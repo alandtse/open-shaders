@@ -1,6 +1,7 @@
 #include "SceneManager.h"
 
 #include "BaselineManager.h"
+#include "CSEditor/FormEditSources.h"
 #include "Presets/UnifiedPresetCatalog.h"
 #include "SceneSettingsContextRules.h"
 #include "SceneSettingsLocationTargets.h"
@@ -481,6 +482,27 @@ void SceneManager::RegisterUxActions()
 			if (result.cancelled)
 				throw std::runtime_error("Preset copy was refused or could not be saved");
 		}));
+	FEATURE_RENDER_COMMAND("copyPresetRecords",
+		"Copy selected preset record values into personal OS Editor JSON files. Args: id, file=relative Forms payload path, settings=[JSON pointer leaves], overwrite=false skips existing personal values, true replaces selected personal values. Preset files remain unchanged. Refuses unsaved scene drafts, unsaved record edits, invalid paths and unreadable documents; failed writes or record loads roll back personal files. Saves immediately without global Save.",
+		([](Feature*, const json& args) {
+			auto& manager = RequireReady();
+			if (manager.HasPendingContextEdit())
+				throw std::invalid_argument(SceneSettingsUI::PendingContextEditMessage());
+			const PresetContent::Selection selection{ { Util::PathHelpers::FromUtf8(args.at("file").get<std::string>()),
+				args.at("settings").get<std::vector<std::string>>() } };
+			if (!FormEditSources::CopyPresetSettings(args.at("id").get<std::string>(), selection, args.value("overwrite", false)))
+				throw std::runtime_error("Preset record copy was refused or could not be saved");
+		}));
+	FEATURE_RENDER_COMMAND("editPresetSetting",
+		"Edit one existing preset value through Manage Preset. Args: id, file=relative payload path, setting=JSON pointer, expected=original JSON value, value=new JSON value. Supports Base Settings, scene files, form files and legacy imports. Saves immediately and reapplies enabled layers. Refuses stale values, incompatible types, pending scene drafts and conflicts with another enabled scene preset; failed reapplication rolls back the file. Refresh preset contents afterward.",
+		([](Feature*, const json& args) {
+			RequireReady();
+			const auto result = UnifiedPresetCatalog::GetSingleton().EditPackSetting(args.at("id").get<std::string>(),
+				Util::PathHelpers::FromUtf8(args.at("file").get<std::string>()), args.at("setting").get<std::string>(),
+				args.at("expected"), args.at("value"));
+			if (result != PresetContent::SettingEditResult::Changed && result != PresetContent::SettingEditResult::Unchanged)
+				throw std::runtime_error(std::format("Preset value edit was refused or failed: {}", magic_enum::enum_name(result)));
+		}));
 	FEATURE_RENDER_COMMAND("deletePresetSettings",
 		"Delete selected settings or one backing file through preset management. Args: id, file=relative payload path, settings=[JSON pointer paths], entireFile=boolean (false default). Legacy originals change only through this explicit destructive action. Pending scene drafts block deletion; failed reapplication restores the source. Refresh presets afterward.",
 		([](Feature*, const json& args) {
@@ -505,7 +527,7 @@ void SceneManager::RegisterUxActions()
 		"Preview a whole-context copy without changing settings. Args: source and destination objects using sceneSets context args. Returns setting identity, value, destinationValue, compatible, conflicts and rejection. Unpaused destination overwrites can reject candidates. Use before copySceneSettings.",
 		CopyCandidates);
 	FEATURE_RENDER_COMMAND("openFeatureSceneToolbar",
-		"Open or resume a loaded feature's retained scene toolbar. Args: feature=shortName. Navigate to that feature's main menu page to see it. Chooses the current interior/time-of-day, weather or location context. Edits preview without persisting until saveFeatureSceneEdit. Closing suspends the preview and keeps the draft; replacing a dirty draft asks for discard confirmation. Does not start weather/time playback.",
+		"Open a loaded feature's scene toolbar. Args: feature=shortName. Navigate to that feature's menu page to see it. Opens Interior indoors or the current Weather outdoors, falling back to the current Location when that layer is unsupported. Features with page-scoped actions limit scene summaries, pause, delete and copy to that page. Edits preview without persisting until saveFeatureSceneEdit. Navigating away retains the toolbar and scene selection but discards unsaved changes; returning reopens the saved context. Closing also discards unsaved changes; changing scene context asks for discard confirmation. Does not start weather/time playback.",
 		OpenFeatureToolbar);
 	FEATURE_RENDER_COMMAND("openFeatureSceneEditor",
 		"Alias for openFeatureSceneToolbar. Args: feature=shortName. Opens or resumes the retained draft on the feature's main menu page without saving it.",
@@ -520,7 +542,7 @@ void SceneManager::RegisterUxActions()
 				throw std::runtime_error(T("feature.scene_manager.edit.save_failed", "Could not save scene settings. Your unsaved changes are kept. Try Save again."));
 		});
 	FEATURE_RENDER_COMMAND("hideFeatureSceneToolbar",
-		"Close the retained scene toolbar and stop its environment preview. Args: none. Suspends unsaved scene application without saving or discarding its entries; opening the same feature resumes them.",
+		"Close the scene toolbar, discard unsaved changes and stop its environment preview. Args: none. Explicitly saved User entries remain unchanged. Verify featureScenePauseState and sceneSets afterward.",
 		[](Feature*, const json&) { SceneSettingsUI::HideFeaturePageEditing(); });
 	FEATURE_RENDER_COMMAND("setEnvironmentPreviewPlaying",
 		"Press the retained feature toolbar's Play or Stop. Args: playing=boolean, feature=shortName required for Play. Locks selected weather/time and can travel to a location. Stop restores prior controls without rewinding the hour. Does not save scene entries. Verify environmentPreviewState.",

@@ -1,5 +1,7 @@
 #include "Utils/Subrect.h"
 
+#include "../I18n/I18n.h"
+#include "Utils/GazeMath.h"
 #include <algorithm>
 #include <cmath>
 
@@ -259,7 +261,7 @@ namespace Util::Subrect
 
 	PixelRegion Controller::GetPixelRegion(uint32_t width, uint32_t height) const
 	{
-		return UVToPixelRegion(currentUV, width, height);
+		return UVToPixelRegion(GetUV(), width, height);
 	}
 
 	StereoPixelRegions Controller::GetStereoPixelRegions(uint32_t fullWidth, uint32_t fullHeight) const
@@ -274,9 +276,55 @@ namespace Util::Subrect
 		// eyes report the same region so callers don't need to branch.
 		const uint32_t eyeWidth = fullWidth / 2;
 		StereoPixelRegions regions;
-		regions.leftEye = UVToPixelRegion(currentUV, eyeWidth, fullHeight);
-		regions.rightEye = UVToPixelRegion(stereoEnabled ? currentRightUV : currentUV, eyeWidth, fullHeight);
+		regions.leftEye = UVToPixelRegion(GetUV(), eyeWidth, fullHeight);
+		regions.rightEye = UVToPixelRegion(GetRightEyeUV(), eyeWidth, fullHeight);
 		return regions;
+	}
+
+	const UVRegion& Controller::GazeUV(std::size_t eye) const
+	{
+		if (gazeOverrideActive && !isDraggingCrop)
+			return gazeUV[eye];
+		if (eye == 0)
+			return currentUV;
+		return stereoEnabled ? currentRightUV : currentUV;
+	}
+
+	void Controller::SetGazeCentres(const std::optional<std::array<UVPoint, 2>>& centres, float recentreThreshold)
+	{
+		if (!centres) {
+			if (gazeOverrideActive) {
+				gazeOverrideActive = false;
+				gazeRecentred = true;
+				gazeEyeReset.fill(true);
+			}
+			return;
+		}
+
+		if (!gazeOverrideActive) {
+			gazeHeldCentre = *centres;
+			gazeOverrideActive = true;
+			gazeRecentred = true;
+			gazeEyeReset.fill(true);
+		} else {
+			for (std::size_t eye = 0; eye < gazeHeldCentre.size(); ++eye) {
+				const UVRegion& saved = (eye == 1 && stereoEnabled) ? currentRightUV : currentUV;
+				const Gaze::Vec2 size{ saved.w, saved.h };
+				const Gaze::Vec2 previous{ gazeHeldCentre[eye].x, gazeHeldCentre[eye].y };
+				const Gaze::Vec2 gaze{ (*centres)[eye].x, (*centres)[eye].y };
+				if (Gaze::ShouldRecentre(previous, gaze, size, recentreThreshold)) {
+					gazeHeldCentre[eye] = (*centres)[eye];
+					gazeRecentred = true;
+					gazeEyeReset[eye] = true;
+				}
+			}
+		}
+
+		for (std::size_t eye = 0; eye < gazeUV.size(); ++eye) {
+			const UVRegion& saved = (eye == 1 && stereoEnabled) ? currentRightUV : currentUV;
+			const Gaze::Crop placed = Gaze::PlaceCrop({ gazeHeldCentre[eye].x, gazeHeldCentre[eye].y }, { saved.w, saved.h });
+			gazeUV[eye] = { placed.x, placed.y, placed.w, placed.h };
+		}
 	}
 
 	void Controller::EnsureDefaultPreset()

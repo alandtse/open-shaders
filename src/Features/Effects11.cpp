@@ -1619,7 +1619,7 @@ namespace
 		bool IsPipelineActive() const override { return globals::state->GetTonemapOwner() == State::TonemapOwner::kEffects11; }
 		bool SetPipelineActive(bool active) override
 		{
-			return PostProcessingMode::Set(active ? PostProcessingMode::Mode::Effects11 : PostProcessingMode::Mode::Vanilla);
+			return PostProcessingMode::Set(active ? PostProcessingMode::Mode::Effects11 : PostProcessingMode::Mode::Vanilla, false);
 		}
 		std::filesystem::path GetActiveRoot() const override { return PresetManager::GetSingleton().GetActivePresetRoot(); }
 		bool ExportTo(const std::filesystem::path& root, json& manifest, bool saveCurrent) override

@@ -1,6 +1,7 @@
 #include "SceneSettingsManager.h"
 
 #include "Feature.h"
+#include "Presets/UnifiedPresetCatalog.h"
 #include "SceneSettingsContextRules.h"
 #include "SceneSettingsInternal.h"
 #include "SceneSettingsLocationTargets.h"
@@ -93,14 +94,13 @@ bool SceneSettingsManager::IsSameSceneContext(const SceneContextId& lhs, const S
 }
 
 SceneSettingsManager::EffectiveContextEntries SceneSettingsManager::BuildEffectiveContextEntries(
-	const std::vector<SettingEntry>& contextEntries, const SceneContextId& context, bool includeDeleted)
+	const std::vector<SettingEntry>& contextEntries, const SceneContextId& context, bool includeDeleted, std::optional<EntrySource> source)
 {
 	EffectiveContextEntries effectiveEntries;
-	// User last: a user entry shadows the overwrite it was authored over.
-	for (auto entrySource : { EntrySource::Overwrite, EntrySource::User })
-		for (const auto& entry : contextEntries)
-			if (entry.source == entrySource && !entry.paused && EntryBelongsToContext(entry, context))
-				effectiveEntries[{ entry.featureShortName, entry.settingPath, entry.settingKey }] = &entry;
+	ForEachEntryByPriority(contextEntries, [&](const SettingEntry& entry) {
+		if ((!source || entry.source == *source) && !entry.paused && EntryBelongsToContext(entry, context))
+			effectiveEntries[{ entry.featureShortName, entry.settingPath, entry.settingKey }] = &entry;
+	});
 	if (!includeDeleted)
 		std::erase_if(effectiveEntries, [](const auto& item) { return item.second->deleted; });
 	return effectiveEntries;
@@ -121,18 +121,18 @@ SceneSettingsManager::SettingProvenance SceneSettingsManager::GetSettingProvenan
 	if (!IsValidSceneContext(context))
 		return provenance;
 
+	const SettingEntry* supplier = nullptr;
 	for (const auto& entry : GetContextEntries(context)) {
 		if (!IsEntryActive(entry) || !IsSameSetting(entry, featureShortName, settingPath, settingKey) ||
 			!EntryBelongsToContext(entry, context))
 			continue;
-		if (entry.source == EntrySource::Overwrite) {
-			// Discovery order is the entry order, and the last file discovered wins.
-			provenance.layer = SettingLayer::Overwrite;
-			continue;
-		}
-		// A user entry outranks every overwrite, so it settles the layer outright.
-		provenance.layer = entry.deleted ? SettingLayer::Deleted : SettingLayer::User;
+		if (!supplier || GetEntryRank(entry) >= GetEntryRank(*supplier))
+			supplier = &entry;
 	}
+	if (supplier)
+		provenance.layer = supplier->deleted                          ? SettingLayer::Deleted :
+		                   supplier->source == EntrySource::Overwrite ? SettingLayer::Overwrite :
+		                                                                SettingLayer::User;
 	return provenance;
 }
 
@@ -460,38 +460,39 @@ std::optional<json> SceneSettingsManager::ResolveContextEntryDefault(const Scene
 		return ResolveLocationLowerValue(context.locationType, context.locationFormKey,
 			GetEntryAddress(entry), entry.source);
 	default:
+		if (entry.source == EntrySource::Overwrite)
+			return CaptureContextValue(context, GetEntryAddress(entry));
 		return entry.originalValue.is_null() ? std::nullopt : std::optional{ entry.originalValue };
 	}
 }
 
 SceneSettingsManager::ContextEntrySummary SceneSettingsManager::GetFeatureSceneSummary(
-	std::string_view featureShortName, const SceneContextId& context, bool matchPeriod) const
+	std::string_view featureShortName, const SceneContextId& context, bool matchPeriod, const SettingSelection& selection) const
 {
 	ContextEntrySummary summary;
-	const bool periodic = IsSceneTimeOfDayEnabled(context);
 	for (const auto& entry : GetContextEntries(context)) {
 		if ((!featureShortName.empty() && entry.featureShortName != featureShortName) ||
-			(matchPeriod && !EntryBelongsToContext(entry, context)))
+			(matchPeriod && !EntryBelongsToContext(entry, context)) ||
+			(selection && !selection->contains({ entry.featureShortName, entry.settingPath, entry.settingKey })))
 			continue;
 		++summary.total;
 		if (entry.paused)
 			++summary.paused;
-		if (entry.source == EntrySource::Overwrite && !entry.paused && !entry.deleted &&
-			(context.type == SceneContextType::Interior || (entry.period != TimeOfDayPeriod::Count) == periodic))
-			++summary.activeOverwrites;
+		if (entry.source == EntrySource::Overwrite && !entry.deleted)
+			++summary.presetSettings;
 	}
 	return summary;
 }
 
 SceneSettingsManager::ContextEntrySummary SceneSettingsManager::GetFeatureSceneSummary(
-	std::string_view featureShortName, SceneContextType type) const
+	std::string_view featureShortName, SceneContextType type, const SettingSelection& selection) const
 {
 	ContextEntrySummary summary;
 	const auto collect = [&](const SceneContextId& context) {
-		const auto target = GetFeatureSceneSummary(featureShortName, context, false);
+		const auto target = GetFeatureSceneSummary(featureShortName, context, false, selection);
 		summary.total += target.total;
 		summary.paused += target.paused;
-		summary.activeOverwrites += target.activeOverwrites;
+		summary.presetSettings += target.presetSettings;
 	};
 	switch (type) {
 	case SceneContextType::Interior:
@@ -511,14 +512,15 @@ SceneSettingsManager::ContextEntrySummary SceneSettingsManager::GetFeatureSceneS
 }
 
 SceneSettingsManager::ContextEntrySummary SceneSettingsManager::GetContextUserEntrySummary(
-	const SceneContextId& context, std::string_view featureShortName) const
+	const SceneContextId& context, std::string_view featureShortName, const SettingSelection& selection) const
 {
 	ContextEntrySummary summary;
 	if (!IsValidSceneContext(context))
 		return summary;
 	for (const auto& entry : GetContextEntries(context)) {
 		if ((!featureShortName.empty() && entry.featureShortName != featureShortName) ||
-			entry.source != EntrySource::User || !EntryBelongsToContext(entry, context))
+			entry.source != EntrySource::User ||
+			(selection && !selection->contains({ entry.featureShortName, entry.settingPath, entry.settingKey })) || !EntryBelongsToContext(entry, context))
 			continue;
 		++summary.total;
 		summary.paused += entry.paused ? 1 : 0;
@@ -526,8 +528,11 @@ SceneSettingsManager::ContextEntrySummary SceneSettingsManager::GetContextUserEn
 	return summary;
 }
 
-void SceneSettingsManager::SetContextEntriesPaused(const SceneContextId& context, bool paused, std::string_view featureShortName)
+void SceneSettingsManager::SetContextEntriesPaused(const SceneContextId& context, bool paused, std::string_view featureShortName,
+	const SettingSelection& selection, EntrySource source)
 {
+	if (source == EntrySource::Overwrite && HasPendingContextEdit())
+		return;
 	auto* contextEntries = GetContextEntriesMut(context);
 	if (!contextEntries)
 		return;
@@ -535,17 +540,24 @@ void SceneSettingsManager::SetContextEntriesPaused(const SceneContextId& context
 	bool changed = false;
 	for (auto& entry : *contextEntries) {
 		if ((!featureShortName.empty() && entry.featureShortName != featureShortName) ||
-			entry.source != EntrySource::User || entry.paused == paused ||
+			entry.source != source || (source == EntrySource::Overwrite && entry.deleted) ||
+			(selection && !selection->contains({ entry.featureShortName, entry.settingPath, entry.settingKey })) || entry.paused == paused ||
 			!EntryBelongsToContext(entry, context))
 			continue;
 		entry.paused = paused;
 		changed = true;
 	}
-	if (changed)
+	if (!changed)
+		return;
+	if (source == EntrySource::User) {
 		CommitContextUserEntryMutation(context);
+	} else {
+		BumpEntryPresentationRevision();
+		ReapplyIfActive();
+	}
 }
 
-void SceneSettingsManager::ClearContextEntries(const SceneContextId& context, std::string_view featureShortName)
+void SceneSettingsManager::ClearContextEntries(const SceneContextId& context, std::string_view featureShortName, const SettingSelection& selection)
 {
 	if (contextEdit && contextEdit->context == context && (featureShortName.empty() || featureShortName == contextEdit->feature))
 		DiscardContextEdit();
@@ -556,7 +568,8 @@ void SceneSettingsManager::ClearContextEntries(const SceneContextId& context, st
 	// Unresolved raw entries are left in the document: they belong to features this session cannot judge.
 	const auto removed = std::erase_if(*contextEntries, [&](const SettingEntry& entry) {
 		return (featureShortName.empty() || entry.featureShortName == featureShortName) &&
-		       entry.source == EntrySource::User && EntryBelongsToContext(entry, context);
+		       entry.source == EntrySource::User && EntryBelongsToContext(entry, context) &&
+		       (!selection || selection->contains({ entry.featureShortName, entry.settingPath, entry.settingKey }));
 	});
 	if (removed != 0)
 		CommitContextUserEntryMutation(context);
@@ -706,7 +719,7 @@ SceneSettingsManager::EntryLayerFileResult SceneSettingsManager::DeleteEntryLaye
 				owned ? error.message() : "path is outside the scene roots");
 		}
 	}
-	if (source == EntrySource::Overwrite && result.written)
+	if (source == EntrySource::Overwrite && result.written && !UnifiedPresetCatalog::GetSingleton().Refresh(false))
 		ReloadOverwrites();
 	if (changed) {
 		BumpEntryPresentationRevision();
@@ -795,9 +808,7 @@ bool SceneSettingsManager::ApplyReplicaSettingsChanges(Feature& feature, const S
 		return false;
 	const auto featureName = feature.GetShortName();
 	const auto rules = GetSceneContextRules(context);
-	const auto sourceEntries = GetContextEntries(context);
-	std::vector<SettingEntry> nextEntries(sourceEntries.begin(), sourceEntries.end());
-	std::vector<EntryValueUpdate> updates;
+	std::map<SettingIdentity, json> values;
 	for (const auto& setting : GetCatalogFeatureSettings(featureName)) {
 		const auto* previous = GetCatalogSerializedValue(originalSettings, setting);
 		const auto* changed = GetCatalogSerializedValue(changedSettings, setting);
@@ -808,6 +819,23 @@ bool SceneSettingsManager::ApplyReplicaSettingsChanges(Feature& feature, const S
 		if (!IsSettingAllowedForType(rules.sceneType, featureName, path, key, rules.requireNumeric) ||
 			!IsSceneSettingValueAllowed(*previous, setting, *changed, rules.requireNumeric))
 			continue;
+		values.emplace(SettingIdentity{ featureName, path, key }, *changed);
+	}
+	return ApplyContextUserValues(context, values);
+}
+
+bool SceneSettingsManager::ApplyContextUserValues(const SceneContextId& context, const std::map<SettingIdentity, json>& values, bool validateOnly)
+{
+	if (values.empty())
+		return true;
+	if (!IsValidSceneContext(context))
+		return false;
+	const auto rules = GetSceneContextRules(context);
+	const auto sourceEntries = GetContextEntries(context);
+	std::vector<SettingEntry> nextEntries(sourceEntries.begin(), sourceEntries.end());
+	std::vector<EntryValueUpdate> updates;
+	for (const auto& [address, value] : values) {
+		const auto& [featureName, path, key] = address;
 		auto entry = std::ranges::find_if(nextEntries, [&](const SettingEntry& candidate) {
 			return candidate.source == EntrySource::User && candidate.featureShortName == featureName &&
 			       candidate.settingPath == path && candidate.settingKey == key && EntryBelongsToContext(candidate, context);
@@ -820,13 +848,15 @@ bool SceneSettingsManager::ApplyReplicaSettingsChanges(Feature& feature, const S
 			entry = std::prev(nextEntries.end());
 		}
 		entry->deleted = false;
-		updates.push_back({ static_cast<size_t>(std::distance(nextEntries.begin(), entry)), *changed });
+		updates.push_back({ static_cast<size_t>(std::distance(nextEntries.begin(), entry)), value });
 	}
 	if (updates.empty())
 		return true;
 	bool userEntriesChanged = false;
 	if (!ApplyEntryValueUpdates(rules.label, rules.sceneType, nextEntries, updates, rules.requireNumeric, userEntriesChanged))
 		return false;
+	if (validateOnly)
+		return true;
 	auto* destination = EnsureContextEntriesMut(context);
 	if (!destination)
 		return false;

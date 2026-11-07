@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CSEditor/FormEditSources.h"
 #include "SceneEntryDraft.h"
 #include "Utils/SettingsControl.h"
 
@@ -19,6 +20,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 using json = nlohmann::json;
@@ -255,6 +257,8 @@ public:
 		std::map<std::string, json> baselines;
 		std::set<std::string> replaceBaselines;
 		std::optional<std::set<std::string>> selectedSceneSettings;
+		std::optional<EntrySource> sceneSource;
+		std::optional<std::vector<FormEditSources::FormEdit>> recordFiles;
 		std::map<std::string, bool> disableAtBoot;
 	};
 
@@ -331,6 +335,11 @@ public:
 
 	// --- Persistence ---
 
+	using PresetPauseState = std::set<std::tuple<std::filesystem::path, std::string,
+		std::vector<std::string>, std::string, TimeOfDayPeriod>>;
+	/** @brief Captures session pauses for the currently loaded preset entries. */
+	PresetPauseState CapturePresetPauses() const;
+
 	/// Commits a user edit: runs the CS editor's automatic save, which writes SceneManager.json.
 	void SaveAllUserSettings();
 
@@ -344,7 +353,7 @@ public:
 
 	/// Re-reads every overwrite file from disk, replacing the mod layer. User entries are untouched.
 	/// Picks up files an export just wrote, and drops entries whose file is gone.
-	void ReloadOverwrites();
+	void ReloadOverwrites(const PresetPauseState& pausedEntries = {});
 	/** @brief Reloads personal and preset scenes after validating the personal document. */
 	bool ReloadSceneSettings();
 
@@ -581,6 +590,7 @@ public:
 
 	/// Identifies one physical persisted setting.
 	using SettingIdentity = SettingsControl::SettingIdentity;
+	using SettingSelection = std::optional<std::set<SettingIdentity>>;
 
 	/// Kind of scene context participating in a copy or authoring operation.
 	enum class SceneContextType : std::uint8_t
@@ -716,19 +726,27 @@ public:
 	};
 
 	/// Return non-empty contexts that contain compatible data for a destination.
-	std::vector<CopySource> GetCopySources(const SceneContextId& destination, std::string_view featureShortName = {}) const;
+	std::vector<CopySource> GetCopySources(const std::optional<SceneContextId>& destination, std::string_view featureShortName = {},
+		std::optional<EntrySource> sourceLayer = std::nullopt) const;
+	/// List saved values from an explicit source layer for the standalone copy picker.
+	std::vector<CopyCandidate> GetCopySourceSettings(const SceneContextId& source, EntrySource sourceLayer, bool allSourcePeriods = false) const;
 	/// Return every context a source can copy compatible data into, including pages with no
 	/// settings yet: every weather and known location, not just the ones already authored.
-	std::vector<CopySource> GetCopyDestinations(const SceneContextId& source, std::string_view featureShortName = {}) const;
+	std::vector<CopySource> GetCopyDestinations(const SceneContextId& source, std::string_view featureShortName = {},
+		std::optional<EntrySource> sourceLayer = std::nullopt, const SettingSelection& selection = std::nullopt,
+		bool allSourcePeriods = false, std::optional<bool> emptyDestinationMode = std::nullopt) const;
 	/// Inspect the settings and conflicts in a proposed copy without mutating state.
 	std::vector<CopyCandidate> GetCopyCandidates(const SceneContextId& source,
-		const SceneContextId& destination, std::string_view featureShortName = {}) const;
+		const SceneContextId& destination, std::string_view featureShortName = {}, const SettingSelection& selection = std::nullopt,
+		std::optional<EntrySource> sourceLayer = std::nullopt, bool allSourcePeriods = false) const;
 	/// Copy settings as one validated mutation and one save/reapply operation.
 	CopyResult CopySettings(const SceneContextId& source, const SceneContextId& destination,
 		CopyConflictPolicy conflictPolicy, std::string_view featureShortName = {});
-	/// Copy one source into several destinations as one mutation: one revision bump, one save, one reapply.
+	/// Copy into several destinations in one save, optionally matching source periods and initializing empty scenes.
 	CopyResult CopySettingsBatch(const SceneContextId& source, std::span<const SceneContextId> destinations,
-		CopyConflictPolicy conflictPolicy, std::string_view featureShortName = {});
+		CopyConflictPolicy conflictPolicy, std::string_view featureShortName = {}, const SettingSelection& selection = std::nullopt,
+		std::optional<EntrySource> sourceLayer = std::nullopt, bool allSourcePeriods = false,
+		std::optional<bool> emptyDestinationMode = std::nullopt);
 	struct PresetSceneSetting
 	{
 		std::string key;
@@ -741,7 +759,7 @@ public:
 	/** @brief Reads compatible scene settings from an installed preset, including inactive legacy imports. */
 	std::vector<PresetSceneSetting> GetPresetSceneSettings(const std::string& packId) const;
 	/** @brief Lists the effective scene values the upstream exporter would bake. */
-	std::vector<PresetSceneSetting> GetSceneExportSettings();
+	std::vector<PresetSceneSetting> GetSceneExportSettings(std::optional<EntrySource> source = std::nullopt);
 	/** @brief Copies selected preset settings into the matching personal scene contexts. */
 	CopyResult CopyPresetSceneSettings(const std::string& packId, std::span<const std::string> selected, CopyConflictPolicy policy);
 	/// Name one context the way the copy source list spells it.
@@ -765,6 +783,8 @@ public:
 	/// Validate and update a group of context entries before applying any of them.
 	void UpdateContextEntryValues(const SceneContextId& context,
 		std::span<const EntryValueUpdate> updates, bool deferSave = false);
+	/** @brief Applies detached User Settings values as one scene edit, or validates them without changing the scene. */
+	bool ApplyContextUserValues(const SceneContextId& context, const std::map<SettingIdentity, json>& values, bool validateOnly = false);
 	/// Keeps a deferred save out of reach for another delay, so a drag held still does not write the
 	/// file mid-gesture. Nothing pending means nothing to hold.
 	void HoldDeferredSceneChanges();
@@ -784,6 +804,8 @@ public:
 	void TogglePauseContextEntry(const SceneContextId& context, size_t index);
 	/// Revert one context entry's value to its originalValue.
 	void RevertContextEntryToDefault(const SceneContextId& context, size_t index);
+	/// Resolves the value beneath an entry, or the original value of a flat user entry.
+	std::optional<json> ResolveContextEntryDefault(const SceneContextId& context, const SettingEntry& entry);
 
 	/// Entries stored for one context, unfiltered by period. Empty when the context holds none.
 	std::span<const SettingEntry> GetContextEntries(const SceneContextId& context) const;
@@ -857,23 +879,24 @@ public:
 	{
 		size_t total = 0;
 		size_t paused = 0;
-		size_t activeOverwrites = 0;
+		size_t presetSettings = 0;
 
 		/** @brief Whether every entry is paused; false for an empty context. */
 		bool AllPaused() const { return total != 0 && paused == total; }
 	};
 
 	/// Count the user entries belonging to one context, and how many of them are paused.
-	ContextEntrySummary GetContextUserEntrySummary(const SceneContextId& context, std::string_view featureShortName = {}) const;
+	ContextEntrySummary GetContextUserEntrySummary(const SceneContextId& context, std::string_view featureShortName = {}, const SettingSelection& selection = std::nullopt) const;
 	/** @brief Summarizes a feature's saved scene settings for picker markers and filtering. */
-	ContextEntrySummary GetFeatureSceneSummary(std::string_view featureShortName, const SceneContextId& context, bool matchPeriod = true) const;
+	ContextEntrySummary GetFeatureSceneSummary(std::string_view featureShortName, const SceneContextId& context, bool matchPeriod = true, const SettingSelection& selection = std::nullopt) const;
 	/** @brief Summarizes a feature across every target of one scene type. */
-	ContextEntrySummary GetFeatureSceneSummary(std::string_view featureShortName, SceneContextType type) const;
-	/// Pause or resume every user entry in a context as one save.
-	void SetContextEntriesPaused(const SceneContextId& context, bool paused, std::string_view featureShortName = {});
+	ContextEntrySummary GetFeatureSceneSummary(std::string_view featureShortName, SceneContextType type, const SettingSelection& selection = std::nullopt) const;
+	/// Pauses selected user entries as one save, or preset entries for the session.
+	void SetContextEntriesPaused(const SceneContextId& context, bool paused, std::string_view featureShortName = {},
+		const SettingSelection& selection = std::nullopt, EntrySource source = EntrySource::User);
 	/// Remove every user entry in a context as one save. Mod-authored overwrites are left alone,
 	/// as are raw entries this session could not resolve to a loaded feature.
-	void ClearContextEntries(const SceneContextId& context, std::string_view featureShortName = {});
+	void ClearContextEntries(const SceneContextId& context, std::string_view featureShortName = {}, const SettingSelection& selection = std::nullopt);
 
 	/// Whether any user entry exists in any context, tombstones included.
 	bool HasAnyUserEntries() const;
@@ -1309,7 +1332,7 @@ private:
 	RE::FormID GetEffectivePreviousWeatherId(const RE::Sky* sky, float weatherLerp) const;
 	/** @brief Samples the sky's current and outgoing weather and their blend factor. */
 	WeatherBlend GetWeatherBlend() const;
-	/** @brief The time-of-day layer's value for one period, user over overwrite, else the base value. */
+	/** @brief The time-of-day layer's effective value for one period, or the base value. */
 	float GetTimeOfDayPeriodFallbackFloat(float baseValue, const std::string& featureShortName,
 		const std::vector<std::string>& settingPath, const std::string& settingKey, int periodIndex) const;
 
@@ -1342,7 +1365,7 @@ private:
 	 *  @param timeOfDayEnabled Selects the per-period set; otherwise each flat entry fills every period.
 	 *  @param type The scene type whose whitelist the entries are judged by. */
 	void CollectPeriodValueGroups(const std::vector<SettingEntry>& sourceEntries, bool timeOfDayEnabled,
-		SceneType type, PeriodSettingMap& values) const;
+		SceneType type, PeriodSettingMap& values, std::map<SettingAddress, float>* transitionDurations = nullptr) const;
 	/** @brief Time-of-day values grouped by address, cached per scene value revision. */
 	const PeriodSettingMap& BuildTimeOfDayValueGroups() const;
 	/** @brief One weather's values grouped by address, cached per scene value revision. */
@@ -1381,12 +1404,7 @@ private:
 	/** @brief Records the entry's transition duration, or the global one, for its address. */
 	void RecordLocationTransitionDuration(const SettingEntry& entry, const SettingAddress& address,
 		std::map<SettingAddress, float>& transitionDurations) const;
-	/** @brief Writes one source's resolvable entries over resolved; a tombstone erases its address, so the
-	 *  layers beneath show through. */
-	void OverlayEntries(ResolvedSettingMap& resolved, const std::vector<SettingEntry>& sourceEntries,
-		SceneType type, EntrySource source,
-		std::map<SettingAddress, float>* transitionDurations = nullptr) const;
-	/// Overlay both sources, shipped overwrites first so user entries win.
+	/// Applies flat User Settings, presets and explicit suppressions in priority order.
 	void OverlayAllEntries(ResolvedSettingMap& resolved, const std::vector<SettingEntry>& sourceEntries,
 		SceneType type, std::map<SettingAddress, float>* transitionDurations = nullptr) const;
 	/** @brief The time-of-day value a weather entry stacks on; a flat entry uses the current period. */
@@ -1410,7 +1428,7 @@ private:
 		std::string_view formKey, std::optional<EntrySource> selectedSource = std::nullopt);
 
 	// --- Generic Scene Copy ---
-	/// The entry that wins for each setting in a context, user over overwrite.
+	/// The entry that wins for each setting in a context.
 	using EffectiveContextEntries = std::map<SettingIdentity, const SettingEntry*>;
 	/** @brief Whether the context's fields are consistent with its type. */
 	static bool IsValidSceneContext(const SceneContextId& context);
@@ -1418,7 +1436,10 @@ private:
 	static bool IsSameSceneContext(const SceneContextId& lhs, const SceneContextId& rhs);
 	/** @brief The winning entry per setting in one context; exports retain tombstones. */
 	static EffectiveContextEntries BuildEffectiveContextEntries(
-		const std::vector<SettingEntry>& contextEntries, const SceneContextId& context, bool includeDeleted = false);
+		const std::vector<SettingEntry>& contextEntries, const SceneContextId& context, bool includeDeleted = false,
+		std::optional<EntrySource> source = std::nullopt);
+	/** @brief Resolves an exported scene's mode from its selected source layer. */
+	bool GetSceneExportTimeOfDayEnabled(const SceneContextId& context, std::optional<EntrySource> source) const;
 	/** @brief Whether a copy would read an unsaved preview or overwrite the retained dirty owner. */
 	bool CopyTouchesPendingEdit(const SceneContextId& source, const SceneContextId& destination,
 		std::span<const CopyCandidate> candidates, CopyConflictPolicy policy) const;
@@ -1442,17 +1463,17 @@ private:
 	/// The value a fresh entry pins: the layers beneath the context, or the feature's own value where
 	/// the context stacks on nothing.
 	std::optional<json> CaptureContextValue(const SceneContextId& context, const SettingAddress& address);
-	/// The value an entry reverts to: what it was created with, or, where the entry stacks on lower
-	/// layers, whatever those supply now.
-	std::optional<json> ResolveContextEntryDefault(const SceneContextId& context, const SettingEntry& entry);
 	/** @brief The source's winning entries, each checked for compatibility and conflict with the destination. */
 	std::vector<CopyCandidate> BuildCopyCandidates(const SceneContextId& source,
-		const SceneContextId& destination, std::string_view featureShortName) const;
+		const SceneContextId& destination, std::string_view featureShortName, std::optional<EntrySource> sourceLayer) const;
 	/// Deferring the commit lets a fan-out over the periods land as one save.
 	CopyResult CopySettingsToContext(const SceneContextId& source, const SceneContextId& destination,
-		CopyConflictPolicy conflictPolicy, bool deferCommit, std::string_view featureShortName);
+		CopyConflictPolicy conflictPolicy, bool deferCommit, std::string_view featureShortName, const SettingSelection& selection = std::nullopt,
+		std::optional<EntrySource> sourceLayer = std::nullopt);
 	/// Whether a context holds entries or is on the user's location list.
 	bool IsSceneContextAuthored(const SceneContextId& context) const;
+	/// An empty weather or location with no explicit mode can adopt the mode chosen for a copy.
+	bool CanInitializeCopyMode(const SceneContextId& context) const;
 	/// Whether a context is the live weather or a link of the player's location chain.
 	bool IsCurrentSceneContext(const SceneContextId& context) const;
 	/// Exact: an eased value moves by far less than any tolerance would forgive, and a skipped apply

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SceneEntryPrecedence.h"
 #include "SceneSettingsManager.h"
 
 #include "Feature.h"
@@ -15,6 +16,21 @@
 /// Catalog, JSON and policy helpers shared by the SceneSettingsManager translation units.
 namespace SceneSettingsInternal
 {
+	inline SceneEntryPrecedence::Rank GetEntryRank(const SceneSettingsManager::SettingEntry& entry)
+	{
+		return SceneEntryPrecedence::GetRank(entry.source == SceneSettingsManager::EntrySource::Overwrite, entry.deleted);
+	}
+
+	/// Visits weaker entries first while retaining discovery order within each source.
+	template <class Callback>
+	void ForEachEntryByPriority(std::span<const SceneSettingsManager::SettingEntry> entries, Callback&& apply)
+	{
+		for (const auto rank : SceneEntryPrecedence::kApplyOrder)
+			for (const auto& entry : entries)
+				if (GetEntryRank(entry) == rank)
+					apply(entry);
+	}
+
 	/** @brief Lists preset payload roots before legacy installed scene files. */
 	std::vector<std::filesystem::path> GetSceneOverwriteRoots();
 	/** @brief Keeps each relative file owned by its first existing source. */

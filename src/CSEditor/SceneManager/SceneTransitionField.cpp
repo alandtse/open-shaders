@@ -37,8 +37,8 @@ namespace
 
 float SceneTransitionField::GetWidth()
 {
-	return ImGui::CalcTextSize(kWidestValue).x + ImGui::GetStyle().FramePadding.x * 2.0f +
-	       ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x;
+	return ImGui::CalcTextSize(kWidestValue).x + ImGui::GetStyle().FramePadding.x +
+	       ImGui::GetFrameHeight();
 }
 
 bool SceneTransitionField::Draw(const char* a_id, std::optional<float>& a_value, float a_inherited, bool a_editable, bool a_mixed, float a_width)

@@ -212,6 +212,7 @@ class ControlBinding:
     source_widget: str = ""
     clamp_numeric_input: bool = False
     hdr_color: bool = False
+    tree_scope: LocalizedText = LocalizedText()
 
 
 @dataclass(frozen=True)
@@ -344,7 +345,7 @@ PERSISTENT_CATEGORY_CONTROL_NAMES = {
 
 # Scalar InputFloat is deliberately unmatched, so the settings it edits stay hidden from scenes.
 DIRECT_UI_CONTROL_RE = re.compile(
-    r"(?:ImGui|Util)::(Checkbox|InvertedCheckbox|CheckboxFlag|CheckboxUint|CheckboxFlags|RadioButton|Combo|BeginCombo|"
+    r"(?:ImGui|Util|SettingsControl)::(Checkbox|InvertedCheckbox|CheckboxFlag|CheckboxUint|CheckboxFlags|RadioButton|Combo|BeginCombo|StringChoice|"
     r"Drag(?:Float[234]?|Int[234]?|ScalarN?)|"
     r"Slider(?:Float[234]?|Int[234]?|ScalarN?|Angle)|"
     r"Input(?:Float[234]|Int[234]?|ScalarN?)|ColorEdit[34]|PercentageSlider)\s*\(")
@@ -565,11 +566,25 @@ def collect_nlohmann_macros(paths: list[Path]) -> dict[str, list[str]]:
     return macros
 
 
+def enclosing_namespace(text: str, position: int, spans: list[tuple[int, int, str]]) -> str:
+    return "::".join(name for start, end, name in spans if start < position < end)
+
+
+def collect_namespace_spans(text: str) -> list[tuple[int, int, str]]:
+    spans = []
+    for match in re.finditer(r"\bnamespace\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*\{", text):
+        end = find_matching_brace(text, match.end() - 1)
+        if end >= 0:
+            spans.append((match.start(), end, match.group(1)))
+    return spans
+
+
 def collect_struct_bodies(paths: list[Path]) -> dict[str, list[str]]:
     """Every definition's body per struct name, in scan order."""
     bodies: dict[str, list[str]] = {}
     for path in paths:
         text = read_text(path)
+        namespace_spans = collect_namespace_spans(text)
         for match in re.finditer(STRUCT_DECL_RE, text):
             name = match.group(1)
             body_start = match.end()
@@ -594,6 +609,9 @@ def collect_struct_bodies(paths: list[Path]) -> dict[str, list[str]]:
                     depth -= 1
                     if depth == 0:
                         bodies.setdefault(name, []).append(text[body_start:i])
+                        namespace = enclosing_namespace(text, match.start(), namespace_spans)
+                        if namespace:
+                            bodies.setdefault(f"{namespace}::{name}", []).append(text[body_start:i])
                         break
                 i += 1
     return bodies
@@ -609,9 +627,14 @@ def clean_type(type_name: str) -> str:
 def parse_struct_fields(body: str) -> dict[str, str]:
     fields: dict[str, str] = {}
     for raw_stmt in mask_cpp_source(body).split(";"):
-        parsed = parse_field_statement(raw_stmt)
+        declarators = split_args(raw_stmt) if "," in raw_stmt and "<" not in raw_stmt else [raw_stmt]
+        parsed = parse_field_statement(declarators[0])
         if parsed:
             fields[parsed[0]] = parsed[1]
+            for declarator in declarators[1:]:
+                extra = re.fullmatch(r"\s*([A-Za-z_]\w*)\s*(?:=.*)?", declarator, re.DOTALL)
+                if extra:
+                    fields.setdefault(extra.group(1), parsed[1])
     return fields
 
 
@@ -1919,6 +1942,8 @@ def resolve_editor_semantic(
         force_hidden: bool = False) -> str:
     if force_hidden or binding is None:
         return "None"
+    if binding.control_kind == "StringChoice" and value_type == "String":
+        return "Text"
     if binding.choices and value_type == "Integer":
         return "Choice"
     if ((binding.control_kind in {"Checkbox", "CheckboxFlag", "CheckboxUint"} or
@@ -2798,6 +2823,46 @@ def resolve_provider_combo_choices(
     return [(index, label, key) for index, (label, key) in enumerate(values)]
 
 
+def resolve_value_table_combo_choices(
+        source: str,
+        items_expression: str,
+        values_expression: str,
+        prefix: str,
+        constants: dict[str, float]) -> list[tuple[int, str, str]]:
+    labels = re.fullmatch(r"([A-Za-z_]\w*)(?:\.data\(\))?", items_expression.strip())
+    values = re.fullmatch(r"[A-Za-z_]\w*", values_expression.strip())
+    if not labels or not values:
+        return []
+    string_arrays, integer_arrays = collect_literal_std_arrays(source, prefix, constants)
+    names = string_arrays.get(labels.group(1))
+    numbers = integer_arrays.get(values.group(0))
+    if not names or not numbers or len(names) != len(numbers):
+        return []
+    return [(number, label, key) for number, (label, key) in zip(numbers, names)]
+
+
+def resolve_combo_call_choices(
+        body: str,
+        position: int,
+        args: list[str],
+        prefix: str,
+        source: str,
+        constants: dict[str, float],
+        providers: dict[str, tuple[tuple[str, str], ...]]) -> list[tuple[int, str, str]]:
+    """Choices of a Combo call, whether its labels are a local array, a provider's array or a label and value table."""
+    values = resolve_combo_choices(body, position, args[2], prefix, source, constants)
+    if not values and len(args) >= 4:
+        values = resolve_provider_combo_choices(
+            body, position, args[2], args[3], providers, constants)
+    if not values and len(args) == 3:
+        alias = args[2].strip()
+        values = resolve_provider_combo_choices(
+            body, position, f"{alias}.data()", f"{alias}.size()", providers, constants)
+    if not values and len(args) >= 5:
+        values = resolve_value_table_combo_choices(source, args[2], args[3], prefix, constants)
+    return values
+
+
 def resolve_choice_label_call(
         source: str,
         expression: str,
@@ -2848,7 +2913,8 @@ def resolve_combo_choices(
     if not re.fullmatch(r"[A-Za-z_]\w*", variable):
         return []
     declaration = list(re.finditer(
-        rf"\b(?:const\s+)?char\s*\*\s*(?:const\s+)?{re.escape(variable)}\s*\[[^\]]*\]\s*=\s*\{{",
+        rf"\b(?:const\s+)?(?:char\s*\*\s*(?:const\s+)?{re.escape(variable)}\s*\[[^\]]*\]\s*="
+        rf"|std::array\s*<[^;{{}}]*>\s*{re.escape(variable)}\s*=?)\s*\{{",
         body[:position]))
     if not declaration:
         return []
@@ -2857,7 +2923,11 @@ def resolve_combo_choices(
     if close_brace < 0:
         return []
 
-    items = [item for item in split_args(body[open_brace + 1:close_brace]) if item.strip()]
+    initializer = body[open_brace + 1:close_brace]
+    inner = initializer.strip()
+    if inner.startswith("{") and find_matching_brace(inner, 0) == len(inner) - 1:
+        initializer = inner[1:-1]
+    items = [item for item in split_args(initializer) if item.strip()]
     choices = []
     for index, item in enumerate(items):
         translated = extract_i18n_call(item, prefix)
@@ -3752,14 +3822,9 @@ def _project_standard_controls(
 
     def resolve_choices(function, position, kind, args):
         if kind == "Combo" and len(args) >= 3:
-            values = resolve_combo_choices(
-                function.body, position, args[2], function.prefix,
-                text_by_path[function.source], constants_by_path[function.source])
-            if not values and len(args) >= 4:
-                values = resolve_provider_combo_choices(
-                    function.body, position, args[2], args[3], providers,
-                    constants_by_path[function.source])
-            return tuple(values)
+            return tuple(resolve_combo_call_choices(
+                function.body, position, args, function.prefix,
+                text_by_path[function.source], constants_by_path[function.source], providers))
         if kind == "RadioButton" and len(args) >= 3:
             value = resolve_numeric_expression(args[2], constants_by_path[function.source])
             label = _localized_text(args[0], function.prefix)
@@ -4093,7 +4158,7 @@ def _project_standard_controls(
                 storage = call_args[summary.storage_parameter]
                 owner = ""
                 path = None
-                if caller.name == "DrawSettings" and caller.owner:
+                if caller in draw_control_functions:
                     pseudo = [""] * (control_storage_argument_index(summary.control_kind) + 1)
                     pseudo[-1] = storage
                     path = extract_control_setting_path(
@@ -4173,6 +4238,21 @@ def _project_standard_controls(
                 identity[0], identity[1], None, LocalizedText(), "Combo",
                 choices=choices, source_widget="Combo")
     return bindings
+
+
+def control_tree_scope(body: str, position: int, prefix: str) -> LocalizedText:
+    scope = LocalizedText()
+    for tree in re.finditer(r"\bImGui::TreeNode(?:Ex)?\s*\(", mask_cpp_source(body)[:position]):
+        close = find_matching_paren(body, tree.end() - 1)
+        args = split_args(body[tree.end():close]) if close >= 0 else []
+        if not args or "NoTreePushOnOpen" in body[tree.end():close]:
+            continue
+        start = mask_cpp_source(body).find("{", close + 1)
+        statement = mask_cpp_source(body).find(";", close + 1)
+        end = find_matching_brace(body, start) if start >= 0 else -1
+        if close < start < position < end and (statement < 0 or start < statement):
+            scope = _localized_text(args[0], prefix) or LocalizedText()
+    return scope
 
 
 def _collect_reversible_numeric_bindings(
@@ -4290,7 +4370,8 @@ def _collect_reversible_numeric_bindings(
                     minimum, maximum, display_scale, transform,
                     source_widget=source_widget,
                     clamp_numeric_input=clamp_numeric_input,
-                    hdr_color=hdr_color)
+                    hdr_color=hdr_color,
+                    tree_scope=control_tree_scope(function.body, invocation.start(), function.prefix))
                 previous = collected.get(identity)
                 if identity in conflicts:
                     continue
@@ -4352,7 +4433,7 @@ def collect_control_index(
             hdr_color=metadata[10])
     merge_unique(bindings, indirect_bindings)
 
-    functions = collect_source_functions(paths)
+    functions = (*collect_source_functions(paths), *collect_callback_controls(paths)[1])
     constants_by_path = {
         path: collect_numeric_constants(
             read_text(path) + (read_text(path.with_suffix(".h"))
@@ -4572,6 +4653,77 @@ def assign_enabled_by(entries: list[dict[str, object]], features: dict[str, dict
                 control["enabledByValue"] = enabled_by[1]
 
 
+def collect_callback_controls(paths: list[Path]) -> tuple[
+        set[tuple[str, tuple[str, ...]]], tuple[SourceFunction, ...]]:
+    roots = set()
+    projected = set()
+    for path in paths:
+        text = read_text(path)
+        header = path.with_suffix(".h")
+        if header.exists():
+            text += "\n" + read_text(header)
+        callbacks = {}
+        for declaration in re.finditer(
+                r"\bstd::function\s*<\s*(?:void|bool)\s*\(([^()]*)\)\s*>\s*"
+                r"([A-Za-z_]\w*)\s*;", mask_cpp_source(text)):
+            parameters = split_args(declaration.group(1))
+            mutable_parameters = tuple(
+                index for index, parameter in enumerate(split_args(declaration.group(1)))
+                if "&" in parameter and not re.search(r"\bconst\b", parameter))
+            signature = tuple(clean_type(parameter) for parameter in parameters)
+            callbacks.setdefault(declaration.group(2), set()).add((signature, mutable_parameters))
+        if not callbacks:
+            continue
+        for function in collect_source_functions([path]):
+            if function.name != "DrawSettings" or not function.owner:
+                continue
+            aliases = collect_local_setting_aliases(function.body)
+            for name, signatures in callbacks.items():
+                if len(signatures) != 1:
+                    continue
+                for invocation in re.finditer(
+                        rf"\b{re.escape(name)}\s*\(", function.masked_body):
+                    close = find_matching_paren(function.body, invocation.end() - 1)
+                    if close < 0:
+                        continue
+                    args = split_args(function.body[invocation.end():close])
+                    signature, mutable_parameters = next(iter(signatures))
+                    replacements = {}
+                    for index in mutable_parameters:
+                        if index >= len(args) or not re.fullmatch(
+                                r"\s*[A-Za-z_]\w*(?:(?:\.[A-Za-z_]\w*)|(?:\[\s*\d+\s*\]))*\s*",
+                                args[index]):
+                            continue
+                        setting_path = extract_control_setting_path(
+                            "InputFloat", ["", args[index]], aliases)
+                        if setting_path:
+                            roots.add((function.owner, setting_path))
+                            replacements[index] = "settings" + "".join(
+                                f"[{part}]" if part.isdecimal() else f".{part}"
+                                for part in setting_path)
+                    if not replacements:
+                        continue
+                    for callback in re.finditer(
+                            r"\[[^\]]*\]\s*\(([^()]*)\)\s*(?:mutable\s*)?\{",
+                            mask_cpp_source(text)):
+                        parameters = parse_helper_parameters(callback.group(1))
+                        callback_signature = tuple(type_name for type_name, _, _ in parameters)
+                        declarations = split_args(callback.group(1))
+                        if callback_signature != signature or any(
+                                "&" not in declarations[index] or re.search(r"\bconst\b", declarations[index])
+                                for index in replacements):
+                            continue
+                        end = find_matching_brace(text, callback.end() - 1)
+                        if end < 0:
+                            continue
+                        body = text[callback.end():end]
+                        for index, replacement in replacements.items():
+                            body = re.sub(rf"\b{re.escape(parameters[index][1])}\b", replacement, body)
+                        projected.add(replace(function, parameters=(), body=body,
+                                              masked_body=mask_cpp_source(body), parameter_text=""))
+    return roots, tuple(projected)
+
+
 def build_entries(source_dir: Path) -> list[dict[str, object]]:
     src_paths = list((source_dir / "src").rglob("*.cpp")) + list((source_dir / "src").rglob("*.h"))
     src_paths += [source_dir / "src" / "TruePBR.cpp", source_dir / "src" / "TruePBR.h"]
@@ -4629,6 +4781,7 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
     for owner, member, child_type, _ in owned_components:
         component_containers.setdefault(owner, {})[member] = child_type.split("::")[-1]
     control_index = collect_control_index(cpp_paths, src_paths, component_containers)
+    callback_setting_roots = collect_callback_controls(cpp_paths)[0]
 
     custom_path_controls = collect_custom_path_controls(cpp_paths)
     entries: list[dict[str, object]] = []
@@ -4715,6 +4868,12 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
         editor_semantic = ("Text" if value_type == "String" and
                            (feature_short, tuple(full_path), key) in custom_path_controls else
                            resolve_editor_semantic(binding, value_type, force_hidden))
+        callback_controlled = binding is None and any(
+                owner == context.field_class and setting_address[:len(root)] == root
+                for owner, root in callback_setting_roots)
+        if callback_controlled:
+            editor_semantic = {"Float": "Numeric", "Integer": "Numeric",
+                               "Boolean": "Toggle"}.get(value_type, editor_semantic)
 
         flags = ["SceneSettingsCatalog::SettingFlag::Persisted"]
         if value_type == "Float" and editor_semantic in {"Numeric", "Generic"}:
@@ -4806,8 +4965,10 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
             "maximum": maximum if maximum is not None else 0.0,
             "displayScale": display_scale,
             "numericTransform": numeric_transform,
+            "treeScope": binding.tree_scope.text if binding else "",
+            "treeScopeKey": binding.tree_scope.key if binding else "",
             "hasNumericBounds": minimum is not None and maximum is not None,
-            "sourceWidget": binding.source_widget if binding else "",
+            "sourceWidget": binding.source_widget if binding else "Callback" if callback_controlled else "",
             "clampNumericInput": bool(
                 binding and binding.clamp_numeric_input and
                 minimum is not None and maximum is not None),
@@ -4852,11 +5013,11 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
         declared_type = catalog_class_aliases.get(context.field_class, {}).get(simple_type, simple_type)
         declared_type = declared_type.split("::")[-1]
         class_fields = catalog_class_fields.get(context.field_class, {})
-        if simple_type not in class_fields and declared_type in ambiguous_structs:
+        if full_type not in struct_fields and simple_type not in class_fields and declared_type in ambiguous_structs:
             discovery_errors.append(
                 f"{full_type} resolves by name to {declared_type}, which several structs define differently")
             return
-        declared_fields = class_fields.get(simple_type, struct_fields.get(declared_type, {}))
+        declared_fields = struct_fields.get(full_type) or class_fields.get(simple_type, struct_fields.get(declared_type, {}))
         for field in fields:
             field_type = declared_fields.get(field, "")
             if not field_type:
@@ -5357,6 +5518,8 @@ namespace SceneSettingsCatalog
 \t\tstd::string_view enabledByKey;
 \t\tstd::string_view enabledByPath;
 \t\tstd::int8_t enabledByValue;
+\t\tstd::string_view treeScope;
+\t\tstd::string_view treeScopeKey;
 \t};
 
 \tstruct UiControlMetadata
@@ -5429,7 +5592,8 @@ namespace SceneSettingsCatalog
             f'{str(e["invertedDisplay"]).lower()}, '
             f'{choice_pointer}, {choice_count}, {choice_display_pointer}, '
             f'"{cpp_escape(e.get("controlScope", ""))}", '
-            f'"{cpp_escape(e["enabledByKey"])}", "{cpp_escape(e["enabledByPath"])}", {e["enabledByValue"]} }},'
+            f'"{cpp_escape(e["enabledByKey"])}", "{cpp_escape(e["enabledByPath"])}", {e["enabledByValue"]}, '
+            f'"{cpp_escape(e.get("treeScope", ""))}", "{cpp_escape(e.get("treeScopeKey", ""))}" }},'
         )
     joined_rows = "\n".join(rows)
     ui_control_rows = "\n".join(
@@ -5626,6 +5790,8 @@ SOURCE_WIDGET_ENTRY_POINTS = {
     "SliderInt": ("SliderInt",),
     "SliderScalar": ("SliderScalar",),
 }
+SOURCE_WIDGET_ENTRY_POINTS["Callback"] = tuple(sorted({
+    point for points in SOURCE_WIDGET_ENTRY_POINTS.values() for point in points}))
 
 
 def required_entry_points(entries: list[dict[str, object]]) -> list[str]:

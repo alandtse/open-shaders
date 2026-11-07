@@ -771,36 +771,36 @@ void SceneSettingsManager::ApplyContextEditPreview(ResolvedSettingMap& resolved,
 
 void SceneSettingsManager::CollectPeriodValueGroups(
 	const std::vector<SettingEntry>& sourceEntries, bool timeOfDayEnabled, SceneType type,
-	PeriodSettingMap& values) const
+	PeriodSettingMap& values, std::map<SettingAddress, float>* transitionDurations) const
 {
-	// Shipped overwrites are the layer's defaults; the user's own entry for the same address wins.
-	for (auto source : { EntrySource::Overwrite, EntrySource::User }) {
-		for (const auto& entry : sourceEntries) {
-			const bool flat = entry.period == TimeOfDayPeriod::Count;
-			const auto periodIndex = static_cast<int>(entry.period);
-			if (entry.source != source || flat == timeOfDayEnabled || periodIndex < 0 ||
-				periodIndex > kPeriodCount || !IsEntryActive(entry))
-				continue;
-			// A flat entry stands for every period at once.
-			const int firstPeriod = flat ? 0 : periodIndex;
-			const int lastPeriod = flat ? kPeriodCount : periodIndex + 1;
-			// A tombstone clears its periods rather than filling them, so the layer beneath shows through.
-			if (entry.deleted) {
-				if (auto valuesIt = values.find(GetEntryAddress(entry)); valuesIt != values.end())
-					for (int slot = firstPeriod; slot < lastPeriod; ++slot)
-						valuesIt->second[slot].reset();
-				continue;
-			}
-			if (!IsResolvableEntry(entry, type))
-				continue;
-			const auto value = entry.value.get<float>();
-			if (!std::isfinite(value))
-				continue;
-			auto& periodValues = values[GetEntryAddress(entry)];
-			for (int slot = firstPeriod; slot < lastPeriod; ++slot)
-				periodValues[slot] = value;
+	ForEachEntryByPriority(sourceEntries, [&](const SettingEntry& entry) {
+		const bool flat = entry.period == TimeOfDayPeriod::Count;
+		const auto periodIndex = static_cast<int>(entry.period);
+		if (flat == timeOfDayEnabled || periodIndex < 0 ||
+			periodIndex > kPeriodCount || !IsEntryActive(entry))
+			return;
+		// A flat entry stands for every period at once.
+		const int firstPeriod = flat ? 0 : periodIndex;
+		const int lastPeriod = flat ? kPeriodCount : periodIndex + 1;
+		// A tombstone clears its periods rather than filling them, so the layer beneath shows through.
+		if (entry.deleted) {
+			if (auto valuesIt = values.find(GetEntryAddress(entry)); valuesIt != values.end())
+				for (int slot = firstPeriod; slot < lastPeriod; ++slot)
+					valuesIt->second[slot].reset();
+			return;
 		}
-	}
+		if (!IsResolvableEntry(entry, type))
+			return;
+		const auto value = entry.value.get<float>();
+		if (!std::isfinite(value))
+			return;
+		const auto address = GetEntryAddress(entry);
+		if (transitionDurations)
+			RecordLocationTransitionDuration(entry, address, *transitionDurations);
+		auto& periodValues = values[address];
+		for (int slot = firstPeriod; slot < lastPeriod; ++slot)
+			periodValues[slot] = value;
+	});
 }
 
 const SceneSettingsManager::PeriodSettingMap& SceneSettingsManager::BuildTimeOfDayValueGroups() const
@@ -932,10 +932,8 @@ void SceneSettingsManager::ResolveLocationLink(const std::vector<SettingEntry>& 
 				periodValues[address].fill(seed->get<float>());
 			resolved.erase(flatIt);
 		}
-		if (transitionDurations && !entry.deleted)
-			RecordLocationTransitionDuration(entry, address, *transitionDurations);
 	}
-	CollectPeriodValueGroups(linkEntries, true, SceneType::Location, periodValues);
+	CollectPeriodValueGroups(linkEntries, true, SceneType::Location, periodValues, transitionDurations);
 }
 
 void SceneSettingsManager::BlendLocationPeriodValues(ResolvedSettingMap& resolved,
@@ -973,17 +971,17 @@ void SceneSettingsManager::RecordLocationTransitionDuration(const SettingEntry& 
 		0.0f, kMaxLocationTransitionSeconds);
 }
 
-void SceneSettingsManager::OverlayEntries(ResolvedSettingMap& resolved, const std::vector<SettingEntry>& sourceEntries,
-	SceneType type, EntrySource source, std::map<SettingAddress, float>* transitionDurations) const
+void SceneSettingsManager::OverlayAllEntries(ResolvedSettingMap& resolved, const std::vector<SettingEntry>& sourceEntries,
+	SceneType type, std::map<SettingAddress, float>* transitionDurations) const
 {
-	for (const auto& entry : sourceEntries) {
+	ForEachEntryByPriority(sourceEntries, [&](const SettingEntry& entry) {
 		// Per-period entries blend through the period maps instead.
-		if (entry.source != source || entry.period != TimeOfDayPeriod::Count || !IsEntryActive(entry) ||
+		if (entry.period != TimeOfDayPeriod::Count || !IsEntryActive(entry) ||
 			!IsSettingAllowedForType(type, entry.featureShortName, entry.settingPath, entry.settingKey))
-			continue;
+			return;
 		auto address = GetEntryAddress(entry);
 		if (!baselineSettings.contains(address))
-			continue;
+			return;
 		if (transitionDurations)
 			RecordLocationTransitionDuration(entry, address, *transitionDurations);
 		// A tombstone empties the address in this layer, so whatever resolved beneath it shows through.
@@ -991,16 +989,7 @@ void SceneSettingsManager::OverlayEntries(ResolvedSettingMap& resolved, const st
 			resolved.erase(address);
 		else
 			resolved[std::move(address)] = entry.value;
-	}
-}
-
-void SceneSettingsManager::OverlayAllEntries(ResolvedSettingMap& resolved,
-	const std::vector<SettingEntry>& sourceEntries, SceneType type,
-	std::map<SettingAddress, float>* transitionDurations) const
-{
-	// Shipped overwrites are the layer's defaults; the user's own entry for the same address wins.
-	OverlayEntries(resolved, sourceEntries, type, EntrySource::Overwrite, transitionDurations);
-	OverlayEntries(resolved, sourceEntries, type, EntrySource::User, transitionDurations);
+	});
 }
 
 const json* SceneSettingsManager::GetFeatureBaseSnapshot(const std::string& featureShortName)

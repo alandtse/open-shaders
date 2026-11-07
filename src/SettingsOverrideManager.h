@@ -50,8 +50,6 @@ public:
 	size_t DiscoverOverrides();
 	/** @brief Projects recognized legacy feature values into standard Baseline documents. */
 	const std::vector<LegacyPack>& GetBaselinePacks() const;
-	/** @brief Imports companion personal edits until the main settings file has saved their migration. */
-	void ImportUserSettings(json& settings) const;
 	/** @brief Captures underlying settings for reload rollback. */
 	void CaptureBaseSettings(const json& settings) { userBaseline = settings; }
 	/** @brief Captures normalized values for detecting subsequent live edits. */

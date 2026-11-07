@@ -61,6 +61,8 @@ namespace SceneWidgetInterceptor
 	 * @param a_draw Draws the control against the int it is handed and returns whether it changed it.
 	 */
 	bool InterceptInt(const char* a_label, int& a_value, const std::function<bool(int&)>& a_draw);
+	/** @brief Binds a custom string choice through the shared setting contract. */
+	bool InterceptString(const char* label, std::string& value, const SettingsControl::StringDrawer& draw);
 	/** @brief Captures a baseline edit after the outermost settings UI scope returns. */
 	void RequestExternalCapture();
 	/** @brief Whether the generator proved a uniquely labelled static visibility control is UI-only. */

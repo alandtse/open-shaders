@@ -358,14 +358,7 @@ namespace
 			GetDofModeLabel(3),
 		};
 
-		int mode = static_cast<int>(ClampDofMode(a_mode));
-		const bool changed = ImGui::Combo(T(TKEY("dof_mode"), "Mode"), &mode, modeLabels, IM_ARRAYSIZE(modeLabels));
-
-		if (!changed)
-			return false;
-
-		a_mode = static_cast<uint32_t>(mode);
-		return true;
+		return Util::Combo(T(TKEY("dof_mode"), "Mode"), &a_mode, modeLabels);
 	}
 
 	bool DrawDofBlurRadiusCombo(uint32_t& a_blurRadius)
@@ -381,14 +374,7 @@ namespace
 			GetDofBlurRadiusLabel(7),
 		};
 
-		int blurRadius = static_cast<int>(ClampDofBlurRadius(a_blurRadius));
-		const bool changed = ImGui::Combo(T(TKEY("dof_blur_radius"), "Blur Radius"), &blurRadius, blurRadiusLabels, IM_ARRAYSIZE(blurRadiusLabels));
-
-		if (!changed)
-			return false;
-
-		a_blurRadius = static_cast<uint32_t>(blurRadius);
-		return true;
+		return Util::Combo(T(TKEY("dof_blur_radius"), "Blur Radius"), &a_blurRadius, blurRadiusLabels);
 	}
 
 	ImVec2 GetDepthOfFieldLockButtonSize()

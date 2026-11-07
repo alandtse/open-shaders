@@ -156,14 +156,16 @@ namespace
 	}
 
 	/** @brief Reads the feature's own values, not whatever the active scene is applying, and splits labels into groups. */
-	void LoadFeature(FeatureExport& entry)
+	void LoadFeature(FeatureExport& entry, const json* values = nullptr)
 	{
 		if (std::exchange(entry.loaded, true))
 			return;
 		auto* feature = Feature::FindFeatureByShortName(entry.shortName);
 		if (!feature)
 			return;
-		{
+		if (values)
+			entry.values = *values;
+		else {
 			SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
 			feature->SaveSettings(entry.values);
 		}
@@ -644,13 +646,13 @@ namespace
 	}
 }
 
-static void BeginExport(Feature* feature)
+static void BeginExport(Feature* feature, const json* values = nullptr)
 {
 	session = {};
 	session.featureLocked = feature != nullptr;
 	if (feature) {
 		auto& entry = session.features.emplace_back(FeatureExport{ .shortName = feature->GetShortName(), .label = feature->GetDisplayName() });
-		LoadFeature(entry);
+		LoadFeature(entry, values);
 		std::ranges::fill(entry.ticked, uint8_t{ 1 });
 	} else {
 		auto features = Feature::GetFeatureList();
@@ -660,17 +662,6 @@ static void BeginExport(Feature* feature)
 				session.features.push_back({ .shortName = candidate->GetShortName(), .label = candidate->GetDisplayName() });
 	}
 	session.modal.Request();
-}
-
-void BaseSettingsEditor::BeginExportInto(Feature* feature, const std::string& packId)
-{
-	assert(feature);
-	BeginExport(feature);
-	target.name = packId;
-	auto& entry = session.features.front();
-	RefreshTarget(entry);
-	for (size_t index = 0; index < entry.rows.size(); ++index)
-		entry.ticked[index] = entry.rows[index].fileState != FileState::Absent;
 }
 
 void BaseSettingsEditor::DrawExport()
@@ -683,10 +674,10 @@ void BaseSettingsEditor::DrawExport()
 }
 
 void BaseSettingsEditor::SelectSettings(Feature* feature, const std::optional<std::vector<std::string>>& selected,
-	std::function<void(std::vector<std::string>)> apply)
+	std::function<void(std::vector<std::string>)> apply, const json* values)
 {
 	assert(feature);
-	BeginExport(feature);
+	BeginExport(feature, values);
 	session.applySelection = std::move(apply);
 	if (selected) {
 		auto& entry = session.features.front();
@@ -713,6 +704,11 @@ std::optional<std::vector<std::string>> BaseSettingsEditor::GetIncludedSettings(
 bool BaseSettingsEditor::IsOpen()
 {
 	return session.modal.IsActive();
+}
+
+void BaseSettingsEditor::Dismiss()
+{
+	session = {};
 }
 
 #undef I18N_KEY_PREFIX

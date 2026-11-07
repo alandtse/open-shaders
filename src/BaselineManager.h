@@ -69,6 +69,8 @@ public:
 	size_t ApplyBaselines(const std::string& featureName, json& featureJson);
 	/** @brief Builds the validated partial contribution, optionally restricted to one enabled pack. */
 	json BuildFeatureBaseline(const std::string& featureName, const json& known, std::string_view packId = {});
+	/** @brief Records installed Base Settings suppliers independently of their enabled state. */
+	json BuildCustomizationSources();
 
 	/**
 	 * @brief Gets list of all discovered Baseline files
@@ -92,6 +94,8 @@ public:
 	 * @return True if the feature has Baseline files
 	 */
 	bool HasFeatureFiles(const std::string& featureName) const;
+	/** @brief Whether enabled, valid Base Settings contain values in the requested feature scope. */
+	bool HasSettings(const std::string& featureName = {}, std::span<const std::string> keys = {}) const;
 
 	/**
 	 * @brief Clears all cached files and forces rediscovery

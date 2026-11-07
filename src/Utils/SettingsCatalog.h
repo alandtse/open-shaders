@@ -40,6 +40,16 @@ namespace Util::Settings
 	/** @copydoc GetCatalogSerializedValue(nlohmann::json&, const SceneSettingsCatalog::SettingMetadata&) */
 	const nlohmann::json* GetCatalogSerializedValue(const nlohmann::json& data, const SceneSettingsCatalog::SettingMetadata& setting);
 
+	/** @brief Binds a catalogue control to a value within a detached settings subtree. */
+	struct ValueControlBinding
+	{
+		const SceneSettingsCatalog::SettingMetadata* setting;
+		nlohmann::json::json_pointer path;
+	};
+	/** @brief Finds persisted controls for a selected serialized setting or aggregate. */
+	std::vector<ValueControlBinding> GetValueControlBindings(std::string_view featureShortName,
+		const nlohmann::json& document, const std::string& selectedPath);
+
 	/** @brief One exportable setting: its JSON pointer path and display label. */
 	struct ExportSetting
 	{

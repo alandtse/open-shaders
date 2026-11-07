@@ -277,4 +277,27 @@ namespace Util::Settings
 	{
 		return GetCatalogSerializedValueImpl(data, setting);
 	}
+
+	std::vector<ValueControlBinding> GetValueControlBindings(std::string_view featureShortName,
+		const nlohmann::json& document, const std::string& selectedPath)
+	{
+		std::vector<ValueControlBinding> result;
+		std::set<std::string> seen;
+		for (const auto& setting : SceneSettingsCatalog::GetSettings()) {
+			if (setting.featureShortName != featureShortName || setting.sourceWidget.empty() ||
+				!SceneSettingsCatalog::HasFlag(setting.flags, SceneSettingsCatalog::SettingFlag::Persisted))
+				continue;
+			nlohmann::json::json_pointer pointer;
+			for (const auto& part : SplitCatalogPath(setting.serializedPath)) pointer /= part;
+			pointer /= std::string(setting.serializedKey);
+			if (setting.serializedComponent >= 0)
+				pointer /= std::to_string(setting.serializedComponent);
+			const auto path = pointer.to_string();
+			if (path != selectedPath && !path.starts_with(selectedPath + "/"))
+				continue;
+			if (document.contains(pointer) && seen.insert(path).second)
+				result.push_back({ &setting, nlohmann::json::json_pointer(path.substr(selectedPath.size())) });
+		}
+		return result;
+	}
 }

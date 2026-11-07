@@ -319,7 +319,7 @@ struct PerformanceOverlay : OverlayFeature
 		static constexpr int kMaxFrameHistorySize = 1800;            // 30s @ 60fps, 7.5s @ 240fps
 
 		bool ShowInOverlay = true;       // was: Enabled
-		bool ShowWeatherPicker = false;  // standalone weather picker window, independent of the overlay above
+		bool ShowWeatherPicker = false;  // Retains the enabled state from older weather-widget settings.
 		bool ShowDrawCalls = true;
 		bool ShowCSPasses = true;
 		bool ShowRenderTargets = false;

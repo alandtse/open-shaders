@@ -3,6 +3,7 @@
 // dependency (ApplyPatch itself needs a live Feature and isn't unit-testable
 // here -- see DevBenchBridge.cpp / VRAPI::CSpluginapi.cpp for its callers).
 
+#include "Presets/BaseSettingsCustomization.h"
 #include "Utils/SettingsNumeric.h"
 #include "Utils/SettingsPatch.h"
 
@@ -11,36 +12,92 @@
 #include <cstdint>
 #include <limits>
 
-TEST_CASE("Overwrite provenance follows global and feature application order", "[settingspatch][provenance]")
+TEST_CASE("Base Settings replace ordinary values but preserve saved post-preset edits", "[settingspatch][base-customization]")
 {
-	const json global = 1;
-	const json globalUser = 2;
-	const json feature = 3;
-	const json featureUser = 4;
-	const auto none = Util::Settings::ResolveOverwriteValue(nullptr, &globalUser, nullptr, &featureUser);
-	REQUIRE(none.installed == nullptr);
-	REQUIRE(none.user == nullptr);
-	const auto globalOnly = Util::Settings::ResolveOverwriteValue(&global, &globalUser, nullptr, &featureUser);
-	REQUIRE(globalOnly.installed == &global);
-	REQUIRE(globalOnly.user == &globalUser);
-	const auto featureWins = Util::Settings::ResolveOverwriteValue(&global, &globalUser, &feature, nullptr);
-	REQUIRE(featureWins.installed == &feature);
-	REQUIRE(featureWins.user == nullptr);
-	const auto customized = Util::Settings::ResolveOverwriteValue(&global, &globalUser, &feature, &featureUser);
-	REQUIRE(customized.installed == &feature);
-	REQUIRE(customized.user == &featureUser);
+	const json active{ { "Feature", { { "Strength", 1.0 }, { "Enabled", true } } } };
+	const json ordinary{ { "Feature", { { "Strength", 0.8 }, { "Other", 3 } } } };
+	json sources = json::object();
+	BaseSettingsCustomization::AddSource(sources, "Pack", active);
+	const auto first = BaseSettingsCustomization::Reconcile(json::object(), sources, active);
+	auto cleaned = ordinary;
+	Util::Settings::RestoreSettings(cleaned, json::object(), first.removed);
+	CHECK(cleaned == json{ { "Feature", { { "Other", 3 } } } });
+	auto values = ordinary;
+	Util::Settings::MergeSettings(values, active);
+	CHECK(values["Feature"]["Strength"] == 1.0);
+	CHECK(BaseSettingsCustomization::SaveEdits(first.state, values, values).at("edits").empty());
+	const auto applied = values;
+	values["Feature"]["Strength"] = 1.2;
+	const auto saved = BaseSettingsCustomization::SaveEdits(first.state, values, applied);
+	CHECK(saved.at("edits") == json{ { "Feature", { { "Strength", 1.2 } } } });
+	const auto restarted = BaseSettingsCustomization::Reconcile(json::parse(saved.dump()), sources, active);
+	CHECK(restarted.removed.empty());
+	const auto personal = BaseSettingsCustomization::UserLayer(ordinary, restarted.state);
+	CHECK(personal == json{ { "Feature", { { "Strength", 1.2 }, { "Other", 3 } } } });
 }
 
-TEST_CASE("Overwrite customizations apply only to the setting present in the user file", "[settingspatch][provenance]")
+TEST_CASE("Disabling a supplier retains shared customizations until the last owner is disabled", "[settingspatch][base-customization]")
 {
-	const json installed = { { "a", 1 }, { "b", 2 } };
-	const json user = { { "a", 1 } };
-	const auto first = Util::Settings::ResolveOverwriteValue(nullptr, nullptr, &installed["a"], &user["a"]);
-	const auto second = Util::Settings::ResolveOverwriteValue(nullptr, nullptr, &installed["b"], nullptr);
-	REQUIRE(first.user != nullptr);
-	REQUIRE(*first.user == *first.installed);
-	REQUIRE(second.installed != nullptr);
-	REQUIRE(second.user == nullptr);
+	const json active{ { "Feature", { { "Strength", 1.0 } } } };
+	json sources = json::object();
+	BaseSettingsCustomization::AddSource(sources, "First", active);
+	auto remaining = active;
+	remaining["Feature"]["Strength"] = 2.0;
+	BaseSettingsCustomization::AddSource(sources, "Second", remaining);
+	auto state = BaseSettingsCustomization::Reconcile(json::object(), sources, active).state;
+	state["edits"] = json{ { "Feature", { { "Strength", 1.2 } } } };
+	const auto shared = BaseSettingsCustomization::Reconcile(state, sources, remaining);
+	CHECK(shared.removed.empty());
+	CHECK(shared.state.at("edits") == state.at("edits"));
+	const auto disabled = BaseSettingsCustomization::Reconcile(state, sources, json::object());
+	CHECK(disabled.state.at("edits").empty());
+	auto settings = state.at("edits");
+	Util::Settings::RestoreSettings(settings, json::object(), disabled.removed);
+	CHECK(settings.empty());
+}
+
+TEST_CASE("Installed supplier changes clear affected customizations from both user layers", "[settingspatch][base-customization]")
+{
+	const json active{ { "Feature", { { "Strength", 1.0 }, { "Other", 2.0 } } } };
+	json sources = json::object();
+	BaseSettingsCustomization::AddSource(sources, "Original", active);
+	auto state = BaseSettingsCustomization::Reconcile(json::object(), sources, active).state;
+	state["edits"] = json{ { "Feature", { { "Strength", 1.2 }, { "Other", 2.2 } } } };
+	SECTION("New supplier with the same value") { BaseSettingsCustomization::AddSource(sources, "New", json{ { "Feature", { { "Strength", 1.0 } } } }); }
+	SECTION("Updated value") { sources["/Feature/Strength"]["Original"] = 1.3; }
+	SECTION("Uninstalled supplier with another owner")
+	{
+		BaseSettingsCustomization::AddSource(state["sources"], "Removed", json{ { "Feature", { { "Strength", 1.0 } } } });
+	}
+	const auto changed = BaseSettingsCustomization::Reconcile(state, sources, active);
+	auto settings = state.at("edits");
+	Util::Settings::RestoreSettings(settings, json::object(), changed.removed);
+	CHECK(settings == json{ { "Feature", { { "Other", 2.2 } } } });
+	CHECK(changed.state.at("edits") == settings);
+}
+
+TEST_CASE("Array customizations are atomic and resetting to preset removes a saved edit", "[settingspatch][base-customization]")
+{
+	const json active{ { "Feature", { { "Tint", { 1.0, 1.0, 1.0 } } } } };
+	json sources = json::object();
+	BaseSettingsCustomization::AddSource(sources, "Pack", active);
+	CHECK(sources.contains("/Feature/Tint"));
+	CHECK(sources.size() == 1);
+	auto state = BaseSettingsCustomization::Reconcile(json::object(), sources, active).state;
+	const json changed{ { "Feature", { { "Tint", { 0.5, 1.0, 1.0 } } } } };
+	state = BaseSettingsCustomization::SaveEdits(state, changed, active);
+	REQUIRE_FALSE(state.at("edits").empty());
+	state = BaseSettingsCustomization::SaveEdits(state, active, changed);
+	CHECK(state.at("edits").empty());
+}
+
+TEST_CASE("Installing an inactive preset does not erase ordinary user settings", "[settingspatch][base-customization]")
+{
+	const auto previous = BaseSettingsCustomization::Reconcile(json::object(), json::object(), json::object());
+	json sources = json::object();
+	BaseSettingsCustomization::AddSource(sources, "New", json{ { "Feature", { { "Strength", 1.0 } } } });
+	const auto changed = BaseSettingsCustomization::Reconcile(previous.state, sources, json::object());
+	CHECK(changed.removed.empty());
 }
 
 namespace
@@ -500,6 +557,23 @@ TEST_CASE("BuildUserOverride tolerates floating-point serialization noise", "[se
 	REQUIRE(Util::Settings::BuildUserOverride(current, overridden).empty());
 }
 
+TEST_CASE("Restored defaults stay above Base Settings through save and reapplication", "[settingspatch]")
+{
+	const json defaults{ { "Group", { { "Strength", 1.0 }, { "Enabled", true } } } };
+	const json base{ { "Group", { { "Strength", 2.0 }, { "Enabled", false } } } };
+	const auto personal = Util::Settings::BuildUserOverride(defaults, base, json::object());
+	CHECK(personal == defaults);
+	auto restored = base;
+	Util::Settings::MergeSettings(restored, personal);
+	CHECK(restored == defaults);
+	const auto saved = json::parse(personal.dump());
+	auto reapplied = base;
+	Util::Settings::MergeSettings(reapplied, saved);
+	CHECK(reapplied == defaults);
+	Util::Settings::RestoreSettings(reapplied, base, base);
+	CHECK(reapplied == base);
+}
+
 TEST_CASE("CollectUnknownSettingKeys accepts an all-known flat patch", "[settingspatch]")
 {
 	const json known{ { "Enabled", true }, { "Quality", 1 } };
@@ -581,6 +655,77 @@ TEST_CASE("CollectUnknownSettingKeys on a non-object incoming patch reports noth
 	std::vector<std::string> unknown;
 	Util::Settings::CollectUnknownSettingKeys(patch, known, "", unknown);
 	REQUIRE(unknown.empty());
+}
+
+TEST_CASE("Preset copy skips explicit personal leaves and keeps arrays indivisible", "[settingspatch]")
+{
+	const json source{ { "Group", { { "Value", 1.0 }, { "Other", 2.0 } } }, { "Color", { 1, 2, 3 } }, { "_metadata", { { "Version", 1 } } } };
+	const json personal{ { "Group", { { "Value", 1.0 } } }, { "Color", { 4, 5, 6 } }, { "Unrelated", true } };
+	const auto result = Util::Settings::SelectSettingsToCopy(source, personal, false);
+	REQUIRE(result.values == json{ { "Group", { { "Other", 2.0 } } } });
+	REQUIRE(result.copied == 1);
+	REQUIRE(result.overwritten == 0);
+	REQUIRE(result.skipped == 2);
+	REQUIRE(personal.at("Color") == json{ 4, 5, 6 });
+	REQUIRE(source.contains("_metadata"));
+}
+
+TEST_CASE("Preset copy replaces selected personal leaves without copying unrelated edits", "[settingspatch]")
+{
+	const json source{ { "Group", { { "Value", 1.0 }, { "Other", 2.0 } } }, { "Color", { 1, 2, 3 } } };
+	const json personal{ { "Group", { { "Value", 5.0 }, { "Unrelated", 7 } } }, { "Color", { 4, 5, 6 } } };
+	const auto result = Util::Settings::SelectSettingsToCopy(source, personal, true);
+	REQUIRE(result.values == source);
+	REQUIRE(result.copied == 1);
+	REQUIRE(result.overwritten == 2);
+	REQUIRE(result.skipped == 0);
+	REQUIRE_FALSE(result.values.at("Group").contains("Unrelated"));
+}
+
+TEST_CASE("Record copies retain selected nested values and preserve other personal fields", "[settingspatch]")
+{
+	const json preset{ { "Settings", { { "Tint", { 1.0, 0.5, 0.0 } }, { "Amount", 0.4 }, { "Unselected", 2.0 } } }, { "_metadata", { { "Version", 1 } } } };
+	const json personal{ { "Settings", { { "Amount", 0.9 }, { "Other", 3.0 } } }, { "_metadata", { { "Version", 2 } } } };
+	const auto selected = Util::Settings::SelectSettingPaths(preset, { "/Settings/Tint", "/Settings/Amount" });
+	SECTION("Skip preserves existing personal values")
+	{
+		const auto copy = Util::Settings::SelectSettingsToCopy(selected, personal, false);
+		auto document = personal;
+		Util::Settings::MergeSettings(document, copy.values);
+		REQUIRE(document.at("Settings") == json{ { "Tint", { 1.0, 0.5, 0.0 } }, { "Amount", 0.9 }, { "Other", 3.0 } });
+		REQUIRE(document.at("_metadata") == personal.at("_metadata"));
+		REQUIRE(copy.copied == 1);
+		REQUIRE(copy.skipped == 1);
+		REQUIRE(copy.overwritten == 0);
+	}
+	SECTION("Replace changes only the selected personal values")
+	{
+		const auto copy = Util::Settings::SelectSettingsToCopy(selected, personal, true);
+		auto document = personal;
+		Util::Settings::MergeSettings(document, copy.values);
+		REQUIRE(document.at("Settings") == json{ { "Tint", { 1.0, 0.5, 0.0 } }, { "Amount", 0.4 }, { "Other", 3.0 } });
+		REQUIRE(document.at("_metadata") == personal.at("_metadata"));
+		REQUIRE(copy.copied == 1);
+		REQUIRE(copy.overwritten == 1);
+		REQUIRE(copy.skipped == 0);
+	}
+	REQUIRE_FALSE(selected.contains("_metadata"));
+	REQUIRE_FALSE(selected.at("Settings").contains("Unselected"));
+}
+
+TEST_CASE("Copied preset values remain personal when equal to the enabled Base Settings", "[settingspatch]")
+{
+	const json baseline{ { "Group", { { "Value", 1.0 }, { "Other", 2.0 } } } };
+	const auto selected = Util::Settings::SelectSettingPaths(baseline, { "/Group/Value" });
+	const auto copy = Util::Settings::SelectSettingsToCopy(selected, json::object(), false);
+	const auto saved = Util::Settings::BuildUserOverride(baseline, baseline, copy.values);
+	REQUIRE(saved == selected);
+	const json laterBaseline{ { "Group", { { "Value", 3.0 }, { "Other", 4.0 } } } };
+	auto resolved = laterBaseline;
+	Util::Settings::MergeSettings(resolved, saved);
+	REQUIRE(resolved.at("Group").at("Value") == 1.0);
+	REQUIRE(resolved.at("Group").at("Other") == 4.0);
+	REQUIRE(Util::Settings::SelectSettingsToCopy(selected, saved, false).skipped == 1);
 }
 
 TEST_CASE("CollectUnknownSettingKeys reports nesting under a known scalar field", "[settingspatch]")

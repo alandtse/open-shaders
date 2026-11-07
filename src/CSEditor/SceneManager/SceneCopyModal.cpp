@@ -15,6 +15,7 @@
 #include <vector>
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include "../../I18n/I18n.h"
 #include "../Browser/BrowserWidgets.h"
@@ -39,6 +40,7 @@ namespace
 	using CopyConflictPolicy = SceneSettingsManager::CopyConflictPolicy;
 	using CopyRejection = SceneSettingsManager::CopyRejection;
 	using CopySource = SceneSettingsManager::CopySource;
+	using EntrySource = SceneSettingsManager::EntrySource;
 	using LocationTargetType = SceneSettingsManager::LocationTargetType;
 	using TimeOfDayPeriod = SceneSettingsManager::TimeOfDayPeriod;
 	using WeatherFlag = RE::TESWeather::WeatherDataFlag;
@@ -48,7 +50,7 @@ namespace
 	constexpr const char* kPopupId = "###SceneCopyModal";
 
 	/// Sizes in font heights, so the modal scales with the UI font.
-	constexpr float kModalWidthEm = 50.0f;
+	constexpr float kModalWidthEm = 36.0f;
 	constexpr float kPaneHeightEm = 17.0f;
 	constexpr float kSearchWidthEm = 10.0f;
 	constexpr float kPeriodDotPitchEm = 0.5f;
@@ -57,9 +59,7 @@ namespace
 	constexpr float kMaxViewportWidthShare = 0.9f;
 	/// The pick pane's share of the width; the review pane takes the rest.
 	constexpr float kPickPaneShare = 0.56f;
-	/// Route card fill and border alphas, matching the tinted chips.
-	constexpr float kCardFillAlpha = 0.14f;
-	constexpr float kCardBorderAlpha = 0.5f;
+	constexpr float kReviewSettingColumnWeight = 2.0f;
 
 	constexpr size_t kSearchBufferSize = 256;
 
@@ -139,12 +139,14 @@ namespace
 		bool operator==(const Destination&) const = default;
 	};
 
-	/** @brief What Copy would run right now: one source into every destination. */
+	/** @brief What Copy would run right now, including how source and destination periods are paired. */
 	struct CopyPlan
 	{
 		SceneContextId source;
 		std::string sourceName;
 		std::vector<Destination> destinations;
+		bool allSourcePeriods = false;
+		std::optional<bool> emptyDestinationMode;
 
 		bool operator==(const CopyPlan&) const = default;
 	};
@@ -182,6 +184,13 @@ namespace
 		SceneContextId page;
 		std::string featureShortName;
 		std::string featureName;
+		SceneSettingsManager::SettingSelection pageScope;
+		SceneSettingsManager::SettingSelection selection;
+		EntrySource sourceLayer = EntrySource::User;
+		SceneSettingsManager::RevisionCache<std::vector<CopyCandidate>> sourceSettings;
+		bool selectedSourceSettings = false;
+		bool allSourcePeriods = false;
+		bool timeOfDayForEmptyDestinations = false;
 		std::string pageName;
 		TintedGlyph pageIcon;
 		char search[kSearchBufferSize]{};
@@ -206,6 +215,53 @@ namespace
 		CopyPlan summaryPlan;
 	};
 	Session session;
+	struct StandaloneCopy
+	{
+		EntrySource layer = EntrySource::User;
+		std::optional<SceneContextId> source;
+		std::optional<SceneContextType> sourceType;
+		bool allSourcePeriods = false;
+		SceneSettingsManager::RevisionCache<std::vector<CopySource>> sources;
+		SceneSettingsManager::RevisionCache<std::vector<CopyCandidate>> settings;
+		std::set<SceneSettingsManager::SettingIdentity> selected;
+		Util::ConfirmationPopup confirmUserCopy;
+		Util::DeferredModal destinations;
+		char search[kSearchBufferSize]{};
+		char sceneSearch[kSearchBufferSize]{};
+	};
+	StandaloneCopy standalone;
+	bool embedded = false;
+
+	std::optional<EntrySource> GetSourceLayer()
+	{
+		if (embedded)
+			return standalone.layer;
+		if (!session.featureShortName.empty())
+			return session.sourceLayer;
+		return std::nullopt;
+	}
+
+	std::vector<CopyCandidate> GetFeatureCopySettings()
+	{
+		auto settings = SceneSettingsManager::GetSingleton()->GetCopySourceSettings(session.page, session.sourceLayer, session.allSourcePeriods);
+		std::erase_if(settings, [](const auto& candidate) {
+			return candidate.setting.featureShortName != session.featureShortName ||
+			       (session.pageScope && !session.pageScope->contains(candidate.setting));
+		});
+		return settings;
+	}
+
+	bool GetEmptyDestinationMode()
+	{
+		return session.allSourcePeriods || session.timeOfDayForEmptyDestinations;
+	}
+
+	bool DrawAllSourcePeriods(bool& selected)
+	{
+		const bool changed = ImGui::Checkbox(T(TKEY("scene_copy_all_source_periods"), "All Source Periods"), &selected);
+		Util::AddTooltip(T(TKEY("scene_copy_all_source_periods_tooltip"), "Copies each saved value to the matching time of day."));
+		return changed;
+	}
 
 	/** @brief One line of the list: a section heading, a scene, or the link that reveals hidden scenes. */
 	struct ListLine
@@ -474,7 +530,7 @@ namespace
 	VisibleList BuildVisibleList(const std::vector<SceneRow>& rows, const std::string& query)
 	{
 		VisibleList list;
-		const bool authoredOnly = filters.direction == CopyDirection::To && !session.showUnauthored;
+		const bool authoredOnly = filters.direction == CopyDirection::To && !session.showUnauthored && query.empty();
 		std::array<std::vector<const SceneRow*>, kContextTypes.size() + 1> sections;
 		for (const auto& row : rows) {
 			if (!MatchesFilters(row, query))
@@ -589,7 +645,9 @@ namespace
 			return { set->context, set->displayName, { { session.page, session.pageName } } };
 		}
 
-		CopyPlan plan{ .source = session.page, .sourceName = session.pageName };
+		CopyPlan plan{ .source = session.page, .sourceName = session.pageName, .allSourcePeriods = session.allSourcePeriods, .emptyDestinationMode = GetEmptyDestinationMode() };
+		if (plan.allSourcePeriods)
+			plan.sourceName = GetSceneName({ .context = session.page, .displayName = session.pageName });
 		// With nothing ticked the highlighted row is the target, so a single copy needs no tick.
 		const auto targets = session.ticked.empty() && session.cursor ? std::set{ *session.cursor } : session.ticked;
 		for (const auto& scene : targets) {
@@ -597,7 +655,7 @@ namespace
 			if (!row)
 				continue;
 			for (const auto& set : row->sets)
-				if (row->flat || session.periods.test(static_cast<size_t>(set.context.period)))
+				if (row->flat || plan.allSourcePeriods || session.periods.test(static_cast<size_t>(set.context.period)))
 					plan.destinations.push_back({ set.context, set.displayName });
 		}
 		return plan;
@@ -609,10 +667,11 @@ namespace
 		auto* manager = SceneSettingsManager::GetSingleton();
 		CopySummary summary;
 		// A setting that fares alike in several destinations is one row, so its key holds everything the row shows.
-		using RowKey = std::tuple<SceneSettingsManager::SettingIdentity, CopyOutcome, std::optional<std::string>, CopyRejection>;
+		using RowKey = std::tuple<SceneSettingsManager::SettingIdentity, CopyOutcome, nlohmann::json, std::optional<std::string>, CopyRejection>;
 		std::map<RowKey, size_t> rowIndices;
 		for (const auto& destination : plan.destinations) {
-			const auto candidates = manager->GetCopyCandidates(plan.source, destination.context, session.featureShortName);
+			const auto candidates = manager->GetCopyCandidates(plan.source, destination.context, session.featureShortName, session.selection,
+				GetSourceLayer(), plan.allSourcePeriods);
 			std::map<SceneSettingsContextRules::CopyGroupKey, std::vector<const CopyCandidate*>> groups;
 			for (const auto& candidate : candidates)
 				groups[SceneSettingsContextRules::GetCopyGroupKey(candidate.setting)].push_back(&candidate);
@@ -630,7 +689,7 @@ namespace
 					                    std::optional{ FormatValue(*candidate->destinationValue) } :
 					                    std::nullopt;
 					const auto [indexIt, inserted] = rowIndices.try_emplace(
-						RowKey{ candidate->setting, outcome, previous, candidate->rejection }, summary.details.size());
+						RowKey{ candidate->setting, outcome, candidate->value, previous, candidate->rejection }, summary.details.size());
 					if (inserted)
 						summary.details.push_back({ .feature = SceneSettingsManager::GetFeatureDisplayName(
 														candidate->setting.featureShortName),
@@ -652,11 +711,13 @@ namespace
 	}
 
 	/** @brief Commits the plan as one batch and reports what landed in a toast. */
-	bool RunCopy(const CopyPlan& plan, CopyConflictPolicy policy)
+	bool RunCopy(const CopyPlan& plan, CopyConflictPolicy policy, std::string_view featureShortName,
+		const SceneSettingsManager::SettingSelection& selection)
 	{
 		const auto destinations =
 			plan.destinations | std::views::transform(&Destination::context) | std::ranges::to<std::vector>();
-		const auto result = SceneSettingsManager::GetSingleton()->CopySettingsBatch(plan.source, destinations, policy, session.featureShortName);
+		const auto result = SceneSettingsManager::GetSingleton()->CopySettingsBatch(plan.source, destinations, policy, featureShortName, selection,
+			GetSourceLayer(), plan.allSourcePeriods, plan.emptyDestinationMode);
 		if (result.blockedByPendingEdit) {
 			SceneSettingsUI::WarnPendingContextEdit();
 			return false;
@@ -676,6 +737,9 @@ namespace
 	void SwapDirection()
 	{
 		filters.direction = filters.direction == CopyDirection::To ? CopyDirection::From : CopyDirection::To;
+		session.selection = session.pageScope;
+		session.selectedSourceSettings = false;
+		session.allSourcePeriods = false;
 		session.rows = {};
 		ResetSelection();
 	}
@@ -884,12 +948,14 @@ namespace
 	void DrawPeriodChips(const SceneRow* cursorRow)
 	{
 		const bool from = filters.direction == CopyDirection::From;
+		if (!from && session.allSourcePeriods)
+			return;
 		// From shows the period it will really copy, which falls back when the source lacks the ticked one.
 		const auto sourcePeriod = from && cursorRow && !cursorRow->flat ?
 		                              std::optional{ GetSourcePeriod(*cursorRow) } :
 		                              std::nullopt;
 		ImGui::AlignTextToFramePadding();
-		Util::Text::Secondary("%s", T(TKEY("scene_copy_periods"), "Periods"));
+		Util::Text::Secondary("%s", from ? T(TKEY("scene_copy_source_period"), "Source period") : T(TKEY("scene_copy_periods"), "Destination periods"));
 		Util::AddTooltip(from ? T(TKEY("scene_copy_periods_from_tooltip"),
 									"The period the settings are read from. A source with one set for every period has nothing to pick.") :
 								T(TKEY("scene_copy_periods_to_tooltip"), "The periods that receive the settings."));
@@ -952,73 +1018,41 @@ namespace
 		Util::Text::Disabled("%s", arrow.utf8);
 	}
 
-	/** @brief One end of the route: a caption over the side's glyph and name, or a hint while it is unpicked.
-	 *  The page's own end is tinted in the accent, so it reads as the fixed side of the copy. */
-	void DrawRouteCard(const char* caption, const std::optional<PreviewSide>& side, bool page, float width)
-	{
-		const auto& style = ImGui::GetStyle();
-		const ImVec2 pad(style.FramePadding.x * 2.0f, style.FramePadding.y);
-		const float height = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetTextLineHeight() + pad.y * 2.0f;
-		const ImVec2 min = ImGui::GetCursorScreenPos();
-		const ImVec2 max(min.x + width, min.y + height);
-		const ImVec4 tint = page ? Util::Colors::GetAccent() : ImGui::GetStyleColorVec4(ImGuiCol_Border);
-		auto* drawList = ImGui::GetWindowDrawList();
-		drawList->AddRectFilled(min, max,
-			page ? ImGui::GetColorU32(ImVec4(tint.x, tint.y, tint.z, kCardFillAlpha)) : ImGui::GetColorU32(ImGuiCol_FrameBg),
-			style.FrameRounding);
-		drawList->AddRect(min, max, ImGui::GetColorU32(ImVec4(tint.x, tint.y, tint.z, kCardBorderAlpha)), style.FrameRounding);
-
-		ImGui::BeginGroup();
-		ImGui::SetCursorScreenPos(ImVec2(min.x + pad.x, min.y + pad.y));
-		Util::TextUnformattedDisabled(caption);
-		ImGui::SetCursorScreenPos(ImVec2(min.x + pad.x, ImGui::GetCursorScreenPos().y));
-		if (side) {
-			DrawTintedGlyph(side->icon, ImGui::GetTextLineHeight());
-			BrowserUI::EllipsizedText(side->label.c_str(), max.x - pad.x - ImGui::GetCursorScreenPos().x,
-				ImGui::GetStyleColorVec4(ImGuiCol_Text));
-		} else {
-			Util::TextUnformattedDisabled(T(TKEY("scene_copy_pick_from_list"), "Pick from the list"));
-		}
-		// The card itself is the item, so the next widget lays out after it rather than after its text.
-		ImGui::SetCursorScreenPos(min);
-		ImGui::Dummy(ImVec2(width, height));
-		ImGui::EndGroup();
-	}
-
-	/** @brief From card, swap button, To card. The page fills its own end; the other end names what the list
-	 *  picks. Shows the picks as of the frame's start: a click in the list below lands here next frame. */
+	/** @brief Explicit copy direction and the source and destination names. */
 	void DrawRoute(const CopyPlan& plan, const std::vector<SceneRow>& rows)
 	{
 		const bool from = filters.direction == CopyDirection::From;
-		const std::optional<PreviewSide> page = PreviewSide{ session.pageName, session.pageIcon };
-		std::optional<PreviewSide> other;
-		if (!plan.destinations.empty() && from) {
-			const auto* sourceRow = FindRow(rows, GetSceneOf(plan.source));
-			assert(sourceRow);
-			other = PreviewSide{ plan.sourceName, sourceRow->icon };
-		} else if (!plan.destinations.empty()) {
-			other = DescribeDestinations(plan, rows);
+		ImGui::Spacing();
+		ImGui::Text("%s: %s", from ? T(TKEY("scene_copy_to"), "To") : T(TKEY("scene_copy_from"), "From"),
+			from ? session.pageName.c_str() : plan.sourceName.c_str());
+		if (!plan.destinations.empty()) {
+			const auto name = from ? plan.sourceName : DescribeDestinations(plan, rows).label;
+			ImGui::Text("%s: %s", from ? T(TKEY("scene_copy_from"), "From") : T(TKEY("scene_copy_to"), "To"), name.c_str());
+		} else {
+			Util::TextUnformattedDisabled(from ? T(TKEY("scene_copy_choose_source"), "Choose one source scene below.") : T(TKEY("scene_copy_choose_destinations"), "Select the scenes that will receive these settings."));
 		}
+		ImGui::Spacing();
+	}
 
-		const float swapSize = BrowserUI::IconButtonSize();
-		const float cardWidth = (ImGui::GetContentRegionAvail().x - swapSize - ImGui::GetStyle().ItemSpacing.x * 2.0f) * 0.5f;
-		const float top = ImGui::GetCursorPosY();
-		DrawRouteCard(from ? T(TKEY("scene_copy_from"), "From") : T(TKEY("scene_copy_from_page"), "From this page"),
-			from ? other : page, !from, cardWidth);
-		const float cardHeight = ImGui::GetItemRectSize().y;
-
-		ImGui::SameLine();
-		ImGui::SetCursorPosY(top + (cardHeight - swapSize) * 0.5f);
-		const auto tooltip = std::format("{}\n{}", T(TKEY("scene_copy_swap"), "Swap direction"),
-			T(TKEY("scene_copy_swap_tooltip"), "Switches between copying out of this page and copying into it. Starts the picks over."));
-		if (BrowserUI::IconButton("##swap", Icons::TI(ICON_TI_ARROWS_EXCHANGE), tooltip.c_str(), false,
-				ImGui::GetColorU32(ImGuiCol_Text)))
-			session.swapPending = true;
-
-		ImGui::SameLine();
-		ImGui::SetCursorPosY(top);
-		DrawRouteCard(from ? T(TKEY("scene_copy_to_page"), "To this page") : T(TKEY("scene_copy_to"), "To"),
-			from ? page : other, from, cardWidth);
+	void DrawEmptyDestinationMode()
+	{
+		const char* normal = T("feature.scene_manager.weather.normal", "Normal");
+		const char* periodic = T("feature.scene_manager.tab.time_of_day", "Time of Day");
+		const float labelWidth = std::max(ImGui::CalcTextSize(normal).x, ImGui::CalcTextSize(periodic).x);
+		ImGui::SetNextItemWidth(labelWidth + ImGui::GetFrameHeight() + 2.0f * ImGui::GetStyle().FramePadding.x);
+		const Util::DisableGuard matchingPeriods(session.allSourcePeriods);
+		const char* label = T(TKEY("scene_copy_empty_destination_mode"), "Mode for empty weather and location scenes");
+		if (ImGui::BeginCombo(label, GetEmptyDestinationMode() ? periodic : normal)) {
+			for (const auto& [mode, option] : { std::pair{ false, normal }, std::pair{ true, periodic } }) {
+				if (Util::RoundedSelectable(option, session.timeOfDayForEmptyDestinations == mode)) {
+					session.timeOfDayForEmptyDestinations = mode;
+					session.rows = {};
+				}
+			}
+			ImGui::EndCombo();
+		}
+		Util::AddTooltip(T(TKEY("scene_copy_empty_destination_mode_tooltip"), "Scenes with settings or an explicit mode keep their current mode."),
+			Util::kTooltipWhenDisabled);
 	}
 
 	/** @brief One outcome's count as a chip that narrows the details to its rows; Dropped's tooltip lists why. */
@@ -1059,13 +1093,13 @@ namespace
 		ImGui::TableNextColumn();
 		DrawTintedGlyph(GetOutcomeIcon(row.outcome), ImGui::GetTextLineHeight());
 		Util::AddTooltip(tooltip);
-		if (dropped)
-			Util::TextUnformattedDisabled(row.name.c_str());
-		else
-			ImGui::TextUnformatted(row.name.c_str());
+		const auto countLabel = merged ? std::format("×{}", row.destinationCount) : std::string{};
+		const float countWidth = merged ? ImGui::CalcTextSize(countLabel.c_str()).x + ImGui::GetStyle().ItemSpacing.x : 0.0f;
+		BrowserUI::EllipsizedText(row.name.c_str(), std::max(1.0f, ImGui::GetContentRegionAvail().x - countWidth),
+			ImGui::GetStyleColorVec4(dropped ? ImGuiCol_TextDisabled : ImGuiCol_Text));
 		if (merged) {
 			ImGui::SameLine();
-			Util::Text::Secondary("×%zu", row.destinationCount);
+			Util::Text::Secondary("%s", countLabel.c_str());
 			Util::AddTooltip(row.destinationNames.c_str());
 		}
 
@@ -1094,8 +1128,8 @@ namespace
 		}
 		if (!ImGui::BeginTable("##changes", 2, kDetailsTableFlags))
 			return;
-		ImGui::TableSetupColumn(T(TKEY("scene_page_copy_column_setting"), "Setting"));
-		ImGui::TableSetupColumn(T(TKEY("scene_page_copy_column_change"), "Change"));
+		ImGui::TableSetupColumn(T(TKEY("scene_page_copy_column_setting"), "Setting"), ImGuiTableColumnFlags_WidthStretch, kReviewSettingColumnWeight);
+		ImGui::TableSetupColumn(T(TKEY("scene_page_copy_column_change"), "Change"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
 		ImGui::TableSetupScrollFreeze(0, 1);
 		ImGui::TableHeadersRow();
 
@@ -1137,26 +1171,18 @@ namespace
 	std::optional<CopyConflictPolicy> DrawFooter(const CopySummary& summary, bool commitRequested)
 	{
 		ImGui::AlignTextToFramePadding();
-		Util::HelpMarker(T(TKEY("scene_copy_guide"),
-			"Copies scene settings between this page and other contexts: times of day, interiors, weathers and "
-			"locations.\n\n"
-			"The arrows between From and To swap the direction: out of this page into the contexts you tick, or "
-			"into this page from the one you pick.\n"
-			"Search and type chips narrow the list. Authored only hides contexts that hold no settings yet.\n"
-			"Periods: when copying out, the periods that receive the settings; when copying in, the period they are "
-			"read from.\n"
-			"The right side lists what happens to each setting before anything is written.\n"
-			"Copy fills only settings not set yet; Overwrite also replaces values already set.\n\n"
-			"Use it to start a new weather or location from one you already tuned. It changes only your own scene "
-			"settings; export a preset to share them."));
+		Util::HelpMarker(embedded ? T(TKEY("scene_copy_standalone_guide"),
+										"Select destinations and review the values. Copy New keeps existing User Settings. Copy and Replace updates them.") :
+									T(TKEY("scene_copy_guide"),
+										"Choose a direction, select scenes, then review the settings. Copy New keeps existing values; Copy and Replace changes them too. Only your User Settings are written."));
 
 		std::optional<CopyConflictPolicy> decision;
 		const auto copyCount = summary.Count(CopyOutcome::Copy);
 		const auto alreadySetCount = summary.Count(CopyOutcome::AlreadySet);
 		const bool canCopy = copyCount != 0;
-		const auto copyLabel = FormatCount(T(TKEY("scene_copy_copy_count"), "Copy {}"), copyCount) + "###copy";
+		const auto copyLabel = FormatCount(T(TKEY("scene_copy_copy_count"), "Copy New ({})"), copyCount) + "###copy";
 		const auto overwriteLabel =
-			FormatCount(T(TKEY("scene_copy_overwrite_count"), "Overwrite {}"), alreadySetCount) + "###overwrite";
+			FormatCount(T(TKEY("scene_copy_overwrite_count"), "Copy and Replace ({})"), copyCount + alreadySetCount) + "###overwrite";
 		const char* cancelLabel = T(TKEY("cancel"), "Cancel");
 		const auto& style = ImGui::GetStyle();
 		float width = style.ItemSpacing.x * 2.0f;
@@ -1195,6 +1221,42 @@ namespace
 		return decision;
 	}
 
+	bool DrawCopySettingChecks(const std::vector<CopyCandidate>& settings,
+		std::set<SceneSettingsManager::SettingIdentity>& selected, std::string_view query = {})
+	{
+		bool changed = ImGui::SmallButton(T("feature.scene_manager.action.select_all", "Select All"));
+		if (changed)
+			for (const auto& setting : settings)
+				selected.insert(setting.setting);
+		ImGui::SameLine();
+		if (ImGui::SmallButton(T("feature.scene_manager.action.select_none", "Select None"))) {
+			selected.clear();
+			changed = true;
+		}
+		const float height = std::min(ImGui::GetFontSize() * kPaneHeightEm,
+			ImGui::GetFrameHeightWithSpacing() * static_cast<float>(std::max(settings.size(), size_t{ 1 })) + 2.0f * ImGui::GetStyle().WindowPadding.y);
+		if (ImGui::BeginChild("##CopySourceSettings", ImVec2(0.0f, height), ImGuiChildFlags_Borders)) {
+			for (size_t index = 0; index < settings.size(); ++index) {
+				const auto& setting = settings[index];
+				const auto label = std::format("{} / {}", SceneSettingsManager::GetFeatureDisplayName(setting.setting.featureShortName), setting.displayName);
+				if (!Util::StringMatchesSearch(label, query))
+					continue;
+				ImGui::PushID(static_cast<int>(index));
+				bool checked = selected.contains(setting.setting);
+				if (ImGui::Checkbox(label.c_str(), &checked)) {
+					if (checked)
+						selected.insert(setting.setting);
+					else
+						selected.erase(setting.setting);
+					changed = true;
+				}
+				ImGui::PopID();
+			}
+		}
+		ImGui::EndChild();
+		return changed;
+	}
+
 	/** @brief The modal's body for one frame: the route and filters across the top, the pick pane beside the
 	 *  review pane, then the footer. */
 	void DrawContents()
@@ -1203,13 +1265,70 @@ namespace
 			return;
 		if (std::exchange(session.swapPending, false))
 			SwapDirection();
+		if (!embedded) {
+			const char* directions[] = { T(TKEY("scene_copy_out"), "Copy to Other Scenes"), T(TKEY("scene_copy_in"), "Copy into This Scene") };
+			int direction = filters.direction == CopyDirection::From ? 1 : 0;
+			if (Util::SegmentedControl("##CopyDirection", directions, IM_ARRAYSIZE(directions), direction))
+				session.swapPending = true;
+		}
 
 		auto* manager = SceneSettingsManager::GetSingleton();
 		const auto revision = manager->GetEntryPresentationRevision();
+		const bool featureCopy = !embedded && !session.featureShortName.empty();
+		if (featureCopy) {
+			const char* layers[] = { T("feature.scene_manager.section.user_settings", "User Settings"),
+				T("feature.scene_manager.section.overwrite_files", "Preset Settings") };
+			int layer = session.sourceLayer == EntrySource::User ? 0 : 1;
+			if (Util::SegmentedControl("##FeatureCopySourceLayer", layers, IM_ARRAYSIZE(layers), layer)) {
+				session.sourceLayer = layer == 0 ? EntrySource::User : EntrySource::Overwrite;
+				session.selection = session.pageScope;
+				session.sourceSettings = {};
+				session.selectedSourceSettings = false;
+				session.rows = {};
+				session.summary = {};
+			}
+		}
+		bool hasSourceSettings = true;
+		if (featureCopy && filters.direction == CopyDirection::To) {
+			if (session.page.period != TimeOfDayPeriod::Count && DrawAllSourcePeriods(session.allSourcePeriods)) {
+				session.sourceSettings = {};
+				session.selectedSourceSettings = false;
+				session.rows = {};
+			}
+			const auto& settings = session.sourceSettings.Get(revision, GetFeatureCopySettings);
+			hasSourceSettings = !settings.empty();
+			if (!std::exchange(session.selectedSourceSettings, true)) {
+				auto& selection = session.selection.emplace();
+				for (const auto& candidate : settings)
+					selection.insert(candidate.setting);
+			}
+			if (!hasSourceSettings) {
+				Util::TextUnformattedDisabled(T("feature.scene_manager.copy.no_sources", "No sources match this filter."));
+			} else if (ImGui::CollapsingHeader(T("feature.scene_manager.column.setting", "Setting")) && DrawCopySettingChecks(settings, *session.selection)) {
+				session.rows = {};
+				session.summary = {};
+			}
+		}
+		if (!hasSourceSettings) {
+			if (ImGui::Button(T("ui.cancel", "Cancel")))
+				ImGui::CloseCurrentPopup();
+			return;
+		}
+		if (filters.direction == CopyDirection::To)
+			DrawEmptyDestinationMode();
 		// Fetched after the swap, which drops the cached rows.
 		const auto& rows = session.rows.Get(revision, [&] {
-			return BuildRows(filters.direction == CopyDirection::From ? manager->GetCopySources(session.page, session.featureShortName) :
-																		manager->GetCopyDestinations(session.page, session.featureShortName));
+			auto contexts = filters.direction == CopyDirection::From ? manager->GetCopySources(session.page, session.featureShortName, GetSourceLayer()) :
+			                                                           manager->GetCopyDestinations(session.page, session.featureShortName,
+																		   GetSourceLayer(), session.selection, session.allSourcePeriods, GetEmptyDestinationMode());
+			if (session.selection && filters.direction == CopyDirection::From) {
+				for (auto& row : contexts) {
+					const auto candidates = manager->GetCopyCandidates(row.context, session.page, session.featureShortName, session.selection, GetSourceLayer());
+					row.settingCount = candidates.size();
+				}
+				std::erase_if(contexts, [](const auto& row) { return row.settingCount == 0; });
+			}
+			return BuildRows(contexts);
 		});
 		// Built from the search as it stood before this frame's typing, which lands next frame.
 		const std::string query = session.search;
@@ -1223,6 +1342,7 @@ namespace
 		bool commitRequested = false;
 		if (ImGui::BeginChild("##pick", ImVec2(ImGui::GetContentRegionAvail().x * kPickPaneShare, paneHeight),
 				ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar)) {
+			ImGui::TextUnformatted(to ? T(TKEY("scene_copy_destinations"), "Destination scenes") : T(TKEY("scene_copy_source"), "Source scene"));
 			DrawContextRow(rows, query);
 			// The list leaves room for the selection footer (To only).
 			commitRequested = DrawList(list, cursorLine, to ? ImGui::GetFrameHeightWithSpacing() : 0.0f);
@@ -1247,44 +1367,210 @@ namespace
 			plan != session.summaryPlan);
 
 		Util::ToolbarDivider();
-		if (ImGui::BeginChild("##review", ImVec2(0.0f, paneHeight), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar))
+		if (ImGui::BeginChild("##review", ImVec2(0.0f, paneHeight), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar)) {
+			ImGui::TextUnformatted(T(TKEY("scene_copy_review"), "Settings to copy"));
 			DrawSummary(summary, plan.destinations.size());
+		}
 		ImGui::EndChild();
 
 		DrawPeriodChips(session.cursor ? FindRow(rows, *session.cursor) : nullptr);
 		ImGui::Separator();
-		if (const auto decision = DrawFooter(summary, commitRequested)) {
-			if (RunCopy(plan, *decision))
-				ImGui::CloseCurrentPopup();
+		if (const auto decision = DrawFooter(summary, commitRequested); decision && RunCopy(plan, *decision, session.featureShortName, session.selection))
+			ImGui::CloseCurrentPopup();
+	}
+
+	CopyPlan BuildPresetToUserPlan(const SceneContextId& source)
+	{
+		auto* manager = SceneSettingsManager::GetSingleton();
+		CopyPlan plan{ .source = source, .allSourcePeriods = standalone.allSourcePeriods };
+		if (plan.allSourcePeriods) {
+			for (const auto period : SceneSettingsManager::kPeriods) {
+				auto destination = source;
+				destination.period = period;
+				plan.destinations.push_back({ destination, manager->GetSceneContextDisplayName(destination) });
+			}
+		} else {
+			plan.destinations.push_back({ source, manager->GetSceneContextDisplayName(source) });
+		}
+		return plan;
+	}
+
+	void CopyPresetSelectionToUser(CopyConflictPolicy policy)
+	{
+		if (standalone.source)
+			RunCopy(BuildPresetToUserPlan(*standalone.source), policy, {}, standalone.selected);
+	}
+
+	void DrawStandaloneSceneList(const std::vector<CopySource>& sources, std::vector<CopySource>::const_iterator& source)
+	{
+		const auto pick = [&](const CopySource& candidate) {
+			standalone.source = candidate.context;
+			standalone.allSourcePeriods = false;
+			standalone.settings = {};
+			standalone.selected.clear();
+			source = sources.begin() + (&candidate - sources.data());
+		};
+		const auto matchesType = [&](const CopySource& candidate) {
+			return !standalone.sourceType || candidate.context.type == *standalone.sourceType;
+		};
+		if (source != sources.end() && !matchesType(*source)) {
+			standalone.source.reset();
+			standalone.allSourcePeriods = false;
+			standalone.selected.clear();
+			source = sources.end();
+		}
+		if (standalone.sourceType == SceneContextType::Interior && source == sources.end()) {
+			if (const auto interior = std::ranges::find_if(sources, matchesType); interior != sources.end()) {
+				pick(*interior);
+			}
+		}
+		BrowserUI::SearchField("##CopySceneSearch", standalone.sceneSearch, sizeof(standalone.sceneSearch), T("ui.search", "Search..."), -FLT_MIN, true);
+		if (ImGui::BeginChild("##CopyScenes", ImVec2(0.0f, ImGui::GetFontSize() * kPaneHeightEm), ImGuiChildFlags_Borders)) {
+			bool found = false;
+			for (const auto& candidate : sources) {
+				if (!matchesType(candidate) || !Util::StringMatchesSearch(candidate.displayName, standalone.sceneSearch))
+					continue;
+				found = true;
+				ImGui::PushID(static_cast<int>(&candidate - sources.data()));
+				const auto label = std::vformat(T("feature.scene_manager.copy.source_count", "{0} ({1})"),
+					std::make_format_args(candidate.displayName, candidate.settingCount));
+				const float rowHeight = ImGui::GetFrameHeight();
+				if (Util::RoundedSelectable("##SourceScene", standalone.source == candidate.context,
+						ImGuiSelectableFlags_NoPadWithHalfSpacing, ImVec2(0.0f, rowHeight)))
+					pick(candidate);
+				const auto min = ImGui::GetItemRectMin();
+				const auto max = ImGui::GetItemRectMax();
+				const float textX = min.x + Util::GetSelectableTextInset();
+				const ImVec4 clip(min.x, min.y, max.x - ImGui::GetStyle().FramePadding.x, max.y);
+				ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+					ImVec2(textX, Util::CenterTextTopY(min.y, rowHeight)), ImGui::GetColorU32(ImGuiCol_Text),
+					label.c_str(), nullptr, 0.0f, &clip);
+				if (textX + ImGui::CalcTextSize(label.c_str()).x > clip.z)
+					Util::AddTooltip(label.c_str());
+				ImGui::PopID();
+			}
+			if (!found)
+				Util::TextUnformattedDisabled(T("feature.scene_manager.copy.no_sources", "No sources match this filter."));
+		}
+		ImGui::EndChild();
+	}
+
+	void DrawStandaloneSource()
+	{
+		auto* manager = SceneSettingsManager::GetSingleton();
+		const char* layers[] = { T("feature.scene_manager.section.user_settings", "User Settings"),
+			T("feature.scene_manager.section.overwrite_files", "Preset Settings") };
+		int layer = standalone.layer == EntrySource::User ? 0 : 1;
+		if (Util::SegmentedControl("##SourceLayer", layers, IM_ARRAYSIZE(layers), layer)) {
+			standalone = {};
+			standalone.layer = layer == 0 ? EntrySource::User : EntrySource::Overwrite;
+		}
+
+		const auto revision = manager->GetEntryPresentationRevision();
+		const auto& sources = standalone.sources.Get(revision, [&] { return manager->GetCopySources(std::nullopt, {}, standalone.layer); });
+		auto source = standalone.source ? std::ranges::find(sources, *standalone.source, &CopySource::context) : sources.end();
+		DrawFilterChips("##SourceType", standalone.sourceType, kContextTypes, DescribeContextType);
+		if (ImGui::BeginTable("##CopyFromLayout", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Borders | ImGuiTableFlags_NoSavedSettings)) {
+			ImGui::TableSetupColumn(T(TKEY("scene_copy_source"), "Source scene"));
+			ImGui::TableSetupColumn(T("feature.scene_manager.column.setting", "Setting"));
+			ImGui::TableHeadersRow();
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			DrawStandaloneSceneList(sources, source);
+			ImGui::TableNextColumn();
+			if (source != sources.end()) {
+				if (source->context.period != TimeOfDayPeriod::Count && DrawAllSourcePeriods(standalone.allSourcePeriods))
+					standalone.settings = {};
+				const auto& settings = standalone.settings.Get(revision, [&] {
+					auto result = manager->GetCopySourceSettings(source->context, standalone.layer, standalone.allSourcePeriods);
+					std::erase_if(standalone.selected, [&](const auto& identity) {
+						return std::ranges::find(result, identity, &CopyCandidate::setting) == result.end();
+					});
+					return result;
+				});
+				BrowserUI::SearchField("##CopySettingSearch", standalone.search, sizeof(standalone.search), T("ui.search", "Search..."), -FLT_MIN, true);
+				DrawCopySettingChecks(settings, standalone.selected, standalone.search);
+			} else {
+				Util::TextUnformattedDisabled(T(TKEY("scene_copy_source_prompt"), "Choose a source scene..."));
+			}
+			ImGui::EndTable();
+		}
+		const Util::DisableGuard disabled(source == sources.end() || standalone.selected.empty() || manager->HasPendingContextEdit());
+		const bool fromPreset = standalone.layer == EntrySource::Overwrite;
+		const auto* destinationLabel = fromPreset ? T(TKEY("scene_copy_out"), "Copy to Other Scenes") :
+		                                            T("feature.scene_manager.copy.copy_selected", "Copy Selected Settings");
+		if (fromPreset) {
+			const auto* copyLabel = T("menu.presets.copy_to_user", "Copy to User Settings");
+			if (Util::Button(copyLabel)) {
+				const auto plan = BuildPresetToUserPlan(source->context);
+				const bool hasConflicts = std::ranges::any_of(plan.destinations, [&](const auto& destination) {
+					const auto candidates = manager->GetCopyCandidates(plan.source, destination.context, {}, standalone.selected, standalone.layer, plan.allSourcePeriods);
+					return std::ranges::any_of(candidates, &CopyCandidate::conflicts);
+				});
+				if (hasConflicts) {
+					standalone.confirmUserCopy = {
+						copyLabel,
+						T("menu.presets.copy_conflict_prompt", "Replace existing User Settings or skip them?"),
+						T("menu.presets.copy_skip_existing", "Skip Existing"),
+						T("ui.cancel", "Cancel")
+					};
+					standalone.confirmUserCopy.alternateLabel = T("menu.presets.copy_replace_existing", "Replace Existing");
+					standalone.confirmUserCopy.focus = Util::ConfirmationPopup::Focus::Cancel;
+					standalone.confirmUserCopy.Request();
+				} else {
+					CopyPresetSelectionToUser(CopyConflictPolicy::SkipExisting);
+				}
+			}
+			BrowserUI::SameLineIfFits(ImGui::CalcTextSize(destinationLabel).x + 2.0f * ImGui::GetStyle().FramePadding.x);
+		}
+		if (Util::Button(destinationLabel)) {
+			filters.direction = CopyDirection::To;
+			session = { .page = source->context, .selection = standalone.selected, .allSourcePeriods = standalone.allSourcePeriods, .pageName = source->displayName, .pageIcon = GetSceneIcon(source->context), .focusSearch = true };
+			ResetSelection();
+			standalone.destinations.Request();
 		}
 	}
 }
 
-void SceneCopyModal::Open(const SceneContextId& page, std::string_view featureShortName)
+void SceneCopyModal::Open(const SceneContextId& page, std::string_view featureShortName, SceneSettingsManager::SettingSelection selection)
 {
+	if (!featureShortName.empty())
+		filters.direction = CopyDirection::To;
 	session = { .page = page,
 		.featureShortName = std::string(featureShortName),
+		.pageScope = selection,
+		.selection = std::move(selection),
 		.pageName = SceneSettingsManager::GetSingleton()->GetSceneContextDisplayName(page),
 		.pageIcon = GetSceneIcon(page),
 		.focusSearch = true };
 	if (!featureShortName.empty()) {
 		auto* feature = Feature::FindFeatureByShortName(session.featureShortName);
 		session.featureName = feature ? feature->GetDisplayName() : session.featureShortName;
+		if (GetFeatureCopySettings().empty())
+			session.sourceLayer = EntrySource::Overwrite;
 	}
 	session.modal.Request();
 	ResetSelection();
 }
 
-void SceneCopyModal::PrepareEmbedded(const SceneContextId& page)
+void SceneCopyModal::PrepareEmbedded()
 {
-	Open(page);
-	session.modal = {};
+	standalone = {};
 }
 
 void SceneCopyModal::DrawEmbedded()
 {
 	ImGui::PushID("SceneManagerCopy");
-	DrawContents();
+	embedded = true;
+	DrawStandaloneSource();
+	const auto title = std::format("{}###SceneCopyDestinations", T(TKEY("scene_copy_destinations"), "Destination scenes"));
+	standalone.destinations.Draw(title.c_str(), ImGui::GetFontSize() * kModalWidthEm, DrawContents);
+	const auto decision = standalone.confirmUserCopy.DrawChoice();
+	if (decision == Util::ConfirmationPopup::Choice::Confirm)
+		CopyPresetSelectionToUser(CopyConflictPolicy::SkipExisting);
+	else if (decision == Util::ConfirmationPopup::Choice::Alternate)
+		CopyPresetSelectionToUser(CopyConflictPolicy::OverwriteExisting);
+	embedded = false;
 	ImGui::PopID();
 }
 

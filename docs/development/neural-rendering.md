@@ -335,24 +335,18 @@ the version gate bounds this implementation to its observed ABI.
 ## Current Feature 18 contract
 
 The runtime creates one persistent Feature 18 instance per rendered eye using
-the observed 310.8.x private ABI. It creates a same-resolution pass with
-`DLSSNR.Upscaling=0u`, `DLSSNR.Scale=1.0f`,
-`DLSSNR.ScalingRatio=1.0f`, and `DLSSNR.Hint.Render.Preset=0u`.
-The creation flags are `IsHDR | DoSharpening | AutoExposure` (`0x61`) in both
-`Feature_Flags` and `NVSDK_NGX_Parameter_Feature_Flags`. The private selectors
-are `DLSSNR.AutoExposure=1u`, `DLSSNR.Hdr=1u`, and `DLSSNR.SDR=0u`.
-`InPreExposure`, `InExposureScale`, `NVSDK_NGX_Parameter_PreExposure`, and
-`NVSDK_NGX_Parameter_ExposureScale` are initialized to `1.0f`. Parameters are
+the observed 310.8.x D3D12 interface. It creates a same-resolution pass with
+`DLSSNR.Width`, `DLSSNR.Height`, `DLSSNR.ScalingRatio=1.0f`, and
+`DLSSNR.Hint.Render.Preset`. Parameters are
 populated through `NVSDK_NGX_D3D12_PopulateParameters_Impl` before creation.
 The creation contract also supplies `DLSSNR.ControlMask=nullptr`,
 `DLSSNR.UseAutoMask`, and `DLSSNR.UICorrection=1u`.
 
-The HDR-selected model contract does not mean that unbounded scene-linear
-values are sent to Feature 18. The input is the bounded display-referred proxy
-described below. The original scene-linear frame remains separate and is used
-for reconstruction after model evaluation. This D3D12 private ABI is observed
-rather than officially documented; successful creation and evaluation do not by
-themselves establish image quality or temporal correctness.
+Unbounded scene-linear values are not sent to Feature 18. The input is the bounded
+display-referred proxy described below. The original scene-linear frame remains
+separate and is used for reconstruction after model evaluation. This D3D12 interface
+is observed rather than officially documented; successful creation and evaluation do
+not by themselves establish image quality or temporal correctness.
 
 `DLSSNR.DepthInverted` follows the Reverse Z-Buffer feature, which is restart-gated, so
 the depth guide's convention never changes while the game runs. Frame time and jitter
@@ -365,9 +359,19 @@ recreate the persistent eye handles. A contract change must likewise retire
 queued GPU work before releasing the handles and recreate both eye instances
 when it changes creation-latched parameters.
 
-The runtime discovers the private float setter slot from the populated parameter
-object before writing Feature 18 floats. Unsigned and resource parameters use
-the corresponding private ABI slots rather than the public SDK overloads.
+Unsigned, float and resource parameters are written through the public
+`NVSDK_NGX_Parameter::Set` overloads. The runtime sets only parameter names the
+`nvngx_dlssnr.dll` builds contain as strings; a name they do not contain is not written.
+
+After each creation the runtime reads `DLSSNR.Available`, `DLSSNR.NeedsUpdatedDriver`,
+`DLSSNR.MinDriverVersionMajor` and `Minor`, and calls the `DLSSNRGetStatsCallback` the
+parameter block registers, which reports the model allocation, the optimization level and
+whether the snippet is a development branch. `Available` and `NeedsUpdatedDriver` are
+recorded as present or absent, because the populated block may not carry them; the driver
+version, optimization level and branch flag are reported as null when the runtime does not
+answer them. A recreation of the model refreshes the snapshot. The values
+appear in the settings panel and in the `capability` object of `neuralRenderingStatus`; none
+of them gates the pass.
 
 The public [DLSS5VKLayer creation code](https://github.com/bmitch87/DLSS5VKLayer/blob/main/core/ngx_snippet.cpp#L509-L523)
 and [HDR input description](https://github.com/bmitch87/DLSS5VKLayer#hdr-input)

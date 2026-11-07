@@ -20,6 +20,7 @@
 
 #ifdef DEVBENCH_BRIDGE_ENABLED
 
+#	include "BaselineManager.h"
 #	include "CSEditor/EditorWindow.h"
 #	include "CSEditor/SceneManager/SceneSettingsManager.h"
 #	include "Feature.h"
@@ -1600,6 +1601,23 @@ namespace
 				}
 			});
 			return json{ { "action", "load" }, { "queued", true }, { "enqueued_at_frame", frame } };
+		}
+		if (action == "status") {
+			const auto shortName = a_args.value("shortName", std::string{});
+			const bool currentTab = a_args.value("currentTab", false);
+			return RunOnThread([state, shortName, currentTab]() -> json {
+				auto* feature = shortName.empty() ? nullptr : Feature::FindFeatureByShortName(shortName);
+				if (!shortName.empty() && !feature)
+					return json{ { "error", "feature not found" }, { "shortName", shortName } };
+				const auto keys = feature && currentTab && feature->HasScopedDefaultSettings() ? feature->GetCurrentPageSettingKeys() : std::vector<std::string>{};
+				return json{ { "canRestoreSaved", state->HasSavedSettings(feature, currentTab) },
+					{ "canReapplyBaseSettings", BaselineManager::GetSingleton()->HasSettings(shortName, keys) },
+					{ "canUndo", globals::menu->CanUndo() }, { "canRedo", globals::menu->CanRedo() } };
+			},
+				Util::DevBenchUx::ExecutionThread::Render);
+		}
+		if (action == "reapplyBaseSettings") {
+			return RunOnThread([state]() -> json { return { { "applied", state->ReapplyBaseSettings() } }; }, Util::DevBenchUx::ExecutionThread::Render);
 		}
 		if (action == "loadFeature") {
 			const auto featureName = a_args.find("shortName");

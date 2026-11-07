@@ -126,6 +126,37 @@ def static_feature_defines(source_root: Path) -> dict:
     return defines
 
 
+def default_feature_option_defines(source_root: Path) -> tuple:
+    """Discover default-enabled boolean shader options alongside their owning feature define."""
+    defaults = {}
+    options = set()
+    for source in sorted((source_root / "src/Features").rglob("*.cpp")):
+        text = source.read_text(encoding="utf-8", errors="replace")
+        if "::GetShaderDefineOptions()" not in text:
+            continue
+        header = source.with_suffix(".h").read_text(encoding="utf-8", errors="replace")
+        owner = re.search(r'GetShaderDefineName\(\)[^{]*\{\s*return\s+"(\w+)"', header)
+        body = re.search(r'::GetShaderDefineOptions\(\)\s*\{(.*?)\n\}', text, re.DOTALL)
+        branches = re.findall(
+            r'if\s*\(settings\.(\w+)\)\s*\{\s*result\.push_back\(\{\s*"(\w+)"\s*,\s*"([^"]*)"\s*\}\);\s*\}',
+            body.group(1) if body else "")
+        if not owner or not branches or len(branches) != body.group(1).count("result.push_back("):
+            raise ValueError(f"Cannot discover default shader options in {source}")
+        for setting, name, value in branches:
+            initial = re.search(rf'\b(?:bool|uint|uint32_t)\s+{re.escape(setting)}\s*=\s*(true|false|0|1)\s*;', header)
+            if not initial:
+                raise ValueError(f"Cannot discover default for {source}: {setting}")
+            options.add(name)
+            if initial.group(1) in ("true", "1"):
+                defaults.setdefault(owner.group(1), set()).add(f"{name}={value}" if value else name)
+    return defaults, options
+
+
+def options_for_features(defines: set, defaults: dict) -> set:
+    """Select default shader options only for feature defines present in this request."""
+    return {option for owner, options in defaults.items() if owner in defines for option in options}
+
+
 def default_reverse_z_defines(source_root: Path) -> set:
     """Reverse Z's all-shader define when its boot setting defaults to enabled."""
     for short, define, text in feature_declarations(source_root):
@@ -499,7 +530,7 @@ def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: s
     disabled_stems (default-disabled stages plus required external dependencies) marks
     which of those sections a default install actually loads with Enabled=false."""
     disabled_stems = (disabled_stems or set()) | unsupported_runtime_features(REPO, runtime)
-    lines = ["[Cache]", f"PluginVersion = {plugin_version}", f"CompileFlags = {DEFAULT_COMPILE_FLAGS_TAG}", "", ""]
+    lines = ["[Cache]", f"PluginVersion = {plugin_version}", f"CompileFlags = {DEFAULT_COMPILE_FLAGS_TAG}", f"Runtime = {runtime}", "", ""]
     count = 0
     for ini_path in sorted((stage / "Features").glob("*.ini")):
         if ini_path.stem in RUNTIME_EXCLUDED_FEATURES[runtime]:
@@ -533,6 +564,7 @@ def filter_profile_defines(config: Path, out: Path, drop: set, source_root: Path
     source_root = source_root or REPO
     runtime = "VR" if "VR" in cfg.get("common_defines", []) else "SE"
     feature_names = feature_define_map(source_root)
+    option_defaults, option_names = default_feature_option_defines(source_root)
     global_defines = default_reverse_z_defines(source_root)
     reverse_z = feature_names.get("ReverseZ")
     if reverse_z and reverse_z not in global_defines:
@@ -544,7 +576,7 @@ def filter_profile_defines(config: Path, out: Path, drop: set, source_root: Path
         if isinstance(node, dict):
             for k, v in node.items():
                 if k in ("common_defines", "defines") and isinstance(v, list):
-                    node[k] = [d for d in v if d.split("=", 1)[0] not in drop]
+                    node[k] = [d for d in v if d.split("=", 1)[0] not in drop | option_names]
                 else:
                     scrub(v)
         elif isinstance(node, list):
@@ -566,8 +598,9 @@ def filter_profile_defines(config: Path, out: Path, drop: set, source_root: Path
                 if shader_type != "Utility":
                     declared = declared | feature_defines.get("*", set())
                 added = (global_defines | declared) - drop - present
+                added |= options_for_features((present | added) - drop, option_defaults)
                 if added:
-                    entry["defines"] = defines + sorted(added)
+                    entry["defines"] = sorted(set(defines) | added)
     out.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
     return out
 
@@ -696,6 +729,7 @@ def extra_shader_requests(source_root: Path, runtime: str) -> dict:
     captured_runtime = capture["runtime"]
     strip, _, _ = profile_strip_defines(source_root, "aio", runtime)
     static = static_feature_defines(source_root)
+    option_defaults, option_names = default_feature_option_defines(source_root)
     global_defines = default_reverse_z_defines(source_root)
     excluded_sources = set()
     unsupported = unsupported_runtime_features(source_root, runtime)
@@ -731,12 +765,15 @@ def extra_shader_requests(source_root: Path, runtime: str) -> dict:
             names = {define.partition("=")[0]: define.partition("=")[2] or None
                      for define in request["key"].split(":", 2)[2].split()}
             names.pop("REVERSE_Z", None)
-            for name in strip:
+            for name in strip | option_names:
                 names.pop(name, None)
             declared = global_defines | static.get(request["type"], set())
             if request["type"] != "Utility":
                 declared |= static.get("*", set())
             names.update({name: None for name in declared - strip if name not in names})
+            for option in options_for_features(set(names), option_defaults):
+                name, _, value = option.partition("=")
+                names[name] = value or None
             request["key"] = f"{request['shader']}:{stage}:" + "".join(
                 name + (f"={value}" if value else "") + " " for name, value in sorted(names.items()))
             request["defines"] = sorted(names.items()) + [(stage_define, None)]

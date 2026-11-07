@@ -439,11 +439,12 @@ bool PostProcessing::ReapplyCurrentPageOverrideSettings()
 {
 	if (!ApplyPendingSettings())
 		return false;
-	if (!HasActivePipelineFeature())
-		return Feature::ReapplyOverrideSettings();
-	const auto type = pipeline[activePipelineFeature]->GetType();
-	const std::array<std::string_view, 1> keys{ type };
-	return ReapplyOverrideSettingsForKeys(keys);
+	return Feature::ReapplyCurrentPageOverrideSettings();
+}
+
+std::vector<std::string> PostProcessing::GetCurrentPageSettingKeys() const
+{
+	return HasActivePipelineFeature() ? std::vector<std::string>{ pipeline[activePipelineFeature]->GetType() } : std::vector<std::string>{};
 }
 
 bool PostProcessing::ApplyPendingSettings()
@@ -1088,7 +1089,7 @@ namespace
 		bool IsDefaultPipelineProvider() const override { return true; }
 		bool SetPipelineActive(bool active) override
 		{
-			return PostProcessingMode::Set(active ? PostProcessingMode::Mode::PostProcessing : PostProcessingMode::Mode::Vanilla);
+			return PostProcessingMode::Set(active ? PostProcessingMode::Mode::PostProcessing : PostProcessingMode::Mode::Vanilla, false);
 		}
 		std::string_view GetDedicatedBaselineFeature() const override { return PostProcessingPresets::kFeatureShortName; }
 		bool CanExportBaseline(std::string_view type) const override

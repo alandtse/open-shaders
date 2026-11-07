@@ -60,8 +60,14 @@ namespace FormEditSources
 		const auto personal = GetFilePath(Util::PathHelpers::GetCommunityShaderPath(), key);
 		if (std::filesystem::exists(personal, error))
 			return personal;
+		return ResolvePackFile(key);
+	}
+
+	std::filesystem::path ResolvePackFile(const FormKey& key)
+	{
 		if (!GetPackFormKeys().contains(key))
 			return {};
+		std::error_code error;
 		for (const auto& root : UnifiedPresetCatalog::GetSingleton().GetActivePackRoots()) {
 			const auto path = GetFilePath(root / kFormsSubdir, key);
 			error.clear();
@@ -248,5 +254,102 @@ namespace FormEditSources
 				success = false;
 		}
 		return success;
+	}
+
+	std::optional<Util::Settings::SettingsCopy> CopyPresetSettings(const std::string& packId, const PresetContent::Selection& selection, bool replaceExisting)
+	try {
+		if (selection.empty() || !CanChangePacks())
+			return std::nullopt;
+		const auto files = PresetContent::List(packId);
+		struct Document
+		{
+			std::optional<json> original;
+			json replacement;
+			bool written = false;
+		};
+		std::map<std::filesystem::path, Document> documents;
+		FormKeySet changed;
+		Util::Settings::SettingsCopy result;
+		for (const auto& [relative, paths] : selection) {
+			if (!PresetContent::IsRecordFile(relative) || paths.empty())
+				return std::nullopt;
+			const auto file = std::ranges::find(files, relative, &PresetContent::File::relative);
+			const FormKey key{ Util::PathToUtf8(*std::next(relative.begin())), Util::PathToUtf8(relative.stem()) };
+			if (file == files.end() || !file->document || !Util::IsSinglePathComponent(key.second) ||
+				std::ranges::find(Widget::kSaveFolderNames, key.first) == Widget::kSaveFolderNames.end())
+				return std::nullopt;
+			const auto destination = GetFilePath(Util::PathHelpers::GetCommunityShaderPath(), key);
+			auto& document = documents[destination];
+			std::error_code error;
+			const bool exists = std::filesystem::exists(destination, error);
+			if (error)
+				return std::nullopt;
+			if (exists) {
+				json original;
+				if (!ReadDocument(destination, original))
+					return std::nullopt;
+				document.original = std::move(original);
+			}
+			const auto values = Util::Settings::SelectSettingPaths(*file->document, paths);
+			PresetActivation::Footprint leaves;
+			PresetContent::CollectValues(values, "", leaves);
+			if (leaves.size() != std::set<std::string>(paths.begin(), paths.end()).size())
+				return std::nullopt;
+			const auto personal = document.original.value_or(json::object());
+			const auto copy = Util::Settings::SelectSettingsToCopy(values, personal, replaceExisting);
+			result.copied += copy.copied;
+			result.overwritten += copy.overwritten;
+			result.skipped += copy.skipped;
+			if (copy.values.empty()) {
+				documents.erase(destination);
+				continue;
+			}
+			document.replacement = personal;
+			Util::Settings::MergeSettings(document.replacement, copy.values);
+			changed.insert(key);
+		}
+		if (documents.empty())
+			return result;
+		ReloadHistoryGuard history;
+		bool committed = false;
+		const SKSE::stl::scope_exit rollback([&] {
+			if (committed)
+				return;
+			for (const auto& [path, document] : documents)
+				if (document.written) {
+					if (document.original) {
+						if (!Util::FileHelpers::WriteJsonAtomically(path, *document.original, 2, "record copy rollback"))
+							logger::error("Could not restore personal record file '{}'", path.string());
+					} else {
+						std::error_code error;
+						std::filesystem::remove(path, error);
+						if (error)
+							logger::error("Could not remove failed record copy '{}': {}", path.string(), error.message());
+					}
+				}
+			InvalidatePersonalEdits();
+			if (EditorWindow::CanBeOpen() && EditorWindow::GetSingleton()->HasWidgetResources() &&
+				!EditorWindow::GetSingleton()->ReloadFormEdits(changed))
+				logger::error("Could not reload personal records after a failed preset copy");
+		});
+		for (auto& [path, document] : documents) {
+			if (!Util::FileHelpers::WriteJsonAtomically(path, document.replacement, 2, "copied record settings"))
+				return std::nullopt;
+			document.written = true;
+		}
+		InvalidatePersonalEdits();
+		if (EditorWindow::CanBeOpen()) {
+			auto* editor = EditorWindow::GetSingleton();
+			if (!editor->HasWidgetResources() && !editor->SetupResources())
+				return std::nullopt;
+			if (!editor->ReloadFormEdits(changed))
+				return std::nullopt;
+		}
+		committed = true;
+		history.Commit();
+		return result;
+	} catch (const std::exception& error) {
+		logger::error("Could not copy preset record settings: {}", error.what());
+		return std::nullopt;
 	}
 }

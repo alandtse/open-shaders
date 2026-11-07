@@ -17,7 +17,7 @@ namespace PostProcessingMode
 
 	/** @brief Enables the chosen pipeline and disables the other.
 	 *  @return False, changing nothing, when the mode's pipeline cannot run (not loaded, or Effects 11 without a preset). */
-	bool Set(Mode mode);
+	bool Set(Mode mode, bool enableLinearLighting = true);
 
 	/** @brief Reads the saved mode from the "General" section, defaulting to what is installed (Effects 11 with a preset, else Post Processing, else Vanilla);
 	 *  a preset pack applied after the last save overrides it with the pipeline the pack chose. Applied fully by ApplyPending(). */
@@ -25,6 +25,9 @@ namespace PostProcessingMode
 
 	/** @brief Writes the chosen mode into the user settings "General" section once it is known, even while its pipeline cannot run. */
 	void Save(json& a_general);
+
+	/** @brief Settings paths committed by a preset's pipeline choice. */
+	json PresetSelectionFields();
 
 	/** @brief Whether the mode read by Load() will apply as Vanilla; known before Effects 11 is ready, since only an explicit Vanilla choice resolves to it. */
 	bool IsVanillaPending();

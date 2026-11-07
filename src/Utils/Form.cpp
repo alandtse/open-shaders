@@ -100,6 +100,33 @@ std::string Util::GetFormDisplayName(RE::FormID formId)
 	return GetFormFileKey(form);
 }
 
+std::string Util::GetSpatialFormDisplayName(const RE::TESForm* form)
+{
+	if (!form)
+		return {};
+	if (form->Is(RE::FormType::Cell, RE::FormType::WorldSpace)) {
+		auto editorId = GetFormEditorID(form);
+		if (!editorId.empty())
+			return editorId;
+	}
+	if (const auto* name = form->GetName(); name && name[0] != '\0')
+		return name;
+	return GetFormDisplayName(form->GetFormID());
+}
+
+std::vector<RE::TESObjectCELL*> Util::GetLoadedCells()
+{
+	std::vector<RE::TESObjectCELL*> cells;
+	auto [forms, lock] = RE::TESForm::GetAllForms();
+	if (forms) {
+		const RE::BSReadLockGuard guard(lock);
+		for (const auto& [id, form] : *forms)
+			if (auto* cell = form ? form->As<RE::TESObjectCELL>() : nullptr)
+				cells.push_back(cell);
+	}
+	return cells;
+}
+
 std::string Util::FormEditorIDIndex::Find(const RE::TESForm* form)
 {
 	if (!form)

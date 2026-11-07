@@ -168,6 +168,8 @@ public:
 	void DrawSettings();
 	/** @brief Draws menu pages in the editor's sidebar layout without a header or footer. */
 	void DrawEditorSettings(bool resetLayout);
+	/** @brief Draws the embedded menu's actions around its browser mode controls. */
+	void DrawEditorMenuHeader(const std::function<void()>& drawModes);
 
 	/**
 	 * @brief Programmatically set the settings menu visibility (open/close/toggle).
@@ -259,12 +261,11 @@ public:
 	};
 
 	/** @brief Render-thread animation and expanded-width state for menu navigation. */
-	[[nodiscard]] SidebarState& GetSidebarState() { return sidebar; }
+	[[nodiscard]] SidebarState& GetSidebarState(bool editorLayout = false) { return editorLayout ? editorSidebar : sidebar; }
 
 	/** @brief Draws the in-game performance/debug overlay */
 	void DrawOverlay();
 	/** @brief Draws the detached weather details editor window */
-	void DrawWeatherDetailsWindow();
 
 	/** @brief Translates raw Skyrim input events into the internal key event queue */
 	void ProcessInputEvents(RE::InputEvent* const* a_events);
@@ -596,12 +597,13 @@ public:
 		bool BackgroundShaderCompilationOnBoot = false;  // Load the menu immediately and compile shaders in the background on boot (same as the Skip Compilation key)
 		bool HideCompilationHUDInVR = false;             // VR immersion: suppress the background-compilation progress HUD (the blocking/foreground compile warning still shows)
 		FeatureSortMode FeatureListSort = FeatureSortMode::Category;
-		bool AutoHideFeatureList = false;     // Auto-hide left feature list panel, show on hover
-		bool SkipConstraintWarning = false;   // Skip popup when a setting change creates new constraints
-		bool RequireShiftToDock = true;       // Require holding Shift to dock windows
-		bool UseResolutionFont = true;        // When true, runtime font size scales with screen resolution; when persisted to theme files, FontSize is zeroed for backward compatibility
-		float AnimationSpeed = 1.0f;          // Menu animation speed multiplier (Util::Anim::Speed clamps it to the supported range)
-		bool ReduceUIAnimations = false;      // Snap menu animations (hover fades, slides, expanding search) instead of easing
+		bool AutoHideFeatureList = false;    // Auto-hide left feature list panel, show on hover
+		bool SkipConstraintWarning = false;  // Skip popup when a setting change creates new constraints
+		bool RequireShiftToDock = true;      // Require holding Shift to dock windows
+		bool UseResolutionFont = true;       // When true, runtime font size scales with screen resolution; when persisted to theme files, FontSize is zeroed for backward compatibility
+		float AnimationSpeed = 1.0f;         // Menu animation speed multiplier (Util::Anim::Speed clamps it to the supported range)
+		bool ReduceUIAnimations = false;     // Snap menu animations (hover fades, slides, expanding search) instead of easing
+		bool ShowSettingInformation = true;
 		std::uint32_t FeatureListFilter = 0;  // Feature list filters (FeatureListFilter bits); read in Load, unknown bits dropped
 		ThemeSettings Theme;
 		std::string SelectedThemePreset = "";     // Currently selected theme preset (empty = custom/user theme)
@@ -725,7 +727,9 @@ private:
 
 	// Menu navigation
 	SidebarState sidebar;
+	SidebarState editorSidebar;
 	std::string selectedMenuId = "Home";
+	std::string editorSelectedMenuId = "Home";
 	std::map<std::string, bool> categoryExpansionStates;
 	std::string pendingFeatureSelection;  // Feature to select on next frame
 	// Anchor id set alongside pendingFeatureSelection (see SelectFeatureMenu); a

@@ -632,9 +632,6 @@ namespace SIE
 		void DeleteDiskCache();
 		/** @brief Deletes the same on-disk directories as DeleteDiskCache(), without touching UI-facing mismatch state. Safe to call from the file-watcher thread. @param a_keepContentStore Preserve the content store so a rebuild can reuse its blobs. */
 		void DeleteDiskCacheFiles(bool a_keepContentStore = false);
-		/** @brief True after a user action requested shader recaching, until the banner is dismissed. */
-		bool IsRecachePending() const { return recachePending; }
-		void SetRecachePending(bool value) { recachePending = value; }
 		/** @brief Validates disk cache integrity against current shader sources and feature set. */
 		void ValidateDiskCache();
 		/** @brief Finalizes a boot-detected feature set change: refresh the manifest and clear the change state. */
@@ -697,6 +694,9 @@ namespace SIE
 		/// disk, this session compiles memory-only, and the menu offers rebuild vs
 		/// fix-setup-and-restart (after a fix the cache revalidates untouched).
 		bool IsDiskCacheHeld() const { return diskCacheHeld; }
+		/// Runtime of the on-disk cache found at boot when it was built for the other one (flat vs VR), else Unknown.
+		/// Its shaders cannot be reused, so the whole cache recompiles; cleared by nothing, it reports this boot only.
+		Util::CacheInvalidation::CacheRuntime GetWrongRuntimeCache() const { return wrongRuntimeCache; }
 		/// True when the cache was kept across a version change, so a blob without a recorded digest must recompile.
 		bool RequiresDigestForReuse() const { return requireDigestForReuse; }
 
@@ -1374,6 +1374,7 @@ namespace SIE
 		// Written only on the main thread under mismatchesMutex; compile workers, the menu and devbench read
 		// single flags lock-free, and GetRollbackState() reads all of them together.
 		std::atomic<bool> diskCacheHeld = false;
+		std::atomic<Util::CacheInvalidation::CacheRuntime> wrongRuntimeCache{ Util::CacheInvalidation::CacheRuntime::Unknown };
 		std::atomic<bool> featureSetChanged = false;
 		std::atomic<bool> featureSetRevertPending = false;
 		std::atomic<bool> featureSetCacheBackedUp = false;
@@ -1407,7 +1408,6 @@ namespace SIE
 		bool useFileWatcher = false;
 		// Set by RequestClear() (file-watcher thread), drained by ProcessPendingClear() (render thread).
 		std::atomic<bool> pendingClear{ false };
-		bool recachePending = false;
 
 		std::stop_source ssource;
 		std::mutex vertexShadersMutex;

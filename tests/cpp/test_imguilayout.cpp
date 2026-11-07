@@ -5,6 +5,84 @@
 #include <imgui_internal.h>
 #include <memory>
 
+TEST_CASE("Selectable text keeps its inset when labels overflow", "[imguilayout][selectable]")
+{
+	for (const float scale : { 0.707f, 1.0f, 1.414f }) {
+		INFO("UI scale " << scale);
+		const std::unique_ptr<ImGuiContext, void (*)(ImGuiContext*)> context(ImGui::CreateContext(), &ImGui::DestroyContext);
+		auto& io = ImGui::GetIO();
+		io.IniFilename = nullptr;
+		io.DisplaySize = ImVec2(1280.0f, 720.0f);
+		io.DeltaTime = 1.0f / 60.0f;
+		io.FontGlobalScale = scale;
+		io.Fonts->AddFontDefault();
+		REQUIRE(io.Fonts->Build());
+		ImGui::GetStyle().ScaleAllSizes(scale);
+		const float inset = 8.0f * scale;
+		struct Sample
+		{
+			ImRect item;
+			ImVec2 contentMax;
+			ImGuiID id;
+			float textLeft = FLT_MAX;
+			float textRight = -FLT_MAX;
+			float rowRight;
+			ImU32 textColor = 0;
+		};
+		const auto frame = [&](const char* label, bool padded, ImGuiSelectableFlags flags = 0, float width = 0.0f) {
+			ImGui::NewFrame();
+			ImGui::SetNextWindowPos(ImVec2(50.0f, 50.0f), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(220.0f * scale, 100.0f * scale), ImGuiCond_Always);
+			ImGui::Begin("SelectableInsetTest", nullptr, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar);
+			auto* window = ImGui::GetCurrentWindow();
+			const auto start = window->DrawList->VtxBuffer.Size;
+			const ImVec2 size(width, 0.0f);
+			auto* selectable = static_cast<bool (*)(const char*, bool, ImGuiSelectableFlags, const ImVec2&)>(&ImGui::Selectable);
+			if (padded)
+				Util::ImGuiLayout::SelectableWithTextInset(selectable, label, false, flags, size, inset);
+			else
+				selectable(label, false, flags, size);
+			Sample result{ .item = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()),
+				.contentMax = window->DC.CursorMaxPos,
+				.id = ImGui::GetItemID(),
+				.rowRight = window->WorkRect.Max.x };
+			for (int index = start; index < window->DrawList->VtxBuffer.Size; ++index) {
+				const auto& vertex = window->DrawList->VtxBuffer[index];
+				if ((vertex.col & IM_COL32_A_MASK) == 0)
+					continue;
+				result.textLeft = std::min(result.textLeft, vertex.pos.x);
+				result.textRight = std::max(result.textRight, vertex.pos.x);
+				result.textColor = vertex.col;
+			}
+			ImGui::End();
+			ImGui::EndFrame();
+			return result;
+		};
+		frame("MMM", false);
+		const auto shortLabel = frame("MMM", false);
+		REQUIRE(shortLabel.textLeft != FLT_MAX);
+		for (const auto* label : { "MMM", "MMMMMMMMMMMMMMMMMMMMM", "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM" }) {
+			INFO(label);
+			const auto native = frame(label, false);
+			const auto padded = frame(label, true);
+			CHECK(padded.textLeft == Catch::Approx(shortLabel.textLeft + inset).margin(1.0f));
+			CHECK(padded.textRight <= padded.rowRight);
+			CHECK(padded.id == native.id);
+			CHECK(padded.item.Min.x == native.item.Min.x);
+			CHECK(padded.item.Max.x == native.item.Max.x);
+			CHECK(padded.item.Min.y == native.item.Min.y);
+			CHECK(padded.item.Max.y == native.item.Max.y);
+			CHECK(padded.contentMax.x == native.contentMax.x);
+			CHECK(padded.contentMax.y == native.contentMax.y);
+		}
+		const auto disabledNative = frame("MMM", false, ImGuiSelectableFlags_Disabled);
+		const auto disabledPadded = frame("MMM", true, ImGuiSelectableFlags_Disabled);
+		CHECK(disabledPadded.textColor == disabledNative.textColor);
+		const auto fixedWidth = frame("MMMMMMMMMMMMMMMMMMMMMMMMMMMMMM", true, 0, 100.0f * scale);
+		CHECK(fixedWidth.textRight <= shortLabel.textLeft + 100.0f * scale);
+	}
+}
+
 TEST_CASE("Deactivated text inputs can apply their final resized buffer", "[imguilayout][inputtext]")
 {
 	const std::unique_ptr<ImGuiContext, decltype(&ImGui::DestroyContext)> context(ImGui::CreateContext(), &ImGui::DestroyContext);

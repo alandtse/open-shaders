@@ -1166,7 +1166,11 @@ namespace
 		}
 		if (!canLock)
 			return;
+		const auto actionMin = ImGui::GetItemRectMin();
+		const auto actionMax = ImGui::GetItemRectMax();
 		ImGui::SameLine();
+		ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x,
+			std::round(actionMin.y + (actionMax.y - actionMin.y - Util::GetLockStatusBadgeSize()) * 0.5f)));
 		const bool locked = editor.IsWeatherLockedByUser(weatherWidget->weather);
 		if (Util::LockStatusBadgeButton("##InspectorLock", locked, EditorWindow::GetWeatherLockTooltip(locked)))
 			editor.ToggleUserWeatherLock(weatherWidget->weather);
@@ -1329,7 +1333,7 @@ void FormListPage::Draw(Browser::FormListState& state, const Context& context)
 		DrawList(state, context, ImGui::GetContentRegionAvail(), active);
 		return;
 	}
-	BrowserUI::SplitPane({ "##FormListSplit", kInspectorBesideMinWidth, kInspectorWidth, Browser::FormListState::kDefaultStackedRatio, editor.resetLayout }, state.stackedRatio, [&](const ImVec2& size) { DrawList(state, context, size, active); }, [&](const ImVec2& size) { DrawInspector(state, context, size, active); });
+	BrowserUI::SplitPane({ .id = "##FormListSplit", .besideMinWidth = kInspectorBesideMinWidth, .detailWidth = kInspectorWidth, .defaultStackedRatio = Browser::FormListState::kDefaultStackedRatio, .resetLayout = editor.resetLayout }, state.stackedRatio, [&](const ImVec2& size) { DrawList(state, context, size, active); }, [&](const ImVec2& size) { DrawInspector(state, context, size, active); });
 }
 
 #undef I18N_KEY_PREFIX

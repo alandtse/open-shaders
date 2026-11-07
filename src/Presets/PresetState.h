@@ -20,11 +20,32 @@ namespace PresetState
 	inline constexpr const char* kFeatureSettingsVersionKey = "featureSettingsVersion";
 	inline constexpr int kFeatureSettingsVersion = 1;
 	inline constexpr const char* kNormalizedFeatureNamesKey = "normalizedFeatureNames";
+	inline constexpr const char* kBootPreferencesVersionKey = "bootPreferencesVersion";
+	inline constexpr int kBootPreferencesVersion = 1;
+	inline constexpr const char* kBaseSettingsCustomizationsKey = "baseSettingsCustomizations";
 	inline constexpr std::array kPrivateKeys{
-		"featureSettingsVersion", "normalizedFeatureNames", "legacyUserOverrideFeatures", "legacyBootOverridesImported",
+		"featureSettingsVersion", "normalizedFeatureNames", "baseSettingsCustomizations",
 		"removedLegacyPackIds", "knownBaselinePackIds", "disabledBaselinePackIds", "enabledScenePackIds",
 		"disabledScenePackIds", "knownScenePackIds", "automaticPresets", "lastSharedActivePackId", "lastSharedBaselinePackIds", "baseSettingsOrderCustomized", "baselinePackOrder"
 	};
+
+	/** @brief Reads explicit boot preferences and drops copied defaults from legacy settings. */
+	inline nlohmann::json NormalizeBootPreferences(const nlohmann::json& saved,
+		const nlohmann::json& defaults, const nlohmann::json& presetState)
+	{
+		auto preferences = nlohmann::json::object();
+		if (!saved.is_object() || !defaults.is_object())
+			return preferences;
+		const bool explicitPreferences = presetState.is_object() &&
+		                                 presetState.value(kBootPreferencesVersionKey, nlohmann::json{}) == kBootPreferencesVersion;
+		for (const auto& [feature, disabled] : saved.items()) {
+			const auto fallback = defaults.find(feature);
+			if (fallback != defaults.end() && disabled.is_boolean() &&
+				(explicitPreferences || disabled != *fallback))
+				preferences[feature] = disabled;
+		}
+		return preferences;
+	}
 
 	/** @brief Restores OS-only fields omitted by an upstream preset-state save. */
 	inline nlohmann::json RestorePrivateState(nlohmann::json state, const nlohmann::json& saved)

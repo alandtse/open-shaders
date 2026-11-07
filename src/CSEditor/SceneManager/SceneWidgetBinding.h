@@ -12,7 +12,7 @@
 #include "SceneSettingsCatalog.generated.h"
 #include "SceneSettingsManager.h"
 
-/// Binds one intercepted ImGui control to a scene entry and owns its gutter toggle.
+/// Binds one intercepted ImGui control to a scene entry.
 namespace SceneWidgetBinding
 {
 	/// The caller's storage, erased to the primitive kinds the catalog can persist.
@@ -28,7 +28,8 @@ namespace SceneWidgetBinding
 			Int,
 			Float,
 			FloatVector,
-			Scalar
+			Scalar,
+			String
 		};
 
 		Kind kind = Kind::Float;
@@ -39,6 +40,7 @@ namespace SceneWidgetBinding
 		/** @brief Typed constructors, one per Kind. */
 		static Value Bool(bool* a_data) { return { Kind::Bool, a_data, 1, ImGuiDataType_COUNT }; }
 		static Value Int(int* a_data) { return { Kind::Int, a_data, 1, ImGuiDataType_COUNT }; }
+		static Value String(std::string* a_data) { return { Kind::String, a_data, 1, ImGuiDataType_COUNT }; }
 		static Value Float(float* a_data) { return { Kind::Float, a_data, 1, ImGuiDataType_COUNT }; }
 		static Value FloatVector(float* a_data, std::uint8_t a_count)
 		{
@@ -54,14 +56,19 @@ namespace SceneWidgetBinding
 	struct ValueStorage
 	{
 		alignas(std::uint64_t) std::byte bytes[sizeof(float) * Value::kMaxComponents]{};
-	};
+		std::optional<std::string> text;
 
-	/// Whether this call owns the gutter: a radio group's buttons share one address, so members defer to
-	/// one toggle (see SceneWidgetInterceptor radio path).
-	enum class GutterPolicy : std::uint8_t
-	{
-		Owner,
-		GroupMember
+		/** @brief Returns initialized storage for the control's value type. */
+		void* Data(Value::Kind kind)
+		{
+			if (kind != Value::Kind::String)
+				return bytes;
+			if (!text)
+				text.emplace();
+			return &*text;
+		}
+		/** @brief Returns the previously captured value storage. */
+		const void* Data(Value::Kind kind) const { return kind == Value::Kind::String ? static_cast<const void*>(&text.value()) : bytes; }
 	};
 
 	/// How the bound control resolved this frame. Kept public so the deferred winning/losing
@@ -107,7 +114,7 @@ namespace SceneWidgetBinding
 	class Guard
 	{
 	public:
-		Guard(const char* a_label, const Value& a_value, GutterPolicy a_policy = GutterPolicy::Owner);
+		Guard(const char* a_label, const Value& a_value);
 		~Guard();
 
 		Guard(const Guard&) = delete;
@@ -120,7 +127,7 @@ namespace SceneWidgetBinding
 		int* Int();
 		float* Float();
 
-		/** @brief Closes the disabled scope, commits any edit, and draws the flyout and menu.
+		/** @brief Closes the disabled scope, commits any edit, and draws scene actions.
 		 *  @return What the intercepted function should return: never true while paused. */
 		bool Finish(bool a_changed);
 
@@ -133,6 +140,13 @@ namespace SceneWidgetBinding
 		/// Greys the control for the rest of the call, so an unbindable one cannot edit the base value.
 		void OpenDisabled();
 
+		struct PresetTarget
+		{
+			const SceneSettingsManager::SettingEntry* entry = nullptr;
+			const SceneSettingsManager::SceneContextId* context = nullptr;
+			explicit operator bool() const { return entry != nullptr; }
+		};
+
 		/// One catalog component behind this control, and the entries that persist it.
 		struct Component
 		{
@@ -142,6 +156,7 @@ namespace SceneWidgetBinding
 			std::uint8_t widgetComponent = 0;
 			/// Owning entry per period; only the periods this control writes are filled.
 			std::array<std::optional<size_t>, SceneSettingsManager::kPeriodCount> periodEntries{};
+			PresetTarget preset;
 		};
 
 		/// Collects the catalog components the control covers, each with the entries behind it.
@@ -188,8 +203,11 @@ namespace SceneWidgetBinding
 		/// running now, since that is the only one of a periodic layer that reaches the scene.
 		std::uint8_t CoveredPeriodMask() const;
 
+		/// The effective scene source used by the frame tint and sidebar hint.
+		SceneSettingsManager::SettingLayer ResolveVisibleLayer() const;
+		/// Finds the preset entry this component edits, including paused entries.
+		PresetTarget FindPresetTarget(const SceneSettingsManager::SettingIdentity& setting) const;
 		/// Colour standing for where the value comes from, or nothing when the feature's base wins.
-		/// Shared by the control's tint and the gutter's toggle so the two never disagree.
 		std::optional<ImVec4> ResolveProvenanceColor() const;
 
 		/// Explains scene-editing restrictions in the sidebar.
@@ -199,7 +217,7 @@ namespace SceneWidgetBinding
 
 		/** @brief Captures or resumes the control's scene override. */
 		void EnableOverride();
-		/** @brief Double-click / Ctrl+click / Shift+click on a greyed control starts its override.
+		/** @brief Double-click / Ctrl+click / Shift+click creates a missing or suppressed entry.
 		 *  @return True when the gesture fired and the override was enabled. */
 		bool TryEnableOverrideFromGesture();
 		/** @brief Middle-click on a main-menu control writes back the feature's code default.
@@ -218,22 +236,13 @@ namespace SceneWidgetBinding
 		bool DrawBaselineContextMenu();
 
 		/** @brief Writes an edit into this control's entries, reviving a tombstone and creating missing entries first. */
-		void Commit();
-		/** @brief Draws scene actions and reports whether the entries changed. */
-		bool DrawGutter();
-		/// Whether this control can carry a location transition duration, by the same rule the
-		/// document loader applies: a Location page, and every component transitionable.
-		bool SupportsTransition() const;
-		/// The flyout's per-entry location transition duration.
-		void DrawTransitionSlot();
-		/** @brief Offers scene actions without consuming feature layout space. */
-		void DrawActionFlyout();
-		/** @brief Removes the scene settings owned by this control. */
-		void DeleteOverride();
-
-		/** @brief Tombstones or clears every covered period of every component this control spans.
-		 *  @param a_tombstoned Whether the address ends up suppressed. */
-		void SetTombstoned(bool a_tombstoned);
+		void Commit(bool editingPreset);
+		/** @brief Offers the selected setting's scene actions on hover. */
+		void DrawSceneActionFlyout();
+		bool CanUseSceneActions() const;
+		void DrawSceneActions();
+		/// Clears saved suppressions when the user restores or recreates a setting.
+		void ClearSuppressions();
 
 		/// Whether a period slot is one this control reads and writes.
 		bool IsCoveredSlot(int a_slot) const;
@@ -286,14 +295,13 @@ namespace SceneWidgetBinding
 		void WriteComponent(void* a_storage, const Component& a_component, const json& a_stored) const;
 
 		/// The caller's post-call storage, as the primitive one component persists.
-		json ReadEditedValue(const Component& a_component) const;
+		json ReadEditedValue(const Component& a_component, const void* storage = nullptr) const;
 
 		/** @brief The edited value of each component, for every entry that component owns. */
 		std::vector<SceneSettingsManager::EntryValueUpdate> BuildEntryValueUpdates() const;
 
 		const char* label;
 		Value value;
-		GutterPolicy policy;
 		State state = State::Unsupported;
 		BaselineLayer baselineLayer = BaselineLayer::Base;
 		/// The Baseline pack supplying the value beneath the control, for its tooltip.
@@ -310,6 +318,7 @@ namespace SceneWidgetBinding
 		std::size_t valueSize = 0;
 		/// Widget value = persisted value * widgetScale; only a proxied control scales.
 		float widgetScale = 1.0f;
+		bool transformedTemporary = false;
 
 		const SceneSettingsCatalog::SettingMetadata* metadata = nullptr;
 		SceneSettingsManager::SceneContextId contextId;
@@ -330,16 +339,16 @@ namespace SceneWidgetBinding
 		ValueStorage preCall;
 		/// Storage a bound scene control reads and writes, so no write reaches the feature member.
 		ValueStorage holding;
+		ValueStorage displayedBeforeEdit;
 		/// Whether the control was bound to `holding` rather than the caller's storage.
 		bool boundToHolding = false;
 		bool replicaReadOnly = false;
 
 		bool commitDeferred = false;
+		bool disabledByCaller = false;
 		bool disabledOpened = false;
 		bool mixedFlagPushed = false;
 		bool tintPushed = false;
 		bool actionOutlinePushed = false;
-
-		bool ownsActionFlyout = false;
 	};
 }

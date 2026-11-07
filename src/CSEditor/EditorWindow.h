@@ -337,7 +337,7 @@ public:
 	void DrawTimeScaleSlider(const char* id, RE::Calendar* calendar);
 
 	/** @brief Draw the full time controls panel (pause, game time, timescale). */
-	void DrawTimeControls();
+	void DrawTimeControls(bool stacked = false);
 
 	/** @brief Which time periods the game-time slider segments. */
 	enum class TimePeriodSet : std::uint8_t

@@ -820,15 +820,17 @@ namespace ShadowCasterManager
 		// strict-light loop (which consumes lights[] passed to this function) also
 		// sees them so non-LLF code paths and shaders without LIGHT_LIMIT_FIX still
 		// receive the diffuse contribution.
-		for (auto& c : s_normalConvert) {
+		static thread_local std::vector<RE::NiPointer<RE::BSShadowLight>> converted;
+		SnapshotConvertedLights(converted);
+		for (auto& convertedLight : converted) {
 			if (added >= maxCount)
 				break;
-			auto* l = reinterpret_cast<RE::BSLight*>(c.light);
+			auto* l = reinterpret_cast<RE::BSLight*>(convertedLight.get());
 			if (!l || l == sunLight)
 				continue;
 			const auto state = ReadSurfaceLight(l);
 			if (!state.readable) {
-				NoteStaleSurfaceLight(l, 0, static_cast<std::uint32_t>(s_normalConvert.size()));
+				NoteStaleSurfaceLight(l, 0, static_cast<std::uint32_t>(converted.size()));
 				continue;
 			}
 			if (!state.hasLight || state.hidden)
@@ -846,6 +848,7 @@ namespace ShadowCasterManager
 				lights[added++] = l;
 			// Note: do NOT increment *shadowCount; this is a non-shadow contribution.
 		}
+		converted.clear();
 
 		ctx.Rax = static_cast<uint64_t>(added);
 	}
@@ -856,6 +859,7 @@ namespace ShadowCasterManager
 
 	static bool Hook_IsShadowLight(RE::BSShadowLight* light)
 	{
+		std::shared_lock lock(s_normalConvertMutex);
 		for (auto& c : s_normalConvert)
 			if (c.light == light)
 				return false;
@@ -869,14 +873,18 @@ namespace ShadowCasterManager
 		auto* light = reinterpret_cast<RE::NiLight*>(ctx.Rdx);
 		if (ssn != GetShadowSceneNode())
 			return;
-		for (auto it = s_normalConvert.begin(); it != s_normalConvert.end(); ++it) {
-			auto* nl = it->light->light.get();
-			if (nl && nl == light) {
-				GameClearGeometryList(it->light);
+		RE::BSShadowLight* removed = nullptr;
+		if (light) {
+			std::unique_lock lock(s_normalConvertMutex);
+			const auto it = std::find_if(s_normalConvert.begin(), s_normalConvert.end(),
+				[&](const ConvertedLight& c) { return c.niLight == light; });
+			if (it != s_normalConvert.end()) {
+				removed = it->light;
 				s_normalConvert.erase(it);
-				break;
 			}
 		}
+		if (removed)
+			GameClearGeometryList(removed);
 		if (light) {
 			std::scoped_lock lk(s_shadowConvertMutex);
 			s_shadowConvert.erase(light);
@@ -949,6 +957,21 @@ namespace ShadowCasterManager
 			if (!lock.owns_lock())
 				return;  // ResetScene is swapping portalGraph; skip rather than read a null graph
 			func(a_ssn, a_light, a3, a4);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	// Detours TestPortalGraphOcclusionShapes (99787/106434): it derefs ssn->portalGraph with no null
+	// check, so a null graph faults on the culling render thread.
+	struct Hook_TestPortalGraphOcclusionShapes
+	{
+		static bool thunk(RE::NiPoint3* a_viewerPos, RE::BSCullingProcess* a_process, void* a_visitor)
+		{
+			std::shared_lock lock(s_portalGraphMutex, std::try_to_lock);
+			const auto* ssn = GetShadowSceneNode();
+			if (!lock.owns_lock() || !ssn || !ssn->GetRuntimeData().portalGraph)
+				return true;
+			return func(a_viewerPos, a_process, a_visitor);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -1438,6 +1461,9 @@ namespace ShadowCasterManager
 			if (long rc = stl::detour_thunk<Hook_AccumulateLight>(REL::RelocationID(99753, 106401)))
 				logger::error("[SCM] Hook_AccumulateLight detour FAILED (DetourTransactionCommit={})", rc);
 		}
+
+		if (long rc = stl::detour_thunk<Hook_TestPortalGraphOcclusionShapes>(REL::RelocationID(99787, 106434)))
+			logger::error("[SCM] Hook_TestPortalGraphOcclusionShapes detour FAILED (DetourTransactionCommit={})", rc);
 
 		{
 			// BSShadowLight::ctor -- at function start (5 bytes). Zeroes the

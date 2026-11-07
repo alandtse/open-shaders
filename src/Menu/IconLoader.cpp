@@ -258,6 +258,7 @@ namespace Util::IconLoader
 		logoMonochrome.Release();
 		search.Release();
 		featureSettingRevert.Release();
+		settingInformationOff.Release();
 		applyToGame.Release();
 		pauseTime.Release();
 		undo.Release();
@@ -302,6 +303,7 @@ namespace Util::IconLoader
 				{ logoPath, &icons.logo.texture, &icons.logo.size },
 				{ "Community Shaders Logo\\Monochrome\\cs-logo.png", &icons.logoMonochrome.texture, &icons.logoMonochrome.size },
 				{ iconFolder + "restore-settings.png", &icons.featureSettingRevert.texture, &icons.featureSettingRevert.size },
+				{ "Action Icons\\setting-information-off.png", &icons.settingInformationOff.texture, &icons.settingInformationOff.size, true },
 				{ iconFolder + "discord.png", &icons.discord.texture, &icons.discord.size },
 				{ iconFolder + "apply-to-game.png", &icons.applyToGame.texture, &icons.applyToGame.size },
 				{ iconFolder + "pause.png", &icons.pauseTime.texture, &icons.pauseTime.size },

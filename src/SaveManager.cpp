@@ -62,7 +62,7 @@ namespace SaveManager
 	const char* GetEditorSaveTooltip(bool unsaved)
 	{
 		return unsaved ?
-		           T("cs_editor.save_unsaved_tooltip", "Unsaved changes. Save settings and record edits (Ctrl+S). Scene toolbar drafts require their own Save.") :
-		           T("cs_editor.save_tooltip_short", "Save settings and record edits (Ctrl+S). Scene toolbar drafts require their own Save.");
+		           T("cs_editor.save_unsaved_tooltip", "Unsaved changes. Save editor settings and record edits (Ctrl+S). Scene toolbar drafts require their own Save.") :
+		           T("cs_editor.save_tooltip_short", "Save editor settings and record edits (Ctrl+S). Scene toolbar drafts require their own Save.");
 	}
 }

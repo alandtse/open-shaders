@@ -22,19 +22,12 @@ namespace SceneSettingsPolicy
 		{ "ExponentialHeightFog", "volumetricHistoryMissSampleCount" },
 		{ "ExponentialHeightFog", "volumetricSampleJitterMultiplier" },
 		{ "ExponentialHeightFog", "volumetricUpsampleJitterMultiplier" },
-		{ "GrassOptimizations" },
-		{ "TerrainVariation" },
 		{ "ImageBasedLighting", "DisableInWorldMap" },
 		{ "ImageBasedLighting", "DisableInLoadingScreen" },
 		{ "PostProcessing", "Border" },
 		// Auto-enabled each frame from its inputs, so a scene value would never be retained.
 		{ "PostProcessing", "Composite" },
 		{ "PostProcessing", "Depth of Field", "HighlightShape" },
-		{ "PostProcessing", "Color Grading and Tone Mapping", "enabled" },
-		{ "PostProcessing", "Color Grading and Tone Mapping", "enableTonemap" },
-		{ "PostProcessing", "Color Grading and Tone Mapping", "useOpenDrt" },
-		{ "PostProcessing", "Color Grading and Tone Mapping", "currentTonemapper" },
-		{ "PostProcessing", "Color Grading and Tone Mapping", "tonemapParams" },
 		{ "PostProcessing", "Motion Blur", "VelocityScale" },
 		// Shader defines: a change recompiles every SSGI compute shader on the render thread.
 		{ "ScreenSpaceGI", "ResolutionMode" },
@@ -52,6 +45,7 @@ namespace SceneSettingsPolicy
 		{ "LightLimitFix", "ShowShadowOverlay" },
 		{ "ScreenSpaceGI", "DebugUseUnjitteredCameraReconstruction" },
 		{ "ScreenSpaceGI", "ResourceProfile" },
+		{ "WetnessEffects", "CharacterSpotDebug" },
 	};
 
 	inline const std::vector<SettingPolicyPath> kLocationFeatureWhitelist = {

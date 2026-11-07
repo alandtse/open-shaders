@@ -699,14 +699,13 @@ namespace BrowserUI
 		ImGui::PopStyleVar();
 		if (!split)
 			return;
+		if (spec.resetLayout)
+			ImGui::TableResetSettings(ImGui::GetCurrentTable());
 		const float detailWidth = spec.detailWidth * scale;
 		ImGui::TableSetupColumn("##List", ImGuiTableColumnFlags_WidthStretch,
 			spec.stretchDetail ? std::max(ImGui::GetFontSize(), avail.x - detailWidth) : 0.0f);
 		ImGui::TableSetupColumn("##Detail", spec.stretchDetail ? ImGuiTableColumnFlags_WidthStretch : ImGuiTableColumnFlags_WidthFixed,
 			detailWidth);
-		// Must precede TableNextRow: the first row locks the layout, after which widths are ignored.
-		if (spec.resetLayout)
-			ImGui::TableSetColumnWidth(1, detailWidth);
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
 		drawList(ImVec2(0.0f, ImGui::GetContentRegionAvail().y));

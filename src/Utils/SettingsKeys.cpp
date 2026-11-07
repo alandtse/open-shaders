@@ -136,13 +136,6 @@ namespace
 // (and be unit-tested) without the engine headers ApplyPatch needs.
 namespace Util::Settings
 {
-	OverwriteValue ResolveOverwriteValue(const json* global, const json* globalUser, const json* feature, const json* featureUser)
-	{
-		if (feature)
-			return { feature, featureUser };
-		return global ? OverwriteValue{ global, globalUser } : OverwriteValue{};
-	}
-
 	void EraseMetadataKeys(json& settings)
 	{
 		if (!settings.is_object())
@@ -320,6 +313,36 @@ namespace Util::Settings
 		}
 
 		return userOverride;
+	}
+
+	SettingsCopy SelectSettingsToCopy(const json& source, const json& personal, bool replaceExisting)
+	{
+		SettingsCopy result;
+		if (!source.is_object())
+			return result;
+		for (const auto& [key, value] : source.items()) {
+			if (key.starts_with('_'))
+				continue;
+			const auto existing = personal.is_object() ? personal.find(key) : personal.end();
+			const bool present = personal.is_object() && existing != personal.end();
+			if (value.is_object()) {
+				auto nested = SelectSettingsToCopy(value, present ? *existing : json::object(), replaceExisting);
+				if (!nested.values.empty())
+					result.values[key] = std::move(nested.values);
+				result.copied += nested.copied;
+				result.overwritten += nested.overwritten;
+				result.skipped += nested.skipped;
+			} else if (present && !replaceExisting) {
+				++result.skipped;
+			} else {
+				result.values[key] = value;
+				if (present)
+					++result.overwritten;
+				else
+					++result.copied;
+			}
+		}
+		return result;
 	}
 
 	bool EraseSettingPath(json& document, const json::json_pointer& setting)

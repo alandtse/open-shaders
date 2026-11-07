@@ -101,18 +101,11 @@ namespace Icons
 		return ImGui::CalcTextSize(glyph.utf8);
 	}
 
-	/**
-	 * @brief Top-left pos for AddText that centres the glyph in boxMin+boxSize (current font), pixel-snapped.
-	 * Centres the glyph's ink, measured from the atlas once per glyph and size.
-	 */
-	[[nodiscard]] inline ImVec2 GetCenteredGlyphPos(ImVec2 boxMin, ImVec2 boxSize, const char* utf8Glyph)
+	/** @brief Cached visible glyph bounds in baked-font units. */
+	[[nodiscard]] inline ImVec4 GetGlyphInkBounds(unsigned int c, ImFontBaked* baked)
 	{
-		unsigned int c = 0;
-		if (utf8Glyph && utf8Glyph[0] != '\0')
-			ImTextCharFromUtf8(&c, utf8Glyph, nullptr);
-		ImFontBaked* baked = ImGui::GetFontBaked();
 		if (c == 0 || !baked)
-			return boxMin;
+			return ImVec4(0, 0, 0, 0);
 		const ImFontGlyph* g = baked->FindGlyph(static_cast<ImWchar>(c));  // never null: falls back to the fallback glyph
 
 		// The quad comes from the font's glyph bbox, which can be looser than the ink (Tabler's all start at x=0)
@@ -146,7 +139,22 @@ namespace Icons
 			}
 		}
 
-		const ImVec4& b = ink.box;
+		return ink.box;
+	}
+
+	/**
+	 * @brief Top-left pos for AddText that centres the glyph in boxMin+boxSize (current font), pixel-snapped.
+	 * Centres the glyph's ink, measured from the atlas once per glyph and size.
+	 */
+	[[nodiscard]] inline ImVec2 GetCenteredGlyphPos(ImVec2 boxMin, ImVec2 boxSize, const char* utf8Glyph)
+	{
+		unsigned int c = 0;
+		if (utf8Glyph && utf8Glyph[0] != '\0')
+			ImTextCharFromUtf8(&c, utf8Glyph, nullptr);
+		ImFontBaked* baked = ImGui::GetFontBaked();
+		if (c == 0 || !baked)
+			return boxMin;
+		const ImVec4 b = GetGlyphInkBounds(c, baked);
 		const float scale = ImGui::GetFontSize() / baked->Size;
 		const float x = boxMin.x + (boxSize.x - (b.z - b.x) * scale) * 0.5f - b.x * scale;
 		const float y = boxMin.y + (boxSize.y - (b.w - b.y) * scale) * 0.5f - b.y * scale;
@@ -227,11 +235,11 @@ namespace Icons
 	}
 
 	/**
-	 * @brief Button with a leading icon glyph and body-font label.
+	 * @brief Button with a leading or trailing icon glyph and body-font label.
 	 * Icon fonts have no Latin glyphs, so the two faces are drawn separately.
 	 */
 	inline bool LabeledButton(const char* id, GlyphRef glyph, const char* label,
-		const ImVec2& size = ImVec2(0, 0))
+		const ImVec2& size = ImVec2(0, 0), bool trailingIcon = false)
 	{
 		const ImVec2 iconSize = CalcGlyphSize(glyph);
 		const ImVec2 labelSize = label ? ImGui::CalcTextSize(label) : ImVec2(0, 0);
@@ -255,8 +263,9 @@ namespace Icons
 		const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
 
 		if (glyph) {
-			DrawCenteredGlyph(dl, ImVec2(x, min.y), ImVec2(iconSize.x, btnSize.y), glyph, col);
-			x += iconSize.x + gap;
+			DrawCenteredGlyph(dl, ImVec2(x + (trailingIcon ? labelSize.x + gap : 0.0f), min.y), ImVec2(iconSize.x, btnSize.y), glyph, col);
+			if (!trailingIcon)
+				x += iconSize.x + gap;
 		}
 		if (label && label[0])
 			dl->AddText(ImVec2(x, midY - labelSize.y * 0.5f), col, label);

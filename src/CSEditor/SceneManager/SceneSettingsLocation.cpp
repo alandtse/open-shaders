@@ -15,6 +15,19 @@ using namespace SceneSettingsContextRules;
 
 const SceneSettingsManager::LocationSceneConfig SceneSettingsManager::kEmptyLocationConfig{};
 
+namespace
+{
+	void IncludeLocationTargets(std::vector<SceneSettingsManager::LocationTarget>& catalog,
+		const std::vector<SceneSettingsManager::LocationTarget>& targets)
+	{
+		for (const auto& target : targets)
+			if (!std::ranges::any_of(catalog, [&](const auto& existing) {
+					return existing.type == target.type && existing.formKey == target.formKey;
+				}))
+				catalog.push_back(target);
+	}
+}
+
 std::string SceneSettingsManager::GetLocationConfigKey(LocationTargetType type, std::string_view formKey)
 {
 	// The UI asks per control per frame; normalizing parses the form key and depends on nothing else.
@@ -108,6 +121,8 @@ const std::vector<SceneSettingsManager::LocationTarget>& SceneSettingsManager::G
 	cachedTargetLocationId = locationId;
 	cachedTargetCellId = cellId;
 	locationTargetsCached = true;
+	if (cachedLocationCatalog)
+		IncludeLocationTargets(*cachedLocationCatalog, cachedLocationTargets);
 	return cachedLocationTargets;
 }
 
@@ -133,8 +148,11 @@ std::vector<SceneSettingsManager::LocationTarget> SceneSettingsManager::GetAutho
 
 const std::vector<SceneSettingsManager::LocationTarget>& SceneSettingsManager::GetLocationCatalog() const
 {
-	if (!cachedLocationCatalog)
+	if (!cachedLocationCatalog) {
 		cachedLocationCatalog = BuildLocationCatalog();
+		IncludeLocationTargets(*cachedLocationCatalog, GetCurrentLocationTargets());
+		IncludeLocationTargets(*cachedLocationCatalog, GetAuthoredLocationTargets());
+	}
 	return *cachedLocationCatalog;
 }
 
@@ -279,8 +297,7 @@ std::optional<SceneSettingsManager::ResolvedSettingMap> SceneSettingsManager::Bu
 		auto configIt = locationSceneConfigs.find(targetKey);
 		if (targetKey == selectedTargetKey) {
 			targetFound = true;
-			// A user entry sits above the overwrite it shadows, so the overwrite is its lower layer.
-			// A capture deliberately passes the overwrite layer here to resolve beneath it instead.
+			// Resetting a user value can use the applied location preset. Fresh captures exclude that preset.
 			if (selectedSource == EntrySource::User && configIt != locationSceneConfigs.end()) {
 				std::vector<SettingEntry> overwrites;
 				std::ranges::copy_if(configIt->second.entries, std::back_inserter(overwrites),

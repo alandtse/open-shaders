@@ -1,10 +1,13 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Forward-declared so the header doesn't drag in <d3d11.h>. The plugin's PCH
@@ -29,6 +32,13 @@ namespace Util::Subrect
 
 		/** @brief True when this region covers the full frame (no crop). */
 		bool IsFullEye() const { return w >= 0.999f && h >= 0.999f; }
+	};
+
+	/** @brief A 2D point in normalised UV space. */
+	struct UVPoint
+	{
+		float x = 0.0f;
+		float y = 0.0f;
 	};
 
 	/** @brief A sub-region of a texture expressed in absolute pixel coordinates. */
@@ -158,9 +168,34 @@ namespace Util::Subrect
 		// texture must add `fullWidth / 2` to rightEye.x themselves.
 		StereoPixelRegions GetStereoPixelRegions(uint32_t fullWidth, uint32_t fullHeight) const;
 
-		/** @brief Get the current crop region in UV coordinates. */
-		const UVRegion& GetUV() const { return currentUV; }
-		const UVRegion& GetRightEyeUV() const { return stereoEnabled ? currentRightUV : currentUV; }
+		/** @brief Get the current crop region in UV coordinates, including any gaze override. */
+		const UVRegion& GetUV() const { return GazeUV(0); }
+		const UVRegion& GetRightEyeUV() const { return GazeUV(stereoEnabled ? 1 : 0); }
+
+		/** @brief The primary saved crop, ignoring any gaze override; what SaveSettings writes. */
+		const UVRegion& GetSavedUV() const { return currentUV; }
+		const UVRegion& GetSavedRightEyeUV() const { return stereoEnabled ? currentRightUV : currentUV; }
+
+		/**
+		 * @brief Places the saved crop at a held gaze centre without changing the saved crop.
+		 *
+		 * The held centre only follows @p centres when the gaze moved more than
+		 * @p recentreThreshold crop widths/heights; GetUV()/GetRightEyeUV() then report the
+		 * placed region until the override is cleared. Dragging in DrawEditor still wins.
+		 *
+		 * @param centres Per-eye gaze centres in normalised eye UV (y down), or nullopt to clear.
+		 * @param recentreThreshold Movement that triggers a new centre, as a fraction of the crop size.
+		 */
+		void SetGazeCentres(const std::optional<std::array<UVPoint, 2>>& centres, float recentreThreshold);
+
+		/** @brief True while a gaze override decides the reported UVs. */
+		bool IsGazeActive() const { return gazeOverrideActive; }
+
+		/** @brief True once after a recentre, or after gaze activates or deactivates. */
+		bool ConsumeGazeRecentred() { return std::exchange(gazeRecentred, false); }
+
+		/** @brief True once per eye after that eye's gazed region moved, so its upscaler history can reset. */
+		bool ConsumeGazeEyeReset(std::size_t eye) { return eye < gazeEyeReset.size() && std::exchange(gazeEyeReset[eye], false); }
 
 		/** @brief True while the user is actively drag-resizing the crop region. */
 		bool IsDragging() const { return isDraggingCrop; }
@@ -218,6 +253,16 @@ namespace Util::Subrect
 
 		bool isDraggingCrop = false;
 		float dragStartUV[2] = { 0.0f, 0.0f };
+
+		// Gaze override: held centres and the UVs placed from them. The saved crop
+		// (currentUV/currentRightUV) is what SaveSettings and the editor touch.
+		std::array<UVPoint, 2> gazeHeldCentre{};
+		std::array<UVRegion, 2> gazeUV{};
+		bool gazeOverrideActive = false;
+		bool gazeRecentred = false;
+		std::array<bool, 2> gazeEyeReset{};
+
+		const UVRegion& GazeUV(std::size_t eye) const;
 
 		void EnsureDefaultPreset();
 		void ClampCurrentUV();

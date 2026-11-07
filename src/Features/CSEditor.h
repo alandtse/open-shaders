@@ -1,12 +1,12 @@
 #pragma once
 
 #include "Buffer.h"
+#include "Feature.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
-#include "OverlayFeature.h"
 #include "State.h"
 
-struct CSEditor : OverlayFeature
+struct CSEditor : Feature
 {
 public:
 	static CSEditor* GetSingleton()
@@ -22,6 +22,8 @@ public:
 	virtual inline std::string_view GetCategory() const override { return FeatureCategories::kUtility; }
 	virtual bool IsCore() const override { return true; }
 	virtual bool IsInMenu() const override { return false; }
+	/** @copydoc Feature::RegisterUxActions */
+	void RegisterUxActions() override;
 
 	virtual inline std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
@@ -47,12 +49,6 @@ public:
 	static void ToggleEditorWindow();
 
 	void LerpWeather(RE::TESWeather*, RE::TESWeather*, float);
-
-	/**
-	 * Renders the standalone weather details window.
-	 * @param open Pointer to the open/close state owned by the caller.
-	 */
-	void RenderWeatherDetailsWindow(bool* open, bool showSectionHeaders = true);
 
 	/**
 	 * Renders the CS Editor's optional Weather Debug window: custom-settings status, filter
@@ -86,11 +82,6 @@ public:
 	 * @param showInteractiveElements Enables interactive controls when true.
 	 */
 	static void RenderWeatherInformationDisplay(RE::Sky* sky, bool showInteractiveElements = true, bool showSectionHeader = true);
-
-	struct WeatherDetailsWindowSettings
-	{
-		bool Enabled = false;
-	} WeatherDetailsWindow;
 
 	/**
 	 * Gets the appropriate color for a weather type based on its flags.
@@ -145,10 +136,8 @@ public:
 	 * colour-coded text toggles (dim = off, bright = on). Updates the shared filter state.
 	 */
 	static void DrawWeatherFilterChips();
-
-	// Implement OverlayFeature interface
-	void DrawOverlay() override;
-	bool IsOverlayVisible() const override;
+	/** @brief Width of the two-column weather filter grid at the current UI scale. */
+	static float GetWeatherFilterWidth();
 
 	/** @brief Re-resolves form edits after the active preset pack changed, reloading the built widgets it affects. */
 	static void ReloadFormEdits();
@@ -172,7 +161,7 @@ private:
 	static inline std::vector<RE::TESWeather*> s_allWeathers;
 	static inline std::vector<RE::TESWeather*> s_filteredWeathers;
 	static inline int s_selectedWeatherIdx = -1;
-	static inline uint32_t s_weatherFlagFilter = ALL_WEATHER_FLAGS;  // Start with all filters enabled by default (bits 0-6)
+	static inline uint32_t s_weatherFlagFilter = 0;
 	static inline uint32_t s_lastWeatherFlagFilter = UNCLASSIFIED_FLAG;
 	static inline bool s_accelerateWeatherChange = true;
 	static inline float s_accelerationRate = 5.0f;

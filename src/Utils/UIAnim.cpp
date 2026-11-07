@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "Menu.h"
 #include "Menu/ThemeManager.h"
+#include "Utils/ImGuiLayout.h"
 #include "Utils/UI.h"
 #include "Utils/UISurface.h"
 
@@ -217,7 +218,7 @@ namespace Util::Anim
 		ImGuiContext& context = *ImGui::GetCurrentContext();
 		const ImGuiID id = ImGui::GetID(label);
 		// Logarithmic sliders map value to position differently, and the text-entry mode has no grab: leave both to ImGui
-		if (ReducedMotion() || (!isFloat && !isInt) || (flags & ImGuiSliderFlags_Logarithmic) || context.TempInputId == id)
+		if ((!isFloat && !isInt) || (flags & ImGuiSliderFlags_Logarithmic) || context.TempInputId == id)
 			return real(label, dataType, data, min, max, format, flags);
 
 		const auto read = [&](const void* value) {
@@ -304,7 +305,7 @@ namespace Util::Anim
 	{
 		ImGuiWindow* window = ImGui::GetCurrentWindow();
 		const ImGuiContext& context = *ImGui::GetCurrentContext();
-		if (ReducedMotion() || window->SkipItems || (context.CurrentItemFlags & ImGuiItemFlags_MixedValue))
+		if (window->SkipItems || (context.CurrentItemFlags & ImGuiItemFlags_MixedValue))
 			return real(label, value);
 
 		const ImGuiID id = window->GetID(label);
@@ -370,11 +371,17 @@ namespace Util::Anim
 
 		/// The highlight's look: the accent at the NavSelected surface's strength, fainter on hover, darker once selected
 		/// or pressed, with the accent bar fading in on a selected row.
-		void DrawListHighlight(ImDrawList* drawList, const ImVec2& min, const ImVec2& max, float visibility, float selectedness, float press)
+		void DrawListHighlight(ImDrawList* drawList, ImRect bounds, float visibility, float selectedness, float press)
 		{
 			const auto& surface = Surface::Get(Surface::Role::NavSelected);
 			if (!surface.enabled || visibility <= 0.0f)
 				return;
+			// Selectable bounds include half the row spacing, which can extend beyond the list's clip.
+			bounds.ClipWithFull(ImGui::GetCurrentWindow()->InnerClipRect);
+			if (bounds.GetWidth() <= 0.0f || bounds.GetHeight() <= 0.0f)
+				return;
+			const auto& min = bounds.Min;
+			const auto& max = bounds.Max;
 			const ImVec4 accent = Colors::GetAccent();
 			const float darken = (1.0f - (1.0f - Constants::LIST_HIGHLIGHT_SELECTED_DARKEN) * selectedness) *
 			                     (1.0f - (1.0f - Constants::LIST_HIGHLIGHT_PRESS_DARKEN) * press);
@@ -406,7 +413,7 @@ namespace Util::Anim
 	bool GlideSelectable(SelectableFn real, const char* label, bool selected, ImGuiSelectableFlags flags, const ImVec2& size)
 	{
 		ImGuiWindow* window = ImGui::GetCurrentWindow();
-		if (g_noListHighlight > 0 || ReducedMotion() || window->SkipItems)
+		if (g_noListHighlight > 0 || window->SkipItems)
 			return real(label, selected, flags, size);
 
 		const ImGuiID id = window->GetID(label);
@@ -420,18 +427,11 @@ namespace Util::Anim
 		ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32_BLACK_TRANS);
 		const auto& surface = Surface::Get(Surface::Role::NavSelected);
 		const auto& style = ImGui::GetStyle();
-		ImVec2 labelAlign = style.SelectableTextAlign;
+		float textInset = 0.0f;
 		if (window->DC.LayoutType != ImGuiLayoutType_Horizontal && surface.enabled && surface.accentBar && label[0] != '#') {
-			const float labelWidth = ImGui::CalcTextSize(label, nullptr, true).x;
-			const float width = size.x > 0.0f ? size.x : ImGui::GetContentRegionAvail().x;
-			const float room = width - labelWidth;
-			const float padding = std::max(0.0f, surface.accentBarWidth * GetUIScale() + style.ItemInnerSpacing.x - style.ItemSpacing.x * 0.5f);
-			if (room > 0.0f)
-				labelAlign.x = std::min(1.0f, labelAlign.x + padding / room);
+			textInset = std::max(0.0f, surface.accentBarWidth * GetUIScale() + style.ItemInnerSpacing.x - style.ItemSpacing.x * 0.5f);
 		}
-		ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, labelAlign);
-		const bool clicked = real(label, selected, flags, size);
-		ImGui::PopStyleVar();
+		const bool clicked = ImGuiLayout::SelectableWithTextInset(real, label, selected, flags, size, textInset);
 		ImGui::PopStyleColor(3);
 		if (!ImGui::IsItemVisible())
 			return clicked;
@@ -467,7 +467,7 @@ namespace Util::Anim
 		const float selectedness = selectionFresh ? selectedTarget : Smooth(storage->GetFloat(id ^ kSelSalt, selectedTarget), selectedTarget, Constants::ANIM_SELECT_RATE);
 		storage->SetFloat(id ^ kSelSalt, selectedness);
 		if (selectedness > Constants::ANIM_EPSILON)
-			DrawListHighlight(underlay.Background(), rect.Min, rect.Max, selectedness, 1.0f, 0.0f);
+			DrawListHighlight(underlay.Background(), rect, selectedness, 1.0f, 0.0f);
 		if (selected && !disabled) {
 			const float selRel[4] = { rect.Min.x - origin.x, rect.Min.y - origin.y, rect.Max.x - origin.x, rect.Max.y - origin.y };
 			for (ImGuiID n = 0; n < 4; ++n)
@@ -511,7 +511,7 @@ namespace Util::Anim
 			storage->SetFloat(key(kVisSalt), visibility);
 			storage->SetFloat(key(kPressSalt), press);
 			storage->SetInt(key(kLastDrawSalt), frame);
-			DrawListHighlight(underlay.Background(), ImVec2(rel[0] + origin.x, rel[1] + origin.y), ImVec2(rel[2] + origin.x, rel[3] + origin.y),
+			DrawListHighlight(underlay.Background(), ImRect(rel[0] + origin.x, rel[1] + origin.y, rel[2] + origin.x, rel[3] + origin.y),
 				visibility, 0.0f, press);
 		} else if (hoverId == 0 && !drawnThisFrame && lastDraw >= frame - 1) {
 			const float visibility = Smooth(storage->GetFloat(key(kVisSalt), 0.0f), 0.0f, Constants::ANIM_HOVER_RATE);
@@ -521,7 +521,7 @@ namespace Util::Anim
 				storage->SetInt(key(kLastDrawSalt), frame);
 				const ImVec2 min(storage->GetFloat(key(kRectSalt), 0.0f) + origin.x, storage->GetFloat(key(kRectSalt + 1), 0.0f) + origin.y);
 				const ImVec2 max(storage->GetFloat(key(kRectSalt + 2), 0.0f) + origin.x, storage->GetFloat(key(kRectSalt + 3), 0.0f) + origin.y);
-				DrawListHighlight(underlay.Background(), min, max, visibility, 0.0f, storage->GetFloat(key(kPressSalt), 0.0f));
+				DrawListHighlight(underlay.Background(), ImRect(min, max), visibility, 0.0f, storage->GetFloat(key(kPressSalt), 0.0f));
 			}
 		}
 		return clicked;

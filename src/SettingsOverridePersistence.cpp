@@ -72,52 +72,6 @@ const std::vector<SettingsOverrideManager::LegacyPack>& SettingsOverrideManager:
 	return *translatedPacks;
 }
 
-void SettingsOverrideManager::ImportUserSettings(json& settings) const
-{
-	auto state = settings.value(UnifiedPresetCatalog::kUserSettingsKey, json::object());
-	if (!state.is_object())
-		state = json::object();
-	auto names = GetFeatureNames();
-	const auto imported = state.value("legacyUserOverrideFeatures", json::array());
-	if (imported.is_array())
-		std::erase_if(names, [&](const auto& feature) { return std::ranges::find(imported, json(feature.second)) != imported.end(); });
-	json mask = json::object();
-	for (const auto& pack : GetBaselinePacks())
-		for (const auto& [shortName, values] : pack.documents)
-			for (const auto& [registeredShortName, name] : names)
-				if (registeredShortName == shortName) {
-					auto& featureMask = mask[name];
-					if (!featureMask.is_object())
-						featureMask = json::object();
-					featureMask.update(values, true);
-				}
-	const auto read = [&](const std::string& name) -> std::optional<json> {
-		const auto path = Util::PathHelpers::GetUserOverridesPath() / (name + ".user.json");
-		std::error_code error;
-		if (!std::filesystem::exists(path, error) && !error)
-			return std::nullopt;
-		return Util::FileHelpers::ReadJsonObject(path, "legacy personal settings", PresetState::kMaxDocumentBytes);
-	};
-	if (const auto global = read("Global")) {
-		LegacyPreset::ImportPersonalEdits(settings, Util::Settings::SelectSettings(*global, mask), names);
-		if (state.value("legacyBootOverridesImported", json(false)) != true) {
-			json bootMask = json::object();
-			for (const auto& pack : GetBaselinePacks())
-				for (const auto& [name, disabled] : pack.disableAtBoot)
-					bootMask[name] = disabled;
-			if (const auto boot = global->find("Disable at Boot"); boot != global->end() && boot->is_object()) {
-				auto& personal = settings["Disable at Boot"];
-				if (!personal.is_object())
-					personal = json::object();
-				personal.update(Util::Settings::SelectSettings(*boot, bootMask), true);
-			}
-		}
-	}
-	for (const auto& [shortName, name] : names)
-		if (const auto values = read(shortName); values && mask.contains(name))
-			LegacyPreset::ImportPersonalEdits(settings, json{ { name, Util::Settings::SelectSettings(*values, mask[name]) } }, names);
-}
-
 json SettingsOverrideManager::GetPendingEdits(const json& settings) const
 {
 	return Util::Settings::BuildUserOverride(settings, appliedSettings);

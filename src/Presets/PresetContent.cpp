@@ -1,8 +1,30 @@
 #include "PresetContent.h"
 
+#include "Feature.h"
 #include "SettingsOverrideManager.h"
+#include "State.h"
 #include "UnifiedPresetCatalog.h"
 #include "Utils/FileSystem.h"
+
+nlohmann::json PresetContent::EditableValue(const File& file, const std::string& path)
+{
+	const nlohmann::json::json_pointer pointer(path);
+	if (!file.document || !file.document->contains(pointer))
+		return nullptr;
+	const auto& value = file.document->at(pointer);
+	const auto featureName = IsBaselineFile(file.relative) ? Util::PathToUtf8(file.relative.stem()) :
+	                         IsSceneFile(file.relative)    ? SceneFeatureName(file.relative, *file.document) :
+	                                                         std::string{};
+	auto* feature = Feature::FindRegisteredFeatureByShortName(featureName);
+	const auto* defaults = feature && globals::state ? globals::state->GetFeatureDefaults(feature->GetName()) : nullptr;
+	if (defaults && defaults->contains(pointer)) {
+		nlohmann::json normalized{ { "value", defaults->at(pointer) } };
+		const auto result = ReplaceSetting(normalized, "/value", defaults->at(pointer), value);
+		if (result == SettingEditResult::Changed || result == SettingEditResult::Unchanged)
+			return normalized.at("value");
+	}
+	return value;
+}
 
 std::vector<PresetContent::File> PresetContent::List(const std::string& packId)
 {

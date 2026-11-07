@@ -44,6 +44,7 @@
 #include "Features/SkySync.h"
 #include "Features/Skylighting.h"
 #include "Features/SnowCover.h"
+#include "Features/SnowDeformation.h"
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
@@ -314,6 +315,7 @@ namespace
 			&globals::features::exponentialHeightFog,
 			&globals::features::hdrDisplay,
 			&globals::features::snowCover,
+			&globals::features::snowDeformation,
 			&globals::features::skin,
 			&globals::features::reverseZ,
 			&globals::features::postProcessing
@@ -386,6 +388,15 @@ void Feature::ApplyDrawHooks()
 	for (auto* feature : features) {
 		if (feature->loaded)
 			feature->OnDraw();
+	}
+}
+
+void Feature::ApplyPreShadowMapsHooks()
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsPreShadowMapsHook(); });
+	for (auto* feature : features) {
+		if (feature->loaded)
+			feature->PreShadowMaps();
 	}
 }
 
@@ -558,6 +569,33 @@ bool Feature::ToggleAtBootSetting()
 bool Feature::ReapplyOverrideSettings()
 {
 	return globals::state->ClearFeatureEditsUnderBaselines(this);
+}
+
+json Feature::SelectCurrentPageSettings(const json& settings) const
+{
+	if (!HasScopedDefaultSettings())
+		return settings;
+	json selected = json::object();
+	for (const auto& key : GetCurrentPageSettingKeys())
+		if (const auto value = settings.find(key); value != settings.end())
+			selected[key] = *value;
+	return selected;
+}
+
+bool Feature::RestoreCurrentPageSavedSettings()
+{
+	return globals::state->RestoreSavedFeatureSettings(this, true);
+}
+
+bool Feature::ReapplyCurrentPageOverrideSettings()
+{
+	if (!HasScopedOverrideSettings())
+		return ReapplyOverrideSettings();
+	const auto keys = GetCurrentPageSettingKeys();
+	if (keys.empty())
+		return false;
+	const std::vector<std::string_view> views(keys.begin(), keys.end());
+	return ReapplyOverrideSettingsForKeys(views);
 }
 
 bool Feature::ReapplyOverrideSettingsForKeys(std::span<const std::string_view> settingKeys)

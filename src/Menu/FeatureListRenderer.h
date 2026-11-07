@@ -35,13 +35,14 @@ namespace MenuPageIds
  */
 namespace FeatureListFilter
 {
-	inline constexpr std::uint32_t kFavorites = 1u << 0;   ///< Pinned features
-	inline constexpr std::uint32_t kModified = 1u << 1;    ///< Settings differ from defaults and Baseline presets
-	inline constexpr std::uint32_t kScene = 1u << 2;       ///< Has Scene Manager settings
-	inline constexpr std::uint32_t kPreRelease = 1u << 3;  ///< Alpha or beta
-	inline constexpr std::uint32_t kUnloaded = 1u << 4;    ///< Not loaded: missing, failed, or disabled at boot
+	inline constexpr std::uint32_t kFavorites = 1u << 0;      ///< Pinned features
+	inline constexpr std::uint32_t kModified = 1u << 1;       ///< Settings differ from defaults and Baseline presets
+	inline constexpr std::uint32_t kScene = 1u << 2;          ///< Has Scene Manager settings
+	inline constexpr std::uint32_t kPreRelease = 1u << 3;     ///< Alpha or beta
+	inline constexpr std::uint32_t kUnloaded = 1u << 4;       ///< Not loaded: missing, failed, or disabled at boot
+	inline constexpr std::uint32_t kSceneEditable = 1u << 5;  ///< Can open the feature's Scene Manager toolbar
 	/// Every filter; a saved mask is cut to these bits.
-	inline constexpr std::uint32_t kKnown = kFavorites | kModified | kScene | kPreRelease | kUnloaded;
+	inline constexpr std::uint32_t kKnown = kFavorites | kModified | kScene | kPreRelease | kUnloaded | kSceneEditable;
 }
 
 /**
@@ -130,7 +131,7 @@ public:
 	static std::string TranslateCategory(std::string_view category);
 
 private:
-	static void RenderBuiltInRow(const BuiltInMenu& menu, size_t listId, size_t& selectedMenu, float width = 0.0f);
+	static void RenderBuiltInRow(const BuiltInMenu& menu, size_t listId, size_t& selectedMenu, float width = 0.0f, bool compact = false);
 	struct ListMenuVisitor
 	{
 		size_t listId;

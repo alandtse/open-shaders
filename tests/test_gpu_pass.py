@@ -80,6 +80,24 @@ int main() {
         source = source.replace("DYNAMIC_MACRO", header[header.index("#define CS_GPU_PASS_DYNAMIC"):])
         runtime.SceneSettingsRuntimeTests.compile_and_run(self, source)
 
+    def test_dynamic_passes_are_limited_to_names_built_at_run_time(self):
+        # CS_GPU_PASS_DYNAMIC allocates on every call. A fixed set of names belongs in
+        # CS_GPU_PASS, CS_GPU_PASS_SELECT or CS_GPU_PASS_INDEXED; only add a file here when its
+        # pass names depend on data that exists at run time, such as an effect or preset name.
+        allowed = {
+            "src/Features/Effects11.cpp": 2,
+            "src/Features/Effects11/EffectManager.cpp": 1,
+            "src/Features/Effects11/Effects/Effect.cpp": 1,
+        }
+        found = {}
+        for path in sorted((ROOT / "src").rglob("*")):
+            if path.suffix not in {".cpp", ".h"} or path.name == "GpuPass.h":
+                continue
+            count = path.read_text(encoding="utf-8", errors="replace").count("CS_GPU_PASS_DYNAMIC(")
+            if count:
+                found[path.relative_to(ROOT).as_posix()] = count
+        self.assertEqual(found, allowed)
+
 
 if __name__ == "__main__":
     unittest.main()

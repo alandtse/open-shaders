@@ -79,6 +79,7 @@ namespace ShadowCasterManager
 	std::unique_ptr<FormulaHelper> s_formulaRedrawBudget;
 
 	std::vector<ConvertedLight> s_normalConvert;
+	std::shared_mutex s_normalConvertMutex;
 	std::set<RE::NiLight*> s_shadowConvert;
 	std::set<RE::NiLight*> s_shadowConvertDescriptorInited;
 	std::mutex s_shadowConvertMutex;
@@ -403,7 +404,10 @@ namespace ShadowCasterManager
 		// ConvertLight -> GameEnableLight pinning, but the engine function
 		// takes NiLight* (not BSLight* as the wrapper assumed); the call
 		// was a silent no-op on every runtime and accomplished nothing.
-		s_normalConvert.clear();
+		{
+			std::unique_lock lock(s_normalConvertMutex);
+			s_normalConvert.clear();
+		}
 		// Promotion tracking is NOT wiped here: this reset is deferred to the render thread
 		// and can drain after the game thread promotes the new cell's lights, wiping live
 		// entries. ScheduleShadowCasters reconciles stale entries per-frame instead.
@@ -497,20 +501,32 @@ namespace ShadowCasterManager
 		return std::clamp(elapsedSeconds / kShadowFadeInSeconds, 0.0f, 1.0f);
 	}
 
+	void SnapshotConvertedLights(std::vector<RE::NiPointer<RE::BSShadowLight>>& out)
+	{
+		std::shared_lock lock(s_normalConvertMutex);
+		out.clear();
+		out.reserve(s_normalConvert.size());
+		for (const auto& c : s_normalConvert) {
+			// A freed and zeroed light must not be ref-counted: the write would land in freed memory.
+			if (c.light && *reinterpret_cast<const uintptr_t*>(c.light) != 0)
+				out.emplace_back(c.light);
+		}
+	}
+
+	std::size_t ConvertedLightCount()
+	{
+		std::shared_lock lock(s_normalConvertMutex);
+		return s_normalConvert.size();
+	}
+
 	void ForEachConvertedLight(const std::function<void(RE::BSShadowLight*)>& visitor)
 	{
-		for (auto& c : s_normalConvert) {
-			if (!c.light)
-				continue;
-			// Defensive vtable check: catches lights freed and zeroed by
-			// tbbmalloc / EngineFixes between our per-frame reconciliation
-			// in ScheduleShadowCasters and the cluster builder running. The
-			// reconciliation prunes stale pointers up-front, but a bulk
-			// engine teardown could still happen mid-frame.
-			if (*reinterpret_cast<const uintptr_t*>(c.light) == 0)
-				continue;
-			visitor(c.light);
-		}
+		// The snapshot's vtable check catches lights freed and zeroed by tbbmalloc / EngineFixes
+		// between per-frame reconciliation and the cluster builder; its references keep the rest alive.
+		std::vector<RE::NiPointer<RE::BSShadowLight>> lights;
+		SnapshotConvertedLights(lights);
+		for (auto& light : lights)
+			visitor(light.get());
 	}
 
 	// =========================================================================

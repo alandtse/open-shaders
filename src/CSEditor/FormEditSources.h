@@ -3,10 +3,13 @@
 #include <filesystem>
 #include <functional>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "Presets/PresetContent.h"
 
 namespace FormEditSources
 {
@@ -37,6 +40,8 @@ namespace FormEditSources
 	FormKeySet GetEffectiveKeys();
 	/** @brief Reads effective form edits, rejecting unreadable sources. */
 	bool ReadEffectiveFormEdits(std::vector<FormEdit>& out);
+	/** @brief Copies selected preset record values to personal files, rolling back failed writes or loads. */
+	std::optional<Util::Settings::SettingsCopy> CopyPresetSettings(const std::string& packId, const PresetContent::Selection& selection, bool replaceExisting);
 
 	/** @brief Preserves editor history when a preset source transaction rolls back. */
 	class ReloadHistoryGuard
@@ -61,6 +66,8 @@ namespace FormEditSources
 	FormKeySet ScanKeys(const std::filesystem::path& root);
 	/** @brief Uses the personal document first, then the active pack's document. */
 	std::filesystem::path ResolveFile(const FormKey& key);
+	/** @brief Resolves a record from enabled presets without personal-file precedence. */
+	std::filesystem::path ResolvePackFile(const FormKey& key);
 	/** @brief Returns the active pack's cached form keys. */
 	const FormKeySet& GetPackFormKeys();
 	/** @brief Rescans the active pack and returns both previous and current form keys. */

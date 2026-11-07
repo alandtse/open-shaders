@@ -59,12 +59,18 @@ namespace FoveatedRenderImpl
 		// Detect UV/mode change → destroy DLSS resources so SL recreates them at
 		// the new size. Both eye UVs feed the hash; asymmetric presets (e.g.
 		// Nasal Convergence) can change rightUV while leftUV stays put.
-		uint64_t uvHash = ComputeSubrectUVHash(p.leftUV, p.rightUV, (uint32_t)p.mode);
+		const auto& subrect = globals::features::upscaling.foveatedRender.subrectController;
+		uint64_t uvHash = ComputeSubrectUVHash(subrect.GetSavedUV(), subrect.GetSavedRightEyeUV(), (uint32_t)p.mode);
 		if (uvHash != Core::activeSubrectUVHash) {
 			logger::info("[FOVEATED] Subrect UV or mode changed, recreating DLSS resources");
 			streamline.DestroyDLSSResources();
 			Core::activeSubrectUVHash = uvHash;
 		}
+
+		// A recentre moves the whole subrect, so the accumulated periphery history
+		// no longer matches it; reseed it from this frame's snapshot.
+		if (globals::features::upscaling.foveatedRender.ConsumeGazeRecentred())
+			Core::vrTemporalHistoryValid = false;
 
 		// UINT32_MAX + 1 wraps to 0, so the sentinel also forces a reseed on first use.
 		if (Core::lastRouteFrame + 1 != globals::state->frameCount)

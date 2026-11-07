@@ -19,6 +19,8 @@ namespace SceneSettingsUI
 	bool CanEditFeaturePage(Feature* feature);
 	bool BeginFeaturePageEditing(Feature* feature);
 	bool IsFeaturePageEditing(Feature* feature);
+	/** @brief Keeps the toolbar selection while discarding unsaved previews on navigation. */
+	void UpdateFeaturePage(Feature* feature);
 	void HideFeaturePageEditing();
 	/** @brief Describes the explicit-save requirement when a retained draft blocks a reload. */
 	const char* PendingContextEditMessage();

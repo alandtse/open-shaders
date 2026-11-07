@@ -65,6 +65,7 @@ add_executable(
     test_dynamicnearclip.cpp
     test_camera_reprojection.cpp
     test_subrect.cpp
+    test_gaze_math.cpp
     test_perfutils.cpp
     test_restartsettings.cpp
     test_sphericalharmonics.cpp
@@ -73,6 +74,7 @@ add_executable(
     test_isl_radiusmath.cpp
     test_shadowcaster_math.cpp
     test_lodshadow_update_budget.cpp
+    test_gpupassnames.cpp
     test_atlas_allocator.cpp
     test_mathutils.cpp
     test_snowcover_math.cpp
@@ -124,6 +126,8 @@ add_executable(
     test_region_overlay.cpp
     test_tablabel.cpp
     test_imguilayout.cpp
+    test_control_value.cpp
+    test_vr_helper_combo.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
     i18n_stub.cpp

@@ -1486,7 +1486,7 @@ void SettingsTabRenderer::RenderStylingSection()
 					T("menu.settings.color_button_right", "Right")
 				};
 				int colorButtonPos = (int)style.ColorButtonPosition;
-				if (ImGui::Combo(T("menu.settings.color_button_position", "ColorButtonPosition"), &colorButtonPos, colorButtonPositions, IM_ARRAYSIZE(colorButtonPositions))) {
+				if (Util::Combo(T("menu.settings.color_button_position", "ColorButtonPosition"), &colorButtonPos, colorButtonPositions)) {
 					style.ColorButtonPosition = static_cast<ImGuiDir>(colorButtonPos);
 				}
 			}

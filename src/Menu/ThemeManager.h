@@ -402,7 +402,11 @@ public:
 		static constexpr float REVEAL_OUTLINE_PADDING = 3.0f;       // Reveal outline margin around the control
 
 		// Home dashboard (sizes are 1080p baseline, scaled by Util::GetUIScale())
-		static constexpr float HOME_TWO_COLUMN_MIN_CHARS = 60.0f;                           // Content width, in average character widths, for two card columns
+		static constexpr float HOME_CARD_MIN_WIDTH_EM = 16.0f;
+		static constexpr float HOME_GRAPH_LINES = 3.0f;
+		static constexpr float HOME_CARD_HEIGHT_FRAMES = 7.0f;
+		static constexpr float HOME_PROFILE_REFRESH_SECONDS = 0.5f;
+		static constexpr float HOME_STATUS_TEXT_OFFSET_PIXELS = 1.0f;
 		static constexpr float HOME_CARD_ACTION_GAP = 4.0f;                                 // Extra gap above a card's action buttons
 		static constexpr float HOME_PRESET_THUMB_SIZE = 64.0f;                              // Active preset thumbnail edge
 		static constexpr float HOME_DISCORD_BANNER_MAX_HEIGHT = 110.0f;                     // Discord banner height cap; its width follows the aspect ratio

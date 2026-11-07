@@ -64,21 +64,4 @@ namespace LegacyPreset
 		return result;
 	}
 
-	/** @brief Imports companion edits as personal settings above the preset layer. */
-	inline void ImportPersonalEdits(nlohmann::json& settings, const nlohmann::json& edits,
-		std::span<const FeatureNames> features)
-	{
-		if (!edits.is_object())
-			return;
-		for (const auto& [_, name] : features) {
-			const auto values = edits.find(name);
-			if (values == edits.end() || !values->is_object() || values->empty())
-				continue;
-			auto& personal = settings[name];
-			if (!personal.is_object())
-				personal = nlohmann::json::object();
-			personal.update(*values, true);
-			PresetState::MarkNormalizedFeatureEdits(settings["Presets"], name);
-		}
-	}
 }

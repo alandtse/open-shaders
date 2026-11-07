@@ -107,12 +107,8 @@ void Wind::DrawWindFieldSettings()
 		ImGui::TextUnformatted(T(TKEY("wind_field_transition_duration_tooltip"),
 			"A direction change creates a new, fixed-orientation noise field and lerps the old field into it over this period."));
 	static constexpr const char* debugViewLabels[]{ "Blended Output", "Current Field", "Previous Field", "Both Fields", "Comparison", "Spring Field", "Transient Impulses" };
-	int debugView = static_cast<int>(runtimeState.windFieldDebugView);
-	if (ImGui::Combo(T(TKEY("wind_field_debug_view"), "Wind Debug View"), &debugView, debugViewLabels,
-			static_cast<int>(std::size(debugViewLabels)))) {
-		runtimeState.windFieldDebugView = static_cast<WindFieldDebugView>(debugView);
+	if (Util::Combo(T(TKEY("wind_field_debug_view"), "Wind Debug View"), &runtimeState.windFieldDebugView, debugViewLabels))
 		runtimeState.visualizeWindField = true;
-	}
 	ImGui::SeparatorText(T(TKEY("wind_field_live_values"), "Wind Field Live Values"));
 	const auto* sky = globals::game::sky;
 	const auto* weather = sky ? sky->currentWeather : nullptr;
@@ -887,16 +883,8 @@ void Wind::DrawGrassWindSettings()
 	};
 	for (uint32_t index = 0; index < kGrassWindSpringQualityRangeCount; ++index) {
 		ImGui::SeparatorText(kGrassWindSpringQualityRangeNames[index].data());
-		int textureSizeIndex = 0;
-		for (std::size_t option = 0; option < kGrassWindSpringTextureSizes.size(); ++option) {
-			if (settings.grassWindSpringQuality[index].textureSize == kGrassWindSpringTextureSizes[option]) {
-				textureSizeIndex = static_cast<int>(option);
-				break;
-			}
-		}
-		if (ImGui::Combo(T(textureSizeKeys[index], textureSizeDefaults[index]), &textureSizeIndex,
-				textureSizeLabels, static_cast<int>(std::size(textureSizeLabels))))
-			settings.grassWindSpringQuality[index].textureSize = kGrassWindSpringTextureSizes[textureSizeIndex];
+		Util::Combo(T(textureSizeKeys[index], textureSizeDefaults[index]),
+			&settings.grassWindSpringQuality[index].textureSize, textureSizeLabels, kGrassWindSpringTextureSizes);
 		ImGui::SliderFloat(T(distanceKeys[index], distanceDefaults[index]),
 			&settings.grassWindSpringQuality[index].maxDistance, kGrassWindSpringDistanceMin,
 			kGrassWindSpringDistanceMax, "%.0f units", ImGuiSliderFlags_AlwaysClamp);

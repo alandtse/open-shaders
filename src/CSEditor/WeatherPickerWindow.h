@@ -12,11 +12,9 @@ public:
 	/** @brief Draw the floating weather picker (anchored above the palette until moved). */
 	void Draw();
 	/** @brief Picker body: weather combo, lock and transition controls. */
-	void DrawContents();
-	/** @brief Persist picker state to the editor settings. */
-	void Save();
-	/** @brief Load picker state from the editor settings. */
-	void Load();
+	void DrawContents(bool expanded = false);
+	/** @brief Draw the shared weather list and filter buttons within the supplied bounds. */
+	static void DrawSelection(float width, float height, bool fullWidthSearch = false);
 
 	bool open = true;
 };

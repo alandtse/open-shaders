@@ -1,10 +1,13 @@
 #include "Game.h"
 
 #include <atomic>
+#include <cctype>
 #include <limits>
 #include <mutex>
+#include <unordered_map>
 
 #include "Features/SkySync.h"
+#include "Form.h"
 #include "Globals.h"
 #include "State.h"
 #include "StringUtils.h"
@@ -1197,4 +1200,78 @@ RE::NiPoint3 Util::GetMoonDirection(const RE::Moon* moon)
 	if (direction.Unitize() <= FLT_EPSILON)
 		return { 0.0f, 0.0f, 1.0f };
 	return direction;
+}
+
+namespace Util::SceneTravel
+{
+	namespace
+	{
+		std::unordered_map<RE::FormID, std::string> locationCellCommands;
+	}
+
+	void CacheLocationDestinations()
+	{
+		locationCellCommands.clear();
+		auto cells = Util::GetLoadedCells();
+		std::ranges::sort(cells, [](const auto* left, const auto* right) {
+			return std::pair{ left->IsInteriorCell(), left->GetFormID() } <
+			       std::pair{ right->IsInteriorCell(), right->GetFormID() };
+		});
+		for (auto* cell : cells)
+			if (const auto* location = cell->GetLocation())
+				if (auto command = GetCommand(cell))
+					locationCellCommands.try_emplace(location->GetFormID(), std::move(*command));
+	}
+
+	std::optional<std::string> GetCommand(RE::TESForm* destination, std::string_view cellEditorId)
+	{
+		const auto isIdentifier = [](std::string_view value) {
+			return !value.empty() && std::ranges::all_of(value, [](unsigned char character) {
+				return std::isalnum(character) != 0 || character == '_';
+			});
+		};
+		auto* location = destination ? destination->As<RE::BGSLocation>() : nullptr;
+		if (location) {
+			const auto marker = location->worldLocMarker ? location->worldLocMarker.get() : nullptr;
+			if (marker && marker->GetFormID() != 0 && marker->GetParentCell())
+				return std::format("player.moveto {:08X}", marker->GetFormID());
+		}
+		if (isIdentifier(cellEditorId))
+			return std::format("coc {}", cellEditorId);
+		if (!destination)
+			return std::nullopt;
+		if (location) {
+			const auto fallback = locationCellCommands.find(location->GetFormID());
+			return fallback != locationCellCommands.end() ? std::optional{ fallback->second } : std::nullopt;
+		}
+		if (auto* cell = destination->As<RE::TESObjectCELL>()) {
+			const auto editorId = Util::GetFormEditorID(cell);
+			if (isIdentifier(editorId))
+				return std::format("coc {}", editorId);
+			if (cell->IsExteriorCell()) {
+				const auto* coordinates = cell->GetCoordinates();
+				const auto worldspaceId = Util::GetFormEditorID(cell->GetRuntimeData().worldSpace);
+				if (coordinates && isIdentifier(worldspaceId))
+					return std::format("cow {} {} {}", worldspaceId, coordinates->cellX, coordinates->cellY);
+			}
+		}
+		if (auto* worldspace = destination->As<RE::TESWorldSpace>()) {
+			const auto editorId = Util::GetFormEditorID(worldspace);
+			if (isIdentifier(editorId))
+				return std::format("cow {} {} {}", editorId, worldspace->fixedCenter.x, worldspace->fixedCenter.y);
+		}
+		return std::nullopt;
+	}
+
+	bool Go(RE::TESForm* destination, std::string_view cellEditorId)
+	{
+		if (!globals::game::player || !globals::game::player->parentCell || !globals::state ||
+			globals::state->IsMainOrLoadingMenuOpen(globals::game::ui))
+			return false;
+		const auto command = GetCommand(destination, cellEditorId);
+		if (!command)
+			return false;
+		SKSE::GetTaskInterface()->AddTask([command = *command] { RE::Console::ExecuteCommand(command.c_str()); });
+		return true;
+	}
 }

@@ -494,9 +494,14 @@ json UnifiedPresetCatalog::SerializeActiveState() const
 	return state;
 }
 
+void UnifiedPresetCatalog::SetBaseSettingsCustomizations(const json& state)
+{
+	preservedState[PresetState::kBaseSettingsCustomizationsKey] = state;
+}
+
 bool UnifiedPresetCatalog::SaveActiveState() const
 {
-	// Only this section is written now; the rest of the user config waits for Save Settings.
+	// Save preset choices and invalidated customizations without saving unrelated live edits.
 	const auto path = Util::PathHelpers::GetSettingsUserPath();
 	std::error_code ec;
 	auto document = std::filesystem::exists(path, ec) ? Util::FileHelpers::ReadJsonObject(path, "user config") :
@@ -508,6 +513,7 @@ bool UnifiedPresetCatalog::SaveActiveState() const
 	const auto previousDocument = *document;
 	try {
 		(*document)[kUserSettingsKey] = SerializeActiveState();
+		globals::state->PreparePresetSettingsSave(*document);
 		if (!Util::FileHelpers::WriteJsonAtomically(path, *document, kUserSettingsIndent, "user config")) {
 			logger::warn("[Presets] Failed to save active pack state to {}", Util::PathHelpers::ToUtf8(path));
 			return false;
@@ -520,6 +526,7 @@ bool UnifiedPresetCatalog::SaveActiveState() const
 		Util::FileHelpers::WriteJsonAtomically(path, previousDocument, kUserSettingsIndent, "preset state rollback");
 		return false;
 	}
+	globals::state->MarkPresetSettingsSaved(*document);
 	// Left behind, the old file would come back as the state the next time the user config goes missing.
 	std::filesystem::remove(Util::PathHelpers::GetUnifiedPresetsRealPath() / kLegacyActiveStateFileName, ec);
 	++revision;
@@ -697,7 +704,7 @@ void UnifiedPresetCatalog::DiscoverLegacyScenes()
 	}
 }
 
-void UnifiedPresetCatalog::DiscoverSceneActivation()
+void UnifiedPresetCatalog::DiscoverSceneActivation(bool automatic)
 {
 	sceneFootprints.clear();
 	std::vector<PresetActivation::Candidate> candidates;
@@ -736,14 +743,14 @@ void UnifiedPresetCatalog::DiscoverSceneActivation()
 	const auto previous = SerializeActiveState();
 	const auto disabled = PresetState::ReadIds(preservedState, "disabledScenePackIds");
 	auto known = PresetState::ReadIds(preservedState, "knownScenePackIds");
-	const auto selection = PresetActivation::Select(candidates, enabledScenePackIds, disabled, known, GetAutomaticPresets());
+	const auto selection = PresetActivation::Select(candidates, enabledScenePackIds, disabled, known, automatic);
 	for (const auto& id : enabledScenePackIds)
 		if (std::ranges::find(selection.enabled, id) == selection.enabled.end())
 			std::erase(baselinePackIds, id);
 	enabledScenePackIds = selection.enabled;
 	if (!IsScenePackEnabled(activePackId))
 		activePackId = enabledScenePackIds.empty() ? std::string{} : enabledScenePackIds.front();
-	if (GetAutomaticPresets())
+	if (automatic)
 		for (const auto& candidate : candidates)
 			if (std::ranges::find(known, candidate.id) == known.end())
 				known.push_back(candidate.id);
@@ -760,12 +767,14 @@ void UnifiedPresetCatalog::DiscoverSceneActivation()
 		LoadActiveState(json{ { kUserSettingsKey, previous } });
 }
 
-void UnifiedPresetCatalog::Discover()
+void UnifiedPresetCatalog::Discover(bool allowAutomaticActivation)
 {
+	const auto previousActiveId = activePackId;
 	ReleaseAllArtwork();
 	packs.clear();
 	Util::FileHelpers::EnsureDirectoryExists(Util::PathHelpers::GetUnifiedPresetsRealPath());
 	LoadActiveState();
+	const bool automatic = allowAutomaticActivation && GetAutomaticPresets();
 
 	// Before the scan, so the packs it creates are listed by it.
 	for (auto* provider : GetProviders())
@@ -793,7 +802,7 @@ void UnifiedPresetCatalog::Discover()
 	for (const auto& id : discoveredBaselines)
 		if (const auto* pack = FindPack(id); pack && pack->valid && pack->IsBaseline() && !pack->IsCS() && !pack->IsE11())
 			automaticBaselines.push_back(id);
-	const auto automaticState = PresetState::DiscoverBaselines(SerializeActiveState(), automaticBaselines, GetAutomaticPresets());
+	const auto automaticState = PresetState::DiscoverBaselines(SerializeActiveState(), automaticBaselines, automatic);
 	if (automaticState != SerializeActiveState()) {
 		const auto previousState = SerializeActiveState();
 		LoadActiveState(json{ { kUserSettingsKey, automaticState } });
@@ -801,7 +810,7 @@ void UnifiedPresetCatalog::Discover()
 			LoadActiveState(json{ { kUserSettingsKey, previousState } });
 	}
 
-	DiscoverSceneActivation();
+	DiscoverSceneActivation(automatic);
 	const auto previousOrder = baselinePackOrder;
 	baselinePackOrder = PresetState::RetainBaselineOrder(previousOrder, baselinePackIds, discoveredBaselines,
 		preservedState.value("baseSettingsOrderCustomized", json(false)) == true);
@@ -809,10 +818,10 @@ void UnifiedPresetCatalog::Discover()
 		baselinePackOrder = previousOrder;
 
 	// With nothing saved, the Legacy install still runs by default; show it as the active pack without persisting.
-	if (GetAutomaticPresets() && activePackId.empty() && !activePipeline) {
+	if ((automatic || (!allowAutomaticActivation && !previousActiveId.empty())) && activePackId.empty() && !activePipeline) {
 		for (auto* provider : GetProviders()) {
 			const auto id = provider->GetDefaultActivePackId();
-			if (!id.empty() && FindPack(id)) {
+			if (!id.empty() && FindPack(id) && (automatic || (!allowAutomaticActivation && id == previousActiveId))) {
 				activePackId = id;
 				enabledScenePackIds.push_back(id);
 				break;
@@ -827,9 +836,9 @@ void UnifiedPresetCatalog::Discover()
 	logger::info("[Presets] Discovered {} pack(s); active='{}'", packs.size(), activePackId.empty() ? "(none)" : activePackId);
 }
 
-bool UnifiedPresetCatalog::Refresh()
+bool UnifiedPresetCatalog::Refresh(bool allowAutomaticActivation)
 {
-	return ApplyChange([&] { Discover(); return true; });
+	return ApplyChange([&] { Discover(allowAutomaticActivation); return true; });
 }
 
 std::vector<size_t> UnifiedPresetCatalog::Query(std::optional<PresetType> typeFilter, const std::string& search) const
@@ -852,6 +861,20 @@ std::vector<size_t> UnifiedPresetCatalog::Query(std::optional<PresetType> typeFi
 
 		indices.push_back(i);
 	}
+	std::unordered_map<std::string, size_t> priority;
+	for (size_t index = 0; index < baselinePackOrder.size(); ++index)
+		priority[baselinePackOrder[index]] = index + 1;
+	std::ranges::stable_sort(indices, [&](size_t first, size_t second) {
+		const auto& a = packs[first];
+		const auto& b = packs[second];
+		const auto group = [](const auto& pack) { return pack.hasBaseline ? 2 : pack.IsE11() ? 0 :
+			                                                                                   1; };
+		if (group(a) != group(b))
+			return group(a) < group(b);
+		const auto aPriority = priority.contains(a.id) ? priority.at(a.id) : 0;
+		const auto bPriority = priority.contains(b.id) ? priority.at(b.id) : 0;
+		return aPriority > bPriority;
+	});
 	return indices;
 }
 
@@ -976,7 +999,9 @@ try {
 	}
 	if (!FormEditSources::CanChangePacks())
 		return false;
+	const auto pausedEntries = SceneSettingsManager::GetSingleton()->CapturePresetPauses();
 	const json previousState{ { kUserSettingsKey, SerializeActiveState() } };
+	const auto previousPipelineRevision = pipelineRevision;
 	json previousSettings;
 	globals::state->SaveToJson(previousSettings);
 	const auto previousMode = PostProcessingMode::Get();
@@ -989,10 +1014,12 @@ try {
 		if (change()) {
 			BaselineManager::GetSingleton()->Refresh();
 			if (globals::state->ReapplyPresetLayers()) {
-				SceneSettingsManager::GetSingleton()->ReloadOverwrites();
+				SceneSettingsManager::GetSingleton()->ReloadOverwrites(pausedEntries);
 				if (FormEditSources::ReloadActivePack() && SaveActiveState()) {
 					history.Commit();
-					globals::state->CheckSettingsChanged();
+					globals::state->CheckSettingsChanged(pipelineRevision != previousPipelineRevision ?
+															 PostProcessingMode::PresetSelectionFields() :
+															 json::object());
 					return true;
 				}
 			}
@@ -1019,9 +1046,9 @@ try {
 	for (const auto& [provider, selected] : previousPayloads)
 		restore("payload", [&] { return provider->Apply(selected, false); });
 	restore("baseline settings", [&] { BaselineManager::GetSingleton()->Refresh(); return globals::state->ReapplyPresetLayers(); });
-	restore("pipeline", [&] { return PostProcessingMode::Set(previousMode); });
+	restore("pipeline", [&] { return PostProcessingMode::Set(previousMode, false); });
 	restore("live settings", [&] { globals::state->LoadFromJson(previousSettings); return true; });
-	restore("scene settings", [] { SceneSettingsManager::GetSingleton()->ReloadOverwrites(); return true; });
+	restore("scene settings", [&] { SceneSettingsManager::GetSingleton()->ReloadOverwrites(pausedEntries); return true; });
 	restore("form sources", [] { return FormEditSources::ReloadActivePack(); });
 	globals::state->CheckSettingsChanged();
 	return false;
@@ -1112,6 +1139,116 @@ bool UnifiedPresetCatalog::DeactivatePack(const std::string& id)
 	return true;
 }
 
+PresetContent::SettingEditResult UnifiedPresetCatalog::EditPackSetting(const std::string& id, const std::filesystem::path& relative,
+	const std::string& path, const json& expected, const json& value)
+{
+	const std::array edits{ PresetContent::SettingEdit{ id, relative, path, expected, value } };
+	return EditPackSettings(edits);
+}
+
+PresetContent::SettingEditResult UnifiedPresetCatalog::EditPackSettings(std::span<const PresetContent::SettingEdit> edits,
+	std::span<const std::string> confirmedConflicts, std::vector<std::string>* foundConflicts, bool previewOnly)
+try {
+	using Result = PresetContent::SettingEditResult;
+	if (SceneSettingsManager::GetSingleton()->HasPendingContextEdit())
+		return Result::Blocked;
+	struct Document
+	{
+		json original;
+		json replacement;
+		bool written = false;
+	};
+	std::map<std::filesystem::path, Document> documents;
+	std::map<std::string, std::vector<PresetContent::File>> packFiles;
+	std::map<std::pair<std::string, std::filesystem::path>, const Document*> changedSceneFiles;
+	for (const auto& edit : edits) {
+		const auto* pack = FindPack(edit.packId);
+		if (!pack)
+			return Result::Missing;
+		auto [files, inserted] = packFiles.try_emplace(edit.packId);
+		if (inserted)
+			files->second = PresetContent::List(edit.packId);
+		const auto file = std::ranges::find(files->second, edit.relative, &PresetContent::File::relative);
+		if (file == files->second.end())
+			return Result::Missing;
+		const auto physical = Util::FileHelpers::ResolveExistingFile(file->source);
+		if (physical.empty())
+			return Result::Failed;
+		auto [document, loaded] = documents.try_emplace(physical);
+		if (loaded) {
+			const auto original = Util::FileHelpers::ReadJsonObject(physical, "preset file", PresetState::kMaxDocumentBytes);
+			if (!original)
+				return Result::Failed;
+			document->second.original = *original;
+			document->second.replacement = *original;
+		}
+		std::string actualPath = edit.path;
+		if (pack->source == SourceKind::LegacyBaseline && edit.packId.starts_with("Legacy (Global) - ")) {
+			auto* feature = Feature::FindRegisteredFeatureByShortName(Util::PathHelpers::ToUtf8(edit.relative.stem()));
+			if (!feature)
+				return Result::Missing;
+			json::json_pointer root;
+			root /= feature->GetName();
+			actualPath = root.to_string() + edit.path;
+		}
+		const auto prototype = PresetContent::EditableValue(*file, edit.path);
+		const auto result = PresetContent::ReplaceSetting(document->second.replacement, actualPath, edit.expected, edit.value, &prototype);
+		if (result != Result::Changed && result != Result::Unchanged)
+			return result;
+		if (IsScenePackEnabled(edit.packId))
+			changedSceneFiles.try_emplace({ edit.packId, edit.relative }, &document->second);
+	}
+	std::vector<std::string> conflicts;
+	for (const auto& [source, document] : changedSceneFiles) {
+		if (document->original == document->replacement)
+			continue;
+		const auto& [id, relative] = source;
+		const auto footprint = PresetContent::Describe(relative, document->replacement);
+		for (const auto& other : enabledScenePackIds) {
+			const auto found = sceneFootprints.find(other);
+			if (other == id || found == sceneFootprints.end() || !PresetActivation::Conflicts(footprint, found->second))
+				continue;
+			if (packFiles.contains(other))
+				return Result::Conflict;
+			if (std::ranges::find(conflicts, other) == conflicts.end())
+				conflicts.push_back(other);
+		}
+	}
+	if (foundConflicts)
+		*foundConflicts = conflicts;
+	if (!std::ranges::all_of(conflicts, [&](const auto& id) { return std::ranges::find(confirmedConflicts, id) != confirmedConflicts.end(); }))
+		return Result::Conflict;
+	if (previewOnly)
+		return Result::Unchanged;
+	std::erase_if(documents, [](const auto& document) { return document.second.original == document.second.replacement; });
+	if (documents.empty())
+		return Result::Unchanged;
+	const bool changed = ApplyChange([&] {
+		for (const auto& id : conflicts)
+			if (!DeactivatePack(id))
+				return false;
+		for (auto& [path, document] : documents) {
+			document.written = true;
+			if (!Util::FileHelpers::WriteJsonAtomically(path, document.replacement, kUserSettingsIndent, "preset value"))
+				return false;
+		}
+		if (!conflicts.empty() && !SaveActiveState())
+			return false;
+		Discover();
+		return true; }, [&] {
+		bool restored = true;
+		for (const auto& [path, document] : documents)
+			if (document.written)
+				restored &= Util::FileHelpers::WriteJsonAtomically(path, document.original, kUserSettingsIndent, "preset value rollback");
+		return restored; });
+	if (!changed)
+		Discover();
+	return changed ? Result::Changed : Result::Failed;
+} catch (const std::exception& error) {
+	logger::error("[Presets] Could not edit a preset value: {}", error.what());
+	return PresetContent::SettingEditResult::Failed;
+}
+
 bool UnifiedPresetCatalog::DeletePackSettings(const std::string& id, const std::filesystem::path& relative,
 	std::span<const std::string> paths, bool entireFile)
 {
@@ -1133,7 +1270,7 @@ bool UnifiedPresetCatalog::DeletePackSettings(const std::string& id, const std::
 			std::filesystem::rename(physical, pending, error);
 			if (error) return false;
 			moved = true;
-			Discover();
+			Discover(false);
 			return true; }, [&] {
 			if (!moved) return true;
 			std::error_code error;
@@ -1143,31 +1280,67 @@ bool UnifiedPresetCatalog::DeletePackSettings(const std::string& id, const std::
 			std::error_code error;
 			std::filesystem::remove(pending, error);
 		} else
-			Discover();
+			Discover(false);
 		return changed;
 	}
-	const auto original = Util::FileHelpers::ReadJsonObject(physical, "preset file", PresetState::kMaxDocumentBytes);
-	if (!original)
+	return DeletePackSettings(id, PresetContent::Selection{ { relative, std::vector<std::string>(paths.begin(), paths.end()) } });
+}
+
+bool UnifiedPresetCatalog::DeletePackSettings(const std::string& id, const PresetContent::Selection& selection)
+{
+	const auto* pack = FindPack(id);
+	if (!pack || selection.empty() || SceneSettingsManager::GetSingleton()->HasPendingContextEdit())
 		return false;
-	auto replacement = *original;
-	std::vector<std::string> actualPaths(paths.begin(), paths.end());
-	if (pack->source == SourceKind::LegacyBaseline && id.starts_with("Legacy (Global) - ")) {
-		auto* feature = Feature::FindFeatureByShortName(Util::PathHelpers::ToUtf8(relative.stem()));
-		if (!feature)
+	const auto files = PresetContent::List(id);
+	struct Document
+	{
+		json original;
+		json replacement;
+		bool written = false;
+	};
+	std::map<std::filesystem::path, Document> documents;
+	for (const auto& [relative, paths] : selection) {
+		const auto file = std::ranges::find(files, relative, &PresetContent::File::relative);
+		if (file == files.end() || paths.empty())
 			return false;
-		json::json_pointer root;
-		root /= feature->GetName();
-		for (auto& path : actualPaths) path = root.to_string() + path;
+		const auto physical = Util::FileHelpers::ResolveExistingFile(file->source);
+		if (physical.empty())
+			return false;
+		auto [found, inserted] = documents.try_emplace(physical);
+		if (inserted) {
+			const auto original = Util::FileHelpers::ReadJsonObject(physical, "preset file", PresetState::kMaxDocumentBytes);
+			if (!original)
+				return false;
+			found->second.original = *original;
+			found->second.replacement = *original;
+		}
+		auto actualPaths = paths;
+		if (pack->source == SourceKind::LegacyBaseline && id.starts_with("Legacy (Global) - ")) {
+			auto* feature = Feature::FindRegisteredFeatureByShortName(Util::PathHelpers::ToUtf8(relative.stem()));
+			if (!feature)
+				return false;
+			json::json_pointer root;
+			root /= feature->GetName();
+			for (auto& path : actualPaths) path = root.to_string() + path;
+		}
+		if (!PresetContent::RemoveSettings(found->second.replacement, actualPaths))
+			return false;
 	}
-	if (!PresetContent::RemoveSettings(replacement, actualPaths))
-		return false;
-	bool written = false;
-	const auto changed = ApplyChange([&] {
-		written = Util::FileHelpers::WriteJsonAtomically(physical, replacement, kUserSettingsIndent, "preset settings");
-		if (written) Discover();
-		return written; }, [&] { return !written || Util::FileHelpers::WriteJsonAtomically(physical, *original, kUserSettingsIndent, "preset settings rollback"); });
+	const bool changed = ApplyChange([&] {
+		for (auto& [path, document] : documents) {
+			document.written = true;
+			if (!Util::FileHelpers::WriteJsonAtomically(path, document.replacement, kUserSettingsIndent, "preset settings"))
+				return false;
+		}
+		Discover(false);
+		return true; }, [&] {
+		bool restored = true;
+		for (const auto& [path, document] : documents)
+			if (document.written)
+				restored &= Util::FileHelpers::WriteJsonAtomically(path, document.original, kUserSettingsIndent, "preset settings rollback");
+		return restored; });
 	if (!changed)
-		Discover();
+		Discover(false);
 	return changed;
 }
 
@@ -1202,7 +1375,7 @@ bool UnifiedPresetCatalog::DeletePack(const std::string& id)
 			return true;
 		});
 		if (removed)
-			Discover();
+			Discover(false);
 		return removed;
 	}
 	const auto path = ResolvePackDirectory(*pack);
@@ -1238,7 +1411,7 @@ bool UnifiedPresetCatalog::DeletePack(const std::string& id)
 		return !error; });
 	if (!deleted)
 		return false;
-	Discover();
+	Discover(false);
 	return true;
 }
 
@@ -1330,21 +1503,13 @@ void UnifiedPresetCatalog::QueueBaselineOverlap(const std::string& packId, const
 		if (auto name = feature->GetDisplayName(); std::ranges::find(overlapFeatureNames, name) == overlapFeatureNames.end())
 			overlapFeatureNames.push_back(std::move(name));
 
-	std::string packNames;
-	for (const auto& id : overlapPackIds) {
-		const auto* pack = FindPack(id);
-		packNames += (packNames.empty() ? "" : ", ") + (pack && !pack->name.empty() ? pack->name : id);
-	}
 	std::string names;
 	for (const auto& name : overlapFeatureNames)
 		names += (names.empty() ? "" : ", ") + name;
-	const auto count = overlapFeatureNames.size();
-
-	overlapPrompt.title = T("menu.presets.overlap_title", "Base Settings Preset Over Your Changes");
+	overlapPrompt.title = T("menu.presets.overlap_title", "Use Preset Values?");
 	overlapPrompt.message = std::vformat(T("menu.presets.overlap_message",
-											 "{} sets {} features you have changed: {}.\n\n"
-											 "Your changes are kept and still win. Use the preset's values to drop them for the settings it sets."),
-		std::make_format_args(packNames, count, names));
+											 "Use these preset values instead of your edits in {}?"),
+		std::make_format_args(names));
 	overlapPrompt.confirmLabel = T("menu.presets.overlap_use_preset", "Use Preset Values");
 	overlapPrompt.cancelLabel = T("menu.presets.overlap_keep", "Keep My Changes");
 	overlapPrompt.focus = Util::ConfirmationPopup::Focus::Cancel;

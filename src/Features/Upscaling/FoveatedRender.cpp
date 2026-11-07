@@ -25,7 +25,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	subrectMaskMode,
 	subrectFeatherWidth,
 	subrectFalloffCurve,
-	subrectDitherStrength);
+	subrectDitherStrength,
+	gazeFollow,
+	gazeSource,
+	gazeOscPort,
+	gazeRecentreThreshold,
+	gazeOffsetX,
+	gazeOffsetY);
 
 // ============================================================================
 // Lifecycle
@@ -112,6 +118,11 @@ void FoveatedRender::ClampSettings()
 	settings.subrectFeatherWidth = std::clamp(settings.subrectFeatherWidth, 2.0f, 128.0f);
 	settings.subrectFalloffCurve = std::clamp(settings.subrectFalloffCurve, 0.5f, 2.0f);
 	settings.subrectDitherStrength = std::clamp(settings.subrectDitherStrength, 0.0f, 2.0f);
+	settings.gazeSource = std::min(settings.gazeSource, 2u);
+	settings.gazeOscPort = std::clamp(settings.gazeOscPort, 1024u, 65535u);
+	settings.gazeRecentreThreshold = std::clamp(settings.gazeRecentreThreshold, 0.02f, 0.5f);
+	settings.gazeOffsetX = std::clamp(settings.gazeOffsetX, -0.25f, 0.25f);
+	settings.gazeOffsetY = std::clamp(settings.gazeOffsetY, -0.25f, 0.25f);
 	// Preset clamping reads from Upscaling::Settings now.
 	auto& sharedPreset = globals::features::upscaling.settings.presetDLSS;
 	sharedPreset = std::min(sharedPreset, 5u);
@@ -141,6 +152,30 @@ bool FoveatedRender::IsActive() const
 	// cost. Skip the route so the standard full-frame path runs instead.
 	const bool isFullEye = subrectController.GetUV().IsFullEye() && subrectController.GetRightEyeUV().IsFullEye();
 	return !isFullEye;
+}
+
+void FoveatedRender::UpdateGaze()
+{
+	const bool tracking = globals::game::isVR && settings.gazeFollow && IsActive();
+	if (!tracking) {
+		subrectController.SetGazeCentres(std::nullopt, settings.gazeRecentreThreshold);
+		gazeProvider.Shutdown();
+		return;
+	}
+
+	gazeProvider.Configure(settings.gazeSource != 2u, settings.gazeSource != 1u,
+		static_cast<int>(settings.gazeOscPort), settings.gazeOffsetX, settings.gazeOffsetY);
+	const Util::Gaze::Sample sample = gazeProvider.Poll();
+	if (!sample.valid) {
+		subrectController.SetGazeCentres(std::nullopt, settings.gazeRecentreThreshold);
+		return;
+	}
+
+	const std::array<Util::Subrect::UVPoint, 2> centres{
+		Util::Subrect::UVPoint{ sample.centre[0].x, sample.centre[0].y },
+		Util::Subrect::UVPoint{ sample.centre[1].x, sample.centre[1].y },
+	};
+	subrectController.SetGazeCentres(centres, settings.gazeRecentreThreshold);
 }
 
 bool FoveatedRender::ShouldForceVisualize() const
@@ -345,6 +380,71 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 	           T(TKEY("foveated_mask_rectangle"), "Rectangle");
 }
 
+void FoveatedRender::DrawGazeSettings()
+{
+	ImGui::Separator();
+	ImGui::Text("%s", T(TKEY("foveated_gaze_header"), "Eye-Tracked Foveation"));
+	ImGui::TextWrapped("%s", T(TKEY("foveated_gaze_desc"),
+								 "Moves the subrect to where you look. Needs eye tracking on the headset and "
+								 "Share eye tracking data turned on in SteamVR > Steam Link."));
+
+	bool follow = settings.gazeFollow;
+	if (ImGui::Checkbox(T(TKEY("foveated_gaze_follow"), "Follow eye gaze"), &follow))
+		settings.gazeFollow = follow;
+	if (!settings.gazeFollow)
+		return;
+
+	const char* const sourceLabels[]{
+		T(TKEY("foveated_gaze_source_auto"), "SteamVR, then OSC"),
+		T(TKEY("foveated_gaze_source_steamvr"), "SteamVR only"),
+		T(TKEY("foveated_gaze_source_osc"), "OSC only"),
+	};
+	Util::Combo(T(TKEY("foveated_gaze_source"), "Gaze Source"), &settings.gazeSource, sourceLabels);
+
+	ImGui::SliderFloat(T(TKEY("foveated_gaze_threshold"), "Recentre Threshold"), &settings.gazeRecentreThreshold, 0.02f, 0.5f, "%.2f");
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("foveated_gaze_threshold_tooltip"),
+							  "How far the gaze must move, as a fraction of the crop size, before the subrect jumps to follow it. "
+							  "Higher is steadier; lower follows faster."));
+	}
+
+	ImGui::SliderFloat2(T(TKEY("foveated_gaze_offsets"), "Gaze Offset (X, Y)"), &settings.gazeOffsetX, -0.25f, 0.25f, "%.2f");
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("foveated_gaze_offsets_tooltip"),
+							  "Nudges the OSC gaze centre when the sharp area sits a little off from where you look. "
+							  "SteamVR's own foveation centre is not adjusted."));
+	}
+
+	const auto status = gazeProvider.GetStatus();
+	const char* sourceName = T(TKEY("foveated_gaze_source_none_name"), "none");
+	if (status.source == Util::Gaze::Source::kSteamVr)
+		sourceName = T(TKEY("foveated_gaze_source_steamvr_name"), "SteamVR");
+	else if (status.source == Util::Gaze::Source::kOsc)
+		sourceName = T(TKEY("foveated_gaze_source_osc_name"), "OSC");
+
+	if (status.valid) {
+		Util::Text::WrappedInfo("%s", std::vformat(T(TKEY("foveated_gaze_tracking"), "Tracking gaze via {} ({} valid frames)."),
+										  std::make_format_args(sourceName, status.validFrames))
+										  .c_str());
+	} else {
+		Util::Text::WrappedWarning("%s", T(TKEY("foveated_gaze_none"),
+											 "No gaze: turn on eye tracking on the headset and enable Share eye tracking data in SteamVR > Steam Link."));
+	}
+
+	if (status.oscBindFailed) {
+		Util::Text::WrappedWarning("%s", std::vformat(T(TKEY("foveated_gaze_osc_bind_failed"), "OSC could not bind UDP port {}; another app may hold it."),
+											 std::make_format_args(status.oscPort))
+											 .c_str());
+	} else if (status.oscListening) {
+		ImGui::TextDisabled("%s", std::vformat(T(TKEY("foveated_gaze_osc_listening"), "Listening for OSC on UDP port {} ({} packets)."),
+									  std::make_format_args(status.oscPort, status.oscPackets))
+									  .c_str());
+	}
+
+	if (subrectController.GetUV().IsFullEye() && subrectController.GetRightEyeUV().IsFullEye())
+		Util::Text::WrappedWarning("%s", T(TKEY("foveated_gaze_full_eye"), "The region is Full Eye, so there is nothing to move. Pick a smaller preset in Subrect Region below."));
+}
+
 void FoveatedRender::DrawSettings()
 {
 	ClampSettings();
@@ -509,6 +609,8 @@ void FoveatedRender::DrawSettings()
 
 		if (subrectController.IsDragging())
 			lastDragTime = std::chrono::steady_clock::now();
+
+		DrawGazeSettings();
 	}
 }
 

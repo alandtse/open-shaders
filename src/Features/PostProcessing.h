@@ -62,12 +62,14 @@ struct PostProcessing : Feature
 	virtual void RestoreDefaultSettings() override;
 	/** @return true while viewing a pipeline subfeature. */
 	virtual bool HasScopedDefaultSettings() const override;
+	bool IsSettingsScopeTab() const override { return false; }
 	/** Restores defaults for the entire feature or selected subfeature. */
 	virtual void RestoreCurrentPageDefaultSettings() override;
 	/** @return true while viewing a pipeline subfeature. */
 	virtual bool HasScopedOverrideSettings() const override;
 	/** Reapplies overrides for the entire feature or selected subfeature. */
 	virtual bool ReapplyCurrentPageOverrideSettings() override;
+	virtual std::vector<std::string> GetCurrentPageSettingKeys() const override;
 
 	/** @brief Reports whether scene exposure is published and its luminance range and compensation. */
 	virtual json GetDiagnostics() override;

@@ -650,6 +650,26 @@ TEST_CASE("CheckCompileFlags: older caches adopt only under default flags, diffe
 	CHECK(CheckCompileFlags(std::string("pp=1;afc=0"), "pp=0;afc=0") == CompileFlagsCheck::Mismatch);
 }
 
+TEST_CASE("DetectCacheRuntime: recorded key wins, legacy caches infer from the VR section", "[cacheinvalidation]")
+{
+	CHECK(DetectCacheRuntime(std::string("VR"), std::nullopt) == CacheRuntime::VR);
+	CHECK(DetectCacheRuntime(std::string("SE"), true) == CacheRuntime::Flat);
+	CHECK(DetectCacheRuntime(std::string("bogus"), true) == CacheRuntime::Unknown);
+	CHECK(DetectCacheRuntime(std::nullopt, std::nullopt) == CacheRuntime::Flat);
+	CHECK(DetectCacheRuntime(std::nullopt, true) == CacheRuntime::VR);
+	CHECK(DetectCacheRuntime(std::nullopt, false) == CacheRuntime::Unknown);
+}
+
+TEST_CASE("IsCacheRuntimeMismatch: only a known opposite runtime mismatches", "[cacheinvalidation]")
+{
+	CHECK(IsCacheRuntimeMismatch(CacheRuntime::VR, false));
+	CHECK(IsCacheRuntimeMismatch(CacheRuntime::Flat, true));
+	CHECK_FALSE(IsCacheRuntimeMismatch(CacheRuntime::VR, true));
+	CHECK_FALSE(IsCacheRuntimeMismatch(CacheRuntime::Flat, false));
+	CHECK_FALSE(IsCacheRuntimeMismatch(CacheRuntime::Unknown, true));
+	CHECK_FALSE(IsCacheRuntimeMismatch(CacheRuntime::Unknown, false));
+}
+
 TEST_CASE("AreMismatchesDigestResolvable: version bumps and toggles keep the cache", "[cacheinvalidation]")
 {
 	const CacheMismatch plugin{ CacheMismatch::Kind::PluginVersion, "Plugin", "Plugin", "version changed" };

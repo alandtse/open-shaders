@@ -362,6 +362,33 @@ void Example::DrawExtra() {
             "Strength", "feature.example.strength"))
         self.assertEqual(binding.control_kind, "SliderFloat")
 
+    def test_reachable_draw_methods_project_scalar_helpers(self):
+        source = r'''
+        #define I18N_KEY_PREFIX "feature.example."
+        void DrawAmount(const char* label, float& value, float maximum = 4.f)
+        {
+            ImGui::SliderFloat(label, &value, 0.f, maximum);
+        }
+        void Example::DrawSettings() { DrawDetails(); }
+        void Example::DrawDetails()
+        {
+            DrawAmount(T(TKEY("amount"), "Amount"), settings.amount);
+        }
+        void Example::Unused()
+        {
+            DrawAmount("Unused", settings.unused);
+        }
+        '''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Example.cpp"
+            path.write_text(source, encoding="utf-8")
+            index = GENERATOR.collect_control_index([path])
+        amount = index.bindings[("Example", ("amount",))]
+        self.assertEqual(amount.label, GENERATOR.LocalizedText(
+            "Amount", "feature.example.amount"))
+        self.assertEqual((amount.minimum, amount.maximum), (0.0, 4.0))
+        self.assertNotIn(("Example", ("unused",)), index.bindings)
+
     def test_selector_paths_include_tabs_from_draw_helpers(self):
         source = """
         #define I18N_KEY_PREFIX "feature.example."
@@ -1430,6 +1457,23 @@ void Synthetic::DrawSettings() { SettingsControl::DrawPathControls(identity, pat
             controls = GENERATOR.collect_custom_path_controls([path])
         self.assertEqual(controls, {("Synthetic", ("layer", "settings"), "assetPath")})
 
+    def test_string_choice_controls_are_discovered_from_the_shared_contract(self):
+        source = r'''
+void Synthetic::DrawSettings() {
+    SettingsControl::StringChoice(T("synthetic.mode", "Mode"), settings.mode,
+        [](std::string& selected) { return DrawChoices(selected); });
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Synthetic.cpp"
+            path.write_text(source, encoding="utf-8")
+            index = GENERATOR.collect_control_index([path])
+        binding = index.bindings[("Synthetic", ("mode",))]
+        self.assertEqual(binding.label.text, "Mode")
+        self.assertEqual(binding.label.key, "synthetic.mode")
+        self.assertEqual(GENERATOR.resolve_editor_semantic(binding, "String"), "Text")
+        self.assertEqual(GENERATOR.resolve_editor_semantic(binding, "String", True), "None")
+
     def test_same_class_serialization_delegate_is_discovered(self):
         source = r'''
 void Synthetic::SaveSettings(json& output) { SaveCurrent(output); }
@@ -1745,6 +1789,88 @@ void Synthetic::DrawSettings() {
         self.assertTrue(unmatched)
         self.assertTrue(all("Hidden" in entry["flags"] for entry in unmatched))
 
+    def test_dynamic_callback_parameters_keep_stable_serialized_addresses(self):
+        header = r'''
+struct SyntheticFeature : Feature {
+    struct Settings {
+        std::array<float4, 2> parameters;
+        std::array<float4, 2> readonly;
+        std::array<float4, 2> copied;
+        std::array<float4, 2> unused;
+        float gain;
+    } settings;
+    std::string GetShortName() { return "Synthetic"; }
+    std::string GetName() { return "Synthetic Feature"; }
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    SyntheticFeature::Settings, parameters, readonly, copied, unused, gain)
+'''
+        source = r'''
+bool EditGain(float* values) {
+    float displayed[1];
+    for (int index = 0; index < 1; ++index)
+        displayed[index] = log2(values[index]);
+    const bool changed = ImGui::SliderFloat("Gain", displayed, -4.f, 4.f);
+    for (int index = 0; index < 1; ++index)
+        values[index] = exp2(displayed[index]);
+    return changed;
+}
+struct DynamicEditor {
+    using Parameters = std::array<float4, 2>;
+    std::function<void(Parameters&)> draw;
+    std::function<void(const Parameters&)> inspect;
+    std::function<void(Parameters)> copy;
+    static DynamicEditor Make() {
+        return { [](Parameters& values) { EditGain(&values[0].x); }, {}, {} };
+    }
+};
+void SyntheticFeature::DrawSettings() {
+    if (ImGui::TreeNode(T("feature.synthetic.gain_options", "Gain Options"))) {
+        EditGain(&settings.gain);
+        ImGui::TreePop();
+    }
+    auto& values = settings.parameters;
+    editors[selected].draw(values);
+    editors[selected].inspect(settings.readonly);
+    editors[selected].copy(settings.copied);
+    editors[selected].draw(Clone(settings.unused));
+}
+void SyntheticFeature::Update() {
+    editors[selected].draw(settings.unused);
+}
+void SyntheticFeature::SaveSettings(json& output) { output = settings; }
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src").mkdir()
+            (root / "src/SyntheticFeature.h").write_text(header, encoding="utf-8")
+            (root / "src/SyntheticFeature.cpp").write_text(source, encoding="utf-8")
+            entries = GENERATOR.build_entries(root)
+            GENERATOR.validate_entries(entries, 1)
+        dynamic = [entry for entry in entries if entry["path"].startswith("parameters/")]
+        self.assertEqual(len(dynamic), 8)
+        self.assertEqual(len({(entry["path"], entry["key"]) for entry in dynamic}), 8)
+        for entry in dynamic:
+            with self.subTest(path=entry["path"], key=entry["key"]):
+                self.assertEqual(entry["editorSemantic"], "Numeric")
+                self.assertIn("SettingFlag::SceneControllable", entry["flags"])
+                self.assertIn("SettingFlag::Transitionable", entry["flags"])
+                self.assertEqual(entry["serializedPath"], "parameters")
+                self.assertEqual(entry["serializedKey"], entry["path"].split("/")[-1])
+                self.assertEqual(entry["serializedComponent"], "xyzw".index(entry["key"]))
+        for entry in entries:
+            if entry not in dynamic and entry["key"] != "gain":
+                self.assertIn("SettingFlag::Hidden", entry["flags"])
+        gain = next(entry for entry in dynamic if entry["path"] == "parameters/0" and entry["key"] == "x")
+        self.assertEqual(gain["displayName"], "Gain")
+        self.assertEqual(gain["numericTransform"], "Log2")
+        self.assertEqual((gain["minimum"], gain["maximum"]), (0.0625, 16.0))
+        self.assertEqual(gain["treeScope"], "")
+        scoped_gain = next(entry for entry in entries if entry["key"] == "gain")
+        self.assertEqual(scoped_gain["displayName"], "Gain")
+        self.assertEqual(scoped_gain["treeScope"], "Gain Options")
+        self.assertEqual(scoped_gain["treeScopeKey"], "feature.synthetic.gain_options")
+
     def test_generated_metadata_contains_display_scale(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
@@ -1949,6 +2075,81 @@ void SyntheticFeature::SaveSettings(json& output) { output = settings; }
                     expected = "outer/Section/vectors" if entry["path"].startswith("outer/vectors/") else "outer/Section"
                     self.assertEqual(entry["displayPath"], expected)
                     self.assertEqual(entry["aggregateCount"], 3)
+
+
+    def test_combo_calls_resolve_provider_aliases_and_value_tables(self):
+        providers = {"getSpaces": (("sRGB", ""), ("ACEScg", "feature.fixture.acescg"))}
+        body = 'auto& spaces = getSpaces();\nUtil::Combo("Space", &space, spaces);\n'
+        aliased = GENERATOR.resolve_combo_call_choices(
+            body, body.index("Util::Combo"), ['"Space"', "&space", "spaces"],
+            "feature.fixture.", "", {}, providers)
+        self.assertEqual(aliased, [(0, "sRGB", ""), (1, "ACEScg", "feature.fixture.acescg")])
+
+        source = (
+            'constexpr std::array<const char*, 3> labels = { "128", "256", "512" };\n'
+            "constexpr std::array<int, labels.size()> values = { 128, 256, 512 };\n")
+        table = GENERATOR.resolve_combo_call_choices(
+            "", 0, ['"Size"', "&size", "labels.data()", "values", "1"],
+            "feature.fixture.", source, {}, {})
+        self.assertEqual(table, [(128, "128", ""), (256, "256", ""), (512, "512", "")])
+
+
+    def test_same_named_structs_in_namespaces_keep_their_own_fields(self):
+        header = r'''
+namespace First
+{
+    struct Tuning
+    {
+        float gain = 1.0f;
+    };
+}
+
+namespace Second::Inner
+{
+    struct Tuning
+    {
+        float strengthA = 1.0f, strengthB = 2.0f;
+        float plainA, plainB;
+        bool enabled = false;
+    };
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Tuning.h"
+            path.write_text(header, encoding="utf-8")
+            bodies = GENERATOR.collect_struct_bodies([path])
+        self.assertEqual(
+            GENERATOR.parse_struct_fields(bodies["First::Tuning"][0]), {"gain": "float"})
+        self.assertEqual(
+            GENERATOR.parse_struct_fields(bodies["Second::Inner::Tuning"][0]),
+            {"strengthA": "float", "strengthB": "float", "plainA": "float", "plainB": "float", "enabled": "bool"})
+
+
+    def test_std_array_label_tables_resolve_combo_choices(self):
+        body = r'''
+const std::array<const char*, kMaxStyle + 1> styleLabels{
+    T(TKEY("style_0"), "Style 0"),
+    T(TKEY("style_1"), "Style 1"),
+};
+Util::Combo("Style", &tuning.style, styleLabels);
+'''
+        choices = GENERATOR.resolve_combo_choices(
+            body, body.index("Util::Combo"), "styleLabels", "feature.fixture.")
+        self.assertEqual([(index, label) for index, label, _ in choices], [(0, "Style 0"), (1, "Style 1")])
+
+
+    def test_double_braced_std_array_label_tables_keep_every_choice(self):
+        body = r'''
+const std::array<const char*, 2> styleLabels{{
+    T(TKEY("style_0"), "Style 0"),
+    T(TKEY("style_1"), "Style 1"),
+}};
+Util::Combo("Style", &tuning.style, styleLabels);
+'''
+        choices = GENERATOR.resolve_combo_choices(
+            body, body.index("Util::Combo"), "styleLabels", "feature.fixture.")
+        self.assertEqual([(index, label) for index, label, _ in choices], [(0, "Style 0"), (1, "Style 1")])
+
 
 
 if __name__ == "__main__":

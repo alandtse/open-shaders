@@ -162,7 +162,7 @@ namespace Util::Anim
 	 * ImGui's grab is hidden and redrawn gliding to the value's position, which covers a click that jumps a long way
 	 * on a wide slider, a drag (followed closely) and a value changed from outside (a preset, restore, undo). Hooked
 	 * into ImGui::SliderScalar, so every slider variant gets it with no per-widget opt-in. Float and int sliders glide;
-	 * logarithmic sliders, other data types, and everything while UI animations are off, pass straight through.
+	 * logarithmic sliders and other data types pass straight through; reduced motion snaps the grab.
 	 */
 	bool EasedSliderScalar(SliderScalarFn real, const char* label, ImGuiDataType dataType, void* data, const void* min,
 		const void* max, const char* format, ImGuiSliderFlags flags);
@@ -173,8 +173,8 @@ namespace Util::Anim
 	/**
 	 * @brief Checkbox whose check mark fades and pops in and out instead of switching. ImGui's own mark is hidden and
 	 * redrawn eased; the frame, hover and click behaviour are ImGui's. Hooked into ImGui::Checkbox (see
-	 * SceneWidgetInterceptor), so every checkbox gets it with no per-widget opt-in. Mixed-value checkboxes, and
-	 * everything while UI animations are off, pass straight through.
+	 * SceneWidgetInterceptor), so every checkbox gets it with no per-widget opt-in. Mixed-value checkboxes
+	 * pass straight through; reduced motion snaps the check mark.
 	 */
 	bool EasedCheckbox(CheckboxFn real, const char* label, bool* value);
 
@@ -187,7 +187,7 @@ namespace Util::Anim
 	 * while pressed, and fades out where it is when the mouse is over nothing clickable. ImGui's own hover and selected
 	 * fills are hidden so nothing doubles up. Rows of one list are the
 	 * Selectables of one window, so every list gets it with no opt-in. Hooked into ImGui::Selectable (see UIHooks);
-	 * passes straight through while UI animations are off.
+	 * snaps highlights while UI animations are off.
 	 */
 	bool GlideSelectable(SelectableFn real, const char* label, bool selected, ImGuiSelectableFlags flags, const ImVec2& size);
 

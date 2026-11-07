@@ -59,7 +59,7 @@ namespace
 	auto* RealRadioButtonActive = static_cast<bool (*)(const char*, bool)>(&ImGui::RadioButton);
 
 	// ImGui delegates between entry points we also detour (SliderFloat -> SliderScalar,
-	// ColorEdit3 -> ColorEdit4), and the gutter toggle is itself a Checkbox: only the outermost binds.
+	// ColorEdit3 -> ColorEdit4): only the outermost binds.
 	bool insideInterceptedCall = false;
 	std::size_t scopeDepth = 0;
 	std::vector<Feature*> pendingCaptures;
@@ -326,10 +326,8 @@ namespace
 	{
 		if (!ShouldIntercept())
 			return RealRadioButton(label, v, buttonValue);
-		// A radio group is several calls against one address; only the first owns the gutter.
 		InterceptedCall interceptedCall;
-		SceneWidgetBinding::Guard guard(label, SceneWidgetBinding::Value::Int(v),
-			SceneWidgetBinding::GutterPolicy::GroupMember);
+		SceneWidgetBinding::Guard guard(label, SceneWidgetBinding::Value::Int(v));
 		return guard.Finish(RealRadioButton(label, guard.Int(), buttonValue));
 	}
 
@@ -441,7 +439,7 @@ bool SceneWidgetInterceptor::Install()
 	}
 
 	installed = true;
-	SettingsControl::SetCallbacks({ &IsArmed, &InterceptInt, &CustomSceneControls::DrawPathSceneControls, &CustomSceneControls::RecordBaselineEdit });
+	SettingsControl::SetCallbacks({ &IsArmed, &InterceptInt, &CustomSceneControls::DrawPathSceneControls, &CustomSceneControls::RecordBaselineEdit, &InterceptString });
 	logger::info("SceneWidgetInterceptor: installed {} entry points", GetDetourTable().size());
 	return true;
 }
@@ -542,6 +540,19 @@ bool SceneWidgetInterceptor::InterceptInt(const char* a_label, int& a_value, con
 const SceneWidgetInterceptor::Context* SceneWidgetInterceptor::GetArmedContext()
 {
 	return armed ? &armedContext : nullptr;
+}
+
+bool SceneWidgetInterceptor::InterceptString(const char* label, std::string& value, const SettingsControl::StringDrawer& draw)
+{
+	if (!ShouldIntercept())
+		return draw(value);
+	InterceptedCall interceptedCall;
+	SceneWidgetBinding::Guard guard(label, SceneWidgetBinding::Value::String(&value));
+	ImGui::BeginGroup();
+	const bool changed = draw(*static_cast<std::string*>(guard.Raw()));
+	ImGui::EndGroup();
+	const bool committed = guard.Finish(changed);
+	return !IsArmed() && committed;
 }
 
 const SceneWidgetInterceptor::Proxy* SceneWidgetInterceptor::GetArmedProxy()

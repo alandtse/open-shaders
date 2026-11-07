@@ -1197,7 +1197,24 @@ void SceneSettingsManager::LoadAll()
 	TryEnsureLocationDataLoaded();
 }
 
-void SceneSettingsManager::ReloadOverwrites()
+SceneSettingsManager::PresetPauseState SceneSettingsManager::CapturePresetPauses() const
+{
+	PresetPauseState pausedEntries;
+	const auto capture = [&](const std::vector<SettingEntry>& sourceEntries) {
+		for (const auto& entry : sourceEntries)
+			if (entry.source == EntrySource::Overwrite && entry.paused)
+				pausedEntries.emplace(entry.sourcePath, entry.featureShortName, entry.settingPath, entry.settingKey, entry.period);
+	};
+	for (const auto& [type, sourceEntries] : entries)
+		capture(sourceEntries);
+	for (const auto& [weatherId, config] : weatherSceneConfigs)
+		capture(config.entries);
+	for (const auto& [configKey, config] : locationSceneConfigs)
+		capture(config.entries);
+	return pausedEntries;
+}
+
+void SceneSettingsManager::ReloadOverwrites(const PresetPauseState& pausedEntries)
 {
 	DiscardContextEdit();
 	// Nothing has been discovered yet, so the first load will read the current files anyway.
@@ -1227,6 +1244,18 @@ void SceneSettingsManager::ReloadOverwrites()
 		DiscoverWeatherOverwrites();
 	if (locationDataLoaded)
 		DiscoverLocationOverwrites();
+	const auto restorePauses = [&](std::vector<SettingEntry>& sourceEntries) {
+		for (auto& entry : sourceEntries)
+			if (entry.source == EntrySource::Overwrite &&
+				pausedEntries.contains({ entry.sourcePath, entry.featureShortName, entry.settingPath, entry.settingKey, entry.period }))
+				entry.paused = true;
+	};
+	for (auto& [type, sourceEntries] : entries)
+		restorePauses(sourceEntries);
+	for (auto& [weatherId, config] : weatherSceneConfigs)
+		restorePauses(config.entries);
+	for (auto& [configKey, config] : locationSceneConfigs)
+		restorePauses(config.entries);
 	RefreshTimeOfDayModes();
 
 	BumpEntryPresentationRevision();
@@ -1283,6 +1312,7 @@ bool SceneSettingsManager::TryEnsureLocationDataLoaded()
 		RefreshTimeOfDayModes();
 		locationDataLoaded = true;
 		locationTargetsCached = false;
+		cachedLocationCatalog.reset();
 		MarkEntriesLoaded();
 		return true;
 	} catch (const std::exception& e) {

@@ -612,7 +612,7 @@ void Wind::RestoreCurrentPageDefaultSettings()
 	}
 }
 
-bool Wind::ReapplyCurrentPageOverrideSettings()
+std::vector<std::string> Wind::GetCurrentPageSettingKeys() const
 {
 	static constexpr std::array<std::string_view, 12> windFieldKeys{
 		"windFieldGustScale",
@@ -644,7 +644,7 @@ bool Wind::ReapplyCurrentPageOverrideSettings()
 		"treeTransientSpringFrequency",
 		"treeTransientSpringDamping"
 	};
-	static constexpr std::array<std::string_view, 22> grassKeys{
+	static constexpr std::array<std::string_view, 21> grassKeys{
 		"grassTransientBendStrength",
 		"grassTransientFlutterHalfLife",
 		"grassTransientFlutterStrength",
@@ -670,19 +670,36 @@ bool Wind::ReapplyCurrentPageOverrideSettings()
 
 	switch (uiState.activeSettingsPage) {
 	case SettingsPage::WindField:
-		return ReapplyOverrideSettingsForKeys(windFieldKeys);
+		return { windFieldKeys.begin(), windFieldKeys.end() };
 	case SettingsPage::WindEffects:
-		return ReapplyOverrideSettingsForKeys(windEffectKeys);
+		return { windEffectKeys.begin(), windEffectKeys.end() };
 	case SettingsPage::Trees:
-		return ReapplyOverrideSettingsForKeys(treeKeys);
+		return { treeKeys.begin(), treeKeys.end() };
 	case SettingsPage::TreeMeshes:
+		return {};
+	case SettingsPage::Grass:
+		return { grassKeys.begin(), grassKeys.end() };
+	}
+	return {};
+}
+
+bool Wind::RestoreCurrentPageSavedSettings()
+{
+	if (uiState.activeSettingsPage == SettingsPage::TreeMeshes) {
+		TreeWindPatcher::RevertUnsavedChanges();
+		return true;
+	}
+	return Feature::RestoreCurrentPageSavedSettings();
+}
+
+bool Wind::ReapplyCurrentPageOverrideSettings()
+{
+	if (uiState.activeSettingsPage == SettingsPage::TreeMeshes) {
 		TreeWindPatcher::RevertUnsavedChanges();
 		TreeWindPatcher::SetUniversalOverride(false, {});
 		return true;
-	case SettingsPage::Grass:
-		return ReapplyOverrideSettingsForKeys(grassKeys);
 	}
-	return false;
+	return Feature::ReapplyCurrentPageOverrideSettings();
 }
 
 void Wind::SetupResources()

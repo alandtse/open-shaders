@@ -149,13 +149,7 @@ void MotionBlur::DrawSettings()
 
 	const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
 	ImGui::BeginDisabled(cam != nullptr);
-
-	{
-		int preset = static_cast<int>(settings.ScalePreset);
-		const SettingsControl::ProxyScope proxy(&settings.ScalePreset, 1.0f);
-		if (ImGui::Combo(T("feature.post_processing.motion_blur.motion_length", "Motion Length"), &preset, presets, IM_ARRAYSIZE(presets)) && !SettingsControl::IsReplicating())
-			settings.ScalePreset = static_cast<MotionScale>(preset);
-	}
+	Util::Combo(T("feature.post_processing.motion_blur.motion_length", "Motion Length"), &settings.ScalePreset, presets);
 
 	ImGui::EndDisabled();
 	if (cam) {

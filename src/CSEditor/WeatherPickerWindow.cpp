@@ -57,119 +57,144 @@ void WeatherPickerWindow::Draw()
 	ImGui::End();
 }
 
-void WeatherPickerWindow::DrawContents()
+void WeatherPickerWindow::DrawSelection(float width, float height, bool fullWidthSearch)
 {
 	const float scale = Util::GetUIScale();
-	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ThemeManager::Constants::CSE_PICKER_ITEM_SPACING * scale, ThemeManager::Constants::CSE_PICKER_ITEM_SPACING * scale));
-	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ThemeManager::Constants::CSE_PICKER_ITEM_SPACING * scale, ThemeManager::Constants::CSE_PICKER_FRAME_PADDING_Y * scale));
-
-	auto* sky = globals::game::sky;
-	if (!sky) {
-		ImGui::TextDisabled("%s", T(TKEY("sky_not_available"), "Sky not available"));
-		ImGui::PopStyleVar(2);
-		return;
-	}
-
-	auto weatherShortName = [](RE::TESWeather* weather) -> std::string {
-		if (!weather)
-			return {};
-		if (auto* editorId = weather->GetFormEditorID(); editorId && editorId[0] != '\0')
-			return editorId;
-		return std::format("{:08X}", weather->GetFormID());
-	};
-
-	std::string comboPreviewStorage;
-	const char* comboPreview = T(TKEY("select_weather"), "Select Weather");
-	if (sky->currentWeather) {
-		comboPreviewStorage = weatherShortName(sky->currentWeather);
-		comboPreview = comboPreviewStorage.c_str();
-	}
-
-	static constexpr const char* kWeatherSearchId = "WeatherPickerWindow";
+	const auto& style = ImGui::GetStyle();
+	const float gap = style.ItemSpacing.x;
+	const float inset = ThemeManager::Constants::LEFT_PANE_EDGE_INSET * scale;
+	const float filtersWidth = CSEditor::GetWeatherFilterWidth() + inset * 2.0f;
+	const bool stacked = width < filtersWidth + ThemeManager::Constants::CSE_PICKER_COMBO_WIDTH * scale + gap;
+	const float listWidth = stacked ? width : width - filtersWidth - gap;
 	CSEditor::SyncWeatherFilter();
-	auto& filteredWeathers = CSEditor::GetFilteredWeathers();
-	auto& selectedWeatherIdx = CSEditor::GetSelectedWeatherIdx();
-
-	const float comboWidth = ThemeManager::Constants::CSE_PICKER_COMBO_WIDTH * scale;
-	const float listWidth = comboWidth;
-	const float listHeight = ImGui::GetTextLineHeightWithSpacing() * ThemeManager::Constants::CSE_PICKER_LIST_ROWS;
-	// Popup is the scroll list with the filter chip grid joined to its right.
-	const float chipsWidth = 2.0f * (ImGui::CalcTextSize("Aurora Sun").x + ImGui::GetStyle().FramePadding.x * 2.0f + ThemeManager::Constants::CSE_PICKER_CHIP_PAD * scale) + ThemeManager::Constants::CSE_PICKER_CHIP_GAP * scale;
-	const float popupWidth = listWidth + chipsWidth + ImGui::GetStyle().WindowPadding.x * 2.0f + ThemeManager::Constants::CSE_PICKER_GROUP_GAP * scale;
-	ImGui::SetNextWindowSizeConstraints(ImVec2(popupWidth, 0.0f), ImVec2(FLT_MAX, FLT_MAX));
-
-	ImGui::SetNextItemWidth(comboWidth);
-	if (ImGui::BeginCombo("##WeatherPickerWindowCombo", comboPreview)) {
-		ImGui::BeginGroup();
-		ImGui::SetNextItemWidth(listWidth);
-		auto searchText = Util::DrawComboSearchInput(kWeatherSearchId);
-		if (ImGui::BeginChild("##WeatherPickerList", ImVec2(listWidth, listHeight), ImGuiChildFlags_None)) {
-			for (int i = 0; i < static_cast<int>(filteredWeathers.size()); ++i) {
-				auto* weather = filteredWeathers[i];
-				if (!searchText.empty()) {
-					auto editorId = weather->GetFormEditorID() ? std::string(weather->GetFormEditorID()) : "";
-					auto name = weather->GetName() ? std::string(weather->GetName()) : "";
-					auto formId = std::format("{:08X}", weather->GetFormID());
-					if (!Util::StringMatchesSearch(editorId, searchText) &&
-						!Util::StringMatchesSearch(name, searchText) &&
-						!Util::StringMatchesSearch(formId, searchText))
-						continue;
-				}
-
-				const bool isSelected = (selectedWeatherIdx == i);
+	const auto* sky = globals::game::sky;
+	constexpr auto searchId = "WeatherPickerSelection";
+	ImGui::BeginGroup();
+	std::string search;
+	if (fullWidthSearch) {
+		ImGui::SetNextItemWidth(width);
+		search = Util::DrawComboSearchInput(searchId, false);
+		height = std::max(ImGui::GetTextLineHeightWithSpacing(), height - ImGui::GetFrameHeightWithSpacing());
+	}
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(inset, inset));
+	const bool showList = ImGui::BeginChild("##WeatherPickerSelection", ImVec2(listWidth, height), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+	ImGui::PopStyleVar();
+	if (showList) {
+		if (!fullWidthSearch) {
+			ImGui::SetNextItemWidth(-FLT_MIN);
+			search = Util::DrawComboSearchInput(searchId);
+		}
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(inset, inset));
+		const bool showWeathers = ImGui::BeginChild("##WeatherPickerList", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
+		ImGui::PopStyleVar();
+		if (showWeathers) {
+			const auto& weathers = CSEditor::GetFilteredWeathers();
+			for (int index = 0; index < static_cast<int>(weathers.size()); ++index) {
+				auto* weather = weathers[index];
+				const auto editorId = Util::GetFormEditorID(weather);
+				const auto name = weather->GetName() ? weather->GetName() : "";
+				const auto formId = std::format("{:08X}", weather->GetFormID());
+				if (!search.empty() && !Util::StringMatchesSearch(editorId, search) &&
+					!Util::StringMatchesSearch(name, search) && !Util::StringMatchesSearch(formId, search))
+					continue;
+				const bool selected = sky && sky->currentWeather == weather;
 				ImGui::PushID(static_cast<int>(weather->GetFormID()));  // Editor IDs can repeat across plugins
 				ImGui::PushStyleColor(ImGuiCol_Text, CSEditor::GetWeatherTypeColor(weather));
-				const bool didSelect = Util::RoundedSelectable(weatherShortName(weather).c_str(), isSelected);
+				const bool clicked = Util::RoundedSelectable(editorId.empty() ? formId.c_str() : editorId.c_str(), selected);
 				ImGui::PopStyleColor();
 				ImGui::PopID();
-
-				if (didSelect) {
-					CSEditor::SelectWeather(sky, i);
-					Util::ClearComboSearch(kWeatherSearchId);
-					break;
-				}
-
-				if (ImGui::IsItemHovered()) {
-					ImGui::BeginTooltip();
-					ImGui::Text(T(TKEY("tooltip_weather_name"), "Weather: %s"), weather->GetName() ? weather->GetName() : "Unnamed");
-					ImGui::Text(T(TKEY("tooltip_editor_id"), "Editor ID: %s"), weather->GetFormEditorID() ? weather->GetFormEditorID() : "None");
+				if (clicked)
+					CSEditor::SelectWeather(globals::game::sky, index);
+				if (auto tooltip = Util::HoverTooltipWrapper()) {
+					ImGui::Text(T(TKEY("tooltip_weather_name"), "Weather: %s"), name);
+					ImGui::Text(T(TKEY("tooltip_editor_id"), "Editor ID: %s"), editorId.c_str());
 					ImGui::Text(T(TKEY("tooltip_form_id"), "Form ID: 0x%08X"), weather->GetFormID());
-					ImGui::EndTooltip();
 				}
-				if (isSelected)
+				if (selected)
 					ImGui::SetItemDefaultFocus();
 			}
 		}
 		ImGui::EndChild();
-		ImGui::EndGroup();
-
-		ImGui::SameLine(0.0f, ThemeManager::Constants::CSE_PICKER_GROUP_GAP * scale);
-		ImGui::BeginGroup();
-		CSEditor::DrawWeatherFilterChips();
-		ImGui::EndGroup();
-
-		ImGui::EndCombo();
-	} else {
-		Util::ClearComboSearch(kWeatherSearchId);
 	}
-
-	ImGui::SameLine(0.0f, ThemeManager::Constants::CSE_PICKER_ITEM_SPACING * scale);
-	const float iconSize = ImGui::GetFrameHeight();
-	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
-	{
-		auto _style = Util::TransparentIconButtonStyle();
-		if (Icons::Button("##WeatherPickerWindowReset", Icons::TI(MenuIcons::kRestore), ImVec2(iconSize, iconSize)))
-			CSEditor::ResetWeatherToDefault(sky);
-	}
+	ImGui::EndChild();
+	if (!stacked)
+		ImGui::SameLine(0.0f, gap);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(inset, inset));
+	const bool showFilters = ImGui::BeginChild("##WeatherPickerFilters", ImVec2(filtersWidth, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 	ImGui::PopStyleVar();
-	Util::AddTooltip(T(TKEY("reset_weather_tooltip"), "Resets weather to default"));
-
-	CSEditor::DrawWeatherTransitionBar(sky, comboWidth + ThemeManager::Constants::CSE_PICKER_ITEM_SPACING * scale + iconSize, false);
-
-	ImGui::PopStyleVar(2);
+	if (showFilters)
+		CSEditor::DrawWeatherFilterChips();
+	ImGui::EndChild();
+	ImGui::EndGroup();
 }
 
-void WeatherPickerWindow::Save() {}
-void WeatherPickerWindow::Load() {}
+void WeatherPickerWindow::DrawContents(bool expanded)
+{
+	const float scale = Util::GetUIScale();
+	const float spacing = ThemeManager::Constants::CSE_PICKER_ITEM_SPACING * scale;
+	if (!expanded) {
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(spacing, spacing));
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(spacing, ThemeManager::Constants::CSE_PICKER_FRAME_PADDING_Y * scale));
+	}
+	const SKSE::stl::scope_exit restoreStyle([expanded] { if (!expanded) ImGui::PopStyleVar(2); });
+	auto* sky = globals::game::sky;
+	if (!sky) {
+		ImGui::TextDisabled("%s", T(TKEY("sky_not_available"), "Sky not available"));
+		return;
+	}
+	const float comboWidth = ThemeManager::Constants::CSE_PICKER_COMBO_WIDTH * scale;
+	const float listHeight = ImGui::GetTextLineHeightWithSpacing() * ThemeManager::Constants::CSE_PICKER_LIST_ROWS;
+	if (expanded) {
+		DrawSelection(ImGui::GetContentRegionAvail().x, listHeight, true);
+	} else {
+		const auto preview = sky->currentWeather ? Util::GetFormEditorID(sky->currentWeather) : std::string{};
+		const float popupWidth = comboWidth + CSEditor::GetWeatherFilterWidth() + spacing +
+		                         (ImGui::GetStyle().WindowPadding.x + ThemeManager::Constants::LEFT_PANE_EDGE_INSET * scale) * 2.0f;
+		const auto& style = ImGui::GetStyle();
+		const float popupHeight = std::min(listHeight + style.WindowPadding.y * 2.0f,
+			ImGui::GetWindowViewport()->WorkSize.y - style.DisplaySafeAreaPadding.y * 2.0f);
+		ImGui::SetNextWindowSizeConstraints(ImVec2(popupWidth, popupHeight), ImVec2(popupWidth, popupHeight));
+		ImGui::SetNextItemWidth(comboWidth);
+		if (ImGui::BeginCombo("##WeatherPickerWindowCombo", preview.empty() ? T(TKEY("select_weather"), "Select Weather") : preview.c_str())) {
+			DrawSelection(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y);
+			ImGui::EndCombo();
+		}
+		ImGui::SameLine(0.0f, spacing);
+		const float iconSize = ImGui::GetFrameHeight();
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+		{
+			auto iconStyle = Util::TransparentIconButtonStyle();
+			if (Icons::Button("##WeatherPickerWindowReset", Icons::TI(MenuIcons::kRestore), ImVec2(iconSize, iconSize)))
+				CSEditor::ResetWeatherToDefault(sky);
+		}
+		ImGui::PopStyleVar();
+		Util::AddTooltip(T(TKEY("reset_weather_tooltip"), "Resets weather to default"));
+	}
+	if (expanded) {
+		const auto* reset = T("feature.weather_picker.reset_weather", "Reset Weather");
+		if (Util::Button(reset))
+			CSEditor::ResetWeatherToDefault(sky);
+		Util::AddTooltip(T(TKEY("reset_weather_tooltip"), "Resets weather to default"));
+		ImGui::SameLine();
+		auto* editor = EditorWindow::GetSingleton();
+		const bool locked = editor->IsWeatherLockedByUser(sky->currentWeather);
+		const auto* lock = locked ? T("feature.weather_picker.unlock_weather", "Unlock Weather") : T("feature.weather_picker.lock_weather", "Lock Weather");
+		{
+			const Util::DisableGuard disabled(!sky->currentWeather);
+			if (locked)
+				ImGui::PushStyleColor(ImGuiCol_Button, Menu::GetSingleton()->GetTheme().StatusPalette.SuccessColor);
+			if (Util::Button(lock))
+				editor->ToggleUserWeatherLock(sky->currentWeather);
+			if (locked)
+				ImGui::PopStyleColor();
+			// Hooks failed to install, but MaintainWeatherLock still re-applies the lock every
+			// frame, so the lock still works -- just without redirecting the engine's own
+			// SetWeather/ForceWeather call sites, so weather may visibly flash before correcting.
+			Util::AddTooltip(EditorWindow::GetWeatherLockTooltip(locked));
+		}
+	}
+	const float transitionWidth = expanded ? -FLT_MIN : comboWidth + spacing + ImGui::GetFrameHeight();
+	CSEditor::DrawWeatherTransitionBar(sky, transitionWidth, expanded);
+}
 
 #undef I18N_KEY_PREFIX

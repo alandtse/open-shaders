@@ -58,6 +58,7 @@
 
 #include "CSEditor/Browser/BrowserWidgets.h"
 #include "CSEditor/EditorWindow.h"
+#include "CSEditor/SceneManager/SceneEntryTable.h"
 #include "CSEditor/SceneManager/SceneSettingsManager.h"
 #include "CSEditor/SceneManager/SceneWidgetInterceptor.h"
 #include "Features/CSEditor.h"
@@ -528,6 +529,7 @@ void Menu::Load(json& o_json)
 	}
 
 	// Feature list filters; bits from a newer or hand-edited config that no chip uses are dropped
+	settings.ShowSettingInformation = o_json.value("ShowSettingInformation", true);
 	settings.FeatureListFilter = 0;
 	if (const auto it = o_json.find("FeatureListFilter"); it != o_json.end() && it->is_number_integer() && it->get<std::int64_t>() >= 0)
 		settings.FeatureListFilter = static_cast<std::uint32_t>(it->get<std::int64_t>() & FeatureListFilter::kKnown);
@@ -610,6 +612,7 @@ void Menu::Save(json& o_json)
 	// Save all settings except Theme values
 	// Theme values should only be saved in theme preset files, not in the main config
 	o_json = settings;
+	o_json["ShowSettingInformation"] = settings.ShowSettingInformation;
 
 	// Remove Theme object from config, only keep SelectedThemePreset
 	o_json.erase("Theme");
@@ -997,7 +1000,6 @@ void Menu::DrawSettings()
 
 		// Render header using extracted component
 		MenuHeaderRenderer::RenderHeader(*this, sidebar.visible, uiScale);
-		Util::DrawRecacheBanner();
 
 		// A modal, so it is drawn at window level next to the header's popovers
 		GoToPalette::Draw(shortcuts);
@@ -1127,6 +1129,11 @@ void Menu::DispatchShortcuts()
 		MenuShortcuts::Dispatch(shortcuts);
 }
 
+void Menu::DrawEditorMenuHeader(const std::function<void()>& drawModes)
+{
+	MenuHeaderRenderer::RenderEditorHeader(*this, editorSidebar.visible, editorSelectedMenuId, drawModes);
+}
+
 void Menu::DrawEditorSettings(bool resetEditorLayout)
 {
 	ApplyPendingUndo();
@@ -1134,8 +1141,10 @@ void Menu::DrawEditorSettings(bool resetEditorLayout)
 		OnFocusChanged();
 		focusChanged = false;
 	}
-	static std::string editorSelectedMenuId = "Home";
-	FeatureListRenderer::RenderFeatureList(0.0f, editorSelectedMenuId, featureSearch, pendingFeatureSelection, categoryExpansionStates, [this]() { DrawSettingsPage(); }, [this]() { DrawSettingsPage(true); }, true, sidebar.visible, resetEditorLayout);
+	FeatureListRenderer::RenderFeatureList(0.0f, editorSelectedMenuId, featureSearch, pendingFeatureSelection, categoryExpansionStates, [this]() { DrawSettingsPage(); }, [this]() { DrawSettingsPage(true); }, true, editorSidebar.visible, resetEditorLayout);
+	if (shortcuts.empty())
+		shortcuts = MenuShortcuts::BuildTable(MakeShortcutActions());
+	GoToPalette::Draw(shortcuts);
 	Util::DrawClearShaderCacheConfirmation();
 }
 
@@ -1271,7 +1280,7 @@ void Menu::DrawOverlay()
 	ImGuiContext* ctx = ImGui::GetCurrentContext();
 	bool canReload = ctx && !ctx->WithinFrameScope && ctx->WithinEndChildID == 0;
 
-	if (auto& atlas = MenuFonts::GetAtlasState(); !IsEnabled && atlas.wantsFontPreviewAtlas) {
+	if (auto& atlas = MenuFonts::GetAtlasState(); !IsEnabled && !EditorWindow::GetSingleton()->open && atlas.wantsFontPreviewAtlas) {
 		atlas.wantsFontPreviewAtlas = false;
 		atlas.pendingFontReload = true;
 	}
@@ -1315,6 +1324,7 @@ void Menu::DrawOverlay()
 		},
 		MenuFonts::GetAtlasState().cachedFontSize,
 		ThemeManager::ResolveFontSize(*this));
+	SceneEntryTable::EndPresetEditingIfHidden();
 
 	// Always-on VR status HUD (shader-compilation progress, etc.) into its own
 	// helper HUD panel, so it composites over the scene without the menu being
@@ -1382,7 +1392,7 @@ void Menu::ProcessInputEventQueue()
 
 	const int requestedSidebarVisibility = pendingSidebarVisibility.exchange(-1, std::memory_order_relaxed);
 	if (requestedSidebarVisibility != -1)
-		sidebar.visible = requestedSidebarVisibility != 0;
+		GetSidebarState(EditorWindow::GetSingleton()->open).visible = requestedSidebarVisibility != 0;
 
 	// Apply any off-thread visibility requests (e.g. devbench) here on the render thread,
 	// mirroring the ToggleKey path, so SetVisible's ImGui access stays on the owning thread.
@@ -1528,6 +1538,8 @@ void Menu::ProcessInputEventQueue()
 						 }
 					 } },
 					{ settings.ToggleKey, [this]() {
+						 if (PresetExportPanel::IsOpen())
+							 PresetsPageRenderer::DismissPopups();
 						 if (!HomePageRenderer::ShouldShowFirstTimeSetup() && !EditorWindow::GetSingleton()->open) {
 							 IsEnabled = !IsEnabled;
 							 if (IsEnabled)
@@ -1777,6 +1789,8 @@ bool Menu::SetVisible(bool a_visible)
 	// drop in-progress input.
 	if (a_visible && HomePageRenderer::ShouldShowFirstTimeSetup())
 		return IsEnabled;
+	if (!a_visible && PresetExportPanel::IsOpen())
+		PresetsPageRenderer::DismissPopups();
 	const bool wasEnabled = IsEnabled;
 	IsEnabled = a_visible;
 	if (IsEnabled && !wasEnabled)
@@ -1841,6 +1855,10 @@ void Menu::RecordRecentFeature(const std::string& shortName)
 
 void Menu::SelectFeatureMenu(const std::string& featureName, const std::string& sectionAnchor)
 {
+	if (featureName == "SceneManager" && EditorWindow::GetSingleton()->open) {
+		OpenSceneManager();
+		return;
+	}
 	if (featureName == MenuPageIds::kIssues || featureName == "FeatureIssues") {
 		pendingFeatureSelection = MenuPageIds::kHome;
 		HomePageRenderer::FocusNeedsAttention();
@@ -1851,28 +1869,6 @@ void Menu::SelectFeatureMenu(const std::string& featureName, const std::string& 
 		pendingFeatureSelection = featureName;
 	pendingSectionAnchor = sectionAnchor;
 	logger::info("Queued navigation to {} feature menu", featureName);
-}
-
-/**
- * @brief Renders the standalone weather details window when enabled
- *
- * Delegates to the Scene Selector feature for rendering the weather details window
- * that can remain open even when the main menu is closed. This provides a simple
- * coordination layer between the Menu system and the Scene Selector feature.
- */
-void Menu::DrawWeatherDetailsWindow()
-{
-	if (!globals::features::sceneSelector.WeatherDetailsWindow.Enabled) {
-		return;
-	}
-	if (!globals::features::sceneSelector.loaded) {
-		return;
-	}
-
-	// Use the Scene Selector feature for window management and rendering
-	auto& weather = globals::features::sceneSelector;
-	bool* p_open = &weather.WeatherDetailsWindow.Enabled;
-	weather.RenderWeatherDetailsWindow(p_open);
 }
 
 void Menu::OpenFeaturePage(const std::string& featureName)

@@ -516,13 +516,7 @@ void LightLimitFix::DrawLightDebugSettings()
 				T("feature.light_limit_fix.lights_vis_mode_opt_shadow_slot_index_color", "Shadow Slot Index Color"),
 				T("feature.light_limit_fix.lights_vis_mode_opt_light_type_visualization", "Light Type Visualization"),
 			};
-			// Round-trip through int instead of `(int*)&uint` to avoid strict-aliasing UB
-			// (ImGui has no ComboScalar). Clamp on the way in defends against any stale
-			// persisted value that might still exist from older builds.
-			int visMode = std::clamp(static_cast<int>(LightsVisualisationMode),
-				0, IM_ARRAYSIZE(comboOptions) - 1);
-			ImGui::Combo(T("feature.light_limit_fix.lights_vis_mode", "Lights Visualisation Mode"), &visMode, comboOptions, IM_ARRAYSIZE(comboOptions));
-			LightsVisualisationMode = static_cast<uint>(visMode);
+			Util::Combo(T("feature.light_limit_fix.lights_vis_mode", "Lights Visualisation Mode"), &LightsVisualisationMode, comboOptions);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"%s",
@@ -593,8 +587,8 @@ void LightLimitFix::SetupResources()
 	{
 		CompileComputeShaders();
 
-		lightBuildingCB = new ConstantBuffer(ConstantBufferDesc<LightBuildingCB>());
-		lightCullingCB = new ConstantBuffer(ConstantBufferDesc<LightCullingCB>());
+		lightBuildingCB = new ConstantBuffer(ConstantBufferDesc<LightBuildingCB>(), "LLF::LightBuildingCB");
+		lightCullingCB = new ConstantBuffer(ConstantBufferDesc<LightCullingCB>(), "LLF::LightCullingCB");
 		shadowDemandCB = new ConstantBuffer(ConstantBufferDesc<ShadowDemandCB>(), "LLF::ShadowDemandCB");
 		shadowDepthPyramidCB = new ConstantBuffer(ConstantBufferDesc<ShadowDepthPyramidCB>(), "LLF::ShadowDepthPyramidCB");
 	}
@@ -722,7 +716,7 @@ void LightLimitFix::SetupResources()
 	}
 
 	{
-		strictLightDataCB = new ConstantBuffer(ConstantBufferDesc<StrictLightDataCB>());
+		strictLightDataCB = new ConstantBuffer(ConstantBufferDesc<StrictLightDataCB>(), "LLF::StrictLightDataCB");
 	}
 }
 

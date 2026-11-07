@@ -167,9 +167,7 @@ void Skylighting::DrawSettings()
 			T(TKEY("probe_grid_medium"), "192 x 192 x 96"),
 			T(TKEY("probe_grid_high"), "256 x 256 x 128")
 		};
-		int selectedGrid = static_cast<int>(settings.ProbeGridQuality);
-		if (ImGui::Combo(T(TKEY("probe_grid"), "Probe Grid"), &selectedGrid, gridNames, 3))
-			settings.ProbeGridQuality = static_cast<uint>(selectedGrid);
+		Util::Combo(T(TKEY("probe_grid"), "Probe Grid"), &settings.ProbeGridQuality, gridNames);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("probe_grid_tooltip"), "Smaller grids reduce update work and memory use but lower spatial detail. Changing the grid rebuilds probe history."));
 

@@ -4,9 +4,12 @@
 #include "IconsTabler.h"
 #include "Menu.h"
 #include "Menu/Icons/helpers/SceneActionIcons.h"
+#include "Presets/UnifiedPresetCatalog.h"
 #include "SceneSettingsContextRules.h"
 #include "SceneSettingsInternal.h"
+#include "SceneSettingsUI.h"
 #include "SceneTransitionField.h"
+#include "Utils/FileSystem.h"
 #include "Utils/SettingsCatalog.h"
 #include "Utils/UI.h"
 
@@ -20,6 +23,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <ranges>
 #include <set>
 #include <string>
 #include <string_view>
@@ -52,11 +56,12 @@ namespace
 	constexpr float kCompactToggleWidthScale = 1.6f;
 	constexpr float kCompactToggleHeightScale = 0.8f;
 	constexpr float kSceneFlyoutRounding = 4.0f;
-	constexpr float kSceneFlyoutPaddingX = 6.0f;
-	constexpr float kSceneFlyoutPaddingY = 3.0f;
+	constexpr float kSceneFlyoutPadding = 3.0f;
 	constexpr float kSceneFlyoutBackgroundAlpha = 0.95f;
 	constexpr float kStringEditorMaxWidthEm = 16.0f;
 	constexpr float kChannelSelectorWidthEm = 4.0f;
+	constexpr float kPresetChoiceWidthEm = 24.0f;
+	constexpr size_t kPresetChoiceVisibleRows = 5;
 	constexpr float kTableBorderWidth = 1.0f;
 	constexpr const char* kEllipsis = "...";
 	constexpr const char* kNumericWidthSample = "-000.000";
@@ -191,6 +196,7 @@ namespace
 		std::function<void(const std::string& feature, const std::vector<std::string>& path, const std::string& key, int period)> onAddPeriod;
 		const char* auxiliaryColumnLabel = nullptr;
 		std::function<void(const std::vector<size_t>& indices, float width, bool readOnly)> drawAuxiliary;
+		bool canEditPreset = false;
 	};
 	static ImVec2 GetCompactFeatureToggleSize()
 	{
@@ -470,7 +476,7 @@ namespace
 		}
 	}
 
-	bool DrawNumeric(const Entry& entry, const Metadata& metadata, json& changed, bool expanded)
+	bool DrawNumeric(const Entry& entry, const Metadata& metadata, json& changed, bool expanded, const char* label = "##value", bool originalControl = false)
 	{
 		double value = 0.0;
 		if (!entry.value.is_number() ||
@@ -497,9 +503,11 @@ namespace
 			const auto low = bounded ? static_cast<std::int64_t>(std::ceil(minimum)) : 0;
 			const auto high = bounded ? static_cast<std::int64_t>(std::floor(maximum)) : 0;
 			bounded &= low <= high;
-			edited = expanded && bounded ?
-			             ImGui::SliderScalar("##value", ImGuiDataType_S64, &integer, &low, &high, "%lld", flags) :
-			             ImGui::DragScalar("##value", ImGuiDataType_S64, &integer, kIntegerDragSpeed,
+			edited = originalControl && metadata.sourceWidget.starts_with("Input") ?
+			             ImGui::InputScalar(label, ImGuiDataType_S64, &integer) :
+			         expanded && bounded ?
+			             ImGui::SliderScalar(label, ImGuiDataType_S64, &integer, &low, &high, "%lld", flags) :
+			             ImGui::DragScalar(label, ImGuiDataType_S64, &integer, kIntegerDragSpeed,
 							 bounded ? &low : nullptr, bounded ? &high : nullptr, "%lld", flags);
 			value = static_cast<double>(integer);
 		} else {
@@ -509,8 +517,9 @@ namespace
 			const float displayScale = static_cast<float>(SceneSettingsInternal::GetCatalogNumericDisplayScale(metadata));
 			const float speed = kFloatDragSpeed * displayScale;
 			const char* format = displayScale == 1.0f ? "%.3f" : "%.1f";
-			edited = expanded && bounded ? ImGui::SliderFloat("##value", &number, low, high, format, flags) :
-			                               ImGui::DragFloat("##value", &number, speed, low, high, format, flags);
+			edited = originalControl && metadata.sourceWidget.starts_with("Input") ? ImGui::InputFloat(label, &number, 0.0f, 0.0f, format) :
+			         expanded && bounded                                           ? ImGui::SliderFloat(label, &number, low, high, format, flags) :
+			                                                                         ImGui::DragFloat(label, &number, speed, low, high, format, flags);
 			value = number;
 		}
 		if (!edited || !std::isfinite(value))
@@ -526,7 +535,7 @@ namespace
 		return true;
 	}
 
-	bool DrawScalar(const Entry& entry, const Metadata& metadata, json& changed, bool expanded)
+	bool DrawScalar(const Entry& entry, const Metadata& metadata, json& changed, bool expanded, const char* label = "##value", bool originalControl = false)
 	{
 		using enum SceneSettingsCatalog::ValueType;
 		const bool toggle = metadata.valueType == Boolean ||
@@ -534,7 +543,7 @@ namespace
 		if (toggle) {
 			const bool stored = entry.value.is_boolean() ? entry.value.get<bool>() : entry.value.get<std::int64_t>() != 0;
 			bool value = stored != metadata.invertedDisplay;
-			if (!ImGui::Checkbox("##value", &value))
+			if (!ImGui::Checkbox(label, &value))
 				return false;
 			value = value != metadata.invertedDisplay;
 			changed = entry.value.is_boolean() ? json(value) : json(value ? 1 : 0);
@@ -553,7 +562,18 @@ namespace
 			for (size_t index = 0; index < metadata.choiceCount; ++index)
 				if (entry.value == metadata.choices[index])
 					preview = choiceLabel(index);
-			if (ImGui::BeginCombo("##value", preview.c_str())) {
+			if (originalControl && metadata.sourceWidget == "RadioButton") {
+				for (size_t index = 0; index < metadata.choiceCount; ++index) {
+					ImGui::PushID(static_cast<int>(index));
+					if (ImGui::RadioButton(choiceLabel(index).c_str(), entry.value == metadata.choices[index])) {
+						changed = metadata.choices[index];
+						edited = true;
+					}
+					ImGui::PopID();
+				}
+				return edited;
+			}
+			if (ImGui::BeginCombo(label, preview.c_str())) {
 				for (size_t index = 0; index < metadata.choiceCount; ++index) {
 					const auto choice = metadata.choices[index];
 					if (Util::RoundedSelectable(choiceLabel(index).c_str(), entry.value == choice)) {
@@ -566,10 +586,10 @@ namespace
 			return edited;
 		}
 		if (metadata.valueType == Float || metadata.valueType == Integer)
-			return DrawNumeric(entry, metadata, changed, expanded);
+			return DrawNumeric(entry, metadata, changed, expanded, label, originalControl);
 		if (metadata.valueType == String) {
 			auto value = entry.value.get<std::string>();
-			if (ImGui::InputText("##value", &value)) {
+			if (ImGui::InputText(label, &value)) {
 				changed = std::move(value);
 				return true;
 			}
@@ -578,27 +598,28 @@ namespace
 	}
 
 	bool DrawAggregate(std::span<const Entry> entries, const std::vector<size_t>& indices,
-		std::vector<Manager::EntryValueUpdate>& updates, bool expanded)
+		std::vector<Manager::EntryValueUpdate>& updates, bool expanded, std::span<const Metadata* const> metadata = {}, const char* label = "##value")
 	{
 		if (indices.size() < 2 || indices.size() > 4)
 			return false;
+		const auto getMetadata = [&](size_t index) { return metadata.empty() ? GetMetadata(entries[index]) : metadata[index]; };
 		auto ordered = indices;
 		std::ranges::sort(ordered, {}, [&](size_t index) {
-			const auto* metadata = GetMetadata(entries[index]);
-			return metadata ? metadata->serializedComponent : -1;
+			const auto* setting = getMetadata(index);
+			return setting ? setting->serializedComponent : -1;
 		});
 		std::array<float, 4> values{};
-		const auto* first = GetMetadata(entries[ordered.front()]);
+		const auto* first = getMetadata(ordered.front());
 		if (!first || first->aggregateCount != ordered.size())
 			return false;
 		for (size_t component = 0; component < ordered.size(); ++component) {
 			const auto& entry = entries[ordered[component]];
-			const auto* metadata = GetMetadata(entry);
-			if (!metadata || !entry.value.is_number() || entry.paused != entries[ordered.front()].paused ||
-				metadata->serializedComponent != first->aggregateStart + component)
+			const auto* setting = getMetadata(ordered[component]);
+			if (!setting || !entry.value.is_number() || entry.paused != entries[ordered.front()].paused ||
+				setting->serializedComponent != first->aggregateStart + component)
 				return false;
 			double value = 0.0;
-			if (!SceneSettingsInternal::ConvertCatalogNumericStoredToDisplay(*metadata, entry.value.get<double>(), value))
+			if (!SceneSettingsInternal::ConvertCatalogNumericStoredToDisplay(*setting, entry.value.get<double>(), value))
 				return false;
 			values[component] = static_cast<float>(value);
 		}
@@ -606,15 +627,15 @@ namespace
 		if (first->aggregateSemantic == SceneSettingsCatalog::AggregateSemantic::Color && ordered.size() >= 3) {
 			const auto flags = ImGuiColorEditFlags_Float | (first->hdrColor ? ImGuiColorEditFlags_HDR : 0) |
 			                   (expanded ? 0 : ImGuiColorEditFlags_NoInputs);
-			edited = ordered.size() == 3 ? ImGui::ColorEdit3("##value", values.data(), flags) :
-			                               ImGui::ColorEdit4("##value", values.data(), flags);
+			edited = ordered.size() == 3 ? ImGui::ColorEdit3(label, values.data(), flags) :
+			                               ImGui::ColorEdit4(label, values.data(), flags);
 		} else {
-			edited = ImGui::DragScalarN("##value", ImGuiDataType_Float, values.data(), static_cast<int>(ordered.size()), kFloatDragSpeed);
+			edited = ImGui::DragScalarN(label, ImGuiDataType_Float, values.data(), static_cast<int>(ordered.size()), kFloatDragSpeed);
 		}
 		if (edited) {
 			for (size_t component = 0; component < ordered.size(); ++component) {
 				double stored = 0.0;
-				if (!SceneSettingsInternal::ConvertCatalogNumericDisplayToStored(*GetMetadata(entries[ordered[component]]), values[component], stored)) {
+				if (!SceneSettingsInternal::ConvertCatalogNumericDisplayToStored(*getMetadata(ordered[component]), values[component], stored)) {
 					updates.clear();
 					return true;
 				}
@@ -624,7 +645,8 @@ namespace
 		return true;
 	}
 
-	void DrawEntryValue(const Context& context, std::span<const Entry> entries, const std::vector<size_t>& indices, Source source, bool expanded)
+	void DrawEntryValue(const Context& context, std::span<const Entry> entries, const std::vector<size_t>& indices, Source source, bool expanded,
+		const std::function<void(std::span<const Manager::EntryValueUpdate>)>& onPresetEdit)
 	{
 		if (indices.empty())
 			return;
@@ -632,12 +654,13 @@ namespace
 		const auto* metadata = GetMetadata(entry);
 		if (entry.deleted) {
 			Util::Text::Disabled("%s", entry.paused ? T("feature.scene_manager.status.paused", "Paused") :
-													  T("feature.scene_manager.entry_removed", "Removed"));
+													  T("feature.scene_manager.entry_removed", "Deleted"));
 			return;
 		}
-		const bool readOnly = source == Source::Overwrite || !metadata ||
+		const bool readOnly = (source == Source::Overwrite && !onPresetEdit) || !metadata ||
 		                      Manager::GetSingleton()->IsContextEditTarget(context, entry.featureShortName);
 		const Util::DisableGuard disabled(readOnly);
+		Util::PushTintedFrameStyle(source == Source::Overwrite ? Util::Colors::GetWarning() : Util::Colors::GetSuccess());
 		ImGui::SetNextItemWidth(-FLT_MIN);
 		std::vector<Manager::EntryValueUpdate> updates;
 		if (!DrawAggregate(entries, indices, updates, expanded)) {
@@ -660,18 +683,23 @@ namespace
 				}
 			}
 		}
-		if (!readOnly && !updates.empty())
-			Manager::GetSingleton()->UpdateContextEntryValues(context, updates, true);
+		Util::PopTintedFrameStyle();
+		if (!readOnly && !updates.empty()) {
+			if (source == Source::Overwrite)
+				onPresetEdit(updates);
+			else
+				Manager::GetSingleton()->UpdateContextEntryValues(context, updates, true);
+		}
 		if (ImGui::IsItemActive())
 			Manager::GetSingleton()->HoldDeferredSceneChanges();
 		if (entry.paused)
 			Util::AddTooltip(T("feature.scene_manager.action.resume", "Resume"));
 	}
-	void DrawLocationTransition(const Context& context, const std::vector<Entry>& entries,
-		const std::vector<size_t>& indices, Source source)
+	void DrawLocationTransition(const Context& context, std::span<const Entry> entries,
+		std::span<const size_t> indices, Source source, float width, bool fromFeatureToolbar = false)
 	{
 		if (indices.empty() || std::ranges::any_of(indices, [&](size_t index) {
-				return entries[index].deleted || !entries[index].value.is_number() ||
+				return index >= entries.size() || entries[index].deleted || !entries[index].value.is_number() ||
 				       !SceneSettingsInternal::FindAllowedCatalogSetting(entries[index].featureShortName,
 						   entries[index].settingPath, entries[index].settingKey, true);
 			})) {
@@ -683,12 +711,12 @@ namespace
 		const bool mixed = std::ranges::any_of(indices, [&](size_t index) {
 			return entries[index].transitionSeconds != seconds;
 		});
-		const bool editable = source == Source::User && std::ranges::none_of(indices, [&](size_t index) {
+		const bool editable = source == Source::User && (fromFeatureToolbar || std::ranges::none_of(indices, [&](size_t index) {
 			return manager->IsContextEditTarget(EntryContext(context, entries[index]), entries[index].featureShortName);
-		});
+		}));
 		if (SceneTransitionField::Draw("##LocationTransition", seconds,
-				manager->GetTransitionControl(Manager::TransitionControl::LocationSeconds), editable, mixed, ImGui::GetContentRegionAvail().x))
-			manager->SetLocationEntryTransitionSeconds(context.locationType, context.locationFormKey, indices, seconds);
+				manager->GetTransitionControl(Manager::TransitionControl::LocationSeconds), editable, mixed, width))
+			manager->SetLocationEntryTransitionSeconds(context.locationType, context.locationFormKey, indices, seconds, fromFeatureToolbar);
 	}
 
 	void RemoveIndicesReversed(const std::vector<size_t>& indices, std::function<void(size_t)> removeFn)
@@ -707,7 +735,7 @@ namespace
 		});
 	}
 
-	FlyoutResult DrawFlyoutControls(bool paused, bool isGroup, bool isOverwrite, const Context& context,
+	FlyoutResult DrawFlyoutControls(bool paused, bool isGroup, bool disableRevert, const Context& context,
 		const std::vector<Entry>& entries, const std::vector<size_t>& indices)
 	{
 		FlyoutResult result;
@@ -726,7 +754,7 @@ namespace
 		ImGui::SameLine();
 		ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, cursor.y));
 		{
-			const Util::DisableGuard disable(isOverwrite);
+			const Util::DisableGuard disable(disableRevert);
 			result.reverted = Icons::Button("##revert", Icons::TI(ICON_TI_ERASER), ImVec2(buttonH, buttonH));
 		}
 		Util::AddTooltip(T("feature.scene_manager.action.revert", "Revert to default"), Util::kTooltipWhenDisabled);
@@ -734,8 +762,7 @@ namespace
 		ImGui::SameLine();
 		ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, cursor.y));
 		result.deleted = Icons::Button("##remove", SceneActionIcons::kDelete, ImVec2(buttonH, buttonH));
-		Util::AddTooltip(isOverwrite ? T("feature.scene_manager.entry_suppress_tooltip", "Remove this context's value and use the settings beneath it.") :
-									   T("feature.scene_manager.action.remove", "Remove"));
+		Util::AddTooltip(T("feature.scene_manager.action.delete", "Delete"), Util::kTooltipWhenDisabled);
 		return result;
 	}
 
@@ -825,13 +852,13 @@ namespace
 		ImGui::SetCursorPosY(ImGui::GetCursorPosY() + std::max(0.0f, (rowHeight - itemHeight) * 0.5f));
 	}
 
-	void DrawInlineControls(const Context& context, const std::vector<size_t>& indices, bool overwrite,
+	void DrawInlineControls(const Context& context, const std::vector<size_t>& indices, bool disableRevert,
 		const std::vector<Entry>& entries, const TableCallbacks& callbacks)
 	{
 		if (indices.empty())
 			return;
 		const bool paused = AreAllPaused(indices, entries);
-		const auto result = DrawFlyoutControls(paused, indices.size() > 1, overwrite, context, entries, indices);
+		const auto result = DrawFlyoutControls(paused, indices.size() > 1, disableRevert, context, entries, indices);
 		ApplyGroupControlResult(result, indices, paused, entries, callbacks, nullptr);
 	}
 	static int GetSettingLabelMaxLines()
@@ -1094,6 +1121,7 @@ namespace
 	{
 		const int numValueColumns = layout.numValueColumns;
 		bool isOverwrite = source == EntrySource::Overwrite;
+		const bool disableRevert = isOverwrite && !cb.canEditPreset;
 		bool multiColumn = numValueColumns > 1;
 		bool inlineActions = HasInlineActionColumn(numValueColumns);
 		const bool hasAuxiliaryColumn = layout.auxiliaryColumnWidth > 0.0f &&
@@ -1168,7 +1196,7 @@ namespace
 		if (columnWidthsChanged)
 			ImGui::TableSetColumnWidthAutoAll(GImGui->CurrentTable);
 
-		if (multiColumn || hasAuxiliaryColumn) {
+		{
 			// Header row
 			auto* table = GImGui->CurrentTable;
 			if (!table->IsLayoutLocked)
@@ -1201,7 +1229,7 @@ namespace
 							cellRect.Min, cellRect.Max, flyoutStyle);
 						if (flyoutScope) {
 							bool allPaused = AreAllPaused(indices, entries);
-							auto result = DrawFlyoutControls(allPaused, true, isOverwrite, context, entries, indices);
+							auto result = DrawFlyoutControls(allPaused, true, disableRevert, context, entries, indices);
 							ApplyGroupControlResult(result, indices, allPaused,
 								entries, deferredCallbacks, &flyout.col);
 						}
@@ -1251,7 +1279,7 @@ namespace
 						flyout.rowSourceRow = rowIndex;
 					if (flyoutScope) {
 						bool allPaused = AreAllPaused(rowIndices, entries);
-						auto result = DrawFlyoutControls(allPaused, true, isOverwrite, context, entries, rowIndices);
+						auto result = DrawFlyoutControls(allPaused, true, disableRevert, context, entries, rowIndices);
 						ApplyGroupControlResult(result, rowIndices, allPaused,
 							entries, deferredCallbacks, &flyout.row);
 					}
@@ -1331,7 +1359,7 @@ namespace
 						if (flyout.cell.isOpen && flyout.cell.activeId == cellId)
 							flyout.cellSourceRow = rowIndex;
 						if (flyoutScope) {
-							auto result = DrawFlyoutControls(allPaused, cellIndices.size() > 1, isOverwrite, context, entries, cellIndices);
+							auto result = DrawFlyoutControls(allPaused, cellIndices.size() > 1, disableRevert, context, entries, cellIndices);
 
 							if (result.toggled) {
 								for (const auto index : cellIndices)
@@ -1384,7 +1412,7 @@ namespace
 					if (inlineActions) {
 						ImGui::TableSetColumnIndex(actionsColumn);
 						CenterCursorY(rowVisualH, GetSceneActionButtonSize());
-						DrawInlineControls(context, rowIndices, isOverwrite, entries, deferredCallbacks);
+						DrawInlineControls(context, rowIndices, disableRevert, entries, deferredCallbacks);
 					}
 
 					ImGui::PopID();
@@ -1492,6 +1520,12 @@ namespace
 		int member = -1;
 	};
 
+	struct PresetChoice
+	{
+		std::string id;
+		std::vector<PresetContent::SettingEdit> edits;
+	};
+
 	struct ViewState
 	{
 		SourcePanelCache cache;
@@ -1500,15 +1534,275 @@ namespace
 		bool addOpen = false;
 		bool addAllPeriods = false;
 		std::optional<Period> addPeriod;
+		std::optional<float> addTransition;
 		std::string feature;
 		std::vector<int> selectedPath;
 		std::vector<AddControl> controls;
 		AddNode settingTree;
 		std::map<ImGuiID, float> pickerScroll;
+		bool presetEditFailed = false;
+		std::map<size_t, std::pair<Entry, json>> presetEdits;
+		Util::DeferredModal choosePreset;
+		std::vector<PresetChoice> presetChoices;
+		std::optional<size_t> selectedPreset;
+		bool deletingPresetSettings = false;
 		Util::ConfirmationPopup removeSource;
-		Source pendingSource = Source::User;
 	};
 	std::map<Context, ViewState> viewStates;
+	std::optional<Context> presetEditContext;
+	int lastPresetTableFrame = -1;
+	struct FeaturePresetDraft
+	{
+		Context context;
+		std::string feature;
+		std::uint64_t scopeRevision = 0;
+		int lastFrame = -1;
+		ViewState view;
+		std::vector<std::pair<Entry, json>> edits;
+		std::map<Manager::SettingIdentity, json> userEdits;
+	};
+	FeaturePresetDraft featurePresetDraft;
+
+	bool IsSamePresetEntry(const Entry& a, const Entry& b)
+	{
+		return a.sourcePath == b.sourcePath && a.featureShortName == b.featureShortName &&
+		       a.settingPath == b.settingPath && a.settingKey == b.settingKey && a.period == b.period;
+	}
+
+	class PresetEntryFiles
+	{
+	public:
+		std::optional<PresetContent::SettingEdit> Resolve(const Entry& entry, const json& value)
+		{
+			json::json_pointer pointer;
+			for (const auto& part : entry.settingPath)
+				pointer /= part;
+			pointer /= entry.settingKey;
+			for (const auto& pack : catalog.GetPacks()) {
+				if (pack.source == UnifiedPresetCatalog::SourceKind::LegacyScene) {
+					if (std::ranges::find(pack.legacySceneFiles, entry.sourcePath) == pack.legacySceneFiles.end())
+						continue;
+				} else if (!std::ranges::any_of(catalog.GetPackRoots(pack.id), [&](const auto& root) {
+							   return Util::PathHelpers::IsPathLexicallyWithinDirectory(root, entry.sourcePath);
+						   }))
+					continue;
+				const auto& packFiles = GetFiles(pack.id);
+				const auto sourceKey = PresetContent::PathKey(entry.sourcePath.lexically_normal());
+				const auto file = std::ranges::find_if(packFiles, [&](const PresetContent::File& candidate) {
+					return PresetContent::PathKey(candidate.source.lexically_normal()) == sourceKey;
+				});
+				if (file == packFiles.end())
+					continue;
+				if (!file->document || !file->document->contains(pointer) || (!entry.deleted && !Manager::AppliedValuesEqual(PresetContent::EditableValue(*file, pointer.to_string()), entry.value))) {
+					logger::warn("[SceneSettings] Preset value changed on disk: {} {}", Util::PathToUtf8(entry.sourcePath), pointer.to_string());
+					return std::nullopt;
+				}
+				return PresetContent::SettingEdit{ pack.id, file->relative, pointer.to_string(), file->document->at(pointer), value };
+			}
+			logger::warn("[SceneSettings] No preset owns {}", Util::PathToUtf8(entry.sourcePath));
+			return std::nullopt;
+		}
+
+		std::vector<PresetContent::SettingEdit> FindShared(const Entry& entry, const PresetContent::SettingEdit& original)
+		{
+			std::vector<PresetContent::SettingEdit> matches;
+			const auto contextPath = PresetContent::PathKey(original.relative.parent_path());
+			const json::json_pointer setting(original.path);
+			const json::json_pointer deletion("/_metadata/entryDeletions" + original.path);
+			for (const auto& pack : catalog.GetPacks()) {
+				if (pack.id == original.packId || !pack.hasCSPresets || !catalog.IsScenePackEnabled(pack.id))
+					continue;
+				const auto& packFiles = GetFiles(pack.id);
+				const auto file = std::ranges::find_if(packFiles, [&](const PresetContent::File& candidate) {
+					return candidate.document && PresetContent::IsSceneFile(candidate.relative) &&
+					       PresetContent::PathKey(candidate.relative.parent_path()) == contextPath &&
+					       PresetContent::SceneFeatureName(candidate.relative, *candidate.document) == entry.featureShortName &&
+					       candidate.document->contains(setting);
+				});
+				if (file == packFiles.end())
+					continue;
+				const bool deleted = file->document->contains(deletion) && file->document->at(deletion) == true;
+				if (deleted == entry.deleted && (deleted || Manager::AppliedValuesEqual(
+																PresetContent::EditableValue(*file, original.path), entry.value)))
+					matches.push_back({ pack.id, file->relative, original.path, file->document->at(setting), original.value });
+			}
+			return matches;
+		}
+
+	private:
+		const std::vector<PresetContent::File>& GetFiles(const std::string& packId)
+		{
+			auto [packFiles, inserted] = files.try_emplace(packId);
+			if (inserted)
+				packFiles->second = PresetContent::List(packId);
+			return packFiles->second;
+		}
+
+		const UnifiedPresetCatalog& catalog = UnifiedPresetCatalog::GetSingleton();
+		std::map<std::string, std::vector<PresetContent::File>> files;
+	};
+
+	bool RequestPresetChoice(ViewState& state, std::map<std::string, std::vector<PresetContent::SettingEdit>> choices, bool deleting)
+	{
+		state.presetChoices.clear();
+		for (auto& [id, edits] : choices)
+			state.presetChoices.push_back({ id, deleting ? std::move(edits) : std::vector<PresetContent::SettingEdit>{} });
+		if (state.presetChoices.empty())
+			return false;
+		state.selectedPreset = state.presetChoices.size() == 1 ? std::optional<size_t>{ 0 } : std::nullopt;
+		state.deletingPresetSettings = deleting;
+		state.choosePreset.Request();
+		return true;
+	}
+
+	bool SavePresetEdits(ViewState& state, auto&& drafts, bool allowConflictPrompt)
+	{
+		auto& catalog = UnifiedPresetCatalog::GetSingleton();
+		PresetEntryFiles files;
+		std::vector<PresetContent::SettingEdit> edits;
+		std::map<std::string, std::vector<PresetContent::SettingEdit>> choices;
+		for (const auto& [entry, value] : drafts) {
+			if (Manager::AppliedValuesEqual(entry.value, value))
+				continue;
+			const auto original = files.Resolve(entry, value);
+			if (!original)
+				return false;
+			edits.push_back(*original);
+			const auto shared = files.FindShared(entry, *original);
+			if (!shared.empty()) {
+				choices.try_emplace(original->packId);
+				for (const auto& edit : shared)
+					choices.try_emplace(edit.packId);
+			}
+		}
+		if (choices.size() > 1)
+			return !allowConflictPrompt || RequestPresetChoice(state, std::move(choices), false);
+		if (edits.empty())
+			return true;
+		std::vector<std::string> conflicts;
+		const auto result = catalog.EditPackSettings(edits, {}, &conflicts);
+		if (allowConflictPrompt && result == PresetContent::SettingEditResult::Conflict && !conflicts.empty()) {
+			choices.clear();
+			for (const auto& id : conflicts)
+				choices.try_emplace(id);
+			return RequestPresetChoice(state, std::move(choices), false);
+		}
+		const bool saved = result == PresetContent::SettingEditResult::Changed || result == PresetContent::SettingEditResult::Unchanged;
+		if (!saved)
+			logger::warn("[SceneSettings] Preset edit was rejected ({})", static_cast<int>(result));
+		return saved;
+	}
+
+	bool RequestPresetDeletion(ViewState& state, std::span<const Entry* const> entries)
+	{
+		PresetEntryFiles files;
+		std::map<std::string, std::vector<PresetContent::SettingEdit>> choices;
+		std::set<std::tuple<std::string, std::filesystem::path, std::string>> added;
+		const auto add = [&](PresetContent::SettingEdit target) {
+			if (added.emplace(target.packId, target.relative, target.path).second)
+				choices[target.packId].push_back(std::move(target));
+		};
+		for (const auto* selected : entries) {
+			const auto& entry = *selected;
+			const auto target = files.Resolve(entry, entry.value);
+			if (!target)
+				return false;
+			add(*target);
+			for (auto& match : files.FindShared(entry, *target))
+				add(std::move(match));
+		}
+		return RequestPresetChoice(state, std::move(choices), true);
+	}
+
+	void DrawPresetChoice(ViewState& state)
+	{
+		if (!state.choosePreset.IsActive())
+			return;
+		auto& catalog = UnifiedPresetCatalog::GetSingleton();
+		const bool deleting = state.deletingPresetSettings;
+		const auto title = std::format("{}###ScenePresetChoice", deleting ? T("feature.scene_manager.choose_preset", "Choose Preset") :
+																			T("feature.scene_manager.disable_conflicting_preset", "Disable Conflicting Preset"));
+		state.choosePreset.Draw(title.c_str(), C::Em(kPresetChoiceWidthEm), [&] {
+			if (deleting) {
+				ImGui::TextWrapped("%s", state.presetChoices.size() > 1 ?
+											 T("feature.scene_manager.choose_delete_preset", "These settings come from more than one enabled preset. Choose which preset to delete from.") :
+											 T("feature.scene_manager.confirm_delete_preset_values", "Delete the selected settings from this preset?"));
+			} else {
+				ImGui::TextWrapped("%s", T("feature.scene_manager.edit_preset_conflicts", "More than one enabled preset supplies this setting."));
+				ImGui::Spacing();
+				ImGui::TextWrapped("%s", T("feature.scene_manager.choose_edit_preset", "Choose which preset to disable to edit this setting."));
+			}
+			const auto& style = ImGui::GetStyle();
+			const float listHeight = ImGui::GetTextLineHeightWithSpacing() *
+			                         static_cast<float>(std::min(kPresetChoiceVisibleRows, state.presetChoices.size()));
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, std::max(style.FrameBorderSize, Util::GetUIScale()));
+			const bool listOpen = ImGui::BeginListBox("##PresetChoices", ImVec2(-FLT_MIN, listHeight + 2.0f * style.FramePadding.y));
+			ImGui::PopStyleVar();
+			if (listOpen) {
+				for (size_t index = 0; index < state.presetChoices.size(); ++index) {
+					const auto& option = state.presetChoices[index];
+					const auto* pack = catalog.FindPack(option.id);
+					std::string label = pack ? pack->name : option.id;
+					if (pack && std::ranges::any_of(state.presetChoices, [&](const PresetChoice& other) {
+							const auto* otherPack = catalog.FindPack(other.id);
+							return other.id != option.id && otherPack && otherPack->name == pack->name;
+						}))
+						label = std::format("{} ({})", label, option.id);
+					ImGui::PushID(option.id.c_str());
+					if (Util::RoundedSelectable(label.c_str(), state.selectedPreset == index, ImGuiSelectableFlags_NoAutoClosePopups))
+						state.selectedPreset = index;
+					ImGui::PopID();
+				}
+				ImGui::EndListBox();
+			}
+			const auto* selected = state.selectedPreset ? &state.presetChoices[*state.selectedPreset] : nullptr;
+			ImGui::Separator();
+			const auto* label = deleting ? T("feature.scene_manager.action.delete", "Delete") :
+			                               T("menu.presets.disable", "Disable Preset");
+			bool apply = false;
+			{
+				const Util::DisableGuard noSelection(!selected);
+				apply = Util::Button(label);
+			}
+			if (apply && selected) {
+				if (deleting) {
+					PresetContent::Selection paths;
+					for (const auto& edit : selected->edits)
+						paths[edit.relative].push_back(edit.path);
+					state.presetEditFailed = !catalog.DeletePackSettings(selected->id, paths);
+				} else {
+					state.presetEditFailed = !catalog.DisablePack(selected->id);
+				}
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::SameLine();
+			if (Util::Button(T("feature.scene_manager.action.cancel", "Cancel")))
+				ImGui::CloseCurrentPopup();
+		});
+		if (!state.choosePreset.IsActive())
+			state.presetChoices.clear();
+	}
+
+	void FinishPresetEdit(const Context& context, ViewState& state, bool allowConflictPrompt = true)
+	{
+		if (state.presetEdits.empty())
+			return;
+		auto* manager = Manager::GetSingleton();
+		const auto entries = manager->GetContextEntries(context);
+		std::vector<Manager::EntryValueUpdate> restore;
+		for (const auto& [index, draft] : state.presetEdits) {
+			const auto& [original, value] = draft;
+			if (index < entries.size() && entries[index].sourcePath == original.sourcePath &&
+				entries[index].settingPath == original.settingPath && entries[index].settingKey == original.settingKey &&
+				entries[index].period == original.period && Manager::AppliedValuesEqual(entries[index].value, value))
+				restore.push_back({ index, original.value });
+		}
+		// Restore the in-memory preview before the transaction snapshots the active scene.
+		manager->UpdateContextEntryValues(context, restore, true);
+		state.presetEditFailed = restore.size() != state.presetEdits.size() ||
+		                         !SavePresetEdits(state, state.presetEdits | std::views::values, allowConflictPrompt);
+		state.presetEdits.clear();
+	}
 
 	void RebuildAddSettings(const Context& context, ViewState& state)
 	{
@@ -1641,6 +1935,7 @@ namespace
 			for (auto& [key, view] : viewStates)
 				view.addOpen = false;
 			state.addOpen = true;
+			state.addTransition.reset();
 			state.feature.clear();
 			state.controls.clear();
 			state.settingTree = {};
@@ -1740,23 +2035,41 @@ namespace
 			ImGui::EndChild();
 			ImGui::Spacing();
 			int selected = 0;
+			bool hasTransition = false;
 			for (auto& control : state.controls) {
 				if (IsAddSelectionUnavailable(context, state, control))
 					control.selected = false;
 				selected += control.selected ? 1 : 0;
+				if (control.selected && context.type == Manager::SceneContextType::Location)
+					VisitAddMembers(control, [&](const Metadata& member) {
+						hasTransition |= SceneSettingsCatalog::HasFlag(member.flags, SceneSettingsCatalog::SettingFlag::Transitionable);
+					});
+			}
+			auto* manager = Manager::GetSingleton();
+			if (hasTransition) {
+				ImGui::TextUnformatted(T("feature.scene_manager.location.transition.column", "Transition"));
+				ImGui::SameLine();
+				SceneTransitionField::Draw("##AddLocationTransition", state.addTransition,
+					manager->GetTransitionControl(Manager::TransitionControl::LocationSeconds), true);
 			}
 			const auto addLabel = std::vformat(T("feature.scene_manager.action.add_count", "Add ({0})"), std::make_format_args(selected));
 			const Util::DisableGuard disabled(selected == 0);
 			if (Util::Button(addLabel.c_str(), ImVec2(-FLT_MIN, 0.0f))) {
+				std::vector<size_t> transitionEntries;
 				for (const auto& control : state.controls)
 					if (control.selected)
 						VisitAddMembers(control, [&](const Metadata& member) {
 							VisitAddPeriods(context, state, [&](const Context& target) {
-								Manager::GetSingleton()->AddContextSetting(target, state.feature,
+								const auto index = manager->AddContextSetting(target, state.feature,
 									Manager::SplitSettingPath(member.settingPath), std::string(member.settingKey), true);
+								if (index && hasTransition && state.addTransition &&
+									SceneSettingsCatalog::HasFlag(member.flags, SceneSettingsCatalog::SettingFlag::Transitionable))
+									transitionEntries.push_back(*index);
 							});
 						});
-				Manager::GetSingleton()->SaveAllUserSettings();
+				if (!transitionEntries.empty())
+					manager->SetLocationEntryTransitionSeconds(context.locationType, context.locationFormKey, transitionEntries, state.addTransition, true);
+				manager->SaveAllUserSettings();
 				state.addOpen = false;
 			}
 		}
@@ -1789,12 +2102,64 @@ namespace
 	}
 }
 
+bool SceneEntryTable::DrawValueControls(std::span<const Util::Settings::ValueControlBinding> bindings, json& value)
+{
+	if (bindings.empty())
+		return false;
+	std::vector<Entry> entries;
+	std::vector<const Metadata*> metadata;
+	std::vector<size_t> indices;
+	for (const auto& binding : bindings) {
+		if (!value.contains(binding.path))
+			return false;
+		indices.push_back(entries.size());
+		Entry entry;
+		entry.value = value.at(binding.path);
+		entries.push_back(std::move(entry));
+		metadata.push_back(binding.setting);
+	}
+	const auto sizeControl = [](const std::string& label) {
+		const float available = ImGui::GetContentRegionAvail().x;
+		const float textWidth = ImGui::CalcTextSize(label.c_str()).x;
+		const float minimumWidth = ImGui::GetFontSize() * C::SCENE_TOD_PARAM_COL_EM;
+		if (textWidth + minimumWidth + ImGui::GetStyle().ItemInnerSpacing.x > available) {
+			ImGui::TextWrapped("%s", label.c_str());
+			ImGui::SetNextItemWidth(-FLT_MIN);
+			return std::string("##value");
+		}
+		ImGui::SetNextItemWidth(available - textWidth - ImGui::GetStyle().ItemInnerSpacing.x);
+		return label + "##value";
+	};
+	const auto& setting = *metadata.front();
+	if (indices.size() > 1 && setting.aggregateCount == indices.size()) {
+		const auto aggregateLabel = sizeControl(Util::Settings::StripImGuiId(setting.displayNameKey.empty() ? setting.displayName :
+																											  T(setting.displayNameKey, setting.displayName.data())));
+		std::vector<Manager::EntryValueUpdate> updates;
+		if (DrawAggregate(entries, indices, updates, true, metadata, aggregateLabel.c_str())) {
+			for (const auto& update : updates)
+				value.at(bindings[update.index].path) = update.value;
+			return true;
+		}
+	}
+	for (size_t index = 0; index < entries.size(); ++index) {
+		ImGui::PushID(static_cast<int>(index));
+		const SKSE::stl::scope_exit restoreId([] { ImGui::PopID(); });
+		const auto label = sizeControl(Util::Settings::GetCatalogLeafDisplayName(*metadata[index]));
+		json changed;
+		const auto widget = metadata[index]->sourceWidget;
+		const bool expanded = !widget.starts_with("Drag") && !widget.starts_with("Input");
+		if (DrawScalar(entries[index], *metadata[index], changed, expanded, label.c_str(), true))
+			value.at(bindings[index].path) = std::move(changed);
+	}
+	return true;
+}
+
 Util::FlyoutStyle SceneEntryTable::GetActionFlyoutStyle()
 {
 	const float scale = Util::GetUIScale();
-	const float paddingY = ImGui::GetStyle().WindowBorderSize + kSceneFlyoutPaddingY * scale;
+	const float padding = std::round(ImGui::GetStyle().WindowBorderSize + kSceneFlyoutPadding * scale);
 	return {
-		{ std::max(kSceneFlyoutPaddingX * scale, paddingY), paddingY },
+		{ padding, padding },
 		kSceneFlyoutRounding * scale,
 		kSceneFlyoutBackgroundAlpha,
 		1.0f,
@@ -1814,11 +2179,149 @@ ImVec2 SceneEntryTable::GetActionToggleSize()
 	return GetCompactFeatureToggleSize();
 }
 
+std::string SceneEntryTable::GetPresetSourceHint(const Entry* entry)
+{
+	const auto* fallback = T("cs_editor.scene_setting_preset_hint", "Orange: Scene Manager setting supplied by a preset.");
+	if (!entry)
+		return fallback;
+	const auto& setting = *entry;
+	const auto& catalog = UnifiedPresetCatalog::GetSingleton();
+	struct CachedOwners
+	{
+		std::uint64_t catalogRevision = 0;
+		std::uint64_t entryRevision = 0;
+		std::filesystem::path file;
+		std::vector<std::string> path;
+		std::string key;
+		std::set<std::string> names;
+	};
+	static CachedOwners owners;
+	const auto entryRevision = Manager::GetSingleton()->GetEntryPresentationRevision();
+	if (owners.catalogRevision != catalog.GetRevision() || owners.entryRevision != entryRevision ||
+		owners.file != setting.sourcePath || owners.path != setting.settingPath || owners.key != setting.settingKey) {
+		owners = { catalog.GetRevision(), entryRevision, setting.sourcePath, setting.settingPath, setting.settingKey, {} };
+		PresetEntryFiles files;
+		if (const auto original = files.Resolve(setting, setting.value)) {
+			if (const auto* pack = catalog.FindPack(original->packId))
+				owners.names.insert(pack->name);
+			for (const auto& shared : files.FindShared(setting, *original)) {
+				if (const auto* pack = catalog.FindPack(shared.packId))
+					owners.names.insert(pack->name);
+			}
+		}
+	}
+	if (owners.names.empty())
+		return fallback;
+	std::string names;
+	for (const auto& name : owners.names) {
+		if (!names.empty())
+			names += ", ";
+		names += name;
+	}
+	return std::vformat(T("cs_editor.scene_setting_named_preset_hint", "Orange: Scene Manager setting supplied by a preset ({})."),
+		std::make_format_args(names));
+}
+
+void SceneEntryTable::BeginFeaturePresetFrame(const Context& context, std::string_view feature, std::uint64_t scopeRevision)
+{
+	auto& draft = featurePresetDraft;
+	const int frame = ImGui::GetFrameCount();
+	if (draft.context != context || draft.feature != feature || draft.scopeRevision != scopeRevision || draft.lastFrame + 1 < frame) {
+		draft = {};
+		draft.context = context;
+		draft.feature = feature;
+		draft.scopeRevision = scopeRevision;
+	}
+	draft.lastFrame = frame;
+}
+
+const nlohmann::json* SceneEntryTable::GetFeaturePresetDraft(const Entry& entry)
+{
+	const auto& draft = featurePresetDraft;
+	const auto found = std::ranges::find_if(draft.edits, [&](const auto& edit) { return IsSamePresetEntry(edit.first, entry); });
+	return found == draft.edits.end() ? nullptr : &found->second;
+}
+
+void SceneEntryTable::StageFeaturePresetEdit(const Entry& entry, nlohmann::json value)
+{
+	auto& draft = featurePresetDraft;
+	if (draft.lastFrame != ImGui::GetFrameCount() || draft.view.choosePreset.IsActive())
+		return;
+	const auto found = std::ranges::find_if(draft.edits, [&](const auto& edit) { return IsSamePresetEntry(edit.first, entry); });
+	if (found != draft.edits.end())
+		found->second = std::move(value);
+	else
+		draft.edits.emplace_back(entry, std::move(value));
+}
+
+void SceneEntryTable::StageFeatureUserEdit(const Manager::SettingIdentity& setting, nlohmann::json value)
+{
+	auto& draft = featurePresetDraft;
+	if (draft.lastFrame == ImGui::GetFrameCount() && !draft.view.choosePreset.IsActive())
+		draft.userEdits.insert_or_assign(setting, std::move(value));
+}
+
+const nlohmann::json* SceneEntryTable::GetFeatureUserDraft(const Manager::SettingIdentity& setting)
+{
+	const auto& edits = featurePresetDraft.userEdits;
+	const auto found = edits.find(setting);
+	return found == edits.end() ? nullptr : &found->second;
+}
+
+void SceneEntryTable::RequestFeaturePresetDeletion(std::span<const Entry* const> entries)
+{
+	auto& draft = featurePresetDraft;
+	if (draft.lastFrame == ImGui::GetFrameCount() && !draft.view.choosePreset.IsActive() &&
+		!Manager::GetSingleton()->HasPendingContextEdit())
+		draft.view.presetEditFailed = !RequestPresetDeletion(draft.view, entries);
+}
+
+void SceneEntryTable::DrawFeatureTransition(const Context& context, std::span<const size_t> indices)
+{
+	auto* manager = Manager::GetSingleton();
+	const auto entries = manager->GetContextEntries(context);
+	if (std::ranges::any_of(indices, [&](size_t index) { return index >= entries.size() || !IsTransitionEntry(entries[index]); }))
+		return;
+	DrawLocationTransition(context, entries, indices, Source::User, SceneTransitionField::GetWidth(), true);
+	Util::AddTooltip(T("feature.scene_manager.location.transition.column", "Transition"), Util::kTooltipWhenDisabled);
+}
+
+void SceneEntryTable::FinishFeaturePresetFrame()
+{
+	auto& draft = featurePresetDraft;
+	auto* manager = Manager::GetSingleton();
+	if ((!draft.edits.empty() || !draft.userEdits.empty()) && !ImGui::IsAnyItemActive()) {
+		if (!draft.edits.empty() && manager->HasPendingContextEdit()) {
+			SceneSettingsUI::WarnPendingContextEdit();
+		} else {
+			draft.view.presetEditFailed = (!draft.edits.empty() && !manager->ApplyContextUserValues(draft.context, draft.userEdits, true)) ||
+			                              !SavePresetEdits(draft.view, draft.edits, true);
+			if (!draft.view.presetEditFailed && !draft.view.choosePreset.IsActive() && !draft.userEdits.empty()) {
+				draft.view.presetEditFailed = !manager->BeginContextEdit(draft.feature, draft.context) ||
+				                              !manager->ApplyContextUserValues(draft.context, draft.userEdits);
+			}
+		}
+		draft.edits.clear();
+		draft.userEdits.clear();
+	}
+	DrawPresetChoice(draft.view);
+	if (draft.view.presetEditFailed)
+		Util::Text::WrappedWarning("%s", T("feature.scene_manager.preset_edit_failed", "Could not save preset settings. Check the log and try again."));
+}
+
 void SceneEntryTable::Draw(const Context& context)
 {
 	auto* manager = Manager::GetSingleton();
 	auto key = context;
 	key.period = Period::Count;
+	const int frame = ImGui::GetFrameCount();
+	if (presetEditContext) {
+		auto previousKey = *presetEditContext;
+		previousKey.period = Period::Count;
+		if (previousKey != key || lastPresetTableFrame + 1 < frame)
+			EndPresetEditing();
+	}
+	lastPresetTableFrame = frame;
 	auto& state = viewStates[key];
 	ImGui::PushID(&state);
 	const SKSE::stl::scope_exit restoreId([] { ImGui::PopID(); });
@@ -1855,7 +2358,7 @@ void SceneEntryTable::Draw(const Context& context)
 	if (context.type == Manager::SceneContextType::TimeOfDay)
 		ImGui::Separator();
 	const auto stored = manager->GetContextEntries(context);
-	const std::vector<Entry> entries(stored.begin(), stored.end());
+	std::vector<Entry> entries(stored.begin(), stored.end());
 	const bool transitionColumn = context.type == Manager::SceneContextType::Location &&
 	                              std::ranges::any_of(entries, [&](const Entry& entry) { return IsTransitionEntry(entry) && (entry.period != Period::Count) == periodic; });
 	const char* transitionLabel = transitionColumn ? T("feature.scene_manager.location.transition.column", "Transition") : nullptr;
@@ -1865,21 +2368,46 @@ void SceneEntryTable::Draw(const Context& context)
 	RefreshSourcePanelCache(state.cache, entries, periodic ? kPeriodCount : 1, !periodic, false,
 		transitionWidth, periodic);
 	if (state.cache.overwrite.group.rows.empty() && state.cache.user.group.rows.empty()) {
+		DrawPresetChoice(state);
 		DrawEmptySettings(context);
 		return;
 	}
 	std::vector<size_t> removals;
+	std::vector<size_t> presetRemovals;
+	std::function<void(std::span<const Manager::EntryValueUpdate>)> onPresetEdit;
+	if (!manager->HasPendingContextEdit() && !state.choosePreset.IsActive())
+		onPresetEdit = [&](std::span<const Manager::EntryValueUpdate> updates) {
+			presetEditContext = context;
+			state.presetEditFailed = false;
+			for (const auto& update : updates) {
+				auto [draft, inserted] = state.presetEdits.try_emplace(update.index, std::pair{ entries[update.index], update.value });
+				if (!inserted)
+					draft->second.second = update.value;
+			}
+			manager->UpdateContextEntryValues(context, updates, true);
+		};
 	const TableCallbacks callbacks{
-		[&](size_t index, float, bool) { DrawEntryValue(EntryContext(context, entries[index]), entries, { index }, entries[index].source, !periodic); },
-		[&](const std::vector<size_t>& indices, float, bool) { DrawEntryValue(EntryContext(context, entries[indices.front()]), entries, indices, entries[indices.front()].source, !periodic); },
+		[&](size_t index, float, bool) { DrawEntryValue(EntryContext(context, entries[index]), entries, { index }, entries[index].source, !periodic, onPresetEdit); },
+		[&](const std::vector<size_t>& indices, float, bool) { DrawEntryValue(EntryContext(context, entries[indices.front()]), entries, indices, entries[indices.front()].source, !periodic, onPresetEdit); },
 		[&](size_t index) { manager->TogglePauseContextEntry(EntryContext(context, entries[index]), index); },
 		[&](size_t index) {
-			if (entries[index].deleted)
+			const auto& entry = entries[index];
+			const auto target = EntryContext(context, entry);
+			if (entry.deleted) {
 				removals.push_back(index);
-			else
-				manager->RevertContextEntryToDefault(EntryContext(context, entries[index]), index);
+			} else if (entry.source == Source::User) {
+				manager->RevertContextEntryToDefault(target, index);
+			} else if (onPresetEdit) {
+				if (auto value = manager->ResolveContextEntryDefault(target, entry)) {
+					const Manager::EntryValueUpdate update{ index, std::move(*value) };
+					onPresetEdit({ &update, 1 });
+				}
+			}
 		},
-		[&](size_t index) { removals.push_back(index); },
+		[&](size_t index) {
+			auto& targets = entries[index].source == Source::Overwrite ? presetRemovals : removals;
+			targets.push_back(index);
+		},
 		[&](const std::string& feature, const std::vector<std::string>& path, const std::string& setting, int period) {
 			auto target = context;
 			target.period = static_cast<Period>(period);
@@ -1887,9 +2415,10 @@ void SceneEntryTable::Draw(const Context& context)
 		},
 		transitionLabel,
 		transitionColumn ? std::function<void(const std::vector<size_t>&, float, bool)>([&](const std::vector<size_t>& indices, float, bool readOnly) {
-			DrawLocationTransition(context, entries, indices, readOnly ? Source::Overwrite : Source::User);
+			DrawLocationTransition(context, entries, indices, readOnly ? Source::Overwrite : Source::User, ImGui::GetContentRegionAvail().x);
 		}) :
-						   std::function<void(const std::vector<size_t>&, float, bool)>{}
+						   std::function<void(const std::vector<size_t>&, float, bool)>{},
+		static_cast<bool>(onPresetEdit)
 	};
 	for (const auto source : { Source::Overwrite, Source::User }) {
 		auto& cached = source == Source::Overwrite ? state.cache.overwrite : state.cache.user;
@@ -1903,11 +2432,12 @@ void SceneEntryTable::Draw(const Context& context)
 					for (const auto index : cached.indices)
 						if (entries[index].paused == cached.allPaused)
 							callbacks.togglePause(index); }, [&] {
-				state.pendingSource = source;
+				if (source == Source::Overwrite) {
+					presetRemovals = cached.indices;
+					return;
+				}
 				state.removeSource.title = T("feature.scene_manager.action.delete_all", "Delete All");
-				state.removeSource.message = source == Source::Overwrite ?
-					T("feature.scene_manager.entry_suppress_tooltip", "Remove this context's value and use the settings beneath it.") :
-					T("feature.scene_manager.confirm.delete_all_user", "Are you sure you want to remove all user-added settings?");
+				state.removeSource.message = T("feature.scene_manager.confirm.delete_all_user", "Are you sure you want to remove all user-added settings?");
 				state.removeSource.confirmLabel = T("feature.scene_manager.action.delete_all", "Delete All");
 				state.removeSource.cancelLabel = T("feature.scene_manager.action.cancel", "Cancel");
 				state.removeSource.Request(); }, cached.layout))
@@ -1915,25 +2445,57 @@ void SceneEntryTable::Draw(const Context& context)
 		ImGui::EndChild();
 	}
 	if (state.removeSource.Draw()) {
-		const auto& cached = state.pendingSource == Source::Overwrite ? state.cache.overwrite : state.cache.user;
+		const auto& cached = state.cache.user;
 		if (!OwnsRetainedEdit(context, entries, cached.indices))
 			removals.insert(removals.end(), cached.indices.begin(), cached.indices.end());
 	}
 	RemoveIndicesReversed(removals, [&](size_t index) {
 		const auto& entry = entries[index];
 		const auto target = EntryContext(context, entry);
-		if (entry.source == Source::Overwrite)
-			manager->TombstoneContextSetting(target, entry.featureShortName, entry.settingPath, entry.settingKey);
-		else if (entry.deleted)
+		if (entry.deleted)
 			manager->ClearContextTombstone(target, entry.featureShortName, entry.settingPath, entry.settingKey);
 		else if (const auto current = manager->FindContextUserEntry(target, entry.featureShortName, entry.settingPath, entry.settingKey))
 			manager->RemoveContextSetting(target, *current);
 	});
+	if (!ImGui::IsAnyItemActive())
+		FinishPresetEdit(context, state);
+	if (!presetRemovals.empty() && !manager->HasPendingContextEdit() && !state.choosePreset.IsActive()) {
+		presetEditContext = context;
+		std::vector<const Entry*> targets;
+		for (const auto index : presetRemovals)
+			targets.push_back(&entries[index]);
+		state.presetEditFailed = !RequestPresetDeletion(state, targets);
+	}
+	DrawPresetChoice(state);
+	if (state.presetEditFailed)
+		Util::Text::WrappedWarning("%s", T("feature.scene_manager.preset_edit_failed", "Could not save preset settings. Check the log and try again."));
+}
+
+void SceneEntryTable::EndPresetEditing()
+{
+	if (!presetEditContext)
+		return;
+	const auto context = *presetEditContext;
+	presetEditContext.reset();
+	auto key = context;
+	key.period = Period::Count;
+	auto& state = viewStates.at(key);
+	FinishPresetEdit(context, state, false);
+	state.choosePreset = {};
+	state.presetChoices.clear();
+}
+
+void SceneEntryTable::EndPresetEditingIfHidden()
+{
+	if (presetEditContext && lastPresetTableFrame != ImGui::GetFrameCount())
+		EndPresetEditing();
+	if (featurePresetDraft.lastFrame >= 0 && featurePresetDraft.lastFrame != ImGui::GetFrameCount())
+		featurePresetDraft = {};
 }
 
 bool SceneEntryTable::HasActiveDialog()
 {
 	return std::ranges::any_of(viewStates, [](const auto& pair) {
-		return pair.second.addOpen || pair.second.removeSource.IsOpen();
+		return pair.second.addOpen || pair.second.removeSource.IsOpen() || pair.second.choosePreset.IsActive();
 	});
 }

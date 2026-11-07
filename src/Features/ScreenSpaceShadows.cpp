@@ -345,8 +345,8 @@ void ScreenSpaceShadows::DrawShadows()
 		if (!shader)
 			return;
 
-		std::string timerName = eyeName ? std::format("ScreenSpaceShadows::RayMarch({})", eyeName) : "ScreenSpaceShadows::RayMarch";
-		CS_GPU_PASS_DYNAMIC(timerName);
+		CS_GPU_PASS_INDEXED(eyeName ? 1 + eyeIndex : 0,
+			"ScreenSpaceShadows::RayMarch", "ScreenSpaceShadows::RayMarch(Left Eye)", "ScreenSpaceShadows::RayMarch(Right Eye)");
 
 		context->CSSetShader(shader, nullptr, 0);
 

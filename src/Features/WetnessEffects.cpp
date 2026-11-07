@@ -4,7 +4,7 @@
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
-#include "PerformanceOverlay.h"
+#include "SceneSelector.h"
 #include "State.h"
 #include "Utils/MathUtils.h"
 #include "Utils/SettingsControl.h"
@@ -466,7 +466,7 @@ void WetnessEffects::DrawSettings()
 void WetnessEffects::DrawEnvironmentWetnessSettings()
 {
 	// Climate Preset Selection - Always visible at the top
-	Util::DrawSectionHeader(T(TKEY("climate_presets"), "Climate Presets"), false, false);
+	ImGui::SeparatorText(T(TKEY("climate_presets"), "Climate Presets"));
 
 	ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.2f, 0.3f, 0.4f, 0.6f));    // Subtle blue background
 	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.35f, 0.45f, 0.8f));  // Slightly darker for button
@@ -476,21 +476,14 @@ void WetnessEffects::DrawEnvironmentWetnessSettings()
 	for (size_t i = 0; i < CLIMATE_PRESET_INFO.size(); ++i) {
 		presetNames[i] = GetClimatePresetDisplayName(i);
 	}
-	// Map preset enum to combo index (Custom=0, Legacy=1, Nordic=2, Arctic=3, Coastal=4, Monsoon=5)
-	int currentComboIndex = static_cast<int>(climatePreset);
-
-	if (ImGui::Combo(T(TKEY("climate_preset"), "Climate Preset"), &currentComboIndex, presetNames, static_cast<int>(CLIMATE_PRESET_INFO.size()))) {  // Map combo index back to preset enum
-		// Simplified: map combo index directly to enum, with bounds check
-		ClimatePreset newPreset = (currentComboIndex >= 0 && currentComboIndex < static_cast<int>(CLIMATE_PRESET_INFO.size())) ? static_cast<ClimatePreset>(currentComboIndex) : defaultPreset;
-
-		// Update the preset selection
-		climatePreset = newPreset;
-
+	// The combo index is the preset enum value (Custom=0, Legacy=1, Nordic=2, Arctic=3, Coastal=4, Monsoon=5)
+	if (Util::Combo(T(TKEY("climate_preset"), "Climate Preset"), &climatePreset, presetNames)) {
 		// Apply preset settings (but not for Custom, which just means user-modified)
-		if (newPreset != ClimatePreset::Custom) {
-			ApplyClimatePreset(newPreset);
+		if (climatePreset != ClimatePreset::Custom) {
+			ApplyClimatePreset(climatePreset);
 		}
 	}
+	const int currentComboIndex = static_cast<int>(climatePreset);
 
 	ImGui::PopStyleColor(2);  // Pop both style colors
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -696,10 +689,8 @@ void WetnessEffects::DrawEnvironmentWetnessSettings()
 	ImGui::Spacing();
 	auto& csEditor = globals::features::csEditor;
 	if (csEditor.loaded) {
-		// The picker is a standalone widget now; the CS Editor feature has no menu page to open.
 		if (ImGui::SmallButton(T(TKEY("open_weather_picker"), "Open Weather Picker"))) {
-			globals::features::performanceOverlay.settings.ShowWeatherPicker = true;
-			csEditor.WeatherDetailsWindow.Enabled = true;
+			globals::features::sceneSelector.OpenWeatherOverlay();
 			globals::state->MarkSettingsChanged();
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -787,7 +778,7 @@ static void DrawRainTypeLabel(const char* prefix, float rate)
 
 void WetnessEffects::DrawCharacterRainSettings()
 {
-	Util::DrawSectionHeader(T(TKEY("character_activation_exposure"), "Activation & Exposure"), false, false);
+	ImGui::SeparatorText(T(TKEY("character_activation_exposure"), "Activation & Exposure"));
 	bool wetnessEnabled = settings.EnableWetnessEffects != 0;
 	if (ImGui::Checkbox(T(TKEY("enable_wetness"), "Enable Wetness"), &wetnessEnabled)) {
 		settings.EnableWetnessEffects = wetnessEnabled;
@@ -817,7 +808,7 @@ void WetnessEffects::DrawCharacterRainSettings()
 	ImGui::EndDisabled();
 
 	ImGui::Spacing();
-	Util::DrawSectionHeader(T(TKEY("character_drops_trails"), "Drops & Trails"), false, false);
+	ImGui::SeparatorText(T(TKEY("character_drops_trails"), "Drops & Trails"));
 
 	ImGui::BeginDisabled(characterEffectsDisabled);
 	ImGui::SliderFloat(T(TKEY("character_spot_density"), "Drop Density"), &settings.CharacterSpotDensity,
@@ -829,7 +820,7 @@ void WetnessEffects::DrawCharacterRainSettings()
 	ImGui::EndDisabled();
 
 	ImGui::Spacing();
-	Util::DrawSectionHeader(T(TKEY("character_surface_lighting"), "Wet Surface Lighting"), false, false);
+	ImGui::SeparatorText(T(TKEY("character_surface_lighting"), "Wet Surface Lighting"));
 	ImGui::BeginDisabled(!settings.EnableWetnessEffects);
 	ImGui::SliderFloat(T(TKEY("hair_wetness"), "Hair Wetness"), &settings.HairWetness, 0.0f, 1.0f);
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -851,7 +842,7 @@ void WetnessEffects::DrawCharacterRainSettings()
 	ImGui::EndDisabled();
 
 	ImGui::Spacing();
-	Util::DrawSectionHeader(T(TKEY("character_equipped_weapons"), "Equipped Weapons"), false, false);
+	ImGui::SeparatorText(T(TKEY("character_equipped_weapons"), "Equipped Weapons"));
 	ImGui::BeginDisabled(characterEffectsDisabled);
 	bool weaponDrops = settings.EnableWeaponRainDrops != 0;
 	if (ImGui::Checkbox(T(TKEY("enable_weapon_rain_drops"), "Stationary Water Beads"), &weaponDrops))
@@ -861,7 +852,7 @@ void WetnessEffects::DrawCharacterRainSettings()
 	ImGui::EndDisabled();
 
 	ImGui::Spacing();
-	Util::DrawSectionHeader(T(TKEY("character_debug"), "Debug"), false, false);
+	ImGui::SeparatorText(T(TKEY("character_debug"), "Debug"));
 	if (Util::Button(T(TKEY("character_restore_defaults"), "Restore Character Wet Defaults")))
 		RestoreCharacterRainDefaults();
 
@@ -876,9 +867,7 @@ void WetnessEffects::DrawCharacterRainSettings()
 		T(TKEY("character_debug_weapons"), "Held Weapon Classification")
 	};
 	static_assert(std::size(debugModes) == static_cast<std::size_t>(CharacterDebugMode::Count));
-	int debugMode = static_cast<int>(std::min<uint>(settings.CharacterSpotDebug, static_cast<uint>(std::size(debugModes) - 1)));
-	if (ImGui::Combo(T(TKEY("character_spot_debug"), "Water Layer Debug"), &debugMode, debugModes, static_cast<int>(std::size(debugModes))))
-		settings.CharacterSpotDebug = static_cast<uint>(debugMode);
+	Util::Combo(T(TKEY("character_spot_debug"), "Water Layer Debug"), &settings.CharacterSpotDebug, debugModes);
 	ImGui::EndDisabled();
 }
 
@@ -1116,12 +1105,12 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		}
 	}
 
-	static size_t rainTimer = 0;  // size_t for precision
+	static size_t rainTimer = 0;  // microseconds; size_t for precision
 	const std::uint32_t currentFrame = globals::state ? globals::state->frameCount : 0u;
 	const bool paused = globals::game::ui && globals::game::ui->GameIsPaused();
 	if (rainTimerFrame.TryAdvance(currentFrame, !paused))
-		rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000);  // BSTimer::delta is always 0 for some reason
-	data.Time = rainTimer / 1000.f;
+		rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000000);  // BSTimer::delta is always 0 for some reason
+	data.Time = static_cast<float>(static_cast<double>(rainTimer) / 1000000.0);
 
 	data.settings = settings;
 	data.settings.MaxShoreWetness = settings.EnableWetnessEffects ? settings.MaxShoreWetness : 0.0f;

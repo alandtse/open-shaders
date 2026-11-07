@@ -178,6 +178,34 @@ namespace Util::CacheInvalidation
 		return *recorded == current ? CompileFlagsCheck::Match : CompileFlagsCheck::Mismatch;
 	}
 
+	/// Game runtime a disk cache was compiled for; flat covers SE and AE.
+	enum class CacheRuntime
+	{
+		Unknown,
+		Flat,
+		VR,
+	};
+
+	/// Runtime a cache was built for. Prefers the recorded `Runtime` key; caches without one fall back to the
+	/// VR feature's recorded state (shipped flat caches omit the VR section, shipped VR caches enable it).
+	inline CacheRuntime DetectCacheRuntime(const std::optional<std::string>& recordedRuntime, const std::optional<bool>& vrFeatureEnabled)
+	{
+		if (recordedRuntime) {
+			if (*recordedRuntime == "VR")
+				return CacheRuntime::VR;
+			return *recordedRuntime == "SE" ? CacheRuntime::Flat : CacheRuntime::Unknown;
+		}
+		if (!vrFeatureEnabled)
+			return CacheRuntime::Flat;
+		return *vrFeatureEnabled ? CacheRuntime::VR : CacheRuntime::Unknown;
+	}
+
+	/// True when the cache was built for the other runtime: its shaders are keyed by the `VR` define, so none can be reused.
+	inline bool IsCacheRuntimeMismatch(CacheRuntime cacheRuntime, bool currentIsVR)
+	{
+		return cacheRuntime != CacheRuntime::Unknown && (cacheRuntime == CacheRuntime::VR) != currentIsVR;
+	}
+
 	/// Decide whether `mismatches` (current state vs. the rollback slot's
 	/// manifest) qualify as a restore candidate, and if so record them. Whether
 	/// the rollback slot's Info.ini actually exists on disk is the caller's

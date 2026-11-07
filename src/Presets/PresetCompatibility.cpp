@@ -158,7 +158,7 @@ namespace PresetCompatibility
 		if (!warning.missingPlugins.empty()) {
 			warning.pluginsMessage = i18n->Format("menu.presets.compat_plugins_missing",
 				{ { "plugins", JoinNames(warning.missingPlugins) } },
-				"Made with plugin(s) not in your load order: {plugins}");
+				"Missing plugins: {plugins}");
 		}
 		return warning;
 	}

@@ -557,7 +557,7 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 	}
 }
 
-bool CSUtility::ReapplyCurrentPageOverrideSettings()
+std::vector<std::string> CSUtility::GetCurrentPageSettingKeys() const
 {
 	static constexpr std::array<std::string_view, 21> atmosphereKeys{ "useAmbientEffectLighting", "skyBrightness", "cloudBrightness", "skySaturation", "cloudSaturation", "skyGammaOffset", "cloudGammaOffset", "effectBrightness", "skyStaticBrightness", "skyStaticTransparency", "fogGammaOffset", "fogAlphaGammaOffset", "fogIntensity", "vlGammaOffset", "vlIntensity", "sunGlareIntensity", "effectColor", "skyStaticColor", "sunGlareColor", "fogSaturation", "vlSaturation" };
 	static constexpr std::array<std::string_view, 2> waterKeys{ "water", "waterGammaOffset" };
@@ -568,19 +568,24 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 
 	switch (activeSettingsPage) {
 	case SettingsPage::Atmosphere:
-		return ReapplyOverrideSettingsForKeys(atmosphereKeys);
+		return { atmosphereKeys.begin(), atmosphereKeys.end() };
 	case SettingsPage::Water:
-		return ReapplyOverrideSettingsForKeys(waterKeys);
+		return { waterKeys.begin(), waterKeys.end() };
 	case SettingsPage::Light:
-		return ReapplyOverrideSettingsForKeys(lightKeys);
+		return { lightKeys.begin(), lightKeys.end() };
 	case SettingsPage::Materials:
-		return ReapplyOverrideSettingsForKeys(materialKeys);
+		return { materialKeys.begin(), materialKeys.end() };
 	case SettingsPage::VanillaDepthOfField:
-		return ReapplyOverrideSettingsForKeys(depthOfFieldKeys);
+		return { depthOfFieldKeys.begin(), depthOfFieldKeys.end() };
 	case SettingsPage::VanillaBloom:
-		return ReapplyOverrideSettingsForKeys(bloomKeys);
+		return { bloomKeys.begin(), bloomKeys.end() };
 	}
-	return false;
+	return {};
+}
+
+bool CSUtility::ReapplyCurrentPageOverrideSettings()
+{
+	return Feature::ReapplyCurrentPageOverrideSettings();
 }
 
 void CSUtility::SetupResources()

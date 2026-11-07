@@ -174,6 +174,7 @@ void OverlayRenderer::RenderOverlay(
 	menu.UpdateOpenFade(io.DeltaTime);
 
 	if (ShouldSkipRendering()) {
+		Util::CursorLoader::ReleaseNativeCursor();
 		EditorWindow::GetSingleton()->FinishGameHourSliderFrame(false);
 		io.ClearInputKeys();
 		io.ClearEventsQueue();
@@ -270,7 +271,6 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 effectFailed ||
 			 globals::features::performanceOverlay.settings.ShowInOverlay ||
 			 globals::features::sceneSelector.IsOverlayVisible() ||
-			 globals::features::performanceOverlay.settings.ShowWeatherPicker ||
 			 renderDoc->IsAvailable() ||
 			 globals::features::vr.HelperRequestsRender());
 }
@@ -532,6 +532,8 @@ void OverlayRenderer::HandleABTesting()
 
 void OverlayRenderer::FinalizeImGuiFrame()
 {
+	if (auto* menu = globals::menu)
+		Util::CursorLoader::UpdateNativeCursor(*menu);
 	if (auto* menu = Menu::GetSingleton();
 		menu && menu->GetSettings().Theme.UseCustomCursor && Util::CursorLoader::GetLoadedCount() > 0) {
 		Util::CursorLoader::DrawCustomCursor(*menu);
@@ -556,7 +558,7 @@ bool OverlayRenderer::RenderDesktopMirror(ImDrawData* drawData)
 	uint32_t panelWidth = 0;
 	uint32_t panelHeight = 0;
 	const bool helperPanelActive = globals::game::isVR && globals::features::vr.GetHelperPanelSize(panelWidth, panelHeight);
-	if (!helperPanelActive || !drawData || !globals::d3d::swapChain)
+	if (!helperPanelActive || !drawData || !globals::d3d::swapChain || !globals::features::vr.settings.FitMenuToDesktop)
 		return false;
 	if (globals::features::upscaling.d3d12SwapChainActive ||
 		(globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR))

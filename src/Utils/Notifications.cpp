@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <format>
+#include <imgui_internal.h>
 #include <vector>
 
 namespace
@@ -105,7 +106,8 @@ namespace Util::Notifications
 			if (ImGui::Begin(std::format("##Notification{}", (void*)&notif).c_str(), nullptr,
 					ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
 						ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDocking |
-						ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoScrollbar)) {
+						ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_Tooltip)) {
+				ImGui::BringWindowToDisplayBack(ImGui::GetCurrentWindow());
 				ImDrawList* draw = ImGui::GetWindowDrawList();
 				const ImVec2 p0 = ImGui::GetWindowPos();
 				const ImVec2 p1{ p0.x + cardSize.x, p0.y + cardSize.y };

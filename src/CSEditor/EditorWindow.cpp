@@ -8,6 +8,7 @@
 #	include "Features/Effects11/Editor/Effects11Editor.h"
 #endif
 #include "Features/HDRDisplay.h"
+#include "Features/SceneSelector.h"
 #include "Features/Upscaling.h"
 #include "Globals.h"
 #include "IconsTabler.h"
@@ -449,13 +450,19 @@ void EditorWindow::DrawBrowserPage()
 
 void EditorWindow::DrawBrowserHeader()
 {
-	const auto modeButton = [this](const char* label, BrowserMode mode) {
-		if (BrowserUI::FilterChip(label, { label }, browserMode == mode))
-			browserMode = mode;
+	const auto drawModes = [this] {
+		const auto modeButton = [this](const char* label, BrowserMode mode) {
+			if (BrowserUI::FilterChip(label, { label }, browserMode == mode))
+				browserMode = mode;
+		};
+		modeButton(T(TKEY("weather_lighting_browser"), "OS Editor Browser"), BrowserMode::Editor);
+		ImGui::SameLine();
+		modeButton(T(TKEY("os_menu"), "OS Menu"), BrowserMode::Menu);
 	};
-	modeButton(T(TKEY("weather_lighting_browser"), "OS Editor Browser"), BrowserMode::Editor);
-	ImGui::SameLine();
-	modeButton(T(TKEY("os_menu"), "OS Menu"), BrowserMode::Menu);
+	if (browserMode == BrowserMode::Menu)
+		globals::menu->DrawEditorMenuHeader(drawModes);
+	else
+		drawModes();
 }
 
 void EditorWindow::ShowMenuBrowser()
@@ -468,7 +475,7 @@ void EditorWindow::ShowMenuBrowser()
 
 void EditorWindow::ShowObjectsWindow()
 {
-	if (std::exchange(m_focusBrowser, false))
+	if (std::exchange(m_focusBrowser, false) && !ImGui::GetTopMostPopupModal())
 		ImGui::SetNextWindowFocus();
 	const int requestedMode = pendingBrowserMode.exchange(-1, std::memory_order_relaxed);
 	if (requestedMode != -1)
@@ -481,6 +488,7 @@ void EditorWindow::ShowObjectsWindow()
 		ImGui::End();
 		return;
 	}
+	SceneSettingsUI::UpdateFeaturePage(nullptr);
 
 	// Reset filter state when the user switches categories so stale column
 	// selections (e.g. Status) don't hide all items in the new category.
@@ -875,7 +883,12 @@ void EditorWindow::RenderUI()
 				if (PresetExportPanel::CanExport())
 					PresetExportPanel::Open();
 			} else {
-				SaveManager::SaveEditor(SaveManager::Trigger::User);
+				auto* browser = ImGui::FindWindowByName("###OS Editor Browser");
+				auto* focused = ImGui::GetCurrentContext()->NavWindow;
+				if (browserMode == BrowserMode::Menu && browser && focused && ImGui::IsWindowChildOf(focused, browser, false, false))
+					SaveManager::SaveAll(SaveManager::Trigger::User);
+				else
+					SaveManager::SaveEditor(SaveManager::Trigger::User);
 			}
 		}
 	}
@@ -963,7 +976,6 @@ void EditorWindow::RenderUI()
 				const bool canExport = PresetExportPanel::CanExport();
 				if (MenuItemWithShortcutSubtext(T(TKEY("export_preset"), "Export Preset..."), "Ctrl+Shift+S", canExport))
 					PresetExportPanel::Open();
-				Util::AddTooltip(PresetExportPanel::GetSummary(), Util::kTooltipWhenDisabled);
 
 				ImGui::Separator();
 				for (auto* collection : GetWidgetCollections())
@@ -1014,13 +1026,13 @@ void EditorWindow::RenderUI()
 
 				if (ImGui::Checkbox(T(TKEY("palette"), "Palette"), &PaletteWindow::GetSingleton()->open)) {
 				}
-				if (ImGui::Checkbox(T(TKEY("weather_picker"), "Weather Picker"), &WeatherPickerWindow::GetSingleton()->open)) {
-				}
+				ImGui::Checkbox(T(TKEY("weather_picker"), "Weather Picker"), &WeatherPickerWindow::GetSingleton()->open);
 				ImGui::Checkbox(T(TKEY("weather_debug"), "Weather Debug"), &showWeatherDebug);
 				Util::AddTooltip(T(TKEY("weather_debug_tooltip"), "Current and last weather details, plus rain & wetness analysis from other features"));
 
 				if (Util::RoundedMenuItem(T(TKEY("reset_window_layout"), "Reset Window Layout"))) {
 					resetLayout = true;
+					globals::features::sceneSelector.ResetWindowLayout();
 #ifdef ENABLE_EFFECTS11
 					Effects11Editor::GetSingleton().RequestLayoutReset();
 #endif
@@ -1132,10 +1144,7 @@ void EditorWindow::RenderUI()
 				ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, iconY));
 				if (DrawBarIconButton("##GlobalExportPreset", SceneActionIcons::kExport, canExport, textColor, statusPalette.Disable, iconButtonSize))
 					PresetExportPanel::Open();
-				const std::string exportTooltip = std::format("{} (Ctrl+Shift+S)\n{}", T(TKEY("export_preset"), "Export Preset..."),
-					canExport ?
-						PresetExportPanel::GetSummary() :
-						T(TKEY("export_preset_empty_tooltip"), "Nothing to export yet: author scene settings, save form edits, or load Post Processing or an Effects 11 preset first."));
+				const std::string exportTooltip = std::format("{} (Ctrl+Shift+S)", T(TKEY("export_preset"), "Export Preset..."));
 				Util::AddTooltip(exportTooltip.c_str(), Util::kTooltipWhenDisabled);
 			}
 
@@ -1218,11 +1227,9 @@ void EditorWindow::RenderUI()
 					std::snprintf(previewStatusBuf, sizeof(previewStatusBuf), T(TKEY("preview_free_camera_locked"), "[ %s ] FREE CAMERA LOCKED"), previewHotkey.c_str());
 				else
 					std::snprintf(previewStatusBuf, sizeof(previewStatusBuf), T(TKEY("preview_play_mode"), "[ %s ] PLAY MODE"), previewHotkey.c_str());
-				const float previewCenterX = barMinX + barWidth * 0.5f;
-				const float availableHalfWidth = std::max(0.0f, std::min(previewCenterX - leftClusterEnd - minimumCenterWidth - itemSpacing * 2.0f,
-																	rightCursor - itemSpacing - previewCenterX));
-				previewStatusWidth = std::min(ImGui::CalcTextSize(previewStatusBuf).x, availableHalfWidth * 2.0f);
-				previewStatusX = previewCenterX - previewStatusWidth * 0.5f;
+				const float availableWidth = std::max(0.0f, rightCursor - leftClusterEnd - minimumCenterWidth - itemSpacing * 2.0f);
+				previewStatusWidth = std::min(ImGui::CalcTextSize(previewStatusBuf).x, availableWidth);
+				previewStatusX = rightCursor - itemSpacing - previewStatusWidth;
 				if (previewStatusWidth > 0.0f)
 					rightCursor = previewStatusX - itemSpacing;
 			}
@@ -1235,6 +1242,7 @@ void EditorWindow::RenderUI()
 			const float centerClusterX = std::clamp(barMinX + (barWidth - centerClusterW) * 0.5f, leftClusterEnd, centerMaxX);
 
 			if (showPreviewStatus && previewStatusWidth > 0.0f) {
+				barWindow->DC.CurrLineTextBaseOffset = 0.0f;
 				ImGui::SetCursorScreenPos(ImVec2(previewStatusX, textY));
 				BrowserUI::EllipsizedText(previewStatusBuf, previewStatusWidth, Util::GetPulsingColor(enabledColor));
 			}
@@ -1389,7 +1397,6 @@ bool EditorWindow::SetupResources()
 		return true;
 	Load();
 	PaletteWindow::GetSingleton()->Load();
-	WeatherPickerWindow::GetSingleton()->Load();
 	InvalidateJsonAttachmentCache();
 
 	Util::FormEditorIDIndex editorIDs;
@@ -1557,7 +1564,8 @@ void EditorWindow::UpdateOpenState()
 		toolPrompt = Util::ConfirmationPopup{};
 		promptedTool = nullptr;
 		toolPromptProceed = nullptr;
-		if (!CanBeOpen() && ImGui::GetCurrentContext())
+		if (!CanBeOpen() && ImGui::GetCurrentContext() &&
+			ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
 			ImGui::ClosePopupToLevel(0, true);
 		lightEditor.ResetOverrides();
 		ShowGameMenus();
@@ -2458,7 +2466,7 @@ void EditorWindow::DrawTimeScaleSlider(const char* id, RE::Calendar* calendar)
 		ImGui::Text(T(TKEY("time_scale_tooltip"), "Adjust how fast time passes (vanilla: %.1fx). Right-click to reset."), kVanillaTimeScale);
 }
 
-void EditorWindow::DrawTimeControls()
+void EditorWindow::DrawTimeControls(bool stacked)
 {
 	auto calendar = Util::Climate::GetCalendar();
 	if (!calendar || !calendar->gameHour || !calendar->timeScale)
@@ -2467,7 +2475,8 @@ void EditorWindow::DrawTimeControls()
 	const float gap = ImGui::GetStyle().ItemSpacing.x;
 	const float iconSize = ImGui::GetFrameHeight();
 	const float avail = ImGui::GetContentRegionAvail().x;
-	const float sliderWidth = std::max(ThemeManager::Constants::CSE_TIME_SLIDER_MIN_WIDTH * Util::GetUIScale(), (avail - iconSize * 2.0f - gap * 3.0f) * 0.5f);
+	const float sliderWidth = std::max(ThemeManager::Constants::CSE_TIME_SLIDER_MIN_WIDTH * Util::GetUIScale(),
+		stacked ? avail - iconSize - gap : (avail - iconSize * 2.0f - gap * 3.0f) * 0.5f);
 
 	ImGui::SetNextItemWidth(sliderWidth);
 	DrawPausedAwareGameHourSlider("##FeatureGameTime");
@@ -2477,7 +2486,10 @@ void EditorWindow::DrawTimeControls()
 	DrawTimePauseToggle("##FeaturePauseTime", ImVec2(iconSize, iconSize));
 	Util::HoverTip(T(TKEY("pause_time_tooltip"), "Pause or resume game time progression"));
 
-	ImGui::SameLine();
+	if (stacked)
+		ImGui::Spacing();
+	else
+		ImGui::SameLine();
 	ImGui::SetNextItemWidth(sliderWidth);
 	DrawTimeScaleSlider("##TimeScale", calendar);
 

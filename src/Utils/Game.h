@@ -122,6 +122,16 @@ namespace Util::EnvironmentControls
 	bool IsPreviewActive();
 }
 
+namespace Util::SceneTravel
+{
+	/** @brief Cache location-to-cell fallbacks after plugin records finish loading. */
+	void CacheLocationDestinations();
+	/** @brief Resolve a cell, worldspace or location to its validated console travel command. */
+	std::optional<std::string> GetCommand(RE::TESForm* destination, std::string_view cellEditorId = {});
+	/** @brief Queue travel on the game thread; return false if the destination is unavailable. */
+	bool Go(RE::TESForm* destination, std::string_view cellEditorId = {});
+}
+
 namespace Util
 {
 	inline constexpr float kFallbackCameraAspect = 16.0f / 9.0f;

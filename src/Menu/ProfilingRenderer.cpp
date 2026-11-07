@@ -320,14 +320,14 @@ static bool HasLiveTimingMode(const Profiler::TimerResult& result, bool cpuMode)
 	return cpuMode ? result.hasCpu : result.hasGpu;
 }
 
-void ProfilingRenderer::RenderGraph()
+bool ProfilingRenderer::RenderGraph(float height, bool showLegend)
 {
 	auto& profiler = (*globals::profiler);
 	const auto& results = profiler.GetResults();
 	bool cpuMode = (timingMode == TimingMode::CPU);
 
 	if (results.empty())
-		return;
+		return false;
 
 	std::vector<legit::ProfilerTask> tasks;
 
@@ -356,7 +356,7 @@ void ProfilingRenderer::RenderGraph()
 	}
 
 	if (tasks.empty())
-		return;
+		return false;
 
 	if (gpuGraphGate.ShouldSample())
 		gpuGraph.LoadFrameData(tasks.data(), tasks.size());
@@ -367,13 +367,24 @@ void ProfilingRenderer::RenderGraph()
 
 	const float uiScale = Util::GetUIScale();
 	const int totalWidth = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x));
-	const int legendWidth = ComputeGraphLegendWidth(totalWidth, ScaleToUiInt(100.0f), 0.42f, ScaleToUiInt(280.0f), ScaleToUiInt(420.0f));
+	const int legendWidth = showLegend ? ComputeGraphLegendWidth(totalWidth, ScaleToUiInt(100.0f), 0.42f, ScaleToUiInt(280.0f), ScaleToUiInt(420.0f)) : 0;
 	const int graphWidth = std::max(1, totalWidth - legendWidth);
-	const float graphHeight = kMainGraphHeight * uiScale;
 
-	gpuGraph.RenderTimings(static_cast<float>(graphWidth), static_cast<float>(legendWidth), graphHeight, 0, maxFrameTimeSec, uiScale);
+	gpuGraph.RenderTimings(static_cast<float>(graphWidth), static_cast<float>(legendWidth), height, 0, maxFrameTimeSec, uiScale);
 
-	ImGui::Spacing();
+	return true;
+}
+
+void ProfilingRenderer::RenderCompactGraph(float height)
+{
+	auto* profiler = globals::profiler;
+	if (!profiler || !profiler->IsUserEnabled()) {
+		ImGui::TextDisabled("%s", T("menu.profiling.disabled", "Profiling is disabled"));
+		return;
+	}
+	profiler->RequestCapture(timingMode == TimingMode::CPU ? Profiler::CaptureMode::CPU : Profiler::CaptureMode::GPU);
+	if (!RenderGraph(height, false))
+		ImGui::TextDisabled("%s", T("menu.profiling.no_timing_data_world", "No timing data available (enter game world)"));
 }
 
 void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
@@ -433,7 +444,8 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 	if (renderedFeatureOverview)
 		ImGui::SeparatorText(T("menu.profiling.all_timings", "All Timings"));
 
-	RenderGraph();
+	RenderGraph(kMainGraphHeight * Util::GetUIScale(), true);
+	ImGui::Spacing();
 
 	if (showTable) {
 		std::vector<std::string> passLabels;

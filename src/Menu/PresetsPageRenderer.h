@@ -17,6 +17,8 @@ public:
 	static void DrawPopups();
 	/** @brief Whether a preset popup owns input. */
 	static bool IsPopupOpen();
+	/** @brief Dismisses preset dialogs and cancels pending file operations. */
+	static void DismissPopups();
 	/** @brief Opens preset authoring in the menu that currently hosts the UI. */
 	static void OpenExport();
 	/** @brief Opens the selected preset's files and selective copy actions. */

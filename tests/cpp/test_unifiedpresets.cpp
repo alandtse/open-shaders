@@ -7,16 +7,57 @@
 #include <format>
 #include <fstream>
 #include <latch>
+#include <limits>
 #include <thread>
 #include <winrt/base.h>
 
 #include "CSEditor/SceneManager/SceneEntryDraft.h"
+#include "CSEditor/SceneManager/SceneEntryPrecedence.h"
 #include "Presets/LegacyPreset.h"
 #include "Presets/PresetActivation.h"
 #include "Presets/PresetContent.h"
 #include "Presets/PresetState.h"
 #include "Utils/RenderTaskQueue.h"
 #include "Utils/SettingsPatch.h"
+
+TEST_CASE("Scene presets take precedence over values saved for the same scene", "[presets][scene-settings]")
+{
+	using namespace SceneEntryPrecedence;
+	const auto user = GetRank(false, false);
+	const auto preset = GetRank(true, false);
+	const auto suppression = GetRank(false, true);
+
+	CHECK(user < preset);
+	CHECK(preset < suppression);
+	CHECK(GetRank(true, true) == preset);
+	CHECK(kApplyOrder == std::array{ user, preset, suppression });
+}
+
+TEST_CASE("Legacy boot snapshots do not block preset boot values", "[presets]")
+{
+	const nlohmann::json defaults{
+		{ "OptInFeature", true }, { "OtherFeature", false }, { "ThirdFeature", false }
+	};
+	const nlohmann::json saved{
+		{ "OptInFeature", true }, { "OtherFeature", true }, { "ThirdFeature", "false" }, { "UnknownFeature", true }
+	};
+	const nlohmann::json preset{ { "OptInFeature", false } };
+	const nlohmann::json marked{ { PresetState::kBootPreferencesVersionKey, PresetState::kBootPreferencesVersion } };
+
+	const auto migrated = PresetState::NormalizeBootPreferences(saved, defaults, nlohmann::json::object());
+	REQUIRE(migrated == nlohmann::json{ { "OtherFeature", true } });
+
+	auto boot = defaults;
+	boot.update(preset);
+	boot.update(migrated);
+	CHECK(boot.at("OptInFeature") == false);
+	CHECK(boot.at("OtherFeature") == true);
+
+	boot.update(PresetState::NormalizeBootPreferences(saved, defaults, marked));
+	CHECK(boot.at("OptInFeature") == true);
+	CHECK(boot.at("ThirdFeature") == false);
+	CHECK_FALSE(boot.contains("UnknownFeature"));
+}
 
 TEST_CASE("Legacy feature overwrites translate into upstream Baseline payloads", "[presets][legacy-presets]")
 {
@@ -55,20 +96,6 @@ TEST_CASE("Retired legacy keys do not reject neighboring supported settings", "[
 	Util::Settings::CollectUnknownSettingKeys(malformed.values, schema, "", invalid);
 	REQUIRE(invalid == std::vector<std::string>{ "Enabled (wrong type)" });
 	REQUIRE(malformed.retiredKeys == std::vector<std::string>{ "RetiredToggle" });
-}
-
-TEST_CASE("Legacy companion values remain personal edits above Base Settings", "[presets][legacy-presets]")
-{
-	const std::array<LegacyPreset::FeatureNames, 1> features{ std::pair{ "First", "First Feature" } };
-	nlohmann::json settings{ { "First Feature", { { "Amount", 0.3 }, { "Kept", 2 } } } };
-	LegacyPreset::ImportPersonalEdits(settings,
-		{ { "First Feature", { { "Amount", 0.7 } } }, { "Unknown", { { "Amount", 5 } } } }, features);
-	REQUIRE(settings.at("First Feature").at("Amount") == 0.7);
-	REQUIRE(settings.at("First Feature").at("Kept") == 2);
-	REQUIRE_FALSE(settings.contains("Unknown"));
-	REQUIRE(PresetState::HasNormalizedFeatureEdits(settings.at("Presets"), "First Feature"));
-	LegacyPreset::ImportPersonalEdits(settings, { { "First Feature", nullptr } }, features);
-	REQUIRE(settings.at("First Feature").at("Amount") == 0.7);
 }
 
 TEST_CASE("Legacy boot settings use the upstream manifest contract", "[presets][legacy-presets]")
@@ -119,12 +146,12 @@ TEST_CASE("Base Settings default to all enabled and retain explicit disabled cho
 
 TEST_CASE("Upstream preset-state saves do not discard OS preferences", "[presets]")
 {
-	const nlohmann::json privateState{ { "disabledBaselinePackIds", { "Off" } }, { "legacyUserOverrideFeatures", { "Feature" } },
+	const nlohmann::json privateState{ { "disabledBaselinePackIds", { "Off" } }, { "baseSettingsCustomizations", { "Feature" } },
 		{ "removedLegacyPackIds", { "Legacy - Old" } }, { "automaticPresets", false } };
 	const auto restored = PresetState::RestorePrivateState({ { "activePackId", "CS Selection" } }, privateState);
 	REQUIRE(restored.at("activePackId") == "CS Selection");
 	REQUIRE(restored.at("disabledBaselinePackIds") == nlohmann::json({ "Off" }));
-	REQUIRE(restored.at("legacyUserOverrideFeatures") == nlohmann::json({ "Feature" }));
+	REQUIRE(restored.at("baseSettingsCustomizations") == nlohmann::json({ "Feature" }));
 	REQUIRE(restored.at("removedLegacyPackIds") == nlohmann::json({ "Legacy - Old" }));
 	REQUIRE(restored.at("automaticPresets") == false);
 	REQUIRE(PresetState::RestorePrivateState({ { "automaticPresets", true } }, privateState).at("automaticPresets") == true);
@@ -173,6 +200,31 @@ TEST_CASE("Automatic scene presets keep conflicting new presets entirely disable
 	REQUIRE(Select(candidates, {}, {}, existing, true).enabled == std::vector<std::string>{ "First", "Third" });
 	REQUIRE_FALSE(Conflicts({ { "same", 1 } }, { { "same", 1.0 } }));
 	REQUIRE(Conflicts({ { "exclusive/e11", true } }, { { "exclusive/e11", true } }));
+}
+
+TEST_CASE("Preset file filters separate payload types without admitting other files", "[presets]")
+{
+	using PresetContent::FileFilter;
+	using PresetContent::MatchesFileFilter;
+	const std::array<std::pair<std::filesystem::path, FileFilter>, 6> payloads{
+		std::pair{ "Baseline/Example.json", FileFilter::Baseline },
+		std::pair{ "InteriorOnly/Example.json", FileFilter::Scene },
+		std::pair{ "TimeOfDay/Day/Example.json", FileFilter::Scene },
+		std::pair{ "Weather/0x123~Example.esp/Day/Example.json", FileFilter::Scene },
+		std::pair{ "Locations/0x456~Example.esp/Example.json", FileFilter::Scene },
+		std::pair{ "Forms/ImageSpaces/Example.json", FileFilter::Records }
+	};
+	for (const auto& [path, type] : payloads) {
+		REQUIRE(MatchesFileFilter(path, FileFilter::All));
+		REQUIRE(PresetContent::IsRecordFile(path) == (type == FileFilter::Records));
+		for (auto filter : { FileFilter::Baseline, FileFilter::Scene, FileFilter::Records })
+			REQUIRE(MatchesFileFilter(path, filter) == (filter == type));
+	}
+	for (const auto& path : { "", "Preset.json", "effects11/enbseries.ini", "Forms/Example.json", "Forms/ImageSpaces/Example.txt", "Forms/../Example.json", "Forms/./Example.json", "Forms/ImageSpaces/nested/Example.json", "../Baseline/Example.json", "C:/Baseline/Example.json" }) {
+		REQUIRE_FALSE(PresetContent::IsRecordFile(path));
+		for (auto filter : { FileFilter::All, FileFilter::Baseline, FileFilter::Scene, FileFilter::Records })
+			REQUIRE_FALSE(MatchesFileFilter(path, filter));
+	}
 }
 
 TEST_CASE("Preset conflicts use setting addresses rather than filenames", "[presets]")
@@ -228,6 +280,97 @@ TEST_CASE("Deleting selected preset settings preserves other values and metadata
 	REQUIRE(document.at("_feature") == "Example");
 }
 
+TEST_CASE("Editing a preset value preserves unrelated settings and scene metadata", "[presets][preset-edit]")
+{
+	using namespace PresetContent;
+	using json = nlohmann::json;
+	const json original{
+		{ "_feature", "Example" }, { "Group", { { "Amount", 0.5 }, { "Kept", 2 } } },
+		{ "_metadata", { { "entryTransitions", { { "Group", { { "Amount", 2.0 } } } } } } }
+	};
+	auto document = original;
+	REQUIRE(ReplaceSetting(document, "/Group/Amount", 0.5, 1) == SettingEditResult::Changed);
+	REQUIRE(document.at("Group").at("Amount").is_number_float());
+	REQUIRE(document.at("Group").at("Amount") == 1.0);
+	document["Group"]["Amount"] = 0.5;
+	REQUIRE(document == original);
+	REQUIRE(ReplaceSetting(document, "/Group/Amount", 0.5, 0.5) == SettingEditResult::Unchanged);
+}
+
+TEST_CASE("Preset value editing refuses stale, missing and internal paths", "[presets][preset-edit]")
+{
+	using namespace PresetContent;
+	const nlohmann::json original{ { "Amount", 0.75 }, { "Group", { { "_hidden", 1 } } }, { "_feature", "Example" } };
+	auto document = original;
+	REQUIRE(ReplaceSetting(document, "/Amount", 0.5, 0.9) == SettingEditResult::Stale);
+	REQUIRE(ReplaceSetting(document, "/Amount", 0, 0.9) == SettingEditResult::Stale);
+	REQUIRE(ReplaceSetting(document, "/Missing", nullptr, 0.9) == SettingEditResult::Missing);
+	REQUIRE(ReplaceSetting(document, "", original, nlohmann::json::object()) == SettingEditResult::Missing);
+	REQUIRE(ReplaceSetting(document, "/_feature", "Example", "Other") == SettingEditResult::Missing);
+	REQUIRE(ReplaceSetting(document, "/Group/_hidden", 1, 2) == SettingEditResult::Missing);
+	REQUIRE(ReplaceSetting(document, "/~invalid", 1, 2) == SettingEditResult::InvalidValue);
+	REQUIRE(document == original);
+}
+
+TEST_CASE("Preset value editing validates types, bounds and finite numbers", "[presets][preset-edit]")
+{
+	using namespace PresetContent;
+	using json = nlohmann::json;
+	const json original{ { "Signed", -1 }, { "Unsigned", std::uint32_t{ 7 } }, { "Float", 0.5 },
+		{ "Enabled", true }, { "Name", "Original" }, { "Vector", { 1.0, 2.0 } } };
+	auto document = original;
+	REQUIRE(ReplaceSetting(document, "/Signed", -1, 1.5) == SettingEditResult::InvalidValue);
+	REQUIRE(ReplaceSetting(document, "/Signed", -1, std::numeric_limits<std::int64_t>::max()) == SettingEditResult::InvalidValue);
+	REQUIRE(ReplaceSetting(document, "/Unsigned", std::uint32_t{ 7 }, -1) == SettingEditResult::InvalidValue);
+	REQUIRE(ReplaceSetting(document, "/Float", 0.5, std::numeric_limits<double>::infinity()) == SettingEditResult::InvalidValue);
+	REQUIRE(ReplaceSetting(document, "/Float", 0.5, std::numeric_limits<double>::quiet_NaN()) == SettingEditResult::InvalidValue);
+	REQUIRE(ReplaceSetting(document, "/Enabled", true, 1) == SettingEditResult::InvalidValue);
+	REQUIRE(ReplaceSetting(document, "/Name", "Original", 1) == SettingEditResult::InvalidValue);
+	REQUIRE(ReplaceSetting(document, "/Vector", json{ 1.0, 2.0 }, json{ 3.0 }) == SettingEditResult::InvalidValue);
+	REQUIRE(document == original);
+}
+
+TEST_CASE("Preset value editing retains numeric types in arrays and records", "[presets][preset-edit]")
+{
+	using namespace PresetContent;
+	using json = nlohmann::json;
+	json document{ { "Vector", { 1.0, 2.0 } }, { "Flags", { 1, 2 } }, { "Enabled", true },
+		{ "Unsigned", std::uint32_t{ 7 } }, { "Name/With~Escapes", "Old" },
+		{ "Records", json::array({ { { "Value", 0.5 } } }) } };
+	REQUIRE(ReplaceSetting(document, "/Vector", json{ 1.0, 2.0 }, json{ 3, 4 }) == SettingEditResult::Changed);
+	REQUIRE(document["Vector"][0].is_number_float());
+	REQUIRE(document["Vector"][1].is_number_float());
+	REQUIRE(ReplaceSetting(document, "/Flags", json{ 1, 2 }, json{ 3, 4, 5 }) == SettingEditResult::Changed);
+	REQUIRE(ReplaceSetting(document, "/Unsigned", std::uint32_t{ 7 }, 8) == SettingEditResult::Changed);
+	REQUIRE(document["Unsigned"].is_number_unsigned());
+	REQUIRE(ReplaceSetting(document, "/Enabled", true, false) == SettingEditResult::Changed);
+	REQUIRE(ReplaceSetting(document, "/Name~1With~0Escapes", "Old", "New") == SettingEditResult::Changed);
+	REQUIRE(ReplaceSetting(document, "/Records", json::array({ { { "Value", 0.5 } } }),
+				json::array({ { { "Value", 2 } } })) == SettingEditResult::Changed);
+	REQUIRE(document["Records"][0]["Value"].is_number_float());
+	const auto original = document;
+	REQUIRE(ReplaceSetting(document, "/Records", document["Records"], json::array({ { { "Value", "Invalid" } } })) == SettingEditResult::InvalidValue);
+	REQUIRE(document == original);
+}
+
+TEST_CASE("Preset editing honors declared numeric types in older JSON files", "[presets][preset-edit]")
+{
+	using namespace PresetContent;
+	using json = nlohmann::json;
+	json document{ { "Float", 1 }, { "Integer", 1 }, { "Vector", { 1, 2 } } };
+	const json floatType = 1.0;
+	REQUIRE(ReplaceSetting(document, "/Float", 1, 1.25, &floatType) == SettingEditResult::Changed);
+	REQUIRE(document["Float"].is_number_float());
+	REQUIRE(document["Float"] == 1.25);
+	const json integerType = 1;
+	REQUIRE(ReplaceSetting(document, "/Integer", 1, 1.25, &integerType) == SettingEditResult::InvalidValue);
+	const json vectorType{ 1.0, 2.0 };
+	REQUIRE(ReplaceSetting(document, "/Vector", json{ 1, 2 }, json{ 1.25, 2.75 }, &vectorType) == SettingEditResult::Changed);
+	REQUIRE(document["Vector"][0].is_number_float());
+	REQUIRE(document["Vector"][1].is_number_float());
+	REQUIRE(SceneFeatureName("InteriorOnly/Legacy_Example.json", { { "_feature", "" } }) == "Example");
+}
+
 TEST_CASE("Updated enabled scene presets cannot retain conflicting selections", "[presets]")
 {
 	const std::vector<PresetActivation::Candidate> candidates{ { "First", { { "field", 1 } } }, { "Second", { { "field", 2 } } } };
@@ -235,6 +378,32 @@ TEST_CASE("Updated enabled scene presets cannot retain conflicting selections", 
 	const auto result = PresetActivation::Select(candidates, enabled, {}, enabled, false);
 	REQUIRE(result.enabled == std::vector<std::string>{ "Second" });
 	REQUIRE(result.blocked.at("First") == std::vector<std::string>{ "Second" });
+}
+
+TEST_CASE("Deleting shared scene settings keeps other preset choices unchanged", "[presets]")
+{
+	using namespace PresetActivation;
+	using json = nlohmann::json;
+	const std::filesystem::path file = "InteriorOnly/Feature.json";
+	json first{ { "_feature", "Feature" }, { "Value", 1 }, { "FirstOnly", 2 } };
+	json second{ { "_feature", "Feature" }, { "Value", 1 }, { "SecondOnly", 3 } };
+	const json third{ { "_feature", "Feature" }, { "Value", 4 } };
+	const std::vector<std::string> enabled{ "First", "Second" };
+	const auto rescan = [&] {
+		return Select({ { "First", PresetContent::Describe(file, first) },
+						  { "Second", PresetContent::Describe(file, second) },
+						  { "Third", PresetContent::Describe(file, third) } },
+			enabled, {}, {}, false);
+	};
+	REQUIRE(rescan().enabled == enabled);
+	first["Value"] = 5;
+	REQUIRE(Conflicts(PresetContent::Describe(file, first), PresetContent::Describe(file, second)));
+	const std::array<std::string, 1> paths{ "/Value" };
+	REQUIRE(PresetContent::RemoveSettings(first, paths));
+	REQUIRE(second.at("Value") == 1);
+	REQUIRE(rescan().enabled == enabled);
+	REQUIRE(PresetContent::RemoveSettings(second, paths));
+	REQUIRE(rescan().enabled == enabled);
 }
 
 TEST_CASE("Scene drafts suspend and resume only their owned entries", "[presets][scene-draft]")

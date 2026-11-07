@@ -111,15 +111,13 @@ std::vector<std::filesystem::path> SceneSettingsManager::FindPresetFiles(const s
 	if (packId.empty())
 		return found;
 	const auto packRoot = Util::PathHelpers::GetUnifiedPackPath(packId);
-	const auto prefix = packId + "_";
 
 	const auto sweepDir = [&](const std::filesystem::path& directory) {
 		std::error_code ec;
 		if (!std::filesystem::exists(directory, ec))
 			return;
 		for (const auto& path : GetSortedJsonFiles(directory, "preset files"))
-			if (Util::PathHelpers::ToUtf8(path.filename()).starts_with(prefix))
-				found.push_back(path);
+			found.push_back(path);
 	};
 	const auto childDirectories = [](const std::filesystem::path& root, std::string_view context) {
 		std::error_code ec;
@@ -180,7 +178,7 @@ try {
 
 	if (info.selectedSceneSettings) {
 		std::set<std::string> available;
-		for (const auto& setting : GetSceneExportSettings()) available.insert(setting.key);
+		for (const auto& setting : GetSceneExportSettings(info.sceneSource)) available.insert(setting.key);
 		if (!std::ranges::includes(available, *info.selectedSceneSettings)) {
 			logger::warn("[Presets] Scene export selection changed; select the settings again");
 			return false;
@@ -243,8 +241,12 @@ try {
 	const bool exportForms = info.type != PresetType::Baseline;
 	std::vector<FormEditSources::FormEdit> formEdits;
 	bool formSourcesRead = true;
-	if (exportForms)
-		wroteAll = formSourcesRead = FormEditSources::ReadEffectiveFormEdits(formEdits);
+	if (exportForms) {
+		if (info.recordFiles)
+			formEdits = *info.recordFiles;
+		else
+			wroteAll = formSourcesRead = FormEditSources::ReadEffectiveFormEdits(formEdits);
+	}
 
 	const auto removeStaleFiles = [&](const std::vector<std::filesystem::path>& paths) {
 		for (const auto& path : paths) {
@@ -322,7 +324,7 @@ try {
 									 const std::filesystem::path& allowedRoot, const std::filesystem::path& baseDir,
 									 std::string_view sceneLabel, const json& extraMetadata = json::object()) {
 			const auto directory = GetOverwriteDir(baseDir, context.period);
-			for (const auto& [identity, entry] : BuildEffectiveContextEntries(sourceEntries, context, true)) {
+			for (const auto& [identity, entry] : BuildEffectiveContextEntries(sourceEntries, context, true, info.sceneSource)) {
 				if (info.selectedSceneSettings && !info.selectedSceneSettings->contains(GetSceneExportKey(context, *entry)))
 					continue;
 				auto& file = files[{ directory, identity.featureShortName }];
@@ -346,7 +348,7 @@ try {
 		const auto bakeSceneSets = [&](SceneContextId context, const PeriodicSceneConfig& config,
 									   const std::filesystem::path& allowedRoot, const std::filesystem::path& sceneDir,
 									   std::string_view sceneLabel, json metadata = json::object()) {
-			metadata[kTimeOfDayEnabledKey] = config.timeOfDayEnabled;
+			metadata[kTimeOfDayEnabledKey] = GetSceneExportTimeOfDayEnabled(context, info.sceneSource);
 			bakeContext(context, config.entries, allowedRoot, sceneDir, sceneLabel, metadata);
 			for (auto period : kPeriods) {
 				context.period = period;

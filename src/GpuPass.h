@@ -3,9 +3,13 @@
 #include <Tracy/Tracy.hpp>
 #include <Tracy/TracyD3D11.hpp>
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string_view>
 
+#include "GpuPassNames.h"
 #include "Utils/Macros.h"
 
 namespace GpuPassCapabilities
@@ -37,7 +41,8 @@ enum class GpuPassSpan
 /// Use via the convenience macros at render-pass entry points:
 ///   CS_GPU_PASS("Feature::PassName");                     // literal name, zero allocation
 ///   CS_GPU_PASS_SELECT(cond, "A", "B");                   // literal ternary, zero allocation
-///   CS_GPU_PASS_DYNAMIC(runtimeName);                     // runtime name, allocates
+///   CS_GPU_PASS_INDEXED(i, "A", "B", "C");                // literal table, zero allocation
+///   CS_GPU_PASS_DYNAMIC(runtimeName);                     // runtime name, allocates; only for names that exist at runtime
 struct ScopedGpuPass
 {
 	/** @brief Opens a pass using Tracy's dynamic source-location path. name is copied, not retained. */
@@ -91,6 +96,52 @@ private:
 		[[maybe_unused]] static const bool CS_DETAIL_CONCAT(cs_gpu_pass_capability2_, __LINE__) = GpuPassCapabilities::Register(name2); \
 		const bool CS_DETAIL_CONCAT(cs_gpu_pass_cond_, __LINE__) = (cond);                                                              \
 		ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__) { CS_DETAIL_CONCAT(cs_gpu_pass_cond_, __LINE__) ? std::string_view(name1) : std::string_view(name2) }
+#endif
+
+namespace GpuPassDetail
+{
+#ifdef TRACY_ENABLE
+	/** @brief The name table plus one static Tracy source location per name. */
+	template <std::size_t N>
+	struct PassSet
+	{
+		PassNames<N> names;
+		std::array<tracy::SourceLocationData, N> srclocs;
+	};
+
+	/** @brief Builds the name table and its Tracy source locations at compile time. */
+	template <class... Names>
+	constexpr auto MakePassSet(const char* function, const char* file, std::uint32_t line, Names... names)
+	{
+		return PassSet<sizeof...(Names)>{ MakePassNames(names...), { tracy::SourceLocationData{ names, function, file, line, 0 }... } };
+	}
+#endif
+
+	/** @brief Registers every name's feature prefix; the result only lets a static initializer run it once. */
+	template <std::size_t N>
+	bool RegisterAll(const PassNames<N>& names)
+	{
+		for (const char* name : names.names)
+			GpuPassCapabilities::Register(name);
+		return true;
+	}
+}
+
+/// Zero-allocation pass for a small fixed set of literal names chosen at run time: the
+/// generalization of CS_GPU_PASS_SELECT to any count. `index` selects the name and is
+/// clamped to the last one.
+#ifdef TRACY_ENABLE
+#	define CS_GPU_PASS_INDEXED(index, ...)                                                                                                                                         \
+		static constexpr auto CS_DETAIL_CONCAT(cs_gpu_pass_set_, __LINE__) = GpuPassDetail::MakePassSet(__FUNCTION__, __FILE__, static_cast<std::uint32_t>(__LINE__), __VA_ARGS__); \
+		[[maybe_unused]] static const bool CS_DETAIL_CONCAT(cs_gpu_pass_capability_, __LINE__) = GpuPassDetail::RegisterAll(CS_DETAIL_CONCAT(cs_gpu_pass_set_, __LINE__).names);    \
+		const std::size_t CS_DETAIL_CONCAT(cs_gpu_pass_index_, __LINE__) = CS_DETAIL_CONCAT(cs_gpu_pass_set_, __LINE__).names.Clamp(static_cast<std::size_t>(index));               \
+		ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__) { &CS_DETAIL_CONCAT(cs_gpu_pass_set_, __LINE__).srclocs[CS_DETAIL_CONCAT(cs_gpu_pass_index_, __LINE__)], std::string_view(CS_DETAIL_CONCAT(cs_gpu_pass_set_, __LINE__).names.names[CS_DETAIL_CONCAT(cs_gpu_pass_index_, __LINE__)]) }
+#else
+#	define CS_GPU_PASS_INDEXED(index, ...)                                                                                                                                  \
+		static constexpr auto CS_DETAIL_CONCAT(cs_gpu_pass_names_, __LINE__) = GpuPassDetail::MakePassNames(__VA_ARGS__);                                                    \
+		[[maybe_unused]] static const bool CS_DETAIL_CONCAT(cs_gpu_pass_capability_, __LINE__) = GpuPassDetail::RegisterAll(CS_DETAIL_CONCAT(cs_gpu_pass_names_, __LINE__)); \
+		const std::size_t CS_DETAIL_CONCAT(cs_gpu_pass_index_, __LINE__) = CS_DETAIL_CONCAT(cs_gpu_pass_names_, __LINE__).Clamp(static_cast<std::size_t>(index));            \
+		ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__) { std::string_view(CS_DETAIL_CONCAT(cs_gpu_pass_names_, __LINE__).names[CS_DETAIL_CONCAT(cs_gpu_pass_index_, __LINE__)]) }
 #endif
 
 #define CS_GPU_PASS_DYNAMIC(name)                                                     \

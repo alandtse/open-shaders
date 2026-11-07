@@ -126,7 +126,7 @@ void LensFlare::DrawSettings()
 			T("feature.post_processing.lens_flare.ghost_mode_quality", "Quality (FFT Bokeh)"),
 			T("feature.post_processing.lens_flare.ghost_mode_ultra", "Ultra (Per-Ghost FFT)")
 		};
-		ImGui::Combo(T("feature.post_processing.lens_flare.ghost_mode", "Ghost Mode"), &settings.GhostModeInt, modeNames, 3);
+		Util::Combo(T("feature.post_processing.lens_flare.ghost_mode", "Ghost Mode"), &settings.GhostModeInt, modeNames, 3);
 		tooltip(T("feature.post_processing.lens_flare.tooltip_ghost_mode",
 			"Fast: procedural radial ghosts (low cost).\n"
 			"Quality: FFT convolution with bokeh shape.\n"

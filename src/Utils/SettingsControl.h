@@ -48,6 +48,7 @@ namespace SettingsControl
 
 	using PathValidator = std::function<std::string(const std::filesystem::path&)>;
 	using IntDrawer = std::function<bool(int&)>;
+	using StringDrawer = std::function<bool(std::string&)>;
 	/** @brief Optional control adapters supplied by the active settings UI integration. */
 	struct Callbacks
 	{
@@ -55,6 +56,7 @@ namespace SettingsControl
 		bool (*interceptInt)(const char*, int&, const IntDrawer&) = nullptr;
 		bool (*drawPath)(const SettingIdentity&, std::string&, std::string&, const PathValidator&) = nullptr;
 		void (*recordBaselineEdit)(const SettingIdentity&, const nlohmann::json&) = nullptr;
+		bool (*interceptString)(const char*, std::string&, const StringDrawer&) = nullptr;
 	};
 
 	/** @brief Installs the settings UI adapters on the UI thread. */
@@ -77,6 +79,8 @@ namespace SettingsControl
 	bool IsReplicating();
 	/** @brief Draws a custom integer control through the optional settings adapter. */
 	bool InterceptInt(const char* label, int& value, const IntDrawer& draw);
+	/** @brief Draws a named string choice through the optional settings adapter. */
+	bool StringChoice(const char* label, std::string& value, const StringDrawer& draw);
 	/** @brief Returns true when the settings adapter supplies a path control. */
 	bool DrawPathControls(const SettingIdentity& setting, std::string& path, std::string& error, const PathValidator& validate);
 	/** @brief Records a custom control's edited persisted value. */

@@ -157,8 +157,8 @@ public:
 	void Save(ConfigMode a_configMode = ConfigMode::USER, bool a_isExplicitUserSave = true);
 	/** @brief Writes the running build's immutable feature defaults and returns the output path. */
 	std::filesystem::path DumpFeatureDefaults() const;
-	/** @brief Checks serialized settings against the last successful load or save after an interaction. */
-	void CheckSettingsChanged();
+	/** @brief Compares working settings after accepting only the supplied independently persisted fields. */
+	void CheckSettingsChanged(const json& persistedFields = json::object());
 	/** @brief Marks the personal configuration changed after a non-widget action. */
 	void MarkSettingsChanged()
 	{
@@ -178,6 +178,8 @@ public:
 	bool SetFeatureFavorite(const std::string& featureName, bool favorite);
 	/** @brief Saves category or alphabetical feature sorting immediately; returns false on failure. */
 	bool SetFeatureListSort(bool alphabetical);
+	/** @brief Saves setting-message visibility immediately without saving working feature edits. */
+	bool SetSettingInformationVisible(bool visible);
 	/** @brief Refreshes personal edits once after a settings change. */
 	void PrimeUserEdits();
 	/** @brief Personal edits for one feature, including pending file overrides. */
@@ -198,12 +200,16 @@ public:
 	const json* GetFeatureBase(std::string_view featureName) const;
 	/** @brief Rebuilds preset Baselines while retaining live personal edits and installed overwrites. */
 	bool ReapplyPresetLayers();
+	/** @brief Deletes invalidated Base Settings customizations from a saved document. */
+	void PreparePresetSettingsSave(json& settings) const;
+	/** @brief Acknowledges saved cleanup without saving unrelated live edits. */
+	void MarkPresetSettingsSaved(const json& settings);
 	/** @brief Reapplies the enabled preset layers through the existing transaction. */
 	void ReapplySettingsLayers();
 	/** @brief Invalidates cached personal edits beneath enabled Baseline packs. */
 	void InvalidateEditsUnderBaselines(Feature* feature = nullptr);
-	/** @brief Restores one feature to its code defaults and enabled Baseline packs. */
-	void RestoreFeatureLayers(Feature* feature);
+	/** @brief Restores one feature's code defaults as personal values above enabled Base Settings. */
+	void RestoreFeatureLayers(Feature* feature, bool currentPage = false);
 	/** @brief Saved feature values and their underlying personal-edit layers. */
 	struct SavedFeatureSettings
 	{
@@ -214,7 +220,13 @@ public:
 	/** @brief Reads effective saved values without modifying the live feature; throws for invalid files. */
 	SavedFeatureSettings ReadSavedFeatureSettings(Feature& feature) const;
 	/** @brief Reloads one feature's saved personal settings over its current Base Settings and overwrite layers. */
-	bool RestoreSavedFeatureSettings(Feature* feature);
+	bool RestoreSavedFeatureSettings(Feature* feature, bool currentPage = false);
+	/** @brief Whether saved user values exist for the whole configuration or a feature's requested scope. */
+	bool HasSavedSettings(Feature* feature = nullptr, bool currentPage = false) const;
+	/** @brief Uses all enabled Base Settings values without saving unrelated personal edits. */
+	bool ReapplyBaseSettings();
+	/** @brief Copies selected Base Settings into saved personal settings without saving unrelated edits. */
+	bool CopyFeatureSettingsToUser(Feature* feature, const json& settings);
 	/** @brief Returns loaded features whose personal edits overlap one pack, or all enabled Baselines. */
 	std::vector<Feature*> FindEditsUnderPack(const std::string& packId);
 	/** @brief Returns the cached overlap status for a feature, refreshed after settings interactions. */
@@ -720,6 +732,8 @@ public:
 
 	void ClearDisabledFeatures();
 	bool SetFeatureDisabled(const std::string& featureName, bool isDisabled);
+	/** @brief Clears a saved personal boot choice and uses the resolved preset or default value. */
+	bool ResetFeatureBootPreference(const std::string& featureName);
 	bool IsFeatureDisabled(const std::string& featureName);
 	std::unordered_map<std::string, bool>& GetDisabledFeatures();
 
@@ -793,17 +807,22 @@ private:
 	bool DropPresetEdits(const std::string& packId, Feature* onlyFeature, std::span<const std::string_view> keys = {});
 	std::unordered_map<std::string, bool> baselineOverlapCache;
 	std::uint64_t baselineOverlapCatalogRevision = UINT64_MAX;
-	void MarkSettingsSaved();
+	void MarkSettingsSaved(bool captureApplied = false);
 	json BuildSettingsSnapshot();
 	json savedSettingsSnapshot;
+	void CaptureSavedSettingsFields(const json& document);
+	std::unordered_map<std::string, std::vector<std::string>> savedFeatureFields;
+	bool hasSavedUserSettings = false;
 	bool settingsChanged = false;
 	std::unordered_map<std::string, bool> favoriteFeatures;
-	bool SaveFeaturePreference(const json& patch);
+	bool SaveFeaturePreference(const json& patch, bool trackInSnapshot = true);
 	json defaultSettingsBaseline;
 	json featureSettingsBases = json::object();
 	json userFeatureEdits = json::object();
 	json userEditsCache;
 	json userBootPreferences = json::object();
+	json baseSettingsInvalidations = json::object();
+	json pendingBaseSettingsResets = json::object();
 	bool featureResourcesReady = false;
 	winrt::com_ptr<ID3DUserDefinedAnnotation> pPerf;
 	std::mutex statsMutex;

@@ -2,6 +2,7 @@
 
 #include "Feature.h"
 #include "I18n/I18n.h"
+#include "Menu.h"
 #include "Utils/SettingsCatalog.h"
 #include "Utils/SettingsControl.h"
 #include "Utils/UI.h"
@@ -117,6 +118,14 @@ namespace
 				prerequisites.reset();
 		}
 		DrawBenchmarkMenuItem(feature, setting, *current, prerequisites);
+		if (const auto queued = manager->GetQueue().size(); queued != 0) {
+			const auto label = fmt::format(fmt::runtime(T("menu.settings.benchmark_go", "Go to benchmark ({})")), queued);
+			if (ImGui::MenuItem(label.c_str())) {
+				auto* menu = Menu::GetSingleton();
+				menu->SelectFeatureMenu("Performance");
+				menu->RequestTab("BenchmarkTab");
+			}
+		}
 	}
 
 	bool IsHighlighted(const SceneSettingsCatalog::SettingMetadata& setting)

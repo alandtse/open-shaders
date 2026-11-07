@@ -10,14 +10,16 @@ struct Feature;
 
 namespace Util::Settings
 {
-	/** @brief Installed value and companion customization winning at one overwrite-owned setting. */
-	struct OverwriteValue
+	/** @brief Accepted preset values and per-setting copy outcomes. */
+	struct SettingsCopy
 	{
-		const json* installed = nullptr;
-		const json* user = nullptr;
+		json values = json::object();
+		size_t copied = 0;
+		size_t overwritten = 0;
+		size_t skipped = 0;
 	};
-	/** @brief Feature overwrites outrank global companion edits; companions require an installed owner. */
-	OverwriteValue ResolveOverwriteValue(const json* global, const json* globalUser, const json* feature, const json* featureUser);
+	/** @brief Selects preset leaves while preserving or replacing explicit personal settings. */
+	SettingsCopy SelectSettingsToCopy(const json& source, const json& personal, bool replaceExisting);
 
 	/**
 	 * @brief Overlays recognized roots, validating known values and preserving owner-defined nested data.

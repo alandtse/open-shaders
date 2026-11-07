@@ -33,6 +33,7 @@
 #include <dxgi.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <unordered_set>
 #include <wrl/client.h>
 
 #include "../Feature.h"
@@ -273,12 +274,31 @@ namespace Util
 		const auto start = ImGui::GetCursorScreenPos();
 		const float right = start.x + ImGui::GetContentRegionAvail().x;
 		const float textRight = closable ? right - size - ImGui::GetStyle().ItemSpacing.x : right;
-		ImGui::PushClipRect(start, ImVec2(std::max(start.x, textRight), start.y + size), true);
-		ImGui::AlignTextToFramePadding();
-		const std::string_view label(title);
-		const auto visibleLabel = label.substr(0, label.find("##"));
-		ImGui::TextUnformatted(visibleLabel.data(), visibleLabel.data() + visibleLabel.size());
-		ImGui::PopClipRect();
+		{
+			MenuFonts::ImFontGuard titleFont(MenuFonts::GetSectionHeadingFont());
+			const std::string_view label(title);
+			const auto visibleLabel = label.substr(0, label.find("##"));
+			const float titleWidth = ImGui::CalcTextSize(visibleLabel.data(), visibleLabel.data() + visibleLabel.size()).x;
+			float inkTop = FLT_MAX, inkBottom = -FLT_MAX;
+			auto* baked = ImGui::GetFontBaked();
+			for (const char* cursor = visibleLabel.data(); cursor < visibleLabel.data() + visibleLabel.size();) {
+				unsigned int codepoint;
+				const int length = ImTextCharFromUtf8(&codepoint, cursor, visibleLabel.data() + visibleLabel.size());
+				if (!length)
+					break;
+				cursor += length;
+				if (const auto* glyph = baked->FindGlyph(static_cast<ImWchar>(codepoint)); glyph && glyph->Visible) {
+					inkTop = std::min(inkTop, glyph->Y0);
+					inkBottom = std::max(inkBottom, glyph->Y1);
+				}
+			}
+			const float inkCenter = inkTop <= inkBottom ? (inkTop + inkBottom) * 0.5f * ImGui::GetFontSize() / baked->Size : GetTextInkCenterY();
+			const ImVec4 clip(start.x, start.y, std::max(start.x, textRight), start.y + size);
+			ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+				ImVec2(std::max(start.x, start.x + (right - start.x - titleWidth) * 0.5f), start.y + size * 0.5f - inkCenter),
+				ImGui::GetColorU32(ImGuiCol_Text), visibleLabel.data(), visibleLabel.data() + visibleLabel.size(), 0.0f, &clip);
+		}
+		ImGui::Dummy(ImVec2(right - start.x, size));
 		if (closable) {
 			ImGui::SameLine();
 			ImGui::SetCursorScreenPos(ImVec2(right - size, start.y));
@@ -443,7 +463,9 @@ namespace Util
 		const bool drawFill = hovered || active || selected;
 		const bool drawCursor = GImGui->NavId == ImGui::GetItemID();
 		if (ImGui::IsItemVisible() && (drawFill || drawCursor)) {
-			const ImRect itemBounds(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+			ImRect itemBounds(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+			if (splitBackground)
+				itemBounds.ClipWithFull(window->InnerClipRect);
 			if (tableBackground) {
 				ImGui::TablePushBackgroundChannel();
 			} else if (columnsBackground) {
@@ -483,8 +505,7 @@ namespace Util
 
 	bool RoundedSelectable(const char* label, bool selected, ImGuiSelectableFlags flags, const ImVec2& size)
 	{
-		return Anim::ReducedMotion() ? DrawSelectable(label, selected, flags, size, SelectableShape::Theme) :
-		                               ImGui::Selectable(label, selected, flags, size);
+		return ImGui::Selectable(label, selected, flags, size);
 	}
 
 	template <class DrawEntry>
@@ -687,6 +708,8 @@ namespace Util
 		{
 			ImGuiID id = 0;
 			std::string label;
+			bool disabled = false;
+			std::string tooltip;
 		};
 
 		struct PillTabBarState
@@ -714,7 +737,8 @@ namespace Util
 		}
 
 		/** @brief Draws the glass track + pills. Returns true if the selection changed. */
-		bool DrawGlassPillStrip(const char* id, const std::vector<std::string>& labels, int& selected, int marked = -1, bool muted = false, bool centered = false)
+		bool DrawGlassPillStrip(const char* id, const std::vector<std::string>& labels, int& selected, int marked = -1, bool muted = false, bool centered = false,
+			std::span<const PillTabItemState> items = {})
 		{
 			if (labels.empty())
 				return false;
@@ -799,10 +823,14 @@ namespace Util
 					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, isSelected ? clearFill : palette.hoverFill);
 					ImGui::PushStyleColor(ImGuiCol_ButtonActive, clearFill);
 					ImGui::PushStyleColor(ImGuiCol_Text, isSelected ? palette.selectedText : palette.idleText);
+					ImGui::BeginDisabled(static_cast<size_t>(i) < items.size() && items[i].disabled);
 					if (Util::Button(labels[i].c_str())) {
 						selected = i;
 						changed = true;
 					}
+					ImGui::EndDisabled();
+					if (static_cast<size_t>(i) < items.size() && !items[i].tooltip.empty())
+						AddTooltip(items[i].tooltip.c_str(), kTooltipWhenDisabled);
 					if (needScroll && i == selected && (selected != previousSelection || changed || layoutChanged))
 						ImGui::SetScrollHereX(0.5f);
 					ImGui::PopStyleColor(4);
@@ -859,12 +887,15 @@ namespace Util
 				if (ImGui::BeginPopup("##TabList")) {
 					for (int i = 0; i < static_cast<int>(labels.size()); ++i) {
 						ImGui::PushID(i);
-						if (ImGui::Selectable(labels[i].c_str(), i == selected)) {
+						const auto flags = static_cast<size_t>(i) < items.size() && items[i].disabled ? ImGuiSelectableFlags_Disabled : ImGuiSelectableFlags_None;
+						if (ImGui::Selectable(labels[i].c_str(), i == selected, flags)) {
 							selected = i;
 							changed = true;
 						}
 						if (i == selected)
 							ImGui::SetItemDefaultFocus();
+						if (static_cast<size_t>(i) < items.size() && !items[i].tooltip.empty())
+							AddTooltip(items[i].tooltip.c_str(), kTooltipWhenDisabled);
 						ImGui::PopID();
 					}
 					ImGui::EndPopup();
@@ -917,7 +948,7 @@ namespace Util
 		}
 		{
 			MenuFonts::FontRoleGuard bodyFont(Menu::FontRole::Body);
-			if (DrawGlassPillStrip(str_id, state.labelsForStrip, selected, -1, false, centered))
+			if (DrawGlassPillStrip(str_id, state.labelsForStrip, selected, -1, false, centered, state.itemsForStrip))
 				state.selectedId = state.itemsForStrip[selected].id;
 		}
 		ImGui::Spacing();
@@ -925,7 +956,7 @@ namespace Util
 		return true;
 	}
 
-	bool BeginPillTabItem(const char* label, bool* p_open, ImGuiTabItemFlags flags)
+	bool BeginPillTabItem(const char* label, bool* p_open, ImGuiTabItemFlags flags, const char* tooltip)
 	{
 		auto* state = CurrentPillTabBar();
 		if (!state)
@@ -936,7 +967,10 @@ namespace Util
 			return false;
 
 		const ImGuiID id = ImGui::GetID(label);
-		state->itemsThisFrame.push_back({ id, label });
+		const bool disabled = (GImGui->CurrentItemFlags & ImGuiItemFlags_Disabled) != 0;
+		state->itemsThisFrame.push_back({ id, label, disabled, tooltip ? tooltip : "" });
+		if (disabled)
+			return false;
 
 		if (flags & ImGuiTabItemFlags_SetSelected)
 			state->nextSelectedId = id;
@@ -978,13 +1012,15 @@ namespace Util
 		state->labelsForStrip.clear();
 		for (const auto& item : state->itemsForStrip)
 			state->labelsForStrip.emplace_back(PillTabDisplayLabel(item.label.c_str()));
-		const auto hasTab = [&](ImGuiID id) {
-			return std::ranges::any_of(state->itemsForStrip, [&](const auto& item) { return item.id == id; });
+		const auto hasEnabledTab = [&](ImGuiID id) {
+			return std::ranges::any_of(state->itemsForStrip, [&](const auto& item) { return item.id == id && !item.disabled; });
 		};
-		if (state->nextSelectedId != 0 && hasTab(state->nextSelectedId))
+		if (state->nextSelectedId != 0 && hasEnabledTab(state->nextSelectedId))
 			state->selectedId = state->nextSelectedId;
-		else if (!hasTab(state->selectedId))
-			state->selectedId = state->itemsForStrip.empty() ? 0 : state->itemsForStrip.front().id;
+		else if (!hasEnabledTab(state->selectedId)) {
+			const auto firstEnabled = std::ranges::find_if(state->itemsForStrip, [](const auto& item) { return !item.disabled; });
+			state->selectedId = firstEnabled == state->itemsForStrip.end() ? 0 : firstEnabled->id;
+		}
 		state->nextSelectedId = 0;
 
 		ImGui::PopID();
@@ -1248,23 +1284,6 @@ namespace Util
 			shaderCache->DeleteDiskCache();
 		}
 		shaderCache->ClearContentStore();
-		shaderCache->SetRecachePending(true);
-	}
-
-	void DrawRecacheBanner()
-	{
-		auto* shaderCache = globals::shaderCache;
-		if (!shaderCache || !shaderCache->IsRecachePending())
-			return;
-		if (!shaderCache->IsCompiling()) {
-			shaderCache->SetRecachePending(false);
-			return;
-		}
-		if (StatusBanner(ICON_TI_REFRESH,
-				T("ui.recache_banner", "Shaders are loaded or compiled as needed after this change. Click to dismiss."),
-				Colors::GetWarning()))
-			shaderCache->SetRecachePending(false);
-		ImGui::Spacing();
 	}
 
 	void RequestClearShaderCacheConfirmation(ShaderCacheClearScope a_scope)
@@ -1443,9 +1462,36 @@ namespace Util
 
 		ImGui::OpenPopup(title.c_str());
 
+		const auto buttonWidthForLabel = [](const std::string& label) {
+			return ImGui::CalcTextSize(label.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+		};
+		const float buttonWidth = std::max({
+			ThemeManager::Constants::POPUP_BUTTON_WIDTH * GetUIScale(),
+			buttonWidthForLabel(confirmLabel),
+			buttonWidthForLabel(cancelLabel),
+			buttonWidthForLabel(alternateLabel),
+		});
+		const ImVec2 buttonSize(buttonWidth, 0.0f);
+		const int buttonCount = 1 + !confirmLabel.empty() + !alternateLabel.empty();
+		const float spacing = ImGui::GetStyle().ItemSpacing.x;
+		const float totalWidth = buttonSize.x * buttonCount + spacing * (buttonCount - 1);
+		if (buttonCount > 2)
+			ImGui::SetNextWindowSize(ImVec2(totalWidth + ImGui::GetStyle().WindowPadding.x * 2.0f, 0.0f), ImGuiCond_Appearing);
+
 		Choice result = Choice::None;
 		if (auto popup = CenteredPopupModal(title.c_str(), &show)) {
 			ImGui::TextWrapped("%s", message.c_str());
+			if (!bulletItems.empty()) {
+				ImGui::Spacing();
+				for (const auto& item : bulletItems) {
+					ImGui::Bullet();
+					ImGui::TextWrapped("%s", item.c_str());
+				}
+			}
+			if (!footer.empty()) {
+				ImGui::Spacing();
+				ImGui::TextWrapped("%s", footer.c_str());
+			}
 			ImGui::Spacing();
 			ImGui::Separator();
 			ImGui::Spacing();
@@ -1453,19 +1499,6 @@ namespace Util
 			if (showDontAskAgain)
 				ImGui::Checkbox(dontAskAgainLabel.empty() ? T("ui.dont_ask_again", "Don't ask me again") : dontAskAgainLabel.c_str(), &dontAskCheckbox);
 
-			const auto buttonWidthForLabel = [](const std::string& label) {
-				return ImGui::CalcTextSize(label.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-			};
-			const float buttonWidth = std::max({
-				ThemeManager::Constants::POPUP_BUTTON_WIDTH * GetUIScale(),
-				buttonWidthForLabel(confirmLabel),
-				buttonWidthForLabel(cancelLabel),
-				buttonWidthForLabel(alternateLabel),
-			});
-			const ImVec2 buttonSize(buttonWidth, 0.0f);
-			const int buttonCount = 1 + !confirmLabel.empty() + !alternateLabel.empty();
-			const float spacing = ImGui::GetStyle().ItemSpacing.x;
-			const float totalWidth = buttonSize.x * buttonCount + spacing * (buttonCount - 1);
 			const float offset = (ImGui::GetWindowWidth() - totalWidth) * 0.5f;
 			if (offset > 0)
 				ImGui::SetCursorPosX(offset);
@@ -1510,11 +1543,12 @@ namespace Util
 		// The slider binds a temporary, so name the member it stands for or scene authoring misses it.
 		SettingsControl::ProxyScope sceneProxy(data, kPercentageScale);
 
-		float percentageData = (*data) * kPercentageScale;
+		const float shownPercentage = (*data) * kPercentageScale;
+		float percentageData = shownPercentage;
 		bool retval = ImGui::SliderFloat(label, &percentageData, lb, ub, format, flags);
 		// Only on an edit: the scaled round trip is not exact in float, so an idle write-back drifts the member.
-		if (retval && !SettingsControl::IsReplicating())
-			(*data) = percentageData / kPercentageScale;
+		if (!SettingsControl::IsReplicating())
+			CommitDisplayedValue(*data, shownPercentage, percentageData, [](float percentage) { return percentage / kPercentageScale; });
 		return retval;
 	}
 
@@ -1524,10 +1558,11 @@ namespace Util
 			return false;
 
 		SettingsControl::ProxyScope sceneProxy(storedValue, 1.0f);
-		bool displayValue = !*storedValue;
+		const bool shownValue = !*storedValue;
+		bool displayValue = shownValue;
 		const bool changed = ImGui::Checkbox(label, &displayValue);
-		if (changed && !SettingsControl::IsReplicating())
-			*storedValue = !displayValue;
+		if (!SettingsControl::IsReplicating())
+			CommitDisplayedValue(*storedValue, shownValue, displayValue, [](bool shown) { return !shown; });
 		return changed;
 	}
 
@@ -1537,11 +1572,19 @@ namespace Util
 			return false;
 
 		SettingsControl::ProxyScope sceneProxy(storedValue, 1.0f);
-		int displayValue = static_cast<int>(*storedValue);
+		const int shownValue = static_cast<int>(*storedValue);
+		int displayValue = shownValue;
 		const bool changed = ImGui::RadioButton(label, &displayValue, static_cast<int>(buttonValue));
-		if (changed && !SettingsControl::IsReplicating())
-			*storedValue = static_cast<unsigned int>(displayValue);
+		if (!SettingsControl::IsReplicating())
+			CommitDisplayedValue(*storedValue, shownValue, displayValue);
 		return changed;
+	}
+
+	bool ComboAtStorage(const char* label, const void* storageAddress, int* displayIndex, const char* const* items, int itemCount)
+	{
+		ActiveControlStorageGuard storageGuard(storageAddress);
+		SettingsControl::ProxyScope sceneProxy(storageAddress, 1.0f);
+		return ImGui::Combo(label, displayIndex, items, itemCount);
 	}
 
 	const void* GetActiveControlStorageAddress()
@@ -2969,6 +3012,13 @@ namespace Util
 		});
 	}
 
+	void AutoFitTableColumnsOnce()
+	{
+		static std::unordered_set<ImGuiID> fitted;
+		if (auto* table = ImGui::GetCurrentTable(); table && fitted.insert(table->ID).second)
+			ImGui::TableSetColumnWidthAutoAll(table);
+	}
+
 	bool VersionStringLess(const std::string& a, const std::string& b, bool ascending)
 	{
 		const auto parsePart = [](const std::string& part) {
@@ -3283,20 +3333,63 @@ namespace Util
 		}
 	}
 
+	bool BeginComboWithAction(const char* label, const char* previewValue, ComboPreviewAction& action, ImGuiComboFlags flags)
+	{
+		action.pressed = false;
+		if ((!action.label && !action.previewColor) || ImGui::GetCurrentWindow()->SkipItems)
+			return ImGui::BeginCombo(label, previewValue, flags);
+		const auto& style = ImGui::GetStyle();
+		const auto origin = ImGui::GetCursorScreenPos();
+		const float width = ImGui::CalcItemWidth();
+		const float arrowWidth = flags & ImGuiComboFlags_NoArrowButton ? 0.0f : ImGui::GetFrameHeight();
+		const float previewRight = origin.x + width - arrowWidth - style.ItemInnerSpacing.x;
+		auto* drawList = ImGui::GetWindowDrawList();
+		ImDrawListSplitter layers;
+		float textRight = previewRight;
+		if (action.label) {
+			const float actionWidth = ImGui::CalcTextSize(action.label).x + style.FramePadding.x * 2.0f;
+			const float textWidth = ImGui::CalcTextSize(previewValue).x;
+			const ImVec2 actionPosition(std::max(origin.x, std::min(origin.x + style.FramePadding.x + textWidth + style.ItemSpacing.x, previewRight - actionWidth)),
+				origin.y + style.FramePadding.y);
+			layers.Split(drawList, 2);
+			layers.SetCurrentChannel(drawList, 1);
+			const auto nextItem = GImGui->NextItemData;
+			ImGui::PushID(label);
+			ImGui::SetCursorScreenPos(actionPosition);
+			ImGui::BeginDisabled(!action.enabled);
+			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x, 0.0f));
+			action.pressed = ImGui::Button(action.label);
+			ImGui::PopStyleVar();
+			ImGui::EndDisabled();
+			ImGui::PopID();
+			ImGui::SetCursorScreenPos(origin);
+			GImGui->NextItemData = nextItem;
+			layers.SetCurrentChannel(drawList, 0);
+			textRight = actionPosition.x - style.ItemInnerSpacing.x;
+		}
+		const bool open = ImGui::BeginCombo(label, "", flags);
+		const ImVec4 clip(origin.x, origin.y, std::max(origin.x, textRight), origin.y + ImGui::GetFrameHeight());
+		drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(origin.x + style.FramePadding.x, origin.y + style.FramePadding.y),
+			action.previewColor ? action.previewColor : ImGui::GetColorU32(ImGuiCol_Text), previewValue, nullptr, 0.0f, &clip);
+		layers.Merge(drawList);
+		return open;
+	}
+
 	bool BeginSearchableCombo(
 		const char* label, const char* previewValue, ImGuiComboFlags flags,
-		const void* storageAddress, int maxVisibleItems, float* savedScrollY)
+		const void* storageAddress, int maxVisibleItems, float* savedScrollY, ComboPreviewAction* action)
 	{
 		const ImGuiID id = ImGui::GetID(label);
 		auto& state = detail::GetSearchableComboState(id);
 		detail::SetSearchableComboPopupConstraints(previewValue, flags, maxVisibleItems);
 
+		const auto begin = [&] { return action ? BeginComboWithAction(label, previewValue, *action, flags) : ImGui::BeginCombo(label, previewValue, flags); };
 		bool open = false;
 		if (storageAddress) {
 			ActiveControlStorageGuard storageGuard(storageAddress);
-			open = ImGui::BeginCombo(label, previewValue, flags);
+			open = begin();
 		} else {
-			open = ImGui::BeginCombo(label, previewValue, flags);
+			open = begin();
 		}
 		const ImGuiLastItemData openerItem = GImGui->LastItemData;
 		if (!open) {
@@ -3490,7 +3583,7 @@ namespace Util
 		return changed;
 	}
 
-	std::string DrawComboSearchInput(const char* id)
+	std::string DrawComboSearchInput(const char* id, bool drawSeparator)
 	{
 		auto& state = detail::GetComboSearchStates()[id];
 
@@ -3517,7 +3610,8 @@ namespace Util
 		Icons::DrawCenteredGlyph(ImGui::GetWindowDrawList(), ImVec2(ImGui::GetItemRectMin().x + iconOffsetX, ImGui::GetItemRectMin().y),
 			ImVec2(iconSize, ImGui::GetItemRectSize().y), Icons::TI(MenuIcons::kSearch), ImGui::GetColorU32(iconColor));
 
-		ImGui::Separator();
+		if (drawSeparator)
+			ImGui::Separator();
 
 		return state.buffer;
 	}
@@ -3711,7 +3805,7 @@ namespace Util
 	void DropdownArrowButton(const char* popupId, const char* tooltip, bool disabled, const char* disabledTooltip)
 	{
 		const ImVec2 fieldMin = ImGui::GetItemRectMin();
-		ImGui::SameLine(0.0f, 0.0f);
+		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
 		{
 			const DisableGuard disableGuard(disabled);
 			if (ImGui::ArrowButton(std::format("##Arrow{}", popupId).c_str(), ImGuiDir_Down))
@@ -4591,10 +4685,11 @@ namespace Util
 
 	namespace
 	{
-		constexpr float kFlyoutCloseDelay = 0.06f;
-		constexpr float kFlyoutSlideOpenSpeed = 1.0f / ThemeManager::Constants::FEATURE_ACTION_HINT_FADE_SECONDS;
-		constexpr float kFlyoutSlideCloseSpeed = kFlyoutSlideOpenSpeed;
+		constexpr float kFlyoutCloseDelay = 0.25f;
+		constexpr float kFlyoutSlideOpenSpeed = 10.0f;
+		constexpr float kFlyoutSlideCloseSpeed = 14.0f;
 		constexpr float kFlyoutSlideDistance = 6.0f;
+		constexpr float kFlyoutAlphaScale = 4.0f;
 		constexpr std::string_view kFlyoutWindowPrefix = "##flyout_";
 		constexpr std::string_view kBlurredFlyoutWindowPrefix = "##blurred_flyout_";
 
@@ -4620,11 +4715,16 @@ namespace Util
 		ImRect GetFlyoutWindowRect()
 		{
 			auto* viewport = ImGui::GetMainViewport();
-			auto* rootWindow = ImGui::GetCurrentWindow()->RootWindow;
-			return ImRect(
+			auto* window = ImGui::GetCurrentWindow();
+			while (window->ParentWindow && (window->ChildFlags & ImGuiChildFlags_AutoResizeY))
+				window = window->ParentWindow;
+			auto* rootWindow = window->RootWindow;
+			ImRect visible(
 				ImVec2(std::max(viewport->Pos.x, rootWindow->Pos.x), std::max(viewport->Pos.y, rootWindow->Pos.y)),
 				ImVec2(std::min(viewport->Pos.x + viewport->Size.x, rootWindow->Pos.x + rootWindow->Size.x),
 					std::min(viewport->Pos.y + viewport->Size.y, rootWindow->Pos.y + rootWindow->Size.y)));
+			visible.ClipWith(window->InnerClipRect);
+			return visible;
 		}
 
 		bool IsFlyoutSourceHovered(const ImVec2& min, const ImVec2& max)
@@ -4645,7 +4745,7 @@ namespace Util
 				style.centerOnSource ? (sourceMin.x + sourceMax.x) * 0.5f : sourceMax.x,
 				sourceMax.y + gap - slideOffset);
 
-			canOpen = state.lastSize.y <= 0.0f || sourceMax.y + gap + state.lastSize.y <= visible.Max.y;
+			canOpen = state.lastSize.x <= visible.GetWidth() && sourceMax.y + gap + state.lastSize.y <= visible.Max.y;
 			if (state.lastSize.x > 0.0f) {
 				const float minimumAnchor = visible.Min.x + state.lastSize.x * horizontalPivot;
 				const float maximumAnchor = visible.Max.x - state.lastSize.x * (1.0f - horizontalPivot);
@@ -4666,6 +4766,12 @@ namespace Util
 			const ImGuiID submittedItemId = ImGui::GetItemID();
 			const ImVec2 sourceMin = explicitSourceMin ? *explicitSourceMin : ImGui::GetItemRectMin();
 			const ImVec2 sourceMax = explicitSourceMax ? *explicitSourceMax : ImGui::GetItemRectMax();
+			const auto sourceBounds = ImGui::GetCurrentWindow()->InnerClipRect;
+			if (!sourceBounds.Overlaps(ImRect(sourceMin, sourceMax)) || sourceMin.y < sourceBounds.Min.y || sourceMax.y > sourceBounds.Max.y) {
+				if (state.activeId == itemId)
+					ResetFlyout(state);
+				return false;
+			}
 
 			const int currentFrame = ImGui::GetFrameCount();
 			if (state.lastFrame >= 0 && currentFrame > state.lastFrame + 1)
@@ -4737,7 +4843,7 @@ namespace Util
 			const float scale = GetUIScale();
 			const float easedProgress = GetFlyoutEasedProgress(state);
 			const float slideOffset = (1.0f - easedProgress) * kFlyoutSlideDistance * scale;
-			const float alpha = easedProgress;
+			const float alpha = std::min(state.openProgress * kFlyoutAlphaScale, 1.0f);
 			bool canOpen = true;
 			const ImVec2 flyoutPos = GetFlyoutPos(
 				state, sourceMin, sourceMax, slideOffset, scale, GetFlyoutWindowRect(), flyoutStyle, canOpen);
@@ -4749,7 +4855,7 @@ namespace Util
 
 			ImGui::SetNextWindowPos(
 				flyoutPos, ImGuiCond_Always, ImVec2(flyoutStyle.centerOnSource ? 0.5f : 1.0f, 0.0f));
-			ImGui::SetNextWindowBgAlpha(flyoutStyle.windowBackgroundAlpha);
+			ImGui::SetNextWindowBgAlpha(flyoutStyle.windowBackgroundAlpha * alpha);
 			if (focusOnOpen)
 				ImGui::SetNextWindowFocus();
 
@@ -4758,7 +4864,8 @@ namespace Util
 			                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
 			                                   ImGuiWindowFlags_NoFocusOnAppearing;
 
-			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, flyoutStyle.windowPadding);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+				ImVec2(std::round(flyoutStyle.windowPadding.x), std::round(flyoutStyle.windowPadding.y)));
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, flyoutStyle.windowRounding);
 			ImGui::PushStyleVar(ImGuiStyleVar_Alpha, flyoutStyle.contentAlpha * alpha);
 			SKSE::stl::scope_exit restoreStyle([]() noexcept { ImGui::PopStyleVar(3); });
@@ -4801,6 +4908,10 @@ namespace Util
 			else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
 				state.draggedFromFlyout = false;
 
+			auto* window = ImGui::GetCurrentWindow();
+			const float contentHeight = window->DC.CursorMaxPos.y - window->DC.CursorStartPos.y;
+			// Fractional item spacing can truncate the last content edge during auto-fit.
+			window->DC.CursorMaxPos.y = window->DC.CursorStartPos.y + std::ceil(contentHeight);
 			ImGui::End();
 			ImGui::PopStyleVar(3);
 
@@ -4814,9 +4925,9 @@ namespace Util
 			const float deltaTime = ImGui::GetIO().DeltaTime;
 			const bool mouseDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
 			const ImVec2 bridgeMin(
-				std::min(state.sourceMin.x, state.flyoutMin.x), std::min(state.sourceMax.y, state.flyoutMin.y));
+				std::min(state.sourceMin.x, state.flyoutMin.x), std::min(state.sourceMax.y, state.flyoutMax.y));
 			const ImVec2 bridgeMax(
-				std::max(state.sourceMax.x, state.flyoutMax.x), std::max(state.sourceMax.y, state.flyoutMin.y));
+				std::max(state.sourceMax.x, state.flyoutMax.x), std::max(state.sourceMin.y, state.flyoutMin.y));
 			const bool sourceHovered = overSource || ContainsPoint(bridgeMin, bridgeMax, mousePos);
 
 			if (state.closing) {

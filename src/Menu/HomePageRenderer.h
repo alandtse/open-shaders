@@ -4,11 +4,10 @@
 #include <string>
 
 /**
- * @brief Renders the Home page of the in-game menu with welcome info, FAQ, and first-time setup.
+ * @brief Renders the Home dashboard and first-time setup.
  *
- * Displays a welcome banner, quick links (Discord, etc.), active constraint
- * warnings, and a FAQ section. Also manages the first-time setup dialog
- * shown on initial launch.
+ * Displays performance, presets, shader cache, hardware, quick links, and issue details.
+ * Also manages the first-time setup dialog shown on initial launch.
  */
 class HomePageRenderer
 {
@@ -34,7 +33,7 @@ public:
 	static constexpr float DISCORD_BANNER_MAX_WIDTH = 1200.0f;
 	static constexpr float DISCORD_BANNER_PADDING_MARGIN = 40.0f;
 
-	/** @brief Renders the full Home page including welcome, quick links, constraints, and FAQ sections. */
+	/** @brief Renders the Home dashboard, navigation links, and issue details. */
 	static void RenderHomePage();
 	/** @brief Opens the Home attention details after navigation. */
 	static void FocusNeedsAttention();
@@ -52,8 +51,8 @@ public:
 private:
 	static bool attentionRequested;
 	static void RenderQuickLinksSection();
-	static void RenderFAQSection();
 	static void RenderCacheMismatchSection();
+	static void RenderWrongRuntimeCacheSection();
 	static void RenderActiveConstraintsSection();
 
 	// State

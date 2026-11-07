@@ -3,9 +3,11 @@
 #include "Feature.h"
 #include "FeatureIssues.h"
 #include "I18n/I18n.h"
+#include "Presets/BaseSettingsCustomization.h"
 #include "Presets/PresetState.h"
 #include "Presets/UnifiedPresetCatalog.h"
 #include "SettingsOverrideManager.h"
+#include "State.h"
 #include "Util.h"
 #include "Utils/FileSystem.h"
 #include "Utils/SettingsCatalog.h"
@@ -200,6 +202,61 @@ size_t BaselineManager::ApplyBaselines(const std::string& featureName, json& fea
 	return appliedCount;
 }
 
+json BaselineManager::BuildCustomizationSources()
+{
+	json sources = json::object();
+	const auto& catalog = UnifiedPresetCatalog::GetSingleton();
+	const auto add = [&](const std::string& id, const std::string& shortName, const json& values) {
+		auto* feature = Feature::FindRegisteredFeatureByShortName(shortName);
+		const auto* defaults = feature ? globals::state->GetFeatureDefaults(feature->GetName()) : nullptr;
+		if (!defaults)
+			return;
+		std::vector<std::string> unknown;
+		Util::Settings::CollectUnknownSettingKeys(values, *defaults, "", unknown);
+		if (unknown.empty())
+			BaseSettingsCustomization::AddSource(sources, id, json{ { feature->GetName(), values } });
+	};
+	for (const auto& pack : catalog.GetPacks()) {
+		if (!pack.valid)
+			continue;
+		if (pack.source == UnifiedPresetCatalog::SourceKind::LegacyBaseline) {
+			for (const auto& legacy : SettingsOverrideManager::GetSingleton()->GetBaselinePacks())
+				if (legacy.id == pack.id)
+					for (const auto& [name, values] : legacy.documents)
+						add(pack.id, name, values);
+		} else {
+			const auto roots = catalog.GetPackRoots(pack.id);
+			for (const auto& root : roots) {
+				const auto directory = root / "Baseline";
+				std::error_code error;
+				if (!std::filesystem::exists(directory, error)) {
+					if (error)
+						throw std::runtime_error("Could not inspect installed Base Settings suppliers");
+					continue;
+				}
+				std::vector<std::filesystem::path> paths;
+				for (const auto& entry : std::filesystem::directory_iterator(directory))
+					if (entry.is_regular_file() && Feature::IsFeatureKnown(ParseBaselineFeatureName(entry.path())))
+						paths.push_back(entry.path());
+				std::ranges::sort(paths);
+				for (const auto& path : paths) {
+					const auto relative = std::filesystem::path("Baseline") / path.filename();
+					if (PresetState::FindFirstExistingPayload(roots, relative).lexically_normal() != path.lexically_normal())
+						continue;
+					auto file = LoadFile(path, pack.id);
+					if (!file)
+						throw std::runtime_error("Could not read installed Base Settings suppliers");
+					if (file->enabled)
+						add(pack.id, file->featureName, file->values);
+				}
+			}
+		}
+		for (const auto& [name, disabled] : pack.disableAtBoot)
+			BaseSettingsCustomization::AddSource(sources, pack.id, json{ { "Disable at Boot", { { name, disabled } } } });
+	}
+	return sources;
+}
+
 json BaselineManager::BuildFeatureBaseline(const std::string& featureName, const json& known, std::string_view packId)
 {
 	json result = json::object();
@@ -236,6 +293,16 @@ bool BaselineManager::HasFeatureFiles(const std::string& featureName) const
 
 	auto it = featureFileMap.find(featureName);
 	return it != featureFileMap.end() && !it->second.empty();
+}
+
+bool BaselineManager::HasSettings(const std::string& featureName, std::span<const std::string> keys) const
+{
+	if (!discovered)
+		return false;
+	return std::ranges::any_of(files, [&](const auto& file) {
+		return (featureName.empty() || file.featureName == featureName) && file.enabled && file.unknownKeys.empty() &&
+		       !file.values.empty() && IsApplicable(file) && (keys.empty() || std::ranges::any_of(keys, [&](const auto& key) { return file.values.contains(key); }));
+	});
 }
 
 void BaselineManager::Refresh()

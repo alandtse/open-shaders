@@ -101,7 +101,7 @@ void DoF::DrawSettings()
 			T("feature.post_processing.do_f.gather_quality_performance", "Performance (4 rings)"),
 			T("feature.post_processing.do_f.gather_quality_quality", "Quality (5 rings)")
 		};
-		ImGui::Combo(T("feature.post_processing.do_f.gather_quality", "Gather Quality"), &settings.GatherQuality, gatherQuality, IM_ARRAYSIZE(gatherQuality));
+		Util::Combo(T("feature.post_processing.do_f.gather_quality", "Gather Quality"), &settings.GatherQuality, gatherQuality, IM_ARRAYSIZE(gatherQuality));
 	}
 	if (!settings.UseAdaptiveGather)
 		ImGui::SliderFloat(T("feature.post_processing.do_f.blur_quality", "Compatibility Blur Quality"), &settings.BlurQuality, 2.0f, 30.0f, "%.1f");
@@ -114,7 +114,7 @@ void DoF::DrawSettings()
 		T("feature.post_processing.do_f.bokeh_mode_procedural", "Procedural"),
 		T("feature.post_processing.do_f.bokeh_mode_custom_texture", "Custom Texture (Higher Cost)")
 	};
-	ImGui::Combo(T("feature.post_processing.do_f.bokeh_mode", "Bokeh Mode"), &settings.BokehMode, bokehModes, IM_ARRAYSIZE(bokehModes));
+	Util::Combo(T("feature.post_processing.do_f.bokeh_mode", "Bokeh Mode"), &settings.BokehMode, bokehModes, IM_ARRAYSIZE(bokehModes));
 	if (settings.BokehMode == 0) {
 		ImGui::BeginDisabled(cam != nullptr);
 		ImGui::SliderInt(T("feature.post_processing.do_f.bokeh_blade_count", "Aperture Blades"), &settings.BokehBladeCount, 4, 16, "%d", ImGuiSliderFlags_AlwaysClamp);

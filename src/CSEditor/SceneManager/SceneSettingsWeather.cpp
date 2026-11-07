@@ -68,8 +68,7 @@ std::optional<float> SceneSettingsManager::ResolveWeatherLowerValue(RE::FormID w
 
 	float lowerValue = GetTimeOfDayPeriodFallbackFloat(baselineValue,
 		address.featureShortName, address.settingPath, address.settingKey, periodIndex);
-	// Only a user entry has the weather overwrite layer beneath it. A capture deliberately passes
-	// the overwrite layer here so it resolves to the value that applies without any mod.
+	// Resetting a user value can use the applied weather preset. Fresh captures exclude that preset.
 	if (selectedSource != EntrySource::User)
 		return lowerValue;
 

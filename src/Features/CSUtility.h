@@ -251,6 +251,7 @@ struct CSUtility : Feature
 	virtual bool HasScopedOverrideSettings() const override { return true; }
 	/** Reapplies override-controlled settings for the active OS Utility tab. */
 	virtual bool ReapplyCurrentPageOverrideSettings() override;
+	virtual std::vector<std::string> GetCurrentPageSettingKeys() const override;
 	virtual void SetupResources() override;
 	virtual void PostPostLoad() override;
 	virtual void DataLoaded() override;

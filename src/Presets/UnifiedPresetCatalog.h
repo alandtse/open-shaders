@@ -14,6 +14,7 @@
 #include "PostProcessingMode.h"
 #include "PresetActivation.h"
 #include "PresetCompatibility.h"
+#include "PresetContent.h"
 #include "PresetProvider.h"
 #include "Utils/UI.h"
 
@@ -125,13 +126,17 @@ public:
 	std::optional<std::string> GetActivePayloadPresetId(const PresetProvider& provider) const;
 	/** @brief Returns the revision used to invalidate derived preset state. */
 	std::uint64_t GetRevision() const { return revision; }
+	/** @brief Updates local user customizations without changing shared preset payloads. */
+	void SetBaseSettingsCustomizations(const nlohmann::json& state);
+	/** @brief Persists preset choices and affected local settings together. */
+	bool SaveActiveState() const;
 	/** @brief Restores a supplied personal configuration without reading or writing disk. */
 	void LoadActiveState(const nlohmann::json& settings);
 
 	/** @brief Rescans every pack and orphan, sorted by name, releasing loaded artwork and reloading the active id. */
-	void Discover();
-	/** @brief Rescans and reapplies every selected payload through the selection transaction. */
-	bool Refresh();
+	void Discover(bool allowAutomaticActivation = true);
+	/** @brief Rescans and reapplies selected payloads, optionally admitting new presets. */
+	bool Refresh(bool allowAutomaticActivation = true);
 	/** @brief Packs from the last Discover. */
 	const std::vector<PackInfo>& GetPacks() const { return packs; }
 
@@ -172,7 +177,7 @@ public:
 	PackInfo* FindPack(const std::string& id);
 	const PackInfo* FindPack(const std::string& id) const;
 
-	/** @brief Indices of packs of the given type (any when null) matching a case-insensitive name/author/description/tag search. */
+	/** @brief Matching pack indices in library order, including Base Settings priority. */
 	std::vector<size_t> Query(std::optional<PresetType> typeFilter, const std::string& search) const;
 
 	/** @brief Loads a pack's logo, cover and screenshots once; the cover stands in for a missing logo. */
@@ -189,8 +194,16 @@ public:
 	void DisableActivePack();
 	/** @brief Disables a selected pack's scene, form, pipeline and Base Settings layers together. */
 	bool DisablePack(const std::string& id);
+	/** @brief Atomically edits one preset value and reapplies enabled layers, rolling back on failure. */
+	PresetContent::SettingEditResult EditPackSetting(const std::string& id, const std::filesystem::path& relative,
+		const std::string& path, const nlohmann::json& expected, const nlohmann::json& value);
+	/** @brief Atomically edits grouped preset values and restores every source file on failure. */
+	PresetContent::SettingEditResult EditPackSettings(std::span<const PresetContent::SettingEdit> edits,
+		std::span<const std::string> confirmedConflicts = {}, std::vector<std::string>* foundConflicts = nullptr, bool previewOnly = false);
 	/** @brief Deletes selected settings or one exact backing file, restoring it if reapplication fails. */
 	bool DeletePackSettings(const std::string& id, const std::filesystem::path& relative, std::span<const std::string> paths, bool entireFile);
+	/** @brief Deletes settings across files as one rollback-capable preset transaction. */
+	bool DeletePackSettings(const std::string& id, const PresetContent::Selection& selection);
 	/** @brief Whether a pack has its own deletable library folder. */
 	bool CanDeletePack(const std::string& id) const;
 	/** @brief Disables a pack and moves its folder to the library's hidden deleted-presets folder. */
@@ -254,10 +267,6 @@ private:
 
 	/** @brief Reads the persisted active pack state from SettingsUser.json, clearing it when missing or bad. */
 	void LoadActiveState();
-	/** @brief Writes the active pack state into its SettingsUser.json section, leaving the rest of the file alone.
-	 *  @return False when the user config could not be read or written. */
-	bool SaveActiveState() const;
-
 	/** @brief Enables a pack's Baseline overwrites as the last layer and reapplies them to the loaded features. */
 	void EnableBaseline(const PackInfo& pack);
 	/** @brief Applies selection changes and persists only after every runtime layer accepts them. */
@@ -274,7 +283,7 @@ private:
 	/** @brief Exposes loose legacy scenes without copying or rewriting their files. */
 	void DiscoverLegacyScenes();
 	/** @brief Discovers setting conflicts and selects new scene presets. */
-	void DiscoverSceneActivation();
+	void DiscoverSceneActivation(bool automatic);
 	/** @brief Adds provider-owned library and legacy payloads not covered by unified packs. */
 	void DiscoverProviderPresets();
 	/** @brief Switches to the pipeline a pack chose, recording it as the pack layer's choice; the caller persists.

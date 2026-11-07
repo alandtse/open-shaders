@@ -508,7 +508,7 @@ void LightEditor::DrawSettings()
 	const auto drawTop = [this](const ImVec2& topSize) {
 		// Bounds the split pane, which sizes itself to the space left.
 		if (ImGui::BeginChild("##LightTop", topSize, ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
-			BrowserUI::SplitPane({ "##LightSplit", kLightInspectorBesideMinWidth, kLightInspectorWidth, kDefaultStackedTableRatio, EditorWindow::GetSingleton()->resetLayout }, stackedTableRatio, [this](const ImVec2& size) { DrawLightTable(size); }, [this](const ImVec2& size) { DrawInspector(size); });
+			BrowserUI::SplitPane({ .id = "##LightSplit", .besideMinWidth = kLightInspectorBesideMinWidth, .detailWidth = kLightInspectorWidth, .defaultStackedRatio = kDefaultStackedTableRatio, .resetLayout = EditorWindow::GetSingleton()->resetLayout }, stackedTableRatio, [this](const ImVec2& size) { DrawLightTable(size); }, [this](const ImVec2& size) { DrawInspector(size); });
 		ImGui::EndChild();
 	};
 	BrowserUI::StackedSplit("##LightAdjustSplit", topPaneRatio, kDefaultTopPaneRatio, EditorWindow::GetSingleton()->resetLayout, drawTop, [this](const ImVec2& size) { DrawAdjustments(size); });

@@ -153,18 +153,6 @@ void PerformanceOverlay::DrawSettings()
 			Util::Input::KeyIdToString(menuSettings.OverlayToggleKey).c_str());
 	}
 
-	// Independent of the performance overlay: works with the overlay above switched off.
-	const auto* weatherPickerLabel = T(TKEY("show_weather_picker"), "Enable Weather Picker Widget");
-	Util::SameLineIfFits(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(weatherPickerLabel).x);
-	ImGui::Checkbox(weatherPickerLabel, &this->settings.ShowWeatherPicker);
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("show_weather_picker_tooltip"), "Opens the weather picker, with weather details and rain & wetness analysis,\nin a separate window that stays open even when the main menu is closed."));
-		ImGui::Text("%s", T(TKEY("toggle_with"), "Toggle with "));
-		ImGui::SameLine();
-		ImGui::TextColored(themeSettings.StatusPalette.CurrentHotkey, "%s",
-			Util::Input::KeyIdToString(menuSettings.OverlayToggleKey).c_str());
-	}
-
 	if (this->settings.ShowInOverlay) {
 		ImGui::Indent();
 
@@ -1432,7 +1420,7 @@ void PerformanceOverlay::DrawABRunSummary(bool editable)
 				fields.emplace_back();
 			return fields;
 		},
-		false);
+		false, { .trailingFixedColumn = editable, .autoFitOnFirstShow = true });
 	if (!removed.empty())
 		abTestingManager->Unqueue(removed);
 	ImGui::TextDisabled("%s", T(TKEY("run_summary_note"), "Frame time and FPS are the headline on flat; in VR the frame rate is locked to the display, so the verdict follows GPU time. A change inside its uncertainty is no measurable change."));
@@ -2526,6 +2514,17 @@ void PerformanceOverlay::RegisterUxActions()
 			manager->RunOptions() = RunOptionsFromArgs(args, manager->RunOptions());
 			std::string error;
 			if (!manager->RunQueue(&error))
+				throw std::runtime_error(error);
+		});
+
+	FEATURE_COMMAND("repeatComparisonRun",
+		"Run the last benchmark again with the same changes and options (what the Repeat benchmark button does); the new results replace the old ones and the queue is left alone. Params: none.",
+		[](Feature*, const json&) {
+			auto* manager = ABTestingManager::GetSingleton();
+			if (manager->IsComparisonRunning())
+				throw std::runtime_error("A comparison is running; stop it with stopABTest first.");
+			std::string error;
+			if (!manager->RepeatRun(&error))
 				throw std::runtime_error(error);
 		});
 

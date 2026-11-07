@@ -44,6 +44,7 @@
 #include "Features/SkySync.h"
 #include "Features/Skylighting.h"
 #include "Features/SnowCover.h"
+#include "Features/SnowDeformation.h"
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
@@ -129,6 +130,7 @@ namespace globals
 		ExponentialHeightFog exponentialHeightFog{};
 		TruePBR truePBR{};
 		SnowCover snowCover{};
+		SnowDeformation snowDeformation{};
 		Skin skin{};
 		ReverseZ reverseZ{};
 		PostProcessing postProcessing{};
@@ -296,6 +298,7 @@ namespace globals
 
 		bShadowsOnGrass = RE::GetINISetting("bShadowsOnGrass:Display");
 		shadowMaskQuarter = RE::GetINISetting("iShadowMaskQuarter:Display");
+		Util::SceneTravel::CacheLocationDestinations();
 	}
 
 	void OnGameWindowClose()

@@ -14,9 +14,11 @@ namespace MenuIcons
 	inline constexpr const char* kPresets = ICON_TI_PALETTE;
 	inline constexpr const char* kCSEditor = ICON_TI_ADJUSTMENTS_HORIZONTAL;
 	inline constexpr const char* kScreenshot = ICON_TI_CAMERA;
-	inline constexpr const char* kSceneSelector = ICON_TI_PHOTO;
+	inline constexpr const char* kSceneSelector = ICON_TI_COMPASS;
 	inline constexpr const char* kSettings = ICON_TI_SETTINGS;
 	inline constexpr const char* kProfiling = ICON_TI_CHART_BAR;
+	inline constexpr const char* kGpu = ICON_TI_CPU;
+	inline constexpr const char* kGame = ICON_TI_DEVICE_GAMEPAD;
 	inline constexpr const char* kIssues = ICON_TI_ALERT_TRIANGLE;
 	inline constexpr const char* kShaders = ICON_TI_APERTURE;
 	inline constexpr const char* kLocations = ICON_TI_MAP_PIN;

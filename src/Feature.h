@@ -436,6 +436,15 @@ public:
 	virtual void OnDraw() {}
 
 	/**
+	 * @brief Opt-in flag checked once, when the hook's feature list is built: return true to have
+	 * PreShadowMaps() called once per frame, before the engine renders its shadow maps.
+	 */
+	virtual bool WantsPreShadowMapsHook() const { return false; }
+
+	/** @brief Called on the render thread once per frame before the shadow maps render, for every loaded feature that opted in via WantsPreShadowMapsHook(). */
+	virtual void PreShadowMaps() {}
+
+	/**
 	 * @brief True while the feature reads the Masks2 material-category lane, so forward eye draws write it.
 	 * Default false keeps the extra render-target bind off the eye draws for everyone else.
 	 */
@@ -521,6 +530,17 @@ public:
 
 	/** @brief Whether Restore Defaults targets the current settings page instead of the entire feature. */
 	virtual bool HasScopedDefaultSettings() const { return false; }
+	/** @brief Whether the visible settings scope is labeled as a tab rather than a page. */
+	virtual bool IsSettingsScopeTab() const { return true; }
+
+	/** @brief Top-level serialized keys owned by the current settings page. */
+	virtual std::vector<std::string> GetCurrentPageSettingKeys() const { return {}; }
+
+	/** @brief Selects the current page from a feature settings document. */
+	json SelectCurrentPageSettings(const json& settings) const;
+
+	/** @brief Restores saved settings for the visible page, including external page data. */
+	virtual bool RestoreCurrentPageSavedSettings();
 
 	/** @brief Restores defaults for the currently visible settings page or subfeature. */
 	virtual void RestoreCurrentPageDefaultSettings() { RestoreDefaultSettings(); }
@@ -579,7 +599,7 @@ public:
 	virtual bool HasScopedOverrideSettings() const { return false; }
 
 	/** @brief Reapplies Base Settings for the current page or the entire feature. */
-	virtual bool ReapplyCurrentPageOverrideSettings() { return ReapplyOverrideSettings(); }
+	virtual bool ReapplyCurrentPageOverrideSettings();
 
 	/**
 	 * Weather analysis configuration for features that want to provide weather analysis.
@@ -650,6 +670,9 @@ public:
 
 	/** @brief Visits OnDraw() on every loaded feature that opted in via WantsDrawHook(); the list is cached once. */
 	static void ApplyDrawHooks();
+
+	/** @brief Visits PreShadowMaps() on every loaded feature that opted in via WantsPreShadowMapsHook(); the list is cached once. */
+	static void ApplyPreShadowMapsHooks();
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();

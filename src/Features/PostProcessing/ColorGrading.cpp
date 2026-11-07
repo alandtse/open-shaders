@@ -576,7 +576,7 @@ void ColorGrading::DrawSettings()
 			T(TKEY("log_type_arrilogc4"), "ARRILogC4"),
 			T(TKEY("log_type_sonyslog3"), "SonySLog3"),
 		};
-		ImGui::Combo(T(TKEY("log_type"), "Log Type"), (int*)&settings.logType, logTypes, IM_ARRAYSIZE(logTypes));
+		Util::Combo(T(TKEY("log_type"), "Log Type"), &settings.logType, logTypes);
 	}
 
 	ImGui::SeparatorText(T(TKEY("color_grading"), "Color Grading"));
@@ -654,47 +654,54 @@ void ColorGrading::DrawSettings()
 		} else {
 			auto& tonemappers = TonemapperInfo::GetTonemappers();
 
-			ImGui::BeginDisabled(SettingsControl::IsReplicating());
-			if (ImGui::BeginCombo(T(TKEY("tonemapper"), "Tonemapper"), tonemappers[tonemapperType].name.data(), ImGuiComboFlags_HeightLargest)) {
-				for (int i = 0; i < (int)tonemappers.size(); ++i) {
-					ImGui::PushID(i);
-					const bool selected = i == tonemapperType;
-					const bool supportsHDR = tonemappers[i].supportsHDR;
-					const char* tonemapperName = tonemappers[i].name.data();
+			if (SettingsControl::StringChoice(T(TKEY("tonemapper"), "Tonemapper"), settings.currentTonemapper,
+					[&](std::string& selectedName) {
+						const auto selectedEntry = std::ranges::find(tonemappers, selectedName, &TonemapperInfo::name);
+						const int selectedTonemapper = selectedEntry == tonemappers.end() ? tonemapperType : static_cast<int>(selectedEntry - tonemappers.begin());
+						bool changed = false;
+						if (ImGui::BeginCombo(T(TKEY("tonemapper"), "Tonemapper"), tonemappers[selectedTonemapper].name.data(), ImGuiComboFlags_HeightLargest)) {
+							for (int i = 0; i < (int)tonemappers.size(); ++i) {
+								ImGui::PushID(i);
+								const bool selected = i == selectedTonemapper;
+								const bool supportsHDR = tonemappers[i].supportsHDR;
+								const char* tonemapperName = tonemappers[i].name.data();
 
-					const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
-					const ImVec2 nameSize = ImGui::CalcTextSize(tonemapperName);
-					const float rowHeight = ImGui::GetFrameHeight();
-					const float rowWidth = std::max(ImGui::GetContentRegionAvail().x,
-						Util::GetSelectableTextInset() + nameSize.x + gap + Util::MeasureHdrSdrCapabilityPillWidth(supportsHDR) + ImGui::GetStyle().FramePadding.x);
+								const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
+								const ImVec2 nameSize = ImGui::CalcTextSize(tonemapperName);
+								const float rowHeight = ImGui::GetFrameHeight();
+								const float rowWidth = std::max(ImGui::GetContentRegionAvail().x,
+									Util::GetSelectableTextInset() + nameSize.x + gap + Util::MeasureHdrSdrCapabilityPillWidth(supportsHDR) + ImGui::GetStyle().FramePadding.x);
 
-					if (Util::RoundedSelectable("##tm", selected, ImGuiSelectableFlags_NoPadWithHalfSpacing, ImVec2(rowWidth, rowHeight))) {
-						tonemappers[tonemapperType].cached_settings = settings.tonemapParams;
-						settings.tonemapParams = tonemappers[i].cached_settings;
-						tonemapperType = i;
-						settings.currentTonemapper = tonemappers[tonemapperType].name.data();
-						recompileFlag = true;
-					}
+								if (Util::RoundedSelectable("##tm", selected, ImGuiSelectableFlags_NoPadWithHalfSpacing, ImVec2(rowWidth, rowHeight))) {
+									selectedName = tonemappers[i].name;
+									changed = true;
+								}
 
-					{
-						const ImVec2 min = ImGui::GetItemRectMin();
-						const float rowH = ImGui::GetItemRectSize().y;
-						const float textX = min.x + Util::GetSelectableTextInset();
-						const float textY = Util::CenterTextTopY(min.y, rowH);
-						ImGui::GetWindowDrawList()->AddText(ImVec2(textX, textY), ImGui::GetColorU32(ImGuiCol_Text), tonemapperName);
-						Util::DrawHdrSdrCapabilityPillAt(ImVec2(textX + nameSize.x + gap, min.y), rowH, supportsHDR);
-					}
+								{
+									const ImVec2 min = ImGui::GetItemRectMin();
+									const float rowH = ImGui::GetItemRectSize().y;
+									const float textX = min.x + Util::GetSelectableTextInset();
+									const float textY = Util::CenterTextTopY(min.y, rowH);
+									ImGui::GetWindowDrawList()->AddText(ImVec2(textX, textY), ImGui::GetColorU32(ImGuiCol_Text), tonemapperName);
+									Util::DrawHdrSdrCapabilityPillAt(ImVec2(textX + nameSize.x + gap, min.y), rowH, supportsHDR);
+								}
 
-					if (selected)
-						ImGui::SetItemDefaultFocus();
+								if (selected)
+									ImGui::SetItemDefaultFocus();
 
-					if (auto _tt = Util::HoverTooltipWrapper())
-						ImGui::TextUnformatted(tonemappers[i].desc.data());
-					ImGui::PopID();
-				}
-				ImGui::EndCombo();
+								if (auto _tt = Util::HoverTooltipWrapper())
+									ImGui::TextUnformatted(tonemappers[i].desc.data());
+								ImGui::PopID();
+							}
+							ImGui::EndCombo();
+						}
+						return changed;
+					})) {
+				tonemappers[tonemapperType].cached_settings = settings.tonemapParams;
+				ResolveTonemapperFromSettings();
+				settings.tonemapParams = tonemappers[tonemapperType].cached_settings;
+				recompileFlag = true;
 			}
-			ImGui::EndDisabled();
 			Util::SameLineIfFits(Util::MeasureHdrSdrCapabilityPillWidth(tonemappers[tonemapperType].supportsHDR));
 			Util::DrawHdrSdrCapabilityPill(tonemappers[tonemapperType].supportsHDR);
 			ImGui::Spacing();
@@ -852,7 +859,7 @@ void ColorGrading::DrawSettings()
 		const bool wideGamutActive = linearLighting.settings.enableACEScg && linearLighting.IsLinearLightingActive();
 		const char* inputSpaceName = wideGamutActive ? spaces[5] : spaces[0];
 		ImGui::TextDisabled(T(TKEY("input_color_space"), "Input Color Space: %s (%s)"), inputSpaceName, wideGamutActive ? T(TKEY("input_color_space_auto_detected"), "auto-detected from Linear Lighting ACEScg") : T(TKEY("input_color_space_fixed"), "fixed"));
-		ImGui::Combo(T(TKEY("working_color_space"), "Working Color Space"), &settings.processColorSpace, spaces.data(), (int)spaces.size());
+		Util::Combo(T(TKEY("working_color_space"), "Working Color Space"), &settings.processColorSpace, spaces);
 		ImGui::TextDisabled(T(TKEY("output_color_space"), "Output Color Space: %s (auto from HDR Display)"), spaces[outputColorSpace]);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("output_color_space_tooltip"), "Output switches automatically: SDR -> sRGB, HDR -> BT2020."));

@@ -11,6 +11,40 @@ namespace Util::ImGuiLayout
 {
 	inline constexpr unsigned kVersion = 2;
 
+	/** @brief Insets selectable text without changing its item geometry, ID, or clipping boundary. */
+	inline bool SelectableWithTextInset(bool (*selectable)(const char*, bool, ImGuiSelectableFlags, const ImVec2&),
+		const char* label, bool selected, ImGuiSelectableFlags flags, const ImVec2& size, float inset)
+	{
+		auto* window = ImGui::GetCurrentWindow();
+		if (window->SkipItems || inset <= 0.0f)
+			return selectable(label, selected, flags, size);
+		const auto labelSize = ImGui::CalcTextSize(label, nullptr, true);
+		const ImVec2 position(window->DC.CursorPos.x, window->DC.CursorPos.y + window->DC.CurrLineTextBaseOffset);
+		float width = size.x != 0.0f ? size.x : labelSize.x;
+		if (size.x == 0.0f || (flags & ImGuiSelectableFlags_SpanAvailWidth)) {
+			const auto& work = (flags & ImGuiSelectableFlags_SpanAllColumns) ? window->ParentWorkRect : window->WorkRect;
+			width = std::max(labelSize.x, work.Max.x - ((flags & ImGuiSelectableFlags_SpanAllColumns) ? work.Min.x : position.x));
+		}
+		ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32_BLACK_TRANS);
+		const bool pressed = selectable(label, selected, flags, size);
+		ImGui::PopStyleColor();
+		if (!ImGui::IsItemVisible())
+			return pressed;
+		const ImVec2 textMin(position.x + inset, position.y);
+		const ImVec2 textMax(std::min(position.x + width, window->WorkRect.Max.x), position.y + (size.y != 0.0f ? size.y : labelSize.y));
+		if (textMax.x <= textMin.x)
+			return pressed;
+		ImRect clip(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+		clip.Max.x = std::min(clip.Max.x, textMax.x);
+		const bool disabledByFlag = (flags & ImGuiSelectableFlags_Disabled) && !(GImGui->CurrentItemFlags & ImGuiItemFlags_Disabled);
+		if (disabledByFlag)
+			ImGui::BeginDisabled();
+		ImGui::RenderTextClippedEx(window->DrawList, textMin, textMax, label, ImGui::FindRenderedTextEnd(label), &labelSize, ImGui::GetStyle().SelectableTextAlign, &clip);
+		if (disabledByFlag)
+			ImGui::EndDisabled();
+		return pressed;
+	}
+
 	/** @brief Fits a floating window's complete rectangle inside the viewport work area. */
 	inline ImRect ConstrainWindowRect(const ImRect& rectangle, const ImRect& workArea)
 	{

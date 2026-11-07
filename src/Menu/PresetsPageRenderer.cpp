@@ -12,7 +12,6 @@
 #include "Menu/FeatureListRenderer.h"
 #include "Menu/IconLoader.h"
 #include "Menu/Icons/helpers/IconFonts.h"
-#include "Menu/Presets/BaseSettingsEditor.h"
 #include "Menu/Presets/PresetExportPanel.h"
 #include "Menu/Presets/SceneFilesPanel.h"
 #include "Menu/ThemeManager.h"
@@ -100,7 +99,7 @@ namespace
 
 	const char* BackendLabelCS(bool compact)
 	{
-		return compact ? "CS" : "CS Presets";
+		return compact ? "CS" : T("menu.presets.source_cs", "CS Presets");
 	}
 
 	const char* BackendLabelBaseline(bool)
@@ -170,20 +169,23 @@ namespace
 		std::string message;
 		for (const auto* line : { &pack.compat.versionMessage, &pack.compat.featuresMessage }) {
 			if (!line->empty())
-				message += *line + "\n";
+				message += (message.empty() ? "" : "\n\n") + *line;
 		}
 		if (!conflicts.empty()) {
-			message += T("menu.presets.replace_conflicts", "Applying this preset will disable these conflicting presets:") + std::string("\n");
-			for (const auto& id : conflicts) {
-				const auto* other = UnifiedPresetCatalog::GetSingleton().FindPack(id);
-				message += (other ? other->name : id) + "\n";
-			}
+			if (!message.empty())
+				message += "\n\n";
+			message += T("menu.presets.replace_conflicts", "Applying this preset will disable these conflicting presets:");
 		}
-		message += T("menu.presets.compat_apply_anyway", "Apply it anyway?");
 
 		pendingApplyPackId = pack.id;
 		applyConfirmation.title = T("menu.presets.compat_apply_title", "Compatibility warning");
 		applyConfirmation.message = std::move(message);
+		applyConfirmation.bulletItems.clear();
+		for (const auto& id : conflicts) {
+			const auto* other = UnifiedPresetCatalog::GetSingleton().FindPack(id);
+			applyConfirmation.bulletItems.push_back(other ? other->name : id);
+		}
+		applyConfirmation.footer = T("menu.presets.compat_apply_anyway", "Apply it anyway?");
 		applyConfirmation.confirmLabel = T("menu.presets.apply", "Enable Preset");
 		applyConfirmation.cancelLabel = T("ui.cancel", "Cancel");
 		applyConfirmation.Request();
@@ -215,27 +217,17 @@ namespace
 		return clicked;
 	}
 
-	/** @brief Baseline layer note, the features the pack sets, and its disable-at-boot list. */
+	/** @brief Lists the preset's features and disable-at-boot choices. */
 	void DrawBaselineDetails(const UnifiedPresetCatalog::PackInfo& pack)
 	{
 		ImGui::Spacing();
-		Util::Text::WrappedDisabled("%s", T("menu.presets.baseline_layer_note",
-											  "Base settings are feature defaults applied beneath the Scene Manager, independent of the active pack. "
-											  "They win over saved settings until you change a value yourself."));
 		if (!pack.baselineFeatures.empty()) {
 			ImGui::SeparatorText(T("menu.presets.baseline_features", "Included features"));
 			for (const auto& featureName : pack.baselineFeatures) {
 				auto* feature = Feature::FindFeatureByShortName(featureName);
-				if (feature) {
-					ImGui::PushID(featureName.c_str());
+				if (feature)
 					ImGui::BulletText("%s", feature->GetDisplayName().c_str());
-					BrowserUI::SameLineIfFits(ImGui::CalcTextSize(T("menu.presets.edit_settings", "Edit Settings...")).x + ImGui::GetStyle().FramePadding.x * 2.0f);
-					ImGui::BeginDisabled(!feature->loaded || pack.source != UnifiedPresetCatalog::SourceKind::UnifiedPack);
-					if (ImGui::Button(T("menu.presets.edit_settings", "Edit Settings...")))
-						BaseSettingsEditor::BeginExportInto(feature, pack.id);
-					ImGui::EndDisabled();
-					ImGui::PopID();
-				} else
+				else
 					ImGui::BulletText("%s %s", featureName.c_str(), T("menu.presets.baseline_feature_unavailable", "(not available)"));
 			}
 		}
@@ -243,19 +235,28 @@ namespace
 			ImGui::Spacing();
 			ImGui::SeparatorText(T("menu.presets.baseline_boot", "Disable at boot"));
 			Util::Text::WrappedDisabled("%s", T("menu.presets.baseline_boot_note",
-												  "Applied when this Base Settings pack is enabled. A game restart is still required for load/unload."));
+												  "Saved choices take priority over presets. Restart the game after changing a boot setting."));
 			std::vector<std::pair<std::string, bool>> bootEntries(pack.disableAtBoot.begin(), pack.disableAtBoot.end());
 			std::ranges::sort(bootEntries, {}, &std::pair<std::string, bool>::first);
+			const auto* bootBase = globals::state->GetFeatureBase("Disable at Boot");
 			for (const auto& [featureName, disabled] : bootEntries) {
-				std::string label = featureName;
-				for (auto* feature : Feature::GetFeatureList()) {
-					if (feature && feature->GetShortName() == featureName) {
-						label = feature->GetDisplayName();
-						break;
-					}
-				}
+				auto* feature = Feature::FindFeatureByShortName(featureName);
+				const auto label = feature ? feature->GetDisplayName() : featureName;
 				ImGui::BulletText("%s: %s", label.c_str(),
 					disabled ? T("menu.features.disabled", "Disabled") : T("menu.features.enabled", "Enabled"));
+				if (!feature || feature->IsAlwaysEnabled() || !UnifiedPresetCatalog::GetSingleton().IsBaselineEnabled(pack.id) ||
+					globals::state->IsFeatureDisabled(featureName) == disabled)
+					continue;
+				const bool winsAmongPresets = bootBase && bootBase->contains(featureName) && bootBase->at(featureName) == disabled;
+				Util::Text::WrappedDisabled("%s", winsAmongPresets ?
+													  T("menu.presets.baseline_boot_user_choice", "Your saved choice takes priority.") :
+													  T("menu.presets.baseline_boot_other_preset", "Another enabled preset has higher priority."));
+				if (winsAmongPresets) {
+					ImGui::PushID(featureName.c_str());
+					if (ImGui::SmallButton(T("menu.presets.baseline_boot_use_preset", "Use Preset Value")))
+						globals::state->ResetFeatureBootPreference(featureName);
+					ImGui::PopID();
+				}
 			}
 		}
 	}
@@ -281,11 +282,19 @@ namespace
 		// Each button after the first wraps to a new row when the pane is too narrow to hold it.
 		const bool enabled = packActive || baselineEnabled;
 		ImGui::BeginDisabled(!enabled && !CanApplyPack(pack));
-		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 999.0f);
-		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(Util::GetPillPaddingX(ImGui::GetFrameHeight()),
-															ImGui::GetStyle().FramePadding.y));
 		{
-			const auto actionStyle = enabled ? Util::WarningButtonStyle() : Util::SuccessButtonStyle();
+			if (!enabled) {
+				const ImVec4& info = theme.StatusPalette.InfoColor;
+				const float lift = ThemeManager::Constants::PRESET_BUTTON_HOVER_LIFT;
+				ImGui::PushStyleColor(ImGuiCol_Button, info);
+				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(std::min(1.0f, info.x + lift), std::min(1.0f, info.y + lift), std::min(1.0f, info.z + lift), 1.0f));
+				ImGui::PushStyleColor(ImGuiCol_ButtonActive, info);
+				ImGui::PushStyleColor(ImGuiCol_Text, ThemeManager::Constants::PRESET_APPLY_TEXT_COLOR);
+			}
+			const SKSE::stl::scope_exit restoreColors([&] {
+				if (!enabled)
+					ImGui::PopStyleColor(4);
+			});
 			if (Util::ButtonWithFlash(enabled ? T("menu.presets.disable", "Disable Preset") : T("menu.presets.apply", "Enable Preset"))) {
 				if (enabled)
 					catalog.DisablePack(pack.id);
@@ -293,28 +302,12 @@ namespace
 					RequestApplyPack(pack);
 			}
 		}
-		ImGui::PopStyleVar(2);
 		ImGui::EndDisabled();
 
 		if (pack.hasCSPresets || pack.hasBaseline || pack.hasFormEdits) {
-			BrowserUI::SameLineIfFits(ImGui::CalcTextSize(T("menu.presets.manage_contents", "Manage Settings...")).x + ImGui::GetStyle().FramePadding.x * 2.0f);
-			if (Util::Button(T("menu.presets.manage_contents", "Manage Settings...")))
+			BrowserUI::SameLineIfFits(ImGui::CalcTextSize(T("menu.presets.manage_contents", "Manage Preset...")).x + ImGui::GetStyle().FramePadding.x * 2.0f);
+			if (Util::Button(T("menu.presets.manage_contents", "Manage Preset...")))
 				PresetsPageRenderer::OpenContents(pack.id);
-		}
-		if (!enabled) {
-			const auto conflicts = catalog.GetConflictingPacks(pack.id);
-			if (!conflicts.empty()) {
-				Util::Text::WrappedWarning("%s", T("menu.presets.conflict_disabled", "Not applied because an enabled preset controls conflicting settings."));
-				for (const auto& id : conflicts)
-					if (const auto* other = catalog.FindPack(id))
-						ImGui::BulletText("%s", other->name.c_str());
-			}
-		}
-		if (pack.source == UnifiedPresetCatalog::SourceKind::UnifiedPack) {
-			BrowserUI::SameLineIfFits(ImGui::CalcTextSize(T("menu.presets.update", "Update Preset...")).x + ImGui::GetStyle().FramePadding.x * 2.0f);
-			if (Util::Button(T("menu.presets.update", "Update Preset...")))
-				PresetExportPanel::OpenForPack(pack.id);
-			Util::AddTooltip(T("menu.presets.update_tooltip", "Export current settings into this preset, starting with its metadata and included features."));
 		}
 
 		const Icons::GlyphRef folderIcon = Icons::TI(ICON_TI_FOLDER_OPEN);
@@ -344,33 +337,43 @@ namespace
 				deleteConfirmation.Request();
 			}
 		}
+	}
+
+	void DrawPackMessages(UnifiedPresetCatalog& catalog, const UnifiedPresetCatalog::PackInfo& pack)
+	{
 		if (deleteFailed)
 			Util::Text::WrappedError("%s", T("menu.presets.delete_failed", "Could not delete this preset. Check the log for details."));
-
-		if (packActive || baselineEnabled) {
-			MenuFonts::FontRoleGuard sub(Menu::FontRole::Subtext);
-			ImGui::PushStyleColor(ImGuiCol_Text, theme.StatusPalette.SuccessColor);
-			ImGui::TextWrapped("%s", packActive ? T("menu.presets.active_pack", "This pack is currently active.") :
-												  T("menu.presets.baseline_enabled", "This pack's base settings are enabled."));
-			ImGui::PopStyleColor();
+		if (!pack.valid && !pack.invalidReason.empty())
+			Util::Text::WrappedError("%s", pack.invalidReason.c_str());
+		PresetCompatibility::DrawWarnings(pack.compat, false);
+		if (!catalog.IsScenePackEnabled(pack.id) && !catalog.IsBaselineEnabled(pack.id)) {
+			const auto conflicts = catalog.GetConflictingPacks(pack.id);
+			if (!conflicts.empty()) {
+				Util::Text::WrappedWarning("%s", T("menu.presets.conflict_disabled", "Enabling this preset will disable:"));
+				for (const auto& id : conflicts)
+					if (const auto* other = catalog.FindPack(id))
+						ImGui::BulletText("%s", other->name.c_str());
+			}
 		}
 	}
 
-	std::optional<bool> DrawBaselinePriorityActions(const ImVec2& origin, size_t priority, size_t count)
+	std::optional<bool> DrawBaselinePriorityActions(const ImVec2& origin, float height, size_t priority, size_t count)
 	{
 		std::optional<bool> raise;
-		ImGui::SetCursorScreenPos(origin);
-		ImGui::BeginDisabled(priority == count);
-		if (ImGui::ArrowButton("##Raise", ImGuiDir_Up))
-			raise = true;
-		ImGui::EndDisabled();
-		Util::AddTooltip(T("menu.presets.raise_priority", "Increase Base Settings priority"));
-		ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.y));
-		ImGui::BeginDisabled(priority == 1);
-		if (ImGui::ArrowButton("##Lower", ImGuiDir_Down))
-			raise = false;
-		ImGui::EndDisabled();
-		Util::AddTooltip(T("menu.presets.lower_priority", "Decrease Base Settings priority"));
+		{
+			const Util::DisableGuard unavailable(priority >= count);
+			ImGui::SetCursorScreenPos(origin);
+			if (ImGui::ArrowButton("##Raise", ImGuiDir_Up))
+				raise = true;
+			Util::AddTooltip(T("menu.presets.raise_priority", "Increase Base Settings priority"));
+		}
+		{
+			const Util::DisableGuard unavailable(priority <= 1);
+			ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + height - ImGui::GetFrameHeight()));
+			if (ImGui::ArrowButton("##Lower", ImGuiDir_Down))
+				raise = false;
+			Util::AddTooltip(T("menu.presets.lower_priority", "Decrease Base Settings priority"));
+		}
 		return raise;
 	}
 }
@@ -381,7 +384,7 @@ float PresetsPageRenderer::MeasureBackendBadgesWidth(bool hasE11, bool hasCSPres
 	bool needGap = false;
 	ForEachBackendBadge(hasE11, hasCSPresets, hasBaseline, compact, [&](const BackendBadge& badge) {
 		AppendBadgeGap(width, needGap);
-		width += ImGui::CalcTextSize(badge.label).x;
+		width += Util::MeasureBadgeWidth(badge.label);
 	});
 	return width;
 }
@@ -396,7 +399,7 @@ void PresetsPageRenderer::DrawBackendBadges(bool hasE11, bool hasCSPresets, bool
 		if (needGap)
 			ImGui::SameLine(0.0f, gap);
 		needGap = true;
-		ImGui::TextColored(muted ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled) : badge.color, "%s", badge.label);
+		Util::Badge(badge.label, muted ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled) : badge.color);
 	});
 	ImGui::EndGroup();
 }
@@ -490,17 +493,6 @@ void PresetsPageRenderer::RenderList()
 	std::unordered_map<std::string, size_t> priority;
 	for (size_t index = 0; index < baselineOrder.size(); ++index)
 		priority[baselineOrder[index]] = index + 1;
-	std::ranges::stable_sort(indices, [&](size_t first, size_t second) {
-		const auto& a = catalog.GetPacks()[first];
-		const auto& b = catalog.GetPacks()[second];
-		const auto group = [](const auto& pack) { return pack.hasBaseline ? 2 : pack.IsE11() ? 0 :
-			                                                                                   1; };
-		if (group(a) != group(b))
-			return group(a) < group(b);
-		const auto aPriority = priority.contains(a.id) ? priority.at(a.id) : 0;
-		const auto bPriority = priority.contains(b.id) ? priority.at(b.id) : 0;
-		return aPriority > bPriority;
-	});
 
 	ImGui::BeginChild("##PresetList", ImVec2(0, 0), false);
 
@@ -513,6 +505,29 @@ void PresetsPageRenderer::RenderList()
 	const float rowGap = ImGui::GetStyle().ItemSpacing.y;
 	const float rowInset = ThemeManager::Constants::PRESET_ROW_INSET * scale;
 	const float statusGap = ThemeManager::Constants::PRESET_ROW_STATUS_GAP * scale;
+	const float buttonSize = ImGui::GetFrameHeight();
+	const float controlsWidth = buttonSize + rowInset;
+	const float controlsHeight = buttonSize * 2.0f + ImGui::GetStyle().ItemInnerSpacing.y;
+	const float rowWidth = ImGui::GetContentRegionAvail().x;
+	const float textWidth = std::max(ImGui::GetFontSize(), rowWidth - logoSize - rowInset * 3.0f - controlsWidth);
+	const char* activeLabel = T("menu.presets.active", "Active");
+	const char* inactiveLabel = T("common.inactive", "Inactive");
+	const char* invalidLabel = T("menu.presets.invalid", "Invalid");
+	float maxBadgesWidth = 0.0f;
+	float maxStatusWidth = 0.0f;
+	{
+		MenuFonts::FontRoleGuard body(Menu::FontRole::Body);
+		maxStatusWidth = std::max({ ImGui::CalcTextSize(activeLabel).x, ImGui::CalcTextSize(inactiveLabel).x, ImGui::CalcTextSize(invalidLabel).x });
+		for (size_t idx : indices) {
+			const auto& pack = catalog.GetPacks()[idx];
+			maxBadgesWidth = std::max(maxBadgesWidth, MeasureBackendBadgesWidth(pack.IsE11(), pack.IsCS(), pack.IsBaseline(), true));
+		}
+	}
+	const bool badgesBesideName = textWidth - rowInset - maxBadgesWidth - statusGap - maxStatusWidth >= ImGui::GetFontSize() * kMinRowNameFontSizes;
+	const bool statusBesideBadges = badgesBesideName || maxBadgesWidth + statusGap + maxStatusWidth <= textWidth;
+	const float textLines = badgesBesideName ? 2.0f : statusBesideBadges ? 3.0f :
+	                                                                       4.0f;
+	const float rowHeight = std::max({ logoSize, ImGui::GetTextLineHeightWithSpacing() * textLines, controlsHeight }) + rowPad * 2.0f;
 	std::string moveId;
 	bool moveRaise = false;
 
@@ -524,50 +539,17 @@ void PresetsPageRenderer::RenderList()
 		auto& pack = *packPtr;
 		const bool selected = selectedPackId == pack.id;
 		const bool isActive = catalog.IsScenePackEnabled(pack.id) || catalog.IsBaselineEnabled(pack.id);
-		const auto& compat = pack.compat;
 		const bool reorderable = pack.hasBaseline && priority.contains(pack.id) && baselineOrder.size() > 1;
-		const float buttonSize = ImGui::GetFrameHeight();
-		const float controlsWidth = reorderable ? buttonSize + rowInset : 0.0f;
-		const float rowWidth = ImGui::GetContentRegionAvail().x;
-		const float textWidth = std::max(ImGui::GetFontSize(), rowWidth - logoSize - rowInset * 3.0f - controlsWidth);
-		const char* activeLabel = T("menu.presets.active", "Active");
-		const char* invalidLabel = T("menu.presets.invalid", "Invalid");
+		const char* stateLabel = !pack.valid ? invalidLabel : isActive ? activeLabel :
+		                                                                 inactiveLabel;
+		float stateWidth;
 		float trailingWidth;
-		bool badgesBesideName;
-		bool activeBesideBadges = true;
-		bool invalidBesideStatus = true;
-		int statusLines = 0;
 		{
 			MenuFonts::FontRoleGuard body(Menu::FontRole::Body);
 			const float badgesWidth = MeasureBackendBadgesWidth(pack.IsE11(), pack.IsCS(), pack.IsBaseline(), true);
-			trailingWidth = rowInset + badgesWidth;
-			if (isActive)
-				trailingWidth += statusGap + ImGui::CalcTextSize(activeLabel).x;
-			if (!pack.valid)
-				trailingWidth += statusGap + ImGui::CalcTextSize(invalidLabel).x;
-			badgesBesideName = textWidth - trailingWidth >= ImGui::GetFontSize() * kMinRowNameFontSizes;
-			if (!badgesBesideName) {
-				float usedWidth = badgesWidth;
-				const auto fitStatus = [&](bool visible, const char* label, bool& beside) {
-					if (!visible)
-						return;
-					const float width = ImGui::CalcTextSize(label).x;
-					beside = usedWidth + statusGap + width <= textWidth;
-					if (!beside)
-						++statusLines;
-					usedWidth = beside ? usedWidth + statusGap + width : width;
-				};
-				fitStatus(isActive, activeLabel, activeBesideBadges);
-				fitStatus(!pack.valid, invalidLabel, invalidBesideStatus);
-			}
+			stateWidth = ImGui::CalcTextSize(stateLabel).x;
+			trailingWidth = rowInset + badgesWidth + statusGap + stateWidth;
 		}
-		const int warnLines = (compat.versionGap != PresetCompatibility::VersionGap::None ? 1 : 0) +
-		                      (!compat.featuresMessage.empty() ? 1 : 0) +
-		                      (!compat.pluginsMessage.empty() ? 1 : 0);
-		const float textLines = (badgesBesideName ? 2.0f : 3.0f) + static_cast<float>(warnLines + statusLines);
-		const float textBlockH = ImGui::GetTextLineHeightWithSpacing() * textLines;
-		const float controlsHeight = reorderable ? buttonSize * 2.0f + ImGui::GetStyle().ItemInnerSpacing.y : 0.0f;
-		const float rowHeight = std::max({ logoSize, textBlockH, controlsHeight }) + rowPad * 2.0f;
 
 		ImGui::PushID(pack.id.c_str());
 
@@ -617,16 +599,13 @@ void PresetsPageRenderer::RenderList()
 			if (badgesBesideName)
 				ImGui::SameLine(0.0f, rowInset);
 			DrawBackendBadges(pack.IsE11(), pack.IsCS(), pack.IsBaseline(), true, !isActive);
-			if (isActive) {
-				if (activeBesideBadges)
-					ImGui::SameLine(0.0f, statusGap);
-				ImGui::TextColored(theme.StatusPalette.SuccessColor, "%s", activeLabel);
-			}
-			if (!pack.valid) {
-				if (invalidBesideStatus)
-					ImGui::SameLine(0.0f, statusGap);
-				ImGui::TextColored(theme.StatusPalette.Error, "%s", invalidLabel);
-			}
+			const float statusRight = rowOrigin.x + rowWidth - rowInset - (reorderable ? controlsWidth : 0.0f);
+			if (statusBesideBadges)
+				ImGui::SameLine(0.0f, statusGap);
+			ImGui::SetCursorScreenPos(ImVec2(statusRight - stateWidth, ImGui::GetCursorScreenPos().y));
+			ImGui::TextColored(!pack.valid ? theme.StatusPalette.Error : isActive ? theme.StatusPalette.SuccessColor :
+																					ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled),
+				"%s", stateLabel);
 		}
 		{
 			MenuFonts::FontRoleGuard sub(Menu::FontRole::Subtext);
@@ -647,14 +626,14 @@ void PresetsPageRenderer::RenderList()
 				meta = T("menu.presets.source_baseline", "Base Settings");
 			if (!meta.empty())
 				BrowserUI::EllipsizedText(meta.c_str(), textWidth, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-			PresetCompatibility::DrawWarnings(compat, true);
 		}
 		ImGui::EndGroup();
 		ImGui::PopStyleColor();
 
 		if (reorderable) {
 			const float x = rowOrigin.x + rowWidth - rowInset - buttonSize;
-			if (const auto raise = DrawBaselinePriorityActions(ImVec2(x, rowOrigin.y + (rowHeight - controlsHeight) * 0.5f), priority.at(pack.id), baselineOrder.size())) {
+			if (const auto raise = DrawBaselinePriorityActions(ImVec2(x, rowOrigin.y + rowPad), rowHeight - rowPad * 2.0f,
+					priority.at(pack.id), baselineOrder.size())) {
 				moveId = pack.id;
 				moveRaise = *raise;
 			}
@@ -771,7 +750,6 @@ void PresetsPageRenderer::RenderDetail(const ImVec2& size)
 						Util::FileHelpers::OpenWithShell(pack->nexusUrl);
 					Util::AddTooltip(T("menu.presets.nexus_link_tooltip", "Open this preset's Nexus Mods page."));
 				}
-				PresetCompatibility::DrawWarnings(pack->compat, false);
 			}
 
 			if (!badgesBesideTitle && badgesWidth > 0.0f) {
@@ -781,6 +759,8 @@ void PresetsPageRenderer::RenderDetail(const ImVec2& size)
 
 			ImGui::Spacing();
 			DrawPackActions(catalog, *pack);
+			ImGui::Spacing();
+			DrawPackMessages(catalog, *pack);
 
 			ImGui::EndGroup();
 		}
@@ -807,19 +787,8 @@ void PresetsPageRenderer::RenderDetail(const ImVec2& size)
 		ImGui::TextDisabled("%s", T("menu.presets.no_description", "No description provided."));
 	}
 
-	if (pack->hasCSPresets) {
-		ImGui::Spacing();
-		Util::Text::WrappedDisabled("%s", T("menu.presets.cs_layer_note",
-											  "Applying makes this pack's CS Presets the active scene layer, replacing the previous pack's."));
-	}
-
 	if (pack->hasBaseline)
 		DrawBaselineDetails(*pack);
-
-	if (!pack->valid && !pack->invalidReason.empty()) {
-		ImGui::Spacing();
-		ImGui::TextColored(theme.StatusPalette.Error, "%s", pack->invalidReason.c_str());
-	}
 
 	if (!pack->screenshotSRVs.empty()) {
 		ImGui::Spacing();
@@ -991,6 +960,16 @@ bool PresetsPageRenderer::IsPopupOpen()
 	return popupOpen || requestedPopup != PresetPopup::None;
 }
 
+void PresetsPageRenderer::DismissPopups()
+{
+	requestedPopup = PresetPopup::None;
+	popupOpen = false;
+	closePopup = false;
+	SceneFilesPanel::Dismiss();
+	PresetExportPanel::Dismiss();
+	ImGui::ClosePopupToLevel(0, true);
+}
+
 void PresetsPageRenderer::DrawPopups()
 {
 	const auto request = std::exchange(requestedPopup, PresetPopup::None);
@@ -1013,7 +992,7 @@ void PresetsPageRenderer::DrawPopups()
 			ImGuiCond_Appearing);
 		ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), maximum);
 		const auto title = std::string(kind == PresetPopup::Create ? T("menu.presets.create", "Create Preset...") :
-																	 T("menu.presets.manage_contents", "Manage Settings...")) +
+																	 T("menu.presets.manage_contents", "Manage Preset...")) +
 		                   id;
 		bool open = true;
 		if (auto popup = Util::CenteredPopupModal(title.c_str(), &open, ImGuiWindowFlags_NoResize)) {
@@ -1032,8 +1011,8 @@ void PresetsPageRenderer::DrawPopups()
 				open = false;
 				closePopup = false;
 			}
+			popupOpen |= open;
 		}
-		popupOpen |= open && ImGui::IsPopupOpen(id);
 	}
 	if (!drewExportDialogs)
 		PresetExportPanel::Draw();
@@ -1053,9 +1032,6 @@ void PresetsPageRenderer::Render()
 
 	ImGui::BeginChild("PresetsPage", ImVec2(0, 0), false);
 
-	bool automatic = catalog.GetAutomaticPresets();
-	if (ImGui::Checkbox(T("menu.presets.auto_apply", "Automatically Apply Presets at Startup"), &automatic))
-		catalog.SetAutomaticPresets(automatic);
 	{
 		const float scale = Util::GetUIScale();
 		const float width = ImGui::GetContentRegionAvail().x;
@@ -1085,6 +1061,8 @@ void PresetsPageRenderer::Render()
 		if (const auto* pack = catalog.FindPack(pendingApplyPackId))
 			ApplyPack(*pack);
 	}
+	if (!applyConfirmation.IsOpen())
+		pendingApplyPackId.clear();
 	if (deleteConfirmation.Draw()) {
 		deleteFailed = !catalog.DeletePack(pendingDeletePackId);
 		if (!deleteFailed)

@@ -31,6 +31,7 @@
 #define ICON_TI_CLOUD_RAIN "\xee\xa9\xb2"	// U+ea72
 #define ICON_TI_CLOUD_STORM "\xee\xa9\xb4"	// U+ea74
 #define ICON_TI_CLOUD "\xee\xa9\xb6"	// U+ea76
+#define ICON_TI_COMPASS "\xee\xa9\xb9"	// U+ea79
 #define ICON_TI_COPY "\xee\xa9\xba"	// U+ea7a
 #define ICON_TI_DOTS "\xee\xaa\x95"	// U+ea95
 #define ICON_TI_EXTERNAL_LINK "\xee\xaa\x99"	// U+ea99
@@ -51,6 +52,7 @@
 #define ICON_TI_X "\xee\xad\x95"	// U+eb55
 #define ICON_TI_APERTURE "\xee\xad\x98"	// U+eb58
 #define ICON_TI_DEVICE_FLOPPY "\xee\xad\xa2"	// U+eb62
+#define ICON_TI_DEVICE_GAMEPAD "\xee\xad\xa3"	// U+eb63
 #define ICON_TI_ARROW_BACK_UP "\xee\xad\xb7"	// U+eb77
 #define ICON_TI_ARROW_FORWARD_UP "\xee\xad\xb8"	// U+eb78
 #define ICON_TI_ERASER "\xee\xae\x8b"	// U+eb8b
@@ -75,6 +77,7 @@
 #define ICON_TI_FILE_IMPORT "\xee\xb7\xaa"	// U+edea
 #define ICON_TI_STACK_2 "\xee\xbb\xb7"	// U+eef7
 #define ICON_TI_SORT_ASCENDING_LETTERS "\xee\xbc\x98"	// U+ef18
+#define ICON_TI_CPU "\xee\xbe\x8e"	// U+ef8e
 #define ICON_TI_LAYOUT_SIDEBAR_LEFT_COLLAPSE "\xef\x80\x84"	// U+f004
 #define ICON_TI_LAYOUT_SIDEBAR_LEFT_EXPAND "\xef\x80\x85"	// U+f005
 #define ICON_TI_ROBOT "\xef\x80\x8b"	// U+f00b
@@ -117,6 +120,7 @@ inline constexpr unsigned short ICON_TI_GLYPH_RANGES[] = {
 	0xea72, 0xea72,
 	0xea74, 0xea74,
 	0xea76, 0xea76,
+	0xea79, 0xea79,
 	0xea7a, 0xea7a,
 	0xea89, 0xea89,
 	0xea95, 0xea95,
@@ -140,6 +144,7 @@ inline constexpr unsigned short ICON_TI_GLYPH_RANGES[] = {
 	0xeb55, 0xeb55,
 	0xeb58, 0xeb58,
 	0xeb62, 0xeb62,
+	0xeb63, 0xeb63,
 	0xeb77, 0xeb77,
 	0xeb78, 0xeb78,
 	0xeb8b, 0xeb8b,
@@ -162,6 +167,7 @@ inline constexpr unsigned short ICON_TI_GLYPH_RANGES[] = {
 	0xedea, 0xedea,
 	0xeef7, 0xeef7,
 	0xef18, 0xef18,
+	0xef8e, 0xef8e,
 	0xf004, 0xf004,
 	0xf005, 0xf005,
 	0xf00b, 0xf00b,

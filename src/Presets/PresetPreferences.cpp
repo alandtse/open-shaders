@@ -24,15 +24,33 @@ nlohmann::json PresetPreferences::Restore(nlohmann::json state)
 	return PresetState::RestorePrivateState(std::move(state), *saved);
 }
 
-bool PresetPreferences::Save(const nlohmann::json& state)
+bool PresetPreferences::Save(const nlohmann::json& state, const std::function<bool()>& saveSettings)
 {
 	std::error_code error;
 	const bool exists = std::filesystem::exists(GetPath(), error);
-	if (error || (exists && !Util::FileHelpers::ReadJsonObject(GetPath(), "OS preset preferences", PresetState::kMaxDocumentBytes)))
+	const auto previous = exists ? Util::FileHelpers::ReadJsonObject(GetPath(), "OS preset preferences", PresetState::kMaxDocumentBytes) :
+	                               std::optional<nlohmann::json>{ nlohmann::json::object() };
+	if (error || !previous)
 		return false;
 	nlohmann::json preferences = nlohmann::json::object();
 	for (const auto key : PresetState::kPrivateKeys)
 		if (state.contains(key))
 			preferences[key] = state.at(key);
-	return Util::FileHelpers::WriteJsonAtomically(GetPath(), preferences, 2, "OS preset preferences");
+	if (!Util::FileHelpers::WriteJsonAtomically(GetPath(), preferences, 2, "OS preset preferences"))
+		return false;
+	const auto restore = [&] {
+		if (exists)
+			Util::FileHelpers::WriteJsonAtomically(GetPath(), *previous, 2, "OS preset preferences rollback");
+		else
+			std::filesystem::remove(GetPath(), error);
+	};
+	try {
+		if (!saveSettings || saveSettings())
+			return true;
+	} catch (...) {
+		restore();
+		throw;
+	}
+	restore();
+	return false;
 }

@@ -10,13 +10,11 @@ namespace SceneSettingsLocationTargets
 	/** @brief Whether a type is one of kLocationTargetTypes. */
 	bool IsValidLocationTargetType(SceneSettingsManager::LocationTargetType type);
 
-	/** @brief A form's full name, else its generic form display name. */
+	/** @brief The target's name according to its own record type. */
 	template <class Form>
 	std::string GetLocationTargetDisplayName(const Form* form)
 	{
-		if (const char* fullName = form->GetFullName(); fullName && fullName[0] != '\0')
-			return std::string(fullName);
-		return Util::GetFormDisplayName(form->GetFormID());
+		return Util::GetSpatialFormDisplayName(form);
 	}
 
 	/// Regions carry no full name, so their editor ID is the only readable label they have.

@@ -64,6 +64,11 @@ namespace SettingsControl
 		return callbacks.drawPath && callbacks.drawPath(setting, path, error, validate);
 	}
 
+	bool StringChoice(const char* label, std::string& value, const StringDrawer& draw)
+	{
+		return callbacks.interceptString ? callbacks.interceptString(label, value, draw) : draw(value);
+	}
+
 	void RecordBaselineEdit(const SettingIdentity& setting, const nlohmann::json& value)
 	{
 		if (callbacks.recordBaselineEdit)

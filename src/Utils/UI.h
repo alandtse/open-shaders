@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <array>
 #include <cfloat>  // For FLT_MAX
 #include <concepts>
 #include <cstdint>
@@ -19,6 +20,7 @@
 #include "../Menu/Fonts.h"
 #include "../Menu/ThemeManager.h"
 #include "Utils/BootSnapshot.h"
+#include "Utils/ControlValue.h"
 #include "Utils/Input.h"
 #include "Utils/SettingsControl.h"
 #include "Utils/ShaderCacheClearScope.h"
@@ -338,7 +340,7 @@ namespace Util
 	 * @param centered Centre the strip on the available width instead of starting it at the left.
 	 */
 	bool BeginPillTabBar(const char* str_id, bool centered = false);
-	bool BeginPillTabItem(const char* label, bool* p_open = nullptr, ImGuiTabItemFlags flags = 0);
+	bool BeginPillTabItem(const char* label, bool* p_open = nullptr, ImGuiTabItemFlags flags = 0, const char* tooltip = nullptr);
 	void EndPillTabItem();
 	void EndPillTabBar();
 	/** @brief True while a BeginPillTabBar has not yet been closed (for font helpers). */
@@ -426,8 +428,6 @@ namespace Util
 	 */
 	void RequestClearShaderCacheConfirmation(ShaderCacheClearScope a_scope);
 	void DrawClearShaderCacheConfirmation();
-	/** @brief Draws a dismissible notice after a shader cache or pipeline change. */
-	void DrawRecacheBanner();
 
 	/**
 	 * @brief Reloads the saved settings, first asking for confirmation when there are unsaved changes.
@@ -463,6 +463,10 @@ namespace Util
 
 		std::string title;
 		std::string message;
+		/// Optional items drawn with font-scaled bullets below the message.
+		std::vector<std::string> bulletItems;
+		/// Optional paragraph following the item list.
+		std::string footer;
 		/// Empty hides the button.
 		std::string confirmLabel;
 		/// Empty falls back to the translated "Cancel".
@@ -962,6 +966,63 @@ namespace Util
 	/** @brief Draws a checkbox whose clipped label expands on hover. */
 	bool CheckboxWithClippedText(const char* label, bool* value);
 	bool RadioButton(const char* label, unsigned int* storedValue, unsigned int buttonValue);
+	/** @brief Draws ImGui::Combo over @p displayIndex while reporting @p storageAddress as the edited setting, so scene-setting and benchmark menus find it. */
+	bool ComboAtStorage(const char* label, const void* storageAddress, int* displayIndex, const char* const* items, int itemCount);
+	/**
+	 * @brief Draws a dropdown that edits an integral or enum setting in place, one item per value starting at 0.
+	 *
+	 * ImGui::Combo needs an int, so the setting is shown through a copy; this reports the setting itself
+	 * as the control's storage, which the scene-setting and benchmark menus match controls by.
+	 * A stored value past the last item is shown as the last item and left unchanged until the user picks.
+	 * Returns true when the user picked or the control hook changed the setting itself, such as a reset.
+	 */
+	template <class Stored>
+	bool Combo(const char* label, Stored* storedValue, const char* const* items, int itemCount)
+	{
+		if (!storedValue)
+			return false;
+		const int shownIndex = ComboShownIndex(*storedValue, itemCount);
+		int displayIndex = shownIndex;
+		if (!ComboAtStorage(label, storedValue, &displayIndex, items, itemCount))
+			return false;
+		if (!SettingsControl::IsReplicating())
+			CommitDisplayedValue(*storedValue, shownIndex, displayIndex);
+		return true;
+	}
+
+	template <class Stored, size_t ItemCount>
+	bool Combo(const char* label, Stored* storedValue, const std::array<const char*, ItemCount>& items)
+	{
+		static_assert(ComboLabelsMatch<Stored>(ItemCount), "Util::Combo: an enum setting needs one label per enumerator, in value order");
+		return Combo(label, storedValue, items.data(), static_cast<int>(ItemCount));
+	}
+
+	template <class Stored, size_t ItemCount>
+	bool Combo(const char* label, Stored* storedValue, const char* const (&items)[ItemCount])
+	{
+		static_assert(ComboLabelsMatch<Stored>(ItemCount), "Util::Combo: an enum setting needs one label per enumerator, in value order");
+		return Combo(label, storedValue, items, static_cast<int>(ItemCount));
+	}
+
+	/**
+	 * @brief Draws a dropdown over a setting whose values are not 0, 1, 2 ...: item i stands for values[i].
+	 *
+	 * A stored value that is none of @p values is shown as item @p fallbackIndex and left unchanged
+	 * until the user picks.
+	 */
+	template <class Stored, class Value, size_t ItemCount>
+	bool Combo(const char* label, Stored* storedValue, const char* const* items, const std::array<Value, ItemCount>& values, int fallbackIndex = 0)
+	{
+		if (!storedValue)
+			return false;
+		const int shownIndex = ComboValueIndex(*storedValue, values, fallbackIndex);
+		int displayIndex = shownIndex;
+		if (!ComboAtStorage(label, storedValue, &displayIndex, items, static_cast<int>(ItemCount)))
+			return false;
+		if (!SettingsControl::IsReplicating())
+			CommitDisplayedValue(*storedValue, shownIndex, displayIndex, [&values](int index) { return values[index]; });
+		return true;
+	}
 	const void* GetActiveControlStorageAddress();
 	/** @brief Main viewport size multiplied by scale. */
 	ImVec2 GetNativeViewportSizeScaled(float scale);
@@ -1179,6 +1240,16 @@ namespace Util
 		const std::vector<TableSortFunc>& customSorts = {},
 		TableCellRenderFunc cellRender = nullptr);
 
+	/** @brief Optional column behaviour for the custom string table helpers. */
+	struct StringTableOptions
+	{
+		bool trailingFixedColumn = false;  ///< Last column is a narrow, unsortable, unlabelled column for a button, left out of the search options.
+		bool autoFitOnFirstShow = false;   ///< Sizes every column to its content the first time the table shows rows; later resizes are kept.
+	};
+
+	/** @brief Queues a content fit of the current table's columns, once per table. */
+	void AutoFitTableColumnsOnce();
+
 	/**
 	 * Renders a sortable ImGui table for custom row types (vector<T>), sorts in-place.
 	 * @tparam T The row type. Must be copyable and compatible with the provided cellRender and customSorts functions.
@@ -1194,6 +1265,7 @@ namespace Util
 	 * @param outerSize Optional outer size for the table (0,0 = auto-size).
 	 * @param scrollable Enables a bounded, internally scrolling table.
 	 * @param borders Table border flags.
+	 * @param options Optional column behaviour; see StringTableOptions.
 	 */
 	template <typename T>
 	void ShowSortedStringTableCustom(
@@ -1207,7 +1279,8 @@ namespace Util
 		const std::vector<T>& footerRows = {},
 		const ImVec2& outerSize = ImVec2(0, 0),
 		bool scrollable = true,
-		ImGuiTableFlags borders = ImGuiTableFlags_Borders)
+		ImGuiTableFlags borders = ImGuiTableFlags_Borders,
+		const StringTableOptions& options = {})
 	{
 		// ScrollY makes the table scroll internally when its bounded
 		// outerSize is smaller than its content. For unbounded tables
@@ -1226,7 +1299,10 @@ namespace Util
 		if (ImGui::BeginTable(table_id, static_cast<int>(headers.size()), flags, tableSize)) {
 			// Set up columns with content-based sizing
 			for (size_t i = 0; i < headers.size(); ++i) {
-				ImGui::TableSetupColumn(headers[i].c_str());
+				if (options.trailingFixedColumn && i + 1 == headers.size())
+					ImGui::TableSetupColumn(headers[i].c_str(), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_NoHeaderLabel, ImGui::GetFrameHeight());
+				else
+					ImGui::TableSetupColumn(headers[i].c_str());
 			}
 			ImGui::TableHeadersRow();
 
@@ -1255,6 +1331,8 @@ namespace Util
 					}
 				}
 			}
+			if (options.autoFitOnFirstShow && !rows.empty())
+				AutoFitTableColumnsOnce();
 			ImGui::EndTable();
 		}
 	}
@@ -1278,6 +1356,7 @@ namespace Util
 	 * @param getFilterableFields Function that extracts filterable strings from a row for each column.
 	 *        Should return a vector of strings, one per column, used for filtering.
 	 * @param scrollOnFilterChange If true, scrolls to top when filter changes (default: true).
+	 * @param options Optional column behaviour; see StringTableOptions.
 	 */
 	template <typename T>
 	void ShowFilteredStringTableCustom(
@@ -1291,7 +1370,8 @@ namespace Util
 		std::string& filterText,
 		int& searchColumn,
 		std::function<std::vector<std::string>(const T&)> getFilterableFields,
-		bool scrollOnFilterChange = true)
+		bool scrollOnFilterChange = true,
+		const StringTableOptions& options = {})
 	{
 		// Filter controls
 		static std::string previousFilterText = "";
@@ -1305,8 +1385,9 @@ namespace Util
 
 		// Create search column options
 		std::vector<std::string> searchOptions = { "All Columns" };
-		for (const auto& col : headers) {
-			searchOptions.push_back(col);
+		for (size_t i = 0; i < headers.size(); ++i) {
+			if (!(options.trailingFixedColumn && i + 1 == headers.size()))
+				searchOptions.push_back(headers[i]);
 		}
 		std::vector<const char*> searchOptionsCStr;
 		for (const auto& option : searchOptions) {
@@ -1374,7 +1455,8 @@ namespace Util
 				if (cellRender) {
 					cellRender(rowIdx, colIdx, row, currentFilterText);
 				}
-			});
+			},
+			{}, ImVec2(0, 0), true, ImGuiTableFlags_Borders, options);
 
 		ImGui::PopStyleVar();  // CellPadding
 		ImGui::EndChild();
@@ -1423,10 +1505,23 @@ namespace Util
 	/** @brief Allocation-free label accessor for indexed searchable combos. */
 	using SearchableComboLabelGetter = const char* (*)(const void* userData, int index);
 
+	/** @brief Optional action and text color for a combo preview. */
+	struct ComboPreviewAction
+	{
+		const char* label = nullptr;
+		bool enabled = true;
+		bool pressed = false;
+		ImU32 previewColor = 0;
+	};
+
+	/** @brief Begins a combo with an independent action inside its preview; call EndCombo when true. */
+	bool BeginComboWithAction(const char* label, const char* previewValue, ComboPreviewAction& action,
+		ImGuiComboFlags flags = ImGuiComboFlags_None);
+
 	/** @brief Begins a searchable combo, optionally restoring caller-owned scroll position. Call EndSearchableCombo when true. */
 	bool BeginSearchableCombo(const char* label, const char* previewValue,
 		ImGuiComboFlags flags = ImGuiComboFlags_None, const void* storageAddress = nullptr,
-		int maxVisibleItems = 0, float* savedScrollY = nullptr);
+		int maxVisibleItems = 0, float* savedScrollY = nullptr, ComboPreviewAction* action = nullptr);
 
 	/** @brief Ends a combo opened by BeginSearchableCombo. */
 	void EndSearchableCombo();
@@ -1483,7 +1578,7 @@ namespace Util
 	 * @brief Draws a search input field with icon inside a combo dropdown.
 	 *
 	 * Reusable helper for any combo that needs search/filter functionality.
-	 * Draws a text input with a search icon overlay and separator, and
+	 * Draws a text input with a search icon overlay and optional separator, and
 	 * auto-focuses the input when the combo first opens.
 	 * Returns an owned copy of the current search text for safe use after
 	 * ClearComboSearch may mutate the underlying buffer.
@@ -1491,9 +1586,10 @@ namespace Util
 	 * @param id Stable string literal identifying this search input. Must be a
 	 *           finite, static set of IDs — one persistent map entry is created
 	 *           per unique id and never removed.
+	 * @param drawSeparator Whether to draw the combo's separator below the input.
 	 * @return Current search text (empty string when no filter is active)
 	 */
-	std::string DrawComboSearchInput(const char* id);
+	std::string DrawComboSearchInput(const char* id, bool drawSeparator = true);
 
 	/**
 	 * @brief Clears the search buffer for a given combo search ID.

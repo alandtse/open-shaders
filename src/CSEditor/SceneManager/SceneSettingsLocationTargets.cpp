@@ -177,9 +177,7 @@ namespace SceneSettingsLocationTargets
 			if (location)
 				targets.push_back(MakeLocationTarget(location, {}));
 		// Unnamed cells cannot be told apart in a list, so only cells with an editor ID or a name are offered.
-		for (auto* cell : dataHandler->GetFormArray<RE::TESObjectCELL>()) {
-			if (!cell)
-				continue;
+		for (auto* cell : Util::GetLoadedCells()) {
 			const char* fullName = cell->GetFullName();
 			if (!Util::GetFormEditorID(cell).empty() || (fullName && fullName[0] != '\0'))
 				targets.push_back(MakeCellTarget(cell));

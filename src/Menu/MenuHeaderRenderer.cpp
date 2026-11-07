@@ -4,6 +4,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include "BaselineManager.h"
 #include "CSEditor/Browser/BrowserWidgets.h"
 #include "Fonts.h"
 #include "Globals.h"
@@ -46,103 +47,156 @@ std::string MenuHeaderRenderer::GetTitle()
 	return std::format("{} {}", Plugin::DISPLAY_NAME, version);
 }
 
-void MenuHeaderRenderer::RenderHeader(Menu& menu, bool& sidebarVisible, float uiScale)
+void MenuHeaderRenderer::RenderActions(Menu& menu, bool& sidebarVisible, bool showBackground)
 {
 	const float size = BrowserUI::IconButtonSize();
-	const float homeGap = ImGui::GetStyle().ItemInnerSpacing.x;
-	if (ImGui::BeginTable("##MainMenuHeader", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX | ImGuiTableFlags_NoPadInnerX | ImGuiTableFlags_NoSavedSettings)) {
-		ImGui::TableSetupColumn("##ActionsAndTitle", ImGuiTableColumnFlags_WidthStretch);
-		ImGui::TableSetupColumn("##Navigation", ImGuiTableColumnFlags_WidthFixed, size * 2.0f + homeGap + ImGui::GetStyle().ItemSpacing.x);
+	bool afterFirst = false;
+	const auto action = [&](const char* id, Icons::GlyphRef glyph, const char* tooltip, bool selected, bool enabled, auto&& run, ImU32 tint = 0) {
+		if (afterFirst)
+			BrowserUI::SameLineIfFits(size);
+		afterFirst = true;
+		ImGui::BeginDisabled(!enabled);
+		if (BrowserUI::IconButton(id, glyph, tooltip, selected, tint))
+			run();
+		ImGui::EndDisabled();
+	};
+	action("##SidebarToggle", Icons::TI(ICON_TI_LAYOUT_COLUMNS), sidebarVisible ? T("menu.hide_sidebar", "Hide Sidebar") : T("menu.show_sidebar", "Show Sidebar"),
+		sidebarVisible, true, [&] { sidebarVisible = !sidebarVisible; });
+	if (showBackground) {
+		action("##BackgroundToggle", Icons::TI(ICON_TI_EYE), menu.IsBackgroundVisible() ? T("menu.hide_background", "Hide Background") : T("menu.show_background", "Show Background"),
+			!menu.IsBackgroundVisible(), true, [&] { menu.ToggleBackgroundVisibility(); });
+	}
+
+	auto* shaderCache = globals::shaderCache;
+	const bool canClear = !shaderCache->IsCapturingActiveShaders() && !shaderCache->IsAwaitingMenuCloseCapture();
+	const auto clearScope = Util::ResolveShaderCacheClearScope();
+	const auto* cacheTooltip = clearScope == Util::ShaderCacheClearScope::ActiveOnly ?
+	                               T("menu.clear_active_shaders", "Clear Active Shaders") :
+	                               T("menu.clear_shader_cache", "Clear Shader Cache");
+	const auto cacheGlyph = clearScope == Util::ShaderCacheClearScope::ActiveOnly ? SettingsActionIcons::kClearActiveShaders : SettingsActionIcons::kClearCache;
+	BrowserUI::SameLineIfFits(size);
+	ImGui::BeginDisabled(!canClear);
+	if (BrowserUI::PaintedIconButton("##ClearShaderCache", [cacheGlyph](ImDrawList* drawList, ImVec2, float, ImU32) {
+			Icons::FontGuard font(cacheGlyph);
+			const auto color = ImGui::IsItemHovered() ? ImGui::GetStyleColorVec4(ImGuiCol_Text) : Util::Colors::GetSecondary();
+			// Status marks change glyph bounds, so both cache icons share one placement reference.
+			const auto position = Icons::GetCenteredGlyphPos(ImGui::GetItemRectMin(), ImGui::GetItemRectSize(), SettingsActionIcons::kClearCache.utf8);
+		drawList->AddText(position, ImGui::GetColorU32(color), cacheGlyph.utf8); }, 0, cacheTooltip))
+		Util::RequestClearShaderCacheConfirmation(clearScope);
+	ImGui::EndDisabled();
+	action("##RestoreDefaults", SettingsActionIcons::kRestoreDefaults, T("menu.restore_defaults", "Restore All Defaults"), false, true,
+		[] { RequestRestoreDefaults(); });
+	action("##ReapplyBaseSettings", SettingsActionIcons::kReapplyOverride, T("menu.reapply_all_base_settings", "Reapply All Base Settings"), false,
+		BaselineManager::GetSingleton()->HasSettings(), [] { globals::state->ReapplyBaseSettings(); });
+	action("##RestoreSettings", SettingsActionIcons::kRestoreSaved, T("menu.restore_all_saved_settings", "Restore All Saved Settings"), false, globals::state->HasSavedSettings(),
+		[] { globals::state->Load(); });
+	const bool unsaved = globals::state->HasUnsavedChanges();
+	{
+		auto unsavedTint = Util::StateHoverButtonStyle(Util::Colors::GetUnsaved(), unsaved);
+		ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
+		const SKSE::stl::scope_exit restoreSaveHover([]() noexcept { ImGui::PopStyleColor(); });
+		action("##SaveSettings", Icons::TI(ICON_TI_DEVICE_FLOPPY), unsaved ? T("menu.save_settings_unsaved", "Save Settings (unsaved changes)") : T("menu.save_settings", "Save Settings"), false, true, [] { SaveManager::SaveAll(); }, unsaved ? ImGui::GetColorU32(Util::Colors::GetUnsaved()) : 0);
+	}
+}
+
+void MenuHeaderRenderer::RenderNavigation(Menu& menu, std::string_view selectedPage)
+{
+	ImGui::BeginDisabled(!menu.CanUndo());
+	if (BrowserUI::IconButton("##Undo", Icons::TI(ICON_TI_ARROW_BACK_UP), T("menu.shortcuts.undo", "Undo")))
+		menu.RequestUndo();
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!menu.CanRedo());
+	if (BrowserUI::IconButton("##Redo", Icons::TI(ICON_TI_ARROW_FORWARD_UP), T("menu.shortcuts.redo", "Redo")))
+		menu.RequestRedo();
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	const auto issueCount = IssuesPageRenderer::GetFeatureIssueCount();
+	const auto homeTooltip = issueCount == 0 ? std::string(T("menu.features.home", "Home")) :
+	                         issueCount == 1 ? std::string(T("menu.home.feature_issue_one", "1 feature issue")) :
+	                                           I18n::GetSingleton()->Format("menu.home.feature_issue_many", { { "count", std::to_string(issueCount) } }, "{count} feature issues");
+	const auto errorColor = Util::Colors::GetError();
+	ImGui::PushStyleColor(ImGuiCol_Header, issueCount > 0 ? ImVec4(errorColor.x, errorColor.y, errorColor.z, ThemeManager::Constants::SEGMENT_SELECTED_FILL_ALPHA) : ImGui::GetStyleColorVec4(ImGuiCol_Header));
+	const SKSE::stl::scope_exit restoreIssueAccent([]() noexcept { ImGui::PopStyleColor(); });
+	if (BrowserUI::IconButton("##Home", Icons::TI(ICON_TI_HOME), homeTooltip.c_str(), issueCount > 0 || selectedPage == "Home",
+			issueCount > 0 ? ImGui::GetColorU32(errorColor) : 0)) {
+		menu.SelectFeatureMenu("Home");
+		if (issueCount > 0)
+			HomePageRenderer::FocusNeedsAttention();
+	}
+	ImGui::SameLine();
+	if (BrowserUI::IconButton("##Search", Icons::TI(ICON_TI_SEARCH), T("menu.palette.title", "Go to..."), GoToPalette::IsOpen()))
+		GoToPalette::Open();
+}
+
+void MenuHeaderRenderer::DrawRestoreDefaultsConfirmation()
+{
+	if (restoreDefaults.Draw()) {
+		globals::state->Load(State::ConfigMode::DEFAULT);
+		globals::state->MarkSettingsChanged();
+	}
+}
+
+void MenuHeaderRenderer::RenderEditorHeader(Menu& menu, bool& sidebarVisible, std::string_view selectedPage,
+	const std::function<void()>& drawModes)
+{
+	const float size = BrowserUI::IconButtonSize();
+	const auto& style = ImGui::GetStyle();
+	ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0.0f, 0.0f));
+	if (ImGui::BeginTable("##EditorMenuHeader", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX | ImGuiTableFlags_NoPadInnerX | ImGuiTableFlags_NoSavedSettings)) {
+		ImGui::TableSetupColumn("##ActionsAndModes", ImGuiTableColumnFlags_WidthStretch);
+		ImGui::TableSetupColumn("##Navigation", ImGuiTableColumnFlags_WidthFixed, size * 4.0f + style.ItemSpacing.x * 3.0f);
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
 		const float top = ImGui::GetCursorPosY();
 		ImGui::BeginGroup();
-		bool afterFirst = false;
-		const auto action = [&](const char* id, Icons::GlyphRef glyph, const char* tooltip, bool selected, bool enabled, auto&& run, ImU32 tint = 0) {
-			if (afterFirst)
-				BrowserUI::SameLineIfFits(size);
-			afterFirst = true;
-			ImGui::BeginDisabled(!enabled);
-			if (BrowserUI::IconButton(id, glyph, tooltip, selected, tint))
-				run();
-			ImGui::EndDisabled();
-		};
-		action("##SidebarToggle", Icons::TI(ICON_TI_LAYOUT_COLUMNS), sidebarVisible ? T("menu.hide_sidebar", "Hide Sidebar") : T("menu.show_sidebar", "Show Sidebar"),
-			sidebarVisible, true, [&] { sidebarVisible = !sidebarVisible; });
-		action("##BackgroundToggle", Icons::TI(ICON_TI_EYE), menu.IsBackgroundVisible() ? T("menu.hide_background", "Hide Background") : T("menu.show_background", "Show Background"),
-			!menu.IsBackgroundVisible(), true, [&] { menu.ToggleBackgroundVisibility(); });
+		drawModes();
+		ImGui::SameLine();
+		RenderActions(menu, sidebarVisible, false);
+		ImGui::EndGroup();
+		const float height = ImGui::GetItemRectSize().y;
+		ImGui::TableSetColumnIndex(1);
+		ImGui::SetCursorPosY(top + std::max(0.0f, (height - size) * 0.5f));
+		RenderNavigation(menu, selectedPage);
+		ImGui::EndTable();
+	}
+	ImGui::PopStyleVar();
+	DrawRestoreDefaultsConfirmation();
+}
 
-		auto* shaderCache = globals::shaderCache;
-		const bool canClear = !shaderCache->IsCapturingActiveShaders() && !shaderCache->IsAwaitingMenuCloseCapture();
-		const auto clearScope = Util::ResolveShaderCacheClearScope();
-		const auto* cacheTooltip = clearScope == Util::ShaderCacheClearScope::ActiveOnly ?
-		                               T("menu.clear_active_shaders", "Clear Active Shaders") :
-		                               T("menu.clear_shader_cache", "Clear Shader Cache");
-		const auto cacheGlyph = clearScope == Util::ShaderCacheClearScope::ActiveOnly ? SettingsActionIcons::kClearActiveShaders : SettingsActionIcons::kClearCache;
-		BrowserUI::SameLineIfFits(size);
-		ImGui::BeginDisabled(!canClear);
-		if (BrowserUI::PaintedIconButton("##ClearShaderCache", [cacheGlyph](ImDrawList* drawList, ImVec2, float, ImU32) {
-				Icons::FontGuard font(cacheGlyph);
-				const auto color = ImGui::IsItemHovered() ? ImGui::GetStyleColorVec4(ImGuiCol_Text) : Util::Colors::GetSecondary();
-				// Status marks change glyph bounds, so both cache icons share one placement reference.
-				const auto position = Icons::GetCenteredGlyphPos(ImGui::GetItemRectMin(), ImGui::GetItemRectSize(), SettingsActionIcons::kClearCache.utf8);
-			drawList->AddText(position, ImGui::GetColorU32(color), cacheGlyph.utf8); }, 0, cacheTooltip))
-			Util::RequestClearShaderCacheConfirmation(clearScope);
-		ImGui::EndDisabled();
-		const bool restoreAllDefaults = ImGui::GetIO().KeyShift;
-		const auto* restoreTooltip = restoreAllDefaults ? T("menu.restore_defaults", "Restore All Defaults") : T("menu.restore_settings", "Restore Saved Settings");
-		action("##RestoreSettings", restoreAllDefaults ? SettingsActionIcons::kRestoreDefaults : SettingsActionIcons::kRestoreSaved, restoreTooltip, false, true,
-			[&] {
-				if (restoreAllDefaults)
-					RequestRestoreDefaults();
-				else
-					globals::state->Load();
-			});
-		const bool unsaved = globals::state->HasUnsavedChanges();
-		{
-			auto unsavedTint = Util::StateHoverButtonStyle(Util::Colors::GetUnsaved(), unsaved);
-			ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
-			const SKSE::stl::scope_exit restoreSaveHover([]() noexcept { ImGui::PopStyleColor(); });
-			action("##SaveSettings", Icons::TI(ICON_TI_DEVICE_FLOPPY), unsaved ? T("menu.save_settings_unsaved", "Save Settings (unsaved changes)") : T("menu.save_settings", "Save Settings"), false, true, [] { SaveManager::SaveAll(); }, unsaved ? ImGui::GetColorU32(Util::Colors::GetUnsaved()) : 0);
-		}
+void MenuHeaderRenderer::RenderHeader(Menu& menu, bool& sidebarVisible, float uiScale)
+{
+	const float size = BrowserUI::IconButtonSize();
+	const float navigationGap = ImGui::GetStyle().ItemInnerSpacing.x;
+	if (ImGui::BeginTable("##MainMenuHeader", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX | ImGuiTableFlags_NoPadInnerX | ImGuiTableFlags_NoSavedSettings)) {
+		ImGui::TableSetupColumn("##ActionsAndTitle", ImGuiTableColumnFlags_WidthStretch);
+		ImGui::TableSetupColumn("##Navigation", ImGuiTableColumnFlags_WidthFixed, size * 4.0f + navigationGap + ImGui::GetStyle().ItemSpacing.x * 3.0f);
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		float titleTop = ImGui::GetCursorPosY();
+		ImGui::BeginGroup();
+		RenderActions(menu, sidebarVisible, true);
 
 		{
 			MenuFonts::FontRoleGuard titleFont(Menu::FontRole::Title);
 			const auto title = GetTitle();
 			const float titleWidth = ImGui::CalcTextSize(title.c_str()).x;
 			BrowserUI::SameLineIfFits(titleWidth);
+			titleTop = ImGui::GetCursorPosY();
 			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - titleWidth));
-			ImGui::AlignTextToFramePadding();
-			ImGui::TextWrapped("%s", title.c_str());
+			const auto position = ImGui::GetCursorScreenPos();
+			ImGui::GetWindowDrawList()->AddText(ImVec2(position.x, Util::CenterTextTopY(position.y, size)), ImGui::GetColorU32(ImGuiCol_Text), title.c_str());
+			ImGui::Dummy(ImVec2(titleWidth, size));
 		}
 		ImGui::EndGroup();
-		const float height = ImGui::GetItemRectSize().y;
 		ImGui::TableSetColumnIndex(1);
-		ImGui::SetCursorPosX(ImGui::GetCursorPosX() + homeGap);
-		ImGui::SetCursorPosY(top + std::max(0.0f, (height - size) * 0.5f));
-		const auto issueCount = IssuesPageRenderer::GetFeatureIssueCount();
-		const auto homeTooltip = issueCount == 0 ? std::string(T("menu.features.home", "Home")) :
-		                         issueCount == 1 ? std::string(T("menu.home.feature_issue_one", "1 feature issue")) :
-		                                           I18n::GetSingleton()->Format("menu.home.feature_issue_many", { { "count", std::to_string(issueCount) } }, "{count} feature issues");
-		const auto errorColor = Util::Colors::GetError();
-		ImGui::PushStyleColor(ImGuiCol_Header, issueCount > 0 ? ImVec4(errorColor.x, errorColor.y, errorColor.z, ThemeManager::Constants::SEGMENT_SELECTED_FILL_ALPHA) : ImGui::GetStyleColorVec4(ImGuiCol_Header));
-		const SKSE::stl::scope_exit restoreIssueAccent([]() noexcept { ImGui::PopStyleColor(); });
-		if (BrowserUI::IconButton("##Home", Icons::TI(ICON_TI_HOME), homeTooltip.c_str(), issueCount > 0 || menu.GetSelectedMenuId() == "Home",
-				issueCount > 0 ? ImGui::GetColorU32(errorColor) : 0)) {
-			menu.SelectFeatureMenu("Home");
-			if (issueCount > 0)
-				HomePageRenderer::FocusNeedsAttention();
-		}
-		ImGui::SameLine();
-		if (BrowserUI::IconButton("##Search", Icons::TI(ICON_TI_SEARCH), T("menu.palette.title", "Go to..."), GoToPalette::IsOpen()))
-			GoToPalette::Open();
+		ImGui::SetCursorPosX(ImGui::GetCursorPosX() + navigationGap);
+		ImGui::SetCursorPosY(titleTop);
+		RenderNavigation(menu, menu.GetSelectedMenuId());
 		ImGui::EndTable();
 	}
 
-	if (restoreDefaults.Draw()) {
-		globals::state->Load(State::ConfigMode::DEFAULT);
-		globals::state->MarkSettingsChanged();
-	}
+	DrawRestoreDefaultsConfirmation();
 
 	ImGui::SeparatorEx(ImGuiSeparatorFlags_Horizontal, ThemeManager::Constants::SEPARATOR_THICKNESS * uiScale);
 	ImGui::Spacing();

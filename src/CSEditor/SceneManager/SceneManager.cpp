@@ -45,7 +45,7 @@ void SceneManager::DrawTransitions()
 		Util::AddTooltip(tooltip);
 		if (GetUserTransitionControl(control) &&
 			DrawResetButton(resetLabel, T("feature.scene_manager.transition_reset_tooltip",
-											"Drop your value and use the active preset's, or the default when it sets none.")))
+											"Reset to the default value, or the value defined in the applied preset.")))
 			SetTransitionControl(control, std::nullopt);
 	};
 

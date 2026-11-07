@@ -24,6 +24,34 @@ namespace
 	constexpr float kProfileCardMinimumWidth = 240.0f;
 	constexpr float kProfileCardHeight = 144.0f;
 	constexpr float kProfileCardBorderThickness = 2.0f;
+
+	int FindActiveProfile()
+	{
+		constexpr Feature::PerfProfile profiles[] = { Feature::PerfProfile::Performance, Feature::PerfProfile::Balanced, Feature::PerfProfile::Quality };
+		for (int index = 0; index < IM_ARRAYSIZE(profiles); ++index) {
+			const bool matches = std::ranges::all_of(Feature::GetFeatureList(), [&](auto* feature) {
+				return !feature->loaded || (!globals::game::isVR && feature->PerformanceSectionRequiresVR()) ||
+				       feature->GetPerformanceSectionLabel().empty() || feature->MatchesPerformanceProfile(profiles[index]);
+			});
+			if (matches)
+				return index;
+		}
+		return -1;
+	}
+}
+
+const char* PerformanceRenderer::GetCurrentProfileName()
+{
+	switch (FindActiveProfile()) {
+	case 0:
+		return T(TKEY("profile_performance"), "Performance");
+	case 1:
+		return T(TKEY("profile_balanced"), "Balanced");
+	case 2:
+		return T(TKEY("profile_quality"), "Quality");
+	default:
+		return T(TKEY("profile_custom"), "(Custom)");
+	}
 }
 
 // Shared by DrawSectionHeader and DrawSubsectionLink for a consistent link + tooltip.
@@ -216,17 +244,7 @@ static void RenderPresets(Feature* host)
 	const Feature::PerfProfile profiles[3] = {
 		Feature::PerfProfile::Performance, Feature::PerfProfile::Balanced, Feature::PerfProfile::Quality
 	};
-	int activeIdx = -1;
-	for (int i = 0; i < IM_ARRAYSIZE(profiles) && activeIdx < 0; ++i) {
-		bool all = true;
-		for (Feature* f : ordered)
-			if (!f->MatchesPerformanceProfile(profiles[i])) {
-				all = false;
-				break;
-			}
-		if (all)
-			activeIdx = i;
-	}
+	const int activeIdx = FindActiveProfile();
 
 	const char* labels[3] = {
 		T(TKEY("profile_performance"), "Performance"),
@@ -334,8 +352,10 @@ static void RenderPresets(Feature* host)
 
 void PerformanceRenderer::Render(Feature* host)
 {
+	const bool openProfiling = globals::menu->ConsumeSectionAnchor("profiling");
+	const bool openPresets = globals::menu->ConsumeSectionAnchor("performance-presets");
 	if (Util::BeginPillTabBar("##PerformanceTabs")) {
-		if (MenuFonts::BeginTabItemWithFont(T(TKEY("tab_presets"), "Presets"), Menu::FontRole::Subheading)) {
+		if (MenuFonts::BeginTabItemWithFont(T(TKEY("tab_presets"), "Presets"), Menu::FontRole::Subheading, openPresets ? ImGuiTabItemFlags_SetSelected : 0)) {
 			if (ImGui::BeginChild("##PerformancePresetsContent", ImVec2(0, 0), false))
 				RenderPresets(host);
 			ImGui::EndChild();
@@ -347,7 +367,12 @@ void PerformanceRenderer::Render(Feature* host)
 		const std::string benchmarkTab = benchmarkQueued > 0 ?
 		                                     std::format("{} ({})###BenchmarkTab", benchmarkTabLabel, benchmarkQueued) :
 		                                     std::format("{}###BenchmarkTab", benchmarkTabLabel);
-		if (MenuFonts::BeginTabItemWithFont(benchmarkTab.c_str(), Menu::FontRole::Subheading)) {
+		const bool benchmarkTabOpen = MenuFonts::BeginTabItemWithFont(benchmarkTab.c_str(), Menu::FontRole::Subheading);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("tab_benchmark_tooltip"), "Measures what a change costs on your scene."));
+			ImGui::Text("%s", T(TKEY("tab_benchmark_queue_tooltip"), "A number is how many changes are queued for the next run. The queue is not saved; running it or Clear all empties it."));
+		}
+		if (benchmarkTabOpen) {
 			if (ImGui::BeginChild("##PerformanceBenchmarkContent", ImVec2(0, 0), false))
 				ABTestingManager::GetSingleton()->DrawBenchmarkTab();
 			ImGui::EndChild();
@@ -361,7 +386,7 @@ void PerformanceRenderer::Render(Feature* host)
 			Util::EndPillTabItem();
 		}
 
-		if (MenuFonts::BeginTabItemWithFont(T("menu.features.profiling", "Profiling"), Menu::FontRole::Subheading)) {
+		if (MenuFonts::BeginTabItemWithFont(T("menu.features.profiling", "Profiling"), Menu::FontRole::Subheading, openProfiling ? ImGuiTabItemFlags_SetSelected : 0)) {
 			if (ImGui::BeginChild("##PerformanceProfilingContent", ImVec2(0, 0), false))
 				ProfilingRenderer::RenderStatistics();
 			ImGui::EndChild();

@@ -35,7 +35,7 @@ void Camera::DrawSettings()
 		T("feature.post_processing.camera.noise_type_film_grain", "Film grain"),
 		T("feature.post_processing.camera.noise_type_color_grain", "Color grain")
 	};
-	ImGui::Combo(T("feature.post_processing.camera.noise_type", "Noise type"), &settings.NoiseType, noiseTypes, IM_ARRAYSIZE(noiseTypes));
+	Util::Combo(T("feature.post_processing.camera.noise_type", "Noise type"), &settings.NoiseType, noiseTypes, IM_ARRAYSIZE(noiseTypes));
 	if (ImGui::IsItemHovered()) {
 		ImGui::SetTooltip("%s", T("feature.post_processing.camera.type_of_noise_to_apply", "Type of noise to apply."));
 	}

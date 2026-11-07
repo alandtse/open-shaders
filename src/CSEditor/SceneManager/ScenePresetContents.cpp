@@ -92,7 +92,27 @@ std::vector<SceneSettingsManager::PresetSceneSetting> SceneSettingsManager::GetP
 	return result;
 }
 
-std::vector<SceneSettingsManager::PresetSceneSetting> SceneSettingsManager::GetSceneExportSettings()
+bool SceneSettingsManager::GetSceneExportTimeOfDayEnabled(const SceneContextId& context, std::optional<EntrySource> source) const
+{
+	if (!source)
+		return IsSceneTimeOfDayEnabled(context);
+	const PeriodicSceneConfig* config = nullptr;
+	if (context.type == SceneContextType::Weather) {
+		if (const auto found = weatherSceneConfigs.find(context.weatherId); found != weatherSceneConfigs.end())
+			config = &found->second;
+	} else if (context.type == SceneContextType::Location) {
+		if (const auto found = locationSceneConfigs.find(GetLocationConfigKey(context.locationType, context.locationFormKey)); found != locationSceneConfigs.end())
+			config = &found->second;
+	}
+	if (!config)
+		return context.period != TimeOfDayPeriod::Count;
+	const auto mode = *source == EntrySource::User ? config->userTimeOfDayEnabled : config->overwriteTimeOfDayEnabled;
+	return mode.value_or(std::ranges::all_of(config->entries, [&](const SettingEntry& entry) {
+		return entry.source != *source || entry.period != TimeOfDayPeriod::Count;
+	}));
+}
+
+std::vector<SceneSettingsManager::PresetSceneSetting> SceneSettingsManager::GetSceneExportSettings(std::optional<EntrySource> source)
 {
 	std::vector<PresetSceneSetting> result;
 	VisitEntryLayers({}, [&](const SceneContextId& target, const std::vector<SettingEntry>& sourceEntries) {
@@ -101,8 +121,8 @@ std::vector<SceneSettingsManager::PresetSceneSetting> SceneSettingsManager::GetS
 		for (const auto period : periods) {
 			auto context = target;
 			context.period = period;
-			for (const auto& [identity, entry] : BuildEffectiveContextEntries(sourceEntries, context, true))
-				result.push_back({ GetSceneExportKey(context, *entry), context, *entry, IsSceneTimeOfDayEnabled(context) });
+			for (const auto& [identity, entry] : BuildEffectiveContextEntries(sourceEntries, context, true, source))
+				result.push_back({ GetSceneExportKey(context, *entry), context, *entry, GetSceneExportTimeOfDayEnabled(context, source) });
 		}
 	});
 	return result;
