@@ -84,7 +84,8 @@ namespace DX12Native
 		std::string failure, firstTextureSourceFailure;
 		/** @brief Loads one owned package on the binding worker; never accesses engine objects. */
 		static std::shared_ptr<const MaterialResources> Load(const GraphicsBackend& a_backend, const TopLevel& a_scene,
-            const NativePBR::LiveBindingSource* a_livePbr = nullptr);
+            const NativePBR::LiveBindingSource* a_livePbr = nullptr,
+            const MaterialResources* a_previous = nullptr);
 	};
 
 	/** @brief Validates and uploads original DDS mip chains into bounded compatible array pages. */

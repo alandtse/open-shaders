@@ -97,10 +97,23 @@ namespace DX12Native
 	}
 
 	std::shared_ptr<const MaterialResources> MaterialResources::Load(const GraphicsBackend& a_backend, const TopLevel& a_scene,
-        const NativePBR::LiveBindingSource* a_livePbr)
-	{
-		static_assert(sizeof(MaterialRecord) == 128 && sizeof(SurfaceRecord) == 32);
-		auto result = std::make_shared<MaterialResources>();
+        const NativePBR::LiveBindingSource* a_livePbr, const MaterialResources* a_previous)
+    {
+        static_assert(sizeof(MaterialRecord) == 128 && sizeof(SurfaceRecord) == 32);
+        auto result = std::make_shared<MaterialResources>();
+        if (a_previous) {
+            // Only published, completed pages can be inherited. Their resource
+            // owners are copied and each new generation gets its own descriptors.
+            if (a_previous->pendingUpload && a_previous->pendingUpload->Poll() != MaterialUploadStatus::Ready)
+                throw MaterialUploadBusy("Previous native material generation has an unfinished upload");
+            result->pools = a_previous->pools;
+            result->locations = a_previous->locations;
+            result->logicalLocations = a_previous->logicalLocations;
+            result->verifiedTextureSources = a_previous->verifiedTextureSources;
+            result->textureTickets = a_previous->textureTickets;
+            result->bytes = a_previous->bytes;
+            result->textures = a_previous->textures;
+        }
         NativePBR::LiveMatchResult liveMatch;
         if (a_livePbr) {
             std::vector<NativePBR::PreparedMatchInput> inputs;
@@ -139,6 +152,9 @@ namespace DX12Native
 			catch (const MaterialUploadError&) { throw; }
 			catch (const std::bad_alloc&) { throw; }
 			catch (const std::exception& error) {
+                // An incremental load must not publish a generation missing
+                // the previously valid native residency. Keep old bindings alive.
+                if (a_previous) throw MaterialUploadError(error.what());
 				result->failure = error.what();
 				result->pools.clear(); result->locations.clear(); result->logicalLocations.clear(); result->textureTickets.clear();
                 result->verifiedTextureSources = {};

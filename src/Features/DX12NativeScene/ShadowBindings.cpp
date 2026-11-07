@@ -12,8 +12,8 @@ namespace DX12Native
 	}
 	std::shared_ptr<const ShadowBindings> ShadowBindings::Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
         uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr,
-        bool a_importLoose, bool a_importArchive)
-	{
+        bool a_importLoose, bool a_importArchive, std::shared_ptr<const ShadowBindings> a_previous)
+    {
 		auto result = std::make_shared<ShadowBindings>();
 		result->uploadBatchBudget = a_uploadBatchBudget;
 		result->scene = std::move(a_scene);
@@ -36,16 +36,22 @@ namespace DX12Native
 		const auto tables = offsetsBytes + materialBytes + surfaceBytes;
 		if (kDescriptorAndRoomReserve > a_budget - tables) throw std::runtime_error("Shadow binding overhead exceeds budget");
 		auto boundedScene = *result->scene;
-		if (boundedScene.materialSource) {
+        const bool canInherit = a_previous && a_previous->scene == result->scene &&
+            a_previous->materials && a_importLoose && a_livePbr;
+        if (boundedScene.materialSource) {
 			auto source = std::make_shared<MaterialSource>(*boundedScene.materialSource);
 			source->budget = std::min(source->budget, a_budget - tables - kDescriptorAndRoomReserve);
 			source->uploadBatchBytes = a_uploadBatchBudget;
             source->importLoosePbr = a_importLoose && a_livePbr != nullptr;
             source->importArchivePbr = source->importLoosePbr && a_importArchive;
+            // Skip the legacy manifest on later batches; previously published
+            // atlas and runtime pages are inherited through a_previous.
+            if (canInherit) source->usePreparedTextureManifest = false;
 			boundedScene.materialSource = std::move(source);
 		}
 		result->bytes = offsetsBytes + kDescriptorAndRoomReserve;
-		result->materials = MaterialResources::Load(a_backend, boundedScene, a_livePbr.get());
+		result->materials = MaterialResources::Load(a_backend, boundedScene, a_livePbr.get(),
+            canInherit ? a_previous->materials.get() : nullptr);
 		if (result->materials->bytes > a_budget - result->bytes || result->materials->tableBytes > a_budget - result->bytes - result->materials->bytes)
 			throw std::runtime_error("Shadow materials exceed budget");
 		result->bytes += result->materials->bytes + result->materials->tableBytes;

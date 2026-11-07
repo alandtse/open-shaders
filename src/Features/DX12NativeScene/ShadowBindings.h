@@ -24,7 +24,8 @@ namespace DX12Native
 		/** @brief Creates binding tables on a worker; material upload completion must be polled before use. */
 		static std::shared_ptr<const ShadowBindings> Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
             uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr,
-            bool a_importLoose, bool a_importArchive);
+            bool a_importLoose, bool a_importArchive,
+            std::shared_ptr<const ShadowBindings> a_previous = {});
 	};
 	/** @brief Loads shadow material bindings asynchronously with revision-safe publication. */
 	class ShadowBindingWorker
