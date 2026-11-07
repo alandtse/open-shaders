@@ -2,6 +2,7 @@
 
 #include "TruePBR/BSLightingShaderMaterialPBR.h"
 #include "TruePBR/BSLightingShaderMaterialPBRLandscape.h"
+#include "TruePBR/NativePBRCompiler.h"
 
 #include "Features/InteriorSun.h"
 #include "Hooks.h"
@@ -65,12 +66,22 @@ static NativePBR::Glint SnapshotGlint(const GlintParameters& a_glint)
 		a_glint.microfacetRoughness, a_glint.densityRandomization };
 }
 
+static void SnapshotPBRBase(const RE::BSLightingShaderMaterialBase& a_material, NativePBR::MaterialData& a_result)
+{
+	for (size_t index = 0; index < a_result.uvOffsetScale.size(); ++index) {
+		a_result.uvOffsetScale[index] = { a_material.texCoordOffset[index].x, a_material.texCoordOffset[index].y,
+			a_material.texCoordScale[index].x, a_material.texCoordScale[index].y };
+	}
+	a_result.materialAlpha = a_material.materialAlpha;
+	a_result.clampMode = static_cast<uint32_t>(a_material.textureClampMode);
+}
+
 static NativePBR::MaterialData SnapshotPBRMesh(const BSLightingShaderMaterialPBR& a_material)
 {
 	NativePBR::MaterialData result;
 	result.kind = NativePBR::MaterialKind::Mesh;
+	SnapshotPBRBase(a_material, result);
 	result.pbrFlags = a_material.pbrFlags.underlying();
-	result.clampMode = static_cast<uint32_t>(a_material.textureClampMode);
 	result.roughnessScale = a_material.GetRoughnessScale();
 	result.displacementScale = a_material.GetDisplacementScale();
 	result.specularLevel = a_material.GetSpecularLevel();
@@ -98,6 +109,11 @@ static NativePBR::MaterialData SnapshotPBRMesh(const BSLightingShaderMaterialPBR
 	result.glint = SnapshotGlint(a_material.GetGlintParameters());
 	result.projectedGlint = SnapshotGlint(a_material.GetProjectedMaterialGlintParameters());
 
+	const std::array textures{ a_material.diffuseTexture.get(), a_material.normalTexture.get(), a_material.rmaosTexture.get(),
+		a_material.emissiveTexture.get(), a_material.displacementTexture.get(), a_material.featuresTexture0.get(), a_material.featuresTexture1.get() };
+	for (size_t role = 0; role < textures.size(); ++role)
+		if (textures[role]) result.textureResourceNames[role] = textures[role]->name.c_str();
+
 	auto* textureSet = a_material.textureSet.get();
 	if (!textureSet) return result;
 	static const auto* textureSetRTTI = REL::Relocation<const RE::NiRTTI*>{ RE::BSTextureSet::Ni_RTTI }.get();
@@ -117,6 +133,7 @@ static NativePBR::MaterialData SnapshotPBRLandscape(const BSLightingShaderMateri
 {
 	NativePBR::MaterialData result;
 	result.kind = NativePBR::MaterialKind::Landscape;
+	SnapshotPBRBase(a_material, result);
 	result.landscapeTileCount = std::min(uint32_t(a_material.numLandscapeTextures),
 		uint32_t(BSLightingShaderMaterialPBRLandscape::NumTiles));
 	for (uint32_t tile = 0; tile < result.landscapeTileCount; ++tile) {
@@ -125,6 +142,12 @@ static NativePBR::MaterialData SnapshotPBRLandscape(const BSLightingShaderMateri
 		output.roughnessScale = a_material.roughnessScales[tile];
 		output.displacementScale = a_material.displacementScales[tile];
 		output.specularLevel = a_material.specularLevels[tile];
+		const std::array textures{ a_material.landscapeBaseColorTextures[tile].get(),
+			a_material.landscapeNormalTextures[tile].get(), a_material.landscapeRMAOSTextures[tile].get(),
+			a_material.landscapeDisplacementTextures[tile].get() };
+		for (size_t role = 0; role < textures.size(); ++role) {
+			if (textures[role]) output.textureNames[role] = textures[role]->name.c_str();
+		}
 		output.glint = SnapshotGlint(a_material.glintParameters[tile]);
 	}
 	return result;
@@ -223,9 +246,34 @@ void SetupPBRLandscapeTextureParameters(BSLightingShaderMaterialPBRLandscape& ma
 
 void TruePBR::DrawSettings()
 {
+	static NativePBR::RecipeCache recipes;
+	static size_t incompleteRecipes = 0;
+	static std::array<size_t, 9> recipeIssues{};
+	if (auto generation = nativeRegistry.ExportChanges(recipes.Revision(), recipes.KnownRevisions())) {
+		recipes.Update(*generation);
+		incompleteRecipes = 0;
+		recipeIssues.fill(0);
+		for (const auto& [identity, recipe] : recipes.Recipes()) {
+			if (recipe.issues & ~NativePBR::UnknownOpacity) ++incompleteRecipes;
+			for (size_t issue = 0; issue < recipeIssues.size(); ++issue)
+				if (recipe.issues & (1u << issue)) ++recipeIssues[issue];
+		}
+	}
 	const auto nativePbr = nativeRegistry.GetStatistics();
 	ImGui::TextDisabled("Native PBR metadata: %zu mesh, %zu landscape | dirty: %zu | revision: %llu",
 		nativePbr.mesh, nativePbr.landscape, nativePbr.dirty, static_cast<unsigned long long>(nativePbr.revision));
+	ImGui::TextDisabled("Native PBR recipes: %zu | pending: %zu | unsupported or incomplete: %zu | opacity unverified",
+		recipes.Recipes().size(), recipes.Pending(), incompleteRecipes);
+	if (ImGui::TreeNode("Native PBR recipe details")) {
+		ImGui::TextDisabled("Missing texture paths: %zu | landscape: %zu | advanced features: %zu",
+			recipeIssues[0], recipeIssues[1], recipeIssues[2]);
+		ImGui::TextDisabled("Glint: %zu | opacity unverified: %zu | invalid: %zu",
+			recipeIssues[3], recipeIssues[4], recipeIssues[5]);
+		ImGui::TextDisabled("Displacement: %zu | feature maps: %zu | projected overrides: %zu",
+			recipeIssues[6], recipeIssues[7], recipeIssues[8]);
+		ImGui::TextDisabled("Recipes include prior versions retained while pending; no live DX12 bindings are published.");
+		ImGui::TreePop();
+	}
 	if (ImGui::TreeNodeEx(T(TKEY("global_settings"), "Global Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::SliderFloat(T(TKEY("vertex_ao_strength"), "Vertex AO Strength"), &settings.VertexAOStrength, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 
@@ -969,10 +1017,27 @@ bool TruePBR::BSLightingShader_SetupMaterial(RE::BSLightingShader* shader, RE::B
 		auto graphicsState = globals::game::graphicsState;
 		auto smState = globals::game::smState;
 
-		if ((lightingType == MTLand || lightingType == MTLandLODBlend) && nativeRegistry.NeedsCapture(material))
-			nativeRegistry.Publish(material, SnapshotPBRLandscape(*static_cast<const BSLightingShaderMaterialPBRLandscape*>(material)));
-		else if (isObjectTechnique && PBRMaterialHasRequiredTextures(material) && nativeRegistry.NeedsCapture(material))
-			nativeRegistry.Publish(material, SnapshotPBRMesh(*static_cast<const BSLightingShaderMaterialPBR*>(material)));
+		const std::array<std::array<float, 4>, 2> uv{ { { material->texCoordOffset[0].x, material->texCoordOffset[0].y,
+			material->texCoordScale[0].x, material->texCoordScale[0].y }, { material->texCoordOffset[1].x, material->texCoordOffset[1].y,
+			material->texCoordScale[1].x, material->texCoordScale[1].y } } };
+		if (lightingType == MTLand || lightingType == MTLandLODBlend) {
+			const auto* pbr = static_cast<const BSLightingShaderMaterialPBRLandscape*>(material);
+			std::array<const void*, 24> textures{};
+			for (size_t tile = 0; tile < std::min(pbr->numLandscapeTextures, BSLightingShaderMaterialPBRLandscape::NumTiles); ++tile) {
+				textures[tile * 4] = pbr->landscapeBaseColorTextures[tile].get();
+				textures[tile * 4 + 1] = pbr->landscapeNormalTextures[tile].get();
+				textures[tile * 4 + 2] = pbr->landscapeRMAOSTextures[tile].get();
+				textures[tile * 4 + 3] = pbr->landscapeDisplacementTextures[tile].get();
+			}
+			if (auto capture = nativeRegistry.ObserveAndBegin(material, uv, material->materialAlpha, uint32_t(material->textureClampMode), textures))
+				nativeRegistry.Publish(material, capture, SnapshotPBRLandscape(*pbr));
+		} else if (isObjectTechnique) {
+			const auto* pbr = static_cast<const BSLightingShaderMaterialPBR*>(material);
+			const std::array<const void*, 8> textures{ pbr->diffuseTexture.get(), pbr->normalTexture.get(), pbr->rmaosTexture.get(),
+				pbr->emissiveTexture.get(), pbr->displacementTexture.get(), pbr->featuresTexture0.get(), pbr->featuresTexture1.get(), pbr->textureSet.get() };
+			auto capture = nativeRegistry.ObserveAndBegin(material, uv, material->materialAlpha, uint32_t(material->textureClampMode), textures);
+			if (capture && PBRMaterialHasRequiredTextures(material)) nativeRegistry.Publish(material, capture, SnapshotPBRMesh(*pbr));
+		}
 
 		RE::BSGraphics::Renderer::PrepareVSConstantGroup(RE::BSGraphics::ConstantGroupLevel::PerMaterial);
 		RE::BSGraphics::Renderer::PreparePSConstantGroup(RE::BSGraphics::ConstantGroupLevel::PerMaterial);
@@ -1344,6 +1409,7 @@ void SetupLandscapeTexture(BSLightingShaderMaterialPBRLandscape& material, RE::T
 	if (material.landscapeBaseColorTextures[textureIndex] != nullptr) {
 		material.numLandscapeTextures = std::max(material.numLandscapeTextures, textureIndex + 1);
 	}
+	truePBR->nativeRegistry.MarkDirty(&material);
 }
 
 RE::TESLandTexture* GetDefaultLandTexture()

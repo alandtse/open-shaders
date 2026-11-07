@@ -254,6 +254,7 @@ void BSLightingShaderMaterialPBR::ReceiveValuesFromRootMaterial(bool skinned, bo
 {
 	BSLightingShaderMaterialBase::ReceiveValuesFromRootMaterial(skinned, rimLighting, softLighting, backLighting, MSN);
 	const auto& stateData = globals::game::graphicsState->GetRuntimeData();
+	const bool changed = !rmaosTexture || !emissiveTexture || !displacementTexture || !featuresTexture0 || !featuresTexture1;
 	if (rmaosTexture == nullptr) {
 		rmaosTexture = stateData.defaultTextureWhite;
 	}
@@ -269,6 +270,7 @@ void BSLightingShaderMaterialPBR::ReceiveValuesFromRootMaterial(bool skinned, bo
 	if (featuresTexture1 == nullptr) {
 		featuresTexture1 = stateData.defaultTextureWhite;
 	}
+	if (changed) globals::features::truePBR.nativeRegistry.MarkDirty(this);
 }
 
 uint32_t BSLightingShaderMaterialPBR::GetTextures(RE::NiSourceTexture** textures)
