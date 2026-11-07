@@ -7,6 +7,7 @@
 #include "Features/DX12NativeScene/LiveLooseTexturePlan.h"
 #include "Features/DX12NativeScene/RuntimeTextureProgress.h"
 #include "Features/DX12NativeScene/MaterialManifestPolicy.h"
+#include "Features/DX12NativeScene/RuntimeGeometryCapture.h"
 #include "Features/DX12NativeScene/MaterialTextureLookup.h"
 #include "Features/DX12NativeScene/ArchiveDdsSource.h"
 #include "Features/DX12NativeScene/LiveGpuTextureEligibility.h"
@@ -1381,4 +1382,50 @@ TEST_CASE("Runtime-only DDS acquisition bypasses legacy manifest without changin
     source.importLoosePbr = true;
     REQUIRE_FALSE(source.usePreparedTextureManifest);
     REQUIRE(source.importLoosePbr);
+}
+
+
+TEST_CASE("Live geometry capture owns bounded static mesh data and rejects unsafe layouts", "[native_geometry]")
+{
+    std::array<float, 12> world{ 1,0,0,0,0,1,0,0,0,0,1,0 };
+    std::vector<uint8_t> raw(3 * 16);
+    const std::array<std::array<float, 4>, 3> positions{{
+        { 0, 0, 0, 1 }, { 1, 0, 0, 1 }, { 0, 1, 0, 1 }
+    }};
+    std::memcpy(raw.data(), positions.data(), raw.size());
+    const std::array<uint16_t, 3> indices{ 0, 1, 2 };
+    DX12Native::RuntimeGeometryInput input;
+    input.referenceKey = "000001:Skyrim.esm";
+    input.shapeName = "Wall";
+    input.transform = world;
+    input.bound = { 0, 0, 0, 2 };
+    input.vertexCount = 3;
+    input.vertexStride = 16;
+    input.triangleCount = 1;
+    input.vertices = raw;
+    input.indices = indices;
+    REQUIRE(DX12Native::ValidRuntimeGeometryInput(input));
+    auto packet = DX12Native::CopyRuntimeGeometry(input);
+    REQUIRE(packet);
+    REQUIRE(packet->indexCount == 3);
+    DX12Native::RuntimeGeometryMailbox mailbox(100, 1);
+    REQUIRE(mailbox.Submit(packet));
+    REQUIRE(mailbox.Contains(input.referenceKey, input.shapeName));
+    REQUIRE(mailbox.Count() == 1);
+    raw[0] = 99;
+    REQUIRE(packet->vertices[0] != raw[0]); // no borrowed engine bytes
+    REQUIRE_FALSE(mailbox.Submit(packet));
+    REQUIRE(mailbox.Export(0, 1).size() == 1);
+    REQUIRE(mailbox.Export(1, 1).empty());
+    input.skinned = true;
+    REQUIRE_FALSE(DX12Native::CopyRuntimeGeometry(input));
+    input.skinned = false;
+    input.dynamic = true;
+    REQUIRE_FALSE(DX12Native::ValidRuntimeGeometryInput(input));
+    input.dynamic = false;
+    input.triangleCount = 0;
+    REQUIRE_FALSE(DX12Native::ValidRuntimeGeometryInput(input));
+    input.triangleCount = 1;
+    mailbox.Reset();
+    REQUIRE(mailbox.Count() == 0);
 }
