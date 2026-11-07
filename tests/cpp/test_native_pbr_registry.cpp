@@ -8,6 +8,7 @@
 #include "Features/DX12NativeScene/RuntimeTextureProgress.h"
 #include "Features/DX12NativeScene/MaterialManifestPolicy.h"
 #include "Features/DX12NativeScene/RuntimeGeometryCapture.h"
+#include "Features/DX12NativeScene/RuntimeGeometryEncoding.h"
 #include "Features/DX12NativeScene/MaterialTextureLookup.h"
 #include "Features/DX12NativeScene/ArchiveDdsSource.h"
 #include "Features/DX12NativeScene/LiveGpuTextureEligibility.h"
@@ -1428,4 +1429,37 @@ TEST_CASE("Live geometry capture owns bounded static mesh data and rejects unsaf
     input.triangleCount = 1;
     mailbox.Reset();
     REQUIRE(mailbox.Count() == 0);
+}
+
+
+TEST_CASE("Runtime geometry encoder creates native index/position payload without atlas files", "[native_geometry]")
+{
+    DX12Native::RuntimeGeometryPacket packet;
+    packet.referenceKey = "A:Skyrim.esm";
+    packet.shapeName = "Cube";
+    packet.vertexCount = 3;
+    packet.vertexStride = 16;
+    packet.indexCount = 3;
+    packet.indices = { 0, 1, 2 };
+    packet.vertices.resize(48);
+    const std::array<std::array<float, 4>, 3> xyz{{
+        { 0, 0, 0, 1 }, { 1, 0, 0, 1 }, { 0, 1, 0, 1 }
+    }};
+    std::memcpy(packet.vertices.data(), xyz.data(), packet.vertices.size());
+    auto encoded = DX12Native::EncodeRuntimeGeometry(packet);
+    REQUIRE(encoded);
+    REQUIRE(encoded->geometry.size() == 16 + 3 * 12 + 3 * 4);
+    REQUIRE(encoded->attributes.empty());
+    uint32_t magic = 0;
+    std::memcpy(&magic, encoded->geometry.data(), 4);
+    REQUIRE(magic == 0x4d475352u);
+    packet.indices[1] = 42;
+    REQUIRE_FALSE(DX12Native::EncodeRuntimeGeometry(packet));
+    packet.indices[1] = 1;
+    packet.vertices[0] = 0xFF;
+    packet.vertices[1] = 0xFF;
+    packet.vertices[2] = 0xFF;
+    packet.vertices[3] = 0x7F; // non-finite position
+    REQUIRE_FALSE(DX12Native::EncodeRuntimeGeometry(packet));
+    REQUIRE(DX12Native::GeometryHalfToFloat(0x3c00) == 1.0f);
 }
