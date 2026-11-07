@@ -173,6 +173,20 @@ namespace DX12Native
 				}
 				Instance instance;
 				instance.identity = snapshot->instances.size() + 1;
+				if (row.contains("referenceKey") && row.at("referenceKey").is_string() &&
+					row.contains("model") && row.at("model").is_string() &&
+					row.contains("shapeName") && row.at("shapeName").is_string() &&
+					row.contains("sourceSha256") && row.at("sourceSha256").is_string() &&
+					row.contains("blockIndex") && row.at("blockIndex").is_number_unsigned()) {
+					auto reference = row.at("referenceKey").get<std::string>();
+					auto model = row.at("model").get<std::string>();
+					auto shape = row.at("shapeName").get<std::string>();
+					auto digest = row.at("sourceSha256").get<std::string>();
+					const auto block = row.at("blockIndex").get<uint64_t>();
+					if (!reference.empty() && reference.size() <= 256 && !model.empty() && model.size() <= 1024 &&
+						!shape.empty() && shape.size() <= 1024 && IsDigest(digest) && block < UINT32_MAX)
+						instance.preparedIdentity = { std::move(reference), std::move(model), std::move(shape), std::move(digest), uint32_t(block) };
+				}
 				instance.mesh = found->second->source;
 				instance.indexCount = row.at("indexCount").get<uint32_t>();
 				if (uint64_t(instance.indexCount) * 4 != found->second->validationOffset - found->second->indexOffset)

@@ -82,10 +82,18 @@ namespace DX12Native
 		uint32_t roomIndex = UINT32_MAX;
 	};
 
+	/** @brief Retains prepared source provenance without asserting a live-engine match. */
+	struct PreparedIdentity
+	{
+		std::string referenceKey, model, shapeName, sourceDigest;
+		uint32_t blockIndex = UINT32_MAX;
+	};
+
 	/** @brief Records a rigid instance separately from retained mesh bytes. */
 	struct Instance
 	{
 		uint64_t identity = 0;
+		PreparedIdentity preparedIdentity;
 		std::shared_ptr<const Mesh> mesh;
 		Material material;
 		DirectX::XMFLOAT3X4 world{};
