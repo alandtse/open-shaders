@@ -94,8 +94,15 @@ endif()
 if(NATIVE_LIGHTING_DXIL)
     append_copy_if_different(_shader_copy_cmds NATIVE_LIGHTING_DXIL "${NATIVE_LIGHTING_DXIL_DIR}" "${AIO_DIR}/Shaders/NativeLighting")
 endif()
+# The Native Composite build emits both AddLighting.dxil and ShadowLayer.dxil.
+# Every compiled DXIL output must be staged before SyncShaderDeploy can copy it
+# to the game. The previous rule staged AddLighting alone, leaving the new
+# independent shadow pass unavailable despite a successful DXC build.
 if(NATIVE_COMPOSITE_DXIL)
     append_copy_if_different(_shader_copy_cmds NATIVE_COMPOSITE_DXIL "${NATIVE_COMPOSITE_DXIL_DIR}" "${AIO_DIR}/Shaders/NativeComposite")
+endif()
+if(NATIVE_COMPOSITE_SHADOW_DXIL)
+    append_copy_if_different(_shader_copy_cmds NATIVE_COMPOSITE_SHADOW_DXIL "${NATIVE_COMPOSITE_DXIL_DIR}" "${AIO_DIR}/Shaders/NativeComposite")
 endif()
 append_copy_if_different(_shader_copy_cmds FFX_RUNTIME_FILES "${FFX_RUNTIME_SHADER_ROOT}" "${AIO_DIR}/Shaders")
 # Streamline-Runtime.cmake's payload is a build-tree dir, not a FEATURE_PATH, so
@@ -130,6 +137,7 @@ add_custom_command(
         ${DX12_NATIVE_SCENE_DXIL}
         ${NATIVE_LIGHTING_DXIL}
         ${NATIVE_COMPOSITE_DXIL}
+        ${NATIVE_COMPOSITE_SHADOW_DXIL}
         ${FFX_RUNTIME_FILES}
         ${STREAMLINE_RUNTIME_FILES}
         ${STREAMLINE_RUNTIME_DX12_FILES}
@@ -137,6 +145,9 @@ add_custom_command(
         ${_all_feature_shader_files}
         ${CMAKE_SOURCE_DIR}/cmake/CleanupStaleEntries.cmake
         ${CMAKE_SOURCE_DIR}/cmake/PreservedRuntimePaths.cmake
+        # Re-stage once after staging rules change, even when all compiled
+        # DXIL files predate an existing copy_shaders.stamp.
+        ${CMAKE_SOURCE_DIR}/cmake/ShaderStaging.cmake
     COMMENT "Copying changed shaders into AIO/Shaders"
 )
 
