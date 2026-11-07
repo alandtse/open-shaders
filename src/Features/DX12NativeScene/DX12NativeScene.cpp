@@ -10,7 +10,7 @@
 #include "Utils/D3D.h"
 #include <cmath>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -87,6 +87,8 @@ namespace
             static_cast<unsigned long long>(count("rejectedMaterials")));
 
         ImGui::SeparatorText("Texture residency");
+        ImGui::Text("Runtime-only source mode: %s",
+            budget.value("runtimeOnlyMaterialSources", false) ? "Enabled" : "Disabled");
         ImGui::Text("Loose DDS - planned: %llu  imported: %llu  rejected: %llu  deferred: %llu",
             static_cast<unsigned long long>(count("looseDdsPlanned")),
             static_cast<unsigned long long>(count("looseDdsImported")),
@@ -168,6 +170,11 @@ void DX12NativeScene::DrawSettings()
     ImGui::EndDisabled();
     ImGui::TextDisabled("Worker-only; maximum 8 sources / 32 MiB combined per load.");
     ImGui::TextDisabled("Archive fallback runs only when the loose DDS is absent.");
+    ImGui::BeginDisabled(!settings.UseLivePBR || !settings.ImportLoosePBR);
+    ImGui::Checkbox("Experimental: runtime-only material sources (no atlas manifest)",
+        &settings.RuntimeOnlyMaterials);
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Prepared geometry is still required; unsupported materials can lack native shading.");
     if (ImGui::CollapsingHeader("Native PBR Diagnostics"))
         DrawNativePBRDiagnostics(GetDiagnostics());
 	{
@@ -263,6 +270,7 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	settings.UseLivePBR = selected.UseLivePBR;
         settings.ImportLoosePBR = selected.ImportLoosePBR;
         settings.ImportArchivePBR = selected.ImportArchivePBR;
+        settings.RuntimeOnlyMaterials = selected.RuntimeOnlyMaterials;
 	settings.ShadowAllLights = selected.ShadowAllLights;
 	settings.ShadowStochastic = selected.ShadowStochastic;
 	settings.ShadowDistanceFade = selected.ShadowDistanceFade;
@@ -440,7 +448,8 @@ void DX12NativeScene::EarlyPrepass()
         materialBindings.Request(*backend, scene, uint64_t(settings.BudgetMB) * 1024 * 1024,
             uint64_t(settings.MaterialBatchMB) * 1024 * 1024, livePbrSource,
             settings.UseLivePBR && settings.ImportLoosePBR,
-            settings.UseLivePBR && settings.ImportLoosePBR && settings.ImportArchivePBR);
+            settings.UseLivePBR && settings.ImportLoosePBR && settings.ImportArchivePBR,
+            settings.UseLivePBR && settings.ImportLoosePBR && settings.RuntimeOnlyMaterials);
     }
 	materialBindings.Advance();
 	DispatchShadow("early-prepass");
@@ -583,6 +592,8 @@ void DX12NativeScene::PublishDiagnostics()
 		{ "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() },
 		{ "materialBudget", { { "dxgiAvailable", bindings ? bindings->materialBudget.dxgiAvailable : false },
 			{ "selectedBatchLimitBytes", uint64_t(settings.MaterialBatchMB) * 1024 * 1024 },
+            { "runtimeOnlyMaterialSources", settings.UseLivePBR && settings.ImportLoosePBR &&
+                settings.RuntimeOnlyMaterials },
 			{ "loadedBatchLimitBytes", bindings ? bindings->uploadBatchBudget : 0 },
 			{ "effectiveBytes", bindings ? bindings->materialBudget.effectiveBytes : 0 },
 			{ "localBudgetBytes", bindings ? bindings->materialBudget.localBudget : 0 },

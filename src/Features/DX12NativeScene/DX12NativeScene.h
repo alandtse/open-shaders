@@ -20,6 +20,7 @@ struct DX12NativeScene final : Feature
 		bool UseLivePBR = false; // Experimental opt-in; do not enable before runtime validation.
         bool ImportLoosePBR = false; // Separate opt-in for bounded loose-file DDS residency.
         bool ImportArchivePBR = false; // Further opt-in: archive resource manager fallback.
+        bool RuntimeOnlyMaterials = false; // Optional manifest-free runtime texture acquisition.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;

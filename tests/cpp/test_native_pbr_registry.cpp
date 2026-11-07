@@ -6,6 +6,7 @@
 #include "TruePBR/VerifiedBridge.h"
 #include "Features/DX12NativeScene/LiveLooseTexturePlan.h"
 #include "Features/DX12NativeScene/RuntimeTextureProgress.h"
+#include "Features/DX12NativeScene/MaterialManifestPolicy.h"
 #include "Features/DX12NativeScene/MaterialTextureLookup.h"
 #include "Features/DX12NativeScene/ArchiveDdsSource.h"
 #include "Features/DX12NativeScene/LiveGpuTextureEligibility.h"
@@ -1366,4 +1367,18 @@ TEST_CASE("Progressive source request planner does not retry failed batches", "[
     progress.Reset();
     REQUIRE(progress.AttemptedCount() == 0);
     REQUIRE(progress.Batches() == 0);
+}
+
+TEST_CASE("Runtime-only DDS acquisition bypasses legacy manifest without changing geometry", "[native_pbr]")
+{
+    REQUIRE(DX12Native::UsePreparedMaterialManifest(false, false));
+    REQUIRE_FALSE(DX12Native::UsePreparedMaterialManifest(true, false));
+    REQUIRE_FALSE(DX12Native::UsePreparedMaterialManifest(false, true));
+    REQUIRE_FALSE(DX12Native::UsePreparedMaterialManifest(true, true));
+    DX12Native::MaterialSource source;
+    REQUIRE(source.usePreparedTextureManifest);
+    source.usePreparedTextureManifest = DX12Native::UsePreparedMaterialManifest(true, false);
+    source.importLoosePbr = true;
+    REQUIRE_FALSE(source.usePreparedTextureManifest);
+    REQUIRE(source.importLoosePbr);
 }
