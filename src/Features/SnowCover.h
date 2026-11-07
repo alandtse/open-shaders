@@ -69,6 +69,9 @@ public:
 		return type == RE::BSShader::Type::Lighting || type == RE::BSShader::Type::Grass || type == RE::BSShader::Type::DistantTree;
 	}
 	bool SupportsVR() override { return true; }
+
+	/** @brief Snow coverage from 0 (bare) to 1 (fully covered) at a world position, from altitude, season and current snowfall. */
+	float SnowAmountAt(const RE::NiPoint3& a_position) const;
 	std::string GetDisplayName() override { return T("feature.snow_cover.name", "Snow Cover"); }
 	std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{

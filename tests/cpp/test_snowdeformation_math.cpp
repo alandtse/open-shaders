@@ -114,3 +114,25 @@ TEST_CASE("Light objects rest near the snow top and heavy ones at the ground", "
 	REQUIRE(Math::FloorRiseSpeed(5.0f, 6.0f, 60.0f) == Approx(30.0f));
 	REQUIRE(Math::FloorRiseSpeed(50.0f, 6.0f, 60.0f) == Approx(60.0f));
 }
+
+TEST_CASE("Wading slows a mover in proportion to leg burial", "[snow-deformation]")
+{
+	REQUIRE(Math::WadeSlowdown(0.0f, 40.0f, 0.5f) == Approx(0.0f));
+	REQUIRE(Math::WadeSlowdown(20.0f, 40.0f, 0.5f) == Approx(0.25f));
+	REQUIRE(Math::WadeSlowdown(80.0f, 40.0f, 0.5f) == Approx(0.5f));
+	REQUIRE(Math::WadeSlowdown(-5.0f, 40.0f, 0.5f) == Approx(0.0f));
+	REQUIRE(Math::WadeSlowdown(20.0f, 40.0f, 3.0f) == Approx(0.5f));
+}
+
+TEST_CASE("Cold adapted races are recognised by name", "[snow-deformation]")
+{
+	REQUIRE(Math::IsColdAdaptedName("Frost Troll"));
+	REQUIRE(Math::IsColdAdaptedName("Frostbite Spider"));
+	REQUIRE(Math::IsColdAdaptedName("Ice Wraith"));
+	REQUIRE(Math::IsColdAdaptedName("snowy sabre cat"));
+	REQUIRE(Math::IsColdAdaptedName("Draugr Ghost"));
+	REQUIRE_FALSE(Math::IsColdAdaptedName("Nord"));
+	REQUIRE_FALSE(Math::IsColdAdaptedName("Troll"));
+	REQUIRE_FALSE(Math::IsColdAdaptedName("Sliceblade"));
+	REQUIRE_FALSE(Math::IsColdAdaptedName(""));
+}
