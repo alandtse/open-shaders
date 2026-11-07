@@ -1,4 +1,5 @@
 #include "MaterialResources.h"
+#include "MaterialPageCache.h"
 #include "VideoMemoryBudget.h"
 
 #include "Utils/FileDigest.h"
@@ -16,6 +17,7 @@ namespace DX12Native
 	namespace
 	{
 		constexpr uint64_t kMaximumDdsBytes = 128ull * 1024 * 1024;
+		constexpr uint64_t kMaximumRetainedPageBytes = 64ull * 1024 * 1024;
 		constexpr uint32_t kPageSlices = 8, kUploadTimeoutMS = 5000;
 		struct Texture
 		{
@@ -23,6 +25,32 @@ namespace DX12Native
 			std::vector<std::string> paths;
 			DirectX::ScratchImage image;
 		};
+
+		struct CachedPages
+		{
+			std::mutex mutex;
+			winrt::com_ptr<ID3D12Device> device;
+			MaterialPageCache<MaterialTexturePool> pages;
+		};
+
+		CachedPages& PageCache()
+		{
+			// The worker can outlive static destruction, so retained pages need process lifetime.
+			static auto* cache = new CachedPages;
+			return *cache;
+		}
+
+		std::string PageKey(const std::vector<Texture*>& a_textures)
+		{
+			const auto& meta = a_textures.front()->image.GetMetadata();
+			auto key = std::format("{}:{}:{}:{}:", meta.width, meta.height, meta.mipLevels, uint32_t(DirectX::MakeLinear(meta.format)));
+			for (const auto* texture : a_textures) {
+				auto hash = texture->hash;
+				std::ranges::transform(hash, hash.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+				key += hash;
+			}
+			return key;
+		}
 
 		std::vector<uint8_t> ReadTexture(const std::filesystem::path& a_directory, const std::string& a_hash)
 		{
@@ -90,6 +118,25 @@ namespace DX12Native
 				bytes += slicePitch;
 			}
 			if (bytes > a_budget) throw std::runtime_error("Decoded material DDS exceeds budget");
+		}
+
+		void PublishPage(const std::vector<Texture*>& a_textures, MaterialResources& a_result, MaterialTexturePool a_page)
+		{
+			const auto& meta = a_textures.front()->image.GetMetadata();
+			const auto pool = uint32_t(a_result.pools.size());
+			static LogicalTextureRegistry identities;
+			for (uint32_t slice = 0; slice < a_textures.size(); ++slice) {
+				auto digest = a_textures[slice]->hash;
+				std::ranges::transform(digest, digest.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+				auto ticket = identities.Acquire({ std::move(digest), meta.width, meta.height, uint32_t(a_page.format), uint32_t(meta.mipLevels) });
+				if (!ticket) throw std::runtime_error("Material logical texture identity limit reached");
+				a_result.logicalLocations.emplace(ticket->handle, std::array<uint32_t, 2>{ pool, slice });
+				for (const auto& path : a_textures[slice]->paths) a_result.locations.emplace(path, ticket->handle);
+				a_result.textureTickets.push_back(std::move(ticket));
+			}
+			a_result.bytes += a_page.bytes;
+			a_result.textures += uint32_t(a_textures.size());
+			a_result.pools.push_back(std::move(a_page));
 		}
 
 		void UploadPage(const GraphicsBackend& a_backend, const std::vector<Texture*>& a_textures, MaterialResources& a_result, uint64_t a_budget)
@@ -169,20 +216,7 @@ namespace DX12Native
 			a_result.peakStagingBytes = std::max(a_result.peakStagingBytes, stagingAllocation);
 			a_result.uploadedBytes += uploadBytes;
 			++a_result.uploadedPages;
-			const auto pool = uint32_t(a_result.pools.size());
-			static LogicalTextureRegistry identities;
-			for (uint32_t slice = 0; slice < a_textures.size(); ++slice) {
-				auto digest = a_textures[slice]->hash;
-				std::ranges::transform(digest, digest.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-				auto ticket = identities.Acquire({ std::move(digest), meta.width, meta.height, uint32_t(format), uint32_t(meta.mipLevels) });
-				if (!ticket) throw std::runtime_error("Material logical texture identity limit reached");
-				a_result.logicalLocations.emplace(ticket->handle, std::array<uint32_t, 2>{ pool, slice });
-				for (const auto& path : a_textures[slice]->paths) a_result.locations.emplace(path, ticket->handle);
-				a_result.textureTickets.push_back(std::move(ticket));
-			}
-			a_result.pools.push_back({ upload.target, format, uint32_t(meta.mipLevels), uint32_t(a_textures.size()) });
-			a_result.bytes += allocation;
-			a_result.textures += uint32_t(a_textures.size());
+			PublishPage(a_textures, a_result, { upload.target, format, uint32_t(meta.mipLevels), uint32_t(a_textures.size()), allocation });
 		}
 	}
 
@@ -191,6 +225,27 @@ namespace DX12Native
 		auto& retirement = RetiredUpload();
 		std::unique_lock lock(retirement.mutex, std::try_to_lock);
 		if (lock.owns_lock()) RetireCompletedUpload(retirement);
+		static auto lastPressureCheck = std::chrono::steady_clock::now();
+		const auto now = std::chrono::steady_clock::now();
+		if (now - lastPressureCheck < std::chrono::seconds(2)) return;
+		lastPressureCheck = now;
+		auto& cache = PageCache();
+		std::unique_lock cacheLock(cache.mutex, std::try_to_lock);
+		if (!cacheLock || !cache.device || !cache.pages.Bytes()) return;
+		VideoMemoryBudget budget;
+		const auto pressure = budget.Query(cache.device.get(), 0);
+		if (FAILED(cache.device->GetDeviceRemovedReason()) || (pressure.dxgiAvailable && pressure.headroom <= pressure.reserve)) {
+			cache.pages.Clear();
+			cache.device = nullptr;
+		}
+	}
+
+	std::optional<uint64_t> RetainedMaterialPageBytes()
+	{
+		auto& cache = PageCache();
+		std::unique_lock lock(cache.mutex, std::try_to_lock);
+		if (!lock) return std::nullopt;
+		return cache.pages.Bytes();
 	}
 
 	void LoadMaterialTextures(const GraphicsBackend& a_backend, const MaterialSource& a_source, MaterialResources& a_result)
@@ -235,11 +290,37 @@ namespace DX12Native
 			const auto& meta = texture->image.GetMetadata();
 			groups[{ meta.width, meta.height, meta.mipLevels, DirectX::MakeLinear(meta.format) }].push_back(texture.get());
 		}
+		struct PageRequest { std::string key; std::vector<Texture*> textures; };
+		std::vector<PageRequest> requests;
 		for (const auto& [key, group] : groups)
 			for (size_t first = 0; first < group.size(); first += kPageSlices) {
-				if (a_result.pools.size() >= kMaximumTexturePools) throw std::runtime_error("Texture pool count exceeded");
-				const std::vector<Texture*> page(group.begin() + first, group.begin() + std::min(first + kPageSlices, group.size()));
-				UploadPage(a_backend, page, a_result, a_source.budget);
+				if (requests.size() >= kMaximumTexturePools) throw std::runtime_error("Texture pool count exceeded");
+				std::vector<Texture*> page(group.begin() + first, group.begin() + std::min(first + kPageSlices, group.size()));
+				auto pageKey = PageKey(page);
+				requests.push_back({ std::move(pageKey), std::move(page) });
 			}
+		if (requests.empty()) return;
+		auto& cache = PageCache();
+		std::scoped_lock cacheLock(cache.mutex);
+		if (cache.device.get() != a_backend.d3d12Device.get()) { cache.pages.Clear(); cache.device = a_backend.d3d12Device; }
+		std::vector<PageRequest*> missing;
+		std::vector<std::pair<std::string, uint32_t>> completed;
+		for (auto& request : requests) {
+			auto page = cache.pages.Take(request.key);
+			if (!page || page->bytes > a_source.budget || a_result.bytes > a_source.budget - page->bytes) { missing.push_back(&request); continue; }
+			completed.emplace_back(request.key, uint32_t(a_result.pools.size()));
+			PublishPage(request.textures, a_result, std::move(*page));
+			++a_result.reusedPages;
+		}
+		cache.pages.Clear();
+		for (const auto* request : missing) {
+			completed.emplace_back(request->key, uint32_t(a_result.pools.size()));
+			UploadPage(a_backend, request->textures, a_result, a_source.budget);
+		}
+		const auto retainLimit = std::min(kMaximumRetainedPageBytes, a_source.budget / 4);
+		for (const auto& [key, index] : completed) {
+			const auto& page = a_result.pools[index];
+			cache.pages.Retain(key, page, page.bytes, retainLimit);
+		}
 	}
 }

@@ -4,7 +4,29 @@
 #include "TruePBR/NativePBRCompiler.h"
 #include "TruePBR/InstanceCoverage.h"
 #include "Features/DX12NativeScene/LogicalTextureRegistry.h"
+#include "Features/DX12NativeScene/MaterialPageCache.h"
 #include "Features/DX12NativeScene/VideoMemoryBudget.h"
+
+TEST_CASE("Material page cache transfers ownership and enforces its byte limit", "[native_pbr]")
+{
+    DX12Native::MaterialPageCache<std::shared_ptr<int>> cache;
+    auto first = std::make_shared<int>(1);
+    auto second = std::make_shared<int>(2);
+    REQUIRE(cache.Retain("first", first, 40, 100));
+    REQUIRE(cache.Retain("second", second, 60, 100));
+    REQUIRE(cache.Bytes() == 100);
+    REQUIRE_FALSE(cache.Retain("third", second, 1, 100));
+    REQUIRE_FALSE(cache.Retain("first", first, 1, 101));
+    auto reused = cache.Take("first");
+    REQUIRE(reused);
+    REQUIRE(*reused == first);
+    REQUIRE(cache.Bytes() == 60);
+    REQUIRE_FALSE(cache.Take("missing"));
+    cache.Clear();
+    REQUIRE(cache.Bytes() == 0);
+    REQUIRE(**reused == 1);
+    REQUIRE(*second == 2);
+}
 
 TEST_CASE("Native PBR invalidation and recreation are observable", "[native_pbr]")
 {

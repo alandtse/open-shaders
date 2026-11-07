@@ -111,7 +111,7 @@ namespace DX12Native
 			catch (const std::exception& error) {
 				result->failure = error.what();
 				result->pools.clear(); result->locations.clear(); result->logicalLocations.clear(); result->textureTickets.clear(); result->bytes = result->textures = 0;
-				result->peakStagingBytes = result->uploadedBytes = result->uploadWaitMicroseconds = result->uploadedPages = 0;
+				result->peakStagingBytes = result->uploadedBytes = result->uploadWaitMicroseconds = result->uploadedPages = result->reusedPages = 0;
 			}
 		}
 		std::vector<MaterialRecord> materials;

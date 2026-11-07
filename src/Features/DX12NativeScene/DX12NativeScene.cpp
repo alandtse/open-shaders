@@ -201,6 +201,7 @@ void DX12NativeScene::EarlyPrepass()
 	CS_GPU_PASS("DX12NativeScene::PreparedSceneProgress");
 	const SKSE::stl::scope_exit publish([this]() noexcept { try { PublishDiagnostics(); } catch (...) {} });
 	AdvanceCoverage();
+	DX12Native::RetireMaterialUploads();
 	{
 		std::scoped_lock lock(settingsMutex);
 		if (const auto enabled = requestedEnabled.exchange(-1); enabled >= 0) settings.Enabled = enabled != 0;
@@ -378,6 +379,7 @@ std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScen
 void DX12NativeScene::PublishDiagnostics()
 {
 	const auto bindings = materialBindings.Get();
+	const auto retainedPages = DX12Native::RetainedMaterialPageBytes();
 	json snapshot{ { "enabled", settings.Enabled }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure },
 		{ "raster", raster.GetDiagnostics() }, { "shadowStage", shadowStage }, { "shadowStatus", shadowStatus }, { "shadow", shadow.GetDiagnostics() },
 		{ "shadowOpaqueRetryAttempts", shadowOpaqueRetryAttempts }, { "shadowOpaqueRetryRecovered", shadowOpaqueRetryRecovered },
@@ -393,8 +395,10 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "localBudgetBytes", bindings ? bindings->materialBudget.localBudget : 0 },
 			{ "localUsageBytes", bindings ? bindings->materialBudget.localUsage : 0 },
 			{ "textureBytes", bindings ? bindings->materials->bytes : 0 }, { "tableBytes", bindings ? bindings->materials->tableBytes : 0 },
+			{ "retainedPageBytes", retainedPages ? json(*retainedPages) : json(nullptr) },
 			{ "peakStagingBytes", bindings ? bindings->materials->peakStagingBytes : 0 },
 			{ "uploadedBytes", bindings ? bindings->materials->uploadedBytes : 0 }, { "uploadedPages", bindings ? bindings->materials->uploadedPages : 0 },
+			{ "reusedPages", bindings ? bindings->materials->reusedPages : 0 },
 			{ "uploadWaitMicroseconds", bindings ? bindings->materials->uploadWaitMicroseconds : 0 } } } };
 	{
 		std::scoped_lock lock(coverageMutex);
