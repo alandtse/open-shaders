@@ -1,4 +1,5 @@
 #include "DX12NativeScene.h"
+#include "RE/B/BSTriShape.h"
 #include "Globals.h"
 #include "TruePBR.h"
 #include <BS_thread_pool.hpp>
@@ -10,7 +11,7 @@
 #include "Utils/D3D.h"
 #include <cmath>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -175,6 +176,11 @@ void DX12NativeScene::DrawSettings()
         &settings.RuntimeOnlyMaterials);
     ImGui::EndDisabled();
     ImGui::TextDisabled("Prepared geometry is still required; unsupported materials can lack native shading.");
+    if (ImGui::Checkbox("Experimental: capture runtime static geometry", &settings.CaptureRuntimeGeometry))
+        runtimeGeometryCaptureActive.store(settings.CaptureRuntimeGeometry, std::memory_order_release);
+    ImGui::TextDisabled("Copies CPU-backed static mesh bytes only; GPU-only/skinned/dynamic meshes are excluded.");
+    ImGui::Text("Runtime mesh captures: %zu  bytes: %.2f MiB",
+        runtimeGeometry.Count(), double(runtimeGeometry.Bytes()) / (1024.0 * 1024.0));
     if (ImGui::CollapsingHeader("Native PBR Diagnostics"))
         DrawNativePBRDiagnostics(GetDiagnostics());
 	{
@@ -308,10 +314,72 @@ void DX12NativeScene::OnRuntimeDisabled() { resetRequested = true; }
 void DX12NativeScene::OnSceneTransitionReset(bool a_open)
 {
 	transitionOpen = a_open;
-	if (a_open) globals::features::truePBR.nativeRegistry.ClearInstanceHints();
+	if (a_open) {
+        globals::features::truePBR.nativeRegistry.ClearInstanceHints();
+        runtimeGeometry.Reset();
+    }
 	ResetScene();
 }
 void DX12NativeScene::GameLoaded() { resetRequested = true; }
+
+
+void DX12NativeScene::ObserveRuntimeGeometry(RE::BSGeometry* geometry,
+    const std::string& reference, const std::string& shape)
+{
+    if (!runtimeGeometryCaptureActive.load(std::memory_order_relaxed) || !geometry ||
+        runtimeGeometry.Contains(reference, shape)) return;
+    // Only static BSTriShape CPU data is supported; never map D3D11 buffers.
+    auto* tri = geometry->AsTriShape();
+    if (!tri || geometry->AsDynamicTriShape()) return;
+    const auto& runtime = geometry->GetGeometryRuntimeData();
+    const auto* renderer = runtime.rendererData;
+    if (runtime.skinInstance || runtime.alphaProperty || !renderer ||
+        !renderer->rawVertexData || !renderer->rawIndexData) return;
+    auto desc = runtime.vertexDesc;
+    if (!desc.HasFlag(RE::BSGraphics::Vertex::VF_VERTEX)) return;
+    const uint32_t stride = desc.GetSize();
+    const auto& counts = tri->GetTrishapeRuntimeData();
+    if (!counts.vertexCount || !counts.triangleCount || stride < 16 || stride > 256) return;
+    const uint64_t length = uint64_t(counts.vertexCount) * stride +
+        uint64_t(counts.triangleCount) * 3 * sizeof(uint16_t);
+    if (length > 256 * 1024) return; // Bound render-thread copy latency.
+    const uint32_t frame = globals::game::graphicsState ?
+        globals::game::graphicsState->GetFrameCount() : 0;
+    {
+        std::scoped_lock lock(runtimeGeometryBudgetMutex);
+        if (runtimeGeometryBudgetFrame != frame) {
+            runtimeGeometryBudgetFrame = frame;
+            runtimeGeometryFrameBytes = 0;
+        }
+        if (length > 512 * 1024 - runtimeGeometryFrameBytes) return;
+        runtimeGeometryFrameBytes += uint32_t(length);
+    }
+    DX12Native::RuntimeGeometryInput input;
+    input.referenceKey = reference;
+    input.shapeName = shape;
+    input.vertexCount = counts.vertexCount;
+    input.vertexStride = stride;
+    input.triangleCount = counts.triangleCount;
+    input.hasNormal = desc.HasFlag(RE::BSGraphics::Vertex::VF_NORMAL);
+    input.hasUv = desc.HasFlag(RE::BSGraphics::Vertex::VF_UV);
+    input.hasTangent = desc.HasFlag(RE::BSGraphics::Vertex::VF_TANGENT);
+    if (input.hasNormal) input.normalOffset = desc.GetAttributeOffset(RE::BSGraphics::Vertex::VA_NORMAL);
+    if (input.hasUv) input.uvOffset = desc.GetAttributeOffset(RE::BSGraphics::Vertex::VA_TEXCOORD0);
+    if (input.hasTangent) input.tangentOffset = desc.GetAttributeOffset(RE::BSGraphics::Vertex::VA_BINORMAL);
+    for (uint32_t row = 0; row < 3; ++row) {
+        for (uint32_t col = 0; col < 3; ++col)
+            input.transform[4 * row + col] = geometry->world.rotate.entry[row][col] * geometry->world.scale;
+    }
+    input.transform[3] = geometry->world.translate.x;
+    input.transform[7] = geometry->world.translate.y;
+    input.transform[11] = geometry->world.translate.z;
+    input.bound = { geometry->worldBound.center.x, geometry->worldBound.center.y,
+        geometry->worldBound.center.z, geometry->worldBound.radius };
+    input.frame = frame;
+    input.vertices = { renderer->rawVertexData, size_t(counts.vertexCount) * stride };
+    input.indices = { renderer->rawIndexData, size_t(counts.triangleCount) * 3 };
+    runtimeGeometry.Submit(DX12Native::CopyRuntimeGeometry(input, 256 * 1024));
+}
 
 void DX12NativeScene::ResetScene()
 {
@@ -390,7 +458,9 @@ void DX12NativeScene::EarlyPrepass()
 		raster.ReloadShader();
 		shadow.ReloadShaders();
 	}
-	if (resetRequested.exchange(false)) ResetScene();
+	runtimeGeometryCaptureActive.store(settings.Enabled && settings.CaptureRuntimeGeometry,
+        std::memory_order_release);
+    if (resetRequested.exchange(false)) ResetScene();
 	if (shadowResetRequested.exchange(false)) shadow.Reset();
 	if (!settings.Enabled || transitionOpen) {
 		if (cellID) ResetScene();
@@ -587,7 +657,11 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "reachMultiplier", settings.ShadowReachMultiplier }, { "falloffFraction", settings.ShadowFalloffFraction },
 			{ "falloffExponent", settings.ShadowFalloffExponent }, { "distanceFade", settings.ShadowDistanceFade },
 			{ "normalInfluence", settings.ShadowNormalInfluence }, { "traceDensityMode", settings.ShadowTraceDensityMode } } },
-		{ "prepared", prepared.GetDiagnostics() }, { "materialFailure", materialBindings.Failure() }, { "materialUploadPending", materialBindings.UploadPending() },
+		{ "runtimeGeometry", { { "capturedMeshes", runtimeGeometry.Count() },
+            { "capturedBytes", runtimeGeometry.Bytes() },
+            { "captureRevision", runtimeGeometry.Revision() },
+            { "enabled", runtimeGeometryCaptureActive.load(std::memory_order_acquire) } } },
+        { "prepared", prepared.GetDiagnostics() }, { "materialFailure", materialBindings.Failure() }, { "materialUploadPending", materialBindings.UploadPending() },
         { "materialBindingsReady", bindings && bindings->scene == acceleration.GetScene() },
 		{ "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() },
 		{ "materialBudget", { { "dxgiAvailable", bindings ? bindings->materialBudget.dxgiAvailable : false },

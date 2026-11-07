@@ -5,6 +5,7 @@
 #include "TruePBR/NativePBRCompiler.h"
 
 #include "Features/InteriorSun.h"
+#include "Features/DX12NativeScene/DX12NativeScene.h"
 #include "Hooks.h"
 #include "I18n/I18n.h"
 #include "ShaderCache.h"
@@ -1008,6 +1009,17 @@ struct BSLightingShaderProperty_GetRenderPasses
 		}
 
 		const auto issEnabledAndInteriorWithSun = globals::features::interiorSun.loaded && globals::features::interiorSun.isInteriorWithSun;
+
+		// Borrow engine geometry only during this render hook. The DX12 feature
+        // copies eligible CPU arrays immediately; no raw pointers escape.
+        if (geometry && !geometry->name.empty()) {
+            if (auto* reference = geometry->GetUserData(); reference && !reference->IsDynamicForm()) {
+                if (const auto* file = reference->GetFile(0))
+                    globals::features::dx12NativeScene.ObserveRuntimeGeometry(geometry,
+                        std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename()),
+                        geometry->name.c_str());
+            }
+        }
 
 		const bool isPbr = IsPBRShaderProperty(property);
 		if (isPbr && geometry && !geometry->name.empty()) {

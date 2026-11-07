@@ -2,6 +2,7 @@
 
 #include "Feature.h"
 #include "Features/DX12NativeScene/PreparedScene.h"
+#include "Features/DX12NativeScene/RuntimeGeometryCapture.h"
 #include "Features/DX12NativeScene/RasterCapture.h"
 #include "Features/DX12NativeScene/ShadowTrace.h"
 #include "TruePBR/InstanceCoverage.h"
@@ -11,6 +12,8 @@
 #include <mutex>
 
 /** @brief Loads prepared geometry and publishes its completed DX12 acceleration scene. */
+namespace RE { class BSGeometry; }
+
 struct DX12NativeScene final : Feature
 {
 	struct Settings
@@ -21,6 +24,7 @@ struct DX12NativeScene final : Feature
         bool ImportLoosePBR = false; // Separate opt-in for bounded loose-file DDS residency.
         bool ImportArchivePBR = false; // Further opt-in: archive resource manager fallback.
         bool RuntimeOnlyMaterials = false; // Optional manifest-free runtime texture acquisition.
+        bool CaptureRuntimeGeometry = false; // Static CPU-backed meshes only; no GPU readbacks.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
@@ -56,6 +60,7 @@ struct DX12NativeScene final : Feature
 	void OnWorldRenderBegin() override { DispatchShadow("world-render-begin"); }
 	void Prepass() override { DispatchShadow("before-opaque"); }
 	void OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs) override;
+    void ObserveRuntimeGeometry(RE::BSGeometry* a_geometry, const std::string& a_reference, const std::string& a_shape);
 	void OnRuntimeDisabled() override;
 	void OnSceneTransitionReset(bool a_open) override;
 	void GameLoaded() override;
@@ -92,6 +97,10 @@ private:
 	void DispatchShadow(const char* a_stage);
 	std::optional<GraphicsBackend> backend;
 	DX12Native::PreparedScene prepared;
+    DX12Native::RuntimeGeometryMailbox runtimeGeometry;
+    std::atomic<bool> runtimeGeometryCaptureActive{ false };
+    std::mutex runtimeGeometryBudgetMutex;
+    uint32_t runtimeGeometryBudgetFrame = UINT32_MAX, runtimeGeometryFrameBytes = 0;
 	DX12Native::RasterCapture raster;
 	DX12Native::ShadowTrace shadow;
 	DX12Native::AccelerationWorker acceleration;
