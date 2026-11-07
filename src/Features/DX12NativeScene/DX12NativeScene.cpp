@@ -16,6 +16,9 @@ void DX12NativeScene::DrawSettings()
 	if (ImGui::Checkbox("Load prepared scene", &settings.Enabled)) resetRequested = true;
 	if (ImGui::Checkbox("Produce RT shadow mask", &settings.ShadowMask)) shadowResetRequested = true;
 	if (settings.ShadowMask && !shadowStatus.empty()) ImGui::TextUnformatted(shadowStatus.c_str());
+	if (settings.ShadowMask) ImGui::TextDisabled("Opaque-frame shadow recoveries: %llu / %llu",
+		static_cast<unsigned long long>(shadowOpaqueRetryRecovered),
+		static_cast<unsigned long long>(shadowOpaqueRetryAttempts));
 	if (ImGui::CollapsingHeader("Early DX12 shadow-mask controls")) {
 		ImGui::TextDisabled("This panel owns raw shadow visibility; its final-image contribution is independent in Native Composite.");
 		bool changed = false;
@@ -275,6 +278,14 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 		}
 	}
 	raster.Capture(*backend, inputs, Util::GetCurrentSceneDepthSRV(false), camera, frame, uint64_t(settings.FrameBudgetMB) * 1024 * 1024);
+	// Earlier shadow hooks may precede the current-frame main camera.
+	// Retry only when the same-frame producer has not already published a mask;
+	// DispatchShadow retains the camera, cell, material, scope and fence guards.
+	if (settings.ShadowMask && !shadow.Get(frame)) {
+		++shadowOpaqueRetryAttempts;
+		DispatchShadow("opaque-raster-ready");
+		if (shadow.Get(frame)) ++shadowOpaqueRetryRecovered;
+	}
 }
 
 std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScene() const
@@ -294,6 +305,7 @@ void DX12NativeScene::PublishDiagnostics()
 {
 	json snapshot{ { "enabled", settings.Enabled }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure },
 		{ "raster", raster.GetDiagnostics() }, { "shadowStage", shadowStage }, { "shadowStatus", shadowStatus }, { "shadow", shadow.GetDiagnostics() },
+		{ "shadowOpaqueRetryAttempts", shadowOpaqueRetryAttempts }, { "shadowOpaqueRetryRecovered", shadowOpaqueRetryRecovered },
 		{ "shadowTraceControls", { { "revision", shadowControlsRevision },
 			{ "allLights", settings.ShadowAllLights }, { "lightIndex", settings.ShadowLightIndex },
 			{ "stochastic", settings.ShadowStochastic }, { "emitterRadius", settings.ShadowEmitterRadius },

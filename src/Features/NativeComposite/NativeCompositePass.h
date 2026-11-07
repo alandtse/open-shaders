@@ -65,6 +65,8 @@ public:
 	bool Retain(const std::shared_ptr<const Frame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value);
 	/** @brief Returns a short explanation of the latest capture result. */
 	const std::string& Status() const { return status; }
+	/** @brief The first rejected independent shadow gate or successful submission. */
+	const std::string& ShadowStatus() const { return shadowStatus; }
 	uint64_t CompletedComposites() const { return completedComposites.load(); }
 	uint64_t AcceptedPixels() const { return acceptedPixels.load(); }
 	uint64_t ModifiedPixels() const { return modifiedPixels.load(); }
@@ -109,4 +111,6 @@ private:
 	bool InitializeLighting(ID3D12Device* a_device);
 	bool InitializeShadow(ID3D12Device* a_device);
 	std::string status = "Not captured";
+	std::string shadowStatus = "Independent shadow layer not captured";
+	std::string shadowPipelineFailure;
 };

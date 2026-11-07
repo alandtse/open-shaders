@@ -9,14 +9,24 @@
 bool NativeComposite::InitializeShadow(ID3D12Device* a_device)
 {
 	if (shadowPipeline && shadowPipelineDevice == a_device) return true;
+	shadowPipelineFailure.clear();
 	try {
 		std::ifstream file("Data/Shaders/NativeComposite/ShadowLayer.dxil", std::ios::binary | std::ios::ate);
-		if (!file) return false;
+		if (!file) {
+			shadowPipelineFailure = "ShadowLayer.dxil missing: Data/Shaders/NativeComposite/ShadowLayer.dxil";
+			return false;
+		}
 		const auto size = file.tellg();
-		if (size <= 0 || size > 16 * 1024 * 1024) return false;
+		if (size <= 0 || size > 16 * 1024 * 1024) {
+			shadowPipelineFailure = "ShadowLayer.dxil size is invalid (empty or >16 MiB)";
+			return false;
+		}
 		std::vector<char> shader(static_cast<size_t>(size));
 		file.seekg(0);
-		if (!file.read(shader.data(), size)) return false;
+		if (!file.read(shader.data(), size)) {
+			shadowPipelineFailure = "ShadowLayer.dxil could not be read completely";
+			return false;
+		}
 		CD3DX12_DESCRIPTOR_RANGE ranges[2];
 		ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);
 		ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
@@ -35,7 +45,13 @@ bool NativeComposite::InitializeShadow(ID3D12Device* a_device)
 		DX::ThrowIfFailed(a_device->CreateComputePipelineState(&pso, IID_PPV_ARGS(newPipeline.put())));
 		shadowRoot = std::move(newRoot); shadowPipeline = std::move(newPipeline); shadowPipelineDevice = a_device;
 		return true;
-	} catch (...) { return false; }
+	} catch (const std::exception& error) {
+		shadowPipelineFailure = std::string("ShadowLayer.dxil root signature or PSO creation failed: ") + error.what();
+		return false;
+	} catch (...) {
+		shadowPipelineFailure = "ShadowLayer.dxil root signature or PSO creation failed (unknown error)";
+		return false;
+	}
 }
 
 bool NativeComposite::InitializeLighting(ID3D12Device* a_device)
@@ -87,39 +103,70 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 {
 	CS_GPU_PASS("NativeComposite::RasterPassThrough");
 	status = "Invalid capture input";
-	if (!a_device11 || !a_context11 || !a_device12 || !a_queue || !a_source || !a_width || !a_height)
+	shadowStatus = "Independent shadow layer disabled or contribution is zero";
+	if (!a_device11 || !a_context11 || !a_device12 || !a_queue || !a_source || !a_width || !a_height) {
+		shadowStatus = "Shadow composite missing device, queue, input texture or dimensions";
 		return {};
+	}
 	winrt::com_ptr<ID3D11Device> sourceDevice;
 	a_source->GetDevice(sourceDevice.put());
 	winrt::com_ptr<ID3D12Device> queueDevice;
 	if (sourceDevice.get() != a_device11 || FAILED(a_queue->GetDevice(IID_PPV_ARGS(queueDevice.put()))) ||
-		queueDevice.get() != a_device12 || a_queue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT)
+		queueDevice.get() != a_device12 || a_queue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT) {
+		shadowStatus = "Shadow composite DX11/DX12 device or command queue mismatch";
 		return {};
+	}
 
 	D3D11_TEXTURE2D_DESC desc{};
 	a_source->GetDesc(&desc);
 	if (desc.ArraySize != 1 || desc.MipLevels != 1 || desc.SampleDesc.Count != 1 ||
-		desc.Width < a_width || desc.Height < a_height || desc.Format == DXGI_FORMAT_UNKNOWN)
+		desc.Width < a_width || desc.Height < a_height || desc.Format == DXGI_FORMAT_UNKNOWN) {
+		shadowStatus = "Shadow composite input has unsupported dimensions, sample count or format";
 		return {};
+	}
 	D3D12_FEATURE_DATA_FORMAT_SUPPORT support{ desc.Format };
 	if (FAILED(a_device12->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support))) ||
 		!(support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE)) {
 		status = "Unsupported scene format";
+		shadowStatus = "Composite scene format cannot be sampled by the DX12 device";
 		return {};
 	}
 	const bool supportsLighting = (support.Support1 & D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW) &&
 		(support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD) && (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
 	const bool shadowRequested = (a_shadowSettings.contribution * a_shadowSettings.blend > 0.0f) || a_shadowSettings.preview;
-	const bool applyShadow = supportsLighting && shadowRequested && a_shadow && a_raster &&
-		a_shadow->mask && a_shadow->mask->resource && a_shadow->readyFence &&
-		a_shadow->readyValue && a_shadow->readyValue != UINT64_MAX &&
-		a_shadow->frame == a_frame && a_shadow->width == a_width && a_shadow->height == a_height &&
-		a_shadow->retainedBackend.d3d12Device.get() == a_device12 &&
-		a_raster->depth && a_raster->depth->resource && a_raster->cameraValid &&
-		a_raster->readyFence && a_raster->readyValue && a_raster->readyValue != UINT64_MAX &&
-		a_raster->frame == a_frame && a_raster->width == a_width && a_raster->height == a_height &&
-		a_raster->sourceDepthFormat != DXGI_FORMAT_UNKNOWN && a_transfer != Transfer::Unknown &&
-		InitializeShadow(a_device12);
+	bool applyShadow = false;
+	// A raster-only submission must not conceal the exact shadow admission gate
+	// that prevented this current frame from consuming the independent mask.
+	if (shadowRequested) {
+		if (!supportsLighting) shadowStatus = "Composite scene format does not support typed UAV load/store";
+		else if (!a_shadow) shadowStatus = "Current-frame shadow mask not published by DX12 Native Scene";
+		else if (!a_raster) shadowStatus = "Current-frame raster depth snapshot not published";
+		else if (!a_shadow->mask || !a_shadow->mask->resource) shadowStatus = "Shadow mask texture unavailable";
+		else if (!a_shadow->readyFence || !a_shadow->readyValue || a_shadow->readyValue == UINT64_MAX)
+			shadowStatus = "Shadow producer fence missing or invalid";
+		else if (a_shadow->frame != a_frame) shadowStatus = "Shadow mask belongs to another frame";
+		else if (a_shadow->width != a_width || a_shadow->height != a_height)
+			shadowStatus = "Shadow mask dimensions differ from native composite";
+		else if (a_shadow->retainedBackend.d3d12Device.get() != a_device12)
+			shadowStatus = "Shadow mask belongs to a different DX12 device";
+		else if (!a_raster->depth || !a_raster->depth->resource) shadowStatus = "Raster depth texture unavailable";
+		else if (!a_raster->cameraValid) shadowStatus = "Raster depth has no validated current-frame camera";
+		else if (!a_raster->readyFence || !a_raster->readyValue || a_raster->readyValue == UINT64_MAX)
+			shadowStatus = "Raster capture producer fence missing or invalid";
+		else if (a_raster->frame != a_frame) shadowStatus = "Raster depth belongs to another frame";
+		else if (a_raster->width != a_width || a_raster->height != a_height)
+			shadowStatus = "Raster depth dimensions differ from native composite";
+		else if (a_raster->sourceDepthFormat == DXGI_FORMAT_UNKNOWN)
+			shadowStatus = "Captured raster depth source format unavailable";
+		else if (a_transfer == Transfer::Unknown)
+			shadowStatus = "Composite scene transfer/color space is unknown";
+		else if (!InitializeShadow(a_device12))
+			shadowStatus = shadowPipelineFailure.empty() ? "ShadowLayer.dxil pipeline initialization failed" : shadowPipelineFailure;
+		else {
+			applyShadow = true;
+			shadowStatus = "Current-frame shadow admitted; awaiting GPU submission";
+		}
+	}
 	const bool blend = supportsLighting && a_lighting && a_lighting->readyFence && a_lighting->readyValue &&
 		a_lighting->readyValue != UINT64_MAX && a_lighting->backend.d3d12Device.get() == a_device12 &&
 		a_lighting->textures[0] && a_lighting->textures[1] && a_lighting->textures[2] && a_lighting->textures[7] && a_lighting->textures[8] && a_lighting->textures[9] &&
@@ -160,6 +207,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 	}
 	if (!slot) {
 		status = "Waiting for available frame resources (four fenced composite slots in flight)";
+		if (applyShadow) shadowStatus = "Shadow compositor frame slots are still occupied";
 		return {};
 	}
 
@@ -388,9 +436,18 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			DX::ThrowIfFailed(a_queue->Wait(a_lighting->readyFence.get(), a_lighting->readyValue));
 		ID3D12CommandList* lists[]{ slot->commands.get() };
 		const uint64_t done = slot->fence.Next();
-		if ((blend && !globals::features::nativeLighting.RetainContribution(a_lighting, slot->fence.fence12.get(), done)) ||
-			(applyShadow && (!globals::features::dx12NativeScene.RetainShadowMask(a_shadow, slot->fence.fence12.get(), done) ||
-				!globals::features::dx12NativeScene.RetainRasterFrame(a_raster, slot->fence.fence12.get(), done)))) {
+		if (blend && !globals::features::nativeLighting.RetainContribution(a_lighting, slot->fence.fence12.get(), done)) {
+			if (applyShadow) shadowStatus = "Shadow submission blocked by native-lighting retention failure";
+			slot->untracked = true;
+			return {};
+		}
+		if (applyShadow && !globals::features::dx12NativeScene.RetainShadowMask(a_shadow, slot->fence.fence12.get(), done)) {
+			shadowStatus = "Shadow mask consumer-fence retention failed";
+			slot->untracked = true;
+			return {};
+		}
+		if (applyShadow && !globals::features::dx12NativeScene.RetainRasterFrame(a_raster, slot->fence.fence12.get(), done)) {
+			shadowStatus = "Raster depth consumer-fence retention failed";
 			slot->untracked = true;
 			return {};
 		}
@@ -412,11 +469,14 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		frame.validityRevision = a_revision ^ (blend ? (a_lighting->validityRevision * 0x9e3779b97f4a7c15ull) : 0) ^
 			(applyShadow ? (a_shadowSettings.revision * 0xbf58476d1ce4e5b9ull) : 0);
 		status = "Submitted";
+		if (applyShadow) shadowStatus = "Independent shadow layer submitted";
 		return slot->frame;
 	} catch (const std::exception& error) {
 		status = error.what();
+		if (applyShadow) shadowStatus = std::string("Shadow composite submission failed: ") + error.what();
 	} catch (...) {
 		status = "Capture failed";
+		if (applyShadow) shadowStatus = "Shadow composite submission failed (unknown exception)";
 	}
 	if (submitted || producerSignalled)
 		slot->untracked = true;

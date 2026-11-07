@@ -66,6 +66,19 @@ void NativeCompositeFeature::DrawSettings()
 	enabled = settings.Enabled;
 	ImGui::TextDisabled("%s", pass.Status().c_str());
 	ImGui::TextDisabled("%s", LightingStatus(lightingStatus.load()));
+	if (settings.ShadowLayerEnabled) {
+		ImGui::TextWrapped("Independent shadow admission: %s", pass.ShadowStatus().c_str());
+		const auto sceneDiagnostics = globals::features::dx12NativeScene.GetDiagnostics();
+		const auto producerStatus = sceneDiagnostics.value("shadowStatus", std::string{});
+		if (!producerStatus.empty())
+			ImGui::TextWrapped("Shadow producer: %s", producerStatus.c_str());
+		const auto mask = sceneDiagnostics.value("shadow", json::object());
+		if (mask.is_object()) {
+			ImGui::TextDisabled("Raw shadow dispatches: %llu | opaque recoveries: %llu",
+				static_cast<unsigned long long>(mask.value("submissions", uint64_t{ 0 })),
+				static_cast<unsigned long long>(sceneDiagnostics.value("shadowOpaqueRetryRecovered", uint64_t{ 0 })));
+		}
+	}
 	ImGui::TextDisabled("Lighting submissions: %llu | shadow-layer submissions: %llu",
 		static_cast<unsigned long long>(lightingSubmissions.load()), static_cast<unsigned long long>(shadowSubmissions.load()));
 }
@@ -166,12 +179,19 @@ json NativeCompositeFeature::GetDiagnostics()
 {
 	std::scoped_lock lock(settingsMutex);
 	const auto state = lightingStatus.load();
+	const auto sceneDiagnostics = globals::features::dx12NativeScene.GetDiagnostics();
 	return { { "enabled", enabled.load() }, { "captures", captures.load() }, { "lightingSubmissions", lightingSubmissions.load() }, { "shadowSubmissions", shadowSubmissions.load() },
 		{ "completedComposites", pass.CompletedComposites() }, { "acceptedPixels", pass.AcceptedPixels() },
 		{ "modifiedPixels", pass.ModifiedPixels() }, { "visualizationPixels", pass.VisualizationPixels() },
 		{ "effectiveRecoveredPixels", pass.EffectiveRecoveredPixels() }, { "finiteOnlyPixels", pass.FiniteOnlyPixels() },
 		{ "counterReadFailures", pass.CounterReadFailures() }, { "visuallyConsumedPixels", nullptr },
 		{ "lightingStatus", LightingStatus(state) },
+		{ "shadowAdmissionStatus", pass.ShadowStatus() },
+		{ "shadowProducerStatus", sceneDiagnostics.value("shadowStatus", std::string{}) },
+		{ "shadowProducerStage", sceneDiagnostics.value("shadowStage", std::string{}) },
+		{ "shadowProducer", sceneDiagnostics.value("shadow", json::object()) },
+		{ "shadowOpaqueRetryAttempts", sceneDiagnostics.value("shadowOpaqueRetryAttempts", uint64_t{ 0 }) },
+		{ "shadowOpaqueRetryRecovered", sceneDiagnostics.value("shadowOpaqueRetryRecovered", uint64_t{ 0 }) },
 		{ "shadowLayerEnabled", settings.ShadowLayerEnabled },
 		{ "shadowContribution", settings.ShadowContribution },
 		{ "shadowAfterLighting", settings.ShadowAfterLighting } };

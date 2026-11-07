@@ -77,3 +77,34 @@ contribution slider.
    No previous-frame resources may be substituted.
 
 Build and Skyrim runtime execution are left to the owner.
+
+## Same-frame recovery and shadow admission (November 2026)
+
+The early shadow tracer may be invoked before the current-frame main-camera
+snapshot is available. `DX12NativeScene::OnOpaqueRasterReady` now retries a
+shadow dispatch after raster/depth capture **only if** no mask for that exact
+frame has already been offered. The retry uses `DispatchShadow`, which keeps
+the established camera-origin validation, interior-cell scope, prepared-scene
+and material/light eligibility, DXGI budget and producer-fence safety.
+No previous-frame mask is substituted. Counters
+`shadowOpaqueRetryAttempts` and `shadowOpaqueRetryRecovered` distinguish
+retries from successful late recovery.
+
+Native Composite's independent shadow admission is now evaluated gate by gate
+instead of a silent all-or-nothing Boolean. The **Independent shadow admission**
+line shows the first failing condition or successful pass submission.
+Separate **Shadow producer** status exposes upstream trace failures.
+`GetDiagnostics()` exports `shadowAdmissionStatus`, `shadowProducerStatus`,
+`shadowProducerStage`, `shadowProducer`, and both opaque-retry counters.
+
+If `ShadowLayer.dxil` is missing, unreadable, invalid-sized or fails DX12
+root-signature/PSO initialization, its specific failure is reported; it does
+not silently disappear into the raster-only path. Shadow and lighting admission
+remain independent. In particular, disabled Native Lighting is not a reason
+to reject a valid current-frame shadow mask.
+
+Owner validation: With Native Lighting disabled and independent shadows
+enabled, check raw shadow submissions, late retry recoveries and
+`shadowSubmissions`. If raw submissions advance but `shadowSubmissions`
+does not, read the new admission reason rather than weakening frame/fence
+identity checks.

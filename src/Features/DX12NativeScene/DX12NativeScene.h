@@ -96,6 +96,7 @@ private:
 	std::atomic<uint32_t> requestedBudget{ 0 };
 	std::atomic<uint32_t> requestedFrameBudget{ UINT32_MAX };
 	uint64_t shadowControlsRevision = 1;
+	uint64_t shadowOpaqueRetryAttempts = 0, shadowOpaqueRetryRecovered = 0;
 	mutable std::mutex settingsMutex, diagnosticsMutex;
 	json diagnostics = json::object();
 	bool submitted = false;
