@@ -5,7 +5,25 @@
 #include "TruePBR/InstanceCoverage.h"
 #include "Features/DX12NativeScene/LogicalTextureRegistry.h"
 #include "Features/DX12NativeScene/MaterialPageCache.h"
+#include "Features/DX12NativeScene/TextureSourceBatch.h"
 #include "Features/DX12NativeScene/VideoMemoryBudget.h"
+
+TEST_CASE("Texture source batches preserve valid entries after failures", "[native_pbr]")
+{
+    const std::vector<int> entries{ 1, 2, 3 };
+    std::vector<int> loaded;
+    unsigned rejected = 0;
+    DX12Native::ProcessTextureSources(entries, [&](int entry) {
+        if (entry == 2) throw std::runtime_error("missing");
+        loaded.push_back(entry);
+    }, [&](const std::exception&) { ++rejected; });
+    REQUIRE(loaded == std::vector<int>{ 1, 3 });
+    REQUIRE(rejected == 1);
+    REQUIRE_THROWS_AS(DX12Native::ProcessTextureSources(entries, [](int) { throw std::bad_alloc(); },
+        [](const std::exception&) {}), std::bad_alloc);
+    REQUIRE_THROWS_AS(DX12Native::ProcessTextureSources(entries, [](int) { throw std::runtime_error("device"); },
+        [](const std::exception&) { throw; }), std::runtime_error);
+}
 
 TEST_CASE("Material page cache transfers ownership and enforces its byte limit", "[native_pbr]")
 {

@@ -400,6 +400,8 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "uploadedBytes", bindings ? bindings->materials->uploadedBytes : 0 }, { "uploadedPages", bindings ? bindings->materials->uploadedPages : 0 },
 			{ "reusedPages", bindings ? bindings->materials->reusedPages : 0 },
 			{ "reusedTextures", bindings ? bindings->materials->reusedTextures : 0 },
+			{ "rejectedTextureSources", bindings ? bindings->materials->rejectedTextureSources : 0 },
+			{ "firstTextureSourceFailure", bindings ? bindings->materials->firstTextureSourceFailure : std::string{} },
 			{ "uploadWaitMicroseconds", bindings ? bindings->materials->uploadWaitMicroseconds : 0 } } } };
 	{
 		std::scoped_lock lock(coverageMutex);

@@ -49,8 +49,8 @@ namespace DX12Native
 		uint32_t roomCount = 0;
 		bool roomsKnown = false;
 		uint64_t bytes = 0, tableBytes = 0, peakStagingBytes = 0, uploadedBytes = 0, uploadWaitMicroseconds = 0;
-		uint32_t readyMaterials = 0, rejectedMaterials = 0, textures = 0, uploadedPages = 0, reusedPages = 0, reusedTextures = 0;
-		std::string failure;
+		uint32_t readyMaterials = 0, rejectedMaterials = 0, textures = 0, uploadedPages = 0, reusedPages = 0, reusedTextures = 0, rejectedTextureSources = 0;
+		std::string failure, firstTextureSourceFailure;
 		/** @brief Loads one owned package on the binding worker; never accesses engine objects. */
 		static std::shared_ptr<const MaterialResources> Load(const GraphicsBackend& a_backend, const TopLevel& a_scene);
 	};

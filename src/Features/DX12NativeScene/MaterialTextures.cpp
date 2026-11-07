@@ -1,5 +1,6 @@
 #include "MaterialResources.h"
 #include "MaterialPageCache.h"
+#include "TextureSourceBatch.h"
 #include "VideoMemoryBudget.h"
 
 #include "Utils/FileDigest.h"
@@ -266,32 +267,51 @@ namespace DX12Native
 		const auto& entries = manifest.at("textures");
 		if (!entries.is_array() || entries.size() > 4096) throw std::runtime_error("Texture source count exceeds limit");
 		std::map<std::string, std::unique_ptr<Texture>> textures;
+		std::unordered_map<std::string, std::string> rejected;
 		uint64_t sourceBytes = 0;
-		for (const auto& entry : entries) {
-			if (entry.value("status", std::string{}) != "cached") continue;
-			auto hash = entry.at("sha256").get<std::string>();
-			if (entry.at("file") != "textures/" + hash + ".dds") throw std::runtime_error("Texture cache path mismatch");
-			std::ranges::transform(hash, hash.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-			auto& texture = textures[hash];
-			if (!texture) {
-				texture = std::make_unique<Texture>();
-				texture->hash = hash;
-				const auto bytes = ReadTexture(a_source.directory, hash);
-				if (sourceBytes > a_source.budget || bytes.size() > a_source.budget - sourceBytes) throw std::runtime_error("DDS source budget exceeded");
-				sourceBytes += bytes.size();
-				DirectX::TexMetadata metadata{};
-				DX::ThrowIfFailed(DirectX::GetMetadataFromDDSMemory(bytes.data(), bytes.size(), DirectX::DDS_FLAGS_NONE, metadata));
-				ValidateMetadata(metadata, a_source.budget);
-				DX::ThrowIfFailed(DirectX::LoadFromDDSMemory(bytes.data(), bytes.size(), DirectX::DDS_FLAGS_NO_LEGACY_EXPANSION, nullptr, texture->image));
-				const auto& meta = texture->image.GetMetadata();
-				ValidateMetadata(meta, a_source.budget);
-				D3D12_FEATURE_DATA_FORMAT_SUPPORT support{ DirectX::MakeLinear(meta.format) };
-				DX::ThrowIfFailed(a_backend.d3d12Device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support)));
-				constexpr auto required = D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE | D3D12_FORMAT_SUPPORT1_TEXTURE2D;
-				if ((support.Support1 & required) != required) throw std::runtime_error("Material texture sampling unsupported");
+		ProcessTextureSources(entries, [&](const auto& entry) {
+			std::string hash;
+			bool rejectHash = false;
+			try {
+				const auto status = entry.value("status", std::string{});
+				if (status != "cached") throw std::runtime_error("Unresolved texture source: " + status.substr(0, 128));
+				hash = entry.at("sha256").get<std::string>();
+				if (entry.at("file") != "textures/" + hash + ".dds") throw std::runtime_error("Texture cache path mismatch");
+				const auto texturePath = entry.at("path").get<std::string>();
+				std::ranges::transform(hash, hash.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+				if (const auto prior = rejected.find(hash); prior != rejected.end()) throw std::runtime_error(prior->second);
+				auto found = textures.find(hash);
+				if (found == textures.end()) {
+					rejectHash = true;
+					auto texture = std::make_unique<Texture>();
+					texture->hash = hash;
+					const auto bytes = ReadTexture(a_source.directory, hash);
+					if (sourceBytes > a_source.budget || bytes.size() > a_source.budget - sourceBytes) throw std::runtime_error("DDS source budget exceeded");
+					DirectX::TexMetadata metadata{};
+					DX::ThrowIfFailed(DirectX::GetMetadataFromDDSMemory(bytes.data(), bytes.size(), DirectX::DDS_FLAGS_NONE, metadata));
+					ValidateMetadata(metadata, a_source.budget);
+					DX::ThrowIfFailed(DirectX::LoadFromDDSMemory(bytes.data(), bytes.size(), DirectX::DDS_FLAGS_NO_LEGACY_EXPANSION, nullptr, texture->image));
+					const auto& meta = texture->image.GetMetadata();
+					ValidateMetadata(meta, a_source.budget);
+					D3D12_FEATURE_DATA_FORMAT_SUPPORT support{ DirectX::MakeLinear(meta.format) };
+					DX::ThrowIfFailed(a_backend.d3d12Device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support)));
+					constexpr auto required = D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE | D3D12_FORMAT_SUPPORT1_TEXTURE2D;
+					if ((support.Support1 & required) != required) throw std::runtime_error("Material texture sampling unsupported");
+					sourceBytes += bytes.size();
+					found = textures.emplace(hash, std::move(texture)).first;
+					rejectHash = false;
+				}
+				found->second->paths.push_back(texturePath);
+			} catch (const std::bad_alloc&) { throw; }
+			catch (const std::exception& error) {
+				if (rejectHash && hash.size() == 64) rejected.try_emplace(std::move(hash), std::string(error.what()).substr(0, 256));
+				throw;
 			}
-			texture->paths.push_back(entry.at("path").get<std::string>());
-		}
+		}, [&](const std::exception& error) {
+			if (FAILED(a_backend.d3d12Device->GetDeviceRemovedReason())) throw MaterialUploadError("Material texture device removed");
+			++a_result.rejectedTextureSources;
+			if (a_result.firstTextureSourceFailure.empty()) a_result.firstTextureSourceFailure = std::string(error.what()).substr(0, 256);
+		});
 		using Key = std::tuple<size_t, size_t, size_t, DXGI_FORMAT>;
 		auto groupKey = [](const Texture& texture) -> Key {
 			const auto& meta = texture.image.GetMetadata();

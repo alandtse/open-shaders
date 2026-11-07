@@ -108,6 +108,7 @@ namespace DX12Native
 		if (a_scene.materialSource) {
 			try { LoadMaterialTextures(a_backend, *a_scene.materialSource, *result); }
 			catch (const MaterialUploadError&) { throw; }
+			catch (const std::bad_alloc&) { throw; }
 			catch (const std::exception& error) {
 				result->failure = error.what();
 				result->pools.clear(); result->locations.clear(); result->logicalLocations.clear(); result->textureTickets.clear(); result->bytes = result->textures = 0;
