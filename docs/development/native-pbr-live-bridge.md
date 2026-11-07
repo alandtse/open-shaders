@@ -30,7 +30,7 @@ this bridge deliberately does **not** import live textures, change opacity or al
 advanced PBR features.
 
 Diagnostics under `materialBudget` expose `livePbrMatched`, `livePbrAmbiguous`,
-`livePbrIncompatible`, and `livePbrMissing`. A matched candidate may still be
+`livePbrIncompatible`, `livePbrMissing`, and `livePbrApplied`. A matched candidate may still be
 rejected by the ordinary native material compiler; the existing material readiness
 and failure counters remain authoritative.
 

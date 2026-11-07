@@ -170,6 +170,7 @@ namespace DX12Native
                         // Reuse verified resident atlas textures; only native PBR scalars change.
                         record.scalar.w = live->recipe->parameters.roughnessScale;
                         record.scalar.z = live->recipe->parameters.specularLevel;
+                        ++result->livePbrApplied;
                     }
                 }
 				catch (const std::exception&) { record.flags[3] = 16; }

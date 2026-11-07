@@ -440,6 +440,7 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "asyncBatchPages", bindings ? bindings->materials->asyncBatchPages : 0 },
 			{ "asyncBatchStagingBytes", bindings ? bindings->materials->asyncBatchStagingBytes : 0 },
 			{ "livePbrMatched", bindings ? bindings->materials->livePbrMatched : 0 },
+            { "livePbrApplied", bindings ? bindings->materials->livePbrApplied : 0 },
             { "livePbrAmbiguous", bindings ? bindings->materials->livePbrAmbiguous : 0 },
             { "livePbrIncompatible", bindings ? bindings->materials->livePbrIncompatible : 0 },
             { "livePbrMissing", bindings ? bindings->materials->livePbrMissing : 0 },
