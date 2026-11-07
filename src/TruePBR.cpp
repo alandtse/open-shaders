@@ -113,8 +113,18 @@ static NativePBR::MaterialData SnapshotPBRMesh(const BSLightingShaderMaterialPBR
 
 	const std::array textures{ a_material.diffuseTexture.get(), a_material.normalTexture.get(), a_material.rmaosTexture.get(),
 		a_material.emissiveTexture.get(), a_material.displacementTexture.get(), a_material.featuresTexture0.get(), a_material.featuresTexture1.get() };
-	for (size_t role = 0; role < textures.size(); ++role)
-		if (textures[role]) result.textureResourceNames[role] = textures[role]->name.c_str();
+	for (size_t role = 0; role < textures.size(); ++role) {
+		if (!textures[role]) continue;
+		result.textureResourceNames[role] = textures[role]->name.c_str();
+		const auto* rendererTexture = textures[role]->rendererTexture;
+		if (!rendererTexture || !rendererTexture->texture) continue;
+		winrt::com_ptr<ID3D11Texture2D> texture;
+		if (FAILED(Util::AsReal(rendererTexture->texture)->QueryInterface(IID_PPV_ARGS(texture.put())))) continue;
+		D3D11_TEXTURE2D_DESC desc{};
+		texture->GetDesc(&desc);
+		result.textureResources[role] = { desc.Width, desc.Height, desc.MipLevels, desc.ArraySize, uint32_t(desc.Format),
+			desc.MiscFlags, desc.BindFlags, uint32_t(desc.Usage), desc.SampleDesc.Count, true };
+	}
 
 	auto* textureSet = a_material.textureSet.get();
 	if (!textureSet) return result;
@@ -248,7 +258,7 @@ void SetupPBRLandscapeTextureParameters(BSLightingShaderMaterialPBRLandscape& ma
 
 struct TruePBR::RecipeWorker
 {
-	struct Summary { size_t recipes = 0, pending = 0, incomplete = 0; std::array<size_t, 13> issues{}; bool failed = false; };
+	struct Summary { size_t recipes = 0, pending = 0, incomplete = 0, observedTextures = 0, sharedCandidates = 0; std::array<size_t, 13> issues{}; bool failed = false; };
 	NativePBR::RecipeCache cache;
 	std::mutex mutex;
 	Summary summary;
@@ -287,6 +297,8 @@ void TruePBR::DrawSettings()
 		ImGui::TextDisabled("Normal mode unknown: %zu | UV animation unknown: %zu | scene match missing: %zu",
 			recipeIssues[9], recipeIssues[10], recipeIssues[11]);
 		ImGui::TextDisabled("Invalid texture paths: %zu", recipeIssues[12]);
+		ImGui::TextDisabled("DX11 2D texture references: %zu | NT-shared candidates: %zu (capture-time only; synchronization unverified)",
+			summary.observedTextures, summary.sharedCandidates);
 		ImGui::TextDisabled("Recipes include prior versions retained while pending; no live DX12 bindings are published.");
 		ImGui::TreePop();
 	}
@@ -555,6 +567,11 @@ void TruePBR::Prepass()
 					summary.pending = worker->cache.Pending();
 					for (const auto& [identity, recipe] : worker->cache.Recipes()) {
 						if (recipe.issues & ~NativePBR::UnknownOpacity) ++summary.incomplete;
+						for (const auto& texture : recipe.textures) {
+							if (!texture.resource.texture2D) continue;
+							++summary.observedTextures;
+							if (texture.resource.miscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE) ++summary.sharedCandidates;
+						}
 						for (size_t issue = 0; issue < summary.issues.size(); ++issue)
 							if (recipe.issues & (1u << issue)) ++summary.issues[issue];
 					}

@@ -84,6 +84,19 @@ TEST_CASE("Native PBR invalidation and recreation are observable", "[native_pbr]
     REQUIRE(registry.Export().front().identity != first.identity);
 }
 
+TEST_CASE("PBR recipes retain observed texture capabilities", "[native_pbr]")
+{
+    NativePBR::Snapshot snapshot;
+    snapshot.identity = 4;
+    snapshot.revision = 7;
+    auto& observed = snapshot.material.textureResources[0];
+    observed = { 1024, 512, 11, 1, 98, 0x800, 8, 0, 1, true };
+    const auto recipe = NativePBR::CompileRecipe(snapshot);
+    REQUIRE(recipe.textures[0].resource == observed);
+    REQUIRE_FALSE(recipe.textures[1].resource.texture2D);
+    REQUIRE(recipe.issues & NativePBR::UnmatchedSceneInstance);
+}
+
 TEST_CASE("Native PBR bulk invalidation reports only state changes", "[native_pbr]")
 {
     NativePBR::Registry registry;

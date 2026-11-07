@@ -33,6 +33,15 @@ namespace NativePBR
 		bool operator==(const LandscapeTile&) const = default;
 	};
 
+	/** @brief Records DX11 texture properties observed during a material capture. */
+	struct TextureResourceInfo
+	{
+		uint32_t width = 0, height = 0, mipLevels = 0, arraySize = 0, format = 0;
+		uint32_t miscFlags = 0, bindFlags = 0, usage = 0, sampleCount = 0;
+		bool texture2D = false;
+		bool operator==(const TextureResourceInfo&) const = default;
+	};
+
 	/** @brief Engine-pointer-free material metadata for native consumers. */
 	struct MaterialData
 	{
@@ -49,6 +58,7 @@ namespace NativePBR
 		Glint glint, projectedGlint;
 		std::array<std::string, static_cast<size_t>(TextureRole::Count)> texturePaths{};
 		std::array<std::string, static_cast<size_t>(TextureRole::Count)> textureResourceNames{};
+		std::array<TextureResourceInfo, static_cast<size_t>(TextureRole::Count)> textureResources{};
 		std::array<LandscapeTile, 6> landscapeTiles{};
 		bool texturePathsComplete = false;
 		bool operator==(const MaterialData&) const = default;

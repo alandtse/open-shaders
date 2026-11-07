@@ -34,6 +34,7 @@ namespace NativePBR
         TextureInterpretation interpretation = TextureInterpretation::DataLinear;
         TextureChannels channels = TextureChannels::Unspecified;
         std::string assetPath, canonicalPath, observedResourceName;
+        TextureResourceInfo resource;
         bool required = false;
     };
 
@@ -81,6 +82,7 @@ namespace NativePBR
                 else result.issues |= InvalidTexturePath;
             }
             texture.observedResourceName = material.textureResourceNames[index];
+            texture.resource = material.textureResources[index];
             texture.required = index <= static_cast<size_t>(TextureRole::Rmaos);
         }
         if (!result.identity || !result.revision || !IsFinite(material) || material.clampMode > 3 ||
