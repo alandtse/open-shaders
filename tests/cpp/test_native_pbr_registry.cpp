@@ -1118,3 +1118,50 @@ TEST_CASE("Live DX11 texture route assessment never treats descriptor hints as t
     REQUIRE(report.copyCandidates == 1);
     REQUIRE(report.unsupported == 0);
 }
+
+
+TEST_CASE("Runtime-authoritative matching ignores inaccurate offline material properties", "[native_pbr]")
+{
+    NativePBR::Registry registry;
+    int runtimeMaterial = 0;
+    NativePBR::MaterialData data{};
+    data.texturePaths = { "textures/live/color.dds", "textures/live/normal.dds",
+        "textures/live/packed.dds", "", "", "", "" };
+    data.texturePathsComplete = true;
+    auto token = registry.BeginCapture(&runtimeMaterial);
+    REQUIRE(registry.Publish(&runtimeMaterial, token, data));
+    const auto generation = registry.Export();
+    NativePBR::RecipeCache cache;
+    cache.Update(generation);
+    auto published = std::make_shared<NativePBR::RecipeGeneration>();
+    published->revision = generation.revision;
+    published->batchesComplete = true;
+    published->recipes.emplace(token.identity, std::make_shared<const NativePBR::Recipe>(
+        NativePBR::CompileRecipe({ token.identity, 1, data })));
+    NativePBR::PreparedMatchInput prepared;
+    prepared.referenceKey = "A:Skyrim.esm";
+    prepared.shapeName = "Cube";
+    prepared.opaque = true;
+    prepared.texturePaths = { "textures/offline/incorrect.dds", "", "", "" };
+    prepared.alpha = 0.1f;
+    prepared.pbr = false;
+    prepared.valid = false;
+    NativePBR::InstanceHint hint;
+    hint.materialIdentity = token.identity;
+    hint.referenceKey = prepared.referenceKey;
+    hint.shapeName = prepared.shapeName;
+    NativePBR::LiveBindingSource source{ published, { hint } };
+    const auto matches = NativePBR::ResolveRuntimeMatches({ prepared }, source);
+    REQUIRE(matches.report.matched == 1);
+    REQUIRE(matches.matches[0]);
+    REQUIRE(matches.matches[0]->recipe->parameters.texturePaths[0] == "textures/live/color.dds");
+    REQUIRE(NativePBR::ResolveRuntimeMatches({ prepared, prepared }, source).report.ambiguous == 2);
+    source.hints.push_back(hint);
+    REQUIRE(NativePBR::ResolveRuntimeMatches({ prepared }, source).report.ambiguous == 1);
+    source.hints.pop_back();
+    source.hints[0].properties.alphaProperty = true;
+    REQUIRE(NativePBR::ResolveRuntimeMatches({ prepared }, source).report.incompatible == 1);
+    source.hints[0].properties.alphaProperty = false;
+    prepared.opaque = false;
+    REQUIRE(NativePBR::ResolveRuntimeMatches({ prepared }, source).report.incompatible == 1);
+}

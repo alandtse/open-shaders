@@ -98,6 +98,78 @@ namespace NativePBR
         return true;
     }
 
+
+    /** @brief Runtime-authoritative identity binding: offline textures/UVs/scalars are not evidence.
+     *
+     * A unique reference + shape observation is the only association currently available
+     * from the render hook. Both prepared and runtime sides must be unique; ambiguous
+     * geometry always fails closed. Native capability and residency are evaluated later.
+     */
+    inline LiveMatchResult ResolveRuntimeMatches(const std::vector<PreparedMatchInput>& a_prepared,
+        const LiveBindingSource& a_source)
+    {
+        LiveMatchResult output;
+        output.matches.resize(a_prepared.size());
+        if (!a_source.generation || !a_source.generation->batchesComplete) {
+            output.report.missing = a_prepared.size();
+            return output;
+        }
+        auto keyFor = [](const std::string& reference, const std::string& shape) {
+            std::string key = Util::ToLowerAscii(reference);
+            key.push_back('\0');
+            key += Util::ToLowerAscii(shape);
+            return key;
+        };
+        std::unordered_map<std::string, size_t> preparedCounts;
+        for (const auto& candidate : a_prepared)
+            if (!candidate.referenceKey.empty() && !candidate.shapeName.empty())
+                ++preparedCounts[keyFor(candidate.referenceKey, candidate.shapeName)];
+        std::unordered_map<std::string, std::vector<const InstanceHint*>> observed;
+        for (const auto& hint : a_source.hints)
+            if (hint.materialIdentity && !hint.referenceKey.empty() && !hint.shapeName.empty())
+                observed[keyFor(hint.referenceKey, hint.shapeName)].push_back(&hint);
+        for (size_t i = 0; i < a_prepared.size(); ++i) {
+            const auto& candidate = a_prepared[i];
+            if (candidate.referenceKey.empty() || candidate.shapeName.empty()) {
+                ++output.report.missing;
+                continue;
+            }
+            const auto key = keyFor(candidate.referenceKey, candidate.shapeName);
+            auto it = observed.find(key);
+            if (it == observed.end()) {
+                ++output.report.missing;
+                continue;
+            }
+            if (preparedCounts[key] != 1 || it->second.size() != 1 || it->second.front()->propertiesConflict) {
+                ++output.report.ambiguous;
+                continue;
+            }
+            const auto& hint = *it->second.front();
+            // Trust prepared geometry only for traversal eligibility, not material identity.
+            // Skinned, alpha-property and non-opaque instances require a different native path.
+            if (!candidate.opaque || hint.properties.alphaProperty || hint.properties.skinned ||
+                hint.properties.alphaFlags != 0) {
+                ++output.report.incompatible;
+                continue;
+            }
+            const auto recipeIt = a_source.generation->recipes.find(hint.materialIdentity);
+            if (recipeIt == a_source.generation->recipes.end() || !recipeIt->second) {
+                ++output.report.missing;
+                continue;
+            }
+            const auto& recipe = *recipeIt->second;
+            if (recipe.identity != hint.materialIdentity || !recipe.revision ||
+                recipe.parameters.kind != MaterialKind::Mesh || !IsFinite(recipe.parameters) ||
+                (recipe.issues & InvalidSnapshot) != 0) {
+                ++output.report.incompatible;
+                continue;
+            }
+            output.matches[i] = VerifiedLiveMatch{ recipeIt->second, hint.properties };
+            ++output.report.matched;
+        }
+        return output;
+    }
+
     /** @brief Builds a read-only, per-instance binding plan with fail-closed ambiguity handling. */
     inline LiveMatchResult ResolveLiveMatches(const std::vector<PreparedMatchInput>& a_prepared,
         const LiveBindingSource& a_source)
