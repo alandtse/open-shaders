@@ -12,7 +12,7 @@ namespace DX12Native
 	}
 	std::shared_ptr<const ShadowBindings> ShadowBindings::Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
         uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr,
-        bool a_importLoose)
+        bool a_importLoose, bool a_importArchive)
 	{
 		auto result = std::make_shared<ShadowBindings>();
 		result->uploadBatchBudget = a_uploadBatchBudget;
@@ -41,6 +41,7 @@ namespace DX12Native
 			source->budget = std::min(source->budget, a_budget - tables - kDescriptorAndRoomReserve);
 			source->uploadBatchBytes = a_uploadBatchBudget;
             source->importLoosePbr = a_importLoose && a_livePbr != nullptr;
+            source->importArchivePbr = source->importLoosePbr && a_importArchive;
 			boundedScene.materialSource = std::move(source);
 		}
 		result->bytes = offsetsBytes + kDescriptorAndRoomReserve;
@@ -117,11 +118,11 @@ namespace DX12Native
 
 	void ShadowBindingWorker::Request(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
         uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr,
-        bool a_importLoose)
+        bool a_importLoose, bool a_importArchive)
     {
         const uint64_t incomingRevision = a_livePbr && a_livePbr->generation ? a_livePbr->generation->revision : 0;
         if (desired == a_scene && budget == a_budget && uploadBatchBudget == a_uploadBatchBudget &&
-            liveRevision == incomingRevision && importLoose == a_importLoose && backend.d3d12Device.get() == a_backend.d3d12Device.get() &&
+            liveRevision == incomingRevision && importLoose == a_importLoose && importArchive == a_importArchive && backend.d3d12Device.get() == a_backend.d3d12Device.get() &&
             backend.commandQueue.get() == a_backend.commandQueue.get()) return;
         const bool sameScene = desired == a_scene && backend.d3d12Device.get() == a_backend.d3d12Device.get();
         ++revision;
@@ -129,6 +130,7 @@ namespace DX12Native
         livePbr = std::move(a_livePbr);
         liveRevision = incomingRevision;
         importLoose = a_importLoose;
+        importArchive = a_importArchive;
         backend = a_backend;
         budget = a_budget;
         uploadBatchBudget = a_uploadBatchBudget;
@@ -170,8 +172,8 @@ namespace DX12Native
 		task->revision = revision;
 		try {
 			static BS::thread_pool<> pool{ 1 };
-			pool.detach_task([task, backend = backend, scene = desired, budget = budget, uploadBudget = uploadBatchBudget, live = livePbr, import = importLoose] {
-                try { task->bindings = ShadowBindings::Create(backend, scene, budget, uploadBudget, live, import); }
+			pool.detach_task([task, backend = backend, scene = desired, budget = budget, uploadBudget = uploadBatchBudget, live = livePbr, import = importLoose, archives = importArchive] {
+                try { task->bindings = ShadowBindings::Create(backend, scene, budget, uploadBudget, live, import, archives); }
 				catch (const MaterialUploadBusy& error) { task->failure = error.what(); task->deferred = true; }
 				catch (const std::exception& error) { task->failure = error.what(); }
 				catch (...) { task->failure = "Unknown shadow binding failure"; }
@@ -189,7 +191,7 @@ namespace DX12Native
 	{
 		++revision;
         desired.reset();
-        livePbr.reset(); liveRevision = 0; importLoose = false;
+        livePbr.reset(); liveRevision = 0; importLoose = false; importArchive = false;
 		published.reset();
 		failure.clear();
 		attempted = false;

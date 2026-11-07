@@ -10,7 +10,7 @@
 #include "Utils/D3D.h"
 #include <cmath>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 void DX12NativeScene::DrawSettings()
 {
@@ -21,7 +21,12 @@ void DX12NativeScene::DrawSettings()
     ImGui::BeginDisabled(!settings.UseLivePBR);
     if (ImGui::Checkbox("Experimental: import missing loose PBR DDS", &settings.ImportLoosePBR)) resetRequested = true;
     ImGui::EndDisabled();
-    ImGui::TextDisabled("Worker-only; maximum 8 loose sources / 32 MiB per load; archives unsupported.");
+    ImGui::BeginDisabled(!settings.UseLivePBR || !settings.ImportLoosePBR);
+    if (ImGui::Checkbox("Experimental: use archive-backed DDS fallback", &settings.ImportArchivePBR))
+        resetRequested = true;
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Worker-only; maximum 8 sources / 32 MiB combined per load.");
+    ImGui::TextDisabled("Archive fallback runs only when the loose DDS is absent.");
 	{
 		std::scoped_lock coverageLock(coverageMutex);
 		if (coverageFailed) ImGui::TextDisabled("Candidate analysis unavailable or failed.");
@@ -114,6 +119,7 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	++shadowControlsRevision;
 	settings.UseLivePBR = selected.UseLivePBR;
         settings.ImportLoosePBR = selected.ImportLoosePBR;
+        settings.ImportArchivePBR = selected.ImportArchivePBR;
 	settings.ShadowAllLights = selected.ShadowAllLights;
 	settings.ShadowStochastic = selected.ShadowStochastic;
 	settings.ShadowDistanceFade = selected.ShadowDistanceFade;
@@ -290,7 +296,8 @@ void DX12NativeScene::EarlyPrepass()
         } else { livePbrSource.reset(); livePbrRevision = 0; }
         materialBindings.Request(*backend, scene, uint64_t(settings.BudgetMB) * 1024 * 1024,
             uint64_t(settings.MaterialBatchMB) * 1024 * 1024, livePbrSource,
-            settings.UseLivePBR && settings.ImportLoosePBR);
+            settings.UseLivePBR && settings.ImportLoosePBR,
+            settings.UseLivePBR && settings.ImportLoosePBR && settings.ImportArchivePBR);
     }
 	materialBindings.Advance();
 	DispatchShadow("early-prepass");
@@ -457,6 +464,10 @@ void DX12NativeScene::PublishDiagnostics()
             { "looseDdsRejected", bindings ? bindings->materials->looseDdsRejected : 0 },
             { "looseDdsDeferred", bindings ? bindings->materials->looseDdsDeferred : 0 },
             { "looseDdsBytes", bindings ? bindings->materials->looseDdsBytes : 0 },
+            { "archiveDdsPlanned", bindings ? bindings->materials->archiveDdsPlanned : 0 },
+            { "archiveDdsImported", bindings ? bindings->materials->archiveDdsImported : 0 },
+            { "archiveDdsRejected", bindings ? bindings->materials->archiveDdsRejected : 0 },
+            { "archiveDdsBytes", bindings ? bindings->materials->archiveDdsBytes : 0 },
             { "livePbrAmbiguous", bindings ? bindings->materials->livePbrAmbiguous : 0 },
             { "livePbrIncompatible", bindings ? bindings->materials->livePbrIncompatible : 0 },
             { "livePbrMissing", bindings ? bindings->materials->livePbrMissing : 0 },

@@ -24,7 +24,7 @@ namespace DX12Native
 		/** @brief Creates binding tables on a worker; material upload completion must be polled before use. */
 		static std::shared_ptr<const ShadowBindings> Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
             uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr,
-            bool a_importLoose);
+            bool a_importLoose, bool a_importArchive);
 	};
 	/** @brief Loads shadow material bindings asynchronously with revision-safe publication. */
 	class ShadowBindingWorker
@@ -33,7 +33,7 @@ namespace DX12Native
 		/** @brief Selects one scene, deferring a new load until an earlier worker retires. */
 		void Request(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
             uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr = {},
-            bool a_importLoose = false);
+            bool a_importLoose = false, bool a_importArchive = false);
 		/** @brief Polls an owned worker without waiting and publishes only the selected revision. */
 		void Advance();
 		/** @brief Invalidates current bindings without waiting for the worker. */
@@ -50,7 +50,7 @@ namespace DX12Native
 		std::shared_ptr<const TopLevel> desired;
         std::shared_ptr<const NativePBR::LiveBindingSource> livePbr;
         uint64_t liveRevision = 0;
-        bool importLoose = false;
+        bool importLoose = false, importArchive = false;
 		std::shared_ptr<const ShadowBindings> published;
 		GraphicsBackend backend;
 		uint64_t revision = 0, budget = 0, uploadBatchBudget = 0;

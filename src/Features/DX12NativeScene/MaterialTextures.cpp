@@ -4,6 +4,7 @@
 #include "TextureSourceBatch.h"
 #include "LiveLooseTexturePlan.h"
 #include "MaterialTextureLookup.h"
+#include "ArchiveDdsSource.h"
 #include "VideoMemoryBudget.h"
 
 #include "Utils/FileDigest.h"
@@ -32,6 +33,7 @@ namespace DX12Native
 			std::string hash;
 			std::vector<std::string> paths;
             std::filesystem::path looseSource;
+            std::string archiveSource;
 			DirectX::TexMetadata metadata{};
 			DirectX::ScratchImage image;
 		};
@@ -480,19 +482,37 @@ namespace DX12Native
             a_result.looseDdsPlanned = uint32_t(planned.paths.size());
             a_result.looseDdsDeferred = uint32_t(planned.deferred);
             for (const auto& canonical : planned.paths) {
+                bool triedArchive = false;
                 try {
                     // Only canonical relative paths from uniquely matched PBR materials enter here.
                     const auto path = std::filesystem::path("Data") / std::filesystem::path(canonical);
-                    auto [bytes, digest] = ReadLooseDds(path);
+                    std::vector<uint8_t> bytes;
+                    std::string digest;
+                    const auto attributes = GetFileAttributesW(path.c_str());
+                    const DWORD lookupError = attributes == INVALID_FILE_ATTRIBUTES ? GetLastError() : ERROR_SUCCESS;
+                    const bool missingLoose = attributes == INVALID_FILE_ATTRIBUTES &&
+                        (lookupError == ERROR_FILE_NOT_FOUND || lookupError == ERROR_PATH_NOT_FOUND);
+                    if (missingLoose && a_source.importArchivePbr) {
+                        triedArchive = true;
+                        ++a_result.archiveDdsPlanned;
+                        auto archived = ReadArchiveDds(canonical);
+                        bytes = std::move(archived.bytes);
+                        digest = std::move(archived.digest);
+                    } else {
+                        auto loose = ReadLooseDds(path);
+                        bytes = std::move(loose.first);
+                        digest = std::move(loose.second);
+                    }
                     if (sourceBytes > a_source.budget || bytes.size() > a_source.budget - sourceBytes ||
-                        a_result.looseDdsBytes > kLooseDdsLoadLimit ||
-                        bytes.size() > kLooseDdsLoadLimit - a_result.looseDdsBytes)
+                        a_result.looseDdsBytes + a_result.archiveDdsBytes > kLooseDdsLoadLimit ||
+                        bytes.size() > kLooseDdsLoadLimit - (a_result.looseDdsBytes + a_result.archiveDdsBytes))
                         throw std::runtime_error("Loose DDS source budget exhausted");
                     auto it = textures.find(digest);
                     if (it == textures.end()) {
                         auto image = std::make_unique<Texture>();
                         image->hash = digest;
-                        image->looseSource = path;
+                        if (triedArchive) image->archiveSource = canonical;
+                        else image->looseSource = path;
                         DX::ThrowIfFailed(DirectX::GetMetadataFromDDSMemory(bytes.data(), bytes.size(),
                             DirectX::DDS_FLAGS_NO_LEGACY_EXPANSION, image->metadata));
                         ValidateMetadata(image->metadata, a_source.budget);
@@ -504,13 +524,16 @@ namespace DX12Native
                             throw std::runtime_error("Loose DDS texture format unsupported");
                         it = textures.emplace(digest, std::move(image)).first;
                         sourceBytes += bytes.size();
-                        a_result.looseDdsBytes += bytes.size();
+                        if (triedArchive) a_result.archiveDdsBytes += bytes.size();
+                        else a_result.looseDdsBytes += bytes.size();
                     }
                     it->second->paths.push_back(canonical);
-                    ++a_result.looseDdsImported;
+                    if (triedArchive) ++a_result.archiveDdsImported;
+                    else ++a_result.looseDdsImported;
                 } catch (const std::bad_alloc&) { throw; }
                 catch (const std::exception& error) {
-                    ++a_result.looseDdsRejected;
+                    if (triedArchive) ++a_result.archiveDdsRejected;
+                    else ++a_result.looseDdsRejected;
                     if (a_result.firstTextureSourceFailure.empty())
                         a_result.firstTextureSourceFailure = std::string(error.what()).substr(0, 256);
                 }
@@ -629,8 +652,10 @@ namespace DX12Native
 					current = texture;
 					const auto predicted = ValidateMetadata(texture->metadata, a_source.budget);
 					if (decodedBytes > a_source.budget - predicted) throw std::runtime_error("Decoded material page exceeds budget");
-					const auto bytes = texture->looseSource.empty() ? ReadTexture(a_source.directory, texture->hash, a_result) :
-                        ReadLooseDds(texture->looseSource, texture->hash).first;
+					const auto bytes = !texture->archiveSource.empty() ?
+                        ReadArchiveDds(texture->archiveSource, texture->hash).bytes :
+                        !texture->looseSource.empty() ? ReadLooseDds(texture->looseSource, texture->hash).first :
+                        ReadTexture(a_source.directory, texture->hash, a_result);
 					DX::ThrowIfFailed(DirectX::LoadFromDDSMemory(bytes.data(), bytes.size(), DirectX::DDS_FLAGS_NO_LEGACY_EXPANSION, nullptr, texture->image));
 					const auto& decoded = texture->image.GetMetadata();
 					ValidateMetadata(decoded, a_source.budget);

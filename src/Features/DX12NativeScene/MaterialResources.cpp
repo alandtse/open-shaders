@@ -137,7 +137,8 @@ namespace DX12Native
         }
 		if (a_scene.materialSource) {
 			try { LoadMaterialTextures(a_backend, *a_scene.materialSource, *result,
-                    a_scene.materialSource->importLoosePbr && a_livePbr ? &liveMatch : nullptr); }
+                    (a_scene.materialSource->importLoosePbr || a_scene.materialSource->importArchivePbr) && a_livePbr ?
+                        &liveMatch : nullptr); }
 			catch (const MaterialUploadError&) { throw; }
 			catch (const std::bad_alloc&) { throw; }
 			catch (const std::exception& error) {

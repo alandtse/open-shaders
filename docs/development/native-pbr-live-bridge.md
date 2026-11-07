@@ -81,3 +81,21 @@ they are **not** evidence of correct in-game lighting until user validation.
 
 If repeated load attempts exhaust GPU memory, turn off the loose import toggle.
 The known-good baseline is the prepared atlas plus the existing native fallback.
+
+### Archive-backed DDS fallback (additional experimental opt-in)
+
+**Experimental: use archive-backed DDS fallback** is separately disabled by
+default and requires both earlier PBR switches. The background loader uses
+Skyrim's BSResourceNiBinaryStream only when a planned source has no loose
+DDS file. A present but invalid loose file is *not* silently replaced by an
+archived texture. The combined missing-source budget is 8 texture requests /
+32 MiB, shared by archive and loose additions.
+
+All archive bytes are copied into owned memory, checked with SHA-256, validated
+as DDS, then re-read and digest-checked before use by the existing DX12 page
+upload and GPU fence retirement system. No live DX11 GPU pointer is borrowed.
+
+Diagnostics: archiveDdsPlanned, archiveDdsImported, archiveDdsRejected,
+archiveDdsBytes. This is initial archive-backed source support; it has not
+been compiled or runtime-validated. Archive stream availability, performance
+and exact texture parity must be checked in Skyrim before enabling by default.
