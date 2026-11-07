@@ -645,3 +645,18 @@ TEST_CASE("DXGI budget limits new material allocations without double counting",
     REQUIRE_FALSE(unavailable.dxgiAvailable);
     REQUIRE(unavailable.effectiveBytes == 512 * mib);
 }
+
+TEST_CASE("Recipe texture paths stay relative and reject traversal", "[native_pbr]")
+{
+    REQUIRE(NativePBR::CanonicalTexturePath("Textures\\Armor\\Body.DDS") == "textures/armor/body.dds");
+    REQUIRE(NativePBR::CanonicalTexturePath("armor/body.dds") == "textures/armor/body.dds");
+    REQUIRE_FALSE(NativePBR::CanonicalTexturePath("../outside.dds"));
+    REQUIRE_FALSE(NativePBR::CanonicalTexturePath("C:\\outside.dds"));
+    REQUIRE_FALSE(NativePBR::CanonicalTexturePath("/outside.dds"));
+    NativePBR::Snapshot snapshot{ 1, 1, {} };
+    snapshot.material.texturePaths[0] = "../outside.dds";
+    const auto recipe = NativePBR::CompileRecipe(snapshot);
+    REQUIRE(recipe.issues & NativePBR::InvalidTexturePath);
+    REQUIRE(recipe.textures[0].canonicalPath.empty());
+    REQUIRE(recipe.textures[0].assetPath == "../outside.dds");
+}

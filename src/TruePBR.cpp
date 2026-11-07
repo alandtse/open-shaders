@@ -248,7 +248,7 @@ void TruePBR::DrawSettings()
 {
 	static NativePBR::RecipeCache recipes;
 	static size_t incompleteRecipes = 0;
-	static std::array<size_t, 12> recipeIssues{};
+	static std::array<size_t, 13> recipeIssues{};
 	if (auto generation = nativeRegistry.ExportChanges(recipes.Revision(), recipes.KnownRevisions())) {
 		recipes.Update(*generation);
 		incompleteRecipes = 0;
@@ -275,6 +275,7 @@ void TruePBR::DrawSettings()
 			recipeIssues[6], recipeIssues[7], recipeIssues[8]);
 		ImGui::TextDisabled("Normal mode unknown: %zu | UV animation unknown: %zu | scene match missing: %zu",
 			recipeIssues[9], recipeIssues[10], recipeIssues[11]);
+		ImGui::TextDisabled("Invalid texture paths: %zu", recipeIssues[12]);
 		ImGui::TextDisabled("Recipes include prior versions retained while pending; no live DX12 bindings are published.");
 		ImGui::TreePop();
 	}

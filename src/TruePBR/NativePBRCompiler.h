@@ -1,6 +1,7 @@
 #pragma once
 
 #include "NativePBRRegistry.h"
+#include "Utils/StringUtils.h"
 #include <unordered_set>
 
 namespace NativePBR
@@ -18,7 +19,8 @@ namespace NativePBR
         UnsupportedProjection = 1u << 8,
         UnknownNormalMode = 1u << 9,
         UnknownUvAnimation = 1u << 10,
-        UnmatchedSceneInstance = 1u << 11
+        UnmatchedSceneInstance = 1u << 11,
+        InvalidTexturePath = 1u << 12
     };
 
     enum class TextureInterpretation : uint8_t { ColorSrgb, DataLinear };
@@ -30,7 +32,7 @@ namespace NativePBR
         TextureRole role = TextureRole::BaseColor;
         TextureInterpretation interpretation = TextureInterpretation::DataLinear;
         TextureChannels channels = TextureChannels::Unspecified;
-        std::string assetPath, observedResourceName;
+        std::string assetPath, canonicalPath, observedResourceName;
         bool required = false;
     };
 
@@ -42,6 +44,23 @@ namespace NativePBR
         uint32_t issues = 0;
         std::array<TextureRequest, static_cast<size_t>(TextureRole::Count)> textures{};
     };
+
+    /** @brief Normalizes a relative texture asset path without permitting parent or drive traversal. */
+    inline std::optional<std::string> CanonicalTexturePath(const std::string& a_path)
+    {
+        if (a_path.empty() || a_path.size() > 1024 || a_path.find(':') != std::string::npos ||
+            std::ranges::any_of(a_path, [](unsigned char c) { return c < 32; })) return std::nullopt;
+        auto normalized = Util::ToLowerAscii(a_path);
+        std::replace(normalized.begin(), normalized.end(), '\\', '/');
+        const std::filesystem::path path(normalized);
+        try {
+            Util::JoinRelativePath({}, path);
+        } catch (const std::invalid_argument&) { return std::nullopt; }
+        normalized = path.lexically_normal().generic_string();
+        if (normalized.empty() || normalized == "." || normalized.starts_with('/')) return std::nullopt;
+        if (!normalized.starts_with("textures/")) normalized = "textures/" + normalized;
+        return normalized;
+    }
 
     /** @brief Compiles an owned snapshot without accessing game objects or GPU resources. */
     inline Recipe CompileRecipe(const Snapshot& a_snapshot)
@@ -56,6 +75,10 @@ namespace NativePBR
                 TextureInterpretation::ColorSrgb : TextureInterpretation::DataLinear;
             if (texture.role == TextureRole::Rmaos) texture.channels = TextureChannels::RoughnessMetallicAoSpecular;
             texture.assetPath = material.texturePaths[index];
+            if (!texture.assetPath.empty()) {
+                if (auto canonical = CanonicalTexturePath(texture.assetPath)) texture.canonicalPath = std::move(*canonical);
+                else result.issues |= InvalidTexturePath;
+            }
             texture.observedResourceName = material.textureResourceNames[index];
             texture.required = index <= static_cast<size_t>(TextureRole::Rmaos);
         }
