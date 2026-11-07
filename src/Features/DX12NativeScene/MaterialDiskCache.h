@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <span>
 #include <string>
 #include <unordered_set>
@@ -20,14 +21,45 @@ namespace DX12Native
 	{
 	public:
 		enum class StoreResult { Stored, Existing, Unavailable };
-		explicit MaterialDiskCache(std::filesystem::path a_directory, uint64_t a_limit = 128ull * 1024 * 1024) : directory(std::move(a_directory)), limit(a_limit) {}
+		explicit MaterialDiskCache(std::filesystem::path a_directory,
+            uint64_t a_limit = 128ull * 1024 * 1024, std::string a_extension = ".dds") :
+            directory(std::move(a_directory)), limit(a_limit), extension(std::move(a_extension))
+        {
+            if (extension != ".dds" && extension != ".rgc")
+                throw std::invalid_argument("Unsupported native cache extension");
+        }
+
+        /** @brief Background-only bounded listing; each item must be read and hash-verified. */
+        std::vector<std::string> ListDigests(size_t a_limit = 256)
+        {
+            std::scoped_lock lock(mutex);
+            std::vector<std::string> digests;
+            if (!a_limit) return digests;
+            std::error_code error;
+            const auto status = std::filesystem::symlink_status(directory, error);
+            if (error || !std::filesystem::is_directory(status) ||
+                std::filesystem::is_symlink(status)) return digests;
+            for (std::filesystem::directory_iterator it(directory, error), end;
+                !error && it != end && digests.size() < a_limit; it.increment(error)) {
+                const auto name = it->path().filename().string();
+                if (name.size() != 64 + extension.size() ||
+                    name.substr(64) != extension || !ValidDigest(name.substr(0, 64))) continue;
+                if (it->is_symlink(error) || error || !it->is_regular_file(error) || error) {
+                    error.clear();
+                    continue;
+                }
+                digests.push_back(name.substr(0, 64));
+            }
+            std::ranges::sort(digests);
+            return digests;
+        }
 
 		/** @brief Reads only bytes whose SHA-256 matches their content-addressed name. */
 		std::optional<std::vector<uint8_t>> Read(const std::string& a_digest, uint64_t a_maxBytes)
 		{
 			std::scoped_lock lock(mutex);
 			if (!ValidDigest(a_digest)) return std::nullopt;
-			auto bytes = ReadVerified(directory / (a_digest + ".dds"), a_digest, a_maxBytes);
+			auto bytes = ReadVerified(directory / (a_digest + extension), a_digest, a_maxBytes);
 			if (bytes) Remember(a_digest); else known.erase(a_digest);
 			return bytes;
 		}
@@ -56,7 +88,7 @@ namespace DX12Native
 			struct CloseLock { HANDLE file; ~CloseLock() { CloseHandle(file); } } closeLock{ lockFile };
 			BY_HANDLE_FILE_INFORMATION lockInfo{};
 			if (!GetFileInformationByHandle(lockFile, &lockInfo) || (lockInfo.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY))) return StoreResult::Unavailable;
-			const auto final = directory / (a_digest + ".dds");
+			const auto final = directory / (a_digest + extension);
 			if (ReadVerified(final, a_digest, limit)) { Remember(a_digest); return StoreResult::Existing; }
 			known.erase(a_digest);
 			if (!MakeRoom(a_bytes.size(), final)) return StoreResult::Unavailable;
@@ -114,7 +146,7 @@ namespace DX12Native
 			for (std::filesystem::directory_iterator it(directory, error), end; !error && it != end; it.increment(error)) {
 				const auto& item = *it;
 				const auto name = item.path().filename().string();
-				const bool regularName = name.size() == 68 && name.substr(64) == ".dds";
+				const bool regularName = name.size() == 64 + extension.size() && name.substr(64) == extension;
 				const bool tempName = name.size() > 69 && name.substr(64, 5) == ".tmp." &&
 					std::ranges::all_of(name.substr(69), [](unsigned char c) { return std::isdigit(c) != 0 || c == '.'; });
 				if ((!regularName && !tempName) || !ValidDigest(name.substr(0, 64)) || item.is_symlink(error) || error || !item.is_regular_file(error) || error) continue;
@@ -145,6 +177,7 @@ namespace DX12Native
 		}
 		std::filesystem::path directory;
 		uint64_t limit, serial = 0;
+        std::string extension;
 		std::unordered_set<std::string> known;
 		std::mutex mutex;
 	};
