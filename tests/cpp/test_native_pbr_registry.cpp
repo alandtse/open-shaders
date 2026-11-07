@@ -1038,6 +1038,9 @@ TEST_CASE("Loose PBR texture planner is bounded, deduplicated and excludes prepa
 {
     NativePBR::Recipe recipe;
     recipe.identity = recipe.revision = 1;
+    recipe.parameters.texturePathsComplete = true;
+    recipe.parameters.texturePaths = { "textures/base.dds", "textures/normal.dds",
+        "textures/rmaos.dds", "textures/glow.dds", "", "", "" };
     recipe.textures[0].canonicalPath = "textures/base.dds";
     recipe.textures[1].canonicalPath = "textures/normal.dds";
     recipe.textures[2].canonicalPath = "textures/rmaos.dds";
@@ -1234,4 +1237,38 @@ TEST_CASE("Runtime PBR issue instrumentation counts overlapping causes without b
     counts.Observe(recipe);
     REQUIRE(counts.affected == 2);
     REQUIRE(counts.issues[2] == 2);
+}
+
+TEST_CASE("Missing source planner prioritizes native-ready recipes then feature-limited meshes", "[native_pbr]")
+{
+    NativePBR::Snapshot readySnapshot{ 101, 2, {} };
+    readySnapshot.material.texturePaths = { "textures/ready/c.dds", "textures/ready/n.dds",
+        "textures/ready/r.dds", "", "", "", "" };
+    readySnapshot.material.texturePathsComplete = true;
+    NativePBR::Snapshot limitedSnapshot{ 102, 3, {} };
+    limitedSnapshot.material.texturePaths = { "textures/limited/c.dds", "textures/limited/n.dds",
+        "textures/limited/r.dds", "", "", "", "" };
+    limitedSnapshot.material.texturePathsComplete = true;
+    limitedSnapshot.material.pbrFlags = 1u << 5; // fuzz requires a dedicated shading implementation
+    auto ready = std::make_shared<const NativePBR::Recipe>(NativePBR::CompileRecipe(readySnapshot));
+    auto limited = std::make_shared<const NativePBR::Recipe>(NativePBR::CompileRecipe(limitedSnapshot));
+    REQUIRE_FALSE(NativePBR::NativeMeshRecipeSupported(*limited));
+    NativePBR::LiveMatchResult matches;
+    matches.matches.push_back(NativePBR::VerifiedLiveMatch{ limited, {} });
+    matches.matches.push_back(NativePBR::VerifiedLiveMatch{ ready, {} });
+    matches.matches.push_back(NativePBR::VerifiedLiveMatch{ limited, {} });
+    const auto planned = DX12Native::PlanLiveLooseTextures(matches, {}, 4);
+    REQUIRE(planned.paths.size() == 4);
+    REQUIRE(planned.paths[0] == "textures/ready/c.dds");
+    REQUIRE(planned.paths[1] == "textures/ready/n.dds");
+    REQUIRE(planned.paths[2] == "textures/ready/r.dds");
+    REQUIRE(planned.paths[3] == "textures/limited/c.dds");
+    REQUIRE(planned.deferred == 2);
+    REQUIRE(planned.supportedRecipes == 1);
+    REQUIRE(planned.featureLimitedRecipes == 1);
+    REQUIRE(planned.skippedRecipes == 0);
+    const auto notImported = DX12Native::PlanLiveLooseTextures(matches,
+        { "textures/ready/c.dds", "textures/ready/n.dds", "textures/ready/r.dds" }, 4);
+    REQUIRE(notImported.paths[0] == "textures/limited/c.dds");
+    REQUIRE(notImported.alreadyPresent == 3);
 }

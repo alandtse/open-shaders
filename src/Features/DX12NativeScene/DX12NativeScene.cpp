@@ -92,6 +92,13 @@ namespace
             static_cast<unsigned long long>(count("looseDdsImported")),
             static_cast<unsigned long long>(count("looseDdsRejected")),
             static_cast<unsigned long long>(count("looseDdsDeferred")));
+        ImGui::Text("Eligible recipes: %llu  feature-limited: %llu  skipped: %llu",
+            static_cast<unsigned long long>(count("looseDdsReadyRecipes")),
+            static_cast<unsigned long long>(count("looseDdsFeatureLimitedRecipes")),
+            static_cast<unsigned long long>(count("looseDdsSkippedRecipes")));
+        ImGui::Text("Already prepared paths: %llu  invalid requests: %llu",
+            static_cast<unsigned long long>(count("looseDdsPrepared")),
+            static_cast<unsigned long long>(count("looseDdsInvalid")));
         ImGui::Text("Archive DDS - planned: %llu  imported: %llu  rejected: %llu",
             static_cast<unsigned long long>(count("archiveDdsPlanned")),
             static_cast<unsigned long long>(count("archiveDdsImported")),
@@ -603,6 +610,11 @@ void DX12NativeScene::PublishDiagnostics()
             { "looseDdsImported", bindings ? bindings->materials->looseDdsImported : 0 },
             { "looseDdsRejected", bindings ? bindings->materials->looseDdsRejected : 0 },
             { "looseDdsDeferred", bindings ? bindings->materials->looseDdsDeferred : 0 },
+            { "looseDdsReadyRecipes", bindings ? bindings->materials->looseDdsReadyRecipes : 0 },
+            { "looseDdsFeatureLimitedRecipes", bindings ? bindings->materials->looseDdsFeatureLimitedRecipes : 0 },
+            { "looseDdsSkippedRecipes", bindings ? bindings->materials->looseDdsSkippedRecipes : 0 },
+            { "looseDdsPrepared", bindings ? bindings->materials->looseDdsPrepared : 0 },
+            { "looseDdsInvalid", bindings ? bindings->materials->looseDdsInvalid : 0 },
             { "looseDdsBytes", bindings ? bindings->materials->looseDdsBytes : 0 },
             { "archiveDdsPlanned", bindings ? bindings->materials->archiveDdsPlanned : 0 },
             { "archiveDdsImported", bindings ? bindings->materials->archiveDdsImported : 0 },

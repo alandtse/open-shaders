@@ -76,6 +76,7 @@ namespace DX12Native
         uint32_t livePbrUnsupported = 0, livePbrUnsafeOpacity = 0, livePbrMissingBasis = 0;
         uint32_t livePbrMissingBindings = 0, livePbrOfflineFallback = 0;
         uint32_t looseDdsPlanned = 0, looseDdsImported = 0, looseDdsRejected = 0, looseDdsDeferred = 0;
+        uint32_t looseDdsReadyRecipes = 0, looseDdsFeatureLimitedRecipes = 0, looseDdsSkippedRecipes = 0, looseDdsPrepared = 0, looseDdsInvalid = 0;
         uint64_t looseDdsBytes = 0, archiveDdsBytes = 0;
         uint32_t archiveDdsPlanned = 0, archiveDdsImported = 0, archiveDdsRejected = 0;
         LiveGpuTextureRoutes liveGpuRoutes;

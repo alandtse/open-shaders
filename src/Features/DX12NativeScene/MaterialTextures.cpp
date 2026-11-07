@@ -481,6 +481,11 @@ namespace DX12Native
             const auto planned = PlanLiveLooseTextures(*a_matches, present);
             a_result.looseDdsPlanned = uint32_t(planned.paths.size());
             a_result.looseDdsDeferred = uint32_t(planned.deferred);
+            a_result.looseDdsReadyRecipes = uint32_t(planned.supportedRecipes);
+            a_result.looseDdsFeatureLimitedRecipes = uint32_t(planned.featureLimitedRecipes);
+            a_result.looseDdsSkippedRecipes = uint32_t(planned.skippedRecipes);
+            a_result.looseDdsPrepared = uint32_t(planned.alreadyPresent);
+            a_result.looseDdsInvalid = uint32_t(planned.invalid);
             for (const auto& canonical : planned.paths) {
                 bool triedArchive = false;
                 try {
