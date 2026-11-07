@@ -8,6 +8,7 @@
 #include "Features/DX12NativeScene/MaterialTextureLookup.h"
 #include "Features/DX12NativeScene/ArchiveDdsSource.h"
 #include "Features/DX12NativeScene/LiveGpuTextureEligibility.h"
+#include "Features/DX12NativeScene/RuntimeMaterialCompiler.h"
 #include "Features/DX12NativeScene/LogicalTextureRegistry.h"
 #include "Features/DX12NativeScene/MaterialPageCache.h"
 #include "Features/DX12NativeScene/VerifiedTextureSources.h"
@@ -1161,4 +1162,53 @@ TEST_CASE("Runtime-authoritative matching ignores inaccurate offline material pr
     source.hints[0].properties.alphaProperty = false;
     prepared.opaque = false;
     REQUIRE(NativePBR::ResolveRuntimeMatches({ prepared }, source).report.incompatible == 1);
+}
+
+
+TEST_CASE("Runtime PBR material compiler takes texture bindings and parameters from live recipe", "[native_pbr]")
+{
+    NativePBR::Snapshot snapshot{ 5, 7, {} };
+    snapshot.material.texturePaths = { "textures/live/c.dds", "textures/live/n.dds",
+        "textures/live/r.dds", "", "", "", "" };
+    snapshot.material.texturePathsComplete = true;
+    snapshot.material.roughnessScale = 0.6f;
+    snapshot.material.specularLevel = 0.12f;
+    snapshot.material.uvOffsetScale[0] = { 0.2f, 0.3f, 1.5f, 2.0f };
+    const auto recipe = std::make_shared<const NativePBR::Recipe>(NativePBR::CompileRecipe(snapshot));
+    NativePBR::InstanceProperties properties;
+    properties.shaderFlags = 1ull << 37; // runtime vertex colors
+    properties.emissionKnown = true;
+    properties.emissiveColor = { 0.25f, 0.5f, 0.75f };
+    properties.emissiveMultiplier = 3.0f;
+    NativePBR::VerifiedLiveMatch match{ recipe, properties };
+    DX12Native::MaterialResources resources;
+    for (size_t i = 0; i < 3; ++i) {
+        const auto path = DX12Native::MaterialTextureLookupKey(recipe->textures[i].canonicalPath);
+        resources.locations.emplace(path, i + 1);
+        resources.logicalLocations.emplace(i + 1, std::array<uint32_t, 2>{ 0u, uint32_t(i) });
+    }
+    DX12Native::Material source;
+    auto attributes = std::make_shared<DX12Native::VertexAttributes>();
+    attributes->hasTangentFrame = true;
+    source.attributes = attributes;
+    // Inaccurate / missing offline metadata cannot influence the runtime compiler.
+    const auto result = DX12Native::CompileRuntimeMaterial(resources, source, match);
+    REQUIRE(result.status == DX12Native::RuntimeMaterialStatus::Ready);
+    REQUIRE(result.record.colorNormal == std::array<uint32_t, 4>{ 0, 0, 0, 1 });
+    REQUIRE(result.record.packedEmission[0] == 0);
+    REQUIRE(result.record.packedEmission[1] == 2);
+    REQUIRE(result.record.scalar.z == 0.12f);
+    REQUIRE(result.record.scalar.w == 0.6f);
+    REQUIRE(result.record.uv.x == 1.5f);
+    REQUIRE(result.record.uv.z == 0.2f);
+    REQUIRE(result.record.flags[0] & 8);
+    REQUIRE(result.emissionApplied);
+    REQUIRE(result.record.emission.w == 3.0f);
+    auto missing = resources;
+    missing.locations.erase(DX12Native::MaterialTextureLookupKey("textures/live/r.dds"));
+    REQUIRE(DX12Native::CompileRuntimeMaterial(missing, source, match).status ==
+        DX12Native::RuntimeMaterialStatus::MissingTextures);
+    match.properties.shaderFlags |= 1ull << 3;
+    REQUIRE(DX12Native::CompileRuntimeMaterial(resources, source, match).status ==
+        DX12Native::RuntimeMaterialStatus::UnsafeOpacity);
 }
