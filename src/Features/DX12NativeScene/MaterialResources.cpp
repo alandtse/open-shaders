@@ -1,4 +1,5 @@
 #include "MaterialResources.h"
+#include "MaterialTextureLookup.h"
 
 #include <algorithm>
 #include <cctype>
@@ -13,18 +14,11 @@ namespace DX12Native
 		constexpr uint32_t kReady = 1, kPbr = 2, kModelNormal = 4, kVertexColor = 8, kAlphaTest = 16, kVertexAlpha = 32, kEmission = 64, kSpecular = 128, kOpacityReady = 256;
 		constexpr uint32_t kPbrSourceFlag = 1u << 23;
 
-		std::string Normalize(std::string a_path)
-		{
-			std::ranges::transform(a_path, a_path.begin(), [](unsigned char c) { return c == '/' ? '\\' : char(std::tolower(c)); });
-			if (!a_path.empty() && !a_path.starts_with("textures\\")) a_path = "textures\\" + a_path;
-			return a_path;
-		}
-
 		std::array<uint32_t, 2> Find(const MaterialResources& a_resources, const json& a_material, size_t a_slot)
 		{
 			const auto& paths = a_material.at("textures");
 			if (!paths.is_array() || a_slot >= paths.size() || !paths[a_slot].is_string()) return { kMissingTexture, 0 };
-			const auto found = a_resources.locations.find(Normalize(paths[a_slot].get<std::string>()));
+			const auto found = a_resources.locations.find(MaterialTextureLookupKey(paths[a_slot].get<std::string>()));
 			if (found == a_resources.locations.end()) return { kMissingTexture, 0 };
 			const auto location = a_resources.logicalLocations.find(found->second);
 			return location == a_resources.logicalLocations.end() ? std::array<uint32_t, 2>{ kMissingTexture, 0 } : location->second;

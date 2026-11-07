@@ -3,6 +3,7 @@
 #include "MaterialDiskCache.h"
 #include "TextureSourceBatch.h"
 #include "LiveLooseTexturePlan.h"
+#include "MaterialTextureLookup.h"
 #include "VideoMemoryBudget.h"
 
 #include "Utils/FileDigest.h"
@@ -218,6 +219,7 @@ namespace DX12Native
 				a_result.logicalLocations.emplace(ticket->handle, std::array<uint32_t, 2>{ pool, slice });
 				for (const auto& path : texture->paths) {
                     a_result.locations.emplace(path, ticket->handle);
+                    a_result.locations.emplace(MaterialTextureLookupKey(path), ticket->handle);
                     // The digest was validated against DDS bytes before this page was made resident.
                     a_result.verifiedTextureSources.Observe(path, texture->hash,
                         uint32_t(meta.width), uint32_t(meta.height), uint32_t(meta.mipLevels));

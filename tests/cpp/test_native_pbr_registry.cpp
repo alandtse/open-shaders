@@ -5,6 +5,7 @@
 #include "TruePBR/InstanceCoverage.h"
 #include "TruePBR/VerifiedBridge.h"
 #include "Features/DX12NativeScene/LiveLooseTexturePlan.h"
+#include "Features/DX12NativeScene/MaterialTextureLookup.h"
 #include "Features/DX12NativeScene/LogicalTextureRegistry.h"
 #include "Features/DX12NativeScene/MaterialPageCache.h"
 #include "Features/DX12NativeScene/VerifiedTextureSources.h"
@@ -1058,4 +1059,15 @@ TEST_CASE("Loose PBR texture planner is bounded, deduplicated and excludes prepa
     plan = DX12Native::PlanLiveLooseTextures(matches, {}, 8);
     REQUIRE(plan.paths.size() == 3);
     REQUIRE(plan.invalid == 1);
+}
+
+TEST_CASE("Native material path lookup resolves slash- and case-normalized loose DDS aliases", "[native_pbr]")
+{
+    REQUIRE(DX12Native::MaterialTextureLookupKey("Textures\\MyMod\\RMAOS.DDS") ==
+        "textures\\mymod\\rmaos.dds");
+    REQUIRE(DX12Native::MaterialTextureLookupKey("textures/mymod/rmaos.dds") ==
+        "textures\\mymod\\rmaos.dds");
+    REQUIRE(DX12Native::MaterialTextureLookupKey("MyMod/RMAOS.dds") ==
+        "textures\\mymod\\rmaos.dds");
+    REQUIRE(DX12Native::MaterialTextureLookupKey("") == "");
 }
