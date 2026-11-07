@@ -15,7 +15,7 @@ bool AdmitShadowCandidate(uint instance,uint primitive,float2 barycentric,inout 
 void TraceNativeShadow(uint2 pixel)
 {
     Shadow[pixel]=float4(1,0,0,0);
-    if (!NativeTraceDensityPixel(pixel.x,pixel.y,DirectTraceMode,FrameIndex,0x62c01dafu)) {
+    if (!NativeTraceDensityPixel(pixel.x,pixel.y,DirectTraceMode,FrameIndex,0x62c01daeu)) {
         // Explicitly omitted raw sample. -1 differs from invalid (0) and
         // successfully evaluated (1). No current-frame reconstruction.
         Shadow[pixel]=float4(0,-1,0,0);

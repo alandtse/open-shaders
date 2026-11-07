@@ -117,7 +117,6 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		// Zero radiance with a distinct untraced validity state, never a dark
 		// physically evaluated sample. All outputs stay full-resolution.
 		RejectionReason[pixel] = 0x10000000u;
-		Count(27);
 		return;
 	}
 	Count(0);

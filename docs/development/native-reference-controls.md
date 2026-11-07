@@ -68,12 +68,12 @@ five-tap, instance-/depth-gated spatial softening is available from 0 to
 
 ## Intentionally not ported yet
 
-The old **sparse direct/shadow trace resolution** selectors and temporal
-shadow-history accumulation depend on matching native reconstruction/history
-buffers that are absent from the clean pipeline. Those controls are not
-exposed as no-op sliders. Likewise old RR resolution/mode controls belong to a
-future independent RR implementation; this commit does not touch RR guide
-buffers or add old indirect dispatchers.
+The historical reduced-dimension direct/shadow trace-resolution selectors
+and temporal shadow-history accumulation remain unported. The new
+[full-resolution trace-density modes](native-trace-density.md) are separate:
+they omit ray work at selected pixels while preserving native-size output
+textures and exposing raw gaps without reconstruction. RR guide handling,
+history processing and the old indirect dispatchers remain out of scope.
 
 ## Verification
 
@@ -141,3 +141,12 @@ The tested screenshot has Native Lighting disabled even though Native
 Composite's **Add native direct lighting** checkbox is on. Native Composite
 will therefore apply the independent shadows while the native direct
 lighting contribution remains absent; that is deliberate.
+
+## Full-resolution trace-density extension
+
+Both Native Lighting and DX12 Native Scene now expose independent
+`Full / Two-thirds / Half` trace-density selectors, defaulting to Full.
+Neither selector changes output/context dimensions, adds temporal samples,
+or alters the independently owned Native Composite controls. See
+[native-trace-density.md](native-trace-density.md) for the shader contract,
+omitted-pixel states, and runtime verification matrix.

@@ -98,7 +98,9 @@ private:
 	winrt::com_ptr<ID3D12PipelineState> pipeline;
 	std::array<std::shared_ptr<Contribution>, 4> frames;
 	std::shared_ptr<Contribution> current;
-	std::array<uint64_t, 28> totals{}; // Slot 27: samples intentionally omitted by trace-density policy.
+	std::array<uint64_t, 27> totals{};
+	// Derived after the existing GPU candidate counter readback; no extra per-pixel atomic.
+	uint64_t skippedPixels = 0;
 	std::string status;
 	uint64_t nextFence = 0, submissions = 0, completions = 0, counterReadFailures = 0, comparisonFrames = 0, busyDeferrals = 0;
 	DX12Native::VideoMemoryBudget videoBudget;

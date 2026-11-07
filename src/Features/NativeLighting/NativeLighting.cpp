@@ -189,6 +189,10 @@ void NativeLightingFeature::Retire()
 		if (FAILED(frame->counterReadback->Map(0, &read, &mapped))) { ++counterReadFailures; status = "Native lighting counter readback unavailable"; continue; }
 		const auto* counts = static_cast<const uint32_t*>(mapped);
 		for (size_t i = 0; i < totals.size(); ++i) totals[i] += counts[i];
+		const uint64_t gridPixels = uint64_t(frame->width) * frame->height;
+		// Counter 0 runs for all selected pixels, before any primary ray query.
+		// Derive omitted coverage without a new contended GPU atomic counter.
+		skippedPixels += gridPixels - std::min<uint64_t>(gridPixels, counts[0]);
 		D3D12_RANGE noWrite{ 0, 0 };
 		frame->counterReadback->Unmap(0, &noWrite);
 		frame->countersRead = true;
@@ -220,7 +224,7 @@ void NativeLightingFeature::PublishDiagnostics()
 		{ "frameSlots", frames.size() }, { "busyDeferrals", busyDeferrals },
 		{ "dxgiAvailable", videoBudget.last.dxgiAvailable }, { "effectiveFrameBudgetBytes", videoBudget.last.effectiveBytes },
 		{ "dxgiLocalBudgetBytes", videoBudget.last.localBudget }, { "dxgiLocalUsageBytes", videoBudget.last.localUsage }, { "counterReadFailures", counterReadFailures },
-		{ "candidatePixels", totals[0] }, { "skippedPixels", totals[27] },
+		{ "candidatePixels", totals[0] }, { "skippedPixels", skippedPixels },
 		{ "traceDensityMode", current ? current->traceDensityMode : 0u },
 		{ "signalWidth", current ? current->width : 0u }, { "signalHeight", current ? current->height : 0u },
 		{ "maskCulled", totals[1] }, { "maskUnavailable", totals[2] },
