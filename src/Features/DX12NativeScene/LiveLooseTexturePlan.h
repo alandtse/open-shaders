@@ -13,7 +13,7 @@ namespace DX12Native
     struct LiveLooseTexturePlan
     {
         std::vector<std::string> paths;
-        size_t alreadyPresent = 0, deferred = 0, invalid = 0;
+        size_t alreadyPresent = 0, alreadyAttempted = 0, deferred = 0, invalid = 0;
         size_t supportedRecipes = 0, featureLimitedRecipes = 0, skippedRecipes = 0;
     };
 
@@ -25,7 +25,8 @@ namespace DX12Native
      * landscape and incomplete identities remain excluded.
      */
     inline LiveLooseTexturePlan PlanLiveLooseTextures(const NativePBR::LiveMatchResult& a_matches,
-        const std::unordered_set<std::string>& a_present, size_t a_maxTextures = 8)
+        const std::unordered_set<std::string>& a_present, size_t a_maxTextures = 8,
+        const std::unordered_set<std::string>& a_attempted = {})
     {
         LiveLooseTexturePlan plan;
         std::array<std::vector<const NativePBR::Recipe*>, 2> priority;
@@ -65,6 +66,7 @@ namespace DX12Native
                     }
                     if (!visited.insert(request.canonicalPath).second) continue;
                     if (a_present.contains(request.canonicalPath)) { ++plan.alreadyPresent; continue; }
+                    if (a_attempted.contains(request.canonicalPath)) { ++plan.alreadyAttempted; continue; }
                     if (plan.paths.size() >= a_maxTextures) { ++plan.deferred; continue; }
                     plan.paths.push_back(request.canonicalPath);
                 }

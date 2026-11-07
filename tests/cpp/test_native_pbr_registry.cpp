@@ -5,6 +5,7 @@
 #include "TruePBR/InstanceCoverage.h"
 #include "TruePBR/VerifiedBridge.h"
 #include "Features/DX12NativeScene/LiveLooseTexturePlan.h"
+#include "Features/DX12NativeScene/RuntimeTextureProgress.h"
 #include "Features/DX12NativeScene/MaterialTextureLookup.h"
 #include "Features/DX12NativeScene/ArchiveDdsSource.h"
 #include "Features/DX12NativeScene/LiveGpuTextureEligibility.h"
@@ -1331,4 +1332,38 @@ TEST_CASE("Native material source supports future manifest-free runtime acquisit
     const auto requests = DX12Native::PlanLiveLooseTextures(matches, {});
     REQUIRE(requests.paths.size() == 3);
     REQUIRE(requests.paths[0] == "textures/runtime/c.dds");
+}
+
+TEST_CASE("Progressive source request planner does not retry failed batches", "[native_pbr]")
+{
+    NativePBR::Snapshot snapshot{ 900, 1, {} };
+    snapshot.material.texturePaths = { "textures/a.dds", "textures/b.dds", "textures/c.dds", "", "", "", "" };
+    snapshot.material.texturePathsComplete = true;
+    auto recipe = std::make_shared<const NativePBR::Recipe>(NativePBR::CompileRecipe(snapshot));
+    NativePBR::LiveMatchResult matches;
+    matches.matches.push_back(NativePBR::VerifiedLiveMatch{ recipe, {} });
+    DX12Native::RuntimeTextureProgress progress;
+    const auto first = DX12Native::PlanLiveLooseTextures(matches, {}, 2, progress.Attempted());
+    REQUIRE(first.paths.size() == 2);
+    REQUIRE(first.deferred == 1);
+    progress.Record(first.paths, { "textures/a.dds" });
+    REQUIRE(progress.Batches() == 1);
+    REQUIRE(progress.Successful() == 1);
+    REQUIRE(progress.Failed() == 1);
+    const auto next = DX12Native::PlanLiveLooseTextures(matches, { "textures/a.dds" }, 2, progress.Attempted());
+    REQUIRE(next.paths.size() == 1);
+    REQUIRE(next.paths[0] == "textures/c.dds");
+    REQUIRE(next.alreadyAttempted == 1);
+    REQUIRE(next.alreadyPresent == 1);
+    REQUIRE(next.deferred == 0);
+    progress.Record(next.paths, {});
+    REQUIRE(progress.AttemptedCount() == 3);
+    REQUIRE(progress.Failed() == 2);
+    const auto final = DX12Native::PlanLiveLooseTextures(matches,
+        { "textures/a.dds" }, 2, progress.Attempted());
+    REQUIRE(final.paths.empty());
+    REQUIRE(final.deferred == 0);
+    progress.Reset();
+    REQUIRE(progress.AttemptedCount() == 0);
+    REQUIRE(progress.Batches() == 0);
 }
