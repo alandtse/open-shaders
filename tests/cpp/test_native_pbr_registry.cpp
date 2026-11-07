@@ -4,6 +4,7 @@
 #include "TruePBR/NativePBRCompiler.h"
 #include "TruePBR/InstanceCoverage.h"
 #include "Features/DX12NativeScene/LogicalTextureRegistry.h"
+#include "Features/DX12NativeScene/VideoMemoryBudget.h"
 
 TEST_CASE("Native PBR invalidation and recreation are observable", "[native_pbr]")
 {
@@ -627,4 +628,20 @@ TEST_CASE("Logical texture identities remain stable while retained", "[native_pb
     recreated = registry.Acquire(first);
     REQUIRE(recreated);
     REQUIRE(recreated->handle != old);
+}
+
+TEST_CASE("DXGI budget limits new material allocations without double counting", "[native_pbr]")
+{
+    using DX12Native::VideoMemoryBudget;
+    constexpr auto mib = VideoMemoryBudget::kMiB;
+    const auto ample = VideoMemoryBudget::Evaluate(8192 * mib, 6144 * mib, 0, 512 * mib);
+    REQUIRE(ample.dxgiAvailable);
+    REQUIRE(ample.effectiveBytes == 512 * mib);
+    const auto pressured = VideoMemoryBudget::Evaluate(8192 * mib, 8000 * mib, 0, 512 * mib);
+    REQUIRE(pressured.effectiveBytes == 0);
+    const auto retained = VideoMemoryBudget::Evaluate(8192 * mib, 8000 * mib, 128 * mib, 512 * mib);
+    REQUIRE(retained.effectiveBytes == 128 * mib);
+    const auto unavailable = VideoMemoryBudget::Evaluate(0, 0, 0, 512 * mib);
+    REQUIRE_FALSE(unavailable.dxgiAvailable);
+    REQUIRE(unavailable.effectiveBytes == 512 * mib);
 }

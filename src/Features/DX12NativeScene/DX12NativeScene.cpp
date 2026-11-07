@@ -371,6 +371,7 @@ std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScen
 
 void DX12NativeScene::PublishDiagnostics()
 {
+	const auto bindings = materialBindings.Get();
 	json snapshot{ { "enabled", settings.Enabled }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure },
 		{ "raster", raster.GetDiagnostics() }, { "shadowStage", shadowStage }, { "shadowStatus", shadowStatus }, { "shadow", shadow.GetDiagnostics() },
 		{ "shadowOpaqueRetryAttempts", shadowOpaqueRetryAttempts }, { "shadowOpaqueRetryRecovered", shadowOpaqueRetryRecovered },
@@ -380,7 +381,12 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "reachMultiplier", settings.ShadowReachMultiplier }, { "falloffFraction", settings.ShadowFalloffFraction },
 			{ "falloffExponent", settings.ShadowFalloffExponent }, { "distanceFade", settings.ShadowDistanceFade },
 			{ "normalInfluence", settings.ShadowNormalInfluence }, { "traceDensityMode", settings.ShadowTraceDensityMode } } },
-		{ "prepared", prepared.GetDiagnostics() }, { "materialFailure", materialBindings.Failure() }, { "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() } };
+		{ "prepared", prepared.GetDiagnostics() }, { "materialFailure", materialBindings.Failure() }, { "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() },
+		{ "materialBudget", { { "dxgiAvailable", bindings ? bindings->materialBudget.dxgiAvailable : false },
+			{ "effectiveBytes", bindings ? bindings->materialBudget.effectiveBytes : 0 },
+			{ "localBudgetBytes", bindings ? bindings->materialBudget.localBudget : 0 },
+			{ "localUsageBytes", bindings ? bindings->materialBudget.localUsage : 0 },
+			{ "textureBytes", bindings ? bindings->materials->bytes : 0 }, { "tableBytes", bindings ? bindings->materials->tableBytes : 0 } } } };
 	{
 		std::scoped_lock lock(coverageMutex);
 		snapshot["pbrCandidates"] = { { "pending", bool(coverageTask) }, { "failed", coverageFailed },

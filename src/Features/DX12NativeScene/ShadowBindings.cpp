@@ -11,6 +11,10 @@ namespace DX12Native
 		result->scene = std::move(a_scene);
 		if (!a_backend.d3d12Device || !result->scene || result->scene->bottoms.empty() || result->scene->bottoms.size() > kMaximumInstances || result->scene->bottoms.size() != result->scene->instances.size())
 			throw std::runtime_error("Invalid shadow scene bindings");
+		if (!a_budget) throw std::runtime_error("Shadow binding budget is zero");
+		VideoMemoryBudget budget;
+		result->materialBudget = budget.Query(a_backend.d3d12Device.get(), 0, a_budget);
+		a_budget = result->materialBudget.effectiveBytes;
 		const auto offsetsDesc = CD3DX12_RESOURCE_DESC::Buffer(result->scene->bottoms.size() * sizeof(uint32_t));
 		const auto materialDesc = CD3DX12_RESOURCE_DESC::Buffer(result->scene->instances.size() * sizeof(MaterialRecord));
 		const auto surfaceDesc = CD3DX12_RESOURCE_DESC::Buffer(result->scene->instances.size() * sizeof(SurfaceRecord));
