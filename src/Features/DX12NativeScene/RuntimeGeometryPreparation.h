@@ -2,12 +2,14 @@
 
 #include "PreparedScene.h"
 #include "RuntimeGeometryEncoding.h"
+#include "Utils/D3D.h"
 #include <BS_thread_pool.hpp>
 #include <atomic>
 #include <directx/d3dx12.h>
 #include <exception>
 #include <mutex>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -87,7 +89,8 @@ namespace DX12Native
                 instance.material.shadingStatus = "runtime-captured";
                 instance.observationFrame = packet->captureFrame;
                 std::memcpy(instance.world.m, packet->transform.data(), sizeof(instance.world.m));
-                std::copy(packet->bound.begin(), packet->bound.end(), &instance.bound.x);
+                static_assert(sizeof(instance.bound) == sizeof(float) * 4);
+                std::memcpy(&instance.bound, packet->bound.data(), sizeof(instance.bound));
                 if (!encoded->attributes.empty() && budget > result->bytes) {
                     try {
                         auto attrs = std::make_shared<VertexAttributes>();
@@ -144,7 +147,7 @@ namespace DX12Native
                 else ++failures;
                 pending.reset();
             }
-            if (pending || !backend.d3d12Device || !budget) return;
+            if (pending || !backend.d3d12Device || !budget || attempted.size() >= mailbox.Count()) return;
             const auto items = mailbox.Export(0, mailbox.Count());
             std::vector<std::shared_ptr<const RuntimeGeometryPacket>> next;
             auto work = std::make_shared<Work>();

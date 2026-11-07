@@ -495,7 +495,10 @@ void DX12NativeScene::EarlyPrepass()
 	// Background runtime mesh preparation is entirely independent of the
     // active atlas-backed geometry and material binding generations.
     if (settings.CaptureRuntimeGeometry && runtimeGeometry.Count() != 0) {
-        const auto geometryBudget = uint64_t(settings.BudgetMB) * 1024 * 1024;
+        // Preview allocations are deliberately independent and limited to 64 MiB
+        // so the atlas-backed production scene retains VRAM headroom.
+        const auto geometryBudget = std::min<uint64_t>(
+            uint64_t(settings.BudgetMB) * 1024 * 1024 / 4, 64ull * 1024 * 1024);
         runtimeGeometryPrepare.Advance(*backend, runtimeGeometry, revision, geometryBudget);
         if (auto ready = runtimeGeometryPrepare.GetCell(); ready && ready->snapshot &&
             !ready->snapshot->instances.empty() &&
