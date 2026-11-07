@@ -277,6 +277,92 @@ def scenario_hands(bench, report):
         report.look(image, "crouched view of the snow in front of the feet with dents under both hands; note any sawtooth edges")
 
 
+OBJECT_SPOT = (111500.0, 104400.0, -8800.0)
+OBJECT_FEATHER = "0003AD66"
+OBJECT_HELMET = "00012E4D"
+
+
+def papyrus_object(bench, function, args, target):
+    return bench.call("papyrus", {"action": "call", "script": "ObjectReference", "function": function, "args": args, "self": {"form": target}})
+
+
+def place_item(bench, form, dx, dy):
+    ref = papyrus_object(bench, "PlaceAtMe", [{"form": form}, 1, False, False], "0x14")["returned"]["formId"]
+    papyrus_object(bench, "MoveTo", [{"form": "0x14"}, dx, dy, 70.0, True], ref)
+    return ref
+
+
+def object_samples(bench):
+    samples = {}
+    for _ in range(2):
+        for sample in bench.diagnostics().get("Objects", []):
+            samples[sample["Name"]] = sample
+        time.sleep(1.5)
+    return samples
+
+
+def item_height(bench, ref):
+    return papyrus_object(bench, "GetPositionZ", [], ref)["returned"]
+
+
+def scenario_objects(bench, report):
+    """Drop light and heavy items into a drift: weight scales the print, light items float above where they settle without the toggles."""
+    freecam_off(bench)
+    base = {"Enabled": True, "IncludeObjects": True, "BlanketHeight": 20.0}
+    bench.set_feature("SnowDeformation", {**base, "Lifetime": 1800.0, "WeightResponse": False, "SnowDrag": False, "DensityFloor": False})
+    for axis, value in zip("xyz", OBJECT_SPOT):
+        bench.console(f"player.setpos {axis} {value}")
+    time.sleep(6)
+    clear_modals(bench)
+    refs = []
+
+    def remove_all():
+        for ref in refs:
+            try:
+                papyrus_object(bench, "Delete", [], ref)
+            except Exception:
+                pass
+
+    def clear_field():
+        bench.call("openshaders.actions", {"action": "invokeCommand", "shortName": "SnowDeformation", "name": "ClearPrints"})
+        time.sleep(3)
+
+    clear_field()
+    try:
+        refs = [place_item(bench, OBJECT_FEATHER, 150, 0)]
+        time.sleep(10)
+        before = bench.diagnostics().get("PhysicsBodies", 0)
+        time.sleep(5)
+        after = bench.diagnostics().get("PhysicsBodies", 0)
+        report.check("objects.parity", "PASS" if after == before else "FAIL", f"PhysicsBodies {before}->{after} with Light Items Float and Snow Slows Rolling Items off")
+        settled = item_height(bench, refs[0])
+        remove_all()
+        clear_field()
+
+        bench.set_feature("SnowDeformation", {"WeightResponse": True, "SnowDrag": True, "DensityFloor": True})
+        refs = [place_item(bench, OBJECT_FEATHER, 150, 0)]
+        lift = 0.0
+        for _ in range(8):
+            time.sleep(5)
+            lift = item_height(bench, refs[0]) - settled
+            if lift > 3.0:
+                break
+        report.check("objects.float", "PASS" if lift > 3.0 else "FAIL", f"feather rose {lift:.1f} units above where it settles with the toggles off")
+
+        clear_field()
+        refs.append(place_item(bench, OBJECT_HELMET, 150, 120))
+        time.sleep(12)
+        samples = object_samples(bench)
+        feather, helmet = samples.get("Hagraven Feathers"), samples.get("Iron Helmet")
+        if feather is None or helmet is None:
+            report.check("objects.weight", "FAIL", f"items missing from diagnostics: {sorted(samples)}")
+        else:
+            report.check("objects.weight", "PASS" if feather["Scale"] < helmet["Scale"] else "FAIL", f"print scale feather={feather['Scale']:.2f} helmet={helmet['Scale']:.2f}")
+    finally:
+        remove_all()
+        bench.set_feature("SnowDeformation", {"WeightResponse": False, "SnowDrag": False, "DensityFloor": False})
+
+
 def hold_storm(bench):
     """Force the snowstorm at a fixed hour so before and after shots share lighting."""
     bench.console(f"fw {SNOWSTORM_WEATHER}")
@@ -334,7 +420,7 @@ def main():
     parser.add_argument("--out", required=True, help="output directory (screenshots, results.json, report.md)")
     parser.add_argument("--port", type=int, help="devbench port; default probes 8920-8923")
     parser.add_argument("--save", help="load this save first (default: the game's latest save)")
-    parser.add_argument("--only", nargs="*", choices=["blanket", "sink", "accumulation", "eyes", "hands"], help="run a subset")
+    parser.add_argument("--only", nargs="*", choices=["blanket", "sink", "accumulation", "eyes", "hands", "objects"], help="run a subset")
     args = parser.parse_args()
 
     out = Path(args.out).resolve()
@@ -360,7 +446,7 @@ def main():
         report.write({"runtime": runtime, "port": port, "time": time.strftime("%Y-%m-%d %H:%M:%S")})
         sys.exit("Player is not at the Winterhold test spot; see report.md")
 
-    scenarios = {"blanket": scenario_blanket, "sink": scenario_sink, "accumulation": scenario_accumulation}
+    scenarios = {"blanket": scenario_blanket, "sink": scenario_sink, "accumulation": scenario_accumulation, "objects": scenario_objects}
     if state.get("vr"):
         scenarios["eyes"] = scenario_eyes
         scenarios["hands"] = scenario_hands
