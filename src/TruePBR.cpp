@@ -254,7 +254,15 @@ struct TruePBR::RecipeWorker
 	Summary summary;
 	std::atomic<bool> active{ false }, more{ false };
 	std::atomic<uint64_t> revision{ 0 };
+	std::atomic<std::shared_ptr<const NativePBR::RecipeGeneration>> published;
 };
+
+std::shared_ptr<const NativePBR::RecipeGeneration> TruePBR::GetNativeRecipes() const
+{
+	if (!recipeWorker) return {};
+	auto generation = recipeWorker->published.load(std::memory_order_acquire);
+	return generation && generation->revision == nativeRegistry.Revision() ? generation : nullptr;
+}
 
 void TruePBR::DrawSettings()
 {
@@ -538,6 +546,8 @@ void TruePBR::Prepass()
 				try {
 					if (auto changes = registry->ExportChanges(worker->cache.Revision(), worker->cache.KnownRevisions())) {
 						worker->cache.Update(*changes);
+						worker->published.store(NativePBR::PublishRecipes(worker->cache, *changes,
+							worker->published.load(std::memory_order_relaxed)), std::memory_order_release);
 						worker->more.store(changes->hasMore, std::memory_order_relaxed);
 					}
 					RecipeWorker::Summary summary;

@@ -2,6 +2,7 @@
 
 #include "NativePBRRegistry.h"
 #include "Utils/StringUtils.h"
+#include <memory>
 #include <unordered_set>
 
 namespace NativePBR
@@ -158,5 +159,35 @@ namespace NativePBR
         std::unordered_set<uint64_t> pendingIdentities;
         uint64_t revision = 0, observedRevision = 0, compilations = 0;
     };
+
+    /** @brief Holds immutable completed recipes for one observed registry generation. */
+    struct RecipeGeneration
+    {
+        uint64_t revision = 0;
+        bool batchesComplete = false;
+        std::unordered_map<uint64_t, std::shared_ptr<const Recipe>> recipes;
+    };
+
+    /** @brief Publishes owned recipes while excluding dirty and not-yet-compiled entries. */
+    inline std::shared_ptr<const RecipeGeneration> PublishRecipes(const RecipeCache& a_cache,
+        const Registry::ChangeSet& a_changes, const std::shared_ptr<const RecipeGeneration>& a_previous)
+    {
+        auto result = std::make_shared<RecipeGeneration>();
+        result->revision = a_changes.revision;
+        result->batchesComplete = !a_changes.hasMore;
+        result->recipes.reserve(a_cache.Recipes().size());
+        for (const auto& [identity, recipe] : a_cache.Recipes()) {
+            if (a_cache.IsPending(identity)) continue;
+            if (a_previous) {
+                const auto previous = a_previous->recipes.find(identity);
+                if (previous != a_previous->recipes.end() && previous->second->revision == recipe.revision) {
+                    result->recipes.emplace(identity, previous->second);
+                    continue;
+                }
+            }
+            result->recipes.emplace(identity, std::make_shared<const Recipe>(recipe));
+        }
+        return result;
+    }
 
 }

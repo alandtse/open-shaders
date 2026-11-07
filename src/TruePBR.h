@@ -3,6 +3,8 @@
 #include "Feature.h"
 #include "TruePBR/NativePBRRegistry.h"
 
+namespace NativePBR { struct RecipeGeneration; }
+
 struct GlintParameters
 {
 	bool enabled = false;
@@ -95,6 +97,8 @@ public:
 
 	struct RecipeWorker;
 	std::shared_ptr<RecipeWorker> recipeWorker;
+	/** @brief On the render thread, retains a generation if it still matches the registry. */
+	std::shared_ptr<const NativePBR::RecipeGeneration> GetNativeRecipes() const;
 
 	/** @brief When true, logs each PBR JSON file path during load. Off by default. */
 	bool enableVerboseJsonLogging = false;

@@ -458,6 +458,45 @@ TEST_CASE("Incremental cache recovers pending and recreated materials", "[native
     REQUIRE(cache.Recipes().contains(replacement.identity));
 }
 
+TEST_CASE("Published recipes exclude pending materials and preserve immutable versions", "[native_pbr]")
+{
+    NativePBR::Registry registry;
+    NativePBR::RecipeCache cache;
+    int first = 0, second = 0;
+    auto firstCapture = registry.BeginCapture(&first);
+    auto secondCapture = registry.BeginCapture(&second);
+    REQUIRE(registry.Publish(&first, firstCapture, {}));
+    REQUIRE(registry.Publish(&second, secondCapture, {}));
+    auto changes = *registry.ExportChanges(cache.Revision(), cache.KnownRevisions(), 1);
+    cache.Update(changes);
+    auto partial = NativePBR::PublishRecipes(cache, changes, {});
+    REQUIRE_FALSE(partial->batchesComplete);
+    REQUIRE(partial->recipes.size() == 1);
+    changes = *registry.ExportChanges(cache.Revision(), cache.KnownRevisions(), 1);
+    cache.Update(changes);
+    auto complete = NativePBR::PublishRecipes(cache, changes, partial);
+    REQUIRE(complete->batchesComplete);
+    REQUIRE(complete->recipes.size() == 2);
+    REQUIRE(complete->recipes.at(partial->recipes.begin()->first) == partial->recipes.begin()->second);
+    registry.MarkDirty(&first);
+    changes = *registry.ExportChanges(cache.Revision(), cache.KnownRevisions());
+    cache.Update(changes);
+    auto pending = NativePBR::PublishRecipes(cache, changes, complete);
+    REQUIRE_FALSE(pending->recipes.contains(firstCapture.identity));
+    REQUIRE(pending->recipes.at(secondCapture.identity) == complete->recipes.at(secondCapture.identity));
+    REQUIRE(registry.Publish(&first, registry.BeginCapture(&first), {}));
+    changes = *registry.ExportChanges(cache.Revision(), cache.KnownRevisions());
+    cache.Update(changes);
+    auto restored = NativePBR::PublishRecipes(cache, changes, pending);
+    REQUIRE(restored->recipes.contains(firstCapture.identity));
+    registry.Forget(&first);
+    changes = *registry.ExportChanges(cache.Revision(), cache.KnownRevisions());
+    cache.Update(changes);
+    auto removed = NativePBR::PublishRecipes(cache, changes, restored);
+    REQUIRE_FALSE(removed->recipes.contains(firstCapture.identity));
+    REQUIRE(complete->recipes.contains(firstCapture.identity));
+}
+
 TEST_CASE("Incremental export bounds material compilation per update", "[native_pbr]")
 {
     NativePBR::Registry registry;
