@@ -46,6 +46,7 @@ namespace NativePBR
 	struct MaterialData
 	{
 		MaterialKind kind = MaterialKind::Mesh;
+		uint64_t textureGeneration = 0;
 		uint32_t pbrFlags = 0, clampMode = 0, landscapeTileCount = 0;
 		std::array<std::array<float, 4>, 2> uvOffsetScale{ { { 0, 0, 1, 1 }, { 0, 0, 1, 1 } } };
 		float materialAlpha = 1.0f;
@@ -125,7 +126,7 @@ namespace NativePBR
 		static constexpr size_t kMaximumHintsPerMaterial = 64;
 		struct Capture
 		{
-			uint64_t identity = 0, mutation = 0;
+			uint64_t identity = 0, mutation = 0, textureGeneration = 0;
 			explicit operator bool() const { return identity != 0; }
 		};
 
@@ -141,20 +142,21 @@ namespace NativePBR
 			auto [it, inserted] = entries.try_emplace(a_source);
 			if (inserted) { it->second.identity = nextIdentity++; ++revision; }
 			const auto& entry = it->second;
-			return entry.dirty ? Capture{ entry.identity, entry.mutation } : Capture{};
+			return entry.dirty ? Capture{ entry.identity, entry.mutation, entry.textureGeneration } : Capture{};
 		}
 
 		/** @brief Observes base and texture identities and returns a revision-safe capture token. */
 		template <size_t N>
 		Capture ObserveAndBegin(const void* a_source, const std::array<std::array<float, 4>, 2>& a_uv,
-			float a_alpha, uint32_t a_clamp, const std::array<const void*, N>& a_textures)
+			float a_alpha, uint32_t a_clamp, const std::array<const void*, N>& a_textures,
+			const std::array<const void*, static_cast<size_t>(TextureRole::Count) * 2>& a_resources = {})
 		{
 			static_assert(N == static_cast<size_t>(TextureRole::Count) + 1 || N == 24);
 			if (!a_source) return {};
 			auto unchanged = [&](const Entry& entry) {
 				const bool base = entry.baseObserved && entry.observedUv == a_uv && entry.observedAlpha == a_alpha && entry.observedClamp == a_clamp;
 				if constexpr (N == 24) return base && entry.landscapeTexturesObserved && entry.landscapeTextures == a_textures;
-				else return base && entry.texturesObserved && entry.textures == a_textures;
+				else return base && entry.texturesObserved && entry.textures == a_textures && entry.resourcesObserved && entry.resources == a_resources;
 			};
 			{
 				std::shared_lock lock(mutex);
@@ -171,11 +173,15 @@ namespace NativePBR
 				entry.observedAlpha = a_alpha;
 				entry.observedClamp = a_clamp;
 				if constexpr (N == 24) { entry.landscapeTextures = a_textures; entry.landscapeTexturesObserved = true; }
-				else { entry.textures = a_textures; entry.texturesObserved = true; }
+				else {
+					if (!entry.texturesObserved || entry.textures != a_textures || !entry.resourcesObserved || entry.resources != a_resources) ++entry.textureGeneration;
+					entry.textures = a_textures; entry.texturesObserved = true;
+					entry.resources = a_resources; entry.resourcesObserved = true;
+				}
 				++entry.mutation;
 				if (!entry.dirty) { entry.dirty = true; ++revision; }
 			}
-			return entry.dirty ? Capture{ entry.identity, entry.mutation } : Capture{};
+			return entry.dirty ? Capture{ entry.identity, entry.mutation, entry.textureGeneration } : Capture{};
 		}
 
 		/** @brief Invalidates a published snapshot when observed base parameters change. */
@@ -245,6 +251,7 @@ namespace NativePBR
 			if (it == entries.end() || !a_capture || it->second.identity != a_capture.identity ||
 				it->second.mutation != a_capture.mutation || !it->second.dirty) return false;
 			auto& entry = it->second;
+			a_data.textureGeneration = a_capture.textureGeneration;
 			if (entry.baseObserved && (entry.observedUv != a_data.uvOffsetScale || entry.observedAlpha != a_data.materialAlpha ||
 				entry.observedClamp != a_data.clampMode)) return false;
 			if (entry.revision && entry.data == a_data) {
@@ -408,12 +415,13 @@ namespace NativePBR
 	private:
 		struct Entry
 		{
-			uint64_t identity = 0, revision = 0, mutation = 0;
-			bool dirty = true, texturesObserved = false, landscapeTexturesObserved = false, baseObserved = false;
+			uint64_t identity = 0, revision = 0, mutation = 0, textureGeneration = 0;
+			bool dirty = true, texturesObserved = false, landscapeTexturesObserved = false, resourcesObserved = false, baseObserved = false;
 			std::array<std::array<float, 4>, 2> observedUv{};
 			float observedAlpha = 0;
 			uint32_t observedClamp = 0;
 			std::array<const void*, static_cast<size_t>(TextureRole::Count) + 1> textures{};
+			std::array<const void*, static_cast<size_t>(TextureRole::Count) * 2> resources{};
 			std::array<const void*, 24> landscapeTextures{};
 			MaterialData data;
 			std::vector<InstanceHint> hints;

@@ -463,6 +463,30 @@ TEST_CASE("Publication rejects a snapshot inconsistent with its observation", "[
     REQUIRE(registry.Publish(&source, capture, data));
 }
 
+TEST_CASE("Renderer resource replacement invalidates the material generation", "[native_pbr]")
+{
+    NativePBR::Registry registry;
+    NativePBR::MaterialData data;
+    int source = 0, renderer = 0, first = 0, second = 0;
+    std::array<const void*, 8> textures{};
+    std::array<const void*, 14> resources{};
+    resources[0] = &renderer;
+    resources[1] = &first;
+    auto capture = registry.ObserveAndBegin(&source, data.uvOffsetScale, data.materialAlpha, data.clampMode, textures, resources);
+    REQUIRE(registry.Publish(&source, capture, data));
+    const auto original = registry.Export().front();
+    REQUIRE_FALSE(registry.ObserveAndBegin(&source, data.uvOffsetScale, data.materialAlpha, data.clampMode, textures, resources));
+    resources[1] = &second;
+    const auto replacement = registry.ObserveAndBegin(&source, data.uvOffsetScale, data.materialAlpha, data.clampMode, textures, resources);
+    REQUIRE(replacement);
+    REQUIRE_FALSE(registry.Publish(&source, capture, data));
+    REQUIRE(registry.Publish(&source, replacement, data));
+    const auto updated = registry.Export().front();
+    REQUIRE(updated.identity == original.identity);
+    REQUIRE(updated.revision > original.revision);
+    REQUIRE(updated.material.textureGeneration > original.material.textureGeneration);
+}
+
 TEST_CASE("Incremental registry export copies only changed snapshots", "[native_pbr]")
 {
     NativePBR::Registry registry;
