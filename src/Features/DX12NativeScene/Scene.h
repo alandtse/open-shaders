@@ -27,6 +27,7 @@ namespace DX12Native
 		std::string cell, layoutDigest;
 		uint64_t budget = 0;
 		std::shared_ptr<const json> rooms;
+		uint64_t uploadBatchBytes = 16ull * 1024 * 1024;
 	};
 	/** @brief Preserves offline material work classes without rediscovering them during traversal. */
 	enum class OfflineMaterialFlags : uint32_t

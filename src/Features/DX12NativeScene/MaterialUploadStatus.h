@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <algorithm>
 
 namespace DX12Native
 {
@@ -19,4 +20,7 @@ namespace DX12Native
 	{
 		return a_current <= a_limit && a_next <= a_limit - a_current;
 	}
+
+	/** @brief Bounds the prepared-material staging limit selected in settings. */
+	inline uint32_t ClampMaterialBatchMB(uint32_t a_value) { return std::clamp(a_value, 1u, 64u); }
 }

@@ -19,7 +19,6 @@ namespace DX12Native
 	{
 		constexpr uint64_t kMaximumDdsBytes = 128ull * 1024 * 1024;
 		constexpr uint64_t kMaximumRetainedPageBytes = 64ull * 1024 * 1024;
-		constexpr uint64_t kMaximumUploadBatchBytes = 16ull * 1024 * 1024;
 		constexpr uint32_t kPageSlices = 8, kUploadTimeoutMS = 5000;
 		struct Texture
 		{
@@ -165,7 +164,7 @@ namespace DX12Native
 			a_result.pools.push_back(std::move(a_page));
 		}
 
-		void UploadPage(const GraphicsBackend& a_backend, const std::vector<Texture*>& a_textures, MaterialResources& a_result, uint64_t a_budget, bool a_async, Upload* a_batch)
+		void UploadPage(const GraphicsBackend& a_backend, const std::vector<Texture*>& a_textures, MaterialResources& a_result, uint64_t a_budget, bool a_async, Upload* a_batch, uint64_t a_batchLimit)
 		{
 			auto& retirement = RetiredUpload();
 			std::scoped_lock retirementLock(retirement.mutex);
@@ -186,7 +185,7 @@ namespace DX12Native
 			if (!a_budget) throw std::runtime_error("Material texture budget is zero");
 			VideoMemoryBudget budget;
 			const auto batchStaging = a_batch ? a_batch->stagingBytes : 0;
-			if (a_batch && !MaterialUploadFitsBatch(batchStaging, stagingAllocation, kMaximumUploadBatchBytes))
+			if (a_batch && !MaterialUploadFitsBatch(batchStaging, stagingAllocation, a_batchLimit))
 				throw std::runtime_error("Material upload batch staging limit exceeded");
 			if (batchStaging > a_budget || a_result.bytes > a_budget - batchStaging) throw std::runtime_error("Material batch budget exceeded");
 			a_budget = budget.Query(a_backend.d3d12Device.get(), a_result.bytes + batchStaging, a_budget).effectiveBytes;
@@ -466,7 +465,7 @@ namespace DX12Native
 				a_backend.d3d12Device->GetCopyableFootprints(&desc, 0, uint32_t(slices * mips), 0, nullptr, nullptr, nullptr, &upload);
 				const auto stagingDesc = CD3DX12_RESOURCE_DESC::Buffer(upload);
 				const auto staging = a_backend.d3d12Device->GetResourceAllocationInfo(0, 1, &stagingDesc).SizeInBytes;
-				if (target == UINT64_MAX || staging == UINT64_MAX || !MaterialUploadFitsBatch(batchStaging, staging, kMaximumUploadBatchBytes) || target > a_source.budget ||
+				if (target == UINT64_MAX || staging == UINT64_MAX || !MaterialUploadFitsBatch(batchStaging, staging, a_source.uploadBatchBytes) || target > a_source.budget ||
 					batchTargets > a_source.budget - target) { batchable = false; break; }
 				batchStaging += staging;
 				batchTargets += target;
@@ -509,7 +508,7 @@ namespace DX12Native
 				for (const auto* texture : page) slices.push_back(TextureKey(*texture));
 				completed.push_back({ PageKey(slices), std::move(slices), uint32_t(a_result.pools.size()) });
 				const bool lastPage = std::next(groupIt) == groups.end() && first + kPageSlices >= group.size();
-				UploadPage(a_backend, page, a_result, a_source.budget, lastPage, batchable ? &batch : nullptr);
+				UploadPage(a_backend, page, a_result, a_source.budget, lastPage, batchable ? &batch : nullptr, a_source.uploadBatchBytes);
 				for (auto* texture : page) texture->image.Release();
 			}
 		}

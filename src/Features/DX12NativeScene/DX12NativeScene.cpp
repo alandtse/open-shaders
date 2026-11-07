@@ -10,7 +10,7 @@
 #include "Utils/D3D.h"
 #include <cmath>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, MaterialBatchMB, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 void DX12NativeScene::DrawSettings()
 {
@@ -87,6 +87,10 @@ void DX12NativeScene::DrawSettings()
 			requestedFrameBudget = uint32_t(manual);
 	}
 	ImGui::TextDisabled("Pool allocations respect DXGI headroom; independent of the prepared-scene budget.");
+	const auto requestedBatch = requestedMaterialBatch.load();
+	int batchMB = int(requestedBatch ? requestedBatch : settings.MaterialBatchMB);
+	if (ImGui::SliderInt("Prepared material batch limit (MiB)", &batchMB, 1, 64)) requestedMaterialBatch = uint32_t(batchMB);
+	ImGui::TextDisabled("Applies to the next prepared material load; larger sets use the existing worker path.");
 }
 
 void DX12NativeScene::LoadSettings(json& a_json)
@@ -98,6 +102,7 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	if (requestedShadow.load() != 1) requestedShadow = selected.ShadowMask ? 1 : 0;
 	requestedBudget = std::clamp(selected.BudgetMB, 64u, 4096u);
 	requestedFrameBudget = selected.FrameBudgetMB ? std::clamp(selected.FrameBudgetMB, 64u, 4096u) : 0u;
+	requestedMaterialBatch = DX12Native::ClampMaterialBatchMB(selected.MaterialBatchMB);
 	std::scoped_lock lock(settingsMutex);
 	const auto clamp = [](float value, float fallback, float low, float high) { return std::isfinite(value) ? std::clamp(value, low, high) : fallback; };
 	++shadowControlsRevision;
@@ -121,6 +126,7 @@ void DX12NativeScene::SaveSettings(json& a_json)
 	if (const auto shadowEnabled = requestedShadow.load(); shadowEnabled >= 0) selected.ShadowMask = shadowEnabled != 0;
 	if (const auto budget = requestedBudget.load(); budget) selected.BudgetMB = budget;
 	if (const auto frameBudget = requestedFrameBudget.load(); frameBudget != UINT32_MAX) selected.FrameBudgetMB = frameBudget;
+	if (const auto batch = requestedMaterialBatch.load(); batch) selected.MaterialBatchMB = batch;
 	a_json = selected;
 }
 void DX12NativeScene::RestoreDefaultSettings()
@@ -129,6 +135,7 @@ void DX12NativeScene::RestoreDefaultSettings()
 	requestedShadow = Settings{}.ShadowMask ? 1 : 0;
 	requestedBudget = Settings{}.BudgetMB;
 	requestedFrameBudget = Settings{}.FrameBudgetMB;
+	requestedMaterialBatch = Settings{}.MaterialBatchMB;
 	{ std::scoped_lock lock(settingsMutex); settings = Settings{}; ++shadowControlsRevision; }
 	resetRequested = true;
 }
@@ -208,6 +215,7 @@ void DX12NativeScene::EarlyPrepass()
 		if (const auto shadowEnabled = requestedShadow.exchange(-1); shadowEnabled >= 0) settings.ShadowMask = shadowEnabled != 0;
 		if (const auto budget = requestedBudget.exchange(0); budget) settings.BudgetMB = budget;
 		if (const auto frameBudget = requestedFrameBudget.exchange(UINT32_MAX); frameBudget != UINT32_MAX) settings.FrameBudgetMB = frameBudget;
+		if (const auto batch = requestedMaterialBatch.exchange(0); batch) settings.MaterialBatchMB = batch;
 	}
 	auto* cell = globals::game::player ? globals::game::player->GetParentCell() : nullptr;
 	const auto currentID = cell ? cell->GetFormID() : 0;
@@ -252,7 +260,7 @@ void DX12NativeScene::EarlyPrepass()
 	}
 	acceleration.Advance();
 	if (auto scene = acceleration.GetScene(); scene && shadow.RetireScenesExcept(scene) && retiredMaterials.expired())
-		materialBindings.Request(*backend, scene, uint64_t(settings.BudgetMB) * 1024 * 1024);
+		materialBindings.Request(*backend, scene, uint64_t(settings.BudgetMB) * 1024 * 1024, uint64_t(settings.MaterialBatchMB) * 1024 * 1024);
 	materialBindings.Advance();
 	DispatchShadow("early-prepass");
 }
@@ -392,6 +400,8 @@ void DX12NativeScene::PublishDiagnostics()
 		{ "prepared", prepared.GetDiagnostics() }, { "materialFailure", materialBindings.Failure() }, { "materialUploadPending", materialBindings.UploadPending() },
 		{ "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() },
 		{ "materialBudget", { { "dxgiAvailable", bindings ? bindings->materialBudget.dxgiAvailable : false },
+			{ "selectedBatchLimitBytes", uint64_t(settings.MaterialBatchMB) * 1024 * 1024 },
+			{ "loadedBatchLimitBytes", bindings ? bindings->uploadBatchBudget : 0 },
 			{ "effectiveBytes", bindings ? bindings->materialBudget.effectiveBytes : 0 },
 			{ "localBudgetBytes", bindings ? bindings->materialBudget.localBudget : 0 },
 			{ "localUsageBytes", bindings ? bindings->materialBudget.localUsage : 0 },
@@ -461,10 +471,11 @@ void DX12NativeScene::RegisterUxActions()
 		++feature.shadowControlsRevision;
 		globals::features::nativeComposite.ConfigureShadowLayer(args);
 	});
-	FEATURE_COMMAND("setPreparedScene", "Queue the prepared static-scene loading settings. Params: enabled (boolean), budgetMB (optional integer, 64..4096).", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("setPreparedScene", "Queue prepared scene settings. Params: enabled (boolean), budgetMB (optional integer, 64..4096), materialBatchMB (optional integer, 1..64).", [](Feature* self, const json& args) {
 		auto& scene = *static_cast<DX12NativeScene*>(self);
 		scene.requestedEnabled = args.at("enabled").get<bool>() ? 1 : 0;
 		if (args.contains("budgetMB")) scene.requestedBudget = std::clamp(args.at("budgetMB").get<uint32_t>(), 64u, 4096u);
+		if (args.contains("materialBatchMB")) scene.requestedMaterialBatch = DX12Native::ClampMaterialBatchMB(args.at("materialBatchMB").get<uint32_t>());
 		scene.resetRequested = true;
 	});
 }

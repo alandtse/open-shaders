@@ -15,7 +15,7 @@ struct DX12NativeScene final : Feature
 	struct Settings
 	{
 		bool Enabled = true, ShadowMask = true;
-		uint32_t BudgetMB = 512, FrameBudgetMB = 0;
+		uint32_t BudgetMB = 512, FrameBudgetMB = 0, MaterialBatchMB = 16;
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
@@ -105,6 +105,7 @@ private:
 	std::atomic<int> requestedEnabled{ -1 }, requestedShadow{ -1 };
 	std::atomic<uint32_t> requestedBudget{ 0 };
 	std::atomic<uint32_t> requestedFrameBudget{ UINT32_MAX };
+	std::atomic<uint32_t> requestedMaterialBatch{ 0 };
 	uint64_t shadowControlsRevision = 1;
 	uint64_t shadowOpaqueRetryAttempts = 0, shadowOpaqueRetryRecovered = 0;
 	mutable std::mutex settingsMutex, diagnosticsMutex;

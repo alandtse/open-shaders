@@ -5,9 +5,10 @@
 
 namespace DX12Native
 {
-	std::shared_ptr<const ShadowBindings> ShadowBindings::Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget)
+	std::shared_ptr<const ShadowBindings> ShadowBindings::Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget, uint64_t a_uploadBatchBudget)
 	{
 		auto result = std::make_shared<ShadowBindings>();
+		result->uploadBatchBudget = a_uploadBatchBudget;
 		result->scene = std::move(a_scene);
 		if (!a_backend.d3d12Device || !result->scene || result->scene->bottoms.empty() || result->scene->bottoms.size() > kMaximumInstances || result->scene->bottoms.size() != result->scene->instances.size())
 			throw std::runtime_error("Invalid shadow scene bindings");
@@ -31,6 +32,7 @@ namespace DX12Native
 		if (boundedScene.materialSource) {
 			auto source = std::make_shared<MaterialSource>(*boundedScene.materialSource);
 			source->budget = std::min(source->budget, a_budget - tables - kDescriptorAndRoomReserve);
+			source->uploadBatchBytes = a_uploadBatchBudget;
 			boundedScene.materialSource = std::move(source);
 		}
 		result->bytes = offsetsBytes + kDescriptorAndRoomReserve;
@@ -104,13 +106,14 @@ namespace DX12Native
 		std::string failure;
 	};
 
-	void ShadowBindingWorker::Request(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget)
+	void ShadowBindingWorker::Request(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget, uint64_t a_uploadBatchBudget)
 	{
 		if (desired == a_scene && budget == a_budget && backend.d3d12Device.get() == a_backend.d3d12Device.get() && backend.commandQueue.get() == a_backend.commandQueue.get()) return;
 		++revision;
 		desired = std::move(a_scene);
 		backend = a_backend;
 		budget = a_budget;
+		uploadBatchBudget = a_uploadBatchBudget;
 		published.reset();
 		attempted = false;
 		failure.clear();
@@ -140,8 +143,8 @@ namespace DX12Native
 		task->revision = revision;
 		try {
 			static BS::thread_pool<> pool{ 1 };
-			pool.detach_task([task, backend = backend, scene = desired, budget = budget] {
-				try { task->bindings = ShadowBindings::Create(backend, scene, budget); }
+			pool.detach_task([task, backend = backend, scene = desired, budget = budget, uploadBudget = uploadBatchBudget] {
+				try { task->bindings = ShadowBindings::Create(backend, scene, budget, uploadBudget); }
 				catch (const std::exception& error) { task->failure = error.what(); }
 				catch (...) { task->failure = "Unknown shadow binding failure"; }
 				task->done.store(true, std::memory_order_release);

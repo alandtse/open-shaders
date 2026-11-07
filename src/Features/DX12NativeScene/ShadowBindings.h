@@ -18,17 +18,17 @@ namespace DX12Native
 		std::shared_ptr<const MaterialResources> materials;
 		winrt::com_ptr<ID3D12Resource> offsets;
 		winrt::com_ptr<ID3D12DescriptorHeap> heap;
-		uint64_t bytes = 0;
+		uint64_t bytes = 0, uploadBatchBudget = 0;
 		VideoMemoryBudget::Snapshot materialBudget;
 		/** @brief Creates binding tables on a worker; material upload completion must be polled before use. */
-		static std::shared_ptr<const ShadowBindings> Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget);
+		static std::shared_ptr<const ShadowBindings> Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget, uint64_t a_uploadBatchBudget);
 	};
 	/** @brief Loads shadow material bindings asynchronously with revision-safe publication. */
 	class ShadowBindingWorker
 	{
 	public:
 		/** @brief Selects one scene, deferring a new load until an earlier worker retires. */
-		void Request(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget);
+		void Request(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget, uint64_t a_uploadBatchBudget);
 		/** @brief Polls an owned worker without waiting and publishes only the selected revision. */
 		void Advance();
 		/** @brief Invalidates current bindings without waiting for the worker. */
@@ -45,7 +45,7 @@ namespace DX12Native
 		std::shared_ptr<const TopLevel> desired;
 		std::shared_ptr<const ShadowBindings> published;
 		GraphicsBackend backend;
-		uint64_t revision = 0, budget = 0;
+		uint64_t revision = 0, budget = 0, uploadBatchBudget = 0;
 		bool attempted = false;
 		std::string failure;
 	};
