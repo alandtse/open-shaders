@@ -3,6 +3,7 @@
 #include "TruePBR/NativePBRRegistry.h"
 #include "TruePBR/NativePBRCompiler.h"
 #include "TruePBR/InstanceCoverage.h"
+#include "TruePBR/VerifiedBridge.h"
 #include "Features/DX12NativeScene/LogicalTextureRegistry.h"
 #include "Features/DX12NativeScene/MaterialPageCache.h"
 #include "Features/DX12NativeScene/MaterialDiskCache.h"
@@ -925,4 +926,55 @@ TEST_CASE("Recipe texture paths stay relative and reject traversal", "[native_pb
     REQUIRE(recipe.issues & NativePBR::InvalidTexturePath);
     REQUIRE(recipe.textures[0].canonicalPath.empty());
     REQUIRE(recipe.textures[0].assetPath == "../outside.dds");
+}
+
+
+TEST_CASE("Strict native bridge rejects ambiguous and incompatible live source matches", "[native_pbr]")
+{
+    NativePBR::Registry registry;
+    int material = 0;
+    auto data = NativePBR::MaterialData{};
+    data.texturePaths = { "textures/a.dds", "textures/n.dds", "textures/r.dds", "", "", "", "" };
+    data.texturePathsComplete = true;
+    const auto token = registry.BeginCapture(&material);
+    REQUIRE(registry.Publish(&material, token, data));
+    auto changes = registry.ExportChanges(0, {});
+    REQUIRE(changes);
+    NativePBR::RecipeCache cache;
+    cache.Update(*changes);
+    const auto generation = NativePBR::PublishRecipes(cache, *changes, {});
+    REQUIRE(generation->batchesComplete);
+    NativePBR::PreparedMatchInput offline;
+    offline.referenceKey = "A:Skyrim.esm";
+    offline.shapeName = "Cube";
+    offline.valid = offline.pbr = offline.opaque = true;
+    offline.texturePaths = { "textures/a.dds", "textures/n.dds", "textures/r.dds", "" };
+    offline.uvOffsetScale = { 0, 0, 1, 1 };
+    offline.shaderFlags = 0x1234;
+    NativePBR::InstanceHint hint;
+    hint.materialIdentity = token.identity;
+    hint.referenceKey = offline.referenceKey;
+    hint.shapeName = offline.shapeName;
+    hint.properties.shaderFlags = offline.shaderFlags;
+    NativePBR::LiveBindingSource source{ generation, { hint } };
+    auto selection = NativePBR::ResolveLiveMatches({ offline }, source);
+    REQUIRE(selection.report.matched == 1);
+    REQUIRE(selection.matches[0]);
+    REQUIRE(selection.matches[0]->recipe->identity == token.identity);
+    source.hints.push_back(hint);
+    REQUIRE(NativePBR::ResolveLiveMatches({ offline }, source).report.ambiguous == 1);
+    source.hints.pop_back();
+    offline.texturePaths[1] = "textures/other.dds";
+    REQUIRE(NativePBR::ResolveLiveMatches({ offline }, source).report.incompatible == 1);
+    offline.texturePaths[1] = "textures/n.dds";
+    offline.alpha = 0.5f;
+    REQUIRE(NativePBR::ResolveLiveMatches({ offline }, source).report.incompatible == 1);
+    offline.alpha = 1.0f;
+    hint.properties.alphaProperty = true;
+    source.hints = { hint };
+    REQUIRE(NativePBR::ResolveLiveMatches({ offline }, source).report.incompatible == 1);
+    source.hints = {};
+    REQUIRE(NativePBR::ResolveLiveMatches({ offline }, source).report.missing == 1);
+    source.hints = { hint };
+    REQUIRE(NativePBR::ResolveLiveMatches({ offline, offline }, source).report.ambiguous == 2);
 }
