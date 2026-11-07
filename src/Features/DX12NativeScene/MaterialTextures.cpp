@@ -409,14 +409,30 @@ namespace DX12Native
         const NativePBR::LiveMatchResult* a_matches)
 	{
 		if (!MaterialUploadsReady()) throw MaterialUploadBusy("Previous material upload is still in flight");
-		const auto path = a_source.directory / "cell-textures.json";
-		if (std::filesystem::file_size(path) > 16ull * 1024 * 1024) throw std::runtime_error("Texture manifest exceeds limit");
-		std::ifstream stream(path);
-		const auto manifest = json::parse(stream);
-		if (manifest.at("schemaVersion") != 1 || _stricmp(manifest.at("cell").get_ref<const std::string&>().c_str(), a_source.cell.c_str()) != 0 || manifest.at("layoutDigest") != a_source.layoutDigest)
-			throw std::runtime_error("Texture manifest identity mismatch");
-		const auto& entries = manifest.at("textures");
-		if (!entries.is_array() || entries.size() > 4096) throw std::runtime_error("Texture source count exceeds limit");
+        // Material acquisition has two independent inputs:
+        // (1) a legacy offline DDS manifest when fallback is still required;
+        // (2) bounded runtime True PBR recipe sources (loose or archive).
+        // Keeping the first optional permits its eventual retirement without
+        // changing the native geometry/BLAS preparation protocol.
+        json entries = json::array();
+        if (a_source.usePreparedTextureManifest) {
+            const auto manifestPath = a_source.directory / "cell-textures.json";
+            if (std::filesystem::file_size(manifestPath) > 16ull * 1024 * 1024)
+                throw std::runtime_error("Texture manifest exceeds limit");
+            std::ifstream stream(manifestPath);
+            const auto manifest = json::parse(stream);
+            if (manifest.at("schemaVersion") != 1 ||
+                _stricmp(manifest.at("cell").get_ref<const std::string&>().c_str(), a_source.cell.c_str()) != 0 ||
+                manifest.at("layoutDigest") != a_source.layoutDigest)
+                throw std::runtime_error("Texture manifest identity mismatch");
+            entries = manifest.at("textures");
+            if (!entries.is_array() || entries.size() > 4096)
+                throw std::runtime_error("Texture source count exceeds limit");
+        } else if (!a_source.importLoosePbr || !a_matches) {
+            // A runtime-only load requires a runtime-owned material generation.
+            // Never silently construct empty tables due to absent provenance.
+            throw std::runtime_error("Runtime material sources require live recipe matches and DDS acquisition");
+        }
 		std::map<std::string, std::unique_ptr<Texture>> textures;
 		std::unordered_map<std::string, std::string> rejected;
 		uint64_t sourceBytes = 0;

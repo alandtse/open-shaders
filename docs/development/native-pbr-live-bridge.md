@@ -71,3 +71,22 @@ fresh Release build and then validate normals, opacity, UVs, emissive
 objects, applied/fallback counters, source acquisition and frame pacing.
 The offline fallback remains the recovery path for unsupported geometry
 and native shading features.
+
+
+## Staged retirement of offline-generated material data
+
+The legacy `cell-textures.json` path is now **optional at the loader API
+boundary** (`MaterialSource::usePreparedTextureManifest`, default true).
+A worker can instead prepare texture pages from already-matched live True PBR
+recipes and bounded loose/archive DDS sources without consulting the offline
+texture manifest. The default gameplay configuration remains unchanged:
+existing atlas texture pages and offline fallback material records still load.
+
+This is an architectural seam, **not yet removal of the offline generator**.
+No UI or production feature automatically selects manifest-free mode.
+At current coverage most matched materials still lack supported/resident
+runtime shading, and removing legacy pages would leave their fallback
+records unusable. We must first establish full source residency, native
+feature coverage and renderer fallback behavior, then switch the default
+and delete obsolete offline material generation. BLAS/TLAS geometry
+preparation is independent of this material deprecation.

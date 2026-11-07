@@ -1310,3 +1310,25 @@ TEST_CASE("Native runtime PBR accepts only provably neutral fuzz and subsurface 
     recipe = NativePBR::CompileRecipe(snapshot);
     REQUIRE_FALSE(NativePBR::NativeMeshRecipeSupported(recipe));
 }
+
+TEST_CASE("Native material source supports future manifest-free runtime acquisition", "[native_pbr]")
+{
+    DX12Native::MaterialSource source;
+    REQUIRE(source.usePreparedTextureManifest);
+    REQUIRE_FALSE(source.importLoosePbr);
+    source.usePreparedTextureManifest = false;
+    source.importLoosePbr = true;
+    REQUIRE_FALSE(source.usePreparedTextureManifest);
+    // The source loader can omit cell-textures.json when runtime sources
+    // and a verified live match plan are supplied; prepared geometry is separate.
+    NativePBR::Snapshot snapshot{ 811, 1, {} };
+    snapshot.material.texturePaths = { "textures/runtime/c.dds", "textures/runtime/n.dds",
+        "textures/runtime/r.dds", "", "", "", "" };
+    snapshot.material.texturePathsComplete = true;
+    auto recipe = std::make_shared<const NativePBR::Recipe>(NativePBR::CompileRecipe(snapshot));
+    NativePBR::LiveMatchResult matches;
+    matches.matches.push_back(NativePBR::VerifiedLiveMatch{ recipe, {} });
+    const auto requests = DX12Native::PlanLiveLooseTextures(matches, {});
+    REQUIRE(requests.paths.size() == 3);
+    REQUIRE(requests.paths[0] == "textures/runtime/c.dds");
+}
