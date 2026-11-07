@@ -9,6 +9,7 @@
 #include "Features/DX12NativeScene/MaterialManifestPolicy.h"
 #include "Features/DX12NativeScene/RuntimeGeometryCapture.h"
 #include "Features/DX12NativeScene/RuntimeGeometryEncoding.h"
+#include "Features/DX12NativeScene/RuntimeGeometryDiskFormat.h"
 #include "Features/DX12NativeScene/MaterialTextureLookup.h"
 #include "Features/DX12NativeScene/ArchiveDdsSource.h"
 #include "Features/DX12NativeScene/LiveGpuTextureEligibility.h"
@@ -1462,4 +1463,66 @@ TEST_CASE("Runtime geometry encoder creates native index/position payload withou
     packet.vertices[3] = 0x7F; // non-finite position
     REQUIRE_FALSE(DX12Native::EncodeRuntimeGeometry(packet));
     REQUIRE(DX12Native::GeometryHalfToFloat(0x3c00) == 1.0f);
+}
+
+
+TEST_CASE("Content addressed native geometry cache roundtrips only verified static source data", "[native_geometry]")
+{
+    DX12Native::RuntimeGeometryPacket packet;
+    packet.referenceKey = "000001:Skyrim.esm";
+    packet.shapeName = "Wall";
+    packet.transform = { 1,0,0,0,0,1,0,0,0,0,1,0 };
+    packet.bound = { 0,0,0,2 };
+    packet.vertexCount = 3;
+    packet.vertexStride = 16;
+    packet.indexCount = 3;
+    packet.indices = { 0,1,2 };
+    packet.vertices.resize(48);
+    const std::array<std::array<float,4>,3> positions{{
+        { 0,0,0,1 },{ 1,0,0,1 },{ 0,1,0,1 }
+    }};
+    std::memcpy(packet.vertices.data(), positions.data(), packet.vertices.size());
+    const auto encoded = DX12Native::SerializeRuntimeGeometryCache(packet);
+    REQUIRE(encoded);
+    REQUIRE(encoded->size() > 128);
+    const auto digest = DX12Native::RuntimeGeometryContentId(packet);
+    REQUIRE(digest);
+    auto restored = DX12Native::DeserializeRuntimeGeometryCache(*encoded);
+    REQUIRE(restored);
+    REQUIRE(restored->referenceKey == packet.referenceKey);
+    REQUIRE(restored->shapeName == packet.shapeName);
+    REQUIRE(restored->vertices == packet.vertices);
+    REQUIRE(restored->indices == packet.indices);
+    REQUIRE(DX12Native::RuntimeGeometryContentId(*restored) == digest);
+    auto corrupt = *encoded;
+    corrupt[0] ^= 0x1;
+    REQUIRE_FALSE(DX12Native::DeserializeRuntimeGeometryCache(corrupt));
+    corrupt = *encoded;
+    corrupt.pop_back();
+    REQUIRE_FALSE(DX12Native::DeserializeRuntimeGeometryCache(corrupt));
+    packet.indices[2] = 300;
+    REQUIRE_FALSE(DX12Native::SerializeRuntimeGeometryCache(packet));
+}
+
+TEST_CASE("Geometry cache files have a distinct extension and independently verified contents", "[native_geometry]")
+{
+    const auto root = std::filesystem::current_path() /
+        ("native-geometry-test-" + std::to_string(GetCurrentProcessId()));
+    struct Cleanup {
+        std::filesystem::path folder;
+        ~Cleanup() { std::error_code ec; std::filesystem::remove_all(folder, ec); }
+    } cleanup{root};
+    DX12Native::MaterialDiskCache cache(root, 2 * 1024 * 1024, ".rgc");
+    std::vector<uint8_t> bytes(192, 42);
+    auto hash = Util::FileDigest::Sha256BytesHex(bytes);
+    REQUIRE(hash);
+    REQUIRE(cache.Store(*hash, bytes) == DX12Native::MaterialDiskCache::StoreResult::Stored);
+    REQUIRE(cache.ListDigests(1) == std::vector<std::string>{ *hash });
+    REQUIRE(cache.Read(*hash, 1024) == bytes);
+    bytes[0] ^= 1;
+    REQUIRE(cache.Store(*hash, bytes) == DX12Native::MaterialDiskCache::StoreResult::Unavailable);
+    std::ofstream modify(root / (*hash + ".rgc"), std::ios::binary | std::ios::trunc);
+    modify.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    modify.close();
+    REQUIRE_FALSE(cache.Read(*hash, 1024));
 }
