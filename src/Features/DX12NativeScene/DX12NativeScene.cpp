@@ -41,10 +41,11 @@ void DX12NativeScene::DrawSettings()
 		if (ImGui::Combo("Shadow normal influence", &normal, "Legacy flat\0Geometry normals\0Full material normals\0"))
 			{ settings.ShadowNormalInfluence = uint32_t(normal); changed = true; }
 		if (ImGui::Button("Reset shadow reach / falloff")) {
-			settings.ShadowReachMultiplier = 1.0f;
-			settings.ShadowFalloffFraction = 0.1f;
-			settings.ShadowFalloffExponent = 1.0f;
-			settings.ShadowDistanceFade = false;
+			const Settings defaults{};
+			settings.ShadowReachMultiplier = defaults.ShadowReachMultiplier;
+			settings.ShadowFalloffFraction = defaults.ShadowFalloffFraction;
+			settings.ShadowFalloffExponent = defaults.ShadowFalloffExponent;
+			settings.ShadowDistanceFade = defaults.ShadowDistanceFade;
 			changed = true;
 		}
 		if (changed) ++shadowControlsRevision;
@@ -82,10 +83,10 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	settings.ShadowDistanceFade = selected.ShadowDistanceFade;
 	settings.ShadowLightIndex = selected.ShadowLightIndex;
 	settings.ShadowNormalInfluence = std::min(selected.ShadowNormalInfluence, 2u);
-	settings.ShadowEmitterRadius = clamp(selected.ShadowEmitterRadius, 1.0f, 0.0f, 8.0f);
-	settings.ShadowReachMultiplier = clamp(selected.ShadowReachMultiplier, 1.0f, 0.1f, 64.0f);
-	settings.ShadowFalloffFraction = clamp(selected.ShadowFalloffFraction, 0.1f, 0.02f, 1.0f);
-	settings.ShadowFalloffExponent = clamp(selected.ShadowFalloffExponent, 1.0f, 0.25f, 4.0f);
+	settings.ShadowEmitterRadius = clamp(selected.ShadowEmitterRadius, Settings{}.ShadowEmitterRadius, 0.0f, 8.0f);
+	settings.ShadowReachMultiplier = clamp(selected.ShadowReachMultiplier, Settings{}.ShadowReachMultiplier, 0.1f, 64.0f);
+	settings.ShadowFalloffFraction = clamp(selected.ShadowFalloffFraction, Settings{}.ShadowFalloffFraction, 0.02f, 1.0f);
+	settings.ShadowFalloffExponent = clamp(selected.ShadowFalloffExponent, Settings{}.ShadowFalloffExponent, 0.25f, 4.0f);
 	resetRequested = true;
 }
 void DX12NativeScene::SaveSettings(json& a_json)
@@ -100,8 +101,8 @@ void DX12NativeScene::SaveSettings(json& a_json)
 }
 void DX12NativeScene::RestoreDefaultSettings()
 {
-	requestedEnabled = 0;
-	requestedShadow = 0;
+	requestedEnabled = Settings{}.Enabled ? 1 : 0;
+	requestedShadow = Settings{}.ShadowMask ? 1 : 0;
 	requestedBudget = Settings{}.BudgetMB;
 	requestedFrameBudget = Settings{}.FrameBudgetMB;
 	{ std::scoped_lock lock(settingsMutex); settings = Settings{}; ++shadowControlsRevision; }

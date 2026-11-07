@@ -94,10 +94,10 @@ void NativeCompositeFeature::LoadSettings(json& a_json)
 	++validityRevision;
 	settings.LightingStrength = std::isfinite(settings.LightingStrength) ? std::clamp(settings.LightingStrength, 0.0f, 2.0f) : 1.0f;
 	const auto safe = [](float v, float fallback, float low, float high) { return std::isfinite(v) ? std::clamp(v, low, high) : fallback; };
-	settings.ShadowContribution = safe(settings.ShadowContribution, 1.0f, 0.0f, 4.0f);
-	settings.ShadowBlend = safe(settings.ShadowBlend, 1.0f, 0.0f, 1.0f);
-	settings.ShadowRadiusPixels = safe(settings.ShadowRadiusPixels, 0.0f, 0.0f, 32.0f);
-	settings.ShadowReceiverTolerance = safe(settings.ShadowReceiverTolerance, 2.0f, 0.1f, 64.0f);
+	settings.ShadowContribution = safe(settings.ShadowContribution, Settings{}.ShadowContribution, 0.0f, 4.0f);
+	settings.ShadowBlend = safe(settings.ShadowBlend, Settings{}.ShadowBlend, 0.0f, 1.0f);
+	settings.ShadowRadiusPixels = safe(settings.ShadowRadiusPixels, Settings{}.ShadowRadiusPixels, 0.0f, 32.0f);
+	settings.ShadowReceiverTolerance = safe(settings.ShadowReceiverTolerance, Settings{}.ShadowReceiverTolerance, 0.1f, 64.0f);
 	enabled = settings.Enabled;
 	if (settings.ShadowLayerEnabled)
 		globals::features::dx12NativeScene.RequestShadowProducerForComposite();
@@ -117,6 +117,8 @@ void NativeCompositeFeature::RestoreDefaultSettings()
 	policy = {};
 	++validityRevision;
 	enabled = settings.Enabled;
+	if (settings.ShadowLayerEnabled)
+		globals::features::dx12NativeScene.RequestShadowProducerForComposite();
 }
 
 void NativeCompositeFeature::ConfigureShadowLayer(const json& args)

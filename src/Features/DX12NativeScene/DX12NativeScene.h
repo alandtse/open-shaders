@@ -13,13 +13,13 @@ struct DX12NativeScene final : Feature
 {
 	struct Settings
 	{
-		bool Enabled = false, ShadowMask = false;
+		bool Enabled = true, ShadowMask = true;
 		uint32_t BudgetMB = 512, FrameBudgetMB = 0;
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
-		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = false;
+		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
-		float ShadowEmitterRadius = 1.0f;
-		float ShadowReachMultiplier = 1.0f, ShadowFalloffFraction = 0.1f, ShadowFalloffExponent = 1.0f;
+		float ShadowEmitterRadius = 0.2f;
+		float ShadowReachMultiplier = 2.0f, ShadowFalloffFraction = 1.0f, ShadowFalloffExponent = 0.6f;
 	} settings;
 	struct PublishedScene
 	{

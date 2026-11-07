@@ -11,9 +11,8 @@ The feature now exposes persisted live controls, adjustable in its UI and
 `configure` DevBench action:
 
 - Common direct strength, diffuse/specular strengths and independent emission
-  strength. Emission is **off by default** to avoid double-counting raster
-  emissive contribution; reference emission used a different scene-composition
-  architecture.
+  strength. The user-tested emission default is **1.0x**, which may
+  double-count emissive lighting already present in the raster scene.
 - Normal influence: legacy flat/no direct specular, geometric normals, or
   material (True PBR) normals. Geometric mode uses world-space triangle edges.
 - Point-light radius multiplier, falloff transition width, exponent. Inverse
@@ -50,9 +49,12 @@ unmatched receivers; incompatible pixels retain raster. A conservative
 five-tap, instance-/depth-gated spatial softening is available from 0 to
 32 px. No cross-geometry blur or prior-frame history is used.
 
-- Shadow strength/blend are **off by default** (reference default strength
-  zero); enabling the early mask alone therefore preserves the prior image.
-- Strength and blend both scale the mask's effect on raster light.
+- The user-tested independent shadow layer is **enabled by default** with
+  contribution 2.0x and blend 0.70. A separate Native Lighting enable switch
+  remains off, preserving ownership of standalone shadowing.
+- Contribution amplifies weighted occlusion (0..4x); blend mixes the effect
+  independently (0..1). The final-image composition option is enabled by
+  default, affecting raster and any native direct contribution.
 - Shadow preview shows only depth-matched mask pixels.
 - The compositor waits on both producers and retains shadow/raster snapshots
   until the compositor GPU fence completes. It also emits a distinct
@@ -79,9 +81,9 @@ The source changes and constant layouts were checked statically. The owner
 must run the Visual Studio Release build, shader packaging/deployment and
 Skyrim runtime comparison. Important experiments:
 
-1. With the new shadow layer at default strength 0, verify original raster
-   and direct lighting remain unchanged.
-2. Enable early shadow mask and set layer strength 0.25, radius 0:
+1. Temporarily set shadow contribution to 0 and verify the original raster
+   image is unchanged, then restore the tested default 2.0x.
+2. With the early shadow mask enabled, set contribution to 0.25x and radius 0:
    matched pixels should darken but invalid/out-of-depth pixels stay raster.
 3. Increase radius to 2 or 3 px; inspect edges for mask bleeding and read
    DX12 Native Scene / Native Composite diagnostics.
@@ -89,3 +91,53 @@ Skyrim runtime comparison. Important experiments:
    changing unrelated validity lab or RR policy.
 5. Watch `busyDeferrals` and independent `shadowSubmissions` when varying
    control values; no stale resources may be substituted.
+
+## User-tested defaults — November 7, 2026
+
+These defaults were transcribed from three supplied Skyrim settings screenshots.
+They apply to fresh configuration fields and **Restore Defaults**; existing
+persisted user/scene settings remain authoritative until reset. UI buttons
+that reset light/direct strengths or shadow reach/falloff now use the same
+settings-struct defaults, rather than obsolete constants.
+
+| Feature | Control | Default |
+| --- | --- | --- |
+| Native Lighting | Enable native lighting | Off |
+| Native Lighting | Diffuse / Specular | Both on |
+| Native Lighting | Direct strength | 2.00x |
+| Native Lighting | Diffuse intensity / Specular intensity | 1.00x / 1.00x |
+| Native Lighting | Prepared emission strength | 1.00x |
+| Native Lighting | Normal influence | Full material normals (True PBR) |
+| Native Lighting | Radius multiplier | 4.00x |
+| Native Lighting | Falloff transition width / exponent | 0.10 / 1.00 |
+| Native Lighting | Direct ray-occlusion weight | 1.00 |
+| Native Lighting | Stochastic emitter sampling | Off |
+| Native Lighting | Emitter radius scale | 1.00x (inactive while sampling off) |
+| Native Lighting | All prepared cell lights | On |
+| Native Lighting | Automatic lighting VRAM budget (DXGI) | On (0 MiB override) |
+| Native Lighting | Early shadow-mask culling | On |
+| Native Lighting | Publish validity debug / Compare culling | Both off |
+| Native Composite | Enable Native Composite / Add native direct lighting | Both on |
+| Native Composite | Lighting strength | 1.000 |
+| Native Composite | Enable independent shadow layer | On |
+| Native Composite | Shadow contribution | 2.00x |
+| Native Composite | Shadow blend | 0.70 |
+| Native Composite | Shadow softness | 2.0 pixels |
+| Native Composite | Shadow receiver tolerance | 16.00 |
+| Native Composite | Preview independent shadow mask | Off |
+| Native Composite | Apply shadows to final combined lighting | On |
+| DX12 Native Scene | Load prepared scene / Produce RT shadow mask | Both on |
+| DX12 Native Scene | Shadow all prepared point lights | On |
+| DX12 Native Scene | Stochastic shadow emitter sampling | On |
+| DX12 Native Scene | Shadow emitter radius multiplier | 0.200 |
+| DX12 Native Scene | Shadow light reach multiplier | 2.00x |
+| DX12 Native Scene | Shadow fade range fraction | 1.000 |
+| DX12 Native Scene | Shadow falloff curve | 0.60 |
+| DX12 Native Scene | Fade shadows near light reach | On |
+| DX12 Native Scene | Shadow normal influence | Full material normals |
+| DX12 Native Scene | Automatic native frame VRAM budget (DXGI) | On (0 MiB override) |
+
+The tested screenshot has Native Lighting disabled even though Native
+Composite's **Add native direct lighting** checkbox is on. Native Composite
+will therefore apply the independent shadows while the native direct
+lighting contribution remains absent; that is deliberate.

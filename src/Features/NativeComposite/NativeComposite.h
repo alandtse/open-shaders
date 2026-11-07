@@ -15,12 +15,12 @@ struct NativeCompositeFeature final : Feature
 		float LightingStrength = 1.0f;
 		bool PersistLab = false;
 		// Independent DX12 shadow layer. Does not require Native Lighting.
-		bool ShadowLayerEnabled = false;
-		float ShadowContribution = 1.0f; // 0..4, boosts weighted occlusion beyond 1x.
-		float ShadowBlend = 1.0f;        // 0..1, mixes shadow effect with unshadowed scene.
-		float ShadowRadiusPixels = 0.0f, ShadowReceiverTolerance = 2.0f;
+		bool ShadowLayerEnabled = true;
+		float ShadowContribution = 2.0f; // 0..4, boosts weighted occlusion beyond 1x.
+		float ShadowBlend = 0.70f;       // 0..1, mixes shadow effect with unshadowed scene.
+		float ShadowRadiusPixels = 2.0f, ShadowReceiverTolerance = 16.0f;
 		bool ShadowPreview = false;
-		bool ShadowAfterLighting = false; // false: raster only; true: combined raster + native direct.
+		bool ShadowAfterLighting = true;  // false: raster only; true: combined raster + native direct.
 	};
 	std::string GetName() override { return "Native Composite"; }
 	std::string GetShortName() override { return "NativeComposite"; }

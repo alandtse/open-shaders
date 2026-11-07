@@ -14,8 +14,8 @@ struct NativeLightingFeature final : Feature
 		bool Enabled = false, Diffuse = true, Specular = true, EarlyShadowCull = true, Debug = false, CompareCulling = false;
 		float DiffuseIntensity = 1.0f, SpecularIntensity = 1.0f;
 		// Ported from reference PR #9; native direct owns these independently.
-		float DirectStrength = 1.0f, EmissionStrength = 0.0f;
-		float PointLightRadiusMultiplier = 1.0f, PointLightFalloffFraction = 0.1f, PointLightFalloffExponent = 1.0f;
+		float DirectStrength = 2.0f, EmissionStrength = 1.0f;
+		float PointLightRadiusMultiplier = 4.0f, PointLightFalloffFraction = 0.1f, PointLightFalloffExponent = 1.0f;
 		float ShadowStrength = 1.0f, EmitterRadiusMultiplier = 1.0f;
 		uint32_t NormalInfluence = 2, SelectedDirectLight = 0;
 		bool StochasticShadows = false, UseAllPreparedLights = true;

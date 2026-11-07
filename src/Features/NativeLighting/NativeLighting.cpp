@@ -25,7 +25,7 @@ void NativeLightingFeature::DrawSettings()
 	tuned |= ImGui::SliderFloat("Diffuse intensity", &settings.DiffuseIntensity, 0.0f, 8.0f, "%.2fx");
 	tuned |= ImGui::SliderFloat("Specular intensity", &settings.SpecularIntensity, 0.0f, 8.0f, "%.2fx");
 	tuned |= ImGui::SliderFloat("Prepared emission strength", &settings.EmissionStrength, 0.0f, 8.0f, "%.2fx");
-	ImGui::TextDisabled("Emission defaults off: the raster scene may already include emissive lighting.");
+	ImGui::TextDisabled("Prepared emission may double-count emissive lighting in the raster scene.");
 	int normalMode = int(settings.NormalInfluence);
 	if (ImGui::Combo("Normal influence", &normalMode, "Legacy flat (no specular)\0Geometry normals\0Full material normals (True PBR)\0")) {
 		settings.NormalInfluence = uint32_t(normalMode); tuned = true;
@@ -36,8 +36,11 @@ void NativeLightingFeature::DrawSettings()
 	tuned |= ImGui::SliderFloat("Falloff curve exponent", &settings.PointLightFalloffExponent, 0.25f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
 	ImGui::TextDisabled("Radius affects cutoff only; inverse-square energy is unchanged.");
 	if (ImGui::Button("Reset light reach / falloff")) {
-		settings.PointLightRadiusMultiplier = 1.0f; settings.PointLightFalloffFraction = 0.1f;
-		settings.PointLightFalloffExponent = 1.0f; tuned = true;
+		const Settings defaults{};
+		settings.PointLightRadiusMultiplier = defaults.PointLightRadiusMultiplier;
+		settings.PointLightFalloffFraction = defaults.PointLightFalloffFraction;
+		settings.PointLightFalloffExponent = defaults.PointLightFalloffExponent;
+		tuned = true;
 	}
 	ImGui::SeparatorText("Occlusion within native direct lighting");
 	tuned |= ImGui::SliderFloat("Direct ray-occlusion weight", &settings.ShadowStrength, 0.0f, 1.0f, "%.2f");
@@ -57,8 +60,12 @@ void NativeLightingFeature::DrawSettings()
 		}
 	}
 	if (ImGui::Button("Reset direct strengths")) {
-		settings.DirectStrength = settings.DiffuseIntensity = settings.SpecularIntensity = 1.0f;
-		settings.EmissionStrength = 0.0f; tuned = true;
+		const Settings defaults{};
+		settings.DirectStrength = defaults.DirectStrength;
+		settings.DiffuseIntensity = defaults.DiffuseIntensity;
+		settings.SpecularIntensity = defaults.SpecularIntensity;
+		settings.EmissionStrength = defaults.EmissionStrength;
+		tuned = true;
 	}
 	if (tuned) ++validityRevision;
 	bool autoBudget = settings.BudgetMB == 0;
@@ -113,9 +120,9 @@ void NativeLightingFeature::LoadSettings(json& a_json)
 	selected.DiffuseIntensity = std::isfinite(selected.DiffuseIntensity) ? std::clamp(selected.DiffuseIntensity, 0.0f, 8.0f) : 1.0f;
 	selected.SpecularIntensity = std::isfinite(selected.SpecularIntensity) ? std::clamp(selected.SpecularIntensity, 0.0f, 8.0f) : 1.0f;
 	const auto sanitize = [](float v, float fallback, float low, float high) { return std::isfinite(v) ? std::clamp(v, low, high) : fallback; };
-	selected.DirectStrength = sanitize(selected.DirectStrength, 1.0f, 0.0f, 8.0f);
-	selected.EmissionStrength = sanitize(selected.EmissionStrength, 0.0f, 0.0f, 8.0f);
-	selected.PointLightRadiusMultiplier = sanitize(selected.PointLightRadiusMultiplier, 1.0f, 0.1f, 64.0f);
+	selected.DirectStrength = sanitize(selected.DirectStrength, Settings{}.DirectStrength, 0.0f, 8.0f);
+	selected.EmissionStrength = sanitize(selected.EmissionStrength, Settings{}.EmissionStrength, 0.0f, 8.0f);
+	selected.PointLightRadiusMultiplier = sanitize(selected.PointLightRadiusMultiplier, Settings{}.PointLightRadiusMultiplier, 0.1f, 64.0f);
 	selected.PointLightFalloffFraction = sanitize(selected.PointLightFalloffFraction, 0.1f, 0.02f, 1.0f);
 	selected.PointLightFalloffExponent = sanitize(selected.PointLightFalloffExponent, 1.0f, 0.25f, 4.0f);
 	selected.ShadowStrength = sanitize(selected.ShadowStrength, 1.0f, 0.0f, 1.0f);
@@ -241,9 +248,9 @@ void NativeLightingFeature::RegisterUxActions()
 		};
 		tune("diffuseIntensity", feature.settings.DiffuseIntensity, 1.0f, 0.0f, 8.0f);
 		tune("specularIntensity", feature.settings.SpecularIntensity, 1.0f, 0.0f, 8.0f);
-		tune("directStrength", feature.settings.DirectStrength, 1.0f, 0.0f, 8.0f);
-		tune("emissionStrength", feature.settings.EmissionStrength, 0.0f, 0.0f, 8.0f);
-		tune("radiusMultiplier", feature.settings.PointLightRadiusMultiplier, 1.0f, 0.1f, 64.0f);
+		tune("directStrength", feature.settings.DirectStrength, NativeLightingFeature::Settings{}.DirectStrength, 0.0f, 8.0f);
+		tune("emissionStrength", feature.settings.EmissionStrength, NativeLightingFeature::Settings{}.EmissionStrength, 0.0f, 8.0f);
+		tune("radiusMultiplier", feature.settings.PointLightRadiusMultiplier, NativeLightingFeature::Settings{}.PointLightRadiusMultiplier, 0.1f, 64.0f);
 		tune("falloffFraction", feature.settings.PointLightFalloffFraction, 0.1f, 0.02f, 1.0f);
 		tune("falloffExponent", feature.settings.PointLightFalloffExponent, 1.0f, 0.25f, 4.0f);
 		tune("shadowStrength", feature.settings.ShadowStrength, 1.0f, 0.0f, 1.0f);
