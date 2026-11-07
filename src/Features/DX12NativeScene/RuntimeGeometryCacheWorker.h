@@ -5,6 +5,7 @@
 #include "MaterialDiskCache.h"
 #include <BS_thread_pool.hpp>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -48,6 +49,10 @@ namespace DX12Native
         {
             ++epoch;
             scheduled.clear();
+            // Refresh the cache index on the next menu visit; the last
+            // gameplay session may have written new verified geometry.
+            menuRequested = false;
+            prewarmComplete = false;
         }
 
         /** @brief Called on the main thread; only schedules background I/O and reads completed stats. */
@@ -63,6 +68,10 @@ namespace DX12Native
                 } else {
                     stored += work->accepted;
                     rejected += work->rejected;
+                    // Keep gameplay disk I/O bounded: at most four files
+                    // per 250 ms, with no synchronous render-thread reads.
+                    nextWriteAt = std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(250);
                 }
                 if (!work->error.empty()) lastError = work->error;
                 work.reset();
@@ -76,7 +85,8 @@ namespace DX12Native
                 Start(next);
                 return;
             }
-            if (menu || !mailbox || mailbox->Count() == 0) return;
+            if (menu || !mailbox || mailbox->Count() == 0 ||
+                std::chrono::steady_clock::now() < nextWriteAt) return;
             auto next = std::make_shared<Work>();
             next->epoch = epoch;
             for (const auto& packet : mailbox->Export(0, mailbox->Count())) {
@@ -162,5 +172,6 @@ namespace DX12Native
         uint64_t prewarmBytes = 0;
         bool menuRequested = false, prewarmComplete = false;
         std::string lastError;
+        std::chrono::steady_clock::time_point nextWriteAt{};
     };
 }
