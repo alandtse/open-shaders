@@ -1,116 +1,73 @@
-# Experimental verified live True PBR scalar bridge
+# Native True PBR material authority and DX12 residency
 
-The `DX12 Native Scene` panel now exposes **Experimental: verified live PBR scalars** (default **off**).
-This is a first, deliberately limited live bridge, not a live DX11/DX12 texture interop layer.
+## Authority and identity
 
-The render thread captures a revision-matched, immutable True PBR recipe generation and
-a bounded set of reference/shape observations. A worker builds a per-instance matching
-plan. Candidates are rejected unless the prepared reference/shape is unique, the live
-observation is unique, the surface is static and opaque, the material is an ordinary
-mesh recipe without unsupported PBR features, and alpha, clamp mode, UV transform and
-base/normal/RMAOS/emission texture paths match exactly.
+The DX12 Native Scene opt-in control named "Experimental: verified live PBR scalars"
+now uses runtime True PBR recipes to compile complete 128-byte shader records.
+Its existing setting name and default OFF state remain unchanged.
 
-On an accepted match the worker applies **roughness scale** and **specular level**
-to the existing 128-byte native material record. If the same instance has verified
-finite nonnegative emission metadata, its observed emissive color and multiplier
-are applied separately. Texture descriptors, resident DDS
-pages, emitter settings, geometry and shader paths remain as prepared by the offline
-scene. The material table stays immutable after upload. Different live identities or
-revisions cannot share deduplicated records.
+Runtime material properties, shader flags, base/normal/RMAOS/emission paths,
+UV transforms, sampler and PBR parameters are authoritative. The offline atlas
+is retained for static geometry, vertex attributes and reusable resident DDS
+pages. Offline material paths and scalars no longer veto unique live matches.
 
-A live source match additionally requires corresponding SHA-256-verified DDS
-sources to have been successfully published in the native material page registry.
-The source index catches normalized-path conflicts and rejects incompatible
-observed texture dimensions/mip counts. This verifies **atlas provenance**, not
-byte-for-byte identity with the currently bound DX11 GPU texture.
+Runtime matching requires exactly one reference-and-shape identity on each
+side. Skinned and alpha-property geometry, ambiguous references and geometry
+not verified as an opaque traversal candidate remain excluded. This is
+deliberately conservative: the capture hook does not yet prove a native NIF
+model/block identity, animated UV state or exact runtime GPU texture contents.
 
-Unsupported, ambiguous, dirty, missing, animated, alpha-tested, landscape, or otherwise
-incompatible candidates continue through the existing offline atlas material route.
-A matching observation is not proof that a live GPU texture contains the same bits as
-the offline asset; use the opt-in mode only for evaluating scalar parity.
+## Runtime record compiler
 
-The material worker accepts a new recipe revision without blocking the main thread.
-New captures are throttled to approximately 120 render frames, and completed
-materials are only published after the existing upload-fence policy. In-flight
-prepared material work retains its existing resource ownership. As the branch does
-not yet revalidate source texture bytes or fully verify renderer material identity,
-this bridge deliberately does **not** import live textures, change opacity or alter
-advanced PBR features.
+CompileRuntimeMaterial reads the live immutable recipe and the captured
+shader-property observation, resolving runtime texture paths through the
+existing verified DX12 residency registry. Its material record includes
+runtime base, normal, RMAOS and optional emission bindings; UV and clamp;
+roughness and specular; appropriate model-normal and vertex-color flags;
+and valid instance emission.
 
-Diagnostics under `materialBudget` expose `livePbrMatched`, `livePbrAmbiguous`,
-`livePbrIncompatible`, `livePbrMissing`, `livePbrApplied`, `livePbrEmissiveApplied`,
-and `livePbrSourcesMissing/Ambiguous/Incompatible`. A matched candidate may still be
-rejected by the ordinary native material compiler; the existing material readiness
-and failure counters remain authoritative.
+Unsupported advanced effects (glint, projected PBR, displacement, feature
+textures, coat/fuzz/subsurface), non-opaque state, absent normal basis and
+missing resident DDS bindings do not use fabricated shader approximations.
+They retain the previous offline material compiler as a fallback. A live
+match alone is not proof that a record has native coverage.
 
-### Not completed by this bridge
+Texture source provenance is SHA-256-verified, but this does not prove that
+an archive or loose DDS matches the current renderer-owned DX11 GPU bytes.
+Direct DX11-to-DX12 GPU texture sharing/copy remains future work and is
+limited to descriptor eligibility diagnostics in this branch.
 
-- Live texture byte/digest verification and DX12 GPU residency for non-atlas textures.
-- Per-landscape-layer PBR texture paths and native landscape shading.
-- Advanced True PBR coat, fuzz, displacement, glint, subsurface and projection.
-- Full geometry-to-material provenance, including mesh block identity and dynamic forms.
-- Native shader support for all material types and in-game quality/performance validation.
+The existing asynchronous material worker prepares and publishes immutable
+bindings after its upload completion fences. Runtime matching and compilation
+are not performed by the draw shader or synchronously on the main thread.
 
-No Windows/Skyrim compilation or live runtime test has been performed by this commit.
+## Runtime UI counters
 
-### Experimental loose DDS supplement (separate opt-in)
+The collapsible Native PBR Diagnostics section reports livePbrMatched as
+unique identity matches, and livePbrApplied as the number of complete
+runtime-derived shader records accepted. livePbrOfflineFallback indicates
+matched objects whose material records used the offline fallback.
 
-The `Experimental: import missing loose PBR DDS` checkbox is **off by default**.
-Enable verified live PBR scalars first; the loose import option only applies to that
-already-matched opaque static scene. On a background material worker it selects
-up to **8 unique missing DDS paths per scene/revision**, reads at most **32 MiB**
-of additional source data, rejects reparse-point files, hashes their bytes with
-SHA-256 and validates DDS metadata and DX12 shader-sampling support.
+New reasons: livePbrUnsupported, livePbrUnsafeOpacity,
+livePbrMissingBasis, livePbrMissingBindings, plus existing source missing,
+ambiguous and incompatible counters. Loose/archive import statistics and
+DXGI memory/upload telemetry remain available.
 
-Only **loose files** under `Data/textures` are accepted. BSA/archive resources,
-non-DDS sources, complex PBR features and renderer-owned GPU textures are
-deliberately not captured. Import uses the **same material upload page cache,
-DXGI budget, staging limit, single in-flight upload slot and completion fences**
-as the prepared atlas. A file is reopened and digest-checked before GPU upload;
-a changed or unavailable file does not become a resident texture.
+## Bounded texture acquisition (still opt-in)
 
-The per-instance source request must still pass the strict live-material matcher.
-Sources missing at a particular load remain on the existing prepared/fallback
-path. The planner defers requests past its eight-file cap; it does not loop on
-the main render thread trying to fill them. Toggling the option triggers a
-fresh asynchronously prepared binding set.
+Loose DDS acquisition and archive-backed Skyrim resource-stream fallback
+remain separate switches, disabled by default. The source acquisition plan
+is capped at 8 DDS paths and 32 MiB per load; it uses the existing page
+caches, DXGI memory checks and upload retirement fences. Archive sources
+are considered only if the loose file is absent. No CPU GPU readback or
+renderer texture pointer is borrowed.
 
-Diagnostics: `looseDdsPlanned`, `looseDdsImported`, `looseDdsRejected`,
-`looseDdsDeferred` and `looseDdsBytes`. These are worker load counters;
-they are **not** evidence of correct in-game lighting until user validation.
+## Limitations and test requirements
 
-If repeated load attempts exhaust GPU memory, turn off the loose import toggle.
-The known-good baseline is the prepared atlas plus the existing native fallback.
-
-### Archive-backed DDS fallback (additional experimental opt-in)
-
-**Experimental: use archive-backed DDS fallback** is separately disabled by
-default and requires both earlier PBR switches. The background loader uses
-Skyrim's BSResourceNiBinaryStream only when a planned source has no loose
-DDS file. A present but invalid loose file is *not* silently replaced by an
-archived texture. The combined missing-source budget is 8 texture requests /
-32 MiB, shared by archive and loose additions.
-
-All archive bytes are copied into owned memory, checked with SHA-256, validated
-as DDS, then re-read and digest-checked before use by the existing DX12 page
-upload and GPU fence retirement system. No live DX11 GPU pointer is borrowed.
-
-Diagnostics: archiveDdsPlanned, archiveDdsImported, archiveDdsRejected,
-archiveDdsBytes. This is initial archive-backed source support; it has not
-been compiled or runtime-validated. Archive stream availability, performance
-and exact texture parity must be checked in Skyrim before enabling by default.
-
-### Live DX11 texture transfer preparation (diagnostics only)
-
-The native material worker now classifies copied D3D11 texture descriptors for
-uniquely matched PBR recipes into **unobserved**, **unsupported shape**,
-**copy candidate**, and **potential NT shared-handle candidate**. It reports
-liveGpuUnobserved, liveGpuUnsupported, liveGpuCopyCandidates and
-liveGpuSharedCandidates in the native material budget diagnostics.
-
-The classification never opens a handle, maps a D3D11 texture, reads GPU bytes,
-or transfers it to DX12. A shared misc flag **does not prove** an existing
-shareable handle, correct adapter ownership, proper resource states, or an
-engine-to-DX12 fence protocol. Non-shared resources would require a separately
-paced D3D11 copy with explicit lifetime and cross-API synchronization. Neither
-path is enabled by this commit; zero additional gameplay GPU work is introduced.
+This runtime-authoritative update has not passed Windows compilation or
+in-game testing by ChatGPT. Previous successful screenshots validated the
+earlier scalar-only route, not this new complete material compiler. Run a
+fresh Release build and then validate normals, opacity, UVs, emissive
+objects, applied/fallback counters, source acquisition and frame pacing.
+The offline fallback remains the recovery path for unsupported geometry
+and native shading features.
