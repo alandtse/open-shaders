@@ -1128,20 +1128,31 @@ bool TruePBR::BSLightingShader_SetupMaterial(RE::BSLightingShader* shader, RE::B
 				nativeRegistry.Publish(material, capture, SnapshotPBRLandscape(*pbr));
 		} else if (isObjectTechnique) {
 			const auto* pbr = static_cast<const BSLightingShaderMaterialPBR*>(material);
-			const std::array sources{ pbr->diffuseTexture.get(), pbr->normalTexture.get(), pbr->rmaosTexture.get(),
-				pbr->emissiveTexture.get(), pbr->displacementTexture.get(), pbr->featuresTexture0.get(), pbr->featuresTexture1.get() };
-			std::array<const void*, 8> textures{};
-			std::array<const void*, 14> resources{};
-			for (size_t index = 0; index < sources.size(); ++index) {
-				textures[index] = sources[index];
-				if (sources[index] && sources[index]->rendererTexture) {
-					resources[index * 2] = sources[index]->rendererTexture;
-					resources[index * 2 + 1] = sources[index]->rendererTexture->texture;
+			auto observeTextures = [pbr] {
+				const std::array sources{ pbr->diffuseTexture.get(), pbr->normalTexture.get(), pbr->rmaosTexture.get(),
+					pbr->emissiveTexture.get(), pbr->displacementTexture.get(), pbr->featuresTexture0.get(), pbr->featuresTexture1.get() };
+				std::array<const void*, 8> textures{};
+				std::array<const void*, 14> resources{};
+				for (size_t index = 0; index < sources.size(); ++index) {
+					textures[index] = sources[index];
+					if (sources[index] && sources[index]->rendererTexture) {
+						resources[index * 2] = sources[index]->rendererTexture;
+						resources[index * 2 + 1] = sources[index]->rendererTexture->texture;
+					}
 				}
-			}
-			textures.back() = pbr->textureSet.get();
+				textures.back() = pbr->textureSet.get();
+				return std::pair{ textures, resources };
+			};
+			const auto [textures, resources] = observeTextures();
 			auto capture = nativeRegistry.ObserveAndBegin(material, uv, material->materialAlpha, uint32_t(material->textureClampMode), textures, resources);
-			if (capture && PBRMaterialHasRequiredTextures(material)) nativeRegistry.Publish(material, capture, SnapshotPBRMesh(*pbr));
+			if (capture && PBRMaterialHasRequiredTextures(material)) {
+				auto snapshot = SnapshotPBRMesh(*pbr);
+				const auto [currentTextures, currentResources] = observeTextures();
+				NativePBR::MaterialData current;
+				SnapshotPBRBase(*material, current);
+				nativeRegistry.ObserveAndBegin(material, current.uvOffsetScale, current.materialAlpha, current.clampMode, currentTextures, currentResources);
+				nativeRegistry.Publish(material, capture, std::move(snapshot));
+			}
 		}
 
 		RE::BSGraphics::Renderer::PrepareVSConstantGroup(RE::BSGraphics::ConstantGroupLevel::PerMaterial);

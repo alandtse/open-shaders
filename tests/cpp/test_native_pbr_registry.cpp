@@ -487,6 +487,23 @@ TEST_CASE("Renderer resource replacement invalidates the material generation", "
     REQUIRE(updated.material.textureGeneration > original.material.textureGeneration);
 }
 
+TEST_CASE("A resource change during capture rejects the old snapshot", "[native_pbr]")
+{
+    NativePBR::Registry registry;
+    NativePBR::MaterialData data;
+    int source = 0, first = 0, second = 0;
+    std::array<const void*, 8> textures{};
+    std::array<const void*, 14> resources{};
+    resources[1] = &first;
+    const auto before = registry.ObserveAndBegin(&source, data.uvOffsetScale, data.materialAlpha, data.clampMode, textures, resources);
+    resources[1] = &second;
+    const auto after = registry.ObserveAndBegin(&source, data.uvOffsetScale, data.materialAlpha, data.clampMode, textures, resources);
+    REQUIRE_FALSE(registry.Publish(&source, before, data));
+    REQUIRE(registry.Export().empty());
+    REQUIRE(registry.Publish(&source, after, data));
+    REQUIRE(registry.Export().front().material.textureGeneration == after.textureGeneration);
+}
+
 TEST_CASE("Incremental registry export copies only changed snapshots", "[native_pbr]")
 {
     NativePBR::Registry registry;
