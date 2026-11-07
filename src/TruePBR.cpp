@@ -995,9 +995,25 @@ struct BSLightingShaderProperty_GetRenderPasses
 		const bool isPbr = IsPBRShaderProperty(property);
 		if (isPbr && geometry && !geometry->name.empty()) {
 			if (auto* reference = geometry->GetUserData(); reference && !reference->IsDynamicForm()) {
-				if (const auto* file = reference->GetFile(0))
+				if (const auto* file = reference->GetFile(0)) {
+					const auto& geometryData = geometry->GetGeometryRuntimeData();
+					NativePBR::InstanceProperties instance;
+					instance.shaderFlags = property->flags.underlying();
+					instance.skinned = bool(geometryData.skinInstance);
+					if (const auto* alpha = geometryData.alphaProperty.get()) {
+						instance.alphaProperty = true;
+						instance.alphaFlags = alpha->alphaFlags;
+						instance.alphaThreshold = alpha->alphaThreshold;
+					}
+					if (const auto* color = property->emissiveColor; color && std::isfinite(color->red) && std::isfinite(color->green) &&
+						std::isfinite(color->blue) && std::isfinite(property->emissiveMult)) {
+						instance.emissionKnown = true;
+						instance.emissiveColor = { color->red, color->green, color->blue };
+						instance.emissiveMultiplier = property->emissiveMult;
+					}
 					globals::features::truePBR.nativeRegistry.ObserveInstance(property->material,
-						std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename()), geometry->name.c_str());
+						std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename()), geometry->name.c_str(), instance);
+				}
 			}
 		}
 

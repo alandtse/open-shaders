@@ -701,6 +701,34 @@ TEST_CASE("Prepared candidate analysis counts only published recipes for unique 
     REQUIRE_FALSE(NativePBR::AnalyzeInstanceCoverage(prepared, hints).recipeGenerationAvailable);
 }
 
+TEST_CASE("Conflicting instance properties prevent unique candidate matching", "[native_pbr]")
+{
+    NativePBR::Registry registry;
+    int material = 0;
+    NativePBR::InstanceProperties first;
+    first.alphaProperty = true;
+    first.alphaFlags = 512;
+    first.alphaThreshold = 128;
+    first.emissionKnown = true;
+    first.emissiveColor = { 1.0f, 0.5f, 0.25f };
+    first.emissiveMultiplier = 2.0f;
+    registry.ObserveInstance(&material, "ref", "shape", first);
+    auto hints = registry.ExportInstanceHints();
+    REQUIRE(hints.size() == 1);
+    REQUIRE(hints.front().properties == first);
+    REQUIRE(NativePBR::AnalyzeInstanceCoverage({ { "ref", "shape" } }, hints).uniqueCandidates == 1);
+    auto second = first;
+    second.alphaThreshold = 64;
+    registry.ObserveInstance(&material, "ref", "shape", second);
+    hints = registry.ExportInstanceHints();
+    REQUIRE(hints.front().propertiesConflict);
+    REQUIRE(NativePBR::AnalyzeInstanceCoverage({ { "ref", "shape" } }, hints).ambiguous == 1);
+    const auto revision = registry.Revision();
+    registry.ObserveInstance(&material, "ref", "shape", first);
+    registry.ObserveInstance(&material, "ref", "shape", second);
+    REQUIRE(registry.Revision() == revision);
+}
+
 TEST_CASE("Clearing scene observations preserves published materials", "[native_pbr]")
 {
     NativePBR::Registry registry;

@@ -31,10 +31,16 @@ namespace NativePBR
 		};
 		std::unordered_map<std::string, size_t> preparedCounts;
 		std::unordered_map<std::string, std::vector<uint64_t>> materials;
+		std::unordered_map<std::string, InstanceProperties> properties;
+		std::unordered_set<std::string> conflicts;
 		for (const auto& item : a_prepared)
 			if (!item.referenceKey.empty() && !item.shapeName.empty()) ++preparedCounts[key(item.referenceKey, item.shapeName)];
 		for (const auto& hint : a_hints) {
-			auto& values = materials[key(hint.referenceKey, hint.shapeName)];
+			const auto hintKey = key(hint.referenceKey, hint.shapeName);
+			if (hint.propertiesConflict) conflicts.insert(hintKey);
+			const auto [prior, inserted] = properties.try_emplace(hintKey, hint.properties);
+			if (!inserted && prior->second != hint.properties) conflicts.insert(hintKey);
+			auto& values = materials[hintKey];
 			if (std::find(values.begin(), values.end(), hint.materialIdentity) == values.end()) values.push_back(hint.materialIdentity);
 		}
 		InstanceCoverage result;
@@ -46,7 +52,7 @@ namespace NativePBR
 			const auto identity = key(item.referenceKey, item.shapeName);
 			const auto found = materials.find(identity);
 			if (found == materials.end()) ++result.noObservation;
-			else if (preparedCounts[identity] != 1 || found->second.size() != 1) ++result.ambiguous;
+			else if (preparedCounts[identity] != 1 || found->second.size() != 1 || conflicts.contains(identity)) ++result.ambiguous;
 			else {
 				++result.uniqueCandidates;
 				if (a_recipes) {

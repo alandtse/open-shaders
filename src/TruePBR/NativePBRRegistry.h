@@ -80,10 +80,24 @@ namespace NativePBR
 		MaterialData material;
 	};
 
+	/** @brief Captures per-geometry shader and alpha state without retaining engine objects. */
+	struct InstanceProperties
+	{
+		uint64_t shaderFlags = 0;
+		uint16_t alphaFlags = 0;
+		uint8_t alphaThreshold = 0;
+		bool alphaProperty = false, skinned = false, emissionKnown = false;
+		std::array<float, 3> emissiveColor{};
+		float emissiveMultiplier = 0;
+		bool operator==(const InstanceProperties&) const = default;
+	};
+
 	struct InstanceHint
 	{
 		uint64_t materialIdentity = 0;
 		std::string referenceKey, shapeName;
+		InstanceProperties properties;
+		bool propertiesConflict = false;
 	};
 
 	struct Statistics
@@ -236,23 +250,26 @@ namespace NativePBR
 		}
 
 		/** @brief Records a bounded, unverified reference-and-shape association. */
-		void ObserveInstance(const void* a_source, std::string a_reference, std::string a_shape)
+		void ObserveInstance(const void* a_source, std::string a_reference, std::string a_shape, InstanceProperties a_properties = {})
 		{
 			if (!a_source || a_reference.empty() || a_reference.size() > 256 || a_shape.empty() || a_shape.size() > 1024) return;
 			{
 				std::shared_lock lock(mutex);
 				if (auto it = entries.find(a_source); it != entries.end())
 					for (const auto& hint : it->second.hints)
-						if (hint.referenceKey == a_reference && hint.shapeName == a_shape) return;
+						if (hint.referenceKey == a_reference && hint.shapeName == a_shape && (hint.propertiesConflict || hint.properties == a_properties)) return;
 			}
 			std::unique_lock lock(mutex);
 			auto [it, inserted] = entries.try_emplace(a_source);
 			auto& entry = it->second;
 			if (inserted) { entry.identity = nextIdentity++; ++revision; }
-			for (const auto& hint : entry.hints)
-				if (hint.referenceKey == a_reference && hint.shapeName == a_shape) return;
+			for (auto& hint : entry.hints)
+				if (hint.referenceKey == a_reference && hint.shapeName == a_shape) {
+					if (!hint.propertiesConflict && hint.properties != a_properties) { hint.propertiesConflict = true; ++revision; }
+					return;
+				}
 			if (entry.hints.size() >= kMaximumHintsPerMaterial || totalHints >= kMaximumInstanceHints) { ++hintLimitHits; return; }
-			entry.hints.push_back({ entry.identity, std::move(a_reference), std::move(a_shape) });
+			entry.hints.push_back({ entry.identity, std::move(a_reference), std::move(a_shape), a_properties });
 			++totalHints;
 			++revision;
 		}
