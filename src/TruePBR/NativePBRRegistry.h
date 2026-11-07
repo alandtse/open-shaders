@@ -267,6 +267,16 @@ namespace NativePBR
 			return result;
 		}
 
+		/** @brief Drops scene observations while retaining material identities and snapshots. */
+		void ClearInstanceHints()
+		{
+			std::unique_lock lock(mutex);
+			if (!totalHints) return;
+			for (auto& [source, entry] : entries) entry.hints.clear();
+			totalHints = 0;
+			++revision;
+		}
+
 		/** @brief Removes the old identity before an engine material address can be reused. */
 		void Forget(const void* a_source)
 		{

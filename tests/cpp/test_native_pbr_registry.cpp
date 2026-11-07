@@ -584,3 +584,21 @@ TEST_CASE("Prepared instance coverage keeps ambiguous candidates separate", "[na
     REQUIRE(coverage.noObservation == 1);
     REQUIRE(coverage.missingIdentity == 1);
 }
+
+TEST_CASE("Clearing scene observations preserves published materials", "[native_pbr]")
+{
+    NativePBR::Registry registry;
+    int source = 0;
+    REQUIRE(registry.Publish(&source, registry.BeginCapture(&source), {}));
+    const auto material = registry.Export().front();
+    registry.ObserveInstance(&source, "000123:Example.esm", "Shape");
+    const auto before = registry.GetStatistics().revision;
+    registry.ClearInstanceHints();
+    REQUIRE(registry.GetStatistics().revision > before);
+    REQUIRE(registry.ExportInstanceHints().empty());
+    REQUIRE(registry.Export().front().identity == material.identity);
+    REQUIRE(registry.Export().front().revision == material.revision);
+    const auto cleared = registry.GetStatistics().revision;
+    registry.ClearInstanceHints();
+    REQUIRE(registry.GetStatistics().revision == cleared);
+}

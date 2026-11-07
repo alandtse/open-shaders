@@ -130,7 +130,12 @@ void DX12NativeScene::RestoreDefaultSettings()
 	resetRequested = true;
 }
 void DX12NativeScene::OnRuntimeDisabled() { resetRequested = true; }
-void DX12NativeScene::OnSceneTransitionReset(bool a_open) { transitionOpen = a_open; ResetScene(); }
+void DX12NativeScene::OnSceneTransitionReset(bool a_open)
+{
+	transitionOpen = a_open;
+	if (a_open) globals::features::truePBR.nativeRegistry.ClearInstanceHints();
+	ResetScene();
+}
 void DX12NativeScene::GameLoaded() { resetRequested = true; }
 
 void DX12NativeScene::ResetScene()
