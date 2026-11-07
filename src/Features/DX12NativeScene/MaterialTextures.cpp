@@ -178,7 +178,12 @@ namespace DX12Native
 				auto ticket = identities.Acquire({ std::move(digest), meta.width, meta.height, uint32_t(a_page.format), uint32_t(meta.mipLevels) });
 				if (!ticket) throw std::runtime_error("Material logical texture identity limit reached");
 				a_result.logicalLocations.emplace(ticket->handle, std::array<uint32_t, 2>{ pool, slice });
-				for (const auto& path : texture->paths) a_result.locations.emplace(path, ticket->handle);
+				for (const auto& path : texture->paths) {
+                    a_result.locations.emplace(path, ticket->handle);
+                    // The digest was validated against DDS bytes before this page was made resident.
+                    a_result.verifiedTextureSources.Observe(path, texture->hash,
+                        uint32_t(meta.width), uint32_t(meta.height), uint32_t(meta.mipLevels));
+                }
 				a_result.textureTickets.push_back(std::move(ticket));
 			}
 			a_result.bytes += a_page.bytes;

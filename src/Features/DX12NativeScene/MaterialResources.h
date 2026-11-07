@@ -2,6 +2,7 @@
 
 #include "AccelerationScene.h"
 #include "LogicalTextureRegistry.h"
+#include "VerifiedTextureSources.h"
 #include "MaterialUploadStatus.h"
 #include "TruePBR/VerifiedBridge.h"
 #include <array>
@@ -56,6 +57,7 @@ namespace DX12Native
 	{
 		std::vector<MaterialTexturePool> pools;
 		std::unordered_map<std::string, uint64_t> locations;
+        VerifiedTextureSources verifiedTextureSources;
 		std::unordered_map<uint64_t, std::array<uint32_t, 2>> logicalLocations;
 		std::vector<std::shared_ptr<const LogicalTextureRegistry::Ticket>> textureTickets;
 		std::shared_ptr<MaterialUploadCompletion> pendingUpload;

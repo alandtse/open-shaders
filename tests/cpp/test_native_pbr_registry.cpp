@@ -6,6 +6,7 @@
 #include "TruePBR/VerifiedBridge.h"
 #include "Features/DX12NativeScene/LogicalTextureRegistry.h"
 #include "Features/DX12NativeScene/MaterialPageCache.h"
+#include "Features/DX12NativeScene/VerifiedTextureSources.h"
 #include "Features/DX12NativeScene/MaterialDiskCache.h"
 #include "Features/DX12NativeScene/TextureSourceBatch.h"
 #include "Features/DX12NativeScene/MaterialUploadStatus.h"
@@ -977,4 +978,38 @@ TEST_CASE("Strict native bridge rejects ambiguous and incompatible live source m
     REQUIRE(NativePBR::ResolveLiveMatches({ offline }, source).report.missing == 1);
     source.hints = { hint };
     REQUIRE(NativePBR::ResolveLiveMatches({ offline, offline }, source).report.ambiguous == 2);
+}
+
+TEST_CASE("Verified resident DDS sources reject path collisions and incompatible live texture dimensions", "[native_pbr]")
+{
+    NativePBR::Snapshot snapshot{ 1, 1, {} };
+    snapshot.material.texturePaths = { "textures/a.dds", "textures/n.dds", "textures/r.dds", "", "", "", "" };
+    snapshot.material.texturePathsComplete = true;
+    auto recipe = NativePBR::CompileRecipe(snapshot);
+    DX12Native::VerifiedTextureSources sources;
+    const std::string a(64, 'a'), b(64, 'b');
+    REQUIRE(sources.Assess(recipe) == DX12Native::LiveTextureSourceStatus::Missing);
+    REQUIRE(sources.Observe("Textures\\A.DDS", a, 256, 256, 8));
+    REQUIRE(sources.Observe("textures/n.dds", a, 256, 256, 8));
+    REQUIRE(sources.Observe("textures/r.dds", b, 256, 256, 8));
+    REQUIRE(sources.Size() == 3);
+    REQUIRE(sources.Assess(recipe) == DX12Native::LiveTextureSourceStatus::Available);
+    REQUIRE(sources.Observe("textures/a.dds", a, 256, 256, 8)); // canonical duplicate
+    REQUIRE_FALSE(sources.Observe("textures/a.dds", b, 256, 256, 8));
+    REQUIRE(sources.Assess(recipe) == DX12Native::LiveTextureSourceStatus::Ambiguous);
+
+    DX12Native::VerifiedTextureSources distinct;
+    REQUIRE(distinct.Observe("textures/a.dds", a, 256, 256, 8));
+    REQUIRE(distinct.Observe("textures/n.dds", a, 256, 256, 8));
+    REQUIRE(distinct.Observe("textures/r.dds", b, 256, 256, 8));
+    recipe.textures[static_cast<size_t>(NativePBR::TextureRole::Normal)].resource =
+        { 128, 256, 8, 1, 0, 0, 0, 0, 1, true };
+    REQUIRE(distinct.Assess(recipe) == DX12Native::LiveTextureSourceStatus::Incompatible);
+    recipe.textures[static_cast<size_t>(NativePBR::TextureRole::Normal)].resource.width = 256;
+    REQUIRE(distinct.Assess(recipe) == DX12Native::LiveTextureSourceStatus::Available);
+    recipe.textures[static_cast<size_t>(NativePBR::TextureRole::Emission)].assetPath = "textures/e.dds";
+    recipe.textures[static_cast<size_t>(NativePBR::TextureRole::Emission)].canonicalPath = "textures/e.dds";
+    REQUIRE(distinct.Assess(recipe) == DX12Native::LiveTextureSourceStatus::Missing);
+    REQUIRE_FALSE(distinct.Observe("../outside.dds", a, 256, 256, 8));
+    REQUIRE_FALSE(distinct.Observe("textures/e.dds", "bad-digest", 256, 256, 8));
 }
