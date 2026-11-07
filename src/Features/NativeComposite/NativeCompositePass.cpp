@@ -154,8 +154,12 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		else if (!a_raster->readyFence || !a_raster->readyValue || a_raster->readyValue == UINT64_MAX)
 			shadowStatus = "Raster capture producer fence missing or invalid";
 		else if (a_raster->frame != a_frame) shadowStatus = "Raster depth belongs to another frame";
-		else if (a_raster->width != a_width || a_raster->height != a_height)
-			shadowStatus = "Raster depth dimensions differ from native composite";
+		// RasterCapture retains the full DX11 allocation, whereas the shadow
+		// trace and composite operate on the active dynamic-resolution subrect.
+		// A larger raster texture is valid: the shader reads only [0, a_width)
+		// x [0, a_height). Reject undersized allocations, not extra capacity.
+		else if (a_raster->width < a_width || a_raster->height < a_height)
+			shadowStatus = "Raster depth allocation is smaller than active composite resolution";
 		else if (a_raster->sourceDepthFormat == DXGI_FORMAT_UNKNOWN)
 			shadowStatus = "Captured raster depth source format unavailable";
 		else if (a_transfer == Transfer::Unknown)

@@ -108,3 +108,24 @@ enabled, check raw shadow submissions, late retry recoveries and
 `shadowSubmissions`. If raw submissions advance but `shadowSubmissions`
 does not, read the new admission reason rather than weakening frame/fence
 identity checks.
+
+## Physical raster depth allocation vs active render size
+
+The DX11 raster capture stores the *physical* allocation size of its opaque
+inputs and copied depth. The independent shadow mask and Native Composite are
+indexed by the *active* dynamic render size. This means a larger allocation
+must not be rejected solely because it has more unused pixels.
+
+The shadow compositor now requires:
+
+- Current-frame shadow mask **exactly** matching active composite width/height.
+- Current-frame raster depth allocation **at least as large** as active width
+  and height. The shadow shader samples only active pixel coordinates.
+- The same source depth format, valid camera and producer fence gates as
+  before. Smaller raster allocations still reject with an explicit reason.
+
+This is a dimensions/admission change, **not** an adjustment to scene-vs-raster
+depth values or depth reconstruction. If the admission result changes to
+`Independent shadow layer submitted` but rendered shadows remain absent,
+investigate the per-pixel receiver-distance rejection separately, using
+depth/error instrumentation rather than loosening its tolerance by default.
