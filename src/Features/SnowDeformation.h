@@ -285,6 +285,7 @@ private:
 		float radius = 0.0f;
 		RE::bhkNiCollisionObject* object = nullptr;
 		float weight = 0.0f;
+		float area = 0.0f;
 	};
 
 	struct HandBlob
@@ -305,6 +306,7 @@ private:
 		std::string name;
 		float weight = 0.0f;
 		float radius = 0.0f;
+		float area = 0.0f;
 		float pressure = 0.0f;
 		float scale = 1.0f;
 	};

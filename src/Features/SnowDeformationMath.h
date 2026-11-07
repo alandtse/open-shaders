@@ -8,10 +8,28 @@ namespace SnowDeformationMath
 {
 	constexpr float Pi = 3.14159265f;
 
-	/** @brief Mass per footprint area for a body of a_mass resting on a circle of a_radius; 0 when either is unknown. */
-	inline float ContactPressure(float a_mass, float a_radius)
+	/** @brief Ground footprint of a sphere or round print of a_radius. */
+	inline float CircleFootprint(float a_radius)
 	{
-		return a_mass > 0.0f && a_radius > 1e-3f ? a_mass / (Pi * a_radius * a_radius) : 0.0f;
+		return Pi * a_radius * a_radius;
+	}
+
+	/** @brief Ground footprint of a box whose half extents along the ground axes are a_halfX and a_halfY. */
+	inline float BoxFootprint(float a_halfX, float a_halfY)
+	{
+		return 4.0f * std::max(a_halfX, 0.0f) * std::max(a_halfY, 0.0f);
+	}
+
+	/** @brief Ground footprint of a capsule of a_radius whose axis covers a_groundLength on the ground. */
+	inline float CapsuleFootprint(float a_groundLength, float a_radius)
+	{
+		return 2.0f * a_radius * (std::max(a_groundLength, 0.0f) + 2.0f * a_radius);
+	}
+
+	/** @brief Weight per footprint area for a body of a_weight resting on a_area; 0 when either is unknown. */
+	inline float ContactPressure(float a_weight, float a_area)
+	{
+		return a_weight > 0.0f && a_area > 1e-3f ? a_weight / a_area : 0.0f;
 	}
 
 	/**

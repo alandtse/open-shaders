@@ -57,13 +57,23 @@ TEST_CASE("A hand brushes the snow only when it moves across the ground", "[snow
 	REQUIRE_FALSE(Math::IsBrushing(0.1f, 0.1f, 0.25f));
 	REQUIRE(Math::IsBrushing(0.25f, 0.0f, 0.25f));
 	REQUIRE(Math::IsBrushing(-0.2f, 0.2f, 0.25f));
+}
 
-TEST_CASE("Contact pressure is mass over footprint area and 0 when unknown", "[snow-deformation]")
+TEST_CASE("Contact pressure is weight over footprint area and 0 when unknown", "[snow-deformation]")
 {
-	REQUIRE(Math::ContactPressure(10.0f, 1.0f) == Approx(10.0f / Math::Pi));
-	REQUIRE(Math::ContactPressure(10.0f, 2.0f) == Approx(10.0f / (4.0f * Math::Pi)));
-	REQUIRE(Math::ContactPressure(0.0f, 2.0f) == 0.0f);
+	REQUIRE(Math::ContactPressure(10.0f, 4.0f) == Approx(2.5f));
+	REQUIRE(Math::ContactPressure(0.0f, 4.0f) == 0.0f);
 	REQUIRE(Math::ContactPressure(10.0f, 0.0f) == 0.0f);
+}
+
+TEST_CASE("Footprints follow the shape on the ground", "[snow-deformation]")
+{
+	REQUIRE(Math::CircleFootprint(2.0f) == Approx(4.0f * Math::Pi));
+	REQUIRE(Math::BoxFootprint(30.0f, 4.0f) == Approx(480.0f));
+	REQUIRE(Math::BoxFootprint(-1.0f, 4.0f) == 0.0f);
+	REQUIRE(Math::CapsuleFootprint(60.0f, 3.0f) == Approx(6.0f * 66.0f));
+	REQUIRE(Math::CapsuleFootprint(0.0f, 3.0f) == Approx(36.0f));
+	REQUIRE(Math::BoxFootprint(30.0f, 4.0f) < Math::CircleFootprint(37.5f));
 }
 
 TEST_CASE("Weight scale runs from nothing for light bodies to a full print for heavy ones", "[snow-deformation]")

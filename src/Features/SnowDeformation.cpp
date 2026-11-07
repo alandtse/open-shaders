@@ -61,8 +61,8 @@ namespace
 	constexpr size_t kMaxObjectRefs = 256;
 	constexpr size_t kMaxObjectShapes = 3;
 	constexpr float kObjectContact = 48.0f;
-	constexpr float kLightPressure = 0.0005f;
-	constexpr float kHeavyPressure = 0.02f;
+	constexpr float kLightPressure = 0.001f;
+	constexpr float kHeavyPressure = 0.03f;
 	constexpr float kMinWeightScale = 0.05f;
 	constexpr size_t kMaxObjectSamples = 16;
 	constexpr float kHandRange = 800.0f;
@@ -503,47 +503,84 @@ namespace
 		float radius = 0.0f;
 	};
 
-	bool GetShapeSegment(RE::bhkNiCollisionObject* a_object, const RE::NiPoint3& a_centre, ShapeSegment& a_segment)
+	struct ShapeFrame
 	{
-		auto rigid = a_object && a_object->body ? a_object->body->AsBhkRigidBody() : nullptr;
-		auto body = rigid ? skyrim_cast<RE::hkpRigidBody*>(rigid->referencedObject.get()) : nullptr;
-		auto shape = body ? body->collidable.GetShape() : nullptr;
-		if (!shape)
-			return false;
-
-		const auto& transform = body->motion.motionState.transform;
+		const RE::hkpShape* shape = nullptr;
 		float axes[3][4];
 		float origin[4];
-		_mm_storeu_ps(axes[0], transform.rotation.col0.quad);
-		_mm_storeu_ps(axes[1], transform.rotation.col1.quad);
-		_mm_storeu_ps(axes[2], transform.rotation.col2.quad);
-		_mm_storeu_ps(origin, transform.translation.quad);
-		const float scale = RE::bhkWorld::GetWorldScaleInverse();
-		auto toWorld = [&](const RE::hkVector4& a_local) {
+		float scale = 1.0f;
+
+		RE::NiPoint3 ToWorld(const RE::hkVector4& a_local) const
+		{
 			float local[4];
 			_mm_storeu_ps(local, a_local.quad);
 			return RE::NiPoint3(
 				(origin[0] + axes[0][0] * local[0] + axes[1][0] * local[1] + axes[2][0] * local[2]) * scale,
 				(origin[1] + axes[0][1] * local[0] + axes[1][1] * local[1] + axes[2][1] * local[2]) * scale,
 				(origin[2] + axes[0][2] * local[0] + axes[1][2] * local[1] + axes[2][2] * local[2]) * scale);
-		};
+		}
+
+		/** @brief Half extent of the shape along world axis a_axis, in world units. */
+		float Extent(uint32_t a_axis) const
+		{
+			const RE::hkVector4 positive{ axes[0][a_axis], axes[1][a_axis], axes[2][a_axis], 0.0f };
+			const RE::hkVector4 negative{ -axes[0][a_axis], -axes[1][a_axis], -axes[2][a_axis], 0.0f };
+			return 0.5f * (shape->GetMaximumProjection(positive) + shape->GetMaximumProjection(negative)) * scale;
+		}
+	};
+
+	bool LoadShapeFrame(RE::bhkNiCollisionObject* a_object, ShapeFrame& a_frame)
+	{
+		auto rigid = a_object && a_object->body ? a_object->body->AsBhkRigidBody() : nullptr;
+		auto body = rigid ? skyrim_cast<RE::hkpRigidBody*>(rigid->referencedObject.get()) : nullptr;
+		a_frame.shape = body ? body->collidable.GetShape() : nullptr;
+		if (!a_frame.shape)
+			return false;
+		const auto& transform = body->motion.motionState.transform;
+		_mm_storeu_ps(a_frame.axes[0], transform.rotation.col0.quad);
+		_mm_storeu_ps(a_frame.axes[1], transform.rotation.col1.quad);
+		_mm_storeu_ps(a_frame.axes[2], transform.rotation.col2.quad);
+		_mm_storeu_ps(a_frame.origin, transform.translation.quad);
+		a_frame.scale = RE::bhkWorld::GetWorldScaleInverse();
+		return true;
+	}
+
+	/** @brief Ground footprint of a collision shape in square world units: the shadow of a capsule, or the box around any other shape; 0 when unknown. */
+	float ShapeFootprintArea(RE::bhkNiCollisionObject* a_object)
+	{
+		ShapeFrame frame;
+		if (!LoadShapeFrame(a_object, frame))
+			return 0.0f;
+		if (frame.shape->type == RE::hkpShapeType::kCapsule) {
+			const auto capsule = static_cast<const RE::hkpCapsuleShape*>(frame.shape);
+			const RE::NiPoint3 a = frame.ToWorld(capsule->vertexA);
+			const RE::NiPoint3 b = frame.ToWorld(capsule->vertexB);
+			const float radius = capsule->radius * frame.scale;
+			const float length = std::sqrt((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y));
+			return SnowDeformationMath::CapsuleFootprint(length, radius);
+		}
+		return SnowDeformationMath::BoxFootprint(frame.Extent(0), frame.Extent(1));
+	}
+
+	bool GetShapeSegment(RE::bhkNiCollisionObject* a_object, const RE::NiPoint3& a_centre, ShapeSegment& a_segment)
+	{
+		ShapeFrame frame;
+		if (!LoadShapeFrame(a_object, frame))
+			return false;
+		const auto shape = frame.shape;
+		const float scale = frame.scale;
 
 		if (shape->type == RE::hkpShapeType::kCapsule) {
 			const auto capsule = static_cast<const RE::hkpCapsuleShape*>(shape);
-			a_segment.low = toWorld(capsule->vertexA);
-			a_segment.high = toWorld(capsule->vertexB);
+			a_segment.low = frame.ToWorld(capsule->vertexA);
+			a_segment.high = frame.ToWorld(capsule->vertexB);
 			if (a_segment.low.z > a_segment.high.z)
 				std::swap(a_segment.low, a_segment.high);
 			a_segment.radius = capsule->radius * scale;
 		} else {
-			auto extent = [&](uint32_t a_axis) {
-				const RE::hkVector4 positive{ axes[0][a_axis], axes[1][a_axis], axes[2][a_axis], 0.0f };
-				const RE::hkVector4 negative{ -axes[0][a_axis], -axes[1][a_axis], -axes[2][a_axis], 0.0f };
-				return 0.5f * (shape->GetMaximumProjection(positive) + shape->GetMaximumProjection(negative)) * scale;
-			};
-			const float reach = shape->GetMaximumProjection(RE::hkVector4{ -axes[0][2], -axes[1][2], -axes[2][2], 0.0f }) * scale;
-			a_segment.radius = std::max(std::sqrt(std::max(extent(0) * extent(1), 0.0f)), 1.0f);
-			a_segment.low = RE::NiPoint3(a_centre.x, a_centre.y, origin[2] * scale - reach + a_segment.radius);
+			const float reach = shape->GetMaximumProjection(RE::hkVector4{ -frame.axes[0][2], -frame.axes[1][2], -frame.axes[2][2], 0.0f }) * scale;
+			a_segment.radius = std::max(std::sqrt(std::max(frame.Extent(0) * frame.Extent(1), 0.0f)), 1.0f);
+			a_segment.low = RE::NiPoint3(a_centre.x, a_centre.y, frame.origin[2] * scale - reach + a_segment.radius);
 			a_segment.high = a_segment.low;
 		}
 		return IsFinite(a_segment.low) && IsFinite(a_segment.high) && a_segment.radius > 0.0f && a_segment.radius < 128.0f;
@@ -1437,14 +1474,14 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 			RE::NiPoint3 centre;
 			float radius = 0.0f;
 			if (Util::GetShapeBound(a_object, centre, radius) && radius > 0.1f && radius <= 128.0f)
-				contactScratch.push_back({ a_object, centre, radius, nullptr, weight });
+				contactScratch.push_back({ a_object, centre, radius, nullptr, weight, ShapeFootprintArea(a_object) });
 			return RE::BSVisit::BSVisitControl::kContinue;
 		});
 		if (contactScratch.empty()) {
 			const auto& bound = root->worldBound;
 			if (!(bound.radius > 0.1f) || bound.radius > 128.0f)
 				continue;
-			contactScratch.push_back({ root, bound.center, bound.radius, nullptr, weight });
+			contactScratch.push_back({ root, bound.center, bound.radius, nullptr, weight, SnowDeformationMath::CircleFootprint(bound.radius) });
 		}
 		std::sort(contactScratch.begin(), contactScratch.end(), [](const Contact& a_lhs, const Contact& a_rhs) { return a_lhs.radius > a_rhs.radius; });
 		if (contactScratch.size() > kMaxObjectShapes)
@@ -1466,10 +1503,11 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 		for (const auto& contact : contactScratch) {
 			if (a_stamps.size() >= kMaxStamps)
 				break;
-			const float pressure = SnowDeformationMath::ContactPressure(contact.weight, contact.radius);
+			const float area = contact.area > 0.0f ? contact.area : SnowDeformationMath::CircleFootprint(contact.radius);
+			const float pressure = SnowDeformationMath::ContactPressure(contact.weight, area);
 			const float weightScale = settings.WeightResponse ? SnowDeformationMath::WeightScale(pressure, kLightPressure, kHeavyPressure) : 1.0f;
 			if (gatherObjectSamples.size() < kMaxObjectSamples)
-				gatherObjectSamples.push_back({ ref->GetDisplayFullName(), contact.weight, contact.radius, pressure, weightScale });
+				gatherObjectSamples.push_back({ ref->GetDisplayFullName(), contact.weight, contact.radius, area, pressure, weightScale });
 			if (weightScale < kMinWeightScale)
 				continue;
 			Stamp stamp{};
@@ -3389,7 +3427,7 @@ json SnowDeformation::GetDiagnostics()
 	{
 		std::scoped_lock lock(stampLock);
 		for (const auto& sample : objectSamples)
-			objects.push_back({ { "Name", sample.name }, { "Weight", sample.weight }, { "Radius", sample.radius }, { "Pressure", sample.pressure }, { "Scale", sample.scale } });
+			objects.push_back({ { "Name", sample.name }, { "Weight", sample.weight }, { "Radius", sample.radius }, { "Area", sample.area }, { "Pressure", sample.pressure }, { "Scale", sample.scale } });
 	}
 	return {
 		{ "Objects", objects },
