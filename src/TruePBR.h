@@ -93,6 +93,9 @@ public:
 	/** @brief Current live PBR metadata, exposed to native workers as value snapshots. */
 	NativePBR::Registry nativeRegistry;
 
+	struct RecipeWorker;
+	std::shared_ptr<RecipeWorker> recipeWorker;
+
 	/** @brief When true, logs each PBR JSON file path during load. Off by default. */
 	bool enableVerboseJsonLogging = false;
 

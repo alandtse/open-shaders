@@ -10,6 +10,8 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
+#include <BS_thread_pool.hpp>
+#include <atomic>
 
 #define I18N_KEY_PREFIX "feature.true_pbr."
 
@@ -244,26 +246,27 @@ namespace PNState
 
 void SetupPBRLandscapeTextureParameters(BSLightingShaderMaterialPBRLandscape& material, const TruePBR::PBRTextureSetData& textureSetData, uint32_t textureIndex);
 
+struct TruePBR::RecipeWorker
+{
+	struct Summary { size_t recipes = 0, pending = 0, incomplete = 0; std::array<size_t, 13> issues{}; bool failed = false; };
+	NativePBR::RecipeCache cache;
+	std::mutex mutex;
+	Summary summary;
+	std::atomic<bool> active{ false }, more{ false };
+	std::atomic<uint64_t> revision{ 0 };
+};
+
 void TruePBR::DrawSettings()
 {
-	static NativePBR::RecipeCache recipes;
-	static size_t incompleteRecipes = 0;
-	static std::array<size_t, 13> recipeIssues{};
-	if (auto generation = nativeRegistry.ExportChanges(recipes.Revision(), recipes.KnownRevisions())) {
-		recipes.Update(*generation);
-		incompleteRecipes = 0;
-		recipeIssues.fill(0);
-		for (const auto& [identity, recipe] : recipes.Recipes()) {
-			if (recipe.issues & ~NativePBR::UnknownOpacity) ++incompleteRecipes;
-			for (size_t issue = 0; issue < recipeIssues.size(); ++issue)
-				if (recipe.issues & (1u << issue)) ++recipeIssues[issue];
-		}
-	}
+	RecipeWorker::Summary summary;
+	if (recipeWorker) { std::scoped_lock lock(recipeWorker->mutex); summary = recipeWorker->summary; }
+	const auto& recipeIssues = summary.issues;
 	const auto nativePbr = nativeRegistry.GetStatistics();
 	ImGui::TextDisabled("Native PBR metadata: %zu mesh, %zu landscape | dirty: %zu | revision: %llu",
 		nativePbr.mesh, nativePbr.landscape, nativePbr.dirty, static_cast<unsigned long long>(nativePbr.revision));
 	ImGui::TextDisabled("Native PBR recipes: %zu | pending: %zu | unsupported or incomplete: %zu | opacity unverified",
-		recipes.Recipes().size(), recipes.Pending(), incompleteRecipes);
+		summary.recipes, summary.pending, summary.incomplete);
+	if (summary.failed) ImGui::TextDisabled("Native PBR recipe compilation failed; retry after a material change.");
 	ImGui::TextDisabled("Unverified reference/shape observations: %zu | limit hits: %llu", nativePbr.instanceHints,
 		static_cast<unsigned long long>(nativePbr.hintLimitHits));
 	if (ImGui::TreeNode("Native PBR recipe details")) {
@@ -524,6 +527,43 @@ void TruePBR::SetupResources()
 
 void TruePBR::Prepass()
 {
+	if (!recipeWorker) recipeWorker = std::make_shared<RecipeWorker>();
+	const auto worker = recipeWorker;
+	if (!worker->active.load(std::memory_order_acquire) &&
+		(worker->more.load(std::memory_order_relaxed) || worker->revision.load(std::memory_order_relaxed) != nativeRegistry.Revision())) {
+		worker->active.store(true, std::memory_order_release);
+		try {
+			static BS::thread_pool<> pool{ 1 };
+			pool.detach_task([worker, registry = &nativeRegistry] {
+				try {
+					if (auto changes = registry->ExportChanges(worker->cache.Revision(), worker->cache.KnownRevisions())) {
+						worker->cache.Update(*changes);
+						worker->more.store(changes->hasMore, std::memory_order_relaxed);
+					}
+					RecipeWorker::Summary summary;
+					summary.recipes = worker->cache.Recipes().size();
+					summary.pending = worker->cache.Pending();
+					for (const auto& [identity, recipe] : worker->cache.Recipes()) {
+						if (recipe.issues & ~NativePBR::UnknownOpacity) ++summary.incomplete;
+						for (size_t issue = 0; issue < summary.issues.size(); ++issue)
+							if (recipe.issues & (1u << issue)) ++summary.issues[issue];
+					}
+					{ std::scoped_lock lock(worker->mutex); worker->summary = summary; }
+					worker->revision.store(worker->cache.Revision(), std::memory_order_relaxed);
+				} catch (...) {
+					{ std::scoped_lock lock(worker->mutex); worker->summary.failed = true; }
+					worker->revision.store(registry->Revision(), std::memory_order_relaxed);
+					worker->more.store(false, std::memory_order_relaxed);
+				}
+				worker->active.store(false, std::memory_order_release);
+			});
+		} catch (...) {
+			worker->active.store(false, std::memory_order_release);
+			{ std::scoped_lock lock(worker->mutex); worker->summary.failed = true; }
+			worker->revision.store(nativeRegistry.Revision(), std::memory_order_relaxed);
+			worker->more.store(false, std::memory_order_relaxed);
+		}
+	}
 	SetupDefaultPBRLandTextureSet();
 
 	auto context = globals::d3d::context;

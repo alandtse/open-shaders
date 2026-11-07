@@ -350,6 +350,13 @@ namespace NativePBR
 			return result;
 		}
 
+		/** @brief Returns the current registry generation without copying its entries. */
+		uint64_t Revision() const
+		{
+			std::shared_lock lock(mutex);
+			return revision;
+		}
+
 		/** @brief Returns registration diagnostics without exposing engine pointers. */
 		Statistics GetStatistics() const
 		{
