@@ -19,7 +19,7 @@ namespace DX12Native
 	{
 		constexpr uint64_t kMaximumDdsBytes = 128ull * 1024 * 1024;
 		constexpr uint64_t kMaximumRetainedPageBytes = 64ull * 1024 * 1024;
-		constexpr uint32_t kPageSlices = 8, kUploadTimeoutMS = 5000;
+		constexpr uint32_t kPageSlices = 8;
 		struct Texture
 		{
 			std::string hash;
@@ -123,7 +123,7 @@ namespace DX12Native
 			{
 				if (!fence) return MaterialUploadStatus::Ready;
 				const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
-				const auto status = EvaluateMaterialUpload(fence->GetCompletedValue(), uint64_t(elapsed), kUploadTimeoutMS);
+				const auto status = EvaluateMaterialUpload(fence->GetCompletedValue(), uint64_t(elapsed), kMaterialUploadTimeoutMs);
 				if (status == MaterialUploadStatus::Ready) fence = nullptr;
 				return status;
 			}
@@ -169,7 +169,7 @@ namespace DX12Native
 			auto& retirement = RetiredUpload();
 			std::scoped_lock retirementLock(retirement.mutex);
 			RetireCompletedUpload(retirement);
-			if (retirement.pending) throw MaterialUploadError("Previous material upload is still in flight");
+			if (retirement.pending) throw MaterialUploadBusy("Previous material upload is still in flight");
 			const auto& meta = a_textures.front()->metadata;
 			const auto format = DirectX::MakeLinear(meta.format);
 			const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DirectX::MakeTypeless(format), meta.width, uint32_t(meta.height), uint16_t(a_textures.size()), uint16_t(meta.mipLevels));
@@ -251,7 +251,7 @@ namespace DX12Native
 			if (FAILED(a_backend.commandQueue->Signal(upload.fence.get(), 1))) throw MaterialUploadError("Material upload queue signal failed");
 			if (!a_async) {
 				const auto waitStart = std::chrono::steady_clock::now();
-				if (WaitForSingleObject(upload.event.get(), kUploadTimeoutMS) != WAIT_OBJECT_0 || upload.fence->GetCompletedValue() == UINT64_MAX)
+				if (WaitForSingleObject(upload.event.get(), kMaterialUploadTimeoutMs) != WAIT_OBJECT_0 || upload.fence->GetCompletedValue() == UINT64_MAX)
 					throw MaterialUploadError("Background material upload did not complete");
 				const auto waitDuration = std::chrono::steady_clock::now() - waitStart;
 				a_result.uploadWaitMicroseconds += uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(waitDuration).count());
@@ -276,7 +276,7 @@ namespace DX12Native
 			auto& retirement = RetiredUpload();
 			std::scoped_lock retirementLock(retirement.mutex);
 			RetireCompletedUpload(retirement);
-			if (retirement.pending) throw MaterialUploadError("Previous material upload is still in flight");
+			if (retirement.pending) throw MaterialUploadBusy("Previous material upload is still in flight");
 			const SKSE::stl::scope_exit retainSubmitted([&]() noexcept {
 				if (a_batch.submitted && a_batch.fence && a_batch.fence->GetCompletedValue() < 1) {
 					retirement.device = a_backend.d3d12Device;
@@ -327,8 +327,18 @@ namespace DX12Native
 		return cache.pages.Bytes();
 	}
 
+	bool MaterialUploadsReady()
+	{
+		auto& retirement = RetiredUpload();
+		std::unique_lock lock(retirement.mutex, std::try_to_lock);
+		if (!lock) return false;
+		RetireCompletedUpload(retirement);
+		return !retirement.pending;
+	}
+
 	void LoadMaterialTextures(const GraphicsBackend& a_backend, const MaterialSource& a_source, MaterialResources& a_result)
 	{
+		if (!MaterialUploadsReady()) throw MaterialUploadBusy("Previous material upload is still in flight");
 		const auto path = a_source.directory / "cell-textures.json";
 		if (std::filesystem::file_size(path) > 16ull * 1024 * 1024) throw std::runtime_error("Texture manifest exceeds limit");
 		std::ifstream stream(path);
@@ -405,7 +415,13 @@ namespace DX12Native
 			if (!page || page->page.bytes > a_source.budget || a_result.bytes > a_source.budget - page->page.bytes) continue;
 			if (page->page.readyFence) {
 				const auto ready = page->page.readyFence->GetCompletedValue();
-				if (ready == UINT64_MAX || ready < 1) continue;
+				if (ready == UINT64_MAX) throw MaterialUploadError("Cached material page device removed");
+				if (ready < 1) {
+					const auto bytes = page->page.bytes;
+					cache.pages.Retain(std::move(page->key), std::move(page->page), bytes,
+						kMaximumRetainedPageBytes, std::move(page->slices));
+					throw MaterialUploadBusy("Cached material page is still in flight");
+				}
 				page->page.readyFence = nullptr;
 			}
 			std::vector<std::pair<Texture*, uint32_t>> selected;

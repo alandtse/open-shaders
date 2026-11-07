@@ -47,6 +47,7 @@ namespace DX12Native
 		GraphicsBackend backend;
 		uint64_t revision = 0, budget = 0, uploadBatchBudget = 0;
 		bool attempted = false;
+		MaterialUploadRetry uploadRetry;
 		std::string failure;
 	};
 

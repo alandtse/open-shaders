@@ -24,6 +24,23 @@ TEST_CASE("Material upload publication follows fence and timeout", "[native_pbr]
     REQUIRE(DX12Native::ClampMaterialBatchMB(65) == 64);
 }
 
+TEST_CASE("Material upload retries wait for retirement and stop at the deadline", "[native_pbr]")
+{
+    using enum DX12Native::MaterialUploadStatus;
+    DX12Native::MaterialUploadRetry retry;
+    retry.Start(100);
+    REQUIRE(retry.Poll(false, 5099) == Pending);
+    REQUIRE(retry.Waiting());
+    REQUIRE(retry.Poll(true, 5100) == Ready);
+    REQUIRE_FALSE(retry.Waiting());
+    retry.Start(100);
+    REQUIRE(retry.Poll(false, 5100) == Failed);
+    REQUIRE_FALSE(retry.Waiting());
+    retry.Start(200);
+    retry.Reset();
+    REQUIRE_FALSE(retry.Waiting());
+}
+
 TEST_CASE("Texture source batches preserve valid entries after failures", "[native_pbr]")
 {
     const std::vector<int> entries{ 1, 2, 3 };

@@ -13,6 +13,11 @@ namespace DX12Native
 	{
 		using std::runtime_error::runtime_error;
 	};
+	/** @brief Defers a new load while an earlier submitted upload still owns staging. */
+	struct MaterialUploadBusy : MaterialUploadError
+	{
+		using MaterialUploadError::MaterialUploadError;
+	};
 	inline constexpr uint32_t kMaximumTexturePools = 256;
 	inline constexpr uint32_t kMissingTexture = UINT32_MAX;
 	/** @brief Matches the immutable 128-byte ray-material shader record. */
@@ -69,6 +74,8 @@ namespace DX12Native
 	void LoadMaterialTextures(const GraphicsBackend& a_backend, const MaterialSource& a_source, MaterialResources& a_result);
 	/** @brief Releases a completed or device-removed failed upload without waiting. */
 	void RetireMaterialUploads();
+	/** @brief Checks the single upload slot without waiting. */
+	bool MaterialUploadsReady();
 	/** @brief Returns retained cache bytes without waiting for the loading worker. */
 	std::optional<uint64_t> RetainedMaterialPageBytes();
 }

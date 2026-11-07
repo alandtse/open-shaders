@@ -2,9 +2,14 @@
 #include <directx/d3dx12.h>
 #include <BS_thread_pool.hpp>
 #include <atomic>
+#include <chrono>
 
 namespace DX12Native
 {
+	static uint64_t MaterialClockMs()
+	{
+		return uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+	}
 	std::shared_ptr<const ShadowBindings> ShadowBindings::Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget, uint64_t a_uploadBatchBudget)
 	{
 		auto result = std::make_shared<ShadowBindings>();
@@ -104,6 +109,7 @@ namespace DX12Native
 		uint64_t revision = 0;
 		std::shared_ptr<const ShadowBindings> bindings;
 		std::string failure;
+		bool deferred = false;
 	};
 
 	void ShadowBindingWorker::Request(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget, uint64_t a_uploadBatchBudget)
@@ -116,6 +122,7 @@ namespace DX12Native
 		uploadBatchBudget = a_uploadBatchBudget;
 		published.reset();
 		attempted = false;
+		uploadRetry.Reset();
 		failure.clear();
 	}
 
@@ -135,8 +142,16 @@ namespace DX12Native
 			if (pending->revision == revision) {
 				published = pending->bindings;
 				failure = pending->failure;
+				if (pending->deferred) uploadRetry.Start(MaterialClockMs());
 			}
 			pending.reset();
+		}
+		if (uploadRetry.Waiting()) {
+			const auto status = uploadRetry.Poll(MaterialUploadsReady(), MaterialClockMs());
+			if (status == MaterialUploadStatus::Pending) return;
+			if (status == MaterialUploadStatus::Failed) { failure = "Previous material upload did not retire"; return; }
+			attempted = false;
+			failure.clear();
 		}
 		if (!desired || attempted) return;
 		auto task = std::make_shared<State>();
@@ -145,6 +160,7 @@ namespace DX12Native
 			static BS::thread_pool<> pool{ 1 };
 			pool.detach_task([task, backend = backend, scene = desired, budget = budget, uploadBudget = uploadBatchBudget] {
 				try { task->bindings = ShadowBindings::Create(backend, scene, budget, uploadBudget); }
+				catch (const MaterialUploadBusy& error) { task->failure = error.what(); task->deferred = true; }
 				catch (const std::exception& error) { task->failure = error.what(); }
 				catch (...) { task->failure = "Unknown shadow binding failure"; }
 				task->done.store(true, std::memory_order_release);
@@ -164,11 +180,12 @@ namespace DX12Native
 		published.reset();
 		failure.clear();
 		attempted = false;
+		uploadRetry.Reset();
 	}
 
 	bool ShadowBindingWorker::UploadPending() const
 	{
-		return pending && pending->done.load(std::memory_order_acquire) && pending->bindings && pending->bindings->materials->pendingUpload;
+		return uploadRetry.Waiting() || (pending && pending->done.load(std::memory_order_acquire) && pending->bindings && pending->bindings->materials->pendingUpload);
 	}
 
 }
