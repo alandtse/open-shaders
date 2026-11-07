@@ -1,4 +1,5 @@
 #include "MaterialResources.h"
+#include "VideoMemoryBudget.h"
 
 #include "Utils/FileDigest.h"
 #include <DirectXTex.h>
@@ -88,6 +89,9 @@ namespace DX12Native
 			a_backend.d3d12Device->GetCopyableFootprints(&desc, 0, subresources, 0, footprints.data(), rows.data(), rowBytes.data(), &uploadBytes);
 			const auto stagingDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadBytes);
 			const auto stagingAllocation = a_backend.d3d12Device->GetResourceAllocationInfo(0, 1, &stagingDesc).SizeInBytes;
+			if (!a_budget) throw std::runtime_error("Material texture budget is zero");
+			VideoMemoryBudget budget;
+			a_budget = budget.Query(a_backend.d3d12Device.get(), a_result.bytes, a_budget).effectiveBytes;
 			if (allocation == UINT64_MAX || stagingAllocation == UINT64_MAX || allocation > a_budget || stagingAllocation > a_budget - allocation ||
 				a_result.bytes > a_budget - allocation - stagingAllocation) throw std::runtime_error("Material texture/staging budget exceeded");
 			Upload upload;
