@@ -1,5 +1,7 @@
 #include "DX12NativeScene.h"
 #include "Globals.h"
+#include "TruePBR.h"
+#include <BS_thread_pool.hpp>
 #include "Features/NativeComposite/NativeComposite.h"
 #include "GpuPass.h"
 #include "State.h"
@@ -13,6 +15,18 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabl
 void DX12NativeScene::DrawSettings()
 {
 	std::scoped_lock lock(settingsMutex);
+	if (ImGui::Button("Analyze live PBR candidates")) coverageRequested = true;
+	{
+		std::scoped_lock coverageLock(coverageMutex);
+		if (coverageFailed) ImGui::TextDisabled("Candidate analysis unavailable or failed.");
+		if (coverageTask) ImGui::TextDisabled("Analyzing live PBR candidates...");
+		if (coverageResult) {
+			const auto scene = GetPublishedScene();
+			ImGui::TextDisabled("Unverified snapshot candidates%s: %zu unique, %zu ambiguous, %zu unobserved, %zu without source identity",
+				!scene || scene->revision != coverageRevision ? " (previous scene)" : "", coverageResult->uniqueCandidates,
+				coverageResult->ambiguous, coverageResult->noObservation, coverageResult->missingIdentity);
+		}
+	}
 	if (ImGui::Checkbox("Load prepared scene", &settings.Enabled)) resetRequested = true;
 	if (ImGui::Checkbox("Produce RT shadow mask", &settings.ShadowMask)) shadowResetRequested = true;
 	if (settings.ShadowMask && !shadowStatus.empty()) ImGui::TextUnformatted(shadowStatus.c_str());
@@ -132,10 +146,50 @@ void DX12NativeScene::ResetScene()
 	acceleration.Reset();
 }
 
+struct DX12NativeScene::CoverageTask
+{
+	std::atomic<bool> done{ false };
+	uint64_t sceneRevision = 0;
+	NativePBR::InstanceCoverage coverage;
+	bool failed = false;
+};
+
+void DX12NativeScene::AdvanceCoverage()
+{
+	std::scoped_lock lock(coverageMutex);
+	if (coverageTask && coverageTask->done.load(std::memory_order_acquire)) {
+		coverageFailed = coverageTask->failed;
+		if (!coverageFailed) { coverageResult = coverageTask->coverage; coverageRevision = coverageTask->sceneRevision; }
+		coverageTask.reset();
+	}
+	if (coverageTask || !coverageRequested.exchange(false)) return;
+	const auto scene = GetPublishedScene();
+	if (!scene) { coverageFailed = true; return; }
+	try {
+		auto task = std::make_shared<CoverageTask>();
+		task->sceneRevision = scene->revision;
+		auto hints = globals::features::truePBR.nativeRegistry.ExportInstanceHints();
+		static BS::thread_pool<> pool{ 1 };
+		pool.detach_task([task, acceleration = scene->acceleration, hints = std::move(hints)] {
+			try {
+				std::vector<NativePBR::PreparedInstanceKey> keys;
+				keys.reserve(acceleration->instances.size());
+				for (const auto& instance : acceleration->instances)
+					keys.push_back({ instance.preparedIdentity.referenceKey, instance.preparedIdentity.shapeName });
+				task->coverage = NativePBR::AnalyzeInstanceCoverage(keys, hints);
+			} catch (...) { task->failed = true; }
+			task->done.store(true, std::memory_order_release);
+		});
+		coverageFailed = false;
+		coverageTask = std::move(task);
+	} catch (const std::exception& error) { coverageFailed = true; logger::warn("Native PBR candidate analysis: {}", error.what()); }
+}
+
 void DX12NativeScene::EarlyPrepass()
 {
 	CS_GPU_PASS("DX12NativeScene::PreparedSceneProgress");
 	const SKSE::stl::scope_exit publish([this]() noexcept { try { PublishDiagnostics(); } catch (...) {} });
+	AdvanceCoverage();
 	{
 		std::scoped_lock lock(settingsMutex);
 		if (const auto enabled = requestedEnabled.exchange(-1); enabled >= 0) settings.Enabled = enabled != 0;
@@ -322,6 +376,13 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "falloffExponent", settings.ShadowFalloffExponent }, { "distanceFade", settings.ShadowDistanceFade },
 			{ "normalInfluence", settings.ShadowNormalInfluence }, { "traceDensityMode", settings.ShadowTraceDensityMode } } },
 		{ "prepared", prepared.GetDiagnostics() }, { "materialFailure", materialBindings.Failure() }, { "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() } };
+	{
+		std::scoped_lock lock(coverageMutex);
+		snapshot["pbrCandidates"] = { { "pending", bool(coverageTask) }, { "failed", coverageFailed },
+			{ "sceneRevision", coverageRevision }, { "currentScene", coverageResult && coverageRevision == revision },
+			{ "unique", coverageResult ? coverageResult->uniqueCandidates : 0 }, { "ambiguous", coverageResult ? coverageResult->ambiguous : 0 },
+			{ "unobserved", coverageResult ? coverageResult->noObservation : 0 }, { "missingIdentity", coverageResult ? coverageResult->missingIdentity : 0 } };
+	}
 	std::scoped_lock lock(diagnosticsMutex);
 	diagnostics = std::move(snapshot);
 }
@@ -334,6 +395,9 @@ json DX12NativeScene::GetDiagnostics()
 
 void DX12NativeScene::RegisterUxActions()
 {
+	FEATURE_COMMAND("analyzePBRCandidates", "Queue a snapshot analysis of unverified reference and shape candidates; read pbrCandidates in diagnostics.", [](Feature* self, const json&) {
+		static_cast<DX12NativeScene*>(self)->coverageRequested = true;
+	});
 	FEATURE_COMMAND("setShadowMask", "Queue the separate early prepared-scene RT shadow mask setting. Params: enabled (boolean).", [](Feature* self, const json& args) {
 		auto& scene = *static_cast<DX12NativeScene*>(self);
 		const bool enabled = args.at("enabled").get<bool>();

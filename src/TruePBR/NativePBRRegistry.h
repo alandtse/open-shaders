@@ -80,16 +80,25 @@ namespace NativePBR
 		MaterialData material;
 	};
 
+	struct InstanceHint
+	{
+		uint64_t materialIdentity = 0;
+		std::string referenceKey, shapeName;
+	};
+
 	struct Statistics
 	{
 		uint64_t revision = 0, published = 0, forgotten = 0;
-		size_t live = 0, dirty = 0, mesh = 0, landscape = 0;
+		size_t live = 0, dirty = 0, mesh = 0, landscape = 0, instanceHints = 0;
+		uint64_t hintLimitHits = 0;
 	};
 
 	/** @brief Thread-safe snapshot boundary; engine objects are accessed only by the caller. */
 	class Registry
 	{
 	public:
+		static constexpr size_t kMaximumInstanceHints = 4096;
+		static constexpr size_t kMaximumHintsPerMaterial = 64;
 		struct Capture
 		{
 			uint64_t identity = 0, mutation = 0;
@@ -226,11 +235,48 @@ namespace NativePBR
 			return true;
 		}
 
+		/** @brief Records a bounded, unverified reference-and-shape association. */
+		void ObserveInstance(const void* a_source, std::string a_reference, std::string a_shape)
+		{
+			if (!a_source || a_reference.empty() || a_reference.size() > 256 || a_shape.empty() || a_shape.size() > 1024) return;
+			{
+				std::shared_lock lock(mutex);
+				if (auto it = entries.find(a_source); it != entries.end())
+					for (const auto& hint : it->second.hints)
+						if (hint.referenceKey == a_reference && hint.shapeName == a_shape) return;
+			}
+			std::unique_lock lock(mutex);
+			auto [it, inserted] = entries.try_emplace(a_source);
+			auto& entry = it->second;
+			if (inserted) { entry.identity = nextIdentity++; ++revision; }
+			for (const auto& hint : entry.hints)
+				if (hint.referenceKey == a_reference && hint.shapeName == a_shape) return;
+			if (entry.hints.size() >= kMaximumHintsPerMaterial || totalHints >= kMaximumInstanceHints) { ++hintLimitHits; return; }
+			entry.hints.push_back({ entry.identity, std::move(a_reference), std::move(a_shape) });
+			++totalHints;
+			++revision;
+		}
+
+		/** @brief Copies unverified instance associations without engine pointers. */
+		std::vector<InstanceHint> ExportInstanceHints() const
+		{
+			std::shared_lock lock(mutex);
+			std::vector<InstanceHint> result;
+			for (const auto& [source, entry] : entries)
+				result.insert(result.end(), entry.hints.begin(), entry.hints.end());
+			return result;
+		}
+
 		/** @brief Removes the old identity before an engine material address can be reused. */
 		void Forget(const void* a_source)
 		{
 			std::unique_lock lock(mutex);
-			if (entries.erase(a_source)) { ++revision; ++forgotten; }
+			if (auto it = entries.find(a_source); it != entries.end()) {
+				totalHints -= it->second.hints.size();
+				entries.erase(it);
+				++revision;
+				++forgotten;
+			}
 		}
 
 		/** @brief Copies only owned metadata, safe for background and DX12 preparation. */
@@ -302,9 +348,11 @@ namespace NativePBR
 			result.revision = revision;
 			result.published = published;
 			result.forgotten = forgotten;
+			result.hintLimitHits = hintLimitHits;
 			result.live = entries.size();
 			for (const auto& [source, entry] : entries) {
 				result.dirty += entry.dirty ? 1u : 0u;
+				result.instanceHints += entry.hints.size();
 				if (entry.revision) {
 					result.mesh += entry.data.kind == MaterialKind::Mesh ? 1u : 0u;
 					result.landscape += entry.data.kind == MaterialKind::Landscape ? 1u : 0u;
@@ -324,6 +372,7 @@ namespace NativePBR
 			std::array<const void*, static_cast<size_t>(TextureRole::Count) + 1> textures{};
 			std::array<const void*, 24> landscapeTextures{};
 			MaterialData data;
+			std::vector<InstanceHint> hints;
 		};
 
 		template <size_t N>
@@ -350,6 +399,7 @@ namespace NativePBR
 
 		mutable std::shared_mutex mutex;
 		std::unordered_map<const void*, Entry> entries;
-		uint64_t nextIdentity = 1, revision = 0, published = 0, forgotten = 0;
+		size_t totalHints = 0;
+		uint64_t nextIdentity = 1, revision = 0, published = 0, forgotten = 0, hintLimitHits = 0;
 	};
 }

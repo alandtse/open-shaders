@@ -4,6 +4,7 @@
 #include "Features/DX12NativeScene/PreparedScene.h"
 #include "Features/DX12NativeScene/RasterCapture.h"
 #include "Features/DX12NativeScene/ShadowTrace.h"
+#include "TruePBR/InstanceCoverage.h"
 #include <atomic>
 #include <optional>
 #include <mutex>
@@ -81,6 +82,8 @@ struct DX12NativeScene final : Feature
 private:
 	void ResetScene();
 	void PublishDiagnostics();
+	void AdvanceCoverage();
+	struct CoverageTask;
 	void DispatchShadow(const char* a_stage);
 	std::optional<GraphicsBackend> backend;
 	DX12Native::PreparedScene prepared;
@@ -89,6 +92,12 @@ private:
 	DX12Native::AccelerationWorker acceleration;
 	DX12Native::ShadowBindingWorker materialBindings;
 	std::weak_ptr<const DX12Native::ShadowBindings> retiredMaterials;
+	std::shared_ptr<CoverageTask> coverageTask;
+	std::optional<NativePBR::InstanceCoverage> coverageResult;
+	std::atomic<bool> coverageRequested{ false };
+	uint64_t coverageRevision = 0;
+	bool coverageFailed = false;
+	mutable std::mutex coverageMutex;
 	std::string failure, shadowStatus, shadowStage;
 	uint64_t revision = 0;
 	uint32_t cellID = 0;

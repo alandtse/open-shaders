@@ -2,6 +2,7 @@
 #include <limits>
 #include "TruePBR/NativePBRRegistry.h"
 #include "TruePBR/NativePBRCompiler.h"
+#include "TruePBR/InstanceCoverage.h"
 
 TEST_CASE("Native PBR invalidation and recreation are observable", "[native_pbr]")
 {
@@ -537,4 +538,49 @@ TEST_CASE("Bounded export advances when the registry changes mid-batch", "[nativ
     REQUIRE(cache.Pending() == 0);
     cache.Update(first);
     REQUIRE(cache.Recipes().size() == 2);
+}
+
+TEST_CASE("Instance hints preserve many-to-one associations and expire with the material", "[native_pbr]")
+{
+    NativePBR::Registry registry;
+    int source = 0;
+    registry.ObserveInstance(&source, "000123:Example.esm", "ShapeA");
+    registry.ObserveInstance(&source, "000124:Example.esm", "ShapeA");
+    registry.ObserveInstance(&source, "000123:Example.esm", "ShapeA");
+    const auto hints = registry.ExportInstanceHints();
+    REQUIRE(hints.size() == 2);
+    REQUIRE(hints[0].materialIdentity == hints[1].materialIdentity);
+    REQUIRE(registry.GetStatistics().instanceHints == 2);
+    registry.Forget(&source);
+    REQUIRE(registry.ExportInstanceHints().empty());
+}
+
+TEST_CASE("Instance hint limits release capacity on material destruction", "[native_pbr]")
+{
+    NativePBR::Registry registry;
+    std::array<int, 65> sources{};
+    for (size_t source = 0; source < 64; ++source)
+        for (size_t hint = 0; hint < 64; ++hint)
+            registry.ObserveInstance(&sources[source], std::to_string(source), std::to_string(hint));
+    REQUIRE(registry.GetStatistics().instanceHints == NativePBR::Registry::kMaximumInstanceHints);
+    registry.ObserveInstance(&sources[64], "new", "shape");
+    REQUIRE(registry.GetStatistics().instanceHints == NativePBR::Registry::kMaximumInstanceHints);
+    REQUIRE(registry.GetStatistics().hintLimitHits == 1);
+    registry.Forget(&sources[0]);
+    registry.ObserveInstance(&sources[64], "new", "shape");
+    REQUIRE(registry.GetStatistics().instanceHints == NativePBR::Registry::kMaximumInstanceHints - 63);
+}
+
+TEST_CASE("Prepared instance coverage keeps ambiguous candidates separate", "[native_pbr]")
+{
+    std::vector<NativePBR::PreparedInstanceKey> prepared{ { "01:Mod.esm", "A" }, { "02:Mod.esm", "B" },
+        { "02:Mod.esm", "B" }, { "03:Mod.esm", "C" }, { "", "" }, { "04:Mod.esm", "D" } };
+    std::vector<NativePBR::InstanceHint> hints{ { 1, "01:mod.esm", "a" }, { 2, "02:mod.esm", "B" },
+        { 3, "04:mod.esm", "D" }, { 4, "04:mod.esm", "D" } };
+    const auto coverage = NativePBR::AnalyzeInstanceCoverage(prepared, hints);
+    REQUIRE(coverage.total == 6);
+    REQUIRE(coverage.uniqueCandidates == 1);
+    REQUIRE(coverage.ambiguous == 3);
+    REQUIRE(coverage.noObservation == 1);
+    REQUIRE(coverage.missingIdentity == 1);
 }

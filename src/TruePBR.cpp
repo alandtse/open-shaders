@@ -264,6 +264,8 @@ void TruePBR::DrawSettings()
 		nativePbr.mesh, nativePbr.landscape, nativePbr.dirty, static_cast<unsigned long long>(nativePbr.revision));
 	ImGui::TextDisabled("Native PBR recipes: %zu | pending: %zu | unsupported or incomplete: %zu | opacity unverified",
 		recipes.Recipes().size(), recipes.Pending(), incompleteRecipes);
+	ImGui::TextDisabled("Unverified reference/shape observations: %zu | limit hits: %llu", nativePbr.instanceHints,
+		static_cast<unsigned long long>(nativePbr.hintLimitHits));
 	if (ImGui::TreeNode("Native PBR recipe details")) {
 		ImGui::TextDisabled("Missing texture paths: %zu | landscape: %zu | advanced features: %zu",
 			recipeIssues[0], recipeIssues[1], recipeIssues[2]);
@@ -940,6 +942,13 @@ struct BSLightingShaderProperty_GetRenderPasses
 		const auto issEnabledAndInteriorWithSun = globals::features::interiorSun.loaded && globals::features::interiorSun.isInteriorWithSun;
 
 		const bool isPbr = IsPBRShaderProperty(property);
+		if (isPbr && geometry && !geometry->name.empty()) {
+			if (auto* reference = geometry->GetUserData(); reference && !reference->IsDynamicForm()) {
+				if (const auto* file = reference->GetFile(0))
+					globals::features::truePBR.nativeRegistry.ObserveInstance(property->material,
+						std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename()), geometry->name.c_str());
+			}
+		}
 
 		auto currentPass = renderPasses->head;
 		while (currentPass != nullptr) {
