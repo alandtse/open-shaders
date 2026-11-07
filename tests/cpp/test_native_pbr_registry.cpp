@@ -1272,3 +1272,41 @@ TEST_CASE("Missing source planner prioritizes native-ready recipes then feature-
     REQUIRE(notImported.paths[0] == "textures/limited/c.dds");
     REQUIRE(notImported.alreadyPresent == 3);
 }
+
+TEST_CASE("Native runtime PBR accepts only provably neutral fuzz and subsurface flags", "[native_pbr]")
+{
+    NativePBR::Snapshot snapshot{ 510, 5, {} };
+    snapshot.material.texturePaths = { "textures/c.dds", "textures/n.dds", "textures/r.dds", "", "", "", "" };
+    snapshot.material.texturePathsComplete = true;
+    snapshot.material.pbrFlags = 1u << 5;
+    snapshot.material.fuzzWeight = 0.0f;
+    auto recipe = NativePBR::CompileRecipe(snapshot);
+    REQUIRE((recipe.issues & NativePBR::UnsupportedPbrFeatures) != 0);
+    REQUIRE((NativePBR::EffectiveNativeIssues(recipe) & NativePBR::UnsupportedPbrFeatures) == 0);
+    REQUIRE(NativePBR::NativeMeshRecipeSupported(recipe));
+    snapshot.material.fuzzWeight = 0.25f;
+    recipe = NativePBR::CompileRecipe(snapshot);
+    REQUIRE_FALSE(NativePBR::NativeMeshRecipeSupported(recipe));
+
+    snapshot.material.pbrFlags = 1u << 0;
+    snapshot.material.subsurfaceOpacity = 1.0f;
+    recipe = NativePBR::CompileRecipe(snapshot);
+    REQUIRE(NativePBR::NativeMeshRecipeSupported(recipe));
+    snapshot.material.subsurfaceOpacity = 0.5f;
+    recipe = NativePBR::CompileRecipe(snapshot);
+    REQUIRE_FALSE(NativePBR::NativeMeshRecipeSupported(recipe));
+
+    snapshot.material.pbrFlags = (1u << 0) | (1u << 5);
+    snapshot.material.subsurfaceOpacity = 1.0f;
+    snapshot.material.fuzzWeight = 0.0f;
+    recipe = NativePBR::CompileRecipe(snapshot);
+    REQUIRE(NativePBR::NativeMeshRecipeSupported(recipe));
+    snapshot.material.pbrFlags |= 1u << 1; // active coat: still unsupported
+    recipe = NativePBR::CompileRecipe(snapshot);
+    REQUIRE_FALSE(NativePBR::NativeMeshRecipeSupported(recipe));
+    snapshot.material.pbrFlags = 1u << 5;
+    snapshot.material.fuzzWeight = 0.0f;
+    snapshot.material.texturePaths[6] = "textures/feature.dds";
+    recipe = NativePBR::CompileRecipe(snapshot);
+    REQUIRE_FALSE(NativePBR::NativeMeshRecipeSupported(recipe));
+}

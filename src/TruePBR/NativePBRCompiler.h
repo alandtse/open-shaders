@@ -47,6 +47,28 @@ namespace NativePBR
         std::array<TextureRequest, static_cast<size_t>(TextureRole::Count)> textures{};
     };
 
+    /** @brief Ignores only proven zero-contribution optional lobes.
+     *
+     * Fuzz specular is a lerp with the captured fuzz weight. A weight of zero
+     * makes it identical to the base specular response. Subsurface uses
+     * (1 - Thickness) for both transmission and lobe weights, so captured
+     * thickness one makes it neutral. No other active PBR feature is
+     * discarded. In particular coat, glint, projection, displacement and
+     * feature textures remain unsupported.
+     */
+    inline uint32_t EffectiveNativeIssues(const Recipe& recipe)
+    {
+        uint32_t effective = recipe.issues;
+        constexpr uint32_t kSubsurface = 1u << 0;
+        constexpr uint32_t kFuzz = 1u << 5;
+        const auto flags = recipe.parameters.pbrFlags;
+        if ((flags & ~(kSubsurface | kFuzz)) == 0 &&
+            ((flags & kSubsurface) == 0 || recipe.parameters.subsurfaceOpacity == 1.0f) &&
+            ((flags & kFuzz) == 0 || recipe.parameters.fuzzWeight == 0.0f))
+            effective &= ~UnsupportedPbrFeatures;
+        return effective;
+    }
+
     /** @brief Per-bit nonexclusive reasons for runtime PBR incompatibility.
      * Recipe bits 4, 9, 10 and 11 are baseline unknowns resolved by
      * static instance inspection and are intentionally not tallied here.

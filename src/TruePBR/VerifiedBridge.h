@@ -64,7 +64,7 @@ namespace NativePBR
             UnknownOpacity | UnknownNormalMode | UnknownUvAnimation | UnmatchedSceneInstance;
         return a_recipe.identity != 0 && a_recipe.revision != 0 &&
             a_recipe.parameters.kind == MaterialKind::Mesh &&
-            (a_recipe.issues & ~kResolvedByPreparedOpaqueSource) == 0 &&
+            (EffectiveNativeIssues(a_recipe) & ~kResolvedByPreparedOpaqueSource) == 0 &&
             IsFinite(a_recipe.parameters) && a_recipe.parameters.texturePathsComplete;
     }
 
