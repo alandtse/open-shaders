@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Guest room · offline layout</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101820;color:#dfebef;font:14px system-ui,sans-serif}
+header{padding:18px 24px;border-bottom:1px solid #35434c}h1{font-size:21px;margin:0 0 7px}p{margin:6px 0;color:#aebfc9}
+main{display:grid;grid-template-columns:minmax(0,1fr) 320px;height:calc(100vh - 112px);min-height:520px}
+#stage{position:relative;overflow:hidden}canvas{position:absolute;width:100%;height:100%;touch-action:none}#labels{pointer-events:none}
+aside{padding:20px;background:#19242e;overflow:auto;border-left:1px solid #35434c}label{display:block;margin:18px 0 6px}
+button,select{background:#293d4b;color:#ecf5f7;border:1px solid #526573;border-radius:5px;padding:8px;margin:3px 0}select,input[type=range]{width:100%}
+button{cursor:pointer;margin-right:5px}button:hover{background:#3a5363}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 ui-monospace,monospace}
+.hint{position:absolute;bottom:15px;left:20px;background:#101820cf;padding:9px;border-radius:5px;pointer-events:none}.accent{color:#ffd075}
+summary{cursor:pointer;margin-top:18px}#error{color:#ffa99b;position:absolute;top:20px;left:20px}a{color:#89cde9}
+@media(max-width:750px){main{grid-template-columns:1fr;height:auto}#stage{height:65vh}aside{border-left:0}}
+</style>
+<header><h1 id="title">Offline cell layout</h1><p>Partial geometry from deployed PGPatcher inputs · <strong>placement and runtime coverage unverified</strong></p></header>
+<main><section id="stage"><canvas id="view" aria-label="Interactive triangle layout"></canvas><canvas id="labels"></canvas><div id="error"></div>
+<div class="hint">Drag to orbit · Shift-drag to pan · Wheel to zoom · Skyrim Z is up</div></section>
+<aside><div id="totals"></div><label>View</label><button id="orbit">Orbit</button><button id="top">Top</button><button id="front">Front</button><button id="fit">Fit room</button>
+<label for="cut">Height cut <span id="cutValue"></span></label><input id="cut" type="range" step="1"><p>Hides triangles above this height. Lower it to see inside.</p>
+<label><input id="showLights" type="checkbox" checked> Baseline light positions</label><p class="accent">Light markers are record data; flicker, overrides and runtime state are not evaluated.</p>
+<label><input id="showPreviewOnly" type="checkbox" checked> Preview-only geometry (amber)</label><p>Amber surfaces need material/alpha support. They are not opaque shadow candidates; texture cutouts are not displayed.</p>
+<label for="selection">Inspect reference</label><select id="selection"><option value="">All admitted geometry</option></select><button id="focus">Focus reference</button><pre id="details"></pre>
+<details><summary id="omissionTitle">Omissions</summary><pre id="omissions"></pre></details><p>Colors identify references, not materials. No textures, ray tracing or lighting replacement.</p></aside></main>
+<script>
+'use strict';
+const scene = /*SCENE_DATA*/null;
+if(!scene){document.getElementById('error').textContent='This is the empty preview template. Open the generated cell-preview.html in your prepared output folder.';throw Error('Scene data not embedded');}
+const {layout,meshes}=scene;
+const byId=id=>document.getElementById(id),canvas=byId('view'),overlay=byId('labels'),ctx=overlay.getContext('2d');
+const gl=canvas.getContext('webgl2',{antialias:true});
+byId('title').textContent=`${layout.editorId} · offline layout`;
+if(!gl){byId('error').textContent='WebGL 2 is unavailable. The complete layout remains in cell-layout.json.';throw Error('WebGL 2 required');}
+function shader(type,source){const s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s;}
+const program=gl.createProgram();
+gl.attachShader(program,shader(gl.VERTEX_SHADER,`#version 300 es
+in vec3 position;uniform mat4 model;uniform vec3 center,right,up,forward;uniform vec3 cameraScale;out vec3 world;
+void main(){world=(model*vec4(position,1.)).xyz;vec3 p=world-center;gl_Position=vec4(dot(p,right)*cameraScale.x,dot(p,up)*cameraScale.y,-dot(p,forward)*cameraScale.z,1.);}`));
+gl.attachShader(program,shader(gl.FRAGMENT_SHADER,`#version 300 es
+precision highp float;in vec3 world;uniform vec3 color;uniform float cut;out vec4 result;
+void main(){if(world.z>cut)discard;vec3 n=normalize(cross(dFdx(world),dFdy(world)));float light=.35+.65*abs(dot(n,normalize(vec3(.35,-.4,.85))));result=vec4(color*light,1.);}`));
+gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));gl.useProgram(program);
+const loc=Object.fromEntries(['model','center','right','up','forward','cameraScale','color','cut'].map(name=>[name,gl.getUniformLocation(program,name)]));
+const position=gl.getAttribLocation(program,'position'),buffers=new Map();
+for(const mesh of meshes){
+ const bytes=Uint8Array.from(atob(mesh.blob),c=>c.charCodeAt(0)),header=new DataView(bytes.buffer);
+ const vertexCount=header.getUint32(8,true),indexCount=header.getUint32(12,true);
+ if(header.getUint32(0,true)!==0x4d475352||header.getUint32(4,true)!==1||bytes.length!==16+vertexCount*12+indexCount*4)throw Error('Invalid preview mesh');
+ const vao=gl.createVertexArray();gl.bindVertexArray(vao);
+ const vertices=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,vertices);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(bytes.buffer,16,vertexCount*3),gl.STATIC_DRAW);
+ gl.enableVertexAttribArray(position);gl.vertexAttribPointer(position,3,gl.FLOAT,false,0,0);
+ const indices=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indices);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint32Array(bytes.buffer,16+vertexCount*12,indexCount),gl.STATIC_DRAW);
+ buffers.set(mesh.hash,{vao,indexCount});
+}
+function matrix(m){return new Float32Array([m[0],m[4],m[8],0,m[1],m[5],m[9],0,m[2],m[6],m[10],0,m[3],m[7],m[11],1]);}
+function color(key){let h=2166136261;for(const c of key){h^=c.charCodeAt(0);h=Math.imul(h,16777619);}return [.35+((h>>>0)&255)/500,.35+((h>>>8)&255)/500,.35+((h>>>16)&255)/500];}
+const draws=layout.instances.map(i=>({...i,matrix:matrix(i.shapeToCell),color:color(i.referenceKey)}));
+const refs=[...new Set(draws.map(i=>i.referenceKey))];
+for(const key of refs){const first=draws.find(i=>i.referenceKey===key),option=document.createElement('option');option.value=key;option.textContent=`${key} · ${first.baseEditorId||first.model.split('\\').pop()}`;byId('selection').append(option);}
+byId('totals').textContent=`${refs.length} references · ${draws.length} shape instances · ${draws.reduce((n,i)=>n+i.indexCount/3,0).toLocaleString()} triangles · ${layout.previewOnlyInstances} preview-only instances`;
+const reasonCounts=new Map();for(const o of layout.omissions)reasonCounts.set(o.reason,(reasonCounts.get(o.reason)||0)+1);
+byId('omissionTitle').textContent=`Omission records (${layout.omissions.length})`;
+byId('omissions').textContent=[...reasonCounts].map(([r,n])=>`${n} × ${r}`).join('\n')+'\n\n'+layout.omissions.map(o=>`${o.referenceKey}${o.blockIndex===null?'':` / shape ${o.blockIndex}`}\n${o.model||'(no model)'}\n${o.reason}`).join('\n\n');
+let az=-Math.PI/4,el=.65,center=[0,0,0],span=1,depth=1,selected='',drag=null,roomBounds;
+function bounds(items){const b=[Infinity,Infinity,Infinity,-Infinity,-Infinity,-Infinity];for(const i of items)for(let a=0;a<3;a++){b[a]=Math.min(b[a],i.cellBounds[a]);b[a+3]=Math.max(b[a+3],i.cellBounds[a+3]);}return b;}
+function fit(items){if(!items.length)return;const b=bounds(items);center=b.slice(0,3).map((v,a)=>(v+b[a+3])/2);span=Math.max(...b.slice(0,3).map((v,a)=>b[a+3]-v),1)*.7;draw();}
+roomBounds=draws.length?bounds(draws):[-1,-1,-1,1,1,1];depth=Math.max(...roomBounds.slice(0,3).map((v,a)=>roomBounds[a+3]-v),1)*5;
+byId('cut').min=Math.floor(roomBounds[2]);byId('cut').max=Math.ceil(roomBounds[5])+1;byId('cut').value=byId('cut').max;
+function axes(){return {right:[-Math.sin(az),Math.cos(az),0],up:[-Math.sin(el)*Math.cos(az),-Math.sin(el)*Math.sin(az),Math.cos(el)],forward:[Math.cos(el)*Math.cos(az),Math.cos(el)*Math.sin(az),Math.sin(el)]};}
+const dot=(a,b)=>a.reduce((n,v,i)=>n+v*b[i],0);
+function draw(){
+ const dpr=window.devicePixelRatio||1,w=Math.max(1,Math.round(canvas.clientWidth*dpr)),h=Math.max(1,Math.round(canvas.clientHeight*dpr));
+ if(canvas.width!==w||canvas.height!==h){canvas.width=overlay.width=w;canvas.height=overlay.height=h;}
+ const {right,up,forward}=axes(),aspect=w/h,cut=Number(byId('cut').value);
+ gl.viewport(0,0,w,h);gl.enable(gl.DEPTH_TEST);gl.disable(gl.CULL_FACE);gl.clearColor(.063,.094,.125,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+ gl.uniform3fv(loc.center,center);gl.uniform3fv(loc.right,right);gl.uniform3fv(loc.up,up);gl.uniform3fv(loc.forward,forward);gl.uniform3f(loc.cameraScale,1/(span*aspect),1/span,1/depth);gl.uniform1f(loc.cut,cut);
+ for(const i of draws){if(!i.opaqueOccluderCandidate&&!byId('showPreviewOnly').checked)continue;const mesh=buffers.get(i.geometrySha256),baseColor=i.opaqueOccluderCandidate?i.color:[.95,.55,.22];gl.bindVertexArray(mesh.vao);gl.uniformMatrix4fv(loc.model,false,i.matrix);gl.uniform3fv(loc.color,selected===i.referenceKey?[1,.78,.27]:selected?baseColor.map(c=>c*.4):baseColor);gl.drawElements(gl.TRIANGLES,mesh.indexCount,gl.UNSIGNED_INT,0);}
+ ctx.clearRect(0,0,w,h);ctx.font=`${12*dpr}px system-ui`;ctx.lineWidth=2*dpr;
+ if(byId('showLights').checked)for(const l of layout.lights){if(!l.position||l.position[2]>cut)continue;const p=l.position.map((v,a)=>v-center[a]),x=(dot(p,right)/(span*aspect)*.5+.5)*w,y=(.5-dot(p,up)/span*.5)*h;
+ ctx.beginPath();ctx.arc(x,y,5*dpr,0,Math.PI*2);ctx.fillStyle='#ffd075';ctx.fill();ctx.fillText(l.referenceKey,x+9*dpr,y);}
+ ctx.fillStyle='#aebfc9';ctx.fillText('Light markers visible through walls',18*dpr,26*dpr);
+ byId('cutValue').textContent=`Z ${cut}`;
+}
+function details(){const items=draws.filter(i=>i.referenceKey===selected);byId('details').textContent=items.length?`${selected}\n${items[0].baseEditorId||'(no base EditorID)'}\n${items[0].model}\n${items.length} shapes · ${items.reduce((n,i)=>n+i.indexCount/3,0)} triangles\n${items.map(i=>`${i.shapeName}: ${i.geometryStatus}`).join('\n')}\nCell bounds: ${bounds(items).map(n=>n.toFixed(1)).join(', ')}\nRuntime comparison: pending`:'Select a reference to highlight its geometry.';draw();}
+canvas.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId);});
+canvas.addEventListener('pointerup',()=>drag=null);canvas.addEventListener('pointercancel',()=>drag=null);
+canvas.addEventListener('pointermove',e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag={x:e.clientX,y:e.clientY};if(e.shiftKey){const {right,up}=axes(),s=span*2/canvas.clientHeight;center=center.map((v,a)=>v-dx*s*right[a]+dy*s*up[a]);}else{az-=dx*.007;el=Math.max(-1.57,Math.min(1.57,el+dy*.007));}draw();});
+canvas.addEventListener('wheel',e=>{e.preventDefault();span=Math.max(.1,Math.min(depth*5,span*Math.exp(e.deltaY*.001)));draw();},{passive:false});
+byId('selection').onchange=e=>{selected=e.target.value;details();};byId('focus').onclick=()=>fit(draws.filter(i=>i.referenceKey===selected));
+byId('fit').onclick=()=>fit(draws);byId('orbit').onclick=()=>{az=-Math.PI/4;el=.65;fit(draws);};byId('top').onclick=()=>{az=-Math.PI/2;el=Math.PI/2;fit(draws);};byId('front').onclick=()=>{az=-Math.PI/2;el=0;fit(draws);};
+byId('cut').oninput=draw;byId('showLights').onchange=draw;byId('showPreviewOnly').onchange=draw;new ResizeObserver(draw).observe(byId('stage'));fit(draws);details();
+</script>
+</html>
