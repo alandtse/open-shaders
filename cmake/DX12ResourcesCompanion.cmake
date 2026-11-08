@@ -34,8 +34,8 @@ if(AUTO_PLUGIN_DEPLOYMENT AND WIN32)
     add_custom_target(BUILD_DX12_RESOURCES_COMPANION
         DEPENDS "${_dx12_prep_build}/publish.stamp")
     add_custom_target(DEPLOY_DX12_RESOURCES_COMPANION
-        DEPENDS BUILD_DX12_RESOURCES_COMPANION
         COMMENT "Deploy DX12ResourcesPrep alongside the Skyrim SKSE plugin")
+    add_dependencies(DEPLOY_DX12_RESOURCES_COMPANION BUILD_DX12_RESOURCES_COMPANION)
     foreach(_dx12_deploy_root $ENV{CommunityShadersOutputDir})
         add_custom_command(TARGET DEPLOY_DX12_RESOURCES_COMPANION POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory

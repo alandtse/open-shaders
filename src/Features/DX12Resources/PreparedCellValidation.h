@@ -3,6 +3,7 @@
 #include "CellRequest.h"
 #include "PluginCellCatalog.h"
 #include "Utils/FileDigest.h"
+#include <Windows.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cctype>
@@ -89,9 +90,12 @@ namespace DX12ResourceService
                 } else if (shape.at("status") == "compiled") {
                     throw std::runtime_error("Compiled shape is missing geometry");
                 }
-                if (!shape.at("shadingFile").is_null())
+                if (!shape.at("shadingFile").is_null()) {
                     VerifyPreparedBlob(output, shape.at("shadingFile").get<std::string>(),
                         shape.at("shadingSha256").get<std::string>(), "shading", ".rsga", checked);
+                } else if (shape.at("shadingStatus") == "compiled") {
+                    throw std::runtime_error("Compiled shading attributes are missing");
+                }
             }
         }
         for (const auto& instance : layout.at("instances")) {
