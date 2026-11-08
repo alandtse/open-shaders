@@ -8,7 +8,8 @@ using Mutagen.Bethesda.Plugins.Order;
 using Mutagen.Bethesda.Plugins.Cache;
 using Mutagen.Bethesda.Skyrim;
 
-return args.Length == 5 ? ScenePreparation.Run(args[..4], int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture)) :
+return args.Length == 5 && args[0] == "--list-cells" ? PluginCellIndex.Run(args[1..]) :
+    args.Length == 5 ? ScenePreparation.Run(args[..4], int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture)) :
     ScenePreparation.Run(args);
 
 internal static class ScenePreparation
