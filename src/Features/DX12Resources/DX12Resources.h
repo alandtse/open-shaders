@@ -3,13 +3,15 @@
 #include "Feature.h"
 #include "CellRequest.h"
 #include "CellDiscovery.h"
+#include "AutoCellResolver.h"
+#include <optional>
 #include <atomic>
 #include <mutex>
 #include <array>
 #include <memory>
 #include <string>
 
-/** @brief Independent manual interior preparation service. It owns no RT shading. */
+/** @brief Standalone interior preparation service with automatic CELL identification. */
 struct DX12Resources final : Feature
 {
     struct Settings { bool Enabled = true; } settings;
@@ -28,23 +30,32 @@ struct DX12Resources final : Feature
     json GetDiagnostics() override;
     std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
     {
-        return { "Manual, standalone DX12 interior resource preparation and validation.",
-                 { "Manual plugin/local CELL selection", "Independent preparation job",
+        return { "Automatic interior identification and source preparation.",
+                 { "Latest-save or current interior detection", "Independent preparation job",
                    "Versioned DX12-cache reports" } };
     }
 
 private:
     struct Job;
-    void SubmitManualRequest(const DX12ResourceService::CellRequest& request);
+    struct ScanJob;
+    void SubmitDetectedRequest(const DX12ResourceService::CellRequest& request);
     void PollJob();
+    void BeginAutomaticDetection(bool mainMenu);
+    void PollAutomaticDetection();
     std::atomic<bool> dataLoaded{ false };
     std::mutex statusMutex;
     std::shared_ptr<Job> job;
+    std::shared_ptr<ScanJob> scanJob;
+    std::optional<DX12ResourceService::CellRequest> detectedCell;
+    bool detectionRequested = false;
+    std::string detectionSource = "Not detected";
+    std::string detectionLocation;
+    std::string detectionSave;
+    std::string detectionStatus = "Waiting for Skyrim data";
     json latestReport = json::object();
     std::string status = "No CELL selected";
     std::string reportPath;
     bool reportSaved = false;
     double lastElapsedMs = 0;
-    std::array<char, 128> pluginText{};
-    std::array<char, 16> localIdText{};
+
 };

@@ -2,6 +2,11 @@
 #include "Utils/FileDigest.h"
 #include <RE/T/TESDataHandler.h>
 #include <RE/T/TESObjectCELL.h>
+#include <RE/P/PlayerCharacter.h>
+#include <RE/U/UI.h>
+#include <RE/M/MainMenu.h>
+#include <shlobj.h>
+#pragma comment(lib, "Shell32.lib")
 #include <BS_thread_pool.hpp>
 #include <Windows.h>
 #include <chrono>
@@ -11,6 +16,13 @@
 #include <vector>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12Resources::Settings, Enabled)
+
+struct DX12Resources::ScanJob
+{
+    std::atomic<bool> done{ false };
+    std::optional<DX12ResourceService::SaveLocationHint> hint;
+    std::string error;
+};
 
 struct DX12Resources::Job
 {
@@ -94,9 +106,9 @@ namespace
     }
 }
 
-void DX12Resources::SubmitManualRequest(const DX12ResourceService::CellRequest& request)
+void DX12Resources::SubmitDetectedRequest(const DX12ResourceService::CellRequest& request)
 {
-    // This lookup is run from the user's manual UI action, NEVER on a background worker.
+    // Only the main/UI thread resolves live RE forms. No engine pointer enters the worker.
     if (!dataLoaded.load(std::memory_order_acquire)) {
         status = "Skyrim data files are not loaded";
         return;
@@ -105,7 +117,7 @@ void DX12Resources::SubmitManualRequest(const DX12ResourceService::CellRequest& 
     const auto* cell = handler ?
         handler->LookupForm<RE::TESObjectCELL>(request.localId, request.plugin) : nullptr;
     if (!cell) {
-        status = "CELL record not found for the selected plugin and local FormID";
+        status = "Detected CELL record no longer resolves in the active load order";
         return;
     }
     if (!cell->IsInteriorCell()) {
@@ -154,37 +166,142 @@ void DX12Resources::PollJob()
     job.reset();
 }
 
+void DX12Resources::PollAutomaticDetection()
+{
+    if (!scanJob || !scanJob->done.load(std::memory_order_acquire)) return;
+    const auto completed = std::move(scanJob);
+    detectedCell.reset();
+    detectionSource = "Latest save";
+    if (!completed->hint) {
+        detectionStatus = completed->error.empty() ?
+            "No valid Skyrim SE save found in the standard Saves folders." : completed->error;
+        return;
+    }
+    detectionSave = completed->hint->fileName;
+    detectionLocation = completed->hint->locationName;
+    auto* handler = RE::TESDataHandler::GetSingleton();
+    if (!handler) {
+        detectionStatus = "Skyrim's CELL form registry is unavailable";
+        return;
+    }
+    std::vector<DX12ResourceService::InteriorCellCandidate> candidates;
+    // Engine form access stays on the main/UI thread, never the save-file worker.
+    for (const auto* cell : handler->GetFormArray<RE::TESObjectCELL>()) {
+        if (!cell || !cell->IsInteriorCell()) continue;
+        const char* editor = cell->GetFormEditorID();
+        const char* display = cell->GetName();
+        if (!DX12ResourceService::SameCellHint(
+                editor ? std::string_view(editor) : std::string_view{}, completed->hint->editorId) &&
+            !DX12ResourceService::SameCellHint(
+                display ? std::string_view(display) : std::string_view{}, completed->hint->locationName))
+            continue;
+        const auto* file = cell->GetFile(0);
+        if (!file || !file->GetFilename()) continue;
+        candidates.push_back({ { file->GetFilename(), cell->GetLocalFormID() },
+            editor ? editor : "", display ? display : "" });
+    }
+    const auto result = DX12ResourceService::ResolveSaveCell(*completed->hint, candidates);
+    detectedCell = result.cell;
+    detectionStatus = result.cell ?
+        "Interior resolved: " + result.explanation :
+        "No interior selected: " + result.explanation;
+}
+
+void DX12Resources::BeginAutomaticDetection(bool mainMenu)
+{
+    if (!dataLoaded.load(std::memory_order_acquire)) {
+        detectionStatus = "Waiting for Skyrim to load plugin CELL records";
+        return;
+    }
+    if (!mainMenu) {
+        detectedCell.reset();
+        detectionSource = "Current game cell";
+        detectionSave.clear();
+        detectionLocation.clear();
+        if (const auto* player = RE::PlayerCharacter::GetSingleton()) {
+            if (const auto* cell = player->GetParentCell()) {
+                if (cell->IsInteriorCell()) {
+                    if (const auto* file = cell->GetFile(0); file && file->GetFilename()) {
+                        detectedCell = DX12ResourceService::CellRequest{
+                            file->GetFilename(), cell->GetLocalFormID() };
+                        detectionLocation = cell->GetName() ? cell->GetName() : "";
+                        detectionStatus = "Current interior resolved directly from Skyrim";
+                        return;
+                    }
+                }
+            }
+        }
+        detectionStatus = "No current closed interior; only interior cells are supported";
+        return;
+    }
+    if (detectionRequested) return;
+    detectionRequested = true;
+    detectedCell.reset();
+    detectionSource = "Latest save";
+    detectionStatus = "Scanning Skyrim save headers...";
+    std::vector<std::filesystem::path> folders;
+    PWSTR documents = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_DEFAULT, nullptr, &documents)) &&
+        documents) {
+        const std::filesystem::path root(documents);
+        folders.push_back(root / "My Games" / "Skyrim Special Edition" / "Saves");
+        folders.push_back(root / "My Games" / "Skyrim Special Edition GOG" / "Saves");
+        CoTaskMemFree(documents);
+    }
+    if (folders.empty()) {
+        detectionStatus = "Windows Documents folder could not be resolved";
+        return;
+    }
+    auto next = std::make_shared<ScanJob>();
+    try {
+        static BS::thread_pool<> pool{ 1 };
+        pool.detach_task([next, folders = std::move(folders)] {
+            try { next->hint = DX12ResourceService::LatestSaveLocation(folders); }
+            catch (const std::exception& ex) { next->error = ex.what(); }
+            next->done.store(true, std::memory_order_release);
+        });
+        scanJob = std::move(next);
+    } catch (const std::exception& ex) { detectionStatus = ex.what(); }
+}
+
 void DX12Resources::DrawSettings()
 {
     std::scoped_lock lock(statusMutex);
     PollJob();
-    ImGui::Checkbox("Enable manual DX12 Resources preparation", &settings.Enabled);
-    ImGui::TextDisabled("Independent from DX12 Native Scene and legacy True PBR.");
+    PollAutomaticDetection();
+    const auto* ui = RE::UI::GetSingleton();
+    const bool mainMenu = ui && ui->IsMenuOpen(RE::MainMenu::MENU_NAME);
+    ImGui::Checkbox("Enable DX12 Resources preparation", &settings.Enabled);
+    ImGui::TextDisabled("Current interior or latest-save location; no manual IDs required.");
     ImGui::BeginDisabled(!settings.Enabled);
-    ImGui::InputTextWithHint("Source plugin", "Skyrim.esm", pluginText.data(), pluginText.size());
-    ImGui::InputTextWithHint("Local CELL FormID (hex)", "000001", localIdText.data(),
-        localIdText.size(), ImGuiInputTextFlags_CharsHexadecimal);
-    const auto request = DX12ResourceService::ParseCellRequest(
-        pluginText.data(), localIdText.data());
-    if (request)
-        ImGui::Text("CELL identity: %s", request->Key().c_str());
-    else
-        ImGui::TextDisabled("Enter an exact source plugin and local CELL FormID.");
-    ImGui::TextDisabled("Only closed interiors. No save prediction or automatic processing.");
-    ImGui::BeginDisabled(!request || !dataLoaded.load(std::memory_order_acquire) || bool(job));
-    if (ImGui::Button("Prepare Selected Cell (source discovery)") && request)
-        SubmitManualRequest(*request);
+    if (ImGui::Button("Refresh detected interior")) {
+        detectionRequested = false;
+        if (scanJob) {
+            // Existing worker owns its task; don't discard its in-flight read.
+            detectionStatus = "Previous save scan is still in progress";
+        }
+    }
+    if (!scanJob) BeginAutomaticDetection(mainMenu);
+    ImGui::SeparatorText("Detected interior");
+    ImGui::Text("Source: %s", detectionSource.c_str());
+    if (!detectionSave.empty()) ImGui::TextWrapped("Save: %s", detectionSave.c_str());
+    if (!detectionLocation.empty()) ImGui::TextWrapped("Location: %s", detectionLocation.c_str());
+    if (detectedCell) ImGui::Text("Resolved CELL: %s", detectedCell->Key().c_str());
+    ImGui::TextWrapped("%s", detectionStatus.c_str());
+    ImGui::TextDisabled("Only closed interiors. Ambiguous names are not selected.");
+    ImGui::BeginDisabled(!detectedCell || bool(job));
+    if (ImGui::Button("Prepare Detected Interior (source discovery)") && detectedCell)
+        SubmitDetectedRequest(*detectedCell);
     ImGui::EndDisabled();
     if (job) ImGui::TextUnformatted("Source-discovery worker running...");
     ImGui::TextWrapped("%s", status.c_str());
     if (reportSaved) {
-        ImGui::Text("Report: %s", reportPath.c_str());
+        ImGui::TextWrapped("Report: %s", reportPath.c_str());
         ImGui::Text("Elapsed: %.2f ms", lastElapsedMs);
         ImGui::TextDisabled("Geometry, materials and lights are NOT marked ready.");
     }
     ImGui::EndDisabled();
 }
-
 void DX12Resources::LoadSettings(json& input)
 {
     std::scoped_lock lock(statusMutex);
@@ -205,6 +322,11 @@ json DX12Resources::GetDiagnostics()
     std::scoped_lock lock(statusMutex);
     PollJob();
     return { { "enabled", settings.Enabled },
+        { "detection", { { "source", detectionSource },
+            { "status", detectionStatus },
+            { "location", detectionLocation }, { "save", detectionSave },
+            { "resolved", detectedCell.has_value() },
+            { "cell", detectedCell ? detectedCell->Key() : std::string{} } } },
         { "dataLoaded", dataLoaded.load(std::memory_order_acquire) },
         { "stage", "discovery-only" }, { "prepared", false },
         { "workerBusy", bool(job) }, { "status", status },
