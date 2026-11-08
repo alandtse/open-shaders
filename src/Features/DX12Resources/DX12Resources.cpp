@@ -196,8 +196,10 @@ void DX12Resources::PollAutomaticDetection()
                 display ? std::string_view(display) : std::string_view{}, completed->hint->locationName))
             continue;
         const auto* file = cell->GetFile(0);
-        if (!file || !file->GetFilename()) continue;
-        candidates.push_back({ { file->GetFilename(), cell->GetLocalFormID() },
+        if (!file) continue;
+        const std::string_view filename = file->GetFilename();
+        if (filename.empty()) continue;
+        candidates.push_back({ { std::string(filename), cell->GetLocalFormID() },
             editor ? editor : "", display ? display : "" });
     }
     const auto result = DX12ResourceService::ResolveSaveCell(*completed->hint, candidates);
@@ -221,12 +223,15 @@ void DX12Resources::BeginAutomaticDetection(bool mainMenu)
         if (const auto* player = RE::PlayerCharacter::GetSingleton()) {
             if (const auto* cell = player->GetParentCell()) {
                 if (cell->IsInteriorCell()) {
-                    if (const auto* file = cell->GetFile(0); file && file->GetFilename()) {
-                        detectedCell = DX12ResourceService::CellRequest{
-                            file->GetFilename(), cell->GetLocalFormID() };
-                        detectionLocation = cell->GetName() ? cell->GetName() : "";
-                        detectionStatus = "Current interior resolved directly from Skyrim";
-                        return;
+                    if (const auto* file = cell->GetFile(0)) {
+                        const std::string_view filename = file->GetFilename();
+                        if (!filename.empty()) {
+                            detectedCell = DX12ResourceService::CellRequest{
+                                std::string(filename), cell->GetLocalFormID() };
+                            detectionLocation = cell->GetName() ? cell->GetName() : "";
+                            detectionStatus = "Current interior resolved directly from Skyrim";
+                            return;
+                        }
                     }
                 }
             }
@@ -268,7 +273,7 @@ void DX12Resources::DrawSettings()
 {
     std::scoped_lock lock(statusMutex);
     PollJob();
-    const auto* ui = RE::UI::GetSingleton();
+    auto* ui = RE::UI::GetSingleton();
     const bool mainMenu = ui && ui->IsMenuOpen(RE::MainMenu::MENU_NAME);
     if (!lastDetectionMainMenu || *lastDetectionMainMenu != mainMenu) {
         // Return to menu must not reuse an in-game CELL; leaving menu must
