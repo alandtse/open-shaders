@@ -10,12 +10,27 @@
 #include "Utils/DevBenchUx.h"
 #include "Utils/D3D.h"
 #include <cmath>
+#include <string_view>
+#include <utility>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
 {
+    // Stable, case-insensitive identity for one prepared interior (plugin + local FormID).
+    uint64_t PreparedCellReloadToken(std::string_view plugin, uint32_t local)
+    {
+        uint64_t hash = 14695981039346656037ull;
+        for (unsigned char c : plugin) {
+            const unsigned char lower = c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
+            hash = (hash ^ lower) * 1099511628211ull;
+        }
+        for (unsigned shift : { 0u, 8u, 16u, 24u })
+            hash = (hash ^ ((local >> shift) & 0xffu)) * 1099511628211ull;
+        return hash ? hash : 1;
+    }
+
     // Displays only the most recently published JSON snapshot; no GPU queries or
     // file/archive operations are performed by the ImGui thread.
     void DrawNativePBRDiagnostics(const json& a_snapshot)
@@ -263,6 +278,43 @@ void DX12NativeScene::DrawSettings()
 		}
 		if (changed) ++shadowControlsRevision;
 	}
+    ImGui::SeparatorText("Prepared DX12 CELL loading");
+    if (ImGui::Button("Reload prepared CELL from cache"))
+        resetRequested.store(true, std::memory_order_release);
+    ImGui::TextDisabled("Read the published 3-file CELL package without running preparation.");
+    {
+        // UI only reads a cached JSON snapshot; disk IO and DX12 work stay off the menu thread.
+        const auto snapshot = GetDiagnostics();
+        const auto loaded = snapshot.value("prepared", json::object());
+        const auto as = snapshot.value("acceleration", json::object());
+        const auto value = [](const json& node, const char* key) -> uint64_t {
+            return node.is_object() ? node.value(key, uint64_t{0}) : 0;
+        };
+        ImGui::Text("CELL loading: %s",
+            loaded.value("loading", false) ? "In progress" :
+            loaded.value("loaded", false) ? "Geometry loaded" :
+            loaded.value("requested", false) ? "Attempt finished" : "Not requested");
+        ImGui::Text("Geometry: %llu meshes / %llu instances / %.2f MiB",
+            static_cast<unsigned long long>(value(loaded, "meshes")),
+            static_cast<unsigned long long>(value(loaded, "instances")),
+            double(value(loaded, "geometryBytes")) / (1024.0 * 1024.0));
+        ImGui::Text("Shading: %llu instances / %llu tangent frames",
+            static_cast<unsigned long long>(value(loaded, "shadedInstances")),
+            static_cast<unsigned long long>(value(loaded, "tangentInstances")));
+        ImGui::Text("BLAS: %llu/%llu | TLAS: %llu/%llu",
+            static_cast<unsigned long long>(value(as, "bottomCompletions")),
+            static_cast<unsigned long long>(value(as, "bottomSubmissions")),
+            static_cast<unsigned long long>(value(as, "topCompletions")),
+            static_cast<unsigned long long>(value(as, "topSubmissions")));
+        ImGui::Text("Published DX12 scene: %s", snapshot.value("published", false) ? "Yes" : "No");
+        const auto loadFailure = loaded.value("failure", std::string{});
+        if (!loadFailure.empty()) ImGui::TextWrapped("CELL load failure: %s", loadFailure.c_str());
+        const auto asFailure = as.value("failure", std::string{});
+        if (!asFailure.empty()) ImGui::TextWrapped("Acceleration failure: %s", asFailure.c_str());
+        const auto workerFailure = as.value("lastBatchFailure", std::string{});
+        if (!workerFailure.empty()) ImGui::TextWrapped("AS worker failure: %s", workerFailure.c_str());
+        ImGui::TextDisabled("Geometry and acceleration are reported independently of material readiness.");
+    }
 	ImGui::TextUnformatted(failure.empty() ? "Prepared static scenes" : failure.c_str());
 	const uint32_t requestedFrame = requestedFrameBudget.load();
 	uint32_t frameLimit = requestedFrame != UINT32_MAX ? requestedFrame : settings.FrameBudgetMB;
@@ -404,6 +456,12 @@ void DX12NativeScene::ObserveRuntimeGeometry(RE::BSGeometry* geometry,
     runtimeGeometry.Submit(DX12Native::CopyRuntimeGeometry(input, 256 * 1024));
 }
 
+void DX12NativeScene::NotifyPreparedCellPublished(std::string_view plugin, uint32_t localID)
+{
+    if (plugin.empty() || !localID) return;
+    pendingPreparedCellReload.store(PreparedCellReloadToken(plugin, localID), std::memory_order_release);
+}
+
 void DX12NativeScene::ResetScene()
 {
 	++revision;
@@ -480,6 +538,14 @@ void DX12NativeScene::EarlyPrepass()
 	}
 	auto* cell = globals::game::player ? globals::game::player->GetParentCell() : nullptr;
 	const auto currentID = cell ? cell->GetFormID() : 0;
+    // Publication can complete after an earlier missing-cache attempt.
+    // Consume the matching notification on the scene thread, not the companion worker.
+    if (const auto notification = pendingPreparedCellReload.exchange(0, std::memory_order_acq_rel);
+        notification && cell && cell->IsInteriorCell()) {
+        const auto* source = cell->GetFile(0);
+        if (source && notification == PreparedCellReloadToken(source->GetFilename(), cell->GetLocalFormID()))
+            resetRequested.store(true, std::memory_order_release);
+    }
 	if (reloadRequested.exchange(false)) {
 		ResetScene();
 		raster.ReloadShader();
@@ -537,7 +603,7 @@ void DX12NativeScene::EarlyPrepass()
 		if (!source) { failure = "Cell source unavailable"; return; }
 		const auto local = cell->GetLocalFormID();
 		const auto key = std::format("{:06X}:{}", local, source->GetFilename());
-		const auto directory = std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/RedstoneScene/cells") / source->GetFilename() / std::format("{:06X}", local);
+		const auto directory = std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") / source->GetFilename() / std::format("{:06X}", local);
 		const auto budget = uint64_t(settings.BudgetMB) * 1024 * 1024;
 		prepared.Request(*backend, directory, key, revision, budget, budget);
 	}

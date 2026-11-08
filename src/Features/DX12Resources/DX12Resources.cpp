@@ -1,4 +1,6 @@
 #include "DX12Resources.h"
+#include "Features/DX12NativeScene/DX12NativeScene.h"
+#include "Globals.h"
 #include "CompanionProcess.h"
 #include "PreparedCellValidation.h"
 #include "Utils/FileDigest.h"
@@ -39,6 +41,7 @@ struct DX12Resources::CatalogJob
 struct DX12Resources::PreparationJob
 {
     std::atomic<bool> done{ false };
+    DX12ResourceService::CellRequest request;
     std::string path;
     std::string error;
     std::string logPath;
@@ -457,13 +460,14 @@ void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest&
         return;
     }
 
-    // The producer deliberately refuses output under Data. Stage in the game
-    // root, validate all referenced hashes, then publish inside DX12-cache.
-    const auto workspace = data.parent_path() / "DX12ResourcesWork" / "cells" / request.plugin /
+    // Work is isolated beneath DX12-cache/work, never beneath the published cells/.
+    // The companion only permits this explicitly scoped write location.
+    const auto workspace = data / "SKSE/Plugins/CommunityShaders/DX12-cache/work/cells" / request.plugin /
         std::format("{:06X}-{}-{}", request.localId, GetTickCount64(), preparationSequence++);
     const auto logPath = data / "SKSE/Plugins/CommunityShaders/DX12-cache/logs" /
         std::format("prepare-{}-{}-{}.log", request.localId, GetCurrentProcessId(), GetTickCount64());
     auto next = std::make_shared<PreparationJob>();
+    next->request = request;
     preparationStatus = "Preparing selected CELL with independent DX12ResourcesPrep...";
     preparationReport = json::object();
     preparationPath.clear();
@@ -507,6 +511,7 @@ void DX12Resources::PollCellPreparation()
     }
     preparationReport = std::move(completed->report);
     preparationPath = completed->path;
+    globals::features::dx12NativeScene.NotifyPreparedCellPublished(completed->request.plugin, completed->request.localId);
     const int missing = preparationReport.value("unresolvedAssets", 0);
     preparationStatus = missing == 0 ?
         "CELL preparation validated and cached (runtime coverage still unverified)" :
@@ -669,6 +674,7 @@ json DX12Resources::GetDiagnostics()
 {
     std::scoped_lock lock(statusMutex);
     PollJob();
+    PollCellPreparation();
     return { { "enabled", settings.Enabled },
         { "detection", { { "source", detectionSource },
             { "status", detectionStatus },

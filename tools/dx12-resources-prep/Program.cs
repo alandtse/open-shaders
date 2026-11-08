@@ -30,8 +30,26 @@ try
     if (quality is < 0 or > 2) throw new ArgumentOutOfRangeException(nameof(quality));
     var data = Path.GetFullPath(args[0]);
     var output = Path.GetFullPath(args[2]);
-    if (output.Equals(data, StringComparison.OrdinalIgnoreCase) || output.StartsWith(data + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-        throw new ArgumentException("Output must be outside the game Data directory.");
+    // The companion may write only to the dedicated temporary work subtree.
+    // Never permit direct publication under DX12-cache/cells, or arbitrary writes under Data.
+    var workRoot = Path.GetFullPath(Path.Combine(data, "SKSE", "Plugins",
+        "CommunityShaders", "DX12-cache", "work", "cells"));
+    var insideData = output.Equals(data, StringComparison.OrdinalIgnoreCase) ||
+        output.StartsWith(data + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    var insideWork = output.StartsWith(workRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    if (insideData && !insideWork)
+        throw new ArgumentException("Output inside Data is permitted only under DX12-cache/work/cells.");
+    if (insideWork)
+    {
+        // Reject any existing link/junction from the Data root through the destination.
+        for (DirectoryInfo? current = new(output);
+             current != null && current.FullName.StartsWith(data, StringComparison.OrdinalIgnoreCase);
+             current = current.Parent)
+        {
+            if (current.Exists && current.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                throw new IOException("Preparation work path contains a reparse point.");
+        }
+    }
     var parts = args[1].Split(':');
     if (parts.Length != 2) throw new ArgumentException("Cell identity must be plugin:hex-local-id.");
     var cellKey = new FormKey(ModKey.FromFileName(parts[0]), Convert.ToUInt32(parts[1], 16));

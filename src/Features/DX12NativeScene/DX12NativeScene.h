@@ -12,6 +12,7 @@
 #include <atomic>
 #include <optional>
 #include <mutex>
+#include <string_view>
 
 /** @brief Loads prepared geometry and publishes its completed DX12 acceleration scene. */
 namespace RE { class BSGeometry; }
@@ -67,6 +68,8 @@ struct DX12NativeScene final : Feature
 	void OnRuntimeDisabled() override;
 	void OnSceneTransitionReset(bool a_open) override;
 	void GameLoaded() override;
+    /** @brief Request a safe retry of a newly published CELL on the scene thread. */
+    void NotifyPreparedCellPublished(std::string_view plugin, uint32_t localID);
 	void ClearShaderCache() override { reloadRequested = true; }
 	json GetDiagnostics() override;
 	void RegisterUxActions() override;
@@ -127,6 +130,7 @@ private:
 	uint64_t revision = 0;
 	uint32_t cellID = 0;
 	std::atomic<bool> resetRequested{ false }, reloadRequested{ false }, shadowResetRequested{ false };
+    std::atomic<uint64_t> pendingPreparedCellReload{ 0 };
 	std::atomic<int> requestedEnabled{ -1 }, requestedShadow{ -1 };
 	std::atomic<uint32_t> requestedBudget{ 0 };
 	std::atomic<uint32_t> requestedFrameBudget{ UINT32_MAX };

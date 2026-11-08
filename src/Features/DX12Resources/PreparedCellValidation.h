@@ -154,9 +154,9 @@ namespace DX12ResourceService
             throw std::runtime_error("Refusing to replace an unsafe prepared CELL");
         ec.clear();
 
-        // Preserve report JSONs outside Data. No copied DDS, NIF or individual mesh blobs.
+        // Keep compact diagnostic JSON beneath DX12-cache/diagnostics; never in published cells/.
         const auto stamp = std::to_wstring(GetTickCount64());
-        const auto diagnostics = data.parent_path() / "DX12ResourcesWork/diagnostics/cells" /
+        const auto diagnostics = data / "SKSE/Plugins/CommunityShaders/DX12-cache/diagnostics/cells" /
             request.plugin / (std::format(L"{:06X}-", request.localId) + stamp);
         std::filesystem::create_directories(diagnostics);
         for (const char* report : { "cell-preparation.json", "cell-records.json",
