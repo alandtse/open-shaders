@@ -285,29 +285,29 @@ void DX12NativeScene::DrawSettings()
     {
         // UI only reads a cached JSON snapshot; disk IO and DX12 work stay off the menu thread.
         const auto snapshot = GetDiagnostics();
-        const auto loaded = snapshot.value("prepared", json::object());
+        const auto preparedStatus = snapshot.value("prepared", json::object());
         const auto as = snapshot.value("acceleration", json::object());
         const auto value = [](const json& node, const char* key) -> uint64_t {
             return node.is_object() ? node.value(key, uint64_t{0}) : 0;
         };
         ImGui::Text("CELL loading: %s",
-            loaded.value("loading", false) ? "In progress" :
-            loaded.value("loaded", false) ? "Geometry loaded" :
-            loaded.value("requested", false) ? "Attempt finished" : "Not requested");
+            preparedStatus.value("loading", false) ? "In progress" :
+            preparedStatus.value("loaded", false) ? "Geometry loaded" :
+            preparedStatus.value("requested", false) ? "Attempt finished" : "Not requested");
         ImGui::Text("Geometry: %llu meshes / %llu instances / %.2f MiB",
-            static_cast<unsigned long long>(value(loaded, "meshes")),
-            static_cast<unsigned long long>(value(loaded, "instances")),
-            double(value(loaded, "geometryBytes")) / (1024.0 * 1024.0));
+            static_cast<unsigned long long>(value(preparedStatus, "meshes")),
+            static_cast<unsigned long long>(value(preparedStatus, "instances")),
+            double(value(preparedStatus, "geometryBytes")) / (1024.0 * 1024.0));
         ImGui::Text("Shading: %llu instances / %llu tangent frames",
-            static_cast<unsigned long long>(value(loaded, "shadedInstances")),
-            static_cast<unsigned long long>(value(loaded, "tangentInstances")));
+            static_cast<unsigned long long>(value(preparedStatus, "shadedInstances")),
+            static_cast<unsigned long long>(value(preparedStatus, "tangentInstances")));
         ImGui::Text("BLAS: %llu/%llu | TLAS: %llu/%llu",
             static_cast<unsigned long long>(value(as, "bottomCompletions")),
             static_cast<unsigned long long>(value(as, "bottomSubmissions")),
             static_cast<unsigned long long>(value(as, "topCompletions")),
             static_cast<unsigned long long>(value(as, "topSubmissions")));
         ImGui::Text("Published DX12 scene: %s", snapshot.value("published", false) ? "Yes" : "No");
-        const auto loadFailure = loaded.value("failure", std::string{});
+        const auto loadFailure = preparedStatus.value("failure", std::string{});
         if (!loadFailure.empty()) ImGui::TextWrapped("CELL load failure: %s", loadFailure.c_str());
         const auto asFailure = as.value("failure", std::string{});
         if (!asFailure.empty()) ImGui::TextWrapped("Acceleration failure: %s", asFailure.c_str());
