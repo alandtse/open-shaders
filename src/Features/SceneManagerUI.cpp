@@ -1,6 +1,6 @@
 #include "SceneManagerUI.h"
 
-#include "CSEditor/SceneSettingsUI.h"
+#include "CSEditor/SceneManager/SceneSettingsUI.h"
 #include "I18n/I18n.h"
 
 namespace SceneManagerUI
@@ -30,46 +30,8 @@ namespace SceneManagerUI
 		SceneSettingsUI::HideFeaturePageEditing();
 	}
 
-	static bool BeginSceneTab(const char* label)
-	{
-		static ImGuiID selectedTab = 0;
-		const auto id = ImGui::GetID(label);
-		if (!ImGui::BeginTabItem(label))
-			return false;
-		if (selectedTab != id) {
-			SceneSettingsUI::ResetPickerScrollPositions();
-			selectedTab = id;
-		}
-		return true;
-	}
-
 	void Draw()
 	{
-		SceneSettingsUI::DrawGlobalActions();
-		if (!ImGui::BeginTabBar("##SceneManagerTabs"))
-			return;
-
-		if (BeginSceneTab(T("feature.scene_manager.tab.interior", "Interior"))) {
-			SceneSettingsUI::DrawInteriorPanel();
-			ImGui::EndTabItem();
-		}
-		if (BeginSceneTab(T("feature.scene_manager.tab.time_of_day", "Time of Day"))) {
-			SceneSettingsUI::DrawTimeOfDayPanel();
-			ImGui::EndTabItem();
-		}
-		if (BeginSceneTab(T("feature.scene_manager.tab.locations", "Locations"))) {
-			SceneSettingsUI::DrawLocationPanel();
-			ImGui::EndTabItem();
-		}
-		if (BeginSceneTab(T("feature.scene_manager.tab.weather", "Weather"))) {
-			SceneSettingsUI::DrawWeatherPanel();
-			ImGui::EndTabItem();
-		}
-		if (BeginSceneTab(T("feature.scene_manager.copy.title", "Copy Scene Settings"))) {
-			SceneSettingsUI::DrawCopyPanel();
-			ImGui::EndTabItem();
-		}
-
-		ImGui::EndTabBar();
+		SceneSettingsUI::DrawStandalonePage();
 	}
 }

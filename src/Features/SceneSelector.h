@@ -39,6 +39,9 @@ public:
 	void RenderWeatherDetailsWindow(bool* open);
 	void ResetWindowLayout();
 
+	/** @brief Open the shared weather overlay from an editor or feature action. */
+	void OpenWeatherOverlay();
+
 	/**
 	 * Displays weather info for a given weather record.
 	 * @param weather Weather record to display.
@@ -79,43 +82,25 @@ private:
 	bool resetWindowSize = false;
 
 	void DrawShowInOverlayToggle();
-	void DrawTimeControls();
-	void DrawSceneSelectorSection();
-	static void DrawWeatherStatusPanel();
+	void DrawTeleportControls();
 
 	static constexpr float WIND_DIRECTION_OFFSET = 30.5f;
-	static constexpr uint32_t ALL_WEATHER_FLAGS = 0x7F;
-	static constexpr uint32_t UNCLASSIFIED_FLAG = 0x40;
-
-	static inline bool s_dataAvailable = false;
-	static inline bool s_weathersLoaded = false;
-	static inline std::vector<RE::TESWeather*> s_allWeathers;
-	static inline std::vector<RE::TESWeather*> s_filteredWeathers;
-	static inline int s_selectedWeatherIdx = -1;
-	static inline uint32_t s_weatherFlagFilter = ALL_WEATHER_FLAGS;
-	static inline uint32_t s_lastWeatherFlagFilter = UNCLASSIFIED_FLAG;
-	static inline bool s_accelerateWeatherChange = true;
 	static inline RE::TESWeather* s_cachedLastWeather = nullptr;
 
-	static std::string GetDisplayName(const RE::TESWeather* weather);
-
-	struct WeatherNameComparator
+	struct TravelDestination
 	{
-		bool operator()(const RE::TESWeather* a, const RE::TESWeather* b) const
-		{
-			return SceneSelector::GetDisplayName(a) < SceneSelector::GetDisplayName(b);
-		}
+		RE::TESForm* form;
+		std::string label;
+		std::string editorId;
+		RE::FormType type;
 	};
+	static inline std::vector<TravelDestination> s_destinations;
 
 	static void DisplayWeatherBasicInfo(RE::TESWeather* weather, float weatherPct);
 	static void DisplayPrecipitationInfo(RE::TESWeather* weather);
 	static void DisplayLightningInfo(RE::TESWeather* weather, bool showInteractiveElements);
 	static void DisplayWindInfo(RE::TESWeather* weather);
 
-	static void EnsureWeatherListLoaded();
-	static void LoadAllWeathers();
-	static void UpdateFilteredWeathers();
-	static int FindWeatherIndex(RE::TESWeather* targetWeather);
 	static std::vector<std::string> GetWeatherFlagNames(RE::TESWeather* weather);
 
 	void DrawOverlay() override;

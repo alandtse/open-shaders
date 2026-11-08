@@ -5,6 +5,7 @@
 #include "Menu.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/UI.h"
 
 namespace FeatureIssues
 {
@@ -171,7 +172,7 @@ namespace FeatureIssues
 		return std::any_of(s_featureIssues.begin(), s_featureIssues.end(),
 			[](const auto& issue) {
 				return (issue.issueType == FeatureIssueInfo::IssueType::OBSOLETE && issue.ModifiedShaderDirectory()) ||
-			           issue.issueType == FeatureIssueInfo::IssueType::UNKNOWN;
+				       issue.issueType == FeatureIssueInfo::IssueType::UNKNOWN;
 			});
 	}
 
@@ -224,24 +225,25 @@ namespace FeatureIssues
 			}
 		}
 
-		// Convert timestamp to human-readable format
-		if (info.latestTimestamp != std::filesystem::file_time_type::min()) {
-			try {
-				auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-					info.latestTimestamp - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
-				auto time_t = std::chrono::system_clock::to_time_t(sctp);
-				std::stringstream ss;
-				ss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
-				info.timestampDisplay = ss.str();
-			} catch (const std::exception& e) {
-				info.timestampDisplay = "Unknown";
-				logger::warn("Error formatting timestamp: {}", e.what());
-			}
-		} else {
-			info.timestampDisplay = "No files found";
-		}
-
+		info.timestampDisplay = info.latestTimestamp != std::filesystem::file_time_type::min() ?
+		                            FormatFileTimestamp(info.latestTimestamp) :
+		                            "No files found";
 		return info;
+	}
+
+	std::string FormatFileTimestamp(std::filesystem::file_time_type timestamp)
+	{
+		try {
+			auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+				timestamp - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
+			auto time_t = std::chrono::system_clock::to_time_t(sctp);
+			std::stringstream ss;
+			ss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
+			return ss.str();
+		} catch (const std::exception& e) {
+			logger::warn("Error formatting timestamp: {}", e.what());
+			return "Unknown";
+		}
 	}
 
 	void AddFeatureIssue(const std::string& shortName, const std::string& version,
@@ -417,6 +419,7 @@ namespace FeatureIssues
 		std::vector<const FeatureIssueInfo*> unknownIssues;
 		std::vector<const FeatureIssueInfo*> obsoleteIssues;
 		std::vector<const FeatureIssueInfo*> versionIssues;
+		std::vector<const FeatureIssueInfo*> baselineIssues;
 		std::vector<const FeatureIssueInfo*> overrideIssues;
 		std::vector<const FeatureIssueInfo*> conflictIssues;
 
@@ -431,6 +434,8 @@ namespace FeatureIssues
 				obsoleteIssues.push_back(&issue);
 			} else if (issue.IsVersionMismatch()) {
 				versionIssues.push_back(&issue);
+			} else if (issue.IsBaselineFailed()) {
+				baselineIssues.push_back(&issue);
 			} else if (issue.IsOverrideFailed()) {
 				overrideIssues.push_back(&issue);
 			} else if (issue.IsConflict()) {
@@ -477,6 +482,16 @@ namespace FeatureIssues
 				DrawFeatureIssue(*issue, theme.StatusPalette.Warning);
 			}
 		}
+		// Baseline preset failures
+		if (auto section = Util::SectionWrapper(T("menu.issues.baseline_failures_header", "Base Settings Preset Failures"),
+				T("menu.issues.baseline_failures_desc",
+					"These Base Settings preset files failed to load or apply. Check the file format and content."),
+				theme.StatusPalette.Error, !baselineIssues.empty())) {
+			for (const auto* issue : baselineIssues) {
+				DrawFeatureIssue(*issue, theme.StatusPalette.Error);
+			}
+		}
+
 		if (auto section = Util::SectionWrapper(T("menu.issues.conflicts_header", "Conflicting Mods"),
 				T("menu.issues.conflicts_desc",
 					"The following features were disabled because a mod that cannot be used with them was detected. "
@@ -494,9 +509,8 @@ namespace FeatureIssues
 				T("menu.issues.override_failures_desc",
 					"The following override files failed to load or apply. Check the file format and content."),
 				theme.StatusPalette.Error, !overrideIssues.empty())) {
-			for (const auto* issue : overrideIssues) {
+			for (const auto* issue : overrideIssues)
 				DrawFeatureIssue(*issue, theme.StatusPalette.Error);
-			}
 		}
 
 		// Common cleanup actions section
@@ -780,6 +794,7 @@ namespace FeatureIssues
 		// 1. Features that don't modify shader directories (safe to delete)
 		// 2. Obsolete features with replacements (user can install replacement after deletion)
 		bool canSafelyDelete = !issue.IsConflict() && (!issue.ModifiedShaderDirectory() || (issue.IsObsolete() && !issue.replacementFeature.empty())) && !IsVersionMismatchForCoreFeature(issue);
+		canSafelyDelete &= !issue.IsBaselineFailed() || issue.fileInfo.hasINI;
 		if (canSafelyDelete) {
 			ImGui::SameLine();
 			std::string deleteButtonId = "Delete##" + issue.shortName;
@@ -836,7 +851,7 @@ namespace FeatureIssues
 				ImGui::TextColored(theme.StatusPalette.Error, "%s", T("menu.issues.cannot_be_undone", "This action cannot be undone!"));
 				ImGui::Spacing();
 
-				if (ImGui::Button(T("menu.issues.delete", "Delete"), ImVec2(120, 0))) {
+				if (Util::Button(T("menu.issues.delete", "Delete"), ImVec2(120, 0))) {
 					if (DeleteFeatureFiles(issue)) {
 						s_pendingIssueRemoval = issue.shortName;
 					}
@@ -844,7 +859,7 @@ namespace FeatureIssues
 				}
 				ImGui::SetItemDefaultFocus();
 				ImGui::SameLine();
-				if (ImGui::Button(T("menu.issues.cancel", "Cancel"), ImVec2(120, 0))) {
+				if (Util::Button(T("menu.issues.cancel", "Cancel"), ImVec2(120, 0))) {
 					ImGui::CloseCurrentPopup();
 				}
 			}
@@ -857,6 +872,11 @@ namespace FeatureIssues
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s", T("menu.issues.disable_at_boot_tooltip", "Keep this feature off at boot so the conflicting mod can be used. You can enable it again from its page."));
 			}
+		}
+		if (issue.IsBaselineFailed()) {
+			ImGui::Indent();
+			ImGui::TextWrapped("%s", issue.rejectionReason.c_str());
+			ImGui::Unindent();
 		}
 		ImGui::PopID();
 	}
@@ -1007,29 +1027,22 @@ namespace FeatureIssues
 
 		bool LoadPersistentTestState()
 		{
-			const auto stateFilePath = GetTestStateFilePath();
-			if (!std::filesystem::exists(stateFilePath)) {
+			const auto document = Util::FileHelpers::ReadJsonObject(GetTestStateFilePath(), "persistent test state");
+			if (!document) {
 				return false;
 			}
 
 			try {
-				std::ifstream file(stateFilePath);
-				if (!file) {
-					return false;
-				}
-
-				nlohmann::json stateData;
-				file >> stateData;
-
+				const auto& stateData = *document;
 				s_activeTestInis.clear();
 				if (stateData.contains("testInis") && stateData["testInis"].is_array()) {
 					for (const auto& testData : stateData["testInis"]) {
 						TestIniInfo testInfo;
-						testInfo.testIniPath = testData["testIniPath"].get<std::string>();
-						testInfo.isNewFile = testData["isNewFile"].get<bool>();
-						testInfo.testType = testData["testType"].get<std::string>();
-						testInfo.featureName = testData["featureName"].get<std::string>();
-						testInfo.originalVersion = testData["originalVersion"].get<std::string>();
+						testInfo.testIniPath = testData.at("testIniPath").get<std::string>();
+						testInfo.isNewFile = testData.at("isNewFile").get<bool>();
+						testInfo.testType = testData.at("testType").get<std::string>();
+						testInfo.featureName = testData.at("featureName").get<std::string>();
+						testInfo.originalVersion = testData.at("originalVersion").get<std::string>();
 
 						s_activeTestInis.push_back(testInfo);
 					}
@@ -1065,12 +1078,10 @@ namespace FeatureIssues
 					std::chrono::system_clock::now().time_since_epoch())
 				                           .count();
 
-				std::ofstream file(stateFilePath);
-				if (!file) {
+				if (!Util::FileHelpers::WriteJsonAtomically(stateFilePath, stateData, 2, "persistent test state")) {
 					return false;
 				}
 
-				file << stateData.dump(2);
 				logger::debug("Saved {} test INI records to persistent state", s_activeTestInis.size());
 				return true;
 			} catch (const std::exception& e) {
@@ -1679,7 +1690,7 @@ namespace FeatureIssues
 						themeSettings.StatusPalette.Error,
 						themeSettings.StatusPalette.CurrentHotkey);
 
-					if (ImGui::Button(T("menu.issues.test.restore", "Restore"), { -1, 0 })) {
+					if (Util::Button(T("menu.issues.test.restore", "Restore"), { -1, 0 })) {
 						auto& testInis = GetCurrentTestInis();
 						if (RestoreOriginalState(testInis)) {
 							logger::info("Successfully restored original state");

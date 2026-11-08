@@ -70,7 +70,7 @@ jobs:
                   sudo apt-get update
                   # wine64 named explicitly: with i386 multiarch on, apt can satisfy `wine` from
                   # wine32:i386 alone, leaving no 64-bit loader (x86-64 PEs fail "Bad EXE format").
-                  sudo apt-get install -y ninja-build wine wine64 wine32:i386 g++ lsb-release wget gnupg software-properties-common
+                  sudo apt-get install -y ninja-build nasm wine wine64 wine32:i386 g++ lsb-release wget gnupg software-properties-common
                   # Ubuntu noble already ships Clang 20 natively; installing from
                   # apt.llvm.org (the old llvm.sh path) pulls a conflicting libllvm20
                   # build and apt refuses the transaction. MSVC 14.51's STL headers

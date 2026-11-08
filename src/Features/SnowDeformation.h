@@ -158,7 +158,7 @@ struct SnowDeformation : Feature
 		template <class T>
 		struct Projectile_AddImpact
 		{
-			static void thunk(RE::Projectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_position, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, int32_t a_arg6, uint32_t a_arg7);
+			static RE::Projectile::ImpactData* thunk(RE::Projectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_position, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, int32_t a_arg6, uint32_t a_arg7);
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 

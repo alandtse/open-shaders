@@ -11,7 +11,7 @@ namespace RainRefractionTexture
 	struct Footprint
 	{
 		std::array<float, 4> uvBounds{ 0, 0, 1, 1 };
-		std::array<float, 2> radiusScale{ 1, 1 };
+		std::array<float, 2> radiusScale{ 1, 1 };  ///< Billboard half-extents relative to the covered width, so the drop keeps its aspect
 	};
 
 	/** @brief Fits a billboard to RGBA8 alpha coverage while preserving the drop's aspect ratio and filter border. */

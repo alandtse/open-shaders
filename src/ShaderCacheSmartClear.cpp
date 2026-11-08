@@ -303,6 +303,7 @@ namespace SIE
 		// so the resurrected shaders get their own accurate stats/event.
 		if (erasedProcessed > 0 && completionTime.load(std::memory_order_relaxed) != 0) {
 			QueryPerformanceCounter(&lastReset);
+			lastResetQpc.store(lastReset.QuadPart, std::memory_order_relaxed);
 			lastCalculation = lastReset;
 			completionTime.store(0, std::memory_order_relaxed);
 			compilationPhaseStarted.store(false, std::memory_order_relaxed);

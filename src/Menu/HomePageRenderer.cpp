@@ -3,231 +3,416 @@
 
 #include <imgui.h>
 
+#include "CSEditor/Browser/BrowserWidgets.h"
 #include "Feature.h"
 #include "FeatureConstraints.h"
+#include "FeatureIssues.h"
+#include "Features/PerformanceOverlay.h"
+#include "Features/Upscaling.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
+#include "IconsTabler.h"
 #include "Menu.h"
+#include "Menu/FeatureListRenderer.h"
+#include "Menu/IconLoader.h"
+#include "Menu/IssuesPageRenderer.h"
+#include "Menu/MenuIcons.h"
+#include "Menu/MenuLinks.h"
+#include "Menu/PerformanceRenderer.h"
+#include "Menu/ProfilingRenderer.h"
+#include "Menu/SettingsPageRenderer.h"
+#include "Menu/SettingsSections.h"
 #include "Plugin.h"
+#include "Presets/UnifiedPresetCatalog.h"
+#include "Profiler.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "ThemeManager.h"
+#include "Utils/UIAnim.h"
 
 // Static member definitions
 bool HomePageRenderer::isFirstTimeSetupShown = false;
-uint32_t HomePageRenderer::keyThatClosedDialog = 0;
 
-bool HomePageRenderer::ShouldSkipKeyRelease(uint32_t key)
+bool HomePageRenderer::attentionRequested = false;
+
+void HomePageRenderer::FocusNeedsAttention()
 {
-	if (keyThatClosedDialog && key == keyThatClosedDialog) {
-		keyThatClosedDialog = 0;
-		return true;
+	attentionRequested = true;
+}
+
+namespace
+{
+	float LeadingTextInset(const char* text)
+	{
+		unsigned int codepoint = 0;
+		ImTextCharFromUtf8(&codepoint, text, nullptr);
+		auto* baked = ImGui::GetFontBaked();
+		return baked ? std::round(Icons::GetGlyphInkBounds(codepoint, baked).x * ImGui::GetFontSize() / baked->Size) : 0.0f;
 	}
-	return false;
+
+	float DashboardTitle(const char* text, bool fitWidth = false)
+	{
+		MenuFonts::FontRoleGuard font(Menu::FontRole::Title);
+		const float titleScale = globals::menu->GetFeatureTitleScale();
+		ImGui::SetWindowFontScale(titleScale);
+		if (fitWidth) {
+			const float width = ImGui::CalcTextSize(text).x;
+			if (width > ImGui::GetContentRegionAvail().x)
+				ImGui::SetWindowFontScale(titleScale * ImGui::GetContentRegionAvail().x / width);
+		}
+		const float textStart = std::floor(ImGui::GetCursorScreenPos().x) + LeadingTextInset(text);
+		if (fitWidth)
+			ImGui::TextUnformatted(text);
+		else
+			ImGui::TextWrapped("%s", text);
+		ImGui::SetWindowFontScale(1.0f);
+		return textStart;
+	}
+
+	void RenderPresetSummary()
+	{
+		auto& catalog = UnifiedPresetCatalog::GetSingleton();
+		const auto* pack = catalog.FindPack(catalog.GetActivePackId());
+		DashboardTitle(pack ? pack->name.c_str() : T("menu.home.preset_none", "No active preset"));
+		const auto count = catalog.GetBaselinePackIds().size();
+		Util::Text::WrappedDisabled("%s", I18n::GetSingleton()->Format("menu.home.base_settings_count",
+																  { { "count", std::to_string(count) } }, "{count} Base Settings presets enabled")
+											  .c_str());
+		ImGui::Spacing();
+		if (Icons::LabeledButton("##BrowsePresets", Icons::TI(MenuIcons::kPresets), T("menu.home.browse_presets", "Browse presets")))
+			globals::menu->SelectFeatureMenu(std::string(MenuPageIds::kPresets));
+		bool automatic = catalog.GetAutomaticPresets();
+		ImGui::BeginGroup();
+		bool changed = ImGui::Checkbox("##AutomaticPresets", &automatic);
+		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextWrapped("%s", T("menu.presets.auto_apply", "Automatically Apply Presets at Startup"));
+		if (ImGui::IsItemClicked()) {
+			automatic = !automatic;
+			changed = true;
+		}
+		ImGui::EndGroup();
+		if (changed)
+			catalog.SetAutomaticPresets(automatic);
+	}
+
+	void RenderPerformanceSummary(float cardHeight)
+	{
+		const auto& io = ImGui::GetIO();
+		if (ImGui::BeginTable("##FrameMetrics", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadOuterX)) {
+			ImGui::TableNextColumn();
+			DashboardTitle(std::format("{:.0f} FPS", io.Framerate).c_str());
+			Util::AddTooltip(T("menu.home.frame_rate_hint", "Rendered frames per second, before frame generation."));
+			ImGui::TableNextColumn();
+			DashboardTitle(std::format("{:.2f} ms", io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f).c_str());
+			ImGui::EndTable();
+		}
+		static std::string profileName;
+		static double nextProfileRefresh = 0.0;
+		const double now = ImGui::GetTime();
+		const double refreshInterval = ThemeManager::Constants::HOME_PROFILE_REFRESH_SECONDS;
+		if (profileName.empty() || now >= nextProfileRefresh || now + refreshInterval < nextProfileRefresh) {
+			profileName = PerformanceRenderer::GetCurrentProfileName();
+			nextProfileRefresh = now + refreshInterval;
+		}
+		const auto profile = I18n::GetSingleton()->Format("menu.home.performance_preset", { { "profile", profileName } }, "Preset: {profile}");
+		const auto* profiling = T("menu.features.profiling", "Profiling");
+		const auto& style = ImGui::GetStyle();
+		const float presetWidth = ImGui::CalcTextSize(profile.c_str()).x + style.FramePadding.x * 2.0f;
+		const float buttonsWidth = Icons::MeasureLabeledButton(Icons::TI(MenuIcons::kProfiling), profiling) + style.ItemSpacing.x + presetWidth;
+		const float footerHeight = ImGui::GetFrameHeightWithSpacing() * (buttonsWidth > ImGui::GetContentRegionAvail().x ? 2.0f : 1.0f);
+		const float graphHeight = std::max(ImGui::GetTextLineHeightWithSpacing() * ThemeManager::Constants::HOME_GRAPH_LINES,
+			cardHeight - ImGui::GetCursorPosY() - ImGui::GetCurrentWindow()->WindowPadding.y - footerHeight);
+		const float footerY = ImGui::GetCursorPosY() + graphHeight + style.ItemSpacing.y;
+		ProfilingRenderer::RenderCompactGraph(graphHeight);
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+			if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+				globals::menu->SelectFeatureMenu(std::string(MenuPageIds::kProfiling), "profiling");
+		}
+		ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), footerY));
+		if (Icons::LabeledButton("##OpenProfiling", Icons::TI(MenuIcons::kProfiling), profiling))
+			globals::menu->SelectFeatureMenu(std::string(MenuPageIds::kProfiling), "profiling");
+		BrowserUI::SameLineIfFits(presetWidth);
+		if (Util::Button(profile.c_str(), ImVec2(presetWidth, ImGui::GetFrameHeight())))
+			globals::menu->SelectFeatureMenu(std::string(MenuPageIds::kProfiling), "performance-presets");
+	}
+
+	void RenderShaderSummary()
+	{
+		auto* cache = globals::shaderCache;
+		const auto progress = cache->GetTaskProgress();
+		const auto* status = !cache->IsEnabled()      ? T("menu.home.shaders_disabled", "Shaders disabled") :
+		                     cache->IsDiskCacheHeld() ? T("menu.home.cache_waiting", "Waiting for a cache decision") :
+		                     cache->IsCompiling()     ? T("menu.home.shaders_compiling", "Building shaders") :
+		                     progress.failed > 0      ? T("menu.home.shaders_failed", "Shaders need attention") :
+		                                                T("menu.home.shaders_ready", "Idle");
+		DashboardTitle(status);
+		ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.home.shader_tasks",
+														 { { "done", std::to_string(progress.successful + progress.failed) }, { "total", std::to_string(progress.total) },
+															 { "failed", std::to_string(progress.failed) } },
+														 "{done}/{total} tasks completed, {failed} failed")
+									 .c_str());
+		ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.home.disk_cache",
+														 { { "status", cache->IsDiskCacheActive() ? T("common.active", "Active") : T("common.inactive", "Inactive") } }, "Disk cache: {status}")
+									 .c_str());
+		ImGui::Spacing();
+		if (Icons::LabeledButton("##ShaderSettings", Icons::TI(MenuIcons::kShaders), T("menu.settings.nav_shaders_cache", "Shaders & Cache")))
+			SettingsPageRenderer::OpenSection(SettingsSectionIds::kShadersCache);
+	}
+
+	void RenderGpuSummary()
+	{
+		auto& upscaling = globals::features::upscaling;
+		const bool enabled = upscaling.loaded && !globals::state->IsFeatureDisabled(upscaling.GetShortName());
+		DashboardTitle(globals::state->adapterDescription.c_str(), true);
+		ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.footer.d3d12_swap_chain",
+														 { { "status", globals::features::upscaling.d3d12SwapChainActive ? T("common.active", "Active") : T("common.inactive", "Inactive") } },
+														 "D3D12 Swap Chain: {status}")
+									 .c_str());
+		const auto method = enabled ? upscaling.GetUpscaleMethod() : Upscaling::UpscaleMethod::kNONE;
+		const char* methodName = T("feature.upscaling.none", "None");
+		switch (method) {
+		case Upscaling::UpscaleMethod::kTAA:
+			methodName = "TAA";
+			break;
+		case Upscaling::UpscaleMethod::kDLSS:
+			methodName = "NVIDIA DLSS";
+			break;
+		case Upscaling::UpscaleMethod::kFSR:
+			methodName = "AMD FSR";
+			break;
+		default:
+			break;
+		}
+		ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.home.upscaling_method", { { "method", methodName } }, "Upscaling: {method}").c_str());
+		if (method != Upscaling::UpscaleMethod::kNONE) {
+			ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.home.render_scale",
+															 { { "scale", std::format("{:.0f}", upscaling.resolutionScale.x * 100.0f) } }, "Render scale: {scale}%")
+										 .c_str());
+		}
+		std::string frameGeneration = T("menu.home.frame_generation_disabled", "Disabled");
+		if (enabled && upscaling.settings.frameGenerationMode != 0) {
+			const auto frameGenMethod = upscaling.GetFrameGenMethod();
+			frameGeneration = frameGenMethod == Upscaling::FrameGenMethod::kNone ? T("menu.home.frame_generation_unavailable", "Unavailable") :
+			                                                                       std::format("{} ({}x)", frameGenMethod == Upscaling::FrameGenMethod::kDLSSG ? "NVIDIA DLSS-G" : "AMD FSR",
+																					   upscaling.GetFrameGenerationMultiplier());
+		}
+		ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.home.frame_generation", { { "status", frameGeneration } }, "Frame generation: {status}").c_str());
+		ImGui::Spacing();
+		if (Icons::LabeledButton("##Upscaling", Icons::TI(ICON_TI_DEVICE_DESKTOP), T("feature.upscaling.name", "Upscaling")))
+			globals::menu->SelectFeatureMenu(globals::features::upscaling.GetShortName());
+	}
+
+	void RenderGameSummary()
+	{
+		DashboardTitle(globals::game::isVR ? T("menu.home.game_vr", "Skyrim VR") : T("menu.home.game_se", "Skyrim Special Edition"));
+		ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.home.game_version",
+														 { { "version", Util::GetFormattedVersion(REL::Module::get().version()) } }, "Game version: {version}")
+									 .c_str());
+		const auto* runtime = globals::game::isVR                                   ? T("menu.home.runtime_vr", "Virtual Reality (VR)") :
+		                      REL::Module::GetRuntime() == REL::Module::Runtime::AE ? T("menu.home.runtime_ae", "Anniversary Edition (AE)") :
+		                                                                              T("menu.home.runtime_se", "Special Edition (SE)");
+		Util::Text::WrappedDisabled("%s", I18n::GetSingleton()->Format("menu.home.runtime", { { "runtime", runtime } }, "Runtime: {runtime}").c_str());
+		ImGui::Spacing();
+		if (Icons::LabeledButton("##Keybindings", Icons::TI(MenuIcons::kSettings), T("menu.settings.nav_keybindings", "Keybindings")))
+			SettingsPageRenderer::OpenSection(SettingsSectionIds::kKeybindings);
+	}
+	void DrawFAQAnswer(const char* text)
+	{
+		const float indent = ImGui::GetTreeNodeToLabelSpacing();
+		ImGui::Indent(indent);
+		ImGui::TextWrapped("%s", text);
+		ImGui::Unindent(indent);
+	}
+
+	void RenderFAQContents()
+	{
+		constexpr auto flags = ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
+		// FAQ items with collapsible headers
+		if (ImGui::TreeNodeEx(T("menu.faq.q1", "What is {brand}?"), flags)) {
+			DrawFAQAnswer(T("menu.faq.a1",
+				"{brand} is a fork of Community Shaders that ships features the upstream project "
+				"has not yet released. Both projects are comprehensive graphics enhancement frameworks "
+				"for Skyrim that provide advanced lighting, materials, and visual effects. They're "
+				"designed to be modular, letting you enable only the features you want while "
+				"maintaining good performance. This fork preserves the upstream runtime layout so user "
+				"settings and themes are compatible."));
+		}
+
+		if (ImGui::TreeNodeEx(T("menu.faq.q2", "How do I configure features?"), flags)) {
+			DrawFAQAnswer(T("menu.faq.a2",
+				"Each feature can be found in the left sidebar menu. Click on any feature to access its "
+				"settings. Most features include presets and detailed tooltips to help you understand "
+				"what each setting does."));
+		}
+
+		if (ImGui::TreeNodeEx(T("menu.faq.q4", "I have \"Failed Shaders\" when compiling?"), flags)) {
+			DrawFAQAnswer(T("menu.faq.a4",
+				"Failed shaders are usually caused by mixed file versions. Ensure all features are up to date "
+				"and avoid mixing files from test builds or outdated versions. Please review 'Needs attention' on Home "
+				"and/or Wiki for more information. Update your features and remove any obsolete features."));
+		}
+
+		if (ImGui::TreeNodeEx(T("menu.faq.q5", "How do I improve performance?"), flags)) {
+			DrawFAQAnswer(T("menu.faq.a5",
+				"Start by enabling the Performance Overlay to monitor your FPS. Consider disabling "
+				"expensive features like Screen Space GI or reducing quality settings. The Upscaling "
+				"feature also includes options that can improve performance."));
+		}
+
+		if (ImGui::TreeNodeEx(T("menu.faq.q6", "Is {brand} compatible with ENB?"), flags)) {
+			DrawFAQAnswer(T("menu.faq.a6",
+				"No, {brand} (like upstream Community Shaders) is not compatible with ENB. The "
+				"plugin will automatically disable itself if ENB is detected."));
+		}
+
+		if (ImGui::TreeNodeEx(T("menu.faq.q8", "I would like to help develop {brand}."), flags)) {
+			DrawFAQAnswer(T("menu.faq.a8",
+				"{brand} is open source. Check out the upstream GitHub wiki for contribution "
+				"guidelines on the shared architecture; open issues and PRs against this repository for "
+				"fork-specific work, or against upstream Community Shaders for changes that benefit both "
+				"projects. Whether you're interested in shader programming, C++ development, or "
+				"documentation, there's always something to contribute."));
+		}
+
+		if (ImGui::TreeNodeEx(T("menu.faq.q9", "Is {brand} open source?"), flags)) {
+			DrawFAQAnswer(T("menu.faq.a9",
+				"Yes! {brand} is completely open source and available on GitHub, as is upstream "
+				"Community Shaders. You can view the source code, report issues, suggest features, and "
+				"contribute to either project. Both are licensed under GPL, ensuring they remain free and "
+				"open for everyone. Branding materials and assets (icons, Nexus branding, typography, etc.) "
+				"are not covered by the GPL Licence. Any included assets may not be used without explicit "
+				"permission."));
+		}
+	}
 }
 
 void HomePageRenderer::RenderHomePage()
 {
-	ImGui::BeginChild("HomePage", ImVec2(0, 0), false);
+	if (ImGui::BeginChild("HomePage")) {
+		const float titleX = ImGui::GetCursorPosX();
+		ImGui::SetCursorPosX(titleX + ImGui::GetStyle().FramePadding.x);
+		const float titleTextStart = DashboardTitle(T("menu.features.home", "Home"));
+		ImGui::SetCursorPosX(titleX);
 
-	RenderWelcomeSection();
-	ImGui::Spacing();
-
-	RenderWrongRuntimeCacheSection();
-	RenderCacheMismatchSection();
-
-	RenderActiveConstraintsSection();
-
-	RenderQuickLinksSection();
-	ImGui::Spacing();
-
-	RenderFAQSection();
-
-	ImGui::EndChild();
-}
-
-void HomePageRenderer::RenderWelcomeSection()
-{
-	float scale = Util::GetUIScale();
-	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8 * scale, 8 * scale));
-
-	// Main title - centered with safe font handling
-	ImGuiIO& io = ImGui::GetIO();
-	ImFont* titleFont = nullptr;
-
-	// Safely check if we have multiple fonts and the second one is valid
-	if (io.Fonts && io.Fonts->Fonts.Size > 1 && io.Fonts->Fonts[1] != nullptr) {
-		titleFont = io.Fonts->Fonts[1];
-	}
-
-	// Scale the text to make it larger (2.0x size)
-	ImGui::SetWindowFontScale(TITLE_FONT_SCALE);
-
-	// Only push font if we have a valid one, otherwise use default scaled
-	if (titleFont) {
-		ImGui::PushFont(titleFont, titleFont->LegacySize);
-	}
-
-	ImVec2 windowSize = ImGui::GetWindowSize();
-	auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
-	auto expectedTag = std::format("v{}", versionStr);
-	std::string titleWithVersion = Plugin::BUILD_DESCRIBE == expectedTag ?
-	                                   I18n::GetSingleton()->Format("menu.home.welcome", { { "version", std::string(versionStr) } }, "Welcome to {brand} {version}") :
-	                                   I18n::GetSingleton()->Format("menu.home.welcome_dev", { { "version", std::string(versionStr) } }, "Welcome to {brand} {version}");
-	ImVec2 titleSize = ImGui::CalcTextSize(titleWithVersion.c_str());
-	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
-	ImGui::Text("%s", titleWithVersion.c_str());
-
-	// Only pop font if we pushed one
-	if (titleFont) {
-		ImGui::PopFont();
-	}
-
-	// Reset text scale back to normal
-	ImGui::SetWindowFontScale(1.0f);
-
-	ImGui::Spacing();
-
-	// Intro text - centered
-	const char* introText = T("menu.home.intro",
-		"{brand} is a fork of Community Shaders providing advanced graphics enhancements for Skyrim.\n"
-		"This comprehensive collection of features brings modern rendering techniques\n"
-		"to enhance your visual experience.");
-	ImVec2 introSize = ImGui::CalcTextSize(introText);
-	ImGui::SetCursorPosX((windowSize.x - introSize.x) * 0.5f);
-	ImGui::TextWrapped("%s", introText);
-
-	ImGui::Spacing();
-
-	// VR discoverability: name the location and offer a click straight into the VR feature
-	// (Performance is its first tab).
-	if (globals::game::isVR) {
-		ImGui::TextWrapped("%s", T("menu.home.performance_tip",
-									 "One-tap performance profiles (foveation, reprojection, render resolution) are on "
-									 "the VR feature's Performance tab:"));
-		if (ImGui::SmallButton(T("menu.home.performance_link", "Open Performance"))) {
-			if (auto* menu = Menu::GetSingleton())
-				menu->SelectFeatureMenu("VR");
+		const auto featureIssues = IssuesPageRenderer::GetFeatureIssueCount();
+		const auto constraints = IssuesPageRenderer::GetConstraintCount();
+		auto* cache = globals::shaderCache;
+		const bool needsAttention = featureIssues > 0 || constraints > 0 || cache->GetFailedTasks() > 0 || cache->IsDiskCacheHeld() || cache->HasFeatureSetChanges() ||
+		                            cache->GetWrongRuntimeCache() != Util::CacheInvalidation::CacheRuntime::Unknown;
+		const char* status = needsAttention ? T("menu.home.needs_attention", "Needs attention") : T("menu.home.no_issues", "No issues detected");
+		{
+			const float buttonX = titleTextStart - LeadingTextInset(status) - ImGui::GetStyle().FramePadding.x + ThemeManager::Constants::HOME_STATUS_TEXT_OFFSET_PIXELS;
+			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + buttonX - ImGui::GetCursorScreenPos().x);
+			auto statusStyle = Util::TransparentIconButtonStyle();
+			ImGui::PushStyleColor(ImGuiCol_Text, needsAttention ? Util::Colors::GetError() : Util::Colors::GetSuccess());
+			const bool clicked = Icons::LabeledButton("##Attention", Icons::TI(needsAttention ? MenuIcons::kIssues : ICON_TI_CIRCLE_CHECK), status, ImVec2(0, 0), true);
+			ImGui::PopStyleColor();
+			if (clicked || attentionRequested)
+				ImGui::OpenPopup("##NeedsAttention");
+			attentionRequested = false;
+			BrowserUI::SameLineIfFits(ImGui::CalcTextSize(T("menu.home.saved", "Settings saved")).x);
+			ImGui::TextColored(globals::state->HasUnsavedChanges() ? Util::Colors::GetUnsaved() : Util::Colors::GetSecondary(), "%s",
+				globals::state->HasUnsavedChanges() ? T("menu.home.unsaved", "Unsaved settings") : T("menu.home.saved", "Settings saved"));
 		}
 		ImGui::Spacing();
-	}
+		ImGui::Separator();
+		const float minimumColumnWidth = ImGui::GetFontSize() * ThemeManager::Constants::HOME_CARD_MIN_WIDTH_EM;
+		const float columnGap = ImGui::GetStyle().CellPadding.x * 2.0f;
+		const int columns = std::clamp(static_cast<int>((ImGui::GetContentRegionAvail().x + columnGap) / (minimumColumnWidth + columnGap)), 1, 3);
+		constexpr auto tableFlags = ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadOuterX | ImGuiTableFlags_NoSavedSettings;
+		if (ImGui::BeginTable("##HomeDashboard", columns, tableFlags)) {
+			const float cardHeight = ImGui::GetFrameHeightWithSpacing() * ThemeManager::Constants::HOME_CARD_HEIGHT_FRAMES;
+			const auto nextCard = [&] {
+				ImGui::TableNextColumn();
+				ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, cardHeight), ImVec2(FLT_MAX, FLT_MAX));
+			};
+			nextCard();
+			{
+				Util::SectionCard card("##HomePerformance", MenuIcons::kProfiling, T("menu.features.performance", "Performance"));
+				RenderPerformanceSummary(cardHeight);
+			}
+			nextCard();
+			{
+				Util::SectionCard card("##HomePresets", MenuIcons::kPresets, T("menu.features.presets", "Presets"));
+				RenderPresetSummary();
+			}
+			nextCard();
+			{
+				Util::SectionCard card("##HomeShaders", MenuIcons::kShaders, T("menu.settings.card_shader_cache", "Shader Cache"));
+				RenderShaderSummary();
+			}
+			nextCard();
+			{
+				Util::SectionCard card("##HomeGpu", MenuIcons::kGpu, T("menu.home.gpu", "GPU"));
+				RenderGpuSummary();
+			}
+			nextCard();
+			{
+				Util::SectionCard card("##HomeGame", MenuIcons::kGame, T("menu.home.game", "Game"));
+				RenderGameSummary();
+			}
+			nextCard();
+			{
+				Util::SectionCard card("##HomeFAQ", MenuIcons::kHelp, T("menu.faq.title", "Frequently Asked Questions"));
+				ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, ImGui::GetStyle().ItemSpacing.y));
+				const bool faqVisible = ImGui::BeginChild("##HomeFAQContents", ImVec2(0.0f, std::max(ImGui::GetTextLineHeightWithSpacing(), ImGui::GetContentRegionAvail().y)),
+					ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoBackground);
+				ImGui::PopStyleVar();
+				if (faqVisible)
+					RenderFAQContents();
+				ImGui::EndChild();
+			}
+			ImGui::EndTable();
+		}
+		ImGui::Spacing();
+		RenderQuickLinksSection();
+		ImGui::Spacing();
 
-	ImGui::PopStyleVar();
+		const auto viewport = ImGui::GetWindowViewport();
+		const ImVec2 popupSize(std::min(ImGui::GetFontSize() * ThemeManager::Constants::HOME_DETAIL_WIDTH_EM, viewport->WorkSize.x),
+			viewport->WorkSize.y * ThemeManager::Constants::HOME_DETAIL_HEIGHT_RATIO);
+		ImGui::SetNextWindowSize(popupSize, ImGuiCond_Appearing);
+		if (ImGui::BeginPopup("##NeedsAttention")) {
+			DashboardTitle(T("menu.home.needs_attention", "Needs attention"));
+			if (featureIssues > 0)
+				FeatureIssues::DrawFeatureIssuesUI();
+			if (cache->GetFailedTasks() > 0)
+				ImGui::TextWrapped("%s", T("menu.home.shader_failure_hint", "Some shaders failed to compile. Open Shaders & Cache for details and check the game log."));
+			RenderWrongRuntimeCacheSection();
+			RenderCacheMismatchSection();
+			if (constraints > 0)
+				IssuesPageRenderer::RenderConstraintsSection();
+			if (!needsAttention && constraints == 0)
+				ImGui::TextWrapped("%s", T("menu.home.no_issues", "No issues detected"));
+			ImGui::EndPopup();
+		}
+	}
+	ImGui::EndChild();
 }
 
 void HomePageRenderer::RenderQuickLinksSection()
 {
-	// Quick Links title - centered
-	ImVec2 windowSize = ImGui::GetWindowSize();
-	const char* quickLinksTitle = T("menu.home.quick_links", "Quick Links");
-	ImVec2 titleSize = ImGui::CalcTextSize(quickLinksTitle);
-	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
-	ImGui::Text("%s", quickLinksTitle);
-
-	// Nexus button → the Open Shaders fork page (mod 180419).
-	ImGui::Columns(4, nullptr, false);
-
-	if (ImGui::Button(T("menu.home.nexus_mods", "Nexus Mods"), ImVec2(-1, 0))) {
-		ShellExecuteA(NULL, "open", "https://www.nexusmods.com/skyrimspecialedition/mods/180419", NULL, NULL, SW_SHOWNORMAL);
-	}
-
-	// Discord button → the Open Shaders fork's own server invite.
-	ImGui::NextColumn();
-	if (ImGui::Button(T("menu.home.join_discord", "Join Discord"), ImVec2(-1, 0))) {
-		ShellExecuteA(NULL, "open", "https://discord.gg/V6qa82Spxw", NULL, NULL, SW_SHOWNORMAL);
-	}
-
-	ImGui::NextColumn();
-	if (ImGui::Button(T("menu.home.github", "GitHub"), ImVec2(-1, 0))) {
-		ShellExecuteA(NULL, "open", "https://github.com/alandtse/open-shaders", NULL, NULL, SW_SHOWNORMAL);
-	}
-
-	ImGui::NextColumn();
-	if (ImGui::Button(T("menu.home.dev_wiki", "Developer Wiki"), ImVec2(-1, 0))) {
-		ShellExecuteA(NULL, "open", "https://github.com/alandtse/open-shaders/wiki", NULL, NULL, SW_SHOWNORMAL);
-	}
-
-	ImGui::Columns(1);
-}
-
-void HomePageRenderer::RenderFAQSection()
-{
-	// FAQ title - centered
-	ImVec2 windowSize = ImGui::GetWindowSize();
-	const char* faqTitle = T("menu.faq.title", "Frequently Asked Questions");
-	ImVec2 titleSize = ImGui::CalcTextSize(faqTitle);
-	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
-	ImGui::Text("%s", faqTitle);
 	ImGui::Separator();
-
-	// FAQ items with collapsible headers
-	if (ImGui::CollapsingHeader(T("menu.faq.q1", "What is {brand}?"))) {
-		ImGui::TextWrapped("%s", T("menu.faq.a1",
-									 "{brand} is a fork of Community Shaders that ships features the upstream project "
-									 "has not yet released. Both projects are comprehensive graphics enhancement frameworks "
-									 "for Skyrim that provide advanced lighting, materials, and visual effects. They're "
-									 "designed to be modular, letting you enable only the features you want while "
-									 "maintaining good performance. This fork preserves the upstream runtime layout so user "
-									 "settings and themes are compatible."));
-	}
-
-	if (ImGui::CollapsingHeader(T("menu.faq.q2", "How do I configure features?"))) {
-		ImGui::TextWrapped("%s", T("menu.faq.a2",
-									 "Each feature can be found in the left sidebar menu. Click on any feature to access its "
-									 "settings. Most features include presets and detailed tooltips to help you understand "
-									 "what each setting does."));
-	}
-
-	if (ImGui::CollapsingHeader(T("menu.faq.q3", "Why are some features not loading?"))) {
-		ImGui::TextWrapped("%s", T("menu.faq.a3",
-									 "Features may fail to load due to hardware incompatibility, missing dependencies, or "
-									 "conflicts with other mods. Check the 'Feature Issues' tab for detailed information "
-									 "about any problematic features."));
-	}
-
-	if (ImGui::CollapsingHeader(T("menu.faq.q4", "I have \"Failed Shaders\" when compiling?"))) {
-		ImGui::TextWrapped("%s", T("menu.faq.a4",
-									 "Failed shaders are usually caused by mixed file versions. Ensure all features are up to date "
-									 "and avoid mixing files from test builds or outdated versions. Please review the 'Feature Issues' tab "
-									 "and/or Wiki for more information. Update your features and remove any obsolete features."));
-	}
-
-	if (ImGui::CollapsingHeader(T("menu.faq.q5", "How do I improve performance?"))) {
-		ImGui::TextWrapped("%s", T("menu.faq.a5",
-									 "Start by enabling the Performance Overlay to monitor your FPS. Consider disabling "
-									 "expensive features like Screen Space GI or reducing quality settings. The 'Display' "
-									 "tab also includes upscaling options that can improve performance."));
-	}
-
-	if (ImGui::CollapsingHeader(T("menu.faq.q6", "Is {brand} compatible with ENB?"))) {
-		ImGui::TextWrapped("%s", T("menu.faq.a6",
-									 "No, {brand} (like upstream Community Shaders) is not compatible with ENB. The "
-									 "plugin will automatically disable itself if ENB is detected."));
-	}
-
-	if (ImGui::CollapsingHeader(T("menu.faq.q7", "The menu hotkey isn't working!"))) {
-		ImGui::TextWrapped("%s", T("menu.faq.a7",
-									 "By default, {brand} uses the END key to open this menu. If your keyboard "
-									 "doesn't have an END key or it's not working, you can change it in the General > Keybindings tab. "
-									 "You can also edit the hotkey in the JSON configuration files."));
-	}
-
-	if (ImGui::CollapsingHeader(T("menu.faq.q8", "I would like to help develop {brand}."))) {
-		ImGui::TextWrapped("%s", T("menu.faq.a8",
-									 "{brand} is open source. Check out the upstream GitHub wiki for contribution "
-									 "guidelines on the shared architecture; open issues and PRs against this repository for "
-									 "fork-specific work, or against upstream Community Shaders for changes that benefit both "
-									 "projects. Whether you're interested in shader programming, C++ development, or "
-									 "documentation, there's always something to contribute."));
-	}
-
-	if (ImGui::CollapsingHeader(T("menu.faq.q9", "Is {brand} open source?"))) {
-		ImGui::TextWrapped("%s", T("menu.faq.a9",
-									 "Yes! {brand} is completely open source and available on GitHub, as is upstream "
-									 "Community Shaders. You can view the source code, report issues, suggest features, and "
-									 "contribute to either project. Both are licensed under GPL, ensuring they remain free and "
-									 "open for everyone. Branding materials and assets (icons, Nexus branding, typography, etc.) "
-									 "are not covered by the GPL Licence. Any included assets may not be used without explicit "
-									 "permission."));
+	const float available = ImGui::GetContentRegionAvail().x;
+	using MenuLinks::Link;
+	constexpr std::array links = { Link::NexusMods, Link::GitHub, Link::Wiki, Link::DeveloperWiki, Link::Discord };
+	float rowWidth = ImGui::GetStyle().ItemSpacing.x * static_cast<float>(links.size() - 1);
+	for (const auto link : links)
+		rowWidth += BrowserUI::MeasureChip(MenuLinks::GetLabel(link), true);
+	if (rowWidth < available)
+		ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (available - rowWidth) * 0.5f);
+	for (size_t index = 0; index < links.size(); ++index) {
+		const auto link = links[index];
+		const char* label = MenuLinks::GetLabel(link);
+		if (index > 0)
+			BrowserUI::SameLineIfFits(BrowserUI::MeasureChip(label, true));
+		ImGui::PushID(static_cast<int>(link));
+		if (BrowserUI::Chip("##Link", label, Icons::TI(MenuIcons::kExternal)))
+			MenuLinks::Open(link);
+		ImGui::PopID();
+		Util::AddTooltip(MenuLinks::GetUrl(link));
 	}
 }
 
@@ -358,9 +543,9 @@ void HomePageRenderer::RenderCacheMismatchSection()
 		if (restoreDisabled)
 			ImGui::BeginDisabled();
 
-		const bool restoreClicked = ImGui::Button(isCompiling ?
-													  T("menu.home.cache_mismatch_cancel_restore", "Cancel Compile & Restore Previous Cache") :
-													  T("menu.home.cache_mismatch_restore", "Restore Previous Cache & Restart"));
+		const bool restoreClicked = Util::Button(isCompiling ?
+													 T("menu.home.cache_mismatch_cancel_restore", "Cancel Compile & Restore Previous Cache") :
+													 T("menu.home.cache_mismatch_restore", "Restore Previous Cache & Restart"));
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", isCompiling ?
 								  T("menu.home.cache_mismatch_cancel_restore_tooltip", "Stops the in-progress compile (discarding its progress) and swaps the previous shader cache back into use. Restart required.") :
@@ -381,7 +566,7 @@ void HomePageRenderer::RenderCacheMismatchSection()
 		const bool keepDisabled = !previousCacheAvailable || featureSetChanged;
 		if (keepDisabled)
 			ImGui::BeginDisabled();
-		if (ImGui::Button(T("menu.home.cache_mismatch_keep", "Keep Current Cache")))
+		if (Util::Button(T("menu.home.cache_mismatch_keep", "Keep Current Cache")))
 			shaderCache->DiscardPreviousDiskCache();
 		if (auto _ttk = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", featureSetChanged ?
@@ -407,13 +592,13 @@ void HomePageRenderer::RenderCacheMismatchSection()
 			if (Util::BeginPopupModalWithRoundedClose(popupTitle.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
 				ImGui::TextWrapped("%s", T("menu.home.cache_mismatch_cancel_restore_body", "The in-progress shader compile will be stopped and its progress discarded. You'll need to recompile later if you want the new feature set."));
 				ImGui::Spacing();
-				if (ImGui::Button(T("menu.home.cache_mismatch_cancel_restore_confirm", "Cancel Compile & Restore"))) {
+				if (Util::Button(T("menu.home.cache_mismatch_cancel_restore_confirm", "Cancel Compile & Restore"))) {
 					s_restoreFailed = !shaderCache->RestorePreviousDiskCache();
 					s_showCancelConfirm = false;
 					ImGui::CloseCurrentPopup();
 				}
 				ImGui::SameLine();
-				if (ImGui::Button(T("menu.home.cache_mismatch_cancel_restore_keep_compiling", "Keep Compiling"))) {
+				if (Util::Button(T("menu.home.cache_mismatch_cancel_restore_keep_compiling", "Keep Compiling"))) {
 					s_showCancelConfirm = false;
 					ImGui::CloseCurrentPopup();
 				}
@@ -436,7 +621,7 @@ void HomePageRenderer::RenderCacheMismatchSection()
 
 		if (!canMatch)
 			ImGui::BeginDisabled();
-		const bool matchClicked = ImGui::Button(T("menu.home.cache_mismatch_match", "Match Cache & Restart"));
+		const bool matchClicked = Util::Button(T("menu.home.cache_mismatch_match", "Match Cache & Restart"));
 		if (!canMatch)
 			ImGui::EndDisabled();
 		if (auto _ttm = Util::HoverTooltipWrapper()) {
@@ -457,7 +642,7 @@ void HomePageRenderer::RenderCacheMismatchSection()
 			}
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(T("menu.home.cache_mismatch_rebuild", "Rebuild Cache for Current Features"))) {
+		if (Util::Button(T("menu.home.cache_mismatch_rebuild", "Rebuild Cache for Current Features"))) {
 			shaderCache->AcceptCacheRebuild();
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -613,18 +798,18 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 	// Fullscreen fade on the dialog's draw list — covers all windows beneath at the dialog's z-position
 	auto* drawList = ImGui::GetWindowDrawList();
 	drawList->PushClipRectFullScreen();
-	drawList->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, MODAL_OVERLAY_ALPHA));
+	drawList->AddRectFilled(ImVec2(0, 0), io.DisplaySize, ImGui::GetColorU32(IM_COL32(0, 0, 0, MODAL_OVERLAY_ALPHA)));
 	drawList->PopClipRect();
 
 	auto menu = Menu::GetSingleton();
 
 	// Render CS logo as background watermark with proper aspect ratio
-	if (menu && menu->uiIcons.logo.texture) {
+	if (menu && Util::IconLoader::GetIcons().logo.texture) {
 		ImVec2 windowPos = ImGui::GetWindowPos();
 		ImVec2 windowSize = ImGui::GetWindowSize();
 
 		// Get the original texture size to maintain aspect ratio
-		ImVec2 textureSize = menu->uiIcons.logo.size;
+		ImVec2 textureSize = Util::IconLoader::GetIcons().logo.size;
 		float aspectRatio = textureSize.x / textureSize.y;
 
 		// Set desired height and calculate width to maintain aspect ratio
@@ -642,11 +827,11 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 			textColor.w = 0.24f;  // Low alpha for watermark effect
 			watermarkColor = ImGui::GetColorU32(textColor);
 		} else {
-			watermarkColor = IM_COL32(255, 255, 255, 60);
+			watermarkColor = ImGui::GetColorU32(IM_COL32(255, 255, 255, 60));
 		}
 
 		// Render as subtle watermark background
-		ImGui::GetWindowDrawList()->AddImage(menu->uiIcons.logo.texture, logoMin, logoMax,
+		ImGui::GetWindowDrawList()->AddImage(Util::IconLoader::GetIcons().logo.texture, logoMin, logoMax,
 			ImVec2(0, 0), ImVec2(1, 1), watermarkColor);
 	}
 
@@ -672,7 +857,7 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 	ImGui::Spacing();
 
 	// Description - centered
-	const char* description = T("menu.setup.choose_hotkey", "Please choose a hotkey to access the menu:");
+	const char* description = T("menu.setup.choose_hotkey", "Click the key below to choose a menu hotkey:");
 	centerText(description);
 	ImGui::Text("%s", description);
 
@@ -685,12 +870,12 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 	ImGui::SetWindowFontScale(isCapturing ? HOTKEY_TEXT_SCALE_CAPTURING : HOTKEY_TEXT_SCALE);
 
 	// Format hotkey with brackets to make it look like a button
+	const std::string toggleKeyName = Util::Input::KeyIdToString(menu->GetSettings().ToggleKey);
 	std::string hotkeyStr;
 	if (isCapturing) {
 		hotkeyStr = "[ ... ]";
 	} else {
-		auto& keys = menu->GetSettings().ToggleKey;
-		hotkeyStr = std::string("[ ") + Util::Input::KeyIdToString(keys) + " ]";
+		hotkeyStr = "[ " + toggleKeyName + " ]";
 	}
 
 	ImVec2 hotkeyTextSize = ImGui::CalcTextSize(hotkeyStr.c_str());
@@ -727,8 +912,8 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 
 	// Handle click to start hotkey capture
 	if (clicked && !isCapturing) {
-		// Prevent starting capture if this click was caused by Enter key,
-		// because we want Enter to close the dialog instead.
+		// Prevent starting capture if this click was caused by Enter key
+		// (keyboard nav), so a reflexive Enter press doesn't enter capture mode.
 		if (!ImGui::IsKeyPressed(ImGuiKey_Enter))
 			menu->settingToggleKey = true;
 	}
@@ -764,18 +949,14 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 
 	ImGui::Spacing();
 
-	// Check for Enter or Escape key to close, but only if not capturing a hotkey
-	bool escapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
-	if ((ImGui::IsKeyPressed(ImGuiKey_Enter) || escapePressed) && !isCapturing) {
-		MarkFirstTimeSetupComplete(escapePressed ? VK_ESCAPE : VK_RETURN);
-	}
-
 	// Help text with breathing animation
-	const char* helpText = T("menu.setup.press_to_close", "Press Escape or Enter to continue");
+	const std::string helpText = I18n::GetSingleton()->Format("menu.setup.press_hotkey_to_continue",
+		{ { "key", toggleKeyName } },
+		"Press {key} to continue");
 
 	ImGui::SetWindowFontScale(HELP_TEXT_SCALE);
-	centerText(helpText);
-	Util::DrawBreathingText(helpText);
+	centerText(helpText.c_str());
+	Util::DrawBreathingText(helpText.c_str(), themeSettings.StatusPalette.InfoColor);
 
 	ImGui::SetWindowFontScale(1.0f);
 
@@ -800,7 +981,7 @@ bool HomePageRenderer::ShouldShowFirstTimeSetup()
 	return !menu->GetSettings().FirstTimeSetupCompleted;
 }
 
-void HomePageRenderer::MarkFirstTimeSetupComplete(uint32_t closingKey)
+void HomePageRenderer::MarkFirstTimeSetupComplete()
 {
 	// Set the flag in the Menu settings
 	auto menu = Menu::GetSingleton();
@@ -813,5 +994,4 @@ void HomePageRenderer::MarkFirstTimeSetupComplete(uint32_t closingKey)
 	globals::state->Save();
 
 	isFirstTimeSetupShown = true;
-	keyThatClosedDialog = closingKey;
 }

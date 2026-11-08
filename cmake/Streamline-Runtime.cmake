@@ -20,7 +20,9 @@ set(STREAMLINE_RUNTIME_DIRECTORY
 # Upscaling::streamlineDX12 loads its own interposer from a separate plugin
 # directory; the interposer/plugin DLLs are API-agnostic, so this reuses the
 # same downloaded archive rather than a second SDK.
-set(STREAMLINE_RUNTIME_DX12_RELATIVE_DIRECTORY "Shaders/Upscaling/StreamlineDX12")
+set(STREAMLINE_RUNTIME_DX12_RELATIVE_DIRECTORY
+    "Shaders/Upscaling/StreamlineDX12"
+)
 set(STREAMLINE_RUNTIME_DX12_DIRECTORY
     "${STREAMLINE_RUNTIME_ROOT}/payload/${STREAMLINE_RUNTIME_DX12_RELATIVE_DIRECTORY}"
 )
@@ -50,9 +52,16 @@ if(NOT SKIP_RUNTIME_DOWNLOADS)
 
     set(_streamline_extract_required ON)
     if(EXISTS "${STREAMLINE_RUNTIME_EXTRACT_STAMP}")
-        file(READ "${STREAMLINE_RUNTIME_EXTRACT_STAMP}" _streamline_extracted_hash)
+        file(
+            READ "${STREAMLINE_RUNTIME_EXTRACT_STAMP}"
+            _streamline_extracted_hash
+        )
         string(STRIP "${_streamline_extracted_hash}" _streamline_extracted_hash)
-        if(_streamline_extracted_hash STREQUAL STREAMLINE_RUNTIME_ARCHIVE_SHA256)
+        if(
+            _streamline_extracted_hash
+                STREQUAL
+                STREAMLINE_RUNTIME_ARCHIVE_SHA256
+        )
             set(_streamline_extract_required OFF)
         endif()
     endif()
@@ -86,11 +95,7 @@ function(stage_streamline_runtime _filename _directory _out_var)
     )
         # The archive was never fetched or extracted, so all that is known is
         # the expected path; registering it makes a package install fail.
-        set(${_out_var}
-            ${${_out_var}}
-            "${_destination}"
-            PARENT_SCOPE
-        )
+        set(${_out_var} ${${_out_var}} "${_destination}" PARENT_SCOPE)
         return()
     endif()
     set(_production_matches "")
@@ -134,11 +139,7 @@ function(stage_streamline_runtime _filename _directory _out_var)
 
     list(GET _production_matches 0 _source)
     file(COPY_FILE "${_source}" "${_destination}" ONLY_IF_DIFFERENT)
-    set(${_out_var}
-        ${${_out_var}}
-        "${_destination}"
-        PARENT_SCOPE
-    )
+    set(${_out_var} ${${_out_var}} "${_destination}" PARENT_SCOPE)
 endfunction()
 
 set(STREAMLINE_RUNTIME_PAYLOAD_FILES "")

@@ -12,8 +12,8 @@
 
 /** Routes loaded magic projectiles into launch and exact-impact transient wind sources. */
 class ProjectileMagicWindRouter final :
-	public WindEffect,
-	public RE::BSTEventSink<RE::TESSpellCastEvent>
+    public WindEffect,
+    public RE::BSTEventSink<RE::TESSpellCastEvent>
 {
 public:
 	/** User tuning for record-driven magic projectile wind. */

@@ -11,7 +11,8 @@ struct LensFlare : public PostProcessFeature
 	virtual inline std::string GetDesc() const override { return T("feature.post_processing.lens_flare.description", "Screen-space lens flare with ghosts and halo. Supports FFT bokeh convolution for physically-shaped ghosts."); }
 	virtual bool WritesToMainTexture() const override { return false; }
 
-	TextureInfo GetFlareOutput() const;
+	/// Get the half-resolution ghosts and halo; Composite applies the final mix.
+	TextureInfo GetGhostHaloOutput() const;
 
 	static constexpr int NUM_GHOSTS = 8;
 	static constexpr uint FFT_MIN = 128;
@@ -35,15 +36,15 @@ struct LensFlare : public PostProcessFeature
 
 	struct Settings
 	{
-		float Intensity = 0.1f;
+		float Intensity = 0.25f;
 		float ThresholdEV = 3.0f;  // EV100-based threshold (converted to linear luminance for shader)
 		float ThresholdRange = 1.0f;
 		float GhostStrength = 0.3f;
 		float GhostChromaShift = 0.015f;
-		int GhostModeInt = 0;  // 0 = Fast, 1 = Quality, 2 = Ultra
-		int FFTResolution = 256;
+		int GhostModeInt = 1;  // 0 = Fast, 1 = Quality, 2 = Ultra
+		int FFTResolution = 512;
 		float KernelScale = 0.1f;      // Fraction of FFT resolution for bokeh kernel size
-		float FStop = 2.8f;            // F-number for procedural aperture (e.g. F2.8)
+		float FStop = 14.3f;           // F-number for procedural aperture (e.g. F2.8)
 		int ApertureBlades = 6;        // Number of aperture blades (3-10)
 		float ApertureRotation = 0.f;  // Aperture rotation in degrees
 		float HaloStrength = 0.2f;
@@ -122,7 +123,6 @@ struct LensFlare : public PostProcessFeature
 
 	eastl::unique_ptr<ConstantBuffer> lensFlareCB = nullptr;
 
-	eastl::unique_ptr<Texture2D> texFlare = nullptr;      // full resolution (final output)
 	eastl::unique_ptr<Texture2D> texThreshold = nullptr;  // half resolution
 	eastl::unique_ptr<Texture2D> texGhostHalo = nullptr;  // half resolution
 	eastl::unique_ptr<Texture2D> texBlurTemp = nullptr;   // quarter resolution
@@ -140,7 +140,6 @@ struct LensFlare : public PostProcessFeature
 	winrt::com_ptr<ID3D11ComputeShader> ghostHaloCS = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> blurDownCS = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> blurUpCS = nullptr;
-	winrt::com_ptr<ID3D11ComputeShader> mixCS = nullptr;
 
 	// FFT ghost pipeline shaders (self-contained in lensflare_fft.cs.hlsl)
 	static constexpr uint FFT_VARIANT_COUNT = 4;
@@ -188,4 +187,4 @@ private:
 	void PrepareBokehFFT(BokehFFTCache& cache, const LensFlareCB& data);
 };
 
-inline PostProcessFeature::TextureInfo LensFlare::GetFlareOutput() const { return outputReady ? TextureInfo{ texFlare->resource.get(), texFlare->srv.get() } : TextureInfo{}; }
+inline PostProcessFeature::TextureInfo LensFlare::GetGhostHaloOutput() const { return outputReady ? TextureInfo{ texGhostHalo->resource.get(), texGhostHalo->srv.get() } : TextureInfo{}; }

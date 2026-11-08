@@ -33,13 +33,17 @@ foreach(_src IN LISTS _src_files)
     # deployed file is actually stale (e.g. a destination held open by a
     # running game).
     file(
-        COPY_FILE "${_src}" "${_dst}"
+        COPY_FILE "${_src}"
+        "${_dst}"
         ONLY_IF_DIFFERENT
         INPUT_MAY_BE_RECENT
         RESULT _copy_result
     )
     if(NOT _copy_result EQUAL 0)
-        message(FATAL_ERROR "Failed to deploy shader file: ${_src} -> ${_dst}: ${_copy_result}")
+        message(
+            FATAL_ERROR
+            "Failed to deploy shader file: ${_src} -> ${_dst}: ${_copy_result}"
+        )
     endif()
 endforeach()
 

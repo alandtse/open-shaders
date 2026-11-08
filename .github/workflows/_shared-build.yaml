@@ -363,10 +363,8 @@ jobs:
               if: matrix.pass == 'release-parity' && inputs.cache-artifacts && github.event_name != 'pull_request_target' && inputs.repository == github.repository && steps.check-hlsl.outputs.skip != 'true'
               shell: bash
               run: |
-                  python -m unittest discover -s tests -p test_build_shader_cache.py
-                  python -m unittest discover -s tests -p test_verify_shader_cache.py
                   python -m pip install --quiet "setuptools>=60,<80" pyfomod pyyaml
-                  python -m unittest discover -s tests -p test_build_fomod_package.py
+                  python -m unittest discover -s tests -p 'test_*.py'
                   python tools/build-shader-cache.py --finalize-existing build/ShaderCache --shader-dir build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }}
                   python tools/verify_shader_cache.py artifact --cache build/ShaderCache --shaders build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }}
 
@@ -532,13 +530,11 @@ jobs:
               run: |
                   ctest --test-dir build/ALL -C Release --output-on-failure -R "CppUtilTests|ScreenshotDevBenchTests" --timeout 60
 
-            - name: Test settings catalog generator
+            - name: Run Python unit tests
               if: steps.check-cpp.outputs.skip != 'true'
-              run: python -m unittest discover -s tests -p test_scene_settings_catalog_generator.py
-
-            - name: Test shader staging CMake modules
-              if: steps.check-cpp.outputs.skip != 'true'
-              run: python -m unittest discover -s tests -p test_cmake_shader_staging.py
+              run: |
+                  python -m pip install --quiet pyyaml
+                  python -m unittest discover -s tests -p "test_*.py"
 
             - name: Upload test results on failure
               if: failure() && steps.check-cpp.outputs.skip != 'true'
@@ -577,9 +573,8 @@ jobs:
                     echo "skip=false" >> $GITHUB_OUTPUT
                   fi
 
-            # These tests compile slices of src/*.cpp against stub headers with g++, so they
-            # need no Windows SDK. Tests that need the Windows imgui build, hlslkit or pyfomod
-            # run in the Windows jobs instead.
+            # Tests that need hlslkit, pyfomod, cmake or Windows skip themselves when absent, so
+            # discovery runs every test_*.py without a list.
             - name: Install PyYAML
               if: steps.check-python.outputs.skip != 'true'
               run: |
@@ -588,20 +583,5 @@ jobs:
 
             - name: Run Python unit tests
               if: steps.check-python.outputs.skip != 'true'
-              working-directory: tests
-              run: >
-                  "$RUNNER_TEMP/venv/bin/python" -m unittest -v
-                  test_editor_startup
-                  test_effects11_hdr
-                  test_environment_controls
-                  test_feature_flip_impact
-                  test_force_weather
-                  test_gpu_pass
-                  test_nr_interop
-                  test_profiler
-                  test_release_plan
-                  test_scene_settings_audit
-                  test_scene_settings_persistence
-                  test_scene_settings_policy
-                  test_skylighting_cadence
-                  test_skylighting_scheduling
+              run: |
+                  "$RUNNER_TEMP/venv/bin/python" -m unittest discover -v -s tests -p 'test_*.py'

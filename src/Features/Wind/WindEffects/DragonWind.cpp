@@ -105,9 +105,9 @@ namespace DragonWindRuntime
 		};
 
 		class Manager :
-			public RE::BSTEventSink<RE::TESObjectLoadedEvent>,
-			public RE::BSTEventSink<RE::BSAnimationGraphEvent>,
-			public RE::BSTEventSink<RE::TESSpellCastEvent>
+		    public RE::BSTEventSink<RE::TESObjectLoadedEvent>,
+		    public RE::BSTEventSink<RE::BSAnimationGraphEvent>,
+		    public RE::BSTEventSink<RE::TESSpellCastEvent>
 		{
 		public:
 			static Manager& GetSingleton()

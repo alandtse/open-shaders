@@ -61,7 +61,6 @@ namespace GrassCollision
 			previousField.w, previousWorldMatrix, previousBendAxis, previousBendAngle);
 	}
 
-#ifndef GRASS_OPTIMIZATIONS
 	void ApplyDeformation(
 		VS_INPUT input, float3 currentPosition, float3 previousPosition,
 		out float3 displacement, out float3 previousDisplacement,
@@ -77,5 +76,4 @@ namespace GrassCollision
 			currentField, previousField, World[0], PreviousWorld[0],
 			displacement, previousDisplacement, bendAxis, bendAngle);
 	}
-#endif
 }

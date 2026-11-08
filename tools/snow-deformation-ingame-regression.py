@@ -159,6 +159,16 @@ def freecam_off(bench):
 
 def shot(bench, report, name):
     clear_modals(bench)
+    deadline = time.monotonic() + 180
+    while True:
+        cache = bench.call("inspect", {"kind": "shadercache"})
+        if cache.get("failedTasks", 0) or cache.get("currentFailedCount", 0):
+            raise RuntimeError("Shader compilation failed; a rendering comparison would be invalid")
+        if not cache.get("compiling", True):
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Shader compilation did not finish before the capture")
+        time.sleep(1)
     result = bench.call("capture", {"kind": "openshaders", "checkpointId": name, "variant": "snowreg", "outDir": str(report.out)}, timeout=40)
     path = Path(result.get("path", ""))
     if not path.is_file():

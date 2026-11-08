@@ -19,6 +19,8 @@ public:
 	 *             is not drawn as a jump link to prevent redundant navigation.
 	 */
 	static void Render(Feature* host = nullptr);
+	/** @brief Name of the performance preset matched by all participating features, or Custom. */
+	static const char* GetCurrentProfileName();
 
 	/**
 	 * @brief Draws an indented, clickable heading for a named sub-part of a feature's

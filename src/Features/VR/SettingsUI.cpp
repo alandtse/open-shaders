@@ -233,14 +233,14 @@ void VR::DrawSettings()
 	auto menu = globals::menu;
 	if (!menu)
 		return;
-	if (ImGui::BeginTabBar("##VRTabs", ImGuiTabBarFlags_None)) {
+	if (Util::BeginPillTabBar("##VRTabs")) {
 		if (BeginTabItemWithFont(T(TKEY("tab_general"), "General"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##VRGeneralFrame", { 0, 0 }, true)) {
 				DrawGeneralVRSettings();
 				dynamicNearClip.DrawSettings();
 			}
 			ImGui::EndChild();
-			ImGui::EndTabItem();
+			Util::EndPillTabItem();
 		}
 
 		if (BeginTabItemWithFont(T(TKEY("tab_stereo"), "Stereo"), Menu::FontRole::Subheading)) {
@@ -248,7 +248,7 @@ void VR::DrawSettings()
 				DrawStereoSettings();
 			}
 			ImGui::EndChild();
-			ImGui::EndTabItem();
+			Util::EndPillTabItem();
 		}
 
 		// Controller bindings — only meaningful when the VR overlay helper owns
@@ -263,11 +263,11 @@ void VR::DrawSettings()
 					DrawHelperBindingsTable();
 				}
 				ImGui::EndChild();
-				ImGui::EndTabItem();
+				Util::EndPillTabItem();
 			}
 		}
 
-		ImGui::EndTabBar();
+		Util::EndPillTabBar();
 	}
 }
 

@@ -61,14 +61,14 @@ if (-not $NoSubmodules) {
     & git -C $Path submodule update --init --recursive
     if ($LASTEXITCODE -ne 0) {
         # The clones borrow the main checkout's submodule objects, which lag behind a pin that landed
-        # after its last update, so fetch from each submodule's own remote and retry once.
+        # after its last update, so fetch each submodule's remote and required nested submodules, then retry once.
         Write-Host "Submodule update failed; fetching from the submodule remotes and retrying"
         $submodules = & git -C $Path config -f .gitmodules --get-regexp '^submodule\..*\.url$'
         foreach ($entry in $submodules) {
             $name, $url = $entry -split ' ', 2
             $subPath = (& git -C $Path config -f .gitmodules ($name -replace '\.url$', '.path'))
             if (Test-Path (Join-Path $Path $subPath)) {
-                & git -C (Join-Path $Path $subPath) fetch --quiet $url '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
+                & git -C (Join-Path $Path $subPath) fetch --quiet --recurse-submodules=on-demand $url '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
             }
         }
         & git -C $Path submodule update --init --recursive

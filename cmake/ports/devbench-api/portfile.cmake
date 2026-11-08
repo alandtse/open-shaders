@@ -9,21 +9,31 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO alandtse/devbench
-    REF 5bc4ad7c2a11063747ed4388405c30c3a3595c9b
-    SHA512 0ca6ced4427904fbd3da6e22f7509564e0b3d35bbef1952e60e551196d20f78212e7f970c5e85bd3d84f936f0df3db600d05bfabb30508435d26287b60fdea08
+    REF 7a9f0c4a16b2fb9202e20de419ff0f0aeee18b10
+    SHA512 95ad248cf45b5e1234844a407033ae12001e481f267efd37a0e3873c8e2710235f0518ececcc0dd3a78cf66c0a38a192b169c67c6e9211030ade3eedc6249b87
     HEAD_REF main
 )
 
 # MIT API glue → header to include/, source to share/ (referenced by the config target).
-file(INSTALL "${SOURCE_PATH}/include/DevBenchAPI.h"
-    DESTINATION "${CURRENT_PACKAGES_DIR}/include")
-file(INSTALL "${SOURCE_PATH}/include/DevBenchAPI.cpp"
-    DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}/src")
+file(
+    INSTALL "${SOURCE_PATH}/include/DevBenchAPI.h"
+    DESTINATION "${CURRENT_PACKAGES_DIR}/include"
+)
+file(
+    INSTALL "${SOURCE_PATH}/include/DevBenchAPI.cpp"
+    DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}/src"
+)
 
 # CMake package config — defines DevBench::API.
-file(INSTALL "${CMAKE_CURRENT_LIST_DIR}/devbench-api-config.cmake"
-    DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}")
+file(
+    INSTALL "${CMAKE_CURRENT_LIST_DIR}/devbench-api-config.cmake"
+    DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}"
+)
 
 # The API glue is MIT (not the GPL-3.0 plugin) — ship that as the port copyright.
-file(INSTALL "${SOURCE_PATH}/include/DevBenchAPI.LICENSE.txt"
-    DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}" RENAME copyright)
+file(
+    INSTALL "${SOURCE_PATH}/include/DevBenchAPI.LICENSE.txt"
+    DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}"
+    RENAME
+    copyright
+)
