@@ -19,6 +19,14 @@ namespace NR
 
 	static const float kMaxChromaStops = 1.0f;
 	static const float kChromaFloor = 1.0f / 512.0f;
+	static const float kChromaTaperStart = 0.85f;
+	static const float kChromaTaperEnd = 0.98f;
+
+	// The proxy clips at 1, so a channel near it carries no usable colour offset; fade the chroma out before it does.
+	float ChromaHeadroom(float3 proxy)
+	{
+		return 1.0 - smoothstep(kChromaTaperStart, kChromaTaperEnd, max(proxy.r, max(proxy.g, proxy.b)));
+	}
 
 	// Luminance-neutral, so CompositeGain stays the only brightness edit.
 	float3 ChromaOffset(float3 inputLinear, float3 outputLinear, float3 lumaWeights, float floorValue)

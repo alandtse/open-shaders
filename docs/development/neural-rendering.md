@@ -60,6 +60,9 @@ channel minus the luminance-weighted mean, capped at one stop) on top of the
 brightness gain, scaled by the category strength and the dynamic-range
 protection. At 0 the game's hue and chroma are untouched. The shift is stored
 with the gain history, so frames that reuse a gain also reuse the colour.
+The shift is rescaled in linear light to leave luminance alone and fades out as the model's
+display proxy approaches clipping (peak channel 0.85 to 0.98), because a clipped proxy carries no
+usable colour offset. It is multiplicative, so HDR range above the proxy's white is preserved.
 
 The six evaluation parameters are written in `NR::Runtime::Evaluate()`. Committing a tuning edit
 recreates the Feature 18 handles because the runtime can latch appearance tuning
