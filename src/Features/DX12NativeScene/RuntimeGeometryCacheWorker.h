@@ -25,11 +25,26 @@ namespace DX12Native
      */
     class RuntimeGeometryCacheWorker
     {
+        static uint64_t CpuPrewarmWindow()
+        {
+            MEMORYSTATUSEX memory{};
+            memory.dwLength = sizeof(memory);
+            return GlobalMemoryStatusEx(&memory) ? memory.ullAvailPhys / 8 :
+                64ull * 1024 * 1024; // Conservative fallback when RAM telemetry fails.
+        }
+        static uint64_t DiskCapacity()
+        {
+            std::error_code error;
+            const auto space = std::filesystem::space("Data", error);
+            // Disk storage is independent from DXGI video-memory residency.
+            // Leave most free disk space for Skyrim and other applications.
+            return error ? 256ull * 1024 * 1024 : space.available / 8;
+        }
         struct Shared
         {
             MaterialDiskCache disk{
                 "Data/SKSE/Plugins/CommunityShaders/NativePBRCache/geometry",
-                256ull * 1024 * 1024, ".rgc" };
+                DiskCapacity(), ".rgc" };
         };
         struct Work
         {
@@ -68,10 +83,8 @@ namespace DX12Native
                 } else {
                     stored += work->accepted;
                     rejected += work->rejected;
-                    // Keep gameplay disk I/O bounded: at most four files
-                    // per 250 ms, with no synchronous render-thread reads.
-                    nextWriteAt = std::chrono::steady_clock::now() +
-                        std::chrono::milliseconds(250);
+                    // The single detached cache worker limits concurrency.
+                    // No fixed mesh-count/cooldown throttle on completed jobs.
                 }
                 if (!work->error.empty()) lastError = work->error;
                 work.reset();
@@ -85,15 +98,25 @@ namespace DX12Native
                 Start(next);
                 return;
             }
-            if (menu || !mailbox || mailbox->Count() == 0 ||
-                std::chrono::steady_clock::now() < nextWriteAt) return;
+            if (menu || !mailbox || mailbox->Count() == 0) return;
             auto next = std::make_shared<Work>();
             next->epoch = epoch;
+            // Adapt disk-write batch size to uncommitted CPU memory, rather
+            // than imposing a permanent four-mesh ceiling on fast systems.
+            MEMORYSTATUSEX memory{};
+            memory.dwLength = sizeof(memory);
+            const uint64_t ramAllowance = GlobalMemoryStatusEx(&memory) ?
+                memory.ullAvailPhys / 128 : 1024ull * 1024;
+            const uint64_t batchBytes = std::min<uint64_t>(mailbox->Bytes(),
+                std::max<uint64_t>(512ull * 1024, ramAllowance));
+            uint64_t selectedBytes = 0;
             for (const auto& packet : mailbox->Export(0, mailbox->Count())) {
                 const auto key = packet->referenceKey + '\0' + packet->shapeName;
-                if (!scheduled.insert(key).second) continue;
+                if (scheduled.contains(key)) continue;
+                if (selectedBytes && packet->Bytes() > batchBytes - selectedBytes) break;
+                scheduled.insert(key);
                 next->inputs.push_back(packet);
-                if (next->inputs.size() >= 4) break;
+                selectedBytes += packet->Bytes();
             }
             if (!next->inputs.empty()) Start(next);
         }
@@ -119,17 +142,20 @@ namespace DX12Native
                         if (result->menu) {
                             auto items = std::make_shared<PrewarmedRuntimeGeometry>();
                             uint64_t used = 0;
-                            for (const auto& digest : state->disk.ListDigests(256)) {
+                            const uint64_t prewarmBudget = CpuPrewarmWindow();
+                            const auto candidates = std::min<uint64_t>(8192,
+                                std::max<uint64_t>(256, prewarmBudget / (512ull * 1024)));
+                            for (const auto& digest : state->disk.ListDigests(size_t(candidates))) {
                                 ++result->processed;
-                                const auto data = state->disk.Read(digest, 512 * 1024 + 4096);
+                                const auto data = state->disk.Read(digest,
+                                    GeometryCacheCodec::kMaximumSourceBytes + 4096ull);
                                 if (!data) { ++result->rejected; continue; }
                                 const auto packet = DeserializeRuntimeGeometryCache(*data);
                                 if (!packet) { ++result->rejected; continue; }
                                 auto encoded = EncodeRuntimeGeometry(*packet);
                                 if (!encoded) { ++result->rejected; continue; }
                                 const auto bytes = uint64_t(encoded->geometry.size()) + encoded->attributes.size();
-                                if (used > 64ull * 1024 * 1024 ||
-                                    bytes > 64ull * 1024 * 1024 - used) break;
+                                if (used > prewarmBudget || bytes > prewarmBudget - used) break;
                                 used += bytes;
                                 items->emplace(digest,
                                     std::make_shared<const EncodedRuntimeGeometry>(std::move(*encoded)));
@@ -172,6 +198,5 @@ namespace DX12Native
         uint64_t prewarmBytes = 0;
         bool menuRequested = false, prewarmComplete = false;
         std::string lastError;
-        std::chrono::steady_clock::time_point nextWriteAt{};
     };
 }

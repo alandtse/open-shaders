@@ -632,9 +632,10 @@ void DX12NativeScene::EarlyPrepass()
             runtimeGeometryAllowedBytes - previewAsBytes : 0;
         const uint64_t accelBudget = runtimeGeometryAllowedBytes > geometryBytes ?
             runtimeGeometryAllowedBytes - geometryBytes : 0;
-        if (geometryBudget)
-            runtimeGeometryPrepare.Advance(*backend, runtimeGeometry, revision, geometryBudget,
-                settings.CacheRuntimeGeometry ? runtimeGeometryCache.GetPrewarmed() : nullptr);
+        // Advance even with zero new budget so completed detached work can be
+        // retired; Advance itself refuses to schedule any new allocation at 0.
+        runtimeGeometryPrepare.Advance(*backend, runtimeGeometry, revision, geometryBudget,
+            settings.CacheRuntimeGeometry ? runtimeGeometryCache.GetPrewarmed() : nullptr);
         if (auto ready = runtimeGeometryPrepare.GetCell(); accelBudget && ready && ready->snapshot &&
             !ready->snapshot->instances.empty() && runtimeAccelerationPreview.Finished() &&
             runtimePreviewGeneration != ready->snapshot->generation) {

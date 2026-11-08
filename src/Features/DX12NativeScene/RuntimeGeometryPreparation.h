@@ -171,13 +171,15 @@ namespace DX12Native
             std::vector<std::shared_ptr<const RuntimeGeometryPacket>> next;
             auto work = std::make_shared<Work>();
             work->epoch = sceneEpoch;
-            next.reserve(4);
+            const uint64_t batchBytes = std::max<uint64_t>(512ull * 1024, budget / 32);
+            uint64_t selectedBytes = 0;
             for (const auto& item : items) {
                 const auto key = item->referenceKey + '\0' + item->shapeName;
                 if (attempted.contains(key)) continue;
+                if (selectedBytes && item->Bytes() > batchBytes - selectedBytes) break;
                 next.push_back(item);
                 work->keys.push_back(key);
-                if (next.size() == 4) break;
+                selectedBytes += item->Bytes();
             }
             if (next.empty()) return;
             try {
