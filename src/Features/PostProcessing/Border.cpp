@@ -113,13 +113,13 @@ void Border::ClearMotionVectorsForFrameGen()
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
 
-	// Compute dynamic resolution dimensions (actual rendered area before upscaling)
 	float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
-	auto dynResDim = Util::ConvertToDynamic(screenSize);
+	auto dynResDim = Util::ConvertToDynamic(screenSize, true);
 
 	BorderCB data = {
 		.BorderColor = float4(settings.BorderColor.x, settings.BorderColor.y, settings.BorderColor.z, settings.DepthThreshold),
-		.Scale = settings.Scale
+		.Scale = settings.Scale,
+		.BufferDim = float4(dynResDim.x, dynResDim.y, 1.f / dynResDim.x, 1.f / dynResDim.y)
 	};
 	borderCB->Update(data);
 
@@ -129,8 +129,6 @@ void Border::ClearMotionVectorsForFrameGen()
 	}
 	auto motion = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
-	// Bind SharedData (b5) and FrameBuffer (b12) for CS stage — shader needs
-	// BufferDim and DynamicResolutionParams1 to compute dynamic resolution area.
 	globals::state->BindSharedDataCS(context, false);
 	ID3D11Buffer* perFrameBuf = *globals::game::perFrame.get();
 	context->CSSetConstantBuffers(12, 1, &perFrameBuf);
@@ -168,7 +166,8 @@ void Border::Draw(TextureInfo& inout_tex)
 
 	BorderCB data = {
 		.BorderColor = float4(settings.BorderColor.x, settings.BorderColor.y, settings.BorderColor.z, settings.DepthThreshold),
-		.Scale = settings.Scale
+		.Scale = settings.Scale,
+		.BufferDim = float4(res.x, res.y, 1.f / res.x, 1.f / res.y)
 	};
 	borderCB->Update(data);
 

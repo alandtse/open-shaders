@@ -215,17 +215,8 @@ namespace ShadowSampling
 		return GetAmbientLighting() + GetDirectionalLighting();
 	}
 
-#if defined(SKYLIGHTING) && !defined(INTERIOR)
-	void ExtractLighting(float3 inputColor, out float3 dirColor, out float3 ambientColor, float skylightingDiffuse)
-#else
-	void ExtractLighting(float3 inputColor, out float3 dirColor, out float3 ambientColor)
-#endif
+	void ExtractLighting(float3 inputColor, float3 ambientColorAmb, out float3 dirColor, out float3 ambientColor)
 	{
-#if defined(SKYLIGHTING) && !defined(INTERIOR)
-		float3 ambientColorAmb = GetAmbientLighting(skylightingDiffuse);
-#else
-		float3 ambientColorAmb = GetAmbientLighting();
-#endif
 		float3 dirLightColorDir = GetDirectionalLighting();
 
 		float inputLuma = Color::RGBToLuminance(inputColor);
@@ -238,6 +229,18 @@ namespace ShadowSampling
 
 		ambientColor = ambientColorAmb;
 		dirColor = max(0.0, inputColor - ambientColor);
+	}
+
+#if defined(SKYLIGHTING) && !defined(INTERIOR)
+	void ExtractLighting(float3 inputColor, out float3 dirColor, out float3 ambientColor, float skylightingDiffuse)
+	{
+		ExtractLighting(inputColor, GetAmbientLighting(skylightingDiffuse), dirColor, ambientColor);
+	}
+#endif
+
+	void ExtractLighting(float3 inputColor, out float3 dirColor, out float3 ambientColor)
+	{
+		ExtractLighting(inputColor, GetAmbientLighting(), dirColor, ambientColor);
 	}
 }
 

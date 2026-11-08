@@ -600,15 +600,17 @@ namespace Util
 		return view;
 	}
 
-	FullscreenPassScope::FullscreenPassScope(ID3D11DeviceContext* a_context, UINT a_psSRVCount, UINT a_psCBStart, UINT a_psCBCount) :
+	FullscreenPassScope::FullscreenPassScope(ID3D11DeviceContext* a_context, UINT a_psSRVCount, UINT a_psCBStart, UINT a_psCBCount, UINT a_psSamplerCount) :
 		ctx(a_context),
 		psSRVCount(a_psSRVCount),
 		psCBStart(a_psCBStart),
-		psCBCount(a_psCBCount)
+		psCBCount(a_psCBCount),
+		psSamplerCount(a_psSamplerCount)
 	{
 		assert(ctx && psSRVCount <= D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT &&
 			   psCBStart <= D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT &&
-			   psCBCount <= D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - psCBStart);
+			   psCBCount <= D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - psCBStart &&
+			   psSamplerCount <= D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT);
 		// Save all MRT slots, not just slot 0 — a caller may enter with multiple RTVs bound.
 		ctx->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTV, &savedDSV);
 		ctx->RSGetViewports(&numVP, savedVP);
@@ -620,7 +622,7 @@ namespace Util
 		ctx->HSGetShader(&savedHS, nullptr, nullptr);
 		ctx->DSGetShader(&savedDS, nullptr, nullptr);
 		ctx->RSGetState(&savedRS);
-		ctx->PSGetSamplers(0, 1, &savedSampler0);
+		ctx->PSGetSamplers(0, psSamplerCount, savedPSSamplers);
 		ctx->PSGetShaderResources(0, psSRVCount, savedPSSRVs);
 		ctx->PSGetConstantBuffers(psCBStart, psCBCount, savedPSCBs);
 		ctx->IAGetInputLayout(&savedIL);
@@ -646,7 +648,7 @@ namespace Util
 		ctx->HSSetShader(savedHS, nullptr, 0);
 		ctx->DSSetShader(savedDS, nullptr, 0);
 		ctx->RSSetState(savedRS);
-		ctx->PSSetSamplers(0, 1, &savedSampler0);
+		ctx->PSSetSamplers(0, psSamplerCount, savedPSSamplers);
 		ctx->PSSetConstantBuffers(psCBStart, psCBCount, savedPSCBs);
 		ctx->IASetInputLayout(savedIL);
 		ctx->IASetVertexBuffers(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT, savedVB, savedVBStride, savedVBOffset);
@@ -663,7 +665,8 @@ namespace Util
 		SafeRelease(savedHS);
 		SafeRelease(savedDS);
 		SafeRelease(savedRS);
-		SafeRelease(savedSampler0);
+		for (UINT i = 0; i < psSamplerCount; ++i)
+			SafeRelease(savedPSSamplers[i]);
 		for (UINT i = 0; i < psSRVCount; ++i)
 			SafeRelease(savedPSSRVs[i]);
 		for (UINT i = 0; i < psCBCount; ++i)

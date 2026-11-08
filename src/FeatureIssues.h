@@ -55,7 +55,8 @@ namespace FeatureIssues
 		{
 			OBSOLETE,          // Known obsolete feature with replacement info
 			VERSION_MISMATCH,  // Feature exists but version is incompatible
-			OVERRIDE_FAILED,   // Override file failed to load or apply
+			BASELINE_FAILED,   // Baseline preset file failed to load or apply
+			OVERRIDE_FAILED,   // Installed override file failed to load or apply
 			CONFLICT,          // A mod that cannot coexist with the feature was detected
 			UNKNOWN            // Feature not recognized by this CS version
 		};
@@ -67,8 +68,10 @@ namespace FeatureIssues
 		bool IsObsolete() const { return issueType == IssueType::OBSOLETE; }
 		/** @brief Checks if issue type is VERSION_MISMATCH. */
 		bool IsVersionMismatch() const { return issueType == IssueType::VERSION_MISMATCH; }
-		/** @brief Checks if issue type is OVERRIDE_FAILED. */
+		/** @brief Checks if an installed override failed to load or apply. */
 		bool IsOverrideFailed() const { return issueType == IssueType::OVERRIDE_FAILED; }
+		/** @brief Checks if issue type is BASELINE_FAILED. */
+		bool IsBaselineFailed() const { return issueType == IssueType::BASELINE_FAILED; }
 		/** @brief Checks if issue type is CONFLICT. */
 		bool IsConflict() const { return issueType == IssueType::CONFLICT; }
 		/** @brief Checks if issue type is UNKNOWN. */
@@ -125,6 +128,9 @@ namespace FeatureIssues
 	 * \return Feature file information
 	 */
 	FeatureFileInfo GetFeatureFileInfo(const std::string& featureName);
+
+	/** @brief Local "YYYY-MM-DD HH:MM:SS" form of a file time, or "Unknown" when it cannot be converted. */
+	std::string FormatFileTimestamp(std::filesystem::file_time_type timestamp);
 
 	/**
 	 * Add a feature issue to the tracking system

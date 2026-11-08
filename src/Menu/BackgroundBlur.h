@@ -34,10 +34,10 @@ namespace BackgroundBlur
 	/** @brief Drops the cached source view and texture pointer; the caller must guarantee exclusion. */
 	void ReleaseSourceCache();
 
+	/** @brief Turns the blur on or off. */
 	void SetEnabled(bool enable);
 
 	/** @brief Enables fullscreen scene blur with separate blur for overlapping editor windows. */
 	void SetCSEditorActive(bool active);
 	bool IsCSEditorActive();
-
 }  // namespace BackgroundBlur

@@ -1,7 +1,9 @@
 #pragma once
 
 #include "Buffer.h"
+#include "Effects11/SceneHandoff.h"
 
+#include <array>
 #include <memory>
 #include <winrt/base.h>
 
@@ -23,14 +25,17 @@ public:
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return {
-			T("feature.effects11.description", "Effects 11 loads ENBSeries-compatible FX files, including ENB Extender presets.\nThis allows for advanced post-processing effects and visual enhancements using DirectX 11 Effect (.fx) files."),
-			{ T("feature.effects11.key_feature_1", "ENBSeries and ENB Extender preset support"),
-				T("feature.effects11.key_feature_2", "DirectX 11 Effect file loading"),
-				T("feature.effects11.key_feature_3", "Advanced post-processing pipeline"),
-				T("feature.effects11.key_feature_4", "Custom technique execution"),
+			T("feature.effects11.description", "Effects 11 loads ENBSeries-compatible FX post-processing. Install multiple presets under Data/SKSE/Plugins/CommunityShaders/Effects11/Presets/<Name>/ (each with enbseries.ini + enbseries/), use a classic root/Data enbseries install as Legacy, or ship effects11/ inside a unified Presets pack. Hotswap does not modify root files."),
+			{ T("feature.effects11.key_feature_1", "ENBSeries-compatible FX support"),
+				T("feature.effects11.key_feature_2", "Multi-preset library with in-game hotswap"),
+				T("feature.effects11.key_feature_3", "Legacy root/Data enbseries support"),
+				T("feature.effects11.key_feature_4", "Advanced post-processing pipeline"),
 				T("feature.effects11.key_feature_5", "Dynamic UI variable system") }
 		};
 	}
+
+	bool UsesMainSettings() const override { return false; }
+	bool HasPersonalSettings() const override { return true; }
 
 	struct Settings
 	{
@@ -195,6 +200,13 @@ public:
 
 	bool enableEffect = false;
 
+	/** @brief Whether the active preset hands this feature back to CS through its manifest sceneControl. */
+	bool IsHandedOff(E11Handoff::Feature feature) const { return handedOff[static_cast<size_t>(feature)]; }
+	/** @brief Sets the runtime handoff flag; UnifiedPresetCatalog owns persisting it to the manifest. */
+	void SetHandedOff(E11Handoff::Feature feature, bool value) { handedOff[static_cast<size_t>(feature)] = value; }
+	/** @brief Whether Effects 11 drives a feature it can hand to CS. */
+	bool OwnsFeature(E11Handoff::Feature feature) const { return loaded && enableEffect && !IsHandedOff(feature); }
+
 	bool volumetricRaysFailed = false;
 	bool sunRaysFailed = false;
 	bool tonemapFailed = false;
@@ -229,6 +241,8 @@ public:
 	virtual void DrawSettings() override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
+	/** @brief Exposes the feature-owned portable preset backend. */
+	PresetProvider* GetPresetProvider() override;
 	virtual void RestoreDefaultSettings() override;
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
@@ -245,8 +259,18 @@ public:
 	/** @copydoc Feature::RegisterUxActions */
 	void RegisterUxActions() override;
 
-	/** @brief Flips the "UseEffect" GLOBAL setting; bound to the Effects 11 toggle hotkey. */
+	virtual void PostSetupResources() override;
+	virtual void Reset() override;
+
+	/** @brief Switches between Effects 11 and the pipeline that ran before it; bound to the Effects 11 toggle hotkey. */
 	void ToggleEnabled();
+	/** @brief Writes the "UseEffect" GLOBAL setting; go through PostProcessingMode::Set to keep the pipelines exclusive. */
+	void SetUseEffect(bool enabled);
+	/** @brief UseEffect is on in enbseries.ini; does not require a compiled preset. */
+	bool IsUseEffectEnabled() const;
+	/** @brief UseEffect on and a compiled preset is ready (Effects 11 actually drives the frame). */
+	bool IsPresetEnabled() const;
+	bool IsActive() const { return presetActive; }
 
 	void DrawVolumetricRays();
 
@@ -286,12 +310,15 @@ public:
 	bool ReplacedTonemapperThisFrame() const;
 
 private:
+	bool resourcesReady = false;
+	bool presetActive = false;
 	/** @brief Creates the scattering blend state shared by the ray passes on first use; false if creation failed. */
 	bool EnsureScatteringBlendState();
 	/** @brief Compiles the sun ray shaders and (re)creates their half-res targets; false if anything failed. */
 	bool EnsureSunRaysResources(uint32_t a_width, uint32_t a_height);
 
-	uint tonemapReplacedFrame = UINT32_MAX;  ///< frameCount at which the effect chain's last tonemap output gets presented
+	uint tonemapReplacedFrame = UINT32_MAX;  ///< frameCount when the effect chain last wrote the tonemap output
+	std::array<bool, static_cast<size_t>(E11Handoff::Feature::Count)> handedOff{};
 
 	/** @brief Point light settings, resolved once per frame in CheckCommonData since OverridePointLightColor runs per light. */
 	struct PointLightingParams

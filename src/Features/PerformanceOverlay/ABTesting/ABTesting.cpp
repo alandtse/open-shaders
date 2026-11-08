@@ -7,7 +7,6 @@
 #include "PrerequisiteChain.h"
 #include "SceneSettingsManager.h"
 #include "State.h"
-#include "Utils/FileSystem.h"
 #include "Utils/SettingsCatalog.h"
 #include "Utils/UI.h"
 
@@ -16,7 +15,6 @@
 #include <algorithm>
 #include <cmath>
 #include <fmt/format.h>
-#include <fstream>
 #include <imgui.h>
 #include <set>
 
@@ -414,7 +412,7 @@ std::string ABTestingManager::RestartNeededBy(const std::function<void()>& apply
 	state->SaveToJson(original);
 	const auto pendingBefore = FeaturesPendingRestart();
 	{
-		SceneSettingsManager::SceneLayerGuard guard(*SceneSettingsManager::GetSingleton());
+		SceneSettingsManager::SceneLayerGuard guard;
 		apply();
 	}
 	std::string restartNeeded;
@@ -470,7 +468,7 @@ void ABTestingManager::BeginComparison(size_t index)
 	state->LoadFromJson(queueOriginal);
 	const auto restartNeeded = RestartNeededBy(ChangeClosure(request));
 	{
-		SceneSettingsManager::SceneLayerGuard guard(*SceneSettingsManager::GetSingleton());
+		SceneSettingsManager::SceneLayerGuard guard;
 		if (request.prepare)
 			request.prepare();
 		userConfigSnapshot = nlohmann::json::object();
@@ -644,22 +642,13 @@ bool ABTestingManager::QueueSettingChange(Feature& feature, const SceneSettingsC
 
 std::optional<nlohmann::json> ABTestingManager::SavedSettingValue(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting)
 {
-	std::ifstream file(Util::PathHelpers::GetSettingsUserPath());
-	if (!file.is_open())
-		return std::nullopt;
-
-	nlohmann::json saved;
 	try {
-		file >> saved;
-	} catch (const nlohmann::json::exception&) {
-		return std::nullopt;
+		const auto saved = globals::state->ReadSavedFeatureSettings(feature);
+		if (const auto* value = Util::Settings::GetCatalogSerializedValue(saved.values, setting))
+			return std::optional<nlohmann::json>{ *value };
+	} catch (const std::exception& error) {
+		logger::warn("Could not read benchmark baseline for {}: {}", feature.GetShortName(), error.what());
 	}
-
-	const auto featureSettings = saved.find(feature.GetName());
-	if (featureSettings == saved.end() || !featureSettings->is_object())
-		return std::nullopt;
-	if (const auto* value = Util::Settings::GetCatalogSerializedValue(*featureSettings, setting))
-		return std::optional<nlohmann::json>{ *value };
 	return std::nullopt;
 }
 

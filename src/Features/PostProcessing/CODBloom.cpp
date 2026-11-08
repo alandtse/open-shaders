@@ -39,7 +39,7 @@ void CODBloom::DrawSettings()
 	}
 	ImGui::Unindent();
 
-	if (ImGui::CollapsingHeader(T("feature.post_processing.codbloom.debug", "Debug"))) {
+	if (Util::ShowDebugSections() && ImGui::CollapsingHeader(T("feature.post_processing.codbloom.debug", "Debug"))) {
 		constexpr float kDebugMipPreviewScale = 0.2f;
 		const float previewScale = kDebugMipPreviewScale * Util::GetUIScale();
 		static int mip = 0;
@@ -263,23 +263,6 @@ void CODBloom::Draw(TextureInfo& inout_tex)
 			context->PSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 			pass.Draw();
 		}
-
-		// upsample final mip to mip 0 with blend factor applied (CurrentMipMult=0 to discard threshold data in mip 0)
-		{
-			cbData.UpsampleMult = settings.BlendFactor;
-			cbData.CurrentMipMult = 0.f;
-			bloomCB->Update(cbData);
-
-			float blendFactor[4] = { 0.f, 0.f, 0.f, 0.f };
-			pass.SetBlendState(upsampleBlendState.get(), blendFactor);
-
-			pass.SetTargets({ texBloomMipRTVs[0].get() }, (float)texBloom->desc.Width, (float)texBloom->desc.Height);
-
-			srvs.fill(nullptr);
-			srvs.at(1) = texBloomMipSRVs[1].get();
-			context->PSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-			pass.Draw();
-		}
 	}
 
 	// cleanup (RasterPass destructor restores the pipeline state)
@@ -291,7 +274,7 @@ void CODBloom::Draw(TextureInfo& inout_tex)
 	context->PSSetSamplers(0, 1, &sampler);
 
 	// return
-	inout_tex = { texBloom->resource.get(), texBloomMipSRVs[0].get() };
+	inout_tex = { texBloom->resource.get(), texBloomMipSRVs[1].get() };
 
 	outputReady = true;
 }

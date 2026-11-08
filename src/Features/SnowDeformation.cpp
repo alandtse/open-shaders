@@ -3008,7 +3008,7 @@ void SnowDeformation::Hooks::Main_Update::thunk()
 }
 
 template <class T>
-void SnowDeformation::Hooks::Projectile_AddImpact<T>::thunk(RE::Projectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_position, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, int32_t a_arg6, uint32_t a_arg7)
+RE::Projectile::ImpactData* SnowDeformation::Hooks::Projectile_AddImpact<T>::thunk(RE::Projectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_position, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, int32_t a_arg6, uint32_t a_arg7)
 {
 	auto& singleton = globals::features::snowDeformation;
 	if (a_projectile && singleton.gatherEnabled.load(std::memory_order_relaxed)) {
@@ -3026,7 +3026,7 @@ void SnowDeformation::Hooks::Projectile_AddImpact<T>::thunk(RE::Projectile* a_pr
 			singleton.QueueImpact(event);
 		}
 	}
-	func(a_projectile, a_ref, a_position, a_velocity, a_collidable, a_arg6, a_arg7);
+	return func(a_projectile, a_ref, a_position, a_velocity, a_collidable, a_arg6, a_arg7);
 }
 
 void SnowDeformation::Hooks::Explosion_Initialize::thunk(RE::Explosion* a_explosion)

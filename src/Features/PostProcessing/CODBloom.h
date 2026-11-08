@@ -12,17 +12,18 @@ struct CODBloom : public PostProcessFeature
 	virtual inline std::string GetDesc() const override { return T("feature.post_processing.codbloom.description", "Bloom effect used in Call of Duty: Advanced Warfare. Expect HDR linear RGB inputs."); }
 	virtual bool WritesToMainTexture() const override { return false; }
 
-	TextureInfo GetBloomOutput() const { return outputReady ? TextureInfo{ texBloom->resource.get(), texBloomMipSRVs[0].get() } : TextureInfo{}; }
+	/// Get mip 1 of the accumulated bloom; Composite performs the final upsample.
+	TextureInfo GetBloomOutput() const { return outputReady ? TextureInfo{ texBloom->resource.get(), texBloomMipSRVs[1].get() } : TextureInfo{}; }
 
 	constexpr static size_t s_BloomMips = 9;
 
 	struct Settings
 	{
 		// bloom & lens
-		float Threshold = 3.f;  // EV100 (0 EV100 = 0.125 linear luminance)
-		float UpsampleRadius = 2.f;
+		float Threshold = 0.f;  // EV100 (0 EV100 = 0.125 linear luminance)
+		float UpsampleRadius = 5.f;
 		float BlendFactor = .01f;
-		std::array<float, s_BloomMips - 1> MipBlendFactor = { 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f };
+		std::array<float, s_BloomMips - 1> MipBlendFactor = { 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 0.f };
 	} settings;
 
 	struct alignas(16) BloomCB

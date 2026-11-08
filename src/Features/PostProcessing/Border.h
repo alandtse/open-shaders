@@ -13,16 +13,18 @@ struct Border : public PostProcessFeature
 
 	struct Settings
 	{
-		float3 BorderColor;
-		float DepthThreshold;
-		float4 Scale;
+		float3 BorderColor = { 0.f, 0.f, 0.f };
+		float DepthThreshold = 0.f;
+		float4 Scale = { 0.f, 0.f, 0.f, 0.f };
 	} settings;
 
 	struct alignas(16) BorderCB
 	{
 		float4 BorderColor;
 		float4 Scale;
+		float4 BufferDim;
 	};
+	static_assert(sizeof(BorderCB) == 48);
 	eastl::unique_ptr<ConstantBuffer> borderCB = nullptr;
 
 	eastl::unique_ptr<Texture2D> texOutput = nullptr;

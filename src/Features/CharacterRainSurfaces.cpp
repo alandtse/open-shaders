@@ -114,8 +114,8 @@ namespace CharacterRainSurfaces
 		}
 
 		class ActorLifecycleEventHandler :
-			public RE::BSTEventSink<RE::TESObjectLoadedEvent>,
-			public RE::BSTEventSink<RE::TESEquipEvent>
+		    public RE::BSTEventSink<RE::TESObjectLoadedEvent>,
+		    public RE::BSTEventSink<RE::TESEquipEvent>
 		{
 		public:
 			RE::BSEventNotifyControl ProcessEvent(

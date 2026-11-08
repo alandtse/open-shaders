@@ -410,13 +410,18 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 
 bool LightLimitFix::CheckParticleLights(RE::BSRenderPass* a_pass, uint32_t)
 {
-	if (!a_pass || !a_pass->geometry || !a_pass->shaderProperty)
+	if (!settings.EnableParticleLights || !a_pass || !a_pass->geometry || !a_pass->shaderProperty)
 		return true;
 
 	auto shaderCache = globals::shaderCache;
 	if (!shaderCache->IsEnabled())
 		return true;
 
+	return CheckParticleLightPass(a_pass);
+}
+
+bool LightLimitFix::CheckParticleLightPass(RE::BSRenderPass* a_pass)
+{
 	auto reference = GetParticleLightConfigs(a_pass);
 	if (reference.valid) {
 		if (AddParticleLight(a_pass, reference))

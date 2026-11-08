@@ -34,6 +34,13 @@ namespace Util::CursorLoader
 	/** @brief Releases all loaded cursor textures and resets cursor state. */
 	void Shutdown();
 
+	/** @brief Uses a verified native cursor while the menu owns desktop input. */
+	bool UpdateNativeCursor(const Menu& menu);
+	/** @brief Returns cursor visibility to its previous owner. */
+	void ReleaseNativeCursor();
+	/** @brief Reports cursor presentation and loading-screen fallback state. */
+	nlohmann::json GetDiagnostics();
+
 	/**
 	 * @brief Draws the custom cursor image at the current mouse position.
 	 *
