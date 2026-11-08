@@ -7,6 +7,7 @@
 #include "PluginCellCatalog.h"
 #include <optional>
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <array>
 #include <memory>
@@ -74,7 +75,7 @@ private:
     std::string pluginScanStatus = "Choose a loaded plugin to enumerate its interiors";
     std::array<char, 96> pluginFilter{};
     std::array<char, 96> interiorFilter{};
-    size_t pluginScanCursor = 0;
+    std::uint32_t pluginScanCursor = 0; // Matches RE::BSTArrayBase::size_type.
     bool pluginListReady = false;
     bool pluginScanActive = false;
 
