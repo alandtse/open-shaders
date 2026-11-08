@@ -28,3 +28,8 @@ PreprocessorParity.h defines explicit readiness stages: winning record resolutio
 ## Local verification
 
 Build the Windows Release DLL and deploy the DX12Resources.ini. From the Skyrim main-menu Open Shaders panel, open DX12 Resources and use Prepare Selected Cell (source discovery) with a known interior plugin/local hex FormID. Confirm the source-discovery report path and renderable=false. Missing and exterior IDs should be rejected. No CI or Skyrim runtime build/test of these new commits has been performed.
+
+
+## Selected plugin source fingerprint
+
+The discovery worker additionally opens the selected Data/<plugin> source as an ordinary file with FILE_FLAG_OPEN_REPARSE_POINT, rejects directory/reparse handles, hashes its bytes via SHA-256 and records selectedPluginSha256, selectedPluginBytes and selectedPluginVerified. The hash is a provenance clue, not a substitute for resolving winning CELL overrides or original NIF asset sources. Failure to read the plugin leaves source verification false and cannot make the report renderable.

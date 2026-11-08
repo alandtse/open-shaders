@@ -15,7 +15,9 @@ namespace DX12ResourceService
         uint32_t resolvedFormId = 0;
         std::string cellName;
         std::string formSource;
-        bool isInterior = false;
+        std::string selectedPluginSha256;
+    uint64_t selectedPluginBytes = 0;
+    bool isInterior = false;
         bool isAttached = false;
     };
 
@@ -30,7 +32,10 @@ namespace DX12ResourceService
                 { "localFormId", cell.requested.localId },
                 { "resolvedFormId", cell.resolvedFormId },
                 { "cellName", cell.cellName },
-                { "formSource", cell.formSource }
+                { "formSource", cell.formSource },
+                { "selectedPluginSha256", cell.selectedPluginSha256 },
+                { "selectedPluginBytes", cell.selectedPluginBytes },
+                { "selectedPluginVerified", cell.selectedPluginSha256.size() == 64 }
             } },
             { "interior", cell.isInterior },
             { "runtimeCellAttached", cell.isAttached },

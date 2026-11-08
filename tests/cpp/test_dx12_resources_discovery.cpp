@@ -12,6 +12,7 @@ TEST_CASE("DX12 Resources marks main-menu CELL discovery as non-renderable", "[d
     const auto report = DX12ResourceService::BuildDiscoveryReport(discovered);
     REQUIRE(report.at("identity").at("localFormId") == 0x123);
     REQUIRE(report.at("discoveryComplete") == true);
+    REQUIRE_FALSE(report.at("identity").at("selectedPluginVerified").get<bool>());
     REQUIRE(report.at("geometryReady") == false);
     REQUIRE(DX12ResourceService::IsDiscoveryOnlyReport(report));
     REQUIRE_FALSE(report.at("preprocessorParityGates").at("parityComplete").get<bool>());

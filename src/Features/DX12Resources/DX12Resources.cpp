@@ -25,6 +25,26 @@ namespace
 {
     constexpr uint64_t kMaxReportBytes = 1024 * 1024;
 
+    /** @brief Hash one selected plugin without resolving all overrides/NIFs. */
+    bool HashSelectedPlugin(const std::string& plugin, std::string& sha, uint64_t& bytes)
+    {
+        const auto path = std::filesystem::path("Data") / plugin;
+        const auto handle = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if (handle == INVALID_HANDLE_VALUE) return false;
+        struct Close { HANDLE handle; ~Close() { CloseHandle(handle); } } close{ handle };
+        BY_HANDLE_FILE_INFORMATION info{};
+        LARGE_INTEGER size{};
+        if (!GetFileInformationByHandle(handle, &info) ||
+            (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) ||
+            !GetFileSizeEx(handle, &size) || size.QuadPart <= 0) return false;
+        auto digest = Util::FileDigest::Sha256HandleHex(handle);
+        if (!digest) return false;
+        sha = std::move(*digest);
+        bytes = uint64_t(size.QuadPart);
+        return true;
+    }
+
     /** @brief Atomic, content-addressed discovery report; no engine pointers or GPU work. */
     bool WriteDiscoveryReport(const json& report, std::string& path, std::string& error)
     {
@@ -105,9 +125,11 @@ void DX12Resources::SubmitManualRequest(const DX12ResourceService::CellRequest& 
     status = "Preparing source-discovery report (full geometry extraction not yet ported)";
     try {
         static BS::thread_pool<> pool{ 1 };
-        pool.detach_task([source = std::move(source), output = next] {
+        pool.detach_task([source = std::move(source), output = next]() mutable {
             const auto started = std::chrono::steady_clock::now();
             try {
+                HashSelectedPlugin(source.requested.plugin,
+                    source.selectedPluginSha256, source.selectedPluginBytes);
                 output->report = DX12ResourceService::BuildDiscoveryReport(source);
                 WriteDiscoveryReport(output->report, output->path, output->error);
             } catch (const std::exception& ex) { output->error = ex.what(); }
