@@ -2,7 +2,6 @@
 
 #include "Feature.h"
 #include "CellRequest.h"
-#include "CellDiscovery.h"
 #include "AutoCellResolver.h"
 #include "PluginCellCatalog.h"
 #include <optional>
@@ -33,19 +32,16 @@ struct DX12Resources final : Feature
     json GetDiagnostics() override;
     std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
     {
-        return { "Automatic interior identification and source preparation.",
+        return { "Automatic interior identification and companion-based CELL processing.",
                  { "Latest-save or current interior detection", "Plugin-scoped interior selection",
                    "Independent on-disk CELL preparation job",
                    "Versioned DX12-cache reports" } };
     }
 
 private:
-    struct Job;
     struct ScanJob;
     struct CatalogJob;
     struct PreparationJob;
-    void SubmitDetectedRequest(const DX12ResourceService::CellRequest& request);
-    void PollJob();
     void BeginAutomaticDetection(bool mainMenu);
     void PollAutomaticDetection();
     void RefreshLoadedPlugins();
@@ -55,7 +51,6 @@ private:
     void PollCellPreparation();
     std::atomic<bool> dataLoaded{ false };
     std::mutex statusMutex;
-    std::shared_ptr<Job> job;
     std::shared_ptr<ScanJob> scanJob;
     std::shared_ptr<CatalogJob> pluginScanJob;
     std::shared_ptr<PreparationJob> preparationJob;
@@ -66,11 +61,6 @@ private:
     std::string detectionLocation;
     std::string detectionSave;
     std::string detectionStatus = "Waiting for Skyrim data";
-    json latestReport = json::object();
-    std::string status = "No CELL selected";
-    std::string reportPath;
-    bool reportSaved = false;
-    double lastElapsedMs = 0;
 
     // One on-demand browser; engine CELL metadata is copied incrementally on
     // the UI thread and never accessed by a detached worker.
@@ -85,6 +75,7 @@ private:
     std::uint32_t pluginScanSequence = 0;
     std::uint32_t preparationSequence = 0;
     std::string preparationStatus = "No cell preparation started";
+    std::string preparationCell;
     std::string preparationPath;
     std::string preparationLogPath;
     double preparationElapsedMs = 0;
