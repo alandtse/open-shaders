@@ -11,6 +11,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -104,6 +105,21 @@ namespace DX12Native
         return packet;
     }
 
+    /** @brief Identities already present in the successfully published production TLAS.
+     *  A runtime capture is unnecessary only when that precise reference/shape
+     *  already has a built acceleration instance; missing or unresolved items
+     *  remain eligible for runtime capture.
+     */
+    struct PreparedRuntimeCoverage
+    {
+        uint64_t sceneRevision = 0;
+        std::unordered_set<std::string> completed;
+        bool Contains(const std::string& reference, const std::string& shape) const
+        {
+            return completed.contains(reference + '\0' + shape);
+        }
+    };
+
     /** @brief Bounded immutable capture mailbox, scoped to the current scene.
      *
      * Exported packets own their storage and can safely outlive the render hook.
@@ -131,6 +147,20 @@ namespace DX12Native
             entries.emplace(key, std::move(packet));
             ++revision;
             return true;
+        }
+        /** @brief Discard captures that the published production TLAS already covers. */
+        size_t RemoveCovered(const PreparedRuntimeCoverage& coverage)
+        {
+            std::scoped_lock lock(mutex);
+            size_t removed = 0;
+            for (auto item = entries.begin(); item != entries.end();) {
+                if (!coverage.completed.contains(item->first)) { ++item; continue; }
+                bytes -= item->second->Bytes();
+                item = entries.erase(item);
+                ++removed;
+            }
+            if (removed) ++revision;
+            return removed;
         }
         std::vector<std::shared_ptr<const RuntimeGeometryPacket>> Export(size_t start, size_t limit) const
         {

@@ -104,6 +104,11 @@ private:
 	std::optional<GraphicsBackend> backend;
 	DX12Native::PreparedScene prepared;
     DX12Native::RuntimeGeometryMailbox runtimeGeometry;
+    // Immutable completed-TLAS identity index is published atomically for the draw hook.
+    std::atomic<std::shared_ptr<const DX12Native::PreparedRuntimeCoverage>> runtimePreparedCoverage;
+    std::shared_ptr<const DX12Native::TopLevel> runtimeCoverageSource;
+    std::atomic<uint64_t> runtimePreparedSkipped{ 0 };
+    uint64_t runtimePreparedPruned = 0;
     DX12Native::RuntimeGeometryCacheWorker runtimeGeometryCache;
     DX12Native::RuntimeGeometryPreparation runtimeGeometryPrepare;
     DX12Native::AccelerationWorker runtimeAccelerationPreview;

@@ -401,8 +401,13 @@ void DX12NativeScene::GameLoaded() { resetRequested = true; }
 void DX12NativeScene::ObserveRuntimeGeometry(RE::BSGeometry* geometry,
     const std::string& reference, const std::string& shape)
 {
-    if (!runtimeGeometryCaptureActive.load(std::memory_order_relaxed) || !geometry ||
-        runtimeGeometry.Contains(reference, shape)) return;
+    if (!runtimeGeometryCaptureActive.load(std::memory_order_relaxed) || !geometry) return;
+    if (const auto covered = runtimePreparedCoverage.load(std::memory_order_acquire);
+        covered && covered->Contains(reference, shape)) {
+        runtimePreparedSkipped.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    if (runtimeGeometry.Contains(reference, shape)) return;
     // Only static BSTriShape CPU data is supported; never map D3D11 buffers.
     auto* tri = geometry->AsTriShape();
     if (!tri || geometry->AsDynamicTriShape()) return;
@@ -473,6 +478,11 @@ void DX12NativeScene::ResetScene()
 	materialBindings.Reset();
     livePbrSource.reset(); livePbrRevision = 0; livePbrLastCaptureFrame = 0;
     runtimeGeometryPrepare.Reset();
+    runtimeGeometry.Reset();
+    runtimePreparedCoverage.store({}, std::memory_order_release);
+    runtimeCoverageSource.reset();
+    runtimePreparedSkipped.store(0, std::memory_order_relaxed);
+    runtimePreparedPruned = 0;
     runtimeGeometryCache.ResetScene();
     runtimeAccelerationPreview.Reset();
     runtimePreviewGeneration = 0;
@@ -559,7 +569,8 @@ void DX12NativeScene::EarlyPrepass()
     // All disk I/O and decoding remain on its background worker.
     if (settings.CacheRuntimeGeometry)
         runtimeGeometryCache.Advance(!cell && !transitionOpen,
-            settings.CaptureRuntimeGeometry && cell && !transitionOpen ?
+            settings.CaptureRuntimeGeometry && cell && !transitionOpen &&
+                runtimePreparedCoverage.load(std::memory_order_acquire) ?
                 &runtimeGeometry : nullptr);
 	if (shadowResetRequested.exchange(false)) shadow.Reset();
 	if (!settings.Enabled || transitionOpen) {
@@ -581,7 +592,8 @@ void DX12NativeScene::EarlyPrepass()
 	}
 	// Background runtime mesh preparation is entirely independent of the
     // active atlas-backed geometry and material binding generations.
-    if (settings.CaptureRuntimeGeometry && runtimeGeometry.Count() != 0) {
+    if (settings.CaptureRuntimeGeometry &&
+        runtimePreparedCoverage.load(std::memory_order_acquire) && runtimeGeometry.Count() != 0) {
         // Preview allocations are deliberately independent and limited to 64 MiB
         // so the atlas-backed production scene retains VRAM headroom.
         const auto geometryBudget = std::min<uint64_t>(
@@ -614,6 +626,22 @@ void DX12NativeScene::EarlyPrepass()
 		}
 	}
 	acceleration.Advance();
+    // Reuse the runtime's existing reference/shape identities, but only skip
+    // geometries actually admitted to a completed production TLAS. Offline
+    // omissions and preview-only candidates must remain discoverable.
+    if (auto current = acceleration.GetScene(); current &&
+        current->scope.scene == revision && current != runtimeCoverageSource) {
+        auto covered = std::make_shared<DX12Native::PreparedRuntimeCoverage>();
+        covered->sceneRevision = revision;
+        for (const auto& instance : current->instances) {
+            const auto& identity = instance.preparedIdentity;
+            if (!identity.referenceKey.empty() && !identity.shapeName.empty())
+                covered->completed.insert(identity.referenceKey + '\0' + identity.shapeName);
+        }
+        runtimeCoverageSource = current;
+        runtimePreparedCoverage.store(covered, std::memory_order_release);
+        runtimePreparedPruned += runtimeGeometry.RemoveCovered(*covered);
+    }
     if (auto scene = acceleration.GetScene(); scene && shadow.RetireScenesExcept(scene) && retiredMaterials.expired()) {
         if (settings.UseLivePBR && globals::game::graphicsState) {
             auto& pbr = globals::features::truePBR;
@@ -778,6 +806,10 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "normalInfluence", settings.ShadowNormalInfluence }, { "traceDensityMode", settings.ShadowTraceDensityMode } } },
 		{ "runtimeGeometry", { { "capturedMeshes", runtimeGeometry.Count() },
             { "capturedBytes", runtimeGeometry.Bytes() },
+            { "alreadyPreparedInstances", runtimePreparedCoverage.load(std::memory_order_acquire) ?
+                runtimePreparedCoverage.load(std::memory_order_acquire)->completed.size() : 0 },
+            { "alreadyPreparedSkipped", runtimePreparedSkipped.load(std::memory_order_relaxed) },
+            { "alreadyPreparedPruned", runtimePreparedPruned },
             { "captureRevision", runtimeGeometry.Revision() },
             { "enabled", runtimeGeometryCaptureActive.load(std::memory_order_acquire) },
             { "preparing", runtimeGeometryPrepare.Busy() },
