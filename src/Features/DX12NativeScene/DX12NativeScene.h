@@ -5,6 +5,7 @@
 #include "Features/DX12NativeScene/RuntimeGeometryCapture.h"
 #include "Features/DX12NativeScene/RuntimeGeometryCacheWorker.h"
 #include "Features/DX12NativeScene/RuntimeGeometryPreparation.h"
+#include "Features/DX12NativeScene/VideoMemoryBudget.h"
 #include "Features/DX12NativeScene/RasterCapture.h"
 #include "Features/DX12NativeScene/ShadowTrace.h"
 #include "TruePBR/InstanceCoverage.h"
@@ -113,6 +114,9 @@ private:
     DX12Native::RuntimeGeometryPreparation runtimeGeometryPrepare;
     DX12Native::AccelerationWorker runtimeAccelerationPreview;
     uint64_t runtimePreviewGeneration = 0;
+    DX12Native::VideoMemoryBudget runtimeGeometryVideoMemory;
+    DX12Native::VideoMemoryBudget::Snapshot runtimeGeometryBudgetStatus{};
+    uint64_t runtimeGeometryActiveBytes = 0, runtimeGeometryAllowedBytes = 0;
     std::atomic<bool> runtimeGeometryCaptureActive{ false };
     std::mutex runtimeGeometryBudgetMutex;
     uint32_t runtimeGeometryBudgetFrame = UINT32_MAX, runtimeGeometryFrameBytes = 0;

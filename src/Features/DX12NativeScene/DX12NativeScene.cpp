@@ -18,6 +18,18 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabl
 
 namespace
 {
+    // Count each shared BLAS once; a combined scene must not double-count
+    // memory merely because multiple TLAS instances refer to one bottom level.
+    uint64_t NativeAccelerationResidentBytes(const std::shared_ptr<const DX12Native::TopLevel>& scene)
+    {
+        if (!scene) return 0;
+        uint64_t total = scene->bytes;
+        std::unordered_set<const DX12Native::BottomLevel*> seen;
+        for (const auto& bottom : scene->bottoms)
+            if (bottom && seen.insert(bottom.get()).second) total += bottom->bytes;
+        return total;
+    }
+
     // Stable, case-insensitive identity for one prepared interior (plugin + local FormID).
     uint64_t PreparedCellReloadToken(std::string_view plugin, uint32_t local)
     {
@@ -486,6 +498,8 @@ void DX12NativeScene::ResetScene()
     runtimeGeometryCache.ResetScene();
     runtimeAccelerationPreview.Reset();
     runtimePreviewGeneration = 0;
+    runtimeGeometryBudgetStatus = {};
+    runtimeGeometryActiveBytes = runtimeGeometryAllowedBytes = 0;
 	prepared.Reset();
 	acceleration.Reset();
 }
@@ -590,22 +604,41 @@ void DX12NativeScene::EarlyPrepass()
 		cellID = currentID;
 		failure.clear();
 	}
-	// Background runtime mesh preparation is entirely independent of the
-    // active atlas-backed geometry and material binding generations.
+    // Runtime additions share the manual scene ceiling and real DXGI headroom
+    // with the already resident production geometry, acceleration and materials.
+    // The disk/CPU cache is intentionally outside this GPU-residency budget.
     if (settings.CaptureRuntimeGeometry &&
         runtimePreparedCoverage.load(std::memory_order_acquire) && runtimeGeometry.Count() != 0) {
-        // Preview allocations are deliberately independent and limited to 64 MiB
-        // so the atlas-backed production scene retains VRAM headroom.
-        const auto geometryBudget = std::min<uint64_t>(
-            uint64_t(settings.BudgetMB) * 1024 * 1024 / 4, 64ull * 1024 * 1024);
-        runtimeGeometryPrepare.Advance(*backend, runtimeGeometry, revision, geometryBudget,
-            settings.CacheRuntimeGeometry ? runtimeGeometryCache.GetPrewarmed() : nullptr);
-        if (auto ready = runtimeGeometryPrepare.GetCell(); ready && ready->snapshot &&
-            !ready->snapshot->instances.empty() &&
-            runtimeAccelerationPreview.Finished() &&
+        const auto currentCell = prepared.GetCell();
+        const auto currentScene = acceleration.GetScene();
+        const auto bound = materialBindings.Get();
+        const uint64_t baselineGeometryBytes = currentCell ? currentCell->bytes : 0;
+        const uint64_t baselineAsBytes = NativeAccelerationResidentBytes(currentScene);
+        const uint64_t baselineMaterialBytes = bound && bound->materials ? bound->materials->bytes : 0;
+        const uint64_t totalLimit = uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB;
+        runtimeGeometryActiveBytes = baselineGeometryBytes + baselineAsBytes + baselineMaterialBytes;
+        const uint64_t availableManual = totalLimit > runtimeGeometryActiveBytes ?
+            totalLimit - runtimeGeometryActiveBytes : 0;
+        const auto runtimeCell = runtimeGeometryPrepare.GetCell();
+        const uint64_t geometryBytes = runtimeCell ? runtimeCell->bytes : 0;
+        const uint64_t previewAsBytes = NativeAccelerationResidentBytes(runtimeAccelerationPreview.GetScene());
+        runtimeGeometryAllowedBytes = 0;
+        if (availableManual) {
+            runtimeGeometryBudgetStatus = runtimeGeometryVideoMemory.Query(backend->d3d12Device.get(),
+                geometryBytes + previewAsBytes, availableManual);
+            runtimeGeometryAllowedBytes = runtimeGeometryBudgetStatus.effectiveBytes;
+        } else runtimeGeometryBudgetStatus = {};
+        const uint64_t geometryBudget = runtimeGeometryAllowedBytes > previewAsBytes ?
+            runtimeGeometryAllowedBytes - previewAsBytes : 0;
+        const uint64_t accelBudget = runtimeGeometryAllowedBytes > geometryBytes ?
+            runtimeGeometryAllowedBytes - geometryBytes : 0;
+        if (geometryBudget)
+            runtimeGeometryPrepare.Advance(*backend, runtimeGeometry, revision, geometryBudget,
+                settings.CacheRuntimeGeometry ? runtimeGeometryCache.GetPrewarmed() : nullptr);
+        if (auto ready = runtimeGeometryPrepare.GetCell(); accelBudget && ready && ready->snapshot &&
+            !ready->snapshot->instances.empty() && runtimeAccelerationPreview.Finished() &&
             runtimePreviewGeneration != ready->snapshot->generation) {
-            runtimeAccelerationPreview.Start(*backend, ready->snapshot, ready->geometries,
-                geometryBudget);
+            runtimeAccelerationPreview.Start(*backend, ready->snapshot, ready->geometries, accelBudget);
             runtimePreviewGeneration = ready->snapshot->generation;
         }
         runtimeAccelerationPreview.Advance();
@@ -810,6 +843,12 @@ void DX12NativeScene::PublishDiagnostics()
                 runtimePreparedCoverage.load(std::memory_order_acquire)->completed.size() : 0 },
             { "alreadyPreparedSkipped", runtimePreparedSkipped.load(std::memory_order_relaxed) },
             { "alreadyPreparedPruned", runtimePreparedPruned },
+            { "gpuBudget", { { "dxgiAvailable", runtimeGeometryBudgetStatus.dxgiAvailable },
+                { "localBudgetBytes", runtimeGeometryBudgetStatus.localBudget },
+                { "localUsageBytes", runtimeGeometryBudgetStatus.localUsage },
+                { "reserveBytes", runtimeGeometryBudgetStatus.reserve },
+                { "activeBaselineBytes", runtimeGeometryActiveBytes },
+                { "runtimeAllowanceBytes", runtimeGeometryAllowedBytes } } },
             { "captureRevision", runtimeGeometry.Revision() },
             { "enabled", runtimeGeometryCaptureActive.load(std::memory_order_acquire) },
             { "preparing", runtimeGeometryPrepare.Busy() },
