@@ -8,6 +8,10 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+if importlib.util.find_spec("hlslkit") is None:
+    raise unittest.SkipTest("hlslkit is not installed")
+if importlib.util.find_spec("pyfomod") is None:
+    raise unittest.SkipTest("pyfomod is not installed")
 from test_verify_shader_cache import dxbc
 
 ROOT = Path(__file__).resolve().parents[1]

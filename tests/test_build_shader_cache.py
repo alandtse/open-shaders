@@ -6,6 +6,9 @@ import unittest
 from unittest.mock import Mock, patch
 from pathlib import Path
 
+if importlib.util.find_spec("hlslkit") is None:
+    raise unittest.SkipTest("hlslkit is not installed")
+
 ROOT = Path(__file__).parents[1]
 SPEC = importlib.util.spec_from_file_location("build_shader_cache", ROOT / "tools/build-shader-cache.py")
 builder = importlib.util.module_from_spec(SPEC)
