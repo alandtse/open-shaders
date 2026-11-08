@@ -1,5 +1,6 @@
 #include "DX12Resources.h"
 #include "CompanionProcess.h"
+#include "PreparedCellValidation.h"
 #include "Utils/FileDigest.h"
 #include <RE/T/TESDataHandler.h>
 #include <RE/T/TESObjectCELL.h>
@@ -33,6 +34,16 @@ struct DX12Resources::CatalogJob
     std::string plugin;
     std::vector<DX12ResourceService::PluginInteriorEntry> entries;
     std::string error;
+};
+
+struct DX12Resources::PreparationJob
+{
+    std::atomic<bool> done{ false };
+    std::string path;
+    std::string error;
+    std::string logPath;
+    json report;
+    double elapsedMs = 0;
 };
 
 struct DX12Resources::Job
@@ -429,10 +440,84 @@ void DX12Resources::AdvancePluginCellScan()
         pluginInteriors.size(), selectedPlugin);
 }
 
+void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest& request)
+{
+    if (preparationJob) {
+        preparationStatus = "A CELL preparation job is already running";
+        return;
+    }
+    if (!DX12ResourceService::ParseCellRequest(request.plugin, std::format("{:X}", request.localId))) {
+        preparationStatus = "Selected CELL identity is invalid";
+        return;
+    }
+    const auto data = DX12ResourceService::SkyrimDataDirectory();
+    const auto pluginsFile = DX12ResourceService::SkyrimPluginsFile();
+    if (pluginsFile.empty() || !std::filesystem::is_regular_file(pluginsFile)) {
+        preparationStatus = "Skyrim Plugins.txt is unavailable";
+        return;
+    }
+
+    // The producer deliberately refuses output under Data. Stage in the game
+    // root, validate all referenced hashes, then publish inside DX12-cache.
+    const auto workspace = data.parent_path() / "DX12ResourcesWork" / "cells" / request.plugin /
+        std::format("{:06X}-{}-{}", request.localId, GetTickCount64(), preparationSequence++);
+    const auto logPath = data / "SKSE/Plugins/CommunityShaders/DX12-cache/logs" /
+        std::format("prepare-{}-{}-{}.log", request.localId, GetCurrentProcessId(), GetTickCount64());
+    auto next = std::make_shared<PreparationJob>();
+    preparationStatus = "Preparing selected CELL with independent DX12ResourcesPrep...";
+    preparationReport = json::object();
+    preparationPath.clear();
+    try {
+        static BS::thread_pool<> pool{ 1 };
+        pool.detach_task([next, request, data, pluginsFile, workspace, logPath] {
+            const auto started = std::chrono::steady_clock::now();
+            next->logPath = logPath.string();
+            try {
+                const auto identity = std::format("{}:{:06X}", request.plugin, request.localId);
+                const auto process = DX12ResourceService::RunCompanion({
+                    data.wstring(), std::filesystem::path(identity).wstring(),
+                    workspace.wstring(), pluginsFile.wstring(), L"1"
+                }, logPath);
+                if (!process.error.empty())
+                    throw std::runtime_error(process.error + ": " + process.log);
+                next->report = DX12ResourceService::ValidatePreparedCell(workspace, request);
+                const auto published = DX12ResourceService::PublishPreparedCell(
+                    workspace, data, request);
+                next->path = published.string();
+            } catch (const std::exception& error) { next->error = error.what(); }
+            next->elapsedMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+            next->done.store(true, std::memory_order_release);
+        });
+        preparationJob = std::move(next);
+    } catch (const std::exception& error) {
+        preparationStatus = "Could not start CELL preparation: " + std::string(error.what());
+    }
+}
+
+void DX12Resources::PollCellPreparation()
+{
+    if (!preparationJob || !preparationJob->done.load(std::memory_order_acquire)) return;
+    const auto completed = std::move(preparationJob);
+    preparationLogPath = completed->logPath;
+    preparationElapsedMs = completed->elapsedMs;
+    if (!completed->error.empty()) {
+        preparationStatus = "CELL preparation failed: " + completed->error;
+        return;
+    }
+    preparationReport = std::move(completed->report);
+    preparationPath = completed->path;
+    const int missing = preparationReport.value("unresolvedAssets", 0);
+    preparationStatus = missing == 0 ?
+        "CELL preparation validated and cached (runtime coverage still unverified)" :
+        std::format("CELL prepared and cached with {} unresolved source assets; NOT render-ready", missing);
+}
+
 void DX12Resources::DrawSettings()
 {
     std::scoped_lock lock(statusMutex);
     PollJob();
+    PollCellPreparation();
     auto* ui = RE::UI::GetSingleton();
     const bool mainMenu = ui && ui->IsMenuOpen(RE::MainMenu::MENU_NAME);
     if (!lastDetectionMainMenu || *lastDetectionMainMenu != mainMenu) {
@@ -537,12 +622,25 @@ void DX12Resources::DrawSettings()
     // A known selected interior may run source discovery regardless of automatic
     // save/current-cell detection. Only exact CELL validity and job ownership gate it.
     const bool canPrepareChosen = DX12ResourceService::CanPrepareKnownInterior(
-        settings.Enabled, dataLoaded.load(std::memory_order_acquire), bool(job),
-        chosenInterior);
+        settings.Enabled, dataLoaded.load(std::memory_order_acquire),
+        bool(job) || bool(preparationJob), chosenInterior);
     ImGui::BeginDisabled(!canPrepareChosen);
-    if (ImGui::Button("Prepare Selected Interior (source discovery)") && canPrepareChosen)
-        SubmitDetectedRequest(*chosenInterior);
+    if (ImGui::Button("Process Selected Cell") && canPrepareChosen)
+        StartCellPreparation(*chosenInterior);
     ImGui::EndDisabled();
+    ImGui::TextDisabled("Quality 1; off-thread Mutagen/Nifly extraction; no atlas.");
+    if (preparationJob) ImGui::TextUnformatted("DX12ResourcesPrep is processing the selected CELL...");
+    ImGui::TextWrapped("%s", preparationStatus.c_str());
+    if (!preparationPath.empty()) {
+        ImGui::TextWrapped("Validated cache: %s", preparationPath.c_str());
+        ImGui::Text("Elapsed: %.1f ms", preparationElapsedMs);
+        ImGui::Text("Compiled shapes: %d | Placed instances: %d | Unresolved sources: %d",
+            preparationReport.value("compiledShapes", 0),
+            preparationReport.value("placedShapeInstances", 0),
+            preparationReport.value("unresolvedAssets", 0));
+    }
+    if (!preparationLogPath.empty())
+        ImGui::TextWrapped("Preparation log: %s", preparationLogPath.c_str());
     if (job) ImGui::TextUnformatted("Source-discovery worker running...");
     ImGui::TextWrapped("%s", status.c_str());
     if (reportSaved) {
@@ -588,7 +686,12 @@ json DX12Resources::GetDiagnostics()
         } },
         { "dataLoaded", dataLoaded.load(std::memory_order_acquire) },
         { "stage", "discovery-only" }, { "prepared", false },
-        { "workerBusy", bool(job) }, { "status", status },
+        { "workerBusy", bool(job) || bool(preparationJob) }, { "status", status },
+        { "companionPreparation", {
+            { "running", bool(preparationJob) }, { "status", preparationStatus },
+            { "output", preparationPath }, { "log", preparationLogPath },
+            { "elapsedMs", preparationElapsedMs }, { "report", preparationReport }
+        } },
         { "reportSaved", reportSaved }, { "reportPath", reportPath },
         { "lastElapsedMs", lastElapsedMs }, { "report", latestReport } };
 }

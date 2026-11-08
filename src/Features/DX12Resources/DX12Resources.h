@@ -35,7 +35,7 @@ struct DX12Resources final : Feature
     {
         return { "Automatic interior identification and source preparation.",
                  { "Latest-save or current interior detection", "Plugin-scoped interior selection",
-                   "Independent preparation job",
+                   "Independent on-disk CELL preparation job",
                    "Versioned DX12-cache reports" } };
     }
 
@@ -43,6 +43,7 @@ private:
     struct Job;
     struct ScanJob;
     struct CatalogJob;
+    struct PreparationJob;
     void SubmitDetectedRequest(const DX12ResourceService::CellRequest& request);
     void PollJob();
     void BeginAutomaticDetection(bool mainMenu);
@@ -50,11 +51,14 @@ private:
     void RefreshLoadedPlugins();
     void StartPluginCellScan(std::string plugin);
     void AdvancePluginCellScan();
+    void StartCellPreparation(const DX12ResourceService::CellRequest& request);
+    void PollCellPreparation();
     std::atomic<bool> dataLoaded{ false };
     std::mutex statusMutex;
     std::shared_ptr<Job> job;
     std::shared_ptr<ScanJob> scanJob;
     std::shared_ptr<CatalogJob> pluginScanJob;
+    std::shared_ptr<PreparationJob> preparationJob;
     std::optional<DX12ResourceService::CellRequest> detectedCell;
     bool detectionRequested = false;
     std::optional<bool> lastDetectionMainMenu;
@@ -79,6 +83,12 @@ private:
     std::array<char, 96> interiorFilter{};
     std::uint32_t pluginScanCursor = 0; // Number of records delivered by the companion.
     std::uint32_t pluginScanSequence = 0;
+    std::uint32_t preparationSequence = 0;
+    std::string preparationStatus = "No cell preparation started";
+    std::string preparationPath;
+    std::string preparationLogPath;
+    double preparationElapsedMs = 0;
+    json preparationReport = json::object();
     bool pluginListReady = false;
     bool pluginScanActive = false;
 
