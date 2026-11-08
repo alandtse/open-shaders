@@ -2,6 +2,9 @@
 
 #include "Feature.h"
 #include "CellRequest.h"
+#include "CellDiscovery.h"
+#include <atomic>
+#include <mutex>
 #include <array>
 #include <memory>
 #include <string>
@@ -21,7 +24,7 @@ struct DX12Resources final : Feature
     void LoadSettings(json& input) override;
     void SaveSettings(json& output) override;
     void RestoreDefaultSettings() override;
-    void DataLoaded() override { dataLoaded = true; }
+    void DataLoaded() override { dataLoaded.store(true, std::memory_order_release); }
     json GetDiagnostics() override;
     std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
     {
@@ -31,7 +34,17 @@ struct DX12Resources final : Feature
     }
 
 private:
-    bool dataLoaded = false;
+    struct Job;
+    void SubmitManualRequest(const DX12ResourceService::CellRequest& request);
+    void PollJob();
+    std::atomic<bool> dataLoaded{ false };
+    std::mutex statusMutex;
+    std::shared_ptr<Job> job;
+    json latestReport = json::object();
+    std::string status = "No CELL selected";
+    std::string reportPath;
+    bool reportSaved = false;
+    double lastElapsedMs = 0;
     std::array<char, 128> pluginText{};
     std::array<char, 16> localIdText{};
 };
