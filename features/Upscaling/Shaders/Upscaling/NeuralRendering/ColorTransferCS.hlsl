@@ -268,7 +268,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	if (boundedGain) {
 		result = original.rgb * NR::CompositeGain(tone * saturate(protectionWeight), NR::kMaxToneStops);
 		if (ColorStrength > 0.0)
-			result *= NR::ChromaGain(NR::ChromaOffset(inputProxy, neuralProxy, Luma, NR::kChromaFloor), ColorStrength * categoryStrength * saturate(protectionWeight), NR::kMaxChromaStops);
+			result *= NR::LuminancePreservingGain(original.rgb, NR::ChromaGain(NR::ChromaOffset(inputProxy, neuralProxy, Luma, NR::kChromaFloor), ColorStrength * categoryStrength * saturate(protectionWeight), NR::kMaxChromaStops), Luma);
 	}
 	if (CompositeMode == NR::kCompositeReplacement)
 		result = neuralLinear;

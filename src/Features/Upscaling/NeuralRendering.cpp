@@ -701,6 +701,7 @@ struct NeuralRendering::Impl
 	{
 		ColorTransferData data{ width, height, i * width };
 		SetRegion(data, i);
+		data.colorStrength = colorStrength;
 		colorBuffer->Update(data);
 		GainReuseData reuse{ Util::GetCameraData(), globals::features::reverseZ.IsActive() ? 1u : 0u, crossEye ? 1u : 0u };
 		if (crossEye) {

@@ -30,6 +30,14 @@ namespace NR
 		return float3(redBlue.x, -(lumaWeights.x * redBlue.x + lumaWeights.z * redBlue.y) / lumaWeights.y, redBlue.y);
 	}
 
+	// A zero-mean offset still moves the luminance of a coloured input, so the gain is rescaled to leave it alone.
+	float3 LuminancePreservingGain(float3 baseColor, float3 gain, float3 lumaWeights)
+	{
+		float before = dot(lumaWeights, baseColor);
+		float after = dot(lumaWeights, baseColor * gain);
+		return (before > 1e-6 && after > 1e-6) ? gain * (before / after) : gain;
+	}
+
 	float3 ChromaGain(float3 offset, float strength, float maxChromaStops)
 	{
 		float3 scaled = all(isfinite(offset)) ? offset * strength : float3(0.0, 0.0, 0.0);
