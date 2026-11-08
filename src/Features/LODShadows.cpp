@@ -27,6 +27,7 @@ namespace
 	constexpr int kRasterDepthBias = 1;
 	constexpr float kTerrainSlopeScaledDepthBias = 1.0f;
 	constexpr uint32_t kCollectIntervalFrames = 4;
+	constexpr uint32_t kFullWalkIntervalScans = 8;
 	constexpr uint64_t kHashSeed = 14695981039346656037ull;
 	constexpr uint64_t kHashPrime = 1099511628211ull;
 
@@ -328,6 +329,7 @@ void LODShadows::Invalidate()
 		map.valid = false;
 	casters.clear();
 	visibleGeometry.clear();
+	loadedRefCache.clear();
 	terrainGeometryCount = 0;
 	terrainAvailable = false;
 	pendingIndex = -1;
@@ -459,6 +461,39 @@ void LODShadows::Prepass()
 	globals::d3d::context->PSSetShaderResources(kMaskSlot, 1, &view);
 }
 
+void LODShadows::HashGeometry(RE::BSGeometry* a_geometry)
+{
+	auto* geometry = a_geometry;
+	HashBytes(sceneHash, &geometry, sizeof(geometry));
+	HashBytes(sceneHash, &geometry->world, sizeof(geometry->world));
+	const auto lodMode = geometry->GetLODMode();
+	HashBytes(sceneHash, &lodMode, sizeof(lodMode));
+	auto& data = geometry->GetGeometryRuntimeData();
+	HashBytes(sceneHash, &data.rendererData, sizeof(data.rendererData));
+	if (auto segmented = geometry->AsSubIndexTriShape()) {
+		auto& segments = segmented->GetSubIndexedTrishapeRuntimeData();
+		if (segments.segmentData) {
+			for (uint32_t i = 0; i < segments.numSegments; ++i) {
+				const auto& range = segments.segmentData[i];
+				HashBytes(sceneHash, &range.index, sizeof(range.index));
+				HashBytes(sceneHash, &range.numTris, sizeof(range.numTris));
+				HashBytes(sceneHash, &range.flags, sizeof(range.flags));
+			}
+		}
+	} else if (geometry->GetType() == RE::BSGeometry::Type::kMultiStreamInstanceTriShape) {
+		auto& instances = static_cast<RE::BSMultiStreamInstanceTriShape*>(geometry)->GetMultiStreamTrishapeRuntimeData();
+		HashBytes(sceneHash, &instances.instanceCount, sizeof(instances.instanceCount));
+		for (auto group : instances.instanceGroups) {
+			if (group && group->vertexBuffer) {
+				HashBytes(sceneHash, &group->vertexBuffer->buffer, sizeof(group->vertexBuffer->buffer));
+				HashBytes(sceneHash, &group->instanceCount, sizeof(group->instanceCount));
+				HashBytes(sceneHash, &group->center, sizeof(group->center));
+				HashBytes(sceneHash, &group->size, sizeof(group->size));
+			}
+		}
+	}
+}
+
 void LODShadows::Collect(RE::NiAVObject* a_object, bool a_ignoreAppCulling, bool a_loadedObject)
 {
 	if (!a_object)
@@ -478,34 +513,7 @@ void LODShadows::Collect(RE::NiAVObject* a_object, bool a_ignoreAppCulling, bool
 				return;
 		}
 		visibleGeometry.emplace_back(geometry);
-		HashBytes(sceneHash, &geometry, sizeof(geometry));
-		HashBytes(sceneHash, &geometry->world, sizeof(geometry->world));
-		const auto lodMode = geometry->GetLODMode();
-		HashBytes(sceneHash, &lodMode, sizeof(lodMode));
-		auto& data = geometry->GetGeometryRuntimeData();
-		HashBytes(sceneHash, &data.rendererData, sizeof(data.rendererData));
-		if (auto segmented = geometry->AsSubIndexTriShape()) {
-			auto& segments = segmented->GetSubIndexedTrishapeRuntimeData();
-			if (segments.segmentData) {
-				for (uint32_t i = 0; i < segments.numSegments; ++i) {
-					const auto& range = segments.segmentData[i];
-					HashBytes(sceneHash, &range.index, sizeof(range.index));
-					HashBytes(sceneHash, &range.numTris, sizeof(range.numTris));
-					HashBytes(sceneHash, &range.flags, sizeof(range.flags));
-				}
-			}
-		} else if (geometry->GetType() == RE::BSGeometry::Type::kMultiStreamInstanceTriShape) {
-			auto& instances = static_cast<RE::BSMultiStreamInstanceTriShape*>(geometry)->GetMultiStreamTrishapeRuntimeData();
-			HashBytes(sceneHash, &instances.instanceCount, sizeof(instances.instanceCount));
-			for (auto group : instances.instanceGroups) {
-				if (group && group->vertexBuffer) {
-					HashBytes(sceneHash, &group->vertexBuffer->buffer, sizeof(group->vertexBuffer->buffer));
-					HashBytes(sceneHash, &group->instanceCount, sizeof(group->instanceCount));
-					HashBytes(sceneHash, &group->center, sizeof(group->center));
-					HashBytes(sceneHash, &group->size, sizeof(group->size));
-				}
-			}
-		}
+		HashGeometry(geometry);
 	}
 }
 
@@ -537,22 +545,41 @@ void LODShadows::CollectTerrain()
 	HashBytes(sceneHash, &landBounds, sizeof(landBounds));
 }
 
-void LODShadows::CollectLoadedObjects()
+void LODShadows::CollectLoadedObjects(bool a_fullWalk)
 {
 	collectedGeometry.clear();
 	for (const auto& geometry : visibleGeometry)
 		collectedGeometry.insert(geometry.get());
+	++loadedScanId;
 	if (auto* tes = globals::game::tes) {
 		tes->ForEachReference([&](RE::TESObjectREFR* reference) {
 			const auto* base = reference ? reference->GetBaseObject() : nullptr;
 			const auto* staticObject = base ? base->As<RE::TESObjectSTAT>() : nullptr;
-			if (base && base->Is(RE::FormType::Static, RE::FormType::StaticCollection, RE::FormType::Tree) &&
-				(!staticObject || !staticObject->IsSkyObject()) &&
-				!reference->IsDisabled() && !reference->IsDeleted())
-				Collect(reference->Get3D(), false, true);
+			if (!base || !base->Is(RE::FormType::Static, RE::FormType::StaticCollection, RE::FormType::Tree) ||
+				(staticObject && staticObject->IsSkyObject()) || reference->IsDisabled() || reference->IsDeleted())
+				return RE::BSContainer::ForEachResult::kContinue;
+			auto* root = reference->Get3D();
+			if (!root)
+				return RE::BSContainer::ForEachResult::kContinue;
+			auto& entry = loadedRefCache[reference];
+			entry.scanId = loadedScanId;
+			const bool culled = root->GetAppCulled();
+			if (!a_fullWalk && entry.root == root && entry.culled == culled) {
+				for (const auto& geometry : entry.geometry) {
+					visibleGeometry.emplace_back(geometry);
+					HashGeometry(geometry.get());
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			}
+			const auto first = visibleGeometry.size();
+			Collect(root, false, true);
+			entry.root = root;
+			entry.culled = culled;
+			entry.geometry.assign(visibleGeometry.begin() + first, visibleGeometry.end());
 			return RE::BSContainer::ForEachResult::kContinue;
 		});
 	}
+	std::erase_if(loadedRefCache, [this](const auto& item) { return item.second.scanId != loadedScanId; });
 }
 
 void LODShadows::AddCaster(RE::BSGeometry* a_geometry)
@@ -1206,7 +1233,7 @@ void LODShadows::ReflectionsPrepass()
 	Publish();
 }
 
-void LODShadows::CollectScene(bool a_refreshLoaded)
+void LODShadows::CollectScene(bool a_refreshLoaded, bool a_fullWalk)
 {
 	std::vector<RE::NiPointer<RE::BSGeometry>> loadedGeometry;
 	if (!a_refreshLoaded && geometryCounts[3] <= visibleGeometry.size())
@@ -1230,7 +1257,7 @@ void LODShadows::CollectScene(bool a_refreshLoaded)
 	if (a_refreshLoaded) {
 		sceneHash = kHashSeed;
 		const auto lodGeometryCount = visibleGeometry.size();
-		CollectLoadedObjects();
+		CollectLoadedObjects(a_fullWalk);
 		sourceHashes[3] = sceneHash;
 		geometryCounts[3] = uint32_t(visibleGeometry.size() - lodGeometryCount);
 	} else {
@@ -1298,7 +1325,11 @@ void LODShadows::EarlyPrepass()
 		const int32_t gridY = tes ? tes->currentGridY : 0;
 		const bool refreshLoaded = !throttleCollect || refreshImmediately || visibleGeometry.empty() || gridX != collectedGridX ||
 		                           gridY != collectedGridY || ++framesSinceCollect >= kCollectIntervalFrames;
-		CollectScene(refreshLoaded);
+		const bool fullWalk = !throttleCollect || refreshImmediately || visibleGeometry.empty() || gridX != collectedGridX ||
+		                      gridY != collectedGridY || (refreshLoaded && ++scansSinceFullWalk >= kFullWalkIntervalScans);
+		CollectScene(refreshLoaded, fullWalk);
+		if (fullWalk)
+			scansSinceFullWalk = 0;
 		if (refreshLoaded) {
 			framesSinceCollect = 0;
 			collectedGridX = gridX;
