@@ -1,4 +1,5 @@
 #include "PreparedScene.h"
+#include "CellPackedFile.h"
 
 #include "Utils/FileDigest.h"
 #include <BS_thread_pool.hpp>
@@ -18,24 +19,6 @@ namespace DX12Native
 		bool IsDigest(const std::string& a_value)
 		{
 			return a_value.size() == 64 && std::ranges::all_of(a_value, [](unsigned char c) { return std::isxdigit(c) != 0; });
-		}
-
-		std::vector<uint8_t> ReadMesh(const std::filesystem::path& a_path, const std::string& a_digest, uint64_t a_limit)
-		{
-			const auto file = CreateFileW(a_path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-			if (file == INVALID_HANDLE_VALUE) throw std::runtime_error("Prepared mesh cannot be opened");
-			const SKSE::stl::scope_exit close([&]() noexcept { CloseHandle(file); });
-			LARGE_INTEGER size{};
-			if (!GetFileSizeEx(file, &size) || size.QuadPart < 16 || uint64_t(size.QuadPart) > a_limit || uint64_t(size.QuadPart) > UINT32_MAX)
-				throw std::runtime_error("Prepared mesh exceeds byte budget");
-			const auto digest = Util::FileDigest::Sha256HandleHex(file);
-			if (!digest || _stricmp(digest->c_str(), a_digest.c_str()) != 0) throw std::runtime_error("Prepared mesh hash mismatch");
-			if (!SetFilePointerEx(file, {}, nullptr, FILE_BEGIN)) throw std::runtime_error("Prepared mesh seek failed");
-			std::vector<uint8_t> bytes(static_cast<size_t>(size.QuadPart));
-			DWORD read = 0;
-			if (!ReadFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) || read != bytes.size())
-				throw std::runtime_error("Prepared mesh read failed");
-			return bytes;
 		}
 
 		winrt::com_ptr<ID3D12Resource> UploadBuffer(const GraphicsBackend& a_backend, std::span<const uint8_t> a_payload,
@@ -59,7 +42,7 @@ namespace DX12Native
 			return buffer;
 		}
 
-		std::shared_ptr<const VertexAttributes> UploadShading(const GraphicsBackend& a_backend, const std::vector<uint8_t>& a_bytes,
+		std::shared_ptr<const VertexAttributes> UploadShading(const GraphicsBackend& a_backend, std::span<const uint8_t> a_bytes,
 			uint32_t a_vertexCount, uint64_t a_limit)
 		{
 			std::array<uint32_t, 4> header{};
@@ -88,12 +71,12 @@ namespace DX12Native
 			shading->vertexCount = a_vertexCount;
 			shading->stride = kShadingStride;
 			shading->hasTangentFrame = header[1] == 2;
-			shading->buffer = UploadBuffer(a_backend, std::span(a_bytes).subspan(16), a_limit,
+			shading->buffer = UploadBuffer(a_backend, a_bytes.subspan(16), a_limit,
 				shading->allocationBytes, L"DX12NativeScene::PreparedShading");
 			return shading;
 		}
 
-		std::shared_ptr<const Geometry> Upload(const GraphicsBackend& a_backend, const std::vector<uint8_t>& a_bytes, uint64_t a_limit)
+		std::shared_ptr<const Geometry> Upload(const GraphicsBackend& a_backend, std::span<const uint8_t> a_bytes, uint64_t a_limit)
 		{
 			std::array<uint32_t, 4> header{};
 			std::memcpy(header.data(), a_bytes.data(), sizeof(header));
@@ -119,7 +102,7 @@ namespace DX12Native
 			geometry->source = std::move(mesh);
 			geometry->indexOffset = vertexBytes;
 			geometry->validationOffset = vertexBytes + indexBytes;
-			geometry->buffer = UploadBuffer(a_backend, std::span(a_bytes).subspan(16), a_limit,
+			geometry->buffer = UploadBuffer(a_backend, a_bytes.subspan(16), a_limit,
 				geometry->allocationBytes, L"DX12NativeScene::PreparedGeometry");
 			return geometry;
 		}
@@ -131,7 +114,7 @@ namespace DX12Native
 			if (std::filesystem::file_size(manifestPath) > kMaximumManifestBytes) throw std::runtime_error("Prepared manifest exceeds limit");
 			std::ifstream file(manifestPath);
 			const auto manifest = json::parse(file);
-			if (manifest.at("schemaVersion").get<uint32_t>() != 1 || manifest.at("rendererSchemaVersion").get<uint32_t>() != 1 || _stricmp(manifest.at("cell").get_ref<const std::string&>().c_str(), a_cell.c_str()) != 0)
+			if (manifest.at("schemaVersion").get<uint32_t>() != 2 || manifest.at("rendererSchemaVersion").get<uint32_t>() != 2 || _stricmp(manifest.at("cell").get_ref<const std::string&>().c_str(), a_cell.c_str()) != 0)
 				throw std::runtime_error("Prepared cell identity/schema mismatch");
 			const auto& rows = manifest.at("instances");
 			if (!rows.is_array() || rows.empty() || rows.size() > kMaximumInstances) throw std::runtime_error("Prepared instance count invalid");
@@ -151,13 +134,21 @@ namespace DX12Native
 				rooms = std::make_shared<const json>(definitions);
 				for (const auto& room : definitions) result->roomDefinitions.push_back(room);
 			}
-			if (a_materialBudget) snapshot->materialSource = std::make_shared<const MaterialSource>(a_directory, a_cell, result->digest, a_materialBudget, rooms);
+			if (a_materialBudget) {
+                auto source = std::make_shared<MaterialSource>(a_directory, a_cell, result->digest, a_materialBudget, rooms);
+                source->textureReferences = std::make_shared<const json>(manifest.at("textureReferences"));
+                snapshot->materialSource = std::move(source);
+            }
 			std::unordered_map<std::string, std::shared_ptr<const Geometry>> geometries;
 			std::unordered_map<std::string, std::shared_ptr<const VertexAttributes>> shadingCache;
 			std::unordered_map<std::string, std::string> shadingFailures;
 			std::unordered_map<std::string, std::shared_ptr<const json>> materials;
 			const auto shadingSchema = manifest.value("shadingSchemaVersion", 0u);
 			const bool shadingSchemaSupported = shadingSchema == 1 || shadingSchema == 2;
+            const auto geometryPack = DX12Packed::Read(a_directory, manifest.at("geometryPack"),
+                "cell-geometry.rsgp", DX12Packed::kGeometryMagic);
+            const auto shadingPack = DX12Packed::Read(a_directory, manifest.at("shadingPack"),
+                "cell-shading.rssp", DX12Packed::kShadingMagic);
 			for (const auto& row : rows) {
 				const auto hash = row.at("geometrySha256").get<std::string>();
 				if (!IsDigest(hash) || row.at("geometryFile").get<std::string>() != "geometry/" + hash + ".rsgm")
@@ -165,7 +156,7 @@ namespace DX12Native
 				auto found = geometries.find(hash);
 				if (found == geometries.end()) {
 					if (result->bytes >= a_budget) throw std::runtime_error("Prepared package budget exhausted");
-					const auto bytes = ReadMesh(a_directory / "geometry" / (hash + ".rsgm"), hash, a_budget - result->bytes);
+					const auto bytes = geometryPack.Get(hash);
 					auto geometry = Upload(a_backend, bytes, a_budget - result->bytes);
 					result->bytes += geometry->allocationBytes;
 					result->geometries.emplace(geometry->source.get(), geometry);
@@ -232,7 +223,7 @@ namespace DX12Native
 					if (IsDigest(shadingHash) && shadingFile == "shading/" + shadingHash + ".rsga") {
 						if (!shadingCache.contains(shadingHash) && !shadingFailures.contains(shadingHash)) {
 							try {
-								const auto bytes = ReadMesh(a_directory / "shading" / (shadingHash + ".rsga"), shadingHash, a_budget - result->bytes);
+								const auto bytes = shadingPack.Get(shadingHash);
 								auto shading = UploadShading(a_backend, bytes, instance.mesh->vertexCount, a_budget - result->bytes);
 								result->bytes += shading->allocationBytes;
 								shadingCache.emplace(shadingHash, std::move(shading));

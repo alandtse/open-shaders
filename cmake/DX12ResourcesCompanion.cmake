@@ -12,8 +12,7 @@ if(AUTO_PLUGIN_DEPLOYMENT AND WIN32)
         "${CMAKE_SOURCE_DIR}/tools/dx12-resources-prep/*.cs")
     list(APPEND _dx12_prep_inputs
         "${_dx12_prep_project}"
-        "${CMAKE_SOURCE_DIR}/tools/dx12-resources-prep/packages.lock.json"
-        "${CMAKE_SOURCE_DIR}/tools/dx12-resources-prep/LayoutPreview.html")
+        "${CMAKE_SOURCE_DIR}/tools/dx12-resources-prep/packages.lock.json")
     add_custom_command(
         OUTPUT "${_dx12_prep_build}/publish.stamp"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_dx12_prep_build}"

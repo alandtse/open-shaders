@@ -150,12 +150,6 @@ try
         assets = pgAssets.Select(asset => new { asset.Path, asset.Status, asset.Sha256 })
     }))).ToLowerInvariant();
     var layout = CellLayout.Write(output, target.FormKey.ToString(), target.EditorID, inputDigest, rows, compiledAssets, options);
-    if (quality == 2) TextureSources.Write(data, output, listings, options);
-    else File.WriteAllText(Path.Combine(output, "cell-textures.json"), JsonSerializer.Serialize(new
-    {
-        schemaVersion = 1, cell = target.FormKey.ToString(), layoutDigest = layout.Digest,
-        textures = Array.Empty<object>()
-    }, options));
     File.WriteAllText(Path.Combine(output, "cell-records.json"), JsonSerializer.Serialize(new
     {
         schemaVersion = 1, tool = "DX12ResourcesPrep", recordReader = "Mutagen.Bethesda.Skyrim/0.54.4",
@@ -170,7 +164,7 @@ try
     }), options));
     File.WriteAllText(Path.Combine(output, "cell-preparation.json"), JsonSerializer.Serialize(new
     {
-        schemaVersion = 1, formatContract = "dx12-resources-cell", formatVersion = 1,
+        schemaVersion = 1, formatContract = "dx12-resources-cell", formatVersion = 2,
         inputDigest, cell = target.FormKey.ToString(), editorId = target.EditorID,
         assetProvider = "PGPatcher deployed output; no conflict re-resolution", references = rows.Count, staticRecordCandidates = staticCount,
         furnitureRecordCandidates = furnitureCount, placedLights = lightCount, unresolvedBases, assets = pgAssets,
@@ -183,13 +177,13 @@ try
         previewOnlyShapes = compiledAssets.SelectMany(asset => asset.Shapes).Count(shape => shape.Status.StartsWith("preview-only:", StringComparison.Ordinal)),
         placedReferences = layout.PlacedReferences, placedShapeInstances = layout.Instances, placedTriangles = layout.Triangles,
         layoutDigest = layout.Digest, placementMatricesComposed = true,
-        stage = "cell-layout-partial", geometryCompiled = compiledShapes.Length > 0, accelerationBuilt = false, runtimeCoverageValid = false,
+        stage = "cell-packed-partial", geometryCompiled = compiledShapes.Length > 0, accelerationBuilt = false, runtimeCoverageValid = false,
         outstanding = new[] { "Runtime placement/state comparison", "Excluded mesh/material coverage", "Shader coordinator and DX12 integration" }
     }, options));
     Console.WriteLine($"Prepared {rows.Count} references, {staticCount} static-record candidates and {lightCount} placed lights.");
     Console.WriteLine($"PG inputs: {pgAssets.Count(asset => asset.CachedSource != null)} cached / {pgAssets.Count} requested; unresolved bases: {unresolvedBases}.");
     Console.WriteLine($"Compiled {compiledShapes.Length} shapes / {compiledShapes.Sum(shape => (long)shape.IndexCount / 3)} triangles; {compiledAssets.Count(asset => asset.CacheHit)} mesh cache hits.");
-    Console.WriteLine($"Placed {layout.PlacedReferences} references / {layout.Instances} shape instances / {layout.Triangles} triangles; preview: cell-preview.html.");
+    Console.WriteLine($"Placed {layout.PlacedReferences} references / {layout.Instances} shape instances / {layout.Triangles} triangles; packed geometry + shading.");
     return 0;
 }
 catch (Exception error)

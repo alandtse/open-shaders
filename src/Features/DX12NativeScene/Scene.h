@@ -29,6 +29,7 @@ namespace DX12Native
 		std::string cell, layoutDigest;
 		uint64_t budget = 0;
 		std::shared_ptr<const json> rooms;
+        std::shared_ptr<const json> textureReferences; // Existing Data/BSA path references from the packed CELL.
 		uint64_t uploadBatchBytes = 16ull * 1024 * 1024;
         bool importLoosePbr = false; // Worker-owned loose DDS supplement, explicitly opt-in.
         bool importArchivePbr = false; // Optional archive fallback when the loose file is absent.

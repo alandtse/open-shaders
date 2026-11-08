@@ -88,14 +88,37 @@ internal static class CellLayout
             return new { referenceKey = row.GetProperty("key"), halfExtents = extents, cellToRoom = PlacementTransform.ToRows(inverse) };
         }).ToArray();
         if (rooms.Length > 128) throw new InvalidDataException("Prepared room count exceeds 128.");
+        var geometryPack = CellPacks.Write(output, "cell-geometry.rsgp", "geometry", ".rsgm",
+            CellPacks.GeometryMagic, instances.Select(instance => (instance.GeometryFile, instance.GeometrySha256)));
+        var shadingPack = CellPacks.Write(output, "cell-shading.rssp", "shading", ".rsga",
+            CellPacks.ShadingMagic, instances.Where(instance => instance.ShadingStatus == "compiled" &&
+                instance.ShadingFile != null && instance.ShadingSha256 != null)
+                .Select(instance => (instance.ShadingFile!, instance.ShadingSha256!)));
+        // Keep DDS data in Skyrim Data/BSA; never stage or publish texture payloads.
+        var textureReferences = instances.SelectMany(instance => instance.Material?.Textures ?? [])
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path =>
+            {
+                try
+                {
+                    var canonical = PgAssets.Normalize(path);
+                    if (!canonical.StartsWith("textures\\", StringComparison.Ordinal))
+                        canonical = "textures\\" + canonical;
+                    return canonical.EndsWith(".dds", StringComparison.Ordinal) ? canonical.Replace('\\', '/') : null;
+                }
+                catch (InvalidDataException) { return null; }
+            })
+            .OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, StringComparer.Ordinal).Select(path => new { path, status = "referenced" }).ToArray();
         var digest = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
         {
-            schemaVersion = 1, roomSchemaVersion = 1, inputDigest, compilerKeys = assets.Select(asset => asset.CompilerKey).Distinct(), instances, omissions, lights, rooms
+            schemaVersion = 2, roomSchemaVersion = 1, inputDigest, compilerKeys = assets.Select(asset => asset.CompilerKey).Distinct(), geometryPack, shadingPack, textureReferences, instances, omissions, lights, rooms
         }, options))).ToLowerInvariant();
         var placedReferences = instances.Select(instance => instance.ReferenceKey).Distinct().Count();
         var layout = new
         {
-            schemaVersion = 1, rendererSchemaVersion = 1, shadingSchemaVersion = 2, materialSchemaVersion = 1, roomSchemaVersion = 1, rooms, cell, editorId, inputDigest, layoutDigest = digest,
+            schemaVersion = 2, rendererSchemaVersion = 2, shadingSchemaVersion = 2, materialSchemaVersion = 1, roomSchemaVersion = 1, rooms, cell, editorId, inputDigest, layoutDigest = digest,
+            geometryPack, shadingPack, textureReferences,
             coordinateSystem = "Skyrim cell coordinates, Z up, native game units",
             rotationConvention = "CommonLibSSE-NG NiMatrix3::SetEulerAnglesXYZ; record radians; runtime comparison pending",
             nifRotationConvention = "Nifly 1.1.0 Matrix33 wire-order fields mapped to native NIF rows, then transposed for System.Numerics",
@@ -105,18 +128,6 @@ internal static class CellLayout
             previewOnlyInstances = instances.Count(instance => !instance.OpaqueOccluderCandidate), instances, omissions, lights
         };
         File.WriteAllText(Path.Combine(output, "cell-layout.json"), JsonSerializer.Serialize(layout, options));
-        var meshes = instances.DistinctBy(instance => instance.GeometrySha256).Select(instance => new
-        {
-            hash = instance.GeometrySha256, blob = Convert.ToBase64String(File.ReadAllBytes(Path.Combine(output, instance.GeometryFile)))
-        }).ToArray();
-        // The preview is embedded so single-file publishing needs no assembly path or loose HTML file.
-        using var templateStream = typeof(CellLayout).Assembly.GetManifestResourceStream(
-            "DX12ResourcesPrep.LayoutPreview.html")
-            ?? throw new InvalidDataException("Embedded DX12 Resources preview template is missing.");
-        using var templateReader = new StreamReader(templateStream);
-        var template = templateReader.ReadToEnd();
-        var payload = JsonSerializer.Serialize(new { layout, meshes }, options);
-        File.WriteAllText(Path.Combine(output, "cell-preview.html"), template.Replace("/*SCENE_DATA*/null", payload));
         return new(placedReferences, instances.Count, instances.Sum(instance => (long)instance.IndexCount / 3),
             records.Length - placedReferences, digest);
     }

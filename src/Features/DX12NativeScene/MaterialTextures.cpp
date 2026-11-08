@@ -415,7 +415,11 @@ namespace DX12Native
         // Keeping the first optional permits its eventual retirement without
         // changing the native geometry/BLAS preparation protocol.
         json entries = json::array();
-        if (a_source.usePreparedTextureManifest) {
+        if (a_source.usePreparedTextureManifest && a_source.textureReferences) {
+            entries = *a_source.textureReferences; // External game Data/BSA references; no DDS cache files.
+            if (!entries.is_array() || entries.size() > 4096)
+                throw std::runtime_error("Prepared texture reference count exceeds limit");
+        } else if (a_source.usePreparedTextureManifest) {
             const auto manifestPath = a_source.directory / "cell-textures.json";
             if (std::filesystem::file_size(manifestPath) > 16ull * 1024 * 1024)
                 throw std::runtime_error("Texture manifest exceeds limit");
@@ -443,20 +447,53 @@ namespace DX12Native
 			bool rejectHash = false;
 			try {
 				const auto status = entry.value("status", std::string{});
-				if (status != "cached") throw std::runtime_error("Unresolved texture source: " + status.substr(0, 128));
-				hash = entry.at("sha256").get<std::string>();
-				if (entry.at("file") != "textures/" + hash + ".dds") throw std::runtime_error("Texture cache path mismatch");
-				const auto texturePath = entry.at("path").get<std::string>();
-				std::ranges::transform(hash, hash.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-				if (const auto prior = rejected.find(hash); prior != rejected.end()) throw std::runtime_error(prior->second);
-				auto found = textures.find(hash);
-				if (found == textures.end()) {
-					rejectHash = true;
-					auto texture = std::make_unique<Texture>();
-					texture->hash = hash;
-					bool fromCache = false;
-					const auto bytes = ReadTexture(a_source.directory, hash, a_result, &fromCache);
-					if (sourceBytes > a_source.budget || bytes.size() > a_source.budget - sourceBytes) throw std::runtime_error("DDS source budget exceeded");
+                const bool externalReference = status == "referenced";
+                if (!externalReference && status != "cached")
+                    throw std::runtime_error("Unresolved texture source: " + status.substr(0, 128));
+                const auto texturePath = entry.at("path").get<std::string>();
+                std::filesystem::path loosePath;
+                std::string archivePath;
+                std::vector<uint8_t> bytes;
+                bool fromCache = false;
+                if (externalReference) {
+                    const auto canonical = NativePBR::CanonicalTexturePath(texturePath);
+                    if (!canonical || *canonical != texturePath || !canonical->ends_with(".dds"))
+                        throw std::runtime_error("Invalid external DDS reference");
+                    loosePath = std::filesystem::path("Data") / std::filesystem::path(*canonical);
+                    const auto attributes = GetFileAttributesW(loosePath.c_str());
+                    const DWORD lookupError = attributes == INVALID_FILE_ATTRIBUTES ? GetLastError() : ERROR_SUCCESS;
+                    const bool missingLoose = attributes == INVALID_FILE_ATTRIBUTES &&
+                        (lookupError == ERROR_FILE_NOT_FOUND || lookupError == ERROR_PATH_NOT_FOUND);
+                    if (missingLoose) {
+                        auto archived = ReadArchiveDds(*canonical);
+                        bytes = std::move(archived.bytes);
+                        hash = std::move(archived.digest);
+                        archivePath = *canonical;
+                    } else {
+                        auto loose = ReadLooseDds(loosePath);
+                        bytes = std::move(loose.first);
+                        hash = std::move(loose.second);
+                    }
+                } else {
+                    hash = entry.at("sha256").get<std::string>();
+                    if (entry.at("file") != "textures/" + hash + ".dds")
+                        throw std::runtime_error("Texture cache path mismatch");
+                    std::ranges::transform(hash, hash.begin(),
+                        [](unsigned char c) { return char(std::tolower(c)); });
+                    bytes = ReadTexture(a_source.directory, hash, a_result, &fromCache);
+                }
+                if (const auto prior = rejected.find(hash); prior != rejected.end())
+                    throw std::runtime_error(prior->second);
+                auto found = textures.find(hash);
+                if (found == textures.end()) {
+                    rejectHash = true;
+                    auto texture = std::make_unique<Texture>();
+                    texture->hash = hash;
+                    if (externalReference) {
+                        if (!archivePath.empty()) texture->archiveSource = archivePath;
+                        else texture->looseSource = loosePath;
+                    }
+                    if (sourceBytes > a_source.budget || bytes.size() > a_source.budget - sourceBytes) throw std::runtime_error("DDS source budget exceeded");
 					DX::ThrowIfFailed(DirectX::GetMetadataFromDDSMemory(bytes.data(), bytes.size(), DirectX::DDS_FLAGS_NO_LEGACY_EXPANSION, texture->metadata));
 					const auto& meta = texture->metadata;
 					ValidateMetadata(meta, a_source.budget);
@@ -464,7 +501,7 @@ namespace DX12Native
 					DX::ThrowIfFailed(a_backend.d3d12Device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support)));
 					constexpr auto required = D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE | D3D12_FORMAT_SUPPORT1_TEXTURE2D;
 					if ((support.Support1 & required) != required) throw std::runtime_error("Material texture sampling unsupported");
-					if (!fromCache && cacheWrites < kMaximumCacheEntriesPerLoad && bytes.size() <= kMaximumCacheWritesPerLoad - cacheWriteBytes) {
+					if (!externalReference && !fromCache && cacheWrites < kMaximumCacheEntriesPerLoad && bytes.size() <= kMaximumCacheWritesPerLoad - cacheWriteBytes) {
 						try {
 							if (!DiskCache().Known(hash)) {
 								cacheWriteBytes += bytes.size(); ++cacheWrites;
