@@ -13,7 +13,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, BudgetPolicyVersion, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -291,6 +291,29 @@ void DX12NativeScene::DrawSettings()
 		}
 		if (changed) ++shadowControlsRevision;
 	}
+    ImGui::SeparatorText("Prepared scene VRAM budget");
+    const uint32_t pendingSceneBudget = requestedBudget.load();
+    uint32_t selectedSceneBudget = pendingSceneBudget != UINT32_MAX ?
+        pendingSceneBudget : settings.BudgetMB;
+    bool automaticSceneBudget = selectedSceneBudget == 0;
+    if (ImGui::Checkbox("Automatic prepared scene budget (DXGI)", &automaticSceneBudget)) {
+        requestedBudget.store(automaticSceneBudget ? 0u : 2048u);
+        resetRequested.store(true, std::memory_order_release);
+        selectedSceneBudget = automaticSceneBudget ? 0u : 2048u;
+    }
+    if (!automaticSceneBudget) {
+        int cap = int(selectedSceneBudget);
+        if (ImGui::SliderInt("Manual scene budget (MiB)", &cap, 64, 4096)) {
+            requestedBudget.store(uint32_t(cap));
+            resetRequested.store(true, std::memory_order_release);
+        }
+    }
+    const auto budgetInfo = GetDiagnostics().value("preparedSceneBudget", json::object());
+    ImGui::Text("DXGI local usage: %.1f / %.1f MiB | effective scene allowance: %.1f MiB",
+        double(budgetInfo.value("localUsageBytes", uint64_t{0})) / (1024.0 * 1024.0),
+        double(budgetInfo.value("localBudgetBytes", uint64_t{0})) / (1024.0 * 1024.0),
+        double(budgetInfo.value("effectiveBytes", uint64_t{0})) / (1024.0 * 1024.0));
+    ImGui::TextDisabled("Budget applies to prepared geometry, acceleration and material stages. Zero selects automatic DXGI headroom.");
     ImGui::SeparatorText("Prepared DX12 CELL loading");
     if (ImGui::Button("Reload prepared CELL from cache"))
         resetRequested.store(true, std::memory_order_release);
@@ -307,7 +330,10 @@ void DX12NativeScene::DrawSettings()
             preparedStatus.value("loading", false) ? "In progress" :
             preparedStatus.value("loaded", false) ? "Geometry loaded" :
             preparedStatus.value("requested", false) ? "Attempt finished" : "Not requested");
-        ImGui::Text("Geometry: %llu meshes / %llu instances / %.2f MiB",
+        ImGui::Text("Geometry upload progress: %llu meshes / %.2f MiB",
+        static_cast<unsigned long long>(value(preparedStatus, "uploadProgressMeshes")),
+        double(value(preparedStatus, "uploadProgressBytes")) / (1024.0 * 1024.0));
+    ImGui::Text("Geometry: %llu meshes / %llu instances / %.2f MiB",
             static_cast<unsigned long long>(value(preparedStatus, "meshes")),
             static_cast<unsigned long long>(value(preparedStatus, "instances")),
             double(value(preparedStatus, "geometryBytes")) / (1024.0 * 1024.0));
@@ -351,11 +377,16 @@ void DX12NativeScene::DrawSettings()
 void DX12NativeScene::LoadSettings(json& a_json)
 {
 	const Settings selected = a_json;
+    // Configs from before automatic budgeting stored the old 512 MiB
+    // default. Migrate that default once, preserving explicit new overrides.
+    const uint32_t restoredSceneBudget =
+        !a_json.contains("BudgetPolicyVersion") && selected.BudgetMB == 512 ?
+        0u : selected.BudgetMB;
 	// A compositor requesting the independent layer takes precedence over the
 	// scene configuration's possibly older disabled producer state.
 	if (requestedEnabled.load() != 1) requestedEnabled = selected.Enabled ? 1 : 0;
 	if (requestedShadow.load() != 1) requestedShadow = selected.ShadowMask ? 1 : 0;
-	requestedBudget = std::clamp(selected.BudgetMB, 64u, 4096u);
+	requestedBudget = restoredSceneBudget ? std::clamp(restoredSceneBudget, 64u, 4096u) : 0u;
 	requestedFrameBudget = selected.FrameBudgetMB ? std::clamp(selected.FrameBudgetMB, 64u, 4096u) : 0u;
 	requestedMaterialBatch = DX12Native::ClampMaterialBatchMB(selected.MaterialBatchMB);
 	std::scoped_lock lock(settingsMutex);
@@ -383,7 +414,7 @@ void DX12NativeScene::SaveSettings(json& a_json)
 	auto selected = settings;
 	if (const auto enabled = requestedEnabled.load(); enabled >= 0) selected.Enabled = enabled != 0;
 	if (const auto shadowEnabled = requestedShadow.load(); shadowEnabled >= 0) selected.ShadowMask = shadowEnabled != 0;
-	if (const auto budget = requestedBudget.load(); budget) selected.BudgetMB = budget;
+	if (const auto budget = requestedBudget.load(); budget != UINT32_MAX) selected.BudgetMB = budget;
 	if (const auto frameBudget = requestedFrameBudget.load(); frameBudget != UINT32_MAX) selected.FrameBudgetMB = frameBudget;
 	if (const auto batch = requestedMaterialBatch.load(); batch) selected.MaterialBatchMB = batch;
 	a_json = selected;
@@ -480,6 +511,17 @@ void DX12NativeScene::NotifyPreparedCellPublished(std::string_view plugin, uint3
     pendingPreparedCellReload.store(PreparedCellReloadToken(plugin, localID), std::memory_order_release);
 }
 
+uint64_t DX12NativeScene::SceneMemoryLimit(uint64_t trackedBytes)
+{
+    if (!backend) return uint64_t(settings.BudgetMB ? settings.BudgetMB : 512u) *
+        DX12Native::VideoMemoryBudget::kMiB;
+    const uint64_t manualBytes = uint64_t(settings.BudgetMB) *
+        DX12Native::VideoMemoryBudget::kMiB;
+    preparedSceneBudgetStatus = preparedSceneVideoMemory.Query(
+        backend->d3d12Device.get(), trackedBytes, manualBytes);
+    return preparedSceneBudgetStatus.effectiveBytes;
+}
+
 void DX12NativeScene::ResetScene()
 {
 	++revision;
@@ -489,6 +531,8 @@ void DX12NativeScene::ResetScene()
 	shadow.Reset();
 	if (auto old = materialBindings.Get()) retiredMaterials = old;
 	materialBindings.Reset();
+    materialRequestBudgetScene.reset();
+    materialRequestBudgetBytes = 0;
     livePbrSource.reset(); livePbrRevision = 0; livePbrLastCaptureFrame = 0;
     runtimeGeometryPrepare.Reset();
     runtimeGeometry.Reset();
@@ -501,6 +545,7 @@ void DX12NativeScene::ResetScene()
     currentSceneStableBindings.reset();
     currentSceneSubmittedBatch = 0;
     runtimeGeometryBudgetStatus = {};
+    preparedSceneBudgetStatus = {};
     runtimeGeometryActiveBytes = runtimeGeometryAllowedBytes = 0;
 	prepared.Reset();
 	acceleration.Reset();
@@ -558,7 +603,7 @@ void DX12NativeScene::EarlyPrepass()
 		std::scoped_lock lock(settingsMutex);
 		if (const auto enabled = requestedEnabled.exchange(-1); enabled >= 0) settings.Enabled = enabled != 0;
 		if (const auto shadowEnabled = requestedShadow.exchange(-1); shadowEnabled >= 0) settings.ShadowMask = shadowEnabled != 0;
-		if (const auto budget = requestedBudget.exchange(0); budget) settings.BudgetMB = budget;
+		if (const auto budget = requestedBudget.exchange(UINT32_MAX); budget != UINT32_MAX) settings.BudgetMB = budget;
 		if (const auto frameBudget = requestedFrameBudget.exchange(UINT32_MAX); frameBudget != UINT32_MAX) settings.FrameBudgetMB = frameBudget;
 		if (const auto batch = requestedMaterialBatch.exchange(0); batch) settings.MaterialBatchMB = batch;
 	}
@@ -618,8 +663,8 @@ void DX12NativeScene::EarlyPrepass()
         const uint64_t baselineGeometryBytes = currentCell ? currentCell->bytes : 0;
         const uint64_t baselineAsBytes = NativeAccelerationResidentBytes(currentSceneStableAcceleration);
         const uint64_t baselineMaterialBytes = bound ? bound->bytes : 0;
-        const uint64_t totalLimit = uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB;
         runtimeGeometryActiveBytes = baselineGeometryBytes + baselineAsBytes + baselineMaterialBytes;
+        const uint64_t totalLimit = SceneMemoryLimit(runtimeGeometryActiveBytes);
         const uint64_t availableManual = totalLimit > runtimeGeometryActiveBytes ?
             totalLimit - runtimeGeometryActiveBytes : 0;
         const auto runtimeCell = runtimeGeometryPrepare.GetCell();
@@ -642,13 +687,18 @@ void DX12NativeScene::EarlyPrepass()
 		const auto local = cell->GetLocalFormID();
 		const auto key = std::format("{:06X}:{}", local, source->GetFilename());
 		const auto directory = std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") / source->GetFilename() / std::format("{:06X}", local);
-		const auto budget = uint64_t(settings.BudgetMB) * 1024 * 1024;
-		prepared.Request(*backend, directory, key, revision, budget, budget);
+        const uint64_t manualBytes = uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB;
+        SceneMemoryLimit();
+		prepared.Request(*backend, directory, key, revision, manualBytes, manualBytes);
 	}
 	if (!submitted) {
 		if (auto scene = prepared.GetCell()) {
-			acceleration.Start(*backend, scene->snapshot, scene->geometries, uint64_t(settings.BudgetMB) * 1024 * 1024);
-			submitted = true;
+            const uint64_t sceneAllowance = SceneMemoryLimit(scene->bytes);
+            if (sceneAllowance > scene->bytes) {
+                acceleration.Start(*backend, scene->snapshot, scene->geometries,
+                    uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB);
+                submitted = true;
+            }
 		}
 	}
 	acceleration.Advance();
@@ -695,7 +745,22 @@ void DX12NativeScene::EarlyPrepass()
                 }
             }
         } else { livePbrSource.reset(); livePbrRevision = 0; }
-        materialBindings.Request(*backend, scene, uint64_t(settings.BudgetMB) * 1024 * 1024,
+        // Latch the starting material allowance for each TLAS generation:
+        // per-frame DXGI fluctuations must not repeatedly restart uploads.
+        if (materialRequestBudgetScene != scene || !materialRequestBudgetBytes) {
+            const uint64_t occupied =
+                (prepared.GetCell() ? prepared.GetCell()->bytes : 0) +
+                NativeAccelerationResidentBytes(scene);
+            const uint64_t totalAllowance = SceneMemoryLimit(occupied);
+            // Materials consume remaining scene capacity, not another copy
+            // of the entire manual cap; DXGI headroom is checked again by
+            // ShadowBindingWorker before resources are created.
+            materialRequestBudgetBytes = totalAllowance > occupied ?
+                totalAllowance - occupied : 0;
+            materialRequestBudgetScene = scene;
+        }
+        if (materialRequestBudgetBytes)
+            materialBindings.Request(*backend, scene, materialRequestBudgetBytes,
             uint64_t(settings.MaterialBatchMB) * 1024 * 1024, livePbrSource,
             settings.UseLivePBR && settings.ImportLoosePBR,
             settings.UseLivePBR && settings.ImportLoosePBR && settings.ImportArchivePBR,
@@ -721,8 +786,12 @@ void DX12NativeScene::EarlyPrepass()
             combined->snapshot->scope.policy == 2 &&
             combined->snapshot->scope.batch > currentSceneSubmittedBatch) {
             currentSceneSubmittedBatch = combined->snapshot->scope.batch;
-            acceleration.Start(*backend, combined->snapshot, combined->geometries,
-                uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB);
+            const uint64_t sceneAllowance = SceneMemoryLimit(combined->bytes +
+                NativeAccelerationResidentBytes(currentSceneStableAcceleration));
+            if (sceneAllowance > combined->bytes) {
+                acceleration.Start(*backend, combined->snapshot, combined->geometries,
+                    uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB);
+            }
         }
     }
 	DispatchShadow("early-prepass");
@@ -901,6 +970,15 @@ void DX12NativeScene::PublishDiagnostics()
                 runtimeGeometryPrepare.GetCell()->bytes : 0 },
             { "activeSceneInstances", currentSceneStableAcceleration ?
                 currentSceneStableAcceleration->instances.size() : 0 } } },
+        { "preparedSceneBudget", {
+            { "automatic", settings.BudgetMB == 0 },
+            { "manualLimitBytes", uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB },
+            { "dxgiAvailable", preparedSceneBudgetStatus.dxgiAvailable },
+            { "localBudgetBytes", preparedSceneBudgetStatus.localBudget },
+            { "localUsageBytes", preparedSceneBudgetStatus.localUsage },
+            { "reserveBytes", preparedSceneBudgetStatus.reserve },
+            { "effectiveBytes", preparedSceneBudgetStatus.effectiveBytes }
+        } },
         { "prepared", prepared.GetDiagnostics() }, { "materialFailure", materialBindings.Failure() }, { "materialUploadPending", materialBindings.UploadPending() },
         { "materialBindingsReady", bindings && bindings->scene == acceleration.GetScene() },
 		{ "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() },
@@ -1024,10 +1102,10 @@ void DX12NativeScene::RegisterUxActions()
 		++feature.shadowControlsRevision;
 		globals::features::nativeComposite.ConfigureShadowLayer(args);
 	});
-	FEATURE_COMMAND("setPreparedScene", "Queue prepared scene settings. Params: enabled (boolean), budgetMB (optional integer, 64..4096), materialBatchMB (optional integer, 1..64).", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("setPreparedScene", "Queue prepared scene settings. Params: enabled (boolean), budgetMB (optional integer; 0 = automatic DXGI, otherwise 64..4096), materialBatchMB (optional integer, 1..64).", [](Feature* self, const json& args) {
 		auto& scene = *static_cast<DX12NativeScene*>(self);
 		scene.requestedEnabled = args.at("enabled").get<bool>() ? 1 : 0;
-		if (args.contains("budgetMB")) scene.requestedBudget = std::clamp(args.at("budgetMB").get<uint32_t>(), 64u, 4096u);
+		if (args.contains("budgetMB")) { const auto mb = args.at("budgetMB").get<uint32_t>(); scene.requestedBudget = mb ? std::clamp(mb, 64u, 4096u) : 0u; }
 		if (args.contains("materialBatchMB")) scene.requestedMaterialBatch = DX12Native::ClampMaterialBatchMB(args.at("materialBatchMB").get<uint32_t>());
 		scene.resetRequested = true;
 	});

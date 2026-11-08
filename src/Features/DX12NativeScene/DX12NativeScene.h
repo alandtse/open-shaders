@@ -23,7 +23,8 @@ struct DX12NativeScene final : Feature
 	struct Settings
 	{
 		bool Enabled = true, ShadowMask = true;
-		uint32_t BudgetMB = 512, FrameBudgetMB = 0, MaterialBatchMB = 16;
+		uint32_t BudgetMB = 0, FrameBudgetMB = 0, MaterialBatchMB = 16; // BudgetMB=0: automatic DXGI
+        uint32_t BudgetPolicyVersion = 1; // Migrate legacy 512 MiB default to auto
 		bool UseLivePBR = false; // Experimental opt-in; do not enable before runtime validation.
         bool ImportLoosePBR = false; // Separate opt-in for bounded loose-file DDS residency.
         bool ImportArchivePBR = false; // Further opt-in: archive resource manager fallback.
@@ -98,6 +99,7 @@ struct DX12NativeScene final : Feature
 
 private:
 	void ResetScene();
+    uint64_t SceneMemoryLimit(uint64_t trackedBytes = 0);
 	void PublishDiagnostics();
 	void AdvanceCoverage();
 	struct CoverageTask;
@@ -117,6 +119,8 @@ private:
     std::shared_ptr<const DX12Native::TopLevel> currentSceneStableAcceleration;
     std::shared_ptr<const DX12Native::ShadowBindings> currentSceneStableBindings;
     uint64_t currentSceneSubmittedBatch = 0;
+    DX12Native::VideoMemoryBudget preparedSceneVideoMemory;
+    DX12Native::VideoMemoryBudget::Snapshot preparedSceneBudgetStatus{};
     DX12Native::VideoMemoryBudget runtimeGeometryVideoMemory;
     DX12Native::VideoMemoryBudget::Snapshot runtimeGeometryBudgetStatus{};
     uint64_t runtimeGeometryActiveBytes = 0, runtimeGeometryAllowedBytes = 0;
@@ -127,6 +131,8 @@ private:
 	DX12Native::ShadowTrace shadow;
 	DX12Native::AccelerationWorker acceleration;
 	DX12Native::ShadowBindingWorker materialBindings;
+    std::shared_ptr<const DX12Native::TopLevel> materialRequestBudgetScene;
+    uint64_t materialRequestBudgetBytes = 0;
 	std::weak_ptr<const DX12Native::ShadowBindings> retiredMaterials;
 	// Immutable recipe/hint snapshot retained through the asynchronous binding worker.
 	std::shared_ptr<const NativePBR::LiveBindingSource> livePbrSource;
@@ -144,7 +150,7 @@ private:
 	std::atomic<bool> resetRequested{ false }, reloadRequested{ false }, shadowResetRequested{ false };
     std::atomic<uint64_t> pendingPreparedCellReload{ 0 };
 	std::atomic<int> requestedEnabled{ -1 }, requestedShadow{ -1 };
-	std::atomic<uint32_t> requestedBudget{ 0 };
+	std::atomic<uint32_t> requestedBudget{ UINT32_MAX };
 	std::atomic<uint32_t> requestedFrameBudget{ UINT32_MAX };
 	std::atomic<uint32_t> requestedMaterialBatch{ 0 };
 	uint64_t shadowControlsRevision = 1;

@@ -42,7 +42,7 @@ namespace DX12Native
 		/** @brief Cancels publication without joining the loader. */
 		void Reset();
 		/** @brief Reports whether this revision already attempted a package load. */
-		bool Requested() const { return requested; }
+		bool Requested() const;
 		/** @brief Retains only a current-revision fully loaded package. */
 		std::shared_ptr<const PreparedCell> GetCell() const;
 		/** @brief Reports loader state independently of traversal and runtime validity. */
