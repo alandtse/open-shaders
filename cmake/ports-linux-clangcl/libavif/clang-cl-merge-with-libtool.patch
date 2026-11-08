@@ -1,0 +1,11 @@
+--- a/cmake/Modules/merge_static_libs.cmake
++++ b/cmake/Modules/merge_static_libs.cmake
+@@ -93,7 +93,7 @@
+             COMMENT "Merge static libraries with libtool"
+             COMMAND xcrun libtool -static -o $<TARGET_FILE:${target}> -no_warning_for_no_symbols ${libs}
+         )
+-    elseif(CMAKE_C_COMPILER_ID MATCHES "^(Clang|GNU|Intel|IntelLLVM)$")
++    elseif(CMAKE_C_COMPILER_ID MATCHES "^(Clang|GNU|Intel|IntelLLVM)$" AND NOT (MSVC AND CMAKE_LIBTOOL))
+         add_custom_command(
+             TARGET ${target}
+             POST_BUILD
