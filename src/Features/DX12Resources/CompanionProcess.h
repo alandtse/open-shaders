@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 #include <shlobj.h>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -72,8 +73,11 @@ namespace DX12ResourceService
         std::filesystem::create_directories(logPath.parent_path(), ec);
         if (ec) { result.error = "Could not create DX12 Resources log directory"; return result; }
 
+        SECURITY_ATTRIBUTES inherit{};
+        inherit.nLength = sizeof(inherit);
+        inherit.bInheritHandle = TRUE;
         const HANDLE logHandle = CreateFileW(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
-            nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+            &inherit, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (logHandle == INVALID_HANDLE_VALUE) {
             result.error = "Could not create DX12 Resources process log";
             return result;
