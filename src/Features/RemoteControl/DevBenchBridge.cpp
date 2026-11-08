@@ -66,6 +66,7 @@
 #	include <nlohmann/json.hpp>
 
 #	include <algorithm>
+#	include <atomic>
 #	include <chrono>
 #	include <cmath>
 #	include <cstring>
@@ -1913,18 +1914,20 @@ namespace
 		}
 
 		// Detached because joining at DLL unload under the loader lock could deadlock; it only paces, the reads run on the game thread.
-		std::thread([a_dvb, reconciler = std::make_shared<Util::DevBenchNotices::Reconciler>()] {
+		std::thread([a_dvb, reconciler = std::make_shared<Util::DevBenchNotices::Reconciler>(), inFlight = std::make_shared<std::atomic<bool>>(false)] {
 			for (;;) {
 				std::this_thread::sleep_for(std::chrono::seconds(1));
 				auto* task = SKSE::GetTaskInterface();
-				if (!task)
+				if (!task || inFlight->exchange(true))
 					continue;
-				task->AddTask([a_dvb, reconciler] {
+				task->AddTask([a_dvb, reconciler, inFlight] {
+					State::SettingsLayerGuard settingsLayerGuard;
 					const auto delta = reconciler->Update(Util::DevBenchNotices::Evaluate(GatherNoticeConditions()));
 					for (const auto& key : delta.clear)
 						a_dvb->ClearNotice(key.c_str());
 					for (const auto& notice : delta.post)
 						a_dvb->PostNotice(notice.key.c_str(), "openshaders", Util::DevBenchNotices::SeverityName(notice.severity), notice.text.c_str(), 0);
+					inFlight->store(false);
 				});
 			}
 		}).detach();
