@@ -315,26 +315,31 @@ void GrassOptimizations::DrawBucket(GrassBucket& b)
 
 	SetupOptimizedPass(b);
 
-	auto& shadowState = globals::game::shadowState->GetRuntimeData();
-	if (shadowState.topology != REX::W32::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST) {
-		shadowState.topology = REX::W32::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		shadowState.stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_PRIMITIVE_TOPO);
+	auto shadowState = globals::game::shadowState;
+	GET_INSTANCE_MEMBER(topology, shadowState)
+	GET_INSTANCE_MEMBER(vertexDesc, shadowState)
+	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
+	GET_INSTANCE_MEMBER(PSResourceModifiedBits, shadowState)
+	GET_INSTANCE_MEMBER(PSTexture, shadowState)
+	if (topology != REX::W32::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST) {
+		topology = REX::W32::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_PRIMITIVE_TOPO);
 	}
 
-	if (shadowState.vertexDesc != descVal) {
-		shadowState.vertexDesc = descVal;
-		shadowState.stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_VERTEX_DESC);
+	if (vertexDesc != descVal) {
+		vertexDesc = descVal;
+		stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_VERTEX_DESC);
 	}
 
 	// Batch material texture bindings instead of letting SetDirtyStates bind each slot separately.
 	constexpr uint32_t kMaterialTextureBits = 0x7F;
-	const uint32_t materialTextures = shadowState.PSResourceModifiedBits & kMaterialTextureBits;
-	shadowState.PSResourceModifiedBits &= ~kMaterialTextureBits;
+	const uint32_t materialTextures = PSResourceModifiedBits & kMaterialTextureBits;
+	PSResourceModifiedBits &= ~kMaterialTextureBits;
 	RE::BSGraphics::SetDirtyStates(false);
 	if (materialTextures) {
 		const uint32_t firstTexture = std::countr_zero(materialTextures);
 		const uint32_t textureCount = std::bit_width(materialTextures) - firstTexture;
-		ctx->PSSetShaderResources(firstTexture, textureCount, reinterpret_cast<ID3D11ShaderResourceView* const*>(&shadowState.PSTexture[firstTexture]));
+		ctx->PSSetShaderResources(firstTexture, textureCount, reinterpret_cast<ID3D11ShaderResourceView* const*>(&PSTexture[firstTexture]));
 	}
 
 	// Bind complexity and canopy heights for all tiers; the vertex shader selects each record's tier.
@@ -369,9 +374,9 @@ void GrassOptimizations::DrawBucket(GrassBucket& b)
 			indexBuffer = lod->indexBuffer;
 			stride = lod->meshStride;
 
-			if (shadowState.vertexDesc != lod->descVal) {
-				shadowState.vertexDesc = lod->descVal;
-				shadowState.stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_VERTEX_DESC);
+			if (vertexDesc != lod->descVal) {
+				vertexDesc = lod->descVal;
+				stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_VERTEX_DESC);
 				RE::BSGraphics::SetDirtyStates(false);
 			}
 		}

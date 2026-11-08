@@ -300,7 +300,9 @@ struct LinearLighting::Hooks
 			descriptor &= ~projectedTextureIsSRGB;
 			if (globals::features::linearLighting.IsLinearLightingActive() &&
 				(globals::state->currentPixelDescriptor & static_cast<uint>(SIE::ShaderCache::LightingShaderFlags::ProjectedUV))) {
-				if (auto* srv = globals::game::shadowState->GetRuntimeData().PSTexture[3]) {
+				auto shadowState = globals::game::shadowState;
+				GET_INSTANCE_MEMBER(PSTexture, shadowState)
+				if (auto* srv = PSTexture[3]) {
 					D3D11_SHADER_RESOURCE_VIEW_DESC viewDesc{};
 					Util::AsReal(srv)->GetDesc(&viewDesc);
 					if (DirectX::IsSRGB(viewDesc.Format))
