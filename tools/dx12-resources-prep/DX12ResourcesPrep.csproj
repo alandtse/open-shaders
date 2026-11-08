@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
   <ItemGroup>
     <Content Include="LayoutPreview.html" CopyToOutputDirectory="PreserveNewest" />

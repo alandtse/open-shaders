@@ -41,7 +41,7 @@ internal static class PluginCellIndex
                 : [];
             var implicitListings = officialMasters.Concat(creationClub)
                 .Where(name => File.Exists(Path.Combine(data, name)))
-                .Select(ModKey.FromFileName);
+                .Select(name => ModKey.FromFileName(name));
             var listings = implicitListings.Concat(
                     PluginListings.LoadOrderListingsFromPath(pluginsPath, GameRelease.SkyrimSE, data)
                         .Where(listing => listing.Enabled).Select(listing => listing.ModKey))
