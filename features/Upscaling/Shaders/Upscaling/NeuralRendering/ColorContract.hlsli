@@ -14,6 +14,28 @@ namespace NR
 		float gain = exp2(clamp(tone, -maxToneStops, maxToneStops));
 		return ENABLE_LL ? gain : Color::LinearToSkyrimGamma(gain);
 	}
+
+	static const float kMaxChromaStops = 1.0f;
+	static const float kChromaFloor = 1.0f / 512.0f;
+
+	// Luminance-neutral, so CompositeGain stays the only brightness edit.
+	float3 ChromaOffset(float3 inputLinear, float3 outputLinear, float3 lumaWeights, float floorValue)
+	{
+		float3 offset = log2((max(outputLinear, 0.0) + floorValue) / (max(inputLinear, 0.0) + floorValue));
+		return offset - dot(lumaWeights, offset);
+	}
+
+	float3 ChromaFromRedBlue(float2 redBlue, float3 lumaWeights)
+	{
+		return float3(redBlue.x, -(lumaWeights.x * redBlue.x + lumaWeights.z * redBlue.y) / lumaWeights.y, redBlue.y);
+	}
+
+	float3 ChromaGain(float3 offset, float strength, float maxChromaStops)
+	{
+		float3 scaled = all(isfinite(offset)) ? offset * strength : float3(0.0, 0.0, 0.0);
+		float3 gain = exp2(clamp(scaled, -maxChromaStops, maxChromaStops));
+		return ENABLE_LL ? gain : Color::LinearToSkyrimGamma(gain);
+	}
 }
 
 #endif  // __NR_COLOR_CONTRACT_HLSLI__

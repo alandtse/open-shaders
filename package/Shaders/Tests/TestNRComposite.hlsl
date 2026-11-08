@@ -41,3 +41,49 @@
 	ASSERT(IsTrue, abs(NR::CompositeGain(1e4f, NR::kMaxToneStops) - exp2(NR::kMaxToneStops)) < 1e-3f);
 	ASSERT(IsTrue, abs(NR::CompositeGain(-1e4f, NR::kMaxToneStops) - exp2(-NR::kMaxToneStops)) < 1e-3f);
 }
+
+	/// @tags nr, color
+	/// A zero strength and an unchanged model both leave the chroma gain at exactly one
+	[numthreads(1, 1, 1)] void TestNRChromaGainIsAPassthroughAtZeroStrengthOrNoChange()
+{
+	const float3 luma = float3(0.2126f, 0.7152f, 0.0722f);
+	const float3 input = float3(0.18f, 0.32f, 0.55f);
+	const float3 shifted = float3(0.30f, 0.30f, 0.20f);
+	const float3 same = NR::ChromaGain(NR::ChromaOffset(input, input, luma, NR::kChromaFloor), 1.0f, NR::kMaxChromaStops);
+	const float3 off = NR::ChromaGain(NR::ChromaOffset(input, shifted, luma, NR::kChromaFloor), 0.0f, NR::kMaxChromaStops);
+	ASSERT(IsTrue, all(abs(same - 1.0f) < 1e-6f));
+	ASSERT(IsTrue, all(abs(off - 1.0f) < 1e-6f));
+}
+
+/// @tags nr, color
+/// The offset carries colour only: its luminance-weighted mean is zero, and a pure brightness change gives none
+[numthreads(1, 1, 1)] void TestNRChromaOffsetIsLuminanceNeutral() {
+	const float3 luma = float3(0.2126f, 0.7152f, 0.0722f);
+	const float3 input = float3(0.18f, 0.32f, 0.55f);
+	const float3 offset = NR::ChromaOffset(input, float3(0.40f, 0.25f, 0.20f), luma, NR::kChromaFloor);
+	ASSERT(IsTrue, abs(dot(luma, offset)) < 1e-5f);
+	ASSERT(IsTrue, any(abs(offset) > 0.05f));
+	const float3 brighter = NR::ChromaOffset(input, input * 2.0f, luma, 0.0f);
+	ASSERT(IsTrue, all(abs(brighter) < 1e-5f));
+}
+
+	/// @tags nr, color
+	/// Storing the red and blue offsets reproduces the full offset
+	[numthreads(1, 1, 1)] void TestNRChromaRedBlueRoundTrip()
+{
+	const float3 luma = float3(0.2126f, 0.7152f, 0.0722f);
+	const float3 offset = NR::ChromaOffset(float3(0.18f, 0.32f, 0.55f), float3(0.40f, 0.25f, 0.20f), luma, NR::kChromaFloor);
+	const float3 restored = NR::ChromaFromRedBlue(float2(offset.x, offset.z), luma);
+	ASSERT(IsTrue, all(abs(restored - offset) < 1e-5f));
+}
+
+/// @tags nr, color
+/// A runaway or non-finite offset stays inside the chroma cap or is ignored
+[numthreads(1, 1, 1)] void TestNRChromaGainIsBounded() {
+	const float3 huge = float3(1e4f, -1e4f, 0.0f);
+	const float3 gain = NR::ChromaGain(huge, 1.0f, NR::kMaxChromaStops);
+	ASSERT(IsTrue, all(isfinite(gain)));
+	ASSERT(IsTrue, all(abs(log2(gain)) <= NR::kMaxChromaStops + 1e-4f));
+	const float3 notANumber = float3(asfloat(0x7FC00000u), 0.0f, 0.0f);
+	ASSERT(IsTrue, all(abs(NR::ChromaGain(notANumber, 1.0f, NR::kMaxChromaStops) - 1.0f) < 1e-6f));
+}
