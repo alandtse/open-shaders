@@ -477,7 +477,11 @@ void State::Reset()
 
 	// Disable "improved" snow shader, unsupported
 	if (!globals::game::isVR) {
-		RE::GetINISetting("bEnableImprovedSnow:Display")->data.b = false;
+		static RE::Setting* improvedSnow = nullptr;
+		if (!improvedSnow)
+			improvedSnow = RE::GetINISetting("bEnableImprovedSnow:Display");
+		if (improvedSnow)
+			improvedSnow->data.b = false;
 	}
 
 	activeReflections = false;
@@ -923,7 +927,11 @@ json State::BuildSettingsSnapshot()
 	json current;
 	SaveToJson(current);
 	// These menu preferences are saved independently of the global Save action.
-	current["Menu"].erase("FeatureListSort");
+	for (const auto path : SELF_SAVING_SETTINGS) {
+		const json::json_pointer pointer{ std::string(path) };
+		if (current.contains(pointer))
+			current.at(pointer.parent_pointer()).erase(pointer.back());
+	}
 	current["Menu"].erase("ShowSettingInformation");
 	auto* overrides = SettingsOverrideManager::GetSingleton();
 	const auto pending = overrides->GetPendingEdits(current);
@@ -1102,6 +1110,7 @@ void State::ReapplySettingsLayers()
 
 void State::InvalidateEditsUnderBaselines(Feature* feature)
 {
+	++userEditsRevision;
 	if (feature)
 		baselineOverlapCache.erase(feature->GetName());
 	else
@@ -1541,10 +1550,8 @@ bool State::DropPresetEdits(const std::string& packId, Feature* onlyFeature, std
 	return true;
 }
 
-void State::SaveToJson(nlohmann::json& settings)
+void State::SaveCoreToJson(json& settings)
 {
-	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
-	std::lock_guard<std::mutex> lock(m_mutex);
 	const auto shaderCache = globals::shaderCache;
 
 	globals::menu->Save(settings["Menu"]);
@@ -1593,6 +1600,21 @@ void State::SaveToJson(nlohmann::json& settings)
 	settings["Favorites"] = favoriteFeatures;
 
 	settings["Version"] = Plugin::VERSION.string();
+}
+
+json State::CaptureCoreSettings()
+{
+	json settings;
+	std::lock_guard<std::mutex> lock(m_mutex);
+	SaveCoreToJson(settings);
+	return settings;
+}
+
+void State::SaveToJson(nlohmann::json& settings)
+{
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
+	std::lock_guard<std::mutex> lock(m_mutex);
+	SaveCoreToJson(settings);
 
 	// Save feature settings
 	for (auto* feature : Feature::GetFeatureList()) {
@@ -1831,6 +1853,26 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 	}
 	if (a_configMode == ConfigMode::USER)
 		MarkSettingsSaved();
+}
+
+bool State::SaveCoreSettings(std::span<const std::string_view> paths)
+{
+	const auto configPath = GetConfigPath(ConfigMode::USER);
+	std::error_code ec;
+	const bool fileExists = std::filesystem::exists(configPath, ec);
+	if (ec)
+		return false;
+	const auto saved = fileExists ? Util::FileHelpers::ReadJsonObject(configPath, "user config") : std::optional<json>(json::object());
+	if (!saved)
+		return false;
+	const auto current = CaptureCoreSettings();
+	json patch = json::object();
+	for (const auto path : paths) {
+		const json::json_pointer pointer{ std::string(path) };
+		if (current.contains(pointer) && (!saved->contains(pointer) || saved->at(pointer) != current.at(pointer)))
+			patch[pointer] = current.at(pointer);
+	}
+	return patch.empty() || SaveFeaturePreference(patch, false);
 }
 
 bool State::SaveFeaturePreference(const json& patch, bool trackInSnapshot)

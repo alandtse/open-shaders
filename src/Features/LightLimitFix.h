@@ -23,6 +23,7 @@ private:
 	void DrawLightDebugSettings();
 
 	static constexpr uint32_t MAX_LIGHTS = 1024;
+	static_assert(MAX_LIGHTS <= 16 * 16 * 4);
 	// Per-cluster visible-light cap; sizes the global lightIndexList pool as
 	// clusterCount * CLUSTER_MAX_LIGHTS. MUST match MAX_CLUSTER_LIGHTS in the
 	// shader-side Common.hlsli or the cull pass can overrun the pool.

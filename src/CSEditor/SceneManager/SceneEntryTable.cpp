@@ -755,13 +755,13 @@ namespace
 		ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, cursor.y));
 		{
 			const Util::DisableGuard disable(disableRevert);
-			result.reverted = Icons::Button("##revert", Icons::TI(ICON_TI_ERASER), ImVec2(buttonH, buttonH));
+			result.reverted = Util::LabeledButton("##revert", Icons::TI(ICON_TI_ERASER), ImVec2(buttonH, buttonH));
 		}
 		Util::AddTooltip(T("feature.scene_manager.action.revert", "Revert to default"), Util::kTooltipWhenDisabled);
 
 		ImGui::SameLine();
 		ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, cursor.y));
-		result.deleted = Icons::Button("##remove", SceneActionIcons::kDelete, ImVec2(buttonH, buttonH));
+		result.deleted = Util::LabeledButton("##remove", SceneActionIcons::kDelete, ImVec2(buttonH, buttonH));
 		Util::AddTooltip(T("feature.scene_manager.action.delete", "Delete"), Util::kTooltipWhenDisabled);
 		return result;
 	}
@@ -1312,7 +1312,7 @@ namespace
 							ImGui::SetCursorPos(ImVec2(
 								ImGui::GetCursorPosX() + std::max(0.f, (cellW - btnSz) * 0.5f),
 								ImGui::GetCursorPosY() + std::max(0.f, (rowVisualH - btnSz) * 0.5f)));
-							if (Icons::Button("##addPeriod", Icons::TI(ICON_TI_PLUS), ImVec2(btnSz, btnSz))) {
+							if (Util::LabeledButton("##addPeriod", Icons::TI(ICON_TI_PLUS), ImVec2(btnSz, btnSz))) {
 								for (const auto sourceIndex : row.addPeriodSourceIndices) {
 									if (sourceIndex >= entries.size())
 										continue;
@@ -1869,7 +1869,7 @@ namespace
 			bool goBack = false;
 			if (selectedChild) {
 				ImGui::SameLine();
-				goBack = Icons::Button("##SubFeatureBack", Icons::TI(ICON_TI_ARROW_BACK_UP), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
+				goBack = Util::LabeledButton("##SubFeatureBack", Icons::TI(ICON_TI_ARROW_BACK_UP), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
 				Util::AddTooltip(T("feature.scene_manager.action.show_parent_settings", "Show parent settings"));
 			}
 			ImGui::PopID();

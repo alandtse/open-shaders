@@ -32,6 +32,7 @@
 #include "Utils/Subrect.h"
 #include "Utils/UI.h"
 #include "Utils/UIAnim.h"
+#include "Utils/UISurface.h"
 #include "Weather/LightingTemplateWidget.h"
 #include "WeatherPickerWindow.h"
 #include "WeatherUtils.h"
@@ -273,7 +274,7 @@ void EditorWindow::DrawActiveWeatherIndicator(bool drawTrailer)
 		openWeatherEditor();
 	Util::AddTooltip(std::format("{} (0x{:08X})", T(TKEY("open_active_weather_tooltip"), "Open this weather's editor window."), id).c_str());
 	ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-	if (BrowserUI::IconButton("##active_weather_indicator", Icons::TI(ICON_TI_EXTERNAL_LINK),
+	if (Util::IconButton("##active_weather_indicator", Icons::TI(ICON_TI_EXTERNAL_LINK),
 			T(TKEY("open_active_weather_tooltip"), "Open this weather's editor window.")))
 		openWeatherEditor();
 	if (drawTrailer)
@@ -383,7 +384,7 @@ void EditorWindow::DrawBrowserSidebar(bool compact)
 				if (hovered)
 					ImGui::SetTooltip("%s", category.label);
 			} else {
-				const float edgeInset = std::max(style.FramePadding.x, ThemeManager::Constants::ANIM_SELECTED_BAR_WIDTH * scale);
+				const float edgeInset = Util::Surface::ListHighlightTextInset();
 				const float iconX = min.x + edgeInset;
 				Icons::DrawCenteredGlyph(drawList, ImVec2(iconX, iconY), ImVec2(iconBox, iconBox), category.icon, iconColor);
 
@@ -406,9 +407,9 @@ void EditorWindow::DrawBrowserSidebar(bool compact)
 	ImGui::EndChild();
 
 	// Collapse / expand, kept at the bottom of the column.
-	const float button = BrowserUI::IconButtonSize();
+	const float button = Util::IconButtonSize();
 	ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - button) * (compact ? 0.5f : 1.0f));
-	if (BrowserUI::IconButton("##SidebarCompact", Icons::TI(compact ? ICON_TI_CHEVRON_RIGHT : ICON_TI_CHEVRON_LEFT),
+	if (Util::IconButton("##SidebarCompact", Icons::TI(compact ? ICON_TI_CHEVRON_RIGHT : ICON_TI_CHEVRON_LEFT),
 			compact ? T(TKEY("sidebar_expand"), "Expand the sidebar") : T(TKEY("sidebar_collapse"), "Collapse the sidebar to icons"))) {
 		settings.browserSidebarCompact = !settings.browserSidebarCompact;
 		Save();
@@ -783,7 +784,7 @@ void EditorWindow::ShowWidgetWindow()
 	if (io.KeyCtrl && CanUseEditorShortcuts()) {
 		if (auto* focused = GetFocusedRecordWidget()) {
 			if (ImGui::IsKeyPressed(ImGuiKey_W, false))
-				focused->SetOpen(false);
+				focused->CloseFocusedView();
 			else if (ImGui::IsKeyPressed(ImGuiKey_R, false))
 				DiscardWidgetChanges(*focused);
 		}
@@ -800,7 +801,7 @@ void EditorWindow::ShowWidgetWindow()
 	// Draw retained cell windows alongside the other form windows.
 	for (auto& [_, widget] : cellLightingWidgets) {
 		if (widget->IsOpen()) {
-			widget->DrawWidget();
+			widget->DrawViews();
 			widget->TrackEdits();
 		}
 	}
@@ -1557,8 +1558,8 @@ void EditorWindow::UpdateOpenState()
 #ifdef ENABLE_EFFECTS11
 		Effects11Editor::GetSingleton().Close();  // Restores the menu first so returnToMenu below records it.
 #endif
-		returnToMenu = globals::menu->IsEnabled;
-		globals::menu->IsEnabled = false;
+		returnToMenu = globals::menu->IsOpen();
+		globals::menu->Close();
 
 	} else if (!open && wasOpen) {
 		toolPrompt = Util::ConfirmationPopup{};
@@ -1574,7 +1575,7 @@ void EditorWindow::UpdateOpenState()
 		Effects11Editor::GetSingleton().Close(false);
 #endif
 		if (std::exchange(returnToMenu, false))
-			globals::menu->IsEnabled = true;
+			globals::menu->Open();
 		overlayWeatherLockPending = false;
 		if (weatherLockedByOverlay) {
 			UnlockWeather();
@@ -1783,7 +1784,7 @@ void EditorWindow::ShowSettingsWindow()
 			ImGui::AlignTextToFramePadding();
 			ImGui::TextUnformatted(T(TKEY("editor_ui_scale"), "Editor UI Scale"));
 			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-			if (BrowserUI::IconButton("##ResetUIScale", Icons::TI(MenuIcons::kRestore), T(TKEY("reset_ui_scale_tooltip"), "Reset UI scale to default (100%)"))) {
+			if (Util::IconButton("##ResetUIScale", Icons::TI(MenuIcons::kRestore), T(TKEY("reset_ui_scale_tooltip"), "Reset UI scale to default (100%)"))) {
 				settings.editorUIScale = 1.0f;
 				Save();
 			}
@@ -1862,7 +1863,7 @@ void EditorWindow::ShowSettingsWindow()
 					}
 
 					ImGui::TableSetColumnIndex(2);
-					if (BrowserUI::IconButton(std::format("##{}", recordMarker.first).c_str(), Icons::TI(ICON_TI_TRASH), T(TKEY("delete"), "Delete")))
+					if (Util::IconButton(std::format("##{}", recordMarker.first).c_str(), Icons::TI(ICON_TI_TRASH), T(TKEY("delete"), "Delete")))
 						markerToDelete = recordMarker.first;
 				}
 

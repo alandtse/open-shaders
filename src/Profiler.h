@@ -197,6 +197,9 @@ public:
 	bool BeginPass(std::string_view name, bool fireCallbacks = true);
 	void EndPass(bool fireCallbacks = true);
 
+	/** @brief Records zero for an existing pass deliberately skipped during the active capture. */
+	void MarkPassSkipped(std::string_view name);
+
 	/**
 	 * @brief Ends the current profiling frame.
 	 * @param a_frameCount The engine's own frame counter for this tick,
@@ -283,6 +286,7 @@ public:
 		activeCpuTimers.clear();
 		completedCpuTimers.clear();
 		// A cleared timer must not resurrect from a still-in-flight ring slot.
+		pendingSkipped.count = 0;
 		ResetPendingFrames();
 	}
 
@@ -309,6 +313,14 @@ public:
 	}
 
 private:
+	/** @brief Reused pass-name storage for deliberate skips in one captured frame. */
+	struct SkipMarks
+	{
+		std::vector<std::string> names;
+		uint32_t count = 0;
+		void Add(std::string_view name);
+	};
+
 	/// A CPU-only scope still open, awaiting EndCpuPass.
 	struct CpuTimer
 	{
@@ -350,6 +362,8 @@ private:
 		uint32_t capturedFrame = 0;
 		uint64_t capturedCycle = 0;
 		std::string namePrefix;
+		SkipMarks skipped;
+		bool overflowed = false;
 	};
 
 	ID3D11Device* device = nullptr;
@@ -399,6 +413,7 @@ private:
 	};
 	std::vector<KnownTimer> knownTimers;
 	std::unordered_map<std::string, size_t> knownTimerIndex;
+	SkipMarks pendingSkipped;
 	uint64_t captureCycleCount = 0;
 	float totalTimeMs = 0.0f;
 	float cpuTotalTimeMs = 0.0f;
@@ -453,12 +468,15 @@ private:
 		frame.inFlight = false;
 		frame.capturedCycle = 0;
 		frame.namePrefix.clear();
+		frame.skipped.count = 0;
+		frame.overflowed = false;
 	}
 
 	/// Resets every ring slot except one with an open scope: frames[writeFrame]
 	/// while frameActive, whose batch/activeStack a still-open BeginPass uses.
 	void ResetPendingFrames()
 	{
+		pendingSkipped.count = 0;
 		for (uint32_t i = 0; i < kFrameLatency; i++) {
 			if (frameActive && i == writeFrame)
 				continue;

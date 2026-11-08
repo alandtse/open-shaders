@@ -446,17 +446,21 @@ namespace
 
 	/** @brief The setting's value in one of the settings layers State holds for its feature. */
 	template <class Layer>
-	const json* FindStateLayerValue(const SettingMetadata& a_setting, Layer a_layer)
+	const json* FindStateLayerValue(const SettingMetadata& a_setting, Layer a_layer, json* contextualStorage = nullptr)
 	{
 		auto* feature = Feature::FindFeatureByShortName(std::string{ a_setting.featureShortName });
-		const auto* layer = feature ? (globals::state->*a_layer)(feature->GetName()) : nullptr;
-		return layer ? SceneSettingsInternal::GetCatalogSerializedValue(*layer, a_setting) : nullptr;
+		const auto* source = feature ? (globals::state->*a_layer)(feature->GetName()) : nullptr;
+		if (source && contextualStorage) {
+			*contextualStorage = *source;
+			feature->ApplyContextualDefaults(*contextualStorage);
+			source = contextualStorage;
+		}
+		return source ? SceneSettingsInternal::GetCatalogSerializedValue(*source, a_setting) : nullptr;
 	}
 
-	/** @brief The setting's value in the layers beneath the user's edits: defaults with Baseline packs applied. */
 	const json* FindLayeredBaseValue(const SettingMetadata& a_setting)
 	{
-		return FindStateLayerValue(a_setting, &State::GetFeatureBase);
+		return FindStateLayerValue(a_setting, &::State::GetFeatureBase);
 	}
 
 }
@@ -1259,11 +1263,11 @@ bool SceneWidgetBinding::Guard::TryResetFromGesture()
 	return ResetToSource(ResetSource::Defaults);
 }
 
-const json* SceneWidgetBinding::Guard::FindResetValue(const Component& component, ResetSource source) const
+const json* SceneWidgetBinding::Guard::FindResetValue(const Component& component, ResetSource source, json& storage) const
 {
 	switch (source) {
 	case ResetSource::Defaults:
-		return FindStateLayerValue(*component.setting, &::State::GetFeatureDefaults);
+		return FindStateLayerValue(*component.setting, &::State::GetFeatureDefaults, &storage);
 	case ResetSource::BaseSettings:
 		{
 			std::string packId;
@@ -1276,8 +1280,9 @@ const json* SceneWidgetBinding::Guard::FindResetValue(const Component& component
 bool SceneWidgetBinding::Guard::ResetToSource(ResetSource source)
 {
 	bool reset = false;
+	json contextualBase;
 	for (const auto& component : components) {
-		const auto* defaultValue = FindResetValue(component, source);
+		const auto* defaultValue = FindResetValue(component, source, contextualBase);
 		if (!defaultValue || SceneSettingsManager::AppliedValuesEqual(*defaultValue, ReadEditedValue(component)))
 			continue;
 		WriteComponent(value.data, component, *defaultValue);
@@ -1304,12 +1309,13 @@ bool SceneWidgetBinding::Guard::DrawBaselineContextMenu()
 			std::pair{ ResetSource::Defaults, T("menu.settings.reset_to_default", "Reset to default") },
 			std::pair{ ResetSource::BaseSettings, T("menu.settings.reset_to_base_settings", "Reset to Base Settings preset") }
 		};
+		json contextualBase;
 		for (const auto& [source, resetCaption] : resetSources) {
 			bool canReset = false;
 			bool hasSource = false;
 			std::string defaultText;
 			for (const auto& component : components) {
-				const auto* defaultValue = FindResetValue(component, source);
+				const auto* defaultValue = FindResetValue(component, source, contextualBase);
 				if (!defaultValue)
 					continue;
 				hasSource = true;
@@ -1369,7 +1375,7 @@ void SceneWidgetBinding::Guard::NavigateGreyedSetting() const
 {
 	if (state == State::Unbound) {
 		if (auto* menu = globals::menu) {
-			menu->IsEnabled = true;
+			menu->Open();
 			if (!identity.featureShortName.empty())
 				menu->SelectFeatureMenu(identity.featureShortName);
 		}
@@ -1499,7 +1505,7 @@ void SceneWidgetBinding::Guard::DrawSceneActions()
 
 	{
 		const Util::DisableGuard disabled(!available || presetBlocked);
-		if (Icons::Button("##SceneOverrideReset", Icons::TI(ICON_TI_ERASER), ImVec2(size, size))) {
+		if (Util::LabeledButton("##SceneOverrideReset", Icons::TI(ICON_TI_ERASER), ImVec2(size, size))) {
 			if (suppressed) {
 				ClearSuppressions();
 			} else if (editsPreset) {
@@ -1521,7 +1527,7 @@ void SceneWidgetBinding::Guard::DrawSceneActions()
 	{
 		const Util::DisableGuard disabled(!available || presetBlocked);
 		const auto icon = suppressed ? Icons::TI(ICON_TI_RESTORE) : SceneActionIcons::kDelete;
-		if (Icons::Button("##SceneOverrideDelete", icon, ImVec2(size, size))) {
+		if (Util::LabeledButton("##SceneOverrideDelete", icon, ImVec2(size, size))) {
 			if (suppressed) {
 				ClearSuppressions();
 			} else if (editsPreset) {

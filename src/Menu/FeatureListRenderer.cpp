@@ -111,7 +111,7 @@ namespace
 
 		const ImVec4 textColor = ImGui::GetStyleColorVec4(disabled ? ImGuiCol_TextDisabled : ImGuiCol_Text);
 		const ImVec4 iconColor = !disabled ? Util::Colors::GetAccent() : textColor;
-		const float iconGap = Constants::NAV_ROW_ICON_GAP * scale;
+		const float iconGap = Constants::ICON_LABEL_GAP * scale;
 
 		// Narrow buttons keep the icon readable and reveal the full label on hover.
 		const float fontSize = ImGui::GetFontSize();
@@ -263,7 +263,7 @@ namespace
 		auto* drawList = ImGui::GetWindowDrawList();
 		Icons::DrawCenteredGlyph(drawList, ImVec2(pos.x + padX, pos.y), ImVec2(lineHeight, lineHeight), Icons::TI(ICON_TI_CHEVRON_LEFT),
 			ImGui::GetColorU32(Util::Colors::GetSecondary()));
-		drawList->AddText(ImVec2(pos.x + padX + lineHeight + ThemeManager::Constants::NAV_ROW_ICON_GAP * Util::GetUIScale(), pos.y),
+		drawList->AddText(ImVec2(pos.x + padX + lineHeight + ThemeManager::Constants::ICON_LABEL_GAP * Util::GetUIScale(), pos.y),
 			ImGui::GetColorU32(ImGuiCol_Text), T("menu.features.back_to_features", "Features"));
 		return clicked;
 	}
@@ -301,11 +301,9 @@ namespace
 			const bool lit = ImGui::IsWindowHovered() || ImGui::GetFocusID() == buttonId || ImGui::IsPopupOpen("##FeatureSortPopup");
 			const float alpha = std::lerp(ThemeManager::Constants::PALETTE_DIMMED_ALPHA, 1.0f, Util::Anim::Toggle(ImGui::GetID("##Visibility"), lit));
 			ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * alpha);
-			{
-				auto style = Util::TransparentIconButtonStyle();
-				if (Icons::Button("###FeatureSort", GetSortModeIcon(globals::menu->GetSettings().FeatureListSort), ImVec2(size, size)))
-					ImGui::OpenPopup("##FeatureSortPopup");
-			}
+			if (Util::IconButton("###FeatureSort", GetSortModeIcon(globals::menu->GetSettings().FeatureListSort), nullptr))
+				ImGui::OpenPopup("##FeatureSortPopup");
+			FeatureListRenderer::DrawFilterDot(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
 			ImGui::PopStyleVar();
 			Util::HoverTip(T("menu.features.sort_tooltip", "Sort features"));
 			FeatureListRenderer::RenderSortPopup("##FeatureSortPopup");
@@ -373,15 +371,17 @@ namespace
 		return leftPanelVisible;
 	}
 
-	void SeparatorTextWithFont(const char* text, Menu::FontRole role)
+	/** @brief Badge label of a pre-release stage; null for release features. */
+	const char* GetStageBadgeLabel(Feature::ReleaseStage stage)
 	{
-		MenuFonts::FontRoleGuard guard(role);
-		ImGui::SeparatorText(text);
-	}
-
-	void SeparatorTextWithFont(const std::string& text, Menu::FontRole role)
-	{
-		SeparatorTextWithFont(text.c_str(), role);
+		switch (stage) {
+		case Feature::ReleaseStage::Alpha:
+			return T("menu.features.badge_alpha", "Alpha");
+		case Feature::ReleaseStage::Beta:
+			return T("menu.features.badge_beta", "Beta");
+		default:
+			return nullptr;
+		}
 	}
 
 	bool BeginTabItemWithFont(const char* label, Menu::FontRole role, ImGuiTabItemFlags flags = ImGuiTabItemFlags_None)
@@ -396,7 +396,7 @@ namespace
 	 * @param description Short description shown below the title (single line, truncated if too long)
 	 * @return The height of just the title line (for button alignment)
 	 */
-	float DrawFeatureHeader(const std::string& featureName, const std::string& version, const std::string& description = "", const std::string& stageTag = "", ImVec4 stageColor = {})
+	float DrawFeatureHeader(const std::string& featureName, const std::string& version, const std::string& description = "", Feature::ReleaseStage stage = Feature::ReleaseStage::Release)
 	{
 		auto& themeSettings = globals::menu->GetTheme();
 		auto& palette = themeSettings.Palette;
@@ -432,29 +432,17 @@ namespace
 		// Running x for baseline-aligned annotations (stage tag, then version) to the right of the title
 		float annotationX = titleMax.x + ImGui::GetStyle().ItemSpacing.x;
 
-		// Draw stage marker ([ALPHA]/[BETA]) on the title baseline
-		if (!stageTag.empty()) {
-			ImVec2 tagSize;
-			{
-				MenuFonts::FontRoleGuard bodyGuard(Menu::FontRole::Body);
-				ImGui::SetWindowFontScale(titleScale);
-				tagSize = ImGui::CalcTextSize(stageTag.c_str());
-				ImGui::SetWindowFontScale(1.0f);
+		if (stage != Feature::ReleaseStage::Release) {
+			const float badgeWidth = FeatureListRenderer::MeasureStageBadge(stage);
+			const float badgeHeight = ImGui::GetTextLineHeight();
+			if (annotationX + badgeWidth > headerRight) {
+				annotationX = startPos.x;
+				titleSize.y += ImGui::GetStyle().ItemInnerSpacing.y + badgeHeight;
+				titleBaseline = startPos.y + titleSize.y - badgeHeight + ImGui::GetFontBaked()->Ascent;
 			}
-
-			{
-				MenuFonts::FontRoleGuard bodyGuard(Menu::FontRole::Body);
-				ImGui::SetWindowFontScale(titleScale);
-				if (annotationX + tagSize.x > headerRight) {
-					annotationX = startPos.x;
-					titleBaseline = startPos.y + titleSize.y + ImGui::GetStyle().ItemInnerSpacing.y + ImGui::GetFontBaked()->Ascent;
-					titleSize.y = titleBaseline - ImGui::GetFontBaked()->Ascent + ImGui::GetFontSize() - startPos.y;
-				}
-				ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
-					ImVec2(annotationX, titleBaseline - ImGui::GetFontBaked()->Ascent), ImGui::GetColorU32(stageColor), stageTag.c_str());
-				annotationX += tagSize.x + ImGui::GetStyle().ItemSpacing.x;
-				ImGui::SetWindowFontScale(1.0f);
-			}
+			ImGui::SetCursorScreenPos(ImVec2(annotationX, startPos.y + titleSize.y - badgeHeight));
+			FeatureListRenderer::DrawStageBadge(stage, badgeHeight);
+			annotationX += badgeWidth + ImGui::GetStyle().ItemSpacing.x;
 		}
 
 		// Draw version with the title font on the same baseline if version exists
@@ -595,6 +583,33 @@ std::string FeatureListRenderer::TranslateCategory(std::string_view category)
 		return T("feature.category.water", "Water");
 
 	return std::string(category);
+}
+
+void FeatureListRenderer::DrawFilterDot(const ImVec2& buttonMin, const ImVec2& buttonMax)
+{
+	if ((globals::menu->GetSettings().FeatureListFilter & FeatureListFilter::kKnown) == 0)
+		return;
+	const float radius = ImGui::GetFrameHeight() * ThemeManager::Constants::STATUS_DOT_RATIO;
+	Util::DrawIconCircle(ImVec2(buttonMax.x - radius * 1.5f, buttonMin.y + radius * 1.5f), radius, ImGui::GetColorU32(Util::Colors::GetAccent()), true);
+}
+
+float FeatureListRenderer::MeasureStageBadge(Feature::ReleaseStage stage)
+{
+	const char* label = GetStageBadgeLabel(stage);
+	if (!label)
+		return 0.0f;
+	MenuFonts::FontRoleGuard badgeFont(Menu::FontRole::Subtext);
+	return Util::MeasureBadgeWidth(label);
+}
+
+void FeatureListRenderer::DrawStageBadge(Feature::ReleaseStage stage, float rowHeight)
+{
+	const char* label = GetStageBadgeLabel(stage);
+	if (!label)
+		return;
+	const auto& statusPalette = globals::menu->GetTheme().StatusPalette;
+	MenuFonts::FontRoleGuard badgeFont(Menu::FontRole::Subtext);
+	Util::Badge(label, stage == Feature::ReleaseStage::Alpha ? statusPalette.Error : statusPalette.Warning, { .rowHeight = rowHeight });
 }
 
 void FeatureListRenderer::RenderFeatureList(
@@ -1024,8 +1039,8 @@ void FeatureListRenderer::ListMenuVisitor::operator()(const BuiltInMenu& menu)
 
 void FeatureListRenderer::ListMenuVisitor::operator()(const std::string& label)
 {
-	// Use default separator text for other labels - should be themed via ImGuiCol_Separator
-	SeparatorTextWithFont(label, Menu::FontRole::Subheading);
+	// Themed via ImGuiCol_Separator
+	Util::SeparatorTextWithFont(label.c_str(), Menu::FontRole::Subheading);
 }
 
 void FeatureListRenderer::ListMenuVisitor::operator()(const CategoryHeader& header)
@@ -1319,7 +1334,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureHeader(Feature* feat, bo
 	auto [description, details] = feat->GetFeatureSummary();
 	const auto stage = feat->GetReleaseStage();
 	DrawFeatureHeader(feat->GetDisplayName(), loaded && !IsUtilityFeature(feat) ? feat->version : "", description,
-		Feature::GetReleaseStageTag(stage), Feature::GetReleaseStageColor(stage));
+		stage);
 }
 
 void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(Feature* feat, bool disabled, bool loaded)
@@ -1517,7 +1532,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, 
 
 	if (hasFailedMessage && feat->DrawFailLoadMessage() && !FeatureIssues::IsObsoleteFeature(feat->GetShortName())) {
 		ImGui::Spacing();
-		SeparatorTextWithFont(T("menu.features.error_header", "Error"), Menu::FontRole::Subheading);
+		Util::SeparatorTextWithFont(T("menu.features.error_header", "Error"), Menu::FontRole::Subheading);
 		ImGui::TextColored(themeSettings.StatusPalette.Error, "%s", feat->failedLoadedMessage.c_str());
 	}
 }
@@ -1527,7 +1542,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderUseBaselinesButton(Feature* fea
 	const float size = ImGui::GetFrameHeight();
 	{
 		auto style = Util::TransparentIconButtonStyle();
-		if (Icons::Button("##UseBaselines", Icons::TI(ICON_TI_STACK_2), ImVec2(size, size)))
+		if (Util::LabeledButton("##UseBaselines", Icons::TI(ICON_TI_STACK_2), ImVec2(size, size)))
 			globals::state->ClearFeatureEditsUnderBaselines(feat);
 	}
 
@@ -1543,7 +1558,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderRestoreDefaultsButton(Feature* 
 	const float size = ImGui::GetFrameHeight();
 	{
 		auto style = Util::TransparentIconButtonStyle();
-		if (Icons::Button("##RestoreDefaults", SettingsActionIcons::kRestoreDefaults, ImVec2(size, size))) {
+		if (Util::LabeledButton("##RestoreDefaults", SettingsActionIcons::kRestoreDefaults, ImVec2(size, size))) {
 			// Restored defaults remain personal values above enabled Base Settings.
 			globals::state->RestoreFeatureLayers(feat);
 		}

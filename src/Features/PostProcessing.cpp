@@ -114,7 +114,7 @@ void PostProcessing::DrawSettings()
 		ImGui::PushID("CinematicCamera");
 		ImGui::Checkbox("##Enabled", &cinematicCamera.settings.Enabled);
 		ImGui::SameLine();
-		if (Icons::Button("##Bars", Icons::TI(ICON_TI_MENU_2)))
+		if (Util::LabeledButton("##Bars", Icons::TI(ICON_TI_MENU_2)))
 			activeSettingsPage = SettingsPage::CinematicCamera;
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T("feature.post_processing.edit_settings_for_this_feature", "Edit settings for this feature."));
@@ -134,7 +134,7 @@ void PostProcessing::DrawSettings()
 				if (!drawForcedEnabled("##Enabled", *feat))
 					ImGui::Checkbox("##Enabled", &feat->enabled);
 				ImGui::SameLine();
-				if (Icons::Button("##Bars", Icons::TI(ICON_TI_MENU_2))) {
+				if (Util::LabeledButton("##Bars", Icons::TI(ICON_TI_MENU_2))) {
 					activePipelineFeature = i;
 					activeSettingsPage = SettingsPage::SubFeature;
 				}
@@ -148,7 +148,7 @@ void PostProcessing::DrawSettings()
 			}
 		}
 	} else if (activeSettingsPage == SettingsPage::SubFeature) {
-		if (Icons::LabeledButton("##BackToPipeline", Icons::TI(ICON_TI_ARROW_LEFT),
+		if (Util::LabeledButton("##BackToPipeline", Icons::TI(ICON_TI_ARROW_LEFT),
 				T("feature.post_processing.back_to_pipeline", "Back to Pipeline"))) {
 			activeSettingsPage = SettingsPage::Pipeline;
 		}
@@ -164,7 +164,7 @@ void PostProcessing::DrawSettings()
 				ImGui::TextWrapped("%s", description.c_str());
 
 				ImGui::Spacing();
-				if (Icons::LabeledButton("##RecompileShaders", Icons::TI(ICON_TI_REFRESH),
+				if (Util::LabeledButton("##RecompileShaders", Icons::TI(ICON_TI_REFRESH),
 						T("feature.post_processing.recompile_shaders", "Recompile Shaders"))) {
 					feat->ClearShaderCache();
 				}
@@ -192,7 +192,7 @@ void PostProcessing::DrawSettings()
 			activeSettingsPage = SettingsPage::Pipeline;
 		}
 	} else if (activeSettingsPage == SettingsPage::CinematicCamera) {
-		if (Icons::LabeledButton("##BackToPipeline", Icons::TI(ICON_TI_ARROW_LEFT),
+		if (Util::LabeledButton("##BackToPipeline", Icons::TI(ICON_TI_ARROW_LEFT),
 				T("feature.post_processing.back_to_pipeline", "Back to Pipeline"))) {
 			activeSettingsPage = SettingsPage::Pipeline;
 		}
@@ -392,6 +392,16 @@ void PostProcessing::SaveActiveSettings(json& o_json)
 	cinematicCamera.SaveSettings(cameraSettings);
 	o_json["cinematic_camera"] = cameraSettings;
 	o_json.erase("ppsettings");
+}
+
+void PostProcessing::ApplyContextualDefaults(json& a_defaults) const
+{
+	for (const auto& pipe : pipeline) {
+		if (!pipe)
+			continue;
+		if (auto section = a_defaults.find(pipe->GetType()); section != a_defaults.end() && section->contains("settings"))
+			pipe->ApplyContextualDefaults((*section)["settings"]);
+	}
 }
 
 void PostProcessing::RestoreDefaultSettings()
@@ -704,6 +714,7 @@ void PostProcessing::CopyToRenderTarget(
 	targetRT.texture->GetDesc(Util::AsW32(&targetDesc));
 
 	if (!convert && srcDesc.Format == targetDesc.Format && srcDesc.Width == targetDesc.Width && srcDesc.Height == targetDesc.Height) {
+		CS_GPU_PASS("PostProcessing::CopyToTarget");
 		context->CopySubresourceRegion(Util::AsReal(targetRT.texture), 0, 0, 0, 0, srcTex, 0, nullptr);
 		return;
 	}
@@ -711,6 +722,7 @@ void PostProcessing::CopyToRenderTarget(
 	if (!copyPS || !fullscreenVS || !convertTex || !convertTex->rtv || !convertTex->resource)
 		return;
 
+	CS_GPU_PASS("PostProcessing::ConvertToTarget");
 	DrawCopy(*convertTex, srcTex, srcSRV, conversion);
 
 	context->CopySubresourceRegion(Util::AsReal(targetRT.texture), 0, 0, 0, 0, convertTex->resource.get(), 0, nullptr);

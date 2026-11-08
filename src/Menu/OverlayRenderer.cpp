@@ -34,6 +34,7 @@
 #include "Menu/FontAtlasState.h"
 #include "Menu/Presets/PresetExportPanel.h"
 #include "Menu/PresetsPageRenderer.h"
+#include "Menu/SettingsTabRenderer.h"
 #include "Presets/UnifiedPresetCatalog.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -190,7 +191,7 @@ void OverlayRenderer::RenderOverlay(
 
 #if defined(ENABLE_EFFECTS11)
 	auto& effects11Editor = Effects11Editor::GetSingleton();
-	if (effects11Editor.IsOpen() && menu.IsEnabled)
+	if (effects11Editor.IsOpen() && menu.IsOpen())
 		effects11Editor.Close(false);
 #endif
 	if (editorWindow->open) {
@@ -198,7 +199,11 @@ void OverlayRenderer::RenderOverlay(
 		io.MouseDrawCursor = !flying;
 		if (flying)
 			io.MousePos = { -FLT_MAX, -FLT_MAX };  // prevent hover/tooltips during active flying
+		const auto& context = *ImGui::GetCurrentContext();
+		const bool editedBefore = context.ActiveIdHasBeenEditedThisFrame;
 		editorWindow->Draw();
+		SettingsTabRenderer::CheckThemeChanged((!editedBefore && context.ActiveIdHasBeenEditedThisFrame) ||
+											   ImGui::IsMouseReleased(ImGuiMouseButton_Left) || context.NavActivateId != 0);
 #if defined(ENABLE_EFFECTS11)
 	} else if (effects11Editor.IsOpen()) {
 		io.MouseDrawCursor = true;
@@ -216,15 +221,17 @@ void OverlayRenderer::RenderOverlay(
 			const bool editedBefore = context.ActiveIdHasBeenEditedThisFrame;
 			drawSettings();
 			// Only frames that edited something pay for the check; search boxes edit too, so it compares.
-			if (!editedBefore && context.ActiveIdHasBeenEditedThisFrame)
+			const bool edited = !editedBefore && context.ActiveIdHasBeenEditedThisFrame;
+			if (edited)
 				globals::state->CheckCoreSettingsChanged();
+			SettingsTabRenderer::CheckThemeChanged(edited || ImGui::IsMouseReleased(ImGuiMouseButton_Left) || context.NavActivateId != 0);
 		}
 	} else {
 		ImGui::GetIO().MouseDrawCursor = PresetExportPanel::IsOpen();
 	}
 
 	// Enabling a Baseline pack can happen from either the menu or the CS editor, and the answer outlives the page.
-	if (editorWindow->open || menu.IsEnabled)
+	if (editorWindow->open || menu.IsOpen())
 		UnifiedPresetCatalog::GetSingleton().DrawBaselineOverlapPrompt();
 
 	// The editor draws its own notifications; while it is closed they still need a host, e.g. the
@@ -260,7 +267,7 @@ bool OverlayRenderer::ShouldSkipRendering()
 #endif
 
 	return !(shaderCache->IsCompiling() ||
-			 Menu::GetSingleton()->IsEnabled ||
+			 Menu::GetSingleton()->IsOpen() ||
 			 Menu::GetSingleton()->openFade > 0.0f ||
 			 HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			 EditorWindow::GetSingleton()->open ||
@@ -361,14 +368,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 	auto& themeSettings = Menu::GetSingleton()->GetTheme();
 	auto* renderDoc = RenderDoc::GetSingleton();
 	bool renderDocAvailable = renderDoc->IsAvailable();
-	const auto renderDocInformation = renderDoc->GetOverlayWarningMessage();
-
-	std::string compilePrefix = shaderCache->backgroundCompilation ? T("overlay.background_prefix", "Background ") : "";
-	std::string shaderStats = shaderCache->GetShaderStatsString(!state->IsDeveloperMode());
-	auto progressTitle = std::vformat(T("overlay.compiling_shaders", "{}Compiling Shaders: {}"),
-		std::make_format_args(compilePrefix, shaderStats));
-	const float percent = totalShaders > 0 ? static_cast<float>(compiledShaders) / static_cast<float>(totalShaders) : 0.0f;
-	auto progressOverlay = fmt::format("{}/{} ({:2.1f}%)", compiledShaders, totalShaders, 100 * percent);
+	const auto renderDocInformation = renderDocAvailable ? renderDoc->GetOverlayWarningMessage() : std::string();
 
 #if defined(ENABLE_EFFECTS11)
 	uint32_t effectFailed = EffectManager::GetSingleton().IsInitialized() ? EffectManager::GetSingleton().GetFailedEffectCount() : 0;
@@ -395,6 +395,12 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 			return;
 		}
 		if (!hideRoutineHud) {
+			std::string compilePrefix = shaderCache->backgroundCompilation ? T("overlay.background_prefix", "Background ") : "";
+			std::string shaderStats = shaderCache->GetShaderStatsString(!state->IsDeveloperMode());
+			auto progressTitle = std::vformat(T("overlay.compiling_shaders", "{}Compiling Shaders: {}"),
+				std::make_format_args(compilePrefix, shaderStats));
+			const float percent = totalShaders > 0 ? static_cast<float>(compiledShaders) / static_cast<float>(totalShaders) : 0.0f;
+			auto progressOverlay = fmt::format("{}/{} ({:2.1f}%)", compiledShaders, totalShaders, 100 * percent);
 			ImGui::TextUnformatted(progressTitle.c_str());
 			ImGui::ProgressBar(percent, ImVec2(0.0f, 0.0f), progressOverlay.c_str());
 		}

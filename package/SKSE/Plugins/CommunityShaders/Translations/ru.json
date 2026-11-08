@@ -363,7 +363,6 @@
     "cs_editor.scene_restore_preset_value": "Восстановить значение пресета",
     "cs_editor.scene_setting_named_preset_hint": "Оранжевый: Настройка Scene Manager из пресета ({}).",
     "cs_editor.scene_setting_preset_hint": "Оранжевый: Настройка Scene Manager из пресета.",
-    "cs_editor.search_clear": "Очистить поиск",
     "cs_editor.search_settings_hint": "Поиск настроек (Ctrl+F)",
     "cs_editor.select_weather": "Выбрать погоду",
     "cs_editor.session_history": "Сессия и история",
@@ -3828,7 +3827,6 @@
     "menu.issues.cancel": "Отмена",
     "menu.issues.cannot_be_undone": "Это действие нельзя отменить!",
     "menu.issues.check_modified_files": "Проверить изменённые файлы в Data/Shaders/ (не в подпапках функций)",
-    "menu.issues.cleanup_actions": "Действия по очистке:",
     "menu.issues.clear_issue_list": "Очистить список проблем",
     "menu.issues.clear_issue_list_tooltip": "Очищает этот список проблем (полезно после очистки).",
     "menu.issues.compilation_breaking_desc": "Следующие функции изменили базовые файлы шейдеров и должны быть полностью удалены через менеджер модов. Удаление только INI-файла не исправит ошибки компиляции, если базовые шейдеры были изменены.",
@@ -4180,6 +4178,7 @@
     "menu.settings.require_shift_to_dock_tooltip": "При включении нужно удерживать Shift для стыковки окон. Предотвращает случайную стыковку.",
     "menu.settings.reset_to_base_settings": "Восстановить пресет базовых настроек",
     "menu.settings.reset_to_default": "Восстановить значение по умолчанию",
+    "menu.settings.revert_theme": "Откатить",
     "menu.settings.save_as_new_theme": "Сохранить как новую тему",
     "menu.settings.save_theme_tooltip": "Обновляет выбранную тему (%s) текущими настройками",
     "menu.settings.screenshot_key": "Клавиша скриншота:",
@@ -4342,5 +4341,7 @@
     "ui.vr.color_coding_primary": "",
     "ui.vr.color_coding_secondary": "",
     "ui.vr.primary_controller": "",
-    "ui.vr.secondary_controller": ""
+    "ui.vr.secondary_controller": "",
+    "cs_editor.search_clear": "Очистить поиск",
+    "menu.issues.cleanup_actions": "Действия по очистке:"
 }

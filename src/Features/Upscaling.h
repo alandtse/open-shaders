@@ -496,7 +496,7 @@ public:
 		       IsDlssSharpeningEnabled() && GetUpscaleMethod() == UpscaleMethod::kDLSS;
 	}
 
-	static void TimerSleepQPC(int64_t targetQPC);
+	static void TimerSleepQPC(int64_t targetQPC, int64_t frequency);
 
 	void FrameLimiter();
 

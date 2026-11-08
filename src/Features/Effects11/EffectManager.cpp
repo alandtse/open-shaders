@@ -16,6 +16,7 @@
 #include "SettingManager.h"
 #include "TextureManager.h"
 #include "Utils/D3D.h"
+#include "Utils/Logging.h"
 #include "WeatherManager.h"
 
 #include <d3dcompiler.h>
@@ -671,6 +672,7 @@ void EffectManager::CreateQuadGeometry()
 	initData.pSysMem = vertices;
 
 	DX::ThrowIfFailed(globals::d3d::device->CreateBuffer(&bufferDesc, &initData, quadVertexBuffer.put()));
+	Util::SetResourceName(quadVertexBuffer.get(), "EffectManager::QuadVertexBuffer");
 
 	// Create input layout for ENB post-processing
 	D3D11_INPUT_ELEMENT_DESC inputElementDescs[] = {
@@ -691,6 +693,7 @@ void EffectManager::CreateQuadGeometry()
 	if (FAILED(hr)) {
 		logger::error("[EFFECTS11] Failed to create shared input layout for ENB effects");
 	}
+	Util::SetResourceName(inputLayout.get(), "EffectManager::InputLayout");
 }
 
 void EffectManager::CreateRenderStates()
@@ -709,6 +712,7 @@ void EffectManager::CreateRenderStates()
 	rastDesc.AntialiasedLineEnable = FALSE;
 
 	DX::ThrowIfFailed(globals::d3d::device->CreateRasterizerState(&rastDesc, rasterizerState.put()));
+	Util::SetResourceName(rasterizerState.get(), "EffectManager::RasterizerState");
 
 	// Blend state for standard rendering (no blending)
 	D3D11_BLEND_DESC blendDesc = {};
@@ -718,6 +722,7 @@ void EffectManager::CreateRenderStates()
 	blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 
 	DX::ThrowIfFailed(globals::d3d::device->CreateBlendState(&blendDesc, blendState.put()));
+	Util::SetResourceName(blendState.get(), "EffectManager::BlendState");
 }
 
 void EffectManager::CreateCopyShaders()
@@ -729,12 +734,15 @@ void EffectManager::CreateCopyShaders()
 		return;
 	}
 
+	Util::SetResourceName(copyVertexShader.get(), "EffectManager::CopyVS");
+
 	copyPixelShader.attach(static_cast<ID3D11PixelShader*>(
 		Util::CompileShader(L"Data\\Shaders\\Effects11\\CopyPS.hlsl", {}, "ps_5_0")));
 	if (!copyPixelShader) {
 		logger::error("[EFFECTS11] Failed to compile copy pixel shader");
 		return;
 	}
+	Util::SetResourceName(copyPixelShader.get(), "EffectManager::CopyPS");
 
 	D3D11_BUFFER_DESC cbDesc{};
 	cbDesc.ByteWidth = 16;
@@ -742,6 +750,7 @@ void EffectManager::CreateCopyShaders()
 	cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 	cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 	globals::d3d::device->CreateBuffer(&cbDesc, nullptr, ditherConstantBuffer.put());
+	Util::SetResourceName(ditherConstantBuffer.get(), "EffectManager::DitherCB");
 
 	logger::info("[EFFECTS11] Created texture copy shaders successfully");
 }
@@ -754,6 +763,7 @@ void EffectManager::CreateColorCorrectionShader()
 		logger::error("[EFFECTS11] Failed to compile color correction compute shader");
 		return;
 	}
+	Util::SetResourceName(colorCorrectionComputeShader.get(), "EffectManager::ColorCorrectionCS");
 
 	// Create constant buffer
 	D3D11_BUFFER_DESC cbDesc = {};
@@ -767,6 +777,7 @@ void EffectManager::CreateColorCorrectionShader()
 		logger::error("[EFFECTS11] Failed to create color correction constant buffer");
 		return;
 	}
+	Util::SetResourceName(colorCorrectionConstantBuffer.get(), "EffectManager::ColorCorrectionCB");
 
 	logger::info("[EFFECTS11] Created color correction compute shader successfully");
 }
@@ -969,7 +980,7 @@ void EffectManager::UpdateCursorData()
 
 	// Shaders get the cursor while a UI that shows it is open, e.g. for click-to-focus depth of field
 	auto* menu = globals::menu;
-	const bool cursorVisible = (menu && menu->IsEnabled) || Effects11Editor::GetSingleton().IsOpen();
+	const bool cursorVisible = (menu && menu->IsOpen()) || Effects11Editor::GetSingleton().IsOpen();
 	if (cursorVisible && ImGui::GetCurrentContext()) {
 		const auto& io = ImGui::GetIO();
 		if (io.DisplaySize.x > 0.0f && io.DisplaySize.y > 0.0f) {
@@ -1006,7 +1017,7 @@ void EffectManager::UpdateLightParameters()
 	if (!sky || !sky->sun || !sky->sun->root || !sky->root)
 		return;
 
-	const float visibility = Util::GetSunVisibility();
+	const float visibility = Util::GetSunVisibility(sky->sun);
 	if (visibility <= 0.0f)
 		return;
 
@@ -1088,11 +1099,9 @@ void EffectManager::UpdateCommonVariablesForEffect(Effect& effect)
 bool EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11RenderTargetView* a_dest, bool a_dither, int a_eyeIndex)
 {
 	if (!a_source || !a_dest || !copyPixelShader || !copyVertexShader) {
-		static bool logged = false;
-		if (!logged) {
+		static Util::OnceFlag logged;
+		if (logged.First())
 			logger::warn("[EFFECTS11] Invalid parameters or shaders not initialized for texture copy");
-			logged = true;
-		}
 		return false;
 	}
 

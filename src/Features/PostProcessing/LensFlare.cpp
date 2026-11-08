@@ -454,7 +454,7 @@ void LensFlare::ClearShaderCache()
 	{
 		std::lock_guard lock(shaderMutex);
 		Util::ClearShaders<ID3D11ComputeShader>({ thresholdCS, ghostHaloCS, blurDownCS, blurUpCS,
-			fftMultiplyCS, bokehPrepareCS, fftThresholdCS, fftGhostComposeCS });
+			fftMultiplyCS, bokehPrepareCS, fftThresholdCS, fftGhostComposeCS, fftGhostComposeFirstCS });
 		for (uint i = 0; i < FFT_VARIANT_COUNT; ++i) {
 			Util::ClearShaders<ID3D11ComputeShader>({ fftRowCS[i], fftColCS[i], fftRowInvCS[i], fftColInvCS[i] });
 		}
@@ -476,6 +476,7 @@ void LensFlare::CompileComputeShaders()
 		{ &bokehPrepareCS, "lensflare_fft.cs.hlsl", {}, "CSBokehPrepare" },
 		{ &fftThresholdCS, "lensflare_fft.cs.hlsl", {}, "CSFFTThreshold" },
 		{ &fftGhostComposeCS, "lensflare_fft.cs.hlsl", {}, "CSFFTGhostCompose" },
+		{ &fftGhostComposeFirstCS, "lensflare_fft.cs.hlsl", { { "FIRST_GROUP", "" } }, "CSFFTGhostCompose" },
 		{ &fftMultiplyCS, "lensflare_fft.cs.hlsl", {}, "CS_Multiply" },
 	};
 
@@ -494,7 +495,7 @@ bool LensFlare::FFTShadersReady(uint resolution) const
 {
 	const uint variant = GetFFTVariant(resolution);
 	return AllShadersReady({ &fftRowCS[variant], &fftColCS[variant], &fftRowInvCS[variant], &fftColInvCS[variant],
-		&bokehPrepareCS, &fftMultiplyCS, &fftThresholdCS, &fftGhostComposeCS });
+		&bokehPrepareCS, &fftMultiplyCS, &fftThresholdCS, &fftGhostComposeCS, &fftGhostComposeFirstCS });
 }
 
 void LensFlare::DispatchFFT(ID3D11ComputeShader* shader, Texture2D* input, Texture2D* output, uint resolution)
@@ -719,14 +720,11 @@ void LensFlare::DrawQuality(TextureInfo& inout_tex, LensFlareCB& data)
 		groups.push_back({ settings.KernelScale, data.ActiveGhostMask });
 	}
 
-	// === Clear texGhostHalo for additive compositing ===
-	{
+	if (debugsettings.disableGhosts) {
 		const FLOAT clearColor[4] = { 0.f, 0.f, 0.f, 0.f };
 		context->ClearUnorderedAccessViewFloat(texGhostHalo->uav.get(), clearColor);
-	}
-
-	if (debugsettings.disableGhosts)
 		return;
+	}
 
 	for (size_t i = 0; i < bokehFFTCache.size(); ++i) {
 		if (bokehFFTDirty || i >= groups.size())
@@ -801,7 +799,7 @@ void LensFlare::DrawQuality(TextureInfo& inout_tex, LensFlareCB& data)
 		DispatchFFT(fftColInvCS[fftVariant].get(), texFFT[0].get(), texFFT[1].get(), N);
 
 		// 3d: Compose IFFT result → additive into texGhostHalo
-		if (fftGhostComposeCS) {
+		if (auto* composeCS = gi == 0 ? fftGhostComposeFirstCS.get() : fftGhostComposeCS.get()) {
 			data.OutputWidth = (float)halfW;
 			data.OutputHeight = (float)halfH;
 			data.InputWidth = (float)N;
@@ -816,7 +814,7 @@ void LensFlare::DrawQuality(TextureInfo& inout_tex, LensFlareCB& data)
 
 			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-			context->CSSetShader(fftGhostComposeCS.get(), nullptr, 0);
+			context->CSSetShader(composeCS, nullptr, 0);
 			context->Dispatch((halfW + 7) >> 3, (halfH + 7) >> 3, 1);
 
 			srvs.fill(nullptr);

@@ -17,6 +17,7 @@
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/FileSystem.h"
 #include "Utils/HdrPngMetadata.h"
@@ -426,6 +427,9 @@ namespace
 		if (IsFlatHdrScreenshotCapture()) {
 			// Recompose from the clean scene with no UI buffer.
 			auto& hdr = globals::features::hdrDisplay;
+			if (!hdr.hdrTexture || !hdr.outputTexture || !hdr.hdrDataCB || !hdr.GetHDROutputCS())
+				return src;
+
 			const bool wantClean = uiMode == UiMode::Exclude || (uiMode == UiMode::MenuDefault && Menu::GetSingleton()->IsEnabled);
 			if (wantClean && hdr.outputTexture && hdr.outputTexture->srv) {
 				ID3D11ShaderResourceView* sceneSRV =
@@ -444,10 +448,19 @@ namespace
 			}
 		}
 
+		if (!IsFlatHdrScreenshotCapture() && uiMode != UiMode::Include) {
+			if (auto* clean = globals::features::screenshotFeature.GetFreshCleanScene()) {
+				src.texture = clean;
+				src.uiExcluded = true;
+				src.description = "Pre-UI scene snapshot (no HUD, no menu blur)";
+				return src;
+			}
+		}
+
 		auto& upscaling = globals::features::upscaling;
 		if (IsFlatHdrScreenshotCapture() || upscaling.d3d12SwapChainActive) {
 			src.texture = ResolveDisplayedBackBuffer(holder);
-			if (upscaling.d3d12SwapChainActive && upscaling.ShouldUseFrameGenerationThisFrame()) {
+			if (uiMode == UiMode::Include && upscaling.d3d12SwapChainActive && upscaling.ShouldUseFrameGenerationThisFrame()) {
 				if (!upscaling.dx12SwapChain.swapChainBufferWrapped || !upscaling.dx12SwapChain.uiBufferWrapped)
 					return {};
 				src.srv = upscaling.dx12SwapChain.swapChainBufferWrapped->srv;
@@ -622,6 +635,44 @@ namespace
 		return success;
 	}
 
+	/** @brief Removes the cICP chunk from a PNG; Discord misreads it, while the iCCP profile still describes the HDR colour space. */
+	bool StripPngCicpChunk(const std::filesystem::path& path)
+	{
+		constexpr size_t kPngSignatureSize = 8;
+		constexpr size_t kChunkTypeOffset = 4;
+		constexpr size_t kChunkOverhead = 12;  // length + type + CRC
+
+		std::error_code ec;
+		const auto fileSize = std::filesystem::file_size(path, ec);
+		if (ec) {
+			return false;
+		}
+		std::string data(fileSize, '\0');
+		{
+			std::ifstream file(path, std::ios::binary);
+			if (!file.read(data.data(), static_cast<std::streamsize>(data.size()))) {
+				return false;
+			}
+		}
+
+		for (size_t offset = kPngSignatureSize; offset + kChunkOverhead <= data.size();) {
+			uint32_t length;
+			std::memcpy(&length, &data[offset], sizeof(length));
+			const size_t chunkSize = kChunkOverhead + _byteswap_ulong(length);
+			const auto* type = &data[offset + kChunkTypeOffset];
+			// cICP must precede IDAT, so stop there.
+			if (offset + chunkSize > data.size() || std::memcmp(type, "IDAT", 4) == 0) {
+				return false;
+			}
+			if (std::memcmp(type, "cICP", 4) == 0) {
+				data.erase(offset, chunkSize);
+				return Util::FileHelpers::WriteFileAtomically(path, data, "HDR screenshot");
+			}
+			offset += chunkSize;
+		}
+		return false;
+	}
+
 	bool SaveSdrScreenshot(
 		DirectX::ScratchImage& image,
 		const std::filesystem::path& outputPath,
@@ -739,6 +790,8 @@ void ScreenshotFeature::LoadSettings(json& a_json)
 		hdrPngBitDepth = std::clamp<unsigned int>(a_json["HdrPngBitDepth"], 7u, 16u);
 	if (a_json.contains("HdrUseAvif") && a_json["HdrUseAvif"].is_boolean())
 		hdrUseAvif = a_json["HdrUseAvif"];
+	if (a_json.contains("FixDiscordHdr") && a_json["FixDiscordHdr"].is_boolean())
+		fixDiscordHdr = a_json["FixDiscordHdr"];
 	if (a_json.contains("SdrUsePng"))
 		sdrUsePng = a_json["SdrUsePng"];
 	if (a_json.contains("CopyToClipboard"))
@@ -756,6 +809,7 @@ void ScreenshotFeature::SaveSettings(json& a_json)
 	a_json["ApplyCropToScreenshot"] = applyCropToScreenshot;
 	a_json["HdrPngBitDepth"] = hdrPngBitDepth;
 	a_json["HdrUseAvif"] = hdrUseAvif;
+	a_json["FixDiscordHdr"] = fixDiscordHdr;
 	a_json["SdrUsePng"] = sdrUsePng;
 	a_json["CopyToClipboard"] = copyToClipboard;
 	a_json["DisableVanillaScreenshot"] = disableVanillaScreenshot;
@@ -797,6 +851,12 @@ void ScreenshotFeature::DrawSettings()
 					"%s", T(TKEY("hdr_bit_depth_tooltip"),
 							  "Quantization for the 48 bpp RGB PNG payload. 11-bit is a good default; "
 							  "higher values increase file size with diminishing returns."));
+			ImGui::Checkbox(T(TKEY("fix_discord_hdr"), "Fix Discord HDR screenshots"), &fixDiscordHdr);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text(
+					"%s", T(TKEY("fix_discord_hdr_tooltip"),
+							  "Removes the cICP tag from HDR PNGs, which Discord misreads and shows washed out.\n"
+							  "The embedded ICC profile still describes the HDR colour space."));
 		}
 	} else {
 		ImGui::TextWrapped("%s",
@@ -878,15 +938,11 @@ void ScreenshotFeature::DrawSettings()
 	DrawSequenceSettings();
 	ImGui::SeparatorText(T(TKEY("crop"), "Crop"));
 
-	// Preview reflects what Capture() would save.
+	// Preview reflects what Capture() would save; asks next frame's pre-UI hook for a snapshot.
+	previewVisible = true;
 	CaptureStateGuard guard(globals::d3d::context);
 	winrt::com_ptr<ID3D11Texture2D> previewTextureKeepAlive;
-	auto src = SelectCaptureSource(previewTextureKeepAlive, /*forCapture=*/false);
-	if (src.texture && src.uiSRV) {
-		src.texture = CompositeCapture(src.texture, src.srv, src.uiSRV);
-		src.srv = src.texture ? compositeTexture->srv.get() : nullptr;
-		src.needsPreviewCache = false;
-	}
+	const auto src = SelectCaptureSource(previewTextureKeepAlive, /*forCapture=*/false);
 
 	ID3D11ShaderResourceView* previewView = src.srv;
 	if (src.texture && (src.needsPreviewCache || !previewView)) {
@@ -1073,7 +1129,7 @@ void ScreenshotFeature::EnsurePreviewCache(ID3D11Texture2D* sourceTexture)
 
 void ScreenshotFeature::Reset()
 {
-	if (previewCacheTexture && !Menu::GetSingleton()->IsEnabled) {
+	if (previewCacheTexture && !Menu::GetSingleton()->IsOpen()) {
 		previewCacheSRV = nullptr;
 		previewCacheTexture = nullptr;
 	}
@@ -1090,6 +1146,49 @@ bool ScreenshotFeature::RequestCapture(CaptureRequest request)
 	return true;
 }
 
+void ScreenshotFeature::SnapshotCleanScene()
+{
+	const bool previewWanted = std::exchange(previewVisible, false);
+	if (!loaded || globals::game::isVR || IsFlatHdrScreenshotCapture() || !globals::game::renderer)
+		return;
+	bool requestWanted = false;
+	{
+		std::lock_guard lock(pendingRequestMutex);
+		requestWanted = pendingRequest && pendingRequest->excludeUi;
+	}
+	if (!(captureRequested || requestWanted || previewWanted))
+		return;
+
+	winrt::com_ptr<ID3D11Texture2D> sceneKeepAlive;
+	auto* scene = globals::features::upscaling.d3d12SwapChainActive ?
+	                  ResolveDisplayedBackBuffer(sceneKeepAlive) :
+	                  ResolveSlotTexture(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER], sceneKeepAlive);
+	if (!scene)
+		return;
+
+	D3D11_TEXTURE2D_DESC desc{};
+	scene->GetDesc(&desc);
+	if (!cleanSceneTexture || cleanSceneTexture->desc.Width != desc.Width || cleanSceneTexture->desc.Height != desc.Height || cleanSceneTexture->desc.Format != desc.Format) {
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.SampleDesc.Count = 1;
+		desc.SampleDesc.Quality = 0;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = 0;
+		desc.CPUAccessFlags = 0;
+		desc.MiscFlags = 0;
+		cleanSceneTexture = std::make_unique<Texture2D>(desc, "Screenshot::CleanScene");
+	}
+	CS_GPU_PASS("Screenshot::CleanScene");
+	globals::d3d::context->CopyResource(cleanSceneTexture->resource.get(), scene);
+	cleanSceneFrame = globals::state->frameCount;
+}
+
+ID3D11Texture2D* ScreenshotFeature::GetFreshCleanScene() const
+{
+	return cleanSceneTexture && cleanSceneFrame == globals::state->frameCount ? cleanSceneTexture->resource.get() : nullptr;
+}
+
 void ScreenshotFeature::ProcessCaptureRequest()
 {
 	ProcessPendingReadbacks();
@@ -1104,6 +1203,12 @@ void ScreenshotFeature::ProcessCaptureRequest()
 		std::lock_guard lock(pendingRequestMutex);
 		if (sequenceCapture && sequenceCapture->IsActive())
 			return;
+		const bool cleanRequested = pendingRequest ? pendingRequest->excludeUi : captureRequested.load();
+		if (cleanRequested && !globals::game::isVR && !IsFlatHdrScreenshotCapture() && !GetFreshCleanScene() && !captureDeferred) {
+			captureDeferred = true;
+			return;
+		}
+		captureDeferred = false;
 		request.swap(pendingRequest);
 		stillRequested = request.has_value() || captureRequested.exchange(false);
 		if (stillRequested)
@@ -1280,6 +1385,10 @@ void ScreenshotFeature::ScreenshotWorkerLoop()
 				screenshot.saveAsHdrAvif ? "HDR AVIF" : (screenshot.saveAsHdrPng ? "HDR PNG" : "SDR"));
 		}
 
+		if (saveOk && screenshot.saveAsHdrPng && screenshot.fixDiscordHdr && !StripPngCicpChunk(screenshot.outputPath)) {
+			logger::warn("Failed to strip cICP chunk from HDR PNG for Discord.");
+		}
+
 		if (saveOk) {
 			CopySavedPathToClipboard(screenshot.copyToClipboard, screenshot.outputPath);
 		}
@@ -1413,6 +1522,7 @@ void ScreenshotFeature::Capture(std::optional<CaptureRequest> request)
 	screenshot.saveAsHdrAvif = saveAsHdrAvif;
 	screenshot.saveAsSdrPng = saveAsSdrPng;
 	screenshot.hdrPngBitDepth = static_cast<int>(hdrPngBitDepth);
+	screenshot.fixDiscordHdr = fixDiscordHdr;
 	screenshot.outputPath = request ? request->outputPath : BuildScreenshotPath(screenshotPath, saveAsHdrAvif ? ".avif" : (saveAsHdrPng || saveAsSdrPng ? ".png" : ".bmp"));
 	screenshot.copyToClipboard = copyToClipboard && !request;
 	screenshot.silent = request.has_value();

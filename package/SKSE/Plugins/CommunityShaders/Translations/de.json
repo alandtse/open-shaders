@@ -362,7 +362,6 @@
     "cs_editor.scene_restore_preset_value": "Preset-Wert wiederherstellen",
     "cs_editor.scene_setting_named_preset_hint": "Orange: Scene-Manager-Einstellung aus einer Voreinstellung ({}).",
     "cs_editor.scene_setting_preset_hint": "Orange: Scene-Manager-Einstellung aus einer Voreinstellung.",
-    "cs_editor.search_clear": "Suche leeren",
     "cs_editor.search_settings_hint": "",
     "cs_editor.select_weather": "Wetter auswählen",
     "cs_editor.session_history": "",
@@ -3747,7 +3746,6 @@
     "menu.issues.cancel": "",
     "menu.issues.cannot_be_undone": "",
     "menu.issues.check_modified_files": "",
-    "menu.issues.cleanup_actions": "",
     "menu.issues.clear_issue_list": "",
     "menu.issues.clear_issue_list_tooltip": "",
     "menu.issues.compilation_breaking_desc": "",
@@ -4257,5 +4255,7 @@
     "ui.vr.color_coding_primary": "",
     "ui.vr.color_coding_secondary": "",
     "ui.vr.primary_controller": "",
-    "ui.vr.secondary_controller": ""
+    "ui.vr.secondary_controller": "",
+    "cs_editor.search_clear": "Suche leeren",
+    "menu.issues.cleanup_actions": ""
 }

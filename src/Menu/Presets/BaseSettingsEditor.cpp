@@ -105,7 +105,7 @@ namespace
 	{
 		std::vector<FeatureExport> features;
 		size_t viewed = 0;
-		char search[kSearchBufferSize]{};
+		std::string search;
 		std::optional<size_t> group;
 		bool inFileOnly = false;
 		bool removeUnticked = false;
@@ -316,7 +316,7 @@ namespace
 	/** @brief Search, a chip per group, and the in-file toggle. */
 	void DrawSettingFilters(const FeatureExport& entry)
 	{
-		BrowserUI::SearchField("##search", session.search, sizeof(session.search), T("ui.search", "Search..."),
+		Util::SearchField("##search", session.search, T("ui.search", "Search..."),
 			ImGui::GetFontSize() * kSearchWidthEm, true);
 		if (entry.groups.size() > 1) {
 			ImGui::PushID("groups");

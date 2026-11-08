@@ -44,7 +44,8 @@ Texture2D<float4> srcPrevY : register(t5);             // maybe half-res
 Texture2D<float2> srcPrevCoCg : register(t6);          // maybe half-res
 Texture2D<float4> srcPrevGISpecular : register(t7);    // maybe half-res
 Texture2D<float2> srcNormal : register(t8);
-Texture2D<uint> srcMode : register(t9);  // VRStereoOptimizations' per-pixel classification; unbound unless UseModeTexture
+Texture2D<unorm float> srcPrevAo : register(t9);  // maybe half-res
+Texture2D<uint> srcMode : register(t10);          // VRStereoOptimizations' per-pixel classification; unbound unless UseModeTexture
 
 RWTexture2D<unorm float> outAo : register(u0);
 RWTexture2D<float4> outY : register(u1);
@@ -119,7 +120,7 @@ void CalculateGI(
 	// Use mono screen-space position for noise indexing so both eyes
 	// sample the same noise for corresponding world positions.
 	uint2 noiseCoord = uint2(normalizedScreenPos * OUT_FRAME_DIM);
-	const float2 localNoise = SpatioTemporalNoise(noiseCoord, FrameIndex);
+	const float2 localNoise = SpatioTemporalNoise(noiseCoord, SharedData::FrameCount);
 	const float noiseSlice = localNoise.x;
 	const float noiseStep = localNoise.y;
 
@@ -443,6 +444,7 @@ void CalculateGI(
 #ifdef TEMPORAL_DENOISER
 		float lerpFactor = rcp(srcAccumFrames[pxCoord] * 255);
 
+		float prevAo = srcPrevAo[pxCoord];
 		float4 prevY = srcPrevY[pxCoord];
 		float2 prevCoCg = srcPrevCoCg[pxCoord];
 
@@ -453,24 +455,43 @@ void CalculateGI(
 		// so the marginal bounding effect doesn't justify the bandwidth.
 		[branch] if (lerpFactor >= 0.15)
 		{
-			float4 yL = srcPrevY[pxCoord + int2(-1, 0)];
-			float4 yR = srcPrevY[pxCoord + int2(1, 0)];
-			float4 yU = srcPrevY[pxCoord + int2(0, -1)];
-			float4 yD = srcPrevY[pxCoord + int2(0, 1)];
-			float2 cL = srcPrevCoCg[pxCoord + int2(-1, 0)];
-			float2 cR = srcPrevCoCg[pxCoord + int2(1, 0)];
-			float2 cU = srcPrevCoCg[pxCoord + int2(0, -1)];
-			float2 cD = srcPrevCoCg[pxCoord + int2(0, 1)];
+			int2 historyMin = int2(0, 0);
+			int2 historyMax = int2(OUT_FRAME_DIM) - 1;
+#	ifdef VR
+			int eyeWidth = int(OUT_FRAME_DIM.x) / 2;
+			historyMin.x = int(eyeIndex) * eyeWidth;
+			historyMax.x = historyMin.x + eyeWidth - 1;
+#	endif
+			int2 historyLeft = clamp(int2(pxCoord) + int2(-1, 0), historyMin, historyMax);
+			int2 historyRight = clamp(int2(pxCoord) + int2(1, 0), historyMin, historyMax);
+			int2 historyUp = clamp(int2(pxCoord) + int2(0, -1), historyMin, historyMax);
+			int2 historyDown = clamp(int2(pxCoord) + int2(0, 1), historyMin, historyMax);
+			float4 yL = srcPrevY[historyLeft];
+			float4 yR = srcPrevY[historyRight];
+			float4 yU = srcPrevY[historyUp];
+			float4 yD = srcPrevY[historyDown];
+			float2 cL = srcPrevCoCg[historyLeft];
+			float2 cR = srcPrevCoCg[historyRight];
+			float2 cU = srcPrevCoCg[historyUp];
+			float2 cD = srcPrevCoCg[historyDown];
+			float aL = srcPrevAo[historyLeft];
+			float aR = srcPrevAo[historyRight];
+			float aU = srcPrevAo[historyUp];
+			float aD = srcPrevAo[historyDown];
 
+			float nMinAo = min(min(min(aL, aR), min(aU, aD)), currAo);
+			float nMaxAo = max(max(max(aL, aR), max(aU, aD)), currAo);
 			float4 nMinY = min(min(min(yL, yR), min(yU, yD)), currY);
 			float4 nMaxY = max(max(max(yL, yR), max(yU, yD)), currY);
 			float2 nMinCoCg = min(min(min(cL, cR), min(cU, cD)), currCoCg);
 			float2 nMaxCoCg = max(max(max(cL, cR), max(cU, cD)), currCoCg);
 
+			prevAo = clamp(prevAo, nMinAo, nMaxAo);
 			prevY = clamp(prevY, nMinY, nMaxY);
 			prevCoCg = clamp(prevCoCg, nMinCoCg, nMaxCoCg);
 		}
 
+		currAo = lerp(prevAo, currAo, lerpFactor);
 		currY = lerp(prevY, currY, lerpFactor);
 		currCoCg = lerp(prevCoCg, currCoCg, lerpFactor);
 #	ifdef GI_SPECULAR

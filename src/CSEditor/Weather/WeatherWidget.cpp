@@ -1024,9 +1024,9 @@ void WeatherWidget::DrawCloudSettings()
 		bool layerOpen = ImGui::CollapsingHeader(std::format("{}###{}", layerLabel, layerId).c_str(), flags);
 		if (isTarget) {
 			ImGui::PopStyleColor(3);
-			if (scrollToHighlighted) {
+			if (auto& view = View(); view.scrollToHighlighted) {
 				ImGui::SetScrollHereY(0.5f);
-				scrollToHighlighted = false;
+				view.scrollToHighlighted = false;
 			}
 		}
 

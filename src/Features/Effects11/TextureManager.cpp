@@ -161,6 +161,7 @@ void TextureManager::CreateDownsampleResources()
 	samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 
 	DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, linearSampler.put()));
+	Util::SetResourceName(linearSampler.get(), "TextureManager::LinearSampler");
 
 	// Create downsample vertex shader
 	downsampleVS.attach(static_cast<ID3D11VertexShader*>(
@@ -170,6 +171,8 @@ void TextureManager::CreateDownsampleResources()
 		return;
 	}
 
+	Util::SetResourceName(downsampleVS.get(), "TextureManager::DownsampleVS");
+
 	// Create downsample pixel shader
 	downsamplePS.attach(static_cast<ID3D11PixelShader*>(
 		Util::CompileShader(L"Data\\Shaders\\Effects11\\DownsamplePS.hlsl", {}, "ps_5_0")));
@@ -177,6 +180,8 @@ void TextureManager::CreateDownsampleResources()
 		logger::error("[TextureManager] Downsample pixel shader compilation failed");
 		return;
 	}
+
+	Util::SetResourceName(downsamplePS.get(), "TextureManager::DownsamplePS");
 
 	// Create shared downsample texture
 	sharedDownsampleTexture = CreateDownsampleTexture(DXGI_FORMAT_R11G11B10_FLOAT);

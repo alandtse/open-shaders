@@ -1110,7 +1110,7 @@ void SceneSettingsUI::DrawStandalonePage()
 		const Util::DisableGuard disabled(!PresetExportPanel::CanExport());
 		const auto style = Util::TransparentIconButtonStyle();
 		const float size = ImGui::GetFrameHeight();
-		if (Icons::Button("##ExportPreset", SceneActionIcons::kExport, ImVec2(size, size)))
+		if (Util::LabeledButton("##ExportPreset", SceneActionIcons::kExport, ImVec2(size, size)))
 			PresetExportPanel::Open();
 		Util::AddTooltip(T("cs_editor.export_preset", "Export Preset..."), Util::kTooltipWhenDisabled);
 	}

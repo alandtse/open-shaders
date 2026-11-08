@@ -67,8 +67,8 @@ namespace Util::Surface
 			return "OverlayCard";
 		case Role::Palette:
 			return "Palette";
-		case Role::NavSelected:
-			return "NavSelected";
+		case Role::ListHighlight:
+			return "NavSelected";  // Saved themes key it by its old name
 		case Role::OptionCard:
 			return "OptionCard";
 		case Role::SectionCard:
@@ -105,8 +105,8 @@ namespace Util::Surface
 		case Role::Palette:
 			s.shadow = false;
 			break;
-		case Role::NavSelected:
-			s.fillAlpha = Constants::NAV_SELECTED_FILL_ALPHA;
+		case Role::ListHighlight:
+			s.fillAlpha = Constants::LIST_HIGHLIGHT_FILL_ALPHA;
 			break;
 		default:
 			break;
@@ -224,8 +224,51 @@ namespace Util::Surface
 		           alpha;
 	}
 
+	void DrawListHighlight(ImDrawList* drawList, const ImVec2& min, const ImVec2& max, float visibility, float selectedness, float press)
+	{
+		const RoleSettings& s = Get(Role::ListHighlight);
+		if (!s.enabled || visibility <= 0.0f)
+			return;
+		ImRect bounds(min, max);
+		bounds.ClipWithFull(ImGui::GetCurrentWindow()->InnerClipRect);
+		if (bounds.GetWidth() <= 0.0f || bounds.GetHeight() <= 0.0f)
+			return;
+		drawList->PushClipRect(bounds.Min, bounds.Max, true);
+		const SKSE::stl::scope_exit restoreClip([&] { drawList->PopClipRect(); });
+
+		const ImVec4 accent = Colors::GetAccent();
+		const float darken = (1.0f - (1.0f - Constants::LIST_HIGHLIGHT_SELECTED_DARKEN) * selectedness) *
+		                     (1.0f - (1.0f - Constants::LIST_HIGHLIGHT_PRESS_DARKEN) * press);
+		const float strength = (Constants::LIST_HIGHLIGHT_HOVER_RATIO + (1.0f - Constants::LIST_HIGHLIGHT_HOVER_RATIO) * selectedness) *
+		                       (1.0f + (Constants::LIST_HIGHLIGHT_PRESS_BOOST - 1.0f) * press);
+		drawList->AddRectFilled(min, max,
+			ImGui::GetColorU32(ImVec4(accent.x * darken, accent.y * darken, accent.z * darken, std::min(1.0f, FillOpacity(s.fillAlpha * strength) * visibility))),
+			ImGui::GetStyle().FrameRounding);
+		const float barWidth = ListHighlightBarWidth();
+		if (s.accentBar && barWidth > 0.0f && selectedness > 0.0f) {
+			const float inset = (max.y - min.y) * Constants::LIST_HIGHLIGHT_BAR_INSET;
+			drawList->AddRectFilled(ImVec2(min.x, min.y + inset), ImVec2(min.x + barWidth, max.y - inset),
+				ImGui::GetColorU32(Anim::ScaleAlpha(accent, selectedness * visibility)), barWidth * 0.5f);
+		}
+	}
+
+	float ListHighlightBarWidth()
+	{
+		return Get(Role::ListHighlight).accentBarWidth * GetUIScale();
+	}
+
+	float ListHighlightTextInset()
+	{
+		return std::max(ImGui::GetStyle().FramePadding.x, ListHighlightBarWidth());
+	}
+
 	void Draw(ImDrawList* drawList, const ImVec2& min, const ImVec2& max, Role role, const Options& options)
 	{
+		if (role == Role::ListHighlight) {
+			DrawListHighlight(drawList, min, max, options.alpha);
+			return;
+		}
+
 		const RoleSettings& s = Get(role);
 		if (!s.enabled)
 			return;

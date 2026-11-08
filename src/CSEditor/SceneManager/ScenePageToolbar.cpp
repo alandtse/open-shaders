@@ -5,7 +5,6 @@
 #include <string>
 
 #include "../../I18n/I18n.h"
-#include "../Browser/BrowserWidgets.h"
 #include "Menu/Icons/helpers/IconFonts.h"
 #include "Menu/Icons/helpers/SceneActionIcons.h"
 #include "SceneCopyModal.h"
@@ -29,13 +28,15 @@ namespace
 	/// Divider that keeps the transition label from reading as part of the control before the toolbar.
 	float DividerThickness() { return ThemeManager::Constants::SEPARATOR_THICKNESS * Util::GetUIScale(); }
 
-	/// Clear is page-local, so each page keys its own confirmation and only that page draws it.
+	/// Clear is page-local, so each page keys its own confirmation. Windows can show the same page,
+	/// so only the requesting window draws it: the popup opens under that window's ID stack.
 	struct PageConfirmation
 	{
 		void Request(const SceneContextId& a_page, std::string_view a_feature)
 		{
 			context = a_page;
 			feature = a_feature;
+			requestingWindow = ImGui::GetCurrentWindow()->RootWindow->ID;
 			requested = true;
 			popup.Request();
 		}
@@ -45,7 +46,7 @@ namespace
 		template <typename Action>
 		void Draw(const SceneContextId& a_page, std::string_view a_feature, Action&& a_confirmed)
 		{
-			if (!requested || context != a_page || feature != a_feature)
+			if (!requested || context != a_page || feature != a_feature || requestingWindow != ImGui::GetCurrentWindow()->RootWindow->ID)
 				return;
 			if (popup.Draw())
 				a_confirmed();
@@ -57,6 +58,7 @@ namespace
 		Util::ConfirmationPopup popup;
 		SceneContextId context;
 		std::string feature;
+		ImGuiID requestingWindow = 0;
 		bool requested = false;
 	};
 	PageConfirmation clearConfirmation;
@@ -97,7 +99,7 @@ namespace
 		                                      SceneTransitionField::GetWidth() + style.ItemSpacing.x :
 		                                  0.0f;
 		// Pause, copy, and clear, each set apart by a divider.
-		return BrowserUI::IconButtonSize() * 3.0f + transitionWidth + CompactDividerWidth() * 2.0f;
+		return Util::IconButtonSize() * 3.0f + transitionWidth + CompactDividerWidth() * 2.0f;
 	}
 
 	/// Right-aligns a toolbar of a_width, moving it to its own row when the current one cannot hold it.
@@ -149,7 +151,7 @@ namespace
 											featureShortName.empty() ? T(TKEY("scene_page_resume_all_tooltip"), "Applies every override on this page again.") :
 																	   T(TKEY("scene_feature_resume_tooltip"), "Applies your overrides for this feature in the selected scene again."));
 		ImGui::BeginDisabled(a_summary.total == 0);
-		if (BrowserUI::IconButton("##ScenePageToggle", pauseTarget ? SceneActionIcons::kPause : SceneActionIcons::kResume,
+		if (Util::IconButton("##ScenePageToggle", pauseTarget ? SceneActionIcons::kPause : SceneActionIcons::kResume,
 				tooltip.c_str(), !pauseTarget))
 			a_manager.SetContextEntriesPaused(a_context, pauseTarget, featureShortName);
 		ImGui::EndDisabled();
@@ -165,7 +167,7 @@ namespace
 										   "preview before anything changes.") :
 									   T(TKEY("scene_feature_copy_tooltip"), "Copies only this feature's settings between scenes, with a preview before anything changes."));
 		ImGui::BeginDisabled(!a_hasEntries && !SceneCopyModal::HasSources(a_context, featureShortName));
-		if (BrowserUI::IconButton("##ScenePageCopy", SceneActionIcons::kCopy, tooltip.c_str()))
+		if (Util::IconButton("##ScenePageCopy", SceneActionIcons::kCopy, tooltip.c_str()))
 			SceneCopyModal::Open(a_context, featureShortName);
 		ImGui::EndDisabled();
 	}
@@ -179,8 +181,8 @@ namespace
 			featureShortName.empty() ? T(TKEY("scene_page_clear_tooltip"), "Removes every override this page holds.") :
 									   T(TKEY("scene_feature_clear_tooltip"), "Removes your overrides for this feature in the selected scene. Mod overrides are left alone."));
 		ImGui::BeginDisabled(a_summary.total == 0);
-		if (BrowserUI::IconButton("##ScenePageClear", SceneActionIcons::kDelete, tooltip.c_str(), false,
-				BrowserUI::DestructiveIconColor())) {
+		if (Util::IconButton("##ScenePageClear", SceneActionIcons::kDelete, tooltip.c_str(), false,
+				Util::DestructiveIconColor())) {
 			auto count = a_summary.total;
 			auto pageName = a_manager.GetSceneContextDisplayName(a_context);
 			if (!featureShortName.empty())

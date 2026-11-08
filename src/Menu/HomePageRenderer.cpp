@@ -79,7 +79,7 @@ namespace
 																  { { "count", std::to_string(count) } }, "{count} Base Settings presets enabled")
 											  .c_str());
 		ImGui::Spacing();
-		if (Icons::LabeledButton("##BrowsePresets", Icons::TI(MenuIcons::kPresets), T("menu.home.browse_presets", "Browse presets")))
+		if (Util::LabeledButton("##BrowsePresets", Icons::TI(MenuIcons::kPresets), T("menu.home.browse_presets", "Browse presets")))
 			globals::menu->SelectFeatureMenu(std::string(MenuPageIds::kPresets));
 		bool automatic = catalog.GetAutomaticPresets();
 		ImGui::BeginGroup();
@@ -119,7 +119,7 @@ namespace
 		const auto* profiling = T("menu.features.profiling", "Profiling");
 		const auto& style = ImGui::GetStyle();
 		const float presetWidth = ImGui::CalcTextSize(profile.c_str()).x + style.FramePadding.x * 2.0f;
-		const float buttonsWidth = Icons::MeasureLabeledButton(Icons::TI(MenuIcons::kProfiling), profiling) + style.ItemSpacing.x + presetWidth;
+		const float buttonsWidth = Util::MeasureLabeledButton(Icons::TI(MenuIcons::kProfiling), profiling) + style.ItemSpacing.x + presetWidth;
 		const float footerHeight = ImGui::GetFrameHeightWithSpacing() * (buttonsWidth > ImGui::GetContentRegionAvail().x ? 2.0f : 1.0f);
 		const float graphHeight = std::max(ImGui::GetTextLineHeightWithSpacing() * ThemeManager::Constants::HOME_GRAPH_LINES,
 			cardHeight - ImGui::GetCursorPosY() - ImGui::GetCurrentWindow()->WindowPadding.y - footerHeight);
@@ -131,7 +131,7 @@ namespace
 				globals::menu->SelectFeatureMenu(std::string(MenuPageIds::kProfiling), "profiling");
 		}
 		ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), footerY));
-		if (Icons::LabeledButton("##OpenProfiling", Icons::TI(MenuIcons::kProfiling), profiling))
+		if (Util::LabeledButton("##OpenProfiling", Icons::TI(MenuIcons::kProfiling), profiling))
 			globals::menu->SelectFeatureMenu(std::string(MenuPageIds::kProfiling), "profiling");
 		BrowserUI::SameLineIfFits(presetWidth);
 		if (Util::Button(profile.c_str(), ImVec2(presetWidth, ImGui::GetFrameHeight())))
@@ -157,7 +157,7 @@ namespace
 														 { { "status", cache->IsDiskCacheActive() ? T("common.active", "Active") : T("common.inactive", "Inactive") } }, "Disk cache: {status}")
 									 .c_str());
 		ImGui::Spacing();
-		if (Icons::LabeledButton("##ShaderSettings", Icons::TI(MenuIcons::kShaders), T("menu.settings.nav_shaders_cache", "Shaders & Cache")))
+		if (Util::LabeledButton("##ShaderSettings", Icons::TI(MenuIcons::kShaders), T("menu.settings.nav_shaders_cache", "Shaders & Cache")))
 			SettingsPageRenderer::OpenSection(SettingsSectionIds::kShadersCache);
 	}
 
@@ -200,7 +200,7 @@ namespace
 		}
 		ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.home.frame_generation", { { "status", frameGeneration } }, "Frame generation: {status}").c_str());
 		ImGui::Spacing();
-		if (Icons::LabeledButton("##Upscaling", Icons::TI(ICON_TI_DEVICE_DESKTOP), T("feature.upscaling.name", "Upscaling")))
+		if (Util::LabeledButton("##Upscaling", Icons::TI(ICON_TI_DEVICE_DESKTOP), T("feature.upscaling.name", "Upscaling")))
 			globals::menu->SelectFeatureMenu(globals::features::upscaling.GetShortName());
 	}
 
@@ -215,7 +215,7 @@ namespace
 		                                                                              T("menu.home.runtime_se", "Special Edition (SE)");
 		Util::Text::WrappedDisabled("%s", I18n::GetSingleton()->Format("menu.home.runtime", { { "runtime", runtime } }, "Runtime: {runtime}").c_str());
 		ImGui::Spacing();
-		if (Icons::LabeledButton("##Keybindings", Icons::TI(MenuIcons::kSettings), T("menu.settings.nav_keybindings", "Keybindings")))
+		if (Util::LabeledButton("##Keybindings", Icons::TI(MenuIcons::kSettings), T("menu.settings.nav_keybindings", "Keybindings")))
 			SettingsPageRenderer::OpenSection(SettingsSectionIds::kKeybindings);
 	}
 	void DrawFAQAnswer(const char* text)
@@ -307,7 +307,7 @@ void HomePageRenderer::RenderHomePage()
 			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + buttonX - ImGui::GetCursorScreenPos().x);
 			auto statusStyle = Util::TransparentIconButtonStyle();
 			ImGui::PushStyleColor(ImGuiCol_Text, needsAttention ? Util::Colors::GetError() : Util::Colors::GetSuccess());
-			const bool clicked = Icons::LabeledButton("##Attention", Icons::TI(needsAttention ? MenuIcons::kIssues : ICON_TI_CIRCLE_CHECK), status, ImVec2(0, 0), true);
+			const bool clicked = Util::LabeledButton("##Attention", Icons::TI(needsAttention ? MenuIcons::kIssues : ICON_TI_CIRCLE_CHECK), status, ImVec2(0, 0), true);
 			ImGui::PopStyleColor();
 			if (clicked || attentionRequested)
 				ImGui::OpenPopup("##NeedsAttention");
@@ -376,8 +376,10 @@ void HomePageRenderer::RenderHomePage()
 		ImGui::SetNextWindowSize(popupSize, ImGuiCond_Appearing);
 		if (ImGui::BeginPopup("##NeedsAttention")) {
 			DashboardTitle(T("menu.home.needs_attention", "Needs attention"));
-			if (featureIssues > 0)
+			if (featureIssues > 0) {
+				BrowserUI::HelpMarkerRight(FeatureIssues::GetCleanupGuide().c_str());
 				FeatureIssues::DrawFeatureIssuesUI();
+			}
 			if (cache->GetFailedTasks() > 0)
 				ImGui::TextWrapped("%s", T("menu.home.shader_failure_hint", "Some shaders failed to compile. Open Shaders & Cache for details and check the game log."));
 			RenderWrongRuntimeCacheSection();
@@ -989,9 +991,9 @@ void HomePageRenderer::MarkFirstTimeSetupComplete()
 	// Ensure we are not capturing a hotkey when closing the dialog
 	menu->settingToggleKey = false;
 
-	// Immediately save settings to ensure the flag is persisted
-	// This prevents the welcome screen from showing again even if user doesn't manually save
-	globals::state->Save();
+	// Saved at once so the welcome screen cannot return, with the hotkeys it sets
+	constexpr std::array<std::string_view, 3> setupSettings{ "/Menu/FirstTimeSetupCompleted", "/Menu/ToggleKey", "/Menu/CSEditorToggleKey" };
+	globals::state->SaveCoreSettings(setupSettings);
 
 	isFirstTimeSetupShown = true;
 }

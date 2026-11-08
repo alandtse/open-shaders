@@ -15,6 +15,7 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <span>
+#include <string_view>
 
 using json = nlohmann::json;
 
@@ -94,6 +95,7 @@ public:
 	// Frame time tracking per shader type (in milliseconds)
 	float frameTimePerType[RE::BSShader::Type::Total + 1];        ///< Per-type frame time in milliseconds.
 	float smoothFrameTimePerType[RE::BSShader::Type::Total + 1];  ///< EMA-smoothed per-type frame time in milliseconds.
+	float smoothPresentTimeMs = 0.0f;                             ///< EMA-smoothed CPU time blocked in Present, in milliseconds.
 
 	// Timing state for per-type frame time tracking using QueryPerformanceCounter
 	LARGE_INTEGER frameTimingFrequency;
@@ -240,6 +242,23 @@ public:
 	 * @param i_json Input JSON object to read from.
 	 */
 	void LoadFromJson(nlohmann::json& i_json);
+
+	/** @brief Core settings, as JSON pointers into the user config, that save themselves when the menu closes and
+	 *  never count as unsaved. */
+	static constexpr std::array<std::string_view, 5> SELF_SAVING_SETTINGS = {
+		"/Menu/RecentFeatures", "/Menu/LastSettingsSection", "/Menu/FeatureListSort", "/Menu/SkipConstraintWarning",
+		"/Menu/SkipClearCacheConfirmation"
+	};
+
+	/**
+	 * @brief Saves the named core settings that differ from the last save in one write, without a full Save.
+	 * @param paths JSON pointers into the user config naming core settings, e.g. "/Menu/RecentFeatures".
+	 * @return True when nothing differed or the write succeeded.
+	 */
+	bool SaveCoreSettings(std::span<const std::string_view> paths);
+
+	/** @brief Revision of cached personal edits for menu result counts. */
+	std::uint64_t GetUserEditsRevision() const { return userEditsRevision; }
 
 	/** @brief Loads the active theme preset from the menu settings. */
 	void LoadTheme();
@@ -808,12 +827,17 @@ private:
 	std::unordered_map<std::string, bool> baselineOverlapCache;
 	std::uint64_t baselineOverlapCatalogRevision = UINT64_MAX;
 	void MarkSettingsSaved(bool captureApplied = false);
+	/** @brief Serializes core settings while the caller holds m_mutex. */
+	void SaveCoreToJson(json& settings);
+	/** @brief Captures core settings without serializing live feature values. */
+	json CaptureCoreSettings();
 	json BuildSettingsSnapshot();
 	json savedSettingsSnapshot;
 	void CaptureSavedSettingsFields(const json& document);
 	std::unordered_map<std::string, std::vector<std::string>> savedFeatureFields;
 	bool hasSavedUserSettings = false;
 	bool settingsChanged = false;
+	std::uint64_t userEditsRevision = 0;
 	std::unordered_map<std::string, bool> favoriteFeatures;
 	bool SaveFeaturePreference(const json& patch, bool trackInSnapshot = true);
 	json defaultSettingsBaseline;

@@ -151,6 +151,9 @@ namespace FeatureIssues
 	 */
 	void DrawFeatureIssuesUI();
 
+	/** @brief Shared cleanup guidance for feature issue views. */
+	std::string GetCleanupGuide();
+
 	/**
 	 * Delete feature directory and related files safely
 	 *

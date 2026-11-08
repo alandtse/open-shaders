@@ -29,6 +29,7 @@
 #include "Features/LightLimitFix.h"
 #include "Features/PostProcessing.h"
 #include "Features/RainRefraction.h"
+#include "Features/RemoteControl/FrameRecorder.h"
 #include "Features/RemoteControl/NvPerf.h"
 #include "Features/ScreenshotFeature.h"
 #include "Features/Skin.h"
@@ -452,6 +453,8 @@ namespace WeatherExtensions
 					// compound on every call Sky has not recomputed colors for.
 					Effects11::DirectionalAmbientColors overridden = DirectionalAmbientColors;
 					effects11.OverrideAmbientLighting(overridden);
+					if (auto* sky = globals::game::sky; sky && &DirectionalAmbientColors.directionalAmbientColors[0][0] == &sky->directionalAmbientColors[0][0])
+						effects11.BlendGradedAmbient(sky, overridden);
 					effects11.vanillaAmbientCache = DirectionalAmbientColors;
 					effects11.gradedAmbientCache = overridden;
 					effects11.ambientSpecularTintCacheValid = AmbientSpecularTint != nullptr;
@@ -577,6 +580,8 @@ struct IDXGISwapChain_Present
 			globals::state->startupMenuBlurSourceReady = true;
 
 		globals::state->Reset();
+
+		FrameRecorder::OnPresentEnd();
 
 		NvPerf::OnPresentEnd();
 
@@ -725,6 +730,7 @@ struct BSShaderRenderTargets_Create
 		// its 3 per-site thunks override props for the displayRes RTs.
 		auto& perfMode = globals::features::upscaling.perfMode;
 		perfMode.BeginCreateRTEnlarge();
+		Feature::ForEachLoadedFeature("PreCreateRenderTargets", [](Feature* feature) { feature->PreCreateRenderTargets(); });
 		func();
 		perfMode.EndCreateRTEnlarge();
 

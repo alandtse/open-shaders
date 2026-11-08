@@ -95,6 +95,7 @@ struct Feature
 	virtual std::string GetName() = 0;
 	virtual std::string GetShortName() = 0;
 	virtual std::string GetDisplayName() { return GetName(); }
+	/** @brief Returns the localized feature category for presentation. */
 	std::string GetDisplayCategory() const;
 	virtual std::string GetFeatureModLink() { return ""; }
 	virtual std::string_view GetShaderDefineName() { return ""; }
@@ -219,6 +220,9 @@ public:
 	 * @return Pair of {description, key feature bullet points}.
 	 */
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() { return {}; }
+
+	/** @brief Applies feature-owned render-target configuration before engine allocation. */
+	virtual void PreCreateRenderTargets() {}
 
 	/** @brief Allocates GPU resources (textures, buffers) needed by this feature. */
 	virtual void SetupResources() {}
@@ -585,6 +589,9 @@ public:
 	 * Leaves failedLoadedMessage unset: an expected conflict is not a load failure, and a failure would hold the disk cache.
 	 */
 	void DisableForConflict(std::string_view a_conflict);
+	/** @brief Rewrites defaults that depend on the current settings, so a middle-click reset restores the right value.
+	 *  @param a_defaults The feature's default settings, in the shape SaveSettings writes. */
+	virtual void ApplyContextualDefaults(json& a_defaults) const { (void)a_defaults; }
 
 	/**
 	 * @brief Toggles the "disabled at boot" state for this feature.
@@ -826,7 +833,7 @@ public:
 		for (auto* feature : features) {
 			if (feature->loaded) {
 #ifdef TRACY_ENABLE
-				if (!emitCpuZone) {
+				if (!emitCpuZone || !TracyIsConnected) {
 					callback(feature);
 					continue;
 				}

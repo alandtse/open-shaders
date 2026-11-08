@@ -229,7 +229,7 @@ namespace SceneWidgetBinding
 			BaseSettings
 		};
 		/** @brief Finds this setting's value in the requested installed or default layer. */
-		const json* FindResetValue(const Component& component, ResetSource source) const;
+		const json* FindResetValue(const Component& component, ResetSource source, json& storage) const;
 		/** @brief Restores the control's components from the requested settings layer. */
 		bool ResetToSource(ResetSource source);
 		/** @brief Offers resets to the available defaults, overwrites and Base Settings presets. */
