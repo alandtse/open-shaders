@@ -2,6 +2,7 @@
 #include "Utils/FileDigest.h"
 #include <RE/T/TESDataHandler.h>
 #include <RE/T/TESObjectCELL.h>
+#include <RE/T/TESFile.h>
 #include <RE/P/PlayerCharacter.h>
 #include <RE/U/UI.h>
 #include <RE/M/MainMenu.h>
@@ -14,7 +15,8 @@
 #include <format>
 #include <span>
 #include <vector>
-
+#include <algorithm>
+#include <string_view>
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12Resources::Settings, Enabled)
 
 struct DX12Resources::ScanJob
@@ -269,6 +271,114 @@ void DX12Resources::BeginAutomaticDetection(bool mainMenu)
     } catch (const std::exception& ex) { detectionStatus = ex.what(); }
 }
 
+
+void DX12Resources::RefreshLoadedPlugins()
+{
+    loadedPlugins.clear();
+    pluginListReady = true;
+    pluginScanActive = false;
+    pluginScanCursor = 0;
+    pluginInteriors.clear();
+    chosenInterior.reset();
+    selectedPlugin.clear();
+    pluginScanStatus = "Choose a loaded plugin to enumerate its interiors";
+    if (!dataLoaded.load(std::memory_order_acquire)) return;
+    auto* handler = RE::TESDataHandler::GetSingleton();
+    if (!handler) return;
+
+    const auto add = [&](const RE::TESFile* file) {
+        if (!file) return;
+        const std::string_view name = file->GetFilename();
+        if (name.empty() || name.size() > 120) return;
+        loadedPlugins.emplace_back(name);
+    };
+    const auto* regular = handler->GetLoadedMods();
+    if (regular)
+        for (uint32_t i = 0; i < handler->GetLoadedModCount(); ++i) add(regular[i]);
+    const auto* light = handler->GetLoadedLightMods();
+    if (light)
+        for (uint32_t i = 0; i < handler->GetLoadedLightModCount(); ++i) add(light[i]);
+    std::ranges::sort(loadedPlugins, [](const std::string& a, const std::string& b) {
+        return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(),
+            [](unsigned char l, unsigned char r) { return std::tolower(l) < std::tolower(r); });
+    });
+    const auto unique = std::unique(loadedPlugins.begin(), loadedPlugins.end(),
+        [](const auto& a, const auto& b) {
+            return DX12ResourceService::SamePluginName(a, b);
+        });
+    loadedPlugins.erase(unique, loadedPlugins.end());
+}
+
+void DX12Resources::StartPluginCellScan(std::string plugin)
+{
+    selectedPlugin = std::move(plugin);
+    pluginInteriors.clear();
+    chosenInterior.reset();
+    pluginScanCursor = 0;
+    pluginScanActive = !selectedPlugin.empty();
+    pluginScanStatus = pluginScanActive ? "Scanning the selected plugin's CELL records..." :
+        "Choose a loaded plugin";
+}
+
+void DX12Resources::AdvancePluginCellScan()
+{
+    if (!pluginScanActive) return;
+    auto* handler = RE::TESDataHandler::GetSingleton();
+    if (!handler || !dataLoaded.load(std::memory_order_acquire)) {
+        pluginScanActive = false;
+        pluginScanStatus = "Skyrim's loaded CELL registry is not available";
+        return;
+    }
+    // Engine record arrays are only visited on the UI/main thread. Fixed
+    // batches avoid enumerating all CELL records in a single main-menu frame.
+    const auto& cells = handler->GetFormArray<RE::TESObjectCELL>();
+    constexpr size_t kRecordsPerFrame = 512;
+    for (size_t visited = 0; visited < kRecordsPerFrame &&
+        pluginScanCursor < cells.size(); ++visited, ++pluginScanCursor) {
+        const auto* cell = cells[pluginScanCursor];
+        if (!cell || !cell->IsInteriorCell()) continue;
+        const auto* defining = cell->GetFile(0);
+        if (!defining) continue;
+        const std::string_view owner = defining->GetFilename();
+        if (owner.empty()) continue;
+
+        bool contributed = DX12ResourceService::SamePluginName(selectedPlugin, owner);
+        // A plugin may override an existing interior rather than define it.
+        if (!contributed) {
+            const auto* sources = cell->sourceFiles.array;
+            if (sources) {
+                for (const RE::TESFile* sourceFile : *sources) {
+                    if (sourceFile && DX12ResourceService::SamePluginName(
+                        selectedPlugin, sourceFile->GetFilename())) {
+                        contributed = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!contributed) continue;
+        DX12ResourceService::PluginInteriorEntry record;
+        record.identity = { std::string(owner), cell->GetLocalFormID() };
+        const auto* editor = cell->GetFormEditorID();
+        const auto* display = cell->GetName();
+        record.editorId = editor ? editor : "";
+        record.displayName = display ? display : "";
+        record.relation = DX12ResourceService::SamePluginName(selectedPlugin, owner) ?
+            DX12ResourceService::PluginCellRelation::Defined :
+            DX12ResourceService::PluginCellRelation::Override;
+        pluginInteriors.push_back(std::move(record));
+    }
+    if (pluginScanCursor >= cells.size()) {
+        pluginScanActive = false;
+        DX12ResourceService::SortInteriorCatalog(pluginInteriors);
+        pluginScanStatus = std::format("Finished: {} interior CELLs (including overrides)",
+            pluginInteriors.size());
+    } else {
+        pluginScanStatus = std::format("Scanning CELL records: {} / {} ({} interiors found)",
+            pluginScanCursor, cells.size(), pluginInteriors.size());
+    }
+}
+
 void DX12Resources::DrawSettings()
 {
     std::scoped_lock lock(statusMutex);
@@ -288,6 +398,9 @@ void DX12Resources::DrawSettings()
         detectionStatus = "Detecting active interior...";
     }
     PollAutomaticDetection();
+    if (!pluginListReady && dataLoaded.load(std::memory_order_acquire))
+        RefreshLoadedPlugins();
+    AdvancePluginCellScan();
     ImGui::Checkbox("Enable DX12 Resources preparation", &settings.Enabled);
     ImGui::TextDisabled("Current interior or latest-save location; no manual IDs required.");
     ImGui::BeginDisabled(!settings.Enabled);
@@ -308,6 +421,74 @@ void DX12Resources::DrawSettings()
     ImGui::BeginDisabled(!detectedCell || bool(job));
     if (ImGui::Button("Prepare Detected Interior (source discovery)") && detectedCell)
         SubmitDetectedRequest(*detectedCell);
+    ImGui::EndDisabled();
+
+    ImGui::SeparatorText("Browse interior cells by plugin");
+    ImGui::TextDisabled("Only the selected plugin is scanned; no automatic full-game preparation.");
+    if (ImGui::Button("Refresh loaded plugins") && !pluginScanActive)
+        RefreshLoadedPlugins();
+    ImGui::Text("Loaded plugins: %zu", loadedPlugins.size());
+    ImGui::InputTextWithHint("Filter plugins", "Unslaad, Glenmoril...",
+        pluginFilter.data(), pluginFilter.size());
+    if (ImGui::BeginCombo("Plugin", selectedPlugin.empty() ?
+        "(select loaded plugin)" : selectedPlugin.c_str())) {
+        const std::string_view filter(pluginFilter.data());
+        for (const auto& plugin : loadedPlugins) {
+            if (!DX12ResourceService::ContainsAsciiInsensitive(plugin, filter)) continue;
+            const bool selected = DX12ResourceService::SamePluginName(selectedPlugin, plugin);
+            if (ImGui::Selectable(plugin.c_str(), selected)) StartPluginCellScan(plugin);
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    if (!selectedPlugin.empty()) {
+        ImGui::SameLine();
+        if (ImGui::Button("Rescan selected plugin"))
+            StartPluginCellScan(selectedPlugin);
+    }
+    ImGui::TextWrapped("%s", pluginScanStatus.c_str());
+    ImGui::InputTextWithHint("Filter interiors", "Name, EditorID or FormID",
+        interiorFilter.data(), interiorFilter.size());
+    const std::string_view cellQuery(interiorFilter.data());
+    std::vector<size_t> matchingCells;
+    matchingCells.reserve(pluginInteriors.size());
+    for (size_t i = 0; i < pluginInteriors.size(); ++i)
+        if (DX12ResourceService::MatchesInteriorSearch(pluginInteriors[i], cellQuery))
+            matchingCells.push_back(i);
+    ImGui::Text("Matching interiors: %zu / %zu", matchingCells.size(), pluginInteriors.size());
+    if (ImGui::BeginChild("DX12ResourcesInteriorList", ImVec2(0, 220),
+        ImGuiChildFlags_Borders)) {
+        ImGuiListClipper clipper;
+        clipper.Begin(int(matchingCells.size()));
+        while (clipper.Step()) {
+            for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+                const auto& cell = pluginInteriors[matchingCells[size_t(row)]];
+                const bool selected = chosenInterior &&
+                    chosenInterior->plugin == cell.identity.plugin &&
+                    chosenInterior->localId == cell.identity.localId;
+                const auto label = std::format("{}  |  {}  |  {}  [{}]",
+                    cell.displayName.empty() ? "(unnamed)" : cell.displayName,
+                    cell.editorId.empty() ? "(no EditorID)" : cell.editorId,
+                    cell.identity.Key(),
+                    cell.relation == DX12ResourceService::PluginCellRelation::Defined ?
+                        "defined" : "override");
+                ImGui::PushID(int(matchingCells[size_t(row)]));
+                if (ImGui::Selectable(label.c_str(), selected))
+                    chosenInterior = cell.identity;
+                ImGui::PopID();
+            }
+        }
+    }
+    ImGui::EndChild();
+    if (chosenInterior)
+        ImGui::Text("Selected interior: %s", chosenInterior->Key().c_str());
+    else
+        ImGui::TextDisabled("Select any listed interior, even if it is not loaded or in the latest save.");
+    // A known selected interior may run source discovery regardless of automatic
+    // save/current-cell detection. Only exact CELL validity and job ownership gate it.
+    ImGui::BeginDisabled(!chosenInterior || bool(job));
+    if (ImGui::Button("Prepare Selected Interior (source discovery)") && chosenInterior)
+        SubmitDetectedRequest(*chosenInterior);
     ImGui::EndDisabled();
     if (job) ImGui::TextUnformatted("Source-discovery worker running...");
     ImGui::TextWrapped("%s", status.c_str());
@@ -343,6 +524,15 @@ json DX12Resources::GetDiagnostics()
             { "location", detectionLocation }, { "save", detectionSave },
             { "resolved", detectedCell.has_value() },
             { "cell", detectedCell ? detectedCell->Key() : std::string{} } } },
+        { "pluginBrowser", {
+            { "loadedPluginCount", loadedPlugins.size() },
+            { "selectedPlugin", selectedPlugin },
+            { "scanActive", pluginScanActive },
+            { "scanProgress", pluginScanCursor },
+            { "interiorsFound", pluginInteriors.size() },
+            { "status", pluginScanStatus },
+            { "selectedCell", chosenInterior ? chosenInterior->Key() : std::string{} }
+        } },
         { "dataLoaded", dataLoaded.load(std::memory_order_acquire) },
         { "stage", "discovery-only" }, { "prepared", false },
         { "workerBusy", bool(job) }, { "status", status },

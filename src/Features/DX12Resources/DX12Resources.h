@@ -4,12 +4,14 @@
 #include "CellRequest.h"
 #include "CellDiscovery.h"
 #include "AutoCellResolver.h"
+#include "PluginCellCatalog.h"
 #include <optional>
 #include <atomic>
 #include <mutex>
 #include <array>
 #include <memory>
 #include <string>
+#include <vector>
 
 /** @brief Standalone interior preparation service with automatic CELL identification. */
 struct DX12Resources final : Feature
@@ -31,7 +33,8 @@ struct DX12Resources final : Feature
     std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
     {
         return { "Automatic interior identification and source preparation.",
-                 { "Latest-save or current interior detection", "Independent preparation job",
+                 { "Latest-save or current interior detection", "Plugin-scoped interior selection",
+                   "Independent preparation job",
                    "Versioned DX12-cache reports" } };
     }
 
@@ -42,6 +45,9 @@ private:
     void PollJob();
     void BeginAutomaticDetection(bool mainMenu);
     void PollAutomaticDetection();
+    void RefreshLoadedPlugins();
+    void StartPluginCellScan(std::string plugin);
+    void AdvancePluginCellScan();
     std::atomic<bool> dataLoaded{ false };
     std::mutex statusMutex;
     std::shared_ptr<Job> job;
@@ -58,5 +64,18 @@ private:
     std::string reportPath;
     bool reportSaved = false;
     double lastElapsedMs = 0;
+
+    // One on-demand browser; engine CELL metadata is copied incrementally on
+    // the UI thread and never accessed by a detached worker.
+    std::vector<std::string> loadedPlugins;
+    std::string selectedPlugin;
+    std::vector<DX12ResourceService::PluginInteriorEntry> pluginInteriors;
+    std::optional<DX12ResourceService::CellRequest> chosenInterior;
+    std::string pluginScanStatus = "Choose a loaded plugin to enumerate its interiors";
+    std::array<char, 96> pluginFilter{};
+    std::array<char, 96> interiorFilter{};
+    size_t pluginScanCursor = 0;
+    bool pluginListReady = false;
+    bool pluginScanActive = false;
 
 };
