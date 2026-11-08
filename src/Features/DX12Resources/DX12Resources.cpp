@@ -486,8 +486,11 @@ void DX12Resources::DrawSettings()
         ImGui::TextDisabled("Select any listed interior, even if it is not loaded or in the latest save.");
     // A known selected interior may run source discovery regardless of automatic
     // save/current-cell detection. Only exact CELL validity and job ownership gate it.
-    ImGui::BeginDisabled(!chosenInterior || bool(job));
-    if (ImGui::Button("Prepare Selected Interior (source discovery)") && chosenInterior)
+    const bool canPrepareChosen = DX12ResourceService::CanPrepareKnownInterior(
+        settings.Enabled, dataLoaded.load(std::memory_order_acquire), bool(job),
+        chosenInterior);
+    ImGui::BeginDisabled(!canPrepareChosen);
+    if (ImGui::Button("Prepare Selected Interior (source discovery)") && canPrepareChosen)
         SubmitDetectedRequest(*chosenInterior);
     ImGui::EndDisabled();
     if (job) ImGui::TextUnformatted("Source-discovery worker running...");

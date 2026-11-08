@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -67,6 +68,17 @@ namespace DX12ResourceService
         return ContainsAsciiInsensitive(entry.displayName, query) ||
             ContainsAsciiInsensitive(entry.editorId, query) ||
             ContainsAsciiInsensitive(entry.identity.Key(), query);
+    }
+
+    /** @brief An explicitly chosen interior does not require latest-save
+     * detection or a currently attached cell. The engine validates its
+     * identity again before any asynchronous source-discovery job.
+     */
+    inline bool CanPrepareKnownInterior(bool enabled, bool dataLoaded, bool jobActive,
+        const std::optional<CellRequest>& selected)
+    {
+        return enabled && dataLoaded && !jobActive &&
+            selected.has_value() && !selected->plugin.empty() && selected->localId != 0;
     }
 
     inline void SortInteriorCatalog(std::vector<PluginInteriorEntry>& cells)
