@@ -107,6 +107,6 @@ bool SampleGain(Texture2D<float4> gains, Texture2D<float> depths, float2 uv, flo
 		}
 	}
 	const float3 toned = NeuralRenderingReuse::ApplyGainLinear(currentLinear, toneDelta);
-	const float3 chromaGain = ColorStrength > 0.0 ? NR::LuminancePreservingGain(toned, exp2(NR::ChromaFromRedBlue(chromaRedBlue, Luma)), Luma) : float3(1.0, 1.0, 1.0);
+	const float3 chromaGain = ColorStrength > 0.0 ? NR::LuminancePreservingGain(toned, NR::LinearChromaGain(NR::ChromaFromRedBlue(chromaRedBlue, Luma), 1.0, NR::kMaxChromaStops), Luma, NR::kMaxChromaStops) : float3(1.0, 1.0, 1.0);
 	ReuseOutput[id.xy] = float4(ProxyLinearToSrgb(toned * chromaGain), 1.0);
 }

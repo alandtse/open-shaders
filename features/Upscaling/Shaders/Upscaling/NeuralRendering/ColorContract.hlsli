@@ -30,18 +30,34 @@ namespace NR
 		return float3(redBlue.x, -(lumaWeights.x * redBlue.x + lumaWeights.z * redBlue.y) / lumaWeights.y, redBlue.y);
 	}
 
-	// A zero-mean offset still moves the luminance of a coloured input, so the gain is rescaled to leave it alone.
-	float3 LuminancePreservingGain(float3 baseColor, float3 gain, float3 lumaWeights)
+	// Linear-light gain, bounded by the stop limit.
+	float3 LinearChromaGain(float3 offset, float strength, float maxChromaStops)
 	{
-		float before = dot(lumaWeights, baseColor);
-		float after = dot(lumaWeights, baseColor * gain);
-		return (before > 1e-6 && after > 1e-6) ? gain * (before / after) : gain;
+		float3 scaled = all(isfinite(offset)) ? offset * strength : float3(0.0, 0.0, 0.0);
+		return exp2(clamp(scaled, -maxChromaStops, maxChromaStops));
+	}
+
+	// A zero-mean offset still moves the luminance of a coloured input, so the linear gain is rescaled to leave it
+	// alone; the clamp after the rescale keeps the stop bound, and luminance is exact unless that clamp binds.
+	float3 LuminancePreservingGain(float3 baseLinear, float3 gain, float3 lumaWeights, float maxChromaStops)
+	{
+		float before = dot(lumaWeights, baseLinear);
+		float after = dot(lumaWeights, baseLinear * gain);
+		float3 kept = (before > 1e-6 && after > 1e-6) ? gain * (before / after) : gain;
+		return clamp(kept, exp2(-maxChromaStops), exp2(maxChromaStops));
 	}
 
 	float3 ChromaGain(float3 offset, float strength, float maxChromaStops)
 	{
-		float3 scaled = all(isfinite(offset)) ? offset * strength : float3(0.0, 0.0, 0.0);
-		float3 gain = exp2(clamp(scaled, -maxChromaStops, maxChromaStops));
+		float3 gain = LinearChromaGain(offset, strength, maxChromaStops);
+		return ENABLE_LL ? gain : Color::LinearToSkyrimGamma(gain);
+	}
+
+	// Game-domain gain for a game-domain colour: the rescale happens in linear light in either domain.
+	float3 CompositeChromaGain(float3 gameColor, float3 offset, float strength, float3 lumaWeights, float maxChromaStops)
+	{
+		float3 baseLinear = ENABLE_LL ? gameColor : Color::SkyrimGammaToLinear(gameColor);
+		float3 gain = LuminancePreservingGain(baseLinear, LinearChromaGain(offset, strength, maxChromaStops), lumaWeights, maxChromaStops);
 		return ENABLE_LL ? gain : Color::LinearToSkyrimGamma(gain);
 	}
 }
