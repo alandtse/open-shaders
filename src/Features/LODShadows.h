@@ -203,7 +203,7 @@ private:
 	float4 pendingLandBounds{};
 	std::vector<RE::NiPointer<RE::BSGeometry>> visibleGeometry;
 	std::vector<Caster> casters;
-	std::unordered_set<RE::BSGeometry*> collectedGeometry;
+	ankerl::unordered_dense::set<RE::BSGeometry*> collectedGeometry;
 	std::array<uint64_t, 4> sourceHashes{};
 	std::array<uint32_t, 4> geometryCounts{};
 	uint32_t lastUpdateFrame = 0;

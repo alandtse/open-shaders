@@ -50,8 +50,16 @@ namespace
 
 	void HashBytes(uint64_t& a_hash, const void* a_data, size_t a_size)
 	{
-		for (size_t i = 0; i < a_size; ++i)
-			a_hash = (a_hash ^ static_cast<const uint8_t*>(a_data)[i]) * kHashPrime;
+		const auto* bytes = static_cast<const uint8_t*>(a_data);
+		size_t i = 0;
+		for (; i + sizeof(uint64_t) <= a_size; i += sizeof(uint64_t)) {
+			uint64_t word;
+			std::memcpy(&word, bytes + i, sizeof(word));
+			a_hash = (a_hash ^ word) * kHashPrime;
+			a_hash ^= a_hash >> 32;
+		}
+		for (; i < a_size; ++i)
+			a_hash = (a_hash ^ bytes[i]) * kHashPrime;
 	}
 
 	DirectX::XMMATRIX WorldMatrix(const RE::NiTransform& a_transform)
