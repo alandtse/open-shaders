@@ -65,8 +65,9 @@
 	const float3 kept = NR::LuminancePreservingGain(input, gain, luma, NR::kMaxChromaStops);
 	ASSERT(IsTrue, abs(dot(luma, input * kept) - dot(luma, input)) < 1e-5f);
 	ASSERT(IsTrue, all(NR::LuminancePreservingGain(float3(0, 0, 0), gain, luma, NR::kMaxChromaStops) == gain));
-	const float3 bounded = NR::LuminancePreservingGain(input, float3(2.0f, 0.5f, 1.0f), luma, NR::kMaxChromaStops);
+	const float3 bounded = NR::LuminancePreservingGain(input, float3(2.0f, exp2(-0.5945f), 1.0f), luma, NR::kMaxChromaStops);
 	ASSERT(IsTrue, all(bounded <= 2.0f + 1e-5f) && all(bounded >= 0.5f - 1e-5f));
+	ASSERT(IsTrue, abs(dot(luma, input * bounded) - dot(luma, input)) < 2e-3f);
 }
 
 	/// @tags nr, color

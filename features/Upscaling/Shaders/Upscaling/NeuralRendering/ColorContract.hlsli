@@ -1,7 +1,9 @@
 #ifndef __NR_COLOR_CONTRACT_HLSLI__
 #define __NR_COLOR_CONTRACT_HLSLI__
 
-// Include after Common/Color.hlsli: ENABLE_LL selects the gain's output domain.
+#include "Common/Color.hlsli"
+
+// ENABLE_LL (from Common/Color.hlsli) selects the gain's output domain.
 namespace NR
 {
 	// Tone clamp in stops: bounded so a bad model frame cannot blow out the frame.
@@ -38,13 +40,23 @@ namespace NR
 	}
 
 	// A zero-mean offset still moves the luminance of a coloured input, so the linear gain is rescaled to leave it
-	// alone; the clamp after the rescale keeps the stop bound, and luminance is exact unless that clamp binds.
+	// alone. The rescale can push a channel past the stop bound, so the gain alternates with shrinking it toward 1
+	// in log space until both hold; the last step shrinks, so the bound is exact and luminance is within rounding.
 	float3 LuminancePreservingGain(float3 baseLinear, float3 gain, float3 lumaWeights, float maxChromaStops)
 	{
 		float before = dot(lumaWeights, baseLinear);
-		float after = dot(lumaWeights, baseLinear * gain);
-		float3 kept = (before > 1e-6 && after > 1e-6) ? gain * (before / after) : gain;
-		return clamp(kept, exp2(-maxChromaStops), exp2(maxChromaStops));
+		float3 kept = gain;
+		[unroll] for (uint i = 0; i < 4; ++i)
+		{
+			float after = dot(lumaWeights, baseLinear * kept);
+			if (before > 1e-6 && after > 1e-6)
+				kept *= before / after;
+			float3 stops = log2(kept);
+			float excess = max(max(abs(stops.x), abs(stops.y)), abs(stops.z));
+			if (excess > maxChromaStops)
+				kept = exp2(stops * (maxChromaStops / excess));
+		}
+		return kept;
 	}
 
 	float3 ChromaGain(float3 offset, float strength, float maxChromaStops)
