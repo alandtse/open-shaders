@@ -109,7 +109,12 @@ internal static class CellLayout
         {
             hash = instance.GeometrySha256, blob = Convert.ToBase64String(File.ReadAllBytes(Path.Combine(output, instance.GeometryFile)))
         }).ToArray();
-        var template = File.ReadAllText(Path.Combine(Path.GetDirectoryName(typeof(CellLayout).Assembly.Location)!, "LayoutPreview.html"));
+        // The preview is embedded so single-file publishing needs no assembly path or loose HTML file.
+        using var templateStream = typeof(CellLayout).Assembly.GetManifestResourceStream(
+            "DX12ResourcesPrep.LayoutPreview.html")
+            ?? throw new InvalidDataException("Embedded DX12 Resources preview template is missing.");
+        using var templateReader = new StreamReader(templateStream);
+        var template = templateReader.ReadToEnd();
         var payload = JsonSerializer.Serialize(new { layout, meshes }, options);
         File.WriteAllText(Path.Combine(output, "cell-preview.html"), template.Replace("/*SCENE_DATA*/null", payload));
         return new(placedReferences, instances.Count, instances.Sum(instance => (long)instance.IndexCount / 3),

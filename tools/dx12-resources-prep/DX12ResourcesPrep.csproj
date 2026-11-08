@@ -8,7 +8,7 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
   <ItemGroup>
-    <Content Include="LayoutPreview.html" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="LayoutPreview.html" LogicalName="DX12ResourcesPrep.LayoutPreview.html" />
     <PackageReference Include="Mutagen.Bethesda.Skyrim" Version="0.54.4" />
     <PackageReference Include="Nifly" Version="1.1.0" />
     <PackageReference Include="BCnEncoder.Net" Version="2.3.0" />
