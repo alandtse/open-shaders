@@ -12,6 +12,8 @@
 #include "LinearLighting.h"
 #include "Menu.h"
 #include "Menu/OverlayRenderer.h"
+#include "PostProcessing.h"
+#include "ScreenshotFeature.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Upscaling.h"
@@ -258,6 +260,24 @@ namespace
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
+
+	// Bink draws outside both redirects, so route its frame into the UI buffer before HDR compositing.
+	struct HDR_Movie_Draw
+	{
+		static void thunk(void* a_movie)
+		{
+			auto& hdr = globals::features::hdrDisplay;
+			if (hdr.settings.enableHDR && !hdr.framebufferRedirected && hdr.hdrTexture && hdr.hdrTexture->rtv) {
+				const float clearColor[4]{};
+				globals::d3d::context->ClearRenderTargetView(hdr.hdrTexture->rtv.get(), clearColor);
+				hdr.movieDrawnFrame = globals::state->frameCount;
+				hdr.SetUIBuffer();
+			}
+
+			func(a_movie);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
 }
 
 bool HDRDisplay::isHDRMonitor = false;
@@ -366,7 +386,7 @@ void HDRDisplay::DrawSettings()
 	// Advanced override button — shown when HDR is neither active nor auto-detected
 	if (!isHDRMonitor && !oldEnableHDR) {
 		ImGui::SameLine();
-		if (ImGui::Button(T(TKEY("advanced"), "Advanced"))) {
+		if (Util::Button(T(TKEY("advanced"), "Advanced"))) {
 			bool dontShowWarning;
 			{
 				std::lock_guard<std::mutex> lock(settingsMutex);
@@ -428,7 +448,7 @@ void HDRDisplay::DrawSettings()
 			buttonWidthForLabel(forceEnableLabel),
 			buttonWidthForLabel(cancelLabel) });
 
-		if (ImGui::Button(forceEnableLabel, ImVec2(buttonWidth, 0))) {
+		if (Util::Button(forceEnableLabel, ImVec2(buttonWidth, 0))) {
 			{
 				std::lock_guard<std::mutex> lock(settingsMutex);
 				settings.enableHDR = true;
@@ -441,7 +461,7 @@ void HDRDisplay::DrawSettings()
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(cancelLabel, ImVec2(buttonWidth, 0))) {
+		if (Util::Button(cancelLabel, ImVec2(buttonWidth, 0))) {
 			{
 				std::lock_guard<std::mutex> lock(settingsMutex);
 				settings.enableHDR = false;
@@ -637,6 +657,8 @@ void HDRDisplay::PostPostLoad()
 		stl::detour_thunk<HDR_MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084));
 		stl::write_thunk_call<HDR_Main_PostProcessing>(REL::RelocationID(100430, 107148).address() + REL::Relocate(0x1F0, 0x1E7, 0x206));
 	}
+
+	stl::detour_thunk<HDR_Movie_Draw>(REL::RelocationID(87907, 90279));
 }
 
 void HDRDisplay::SetupResources()
@@ -969,6 +991,9 @@ namespace
 			if (globals::features::hdrDisplay.IsPresentSuppressed())
 				return S_OK;
 
+			if (!globals::features::upscaling.d3d12SwapChainActive)
+				globals::features::screenshotFeature.ProcessCaptureRequest();
+
 			return func(This, SyncInterval, Flags);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -994,9 +1019,9 @@ namespace
 	};
 }
 
-void HDRDisplay::InstallSwapChainPresentHooks(IDXGISwapChain* swapChain)
+void HDRDisplay::InstallSwapChainPresentHooks(IDXGISwapChain* swapChain, std::uintptr_t originalPresent)
 {
-	stl::detour_vfunc<8, SwapChainPresentBottom>(swapChain);
+	stl::detour_vfunc<8, SwapChainPresentBottom>(swapChain, originalPresent);
 	stl::detour_vfunc<35, ID3D11DeviceContext_OMSetBlendState>(globals::d3d::context);
 }
 
@@ -1016,7 +1041,8 @@ ID3D11BlendState* HDRDisplay::GetPatchedAlphaBlendState(ID3D11BlendState* origin
 	bool needsPatch = false;
 	for (int i = 0; i < slotCount; i++) {
 		const auto& rt = desc.RenderTarget[i];
-		if (rt.BlendEnable &&
+		// Destination-only blends erase coverage; alpha correction would make the cleared UI opaque.
+		if (rt.BlendEnable && rt.SrcBlend != D3D11_BLEND_ZERO &&
 			(rt.SrcBlendAlpha != D3D11_BLEND_ONE ||
 				rt.DestBlendAlpha != D3D11_BLEND_INV_SRC_ALPHA ||
 				rt.BlendOpAlpha != D3D11_BLEND_OP_ADD)) {
@@ -1031,7 +1057,7 @@ ID3D11BlendState* HDRDisplay::GetPatchedAlphaBlendState(ID3D11BlendState* origin
 
 	for (int i = 0; i < slotCount; i++) {
 		auto& rt = desc.RenderTarget[i];
-		if (rt.BlendEnable) {
+		if (rt.BlendEnable && rt.SrcBlend != D3D11_BLEND_ZERO) {
 			rt.SrcBlendAlpha = D3D11_BLEND_ONE;
 			rt.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
 			rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
@@ -1054,6 +1080,7 @@ ID3D11BlendState* HDRDisplay::GetPatchedAlphaBlendState(ID3D11BlendState* origin
 
 HRESULT HDRDisplay::PresentToSwapChain(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags)
 {
+	globals::features::screenshotFeature.ProcessCaptureRequest();
 	return SwapChainPresentBottom::func(swapChain, syncInterval, flags);
 }
 
@@ -1535,6 +1562,7 @@ void HDRDisplay::RestoreLDRRenderTargets()
 
 void HDRDisplay::ClearShaderCache()
 {
+	patchedBlendStateCache.clear();
 	if (hdrOutputCS) {
 		hdrOutputCS->Release();
 		hdrOutputCS = nullptr;
@@ -1657,7 +1685,7 @@ float4 HDRDisplay::GetSharedDataHDR() const
 HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 {
 	auto* ui = globals::game::ui;
-	bool isMainOrLoadingMenu = globals::state->IsMainOrLoadingMenuOpen(ui);
+	bool isMainOrLoadingMenu = globals::state->IsMainOrLoadingMenuOpen(ui) || movieDrawnFrame == globals::state->frameCount;
 	bool skipUIComposite = IsFGCompositingThisFrame();
 
 	// Linear Lighting keeps the pipeline linear throughout.
@@ -1665,9 +1693,9 @@ HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 	bool isSceneLinear = globals::features::linearLighting.IsLinearLightingActive();
 
 #if defined(ENABLE_EFFECTS11)
-	const bool applyAutoHDR = globals::features::effects11.ReplacedTonemapperThisFrame();
+	const bool applyAutoHDR = globals::features::effects11.ReplacedTonemapperThisFrame() || globals::features::postProcessing.WantsAutoHDR();
 #else
-	const bool applyAutoHDR = false;
+	const bool applyAutoHDR = globals::features::postProcessing.WantsAutoHDR();
 #endif
 	float effectivePeakNits = static_cast<float>(applyAutoHDR ? std::min(settings.hdrPeakNits, kAutoHDRMaxNits) : settings.hdrPeakNits);
 
@@ -1682,6 +1710,7 @@ HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 	// TweenMenu = pause UI. ScaleUIBrightnessForFG skips while GameIsPaused(), so HDROutputCS applies the same mid-alpha boost when compositing gamma UI.
 	data.fgTweenMenuMidAlphaBoost = (ui && ui->IsMenuOpen(RE::TweenMenu::MENU_NAME)) ? 1.f : 0.f;
 	data.previewSDR = 0.f;
+	// Effects11 ENB presets are SDR; Jiaye SDR-only tonemappers opt in via Color Grading AutoHDR.
 	data.applyAutoHDR = applyAutoHDR ? 1.f : 0.f;
 	return data;
 }

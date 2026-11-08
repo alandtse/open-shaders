@@ -68,10 +68,10 @@ void TestGammaConversion() { ... }
 
 **Tag format:**
 
--   `/// @tag tagname` - Single tag
--   `/// @tags tag1, tag2, tag3` - Multiple tags (comma-separated)
--   Multiple comment lines are combined
--   Tags are optional; tests without tags will have no tag filtering available
+- `/// @tag tagname` - Single tag
+- `/// @tags tag1, tag2, tag3` - Multiple tags (comma-separated)
+- Multiple comment lines are combined
+- Tags are optional; tests without tags will have no tag filtering available
 
 ### Running Specific Tests
 
@@ -118,17 +118,17 @@ To add tests for a new shader module:
 
 ## Dependencies
 
--   **ShaderTestFramework**: Fetched automatically via CMake FetchContent
--   **Catch2 v3**: Fetched automatically via CMake FetchContent
--   **D3D12**: Required for shader execution (Windows only)
+- **ShaderTestFramework**: Fetched automatically via CMake FetchContent
+- **Catch2 v3**: Fetched automatically via CMake FetchContent
+- **D3D12**: Required for shader execution (Windows only)
 
 ## CI Integration
 
 These tests run automatically in GitHub Actions on:
 
--   Pull requests that modify `.hlsl`, `.hlsli`, or test-related files
--   Pushes to tags starting with `v`
--   Manual workflow dispatches
+- Pull requests that modify `.hlsl`, `.hlsli`, or test-related files
+- Pushes to tags starting with `v`
+- Manual workflow dispatches
 
 See the `shader-unit-tests` job in `.github/workflows/_shared-build.yaml` for CI integration.
 
@@ -180,8 +180,8 @@ cmake --preset ALL
 
 **Linker errors:**
 
--   Ensure you're building on Windows with D3D12 support
--   Verify Visual Studio 2026 is installed with C++ development tools
+- Ensure you're building on Windows with D3D12 support
+- Verify Visual Studio 2026 is installed with C++ development tools
 
 **CMake 4.0 Compatibility:**
 
@@ -191,16 +191,16 @@ If you encounter `unresolved external symbol main` errors, this is due to a know
 
 **Shader compilation errors:**
 
--   Check that shader include paths are correct
--   Verify shader code compiles with fxc/dxc separately
+- Check that shader include paths are correct
+- Verify shader code compiles with fxc/dxc separately
 
 **Runtime errors:**
 
--   Ensure D3D12-capable GPU is available
--   Verify Graphics Tools are installed (see above)
+- Ensure D3D12-capable GPU is available
+- Verify Graphics Tools are installed (see above)
 
 ## References
 
--   [ShaderTestFramework Documentation](https://github.com/KStocky/ShaderTestFramework/blob/main/docs/Tutorial.md)
--   [Catch2 Documentation](https://github.com/catchorg/Catch2/tree/devel/docs)
--   [D3D12 Documentation](https://learn.microsoft.com/en-us/windows/win32/direct3d12/directx-12-programming-guide)
+- [ShaderTestFramework Documentation](https://github.com/KStocky/ShaderTestFramework/blob/main/docs/Tutorial.md)
+- [Catch2 Documentation](https://github.com/catchorg/Catch2/tree/devel/docs)
+- [D3D12 Documentation](https://learn.microsoft.com/en-us/windows/win32/direct3d12/directx-12-programming-guide)

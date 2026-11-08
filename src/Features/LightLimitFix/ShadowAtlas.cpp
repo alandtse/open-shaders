@@ -474,11 +474,11 @@ namespace ShadowCasterManager
 			// pool slots without cross-referencing the live dump.
 			std::ofstream manifest(dir / std::format("shadow_atlas_frame{}.json", stamp));
 			manifest << "{\n  \"dim\": " << s_atlas.dim
-					 << ",\n  \"frame\": " << stamp
-					 << ",\n  \"clearsSwallowed\": " << s_clearsSwallowed.load(std::memory_order_relaxed)
-					 << ",\n  \"clearsPassed\": " << s_clearsPassed.load(std::memory_order_relaxed)
-					 << ",\n  \"tileClears\": " << s_tileClears.load(std::memory_order_relaxed)
-					 << ",\n  \"slots\": [\n";
+			         << ",\n  \"frame\": " << stamp
+			         << ",\n  \"clearsSwallowed\": " << s_clearsSwallowed.load(std::memory_order_relaxed)
+			         << ",\n  \"clearsPassed\": " << s_clearsPassed.load(std::memory_order_relaxed)
+			         << ",\n  \"tileClears\": " << s_tileClears.load(std::memory_order_relaxed)
+			         << ",\n  \"slots\": [\n";
 			bool first = true;
 			for (size_t i = 0; i < s_atlas.slots.size(); i++) {
 				const auto& slot = s_atlas.slots[i];
@@ -488,11 +488,11 @@ namespace ShadowCasterManager
 					manifest << ",\n";
 				first = false;
 				manifest << "    { \"slot\": " << i
-						 << ", \"x\": " << slot.tile.x * s_atlas.cell
-						 << ", \"y\": " << slot.tile.y * s_atlas.cell
-						 << ", \"size\": " << (1u << slot.tile.order) * s_atlas.cell
-						 << ", \"lastRenderFrame\": " << slot.renderFrame
-						 << ", \"contentValid\": " << (slot.valid ? "true" : "false") << " }";
+				         << ", \"x\": " << slot.tile.x * s_atlas.cell
+				         << ", \"y\": " << slot.tile.y * s_atlas.cell
+				         << ", \"size\": " << (1u << slot.tile.order) * s_atlas.cell
+				         << ", \"lastRenderFrame\": " << slot.renderFrame
+				         << ", \"contentValid\": " << (slot.valid ? "true" : "false") << " }";
 			}
 			manifest << "\n  ]\n}\n";
 			logger::info("[SCM] Atlas dumped: {}", ddsPath.string());

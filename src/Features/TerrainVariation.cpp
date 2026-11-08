@@ -142,6 +142,9 @@ bool TerrainVariation::IsLandscapeDiffuseTexture(const RE::BSFixedString& a_name
 	const std::unique_lock lock(meshTextureMutex);
 	auto [it, inserted] = meshTextureCache.try_emplace(key, false);
 	if (inserted) {
+		// Only textures painted on the landscape surface qualify, wherever they live, so branches and roots
+		// sharing a landscape/ subfolder with a ground texture are left alone. A mesh copy of a ground texture
+		// in another landscape/ subfolder (landscape/mountains/mountainslab01.dds) still matches by file name.
 		const auto canonical = CanonicaliseTexturePath(key);
 		it->second = landscapeDiffusePaths.contains(canonical) ||
 		             (IsInLandscapeDirectory(canonical) && landscapeDiffuseFileNames.contains(std::string(GetFileName(canonical))));

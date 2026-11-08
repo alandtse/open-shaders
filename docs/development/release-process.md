@@ -22,7 +22,7 @@ PRs are squash-merged, so the **PR title** becomes the commit message that seman
 | `style`    | Formatting, whitespace, missing semicolons                | none                    |
 | `test`     | Tests, test fixtures, test infrastructure                 | none                    |
 
--   **Breaking Changes:** Append `!` to the type (or add a `BREAKING CHANGE:` footer) for **major** release bumps (X.0.0).
+- **Breaking Changes:** Append `!` to the type (or add a `BREAKING CHANGE:` footer) for **major** release bumps (X.0.0).
 
 ---
 
@@ -38,8 +38,8 @@ PRs are squash-merged, so the **PR title** becomes the commit message that seman
 
 After every release reconciles, `main` is an ancestor of `dev`, so every tag on `main` is reachable from `dev`. The `Release: Semantic Version` workflow keeps this invariant in two ways depending on the promotion source:
 
--   **dev → main promotion** (minor/major): `main` fast-forwards to the `dev` SHA, semantic-release appends a `chore(release):` commit on top, then `dev` fast-forwards to absorb that commit. No history rewrites.
--   **hotfix-staging → main promotion** (current-line patch): `main` fast-forwards to the hotfix-staging SHA, semantic-release appends the `chore(release):` commit, then `dev` is **rebase-reconciled** onto the new `main`. `git rebase` drops `dev`'s originals of the cherry-picked fixes (patch-id match) and replays any unique `dev` work on top. This is the only place the workflow force-pushes (`--force-with-lease`).
+- **dev → main promotion** (minor/major): `main` fast-forwards to the `dev` SHA, semantic-release appends a `chore(release):` commit on top, then `dev` fast-forwards to absorb that commit. No history rewrites.
+- **hotfix-staging → main promotion** (current-line patch): `main` fast-forwards to the hotfix-staging SHA, semantic-release appends the `chore(release):` commit, then `dev` is **rebase-reconciled** onto the new `main`. `git rebase` drops `dev`'s originals of the cherry-picked fixes (patch-id match) and replays any unique `dev` work on top. This is the only place the workflow force-pushes (`--force-with-lease`).
 
 After a hotfix release, open PRs targeting `dev` are auto-rebased by the `Auto-rebase open PRs` workflow. PRs from forks need "Allow edits by maintainers" enabled or the action silently skips them; drafts and PRs labeled `no-auto-rebase` are also excluded.
 
@@ -66,9 +66,9 @@ After a hotfix release, open PRs targeting `dev` are auto-rebased by the `Auto-r
 
 A dispatch loads workflow and composite-action files from the dispatched ref, so a promotion whose `ff_target` changes `.github/workflows/` or `.github/actions/` would otherwise run main's stale copies. In that case the run fast-forwards `main`, then re-dispatches itself (phase 2) with `base_sha` set to main's previous tip, and phase 2 performs the release with the promoted workflow, action and `tools/` files. Phase 1 (`plan` and `promote`) runs `tools/release_plan.py` from the dispatched `main` checkout.
 
--   If the re-dispatched run is superseded by a newer dispatch, main is promoted but no release exists. The stranded run's summary prints the recovery `gh workflow run ... -f ff_target=... -f base_sha=...` command.
--   `single_phase=true` skips detection and is the only bypass if the plan itself is broken.
--   The cut that first lands this mechanism still runs main's old workflow. For a coupled workflow-plus-tool change in that cut, fast-forward `main` to `ff_target` by hand, then dispatch with `base_sha` set to main's previous tip.
+- If the re-dispatched run is superseded by a newer dispatch, main is promoted but no release exists. The stranded run's summary prints the recovery `gh workflow run ... -f ff_target=... -f base_sha=...` command.
+- `single_phase=true` skips detection and is the only bypass if the plan itself is broken.
+- The cut that first lands this mechanism still runs main's old workflow. For a coupled workflow-plus-tool change in that cut, fast-forward `main` to `ff_target` by hand, then dispatch with `base_sha` set to main's previous tip.
 
 ---
 
@@ -86,9 +86,9 @@ Version = 0-2-0
 Beta = True
 ```
 
--   **Flags:** `Alpha` or `Beta`. Truthy values are `true`, `1`, `yes`, `on` (case-insensitive). Absent or non-truthy means full **Release**.
--   `Alpha` takes precedence over `Beta` when both are set.
--   The flag line must start the line (after optional whitespace). The CMake parser in `CMakeLists.txt` and the Python parser in `tools/feature_version_audit.py` are both line-anchored; **keep these two regexes in sync**.
+- **Flags:** `Alpha` or `Beta`. Truthy values are `true`, `1`, `yes`, `on` (case-insensitive). Absent or non-truthy means full **Release**.
+- `Alpha` takes precedence over `Beta` when both are set.
+- The flag line must start the line (after optional whitespace). The CMake parser in `CMakeLists.txt` and the Python parser in `tools/feature_version_audit.py` are both line-anchored; **keep these two regexes in sync**.
 
 ### Build-time Baking
 
@@ -96,23 +96,23 @@ Beta = True
 
 ### Runtime API (`src/Feature.h`)
 
--   `Feature::GetReleaseStage()` returns `ReleaseStage::{Release, Beta, Alpha}` by looking the short name up in the baked sets. Resolve it once and pass it around; it is not cached.
--   `IsAlpha()` / `IsBeta()` convenience predicates.
--   `static GetReleaseStageTag(ReleaseStage)` returns the localized `[ALPHA]` / `[BETA]` marker (empty for Release). It takes the stage so callers that already resolved it avoid a redundant lookup.
--   `IsDisabledByDefault()` returns `true` for any non-Release stage, so **Alpha/Beta features start disabled on first install**. Users can still enable them via the "Disable at Boot" menu; do not add a redundant `IsDisabledByDefault` override on a feature that already carries a stage flag.
+- `Feature::GetReleaseStage()` returns `ReleaseStage::{Release, Beta, Alpha}` by looking the short name up in the baked sets. Resolve it once and pass it around; it is not cached.
+- `IsAlpha()` / `IsBeta()` convenience predicates.
+- `static GetReleaseStageTag(ReleaseStage)` returns the localized `[ALPHA]` / `[BETA]` marker (empty for Release). It takes the stage so callers that already resolved it avoid a redundant lookup.
+- `IsDisabledByDefault()` returns `true` for any non-Release stage, so **Alpha/Beta features start disabled on first install**. Users can still enable them via the "Disable at Boot" menu; do not add a redundant `IsDisabledByDefault` override on a feature that already carries a stage flag.
 
 ### UI
 
--   `FeatureListRenderer` draws the stage tag next to the feature name. Alpha uses the theme `StatusPalette.Error` color, Beta uses `StatusPalette.Warning`.
+- `FeatureListRenderer` draws the stage tag next to the feature name. Alpha uses the theme `StatusPalette.Error` color, Beta uses `StatusPalette.Warning`.
 
 ### Versioning Convention (Enforced by `tools/feature_version_audit.py`)
 
--   Pre-release features use `0.x` versions.
--   Beta starts at `0-2-0`, Alpha at `0-1-0`.
--   `alpha -> beta` bumps the minor and resets the patch.
--   Within the same pre-release stage, normal semver applies inside `0.x`.
--   A breaking change (`feat!:` / `BREAKING CHANGE:`) on a pre-release feature **promotes it to release `1-0-0` and strips the Alpha/Beta flag**. `--apply-bumps` performs both the version bump and the flag removal automatically.
--   Stage transitions are exact-match enforced (and may legitimately LOWER the version, e.g. release `1.x` -> beta `0-2-0`), unlike the lenient `>` check used within a stage.
+- Pre-release features use `0.x` versions.
+- Beta starts at `0-2-0`, Alpha at `0-1-0`.
+- `alpha -> beta` bumps the minor and resets the patch.
+- Within the same pre-release stage, normal semver applies inside `0.x`.
+- A breaking change (`feat!:` / `BREAKING CHANGE:`) on a pre-release feature **promotes it to release `1-0-0` and strips the Alpha/Beta flag**. `--apply-bumps` performs both the version bump and the flag removal automatically.
+- Stage transitions are exact-match enforced (and may legitimately LOWER the version, e.g. release `1.x` -> beta `0-2-0`), unlike the lenient `>` check used within a stage.
 
 ---
 
@@ -134,9 +134,9 @@ To promote clang-cl to the default, follow the gate under Compiler Lanes above.
 
 The release attach job (`_attach-release-artifacts.yaml`) wraps the AIO in a FOMOD whose installer offers the prebuilt shader caches as optional downloads. Every optional piece is dropped, never shipped broken:
 
--   A fresh cache must pass `tools/verify_shader_cache.py structure` (readable `Info.ini`, a valid manifest that matches the blobs one to one, intact DXBC in every blob) before it is packaged. An existing cache asset reused from the release is checked the same way, and a cache archive that fails `7z t` is discarded.
--   `build-fomod-package.py` re-checks each cache and omits any option whose cache is missing or fails the check, with a `::warning::` in the log. If every cache is dropped the FOMOD is just the AIO. It also fails if the plugin DLL is absent from the AIO, and if `ModuleConfig.xml` names a file that is not in the staged tree.
--   If the FOMOD cannot be built or its archive fails `7z t` or lacks `ModuleConfig.xml` or the plugin DLL, the release ships the plain AIO instead of failing.
+- A fresh cache must pass `tools/verify_shader_cache.py structure` (readable `Info.ini`, a valid manifest that matches the blobs one to one, intact DXBC in every blob) before it is packaged. An existing cache asset reused from the release is checked the same way, and a cache archive that fails `7z t` is discarded.
+- `build-fomod-package.py` re-checks each cache and omits any option whose cache is missing or fails the check, with a `::warning::` in the log. If every cache is dropped the FOMOD is just the AIO. It also fails if the plugin DLL is absent from the AIO, and if `ModuleConfig.xml` names a file that is not in the staged tree.
+- If the FOMOD cannot be built or its archive fails `7z t` or lacks `ModuleConfig.xml` or the plugin DLL, the release ships the plain AIO instead of failing.
 
 A release with a dropped cache is still valid; look for these warnings in the attach job when a cache option is unexpectedly missing.
 
@@ -167,7 +167,7 @@ cmake --build ./build/ALL --target AIO
 cmake --install ./build/ALL --prefix <TARGET_DIR>
 ```
 
--   `Package-Core` collects everything marked as CORE and the built plugin into a temporary folder, then tars it to `dist/${PROJECT_NAME}-${UTC_NOW}.7z`.
--   `Package-<Feature>` targets create `${FEATURE}-${UTC_NOW}.7z` in `dist/`.
--   `Package-AIO-Manual` performs an install to the AIO folder and then creates a single AIO archive (similar to the automated `AIO_ZIP_PACKAGE`, but wired as an explicit file-producing target).
--   `AIO` target runs `cmake --install` with the `aio` prefix to inspect the folder layout without creating an archive.
+- `Package-Core` collects everything marked as CORE and the built plugin into a temporary folder, then tars it to `dist/${PROJECT_NAME}-${UTC_NOW}.7z`.
+- `Package-<Feature>` targets create `${FEATURE}-${UTC_NOW}.7z` in `dist/`.
+- `Package-AIO-Manual` performs an install to the AIO folder and then creates a single AIO archive (similar to the automated `AIO_ZIP_PACKAGE`, but wired as an explicit file-producing target).
+- `AIO` target runs `cmake --install` with the `aio` prefix to inspect the folder layout without creating an archive.

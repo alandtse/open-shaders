@@ -32,17 +32,17 @@ Every response property is optional. Omit any property to use its coded default;
 
 The coded defaults are:
 
--   `bendEnabled`: `true`; set to `false` to exclude the mesh from the tree-bending render path, including ambient and transient bending. Normal `TreeAnim` animation and the stored bend sensitivity are retained. Global Override cannot re-enable an excluded mesh.
--   `bendSensitivity`: `1.0` (`0.0`–`4.0`)
--   `leafAmbientSensitivity`: `1.0` (`0.0`–`4.0`)
--   `upperBendRange`: `100` (`5`–`100` percent of measured height)
--   `maximumDisplacementPercent`: `3` (`0`–`10` percent)
--   `trunkGustInfluence`: `0.5` (`0.0`–`2.0`)
--   `leafGustInfluence`: `0.99` (`0.0`–`2.0`)
--   `transientWindInfluence`: `2.01` (`0.0`–`5.0`), scaling trunk response to short-lived impulses such as Unrelenting Force
--   `leafTransientWindInfluence`: `5.0` (`0.0`–`5.0`), scaling leaf response to short-lived impulses independently of the trunk
--   `leafTransientFlutterMaximum`: `20.0` (`0.0`–`20.0`), capping only the transient contribution to vanilla leaf flutter for each mesh
--   `transientMaximumBendMultiplier`: `2.5` (`0.0`–`5.0`), capping the trunk response to those impulses
+- `bendEnabled`: `true`; set to `false` to exclude the mesh from the tree-bending render path, including ambient and transient bending. Normal `TreeAnim` animation and the stored bend sensitivity are retained. Global Override cannot re-enable an excluded mesh.
+- `bendSensitivity`: `1.0` (`0.0`–`4.0`)
+- `leafAmbientSensitivity`: `1.0` (`0.0`–`4.0`)
+- `upperBendRange`: `100` (`5`–`100` percent of measured height)
+- `maximumDisplacementPercent`: `3` (`0`–`10` percent)
+- `trunkGustInfluence`: `0.5` (`0.0`–`2.0`)
+- `leafGustInfluence`: `0.99` (`0.0`–`2.0`)
+- `transientWindInfluence`: `2.01` (`0.0`–`5.0`), scaling trunk response to short-lived impulses such as Unrelenting Force
+- `leafTransientWindInfluence`: `5.0` (`0.0`–`5.0`), scaling leaf response to short-lived impulses independently of the trunk
+- `leafTransientFlutterMaximum`: `20.0` (`0.0`–`20.0`), capping only the transient contribution to vanilla leaf flutter for each mesh
+- `transientMaximumBendMultiplier`: `2.5` (`0.0`–`5.0`), capping the trunk response to those impulses
 
 Mesh matching is case-insensitive and accepts either slash style. The in-game Global Override is runtime-only and can temporarily replace per-tree response strengths for testing; meshes with bending disabled remain excluded.
 

@@ -12,14 +12,15 @@ cbuffer BorderCB : register(b1)
 {
 	float4 BorderColor;  // color in xyz, depth threshold in w
 	float4 Scale;        // xyzw: up, down, left, right
+	float4 BufferDim;
 };
 
 [numthreads(8, 8, 1)] void main(uint3 DTid : SV_DispatchThreadID) {
 	uint2 dimensions;
 	OutputTexture.GetDimensions(dimensions.x, dimensions.y);
-	if (any(DTid.xy >= dimensions))
+	if (any(DTid.xy >= min(dimensions, uint2(BufferDim.xy))))
 		return;
-	float2 uv = (DTid.xy + 0.5f) / dimensions;
+	float2 uv = (DTid.xy + 0.5f) * BufferDim.zw;
 	uint2 depthDimensions;
 	DepthTexture.GetDimensions(depthDimensions.x, depthDimensions.y);
 	float depth = FrameBuffer::ToStandardDepth(DepthTexture[uint2(uv * depthDimensions)]);

@@ -8,10 +8,10 @@ This document provides a detailed overview of the Open Shaders plugin architectu
 
 Open Shaders uses a feature-driven modular system where each graphics enhancement is an independent `Feature` class that can be enabled/disabled at runtime.
 
--   **`Feature`** ([src/Feature.h](file:///E:/Documents/source/repos/open-shaders/src/Feature.h)) - Base class for all graphics features.
--   **`State`** ([src/State.h](file:///E:/Documents/source/repos/open-shaders/src/State.h)) - Global singleton managing feature lifecycle.
--   **`ShaderCache`** ([src/ShaderCache.h](file:///E:/Documents/source/repos/open-shaders/src/ShaderCache.h)) - Runtime shader compilation and caching.
--   **`Menu`** ([src/Menu.h](file:///E:/Documents/source/repos/open-shaders/src/Menu.h)) - ImGui-based in-game configuration interface.
+- **`Feature`** ([src/Feature.h](file:///E:/Documents/source/repos/open-shaders/src/Feature.h)) - Base class for all graphics features.
+- **`State`** ([src/State.h](file:///E:/Documents/source/repos/open-shaders/src/State.h)) - Global singleton managing feature lifecycle.
+- **`ShaderCache`** ([src/ShaderCache.h](file:///E:/Documents/source/repos/open-shaders/src/ShaderCache.h)) - Runtime shader compilation and caching.
+- **`Menu`** ([src/Menu.h](file:///E:/Documents/source/repos/open-shaders/src/Menu.h)) - ImGui-based in-game configuration interface.
 
 ### Feature Implementation Pattern
 
@@ -24,10 +24,10 @@ Each feature follows a consistent structure:
 
 ### DirectX Integration
 
--   **Hooking System:** Uses the Detours library to intercept DirectX 11 API calls in [src/Hooks.cpp](file:///E:/Documents/source/repos/open-shaders/src/Hooks.cpp).
--   **Deferred Rendering:** Custom deferred pipeline in [src/Deferred.cpp](file:///E:/Documents/source/repos/open-shaders/src/Deferred.cpp) with feature integration points.
--   **Shader Management:** Runtime compilation with include system (`package/Shaders/Common/`) for shared utilities.
--   **Base Shader Library:** `package/Shaders/` contains Skyrim's core rendering shaders (Lighting.hlsl, Water.hlsl, Sky.hlsl, etc.).
+- **Hooking System:** Uses the Detours library to intercept DirectX 11 API calls in [src/Hooks.cpp](file:///E:/Documents/source/repos/open-shaders/src/Hooks.cpp).
+- **Deferred Rendering:** Custom deferred pipeline in [src/Deferred.cpp](file:///E:/Documents/source/repos/open-shaders/src/Deferred.cpp) with feature integration points.
+- **Shader Management:** Runtime compilation with include system (`package/Shaders/Common/`) for shared utilities.
+- **Base Shader Library:** `package/Shaders/` contains Skyrim's core rendering shaders (Lighting.hlsl, Water.hlsl, Sky.hlsl, etc.).
 
 ---
 
@@ -37,9 +37,9 @@ Each feature follows a consistent structure:
 
 Essential reverse engineering library providing interfaces to interact with Skyrim's game engine safely.
 
--   **`RE::` Namespace:** Skyrim game objects and classes (`BSShader`, `TESObjectREFR`, etc.).
--   **`REL::` Namespace:** Relative addressing and version management.
--   **`SKSE::` Namespace:** SKSE plugin interfaces and utilities.
+- **`RE::` Namespace:** Skyrim game objects and classes (`BSShader`, `TESObjectREFR`, etc.).
+- **`REL::` Namespace:** Relative addressing and version management.
+- **`SKSE::` Namespace:** SKSE plugin interfaces and utilities.
 
 ### Runtime Targeting System
 
@@ -77,10 +77,10 @@ if (REL::Module::IsVR()) {
 }
 ```
 
--   **`REL::RelocateMember<T>()`** - Access members with different offsets.
--   **`REL::RelocateVirtual<T>()`** - Call virtual functions with variant vtables.
--   **`REL::Module::IsVR()`, `IsAE()`, `IsSE()`** - Runtime version detection.
--   **`REL::RelocationID()`** - Dynamic address resolution based on version.
+- **`REL::RelocateMember<T>()`** - Access members with different offsets.
+- **`REL::RelocateVirtual<T>()`** - Call virtual functions with variant vtables.
+- **`REL::Module::IsVR()`, `IsAE()`, `IsSE()`** - Runtime version detection.
+- **`REL::RelocationID()`** - Dynamic address resolution based on version.
 
 ---
 
@@ -90,25 +90,25 @@ if (REL::Module::IsVR()) {
 
 Central coordination point providing access to all major subsystems:
 
--   **Core Systems:** `globals::state`, `globals::deferred`, `globals::menu`, `globals::shaderCache`
--   **Graphics Integration:** `globals::d3d::*` (DirectX device/context), `globals::game::*` (renderer state, shaders), `globals::upscaling` (FidelityFX & Streamline), `globals::dx12SwapChain`.
--   **Feature Registry (`globals::features::`):**
-    -   _Lighting:_ `lightLimitFix`, `volumetricLighting`, `skylighting`, `ibl`
-    -   _Terrain:_ `terrainShadows`, `terrainBlending`, `terrainVariation`, `terrainHelper`
-    -   _Materials:_ `extendedMaterials`, `hairSpecular`, `subsurfaceScattering`
-    -   _Effects:_ `screenSpaceGI`, `screenSpaceShadows`, `waterEffects`, `wetnessEffects`
-    -   _Environment:_ `cloudShadows`, `dynamicCubemaps`, `weatherEditor`, `skySync`
-    -   _VR:_ `vr` (VR-specific adaptations & transformations)
+- **Core Systems:** `globals::state`, `globals::deferred`, `globals::menu`, `globals::shaderCache`
+- **Graphics Integration:** `globals::d3d::*` (DirectX device/context), `globals::game::*` (renderer state, shaders), `globals::upscaling` (FidelityFX & Streamline), `globals::dx12SwapChain`.
+- **Feature Registry (`globals::features::`):**
+    - _Lighting:_ `lightLimitFix`, `volumetricLighting`, `skylighting`, `ibl`
+    - _Terrain:_ `terrainShadows`, `terrainBlending`, `terrainVariation`, `terrainHelper`
+    - _Materials:_ `extendedMaterials`, `hairSpecular`, `subsurfaceScattering`
+    - _Effects:_ `screenSpaceGI`, `screenSpaceShadows`, `waterEffects`, `wetnessEffects`
+    - _Environment:_ `cloudShadows`, `dynamicCubemaps`, `weatherEditor`, `skySync`
+    - _VR:_ `vr` (VR-specific adaptations & transformations)
 
 ### Shared Utilities (`src/Utils/`)
 
--   `UI.h/cpp` - ImGui utilities and input mapping.
--   `D3D.h/cpp` - DirectX utilities and helper functions (including `Util::SetResourceName`).
--   `Game.h/cpp` - Skyrim-specific game state and object utilities.
--   `VRUtils.h/cpp` - VR-specific utilities and coordinate transformations.
--   `FileSystem.h/cpp` - File I/O and path helpers.
--   `Format.h/cpp` - String formatting and conversion.
--   `Serialize.h/cpp` - JSON serialization helpers.
+- `UI.h/cpp` - ImGui utilities and input mapping.
+- `D3D.h/cpp` - DirectX utilities and helper functions (including `Util::SetResourceName`).
+- `Game.h/cpp` - Skyrim-specific game state and object utilities.
+- `VRUtils.h/cpp` - VR-specific utilities and coordinate transformations.
+- `FileSystem.h/cpp` - File I/O and path helpers.
+- `Format.h/cpp` - String formatting and conversion.
+- `Serialize.h/cpp` - JSON serialization helpers.
 
 ---
 

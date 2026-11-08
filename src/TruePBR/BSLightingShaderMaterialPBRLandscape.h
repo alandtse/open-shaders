@@ -40,8 +40,8 @@ public:
 	 */
 	RE::BSShaderMaterial* Create() override;  // 01
 	/**
-	 * @brief Copies all landscape PBR members (textures, per-tile parameters, terrain data) to the target material.
-	 * @param that Target material to copy into (must be BSLightingShaderMaterialPBRLandscape).
+	 * @brief Copies all landscape PBR members (textures, per-tile parameters, terrain data) into this instance.
+	 * @param that Source material to copy from (must be BSLightingShaderMaterialPBRLandscape).
 	 */
 	void CopyMembers(RE::BSShaderMaterial* that) override;  // 02
 	/**

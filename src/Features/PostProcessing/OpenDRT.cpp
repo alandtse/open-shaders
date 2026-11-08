@@ -2,6 +2,7 @@
 #include "Util.h"
 
 #include "I18n/I18n.h"
+#include "Utils/SettingsControl.h"
 #include <algorithm>
 
 namespace
@@ -78,8 +79,6 @@ namespace
 		"D55",
 		"D50",
 	};
-
-	const char* const kSurroundLabels[] = { "Dark", "Dim", "Bright" };
 
 	bool CheckboxInt(const char* label, std::int32_t& value)
 	{
@@ -810,15 +809,23 @@ void OpenDRTDrawSettings(OpenDRTSettings& s, bool hdrActive, float hdrPaperWhite
 {
 	static OpenDRTPresetSelection presets{};
 
+	const char* const surroundLabels[] = {
+		T("feature.post_processing.open_drt.surround_dark", "Dark"),
+		T("feature.post_processing.open_drt.surround_dim", "Dim"),
+		T("feature.post_processing.open_drt.surround_bright", "Bright"),
+	};
+
 	if (ImGui::CollapsingHeader(T("feature.post_processing.open_drt.built_in_presets", "Built-in Presets"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		Util::Combo(T("feature.post_processing.open_drt.look_preset", "Look Preset"), &presets.lookPreset, kLookPresetLabels);
 		Util::Combo(T("feature.post_processing.open_drt.tonescale_preset", "Tonescale Preset"), &presets.tonescalePreset, kTonescalePresetLabels);
 
-		if (ImGui::Button(T("feature.post_processing.open_drt.apply_preset", "Apply Preset"), { -FLT_MIN, 0 })) {
+		ImGui::BeginDisabled(SettingsControl::IsReplicating());
+		if (Util::Button(T("feature.post_processing.open_drt.apply_preset", "Apply Preset"), { -FLT_MIN, 0 })) {
 			ApplyLookPreset(s, presets.lookPreset);
 			ApplyTonescalePreset(s, presets.tonescalePreset);
 			s.clamp = 1;
 		}
+		ImGui::EndDisabled();
 	}
 
 	if (ImGui::CollapsingHeader(T("feature.post_processing.open_drt.display", "Display"), ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -857,7 +864,7 @@ void OpenDRTDrawSettings(OpenDRTSettings& s, bool hdrActive, float hdrPaperWhite
 				T("feature.post_processing.open_drt.display_luminance_for_middle_grey_0_18_in",
 					"Display luminance for middle grey (0.18) in nits.\n"
 					"Sets the target value for middle grey within the available luminance range of the display device."));
-		Util::Combo(T("feature.post_processing.open_drt.surround", "Surround"), &s.tn_su, kSurroundLabels);
+		Util::Combo(T("feature.post_processing.open_drt.surround", "Surround"), &s.tn_su, surroundLabels);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(
 				T("feature.post_processing.open_drt.opendrt_includes_a_simple_surround_compensation_model_dci",

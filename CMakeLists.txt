@@ -73,7 +73,7 @@ option(
 option(TRACY_SUPPORT "Enable support for tracy profiler" OFF)
 option(
     NVPERF_SUPPORT
-    "Enable the Nsight Perf range profiler in Remote Control (requires NVPERF_SDK_ROOT)"
+    "Enable the Nsight Perf range profiler in Developer Tools (requires NVPERF_SDK_ROOT)"
     OFF
 )
 set(NVPERF_SDK_ROOT
@@ -118,10 +118,49 @@ if(GIT_FOUND)
         OUTPUT_STRIP_TRAILING_WHITESPACE
         ERROR_QUIET
     )
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} branch --show-current
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE GIT_BRANCH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --short=9 HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE GIT_HASH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE _git_status
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(_git_status STREQUAL "")
+        set(GIT_DIRTY "false")
+    else()
+        set(GIT_DIRTY "true")
+    endif()
+    # CI PR checkouts are detached, so use the PR's source branch
+    if(GIT_BRANCH STREQUAL "" AND NOT "$ENV{GITHUB_HEAD_REF}" STREQUAL "")
+        set(GIT_BRANCH "$ENV{GITHUB_HEAD_REF}")
+    endif()
+    # Untrusted (PR authors pick it) and lands in a C++ string literal
+    string(REGEX REPLACE "[^A-Za-z0-9._/-]" "_" GIT_BRANCH "${GIT_BRANCH}")
+    # Only CI artifacts are official builds
+    if(NOT GIT_BRANCH STREQUAL "" AND NOT "$ENV{CI}" STREQUAL "true")
+        string(APPEND GIT_BRANCH "*")
+    endif()
 else()
     set(GIT_DESCRIBE "unknown")
+    set(GIT_HASH "")
+    set(GIT_DIRTY "false")
 endif()
 message("\tBuild version: ${GIT_DESCRIBE}")
+message("\tBuild branch: ${GIT_BRANCH}")
 
 # #######################################################################################################################
 # # Add CMake features
@@ -152,6 +191,7 @@ find_package(imgui CONFIG REQUIRED)
 find_package(EASTL CONFIG REQUIRED)
 find_package(directxtk CONFIG REQUIRED)
 find_package(directxtex CONFIG REQUIRED)
+find_package(libavif 1.4.1 EXACT CONFIG REQUIRED)
 find_path(CLIB_UTIL_INCLUDE_DIRS "ClibUtil/utils.hpp")
 find_package(pystring CONFIG REQUIRED)
 find_package(cppwinrt CONFIG REQUIRED)
@@ -231,7 +271,8 @@ FetchContent_Declare(
     ImGuiVRHelper
     GIT_REPOSITORY https://github.com/alandtse/imgui-vr-helper.git
     GIT_TAG v1.7.0
-    GIT_SUBMODULES "" SOURCE_SUBDIR api
+    GIT_SUBMODULES ""
+    SOURCE_SUBDIR api
 )
 FetchContent_MakeAvailable(ImGuiVRHelper)
 target_link_libraries(${PROJECT_NAME} PRIVATE ImGuiVRHelper::api)
@@ -259,6 +300,7 @@ set_source_files_properties(
         COMPILE_OPTIONS
             "$<$<OR:$<C_COMPILER_ID:MSVC>,$<C_COMPILER_ID:Clang>>:/W0>"
 )
+target_compile_definitions(${PROJECT_NAME} PRIVATE SK_HDR_PNG_COMMUNITY_SHADERS)
 
 target_link_libraries(
     ${PROJECT_NAME}
@@ -271,10 +313,12 @@ target_link_libraries(
         EASTL
         Microsoft::DirectXTK
         Microsoft::DirectXTex
+        avif
         pystring::pystring
         unordered_dense::unordered_dense
         efsw::efsw
         xxHash::xxhash
+        comdlg32
         Tracy::TracyClient
         Streamline
         d3d12.lib
@@ -525,17 +569,9 @@ target_sources(
 # # Scene settings catalog
 # #######################################################################################################################
 
-set(SCENE_SETTINGS_PYTHON_ARGS "")
-if(WIN32)
-    find_program(SCENE_SETTINGS_PYTHON_EXECUTABLE NAMES py.exe)
-    if(SCENE_SETTINGS_PYTHON_EXECUTABLE)
-        set(SCENE_SETTINGS_PYTHON_ARGS -3)
-    endif()
-endif()
-if(NOT SCENE_SETTINGS_PYTHON_EXECUTABLE)
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
-    set(SCENE_SETTINGS_PYTHON_EXECUTABLE "${Python3_EXECUTABLE}")
-endif()
+# The generator's annotations (`str | None`) need 3.10.
+find_package(Python3 3.10 COMPONENTS Interpreter REQUIRED)
+set(SCENE_SETTINGS_PYTHON_EXECUTABLE "${Python3_EXECUTABLE}")
 
 set(SCENE_SETTINGS_CATALOG_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(SCENE_SETTINGS_CATALOG_HEADER
@@ -547,7 +583,9 @@ set(SCENE_SETTINGS_CATALOG_SOURCE
 set(SCENE_SETTINGS_ADAPTERS_SOURCE
     "${SCENE_SETTINGS_CATALOG_DIR}/FeatureSceneSettingsAdapters.generated.cpp"
 )
-
+set(SCENE_SETTINGS_CATALOG_STAMP
+    "${SCENE_SETTINGS_CATALOG_DIR}/SceneSettingsCatalog.stamp"
+)
 file(
     GLOB_RECURSE SCENE_SETTINGS_CATALOG_INPUTS
     LIST_DIRECTORIES false
@@ -558,16 +596,20 @@ file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cxx"
 )
 
+# The generator rewrites only outputs whose text changed, so their objects survive an unrelated edit. The
+# stamp is the output instead, or MSBuild would see them older than the sources and rerun every build.
 add_custom_command(
-    OUTPUT
+    OUTPUT "${SCENE_SETTINGS_CATALOG_STAMP}"
+    BYPRODUCTS
         "${SCENE_SETTINGS_CATALOG_HEADER}"
         "${SCENE_SETTINGS_CATALOG_SOURCE}"
         "${SCENE_SETTINGS_ADAPTERS_SOURCE}"
     COMMAND
-        ${SCENE_SETTINGS_PYTHON_EXECUTABLE} ${SCENE_SETTINGS_PYTHON_ARGS}
+        ${SCENE_SETTINGS_PYTHON_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate_scene_settings_catalog.py"
         --source-dir "${CMAKE_CURRENT_SOURCE_DIR}" --out-dir
-        "${SCENE_SETTINGS_CATALOG_DIR}" --min-entries 250
+        "${SCENE_SETTINGS_CATALOG_DIR}" --min-entries 645 --min-controllable 538
+        --min-controllable-features 32 --stamp "${SCENE_SETTINGS_CATALOG_STAMP}"
     DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate_scene_settings_catalog.py"
         ${SCENE_SETTINGS_CATALOG_INPUTS}
@@ -583,6 +625,7 @@ target_include_directories(
 target_sources(
     "${PROJECT_NAME}"
     PRIVATE
+        "${SCENE_SETTINGS_CATALOG_STAMP}"
         "${SCENE_SETTINGS_CATALOG_HEADER}"
         "${SCENE_SETTINGS_CATALOG_SOURCE}"
         "${SCENE_SETTINGS_ADAPTERS_SOURCE}"
@@ -831,7 +874,35 @@ if(SKIP_RUNTIME_DOWNLOADS)
         )
     endif()
 endif()
+# Icon fonts + licenses live under src/Menu/Icons/glyphs; deploy under Icons/glyphs (not Fonts).
+# CONFIGURE_DEPENDS picks up new TTFs / LICENSE files without editing this list.
+set(CS_ICON_FONT_SRC_DIR "${CMAKE_SOURCE_DIR}/src/Menu/Icons/glyphs")
+set(CS_ICON_FONT_DST_REL "Interface/CommunityShaders/Icons/glyphs")
+file(
+    GLOB CS_ICON_FONT_FILES
+    CONFIGURE_DEPENDS
+    LIST_DIRECTORIES FALSE
+    "${CS_ICON_FONT_SRC_DIR}/*.ttf"
+    "${CS_ICON_FONT_SRC_DIR}/*LICENSE*.txt"
+)
+install(
+    FILES ${CS_ICON_FONT_FILES}
+    DESTINATION ${CS_ICON_FONT_DST_REL}
+    COMPONENT Shaders
+)
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
+
+# The rest of the Licenses folder lives in package/; these two sit at the repo root for GitHub.
+set(LICENSES_DESTINATION SKSE/Plugins/CommunityShaders/Licenses)
+set(ROOT_LICENSE_FILES
+    "${CMAKE_SOURCE_DIR}/COPYING.txt"
+    "${CMAKE_SOURCE_DIR}/EXCEPTIONS.md"
+)
+install(
+    FILES ${ROOT_LICENSE_FILES}
+    DESTINATION ${LICENSES_DESTINATION}
+    COMPONENT SKSE
+)
 if(NVPERF_SUPPORT)
     install(
         FILES "${NVPERF_DLL}"
@@ -867,6 +938,8 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         list(FILTER _tmp EXCLUDE REGEX "/Shaders/")
         list(APPEND _AIO_PACKAGE_FILES ${_tmp})
     endforeach()
+    list(APPEND _AIO_PACKAGE_FILES ${CS_ICON_FONT_FILES})
+    list(APPEND _AIO_PACKAGE_FILES ${ROOT_LICENSE_FILES})
 
     # Prepare AIO by copying files only when different. This avoids updating
     # timestamps for unchanged files and prevents downstream incremental
@@ -917,6 +990,29 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     list(FILTER _AIO_PACKAGE_SOURCE_FILES EXCLUDE REGEX "/Tests/")
     list(FILTER _AIO_PACKAGE_SOURCE_FILES EXCLUDE REGEX "/Shaders/")
     append_copy_if_different(_prepare_aio_cmds _AIO_PACKAGE_SOURCE_FILES "${CMAKE_SOURCE_DIR}/package" "${AIO_DIR}")
+    append_copy_if_different(_prepare_aio_cmds ROOT_LICENSE_FILES "${CMAKE_SOURCE_DIR}" "${AIO_DIR}/${LICENSES_DESTINATION}")
+
+    # Icon fonts are sourced from src/Menu/Icons/glyphs (CS_ICON_FONT_FILES glob).
+    list(
+        APPEND _prepare_aio_cmds
+        COMMAND
+        ${CMAKE_COMMAND}
+        -E
+        make_directory
+        "${AIO_DIR}/${CS_ICON_FONT_DST_REL}"
+    )
+    foreach(_icon_font_src IN LISTS CS_ICON_FONT_FILES)
+        get_filename_component(_icon_font_name "${_icon_font_src}" NAME)
+        list(
+            APPEND _prepare_aio_cmds
+            COMMAND
+            ${CMAKE_COMMAND}
+            -E
+            copy_if_different
+            "${_icon_font_src}"
+            "${AIO_DIR}/${CS_ICON_FONT_DST_REL}/${_icon_font_name}"
+        )
+    endforeach()
 
     # Copy feature folders (files only; copy_shaders.stamp owns Shaders/
     # to avoid racing). All features copied — autoupload filter applies
@@ -1285,6 +1381,9 @@ if(ZIP_TO_DIST)
             ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/package
             "${ZIP_DIR}"
         COMMAND
+            ${CMAKE_COMMAND} -E copy ${ROOT_LICENSE_FILES}
+            "${ZIP_DIR}/${LICENSES_DESTINATION}/"
+        COMMAND
             ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}>
             "${ZIP_DIR}/SKSE/Plugins/"
         COMMAND
@@ -1487,12 +1586,10 @@ file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/dist")
 
 set(CORE_PACKAGE "${DIST_PATH}/${PROJECT_NAME}-${UTC_NOW}.7z")
 
-# CORE_SOURCES = all content copied to the AIO directory + the SKSE plugin dll
-file(
-    GLOB_RECURSE CORE_SOURCES
-    CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/package/*"
-)
+# CORE_SOURCES = all content copied to the AIO directory + the SKSE plugin dll.
+# No CONFIGURE_DEPENDS: packaging runs from a fresh CI configure, and omitting
+# it keeps these globs out of the VS generator's per-build VerifyGlobs walk.
+file(GLOB_RECURSE CORE_SOURCES "${CMAKE_SOURCE_DIR}/package/*")
 # Add SKSE plugin dll as dependency (use target-file generator expression so CMake
 # knows the actual output path of the target at build time)
 list(APPEND CORE_SOURCES "$<TARGET_FILE:${PROJECT_NAME}>")
@@ -1514,8 +1611,8 @@ add_custom_command(
     OUTPUT ${CORE_PACKAGE}
     DEPENDS ${CORE_SOURCES}
     COMMAND
-        ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${FEATURE_PATH}
-        --component SKSE
+        ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --config $<CONFIG>
+        --prefix ${FEATURE_PATH} --component SKSE
     COMMAND
         ${CMAKE_COMMAND} -E copy_directory ${CORE_FEATURE_PATHS} ${FEATURE_PATH}
     COMMAND ${CMAKE_COMMAND} -E rm -f -- ${FEATURE_PATH}/Core
@@ -1563,13 +1660,24 @@ foreach(FEATURE_PATH ${FEATURE_PATHS})
 endforeach()
 
 # AIO Folder target
-add_custom_command(
-    OUTPUT ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll
-    DEPENDS ${CORE_SOURCES} ${FFX_RUNTIME_FILES}
-    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
-    COMMENT "Installing to AIO folder"
-)
-add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
+# When the incremental AIO system (PREPARE_AIO) is active, reuse it instead
+# of running a full cmake --install (which does REMOVE_RECURSE + full copy).
+if(TARGET PREPARE_AIO)
+    add_custom_target(
+        "AIO"
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp copy_shaders.stamp
+    )
+else()
+    add_custom_command(
+        OUTPUT ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll
+        DEPENDS ${PROJECT_NAME} ${CORE_SOURCES} ${FFX_RUNTIME_FILES}
+        COMMAND
+            ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --config $<CONFIG>
+            --prefix ${AIO_DIR}
+        COMMENT "Installing to AIO folder"
+    )
+    add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
+endif()
 
 # Manual AIO package target. Strips non-autoupload features at archive
 # time (mirroring AIO_ZIP_PACKAGE) so the manual path produces the same

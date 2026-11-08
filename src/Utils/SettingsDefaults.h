@@ -10,10 +10,9 @@ struct Feature;
 namespace Util::Settings
 {
 	/**
-	 * @brief Reads a catalogued setting's default value, as restored by the feature's RestoreDefaultSettings.
+	 * @brief Reads a catalogued setting from State's captured code defaults.
 	 * @return The default, or nullopt when the feature has no default for that setting.
-	 * @note Main/render thread only. Defaults are captured once per feature, so a default that depends on
-	 *       runtime state (for example a detected monitor) reflects the first read.
+	 * @note Main/render thread only; reading defaults never changes the live feature.
 	 */
 	std::optional<nlohmann::json> GetSettingDefault(Feature& a_feature, const SceneSettingsCatalog::SettingMetadata& a_setting);
 

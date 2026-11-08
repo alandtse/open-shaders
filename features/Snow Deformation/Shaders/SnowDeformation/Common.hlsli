@@ -289,10 +289,14 @@ uint PatchEyeOf(ControlPoint p0, ControlPoint p1, ControlPoint p2)
 #if defined(VR) && defined(DEPTH_ONLY) && !defined(SD_LAYOUT)
 	return p0.EyeIndex;
 #elif defined(VR)
-	[branch] if (StereoEnabled < 0.5) return 0;
-	float left = EyeMismatch(p0.Position, ControlPointWorld(p0), 0) + EyeMismatch(p1.Position, ControlPointWorld(p1), 0) + EyeMismatch(p2.Position, ControlPointWorld(p2), 0);
-	float right = EyeMismatch(p0.Position, ControlPointWorld(p0), 1) + EyeMismatch(p1.Position, ControlPointWorld(p1), 1) + EyeMismatch(p2.Position, ControlPointWorld(p2), 1);
-	return right < left ? 1 : 0;
+	uint eye = 0;
+	[branch] if (StereoEnabled >= 0.5)
+	{
+		float left = EyeMismatch(p0.Position, ControlPointWorld(p0), 0) + EyeMismatch(p1.Position, ControlPointWorld(p1), 0) + EyeMismatch(p2.Position, ControlPointWorld(p2), 0);
+		float right = EyeMismatch(p0.Position, ControlPointWorld(p0), 1) + EyeMismatch(p1.Position, ControlPointWorld(p1), 1) + EyeMismatch(p2.Position, ControlPointWorld(p2), 1);
+		eye = right < left ? 1 : 0;
+	}
+	return eye;
 #else
 	return 0;
 #endif

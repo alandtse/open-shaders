@@ -29,6 +29,9 @@ private:
 	static constexpr uint32_t CLUSTER_MAX_LIGHTS = 128;
 	eastl::hash_map<RE::BSLight*, RE::NiLight*> effectLightValidationCache;
 
+	/** @brief Queues or culls a candidate particle light pass. Kept out of line so other passes skip its vector register saves. */
+	[[msvc::noinline]] bool CheckParticleLightPass(RE::BSRenderPass* a_pass);
+
 public:
 	virtual inline std::string GetName() override { return "Light Limit Fix"; }
 	virtual std::string GetDisplayName() override { return T("feature.light_limit_fix.name", "Light Limit Fix"); }
@@ -217,6 +220,8 @@ public:
 	// both the menu stat and GetDiagnostics() (see below).
 	std::atomic<uint32_t> particleLightCount{ 0 };
 	std::atomic<uint32_t> clusteredLightCount{ 0 };
+	/** @brief Particle lights accepted after expansion, clustering, and buffer filtering. */
+	std::atomic<uint32_t> bufferedParticleLightCount{ 0 };
 
 	std::shared_mutex cachedParticleLightsMutex;
 	eastl::vector<CachedParticleLight> cachedParticleLights;
