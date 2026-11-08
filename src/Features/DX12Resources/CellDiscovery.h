@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CellRequest.h"
+#include "PreprocessorParity.h"
 #include <nlohmann/json.hpp>
 #include <cstdint>
 #include <string>
@@ -37,21 +38,18 @@ namespace DX12ResourceService
             { "materialsReady", false },
             { "lightsReady", false },
             { "preprocessorParity", false },
+            { "preprocessorParityGates", ParityStatus{}.ToJson() },
             { "renderable", false },
             { "nextStage", "Port first-stage offline Mutagen NIF/REFR/light extraction into native DX12 Resources" },
             { "discoveryComplete", cell.isInterior && cell.resolvedFormId != 0 }
         };
     }
 
-    inline bool IsRenderableCacheReport(const nlohmann::json& report)
+    inline bool IsDiscoveryOnlyReport(const nlohmann::json& report)
     {
-        // Discovery reports must never be mistaken for a prepared cell.
         return report.is_object() && report.value("schemaVersion", 0) == 1 &&
-            report.value("kind", std::string{}) == "prepared-interior" &&
-            report.value("geometryReady", false) &&
-            report.value("materialsReady", false) &&
-            report.value("lightsReady", false) &&
-            report.value("preprocessorParity", false) &&
-            report.value("renderable", false);
+            report.value("kind", std::string{}) == "cell-source-discovery" &&
+            !report.value("geometryReady", true) && !report.value("materialsReady", true) &&
+            !report.value("lightsReady", true) && !report.value("renderable", true);
     }
 }

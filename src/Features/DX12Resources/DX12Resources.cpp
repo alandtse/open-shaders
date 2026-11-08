@@ -150,7 +150,7 @@ void DX12Resources::DrawSettings()
         ImGui::TextDisabled("Enter an exact source plugin and local CELL FormID.");
     ImGui::TextDisabled("Only closed interiors. No save prediction or automatic processing.");
     ImGui::BeginDisabled(!request || !dataLoaded.load(std::memory_order_acquire) || bool(job));
-    if (ImGui::Button("Prepare Selected Cell") && request)
+    if (ImGui::Button("Prepare Selected Cell (source discovery)") && request)
         SubmitManualRequest(*request);
     ImGui::EndDisabled();
     if (job) ImGui::TextUnformatted("Source-discovery worker running...");
