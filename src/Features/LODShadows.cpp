@@ -564,7 +564,7 @@ void LODShadows::CollectLoadedObjects(bool a_fullWalk)
 			auto& entry = loadedRefCache[reference];
 			entry.scanId = loadedScanId;
 			const bool culled = root->GetAppCulled();
-			if (!a_fullWalk && entry.root == root && entry.culled == culled) {
+			if (!a_fullWalk && entry.root.get() == root && entry.culled == culled) {
 				for (const auto& geometry : entry.geometry) {
 					visibleGeometry.emplace_back(geometry);
 					HashGeometry(geometry.get());
@@ -573,7 +573,7 @@ void LODShadows::CollectLoadedObjects(bool a_fullWalk)
 			}
 			const auto first = visibleGeometry.size();
 			Collect(root, false, true);
-			entry.root = root;
+			entry.root.reset(root);
 			entry.culled = culled;
 			entry.geometry.assign(visibleGeometry.begin() + first, visibleGeometry.end());
 			return RE::BSContainer::ForEachResult::kContinue;

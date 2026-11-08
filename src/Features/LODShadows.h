@@ -208,7 +208,7 @@ private:
 	/** @brief Geometry last collected for one static reference, reused until a full walk or its root changes. */
 	struct LoadedRefEntry
 	{
-		RE::NiAVObject* root = nullptr;
+		RE::NiPointer<RE::NiAVObject> root;
 		bool culled = false;
 		uint64_t scanId = 0;
 		std::vector<RE::NiPointer<RE::BSGeometry>> geometry;
