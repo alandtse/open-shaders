@@ -228,9 +228,10 @@ void DX12NativeScene::DrawSettings()
     ImGui::Text("Runtime geometry batches: %u  attempts: %zu  failures: %u",
         runtimeGeometryPrepare.Batches(), runtimeGeometryPrepare.Attempted(),
         runtimeGeometryPrepare.Failures());
-    ImGui::Text("Runtime BLAS/TLAS preview ready: %s",
-        runtimeAccelerationPreview.GetScene() ? "Yes" : "No");
-    ImGui::TextDisabled("Preview is independent of the active prepared scene and native lighting.");
+    ImGui::Text("Current-scene TLAS: %s",
+        currentSceneStableAcceleration && currentSceneStableAcceleration->scope.policy == 2 ?
+            "Prepared + runtime geometry" : "Prepared geometry only");
+    ImGui::TextDisabled("Runtime shapes enter the production scene after completion and material binding.");
     if (ImGui::CollapsingHeader("Native PBR Diagnostics"))
         DrawNativePBRDiagnostics(GetDiagnostics());
 	{
@@ -496,8 +497,9 @@ void DX12NativeScene::ResetScene()
     runtimePreparedSkipped.store(0, std::memory_order_relaxed);
     runtimePreparedPruned = 0;
     runtimeGeometryCache.ResetScene();
-    runtimeAccelerationPreview.Reset();
-    runtimePreviewGeneration = 0;
+    currentSceneStableAcceleration.reset();
+    currentSceneStableBindings.reset();
+    currentSceneSubmittedBatch = 0;
     runtimeGeometryBudgetStatus = {};
     runtimeGeometryActiveBytes = runtimeGeometryAllowedBytes = 0;
 	prepared.Reset();
@@ -604,45 +606,35 @@ void DX12NativeScene::EarlyPrepass()
 		cellID = currentID;
 		failure.clear();
 	}
-    // Runtime additions share the manual scene ceiling and real DXGI headroom
-    // with the already resident production geometry, acceleration and materials.
-    // The disk/CPU cache is intentionally outside this GPU-residency budget.
-    if (settings.CaptureRuntimeGeometry &&
-        runtimePreparedCoverage.load(std::memory_order_acquire) && runtimeGeometry.Count() != 0) {
+    // Runtime geometry shares actual DXGI headroom and the scene's manual
+    // ceiling with prepared geometry, completed BLAS/TLAS and materials.
+    // Do not allocate a duplicate runtime-only preview acceleration scene.
+    if (settings.CaptureRuntimeGeometry && currentSceneStableAcceleration &&
+        currentSceneStableAcceleration->scope.scene == revision &&
+        runtimePreparedCoverage.load(std::memory_order_acquire) &&
+        runtimeGeometry.Count() != 0) {
         const auto currentCell = prepared.GetCell();
-        const auto currentScene = acceleration.GetScene();
-        const auto bound = materialBindings.Get();
+        const auto bound = currentSceneStableBindings ? currentSceneStableBindings : materialBindings.Get();
         const uint64_t baselineGeometryBytes = currentCell ? currentCell->bytes : 0;
-        const uint64_t baselineAsBytes = NativeAccelerationResidentBytes(currentScene);
-        const uint64_t baselineMaterialBytes = bound && bound->materials ? bound->materials->bytes : 0;
+        const uint64_t baselineAsBytes = NativeAccelerationResidentBytes(currentSceneStableAcceleration);
+        const uint64_t baselineMaterialBytes = bound ? bound->bytes : 0;
         const uint64_t totalLimit = uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB;
         runtimeGeometryActiveBytes = baselineGeometryBytes + baselineAsBytes + baselineMaterialBytes;
         const uint64_t availableManual = totalLimit > runtimeGeometryActiveBytes ?
             totalLimit - runtimeGeometryActiveBytes : 0;
         const auto runtimeCell = runtimeGeometryPrepare.GetCell();
         const uint64_t geometryBytes = runtimeCell ? runtimeCell->bytes : 0;
-        const uint64_t previewAsBytes = NativeAccelerationResidentBytes(runtimeAccelerationPreview.GetScene());
         runtimeGeometryAllowedBytes = 0;
         if (availableManual) {
-            runtimeGeometryBudgetStatus = runtimeGeometryVideoMemory.Query(backend->d3d12Device.get(),
-                geometryBytes + previewAsBytes, availableManual);
+            runtimeGeometryBudgetStatus = runtimeGeometryVideoMemory.Query(
+                backend->d3d12Device.get(), geometryBytes, availableManual);
             runtimeGeometryAllowedBytes = runtimeGeometryBudgetStatus.effectiveBytes;
         } else runtimeGeometryBudgetStatus = {};
-        const uint64_t geometryBudget = runtimeGeometryAllowedBytes > previewAsBytes ?
-            runtimeGeometryAllowedBytes - previewAsBytes : 0;
-        const uint64_t accelBudget = runtimeGeometryAllowedBytes > geometryBytes ?
-            runtimeGeometryAllowedBytes - geometryBytes : 0;
-        // Advance even with zero new budget so completed detached work can be
-        // retired; Advance itself refuses to schedule any new allocation at 0.
-        runtimeGeometryPrepare.Advance(*backend, runtimeGeometry, revision, geometryBudget,
-            settings.CacheRuntimeGeometry ? runtimeGeometryCache.GetPrewarmed() : nullptr);
-        if (auto ready = runtimeGeometryPrepare.GetCell(); accelBudget && ready && ready->snapshot &&
-            !ready->snapshot->instances.empty() && runtimeAccelerationPreview.Finished() &&
-            runtimePreviewGeneration != ready->snapshot->generation) {
-            runtimeAccelerationPreview.Start(*backend, ready->snapshot, ready->geometries, accelBudget);
-            runtimePreviewGeneration = ready->snapshot->generation;
-        }
-        runtimeAccelerationPreview.Advance();
+        // Retire completed work even if no further allocations are allowed.
+        runtimeGeometryPrepare.Advance(*backend, runtimeGeometry, revision,
+            runtimeGeometryAllowedBytes,
+            settings.CacheRuntimeGeometry ? runtimeGeometryCache.GetPrewarmed() : nullptr,
+            currentCell);
     }
 	if (!prepared.Requested()) {
 		const auto* source = cell->GetFile(0);
@@ -660,6 +652,11 @@ void DX12NativeScene::EarlyPrepass()
 		}
 	}
 	acceleration.Advance();
+    // Keep the last usable scene until the replacement TLAS and its own
+    // material bindings are ready; never expose a mismatched resource pair.
+    if (auto completed = acceleration.GetScene(); completed &&
+        completed->scope.scene == revision && !currentSceneStableAcceleration)
+        currentSceneStableAcceleration = completed;
     // Reuse the runtime's existing reference/shape identities, but only skip
     // geometries actually admitted to a completed production TLAS. Offline
     // omissions and preview-only candidates must remain discoverable.
@@ -676,7 +673,9 @@ void DX12NativeScene::EarlyPrepass()
         runtimePreparedCoverage.store(covered, std::memory_order_release);
         runtimePreparedPruned += runtimeGeometry.RemoveCovered(*covered);
     }
-    if (auto scene = acceleration.GetScene(); scene && shadow.RetireScenesExcept(scene) && retiredMaterials.expired()) {
+    if (auto scene = acceleration.GetScene(); scene &&
+        shadow.RetireScenesExcept(currentSceneStableAcceleration ? currentSceneStableAcceleration : scene) &&
+        retiredMaterials.expired()) {
         if (settings.UseLivePBR && globals::game::graphicsState) {
             auto& pbr = globals::features::truePBR;
             const uint64_t currentRevision = pbr.nativeRegistry.Revision();
@@ -703,6 +702,29 @@ void DX12NativeScene::EarlyPrepass()
             settings.UseLivePBR && settings.ImportLoosePBR && settings.RuntimeOnlyMaterials);
     }
 	materialBindings.Advance();
+    if (auto completed = acceleration.GetScene(); completed &&
+        completed->scope.scene == revision) {
+        const auto matching = materialBindings.Get();
+        if (matching && matching->scene == completed) {
+            currentSceneStableAcceleration = completed;
+            currentSceneStableBindings = matching;
+        }
+    }
+    // Reuse the production worker's completed BLAS cache. The previous
+    // production TLAS remains retained independently during rebuilding.
+    if (settings.CaptureRuntimeGeometry && acceleration.Finished() &&
+        currentSceneStableAcceleration &&
+        currentSceneStableAcceleration->scope.scene == revision) {
+        if (auto combined = runtimeGeometryPrepare.GetCurrentSceneCell();
+            combined && combined->snapshot &&
+            combined->snapshot->scope.scene == revision &&
+            combined->snapshot->scope.policy == 2 &&
+            combined->snapshot->scope.batch > currentSceneSubmittedBatch) {
+            currentSceneSubmittedBatch = combined->snapshot->scope.batch;
+            acceleration.Start(*backend, combined->snapshot, combined->geometries,
+                uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB);
+        }
+    }
 	DispatchShadow("early-prepass");
 }
 
@@ -818,9 +840,9 @@ std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScen
 	auto* cell = globals::game::player ? globals::game::player->GetParentCell() : nullptr;
 	if (!cell || cell->GetFormID() != cellID) return std::nullopt;
 	auto data = prepared.GetCell();
-	auto scene = acceleration.GetScene();
+	auto scene = currentSceneStableAcceleration ? currentSceneStableAcceleration : acceleration.GetScene();
 	if (!data || !scene || scene->scope.scene != revision) return std::nullopt;
-	auto materials = materialBindings.Get();
+	auto materials = currentSceneStableBindings ? currentSceneStableBindings : materialBindings.Get();
 	if (materials && materials->scene != scene) materials.reset();
 	return PublishedScene{ std::move(data), std::move(scene), std::move(materials), cellID, revision };
 }
@@ -844,6 +866,12 @@ void DX12NativeScene::PublishDiagnostics()
                 runtimePreparedCoverage.load(std::memory_order_acquire)->completed.size() : 0 },
             { "alreadyPreparedSkipped", runtimePreparedSkipped.load(std::memory_order_relaxed) },
             { "alreadyPreparedPruned", runtimePreparedPruned },
+            { "currentSceneMerged", currentSceneStableAcceleration &&
+                currentSceneStableAcceleration->scope.policy == 2 },
+            { "currentSceneSubmittedBatch", currentSceneSubmittedBatch },
+            { "currentSceneInputInstances", runtimeGeometryPrepare.GetCurrentSceneCell() &&
+                runtimeGeometryPrepare.GetCurrentSceneCell()->snapshot ?
+                runtimeGeometryPrepare.GetCurrentSceneCell()->snapshot->instances.size() : 0 },
             { "gpuBudget", { { "dxgiAvailable", runtimeGeometryBudgetStatus.dxgiAvailable },
                 { "localBudgetBytes", runtimeGeometryBudgetStatus.localBudget },
                 { "localUsageBytes", runtimeGeometryBudgetStatus.localUsage },
@@ -871,7 +899,8 @@ void DX12NativeScene::PublishDiagnostics()
                 runtimeGeometryPrepare.GetCell()->snapshot->instances.size() : 0 },
             { "preparedBytes", runtimeGeometryPrepare.GetCell() ?
                 runtimeGeometryPrepare.GetCell()->bytes : 0 },
-            { "accelerationPreview", runtimeAccelerationPreview.GetDiagnostics() } } },
+            { "activeSceneInstances", currentSceneStableAcceleration ?
+                currentSceneStableAcceleration->instances.size() : 0 } } },
         { "prepared", prepared.GetDiagnostics() }, { "materialFailure", materialBindings.Failure() }, { "materialUploadPending", materialBindings.UploadPending() },
         { "materialBindingsReady", bindings && bindings->scene == acceleration.GetScene() },
 		{ "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() },

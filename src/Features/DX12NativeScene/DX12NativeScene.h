@@ -112,8 +112,11 @@ private:
     uint64_t runtimePreparedPruned = 0;
     DX12Native::RuntimeGeometryCacheWorker runtimeGeometryCache;
     DX12Native::RuntimeGeometryPreparation runtimeGeometryPrepare;
-    DX12Native::AccelerationWorker runtimeAccelerationPreview;
-    uint64_t runtimePreviewGeneration = 0;
+    // The same production acceleration worker receives composed current-scene
+    // generations. Retain the last usable TLAS/material pair during rebuilds.
+    std::shared_ptr<const DX12Native::TopLevel> currentSceneStableAcceleration;
+    std::shared_ptr<const DX12Native::ShadowBindings> currentSceneStableBindings;
+    uint64_t currentSceneSubmittedBatch = 0;
     DX12Native::VideoMemoryBudget runtimeGeometryVideoMemory;
     DX12Native::VideoMemoryBudget::Snapshot runtimeGeometryBudgetStatus{};
     uint64_t runtimeGeometryActiveBytes = 0, runtimeGeometryAllowedBytes = 0;

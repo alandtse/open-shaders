@@ -131,6 +131,67 @@ namespace DX12Native
         return result;
     }
 
+
+    /** @brief Build an immutable CELL/TLAS input from already owned prepared and
+     * runtime geometry. CPU composition happens on the geometry worker, not the
+     * frame thread. The offline material source, lights and rooms remain
+     * authoritative; only distinct runtime instances are appended.
+     */
+    inline std::shared_ptr<const PreparedCell> ComposeCurrentSceneGeometry(
+        const std::shared_ptr<const PreparedCell>& baseline,
+        const std::shared_ptr<const PreparedCell>& runtime, uint64_t sceneEpoch)
+    {
+        if (!baseline || !baseline->snapshot || !runtime || !runtime->snapshot ||
+            baseline->snapshot->scope.scene != sceneEpoch ||
+            runtime->snapshot->scope.scene != sceneEpoch) return {};
+
+        auto result = std::make_shared<PreparedCell>(*baseline);
+        auto snapshot = std::make_shared<Snapshot>(*baseline->snapshot);
+        std::unordered_set<std::string> occupied;
+        occupied.reserve(snapshot->instances.size() + runtime->snapshot->instances.size());
+        const auto key = [](const Instance& value) {
+            return value.preparedIdentity.referenceKey + '\0' + value.preparedIdentity.shapeName;
+        };
+        for (const auto& instance : snapshot->instances)
+            if (!instance.preparedIdentity.referenceKey.empty() && !instance.preparedIdentity.shapeName.empty())
+                occupied.insert(key(instance));
+        size_t appended = 0;
+        for (const auto& incoming : runtime->snapshot->instances) {
+            if (snapshot->instances.size() >= 8192) {
+                ++snapshot->omissions["current-scene-instance-limit"];
+                break;
+            }
+            if (incoming.preparedIdentity.referenceKey.empty() ||
+                incoming.preparedIdentity.shapeName.empty() ||
+                !occupied.insert(key(incoming)).second) continue;
+            if (!incoming.mesh || !runtime->geometries.contains(incoming.mesh.get())) {
+                ++snapshot->omissions["current-scene-geometry-missing"];
+                continue;
+            }
+            Instance instance = incoming;
+            instance.identity = snapshot->instances.size() + 1;
+            snapshot->instances.push_back(std::move(instance));
+            ++appended;
+            if (!incoming.material.opaqueCandidate) ++result->maskedInstances;
+            if (incoming.material.attributes) {
+                ++result->shadedInstances;
+                if (incoming.material.attributes->hasTangentFrame) ++result->tangentInstances;
+            }
+        }
+        if (!appended) return {};
+        result->geometries.insert(runtime->geometries.begin(), runtime->geometries.end());
+        result->bytes += runtime->bytes;
+        snapshot->generation = baseline->snapshot->generation + runtime->snapshot->generation;
+        snapshot->sweep = snapshot->generation;
+        snapshot->scope.batch = snapshot->generation;
+        snapshot->scope.policy = 2; // prepared baseline plus eligible runtime geometry
+        snapshot->offline = false;
+        // Material tables must still use the validated prepared CELL package.
+        snapshot->materialSource = baseline->snapshot->materialSource;
+        result->snapshot = std::move(snapshot);
+        return result;
+    }
+
     /** @brief One owned batch at a time; publication never waits on the render thread. */
     class RuntimeGeometryPreparation
     {
@@ -141,6 +202,7 @@ namespace DX12Native
             uint32_t cacheHits = 0;
             std::vector<std::string> keys;
             std::shared_ptr<const PreparedCell> result;
+            std::shared_ptr<const PreparedCell> composed;
             std::string failure;
         };
     public:
@@ -148,25 +210,30 @@ namespace DX12Native
         {
             pending.reset(); // Detached worker owns all its input data.
             prepared.reset();
+            composed.reset();
             attempted.clear();
             epoch = 0;
             batches = 0;
             failures = 0;
             cacheHits = 0;
+            scannedMailboxRevision = UINT64_MAX;
         }
         void Advance(const GraphicsBackend& backend, const RuntimeGeometryMailbox& mailbox,
             uint64_t sceneEpoch, uint64_t budget,
-            std::shared_ptr<const PrewarmedRuntimeGeometry> prewarmed = {})
+            std::shared_ptr<const PrewarmedRuntimeGeometry> prewarmed = {},
+            std::shared_ptr<const PreparedCell> baseline = {})
         {
             if (epoch != sceneEpoch) { Reset(); epoch = sceneEpoch; }
             if (pending && pending->done.load(std::memory_order_acquire)) {
                 for (const auto& key : pending->keys) attempted.insert(key);
-                if (pending->result) { prepared = pending->result; ++batches; }
+                if (pending->result) { prepared = pending->result; composed = pending->composed; ++batches; }
                 else ++failures;
                 cacheHits += pending->cacheHits;
                 pending.reset();
             }
-            if (pending || !backend.d3d12Device || !budget || attempted.size() >= mailbox.Count()) return;
+            if (pending || !backend.d3d12Device || !budget ||
+                scannedMailboxRevision == mailbox.Revision()) return;
+            scannedMailboxRevision = mailbox.Revision();
             const auto items = mailbox.Export(0, mailbox.Count());
             std::vector<std::shared_ptr<const RuntimeGeometryPacket>> next;
             auto work = std::make_shared<Work>();
@@ -185,9 +252,13 @@ namespace DX12Native
             try {
                 static BS::thread_pool<> pool{ 1 };
                 pool.detach_task([work, source = std::move(next), backend,
-                    previous = prepared, budget, sceneEpoch, prewarm = std::move(prewarmed)] {
-                    try { work->result = PrepareRuntimeGeometryBatch(
-                        backend, source, previous, sceneEpoch, budget, prewarm, &work->cacheHits); }
+                    previous = prepared, budget, sceneEpoch, prewarm = std::move(prewarmed),
+                    baseline = std::move(baseline)] {
+                    try {
+                        work->result = PrepareRuntimeGeometryBatch(
+                            backend, source, previous, sceneEpoch, budget, prewarm, &work->cacheHits);
+                        work->composed = ComposeCurrentSceneGeometry(baseline, work->result, sceneEpoch);
+                    }
                     catch (const std::exception& error) { work->failure = error.what(); }
                     work->done.store(true, std::memory_order_release);
                 });
@@ -196,6 +267,7 @@ namespace DX12Native
         }
 
         std::shared_ptr<const PreparedCell> GetCell() const { return prepared; }
+        std::shared_ptr<const PreparedCell> GetCurrentSceneCell() const { return composed; }
         bool Busy() const { return pending != nullptr; }
         uint32_t Batches() const { return batches; }
         uint32_t Failures() const { return failures; }
@@ -203,10 +275,10 @@ namespace DX12Native
         size_t Attempted() const { return attempted.size(); }
 
     private:
-        uint64_t epoch = 0;
+        uint64_t epoch = 0, scannedMailboxRevision = UINT64_MAX;
         uint32_t batches = 0, failures = 0, cacheHits = 0;
         std::unordered_set<std::string> attempted;
-        std::shared_ptr<const PreparedCell> prepared;
+        std::shared_ptr<const PreparedCell> prepared, composed;
         std::shared_ptr<Work> pending;
     };
 }
