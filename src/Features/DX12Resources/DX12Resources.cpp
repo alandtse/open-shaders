@@ -1,4 +1,5 @@
 #include "DX12Resources.h"
+#include "CompanionProcess.h"
 #include "Utils/FileDigest.h"
 #include <RE/T/TESDataHandler.h>
 #include <RE/T/TESObjectCELL.h>
@@ -23,6 +24,14 @@ struct DX12Resources::ScanJob
 {
     std::atomic<bool> done{ false };
     std::optional<DX12ResourceService::SaveLocationHint> hint;
+    std::string error;
+};
+
+struct DX12Resources::CatalogJob
+{
+    std::atomic<bool> done{ false };
+    std::string plugin;
+    std::vector<DX12ResourceService::PluginInteriorEntry> entries;
     std::string error;
 };
 
@@ -277,6 +286,7 @@ void DX12Resources::RefreshLoadedPlugins()
     loadedPlugins.clear();
     pluginListReady = true;
     pluginScanActive = false;
+    pluginScanJob.reset();
     pluginScanCursor = 0;
     pluginInteriors.clear();
     chosenInterior.reset();
@@ -315,68 +325,108 @@ void DX12Resources::StartPluginCellScan(std::string plugin)
     pluginInteriors.clear();
     chosenInterior.reset();
     pluginScanCursor = 0;
-    pluginScanActive = !selectedPlugin.empty();
-    pluginScanStatus = pluginScanActive ? "Scanning the selected plugin's CELL records..." :
-        "Choose a loaded plugin";
+    pluginScanJob.reset(); // prior worker owns its inputs and exits independently
+    pluginScanActive = false;
+    if (selectedPlugin.empty()) {
+        pluginScanStatus = "Choose a loaded plugin";
+        return;
+    }
+    if (!dataLoaded.load(std::memory_order_acquire)) {
+        pluginScanStatus = "Skyrim's plugin load order is not ready";
+        return;
+    }
+    const auto known = std::ranges::find_if(loadedPlugins, [&](const std::string& name) {
+        return DX12ResourceService::SamePluginName(name, selectedPlugin);
+    });
+    if (known == loadedPlugins.end()) {
+        pluginScanStatus = "Selected plugin is no longer in the loaded plugin list";
+        return;
+    }
+    const auto data = DX12ResourceService::SkyrimDataDirectory();
+    const auto pluginsFile = DX12ResourceService::SkyrimPluginsFile();
+    if (pluginsFile.empty() || !std::filesystem::is_regular_file(pluginsFile)) {
+        pluginScanStatus = "Skyrim Plugins.txt not found; cannot enumerate on-disk CELLs";
+        return;
+    }
+    const auto output = data / "SKSE/Plugins/CommunityShaders/DX12-cache/reports" /
+        std::format("interiors-{}-{}-{}.json", GetCurrentProcessId(), GetTickCount64(), pluginScanSequence++);
+    const auto log = data / "SKSE/Plugins/CommunityShaders/DX12-cache/logs" /
+        (output.stem().wstring() + L".log");
+    auto next = std::make_shared<CatalogJob>();
+    next->plugin = selectedPlugin;
+    try {
+        static BS::thread_pool<> pool{ 1 };
+        pool.detach_task([next, data, pluginsFile, output, log] {
+            try {
+                const auto result = DX12ResourceService::RunCompanion(
+                    { L"--list-cells", data.wstring(), std::filesystem::path(next->plugin).wstring(),
+                        pluginsFile.wstring(), output.wstring() }, log);
+                if (!result.error.empty()) {
+                    next->error = result.error + ": " + result.log;
+                } else {
+                    std::error_code ec;
+                    if (std::filesystem::file_size(output, ec) > 32 * 1024 * 1024 || ec)
+                        throw std::runtime_error("Companion interior catalog size invalid");
+                    std::ifstream input(output, std::ios::binary);
+                    if (!input) throw std::runtime_error("Companion interior catalog was not created");
+                    const json report = json::parse(input);
+                    if (!report.is_object() ||
+                        report.at("kind") != "dx12-resources-plugin-interiors" ||
+                        report.at("schemaVersion") != 1 ||
+                        !DX12ResourceService::SamePluginName(
+                            report.at("selectedPlugin").get<std::string>(), next->plugin))
+                        throw std::runtime_error("Companion interior catalog contract mismatch");
+                    const auto& records = report.at("interiors");
+                    if (!records.is_array() || records.size() > 200000 ||
+                        report.at("interiorCount").get<size_t>() != records.size())
+                        throw std::runtime_error("Companion interior catalog record count invalid");
+                    for (const auto& record : records) {
+                        const auto owner = record.at("plugin").get<std::string>();
+                        const auto id = record.at("localId").get<uint32_t>();
+                        const auto parsed = DX12ResourceService::ParseCellRequest(owner, std::format("{:X}", id));
+                        if (!parsed) throw std::runtime_error("Companion returned invalid CELL identity");
+                        const auto relation = record.at("relation").get<std::string>();
+                        if (relation != "defined" && relation != "override")
+                            throw std::runtime_error("Companion returned invalid CELL relation");
+                        DX12ResourceService::PluginInteriorEntry entry;
+                        entry.identity = *parsed;
+                        entry.editorId = record.at("editorId").get<std::string>();
+                        entry.displayName = record.at("displayName").get<std::string>();
+                        entry.relation = relation == "defined" ?
+                            DX12ResourceService::PluginCellRelation::Defined :
+                            DX12ResourceService::PluginCellRelation::Override;
+                        next->entries.push_back(std::move(entry));
+                    }
+                    DX12ResourceService::SortInteriorCatalog(next->entries);
+                }
+            } catch (const std::exception& error) { next->error = error.what(); }
+            next->done.store(true, std::memory_order_release);
+        });
+        pluginScanJob = std::move(next);
+        pluginScanActive = true;
+        pluginScanStatus = "Enumerating on-disk CELLs in selected plugin...";
+    } catch (const std::exception& error) {
+        pluginScanStatus = "Could not start CELL scan: " + std::string(error.what());
+    }
 }
 
 void DX12Resources::AdvancePluginCellScan()
 {
-    if (!pluginScanActive) return;
-    auto* handler = RE::TESDataHandler::GetSingleton();
-    if (!handler || !dataLoaded.load(std::memory_order_acquire)) {
-        pluginScanActive = false;
-        pluginScanStatus = "Skyrim's loaded CELL registry is not available";
+    if (!pluginScanJob || !pluginScanJob->done.load(std::memory_order_acquire)) return;
+    const auto completed = std::move(pluginScanJob);
+    pluginScanActive = false;
+    if (!DX12ResourceService::SamePluginName(completed->plugin, selectedPlugin))
+        return; // superseded by a newer plugin selection
+    if (!completed->error.empty()) {
+        pluginInteriors.clear();
+        chosenInterior.reset();
+        pluginScanStatus = "Plugin CELL enumeration failed: " + completed->error;
         return;
     }
-    // Engine record arrays are only visited on the UI/main thread. Fixed
-    // batches avoid enumerating all CELL records in a single main-menu frame.
-    const auto& cells = handler->GetFormArray<RE::TESObjectCELL>();
-    constexpr size_t kRecordsPerFrame = 512;
-    for (size_t visited = 0; visited < kRecordsPerFrame &&
-        pluginScanCursor < cells.size(); ++visited, ++pluginScanCursor) {
-        const auto* cell = cells[pluginScanCursor];
-        if (!cell || !cell->IsInteriorCell()) continue;
-        const auto* defining = cell->GetFile(0);
-        if (!defining) continue;
-        const std::string_view owner = defining->GetFilename();
-        if (owner.empty()) continue;
-
-        bool contributed = DX12ResourceService::SamePluginName(selectedPlugin, owner);
-        // A plugin may override an existing interior rather than define it.
-        if (!contributed) {
-            const auto* sources = cell->sourceFiles.array;
-            if (sources) {
-                for (const RE::TESFile* sourceFile : *sources) {
-                    if (sourceFile && DX12ResourceService::SamePluginName(
-                        selectedPlugin, sourceFile->GetFilename())) {
-                        contributed = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if (!contributed) continue;
-        DX12ResourceService::PluginInteriorEntry record;
-        record.identity = { std::string(owner), cell->GetLocalFormID() };
-        const auto* editor = cell->GetFormEditorID();
-        const auto* display = cell->GetName();
-        record.editorId = editor ? editor : "";
-        record.displayName = display ? display : "";
-        record.relation = DX12ResourceService::SamePluginName(selectedPlugin, owner) ?
-            DX12ResourceService::PluginCellRelation::Defined :
-            DX12ResourceService::PluginCellRelation::Override;
-        pluginInteriors.push_back(std::move(record));
-    }
-    if (pluginScanCursor >= cells.size()) {
-        pluginScanActive = false;
-        DX12ResourceService::SortInteriorCatalog(pluginInteriors);
-        pluginScanStatus = std::format("Finished: {} interior CELLs (including overrides)",
-            pluginInteriors.size());
-    } else {
-        pluginScanStatus = std::format("Scanning CELL records: {} / {} ({} interiors found)",
-            pluginScanCursor, cells.size(), pluginInteriors.size());
-    }
+    pluginInteriors = std::move(completed->entries);
+    pluginScanCursor = static_cast<uint32_t>(pluginInteriors.size());
+    pluginScanStatus = std::format("Indexed {} interior CELLs from {} (including overrides)",
+        pluginInteriors.size(), selectedPlugin);
 }
 
 void DX12Resources::DrawSettings()
@@ -424,7 +474,7 @@ void DX12Resources::DrawSettings()
     ImGui::EndDisabled();
 
     ImGui::SeparatorText("Browse interior cells by plugin");
-    ImGui::TextDisabled("Only the selected plugin is scanned; no automatic full-game preparation.");
+    ImGui::TextDisabled("Interiors are read from the selected plugin file, including unloaded CELLs.");
     if (ImGui::Button("Refresh loaded plugins") && !pluginScanActive)
         RefreshLoadedPlugins();
     ImGui::Text("Loaded plugins: %zu", loadedPlugins.size());

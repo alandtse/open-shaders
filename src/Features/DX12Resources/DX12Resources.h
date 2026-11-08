@@ -42,6 +42,7 @@ struct DX12Resources final : Feature
 private:
     struct Job;
     struct ScanJob;
+    struct CatalogJob;
     void SubmitDetectedRequest(const DX12ResourceService::CellRequest& request);
     void PollJob();
     void BeginAutomaticDetection(bool mainMenu);
@@ -53,6 +54,7 @@ private:
     std::mutex statusMutex;
     std::shared_ptr<Job> job;
     std::shared_ptr<ScanJob> scanJob;
+    std::shared_ptr<CatalogJob> pluginScanJob;
     std::optional<DX12ResourceService::CellRequest> detectedCell;
     bool detectionRequested = false;
     std::optional<bool> lastDetectionMainMenu;
@@ -75,7 +77,8 @@ private:
     std::string pluginScanStatus = "Choose a loaded plugin to enumerate its interiors";
     std::array<char, 96> pluginFilter{};
     std::array<char, 96> interiorFilter{};
-    std::uint32_t pluginScanCursor = 0; // Matches RE::BSTArrayBase::size_type.
+    std::uint32_t pluginScanCursor = 0; // Number of records delivered by the companion.
+    std::uint32_t pluginScanSequence = 0;
     bool pluginListReady = false;
     bool pluginScanActive = false;
 
