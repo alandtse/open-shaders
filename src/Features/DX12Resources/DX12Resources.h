@@ -48,6 +48,7 @@ private:
     std::shared_ptr<ScanJob> scanJob;
     std::optional<DX12ResourceService::CellRequest> detectedCell;
     bool detectionRequested = false;
+    std::optional<bool> lastDetectionMainMenu;
     std::string detectionSource = "Not detected";
     std::string detectionLocation;
     std::string detectionSave;

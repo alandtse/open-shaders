@@ -268,19 +268,30 @@ void DX12Resources::DrawSettings()
 {
     std::scoped_lock lock(statusMutex);
     PollJob();
-    PollAutomaticDetection();
     const auto* ui = RE::UI::GetSingleton();
     const bool mainMenu = ui && ui->IsMenuOpen(RE::MainMenu::MENU_NAME);
+    if (!lastDetectionMainMenu || *lastDetectionMainMenu != mainMenu) {
+        // Return to menu must not reuse an in-game CELL; leaving menu must
+        // discard speculative save hints from an old detached scan.
+        lastDetectionMainMenu = mainMenu;
+        detectionRequested = false;
+        scanJob.reset(); // worker owns its input/output independently
+        detectedCell.reset();
+        detectionSave.clear();
+        detectionLocation.clear();
+        detectionSource = "Not detected";
+        detectionStatus = "Detecting active interior...";
+    }
+    PollAutomaticDetection();
     ImGui::Checkbox("Enable DX12 Resources preparation", &settings.Enabled);
     ImGui::TextDisabled("Current interior or latest-save location; no manual IDs required.");
     ImGui::BeginDisabled(!settings.Enabled);
+    ImGui::BeginDisabled(bool(scanJob));
     if (ImGui::Button("Refresh detected interior")) {
         detectionRequested = false;
-        if (scanJob) {
-            // Existing worker owns its task; don't discard its in-flight read.
-            detectionStatus = "Previous save scan is still in progress";
-        }
+        detectedCell.reset();
     }
+    ImGui::EndDisabled();
     if (!scanJob) BeginAutomaticDetection(mainMenu);
     ImGui::SeparatorText("Detected interior");
     ImGui::Text("Source: %s", detectionSource.c_str());
