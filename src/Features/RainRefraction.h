@@ -57,8 +57,8 @@ public:
 		float MotionStretch;
 		float MotionTransparency;
 		float WindInfluence;
-		float4 TextureBounds{ 0, 0, 1, 1 };  ///< UV rectangle of the raindrop texture's alpha coverage
-		float2 TextureRadiusScale{ 1, 1 };   ///< Billboard half-extents per unit drop radius
+		float4 TextureBounds{ 0, 0, 1, 1 };        ///< UV rectangle of the raindrop texture's alpha coverage
+		float2 TextureRadiusScale{ 1, 1 };         ///< Billboard half-extents per unit drop radius
 		float FallSpeed = kFallbackRainFallSpeed;  ///< Weather gravity velocity in game units per second
 		float pad0{};
 		float CurtainStrength;
