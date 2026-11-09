@@ -21,7 +21,15 @@ public:
 		bool preview = false, afterLighting = false, spatialReconstruction = true;
 		uint64_t revision = 1;
 	};
-	struct Policy
+	struct CharacterSettings
+    {
+        static constexpr uint32_t kMaxBounds = 64;
+        std::array<std::array<float, 4>, kMaxBounds> bounds{};
+        uint32_t frame = 0, count = 0;
+        float margin = 4.0f, lightingBlend = 0.0f, shadowBlend = 0.0f;
+        bool debug = false;
+    };
+    struct Policy
 	{
 		uint32_t diffuse = 1; // Effective validity: display reference-compatible recovered contributions.
 		uint32_t specular = 1;
@@ -59,7 +67,7 @@ public:
 		const std::shared_ptr<const NativeLightingFeature::Contribution>& a_lighting,
 		const std::shared_ptr<const DX12Native::ShadowFrame>& a_shadow,
 		const std::shared_ptr<const DX12Native::RasterFrame>& a_raster,
-		const ShadowSettings& a_shadowSettings,
+		const ShadowSettings& a_shadowSettings, const CharacterSettings& a_character,
 		float a_strength, bool a_directSpatialReconstruction, const Policy& a_policy, uint64_t a_revision);
 	/** @brief Retains a frame until a downstream consumer's GPU fence completes. */
 	bool Retain(const std::shared_ptr<const Frame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value);
@@ -75,6 +83,8 @@ public:
 	uint64_t FiniteOnlyPixels() const { return finiteOnlyPixels.load(); }
 	uint64_t CounterReadFailures() const { return counterReadFailures.load(); }
 	uint64_t ReconstructedPixels() const { return reconstructedPixels.load(); }
+    uint64_t CharacterMaskedFrames() const { return framesWithCharacterBounds.load(); }
+    uint64_t CharacterBoundsSubmitted() const { return protectedCharacterBounds.load(); }
 	~NativeComposite();
 
 private:
@@ -89,7 +99,7 @@ private:
 		winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
 		winrt::com_ptr<ID3D12RootSignature> root;
 		winrt::com_ptr<ID3D12PipelineState> pipeline;
-		winrt::com_ptr<ID3D12Resource> counters, counterReset, counterReadback;
+		winrt::com_ptr<ID3D12Resource> counters, counterReset, counterReadback, characterBounds;
 		SharedFence fence;
 		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 		ID3D12Device* device = nullptr;
@@ -114,4 +124,5 @@ private:
 	std::string status = "Not captured";
 	std::string shadowStatus = "Independent shadow layer not captured";
 	std::string shadowPipelineFailure;
+    std::atomic<uint64_t> framesWithCharacterBounds{ 0 }, protectedCharacterBounds{ 0 };
 };

@@ -3,6 +3,8 @@
 Texture2D<float4> ShadowMask : register(t0);
 Texture2D<float> RasterDepth : register(t1);
 RWTexture2D<float4> Scene : register(u0);
+StructuredBuffer<float4> RasterCharacterBounds : register(t2);
+#include "RasterCharacter.hlsli"
 
 cbuffer ShadowConstants : register(b0)
 {
@@ -16,6 +18,9 @@ cbuffer ShadowConstants : register(b0)
     row_major float4x4 InverseProjection;
     row_major float4x4 InverseView;
     uint SpatialReconstruction;
+    uint CharacterCount;
+    float CharacterShadowBlend;
+    uint CharacterDebug;
 };
 
 float3 SignedPower(float3 value, float exponent)
@@ -39,6 +44,14 @@ float SampleVisibility(int2 samplePixel, float4 center)
 void main(uint3 id : SV_DispatchThreadID)
 {
     if (any(id.xy >= Size)) return;
+    const bool characterReceiver = IsRasterCharacterReceiver(
+        id.xy, RasterDepth[id.xy], Size, InverseProjection, InverseView, CharacterCount);
+    if (CharacterDebug != 0u) {
+        float4 color = Scene[id.xy];
+        Scene[id.xy] = float4(characterReceiver ? float3(1,0,1) : float3(0,0,0), color.a);
+        return;
+    }
+    if (characterReceiver && CharacterShadowBlend <= 0.001f) return;
     const float4 center = ShadowMask[id.xy];
     const bool traced = ValidMask(center);
     if (!traced && !(SpatialReconstruction != 0u && center.y == -1.0f)) return;
@@ -106,7 +119,8 @@ void main(uint3 id : SV_DispatchThreadID)
     }
     // Shadow contribution is independent of direct-light intensity. A gain above 1
     // amplifies partial occlusion, while never producing negative radiance.
-    const float amplifiedOcclusion = saturate((1.0f - visibility) * clamp(Strength, 0.0f, 4.0f));
+    const float amplifiedOcclusion = saturate((1.0f - visibility) * clamp(Strength, 0.0f, 4.0f)) *
+        (characterReceiver ? saturate(CharacterShadowBlend) : 1.0f);
     const float layerVisibility = 1.0f - amplifiedOcclusion * saturate(Blend);
     if (layerVisibility >= 1.0f || !all(isfinite(color.rgb))) return;
     float3 linearColor = LegacyTransfer != 0u ? SignedPower(color.rgb, 1.6f) : color.rgb;

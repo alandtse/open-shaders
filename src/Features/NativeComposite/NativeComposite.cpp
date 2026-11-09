@@ -4,7 +4,7 @@
 #include "Globals.h"
 #include "Features/LinearLighting.h"
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeCompositeFeature::Settings, Enabled, AddLighting, LightingStrength, DirectSpatialReconstruction, PersistLab, ShadowLayerEnabled, ShadowContribution, ShadowBlend, ShadowRadiusPixels, ShadowReceiverTolerance, ShadowPreview, ShadowAfterLighting, ShadowSpatialReconstruction)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeCompositeFeature::Settings, Enabled, AddLighting, LightingStrength, DirectSpatialReconstruction, PersistLab, ProtectRasterCharacter, RasterCharacterLightingBlend, RasterCharacterShadowBlend, RasterCharacterMargin, RasterCharacterDebug, ShadowLayerEnabled, ShadowContribution, ShadowBlend, ShadowRadiusPixels, ShadowReceiverTolerance, ShadowPreview, ShadowAfterLighting, ShadowSpatialReconstruction)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeComposite::Policy, diffuse, specular, visual)
 
 namespace
@@ -30,7 +30,22 @@ void NativeCompositeFeature::DrawSettings()
 	ImGui::SliderFloat(T("feature.nativecomposite.lighting_strength", "Lighting strength"), &settings.LightingStrength, 0.0f, 2.0f);
 	if (ImGui::Checkbox("Spatially reconstruct missing native direct pixels", &settings.DirectSpatialReconstruction)) ++validityRevision;
 	ImGui::TextDisabled("Full-resolution diffuse/specular fill; raw RT signals remain untouched.");
-	ImGui::SeparatorText("Independent RT shadows");
+	ImGui::SeparatorText("Hybrid raster character receiver");
+    bool characterChanged = ImGui::Checkbox("Preserve current-frame raster player", &settings.ProtectRasterCharacter);
+    ImGui::TextDisabled("Bounds + raster depth; no per-pose BLAS/TLAS rebuild or material rebind.");
+    ImGui::BeginDisabled(!settings.ProtectRasterCharacter);
+    characterChanged |= ImGui::SliderFloat("Character native-lighting blend", &settings.RasterCharacterLightingBlend, 0.0f, 1.0f, "%.2f");
+    characterChanged |= ImGui::SliderFloat("Character native-shadow blend", &settings.RasterCharacterShadowBlend, 0.0f, 1.0f, "%.2f");
+    characterChanged |= ImGui::SliderFloat("Character coverage margin (world units)", &settings.RasterCharacterMargin, 0.0f, 32.0f, "%.1f");
+    characterChanged |= ImGui::Checkbox("Visualize depth-tested character coverage", &settings.RasterCharacterDebug);
+    ImGui::EndDisabled();
+    if (characterChanged) ++validityRevision;
+    ImGui::TextDisabled("Zero blend preserves the original character. Positive blends admit existing RT signals.");
+    ImGui::TextDisabled("The test view requires a submitted native lighting or shadow pass.");
+    ImGui::TextDisabled("Hybrid frames: %llu | submitted bounds: %llu",
+        static_cast<unsigned long long>(pass.CharacterMaskedFrames()),
+        static_cast<unsigned long long>(pass.CharacterBoundsSubmitted()));
+    ImGui::SeparatorText("Independent RT shadows");
 	bool shadowChanged = false;
 	if (ImGui::Checkbox("Enable independent shadow layer", &settings.ShadowLayerEnabled)) {
 		shadowChanged = true;
@@ -98,7 +113,10 @@ void NativeCompositeFeature::LoadSettings(json& a_json)
 	++validityRevision;
 	settings.LightingStrength = std::isfinite(settings.LightingStrength) ? std::clamp(settings.LightingStrength, 0.0f, 2.0f) : 1.0f;
 	const auto safe = [](float v, float fallback, float low, float high) { return std::isfinite(v) ? std::clamp(v, low, high) : fallback; };
-	settings.ShadowContribution = safe(settings.ShadowContribution, Settings{}.ShadowContribution, 0.0f, 4.0f);
+	settings.RasterCharacterLightingBlend = safe(settings.RasterCharacterLightingBlend, 0.0f, 0.0f, 1.0f);
+    settings.RasterCharacterShadowBlend = safe(settings.RasterCharacterShadowBlend, 0.0f, 0.0f, 1.0f);
+    settings.RasterCharacterMargin = safe(settings.RasterCharacterMargin, 4.0f, 0.0f, 32.0f);
+    settings.ShadowContribution = safe(settings.ShadowContribution, Settings{}.ShadowContribution, 0.0f, 4.0f);
 	settings.ShadowBlend = safe(settings.ShadowBlend, Settings{}.ShadowBlend, 0.0f, 1.0f);
 	settings.ShadowRadiusPixels = safe(settings.ShadowRadiusPixels, Settings{}.ShadowRadiusPixels, 0.0f, 32.0f);
 	settings.ShadowReceiverTolerance = safe(settings.ShadowReceiverTolerance, Settings{}.ShadowReceiverTolerance, 0.1f, 64.0f);
@@ -156,6 +174,16 @@ void NativeCompositeFeature::RegisterUxActions()
 		std::scoped_lock lock(feature.settingsMutex);
 		if (args.contains("enabled")) feature.settings.Enabled = args.at("enabled").get<bool>();
 		if (args.contains("addLighting")) feature.settings.AddLighting = args.at("addLighting").get<bool>();
+        if (args.contains("protectRasterCharacter")) feature.settings.ProtectRasterCharacter = args.at("protectRasterCharacter").get<bool>();
+        if (args.contains("characterDebug")) feature.settings.RasterCharacterDebug = args.at("characterDebug").get<bool>();
+        const auto tuneCharacter = [&](const char* key, float& target, float low, float high) {
+            if (!args.contains(key)) return;
+            const float value = args.at(key).get<float>();
+            if (std::isfinite(value)) target = std::clamp(value, low, high);
+        };
+        tuneCharacter("characterLightingBlend", feature.settings.RasterCharacterLightingBlend, 0.0f, 1.0f);
+        tuneCharacter("characterShadowBlend", feature.settings.RasterCharacterShadowBlend, 0.0f, 1.0f);
+        tuneCharacter("characterMargin", feature.settings.RasterCharacterMargin, 0.0f, 32.0f);
 		if (args.contains("directSpatialReconstruction")) { feature.settings.DirectSpatialReconstruction = args.at("directSpatialReconstruction").get<bool>(); ++feature.validityRevision; }
 		if (args.contains("lightingStrength")) {
 			const float value = args.at("lightingStrength").get<float>();
@@ -200,7 +228,16 @@ json NativeCompositeFeature::GetDiagnostics()
 		{ "shadowProducer", sceneDiagnostics.value("shadow", json::object()) },
 		{ "shadowOpaqueRetryAttempts", sceneDiagnostics.value("shadowOpaqueRetryAttempts", uint64_t{ 0 }) },
 		{ "shadowOpaqueRetryRecovered", sceneDiagnostics.value("shadowOpaqueRetryRecovered", uint64_t{ 0 }) },
-		{ "shadowLayerEnabled", settings.ShadowLayerEnabled },
+		{ "characterReceiver", {
+            { "enabled", settings.ProtectRasterCharacter },
+            { "lightingBlend", settings.RasterCharacterLightingBlend },
+            { "shadowBlend", settings.RasterCharacterShadowBlend },
+            { "margin", settings.RasterCharacterMargin },
+            { "debug", settings.RasterCharacterDebug },
+            { "framesWithBounds", pass.CharacterMaskedFrames() },
+            { "boundsSubmitted", pass.CharacterBoundsSubmitted() }
+        } },
+        { "shadowLayerEnabled", settings.ShadowLayerEnabled },
 		{ "shadowContribution", settings.ShadowContribution },
 		{ "shadowAfterLighting", settings.ShadowAfterLighting }, { "shadowSpatialReconstruction", settings.ShadowSpatialReconstruction } };
 }
@@ -230,9 +267,23 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 	};
 	const bool wantShadow = shadowSettings.preview || shadowSettings.contribution * shadowSettings.blend > 0.0f;
 	const auto shadow = wantShadow && !unsupportedGamut ? globals::features::dx12NativeScene.GetShadowMask(a_frame) : nullptr;
-	const auto raster = shadow ? globals::features::dx12NativeScene.GetRasterFrame(a_frame) : nullptr;
+	const auto raster = shadow || selected.ProtectRasterCharacter ?
+        globals::features::dx12NativeScene.GetRasterFrame(a_frame) : nullptr;
+    NativeComposite::CharacterSettings character{};
+    if (selected.ProtectRasterCharacter) {
+        const auto bounds = globals::features::dx12NativeScene.GetPlayerRasterBounds(a_frame);
+        if (bounds.frame == a_frame && bounds.count) {
+            character.frame = a_frame;
+            character.count = bounds.count;
+            character.bounds = bounds.bounds;
+            character.margin = selected.RasterCharacterMargin;
+            character.lightingBlend = selected.RasterCharacterLightingBlend;
+            character.shadowBlend = selected.RasterCharacterShadowBlend;
+            character.debug = selected.RasterCharacterDebug;
+        }
+    }
 	auto frame = pass.Capture(a_device11, a_context11, a_device12, a_queue, a_source, a_frame, a_width, a_height,
-		a_transfer, lighting, shadow, raster, shadowSettings, selected.LightingStrength, selected.DirectSpatialReconstruction, selectedPolicy, revision);
+		a_transfer, lighting, shadow, raster, shadowSettings, character, selected.LightingStrength, selected.DirectSpatialReconstruction, selectedPolicy, revision);
 	if (frame) ++captures;
 	if (frame && frame->lightingSubmitted) { ++lightingSubmissions; lightingStatus = 3; }
 	else if (lighting) lightingStatus = 4;
