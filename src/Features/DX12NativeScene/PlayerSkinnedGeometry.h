@@ -71,9 +71,9 @@ namespace DX12Native
             // Until alpha/material parity is available, restrict the DXR
             // character path to surfaces that can safely be treated as opaque.
             if (geometry->GetGeometryRuntimeData().alphaProperty) return;
-            if (!skin || !skin->skinData || !skin->skinData->boneData ||
+            if (!skin || !skin->skinData || !skin->skinData->GetBoneDataAddress(0) ||
                 !skin->bones || !skin->skinPartition || !skin->numMatrices ||
-                skin->numMatrices > 256 || skin->skinData->bones < skin->numMatrices)
+                skin->numMatrices > 256 || skin->skinData->GetBoneCount() < skin->numMatrices)
                 return;
             const auto id = reinterpret_cast<std::uintptr_t>(geometry);
             const auto* partitions = skin->skinPartition.get();
@@ -144,7 +144,7 @@ namespace DX12Native
                     skin->boneWorldTransforms[i] ? skin->boneWorldTransforms[i] :
                     &skin->bones[i]->world;
                 // Output is in world space: bone world * bind-pose skin-to-bone.
-                const auto matrix = (*boneWorld) * skin->skinData->boneData[i].skinToBone;
+                const auto matrix = (*boneWorld) * skin->skinData->GetBoneDataSkinToBone(i);
                 if (!std::isfinite(matrix.translate.x) ||
                     !std::isfinite(matrix.translate.y) ||
                     !std::isfinite(matrix.translate.z) || !std::isfinite(matrix.scale))
