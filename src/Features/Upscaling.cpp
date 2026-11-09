@@ -2981,7 +2981,11 @@ void Upscaling::Upscale()
 	else
 		menuCameraMVsValid = false;
 
-	{
+	// The foveated route encodes its own masks, so the standard encode only runs when it is skipped or fails.
+	const bool foveatedRouteCandidate = FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR &&
+	                                    !(globals::state && globals::state->IsMainOrLoadingMenuOpen());
+
+	auto encodeTextures = [&]() {
 		CS_GPU_PASS("Upscaling::EncodeTextures");
 
 		// VR: ensure per-eye intermediate textures exist before the dispatch writes into them
@@ -3054,7 +3058,10 @@ void Upscaling::Upscale()
 
 		ID3D11ComputeShader* shader = nullptr;
 		context->CSSetShader(shader, nullptr, 0);
-	}
+	};
+
+	if (!foveatedRouteCandidate)
+		encodeTextures();
 
 	{
 		CS_GPU_PASS("Upscaling::Upscale");
@@ -3065,12 +3072,12 @@ void Upscaling::Upscale()
 		// standard path on failure. Main/loading menus must stay off: their backdrop uses
 		// synthesized camera MVs or a per-frame reset that the subrect history cannot follow.
 		auto tryFoveatedRoute = [&](ID3D11Resource* a_depth, const char* a_methodLabel) -> bool {
-			auto* st = globals::state;
-			const bool menuBackdrop = st && st->IsMainOrLoadingMenuOpen();
-			if (!(FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR && !menuBackdrop))
+			if (!foveatedRouteCandidate)
 				return false;
-			if (!FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this))
+			if (!FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this)) {
+				encodeTextures();
 				return false;
+			}
 			const bool routeHandled = FoveatedRenderImpl::Core::ExecuteFoveatedRoute(streamline,
 				Util::AsReal(main.texture), a_depth,
 				reactiveMaskTexture->resource.get(),
@@ -3078,6 +3085,7 @@ void Upscaling::Upscale()
 				motionVectorCopyTexture->resource.get());
 			if (!routeHandled) {
 				logger::warn("[FOVEATED] route preflight failed — falling through to standard {} path", a_methodLabel);
+				encodeTextures();
 			}
 			return routeHandled;
 		};
