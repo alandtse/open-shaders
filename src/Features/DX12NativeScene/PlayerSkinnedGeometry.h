@@ -47,11 +47,16 @@ namespace DX12Native
             topologies.clear();
             poses.clear();
             observed = rejected = 0;
+            lastObservedFrame = 0;
         }
         uint64_t Epoch() const { std::scoped_lock lock(mutex); return epoch; }
         uint64_t Observed() const { std::scoped_lock lock(mutex); return observed; }
         uint64_t Rejected() const { std::scoped_lock lock(mutex); return rejected; }
         size_t Shapes() const { std::scoped_lock lock(mutex); return poses.size(); }
+        uint32_t LastObservedFrame() const {
+            std::scoped_lock lock(mutex);
+            return lastObservedFrame;
+        }
 
         /** @brief Uses the game render hook's borrowed pointers only here. */
         void Observe(RE::BSGeometry* geometry, uint32_t frame)
@@ -162,6 +167,7 @@ namespace DX12Native
             if (epoch != captureEpoch) return;
             topologies[id] = topology;
             poses[id] = std::move(sample);
+            lastObservedFrame = frame;
             ++observed;
         }
 
@@ -186,6 +192,7 @@ namespace DX12Native
         std::unordered_map<std::uintptr_t, std::shared_ptr<const PlayerSkinTopology>> topologies;
         std::unordered_map<std::uintptr_t, std::shared_ptr<const PlayerSkinPose>> poses;
         uint64_t epoch = 1, observed = 0, rejected = 0;
+        uint32_t lastObservedFrame = 0;
     };
 
     /** @brief Deforms copied bind-pose vertices off-thread.
@@ -259,7 +266,8 @@ namespace DX12Native
             observer.Reset();
             pending.reset();
             completed.reset();
-            lastQueuedFrame = lastCompletedFrame = 0;
+            lastQueuedFrame = lastCompletedFrame = lastAdvancedFrame = 0;
+            deferredFrames = 0;
             successful = failed = 0;
             completedHasPlayer = false;
             lastError.clear();
@@ -270,8 +278,7 @@ namespace DX12Native
         }
         void Advance(const GraphicsBackend& backend,
             const std::shared_ptr<const PreparedCell>& baseline,
-            uint64_t sceneEpoch, uint64_t gpuAllowance, uint32_t currentFrame,
-            uint32_t minFrameInterval)
+            uint64_t sceneEpoch, uint64_t gpuAllowance, uint32_t currentFrame)
         {
             if (pending && pending->done.load(std::memory_order_acquire)) {
                 if (pending->combined && pending->frame >= lastCompletedFrame) {
@@ -283,21 +290,35 @@ namespace DX12Native
                 lastError = pending->error;
                 pending.reset();
             }
-            if (pending || !backend.d3d12Device || !baseline ||
-                !baseline->snapshot || !gpuAllowance || !currentFrame ||
-                (lastQueuedFrame && uint32_t(currentFrame - lastQueuedFrame) < minFrameInterval))
+            if (!backend.d3d12Device || !baseline || !baseline->snapshot ||
+                !gpuAllowance || !currentFrame || lastAdvancedFrame == currentFrame)
                 return;
+            lastAdvancedFrame = currentFrame;
+            // Observe can complete after EarlyPrepass, but we never discard a
+            // frame because of an artificial update-frequency setting. The
+            // worker owns at most one frame; if still running, let the hook
+            // replace its latest pose and pick it up as soon as possible.
+            if (pending) {
+                ++deferredFrames;
+                return;
+            }
             const auto poses = observer.Export(currentFrame);
             // Drop stale character geometry when the player has been
             // invisible for long enough (first person, out of view, etc.).
             // A fresh CELL generation then contains only the baseline.
             if (poses.empty() && !completedHasPlayer) return;
-            if (!poses.empty() && std::ranges::none_of(poses, [&](const auto& pose) {
-                return pose && pose->frame > lastQueuedFrame;
-            })) return;
+            // The hook sees the current render pass *after* EarlyPrepass in
+            // the usual frame ordering. Compare source-pose frames against
+            // source-pose frames, not against the frame that queued the work:
+            // otherwise the one-frame capture offset can suppress updates.
+            uint32_t newestPoseFrame = 0;
+            for (const auto& pose : poses)
+                if (pose) newestPoseFrame = std::max(newestPoseFrame, pose->frame);
+            if (!poses.empty() && newestPoseFrame <= lastQueuedFrame)
+                return;
             auto next = std::make_shared<Work>();
-            next->frame = currentFrame;
-            lastQueuedFrame = currentFrame;
+            next->frame = poses.empty() ? currentFrame : newestPoseFrame;
+            lastQueuedFrame = next->frame;
             try {
                 static BS::thread_pool<> pool{ 1 };
                 pool.detach_task([next, poses, backend, baseline, sceneEpoch, gpuAllowance] {
@@ -322,6 +343,7 @@ namespace DX12Native
                                 auto snapshot = std::make_shared<Snapshot>(*runtime->snapshot);
                                 snapshot->generation = next->frame;
                                 snapshot->scope.batch = next->frame;
+                                snapshot->scope.frame = next->frame;
                                 mutableRuntime->snapshot = snapshot;
                                 next->combined = ComposeCurrentSceneGeometry(
                                     baseline, mutableRuntime, sceneEpoch);
@@ -333,6 +355,7 @@ namespace DX12Native
                             snapshot->generation += next->frame;
                             snapshot->sweep = snapshot->generation;
                             snapshot->scope.batch = snapshot->generation;
+                            snapshot->scope.frame = next->frame;
                             snapshot->scope.policy = 2;
                             snapshot->offline = false;
                             clear->snapshot = snapshot;
@@ -351,6 +374,9 @@ namespace DX12Native
         size_t ObservedShapes() const { return observer.Shapes(); }
         uint64_t Observations() const { return observer.Observed(); }
         uint32_t LastCompletedFrame() const { return lastCompletedFrame; }
+        uint32_t LastObservedFrame() const { return observer.LastObservedFrame(); }
+        uint32_t LastQueuedFrame() const { return lastQueuedFrame; }
+        uint64_t DeferredFrames() const { return deferredFrames; }
         uint32_t Successful() const { return successful; }
         uint32_t Failed() const { return failed; }
         bool Busy() const { return bool(pending); }
@@ -360,7 +386,8 @@ namespace DX12Native
         PlayerSkinObserver observer;
         std::shared_ptr<Work> pending;
         std::shared_ptr<const PreparedCell> completed;
-        uint32_t lastQueuedFrame = 0, lastCompletedFrame = 0;
+        uint32_t lastQueuedFrame = 0, lastCompletedFrame = 0, lastAdvancedFrame = 0;
+        uint64_t deferredFrames = 0;
         uint32_t successful = 0, failed = 0;
         bool completedHasPlayer = false;
         std::string lastError;

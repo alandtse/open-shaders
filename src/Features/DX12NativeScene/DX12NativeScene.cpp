@@ -13,7 +13,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, BudgetPolicyVersion, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, CapturePlayerSkin, PlayerSkinUpdateInterval, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, BudgetPolicyVersion, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, CapturePlayerSkin, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -233,15 +233,21 @@ void DX12NativeScene::DrawSettings()
         resetRequested = true;
     }
     ImGui::TextDisabled("Player only; live bone poses, separate memory-only character cache.");
-    ImGui::BeginDisabled(!settings.CapturePlayerSkin);
-    int poseInterval = int(settings.PlayerSkinUpdateInterval);
-    if (ImGui::SliderInt("Player skin DX12 update interval (frames)", &poseInterval, 1, 12))
-        settings.PlayerSkinUpdateInterval = uint32_t(poseInterval);
-    ImGui::EndDisabled();
-    ImGui::Text("Player skin: %zu observed shapes / %llu observations, pose frame %u",
+    ImGui::TextDisabled("Capture/deform every observed frame; DX12 publication is nonblocking and fence-safe.");
+    ImGui::Text("Player skin: %zu shapes / %llu observations (latest frame %u)",
         playerSkin.ObservedShapes(),
         static_cast<unsigned long long>(playerSkin.Observations()),
-        playerSkin.LastCompletedFrame());
+        playerSkin.LastObservedFrame());
+    ImGui::Text("Pose frames: queued %u, prepared %u, DX12 submitted %u, published %u",
+        playerSkin.LastQueuedFrame(), playerSkin.LastCompletedFrame(),
+        playerSkinSubmittedFrame, playerSkinPublishedFrame);
+    const auto capturedPoseFrame = playerSkin.LastObservedFrame();
+    if (playerSkinPublishedFrame && capturedPoseFrame >= playerSkinPublishedFrame)
+        ImGui::Text("Published pose age: %u rendered frames",
+            capturedPoseFrame - playerSkinPublishedFrame);
+    else ImGui::TextDisabled("Published pose age: awaiting first completed character TLAS");
+    ImGui::Text("Pose worker backpressure: %llu frames (latest pose wins)",
+        static_cast<unsigned long long>(playerSkin.DeferredFrames()));
     ImGui::Text("Player skin worker: %s, completed %u, rejected %u",
         playerSkin.Busy() ? "Busy" : "Idle", playerSkin.Successful(), playerSkin.Failed());
     if (!playerSkin.Failure().empty())
@@ -415,7 +421,6 @@ void DX12NativeScene::LoadSettings(json& a_json)
         settings.ImportArchivePBR = selected.ImportArchivePBR;
         settings.RuntimeOnlyMaterials = selected.RuntimeOnlyMaterials;
         settings.CapturePlayerSkin = selected.CapturePlayerSkin;
-        settings.PlayerSkinUpdateInterval = std::clamp(selected.PlayerSkinUpdateInterval, 1u, 12u);
 	settings.ShadowAllLights = selected.ShadowAllLights;
 	settings.ShadowStochastic = selected.ShadowStochastic;
 	settings.ShadowDistanceFade = selected.ShadowDistanceFade;
@@ -566,6 +571,7 @@ void DX12NativeScene::ResetScene()
     runtimeGeometryPrepare.Reset();
     playerSkin.Reset();
     playerSkinSubmittedBatch = 0;
+    playerSkinSubmittedFrame = playerSkinPublishedFrame = 0;
     runtimeGeometry.Reset();
     runtimePreparedCoverage.store({}, std::memory_order_release);
     runtimeCoverageSource.reset();
@@ -806,17 +812,15 @@ void DX12NativeScene::EarlyPrepass()
         if (matching && matching->scene == completed) {
             currentSceneStableAcceleration = completed;
             currentSceneStableBindings = matching;
+            if (settings.CapturePlayerSkin && completed->scope.policy == 2 &&
+                completed->scope.frame != 0)
+                playerSkinPublishedFrame = completed->scope.frame;
         }
     }
     // Character poses are never written into the static disk cache.
     // All deformation and DX12 upload work stays on the owned background worker.
-    const auto lastComplete = acceleration.GetScene();
-    const auto lastMaterials = materialBindings.Get();
-    if (settings.CapturePlayerSkin && acceleration.Finished() &&
-        currentSceneStableAcceleration &&
+    if (settings.CapturePlayerSkin && currentSceneStableAcceleration &&
         currentSceneStableAcceleration->scope.scene == revision &&
-        lastComplete == currentSceneStableAcceleration &&
-        lastMaterials && lastMaterials->scene == lastComplete &&
         globals::game::graphicsState) {
         const auto staticBase = settings.CaptureRuntimeGeometry ?
             runtimeGeometryPrepare.GetCurrentSceneCell() : nullptr;
@@ -829,8 +833,7 @@ void DX12NativeScene::EarlyPrepass()
         const uint64_t total = SceneMemoryLimit(occupied);
         const uint64_t skinAllowance = total > occupied ? (total - occupied) / 2 : 0;
         playerSkin.Advance(*backend, baseline, revision, skinAllowance,
-            globals::game::graphicsState->GetFrameCount(),
-            std::clamp(settings.PlayerSkinUpdateInterval, 1u, 12u));
+            globals::game::graphicsState->GetFrameCount());
     }
     // Reuse the production worker's completed BLAS cache. The previous
     // production TLAS remains retained independently during rebuilding.
@@ -859,8 +862,10 @@ void DX12NativeScene::EarlyPrepass()
                     acceleration.Start(*backend, combined->snapshot, combined->geometries,
                         uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB);
                     currentSceneSubmittedBatch = combined->snapshot->scope.batch;
-                    if (skinned == combined)
+                    if (skinned == combined) {
                         playerSkinSubmittedBatch = currentSceneSubmittedBatch;
+                        playerSkinSubmittedFrame = combined->snapshot->scope.frame;
+                    }
                 }
             }
         }
@@ -1011,14 +1016,22 @@ void DX12NativeScene::PublishDiagnostics()
             { "currentSceneSubmittedBatch", currentSceneSubmittedBatch },
             { "playerSkin", {
                 { "enabled", settings.CapturePlayerSkin },
-                { "interval", settings.PlayerSkinUpdateInterval },
+                { "target", "every-observed-frame" },
                 { "observedShapes", playerSkin.ObservedShapes() },
+                { "lastObservedFrame", playerSkin.LastObservedFrame() },
+                { "lastQueuedFrame", playerSkin.LastQueuedFrame() },
+                { "deferredFrames", playerSkin.DeferredFrames() },
                 { "observations", playerSkin.Observations() },
                 { "busy", playerSkin.Busy() },
                 { "successful", playerSkin.Successful() },
                 { "failed", playerSkin.Failed() },
                 { "lastCompletedFrame", playerSkin.LastCompletedFrame() },
                 { "submittedBatch", playerSkinSubmittedBatch },
+                { "submittedFrame", playerSkinSubmittedFrame },
+                { "publishedFrame", playerSkinPublishedFrame },
+                { "publishedPoseAgeFrames", playerSkinPublishedFrame &&
+                    playerSkin.LastObservedFrame() >= playerSkinPublishedFrame ?
+                    playerSkin.LastObservedFrame() - playerSkinPublishedFrame : 0 },
                 { "failure", playerSkin.Failure() }
             } },
             { "currentSceneInputInstances", runtimeGeometryPrepare.GetCurrentSceneCell() &&

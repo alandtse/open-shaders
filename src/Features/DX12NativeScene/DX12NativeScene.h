@@ -33,7 +33,6 @@ struct DX12NativeScene final : Feature
         bool CaptureRuntimeGeometry = false; // Static CPU-backed meshes only; no GPU readbacks.
         bool CacheRuntimeGeometry = false; // Optional background persistence and menu CPU prewarm.
         bool CapturePlayerSkin = false; // Experimental, opt-in player-only skinned DXR geometry.
-        uint32_t PlayerSkinUpdateInterval = 4; // Render frames between owned pose builds.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
@@ -121,6 +120,7 @@ private:
     DX12Native::PlayerSkinPreparation playerSkin;
     std::atomic<bool> playerSkinCaptureActive{ false };
     uint64_t playerSkinSubmittedBatch = 0;
+    uint32_t playerSkinSubmittedFrame = 0, playerSkinPublishedFrame = 0;
     // The same production acceleration worker receives composed current-scene
     // generations. Retain the last usable TLAS/material pair during rebuilds.
     std::shared_ptr<const DX12Native::TopLevel> currentSceneStableAcceleration;
