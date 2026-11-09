@@ -204,6 +204,7 @@ private:
 	float4 pendingLandBounds{};
 	std::vector<RE::NiPointer<RE::BSGeometry>> visibleGeometry;
 	std::vector<Caster> casters;
+	std::vector<RE::NiPointer<RE::BSGeometry>> loadedGeometry;
 	ankerl::unordered_dense::set<RE::BSGeometry*> collectedGeometry;
 	/** @brief Geometry last collected for one static reference, reused until a full walk or its root changes. */
 	struct LoadedRefEntry

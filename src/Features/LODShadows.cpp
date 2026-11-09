@@ -548,8 +548,8 @@ void LODShadows::CollectTerrain()
 void LODShadows::CollectLoadedObjects(bool a_fullWalk)
 {
 	collectedGeometry.clear();
-	for (const auto& geometry : visibleGeometry)
-		collectedGeometry.insert(geometry.get());
+	const auto lodGeometryCount = visibleGeometry.size();
+	bool lodGeometrySeeded = false;
 	++loadedScanId;
 	if (auto* tes = globals::game::tes) {
 		tes->ForEachReference([&](RE::TESObjectREFR* reference) {
@@ -570,6 +570,11 @@ void LODShadows::CollectLoadedObjects(bool a_fullWalk)
 					HashGeometry(geometry.get());
 				}
 				return RE::BSContainer::ForEachResult::kContinue;
+			}
+			if (!lodGeometrySeeded) {
+				for (size_t i = 0; i < lodGeometryCount; ++i)
+					collectedGeometry.insert(visibleGeometry[i].get());
+				lodGeometrySeeded = true;
 			}
 			const auto first = visibleGeometry.size();
 			Collect(root, false, true);
@@ -1235,7 +1240,7 @@ void LODShadows::ReflectionsPrepass()
 
 void LODShadows::CollectScene(bool a_refreshLoaded, bool a_fullWalk)
 {
-	std::vector<RE::NiPointer<RE::BSGeometry>> loadedGeometry;
+	loadedGeometry.clear();
 	if (!a_refreshLoaded && geometryCounts[3] <= visibleGeometry.size())
 		loadedGeometry.assign(std::make_move_iterator(visibleGeometry.end() - geometryCounts[3]), std::make_move_iterator(visibleGeometry.end()));
 	sceneHash = kHashSeed;
@@ -1262,6 +1267,7 @@ void LODShadows::CollectScene(bool a_refreshLoaded, bool a_fullWalk)
 		geometryCounts[3] = uint32_t(visibleGeometry.size() - lodGeometryCount);
 	} else {
 		visibleGeometry.insert(visibleGeometry.end(), std::make_move_iterator(loadedGeometry.begin()), std::make_move_iterator(loadedGeometry.end()));
+		loadedGeometry.clear();
 	}
 	sceneHash = kHashSeed;
 	HashBytes(sceneHash, sourceHashes.data(), sizeof(sourceHashes));
