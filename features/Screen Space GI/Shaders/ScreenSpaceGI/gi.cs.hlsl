@@ -458,7 +458,7 @@ void CalculateGI(
 			int2 historyMin = int2(0, 0);
 			int2 historyMax = int2(OUT_FRAME_DIM) - 1;
 #	ifdef VR
-			int eyeWidth = int(OUT_FRAME_DIM.x) / 2;
+			const int eyeWidth = int(uint(OUT_FRAME_DIM.x) / 2u);
 			historyMin.x = int(eyeIndex) * eyeWidth;
 			historyMax.x = historyMin.x + eyeWidth - 1;
 #	endif
