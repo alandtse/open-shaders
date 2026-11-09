@@ -158,10 +158,9 @@ void LODShadows::RegisterUxActions()
 	FEATURE_COMMAND("rebuild", "Invalidate the LOD depth cache and reset GPU update statistics.", [](Feature* a_self, const json&) {
 		static_cast<LODShadows*>(a_self)->resetRequested = true;
 	});
-	FEATURE_QUERY("diagnostics", "Return map resolution and coverage, terrain replacement state, geometry and caster counts, cache direction errors, build and render frames, plus GPU timings with their submission frames. Timings exclude final mask sampling and forward shadow sampling in lighting passes.", [](const Feature* a_self, const json&) -> json {
+	FEATURE_RENDER_QUERY("diagnostics", "Return map resolution and coverage, terrain replacement state, geometry and caster counts, cache direction errors, build and render frames, plus GPU timings with their submission frames. Timings exclude final mask sampling and forward shadow sampling in lighting passes.", [](const Feature* a_self, const json&) -> json {
 		const auto* self = static_cast<const LODShadows*>(a_self);
-		std::scoped_lock lock(self->diagnosticsMutex);
-		return self->diagnostics;
+		return self->BuildDiagnostics();
 	});
 }
 
@@ -1175,8 +1174,14 @@ void LODShadows::Publish()
 	context->CSSetShaderResources(kDepthSlot, 2, views);
 	auto* bounds = rayBoundsSRV.get();
 	context->PSSetShaderResources(kRayBoundsSlot, 1, &bounds);
-	std::scoped_lock lock(diagnosticsMutex);
-	diagnostics = { { "ready", ready }, { "enabled", settings.Enabled }, { "validMaps", validMaps }, { "completedMaps", completedMaps },
+	publishedValidMaps = validMaps;
+	for (uint32_t i = 0; i < kMapCount; ++i)
+		publishedHistoryWeights[i] = data[i].history.y;
+}
+
+json LODShadows::BuildDiagnostics() const
+{
+	json diagnostics = { { "ready", ready }, { "enabled", settings.Enabled }, { "validMaps", publishedValidMaps }, { "completedMaps", completedMaps },
 		{ "geometryCount", visibleGeometry.size() }, { "pendingCasters", casters.size() - casterIndex * (pendingIndex >= 0) }, { "unsupportedCasters", unsupportedCasters },
 		{ "updateDraws", lastDraws }, { "updateTriangles", lastTriangles }, { "triangleBudget", updateBudget.Triangles() },
 		{ "lastUpdateGpuMs", lastUpdateMs }, { "maxUpdateGpuMs", maxUpdateMs }, { "timingSamples", timingSamples },
@@ -1184,12 +1189,12 @@ void LODShadows::Publish()
 	diagnostics["mapResolution"] = kResolution;
 	diagnostics["historyInterpolation"] = interpolateHistory;
 	diagnostics["hardwareComparison"] = hardwareComparison;
-	diagnostics["historyWeights"] = { data[0].history.y, data[1].history.y, data[2].history.y };
+	diagnostics["historyWeights"] = { publishedHistoryWeights[0], publishedHistoryWeights[1], publishedHistoryWeights[2] };
 	diagnostics["completedDepthWaiting"] = { completedDepthMaps[0].valid, completedDepthMaps[1].valid, completedDepthMaps[2].valid };
 	diagnostics["terrainGeometryCount"] = terrainGeometryCount;
 	diagnostics["loadedTerrainGeometryCount"] = loadedTerrainGeometryCount;
 	diagnostics["loadedObjectGeometryCount"] = geometryCounts[3];
-	diagnostics["replacesTerrainShadows"] = data[1].parameters.w > 0;
+	diagnostics["replacesTerrainShadows"] = ReplacesTerrainShadows();
 	diagnostics["lastFilterGpuMs"] = lastFilterMs;
 	diagnostics["filteredMaskReady"] = maskReady;
 	diagnostics["filterResolution"] = maskDimensions;
@@ -1212,6 +1217,7 @@ void LODShadows::Publish()
 		const auto direction = light->GetWorldDirection();
 		diagnostics["mapDirectionErrors"] = { (maps[0].direction - direction).Length(), (maps[1].direction - direction).Length(), (maps[2].direction - direction).Length() };
 	}
+	return diagnostics;
 }
 
 void LODShadows::OnDraw()

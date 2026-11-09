@@ -156,6 +156,8 @@ private:
 	void CompileShaders();
 	void Invalidate();
 	void Publish();
+	/** @brief Builds the diagnostics JSON from live state; render thread only. */
+	json BuildDiagnostics() const;
 	void CreateMaskResources();
 	void DrawMask();
 	void CollectTerrain();
@@ -246,8 +248,8 @@ private:
 	std::array<Query, kQueryFrames> filterQueries;
 	uint32_t queryCursor = 0;
 	uint32_t filterQueryCursor = 0;
-	mutable std::mutex diagnosticsMutex;
-	json diagnostics;
+	uint32_t publishedValidMaps = 0;
+	std::array<float, kMapCount> publishedHistoryWeights{};
 	winrt::com_ptr<ID3D11Texture2D> depthTexture;
 	winrt::com_ptr<ID3D11ShaderResourceView> depthSRV;
 	winrt::com_ptr<ID3D11Texture2D> rayBoundsTexture;
