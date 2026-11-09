@@ -91,6 +91,7 @@ add_executable(
     test_shadercachemanifest.cpp
     test_shadercontentstore.cpp
     test_featureflipimpact.cpp
+    test_devbenchnotices.cpp
     test_shadercacheclear.cpp
     test_generationclaim.cpp
     test_framelatch.cpp

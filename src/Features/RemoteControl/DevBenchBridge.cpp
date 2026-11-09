@@ -56,6 +56,7 @@
 #	include "Profiler.h"
 #	include "ShaderCache.h"
 #	include "State.h"
+#	include "Utils/DevBenchNotices.h"
 #	include "Utils/DevBenchUx.h"
 #	include "Utils/SettingsCatalog.h"
 #	include "Utils/SettingsDefaults.h"
@@ -67,6 +68,7 @@
 #	include <nlohmann/json.hpp>
 
 #	include <algorithm>
+#	include <atomic>
 #	include <chrono>
 #	include <cmath>
 #	include <cstring>
@@ -77,6 +79,7 @@
 #	include <mutex>
 #	include <optional>
 #	include <stdexcept>
+#	include <thread>
 #	include <unordered_map>
 #	include <unordered_set>
 
@@ -2001,6 +2004,59 @@ namespace
 	}
 }
 
+namespace
+{
+	/** @brief Reads the renderer state the notices are derived from. Game thread only: it walks feature settings. */
+	Util::DevBenchNotices::Conditions GatherNoticeConditions()
+	{
+		Util::DevBenchNotices::Conditions conditions;
+		if (auto* cache = globals::shaderCache) {
+			conditions.shadersCompiling = cache->IsCompiling();
+			conditions.failedShaders = cache->GetCurrentFailedCount();
+			const auto rollback = cache->GetRollbackState();
+			conditions.cacheAwaitingDecision = rollback.diskCacheHeld || rollback.featureSetChanged || rollback.featureSetRevertPending;
+		}
+		for (const auto& issue : FeatureIssues::GetFeatureIssues()) {
+			if (issue.IsObsolete() || issue.IsVersionMismatch() || issue.IsUnknown())
+				conditions.rejectedFeatures.push_back(issue.displayName.empty() ? issue.shortName : issue.displayName);
+		}
+		for (auto* feature : Feature::GetFeatureList()) {
+			if (feature->loaded && feature->HasAnyPendingRestart())
+				conditions.restartPendingFeatures.push_back(feature->GetDisplayName());
+		}
+		return conditions;
+	}
+
+	/** @brief Keeps devbench's notice board in step with the renderer once a second; needs devbench 1.34.0+. */
+	void StartNoticeWatcher(DevBenchAPI::IDevBenchInterface001* a_dvb)
+	{
+		constexpr unsigned int kNoticeBuild = 13400;
+		if (a_dvb->GetBuildNumber() < kNoticeBuild) {
+			logger::info("DevBenchBridge: devbench build {} < {}; agent notices need 1.34.0", a_dvb->GetBuildNumber(), kNoticeBuild);
+			return;
+		}
+
+		// Detached because joining at DLL unload under the loader lock could deadlock; it only paces, the reads run on the game thread.
+		std::thread([a_dvb, reconciler = std::make_shared<Util::DevBenchNotices::Reconciler>(), inFlight = std::make_shared<std::atomic<bool>>(false)] {
+			for (;;) {
+				std::this_thread::sleep_for(std::chrono::seconds(1));
+				auto* task = SKSE::GetTaskInterface();
+				if (!task || inFlight->exchange(true))
+					continue;
+				task->AddTask([a_dvb, reconciler, inFlight] {
+					State::SettingsLayerGuard settingsLayerGuard;
+					const auto delta = reconciler->Update(Util::DevBenchNotices::Evaluate(GatherNoticeConditions()));
+					for (const auto& key : delta.clear)
+						a_dvb->ClearNotice(key.c_str());
+					for (const auto& notice : delta.post)
+						a_dvb->PostNotice(notice.key.c_str(), "openshaders", Util::DevBenchNotices::SeverityName(notice.severity), notice.text.c_str(), 0);
+					inFlight->store(false);
+				});
+			}
+		}).detach();
+	}
+}
+
 namespace DevBenchBridge
 {
 	void Install()
@@ -2077,6 +2133,8 @@ namespace DevBenchBridge
 		static constexpr const char* devflagsDesc =
 			R"({"description":"Named runtime booleans guarding temporary candidate code paths (DEV_FLAG(\"tmp::name\") in C++), for screening a change on and off in one launch. Flags read false until set and reset at every launch. Action-dispatched. set: params flags (object of name -> boolean; all validated before any is applied). list (default): every flag a call site has read or set. reset: every flag false. All return {flags:{name:bool}}.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["set","list","reset"]},"flags":{"type":"object","additionalProperties":{"type":"boolean"}}}}})";
 		dvb->RegisterTool("openshaders.devflags", devflagsDesc, &DevFlagsToolHandler, nullptr);
+
+		StartNoticeWatcher(dvb);
 	}
 
 	std::optional<Request> GetLastRequest()

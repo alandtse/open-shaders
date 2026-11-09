@@ -24,6 +24,7 @@ namespace
 		REQUIRE(a_left.localToneStrength == a_right.localToneStrength);
 		REQUIRE(a_left.localStructureStrength == a_right.localStructureStrength);
 		REQUIRE(a_left.skinStructureStrength == a_right.skinStructureStrength);
+		REQUIRE(a_left.colorStrength == a_right.colorStrength);
 		REQUIRE(a_left.skinToneStrength == a_right.skinToneStrength);
 		REQUIRE(a_left.hairToneStrength == a_right.hairToneStrength);
 		REQUIRE(a_left.eyeToneStrength == a_right.eyeToneStrength);
@@ -59,6 +60,7 @@ namespace
 		tuning.localToneStrength = 0.5f;
 		tuning.localStructureStrength = 1.25f;
 		tuning.skinStructureStrength = 0.75f;
+		tuning.colorStrength = 0.6f;
 		tuning.skinToneStrength = 0.5f;
 		tuning.hairToneStrength = 0.25f;
 		tuning.eyeToneStrength = 1.75f;

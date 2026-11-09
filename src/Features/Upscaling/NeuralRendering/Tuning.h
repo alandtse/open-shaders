@@ -41,6 +41,7 @@ namespace NR
 	{
 		static constexpr float kMinStrength = 0.0f, kMaxStrength = 2.0f;
 		static constexpr float kDefaultStrength = 1.0f, kAutomaticSkinStructure = -1.0f;
+		static constexpr float kMinColorStrength = 0.0f, kMaxColorStrength = 1.0f, kDefaultColorStrength = 0.0f;
 		static constexpr uint32_t kMaxStyle = 2;
 		static constexpr float kMinModelScale = 0.25f, kMaxModelScale = 1.0f;
 		static constexpr uint32_t kRegionFitPadded = 0, kRegionFitTight = 1, kMaxRegionFit = kRegionFitTight;
@@ -51,6 +52,11 @@ namespace NR
 		float localToneStrength = kDefaultStrength;
 		float localStructureStrength = kDefaultStrength;
 		float skinStructureStrength = kAutomaticSkinStructure;
+		/**
+		 * @brief How much of the model's colour shift the composite applies on top of its brightness edit:
+		 *        0 keeps the game's hue and chroma, 1 takes the model's per-channel shift in full.
+		 */
+		float colorStrength = kDefaultColorStrength;
 		/** @brief Per-category multipliers on the composited tone edit, from the deferred Masks2 category. */
 		float skinToneStrength = kDefaultStrength;
 		float hairToneStrength = kDefaultStrength;
@@ -211,6 +217,7 @@ namespace NR
 					 &skinToneStrength, &hairToneStrength, &eyeToneStrength, &foliageToneStrength, &landscapeToneStrength })
 				*strength = Util::ClampFinite(*strength, kMinStrength, kMaxStrength, kDefaultStrength);
 			skinStructureStrength = Util::ClampFinite(skinStructureStrength, kAutomaticSkinStructure, kMaxStrength, kAutomaticSkinStructure);
+			colorStrength = Util::ClampFinite(colorStrength, kMinColorStrength, kMaxColorStrength, kDefaultColorStrength);
 			const auto materialStrengths = MaterialStrengths();
 			strengthOther = materialStrengths.strength[MaterialStrength::kNone];
 			strengthSkin = materialStrengths.strength[MaterialStrength::kSkin];
