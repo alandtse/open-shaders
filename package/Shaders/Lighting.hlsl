@@ -1852,8 +1852,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		else
 	MESH_TV_SAMPLE_BIAS(rawBaseColor, TexColorSampler, SampColorSampler, diffuseUv, true);
 #			if defined(FUR_SHELLS)
-	if (input.FurShell > 0.0)
-		rawBaseColor.rgb = lerp(rawBaseColor.rgb, furSample.rgb, FurShells::ShellColor);
+	[branch] if (FurShells::ShellColor > 0.0 && input.FurShell > 0.0)
+		rawBaseColor.rgb = lerp(rawBaseColor.rgb, Color::DiffuseToWorking(furSample.rgb, pbrTextures), FurShells::ShellColor);
 #			endif
 	baseColor = float4(Color::Albedo(rawBaseColor.rgb), rawBaseColor.a);
 #		endif
