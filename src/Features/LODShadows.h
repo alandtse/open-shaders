@@ -156,11 +156,14 @@ private:
 	void CompileShaders();
 	void Invalidate();
 	void Publish();
+	/** @brief Builds the diagnostics JSON from live state; render thread only. */
+	json BuildDiagnostics() const;
 	void CreateMaskResources();
 	void DrawMask();
 	void CollectTerrain();
-	void CollectLoadedObjects();
-	void CollectScene(bool a_refreshLoaded);
+	void CollectLoadedObjects(bool a_fullWalk);
+	void CollectScene(bool a_refreshLoaded, bool a_fullWalk);
+	void HashGeometry(RE::BSGeometry* a_geometry);
 	void Collect(RE::NiAVObject* a_object, bool a_ignoreAppCulling = false, bool a_loadedObject = false);
 	void AddCaster(RE::BSGeometry* a_geometry);
 	void BeginMap(uint32_t a_index, const RE::NiPoint3& a_center, const RE::NiPoint3& a_direction);
@@ -203,7 +206,19 @@ private:
 	float4 pendingLandBounds{};
 	std::vector<RE::NiPointer<RE::BSGeometry>> visibleGeometry;
 	std::vector<Caster> casters;
-	std::unordered_set<RE::BSGeometry*> collectedGeometry;
+	std::vector<RE::NiPointer<RE::BSGeometry>> loadedGeometry;
+	ankerl::unordered_dense::set<RE::BSGeometry*> collectedGeometry;
+	/** @brief Geometry last collected for one static reference, reused until a full walk or its root changes. */
+	struct LoadedRefEntry
+	{
+		RE::NiPointer<RE::NiAVObject> root;
+		bool culled = false;
+		uint64_t scanId = 0;
+		std::vector<RE::NiPointer<RE::BSGeometry>> geometry;
+	};
+	ankerl::unordered_dense::map<RE::TESObjectREFR*, LoadedRefEntry> loadedRefCache;
+	uint64_t loadedScanId = 0;
+	uint32_t scansSinceFullWalk = 0;
 	std::array<uint64_t, 4> sourceHashes{};
 	std::array<uint32_t, 4> geometryCounts{};
 	uint32_t lastUpdateFrame = 0;
@@ -233,8 +248,8 @@ private:
 	std::array<Query, kQueryFrames> filterQueries;
 	uint32_t queryCursor = 0;
 	uint32_t filterQueryCursor = 0;
-	mutable std::mutex diagnosticsMutex;
-	json diagnostics;
+	uint32_t publishedValidMaps = 0;
+	std::array<float, kMapCount> publishedHistoryWeights{};
 	winrt::com_ptr<ID3D11Texture2D> depthTexture;
 	winrt::com_ptr<ID3D11ShaderResourceView> depthSRV;
 	winrt::com_ptr<ID3D11Texture2D> rayBoundsTexture;
