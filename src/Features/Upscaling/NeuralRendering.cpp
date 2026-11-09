@@ -2155,18 +2155,18 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
 	changed |= ImGui::SliderFloat(T(TKEY("local_structure"), "Local Structure Strength"), &tuning.localStructureStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
-	changed |= ImGui::SliderFloat(T(TKEY("color_strength"), "Colour Strength"), &tuning.colorStrength, NR::Tuning::kMinColorStrength, NR::Tuning::kMaxColorStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("color_strength_tooltip"),
-			"How much of Neural Rendering's colour shift is applied on top of its brightness edit. 0 keeps the game's own colours; 1 takes the model's shift in full. High values can tint skin and flicker."));
 	changed |= ImGui::SliderFloat(T(TKEY("skin_structure"), "Skin Structure Strength"), &tuning.skinStructureStrength, NR::Tuning::kAutomaticSkinStructure, NR::Tuning::kMaxStrength,
 		tuning.skinStructureStrength == NR::Tuning::kAutomaticSkinStructure ? T(TKEY("skin_auto"), "Auto") : "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
+	changed |= ImGui::SliderFloat(T(TKEY("color_strength"), "Colour Strength"), &tuning.colorStrength, NR::Tuning::kMinColorStrength, NR::Tuning::kMaxColorStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("color_strength_tooltip"),
+			"How much of Neural Rendering's colour shift is applied on top of its brightness edit. 0 keeps the game's own colours; 1 takes the model's shift in full. Also scaled by the Category Tone Strengths. High values can tint skin and flicker."));
 	if (ImGui::CollapsingHeader(T(TKEY("category_tone"), "Category Tone Strengths"))) {
 		ImGui::PushID("categoryTone");
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("category_tone_tooltip"),
-				"Scales Neural Rendering's tone edit per material: 0 leaves a material's brightness untouched, 1 is the normal edit, and 2 doubles it. Materials the deferred buffer does not label are unaffected."));
+				"Scales Neural Rendering's tone edit and colour shift per material: 0 leaves a material's brightness and colour untouched, 1 is the normal edit, and 2 doubles the tone edit. Materials the deferred buffer does not label are unaffected."));
 		changed |= ImGui::SliderFloat(T(TKEY("category_skin"), "Skin"), &tuning.skinToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		changed |= ImGui::SliderFloat(T(TKEY("category_hair"), "Hair"), &tuning.hairToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		changed |= ImGui::SliderFloat(T(TKEY("category_eyes"), "Eyes"), &tuning.eyeToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
