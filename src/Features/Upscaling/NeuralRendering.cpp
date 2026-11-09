@@ -252,7 +252,7 @@ struct NeuralRendering::Impl
 		uint32_t regionOverlayEnabled = 0;
 		float regionOutlineThickness = kRegionOutlineThicknessPixels;
 		uint32_t regionActorBaseX = 0, regionActorBaseY = 0, regionActorWidth = 0, regionActorHeight = 0;
-		float2 pad{};
+		float colorStrength = 0.0f, pad = 0.0f;
 		// Per-category tone multipliers, Skin..Landscape in .x; the 16-byte rows mirror
 		// ColorTransferCS.hlsl's float4 CategoryStrength[5].
 		float4 categoryStrength[5]{};
@@ -270,7 +270,7 @@ struct NeuralRendering::Impl
 	static_assert(offsetof(ColorTransferData, regionOutlineThickness) == 116);
 	static_assert(offsetof(ColorTransferData, regionActorBaseX) == 120);
 	static_assert(offsetof(ColorTransferData, regionActorHeight) == 132);
-	static_assert(offsetof(ColorTransferData, pad) == 136);
+	static_assert(offsetof(ColorTransferData, colorStrength) == 136);
 	static_assert(offsetof(ColorTransferData, categoryStrength) == 144);
 	static_assert(offsetof(ColorTransferData, materialMapEnabled) == 224);
 	static_assert(offsetof(ColorTransferData, materialMapStrengthBound) == 236);
@@ -376,6 +376,8 @@ struct NeuralRendering::Impl
 	float manualExposure = 1.0f, differenceStrength = 1.0f, splitPosition = 0.5f;
 	float shadowProtect = 0.0f, highlightProtect = 0.0f;
 	float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f;
+	/** @brief Share of the model's colour shift the composite applies, from the tuning. */
+	float colorStrength = 0.0f;
 	/** @brief Per-category tone multipliers from the tuning, consumed by TransferColor's cbuffer. */
 	std::array<float, 5> categoryToneStrength{ 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 	bool useResolutionMotionScale = true;
@@ -687,7 +689,7 @@ struct NeuralRendering::Impl
 		srv.Texture2D.MipLevels = 1;
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uav{};
 		uav.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-		desc.Format = srv.Format = uav.Format = DXGI_FORMAT_R16G16_FLOAT;
+		desc.Format = srv.Format = uav.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 		eye.gainHistory = std::make_unique<Texture2D>(desc, std::format("NeuralRendering::Eye{} GainHistory", i).c_str());
 		eye.gainHistory->CreateSRV(srv);
 		eye.gainHistory->CreateUAV(uav);
@@ -716,6 +718,7 @@ struct NeuralRendering::Impl
 	{
 		ColorTransferData data{ width, height, i * width };
 		SetRegion(data, i);
+		data.colorStrength = colorStrength;
 		colorBuffer->Update(data);
 		GainReuseData reuse{ Util::GetCameraData(), globals::features::reverseZ.IsActive() ? 1u : 0u, crossEye ? 1u : 0u };
 		if (crossEye) {
@@ -1019,6 +1022,7 @@ struct NeuralRendering::Impl
 		data.toneLowStrength = toneLowStrength;
 		data.toneRadius = toneRadius;
 		data.toneHighStrength = toneHighStrength;
+		data.colorStrength = colorStrength;
 		for (size_t category = 0; category < categoryToneStrength.size(); ++category)
 			data.categoryStrength[category].x = categoryToneStrength[category];
 		data.hasToneData = !prepare && NeedsToneData();
@@ -2217,11 +2221,15 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	changed |= ImGui::SliderFloat(T(TKEY("skin_structure"), "Skin Structure Strength"), &tuning.skinStructureStrength, NR::Tuning::kAutomaticSkinStructure, NR::Tuning::kMaxStrength,
 		tuning.skinStructureStrength == NR::Tuning::kAutomaticSkinStructure ? T(TKEY("skin_auto"), "Auto") : "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
+	changed |= ImGui::SliderFloat(T(TKEY("color_strength"), "Colour Strength"), &tuning.colorStrength, NR::Tuning::kMinColorStrength, NR::Tuning::kMaxColorStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("color_strength_tooltip"),
+			"How much of Neural Rendering's colour shift is applied on top of its brightness edit. 0 keeps the game's own colours; 1 takes the model's shift in full. Also scaled by the Category Tone Strengths. High values can tint skin and flicker."));
 	if (ImGui::CollapsingHeader(T(TKEY("category_tone"), "Category Tone Strengths"))) {
 		ImGui::PushID("categoryTone");
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("category_tone_tooltip"),
-				"Scales Neural Rendering's tone edit per material: 0 leaves a material's brightness untouched, 1 is the normal edit, and 2 doubles it. Materials the deferred buffer does not label are unaffected."));
+				"Scales Neural Rendering's tone edit and colour shift per material: 0 leaves a material's brightness and colour untouched, 1 is the normal edit, and 2 doubles the tone edit. Materials the deferred buffer does not label are unaffected."));
 		changed |= ImGui::SliderFloat(T(TKEY("category_skin"), "Skin"), &tuning.skinToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		changed |= ImGui::SliderFloat(T(TKEY("category_hair"), "Hair"), &tuning.hairToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		changed |= ImGui::SliderFloat(T(TKEY("category_eyes"), "Eyes"), &tuning.eyeToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
@@ -2617,6 +2625,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			boundedTuning.skinStructureStrength = NR::Tuning::kAutomaticSkinStructure;
 		work.toneLowStrength = boundedTuning.localToneStrength;
 		work.toneHighStrength = boundedTuning.localStructureStrength;
+		work.colorStrength = boundedTuning.colorStrength;
 		work.categoryToneStrength = { boundedTuning.skinToneStrength, boundedTuning.hairToneStrength,
 			boundedTuning.eyeToneStrength, boundedTuning.foliageToneStrength, boundedTuning.landscapeToneStrength };
 		work.regionOverlay = boundedTuning.regionOverlay;

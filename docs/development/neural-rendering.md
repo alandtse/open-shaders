@@ -51,13 +51,24 @@ The controls persist under `Upscaling.neuralRenderingTuning`:
 | Local Tone Strength      | `localToneStrength`      | 0–2                         | 1.0        | `DLSSNR.LocalToneStrength`      |
 | Local Structure Strength | `localStructureStrength` | 0–2                         | 1.0        | `DLSSNR.LocalStructureStrength` |
 | Skin Structure Strength  | `skinStructureStrength`  | -1–2 (-1 displays Auto)     | -1         | `DLSSNR.SkinStructureStrength`  |
+| Colour Strength          | `colorStrength`          | 0–1                         | 0          | none (composite only)           |
 | Use Auto Mask            | `useAutoMask`            | Off / On                    | On         | `DLSSNR.UseAutoMask`            |
 
-All six values are written in `NR::Runtime::Evaluate()`. Committing a tuning edit
+Colour Strength is not an evaluation parameter: the composite applies
+`ColorStrength` times the model's per-channel colour shift (its change in each
+channel minus the luminance-weighted mean, capped at one stop) on top of the
+brightness gain, scaled by the category strength and the dynamic-range
+protection. At 0 the game's hue and chroma are untouched. The shift is stored
+with the gain history, so frames that reuse a gain also reuse the colour.
+The shift is rescaled in linear light to leave luminance alone and fades out as the model's
+display proxy approaches clipping (peak channel 0.85 to 0.98), because a clipped proxy carries no
+usable colour offset. It is multiplicative, so HDR range above the proxy's white is preserved.
+
+The six evaluation parameters are written in `NR::Runtime::Evaluate()`. Committing a tuning edit
 recreates the Feature 18 handles because the runtime can latch appearance tuning
 during creation. Existing config values are preserved when present. Missing or
 invalid values use the defaults above and are bounded to the documented ranges.
-**Restore NR Defaults** resets all six controls; **Reset NR History** invalidates
+**Restore NR Defaults** resets all seven controls; **Reset NR History** invalidates
 both eye histories without changing tuning.
 
 Developer mode also exposes **Use resolution-scaled NR motion**. It is a
