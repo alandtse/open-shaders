@@ -6,6 +6,7 @@
 #include "Features/DX12NativeScene/RuntimeGeometryCacheWorker.h"
 #include "Features/DX12NativeScene/RuntimeGeometryPreparation.h"
 #include "Features/DX12NativeScene/PlayerSkinnedGeometry.h"
+#include "Features/DX12NativeScene/RasterCharacterBounds.h"
 #include "Features/DX12NativeScene/VideoMemoryBudget.h"
 #include "Features/DX12NativeScene/RasterCapture.h"
 #include "Features/DX12NativeScene/ShadowTrace.h"
@@ -33,6 +34,7 @@ struct DX12NativeScene final : Feature
         bool CaptureRuntimeGeometry = false; // Static CPU-backed meshes only; no GPU readbacks.
         bool CacheRuntimeGeometry = false; // Optional background persistence and menu CPU prewarm.
         bool CapturePlayerSkin = false; // Experimental, opt-in player-only skinned DXR geometry.
+        bool HybridRasterCharacter = true; // Current-frame raster character wins over delayed character BLAS.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
@@ -70,6 +72,11 @@ struct DX12NativeScene final : Feature
 	void OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs) override;
     void ObserveRuntimeGeometry(RE::BSGeometry* a_geometry, const std::string& a_reference, const std::string& a_shape);
     void ObservePlayerSkin(RE::BSGeometry* a_geometry);
+    /** @brief Current-frame player skinned bounds for conservative raster receiver protection. */
+    DX12Native::RasterCharacterFrame GetPlayerRasterBounds(uint32_t a_frame) const {
+        return loaded && playerRasterCaptureActive.load(std::memory_order_acquire) &&
+            !transitionOpen ? playerRasterBounds.Get(a_frame) : DX12Native::RasterCharacterFrame{};
+    }
 	void OnRuntimeDisabled() override;
 	void OnSceneTransitionReset(bool a_open) override;
 	void GameLoaded() override;
@@ -118,6 +125,8 @@ private:
     DX12Native::RuntimeGeometryCacheWorker runtimeGeometryCache;
     DX12Native::RuntimeGeometryPreparation runtimeGeometryPrepare;
     DX12Native::PlayerSkinPreparation playerSkin;
+    DX12Native::PlayerRasterBounds playerRasterBounds;
+    std::atomic<bool> playerRasterCaptureActive{ false };
     std::atomic<bool> playerSkinCaptureActive{ false };
     uint64_t playerSkinSubmittedBatch = 0;
     uint32_t playerSkinSubmittedFrame = 0, playerSkinPublishedFrame = 0;
