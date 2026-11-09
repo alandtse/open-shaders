@@ -288,7 +288,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 				const auto upload = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
 				const auto readback = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
                 const auto characterBuffer = CD3DX12_RESOURCE_DESC::Buffer(
-                    4ull * sizeof(float) * CharacterSettings::kMaxBounds);
+                    4ull * sizeof(float) * (CharacterSettings::kMaxBounds + 1));
                 DX::ThrowIfFailed(a_device12->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE,
                     &characterBuffer, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
                     IID_PPV_ARGS(replacement->characterBounds.put())));
@@ -325,7 +325,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
                     camera->CameraPosAdjust.z + camera->CameraViewInverse._34
                 };
                 if (std::ranges::all_of(origin, [](float value) { return std::isfinite(value); })) {
-                    std::array<std::array<float, 4>, CharacterSettings::kMaxBounds> relative{};
+                    std::array<std::array<float, 4>, CharacterSettings::kMaxBounds + 1> relative{};
                     const float margin = std::isfinite(a_character.margin) ?
                         std::clamp(a_character.margin, 0.0f, 32.0f) : 0.0f;
                     for (uint32_t i = 0;
@@ -333,9 +333,39 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
                         const auto& bound = a_character.bounds[i];
                         if (!std::ranges::all_of(bound, [](float v) { return std::isfinite(v); }) ||
                             bound[3] <= 0.0f) continue;
-                        relative[characterCount++] = {
+                        relative[++characterCount] = {
                             bound[0] - origin[0], bound[1] - origin[1],
                             bound[2] - origin[2], bound[3] + margin };
+                    }
+                    if (characterCount) {
+                        // Slot zero bounds the union of all observed shapes;
+                        // a fast early rejection prevents per-shape traversal
+                        // across nearly every environment pixel.
+                        std::array<float, 3> low{
+                            std::numeric_limits<float>::max(),
+                            std::numeric_limits<float>::max(),
+                            std::numeric_limits<float>::max() };
+                        std::array<float, 3> high{
+                            std::numeric_limits<float>::lowest(),
+                            std::numeric_limits<float>::lowest(),
+                            std::numeric_limits<float>::lowest() };
+                        for (uint32_t i = 1; i <= characterCount; ++i) {
+                            const auto& sphere = relative[i];
+                            for (uint32_t axis = 0; axis < 3; ++axis) {
+                                low[axis] = std::min(low[axis], sphere[axis] - sphere[3]);
+                                high[axis] = std::max(high[axis], sphere[axis] + sphere[3]);
+                            }
+                        }
+                        const std::array<float, 3> center{
+                            (low[0] + high[0]) * 0.5f,
+                            (low[1] + high[1]) * 0.5f,
+                            (low[2] + high[2]) * 0.5f };
+                        const float x = high[0] - low[0], y = high[1] - low[1],
+                            z = high[2] - low[2];
+                        const float radius = 0.5f * std::sqrt(x * x + y * y + z * z) + 0.01f;
+                        if (!std::isfinite(radius) || radius <= 0.0f)
+                            characterCount = 0;
+                        else relative[0] = { center[0], center[1], center[2], radius };
                     }
                     if (characterCount) {
                         const D3D12_RANGE noRead{ 0, 0 };
@@ -388,7 +418,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
             characterSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             characterSrv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
             characterSrv.Format = DXGI_FORMAT_UNKNOWN;
-            characterSrv.Buffer.NumElements = CharacterSettings::kMaxBounds;
+            characterSrv.Buffer.NumElements = CharacterSettings::kMaxBounds + 1;
             characterSrv.Buffer.StructureByteStride = 4 * sizeof(float);
             a_device12->CreateShaderResourceView(slot->characterBounds.get(), &characterSrv, cpu);
             cpu.ptr += step;
@@ -465,7 +495,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
             characterSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             characterSrv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
             characterSrv.Format = DXGI_FORMAT_UNKNOWN;
-            characterSrv.Buffer.NumElements = CharacterSettings::kMaxBounds;
+            characterSrv.Buffer.NumElements = CharacterSettings::kMaxBounds + 1;
             characterSrv.Buffer.StructureByteStride = 4 * sizeof(float);
             a_device12->CreateShaderResourceView(slot->characterBounds.get(), &characterSrv, cpu);
             cpu.ptr += step;

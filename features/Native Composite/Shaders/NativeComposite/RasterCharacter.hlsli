@@ -18,7 +18,14 @@ bool IsRasterCharacterReceiver(uint2 pixel, float depth, uint2 size,
     float3 cameraRelative = mul((float3x3)inverseView,
         cameraView.xyz / cameraView.w);
     if (!all(isfinite(cameraRelative))) return false;
-    [loop] for (uint i = 0; i < min(characterCount, 64u); ++i) {
+    // First test the aggregate bound. Only the small region near the player
+    // needs per-shape comparisons; most environment pixels take one test.
+    float4 aggregate = RasterCharacterBounds[0];
+    float3 coarseDifference = cameraRelative - aggregate.xyz;
+    if (!all(isfinite(aggregate)) || aggregate.w <= 0.0f ||
+        dot(coarseDifference, coarseDifference) > aggregate.w * aggregate.w)
+        return false;
+    [loop] for (uint i = 1; i <= min(characterCount, 64u); ++i) {
         float4 region = RasterCharacterBounds[i];
         float3 difference = cameraRelative - region.xyz;
         if (isfinite(region.w) && region.w > 0.0f &&
