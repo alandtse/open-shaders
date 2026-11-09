@@ -4260,8 +4260,5 @@
     "ui.vr.color_coding_primary": "",
     "ui.vr.color_coding_secondary": "",
     "ui.vr.primary_controller": "",
-    "ui.vr.secondary_controller": "",
-    "cs_editor.load_saved_file": "Wczytaj zapisany plik, a jeśli go nie ma, wartości aktywnego presetu, a w ostateczności wartości oryginalne",
-    "cs_editor.revert": "",
-    "menu.issues.cleanup_actions": ""
+    "ui.vr.secondary_controller": ""
 }

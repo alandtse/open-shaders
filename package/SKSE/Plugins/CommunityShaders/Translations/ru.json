@@ -4346,8 +4346,5 @@
     "ui.vr.color_coding_primary": "",
     "ui.vr.color_coding_secondary": "",
     "ui.vr.primary_controller": "",
-    "ui.vr.secondary_controller": "",
-    "cs_editor.load_saved_file": "Загрузить сохранённый файл, иначе значения активного пресета, иначе исходные значения игры",
-    "cs_editor.revert": "Откатить",
-    "menu.issues.cleanup_actions": "Действия по очистке:"
+    "ui.vr.secondary_controller": ""
 }

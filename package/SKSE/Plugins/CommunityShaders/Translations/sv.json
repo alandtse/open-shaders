@@ -4260,12 +4260,5 @@
     "ui.vr.color_coding_primary": "Gul = primär handkontroll",
     "ui.vr.color_coding_secondary": "Blå = sekundär handkontroll",
     "ui.vr.primary_controller": "(Primär handkontroll)",
-    "ui.vr.secondary_controller": "(Sekundär handkontroll)",
-    "cs_editor.load_saved_file": "Läs in den sparade filen, annars den aktiva förinställningens värden, annars spelets ursprungliga värden",
-    "cs_editor.revert": "Återställ",
-    "cs_editor.search_clear": "Rensa sökning",
-    "menu.features.filter_label_pinned": "Fäst",
-    "menu.features.filter_pinned": "Fästa funktioner",
-    "menu.features.pin_tooltip": "Fäst: placerar funktionen högst upp i funktionslistan",
-    "menu.features.unpin_tooltip": "Lossa: flyttar tillbaka funktionen till huvudlistan"
+    "ui.vr.secondary_controller": "(Sekundär handkontroll)"
 }

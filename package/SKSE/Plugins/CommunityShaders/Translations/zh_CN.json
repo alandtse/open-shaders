@@ -5240,12 +5240,5 @@
     "ui.vr.color_coding_primary": "",
     "ui.vr.color_coding_secondary": "",
     "ui.vr.primary_controller": "",
-    "ui.vr.secondary_controller": "",
-    "cs_editor.load_saved_file": "加载已保存的文件，否则使用当前预设的数值，再否则使用原版数值",
-    "cs_editor.revert": "还原",
-    "menu.features.filter_label_pinned": "已固定",
-    "menu.features.filter_pinned": "已固定的功能",
-    "menu.features.pin_tooltip": "固定：将此功能列在功能列表顶部",
-    "menu.features.unpin_tooltip": "取消固定：将此功能移回主列表",
-    "menu.issues.cleanup_actions": "清理操作："
+    "ui.vr.secondary_controller": ""
 }

@@ -4260,8 +4260,5 @@
     "ui.vr.color_coding_primary": "",
     "ui.vr.color_coding_secondary": "",
     "ui.vr.primary_controller": "",
-    "ui.vr.secondary_controller": "",
-    "cs_editor.load_saved_file": "Gespeicherte Datei laden, andernfalls die Werte der aktiven Voreinstellung, andernfalls Vanilla-Werte",
-    "cs_editor.revert": "",
-    "menu.issues.cleanup_actions": ""
+    "ui.vr.secondary_controller": ""
 }

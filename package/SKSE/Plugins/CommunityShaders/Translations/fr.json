@@ -4261,8 +4261,5 @@
     "ui.vr.color_coding_primary": "",
     "ui.vr.color_coding_secondary": "",
     "ui.vr.primary_controller": "",
-    "ui.vr.secondary_controller": "",
-    "cs_editor.load_saved_file": "Charger le fichier enregistré, sinon les valeurs du préréglage actif, sinon les valeurs d’origine",
-    "cs_editor.revert": "",
-    "menu.issues.cleanup_actions": ""
+    "ui.vr.secondary_controller": ""
 }
