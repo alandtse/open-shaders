@@ -358,11 +358,12 @@ namespace Util
 	/** @brief Layout and state of a SegmentedControl. */
 	struct SegmentedOptions
 	{
-		float width = 0.0f;     ///< Fills this width with equal segments; 0 sizes each segment to its content
-		float height = 0.0f;    ///< Track height; 0 is a frame height plus the track padding
-		int marked = -1;        ///< Segment flagged with a dot while it is not the selection
-		bool muted = false;     ///< Dims the selection, for a control showing an off or flat mode
-		bool centered = false;  ///< Centres a content-sized track on the available width
+		float width = 0.0f;          ///< Fills this width with equal segments; 0 sizes each segment to its content
+		float height = 0.0f;         ///< Track height; 0 is a frame height plus the track padding
+		int marked = -1;             ///< Segment flagged with a dot while it is not the selection
+		bool muted = false;          ///< Dims the selection, for a control showing an off or flat mode
+		bool centered = false;       ///< Centres a content-sized track on the available width
+		float reservedWidth = 0.0f;  ///< Leaves room after the strip for a trailing action
 	};
 
 	/**
@@ -388,7 +389,7 @@ namespace Util
 	 * Nesting is supported (stack). Tab labels from the previous frame drive the strip layout.
 	 * @param centered Centre the strip on the available width instead of starting it at the left.
 	 */
-	bool BeginPillTabBar(const char* str_id, bool centered = false);
+	bool BeginPillTabBar(const char* str_id, bool centered = false, const std::function<void()>& trailingAction = {});
 	bool BeginPillTabItem(const char* label, bool* p_open = nullptr, ImGuiTabItemFlags flags = 0, const char* tooltip = nullptr);
 	void EndPillTabItem();
 	void EndPillTabBar();
@@ -876,6 +877,8 @@ namespace Util
 	 * same row looks too low next to it. Centre by ink instead; this is the one place that measures it.
 	 */
 	float GetTextInkCenterY();
+	/** @brief Distance from the line top to the centre of the given text's visible glyphs. */
+	float GetTextInkCenterY(std::string_view text);
 
 	/**
 	 * @brief Screen y at which to draw a line of text (cursor / AddText position) so its ink is centred in a row.

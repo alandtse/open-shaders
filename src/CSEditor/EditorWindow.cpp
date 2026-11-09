@@ -16,6 +16,7 @@
 #include "Menu/BackgroundBlur.h"
 #include "Menu/Icons/helpers/IconFonts.h"
 #include "Menu/Icons/helpers/SceneActionIcons.h"
+#include "Menu/Icons/helpers/SettingsActionIcons.h"
 #include "Menu/Icons/helpers/WeatherTypeIcons.h"
 #include "Menu/MenuHeaderRenderer.h"
 #include "Menu/MenuIcons.h"
@@ -1103,28 +1104,25 @@ void EditorWindow::RenderUI()
 			const ImVec4 disabledColor = statusPalette.Error;
 			// Soft red for paused time lives in DrawTimePauseToggle / DrawPausedAwareGameHourSlider.
 
-			ImGui::SameLine();
-
-			// Undo and redo: Tabler glyphs (not theme PNGs)
-			const auto drawHistoryButton = [&](const char* id, const char* glyph, bool enabled, const std::string& tooltip, auto&& action) {
-				ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, iconY));
-				if (DrawBarIconButton(id, Icons::TI(glyph), enabled, textColor, statusPalette.Disable, iconButtonSize))
-					action();
-				Util::AddTooltip(tooltip.c_str());
-			};
-			{
-				const bool canUndo = undoHistory.CanUndo();
-				drawHistoryButton("##GlobalUndo", ICON_TI_ARROW_BACK_UP, canUndo,
-					canUndo ? I18n::GetSingleton()->Format(TKEY("undo_states"), { { "count", std::to_string(undoHistory.GetUndoCount()) } }, "Undo (Ctrl+Z) - {count} states") :
-							  T(TKEY("undo_no_changes"), "Undo (Ctrl+Z) - No changes to undo"),
-					[this] { PerformUndo(); });
+			const auto recordAction = [&](const char* id, Icons::GlyphRef glyph, bool enabled, const char* tooltip, auto&& run) {
 				ImGui::SameLine(0.0f, style.ItemSpacing.x);
-				const bool canRedo = undoHistory.CanRedo();
-				drawHistoryButton("##GlobalRedo", ICON_TI_ARROW_FORWARD_UP, canRedo,
-					canRedo ? I18n::GetSingleton()->Format(TKEY("redo_states"), { { "count", std::to_string(undoHistory.GetRedoCount()) } }, "Redo (Ctrl+Y) - {count} states") :
-							  T(TKEY("redo_no_changes"), "Redo (Ctrl+Y) - Nothing to redo"),
-					[this] { PerformRedo(); });
-			}
+				ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, iconY));
+				if (DrawBarIconButton(id, glyph, enabled, textColor, statusPalette.Disable, iconButtonSize))
+					run();
+				Util::AddTooltip(tooltip, Util::kTooltipWhenDisabled);
+			};
+			recordAction("##RestoreAllGameValues", SettingsActionIcons::kRestoreDefaults, true,
+				T(TKEY("restore_all_game_values"), "Revert All to Record Values"), [this] {
+					restoreGameValuesPopup.title = T(TKEY("restore_all_game_values"), "Revert All to Record Values");
+					restoreGameValuesPopup.message = T(TKEY("restore_all_game_values_confirm"), "Revert all edited records? Your saved files stay unchanged until you save.");
+					restoreGameValuesPopup.confirmLabel = T(TKEY("restore_all_game_values"), "Revert All to Record Values");
+					restoreGameValuesPopup.cancelLabel = T("ui.cancel", "Cancel");
+					restoreGameValuesPopup.Request();
+				});
+			recordAction("##RestoreAllPresetValues", SettingsActionIcons::kReapplyOverride, FormEditSources::HasPackFormEdits(),
+				T(TKEY("restore_all_preset_values"), "Restore All Preset Record Values"), [this] { RestoreWidgetSettings(Widget::SettingsSource::Preset); });
+			recordAction("##RestoreAllSavedValues", SettingsActionIcons::kRestoreSaved, FormEditSources::HasPersonalEdits(),
+				T(TKEY("restore_all_saved_values"), "Restore All Saved Record Values"), [this] { RestoreWidgetSettings(Widget::SettingsSource::Saved); });
 
 			// Save: the editor's own save, red while any widget has unsaved changes.
 			ImGui::SameLine(0.0f, style.ItemSpacing.x);
@@ -1136,17 +1134,6 @@ void EditorWindow::RenderUI()
 				if (DrawBarIconButton("##ActionBarSave", Icons::TI(MenuIcons::kSave), true, saveColor, saveColor, iconButtonSize))
 					SaveManager::SaveEditor(SaveManager::Trigger::User);
 				Util::AddTooltip(SaveManager::GetEditorSaveTooltip(unsaved));
-			}
-
-			// Export opens the shared Presets page without leaving the editor.
-			ImGui::SameLine(0.0f, style.ItemSpacing.x);
-			{
-				const bool canExport = PresetExportPanel::CanExport();
-				ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, iconY));
-				if (DrawBarIconButton("##GlobalExportPreset", SceneActionIcons::kExport, canExport, textColor, statusPalette.Disable, iconButtonSize))
-					PresetExportPanel::Open();
-				const std::string exportTooltip = std::format("{} (Ctrl+Shift+S)", T(TKEY("export_preset"), "Export Preset..."));
-				Util::AddTooltip(exportTooltip.c_str(), Util::kTooltipWhenDisabled);
 			}
 
 			// Weather lock + name, and period title, centered in the header
@@ -1176,9 +1163,9 @@ void EditorWindow::RenderUI()
 			const float& itemSpacing = ImGui::GetStyle().ItemSpacing.x;
 			const float leftClusterEnd = ImGui::GetItemRectMax().x + itemSpacing;
 			const float dividerThickness = ThemeManager::Constants::CONTROL_OUTLINE_WIDTH * scale;
-			constexpr int kRightActionCount = 4;
+			constexpr int kRightActionCount = 7;
 			constexpr int kRightDividerCount = 2;
-			constexpr int kRightGapCount = 7;
+			constexpr int kRightGapCount = 10;
 			const float rightFixedWidth = iconSize * kRightActionCount + dividerThickness * kRightDividerCount + itemSpacing * kRightGapCount;
 			const float minimumWeatherWidth = weatherName ? lockBadgeSize + weatherStatusGap + std::min(weatherNameWidth, ImGui::CalcTextSize("...").x) + itemSpacing : 0.0f;
 			const float minimumCenterWidth = minimumWeatherWidth + periodWidth + itemSpacing + iconSize;
@@ -1190,6 +1177,12 @@ void EditorWindow::RenderUI()
 
 			rightCursor -= iconSize;
 			const float xButtonX = rightCursor;
+			rightCursor -= itemSpacing + iconSize;
+			const float exportButtonX = rightCursor;
+			rightCursor -= itemSpacing + iconSize;
+			const float redoButtonX = rightCursor;
+			rightCursor -= itemSpacing + iconSize;
+			const float undoButtonX = rightCursor;
 
 			std::array<float, kRightDividerCount> dividerX{};
 			int dividerCount = 0;
@@ -1336,6 +1329,36 @@ void EditorWindow::RenderUI()
 				DrawTimeScaleSlider("##MenuBarTimeScaleSlider", calendar);
 			}
 
+			// Undo and redo: Tabler glyphs (not theme PNGs)
+			const auto drawHistoryButton = [&](const char* id, const char* glyph, bool enabled, float x, const std::string& tooltip, auto&& action) {
+				ImGui::SetCursorScreenPos(ImVec2(x, iconY));
+				if (DrawBarIconButton(id, Icons::TI(glyph), enabled, textColor, statusPalette.Disable, iconButtonSize))
+					action();
+				Util::AddTooltip(tooltip.c_str());
+			};
+			{
+				const bool canUndo = undoHistory.CanUndo();
+				drawHistoryButton("##GlobalUndo", ICON_TI_ARROW_BACK_UP, canUndo, undoButtonX,
+					canUndo ? I18n::GetSingleton()->Format(TKEY("undo_states"), { { "count", std::to_string(undoHistory.GetUndoCount()) } }, "Undo (Ctrl+Z) - {count} states") :
+							  T(TKEY("undo_no_changes"), "Undo (Ctrl+Z) - No changes to undo"),
+					[this] { PerformUndo(); });
+				const bool canRedo = undoHistory.CanRedo();
+				drawHistoryButton("##GlobalRedo", ICON_TI_ARROW_FORWARD_UP, canRedo, redoButtonX,
+					canRedo ? I18n::GetSingleton()->Format(TKEY("redo_states"), { { "count", std::to_string(undoHistory.GetRedoCount()) } }, "Redo (Ctrl+Y) - {count} states") :
+							  T(TKEY("redo_no_changes"), "Redo (Ctrl+Y) - Nothing to redo"),
+					[this] { PerformRedo(); });
+			}
+
+			// Export opens the shared Presets page without leaving the editor.
+			{
+				const bool canExport = PresetExportPanel::CanExport();
+				ImGui::SetCursorScreenPos(ImVec2(exportButtonX, iconY));
+				if (DrawBarIconButton("##GlobalExportPreset", SceneActionIcons::kExport, canExport, textColor, statusPalette.Disable, iconButtonSize))
+					PresetExportPanel::Open();
+				const std::string exportTooltip = std::format("{} (Ctrl+Shift+S)", T(TKEY("export_preset"), "Export Preset..."));
+				Util::AddTooltip(exportTooltip.c_str(), Util::kTooltipWhenDisabled);
+			}
+
 			// Close: white cross, no red fill
 			ImGui::SetCursorScreenPos(ImVec2(xButtonX, iconY));
 			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
@@ -1370,6 +1393,9 @@ void EditorWindow::RenderUI()
 	}
 
 	DrawToolPrompt();
+	Util::DrawClearShaderCacheConfirmation();
+	if (restoreGameValuesPopup.Draw())
+		RestoreWidgetSettings(Widget::SettingsSource::Game);
 
 	if (resetLayout)
 		ResetWidgetTypeSizes();
@@ -1562,6 +1588,7 @@ void EditorWindow::UpdateOpenState()
 		globals::menu->Close();
 
 	} else if (!open && wasOpen) {
+		globals::state->SaveCoreSettings(State::SELF_SAVING_SETTINGS);
 		toolPrompt = Util::ConfirmationPopup{};
 		promptedTool = nullptr;
 		toolPromptProceed = nullptr;
@@ -2721,6 +2748,11 @@ void EditorWindow::DiscardAllWidgetChanges()
 	ForEachWidget([this](Widget& widget) { DiscardWidgetChanges(widget); });
 	anyWidgetUnsaved = false;
 	lastUnsavedScan = -kUnsavedScanInterval;
+}
+
+void EditorWindow::RestoreWidgetSettings(Widget::SettingsSource source)
+{
+	ForEachWidget([source](Widget& widget) { widget.RestoreSettings(source); });
 }
 
 void EditorWindow::ShowNotification(const std::string& message, const ImVec4& color, float duration)

@@ -562,7 +562,8 @@ void Menu::Load(json& o_json)
 	}
 
 	// Legacy support: If old config has Theme data and no SelectedThemePreset, load it
-	if (o_json.contains("Theme") && o_json["Theme"].is_object() && settings.SelectedThemePreset.empty()) {
+	const bool hasLegacyTheme = o_json.contains("Theme") && o_json["Theme"].is_object() && settings.SelectedThemePreset.empty();
+	if (hasLegacyTheme) {
 		bool hasFontRoles = o_json["Theme"].contains("FontRoles");
 		SanitizeFontRolesJson(o_json["Theme"]);
 		settings.Theme = o_json["Theme"];
@@ -583,18 +584,11 @@ void Menu::Load(json& o_json)
 		logger::info("Loaded legacy Theme data from config (no SelectedThemePreset)");
 	}
 
-	// Apply Default Dark theme on first launch if no theme is selected
-	if (!settings.FirstTimeSetupCompleted && settings.SelectedThemePreset.empty()) {
-		// Ensure default themes are created/available
-		CreateDefaultThemes();
-
-		// Load the Default Dark theme and mark it as selected to prevent override
-		if (LoadThemePreset("Default")) {
-			settings.SelectedThemePreset = "Default";  // Mark as selected to prevent State::LoadTheme override
-			logger::info("Applied Default Dark theme on first launch");
-		} else {
-			logger::warn("Failed to load Default Dark theme on first launch");
-		}
+	if (settings.SelectedThemePreset.empty() && !hasLegacyTheme) {
+		if (!settings.FirstTimeSetupCompleted)
+			CreateDefaultThemes();
+		if (!LoadThemePreset("Default"))
+			logger::warn("Failed to load Default Dark theme with no saved selection");
 	} else if (!settings.SelectedThemePreset.empty()) {
 		// Load the previously selected theme preset (including custom themes)
 		if (LoadThemePreset(settings.SelectedThemePreset)) {
@@ -617,14 +611,14 @@ void Menu::Load(json& o_json)
 
 void Menu::Save(json& o_json)
 {
-	o_json["LastSettingsSection"] = settings.LastSettingsSection;
-	o_json["FeatureListFilter"] = settings.FeatureListFilter;
-	o_json["RecentFeatures"] = settings.RecentFeatures;
 	settings.Theme.FontName = settings.Theme.FontRoles[static_cast<size_t>(FontRole::Body)].File;
 
 	// Save all settings except Theme values
 	// Theme values should only be saved in theme preset files, not in the main config
 	o_json = settings;
+	o_json["LastSettingsSection"] = settings.LastSettingsSection;
+	o_json["FeatureListFilter"] = settings.FeatureListFilter;
+	o_json["RecentFeatures"] = settings.RecentFeatures;
 	o_json["ShowSettingInformation"] = settings.ShowSettingInformation;
 
 	// Remove Theme object from config, only keep SelectedThemePreset
@@ -735,6 +729,7 @@ bool Menu::LoadThemePreset(const std::string& themeName)
 			settings.SelectedThemePreset = themeName;
 			// Colours and Fonts undo steps belong to the theme they were made on
 			undoHistory.Forget("theme.");
+			EditorWindow::GetSingleton()->undoHistory.Forget("theme.");
 
 			// Schedule deferred font reload if font has changed
 			if (settings.Theme.FontName != MenuFonts::GetAtlasState().cachedFontName) {
@@ -747,6 +742,7 @@ bool Menu::LoadThemePreset(const std::string& themeName)
 
 			// Apply background blur enabled state from theme
 			BackgroundBlur::SetEnabled(settings.Theme.BackgroundBlurEnabled);
+			SettingsTabRenderer::CheckThemeChanged(true);
 
 			logger::info("Applied theme preset: {}", themeName);
 			return true;
@@ -1153,7 +1149,6 @@ void Menu::DrawEditorSettings(bool resetEditorLayout)
 	if (shortcuts.empty())
 		shortcuts = MenuShortcuts::BuildTable(MakeShortcutActions());
 	GoToPalette::Draw(shortcuts);
-	Util::DrawClearShaderCacheConfirmation();
 }
 
 /**

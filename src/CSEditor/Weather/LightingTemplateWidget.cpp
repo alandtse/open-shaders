@@ -63,7 +63,7 @@ void LightingTemplateWidget::DrawWidget()
 		DrawWidgetHeader("##LightingTemplateSearch", false, true);
 		DrawSearchDropdown();
 	}
-	if (Util::BeginPillTabBar("LightingTemplateSettingsTabs")) {
+	if (BeginSettingsTabBar("LightingTemplateSettingsTabs")) {
 		const ImGuiTabItemFlags basicFlags = GetTabFlagsForOverride(LightingTemplateTab::kBasic);
 		const ImGuiTabItemFlags fogFlags = GetTabFlagsForOverride(LightingTemplateTab::kFog);
 		const ImGuiTabItemFlags dalcFlags = GetTabFlagsForOverride(LightingTemplateTab::kDalc);

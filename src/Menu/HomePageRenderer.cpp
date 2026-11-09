@@ -22,6 +22,7 @@
 #include "Menu/ProfilingRenderer.h"
 #include "Menu/SettingsPageRenderer.h"
 #include "Menu/SettingsSections.h"
+#include "Menu/SettingsTabRenderer.h"
 #include "Plugin.h"
 #include "Presets/UnifiedPresetCatalog.h"
 #include "Profiler.h"
@@ -316,6 +317,7 @@ void HomePageRenderer::RenderHomePage()
 			ImGui::TextColored(globals::state->HasUnsavedChanges() ? Util::Colors::GetUnsaved() : Util::Colors::GetSecondary(), "%s",
 				globals::state->HasUnsavedChanges() ? T("menu.home.unsaved", "Unsaved settings") : T("menu.home.saved", "Settings saved"));
 		}
+		SettingsTabRenderer::RenderThemeUnsavedBanner();
 		ImGui::Spacing();
 		ImGui::Separator();
 		const float minimumColumnWidth = ImGui::GetFontSize() * ThemeManager::Constants::HOME_CARD_MIN_WIDTH_EM;

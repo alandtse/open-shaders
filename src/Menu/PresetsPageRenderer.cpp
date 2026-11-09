@@ -145,10 +145,19 @@ namespace
 		return pack.valid && (pack.hasEffects11 || pack.hasCSPresets || pack.hasBaseline || pack.hasFormEdits);
 	}
 
+	void ReportPresetChangeFailure()
+	{
+		EditorWindow::GetSingleton()->ShowNotification(
+			T("menu.presets.operation_failed", "Could not apply this preset change. Check the log for details."),
+			Util::Colors::GetWarning());
+	}
+
 	void ApplyPack(const UnifiedPresetCatalog::PackInfo& pack)
 	{
 		if (UnifiedPresetCatalog::GetSingleton().ApplyPack(pack.id, true, true))
 			logger::info("[Presets] Applied pack '{}'", pack.id);
+		else
+			ReportPresetChangeFailure();
 	}
 
 	Util::ConfirmationPopup applyConfirmation;
@@ -296,9 +305,10 @@ namespace
 					ImGui::PopStyleColor(4);
 			});
 			if (Util::ButtonWithFlash(enabled ? T("menu.presets.disable", "Disable Preset") : T("menu.presets.apply", "Enable Preset"))) {
-				if (enabled)
-					catalog.DisablePack(pack.id);
-				else
+				if (enabled) {
+					if (!catalog.DisablePack(pack.id))
+						ReportPresetChangeFailure();
+				} else
 					RequestApplyPack(pack);
 			}
 		}
@@ -450,9 +460,11 @@ void PresetsPageRenderer::RenderToolbar()
 	{
 		if (BrowserUI::IconButton("##PresetsRefresh", Icons::TI(ICON_TI_REFRESH),
 				T("menu.presets.refresh_tooltip", "Rescan unified packs and Effects 11 library presets."))) {
-			catalog.Refresh();
+			if (!catalog.Refresh())
+				ReportPresetChangeFailure();
+			else
+				discovered = true;
 			ThemeManager::GetSingleton()->RefreshThemes();
-			discovered = true;
 		}
 
 		ImGui::SameLine();
@@ -643,8 +655,8 @@ void PresetsPageRenderer::RenderList()
 
 		ImGui::PopID();
 	}
-	if (!moveId.empty())
-		catalog.MoveBaseline(moveId, moveRaise);
+	if (!moveId.empty() && !catalog.MoveBaseline(moveId, moveRaise))
+		ReportPresetChangeFailure();
 
 	ImGui::EndChild();
 }

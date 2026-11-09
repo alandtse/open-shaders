@@ -121,7 +121,7 @@ void CellLightingWidget::DrawWidget()
 	} else {
 		bool changed = false;
 
-		if (Util::BeginPillTabBar("CellLightingTabs")) {
+		if (BeginSettingsTabBar("CellLightingTabs")) {
 			const ImGuiTabItemFlags basicFlags = GetTabFlagsForOverride(CellLightingTab::kBasic);
 			const ImGuiTabItemFlags fogFlags = GetTabFlagsForOverride(CellLightingTab::kFog);
 			const ImGuiTabItemFlags dalcFlags = GetTabFlagsForOverride(CellLightingTab::kDalc);

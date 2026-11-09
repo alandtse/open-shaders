@@ -551,8 +551,11 @@ namespace
 			SceneSettingsManager::GetSingleton()->ReleaseSketches(entry.shortName);
 		}
 		auto& catalog = UnifiedPresetCatalog::GetSingleton();
-		catalog.Discover();
-		catalog.ReapplyIfInUse(Util::FileHelpers::SanitizeFileName(target.name));
+		if (!catalog.Refresh(true, false)) {
+			rollBack();
+			catalog.Refresh(false, false);
+			return false;
+		}
 		return true;
 	}
 

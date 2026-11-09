@@ -8,6 +8,8 @@ class MenuHeaderRenderer
 public:
 	/** @brief Brand and release or test-build version without branch metadata. */
 	static std::string GetTitle();
+	/** @brief Draws the shared shader-cache action, including its Shift behavior. */
+	static void RenderShaderCacheButton();
 	/** @brief Draws the same responsive action row in floating and docked menus. */
 	static void RenderHeader(Menu& menu, bool& sidebarVisible, float uiScale);
 	/** @brief Draws menu actions and navigation around the editor's browser mode controls. */

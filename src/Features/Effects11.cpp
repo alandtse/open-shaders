@@ -315,6 +315,13 @@ void Effects11::Initialize()
 	ResolveActivePresetLocation();
 }
 
+const char* Effects11::GetSettingsLockReason(std::string_view featureShortName) const
+{
+	if (featureShortName == "ProceduralSun" && enableEffect && SettingManager::GetSingleton().GetValue<bool>("EnableProceduralSun", "EFFECT"))
+		return T("common.settings_managed_by_enb", "This setting is managed by Effects 11.");
+	return nullptr;
+}
+
 void Effects11::LoadSettings(json& o_json)
 {
 	settings = o_json;

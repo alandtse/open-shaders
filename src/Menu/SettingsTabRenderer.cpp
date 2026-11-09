@@ -22,6 +22,7 @@
 #include "IconsTabler.h"
 #include "Menu.h"
 #include "MenuIcons.h"
+#include "SettingsPageRenderer.h"
 #include "ShaderCache.h"
 #include "ShaderCacheStatusWidget.h"
 #include "State.h"
@@ -669,7 +670,7 @@ void SettingsTabRenderer::RenderThemeUnsavedBanner()
 		return;
 
 	if (Util::StatusBanner(MenuIcons::kSave, T("menu.settings.theme_unsaved_banner", "Unsaved theme changes. Click to open the Theme page, where they're saved."), Util::Colors::GetUnsaved()))
-		globals::menu->GetSettings().LastSettingsSection = std::string(Ids::kTheme);
+		SettingsPageRenderer::OpenSection(Ids::kTheme);
 	ImGui::Spacing();
 }
 

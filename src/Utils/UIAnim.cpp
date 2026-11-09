@@ -429,7 +429,8 @@ namespace Util::Anim
 		// Selectable's item rect already includes its half item spacing pad, which is the area ImGui fills
 		ImRect rect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
 		// Full-width rows highlight edge to edge
-		const bool fullRow = !ImGui::GetCurrentTable() && rect.Min.x <= window->WorkRect.Min.x && rect.Max.x >= window->WorkRect.Max.x;
+		const bool fullRow = !(window->Flags & ImGuiWindowFlags_Popup) && !ImGui::GetCurrentTable() &&
+		                     rect.Min.x <= window->WorkRect.Min.x && rect.Max.x >= window->WorkRect.Max.x;
 		if (fullRow) {
 			rect.Min.x = window->InnerRect.Min.x + window->WindowBorderSize;
 			rect.Max.x = window->InnerRect.Max.x - window->WindowBorderSize;

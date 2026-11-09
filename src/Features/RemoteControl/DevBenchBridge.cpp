@@ -1694,9 +1694,16 @@ namespace
 				if (!shortName.empty() && !feature)
 					return json{ { "error", "feature not found" }, { "shortName", shortName } };
 				const auto keys = feature && currentTab && feature->HasScopedDefaultSettings() ? feature->GetCurrentPageSettingKeys() : std::vector<std::string>{};
+				json records = json::array();
+				EditorWindow::GetSingleton()->ForEachWidget([&](Widget& widget) {
+					if (widget.HasUnsavedChanges())
+						records.push_back({ { "name", widget.GetEditorID() }, { "type", widget.GetWidgetTypeName() } });
+				});
 				return json{ { "canRestoreSaved", state->HasSavedSettings(feature, currentTab) },
 					{ "canReapplyBaseSettings", BaselineManager::GetSingleton()->HasSettings(shortName, keys) },
-					{ "canUndo", globals::menu->CanUndo() }, { "canRedo", globals::menu->CanRedo() } };
+					{ "canUndo", globals::menu->CanUndo() }, { "canRedo", globals::menu->CanRedo() },
+					{ "unsavedSettings", state->HasUnsavedChanges() }, { "settingsChanges", state->GetUnsavedSettingsChanges() },
+					{ "unsavedRecords", records }, { "unsavedSceneSettings", SceneSettingsManager::GetSingleton()->HasUnsavedChanges() } };
 			},
 				Util::DevBenchUx::ExecutionThread::Render);
 		}
@@ -2127,7 +2134,7 @@ namespace DevBenchBridge
 			logger::info("DevBenchBridge: devbench build {} < 10500; CS menu + inspect extensions need 1.5.0", dvb->GetBuildNumber());
 		}
 		static constexpr const char* framesDesc =
-			R"({"description":"Per-frame timings for benchmarks: Present-to-Present frame time, CPU time of the Present thread and of the whole process, frame-generation flag. Idle until started. Action-dispatched. start -> {id} or {error} while a recording is pending or running; recording begins at the next Present and ends at stop or after 16384 frames (full). stop -> {id,recording,frames,full}; takes effect at the next Present, so poll status until recording is false. status -> {id,recording,frames,full}. read -> {id,recording,frames,full,tscHz,presentThreadId,columns:{frameMs,presentThreadCpuMs,processCpuMs,frameGeneration}}: equal-length arrays, one entry per frame, ms rounded to 4 decimals.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["start","stop","status","read"]}},"required":["action"]}})";
+			R"({"description":"Per-frame timings for benchmarks: QPC Present-to-Present frame time, estimated CPU time of the Present thread and of the whole process, frame-generation flag. CPU milliseconds are cycle counts scaled by the measured TSC rate, not guaranteed elapsed CPU time across CPUs or clock changes. Idle until started. Action-dispatched. start -> {id} or {error} while a recording is pending or running; recording begins at the next Present and ends at stop or after 16384 frames (full). stop -> {id,recording,frames,full}; takes effect at the next Present, so poll status until recording is false. status -> {id,recording,frames,full}. read -> {id,recording,frames,full,tscHz,presentThreadId,columns:{frameMs,presentThreadCpuMs,processCpuMs,frameGeneration}}: equal-length arrays, one entry per frame, ms rounded to 4 decimals.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["start","stop","status","read"]}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.frames", framesDesc, &FramesToolHandler, nullptr);
 
 		static constexpr const char* devflagsDesc =

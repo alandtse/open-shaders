@@ -8,9 +8,11 @@
 #include <vector>
 
 #include "../I18n/I18n.h"
+#include "Browser/BrowserWidgets.h"
 #include "EditorWindow.h"
 #include "IconsTabler.h"
 #include "Menu/Icons/helpers/IconFonts.h"
+#include "Menu/Icons/helpers/SettingsActionIcons.h"
 #include "Menu/Icons/helpers/WeatherTypeIcons.h"
 #include "Menu/MenuIcons.h"
 #include "SaveManager.h"
@@ -29,12 +31,6 @@ namespace
 	std::string FormatName(const char* message, const std::string& name)
 	{
 		return std::vformat(message, std::make_format_args(name));
-	}
-
-	/** @brief Text-button label of the action that opens another window on a widget. */
-	const char* GetAnotherViewLabel()
-	{
-		return T(TKEY("new_window"), "New Window");
 	}
 
 	/** @brief Tooltip of the action that opens another window on a widget. */
@@ -114,8 +110,11 @@ void Widget::Load(bool showNotification)
 			path.empty() ? Util::Colors::GetInfo() : Util::Colors::GetSuccess());
 }
 
-bool Widget::ApplySavedDocument(const json& document)
+bool Widget::ApplySavedDocument(const json& document, bool updateSavedBaseline)
 {
+	const bool previousPreserve = preserveSavedBaseline;
+	preserveSavedBaseline = !updateSavedBaseline;
+	const SKSE::stl::scope_exit restoreBaselineMode([&] { preserveSavedBaseline = previousPreserve; });
 	lastLoadSucceeded = true;
 	js = document;
 	try {
@@ -126,6 +125,49 @@ bool Widget::ApplySavedDocument(const json& document)
 	}
 	TrackEdits();
 	return lastLoadSucceeded;
+}
+
+bool Widget::HasSettingsSource(SettingsSource source) const
+{
+	switch (source) {
+	case SettingsSource::Game:
+		return true;
+	case SettingsSource::Preset:
+		return FormEditSources::GetPackFormKeys().contains(GetFormKey());
+	case SettingsSource::Saved:
+		return HasSavedFile();
+	}
+	return false;
+}
+
+void Widget::RestoreSettings(SettingsSource source)
+{
+	if (!HasSettingsSource(source))
+		return;
+	auto* editor = EditorWindow::GetSingleton();
+	if (source == SettingsSource::Game) {
+		editor->undoHistory.Change(editor->MakeUndoTarget(*this), [this] { RevertChanges(); });
+		return;
+	}
+	const auto path = source == SettingsSource::Preset ? FormEditSources::ResolvePackFile(GetFormKey()) : std::filesystem::path(GetSaveFilePath());
+	json document;
+	if (path.empty() || !FormEditSources::ReadDocument(path, document)) {
+		editor->ShowNotification(FormatName(T(TKEY("form_load_failed"), "Could not load settings for {}. Check the log."), GetEditorID()), Util::Colors::GetError());
+		return;
+	}
+	editor->undoHistory.Change(editor->MakeUndoTarget(*this), [&] {
+		const auto before = CaptureEdits();
+		const auto savedDocument = js;
+		if (!ApplySavedDocument(document, false)) {
+			js = savedDocument;
+			if (before)
+				RestoreEdits(*before);
+			editor->ShowNotification(FormatName(T(TKEY("form_load_failed"), "Could not load settings for {}. Check the log."), GetEditorID()), Util::Colors::GetError());
+			return;
+		}
+		if (source == SettingsSource::Saved)
+			CommitSavedSettings();
+	});
 }
 
 void Widget::TrackEdits()
@@ -208,7 +250,7 @@ void Widget::DrawMenu()
 			if (Util::RoundedMenuItem(T(TKEY("delete_saved_file"), "Delete Saved File"))) {
 				ImGui::OpenPopup("DeleteConfirmation");
 			}
-			if (Util::RoundedMenuItem(T(TKEY("revert_to_game_values"), "Revert to Game Values"))) {
+			if (Util::RoundedMenuItem(T(TKEY("revert_to_game_values"), "Revert to Record Values"))) {
 				RevertChanges();
 			}
 
@@ -305,6 +347,14 @@ void Widget::CloseFocusedView()
 	(focused != views.end() ? *focused : views.front()).open = false;
 }
 
+bool Widget::BeginSettingsTabBar(const char* id)
+{
+	return Util::BeginPillTabBar(id, false, [this] {
+		if (BrowserUI::IconButton("##AnotherView", Icons::TI(ICON_TI_LAYOUT_COLUMNS), GetAnotherViewTooltip()))
+			OpenAnotherView();
+	});
+}
+
 void Widget::DrawViews()
 {
 	for (auto& view : views) {
@@ -331,7 +381,6 @@ bool Widget::BeginWidgetWindow(bool showApply, bool showSaveLoadRevert, bool sho
 		view.pendingFocus = false;
 	}
 	view.customHeaderActionsDrawn = false;
-	view.titleBarSearchDrawn = false;
 
 	// Weather type icon sits left of the title via drawLeading (standalone icon fonts).
 	const auto typeIcon = WeatherTypeIcons::Resolve(weather);
@@ -386,8 +435,8 @@ namespace
 		std::optional<ImVec4> textColor;  ///< Text/Glyph colour override
 		std::optional<ImVec4> fillColor;  ///< Text kind: persistent fill colour override
 		std::optional<ImVec4> hoverTint;  ///< Hover and press in this colour instead of the theme's (unsaved save, delete)
-		bool startsGroup = false;         ///< Leave a wider gap before this action
 		bool locked = false;              ///< LockBadge kind
+		bool enabled = true;
 		std::function<void()> onClick;
 		float width = 0.0f;
 	};
@@ -398,13 +447,12 @@ bool Widget::DrawTitleBarActions(bool showApply, bool showSaveLoadRevert, bool s
 	auto* menu = globals::menu;
 	auto* editorWindow = EditorWindow::GetSingleton();
 	ImGuiWindow* window = ImGui::GetCurrentWindow();
-	// Docked windows share a tab bar, so keep actions inline there unless a native title bar hosts them.
-	if (!menu || !editorWindow || !window || window->DockIsActive)
+	if (!menu || !editorWindow || !window)
 		return false;
 
-	const bool nativeTitleBar = !customHeaderRow && !(window->Flags & ImGuiWindowFlags_NoTitleBar) && window->TitleBarHeight > 0.0f;
-	if (!customHeaderRow && !nativeTitleBar)
+	if (customHeaderRow && window->DockIsActive)
 		return false;
+	const bool inlineRow = !customHeaderRow;
 
 	const auto& style = ImGui::GetStyle();
 	const auto& statusPalette = menu->GetTheme().StatusPalette;
@@ -471,13 +519,16 @@ bool Widget::DrawTitleBarActions(bool showApply, bool showSaveLoadRevert, bool s
 		}
 	}
 
-	// Save / Load / Revert / Delete
 	if (showSaveLoadRevert) {
-		const size_t groupStart = actions.size();
-
+		const bool hasSavedFile = HasSavedFile();
+		const auto restoreAction = [&](const char* id, Icons::GlyphRef glyph, const char* label, const char* tooltip, SettingsSource source) {
+			auto restore = [this, source] { RestoreSettings(source); };
+			auto& action = useIcons ? addGlyph(id, glyph, tooltip, restore) : addText(id, label, tooltip, restore);
+			action.enabled = source == SettingsSource::Saved ? hasSavedFile : HasSettingsSource(source);
+		};
 		const bool unsaved = HasUnsavedChanges();
-		const char* saveTooltip = SaveManager::GetEditorSaveTooltip(unsaved);
-		auto saveClick = []() { SaveManager::SaveEditor(SaveManager::Trigger::User); };
+		const char* saveTooltip = T(TKEY("save_record_tooltip"), "Save this record's settings.");
+		auto saveClick = [this]() { Save(); };
 		std::optional<ImVec4> unsavedColor;
 		if (unsaved)
 			unsavedColor = Util::Colors::GetUnsaved();
@@ -490,25 +541,14 @@ bool Widget::DrawTitleBarActions(bool showApply, bool showSaveLoadRevert, bool s
 			action.textColor = unsavedColor;
 			action.hoverTint = unsavedColor;
 		}
+		restoreAction("##TitleSaved", SettingsActionIcons::kRestoreSaved, T("menu.restore_settings", "Restore Saved Settings"),
+			T(TKEY("restore_saved_record_tooltip"), "Restore this record's values from your saved file."), SettingsSource::Saved);
+		restoreAction("##TitlePreset", SettingsActionIcons::kReapplyOverride, T(TKEY("restore_preset"), "Restore Preset Values"),
+			T(TKEY("restore_preset_tooltip"), "Restore this record's values from the enabled preset. Save to keep them in your file."), SettingsSource::Preset);
+		restoreAction("##TitleDefaults", SettingsActionIcons::kRestoreDefaults, T(TKEY("revert_to_game_values"), "Revert to Record Values"),
+			T(TKEY("revert_to_original"), "Revert to record values"), SettingsSource::Game);
 
-		const char* loadTooltip = T(TKEY("load_saved_file"), "Load saved file, else the active preset's values, else vanilla");
-		auto loadClick = [this]() { Load(); };
-		if (useIcons)
-			addGlyph("##TitleLoad", Icons::TI(ICON_TI_FOLDER_OPEN), loadTooltip, loadClick);
-		else
-			addText("##TitleLoad", T(TKEY("load"), "Load"), loadTooltip, loadClick);
-
-		const char* revertTooltip = T(TKEY("revert_to_original"), "Revert to original game values");
-		auto revertClick = [this]() { RevertChanges(); };
-		if (useIcons) {
-			auto& action = addGlyph("##TitleRevert", Icons::TI(MenuIcons::kRestore), revertTooltip, revertClick);
-			action.textColor = statusPalette.Warning;
-		} else {
-			auto& action = addText("##TitleRevert", T(TKEY("revert"), "Revert"), revertTooltip, revertClick);
-			action.textColor = statusPalette.Warning;
-		}
-
-		if (HasSavedFile()) {
+		if (hasSavedFile) {
 			const char* deleteTooltip = T(TKEY("delete_saved_file_tooltip"), "Delete saved file");
 			auto deleteClick = []() { ImGui::OpenPopup("DeleteConfirmation"); };
 			TitleBarAction* deleteAction = nullptr;
@@ -526,51 +566,30 @@ bool Widget::DrawTitleBarActions(bool showApply, bool showSaveLoadRevert, bool s
 			auto& action = addGlyph("##TitlePackSource", Icons::TI(MenuIcons::kPresets), packBadge->tooltip.c_str(), []() {});
 			action.textColor = packBadge->color;
 		}
-
-		if (groupStart > 0)
-			actions[groupStart].startsGroup = true;
 	}
 
-	{
-		const char* tooltip = GetAnotherViewTooltip();
-		auto onClick = [this]() { OpenAnotherView(); };
-		auto& action = useIcons ? addGlyph("##TitleAnotherView", Icons::TI(ICON_TI_LAYOUT_COLUMNS), tooltip, onClick) :
-		                          addText("##TitleAnotherView", GetAnotherViewLabel(), tooltip, onClick);
-		action.startsGroup = actions.size() > 1;
+	if (searchId) {
+		addGlyph("##TitleSearch", Icons::TI(MenuIcons::kSearch), T(TKEY("search_settings_hint"), "Search settings (Ctrl+F)"), [this] {
+			View().requestSearch = true;
+			View().searchDropdownAnchor = ImGui::GetItemRectMax();
+		});
 	}
 
-	const float gap = style.ItemInnerSpacing.x;
-	const float groupGap = gap * 3.0f;
+	const float gap = style.ItemSpacing.x;
 	const float fontSize = ImGui::GetFontSize();
 	const float lockBadgeSize = Util::GetLockStatusBadgeSize();
 	const size_t firstRightAction = !actions.empty() && actions.front().kind == Kind::LockBadge ? 1 : 0;
-	// Match BeginWithCustomHeader's chrome height so search/actions share the title's midline.
+	// Match BeginWithCustomHeader's chrome height so actions share the title's midline.
 	const float headerH = Util::GetEditorChromeHeaderHeight();
-	float buttonHeight = ImGui::GetFontSize() + style.FramePadding.y * 2.0f;
+	const float buttonHeight = ImGui::GetFrameHeight();
 
 	ImRect titleRect;
 	float left = 0.0f;
 	float right = 0.0f;
 
-	if (nativeTitleBar) {
-		titleRect = window->TitleBarRect();
-		buttonHeight = titleRect.GetHeight() - style.FramePadding.y * 2.0f;
-		left = titleRect.Min.x + style.FramePadding.x;
-		right = titleRect.Max.x - window->WindowBorderSize - style.FramePadding.x;
-		const bool hasCollapseButton = !(window->Flags & ImGuiWindowFlags_NoCollapse) && style.WindowMenuButtonPosition != ImGuiDir_None;
-		if (hasCollapseButton) {
-			if (style.WindowMenuButtonPosition == ImGuiDir_Right)
-				right -= fontSize + style.ItemInnerSpacing.x;
-			else
-				left += fontSize + style.ItemInnerSpacing.x;
-		}
-		if (window->HasCloseButton)
-			right -= fontSize + style.ItemInnerSpacing.x;
-		right -= gap;
-		left += ImGui::CalcTextSize(window->Name, nullptr, true).x + (firstRightAction ? gap : groupGap);
-	} else {
+	if (!inlineRow) {
 		// Floating custom header: SameLine after the title. Anchor the control band to the
-		// full chrome row (not the short text item) so icons/search share equal top/bottom air.
+		// full chrome row (not the short text item) so icons share equal top/bottom air.
 		const ImRect titleItem(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
 		const float rowTop = titleItem.Min.y - Util::GetEditorChromeTextCursorOffsetY(headerH);
 		const float contentRight = window->WorkRect.Max.x;
@@ -584,7 +603,7 @@ bool Widget::DrawTitleBarActions(bool showApply, bool showSaveLoadRevert, bool s
 	const float titleLockX = left;
 	if (firstRightAction) {
 		actions.front().width = lockBadgeSize;
-		left += lockBadgeSize + groupGap;
+		left += lockBadgeSize + gap;
 	}
 
 	float actionsWidth = 0.0f;
@@ -597,69 +616,57 @@ bool Widget::DrawTitleBarActions(bool showApply, bool showSaveLoadRevert, bool s
 		else
 			action.width = buttonHeight;  // Icon / Glyph
 		if (i > firstRightAction)
-			actionsWidth += action.startsGroup ? groupGap : gap;
+			actionsWidth += gap;
 		actionsWidth += action.width;
 	}
-
-	const float searchWidth = searchId ? WidgetUI::kSearchBarWidth * scale : 0.0f;
-	const float searchGap = searchId ? gap * 2.0f : 0.0f;
-	const float needed = searchWidth + searchGap + actionsWidth;
-	if (right - left < needed && !actions.empty() && !searchId)
-		return false;
-	if (right - left < actionsWidth && !searchId)
-		return false;
 
 	const float cursorX = left;
 	ImDrawList* drawList = window->DrawList;
 
 	const float actionsLeft = right - actionsWidth;
-	bool drewSearch = false;
-	if (searchId && searchWidth > 0.0f && actionsLeft - cursorX >= searchWidth + searchGap) {
-		const float searchH = ImGui::GetFrameHeight();
-		const float searchX = cursorX + (actionsLeft - cursorX - searchWidth) * 0.5f;
-		const float searchY = titleRect.Min.y + (titleRect.GetHeight() - searchH) * 0.5f;
-		ImGui::SetCursorScreenPos(ImVec2(searchX, searchY));
-		DrawSearchInput(searchId, searchWidth);
-		drewSearch = true;
-		View().titleBarSearchDrawn = true;
-	}
-
-	if (actions.empty() && !drewSearch)
+	if (actions.empty())
 		return true;  // Nothing to show; the title bar stays clean and no inline row is needed.
 
-	if (actionsLeft < cursorX && !actions.empty())
+	if (!inlineRow && actionsLeft < cursorX)
 		return false;  // Actions don't fit; caller draws them inline.
 
 	// Draw the lock after the title and keep the remaining actions right-aligned.
 	// Use InvisibleButton (same pattern as the main CS menu undocked header / close button) so hits
 	// win over the custom-header drag catcher's AllowOverlap. ItemAdd+ButtonBehavior alone does not.
 	float x = titleLockX;
-	const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
 	const ImVec4 iconTint = Util::GetIconTint();
 	const float rounding = style.FrameRounding;
 
 	std::function<void()> pendingClick;
 
-	ImGui::PushClipRect(titleRect.Min, titleRect.Max, false);
+	if (inlineRow)
+		ImGui::BeginGroup();
+	else
+		ImGui::PushClipRect(titleRect.Min, titleRect.Max, false);
 	for (size_t i = 0; i < actions.size(); ++i) {
 		const auto& action = actions[i];
 		if (i == firstRightAction)
 			x = actionsLeft;
 		else if (i > firstRightAction)
-			x += action.startsGroup ? groupGap : gap;
+			x += gap;
 
 		const float itemH = action.kind == Kind::LockBadge ? lockBadgeSize : buttonHeight;
 		const float itemY = titleRect.Min.y + (titleRect.GetHeight() - itemH) * 0.5f;
-		const ImRect bb(ImVec2(x, itemY), ImVec2(x + action.width, itemY + itemH));
+		if (inlineRow && i > 0)
+			Util::SameLineIfFits(action.width);
+		const ImVec2 min = inlineRow ? ImGui::GetCursorScreenPos() : ImVec2(x, itemY);
+		const ImRect bb(min, ImVec2(min.x + action.width, min.y + itemH));
 		x += action.width;
 
 		ImGui::SetCursorScreenPos(bb.Min);
-		ImGui::InvisibleButton(action.id.c_str(), bb.GetSize());
+		ImGui::BeginDisabled(!action.enabled);
+		const bool clicked = ImGui::InvisibleButton(action.id.c_str(), bb.GetSize(), ImGuiButtonFlags_EnableNav);
+		const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
 		const bool hovered = ImGui::IsItemHovered();
 		const bool held = ImGui::IsItemActive();
 		if (hovered)
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-		if (ImGui::IsItemClicked())
+		if (clicked)
 			pendingClick = action.onClick;
 
 		// Hover and press ease in and out, in the action's state colour when it has one
@@ -716,9 +723,13 @@ bool Widget::DrawTitleBarActions(bool showApply, bool showSaveLoadRevert, bool s
 			}
 		}
 
-		Util::AddTooltip(action.tooltip);
+		Util::AddTooltip(action.tooltip, Util::kTooltipWhenDisabled);
+		ImGui::EndDisabled();
 	}
-	ImGui::PopClipRect();
+	if (inlineRow)
+		ImGui::EndGroup();
+	else
+		ImGui::PopClipRect();
 
 	if (pendingClick)
 		pendingClick();
@@ -728,308 +739,90 @@ bool Widget::DrawTitleBarActions(bool showApply, bool showSaveLoadRevert, bool s
 
 void Widget::DrawWidgetHeader(const char* searchId, bool showApply, bool showSaveLoadRevert, bool showForceWeather, RE::TESWeather* weather)
 {
-	auto editorWindow = EditorWindow::GetSingleton();
-	auto menu = globals::menu;
-	bool useIcons = !editorWindow->settings.useTextButtons;
-	const float scale = Util::GetUIScale();
 	auto& view = View();
 	if (view.navigatedFromSearch) {
 		ClearSearchState(true);
 		view.navigatedFromSearch = false;
 	}
+	const bool actionsInTitleBar = view.customHeaderActionsDrawn;
+	if (!actionsInTitleBar)
+		DrawTitleBarActions(showApply, showSaveLoadRevert, showForceWeather, weather, false, searchId);
 
-	// Prefer the title/custom header for the action buttons; fall back to the inline row when they didn't fit.
-	const bool actionsInTitleBar = view.customHeaderActionsDrawn ||
-	                               DrawTitleBarActions(showApply, showSaveLoadRevert, showForceWeather, weather, false, searchId);
-	const bool inlineActions = !actionsInTitleBar;
-	const bool searchInTitleBar = view.titleBarSearchDrawn;
-	const auto textButtonWidth = [](const char* label) {
-		return ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-	};
-	const auto placeAction = [scale](float width, bool startsGroup = false) {
-		if (!startsGroup) {
-			Util::SameLineIfFits(width);
-			return;
-		}
-		const float groupWidth = ImGui::GetStyle().ItemSpacing.x + ThemeManager::Constants::CONTROL_OUTLINE_WIDTH * scale;
-		ImGui::SameLine();
-		if (ImGui::GetContentRegionAvail().x < width + groupWidth) {
-			ImGui::NewLine();
-		} else {
-			Util::ToolbarDivider(false);
-			ImGui::SameLine();
-		}
-	};
-
-	auto drawSearchBar = [&]() {
-		if (!searchInTitleBar)
-			DrawSearchInput(searchId, WidgetUI::kSearchBarWidth * scale);
-	};
-
-	auto drawForceWeatherButton = [&]() {
-		if (!showForceWeather || !weather)
-			return;
-		placeAction(Util::GetLockStatusBadgeSize());
-		bool isLocked = editorWindow->IsWeatherLockedByUser() && editorWindow->GetLockedWeather() == weather;
-		const char* tooltip = !EditorWindow::AreWeatherLockHooksInstalled() ?
-		                          T(TKEY("weather_lock_hooks_unavailable"), "Weather-lock hooks failed to install; the lock still works but weather may briefly flash before correcting") :
-		                          (isLocked ? T(TKEY("unlock_weather"), "Unlock Weather") : T(TKEY("force_this_weather"), "Force This Weather"));
-		if (Util::LockStatusBadgeButton("##InlineForceWeather", isLocked, tooltip)) {
-			if (isLocked)
-				editorWindow->ReleaseUserWeatherLock();
-			else
-				editorWindow->LockWeatherForUser(weather);
-		}
-	};
-
-	const bool unsaved = HasUnsavedChanges();
-	const char* saveTooltip = SaveManager::GetEditorSaveTooltip(unsaved);
-	const auto saveAll = []() { SaveManager::SaveEditor(SaveManager::Trigger::User); };
-
-	if (useIcons) {
-		const float iconSize = ImGui::GetFrameHeight() * WidgetUI::kIconButtonSizeRatio;
-		const ImVec2 buttonSize(iconSize, iconSize);
-
-		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(WidgetUI::kIconButtonSpacing * scale, ImGui::GetStyle().ItemSpacing.y));
-
-		drawSearchBar();
-		if (inlineActions)
-			drawForceWeatherButton();
-
-		// Transparent icon button style
-		ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-		ImGui::PushStyleColor(ImGuiCol_Button, WidgetUI::kIconButtonTransparent);
-		ImVec4 iconButtonHover = ImGui::GetStyleColorVec4(ImGuiCol_Text);
-		iconButtonHover.w = WidgetUI::kIconButtonHoverAlpha;
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, iconButtonHover);
-
-		auto iconButton = [&](const char* suffix, void* texture, const char* tooltip, auto callback) {
-			if (!texture)
-				return;
-			placeAction(buttonSize.x + ImGui::GetStyle().FramePadding.x * 2.0f);
-			// Image button chrome with an eased hover fill instead of ImGui's instant colour swap
-			const ImVec2 padding = ImGui::GetStyle().FramePadding;
-			const ImVec2 imageMin(ImGui::GetCursorScreenPos().x + padding.x, ImGui::GetCursorScreenPos().y + padding.y);
-			const bool clicked = ImGui::InvisibleButton((std::string(searchId) + suffix).c_str(),
-				ImVec2(buttonSize.x + padding.x * 2.0f, buttonSize.y + padding.y * 2.0f));
-			Util::DrawAnimatedButtonHighlight(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()), ImGui::GetItemID(),
-				ImGui::IsItemHovered(), ImGui::IsItemActive(), false);
-			ImGui::GetWindowDrawList()->AddImage(texture, imageMin, ImVec2(imageMin.x + buttonSize.x, imageMin.y + buttonSize.y), ImVec2(0, 0),
-				ImVec2(1, 1), ImGui::GetColorU32(IM_COL32_WHITE));
-			if (clicked)
-				callback();
-			Util::AddTooltip(tooltip);
-		};
-
-		// Apply button
-		if (inlineActions && showApply && (!editorWindow->settings.autoApplyChanges || RequiresManualApply())) {
-			if (Util::IconLoader::GetIcons().applyToGame.texture) {
-				iconButton("_Apply", Util::IconLoader::GetIcons().applyToGame.texture, T(TKEY("apply_changes"), "Apply changes to the game"), [&]() { ApplyChanges(); });
-			} else {
-				placeAction(textButtonWidth(T(TKEY("apply"), "Apply")));
-				if (Util::Button(T(TKEY("apply"), "Apply")))
-					ApplyChanges();
-				Util::AddTooltip(T(TKEY("apply_changes"), "Apply changes to the game"));
-			}
-		}
-
-		// Save/Load/Revert/Delete group
-		if (inlineActions && showSaveLoadRevert) {
-			placeAction(Icons::CalcGlyphSize(Icons::TI(ICON_TI_DEVICE_FLOPPY)).x + ImGui::GetStyle().FramePadding.x * 2.0f, true);
-			{
-				// Unsaved: the glyph and its hover take the unsaved colour
-				auto tint = Util::StateHoverButtonStyle(Util::Colors::GetUnsaved(), unsaved);
-				if (unsaved)
-					ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetUnsaved());
-				if (Util::LabeledButton(std::format("{}##_Save", searchId ? searchId : "").c_str(), Icons::TI(MenuIcons::kSave)))
-					saveAll();
-				if (unsaved)
-					ImGui::PopStyleColor();
-			}
-			Util::AddTooltip(saveTooltip);
-			iconButton("_Load", Util::IconLoader::GetIcons().loadSettings.texture, T(TKEY("load_saved_file"), "Load saved file, else the active preset's values, else vanilla"), [&]() { Load(); });
-			iconButton("_Revert", Util::IconLoader::GetIcons().featureSettingRevert.texture, T(TKEY("revert_to_original"), "Revert to original game values"), [&]() { RevertChanges(); });
-
-			if (HasSavedFile()) {
-				{
-					Icons::FontGuard font(Icons::Family::Tabler);
-					placeAction(textButtonWidth(ICON_TI_TRASH), true);
-					if (Util::ErrorTextButton(std::format("{}{}_Delete", ICON_TI_TRASH, searchId).c_str()))
-						ImGui::OpenPopup("DeleteConfirmation");
-				}
-				Util::AddTooltip(T(TKEY("delete_saved_file_tooltip"), "Delete saved file"));
-			}
-
-			DrawPackSourceBadge();
-		}
-
-		if (inlineActions) {
-			Util::ToolbarDivider(false);
-			ImGui::SameLine();
-			if (Util::IconButton(std::format("{}##_AnotherView", searchId ? searchId : "").c_str(), Icons::TI(ICON_TI_LAYOUT_COLUMNS), GetAnotherViewTooltip()))
-				OpenAnotherView();
-		}
-
-		ImGui::PopStyleColor(2);
-		ImGui::PopStyleVar(2);
-	} else {
-		drawSearchBar();
-		if (inlineActions)
-			drawForceWeatherButton();
-
-		if (menu) {
-			auto textButton = [&](const char* label, const char* tooltip, auto callback) {
-				placeAction(textButtonWidth(label));
-				if (Util::ButtonWithFlash(label))
-					callback();
-				Util::AddTooltip(tooltip);
-			};
-
-			// Apply button
-			if (inlineActions && showApply && (!editorWindow->settings.autoApplyChanges || RequiresManualApply())) {
-				placeAction(textButtonWidth(T(TKEY("apply"), "Apply")));
-				if (Util::SuccessButton(T(TKEY("apply"), "Apply")))
-					ApplyChanges();
-				Util::AddTooltip(T(TKEY("apply_changes"), "Apply changes to the game"));
-			}
-
-			// Save/Load/Revert/Delete group
-			if (inlineActions && showSaveLoadRevert) {
-				placeAction(textButtonWidth(T(TKEY("save"), "Save")), true);
-				{
-					auto tint = Util::StateHoverButtonStyle(Util::Colors::GetUnsaved(), unsaved);
-					if (unsaved)
-						ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetUnsaved());
-					if (Util::ButtonWithFlash(T(TKEY("save"), "Save")))
-						saveAll();
-					if (unsaved)
-						ImGui::PopStyleColor();
-				}
-				Util::AddTooltip(saveTooltip);
-				textButton(T(TKEY("load"), "Load"), T(TKEY("load_saved_file"), "Load saved file, else the active preset's values, else vanilla"), [&]() { Load(); });
-				placeAction(textButtonWidth(T(TKEY("revert"), "Revert")));
-				if (Util::WarningButton(T(TKEY("revert"), "Revert")))
-					RevertChanges();
-				Util::AddTooltip(T(TKEY("revert_to_original"), "Revert to original game values"));
-
-				if (HasSavedFile()) {
-					placeAction(textButtonWidth(T(TKEY("delete"), "Delete")), true);
-					if (Util::ErrorTextButton(T(TKEY("delete"), "Delete")))
-						ImGui::OpenPopup("DeleteConfirmation");
-					Util::AddTooltip(T(TKEY("delete_saved_file_tooltip"), "Delete saved file"));
-				}
-
-				DrawPackSourceBadge();
-			}
-
-			if (inlineActions) {
-				Util::ToolbarDivider(false);
-				textButton(GetAnotherViewLabel(), GetAnotherViewTooltip(), [&]() { OpenAnotherView(); });
-			}
-		}
+	if (searchId && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+		ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+		view.requestSearch = true;
+		view.searchDropdownAnchor = ImVec2(ImGui::GetCurrentWindow()->WorkRect.Max.x, ImGui::GetCursorScreenPos().y);
 	}
-
 	DrawDeleteConfirmationModal();
 
-	if (showApply && RequiresManualApply() && editorWindow->settings.autoApplyChanges && menu) {
-		placeAction(ImGui::CalcTextSize(T(TKEY("changes_require_manual_apply"), "(Changes require manual apply)")).x);
-		ImGui::PushTextWrapPos(0.0f);
-		ImGui::TextColored(menu->GetTheme().StatusPalette.Warning, "%s", T(TKEY("changes_require_manual_apply"), "(Changes require manual apply)"));
-		ImGui::PopTextWrapPos();
+	const bool manualApply = showApply && RequiresManualApply() && EditorWindow::GetSingleton()->settings.autoApplyChanges;
+	if (manualApply) {
+		ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetWarning());
+		ImGui::TextWrapped("%s", T(TKEY("changes_require_manual_apply"), "(Changes require manual apply)"));
+		ImGui::PopStyleColor();
 		Util::AddTooltip(T(TKEY("manual_apply_required_tooltip"), "This form type is only re-read by the engine on weather reinit.\nAuto-apply is disabled - use the Apply button."));
 	}
-
-	if (!view.titleBarSearchDrawn || inlineActions ||
-		(showApply && RequiresManualApply() && editorWindow->settings.autoApplyChanges))
+	if (!actionsInTitleBar || manualApply)
 		ImGui::Separator();
-
-	// Remember where the dropdown should appear so DrawSearchDropdown()
-	// (called after this function) can anchor itself below the search bar.
-	view.searchDropdownAnchor = view.titleBarSearchDrawn ? ImVec2(view.searchInputMin.x, view.searchInputMax.y) : ImGui::GetCursorScreenPos();
-
-	// Rebuild match list only when the query changed; this gates per-frame
-	// CollectSearchableSettings() walks plus three case-insensitive searches per entry.
-	if (!view.searchBuffer.empty()) {
-		if (view.searchResultsForQuery != view.searchBuffer) {
-			view.searchResults = CollectSearchableSettings();
-			std::erase_if(view.searchResults, [&](const SearchResult& r) {
-				return !ContainsStringIgnoreCase(r.displayName, view.searchBuffer) &&
-				       !ContainsStringIgnoreCase(r.tabName, view.searchBuffer) &&
-				       !ContainsStringIgnoreCase(r.settingId, view.searchBuffer);
-			});
-			view.searchResultsForQuery = view.searchBuffer;
-		}
-	} else {
-		ClearSearchState(false);
-	}
 }
 
 void Widget::DrawSearchDropdown()
 {
 	auto& view = View();
-	if (!view.dropdownVisible || view.searchResults.empty())
-		return;
-
-	const float scale = Util::GetUIScale();
-	ImGui::SetNextWindowPos(view.searchDropdownAnchor, ImGuiCond_Always);
-	ImGui::SetNextWindowSize(ImVec2(WidgetUI::kSearchDropdownWidth * scale, 0));
-	ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 1.0f);
-	ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyleColorVec4(ImGuiCol_PopupBg));
-	const std::string dropdownWindowId = std::format("##SearchDropdown_{}_{}", static_cast<const void*>(this), view.id);
-	if (ImGui::Begin(dropdownWindowId.c_str(), nullptr,
-			ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-				ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
-				ImGuiWindowFlags_NoFocusOnAppearing)) {
-		ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
-
-		// Treat clicks on the search input itself as "inside" so typing/cursor
-		// positioning in the input doesn't dismiss the dropdown.
-		const ImRect searchInputRect(view.searchInputMin, view.searchInputMax);
-		const bool clickedOutside = ImGui::GetIO().MouseClicked[0] &&
-		                            !ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
-		                            !searchInputRect.Contains(ImGui::GetIO().MousePos);
-		if (clickedOutside || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-			view.dropdownVisible = false;
-		} else {
-			const size_t visibleRows = std::min(WidgetUI::kSearchDropdownMaxResults, view.searchResults.size());
-			const float childHeight = ImGui::GetFrameHeightWithSpacing() * static_cast<float>(visibleRows);
-			if (ImGui::BeginChild("##SearchDropdownResults", ImVec2(0.0f, childHeight), ImGuiChildFlags_Borders)) {
-				ImGuiListClipper clipper;
-				clipper.Begin(static_cast<int>(view.searchResults.size()), ImGui::GetTextLineHeightWithSpacing());
-				while (clipper.Step()) {
-					for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
-						const auto& result = view.searchResults[static_cast<size_t>(i)];
-						std::string label = result.tabName.empty() ? result.displayName : std::format("{} ({})", result.displayName, result.tabName);
-
-						ImGui::PushID(i);
-						if (Util::RoundedSelectable(label.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups)) {
-							NavigateToSearchResult(result);
-							view.navigatedFromSearch = true;
-						}
-						ImGui::PopID();
+	if (view.requestSearch) {
+		ClearSearchState(true);
+		ImGui::OpenPopup("##WidgetSettingsSearch");
+		view.requestSearch = false;
+	}
+	const float width = WidgetUI::kSearchDropdownWidth * Util::GetUIScale();
+	ImGui::SetNextWindowPos(view.searchDropdownAnchor, ImGuiCond_Appearing, ImVec2(1.0f, 0.0f));
+	ImGui::SetNextWindowSize(ImVec2(width, 0.0f), ImGuiCond_Appearing);
+	if (ImGui::BeginPopup("##WidgetSettingsSearch")) {
+		view.searchPopupOpen = true;
+		if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+			globals::menu->ConsumeEscape();
+		const bool appearing = ImGui::IsWindowAppearing();
+		if (appearing)
+			ImGui::SetKeyboardFocusHere();
+		Util::SearchField("##Query", view.searchBuffer, T(TKEY("search_settings_hint"), "Search settings (Ctrl+F)"), -FLT_MIN, false);
+		if (appearing || view.searchResultsForQuery != view.searchBuffer) {
+			view.searchResults = CollectSearchableSettings();
+			std::erase_if(view.searchResults, [&](const SearchResult& result) {
+				return !ContainsStringIgnoreCase(result.displayName, view.searchBuffer) &&
+				       !ContainsStringIgnoreCase(result.tabName, view.searchBuffer) &&
+				       !ContainsStringIgnoreCase(result.settingId, view.searchBuffer);
+			});
+			view.searchResultsForQuery = view.searchBuffer;
+		}
+		ImGui::Separator();
+		const size_t visibleRows = std::max(size_t{ 1 }, std::min(WidgetUI::kSearchDropdownMaxResults, view.searchResults.size()));
+		const float rowHeight = ImGui::GetTextLineHeightWithSpacing();
+		const float resultsHeight = rowHeight * static_cast<float>(visibleRows) + ImGui::GetStyle().WindowPadding.y * 2.0f;
+		if (ImGui::BeginChild("##SearchDropdownResults", ImVec2(0.0f, resultsHeight), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding)) {
+			ImGuiListClipper clipper;
+			clipper.Begin(static_cast<int>(view.searchResults.size()), rowHeight);
+			while (clipper.Step()) {
+				for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+					const auto& result = view.searchResults[static_cast<size_t>(i)];
+					const std::string label = result.tabName.empty() ? result.displayName : std::format("{} ({})", result.displayName, result.tabName);
+					ImGui::PushID(i);
+					if (Util::RoundedSelectable(label.c_str(), false)) {
+						NavigateToSearchResult(result);
+						view.navigatedFromSearch = true;
+						ImGui::CloseCurrentPopup();
 					}
+					ImGui::PopID();
 				}
 			}
-			ImGui::EndChild();
+			if (view.searchResults.empty())
+				ImGui::TextDisabled("%s", T("ui.no_results", "No results"));
 		}
-	}
-	ImGui::End();
-	ImGui::PopStyleColor();
-	ImGui::PopStyleVar();
-}
-
-void Widget::DrawSearchInput(const char* searchId, float width)
-{
-	width = std::min(width, ImGui::GetContentRegionAvail().x);
-	if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+		ImGui::EndChild();
+		ImGui::EndPopup();
+	} else if (view.searchPopupOpen) {
+		view.searchPopupOpen = false;
 		ClearSearchState(true);
-		ImGui::SetKeyboardFocusHere();
 	}
-	auto& view = View();
-	if (Util::SearchField(searchId, view.searchBuffer, T(TKEY("search_settings_hint"), "Search settings (Ctrl+F)"), width, false))
-		view.dropdownVisible = true;
-	view.searchInputMin = ImGui::GetItemRectMin();
-	view.searchInputMax = ImGui::GetItemRectMax();
 }
 
 void Widget::ClearSearchState(bool clearBuffer)
@@ -1039,7 +832,6 @@ void Widget::ClearSearchState(bool clearBuffer)
 		view.searchBuffer.clear();
 	view.searchResults.clear();
 	view.searchResultsForQuery.clear();
-	view.dropdownVisible = false;
 }
 
 void Widget::NavigateToSearchResult(const SearchResult& result)

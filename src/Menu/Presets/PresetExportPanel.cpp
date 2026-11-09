@@ -1149,19 +1149,20 @@ void PresetExportPanel::Draw()
 		auto sanitizedName = Util::FileHelpers::SanitizeFileName(form.name);
 		auto info = BuildExportInfo(sanitizedName);
 		const bool exported = CaptureBaselines(info) && manager->ExportPreset(info);
-		ReportExportResult(sanitizedName, exported);
 		if (exported) {
-			UnifiedPresetCatalog::GetSingleton().Discover();
-			BaselineManager::GetSingleton()->Refresh();
-			globals::state->ReapplySettingsLayers();
 			auto& catalog = UnifiedPresetCatalog::GetSingleton();
-			if (info.type != PresetType::Baseline) {
-				catalog.ApplyPack(sanitizedName, true, true);
-			} else {
-				catalog.ReapplyIfInUse(sanitizedName);
-			}
+			bool applied = catalog.Refresh(info.type == PresetType::Baseline, false);
+			if (applied && info.type != PresetType::Baseline)
+				applied = catalog.ApplyPack(sanitizedName, true, true, info.recordFiles && !info.recordFiles->empty());
+			if (applied)
+				ReportExportResult(sanitizedName, true);
+			else
+				EditorWindow::GetSingleton()->ShowNotification(
+					T("menu.presets.export_apply_failed", "Preset saved, but its settings could not be fully applied. Check the log for details."),
+					Util::Colors::GetWarning());
 			PresetsPageRenderer::ShowLibrary();
-		}
+		} else
+			ReportExportResult(sanitizedName, false);
 	}
 	BaseSettingsEditor::DrawExport();
 }

@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "../I18n/I18n.h"
+#include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "feature.procedural_sun."
 
@@ -65,6 +66,9 @@ namespace
 
 void ProceduralSun::DrawSettings()
 {
+	const auto* lockReason = Feature::FindSettingsLockReason(GetShortName());
+	const Util::LockedSection settingsLock(lockReason != nullptr, lockReason);
+
 	bool enabled = settings.enabled != 0;
 	if (ImGui::Checkbox(T(TKEY("enabled"), "Enabled"), &enabled))
 		settings.enabled = enabled;

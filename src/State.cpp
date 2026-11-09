@@ -602,11 +602,9 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
 	const bool restoring = a_configMode == ConfigMode::USER && !defaultSettingsBaseline.is_null();
 	const bool restoringDefaults = a_configMode == ConfigMode::DEFAULT && !defaultSettingsBaseline.is_null();
-	if (restoring && !FormEditSources::CanChangePacks()) {
-		logger::warn("Save pending scene and editor form edits before restoring settings");
-		return;
-	}
 	auto& catalog = UnifiedPresetCatalog::GetSingleton();
+	const auto previousFormRoots = catalog.GetActiveFormPackRoots();
+	const bool reloadFormEdits = a_configMode == ConfigMode::USER && (!restoring || FormEditSources::CanChangePacks());
 	auto* overrideManager = SettingsOverrideManager::GetSingleton();
 	const json previousCatalog{ { UnifiedPresetCatalog::kUserSettingsKey, catalog.SerializeActiveState() } };
 	const auto previousFeatureBases = featureSettingsBases;
@@ -698,6 +696,12 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 	if (a_configMode == ConfigMode::USER)
 		catalog.LoadActiveState(userSettings);
 	catalog.Discover();
+	if (restoring && !reloadFormEdits && previousFormRoots != catalog.GetActiveFormPackRoots()) {
+		catalog.LoadActiveState(previousCatalog);
+		catalog.SaveActiveState();
+		logger::warn("Save or discard unsaved OS Editor record edits before restoring different preset record sources");
+		return;
+	}
 	auto* baselines = BaselineManager::GetSingleton();
 	baselines->DiscoverFiles();
 	featureSettingsBases = defaultSettingsBaseline;
@@ -789,7 +793,9 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		}
 
 		FeatureIssues::ScanForOrphanedFeatureINIs();
-		FormEditSources::ReloadHistoryGuard reloadHistory;
+		std::optional<FormEditSources::ReloadHistoryGuard> reloadHistory;
+		if (reloadFormEdits)
+			reloadHistory.emplace();
 		bool payloadsLoaded = true;
 		if (restoring && featureResourcesReady) {
 			try {
@@ -823,7 +829,8 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 
 		if (a_configMode == ConfigMode::USER) {
 			try {
-				payloadsLoaded = payloadsLoaded && SceneSettingsManager::GetSingleton()->ReloadSceneSettings() && FormEditSources::ReloadActivePack();
+				payloadsLoaded = payloadsLoaded && SceneSettingsManager::GetSingleton()->ReloadSceneSettings() &&
+				                 (!reloadFormEdits || FormEditSources::ReloadActivePack());
 			} catch (const std::exception& error) {
 				logger::error("Could not reload preset payloads: {}", error.what());
 				payloadsLoaded = false;
@@ -865,14 +872,16 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 			restore("settings bases", [&] { overrideManager->CaptureBaseSettings(previousOverrideBase); return true; });
 			restore("applied settings", [&] { overrideManager->CaptureAppliedSettings(previousApplied); return true; });
 			restore("scene settings", [] { return SceneSettingsManager::GetSingleton()->ReloadSceneSettings(); });
-			restore("editor form sources", [] { return FormEditSources::ReloadActivePack(); });
+			if (reloadFormEdits)
+				restore("editor form sources", [] { return FormEditSources::ReloadActivePack(); });
 			return;
 		}
 		if (restoringDefaults)
 			CheckSettingsChanged();
 		else
 			MarkSettingsSaved();
-		reloadHistory.Commit();
+		if (reloadHistory)
+			reloadHistory->Commit();
 		logger::info("Loading Settings Complete");
 	} catch (const json::exception& e) {
 		logger::warn("General JSON error accessing settings: {}", e.what());
@@ -995,6 +1004,11 @@ void State::CheckSettingsChanged(const json& persistedFields)
 		settingsChanged = true;
 		logger::error("Could not check unsaved settings: {}", e.what());
 	}
+}
+
+json State::GetUnsavedSettingsChanges()
+{
+	return savedSettingsSnapshot.is_null() ? json::array() : json::diff(savedSettingsSnapshot, BuildSettingsSnapshot());
 }
 
 bool State::ReapplyPresetLayers()

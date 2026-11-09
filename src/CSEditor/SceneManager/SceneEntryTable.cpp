@@ -1773,11 +1773,14 @@ namespace
 				} else {
 					state.presetEditFailed = !catalog.DisablePack(selected->id);
 				}
-				ImGui::CloseCurrentPopup();
+				if (!state.presetEditFailed)
+					ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
 			if (Util::Button(T("feature.scene_manager.action.cancel", "Cancel")))
 				ImGui::CloseCurrentPopup();
+			if (state.presetEditFailed)
+				Util::Text::WrappedWarning("%s", T("feature.scene_manager.preset_edit_failed", "Could not save preset settings. Check the log and try again."));
 		});
 		if (!state.choosePreset.IsActive())
 			state.presetChoices.clear();

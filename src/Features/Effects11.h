@@ -243,6 +243,8 @@ public:
 	void UpdateSkyScattering(PerFrame& a_data);
 
 	virtual void DrawSettings() override;
+	/** @brief Reports standalone controls replaced by this feature's active renderer. */
+	const char* GetSettingsLockReason(std::string_view featureShortName) const override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	/** @brief Exposes the feature-owned portable preset backend. */

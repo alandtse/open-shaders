@@ -209,6 +209,10 @@ public:
 	virtual bool IsInMenu() const { return true; }
 	/** @brief Returns a localized runtime availability reason, or null when available. */
 	virtual const char* GetUnavailableMessage() const { return nullptr; }
+	/** @brief Returns a localized reason while this feature owns another feature's settings. */
+	virtual const char* GetSettingsLockReason(std::string_view) const { return nullptr; }
+	/** @brief Finds an active provider that owns the target feature's settings. */
+	static const char* FindSettingsLockReason(std::string_view featureShortName);
 
 	/**
 	 * Whether to print the INI version missing message when this feature is unloaded

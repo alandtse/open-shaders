@@ -173,6 +173,8 @@ public:
 	void CheckCoreSettingsChanged() { CheckSettingsChanged(); }
 	/** @brief Returns whether the user configuration has unsaved changes. */
 	bool HasUnsavedChanges() const { return settingsChanged; }
+	/** @brief Returns the current differences from the saved personal-settings snapshot for diagnostics. */
+	json GetUnsavedSettingsChanges();
 
 	/** @brief Saves a feature's boot preference immediately; returns false on failure. */
 	bool SetFeatureBootEnabled(const std::string& featureName, bool enabled);

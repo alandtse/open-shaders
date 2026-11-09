@@ -416,6 +416,7 @@ namespace
 		ImVec2 titleSize;
 		ImVec2 titleMax;
 		float titleBaseline;
+		float titleInkCenter;
 		{
 			MenuFonts::FontRoleGuard titleGuard(Menu::FontRole::Title);
 			ImGui::SetWindowFontScale(titleScale);
@@ -423,6 +424,7 @@ namespace
 			titleSize = ImGui::GetItemRectSize();
 			titleMax = ImGui::GetItemRectMax();
 			titleBaseline = ImGui::GetItemRectMin().y + ImGui::GetFontBaked()->Ascent;
+			titleInkCenter = ImGui::GetItemRectMin().y + Util::GetTextInkCenterY(featureName);
 			ImGui::SetWindowFontScale(1.0f);
 		}
 
@@ -439,8 +441,9 @@ namespace
 				annotationX = startPos.x;
 				titleSize.y += ImGui::GetStyle().ItemInnerSpacing.y + badgeHeight;
 				titleBaseline = startPos.y + titleSize.y - badgeHeight + ImGui::GetFontBaked()->Ascent;
+				titleInkCenter = startPos.y + titleSize.y - badgeHeight * 0.5f;
 			}
-			ImGui::SetCursorScreenPos(ImVec2(annotationX, startPos.y + titleSize.y - badgeHeight));
+			ImGui::SetCursorScreenPos(ImVec2(annotationX, titleInkCenter - badgeHeight * 0.5f));
 			FeatureListRenderer::DrawStageBadge(stage, badgeHeight);
 			annotationX += badgeWidth + ImGui::GetStyle().ItemSpacing.x;
 		}

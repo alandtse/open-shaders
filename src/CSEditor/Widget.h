@@ -17,8 +17,7 @@
 
 namespace WidgetUI
 {
-	// Search bar / dropdown
-	constexpr float kSearchBarWidth = 200.0f;
+	// Search popup
 	constexpr float kSearchDropdownWidth = 300.0f;
 	constexpr size_t kSearchDropdownMaxResults = 5;
 
@@ -28,19 +27,12 @@ namespace WidgetUI
 	constexpr ImVec4 kHighlightFrameBg = ImVec4(0.3f, 0.6f, 1.0f, 1.0f);
 	constexpr ImVec4 kHighlightFrameBgHovered = ImVec4(0.4f, 0.7f, 1.0f, 1.0f);
 
-	// Transparent icon button styling
-	constexpr ImVec4 kIconButtonTransparent = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-	constexpr float kIconButtonHoverAlpha = 0.25f;
-
 	// Title-bar action chips: how much a filled text action brightens on hover
 	constexpr float kTextActionHoverBoost = 0.2f;
 
 	// Category section header text (light teal-blue)
 	constexpr ImVec4 kCategoryHeaderColor = ImVec4(0.7f, 0.9f, 1.0f, 1.0f);
 
-	// Icon button spacing
-	constexpr float kIconButtonSpacing = 4.0f;
-	constexpr float kIconButtonSizeRatio = 0.85f;
 }
 
 class Widget
@@ -177,9 +169,8 @@ public:
 	 * @brief Call instead of SetupWidgetWindowDefaults + ImGui::Begin. Tracks per-type window size.
 	 *
 	 * Action-button flags are consumed by the floating custom header (via drawExtras) when they
-	 * fit beside the title; otherwise DrawWidgetHeader falls back to an inline row. Docked windows
-	 * skip the custom header and place actions in the native title bar from DrawWidgetHeader.
-	 * When searchId is set, the search field is drawn in the title bar between the title and actions.
+	 * fit beside the title; otherwise DrawWidgetHeader falls back to an inline row, as in docked windows.
+	 * When searchId is set, a trailing search icon opens the settings search popup.
 	 */
 	bool BeginWidgetWindow(bool showApply = true, bool showSaveLoadRevert = false, bool showForceWeather = false, RE::TESWeather* weather = nullptr, const char* searchId = nullptr);
 
@@ -228,8 +219,20 @@ public:
 	 * @param showNotification If true, display a notification on successful load.
 	 */
 	void Load(bool showNotification = true);
-	/** @brief Applies a parsed document and reports typed-load rejection. */
-	bool ApplySavedDocument(const json& document);
+	/** @brief Applies a parsed document, optionally updating the saved baseline, and reports typed-load rejection. */
+	bool ApplySavedDocument(const json& document, bool updateSavedBaseline = true);
+
+	/** @brief Record values available from the toolbar. */
+	enum class SettingsSource
+	{
+		Game,
+		Preset,
+		Saved
+	};
+	/** @brief Whether the selected source supplies this record. */
+	bool HasSettingsSource(SettingsSource source) const;
+	/** @brief Restores this record from one source without writing any files. */
+	void RestoreSettings(SettingsSource source);
 	/** @brief Refreshes the editor dirty-record index. */
 	void TrackEdits();
 	/** @brief Commits the saved comparison baseline after a successful file write. */
@@ -261,7 +264,7 @@ public:
 	/** @brief Apply the current widget settings to the live game form. Must be implemented by subclasses. */
 	virtual void ApplyChanges() = 0;
 
-	/** @brief Revert widget settings to the last loaded state. Default implementation calls LoadSettings. */
+	/** @brief Restore original game values; editable widgets override the loading fallback. */
 	virtual void RevertChanges() { LoadSettings(); }
 
 	/** @brief Returns true if the widget has unsaved modifications relative to its saved file. */
@@ -286,24 +289,24 @@ public:
 	virtual bool RequiresManualApply() const { return false; }
 
 	/**
-	 * @brief Draw action buttons inside the native title bar (docked windows) or the floating
-	 *        custom header row (when called from BeginWithCustomHeader's drawExtras).
+	 * @brief Draw actions in the floating custom header or an inline row for docked and narrow windows.
 	 *
 	 * Returns false when there is no host row or the row is too narrow; the caller should then
-	 * draw the actions inline beside the search bar.
+	 * draw the actions inline.
 	 * @param customHeaderRow True when drawing inside BeginWithCustomHeader's drawExtras callback.
-	 * @param searchId When non-null, draws the search field centred between the title and actions.
+	 * @param searchId When non-null, adds a trailing settings search icon.
 	 */
 	bool DrawTitleBarActions(bool showApply, bool showSaveLoadRevert, bool showForceWeather, RE::TESWeather* weather, bool customHeaderRow = false, const char* searchId = nullptr);
 
 	/**
-	 * @brief Draw the common widget header with search bar and action buttons.
+	 * @brief Draw the common widget header with action buttons and settings search.
 	 *
-	 * Action buttons and search are placed in the title/custom header when BeginWidgetWindow
-	 * already drew them, or in the native title bar when docked; otherwise they sit inline.
+	 * Action buttons and search use the custom header when they fit; otherwise they sit inline.
 	 * Flags must match the values passed to BeginWidgetWindow.
 	 */
 	void DrawWidgetHeader(const char* searchId, bool showApply = true, bool showSaveLoadRevert = false, bool showForceWeather = false, RE::TESWeather* weather = nullptr);
+	/** @brief Opens the widget's tab strip with its trailing new-window action. */
+	bool BeginSettingsTabBar(const char* id);
 
 	int deleteConfirmationFrame = -1;
 
@@ -327,14 +330,11 @@ public:
 		/// Where an extra window first appears, cascaded from the window that opened it.
 		std::optional<ImVec2> spawnPos;
 		bool customHeaderActionsDrawn = false;
-		bool titleBarSearchDrawn = false;
-
 		std::string searchBuffer;
-		// Cached dropdown position from DrawWidgetHeader so DrawSearchDropdown() can anchor below the search bar.
+		// The search popup opens below the trailing search icon.
 		ImVec2 searchDropdownAnchor{ 0.0f, 0.0f };
-		ImVec2 searchInputMin{ 0.0f, 0.0f };
-		ImVec2 searchInputMax{ 0.0f, 0.0f };
-		bool dropdownVisible = false;
+		bool requestSearch = false;
+		bool searchPopupOpen = false;
 
 		// Navigation / highlight state shared by the search dropdown.
 		std::vector<SearchResult> searchResults;
@@ -511,6 +511,7 @@ public:
 	json js = json();
 
 protected:
+	bool preserveSavedBaseline = false;
 	/** @brief Marks a rejected typed load so its transaction can restore prior values. */
 	void MarkLoadFailed() { lastLoadSucceeded = false; }
 	bool lastLoadSucceeded = true;
@@ -530,8 +531,6 @@ protected:
 	int focusedViewId = 0;
 
 	void ClearSearchState(bool clearBuffer);
-	/** @brief The settings search input at the cursor; Ctrl+F focuses it and starts a fresh search. */
-	void DrawSearchInput(const char* searchId, float width);
 	virtual void NavigateToSearchResult(const SearchResult& result);
 };
 
@@ -584,7 +583,8 @@ protected:
 				settings = vanillaSettings;
 			}
 		}
-		originalSettings = settings;
+		if (!preserveSavedBaseline)
+			originalSettings = settings;
 		ApplyChanges();
 	}
 

@@ -6,6 +6,7 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/Permutation.hlsli"
+#include "Common/Random.hlsli"
 #include "Common/ReverseZ.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
@@ -252,6 +253,7 @@ struct PS_OUTPUT
 
 #ifdef PSHADER
 static const float SunOcclusionDepthRatio = 0.99;
+static const float SkyDitherTileSize = 8.0;
 
 SamplerState SampBaseSampler : register(s0);
 SamplerState SampBlendSampler : register(s1);
@@ -538,7 +540,7 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 
 #		if defined(DITHER)
-	float2 noiseGradUv = float2(0.125, 0.125) * input.Position.xy;
+	float2 noiseGradUv = (input.Position.xy + Random::TemporalTileOffset(SharedData::FrameCount, SkyDitherTileSize)) / SkyDitherTileSize;
 	// The 8x8 engine dither texture stores 0..63, so center it without shifting the weather color.
 	const float noiseGradCenter = 31.5 / 255.0;
 	float noiseGrad = (TexNoiseGradSampler.Sample(SampNoiseGradSampler, noiseGradUv).x - noiseGradCenter) * 0.03125;
@@ -627,7 +629,7 @@ PS_OUTPUT main(PS_INPUT input)
 					// faint layers barely deepen, so layers stacked over a cloud that already hid the sun add little glow
 					float sunContrast = saturate(sunBehind / max(ProceduralSun::CloudSunContrast * Color::RGBToLuminance(psout.Color.xyz), 1e-5) - 1.0);
 					float cloudAlpha = psout.Color.w;
-					psout.Color.w = 1.0 - pow(1.0 - cloudAlpha, lerp(1.0, ProceduralSun::CloudExtinction, sunContrast * cloudAlpha));
+					psout.Color.w = max(cloudAlpha, 1.0 - pow(1.0 - cloudAlpha, lerp(1.0, ProceduralSun::CloudExtinction, sunContrast * cloudAlpha)));
 
 					// The halo the deeper cloud hides comes back as a smooth glow, so clouds around the sun stay lit without its sharp rim
 					float haloPlateau = ProceduralSun::EvaluateHaloPlateau(

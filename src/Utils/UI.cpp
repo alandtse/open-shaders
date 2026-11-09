@@ -280,20 +280,7 @@ namespace Util
 			const std::string_view label(title);
 			const auto visibleLabel = label.substr(0, label.find("##"));
 			const float titleWidth = ImGui::CalcTextSize(visibleLabel.data(), visibleLabel.data() + visibleLabel.size()).x;
-			float inkTop = FLT_MAX, inkBottom = -FLT_MAX;
-			auto* baked = ImGui::GetFontBaked();
-			for (const char* cursor = visibleLabel.data(); cursor < visibleLabel.data() + visibleLabel.size();) {
-				unsigned int codepoint;
-				const int length = ImTextCharFromUtf8(&codepoint, cursor, visibleLabel.data() + visibleLabel.size());
-				if (!length)
-					break;
-				cursor += length;
-				if (const auto* glyph = baked->FindGlyph(static_cast<ImWchar>(codepoint)); glyph && glyph->Visible) {
-					inkTop = std::min(inkTop, glyph->Y0);
-					inkBottom = std::max(inkBottom, glyph->Y1);
-				}
-			}
-			const float inkCenter = inkTop <= inkBottom ? (inkTop + inkBottom) * 0.5f * ImGui::GetFontSize() / baked->Size : GetTextInkCenterY();
+			const float inkCenter = GetTextInkCenterY(visibleLabel);
 			const ImVec4 clip(start.x, start.y, std::max(start.x, textRight), start.y + size);
 			ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
 				ImVec2(std::max(start.x, start.x + (right - start.x - titleWidth) * 0.5f), start.y + size * 0.5f - inkCenter),
@@ -753,7 +740,7 @@ namespace Util
 
 		ImGui::PushID(id);
 		ImGui::BeginGroup();
-		const float avail = ImGui::GetContentRegionAvail().x;
+		const float avail = std::max(1.0f, ImGui::GetContentRegionAvail().x - options.reservedWidth);
 		const bool scroll = options.width <= 0.0f && trackWidth > avail + 0.5f;
 		const float navigationGap = style.ItemInnerSpacing.x;
 		const float navigationSize = std::min(trackHeight, std::max(1.0f, avail));
@@ -924,7 +911,7 @@ namespace Util
 		return !g_pillTabStack.empty();
 	}
 
-	bool BeginPillTabBar(const char* str_id, bool centered)
+	bool BeginPillTabBar(const char* str_id, bool centered, const std::function<void()>& trailingAction)
 	{
 		if (ImGui::GetCurrentWindow()->SkipItems)
 			return false;
@@ -953,8 +940,15 @@ namespace Util
 				segments[i].disabled = item.disabled;
 				segments[i].tooltip = item.tooltip.empty() ? nullptr : item.tooltip.c_str();
 			}
-			if (const int clicked = SegmentedControl(str_id, segments, selected, { .centered = centered }); clicked >= 0)
+			const float reserved = trailingAction ? ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x : 0.0f;
+			if (const int clicked = SegmentedControl(str_id, segments, selected, { .centered = centered, .reservedWidth = reserved }); clicked >= 0)
 				state.selectedId = state.itemsForStrip[clicked].id;
+			if (trailingAction && !segments.empty()) {
+				const float buttonTop = ImGui::GetItemRectMin().y + (ImGui::GetItemRectSize().y - ImGui::GetFrameHeight()) * 0.5f;
+				ImGui::SameLine();
+				ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, buttonTop));
+				trailingAction();
+			}
 		}
 		ImGui::Spacing();
 		ImGui::PushOverrideID(id);
@@ -2666,6 +2660,27 @@ namespace Util
 		const ImFontGlyph* glyph = baked->FindGlyph('H');
 		const float inkCenter = glyph ? (glyph->Y0 + glyph->Y1) * 0.5f * ImGui::GetFontSize() / baked->Size : ImGui::GetFontSize() * 0.5f;
 		return inkCenter;
+	}
+
+	float GetTextInkCenterY(std::string_view text)
+	{
+		if (text.empty())
+			return GetTextInkCenterY();
+		float inkTop = FLT_MAX, inkBottom = -FLT_MAX;
+		auto* baked = ImGui::GetFontBaked();
+		const char* end = text.data() + text.size();
+		for (const char* cursor = text.data(); cursor < end;) {
+			unsigned int codepoint;
+			const int length = ImTextCharFromUtf8(&codepoint, cursor, end);
+			if (!length)
+				break;
+			cursor += length;
+			if (const auto* glyph = baked->FindGlyph(static_cast<ImWchar>(codepoint)); glyph && glyph->Visible) {
+				inkTop = std::min(inkTop, glyph->Y0);
+				inkBottom = std::max(inkBottom, glyph->Y1);
+			}
+		}
+		return inkTop <= inkBottom ? (inkTop + inkBottom) * 0.5f * ImGui::GetFontSize() / baked->Size : GetTextInkCenterY();
 	}
 
 	float CenterTextTopY(float rowTop, float rowHeight)
