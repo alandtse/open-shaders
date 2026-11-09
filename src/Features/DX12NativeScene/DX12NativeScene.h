@@ -5,6 +5,7 @@
 #include "Features/DX12NativeScene/RuntimeGeometryCapture.h"
 #include "Features/DX12NativeScene/RuntimeGeometryCacheWorker.h"
 #include "Features/DX12NativeScene/RuntimeGeometryPreparation.h"
+#include "Features/DX12NativeScene/PlayerSkinnedGeometry.h"
 #include "Features/DX12NativeScene/VideoMemoryBudget.h"
 #include "Features/DX12NativeScene/RasterCapture.h"
 #include "Features/DX12NativeScene/ShadowTrace.h"
@@ -31,6 +32,8 @@ struct DX12NativeScene final : Feature
         bool RuntimeOnlyMaterials = false; // Optional manifest-free runtime texture acquisition.
         bool CaptureRuntimeGeometry = false; // Static CPU-backed meshes only; no GPU readbacks.
         bool CacheRuntimeGeometry = false; // Optional background persistence and menu CPU prewarm.
+        bool CapturePlayerSkin = false; // Experimental, opt-in player-only skinned DXR geometry.
+        uint32_t PlayerSkinUpdateInterval = 4; // Render frames between owned pose builds.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
@@ -67,6 +70,7 @@ struct DX12NativeScene final : Feature
 	void Prepass() override { DispatchShadow("before-opaque"); }
 	void OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs) override;
     void ObserveRuntimeGeometry(RE::BSGeometry* a_geometry, const std::string& a_reference, const std::string& a_shape);
+    void ObservePlayerSkin(RE::BSGeometry* a_geometry);
 	void OnRuntimeDisabled() override;
 	void OnSceneTransitionReset(bool a_open) override;
 	void GameLoaded() override;
@@ -114,6 +118,9 @@ private:
     uint64_t runtimePreparedPruned = 0;
     DX12Native::RuntimeGeometryCacheWorker runtimeGeometryCache;
     DX12Native::RuntimeGeometryPreparation runtimeGeometryPrepare;
+    DX12Native::PlayerSkinPreparation playerSkin;
+    std::atomic<bool> playerSkinCaptureActive{ false };
+    uint64_t playerSkinSubmittedBatch = 0;
     // The same production acceleration worker receives composed current-scene
     // generations. Retain the last usable TLAS/material pair during rebuilds.
     std::shared_ptr<const DX12Native::TopLevel> currentSceneStableAcceleration;
