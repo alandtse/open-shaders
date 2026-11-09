@@ -49,12 +49,12 @@ namespace NR
 
 	// A zero-mean offset still moves the luminance of a coloured input, so the linear gain is rescaled to leave it
 	// alone. The rescale can push a channel past the stop bound, so the gain alternates with shrinking it toward 1
-	// in log space until both hold; the last step shrinks, so the bound is exact and luminance is within rounding.
+	// in log space until both hold; the last step shrinks, so the bound is exact and luminance is within about 1e-4.
 	float3 LuminancePreservingGain(float3 baseLinear, float3 gain, float3 lumaWeights, float maxChromaStops)
 	{
 		float before = dot(lumaWeights, baseLinear);
 		float3 kept = gain;
-		[unroll] for (uint i = 0; i < 4; ++i)
+		[unroll] for (uint i = 0; i < 12; ++i)
 		{
 			float after = dot(lumaWeights, baseLinear * kept);
 			if (before > 1e-6 && after > 1e-6)
