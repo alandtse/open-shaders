@@ -209,6 +209,9 @@ struct NeuralRendering::Impl
 	struct Eye
 	{
 		std::unique_ptr<WrappedResource> color, depth, motion, output;
+		/** @brief The eye's motion shifted by the crop's move since the model last ran; the game's motion stays untouched for the gain reuse. */
+		std::unique_ptr<WrappedResource> cropMotion;
+		bool cropMotionActive = false;
 		/** @brief The model's own inputs and output at the reduced model size; created only while the model runs below the eye size. */
 		std::unique_ptr<WrappedResource> lowColor, lowDepth, lowMotion, lowOutput;
 		/** @brief DLSSNR.UIAlpha built from the Masks2 category lane; created only while the material strength is on. */
@@ -223,7 +226,7 @@ struct NeuralRendering::Impl
 	winrt::com_ptr<ID3D11DeviceContext1> context;
 	winrt::com_ptr<ID3DDeviceContextState> isolated;
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
-	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain, downsampleLow, expandLow;
+	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain, downsampleLow, expandLow, offsetMotion;
 	/** @brief Cbuffer CategoryAlphaCS.hlsl reads: the eye extent, the stereo offset, the softness radius and the eight strengths. */
 	struct alignas(16) CategoryAlphaData
 	{
@@ -303,6 +306,16 @@ struct NeuralRendering::Impl
 	};
 	static_assert(sizeof(LowResData) == 32);
 	std::unique_ptr<ConstantBuffer> lowResBuffer;
+	/** @brief Cbuffer MotionOffsetCS.hlsl reads. */
+	struct alignas(16) MotionOffsetData
+	{
+		uint32_t width, height;
+		float shiftX, shiftY;
+	};
+	static_assert(sizeof(MotionOffsetData) == 16);
+	std::unique_ptr<ConstantBuffer> motionOffsetBuffer;
+	/** @brief Crop each eye's model last evaluated with; empty until it has, and while no crop applies. */
+	std::array<Util::Subrect::PixelRegion, 2> modelCrop{};
 	/** @brief Per-eye eye-stagger schedule and the gains it may reuse; cleared by any history reset. */
 	NR::Cadence::State cadence;
 	/** @brief Whether the last frame's composite reads each eye's synthesized proxy instead of the model output. */
@@ -414,6 +427,7 @@ struct NeuralRendering::Impl
 		categoryAlphaBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<CategoryAlphaData>(), "NeuralRendering::CategoryAlpha CB");
 		gainReuseBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<GainReuseData>(), "NeuralRendering::GainReuse CB");
 		lowResBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<LowResData>(), "NeuralRendering::LowRes CB");
+		motionOffsetBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<MotionOffsetData>(), "NeuralRendering::MotionOffset CB");
 		runtime.Initialize(interop.Device(), RuntimeDirectory(runtimeVariant), globals::state->IsDeveloperMode(), allowUnverifiedRuntime);
 		ready = true;
 	}
@@ -437,6 +451,7 @@ struct NeuralRendering::Impl
 		format = DXGI_FORMAT_UNKNOWN;
 		lastFrame = UINT32_MAX;
 		lastRegion = {};
+		modelCrop = {};
 		cadence = {};
 		reuseFrame = {};
 		staggerActive = false;
@@ -505,6 +520,7 @@ struct NeuralRendering::Impl
 			eye.color = interop.CreateTexture(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " HDRInput");
 			eye.depth = interop.CreateTexture(gw, gh, DXGI_FORMAT_R32_FLOAT, name + " Depth");
 			eye.motion = interop.CreateTexture(gw, gh, DXGI_FORMAT_R16G16_FLOAT, name + " Motion");
+			eye.cropMotion = interop.CreateTexture(gw, gh, DXGI_FORMAT_R16G16_FLOAT, name + " CropMotion");
 			eye.output = interop.CreateTexture(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " HDROutput");
 			if (lw) {
 				eye.lowColor = interop.CreateTexture(lw, lh, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " LowHDRInput");
@@ -578,7 +594,8 @@ struct NeuralRendering::Impl
 
 	void Transition(ID3D12GraphicsCommandList* commands, Eye& eye, bool enter, bool low = false)
 	{
-		TransitionResources(commands, { (low ? eye.lowColor : eye.color)->resource.get(), (low ? eye.lowDepth : eye.depth)->resource.get(), (low ? eye.lowMotion : eye.motion)->resource.get(), (low ? eye.lowOutput : eye.output)->resource.get(), eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr },
+		const auto& motion = low ? eye.lowMotion : (eye.cropMotionActive ? eye.cropMotion : eye.motion);
+		TransitionResources(commands, { (low ? eye.lowColor : eye.color)->resource.get(), (low ? eye.lowDepth : eye.depth)->resource.get(), motion->resource.get(), (low ? eye.lowOutput : eye.output)->resource.get(), eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr },
 			enter);
 	}
 
@@ -757,6 +774,46 @@ struct NeuralRendering::Impl
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
 		context->ClearState();
+	}
+
+	/**
+	 * @brief Writes the eye's motion plus the crop's origin move since the model last ran, so the model's crop-local
+	 *        history follows the scene when the crop moves. NGX motion points from the current to the previous
+	 *        position, so the shift is the current origin minus the previous one, in the units the model reads.
+	 */
+	void ApplyCropMotion(uint32_t i, const NR::Tuning& tuning, uint64_t frameNumber)
+	{
+		auto& eye = eyes[i];
+		eye.cropMotionActive = false;
+		if (!region.active || !eye.cropMotion)
+			return;
+		float shiftX, shiftY;
+		if (!Util::Region::CropOriginShift(Util::Region::ClampToFrame(region.eye[i], width, height), modelCrop[i], shiftX, shiftY) ||
+			(shiftX == 0.0f && shiftY == 0.0f))
+			return;
+		float scaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
+		float scaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
+		const uint64_t previous = cadence.lastModelFrame[i];
+		if (previous != NR::Cadence::kNoModelFrame && frameNumber - previous > 1 && tuning.skipFrameGapMode == 0) {
+			scaleX *= 2.0f;
+			scaleY *= 2.0f;
+		}
+		CS_GPU_PASS("Upscaling::NRCropMotion");
+		auto* shader = offsetMotion.Get(L"Data/Shaders/Upscaling/NeuralRendering/MotionOffsetCS.hlsl",
+			{}, "cs_5_0", "Offset", "NeuralRendering::MotionOffset CS");
+		if (!shader)
+			throw std::runtime_error("NR motion-offset shader unavailable");
+		motionOffsetBuffer->Update(MotionOffsetData{ guideWidth, guideHeight, shiftX / scaleX, shiftY / scaleY });
+		auto buffer = motionOffsetBuffer->CB();
+		context->CSSetConstantBuffers(0, 1, &buffer);
+		ID3D11ShaderResourceView* input = eye.motion->srv;
+		context->CSSetShaderResources(0, 1, &input);
+		ID3D11UnorderedAccessView* output = eye.cropMotion->uav;
+		context->CSSetUnorderedAccessViews(0, 1, &output, nullptr);
+		context->CSSetShader(shader, nullptr, 0);
+		context->Dispatch((guideWidth + 7) / 8, (guideHeight + 7) / 8, 1);
+		context->ClearState();
+		eye.cropMotionActive = true;
 	}
 
 	/** @brief Averages one eye's proxy down to the model's size and takes its depth and motion at the footprint centres. */
@@ -1180,6 +1237,11 @@ struct NeuralRendering::Impl
 			}
 		}
 		context->ClearState();
+		for (uint32_t i = 0; i < eyeCount; ++i) {
+			eyes[i].cropMotionActive = false;
+			if (!eyes[i].frame.reset && !sbs && !lowRes && !(diagnostic.options & NR::Diagnostics::ZeroMotion))
+				ApplyCropMotion(i, tuning, static_cast<uint64_t>(diagnostic.number));
+		}
 		if (lowRes) {
 			for (uint32_t i = 0; i < eyeCount; ++i)
 				DownsampleModelInputs(i);
@@ -1299,7 +1361,7 @@ struct NeuralRendering::Impl
 					};
 					const auto& modelColor = lowRes ? eye.lowColor : eye.color;
 					const auto& modelDepth = lowRes ? eye.lowDepth : eye.depth;
-					const auto& modelMotion = lowRes ? eye.lowMotion : eye.motion;
+					const auto& modelMotion = lowRes ? eye.lowMotion : (eye.cropMotionActive ? eye.cropMotion : eye.motion);
 					const auto& modelOutput = lowRes ? eye.lowOutput : eye.output;
 					success = runtime.Evaluate(eyeCommands, i, modelColor->resource.get(), modelDepth->resource.get(),
 						modelMotion->resource.get(), modelOutput->resource.get(), protection,
@@ -1308,6 +1370,7 @@ struct NeuralRendering::Impl
 				diagnostic.result[i] = eye.frame.result;
 				if (success)
 					diagnostic.evaluated |= 1u << i;
+				modelCrop[i] = success && !sbs && !lowRes ? Util::Region::ClampToFrame(region.eye[i], width, height) : Util::Region::kEmptyRegion;
 				if (eye.frame.created) {
 					diagnostic.created |= 1u << i;
 					diagnostic.reset[i] |= NR::Diagnostics::FeatureCreated;
@@ -2542,7 +2605,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		else if (foveaClip)
 			source = RegionSource::kFovea;
 		regionSource.store(static_cast<uint32_t>(source), std::memory_order_relaxed);
-		if (Util::Region::ShouldResetForRegion(NR::ActorRegion::kResetPolicy, work.region, work.lastRegion, NR::ActorRegion::kHistoryTolerancePixels))
+		const auto regionPolicy = work.sbsEnabled ? NR::ActorRegion::kResetPolicy : NR::ActorRegion::kCompensatedResetPolicy;
+		if (Util::Region::ShouldResetForRegion(regionPolicy, work.region, work.lastRegion, NR::ActorRegion::kHistoryTolerancePixels))
 			reset |= NR::Diagnostics::RegionChanged;
 		work.lastRegion = work.region;
 		if (diagnostic.options & NR::Diagnostics::DisableTone)

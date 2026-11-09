@@ -140,6 +140,12 @@ values rather than a new mechanism. With the toggle off, or with no actor
 tracked, the crop is the whole frame and NR evaluates exactly as it does
 without it.
 
+A crop that moves keeps NR's temporal history. NR's history lives in crop-local coordinates, so each eye's motion
+vectors get the crop origin's move since the model last ran added to them (`MotionOffsetCS.hlsl`, applied to a
+private copy so the gain reuse still reads the game's motion). The history resets only when the crop appears or
+disappears, resizes by more than one alignment step, or jumps by more than half its extent. Side-by-side
+evaluation keeps the reset-on-move rule.
+
 The crop controls below only act through a tracked crop, so they follow that
 toggle: **Show Region Overlay**, **Crop Fit** and **Track Multiple Characters**
 are greyed out while it is off, and `NR::Tuning::Sanitize()` clears all three

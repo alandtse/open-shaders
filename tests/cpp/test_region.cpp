@@ -503,6 +503,34 @@ TEST_CASE("ShouldResetForRegion never resets for a crop change on kNever", "[reg
 		REQUIRE_FALSE(Util::Region::ShouldResetForRegion(ResetPolicy::kNever, current, previous, kTolerancePixels));
 }
 
+TEST_CASE("CropOriginShift reports the move of a same-sized crop", "[region][shift]")
+{
+	float shiftX = 1.0f, shiftY = 1.0f;
+	REQUIRE(Util::Region::CropOriginShift(PixelRegion{ 704, 300, 512, 384 }, PixelRegion{ 640, 320, 512, 384 }, shiftX, shiftY));
+	REQUIRE(shiftX == Catch::Approx(64.0f));
+	REQUIRE(shiftY == Catch::Approx(-20.0f));
+	REQUIRE(Util::Region::CropOriginShift(PixelRegion{ 704, 300, 576, 384 }, PixelRegion{ 640, 320, 512, 384 }, shiftX, shiftY));
+	REQUIRE(shiftX == Catch::Approx(64.0f));
+	REQUIRE_FALSE(Util::Region::CropOriginShift(Util::Region::kEmptyRegion, PixelRegion{ 640, 320, 512, 384 }, shiftX, shiftY));
+	REQUIRE_FALSE(Util::Region::CropOriginShift(PixelRegion{ 640, 320, 512, 384 }, Util::Region::kEmptyRegion, shiftX, shiftY));
+}
+
+TEST_CASE("ShouldResetForRegion keeps history across a compensable move on kOnResize", "[region][reset]")
+{
+	const StereoRegion previous = ActiveRegion(PixelRegion{ 640, 320, 512, 384 });
+	const auto resets = [&](const StereoRegion& current) {
+		return Util::Region::ShouldResetForRegion(ResetPolicy::kOnResize, current, previous, kTolerancePixels);
+	};
+	REQUIRE_FALSE(resets(previous));
+	REQUIRE_FALSE(resets(ActiveRegion(PixelRegion{ 640 + 200, 320 - 150, 512, 384 })));
+	REQUIRE(resets(ActiveRegion(PixelRegion{ 640 + 256, 320, 512, 384 })));
+	REQUIRE(resets(ActiveRegion(PixelRegion{ 640, 320 + 192, 512, 384 })));
+	REQUIRE_FALSE(resets(ActiveRegion(PixelRegion{ 640 + 64, 320, 512 + 64, 384 })));
+	REQUIRE(resets(ActiveRegion(PixelRegion{ 640, 320, 512 + 128, 384 })));
+	REQUIRE(resets(StereoRegion{}));
+	REQUIRE(Util::Region::ShouldResetForRegion(ResetPolicy::kOnResize, previous, StereoRegion{}, kTolerancePixels));
+}
+
 TEST_CASE("AreaFraction is the share of the frame a bounds rect covers", "[region][bounds]")
 {
 	REQUIRE(Util::Region::AreaFraction(ScreenBounds{ 0.0f, 0.0f, 1.0f, 1.0f }) == Catch::Approx(1.0f));
