@@ -826,7 +826,7 @@ void DX12NativeScene::EarlyPrepass()
             runtimeGeometryPrepare.GetCurrentSceneCell() : nullptr;
         const auto baseline = staticBase ? staticBase : prepared.GetCell();
         const auto bindings = currentSceneStableBindings ?
-            currentSceneStableBindings : lastMaterials;
+            currentSceneStableBindings : materialBindings.Get();
         const uint64_t occupied = (baseline ? baseline->bytes : 0) +
             NativeAccelerationResidentBytes(currentSceneStableAcceleration) +
             (bindings ? bindings->bytes : 0);
