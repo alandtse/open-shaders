@@ -3,6 +3,7 @@
 #include "Utils/ActorUtils.h"
 #include "Features/DX12NativeScene/NativeCharacterMeshCapture.h"
 #include "Features/DX12NativeScene/NativeCharacterGeometryPreparation.h"
+#include "Features/DX12NativeScene/NativeCharacterDeformation.h"
 
 #include <BS_thread_pool.hpp>
 #include <algorithm>
@@ -47,6 +48,8 @@ namespace DX12Native
         std::vector<CharacterActorObservation> actors;
         std::vector<CharacterPartObservation> parts;
         std::shared_ptr<const CharacterMeshGeneration> stagedGeometry;
+        std::shared_ptr<const CharacterDeformedResult> deformed;
+        std::string deformationError;
         uint32_t capturedMeshes = 0;
         uint64_t capturedBytes = 0;
         uint32_t droppedActors = 0, droppedParts = 0, invalidParts = 0;
@@ -78,7 +81,8 @@ namespace DX12Native
          * deterministic publication are handled on an independent CPU worker.
          */
         void Advance(uint32_t frame, uint32_t maxActors, uint32_t periodFrames, bool playerOnly,
-            bool stageGeometry, ID3D12Device* device)
+            bool stageGeometry, bool runSkinning,
+            ID3D12Device* device, ID3D12CommandQueue* queue)
         {
             if (pending && pending->done.load(std::memory_order_acquire)) {
                 auto done = std::move(pending);
@@ -213,11 +217,14 @@ namespace DX12Native
                 }
                 auto previous = GetPublished();
                 winrt::com_ptr<ID3D12Device> nativeDevice;
+                winrt::com_ptr<ID3D12CommandQueue> nativeQueue;
                 if (stageGeometry && device) nativeDevice.copy_from(device);
+                if (runSkinning && queue) nativeQueue.copy_from(queue);
                 static BS::thread_pool<> pool{ 1 };
                 pool.detach_task([work, captured, previous,
                     mesh = std::move(capturedMesh),
-                    pose = std::move(capturedPose), nativeDevice] {
+                    pose = std::move(capturedPose), nativeDevice,
+                    nativeQueue, runSkinning] {
                     try {
                         // All aggregation uses owned records, never engine pointers.
                         auto output = std::make_shared<CharacterObservationGeneration>(*captured);
@@ -245,6 +252,21 @@ namespace DX12Native
                         output->stagedGeometry = StageCharacterPose(
                             nativeDevice.get(), pose ? &*pose : nullptr,
                             staged, work->sceneEpoch);
+                        if (runSkinning && previous)
+                            output->deformed = previous->deformed;
+                        if (runSkinning && pose && output->stagedGeometry &&
+                            output->stagedGeometry->pose && nativeQueue &&
+                            output->stagedGeometry->pose->captureFrame == pose->capturedFrame) {
+                            try {
+                                output->deformed = DispatchCharacterSkinning(
+                                    nativeDevice.get(), nativeQueue.get(),
+                                    output->stagedGeometry);
+                            } catch (const std::exception& e) {
+                                output->deformationError = e.what();
+                            } catch (...) {
+                                output->deformationError = "Native DX12 skinning dispatch failed";
+                            }
+                        }
                         work->result = std::move(output);
                     } catch (...) {
                         // A failed optional inventory cannot affect raster or TLAS.
@@ -290,6 +312,16 @@ namespace DX12Native
                     current->stagedGeometry->posedFrames : 0u },
                 { "poseDeferrals", current && current->stagedGeometry ?
                     current->stagedGeometry->poseDeferrals : 0u },
+                { "deformSubmitted", current && bool(current->deformed) },
+                { "deformGpuReady", current && current->deformed && current->deformed->Ready() },
+                { "deformFrame", current && current->deformed ?
+                    current->deformed->poseFrame : 0u },
+                { "deformOutputVertices", current && current->deformed ?
+                    current->deformed->vertices : 0u },
+                { "deformGpuBytes", current && current->deformed ?
+                    current->deformed->allocationBytes : 0ull },
+                { "deformInFlight", CharacterDeformationRetirement::InFlight() },
+                { "deformError", current ? current->deformationError : std::string{} },
                 { "dxgiCharacterBudget", current && current->stagedGeometry ?
                     current->stagedGeometry->budgetBytes : 0ull },
                 { "nativeUploadRejections", current && current->stagedGeometry ?
