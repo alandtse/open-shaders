@@ -50,6 +50,8 @@ struct NativeLLFFeature final : Feature
     // Only supplementary LLF emitters are toggled; prepared scene lighting
     // stays authoritative, while live observations remain available to SCM.
     std::atomic<bool> contributeUnmatched{ true };
+    std::atomic<bool> bakeUnmatchedIntoScene{ true }; // Runtime scene layer; not an offline file.
+
     std::atomic<float> matchDistanceUnits{ 64.0f };
     // Radiance gain for supplementary LLF-only emitters, never prepared scene lights.
     std::atomic<float> contribution{ 1.0f };
@@ -76,9 +78,31 @@ struct NativeLLFFeature final : Feature
     void ClearCapturedLights();
     std::shared_ptr<const LightFrame> GetLightFrame(uint32_t frame) const;
     std::shared_ptr<const LightFrame> GetRecentLightFrame(uint32_t frame) const;
+    /** Publish a completed scene light generation without waiting for workers. */
+    std::shared_ptr<const DX12Native::NativeSceneLightBake> GetSceneLightBake(
+        const std::shared_ptr<const DX12Native::PreparedCell>& baseline) const;
 private:
+    struct UnifiedWork
+    {
+        std::atomic<bool> done{ false };
+        std::shared_ptr<const LightFrame> source;
+        std::shared_ptr<const DX12Native::PreparedCell> prepared;
+        std::shared_ptr<const DX12Native::NativeSceneLightBake> previousBake, baked;
+        uint64_t bakeEpoch = 0;
+        float matchUnits = 0.0f, gain = 0.0f;
+        bool contribute = false, valid = false;
+        UnifiedLights result;
+    };
     mutable std::mutex lightMutex;
     std::shared_ptr<const LightFrame> lightFrame;
+    // The native worker owns immutable copies; neither engine pointers nor
+    // prepared-scene memory may be freed while it evaluates a generation.
+    mutable std::atomic<std::shared_ptr<const UnifiedWork>> workerUnified;
+    mutable std::atomic<std::shared_ptr<const UnifiedWork>> fallbackUnified;
+    mutable std::atomic<std::shared_ptr<const DX12Native::NativeSceneLightBake>> sceneBake;
+    std::atomic<uint64_t> bakeEpoch{ 1 };
+    mutable std::atomic<uint64_t> bakedPublications{ 0 };
+    mutable std::atomic<uint64_t> workerHits{ 0 }, workerQueued{ 0 }, fallbackHits{ 0 };
     std::atomic<bool> transitionOpen{ false };
 public:
     std::string GetName() override { return "NativeLLF"; }
@@ -94,7 +118,7 @@ public:
     void GameLoaded() override { ClearCapturedLights(); }
     void RestoreDefaultSettings() override
     {
-        enabled = true; contributeUnmatched = true; matchDistanceUnits = 64.0f; contribution = 1.0f;
+        enabled = true; contributeUnmatched = true; bakeUnmatchedIntoScene = true; matchDistanceUnits = 64.0f; contribution = 1.0f;
     }
     json GetDiagnostics() override;
 };

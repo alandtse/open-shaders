@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <BS_thread_pool.hpp>
 
 // Backend selection is the ONLY automatic execution switch. Feature toggles
 // are explicit user choices, never material/caster/light validity gates.
@@ -61,10 +62,30 @@ bool NativeSCMFeature::OwnsStaticForLight(const RE::BSShadowLight* source, int32
     return false;
 }
 
+namespace
+{
+    NativeLLFFeature::UnifiedLights ComputeNativeUnifiedLights(
+        std::span<const DX12Native::PreparedPointLight> prepared,
+        const NativeLLFFeature::LightFrame* published,
+        bool active, float units, float gain, bool contribute);
+    std::shared_ptr<const DX12Native::NativeSceneLightBake> BuildNativeSceneLightBake(
+        const NativeLLFFeature::UnifiedLights& unified, uint32_t frame,
+        const std::shared_ptr<const DX12Native::PreparedCell>& baseline,
+        const std::shared_ptr<const DX12Native::NativeSceneLightBake>& previous,
+        float matchUnits, float gain);
+}
+
 void NativeLLFFeature::ClearCapturedLights()
 {
-    std::scoped_lock lock(lightMutex);
-    lightFrame.reset();
+    {
+        std::scoped_lock lock(lightMutex);
+        lightFrame.reset();
+    }
+    // Drop all stale scene/frame generations without waiting for workers.
+    workerUnified.store({}, std::memory_order_release);
+    fallbackUnified.store({}, std::memory_order_release);
+    bakeEpoch.fetch_add(1, std::memory_order_acq_rel);
+    sceneBake.store({}, std::memory_order_release);
 }
 
 void NativeLLFFeature::OnSceneTransitionReset(bool a_open)
@@ -97,12 +118,75 @@ void NativeLLFFeature::PublishLights(const LightLimitFix::LightData* data, uint3
             !std::isfinite(light.radius) || light.radius <= 0.0f) continue;
         generation->lights.push_back(light);
     }
-    std::scoped_lock lock(lightMutex);
-    // A loading transition may have started while the new snapshot was built.
-    // Never republish the old cell after its clear operation.
-    if (transitionOpen.load(std::memory_order_acquire)) lightFrame.reset();
-    else lightFrame = std::move(generation);
+    {
+        std::scoped_lock lock(lightMutex);
+        // A loading transition may have started while the new snapshot was built.
+        // Never republish the old cell after its clear operation.
+        if (transitionOpen.load(std::memory_order_acquire)) {
+            lightFrame.reset();
+            return;
+        }
+        lightFrame = generation;
+    }
+    // NativeLLF CPU work only: schedule prepared-first matching after owning
+    // the live snapshot. On late completion, readers use the exact synchronous
+    // fallback rather than a stale/partial native light generation.
+    const auto pending = workerUnified.load(std::memory_order_acquire);
+    if (pending && !pending->done.load(std::memory_order_acquire)) return;
+    const auto scene = globals::features::dx12NativeScene.GetPublishedScene();
+    if (!scene || !scene->cell || !IsActive()) return;
+    try {
+        auto work = std::make_shared<UnifiedWork>();
+        work->source = generation;
+        work->prepared = scene->cell;
+        work->previousBake = scene->bakedLights;
+        work->bakeEpoch = bakeEpoch.load(std::memory_order_acquire);
+        work->matchUnits = std::clamp(matchDistanceUnits.load(std::memory_order_relaxed), 0.0f, 512.0f);
+        work->gain = std::clamp(contribution.load(std::memory_order_relaxed), 0.0f, 4.0f);
+        work->contribute = contributeUnmatched.load(std::memory_order_relaxed) && work->gain > 0.0f;
+        static BS::thread_pool<> pool{ 1 };
+        pool.detach_task([work] {
+            try {
+                work->result = ComputeNativeUnifiedLights(
+                    work->prepared->nativeLights, work->source.get(), true,
+                    work->matchUnits, work->gain, work->contribute);
+                work->baked = BuildNativeSceneLightBake(
+                    work->result, work->source->frame, work->prepared,
+                    work->previousBake, work->matchUnits, work->gain);
+                work->valid = true;
+            } catch (...) { /* Never consume incomplete output. */ }
+            work->done.store(true, std::memory_order_release);
+        });
+        workerUnified.store(std::move(work), std::memory_order_release);
+        workerQueued.fetch_add(1, std::memory_order_relaxed);
+    } catch (...) { /* Preserve the exact legacy-compatible native fallback. */ }
 }
+std::shared_ptr<const DX12Native::NativeSceneLightBake> NativeLLFFeature::GetSceneLightBake(
+    const std::shared_ptr<const DX12Native::PreparedCell>& baseline) const
+{
+    if (!baseline || !IsActive() ||
+        !bakeUnmatchedIntoScene.load(std::memory_order_relaxed) ||
+        !contributeUnmatched.load(std::memory_order_relaxed)) return {};
+    const auto gain = std::clamp(contribution.load(std::memory_order_relaxed), 0.0f, 4.0f);
+    const auto units = std::clamp(matchDistanceUnits.load(std::memory_order_relaxed), 0.0f, 512.0f);
+    if (gain <= 0.0f) return {};
+    // Publish only the worker's fully completed generation, exactly scoped to
+    // this baseline and reset epoch. No engine pointers or GPU waits involved.
+    const auto work = workerUnified.load(std::memory_order_acquire);
+    if (work && work->done.load(std::memory_order_acquire) && work->valid &&
+        work->baked && work->prepared == baseline &&
+        work->bakeEpoch == bakeEpoch.load(std::memory_order_acquire)) {
+        auto current = sceneBake.load(std::memory_order_acquire);
+        if ((!current || current->generationFrame < work->baked->generationFrame) &&
+            sceneBake.compare_exchange_strong(current, work->baked,
+                std::memory_order_acq_rel, std::memory_order_acquire))
+            bakedPublications.fetch_add(1, std::memory_order_relaxed);
+    }
+    auto baked = sceneBake.load(std::memory_order_acquire);
+    return baked && baked->baseline == baseline &&
+        baked->matchUnits == units && baked->contributionGain == gain ? baked : nullptr;
+}
+
 std::shared_ptr<const NativeLLFFeature::LightFrame> NativeLLFFeature::GetLightFrame(uint32_t frame) const
 {
     std::scoped_lock lock(lightMutex);
@@ -115,25 +199,23 @@ std::shared_ptr<const NativeLLFFeature::LightFrame> NativeLLFFeature::GetRecentL
 }
 
 
-NativeLLFFeature::UnifiedLights NativeLLFFeature::BuildUnifiedLights(
-    std::span<const DX12Native::PreparedPointLight> prepared, uint32_t frame, bool allowRecent) const
+namespace
 {
-    UnifiedLights result{};
+NativeLLFFeature::UnifiedLights ComputeNativeUnifiedLights(
+    std::span<const DX12Native::PreparedPointLight> prepared,
+    const NativeLLFFeature::LightFrame* published,
+    bool active, float units, float gain, bool contribute)
+{
+    NativeLLFFeature::UnifiedLights result{};
     result.prepared = static_cast<uint32_t>(prepared.size());
     result.count = static_cast<uint32_t>(std::min(prepared.size(), result.lights.size()));
     std::copy_n(prepared.begin(), result.count, result.lights.begin());
     result.overflow = result.prepared - result.count;
     // No live LLF data must NEVER erase the authoritative prepared lighting.
-    if (!IsActive()) return result;
-    const auto published = allowRecent ? GetRecentLightFrame(frame) : GetLightFrame(frame);
-    if (!published) return result;
+    if (!active || !published) return result;
     result.observed = static_cast<uint32_t>(published->lights.size());
-
-    const float units = std::clamp(matchDistanceUnits.load(std::memory_order_relaxed), 0.0f, 512.0f);
     const float radiusSquared = units * units;
-    const float gain = std::clamp(contribution.load(std::memory_order_relaxed), 0.0f, 4.0f);
-    const bool contribute = contributeUnmatched.load(std::memory_order_relaxed) && gain > 0.0f;
-    std::array<float, kMaxUnifiedLights> identityDistances{};
+    std::array<float, NativeLLFFeature::kMaxUnifiedLights> identityDistances{};
     identityDistances.fill(std::numeric_limits<float>::infinity());
     const auto distanceSquared = [](const float3& a, const float3& b) {
         const float x = a.x - b.x, y = a.y - b.y, z = a.z - b.z;
@@ -185,6 +267,130 @@ NativeLLFFeature::UnifiedLights NativeLLFFeature::BuildUnifiedLights(
     }
     return result;
 }
+// Scene-scope lighting bake: stable, unprepared emitters accumulate in the
+// native worker's immutable snapshot. This is not disk persistence: LLF input
+// carries no stable placed-form identity with which to validate a disk entry.
+std::shared_ptr<const DX12Native::NativeSceneLightBake> BuildNativeSceneLightBake(
+    const NativeLLFFeature::UnifiedLights& unified, uint32_t frame,
+    const std::shared_ptr<const DX12Native::PreparedCell>& baseline,
+    const std::shared_ptr<const DX12Native::NativeSceneLightBake>& previous,
+    float matchUnits, float gain)
+{
+    auto result = std::make_shared<DX12Native::NativeSceneLightBake>();
+    result->baseline = baseline;
+    result->generationFrame = frame;
+    result->matchUnits = matchUnits;
+    result->contributionGain = gain;
+    constexpr uint32_t kLifetimeFrames = 30;
+    const auto distanceSquared = [](const float3& a, const float3& b) {
+        const float x = a.x - b.x, y = a.y - b.y, z = a.z - b.z;
+        return x*x + y*y + z*z;
+    };
+    const auto matchesPrepared = [&](const DX12Native::PreparedPointLight& light) {
+        for (uint32_t i = 0; i < std::min(unified.prepared, unified.count); ++i) {
+            if (unified.lights[i].supported &&
+                distanceSquared(light.position, unified.lights[i].position) <= matchUnits * matchUnits)
+                return true;
+        }
+        return false;
+    };
+    if (previous && previous->baseline == baseline &&
+        previous->matchUnits == matchUnits && previous->contributionGain == gain) {
+        for (const auto& entry : previous->candidates) {
+            if (frame >= entry.lastSeenFrame &&
+                frame - entry.lastSeenFrame <= kLifetimeFrames &&
+                !matchesPrepared(entry.light))
+                result->candidates.push_back(entry);
+        }
+    }
+    std::vector<bool> touched(result->candidates.size(), false);
+    constexpr uint32_t rejectedFlags =
+        static_cast<uint32_t>(PointLightFlags::Flags::Particle) |
+        static_cast<uint32_t>(PointLightFlags::Flags::Spot) |
+        static_cast<uint32_t>(PointLightFlags::Flags::PortalStrict);
+    for (uint32_t i = std::min(unified.prepared, unified.count); i < unified.count; ++i) {
+        const auto& light = unified.lights[i];
+        const auto& source = unified.source[i];
+        if (!source.valid || !light.supported ||
+            (source.flags & rejectedFlags) != 0 || matchesPrepared(light))
+            continue;
+        size_t match = result->candidates.size();
+        float best = std::numeric_limits<float>::infinity();
+        for (size_t j = 0; j < result->candidates.size(); ++j) {
+            if (touched[j]) continue;
+            const auto& prior = result->candidates[j].light;
+            const float tolerance = std::clamp(prior.radius * 0.005f, 1.0f, 8.0f);
+            const float d = distanceSquared(light.position, prior.position);
+            if (d <= tolerance*tolerance && d < best &&
+                std::abs(light.radius - prior.radius) <= std::max(4.0f, prior.radius * 0.03f)) {
+                match = j;
+                best = d;
+            }
+        }
+        if (match < result->candidates.size()) {
+            auto& entry = result->candidates[match];
+            touched[match] = true;
+            entry.consecutiveObservations = frame > entry.lastSeenFrame &&
+                frame - entry.lastSeenFrame <= 4 ?
+                std::min(entry.consecutiveObservations + 1u, 1024u) : 1u;
+            entry.light = light;
+            entry.lastSeenFrame = frame;
+        } else if (result->candidates.size() < NativeLLFFeature::kMaxUnifiedLights) {
+            result->candidates.push_back({ light, frame, 1u });
+            touched.push_back(true);
+        }
+    }
+    return result;
+}
+} // namespace
+
+NativeLLFFeature::UnifiedLights NativeLLFFeature::BuildUnifiedLights(
+    std::span<const DX12Native::PreparedPointLight> prepared, uint32_t frame, bool allowRecent) const
+{
+    const bool active = IsActive();
+    const auto published = active ?
+        (allowRecent ? GetRecentLightFrame(frame) : GetLightFrame(frame)) : nullptr;
+    const float units = std::clamp(matchDistanceUnits.load(std::memory_order_relaxed), 0.0f, 512.0f);
+    const float gain = std::clamp(contribution.load(std::memory_order_relaxed), 0.0f, 4.0f);
+    const bool contribute = contributeUnmatched.load(std::memory_order_relaxed) && gain > 0.0f;
+    const auto matches = [&](const std::shared_ptr<const UnifiedWork>& work) {
+        return work && work->done.load(std::memory_order_acquire) &&
+            work->valid && work->source == published && work->prepared &&
+            work->prepared->nativeLights.data() == prepared.data() &&
+            work->prepared->nativeLights.size() == prepared.size() &&
+            work->matchUnits == units && work->gain == gain &&
+            work->contribute == contribute;
+    };
+    if (active && published) {
+        if (auto work = workerUnified.load(std::memory_order_acquire); matches(work)) {
+            workerHits.fetch_add(1, std::memory_order_relaxed);
+            return work->result;
+        }
+        if (auto cached = fallbackUnified.load(std::memory_order_acquire); matches(cached))
+            return cached->result;
+    }
+    auto result = ComputeNativeUnifiedLights(prepared, published.get(), active, units, gain, contribute);
+    if (active && published) {
+        auto cached = std::make_shared<UnifiedWork>();
+        cached->source = std::move(published);
+        // Only the authoritative native scene owns the source span. A
+        // matching shared owner is needed for safe future cache reads.
+        if (const auto scene = globals::features::dx12NativeScene.GetPublishedScene();
+            scene && scene->cell && scene->cell->nativeLights.data() == prepared.data() &&
+            scene->cell->nativeLights.size() == prepared.size()) {
+            cached->prepared = scene->cell;
+            cached->matchUnits = units;
+            cached->gain = gain;
+            cached->contribute = contribute;
+            cached->result = result;
+            cached->valid = true;
+            cached->done.store(true, std::memory_order_release);
+            fallbackUnified.store(std::move(cached), std::memory_order_release);
+        }
+        fallbackHits.fetch_add(1, std::memory_order_relaxed);
+    }
+    return result;
+}
 
 namespace
 {
@@ -210,6 +416,11 @@ void NativeLLFFeature::DrawSettings()
     const auto frame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : 0u;
     const auto lights = globals::features::nativeLLF.GetLightFrame(frame);
     ImGui::Text("Captured current-frame LLF lights: %zu", lights ? lights->lights.size() : size_t{0});
+    bool sceneBakeEnabled = bakeUnmatchedIntoScene.load(std::memory_order_relaxed);
+    if (ImGui::Checkbox("Bake stable LLF-only lights into native scene", &sceneBakeEnabled))
+        bakeUnmatchedIntoScene.store(sceneBakeEnabled, std::memory_order_relaxed);
+    ImGui::TextDisabled("Runtime scene layer; four stable observations and 30-frame expiry.");
+    ImGui::TextDisabled("No disk persistence without a verified placed-light identity.");
     bool add = contributeUnmatched.load(std::memory_order_relaxed);
     if (ImGui::Checkbox("Contribute unmatched LLF lights", &add))
         contributeUnmatched.store(add, std::memory_order_relaxed);
@@ -257,6 +468,7 @@ void NativeLLFFeature::LoadSettings(json& j)
 {
     enabled.store(j.value("Enabled", true), std::memory_order_relaxed);
     contributeUnmatched.store(j.value("ContributeUnmatched", true), std::memory_order_relaxed);
+    bakeUnmatchedIntoScene.store(j.value("BakeUnmatchedIntoScene", true), std::memory_order_relaxed);
     const float value = j.value("MatchDistanceUnits", 64.0f);
     matchDistanceUnits.store(std::isfinite(value) ? std::clamp(value, 0.0f, 512.0f) : 64.0f,
         std::memory_order_relaxed);
@@ -270,6 +482,7 @@ void NativeLLFFeature::SaveSettings(json& j)
 {
     j = { { "Enabled", enabled.load(std::memory_order_relaxed) },
         { "ContributeUnmatched", contributeUnmatched.load(std::memory_order_relaxed) },
+        { "BakeUnmatchedIntoScene", bakeUnmatchedIntoScene.load(std::memory_order_relaxed) },
         { "MatchDistanceUnits", matchDistanceUnits.load(std::memory_order_relaxed) },
         { "Contribution", contribution.load(std::memory_order_relaxed) } };
 }
@@ -287,7 +500,14 @@ json NativeLLFFeature::GetDiagnostics()
         { "contributeUnmatched", contributeUnmatched.load() },
         { "matchDistanceUnits", matchDistanceUnits.load() },
         { "contribution", contribution.load() },
-        { "observedLights", lights ? lights->lights.size() : size_t{0} } };
+        { "observedLights", lights ? lights->lights.size() : size_t{0} },
+        { "sceneBakeEnabled", bakeUnmatchedIntoScene.load(std::memory_order_relaxed) },
+        { "sceneBakePublications", bakedPublications.load(std::memory_order_relaxed) },
+        { "sceneBakeCandidates", sceneBake.load(std::memory_order_acquire) ?
+            sceneBake.load(std::memory_order_acquire)->candidates.size() : size_t{0} },
+        { "workerQueued", workerQueued.load(std::memory_order_relaxed) },
+        { "workerResultsConsumed", workerHits.load(std::memory_order_relaxed) },
+        { "synchronousFallbackCalls", fallbackHits.load(std::memory_order_relaxed) } };
     const auto scene = globals::features::dx12NativeScene.GetPublishedScene();
     if (scene && globals::game::graphicsState) {
         const auto merged = BuildUnifiedLights(scene->cell->nativeLights, frame);

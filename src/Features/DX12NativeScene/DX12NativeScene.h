@@ -56,12 +56,13 @@ struct DX12NativeScene final : Feature
 		std::shared_ptr<const DX12Native::ShadowBindings> materials;
 		uint32_t cellID = 0;
 		uint64_t revision = 0;
+        std::shared_ptr<const DX12Native::NativeSceneLightBake> bakedLights;
 	};
 	// NativeLLF unifies prepared and live lights for native DXR with one shared capacity.
 	struct NativeLightBatch
 	{
 		std::array<DX12Native::PreparedPointLight, DX12Native::kMaximumNativePointLights> lights{};
-		uint32_t count = 0, observed = 0, prepared = 0, matched = 0, added = 0, clustered = 0, omitted = 0, overflow = 0;
+		uint32_t count = 0, observed = 0, prepared = 0, matched = 0, added = 0, baked = 0, clustered = 0, omitted = 0, overflow = 0;
 	};
 	struct SceneFrame
 	{
@@ -131,7 +132,9 @@ private:
     uint64_t SceneMemoryLimit(uint64_t trackedBytes = 0);
 	void PublishDiagnostics();
 	void AdvanceCoverage();
+	void AdvanceNativeSCMCoverage();
 	struct CoverageTask;
+	struct NativeSCMCoverageTask;
 	void DispatchShadow(const char* a_stage);
 	std::optional<GraphicsBackend> backend;
 	DX12Native::PreparedScene prepared;
@@ -151,6 +154,7 @@ private:
     // Immutable completed-TLAS identity index is published atomically for the draw hook.
     std::atomic<std::shared_ptr<const DX12Native::PreparedRuntimeCoverage>> runtimePreparedCoverage;
     std::shared_ptr<const DX12Native::TopLevel> runtimeCoverageSource;
+    std::shared_ptr<NativeSCMCoverageTask> runtimeCoverageTask;
     std::atomic<uint64_t> runtimePreparedSkipped{ 0 };
     uint64_t runtimePreparedPruned = 0;
     DX12Native::RuntimeGeometryCacheWorker runtimeGeometryCache;

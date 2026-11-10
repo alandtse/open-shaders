@@ -136,6 +136,15 @@ namespace DX12Native
             std::scoped_lock lock(mutex);
             return entries.contains(Key(reference, shape));
         }
+        /** @brief Cheap admission before validating or copying borrowed renderer arrays.
+         * Submit still enforces the limit under the same lock when the packet arrives. */
+        bool CanCapture(const std::string& reference, const std::string& shape,
+            uint64_t candidateBytes = 0) const
+        {
+            std::scoped_lock lock(mutex);
+            return !entries.contains(Key(reference, shape)) && entries.size() < itemLimit &&
+                candidateBytes <= byteLimit && bytes <= byteLimit - candidateBytes;
+        }
         bool Submit(std::shared_ptr<const RuntimeGeometryPacket> packet)
         {
             if (!packet || packet->referenceKey.empty() || packet->shapeName.empty()) return false;
@@ -162,18 +171,33 @@ namespace DX12Native
             if (removed) ++revision;
             return removed;
         }
+        // Render-side acquisition performs no sorting or filtering. Packet
+        // storage is already immutable, so workers own safe snapshots.
+        std::vector<std::shared_ptr<const RuntimeGeometryPacket>> SnapshotUnordered() const
+        {
+            std::scoped_lock lock(mutex);
+            std::vector<std::shared_ptr<const RuntimeGeometryPacket>> output;
+            output.reserve(entries.size());
+            for (const auto& [key, packet] : entries) output.push_back(packet);
+            return output;
+        }
         std::vector<std::shared_ptr<const RuntimeGeometryPacket>> Export(size_t start, size_t limit) const
         {
             std::scoped_lock lock(mutex);
             std::vector<std::shared_ptr<const RuntimeGeometryPacket>> output;
             output.reserve(std::min(limit, entries.size()));
-            // Stable export order makes background preparation deterministic.
-            std::vector<std::string> keys;
-            keys.reserve(entries.size());
-            for (const auto& [key, value] : entries) keys.push_back(key);
-            std::sort(keys.begin(), keys.end());
-            for (size_t i = start; i < keys.size() && output.size() < limit; ++i)
-                output.push_back(entries.at(keys[i]));
+            // Cache deterministic ordering for the lifetime of this mailbox
+            // revision. Preparation and disk writers may export the same
+            // pending items without sorting thousands of entries twice.
+            if (sortedRevision != revision) {
+                sortedKeys.clear();
+                sortedKeys.reserve(entries.size());
+                for (const auto& [key, value] : entries) sortedKeys.push_back(key);
+                std::sort(sortedKeys.begin(), sortedKeys.end());
+                sortedRevision = revision;
+            }
+            for (size_t i = start; i < sortedKeys.size() && output.size() < limit; ++i)
+                output.push_back(entries.at(sortedKeys[i]));
             return output;
         }
         void Reset()
@@ -194,6 +218,8 @@ namespace DX12Native
         }
         mutable std::mutex mutex;
         std::unordered_map<std::string, std::shared_ptr<const RuntimeGeometryPacket>> entries;
+        mutable std::vector<std::string> sortedKeys;
+        mutable uint64_t sortedRevision = UINT64_MAX;
         size_t byteLimit = 0, itemLimit = 0;
         uint64_t revision = 0, bytes = 0;
     };

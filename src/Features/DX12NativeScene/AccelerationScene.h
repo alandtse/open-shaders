@@ -20,6 +20,7 @@ namespace DX12Native
 		std::vector<std::shared_ptr<const BottomLevel>> bottoms;
 		std::vector<Instance> instances;
 		uint64_t generation = 0, sweep = 0, bytes = 0, blasRevision = 0;
+		bool updateCapable = false;
 		uint32_t omittedInstances = 0;
 		SceneScope scope;
 		std::shared_ptr<const MaterialSource> materialSource;
@@ -79,6 +80,8 @@ namespace DX12Native
 			winrt::com_ptr<ID3D12Resource> scratch, instanceUpload;
 			std::shared_ptr<BottomLevel> bottom;
 			std::shared_ptr<TopLevel> top;
+			// Keep the source acceleration structure alive until a TLAS update fence retires.
+			std::shared_ptr<const TopLevel> updateSource;
 			uint64_t fence = 0, generation = 0, transientBytes = 0;
 			bool submitted = false;
 		};
@@ -96,7 +99,7 @@ namespace DX12Native
 		std::array<Build, 2> builds;
 		std::unordered_map<RangeKey, std::shared_ptr<const BottomLevel>, RangeHash> bottoms;
 		std::shared_ptr<const TopLevel> published;
-		uint64_t generation = 0, nextFence = 0, bottomSubmissions = 0, topSubmissions = 0, bottomCompletions = 0, topCompletions = 0;
+		uint64_t generation = 0, nextFence = 0, bottomSubmissions = 0, topSubmissions = 0, bottomCompletions = 0, topCompletions = 0, topUpdates = 0;
 		uint64_t budgetDeferrals = 0, busyFrames = 0;
 		size_t buildCursor = 0;
 		std::string failure;

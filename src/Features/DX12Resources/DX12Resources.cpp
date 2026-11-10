@@ -17,6 +17,7 @@
 #include <chrono>
 #include <filesystem>
 #include <format>
+#include <stdexcept>
 #include <vector>
 #include <algorithm>
 #include <string_view>
@@ -47,6 +48,15 @@ struct DX12Resources::PreparationJob
     std::string logPath;
     json report;
     double elapsedMs = 0;
+};
+
+/** Only generated, published CELL/WRLD geometry is deleted.
+ * Workspaces, logs, reports and the separate NativePBRCache remain intact. */
+struct DX12Resources::DiskCacheFlushJob
+{
+    std::atomic<bool> done{ false };
+    uintmax_t removed = 0;
+    std::string error;
 };
 
 
@@ -302,9 +312,82 @@ void DX12Resources::AdvancePluginCellScan()
         pluginInteriors.size(), selectedPlugin);
 }
 
+// Called under statusMutex, from the main-menu testing control.
+void DX12Resources::StartDiskCacheFlush()
+{
+    if (diskCacheFlushJob || preparationJob) return;
+    const auto root = DX12ResourceService::SkyrimDataDirectory() /
+        "SKSE/Plugins/CommunityShaders/DX12-cache";
+    auto task = std::make_shared<DiskCacheFlushJob>();
+    try {
+        static BS::thread_pool<> pool{ 1 };
+        pool.detach_task([task, root] {
+            try {
+                auto removeGenerated = [&](const std::filesystem::path& folder) {
+                    std::error_code ec;
+                    const auto state = std::filesystem::symlink_status(folder, ec);
+                    if (state.type() == std::filesystem::file_type::not_found)
+                        return;
+                    if (ec || std::filesystem::is_symlink(state) ||
+                        !std::filesystem::is_directory(state))
+                        throw std::runtime_error("DX12 cache path is not a safe directory: " + folder.string());
+                    task->removed += std::filesystem::remove_all(folder, ec);
+                    if (ec)
+                        throw std::runtime_error("Could not clear DX12 cache: " + ec.message());
+                };
+                // Never traverse an unexpected or redirected cache root.
+                std::error_code ec;
+                const auto rootState = std::filesystem::symlink_status(root, ec);
+                if (rootState.type() != std::filesystem::file_type::not_found) {
+                    if (ec || std::filesystem::is_symlink(rootState) ||
+                        !std::filesystem::is_directory(rootState))
+                        throw std::runtime_error("DX12 cache root is not a safe directory");
+                    removeGenerated(root / "cells");
+                    removeGenerated(root / "worldspaces");
+                }
+            } catch (const std::exception& e) { task->error = e.what(); }
+            catch (...) { task->error = "Unexpected DX12 cache deletion error"; }
+            task->done.store(true, std::memory_order_release);
+        });
+        diskCacheFlushJob = std::move(task);
+        diskCacheFlushConfirm = false;
+        diskCacheFlushStatus = "Clearing published CELL/WRLD geometry files on background worker...";
+    } catch (const std::exception& e) {
+        diskCacheFlushStatus = e.what();
+    }
+}
+
+void DX12Resources::PollDiskCacheFlush()
+{
+    if (!diskCacheFlushJob ||
+        !diskCacheFlushJob->done.load(std::memory_order_acquire)) return;
+    auto finished = std::move(diskCacheFlushJob);
+    diskCacheFlushRemoved = finished->removed;
+    if (!finished->error.empty()) {
+        diskCacheFlushStatus = "Flush incomplete: " + finished->error;
+        return;
+    }
+    ++diskCacheFlushes;
+    // Published geometry no longer exists on disk; next CELL entry should
+    // re-evaluate availability rather than trust last session's cache hit.
+    lastAutomaticInterior.clear();
+    lastStreamingPollMs = 0;
+    failedStreamingTiles.clear();
+    streamingStatus = "Published DX12 geometry cache cleared";
+    preparationPath.clear();
+    preparationReport = json::object();
+    diskCacheFlushStatus = std::format(
+        "Cleared {} generated entries; the next preparation will rebuild geometry.",
+        diskCacheFlushRemoved);
+}
+
 void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest& request,
     std::optional<DX12ResourceService::PreparedSubcellAddress> tile, bool predictive)
 {
+    if (diskCacheFlushJob) {
+        preparationStatus = "DX12 disk cache flush is running; CELL preparation deferred";
+        return;
+    }
     if (preparationJob) {
         preparationStatus = "A CELL preparation job is already running";
         return;
@@ -413,6 +496,8 @@ void DX12Resources::AdvanceAutomaticInterior(const DX12ResourceService::CellRequ
     // The companion job is independent of menu visibility; dispatch and
     // publication polling happen on the native scene's normal frame path.
     PollCellPreparation();
+    PollDiskCacheFlush();
+    if (diskCacheFlushJob) return;
     if (!settings.Enabled || !settings.AutoPrepareOnCellEntry ||
         !dataLoaded.load(std::memory_order_acquire)) return;
     const auto identity = request.ScopedKey();
@@ -442,6 +527,8 @@ void DX12Resources::AdvanceStreamingScene(const DX12ResourceService::CellRequest
 {
     std::scoped_lock lock(statusMutex);
     PollCellPreparation();
+    PollDiskCacheFlush();
+    if (diskCacheFlushJob) return;
     if (!settings.Enabled || !settings.AutoPrepareOnCellEntry ||
         !dataLoaded.load(std::memory_order_acquire) ||
         !DX12Native::SpatialSubcells::ValidSize(size) ||
@@ -502,6 +589,7 @@ void DX12Resources::DrawSettings()
 {
     std::scoped_lock lock(statusMutex);
     PollCellPreparation();
+    PollDiskCacheFlush();
     auto* ui = RE::UI::GetSingleton();
     const bool mainMenu = ui && ui->IsMenuOpen(RE::MainMenu::MENU_NAME);
     if (!lastDetectionMainMenu || *lastDetectionMainMenu != mainMenu) {
@@ -520,6 +608,28 @@ void DX12Resources::DrawSettings()
     if (!pluginListReady && dataLoaded.load(std::memory_order_acquire))
         RefreshLoadedPlugins();
     AdvancePluginCellScan();
+    ImGui::SeparatorText("DX12 disk geometry cache (testing)");
+    ImGui::TextDisabled("Clears generated DX12-cache/cells and DX12-cache/worldspaces, including subcells.");
+    ImGui::TextDisabled("Does not delete original meshes, staging work, logs, reports or NativePBRCache.");
+    if (!mainMenu) diskCacheFlushConfirm = false;
+    ImGui::BeginDisabled(!mainMenu || bool(preparationJob) || bool(diskCacheFlushJob));
+    if (!diskCacheFlushConfirm) {
+        if (ImGui::Button("Flush DX12 disk geometry cache"))
+            diskCacheFlushConfirm = true;
+    } else {
+        if (ImGui::Button("Confirm disk geometry deletion"))
+            StartDiskCacheFlush();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel flush"))
+            diskCacheFlushConfirm = false;
+    }
+    ImGui::EndDisabled();
+    if (!mainMenu)
+        ImGui::TextDisabled("Return to the main menu before flushing, to avoid active scene reads.");
+    if (preparationJob)
+        ImGui::TextDisabled("Finish the current CELL preparation before clearing the disk cache.");
+    ImGui::TextWrapped("%s", diskCacheFlushStatus.c_str());
+
     ImGui::Checkbox("Enable DX12 Resources preparation", &settings.Enabled);
     ImGui::Checkbox("Automatically prepare missing native scenes", &settings.AutoPrepareOnCellEntry);
     ImGui::TextDisabled("Companion runs off-thread; a matching cache is reused without restarting preparation.");
@@ -656,7 +766,11 @@ json DX12Resources::GetDiagnostics()
 {
     std::scoped_lock lock(statusMutex);
     PollCellPreparation();
+    PollDiskCacheFlush();
     return { { "enabled", settings.Enabled },
+        { "diskGeometryCache", { { "flushRunning", bool(diskCacheFlushJob) },
+            { "flushes", diskCacheFlushes }, { "removedEntries", diskCacheFlushRemoved },
+            { "status", diskCacheFlushStatus } } },
         { "autoPrepareOnCellEntry", settings.AutoPrepareOnCellEntry },
         { "automaticLaunches", automaticLaunches }, { "automaticCacheHits", automaticCacheHits },
         { "lastAutomaticInterior", lastAutomaticInterior },

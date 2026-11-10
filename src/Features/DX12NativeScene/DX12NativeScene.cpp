@@ -285,9 +285,35 @@ std::optional<DX12NativeScene::NativeLightBatch> DX12NativeScene::GetNativeLLFLi
 	batch.prepared = merged.prepared;
 	batch.matched = merged.matched;
 	batch.added = merged.added;
+    batch.overflow = merged.overflow;
+    // Native scene supplementary lighting has its own immutable generation.
+    // Live LLF lights win when present; stable baked observations fill gaps.
+    if (const auto baked = scene->bakedLights) {
+        const auto distanceSquared = [](const float3& a, const float3& b) {
+            const float x = a.x - b.x, y = a.y - b.y, z = a.z - b.z;
+            return x*x + y*y + z*z;
+        };
+        for (const auto& entry : baked->candidates) {
+            if (entry.consecutiveObservations < 4 ||
+                a_frame < entry.lastSeenFrame ||
+                a_frame - entry.lastSeenFrame > 30) continue;
+            bool exists = false;
+            for (uint32_t i = 0; i < batch.count; ++i) {
+                if (!batch.lights[i].supported) continue;
+                const float tolerance = std::clamp(entry.light.radius * 0.005f, 1.0f, 8.0f);
+                if (distanceSquared(entry.light.position, batch.lights[i].position) <= tolerance*tolerance) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (exists) continue;
+            if (batch.count >= batch.lights.size()) { ++batch.overflow; break; }
+            batch.lights[batch.count++] = entry.light;
+            ++batch.baked;
+        }
+    }
 	batch.clustered = merged.clusteredLive;
 	batch.omitted = merged.omitted;
-	batch.overflow = merged.overflow;
 	return batch;
 }
 
@@ -628,7 +654,9 @@ void DX12NativeScene::ObserveRuntimeGeometry(RE::BSGeometry* geometry,
         runtimePreparedSkipped.fetch_add(1, std::memory_order_relaxed);
         return;
     }
-    if (runtimeGeometry.Contains(reference, shape)) return;
+    // A full mailbox or already-observed identity must not trigger renderer
+    // vertex/index validation, per-frame copy budgeting or CPU acquisition.
+    if (!runtimeGeometry.CanCapture(reference, shape)) return;
     // Only static BSTriShape CPU data is supported; never map D3D11 buffers.
     auto* tri = geometry->AsTriShape();
     if (!tri || geometry->AsDynamicTriShape()) return;
@@ -643,7 +671,10 @@ void DX12NativeScene::ObserveRuntimeGeometry(RE::BSGeometry* geometry,
     if (!counts.vertexCount || !counts.triangleCount || stride < 16 || stride > 256) return;
     const uint64_t length = uint64_t(counts.vertexCount) * stride +
         uint64_t(counts.triangleCount) * 3 * sizeof(uint16_t);
-    if (length > 256 * 1024) return; // Bound render-thread copy latency.
+    if (length > 256 * 1024 ||
+        !runtimeGeometry.CanCapture(reference, shape, length)) return;
+    // Bound render-thread copy latency AND reject packets that cannot fit
+    // before scanning or copying CPU vertex/index arrays.
     const uint32_t frame = globals::game::graphicsState ?
         globals::game::graphicsState->GetFrameCount() : 0;
     {
@@ -725,6 +756,7 @@ void DX12NativeScene::ResetScene()
     runtimeGeometry.Reset();
     runtimePreparedCoverage.store({}, std::memory_order_release);
     runtimeCoverageSource.reset();
+    runtimeCoverageTask.reset(); // Worker owns its immutable TLAS while running.
     runtimePreparedSkipped.store(0, std::memory_order_relaxed);
     runtimePreparedPruned = 0;
     runtimeGeometryCache.ResetScene();
@@ -778,6 +810,57 @@ void DX12NativeScene::AdvanceCoverage()
 		coverageFailed = false;
 		coverageTask = std::move(task);
 	} catch (const std::exception& error) { coverageFailed = true; logger::warn("Native PBR candidate analysis: {}", error.what()); }
+}
+
+// Completed TLAS identity generation is built away from Skyrim's render
+// callbacks. Only the exact published TLAS may suppress legacy SCM casters.
+struct DX12NativeScene::NativeSCMCoverageTask
+{
+    std::atomic<bool> done{ false };
+    uint64_t sceneRevision = 0;
+    std::shared_ptr<const DX12Native::TopLevel> source;
+    std::shared_ptr<const DX12Native::PreparedRuntimeCoverage> result;
+};
+
+void DX12NativeScene::AdvanceNativeSCMCoverage()
+{
+    const auto published = GetPublishedScene();
+    const auto candidate = published ? published->acceleration : acceleration.GetScene();
+    if (runtimeCoverageTask && runtimeCoverageTask->done.load(std::memory_order_acquire)) {
+        auto completed = std::move(runtimeCoverageTask);
+        if (completed->result && completed->sceneRevision == revision &&
+            completed->source == candidate &&
+            candidate && candidate->scope.scene == revision) {
+            // No publication until the worker's identity index and the
+            // currently offered TLAS are exactly the same generation.
+            runtimeCoverageSource = candidate;
+            runtimePreparedCoverage.store(completed->result, std::memory_order_release);
+            runtimePreparedPruned += runtimeGeometry.RemoveCovered(*completed->result);
+        }
+    }
+    if (runtimeCoverageTask || !candidate || candidate->scope.scene != revision ||
+        candidate == runtimeCoverageSource) return;
+    try {
+        auto work = std::make_shared<NativeSCMCoverageTask>();
+        work->sceneRevision = revision;
+        work->source = candidate;
+        static BS::thread_pool<> pool{ 1 };
+        pool.detach_task([work] {
+            try {
+                auto covered = std::make_shared<DX12Native::PreparedRuntimeCoverage>();
+                covered->sceneRevision = work->sceneRevision;
+                covered->completed.reserve(work->source->instances.size());
+                for (const auto& instance : work->source->instances) {
+                    const auto& identity = instance.preparedIdentity;
+                    if (!identity.referenceKey.empty() && !identity.shapeName.empty())
+                        covered->completed.insert(identity.referenceKey + '\0' + identity.shapeName);
+                }
+                work->result = std::move(covered);
+            } catch (...) { /* Keep raster fallback; retry without a GPU/CPU wait. */ }
+            work->done.store(true, std::memory_order_release);
+        });
+        runtimeCoverageTask = std::move(work);
+    } catch (...) { /* Native coverage may not suppress the original SCM. */ }
 }
 
 void DX12NativeScene::EarlyPrepass()
@@ -1033,22 +1116,7 @@ void DX12NativeScene::EarlyPrepass()
     // Match NativeSCM's static-caster coverage to the scene that Native DXR
     // actually exposes. When a partial grid becomes active, full-CELL TLAS
     // membership must no longer suppress raster fallback for absent casters.
-    const auto currentPublished = GetPublishedScene();
-    const auto coverageCandidate = currentPublished ?
-        currentPublished->acceleration : acceleration.GetScene();
-    if (auto current = coverageCandidate; current &&
-        current->scope.scene == revision && current != runtimeCoverageSource) {
-        auto covered = std::make_shared<DX12Native::PreparedRuntimeCoverage>();
-        covered->sceneRevision = revision;
-        for (const auto& instance : current->instances) {
-            const auto& identity = instance.preparedIdentity;
-            if (!identity.referenceKey.empty() && !identity.shapeName.empty())
-                covered->completed.insert(identity.referenceKey + '\0' + identity.shapeName);
-        }
-        runtimeCoverageSource = current;
-        runtimePreparedCoverage.store(covered, std::memory_order_release);
-        runtimePreparedPruned += runtimeGeometry.RemoveCovered(*covered);
-    }
+    AdvanceNativeSCMCoverage();
     if (auto scene = acceleration.GetScene(); scene &&
         shadow.RetireScenesExcept(currentSceneStableAcceleration ? currentSceneStableAcceleration : scene) &&
         retiredMaterials.expired()) {
@@ -1244,13 +1312,18 @@ std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScen
         stableGridPublished->cell && stableGridPublished->acceleration &&
         stableGridPublished->materials &&
         stableGridPublished->materials->scene == stableGridPublished->acceleration)
-        return stableGridPublished;  // Last complete generation, even while recentering.
+    {
+        auto published = *stableGridPublished;
+        published.bakedLights = globals::features::nativeLLF.GetSceneLightBake(published.cell);
+        return published;  // Last complete scene even while recentering.
+    }
 	auto data = prepared.GetCell();
 	auto scene = currentSceneStableAcceleration ? currentSceneStableAcceleration : acceleration.GetScene();
 	if (!data || !scene || scene->scope.scene != revision) return std::nullopt;
 	auto materials = currentSceneStableBindings ? currentSceneStableBindings : materialBindings.Get();
 	if (materials && materials->scene != scene) materials.reset();
-	return PublishedScene{ std::move(data), std::move(scene), std::move(materials), cellID, revision };
+    auto baked = globals::features::nativeLLF.GetSceneLightBake(data);
+	return PublishedScene{ std::move(data), std::move(scene), std::move(materials), cellID, revision, std::move(baked) };
 }
 
 void DX12NativeScene::PublishDiagnostics()

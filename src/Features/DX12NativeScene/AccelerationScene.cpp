@@ -95,6 +95,8 @@ namespace DX12Native
 		for (const auto& build : builds) {
 			countBottom(build.bottom);
 			countTop(build.top);
+			// An in-flight UPDATE also owns its previous completed TLAS.
+			countTop(build.updateSource);
 			bytes += build.transientBytes;
 		}
 		return bytes;
@@ -193,15 +195,27 @@ namespace DX12Native
 			top->instances.push_back(instance);
 		}
 		if (instances.empty()) return false;
+		// Refit only when the complete ordered BLAS membership is identical.
+		// Changes to topology or missing casters must trigger a full rebuild.
+		const bool canUpdate = published && published->updateCapable &&
+			published->result && published->scope.scene == a_snapshot.scope.scene &&
+			published->bottoms.size() == top->bottoms.size() &&
+			std::equal(published->bottoms.begin(), published->bottoms.end(), top->bottoms.begin());
+		top->updateCapable = true;
 		D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
 		inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
-		inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+		// Prebuild info is requested for the update-capable structure; the
+		// PERFORM_UPDATE flag belongs to the actual build invocation only.
+		inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE |
+			D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE;
 		inputs.NumDescs = uint32_t(instances.size());
 		inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
 		D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO info{};
 		device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &info);
 		const auto resultBytes = AllocationBytes(info.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT);
-		const auto scratchBytes = AllocationBytes(info.ScratchDataSizeInBytes, D3D12_HEAP_TYPE_DEFAULT);
+		const auto scratchBytes = AllocationBytes(
+			canUpdate ? info.UpdateScratchDataSizeInBytes : info.ScratchDataSizeInBytes,
+			D3D12_HEAP_TYPE_DEFAULT);
 		const uint64_t uploadSize = instances.size() * sizeof(D3D12_RAYTRACING_INSTANCE_DESC);
 		const auto uploadBytes = AllocationBytes(uploadSize, D3D12_HEAP_TYPE_UPLOAD);
 		const auto required = resultBytes + scratchBytes + uploadBytes;
@@ -211,7 +225,11 @@ namespace DX12Native
 		top->result = Buffer(info.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"DX12NativeScene::TLAS");
 		top->bytes = resultBytes;
 		a_build.top = std::move(top);
-		a_build.scratch = Buffer(info.ScratchDataSizeInBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"DX12NativeScene::TLAS Scratch");
+		if (canUpdate) a_build.updateSource = published;
+		a_build.scratch = Buffer(
+			canUpdate ? info.UpdateScratchDataSizeInBytes : info.ScratchDataSizeInBytes,
+			D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+			L"DX12NativeScene::TLAS Scratch");
 		a_build.instanceUpload = Buffer(uploadSize, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"DX12NativeScene::TLAS Instances");
 		a_build.transientBytes = scratchBytes + uploadBytes;
 		void* mapped = nullptr;
@@ -220,9 +238,13 @@ namespace DX12Native
 		std::memcpy(mapped, instances.data(), size_t(uploadSize));
 		a_build.instanceUpload->Unmap(0, nullptr);
 		inputs.InstanceDescs = a_build.instanceUpload->GetGPUVirtualAddress();
+		if (canUpdate)
+			inputs.Flags |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE;
 		D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
 		build.Inputs = inputs;
 		build.DestAccelerationStructureData = a_build.top->result->GetGPUVirtualAddress();
+		build.SourceAccelerationStructureData = canUpdate ?
+			a_build.updateSource->result->GetGPUVirtualAddress() : 0;
 		build.ScratchAccelerationStructureData = a_build.scratch->GetGPUVirtualAddress();
 		a_build.commands->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
 		const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(a_build.top->result.get());
@@ -230,6 +252,7 @@ namespace DX12Native
 		a_build.commands->EndEvent();
 		Submit(a_build);
 		++topSubmissions;
+		if (canUpdate) ++topUpdates;
 		return true;
 	}
 
@@ -293,7 +316,8 @@ namespace DX12Native
 	{
 		return {
 			{ "bottomSubmissions", bottomSubmissions }, { "bottomCompletions", bottomCompletions },
-			{ "topSubmissions", topSubmissions }, { "topCompletions", topCompletions }, { "residentBLAS", bottoms.size() },
+			{ "topSubmissions", topSubmissions }, { "topCompletions", topCompletions },
+			{ "topUpdates", topUpdates }, { "residentBLAS", bottoms.size() },
 			{ "residentBytes", completion ? ResidentBytes() : 0 }, { "budgetDeferrals", budgetDeferrals }, { "busyFrames", busyFrames },
 			{ "failure", failure }, { "publishedInstances", published ? published->instances.size() : 0 },
 			{ "omittedInstances", published ? published->omittedInstances : 0 }, { "coverageValid", false }
