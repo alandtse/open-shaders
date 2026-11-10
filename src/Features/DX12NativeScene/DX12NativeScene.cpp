@@ -17,7 +17,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode, NativeShadowRayPreparation)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode, NativeShadowRayPreparation)
 
 
 namespace
@@ -352,6 +352,14 @@ void DX12NativeScene::DrawSettings()
 		}
 		if (changed) ++shadowControlsRevision;
 	}
+    ImGui::SeparatorText("Global native DXGI budget policy");
+    int globalReserve = int(settings.GlobalDXGIHeadroomPercent);
+    if (ImGui::SliderInt("Global DXGI reserve (% of local budget)", &globalReserve, 1, 50)) {
+        settings.GlobalDXGIHeadroomPercent = static_cast<uint32_t>(globalReserve);
+        DX12Native::VideoMemoryBudget::SetHeadroomPercent(settings.GlobalDXGIHeadroomPercent);
+    }
+    ImGui::TextDisabled("Shared by native scene, materials, BLAS/TLAS, lighting, shadows and composite.");
+    ImGui::TextDisabled("Reserve policy changes future admissions; current GPU allocations retire via their fences.");
     ImGui::SeparatorText("Prepared scene VRAM budget");
     const uint32_t pendingSceneBudget = requestedBudget.load();
     uint32_t selectedSceneBudget = pendingSceneBudget != UINT32_MAX ?
@@ -443,6 +451,8 @@ void DX12NativeScene::LoadSettings(json& a_json)
     const uint32_t restoredSceneBudget =
         !a_json.contains("BudgetPolicyVersion") && selected.BudgetMB == 512 ?
         0u : selected.BudgetMB;
+    const auto reservePercent = std::clamp(selected.GlobalDXGIHeadroomPercent, 1u, 50u);
+    DX12Native::VideoMemoryBudget::SetHeadroomPercent(reservePercent);
 	// A compositor requesting the independent layer takes precedence over the
 	// scene configuration's possibly older disabled producer state.
 	if (requestedEnabled.load() != 1) requestedEnabled = selected.Enabled ? 1 : 0;
@@ -457,6 +467,7 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	settings.NativePBR = selected.NativePBR;
 	settings.NativeLLF = selected.NativeLLF;
 	settings.NativeSCM = selected.NativeSCM;
+    settings.GlobalDXGIHeadroomPercent = reservePercent;
         settings.ImportLoosePBR = selected.ImportLoosePBR;
         settings.ImportArchivePBR = selected.ImportArchivePBR;
         settings.RuntimeOnlyMaterials = selected.RuntimeOnlyMaterials;
@@ -492,6 +503,7 @@ void DX12NativeScene::RestoreDefaultSettings()
 	requestedFrameBudget = Settings{}.FrameBudgetMB;
 	requestedMaterialBatch = Settings{}.MaterialBatchMB;
 	{ std::scoped_lock lock(settingsMutex); settings = Settings{}; ++shadowControlsRevision; }
+    DX12Native::VideoMemoryBudget::SetHeadroomPercent(DX12Native::VideoMemoryBudget::kDefaultHeadroomPercent);
 	resetRequested = true;
 }
 void DX12NativeScene::OnRuntimeDisabled() { resetRequested = true; }
@@ -991,6 +1003,7 @@ void DX12NativeScene::PublishDiagnostics()
 	const auto bindings = materialBindings.Get();
 	const auto retainedPages = DX12Native::RetainedMaterialPageBytes();
 	json snapshot{ { "enabled", settings.Enabled }, { "nativeOwnership", OwnsNativeFeatures() },
+        { "globalDXGIHeadroomPercent", DX12Native::VideoMemoryBudget::HeadroomPercent() },
 		{ "nativePBR", globals::features::nativePBR.IsActive() }, { "nativeLLF", globals::features::nativeLLF.IsActive() },
 		{ "nativeSCM", globals::features::nativeSCM.IsActive() },
 		{ "nativeLightSource", OwnsNativeFeatures() ? "prepared-priority-unified" : "prepared-cell" },

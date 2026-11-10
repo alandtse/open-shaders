@@ -28,6 +28,7 @@ struct DX12NativeScene final : Feature
 		bool NativePBR = true, NativeLLF = true, NativeSCM = true;
 		uint32_t BudgetMB = 0, FrameBudgetMB = 0, MaterialBatchMB = 16; // BudgetMB=0: automatic DXGI
         uint32_t BudgetPolicyVersion = 1; // Migrate legacy 512 MiB default to auto
+        uint32_t GlobalDXGIHeadroomPercent = DX12Native::VideoMemoryBudget::kDefaultHeadroomPercent;
 		bool UseLivePBR = false; // Legacy config field; NativePBR now follows DX12 ownership.
         bool ImportLoosePBR = false; // Separate opt-in for bounded loose-file DDS residency.
         bool ImportArchivePBR = false; // Further opt-in: archive resource manager fallback.
