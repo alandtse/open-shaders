@@ -823,6 +823,7 @@ else()
         COMMAND ${CMAKE_COMMAND} -E false
         VERBATIM)
 endif()
+include(cmake/NativeDXCCandidates.cmake)
 # A package install fails on a payload file a skipped download left absent, so the only
 # path left to guard is the AIO archive, which is staged from the tree rather than installed.
 if(SKIP_RUNTIME_DOWNLOADS)

@@ -281,6 +281,13 @@
             "targets": ["native_shaders_only"]
         },
         {
+            "name": "Native-DXC-Pass-2",
+            "description": "Compile native DXIL plus isolated experimental DXC 6.5 candidates, without FXC cache, DLL or packaging",
+            "configurePreset": "ALL",
+            "configuration": "Release",
+            "targets": ["native_shader_pass_2"]
+        },
+        {
             "name": "Debug",
             "description": "Debug build for CS SKSE plugin, generate an AIO folder thats ready to copy",
             "configurePreset": "ALL-DEBUG",
