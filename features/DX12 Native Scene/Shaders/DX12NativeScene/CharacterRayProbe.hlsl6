@@ -15,7 +15,17 @@ cbuffer ProbeConstants : register(b0)
     uint IndexByteOffset;
     uint TargetInstanceMask;
     uint OutputByteOffset;
+    float4 InstanceWorldRow0;
+    float4 InstanceWorldRow1;
+    float4 InstanceWorldRow2;
 };
+
+float3 ToWorld(float3 localPosition)
+{
+    const float4 v = float4(localPosition, 1.0);
+    return float3(dot(v, InstanceWorldRow0),
+        dot(v, InstanceWorldRow1), dot(v, InstanceWorldRow2));
+}
 
 [numthreads(1, 1, 1)]
 void main(uint3 threadID : SV_DispatchThreadID)
@@ -38,9 +48,9 @@ void main(uint3 threadID : SV_DispatchThreadID)
         if (any(idx >= VertexCount))
             continue;
 
-        const float3 a = asfloat(DeformedPositions.Load3(idx.x * 12u));
-        const float3 b = asfloat(DeformedPositions.Load3(idx.y * 12u));
-        const float3 c = asfloat(DeformedPositions.Load3(idx.z * 12u));
+        const float3 a = ToWorld(asfloat(DeformedPositions.Load3(idx.x * 12u)));
+        const float3 b = ToWorld(asfloat(DeformedPositions.Load3(idx.y * 12u)));
+        const float3 c = ToWorld(asfloat(DeformedPositions.Load3(idx.z * 12u)));
         if (!all(isfinite(a)) || !all(isfinite(b)) || !all(isfinite(c)))
             continue;
 

@@ -19,6 +19,9 @@ namespace DX12Native
     {
         winrt::com_ptr<ID3D12Device> device;
         std::shared_ptr<const CharacterDeformedResult> deformation;
+        // Rigid geometry uses the native GPU source directly; its world-space
+        // transform belongs to the TLAS instance, not to this reusable BLAS.
+        std::shared_ptr<const CharacterStagedMesh> rigidSource;
         // Pose-specific validation travels with this immutable GPU generation.
         std::optional<CharacterDeformValidation> validation;
         winrt::com_ptr<ID3D12Resource> acceleration;
@@ -270,6 +273,129 @@ namespace DX12Native
         CharacterBLASRetirement::Retain(submission);
         if (FAILED(queue->Signal(output->completion.get(), output->completionValue)))
             throw std::runtime_error("Native character BLAS fence signal failed");
+        return output;
+    }
+
+    /** Static-topology DX12 BLAS for an opaque, CPU-backed rigid character
+     * attachment. Transform changes never rebuild this bottom level; the
+     * one-instance/multi-instance TLAS owns the actor-space transform.
+     */
+    inline std::shared_ptr<const CharacterIsolatedBLAS> BuildCharacterRigidBLAS(
+        ID3D12Device* device, ID3D12CommandQueue* queue,
+        std::shared_ptr<const CharacterStagedMesh> mesh)
+    {
+        if (!device || !queue || !mesh || mesh->skinned ||
+            !mesh->source || !mesh->vertices || mesh->indices < 3u ||
+            mesh->indices % 3u != 0u || mesh->vertexStride != 12u ||
+            mesh->indexOffset % 4u != 0u ||
+            !CharacterBLASRetirement::CanSubmit())
+            return {};
+        const uint64_t bytes = mesh->source->GetDesc().Width;
+        const uint64_t indicesBytes = uint64_t(mesh->indices) * 4ull;
+        if (mesh->indexOffset > bytes ||
+            indicesBytes > bytes - mesh->indexOffset)
+            return {};
+        winrt::com_ptr<ID3D12Device5> dxr;
+        if (FAILED(device->QueryInterface(IID_PPV_ARGS(dxr.put()))))
+            return {};
+
+        D3D12_RAYTRACING_GEOMETRY_DESC geometry{};
+        geometry.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+        geometry.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+        geometry.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+        geometry.Triangles.VertexCount = mesh->vertices;
+        geometry.Triangles.VertexBuffer.StartAddress =
+            mesh->source->GetGPUVirtualAddress();
+        geometry.Triangles.VertexBuffer.StrideInBytes = 12u;
+        geometry.Triangles.IndexFormat = DXGI_FORMAT_R32_UINT;
+        geometry.Triangles.IndexCount = mesh->indices;
+        geometry.Triangles.IndexBuffer =
+            mesh->source->GetGPUVirtualAddress() + mesh->indexOffset;
+        if (!geometry.Triangles.VertexBuffer.StartAddress ||
+            !geometry.Triangles.IndexBuffer)
+            return {};
+
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
+        inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+        inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+        inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+        inputs.NumDescs = 1;
+        inputs.pGeometryDescs = &geometry;
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO info{};
+        dxr->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &info);
+        if (!info.ResultDataMaxSizeInBytes ||
+            info.ResultDataMaxSizeInBytes == UINT64_MAX ||
+            !info.ScratchDataSizeInBytes ||
+            info.ScratchDataSizeInBytes == UINT64_MAX)
+            return {};
+
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        const auto resultDesc = CD3DX12_RESOURCE_DESC::Buffer(
+            info.ResultDataMaxSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        const auto scratchDesc = CD3DX12_RESOURCE_DESC::Buffer(
+            info.ScratchDataSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        const uint64_t resultBytes = device->GetResourceAllocationInfo(
+            0, 1, &resultDesc).SizeInBytes;
+        const uint64_t scratchBytes = device->GetResourceAllocationInfo(
+            0, 1, &scratchDesc).SizeInBytes;
+        if (!resultBytes || resultBytes == UINT64_MAX ||
+            !scratchBytes || scratchBytes == UINT64_MAX ||
+            resultBytes > UINT64_MAX - scratchBytes)
+            return {};
+        VideoMemoryBudget policy;
+        const auto budget = policy.Query(device, mesh->allocationBytes, 0);
+        if (!budget.dxgiAvailable ||
+            mesh->allocationBytes > budget.effectiveBytes ||
+            resultBytes + scratchBytes >
+                budget.effectiveBytes - mesh->allocationBytes)
+            return {};
+
+        auto output = std::make_shared<CharacterIsolatedBLAS>();
+        output->device.copy_from(device);
+        output->rigidSource = std::move(mesh);
+        output->actorFormID = output->rigidSource->actorFormID;
+        output->partOrdinal = output->rigidSource->partOrdinal;
+        output->sourceToken = output->rigidSource->sourceToken;
+        output->poseFrame = output->rigidSource->captureFrame;
+        output->vertices = output->rigidSource->vertices;
+        output->indices = output->rigidSource->indices;
+        output->indexOffset = output->rigidSource->indexOffset;
+        output->allocationBytes = resultBytes;
+        output->scratchBytes = scratchBytes;
+
+        auto submitted = std::make_shared<CharacterBLASSubmission>();
+        submitted->result = output;
+        if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
+                &resultDesc, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
+                nullptr, IID_PPV_ARGS(output->acceleration.put()))) ||
+            FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
+                &scratchDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                nullptr, IID_PPV_ARGS(submitted->scratch.put()))) ||
+            FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+                IID_PPV_ARGS(submitted->allocator.put()))) ||
+            FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+                submitted->allocator.get(), nullptr,
+                IID_PPV_ARGS(submitted->commands.put()))) ||
+            FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE,
+                IID_PPV_ARGS(output->completion.put()))))
+            throw std::runtime_error("Native rigid attachment BLAS resources unavailable");
+
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
+        build.Inputs = inputs;
+        build.DestAccelerationStructureData = output->acceleration->GetGPUVirtualAddress();
+        build.ScratchAccelerationStructureData = submitted->scratch->GetGPUVirtualAddress();
+        submitted->commands->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
+        const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(output->acceleration.get());
+        submitted->commands->ResourceBarrier(1, &barrier);
+        if (FAILED(submitted->commands->Close()))
+            throw std::runtime_error("Native rigid attachment BLAS command list invalid");
+
+        ID3D12CommandList* lists[]{ submitted->commands.get() };
+        queue->ExecuteCommandLists(1, lists);
+        output->completionValue = 1;
+        CharacterBLASRetirement::Retain(submitted);
+        if (FAILED(queue->Signal(output->completion.get(), output->completionValue)))
+            throw std::runtime_error("Native rigid attachment BLAS fence failed");
         return output;
     }
 }

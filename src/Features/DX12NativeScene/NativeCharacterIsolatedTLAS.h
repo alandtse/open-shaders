@@ -4,6 +4,8 @@
 
 #include <directx/d3dx12.h>
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -21,6 +23,7 @@ namespace DX12Native
     {
         std::shared_ptr<const CharacterIsolatedBLAS> bottom;
         std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> bottoms;
+        std::vector<std::array<float, 12>> instanceTransforms;
         winrt::com_ptr<ID3D12Resource> acceleration;
         winrt::com_ptr<ID3D12Fence> completion;
         uint64_t fenceValue = 0, allocationBytes = 0, scratchBytes = 0;
@@ -85,16 +88,35 @@ namespace DX12Native
      */
     inline std::shared_ptr<const CharacterIsolatedTLAS> BuildCharacterMultiPartTLAS(
         ID3D12Device* device, ID3D12CommandQueue* queue,
-        std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> bottoms)
+        std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> bottoms,
+        std::vector<std::array<float, 12>> instanceTransforms = {},
+        uint32_t observationFrame = 0)
     {
         if (!device || !queue || bottoms.empty() || bottoms.size() > 8 ||
             !CharacterTLASRetirement::CanSubmit()) return {};
-        for (const auto& part : bottoms)
-            if (!part || !part->Ready() || !part->acceleration ||
-                !part->deformation || !part->validation ||
-                !part->validation->sane ||
-                part->validation->poseFrame != part->poseFrame)
+        const std::array<float, 12> identity{
+            1.f, 0.f, 0.f, 0.f,
+            0.f, 1.f, 0.f, 0.f,
+            0.f, 0.f, 1.f, 0.f };
+        if (instanceTransforms.empty())
+            instanceTransforms.assign(bottoms.size(), identity);
+        if (instanceTransforms.size() != bottoms.size()) return {};
+        for (size_t i = 0; i < bottoms.size(); ++i) {
+            const auto& part = bottoms[i];
+            if (!part || !part->Ready() || !part->acceleration)
                 return {};
+            if (part->rigidSource) {
+                if (!part->rigidSource->source || part->rigidSource->skinned ||
+                    part->rigidSource->sourceToken != part->sourceToken)
+                    return {};
+            } else if (!part->deformation || !part->validation ||
+                !part->validation->sane ||
+                part->validation->poseFrame != part->poseFrame) {
+                return {};
+            }
+            for (const float component : instanceTransforms[i])
+                if (!std::isfinite(component)) return {};
+        }
 
         winrt::com_ptr<ID3D12Device5> dxr;
         if (FAILED(device->QueryInterface(IID_PPV_ARGS(dxr.put()))))
@@ -140,12 +162,19 @@ namespace DX12Native
         uint64_t known = 0;
         for (const auto& part : bottoms) {
             uint64_t partBytes = part->allocationBytes;
-            if (part->deformation->allocationBytes > UINT64_MAX - partBytes) return {};
-            partBytes += part->deformation->allocationBytes;
-            if (part->deformation->input) {
-                const auto staged = part->deformation->input->residentBytes;
-                if (staged > UINT64_MAX - partBytes) return {};
-                partBytes += staged;
+            if (part->rigidSource) {
+                if (part->rigidSource->allocationBytes > UINT64_MAX - partBytes)
+                    return {};
+                partBytes += part->rigidSource->allocationBytes;
+            } else {
+                if (part->deformation->allocationBytes > UINT64_MAX - partBytes)
+                    return {};
+                partBytes += part->deformation->allocationBytes;
+                if (part->deformation->input) {
+                    const auto staged = part->deformation->input->residentBytes;
+                    if (staged > UINT64_MAX - partBytes) return {};
+                    partBytes += staged;
+                }
             }
             if (partBytes > UINT64_MAX - known) return {};
             known += partBytes;
@@ -159,10 +188,12 @@ namespace DX12Native
 
         auto tlas = std::make_shared<CharacterIsolatedTLAS>();
         tlas->bottoms = std::move(bottoms);
+        tlas->instanceTransforms = std::move(instanceTransforms);
         tlas->bottom = tlas->bottoms.front();
         tlas->allocationBytes = resultBytes;
         tlas->scratchBytes = scratchBytes;
-        tlas->poseFrame = tlas->bottom->poseFrame;
+        tlas->poseFrame = observationFrame ? observationFrame :
+            tlas->bottom->poseFrame;
         tlas->actorFormID = tlas->bottom->actorFormID;
         tlas->partOrdinal = tlas->bottom->partOrdinal;
         auto submission = std::make_shared<CharacterTLASSubmission>();
@@ -183,9 +214,9 @@ namespace DX12Native
             tlas->bottoms.size());
         for (size_t i = 0; i < instances.size(); ++i) {
             auto& instance = instances[i];
-            instance.Transform[0][0] = 1.0f;
-            instance.Transform[1][1] = 1.0f;
-            instance.Transform[2][2] = 1.0f;
+            std::memcpy(instance.Transform,
+                tlas->instanceTransforms[i].data(),
+                sizeof(instance.Transform));
             instance.InstanceID = uint32_t(i);
             // Dedicated per-instance bits let the diagnostic shader prove
             // that each sample intersects its intended BLAS. Visibility

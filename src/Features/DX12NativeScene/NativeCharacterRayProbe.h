@@ -4,6 +4,7 @@
 
 #include <directx/d3dx12.h>
 #include <bit>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -70,7 +71,7 @@ namespace DX12Native
             params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
             params[3].Descriptor.ShaderRegister = 0;
             params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-            params[4].Constants = { 0, 0, 5 };
+            params[4].Constants = { 0, 0, 17 };
             const D3D12_ROOT_SIGNATURE_DESC desc{
                 5, params, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE };
             winrt::com_ptr<ID3DBlob> serialized, errors;
@@ -184,7 +185,9 @@ namespace DX12Native
     {
         if (!device || !queue || !scene || !scene->Ready() ||
             !scene->acceleration || scene->bottoms.empty() ||
-            scene->bottoms.size() > 8u || !CharacterRayRetirement::CanSubmit())
+            scene->bottoms.size() > 8u ||
+            scene->instanceTransforms.size() != scene->bottoms.size() ||
+            !CharacterRayRetirement::CanSubmit())
             return {};
 
         struct RayInput
@@ -195,25 +198,30 @@ namespace DX12Native
         std::vector<RayInput> rayInputs;
         rayInputs.reserve(scene->bottoms.size());
         for (const auto& bottom : scene->bottoms) {
-            if (!bottom || !bottom->Ready() || !bottom->deformation ||
-                !bottom->deformation->Ready() ||
-                !bottom->deformation->input || !bottom->deformation->positions)
-                return {};
+            if (!bottom || !bottom->Ready()) return {};
             const auto deformation = bottom->deformation;
-            std::shared_ptr<const CharacterStagedMesh> mesh;
-            for (const auto& entry : deformation->input->meshes) {
-                if (entry->skinned &&
-                    entry->actorFormID == bottom->actorFormID &&
-                    entry->partOrdinal == bottom->partOrdinal &&
-                    entry->sourceToken == bottom->sourceToken &&
-                    entry->source && entry->vertices >= 3 &&
-                    entry->indices >= 3 && entry->indices % 3u == 0u &&
-                    entry->indexOffset <= UINT32_MAX) {
-                    mesh = entry;
-                    break;
+            std::shared_ptr<const CharacterStagedMesh> mesh = bottom->rigidSource;
+            if (!mesh) {
+                if (!deformation || !deformation->Ready() ||
+                    !deformation->input || !deformation->positions)
+                    return {};
+                for (const auto& entry : deformation->input->meshes) {
+                    if (entry->skinned &&
+                        entry->actorFormID == bottom->actorFormID &&
+                        entry->partOrdinal == bottom->partOrdinal &&
+                        entry->sourceToken == bottom->sourceToken &&
+                        entry->source && entry->vertices >= 3 &&
+                        entry->indices >= 3 && entry->indices % 3u == 0u &&
+                        entry->indexOffset <= UINT32_MAX) {
+                        mesh = entry;
+                        break;
+                    }
                 }
             }
-            if (!mesh) return {};
+            if (!mesh || !mesh->source || mesh->vertices < 3 ||
+                mesh->indices < 3 || mesh->indices % 3u ||
+                mesh->indexOffset > UINT32_MAX)
+                return {};
             const uint64_t sourceBytes = mesh->source->GetDesc().Width;
             const uint64_t indexBytes = uint64_t(mesh->indices) * 4ull;
             if (mesh->indexOffset > sourceBytes ||
@@ -247,12 +255,19 @@ namespace DX12Native
 
         uint64_t known = scene->allocationBytes;
         for (const auto& bottom : scene->bottoms) {
-            const auto deformation = bottom->deformation;
-            for (const uint64_t bytes : {
-                bottom->allocationBytes, deformation->allocationBytes,
-                deformation->input->residentBytes }) {
-                if (bytes > UINT64_MAX - known) return {};
-                known += bytes;
+            if (bottom->allocationBytes > UINT64_MAX - known) return {};
+            known += bottom->allocationBytes;
+            if (bottom->rigidSource) {
+                if (bottom->rigidSource->allocationBytes > UINT64_MAX - known)
+                    return {};
+                known += bottom->rigidSource->allocationBytes;
+            } else {
+                const auto deformation = bottom->deformation;
+                for (const uint64_t bytes : {
+                    deformation->allocationBytes, deformation->input->residentBytes }) {
+                    if (bytes > UINT64_MAX - known) return {};
+                    known += bytes;
+                }
             }
         }
         VideoMemoryBudget memory;
@@ -296,25 +311,35 @@ namespace DX12Native
             probe->output->GetGPUVirtualAddress());
         for (size_t i = 0; i < rayInputs.size(); ++i) {
             const auto& input = rayInputs[i];
-            // Isolated skinning/BLAS leave the position buffer in UAV state.
-            const auto positionRead = CD3DX12_RESOURCE_BARRIER::Transition(
-                input.pose->positions.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            commands->ResourceBarrier(1, &positionRead);
+            // Deformed skinned vertices are UAV-backed; rigid bind vertices
+            // are a generic-read upload buffer transformed by the TLAS.
+            if (input.pose) {
+                const auto read = CD3DX12_RESOURCE_BARRIER::Transition(
+                    input.pose->positions.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                commands->ResourceBarrier(1, &read);
+            }
+            auto* positions = input.pose ?
+                input.pose->positions.get() : input.mesh->source.get();
             commands->SetComputeRootShaderResourceView(1,
-                input.pose->positions->GetGPUVirtualAddress());
+                positions->GetGPUVirtualAddress());
             commands->SetComputeRootShaderResourceView(2,
                 input.mesh->source->GetGPUVirtualAddress());
-            const uint32_t constants[5]{
+            std::array<uint32_t, 17> constants{
                 input.mesh->vertices, input.mesh->indices,
                 uint32_t(input.mesh->indexOffset),
                 1u << uint32_t(i), uint32_t(i * 16u) };
-            commands->SetComputeRoot32BitConstants(4, 5, constants, 0);
+            std::memcpy(constants.data() + 5,
+                probe->scene->instanceTransforms[i].data(), 12u * sizeof(float));
+            commands->SetComputeRoot32BitConstants(4,
+                uint32_t(constants.size()), constants.data(), 0);
             commands->Dispatch(1, 1, 1);
-            const auto restore = CD3DX12_RESOURCE_BARRIER::Transition(
-                input.pose->positions.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            commands->ResourceBarrier(1, &restore);
+            if (input.pose) {
+                const auto restore = CD3DX12_RESOURCE_BARRIER::Transition(
+                    input.pose->positions.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                commands->ResourceBarrier(1, &restore);
+            }
         }
         const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(probe->output.get());
         commands->ResourceBarrier(1, &barrier);
