@@ -1014,7 +1014,6 @@ try {
 		logger::warn("[Presets] Save or discard unsaved OS Editor record edits before changing preset record sources");
 		return false;
 	}
-	const auto pausedEntries = SceneSettingsManager::GetSingleton()->CapturePresetPauses();
 	const json previousState{ { kUserSettingsKey, SerializeActiveState() } };
 	const auto previousPipelineRevision = pipelineRevision;
 	const auto previousFormRoots = GetActiveFormPackRoots();
@@ -1036,7 +1035,7 @@ try {
 				history.emplace();
 			BaselineManager::GetSingleton()->Refresh();
 			if (globals::state->ReapplyPresetLayers()) {
-				SceneSettingsManager::GetSingleton()->ReloadOverwrites(pausedEntries);
+				SceneSettingsManager::GetSingleton()->ReloadOverwrites();
 				formReloadAttempted = reloadFormEdits;
 				if ((!reloadFormEdits || FormEditSources::ReloadActivePack()) && SaveActiveState()) {
 					if (history)
@@ -1072,7 +1071,7 @@ try {
 	restore("baseline settings", [&] { BaselineManager::GetSingleton()->Refresh(); return globals::state->ReapplyPresetLayers(); });
 	restore("pipeline", [&] { return PostProcessingMode::Set(previousMode, false); });
 	restore("live settings", [&] { globals::state->LoadFromJson(previousSettings); return true; });
-	restore("scene settings", [&] { SceneSettingsManager::GetSingleton()->ReloadOverwrites(pausedEntries); return true; });
+	restore("scene settings", [&] { SceneSettingsManager::GetSingleton()->ReloadOverwrites(); return true; });
 	if (formReloadAttempted)
 		restore("form sources", [] { return FormEditSources::ReloadActivePack(); });
 	globals::state->CheckSettingsChanged();
@@ -1218,7 +1217,8 @@ try {
 			actualPath = root.to_string() + edit.path;
 		}
 		const auto prototype = PresetContent::EditableValue(*file, edit.path);
-		const auto result = PresetContent::ReplaceSetting(document->second.replacement, actualPath, edit.expected, edit.value, &prototype);
+		const auto result = PresetContent::ReplaceSetting(document->second.replacement, actualPath, edit.expected, edit.value,
+			&prototype, PresetContent::IsSceneFile(edit.relative));
 		if (result != Result::Changed && result != Result::Unchanged)
 			return result;
 		if (IsScenePackEnabled(edit.packId))

@@ -1694,7 +1694,7 @@ void EditorWindow::SaveUnsavedWidgets()
 
 bool EditorWindow::HasUnsavedChanges()
 {
-	// Scene Manager saves itself as it goes; it is unsaved only while an edit waits on that save.
+	// Include scene previews that still need an explicit Save.
 	if (auto* sceneManager = SceneSettingsManager::GetSingleton(); sceneManager && sceneManager->HasUnsavedChanges())
 		return true;
 

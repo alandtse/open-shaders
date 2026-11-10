@@ -4814,12 +4814,14 @@ namespace Util
 			state.isOpen = false;
 			state.closing = false;
 			state.flyoutHovered = false;
+			state.flyoutHasActiveItem = false;
 			state.activeId = 0;
 			state.blockedHoverId = blockedHoverId;
 			state.closeTimer = 0.0f;
 			state.openProgress = 0.0f;
 			state.keepOpenForNavigation = false;
 			state.draggedFromFlyout = false;
+			state.resizeHoverPos.reset();
 		}
 
 		bool ContainsPoint(const ImVec2& min, const ImVec2& max, const ImVec2& point)
@@ -4851,19 +4853,22 @@ namespace Util
 			       ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 		}
 
-		ImVec2 GetFlyoutPos(FlyoutState& state, const ImVec2& sourceMin, const ImVec2& sourceMax,
-			float slideOffset, float scale, const ImRect& visible, const FlyoutStyle& style, bool& canOpen)
+		ImVec2 GetFlyoutPos(const FlyoutState& state, float slideOffset, float scale, const ImRect& visible,
+			const FlyoutStyle& style, ImVec2& pivot, bool& canOpen)
 		{
 			const float gap = style.verticalGap * scale;
-			const float horizontalPivot = style.centerOnSource ? 0.5f : 1.0f;
+			const float sourceAnchor = style.centerOnSource ? (state.sourceMin.x + state.sourceMax.x) * 0.5f : state.sourceMax.x;
+			const bool fitsBelow = state.sourceMax.y + gap + state.lastSize.y <= visible.Max.y;
+			const bool fitsAbove = state.sourceMin.y - gap - state.lastSize.y >= visible.Min.y;
+			pivot = ImVec2(style.centerOnSource ? 0.5f : 1.0f, fitsBelow ? 0.0f : 1.0f);
 			ImVec2 pos(
-				style.centerOnSource ? (sourceMin.x + sourceMax.x) * 0.5f : sourceMax.x,
-				sourceMax.y + gap - slideOffset);
+				sourceAnchor,
+				fitsBelow ? state.sourceMax.y + gap - slideOffset : state.sourceMin.y - gap + slideOffset);
 
-			canOpen = state.lastSize.x <= visible.GetWidth() && sourceMax.y + gap + state.lastSize.y <= visible.Max.y;
+			canOpen = state.lastSize.x <= visible.GetWidth() && (fitsBelow || fitsAbove);
 			if (state.lastSize.x > 0.0f) {
-				const float minimumAnchor = visible.Min.x + state.lastSize.x * horizontalPivot;
-				const float maximumAnchor = visible.Max.x - state.lastSize.x * (1.0f - horizontalPivot);
+				const float minimumAnchor = visible.Min.x + state.lastSize.x * pivot.x;
+				const float maximumAnchor = visible.Max.x - state.lastSize.x * (1.0f - pivot.x);
 				pos.x = minimumAnchor <= maximumAnchor ?
 				            std::clamp(pos.x, minimumAnchor, maximumAnchor) :
 				            (visible.Min.x + visible.Max.x) * 0.5f;
@@ -4889,9 +4894,8 @@ namespace Util
 			}
 
 			const int currentFrame = ImGui::GetFrameCount();
-			if (state.lastFrame >= 0 && currentFrame > state.lastFrame + 1)
+			if (state.isOpen && currentFrame > state.lastSourceFrame + 1)
 				ResetFlyout(state);
-			state.lastFrame = currentFrame;
 
 			if (state.pendingFocusReturnId == itemId) {
 				if (submittedItemId == itemId) {
@@ -4924,7 +4928,7 @@ namespace Util
 				}
 			} else {
 				const bool wantsOpen = (hovered && state.blockedHoverId != itemId) || sourcePressed;
-				if (wantsOpen && (!state.isOpen || (state.activeId != itemId && !state.flyoutHovered))) {
+				if (wantsOpen && (!state.isOpen || (state.activeId != itemId && !state.flyoutHovered && !state.flyoutHasActiveItem))) {
 					const bool freshOpen = !state.isOpen || state.activeId != itemId;
 					state.activeId = itemId;
 					state.isOpen = true;
@@ -4933,9 +4937,12 @@ namespace Util
 					if (freshOpen) {
 						state.openProgress = 0.0f;
 						state.keepOpenForNavigation = navigationPressed;
+						state.resizeHoverPos.reset();
 						state.windowName.clear();
 						std::format_to(std::back_inserter(state.windowName), "{}{}",
 							flyoutStyle.blurBackground ? kBlurredFlyoutWindowPrefix : kFlyoutWindowPrefix, itemId);
+						const auto* window = ImGui::FindWindowByName(state.windowName.c_str());
+						state.lastSize = window ? window->Size : ImVec2{};
 					}
 				}
 
@@ -4949,6 +4956,7 @@ namespace Util
 			if (!state.isOpen || state.activeId != itemId)
 				return false;
 
+			state.lastSourceFrame = currentFrame;
 			if (!state.closing)
 				state.openProgress = std::min(state.openProgress + kFlyoutSlideOpenSpeed * deltaTime, 1.0f);
 
@@ -4960,16 +4968,15 @@ namespace Util
 			const float slideOffset = (1.0f - easedProgress) * kFlyoutSlideDistance * scale;
 			const float alpha = std::min(state.openProgress * kFlyoutAlphaScale, 1.0f);
 			bool canOpen = true;
-			const ImVec2 flyoutPos = GetFlyoutPos(
-				state, sourceMin, sourceMax, slideOffset, scale, GetFlyoutWindowRect(), flyoutStyle, canOpen);
+			ImVec2 pivot;
+			const ImVec2 flyoutPos = GetFlyoutPos(state, slideOffset, scale, GetFlyoutWindowRect(), flyoutStyle, pivot, canOpen);
 			if (!canOpen) {
 				state.blockedHoverId = itemId;
 				ResetFlyout(state, true);
 				return false;
 			}
 
-			ImGui::SetNextWindowPos(
-				flyoutPos, ImGuiCond_Always, ImVec2(flyoutStyle.centerOnSource ? 0.5f : 1.0f, 0.0f));
+			ImGui::SetNextWindowPos(flyoutPos, ImGuiCond_Always, pivot);
 			ImGui::SetNextWindowBgAlpha(flyoutStyle.windowBackgroundAlpha * alpha);
 			if (focusOnOpen)
 				ImGui::SetNextWindowFocus();
@@ -4986,6 +4993,11 @@ namespace Util
 			SKSE::stl::scope_exit restoreStyle([]() noexcept { ImGui::PopStyleVar(3); });
 
 			const bool visible = ImGui::Begin(state.windowName.c_str(), nullptr, flags);
+			const ImVec2 mousePos = ImGui::GetIO().MousePos;
+			// Retain hover if resizing moves the flyout out from under a stationary pointer.
+			if (state.lastSize.x != ImGui::GetWindowWidth() && state.flyoutHovered &&
+				ContainsPoint(state.flyoutMin, state.flyoutMax, mousePos))
+				state.resizeHoverPos = mousePos;
 			state.lastSize = ImGui::GetWindowSize();
 			state.flyoutMin = ImGui::GetWindowPos();
 			state.flyoutMax = ImVec2(state.flyoutMin.x + state.lastSize.x, state.flyoutMin.y + state.lastSize.y);
@@ -5015,7 +5027,11 @@ namespace Util
 			if ((dismissRequested || navigationActionClosed) && state.activeId != 0)
 				state.pendingFocusReturnId = state.activeId;
 
-			state.flyoutHovered = flyoutHovered;
+			const ImVec2 mousePos = ImGui::GetIO().MousePos;
+			if (state.resizeHoverPos && (mousePos.x != state.resizeHoverPos->x || mousePos.y != state.resizeHoverPos->y))
+				state.resizeHoverPos.reset();
+			state.flyoutHovered = flyoutHovered || state.resizeHoverPos.has_value();
+			state.flyoutHasActiveItem = GImGui->ActiveId != 0 && GImGui->ActiveIdWindow == ImGui::GetCurrentWindow();
 			if (flyoutHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
 				state.keepOpenForNavigation = false;
 			if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && flyoutHovered)
@@ -5030,7 +5046,6 @@ namespace Util
 			ImGui::End();
 			ImGui::PopStyleVar(3);
 
-			const ImVec2 mousePos = ImGui::GetIO().MousePos;
 			const bool overSource = ContainsPoint(state.sourceMin, state.sourceMax, mousePos);
 			if (!dismissRequested && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !flyoutHovered && !overSource) {
 				ResetFlyout(state);
@@ -5039,17 +5054,19 @@ namespace Util
 
 			const float deltaTime = ImGui::GetIO().DeltaTime;
 			const bool mouseDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
-			const ImVec2 bridgeMin(
-				std::min(state.sourceMin.x, state.flyoutMin.x), std::min(state.sourceMax.y, state.flyoutMax.y));
-			const ImVec2 bridgeMax(
-				std::max(state.sourceMax.x, state.flyoutMax.x), std::max(state.sourceMin.y, state.flyoutMin.y));
+			const bool above = state.flyoutMin.y < state.sourceMin.y;
+			const float sourceEdge = above ? state.sourceMin.y : state.sourceMax.y;
+			const float flyoutEdge = above ? state.flyoutMax.y : state.flyoutMin.y;
+			const ImVec2 bridgeMin(std::min(state.sourceMin.x, state.flyoutMin.x), std::min(sourceEdge, flyoutEdge));
+			const ImVec2 bridgeMax(std::max(state.sourceMax.x, state.flyoutMax.x), std::max(sourceEdge, flyoutEdge));
 			const bool sourceHovered = overSource || ContainsPoint(bridgeMin, bridgeMax, mousePos);
 
 			if (state.closing) {
 				state.openProgress = std::max(state.openProgress - kFlyoutSlideCloseSpeed * deltaTime, 0.0f);
 				if (state.openProgress <= 0.0f)
 					ResetFlyout(state, true);
-			} else if (flyoutHovered || (flyoutFocused && state.keepOpenForNavigation) || sourceHovered || state.draggedFromFlyout || mouseDragging) {
+			} else if (state.flyoutHovered || state.flyoutHasActiveItem || (flyoutFocused && state.keepOpenForNavigation) ||
+					   sourceHovered || state.draggedFromFlyout || mouseDragging) {
 				state.closeTimer = 0.0f;
 			} else {
 				state.closeTimer += deltaTime;
