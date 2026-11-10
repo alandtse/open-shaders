@@ -25,6 +25,22 @@ namespace
 {
     // Count each shared BLAS once; a combined scene must not double-count
     // memory merely because multiple TLAS instances refer to one bottom level.
+    // Lightweight, no-decode preflight for already-cached full CELL packages.
+    // This is an estimate of geometry + BLAS result/scratch + shading; DXGI
+    // remains the authority for actual admission. No render-thread file parse.
+    uint64_t EstimateCachedCellFootprint(const std::filesystem::path& directory)
+    {
+        std::error_code error;
+        const auto geom = std::filesystem::file_size(directory / "cell-geometry.rsgp", error);
+        if (error || geom < 16 || geom > DX12Packed::kMaximumPackBytes) return 0;
+        error.clear();
+        const auto shading = std::filesystem::file_size(directory / "cell-shading.rssp", error);
+        if (error || shading < 16 || shading > DX12Packed::kMaximumPackBytes) return 0;
+        constexpr uint64_t kFixedASAndDescriptorEstimate = 64ull * 1024 * 1024;
+        return uint64_t(geom) * 3ull + uint64_t(shading) * 2ull +
+            kFixedASAndDescriptorEstimate;
+    }
+
     uint64_t NativeAccelerationResidentBytes(const std::shared_ptr<const DX12Native::TopLevel>& scene)
     {
         if (!scene) return 0;
@@ -747,11 +763,12 @@ void DX12NativeScene::EarlyPrepass()
             const DX12ResourceService::CellRequest key{
                 std::string(file->GetFilename()), cell->GetLocalFormID() };
             const auto& player = globals::game::player->world.translate;
-            const auto cellData = prepared.GetCell();
-            // This initial auto estimate uses the known prepared geometry;
-            // missing packages still follow the original full-scene path.
-            const uint64_t estimate = cellData && cellData->bytes <= UINT64_MAX / 2 ?
-                cellData->bytes * 2 : 0;
+            const auto directory = std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") /
+                file->GetFilename() / std::format("{:06X}", cell->GetLocalFormID());
+            const auto estimate = EstimateCachedCellFootprint(directory);
+            // The global DXGI allowance is queried before full-CELL uploads
+            // begin, so cached oversized scenes can choose the grid first.
+            if (backend) SceneMemoryLimit();
             const bool grid = settings.SubdivisionMode == 2 ||
                 (settings.SubdivisionMode == 1 && estimate &&
                     preparedSceneBudgetStatus.dxgiAvailable &&
@@ -828,8 +845,9 @@ void DX12NativeScene::EarlyPrepass()
     // diagnostic TLAS without changing the authoritative live renderer.
     if (settings.SubdivisionMode != 0 && cell->IsInteriorCell()) {
         const auto* file = cell->GetFile(0);
-        const auto full = prepared.GetCell();
-        const uint64_t estimated = full && full->bytes <= UINT64_MAX / 2 ? full->bytes * 2 : 0;
+        const auto fullPackage = std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") /
+            file->GetFilename() / std::format("{:06X}", cell->GetLocalFormID());
+        const uint64_t estimated = EstimateCachedCellFootprint(fullPackage);
         const bool gridSelected = settings.SubdivisionMode == 2 ||
             (settings.SubdivisionMode == 1 && estimated &&
                 preparedSceneBudgetStatus.dxgiAvailable &&
@@ -888,7 +906,16 @@ void DX12NativeScene::EarlyPrepass()
     // Raster continues while partial grid assets become available.
     // In diagnostic/auto mode the established complete-scene renderer
     // remains the normal fallback.
-    const bool exclusiveGrid = settings.SubdivisionMode == 2 &&
+    const auto* fullSource = cell->GetFile(0);
+    const auto cache = fullSource && fullSource->GetFilename() ?
+        std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") /
+            fullSource->GetFilename() / std::format("{:06X}", cell->GetLocalFormID()) :
+        std::filesystem::path{};
+    const auto projected = cache.empty() ? 0 : EstimateCachedCellFootprint(cache);
+    const bool autoGrid = settings.SubdivisionMode == 1 && projected &&
+        preparedSceneBudgetStatus.dxgiAvailable &&
+        projected > preparedSceneBudgetStatus.effectiveBytes;
+    const bool exclusiveGrid = (settings.SubdivisionMode == 2 || autoGrid) &&
         settings.BuildCandidateGridTLAS && settings.UseGridForNativeDXR;
 	if (!exclusiveGrid && !prepared.Requested()) {
 		const auto* source = cell->GetFile(0);
