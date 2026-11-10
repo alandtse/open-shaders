@@ -403,7 +403,6 @@ void DX12NativeScene::DrawSettings()
     ImGui::TextDisabled("Forced + live grid skips expensive full-cell GPU preparation.");
     {
         const auto grid = subcellManager.GetDiagnostics();
-        const auto acceleration = candidateGridAcceleration.GetDiagnostics();
         const auto candidate = candidateGridAcceleration.GetScene();
         const auto bindings = candidateGridBindings.Get();
         const auto active = GetPublishedScene();
