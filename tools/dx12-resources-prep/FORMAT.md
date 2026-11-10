@@ -76,3 +76,9 @@ falls back to normal compilation. Displacement-enabled preparation does not
 reuse cached products until displacement texture provenance is hashed.
 The cache survives work-package cleanup and is independent of CPU/GPU
 subcell residency; it never pins BLAS or DDS textures in GPU memory.
+
+## Exterior WRLD subcell preparation
+
+`DX12ResourcesPrep --worldspace-subcell <Data> <plugin:local-WRLD-ID> <work-output> <Plugins.txt> <quality> <size> <x> <y>` enumerates reference origins in the requested exterior worldspace across CELL records. Mutagen link-cache parent lookup confirms WRLD membership. Manifests carry `scopeType=worldspace` with the worldspace FormKey in the existing `cell` identity field. The game publishes these independent subcell packages beneath `DX12-cache/worldspaces/<plugin>/<WRLD-ID>/subcells/<size>/<x>_<y>/`; interior CELL packages remain unchanged.
+
+**Current coverage remains provisional:** large objects extending from another tile, landscape, foliage, and dynamic meshes require further bounds-aware discovery. This stage must not report complete exterior RT geometry.
