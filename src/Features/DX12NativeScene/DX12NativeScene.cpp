@@ -20,7 +20,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterPlayerOnly, CharacterStageGeometryDX12, CharacterRunSkinningDX12, CharacterValidateSkinningDX12, CharacterBuildIsolatedBLASDX12, CharacterBuildIsolatedTLASDX12, CharacterRunIsolatedRayQueryDX12, CharacterShadowCasterVisibility, CharacterCasterMaxPoseAgeFrames, CharacterMaxActors, CharacterObservationPeriod, CharacterBLASIntervalFrames, CharacterMeshCaptureBatch, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterPlayerOnly, CharacterStageGeometryDX12, CharacterRunSkinningDX12, CharacterValidateSkinningDX12, CharacterBuildIsolatedBLASDX12, CharacterBuildIsolatedTLASDX12, CharacterRunIsolatedRayQueryDX12, CharacterAccumulatePartBLAS, CharacterShadowCasterVisibility, CharacterCasterMaxPoseAgeFrames, CharacterMaxActors, CharacterObservationPeriod, CharacterBLASIntervalFrames, CharacterMeshCaptureBatch, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -395,6 +395,14 @@ void DX12NativeScene::DrawSettings()
         &settings.CharacterRunIsolatedRayQueryDX12)) nativeCharacters.Reset();
     ImGui::EndDisabled();
     ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
+        !settings.CharacterStageGeometryDX12 || !settings.CharacterRunSkinningDX12 ||
+        !settings.CharacterValidateSkinningDX12 ||
+        !settings.CharacterBuildIsolatedBLASDX12);
+    if (ImGui::Checkbox("Accumulate character-part BLAS (isolated testing)",
+        &settings.CharacterAccumulatePartBLAS)) nativeCharacters.Reset();
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Multi-part testing rotates skin palettes; production shadow casting stays off.");
+    ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
         !settings.CharacterStageGeometryDX12 ||
         !settings.CharacterRunSkinningDX12 ||
         !settings.CharacterValidateSkinningDX12 ||
@@ -485,6 +493,8 @@ void DX12NativeScene::DrawSettings()
             "not submitted",
         characterStats.value("isolatedBLASRefit", false) ? "refit" : "build",
         characterStats.value("isolatedBLASFrame", 0u));
+    ImGui::Text("Accumulated character-part BLAS: %zu",
+        characterStats.value("accumulatedBLASParts", size_t{ 0 }));
     ImGui::TextDisabled("BLAS resources %.2f MiB, scratch %.2f MiB, pending %u",
         double(characterStats.value("isolatedBLASBytes", uint64_t{ 0 })) / (1024.0 * 1024.0),
         double(characterStats.value("isolatedBLASScratchBytes", uint64_t{ 0 })) /
@@ -789,6 +799,9 @@ void DX12NativeScene::LoadSettings(json& a_json)
     if (settings.CharacterRunIsolatedRayQueryDX12 != selected.CharacterRunIsolatedRayQueryDX12)
         nativeCharacters.Reset();
     settings.CharacterRunIsolatedRayQueryDX12 = selected.CharacterRunIsolatedRayQueryDX12;
+    if (settings.CharacterAccumulatePartBLAS != selected.CharacterAccumulatePartBLAS)
+        nativeCharacters.Reset();
+    settings.CharacterAccumulatePartBLAS = selected.CharacterAccumulatePartBLAS;
     settings.CharacterShadowCasterVisibility = selected.CharacterShadowCasterVisibility;
     settings.CharacterCasterMaxPoseAgeFrames =
         std::clamp(selected.CharacterCasterMaxPoseAgeFrames, 1u, 30u);
@@ -1477,6 +1490,7 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 	};
     const bool requestCharacterCaster =
         shadowSettings.CharacterShadowCasterVisibility &&
+        !shadowSettings.CharacterAccumulatePartBLAS &&
         shadowSettings.ObserveNativeCharacters &&
         shadowSettings.CharacterStageGeometryDX12 &&
         shadowSettings.CharacterRunSkinningDX12 &&
@@ -1512,6 +1526,7 @@ DX12NativeScene::GetCharacterCasterForVisibility(uint32_t a_frame) const
         !selected.CharacterRunSkinningDX12 ||
         !selected.CharacterValidateSkinningDX12 ||
         !selected.CharacterBuildIsolatedBLASDX12 ||
+        selected.CharacterAccumulatePartBLAS ||
         !selected.CharacterBuildIsolatedTLASDX12 ||
         !selected.CharacterRunIsolatedRayQueryDX12 ||
         !globals::game::graphicsState ||
@@ -1543,6 +1558,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
     bool stageCharacterGeometry = false, runCharacterSkinning = false;
     bool validateCharacterSkinning = false, buildIsolatedCharacterBLAS = false;
     bool buildIsolatedCharacterTLAS = false, traceIsolatedCharacterRay = false;
+    bool accumulatePartBLAS = false;
     uint32_t actorLimit = 16, observationInterval = 8, blasUpdateInterval = 8;
     uint32_t meshBatchLimit = 2;
     {
@@ -1555,6 +1571,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
         buildIsolatedCharacterBLAS = settings.CharacterBuildIsolatedBLASDX12;
         buildIsolatedCharacterTLAS = settings.CharacterBuildIsolatedTLASDX12;
         traceIsolatedCharacterRay = settings.CharacterRunIsolatedRayQueryDX12;
+        accumulatePartBLAS = settings.CharacterAccumulatePartBLAS;
         actorLimit = settings.CharacterMaxActors;
         observationInterval = settings.CharacterObservationPeriod;
         blasUpdateInterval = settings.CharacterBLASIntervalFrames;
@@ -1573,7 +1590,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
             traceIsolatedCharacterRay && buildIsolatedCharacterTLAS &&
                 buildIsolatedCharacterBLAS && validateCharacterSkinning &&
                 runCharacterSkinning && stageCharacterGeometry,
-            blasUpdateInterval, meshBatchLimit,
+            blasUpdateInterval, meshBatchLimit, accumulatePartBLAS,
             backend->d3d12Device.get(), backend->commandQueue.get());
 	const globals::FrameBuffer* camera = nullptr;
 	if (!globals::game::isVR && globals::game::frameBufferCachedValid && globals::game::frameBufferCachedFrame == frame) {

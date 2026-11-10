@@ -59,6 +59,9 @@ namespace DX12Native
         std::optional<CharacterDeformValidation> validation;
         std::optional<CharacterBLASPreflight> blasPreflight;
         std::shared_ptr<const CharacterIsolatedBLAS> isolatedBLAS;
+        // Completed/updateable BLAS generations keyed by observed mesh identity.
+        // Multi-part mode remains an isolated diagnostic, not world ownership.
+        std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> blasParts;
         std::shared_ptr<const CharacterIsolatedTLAS> isolatedTLAS;
         std::shared_ptr<const CharacterRayResult> rayProbe;
         std::optional<CharacterRayOutcome> rayOutcome;
@@ -202,6 +205,7 @@ namespace DX12Native
             pending.reset(); // Detached worker retains only owned values.
             published.store({}, std::memory_order_release);
             attemptedMeshKeys.clear();
+            nextPoseSearchIndex = 0;
             lastObservedFrame = UINT32_MAX;
             workerBusy.store(false, std::memory_order_release);
             submitted.store(0, std::memory_order_relaxed);
@@ -216,7 +220,8 @@ namespace DX12Native
             bool stageGeometry, bool runSkinning, bool validateSkinning,
             bool buildIsolatedBLAS, bool buildIsolatedTLAS,
             bool runIsolatedRayProbe, uint32_t blasIntervalFrames,
-            uint32_t meshBatchLimit, ID3D12Device* device, ID3D12CommandQueue* queue)
+            uint32_t meshBatchLimit, bool accumulatePartBLAS,
+            ID3D12Device* device, ID3D12CommandQueue* queue)
         {
             // Runtime toggles can reset the observer while the engine is
             // supplying input. Serialize only this bounded CPU acquisition;
@@ -258,6 +263,8 @@ namespace DX12Native
             std::vector<CharacterMeshCapture> capturedMeshes;
             capturedMeshes.reserve(meshBatchLimit);
             std::optional<CharacterPoseCapture> capturedPose;
+            const size_t poseStart = accumulatePartBLAS ? nextPoseSearchIndex : 0u;
+            size_t capturedPoseIndex = SIZE_MAX;
 
             // Only Get3D(false): never inspect Skyrim's first-person root.
             // In player-only mode, skip the high-process actor enumeration
@@ -308,7 +315,8 @@ namespace DX12Native
                     const bool partSkinned = part.skinned;
                     const uint64_t sourceToken = part.sourceToken;
                     captured->parts.emplace_back(std::move(part));
-                    if (stageGeometry && device && partSkinned && !capturedPose) {
+                    if (stageGeometry && device && partSkinned && !capturedPose &&
+                        captured->parts.size() - 1 >= poseStart) {
                         bool hasBind = std::ranges::any_of(capturedMeshes,
                             [&](const auto& candidate) {
                                 return candidate.skinned &&
@@ -324,8 +332,12 @@ namespace DX12Native
                                     staged->partOrdinal == ordinal - 1 &&
                                     staged->sourceToken == sourceToken;
                         }
-                        if (hasBind) capturedPose = CaptureCharacterShaderPose(
-                            *geometry, actor->GetFormID(), ordinal - 1, sourceToken, frame);
+                        if (hasBind) {
+                            capturedPose = CaptureCharacterShaderPose(
+                                *geometry, actor->GetFormID(), ordinal - 1, sourceToken, frame);
+                            if (capturedPose)
+                                capturedPoseIndex = captured->parts.size() - 1;
+                        }
                     }
                     if (stageGeometry && device &&
                         capturedMeshes.size() < meshBatchLimit) {
@@ -348,6 +360,9 @@ namespace DX12Native
                 captureActor(RE::PlayerCharacter::GetSingleton());
             else
                 Util::ForEachLoadedActor(captureActor);
+            if (accumulatePartBLAS)
+                nextPoseSearchIndex = capturedPoseIndex != SIZE_MAX ?
+                    capturedPoseIndex + 1u : 0u;
 
             try {
                 auto work = std::make_shared<Work>();
@@ -363,7 +378,7 @@ namespace DX12Native
                     pose = std::move(capturedPose), nativeDevice,
                     nativeQueue, runSkinning, validateSkinning,
                     buildIsolatedBLAS, buildIsolatedTLAS,
-                    runIsolatedRayProbe, blasIntervalFrames] {
+                    runIsolatedRayProbe, blasIntervalFrames, accumulatePartBLAS] {
                     try {
                         // All aggregation uses owned records, never engine pointers.
                         auto output = std::make_shared<CharacterObservationGeneration>(*captured);
@@ -467,9 +482,24 @@ namespace DX12Native
                                 }
                             }
                         }
+                        // Keep per-part acceleration generations across
+                        // observations, but prune absent/equipment-swapped parts.
+                        if (accumulatePartBLAS && previous && output->stagedGeometry) {
+                            output->blasParts = previous->blasParts;
+                            std::erase_if(output->blasParts, [&](const auto& item) {
+                                return !item || !std::ranges::any_of(
+                                    output->stagedGeometry->meshes,
+                                    [&](const auto& mesh) {
+                                        return mesh->skinned &&
+                                            mesh->actorFormID == item->actorFormID &&
+                                            mesh->partOrdinal == item->partOrdinal &&
+                                            mesh->sourceToken == item->sourceToken;
+                                    });
+                            });
+                        }
                         // Standalone BLAS test: only mesh identities still
                         // resident in this generation may retain a completed
-                        // acceleration result. Never publish it to a TLAS.
+                        // acceleration result. Never publish it to the world TLAS.
                         if (buildIsolatedBLAS && runSkinning && nativeQueue && previous) {
                             if (previous->isolatedBLAS && output->stagedGeometry &&
                                 std::ranges::any_of(output->stagedGeometry->meshes,
@@ -492,19 +522,45 @@ namespace DX12Native
                                 output->blasPreflight->poseFrame ==
                                     output->deformed->poseFrame &&
                                 output->blasPreflight->budgetAvailable;
-                            if (validPose && (!output->isolatedBLAS ||
-                                (output->isolatedBLAS->Ready() &&
-                                    output->isolatedBLAS->poseFrame !=
-                                        output->deformed->poseFrame &&
+                            auto previousPart = output->isolatedBLAS;
+                            if (accumulatePartBLAS) {
+                                previousPart.reset();
+                                const auto found = std::ranges::find_if(output->blasParts,
+                                    [&](const auto& item) {
+                                        return item->actorFormID == output->deformed->actorFormID &&
+                                            item->partOrdinal == output->deformed->partOrdinal &&
+                                            output->deformed->input->pose &&
+                                            item->sourceToken ==
+                                                output->deformed->input->pose->sourceToken;
+                                    });
+                                if (found != output->blasParts.end())
+                                    previousPart = *found;
+                            }
+                            if (validPose && (!previousPart ||
+                                (previousPart->Ready() &&
+                                    previousPart->poseFrame != output->deformed->poseFrame &&
                                     uint32_t(output->deformed->poseFrame -
-                                        output->isolatedBLAS->poseFrame) >=
+                                        previousPart->poseFrame) >=
                                             blasIntervalFrames))) {
                                 try {
                                     if (auto candidate = BuildCharacterIsolatedBLAS(
                                         nativeDevice.get(), nativeQueue.get(),
                                         output->deformed, *output->blasPreflight,
-                                        *output->validation, output->isolatedBLAS))
-                                        output->isolatedBLAS = std::move(candidate);
+                                        *output->validation, previousPart)) {
+                                        output->isolatedBLAS = candidate;
+                                        if (accumulatePartBLAS) {
+                                            const auto at = std::ranges::find_if(
+                                                output->blasParts, [&](const auto& item) {
+                                                    return item->actorFormID == candidate->actorFormID &&
+                                                        item->partOrdinal == candidate->partOrdinal &&
+                                                        item->sourceToken == candidate->sourceToken;
+                                                });
+                                            if (at == output->blasParts.end())
+                                                output->blasParts.push_back(candidate);
+                                            else
+                                                *at = candidate;
+                                        }
+                                    }
                                 } catch (const std::exception& e) {
                                     output->blasError = e.what();
                                 } catch (...) {
@@ -707,6 +763,7 @@ namespace DX12Native
                     current->isolatedBLAS->poseFrame : 0u },
                 { "isolatedBLASRefit", current && current->isolatedBLAS &&
                     current->isolatedBLAS->refit },
+                { "accumulatedBLASParts", current ? current->blasParts.size() : size_t{ 0 } },
                 { "isolatedBLASBytes", current && current->isolatedBLAS ?
                     current->isolatedBLAS->allocationBytes : 0ull },
                 { "isolatedBLASScratchBytes", current && current->isolatedBLAS ?
@@ -776,6 +833,7 @@ namespace DX12Native
         std::mutex stateMutex;
         uint64_t sceneEpoch = 1;
         uint32_t lastObservedFrame = UINT32_MAX;
+        size_t nextPoseSearchIndex = 0;
         std::shared_ptr<Work> pending;
         std::unordered_set<std::string> attemptedMeshKeys;
         std::atomic<std::shared_ptr<const CharacterObservationGeneration>> published;
