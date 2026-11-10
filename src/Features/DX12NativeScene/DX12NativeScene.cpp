@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "TruePBR.h"
 #include "Features/LightLimitFix.h"
+#include "Features/NativeFeatures.h"
 #include <BS_thread_pool.hpp>
 #include "Features/NativeComposite/NativeComposite.h"
 #include "GpuPass.h"
@@ -198,7 +199,7 @@ bool DX12NativeScene::OwnsNativeFeatures() const
 
 bool DX12NativeScene::IsPreparedStaticCaster(RE::BSGeometry& geometry) const
 {
-	if (!OwnsNativeFeatures() || !settings.NativeSCM || geometry.GetGeometryRuntimeData().skinInstance)
+	if (!globals::features::nativeSCM.IsActive() || geometry.GetGeometryRuntimeData().skinInstance)
 		return false;
 	// Coverage describes actual acceleration instances, never the offline
 	// manifest alone. Unmatched static geometry remains in SCM's raster path.
@@ -215,15 +216,15 @@ bool DX12NativeScene::IsPreparedStaticCaster(RE::BSGeometry& geometry) const
 
 std::shared_ptr<const ShadowCasterManager::NativeCasterFrame> DX12NativeScene::GetNativeSCMFrame(uint32_t a_frame) const
 {
-	return OwnsNativeFeatures() && settings.NativeSCM ?
+	return globals::features::nativeSCM.IsActive() ?
 		ShadowCasterManager::GetNativeCasterFrame(a_frame) : nullptr;
 }
 
 std::optional<DX12NativeScene::NativeLightBatch> DX12NativeScene::GetNativeLLFLights(uint32_t a_frame) const
 {
-	if (!OwnsNativeFeatures()) return std::nullopt; // Legacy/prepared lighting owns non-native frames.
+	if (!OwnsNativeFeatures()) return std::nullopt; // Original features own non-native frames.
 	NativeLightBatch batch{};
-	if (!settings.NativeLLF) return batch; // Explicit opt-out; never changes renderer ownership.
+	if (!globals::features::nativeLLF.IsActive()) return batch; // Native ownership remains selected; explicit feature opt-out.
 	const auto published = globals::features::lightLimitFix.GetNativeLightFrame(a_frame);
 	if (!published) return batch; // Current frame has not been published yet.
 	batch.observed = static_cast<uint32_t>(published->lights.size());
@@ -239,20 +240,18 @@ void DX12NativeScene::DrawSettings()
 	std::scoped_lock lock(settingsMutex);
 	if (ImGui::Button("Analyze live PBR candidates")) coverageRequested = true;
     ImGui::TextDisabled("Native DX12 ownership: %s", OwnsNativeFeatures() ? "active" : "inactive");
-    if (ImGui::Checkbox("NativePBR (runtime material bridge)", &settings.NativePBR)) resetRequested = true;
-    ImGui::Checkbox("NativeLLF (live light bridge)", &settings.NativeLLF);
-    ImGui::Checkbox("NativeSCM (dynamic caster bridge)", &settings.NativeSCM);
-    ImGui::TextDisabled("No per-effect validity fallback to legacy execution.");
-    ImGui::BeginDisabled(!settings.NativePBR);
+    ImGui::TextDisabled("NativePBR, NativeLLF and NativeSCM are now independent feature entries.");
+    ImGui::TextDisabled("Native feature ownership follows this DX12 backend, without readiness fallback.");
+    ImGui::BeginDisabled(!globals::features::nativePBR.IsActive());
     if (ImGui::Checkbox("Experimental: import missing loose PBR DDS", &settings.ImportLoosePBR)) resetRequested = true;
     ImGui::EndDisabled();
-    ImGui::BeginDisabled(!settings.NativePBR || !settings.ImportLoosePBR);
+    ImGui::BeginDisabled(!globals::features::nativePBR.IsActive() || !settings.ImportLoosePBR);
     if (ImGui::Checkbox("Experimental: use archive-backed DDS fallback", &settings.ImportArchivePBR))
         resetRequested = true;
     ImGui::EndDisabled();
     ImGui::TextDisabled("Worker-only; maximum 8 sources / 32 MiB combined per load.");
     ImGui::TextDisabled("Archive fallback runs only when the loose DDS is absent.");
-    ImGui::BeginDisabled(!settings.NativePBR || !settings.ImportLoosePBR);
+    ImGui::BeginDisabled(!globals::features::nativePBR.IsActive() || !settings.ImportLoosePBR);
     ImGui::Checkbox("Experimental: runtime-only material sources (no atlas manifest)",
         &settings.RuntimeOnlyMaterials);
     ImGui::EndDisabled();
@@ -783,7 +782,7 @@ void DX12NativeScene::EarlyPrepass()
     if (auto scene = acceleration.GetScene(); scene &&
         shadow.RetireScenesExcept(currentSceneStableAcceleration ? currentSceneStableAcceleration : scene) &&
         retiredMaterials.expired()) {
-        if (OwnsNativeFeatures() && settings.NativePBR && globals::game::graphicsState) {
+        if (globals::features::nativePBR.IsActive() && globals::game::graphicsState) {
             auto& pbr = globals::features::truePBR;
             const uint64_t currentRevision = pbr.nativeRegistry.Revision();
             const uint32_t currentFrame = globals::game::graphicsState->GetFrameCount();
@@ -819,9 +818,9 @@ void DX12NativeScene::EarlyPrepass()
         if (materialRequestBudgetBytes)
             materialBindings.Request(*backend, scene, materialRequestBudgetBytes,
             uint64_t(settings.MaterialBatchMB) * 1024 * 1024, livePbrSource,
-            OwnsNativeFeatures() && settings.NativePBR && settings.ImportLoosePBR,
-            OwnsNativeFeatures() && settings.NativePBR && settings.ImportLoosePBR && settings.ImportArchivePBR,
-            OwnsNativeFeatures() && settings.NativePBR && settings.ImportLoosePBR && settings.RuntimeOnlyMaterials);
+            globals::features::nativePBR.IsActive() && settings.ImportLoosePBR,
+            globals::features::nativePBR.IsActive() && settings.ImportLoosePBR && settings.ImportArchivePBR,
+            globals::features::nativePBR.IsActive() && settings.ImportLoosePBR && settings.RuntimeOnlyMaterials);
     }
 	materialBindings.Advance();
     if (auto completed = acceleration.GetScene(); completed &&
@@ -980,7 +979,8 @@ void DX12NativeScene::PublishDiagnostics()
 	const auto bindings = materialBindings.Get();
 	const auto retainedPages = DX12Native::RetainedMaterialPageBytes();
 	json snapshot{ { "enabled", settings.Enabled }, { "nativeOwnership", OwnsNativeFeatures() },
-		{ "nativePBR", settings.NativePBR }, { "nativeLLF", settings.NativeLLF }, { "nativeSCM", settings.NativeSCM },
+		{ "nativePBR", globals::features::nativePBR.IsActive() }, { "nativeLLF", globals::features::nativeLLF.IsActive() },
+		{ "nativeSCM", globals::features::nativeSCM.IsActive() },
 		{ "nativeLightSource", OwnsNativeFeatures() ? "LLF-current-frame" : "prepared-cell" },
 		{ "nativeSCMCasters", globals::game::graphicsState ?
 			([&] { const auto snapshot = GetNativeSCMFrame(globals::game::graphicsState->GetFrameCount());
@@ -1056,7 +1056,7 @@ void DX12NativeScene::PublishDiagnostics()
 		{ "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() },
 		{ "materialBudget", { { "dxgiAvailable", bindings ? bindings->materialBudget.dxgiAvailable : false },
 			{ "selectedBatchLimitBytes", uint64_t(settings.MaterialBatchMB) * 1024 * 1024 },
-            { "runtimeOnlyMaterialSources", OwnsNativeFeatures() && settings.NativePBR && settings.ImportLoosePBR &&
+            { "runtimeOnlyMaterialSources", globals::features::nativePBR.IsActive() && settings.ImportLoosePBR &&
                 settings.RuntimeOnlyMaterials },
 			{ "loadedBatchLimitBytes", bindings ? bindings->uploadBatchBudget : 0 },
 			{ "effectiveBytes", bindings ? bindings->materialBudget.effectiveBytes : 0 },
