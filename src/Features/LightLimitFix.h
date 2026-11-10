@@ -102,6 +102,13 @@ public:
 		std::scoped_lock lock(nativeLightMutex);
 		return nativeLightFrame && nativeLightFrame->frame == a_frame ? nativeLightFrame : nullptr;
 	}
+	/** @brief NativeSCM uses the last LLF light generation while the engine is
+	 *  rendering shadow maps, which precede the current frame's LLF update. */
+	std::shared_ptr<const NativeLightFrame> GetRecentNativeLightFrame(uint32_t a_frame) const
+	{
+		std::scoped_lock lock(nativeLightMutex);
+		return nativeLightFrame && uint32_t(a_frame - nativeLightFrame->frame) <= 1u ? nativeLightFrame : nullptr;
+	}
 
 	struct ClusterAABB
 	{

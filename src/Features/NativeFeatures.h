@@ -2,6 +2,7 @@
 
 #include "Feature.h"
 #include <atomic>
+namespace RE { class BSShadowLight; }
 
 /** Additional DX12 features. The original TruePBR/LLF/SCM implementations are
  * unchanged as the legacy baseline and continue to collect Skyrim state.
@@ -11,7 +12,7 @@
 struct NativePBRFeature final : Feature
 {
     std::atomic<bool> enabled{ true };
-    std::string GetName() override { return "Native PBR"; }
+    std::string GetName() override { return "NativePBR"; }
     std::string GetShortName() override { return "NativePBR"; }
     std::string_view GetCategory() const override { return FeatureCategories::kMaterials; }
     bool IsCore() const override { return true; }
@@ -26,7 +27,7 @@ struct NativePBRFeature final : Feature
 struct NativeLLFFeature final : Feature
 {
     std::atomic<bool> enabled{ true };
-    std::string GetName() override { return "Native LLF"; }
+    std::string GetName() override { return "NativeLLF"; }
     std::string GetShortName() override { return "NativeLLF"; }
     std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
     bool IsCore() const override { return true; }
@@ -41,7 +42,10 @@ struct NativeLLFFeature final : Feature
 struct NativeSCMFeature final : Feature
 {
     std::atomic<bool> enabled{ true };
-    std::string GetName() override { return "Native SCM"; }
+    /** Exact LLF/SCM slot identity selected for native ray-shadow evaluation.
+     *  This is a per-light ownership decision, never a renderer fallback gate. */
+    bool OwnsStaticForLight(const RE::BSShadowLight* light, int32_t slot) const;
+    std::string GetName() override { return "NativeSCM"; }
     std::string GetShortName() override { return "NativeSCM"; }
     std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
     bool IsCore() const override { return true; }

@@ -16,6 +16,7 @@
 #include "../../Utils/PerfUtils.h"
 #include "../../Utils/UI.h"
 #include "../LightLimitFix.h"
+#include "../NativeFeatures.h"
 #include "../Upscaling.h"
 #include "../VR.h"
 #include "I18n/I18n.h"
@@ -335,6 +336,7 @@ namespace ShadowCasterManager
 	struct SplitState
 	{
 		uint64_t pendingHash = 0;    ///< static hash observed on the latest accumulate
+		bool nativeDynamicOnly = false; ///< this light's static shadows belong to DX12, not the raster atlas
 		bool bakeQueued = true;      ///< a rebake is due -- next accumulate is StaticOnly
 		bool bakeThisFrame = false;  ///< this frame's accumulate was StaticOnly (render to cache)
 		uint8_t mismatchStreak = 0;  ///< consecutive accumulates whose hash differed from the bake
@@ -361,6 +363,19 @@ namespace ShadowCasterManager
 		bool bakeUnproven = false;
 	};
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
+
+	static void TransitionNativeShadowOwnership(SplitState& st, int32_t slot, bool nativeDynamicOnly)
+	{
+		if (st.nativeDynamicOnly == nativeDynamicOnly) return;
+		st.nativeDynamicOnly = nativeDynamicOnly;
+		st.bakeQueued = true; // Rebuild the legacy static cache if native ownership ends.
+		st.bakeThisFrame = false;
+		st.fullThisFrame = nativeDynamicOnly;
+		// A previous static bake/live atlas tile must NEVER be reused as a
+		// dynamic-only visibility source (or native shadows will double).
+		InvalidateSlotStaticBake(slot);
+		InvalidateSlotTileContent(slot);
+	}
 
 	static void RetireSplitBake(SplitState& st)
 	{
@@ -1049,12 +1064,14 @@ namespace ShadowCasterManager
 		// casters (RAII-cleared after); pick this accumulate's filter mode
 		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
-			bool split = StaticAtlasReady();
+			const bool nativeDynamicOnly = globals::features::nativeSCM.OwnsStaticForLight(light, slotIndex);
+			bool split = StaticAtlasReady() && !nativeDynamicOnly;
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
+			TransitionNativeShadowOwnership(*st, slotIndex, nativeDynamicOnly);
 			st->fullThisFrame = !split;
 			st->bakeThisFrame = false;
-			CasterPass mode = CasterPass::All;
+			CasterPass mode = nativeDynamicOnly ? CasterPass::DynamicOnly : CasterPass::All;
 			uint64_t bakedHash = 0;
 			bool staticValid = false;
 			bool staticEmpty = false;
@@ -3879,8 +3896,13 @@ namespace ShadowCasterManager
 				if (s_pendingSessionReset.load(std::memory_order_acquire))
 					break;
 				auto& e = s_lights.Lights[i];
-				if (!e.Light || !e.RedrawFrame)
-					continue;
+				if (!e.Light) continue;
+				// Retire stale static depth immediately when backend ownership
+				// changes, including for lights not admitted to redraw this frame.
+				if (auto it = s_splitState.find(e.Light); it != s_splitState.end())
+					TransitionNativeShadowOwnership(it->second, i,
+						globals::features::nativeSCM.OwnsStaticForLight(e.Light, i));
+				if (!e.RedrawFrame) continue;
 				bool keepPriorContent = false;
 				bool emptyRender = false;
 				if (AtlasActive()) {
@@ -3990,7 +4012,7 @@ namespace ShadowCasterManager
 					// degenerating a good shadow to flat black -- keep prior content instead.
 					emptyRender = e.Light->geomList.empty();
 					AtlasTileTexels held{};
-					keepPriorContent = emptyRender &&
+					keepPriorContent = !s_splitState[e.Light].nativeDynamicOnly && emptyRender &&
 					                   GetSlotTileTexels(i, held) && held.contentValid;
 					if (!keepPriorContent)
 						ClearSlotTile(i);
