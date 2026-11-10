@@ -48,6 +48,12 @@ struct DX12NativeScene final : Feature
 		uint32_t cellID = 0;
 		uint64_t revision = 0;
 	};
+	// NativeLLF consumes LLF's live light list; DXR currently supports up to 32 lights per dispatch.
+	struct NativeLightBatch
+	{
+		std::array<DX12Native::PreparedPointLight, 32> lights{};
+		uint32_t count = 0, observed = 0;
+	};
 	struct SceneFrame
 	{
 		uint32_t frame = 0;
@@ -91,6 +97,8 @@ struct DX12NativeScene final : Feature
 	std::optional<GraphicsBackend> GetGraphicsBackend() const { return loaded && settings.Enabled && !transitionOpen ? backend : std::nullopt; }
 	/** @brief Retains a completed scene matching the current cell and revision. */
 	std::optional<PublishedScene> GetPublishedScene() const;
+	/** @brief Live LLF illumination source in a native-owned frame; empty is not a legacy fallback. */
+	std::optional<NativeLightBatch> GetNativeLLFLights(uint32_t a_frame) const;
 	/** @brief Returns the available current-frame outputs without substituting stale resources. */
 	std::optional<SceneFrame> GetSceneFrame(uint32_t a_frame) const;
 	/** @brief Retains the current raster snapshot through the consumer GPU work. */

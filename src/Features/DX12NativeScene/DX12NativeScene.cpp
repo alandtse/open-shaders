@@ -2,6 +2,7 @@
 #include "RE/B/BSTriShape.h"
 #include "Globals.h"
 #include "TruePBR.h"
+#include "Features/LightLimitFix.h"
 #include <BS_thread_pool.hpp>
 #include "Features/NativeComposite/NativeComposite.h"
 #include "GpuPass.h"
@@ -188,6 +189,21 @@ bool DX12NativeScene::OwnsNativeFeatures() const
 	const auto& upscaling = globals::features::upscaling;
 	return loaded && settings.Enabled && !transitionOpen && backend.has_value() &&
 		!globals::game::isVR && upscaling.d3d12SwapChainActive && upscaling.settings.nativeUpscaleEnable;
+}
+
+std::optional<DX12NativeScene::NativeLightBatch> DX12NativeScene::GetNativeLLFLights(uint32_t a_frame) const
+{
+	if (!OwnsNativeFeatures()) return std::nullopt; // Legacy/prepared lighting owns non-native frames.
+	NativeLightBatch batch{};
+	if (!settings.NativeLLF) return batch; // Explicit opt-out; never changes renderer ownership.
+	const auto published = globals::features::lightLimitFix.GetNativeLightFrame(a_frame);
+	if (!published) return batch; // Current frame has not been published yet.
+	batch.observed = static_cast<uint32_t>(published->lights.size());
+	for (const auto& light : published->lights) {
+		if (batch.count == batch.lights.size()) break;
+		batch.lights[batch.count++] = { light.position, light.radiance, light.radius, light.sourceRadius, true };
+	}
+	return batch;
 }
 
 void DX12NativeScene::DrawSettings()
@@ -847,15 +863,17 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 	if (!scene) { shadowStatus = "Prepared scene or acceleration structure unavailable"; return; }
 	const auto dynamicSize = Util::ConvertToDynamic(globals::state->screenSize);
 	const std::array<uint32_t, 2> size{ uint32_t(dynamicSize.x), uint32_t(dynamicSize.y) };
-	const auto& lights = scene->cell->nativeLights;
+	const auto nativeLights = GetNativeLLFLights(frame);
+	const auto& preparedLights = scene->cell->nativeLights;
+	const std::span<const DX12Native::PreparedPointLight> lights = nativeLights ?
+		std::span<const DX12Native::PreparedPointLight>(nativeLights->lights.data(), nativeLights->count) :
+		std::span<const DX12Native::PreparedPointLight>(preparedLights);
 	if (lights.empty() || (shadowSettings.ShadowAllLights && lights.size() > 32) ||
 		(!shadowSettings.ShadowAllLights && shadowSettings.ShadowLightIndex >= lights.size())) {
-		shadowStatus = "Selected shadow lights unavailable or exceed 32";
+		shadowStatus = nativeLights ? "No current-frame NativeLLF lights selected" : "Selected prepared shadow lights unavailable or exceed 32";
 		return;
 	}
-	const auto selectedLights = shadowSettings.ShadowAllLights ?
-		std::span<const DX12Native::PreparedPointLight>(lights) :
-		std::span<const DX12Native::PreparedPointLight>(lights).subspan(shadowSettings.ShadowLightIndex, 1);
+	const auto selectedLights = shadowSettings.ShadowAllLights ? lights : lights.subspan(shadowSettings.ShadowLightIndex, 1);
 	const DX12Native::ShadowTraceControls controls{
 		shadowSettings.ShadowReachMultiplier, shadowSettings.ShadowFalloffFraction,
 		shadowSettings.ShadowFalloffExponent, shadowSettings.ShadowEmitterRadius,
@@ -934,7 +952,10 @@ void DX12NativeScene::PublishDiagnostics()
 	const auto bindings = materialBindings.Get();
 	const auto retainedPages = DX12Native::RetainedMaterialPageBytes();
 	json snapshot{ { "enabled", settings.Enabled }, { "nativeOwnership", OwnsNativeFeatures() },
-		{ "nativePBR", settings.NativePBR }, { "nativeLLF", settings.NativeLLF }, { "nativeSCM", settings.NativeSCM }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure },
+		{ "nativePBR", settings.NativePBR }, { "nativeLLF", settings.NativeLLF }, { "nativeSCM", settings.NativeSCM },
+		{ "nativeLightSource", OwnsNativeFeatures() ? "LLF-current-frame" : "prepared-cell" },
+		{ "nativeLightCount", globals::game::graphicsState ?
+			(GetNativeLLFLights(globals::game::graphicsState->GetFrameCount()).value_or(NativeLightBatch{}).count) : 0u }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure },
 		{ "raster", raster.GetDiagnostics() }, { "shadowStage", shadowStage }, { "shadowStatus", shadowStatus }, { "shadow", shadow.GetDiagnostics() },
 		{ "shadowOpaqueRetryAttempts", shadowOpaqueRetryAttempts }, { "shadowOpaqueRetryRecovered", shadowOpaqueRetryRecovered },
 		{ "shadowTraceControls", { { "revision", shadowControlsRevision },

@@ -56,12 +56,14 @@ void NativeLightingFeature::DrawSettings()
 	tuned |= ImGui::SliderFloat("Emitter radius scale", &settings.EmitterRadiusMultiplier, 0.0f, 8.0f, "%.2fx");
 	ImGui::EndDisabled();
 	ImGui::TextDisabled("One disk-distributed visibility ray per light; not temporal grid undersampling.");
-	tuned |= ImGui::Checkbox("All prepared cell lights", &settings.UseAllPreparedLights);
+	tuned |= ImGui::Checkbox("All lights from active native source", &settings.UseAllPreparedLights);
 	if (!settings.UseAllPreparedLights) {
 		const auto published = globals::features::dx12NativeScene.GetPublishedScene();
-		const auto count = published ? published->cell->nativeLights.size() : 0u;
+		const auto live = globals::game::graphicsState ?
+			globals::features::dx12NativeScene.GetNativeLLFLights(globals::game::graphicsState->GetFrameCount()) : std::nullopt;
+		const auto count = live ? live->count : (published ? published->cell->nativeLights.size() : 0u);
 		int lightIndex = int(settings.SelectedDirectLight);
-		if (ImGui::SliderInt("Prepared baseline light", &lightIndex, 0, int(count ? count - 1 : 0))) {
+		if (ImGui::SliderInt("Native light index", &lightIndex, 0, int(count ? count - 1 : 0))) {
 			settings.SelectedDirectLight = uint32_t(lightIndex); tuned = true;
 		}
 	}
@@ -369,9 +371,11 @@ void NativeLightingFeature::OnOpaqueRasterReady(const OpaqueRasterInputs&)
 		status = "Waiting for current scene, raster depth, camera or material bindings";
 		return;
 	}
-	if ((selected.UseAllPreparedLights && scene->prepared->cell->nativeLights.size() > 32) ||
-		(!selected.UseAllPreparedLights && selected.SelectedDirectLight >= scene->prepared->cell->nativeLights.size()) ||
-		(scene->prepared->cell->nativeLights.empty() && !selectedLab.RunWithoutLighting && selectedLab.MaterialPolicy != 2)) {
+	const auto nativeLights = owner.GetNativeLLFLights(frame);
+	const auto availableLights = nativeLights ? size_t(nativeLights->count) : scene->prepared->cell->nativeLights.size();
+	if ((!nativeLights && selected.UseAllPreparedLights && availableLights > 32) ||
+		(!selected.UseAllPreparedLights && selected.SelectedDirectLight >= availableLights && !nativeLights) ||
+		(availableLights == 0 && !nativeLights && !selectedLab.RunWithoutLighting && selectedLab.MaterialPolicy != 2)) {
 		status = "Prepared point-light selection unavailable or exceeds 32";
 		return;
 	}
@@ -483,10 +487,15 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		struct Light { float4 positionRadius, radianceSourceRadius; std::array<uint32_t, 4> flags; };
 		static_assert(sizeof(Light) == 48);
 		std::array<Light, 32> lights{};
-		const uint32_t selectedCount = a_settings.UseAllPreparedLights ? uint32_t(scene.cell->nativeLights.size()) :
-			(scene.cell->nativeLights.empty() ? 0u : 1u);
+		const auto nativeLights = globals::features::dx12NativeScene.GetNativeLLFLights(slot->scene.frame);
+		const std::span<const DX12Native::PreparedPointLight> lightSource = nativeLights ?
+			std::span<const DX12Native::PreparedPointLight>(nativeLights->lights.data(), nativeLights->count) :
+			std::span<const DX12Native::PreparedPointLight>(scene.cell->nativeLights);
+		const uint32_t selectedCount = a_settings.UseAllPreparedLights ? uint32_t(std::min<size_t>(lightSource.size(), lights.size())) :
+			(lightSource.empty() ? 0u : 1u);
 		for (uint32_t i = 0; i < selectedCount; ++i) {
-			const auto& light = scene.cell->nativeLights[a_settings.UseAllPreparedLights ? i : a_settings.SelectedDirectLight];
+			const auto& light = lightSource[a_settings.UseAllPreparedLights ? i :
+				std::min<size_t>(a_settings.SelectedDirectLight, lightSource.size() - 1)];
 			lights[i] = { { light.position.x, light.position.y, light.position.z, light.radius },
 				{ light.radiance.x, light.radiance.y, light.radiance.z, light.sourceRadius }, { light.supported ? 1u : 0u, 0, 0, 0 } };
 		}
