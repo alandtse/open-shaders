@@ -32,7 +32,8 @@ namespace DX12Native
         bool rigidLocalBoundsValid = false;
         bool skinned = false;
         bool normalAvailable = false, uvAvailable = false, tangentAvailable = false;
-        winrt::com_ptr<ID3D12Resource> source;
+        uint32_t attributeStride = 0;
+        winrt::com_ptr<ID3D12Resource> source, attributes;
         std::string shapeName;
     };
 
@@ -162,8 +163,10 @@ namespace DX12Native
             break;
         }
         std::erase(out->meshes, nullptr);
-        std::vector<uint8_t> bytes;
+        std::vector<uint8_t> bytes, attributeBytes;
         uint32_t vertexCount = 0, indexCount = 0, stride = 0;
+        uint32_t attributeStride = 0;
+        bool tangentFrame = false;
         uint64_t indexOffset = 0;
         if (next->skinned) {
             bytes = EncodeCharacterBindVertices(next->bindVertices);
@@ -188,6 +191,13 @@ namespace DX12Native
                 indexCount = next->rigid->indexCount;
                 stride = 12;
                 indexOffset = uint64_t(vertexCount) * stride;
+                if (!encoded->attributes.empty() &&
+                    (encoded->attributeStride == 36u ||
+                     encoded->attributeStride == 60u)) {
+                    attributeBytes = std::move(encoded->attributes);
+                    attributeStride = encoded->attributeStride;
+                    tangentFrame = encoded->tangentFrame;
+                }
             }
         }
         if (bytes.empty() || !vertexCount) { ++out->rejectedMeshes; return out; }
@@ -228,9 +238,11 @@ namespace DX12Native
                     }
                     mesh->rigidLocalBoundsValid = true;
                 }
-                mesh->normalAvailable = next->rigid->hasNormal;
-                mesh->uvAvailable = next->rigid->hasUv;
-                mesh->tangentAvailable = next->rigid->hasTangent;
+                // Flags reflect GPU-owned, decoded attributes, not optimistic
+                // source flags from the Skyrim renderer.
+                mesh->normalAvailable = false;
+                mesh->uvAvailable = false;
+                mesh->tangentAvailable = false;
             }
             if (next->skinned) {
                 for (const auto& vertex : next->bindVertices) {
@@ -244,8 +256,34 @@ namespace DX12Native
             }
             mesh->indexOffset = indexOffset;
             mesh->skinned = next->skinned;
+            uint64_t sourceAllocation = 0;
             mesh->source = UploadCharacterSourceBuffer(device, bytes,
-                out->budgetBytes - out->residentBytes, mesh->allocationBytes);
+                out->budgetBytes - out->residentBytes, sourceAllocation);
+            mesh->allocationBytes = sourceAllocation;
+            if (!attributeBytes.empty() && attributeStride &&
+                sourceAllocation < out->budgetBytes - out->residentBytes) {
+                try {
+                    uint64_t attributeAllocation = 0;
+                    mesh->attributes = UploadCharacterSourceBuffer(
+                        device, attributeBytes,
+                        out->budgetBytes - out->residentBytes - sourceAllocation,
+                        attributeAllocation);
+                    if (attributeAllocation <=
+                        UINT64_MAX - mesh->allocationBytes) {
+                        mesh->allocationBytes += attributeAllocation;
+                        mesh->attributeStride = attributeStride;
+                        mesh->normalAvailable = true;
+                        mesh->uvAvailable = true;
+                        mesh->tangentAvailable = tangentFrame;
+                    } else {
+                        mesh->attributes = nullptr;
+                    }
+                } catch (...) {
+                    // Geometry remains available for BLAS, but never claim
+                    // native materials are staged when the upload failed.
+                    ++out->dxgiDeferrals;
+                }
+            }
             out->residentBytes += mesh->allocationBytes;
             out->meshes.push_back(std::move(mesh));
             ++out->uploadedMeshes;
