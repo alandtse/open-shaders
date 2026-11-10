@@ -81,7 +81,7 @@ struct NativeLightingFeature final : Feature
 	bool RetainContribution(const std::shared_ptr<const Contribution>& a_frame, ID3D12Fence* a_fence, uint64_t a_value);
 	/** @brief NativeSCM queries direct-light selection through the owning feature,
 	 *  without reading NativeLighting's private settings from external code. */
-	bool SelectsLightForNativeShadows(uint32_t index)
+	bool SelectsLightForNativeShadows(uint32_t index) const
 	{
 		std::scoped_lock lock(settingsMutex);
 		return loaded && settings.Enabled &&
@@ -98,7 +98,8 @@ private:
 	Settings settings;
 	ValidityLab lab;
 	uint64_t validityRevision = 1;
-	std::mutex settingsMutex, diagnosticsMutex;
+	mutable std::mutex settingsMutex;
+	std::mutex diagnosticsMutex;
 	json diagnostics = json::object();
 	GraphicsBackend backend;
 	winrt::com_ptr<ID3D12Fence> completion;
