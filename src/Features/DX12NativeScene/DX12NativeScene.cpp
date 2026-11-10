@@ -20,7 +20,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterMaxActors, CharacterObservationPeriod, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -347,6 +347,25 @@ void DX12NativeScene::DrawSettings()
                 globals::features::nativeSCM.IsActive())), std::memory_order_release);
     ImGui::TextDisabled("SCM supplies CPU geometry; native DX12 owns BLAS, RayQuery and shading.");
     ImGui::TextDisabled("Skinned, moving and GPU-only casters are not yet native-covered.");
+    ImGui::SeparatorText("Native Characters (third-person; observation only)");
+    if (ImGui::Checkbox("Observe third-person character meshes", &settings.ObserveNativeCharacters) &&
+        !settings.ObserveNativeCharacters) nativeCharacters.Reset();
+    ImGui::TextDisabled("Includes player, NPCs and creatures; never inspects Get3D(true).");
+    ImGui::TextDisabled("No DXR character ownership, deformation or raster changes yet.");
+    int maxActors = int(settings.CharacterMaxActors);
+    if (ImGui::SliderInt("Maximum observed actors", &maxActors, 1, 32))
+        settings.CharacterMaxActors = uint32_t(maxActors);
+    int interval = int(settings.CharacterObservationPeriod);
+    if (ImGui::SliderInt("Observation interval (frames)", &interval, 1, 120))
+        settings.CharacterObservationPeriod = uint32_t(interval);
+    const auto characterStats = nativeCharacters.GetDiagnostics();
+    ImGui::Text("Actor samples: %u  Meshes: %u  Skinned: %u  Rigid: %u  Dynamic: %u",
+        characterStats.value("actors", 0u), characterStats.value("parts", 0u),
+        characterStats.value("skinned", 0u), characterStats.value("rigid", 0u),
+        characterStats.value("dynamic", 0u));
+    ImGui::TextDisabled("Character worker: %s, last sample frame %u",
+        characterStats.value("workerBusy", false) ? "busy" : "idle",
+        characterStats.value("generationFrame", 0u));
     ImGui::BeginDisabled(!settings.CaptureRuntimeGeometry);
     ImGui::Checkbox("Experimental: persist and menu-prewarm runtime geometry",
         &settings.CacheRuntimeGeometry);
@@ -572,6 +591,9 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	settings.NativeLLF = selected.NativeLLF;
 	settings.NativeSCM = selected.NativeSCM;
     settings.CaptureSCMRigidCasters = selected.CaptureSCMRigidCasters;
+    settings.ObserveNativeCharacters = selected.ObserveNativeCharacters;
+    settings.CharacterMaxActors = std::clamp(selected.CharacterMaxActors, 1u, 32u);
+    settings.CharacterObservationPeriod = std::clamp(selected.CharacterObservationPeriod, 1u, 120u);
     settings.GlobalDXGIHeadroomPercent = reservePercent;
     settings.SubdivisionMode = std::min(selected.SubdivisionMode, 2u);
     settings.AutoGridMemoryScreening = selected.AutoGridMemoryScreening;
@@ -732,6 +754,7 @@ void DX12NativeScene::ResetScene()
     // NativeLLF generations are cell-scoped. Do not retain old counts or
     // shadow-slot identities after new cells, loading screens or scene resets.
     globals::features::nativeLLF.ClearCapturedLights();
+    nativeCharacters.Reset();
     subcellManager.Reset();
     candidateGridAcceleration.Reset();
     candidateGridBindings.Reset();
@@ -1275,6 +1298,8 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 	const std::array inputs{ a_inputs.litColor, a_inputs.litSpecular, a_inputs.albedo, a_inputs.normalRoughness,
 		a_inputs.masks, a_inputs.masks2, a_inputs.reflectance, a_inputs.motion };
 	const auto frame = globals::game::graphicsState->GetFrameCount();
+    if (settings.ObserveNativeCharacters)
+        nativeCharacters.Advance(frame, settings.CharacterMaxActors, settings.CharacterObservationPeriod);
 	const globals::FrameBuffer* camera = nullptr;
 	if (!globals::game::isVR && globals::game::frameBufferCachedValid && globals::game::frameBufferCachedFrame == frame) {
 		const auto& cached = globals::game::frameBufferCached.nonVR;
@@ -1361,6 +1386,7 @@ void DX12NativeScene::PublishDiagnostics()
         }() },
 		{ "nativePBR", globals::features::nativePBR.IsActive() }, { "nativeLLF", globals::features::nativeLLF.IsActive() },
 		{ "nativeSCM", globals::features::nativeSCM.IsActive() },
+        { "nativeCharacterObservation", nativeCharacters.GetDiagnostics() },
 		{ "nativeLightSource", OwnsNativeFeatures() ? "prepared-priority-unified" : "prepared-cell" },
 		{ "nativeSCMCasters", globals::game::graphicsState ?
 			([&] { const auto snapshot = GetNativeSCMFrame(globals::game::graphicsState->GetFrameCount());

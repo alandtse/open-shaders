@@ -1,0 +1,226 @@
+#pragma once
+
+#include "Utils/ActorUtils.h"
+
+#include <BS_thread_pool.hpp>
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <cmath>
+#include <limits>
+#include <memory>
+#include <string>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+// Character capture is an input-only sidecar. No engine object or renderer
+// pointer crosses the native-CPU worker boundary, and original LLF/SCM and
+// raster draw paths remain the authorities until native coverage is proven.
+namespace DX12Native
+{
+    struct CharacterPartObservation
+    {
+        uint32_t actorFormID = 0, ordinal = 0;
+        std::string shapeName;
+        std::array<float, 4> worldBound{};
+        uint32_t vertexCount = 0, triangleCount = 0;
+        bool skinned = false, dynamic = false, alpha = false, gpuOnly = false;
+    };
+
+    struct CharacterActorObservation
+    {
+        uint32_t formID = 0;
+        bool player = false, ragdoll = false;
+        std::array<float, 4> worldBound{};
+    };
+
+    struct CharacterObservationGeneration
+    {
+        uint32_t frame = 0;
+        uint64_t sceneEpoch = 0;
+        std::vector<CharacterActorObservation> actors;
+        std::vector<CharacterPartObservation> parts;
+        uint32_t droppedActors = 0, droppedParts = 0, invalidParts = 0;
+        uint32_t skinnedParts = 0, dynamicParts = 0, rigidParts = 0;
+        uint32_t alphaParts = 0, gpuOnlyParts = 0;
+    };
+
+    /** @brief Off-thread inventory of third-person character input.
+     * This is an observation stage only: no BLAS, native ownership or GPU
+     * submission. Dynamic and skinned geometry remains raster-owned.
+     */
+    class NativeCharacterObservation
+    {
+    public:
+        void Reset()
+        {
+            ++sceneEpoch;
+            pending.reset(); // Detached worker retains only owned values.
+            published.store({}, std::memory_order_release);
+            lastObservedFrame = UINT32_MAX;
+            workerBusy.store(false, std::memory_order_release);
+            submitted.store(0, std::memory_order_relaxed);
+            completed.store(0, std::memory_order_relaxed);
+        }
+
+        /** @brief Called from the existing opaque-ready render callback.
+         * Bounded engine observation is synchronous. Validation, counting and
+         * deterministic publication are handled on an independent CPU worker.
+         */
+        void Advance(uint32_t frame, uint32_t maxActors, uint32_t periodFrames)
+        {
+            if (pending && pending->done.load(std::memory_order_acquire)) {
+                auto done = std::move(pending);
+                workerBusy.store(false, std::memory_order_release);
+                if (done->result && done->sceneEpoch == sceneEpoch) {
+                    published.store(std::move(done->result), std::memory_order_release);
+                    completed.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            if (pending || !frame) return;
+            periodFrames = std::clamp(periodFrames, 1u, 120u);
+            maxActors = std::clamp(maxActors, 1u, 32u);
+            if (lastObservedFrame != UINT32_MAX &&
+                uint32_t(frame - lastObservedFrame) < periodFrames) return;
+            lastObservedFrame = frame;
+
+            auto captured = std::make_shared<CharacterObservationGeneration>();
+            captured->sceneEpoch = sceneEpoch;
+            captured->frame = frame;
+            constexpr size_t kMaximumParts = 512;
+            constexpr uint32_t kMaximumPartsPerActor = 96;
+
+            // This helper includes the player and high-process NPCs. Visit
+            // exactly Get3D(false): do not observe first-person geometry.
+            Util::ForEachLoadedActor([&](RE::Actor* actor) {
+                if (!actor || !actor->Is3DLoaded()) return;
+                if (captured->actors.size() >= maxActors) {
+                    ++captured->droppedActors;
+                    return;
+                }
+                auto* root = actor->Get3D(false);
+                if (!root) return;
+                CharacterActorObservation info;
+                info.formID = actor->GetFormID();
+                info.player = actor == RE::PlayerCharacter::GetSingleton();
+                info.ragdoll = actor->IsDead() || actor->IsInRagdollState();
+                const auto& bound = root->worldBound;
+                info.worldBound = { bound.center.x, bound.center.y, bound.center.z, bound.radius };
+                captured->actors.push_back(std::move(info));
+                uint32_t ordinal = 0;
+
+                Util::ForEachGeometry(root, [&](RE::BSGeometry* geometry) {
+                    if (!geometry) return;
+                    if (ordinal >= kMaximumPartsPerActor || captured->parts.size() >= kMaximumParts) {
+                        ++captured->droppedParts;
+                        return;
+                    }
+                    CharacterPartObservation part;
+                    part.actorFormID = actor->GetFormID();
+                    part.ordinal = ordinal++;
+                    if (!geometry->name.empty()) part.shapeName = geometry->name.c_str();
+                    const auto& bounds = geometry->worldBound;
+                    part.worldBound = { bounds.center.x, bounds.center.y, bounds.center.z, bounds.radius };
+                    const auto& runtime = geometry->GetGeometryRuntimeData();
+                    part.skinned = bool(runtime.skinInstance);
+                    part.dynamic = geometry->AsDynamicTriShape() != nullptr;
+                    part.alpha = runtime.alphaProperty != nullptr;
+                    if (const auto* tri = geometry->AsTriShape()) {
+                        const auto& counts = tri->GetTrishapeRuntimeData();
+                        part.vertexCount = counts.vertexCount;
+                        part.triangleCount = counts.triangleCount;
+                    }
+                    part.gpuOnly = !runtime.rendererData ||
+                        !runtime.rendererData->rawVertexData ||
+                        !runtime.rendererData->rawIndexData;
+                    captured->parts.emplace_back(std::move(part));
+                });
+            });
+
+            try {
+                auto work = std::make_shared<Work>();
+                work->sceneEpoch = sceneEpoch;
+                static BS::thread_pool<> pool{ 1 };
+                pool.detach_task([work, captured] {
+                    try {
+                        // All aggregation uses owned records, never engine pointers.
+                        auto output = std::make_shared<CharacterObservationGeneration>(*captured);
+                        std::stable_sort(output->parts.begin(), output->parts.end(),
+                            [](const auto& a, const auto& b) {
+                                return a.actorFormID != b.actorFormID ?
+                                    a.actorFormID < b.actorFormID : a.ordinal < b.ordinal;
+                            });
+                        for (const auto& part : output->parts) {
+                            if (part.skinned) ++output->skinnedParts;
+                            else if (part.dynamic) ++output->dynamicParts;
+                            else ++output->rigidParts;
+                            if (part.alpha) ++output->alphaParts;
+                            if (part.gpuOnly) ++output->gpuOnlyParts;
+                            if (!std::isfinite(part.worldBound[3]) ||
+                                part.worldBound[3] <= 0 || !part.vertexCount || !part.triangleCount)
+                                ++output->invalidParts;
+                        }
+                        work->result = std::move(output);
+                    } catch (...) {
+                        // A failed optional inventory cannot affect raster or TLAS.
+                    }
+                    work->done.store(true, std::memory_order_release);
+                });
+                pending = std::move(work);
+                workerBusy.store(true, std::memory_order_release);
+                submitted.fetch_add(1, std::memory_order_relaxed);
+            } catch (...) {
+                workerBusy.store(false, std::memory_order_release);
+            }
+        }
+
+        std::shared_ptr<const CharacterObservationGeneration> GetPublished() const
+        {
+            return published.load(std::memory_order_acquire);
+        }
+
+        json GetDiagnostics() const
+        {
+            auto current = GetPublished();
+            return {
+                { "mode", "third-person-observe-only" },
+                { "firstPersonIncluded", false },
+                { "nativeShadowOwnership", false },
+                { "workerBusy", workerBusy.load(std::memory_order_acquire) },
+                { "submitted", submitted.load(std::memory_order_relaxed) },
+                { "completed", completed.load(std::memory_order_relaxed) },
+                { "generationFrame", current ? current->frame : 0u },
+                { "sceneEpoch", current ? current->sceneEpoch : 0ull },
+                { "actors", current ? current->actors.size() : size_t{ 0 } },
+                { "playerActors", current ? std::count_if(current->actors.begin(), current->actors.end(),
+                    [](const auto& actor) { return actor.player; }) : std::ptrdiff_t{ 0 } },
+                { "parts", current ? current->parts.size() : size_t{ 0 } },
+                { "skinned", current ? current->skinnedParts : 0u },
+                { "dynamic", current ? current->dynamicParts : 0u },
+                { "rigid", current ? current->rigidParts : 0u },
+                { "alpha", current ? current->alphaParts : 0u },
+                { "gpuOnly", current ? current->gpuOnlyParts : 0u },
+                { "invalid", current ? current->invalidParts : 0u },
+                { "droppedActors", current ? current->droppedActors : 0u },
+                { "droppedParts", current ? current->droppedParts : 0u }
+            };
+        }
+
+    private:
+        struct Work
+        {
+            std::atomic<bool> done{ false };
+            uint64_t sceneEpoch = 0;
+            std::shared_ptr<const CharacterObservationGeneration> result;
+        };
+
+        uint64_t sceneEpoch = 1;
+        uint32_t lastObservedFrame = UINT32_MAX;
+        std::shared_ptr<Work> pending;
+        std::atomic<std::shared_ptr<const CharacterObservationGeneration>> published;
+        std::atomic<bool> workerBusy{ false };
+        std::atomic<uint64_t> submitted{ 0 }, completed{ 0 };
+    };
+}

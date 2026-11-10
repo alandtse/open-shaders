@@ -6,6 +6,7 @@
 #include "Features/DX12NativeScene/RuntimeGeometryCapture.h"
 #include "Features/DX12NativeScene/RuntimeGeometryCacheWorker.h"
 #include "Features/DX12NativeScene/RuntimeGeometryPreparation.h"
+#include "Features/DX12NativeScene/NativeCharacterObservation.h"
 #include "Features/DX12NativeScene/VideoMemoryBudget.h"
 #include "Features/DX12NativeScene/RasterCapture.h"
 #include "Features/DX12NativeScene/ShadowTrace.h"
@@ -42,6 +43,9 @@ struct DX12NativeScene final : Feature
         bool CaptureRuntimeGeometry = false; // Explicit static-geometry debug.
         bool CaptureSCMRigidCasters = true; // Bounded native acquisition from SCM's cull data.
         bool CacheRuntimeGeometry = false; // Optional background persistence and menu CPU prewarm.
+        // Third-person character discovery only. It never changes DXR ownership.
+        bool ObserveNativeCharacters = false;
+        uint32_t CharacterMaxActors = 16, CharacterObservationPeriod = 8;
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
@@ -151,6 +155,7 @@ private:
     std::shared_ptr<const DX12Native::TopLevel> requestedCandidateMaterialScene;
     uint64_t candidateMaterialAllowance = 0;
     DX12Native::RuntimeGeometryMailbox runtimeGeometry;
+    DX12Native::NativeCharacterObservation nativeCharacters;
     // Immutable completed-TLAS identity index is published atomically for the draw hook.
     std::atomic<std::shared_ptr<const DX12Native::PreparedRuntimeCoverage>> runtimePreparedCoverage;
     std::shared_ptr<const DX12Native::TopLevel> runtimeCoverageSource;
