@@ -364,18 +364,25 @@ void DX12NativeScene::DrawSettings()
     ImGui::SeparatorText("Native subdivision preparation (experimental)");
     const char* gridModes[]{ "Full scene", "Automatic (after scene estimate)", "Forced grid preparation" };
     int gridMode = static_cast<int>(settings.SubdivisionMode);
-    if (ImGui::Combo("Subdivision preparation mode", &gridMode, gridModes, 3))
+    if (ImGui::Combo("Subdivision preparation mode", &gridMode, gridModes, 3)) {
         settings.SubdivisionMode = static_cast<uint32_t>(gridMode);
+        resetRequested.store(true, std::memory_order_release);
+    }
     int gridUnits = static_cast<int>(settings.SubcellSize / 1024);
-    if (ImGui::SliderInt("Subcell width (x1024 units)", &gridUnits, 2, 16))
+    if (ImGui::SliderInt("Subcell width (x1024 units)", &gridUnits, 2, 16)) {
         settings.SubcellSize = uint32_t(gridUnits * 1024);
+        resetRequested.store(true, std::memory_order_release);
+    }
     ImGui::TextDisabled("Full-scene DXR stays active until partial TLAS integration is validated.");
-    ImGui::Checkbox("Build isolated grid TLAS for diagnostic testing", &settings.BuildCandidateGridTLAS);
+    if (ImGui::Checkbox("Build isolated grid TLAS for diagnostic testing", &settings.BuildCandidateGridTLAS))
+        resetRequested.store(true, std::memory_order_release);
     ImGui::BeginDisabled(!settings.BuildCandidateGridTLAS);
-    ImGui::Checkbox("Experimental: publish ready grid to native DXR", &settings.UseGridForNativeDXR);
+    if (ImGui::Checkbox("Experimental: publish ready grid to native DXR", &settings.UseGridForNativeDXR))
+        resetRequested.store(true, std::memory_order_release);
     ImGui::EndDisabled();
     ImGui::TextDisabled("Opt-in: only an exact matching current-center TLAS and materials become live.");
     ImGui::TextDisabled("Otherwise preserve the original full-scene renderer.");
+    ImGui::TextDisabled("Forced + live grid skips expensive full-cell GPU preparation.");
     ImGui::SeparatorText("Prepared scene VRAM budget");
     const uint32_t pendingSceneBudget = requestedBudget.load();
     uint32_t selectedSceneBudget = pendingSceneBudget != UINT32_MAX ?
@@ -876,7 +883,14 @@ void DX12NativeScene::EarlyPrepass()
             }
         }
     }
-	if (!prepared.Requested()) {
+    // Forced streaming with an explicitly enabled live-grid canary must
+    // NOT upload the entire CELL merely to decide where to subdivide.
+    // Raster continues while partial grid assets become available.
+    // In diagnostic/auto mode the established complete-scene renderer
+    // remains the normal fallback.
+    const bool exclusiveGrid = settings.SubdivisionMode == 2 &&
+        settings.BuildCandidateGridTLAS && settings.UseGridForNativeDXR;
+	if (!exclusiveGrid && !prepared.Requested()) {
 		const auto* source = cell->GetFile(0);
 		if (!source) { failure = "Cell source unavailable"; return; }
 		const auto local = cell->GetLocalFormID();
@@ -886,7 +900,7 @@ void DX12NativeScene::EarlyPrepass()
         SceneMemoryLimit();
 		prepared.Request(*backend, directory, key, revision, manualBytes, manualBytes);
 	}
-	if (!submitted) {
+	if (!exclusiveGrid && !submitted) {
 		if (auto scene = prepared.GetCell()) {
             const uint64_t sceneAllowance = SceneMemoryLimit(scene->bytes);
             if (sceneAllowance > scene->bytes) {
