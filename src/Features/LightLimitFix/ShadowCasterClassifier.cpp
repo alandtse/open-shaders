@@ -290,7 +290,13 @@ namespace ShadowCasterManager
         else {
             ++s_nativeCasterScratch->rasterFallback;
             if (dynamic) ++s_nativeCasterScratch->moving;
-            else ++s_nativeCasterScratch->uncoveredRigid;
+            else {
+                ++s_nativeCasterScratch->uncoveredRigid;
+                // The deduplicating SCM collector is the only legal CPU
+                // acquisition point. One source copy per rigid caster per
+                // frame, regardless of the number of lights that visit it.
+                globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
+            }
             if (geom.GetGeometryRuntimeData().skinInstance) ++s_nativeCasterScratch->skinned;
         }
 	}
@@ -479,10 +485,6 @@ namespace ShadowCasterManager
 			preparedStatic = rec->nativePreparedCovered;
 		}
 		ObserveNativeCaster(geom, dynamic, preparedStatic);
-        // Reuse SCM's existing cull traversal as the CPU geometry source.
-        // Only completed native TLAS instances may retire raster ownership.
-        if (!dynamic && !preparedStatic && s_nativeCasterCollecting)
-            globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
 		// Exactly-covered prepared triangles already intersect native DXR shadow rays.
 		// Leave unprepared static casters and all moving casters in the DX11 path.
 		if (preparedStatic) return true;
