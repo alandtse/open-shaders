@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "CompanionProcess.h"
 #include "PreparedCellValidation.h"
+#include "Features/DX12NativeScene/SpatialSubcells.h"
 #include <RE/T/TESDataHandler.h>
 #include <RE/T/TESObjectCELL.h>
 #include <RE/T/TESFile.h>
@@ -40,6 +41,7 @@ struct DX12Resources::PreparationJob
 {
     std::atomic<bool> done{ false };
     DX12ResourceService::CellRequest request;
+    std::optional<DX12ResourceService::PreparedSubcellAddress> tile;
     std::string path;
     std::string error;
     std::string logPath;
@@ -300,13 +302,15 @@ void DX12Resources::AdvancePluginCellScan()
         pluginInteriors.size(), selectedPlugin);
 }
 
-void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest& request)
+void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest& request,
+    std::optional<DX12ResourceService::PreparedSubcellAddress> tile)
 {
     if (preparationJob) {
         preparationStatus = "A CELL preparation job is already running";
         return;
     }
-    if (!DX12ResourceService::ParseCellRequest(request.plugin, std::format("{:X}", request.localId))) {
+    if (!DX12ResourceService::ParseCellRequest(request.plugin, std::format("{:X}", request.localId)) ||
+        (tile && !tile->Valid())) {
         preparationStatus = "Selected CELL identity is invalid";
         return;
     }
@@ -325,7 +329,9 @@ void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest&
         std::format("prepare-{}-{}-{}.log", request.localId, GetCurrentProcessId(), GetTickCount64());
     auto next = std::make_shared<PreparationJob>();
     next->request = request;
-    preparationStatus = "Processing CELL with DX12ResourcesPrep...";
+    next->tile = tile;
+    preparationStatus = tile ? "Preparing a native DX12 subcell..." :
+        "Processing CELL with DX12ResourcesPrep...";
     preparationReport = json::object();
     preparationPath.clear();
     preparationLogPath.clear();
@@ -333,20 +339,27 @@ void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest&
     preparationCell = request.Key();
     try {
         static BS::thread_pool<> pool{ 1 };
-        pool.detach_task([next, request, data, pluginsFile, workspace, logPath] {
+        pool.detach_task([next, request, tile, data, pluginsFile, workspace, logPath] {
             const auto started = std::chrono::steady_clock::now();
             next->logPath = logPath.string();
             try {
                 const auto identity = std::format("{}:{:06X}", request.plugin, request.localId);
-                const auto process = DX12ResourceService::RunCompanion({
+                std::vector<std::wstring> args{
                     data.wstring(), std::filesystem::path(identity).wstring(),
                     workspace.wstring(), pluginsFile.wstring(), L"1"
-                }, logPath);
+                };
+                if (tile) {
+                    args.insert(args.begin(), L"--subcell");
+                    args.push_back(std::to_wstring(tile->size));
+                    args.push_back(std::to_wstring(tile->x));
+                    args.push_back(std::to_wstring(tile->y));
+                }
+                const auto process = DX12ResourceService::RunCompanion(args, logPath);
                 if (!process.error.empty())
                     throw std::runtime_error(process.error + ": " + process.log);
-                next->report = DX12ResourceService::ValidatePreparedCell(workspace, request);
+                next->report = DX12ResourceService::ValidatePreparedCell(workspace, request, tile);
                 const auto published = DX12ResourceService::PublishPreparedCell(
-                    workspace, data, request);
+                    workspace, data, request, tile);
                 next->path = published.string();
             } catch (const std::exception& error) { next->error = error.what(); }
             next->elapsedMs = std::chrono::duration<double, std::milli>(
@@ -367,15 +380,22 @@ void DX12Resources::PollCellPreparation()
     preparationElapsedMs = completed->elapsedMs;
     if (!completed->error.empty()) {
         preparationStatus = "CELL preparation failed: " + completed->error;
+        if (completed->tile)
+            failedStreamingTiles.emplace(std::format("{}:{}:{}:{}",
+                completed->request.Key(), completed->tile->size,
+                completed->tile->x, completed->tile->y));
         return;
     }
     preparationReport = std::move(completed->report);
     preparationPath = completed->path;
-    globals::features::dx12NativeScene.NotifyPreparedCellPublished(completed->request.plugin, completed->request.localId);
+    if (!completed->tile)
+        globals::features::dx12NativeScene.NotifyPreparedCellPublished(
+            completed->request.plugin, completed->request.localId);
     const int missing = preparationReport.value("unresolvedAssets", 0);
     preparationStatus = missing == 0 ?
-        "CELL preparation validated and cached (runtime coverage still unverified)" :
-        std::format("CELL prepared and cached with {} unresolved source assets; NOT render-ready", missing);
+        (completed->tile ? "DX12 subcell cached, GPU residency not yet active" :
+            "CELL preparation validated and cached (runtime coverage still unverified)") :
+        std::format("CELL prepared with {} unresolved assets; coverage incomplete", missing);
 }
 
 void DX12Resources::AdvanceAutomaticInterior(const DX12ResourceService::CellRequest& request)
@@ -407,6 +427,62 @@ void DX12Resources::AdvanceAutomaticInterior(const DX12ResourceService::CellRequ
     StartCellPreparation(request);
 }
 
+
+void DX12Resources::AdvanceStreamingInterior(const DX12ResourceService::CellRequest& request,
+    uint32_t size, double x, double y, double velocityX, double velocityY)
+{
+    std::scoped_lock lock(statusMutex);
+    PollCellPreparation();
+    if (!settings.Enabled || !settings.AutoPrepareOnCellEntry ||
+        !dataLoaded.load(std::memory_order_acquire) ||
+        !DX12Native::SpatialSubcells::ValidSize(size) ||
+        !std::isfinite(x) || !std::isfinite(y)) return;
+    const auto scope = request.Key() + ":" + std::to_string(size);
+    if (streamingScope != scope) {
+        streamingScope = scope;
+        failedStreamingTiles.clear();
+        lastStreamingPollMs = 0;
+    }
+    const auto now = GetTickCount64();
+    if (lastStreamingPollMs && now - lastStreamingPollMs < 350) return;
+    lastStreamingPollMs = now;
+    streamingSize = size;
+    const auto center = DX12Native::SpatialSubcells::FromPosition(x, y, size);
+    if (std::abs(center.x) > 1'000'000 || std::abs(center.y) > 1'000'000) {
+        streamingStatus = "Subcell coordinates exceed supported preparation region";
+        return;
+    }
+    const auto root = DX12ResourceService::SkyrimDataDirectory() /
+        "SKSE/Plugins/CommunityShaders/DX12-cache/cells" /
+        request.plugin / std::format("{:06X}", request.localId) / "subcells" /
+        std::to_string(size);
+    auto isCached = [&](DX12Native::SpatialSubcells::Coordinate tile) {
+        const auto dir = root / std::format("{}_{}", tile.x, tile.y);
+        std::error_code ec;
+        return std::filesystem::is_regular_file(dir / "cell-layout.json", ec) && !ec &&
+            std::filesystem::is_regular_file(dir / "cell-geometry.rsgp", ec) && !ec &&
+            std::filesystem::is_regular_file(dir / "cell-shading.rssp", ec) && !ec;
+    };
+    const auto order = DX12Native::SpatialSubcells::OrderedWork(center, velocityX, velocityY);
+    streamingActive = streamingSides = streamingCorners = 0;
+    for (auto c : order.active) if (isCached(c)) ++streamingActive;
+    for (auto c : order.predictive.sides) if (isCached(c)) ++streamingSides;
+    for (auto c : order.predictive.corners) if (isCached(c)) ++streamingCorners;
+    streamingStatus = std::format("3x3 {}/9; sides {}/12; corners {}/4",
+        streamingActive, streamingSides, streamingCorners);
+    if (preparationJob) return;
+
+    const auto pending = DX12Native::SpatialSubcells::PendingWork(center, velocityX, velocityY, isCached);
+    for (const auto tile : pending) {
+        const auto identity = std::format("{}:{}:{}:{}", request.Key(), size, tile.x, tile.y);
+        if (failedStreamingTiles.contains(identity)) continue;
+        ++streamingLaunches;
+        StartCellPreparation(request, DX12ResourceService::PreparedSubcellAddress{ size, tile.x, tile.y });
+        return;
+    }
+    if (!pending.empty()) streamingStatus += " | failed tile awaiting retry";
+}
+
 void DX12Resources::DrawSettings()
 {
     std::scoped_lock lock(statusMutex);
@@ -432,6 +508,8 @@ void DX12Resources::DrawSettings()
     ImGui::Checkbox("Enable DX12 Resources preparation", &settings.Enabled);
     ImGui::Checkbox("Automatically prepare missing native interior scenes", &settings.AutoPrepareOnCellEntry);
     ImGui::TextDisabled("Companion runs off-thread; a matching cache is reused without restarting preparation.");
+    ImGui::TextWrapped("Subcell scheduler: %s", streamingStatus.c_str());
+    ImGui::TextDisabled("Cache preparation stage only; full-scene TLAS remains authoritative.");
     ImGui::TextDisabled("Current interior or latest-save location; no manual IDs required.");
     ImGui::BeginDisabled(!settings.Enabled);
     ImGui::BeginDisabled(bool(scanJob));
@@ -565,6 +643,10 @@ json DX12Resources::GetDiagnostics()
         { "autoPrepareOnCellEntry", settings.AutoPrepareOnCellEntry },
         { "automaticLaunches", automaticLaunches }, { "automaticCacheHits", automaticCacheHits },
         { "lastAutomaticInterior", lastAutomaticInterior },
+        { "subcellStreaming", { { "scope", streamingScope }, { "status", streamingStatus },
+            { "size", streamingSize }, { "activePrepared", streamingActive },
+            { "sidesPrepared", streamingSides }, { "cornersPrepared", streamingCorners },
+            { "launches", streamingLaunches }, { "failedTiles", failedStreamingTiles.size() } } },
         { "detection", { { "source", detectionSource },
             { "status", detectionStatus },
             { "location", detectionLocation }, { "save", detectionSave },

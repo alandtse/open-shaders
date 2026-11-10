@@ -4,6 +4,7 @@
 #include "CellRequest.h"
 #include "AutoCellResolver.h"
 #include "PluginCellCatalog.h"
+#include "PreparedCellValidation.h"
 #include <optional>
 #include <atomic>
 #include <cstdint>
@@ -12,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <unordered_set>
 
 /** @brief Standalone interior preparation service with automatic CELL identification. */
 struct DX12Resources final : Feature
@@ -30,6 +32,8 @@ struct DX12Resources final : Feature
     void RestoreDefaultSettings() override;
     /** Render-thread poll and one-shot auto-prepare on entry into a missing native interior cache. */
     void AdvanceAutomaticInterior(const DX12ResourceService::CellRequest& request);
+    void AdvanceStreamingInterior(const DX12ResourceService::CellRequest& request,
+        uint32_t size, double x, double y, double velocityX, double velocityY);
     void DataLoaded() override { dataLoaded.store(true, std::memory_order_release); }
     json GetDiagnostics() override;
     std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
@@ -49,7 +53,8 @@ private:
     void RefreshLoadedPlugins();
     void StartPluginCellScan(std::string plugin);
     void AdvancePluginCellScan();
-    void StartCellPreparation(const DX12ResourceService::CellRequest& request);
+    void StartCellPreparation(const DX12ResourceService::CellRequest& request,
+        std::optional<DX12ResourceService::PreparedSubcellAddress> tile = std::nullopt);
     void PollCellPreparation();
     std::atomic<bool> dataLoaded{ false };
     std::mutex statusMutex;
@@ -80,6 +85,10 @@ private:
     std::string lastAutomaticInterior;
     uint64_t automaticLaunches = 0;
     uint64_t automaticCacheHits = 0;
+    std::string streamingScope, streamingStatus = "Not active";
+    uint64_t lastStreamingPollMs = 0, streamingLaunches = 0;
+    uint32_t streamingSize = 4096, streamingActive = 0, streamingSides = 0, streamingCorners = 0;
+    std::unordered_set<std::string> failedStreamingTiles;
     std::string preparationCell;
     std::string preparationPath;
     std::string preparationLogPath;

@@ -29,6 +29,8 @@ struct DX12NativeScene final : Feature
 		uint32_t BudgetMB = 0, FrameBudgetMB = 0, MaterialBatchMB = 16; // BudgetMB=0: automatic DXGI
         uint32_t BudgetPolicyVersion = 1; // Migrate legacy 512 MiB default to auto
         uint32_t GlobalDXGIHeadroomPercent = DX12Native::VideoMemoryBudget::kDefaultHeadroomPercent;
+        uint32_t SubdivisionMode = 0; // 0 full; 1 auto after estimate; 2 forced companion prep.
+        uint32_t SubcellSize = 4096; // 2048..16384 in 1024 unit steps
 		bool UseLivePBR = false; // Legacy config field; NativePBR now follows DX12 ownership.
         bool ImportLoosePBR = false; // Separate opt-in for bounded loose-file DDS residency.
         bool ImportArchivePBR = false; // Further opt-in: archive resource manager fallback.
@@ -175,6 +177,8 @@ private:
 	std::atomic<uint32_t> requestedBudget{ UINT32_MAX };
 	std::atomic<uint32_t> requestedFrameBudget{ UINT32_MAX };
 	std::atomic<uint32_t> requestedMaterialBatch{ 0 };
+    double previousPlayerX = 0.0, previousPlayerY = 0.0;
+    bool hasPreviousPlayer = false;
 	uint64_t shadowControlsRevision = 1;
 	uint64_t shadowOpaqueRetryAttempts = 0, shadowOpaqueRetryRecovered = 0;
 	mutable std::mutex settingsMutex, diagnosticsMutex;
