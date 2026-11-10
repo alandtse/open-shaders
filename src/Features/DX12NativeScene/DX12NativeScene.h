@@ -54,6 +54,7 @@ struct DX12NativeScene final : Feature
         bool CharacterBuildIsolatedTLASDX12 = false; // Single instance; diagnostic only.
         bool CharacterRunIsolatedRayQueryDX12 = false; // One diagnostic ray, no shadows.
         bool CharacterShadowCasterVisibility = false; // Opt-in; secondary light rays only.
+        uint32_t CharacterCasterMaxPoseAgeFrames = 12; // Bound TLAS reuse across BLAS updates.
         uint32_t CharacterMaxActors = 16, CharacterObservationPeriod = 8;
         uint32_t CharacterBLASIntervalFrames = 8; // Bound experimental GPU AS work.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.

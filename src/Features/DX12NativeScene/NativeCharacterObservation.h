@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cmath>
+#include <cmath>
 #include <limits>
 #include <format>
 #include <memory>
@@ -83,7 +84,7 @@ namespace DX12Native
      */
     inline CharacterCasterReadiness EvaluateCharacterCaster(
         const std::shared_ptr<const CharacterObservationGeneration>& generation,
-        uint32_t renderFrame)
+        uint32_t renderFrame, uint32_t maxPoseAgeFrames = 12u)
     {
         CharacterCasterReadiness readiness;
         if (!generation) return readiness;
@@ -109,9 +110,12 @@ namespace DX12Native
             readiness.reason = "Skinning readback does not match TLAS pose";
             return readiness;
         }
+        // Retain a completed TLAS across the normal BLAS update interval.
+        // Never admit a future pose or one older than the configured window.
+        maxPoseAgeFrames = std::clamp(maxPoseAgeFrames, 1u, 30u);
         if (renderFrame < scene->poseFrame ||
-            renderFrame - scene->poseFrame > 2u) {
-            readiness.reason = "Character pose is older than two render frames";
+            renderFrame - scene->poseFrame > maxPoseAgeFrames) {
+            readiness.reason = "Character pose exceeds maximum configured age";
             return readiness;
         }
         const auto actor = std::ranges::find_if(generation->actors,
@@ -553,9 +557,11 @@ namespace DX12Native
             return published.load(std::memory_order_acquire);
         }
 
-        CharacterCasterReadiness GetCasterReadiness(uint32_t renderFrame) const
+        CharacterCasterReadiness GetCasterReadiness(
+            uint32_t renderFrame, uint32_t maxPoseAgeFrames = 12u) const
         {
-            return EvaluateCharacterCaster(GetPublished(), renderFrame);
+            return EvaluateCharacterCaster(GetPublished(), renderFrame,
+                maxPoseAgeFrames);
         }
 
         json GetDiagnostics() const
