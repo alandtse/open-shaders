@@ -13,12 +13,14 @@
 
 namespace DX12Native
 {
-    // Separate from the published world TLAS and ShadowBindings. The one
-    // instance has an identity transform until actor-space parity is proven;
-    // its only consumer will be an isolated diagnostic RayQuery.
+    // Separate from the published world TLAS and ShadowBindings. Every
+    // diagnostic skinned instance has an identity transform until world-space
+    // parity is proven; none are admitted to the production scene in
+    // multi-part mode.
     struct CharacterIsolatedTLAS
     {
         std::shared_ptr<const CharacterIsolatedBLAS> bottom;
+        std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> bottoms;
         winrt::com_ptr<ID3D12Resource> acceleration;
         winrt::com_ptr<ID3D12Fence> completion;
         uint64_t fenceValue = 0, allocationBytes = 0, scratchBytes = 0;
@@ -77,18 +79,22 @@ namespace DX12Native
         }
     };
 
-    /** @brief Builds an isolated one-instance character TLAS with no world
-     * geometry, no production descriptors, and no modification to any
-     * NativeSCM/lighting/ShadowTrace state.
+    /** @brief Isolated, bounded multi-instance character TLAS.
+     * Production caster eligibility refuses multi-part mode until all
+     * per-part pose and material contracts are validated.
      */
-    inline std::shared_ptr<const CharacterIsolatedTLAS> BuildCharacterIsolatedTLAS(
+    inline std::shared_ptr<const CharacterIsolatedTLAS> BuildCharacterMultiPartTLAS(
         ID3D12Device* device, ID3D12CommandQueue* queue,
-        std::shared_ptr<const CharacterIsolatedBLAS> bottom)
+        std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> bottoms)
     {
-        if (!device || !queue || !bottom || !bottom->Ready() ||
-            !bottom->acceleration || !bottom->deformation ||
-            !CharacterTLASRetirement::CanSubmit())
-            return {};
+        if (!device || !queue || bottoms.empty() || bottoms.size() > 8 ||
+            !CharacterTLASRetirement::CanSubmit()) return {};
+        for (const auto& part : bottoms)
+            if (!part || !part->Ready() || !part->acceleration ||
+                !part->deformation || !part->validation ||
+                !part->validation->sane ||
+                part->validation->poseFrame != part->poseFrame)
+                return {};
 
         winrt::com_ptr<ID3D12Device5> dxr;
         if (FAILED(device->QueryInterface(IID_PPV_ARGS(dxr.put()))))
@@ -98,7 +104,7 @@ namespace DX12Native
         inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
         inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
         inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
-        inputs.NumDescs = 1;
+        inputs.NumDescs = uint32_t(bottoms.size());
 
         D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO info{};
         dxr->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &info);
@@ -115,7 +121,7 @@ namespace DX12Native
         const auto scratchDesc = CD3DX12_RESOURCE_DESC::Buffer(
             info.ScratchDataSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         const auto instanceDesc = CD3DX12_RESOURCE_DESC::Buffer(
-            sizeof(D3D12_RAYTRACING_INSTANCE_DESC));
+            uint64_t(bottoms.size()) * sizeof(D3D12_RAYTRACING_INSTANCE_DESC));
         const auto resultBytes = device->GetResourceAllocationInfo(
             0, 1, &resultDesc).SizeInBytes;
         const auto scratchBytes = device->GetResourceAllocationInfo(
@@ -131,14 +137,18 @@ namespace DX12Native
 
         // CurrentUsage already includes prior allocations, so the budget
         // tracks only this chain's known live resources once.
-        uint64_t known = bottom->allocationBytes +
-            bottom->deformation->allocationBytes;
-        if (known < bottom->allocationBytes)
-            return {};
-        if (bottom->deformation->input) {
-            const auto staged = bottom->deformation->input->residentBytes;
-            if (staged > UINT64_MAX - known) return {};
-            known += staged;
+        uint64_t known = 0;
+        for (const auto& part : bottoms) {
+            uint64_t partBytes = part->allocationBytes;
+            if (part->deformation->allocationBytes > UINT64_MAX - partBytes) return {};
+            partBytes += part->deformation->allocationBytes;
+            if (part->deformation->input) {
+                const auto staged = part->deformation->input->residentBytes;
+                if (staged > UINT64_MAX - partBytes) return {};
+                partBytes += staged;
+            }
+            if (partBytes > UINT64_MAX - known) return {};
+            known += partBytes;
         }
         VideoMemoryBudget memory;
         const auto budget = memory.Query(device, known, 0);
@@ -148,7 +158,8 @@ namespace DX12Native
             return {};
 
         auto tlas = std::make_shared<CharacterIsolatedTLAS>();
-        tlas->bottom = std::move(bottom);
+        tlas->bottoms = std::move(bottoms);
+        tlas->bottom = tlas->bottoms.front();
         tlas->allocationBytes = resultBytes;
         tlas->scratchBytes = scratchBytes;
         tlas->poseFrame = tlas->bottom->poseFrame;
@@ -168,22 +179,27 @@ namespace DX12Native
                 nullptr, IID_PPV_ARGS(submission->instanceUpload.put()))))
             throw std::runtime_error("Isolated character TLAS allocation failed");
 
-        D3D12_RAYTRACING_INSTANCE_DESC instance{};
-        instance.Transform[0][0] = 1.0f;
-        instance.Transform[1][1] = 1.0f;
-        instance.Transform[2][2] = 1.0f;
-        instance.InstanceID = 0;
-        instance.InstanceMask = 0x01;
-        instance.InstanceContributionToHitGroupIndex = 0;
-        instance.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
-        instance.AccelerationStructure =
-            tlas->bottom->acceleration->GetGPUVirtualAddress();
+        std::vector<D3D12_RAYTRACING_INSTANCE_DESC> instances(
+            tlas->bottoms.size());
+        for (size_t i = 0; i < instances.size(); ++i) {
+            auto& instance = instances[i];
+            instance.Transform[0][0] = 1.0f;
+            instance.Transform[1][1] = 1.0f;
+            instance.Transform[2][2] = 1.0f;
+            instance.InstanceID = uint32_t(i);
+            instance.InstanceMask = 0x01;
+            instance.InstanceContributionToHitGroupIndex = 0;
+            instance.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
+            instance.AccelerationStructure =
+                tlas->bottoms[i]->acceleration->GetGPUVirtualAddress();
+        }
 
         void* mapped = nullptr;
         const D3D12_RANGE noRead{ 0, 0 };
         if (FAILED(submission->instanceUpload->Map(0, &noRead, &mapped)) || !mapped)
             throw std::runtime_error("Isolated TLAS instance mapping failed");
-        std::memcpy(mapped, &instance, sizeof(instance));
+        std::memcpy(mapped, instances.data(),
+            instances.size() * sizeof(instances.front()));
         submission->instanceUpload->Unmap(0, nullptr);
         inputs.InstanceDescs = submission->instanceUpload->GetGPUVirtualAddress();
 
@@ -215,5 +231,15 @@ namespace DX12Native
         if (FAILED(queue->Signal(tlas->completion.get(), tlas->fenceValue)))
             throw std::runtime_error("Isolated character TLAS signal failed");
         return tlas;
+    }
+
+    // Keep existing single-part callers and behavior unchanged.
+    inline std::shared_ptr<const CharacterIsolatedTLAS> BuildCharacterIsolatedTLAS(
+        ID3D12Device* device, ID3D12CommandQueue* queue,
+        std::shared_ptr<const CharacterIsolatedBLAS> bottom)
+    {
+        if (!bottom) return {};
+        return BuildCharacterMultiPartTLAS(device, queue,
+            { std::move(bottom) });
     }
 }

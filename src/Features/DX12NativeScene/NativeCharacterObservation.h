@@ -573,8 +573,83 @@ namespace DX12Native
                         // lighting/shadow consumer. It references ONLY a
                         // completed isolated character BLAS.
                         if (buildIsolatedTLAS && buildIsolatedBLAS &&
-                            output->isolatedBLAS && output->isolatedBLAS->Ready() &&
                             nativeDevice && nativeQueue) {
+                            if (accumulatePartBLAS) {
+                                // Diagnostic only: never promote this mixed-
+                                // age multi-part TLAS to production visibility.
+                                // Each skinned part needs its own finite pose,
+                                // current identity and plausible world bounds.
+                                std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> parts;
+                                uint32_t actorIdentity = 0;
+                                for (const auto& part : output->blasParts) {
+                                    if (!part || !part->Ready() || !part->validation ||
+                                        !part->validation->sane ||
+                                        part->validation->poseFrame != part->poseFrame ||
+                                        output->frame < part->poseFrame ||
+                                        output->frame - part->poseFrame > 30u)
+                                        continue;
+                                    const auto observed = std::ranges::find_if(
+                                        output->parts, [&](const auto& mesh) {
+                                            return mesh.actorFormID == part->actorFormID &&
+                                                mesh.ordinal == part->partOrdinal &&
+                                                mesh.sourceToken == part->sourceToken &&
+                                                mesh.skinned && !mesh.alpha && !mesh.dynamic;
+                                        });
+                                    if (observed == output->parts.end()) continue;
+                                    if (actorIdentity && actorIdentity != part->actorFormID)
+                                        continue;
+                                    const auto& bounds = observed->worldBound;
+                                    if (!std::isfinite(bounds[3]) || bounds[3] <= 0.0f)
+                                        continue;
+                                    const float tolerance = std::max(2.0f, bounds[3] * 0.25f);
+                                    bool plausible = true;
+                                    for (size_t axis = 0; axis < 3; ++axis)
+                                        plausible &= std::isfinite(bounds[axis]) &&
+                                            std::isfinite(part->validation->minimum[axis]) &&
+                                            std::isfinite(part->validation->maximum[axis]) &&
+                                            part->validation->minimum[axis] >=
+                                                bounds[axis] - bounds[3] - tolerance &&
+                                            part->validation->maximum[axis] <=
+                                                bounds[axis] + bounds[3] + tolerance;
+                                    if (!plausible) continue;
+                                    actorIdentity = part->actorFormID;
+                                    parts.push_back(part);
+                                    if (parts.size() >= 8) break;
+                                }
+                                if (!parts.empty()) {
+                                    const auto old = previous ?
+                                        previous->isolatedTLAS : nullptr;
+                                    const bool sameMembership = old &&
+                                        old->bottoms == parts;
+                                    const bool oldStillPresent = old &&
+                                        std::ranges::all_of(old->bottoms,
+                                            [&](const auto& item) {
+                                                return std::ranges::find(
+                                                    parts, item) != parts.end();
+                                            });
+                                    const bool awaitingQuery = oldStillPresent &&
+                                        runIsolatedRayProbe &&
+                                        (!previous->rayProbe ||
+                                         previous->rayProbe->scene != old ||
+                                         !previous->rayProbe->Ready() ||
+                                         !previous->rayOutcome);
+                                    if (sameMembership || awaitingQuery)
+                                        output->isolatedTLAS = old;
+                                    else {
+                                        try {
+                                            output->isolatedTLAS = BuildCharacterMultiPartTLAS(
+                                                nativeDevice.get(), nativeQueue.get(),
+                                                std::move(parts));
+                                        } catch (const std::exception& e) {
+                                            output->tlasError = e.what();
+                                        } catch (...) {
+                                            output->tlasError =
+                                                "Isolated multi-part character TLAS failed";
+                                        }
+                                    }
+                                }
+                            } else if (output->isolatedBLAS &&
+                                output->isolatedBLAS->Ready()) {
                             if (previous && previous->isolatedTLAS &&
                                 output->stagedGeometry &&
                                 std::ranges::any_of(output->stagedGeometry->meshes,
@@ -608,6 +683,7 @@ namespace DX12Native
                                     output->tlasError = "Isolated character TLAS build failed";
                                 }
                             }
+                        }
                         }
                         // Only the isolated character TLAS is bound. The
                         // query reports one triangle-intersection diagnostic
@@ -775,6 +851,8 @@ namespace DX12Native
                     current->isolatedTLAS->Ready() },
                 { "isolatedTLASFrame", current && current->isolatedTLAS ?
                     current->isolatedTLAS->poseFrame : 0u },
+                { "isolatedTLASInstances", current && current->isolatedTLAS ?
+                    current->isolatedTLAS->bottoms.size() : size_t{ 0 } },
                 { "isolatedTLASBytes", current && current->isolatedTLAS ?
                     current->isolatedTLAS->allocationBytes : 0ull },
                 { "isolatedTLASPending", CharacterTLASRetirement::Pending() },

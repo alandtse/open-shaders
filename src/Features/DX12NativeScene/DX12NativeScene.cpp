@@ -504,6 +504,8 @@ void DX12NativeScene::DrawSettings()
         characterStats.value("isolatedBLASError", std::string{});
     if (!isolatedBlasFailure.empty())
         ImGui::TextWrapped("Isolated BLAS: %s", isolatedBlasFailure.c_str());
+    ImGui::Text("Isolated TLAS instances: %zu (multi-part diagnostics only)",
+        characterStats.value("isolatedTLASInstances", size_t{ 0 }));
     ImGui::Text("Isolated character TLAS: %s, pose frame %u",
         characterStats.value("isolatedTLASSubmitted", false) ?
             (characterStats.value("isolatedTLASReady", false) ? "GPU ready" : "submitted") :
