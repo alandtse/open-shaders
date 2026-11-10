@@ -17,6 +17,7 @@
 
 /** @brief Loads prepared geometry and publishes its completed DX12 acceleration scene. */
 namespace RE { class BSGeometry; }
+namespace ShadowCasterManager { struct NativeCasterFrame; }
 
 struct DX12NativeScene final : Feature
 {
@@ -60,6 +61,8 @@ struct DX12NativeScene final : Feature
 		std::shared_ptr<const DX12Native::RasterFrame> raster;
 		std::optional<PublishedScene> prepared;
 		std::shared_ptr<const DX12Native::ShadowFrame> shadow;
+		// Same-frame classified raster casters for NativeSCM consumers (no engine pointers).
+		std::shared_ptr<const ShadowCasterManager::NativeCasterFrame> nativeCasters;
 	};
 	std::string GetName() override { return "DX12 Native Scene"; }
 	std::string GetShortName() override { return "DX12NativeScene"; }
@@ -101,6 +104,8 @@ struct DX12NativeScene final : Feature
 	std::optional<PublishedScene> GetPublishedScene() const;
 	/** @brief Live LLF illumination source in a native-owned frame; empty is not a legacy fallback. */
 	std::optional<NativeLightBatch> GetNativeLLFLights(uint32_t a_frame) const;
+	/** @brief Retains SCM's finished same-frame caster classification generation. */
+	std::shared_ptr<const ShadowCasterManager::NativeCasterFrame> GetNativeSCMFrame(uint32_t a_frame) const;
 	/** @brief Returns the available current-frame outputs without substituting stale resources. */
 	std::optional<SceneFrame> GetSceneFrame(uint32_t a_frame) const;
 	/** @brief Retains the current raster snapshot through the consumer GPU work. */

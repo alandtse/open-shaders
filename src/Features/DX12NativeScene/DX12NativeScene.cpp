@@ -188,7 +188,7 @@ bool DX12NativeScene::OwnsNativeFeatures() const
 {
 	const auto& upscaling = globals::features::upscaling;
 	return loaded && settings.Enabled && !transitionOpen && backend.has_value() &&
-		!globals::game::isVR && upscaling.d3d12SwapChainActive && upscaling.settings.nativeUpscaleEnable;
+		!globals::game::isVR && upscaling.settings.nativeUpscaleEnable;
 }
 
 bool DX12NativeScene::IsPreparedStaticCaster(RE::BSGeometry& geometry) const
@@ -206,6 +206,12 @@ bool DX12NativeScene::IsPreparedStaticCaster(RE::BSGeometry& geometry) const
 	if (!file) return false;
 	return coverage->Contains(
 		std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename()), geometry.name.c_str());
+}
+
+std::shared_ptr<const ShadowCasterManager::NativeCasterFrame> DX12NativeScene::GetNativeSCMFrame(uint32_t a_frame) const
+{
+	return OwnsNativeFeatures() && settings.NativeSCM ?
+		ShadowCasterManager::GetNativeCasterFrame(a_frame) : nullptr;
 }
 
 std::optional<DX12NativeScene::NativeLightBatch> DX12NativeScene::GetNativeLLFLights(uint32_t a_frame) const
@@ -777,7 +783,7 @@ void DX12NativeScene::EarlyPrepass()
             const uint64_t currentRevision = pbr.nativeRegistry.Revision();
             const uint32_t currentFrame = globals::game::graphicsState->GetFrameCount();
             if ((currentRevision != livePbrRevision || !livePbrSource) &&
-                (!livePbrLastCaptureFrame || uint32_t(currentFrame - livePbrLastCaptureFrame) >= 120)) {
+                livePbrLastCaptureFrame != currentFrame) {
                 livePbrLastCaptureFrame = currentFrame;
                 auto recipes = pbr.GetNativeRecipes();
                 if (recipes && recipes->batchesComplete) {
@@ -906,7 +912,7 @@ std::optional<DX12NativeScene::SceneFrame> DX12NativeScene::GetSceneFrame(uint32
 {
 	if (!loaded || !settings.Enabled || transitionOpen || !globals::game::graphicsState || globals::game::graphicsState->GetFrameCount() != a_frame)
 		return std::nullopt;
-	SceneFrame frame{ a_frame, raster.Get(a_frame), GetPublishedScene(), GetShadowMask(a_frame) };
+	SceneFrame frame{ a_frame, raster.Get(a_frame), GetPublishedScene(), GetShadowMask(a_frame), GetNativeSCMFrame(a_frame) };
 	if (!frame.raster && !frame.prepared && !frame.shadow) return std::nullopt;
 	return frame;
 }
@@ -972,8 +978,14 @@ void DX12NativeScene::PublishDiagnostics()
 		{ "nativePBR", settings.NativePBR }, { "nativeLLF", settings.NativeLLF }, { "nativeSCM", settings.NativeSCM },
 		{ "nativeLightSource", OwnsNativeFeatures() ? "LLF-current-frame" : "prepared-cell" },
 		{ "nativeSCMCasters", globals::game::graphicsState ?
-			([&] { const auto snapshot = ShadowCasterManager::GetNativeCasterFrame(globals::game::graphicsState->GetFrameCount());
+			([&] { const auto snapshot = GetNativeSCMFrame(globals::game::graphicsState->GetFrameCount());
 				return snapshot ? snapshot->casters.size() : size_t{ 0 }; })() : size_t{ 0 } },
+		{ "nativeSCMMovers", globals::game::graphicsState ?
+			([&] { const auto snapshot = GetNativeSCMFrame(globals::game::graphicsState->GetFrameCount());
+				return snapshot ? std::ranges::count_if(snapshot->casters, [](const auto& caster) { return caster.dynamic; }) : std::ptrdiff_t{ 0 }; })() : std::ptrdiff_t{ 0 } },
+		{ "nativeSCMRetiredStatic", globals::game::graphicsState ?
+			([&] { const auto snapshot = GetNativeSCMFrame(globals::game::graphicsState->GetFrameCount());
+				return snapshot ? snapshot->preparedStaticRetired : 0u; })() : 0u },
 		{ "nativeLightCount", globals::game::graphicsState ?
 			(GetNativeLLFLights(globals::game::graphicsState->GetFrameCount()).value_or(NativeLightBatch{}).count) : 0u }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure },
 		{ "raster", raster.GetDiagnostics() }, { "shadowStage", shadowStage }, { "shadowStatus", shadowStatus }, { "shadow", shadow.GetDiagnostics() },
