@@ -846,9 +846,12 @@ void DX12NativeScene::EarlyPrepass()
     // diagnostic TLAS without changing the authoritative live renderer.
     if (settings.SubdivisionMode != 0 && cell->IsInteriorCell()) {
         const auto* file = cell->GetFile(0);
-        const auto fullPackage = std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") /
-            file->GetFilename() / std::format("{:06X}", cell->GetLocalFormID());
-        const uint64_t estimated = EstimateCachedCellFootprint(fullPackage);
+        const auto fullPackage = file && file->GetFilename() ?
+            std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") /
+                file->GetFilename() / std::format("{:06X}", cell->GetLocalFormID()) :
+            std::filesystem::path{};
+        const uint64_t estimated = fullPackage.empty() ? 0 :
+            EstimateCachedCellFootprint(fullPackage);
         const bool gridSelected = settings.SubdivisionMode == 2 ||
             (settings.SubdivisionMode == 1 && estimated &&
                 preparedSceneBudgetStatus.dxgiAvailable &&
