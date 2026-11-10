@@ -401,6 +401,26 @@ void DX12NativeScene::DrawSettings()
     ImGui::TextDisabled("Opt-in: only an exact matching current-center TLAS and materials become live.");
     ImGui::TextDisabled("Otherwise preserve the original full-scene renderer.");
     ImGui::TextDisabled("Forced + live grid skips expensive full-cell GPU preparation.");
+    {
+        const auto grid = subcellManager.GetDiagnostics();
+        const auto acceleration = candidateGridAcceleration.GetDiagnostics();
+        const auto candidate = candidateGridAcceleration.GetScene();
+        const auto bindings = candidateGridBindings.Get();
+        const auto active = GetPublishedScene();
+        ImGui::Text("Grid center: (%lld, %lld) | loaded %u/9 | loading %u",
+            static_cast<long long>(grid.value("centerX", int64_t{0})),
+            static_cast<long long>(grid.value("centerY", int64_t{0})),
+            grid.value("resident", 0u), grid.value("loading", 0u));
+        ImGui::Text("Grid CPU snapshot: %zu instances | %llu MiB",
+            static_cast<size_t>(grid.value("candidateInstances", uint64_t{0})),
+            static_cast<unsigned long long>(grid.value("candidateBytes", uint64_t{0}) /
+                DX12Native::VideoMemoryBudget::kMiB));
+        ImGui::Text("TLAS: %s | materials: %s | native DXR: %s",
+            candidate && candidate->scope.policy == 3 ? "ready" : "pending",
+            candidate && bindings && bindings->scene == candidate ? "ready" : "pending",
+            active && active->acceleration && active->acceleration->scope.policy == 3 ?
+                "active grid" : "full scene / raster fallback");
+    }
     ImGui::SeparatorText("Prepared scene VRAM budget");
     const uint32_t pendingSceneBudget = requestedBudget.load();
     uint32_t selectedSceneBudget = pendingSceneBudget != UINT32_MAX ?
