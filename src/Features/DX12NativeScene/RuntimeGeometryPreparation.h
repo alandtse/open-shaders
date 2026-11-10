@@ -351,7 +351,8 @@ namespace DX12Native
                         for (const auto& item : source) {
                             const auto key = item->referenceKey + '\0' + item->shapeName;
                             if (work->attempted->contains(key)) continue;
-                            if (selectedBytes && item->Bytes() > batchBytes - selectedBytes) break;
+                            if (selectedBytes && (selectedBytes >= batchBytes ||
+                                item->Bytes() > batchBytes - selectedBytes)) break;
                             next.push_back(item);
                             work->keys.push_back(key);
                             selectedBytes += item->Bytes();
