@@ -13,7 +13,7 @@ cbuffer CharacterSkinningConstants : register(b0)
     uint BoneCount;
     uint RegisterCount;
     uint Reserved;
-}
+};
 
 [numthreads(64, 1, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
