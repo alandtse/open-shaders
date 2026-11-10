@@ -1044,6 +1044,8 @@ namespace ShadowCasterManager
 		uint32_t frame = 0;
 		std::vector<NativeCaster> casters;
 		uint32_t preparedStaticRetired = 0, dropped = 0;
+        uint32_t uncoveredRigid = 0, moving = 0, skinned = 0;
+        uint32_t rasterFallback = 0; // Only geometry absent from published TLAS.
 	};
 	void BeginNativeCasterFrame(uint32_t frame, bool nativeActive);
 	void EndNativeCasterFrame();

@@ -240,6 +240,13 @@ void NativeSCMFeature::DrawSettings()
     const auto frame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : 0u;
     const auto casters = ShadowCasterManager::GetNativeCasterFrame(frame);
     ImGui::Text("Tracked current-frame casters: %zu", casters ? casters->casters.size() : size_t{0});
+    ImGui::Text("Native TLAS-covered static: %u | awaiting rigid transfer: %u",
+        casters ? casters->preparedStaticRetired : 0u,
+        casters ? casters->uncoveredRigid : 0u);
+    ImGui::Text("Unconverted movers: %u | skinned: %u | fallback raster: %u",
+        casters ? casters->moving : 0u,
+        casters ? casters->skinned : 0u,
+        casters ? casters->rasterFallback : 0u);
     ImGui::TextDisabled("Prepared static casters belong to native TLAS; remaining casters use SCM tracking.");
     ImGui::TextDisabled("Matched LLF lights: raster dynamic caster depth only; prepared geometry: native DXR.");
     ImGui::TextDisabled("Uncovered rigid CPU-backed casters may enter the native DX12 geometry mailbox.");
@@ -301,5 +308,10 @@ json NativeSCMFeature::GetDiagnostics()
     const auto casters = ShadowCasterManager::GetNativeCasterFrame(frame);
     return { { "selected", enabled.load() }, { "native", IsActive() },
         { "observedCasters", casters ? casters->casters.size() : size_t{0} },
-        { "retiredPreparedStatic", casters ? casters->preparedStaticRetired : 0u } };
+        { "retiredPreparedStatic", casters ? casters->preparedStaticRetired : 0u },
+        { "uncoveredRigid", casters ? casters->uncoveredRigid : 0u },
+        { "movingNotConverted", casters ? casters->moving : 0u },
+        { "skinnedNotConverted", casters ? casters->skinned : 0u },
+        { "rasterFallback", casters ? casters->rasterFallback : 0u },
+        { "evaluationOwner", "DX12 RayQuery only for actually published TLAS casters" } };
 }

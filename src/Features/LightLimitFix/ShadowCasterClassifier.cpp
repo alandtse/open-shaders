@@ -287,6 +287,12 @@ namespace ShadowCasterManager
 			{ b.center.x, b.center.y, b.center.z, b.radius },
 			bool(geom.GetGeometryRuntimeData().skinInstance), dynamic, preparedStatic });
 		if (preparedStatic) ++s_nativeCasterScratch->preparedStaticRetired;
+        else {
+            ++s_nativeCasterScratch->rasterFallback;
+            if (dynamic) ++s_nativeCasterScratch->moving;
+            else ++s_nativeCasterScratch->uncoveredRigid;
+            if (geom.GetGeometryRuntimeData().skinInstance) ++s_nativeCasterScratch->skinned;
+        }
 	}
 
 
