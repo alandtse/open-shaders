@@ -473,6 +473,10 @@ namespace ShadowCasterManager
 			preparedStatic = rec->nativePreparedCovered;
 		}
 		ObserveNativeCaster(geom, dynamic, preparedStatic);
+        // Reuse SCM's existing cull traversal as the CPU geometry source.
+        // Only completed native TLAS instances may retire raster ownership.
+        if (!dynamic && !preparedStatic && s_nativeCasterCollecting)
+            globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
 		// Exactly-covered prepared triangles already intersect native DXR shadow rays.
 		// Leave unprepared static casters and all moving casters in the DX11 path.
 		if (preparedStatic) return true;

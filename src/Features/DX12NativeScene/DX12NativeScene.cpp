@@ -20,7 +20,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode, NativeShadowRayPreparation)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode, NativeShadowRayPreparation)
 
 
 namespace
@@ -315,6 +315,12 @@ void DX12NativeScene::DrawSettings()
     if (ImGui::Checkbox("Experimental: capture runtime static geometry", &settings.CaptureRuntimeGeometry))
         runtimeGeometryCaptureActive.store(settings.CaptureRuntimeGeometry, std::memory_order_release);
     ImGui::TextDisabled("Copies CPU-backed static mesh bytes only; GPU-only/skinned/dynamic meshes are excluded.");
+    if (ImGui::Checkbox("NativeSCM: capture uncovered rigid caster geometry", &settings.CaptureSCMRigidCasters))
+        runtimeGeometryCaptureActive.store(settings.Enabled &&
+            (settings.CaptureRuntimeGeometry || (settings.CaptureSCMRigidCasters &&
+                globals::features::nativeSCM.IsActive())), std::memory_order_release);
+    ImGui::TextDisabled("SCM supplies CPU geometry; native DX12 owns BLAS, RayQuery and shading.");
+    ImGui::TextDisabled("Skinned, moving and GPU-only casters are not yet native-covered.");
     ImGui::BeginDisabled(!settings.CaptureRuntimeGeometry);
     ImGui::Checkbox("Experimental: persist and menu-prewarm runtime geometry",
         &settings.CacheRuntimeGeometry);
@@ -539,6 +545,7 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	settings.NativePBR = selected.NativePBR;
 	settings.NativeLLF = selected.NativeLLF;
 	settings.NativeSCM = selected.NativeSCM;
+    settings.CaptureSCMRigidCasters = selected.CaptureSCMRigidCasters;
     settings.GlobalDXGIHeadroomPercent = reservePercent;
     settings.SubdivisionMode = std::min(selected.SubdivisionMode, 2u);
     settings.AutoGridMemoryScreening = selected.AutoGridMemoryScreening;
@@ -595,6 +602,23 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_open)
 }
 void DX12NativeScene::GameLoaded() { resetRequested = true; }
 
+
+void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry)
+{
+    // Acquire only stable CPU-backed mesh inputs in the already-active SCM
+    // cull pass. No raster lighting calculation is performed by this bridge.
+    // Actual RT coverage is granted only by the published TLAS.
+    if (!runtimeGeometryCaptureActive.load(std::memory_order_acquire) ||
+        !settings.CaptureSCMRigidCasters || geometry.GetGeometryRuntimeData().skinInstance ||
+        geometry.name.empty()) return;
+    auto* reference = geometry.GetUserData();
+    if (!reference || reference->IsDynamicForm()) return;
+    const auto* source = reference->GetFile(0);
+    if (!source || source->GetFilename().empty()) return;
+    ObserveRuntimeGeometry(&geometry,
+        std::format("{:06X}:{}", reference->GetLocalFormID(), source->GetFilename()),
+        geometry.name.c_str());
+}
 
 void DX12NativeScene::ObserveRuntimeGeometry(RE::BSGeometry* geometry,
     const std::string& reference, const std::string& shape)
@@ -789,7 +813,10 @@ void DX12NativeScene::EarlyPrepass()
 		raster.ReloadShader();
 		shadow.ReloadShaders();
 	}
-	runtimeGeometryCaptureActive.store(settings.Enabled && settings.CaptureRuntimeGeometry,
+	const bool captureNativeSCM = settings.CaptureSCMRigidCasters &&
+        globals::features::nativeSCM.IsActive();
+    runtimeGeometryCaptureActive.store(settings.Enabled &&
+        (settings.CaptureRuntimeGeometry || captureNativeSCM),
         std::memory_order_release);
     if (resetRequested.exchange(false)) ResetScene();
     // Interior requests use CELL identity; exterior requests retain WRLD
@@ -824,7 +851,7 @@ void DX12NativeScene::EarlyPrepass()
     // All disk I/O and decoding remain on its background worker.
     if (settings.CacheRuntimeGeometry)
         runtimeGeometryCache.Advance(!cell && !transitionOpen,
-            settings.CaptureRuntimeGeometry && cell && !transitionOpen &&
+            (settings.CaptureRuntimeGeometry || captureNativeSCM) && cell && !transitionOpen &&
                 runtimePreparedCoverage.load(std::memory_order_acquire) ?
                 &runtimeGeometry : nullptr);
 	if (shadowResetRequested.exchange(false)) shadow.Reset();
@@ -848,7 +875,7 @@ void DX12NativeScene::EarlyPrepass()
     // Runtime geometry shares actual DXGI headroom and the scene's manual
     // ceiling with prepared geometry, completed BLAS/TLAS and materials.
     // Do not allocate a duplicate runtime-only preview acceleration scene.
-    if (settings.CaptureRuntimeGeometry && currentSceneStableAcceleration &&
+    if ((settings.CaptureRuntimeGeometry || captureNativeSCM) && currentSceneStableAcceleration &&
         currentSceneStableAcceleration->scope.scene == revision &&
         runtimePreparedCoverage.load(std::memory_order_acquire) &&
         runtimeGeometry.Count() != 0) {
@@ -1077,7 +1104,7 @@ void DX12NativeScene::EarlyPrepass()
     }
     // Reuse the production worker's completed BLAS cache. The previous
     // production TLAS remains retained independently during rebuilding.
-    if (settings.CaptureRuntimeGeometry && acceleration.Finished() &&
+    if ((settings.CaptureRuntimeGeometry || captureNativeSCM) && acceleration.Finished() &&
         currentSceneStableAcceleration &&
         currentSceneStableAcceleration->scope.scene == revision) {
         if (auto combined = runtimeGeometryPrepare.GetCurrentSceneCell();
@@ -1282,7 +1309,10 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "reachMultiplier", settings.ShadowReachMultiplier }, { "falloffFraction", settings.ShadowFalloffFraction },
 			{ "falloffExponent", settings.ShadowFalloffExponent }, { "distanceFade", settings.ShadowDistanceFade },
 			{ "normalInfluence", settings.ShadowNormalInfluence }, { "traceDensityMode", settings.ShadowTraceDensityMode } } },
-		{ "runtimeGeometry", { { "capturedMeshes", runtimeGeometry.Count() },
+		{ "runtimeGeometry", { { "scmRigidCaptureEnabled", settings.CaptureSCMRigidCasters },
+            { "scmNativeCollectionActive", runtimeGeometryCaptureActive.load(std::memory_order_acquire) &&
+                globals::features::nativeSCM.IsActive() },
+            { "capturedMeshes", runtimeGeometry.Count() },
             { "capturedBytes", runtimeGeometry.Bytes() },
             { "alreadyPreparedInstances", runtimePreparedCoverage.load(std::memory_order_acquire) ?
                 runtimePreparedCoverage.load(std::memory_order_acquire)->completed.size() : 0 },

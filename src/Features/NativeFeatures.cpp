@@ -242,7 +242,8 @@ void NativeSCMFeature::DrawSettings()
     ImGui::Text("Tracked current-frame casters: %zu", casters ? casters->casters.size() : size_t{0});
     ImGui::TextDisabled("Prepared static casters belong to native TLAS; remaining casters use SCM tracking.");
     ImGui::TextDisabled("Matched LLF lights: raster dynamic caster depth only; prepared geometry: native DXR.");
-    ImGui::TextDisabled("A ray-traceable dynamic caster representation remains future work.");
+    ImGui::TextDisabled("Uncovered rigid CPU-backed casters may enter the native DX12 geometry mailbox.");
+    ImGui::TextDisabled("DX12 owns BLAS/TLAS and RayQuery; moving and skinned casters still need updates.");
 }
 void NativePBRFeature::LoadSettings(json& j) { enabled.store(j.value("Enabled", true), std::memory_order_relaxed); }
 void NativeLLFFeature::LoadSettings(json& j)

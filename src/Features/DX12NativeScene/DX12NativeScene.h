@@ -39,7 +39,8 @@ struct DX12NativeScene final : Feature
         bool ImportLoosePBR = false; // Separate opt-in for bounded loose-file DDS residency.
         bool ImportArchivePBR = false; // Further opt-in: archive resource manager fallback.
         bool RuntimeOnlyMaterials = false; // Optional manifest-free runtime texture acquisition.
-        bool CaptureRuntimeGeometry = false; // Static CPU-backed meshes only; no GPU readbacks.
+        bool CaptureRuntimeGeometry = false; // Explicit static-geometry debug.
+        bool CaptureSCMRigidCasters = true; // Bounded native acquisition from SCM's cull data.
         bool CacheRuntimeGeometry = false; // Optional background persistence and menu CPU prewarm.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
@@ -86,6 +87,7 @@ struct DX12NativeScene final : Feature
 	void Prepass() override { DispatchShadow("before-opaque"); }
 	void OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs) override;
     void ObserveRuntimeGeometry(RE::BSGeometry* a_geometry, const std::string& a_reference, const std::string& a_shape);
+    void ObserveSCMRigidCaster(RE::BSGeometry& geometry); // Data only; DX12 evaluates rays.
 	void OnRuntimeDisabled() override;
 	void OnSceneTransitionReset(bool a_open) override;
 	void GameLoaded() override;
