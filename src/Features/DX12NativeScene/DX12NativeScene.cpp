@@ -13,7 +13,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, BudgetPolicyVersion, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -183,22 +183,32 @@ namespace
     }
 }
 
+bool DX12NativeScene::OwnsNativeFeatures() const
+{
+	const auto& upscaling = globals::features::upscaling;
+	return loaded && settings.Enabled && !transitionOpen && backend.has_value() &&
+		!globals::game::isVR && upscaling.d3d12SwapChainActive && upscaling.settings.nativeUpscaleEnable;
+}
+
 void DX12NativeScene::DrawSettings()
 {
 	std::scoped_lock lock(settingsMutex);
 	if (ImGui::Button("Analyze live PBR candidates")) coverageRequested = true;
-    if (ImGui::Checkbox("Experimental: runtime True PBR materials", &settings.UseLivePBR)) resetRequested = true;
-    ImGui::TextDisabled("Opaque static matches only; unverified sources keep offline fallback.");
-    ImGui::BeginDisabled(!settings.UseLivePBR);
+    ImGui::TextDisabled("Native DX12 ownership: %s", OwnsNativeFeatures() ? "active" : "inactive");
+    if (ImGui::Checkbox("NativePBR (runtime material bridge)", &settings.NativePBR)) resetRequested = true;
+    ImGui::Checkbox("NativeLLF (live light bridge)", &settings.NativeLLF);
+    ImGui::Checkbox("NativeSCM (dynamic caster bridge)", &settings.NativeSCM);
+    ImGui::TextDisabled("No per-effect validity fallback to legacy execution.");
+    ImGui::BeginDisabled(!settings.NativePBR);
     if (ImGui::Checkbox("Experimental: import missing loose PBR DDS", &settings.ImportLoosePBR)) resetRequested = true;
     ImGui::EndDisabled();
-    ImGui::BeginDisabled(!settings.UseLivePBR || !settings.ImportLoosePBR);
+    ImGui::BeginDisabled(!settings.NativePBR || !settings.ImportLoosePBR);
     if (ImGui::Checkbox("Experimental: use archive-backed DDS fallback", &settings.ImportArchivePBR))
         resetRequested = true;
     ImGui::EndDisabled();
     ImGui::TextDisabled("Worker-only; maximum 8 sources / 32 MiB combined per load.");
     ImGui::TextDisabled("Archive fallback runs only when the loose DDS is absent.");
-    ImGui::BeginDisabled(!settings.UseLivePBR || !settings.ImportLoosePBR);
+    ImGui::BeginDisabled(!settings.NativePBR || !settings.ImportLoosePBR);
     ImGui::Checkbox("Experimental: runtime-only material sources (no atlas manifest)",
         &settings.RuntimeOnlyMaterials);
     ImGui::EndDisabled();
@@ -393,6 +403,9 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	const auto clamp = [](float value, float fallback, float low, float high) { return std::isfinite(value) ? std::clamp(value, low, high) : fallback; };
 	++shadowControlsRevision;
 	settings.UseLivePBR = selected.UseLivePBR;
+	settings.NativePBR = selected.NativePBR;
+	settings.NativeLLF = selected.NativeLLF;
+	settings.NativeSCM = selected.NativeSCM;
         settings.ImportLoosePBR = selected.ImportLoosePBR;
         settings.ImportArchivePBR = selected.ImportArchivePBR;
         settings.RuntimeOnlyMaterials = selected.RuntimeOnlyMaterials;
@@ -726,7 +739,7 @@ void DX12NativeScene::EarlyPrepass()
     if (auto scene = acceleration.GetScene(); scene &&
         shadow.RetireScenesExcept(currentSceneStableAcceleration ? currentSceneStableAcceleration : scene) &&
         retiredMaterials.expired()) {
-        if (settings.UseLivePBR && globals::game::graphicsState) {
+        if (OwnsNativeFeatures() && settings.NativePBR && globals::game::graphicsState) {
             auto& pbr = globals::features::truePBR;
             const uint64_t currentRevision = pbr.nativeRegistry.Revision();
             const uint32_t currentFrame = globals::game::graphicsState->GetFrameCount();
@@ -762,9 +775,9 @@ void DX12NativeScene::EarlyPrepass()
         if (materialRequestBudgetBytes)
             materialBindings.Request(*backend, scene, materialRequestBudgetBytes,
             uint64_t(settings.MaterialBatchMB) * 1024 * 1024, livePbrSource,
-            settings.UseLivePBR && settings.ImportLoosePBR,
-            settings.UseLivePBR && settings.ImportLoosePBR && settings.ImportArchivePBR,
-            settings.UseLivePBR && settings.ImportLoosePBR && settings.RuntimeOnlyMaterials);
+            OwnsNativeFeatures() && settings.NativePBR && settings.ImportLoosePBR,
+            OwnsNativeFeatures() && settings.NativePBR && settings.ImportLoosePBR && settings.ImportArchivePBR,
+            OwnsNativeFeatures() && settings.NativePBR && settings.ImportLoosePBR && settings.RuntimeOnlyMaterials);
     }
 	materialBindings.Advance();
     if (auto completed = acceleration.GetScene(); completed &&
@@ -920,7 +933,8 @@ void DX12NativeScene::PublishDiagnostics()
 {
 	const auto bindings = materialBindings.Get();
 	const auto retainedPages = DX12Native::RetainedMaterialPageBytes();
-	json snapshot{ { "enabled", settings.Enabled }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure },
+	json snapshot{ { "enabled", settings.Enabled }, { "nativeOwnership", OwnsNativeFeatures() },
+		{ "nativePBR", settings.NativePBR }, { "nativeLLF", settings.NativeLLF }, { "nativeSCM", settings.NativeSCM }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure },
 		{ "raster", raster.GetDiagnostics() }, { "shadowStage", shadowStage }, { "shadowStatus", shadowStatus }, { "shadow", shadow.GetDiagnostics() },
 		{ "shadowOpaqueRetryAttempts", shadowOpaqueRetryAttempts }, { "shadowOpaqueRetryRecovered", shadowOpaqueRetryRecovered },
 		{ "shadowTraceControls", { { "revision", shadowControlsRevision },
@@ -984,7 +998,7 @@ void DX12NativeScene::PublishDiagnostics()
 		{ "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() },
 		{ "materialBudget", { { "dxgiAvailable", bindings ? bindings->materialBudget.dxgiAvailable : false },
 			{ "selectedBatchLimitBytes", uint64_t(settings.MaterialBatchMB) * 1024 * 1024 },
-            { "runtimeOnlyMaterialSources", settings.UseLivePBR && settings.ImportLoosePBR &&
+            { "runtimeOnlyMaterialSources", OwnsNativeFeatures() && settings.NativePBR && settings.ImportLoosePBR &&
                 settings.RuntimeOnlyMaterials },
 			{ "loadedBatchLimitBytes", bindings ? bindings->uploadBatchBudget : 0 },
 			{ "effectiveBytes", bindings ? bindings->materialBudget.effectiveBytes : 0 },

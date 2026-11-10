@@ -23,9 +23,11 @@ struct DX12NativeScene final : Feature
 	struct Settings
 	{
 		bool Enabled = true, ShadowMask = true;
+		// Native features follow one DX12 pipeline ownership decision, never per-effect validity gates.
+		bool NativePBR = true, NativeLLF = true, NativeSCM = true;
 		uint32_t BudgetMB = 0, FrameBudgetMB = 0, MaterialBatchMB = 16; // BudgetMB=0: automatic DXGI
         uint32_t BudgetPolicyVersion = 1; // Migrate legacy 512 MiB default to auto
-		bool UseLivePBR = false; // Experimental opt-in; do not enable before runtime validation.
+		bool UseLivePBR = false; // Legacy config field; NativePBR now follows DX12 ownership.
         bool ImportLoosePBR = false; // Separate opt-in for bounded loose-file DDS residency.
         bool ImportArchivePBR = false; // Further opt-in: archive resource manager fallback.
         bool RuntimeOnlyMaterials = false; // Optional manifest-free runtime texture acquisition.
@@ -82,6 +84,9 @@ struct DX12NativeScene final : Feature
 		requestedShadow = 1;
 		shadowResetRequested = true;
 	}
+	/** @brief The selected DX12 pipeline owns native materials, lights and casters.
+	 *  Not dependent on material/scene/effect validity. */
+	bool OwnsNativeFeatures() const;
 	/** @brief Retains the scene graphics session for DX12-only consumers. */
 	std::optional<GraphicsBackend> GetGraphicsBackend() const { return loaded && settings.Enabled && !transitionOpen ? backend : std::nullopt; }
 	/** @brief Retains a completed scene matching the current cell and revision. */
