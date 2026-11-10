@@ -48,6 +48,49 @@ namespace DX12Native
         std::array<float, 4> worldBound{};
     };
 
+    // Check current rigid-local bounds against the observed world-space part.
+    // A failed match must not admit an attachment to the character TLAS.
+    inline bool CharacterRigidBoundsMatch(
+        const CharacterStagedMesh& staged, const CharacterPartObservation& observed)
+    {
+        if (staged.skinned || !staged.rigidLocalBoundsValid ||
+            observed.skinned || observed.alpha || observed.dynamic || observed.gpuOnly)
+            return false;
+        const auto& bounds = observed.worldBound;
+        const auto& transform = observed.worldTransform;
+        const float radius = bounds[3];
+        if (!std::isfinite(radius) || radius <= 0.0f || radius > 50000.0f)
+            return false;
+        for (size_t axis = 0; axis < 3; ++axis) {
+            if (!std::isfinite(bounds[axis]) ||
+                !std::isfinite(staged.rigidLocalMin[axis]) ||
+                !std::isfinite(staged.rigidLocalMax[axis]) ||
+                staged.rigidLocalMin[axis] > staged.rigidLocalMax[axis])
+                return false;
+        }
+        for (const float element : transform)
+            if (!std::isfinite(element)) return false;
+
+        const float slack = std::max(2.0f, radius * 0.25f);
+        for (size_t axis = 0; axis < 3; ++axis) {
+            float worldMin = transform[axis * 4 + 3];
+            float worldMax = worldMin;
+            for (size_t component = 0; component < 3; ++component) {
+                const float a = transform[axis * 4 + component] *
+                    staged.rigidLocalMin[component];
+                const float b = transform[axis * 4 + component] *
+                    staged.rigidLocalMax[component];
+                worldMin += std::min(a, b);
+                worldMax += std::max(a, b);
+            }
+            if (!std::isfinite(worldMin) || !std::isfinite(worldMax) ||
+                worldMin < bounds[axis] - radius - slack ||
+                worldMax > bounds[axis] + radius + slack)
+                return false;
+        }
+        return true;
+    }
+
     struct CharacterObservationGeneration
     {
         uint32_t frame = 0;
@@ -64,7 +107,7 @@ namespace DX12Native
         // Multi-part acceleration is independently gated before any
         // opt-in native secondary-visibility ownership.
         std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> blasParts;
-        std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> rigidParts;
+        std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> rigidBLASParts;
         std::shared_ptr<const CharacterIsolatedTLAS> isolatedTLAS;
         std::shared_ptr<const CharacterRayResult> rayProbe;
         std::optional<CharacterRayOutcome> rayOutcome;
@@ -402,7 +445,7 @@ namespace DX12Native
                         for (const auto& part : output->parts) {
                             if (part.skinned) ++output->skinnedParts;
                             else if (part.dynamic) ++output->dynamicParts;
-                            else ++output->rigidParts;
+                            else ++output->rigidBLASParts;
                             if (part.alpha) ++output->alphaParts;
                             if (part.gpuOnly) ++output->gpuOnlyParts;
                             if (!std::isfinite(part.worldBound[3]) ||
@@ -583,8 +626,8 @@ namespace DX12Native
                         if (accumulatePartBLAS && includeRigidAttachments &&
                             buildIsolatedBLAS && nativeDevice && nativeQueue &&
                             output->stagedGeometry) {
-                            if (previous) output->rigidParts = previous->rigidParts;
-                            std::erase_if(output->rigidParts, [&](const auto& candidate) {
+                            if (previous) output->rigidBLASParts = previous->rigidBLASParts;
+                            std::erase_if(output->rigidBLASParts, [&](const auto& candidate) {
                                 return !candidate || !candidate->rigidSource ||
                                     !std::ranges::any_of(
                                         output->stagedGeometry->meshes,
@@ -613,7 +656,7 @@ namespace DX12Native
                                 if (observed == output->parts.end() ||
                                     !CharacterRigidBoundsMatch(*staged, *observed))
                                     continue;
-                                if (std::ranges::any_of(output->rigidParts,
+                                if (std::ranges::any_of(output->rigidBLASParts,
                                     [&](const auto& candidate) {
                                         return candidate->actorFormID == staged->actorFormID &&
                                             candidate->partOrdinal == staged->partOrdinal &&
@@ -622,7 +665,7 @@ namespace DX12Native
                                 try {
                                     if (auto candidate = BuildCharacterRigidBLAS(
                                         nativeDevice.get(), nativeQueue.get(), staged))
-                                        output->rigidParts.push_back(std::move(candidate));
+                                        output->rigidBLASParts.push_back(std::move(candidate));
                                 } catch (const std::exception& e) {
                                     output->blasError = e.what();
                                 } catch (...) {
@@ -685,7 +728,7 @@ namespace DX12Native
                                     if (parts.size() >= 8) break;
                                 }
                                 if (includeRigidAttachments && parts.size() < 8u) {
-                                    for (const auto& rigid : output->rigidParts) {
+                                    for (const auto& rigid : output->rigidBLASParts) {
                                         if (!rigid || !rigid->Ready() || !rigid->rigidSource)
                                             continue;
                                         const auto observed = std::ranges::find_if(
@@ -948,7 +991,7 @@ namespace DX12Native
                 { "isolatedBLASRefit", current && current->isolatedBLAS &&
                     current->isolatedBLAS->refit },
                 { "accumulatedBLASParts", current ? current->blasParts.size() : size_t{ 0 } },
-                { "rigidBLASParts", current ? current->rigidParts.size() : size_t{ 0 } },
+                { "rigidBLASParts", current ? current->rigidBLASParts.size() : size_t{ 0 } },
                 { "isolatedBLASBytes", current && current->isolatedBLAS ?
                     current->isolatedBLAS->allocationBytes : 0ull },
                 { "isolatedBLASScratchBytes", current && current->isolatedBLAS ?
