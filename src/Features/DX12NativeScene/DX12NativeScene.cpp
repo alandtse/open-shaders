@@ -222,8 +222,9 @@ bool DX12NativeScene::IsPreparedStaticCaster(RE::BSGeometry& geometry) const
 	// Coverage describes actual acceleration instances, never the offline
 	// manifest alone. Unmatched static geometry remains in SCM's raster path.
 	const auto coverage = runtimePreparedCoverage.load(std::memory_order_acquire);
-	if (!coverage || coverage->sceneRevision != revision ||
-		runtimeCoverageSource != currentSceneStableAcceleration) return false;
+	const auto published = GetPublishedScene();
+	if (!coverage || coverage->sceneRevision != revision || !published ||
+        runtimeCoverageSource != published->acceleration) return false;
 	const auto* reference = geometry.GetUserData();
 	if (!reference || reference->IsDynamicForm() || geometry.name.empty()) return false;
 	const auto* file = reference->GetFile(0);
