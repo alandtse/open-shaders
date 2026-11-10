@@ -408,7 +408,7 @@ void DX12NativeScene::DrawSettings()
         &settings.CharacterIncludeRigidAttachments)) nativeCharacters.Reset();
     ImGui::EndDisabled();
     ImGui::TextDisabled("Rigid geometry uses its DX12 bind BLAS plus the observed world transform.");
-    ImGui::TextDisabled("Multi-part testing rotates poses and validates individual GPU ray hits.");
+    ImGui::TextDisabled("Up to eight opaque caster parts; each needs an individual GPU self-hit.");
     ImGui::BeginDisabled(!settings.CharacterAccumulatePartBLAS ||
         !settings.CharacterRunIsolatedRayQueryDX12 ||
         !settings.CharacterBuildIsolatedTLASDX12);
@@ -431,7 +431,7 @@ void DX12NativeScene::DrawSettings()
         settings.CharacterCasterMaxPoseAgeFrames = uint32_t(maximumCasterAge);
     ImGui::EndDisabled();
     ImGui::TextDisabled("Only secondary shadow rays use the character TLAS.");
-    ImGui::TextDisabled("Default off; no character receiver/material ownership.");
+    ImGui::TextDisabled("Default off; receiver BRDF and alpha/PBR materials still use raster.");
     ImGui::TextDisabled(settings.CharacterPlayerOnly ?
         "Only the third-person player root is inspected." :
         "Includes third-person player, NPCs and creatures.");
@@ -465,7 +465,7 @@ void DX12NativeScene::DrawSettings()
         characterStats.value("nativeReceiverAttributeReady", 0u));
     ImGui::TextDisabled("No native character BRDF without verified normals, UVs and material descriptors.");
     ImGui::TextDisabled("Unsupported skinned/alpha materials remain raster-authoritative.");
-    ImGui::TextDisabled("Deformation is an isolated GPU experiment; BLAS and character rays remain disabled.");
+    ImGui::TextDisabled("DX12 skinning/BLAS/TLAS/RayQuery are opt-in; native visibility needs eligibility.");
     ImGui::Text("Bone palette: %u VS registers (captured frame %u)",
         characterStats.value("poseRegisters", 0u), characterStats.value("poseFrame", 0u));
     ImGui::TextDisabled("Pose stage deferrals: %u",

@@ -56,7 +56,7 @@ void NativeLightingFeature::DrawSettings()
     tuned |= ImGui::Checkbox("Probe raster-aligned character receivers (diagnostic)",
         &settings.CharacterReceiverProbe);
     ImGui::TextDisabled("Secondary native direct rays only; separate from character shadows.");
-    ImGui::TextDisabled("Requires verified character TLAS and matching RayQuery self-hit.");
+    ImGui::TextDisabled("Receiver probe counts raster-depth matches; final material shading stays raster.");
 	ImGui::TextDisabled("Affects the native direct BRDF only; the independent shadow layer is in Native Composite.");
 	tuned |= ImGui::Checkbox("Stochastic emitter sampling", &settings.StochasticShadows);
 	ImGui::BeginDisabled(!settings.StochasticShadows);

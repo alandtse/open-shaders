@@ -61,7 +61,8 @@ namespace DX12Native
         std::optional<CharacterBLASPreflight> blasPreflight;
         std::shared_ptr<const CharacterIsolatedBLAS> isolatedBLAS;
         // Completed/updateable BLAS generations keyed by observed mesh identity.
-        // Multi-part mode remains an isolated diagnostic, not world ownership.
+        // Multi-part acceleration is independently gated before any
+        // opt-in native secondary-visibility ownership.
         std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> blasParts;
         std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> rigidParts;
         std::shared_ptr<const CharacterIsolatedTLAS> isolatedTLAS;
@@ -637,8 +638,8 @@ namespace DX12Native
                         if (buildIsolatedTLAS && buildIsolatedBLAS &&
                             nativeDevice && nativeQueue) {
                             if (accumulatePartBLAS) {
-                                // Diagnostic only: never promote this mixed-
-                                // age multi-part TLAS to production visibility.
+                                // Production visibility requires all per-part
+                                // GPU proofs, valid pose age and world bounds.
                                 // Each skinned part needs its own finite pose,
                                 // current identity and plausible world bounds.
                                 std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> parts;
