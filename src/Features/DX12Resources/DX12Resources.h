@@ -33,7 +33,7 @@ struct DX12Resources final : Feature
     void RestoreDefaultSettings() override;
     /** Render-thread poll and one-shot auto-prepare on entry into a missing native interior cache. */
     void AdvanceAutomaticInterior(const DX12ResourceService::CellRequest& request);
-    void AdvanceStreamingInterior(const DX12ResourceService::CellRequest& request,
+    void AdvanceStreamingScene(const DX12ResourceService::CellRequest& request,
         uint32_t size, double x, double y, double velocityX, double velocityY);
     void DataLoaded() override { dataLoaded.store(true, std::memory_order_release); }
     json GetDiagnostics() override;

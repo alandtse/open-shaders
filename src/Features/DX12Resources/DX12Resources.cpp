@@ -324,7 +324,8 @@ void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest&
     // Work is isolated beneath DX12-cache/work, never beneath the published cells/.
     // The companion only permits this explicitly scoped write location.
     const auto workspace = data / "SKSE/Plugins/CommunityShaders/DX12-cache/work/cells" / request.plugin /
-        std::format("{:06X}-{}-{}", request.localId, GetTickCount64(), preparationSequence++);
+        std::format("{}-{:06X}-{}-{}", request.worldspace ? "WRLD" : "CELL",
+            request.localId, GetTickCount64(), preparationSequence++);
     const auto logPath = data / "SKSE/Plugins/CommunityShaders/DX12-cache/logs" /
         std::format("prepare-{}-{}-{}.log", request.localId, GetCurrentProcessId(), GetTickCount64());
     auto next = std::make_shared<PreparationJob>();
@@ -349,7 +350,8 @@ void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest&
                     workspace.wstring(), pluginsFile.wstring(), L"1"
                 };
                 if (tile) {
-                    args.insert(args.begin(), L"--subcell");
+                    args.insert(args.begin(), request.worldspace ?
+                        L"--worldspace-subcell" : L"--subcell");
                     args.push_back(std::to_wstring(tile->size));
                     args.push_back(std::to_wstring(tile->x));
                     args.push_back(std::to_wstring(tile->y));
@@ -384,7 +386,7 @@ void DX12Resources::PollCellPreparation()
         preparationStatus = "CELL preparation failed: " + completed->error;
         if (completed->tile) {
             const auto identity = std::format("{}:{}:{}:{}",
-                completed->request.Key(), completed->tile->size,
+                completed->request.ScopedKey(), completed->tile->size,
                 completed->tile->x, completed->tile->y);
             auto& retry = failedStreamingTiles[identity];
             retry.failures = std::min(retry.failures + 1u, 5u);
@@ -413,7 +415,7 @@ void DX12Resources::AdvanceAutomaticInterior(const DX12ResourceService::CellRequ
     PollCellPreparation();
     if (!settings.Enabled || !settings.AutoPrepareOnCellEntry ||
         !dataLoaded.load(std::memory_order_acquire)) return;
-    const auto identity = request.Key();
+    const auto identity = request.ScopedKey();
     if (identity.empty() || lastAutomaticInterior == identity) return;
     lastAutomaticInterior = identity;
     if (preparationJob) {
@@ -423,7 +425,7 @@ void DX12Resources::AdvanceAutomaticInterior(const DX12ResourceService::CellRequ
         return;
     }
     const auto cache = DX12ResourceService::SkyrimDataDirectory() /
-        "SKSE/Plugins/CommunityShaders/DX12-cache/cells" /
+        "SKSE/Plugins/CommunityShaders/DX12-cache" / request.CacheFamily() /
         request.plugin / std::format("{:06X}", request.localId);
     std::error_code ec;
     const bool available = std::filesystem::is_regular_file(cache / "cell-layout.json", ec) &&
@@ -435,7 +437,7 @@ void DX12Resources::AdvanceAutomaticInterior(const DX12ResourceService::CellRequ
 }
 
 
-void DX12Resources::AdvanceStreamingInterior(const DX12ResourceService::CellRequest& request,
+void DX12Resources::AdvanceStreamingScene(const DX12ResourceService::CellRequest& request,
     uint32_t size, double x, double y, double velocityX, double velocityY)
 {
     std::scoped_lock lock(statusMutex);
@@ -444,7 +446,7 @@ void DX12Resources::AdvanceStreamingInterior(const DX12ResourceService::CellRequ
         !dataLoaded.load(std::memory_order_acquire) ||
         !DX12Native::SpatialSubcells::ValidSize(size) ||
         !std::isfinite(x) || !std::isfinite(y)) return;
-    const auto scope = request.Key() + ":" + std::to_string(size);
+    const auto scope = request.ScopedKey() + ":" + std::to_string(size);
     if (streamingScope != scope) {
         streamingScope = scope;
         failedStreamingTiles.clear();
@@ -460,7 +462,7 @@ void DX12Resources::AdvanceStreamingInterior(const DX12ResourceService::CellRequ
         return;
     }
     const auto root = DX12ResourceService::SkyrimDataDirectory() /
-        "SKSE/Plugins/CommunityShaders/DX12-cache/cells" /
+        "SKSE/Plugins/CommunityShaders/DX12-cache" / request.CacheFamily() /
         request.plugin / std::format("{:06X}", request.localId) / "subcells" /
         std::to_string(size);
     auto isCached = [&](DX12Native::SpatialSubcells::Coordinate tile) {
@@ -481,7 +483,7 @@ void DX12Resources::AdvanceStreamingInterior(const DX12ResourceService::CellRequ
 
     const auto pending = DX12Native::SpatialSubcells::PendingWork(center, velocityX, velocityY, isCached);
     for (const auto tile : pending) {
-        const auto identity = std::format("{}:{}:{}:{}", request.Key(), size, tile.x, tile.y);
+        const auto identity = std::format("{}:{}:{}:{}", request.ScopedKey(), size, tile.x, tile.y);
         if (auto retry = failedStreamingTiles.find(identity); retry != failedStreamingTiles.end()) {
             if (retry->second.failures >= 5 || now < retry->second.nextAttemptAtMs)
                 continue;
@@ -519,7 +521,7 @@ void DX12Resources::DrawSettings()
         RefreshLoadedPlugins();
     AdvancePluginCellScan();
     ImGui::Checkbox("Enable DX12 Resources preparation", &settings.Enabled);
-    ImGui::Checkbox("Automatically prepare missing native interior scenes", &settings.AutoPrepareOnCellEntry);
+    ImGui::Checkbox("Automatically prepare missing native scenes", &settings.AutoPrepareOnCellEntry);
     ImGui::TextDisabled("Companion runs off-thread; a matching cache is reused without restarting preparation.");
     ImGui::TextWrapped("Subcell scheduler: %s", streamingStatus.c_str());
     ImGui::TextDisabled("Active subcell preparation runs below normal CPU priority.");

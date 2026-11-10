@@ -100,7 +100,12 @@ namespace DX12ResourceService
                 tile.value("x", INT64_MIN) == subcell->x &&
                 tile.value("y", INT64_MIN) == subcell->y;
         };
-        if (!checkSubcell(prep) || !checkSubcell(layout))
+        const checkScope = [&](const PrepJson& manifest) {
+            return manifest.value("scopeType", std::string("cell")) ==
+                (request.worldspace ? "worldspace" : "cell");
+        };
+        if (!checkScope(prep) || !checkScope(layout) ||
+            !checkSubcell(prep) || !checkSubcell(layout))
             throw std::runtime_error("Prepared CELL subcell scope mismatch");
         const auto digest = prep.at("layoutDigest").get<std::string>();
         if (digest.empty() || layout.at("layoutDigest") != digest)
@@ -170,8 +175,8 @@ namespace DX12ResourceService
             std::format("{:06X}", request.localId));
         if (!parsed) throw std::runtime_error("Invalid CELL identity for cache publication");
 
-        auto final = data / "SKSE/Plugins/CommunityShaders/DX12-cache/cells" /
-            request.plugin / std::format("{:06X}", request.localId);
+        auto final = data / "SKSE/Plugins/CommunityShaders/DX12-cache" /
+            request.CacheFamily() / request.plugin / std::format("{:06X}", request.localId);
         if (subcell)
             final /= std::filesystem::path("subcells") / std::to_string(subcell->size) / subcell->Name();
         std::error_code ec;
@@ -185,8 +190,9 @@ namespace DX12ResourceService
 
         // Keep compact diagnostic JSON beneath DX12-cache/diagnostics; never in published cells/.
         const auto stamp = std::to_wstring(GetTickCount64());
-        const auto diagnostics = data / "SKSE/Plugins/CommunityShaders/DX12-cache/diagnostics/cells" /
-            request.plugin / (std::format(L"{:06X}-", request.localId) + stamp);
+        const auto diagnostics = data / "SKSE/Plugins/CommunityShaders/DX12-cache/diagnostics" /
+            request.CacheFamily() / request.plugin /
+            (std::format(L"{:06X}-", request.localId) + stamp);
         std::filesystem::create_directories(diagnostics);
         for (const char* report : { "cell-preparation.json", "cell-records.json",
                  "cell-index.json", "cell-meshes.json" }) {
