@@ -62,6 +62,7 @@ public:
 	uint32_t currentVertexDescriptor = 0;
 	uint32_t currentPixelDescriptor = 0;
 	spdlog::level::level_enum logLevel = spdlog::level::info;
+	std::atomic<int> nativeDXCMode{ 0 };
 	bool enableDeveloperMode = false;  ///< Explicit developer mode toggle; also enabled when log level is debug/trace.
 	// Guarded by shaderDefinesMutex; read it through GetDefinesString().
 	std::string shaderDefinesString = "";

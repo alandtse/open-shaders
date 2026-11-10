@@ -724,6 +724,7 @@ void State::SaveToJson(nlohmann::json& settings)
 	advanced["Dump Shaders"] = shaderCache->IsDump();
 	advanced["Log Level"] = logLevel;
 	advanced["Developer Mode"] = enableDeveloperMode;
+	advanced["Native DXC Mode"] = nativeDXCMode.load(std::memory_order_relaxed);
 	advanced["Shader Defines"] = GetDefinesString();
 	advanced["Compiler Threads"] = shaderCache->compilationThreadCount;
 	advanced["Background Compiler Threads"] = shaderCache->backgroundCompilationThreadCount;
@@ -824,6 +825,8 @@ void State::LoadFromJson(nlohmann::json& settings)
 		}
 		if (advanced.contains("Developer Mode") && advanced["Developer Mode"].is_boolean())
 			enableDeveloperMode = advanced["Developer Mode"];
+		if (advanced.contains("Native DXC Mode") && advanced["Native DXC Mode"].is_number_integer())
+			nativeDXCMode.store(std::clamp(advanced["Native DXC Mode"].get<int>(), 0, 2), std::memory_order_relaxed);
 		if (advanced.contains("Shader Defines") && advanced["Shader Defines"].is_string())
 			SetDefines(advanced["Shader Defines"]);
 		if (advanced.contains("Compiler Threads") && advanced["Compiler Threads"].is_number_integer())

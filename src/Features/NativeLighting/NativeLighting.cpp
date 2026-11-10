@@ -1,4 +1,5 @@
 #include "NativeLighting.h"
+#include "Utils/NativeDXC.h"
 #include "NativeLightingRoot.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -321,13 +322,8 @@ bool NativeLightingFeature::Initialize(const GraphicsBackend& a_backend)
 		backend = a_backend;
 		if (!backend.d3d12Device || !backend.commandQueue) throw std::runtime_error("Native lighting backend unavailable");
 		const auto* shaderPath = globals::features::reverseZ.IsActive() ? "Data/Shaders/NativeLighting/DirectReverseZ.dxil" : "Data/Shaders/NativeLighting/Direct.dxil";
-		std::ifstream file(shaderPath, std::ios::binary | std::ios::ate);
-		if (!file) throw std::runtime_error("Native lighting shader unavailable");
-		const auto size = file.tellg();
-		if (size <= 0 || size > 16 * 1024 * 1024) throw std::runtime_error("Native lighting shader size invalid");
-		std::vector<char> shader(static_cast<size_t>(size));
-		file.seekg(0);
-		if (!file.read(shader.data(), size)) throw std::runtime_error("Native lighting shader read failed");
+		auto shader = NativeDXC::Load(shaderPath, "Data/Shaders/NativeLighting/Direct.hlsl6",
+			globals::features::reverseZ.IsActive());
 		static_assert(NativeLighting::kMaximumInstances == DX12Native::ShadowBindings::kMaximumInstances && NativeLighting::kMaximumTexturePools == DX12Native::kMaximumTexturePools);
 		DX::ThrowIfFailed(NativeLighting::CreateRootSignature(backend.d3d12Device.get(), root.put()));
 		root->SetName(L"NativeLighting::Root");

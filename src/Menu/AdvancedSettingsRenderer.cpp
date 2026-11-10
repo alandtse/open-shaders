@@ -199,6 +199,13 @@ void AdvancedSettingsRenderer::RenderShaderCompileFlags()
 
 	Util::DrawSectionHeader(T("menu.advanced.compile_flags_header", "Compile Flags"));
 
+	int nativeDXCMode = globals::state->nativeDXCMode.load(std::memory_order_relaxed);
+	if (ImGui::Combo("Native DX12 Shader Compiler", &nativeDXCMode,
+			"Packaged DXIL\0Runtime DXC (fallback to packaged DXIL)\0Runtime DXC required\0"))
+		globals::state->nativeDXCMode.store(nativeDXCMode, std::memory_order_relaxed);
+	ImGui::TextDisabled("SM 6.5 DX12 shaders only. Restart to rebuild native pipelines.");
+	ImGui::TextDisabled("DX11 shader compilation remains required for the legacy renderer.");
+
 	// Shader Defines input
 	// SetDefines normalizes the string, so the buffer is only reloaded while the input is idle.
 	static std::string shaderDefines;
