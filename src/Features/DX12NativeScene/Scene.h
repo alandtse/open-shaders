@@ -1,5 +1,7 @@
 #pragma once
 
+#include <unordered_set>
+
 #include "GraphicsBackend.h"
 #include <d3d11.h>
 #include <d3d12.h>
@@ -27,6 +29,12 @@ namespace DX12Native
 		std::string cell, layoutDigest;
 		uint64_t budget = 0;
 		std::shared_ptr<const json> rooms;
+        std::shared_ptr<const json> textureReferences; // Existing Data/BSA path references from the packed CELL.
+		uint64_t uploadBatchBytes = 16ull * 1024 * 1024;
+        bool importLoosePbr = false; // Worker-owned loose DDS supplement, explicitly opt-in.
+        bool importArchivePbr = false; // Optional archive fallback when the loose file is absent.
+        bool usePreparedTextureManifest = true; // Legacy atlas compatibility. Runtime-source mode may omit it.
+        std::unordered_set<std::string> attemptedRuntimePaths; // Worker-owned stream history.
 	};
 	/** @brief Preserves offline material work classes without rediscovering them during traversal. */
 	enum class OfflineMaterialFlags : uint32_t
@@ -82,10 +90,18 @@ namespace DX12Native
 		uint32_t roomIndex = UINT32_MAX;
 	};
 
+	/** @brief Retains prepared source provenance without asserting a live-engine match. */
+	struct PreparedIdentity
+	{
+		std::string referenceKey, model, shapeName, sourceDigest;
+		uint32_t blockIndex = UINT32_MAX;
+	};
+
 	/** @brief Records a rigid instance separately from retained mesh bytes. */
 	struct Instance
 	{
 		uint64_t identity = 0;
+		PreparedIdentity preparedIdentity;
 		std::shared_ptr<const Mesh> mesh;
 		Material material;
 		DirectX::XMFLOAT3X4 world{};

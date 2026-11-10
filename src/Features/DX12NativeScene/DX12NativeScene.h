@@ -2,19 +2,35 @@
 
 #include "Feature.h"
 #include "Features/DX12NativeScene/PreparedScene.h"
+#include "Features/DX12NativeScene/RuntimeGeometryCapture.h"
+#include "Features/DX12NativeScene/RuntimeGeometryCacheWorker.h"
+#include "Features/DX12NativeScene/RuntimeGeometryPreparation.h"
+#include "Features/DX12NativeScene/VideoMemoryBudget.h"
 #include "Features/DX12NativeScene/RasterCapture.h"
 #include "Features/DX12NativeScene/ShadowTrace.h"
+#include "TruePBR/InstanceCoverage.h"
+#include "TruePBR/VerifiedBridge.h"
 #include <atomic>
 #include <optional>
 #include <mutex>
+#include <string_view>
 
 /** @brief Loads prepared geometry and publishes its completed DX12 acceleration scene. */
+namespace RE { class BSGeometry; }
+
 struct DX12NativeScene final : Feature
 {
 	struct Settings
 	{
 		bool Enabled = true, ShadowMask = true;
-		uint32_t BudgetMB = 512, FrameBudgetMB = 0;
+		uint32_t BudgetMB = 0, FrameBudgetMB = 0, MaterialBatchMB = 16; // BudgetMB=0: automatic DXGI
+        uint32_t BudgetPolicyVersion = 1; // Migrate legacy 512 MiB default to auto
+		bool UseLivePBR = false; // Experimental opt-in; do not enable before runtime validation.
+        bool ImportLoosePBR = false; // Separate opt-in for bounded loose-file DDS residency.
+        bool ImportArchivePBR = false; // Further opt-in: archive resource manager fallback.
+        bool RuntimeOnlyMaterials = false; // Optional manifest-free runtime texture acquisition.
+        bool CaptureRuntimeGeometry = false; // Static CPU-backed meshes only; no GPU readbacks.
+        bool CacheRuntimeGeometry = false; // Optional background persistence and menu CPU prewarm.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
@@ -50,9 +66,12 @@ struct DX12NativeScene final : Feature
 	void OnWorldRenderBegin() override { DispatchShadow("world-render-begin"); }
 	void Prepass() override { DispatchShadow("before-opaque"); }
 	void OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs) override;
+    void ObserveRuntimeGeometry(RE::BSGeometry* a_geometry, const std::string& a_reference, const std::string& a_shape);
 	void OnRuntimeDisabled() override;
 	void OnSceneTransitionReset(bool a_open) override;
 	void GameLoaded() override;
+    /** @brief Request a safe retry of a newly published CELL on the scene thread. */
+    void NotifyPreparedCellPublished(std::string_view plugin, uint32_t localID);
 	void ClearShaderCache() override { reloadRequested = true; }
 	json GetDiagnostics() override;
 	void RegisterUxActions() override;
@@ -80,22 +99,60 @@ struct DX12NativeScene final : Feature
 
 private:
 	void ResetScene();
+    uint64_t SceneMemoryLimit(uint64_t trackedBytes = 0);
 	void PublishDiagnostics();
+	void AdvanceCoverage();
+	struct CoverageTask;
 	void DispatchShadow(const char* a_stage);
 	std::optional<GraphicsBackend> backend;
 	DX12Native::PreparedScene prepared;
+    DX12Native::RuntimeGeometryMailbox runtimeGeometry;
+    // Immutable completed-TLAS identity index is published atomically for the draw hook.
+    std::atomic<std::shared_ptr<const DX12Native::PreparedRuntimeCoverage>> runtimePreparedCoverage;
+    std::shared_ptr<const DX12Native::TopLevel> runtimeCoverageSource;
+    std::atomic<uint64_t> runtimePreparedSkipped{ 0 };
+    uint64_t runtimePreparedPruned = 0;
+    DX12Native::RuntimeGeometryCacheWorker runtimeGeometryCache;
+    DX12Native::RuntimeGeometryPreparation runtimeGeometryPrepare;
+    // The same production acceleration worker receives composed current-scene
+    // generations. Retain the last usable TLAS/material pair during rebuilds.
+    std::shared_ptr<const DX12Native::TopLevel> currentSceneStableAcceleration;
+    std::shared_ptr<const DX12Native::ShadowBindings> currentSceneStableBindings;
+    uint64_t currentSceneSubmittedBatch = 0;
+    DX12Native::VideoMemoryBudget preparedSceneVideoMemory;
+    DX12Native::VideoMemoryBudget::Snapshot preparedSceneBudgetStatus{};
+    DX12Native::VideoMemoryBudget runtimeGeometryVideoMemory;
+    DX12Native::VideoMemoryBudget::Snapshot runtimeGeometryBudgetStatus{};
+    uint64_t runtimeGeometryActiveBytes = 0, runtimeGeometryAllowedBytes = 0;
+    std::atomic<bool> runtimeGeometryCaptureActive{ false };
+    std::mutex runtimeGeometryBudgetMutex;
+    uint32_t runtimeGeometryBudgetFrame = UINT32_MAX, runtimeGeometryFrameBytes = 0;
 	DX12Native::RasterCapture raster;
 	DX12Native::ShadowTrace shadow;
 	DX12Native::AccelerationWorker acceleration;
 	DX12Native::ShadowBindingWorker materialBindings;
+    std::shared_ptr<const DX12Native::TopLevel> materialRequestBudgetScene;
+    uint64_t materialRequestBudgetBytes = 0;
 	std::weak_ptr<const DX12Native::ShadowBindings> retiredMaterials;
+	// Immutable recipe/hint snapshot retained through the asynchronous binding worker.
+	std::shared_ptr<const NativePBR::LiveBindingSource> livePbrSource;
+	uint64_t livePbrRevision = 0;
+	uint32_t livePbrLastCaptureFrame = 0;
+	std::shared_ptr<CoverageTask> coverageTask;
+	std::optional<NativePBR::InstanceCoverage> coverageResult;
+	std::atomic<bool> coverageRequested{ false };
+	uint64_t coverageRevision = 0;
+	bool coverageFailed = false;
+	mutable std::mutex coverageMutex;
 	std::string failure, shadowStatus, shadowStage;
 	uint64_t revision = 0;
 	uint32_t cellID = 0;
 	std::atomic<bool> resetRequested{ false }, reloadRequested{ false }, shadowResetRequested{ false };
+    std::atomic<uint64_t> pendingPreparedCellReload{ 0 };
 	std::atomic<int> requestedEnabled{ -1 }, requestedShadow{ -1 };
-	std::atomic<uint32_t> requestedBudget{ 0 };
+	std::atomic<uint32_t> requestedBudget{ UINT32_MAX };
 	std::atomic<uint32_t> requestedFrameBudget{ UINT32_MAX };
+	std::atomic<uint32_t> requestedMaterialBatch{ 0 };
 	uint64_t shadowControlsRevision = 1;
 	uint64_t shadowOpaqueRetryAttempts = 0, shadowOpaqueRetryRecovered = 0;
 	mutable std::mutex settingsMutex, diagnosticsMutex;

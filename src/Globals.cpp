@@ -25,6 +25,7 @@
 #include "Features/IBL.h"
 #include "Features/InteriorSun.h"
 #include "Features/DX12NativeScene/DX12NativeScene.h"
+#include "Features/DX12Resources/DX12Resources.h"
 #include "Features/NativeLighting/NativeLighting.h"
 #include "Features/NativeComposite/NativeComposite.h"
 #include "Features/LODBlending.h"
@@ -98,6 +99,7 @@ namespace globals
 		HairSpecular hairSpecular{};
 		HorizonFix horizonFix{};
 		DX12NativeScene dx12NativeScene{};
+        DX12Resources dx12Resources{};
 		NativeLightingFeature nativeLighting{};
 		NativeCompositeFeature nativeComposite{};
 		InteriorSun interiorSun{};

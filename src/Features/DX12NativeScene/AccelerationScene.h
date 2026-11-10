@@ -46,6 +46,8 @@ namespace DX12Native
 		uint64_t SubmittedFence() const { return nextFence; }
 		/** @brief Reports whether submitted builds still own GPU work. */
 		bool HasPendingBuilds() const;
+		/** @brief Account for completed/pending GPU resources when checking DXGI. */
+        uint64_t TrackedBytes() const { return ResidentBytes(); }
 		/** @brief Reports allocation deferrals without rebuilding diagnostics. */
 		uint64_t BudgetDeferrals() const { return budgetDeferrals; }
 		/** @brief Returns the latched device/build failure. */
@@ -106,7 +108,7 @@ namespace DX12Native
 	public:
 		/** @brief Starts one owned batch; never queues another worker task while busy. */
 		void Start(const GraphicsBackend& a_backend, std::shared_ptr<const Snapshot> a_snapshot,
-			AccelerationScene::GeometryMap a_geometries, uint64_t a_budgetBytes);
+			AccelerationScene::GeometryMap a_geometries, uint64_t a_manualBudgetBytes); // 0 = DXGI auto
 		/** @brief Polls publication and GPU completion, then schedules one progress step. */
 		void Advance();
 		/** @brief Cancels eligibility and requests asynchronous resource retirement. */

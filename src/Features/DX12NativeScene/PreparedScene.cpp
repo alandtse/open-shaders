@@ -1,4 +1,6 @@
 #include "PreparedScene.h"
+#include "CellPackedFile.h"
+#include "VideoMemoryBudget.h"
 
 #include "Utils/FileDigest.h"
 #include <BS_thread_pool.hpp>
@@ -7,6 +9,10 @@
 #include <span>
 #include <fstream>
 #include <cmath>
+#include <chrono>
+#include <thread>
+#include <functional>
+#include <format>
 
 namespace DX12Native
 {
@@ -18,24 +24,6 @@ namespace DX12Native
 		bool IsDigest(const std::string& a_value)
 		{
 			return a_value.size() == 64 && std::ranges::all_of(a_value, [](unsigned char c) { return std::isxdigit(c) != 0; });
-		}
-
-		std::vector<uint8_t> ReadMesh(const std::filesystem::path& a_path, const std::string& a_digest, uint64_t a_limit)
-		{
-			const auto file = CreateFileW(a_path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-			if (file == INVALID_HANDLE_VALUE) throw std::runtime_error("Prepared mesh cannot be opened");
-			const SKSE::stl::scope_exit close([&]() noexcept { CloseHandle(file); });
-			LARGE_INTEGER size{};
-			if (!GetFileSizeEx(file, &size) || size.QuadPart < 16 || uint64_t(size.QuadPart) > a_limit || uint64_t(size.QuadPart) > UINT32_MAX)
-				throw std::runtime_error("Prepared mesh exceeds byte budget");
-			const auto digest = Util::FileDigest::Sha256HandleHex(file);
-			if (!digest || _stricmp(digest->c_str(), a_digest.c_str()) != 0) throw std::runtime_error("Prepared mesh hash mismatch");
-			if (!SetFilePointerEx(file, {}, nullptr, FILE_BEGIN)) throw std::runtime_error("Prepared mesh seek failed");
-			std::vector<uint8_t> bytes(static_cast<size_t>(size.QuadPart));
-			DWORD read = 0;
-			if (!ReadFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) || read != bytes.size())
-				throw std::runtime_error("Prepared mesh read failed");
-			return bytes;
 		}
 
 		winrt::com_ptr<ID3D12Resource> UploadBuffer(const GraphicsBackend& a_backend, std::span<const uint8_t> a_payload,
@@ -59,7 +47,7 @@ namespace DX12Native
 			return buffer;
 		}
 
-		std::shared_ptr<const VertexAttributes> UploadShading(const GraphicsBackend& a_backend, const std::vector<uint8_t>& a_bytes,
+		std::shared_ptr<const VertexAttributes> UploadShading(const GraphicsBackend& a_backend, std::span<const uint8_t> a_bytes,
 			uint32_t a_vertexCount, uint64_t a_limit)
 		{
 			std::array<uint32_t, 4> header{};
@@ -88,12 +76,12 @@ namespace DX12Native
 			shading->vertexCount = a_vertexCount;
 			shading->stride = kShadingStride;
 			shading->hasTangentFrame = header[1] == 2;
-			shading->buffer = UploadBuffer(a_backend, std::span(a_bytes).subspan(16), a_limit,
+			shading->buffer = UploadBuffer(a_backend, a_bytes.subspan(16), a_limit,
 				shading->allocationBytes, L"DX12NativeScene::PreparedShading");
 			return shading;
 		}
 
-		std::shared_ptr<const Geometry> Upload(const GraphicsBackend& a_backend, const std::vector<uint8_t>& a_bytes, uint64_t a_limit)
+		std::shared_ptr<const Geometry> Upload(const GraphicsBackend& a_backend, std::span<const uint8_t> a_bytes, uint64_t a_limit)
 		{
 			std::array<uint32_t, 4> header{};
 			std::memcpy(header.data(), a_bytes.data(), sizeof(header));
@@ -119,23 +107,81 @@ namespace DX12Native
 			geometry->source = std::move(mesh);
 			geometry->indexOffset = vertexBytes;
 			geometry->validationOffset = vertexBytes + indexBytes;
-			geometry->buffer = UploadBuffer(a_backend, std::span(a_bytes).subspan(16), a_limit,
+			geometry->buffer = UploadBuffer(a_backend, a_bytes.subspan(16), a_limit,
 				geometry->allocationBytes, L"DX12NativeScene::PreparedGeometry");
 			return geometry;
 		}
 
+
+        // Budget is a scene-wide ceiling: zero selects DXGI automatic mode.
+        // Geometry uploads proceed in this owned worker, retaining completed
+        // buffers across short-lived DXGI pressure instead of restarting the
+        // CELL for every deferred allocation.
+        class PreparedUploadAllowance
+        {
+        public:
+            PreparedUploadAllowance(const GraphicsBackend& backend, uint64_t manual, uint64_t& used)
+                : backend(backend), manual(manual), used(used) {}
+
+            uint64_t Required(uint64_t payloadBytes) const
+            {
+                const auto desc = CD3DX12_RESOURCE_DESC::Buffer(payloadBytes + 4);
+                const auto info = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &desc);
+                if (info.SizeInBytes == UINT64_MAX || !info.SizeInBytes)
+                    throw std::runtime_error("Invalid prepared geometry allocation");
+                return info.SizeInBytes;
+            }
+
+            uint64_t Available(uint64_t required, bool wait)
+            {
+                // Reserve room for the production BLAS/TLAS and materials.
+                // The DXGI policy itself already retains a device-wide reserve.
+                const uint64_t hardCeiling = manual ? manual : UINT64_MAX;
+                const uint64_t hardGeometry = hardCeiling == UINT64_MAX ?
+                    hardCeiling : hardCeiling - hardCeiling / 8;
+                if (required > hardGeometry || used > hardGeometry - required)
+                    throw std::runtime_error(
+                        std::format("Prepared geometry exceeds manual scene budget (used {} MiB, next {} MiB, limit {} MiB)",
+                            used / VideoMemoryBudget::kMiB, required / VideoMemoryBudget::kMiB,
+                            hardGeometry / VideoMemoryBudget::kMiB));
+
+                for (unsigned attempt = 0;; ++attempt) {
+                    const auto dxgi = memory.Query(backend.d3d12Device.get(), used, manual);
+                    const uint64_t allowable = dxgi.effectiveBytes - dxgi.effectiveBytes / 8;
+                    if (used <= allowable && required <= allowable - used)
+                        return allowable - used;
+                    if (!wait) return 0;
+                    // Lack of an available local-budget query is not a
+                    // transient condition; do not repeatedly sleep on fallback.
+                    if (!dxgi.dxgiAvailable || attempt >= 120)
+                        throw std::runtime_error(
+                            std::format("Prepared geometry waiting for DXGI headroom (used {} MiB, next {} MiB, allowance {} MiB)",
+                                used / VideoMemoryBudget::kMiB, required / VideoMemoryBudget::kMiB,
+                                allowable / VideoMemoryBudget::kMiB));
+                    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                }
+            }
+
+        private:
+            const GraphicsBackend& backend;
+            VideoMemoryBudget memory;
+            uint64_t manual, &used;
+        };
+
 		std::shared_ptr<const PreparedCell> Load(const GraphicsBackend& a_backend, const std::filesystem::path& a_directory,
-			const std::string& a_cell, uint64_t a_epoch, uint64_t a_budget, uint64_t a_materialBudget)
+			const std::string& a_cell, uint64_t a_epoch, uint64_t a_budget, uint64_t a_materialBudget,
+            const std::function<void(uint64_t, uint64_t)>& progress)
 		{
 			const auto manifestPath = a_directory / "cell-layout.json";
 			if (std::filesystem::file_size(manifestPath) > kMaximumManifestBytes) throw std::runtime_error("Prepared manifest exceeds limit");
 			std::ifstream file(manifestPath);
 			const auto manifest = json::parse(file);
-			if (manifest.at("schemaVersion").get<uint32_t>() != 1 || manifest.at("rendererSchemaVersion").get<uint32_t>() != 1 || _stricmp(manifest.at("cell").get_ref<const std::string&>().c_str(), a_cell.c_str()) != 0)
+			if (manifest.at("schemaVersion").get<uint32_t>() != 2 || manifest.at("rendererSchemaVersion").get<uint32_t>() != 2 || _stricmp(manifest.at("cell").get_ref<const std::string&>().c_str(), a_cell.c_str()) != 0)
 				throw std::runtime_error("Prepared cell identity/schema mismatch");
 			const auto& rows = manifest.at("instances");
 			if (!rows.is_array() || rows.empty() || rows.size() > kMaximumInstances) throw std::runtime_error("Prepared instance count invalid");
 			auto result = std::make_shared<PreparedCell>();
+            PreparedUploadAllowance uploads(a_backend, a_budget, result->bytes);
 			result->digest = manifest.at("layoutDigest").get<std::string>();
 			if (!IsDigest(result->digest)) throw std::runtime_error("Prepared layout digest invalid");
 			auto snapshot = std::make_shared<Snapshot>();
@@ -151,28 +197,58 @@ namespace DX12Native
 				rooms = std::make_shared<const json>(definitions);
 				for (const auto& room : definitions) result->roomDefinitions.push_back(room);
 			}
-			if (a_materialBudget) snapshot->materialSource = std::make_shared<const MaterialSource>(a_directory, a_cell, result->digest, a_materialBudget, rooms);
+            // Keep the prepared material manifest in automatic mode as well.
+            // The binding worker will independently recheck DXGI headroom.
+            const auto initialMaterials = VideoMemoryBudget{}.Query(
+                a_backend.d3d12Device.get(), 0, a_materialBudget).effectiveBytes;
+            if (initialMaterials) {
+                auto source = std::make_shared<MaterialSource>(
+                    a_directory, a_cell, result->digest, initialMaterials, rooms);
+                source->textureReferences = std::make_shared<const json>(manifest.at("textureReferences"));
+                snapshot->materialSource = std::move(source);
+            }
 			std::unordered_map<std::string, std::shared_ptr<const Geometry>> geometries;
 			std::unordered_map<std::string, std::shared_ptr<const VertexAttributes>> shadingCache;
 			std::unordered_map<std::string, std::string> shadingFailures;
 			std::unordered_map<std::string, std::shared_ptr<const json>> materials;
 			const auto shadingSchema = manifest.value("shadingSchemaVersion", 0u);
 			const bool shadingSchemaSupported = shadingSchema == 1 || shadingSchema == 2;
+            const auto geometryPack = DX12Packed::Read(a_directory, manifest.at("geometryPack"),
+                "cell-geometry.rsgp", DX12Packed::kGeometryMagic);
+            const auto shadingPack = DX12Packed::Read(a_directory, manifest.at("shadingPack"),
+                "cell-shading.rssp", DX12Packed::kShadingMagic);
 			for (const auto& row : rows) {
 				const auto hash = row.at("geometrySha256").get<std::string>();
 				if (!IsDigest(hash) || row.at("geometryFile").get<std::string>() != "geometry/" + hash + ".rsgm")
 					throw std::runtime_error("Prepared geometry path invalid");
 				auto found = geometries.find(hash);
 				if (found == geometries.end()) {
-					if (result->bytes >= a_budget) throw std::runtime_error("Prepared package budget exhausted");
-					const auto bytes = ReadMesh(a_directory / "geometry" / (hash + ".rsgm"), hash, a_budget - result->bytes);
-					auto geometry = Upload(a_backend, bytes, a_budget - result->bytes);
+                    const auto bytes = geometryPack.Get(hash);
+                    if (bytes.size() < 16) throw std::runtime_error("Prepared RSGM geometry header truncated");
+                    const uint64_t allocation = uploads.Required(bytes.size() - 16);
+                    const uint64_t allowance = uploads.Available(allocation, true);
+                    auto geometry = Upload(a_backend, bytes, allowance);
 					result->bytes += geometry->allocationBytes;
 					result->geometries.emplace(geometry->source.get(), geometry);
 					found = geometries.emplace(hash, std::move(geometry)).first;
+                    if (progress) progress(geometries.size(), result->bytes);
 				}
 				Instance instance;
 				instance.identity = snapshot->instances.size() + 1;
+				if (row.contains("referenceKey") && row.at("referenceKey").is_string() &&
+					row.contains("model") && row.at("model").is_string() &&
+					row.contains("shapeName") && row.at("shapeName").is_string() &&
+					row.contains("sourceSha256") && row.at("sourceSha256").is_string() &&
+					row.contains("blockIndex") && row.at("blockIndex").is_number_unsigned()) {
+					auto reference = row.at("referenceKey").get<std::string>();
+					auto model = row.at("model").get<std::string>();
+					auto shape = row.at("shapeName").get<std::string>();
+					auto digest = row.at("sourceSha256").get<std::string>();
+					const auto block = row.at("blockIndex").get<uint64_t>();
+					if (!reference.empty() && reference.size() <= 256 && !model.empty() && model.size() <= 1024 &&
+						!shape.empty() && shape.size() <= 1024 && IsDigest(digest) && block < UINT32_MAX)
+						instance.preparedIdentity = { std::move(reference), std::move(model), std::move(shape), std::move(digest), uint32_t(block) };
+				}
 				instance.mesh = found->second->source;
 				instance.indexCount = row.at("indexCount").get<uint32_t>();
 				if (uint64_t(instance.indexCount) * 4 != found->second->validationOffset - found->second->indexOffset)
@@ -218,8 +294,12 @@ namespace DX12Native
 					if (IsDigest(shadingHash) && shadingFile == "shading/" + shadingHash + ".rsga") {
 						if (!shadingCache.contains(shadingHash) && !shadingFailures.contains(shadingHash)) {
 							try {
-								const auto bytes = ReadMesh(a_directory / "shading" / (shadingHash + ".rsga"), shadingHash, a_budget - result->bytes);
-								auto shading = UploadShading(a_backend, bytes, instance.mesh->vertexCount, a_budget - result->bytes);
+								const auto bytes = shadingPack.Get(shadingHash);
+                                if (bytes.size() < 16) throw std::runtime_error("Prepared RSGA shading header truncated");
+                                const auto required = uploads.Required(bytes.size() - 16);
+                                const auto allowance = uploads.Available(required, false);
+                                if (!allowance) throw std::runtime_error("deferred:prepared-shading-headroom");
+                                auto shading = UploadShading(a_backend, bytes, instance.mesh->vertexCount, allowance);
 								result->bytes += shading->allocationBytes;
 								shadingCache.emplace(shadingHash, std::move(shading));
 							} catch (const std::exception& error) { shadingFailures.emplace(shadingHash, error.what()); }
@@ -293,9 +373,22 @@ namespace DX12Native
 	{
 		std::atomic<bool> busy{ false };
 		uint64_t completedRevision = 0;
+        std::atomic<uint64_t> uploadedMeshes{ 0 }, uploadedBytes{ 0 };
+        bool retryable = false;
+        uint32_t budgetRetries = 0;
+        std::chrono::steady_clock::time_point retryAfter{};
 		std::shared_ptr<const PreparedCell> cell;
 		std::string failure;
 	};
+
+    bool PreparedScene::Requested() const
+    {
+        if (!requested) return false;
+        if (!state || state->busy.load(std::memory_order_acquire) ||
+            state->completedRevision != revision || !state->retryable)
+            return true;
+        return std::chrono::steady_clock::now() < state->retryAfter;
+    }
 
 	void PreparedScene::Reset()
 	{
@@ -306,15 +399,29 @@ namespace DX12Native
 	void PreparedScene::Request(const GraphicsBackend& a_backend, std::filesystem::path a_directory, std::string a_cell, uint64_t a_epoch, uint64_t a_budget, uint64_t a_materialBudget)
 	{
 		if (!state) state = std::make_shared<State>();
-		if (requested || state->busy.exchange(true, std::memory_order_acq_rel)) return;
+		if (Requested() || state->busy.exchange(true, std::memory_order_acq_rel)) return;
+        state->uploadedMeshes.store(0, std::memory_order_relaxed);
+        state->uploadedBytes.store(0, std::memory_order_relaxed);
 		try {
 			static BS::thread_pool<> pool{ 1 };
 			pool.detach_task([owned = state, backend = a_backend, directory = std::move(a_directory), cell = std::move(a_cell),
 				epoch = a_epoch, budget = a_budget, materialBudget = a_materialBudget, request = revision] {
 				std::shared_ptr<const PreparedCell> loaded;
 				std::string failure;
-				try { loaded = Load(backend, directory, cell, epoch, budget, materialBudget); }
+                try {
+                    loaded = Load(backend, directory, cell, epoch, budget, materialBudget,
+                        [owned](uint64_t meshes, uint64_t bytes) {
+                            owned->uploadedMeshes.store(meshes, std::memory_order_release);
+                            owned->uploadedBytes.store(bytes, std::memory_order_release);
+                        });
+                }
 				catch (const std::exception& error) { failure = error.what(); }
+                const bool transient = failure.starts_with("Prepared geometry waiting for DXGI headroom");
+                if (transient) ++owned->budgetRetries;
+                else owned->budgetRetries = 0;
+                // Persistent shortage is not solved by endless reloads.
+                owned->retryable = transient && owned->budgetRetries <= 3;
+                owned->retryAfter = std::chrono::steady_clock::now() + std::chrono::seconds(3);
 				owned->cell = std::move(loaded);
 				owned->failure = std::move(failure);
 				owned->completedRevision = request;
@@ -347,6 +454,10 @@ namespace DX12Native
 				if (eligibility == "disabled") ++disabledLights;
 			}
 		return { { "loading", busy }, { "loaded", bool(cell) }, { "requested", requested },
+            { "budgetRetryPending", state && !busy && state->completedRevision == revision && state->retryable },
+            { "budgetRetryCount", state ? state->budgetRetries : 0 },
+            { "uploadProgressMeshes", state ? state->uploadedMeshes.load(std::memory_order_acquire) : 0 },
+            { "uploadProgressBytes", state ? state->uploadedBytes.load(std::memory_order_acquire) : 0 },
 			{ "lightCount", cell ? cell->lights.size() : 0 },
 			{ "supportedLightCount", supportedLights },
 			{ "approximatedLightCount", approximatedLights }, { "invalidLightCount", invalidLights }, { "disabledLightCount", disabledLights },

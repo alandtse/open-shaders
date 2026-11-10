@@ -1,4 +1,5 @@
 #include "AccelerationScene.h"
+#include "VideoMemoryBudget.h"
 
 #include <BS_thread_pool.hpp>
 #include <atomic>
@@ -300,12 +301,12 @@ namespace DX12Native
 	}
 
 	struct AccelerationWorker::Input
-	{
-		GraphicsBackend backend;
-		std::shared_ptr<const Snapshot> snapshot;
-		AccelerationScene::GeometryMap geometries;
-		uint64_t budget = 0;
-	};
+    {
+        GraphicsBackend backend;
+        std::shared_ptr<const Snapshot> snapshot;
+        AccelerationScene::GeometryMap geometries;
+        uint64_t manualBudget = 0; // 0 -> DXGI budget, otherwise scene-wide upper cap
+    };
 
 	struct AccelerationWorker::Output
 	{
@@ -316,7 +317,9 @@ namespace DX12Native
 		json diagnostics;
 		std::string failure;
 		double cpuMs = 0;
-		bool terminal = false;
+		bool terminal = false, budgetDeferred = false;
+        uint64_t effectiveBudget = 0;
+        std::chrono::steady_clock::time_point retryAt{};
 	};
 
 	struct AccelerationWorker::State
@@ -326,17 +329,18 @@ namespace DX12Native
 		AccelerationScene acceleration;
 		std::shared_ptr<const Output> completed;
 		uint64_t appliedRevision = 0, sceneEpoch = 0;
+        std::chrono::steady_clock::time_point firstBudgetStall{};
 	};
 
 	void AccelerationWorker::Start(const GraphicsBackend& a_backend, std::shared_ptr<const Snapshot> a_snapshot,
-		AccelerationScene::GeometryMap a_geometries, uint64_t a_budgetBytes)
+		AccelerationScene::GeometryMap a_geometries, uint64_t a_manualBudgetBytes)
 	{
 		if (!state) state = std::make_shared<State>();
 		auto prepared = std::make_shared<Input>();
 		prepared->backend = a_backend;
 		prepared->snapshot = std::move(a_snapshot);
 		prepared->geometries = std::move(a_geometries);
-		prepared->budget = a_budgetBytes;
+		prepared->manualBudget = a_manualBudgetBytes;
 		input = std::move(prepared);
 		output.reset();
 		dispatchFailure.clear();
@@ -360,6 +364,8 @@ namespace DX12Native
 	{
 		if (!state || state->busy.load(std::memory_order_acquire)) return;
 		if (state->completed && state->completed->revision == revision) {
+            if (state->completed->budgetDeferred &&
+                std::chrono::steady_clock::now() < state->completed->retryAt) return;
 			output = state->completed;
 			if (!output->diagnostics.empty()) {
 				lastDiagnostics = output->diagnostics;
@@ -396,12 +402,24 @@ namespace DX12Native
 						else acceleration.ReplaceScope();
 						owned->sceneEpoch = snapshot ? snapshot->scope.scene : 0;
 						owned->appliedRevision = result->revision;
+                        owned->firstBudgetStall = {};
 					}
 					const auto deferrals = acceleration.BudgetDeferrals();
 					if (snapshot) {
 						result->scope = snapshot->scope;
-						if (acceleration.Initialize(prepared->backend))
-							acceleration.Advance(snapshot, prepared->geometries, prepared->budget);
+                        if (acceleration.Initialize(prepared->backend)) {
+                            uint64_t knownGeometryBytes = 0;
+                            for (const auto& [mesh, geometry] : prepared->geometries)
+                                if (geometry) knownGeometryBytes += geometry->allocationBytes;
+                            const uint64_t tracked = std::max(
+                                knownGeometryBytes, acceleration.TrackedBytes());
+                            VideoMemoryBudget budget;
+                            const auto memory = budget.Query(prepared->backend.d3d12Device.get(),
+                                tracked, prepared->manualBudget);
+                            result->effectiveBudget = memory.effectiveBytes;
+                            acceleration.Advance(snapshot, prepared->geometries,
+                                memory.effectiveBytes);
+                        }
 						else if (acceleration.Failure().empty()) result->failure = "Acceleration backend unavailable";
 					} else {
 						acceleration.Advance(nullptr, {}, 0);
@@ -414,10 +432,21 @@ namespace DX12Native
 					const bool pending = acceleration.HasPendingBuilds();
 					const bool built = snapshot && result->scene && result->scene->scope == snapshot->scope;
 					result->terminal = !result->failure.empty() || (!pending && (!snapshot || snapshot->instances.empty() || built));
-					if (!pending && acceleration.BudgetDeferrals() != deferrals) {
-						result->failure = "Acceleration budget prevents this batch from completing";
-						result->terminal = true;
-					}
+                    if (!pending && acceleration.BudgetDeferrals() != deferrals) {
+                        const auto now = std::chrono::steady_clock::now();
+                        if (owned->firstBudgetStall == std::chrono::steady_clock::time_point{})
+                            owned->firstBudgetStall = now;
+                        if (now - owned->firstBudgetStall >= std::chrono::seconds(20)) {
+                            result->failure = "Acceleration budget still exhausted after DXGI retry window";
+                            result->terminal = true;
+                        } else {
+                            result->budgetDeferred = true;
+                            result->retryAt = now + std::chrono::milliseconds(200);
+                            result->terminal = false;
+                        }
+                    } else if (acceleration.BudgetDeferrals() == deferrals) {
+                        owned->firstBudgetStall = {};
+                    }
 				} catch (const std::exception& error) {
 					result->failure = error.what();
 					result->terminal = true;
@@ -451,6 +480,8 @@ namespace DX12Native
 		status["submittedFence"] = output ? output->fenceValue : 0;
 		status["completedFence"] = output && output->fence ? output->fence->GetCompletedValue() : 0;
 		status["batchFinished"] = finished;
+        status["dxgiBudgetDeferred"] = output && output->budgetDeferred;
+        status["effectiveBudgetBytes"] = output ? output->effectiveBudget : 0;
 		status["publicationMatchesBatch"] = matching && bool(output->scene);
 		status["sourceFrame"] = snapshot ? snapshot->scope.frame : 0;
 		status["sourceIsCurrentFrame"] = false;

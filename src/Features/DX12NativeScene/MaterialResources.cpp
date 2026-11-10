@@ -1,4 +1,6 @@
 #include "MaterialResources.h"
+#include "MaterialTextureLookup.h"
+#include "RuntimeMaterialCompiler.h"
 
 #include <algorithm>
 #include <cctype>
@@ -13,19 +15,14 @@ namespace DX12Native
 		constexpr uint32_t kReady = 1, kPbr = 2, kModelNormal = 4, kVertexColor = 8, kAlphaTest = 16, kVertexAlpha = 32, kEmission = 64, kSpecular = 128, kOpacityReady = 256;
 		constexpr uint32_t kPbrSourceFlag = 1u << 23;
 
-		std::string Normalize(std::string a_path)
-		{
-			std::ranges::transform(a_path, a_path.begin(), [](unsigned char c) { return c == '/' ? '\\' : char(std::tolower(c)); });
-			if (!a_path.empty() && !a_path.starts_with("textures\\")) a_path = "textures\\" + a_path;
-			return a_path;
-		}
-
 		std::array<uint32_t, 2> Find(const MaterialResources& a_resources, const json& a_material, size_t a_slot)
 		{
 			const auto& paths = a_material.at("textures");
 			if (!paths.is_array() || a_slot >= paths.size() || !paths[a_slot].is_string()) return { kMissingTexture, 0 };
-			const auto found = a_resources.locations.find(Normalize(paths[a_slot].get<std::string>()));
-			return found == a_resources.locations.end() ? std::array<uint32_t, 2>{ kMissingTexture, 0 } : found->second;
+			const auto found = a_resources.locations.find(MaterialTextureLookupKey(paths[a_slot].get<std::string>()));
+			if (found == a_resources.locations.end()) return { kMissingTexture, 0 };
+			const auto location = a_resources.logicalLocations.find(found->second);
+			return location == a_resources.logicalLocations.end() ? std::array<uint32_t, 2>{ kMissingTexture, 0 } : location->second;
 		}
 
 		float4 Color(const json& a_material, const char* a_key, float a_multiplier)
@@ -99,16 +96,71 @@ namespace DX12Native
 		}
 	}
 
-	std::shared_ptr<const MaterialResources> MaterialResources::Load(const GraphicsBackend& a_backend, const TopLevel& a_scene)
-	{
-		static_assert(sizeof(MaterialRecord) == 128 && sizeof(SurfaceRecord) == 32);
-		auto result = std::make_shared<MaterialResources>();
+	std::shared_ptr<const MaterialResources> MaterialResources::Load(const GraphicsBackend& a_backend, const TopLevel& a_scene,
+        const NativePBR::LiveBindingSource* a_livePbr, const MaterialResources* a_previous)
+    {
+        static_assert(sizeof(MaterialRecord) == 128 && sizeof(SurfaceRecord) == 32);
+        auto result = std::make_shared<MaterialResources>();
+        if (a_previous) {
+            // Only published, completed pages can be inherited. Their resource
+            // owners are copied and each new generation gets its own descriptors.
+            if (a_previous->pendingUpload && a_previous->pendingUpload->Poll() != MaterialUploadStatus::Ready)
+                throw MaterialUploadBusy("Previous native material generation has an unfinished upload");
+            result->pools = a_previous->pools;
+            result->locations = a_previous->locations;
+            result->logicalLocations = a_previous->logicalLocations;
+            result->verifiedTextureSources = a_previous->verifiedTextureSources;
+            result->textureTickets = a_previous->textureTickets;
+            result->bytes = a_previous->bytes;
+            result->textures = a_previous->textures;
+        }
+        NativePBR::LiveMatchResult liveMatch;
+        if (a_livePbr) {
+            std::vector<NativePBR::PreparedMatchInput> inputs;
+            inputs.reserve(a_scene.instances.size());
+            for (const auto& instance : a_scene.instances) {
+                NativePBR::PreparedMatchInput candidate;
+                candidate.referenceKey = instance.preparedIdentity.referenceKey;
+                candidate.shapeName = instance.preparedIdentity.shapeName;
+                // Prepared geometry controls traversal; runtime controls shading.
+                candidate.opaque = instance.material.opaqueCandidate &&
+                    instance.material.offlineMaterialFlags == OfflineMaterialFlags::None;
+                inputs.push_back(std::move(candidate));
+            }
+            liveMatch = NativePBR::ResolveRuntimeMatches(inputs, *a_livePbr);
+            result->livePbrMatched = uint32_t(liveMatch.report.matched);
+            result->livePbrAmbiguous = uint32_t(liveMatch.report.ambiguous);
+            result->livePbrIncompatible = uint32_t(liveMatch.report.incompatible);
+            result->livePbrMissing = uint32_t(liveMatch.report.missing);
+            // Record overlapping recipe issues for every matched instance, including
+            // those later blocked by texture residency. This diagnoses exclusions
+            // without changing existing fallback decisions.
+            for (const auto& match : liveMatch.matches)
+                if (match && match->recipe && !NativePBR::NativeMeshRecipeSupported(*match->recipe))
+                    result->liveRecipeIssues.Observe(*match->recipe);
+            // Once per live material identity: report candidate transfer strategies only.
+            // Resource handles are never opened or copied by this classification.
+            std::unordered_set<uint64_t> reported;
+            for (const auto& match : liveMatch.matches)
+                if (match && match->recipe && reported.insert(match->recipe->identity).second)
+                    result->liveGpuRoutes += AssessLiveGpuRecipe(*match->recipe);
+        }
 		if (a_scene.materialSource) {
-			try { LoadMaterialTextures(a_backend, *a_scene.materialSource, *result); }
+			try { LoadMaterialTextures(a_backend, *a_scene.materialSource, *result,
+                    (a_scene.materialSource->importLoosePbr || a_scene.materialSource->importArchivePbr) && a_livePbr ?
+                        &liveMatch : nullptr); }
 			catch (const MaterialUploadError&) { throw; }
+			catch (const std::bad_alloc&) { throw; }
 			catch (const std::exception& error) {
+                // An incremental load must not publish a generation missing
+                // the previously valid native residency. Keep old bindings alive.
+                if (a_previous) throw MaterialUploadError(error.what());
 				result->failure = error.what();
-				result->pools.clear(); result->locations.clear(); result->bytes = result->textures = 0;
+				result->pools.clear(); result->locations.clear(); result->logicalLocations.clear(); result->textureTickets.clear();
+                result->verifiedTextureSources = {};
+                result->bytes = result->textures = 0;
+				result->peakStagingBytes = result->uploadedBytes = result->uploadWaitMicroseconds = result->uploadedPages = result->reusedPages = result->reusedTextures = 0;
+				result->asyncBatchPages = 0; result->asyncBatchStagingBytes = 0;
 			}
 		}
 		std::vector<MaterialRecord> materials;
@@ -117,11 +169,48 @@ namespace DX12Native
 		for (uint32_t index = 0; index < a_scene.instances.size(); ++index) {
 			const auto& instance = a_scene.instances[index];
 			const auto attributes = instance.material.attributes;
-			const auto key = instance.material.offlineDescription ? instance.material.offlineDescription->dump() + ":" + std::to_string(attributes ? attributes->stride : 0) + ":" + std::to_string(uint32_t(instance.material.offlineMaterialFlags)) : "unavailable";
+			const auto live = a_livePbr && index < liveMatch.matches.size() ? liveMatch.matches[index] : std::nullopt;
+            // Per-instance material properties (including emission) must never alias another instance's record.
+            const auto liveKey = live ? ":live:" + std::to_string(live->recipe->identity) + ":" +
+                std::to_string(live->recipe->revision) + ":instance:" + std::to_string(index) : ":offline";
+            const auto key = (instance.material.offlineDescription ? instance.material.offlineDescription->dump() + ":" + std::to_string(attributes ? attributes->stride : 0) + ":" + std::to_string(uint32_t(instance.material.offlineMaterialFlags)) : "unavailable") + liveKey;
 			const auto [found, inserted] = unique.try_emplace(key, uint32_t(materials.size()));
 			if (inserted) {
 				MaterialRecord record;
-				try { record = Compile(*result, instance.material); }
+				try {
+                    bool usedRuntime = false;
+                    if (live) {
+                        const auto sourceStatus = result->verifiedTextureSources.Assess(*live->recipe);
+                        if (sourceStatus == LiveTextureSourceStatus::Missing) ++result->livePbrSourcesMissing;
+                        if (sourceStatus == LiveTextureSourceStatus::Ambiguous) ++result->livePbrSourcesAmbiguous;
+                        if (sourceStatus == LiveTextureSourceStatus::Incompatible) ++result->livePbrSourcesIncompatible;
+                        if (sourceStatus == LiveTextureSourceStatus::Available) {
+                            const auto compiled = CompileRuntimeMaterial(*result, instance.material, *live);
+                            switch (compiled.status) {
+                            case RuntimeMaterialStatus::Ready:
+                                record = compiled.record;
+                                ++result->livePbrApplied;
+                                if (compiled.emissionApplied) ++result->livePbrEmissiveApplied;
+                                usedRuntime = true;
+                                break;
+                            case RuntimeMaterialStatus::UnsupportedRecipe:
+                                ++result->livePbrUnsupported;
+                                break;
+                            case RuntimeMaterialStatus::UnsafeOpacity:
+                                ++result->livePbrUnsafeOpacity;
+                                break;
+                            case RuntimeMaterialStatus::MissingBasis:
+                                ++result->livePbrMissingBasis;
+                                break;
+                            case RuntimeMaterialStatus::MissingTextures:
+                                ++result->livePbrMissingBindings;
+                                break;
+                            }
+                        }
+                        if (!usedRuntime) ++result->livePbrOfflineFallback;
+                    }
+                    if (!usedRuntime) record = Compile(*result, instance.material);
+                }
 				catch (const std::exception&) { record.flags[3] = 16; }
 				if ((record.flags[0] & kReady) && record.flags[3] == 0) ++result->readyMaterials; else ++result->rejectedMaterials;
 				materials.push_back(record);

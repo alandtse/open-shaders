@@ -3,10 +3,12 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <span>
+#include <cstdint>
 
 // Separate from Utils/ContentHash.h: that one is explicitly non-cryptographic (XXH3, "no
 // adversarial threat model applies") and exists for fast shader-cache keys. This file exists to
-// validate a third-party DLL (nvngx_dlssnr.dll) against a pinned allowlist, where a real
+// validate external content against a cryptographic digest, where a real
 // cryptographic hash is the point.
 namespace Util::FileDigest
 {
@@ -19,4 +21,6 @@ namespace Util::FileDigest
 	std::optional<std::string> Sha256FileHex(const std::filesystem::path& path);
 	/** SHA-256 of an owned synchronous Win32 file handle, uppercase hex; consumes its file position. */
 	std::optional<std::string> Sha256HandleHex(void* handle);
+	/** @brief SHA-256 of owned bytes, uppercase hex. */
+	std::optional<std::string> Sha256BytesHex(std::span<const uint8_t> bytes);
 }
