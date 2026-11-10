@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Utils/ActorUtils.h"
+#include "Features/DX12NativeScene/NativeCharacterMeshCapture.h"
+#include "Features/DX12NativeScene/NativeCharacterGeometryPreparation.h"
 
 #include <BS_thread_pool.hpp>
 #include <algorithm>
@@ -9,6 +11,7 @@
 #include <cstdint>
 #include <cmath>
 #include <limits>
+#include <format>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -43,6 +46,9 @@ namespace DX12Native
         bool playerOnly = false;
         std::vector<CharacterActorObservation> actors;
         std::vector<CharacterPartObservation> parts;
+        std::shared_ptr<const CharacterMeshGeneration> stagedGeometry;
+        uint32_t capturedMeshes = 0;
+        uint64_t capturedBytes = 0;
         uint32_t droppedActors = 0, droppedParts = 0, invalidParts = 0;
         uint32_t skinnedParts = 0, dynamicParts = 0, rigidParts = 0;
         uint32_t alphaParts = 0, gpuOnlyParts = 0;
@@ -60,6 +66,7 @@ namespace DX12Native
             ++sceneEpoch;
             pending.reset(); // Detached worker retains only owned values.
             published.store({}, std::memory_order_release);
+            attemptedMeshKeys.clear();
             lastObservedFrame = UINT32_MAX;
             workerBusy.store(false, std::memory_order_release);
             submitted.store(0, std::memory_order_relaxed);
@@ -70,12 +77,25 @@ namespace DX12Native
          * Bounded engine observation is synchronous. Validation, counting and
          * deterministic publication are handled on an independent CPU worker.
          */
-        void Advance(uint32_t frame, uint32_t maxActors, uint32_t periodFrames, bool playerOnly)
+        void Advance(uint32_t frame, uint32_t maxActors, uint32_t periodFrames, bool playerOnly,
+            bool stageGeometry, ID3D12Device* device)
         {
             if (pending && pending->done.load(std::memory_order_acquire)) {
                 auto done = std::move(pending);
                 workerBusy.store(false, std::memory_order_release);
                 if (done->result && done->sceneEpoch == sceneEpoch) {
+                    // A failed allocation must remain eligible for a later
+                    // bounded retry rather than being silently marked cached.
+                    if (!done->attemptedKey.empty()) {
+                        bool resident = false;
+                        if (const auto staged = done->result->stagedGeometry) {
+                            for (const auto& part : staged->meshes)
+                                resident |= part->actorFormID == done->actorFormID &&
+                                    part->partOrdinal == done->partOrdinal &&
+                                    part->sourceToken == done->sourceToken;
+                        }
+                        if (!resident) attemptedMeshKeys.erase(done->attemptedKey);
+                    }
                     published.store(std::move(done->result), std::memory_order_release);
                     completed.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -93,6 +113,8 @@ namespace DX12Native
             captured->playerOnly = playerOnly;
             constexpr size_t kMaximumParts = 512;
             constexpr uint32_t kMaximumPartsPerActor = 96;
+            std::optional<CharacterMeshCapture> capturedMesh;
+            std::string attemptedKey;
 
             // Only Get3D(false): never inspect Skyrim's first-person root.
             // In player-only mode, skip the high-process actor enumeration
@@ -139,6 +161,22 @@ namespace DX12Native
                         !runtime.rendererData->rawVertexData ||
                         !runtime.rendererData->rawIndexData;
                     captured->parts.emplace_back(std::move(part));
+                    if (stageGeometry && device && !capturedMesh) {
+                        const uint64_t sourceToken = CharacterMeshSourceToken(*geometry);
+                        const std::string key = std::format("{:08X}:{}:{:016X}",
+                            actor->GetFormID(), ordinal - 1, sourceToken);
+                        if (!attemptedMeshKeys.contains(key)) {
+                            auto owned = CaptureCharacterBindMesh(*geometry,
+                                actor->GetFormID(), ordinal - 1, frame);
+                            if (owned) {
+                                captured->capturedMeshes = 1;
+                                captured->capturedBytes = owned->Bytes();
+                                capturedMesh = std::move(*owned);
+                                attemptedKey = key;
+                                attemptedMeshKeys.insert(std::move(key));
+                            }
+                        }
+                    }
                 });
             };
             if (playerOnly)
@@ -149,8 +187,18 @@ namespace DX12Native
             try {
                 auto work = std::make_shared<Work>();
                 work->sceneEpoch = sceneEpoch;
+                if (capturedMesh) {
+                    work->attemptedKey = attemptedKey;
+                    work->actorFormID = capturedMesh->actorFormID;
+                    work->partOrdinal = capturedMesh->partOrdinal;
+                    work->sourceToken = capturedMesh->sourceToken;
+                }
+                auto previous = GetPublished();
+                winrt::com_ptr<ID3D12Device> nativeDevice;
+                if (stageGeometry && device) nativeDevice.copy_from(device);
                 static BS::thread_pool<> pool{ 1 };
-                pool.detach_task([work, captured] {
+                pool.detach_task([work, captured, previous,
+                    mesh = std::move(capturedMesh), nativeDevice] {
                     try {
                         // All aggregation uses owned records, never engine pointers.
                         auto output = std::make_shared<CharacterObservationGeneration>(*captured);
@@ -169,6 +217,12 @@ namespace DX12Native
                                 part.worldBound[3] <= 0 || !part.vertexCount || !part.triangleCount)
                                 ++output->invalidParts;
                         }
+                        // DX12 upload and DXGI residency checks are performed
+                        // on this native CPU worker. The renderer publishes
+                        // the complete immutable generation only afterwards.
+                        output->stagedGeometry = PrepareCharacterMeshes(
+                            nativeDevice.get(), mesh ? &*mesh : nullptr,
+                            previous ? previous->stagedGeometry : nullptr, work->sceneEpoch);
                         work->result = std::move(output);
                     } catch (...) {
                         // A failed optional inventory cannot affect raster or TLAS.
@@ -197,6 +251,19 @@ namespace DX12Native
                 { "playerOnly", current ? current->playerOnly : false },
                 { "firstPersonIncluded", false },
                 { "nativeShadowOwnership", false },
+                { "dx12GeometryStage", "owned-bind-pose-buffers" },
+                { "capturedMeshes", current ? current->capturedMeshes : 0u },
+                { "capturedBytes", current ? current->capturedBytes : 0ull },
+                { "nativeStagedMeshes", current && current->stagedGeometry ?
+                    current->stagedGeometry->meshes.size() : size_t{ 0 } },
+                { "nativeStagedBytes", current && current->stagedGeometry ?
+                    current->stagedGeometry->residentBytes : 0ull },
+                { "dxgiCharacterBudget", current && current->stagedGeometry ?
+                    current->stagedGeometry->budgetBytes : 0ull },
+                { "nativeUploadRejections", current && current->stagedGeometry ?
+                    current->stagedGeometry->rejectedMeshes : 0u },
+                { "nativeDxgiDeferrals", current && current->stagedGeometry ?
+                    current->stagedGeometry->dxgiDeferrals : 0u },
                 { "workerBusy", workerBusy.load(std::memory_order_acquire) },
                 { "submitted", submitted.load(std::memory_order_relaxed) },
                 { "completed", completed.load(std::memory_order_relaxed) },
@@ -222,12 +289,16 @@ namespace DX12Native
         {
             std::atomic<bool> done{ false };
             uint64_t sceneEpoch = 0;
+            std::string attemptedKey;
+            uint32_t actorFormID = 0, partOrdinal = 0;
+            uint64_t sourceToken = 0;
             std::shared_ptr<const CharacterObservationGeneration> result;
         };
 
         uint64_t sceneEpoch = 1;
         uint32_t lastObservedFrame = UINT32_MAX;
         std::shared_ptr<Work> pending;
+        std::unordered_set<std::string> attemptedMeshKeys;
         std::atomic<std::shared_ptr<const CharacterObservationGeneration>> published;
         std::atomic<bool> workerBusy{ false };
         std::atomic<uint64_t> submitted{ 0 }, completed{ 0 };

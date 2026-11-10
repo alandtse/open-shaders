@@ -46,6 +46,8 @@ struct DX12NativeScene final : Feature
         // Third-person character discovery only. It never changes DXR ownership.
         bool ObserveNativeCharacters = false;
         bool CharacterPlayerOnly = false;
+        // Capture owned bind inputs and stage them in DX12 without TLAS use.
+        bool CharacterStageGeometryDX12 = false;
         uint32_t CharacterMaxActors = 16, CharacterObservationPeriod = 8;
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
