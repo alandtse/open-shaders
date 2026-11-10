@@ -11,7 +11,7 @@ internal sealed record LayoutResult(int PlacedReferences, int Instances, long Tr
 internal static class CellLayout
 {
     public static LayoutResult Write(string output, string cell, string? editorId, string inputDigest,
-        List<object> rows, CompiledNif[] assets, JsonSerializerOptions options)
+        List<object> rows, CompiledNif[] assets, JsonSerializerOptions options, int subcellSize = 4096)
     {
         var records = JsonSerializer.SerializeToElement(rows, options).EnumerateArray().ToArray();
         var models = assets.ToDictionary(asset => asset.SourcePath, StringComparer.OrdinalIgnoreCase);
@@ -128,6 +128,11 @@ internal static class CellLayout
             previewOnlyInstances = instances.Count(instance => !instance.OpaqueOccluderCandidate), instances, omissions, lights
         };
         File.WriteAllText(Path.Combine(output, "cell-layout.json"), JsonSerializer.Serialize(layout, options));
+        // Non-disruptive spatial catalog: this does not change or repartition
+        // the existing full-CELL payload. Instances spanning several columns
+        // reference the same instance index, never duplicate geometry bytes.
+        SubcellIndex.Write(output, cell, digest, subcellSize, instances,
+            JsonSerializer.SerializeToElement(lights, options).EnumerateArray().ToArray(), options);
         return new(placedReferences, instances.Count, instances.Sum(instance => (long)instance.IndexCount / 3),
             records.Length - placedReferences, digest);
     }

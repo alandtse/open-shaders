@@ -9,18 +9,22 @@ using Mutagen.Bethesda.Plugins.Cache;
 using Mutagen.Bethesda.Skyrim;
 
 return args.Length == 5 && args[0] == "--list-cells" ? PluginCellIndex.Run(args[1..]) :
-    args.Length == 5 ? ScenePreparation.Run(args[..4], int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture)) :
+    args.Length == 6 ? ScenePreparation.Run(args[..4],
+        int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture),
+        int.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture)) :
+    args.Length == 5 ? ScenePreparation.Run(args[..4],
+        int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture)) :
     ScenePreparation.Run(args);
 
 internal static class ScenePreparation
 {
     internal static string LastFailure = "";
 
-    internal static int Run(string[] args, int quality = 2)
+    internal static int Run(string[] args, int quality = 2, int subcellSize = 4096)
     {
 if (args.Length != 4)
 {
-    Console.Error.WriteLine("Usage: DX12ResourcesPrep <Data directory> <plugin:local-cell-id> <output directory> <deployed Plugins.txt>");
+    Console.Error.WriteLine("Usage: DX12ResourcesPrep <Data directory> <plugin:local-cell-id> <output directory> <deployed Plugins.txt> [quality 0..2] [subcell size 2048..16384 step 1024]");
     return 2;
 }
 
@@ -28,6 +32,8 @@ try
 {
     LastFailure = "";
     if (quality is < 0 or > 2) throw new ArgumentOutOfRangeException(nameof(quality));
+    if (!SubcellIndex.ValidSize(subcellSize))
+        throw new ArgumentOutOfRangeException(nameof(subcellSize), "Size must be 2048..16384 in increments of 1024.");
     var data = Path.GetFullPath(args[0]);
     var output = Path.GetFullPath(args[2]);
     // The companion may write only to the dedicated temporary work subtree.
@@ -167,7 +173,8 @@ try
         pgDiffSha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(data, "ParallaxGen_Diff.json")))),
         assets = pgAssets.Select(asset => new { asset.Path, asset.Status, asset.Sha256 })
     }))).ToLowerInvariant();
-    var layout = CellLayout.Write(output, target.FormKey.ToString(), target.EditorID, inputDigest, rows, compiledAssets, options);
+    var layout = CellLayout.Write(output, target.FormKey.ToString(), target.EditorID,
+        inputDigest, rows, compiledAssets, options, subcellSize);
     File.WriteAllText(Path.Combine(output, "cell-records.json"), JsonSerializer.Serialize(new
     {
         schemaVersion = 1, tool = "DX12ResourcesPrep", recordReader = "Mutagen.Bethesda.Skyrim/0.54.4",
