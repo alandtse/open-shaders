@@ -754,9 +754,13 @@ namespace
 		bool showStatus, float* scroll, Util::ComboPreviewAction& action, float popupRight)
 	{
 		const auto& style = ImGui::GetStyle();
-		const float width = std::max(ImGui::CalcItemWidth(), popupRight - ImGui::GetCursorScreenPos().x);
+		const auto bounds = ImGui::GetPopupAllowedExtentRect(ImGui::GetCurrentWindowRead());
+		const float left = std::max(ImGui::GetCursorScreenPos().x, bounds.Min.x);
+		const float right = std::min(popupRight, bounds.Max.x);
+		float width = std::min(std::max(ImGui::CalcItemWidth(), right - left), bounds.GetWidth());
 		const float height = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() * kSceneTargetComboVisibleItems + style.WindowPadding.y * 2.0f;
-		ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, height));
+		// BeginComboPopup raises the minimum to the opener width before applying the size callback.
+		ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, height), [](ImGuiSizeCallbackData* data) { data->DesiredSize.x = *static_cast<const float*>(data->UserData); }, &width);
 		if (showStatus)
 			action.previewColor = ImGui::GetColorU32(GetScenePickerTextColor(current, marker));
 		const bool open = Util::BeginSearchableCombo(id, preview, ImGuiComboFlags_None, nullptr, kSceneTargetComboVisibleItems, scroll, &action);
