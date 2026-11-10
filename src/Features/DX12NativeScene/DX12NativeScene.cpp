@@ -20,7 +20,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterPlayerOnly, CharacterStageGeometryDX12, CharacterRunSkinningDX12, CharacterValidateSkinningDX12, CharacterMaxActors, CharacterObservationPeriod, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterPlayerOnly, CharacterStageGeometryDX12, CharacterRunSkinningDX12, CharacterValidateSkinningDX12, CharacterBuildIsolatedBLASDX12, CharacterMaxActors, CharacterObservationPeriod, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -366,10 +366,17 @@ void DX12NativeScene::DrawSettings()
     if (ImGui::Checkbox("Validate deformed DX12 vertex buffer (readback)",
         &settings.CharacterValidateSkinningDX12)) nativeCharacters.Reset();
     ImGui::EndDisabled();
+    ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
+        !settings.CharacterStageGeometryDX12 ||
+        !settings.CharacterRunSkinningDX12 ||
+        !settings.CharacterValidateSkinningDX12);
+    if (ImGui::Checkbox("Build isolated dynamic character BLAS (no TLAS)",
+        &settings.CharacterBuildIsolatedBLASDX12)) nativeCharacters.Reset();
+    ImGui::EndDisabled();
     ImGui::TextDisabled(settings.CharacterPlayerOnly ?
         "Only the third-person player root is inspected." :
         "Includes third-person player, NPCs and creatures.");
-    ImGui::TextDisabled("No DXR character ownership, deformation or raster changes yet.");
+    ImGui::TextDisabled("Isolated DX12 tests do not replace raster or native SCM ownership.");
     int maxActors = int(settings.CharacterMaxActors);
     if (ImGui::SliderInt("Maximum observed actors", &maxActors, 1, 32))
         settings.CharacterMaxActors = uint32_t(maxActors);
@@ -431,7 +438,22 @@ void DX12NativeScene::DrawSettings()
         if (!preflightStatus.empty())
             ImGui::TextWrapped("Character BLAS plan: %s", preflightStatus.c_str());
     }
-    ImGui::TextDisabled("No character BLAS or TLAS is built or published.");
+    ImGui::Text("Isolated character BLAS: %s, %s, pose frame %u",
+        characterStats.value("isolatedBLASSubmitted", false) ?
+            (characterStats.value("isolatedBLASReady", false) ? "GPU ready" : "submitted") :
+            "not submitted",
+        characterStats.value("isolatedBLASRefit", false) ? "refit" : "build",
+        characterStats.value("isolatedBLASFrame", 0u));
+    ImGui::TextDisabled("BLAS resources %.2f MiB, scratch %.2f MiB, pending %u",
+        double(characterStats.value("isolatedBLASBytes", uint64_t{ 0 })) / (1024.0 * 1024.0),
+        double(characterStats.value("isolatedBLASScratchBytes", uint64_t{ 0 })) /
+            (1024.0 * 1024.0),
+        characterStats.value("isolatedBLASPending", 0u));
+    const auto isolatedBlasFailure =
+        characterStats.value("isolatedBLASError", std::string{});
+    if (!isolatedBlasFailure.empty())
+        ImGui::TextWrapped("Isolated BLAS: %s", isolatedBlasFailure.c_str());
+    ImGui::TextDisabled("Character BLAS remains completely excluded from the production TLAS.");
     const auto characterDeformError = characterStats.value("deformError", std::string{});
     if (!characterDeformError.empty())
         ImGui::TextWrapped("Deformation status: %s", characterDeformError.c_str());
@@ -676,6 +698,9 @@ void DX12NativeScene::LoadSettings(json& a_json)
     if (settings.CharacterValidateSkinningDX12 != selected.CharacterValidateSkinningDX12)
         nativeCharacters.Reset();
     settings.CharacterValidateSkinningDX12 = selected.CharacterValidateSkinningDX12;
+    if (settings.CharacterBuildIsolatedBLASDX12 != selected.CharacterBuildIsolatedBLASDX12)
+        nativeCharacters.Reset();
+    settings.CharacterBuildIsolatedBLASDX12 = selected.CharacterBuildIsolatedBLASDX12;
     settings.CharacterMaxActors = std::clamp(selected.CharacterMaxActors, 1u, 32u);
     settings.CharacterObservationPeriod = std::clamp(selected.CharacterObservationPeriod, 1u, 120u);
     settings.GlobalDXGIHeadroomPercent = reservePercent;
@@ -1390,7 +1415,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
     // by the developer UI. Mesh acquisition runs without a settings lock.
     bool observeCharacters = false, playerOnly = false;
     bool stageCharacterGeometry = false, runCharacterSkinning = false;
-    bool validateCharacterSkinning = false;
+    bool validateCharacterSkinning = false, buildIsolatedCharacterBLAS = false;
     uint32_t actorLimit = 16, observationInterval = 8;
     {
         std::scoped_lock lock(settingsMutex);
@@ -1399,6 +1424,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
         stageCharacterGeometry = settings.CharacterStageGeometryDX12;
         runCharacterSkinning = settings.CharacterRunSkinningDX12;
         validateCharacterSkinning = settings.CharacterValidateSkinningDX12;
+        buildIsolatedCharacterBLAS = settings.CharacterBuildIsolatedBLASDX12;
         actorLimit = settings.CharacterMaxActors;
         observationInterval = settings.CharacterObservationPeriod;
     }
@@ -1407,6 +1433,8 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
             observationInterval, playerOnly,
             stageCharacterGeometry, runCharacterSkinning && stageCharacterGeometry,
             validateCharacterSkinning && runCharacterSkinning && stageCharacterGeometry,
+            buildIsolatedCharacterBLAS && validateCharacterSkinning &&
+                runCharacterSkinning && stageCharacterGeometry,
             backend->d3d12Device.get(), backend->commandQueue.get());
 	const globals::FrameBuffer* camera = nullptr;
 	if (!globals::game::isVR && globals::game::frameBufferCachedValid && globals::game::frameBufferCachedFrame == frame) {

@@ -5,6 +5,7 @@
 #include "Features/DX12NativeScene/NativeCharacterGeometryPreparation.h"
 #include "Features/DX12NativeScene/NativeCharacterDeformation.h"
 #include "Features/DX12NativeScene/NativeCharacterBLASPreflight.h"
+#include "Features/DX12NativeScene/NativeCharacterIsolatedBLAS.h"
 
 #include <BS_thread_pool.hpp>
 #include <algorithm>
@@ -54,7 +55,8 @@ namespace DX12Native
         std::shared_ptr<const CharacterDeformedResult> deformed;
         std::optional<CharacterDeformValidation> validation;
         std::optional<CharacterBLASPreflight> blasPreflight;
-        std::string deformationError;
+        std::shared_ptr<const CharacterIsolatedBLAS> isolatedBLAS;
+        std::string deformationError, blasError;
         uint32_t capturedMeshes = 0;
         uint64_t capturedBytes = 0;
         uint32_t droppedActors = 0, droppedParts = 0, invalidParts = 0;
@@ -88,7 +90,7 @@ namespace DX12Native
          */
         void Advance(uint32_t frame, uint32_t maxActors, uint32_t periodFrames, bool playerOnly,
             bool stageGeometry, bool runSkinning, bool validateSkinning,
-            ID3D12Device* device, ID3D12CommandQueue* queue)
+            bool buildIsolatedBLAS, ID3D12Device* device, ID3D12CommandQueue* queue)
         {
             // Runtime toggles can reset the observer while the engine is
             // supplying input. Serialize only this bounded CPU acquisition;
@@ -234,7 +236,8 @@ namespace DX12Native
                 pool.detach_task([work, captured, previous,
                     mesh = std::move(capturedMesh),
                     pose = std::move(capturedPose), nativeDevice,
-                    nativeQueue, runSkinning, validateSkinning] {
+                    nativeQueue, runSkinning, validateSkinning,
+                    buildIsolatedBLAS] {
                     try {
                         // All aggregation uses owned records, never engine pointers.
                         auto output = std::make_shared<CharacterObservationGeneration>(*captured);
@@ -326,11 +329,54 @@ namespace DX12Native
                                 }
                                 output->blasPreflight = previous->blasPreflight;
                                 if (!output->blasPreflight ||
+                                    !output->blasPreflight->budgetAvailable ||
                                     output->blasPreflight->poseFrame !=
                                         previous->deformed->poseFrame) {
                                     if (auto estimated = PreflightCharacterDynamicBLAS(
                                         nativeDevice.get(), previous->deformed))
                                         output->blasPreflight = std::move(estimated);
+                                }
+                            }
+                        }
+                        // Standalone BLAS test: only mesh identities still
+                        // resident in this generation may retain a completed
+                        // acceleration result. Never publish it to a TLAS.
+                        if (buildIsolatedBLAS && runSkinning && nativeQueue && previous) {
+                            if (previous->isolatedBLAS && output->stagedGeometry &&
+                                std::ranges::any_of(output->stagedGeometry->meshes,
+                                    [&](const auto& gpuMesh) {
+                                        return gpuMesh->skinned &&
+                                            gpuMesh->actorFormID ==
+                                                previous->isolatedBLAS->actorFormID &&
+                                            gpuMesh->partOrdinal ==
+                                                previous->isolatedBLAS->partOrdinal &&
+                                            gpuMesh->sourceToken ==
+                                                previous->isolatedBLAS->sourceToken;
+                                    }))
+                                output->isolatedBLAS = previous->isolatedBLAS;
+                            const bool validPose =
+                                output->deformed && output->deformed->Ready() &&
+                                output->validation && output->validation->sane &&
+                                output->validation->poseFrame ==
+                                    output->deformed->poseFrame &&
+                                output->blasPreflight &&
+                                output->blasPreflight->poseFrame ==
+                                    output->deformed->poseFrame &&
+                                output->blasPreflight->budgetAvailable;
+                            if (validPose && (!output->isolatedBLAS ||
+                                (output->isolatedBLAS->Ready() &&
+                                    output->isolatedBLAS->poseFrame !=
+                                        output->deformed->poseFrame))) {
+                                try {
+                                    if (auto candidate = BuildCharacterIsolatedBLAS(
+                                        nativeDevice.get(), nativeQueue.get(),
+                                        output->deformed, *output->blasPreflight,
+                                        output->isolatedBLAS))
+                                        output->isolatedBLAS = std::move(candidate);
+                                } catch (const std::exception& e) {
+                                    output->blasError = e.what();
+                                } catch (...) {
+                                    output->blasError = "Native isolated BLAS build failed";
                                 }
                             }
                         }
@@ -441,6 +487,19 @@ namespace DX12Native
                     current->blasPreflight->availableBytes : 0ull },
                 { "blasPreflightStatus", current && current->blasPreflight ?
                     current->blasPreflight->status : std::string("No completed character pose") },
+                { "isolatedBLASSubmitted", current && bool(current->isolatedBLAS) },
+                { "isolatedBLASReady", current && current->isolatedBLAS &&
+                    current->isolatedBLAS->Ready() },
+                { "isolatedBLASFrame", current && current->isolatedBLAS ?
+                    current->isolatedBLAS->poseFrame : 0u },
+                { "isolatedBLASRefit", current && current->isolatedBLAS &&
+                    current->isolatedBLAS->refit },
+                { "isolatedBLASBytes", current && current->isolatedBLAS ?
+                    current->isolatedBLAS->allocationBytes : 0ull },
+                { "isolatedBLASScratchBytes", current && current->isolatedBLAS ?
+                    current->isolatedBLAS->scratchBytes : 0ull },
+                { "isolatedBLASPending", CharacterBLASRetirement::Pending() },
+                { "isolatedBLASError", current ? current->blasError : std::string{} },
                 { "deformError", current ? current->deformationError : std::string{} },
                 { "dxgiCharacterBudget", current && current->stagedGeometry ?
                     current->stagedGeometry->budgetBytes : 0ull },
