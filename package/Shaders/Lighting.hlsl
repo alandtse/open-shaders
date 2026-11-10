@@ -1122,14 +1122,14 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #	if defined(WETNESS_EFFECTS) && !defined(HAIR) && !defined(EYE) && !defined(LANDSCAPE)
 #		define CHARACTER_RAIN_SURFACE
 #	endif
-#if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) && \
-		!defined(SKINNED) && !defined(SKIN) && !defined(HAIR) && \
+#	if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) &&      \
+		!defined(SKINNED) && !defined(SKIN) && !defined(HAIR) &&            \
 		!defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
-		!defined(TREE_ANIM) && !defined(FUR_SHELLS) && \
-		!defined(LANDSCAPE) && !defined(LODLANDSCAPE) && \
+		!defined(TREE_ANIM) && !defined(FUR_SHELLS) &&                      \
+		!defined(LANDSCAPE) && !defined(LODLANDSCAPE) &&                    \
 		!defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
-#define ENVIRONMENT_RAIN_DROPS
-#endif
+#		define ENVIRONMENT_RAIN_DROPS
+#	endif
 #	if defined(WETNESS_EFFECTS)
 #		include "WetnessEffects/WetnessEffects.hlsli"
 #		if defined(CHARACTER_RAIN_SURFACE)
@@ -2858,7 +2858,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float wetness = 0.0;
 	float3 wetnessNormal = vertexNormal.xyz;
 
-#if defined(ENVIRONMENT_RAIN_DROPS)
+#		if defined(ENVIRONMENT_RAIN_DROPS)
 	float environmentRainCoverage = 0.0f;
 	float3 environmentRainNormal = float3(0.0f, 0.0f, 1.0f);
 	float environmentRainBrightness = 1.0f;
@@ -2982,7 +2982,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 	// Experimental environmental droplets using the character rain geometry.
 	// Character surfaces retain their existing, independent rendering path.
-#if defined(ENVIRONMENT_RAIN_DROPS)
+#		if defined(ENVIRONMENT_RAIN_DROPS)
 	bool evaluateEnvironmentDrops =
 		!characterRainSurface &&
 		SharedData::wetnessEffectsSettings.EnableRaindropFx &&
@@ -3345,7 +3345,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	if defined(CHARACTER_RAIN_SURFACE)
 	float3 characterRainSpecular = 0.0f;
 #	endif
-#if defined(ENVIRONMENT_RAIN_DROPS)
+#	if defined(ENVIRONMENT_RAIN_DROPS)
 	float3 environmentRainSpecular = 0.0f;
 #	endif
 
@@ -3384,7 +3384,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		characterRainSpecular += CharacterRainSpots::EvaluateLighting(characterSpotSurfaceNormal, dirLightContext,
 			characterSpotRoughness, characterCoatMask, characterCoatIntensity);
 #		endif
-#if defined(ENVIRONMENT_RAIN_DROPS)
+#		if defined(ENVIRONMENT_RAIN_DROPS)
 	[branch] if (environmentRainCoverage > 0.0f)
 		environmentRainSpecular += CharacterRainSpots::EvaluateLighting(
 			environmentRainNormal,
@@ -3500,7 +3500,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 			characterRainSpecular += CharacterRainSpots::EvaluateLighting(characterSpotSurfaceNormal, pointLightContext,
 				characterSpotRoughness, characterCoatMask, characterCoatIntensity);
 #				endif
-#if defined(ENVIRONMENT_RAIN_DROPS)
+#				if defined(ENVIRONMENT_RAIN_DROPS)
 		[branch] if (environmentRainCoverage > 0.0f)
 			environmentRainSpecular += CharacterRainSpots::EvaluateLighting(
 				environmentRainNormal,
@@ -3937,7 +3937,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 			characterSpotRoughness, characterCoatMask, characterCoatIntensity);
 	float3 characterRainAmbientColor = directionalAmbientColor;
 #		endif
-#if defined(ENVIRONMENT_RAIN_DROPS)
+#		if defined(ENVIRONMENT_RAIN_DROPS)
 	float3 environmentRainReflectance = 0.0f;
 
 	[branch] if (environmentRainCoverage > 0.0f)
@@ -4078,7 +4078,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	radianceSpecularColor += characterRainSpecular + radianceRainDifference;
 #		endif
 #	endif
-#if defined(ENVIRONMENT_RAIN_DROPS)
+#	if defined(ENVIRONMENT_RAIN_DROPS)
 
 	// Environmental water reflections.
 	specularColor += environmentRainSpecular;
@@ -4186,7 +4186,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #			endif
 	}
 #		endif
-#if defined(ENVIRONMENT_RAIN_DROPS)
+#		if defined(ENVIRONMENT_RAIN_DROPS)
 	[branch] if (any(environmentRainReflectance > 0.0f))
 	{
 #			if defined(DYNAMIC_CUBEMAPS)
@@ -4432,7 +4432,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		indirectLobeWeights.specular += characterSpotReflectance;
 	}
 #			endif
-#if defined(ENVIRONMENT_RAIN_DROPS)
+#			if defined(ENVIRONMENT_RAIN_DROPS)
 
 	[branch] if (environmentRainCoverage > 0.0f)
 	{
