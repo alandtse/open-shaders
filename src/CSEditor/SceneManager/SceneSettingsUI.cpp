@@ -35,6 +35,7 @@
 #include "Utils/SettingsCatalog.h"
 #include "Utils/UI.h"
 
+#include <imgui_internal.h>
 #include <imgui_stdlib.h>
 
 #define I18N_KEY_PREFIX "cs_editor."
@@ -46,7 +47,6 @@ namespace
 	constexpr float kManageModalWidthEm = 38.0f;
 	constexpr float kCopyModalWidthEm = 48.0f;
 	constexpr float kTargetManageWidthEm = 24.0f;
-	constexpr float kSceneTargetPopupWidthEm = 32.0f;
 	constexpr ImVec4 kCurrentSceneColor(0.77f, 0.60f, 0.95f, 1.0f);
 	std::string featurePageName;
 	std::optional<SceneSettingsManager::SceneContextId> featurePageContext;
@@ -294,8 +294,8 @@ namespace
 		return open;
 	}
 
-	bool DrawWeatherPicker(RE::FormID& selectedWeather, std::string_view feature = {}, float* scroll = nullptr);
-	bool DrawLocationPicker(std::optional<SceneSettingsManager::LocationTarget>& selectedLocation, std::string_view feature = {}, float* scroll = nullptr);
+	bool DrawWeatherPicker(RE::FormID& selectedWeather, float popupRight, std::string_view feature = {}, float* scroll = nullptr);
+	bool DrawLocationPicker(std::optional<SceneSettingsManager::LocationTarget>& selectedLocation, float popupRight, std::string_view feature = {}, float* scroll = nullptr);
 
 	float ComboWidth(float textWidth)
 	{
@@ -318,7 +318,7 @@ namespace
 		return ComboWidth(width);
 	}
 
-	void DrawFeatureTargetPicker(const std::string& name, SceneSettingsManager::SceneContextId context, float pickerWidth)
+	void DrawFeatureTargetPicker(const std::string& name, SceneSettingsManager::SceneContextId context, float pickerWidth, float popupRight)
 	{
 		using Type = SceneSettingsManager::SceneContextType;
 		const bool periodicTarget = context.type == Type::Weather || context.type == Type::Location;
@@ -329,7 +329,7 @@ namespace
 			ImGui::SetNextItemWidth(inlinePeriod ? available - periodWidth - ImGui::GetStyle().ItemSpacing.x : available);
 			if (context.type == Type::Weather) {
 				auto weather = context.weatherId;
-				if (DrawWeatherPicker(weather, name)) {
+				if (DrawWeatherPicker(weather, popupRight, name)) {
 					context.weatherId = weather;
 					context.period = SceneSettingsManager::GetSingleton()->IsSceneTimeOfDayEnabled(context) ? SceneSettingsManager::GetCurrentPeriod() : TimeOfDayPeriod::Count;
 					RequestFeatureContext(name, context);
@@ -342,7 +342,7 @@ namespace
 				std::optional<SceneSettingsManager::LocationTarget> target;
 				if (found != targets.end())
 					target = *found;
-				if (DrawLocationPicker(target, name) && target) {
+				if (DrawLocationPicker(target, popupRight, name) && target) {
 					context.locationType = target->type;
 					context.locationFormKey = target->formKey;
 					context.period = SceneSettingsManager::GetSingleton()->IsSceneTimeOfDayEnabled(context) ? SceneSettingsManager::GetCurrentPeriod() : TimeOfDayPeriod::Count;
@@ -751,11 +751,10 @@ namespace
 	}
 
 	bool BeginSceneTargetCombo(const char* id, const char* preview, bool current, SceneSettingMarker marker,
-		bool showStatus, float* scroll, Util::ComboPreviewAction& action)
+		bool showStatus, float* scroll, Util::ComboPreviewAction& action, float popupRight)
 	{
 		const auto& style = ImGui::GetStyle();
-		const float width = std::min(ImGui::GetMainViewport()->WorkSize.x - style.WindowPadding.x * 2.0f,
-			std::max(ImGui::CalcItemWidth(), ThemeManager::Constants::Em(kSceneTargetPopupWidthEm)));
+		const float width = std::max(ImGui::CalcItemWidth(), popupRight - ImGui::GetCursorScreenPos().x);
 		const float height = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() * kSceneTargetComboVisibleItems + style.WindowPadding.y * 2.0f;
 		ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, height));
 		if (showStatus)
@@ -834,7 +833,6 @@ namespace
 			ImGui::SetCursorScreenPos(ImVec2(buttonX, start.y));
 			if (ImGui::SmallButton(manageLabel)) {
 				RequestTargetManagement(context, presentation.label);
-				ImGui::CloseCurrentPopup();
 				return false;
 			}
 		}
@@ -887,7 +885,7 @@ namespace
 		return targets;
 	}
 
-	bool DrawWeatherPicker(RE::FormID& selectedWeather, std::string_view feature, float* scroll)
+	bool DrawWeatherPicker(RE::FormID& selectedWeather, float popupRight, std::string_view feature, float* scroll)
 	{
 		using Context = SceneSettingsManager::SceneContextId;
 		using Type = SceneSettingsManager::SceneContextType;
@@ -924,8 +922,8 @@ namespace
 		const auto marker = selected == targets.end() || feature.empty() ? SceneSettingMarker::None :
 		                    filter                                       ? GetFeatureSceneMarker(feature, previewContext, false) :
 		                                                                   GetScenePickerPresentation(previewContext, GetWeatherTargetLabel(*selected)).marker;
-		if (!BeginSceneTargetCombo(feature.empty() ? T("feature.scene_manager.weather.target", "Weather") : "##FeatureSceneWeather",
-				preview.c_str(), selected != targets.end() && isCurrent(*selected), marker, !feature.empty(), scroll ? scroll : &weatherPickerScroll, action))
+		if (!BeginSceneTargetCombo("##SceneWeather", preview.c_str(), selected != targets.end() && isCurrent(*selected),
+				marker, !feature.empty(), scroll ? scroll : &weatherPickerScroll, action, popupRight))
 			return false;
 		std::vector<RE::TESWeather*> current;
 		std::vector<RE::TESWeather*> configured;
@@ -974,6 +972,8 @@ namespace
 		drawGroup(T("feature.scene_manager.weather.group.current", "Current"), current);
 		drawGroup(T("feature.scene_manager.weather.group.configured", "Configured"), configured);
 		drawGroup(T("feature.scene_manager.weather.group.available", "Available"), available);
+		if (feature.empty())
+			DrawTargetManagement();
 		Util::EndSearchableCombo();
 		return changed;
 	}
@@ -985,7 +985,7 @@ namespace
 			std::make_format_args(target.name.empty() ? target.formKey : target.name, typeName));
 	}
 
-	bool DrawLocationPicker(std::optional<SceneSettingsManager::LocationTarget>& selectedLocation, std::string_view feature, float* scroll)
+	bool DrawLocationPicker(std::optional<SceneSettingsManager::LocationTarget>& selectedLocation, float popupRight, std::string_view feature, float* scroll)
 	{
 		using Target = SceneSettingsManager::LocationTarget;
 		using Type = SceneSettingsManager::LocationTargetType;
@@ -1031,8 +1031,8 @@ namespace
 		const auto marker = !selectedLocation || feature.empty() ? SceneSettingMarker::None :
 		                    filter                               ? GetFeatureSceneMarker(feature, previewContext, false) :
 		                                                           getPresentation(*selectedLocation).marker;
-		if (!BeginSceneTargetCombo(feature.empty() ? T("feature.scene_manager.location.target", "Target") : "##FeatureSceneLocation",
-				preview.c_str(), selectedLocation && isCurrent(*selectedLocation), marker, !feature.empty(), scroll ? scroll : &locationPickerScroll, action))
+		if (!BeginSceneTargetCombo("##SceneLocation", preview.c_str(), selectedLocation && isCurrent(*selectedLocation),
+				marker, !feature.empty(), scroll ? scroll : &locationPickerScroll, action, popupRight))
 			return false;
 		std::vector<const Target*> currentTargets;
 		std::vector<const Target*> configured;
@@ -1092,6 +1092,8 @@ namespace
 		drawGroup(T("feature.scene_manager.location.group.configured", "Configured"), configured);
 		drawGroup(T("feature.scene_manager.location.group.types", "Location Types"), locationTypes, true);
 		drawGroup(T("feature.scene_manager.location.group.available", "Available"), available);
+		if (feature.empty())
+			DrawTargetManagement();
 		Util::EndSearchableCombo();
 		return changed;
 	}
@@ -1115,6 +1117,8 @@ void SceneSettingsUI::DrawStandalonePage()
 		Util::AddTooltip(T("cs_editor.export_preset", "Export Preset..."), Util::kTooltipWhenDisabled);
 	}
 	DrawManageSettings();
+	Util::Text::WrappedDisabled("%s", T("feature.scene_manager.feature_page_hint",
+										  "You can edit Scene Manager settings directly on feature pages by clicking the layers icon on the right."));
 	using ContextType = SceneSettingsManager::SceneContextType;
 	const char* labels[] = { T("feature.scene_manager.tab.interior", "Interior"),
 		T("feature.scene_manager.tab.time_of_day", "Time of Day"), T("feature.scene_manager.tab.locations", "Locations"),
@@ -1134,16 +1138,11 @@ void SceneSettingsUI::DrawStandalonePage()
 	auto* manager = SceneSettingsManager::GetSingleton();
 	switch (standalonePage) {
 	case 0:
-		ImGui::TextUnformatted(T("feature.scene_manager.interior.title", "Interior Settings"));
-		ImGui::Separator();
 		SceneEntryTable::Draw({ .type = ContextType::Interior });
 		break;
 	case 1:
 		{
-			ImGui::TextUnformatted(T("feature.scene_manager.time_of_day.title", "Time of Day Settings"));
-			const auto* exteriorLabel = T("feature.scene_manager.time_of_day.exterior_only", "(Exterior Only)");
-			BrowserUI::SameLineIfFits(ImGui::CalcTextSize(exteriorLabel).x);
-			ImGui::TextDisabled("%s", exteriorLabel);
+			ImGui::TextDisabled("%s", T("feature.scene_manager.time_of_day.exterior_only", "(Exterior Only)"));
 			auto currentPeriod = SceneSettingsManager::GetCurrentPeriod();
 			const auto* currentPeriodName = SceneSettingsContextRules::GetCopyPeriodName(currentPeriod);
 			const float currentGameHour = SceneSettingsManager::GetCurrentGameHour();
@@ -1172,26 +1171,21 @@ void SceneSettingsUI::DrawStandalonePage()
 			}
 			{
 				const Util::DisableGuard lockTarget(SceneEntryTable::HasActiveDialog());
+				const float popupRight = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
 				ImGui::SetNextItemWidth(-FLT_MIN);
 				if (standalonePage == 2)
-					DrawLocationPicker(standaloneLocation);
+					DrawLocationPicker(standaloneLocation, popupRight);
 				else
-					DrawWeatherPicker(standaloneWeather);
+					DrawWeatherPicker(standaloneWeather, popupRight);
 			}
 			if (auto context = GetStandaloneContext()) {
-				if (standaloneLocation && context->type == ContextType::Location && !standaloneLocation->cocCode.empty())
-					ImGui::TextDisabled("%s: %s", T("feature.scene_manager.location.coc_code", "COC code"), standaloneLocation->cocCode.c_str());
 				if (manager->IsSceneTimeOfDayEnabled(*context))
 					context->period = SceneSettingsManager::GetCurrentPeriod();
 				SceneEntryTable::Draw(*context);
 			} else if (standalonePage == 2) {
 				Util::Text::WrappedDisabled("%s", T("feature.scene_manager.location.no_target", "No location target is selected."));
-				ImGui::TextWrapped("%s", T("feature.scene_manager.location.no_target_hint",
-											 "Choose any loaded worldspace, region, location type, location, or named cell to add or manage its settings."));
 			} else {
 				Util::Text::WrappedDisabled("%s", T("feature.scene_manager.weather.no_target", "No weather is selected."));
-				ImGui::TextWrapped("%s", T("feature.scene_manager.weather.no_target_hint",
-											 "Choose any loaded weather to add or manage its settings."));
 			}
 			break;
 		}
@@ -1354,7 +1348,9 @@ bool SceneSettingsUI::DrawFeaturePageControls(Feature* feature, bool enabled)
 	constexpr int actionColumns = 6;
 	const int inlineColumns = pickerColumns + actionColumns + (hasTargetPicker ? 0 : 1);
 	const float targetWidth = periodWidth + (hasTargetPicker ? ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x : 0.0f);
-	const bool singleRow = ImGui::GetContentRegionAvail().x >= typeWidth + targetWidth + actionWidth * actionColumns + cellPadding * inlineColumns;
+	const float availableWidth = ImGui::GetContentRegionAvail().x;
+	const float toolbarRight = ImGui::GetCursorScreenPos().x + availableWidth;
+	const bool singleRow = availableWidth >= typeWidth + targetWidth + actionWidth * actionColumns + cellPadding * inlineColumns;
 	if (ImGui::BeginTable("##FeatureSceneEditorBar", singleRow ? inlineColumns : pickerColumns, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings)) {
 		ImGui::TableSetupColumn("##type", ImGuiTableColumnFlags_WidthFixed, typeWidth);
 		if (hasPeriodPicker) {
@@ -1390,7 +1386,8 @@ bool SceneSettingsUI::DrawFeaturePageControls(Feature* feature, bool enabled)
 		}
 		if (hasPeriodPicker) {
 			ImGui::TableSetColumnIndex(1);
-			DrawFeatureTargetPicker(name, *featurePageContext, periodWidth);
+			const float popupRight = singleRow ? ImGui::GetCurrentTable()->Columns[inlineColumns - 1].WorkMinX + actionWidth : toolbarRight;
+			DrawFeatureTargetPicker(name, *featurePageContext, periodWidth, popupRight);
 		}
 		if (!singleRow) {
 			ImGui::EndTable();
@@ -1525,10 +1522,10 @@ void SceneSettingsUI::DrawFeaturePageBody(Feature* feature)
 
 bool SceneSettingsUI::DrawWeatherTargetPicker(RE::FormID& selected, float& scroll)
 {
-	return DrawWeatherPicker(selected, {}, &scroll);
+	return DrawWeatherPicker(selected, ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x, {}, &scroll);
 }
 
 bool SceneSettingsUI::DrawLocationTargetPicker(std::optional<SceneSettingsManager::LocationTarget>& selected, float& scroll)
 {
-	return DrawLocationPicker(selected, {}, &scroll);
+	return DrawLocationPicker(selected, ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x, {}, &scroll);
 }

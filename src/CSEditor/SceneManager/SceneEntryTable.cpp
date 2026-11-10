@@ -2086,14 +2086,9 @@ namespace
 		switch (context.type) {
 		case Type::Interior:
 			Util::Text::Disabled("%s", T("feature.scene_manager.interior.empty", "No interior settings configured."));
-			Util::Text::Disabled("%s", T("feature.scene_manager.empty_add_hint", "Use the Add Setting button above to add overrides."));
-			ImGui::Spacing();
-			ImGui::TextWrapped("%s", T("feature.scene_manager.interior.description",
-										 "Settings added here override feature values in interior cells and revert automatically outside."));
 			break;
 		case Type::TimeOfDay:
 			Util::Text::Disabled("%s", T("feature.scene_manager.time_of_day.empty", "No time-of-day settings configured."));
-			Util::Text::Disabled("%s", T("feature.scene_manager.time_of_day.empty_hint", "Use the Add buttons above to add overrides for each period."));
 			break;
 		case Type::Location:
 			Util::Text::Disabled("%s", T("feature.scene_manager.location.empty", "No settings are configured for this target."));
