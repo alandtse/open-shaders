@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <vector>
@@ -27,6 +28,8 @@ namespace DX12Native
         uint32_t captureFrame = 0;
         uint64_t indexOffset = 0;
         std::array<float, 12> rigidWorldTransform{};
+        std::array<float, 3> rigidLocalMin{}, rigidLocalMax{};
+        bool rigidLocalBoundsValid = false;
         bool skinned = false;
         bool normalAvailable = false, uvAvailable = false, tangentAvailable = false;
         winrt::com_ptr<ID3D12Resource> source;
@@ -207,6 +210,24 @@ namespace DX12Native
             mesh->captureFrame = next->captureFrame;
             if (next->rigid) {
                 mesh->rigidWorldTransform = next->rigid->transform;
+                // The encoded stream is local-space float3 positions followed
+                // by uint32 triangle indices. Capture exact bounds before the
+                // resource crosses the GPU worker boundary.
+                if (vertexCount && bytes.size() >= uint64_t(vertexCount) * 12ull) {
+                    mesh->rigidLocalMin.fill(std::numeric_limits<float>::infinity());
+                    mesh->rigidLocalMax.fill(-std::numeric_limits<float>::infinity());
+                    for (uint32_t vertex = 0; vertex < vertexCount; ++vertex) {
+                        float xyz[3]{};
+                        std::memcpy(xyz, bytes.data() + size_t(vertex) * 12u, sizeof(xyz));
+                        for (size_t axis = 0; axis < 3; ++axis) {
+                            mesh->rigidLocalMin[axis] =
+                                std::min(mesh->rigidLocalMin[axis], xyz[axis]);
+                            mesh->rigidLocalMax[axis] =
+                                std::max(mesh->rigidLocalMax[axis], xyz[axis]);
+                        }
+                    }
+                    mesh->rigidLocalBoundsValid = true;
+                }
                 mesh->normalAvailable = next->rigid->hasNormal;
                 mesh->uvAvailable = next->rigid->hasUv;
                 mesh->tangentAvailable = next->rigid->hasTangent;

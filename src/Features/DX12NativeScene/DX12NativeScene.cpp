@@ -20,7 +20,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterPlayerOnly, CharacterStageGeometryDX12, CharacterRunSkinningDX12, CharacterValidateSkinningDX12, CharacterBuildIsolatedBLASDX12, CharacterBuildIsolatedTLASDX12, CharacterRunIsolatedRayQueryDX12, CharacterAccumulatePartBLAS, CharacterMultiPartCasterVisibility, CharacterShadowCasterVisibility, CharacterCasterMaxPoseAgeFrames, CharacterMaxActors, CharacterObservationPeriod, CharacterBLASIntervalFrames, CharacterMeshCaptureBatch, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterPlayerOnly, CharacterStageGeometryDX12, CharacterRunSkinningDX12, CharacterValidateSkinningDX12, CharacterBuildIsolatedBLASDX12, CharacterBuildIsolatedTLASDX12, CharacterRunIsolatedRayQueryDX12, CharacterAccumulatePartBLAS, CharacterIncludeRigidAttachments, CharacterMultiPartCasterVisibility, CharacterShadowCasterVisibility, CharacterCasterMaxPoseAgeFrames, CharacterMaxActors, CharacterObservationPeriod, CharacterBLASIntervalFrames, CharacterMeshCaptureBatch, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -401,6 +401,13 @@ void DX12NativeScene::DrawSettings()
     if (ImGui::Checkbox("Accumulate character-part BLAS (isolated testing)",
         &settings.CharacterAccumulatePartBLAS)) nativeCharacters.Reset();
     ImGui::EndDisabled();
+    ImGui::BeginDisabled(!settings.CharacterAccumulatePartBLAS ||
+        !settings.CharacterStageGeometryDX12 ||
+        !settings.CharacterBuildIsolatedBLASDX12);
+    if (ImGui::Checkbox("Include opaque rigid attachments (experimental)",
+        &settings.CharacterIncludeRigidAttachments)) nativeCharacters.Reset();
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Rigid geometry uses its DX12 bind BLAS plus the observed world transform.");
     ImGui::TextDisabled("Multi-part testing rotates poses and validates individual GPU ray hits.");
     ImGui::BeginDisabled(!settings.CharacterAccumulatePartBLAS ||
         !settings.CharacterRunIsolatedRayQueryDX12 ||
@@ -505,8 +512,9 @@ void DX12NativeScene::DrawSettings()
             "not submitted",
         characterStats.value("isolatedBLASRefit", false) ? "refit" : "build",
         characterStats.value("isolatedBLASFrame", 0u));
-    ImGui::Text("Accumulated character-part BLAS: %zu",
-        characterStats.value("accumulatedBLASParts", size_t{ 0 }));
+    ImGui::Text("Accumulated character-part BLAS: %zu, rigid BLAS: %zu",
+        characterStats.value("accumulatedBLASParts", size_t{ 0 }),
+        characterStats.value("rigidBLASParts", size_t{ 0 }));
     ImGui::TextDisabled("BLAS resources %.2f MiB, scratch %.2f MiB, pending %u",
         double(characterStats.value("isolatedBLASBytes", uint64_t{ 0 })) / (1024.0 * 1024.0),
         double(characterStats.value("isolatedBLASScratchBytes", uint64_t{ 0 })) /
@@ -821,6 +829,9 @@ void DX12NativeScene::LoadSettings(json& a_json)
     if (settings.CharacterAccumulatePartBLAS != selected.CharacterAccumulatePartBLAS)
         nativeCharacters.Reset();
     settings.CharacterAccumulatePartBLAS = selected.CharacterAccumulatePartBLAS;
+    if (settings.CharacterIncludeRigidAttachments != selected.CharacterIncludeRigidAttachments)
+        nativeCharacters.Reset();
+    settings.CharacterIncludeRigidAttachments = selected.CharacterIncludeRigidAttachments;
     settings.CharacterMultiPartCasterVisibility = selected.CharacterMultiPartCasterVisibility;
     settings.CharacterShadowCasterVisibility = selected.CharacterShadowCasterVisibility;
     settings.CharacterCasterMaxPoseAgeFrames =
@@ -1584,7 +1595,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
     bool stageCharacterGeometry = false, runCharacterSkinning = false;
     bool validateCharacterSkinning = false, buildIsolatedCharacterBLAS = false;
     bool buildIsolatedCharacterTLAS = false, traceIsolatedCharacterRay = false;
-    bool accumulatePartBLAS = false;
+    bool accumulatePartBLAS = false, includeRigidAttachments = false;
     uint32_t actorLimit = 16, observationInterval = 8, blasUpdateInterval = 8;
     uint32_t meshBatchLimit = 2;
     {
@@ -1598,6 +1609,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
         buildIsolatedCharacterTLAS = settings.CharacterBuildIsolatedTLASDX12;
         traceIsolatedCharacterRay = settings.CharacterRunIsolatedRayQueryDX12;
         accumulatePartBLAS = settings.CharacterAccumulatePartBLAS;
+        includeRigidAttachments = settings.CharacterIncludeRigidAttachments;
         actorLimit = settings.CharacterMaxActors;
         observationInterval = settings.CharacterObservationPeriod;
         blasUpdateInterval = settings.CharacterBLASIntervalFrames;
@@ -1617,7 +1629,8 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
                 buildIsolatedCharacterBLAS && validateCharacterSkinning &&
                 runCharacterSkinning && stageCharacterGeometry,
             blasUpdateInterval, meshBatchLimit, accumulatePartBLAS,
-            backend->d3d12Device.get(), backend->commandQueue.get());
+            includeRigidAttachments, backend->d3d12Device.get(),
+            backend->commandQueue.get());
 	const globals::FrameBuffer* camera = nullptr;
 	if (!globals::game::isVR && globals::game::frameBufferCachedValid && globals::game::frameBufferCachedFrame == frame) {
 		const auto& cached = globals::game::frameBufferCached.nonVR;

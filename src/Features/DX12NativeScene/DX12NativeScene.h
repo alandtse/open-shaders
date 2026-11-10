@@ -54,6 +54,7 @@ struct DX12NativeScene final : Feature
         bool CharacterBuildIsolatedTLASDX12 = false; // Single instance; diagnostic only.
         bool CharacterRunIsolatedRayQueryDX12 = false; // One diagnostic ray, no shadows.
         bool CharacterAccumulatePartBLAS = false; // Bounded independent multi-part construction.
+        bool CharacterIncludeRigidAttachments = false; // Reuse static BLAS with observed world transforms.
         bool CharacterMultiPartCasterVisibility = false; // Extra opt-in after per-part ray proof.
         bool CharacterShadowCasterVisibility = false; // Opt-in; secondary light rays only.
         uint32_t CharacterCasterMaxPoseAgeFrames = 12; // Bound TLAS reuse across BLAS updates.

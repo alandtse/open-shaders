@@ -63,6 +63,7 @@ namespace DX12Native
         // Completed/updateable BLAS generations keyed by observed mesh identity.
         // Multi-part mode remains an isolated diagnostic, not world ownership.
         std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> blasParts;
+        std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> rigidParts;
         std::shared_ptr<const CharacterIsolatedTLAS> isolatedTLAS;
         std::shared_ptr<const CharacterRayResult> rayProbe;
         std::optional<CharacterRayOutcome> rayOutcome;
@@ -221,6 +222,7 @@ namespace DX12Native
             bool buildIsolatedBLAS, bool buildIsolatedTLAS,
             bool runIsolatedRayProbe, uint32_t blasIntervalFrames,
             uint32_t meshBatchLimit, bool accumulatePartBLAS,
+            bool includeRigidAttachments,
             ID3D12Device* device, ID3D12CommandQueue* queue)
         {
             // Runtime toggles can reset the observer while the engine is
@@ -386,7 +388,8 @@ namespace DX12Native
                     pose = std::move(capturedPose), nativeDevice,
                     nativeQueue, runSkinning, validateSkinning,
                     buildIsolatedBLAS, buildIsolatedTLAS,
-                    runIsolatedRayProbe, blasIntervalFrames, accumulatePartBLAS] {
+                    runIsolatedRayProbe, blasIntervalFrames, accumulatePartBLAS,
+                    includeRigidAttachments] {
                     try {
                         // All aggregation uses owned records, never engine pointers.
                         auto output = std::make_shared<CharacterObservationGeneration>(*captured);
@@ -576,6 +579,57 @@ namespace DX12Native
                                 }
                             }
                         }
+                        if (accumulatePartBLAS && includeRigidAttachments &&
+                            buildIsolatedBLAS && nativeDevice && nativeQueue &&
+                            output->stagedGeometry) {
+                            if (previous) output->rigidParts = previous->rigidParts;
+                            std::erase_if(output->rigidParts, [&](const auto& candidate) {
+                                return !candidate || !candidate->rigidSource ||
+                                    !std::ranges::any_of(
+                                        output->stagedGeometry->meshes,
+                                        [&](const auto& staged) {
+                                            return !staged->skinned &&
+                                                staged->actorFormID == candidate->actorFormID &&
+                                                staged->partOrdinal == candidate->partOrdinal &&
+                                                staged->sourceToken == candidate->sourceToken;
+                                        });
+                            });
+                            // One additional rigid BLAS at most per worker
+                            // generation. Once staged, a rigid mesh reuses its
+                            // BLAS; only its TLAS transform changes.
+                            for (const auto& staged : output->stagedGeometry->meshes) {
+                                if (!staged || staged->skinned ||
+                                    !staged->rigidLocalBoundsValid)
+                                    continue;
+                                const auto observed = std::ranges::find_if(
+                                    output->parts, [&](const auto& part) {
+                                        return !part.skinned && !part.alpha &&
+                                            !part.dynamic && !part.gpuOnly &&
+                                            part.actorFormID == staged->actorFormID &&
+                                            part.ordinal == staged->partOrdinal &&
+                                            part.sourceToken == staged->sourceToken;
+                                    });
+                                if (observed == output->parts.end() ||
+                                    !CharacterRigidBoundsMatch(*staged, *observed))
+                                    continue;
+                                if (std::ranges::any_of(output->rigidParts,
+                                    [&](const auto& candidate) {
+                                        return candidate->actorFormID == staged->actorFormID &&
+                                            candidate->partOrdinal == staged->partOrdinal &&
+                                            candidate->sourceToken == staged->sourceToken;
+                                    })) continue;
+                                try {
+                                    if (auto candidate = BuildCharacterRigidBLAS(
+                                        nativeDevice.get(), nativeQueue.get(), staged))
+                                        output->rigidParts.push_back(std::move(candidate));
+                                } catch (const std::exception& e) {
+                                    output->blasError = e.what();
+                                } catch (...) {
+                                    output->blasError = "Rigid character BLAS build failed";
+                                }
+                                break;
+                            }
+                        }
                         // The optional one-instance TLAS is intentionally
                         // separate from the world scene and every native
                         // lighting/shadow consumer. It references ONLY a
@@ -588,6 +642,10 @@ namespace DX12Native
                                 // Each skinned part needs its own finite pose,
                                 // current identity and plausible world bounds.
                                 std::vector<std::shared_ptr<const CharacterIsolatedBLAS>> parts;
+                                std::vector<std::array<float, 12>> transforms;
+                                const std::array<float, 12> identity{
+                                    1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f,
+                                    0.f, 0.f, 1.f, 0.f };
                                 uint32_t actorIdentity = 0;
                                 for (const auto& part : output->blasParts) {
                                     if (!part || !part->Ready() || !part->validation ||
@@ -622,19 +680,40 @@ namespace DX12Native
                                     if (!plausible) continue;
                                     actorIdentity = part->actorFormID;
                                     parts.push_back(part);
+                                    transforms.push_back(identity);
                                     if (parts.size() >= 8) break;
+                                }
+                                if (includeRigidAttachments && parts.size() < 8u) {
+                                    for (const auto& rigid : output->rigidParts) {
+                                        if (!rigid || !rigid->Ready() || !rigid->rigidSource)
+                                            continue;
+                                        const auto observed = std::ranges::find_if(
+                                            output->parts, [&](const auto& mesh) {
+                                                return mesh.actorFormID == rigid->actorFormID &&
+                                                    mesh.ordinal == rigid->partOrdinal &&
+                                                    mesh.sourceToken == rigid->sourceToken &&
+                                                    !mesh.skinned && !mesh.alpha &&
+                                                    !mesh.dynamic && !mesh.gpuOnly;
+                                            });
+                                        if (observed == output->parts.end() ||
+                                            (actorIdentity &&
+                                                actorIdentity != rigid->actorFormID) ||
+                                            !CharacterRigidBoundsMatch(
+                                                *rigid->rigidSource, *observed))
+                                            continue;
+                                        actorIdentity = rigid->actorFormID;
+                                        parts.push_back(rigid);
+                                        transforms.push_back(observed->worldTransform);
+                                        if (parts.size() >= 8u) break;
+                                    }
                                 }
                                 if (!parts.empty()) {
                                     const auto old = previous ?
                                         previous->isolatedTLAS : nullptr;
                                     const bool sameMembership = old &&
-                                        old->bottoms == parts;
-                                    const bool oldStillPresent = old &&
-                                        std::ranges::all_of(old->bottoms,
-                                            [&](const auto& item) {
-                                                return std::ranges::find(
-                                                    parts, item) != parts.end();
-                                            });
+                                        old->bottoms == parts &&
+                                        old->instanceTransforms == transforms;
+                                    const bool oldStillPresent = sameMembership;
                                     const bool awaitingQuery = oldStillPresent &&
                                         runIsolatedRayProbe &&
                                         (!previous->rayProbe ||
@@ -648,7 +727,8 @@ namespace DX12Native
                                         try {
                                             output->isolatedTLAS = BuildCharacterMultiPartTLAS(
                                                 nativeDevice.get(), nativeQueue.get(),
-                                                std::move(parts));
+                                                std::move(parts),
+                                                std::move(transforms), output->frame);
                                         } catch (const std::exception& e) {
                                             output->tlasError = e.what();
                                         } catch (...) {
@@ -867,6 +947,7 @@ namespace DX12Native
                 { "isolatedBLASRefit", current && current->isolatedBLAS &&
                     current->isolatedBLAS->refit },
                 { "accumulatedBLASParts", current ? current->blasParts.size() : size_t{ 0 } },
+                { "rigidBLASParts", current ? current->rigidParts.size() : size_t{ 0 } },
                 { "isolatedBLASBytes", current && current->isolatedBLAS ?
                     current->isolatedBLAS->allocationBytes : 0ull },
                 { "isolatedBLASScratchBytes", current && current->isolatedBLAS ?
