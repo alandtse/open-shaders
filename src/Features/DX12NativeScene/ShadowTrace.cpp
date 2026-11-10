@@ -1,7 +1,6 @@
 #include "ShadowTrace.h"
 #include "GpuPass.h"
 #include "Utils/D3D.h"
-#include "Utils/NativeDXC.h"
 #include <directx/d3dx12.h>
 #include <fstream>
 
@@ -10,8 +9,14 @@ namespace DX12Native
 	void ShadowTrace::CreatePipeline()
 	{
 		if (pipeline) return;
-		auto bytecode = NativeDXC::Load("Data/Shaders/DX12NativeScene/ShadowTrace.dxil",
-			"Data/Shaders/DX12NativeScene/ShadowTrace.hlsl6");
+		std::ifstream file("Data/Shaders/DX12NativeScene/ShadowTrace.dxil", std::ios::binary | std::ios::ate);
+		if (!file) throw std::runtime_error("Packaged shadow trace DXIL unavailable");
+		const std::streamoff size = file.tellg();
+		constexpr std::streamoff kMaximumShaderBytes = 16 * 1024 * 1024;
+		if (size <= 0 || size > kMaximumShaderBytes) throw std::runtime_error("Invalid directional DXIL size");
+		std::vector<char> bytecode(static_cast<size_t>(size));
+		file.seekg(0);
+		if (!file.read(bytecode.data(), std::streamsize(bytecode.size()))) throw std::runtime_error("Cannot read directional DXIL");
 		D3D12_DESCRIPTOR_RANGE ranges[6]{};
 		ranges[0] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 0, 0 };
 		ranges[1] = { D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0 };
@@ -64,8 +69,15 @@ namespace DX12Native
 	void ShadowTrace::CreateRayPreparationPipeline()
 	{
 		if (rayPrepPipeline) return;
-		auto bytecode = NativeDXC::Load("Data/Shaders/DX12NativeScene/PrepareShadowRays.dxil",
-			"Data/Shaders/DX12NativeScene/PrepareShadowRays.hlsl6");
+		std::ifstream file("Data/Shaders/DX12NativeScene/PrepareShadowRays.dxil", std::ios::binary | std::ios::ate);
+		if (!file) throw std::runtime_error("DXC ray preparation DXIL unavailable");
+		const std::streamoff size = file.tellg();
+		if (size <= 0 || size > 16 * 1024 * 1024)
+			throw std::runtime_error("Invalid DXC ray preparation bytecode");
+		std::vector<char> bytecode(static_cast<size_t>(size));
+		file.seekg(0);
+		if (!file.read(bytecode.data(), std::streamsize(bytecode.size())))
+			throw std::runtime_error("Cannot read DXC ray preparation bytecode");
 		D3D12_DESCRIPTOR_RANGE range{ D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0 };
 		D3D12_ROOT_PARAMETER parameters[2]{};
 		parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;

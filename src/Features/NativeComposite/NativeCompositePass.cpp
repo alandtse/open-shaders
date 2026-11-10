@@ -2,7 +2,6 @@
 #include "NativeCompositePass.h"
 #include "GpuPass.h"
 #include "Globals.h"
-#include "Utils/NativeDXC.h"
 #include <directx/d3dx12.h>
 #include <fstream>
 #include <limits>
@@ -12,8 +11,22 @@ bool NativeComposite::InitializeShadow(ID3D12Device* a_device)
 	if (shadowPipeline && shadowPipelineDevice == a_device) return true;
 	shadowPipelineFailure.clear();
 	try {
-		auto shader = NativeDXC::Load("Data/Shaders/NativeComposite/ShadowLayer.dxil",
-			"Data/Shaders/NativeComposite/ShadowLayer.hlsl6");
+		std::ifstream file("Data/Shaders/NativeComposite/ShadowLayer.dxil", std::ios::binary | std::ios::ate);
+		if (!file) {
+			shadowPipelineFailure = "ShadowLayer.dxil missing: Data/Shaders/NativeComposite/ShadowLayer.dxil";
+			return false;
+		}
+		const auto size = file.tellg();
+		if (size <= 0 || size > 16 * 1024 * 1024) {
+			shadowPipelineFailure = "ShadowLayer.dxil size is invalid (empty or >16 MiB)";
+			return false;
+		}
+		std::vector<char> shader(static_cast<size_t>(size));
+		file.seekg(0);
+		if (!file.read(shader.data(), size)) {
+			shadowPipelineFailure = "ShadowLayer.dxil could not be read completely";
+			return false;
+		}
 		CD3DX12_DESCRIPTOR_RANGE ranges[2];
 		ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);
 		ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
@@ -46,8 +59,13 @@ bool NativeComposite::InitializeLighting(ID3D12Device* a_device)
 	if (pipeline && pipelineDevice == a_device)
 		return true;
 	try {
-		auto shader = NativeDXC::Load("Data/Shaders/NativeComposite/AddLighting.dxil",
-			"Data/Shaders/NativeComposite/AddLighting.hlsl6");
+		std::ifstream file("Data/Shaders/NativeComposite/AddLighting.dxil", std::ios::binary | std::ios::ate);
+		if (!file) return false;
+		const auto size = file.tellg();
+		if (size <= 0 || size > 16 * 1024 * 1024) return false;
+		std::vector<char> shader(static_cast<size_t>(size));
+		file.seekg(0);
+		if (!file.read(shader.data(), size)) return false;
 		CD3DX12_DESCRIPTOR_RANGE ranges[2];
 		ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 8, 0);
 		ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0);
