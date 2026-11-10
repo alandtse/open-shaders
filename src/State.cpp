@@ -2506,14 +2506,22 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.FrameCount = frameCount * temporal;
 		data.FrameCountAlwaysActive = frameCount;
 
+		// Out-of-world refreshes (VR UI pass, upscaling) keep the last in-world tiles: zeroed tiles read as
+		// water at camera height and the VR underwater mask then floods everything below the horizon.
+		static std::array<float4, 25> waterTiles = [] {
+			std::array<float4, 25> tiles;
+			tiles.fill(float4(0.0f, 0.0f, 0.0f, -FLT_MAX));
+			return tiles;
+		}();
 		if (a_inWorld) {
 			for (int i = -2; i <= 2; i++) {
 				for (int k = -2; k <= 2; k++) {
 					int waterTile = (i + 2) + ((k + 2) * 5);
-					data.WaterData[waterTile] = Util::TryGetWaterData((float)i * 4096.0f, (float)k * 4096.0f);
+					waterTiles[waterTile] = Util::TryGetWaterData((float)i * 4096.0f, (float)k * 4096.0f);
 				}
 			}
 		}
+		std::copy(waterTiles.begin(), waterTiles.end(), data.WaterData);
 
 		// Fallback water height for the VR analytical mask when tile 12 returns the sentinel.
 		// Uses player->GetWaterHeight() (reads relevantWaterHeight from LOADED_REF_DATA) gated by
