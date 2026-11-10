@@ -20,7 +20,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterPlayerOnly, CharacterStageGeometryDX12, CharacterRunSkinningDX12, CharacterValidateSkinningDX12, CharacterBuildIsolatedBLASDX12, CharacterBuildIsolatedTLASDX12, CharacterRunIsolatedRayQueryDX12, CharacterAccumulatePartBLAS, CharacterShadowCasterVisibility, CharacterCasterMaxPoseAgeFrames, CharacterMaxActors, CharacterObservationPeriod, CharacterBLASIntervalFrames, CharacterMeshCaptureBatch, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterPlayerOnly, CharacterStageGeometryDX12, CharacterRunSkinningDX12, CharacterValidateSkinningDX12, CharacterBuildIsolatedBLASDX12, CharacterBuildIsolatedTLASDX12, CharacterRunIsolatedRayQueryDX12, CharacterAccumulatePartBLAS, CharacterMultiPartCasterVisibility, CharacterShadowCasterVisibility, CharacterCasterMaxPoseAgeFrames, CharacterMaxActors, CharacterObservationPeriod, CharacterBLASIntervalFrames, CharacterMeshCaptureBatch, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -401,7 +401,14 @@ void DX12NativeScene::DrawSettings()
     if (ImGui::Checkbox("Accumulate character-part BLAS (isolated testing)",
         &settings.CharacterAccumulatePartBLAS)) nativeCharacters.Reset();
     ImGui::EndDisabled();
-    ImGui::TextDisabled("Multi-part testing rotates skin palettes; production shadow casting stays off.");
+    ImGui::TextDisabled("Multi-part testing rotates poses and validates individual GPU ray hits.");
+    ImGui::BeginDisabled(!settings.CharacterAccumulatePartBLAS ||
+        !settings.CharacterRunIsolatedRayQueryDX12 ||
+        !settings.CharacterBuildIsolatedTLASDX12);
+    ImGui::Checkbox("Allow validated multi-part caster rays (experimental)",
+        &settings.CharacterMultiPartCasterVisibility);
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Independent opt-in for native shadow and direct-light visibility.");
     ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
         !settings.CharacterStageGeometryDX12 ||
         !settings.CharacterRunSkinningDX12 ||
@@ -522,6 +529,9 @@ void DX12NativeScene::DrawSettings()
     const char* rayState = rayStatus == 3u ? "triangle hit" :
         rayStatus == 2u ? "miss" :
         rayStatus == 1u ? "no valid triangle" : "not ready/invalid";
+    ImGui::Text("Per-part RayQuery self-hits: %u / %zu",
+        characterStats.value("isolatedRayPartsHit", 0u),
+        characterStats.value("isolatedRayPartsTested", size_t{ 0 }));
     ImGui::Text("Isolated RayQuery: %s; %s (pose frame %u)",
         characterStats.value("isolatedRayReady", false) ? "GPU ready" :
         characterStats.value("isolatedRaySubmitted", false) ? "submitted" : "not submitted",
@@ -537,7 +547,9 @@ void DX12NativeScene::DrawSettings()
     const auto casterReadiness = nativeCharacters.GetCasterReadiness(
         globals::game::graphicsState ?
             globals::game::graphicsState->GetFrameCount() : 0u,
-        settings.CharacterCasterMaxPoseAgeFrames);
+        settings.CharacterCasterMaxPoseAgeFrames,
+        settings.CharacterAccumulatePartBLAS &&
+            settings.CharacterMultiPartCasterVisibility);
     ImGui::TextWrapped("Character shadow eligibility: %s",
         casterReadiness.reason);
     const auto shadowCounters = shadow.GetDiagnostics();
@@ -804,6 +816,7 @@ void DX12NativeScene::LoadSettings(json& a_json)
     if (settings.CharacterAccumulatePartBLAS != selected.CharacterAccumulatePartBLAS)
         nativeCharacters.Reset();
     settings.CharacterAccumulatePartBLAS = selected.CharacterAccumulatePartBLAS;
+    settings.CharacterMultiPartCasterVisibility = selected.CharacterMultiPartCasterVisibility;
     settings.CharacterShadowCasterVisibility = selected.CharacterShadowCasterVisibility;
     settings.CharacterCasterMaxPoseAgeFrames =
         std::clamp(selected.CharacterCasterMaxPoseAgeFrames, 1u, 30u);
@@ -1492,7 +1505,8 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 	};
     const bool requestCharacterCaster =
         shadowSettings.CharacterShadowCasterVisibility &&
-        !shadowSettings.CharacterAccumulatePartBLAS &&
+        (!shadowSettings.CharacterAccumulatePartBLAS ||
+            shadowSettings.CharacterMultiPartCasterVisibility) &&
         shadowSettings.ObserveNativeCharacters &&
         shadowSettings.CharacterStageGeometryDX12 &&
         shadowSettings.CharacterRunSkinningDX12 &&
@@ -1502,7 +1516,9 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
         shadowSettings.CharacterRunIsolatedRayQueryDX12;
     auto characterCaster = requestCharacterCaster ?
         nativeCharacters.GetCasterReadiness(frame,
-            shadowSettings.CharacterCasterMaxPoseAgeFrames).tlas : nullptr;
+            shadowSettings.CharacterCasterMaxPoseAgeFrames,
+            shadowSettings.CharacterAccumulatePartBLAS &&
+                shadowSettings.CharacterMultiPartCasterVisibility).tlas : nullptr;
 	shadow.Dispatch(*backend, scene->acceleration, scene->materials, selectedLights, camera, size, frame,
 		0ull, controls, std::move(characterCaster));
 	shadowStatus = shadow.Status();
@@ -1528,14 +1544,17 @@ DX12NativeScene::GetCharacterCasterForVisibility(uint32_t a_frame) const
         !selected.CharacterRunSkinningDX12 ||
         !selected.CharacterValidateSkinningDX12 ||
         !selected.CharacterBuildIsolatedBLASDX12 ||
-        selected.CharacterAccumulatePartBLAS ||
+        (selected.CharacterAccumulatePartBLAS &&
+            !selected.CharacterMultiPartCasterVisibility) ||
         !selected.CharacterBuildIsolatedTLASDX12 ||
         !selected.CharacterRunIsolatedRayQueryDX12 ||
         !globals::game::graphicsState ||
         globals::game::graphicsState->GetFrameCount() != a_frame)
         return {};
     return nativeCharacters.GetCasterReadiness(
-        a_frame, selected.CharacterCasterMaxPoseAgeFrames).tlas;
+        a_frame, selected.CharacterCasterMaxPoseAgeFrames,
+        selected.CharacterAccumulatePartBLAS &&
+            selected.CharacterMultiPartCasterVisibility).tlas;
 }
 
 std::shared_ptr<const DX12Native::ShadowFrame> DX12NativeScene::GetShadowMask(uint32_t a_frame) const

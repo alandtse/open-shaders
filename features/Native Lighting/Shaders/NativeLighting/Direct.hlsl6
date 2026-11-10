@@ -279,7 +279,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
         bool blocked = shadow.CommittedStatus() != COMMITTED_NOTHING;
         if (valid && !blocked && CharacterOcclusionEnabled != 0u) {
             RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> actorShadow;
-            actorShadow.TraceRayInline(CharacterCasters, RAY_FLAG_NONE, 0x01, visibility);
+            actorShadow.TraceRayInline(CharacterCasters, RAY_FLAG_NONE, 0xff, visibility);
             while (actorShadow.Proceed()) { }
             blocked = actorShadow.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
         }

@@ -104,7 +104,7 @@ bool TraceDirectVisibility(float3 origin, float3 direction, float distance, out 
     // An invalid prepared-world candidate is never "rescued" by a character.
     if (valid && visible && CharacterCasterEnabled != 0u) {
         RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> character;
-        character.TraceRayInline(CharacterCasters, RAY_FLAG_NONE, 0x01, ray);
+        character.TraceRayInline(CharacterCasters, RAY_FLAG_NONE, 0xff, ray);
         while (character.Proceed()) { }
         if (character.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
             visible = false;
