@@ -230,7 +230,10 @@ public:
 		/** @brief Installs all deferred rendering hooks into the game's vtables and call sites. */
 		static void Install()
 		{
-			stl::write_vfunc<0x35, BSCubeMapCamera_RenderCubemap>(RE::VTABLE_BSCubeMapCamera[0]);
+			if (globals::game::isVR)
+				stl::write_vfunc<0x36, BSCubeMapCamera_RenderCubemap>(RE::VTABLE_BSCubeMapCamera[0]);
+			else
+				stl::write_vfunc<0x35, BSCubeMapCamera_RenderCubemap>(RE::VTABLE_BSCubeMapCamera[0]);
 
 			const bool isAE1799 = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0));
 
