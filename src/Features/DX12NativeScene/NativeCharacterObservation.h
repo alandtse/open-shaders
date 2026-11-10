@@ -180,7 +180,7 @@ namespace DX12Native
             bool stageGeometry, bool runSkinning, bool validateSkinning,
             bool buildIsolatedBLAS, bool buildIsolatedTLAS,
             bool runIsolatedRayProbe, uint32_t blasIntervalFrames,
-            ID3D12Device* device, ID3D12CommandQueue* queue)
+            uint32_t meshBatchLimit, ID3D12Device* device, ID3D12CommandQueue* queue)
         {
             // Runtime toggles can reset the observer while the engine is
             // supplying input. Serialize only this bounded CPU acquisition;
@@ -207,6 +207,7 @@ namespace DX12Native
             if (pending || !frame) return;
             periodFrames = std::clamp(periodFrames, 1u, 120u);
             blasIntervalFrames = std::clamp(blasIntervalFrames, 1u, 120u);
+            meshBatchLimit = std::clamp(meshBatchLimit, 1u, 4u);
             maxActors = std::clamp(maxActors, 1u, 32u);
             if (lastObservedFrame != UINT32_MAX &&
                 uint32_t(frame - lastObservedFrame) < periodFrames) return;
@@ -218,9 +219,9 @@ namespace DX12Native
             captured->playerOnly = playerOnly;
             constexpr size_t kMaximumParts = 512;
             constexpr uint32_t kMaximumPartsPerActor = 96;
-            std::optional<CharacterMeshCapture> capturedMesh;
+            std::vector<CharacterMeshCapture> capturedMeshes;
+            capturedMeshes.reserve(meshBatchLimit);
             std::optional<CharacterPoseCapture> capturedPose;
-            std::string attemptedKey;
 
             // Only Get3D(false): never inspect Skyrim's first-person root.
             // In player-only mode, skip the high-process actor enumeration
@@ -272,10 +273,13 @@ namespace DX12Native
                     const uint64_t sourceToken = part.sourceToken;
                     captured->parts.emplace_back(std::move(part));
                     if (stageGeometry && device && partSkinned && !capturedPose) {
-                        bool hasBind = capturedMesh && capturedMesh->skinned &&
-                            capturedMesh->actorFormID == actor->GetFormID() &&
-                            capturedMesh->partOrdinal == ordinal - 1 &&
-                            capturedMesh->sourceToken == sourceToken;
+                        bool hasBind = std::ranges::any_of(capturedMeshes,
+                            [&](const auto& candidate) {
+                                return candidate.skinned &&
+                                    candidate.actorFormID == actor->GetFormID() &&
+                                    candidate.partOrdinal == ordinal - 1 &&
+                                    candidate.sourceToken == sourceToken;
+                            });
                         if (const auto previous = GetPublished();
                             previous && previous->stagedGeometry) {
                             for (const auto& staged : previous->stagedGeometry->meshes)
@@ -287,18 +291,18 @@ namespace DX12Native
                         if (hasBind) capturedPose = CaptureCharacterShaderPose(
                             *geometry, actor->GetFormID(), ordinal - 1, sourceToken, frame);
                     }
-                    if (stageGeometry && device && !capturedMesh) {
+                    if (stageGeometry && device &&
+                        capturedMeshes.size() < meshBatchLimit) {
                         const std::string key = std::format("{:08X}:{}:{:016X}",
                             actor->GetFormID(), ordinal - 1, sourceToken);
                         if (!attemptedMeshKeys.contains(key)) {
                             auto owned = CaptureCharacterBindMesh(*geometry,
                                 actor->GetFormID(), ordinal - 1, frame);
                             if (owned) {
-                                captured->capturedMeshes = 1;
-                                captured->capturedBytes = owned->Bytes();
-                                capturedMesh = std::move(*owned);
-                                attemptedKey = key;
-                                attemptedMeshKeys.insert(std::move(key));
+                                ++captured->capturedMeshes;
+                                captured->capturedBytes += owned->Bytes();
+                                capturedMeshes.emplace_back(std::move(*owned));
+                                attemptedMeshKeys.insert(key);
                             }
                         }
                     }
@@ -312,12 +316,6 @@ namespace DX12Native
             try {
                 auto work = std::make_shared<Work>();
                 work->sceneEpoch = sceneEpoch;
-                if (capturedMesh) {
-                    work->attemptedKey = attemptedKey;
-                    work->actorFormID = capturedMesh->actorFormID;
-                    work->partOrdinal = capturedMesh->partOrdinal;
-                    work->sourceToken = capturedMesh->sourceToken;
-                }
                 auto previous = GetPublished();
                 winrt::com_ptr<ID3D12Device> nativeDevice;
                 winrt::com_ptr<ID3D12CommandQueue> nativeQueue;
@@ -325,7 +323,7 @@ namespace DX12Native
                 if (runSkinning && queue) nativeQueue.copy_from(queue);
                 static BS::thread_pool<> pool{ 1 };
                 pool.detach_task([work, captured, previous,
-                    mesh = std::move(capturedMesh),
+                    meshes = std::move(capturedMeshes),
                     pose = std::move(capturedPose), nativeDevice,
                     nativeQueue, runSkinning, validateSkinning,
                     buildIsolatedBLAS, buildIsolatedTLAS,
@@ -390,9 +388,12 @@ namespace DX12Native
                         // DX12 upload and DXGI residency checks are performed
                         // on this native CPU worker. The renderer publishes
                         // the complete immutable generation only afterwards.
-                        auto staged = PrepareCharacterMeshes(
-                            nativeDevice.get(), mesh ? &*mesh : nullptr,
-                            retained, work->sceneEpoch);
+                        std::shared_ptr<const CharacterMeshGeneration> staged =
+                            PrepareCharacterMeshes(nativeDevice.get(), nullptr,
+                                retained, work->sceneEpoch);
+                        for (const auto& mesh : meshes)
+                            staged = PrepareCharacterMeshes(nativeDevice.get(),
+                                &mesh, std::move(staged), work->sceneEpoch);
                         output->stagedGeometry = StageCharacterPose(
                             nativeDevice.get(), pose ? &*pose : nullptr,
                             staged, work->sceneEpoch);
@@ -714,9 +715,6 @@ namespace DX12Native
         {
             std::atomic<bool> done{ false };
             uint64_t sceneEpoch = 0;
-            std::string attemptedKey;
-            uint32_t actorFormID = 0, partOrdinal = 0;
-            uint64_t sourceToken = 0;
             std::shared_ptr<const CharacterObservationGeneration> result;
         };
 

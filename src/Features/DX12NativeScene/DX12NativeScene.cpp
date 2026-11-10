@@ -20,7 +20,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterPlayerOnly, CharacterStageGeometryDX12, CharacterRunSkinningDX12, CharacterValidateSkinningDX12, CharacterBuildIsolatedBLASDX12, CharacterBuildIsolatedTLASDX12, CharacterRunIsolatedRayQueryDX12, CharacterShadowCasterVisibility, CharacterCasterMaxPoseAgeFrames, CharacterMaxActors, CharacterObservationPeriod, CharacterBLASIntervalFrames, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterPlayerOnly, CharacterStageGeometryDX12, CharacterRunSkinningDX12, CharacterValidateSkinningDX12, CharacterBuildIsolatedBLASDX12, CharacterBuildIsolatedTLASDX12, CharacterRunIsolatedRayQueryDX12, CharacterShadowCasterVisibility, CharacterCasterMaxPoseAgeFrames, CharacterMaxActors, CharacterObservationPeriod, CharacterBLASIntervalFrames, CharacterMeshCaptureBatch, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -420,6 +420,10 @@ void DX12NativeScene::DrawSettings()
     int interval = int(settings.CharacterObservationPeriod);
     if (ImGui::SliderInt("Observation interval (frames)", &interval, 1, 120))
         settings.CharacterObservationPeriod = uint32_t(interval);
+    int captureBatch = int(settings.CharacterMeshCaptureBatch);
+    if (ImGui::SliderInt("Character mesh captures per observation",
+        &captureBatch, 1, 4))
+        settings.CharacterMeshCaptureBatch = uint32_t(captureBatch);
     const auto characterStats = nativeCharacters.GetDiagnostics();
     ImGui::Text("Actor samples: %u  Meshes: %u  Skinned: %u  Rigid: %u  Dynamic: %u",
         characterStats.value("actors", 0u), characterStats.value("parts", 0u),
@@ -785,6 +789,7 @@ void DX12NativeScene::LoadSettings(json& a_json)
         std::clamp(selected.CharacterBLASIntervalFrames, 1u, 120u);
     settings.CharacterMaxActors = std::clamp(selected.CharacterMaxActors, 1u, 32u);
     settings.CharacterObservationPeriod = std::clamp(selected.CharacterObservationPeriod, 1u, 120u);
+    settings.CharacterMeshCaptureBatch = std::clamp(selected.CharacterMeshCaptureBatch, 1u, 4u);
     settings.GlobalDXGIHeadroomPercent = reservePercent;
     settings.SubdivisionMode = std::min(selected.SubdivisionMode, 2u);
     settings.AutoGridMemoryScreening = selected.AutoGridMemoryScreening;
@@ -1532,6 +1537,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
     bool validateCharacterSkinning = false, buildIsolatedCharacterBLAS = false;
     bool buildIsolatedCharacterTLAS = false, traceIsolatedCharacterRay = false;
     uint32_t actorLimit = 16, observationInterval = 8, blasUpdateInterval = 8;
+    uint32_t meshBatchLimit = 2;
     {
         std::scoped_lock lock(settingsMutex);
         observeCharacters = settings.ObserveNativeCharacters;
@@ -1545,6 +1551,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
         actorLimit = settings.CharacterMaxActors;
         observationInterval = settings.CharacterObservationPeriod;
         blasUpdateInterval = settings.CharacterBLASIntervalFrames;
+        meshBatchLimit = settings.CharacterMeshCaptureBatch;
     }
     if (observeCharacters)
         nativeCharacters.Advance(frame, actorLimit,
@@ -1559,7 +1566,8 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
             traceIsolatedCharacterRay && buildIsolatedCharacterTLAS &&
                 buildIsolatedCharacterBLAS && validateCharacterSkinning &&
                 runCharacterSkinning && stageCharacterGeometry,
-            blasUpdateInterval, backend->d3d12Device.get(), backend->commandQueue.get());
+            blasUpdateInterval, meshBatchLimit,
+            backend->d3d12Device.get(), backend->commandQueue.get());
 	const globals::FrameBuffer* camera = nullptr;
 	if (!globals::game::isVR && globals::game::frameBufferCachedValid && globals::game::frameBufferCachedFrame == frame) {
 		const auto& cached = globals::game::frameBufferCached.nonVR;

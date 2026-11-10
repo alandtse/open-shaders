@@ -56,6 +56,7 @@ struct DX12NativeScene final : Feature
         bool CharacterShadowCasterVisibility = false; // Opt-in; secondary light rays only.
         uint32_t CharacterCasterMaxPoseAgeFrames = 12; // Bound TLAS reuse across BLAS updates.
         uint32_t CharacterMaxActors = 16, CharacterObservationPeriod = 8;
+        uint32_t CharacterMeshCaptureBatch = 2; // 1..4 bounded CPU copies/sample.
         uint32_t CharacterBLASIntervalFrames = 8; // Bound experimental GPU AS work.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
