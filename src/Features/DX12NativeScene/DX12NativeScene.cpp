@@ -222,16 +222,20 @@ std::shared_ptr<const ShadowCasterManager::NativeCasterFrame> DX12NativeScene::G
 
 std::optional<DX12NativeScene::NativeLightBatch> DX12NativeScene::GetNativeLLFLights(uint32_t a_frame) const
 {
-	if (!OwnsNativeFeatures()) return std::nullopt; // Original features own non-native frames.
+	if (!OwnsNativeFeatures()) return std::nullopt;
+	const auto scene = GetPublishedScene();
+	if (!scene) return std::nullopt;
+	const auto merged = globals::features::nativeLLF.BuildUnifiedLights(scene->cell->nativeLights, a_frame);
 	NativeLightBatch batch{};
-	if (!globals::features::nativeLLF.IsActive()) return batch; // Native ownership remains selected; explicit feature opt-out.
-	const auto published = globals::features::nativeLLF.GetLightFrame(a_frame);
-	if (!published) return batch; // Current frame has not been published yet.
-	batch.observed = static_cast<uint32_t>(published->lights.size());
-	for (const auto& light : published->lights) {
-		if (batch.count == batch.lights.size()) break;
-		batch.lights[batch.count++] = { light.position, light.radiance, light.radius, light.sourceRadius, true };
-	}
+	batch.lights = merged.lights;
+	batch.count = merged.count;
+	batch.observed = merged.observed;
+	batch.prepared = merged.prepared;
+	batch.matched = merged.matched;
+	batch.added = merged.added;
+	batch.clustered = merged.clusteredLive;
+	batch.omitted = merged.omitted;
+	batch.overflow = merged.overflow;
 	return batch;
 }
 
@@ -316,11 +320,13 @@ void DX12NativeScene::DrawSettings()
 			changed = true;
 		}
 		ImGui::TextDisabled("All modes trace at render size; skipped pixels have validity -1.");
-		changed |= ImGui::Checkbox("Shadow all prepared point lights", &settings.ShadowAllLights);
+		changed |= ImGui::Checkbox("Shadow all unified native point lights", &settings.ShadowAllLights);
 		if (!settings.ShadowAllLights) {
 			const auto scene = GetPublishedScene();
 			int index = int(settings.ShadowLightIndex);
-			const int maxIndex = scene && !scene->cell->nativeLights.empty() ? int(scene->cell->nativeLights.size()-1) : 0;
+			const auto unified = scene && globals::game::graphicsState ?
+                GetNativeLLFLights(globals::game::graphicsState->GetFrameCount()) : std::nullopt;
+            const int maxIndex = unified ? int(unified->count ? unified->count - 1 : 0) : 0;
 			if (ImGui::SliderInt("Shadow point light index", &index, 0, maxIndex)) { settings.ShadowLightIndex = uint32_t(index); changed = true; }
 		}
 		changed |= ImGui::Checkbox("Stochastic shadow emitter sampling", &settings.ShadowStochastic);
@@ -897,7 +903,7 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 		std::span<const DX12Native::PreparedPointLight>(preparedLights);
 	if (lights.empty() || (shadowSettings.ShadowAllLights && lights.size() > 32) ||
 		(!shadowSettings.ShadowAllLights && shadowSettings.ShadowLightIndex >= lights.size())) {
-		shadowStatus = nativeLights ? "No current-frame NativeLLF lights selected" : "Selected prepared shadow lights unavailable or exceed 32";
+		shadowStatus = "Selected unified native shadow lights unavailable or exceed 32";
 		return;
 	}
 	const auto selectedLights = shadowSettings.ShadowAllLights ? lights : lights.subspan(shadowSettings.ShadowLightIndex, 1);
@@ -981,7 +987,7 @@ void DX12NativeScene::PublishDiagnostics()
 	json snapshot{ { "enabled", settings.Enabled }, { "nativeOwnership", OwnsNativeFeatures() },
 		{ "nativePBR", globals::features::nativePBR.IsActive() }, { "nativeLLF", globals::features::nativeLLF.IsActive() },
 		{ "nativeSCM", globals::features::nativeSCM.IsActive() },
-		{ "nativeLightSource", OwnsNativeFeatures() ? "LLF-current-frame" : "prepared-cell" },
+		{ "nativeLightSource", OwnsNativeFeatures() ? "prepared-priority-unified" : "prepared-cell" },
 		{ "nativeSCMCasters", globals::game::graphicsState ?
 			([&] { const auto snapshot = GetNativeSCMFrame(globals::game::graphicsState->GetFrameCount());
 				return snapshot ? snapshot->casters.size() : size_t{ 0 }; })() : size_t{ 0 } },

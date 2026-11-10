@@ -57,7 +57,7 @@ void NativeLightingFeature::DrawSettings()
 	tuned |= ImGui::SliderFloat("Emitter radius scale", &settings.EmitterRadiusMultiplier, 0.0f, 8.0f, "%.2fx");
 	ImGui::EndDisabled();
 	ImGui::TextDisabled("One disk-distributed visibility ray per light; not temporal grid undersampling.");
-	tuned |= ImGui::Checkbox("All lights from active native source", &settings.UseAllPreparedLights);
+	tuned |= ImGui::Checkbox("All unified native lights (prepared first)", &settings.UseAllPreparedLights);
 	if (!settings.UseAllPreparedLights) {
 		const auto published = globals::features::dx12NativeScene.GetPublishedScene();
 		const auto live = globals::game::graphicsState ?

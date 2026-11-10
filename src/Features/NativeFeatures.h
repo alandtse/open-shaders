@@ -2,7 +2,10 @@
 
 #include "Feature.h"
 #include "LightLimitFix.h"
+#include "Features/DX12NativeScene/PreparedScene.h"
+#include <array>
 #include <atomic>
+#include <span>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -44,6 +47,28 @@ struct NativeLLFFeature final : Feature
         std::vector<Light> lights;
     };
     std::atomic<bool> enabled{ true };
+    // Only supplementary LLF emitters are toggled; prepared scene lighting
+    // stays authoritative, while live observations remain available to SCM.
+    std::atomic<bool> contributeUnmatched{ true };
+    std::atomic<float> matchDistanceUnits{ 64.0f };
+    static constexpr uint32_t kMaxUnifiedLights = 32;
+    struct SourceIdentity
+    {
+        float3 position{};
+        float radius = 0.0f;
+        uint32_t flags = 0;
+        uint32_t shadowSlot = UINT32_MAX;
+        bool valid = false;
+    };
+    struct UnifiedLights
+    {
+        std::array<DX12Native::PreparedPointLight, kMaxUnifiedLights> lights{};
+        std::array<SourceIdentity, kMaxUnifiedLights> source{};
+        uint32_t count = 0, prepared = 0, observed = 0, matched = 0, added = 0;
+        uint32_t clusteredLive = 0, omitted = 0, overflow = 0;
+    };
+    UnifiedLights BuildUnifiedLights(std::span<const DX12Native::PreparedPointLight> prepared,
+        uint32_t frame, bool allowRecent = false) const;
     void PublishLights(const LightLimitFix::LightData* data, uint32_t count, const float3& eye, uint32_t frame);
     std::shared_ptr<const LightFrame> GetLightFrame(uint32_t frame) const;
     std::shared_ptr<const LightFrame> GetRecentLightFrame(uint32_t frame) const;
@@ -59,7 +84,10 @@ public:
     void DrawSettings() override;
     void LoadSettings(json&) override;
     void SaveSettings(json&) override;
-    void RestoreDefaultSettings() override { enabled = true; }
+    void RestoreDefaultSettings() override
+    {
+        enabled = true; contributeUnmatched = true; matchDistanceUnits = 64.0f;
+    }
     json GetDiagnostics() override;
 };
 

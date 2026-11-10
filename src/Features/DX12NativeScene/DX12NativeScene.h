@@ -53,7 +53,7 @@ struct DX12NativeScene final : Feature
 	struct NativeLightBatch
 	{
 		std::array<DX12Native::PreparedPointLight, 32> lights{};
-		uint32_t count = 0, observed = 0;
+		uint32_t count = 0, observed = 0, prepared = 0, matched = 0, added = 0, clustered = 0, omitted = 0, overflow = 0;
 	};
 	struct SceneFrame
 	{
