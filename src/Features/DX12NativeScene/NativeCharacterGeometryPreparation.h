@@ -24,8 +24,11 @@ namespace DX12Native
         uint32_t actorFormID = 0, partOrdinal = 0, vertices = 0, indices = 0;
         uint64_t sourceToken = 0, allocationBytes = 0;
         uint32_t vertexStride = 0, requiredBones = 0;
+        uint32_t captureFrame = 0;
         uint64_t indexOffset = 0;
+        std::array<float, 12> rigidWorldTransform{};
         bool skinned = false;
+        bool normalAvailable = false, uvAvailable = false, tangentAvailable = false;
         winrt::com_ptr<ID3D12Resource> source;
         std::string shapeName;
     };
@@ -201,6 +204,13 @@ namespace DX12Native
             mesh->vertices = vertexCount;
             mesh->indices = indexCount;
             mesh->vertexStride = stride;
+            mesh->captureFrame = next->captureFrame;
+            if (next->rigid) {
+                mesh->rigidWorldTransform = next->rigid->transform;
+                mesh->normalAvailable = next->rigid->hasNormal;
+                mesh->uvAvailable = next->rigid->hasUv;
+                mesh->tangentAvailable = next->rigid->hasTangent;
+            }
             if (next->skinned) {
                 for (const auto& vertex : next->bindVertices) {
                     for (size_t influence = 0; influence < vertex.bone.size(); ++influence) {

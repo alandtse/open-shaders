@@ -453,6 +453,11 @@ void DX12NativeScene::DrawSettings()
     ImGui::TextDisabled("Character mesh evictions: %u (actor/equipment identity changes)",
         characterStats.value("nativeEvictedMeshes", 0u));
     ImGui::TextDisabled("Skin bind vertices, indices and raw bone registers are DX12-staged.");
+    ImGui::Text("Rigid attachments staged: %u; receiver geometry attributes: %u",
+        characterStats.value("nativeRigidStagedMeshes", 0u),
+        characterStats.value("nativeReceiverAttributeReady", 0u));
+    ImGui::TextDisabled("No native character BRDF without verified normals, UVs and material descriptors.");
+    ImGui::TextDisabled("Unsupported skinned/alpha materials remain raster-authoritative.");
     ImGui::TextDisabled("Deformation is an isolated GPU experiment; BLAS and character rays remain disabled.");
     ImGui::Text("Bone palette: %u VS registers (captured frame %u)",
         characterStats.value("poseRegisters", 0u), characterStats.value("poseFrame", 0u));

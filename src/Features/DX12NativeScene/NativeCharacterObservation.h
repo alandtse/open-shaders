@@ -36,6 +36,7 @@ namespace DX12Native
         uint64_t sourceToken = 0; // Runtime-only identity, never persisted.
         std::string shapeName;
         std::array<float, 4> worldBound{};
+        std::array<float, 12> worldTransform{};
         uint32_t vertexCount = 0, triangleCount = 0;
         bool skinned = false, dynamic = false, alpha = false, gpuOnly = false;
     };
@@ -299,6 +300,14 @@ namespace DX12Native
                         std::string("unnamed") : std::string(geometry->name.c_str());
                     const auto& bounds = geometry->worldBound;
                     part.worldBound = { bounds.center.x, bounds.center.y, bounds.center.z, bounds.radius };
+                    for (size_t row = 0; row < 3; ++row)
+                        for (size_t col = 0; col < 3; ++col)
+                            part.worldTransform[4 * row + col] =
+                                geometry->world.rotate.entry[row][col] *
+                                geometry->world.scale;
+                    part.worldTransform[3] = geometry->world.translate.x;
+                    part.worldTransform[7] = geometry->world.translate.y;
+                    part.worldTransform[11] = geometry->world.translate.z;
                     const auto& runtime = geometry->GetGeometryRuntimeData();
                     part.skinned = bool(runtime.skinInstance);
                     part.dynamic = geometry->AsDynamicTriShape() != nullptr;
@@ -777,6 +786,18 @@ namespace DX12Native
                 { "capturedBytes", current ? current->capturedBytes : 0ull },
                 { "nativeStagedMeshes", current && current->stagedGeometry ?
                     current->stagedGeometry->meshes.size() : size_t{ 0 } },
+                { "nativeRigidStagedMeshes", current && current->stagedGeometry ?
+                    std::count_if(current->stagedGeometry->meshes.begin(),
+                        current->stagedGeometry->meshes.end(),
+                        [](const auto& mesh) { return !mesh->skinned; }) :
+                    std::ptrdiff_t{ 0 } },
+                { "nativeReceiverAttributeReady", current && current->stagedGeometry ?
+                    std::count_if(current->stagedGeometry->meshes.begin(),
+                        current->stagedGeometry->meshes.end(),
+                        [](const auto& mesh) {
+                            return mesh->normalAvailable && mesh->uvAvailable &&
+                                mesh->tangentAvailable;
+                        }) : std::ptrdiff_t{ 0 } },
                 { "nativeEvictedMeshes", current && current->stagedGeometry ?
                     current->stagedGeometry->evictedMeshes : 0u },
                 { "nativeStagedBytes", current && current->stagedGeometry ?
