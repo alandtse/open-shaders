@@ -1610,6 +1610,9 @@ namespace Util
 	bool BeginComboWithAction(const char* label, const char* previewValue, ComboPreviewAction& action,
 		ImGuiComboFlags flags = ImGuiComboFlags_None);
 
+	/** @brief Width needed to show the search icon and hint in a combo popup. */
+	float GetSearchableComboMinimumWidth();
+
 	/** @brief Begins a searchable combo, optionally restoring caller-owned scroll position. Call EndSearchableCombo when true. */
 	bool BeginSearchableCombo(const char* label, const char* previewValue,
 		ImGuiComboFlags flags = ImGuiComboFlags_None, const void* storageAddress = nullptr,
