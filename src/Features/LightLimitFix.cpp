@@ -6,6 +6,7 @@
 #include "Features/LightLimitFix/RadiusMath.h"
 #include "Features/LightLimitFix/SettingsSanitize.h"
 #include "Features/LightLimitFix/ShadowCasterMath.h"
+#include "Features/NativeFeatures.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
@@ -1494,6 +1495,12 @@ void LightLimitFix::UpdateLights()
 
 	lightCount = std::min((uint)lightsData.size(), MAX_LIGHTS);
 	clusteredLightCount.store(lightCount, std::memory_order_relaxed);
+
+	// Export the already-gathered CPU buffer at the existing LLF boundary.
+	// All native allocation, conversion and publication live in NativeLLF.
+	globals::features::nativeLLF.PublishLights(lightsData.data(), lightCount,
+		float3{ eyePositionCached[0].x, eyePositionCached[0].y, eyePositionCached[0].z },
+		globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : globals::state->frameCount);
 
 	{
 		CS_PROFILE_CPU_SCOPE(globals::profiler, "LightLimitFix::UploadLightsCPU");

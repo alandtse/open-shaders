@@ -64,6 +64,11 @@ add_executable(cpp_tests
     test_dynamicnearclip.cpp
     test_camera_reprojection.cpp
     test_dx12_native_shadow.cpp
+    test_native_subcells.cpp
+    test_native_trace_density.cpp
+    test_native_subcell_residency.cpp
+    test_dxgi_native_reserve.cpp
+    test_subcell_composition.cpp
     test_native_lighting_cull.cpp
     test_native_composite_validity.cpp
     test_subrect.cpp

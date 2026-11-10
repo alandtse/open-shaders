@@ -1,7 +1,12 @@
 #include "DX12NativeScene.h"
+#include "Features/DX12NativeScene/CellPackedFile.h"
 #include "RE/B/BSTriShape.h"
+#include "RE/T/TESWorldSpace.h"
 #include "Globals.h"
 #include "TruePBR.h"
+#include "Features/LightLimitFix.h"
+#include "Features/DX12Resources/DX12Resources.h"
+#include "Features/NativeFeatures.h"
 #include <BS_thread_pool.hpp>
 #include "Features/NativeComposite/NativeComposite.h"
 #include "GpuPass.h"
@@ -9,17 +14,67 @@
 #include "ShaderCache.h"
 #include "Utils/DevBenchUx.h"
 #include "Utils/D3D.h"
+#include <algorithm>
 #include <cmath>
+#include <span>
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, BudgetPolicyVersion, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
 {
     // Count each shared BLAS once; a combined scene must not double-count
     // memory merely because multiple TLAS instances refer to one bottom level.
+    // Lightweight, no-decode preflight for already-cached full CELL packages.
+    // This is an estimate of geometry + BLAS result/scratch + shading; DXGI
+    // remains the authority for actual admission. No render-thread file parse.
+    uint64_t EstimateCachedCellFootprint(const std::filesystem::path& directory)
+    {
+        std::error_code error;
+        const auto geom = std::filesystem::file_size(directory / "cell-geometry.rsgp", error);
+        if (error || geom < 16 || geom > DX12Packed::kMaximumPackBytes) return 0;
+        error.clear();
+        const auto shading = std::filesystem::file_size(directory / "cell-shading.rssp", error);
+        if (error || shading < 16 || shading > DX12Packed::kMaximumPackBytes) return 0;
+        constexpr uint64_t kFixedASAndDescriptorEstimate = 64ull * 1024 * 1024;
+        return uint64_t(geom) * 3ull + uint64_t(shading) * 2ull +
+            kFixedASAndDescriptorEstimate;
+    }
+
+    // One logical interior CELL or exterior WRLD owns the native scene.
+    // Exterior CELL changes within a WRLD must not reset BLAS/light generations.
+    struct NativeSpatialScope
+    {
+        DX12ResourceService::CellRequest request;
+        std::filesystem::path directory;
+        uint32_t formID = 0;
+        bool exterior = false;
+    };
+
+    std::optional<NativeSpatialScope> ResolveNativeSpatialScope(
+        RE::PlayerCharacter* player, RE::TESObjectCELL* cell)
+    {
+        if (!player || !cell) return std::nullopt;
+        const bool exterior = cell->IsExteriorCell();
+        auto* world = exterior ? player->GetWorldspace() : nullptr;
+        if (exterior && !world) return std::nullopt;
+        const auto* file = exterior ? world->GetFile(0) : cell->GetFile(0);
+        const auto filename = file ? file->GetFilename() : std::string_view{};
+        const uint32_t local = exterior ? world->GetLocalFormID() : cell->GetLocalFormID();
+        const uint32_t id = exterior ? world->GetFormID() : cell->GetFormID();
+        if (filename.empty() || !local || !id) return std::nullopt;
+        NativeSpatialScope scope{};
+        scope.request = { std::string(filename), local, exterior };
+        scope.directory = std::filesystem::path(
+            "Data/SKSE/Plugins/CommunityShaders/DX12-cache") /
+            scope.request.CacheFamily() / scope.request.plugin / std::format("{:06X}", local);
+        scope.formID = id;
+        scope.exterior = exterior;
+        return scope;
+    }
+
     uint64_t NativeAccelerationResidentBytes(const std::shared_ptr<const DX12Native::TopLevel>& scene)
     {
         if (!scene) return 0;
@@ -183,22 +238,76 @@ namespace
     }
 }
 
+bool DX12NativeScene::OwnsNativeFeatures() const
+{
+	// Ownership is selected by the native scene backend, not the upscaler,
+	// presentation path, frame generation, or per-effect validity checks.
+	// Native Lighting and the independent shadow producer remain separately
+	// runtime-toggleable consumers of this one backend decision.
+	return loaded && settings.Enabled && !transitionOpen && backend.has_value() &&
+		!globals::game::isVR;
+}
+
+bool DX12NativeScene::IsPreparedStaticCaster(RE::BSGeometry& geometry) const
+{
+	if (!globals::features::nativeSCM.IsActive() || geometry.GetGeometryRuntimeData().skinInstance)
+		return false;
+	// Coverage describes actual acceleration instances, never the offline
+	// manifest alone. Unmatched static geometry remains in SCM's raster path.
+	const auto coverage = runtimePreparedCoverage.load(std::memory_order_acquire);
+	const auto published = GetPublishedScene();
+	if (!coverage || coverage->sceneRevision != revision || !published ||
+        runtimeCoverageSource != published->acceleration) return false;
+	const auto* reference = geometry.GetUserData();
+	if (!reference || reference->IsDynamicForm() || geometry.name.empty()) return false;
+	const auto* file = reference->GetFile(0);
+	if (!file) return false;
+	return coverage->Contains(
+		std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename()), geometry.name.c_str());
+}
+
+std::shared_ptr<const ShadowCasterManager::NativeCasterFrame> DX12NativeScene::GetNativeSCMFrame(uint32_t a_frame) const
+{
+	return globals::features::nativeSCM.IsActive() ?
+		ShadowCasterManager::GetNativeCasterFrame(a_frame) : nullptr;
+}
+
+std::optional<DX12NativeScene::NativeLightBatch> DX12NativeScene::GetNativeLLFLights(uint32_t a_frame) const
+{
+	if (!OwnsNativeFeatures()) return std::nullopt;
+	const auto scene = GetPublishedScene();
+	if (!scene) return std::nullopt;
+	const auto merged = globals::features::nativeLLF.BuildUnifiedLights(scene->cell->nativeLights, a_frame);
+	NativeLightBatch batch{};
+	batch.lights = merged.lights;
+	batch.count = merged.count;
+	batch.observed = merged.observed;
+	batch.prepared = merged.prepared;
+	batch.matched = merged.matched;
+	batch.added = merged.added;
+	batch.clustered = merged.clusteredLive;
+	batch.omitted = merged.omitted;
+	batch.overflow = merged.overflow;
+	return batch;
+}
+
 void DX12NativeScene::DrawSettings()
 {
 	std::scoped_lock lock(settingsMutex);
 	if (ImGui::Button("Analyze live PBR candidates")) coverageRequested = true;
-    if (ImGui::Checkbox("Experimental: runtime True PBR materials", &settings.UseLivePBR)) resetRequested = true;
-    ImGui::TextDisabled("Opaque static matches only; unverified sources keep offline fallback.");
-    ImGui::BeginDisabled(!settings.UseLivePBR);
+    ImGui::TextDisabled("Native DX12 ownership: %s", OwnsNativeFeatures() ? "active" : "inactive");
+    ImGui::TextDisabled("NativePBR, NativeLLF and NativeSCM are now independent feature entries.");
+    ImGui::TextDisabled("Native feature ownership follows this DX12 backend, without readiness fallback.");
+    ImGui::BeginDisabled(!globals::features::nativePBR.IsActive());
     if (ImGui::Checkbox("Experimental: import missing loose PBR DDS", &settings.ImportLoosePBR)) resetRequested = true;
     ImGui::EndDisabled();
-    ImGui::BeginDisabled(!settings.UseLivePBR || !settings.ImportLoosePBR);
+    ImGui::BeginDisabled(!globals::features::nativePBR.IsActive() || !settings.ImportLoosePBR);
     if (ImGui::Checkbox("Experimental: use archive-backed DDS fallback", &settings.ImportArchivePBR))
         resetRequested = true;
     ImGui::EndDisabled();
     ImGui::TextDisabled("Worker-only; maximum 8 sources / 32 MiB combined per load.");
     ImGui::TextDisabled("Archive fallback runs only when the loose DDS is absent.");
-    ImGui::BeginDisabled(!settings.UseLivePBR || !settings.ImportLoosePBR);
+    ImGui::BeginDisabled(!globals::features::nativePBR.IsActive() || !settings.ImportLoosePBR);
     ImGui::Checkbox("Experimental: runtime-only material sources (no atlas manifest)",
         &settings.RuntimeOnlyMaterials);
     ImGui::EndDisabled();
@@ -206,6 +315,12 @@ void DX12NativeScene::DrawSettings()
     if (ImGui::Checkbox("Experimental: capture runtime static geometry", &settings.CaptureRuntimeGeometry))
         runtimeGeometryCaptureActive.store(settings.CaptureRuntimeGeometry, std::memory_order_release);
     ImGui::TextDisabled("Copies CPU-backed static mesh bytes only; GPU-only/skinned/dynamic meshes are excluded.");
+    if (ImGui::Checkbox("NativeSCM: capture uncovered rigid caster geometry", &settings.CaptureSCMRigidCasters))
+        runtimeGeometryCaptureActive.store(settings.Enabled &&
+            (settings.CaptureRuntimeGeometry || (settings.CaptureSCMRigidCasters &&
+                globals::features::nativeSCM.IsActive())), std::memory_order_release);
+    ImGui::TextDisabled("SCM supplies CPU geometry; native DX12 owns BLAS, RayQuery and shading.");
+    ImGui::TextDisabled("Skinned, moving and GPU-only casters are not yet native-covered.");
     ImGui::BeginDisabled(!settings.CaptureRuntimeGeometry);
     ImGui::Checkbox("Experimental: persist and menu-prewarm runtime geometry",
         &settings.CacheRuntimeGeometry);
@@ -263,11 +378,15 @@ void DX12NativeScene::DrawSettings()
 			changed = true;
 		}
 		ImGui::TextDisabled("All modes trace at render size; skipped pixels have validity -1.");
-		changed |= ImGui::Checkbox("Shadow all prepared point lights", &settings.ShadowAllLights);
+		ImGui::TextDisabled("Receiver rays generated inside native DX12 RayQuery.");
+        ImGui::TextDisabled("No separate camera-ray pipeline or DX11 compute dispatch.");
+		changed |= ImGui::Checkbox("Shadow all unified native point lights", &settings.ShadowAllLights);
 		if (!settings.ShadowAllLights) {
 			const auto scene = GetPublishedScene();
 			int index = int(settings.ShadowLightIndex);
-			const int maxIndex = scene && !scene->cell->nativeLights.empty() ? int(scene->cell->nativeLights.size()-1) : 0;
+			const auto unified = scene && globals::game::graphicsState ?
+                GetNativeLLFLights(globals::game::graphicsState->GetFrameCount()) : std::nullopt;
+            const int maxIndex = unified ? int(unified->count ? unified->count - 1 : 0) : 0;
 			if (ImGui::SliderInt("Shadow point light index", &index, 0, maxIndex)) { settings.ShadowLightIndex = uint32_t(index); changed = true; }
 		}
 		changed |= ImGui::Checkbox("Stochastic shadow emitter sampling", &settings.ShadowStochastic);
@@ -291,29 +410,72 @@ void DX12NativeScene::DrawSettings()
 		}
 		if (changed) ++shadowControlsRevision;
 	}
-    ImGui::SeparatorText("Prepared scene VRAM budget");
-    const uint32_t pendingSceneBudget = requestedBudget.load();
-    uint32_t selectedSceneBudget = pendingSceneBudget != UINT32_MAX ?
-        pendingSceneBudget : settings.BudgetMB;
-    bool automaticSceneBudget = selectedSceneBudget == 0;
-    if (ImGui::Checkbox("Automatic prepared scene budget (DXGI)", &automaticSceneBudget)) {
-        requestedBudget.store(automaticSceneBudget ? 0u : 2048u);
+    ImGui::SeparatorText("Global native DXGI budget policy");
+    int globalReserve = int(settings.GlobalDXGIHeadroomPercent);
+    if (ImGui::SliderInt("Global DXGI reserve (% of local budget)", &globalReserve, 1, 50)) {
+        settings.GlobalDXGIHeadroomPercent = static_cast<uint32_t>(globalReserve);
+        DX12Native::VideoMemoryBudget::SetHeadroomPercent(settings.GlobalDXGIHeadroomPercent);
+    }
+    ImGui::TextDisabled("Shared by native scene, materials, BLAS/TLAS, lighting, shadows and composite.");
+    ImGui::TextDisabled("Reserve policy changes future admissions; current GPU allocations retire via their fences.");
+    ImGui::SeparatorText("Native subdivision preparation (experimental)");
+    const char* gridModes[]{ "Full scene", "Automatic (after scene estimate)", "Forced grid preparation" };
+    int gridMode = static_cast<int>(settings.SubdivisionMode);
+    if (ImGui::Combo("Subdivision preparation mode", &gridMode, gridModes, 3)) {
+        settings.SubdivisionMode = static_cast<uint32_t>(gridMode);
         resetRequested.store(true, std::memory_order_release);
-        selectedSceneBudget = automaticSceneBudget ? 0u : 2048u;
     }
-    if (!automaticSceneBudget) {
-        int cap = int(selectedSceneBudget);
-        if (ImGui::SliderInt("Manual scene budget (MiB)", &cap, 64, 4096)) {
-            requestedBudget.store(uint32_t(cap));
-            resetRequested.store(true, std::memory_order_release);
-        }
+    if (settings.SubdivisionMode == 1) {
+        ImGui::Checkbox("Screen prepared scene size before automatic subdivision",
+            &settings.AutoGridMemoryScreening);
+        ImGui::TextDisabled("Off: automatic mode immediately selects the grid; on: DXGI-based scene screening.");
+        ImGui::TextDisabled("An automatic grid decision stays latched until scene reset.");
     }
+    int gridUnits = static_cast<int>(settings.SubcellSize / 1024);
+    if (ImGui::SliderInt("Subcell width (x1024 units)", &gridUnits, 2, 16)) {
+        settings.SubcellSize = uint32_t(gridUnits * 1024);
+        resetRequested.store(true, std::memory_order_release);
+    }
+    ImGui::TextDisabled("Exteriors use WRLD-scoped 3x3 geometry; interiors keep CELL-scoped caches.");
+    ImGui::TextDisabled("Grid TLAS publication remains experimental and opt-in.");
+    ImGui::TextDisabled("Outdoor static geometry coverage is still provisional.");
+    if (ImGui::Checkbox("Build isolated grid TLAS for diagnostic testing", &settings.BuildCandidateGridTLAS))
+        resetRequested.store(true, std::memory_order_release);
+    ImGui::BeginDisabled(!settings.BuildCandidateGridTLAS);
+    if (ImGui::Checkbox("Experimental: publish ready grid to native DXR", &settings.UseGridForNativeDXR))
+        resetRequested.store(true, std::memory_order_release);
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Opt-in: complete TLAS + material pair swaps together, with no blank frame.");
+    ImGui::TextDisabled("During grid rebuilds, the last published TLAS remains active.");
+    ImGui::TextDisabled("Otherwise preserve the original full-scene renderer.");
+    ImGui::TextDisabled("Forced + live grid skips expensive full-cell GPU preparation.");
+    {
+        const auto grid = subcellManager.GetDiagnostics();
+        const auto candidate = candidateGridAcceleration.GetScene();
+        const auto bindings = candidateGridBindings.Get();
+        const auto active = GetPublishedScene();
+        ImGui::Text("Grid center: (%lld, %lld) | loaded %u/9 | loading %u",
+            static_cast<long long>(grid.value("centerX", int64_t{0})),
+            static_cast<long long>(grid.value("centerY", int64_t{0})),
+            grid.value("resident", 0u), grid.value("loading", 0u));
+        ImGui::Text("Grid CPU snapshot: %zu instances | %llu MiB",
+            static_cast<size_t>(grid.value("candidateInstances", uint64_t{0})),
+            static_cast<unsigned long long>(grid.value("candidateBytes", uint64_t{0}) /
+                DX12Native::VideoMemoryBudget::kMiB));
+        ImGui::Text("TLAS: %s | materials: %s | native DXR: %s",
+            candidate && candidate->scope.policy == 3 ? "ready" : "pending",
+            candidate && bindings && bindings->scene == candidate ? "ready" : "pending",
+            active && active->acceleration && active->acceleration->scope.policy == 3 ?
+                "active grid" : "full scene / raster fallback");
+    }
+    ImGui::SeparatorText("Dynamic DXGI VRAM budgeting");
+    ImGui::TextDisabled("Scene and frame-pool memory follow live DXGI; no manual ceilings.");
     const auto budgetInfo = GetDiagnostics().value("preparedSceneBudget", json::object());
     ImGui::Text("DXGI local usage: %.1f / %.1f MiB | effective scene allowance: %.1f MiB",
         double(budgetInfo.value("localUsageBytes", uint64_t{0})) / (1024.0 * 1024.0),
         double(budgetInfo.value("localBudgetBytes", uint64_t{0})) / (1024.0 * 1024.0),
         double(budgetInfo.value("effectiveBytes", uint64_t{0})) / (1024.0 * 1024.0));
-    ImGui::TextDisabled("Budget applies to prepared geometry, acceleration and material stages. Zero selects automatic DXGI headroom.");
+    ImGui::TextDisabled("Prepared geometry, BLAS/TLAS, frames and materials honor the shared DXGI reserve.");
     ImGui::SeparatorText("Prepared DX12 CELL loading");
     if (ImGui::Button("Reload prepared CELL from cache"))
         resetRequested.store(true, std::memory_order_release);
@@ -355,18 +517,7 @@ void DX12NativeScene::DrawSettings()
         ImGui::TextDisabled("Geometry and acceleration are reported independently of material readiness.");
     }
 	ImGui::TextUnformatted(failure.empty() ? "Prepared static scenes" : failure.c_str());
-	const uint32_t requestedFrame = requestedFrameBudget.load();
-	uint32_t frameLimit = requestedFrame != UINT32_MAX ? requestedFrame : settings.FrameBudgetMB;
-	bool automatic = frameLimit == 0;
-	if (ImGui::Checkbox("Automatic native frame VRAM budget (DXGI)", &automatic)) {
-		frameLimit = automatic ? 0u : 512u;
-		requestedFrameBudget = frameLimit;
-	}
-	if (!automatic) {
-		int manual = int(frameLimit);
-		if (ImGui::SliderInt("Native frame-pool limit (MiB)", &manual, 64, 4096))
-			requestedFrameBudget = uint32_t(manual);
-	}
+	ImGui::TextDisabled("Native frame-pool budgeting: automatic DXGI only.");
 	ImGui::TextDisabled("Pool allocations respect DXGI headroom; independent of the prepared-scene budget.");
 	const auto requestedBatch = requestedMaterialBatch.load();
 	int batchMB = int(requestedBatch ? requestedBatch : settings.MaterialBatchMB);
@@ -377,22 +528,30 @@ void DX12NativeScene::DrawSettings()
 void DX12NativeScene::LoadSettings(json& a_json)
 {
 	const Settings selected = a_json;
-    // Configs from before automatic budgeting stored the old 512 MiB
-    // default. Migrate that default once, preserving explicit new overrides.
-    const uint32_t restoredSceneBudget =
-        !a_json.contains("BudgetPolicyVersion") && selected.BudgetMB == 512 ?
-        0u : selected.BudgetMB;
+    // Stored user-selected memory ceilings are retired; only DXGI is authoritative.
+    const auto reservePercent = std::clamp(selected.GlobalDXGIHeadroomPercent, 1u, 50u);
+    DX12Native::VideoMemoryBudget::SetHeadroomPercent(reservePercent);
 	// A compositor requesting the independent layer takes precedence over the
 	// scene configuration's possibly older disabled producer state.
 	if (requestedEnabled.load() != 1) requestedEnabled = selected.Enabled ? 1 : 0;
 	if (requestedShadow.load() != 1) requestedShadow = selected.ShadowMask ? 1 : 0;
-	requestedBudget = restoredSceneBudget ? std::clamp(restoredSceneBudget, 64u, 4096u) : 0u;
-	requestedFrameBudget = selected.FrameBudgetMB ? std::clamp(selected.FrameBudgetMB, 64u, 4096u) : 0u;
+	requestedBudget = 0u;
+	requestedFrameBudget = 0u;
 	requestedMaterialBatch = DX12Native::ClampMaterialBatchMB(selected.MaterialBatchMB);
 	std::scoped_lock lock(settingsMutex);
 	const auto clamp = [](float value, float fallback, float low, float high) { return std::isfinite(value) ? std::clamp(value, low, high) : fallback; };
 	++shadowControlsRevision;
 	settings.UseLivePBR = selected.UseLivePBR;
+	settings.NativePBR = selected.NativePBR;
+	settings.NativeLLF = selected.NativeLLF;
+	settings.NativeSCM = selected.NativeSCM;
+    settings.CaptureSCMRigidCasters = selected.CaptureSCMRigidCasters;
+    settings.GlobalDXGIHeadroomPercent = reservePercent;
+    settings.SubdivisionMode = std::min(selected.SubdivisionMode, 2u);
+    settings.AutoGridMemoryScreening = selected.AutoGridMemoryScreening;
+    settings.SubcellSize = std::clamp(selected.SubcellSize / 1024, 2u, 16u) * 1024u;
+    settings.BuildCandidateGridTLAS = selected.BuildCandidateGridTLAS;
+    settings.UseGridForNativeDXR = selected.UseGridForNativeDXR;
         settings.ImportLoosePBR = selected.ImportLoosePBR;
         settings.ImportArchivePBR = selected.ImportArchivePBR;
         settings.RuntimeOnlyMaterials = selected.RuntimeOnlyMaterials;
@@ -414,8 +573,8 @@ void DX12NativeScene::SaveSettings(json& a_json)
 	auto selected = settings;
 	if (const auto enabled = requestedEnabled.load(); enabled >= 0) selected.Enabled = enabled != 0;
 	if (const auto shadowEnabled = requestedShadow.load(); shadowEnabled >= 0) selected.ShadowMask = shadowEnabled != 0;
-	if (const auto budget = requestedBudget.load(); budget != UINT32_MAX) selected.BudgetMB = budget;
-	if (const auto frameBudget = requestedFrameBudget.load(); frameBudget != UINT32_MAX) selected.FrameBudgetMB = frameBudget;
+	selected.BudgetMB = 0;
+	selected.FrameBudgetMB = 0;
 	if (const auto batch = requestedMaterialBatch.load(); batch) selected.MaterialBatchMB = batch;
 	a_json = selected;
 }
@@ -427,6 +586,7 @@ void DX12NativeScene::RestoreDefaultSettings()
 	requestedFrameBudget = Settings{}.FrameBudgetMB;
 	requestedMaterialBatch = Settings{}.MaterialBatchMB;
 	{ std::scoped_lock lock(settingsMutex); settings = Settings{}; ++shadowControlsRevision; }
+    DX12Native::VideoMemoryBudget::SetHeadroomPercent(DX12Native::VideoMemoryBudget::kDefaultHeadroomPercent);
 	resetRequested = true;
 }
 void DX12NativeScene::OnRuntimeDisabled() { resetRequested = true; }
@@ -441,6 +601,23 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_open)
 }
 void DX12NativeScene::GameLoaded() { resetRequested = true; }
 
+
+void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry)
+{
+    // Acquire only stable CPU-backed mesh inputs in the already-active SCM
+    // cull pass. No raster lighting calculation is performed by this bridge.
+    // Actual RT coverage is granted only by the published TLAS.
+    if (!runtimeGeometryCaptureActive.load(std::memory_order_acquire) ||
+        !settings.CaptureSCMRigidCasters || geometry.GetGeometryRuntimeData().skinInstance ||
+        geometry.name.empty()) return;
+    auto* reference = geometry.GetUserData();
+    if (!reference || reference->IsDynamicForm()) return;
+    const auto* source = reference->GetFile(0);
+    if (!source || source->GetFilename().empty()) return;
+    ObserveRuntimeGeometry(&geometry,
+        std::format("{:06X}:{}", reference->GetLocalFormID(), source->GetFilename()),
+        geometry.name.c_str());
+}
 
 void DX12NativeScene::ObserveRuntimeGeometry(RE::BSGeometry* geometry,
     const std::string& reference, const std::string& shape)
@@ -513,17 +690,27 @@ void DX12NativeScene::NotifyPreparedCellPublished(std::string_view plugin, uint3
 
 uint64_t DX12NativeScene::SceneMemoryLimit(uint64_t trackedBytes)
 {
-    if (!backend) return uint64_t(settings.BudgetMB ? settings.BudgetMB : 512u) *
-        DX12Native::VideoMemoryBudget::kMiB;
-    const uint64_t manualBytes = uint64_t(settings.BudgetMB) *
-        DX12Native::VideoMemoryBudget::kMiB;
+    if (!backend) return 0;
     preparedSceneBudgetStatus = preparedSceneVideoMemory.Query(
-        backend->d3d12Device.get(), trackedBytes, manualBytes);
+        backend->d3d12Device.get(), trackedBytes, 0);
     return preparedSceneBudgetStatus.effectiveBytes;
 }
 
 void DX12NativeScene::ResetScene()
 {
+    // NativeLLF generations are cell-scoped. Do not retain old counts or
+    // shadow-slot identities after new cells, loading screens or scene resets.
+    globals::features::nativeLLF.ClearCapturedLights();
+    subcellManager.Reset();
+    candidateGridAcceleration.Reset();
+    candidateGridBindings.Reset();
+    requestedCandidateMaterialScene.reset();
+    candidateMaterialAllowance = 0;
+    lastSubmittedGridCell.reset();
+    stableGridPublished.reset();
+    stableGridCenter = {};
+    autoGridDecisionLatched = false;
+    hasPreviousPlayer = false;
 	++revision;
 	cellID = 0;
 	submitted = false;
@@ -603,12 +790,15 @@ void DX12NativeScene::EarlyPrepass()
 		std::scoped_lock lock(settingsMutex);
 		if (const auto enabled = requestedEnabled.exchange(-1); enabled >= 0) settings.Enabled = enabled != 0;
 		if (const auto shadowEnabled = requestedShadow.exchange(-1); shadowEnabled >= 0) settings.ShadowMask = shadowEnabled != 0;
-		if (const auto budget = requestedBudget.exchange(UINT32_MAX); budget != UINT32_MAX) settings.BudgetMB = budget;
-		if (const auto frameBudget = requestedFrameBudget.exchange(UINT32_MAX); frameBudget != UINT32_MAX) settings.FrameBudgetMB = frameBudget;
+		requestedBudget.store(UINT32_MAX, std::memory_order_relaxed);
+		requestedFrameBudget.store(UINT32_MAX, std::memory_order_relaxed);
+        settings.BudgetMB = 0;
+        settings.FrameBudgetMB = 0;
 		if (const auto batch = requestedMaterialBatch.exchange(0); batch) settings.MaterialBatchMB = batch;
 	}
 	auto* cell = globals::game::player ? globals::game::player->GetParentCell() : nullptr;
-	const auto currentID = cell ? cell->GetFormID() : 0;
+    const auto spatialScope = ResolveNativeSpatialScope(globals::game::player, cell);
+    const auto currentID = spatialScope ? spatialScope->formID : 0;
     // Publication can complete after an earlier missing-cache attempt.
     // Consume the matching notification on the scene thread, not the companion worker.
     if (const auto notification = pendingPreparedCellReload.exchange(0, std::memory_order_acq_rel);
@@ -622,15 +812,45 @@ void DX12NativeScene::EarlyPrepass()
 		raster.ReloadShader();
 		shadow.ReloadShaders();
 	}
-	runtimeGeometryCaptureActive.store(settings.Enabled && settings.CaptureRuntimeGeometry,
+	const bool captureNativeSCM = settings.CaptureSCMRigidCasters &&
+        globals::features::nativeSCM.IsActive();
+    runtimeGeometryCaptureActive.store(settings.Enabled &&
+        (settings.CaptureRuntimeGeometry || captureNativeSCM),
         std::memory_order_release);
     if (resetRequested.exchange(false)) ResetScene();
+    // Interior requests use CELL identity; exterior requests retain WRLD
+    // identity across changing exterior CELLs. Companion runs asynchronously.
+    if (settings.Enabled && !transitionOpen && spatialScope) {
+        const auto position = globals::game::player->GetPosition();
+        const auto estimate = spatialScope->exterior ? 0 :
+            EstimateCachedCellFootprint(spatialScope->directory);
+        if (backend) SceneMemoryLimit();
+        // A scene-size decision is made once per worldspace/scene generation;
+        // transient DXGI usage fluctuations must not toggle between renderers.
+        if (settings.SubdivisionMode == 1 && (!settings.AutoGridMemoryScreening ||
+            (estimate && preparedSceneBudgetStatus.dxgiAvailable &&
+                estimate > preparedSceneBudgetStatus.effectiveBytes)))
+            autoGridDecisionLatched = true;
+        const bool grid = (spatialScope->exterior && settings.SubdivisionMode != 0) ||
+            settings.SubdivisionMode == 2 ||
+            (settings.SubdivisionMode == 1 && autoGridDecisionLatched);
+        if (grid) {
+            const double dx = hasPreviousPlayer ? position.x - previousPlayerX : 0.0;
+            const double dy = hasPreviousPlayer ? position.y - previousPlayerY : 0.0;
+            globals::features::dx12Resources.AdvanceStreamingScene(spatialScope->request,
+                settings.SubcellSize, position.x, position.y, dx, dy);
+        } else if (!spatialScope->exterior)
+            globals::features::dx12Resources.AdvanceAutomaticInterior(spatialScope->request);
+        previousPlayerX = position.x;
+        previousPlayerY = position.y;
+        hasPreviousPlayer = true;
+    }
     // This CPU-only cache scheduler operates before the native scene/cell
     // early returns, so the menu can prewarm cached meshes without a TLAS.
     // All disk I/O and decoding remain on its background worker.
     if (settings.CacheRuntimeGeometry)
         runtimeGeometryCache.Advance(!cell && !transitionOpen,
-            settings.CaptureRuntimeGeometry && cell && !transitionOpen &&
+            (settings.CaptureRuntimeGeometry || captureNativeSCM) && cell && !transitionOpen &&
                 runtimePreparedCoverage.load(std::memory_order_acquire) ?
                 &runtimeGeometry : nullptr);
 	if (shadowResetRequested.exchange(false)) shadow.Reset();
@@ -642,10 +862,10 @@ void DX12NativeScene::EarlyPrepass()
 		backend = GraphicsBackend::Create(globals::d3d::device, globals::d3d::context, failure);
 		if (!backend) return;
 	}
-	if (!cell || !cell->IsInteriorCell()) {
-		if (cellID) ResetScene();
-		return;
-	}
+    if (!spatialScope || (spatialScope->exterior && settings.SubdivisionMode == 0)) {
+        if (cellID) ResetScene();
+        return;
+    }
 	if (cellID != currentID) {
 		ResetScene();
 		cellID = currentID;
@@ -654,7 +874,7 @@ void DX12NativeScene::EarlyPrepass()
     // Runtime geometry shares actual DXGI headroom and the scene's manual
     // ceiling with prepared geometry, completed BLAS/TLAS and materials.
     // Do not allocate a duplicate runtime-only preview acceleration scene.
-    if (settings.CaptureRuntimeGeometry && currentSceneStableAcceleration &&
+    if ((settings.CaptureRuntimeGeometry || captureNativeSCM) && currentSceneStableAcceleration &&
         currentSceneStableAcceleration->scope.scene == revision &&
         runtimePreparedCoverage.load(std::memory_order_acquire) &&
         runtimeGeometry.Count() != 0) {
@@ -681,22 +901,122 @@ void DX12NativeScene::EarlyPrepass()
             settings.CacheRuntimeGeometry ? runtimeGeometryCache.GetPrewarmed() : nullptr,
             currentCell);
     }
-	if (!prepared.Requested()) {
+    // Prepare independently resident subcell GPU buffers and optional
+    // diagnostic TLAS without changing the authoritative live renderer.
+    if (settings.SubdivisionMode != 0) {
+        const auto estimated = spatialScope->exterior ? 0 :
+            EstimateCachedCellFootprint(spatialScope->directory);
+        if (settings.SubdivisionMode == 1 && (!settings.AutoGridMemoryScreening ||
+            (estimated && preparedSceneBudgetStatus.dxgiAvailable &&
+                estimated > preparedSceneBudgetStatus.effectiveBytes)))
+            autoGridDecisionLatched = true;
+        const bool gridSelected = spatialScope->exterior ||
+            settings.SubdivisionMode == 2 ||
+            (settings.SubdivisionMode == 1 && autoGridDecisionLatched);
+        if (gridSelected) {
+            const auto& position = globals::game::player->GetPosition();
+            subcellManager.Advance(*backend, spatialScope->directory,
+                spatialScope->request.Key(), revision, settings.SubcellSize,
+                position.x, position.y, 0.0, 0.0,
+                0ull);
+            if (settings.BuildCandidateGridTLAS) {
+                const auto candidate = subcellManager.GetCombined();
+                if (candidate && candidate->snapshot && candidate != lastSubmittedGridCell &&
+                    (candidateGridAcceleration.Finished() || !lastSubmittedGridCell)) {
+                    candidateGridAcceleration.Start(*backend, candidate->snapshot, candidate->geometries,
+                        0ull);
+                    lastSubmittedGridCell = candidate;
+                }
+                candidateGridAcceleration.Advance();
+                // Canary path also builds a matching descriptor/material table.
+                // Never publish the TLAS alone: Native Lighting and DXR shadow
+                // queries need an exact matching binding set.
+                const auto candidateScene = candidateGridAcceleration.GetScene();
+                if (candidateScene && candidateScene->scope.scene == revision &&
+                    candidateScene->scope.policy == 3) {
+                    if (requestedCandidateMaterialScene != candidateScene) {
+                        requestedCandidateMaterialScene = candidateScene;
+                        const uint64_t occupied =
+                            (lastSubmittedGridCell ? lastSubmittedGridCell->bytes : 0) +
+                            NativeAccelerationResidentBytes(candidateScene);
+                        const uint64_t allowance = SceneMemoryLimit(occupied);
+                        candidateMaterialAllowance = allowance > occupied ? allowance - occupied : 0;
+                    }
+                    if (candidateMaterialAllowance) {
+                        candidateGridBindings.Request(*backend, candidateScene,
+                            candidateMaterialAllowance,
+                            uint64_t(settings.MaterialBatchMB) * DX12Native::VideoMemoryBudget::kMiB,
+                            {}, false, false, false);
+                    }
+                }
+                candidateGridBindings.Advance();
+                // Never expose a half-ready generation: promote the complete
+                // source/TLAS/material triple at once. Keep the last valid
+                // triple alive while new geometry and descriptors build.
+                const auto readyCell = subcellManager.GetCombined();
+                const auto readyTLAS = candidateGridAcceleration.GetScene();
+                const auto readyBindings = candidateGridBindings.Get();
+                const auto progress = subcellManager.GetDiagnostics();
+                const auto center = DX12Native::SpatialSubcells::FromPosition(
+                    position.x, position.y, settings.SubcellSize);
+                if (readyCell && readyCell == lastSubmittedGridCell &&
+                    readyCell->snapshot && readyTLAS && readyBindings &&
+                    readyTLAS->scope.scene == revision &&
+                    readyTLAS->scope.policy == 3 &&
+                    readyTLAS->scope == readyCell->snapshot->scope &&
+                    readyBindings->scene == readyTLAS &&
+                    progress.value("centerX", int64_t{INT64_MIN}) == center.x &&
+                    progress.value("centerY", int64_t{INT64_MIN}) == center.y &&
+                    (!stableGridPublished ||
+                        stableGridPublished->acceleration != readyTLAS ||
+                        stableGridPublished->materials != readyBindings)) {
+                    stableGridPublished = PublishedScene{
+                        readyCell, readyTLAS, readyBindings, cellID, revision };
+                    stableGridCenter = center;
+                    ++gridHandoffs;
+                }
+            } else if (lastSubmittedGridCell) {
+                candidateGridAcceleration.Reset();
+                candidateGridBindings.Reset();
+                requestedCandidateMaterialScene.reset();
+                candidateMaterialAllowance = 0;
+                lastSubmittedGridCell.reset();
+            }
+        }
+    }
+    // Forced streaming with an explicitly enabled live-grid canary must
+    // NOT upload the entire CELL merely to decide where to subdivide.
+    // Raster continues while partial grid assets become available.
+    // In diagnostic/auto mode the established complete-scene renderer
+    // remains the normal fallback.
+    const auto projected = spatialScope->exterior ? 0 :
+        EstimateCachedCellFootprint(spatialScope->directory);
+    if (settings.SubdivisionMode == 1 && (!settings.AutoGridMemoryScreening ||
+        (projected && preparedSceneBudgetStatus.dxgiAvailable &&
+            projected > preparedSceneBudgetStatus.effectiveBytes)))
+        autoGridDecisionLatched = true;
+    const bool autoGrid = settings.SubdivisionMode == 1 && autoGridDecisionLatched;
+    // No full-WRLD package exists. Exteriors must never load a single
+    // exterior CELL and accidentally claim it covers the 3x3 worldspace.
+    const bool exclusiveGrid = spatialScope->exterior ||
+        ((settings.SubdivisionMode == 2 || autoGrid) &&
+            settings.BuildCandidateGridTLAS && settings.UseGridForNativeDXR);
+	if (!exclusiveGrid && !prepared.Requested()) {
 		const auto* source = cell->GetFile(0);
 		if (!source) { failure = "Cell source unavailable"; return; }
 		const auto local = cell->GetLocalFormID();
 		const auto key = std::format("{:06X}:{}", local, source->GetFilename());
 		const auto directory = std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") / source->GetFilename() / std::format("{:06X}", local);
-        const uint64_t manualBytes = uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB;
+        const uint64_t manualBytes = 0; // DXGI only.
         SceneMemoryLimit();
 		prepared.Request(*backend, directory, key, revision, manualBytes, manualBytes);
 	}
-	if (!submitted) {
+	if (!exclusiveGrid && !submitted) {
 		if (auto scene = prepared.GetCell()) {
             const uint64_t sceneAllowance = SceneMemoryLimit(scene->bytes);
             if (sceneAllowance > scene->bytes) {
                 acceleration.Start(*backend, scene->snapshot, scene->geometries,
-                    uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB);
+                    0ull);
                 submitted = true;
             }
 		}
@@ -710,7 +1030,13 @@ void DX12NativeScene::EarlyPrepass()
     // Reuse the runtime's existing reference/shape identities, but only skip
     // geometries actually admitted to a completed production TLAS. Offline
     // omissions and preview-only candidates must remain discoverable.
-    if (auto current = acceleration.GetScene(); current &&
+    // Match NativeSCM's static-caster coverage to the scene that Native DXR
+    // actually exposes. When a partial grid becomes active, full-CELL TLAS
+    // membership must no longer suppress raster fallback for absent casters.
+    const auto currentPublished = GetPublishedScene();
+    const auto coverageCandidate = currentPublished ?
+        currentPublished->acceleration : acceleration.GetScene();
+    if (auto current = coverageCandidate; current &&
         current->scope.scene == revision && current != runtimeCoverageSource) {
         auto covered = std::make_shared<DX12Native::PreparedRuntimeCoverage>();
         covered->sceneRevision = revision;
@@ -726,12 +1052,12 @@ void DX12NativeScene::EarlyPrepass()
     if (auto scene = acceleration.GetScene(); scene &&
         shadow.RetireScenesExcept(currentSceneStableAcceleration ? currentSceneStableAcceleration : scene) &&
         retiredMaterials.expired()) {
-        if (settings.UseLivePBR && globals::game::graphicsState) {
+        if (globals::features::nativePBR.IsActive() && globals::game::graphicsState) {
             auto& pbr = globals::features::truePBR;
             const uint64_t currentRevision = pbr.nativeRegistry.Revision();
             const uint32_t currentFrame = globals::game::graphicsState->GetFrameCount();
             if ((currentRevision != livePbrRevision || !livePbrSource) &&
-                (!livePbrLastCaptureFrame || uint32_t(currentFrame - livePbrLastCaptureFrame) >= 120)) {
+                livePbrLastCaptureFrame != currentFrame) {
                 livePbrLastCaptureFrame = currentFrame;
                 auto recipes = pbr.GetNativeRecipes();
                 if (recipes && recipes->batchesComplete) {
@@ -762,9 +1088,9 @@ void DX12NativeScene::EarlyPrepass()
         if (materialRequestBudgetBytes)
             materialBindings.Request(*backend, scene, materialRequestBudgetBytes,
             uint64_t(settings.MaterialBatchMB) * 1024 * 1024, livePbrSource,
-            settings.UseLivePBR && settings.ImportLoosePBR,
-            settings.UseLivePBR && settings.ImportLoosePBR && settings.ImportArchivePBR,
-            settings.UseLivePBR && settings.ImportLoosePBR && settings.RuntimeOnlyMaterials);
+            globals::features::nativePBR.IsActive() && settings.ImportLoosePBR,
+            globals::features::nativePBR.IsActive() && settings.ImportLoosePBR && settings.ImportArchivePBR,
+            globals::features::nativePBR.IsActive() && settings.ImportLoosePBR && settings.RuntimeOnlyMaterials);
     }
 	materialBindings.Advance();
     if (auto completed = acceleration.GetScene(); completed &&
@@ -777,7 +1103,7 @@ void DX12NativeScene::EarlyPrepass()
     }
     // Reuse the production worker's completed BLAS cache. The previous
     // production TLAS remains retained independently during rebuilding.
-    if (settings.CaptureRuntimeGeometry && acceleration.Finished() &&
+    if ((settings.CaptureRuntimeGeometry || captureNativeSCM) && acceleration.Finished() &&
         currentSceneStableAcceleration &&
         currentSceneStableAcceleration->scope.scene == revision) {
         if (auto combined = runtimeGeometryPrepare.GetCurrentSceneCell();
@@ -790,7 +1116,7 @@ void DX12NativeScene::EarlyPrepass()
                 NativeAccelerationResidentBytes(currentSceneStableAcceleration));
             if (sceneAllowance > combined->bytes) {
                 acceleration.Start(*backend, combined->snapshot, combined->geometries,
-                    uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB);
+                    0ull);
             }
         }
     }
@@ -834,15 +1160,17 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 	if (!scene) { shadowStatus = "Prepared scene or acceleration structure unavailable"; return; }
 	const auto dynamicSize = Util::ConvertToDynamic(globals::state->screenSize);
 	const std::array<uint32_t, 2> size{ uint32_t(dynamicSize.x), uint32_t(dynamicSize.y) };
-	const auto& lights = scene->cell->nativeLights;
-	if (lights.empty() || (shadowSettings.ShadowAllLights && lights.size() > 32) ||
+	const auto nativeLights = GetNativeLLFLights(frame);
+	const auto& preparedLights = scene->cell->nativeLights;
+	const std::span<const DX12Native::PreparedPointLight> lights = nativeLights ?
+		std::span<const DX12Native::PreparedPointLight>(nativeLights->lights.data(), nativeLights->count) :
+		std::span<const DX12Native::PreparedPointLight>(preparedLights);
+	if (lights.empty() || (shadowSettings.ShadowAllLights && lights.size() > DX12Native::kMaximumNativePointLights) ||
 		(!shadowSettings.ShadowAllLights && shadowSettings.ShadowLightIndex >= lights.size())) {
-		shadowStatus = "Selected shadow lights unavailable or exceed 32";
+		shadowStatus = "Selected native shadow lights unavailable or exceed 64";
 		return;
 	}
-	const auto selectedLights = shadowSettings.ShadowAllLights ?
-		std::span<const DX12Native::PreparedPointLight>(lights) :
-		std::span<const DX12Native::PreparedPointLight>(lights).subspan(shadowSettings.ShadowLightIndex, 1);
+	const auto selectedLights = shadowSettings.ShadowAllLights ? lights : lights.subspan(shadowSettings.ShadowLightIndex, 1);
 	const DX12Native::ShadowTraceControls controls{
 		shadowSettings.ShadowReachMultiplier, shadowSettings.ShadowFalloffFraction,
 		shadowSettings.ShadowFalloffExponent, shadowSettings.ShadowEmitterRadius,
@@ -850,7 +1178,7 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 		shadowSettings.ShadowTraceDensityMode
 	};
 	shadow.Dispatch(*backend, scene->acceleration, scene->materials, selectedLights, camera, size, frame,
-		uint64_t(shadowSettings.FrameBudgetMB) * 1024 * 1024, controls);
+		0ull, controls);
 	shadowStatus = shadow.Status();
 }
 
@@ -858,7 +1186,7 @@ std::optional<DX12NativeScene::SceneFrame> DX12NativeScene::GetSceneFrame(uint32
 {
 	if (!loaded || !settings.Enabled || transitionOpen || !globals::game::graphicsState || globals::game::graphicsState->GetFrameCount() != a_frame)
 		return std::nullopt;
-	SceneFrame frame{ a_frame, raster.Get(a_frame), GetPublishedScene(), GetShadowMask(a_frame) };
+	SceneFrame frame{ a_frame, raster.Get(a_frame), GetPublishedScene(), GetShadowMask(a_frame), GetNativeSCMFrame(a_frame) };
 	if (!frame.raster && !frame.prepared && !frame.shadow) return std::nullopt;
 	return frame;
 }
@@ -892,7 +1220,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 			if (std::isfinite(errorSquared) && errorSquared <= 0.25f) camera = &cached;
 		}
 	}
-	raster.Capture(*backend, inputs, Util::GetCurrentSceneDepthSRV(false), camera, frame, uint64_t(settings.FrameBudgetMB) * 1024 * 1024);
+	raster.Capture(*backend, inputs, Util::GetCurrentSceneDepthSRV(false), camera, frame, 0ull);
 	// Earlier shadow hooks may precede the current-frame main camera.
 	// Retry only when the same-frame producer has not already published a mask;
 	// DispatchShadow retains the camera, cell, material, scope and fence guards.
@@ -907,7 +1235,16 @@ std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScen
 {
 	if (!loaded || !settings.Enabled || transitionOpen) return std::nullopt;
 	auto* cell = globals::game::player ? globals::game::player->GetParentCell() : nullptr;
-	if (!cell || cell->GetFormID() != cellID) return std::nullopt;
+    const auto scope = ResolveNativeSpatialScope(globals::game::player, cell);
+    if (!scope || scope->formID != cellID) return std::nullopt;
+    if (settings.SubdivisionMode != 0 && settings.BuildCandidateGridTLAS &&
+        settings.UseGridForNativeDXR && stableGridPublished &&
+        stableGridPublished->cellID == cellID &&
+        stableGridPublished->revision == revision &&
+        stableGridPublished->cell && stableGridPublished->acceleration &&
+        stableGridPublished->materials &&
+        stableGridPublished->materials->scene == stableGridPublished->acceleration)
+        return stableGridPublished;  // Last complete generation, even while recentering.
 	auto data = prepared.GetCell();
 	auto scene = currentSceneStableAcceleration ? currentSceneStableAcceleration : acceleration.GetScene();
 	if (!data || !scene || scene->scope.scene != revision) return std::nullopt;
@@ -920,7 +1257,49 @@ void DX12NativeScene::PublishDiagnostics()
 {
 	const auto bindings = materialBindings.Get();
 	const auto retainedPages = DX12Native::RetainedMaterialPageBytes();
-	json snapshot{ { "enabled", settings.Enabled }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure },
+	json snapshot{ { "enabled", settings.Enabled }, { "nativeOwnership", OwnsNativeFeatures() },
+        { "globalDXGIHeadroomPercent", DX12Native::VideoMemoryBudget::HeadroomPercent() },
+        { "subdivisionMode", settings.SubdivisionMode }, { "subcellSize", settings.SubcellSize },
+        { "autoGridMemoryScreening", settings.AutoGridMemoryScreening },
+        { "autoGridDecisionLatched", autoGridDecisionLatched },
+        { "stableGridTLAS", bool(stableGridPublished) },
+        { "gridHandoffs", gridHandoffs },
+        { "stableGridCenter", { stableGridCenter.x, stableGridCenter.y } },
+        { "sceneScope", [&]() {
+            auto* player = globals::game::player;
+            const auto scope = ResolveNativeSpatialScope(player,
+                player ? player->GetParentCell() : nullptr);
+            return scope ? scope->request.ScopedKey() : std::string("unavailable");
+        }() },
+        { "useGridForNativeDXR", settings.UseGridForNativeDXR },
+        { "subcellGpuLoader", subcellManager.GetDiagnostics() },
+        { "candidateGridTLAS", candidateGridAcceleration.GetDiagnostics() },
+        { "candidateGridMaterialReady", [&]() {
+            const auto scene = candidateGridAcceleration.GetScene();
+            const auto bindings = candidateGridBindings.Get();
+            return scene && bindings && bindings->scene == scene;
+        }() },
+        { "candidateGridMaterialFailure", candidateGridBindings.Failure() },
+        { "candidateGridMaterialBudgetBytes", candidateMaterialAllowance },
+        { "publishedGridToNativeDXR", [&]() {
+            const auto selection = GetPublishedScene();
+            return selection && selection->acceleration &&
+                selection->acceleration->scope.policy == 3;
+        }() },
+		{ "nativePBR", globals::features::nativePBR.IsActive() }, { "nativeLLF", globals::features::nativeLLF.IsActive() },
+		{ "nativeSCM", globals::features::nativeSCM.IsActive() },
+		{ "nativeLightSource", OwnsNativeFeatures() ? "prepared-priority-unified" : "prepared-cell" },
+		{ "nativeSCMCasters", globals::game::graphicsState ?
+			([&] { const auto snapshot = GetNativeSCMFrame(globals::game::graphicsState->GetFrameCount());
+				return snapshot ? snapshot->casters.size() : size_t{ 0 }; })() : size_t{ 0 } },
+		{ "nativeSCMMovers", globals::game::graphicsState ?
+			([&] { const auto snapshot = GetNativeSCMFrame(globals::game::graphicsState->GetFrameCount());
+				return snapshot ? std::ranges::count_if(snapshot->casters, [](const auto& caster) { return caster.dynamic; }) : std::ptrdiff_t{ 0 }; })() : std::ptrdiff_t{ 0 } },
+		{ "nativeSCMRetiredStatic", globals::game::graphicsState ?
+			([&] { const auto snapshot = GetNativeSCMFrame(globals::game::graphicsState->GetFrameCount());
+				return snapshot ? snapshot->preparedStaticRetired : 0u; })() : 0u },
+		{ "nativeLightCount", globals::game::graphicsState ?
+			(GetNativeLLFLights(globals::game::graphicsState->GetFrameCount()).value_or(NativeLightBatch{}).count) : 0u }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure },
 		{ "raster", raster.GetDiagnostics() }, { "shadowStage", shadowStage }, { "shadowStatus", shadowStatus }, { "shadow", shadow.GetDiagnostics() },
 		{ "shadowOpaqueRetryAttempts", shadowOpaqueRetryAttempts }, { "shadowOpaqueRetryRecovered", shadowOpaqueRetryRecovered },
 		{ "shadowTraceControls", { { "revision", shadowControlsRevision },
@@ -929,7 +1308,10 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "reachMultiplier", settings.ShadowReachMultiplier }, { "falloffFraction", settings.ShadowFalloffFraction },
 			{ "falloffExponent", settings.ShadowFalloffExponent }, { "distanceFade", settings.ShadowDistanceFade },
 			{ "normalInfluence", settings.ShadowNormalInfluence }, { "traceDensityMode", settings.ShadowTraceDensityMode } } },
-		{ "runtimeGeometry", { { "capturedMeshes", runtimeGeometry.Count() },
+		{ "runtimeGeometry", { { "scmRigidCaptureEnabled", settings.CaptureSCMRigidCasters },
+            { "scmNativeCollectionActive", runtimeGeometryCaptureActive.load(std::memory_order_acquire) &&
+                globals::features::nativeSCM.IsActive() },
+            { "capturedMeshes", runtimeGeometry.Count() },
             { "capturedBytes", runtimeGeometry.Bytes() },
             { "alreadyPreparedInstances", runtimePreparedCoverage.load(std::memory_order_acquire) ?
                 runtimePreparedCoverage.load(std::memory_order_acquire)->completed.size() : 0 },
@@ -971,8 +1353,8 @@ void DX12NativeScene::PublishDiagnostics()
             { "activeSceneInstances", currentSceneStableAcceleration ?
                 currentSceneStableAcceleration->instances.size() : 0 } } },
         { "preparedSceneBudget", {
-            { "automatic", settings.BudgetMB == 0 },
-            { "manualLimitBytes", uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB },
+            { "automatic", true },
+            { "manualLimitBytes", uint64_t{0} },
             { "dxgiAvailable", preparedSceneBudgetStatus.dxgiAvailable },
             { "localBudgetBytes", preparedSceneBudgetStatus.localBudget },
             { "localUsageBytes", preparedSceneBudgetStatus.localUsage },
@@ -984,7 +1366,7 @@ void DX12NativeScene::PublishDiagnostics()
 		{ "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() },
 		{ "materialBudget", { { "dxgiAvailable", bindings ? bindings->materialBudget.dxgiAvailable : false },
 			{ "selectedBatchLimitBytes", uint64_t(settings.MaterialBatchMB) * 1024 * 1024 },
-            { "runtimeOnlyMaterialSources", settings.UseLivePBR && settings.ImportLoosePBR &&
+            { "runtimeOnlyMaterialSources", globals::features::nativePBR.IsActive() && settings.ImportLoosePBR &&
                 settings.RuntimeOnlyMaterials },
 			{ "loadedBatchLimitBytes", bindings ? bindings->uploadBatchBudget : 0 },
 			{ "effectiveBytes", bindings ? bindings->materialBudget.effectiveBytes : 0 },

@@ -9,18 +9,33 @@ using Mutagen.Bethesda.Plugins.Cache;
 using Mutagen.Bethesda.Skyrim;
 
 return args.Length == 5 && args[0] == "--list-cells" ? PluginCellIndex.Run(args[1..]) :
-    args.Length == 5 ? ScenePreparation.Run(args[..4], int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture)) :
+    args.Length == 9 && args[0] == "--worldspace-subcell" ? ScenePreparation.Run(args[1..5],
+        int.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture),
+        int.Parse(args[6], System.Globalization.CultureInfo.InvariantCulture),
+        (long.Parse(args[7], System.Globalization.CultureInfo.InvariantCulture),
+         long.Parse(args[8], System.Globalization.CultureInfo.InvariantCulture)), true) :
+    args.Length == 9 && args[0] == "--subcell" ? ScenePreparation.Run(args[1..5],
+        int.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture),
+        int.Parse(args[6], System.Globalization.CultureInfo.InvariantCulture),
+        (long.Parse(args[7], System.Globalization.CultureInfo.InvariantCulture),
+         long.Parse(args[8], System.Globalization.CultureInfo.InvariantCulture))) :
+    args.Length == 6 ? ScenePreparation.Run(args[..4],
+        int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture),
+        int.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture)) :
+    args.Length == 5 ? ScenePreparation.Run(args[..4],
+        int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture)) :
     ScenePreparation.Run(args);
 
 internal static class ScenePreparation
 {
     internal static string LastFailure = "";
 
-    internal static int Run(string[] args, int quality = 2)
+    internal static int Run(string[] args, int quality = 2, int subcellSize = 4096,
+        (long X, long Y)? requestedSubcell = null, bool worldspace = false)
     {
 if (args.Length != 4)
 {
-    Console.Error.WriteLine("Usage: DX12ResourcesPrep <Data directory> <plugin:local-cell-id> <output directory> <deployed Plugins.txt>");
+    Console.Error.WriteLine("Usage: DX12ResourcesPrep <Data directory> <plugin:local-cell-id> <output directory> <deployed Plugins.txt> [quality 0..2] [subcell size 2048..16384 step 1024]");
     return 2;
 }
 
@@ -28,6 +43,13 @@ try
 {
     LastFailure = "";
     if (quality is < 0 or > 2) throw new ArgumentOutOfRangeException(nameof(quality));
+    if (!SubcellIndex.ValidSize(subcellSize))
+        throw new ArgumentOutOfRangeException(nameof(subcellSize), "Size must be 2048..16384 in increments of 1024.");
+    if (worldspace && requestedSubcell is null)
+        throw new ArgumentException("Exterior worldspace preparation requires one requested subcell.");
+    if (requestedSubcell is { } request && (Math.Abs(request.X) > 1_000_000 ||
+        Math.Abs(request.Y) > 1_000_000))
+        throw new ArgumentOutOfRangeException(nameof(requestedSubcell), "Subcell coordinates out of supported range.");
     var data = Path.GetFullPath(args[0]);
     var output = Path.GetFullPath(args[2]);
     // The companion may write only to the dedicated temporary work subtree.
@@ -64,22 +86,54 @@ try
         .WithTargetDataFolder(data).WithLoadOrder(listings).Build();
     Console.WriteLine($"Loaded {environment.LoadOrder.Count} plugin listings; locating {cellKey}.");
     var cellSources = new Dictionary<FormKey, List<string>>();
+    var worldSources = new Dictionary<FormKey, List<string>>();
+    var worlds = new Dictionary<FormKey, IWorldspaceGetter>();
     var cells = new Dictionary<FormKey, ICellGetter>();
     var references = new Dictionary<FormKey, IPlacedGetter>();
     foreach (var listing in environment.LoadOrder.ListedOrder)
     {
         if (listing.Mod is not { } mod) continue;
+        if (worldspace)
+            foreach (var world in mod.EnumerateMajorRecords<IWorldspaceGetter>())
+            {
+                if (world.FormKey != cellKey) continue;
+                if (!worldSources.TryGetValue(world.FormKey, out var sources))
+                    worldSources[world.FormKey] = sources = [];
+                sources.Add(mod.ModKey.ToString());
+                worlds[world.FormKey] = world;
+            }
         foreach (var cell in mod.EnumerateMajorRecords<ICellGetter>())
         {
             if (!cellSources.TryGetValue(cell.FormKey, out var sources)) cellSources[cell.FormKey] = sources = [];
             sources.Add(mod.ModKey.ToString());
             cells[cell.FormKey] = cell;
-            if (cell.FormKey != cellKey) continue;
-            foreach (var reference in cell.Persistent.Concat(cell.Temporary)) references[reference.FormKey] = reference;
+            if (!worldspace && cell.FormKey != cellKey) continue;
+            foreach (var reference in cell.Persistent.Concat(cell.Temporary))
+            {
+                if (worldspace)
+                {
+                    if (requestedSubcell is not { } tile || reference.Placement is not { } placement)
+                        continue;
+                    var xy = placement.Position;
+                    if (!float.IsFinite(xy.X) || !float.IsFinite(xy.Y) ||
+                        SubcellIndex.Coordinate(xy.X, subcellSize) != tile.X ||
+                        SubcellIndex.Coordinate(xy.Y, subcellSize) != tile.Y) continue;
+                }
+                references[reference.FormKey] = reference;
+            }
         }
     }
-    if (!cells.TryGetValue(cellKey, out var target)) throw new InvalidDataException("Requested cell was not found in the effective load order.");
-    Console.WriteLine($"Indexed {cells.Count} cells; target has {references.Count} candidate references.");
+    ICellGetter? target = null;
+    if (worldspace)
+    {
+        if (!worlds.ContainsKey(cellKey))
+            throw new InvalidDataException("Requested exterior worldspace was not found.");
+    }
+    else if (!cells.TryGetValue(cellKey, out target))
+        throw new InvalidDataException("Requested cell was not found in the effective load order.");
+    var scopeEditorId = worldspace ? worlds[cellKey].EditorID : target!.EditorID;
+    var scopeSources = worldspace ? worldSources[cellKey] : cellSources[cellKey];
+    Console.WriteLine($"Indexed {cells.Count} cells; {(worldspace ? "worldspace" : "CELL")} target has {references.Count} candidate references.");
     var rows = new List<object>();
     var paths = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
     var staticPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -90,7 +144,14 @@ try
     foreach (var candidate in references.Values.OrderBy(r => r.FormKey.ToString(), StringComparer.Ordinal))
     {
         var context = environment.LinkCache.ResolveContext<IPlaced, IPlacedGetter>(candidate.FormKey);
-        if (!context.TryGetParent<ICellGetter>(out var containingCell) || containingCell.FormKey != cellKey) continue;
+        if (worldspace)
+        {
+            // Recursive context traversal reaches WRLD through its CELL.
+            if (!context.TryGetParent<IWorldspaceGetter>(out var containingWorldspace) ||
+                containingWorldspace.FormKey != cellKey) continue;
+        }
+        else if (!context.TryGetParent<ICellGetter>(out var containingCell) ||
+            containingCell.FormKey != cellKey) continue;
         var reference = context.Record;
         var obj = reference as IPlacedObjectGetter;
         var baseRecord = obj?.Base.TryResolve(environment.LinkCache);
@@ -144,12 +205,52 @@ try
             } : null
         });
     }
+    // On-demand subcell requests select only anchored references before NIF
+    // reading and mesh compilation. This avoids compiling the whole CELL merely
+    // to fill the current player region. Oversized cross-boundary models need
+    // an independent bounds catalog before this is suitable for full coverage.
+    if (requestedSubcell is { } subcell)
+    {
+        rows = rows.Where(record =>
+        {
+            var element = JsonSerializer.SerializeToElement(record);
+            if (!element.TryGetProperty("position", out var position) ||
+                position.ValueKind != JsonValueKind.Array || position.GetArrayLength() != 3)
+                return false;
+            var x = position[0].GetDouble();
+            var y = position[1].GetDouble();
+            return double.IsFinite(x) && double.IsFinite(y) &&
+                SubcellIndex.Coordinate(x, subcellSize) == subcell.X &&
+                SubcellIndex.Coordinate(y, subcellSize) == subcell.Y;
+        }).ToList();
+        paths.Clear();
+        staticPaths.Clear();
+        foreach (var record in rows)
+        {
+            var element = JsonSerializer.SerializeToElement(record);
+            var model = element.GetProperty("model").GetString();
+            if (string.IsNullOrWhiteSpace(model)) continue;
+            var normalized = PgAssets.Normalize(model);
+            if (!normalized.StartsWith("meshes\\", StringComparison.Ordinal))
+                normalized = "meshes\\" + normalized;
+            paths.Add(normalized);
+            var classification = element.GetProperty("classification").GetString();
+            if (classification is "static-record-nif-uninspected" or
+                "furniture-record-nif-uninspected" or "moveable-static-record-nif-uninspected")
+                staticPaths.Add(normalized);
+        }
+    }
     Directory.CreateDirectory(output);
     var options = new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     var pgAssets = new List<PgAsset>();
     using (var pg = new PgAssets(data, output))
         foreach (var path in paths) pgAssets.Add(pg.Read(path));
-    var compiler = new MeshCompiler(output, options, quality);
+    // Cache verified mesh products across separate companion sessions; the
+    // current work package is still independently validated and published.
+    SharedMeshCache? shared = null;
+    try { shared = new SharedMeshCache(data,output,options); }
+    catch (IOException) { /* Safe no-cache fallback */ }
+    var compiler = new MeshCompiler(output, options, quality, shared);
     var compiledAssets = pgAssets.Where(asset => staticPaths.Contains(asset.Path)).Select(compiler.Compile).ToArray();
     var compiledShapes = compiledAssets.SelectMany(asset => asset.Shapes).Where(shape => shape.Status == "compiled").ToArray();
     File.WriteAllText(Path.Combine(output, "cell-meshes.json"), JsonSerializer.Serialize(new
@@ -163,16 +264,20 @@ try
     }).ToArray();
     var inputDigest = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
     {
-        schemaVersion = 1, pluginSources, cell = target.FormKey.ToString(),
+        schemaVersion = 1, pluginSources, cell = cellKey.ToString(),
+        scopeType = worldspace ? "worldspace" : "cell", requestedSubcell, subcellSize,
         pgDiffSha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(data, "ParallaxGen_Diff.json")))),
         assets = pgAssets.Select(asset => new { asset.Path, asset.Status, asset.Sha256 })
     }))).ToLowerInvariant();
-    var layout = CellLayout.Write(output, target.FormKey.ToString(), target.EditorID, inputDigest, rows, compiledAssets, options);
+    var layout = CellLayout.Write(output, cellKey.ToString(), scopeEditorId,
+        inputDigest, rows, compiledAssets, options, subcellSize, requestedSubcell,
+        worldspace ? "worldspace" : "cell");
     File.WriteAllText(Path.Combine(output, "cell-records.json"), JsonSerializer.Serialize(new
     {
         schemaVersion = 1, tool = "DX12ResourcesPrep", recordReader = "Mutagen.Bethesda.Skyrim/0.54.4",
-        cellKey = target.FormKey.ToString(), editorId = target.EditorID,
-        inputDigest, pluginsPath, pluginSources, cellSources = cellSources[cellKey], references = rows, models = paths,
+        cellKey = cellKey.ToString(), scopeType = worldspace ? "worldspace" : "cell",
+        editorId = scopeEditorId,
+        inputDigest, pluginsPath, pluginSources, cellSources = scopeSources, references = rows, models = paths,
         geometryReady = false, runtimeCoverageValid = false
     }, options));
     File.WriteAllText(Path.Combine(output, "cell-index.json"), JsonSerializer.Serialize(cells.OrderBy(c => c.Key.ToString()).Select(c => new
@@ -183,7 +288,9 @@ try
     File.WriteAllText(Path.Combine(output, "cell-preparation.json"), JsonSerializer.Serialize(new
     {
         schemaVersion = 1, formatContract = "dx12-resources-cell", formatVersion = 2,
-        inputDigest, cell = target.FormKey.ToString(), editorId = target.EditorID,
+        subcell = requestedSubcell is { } sub ? new { size = subcellSize, x = sub.X, y = sub.Y } : null,
+        scopeType = worldspace ? "worldspace" : "cell",
+        inputDigest, cell = cellKey.ToString(), editorId = scopeEditorId,
         assetProvider = "PGPatcher deployed output; no conflict re-resolution", references = rows.Count, staticRecordCandidates = staticCount,
         furnitureRecordCandidates = furnitureCount, placedLights = lightCount, unresolvedBases, assets = pgAssets,
         sourceCacheHits = pgAssets.Count(asset => asset.CacheHit),
@@ -198,7 +305,8 @@ try
         stage = "cell-packed-partial", geometryCompiled = compiledShapes.Length > 0, accelerationBuilt = false, runtimeCoverageValid = false,
         outstanding = new[] { "Runtime placement/state comparison", "Excluded mesh/material coverage", "Shader coordinator and DX12 integration" }
     }, options));
-    Console.WriteLine($"Prepared {rows.Count} references, {staticCount} static-record candidates and {lightCount} placed lights.");
+    Console.WriteLine($"Prepared {rows.Count} selected references{(requestedSubcell is { } printedTile ? $" in subcell {printedTile.X},{printedTile.Y}" : "")}.");
+    Console.WriteLine($"CELL catalog had {staticCount} static-record candidates and {lightCount} placed lights.");
     Console.WriteLine($"PG inputs: {pgAssets.Count(asset => asset.CachedSource != null)} cached / {pgAssets.Count} requested; unresolved bases: {unresolvedBases}.");
     Console.WriteLine($"Compiled {compiledShapes.Length} shapes / {compiledShapes.Sum(shape => (long)shape.IndexCount / 3)} triangles; {compiledAssets.Count(asset => asset.CacheHit)} mesh cache hits.");
     Console.WriteLine($"Placed {layout.PlacedReferences} references / {layout.Instances} shape instances / {layout.Triangles} triangles; packed geometry + shading.");

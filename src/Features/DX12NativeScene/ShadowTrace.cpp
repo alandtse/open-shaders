@@ -3,6 +3,7 @@
 #include "Utils/D3D.h"
 #include <directx/d3dx12.h>
 #include <fstream>
+#include <cstring>
 
 namespace DX12Native
 {
@@ -24,7 +25,7 @@ namespace DX12Native
 		ranges[3] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3, 0, 0 };
 		ranges[4] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, ShadowBindings::kMaximumInstances, 0, 2, 0 };
 		ranges[5] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kMaximumTexturePools, 0, 3, 0 };
-		D3D12_ROOT_PARAMETER parameters[11]{};
+		D3D12_ROOT_PARAMETER parameters[12]{};
 		parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
 		parameters[0].Descriptor.ShaderRegister = 0;
 		for (uint32_t i = 0; i < 3; ++i) {
@@ -43,7 +44,10 @@ namespace DX12Native
 			parameters[9 + i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
 			parameters[9 + i].Descriptor.ShaderRegister = 4 + i;
 		}
-		D3D12_STATIC_SAMPLER_DESC samplers[4]{};
+        // Extra root CBV uses two DWORDs; remains within the 64-DWORD limit.
+        parameters[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        parameters[11].Descriptor.ShaderRegister = 1;
+        D3D12_STATIC_SAMPLER_DESC samplers[4]{};
 		for (uint32_t i = 0; i < 4; ++i) {
 			samplers[i].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
 			samplers[i].AddressU = (i & 2) ? D3D12_TEXTURE_ADDRESS_MODE_WRAP : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -75,7 +79,7 @@ namespace DX12Native
 			failed = true;
 			return false;
 		}
-		if (pipeline && prepareRays) return true;
+		if (pipeline) return true;
 		try {
 			backend = a_backend;
 			if (!backend.d3d12Device || !backend.commandQueue || !backend.d3d11Device || !backend.d3d11Context)
@@ -95,8 +99,6 @@ namespace DX12Native
 				completion->SetName(L"DX12NativeScene::ShadowCompletion");
 			}
 			CreatePipeline();
-			if (!prepareRays) prepareRays.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\DX12NativeScene\\PrepareShadowRays.cs.hlsl", {}, "cs_5_0")));
-			if (!prepareRays) throw std::runtime_error("Shadow camera-ray shader unavailable");
 			return true;
 		} catch (const std::exception& error) {
 			if (producer.fence12 && !producer.fence11) producer.Reset();
@@ -151,7 +153,6 @@ namespace DX12Native
 	void ShadowTrace::ReloadShaders()
 	{
 		Reset();
-		prepareRays = nullptr;
 		pipeline = nullptr;
 		root = nullptr;
 	}
@@ -173,6 +174,7 @@ namespace DX12Native
 			{ "rejectedMaterials", current ? current->bindings->materials->rejectedMaterials : 0 },
 			{ "lightCount", current ? current->lightSnapshot.size() : 0 },
 			{ "traceDensityMode", current ? current->controls.traceDensityMode : 0u },
+			{ "rayPreparationAPI", "DX12 SM6.5 fused RayQuery" },
 			{ "fullWidth", current ? current->width : 0u }, { "fullHeight", current ? current->height : 0u } };
 	}
 
@@ -189,24 +191,15 @@ namespace DX12Native
 		return false;
 	}
 
-	void ShadowTrace::PrepareRays(ShadowFrame& a_frame, const globals::FrameBuffer& a_camera)
-	{
-		CS_GPU_PASS("DX12NativeScene::PrepareShadowRays");
-		const auto update = [&](const void* data, uint32_t bytes, winrt::com_ptr<ID3D11Buffer>& buffer, const char* name) {
-			if (!buffer) {
-				D3D11_BUFFER_DESC desc{};
-				desc.ByteWidth = bytes;
-				desc.Usage = D3D11_USAGE_DEFAULT;
-				desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-				DX::ThrowIfFailed(backend.d3d11Device->CreateBuffer(&desc, nullptr, buffer.put()));
-				Util::SetResourceName(buffer.get(), name);
-			}
-			backend.d3d11Context->UpdateSubresource(buffer.get(), 0, nullptr, data, 0, 0);
-		};
-		const std::array<uint32_t, 4> dimensions{ a_frame.width, a_frame.height, a_frame.width, a_frame.height };
-		update(dimensions.data(), uint32_t(sizeof(dimensions)), a_frame.grid, "DX12NativeScene::ShadowGrid CB");
-		update(&a_camera, uint32_t(sizeof(a_camera)), a_frame.camera, "DX12NativeScene::ShadowCamera CB");
-		constexpr uint32_t kMaximumLights = 32, kLightTexels = 8, kLightWidth = kMaximumLights * kLightTexels;
+    void ShadowTrace::UploadLightSnapshot(ShadowFrame& a_frame)
+    {
+        CS_GPU_PASS("DX12NativeScene::UploadShadowLightSnapshot");
+        // DX11 is source transport only. Native ray directions and shadow
+        // evaluation are computed exclusively by the DX12 SM6.5 dispatch.
+		constexpr uint32_t kMaximumLights = kMaximumNativePointLights;
+        constexpr uint32_t kLightTexels = kNativeLightRecordTexels;
+        constexpr uint32_t kLightWidth = kNativeShadowLightTextureWidth;
+        static_assert(kMaximumLights * kLightTexels == kLightWidth);
 		std::array<std::array<float, 4>, kLightWidth * 2> snapshot{};
 		for (size_t i = 0; i < a_frame.lightSnapshot.size(); ++i) {
 			const auto& light = a_frame.lightSnapshot[i];
@@ -219,26 +212,6 @@ namespace DX12Native
 		}
 		auto* context = backend.d3d11Context.get();
 		context->UpdateSubresource(a_frame.lights->resource11, 0, nullptr, snapshot.data(), kLightWidth * sizeof(snapshot[0]), 0);
-		winrt::com_ptr<ID3D11ComputeShader> priorShader;
-		winrt::com_ptr<ID3D11UnorderedAccessView> priorWrite;
-		winrt::com_ptr<ID3D11Buffer> priorGrid, priorCamera;
-		context->CSGetShader(priorShader.put(), nullptr, nullptr);
-		context->CSGetUnorderedAccessViews(0, 1, priorWrite.put());
-		context->CSGetConstantBuffers(0, 1, priorGrid.put());
-		context->CSGetConstantBuffers(12, 1, priorCamera.put());
-		auto* output = a_frame.rays->uav;
-		auto* grid = a_frame.grid.get();
-		auto* camera = a_frame.camera.get();
-		context->CSSetUnorderedAccessViews(0, 1, &output, nullptr);
-		context->CSSetConstantBuffers(0, 1, &grid);
-		context->CSSetConstantBuffers(12, 1, &camera);
-		context->CSSetShader(prepareRays.get(), nullptr, 0);
-		context->Dispatch((a_frame.width + 7) / 8, (a_frame.height + 7) / 8, 1);
-		output = priorWrite.get(); grid = priorGrid.get(); camera = priorCamera.get();
-		context->CSSetUnorderedAccessViews(0, 1, &output, nullptr);
-		context->CSSetConstantBuffers(0, 1, &grid);
-		context->CSSetConstantBuffers(12, 1, &camera);
-		context->CSSetShader(priorShader.get(), nullptr, 0);
 		const auto signal = producer.Next();
 		DX::ThrowIfFailed(context->Signal(producer.fence11.get(), signal));
 		context->Flush();
@@ -260,7 +233,7 @@ namespace DX12Native
 		srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		srv.Texture2D.MipLevels = 1;
-		backend.d3d12Device->CreateShaderResourceView(a_frame.rays->resource.get(), &srv, cpu);
+		backend.d3d12Device->CreateShaderResourceView(nullptr, &srv, cpu);
 		cpu.ptr += step;
 		D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
 		uav.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
@@ -270,8 +243,15 @@ namespace DX12Native
 		backend.d3d12Device->CreateShaderResourceView(a_frame.lights->resource.get(), &srv, cpu);
 		auto* commands = a_frame.commands.get();
 		ID3D12DescriptorHeap* heaps[]{ a_frame.bindings->heap.get() };
+
+        // Generate rays in the DX12 RayQuery shader itself.
+        // The shader shares the shadow output's full-resolution pixel grid.
 		commands->SetDescriptorHeaps(1, heaps);
 		commands->SetComputeRootSignature(root.get());
+        if (!a_frame.cameraConstants)
+            throw std::runtime_error("Native shadow camera constants unavailable");
+        commands->SetComputeRootConstantBufferView(11,
+            a_frame.cameraConstants->GetGPUVirtualAddress());
 		commands->SetComputeRootShaderResourceView(0, a_frame.scene->result->GetGPUVirtualAddress());
 		auto gpu = a_frame.bindings->heap->GetGPUDescriptorHandleForHeapStart();
 		gpu.ptr += uint64_t(a_descriptorBase) * step;
@@ -311,7 +291,6 @@ namespace DX12Native
 		static_assert(sizeof(Constants) == 36 * sizeof(uint32_t));
 		commands->SetComputeRoot32BitConstants(5, 36, &constants, 0);
 		std::array begin{
-			CD3DX12_RESOURCE_BARRIER::Transition(a_frame.rays->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
 			CD3DX12_RESOURCE_BARRIER::Transition(a_frame.lights->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
 			CD3DX12_RESOURCE_BARRIER::Transition(a_frame.mask->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
 		};
@@ -320,7 +299,6 @@ namespace DX12Native
 		const auto ordered = CD3DX12_RESOURCE_BARRIER::UAV(a_frame.mask->resource.get());
 		commands->ResourceBarrier(1, &ordered);
 		std::array end{
-			CD3DX12_RESOURCE_BARRIER::Transition(a_frame.rays->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
 			CD3DX12_RESOURCE_BARRIER::Transition(a_frame.lights->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
 			CD3DX12_RESOURCE_BARRIER::Transition(a_frame.mask->resource.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON)
 		};
@@ -338,7 +316,7 @@ namespace DX12Native
 		CS_GPU_PASS("DX12NativeScene::ShadowMaskDispatch");
 		if (current && current->frame == a_frame) return;
 		current.reset();
-		if (!a_scene || !a_scene->result || a_scene->instances.empty() || a_lights.empty() || a_lights.size() > 32 ||
+		if (!a_scene || !a_scene->result || a_scene->instances.empty() || a_lights.empty() || a_lights.size() > kMaximumNativePointLights ||
 			!a_size[0] || !a_size[1] || a_size[0] > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION || a_size[1] > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION) {
 			status = "Prepared scene, lights or shadow dimensions unavailable";
 			return;
@@ -384,15 +362,19 @@ namespace DX12Native
 		}
 		const uint64_t budget = videoBudget.Query(backend.d3d12Device.get(), trackedBytes, a_budget).effectiveBytes;
 		try {
+			// ShadowTrace.dxil builds camera rays directly inside DX12 RayQuery.
 			const auto textureDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT, a_size[0], a_size[1], 1, 1, 1, 0,
 				D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
-			const auto lightDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT, 256, 2, 1, 1, 1, 0,
+			const auto lightDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT, kNativeShadowLightTextureWidth, 2, 1, 1, 1, 0,
 				D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
 			const auto textureBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &textureDesc).SizeInBytes;
 			const auto lightBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &lightDesc).SizeInBytes;
-			if (textureBytes == UINT64_MAX || lightBytes == UINT64_MAX || textureBytes > budget / 2 || lightBytes > budget - textureBytes * 2)
-				throw std::runtime_error("Shadow frame allocation exceeds budget");
-			const auto bytes = textureBytes * 2 + lightBytes;
+            // Receiver rays are generated in the same DX12 shader; reserve
+            // only the full-size shadow mask plus the tiny light snapshot.
+            if (textureBytes == UINT64_MAX || lightBytes == UINT64_MAX ||
+                textureBytes > budget || lightBytes > budget - textureBytes)
+                throw std::runtime_error("Shadow frame allocation exceeds DXGI budget");
+            const uint64_t bytes = textureBytes + lightBytes;
 			uint64_t retained = tables->bytes;
 			for (auto it = frames.begin(); it != frames.end(); ++it) {
 				if (it == available || !*it) continue;
@@ -414,9 +396,8 @@ namespace DX12Native
 				desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
 				desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
 				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-				frame->rays = std::make_unique<WrappedResource>(desc, backend.d3d11Device.get(), backend.d3d12Device.get(), "DX12NativeScene::ShadowCameraRays");
 				frame->mask = std::make_unique<WrappedResource>(desc, backend.d3d11Device.get(), backend.d3d12Device.get(), "DX12NativeScene::ShadowMask");
-				desc.Width = 256; desc.Height = 2;
+				desc.Width = kNativeShadowLightTextureWidth; desc.Height = 2;
 				frame->lights = std::make_unique<WrappedResource>(desc, backend.d3d11Device.get(), backend.d3d12Device.get(), "DX12NativeScene::ShadowLights");
 				slot = std::move(frame);
 			}
@@ -428,12 +409,33 @@ namespace DX12Native
 			slot->controls = a_controls;
 			slot->cameraOrigin = { a_camera.CameraPosAdjust.x + a_camera.CameraViewInverse._14,
 				a_camera.CameraPosAdjust.y + a_camera.CameraViewInverse._24, a_camera.CameraPosAdjust.z + a_camera.CameraViewInverse._34 };
+			slot->rayProjInverse = a_camera.CameraProjInverse;
+			slot->rayViewInverse = a_camera.CameraViewInverse;
+            if (!slot->cameraConstants) {
+                const auto desc = CD3DX12_RESOURCE_DESC::Buffer(256);
+                const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+                DX::ThrowIfFailed(backend.d3d12Device->CreateCommittedResource(
+                    &heap, D3D12_HEAP_FLAG_NONE, &desc,
+                    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                    IID_PPV_ARGS(slot->cameraConstants.put())));
+                slot->cameraConstants->SetName(L"DX12NativeScene::ShadowNativeCamera");
+            }
+            struct NativeCameraConstants {
+                DirectX::SimpleMath::Matrix projectionInverse, viewInverse;
+            };
+            static_assert(sizeof(NativeCameraConstants) == 128);
+            const NativeCameraConstants cameraData{ slot->rayProjInverse, slot->rayViewInverse };
+            void* mapped = nullptr;
+            const D3D12_RANGE noRead{ 0, 0 };
+            DX::ThrowIfFailed(slot->cameraConstants->Map(0, &noRead, &mapped));
+            std::memcpy(mapped, &cameraData, sizeof(cameraData));
+            slot->cameraConstants->Unmap(0, nullptr);
 			slot->retainedBackend = backend;
 			slot->root = root; slot->pipeline = pipeline;
 			slot->producerFence = producer.fence12; slot->producerFence11 = producer.fence11; slot->readyFence = completion;
 			slot->readyValue = slot->producerValue = UINT64_MAX;
 			slot->completionCounted = false;
-			PrepareRays(*slot, a_camera);
+			UploadLightSnapshot(*slot); // DX11 input transfer only; all shadow math is DX12.
 			Record(*slot, uint32_t(available - frames.begin()) * ShadowBindings::kFrameDescriptorCount);
 			current = slot;
 			++submissions;

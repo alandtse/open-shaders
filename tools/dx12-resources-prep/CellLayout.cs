@@ -11,7 +11,8 @@ internal sealed record LayoutResult(int PlacedReferences, int Instances, long Tr
 internal static class CellLayout
 {
     public static LayoutResult Write(string output, string cell, string? editorId, string inputDigest,
-        List<object> rows, CompiledNif[] assets, JsonSerializerOptions options)
+        List<object> rows, CompiledNif[] assets, JsonSerializerOptions options, int subcellSize = 4096,
+        (long X, long Y)? requestedSubcell = null, string scopeType = "cell")
     {
         var records = JsonSerializer.SerializeToElement(rows, options).EnumerateArray().ToArray();
         var models = assets.ToDictionary(asset => asset.SourcePath, StringComparer.OrdinalIgnoreCase);
@@ -112,12 +113,15 @@ internal static class CellLayout
             .OrderBy(path => path, StringComparer.Ordinal).Select(path => new { path, status = "referenced" }).ToArray();
         var digest = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
         {
-            schemaVersion = 2, roomSchemaVersion = 1, inputDigest, compilerKeys = assets.Select(asset => asset.CompilerKey).Distinct(), geometryPack, shadingPack, textureReferences, instances, omissions, lights, rooms
+            schemaVersion = 2, roomSchemaVersion = 1, inputDigest, requestedSubcell, subcellSize, scopeType,
+            compilerKeys = assets.Select(asset => asset.CompilerKey).Distinct(), geometryPack, shadingPack, textureReferences, instances, omissions, lights, rooms
         }, options))).ToLowerInvariant();
         var placedReferences = instances.Select(instance => instance.ReferenceKey).Distinct().Count();
         var layout = new
         {
             schemaVersion = 2, rendererSchemaVersion = 2, shadingSchemaVersion = 2, materialSchemaVersion = 1, roomSchemaVersion = 1, rooms, cell, editorId, inputDigest, layoutDigest = digest,
+            subcell = requestedSubcell is { } sub ? new { size = subcellSize, x = sub.X, y = sub.Y } : null,
+            scopeType,
             geometryPack, shadingPack, textureReferences,
             coordinateSystem = "Skyrim cell coordinates, Z up, native game units",
             rotationConvention = "CommonLibSSE-NG NiMatrix3::SetEulerAnglesXYZ; record radians; runtime comparison pending",
@@ -128,6 +132,11 @@ internal static class CellLayout
             previewOnlyInstances = instances.Count(instance => !instance.OpaqueOccluderCandidate), instances, omissions, lights
         };
         File.WriteAllText(Path.Combine(output, "cell-layout.json"), JsonSerializer.Serialize(layout, options));
+        // Non-disruptive spatial catalog: this does not change or repartition
+        // the existing full-CELL payload. Instances spanning several columns
+        // reference the same instance index, never duplicate geometry bytes.
+        SubcellIndex.Write(output, cell, digest, subcellSize, instances,
+            JsonSerializer.SerializeToElement(lights, options).EnumerateArray().ToArray(), options);
         return new(placedReferences, instances.Count, instances.Sum(instance => (long)instance.IndexCount / 3),
             records.Length - placedReferences, digest);
     }

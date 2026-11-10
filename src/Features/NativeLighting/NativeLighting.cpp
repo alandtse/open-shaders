@@ -9,6 +9,7 @@
 #include <directx/d3dx12.h>
 #include <fstream>
 #include <cmath>
+#include <span>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::Settings, Enabled, Diffuse, Specular, EarlyShadowCull, Debug, CompareCulling, DiffuseIntensity, SpecularIntensity, BudgetMB, PersistLab, DirectStrength, EmissionStrength, PointLightRadiusMultiplier, PointLightFalloffFraction, PointLightFalloffExponent, ShadowStrength, EmitterRadiusMultiplier, NormalInfluence, SelectedDirectLight, StochasticShadows, UseAllPreparedLights, TraceDensityMode)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::ValidityLab, DepthAgreement, DiagnosticDepth, AbsoluteTolerance, RelativeTolerance, MaterialPolicy, RequireMaskAuthority, AssumeMaskAuthoritative, ObserveMask, RunWithoutLighting, ReferenceVisibility, ReferencePrimaryTraversal, MaskThreshold, MaskDistanceTolerance)
@@ -56,12 +57,14 @@ void NativeLightingFeature::DrawSettings()
 	tuned |= ImGui::SliderFloat("Emitter radius scale", &settings.EmitterRadiusMultiplier, 0.0f, 8.0f, "%.2fx");
 	ImGui::EndDisabled();
 	ImGui::TextDisabled("One disk-distributed visibility ray per light; not temporal grid undersampling.");
-	tuned |= ImGui::Checkbox("All prepared cell lights", &settings.UseAllPreparedLights);
+	tuned |= ImGui::Checkbox("All unified native lights (prepared first)", &settings.UseAllPreparedLights);
 	if (!settings.UseAllPreparedLights) {
 		const auto published = globals::features::dx12NativeScene.GetPublishedScene();
-		const auto count = published ? published->cell->nativeLights.size() : 0u;
+		const auto live = globals::game::graphicsState ?
+			globals::features::dx12NativeScene.GetNativeLLFLights(globals::game::graphicsState->GetFrameCount()) : std::nullopt;
+		const auto count = live ? live->count : (published ? published->cell->nativeLights.size() : 0u);
 		int lightIndex = int(settings.SelectedDirectLight);
-		if (ImGui::SliderInt("Prepared baseline light", &lightIndex, 0, int(count ? count - 1 : 0))) {
+		if (ImGui::SliderInt("Native light index", &lightIndex, 0, int(count ? count - 1 : 0))) {
 			settings.SelectedDirectLight = uint32_t(lightIndex); tuned = true;
 		}
 	}
@@ -74,12 +77,7 @@ void NativeLightingFeature::DrawSettings()
 		tuned = true;
 	}
 	if (tuned) ++validityRevision;
-	bool autoBudget = settings.BudgetMB == 0;
-	if (ImGui::Checkbox("Automatic lighting VRAM budget (DXGI)", &autoBudget)) settings.BudgetMB = autoBudget ? 0u : 512u;
-	if (!autoBudget) {
-		int manual = int(settings.BudgetMB);
-		if (ImGui::SliderInt("Lighting frame-pool limit (MiB)", &manual, 64, 4096)) settings.BudgetMB = uint32_t(manual);
-	}
+	ImGui::TextDisabled("Native Lighting VRAM: dynamic DXGI only (shared reserve applies).");
 	ImGui::TextDisabled("DXGI frame-budget telemetry is available in diagnostics; %zu lighting slots.", frames.size());
 	{ std::scoped_lock diagnosticsLock(diagnosticsMutex);
 		ImGui::TextDisabled("Skipped native lighting pixels (GPU completed, cumulative): %llu",
@@ -139,7 +137,7 @@ void NativeLightingFeature::LoadSettings(json& a_json)
 	selected.EmitterRadiusMultiplier = sanitize(selected.EmitterRadiusMultiplier, 1.0f, 0.0f, 8.0f);
 	selected.NormalInfluence = std::min(selected.NormalInfluence, 2u);
 	selected.TraceDensityMode = std::min(selected.TraceDensityMode, 7u);
-	selected.BudgetMB = selected.BudgetMB ? std::clamp(selected.BudgetMB, 64u, 4096u) : 0u;
+	selected.BudgetMB = 0; // Legacy manual cap is ignored.
 	std::scoped_lock lock(settingsMutex);
 	settings = selected;
 	lab = selected.PersistLab && a_json.contains("ValidityLab") ? a_json.at("ValidityLab").get<ValidityLab>() : ValidityLab{};
@@ -278,7 +276,7 @@ void NativeLightingFeature::RegisterUxActions()
 		if (args.contains("selectedLight")) { feature.settings.SelectedDirectLight = args.at("selectedLight").get<uint32_t>(); ++feature.validityRevision; }
 		if (args.contains("normalInfluence")) { feature.settings.NormalInfluence = std::min(args.at("normalInfluence").get<uint32_t>(), 2u); ++feature.validityRevision; }
 		if (args.contains("traceDensityMode")) { feature.settings.TraceDensityMode = std::min(args.at("traceDensityMode").get<uint32_t>(), 7u); ++feature.validityRevision; }
-		if (args.contains("budgetMB")) feature.settings.BudgetMB = args.at("budgetMB").get<uint32_t>() ? std::clamp(args.at("budgetMB").get<uint32_t>(), 64u, 4096u) : 0u;
+		feature.settings.BudgetMB = 0; // Retired budget command.
 	});
 	FEATURE_COMMAND("validityLab", "Set runtime validity controls: depthAgreement, diagnosticDepth, absoluteTolerance, relativeTolerance, materialPolicy (0 strict, 1 neutral, 2 geometry), requireMaskAuthority, assumeMaskAuthoritative, observeMask, runWithoutLighting, referenceVisibility, referencePrimaryTraversal, maskThreshold, maskDistanceTolerance, persistLab.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeLightingFeature*>(self);
@@ -369,10 +367,12 @@ void NativeLightingFeature::OnOpaqueRasterReady(const OpaqueRasterInputs&)
 		status = "Waiting for current scene, raster depth, camera or material bindings";
 		return;
 	}
-	if ((selected.UseAllPreparedLights && scene->prepared->cell->nativeLights.size() > 32) ||
-		(!selected.UseAllPreparedLights && selected.SelectedDirectLight >= scene->prepared->cell->nativeLights.size()) ||
-		(scene->prepared->cell->nativeLights.empty() && !selectedLab.RunWithoutLighting && selectedLab.MaterialPolicy != 2)) {
-		status = "Prepared point-light selection unavailable or exceeds 32";
+	const auto nativeLights = owner.GetNativeLLFLights(frame);
+	const auto availableLights = nativeLights ? size_t(nativeLights->count) : scene->prepared->cell->nativeLights.size();
+	if ((!nativeLights && selected.UseAllPreparedLights && availableLights > DX12Native::kMaximumNativePointLights) ||
+		(!selected.UseAllPreparedLights && selected.SelectedDirectLight >= availableLights && !nativeLights) ||
+		(availableLights == 0 && !nativeLights && !selectedLab.RunWithoutLighting && selectedLab.MaterialPolicy != 2)) {
+		status = "Prepared point-light selection unavailable or exceeds 64";
 		return;
 	}
 	if (!Initialize(*graphics)) return;
@@ -405,8 +405,8 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			if (trackedBytes > UINT64_MAX - frame->bytes) throw std::runtime_error("Native lighting pool accounting overflow");
 			trackedBytes += frame->bytes;
 		}
-		const uint64_t budget = videoBudget.Query(backend.d3d12Device.get(), trackedBytes,
-			uint64_t(a_settings.BudgetMB) * 1024 * 1024).effectiveBytes;
+		const uint64_t budget = videoBudget.Query(
+            backend.d3d12Device.get(), trackedBytes, 0).effectiveBytes;
 		uint64_t bytes = 2 * 1024 * 1024;
 		for (size_t i = 0; i < formats.size(); ++i) {
 			if (!a_settings.CompareCulling && (i == 5 || i == 6)) continue;
@@ -445,7 +445,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			created->counters = make(counters, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, L"NativeLighting::Counters");
 			created->counterReset = make(plain, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::CounterReset");
 			created->counterReadback = make(plain, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, L"NativeLighting::CounterReadback");
-			created->lights = make(CD3DX12_RESOURCE_DESC::Buffer(32 * 48), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Lights");
+			created->lights = make(CD3DX12_RESOURCE_DESC::Buffer(DX12Native::kMaximumNativePointLights * 48), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Lights");
 			// 272-byte Trace ABI rounds to 512 for the D3D12 CBV 256-byte alignment.
 			created->constants = make(CD3DX12_RESOURCE_DESC::Buffer(512), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Constants");
 			void* zeros = nullptr;
@@ -482,11 +482,16 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		const auto& camera = slot->scene.raster->camera;
 		struct Light { float4 positionRadius, radianceSourceRadius; std::array<uint32_t, 4> flags; };
 		static_assert(sizeof(Light) == 48);
-		std::array<Light, 32> lights{};
-		const uint32_t selectedCount = a_settings.UseAllPreparedLights ? uint32_t(scene.cell->nativeLights.size()) :
-			(scene.cell->nativeLights.empty() ? 0u : 1u);
+		std::array<Light, DX12Native::kMaximumNativePointLights> lights{};
+		const auto nativeLights = globals::features::dx12NativeScene.GetNativeLLFLights(slot->scene.frame);
+		const std::span<const DX12Native::PreparedPointLight> lightSource = nativeLights ?
+			std::span<const DX12Native::PreparedPointLight>(nativeLights->lights.data(), nativeLights->count) :
+			std::span<const DX12Native::PreparedPointLight>(scene.cell->nativeLights);
+		const uint32_t selectedCount = a_settings.UseAllPreparedLights ? uint32_t(std::min<size_t>(lightSource.size(), lights.size())) :
+			(lightSource.empty() ? 0u : 1u);
 		for (uint32_t i = 0; i < selectedCount; ++i) {
-			const auto& light = scene.cell->nativeLights[a_settings.UseAllPreparedLights ? i : a_settings.SelectedDirectLight];
+			const auto& light = lightSource[a_settings.UseAllPreparedLights ? i :
+				std::min<size_t>(a_settings.SelectedDirectLight, lightSource.size() - 1)];
 			lights[i] = { { light.position.x, light.position.y, light.position.z, light.radius },
 				{ light.radiance.x, light.radiance.y, light.radiance.z, light.sourceRadius }, { light.supported ? 1u : 0u, 0, 0, 0 } };
 		}

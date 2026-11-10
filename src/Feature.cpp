@@ -10,6 +10,7 @@
 #include "Features/DX12NativeScene/DX12NativeScene.h"
 #include "Features/DX12Resources/DX12Resources.h"
 #include "Features/NativeLighting/NativeLighting.h"
+#include "Features/NativeFeatures.h"
 #include "Features/NativeComposite/NativeComposite.h"
 #include "Features/ProceduralSun.h"
 #if defined(ENABLE_EFFECTS11)
@@ -285,6 +286,9 @@ namespace
             &globals::features::dx12Resources,
 			&globals::features::nativeLighting,
 			&globals::features::nativeComposite,
+			&globals::features::nativePBR,
+			&globals::features::nativeLLF,
+			&globals::features::nativeSCM,
 			&globals::features::interiorSun,
 			&globals::features::furShells,
 			&globals::features::terrainVariation,

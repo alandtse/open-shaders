@@ -4,6 +4,7 @@
 #include "CellRequest.h"
 #include "AutoCellResolver.h"
 #include "PluginCellCatalog.h"
+#include "PreparedCellValidation.h"
 #include <optional>
 #include <atomic>
 #include <cstdint>
@@ -12,11 +13,13 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <unordered_set>
+#include <unordered_map>
 
 /** @brief Standalone interior preparation service with automatic CELL identification. */
 struct DX12Resources final : Feature
 {
-    struct Settings { bool Enabled = true; } settings;
+    struct Settings { bool Enabled = true; bool AutoPrepareOnCellEntry = true; } settings;
 
     std::string GetName() override { return "DX12 Resources"; }
     std::string GetShortName() override { return "DX12Resources"; }
@@ -28,6 +31,10 @@ struct DX12Resources final : Feature
     void LoadSettings(json& input) override;
     void SaveSettings(json& output) override;
     void RestoreDefaultSettings() override;
+    /** Render-thread poll and one-shot auto-prepare on entry into a missing native interior cache. */
+    void AdvanceAutomaticInterior(const DX12ResourceService::CellRequest& request);
+    void AdvanceStreamingScene(const DX12ResourceService::CellRequest& request,
+        uint32_t size, double x, double y, double velocityX, double velocityY);
     void DataLoaded() override { dataLoaded.store(true, std::memory_order_release); }
     json GetDiagnostics() override;
     std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
@@ -47,7 +54,9 @@ private:
     void RefreshLoadedPlugins();
     void StartPluginCellScan(std::string plugin);
     void AdvancePluginCellScan();
-    void StartCellPreparation(const DX12ResourceService::CellRequest& request);
+    void StartCellPreparation(const DX12ResourceService::CellRequest& request,
+        std::optional<DX12ResourceService::PreparedSubcellAddress> tile = std::nullopt,
+        bool predictive = false);
     void PollCellPreparation();
     std::atomic<bool> dataLoaded{ false };
     std::mutex statusMutex;
@@ -75,6 +84,18 @@ private:
     std::uint32_t pluginScanSequence = 0;
     std::uint32_t preparationSequence = 0;
     std::string preparationStatus = "No cell preparation started";
+    std::string lastAutomaticInterior;
+    uint64_t automaticLaunches = 0;
+    uint64_t automaticCacheHits = 0;
+    std::string streamingScope, streamingStatus = "Not active";
+    uint64_t lastStreamingPollMs = 0, streamingLaunches = 0;
+    uint32_t streamingSize = 4096, streamingActive = 0, streamingSides = 0, streamingCorners = 0;
+    struct TileRetry
+    {
+        uint32_t failures = 0;
+        uint64_t nextAttemptAtMs = 0;
+    };
+    std::unordered_map<std::string, TileRetry> failedStreamingTiles;
     std::string preparationCell;
     std::string preparationPath;
     std::string preparationLogPath;

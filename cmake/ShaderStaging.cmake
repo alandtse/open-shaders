@@ -134,15 +134,21 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E touch copy_shaders.stamp
     DEPENDS
         ${HLSL_FILES}
-        ${DX12_NATIVE_SCENE_DXIL}
-        ${NATIVE_LIGHTING_DXIL}
-        ${NATIVE_COMPOSITE_DXIL}
-        ${NATIVE_COMPOSITE_SHADOW_DXIL}
+        # Never reference compiled DXIL OUTPUT files directly here. Doing so
+        # causes the VS/MSBuild generator to attach duplicate producing rules
+        # to prepare_shaders.vcxproj while their dedicated *DXIL targets run
+        # concurrently. NativeComposite/AddLighting.dxil then races itself.
+        # The source shader files above/below retain incremental invalidation,
+        # and the target-level edges below supply producer-before-copy ordering.
         ${FFX_RUNTIME_FILES}
         ${STREAMLINE_RUNTIME_FILES}
         ${STREAMLINE_RUNTIME_DX12_FILES}
         ${_package_shaders}
         ${_all_feature_shader_files}
+        # Also re-stage if a compiled DXIL recipe changes with no HLSL edit.
+        ${CMAKE_SOURCE_DIR}/src/Features/DX12NativeScene/Shaders.cmake
+        ${CMAKE_SOURCE_DIR}/src/Features/NativeLighting/Shaders.cmake
+        ${CMAKE_SOURCE_DIR}/src/Features/NativeComposite/Shaders.cmake
         ${CMAKE_SOURCE_DIR}/cmake/CleanupStaleEntries.cmake
         ${CMAKE_SOURCE_DIR}/cmake/PreservedRuntimePaths.cmake
         # Re-stage once after staging rules change, even when all compiled
@@ -158,6 +164,18 @@ add_custom_target(
     DEPENDS copy_shaders.stamp
     COMMENT "Preparing shaders for validation"
 )
+
+# Only the dedicated DXIL targets own the compiled shader output rules.
+# Use target dependencies (not output-file dependencies on the copy stamp)
+# so parallel Visual Studio builds cannot launch a second compiler for the
+# same AddLighting/ShadowLayer/DXR bytecode. This keeps incremental shader
+# staging independent from full C++ compilation.
+foreach(_compiled_shader_target IN ITEMS
+    DX12NativeSceneDXIL NativeLightingDXIL NativeCompositeDXIL)
+    if(TARGET ${_compiled_shader_target})
+        add_dependencies(prepare_shaders ${_compiled_shader_target})
+    endif()
+endforeach()
 
 # Incremental local validation: compile only the shaders affected by the
 # current working-tree diff (vs HEAD). Mirrors the CI incremental path but

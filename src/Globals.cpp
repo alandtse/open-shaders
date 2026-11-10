@@ -28,6 +28,7 @@
 #include "Features/DX12Resources/DX12Resources.h"
 #include "Features/NativeLighting/NativeLighting.h"
 #include "Features/NativeComposite/NativeComposite.h"
+#include "Features/NativeFeatures.h"
 #include "Features/LODBlending.h"
 #include "Features/LODShadows.h"
 #include "Features/LightLimitFix.h"
@@ -102,6 +103,9 @@ namespace globals
         DX12Resources dx12Resources{};
 		NativeLightingFeature nativeLighting{};
 		NativeCompositeFeature nativeComposite{};
+		NativePBRFeature nativePBR{};
+		NativeLLFFeature nativeLLF{};
+		NativeSCMFeature nativeSCM{};
 		InteriorSun interiorSun{};
 		FurShells furShells{};
 		RainRefraction rainRefraction{};

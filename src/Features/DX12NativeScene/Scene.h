@@ -14,6 +14,12 @@
 
 namespace DX12Native
 {
+    // Shared native-only light ABI: prepared-first LLF, direct RayQuery,
+    // and independent RayQuery shadow tracing must agree on capacity.
+    inline constexpr uint32_t kMaximumNativePointLights = 64;
+    inline constexpr uint32_t kNativeLightRecordTexels = 8;
+    inline constexpr uint32_t kNativeShadowLightTextureWidth =
+        kMaximumNativePointLights * kNativeLightRecordTexels;
 	struct SceneScope
 	{
 		uint64_t scene = 0, light = 0, batch = 0;

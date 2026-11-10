@@ -12,6 +12,19 @@ bool AdmitShadowCandidate(uint instance,uint primitive,float2 barycentric,inout 
         !LoadTriangle(instance,primitive,barycentric,receiverSurface)) { valid=false; return false; }
     return AdmitCandidate(instance,primitive,barycentric);
 }
+float4 NativeCameraRay(uint2 pixel)
+{
+    // Reuse the former DX12 ray-prep pixel-center and camera matrices.
+    // No intermediate cross-API texture, separate PSO or extra dispatch.
+    float2 clip = float2(NativeShadowClip(pixel.x, Size.x),
+        -NativeShadowClip(pixel.y, Size.y));
+    float4 view = mul(NativeCameraProjectionInverse, float4(clip, 0.5f, 1.0f));
+    if (!all(isfinite(view)) || abs(view.w) <= 1e-8f) return 0;
+    float3 direction = mul((float3x3)NativeCameraViewInverse, view.xyz / view.w);
+    float magnitude = dot(direction, direction);
+    return all(isfinite(direction)) && magnitude > 1e-8f ?
+        float4(direction * rsqrt(magnitude), 1.0f) : 0;
+}
 void TraceNativeShadow(uint2 pixel)
 {
     Shadow[pixel]=float4(1,0,0,0);
@@ -21,7 +34,7 @@ void TraceNativeShadow(uint2 pixel)
         Shadow[pixel]=float4(0,-1,0,0);
         return;
     }
-    float4 cameraRay=Receivers[pixel];
+    float4 cameraRay=NativeCameraRay(pixel);
     if (cameraRay.w!=1 || !all(isfinite(cameraRay))) return;
     RayDesc primary;
     primary.Origin=CameraOrigin; primary.Direction=cameraRay.xyz;
@@ -40,7 +53,7 @@ void TraceNativeShadow(uint2 pixel)
     uint instance = surface.CommittedInstanceID(), primitive = surface.CommittedPrimitiveIndex();
     MaterialRecord record = Materials[Surfaces[instance].material.x];
     if ((record.flags.x & 3u) != 3u || record.flags.w != 0u) return;
-    float4 adjacent = Receivers[min(pixel+uint2(1,1),Size-1)];
+    float4 adjacent = NativeCameraRay(min(pixel+uint2(1,1),Size-1));
     float footprint = max(length(adjacent.xyz-primary.Direction),1e-6) * distance;
     EvaluatedSourceMaterial material;
     TriangleSurface triSurface;

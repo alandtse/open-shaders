@@ -2,6 +2,7 @@
 
 #include "Feature.h"
 #include "Features/DX12NativeScene/PreparedScene.h"
+#include "Features/DX12NativeScene/SubcellStreamingManager.h"
 #include "Features/DX12NativeScene/RuntimeGeometryCapture.h"
 #include "Features/DX12NativeScene/RuntimeGeometryCacheWorker.h"
 #include "Features/DX12NativeScene/RuntimeGeometryPreparation.h"
@@ -17,19 +18,29 @@
 
 /** @brief Loads prepared geometry and publishes its completed DX12 acceleration scene. */
 namespace RE { class BSGeometry; }
+namespace ShadowCasterManager { struct NativeCasterFrame; }
 
 struct DX12NativeScene final : Feature
 {
 	struct Settings
 	{
 		bool Enabled = true, ShadowMask = true;
-		uint32_t BudgetMB = 0, FrameBudgetMB = 0, MaterialBatchMB = 16; // BudgetMB=0: automatic DXGI
+		// Native features follow one DX12 pipeline ownership decision, never per-effect validity gates.
+		bool NativePBR = true, NativeLLF = true, NativeSCM = true;
+		uint32_t BudgetMB = 0, FrameBudgetMB = 0, MaterialBatchMB = 16; // Retired manual caps; zero means dynamic DXGI.
         uint32_t BudgetPolicyVersion = 1; // Migrate legacy 512 MiB default to auto
-		bool UseLivePBR = false; // Experimental opt-in; do not enable before runtime validation.
+        uint32_t GlobalDXGIHeadroomPercent = DX12Native::VideoMemoryBudget::kDefaultHeadroomPercent;
+        uint32_t SubdivisionMode = 0; // 0 full; 1 auto after estimate; 2 forced companion prep.
+        bool AutoGridMemoryScreening = true; // false: automatic mode uses grid directly.
+        uint32_t SubcellSize = 4096; // 2048..16384 in 1024 unit steps
+        bool BuildCandidateGridTLAS = false; // Disabled-by-default isolated DXR test.
+        bool UseGridForNativeDXR = false; // Opt-in only, require matching TLAS/material generation.
+		bool UseLivePBR = false; // Legacy config field; NativePBR now follows DX12 ownership.
         bool ImportLoosePBR = false; // Separate opt-in for bounded loose-file DDS residency.
         bool ImportArchivePBR = false; // Further opt-in: archive resource manager fallback.
         bool RuntimeOnlyMaterials = false; // Optional manifest-free runtime texture acquisition.
-        bool CaptureRuntimeGeometry = false; // Static CPU-backed meshes only; no GPU readbacks.
+        bool CaptureRuntimeGeometry = false; // Explicit static-geometry debug.
+        bool CaptureSCMRigidCasters = true; // Bounded native acquisition from SCM's cull data.
         bool CacheRuntimeGeometry = false; // Optional background persistence and menu CPU prewarm.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
@@ -46,12 +57,20 @@ struct DX12NativeScene final : Feature
 		uint32_t cellID = 0;
 		uint64_t revision = 0;
 	};
+	// NativeLLF unifies prepared and live lights for native DXR with one shared capacity.
+	struct NativeLightBatch
+	{
+		std::array<DX12Native::PreparedPointLight, DX12Native::kMaximumNativePointLights> lights{};
+		uint32_t count = 0, observed = 0, prepared = 0, matched = 0, added = 0, clustered = 0, omitted = 0, overflow = 0;
+	};
 	struct SceneFrame
 	{
 		uint32_t frame = 0;
 		std::shared_ptr<const DX12Native::RasterFrame> raster;
 		std::optional<PublishedScene> prepared;
 		std::shared_ptr<const DX12Native::ShadowFrame> shadow;
+		// Same-frame classified raster casters for NativeSCM consumers (no engine pointers).
+		std::shared_ptr<const ShadowCasterManager::NativeCasterFrame> nativeCasters;
 	};
 	std::string GetName() override { return "DX12 Native Scene"; }
 	std::string GetShortName() override { return "DX12NativeScene"; }
@@ -67,6 +86,7 @@ struct DX12NativeScene final : Feature
 	void Prepass() override { DispatchShadow("before-opaque"); }
 	void OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs) override;
     void ObserveRuntimeGeometry(RE::BSGeometry* a_geometry, const std::string& a_reference, const std::string& a_shape);
+    void ObserveSCMRigidCaster(RE::BSGeometry& geometry); // Data only; DX12 evaluates rays.
 	void OnRuntimeDisabled() override;
 	void OnSceneTransitionReset(bool a_open) override;
 	void GameLoaded() override;
@@ -82,10 +102,19 @@ struct DX12NativeScene final : Feature
 		requestedShadow = 1;
 		shadowResetRequested = true;
 	}
+	/** @brief The selected DX12 pipeline owns native materials, lights and casters.
+	 *  Not dependent on material/scene/effect validity. */
+	bool OwnsNativeFeatures() const;
+	/** @brief True only when this exact static reference/shape exists in the active native TLAS. */
+	bool IsPreparedStaticCaster(RE::BSGeometry& geometry) const;
 	/** @brief Retains the scene graphics session for DX12-only consumers. */
 	std::optional<GraphicsBackend> GetGraphicsBackend() const { return loaded && settings.Enabled && !transitionOpen ? backend : std::nullopt; }
 	/** @brief Retains a completed scene matching the current cell and revision. */
 	std::optional<PublishedScene> GetPublishedScene() const;
+	/** @brief Live LLF illumination source in a native-owned frame; empty is not a legacy fallback. */
+	std::optional<NativeLightBatch> GetNativeLLFLights(uint32_t a_frame) const;
+	/** @brief Retains SCM's finished same-frame caster classification generation. */
+	std::shared_ptr<const ShadowCasterManager::NativeCasterFrame> GetNativeSCMFrame(uint32_t a_frame) const;
 	/** @brief Returns the available current-frame outputs without substituting stale resources. */
 	std::optional<SceneFrame> GetSceneFrame(uint32_t a_frame) const;
 	/** @brief Retains the current raster snapshot through the consumer GPU work. */
@@ -106,6 +135,18 @@ private:
 	void DispatchShadow(const char* a_stage);
 	std::optional<GraphicsBackend> backend;
 	DX12Native::PreparedScene prepared;
+    DX12Native::SubcellStreamingManager subcellManager;
+    DX12Native::AccelerationWorker candidateGridAcceleration;
+    DX12Native::ShadowBindingWorker candidateGridBindings;
+    std::shared_ptr<const DX12Native::PreparedCell> lastSubmittedGridCell;
+    // Atomic publication unit: keep all three resources together through
+    // candidate builds, GPU fences, and later 3x3 recentering.
+    std::optional<PublishedScene> stableGridPublished;
+    DX12Native::SpatialSubcells::Coordinate stableGridCenter{};
+    uint64_t gridHandoffs = 0;
+    bool autoGridDecisionLatched = false;
+    std::shared_ptr<const DX12Native::TopLevel> requestedCandidateMaterialScene;
+    uint64_t candidateMaterialAllowance = 0;
     DX12Native::RuntimeGeometryMailbox runtimeGeometry;
     // Immutable completed-TLAS identity index is published atomically for the draw hook.
     std::atomic<std::shared_ptr<const DX12Native::PreparedRuntimeCoverage>> runtimePreparedCoverage;
@@ -153,6 +194,8 @@ private:
 	std::atomic<uint32_t> requestedBudget{ UINT32_MAX };
 	std::atomic<uint32_t> requestedFrameBudget{ UINT32_MAX };
 	std::atomic<uint32_t> requestedMaterialBatch{ 0 };
+    double previousPlayerX = 0.0, previousPlayerY = 0.0;
+    bool hasPreviousPlayer = false;
 	uint64_t shadowControlsRevision = 1;
 	uint64_t shadowOpaqueRetryAttempts = 0, shadowOpaqueRetryRecovered = 0;
 	mutable std::mutex settingsMutex, diagnosticsMutex;

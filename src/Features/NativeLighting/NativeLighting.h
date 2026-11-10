@@ -20,7 +20,7 @@ struct NativeLightingFeature final : Feature
 		uint32_t NormalInfluence = 2, SelectedDirectLight = 0;
 		uint32_t TraceDensityMode = 0; // 0..7, native-resolution sparse ray eligibility.
 		bool StochasticShadows = false, UseAllPreparedLights = true;
-		uint32_t BudgetMB = 0; // 0 = dynamic DXGI local-memory-aware frame pool.
+		uint32_t BudgetMB = 0; // Compatibility only; always dynamic DXGI.
 		bool PersistLab = false;
 	};
 	struct ValidityLab
@@ -79,6 +79,14 @@ struct NativeLightingFeature final : Feature
 	std::shared_ptr<const Contribution> GetContribution(uint32_t a_frame) const;
 	/** @brief Retains a contribution through a downstream GPU completion fence. */
 	bool RetainContribution(const std::shared_ptr<const Contribution>& a_frame, ID3D12Fence* a_fence, uint64_t a_value);
+	/** @brief NativeSCM queries direct-light selection through the owning feature,
+	 *  without reading NativeLighting's private settings from external code. */
+	bool SelectsLightForNativeShadows(uint32_t index) const
+	{
+		std::scoped_lock lock(settingsMutex);
+		return loaded && settings.Enabled &&
+			(settings.UseAllPreparedLights || settings.SelectedDirectLight == index);
+	}
 	~NativeLightingFeature();
 
 private:
@@ -90,7 +98,8 @@ private:
 	Settings settings;
 	ValidityLab lab;
 	uint64_t validityRevision = 1;
-	std::mutex settingsMutex, diagnosticsMutex;
+	mutable std::mutex settingsMutex;
+	std::mutex diagnosticsMutex;
 	json diagnostics = json::object();
 	GraphicsBackend backend;
 	winrt::com_ptr<ID3D12Fence> completion;

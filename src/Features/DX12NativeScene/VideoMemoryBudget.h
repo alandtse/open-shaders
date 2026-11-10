@@ -5,12 +5,28 @@
 #include <winrt/base.h>
 #include <algorithm>
 #include <cstdint>
+#include <atomic>
 
 namespace DX12Native
 {
     struct VideoMemoryBudget
     {
         static constexpr uint64_t kMiB = 1024ull * 1024ull;
+        // One process-wide policy shared by every native DX12 budget consumer.
+        // DXGI CurrentUsage already includes all resources on this adapter:
+        // never sum independently tracked allocations to compute the reserve.
+        static constexpr uint32_t kDefaultHeadroomPercent = 10;
+        inline static std::atomic<uint32_t> globalHeadroomPercent{ kDefaultHeadroomPercent };
+
+        static uint32_t HeadroomPercent()
+        {
+            return globalHeadroomPercent.load(std::memory_order_relaxed);
+        }
+
+        static void SetHeadroomPercent(uint32_t percent)
+        {
+            globalHeadroomPercent.store(std::clamp(percent, 1u, 50u), std::memory_order_relaxed);
+        }
         struct Snapshot
         {
             uint64_t localBudget = 0, localUsage = 0, headroom = 0, reserve = 0;
@@ -25,13 +41,19 @@ namespace DX12Native
         static Snapshot Evaluate(uint64_t budget, uint64_t usage, uint64_t trackedBytes, uint64_t manualLimitBytes = 0)
         {
             Snapshot result{};
-            result.effectiveBytes = manualLimitBytes ? manualLimitBytes : 512ull * kMiB;
+            // Never guess a 512 MiB fallback without DXGI adapter telemetry.
+            // Consumers defer new allocations until the budget can be queried.
+            result.effectiveBytes = 0;
             if (!budget) return result;
             result.dxgiAvailable = true;
             result.localBudget = budget;
             result.localUsage = usage;
             result.headroom = budget > usage ? budget - usage : 0ull;
-            result.reserve = std::max(256ull * kMiB, std::min(1024ull * kMiB, budget / 16ull));
+            // Reserve a globally configured fraction of the *total* adapter
+            // budget, not a per-feature slice. Re-query each time so the
+            // existing shader, AS and material budgets adapt at runtime.
+            const uint64_t percent = HeadroomPercent();
+            result.reserve = (budget / 100) * percent + ((budget % 100) * percent) / 100;
             const auto usable = result.headroom > result.reserve ? result.headroom - result.reserve : 0ull;
             const auto allowance = trackedBytes > UINT64_MAX - usable ? UINT64_MAX : trackedBytes + usable;
             result.effectiveBytes = manualLimitBytes ? std::min(manualLimitBytes, allowance) : allowance;

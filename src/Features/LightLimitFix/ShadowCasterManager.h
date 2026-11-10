@@ -6,6 +6,8 @@
 #include <array>
 #include <d3d11.h>
 #include <functional>
+#include <memory>
+#include <vector>
 
 #include "RE/B/BSShadowLight.h"
 #include "RE/S/ShadowSceneNode.h"
@@ -1029,6 +1031,25 @@ namespace ShadowCasterManager
 	/// Publishes this frame's GPU-measured per-slot screen-visibility demand for
 	/// the redraw scheduler to read. Call once per frame before Update().
 	void SetShadowDemand(const ShadowDemandSample& sample);
+
+	// NativeSCM receives classification during SCM's existing cull walk: no extra
+	// per-frame geometry traversal, and no Skyrim pointers leave the collector.
+	struct NativeCaster
+	{
+		std::array<float, 4> worldBound{};
+		bool skinned = false, dynamic = false, preparedStatic = false;
+	};
+	struct NativeCasterFrame
+	{
+		uint32_t frame = 0;
+		std::vector<NativeCaster> casters;
+		uint32_t preparedStaticRetired = 0, dropped = 0;
+        uint32_t uncoveredRigid = 0, moving = 0, skinned = 0;
+        uint32_t rasterFallback = 0; // Only geometry absent from published TLAS.
+	};
+	void BeginNativeCasterFrame(uint32_t frame, bool nativeActive);
+	void EndNativeCasterFrame();
+	std::shared_ptr<const NativeCasterFrame> GetNativeCasterFrame(uint32_t frame);
 
 	/// Returns read-only view of active light pool.
 	const LightContainer& GetLights();
