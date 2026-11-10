@@ -462,8 +462,14 @@ namespace ShadowCasterManager
 		                          nullptr :
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
-		const bool preparedStatic = !dynamic && s_nativeCasterCollecting &&
-			globals::features::dx12NativeScene.IsPreparedStaticCaster(geom);
+		bool preparedStatic = false;
+		if (!dynamic && s_nativeCasterCollecting) {
+			if (rec->nativeCoverageEpoch != s_casterClassEpoch) {
+				rec->nativePreparedCovered = globals::features::dx12NativeScene.IsPreparedStaticCaster(geom);
+				rec->nativeCoverageEpoch = s_casterClassEpoch;
+			}
+			preparedStatic = rec->nativePreparedCovered;
+		}
 		ObserveNativeCaster(geom, dynamic, preparedStatic);
 		// Exactly-covered prepared triangles already intersect native DXR shadow rays.
 		// Leave unprepared static casters and all moving casters in the DX11 path.

@@ -10,7 +10,9 @@
 #include "ShaderCache.h"
 #include "Utils/DevBenchUx.h"
 #include "Utils/D3D.h"
+#include <algorithm>
 #include <cmath>
+#include <span>
 #include <string_view>
 #include <utility>
 
