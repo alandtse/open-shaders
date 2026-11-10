@@ -64,7 +64,7 @@ namespace DX12Native
         const uint64_t vertexBytes = uint64_t(packet.vertexCount) * packet.vertexStride;
         if (!packet.vertexCount || !packet.indexCount || packet.vertexStride < 16 ||
             packet.indexCount % 3 || packet.vertices.size() != vertexBytes ||
-            packet.indices.size() != packet.indexCount || packet.Bytes() > 8ull * 1024 * 1024)
+            packet.indices.size() != packet.indexCount || packet.Bytes() > 512 * 1024)
             return std::nullopt;
         EncodedRuntimeGeometry out;
         out.geometry.reserve(16 + size_t(packet.vertexCount) * 12 + size_t(packet.indexCount) * 4);

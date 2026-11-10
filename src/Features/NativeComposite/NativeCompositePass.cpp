@@ -3,10 +3,6 @@
 #include "GpuPass.h"
 #include "Globals.h"
 #include <directx/d3dx12.h>
-#include <algorithm>
-#include <array>
-#include <cmath>
-#include <cstring>
 #include <fstream>
 #include <limits>
 
@@ -32,12 +28,12 @@ bool NativeComposite::InitializeShadow(ID3D12Device* a_device)
 			return false;
 		}
 		CD3DX12_DESCRIPTOR_RANGE ranges[2];
-		ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0);
+		ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);
 		ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
 		CD3DX12_ROOT_PARAMETER parameters[3];
 		parameters[0].InitAsDescriptorTable(1, &ranges[0]);
 		parameters[1].InitAsDescriptorTable(1, &ranges[1]);
-		parameters[2].InitAsConstants(44, 0);
+		parameters[2].InitAsConstants(41, 0);
 		const CD3DX12_ROOT_SIGNATURE_DESC desc(3, parameters);
 		winrt::com_ptr<ID3DBlob> serialized, errors;
 		DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
@@ -71,12 +67,12 @@ bool NativeComposite::InitializeLighting(ID3D12Device* a_device)
 		file.seekg(0);
 		if (!file.read(shader.data(), size)) return false;
 		CD3DX12_DESCRIPTOR_RANGE ranges[2];
-		ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 9, 0);
+		ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 8, 0);
 		ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0);
 		CD3DX12_ROOT_PARAMETER parameters[3];
 		parameters[0].InitAsDescriptorTable(1, &ranges[0]);
 		parameters[1].InitAsDescriptorTable(1, &ranges[1]);
-		parameters[2].InitAsConstants(43, 0);
+		parameters[2].InitAsConstants(40, 0);
 		const CD3DX12_ROOT_SIGNATURE_DESC desc(3, parameters);
 		winrt::com_ptr<ID3DBlob> serialized, errors;
 		DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
@@ -102,7 +98,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 	const std::shared_ptr<const NativeLightingFeature::Contribution>& a_lighting,
 	const std::shared_ptr<const DX12Native::ShadowFrame>& a_shadow,
 	const std::shared_ptr<const DX12Native::RasterFrame>& a_raster,
-	const ShadowSettings& a_shadowSettings, const CharacterSettings& a_character,
+	const ShadowSettings& a_shadowSettings,
 	float a_strength, bool a_directSpatialReconstruction, const Policy& a_policy, uint64_t a_revision)
 {
 	CS_GPU_PASS("NativeComposite::RasterPassThrough");
@@ -279,20 +275,14 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			srv.Texture2D.MipLevels = 1;
 			a_device12->CreateShaderResourceView(replacement->frame->color.get(), &srv, replacement->frame->descriptors->GetCPUDescriptorHandleForHeapStart());
 			if (supportsLighting) {
-				heapDesc.NumDescriptors = 4;
+				heapDesc.NumDescriptors = 3;
 				DX::ThrowIfFailed(a_device12->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(replacement->shadowDescriptors.put())));
-				heapDesc.NumDescriptors = 11;
+				heapDesc.NumDescriptors = 10;
 				DX::ThrowIfFailed(a_device12->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(replacement->lightingDescriptors.put())));
 				const auto buffer = CD3DX12_RESOURCE_DESC::Buffer(6 * sizeof(uint32_t));
 				const auto counterBuffer = CD3DX12_RESOURCE_DESC::Buffer(6 * sizeof(uint32_t), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 				const auto upload = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
 				const auto readback = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
-                const auto characterBuffer = CD3DX12_RESOURCE_DESC::Buffer(
-                    4ull * sizeof(float) * (CharacterSettings::kMaxBounds + 1));
-                DX::ThrowIfFailed(a_device12->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE,
-                    &characterBuffer, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                    IID_PPV_ARGS(replacement->characterBounds.put())));
-                replacement->characterBounds->SetName(L"NativeComposite::RasterCharacterBounds");
 				DX::ThrowIfFailed(a_device12->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &counterBuffer, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(replacement->counters.put())));
 				DX::ThrowIfFailed(a_device12->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buffer, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(replacement->counterReset.put())));
 				DX::ThrowIfFailed(a_device12->CreateCommittedResource(&readback, D3D12_HEAP_FLAG_NONE, &buffer, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(replacement->counterReadback.put())));
@@ -305,78 +295,6 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			*slot = std::move(*replacement);
 		}
 
-        // The slot is fenced before reuse. Copy this frame's world-space
-        // player bounds into a camera-relative DX12 upload buffer. Neither
-        // engine scenegraph pointers nor live pose data escape this boundary.
-        uint32_t characterCount = 0;
-        if (supportsLighting && slot->characterBounds &&
-            a_character.frame == a_frame && a_character.count) {
-            const globals::FrameBuffer* camera = nullptr;
-            if (a_raster && a_raster->cameraValid && a_raster->frame == a_frame)
-                camera = &a_raster->camera;
-            else if (blend && a_lighting->scene.raster &&
-                a_lighting->scene.raster->cameraValid &&
-                a_lighting->scene.raster->frame == a_frame)
-                camera = &a_lighting->scene.raster->camera;
-            if (camera) {
-                const std::array<float, 3> origin{
-                    camera->CameraPosAdjust.x + camera->CameraViewInverse._14,
-                    camera->CameraPosAdjust.y + camera->CameraViewInverse._24,
-                    camera->CameraPosAdjust.z + camera->CameraViewInverse._34
-                };
-                if (std::ranges::all_of(origin, [](float value) { return std::isfinite(value); })) {
-                    std::array<std::array<float, 4>, CharacterSettings::kMaxBounds + 1> relative{};
-                    const float margin = std::isfinite(a_character.margin) ?
-                        std::clamp(a_character.margin, 0.0f, 32.0f) : 0.0f;
-                    for (uint32_t i = 0;
-                        i < std::min(a_character.count, CharacterSettings::kMaxBounds); ++i) {
-                        const auto& bound = a_character.bounds[i];
-                        if (!std::ranges::all_of(bound, [](float v) { return std::isfinite(v); }) ||
-                            bound[3] <= 0.0f) continue;
-                        relative[++characterCount] = {
-                            bound[0] - origin[0], bound[1] - origin[1],
-                            bound[2] - origin[2], bound[3] + margin };
-                    }
-                    if (characterCount) {
-                        // Slot zero bounds the union of all observed shapes;
-                        // a fast early rejection prevents per-shape traversal
-                        // across nearly every environment pixel.
-                        std::array<float, 3> low{
-                            std::numeric_limits<float>::max(),
-                            std::numeric_limits<float>::max(),
-                            std::numeric_limits<float>::max() };
-                        std::array<float, 3> high{
-                            std::numeric_limits<float>::lowest(),
-                            std::numeric_limits<float>::lowest(),
-                            std::numeric_limits<float>::lowest() };
-                        for (uint32_t i = 1; i <= characterCount; ++i) {
-                            const auto& sphere = relative[i];
-                            for (uint32_t axis = 0; axis < 3; ++axis) {
-                                low[axis] = std::min(low[axis], sphere[axis] - sphere[3]);
-                                high[axis] = std::max(high[axis], sphere[axis] + sphere[3]);
-                            }
-                        }
-                        const std::array<float, 3> center{
-                            (low[0] + high[0]) * 0.5f,
-                            (low[1] + high[1]) * 0.5f,
-                            (low[2] + high[2]) * 0.5f };
-                        const float x = high[0] - low[0], y = high[1] - low[1],
-                            z = high[2] - low[2];
-                        const float radius = 0.5f * std::sqrt(x * x + y * y + z * z) + 0.01f;
-                        if (!std::isfinite(radius) || radius <= 0.0f)
-                            characterCount = 0;
-                        else relative[0] = { center[0], center[1], center[2], radius };
-                    }
-                    if (characterCount) {
-                        const D3D12_RANGE noRead{ 0, 0 };
-                        void* mapped = nullptr;
-                        DX::ThrowIfFailed(slot->characterBounds->Map(0, &noRead, &mapped));
-                        std::memcpy(mapped, relative.data(), sizeof(relative));
-                        slot->characterBounds->Unmap(0, nullptr);
-                    }
-                }
-            }
-        }
 		producerSignalled = true;
 		a_context11->CopyResource(slot->shared->resource11, a_source);
 		const uint64_t inputValue = slot->fence.Next();
@@ -414,14 +332,6 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			srv.Format = DXGI_FORMAT_R32_FLOAT;
 			a_device12->CreateShaderResourceView(a_raster->depth->resource.get(), &srv, cpu);
 			cpu.ptr += step;
-            D3D12_SHADER_RESOURCE_VIEW_DESC characterSrv{};
-            characterSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-            characterSrv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-            characterSrv.Format = DXGI_FORMAT_UNKNOWN;
-            characterSrv.Buffer.NumElements = CharacterSettings::kMaxBounds + 1;
-            characterSrv.Buffer.StructureByteStride = 4 * sizeof(float);
-            a_device12->CreateShaderResourceView(slot->characterBounds.get(), &characterSrv, cpu);
-            cpu.ptr += step;
 			D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
 			uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
 			uav.Format = desc.Format;
@@ -438,27 +348,22 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			slot->commands->SetComputeRootSignature(slot->shadowRoot.get());
 			auto gpu = slot->shadowDescriptors->GetGPUDescriptorHandleForHeapStart();
 			slot->commands->SetComputeRootDescriptorTable(0, gpu);
-			gpu.ptr += 3ull * step;
+			gpu.ptr += 2ull * step;
 			slot->commands->SetComputeRootDescriptorTable(1, gpu);
 			struct Constants {
 				uint32_t width, height; float receiverTolerance, radiusPixels;
 				uint32_t legacyTransfer, preview; float strength, blend;
 				DirectX::SimpleMath::Matrix inverseProjection, inverseView;
 				uint32_t spatialReconstruction;
-                uint32_t characterCount;
-                float characterShadowBlend;
-                uint32_t characterDebug;
 			};
-			static_assert(sizeof(Constants) == 44 * sizeof(uint32_t));
+			static_assert(sizeof(Constants) == 41 * sizeof(uint32_t));
 			const auto& camera = a_raster->camera;
 			const Constants constants{ a_width, a_height, a_shadowSettings.receiverTolerance, a_shadowSettings.radiusPixels,
 				a_transfer == Transfer::LegacyScene ? 1u : 0u, a_shadowSettings.preview ? 1u : 0u,
 				a_shadowSettings.contribution, a_shadowSettings.blend,
 				camera.CameraProjInverse, camera.CameraViewInverse,
-				a_shadowSettings.spatialReconstruction ? 1u : 0u,
-                characterCount, std::clamp(a_character.shadowBlend, 0.0f, 1.0f),
-                characterCount && a_character.debug ? 1u : 0u };
-			slot->commands->SetComputeRoot32BitConstants(2, 44, &constants, 0);
+				a_shadowSettings.spatialReconstruction ? 1u : 0u };
+			slot->commands->SetComputeRoot32BitConstants(2, 41, &constants, 0);
 			slot->commands->Dispatch((a_width + 7) / 8, (a_height + 7) / 8, 1);
 			const std::array end{
 				CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
@@ -491,14 +396,6 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 				cpu.ptr += step;
 				lightingBarriers[i] = CD3DX12_RESOURCE_BARRIER::Transition(resources[i], D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 			}
-            D3D12_SHADER_RESOURCE_VIEW_DESC characterSrv{};
-            characterSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-            characterSrv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-            characterSrv.Format = DXGI_FORMAT_UNKNOWN;
-            characterSrv.Buffer.NumElements = CharacterSettings::kMaxBounds + 1;
-            characterSrv.Buffer.StructureByteStride = 4 * sizeof(float);
-            a_device12->CreateShaderResourceView(slot->characterBounds.get(), &characterSrv, cpu);
-            cpu.ptr += step;
 			D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
 			uav.Format = desc.Format;
 			uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
@@ -519,18 +416,15 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			slot->commands->SetComputeRootSignature(slot->root.get());
 			auto gpu = slot->lightingDescriptors->GetGPUDescriptorHandleForHeapStart();
 			slot->commands->SetComputeRootDescriptorTable(0, gpu);
-			gpu.ptr += 9ull * step;
+			gpu.ptr += 8ull * step;
 			slot->commands->SetComputeRootDescriptorTable(1, gpu);
 			struct Constants { uint32_t width, height; float strength; uint32_t legacy; uint32_t diffuse, specular, visual, spatialReconstruction;
-				DirectX::SimpleMath::Matrix inverseProjection, inverseView;
-                uint32_t characterCount; float characterNativeBlend; uint32_t characterDebug; };
-			static_assert(sizeof(Constants) == 43 * sizeof(uint32_t));
+				DirectX::SimpleMath::Matrix inverseProjection, inverseView; };
+			static_assert(sizeof(Constants) == 40 * sizeof(uint32_t));
 			const auto& camera = a_lighting->scene.raster->camera;
 			const Constants constants{ a_width, a_height, a_strength, a_transfer == Transfer::LegacyScene ? 1u : 0u, a_policy.diffuse, a_policy.specular, a_policy.visual,
-				a_directSpatialReconstruction && a_lighting->traceDensityMode != 0u ? 1u : 0u, camera.CameraProjInverse, camera.CameraViewInverse,
-                characterCount, std::clamp(a_character.lightingBlend, 0.0f, 1.0f),
-                characterCount && a_character.debug ? 1u : 0u };
-			slot->commands->SetComputeRoot32BitConstants(2, 43, &constants, 0);
+				a_directSpatialReconstruction && a_lighting->traceDensityMode != 0u ? 1u : 0u, camera.CameraProjInverse, camera.CameraViewInverse };
+			slot->commands->SetComputeRoot32BitConstants(2, 40, &constants, 0);
 			slot->commands->Dispatch((a_width + 7) / 8, (a_height + 7) / 8, 1);
 			const auto counterEnd = CD3DX12_RESOURCE_BARRIER::Transition(slot->counters.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
 			slot->commands->ResourceBarrier(1, &counterEnd);
@@ -582,10 +476,6 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		frame.valid = true;
 		frame.lightingSubmitted = blend;
 		frame.shadowSubmitted = applyShadow;
-        if (characterCount && (blend || applyShadow)) {
-            ++framesWithCharacterBounds;
-            protectedCharacterBounds += characterCount;
-        }
 		slot->countersRead = !blend;
 		frame.validityRevision = a_revision ^ (blend ? (a_lighting->validityRevision * 0x9e3779b97f4a7c15ull) : 0) ^
 			(applyShadow ? (a_shadowSettings.revision * 0xbf58476d1ce4e5b9ull) : 0);

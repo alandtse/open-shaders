@@ -13,7 +13,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, BudgetPolicyVersion, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, CapturePlayerSkin, HybridRasterCharacter, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, BudgetPolicyVersion, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -228,48 +228,10 @@ void DX12NativeScene::DrawSettings()
     ImGui::Text("Runtime geometry batches: %u  attempts: %zu  failures: %u",
         runtimeGeometryPrepare.Batches(), runtimeGeometryPrepare.Attempted(),
         runtimeGeometryPrepare.Failures());
-    ImGui::SeparatorText("Hybrid player rendering");
-    if (ImGui::Checkbox("Hybrid: preserve raster player in Native Composite", &settings.HybridRasterCharacter)) {
-        if (settings.HybridRasterCharacter) settings.CapturePlayerSkin = false;
-        playerRasterCaptureActive.store(settings.HybridRasterCharacter, std::memory_order_release);
-        playerSkinCaptureActive.store(settings.CapturePlayerSkin, std::memory_order_release);
-        resetRequested = true;
-    }
-    ImGui::TextDisabled("Raster pose stays current; depth-tested skinned bounds protect native composition.");
-    ImGui::Text("Raster player: %u bounds-frame | %llu observations | %llu dropped",
-        playerRasterBounds.LatestFrame(),
-        static_cast<unsigned long long>(playerRasterBounds.Observations()),
-        static_cast<unsigned long long>(playerRasterBounds.Dropped()));
-    if (ImGui::Checkbox("Experimental: full player BLAS (slow)", &settings.CapturePlayerSkin)) {
-        if (settings.CapturePlayerSkin) settings.HybridRasterCharacter = false;
-        playerSkinCaptureActive.store(settings.CapturePlayerSkin, std::memory_order_release);
-        playerRasterCaptureActive.store(settings.HybridRasterCharacter, std::memory_order_release);
-        resetRequested = true;
-    }
-    ImGui::TextDisabled("Full BLAS is optional and separate from the hybrid raster path.");
-    ImGui::TextDisabled("Capture/deform every observed frame; DX12 publication is nonblocking and fence-safe.");
-    ImGui::Text("Player skin: %zu shapes / %llu observations (latest frame %u)",
-        playerSkin.ObservedShapes(),
-        static_cast<unsigned long long>(playerSkin.Observations()),
-        playerSkin.LastObservedFrame());
-    ImGui::Text("Pose frames: queued %u, prepared %u, DX12 submitted %u, published %u",
-        playerSkin.LastQueuedFrame(), playerSkin.LastCompletedFrame(),
-        playerSkinSubmittedFrame, playerSkinPublishedFrame);
-    const auto capturedPoseFrame = playerSkin.LastObservedFrame();
-    if (playerSkinPublishedFrame && capturedPoseFrame >= playerSkinPublishedFrame)
-        ImGui::Text("Published pose age: %u rendered frames",
-            capturedPoseFrame - playerSkinPublishedFrame);
-    else ImGui::TextDisabled("Published pose age: awaiting first completed character TLAS");
-    ImGui::Text("Pose worker backpressure: %llu frames (latest pose wins)",
-        static_cast<unsigned long long>(playerSkin.DeferredFrames()));
-    ImGui::Text("Player skin worker: %s, completed %u, rejected %u",
-        playerSkin.Busy() ? "Busy" : "Idle", playerSkin.Successful(), playerSkin.Failed());
-    if (!playerSkin.Failure().empty())
-        ImGui::TextWrapped("Player skin: %s", playerSkin.Failure().c_str());
     ImGui::Text("Current-scene TLAS: %s",
         currentSceneStableAcceleration && currentSceneStableAcceleration->scope.policy == 2 ?
             "Prepared + runtime geometry" : "Prepared geometry only");
-    ImGui::TextDisabled("Prepared geometry stays visible while replacement character TLAS and materials finish.");
+    ImGui::TextDisabled("Runtime shapes enter the production scene after completion and material binding.");
     if (ImGui::CollapsingHeader("Native PBR Diagnostics"))
         DrawNativePBRDiagnostics(GetDiagnostics());
 	{
@@ -434,8 +396,6 @@ void DX12NativeScene::LoadSettings(json& a_json)
         settings.ImportLoosePBR = selected.ImportLoosePBR;
         settings.ImportArchivePBR = selected.ImportArchivePBR;
         settings.RuntimeOnlyMaterials = selected.RuntimeOnlyMaterials;
-        settings.HybridRasterCharacter = selected.HybridRasterCharacter;
-        settings.CapturePlayerSkin = selected.CapturePlayerSkin && !selected.HybridRasterCharacter;
 	settings.ShadowAllLights = selected.ShadowAllLights;
 	settings.ShadowStochastic = selected.ShadowStochastic;
 	settings.ShadowDistanceFade = selected.ShadowDistanceFade;
@@ -545,19 +505,6 @@ void DX12NativeScene::ObserveRuntimeGeometry(RE::BSGeometry* geometry,
     runtimeGeometry.Submit(DX12Native::CopyRuntimeGeometry(input, 256 * 1024));
 }
 
-void DX12NativeScene::ObservePlayerSkin(RE::BSGeometry* geometry)
-{
-    if (!geometry || (!playerSkinCaptureActive.load(std::memory_order_acquire) &&
-        !playerRasterCaptureActive.load(std::memory_order_acquire))) return;
-    const uint32_t frame = globals::game::graphicsState ?
-        globals::game::graphicsState->GetFrameCount() : 0;
-    if (!frame) return;
-    if (playerRasterCaptureActive.load(std::memory_order_acquire))
-        playerRasterBounds.Observe(geometry, frame);
-    if (playerSkinCaptureActive.load(std::memory_order_acquire))
-        playerSkin.Observe(geometry, frame);
-}
-
 void DX12NativeScene::NotifyPreparedCellPublished(std::string_view plugin, uint32_t localID)
 {
     if (plugin.empty() || !localID) return;
@@ -588,10 +535,6 @@ void DX12NativeScene::ResetScene()
     materialRequestBudgetBytes = 0;
     livePbrSource.reset(); livePbrRevision = 0; livePbrLastCaptureFrame = 0;
     runtimeGeometryPrepare.Reset();
-    playerSkin.Reset();
-    playerRasterBounds.Reset();
-    playerSkinSubmittedBatch = 0;
-    playerSkinSubmittedFrame = playerSkinPublishedFrame = 0;
     runtimeGeometry.Reset();
     runtimePreparedCoverage.store({}, std::memory_order_release);
     runtimeCoverageSource.reset();
@@ -680,10 +623,6 @@ void DX12NativeScene::EarlyPrepass()
 		shadow.ReloadShaders();
 	}
 	runtimeGeometryCaptureActive.store(settings.Enabled && settings.CaptureRuntimeGeometry,
-        std::memory_order_release);
-    playerSkinCaptureActive.store(settings.Enabled && settings.CapturePlayerSkin && !settings.HybridRasterCharacter,
-        std::memory_order_release);
-    playerRasterCaptureActive.store(settings.Enabled && settings.HybridRasterCharacter,
         std::memory_order_release);
     if (resetRequested.exchange(false)) ResetScene();
     // This CPU-only cache scheduler operates before the native scene/cell
@@ -834,61 +773,24 @@ void DX12NativeScene::EarlyPrepass()
         if (matching && matching->scene == completed) {
             currentSceneStableAcceleration = completed;
             currentSceneStableBindings = matching;
-            if (settings.CapturePlayerSkin && completed->scope.policy == 2 &&
-                completed->scope.frame != 0)
-                playerSkinPublishedFrame = completed->scope.frame;
         }
-    }
-    // Character poses are never written into the static disk cache.
-    // All deformation and DX12 upload work stays on the owned background worker.
-    if (settings.CapturePlayerSkin && currentSceneStableAcceleration &&
-        currentSceneStableAcceleration->scope.scene == revision &&
-        globals::game::graphicsState) {
-        const auto staticBase = settings.CaptureRuntimeGeometry ?
-            runtimeGeometryPrepare.GetCurrentSceneCell() : nullptr;
-        const auto baseline = staticBase ? staticBase : prepared.GetCell();
-        const auto bindings = currentSceneStableBindings ?
-            currentSceneStableBindings : materialBindings.Get();
-        const uint64_t occupied = (baseline ? baseline->bytes : 0) +
-            NativeAccelerationResidentBytes(currentSceneStableAcceleration) +
-            (bindings ? bindings->bytes : 0);
-        const uint64_t total = SceneMemoryLimit(occupied);
-        const uint64_t skinAllowance = total > occupied ? (total - occupied) / 2 : 0;
-        playerSkin.Advance(*backend, baseline, revision, skinAllowance,
-            globals::game::graphicsState->GetFrameCount());
     }
     // Reuse the production worker's completed BLAS cache. The previous
     // production TLAS remains retained independently during rebuilding.
-    if ((settings.CaptureRuntimeGeometry || settings.CapturePlayerSkin) &&
-        acceleration.Finished() && currentSceneStableAcceleration &&
+    if (settings.CaptureRuntimeGeometry && acceleration.Finished() &&
+        currentSceneStableAcceleration &&
         currentSceneStableAcceleration->scope.scene == revision) {
-        // Avoid starving material publication with rapidly changing TLAS inputs.
-        const auto current = acceleration.GetScene();
-        const auto matched = materialBindings.Get();
-        if (current && matched && matched->scene == current &&
-            currentSceneStableAcceleration == current) {
-            const auto skinned = settings.CapturePlayerSkin ?
-                playerSkin.GetCombined() : nullptr;
-            const auto staticCombined = settings.CaptureRuntimeGeometry ?
-                runtimeGeometryPrepare.GetCurrentSceneCell() : nullptr;
-            const auto combined = skinned && skinned->snapshot ?
-                skinned : staticCombined;
-            if (combined && combined->snapshot &&
-                combined->snapshot->scope.scene == revision &&
-                combined->snapshot->scope.policy == 2 &&
-                combined->snapshot->scope.batch > currentSceneSubmittedBatch) {
-                const uint64_t occupied = combined->bytes +
-                    NativeAccelerationResidentBytes(currentSceneStableAcceleration);
-                const uint64_t allowance = SceneMemoryLimit(occupied);
-                if (allowance > combined->bytes) {
-                    acceleration.Start(*backend, combined->snapshot, combined->geometries,
-                        uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB);
-                    currentSceneSubmittedBatch = combined->snapshot->scope.batch;
-                    if (skinned == combined) {
-                        playerSkinSubmittedBatch = currentSceneSubmittedBatch;
-                        playerSkinSubmittedFrame = combined->snapshot->scope.frame;
-                    }
-                }
+        if (auto combined = runtimeGeometryPrepare.GetCurrentSceneCell();
+            combined && combined->snapshot &&
+            combined->snapshot->scope.scene == revision &&
+            combined->snapshot->scope.policy == 2 &&
+            combined->snapshot->scope.batch > currentSceneSubmittedBatch) {
+            currentSceneSubmittedBatch = combined->snapshot->scope.batch;
+            const uint64_t sceneAllowance = SceneMemoryLimit(combined->bytes +
+                NativeAccelerationResidentBytes(currentSceneStableAcceleration));
+            if (sceneAllowance > combined->bytes) {
+                acceleration.Start(*backend, combined->snapshot, combined->geometries,
+                    uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB);
             }
         }
     }
@@ -1036,32 +938,6 @@ void DX12NativeScene::PublishDiagnostics()
             { "currentSceneMerged", currentSceneStableAcceleration &&
                 currentSceneStableAcceleration->scope.policy == 2 },
             { "currentSceneSubmittedBatch", currentSceneSubmittedBatch },
-            { "rasterCharacter", {
-                { "enabled", settings.HybridRasterCharacter },
-                { "latestFrame", playerRasterBounds.LatestFrame() },
-                { "observations", playerRasterBounds.Observations() },
-                { "droppedBounds", playerRasterBounds.Dropped() }
-            } },
-            { "playerSkin", {
-                { "enabled", settings.CapturePlayerSkin },
-                { "target", "every-observed-frame" },
-                { "observedShapes", playerSkin.ObservedShapes() },
-                { "lastObservedFrame", playerSkin.LastObservedFrame() },
-                { "lastQueuedFrame", playerSkin.LastQueuedFrame() },
-                { "deferredFrames", playerSkin.DeferredFrames() },
-                { "observations", playerSkin.Observations() },
-                { "busy", playerSkin.Busy() },
-                { "successful", playerSkin.Successful() },
-                { "failed", playerSkin.Failed() },
-                { "lastCompletedFrame", playerSkin.LastCompletedFrame() },
-                { "submittedBatch", playerSkinSubmittedBatch },
-                { "submittedFrame", playerSkinSubmittedFrame },
-                { "publishedFrame", playerSkinPublishedFrame },
-                { "publishedPoseAgeFrames", playerSkinPublishedFrame &&
-                    playerSkin.LastObservedFrame() >= playerSkinPublishedFrame ?
-                    playerSkin.LastObservedFrame() - playerSkinPublishedFrame : 0 },
-                { "failure", playerSkin.Failure() }
-            } },
             { "currentSceneInputInstances", runtimeGeometryPrepare.GetCurrentSceneCell() &&
                 runtimeGeometryPrepare.GetCurrentSceneCell()->snapshot ?
                 runtimeGeometryPrepare.GetCurrentSceneCell()->snapshot->instances.size() : 0 },

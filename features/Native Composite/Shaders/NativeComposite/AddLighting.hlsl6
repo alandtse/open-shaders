@@ -6,11 +6,9 @@ Texture2D<uint> RejectionReason : register(t4);
 Texture2D<float4> LabGuide : register(t5);
 Texture2D<float4> ReceiverGuide : register(t6);
 Texture2D<float> RasterDepth : register(t7);
-StructuredBuffer<float4> RasterCharacterBounds : register(t8);
 RWTexture2D<float4> Scene : register(u0);
 RWStructuredBuffer<uint> CompositeCounts : register(u1);
 #include "ValidityPolicy.hlsli"
-#include "RasterCharacter.hlsli"
 
 cbuffer CompositeConstants : register(b0)
 {
@@ -23,9 +21,6 @@ cbuffer CompositeConstants : register(b0)
 	uint SpatialReconstruction;
 	row_major float4x4 InverseProjection;
 	row_major float4x4 InverseView;
-    uint CharacterCount;
-    float CharacterNativeBlend;
-    uint CharacterDebug;
 };
 
 float3 SignedPower(float3 value, float exponent)
@@ -145,14 +140,6 @@ void main(uint3 id : SV_DispatchThreadID)
 		Scene[id.xy] = float4(display, originalColor.a);
 		return;
 	}
-    const bool characterReceiver = IsRasterCharacterReceiver(
-        id.xy, RasterDepth[id.xy], Size, InverseProjection, InverseView, CharacterCount);
-    if (CharacterDebug != 0u) {
-        float4 preserved = Scene[id.xy];
-        Scene[id.xy] = float4(characterReceiver ? float3(1,0,1) : float3(0,0,0), preserved.a);
-        return;
-    }
-    if (characterReceiver && CharacterNativeBlend <= 0.001f) return;
 	bool acceptDiffuse = AcceptContribution(DiffusePolicy, original, effective, reason) && all(isfinite(diffuse));
 	bool acceptSpecular = AcceptContribution(SpecularPolicy, original, effective, reason) && all(isfinite(specular));
 	if (SpatialReconstruction != 0u && (reason & 0x10000000u) != 0u) {
@@ -166,8 +153,7 @@ void main(uint3 id : SV_DispatchThreadID)
 	if (acceptDiffuse || acceptSpecular) InterlockedAdd(CompositeCounts[0], 1);
 	if ((acceptDiffuse || acceptSpecular) && original != 1 && effective == 1) InterlockedAdd(CompositeCounts[3], 1);
 	if ((acceptDiffuse || acceptSpecular) && original != 1 && effective != 1) InterlockedAdd(CompositeCounts[4], 1);
-	float3 lighting = ((acceptDiffuse ? diffuse : 0) + (acceptSpecular ? specular : 0)) *
-        (characterReceiver ? saturate(CharacterNativeBlend) : 1.0f);
+	float3 lighting = (acceptDiffuse ? diffuse : 0) + (acceptSpecular ? specular : 0);
 	if (!all(isfinite(lighting)) || !any(lighting != 0))
 		return;
 	InterlockedAdd(CompositeCounts[1], 1);

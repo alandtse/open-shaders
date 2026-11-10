@@ -14,10 +14,6 @@ struct NativeCompositeFeature final : Feature
 		bool AddLighting = true;
 		float LightingStrength = 1.0f;
 		bool DirectSpatialReconstruction = true;
-        bool ProtectRasterCharacter = true; // Hybrid raster ownership, separate from full character BLAS.
-        float RasterCharacterLightingBlend = 0.0f, RasterCharacterShadowBlend = 0.0f;
-        float RasterCharacterMargin = 4.0f; // World units added to conservative skinned bounds.
-        bool RasterCharacterDebug = false;
 		bool PersistLab = false;
 		// Independent DX12 shadow layer. Does not require Native Lighting.
 		bool ShadowLayerEnabled = true;

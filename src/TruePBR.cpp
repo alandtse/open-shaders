@@ -1013,9 +1013,6 @@ struct BSLightingShaderProperty_GetRenderPasses
 		// Borrow engine geometry only during this render hook. The DX12 feature
         // copies eligible CPU arrays immediately; no raw pointers escape.
         if (geometry && !geometry->name.empty()) {
-            // Player skinned geometry has a dedicated live-pose observer.
-            // Never send skeletal meshes into the static geometry disk cache.
-            globals::features::dx12NativeScene.ObservePlayerSkin(geometry);
             if (auto* reference = geometry->GetUserData(); reference && !reference->IsDynamicForm()) {
                 if (const auto* file = reference->GetFile(0))
                     globals::features::dx12NativeScene.ObserveRuntimeGeometry(geometry,
