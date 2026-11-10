@@ -15,6 +15,7 @@ cbuffer ProbeConstants : register(b0)
     uint IndexByteOffset;
     uint TargetInstanceMask;
     uint OutputByteOffset;
+    uint3 TransformPadding; // Align three float4 transform rows to 16B.
     float4 InstanceWorldRow0;
     float4 InstanceWorldRow1;
     float4 InstanceWorldRow2;

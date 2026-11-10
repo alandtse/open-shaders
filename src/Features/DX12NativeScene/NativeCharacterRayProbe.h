@@ -71,7 +71,7 @@ namespace DX12Native
             params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
             params[3].Descriptor.ShaderRegister = 0;
             params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-            params[4].Constants = { 0, 0, 17 };
+            params[4].Constants = { 0, 0, 20 };
             const D3D12_ROOT_SIGNATURE_DESC desc{
                 5, params, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE };
             winrt::com_ptr<ID3DBlob> serialized, errors;
@@ -325,11 +325,11 @@ namespace DX12Native
                 positions->GetGPUVirtualAddress());
             commands->SetComputeRootShaderResourceView(2,
                 input.mesh->source->GetGPUVirtualAddress());
-            std::array<uint32_t, 17> constants{
+            std::array<uint32_t, 20> constants{
                 input.mesh->vertices, input.mesh->indices,
                 uint32_t(input.mesh->indexOffset),
                 1u << uint32_t(i), uint32_t(i * 16u) };
-            std::memcpy(constants.data() + 5,
+            std::memcpy(constants.data() + 8,
                 probe->scene->instanceTransforms[i].data(), 12u * sizeof(float));
             commands->SetComputeRoot32BitConstants(4,
                 uint32_t(constants.size()), constants.data(), 0);
