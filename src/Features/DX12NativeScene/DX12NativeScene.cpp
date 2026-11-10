@@ -285,9 +285,35 @@ std::optional<DX12NativeScene::NativeLightBatch> DX12NativeScene::GetNativeLLFLi
 	batch.prepared = merged.prepared;
 	batch.matched = merged.matched;
 	batch.added = merged.added;
+    batch.overflow = merged.overflow;
+    // Native scene supplementary lighting has its own immutable generation.
+    // Live LLF lights win when present; stable baked observations fill gaps.
+    if (const auto baked = scene->bakedLights) {
+        const auto distanceSquared = [](const float3& a, const float3& b) {
+            const float x = a.x - b.x, y = a.y - b.y, z = a.z - b.z;
+            return x*x + y*y + z*z;
+        };
+        for (const auto& entry : baked->candidates) {
+            if (entry.consecutiveObservations < 4 ||
+                a_frame < entry.lastSeenFrame ||
+                a_frame - entry.lastSeenFrame > 30) continue;
+            bool exists = false;
+            for (uint32_t i = 0; i < batch.count; ++i) {
+                if (!batch.lights[i].supported) continue;
+                const float tolerance = std::clamp(entry.light.radius * 0.005f, 1.0f, 8.0f);
+                if (distanceSquared(entry.light.position, batch.lights[i].position) <= tolerance*tolerance) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (exists) continue;
+            if (batch.count >= batch.lights.size()) { ++batch.overflow; break; }
+            batch.lights[batch.count++] = entry.light;
+            ++batch.baked;
+        }
+    }
 	batch.clustered = merged.clusteredLive;
 	batch.omitted = merged.omitted;
-	batch.overflow = merged.overflow;
 	return batch;
 }
 
@@ -1286,13 +1312,18 @@ std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScen
         stableGridPublished->cell && stableGridPublished->acceleration &&
         stableGridPublished->materials &&
         stableGridPublished->materials->scene == stableGridPublished->acceleration)
-        return stableGridPublished;  // Last complete generation, even while recentering.
+    {
+        auto published = *stableGridPublished;
+        published.bakedLights = globals::features::nativeLLF.GetSceneLightBake(published.cell);
+        return published;  // Last complete scene even while recentering.
+    }
 	auto data = prepared.GetCell();
 	auto scene = currentSceneStableAcceleration ? currentSceneStableAcceleration : acceleration.GetScene();
 	if (!data || !scene || scene->scope.scene != revision) return std::nullopt;
 	auto materials = currentSceneStableBindings ? currentSceneStableBindings : materialBindings.Get();
 	if (materials && materials->scene != scene) materials.reset();
-	return PublishedScene{ std::move(data), std::move(scene), std::move(materials), cellID, revision };
+    auto baked = globals::features::nativeLLF.GetSceneLightBake(data);
+	return PublishedScene{ std::move(data), std::move(scene), std::move(materials), cellID, revision, std::move(baked) };
 }
 
 void DX12NativeScene::PublishDiagnostics()

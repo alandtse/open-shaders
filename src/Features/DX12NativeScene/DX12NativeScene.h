@@ -56,12 +56,13 @@ struct DX12NativeScene final : Feature
 		std::shared_ptr<const DX12Native::ShadowBindings> materials;
 		uint32_t cellID = 0;
 		uint64_t revision = 0;
+        std::shared_ptr<const DX12Native::NativeSceneLightBake> bakedLights;
 	};
 	// NativeLLF unifies prepared and live lights for native DXR with one shared capacity.
 	struct NativeLightBatch
 	{
 		std::array<DX12Native::PreparedPointLight, DX12Native::kMaximumNativePointLights> lights{};
-		uint32_t count = 0, observed = 0, prepared = 0, matched = 0, added = 0, clustered = 0, omitted = 0, overflow = 0;
+		uint32_t count = 0, observed = 0, prepared = 0, matched = 0, added = 0, baked = 0, clustered = 0, omitted = 0, overflow = 0;
 	};
 	struct SceneFrame
 	{
