@@ -15,7 +15,6 @@ namespace DX12Native
 		bool stochastic = true, distanceFade = false;
 		uint32_t normalInfluence = 2;
 		uint32_t traceDensityMode = 0;
-		bool nativeRayPreparation = false; // DXC SM6.5 quality A/B, legacy DX11 is the default until validated.
 	};
 	/** @brief Retains one independently fenced prepared-scene shadow result. */
 	struct ShadowFrame
@@ -23,7 +22,6 @@ namespace DX12Native
 		std::shared_ptr<const TopLevel> scene;
 		std::shared_ptr<const ShadowBindings> bindings;
 		std::unique_ptr<WrappedResource> rays, mask, lights;
-		winrt::com_ptr<ID3D11Buffer> grid, camera;
 		DirectX::SimpleMath::Matrix rayProjInverse, rayViewInverse;
 		winrt::com_ptr<ID3D12DescriptorHeap> rayPrepHeap;
 		winrt::com_ptr<ID3D12RootSignature> rayPrepRoot;
@@ -70,14 +68,13 @@ namespace DX12Native
 		bool Initialize(const GraphicsBackend& a_backend);
 		void CreatePipeline();
 		void CreateRayPreparationPipeline();
-		void PrepareRays(ShadowFrame& a_frame, const globals::FrameBuffer& a_camera);
+		void PrepareRays(ShadowFrame& a_frame);
 		void Record(ShadowFrame& a_frame, uint32_t a_descriptorBase);
 		GraphicsBackend backend;
 		SharedFence producer;
 		winrt::com_ptr<ID3D12Fence> completion;
 		winrt::com_ptr<ID3D12RootSignature> root;
 		winrt::com_ptr<ID3D12PipelineState> pipeline;
-		winrt::com_ptr<ID3D11ComputeShader> prepareRays; // A/B reference until DXC validated
 		winrt::com_ptr<ID3D12RootSignature> rayPrepRoot;
 		winrt::com_ptr<ID3D12PipelineState> rayPrepPipeline;
 		std::array<std::shared_ptr<ShadowFrame>, ShadowBindings::kMaximumFrameSlots> frames;
