@@ -116,7 +116,7 @@ namespace DX12Native
             auto* tri = geometry.AsTriShape();
             if (!tri || geometry.AsDynamicTriShape()) return std::nullopt;
             const auto* renderer = runtime.rendererData;
-            const auto desc = runtime.vertexDesc;
+            auto desc = runtime.vertexDesc;
             if (!renderer || !renderer->rawVertexData || !renderer->rawIndexData ||
                 !desc.HasFlag(RE::BSGraphics::Vertex::VF_VERTEX)) return std::nullopt;
             const auto& counts = tri->GetTrishapeRuntimeData();
