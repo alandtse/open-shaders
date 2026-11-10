@@ -1,83 +1,40 @@
-# Development Documentation
+# open-RT: current native rendering map
 
-## Getting Started
+This is the small, source-aligned technical index for `open-RT`, reviewed against the branch on **2026-11-10**. It describes code ownership, not a claim that all paths have passed in-game testing.
 
--   **[VSCode Setup](./vscode-setup.md)** - IDE configuration, extensions, and auto-deploy
--   **[Shader Workflow](./shader-workflow.md)** - Fast shader iteration and deployment
--   **[Nsight Perf](./nsight-perf.md)** - GPU hardware counters per render pass (Remote Control, `NVPERF_SUPPORT`)
--   **[Upstream Sync](./upstream-sync.md)** - How Open Shaders merges with upstream community-shaders
--   **[Repository Architecture](./architecture.md)** - Codebase layout, global systems, and multi-runtime targeting
--   **[Release Process](./release-process.md)** - Branch model, semantic version bumps, release stages, and manual packaging
--   **[Automated Tests](./testing.md)** - Which test layer to use, what not to write, and how tests reach CI
+| Owner | Responsibility / authoritative source |
+| --- | --- |
+| `DX12NativeScene` | Prepared CELL publication, scene/BLAS/TLAS state, raster capture, native materials, runtime geometry, early independent shadow tracing: `src/Features/DX12NativeScene/` |
+| `DX12Resources` | Interior identification, companion preprocessing, cache preparation, streaming requests: `src/Features/DX12Resources/`, `tools/dx12-resources-prep/` |
+| `NativeLLF` | Prepared + observed light identity/unification, native scene light snapshots: `src/Features/NativeFeatures.{h,cpp}` |
+| `NativeSCM` | Selected shadow-caster ownership and engine-to-native caster observation: `src/Features/NativeFeatures.{h,cpp}` |
+| `NativePBR` | Captured TruePBR material snapshots and native-side bridge: `src/TruePBR/NativePBRRegistry.h`, `src/Features/DX12NativeScene/Material*.cpp` |
+| `NativeLighting` | Independent DX12 direct diffuse/specular output and optional early shadow culling: `src/Features/NativeLighting/` |
+| `NativeComposite` | Frame-scoped DX12 raster capture/composition, optional direct contribution and independent shadow layer: `src/Features/NativeComposite/` |
+| `Upscaling` | FSR runtime interop and native-upscaler input/output contracts: `src/Features/Upscaling/` |
 
-## Quick Links
+## Execution boundaries
 
-### Common Tasks
+1. Skyrim/DX11 supplies raster color, depth and observations. A native feature taking ownership does **not** imply the game's originating hooks move to DX12.
+2. DX12 Resources prepares data; Native Scene publishes completed scene generations and handles acceleration resources and independent early shadow traces.
+3. Native Lighting may dispatch native direct diffuse/specular against that scene. Its toggle does not gate the independent shadow layer.
+4. Native Composite captures raster color and may apply native lighting/shadows. The upscaling/presentation boundary is still under development; do not state that all frames remain on DX12 afterward.
+5. Trace-density controls can intentionally leave unevaluated samples. Producers preserve their native-sized resources; distinguish raw output from optional composite-side spatial operations.
 
--   **Fast shader deployment:** `cmake --build build/ALL --target COPY_SHADERS`
--   **Full build with deployment:** `.\BuildRelease.bat ALL-WITH-AUTO-DEPLOYMENT`
--   **Run tests:** `cmake --build build/ALL --target run_shader_tests`
--   **Create a worktree with submodules + local preset:** `pwsh ./tools/new-worktree.ps1 -Name my-branch`
--   **Install optional git alias:** `pwsh ./tools/install-worktree-alias.ps1`
+## Active constraints
 
-### Build Presets and Meanings
+- Keep raster/legacy capture as an input baseline. Do not treat DX12 and DX11 as interchangeable execution owners.
+- Keep feature switches independent; do not silently merge lighting, shadows, and PBR toggles.
+- Native scene/light/material generations and consumer fences must be coherent across frame and scene transitions.
+- DXGI local-memory telemetry and a shared headroom policy control native allocation decisions (`VideoMemoryBudget.h`). Do not invent a fixed guaranteed reserve.
+- Native HLSL6/DXC assets coexist with legacy shader compilation. A native-only shader/compiler runtime is **not** documented as implemented.
+- Dynamic geometry/character coverage, PBR residency, streamer readiness, and native upscaling require explicit runtime evidence. Do not infer success from code presence or diagnostics alone.
+- FSR Ray Regeneration is outside the present minimal production path; do not document it as enabled or complete.
 
--   `ALL` - Universal binary supporting SE/AE/VR runtime detection (default, standard build without auto-deployment)
--   `Dev` / `Dev-Fast` - Fast iteration presets (recommended for development)
--   `ALL-VS2022`, `ALL-DEBUG`, `Debug`, `PR`, `Linux-ClangCL`, `Windows-ClangCL`, `PR-ClangCL`, `ALL-ClangCL` - see `CMakePresets.json` for what each configures.
--   `ALL-WITH-AUTO-DEPLOYMENT` - **not tracked** — copy `CMakeUserPresets.json.template` to `CMakeUserPresets.json` (gitignored, per-clone) to define it. Extends `ALL` with `AUTO_PLUGIN_DEPLOYMENT=ON` to deploy built plugins and assets directly to your local SE/VR `Data` directories; the preferred preset for a local test-deploy once configured.
+## Validate changes
 
-`CMakePresets.json` lists every tracked preset. A local `CMakeUserPresets.json` can define more (check for one before assuming a preset name doesn't exist — many devs keep deploy-enabled variants there that won't show up in a `git grep`).
+Use the in-game feature panels and diagnostics to compare against source, with special attention to scene/TLAS publication, selected shadow submissions, native LLF/SCM light/caster matching, raw pixel density, composite results, and DXGI budget. Record branch/commit, test cell, toggles, observed frame behavior and relevant logs. In-game verification is owned by the tester, not inferred from compilation.
 
-### Build and Development Configuration
+Build: from the repository root, run `cmake --preset ALL` and `cmake --build --preset ALL --config Release` using the Windows toolchain. For shader/C++ test targets, consult `CMakeLists.txt` and `tests/`. For companion data serialization, the retained [FORMAT.md](../../tools/dx12-resources-prep/FORMAT.md) is authoritative.
 
-To customize builds, set these CMake options (cache variables):
-
--   `AUTO_PLUGIN_DEPLOYMENT` (default: `OFF`) - Auto-copy build output to `CommunityShadersOutputDir`.
--   `ZIP_TO_DIST` (default: `ON`) - Creates individual feature packages as 7z files in `/dist`.
--   `AIO_ZIP_TO_DIST` (default: `ON`) - Creates all-in-one distribution package as 7z in `/dist`.
--   `TRACY_SUPPORT` (default: `OFF`) - Enables Tracy profiler integration for performance analysis.
-
-#### Auto-Deployment Configuration
-
-Set the `CommunityShadersOutputDir` environment variable to a semicolon-separated list of target Skyrim Data directories:
-
-```
-CommunityShadersOutputDir=F:/MySkyrimModpack/mods/CommunityShaders;F:/SteamLibrary/steamapps/common/SkyrimVR/Data;F:/SteamLibrary/steamapps/common/Skyrim Special Edition/Data
-```
-
-## Worktrees
-
-Use `tools/new-worktree.ps1` when creating a new worktree for development. The script:
-
--   Creates the worktree under a sibling `<repo>.worktrees/` directory by default
--   Reuses an existing local branch or creates a new one from `HEAD`
--   Runs `git submodule update --init --recursive` in the new worktree
--   Copies `CMakeUserPresets.json` from the main checkout if it exists there
--   Does not overwrite an existing `CMakeUserPresets.json` unless `-ForcePresetCopy` is passed
-
-Examples:
-
--   `pwsh ./tools/new-worktree.ps1 -Name reproj_fixes`
--   `pwsh ./tools/new-worktree.ps1 -Name vr-debug -StartPoint dev`
--   `pwsh ./tools/new-worktree.ps1 -Name clean-build -NoSubmodules`
-
-If you want a Git-native command, install the optional repo-local alias:
-
--   `pwsh ./tools/install-worktree-alias.ps1`
--   Then use `git new-worktree reproj_fixes`
-
-The alias is installed into local Git config by default, so it does not affect other users unless they opt in.
-
-## Build Targets
-
-| Target             | Builds DLL | Runs Tests | Copies Shaders | Use Case               |
-| ------------------ | ---------- | ---------- | -------------- | ---------------------- |
-| `COPY_SHADERS`     | ❌         | ❌         | ✅             | Fast shader iteration  |
-| `DEPLOY_ALL`       | ✅         | ✅         | ✅             | Full deployment (auto) |
-| `prepare_shaders`  | ❌         | ✅         | ✅ (AIO only)  | CI shader validation   |
-| `run_shader_tests` | ❌         | ✅         | ❌             | Test shaders only      |
-
-## Contributing
-
-When adding new features or documentation, please keep development docs organized under `docs/development/`.
+**Maintenance:** update this single index only when ownership or current behavior changes. Put debug histories and proposed designs in issues/PRs, not permanent docs.
