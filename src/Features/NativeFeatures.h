@@ -77,8 +77,22 @@ struct NativeLLFFeature final : Feature
     std::shared_ptr<const LightFrame> GetLightFrame(uint32_t frame) const;
     std::shared_ptr<const LightFrame> GetRecentLightFrame(uint32_t frame) const;
 private:
+    struct UnifiedWork
+    {
+        std::atomic<bool> done{ false };
+        std::shared_ptr<const LightFrame> source;
+        std::shared_ptr<const DX12Native::PreparedCell> prepared;
+        float matchUnits = 0.0f, gain = 0.0f;
+        bool contribute = false, valid = false;
+        UnifiedLights result;
+    };
     mutable std::mutex lightMutex;
     std::shared_ptr<const LightFrame> lightFrame;
+    // The native worker owns immutable copies; neither engine pointers nor
+    // prepared-scene memory may be freed while it evaluates a generation.
+    mutable std::atomic<std::shared_ptr<const UnifiedWork>> workerUnified;
+    mutable std::atomic<std::shared_ptr<const UnifiedWork>> fallbackUnified;
+    mutable std::atomic<uint64_t> workerHits{ 0 }, workerQueued{ 0 }, fallbackHits{ 0 };
     std::atomic<bool> transitionOpen{ false };
 public:
     std::string GetName() override { return "NativeLLF"; }
