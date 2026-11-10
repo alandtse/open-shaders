@@ -191,6 +191,23 @@ bool DX12NativeScene::OwnsNativeFeatures() const
 		!globals::game::isVR && upscaling.d3d12SwapChainActive && upscaling.settings.nativeUpscaleEnable;
 }
 
+bool DX12NativeScene::IsPreparedStaticCaster(RE::BSGeometry& geometry) const
+{
+	if (!OwnsNativeFeatures() || !settings.NativeSCM || geometry.GetGeometryRuntimeData().skinInstance)
+		return false;
+	// Coverage describes actual acceleration instances, never the offline
+	// manifest alone. Unmatched static geometry remains in SCM's raster path.
+	const auto coverage = runtimePreparedCoverage.load(std::memory_order_acquire);
+	if (!coverage || coverage->sceneRevision != revision ||
+		runtimeCoverageSource != currentSceneStableAcceleration) return false;
+	const auto* reference = geometry.GetUserData();
+	if (!reference || reference->IsDynamicForm() || geometry.name.empty()) return false;
+	const auto* file = reference->GetFile(0);
+	if (!file) return false;
+	return coverage->Contains(
+		std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename()), geometry.name.c_str());
+}
+
 std::optional<DX12NativeScene::NativeLightBatch> DX12NativeScene::GetNativeLLFLights(uint32_t a_frame) const
 {
 	if (!OwnsNativeFeatures()) return std::nullopt; // Legacy/prepared lighting owns non-native frames.
@@ -954,6 +971,9 @@ void DX12NativeScene::PublishDiagnostics()
 	json snapshot{ { "enabled", settings.Enabled }, { "nativeOwnership", OwnsNativeFeatures() },
 		{ "nativePBR", settings.NativePBR }, { "nativeLLF", settings.NativeLLF }, { "nativeSCM", settings.NativeSCM },
 		{ "nativeLightSource", OwnsNativeFeatures() ? "LLF-current-frame" : "prepared-cell" },
+		{ "nativeSCMCasters", globals::game::graphicsState ?
+			([&] { const auto snapshot = ShadowCasterManager::GetNativeCasterFrame(globals::game::graphicsState->GetFrameCount());
+				return snapshot ? snapshot->casters.size() : size_t{ 0 }; })() : size_t{ 0 } },
 		{ "nativeLightCount", globals::game::graphicsState ?
 			(GetNativeLLFLights(globals::game::graphicsState->GetFrameCount()).value_or(NativeLightBatch{}).count) : 0u }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure },
 		{ "raster", raster.GetDiagnostics() }, { "shadowStage", shadowStage }, { "shadowStatus", shadowStatus }, { "shadow", shadow.GetDiagnostics() },

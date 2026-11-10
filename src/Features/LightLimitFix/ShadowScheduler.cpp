@@ -3616,8 +3616,13 @@ namespace ShadowCasterManager
 			return;
 		struct Guard
 		{
-			~Guard() { s_inSchedule.store(false, std::memory_order_release); }
+			~Guard() { EndNativeCasterFrame(); s_inSchedule.store(false, std::memory_order_release); }
 		} guard;
+
+		// NativeSCM captures casters during this exact cull traversal; the
+		// frame is published by Guard even when scheduling exits early.
+		BeginNativeCasterFrame(globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u,
+			globals::features::dx12NativeScene.OwnsNativeFeatures() && globals::features::dx12NativeScene.settings.NativeSCM);
 
 		// Marks a genuine attempt, ahead of every early return below -- an early
 		// return leaves s_cameraHoldGeneration behind, correctly marking the hold

@@ -242,6 +242,53 @@ namespace ShadowCasterManager
 	ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;
 	int s_casterClassEpoch{ 0 };
 
+	// One render-thread-owned collector per SCM schedule. Immutable snapshots are
+	// published after the cull walk, not from inside a hooked geometry callback.
+	static bool s_nativeCasterCollecting = false;
+	static std::shared_ptr<NativeCasterFrame> s_nativeCasterScratch;
+	static std::shared_ptr<const NativeCasterFrame> s_nativeCasterPublished;
+	static std::unordered_set<const RE::BSGeometry*> s_nativeCasterSeen;
+	static std::mutex s_nativeCasterPublishMutex;
+	static constexpr size_t kNativeCasterLimit = 8192;
+
+	void BeginNativeCasterFrame(uint32_t frame, bool active)
+	{
+		s_nativeCasterCollecting = active;
+		s_nativeCasterSeen.clear();
+		s_nativeCasterScratch = active ? std::make_shared<NativeCasterFrame>() : nullptr;
+		if (s_nativeCasterScratch) s_nativeCasterScratch->frame = frame;
+	}
+
+	void EndNativeCasterFrame()
+	{
+		s_nativeCasterCollecting = false;
+		s_nativeCasterSeen.clear();
+		std::scoped_lock lock(s_nativeCasterPublishMutex);
+		s_nativeCasterPublished = std::move(s_nativeCasterScratch);
+	}
+
+	std::shared_ptr<const NativeCasterFrame> GetNativeCasterFrame(uint32_t frame)
+	{
+		std::scoped_lock lock(s_nativeCasterPublishMutex);
+		return s_nativeCasterPublished && s_nativeCasterPublished->frame == frame ?
+			s_nativeCasterPublished : nullptr;
+	}
+
+	static void ObserveNativeCaster(RE::BSGeometry& geom, bool dynamic, bool preparedStatic)
+	{
+		if (!s_nativeCasterCollecting || !s_nativeCasterScratch || !s_nativeCasterSeen.insert(&geom).second) return;
+		if (s_nativeCasterScratch->casters.size() == kNativeCasterLimit) {
+			++s_nativeCasterScratch->dropped;
+			return;
+		}
+		const auto& b = geom.worldBound;
+		s_nativeCasterScratch->casters.push_back({
+			{ b.center.x, b.center.y, b.center.z, b.radius },
+			bool(geom.GetGeometryRuntimeData().skinInstance), dynamic, preparedStatic });
+		if (preparedStatic) ++s_nativeCasterScratch->preparedStaticRetired;
+	}
+
+
 	bool GetActorAttachedDynamic() { return s_actorAttachedDynamic.load(std::memory_order_relaxed); }
 	void SetActorAttachedDynamic(bool a_value) { s_actorAttachedDynamic.store(a_value, std::memory_order_relaxed); }
 
@@ -402,8 +449,8 @@ namespace ShadowCasterManager
 	/// Shared by both cull-append hooks for identical StaticOnly/DynamicOnly semantics.
 	static bool CasterFilteredByPass(RE::BSGeometry& geom)
 	{
-		if (!AtlasActive())
-			return false;
+		const bool useAtlas = AtlasActive();
+		if (!useAtlas && !s_nativeCasterCollecting) return false;
 		if (const auto passless = ShadowMapPassless(geom); passless != PasslessReason::kNone) {
 			s_passlessCasterSkipTotal.fetch_add(1, std::memory_order_relaxed);
 			s_passlessCasterSkipByReason[static_cast<int>(passless)].fetch_add(1, std::memory_order_relaxed);
@@ -415,6 +462,13 @@ namespace ShadowCasterManager
 		                          nullptr :
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
+		const bool preparedStatic = !dynamic && s_nativeCasterCollecting &&
+			globals::features::dx12NativeScene.IsPreparedStaticCaster(geom);
+		ObserveNativeCaster(geom, dynamic, preparedStatic);
+		// Exactly-covered prepared triangles already intersect native DXR shadow rays.
+		// Leave unprepared static casters and all moving casters in the DX11 path.
+		if (preparedStatic) return true;
+		if (!useAtlas) return false;
 		// Every static caster folds into the hash regardless of pass, so a
 		// static-set change is seen during whichever accumulate runs this frame.
 		if (!dynamic)
