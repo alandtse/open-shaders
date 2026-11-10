@@ -250,7 +250,10 @@ namespace DX12Native
 			update(dimensions.data(), uint32_t(sizeof(dimensions)), a_frame.grid, "DX12NativeScene::ShadowGrid CB");
 			update(&a_camera, uint32_t(sizeof(a_camera)), a_frame.camera, "DX12NativeScene::ShadowCamera CB");
 		}
-		constexpr uint32_t kMaximumLights = 32, kLightTexels = 8, kLightWidth = kMaximumLights * kLightTexels;
+		constexpr uint32_t kMaximumLights = kMaximumNativePointLights;
+        constexpr uint32_t kLightTexels = kNativeLightRecordTexels;
+        constexpr uint32_t kLightWidth = kNativeShadowLightTextureWidth;
+        static_assert(kMaximumLights * kLightTexels == kLightWidth);
 		std::array<std::array<float, 4>, kLightWidth * 2> snapshot{};
 		for (size_t i = 0; i < a_frame.lightSnapshot.size(); ++i) {
 			const auto& light = a_frame.lightSnapshot[i];
@@ -425,7 +428,7 @@ namespace DX12Native
 		CS_GPU_PASS("DX12NativeScene::ShadowMaskDispatch");
 		if (current && current->frame == a_frame) return;
 		current.reset();
-		if (!a_scene || !a_scene->result || a_scene->instances.empty() || a_lights.empty() || a_lights.size() > 32 ||
+		if (!a_scene || !a_scene->result || a_scene->instances.empty() || a_lights.empty() || a_lights.size() > kMaximumNativePointLights ||
 			!a_size[0] || !a_size[1] || a_size[0] > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION || a_size[1] > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION) {
 			status = "Prepared scene, lights or shadow dimensions unavailable";
 			return;
@@ -474,7 +477,7 @@ namespace DX12Native
 			if (a_controls.nativeRayPreparation) CreateRayPreparationPipeline();
 			const auto textureDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT, a_size[0], a_size[1], 1, 1, 1, 0,
 				D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
-			const auto lightDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT, 256, 2, 1, 1, 1, 0,
+			const auto lightDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT, kNativeShadowLightTextureWidth, 2, 1, 1, 1, 0,
 				D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
 			const auto textureBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &textureDesc).SizeInBytes;
 			const auto lightBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &lightDesc).SizeInBytes;
@@ -504,7 +507,7 @@ namespace DX12Native
 				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 				frame->rays = std::make_unique<WrappedResource>(desc, backend.d3d11Device.get(), backend.d3d12Device.get(), "DX12NativeScene::ShadowCameraRays");
 				frame->mask = std::make_unique<WrappedResource>(desc, backend.d3d11Device.get(), backend.d3d12Device.get(), "DX12NativeScene::ShadowMask");
-				desc.Width = 256; desc.Height = 2;
+				desc.Width = kNativeShadowLightTextureWidth; desc.Height = 2;
 				frame->lights = std::make_unique<WrappedResource>(desc, backend.d3d11Device.get(), backend.d3d12Device.get(), "DX12NativeScene::ShadowLights");
 				slot = std::move(frame);
 			}

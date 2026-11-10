@@ -73,3 +73,10 @@ TEST_CASE("Native exterior WRLD subcells keep a stable cache identity across CEL
     // One WRLD-scoped grid remains stable even when the engine changes CELL.
     CHECK(ReusedActiveCount({0, 0}, {1, 0}) == 6);
 }
+
+TEST_CASE("All native light transports have the same 64-source capacity", "[dx12-native-scene][lights]")
+{
+    STATIC_REQUIRE(DX12Native::kMaximumNativePointLights == 64);
+    STATIC_REQUIRE(DX12Native::kNativeLightRecordTexels == 8);
+    STATIC_REQUIRE(DX12Native::kNativeShadowLightTextureWidth == 512);
+}

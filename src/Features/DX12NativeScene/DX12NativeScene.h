@@ -57,10 +57,10 @@ struct DX12NativeScene final : Feature
 		uint32_t cellID = 0;
 		uint64_t revision = 0;
 	};
-	// NativeLLF consumes LLF's live light list; DXR currently supports up to 32 lights per dispatch.
+	// NativeLLF unifies prepared and live lights for native DXR with one shared capacity.
 	struct NativeLightBatch
 	{
-		std::array<DX12Native::PreparedPointLight, 32> lights{};
+		std::array<DX12Native::PreparedPointLight, DX12Native::kMaximumNativePointLights> lights{};
 		uint32_t count = 0, observed = 0, prepared = 0, matched = 0, added = 0, clustered = 0, omitted = 0, overflow = 0;
 	};
 	struct SceneFrame

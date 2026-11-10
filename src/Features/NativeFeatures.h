@@ -53,7 +53,7 @@ struct NativeLLFFeature final : Feature
     std::atomic<float> matchDistanceUnits{ 64.0f };
     // Radiance gain for supplementary LLF-only emitters, never prepared scene lights.
     std::atomic<float> contribution{ 1.0f };
-    static constexpr uint32_t kMaxUnifiedLights = 32;
+    static constexpr uint32_t kMaxUnifiedLights = DX12Native::kMaximumNativePointLights;
     struct SourceIdentity
     {
         float3 position{};

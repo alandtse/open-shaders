@@ -225,14 +225,14 @@ void NativeLLFFeature::DrawSettings()
     const auto scene = globals::features::dx12NativeScene.GetPublishedScene();
     if (scene && globals::game::graphicsState) {
         const auto merged = BuildUnifiedLights(scene->cell->nativeLights, frame);
-        ImGui::Text("Prepared %u | matched LLF %u | added LLF %u | unified %u/32",
-            merged.prepared, merged.matched, merged.added, merged.count);
+        ImGui::Text("Prepared %u | matched LLF %u | added LLF %u | unified %u/%u",
+            merged.prepared, merged.matched, merged.added, merged.count, kMaxUnifiedLights);
         ImGui::Text("LLF clustered %u | omitted %u | overflow %u",
             merged.clusteredLive, merged.omitted, merged.overflow);
     }
     ImGui::TextDisabled("LLF-only lights participate in DXR shadows against prepared TLAS geometry.");
     ImGui::TextDisabled("Moving objects require their geometry in the TLAS for fully RT-cast shadows.");
-    ImGui::TextDisabled("Up to 32 unified lights per current native dispatch.");
+    ImGui::TextDisabled("Up to 64 unified lights per native dispatch (prepared-first, then LLF).");
 }
 void NativeSCMFeature::DrawSettings()
 {

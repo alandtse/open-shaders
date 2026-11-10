@@ -1139,9 +1139,9 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 	const std::span<const DX12Native::PreparedPointLight> lights = nativeLights ?
 		std::span<const DX12Native::PreparedPointLight>(nativeLights->lights.data(), nativeLights->count) :
 		std::span<const DX12Native::PreparedPointLight>(preparedLights);
-	if (lights.empty() || (shadowSettings.ShadowAllLights && lights.size() > 32) ||
+	if (lights.empty() || (shadowSettings.ShadowAllLights && lights.size() > DX12Native::kMaximumNativePointLights) ||
 		(!shadowSettings.ShadowAllLights && shadowSettings.ShadowLightIndex >= lights.size())) {
-		shadowStatus = "Selected unified native shadow lights unavailable or exceed 32";
+		shadowStatus = "Selected native shadow lights unavailable or exceed 64";
 		return;
 	}
 	const auto selectedLights = shadowSettings.ShadowAllLights ? lights : lights.subspan(shadowSettings.ShadowLightIndex, 1);

@@ -369,10 +369,10 @@ void NativeLightingFeature::OnOpaqueRasterReady(const OpaqueRasterInputs&)
 	}
 	const auto nativeLights = owner.GetNativeLLFLights(frame);
 	const auto availableLights = nativeLights ? size_t(nativeLights->count) : scene->prepared->cell->nativeLights.size();
-	if ((!nativeLights && selected.UseAllPreparedLights && availableLights > 32) ||
+	if ((!nativeLights && selected.UseAllPreparedLights && availableLights > DX12Native::kMaximumNativePointLights) ||
 		(!selected.UseAllPreparedLights && selected.SelectedDirectLight >= availableLights && !nativeLights) ||
 		(availableLights == 0 && !nativeLights && !selectedLab.RunWithoutLighting && selectedLab.MaterialPolicy != 2)) {
-		status = "Prepared point-light selection unavailable or exceeds 32";
+		status = "Prepared point-light selection unavailable or exceeds 64";
 		return;
 	}
 	if (!Initialize(*graphics)) return;
@@ -445,7 +445,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			created->counters = make(counters, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, L"NativeLighting::Counters");
 			created->counterReset = make(plain, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::CounterReset");
 			created->counterReadback = make(plain, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, L"NativeLighting::CounterReadback");
-			created->lights = make(CD3DX12_RESOURCE_DESC::Buffer(32 * 48), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Lights");
+			created->lights = make(CD3DX12_RESOURCE_DESC::Buffer(DX12Native::kMaximumNativePointLights * 48), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Lights");
 			// 272-byte Trace ABI rounds to 512 for the D3D12 CBV 256-byte alignment.
 			created->constants = make(CD3DX12_RESOURCE_DESC::Buffer(512), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Constants");
 			void* zeros = nullptr;
@@ -482,7 +482,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		const auto& camera = slot->scene.raster->camera;
 		struct Light { float4 positionRadius, radianceSourceRadius; std::array<uint32_t, 4> flags; };
 		static_assert(sizeof(Light) == 48);
-		std::array<Light, 32> lights{};
+		std::array<Light, DX12Native::kMaximumNativePointLights> lights{};
 		const auto nativeLights = globals::features::dx12NativeScene.GetNativeLLFLights(slot->scene.frame);
 		const std::span<const DX12Native::PreparedPointLight> lightSource = nativeLights ?
 			std::span<const DX12Native::PreparedPointLight>(nativeLights->lights.data(), nativeLights->count) :
