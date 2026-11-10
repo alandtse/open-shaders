@@ -202,7 +202,7 @@ namespace
 	public:
 		static void Register()
 		{
-			if (REL::Module::get().version() != SKSE::RUNTIME_VR_1_4_15 || !globals::game::ui)
+			if (!globals::game::isVR || !globals::game::ui)
 				return;
 
 			const auto mapOcclusionWrite = REL::Offset(0x917EFF).address();
