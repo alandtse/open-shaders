@@ -65,3 +65,14 @@ anchor selection alone. Do **not** mark such a subcell as authoritative
 geometry coverage, and do not activate it for production DXR until bounds
 discovery and GPU residency integration have been validated. This path is
 separate from the unchanged full-CELL producer and baseline shader compiler.
+
+## Persistent companion mesh cache
+
+The companion stores source-hash/quality/semantic-compiler-keyed compiled
+NIF geometry and shading products under the approved
+`DX12-cache/work/cells/.shared-mesh-cache` subtree. Metadata and every
+restored binary blob are SHA-256-checked before reuse. A poisoned/stale cache
+falls back to normal compilation. Displacement-enabled preparation does not
+reuse cached products until displacement texture provenance is hashed.
+The cache survives work-package cleanup and is independent of CPU/GPU
+subcell residency; it never pins BLAS or DDS textures in GPU memory.

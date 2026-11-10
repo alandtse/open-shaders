@@ -199,7 +199,12 @@ try
     var pgAssets = new List<PgAsset>();
     using (var pg = new PgAssets(data, output))
         foreach (var path in paths) pgAssets.Add(pg.Read(path));
-    var compiler = new MeshCompiler(output, options, quality);
+    // Cache verified mesh products across separate companion sessions; the
+    // current work package is still independently validated and published.
+    SharedMeshCache? shared = null;
+    try { shared = new SharedMeshCache(data,output,options); }
+    catch (IOException) { /* Safe no-cache fallback */ }
+    var compiler = new MeshCompiler(output, options, quality, shared);
     var compiledAssets = pgAssets.Where(asset => staticPaths.Contains(asset.Path)).Select(compiler.Compile).ToArray();
     var compiledShapes = compiledAssets.SelectMany(asset => asset.Shapes).Where(shape => shape.Status == "compiled").ToArray();
     File.WriteAllText(Path.Combine(output, "cell-meshes.json"), JsonSerializer.Serialize(new

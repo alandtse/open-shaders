@@ -27,11 +27,13 @@ internal sealed class MeshCompiler
     private readonly string compilerKey;
     private readonly int quality;
     private readonly string sourceRoot;
+    private readonly SharedMeshCache? sharedCache;
     private readonly bool displacementInputsEnabled;
     // SHA-check each immutable content-addressed blob once per compilation run.
     private readonly HashSet<string> verifiedCachedFiles = new(StringComparer.OrdinalIgnoreCase);
 
-    public MeshCompiler(string outputDirectory, JsonSerializerOptions jsonOptions, int preparationQuality = 2)
+    public MeshCompiler(string outputDirectory, JsonSerializerOptions jsonOptions, int preparationQuality = 2,
+        SharedMeshCache? sharedCache = null)
     {
         if (preparationQuality is < 0 or > 2) throw new ArgumentOutOfRangeException(nameof(preparationQuality));
         quality = preparationQuality;
@@ -41,6 +43,7 @@ internal sealed class MeshCompiler
         sourceRoot = outputDirectory;
         output = outputDirectory;
         options = jsonOptions;
+        this.sharedCache = sharedCache;
         // Mesh products are governed by a semantic cache schema, not the .NET
         // assembly hash: unrelated CLI and UI edits must not invalidate every NIF.
         // Bump this when shape classification/serialization/displacement changes.
@@ -61,6 +64,8 @@ internal sealed class MeshCompiler
     {
         if (asset.CachedSource == null || asset.Sha256 == null) return new(asset.Path, "", compilerKey, asset.Status, false, 0, []);
         var cacheFile = Path.Combine(output, "compiled", compilerKey, asset.Sha256 + ".json");
+        if (!displacementInputsEnabled && !File.Exists(cacheFile))
+            sharedCache?.TryRestore(compilerKey, asset.Sha256);
         // External height/normal DDS can change without modifying the NIF.
         // Until their hashes are part of the cache key, never reuse potentially stale displaced geometry.
         if (!displacementInputsEnabled && File.Exists(cacheFile))
@@ -95,6 +100,7 @@ internal sealed class MeshCompiler
         Directory.CreateDirectory(Path.GetDirectoryName(cacheFile)!);
         File.WriteAllText(cacheFile + ".tmp", JsonSerializer.Serialize(result, options));
         File.Move(cacheFile + ".tmp", cacheFile, true);
+        if (!displacementInputsEnabled) sharedCache?.TryStore(result);
         return result;
     }
 
