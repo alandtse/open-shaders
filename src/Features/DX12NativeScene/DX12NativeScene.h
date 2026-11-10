@@ -36,6 +36,7 @@ struct DX12NativeScene final : Feature
         bool CacheRuntimeGeometry = false; // Optional background persistence and menu CPU prewarm.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
+		bool NativeShadowRayPreparation = false; // Opt-in DXC SM6.5 preparation for visual A/B.
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
 		uint32_t ShadowTraceDensityMode = 0; // 0..7; all trace densities retain full-size raw masks.
 		float ShadowEmitterRadius = 0.2f;
