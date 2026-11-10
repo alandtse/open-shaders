@@ -136,7 +136,7 @@ public:
 	/** @brief Rescans every pack and orphan, sorted by name, releasing loaded artwork and reloading the active id. */
 	void Discover(bool allowAutomaticActivation = true);
 	/** @brief Rescans and reapplies selected payloads, optionally admitting new presets. */
-	bool Refresh(bool allowAutomaticActivation = true);
+	bool Refresh(bool allowAutomaticActivation = true, bool reloadFormEdits = true);
 	/** @brief Packs from the last Discover. */
 	const std::vector<PackInfo>& GetPacks() const { return packs; }
 
@@ -155,6 +155,8 @@ public:
 	std::filesystem::path GetActivePackRoot() const;
 	/** @brief Returns active payload roots in VFS-before-physical precedence. */
 	std::vector<std::filesystem::path> GetActivePackRoots() const;
+	/** @brief Returns enabled record-bearing roots in their resolution order. */
+	std::vector<std::filesystem::path> GetActiveFormPackRoots() const;
 
 	/** @brief Whether the scene payload of a pack is enabled. */
 	bool IsScenePackEnabled(const std::string& id) const;
@@ -187,7 +189,7 @@ public:
 
 	/** @brief Applies Effects11, swaps the Scene Manager overwrite layer to this pack's CS Presets files, and
 	 *  enables its Baseline overwrites. A Baseline-only pack leaves the active pack and scene layer untouched. */
-	bool ApplyPack(const std::string& id, bool saveEffects11Current = true, bool replaceConflicts = false);
+	bool ApplyPack(const std::string& id, bool saveEffects11Current = true, bool replaceConflicts = false, bool reloadFormEdits = false);
 
 	/** @brief Turns the active pack off: an Effects 11 pack switches the pipeline to Vanilla,
 	 *  and the scene layer and form edits fall back to the user's own. */
@@ -270,7 +272,7 @@ private:
 	/** @brief Enables a pack's Baseline overwrites as the last layer and reapplies them to the loaded features. */
 	void EnableBaseline(const PackInfo& pack);
 	/** @brief Applies selection changes and persists only after every runtime layer accepts them. */
-	bool ApplyChange(const std::function<bool()>& change, const std::function<bool()>& rollback = {});
+	bool ApplyChange(const std::function<bool()>& change, const std::function<bool()>& rollback = {}, bool forceFormReload = false);
 	/** @brief Removes a pack's selected layers inside an active selection transaction. */
 	bool DeactivatePack(const std::string& id);
 	/** @brief Adds a pack whose Baseline sets settings the user changed to the pending overlap prompt. */

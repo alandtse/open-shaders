@@ -30,6 +30,7 @@ namespace LightAttach
 		std::atomic<std::uint64_t> walked{ 0 };
 		std::atomic<std::uint64_t> skipped{ 0 };
 		std::atomic<bool> auditDetail{ false };
+		std::uintptr_t plainLightVtable = 0;
 
 		/** @brief Captures what the attach walk reads from the light and its scene node. */
 		LightAttachGate::Signature MakeSignature(RE::ShadowSceneNode& a_node, RE::BSLight& a_light)
@@ -170,7 +171,8 @@ namespace LightAttach
 			static void thunk(RE::ShadowSceneNode* a_node, RE::BSLight* a_light)
 			{
 				auto& feature = globals::features::lightLimitFix;
-				if (!feature.loaded || !feature.settings.SkipRedundantLightAttach) {
+				// Cell loads reuse light addresses, so tracking restarts after every loading screen.
+				if (!feature.loaded || !feature.settings.SkipRedundantLightAttach || globals::state->isLoadingMenuOpen) {
 					if (tracking.exchange(false)) {
 						std::lock_guard lock(trackerLock);
 						tracker.Clear();
@@ -179,7 +181,14 @@ namespace LightAttach
 					return;
 				}
 
-				if (!a_node || !a_light || a_light->frustrumCull == kParabolicShadowCaster || a_light->IsShadowLight()) {
+				// Menu 3D (inventory, books, lockpicking) runs through shadowSceneNode[1], where LLF reads per-geometry light lists.
+				if (!a_node || !globals::game::smState || a_node != globals::game::smState->shadowSceneNode[0]) {
+					func(a_node, a_light);
+					return;
+				}
+
+				// Gates plain BSLights only. A vtable read, not virtual IsShadowLight(): a chained crash-fix guard may yet skip a freed light.
+				if (!a_light || *reinterpret_cast<const std::uintptr_t*>(a_light) != plainLightVtable || a_light->frustrumCull == kParabolicShadowCaster) {
 					if (a_light) {
 						std::lock_guard lock(trackerLock);
 						tracker.Forget(a_light);
@@ -222,13 +231,16 @@ namespace LightAttach
 		const auto callSite = REL::Module::IsAE() ?
 		                          REL::RelocationID(99701, 106335).address() + kDynamicEnableCallOffset :
 		                          REL::Offset(REL::Module::IsVR() ? kVrPurgeEnableCallRva : kSePurgeEnableCallRva).address();
-		if (!Util::VersionedRelocation::IsCallTo(callSite, REL::RelocationID(99708, 106342).address())) {
-			logger::warn("[LLF] Light attach gate not applied: unexpected code at the per-frame light enable (another mod or an unverified runtime)");
+		// Another plugin's hook here (e.g. Shadow Scene Node Crash Fix) is kept as the next link, so its guard still runs on walks.
+		const bool hooked = Util::VersionedRelocation::IsCallHookedByPlugin(callSite);
+		if (!hooked && !Util::VersionedRelocation::IsCallTo(callSite, REL::RelocationID(99708, 106342).address())) {
+			logger::warn("[LLF] Light attach gate not applied: unexpected code at the per-frame light enable (unverified runtime)");
 			return;
 		}
+		plainLightVtable = RE::VTABLE_BSLight[0].address();
 		stl::write_thunk_call<DynamicLightEnable>(callSite);
 		installed = true;
-		logger::info("[LLF] Installed light attach gate");
+		logger::info("[LLF] Installed light attach gate{}", hooked ? ", chained onto another plugin's hook" : "");
 	}
 
 	void ResetTracking()

@@ -47,13 +47,32 @@ std::string MenuHeaderRenderer::GetTitle()
 	return std::format("{} {}", Plugin::DISPLAY_NAME, version);
 }
 
+void MenuHeaderRenderer::RenderShaderCacheButton()
+{
+	auto* shaderCache = globals::shaderCache;
+	const bool canClear = !shaderCache->IsCapturingActiveShaders() && !shaderCache->IsAwaitingMenuCloseCapture();
+	const auto clearScope = Util::ResolveShaderCacheClearScope();
+	const auto* cacheTooltip = clearScope == Util::ShaderCacheClearScope::ActiveOnly ?
+	                               T("menu.clear_active_shaders", "Clear Active Shaders") :
+	                               T("menu.clear_shader_cache", "Clear Shader Cache");
+	const auto cacheGlyph = clearScope == Util::ShaderCacheClearScope::ActiveOnly ? SettingsActionIcons::kClearActiveShaders : SettingsActionIcons::kClearCache;
+	ImGui::BeginDisabled(!canClear);
+	if (BrowserUI::PaintedIconButton("##ClearShaderCache", [cacheGlyph](ImDrawList* drawList, ImVec2, float, ImU32) {
+			Icons::FontGuard font(cacheGlyph);
+			const auto color = ImGui::IsItemHovered() ? ImGui::GetStyleColorVec4(ImGuiCol_Text) : Util::Colors::GetSecondary();
+			// Status marks change glyph bounds, so both cache icons share one placement reference.
+			const auto position = Icons::GetCenteredGlyphPos(ImGui::GetItemRectMin(), ImGui::GetItemRectSize(), SettingsActionIcons::kClearCache.utf8);
+		drawList->AddText(position, ImGui::GetColorU32(color), cacheGlyph.utf8); }, 0, cacheTooltip))
+		Util::RequestClearShaderCacheConfirmation(clearScope);
+	ImGui::EndDisabled();
+}
+
 void MenuHeaderRenderer::RenderActions(Menu& menu, bool& sidebarVisible, bool showBackground)
 {
-	const float size = BrowserUI::IconButtonSize();
 	bool afterFirst = false;
 	const auto action = [&](const char* id, Icons::GlyphRef glyph, const char* tooltip, bool selected, bool enabled, auto&& run, ImU32 tint = 0) {
 		if (afterFirst)
-			BrowserUI::SameLineIfFits(size);
+			ImGui::SameLine();
 		afterFirst = true;
 		ImGui::BeginDisabled(!enabled);
 		if (BrowserUI::IconButton(id, glyph, tooltip, selected, tint))
@@ -67,23 +86,8 @@ void MenuHeaderRenderer::RenderActions(Menu& menu, bool& sidebarVisible, bool sh
 			!menu.IsBackgroundVisible(), true, [&] { menu.ToggleBackgroundVisibility(); });
 	}
 
-	auto* shaderCache = globals::shaderCache;
-	const bool canClear = !shaderCache->IsCapturingActiveShaders() && !shaderCache->IsAwaitingMenuCloseCapture();
-	const auto clearScope = Util::ResolveShaderCacheClearScope();
-	const auto* cacheTooltip = clearScope == Util::ShaderCacheClearScope::ActiveOnly ?
-	                               T("menu.clear_active_shaders", "Clear Active Shaders") :
-	                               T("menu.clear_shader_cache", "Clear Shader Cache");
-	const auto cacheGlyph = clearScope == Util::ShaderCacheClearScope::ActiveOnly ? SettingsActionIcons::kClearActiveShaders : SettingsActionIcons::kClearCache;
-	BrowserUI::SameLineIfFits(size);
-	ImGui::BeginDisabled(!canClear);
-	if (BrowserUI::PaintedIconButton("##ClearShaderCache", [cacheGlyph](ImDrawList* drawList, ImVec2, float, ImU32) {
-			Icons::FontGuard font(cacheGlyph);
-			const auto color = ImGui::IsItemHovered() ? ImGui::GetStyleColorVec4(ImGuiCol_Text) : Util::Colors::GetSecondary();
-			// Status marks change glyph bounds, so both cache icons share one placement reference.
-			const auto position = Icons::GetCenteredGlyphPos(ImGui::GetItemRectMin(), ImGui::GetItemRectSize(), SettingsActionIcons::kClearCache.utf8);
-		drawList->AddText(position, ImGui::GetColorU32(color), cacheGlyph.utf8); }, 0, cacheTooltip))
-		Util::RequestClearShaderCacheConfirmation(clearScope);
-	ImGui::EndDisabled();
+	ImGui::SameLine();
+	RenderShaderCacheButton();
 	action("##RestoreDefaults", SettingsActionIcons::kRestoreDefaults, T("menu.restore_defaults", "Restore All Defaults"), false, true,
 		[] { RequestRestoreDefaults(); });
 	action("##ReapplyBaseSettings", SettingsActionIcons::kReapplyOverride, T("menu.reapply_all_base_settings", "Reapply All Base Settings"), false,
@@ -133,7 +137,6 @@ void MenuHeaderRenderer::DrawRestoreDefaultsConfirmation()
 {
 	if (restoreDefaults.Draw()) {
 		globals::state->Load(State::ConfigMode::DEFAULT);
-		globals::state->MarkSettingsChanged();
 	}
 }
 
@@ -179,13 +182,19 @@ void MenuHeaderRenderer::RenderHeader(Menu& menu, bool& sidebarVisible, float ui
 
 		{
 			MenuFonts::FontRoleGuard titleFont(Menu::FontRole::Title);
-			const auto title = GetTitle();
-			const float titleWidth = ImGui::CalcTextSize(title.c_str()).x;
-			BrowserUI::SameLineIfFits(titleWidth);
+			ImGui::SameLine();
+			auto title = GetTitle();
+			const float available = std::max(0.0f, ImGui::GetContentRegionAvail().x);
+			if (ImGui::CalcTextSize(title.c_str()).x > available)
+				title.erase(0, std::string_view(Plugin::DISPLAY_NAME).size() + 1);
+			const float titleWidth = std::min(available, ImGui::CalcTextSize(title.c_str()).x);
 			titleTop = ImGui::GetCursorPosY();
 			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - titleWidth));
 			const auto position = ImGui::GetCursorScreenPos();
-			ImGui::GetWindowDrawList()->AddText(ImVec2(position.x, Util::CenterTextTopY(position.y, size)), ImGui::GetColorU32(ImGuiCol_Text), title.c_str());
+			auto* drawList = ImGui::GetWindowDrawList();
+			drawList->PushClipRect(position, ImVec2(position.x + titleWidth, position.y + size), true);
+			drawList->AddText(ImVec2(position.x, Util::CenterTextTopY(position.y, size)), ImGui::GetColorU32(ImGuiCol_Text), title.c_str());
+			drawList->PopClipRect();
 			ImGui::Dummy(ImVec2(titleWidth, size));
 		}
 		ImGui::EndGroup();

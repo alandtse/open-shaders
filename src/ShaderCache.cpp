@@ -26,6 +26,7 @@
 #include "Utils/ContentHash.h"
 #include "Utils/D3D.h"
 #include "Utils/GenerationClaim.h"
+#include "Utils/Logging.h"
 #include "Utils/ShaderCacheManifest.h"
 #include "Utils/ShaderContentStore.h"
 #include "Utils/StandaloneShaderCacheKey.h"
@@ -557,8 +558,9 @@ namespace SIE
 		if (!ShaderCache::Instance().IsDiskCache() || !globals::state->enableContentStore.load(std::memory_order_relaxed))
 			return nullptr;
 		if (GetCompilerIdentity().empty()) {
-			static std::once_flag warned;
-			std::call_once(warned, [] { logger::warn("Shader content store disabled: could not identify d3dcompiler_47.dll"); });
+			static Util::OnceFlag warned;
+			if (warned.First())
+				logger::warn("Shader content store disabled: could not identify d3dcompiler_47.dll");
 			return nullptr;
 		}
 		static Util::ShaderContentStore::Store& store = []() -> Util::ShaderContentStore::Store& {
@@ -1620,6 +1622,7 @@ namespace SIE
 				{ "PBRParams2", grassPSConstants.PBRParams2 },
 				{ "PBRParams3", grassPSConstants.PBRParams3 },
 				{ "PBRParams4", grassPSConstants.PBRParams4 },
+				{ "PBRParams5", grassPSConstants.PBRParams5 },
 			};
 
 			auto& particleVS = result[static_cast<size_t>(RE::BSShader::Type::Particle)]
@@ -2251,9 +2254,12 @@ namespace SIE
 						// An unreadable timestamp means source-vs-cache freshness can't be verified; treat as a miss.
 						diskCacheOutdated = true;
 						logger::debug("Failed to read disk cache mtime for {}: {}", Util::WStringToString(diskPath), ec.message());
-					} else if (std::filesystem::exists(shaderSourcePath)) {
-						const auto sourceTime = GetMaxShaderMTime(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path());
-						if (sourceTime > diskCacheTime) {
+					} else {
+						(void)std::filesystem::last_write_time(shaderSourcePath, ec);
+						if (ec) {
+							diskCacheOutdated = true;
+							logger::debug("Failed to read source mtime for {}: {}", Util::WStringToString(shaderSourcePath), ec.message());
+						} else if (GetMaxShaderMTime(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path()) > diskCacheTime) {
 							diskCacheOutdated = true;
 							logger::debug("Disk-cached shader {} outdated: source is newer than cache", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
 						}
@@ -3056,6 +3062,7 @@ namespace SIE
 			std::unique_lock lockH{ hlslMapMutex };
 			hlslToShaderMap.clear();
 		}
+		ResetActiveShaderTracking();
 		compilationSet.Clear(true);
 		Util::ClearShaderCompileFailures();
 		globals::deferred->ClearShaderCache();
@@ -3080,6 +3087,7 @@ namespace SIE
 
 	bool ShaderCache::Clear(const std::string& a_path)
 	{
+		ResetActiveShaderTracking();
 		std::string lowerFilePath = Util::FixFilePath(a_path);
 
 		// Step 1: Lock hlslMapMutex to find and copy the relevant entries
@@ -3115,6 +3123,7 @@ namespace SIE
 	{
 		compilationSet.BumpTypeEpoch(a_type);
 		logger::debug("Clearing cache for {}", magic_enum::enum_name(a_type));
+		ResetActiveShaderTracking();
 		std::lock_guard lockGuardV(vertexShadersMutex);
 		{
 			for (auto& [id, shader] : vertexShaders[static_cast<size_t>(a_type)]) {
@@ -3157,7 +3166,9 @@ namespace SIE
 	bool ShaderCache::AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, winrt::com_ptr<ID3DBlob> a_blob, bool fromDisk, std::optional<uint64_t> a_taskGeneration)
 	{
 		auto key = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
-		auto keyWithDescriptor = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, false);
+		const auto keyWithDescriptor = spdlog::should_log(spdlog::level::debug) ?
+		                                   SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, false) :
+		                                   std::string{};
 		// The map's blob is shared across threads; the caller's d3dcompiler blob stays with the caller.
 		winrt::com_ptr<ID3DBlob> shared;
 		if (a_blob)
@@ -4606,16 +4617,6 @@ namespace SIE
 			auto newShader = SShaderCache::CreateVertexShader(*shaderBlob, shader,
 				descriptor);
 
-			std::lock_guard lockGuard(vertexShadersMutex);
-			// Clear() takes this same mutex to wipe vertexShaders, so a mismatch here means
-			// inserting now would resurrect state Clear() already removed.
-			if (IsTaskStale(a_taskGeneration, shader.shaderType.get())) {
-				logger::debug("Discarding stale-generation vertex shader {}::{:X} (task gen {}, current {})",
-					magic_enum::enum_name(shader.shaderType.get()), descriptor, *a_taskGeneration,
-					compilationSet.LiveGeneration(shader.shaderType.get()));
-				return nullptr;
-			}
-
 			const auto result = device->CreateVertexShader(shaderBlob->GetBufferPointer(),
 				newShader->byteCodeSize, nullptr, Util::AsReal(&newShader->shader));
 			if (FAILED(result)) {
@@ -4625,6 +4626,16 @@ namespace SIE
 					newShader->shader->Release();
 				}
 			} else {
+				std::lock_guard lockGuard(vertexShadersMutex);
+				// Clear() takes this same mutex to wipe vertexShaders, so a mismatch here means
+				// inserting now would resurrect state Clear() already removed.
+				if (IsTaskStale(a_taskGeneration, shader.shaderType.get())) {
+					logger::debug("Discarding stale-generation vertex shader {}::{:X} (task gen {}, current {})",
+						magic_enum::enum_name(shader.shaderType.get()), descriptor, *a_taskGeneration,
+						compilationSet.LiveGeneration(shader.shaderType.get()));
+					newShader->shader->Release();
+					return nullptr;
+				}
 				auto& entry = vertexShaders[static_cast<size_t>(shader.shaderType.get())][descriptor];
 				if (entry && entry->shader)
 					entry->shader->Release();
@@ -4651,16 +4662,6 @@ namespace SIE
 			auto newShader = SShaderCache::CreatePixelShader(*shaderBlob, shader,
 				descriptor);
 
-			std::lock_guard lockGuard(pixelShadersMutex);
-			// Clear() takes this same mutex to wipe pixelShaders, so a mismatch here means
-			// inserting now would resurrect state Clear() already removed.
-			if (IsTaskStale(a_taskGeneration, shader.shaderType.get())) {
-				logger::debug("Discarding stale-generation pixel shader {}::{:X} (task gen {}, current {})",
-					magic_enum::enum_name(shader.shaderType.get()), descriptor, *a_taskGeneration,
-					compilationSet.LiveGeneration(shader.shaderType.get()));
-				return nullptr;
-			}
-
 			const auto result = device->CreatePixelShader(shaderBlob->GetBufferPointer(),
 				shaderBlob->GetBufferSize(), nullptr, Util::AsReal(&newShader->shader));
 			if (FAILED(result)) {
@@ -4671,6 +4672,16 @@ namespace SIE
 					newShader->shader->Release();
 				}
 			} else {
+				std::lock_guard lockGuard(pixelShadersMutex);
+				// Clear() takes this same mutex to wipe pixelShaders, so a mismatch here means
+				// inserting now would resurrect state Clear() already removed.
+				if (IsTaskStale(a_taskGeneration, shader.shaderType.get())) {
+					logger::debug("Discarding stale-generation pixel shader {}::{:X} (task gen {}, current {})",
+						magic_enum::enum_name(shader.shaderType.get()), descriptor, *a_taskGeneration,
+						compilationSet.LiveGeneration(shader.shaderType.get()));
+					newShader->shader->Release();
+					return nullptr;
+				}
 				auto& entry = pixelShaders[static_cast<size_t>(shader.shaderType.get())][descriptor];
 				if (entry && entry->shader)
 					entry->shader->Release();
@@ -4697,16 +4708,6 @@ namespace SIE
 			auto newShader = SShaderCache::CreateComputeShader(*shaderBlob, shader,
 				descriptor);
 
-			std::lock_guard lockGuard(computeShadersMutex);
-			// Clear() takes this same mutex to wipe computeShaders, so a mismatch here means
-			// inserting now would resurrect state Clear() already removed.
-			if (IsTaskStale(a_taskGeneration, shader.shaderType.get())) {
-				logger::debug("Discarding stale-generation compute shader {}::{:X} (task gen {}, current {})",
-					magic_enum::enum_name(shader.shaderType.get()), descriptor, *a_taskGeneration,
-					compilationSet.LiveGeneration(shader.shaderType.get()));
-				return nullptr;
-			}
-
 			const auto result = device->CreateComputeShader(shaderBlob->GetBufferPointer(),
 				shaderBlob->GetBufferSize(), nullptr, Util::AsReal(&newShader->shader));
 			if (FAILED(result)) {
@@ -4717,6 +4718,16 @@ namespace SIE
 					newShader->shader->Release();
 				}
 			} else {
+				std::lock_guard lockGuard(computeShadersMutex);
+				// Clear() takes this same mutex to wipe computeShaders, so a mismatch here means
+				// inserting now would resurrect state Clear() already removed.
+				if (IsTaskStale(a_taskGeneration, shader.shaderType.get())) {
+					logger::debug("Discarding stale-generation compute shader {}::{:X} (task gen {}, current {})",
+						magic_enum::enum_name(shader.shaderType.get()), descriptor, *a_taskGeneration,
+						compilationSet.LiveGeneration(shader.shaderType.get()));
+					newShader->shader->Release();
+					return nullptr;
+				}
 				auto& entry = computeShaders[static_cast<size_t>(shader.shaderType.get())][descriptor];
 				if (entry && entry->shader)
 					entry->shader->Release();
@@ -5310,6 +5321,13 @@ namespace SIE
 		}
 	}
 
+	void ShaderCache::ResetActiveShaderTracking()
+	{
+		std::lock_guard lock(activeShadersMutex);
+		activeShaderKeys.clear();
+		activeShaders.clear();
+	}
+
 	void ShaderCache::ResetFrameShaderTracking()
 	{
 		if (!globals::state->IsDeveloperMode())
@@ -5480,7 +5498,12 @@ namespace SIE
 	void ShaderCompilationTask::Perform() const
 	{
 		ZoneScoped;
-		ZoneText(GetString().c_str(), GetString().size());
+#ifdef TRACY_ENABLE
+		if (TracyIsConnected) {
+			const auto taskString = GetString();
+			ZoneText(taskString.c_str(), taskString.size());
+		}
+#endif
 
 		if (shaderClass == ShaderClass::Vertex) {
 			ShaderCache::Instance().MakeAndAddVertexShader(shader, descriptor, GetGeneration());
@@ -5727,7 +5750,7 @@ namespace SIE
 	{
 		auto& cache = ShaderCache::Instance();
 		auto key = task.GetString();
-		auto shaderBlob = cache.GetCompletedShader(task);
+		auto shaderBlob = cache.GetCompletedShader(key);
 
 		bool shouldLogCompletion = false;
 		double completionTimeMs = 0.0;

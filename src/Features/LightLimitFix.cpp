@@ -22,7 +22,6 @@
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/DevBenchUx.h"
-#include "Utils/ExternalEmittance.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1334,7 +1333,8 @@ void LightLimitFix::UpdateLights()
 		eyePositionCached[eyeIndex] = { eyePosition.x, eyePosition.y, eyePosition.z };
 	}
 
-	eastl::vector<LightData> lightsData{};
+	static eastl::vector<LightData> lightsData;
+	lightsData.clear();
 	lightsData.reserve(MAX_LIGHTS);
 	const bool isInterior = Util::IsInterior();
 	RefreshJsonPlacedLightCacheFrame();
@@ -1569,7 +1569,7 @@ void LightLimitFix::UpdateStructure()
 		context->CSSetUnorderedAccessViews(0, 1, &clusters_uav, nullptr);
 
 		context->CSSetShader(clusterBuilding, nullptr, 0);
-		context->Dispatch((clusterSize[0] + 15) / 16, (clusterSize[1] + 15) / 16, (clusterSize[2] + 3) / 4);
+		context->Dispatch((clusterSize[0] * clusterSize[1] * clusterSize[2] + 63) / 64, 1, 1);
 
 		ID3D11UnorderedAccessView* null_uav = nullptr;
 		context->CSSetUnorderedAccessViews(0, 1, &null_uav, nullptr);
@@ -2006,7 +2006,6 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 	}
 
 	func(This, Pass, RenderFlags);
-	ExternalEmittance::UpdatePermutation(Pass);
 	auto& singleton = globals::features::lightLimitFix;
 	singleton.BSLightingShader_SetupGeometry_Before(Pass);
 	singleton.BSLightingShader_SetupGeometry_After(Pass);

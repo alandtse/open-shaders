@@ -255,6 +255,7 @@ namespace
 	{
 		static void thunk(int64_t a1)
 		{
+			globals::features::screenshotFeature.SnapshotCleanScene();
 			globals::features::hdrDisplay.SetUIBuffer();
 			func(a1);
 		}
@@ -636,9 +637,9 @@ void HDRDisplay::RestoreDefaultSettings()
 	UpdateSwapChainColorSpace();
 }
 
-void HDRDisplay::DataLoaded()
+void HDRDisplay::PreCreateRenderTargets()
 {
-	// Use Skyrim's built-in ini setting to upgrade all HDR render targets to 16-bit float format.
+	// Prefs ini is read after plugin load and may clear this; upgrades HDR targets to fp16.
 	auto setting = RE::GetINISetting("bUse64bitsHDRRenderTarget:Display");
 	if (setting) {
 		setting->data.b = true;
@@ -926,6 +927,7 @@ void HDRDisplay::SetUIBuffer()
 
 		if (uiBufferMode.useUIBuffer) {
 			float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+			CS_GPU_PASS("HDRDisplay::ClearUI");
 			globals::d3d::context->ClearRenderTargetView(targetRTV, clearColor);
 			++uiGeneration;
 		}
@@ -951,6 +953,7 @@ void HDRDisplay::SetUIBuffer()
 	}
 
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	CS_GPU_PASS("HDRDisplay::ClearUI");
 	globals::d3d::context->ClearRenderTargetView(uiTexture->rtv.get(), clearColor);
 	++uiGeneration;
 
@@ -994,7 +997,21 @@ namespace
 			if (!globals::features::upscaling.d3d12SwapChainActive)
 				globals::features::screenshotFeature.ProcessCaptureRequest();
 
-			return func(This, SyncInterval, Flags);
+			return TimedPresent(This, SyncInterval, Flags);
+		}
+
+		/** @brief Calls the real Present and folds its CPU wait into State::smoothPresentTimeMs. */
+		static HRESULT TimedPresent(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags)
+		{
+			LARGE_INTEGER frequency, presentStart, presentEnd;
+			QueryPerformanceFrequency(&frequency);
+			QueryPerformanceCounter(&presentStart);
+			const HRESULT presentResult = func(swapChain, syncInterval, flags);
+			QueryPerformanceCounter(&presentEnd);
+			const float presentMs = static_cast<float>(static_cast<double>(presentEnd.QuadPart - presentStart.QuadPart) * 1000.0 / static_cast<double>(frequency.QuadPart));
+			auto& smoothPresentTimeMs = globals::state->smoothPresentTimeMs;
+			smoothPresentTimeMs = smoothPresentTimeMs * 0.95f + presentMs * 0.05f;
+			return presentResult;
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -1081,7 +1098,7 @@ ID3D11BlendState* HDRDisplay::GetPatchedAlphaBlendState(ID3D11BlendState* origin
 HRESULT HDRDisplay::PresentToSwapChain(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags)
 {
 	globals::features::screenshotFeature.ProcessCaptureRequest();
-	return SwapChainPresentBottom::func(swapChain, syncInterval, flags);
+	return SwapChainPresentBottom::TimedPresent(swapChain, syncInterval, flags);
 }
 
 void HDRDisplay::DrawImGuiForPresent(bool frameGenActive, bool hdrReady)
@@ -1192,6 +1209,7 @@ void HDRDisplay::ClearUIBuffer()
 		return;
 
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	CS_GPU_PASS("HDRDisplay::ClearUI");
 	globals::d3d::context->ClearRenderTargetView(uiTexture->rtv.get(), clearColor);
 
 	if (savedFramebufferRTV) {
@@ -1248,6 +1266,7 @@ void HDRDisplay::ApplyHDR()
 
 		if (!GetHDROutputCS()) {
 			// Fallback: HDR shader files not present - copy kFRAMEBUFFER directly to output
+			CS_GPU_PASS("HDRDisplay::BackBufferCopy");
 			if (upscaling.d3d12SwapChainActive) {
 				// SetUIBuffer keeps non-FG fallback UI in kFRAMEBUFFER; FG keeps using
 				// uiBufferWrapped for FidelityFX UI composition.
@@ -1267,6 +1286,7 @@ void HDRDisplay::ApplyHDR()
 		DispatchHDROutput(sceneSRV, uiSRV, outputTexture->uav.get());
 	}
 
+	CS_GPU_PASS("HDRDisplay::BackBufferCopy");
 	if (upscaling.d3d12SwapChainActive) {
 		if (upscaling.dx12SwapChain.swapChainBufferWrapped &&
 			upscaling.dx12SwapChain.swapChainBufferWrapped->resource11 &&
@@ -1368,6 +1388,7 @@ void HDRDisplay::SnapshotCleanScene()
 		return;
 	}
 
+	CS_GPU_PASS("HDRDisplay::CleanSceneSnapshot");
 	globals::d3d::context->CopyResource(cleanSceneCapture->resource.get(), hdrTexture->resource.get());
 	cleanSceneCaptureFrame = globals::state->frameCount;
 	cleanSceneCaptureGeneration = sceneGeneration;

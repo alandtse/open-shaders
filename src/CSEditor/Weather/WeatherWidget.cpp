@@ -221,7 +221,7 @@ void WeatherWidget::DrawWidget()
 	}
 
 	// Tab bar for organizing settings
-	if (Util::BeginPillTabBar("WeatherSettingsTabs")) {
+	if (BeginSettingsTabBar("WeatherSettingsTabs")) {
 		const ImGuiTabItemFlags basicFlags = GetTabFlagsForOverride(WeatherTab::kBasic);
 		const ImGuiTabItemFlags dalcFlags = GetTabFlagsForOverride(WeatherTab::kDalc);
 		const ImGuiTabItemFlags atmosphereFlags = GetTabFlagsForOverride(WeatherTab::kAtmosphere);
@@ -464,7 +464,8 @@ void WeatherWidget::LoadSettings()
 		settings = vanillaSettings;
 	}
 	InitializeInheritFlags();
-	originalSettings = settings;
+	if (!preserveSavedBaseline)
+		originalSettings = settings;
 	pendingReinit = true;
 	ApplyChanges();
 }
@@ -543,8 +544,7 @@ void WeatherWidget::SetWeatherValues()
 	// Lightning
 	data.thunderLightningBeginFadeIn = static_cast<uint8_t>(weatherProps["Thunder Lightning Begin Fade In"]);
 	data.thunderLightningEndFadeOut = static_cast<uint8_t>(weatherProps["Thunder Lightning End Fade Out"]);
-	auto& thunderFrequency = weatherProps["Thunder Lightning Frequency"];
-	thunderFrequency = std::clamp(thunderFrequency, kMinThunderLightningFrequency, static_cast<int>(UINT8_MAX));
+	const auto thunderFrequency = std::clamp(weatherProps["Thunder Lightning Frequency"], kMinThunderLightningFrequency, static_cast<int>(UINT8_MAX));
 	data.thunderLightningFrequency = static_cast<int8_t>(static_cast<uint8_t>(thunderFrequency));
 	Float3ToColor(weatherColors["Lightning Color"], weather->data.lightningColor);
 
@@ -1024,9 +1024,9 @@ void WeatherWidget::DrawCloudSettings()
 		bool layerOpen = ImGui::CollapsingHeader(std::format("{}###{}", layerLabel, layerId).c_str(), flags);
 		if (isTarget) {
 			ImGui::PopStyleColor(3);
-			if (scrollToHighlighted) {
+			if (auto& view = View(); view.scrollToHighlighted) {
 				ImGui::SetScrollHereY(0.5f);
-				scrollToHighlighted = false;
+				view.scrollToHighlighted = false;
 			}
 		}
 

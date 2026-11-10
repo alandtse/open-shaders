@@ -406,6 +406,8 @@ public:
 
 	/** @brief Discards every widget's unsaved changes. Undoable, one step per widget. */
 	void DiscardAllWidgetChanges();
+	/** @brief Restores all records supplied by the selected source without writing files. */
+	void RestoreWidgetSettings(Widget::SettingsSource source);
 
 	/**
 	 * @brief Display a temporary on-screen notification message through Util::Notifications.
@@ -527,6 +529,7 @@ private:
 
 	/// Asks what to do with a tool's unwritten changes before an action that would lose them.
 	Util::ConfirmationPopup toolPrompt;
+	Util::ConfirmationPopup restoreGameValuesPopup;
 	ExternalTool* promptedTool = nullptr;
 	/// What the prompted action does once the changes are written or discarded.
 	std::function<void()> toolPromptProceed;

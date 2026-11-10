@@ -87,7 +87,8 @@ namespace
 			return manifest.parent_path();
 		std::error_code error;
 		for (std::filesystem::recursive_directory_iterator it(pack.rootPath, error), end; !error && it != end; it.increment(error)) {
-			if (!it->is_regular_file(error))
+			std::error_code entryError;
+			if (!it->is_regular_file(entryError) || entryError)
 				continue;
 			auto resolved = Util::FileHelpers::ResolveExistingFile(it->path());
 			if (resolved.empty())
@@ -678,7 +679,8 @@ void UnifiedPresetCatalog::DiscoverLegacyScenes()
 	std::error_code error;
 	for (std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, error), end;
 		!error && it != end; it.increment(error)) {
-		if (!it->is_regular_file(error) || error || !PresetContent::IsSceneFile(it->path().lexically_relative(root)))
+		std::error_code entryError;
+		if (!it->is_regular_file(entryError) || entryError || !PresetContent::IsSceneFile(it->path().lexically_relative(root)))
 			continue;
 		const auto stem = Util::PathHelpers::ToUtf8(it->path().stem());
 		const auto split = stem.rfind('_');
@@ -836,9 +838,9 @@ void UnifiedPresetCatalog::Discover(bool allowAutomaticActivation)
 	logger::info("[Presets] Discovered {} pack(s); active='{}'", packs.size(), activePackId.empty() ? "(none)" : activePackId);
 }
 
-bool UnifiedPresetCatalog::Refresh(bool allowAutomaticActivation)
+bool UnifiedPresetCatalog::Refresh(bool allowAutomaticActivation, bool reloadFormEdits)
 {
-	return ApplyChange([&] { Discover(allowAutomaticActivation); return true; });
+	return ApplyChange([&] { Discover(allowAutomaticActivation); return true; }, {}, reloadFormEdits && FormEditSources::HasPackFormEdits());
 }
 
 std::vector<size_t> UnifiedPresetCatalog::Query(std::optional<PresetType> typeFilter, const std::string& search) const
@@ -991,17 +993,31 @@ void UnifiedPresetCatalog::ReleaseAllArtwork()
 	}
 }
 
-bool UnifiedPresetCatalog::ApplyChange(const std::function<bool()>& change, const std::function<bool()>& rollback)
+std::vector<std::filesystem::path> UnifiedPresetCatalog::GetActiveFormPackRoots() const
+{
+	std::vector<std::filesystem::path> roots;
+	for (const auto& id : enabledScenePackIds)
+		if (const auto* pack = FindPack(id); pack && pack->hasFormEdits)
+			for (const auto& root : GetPackRoots(id))
+				if (std::ranges::find(roots, root) == roots.end())
+					roots.push_back(root);
+	return roots;
+}
+
+bool UnifiedPresetCatalog::ApplyChange(const std::function<bool()>& change, const std::function<bool()>& rollback, bool forceFormReload)
 try {
 	if (SceneSettingsManager::GetSingleton()->HasPendingContextEdit()) {
 		SceneSettingsUI::WarnPendingContextEdit();
 		return false;
 	}
-	if (!FormEditSources::CanChangePacks())
+	if (forceFormReload && !FormEditSources::CanChangePacks()) {
+		logger::warn("[Presets] Save or discard unsaved OS Editor record edits before changing preset record sources");
 		return false;
+	}
 	const auto pausedEntries = SceneSettingsManager::GetSingleton()->CapturePresetPauses();
 	const json previousState{ { kUserSettingsKey, SerializeActiveState() } };
 	const auto previousPipelineRevision = pipelineRevision;
+	const auto previousFormRoots = GetActiveFormPackRoots();
 	json previousSettings;
 	globals::state->SaveToJson(previousSettings);
 	const auto previousMode = PostProcessingMode::Get();
@@ -1009,14 +1025,22 @@ try {
 	for (auto* provider : GetProviders())
 		if (const auto selected = provider->GetActivePresetId())
 			previousPayloads.emplace_back(provider, *selected);
-	FormEditSources::ReloadHistoryGuard history;
+	std::optional<FormEditSources::ReloadHistoryGuard> history;
+	bool formReloadAttempted = false;
 	try {
 		if (change()) {
+			const bool reloadFormEdits = forceFormReload || previousFormRoots != GetActiveFormPackRoots();
+			if (reloadFormEdits && !FormEditSources::CanChangePacks())
+				throw std::runtime_error("Save or discard unsaved OS Editor record edits before changing preset record sources");
+			if (reloadFormEdits)
+				history.emplace();
 			BaselineManager::GetSingleton()->Refresh();
 			if (globals::state->ReapplyPresetLayers()) {
 				SceneSettingsManager::GetSingleton()->ReloadOverwrites(pausedEntries);
-				if (FormEditSources::ReloadActivePack() && SaveActiveState()) {
-					history.Commit();
+				formReloadAttempted = reloadFormEdits;
+				if ((!reloadFormEdits || FormEditSources::ReloadActivePack()) && SaveActiveState()) {
+					if (history)
+						history->Commit();
 					globals::state->CheckSettingsChanged(pipelineRevision != previousPipelineRevision ?
 															 PostProcessingMode::PresetSelectionFields() :
 															 json::object());
@@ -1049,7 +1073,8 @@ try {
 	restore("pipeline", [&] { return PostProcessingMode::Set(previousMode, false); });
 	restore("live settings", [&] { globals::state->LoadFromJson(previousSettings); return true; });
 	restore("scene settings", [&] { SceneSettingsManager::GetSingleton()->ReloadOverwrites(pausedEntries); return true; });
-	restore("form sources", [] { return FormEditSources::ReloadActivePack(); });
+	if (formReloadAttempted)
+		restore("form sources", [] { return FormEditSources::ReloadActivePack(); });
 	globals::state->CheckSettingsChanged();
 	return false;
 } catch (const std::exception& error) {
@@ -1060,7 +1085,7 @@ try {
 	return false;
 }
 
-bool UnifiedPresetCatalog::ApplyPack(const std::string& id, bool saveEffects11Current, bool replaceConflicts)
+bool UnifiedPresetCatalog::ApplyPack(const std::string& id, bool saveEffects11Current, bool replaceConflicts, bool reloadFormEdits)
 {
 	auto* pack = FindPack(id);
 	if (!pack || !pack->valid)
@@ -1094,7 +1119,8 @@ bool UnifiedPresetCatalog::ApplyPack(const std::string& id, bool saveEffects11Cu
 		if (pack->hasBaseline)
 			EnableBaseline(*pack);
 		return hasActivePayload || pack->hasBaseline;
-	});
+	},
+		{}, reloadFormEdits);
 	if (applied && pack->hasBaseline)
 		if (const auto edited = globals::state->FindEditsUnderPack(pack->id); !edited.empty())
 			QueueBaselineOverlap(pack->id, edited);
@@ -1223,6 +1249,7 @@ try {
 	std::erase_if(documents, [](const auto& document) { return document.second.original == document.second.replacement; });
 	if (documents.empty())
 		return Result::Unchanged;
+	const bool reloadFormEdits = std::ranges::any_of(edits, [](const auto& edit) { return PresetContent::IsRecordFile(edit.relative); });
 	const bool changed = ApplyChange([&] {
 		for (const auto& id : conflicts)
 			if (!DeactivatePack(id))
@@ -1234,15 +1261,15 @@ try {
 		}
 		if (!conflicts.empty() && !SaveActiveState())
 			return false;
-		Discover();
+		Discover(false);
 		return true; }, [&] {
 		bool restored = true;
 		for (const auto& [path, document] : documents)
 			if (document.written)
 				restored &= Util::FileHelpers::WriteJsonAtomically(path, document.original, kUserSettingsIndent, "preset value rollback");
-		return restored; });
+		return restored; }, reloadFormEdits);
 	if (!changed)
-		Discover();
+		Discover(false);
 	return changed ? Result::Changed : Result::Failed;
 } catch (const std::exception& error) {
 	logger::error("[Presets] Could not edit a preset value: {}", error.what());
@@ -1275,7 +1302,7 @@ bool UnifiedPresetCatalog::DeletePackSettings(const std::string& id, const std::
 			if (!moved) return true;
 			std::error_code error;
 			std::filesystem::rename(pending, physical, error);
-			return !error; });
+			return !error; }, PresetContent::IsRecordFile(relative));
 		if (changed) {
 			std::error_code error;
 			std::filesystem::remove(pending, error);
@@ -1291,6 +1318,7 @@ bool UnifiedPresetCatalog::DeletePackSettings(const std::string& id, const Prese
 	const auto* pack = FindPack(id);
 	if (!pack || selection.empty() || SceneSettingsManager::GetSingleton()->HasPendingContextEdit())
 		return false;
+	const bool reloadFormEdits = std::ranges::any_of(selection, [](const auto& item) { return PresetContent::IsRecordFile(item.first); });
 	const auto files = PresetContent::List(id);
 	struct Document
 	{
@@ -1338,7 +1366,7 @@ bool UnifiedPresetCatalog::DeletePackSettings(const std::string& id, const Prese
 		for (const auto& [path, document] : documents)
 			if (document.written)
 				restored &= Util::FileHelpers::WriteJsonAtomically(path, document.original, kUserSettingsIndent, "preset settings rollback");
-		return restored; });
+		return restored; }, reloadFormEdits);
 	if (!changed)
 		Discover(false);
 	return changed;

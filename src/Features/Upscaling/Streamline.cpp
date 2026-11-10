@@ -21,6 +21,7 @@
 #include "FoveatedRender/Bridge.h"
 #include "FoveatedRender/Ops.h"
 #include "PerfMode.h"
+#include "Utils/Logging.h"
 
 void LoggingCallback(sl::LogType type, const char* msg)
 {
@@ -425,11 +426,14 @@ bool Streamline::EnsureFrameToken()
 	if (!frameChecker.IsNewFrame())
 		return frameToken != nullptr;
 
+	static Util::OnceFlag tokenErrorLogged;
 	if (SL_FAILED(result, slGetNewFrameToken(frameToken, &globals::state->frameCount))) {
-		logger::error("[Streamline {}] Could not get frame token: {}", instanceTag, magic_enum::enum_name(result));
+		if (tokenErrorLogged.First())
+			logger::error("[Streamline {}] Could not get frame token: {}", instanceTag, magic_enum::enum_name(result));
 		frameToken = nullptr;
 		return false;
 	}
+	tokenErrorLogged.Reset();
 
 	return frameToken != nullptr;
 }
@@ -657,12 +661,11 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 			return;
 		const sl::Result markerResult = slPCLSetMarker(marker, *frameToken);
 		if (markerResult != sl::Result::eOk) {
-			static bool markerErrorLogged[2][2] = { { false, false }, { false, false } };
+			static Util::OnceFlag markerErrorLogged[2][2];
 			const uint32_t logIdx = globals::game::isVR ? std::min(eyeIndex, 1u) : 0u;
 			const uint32_t boundedStageIndex = std::min(stageIndex, 1u);
-			if (markerErrorLogged[logIdx][boundedStageIndex])
+			if (!markerErrorLogged[logIdx][boundedStageIndex].First())
 				return;
-			markerErrorLogged[logIdx][boundedStageIndex] = true;
 			logger::warn(
 				"[Streamline {}] slPCLSetMarker({}) failed{}: {}",
 				instanceTag,

@@ -17,7 +17,9 @@
 
 #include "../Feature.h"
 #include "../FeatureConstraints.h"
+#include "../I18n/I18n.h"
 #include "../Menu/Fonts.h"
+#include "../Menu/Icons/helpers/IconFonts.h"
 #include "../Menu/ThemeManager.h"
 #include "Utils/BootSnapshot.h"
 #include "Utils/ControlValue.h"
@@ -253,6 +255,9 @@ namespace Util
 	/** @brief Opens a native menu with a rounded highlight and padding for its themed popup corners. */
 	bool BeginRoundedMenu(const char* label, bool enabled = true);
 
+	/** @brief ImGui::SeparatorText in the given font role. */
+	void SeparatorTextWithFont(const char* a_text, Menu::FontRole a_role);
+
 	/**
 	 * Full-row hover/selection highlight for ImGui tables.
 	 * Makes the entire table row highlight on hover/active/selected instead of just the selectable cell.
@@ -322,9 +327,54 @@ namespace Util
 	/** @brief Tooltip body describing what a plain click currently resolves to, given
 	 *  the live Shift/default state - callers append their own modifier hint line. */
 	const char* GetClearShaderCacheTooltip();
+	/** @brief What a segment's content draws into; the font is already scaled to fit. */
+	struct SegmentState
+	{
+		ImDrawList* drawList = nullptr;
+		ImVec2 min;  ///< Content box
+		ImVec2 max;
+		ImVec4 color;  ///< Label colour for the current state
+		float chosen = 0.0f;
+		bool iconOnly = false;
+	};
+
+	/** @brief One segment of a SegmentedControl. */
+	struct Segment
+	{
+		const char* label = "";  ///< Text after "##" is not shown
+		Icons::GlyphRef icon{};  ///< Shown alone when the segment is too narrow
+		bool disabled = false;   ///< Dimmed and not clickable; its tooltip still shows
+		const char* tooltip = nullptr;
+		float width = 0.0f;                                             ///< 0 measures the icon and label
+		std::function<void(const Segment&, const SegmentState&)> draw;  ///< Null draws the icon and label
+	};
+
+	/** @brief Width of a segment's icon and label. */
+	float MeasureSegmentContent(const Segment& segment);
+
+	/** @brief Draws a segment's icon and label; returns the x past them. */
+	float DrawSegmentContent(const Segment& segment, const SegmentState& state);
+
+	/** @brief Layout and state of a SegmentedControl. */
+	struct SegmentedOptions
+	{
+		float width = 0.0f;          ///< Fills this width with equal segments; 0 sizes each segment to its content
+		float height = 0.0f;         ///< Track height; 0 is a frame height plus the track padding
+		int marked = -1;             ///< Segment flagged with a dot while it is not the selection
+		bool muted = false;          ///< Dims the selection, for a control showing an off or flat mode
+		bool centered = false;       ///< Centres a content-sized track on the available width
+		float reservedWidth = 0.0f;  ///< Leaves room after the strip for a trailing action
+	};
 
 	/**
-	 * @brief Compact segmented control: one rounded track, label-sized segments, the selection in the accent colour.
+	 * @brief Segments in a track, the selection a gliding accent pill; scrolls when too wide.
+	 * @param selected The selected segment, or -1 for none.
+	 * @return The segment clicked this frame, or -1.
+	 */
+	int SegmentedControl(const char* id, std::span<const Segment> segments, int selected, const SegmentedOptions& options = {});
+
+	/**
+	 * @brief SegmentedControl over plain labels, open to Scene Manager interception.
 	 * @param a_selected In/out selected index
 	 * @param a_marked Index to flag with a dot when it is not the selection, or -1
 	 * @param a_muted Dims the selection so the bar still looks active while representing an off/flat mode
@@ -334,12 +384,12 @@ namespace Util
 		int a_marked = -1, bool a_muted = false);
 
 	/**
-	 * @brief Glass/mica pill tab bar: drop-in replacement for ImGui::BeginTabBar / BeginTabItem.
-	 * Draws a compact translucent track with a selected pill instead of classic folder tabs.
+	 * @brief Pill tab bar: drop-in replacement for ImGui::BeginTabBar / BeginTabItem, drawn as a
+	 * SegmentedControl instead of classic folder tabs.
 	 * Nesting is supported (stack). Tab labels from the previous frame drive the strip layout.
 	 * @param centered Centre the strip on the available width instead of starting it at the left.
 	 */
-	bool BeginPillTabBar(const char* str_id, bool centered = false);
+	bool BeginPillTabBar(const char* str_id, bool centered = false, const std::function<void()>& trailingAction = {});
 	bool BeginPillTabItem(const char* label, bool* p_open = nullptr, ImGuiTabItemFlags flags = 0, const char* tooltip = nullptr);
 	void EndPillTabItem();
 	void EndPillTabBar();
@@ -369,23 +419,26 @@ namespace Util
 	 */
 	bool LockStatusBadgeButton(const char* a_id, bool a_locked, const char* a_tooltip = nullptr);
 
-	/** @brief Width of a DrawBadgeAt badge for the given label. */
+	/** @brief Width of a Badge for the given label. */
 	float MeasureBadgeWidth(const char* a_label);
 
+	/** @brief Layout and colour overrides of a Badge. */
+	struct BadgeOptions
+	{
+		float rowHeight = 0.0f;          ///< Row the badge is centred in; 0 is the line height
+		float width = 0.0f;              ///< Fixed width with the label centred; 0 fits the label
+		float alpha = 1.0f;              ///< Multiplier on fill and label, for fades
+		std::optional<ImVec4> fill;      ///< Replaces the tint's soft fill
+		std::optional<ImVec4> label;     ///< Replaces the tint's readable label colour
+		ImDrawList* drawList = nullptr;  ///< Defaults to the current window draw list
+		std::optional<ImVec2> at;        ///< Draws with this row top-left without advancing layout; unset draws at the cursor
+	};
+
 	/**
-	 * @brief Soft rectangular label badge, vertically centred in a row.
-	 * @param a_min Top-left of the row in screen space.
-	 * @param a_rowHeight Height of the row the badge is centred in.
-	 * @param a_bg Badge fill; usually the tint at a low alpha.
-	 * @param a_fg Label colour.
-	 * @param a_drawList Optional; defaults to the current window draw list.
+	 * @brief Soft rectangular label badge tinted from one colour, vertically centred in a row.
 	 * @return The badge width.
 	 */
-	float DrawBadgeAt(ImVec2 a_min, float a_rowHeight, const char* a_label, const ImVec4& a_bg, const ImVec4& a_fg,
-		ImDrawList* a_drawList = nullptr);
-
-	/** @brief Badge tinted from one colour (soft fill, readable label), drawn at the cursor; advances layout with Dummy. */
-	void Badge(const char* a_label, const ImVec4& a_tint);
+	float Badge(const char* a_label, const ImVec4& a_tint, const BadgeOptions& a_options = {});
 
 	/**
 	 * @brief Soft rectangular HDR/SDR capability pill (muted blue / muted red).
@@ -650,11 +703,6 @@ namespace Util
 	/** Draws a destructive ButtonWithFlash with a leading Tabler icon. */
 	bool ErrorButtonWithFlash(const char* id, const char* tablerIcon, const char* label, int flashDurationMs = 200);
 
-	/**
-	 * Creates a transparent button with theme text color hover. Caller must push/pop FrameBorderSize=0 separately.
-	 */
-	StyledButtonWrapper TransparentIconButtonStyle();
-
 	/** Returns theme text color if monochrome icons enabled, otherwise white. */
 	ImVec4 GetIconTint();
 
@@ -829,6 +877,8 @@ namespace Util
 	 * same row looks too low next to it. Centre by ink instead; this is the one place that measures it.
 	 */
 	float GetTextInkCenterY();
+	/** @brief Distance from the line top to the centre of the given text's visible glyphs. */
+	float GetTextInkCenterY(std::string_view text);
 
 	/**
 	 * @brief Screen y at which to draw a line of text (cursor / AddText position) so its ink is centred in a row.
@@ -846,7 +896,7 @@ namespace Util
 	bool ButtonWithFlash(const char* label, const ImVec2& size = ImVec2(0, 0), int flashDurationMs = 200);
 
 	/**
-	 * @brief ButtonWithFlash with a leading Tabler icon (Icons::LabeledButton).
+	 * @brief ButtonWithFlash with a leading Tabler icon (LabeledButton).
 	 * @param id Unique ##id; also keys the flash timer.
 	 * @param tablerIcon ICON_TI_* glyph.
 	 * @param label Translated label.
@@ -879,6 +929,48 @@ namespace Util
 	 * stack, so pushed overrides still apply; behaviour is otherwise identical to ImGui::Button.
 	 */
 	bool Button(const char* label, const ImVec2& size = ImVec2(0, 0));
+
+	/** @brief Cursor over the hovered last item: a hand when clickable (if @p hand), not-allowed while disabled. */
+	void HoverCursor(bool hand = true);
+
+	/** @brief Transparent button chrome for custom glyph controls. */
+	StyledButtonWrapper TransparentIconButtonStyle();
+
+	/** @brief Square size of IconButton. */
+	float IconButtonSize();
+
+	/**
+	 * @brief A quiet icon button's hit area and eased fill; the caller draws the icon.
+	 * @param glyphColor Optional; receives the glyph colour for the button's state.
+	 */
+	bool QuietIconButtonFrame(const char* id, bool active, ImU32* glyphColor = nullptr);
+
+	/**
+	 * @brief Quiet square icon button: transparent until hovered, filled while active.
+	 * @param color Glyph colour; 0 uses the secondary text colour.
+	 */
+	bool IconButton(const char* id, Icons::GlyphRef glyph, const char* tooltip, bool active = false, ImU32 color = 0);
+
+	/** @brief Glyph colour for IconButtons that delete: the error colour, softened to sit quietly in a row. */
+	ImU32 DestructiveIconColor();
+
+	/** @brief Gap LabeledButton leaves between its glyph and label. */
+	float LabeledButtonGap(Icons::GlyphRef glyph, const char* label);
+
+	/** @brief Width LabeledButton takes at its natural size, for right-aligning it. */
+	float MeasureLabeledButton(Icons::GlyphRef glyph, const char* label);
+
+	/**
+	 * @brief Framed button with an icon and an optional label; square when icon-only.
+	 * Icon fonts have no Latin glyphs, so the two faces are drawn separately.
+	 */
+	bool LabeledButton(const char* id, Icons::GlyphRef glyph, const char* label = nullptr, const ImVec2& size = ImVec2(0, 0), bool trailingIcon = false);
+
+	/** @brief Icon-only LabeledButton with an explicit size. */
+	inline bool LabeledButton(const char* id, Icons::GlyphRef glyph, const ImVec2& size)
+	{
+		return LabeledButton(id, glyph, nullptr, size);
+	}
 
 	/**
 	 * @brief ImGui::Selectable. Every Selectable is hooked (UIHooks, Anim::GlideSelectable), so rows of any list get
@@ -1575,6 +1667,20 @@ namespace Util
 		ImGuiComboFlags flags = ImGuiComboFlags_None, std::uint64_t itemsRevision = 0);
 
 	/**
+	 * @brief Search input with a magnifier inside the frame and a clear button while it holds text.
+	 * Escape clears the text without closing the menu or editor. Item queries afterwards refer to the input.
+	 * @param ctrlFFocus Ctrl+F focuses the field while its window (or a child) is focused.
+	 * @param flags, callback, userData Passed on to the input, alongside EscapeClearsAll.
+	 * @return True when the text changed this frame.
+	 */
+	bool SearchField(const char* id, std::string& text, const char* hint, float width, bool ctrlFFocus,
+		ImGuiInputTextFlags flags = 0, ImGuiInputTextCallback callback = nullptr, void* userData = nullptr);
+
+	/** @brief SearchField for fixed-capacity buffers, sharing the same input and clear controls. */
+	bool SearchField(const char* id, char* buffer, std::size_t capacity, const char* hint, float width, bool ctrlFFocus,
+		ImGuiInputTextFlags flags = 0, ImGuiInputTextCallback callback = nullptr, void* userData = nullptr);
+
+	/**
 	 * @brief Draws a search input field with icon inside a combo dropdown.
 	 *
 	 * Reusable helper for any combo that needs search/filter functionality.
@@ -2154,10 +2260,7 @@ namespace Util
 		 */
 		void RenderControls(const std::vector<std::string>& columnHeaders)
 		{
-			char filterBuffer[256] = { 0 };
-			strncpy_s(filterBuffer, filterText.c_str(), sizeof(filterBuffer) - 1);
-
-			ImGui::InputText("Filter", filterBuffer, IM_ARRAYSIZE(filterBuffer));
+			SearchField("##TableFilter", filterText, ::T("ui.search", "Search..."), ImGui::CalcItemWidth(), false);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("Filter table by the selected column. Case-insensitive.");
 			}
@@ -2173,9 +2276,6 @@ namespace Util
 			}
 
 			ImGui::Combo("Search In", &searchColumn, searchOptionsCStr.data(), static_cast<int>(searchOptionsCStr.size()));
-
-			// Update filter text from buffer
-			filterText = filterBuffer;
 		}
 	};
 

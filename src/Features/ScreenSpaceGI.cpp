@@ -655,7 +655,8 @@ void ScreenSpaceGI::SetupResources()
 			}
 		}
 
-		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R8_UNORM;
+		// 8-bit history stalls the temporal AO blend.
+		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16_UNORM;
 		{
 			texAo[0] = eastl::make_unique<Texture2D>(texDesc, "SSGI::AO[0]");
 			texAo[0]->CreateSRV(srvDesc);
@@ -664,7 +665,10 @@ void ScreenSpaceGI::SetupResources()
 			texAo[1] = eastl::make_unique<Texture2D>(texDesc, "SSGI::AO[1]");
 			texAo[1]->CreateSRV(srvDesc);
 			texAo[1]->CreateUAV(uavDesc);
+		}
 
+		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R8_UNORM;
+		{
 			texAccumFrames[0] = eastl::make_unique<Texture2D>(texDesc, "SSGI::AccumFrames[0]");
 			texAccumFrames[0]->CreateSRV(srvDesc);
 			texAccumFrames[0]->CreateUAV(uavDesc);
@@ -865,7 +869,6 @@ void ScreenSpaceGI::UpdateSB()
 		data.RcpTexDim = float2(1.0f) / res;
 		data.FrameDim = dynres;
 		data.RcpFrameDim = float2(1.0f) / dynres;
-		data.FrameIndex = globals::state->frameCount;
 
 		data.NumSlices = settings.NumSlices;
 		data.NumSteps = settings.NumSteps;
@@ -1100,8 +1103,9 @@ void ScreenSpaceGI::DrawSSGI()
 			srvs.at(7) = texGiSpecular[inputAoTexIdx]->srv.get();
 		}
 		srvs.at(8) = texNormal->srv.get();
+		srvs.at(9) = texAo[inputAoTexIdx]->srv.get();
 		if (useModeTextureThisFrame)
-			srvs.at(9) = globals::features::vr.stereoOpt.GetModeTextureSRV();
+			srvs.at(10) = globals::features::vr.stereoOpt.GetModeTextureSRV();
 
 		uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
 		if (runILPath) {

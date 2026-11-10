@@ -27,6 +27,8 @@
 #	include "FeatureIssues.h"
 #	include "Features/LightLimitFix/ShadowCasterManager.h"
 #	include "Features/DeveloperTools.h"
+#	include "Features/RemoteControl/DevFlags.h"
+#	include "Features/RemoteControl/FrameRecorder.h"
 #	include "Features/RemoteControl/NvPerf.h"
 #	include "Features/RemoteControl/ToolSpecs/ActionsTool.h"
 #	include "Features/RemoteControl/ToolSpecs/CaptureNativeExt.h"
@@ -348,6 +350,7 @@ namespace
 					g_toggledOffFeatures.insert(target);
 				}
 				target->loaded = applied;
+				globals::shaderCache->ResetActiveShaderTracking();
 				if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 					const std::string payload = json{ { "shortName", shortName }, { "enabled", applied } }.dump();
 					dvb->EmitEvent("openshaders.feature.changed", payload.c_str());
@@ -1292,7 +1295,7 @@ namespace
 	/**
 	 * @brief Serializes a capture result: the per-filter summary always, every range of every sample on request.
 	 *
-	 * Summary values are per frame and keyed by metric label; a value no replay pass completed is null.
+	 * Summary values are per frame and keyed by metric label, perSample holds them per sample; a value no replay pass completed is null.
 	 */
 	json CaptureResultJson(const NvPerf::CaptureResult& a_result, bool a_detail)
 	{
@@ -1305,16 +1308,27 @@ namespace
 		json unsupported = json::array();
 		for (const auto& metric : a_result.unsupportedMetrics)
 			unsupported.push_back(MetricJson(metric));
+		const auto number = [](double a_value) { return std::isnan(a_value) ? json(nullptr) : json(a_value); };
 		const auto values = [&](const std::vector<double>& a_values) {
 			json out = json::object();
 			for (std::size_t m = 0; m < labels.size() && m < a_values.size(); ++m)
-				out[labels[m]] = std::isnan(a_values[m]) ? json(nullptr) : json(a_values[m]);
+				out[labels[m]] = number(a_values[m]);
+			return out;
+		};
+		const auto perSample = [&](const std::vector<std::vector<double>>& a_series) {
+			json out = json::object();
+			for (std::size_t m = 0; m < labels.size() && m < a_series.size(); ++m) {
+				json column = json::array();
+				for (const double value : a_series[m])
+					column.push_back(number(value));
+				out[labels[m]] = std::move(column);
+			}
 			return out;
 		};
 		json summary = json::array();
 		for (const auto& entry : a_result.summary)
 			summary.push_back(json{ { "range", entry.name }, { "perFrame", entry.occurrencesPerFrame }, { "incomplete", entry.incomplete },
-				{ "values", values(entry.values) } });
+				{ "values", values(entry.values) }, { "perSample", perSample(entry.perSample) } });
 		json out{ { "captureId", a_result.id }, { "success", a_result.success }, { "error", a_result.error }, { "chip", a_result.chipName },
 			{ "startFrame", a_result.startFrame }, { "endFrame", a_result.endFrame }, { "samples", a_result.samples },
 			{ "passesPerSample", a_result.passesPerSample }, { "droppedRanges", a_result.droppedRanges },
@@ -1560,6 +1574,73 @@ namespace
 		}
 	}
 
+	// ---- frames: start / stop / status / read --------------------------------------------
+
+	constexpr double kMsRounding = 1e4;  // 4 decimals keeps a 10 s window around 60 KB
+
+	/** @brief Serializes the recorder state without the frames. */
+	json FrameStatusJson(const FrameRecorder::Status& a_status)
+	{
+		return json{ { "id", a_status.id }, { "recording", a_status.recording }, { "frames", a_status.frames }, { "full", a_status.full } };
+	}
+
+	/** @brief Rounds a duration to kMsRounding precision. */
+	json RoundedMs(double a_ms)
+	{
+		return json(std::round(a_ms * kMsRounding) / kMsRounding);
+	}
+
+	/** @brief Serializes a recording as one array per column, one entry per frame. */
+	json RecordingJson(const FrameRecorder::Recording& a_recording)
+	{
+		json frameMs = json::array(), threadCpu = json::array(), processCpu = json::array(), frameGeneration = json::array();
+		for (const auto& frame : a_recording.frames) {
+			frameMs.push_back(RoundedMs(frame.frameMs));
+			threadCpu.push_back(RoundedMs(frame.presentThreadCpuMs));
+			processCpu.push_back(RoundedMs(frame.processCpuMs));
+			frameGeneration.push_back(frame.frameGeneration);
+		}
+		auto out = FrameStatusJson({ .id = a_recording.id, .recording = a_recording.recording, .full = a_recording.full, .frames = a_recording.frames.size() });
+		out["tscHz"] = a_recording.tscHz;
+		out["presentThreadId"] = a_recording.presentThreadId;
+		out["columns"] = json{ { "frameMs", std::move(frameMs) }, { "presentThreadCpuMs", std::move(threadCpu) },
+			{ "processCpuMs", std::move(processCpu) }, { "frameGeneration", std::move(frameGeneration) } };
+		return out;
+	}
+
+	/**
+	 * @brief Builds the response of the openshaders.frames tool.
+	 *
+	 * Start and stop take effect at the next Present on the render thread; nothing here touches game state, so none
+	 * marshals to the main thread.
+	 */
+	json BuildFramesResult(const json& a_args)
+	{
+		const std::string action = a_args.value("action", std::string{});
+		if (action == "start") {
+			std::uint64_t id = 0;
+			std::string error;
+			if (!FrameRecorder::Start(id, error))
+				return json{ { "error", error } };
+			return json{ { "id", id } };
+		}
+		if (action == "stop") {
+			FrameRecorder::Stop();
+			return FrameStatusJson(FrameRecorder::GetStatus());
+		}
+		if (action == "status")
+			return FrameStatusJson(FrameRecorder::GetStatus());
+		if (action == "read")
+			return RecordingJson(*FrameRecorder::Read());
+		return json{ { "error", "unknown action (start|stop|status|read)" }, { "action", action } };
+	}
+
+	/** @brief DevBench entry point of the openshaders.frames tool. */
+	void FramesToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler("openshaders.frames", &BuildFramesResult, a_argsJson, a_sink, a_write);
+	}
+
 	// ---- settings: global configuration and scoped saved-feature restoration -----------
 
 	json BuildSettingsResult(const json& a_args)
@@ -1613,9 +1694,16 @@ namespace
 				if (!shortName.empty() && !feature)
 					return json{ { "error", "feature not found" }, { "shortName", shortName } };
 				const auto keys = feature && currentTab && feature->HasScopedDefaultSettings() ? feature->GetCurrentPageSettingKeys() : std::vector<std::string>{};
+				json records = json::array();
+				EditorWindow::GetSingleton()->ForEachWidget([&](Widget& widget) {
+					if (widget.HasUnsavedChanges())
+						records.push_back({ { "name", widget.GetEditorID() }, { "type", widget.GetWidgetTypeName() } });
+				});
 				return json{ { "canRestoreSaved", state->HasSavedSettings(feature, currentTab) },
 					{ "canReapplyBaseSettings", BaselineManager::GetSingleton()->HasSettings(shortName, keys) },
-					{ "canUndo", globals::menu->CanUndo() }, { "canRedo", globals::menu->CanRedo() } };
+					{ "canUndo", globals::menu->CanUndo() }, { "canRedo", globals::menu->CanRedo() },
+					{ "unsavedSettings", state->HasUnsavedChanges() }, { "settingsChanges", state->GetUnsavedSettingsChanges() },
+					{ "unsavedRecords", records }, { "unsavedSceneSettings", SceneSettingsManager::GetSingleton()->HasUnsavedChanges() } };
 			},
 				Util::DevBenchUx::ExecutionThread::Render);
 		}
@@ -1879,6 +1967,48 @@ namespace
 	{
 		RunHandler("openshaders.pluginapi", &BuildPluginApiResult, a_argsJson, a_sink, a_write);
 	}
+
+	/** @brief Every known dev flag and its value, as {"flags": {name: value}}. */
+	json DevFlagsJson()
+	{
+		json flags = json::object();
+		for (const auto& [name, value] : DevFlags::List())
+			flags[name] = value;
+		return json{ { "flags", std::move(flags) } };
+	}
+
+	/**
+	 * @brief Builds the response of the openshaders.devflags tool.
+	 *
+	 * Flags are atomics read on any thread, so nothing marshals to the main thread.
+	 */
+	json BuildDevFlagsResult(const json& a_args)
+	{
+		const std::string action = a_args.value("action", std::string{ "list" });
+		if (action == "set") {
+			const auto flags = a_args.find("flags");
+			if (flags == a_args.end() || !flags->is_object())
+				return json{ { "error", "set needs flags: {name: bool}" } };
+			for (const auto& item : flags->items()) {
+				if (!item.value().is_boolean())
+					return json{ { "error", "flag values must be booleans" }, { "flag", item.key() } };
+			}
+			for (const auto& item : flags->items())
+				DevFlags::Set(item.key(), item.value().get<bool>());
+			return DevFlagsJson();
+		}
+		if (action == "reset")
+			DevFlags::Reset();
+		else if (action != "list")
+			return json{ { "error", "unknown action (set|list|reset)" }, { "action", action } };
+		return DevFlagsJson();
+	}
+
+	/** @brief DevBench entry point of the openshaders.devflags tool. */
+	void DevFlagsToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler("openshaders.devflags", &BuildDevFlagsResult, a_argsJson, a_sink, a_write);
+	}
 }
 
 namespace
@@ -2003,6 +2133,13 @@ namespace DevBenchBridge
 		} else {
 			logger::info("DevBenchBridge: devbench build {} < 10500; CS menu + inspect extensions need 1.5.0", dvb->GetBuildNumber());
 		}
+		static constexpr const char* framesDesc =
+			R"({"description":"Per-frame timings for benchmarks: QPC Present-to-Present frame time, estimated CPU time of the Present thread and of the whole process, frame-generation flag. CPU milliseconds are cycle counts scaled by the measured TSC rate, not guaranteed elapsed CPU time across CPUs or clock changes. Idle until started. Action-dispatched. start -> {id} or {error} while a recording is pending or running; recording begins at the next Present and ends at stop or after 16384 frames (full). stop -> {id,recording,frames,full}; takes effect at the next Present, so poll status until recording is false. status -> {id,recording,frames,full}. read -> {id,recording,frames,full,tscHz,presentThreadId,columns:{frameMs,presentThreadCpuMs,processCpuMs,frameGeneration}}: equal-length arrays, one entry per frame, ms rounded to 4 decimals.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["start","stop","status","read"]}},"required":["action"]}})";
+		dvb->RegisterTool("openshaders.frames", framesDesc, &FramesToolHandler, nullptr);
+
+		static constexpr const char* devflagsDesc =
+			R"({"description":"Named runtime booleans guarding temporary candidate code paths (DEV_FLAG(\"tmp::name\") in C++), for screening a change on and off in one launch. Flags read false until set and reset at every launch. Action-dispatched. set: params flags (object of name -> boolean; all validated before any is applied). list (default): every flag a call site has read or set. reset: every flag false. All return {flags:{name:bool}}.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["set","list","reset"]},"flags":{"type":"object","additionalProperties":{"type":"boolean"}}}}})";
+		dvb->RegisterTool("openshaders.devflags", devflagsDesc, &DevFlagsToolHandler, nullptr);
 
 		StartNoticeWatcher(dvb);
 	}

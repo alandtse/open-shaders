@@ -275,12 +275,12 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 
 #	if defined(RIGHT)
 		// Right eye: valid UV range is [0.5*DynRes.x, DynRes.x]
-		bool coord_out_of_eye = coord.x < 0.5 * inParameters.DynamicRes.x;
-		bool coord_offset_out_of_eye = coord_with_offset.x < 0.5 * inParameters.DynamicRes.x;
+		bool coord_out_of_eye = coord.x < 0.5 * inParameters.DynamicRes.x || any(coord >= inParameters.DynamicRes);
+		bool coord_offset_out_of_eye = coord_with_offset.x < 0.5 * inParameters.DynamicRes.x || any(coord_with_offset >= inParameters.DynamicRes);
 #	else
 		// Left eye: valid UV range is [0.0, 0.5*DynRes.x)
-		bool coord_out_of_eye = coord.x >= 0.5 * inParameters.DynamicRes.x;
-		bool coord_offset_out_of_eye = coord_with_offset.x >= 0.5 * inParameters.DynamicRes.x;
+		bool coord_out_of_eye = coord.x >= 0.5 * inParameters.DynamicRes.x || coord.y >= inParameters.DynamicRes.y;
+		bool coord_offset_out_of_eye = coord_with_offset.x >= 0.5 * inParameters.DynamicRes.x || coord_with_offset.y >= inParameters.DynamicRes.y;
 #	endif
 
 		// Clamp cross-eye depth reads to FarDepthValue so rays near the SBS center
@@ -294,8 +294,10 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 		depths.x = lerp(depths.x, inParameters.FarDepthValue, (float)(depths.x == inParameters.NearDepthValue));  // Stencil area
 		depths.y = lerp(depths.y, inParameters.FarDepthValue, (float)(depths.y == inParameters.NearDepthValue));  // Stencil area
 #else
-		depths.x = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord, 0);
-		depths.y = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord_with_offset, 0);
+		// Under dynamic resolution the render area is the texture's top-left, and the border sampler
+		// only covers reads past the texture: reads past the render area are off-screen too.
+		depths.x = all(coord < inParameters.DynamicRes) ? inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord, 0) : inParameters.FarDepthValue;
+		depths.y = all(coord_with_offset < inParameters.DynamicRes) ? inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord_with_offset, 0) : inParameters.FarDepthValue;
 #endif
 
 		// Depth thresholds (bilinear/shadow thickness) are based on a fractional ratio of the difference between sampled depth and the far clip depth
