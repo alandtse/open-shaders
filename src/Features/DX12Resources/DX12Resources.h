@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 #include <unordered_set>
+#include <unordered_map>
 
 /** @brief Standalone interior preparation service with automatic CELL identification. */
 struct DX12Resources final : Feature
@@ -89,7 +90,12 @@ private:
     std::string streamingScope, streamingStatus = "Not active";
     uint64_t lastStreamingPollMs = 0, streamingLaunches = 0;
     uint32_t streamingSize = 4096, streamingActive = 0, streamingSides = 0, streamingCorners = 0;
-    std::unordered_set<std::string> failedStreamingTiles;
+    struct TileRetry
+    {
+        uint32_t failures = 0;
+        uint64_t nextAttemptAtMs = 0;
+    };
+    std::unordered_map<std::string, TileRetry> failedStreamingTiles;
     std::string preparationCell;
     std::string preparationPath;
     std::string preparationLogPath;

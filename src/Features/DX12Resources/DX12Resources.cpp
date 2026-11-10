@@ -382,10 +382,15 @@ void DX12Resources::PollCellPreparation()
     preparationElapsedMs = completed->elapsedMs;
     if (!completed->error.empty()) {
         preparationStatus = "CELL preparation failed: " + completed->error;
-        if (completed->tile)
-            failedStreamingTiles.emplace(std::format("{}:{}:{}:{}",
+        if (completed->tile) {
+            const auto identity = std::format("{}:{}:{}:{}",
                 completed->request.Key(), completed->tile->size,
-                completed->tile->x, completed->tile->y));
+                completed->tile->x, completed->tile->y);
+            auto& retry = failedStreamingTiles[identity];
+            retry.failures = std::min(retry.failures + 1u, 5u);
+            const auto delayMs = 1000ull << std::min(retry.failures - 1u, 5u);
+            retry.nextAttemptAtMs = GetTickCount64() + delayMs;
+        }
         return;
     }
     preparationReport = std::move(completed->report);
@@ -477,14 +482,18 @@ void DX12Resources::AdvanceStreamingInterior(const DX12ResourceService::CellRequ
     const auto pending = DX12Native::SpatialSubcells::PendingWork(center, velocityX, velocityY, isCached);
     for (const auto tile : pending) {
         const auto identity = std::format("{}:{}:{}:{}", request.Key(), size, tile.x, tile.y);
-        if (failedStreamingTiles.contains(identity)) continue;
+        if (auto retry = failedStreamingTiles.find(identity); retry != failedStreamingTiles.end()) {
+            if (retry->second.failures >= 5 || now < retry->second.nextAttemptAtMs)
+                continue;
+        }
         ++streamingLaunches;
         StartCellPreparation(request,
             DX12ResourceService::PreparedSubcellAddress{ size, tile.x, tile.y },
             streamingActive == 9);
         return;
     }
-    if (!pending.empty()) streamingStatus += " | failed tile awaiting retry";
+    if (!pending.empty()) streamingStatus +=
+        " | waiting for bounded retry or a refreshed scene scope";
 }
 
 void DX12Resources::DrawSettings()
@@ -652,7 +661,10 @@ json DX12Resources::GetDiagnostics()
         { "subcellStreaming", { { "scope", streamingScope }, { "status", streamingStatus },
             { "size", streamingSize }, { "activePrepared", streamingActive },
             { "sidesPrepared", streamingSides }, { "cornersPrepared", streamingCorners },
-            { "launches", streamingLaunches }, { "failedTiles", failedStreamingTiles.size() } } },
+            { "launches", streamingLaunches }, { "failedTiles", failedStreamingTiles.size() },
+            { "retryExhausted", std::ranges::count_if(failedStreamingTiles, [](const auto& item) {
+                return item.second.failures >= 5;
+            }) } } },
         { "detection", { { "source", detectionSource },
             { "status", detectionStatus },
             { "location", detectionLocation }, { "save", detectionSave },
