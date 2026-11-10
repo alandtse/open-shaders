@@ -395,6 +395,14 @@ void DX12NativeScene::DrawSettings()
         characterStats.value("poseRegisters", 0u), characterStats.value("poseFrame", 0u));
     ImGui::TextDisabled("Pose stage deferrals: %u",
         characterStats.value("poseDeferrals", 0u));
+    const auto poseNeeded = characterStats.value("poseRequiredBones", 0u);
+    const auto poseProvided = characterStats.value("poseAvailableBones", 0u);
+    ImGui::Text("Last skin-palette check: %u available / %u required bones",
+        poseProvided, poseNeeded);
+    const auto poseRejected = characterStats.value("posePaletteRejections", 0u);
+    if (poseRejected)
+        ImGui::TextDisabled("Incompatible palettes rejected: %u (no GPU dispatch)",
+            poseRejected);
     ImGui::Text("Deformed output: %u vertices, submitted %s, GPU ready %s",
         characterStats.value("deformOutputVertices", 0u),
         characterStats.value("deformSubmitted", false) ? "yes" : "no",

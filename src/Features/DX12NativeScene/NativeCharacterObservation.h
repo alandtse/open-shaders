@@ -394,6 +394,12 @@ namespace DX12Native
                     current->stagedGeometry->posedFrames : 0u },
                 { "poseDeferrals", current && current->stagedGeometry ?
                     current->stagedGeometry->poseDeferrals : 0u },
+                { "posePaletteRejections", current && current->stagedGeometry ?
+                    current->stagedGeometry->posePaletteRejections : 0u },
+                { "poseRequiredBones", current && current->stagedGeometry ?
+                    current->stagedGeometry->lastPoseRequiredBones : 0u },
+                { "poseAvailableBones", current && current->stagedGeometry ?
+                    current->stagedGeometry->lastPoseAvailableBones : 0u },
                 { "deformSubmitted", current && bool(current->deformed) },
                 { "deformGpuReady", current && current->deformed && current->deformed->Ready() },
                 { "deformFrame", current && current->deformed ?

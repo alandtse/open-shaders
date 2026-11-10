@@ -23,7 +23,7 @@ namespace DX12Native
     {
         uint32_t actorFormID = 0, partOrdinal = 0, vertices = 0, indices = 0;
         uint64_t sourceToken = 0, allocationBytes = 0;
-        uint32_t vertexStride = 0;
+        uint32_t vertexStride = 0, requiredBones = 0;
         uint64_t indexOffset = 0;
         bool skinned = false;
         winrt::com_ptr<ID3D12Resource> source;
@@ -44,6 +44,8 @@ namespace DX12Native
         uint32_t uploadedMeshes = 0, rejectedMeshes = 0, dxgiDeferrals = 0;
         uint32_t evictedMeshes = 0;
         uint32_t posedFrames = 0, poseDeferrals = 0;
+        uint32_t posePaletteRejections = 0;
+        uint32_t lastPoseRequiredBones = 0, lastPoseAvailableBones = 0;
         std::shared_ptr<const CharacterStagedPose> pose;
         std::vector<std::shared_ptr<const CharacterStagedMesh>> meshes;
     };
@@ -132,6 +134,9 @@ namespace DX12Native
             out->evictedMeshes = previous->evictedMeshes;
             out->posedFrames = previous->posedFrames;
             out->poseDeferrals = previous->poseDeferrals;
+            out->posePaletteRejections = previous->posePaletteRejections;
+            out->lastPoseRequiredBones = previous->lastPoseRequiredBones;
+            out->lastPoseAvailableBones = previous->lastPoseAvailableBones;
             out->pose = previous->pose;
         }
         if (!device || !next) return out;
@@ -196,6 +201,16 @@ namespace DX12Native
             mesh->vertices = vertexCount;
             mesh->indices = indexCount;
             mesh->vertexStride = stride;
+            if (next->skinned) {
+                for (const auto& vertex : next->bindVertices) {
+                    for (size_t influence = 0; influence < vertex.bone.size(); ++influence) {
+                        if (vertex.bone[influence] != Util::InvalidSkinBone &&
+                            vertex.weight[influence] > 0.0f)
+                            mesh->requiredBones = std::max(mesh->requiredBones,
+                                uint32_t(vertex.bone[influence]) + 1u);
+                    }
+                }
+            }
             mesh->indexOffset = indexOffset;
             mesh->skinned = next->skinned;
             mesh->source = UploadCharacterSourceBuffer(device, bytes,
@@ -224,14 +239,27 @@ namespace DX12Native
             incoming->registers.size() != incoming->registerCount ||
             incoming->registerCount != incoming->boneCount * 3u ||
             incoming->registerCount > 240u) return prior;
-        bool hasBind = false;
-        for (const auto& mesh : prior->meshes)
-            hasBind |= mesh->skinned &&
+        const CharacterStagedMesh* bindMesh = nullptr;
+        for (const auto& mesh : prior->meshes) {
+            if (mesh->skinned &&
                 mesh->actorFormID == incoming->actorFormID &&
                 mesh->partOrdinal == incoming->partOrdinal &&
-                mesh->sourceToken == incoming->sourceToken;
-        if (!hasBind) return prior;
+                mesh->sourceToken == incoming->sourceToken) {
+                bindMesh = mesh.get();
+                break;
+            }
+        }
+        if (!bindMesh) return prior;
         auto updated = std::make_shared<CharacterMeshGeneration>(*prior);
+        updated->lastPoseRequiredBones = bindMesh->requiredBones;
+        updated->lastPoseAvailableBones = incoming->boneCount;
+        if (!bindMesh->requiredBones ||
+            bindMesh->requiredBones > incoming->boneCount) {
+            ++updated->posePaletteRejections;
+            // Never dispatch a shader that would silently ignore out-of-range
+            // bone indices. Keep previous, independently validated results.
+            return updated;
+        }
         if (updated->pose) {
             updated->residentBytes -= updated->pose->allocationBytes;
             updated->pose.reset();
