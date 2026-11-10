@@ -69,6 +69,85 @@ namespace DX12Native
         uint32_t alphaParts = 0, gpuOnlyParts = 0;
     };
 
+    struct CharacterCasterReadiness
+    {
+        std::shared_ptr<const CharacterIsolatedTLAS> tlas;
+        const char* reason = "Character observation not available";
+        bool worldBoundsPlausible = false;
+    };
+
+    /** @brief Conservative readiness for experimental shadow-caster rays.
+     * A finite GPU readback and a self-hit DO NOT prove Skyrim pose parity.
+     * Restrict admission to a recent third-person actor and a sample AABB
+     * that fits the actor's current world bound. The user must still opt in.
+     */
+    inline CharacterCasterReadiness EvaluateCharacterCaster(
+        const std::shared_ptr<const CharacterObservationGeneration>& generation,
+        uint32_t renderFrame)
+    {
+        CharacterCasterReadiness readiness;
+        if (!generation) return readiness;
+        if (!generation->isolatedTLAS || !generation->isolatedTLAS->Ready()) {
+            readiness.reason = "Isolated character TLAS not GPU-ready";
+            return readiness;
+        }
+        const auto& scene = generation->isolatedTLAS;
+        if (!scene->bottom || !scene->bottom->Ready() ||
+            !scene->bottom->deformation || !scene->bottom->deformation->Ready()) {
+            readiness.reason = "Character BLAS/deformation not GPU-ready";
+            return readiness;
+        }
+        if (!generation->rayProbe || !generation->rayProbe->Ready() ||
+            generation->rayProbe->scene != scene || !generation->rayOutcome ||
+            generation->rayOutcome->status != 3u) {
+            readiness.reason = "No completed matching character RayQuery hit";
+            return readiness;
+        }
+        if (!generation->validation || !generation->validation->sane ||
+            generation->validation->poseFrame != scene->poseFrame ||
+            generation->rayProbe->poseFrame != scene->poseFrame) {
+            readiness.reason = "Skinning readback does not match TLAS pose";
+            return readiness;
+        }
+        if (renderFrame < scene->poseFrame ||
+            renderFrame - scene->poseFrame > 2u) {
+            readiness.reason = "Character pose is older than two render frames";
+            return readiness;
+        }
+        const auto actor = std::ranges::find_if(generation->actors,
+            [&](const auto& entry) { return entry.formID == scene->actorFormID; });
+        if (actor == generation->actors.end()) {
+            readiness.reason = "Character actor not present in observed third-person root";
+            return readiness;
+        }
+        const auto& bounds = actor->worldBound;
+        const auto& minimum = generation->validation->minimum;
+        const auto& maximum = generation->validation->maximum;
+        if (!std::isfinite(bounds[3]) || bounds[3] <= 0 ||
+            bounds[3] > 50000.0f) {
+            readiness.reason = "Character world bound invalid";
+            return readiness;
+        }
+        // Bounds are only a plausibility test: they DO NOT verify the bone
+        // palette's transform convention or sample the entire character.
+        const float tolerance = bounds[3] * 1.5f + 4.0f;
+        for (size_t axis = 0; axis < 3; ++axis) {
+            if (!std::isfinite(bounds[axis]) ||
+                !std::isfinite(minimum[axis]) ||
+                !std::isfinite(maximum[axis]) ||
+                minimum[axis] > maximum[axis] ||
+                minimum[axis] < bounds[axis] - tolerance ||
+                maximum[axis] > bounds[axis] + tolerance) {
+                readiness.reason = "Deformed vertices outside actor world bound";
+                return readiness;
+            }
+        }
+        readiness.worldBoundsPlausible = true;
+        readiness.tlas = scene;
+        readiness.reason = "Opt-in eligible (bounds plausible; parity not proven)";
+        return readiness;
+    }
+
     /** @brief Off-thread inventory of third-person character input.
      * This is an observation stage only: no BLAS, native ownership or GPU
      * submission. Dynamic and skinned geometry remains raster-owned.
@@ -474,10 +553,20 @@ namespace DX12Native
             return published.load(std::memory_order_acquire);
         }
 
+        CharacterCasterReadiness GetCasterReadiness(uint32_t renderFrame) const
+        {
+            return EvaluateCharacterCaster(GetPublished(), renderFrame);
+        }
+
         json GetDiagnostics() const
         {
             auto current = GetPublished();
+            const auto eligibility = EvaluateCharacterCaster(current,
+                current ? current->frame : 0u);
             return {
+                { "casterBoundsPlausible", eligibility.worldBoundsPlausible },
+                { "casterEligibleAtObservation", bool(eligibility.tlas) },
+                { "casterEligibilityReason", eligibility.reason },
                 { "mode", current && current->playerOnly ?
                     "third-person-player-only" : "third-person-observe-only" },
                 { "playerOnly", current ? current->playerOnly : false },
