@@ -181,7 +181,7 @@ void Streamline::LoadInterposer()
 	slSetD3DDevice = reinterpret_cast<PFun_slSetD3DDevice*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slSetD3DDevice")));
 
 	if (SL_FAILED(res, slInit(pref, sl::kSDKVersion))) {
-		logger::critical("[Streamline {}] Failed to initialize Streamline", instanceTag);
+		logger::critical("[Streamline {}] Failed to initialize Streamline: slInit returned {} ({})", instanceTag, magic_enum::enum_name(res), std::to_underlying(res));
 	} else {
 		initialized = true;
 		featureDLSS = false;
