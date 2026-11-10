@@ -61,7 +61,8 @@ namespace DX12ResourceService
     }
 
     inline CompanionResult RunCompanion(const std::vector<std::wstring>& arguments,
-        const std::filesystem::path& logPath)
+        const std::filesystem::path& logPath,
+        DWORD priorityClass = NORMAL_PRIORITY_CLASS)
     {
         CompanionResult result;
         const auto executable = CompanionExecutable();
@@ -95,8 +96,13 @@ namespace DX12ResourceService
         startup.hStdError = logHandle;
         PROCESS_INFORMATION process{};
         const auto working = std::filesystem::absolute(".").wstring();
+        // A tile prewarm process runs at IDLE priority; mandatory active
+        // geometry uses BELOW_NORMAL. The Skyrim process stays responsive.
+        const DWORD allowed = priorityClass == IDLE_PRIORITY_CLASS ||
+            priorityClass == BELOW_NORMAL_PRIORITY_CLASS ?
+            priorityClass : NORMAL_PRIORITY_CLASS;
         const BOOL launched = CreateProcessW(executable.c_str(), command.data(), nullptr,
-            nullptr, TRUE, CREATE_NO_WINDOW, nullptr, working.c_str(), &startup, &process);
+            nullptr, TRUE, CREATE_NO_WINDOW | allowed, nullptr, working.c_str(), &startup, &process);
         const DWORD launchError = launched ? ERROR_SUCCESS : GetLastError();
         CloseHandle(logHandle);
         if (!launched) {

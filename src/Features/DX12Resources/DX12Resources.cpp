@@ -303,7 +303,7 @@ void DX12Resources::AdvancePluginCellScan()
 }
 
 void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest& request,
-    std::optional<DX12ResourceService::PreparedSubcellAddress> tile)
+    std::optional<DX12ResourceService::PreparedSubcellAddress> tile, bool predictive)
 {
     if (preparationJob) {
         preparationStatus = "A CELL preparation job is already running";
@@ -339,7 +339,7 @@ void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest&
     preparationCell = request.Key();
     try {
         static BS::thread_pool<> pool{ 1 };
-        pool.detach_task([next, request, tile, data, pluginsFile, workspace, logPath] {
+        pool.detach_task([next, request, tile, predictive, data, pluginsFile, workspace, logPath] {
             const auto started = std::chrono::steady_clock::now();
             next->logPath = logPath.string();
             try {
@@ -354,7 +354,9 @@ void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest&
                     args.push_back(std::to_wstring(tile->x));
                     args.push_back(std::to_wstring(tile->y));
                 }
-                const auto process = DX12ResourceService::RunCompanion(args, logPath);
+                const auto process = DX12ResourceService::RunCompanion(args, logPath,
+                    tile ? (predictive ? IDLE_PRIORITY_CLASS : BELOW_NORMAL_PRIORITY_CLASS) :
+                        NORMAL_PRIORITY_CLASS);
                 if (!process.error.empty())
                     throw std::runtime_error(process.error + ": " + process.log);
                 next->report = DX12ResourceService::ValidatePreparedCell(workspace, request, tile);
@@ -477,7 +479,9 @@ void DX12Resources::AdvanceStreamingInterior(const DX12ResourceService::CellRequ
         const auto identity = std::format("{}:{}:{}:{}", request.Key(), size, tile.x, tile.y);
         if (failedStreamingTiles.contains(identity)) continue;
         ++streamingLaunches;
-        StartCellPreparation(request, DX12ResourceService::PreparedSubcellAddress{ size, tile.x, tile.y });
+        StartCellPreparation(request,
+            DX12ResourceService::PreparedSubcellAddress{ size, tile.x, tile.y },
+            streamingActive == 9);
         return;
     }
     if (!pending.empty()) streamingStatus += " | failed tile awaiting retry";
@@ -509,7 +513,9 @@ void DX12Resources::DrawSettings()
     ImGui::Checkbox("Automatically prepare missing native interior scenes", &settings.AutoPrepareOnCellEntry);
     ImGui::TextDisabled("Companion runs off-thread; a matching cache is reused without restarting preparation.");
     ImGui::TextWrapped("Subcell scheduler: %s", streamingStatus.c_str());
-    ImGui::TextDisabled("Cache preparation stage only; full-scene TLAS remains authoritative.");
+    ImGui::TextDisabled("Active subcell preparation runs below normal CPU priority.");
+    ImGui::TextDisabled("Predictive 5x5 prewarm uses idle priority.");
+    ImGui::TextDisabled("GPU residency and native TLAS have separate controls.");
     ImGui::TextDisabled("Current interior or latest-save location; no manual IDs required.");
     ImGui::BeginDisabled(!settings.Enabled);
     ImGui::BeginDisabled(bool(scanJob));

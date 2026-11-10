@@ -54,7 +54,8 @@ private:
     void StartPluginCellScan(std::string plugin);
     void AdvancePluginCellScan();
     void StartCellPreparation(const DX12ResourceService::CellRequest& request,
-        std::optional<DX12ResourceService::PreparedSubcellAddress> tile = std::nullopt);
+        std::optional<DX12ResourceService::PreparedSubcellAddress> tile = std::nullopt,
+        bool predictive = false);
     void PollCellPreparation();
     std::atomic<bool> dataLoaded{ false };
     std::mutex statusMutex;
