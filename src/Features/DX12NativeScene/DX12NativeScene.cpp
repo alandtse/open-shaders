@@ -905,7 +905,13 @@ void DX12NativeScene::EarlyPrepass()
     // Reuse the runtime's existing reference/shape identities, but only skip
     // geometries actually admitted to a completed production TLAS. Offline
     // omissions and preview-only candidates must remain discoverable.
-    if (auto current = acceleration.GetScene(); current &&
+    // Match NativeSCM's static-caster coverage to the scene that Native DXR
+    // actually exposes. When a partial grid becomes active, full-CELL TLAS
+    // membership must no longer suppress raster fallback for absent casters.
+    const auto currentPublished = GetPublishedScene();
+    const auto coverageCandidate = currentPublished ?
+        currentPublished->acceleration : acceleration.GetScene();
+    if (auto current = coverageCandidate; current &&
         current->scope.scene == revision && current != runtimeCoverageSource) {
         auto covered = std::make_shared<DX12Native::PreparedRuntimeCoverage>();
         covered->sceneRevision = revision;
