@@ -49,6 +49,7 @@ private:
     struct ScanJob;
     struct CatalogJob;
     struct PreparationJob;
+    struct DiskCacheFlushJob;
     void BeginAutomaticDetection(bool mainMenu);
     void PollAutomaticDetection();
     void RefreshLoadedPlugins();
@@ -58,11 +59,17 @@ private:
         std::optional<DX12ResourceService::PreparedSubcellAddress> tile = std::nullopt,
         bool predictive = false);
     void PollCellPreparation();
+    void StartDiskCacheFlush();
+    void PollDiskCacheFlush();
     std::atomic<bool> dataLoaded{ false };
     std::mutex statusMutex;
     std::shared_ptr<ScanJob> scanJob;
     std::shared_ptr<CatalogJob> pluginScanJob;
     std::shared_ptr<PreparationJob> preparationJob;
+    std::shared_ptr<DiskCacheFlushJob> diskCacheFlushJob;
+    bool diskCacheFlushConfirm = false;
+    uint64_t diskCacheFlushes = 0, diskCacheFlushRemoved = 0;
+    std::string diskCacheFlushStatus = "Not requested";
     std::optional<DX12ResourceService::CellRequest> detectedCell;
     bool detectionRequested = false;
     std::optional<bool> lastDetectionMainMenu;
