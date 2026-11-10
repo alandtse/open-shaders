@@ -6,6 +6,7 @@
 #include "Features/DX12NativeScene/NativeCharacterDeformation.h"
 #include "Features/DX12NativeScene/NativeCharacterBLASPreflight.h"
 #include "Features/DX12NativeScene/NativeCharacterIsolatedBLAS.h"
+#include "Features/DX12NativeScene/NativeCharacterIsolatedTLAS.h"
 
 #include <BS_thread_pool.hpp>
 #include <algorithm>
@@ -56,7 +57,8 @@ namespace DX12Native
         std::optional<CharacterDeformValidation> validation;
         std::optional<CharacterBLASPreflight> blasPreflight;
         std::shared_ptr<const CharacterIsolatedBLAS> isolatedBLAS;
-        std::string deformationError, blasError;
+        std::shared_ptr<const CharacterIsolatedTLAS> isolatedTLAS;
+        std::string deformationError, blasError, tlasError;
         uint32_t capturedMeshes = 0;
         uint64_t capturedBytes = 0;
         uint32_t droppedActors = 0, droppedParts = 0, invalidParts = 0;
@@ -90,7 +92,8 @@ namespace DX12Native
          */
         void Advance(uint32_t frame, uint32_t maxActors, uint32_t periodFrames, bool playerOnly,
             bool stageGeometry, bool runSkinning, bool validateSkinning,
-            bool buildIsolatedBLAS, uint32_t blasIntervalFrames,
+            bool buildIsolatedBLAS, bool buildIsolatedTLAS,
+            uint32_t blasIntervalFrames,
             ID3D12Device* device, ID3D12CommandQueue* queue)
         {
             // Runtime toggles can reset the observer while the engine is
@@ -239,7 +242,7 @@ namespace DX12Native
                     mesh = std::move(capturedMesh),
                     pose = std::move(capturedPose), nativeDevice,
                     nativeQueue, runSkinning, validateSkinning,
-                    buildIsolatedBLAS, blasIntervalFrames] {
+                    buildIsolatedBLAS, buildIsolatedTLAS, blasIntervalFrames] {
                     try {
                         // All aggregation uses owned records, never engine pointers.
                         auto output = std::make_shared<CharacterObservationGeneration>(*captured);
@@ -385,6 +388,29 @@ namespace DX12Native
                                 }
                             }
                         }
+                        // The optional one-instance TLAS is intentionally
+                        // separate from the world scene and every native
+                        // lighting/shadow consumer. It references ONLY a
+                        // completed isolated character BLAS.
+                        if (buildIsolatedTLAS && buildIsolatedBLAS &&
+                            output->isolatedBLAS && output->isolatedBLAS->Ready() &&
+                            nativeDevice && nativeQueue) {
+                            if (previous && previous->isolatedTLAS &&
+                                previous->isolatedTLAS->bottom ==
+                                    output->isolatedBLAS)
+                                output->isolatedTLAS = previous->isolatedTLAS;
+                            if (!output->isolatedTLAS) {
+                                try {
+                                    output->isolatedTLAS = BuildCharacterIsolatedTLAS(
+                                        nativeDevice.get(), nativeQueue.get(),
+                                        output->isolatedBLAS);
+                                } catch (const std::exception& e) {
+                                    output->tlasError = e.what();
+                                } catch (...) {
+                                    output->tlasError = "Isolated character TLAS build failed";
+                                }
+                            }
+                        }
                         if (runSkinning && pose && output->stagedGeometry &&
                             output->stagedGeometry->pose && nativeQueue &&
                             output->stagedGeometry->pose->captureFrame == pose->capturedFrame) {
@@ -505,6 +531,15 @@ namespace DX12Native
                     current->isolatedBLAS->scratchBytes : 0ull },
                 { "isolatedBLASPending", CharacterBLASRetirement::Pending() },
                 { "isolatedBLASError", current ? current->blasError : std::string{} },
+                { "isolatedTLASSubmitted", current && bool(current->isolatedTLAS) },
+                { "isolatedTLASReady", current && current->isolatedTLAS &&
+                    current->isolatedTLAS->Ready() },
+                { "isolatedTLASFrame", current && current->isolatedTLAS ?
+                    current->isolatedTLAS->poseFrame : 0u },
+                { "isolatedTLASBytes", current && current->isolatedTLAS ?
+                    current->isolatedTLAS->allocationBytes : 0ull },
+                { "isolatedTLASPending", CharacterTLASRetirement::Pending() },
+                { "isolatedTLASError", current ? current->tlasError : std::string{} },
                 { "deformError", current ? current->deformationError : std::string{} },
                 { "dxgiCharacterBudget", current && current->stagedGeometry ?
                     current->stagedGeometry->budgetBytes : 0ull },
