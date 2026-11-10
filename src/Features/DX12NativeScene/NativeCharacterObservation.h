@@ -631,40 +631,40 @@ namespace DX12Native
                                 return !candidate || !candidate->rigidSource ||
                                     !std::ranges::any_of(
                                         output->stagedGeometry->meshes,
-                                        [&](const auto& staged) {
-                                            return !staged->skinned &&
-                                                staged->actorFormID == candidate->actorFormID &&
-                                                staged->partOrdinal == candidate->partOrdinal &&
-                                                staged->sourceToken == candidate->sourceToken;
+                                        [&](const auto& residentMesh) {
+                                            return !residentMesh->skinned &&
+                                                residentMesh->actorFormID == candidate->actorFormID &&
+                                                residentMesh->partOrdinal == candidate->partOrdinal &&
+                                                residentMesh->sourceToken == candidate->sourceToken;
                                         });
                             });
                             // One additional rigid BLAS at most per worker
                             // generation. Once staged, a rigid mesh reuses its
                             // BLAS; only its TLAS transform changes.
-                            for (const auto& staged : output->stagedGeometry->meshes) {
-                                if (!staged || staged->skinned ||
-                                    !staged->rigidLocalBoundsValid)
+                            for (const auto& rigidMesh : output->stagedGeometry->meshes) {
+                                if (!rigidMesh || rigidMesh->skinned ||
+                                    !rigidMesh->rigidLocalBoundsValid)
                                     continue;
                                 const auto observed = std::ranges::find_if(
                                     output->parts, [&](const auto& part) {
                                         return !part.skinned && !part.alpha &&
                                             !part.dynamic && !part.gpuOnly &&
-                                            part.actorFormID == staged->actorFormID &&
-                                            part.ordinal == staged->partOrdinal &&
-                                            part.sourceToken == staged->sourceToken;
+                                            part.actorFormID == rigidMesh->actorFormID &&
+                                            part.ordinal == rigidMesh->partOrdinal &&
+                                            part.sourceToken == rigidMesh->sourceToken;
                                     });
                                 if (observed == output->parts.end() ||
-                                    !CharacterRigidBoundsMatch(*staged, *observed))
+                                    !CharacterRigidBoundsMatch(*rigidMesh, *observed))
                                     continue;
                                 if (std::ranges::any_of(output->rigidBLASParts,
                                     [&](const auto& candidate) {
-                                        return candidate->actorFormID == staged->actorFormID &&
-                                            candidate->partOrdinal == staged->partOrdinal &&
-                                            candidate->sourceToken == staged->sourceToken;
+                                        return candidate->actorFormID == rigidMesh->actorFormID &&
+                                            candidate->partOrdinal == rigidMesh->partOrdinal &&
+                                            candidate->sourceToken == rigidMesh->sourceToken;
                                     })) continue;
                                 try {
                                     if (auto candidate = BuildCharacterRigidBLAS(
-                                        nativeDevice.get(), nativeQueue.get(), staged))
+                                        nativeDevice.get(), nativeQueue.get(), rigidMesh))
                                         output->rigidBLASParts.push_back(std::move(candidate));
                                 } catch (const std::exception& e) {
                                     output->blasError = e.what();
