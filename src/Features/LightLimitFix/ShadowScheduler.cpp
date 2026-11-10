@@ -9,6 +9,7 @@
 #include "../../EngineFixes/AlphaGeometryGroupCeilingFix.h"
 #include "../../EngineFixes/CullPoolExhaustionFix.h"
 #include "../../Globals.h"
+#include "../DX12NativeScene/DX12NativeScene.h"
 #include "../../GpuPass.h"
 #include "../../State.h"
 #include "../../Utils/Game.h"

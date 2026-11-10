@@ -6,6 +6,7 @@
 #include <fstream>
 
 #include "../../Globals.h"
+#include "../DX12NativeScene/DX12NativeScene.h"
 #include "../../State.h"
 #include "../../Utils/ActorUtils.h"
 #include "../../Utils/FileSystem.h"
