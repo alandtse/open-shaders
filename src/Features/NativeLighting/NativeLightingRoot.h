@@ -40,7 +40,7 @@ namespace NativeLighting
         params[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
         params[12].Descriptor.ShaderRegister = 7;
         params[13].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-        params[13].Constants = { 2, 0, 1 };
+        params[13].Constants = { 2, 0, 2 }; // occlusion and receiver probe gates
 		D3D12_STATIC_SAMPLER_DESC samplers[4]{};
 		for (uint32_t i = 0; i < 4; ++i) {
 			samplers[i].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;

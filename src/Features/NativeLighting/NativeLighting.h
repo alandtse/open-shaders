@@ -22,6 +22,7 @@ struct NativeLightingFeature final : Feature
 		bool StochasticShadows = false, UseAllPreparedLights = true;
         // Independent opt-in; only secondary occlusion rays inspect characters.
         bool CharacterCasterOcclusion = false;
+        bool CharacterReceiverProbe = false; // Raster-aligned hits, no shading.
 		uint32_t BudgetMB = 0; // Compatibility only; always dynamic DXGI.
 		bool PersistLab = false;
 	};
@@ -55,6 +56,7 @@ struct NativeLightingFeature final : Feature
 		GraphicsBackend backend;
 		DX12NativeScene::SceneFrame scene;
         std::shared_ptr<const DX12Native::CharacterIsolatedTLAS> characterCasters;
+        bool characterProbeEnabled = false;
 		std::weak_ptr<const DX12Native::ShadowBindings> descriptorBindings;
 		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 		uint64_t readyValue = 0, bytes = 0, sceneRevision = 0;
@@ -110,7 +112,7 @@ private:
 	winrt::com_ptr<ID3D12PipelineState> pipeline;
 	std::array<std::shared_ptr<Contribution>, 4> frames;
 	std::shared_ptr<Contribution> current;
-	std::array<uint64_t, 27> totals{};
+	std::array<uint64_t, 28> totals{};
 	// Derived after the existing GPU candidate counter readback; no extra per-pixel atomic.
 	uint64_t skippedPixels = 0;
 	std::string status;

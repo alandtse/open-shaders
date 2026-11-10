@@ -1,7 +1,11 @@
 RaytracingAccelerationStructure Scene : register(t0);
 // Optional separate character-caster TLAS; never used for primary receivers.
 RaytracingAccelerationStructure CharacterCasters : register(t7);
-cbuffer CharacterVisibilityControl : register(b2) { uint CharacterOcclusionEnabled; };
+cbuffer CharacterVisibilityControl : register(b2)
+{
+    uint CharacterOcclusionEnabled;
+    uint CharacterReceiverProbeEnabled;
+};
 Texture2D<float> RasterDepth : register(t1);
 StructuredBuffer<uint> ValidationOffsets : register(t2);
 struct PointLight { float4 positionRadius; float4 radianceSourceRadius; uint4 flags; };
@@ -153,6 +157,22 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	}
 	RayDesc ray;
 	ray.Origin = CameraOrigin; ray.Direction = direction; ray.TMin = MinimumDistance; ray.TMax = 60000.0f;
+    // Compare the completed third-person character TLAS against *raster*
+    // depth without adding unverified native material signals to the image.
+    // Receiver material, shading, alpha and final composition remain raster.
+    if (CharacterReceiverProbeEnabled != 0u && rasterValid &&
+        rasterDistance > 0.0f) {
+        RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> receiverActor;
+        receiverActor.TraceRayInline(CharacterCasters, RAY_FLAG_NONE, 0xffu, ray);
+        while (receiverActor.Proceed()) { }
+        if (receiverActor.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+            const float hitDistance = receiverActor.CommittedRayT();
+            const float tolerance = max(5.0f, rasterDistance * 1e-5f);
+            if (isfinite(hitDistance) && hitDistance > 0.0f &&
+                abs(hitDistance - rasterDistance) <= tolerance)
+                Count(27u); // raster-aligned native character receiver
+        }
+    }
 	bool valid = true;
 	bool rejectedPrimaryCandidate = false;
 	RayQuery<RAY_FLAG_FORCE_NON_OPAQUE | RAY_FLAG_CULL_BACK_FACING_TRIANGLES> query;
