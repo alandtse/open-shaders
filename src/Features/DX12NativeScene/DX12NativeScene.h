@@ -6,6 +6,7 @@
 #include "Features/DX12NativeScene/RuntimeGeometryCapture.h"
 #include "Features/DX12NativeScene/RuntimeGeometryCacheWorker.h"
 #include "Features/DX12NativeScene/RuntimeGeometryPreparation.h"
+#include "Features/DX12NativeScene/NativeCharacterObservation.h"
 #include "Features/DX12NativeScene/VideoMemoryBudget.h"
 #include "Features/DX12NativeScene/RasterCapture.h"
 #include "Features/DX12NativeScene/ShadowTrace.h"
@@ -42,6 +43,24 @@ struct DX12NativeScene final : Feature
         bool CaptureRuntimeGeometry = false; // Explicit static-geometry debug.
         bool CaptureSCMRigidCasters = true; // Bounded native acquisition from SCM's cull data.
         bool CacheRuntimeGeometry = false; // Optional background persistence and menu CPU prewarm.
+        // Third-person character discovery only. It never changes DXR ownership.
+        bool ObserveNativeCharacters = false;
+        bool CharacterPlayerOnly = false;
+        // Capture owned bind inputs and stage them in DX12 without TLAS use.
+        bool CharacterStageGeometryDX12 = false;
+        bool CharacterRunSkinningDX12 = false; // Isolated pose-parity candidate.
+        bool CharacterValidateSkinningDX12 = false; // Bounded GPU readback diagnostics only.
+        bool CharacterBuildIsolatedBLASDX12 = false; // No production TLAS/ray ownership.
+        bool CharacterBuildIsolatedTLASDX12 = false; // Single instance; diagnostic only.
+        bool CharacterRunIsolatedRayQueryDX12 = false; // One diagnostic ray, no shadows.
+        bool CharacterAccumulatePartBLAS = false; // Bounded independent multi-part construction.
+        bool CharacterIncludeRigidAttachments = false; // Reuse static BLAS with observed world transforms.
+        bool CharacterMultiPartCasterVisibility = false; // Extra opt-in after per-part ray proof.
+        bool CharacterShadowCasterVisibility = false; // Opt-in; secondary light rays only.
+        uint32_t CharacterCasterMaxPoseAgeFrames = 12; // Bound TLAS reuse across BLAS updates.
+        uint32_t CharacterMaxActors = 16, CharacterObservationPeriod = 8;
+        uint32_t CharacterMeshCaptureBatch = 2; // 1..4 bounded CPU copies/sample.
+        uint32_t CharacterBLASIntervalFrames = 8; // Bound experimental GPU AS work.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
@@ -120,6 +139,12 @@ struct DX12NativeScene final : Feature
 	std::optional<SceneFrame> GetSceneFrame(uint32_t a_frame) const;
 	/** @brief Retains the current raster snapshot through the consumer GPU work. */
 	std::shared_ptr<const DX12Native::RasterFrame> GetRasterFrame(uint32_t a_frame) const { return loaded && settings.Enabled && !transitionOpen ? raster.Get(a_frame) : nullptr; }
+    /** @brief Eligible third-person character caster for independent native
+     * visibility consumers. This does not require the separate shadow-mask
+     * toggle, and does not promote characters to prepared receivers.
+     */
+    std::shared_ptr<const DX12Native::CharacterIsolatedTLAS>
+        GetCharacterCasterForVisibility(uint32_t a_frame) const;
 	/** @brief Returns a matching prepared-scene shadow mask and its completion fence. */
 	std::shared_ptr<const DX12Native::ShadowFrame> GetShadowMask(uint32_t a_frame) const;
 	/** @brief Retains a borrowed shadow mask until the consumer GPU fence completes. */
@@ -151,6 +176,7 @@ private:
     std::shared_ptr<const DX12Native::TopLevel> requestedCandidateMaterialScene;
     uint64_t candidateMaterialAllowance = 0;
     DX12Native::RuntimeGeometryMailbox runtimeGeometry;
+    DX12Native::NativeCharacterObservation nativeCharacters;
     // Immutable completed-TLAS identity index is published atomically for the draw hook.
     std::atomic<std::shared_ptr<const DX12Native::PreparedRuntimeCoverage>> runtimePreparedCoverage;
     std::shared_ptr<const DX12Native::TopLevel> runtimeCoverageSource;

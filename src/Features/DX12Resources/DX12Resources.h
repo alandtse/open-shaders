@@ -19,7 +19,7 @@
 /** @brief Standalone interior preparation service with automatic CELL identification. */
 struct DX12Resources final : Feature
 {
-    struct Settings { bool Enabled = true; bool AutoPrepareOnCellEntry = true; } settings;
+    struct Settings { bool Enabled = true; bool AutoPrepareOnCellEntry = true; bool FlushDiskGeometryOnStartup = false; } settings;
 
     std::string GetName() override { return "DX12 Resources"; }
     std::string GetShortName() override { return "DX12Resources"; }
@@ -35,7 +35,9 @@ struct DX12Resources final : Feature
     void AdvanceAutomaticInterior(const DX12ResourceService::CellRequest& request);
     void AdvanceStreamingScene(const DX12ResourceService::CellRequest& request,
         uint32_t size, double x, double y, double velocityX, double velocityY);
-    void DataLoaded() override { dataLoaded.store(true, std::memory_order_release); }
+    void DataLoaded() override;
+    /** Block native cache consumers while a startup flush is pending/failed. */
+    bool DiskGeometryCacheReady();
     json GetDiagnostics() override;
     std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
     {
@@ -67,6 +69,9 @@ private:
     std::shared_ptr<CatalogJob> pluginScanJob;
     std::shared_ptr<PreparationJob> preparationJob;
     std::shared_ptr<DiskCacheFlushJob> diskCacheFlushJob;
+    // Session-only barrier: if opted in, the first native cache read must
+    // follow a successful disk deletion, never a stale cached scene.
+    bool startupFlushTriggered = false, startupFlushComplete = false;
     bool diskCacheFlushConfirm = false;
     uint64_t diskCacheFlushes = 0, diskCacheFlushRemoved = 0;
     std::string diskCacheFlushStatus = "Not requested";

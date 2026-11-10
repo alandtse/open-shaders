@@ -21,7 +21,7 @@ namespace NativeLighting
 		ranges[3] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kMaximumTexturePools, 0, 3, 0 };
 		ranges[4] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6, 0, 0 };
 		ranges[5] = { D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 11, 0, 0, 0 };
-		D3D12_ROOT_PARAMETER params[12]{};
+		D3D12_ROOT_PARAMETER params[14]{};
 		constexpr std::array rootSrvRegisters{ 0u, 2u, 3u, 4u, 5u };
 		constexpr std::array rootSrvIndices{ 0u, 2u, 3u, 5u, 6u };
 		for (size_t i = 0; i < rootSrvIndices.size(); ++i) {
@@ -35,6 +35,12 @@ namespace NativeLighting
 		}
 		params[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 		params[11].Descriptor.ShaderRegister = 0;
+        // Isolated third-person caster TLAS for direct-light shadow rays.
+        // The prepared-world TLAS remains the sole primary receiver source.
+        params[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+        params[12].Descriptor.ShaderRegister = 7;
+        params[13].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        params[13].Constants = { 2, 0, 2 }; // occlusion and receiver probe gates
 		D3D12_STATIC_SAMPLER_DESC samplers[4]{};
 		for (uint32_t i = 0; i < 4; ++i) {
 			samplers[i].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;

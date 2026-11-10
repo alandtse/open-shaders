@@ -20,7 +20,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterPlayerOnly, CharacterStageGeometryDX12, CharacterRunSkinningDX12, CharacterValidateSkinningDX12, CharacterBuildIsolatedBLASDX12, CharacterBuildIsolatedTLASDX12, CharacterRunIsolatedRayQueryDX12, CharacterAccumulatePartBLAS, CharacterIncludeRigidAttachments, CharacterMultiPartCasterVisibility, CharacterShadowCasterVisibility, CharacterCasterMaxPoseAgeFrames, CharacterMaxActors, CharacterObservationPeriod, CharacterBLASIntervalFrames, CharacterMeshCaptureBatch, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -347,6 +347,238 @@ void DX12NativeScene::DrawSettings()
                 globals::features::nativeSCM.IsActive())), std::memory_order_release);
     ImGui::TextDisabled("SCM supplies CPU geometry; native DX12 owns BLAS, RayQuery and shading.");
     ImGui::TextDisabled("Skinned, moving and GPU-only casters are not yet native-covered.");
+    ImGui::SeparatorText("Native Characters (third-person; observation only)");
+    if (ImGui::Checkbox("Observe third-person character meshes", &settings.ObserveNativeCharacters) &&
+        !settings.ObserveNativeCharacters) nativeCharacters.Reset();
+    if (ImGui::Checkbox("Observe player only", &settings.CharacterPlayerOnly))
+        nativeCharacters.Reset();
+    ImGui::BeginDisabled(!settings.ObserveNativeCharacters);
+    if (ImGui::Checkbox("Stage owned character geometry in DX12 (experimental)",
+        &settings.CharacterStageGeometryDX12)) nativeCharacters.Reset();
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
+        !settings.CharacterStageGeometryDX12);
+    if (ImGui::Checkbox("Dispatch isolated DX12 skinning test (no TLAS ownership)",
+        &settings.CharacterRunSkinningDX12)) nativeCharacters.Reset();
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
+        !settings.CharacterStageGeometryDX12 || !settings.CharacterRunSkinningDX12);
+    if (ImGui::Checkbox("Validate deformed DX12 vertex buffer (readback)",
+        &settings.CharacterValidateSkinningDX12)) nativeCharacters.Reset();
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
+        !settings.CharacterStageGeometryDX12 ||
+        !settings.CharacterRunSkinningDX12 ||
+        !settings.CharacterValidateSkinningDX12);
+    if (ImGui::Checkbox("Build isolated dynamic character BLAS (no TLAS)",
+        &settings.CharacterBuildIsolatedBLASDX12)) nativeCharacters.Reset();
+    int blasInterval = int(settings.CharacterBLASIntervalFrames);
+    if (ImGui::SliderInt("Isolated BLAS update interval (frames)",
+        &blasInterval, 1, 120))
+        settings.CharacterBLASIntervalFrames = uint32_t(blasInterval);
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
+        !settings.CharacterStageGeometryDX12 ||
+        !settings.CharacterRunSkinningDX12 ||
+        !settings.CharacterValidateSkinningDX12 ||
+        !settings.CharacterBuildIsolatedBLASDX12);
+    if (ImGui::Checkbox("Build isolated character TLAS (single instance)",
+        &settings.CharacterBuildIsolatedTLASDX12)) nativeCharacters.Reset();
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
+        !settings.CharacterStageGeometryDX12 ||
+        !settings.CharacterRunSkinningDX12 ||
+        !settings.CharacterValidateSkinningDX12 ||
+        !settings.CharacterBuildIsolatedBLASDX12 ||
+        !settings.CharacterBuildIsolatedTLASDX12);
+    if (ImGui::Checkbox("Trace isolated character RayQuery (diagnostic only)",
+        &settings.CharacterRunIsolatedRayQueryDX12)) nativeCharacters.Reset();
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
+        !settings.CharacterStageGeometryDX12 || !settings.CharacterRunSkinningDX12 ||
+        !settings.CharacterValidateSkinningDX12 ||
+        !settings.CharacterBuildIsolatedBLASDX12);
+    if (ImGui::Checkbox("Accumulate character-part BLAS (isolated testing)",
+        &settings.CharacterAccumulatePartBLAS)) nativeCharacters.Reset();
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!settings.CharacterAccumulatePartBLAS ||
+        !settings.CharacterStageGeometryDX12 ||
+        !settings.CharacterBuildIsolatedBLASDX12);
+    if (ImGui::Checkbox("Include opaque rigid attachments (experimental)",
+        &settings.CharacterIncludeRigidAttachments)) nativeCharacters.Reset();
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Rigid geometry uses its DX12 bind BLAS plus the observed world transform.");
+    ImGui::TextDisabled("Up to eight opaque caster parts; each needs an individual GPU self-hit.");
+    ImGui::BeginDisabled(!settings.CharacterAccumulatePartBLAS ||
+        !settings.CharacterRunIsolatedRayQueryDX12 ||
+        !settings.CharacterBuildIsolatedTLASDX12);
+    ImGui::Checkbox("Allow validated multi-part caster rays (experimental)",
+        &settings.CharacterMultiPartCasterVisibility);
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Independent opt-in for native shadow and direct-light visibility.");
+    ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
+        !settings.CharacterStageGeometryDX12 ||
+        !settings.CharacterRunSkinningDX12 ||
+        !settings.CharacterValidateSkinningDX12 ||
+        !settings.CharacterBuildIsolatedBLASDX12 ||
+        !settings.CharacterBuildIsolatedTLASDX12 ||
+        !settings.CharacterRunIsolatedRayQueryDX12 || !settings.ShadowMask);
+    ImGui::Checkbox("Character shadows in native visibility (experimental)",
+        &settings.CharacterShadowCasterVisibility);
+    int maximumCasterAge = int(settings.CharacterCasterMaxPoseAgeFrames);
+    if (ImGui::SliderInt("Maximum character-caster pose age (frames)",
+        &maximumCasterAge, 1, 30))
+        settings.CharacterCasterMaxPoseAgeFrames = uint32_t(maximumCasterAge);
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Only secondary shadow rays use the character TLAS.");
+    ImGui::TextDisabled("Default off; receiver BRDF and alpha/PBR materials still use raster.");
+    ImGui::TextDisabled(settings.CharacterPlayerOnly ?
+        "Only the third-person player root is inspected." :
+        "Includes third-person player, NPCs and creatures.");
+    ImGui::TextDisabled("Isolated DX12 tests do not replace raster or native SCM ownership.");
+    int maxActors = int(settings.CharacterMaxActors);
+    if (ImGui::SliderInt("Maximum observed actors", &maxActors, 1, 32))
+        settings.CharacterMaxActors = uint32_t(maxActors);
+    int interval = int(settings.CharacterObservationPeriod);
+    if (ImGui::SliderInt("Observation interval (frames)", &interval, 1, 120))
+        settings.CharacterObservationPeriod = uint32_t(interval);
+    int captureBatch = int(settings.CharacterMeshCaptureBatch);
+    if (ImGui::SliderInt("Character mesh captures per observation",
+        &captureBatch, 1, 4))
+        settings.CharacterMeshCaptureBatch = uint32_t(captureBatch);
+    const auto characterStats = nativeCharacters.GetDiagnostics();
+    ImGui::Text("Actor samples: %u  Meshes: %u  Skinned: %u  Rigid: %u  Dynamic: %u",
+        characterStats.value("actors", 0u), characterStats.value("parts", 0u),
+        characterStats.value("skinned", 0u), characterStats.value("rigid", 0u),
+        characterStats.value("dynamic", 0u));
+    ImGui::TextDisabled("Character worker: %s, last sample frame %u",
+        characterStats.value("workerBusy", false) ? "busy" : "idle",
+        characterStats.value("generationFrame", 0u));
+    ImGui::Text("Owned DX12 character bind buffers: %zu (%.2f MiB)",
+        characterStats.value("nativeStagedMeshes", size_t{ 0 }),
+        double(characterStats.value("nativeStagedBytes", uint64_t{ 0 })) / (1024.0 * 1024.0));
+    ImGui::TextDisabled("Character mesh evictions: %u (actor/equipment identity changes)",
+        characterStats.value("nativeEvictedMeshes", 0u));
+    ImGui::TextDisabled("Skin bind vertices, indices and raw bone registers are DX12-staged.");
+    ImGui::Text("Rigid attachments staged: %u; receiver geometry attributes: %u",
+        characterStats.value("nativeRigidStagedMeshes", 0u),
+        characterStats.value("nativeReceiverAttributeReady", 0u));
+    ImGui::TextDisabled("No native character BRDF without verified normals, UVs and material descriptors.");
+    ImGui::TextDisabled("Unsupported skinned/alpha materials remain raster-authoritative.");
+    ImGui::TextDisabled("DX12 skinning/BLAS/TLAS/RayQuery are opt-in; native visibility needs eligibility.");
+    ImGui::Text("Bone palette: %u VS registers (captured frame %u)",
+        characterStats.value("poseRegisters", 0u), characterStats.value("poseFrame", 0u));
+    ImGui::TextDisabled("Pose stage deferrals: %u",
+        characterStats.value("poseDeferrals", 0u));
+    const auto poseNeeded = characterStats.value("poseRequiredBones", 0u);
+    const auto poseProvided = characterStats.value("poseAvailableBones", 0u);
+    ImGui::Text("Last skin-palette check: %u available / %u required bones",
+        poseProvided, poseNeeded);
+    const auto poseRejected = characterStats.value("posePaletteRejections", 0u);
+    if (poseRejected)
+        ImGui::TextDisabled("Incompatible palettes rejected: %u (no GPU dispatch)",
+            poseRejected);
+    ImGui::Text("Deformed output: %u vertices, submitted %s, GPU ready %s",
+        characterStats.value("deformOutputVertices", 0u),
+        characterStats.value("deformSubmitted", false) ? "yes" : "no",
+        characterStats.value("deformGpuReady", false) ? "yes" : "no");
+    ImGui::Text("Deformation sanity: %s, sampled %u, non-finite %u (pose frame %u)",
+        characterStats.value("validationReady", false) ?
+            (characterStats.value("validationSane", false) ? "finite" : "FAILED") : "pending/off",
+        characterStats.value("validationInspected", 0u),
+        characterStats.value("validationNonFinite", 0u),
+        characterStats.value("validationFrame", 0u));
+    if (characterStats.value("validationReady", false))
+        ImGui::TextDisabled("Max displacement vs bind pose: %.2f game units",
+            characterStats.value("validationMaximumBindDisplacement", 0.0f));
+    ImGui::TextDisabled("Sanity checks do not prove Skyrim skinning parity.");
+    ImGui::Text("Dynamic BLAS preflight: DXR %s, DXGI headroom %s",
+        characterStats.value("blasPreflightDXR", false) ? "ready" : "unavailable",
+        characterStats.value("blasPreflightBudget", false) ? "sufficient" : "insufficient/unknown");
+    if (characterStats.value("blasPreflightReady", false)) {
+        constexpr double mib = 1024.0 * 1024.0;
+        ImGui::TextDisabled("BLAS result %.2f MiB, scratch %.2f MiB, update scratch %.2f MiB",
+            double(characterStats.value("blasPreflightResultBytes", uint64_t{ 0 })) / mib,
+            double(characterStats.value("blasPreflightScratchBytes", uint64_t{ 0 })) / mib,
+            double(characterStats.value("blasPreflightUpdateScratchBytes", uint64_t{ 0 })) / mib);
+        const auto preflightStatus =
+            characterStats.value("blasPreflightStatus", std::string{});
+        if (!preflightStatus.empty())
+            ImGui::TextWrapped("Character BLAS plan: %s", preflightStatus.c_str());
+    }
+    ImGui::Text("Isolated character BLAS: %s, %s, pose frame %u",
+        characterStats.value("isolatedBLASSubmitted", false) ?
+            (characterStats.value("isolatedBLASReady", false) ? "GPU ready" : "submitted") :
+            "not submitted",
+        characterStats.value("isolatedBLASRefit", false) ? "refit" : "build",
+        characterStats.value("isolatedBLASFrame", 0u));
+    ImGui::Text("Accumulated character-part BLAS: %zu, rigid BLAS: %zu",
+        characterStats.value("accumulatedBLASParts", size_t{ 0 }),
+        characterStats.value("rigidBLASParts", size_t{ 0 }));
+    ImGui::TextDisabled("BLAS resources %.2f MiB, scratch %.2f MiB, pending %u",
+        double(characterStats.value("isolatedBLASBytes", uint64_t{ 0 })) / (1024.0 * 1024.0),
+        double(characterStats.value("isolatedBLASScratchBytes", uint64_t{ 0 })) /
+            (1024.0 * 1024.0),
+        characterStats.value("isolatedBLASPending", 0u));
+    const auto isolatedBlasFailure =
+        characterStats.value("isolatedBLASError", std::string{});
+    if (!isolatedBlasFailure.empty())
+        ImGui::TextWrapped("Isolated BLAS: %s", isolatedBlasFailure.c_str());
+    ImGui::Text("Isolated TLAS instances: %zu (multi-part diagnostics only)",
+        characterStats.value("isolatedTLASInstances", size_t{ 0 }));
+    ImGui::Text("Isolated character TLAS: %s, pose frame %u",
+        characterStats.value("isolatedTLASSubmitted", false) ?
+            (characterStats.value("isolatedTLASReady", false) ? "GPU ready" : "submitted") :
+            "not submitted",
+        characterStats.value("isolatedTLASFrame", 0u));
+    ImGui::TextDisabled("TLAS %.2f MiB, pending %u",
+        double(characterStats.value("isolatedTLASBytes", uint64_t{ 0 })) /
+            (1024.0 * 1024.0),
+        characterStats.value("isolatedTLASPending", 0u));
+    const auto tlasFailure = characterStats.value("isolatedTLASError", std::string{});
+    if (!tlasFailure.empty())
+        ImGui::TextWrapped("Isolated TLAS: %s", tlasFailure.c_str());
+    const auto rayStatus = characterStats.value("isolatedRayStatus", 0u);
+    const char* rayState = rayStatus == 3u ? "triangle hit" :
+        rayStatus == 2u ? "miss" :
+        rayStatus == 1u ? "no valid triangle" : "not ready/invalid";
+    ImGui::Text("Per-part RayQuery self-hits: %u / %zu",
+        characterStats.value("isolatedRayPartsHit", 0u),
+        characterStats.value("isolatedRayPartsTested", size_t{ 0 }));
+    ImGui::Text("Isolated RayQuery: %s; %s (pose frame %u)",
+        characterStats.value("isolatedRayReady", false) ? "GPU ready" :
+        characterStats.value("isolatedRaySubmitted", false) ? "submitted" : "not submitted",
+        rayState, characterStats.value("isolatedRayFrame", 0u));
+    if (rayStatus == 3u)
+        ImGui::TextDisabled("Ray hit t %.4f; primitive %u; instance %u",
+            characterStats.value("isolatedRayDistance", 0.0f),
+            characterStats.value("isolatedRayPrimitive", UINT32_MAX),
+            characterStats.value("isolatedRayInstance", UINT32_MAX));
+    const auto rayError = characterStats.value("isolatedRayError", std::string{});
+    if (!rayError.empty())
+        ImGui::TextWrapped("Isolated RayQuery: %s", rayError.c_str());
+    const auto casterReadiness = nativeCharacters.GetCasterReadiness(
+        globals::game::graphicsState ?
+            globals::game::graphicsState->GetFrameCount() : 0u,
+        settings.CharacterCasterMaxPoseAgeFrames,
+        settings.CharacterAccumulatePartBLAS &&
+            settings.CharacterMultiPartCasterVisibility);
+    ImGui::TextWrapped("Character shadow eligibility: %s",
+        casterReadiness.reason);
+    const auto shadowCounters = shadow.GetDiagnostics();
+    ImGui::Text("Character shadow visibility rays blocked: %u",
+        shadowCounters.value("characterShadowRayHits", 0u));
+    ImGui::TextDisabled("Latest completed shadow hit sample: %s (frame %u)",
+        shadowCounters.value("characterShadowHitCountReady", false) ?
+            "ready" : "pending/not offered",
+        shadowCounters.value("characterShadowHitSampleFrame", 0u));
+    ImGui::TextDisabled("World-bound plausibility is not exact pose parity.");
+    const auto characterDeformError = characterStats.value("deformError", std::string{});
+    if (!characterDeformError.empty())
+        ImGui::TextWrapped("Deformation status: %s", characterDeformError.c_str());
+    ImGui::TextDisabled("DXGI character deferrals: %u  invalid uploads: %u",
+        characterStats.value("nativeDxgiDeferrals", 0u),
+        characterStats.value("nativeUploadRejections", 0u));
     ImGui::BeginDisabled(!settings.CaptureRuntimeGeometry);
     ImGui::Checkbox("Experimental: persist and menu-prewarm runtime geometry",
         &settings.CacheRuntimeGeometry);
@@ -572,6 +804,43 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	settings.NativeLLF = selected.NativeLLF;
 	settings.NativeSCM = selected.NativeSCM;
     settings.CaptureSCMRigidCasters = selected.CaptureSCMRigidCasters;
+    settings.ObserveNativeCharacters = selected.ObserveNativeCharacters;
+    if (settings.CharacterPlayerOnly != selected.CharacterPlayerOnly)
+        nativeCharacters.Reset();
+    settings.CharacterPlayerOnly = selected.CharacterPlayerOnly;
+    if (settings.CharacterStageGeometryDX12 != selected.CharacterStageGeometryDX12)
+        nativeCharacters.Reset();
+    settings.CharacterStageGeometryDX12 = selected.CharacterStageGeometryDX12;
+    if (settings.CharacterRunSkinningDX12 != selected.CharacterRunSkinningDX12)
+        nativeCharacters.Reset();
+    settings.CharacterRunSkinningDX12 = selected.CharacterRunSkinningDX12;
+    if (settings.CharacterValidateSkinningDX12 != selected.CharacterValidateSkinningDX12)
+        nativeCharacters.Reset();
+    settings.CharacterValidateSkinningDX12 = selected.CharacterValidateSkinningDX12;
+    if (settings.CharacterBuildIsolatedBLASDX12 != selected.CharacterBuildIsolatedBLASDX12)
+        nativeCharacters.Reset();
+    settings.CharacterBuildIsolatedBLASDX12 = selected.CharacterBuildIsolatedBLASDX12;
+    if (settings.CharacterBuildIsolatedTLASDX12 != selected.CharacterBuildIsolatedTLASDX12)
+        nativeCharacters.Reset();
+    settings.CharacterBuildIsolatedTLASDX12 = selected.CharacterBuildIsolatedTLASDX12;
+    if (settings.CharacterRunIsolatedRayQueryDX12 != selected.CharacterRunIsolatedRayQueryDX12)
+        nativeCharacters.Reset();
+    settings.CharacterRunIsolatedRayQueryDX12 = selected.CharacterRunIsolatedRayQueryDX12;
+    if (settings.CharacterAccumulatePartBLAS != selected.CharacterAccumulatePartBLAS)
+        nativeCharacters.Reset();
+    settings.CharacterAccumulatePartBLAS = selected.CharacterAccumulatePartBLAS;
+    if (settings.CharacterIncludeRigidAttachments != selected.CharacterIncludeRigidAttachments)
+        nativeCharacters.Reset();
+    settings.CharacterIncludeRigidAttachments = selected.CharacterIncludeRigidAttachments;
+    settings.CharacterMultiPartCasterVisibility = selected.CharacterMultiPartCasterVisibility;
+    settings.CharacterShadowCasterVisibility = selected.CharacterShadowCasterVisibility;
+    settings.CharacterCasterMaxPoseAgeFrames =
+        std::clamp(selected.CharacterCasterMaxPoseAgeFrames, 1u, 30u);
+    settings.CharacterBLASIntervalFrames =
+        std::clamp(selected.CharacterBLASIntervalFrames, 1u, 120u);
+    settings.CharacterMaxActors = std::clamp(selected.CharacterMaxActors, 1u, 32u);
+    settings.CharacterObservationPeriod = std::clamp(selected.CharacterObservationPeriod, 1u, 120u);
+    settings.CharacterMeshCaptureBatch = std::clamp(selected.CharacterMeshCaptureBatch, 1u, 4u);
     settings.GlobalDXGIHeadroomPercent = reservePercent;
     settings.SubdivisionMode = std::min(selected.SubdivisionMode, 2u);
     settings.AutoGridMemoryScreening = selected.AutoGridMemoryScreening;
@@ -732,6 +1001,7 @@ void DX12NativeScene::ResetScene()
     // NativeLLF generations are cell-scoped. Do not retain old counts or
     // shadow-slot identities after new cells, loading screens or scene resets.
     globals::features::nativeLLF.ClearCapturedLights();
+    nativeCharacters.Reset();
     subcellManager.Reset();
     candidateGridAcceleration.Reset();
     candidateGridBindings.Reset();
@@ -869,6 +1139,10 @@ void DX12NativeScene::EarlyPrepass()
 	const SKSE::stl::scope_exit publish([this]() noexcept { try { PublishDiagnostics(); } catch (...) {} });
 	AdvanceCoverage();
 	DX12Native::RetireMaterialUploads();
+    // DataLoaded starts the opt-in disk flush before any native CELL/WRLD
+    // material or geometry files may be requested. Never load stale cache
+    // data while deletion is in progress or failed; raster stays available.
+    if (!globals::features::dx12Resources.DiskGeometryCacheReady()) return;
 	{
 		std::scoped_lock lock(settingsMutex);
 		if (const auto enabled = requestedEnabled.exchange(-1); enabled >= 0) settings.Enabled = enabled != 0;
@@ -1245,8 +1519,24 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 		shadowSettings.ShadowStochastic, shadowSettings.ShadowDistanceFade, shadowSettings.ShadowNormalInfluence,
 		shadowSettings.ShadowTraceDensityMode
 	};
+    const bool requestCharacterCaster =
+        shadowSettings.CharacterShadowCasterVisibility &&
+        (!shadowSettings.CharacterAccumulatePartBLAS ||
+            shadowSettings.CharacterMultiPartCasterVisibility) &&
+        shadowSettings.ObserveNativeCharacters &&
+        shadowSettings.CharacterStageGeometryDX12 &&
+        shadowSettings.CharacterRunSkinningDX12 &&
+        shadowSettings.CharacterValidateSkinningDX12 &&
+        shadowSettings.CharacterBuildIsolatedBLASDX12 &&
+        shadowSettings.CharacterBuildIsolatedTLASDX12 &&
+        shadowSettings.CharacterRunIsolatedRayQueryDX12;
+    auto characterCaster = requestCharacterCaster ?
+        nativeCharacters.GetCasterReadiness(frame,
+            shadowSettings.CharacterCasterMaxPoseAgeFrames,
+            shadowSettings.CharacterAccumulatePartBLAS &&
+                shadowSettings.CharacterMultiPartCasterVisibility).tlas : nullptr;
 	shadow.Dispatch(*backend, scene->acceleration, scene->materials, selectedLights, camera, size, frame,
-		0ull, controls);
+		0ull, controls, std::move(characterCaster));
 	shadowStatus = shadow.Status();
 }
 
@@ -1257,6 +1547,30 @@ std::optional<DX12NativeScene::SceneFrame> DX12NativeScene::GetSceneFrame(uint32
 	SceneFrame frame{ a_frame, raster.Get(a_frame), GetPublishedScene(), GetShadowMask(a_frame), GetNativeSCMFrame(a_frame) };
 	if (!frame.raster && !frame.prepared && !frame.shadow) return std::nullopt;
 	return frame;
+}
+
+std::shared_ptr<const DX12Native::CharacterIsolatedTLAS>
+DX12NativeScene::GetCharacterCasterForVisibility(uint32_t a_frame) const
+{
+    Settings selected;
+    { std::scoped_lock lock(settingsMutex); selected = settings; }
+    if (!loaded || !selected.Enabled || transitionOpen ||
+        !selected.ObserveNativeCharacters ||
+        !selected.CharacterStageGeometryDX12 ||
+        !selected.CharacterRunSkinningDX12 ||
+        !selected.CharacterValidateSkinningDX12 ||
+        !selected.CharacterBuildIsolatedBLASDX12 ||
+        (selected.CharacterAccumulatePartBLAS &&
+            !selected.CharacterMultiPartCasterVisibility) ||
+        !selected.CharacterBuildIsolatedTLASDX12 ||
+        !selected.CharacterRunIsolatedRayQueryDX12 ||
+        !globals::game::graphicsState ||
+        globals::game::graphicsState->GetFrameCount() != a_frame)
+        return {};
+    return nativeCharacters.GetCasterReadiness(
+        a_frame, selected.CharacterCasterMaxPoseAgeFrames,
+        selected.CharacterAccumulatePartBLAS &&
+            selected.CharacterMultiPartCasterVisibility).tlas;
 }
 
 std::shared_ptr<const DX12Native::ShadowFrame> DX12NativeScene::GetShadowMask(uint32_t a_frame) const
@@ -1275,6 +1589,48 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 	const std::array inputs{ a_inputs.litColor, a_inputs.litSpecular, a_inputs.albedo, a_inputs.normalRoughness,
 		a_inputs.masks, a_inputs.masks2, a_inputs.reflectance, a_inputs.motion };
 	const auto frame = globals::game::graphicsState->GetFrameCount();
+    // Copy only the character controls while holding the same mutex used
+    // by the developer UI. Mesh acquisition runs without a settings lock.
+    bool observeCharacters = false, playerOnly = false;
+    bool stageCharacterGeometry = false, runCharacterSkinning = false;
+    bool validateCharacterSkinning = false, buildIsolatedCharacterBLAS = false;
+    bool buildIsolatedCharacterTLAS = false, traceIsolatedCharacterRay = false;
+    bool accumulatePartBLAS = false, includeRigidAttachments = false;
+    uint32_t actorLimit = 16, observationInterval = 8, blasUpdateInterval = 8;
+    uint32_t meshBatchLimit = 2;
+    {
+        std::scoped_lock lock(settingsMutex);
+        observeCharacters = settings.ObserveNativeCharacters;
+        playerOnly = settings.CharacterPlayerOnly;
+        stageCharacterGeometry = settings.CharacterStageGeometryDX12;
+        runCharacterSkinning = settings.CharacterRunSkinningDX12;
+        validateCharacterSkinning = settings.CharacterValidateSkinningDX12;
+        buildIsolatedCharacterBLAS = settings.CharacterBuildIsolatedBLASDX12;
+        buildIsolatedCharacterTLAS = settings.CharacterBuildIsolatedTLASDX12;
+        traceIsolatedCharacterRay = settings.CharacterRunIsolatedRayQueryDX12;
+        accumulatePartBLAS = settings.CharacterAccumulatePartBLAS;
+        includeRigidAttachments = settings.CharacterIncludeRigidAttachments;
+        actorLimit = settings.CharacterMaxActors;
+        observationInterval = settings.CharacterObservationPeriod;
+        blasUpdateInterval = settings.CharacterBLASIntervalFrames;
+        meshBatchLimit = settings.CharacterMeshCaptureBatch;
+    }
+    if (observeCharacters)
+        nativeCharacters.Advance(frame, actorLimit,
+            observationInterval, playerOnly,
+            stageCharacterGeometry, runCharacterSkinning && stageCharacterGeometry,
+            validateCharacterSkinning && runCharacterSkinning && stageCharacterGeometry,
+            buildIsolatedCharacterBLAS && validateCharacterSkinning &&
+                runCharacterSkinning && stageCharacterGeometry,
+            buildIsolatedCharacterTLAS && buildIsolatedCharacterBLAS &&
+                validateCharacterSkinning && runCharacterSkinning &&
+                stageCharacterGeometry,
+            traceIsolatedCharacterRay && buildIsolatedCharacterTLAS &&
+                buildIsolatedCharacterBLAS && validateCharacterSkinning &&
+                runCharacterSkinning && stageCharacterGeometry,
+            blasUpdateInterval, meshBatchLimit, accumulatePartBLAS,
+            includeRigidAttachments, backend->d3d12Device.get(),
+            backend->commandQueue.get());
 	const globals::FrameBuffer* camera = nullptr;
 	if (!globals::game::isVR && globals::game::frameBufferCachedValid && globals::game::frameBufferCachedFrame == frame) {
 		const auto& cached = globals::game::frameBufferCached.nonVR;
@@ -1361,6 +1717,7 @@ void DX12NativeScene::PublishDiagnostics()
         }() },
 		{ "nativePBR", globals::features::nativePBR.IsActive() }, { "nativeLLF", globals::features::nativeLLF.IsActive() },
 		{ "nativeSCM", globals::features::nativeSCM.IsActive() },
+        { "nativeCharacterObservation", nativeCharacters.GetDiagnostics() },
 		{ "nativeLightSource", OwnsNativeFeatures() ? "prepared-priority-unified" : "prepared-cell" },
 		{ "nativeSCMCasters", globals::game::graphicsState ?
 			([&] { const auto snapshot = GetNativeSCMFrame(globals::game::graphicsState->GetFrameCount());

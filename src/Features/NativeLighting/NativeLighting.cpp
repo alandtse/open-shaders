@@ -11,7 +11,7 @@
 #include <cmath>
 #include <span>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::Settings, Enabled, Diffuse, Specular, EarlyShadowCull, Debug, CompareCulling, DiffuseIntensity, SpecularIntensity, BudgetMB, PersistLab, DirectStrength, EmissionStrength, PointLightRadiusMultiplier, PointLightFalloffFraction, PointLightFalloffExponent, ShadowStrength, EmitterRadiusMultiplier, NormalInfluence, SelectedDirectLight, StochasticShadows, UseAllPreparedLights, TraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::Settings, Enabled, Diffuse, Specular, EarlyShadowCull, Debug, CompareCulling, DiffuseIntensity, SpecularIntensity, BudgetMB, PersistLab, DirectStrength, EmissionStrength, PointLightRadiusMultiplier, PointLightFalloffFraction, PointLightFalloffExponent, ShadowStrength, EmitterRadiusMultiplier, NormalInfluence, SelectedDirectLight, StochasticShadows, UseAllPreparedLights, TraceDensityMode, CharacterCasterOcclusion, CharacterReceiverProbe)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::ValidityLab, DepthAgreement, DiagnosticDepth, AbsoluteTolerance, RelativeTolerance, MaterialPolicy, RequireMaskAuthority, AssumeMaskAuthoritative, ObserveMask, RunWithoutLighting, ReferenceVisibility, ReferencePrimaryTraversal, MaskThreshold, MaskDistanceTolerance)
 
 void NativeLightingFeature::DrawSettings()
@@ -51,6 +51,12 @@ void NativeLightingFeature::DrawSettings()
 	}
 	ImGui::SeparatorText("Occlusion within native direct lighting");
 	tuned |= ImGui::SliderFloat("Direct ray-occlusion weight", &settings.ShadowStrength, 0.0f, 1.0f, "%.2f");
+    tuned |= ImGui::Checkbox("Third-person character occlusion (experimental)",
+        &settings.CharacterCasterOcclusion);
+    tuned |= ImGui::Checkbox("Probe raster-aligned character receivers (diagnostic)",
+        &settings.CharacterReceiverProbe);
+    ImGui::TextDisabled("Secondary native direct rays only; separate from character shadows.");
+    ImGui::TextDisabled("Receiver probe counts raster-depth matches; final material shading stays raster.");
 	ImGui::TextDisabled("Affects the native direct BRDF only; the independent shadow layer is in Native Composite.");
 	tuned |= ImGui::Checkbox("Stochastic emitter sampling", &settings.StochasticShadows);
 	ImGui::BeginDisabled(!settings.StochasticShadows);
@@ -240,6 +246,12 @@ void NativeLightingFeature::PublishDiagnostics()
 	snapshot["receiverIdentityAvailable"] = false;
 	snapshot["maskAvailable"] = current && current->maskAvailable;
 	snapshot["maskExperimental"] = current && current->maskExperimental;
+    snapshot["characterCasterOcclusion"] = current && bool(current->characterCasters);
+    snapshot["characterCasterFrame"] = current && current->characterCasters ?
+        current->characterCasters->poseFrame : 0u;
+    snapshot["characterReceiverProbeEnabled"] =
+        current && current->characterProbeEnabled;
+    snapshot["characterReceiverRasterMatches"] = totals[27];
 	std::scoped_lock lock(diagnosticsMutex);
 	diagnostics = std::move(snapshot);
 }
@@ -461,6 +473,16 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			slot = std::move(created);
 		}
 		slot->scene = std::move(a_scene);
+        // Independent Native Lighting visibility never assumes the separate
+        // shadow-mask feature is enabled. Retain the exact TLAS until this
+        // contribution's GPU fence and downstream consumers complete.
+        slot->characterCasters =
+            (a_settings.CharacterCasterOcclusion ||
+                a_settings.CharacterReceiverProbe) ?
+            globals::features::dx12NativeScene.GetCharacterCasterForVisibility(
+                slot->scene.frame) : nullptr;
+        slot->characterProbeEnabled = a_settings.CharacterReceiverProbe &&
+            bool(slot->characterCasters);
 		if (!a_lab.ObserveMask && !a_lab.AssumeMaskAuthoritative) slot->scene.shadow.reset();
 		if (slot->scene.shadow && (!slot->scene.shadow->mask || !slot->scene.shadow->mask->resource ||
 			!slot->scene.shadow->readyFence || !slot->scene.shadow->readyValue || slot->scene.shadow->readyValue == UINT64_MAX ||
@@ -607,6 +629,15 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		commands->SetDescriptorHeaps(1, heaps);
 		commands->SetComputeRootSignature(root.get());
 		commands->SetComputeRootShaderResourceView(0, scene.acceleration->result->GetGPUVirtualAddress());
+        const bool useCharacter = slot->characterCasters &&
+            slot->characterCasters->Ready() && slot->characterCasters->acceleration;
+        commands->SetComputeRootShaderResourceView(12,
+            useCharacter ? slot->characterCasters->acceleration->GetGPUVirtualAddress() :
+                scene.acceleration->result->GetGPUVirtualAddress());
+        const uint32_t characterModes[2]{
+            useCharacter && a_settings.CharacterCasterOcclusion ? 1u : 0u,
+            useCharacter && slot->characterProbeEnabled ? 1u : 0u };
+        commands->SetComputeRoot32BitConstants(13, 2, characterModes, 0);
 		commands->SetComputeRootShaderResourceView(2, scene.materials->offsets->GetGPUVirtualAddress());
 		commands->SetComputeRootShaderResourceView(3, slot->lights->GetGPUVirtualAddress());
 		commands->SetComputeRootShaderResourceView(5, scene.materials->materials->surfaces->GetGPUVirtualAddress());

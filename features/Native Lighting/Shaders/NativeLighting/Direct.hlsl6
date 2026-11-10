@@ -1,4 +1,11 @@
 RaytracingAccelerationStructure Scene : register(t0);
+// Optional separate character-caster TLAS; never used for primary receivers.
+RaytracingAccelerationStructure CharacterCasters : register(t7);
+cbuffer CharacterVisibilityControl : register(b2)
+{
+    uint CharacterOcclusionEnabled;
+    uint CharacterReceiverProbeEnabled;
+};
 Texture2D<float> RasterDepth : register(t1);
 StructuredBuffer<uint> ValidationOffsets : register(t2);
 struct PointLight { float4 positionRadius; float4 radianceSourceRadius; uint4 flags; };
@@ -150,6 +157,22 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	}
 	RayDesc ray;
 	ray.Origin = CameraOrigin; ray.Direction = direction; ray.TMin = MinimumDistance; ray.TMax = 60000.0f;
+    // Compare the completed third-person character TLAS against *raster*
+    // depth without adding unverified native material signals to the image.
+    // Receiver material, shading, alpha and final composition remain raster.
+    if (CharacterReceiverProbeEnabled != 0u && rasterValid &&
+        rasterDistance > 0.0f) {
+        RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> receiverActor;
+        receiverActor.TraceRayInline(CharacterCasters, RAY_FLAG_NONE, 0xffu, ray);
+        while (receiverActor.Proceed()) { }
+        if (receiverActor.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+            const float hitDistance = receiverActor.CommittedRayT();
+            const float tolerance = max(5.0f, rasterDistance * 1e-5f);
+            if (isfinite(hitDistance) && hitDistance > 0.0f &&
+                abs(hitDistance - rasterDistance) <= tolerance)
+                Count(27u); // raster-aligned native character receiver
+        }
+    }
 	bool valid = true;
 	bool rejectedPrimaryCandidate = false;
 	RayQuery<RAY_FLAG_FORCE_NON_OPAQUE | RAY_FLAG_CULL_BACK_FACING_TRIANGLES> query;
@@ -273,7 +296,14 @@ void main(uint2 pixel : SV_DispatchThreadID)
 			if (admitted) shadow.CommitNonOpaqueTriangleHit();
 		}
 		if (!valid) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 7 : originalReason); return; }
-		float shadowVisibility = shadow.CommittedStatus() == COMMITTED_NOTHING ? 1.0f : 1.0f - saturate(ShadowTuning.x);
+        bool blocked = shadow.CommittedStatus() != COMMITTED_NOTHING;
+        if (valid && !blocked && CharacterOcclusionEnabled != 0u) {
+            RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> actorShadow;
+            actorShadow.TraceRayInline(CharacterCasters, RAY_FLAG_NONE, 0xff, visibility);
+            while (actorShadow.Proceed()) { }
+            blocked = actorShadow.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+        }
+		float shadowVisibility = blocked ? 1.0f - saturate(ShadowTuning.x) : 1.0f;
 		if (shadowVisibility <= 0.0f) continue;
 		float3 halfVector = l + v;
 		float3 h = dot(halfVector, halfVector) > 1e-8f ? normalize(halfVector) : n;

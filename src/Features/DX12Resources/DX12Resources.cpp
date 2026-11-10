@@ -21,7 +21,7 @@
 #include <vector>
 #include <algorithm>
 #include <string_view>
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12Resources::Settings, Enabled, AutoPrepareOnCellEntry)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12Resources::Settings, Enabled, AutoPrepareOnCellEntry, FlushDiskGeometryOnStartup)
 
 struct DX12Resources::ScanJob
 {
@@ -312,7 +312,7 @@ void DX12Resources::AdvancePluginCellScan()
         pluginInteriors.size(), selectedPlugin);
 }
 
-// Called under statusMutex, from the main-menu testing control.
+// Called under statusMutex, from DataLoaded or the main-menu testing control.
 void DX12Resources::StartDiskCacheFlush()
 {
     if (diskCacheFlushJob || preparationJob) return;
@@ -368,6 +368,7 @@ void DX12Resources::PollDiskCacheFlush()
         return;
     }
     ++diskCacheFlushes;
+    if (startupFlushTriggered) startupFlushComplete = true;
     // Published geometry no longer exists on disk; next CELL entry should
     // re-evaluate availability rather than trust last session's cache hit.
     lastAutomaticInterior.clear();
@@ -381,11 +382,34 @@ void DX12Resources::PollDiskCacheFlush()
         diskCacheFlushRemoved);
 }
 
+void DX12Resources::DataLoaded()
+{
+    // Feature settings are already restored before the SKSE DataLoaded event.
+    // This runs once per Skyrim process, without opening the configuration UI.
+    std::scoped_lock lock(statusMutex);
+    dataLoaded.store(true, std::memory_order_release);
+    if (!settings.FlushDiskGeometryOnStartup || startupFlushTriggered) return;
+    startupFlushTriggered = true;
+    startupFlushComplete = false;
+    StartDiskCacheFlush();
+}
+
+bool DX12Resources::DiskGeometryCacheReady()
+{
+    std::scoped_lock lock(statusMutex);
+    PollDiskCacheFlush();
+    // A failed automatic flush must not allow native geometry to be loaded
+    // from old disk files. The user may retry manually or disable the option.
+    return !diskCacheFlushJob &&
+        (!startupFlushTriggered || startupFlushComplete || !settings.FlushDiskGeometryOnStartup);
+}
+
 void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest& request,
     std::optional<DX12ResourceService::PreparedSubcellAddress> tile, bool predictive)
 {
-    if (diskCacheFlushJob) {
-        preparationStatus = "DX12 disk cache flush is running; CELL preparation deferred";
+    if (diskCacheFlushJob ||
+        (startupFlushTriggered && !startupFlushComplete && settings.FlushDiskGeometryOnStartup)) {
+        preparationStatus = "DX12 disk geometry startup flush is incomplete; CELL preparation deferred";
         return;
     }
     if (preparationJob) {
@@ -497,7 +521,8 @@ void DX12Resources::AdvanceAutomaticInterior(const DX12ResourceService::CellRequ
     // publication polling happen on the native scene's normal frame path.
     PollCellPreparation();
     PollDiskCacheFlush();
-    if (diskCacheFlushJob) return;
+    if (diskCacheFlushJob ||
+        (startupFlushTriggered && !startupFlushComplete && settings.FlushDiskGeometryOnStartup)) return;
     if (!settings.Enabled || !settings.AutoPrepareOnCellEntry ||
         !dataLoaded.load(std::memory_order_acquire)) return;
     const auto identity = request.ScopedKey();
@@ -528,7 +553,8 @@ void DX12Resources::AdvanceStreamingScene(const DX12ResourceService::CellRequest
     std::scoped_lock lock(statusMutex);
     PollCellPreparation();
     PollDiskCacheFlush();
-    if (diskCacheFlushJob) return;
+    if (diskCacheFlushJob ||
+        (startupFlushTriggered && !startupFlushComplete && settings.FlushDiskGeometryOnStartup)) return;
     if (!settings.Enabled || !settings.AutoPrepareOnCellEntry ||
         !dataLoaded.load(std::memory_order_acquire) ||
         !DX12Native::SpatialSubcells::ValidSize(size) ||
@@ -624,6 +650,12 @@ void DX12Resources::DrawSettings()
             diskCacheFlushConfirm = false;
     }
     ImGui::EndDisabled();
+    ImGui::Checkbox("Flush DX12 disk geometry cache on every game start",
+        &settings.FlushDiskGeometryOnStartup);
+    ImGui::TextDisabled("Opt-in: runs once after Skyrim data loads, before native cached scene reads.");
+    ImGui::TextDisabled("Takes effect on next game launch; no menu interaction required.");
+    if (startupFlushTriggered && !startupFlushComplete && settings.FlushDiskGeometryOnStartup)
+        ImGui::TextDisabled("Automatic flush incomplete: native disk-scene loading is deferred.");
     if (!mainMenu)
         ImGui::TextDisabled("Return to the main menu before flushing, to avoid active scene reads.");
     if (preparationJob)
@@ -769,6 +801,11 @@ json DX12Resources::GetDiagnostics()
     PollDiskCacheFlush();
     return { { "enabled", settings.Enabled },
         { "diskGeometryCache", { { "flushRunning", bool(diskCacheFlushJob) },
+            { "flushOnStartup", settings.FlushDiskGeometryOnStartup },
+            { "startupTriggered", startupFlushTriggered },
+            { "startupComplete", startupFlushComplete },
+            { "startupBlocked", startupFlushTriggered && !startupFlushComplete &&
+                settings.FlushDiskGeometryOnStartup },
             { "flushes", diskCacheFlushes }, { "removedEntries", diskCacheFlushRemoved },
             { "status", diskCacheFlushStatus } } },
         { "autoPrepareOnCellEntry", settings.AutoPrepareOnCellEntry },
