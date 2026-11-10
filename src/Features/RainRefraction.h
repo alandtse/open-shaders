@@ -43,7 +43,7 @@ public:
 		bool Enable = false;
 		float MotionStretch = 2.0f;
 		float MotionTransparency = 0.91f;
-		float WindInfluence = 1.0f;
+		float WindInfluence = 0.0f;
 	} settings;
 
 	/** @brief Feature buffer data, matching RainRefractionSettings in SharedData.hlsli; Enable is cleared when the raindrop texture or blend state is missing. */
