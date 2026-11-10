@@ -3,6 +3,7 @@
 #include "Utils/D3D.h"
 #include <directx/d3dx12.h>
 #include <fstream>
+#include <cstring>
 
 namespace DX12Native
 {
@@ -67,41 +68,6 @@ namespace DX12Native
 		state.CS = { bytecode.data(), bytecode.size() };
 		DX::ThrowIfFailed(backend.d3d12Device->CreateComputePipelineState(&state, IID_PPV_ARGS(pipeline.put())));
 		pipeline->SetName(L"DX12NativeScene::ShadowPipeline");
-	}
-
-	void ShadowTrace::CreateRayPreparationPipeline()
-	{
-		if (rayPrepPipeline) return;
-		std::ifstream file("Data/Shaders/DX12NativeScene/PrepareShadowRays.dxil", std::ios::binary | std::ios::ate);
-		if (!file) throw std::runtime_error("DXC ray preparation DXIL unavailable");
-		const std::streamoff size = file.tellg();
-		if (size <= 0 || size > 16 * 1024 * 1024)
-			throw std::runtime_error("Invalid DXC ray preparation bytecode");
-		std::vector<char> bytecode(static_cast<size_t>(size));
-		file.seekg(0);
-		if (!file.read(bytecode.data(), std::streamsize(bytecode.size())))
-			throw std::runtime_error("Cannot read DXC ray preparation bytecode");
-		D3D12_DESCRIPTOR_RANGE range{ D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0 };
-		D3D12_ROOT_PARAMETER parameters[2]{};
-		parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-		parameters[0].Constants = { 0, 0, 36 };
-		parameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-		parameters[1].DescriptorTable = { 1, &range };
-		const D3D12_ROOT_SIGNATURE_DESC desc{ 2, parameters, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE };
-		winrt::com_ptr<ID3DBlob> serialized, errors;
-		DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
-		winrt::com_ptr<ID3D12RootSignature> signature;
-		DX::ThrowIfFailed(backend.d3d12Device->CreateRootSignature(
-			0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(signature.put())));
-		D3D12_COMPUTE_PIPELINE_STATE_DESC state{};
-		state.pRootSignature = signature.get();
-		state.CS = { bytecode.data(), bytecode.size() };
-		winrt::com_ptr<ID3D12PipelineState> pso;
-		DX::ThrowIfFailed(backend.d3d12Device->CreateComputePipelineState(&state, IID_PPV_ARGS(pso.put())));
-		signature->SetName(L"DX12NativeScene::PrepareRaysRoot");
-		pso->SetName(L"DX12NativeScene::PrepareRaysDXC");
-		rayPrepRoot = std::move(signature);
-		rayPrepPipeline = std::move(pso);
 	}
 
 	bool ShadowTrace::Initialize(const GraphicsBackend& a_backend)
@@ -187,8 +153,6 @@ namespace DX12Native
 	void ShadowTrace::ReloadShaders()
 	{
 		Reset();
-		rayPrepPipeline = nullptr;
-		rayPrepRoot = nullptr;
 		pipeline = nullptr;
 		root = nullptr;
 	}
@@ -227,7 +191,7 @@ namespace DX12Native
 		return false;
 	}
 
-    void ShadowTrace::PrepareRays(ShadowFrame& a_frame)
+    void ShadowTrace::UploadLightSnapshot(ShadowFrame& a_frame)
     {
         CS_GPU_PASS("DX12NativeScene::UploadShadowLightSnapshot");
         // DX11 is source transport only. Native ray directions and shadow
@@ -405,9 +369,12 @@ namespace DX12Native
 				D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
 			const auto textureBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &textureDesc).SizeInBytes;
 			const auto lightBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &lightDesc).SizeInBytes;
-			if (textureBytes == UINT64_MAX || lightBytes == UINT64_MAX || textureBytes > budget / 2 || lightBytes > budget - textureBytes * 2)
-				throw std::runtime_error("Shadow frame allocation exceeds budget");
-			const auto bytes = textureBytes * 2 + lightBytes;
+            // Receiver rays are generated in the same DX12 shader; reserve
+            // only the full-size shadow mask plus the tiny light snapshot.
+            if (textureBytes == UINT64_MAX || lightBytes == UINT64_MAX ||
+                textureBytes > budget || lightBytes > budget - textureBytes)
+                throw std::runtime_error("Shadow frame allocation exceeds DXGI budget");
+            const uint64_t bytes = textureBytes + lightBytes;
 			uint64_t retained = tables->bytes;
 			for (auto it = frames.begin(); it != frames.end(); ++it) {
 				if (it == available || !*it) continue;
@@ -429,7 +396,6 @@ namespace DX12Native
 				desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
 				desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
 				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-				frame->rays = std::make_unique<WrappedResource>(desc, backend.d3d11Device.get(), backend.d3d12Device.get(), "DX12NativeScene::ShadowCameraRays");
 				frame->mask = std::make_unique<WrappedResource>(desc, backend.d3d11Device.get(), backend.d3d12Device.get(), "DX12NativeScene::ShadowMask");
 				desc.Width = kNativeShadowLightTextureWidth; desc.Height = 2;
 				frame->lights = std::make_unique<WrappedResource>(desc, backend.d3d11Device.get(), backend.d3d12Device.get(), "DX12NativeScene::ShadowLights");
@@ -469,7 +435,7 @@ namespace DX12Native
 			slot->producerFence = producer.fence12; slot->producerFence11 = producer.fence11; slot->readyFence = completion;
 			slot->readyValue = slot->producerValue = UINT64_MAX;
 			slot->completionCounted = false;
-			PrepareRays(*slot); // Source light upload only; no DX11 or separate DX12 ray math.
+			UploadLightSnapshot(*slot); // DX11 input transfer only; all shadow math is DX12.
 			Record(*slot, uint32_t(available - frames.begin()) * ShadowBindings::kFrameDescriptorCount);
 			current = slot;
 			++submissions;

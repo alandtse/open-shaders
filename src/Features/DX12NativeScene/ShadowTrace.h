@@ -21,11 +21,8 @@ namespace DX12Native
 	{
 		std::shared_ptr<const TopLevel> scene;
 		std::shared_ptr<const ShadowBindings> bindings;
-		std::unique_ptr<WrappedResource> rays, mask, lights;
+		std::unique_ptr<WrappedResource> mask, lights;
 		DirectX::SimpleMath::Matrix rayProjInverse, rayViewInverse;
-		winrt::com_ptr<ID3D12DescriptorHeap> rayPrepHeap;
-		winrt::com_ptr<ID3D12RootSignature> rayPrepRoot;
-		winrt::com_ptr<ID3D12PipelineState> rayPrepPipeline; // Retained for source compatibility; not dispatched.
         winrt::com_ptr<ID3D12Resource> cameraConstants; // Native DX12 camera matrices.
 		winrt::com_ptr<ID3D12CommandAllocator> allocator;
 		winrt::com_ptr<ID3D12GraphicsCommandList> commands;
@@ -68,16 +65,13 @@ namespace DX12Native
 	private:
 		bool Initialize(const GraphicsBackend& a_backend);
 		void CreatePipeline();
-		void CreateRayPreparationPipeline();
-		void PrepareRays(ShadowFrame& a_frame);
+		void UploadLightSnapshot(ShadowFrame& a_frame);
 		void Record(ShadowFrame& a_frame, uint32_t a_descriptorBase);
 		GraphicsBackend backend;
 		SharedFence producer;
 		winrt::com_ptr<ID3D12Fence> completion;
 		winrt::com_ptr<ID3D12RootSignature> root;
 		winrt::com_ptr<ID3D12PipelineState> pipeline;
-		winrt::com_ptr<ID3D12RootSignature> rayPrepRoot;
-		winrt::com_ptr<ID3D12PipelineState> rayPrepPipeline;
 		std::array<std::shared_ptr<ShadowFrame>, ShadowBindings::kMaximumFrameSlots> frames;
 		std::shared_ptr<ShadowFrame> current;
 		uint64_t nextFence = 0, submissions = 0, completions = 0, busyDeferrals = 0;

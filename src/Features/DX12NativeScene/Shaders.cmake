@@ -5,22 +5,16 @@ find_program(DX12_NATIVE_SCENE_DXC NAMES dxc.exe dxc
 if(DX12_NATIVE_SCENE_DXC)
     set(DX12_NATIVE_SCENE_DXIL_DIR "${CMAKE_CURRENT_BINARY_DIR}/DX12NativeScene")
     set(DX12_NATIVE_SCENE_DXIL "${DX12_NATIVE_SCENE_DXIL_DIR}/ShadowTrace.dxil")
-    set(DX12_NATIVE_SCENE_RAYS_DXIL "${DX12_NATIVE_SCENE_DXIL_DIR}/PrepareShadowRays.dxil")
     file(GLOB_RECURSE DX12_NATIVE_SCENE_SHADER_DEPENDENCIES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders/DX12NativeScene/*.hlsli")
     add_custom_command(
-        OUTPUT "${DX12_NATIVE_SCENE_DXIL}" "${DX12_NATIVE_SCENE_RAYS_DXIL}"
+        OUTPUT "${DX12_NATIVE_SCENE_DXIL}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${DX12_NATIVE_SCENE_DXIL_DIR}"
         COMMAND "${DX12_NATIVE_SCENE_DXC}" -T cs_6_5 -E main -HV 2021 -O3 -Ges -Gis
             -I "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders"
             -Fo "${DX12_NATIVE_SCENE_DXIL}"
             "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders/DX12NativeScene/ShadowTrace.hlsl6"
-        COMMAND "${DX12_NATIVE_SCENE_DXC}" -T cs_6_5 -E main -HV 2021 -O3 -Ges -Gis
-            -I "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders"
-            -Fo "${DX12_NATIVE_SCENE_RAYS_DXIL}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders/DX12NativeScene/PrepareShadowRays.hlsl6"
         DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders/DX12NativeScene/PrepareShadowRays.hlsl6"
             "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders/DX12NativeScene/ShadowTrace.hlsl6"
             ${DX12_NATIVE_SCENE_SHADER_DEPENDENCIES}
             "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders/Common/PBRMath.hlsli"
@@ -30,10 +24,10 @@ if(DX12_NATIVE_SCENE_DXC)
             "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders/Common/Math.hlsli"
         VERBATIM
     )
-    add_custom_target(DX12NativeSceneDXIL DEPENDS "${DX12_NATIVE_SCENE_DXIL}" "${DX12_NATIVE_SCENE_RAYS_DXIL}")
+    add_custom_target(DX12NativeSceneDXIL DEPENDS "${DX12_NATIVE_SCENE_DXIL}")
     add_dependencies(${PROJECT_NAME} DX12NativeSceneDXIL)
-    register_feature_payload(DX12NativeScene FILES "${DX12_NATIVE_SCENE_DXIL}" "${DX12_NATIVE_SCENE_RAYS_DXIL}" DESTINATION "Shaders/DX12NativeScene")
-    install(FILES "${DX12_NATIVE_SCENE_DXIL}" "${DX12_NATIVE_SCENE_RAYS_DXIL}" DESTINATION "Shaders/DX12NativeScene" COMPONENT Shaders)
+    register_feature_payload(DX12NativeScene FILES "${DX12_NATIVE_SCENE_DXIL}" DESTINATION "Shaders/DX12NativeScene")
+    install(FILES "${DX12_NATIVE_SCENE_DXIL}" DESTINATION "Shaders/DX12NativeScene" COMPONENT Shaders)
 else()
     message(WARNING "DXC was not found; DX12 Native Scene shadow tracing bytecode will be unavailable")
 endif()
