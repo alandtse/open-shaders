@@ -1,7 +1,8 @@
 // Isolated third-person character RayQuery probe. Never connected to the
 // world TLAS, NativeSCM, NativeLighting or native shadow-mask output.
-// The one-instance TLAS intentionally uses the identity transform. A single
-// valid triangle on the deformed mesh supplies a reproducible diagnostic ray.
+// An identity-transform TLAS has one to eight skinned instances. Each
+// dispatch targets exactly one instance through an independent mask bit;
+// no production visibility is enabled solely by a successful self-hit.
 RaytracingAccelerationStructure CharacterScene : register(t0);
 ByteAddressBuffer DeformedPositions : register(t1);
 ByteAddressBuffer IndexedBindSource : register(t2);
@@ -12,7 +13,8 @@ cbuffer ProbeConstants : register(b0)
     uint VertexCount;
     uint IndexCount;
     uint IndexByteOffset;
-    uint Reserved;
+    uint TargetInstanceMask;
+    uint OutputByteOffset;
 };
 
 [numthreads(1, 1, 1)]
@@ -67,7 +69,7 @@ void main(uint3 threadID : SV_DispatchThreadID)
         ray.TMax = rayLength * 2.5 + 0.01;
 
         RayQuery<RAY_FLAG_NONE> query;
-        query.TraceRayInline(CharacterScene, RAY_FLAG_NONE, 0x01, ray);
+        query.TraceRayInline(CharacterScene, RAY_FLAG_NONE, TargetInstanceMask, ray);
         while (query.Proceed()) { }
         if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
         {
@@ -78,5 +80,5 @@ void main(uint3 threadID : SV_DispatchThreadID)
         }
     }
 
-    ProbeResult.Store4(0, uint4(status, asuint(hitDistance), primitive, instanceID));
+    ProbeResult.Store4(OutputByteOffset, uint4(status, asuint(hitDistance), primitive, instanceID));
 }

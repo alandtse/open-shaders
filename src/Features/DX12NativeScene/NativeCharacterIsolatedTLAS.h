@@ -187,7 +187,10 @@ namespace DX12Native
             instance.Transform[1][1] = 1.0f;
             instance.Transform[2][2] = 1.0f;
             instance.InstanceID = uint32_t(i);
-            instance.InstanceMask = 0x01;
+            // Dedicated per-instance bits let the diagnostic shader prove
+            // that each sample intersects its intended BLAS. Visibility
+            // shaders use 0xff to include all eligible parts.
+            instance.InstanceMask = uint8_t(1u << i);
             instance.InstanceContributionToHitGroupIndex = 0;
             instance.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
             instance.AccelerationStructure =

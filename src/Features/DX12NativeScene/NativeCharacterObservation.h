@@ -65,6 +65,7 @@ namespace DX12Native
         std::shared_ptr<const CharacterIsolatedTLAS> isolatedTLAS;
         std::shared_ptr<const CharacterRayResult> rayProbe;
         std::optional<CharacterRayOutcome> rayOutcome;
+        std::vector<CharacterRayOutcome> rayOutcomes;
         std::string deformationError, blasError, tlasError, rayError;
         uint32_t capturedMeshes = 0;
         uint64_t capturedBytes = 0;
@@ -81,113 +82,111 @@ namespace DX12Native
         bool meshBoundsPlausible = false;
     };
 
-    /** @brief Conservative readiness for experimental shadow-caster rays.
-     * A finite GPU readback and a self-hit DO NOT prove Skyrim pose parity.
-     * Restrict admission to a recent third-person actor and a sample AABB
-     * that fits the actor's current world bound. The user must still opt in.
+    /** @brief Require matching GPU self-hits and spatially plausible,
+     * immutable skinned-part generations before any production occlusion.
+     * This is a safety gate, not proof of exact Skyrim skinning parity.
      */
     inline CharacterCasterReadiness EvaluateCharacterCaster(
         const std::shared_ptr<const CharacterObservationGeneration>& generation,
-        uint32_t renderFrame, uint32_t maxPoseAgeFrames = 12u)
+        uint32_t renderFrame, uint32_t maxPoseAgeFrames = 12u,
+        bool allowMultiPart = false)
     {
         CharacterCasterReadiness readiness;
         if (!generation) return readiness;
-        if (!generation->isolatedTLAS || !generation->isolatedTLAS->Ready()) {
+        const auto& scene = generation->isolatedTLAS;
+        if (!scene || !scene->Ready() || !scene->acceleration) {
             readiness.reason = "Isolated character TLAS not GPU-ready";
             return readiness;
         }
-        const auto& scene = generation->isolatedTLAS;
-        if (!scene->bottom || !scene->bottom->Ready() ||
-            !scene->bottom->deformation || !scene->bottom->deformation->Ready()) {
-            readiness.reason = "Character BLAS/deformation not GPU-ready";
+        const auto& parts = scene->bottoms;
+        if (parts.empty() || parts.size() > 8u || (parts.size() > 1u && !allowMultiPart)) {
+            readiness.reason = "Multi-part caster requires separate production opt-in";
             return readiness;
         }
         if (!generation->rayProbe || !generation->rayProbe->Ready() ||
-            generation->rayProbe->scene != scene || !generation->rayOutcome ||
-            generation->rayOutcome->status != 3u) {
-            readiness.reason = "No completed matching character RayQuery hit";
+            generation->rayProbe->scene != scene ||
+            generation->rayProbe->partCount != parts.size() ||
+            generation->rayOutcomes.size() != parts.size()) {
+            readiness.reason = "No completed matching per-part RayQuery diagnostics";
             return readiness;
         }
-        // Validation belongs to the same immutable BLAS/TLAS generation.
-        // The observer's latest readback can already describe a newer pose.
-        if (!scene->bottom->validation || !scene->bottom->validation->sane ||
-            scene->bottom->validation->poseFrame != scene->poseFrame ||
-            generation->rayProbe->poseFrame != scene->poseFrame) {
-            readiness.reason = "Skinning readback does not match TLAS pose";
-            return readiness;
-        }
-        // Retain a completed TLAS across the normal BLAS update interval.
-        // Never admit a future pose or one older than the configured window.
         maxPoseAgeFrames = std::clamp(maxPoseAgeFrames, 1u, 30u);
-        if (renderFrame < scene->poseFrame ||
-            renderFrame - scene->poseFrame > maxPoseAgeFrames) {
-            readiness.reason = "Character pose exceeds maximum configured age";
-            return readiness;
-        }
-        const auto actor = std::ranges::find_if(generation->actors,
-            [&](const auto& entry) { return entry.formID == scene->actorFormID; });
-        if (actor == generation->actors.end()) {
-            readiness.reason = "Character actor not present in observed third-person root";
-            return readiness;
-        }
-        const auto& bounds = actor->worldBound;
-        const auto& minimum = scene->bottom->validation->minimum;
-        const auto& maximum = scene->bottom->validation->maximum;
-        if (!std::isfinite(bounds[3]) || bounds[3] <= 0 ||
-            bounds[3] > 50000.0f) {
-            readiness.reason = "Character world bound invalid";
-            return readiness;
-        }
-        // Bounds are only a plausibility test: they DO NOT verify the bone
-        // palette's transform convention or sample the entire character.
-        const float tolerance = bounds[3] * 1.5f + 4.0f;
-        for (size_t axis = 0; axis < 3; ++axis) {
-            if (!std::isfinite(bounds[axis]) ||
-                !std::isfinite(minimum[axis]) ||
-                !std::isfinite(maximum[axis]) ||
-                minimum[axis] > maximum[axis] ||
-                minimum[axis] < bounds[axis] - tolerance ||
-                maximum[axis] > bounds[axis] + tolerance) {
-                readiness.reason = "Deformed vertices outside actor world bound";
+        uint32_t actorIdentity = 0;
+        for (size_t i = 0; i < parts.size(); ++i) {
+            const auto& part = parts[i];
+            if (!part || !part->Ready() || !part->acceleration ||
+                !part->deformation || !part->deformation->Ready() ||
+                !part->validation || !part->validation->sane ||
+                part->validation->poseFrame != part->poseFrame) {
+                readiness.reason = "Character BLAS or pose validation incomplete";
                 return readiness;
+            }
+            const auto& outcome = generation->rayOutcomes[i];
+            if (outcome.status != 3u || outcome.instanceID != i) {
+                readiness.reason = "A character part did not pass its own RayQuery self-hit";
+                return readiness;
+            }
+            if (renderFrame < part->poseFrame ||
+                renderFrame - part->poseFrame > maxPoseAgeFrames) {
+                readiness.reason = "At least one character-part pose is stale";
+                return readiness;
+            }
+            if (actorIdentity && actorIdentity != part->actorFormID) {
+                readiness.reason = "Caster TLAS contains mixed actors";
+                return readiness;
+            }
+            actorIdentity = part->actorFormID;
+            const auto actor = std::ranges::find_if(generation->actors,
+                [&](const auto& candidate) {
+                    return candidate.formID == part->actorFormID;
+                });
+            if (actor == generation->actors.end()) {
+                readiness.reason = "Character actor left third-person observation";
+                return readiness;
+            }
+            const auto observed = std::ranges::find_if(generation->parts,
+                [&](const auto& mesh) {
+                    return mesh.actorFormID == part->actorFormID &&
+                        mesh.ordinal == part->partOrdinal &&
+                        mesh.sourceToken == part->sourceToken;
+                });
+            if (observed == generation->parts.end() ||
+                !observed->skinned || observed->alpha || observed->dynamic ||
+                observed->gpuOnly) {
+                readiness.reason = "Skinned part material or identity is unsupported";
+                return readiness;
+            }
+            // A finite result in the actor's root sphere alone can still be
+            // local-space data. Also require this exact mesh-part sphere.
+            const auto& minimum = part->validation->minimum;
+            const auto& maximum = part->validation->maximum;
+            for (const auto* bounds : { &actor->worldBound, &observed->worldBound }) {
+                const float r = (*bounds)[3];
+                if (!std::isfinite(r) || r <= 0.0f || r > 50000.0f) {
+                    readiness.reason = "Actor or mesh world bound is invalid";
+                    return readiness;
+                }
+                const float slack = bounds == &actor->worldBound ?
+                    r * 0.5f + 4.0f : r * 0.25f + 2.0f;
+                for (size_t axis = 0; axis < 3; ++axis) {
+                    if (!std::isfinite((*bounds)[axis]) ||
+                        !std::isfinite(minimum[axis]) ||
+                        !std::isfinite(maximum[axis]) ||
+                        minimum[axis] > maximum[axis] ||
+                        minimum[axis] < (*bounds)[axis] - r - slack ||
+                        maximum[axis] > (*bounds)[axis] + r + slack) {
+                        readiness.reason = "Deformed part outside observed world bounds";
+                        return readiness;
+                    }
+                }
             }
         }
         readiness.worldBoundsPlausible = true;
-        // The actor root may be far wider than a skinned body/armor part.
-        // Compare against the *same* skinned part and source generation
-        // before allowing an opaque character TLAS to block native light.
-        const auto part = std::ranges::find_if(generation->parts,
-            [&](const auto& observed) {
-                return observed.actorFormID == scene->actorFormID &&
-                    observed.ordinal == scene->partOrdinal &&
-                    observed.sourceToken == scene->bottom->sourceToken;
-            });
-        if (part == generation->parts.end() || !part->skinned ||
-            part->alpha || part->dynamic) {
-            readiness.reason = "Character part identity or material eligibility changed";
-            return readiness;
-        }
-        const auto& partBounds = part->worldBound;
-        const float partRadius = partBounds[3];
-        if (!std::isfinite(partRadius) || partRadius <= 0.0f ||
-            partRadius > 50000.0f) {
-            readiness.reason = "Character mesh world bound invalid";
-            return readiness;
-        }
-        // A small slack allows animation-frame latency and bounding-sphere
-        // conservatism, but refuses gross local/world-space mismatches.
-        const float partTolerance = std::max(2.0f, partRadius * 0.25f);
-        for (size_t axis = 0; axis < 3; ++axis) {
-            if (!std::isfinite(partBounds[axis]) ||
-                minimum[axis] < partBounds[axis] - partRadius - partTolerance ||
-                maximum[axis] > partBounds[axis] + partRadius + partTolerance) {
-                readiness.reason = "Skinned mesh does not match its world-space part bounds";
-                return readiness;
-            }
-        }
         readiness.meshBoundsPlausible = true;
         readiness.tlas = scene;
-        readiness.reason = "Opt-in eligible (mesh bounds plausible; parity not proven)";
+        readiness.reason = parts.size() == 1 ?
+            "Single-part caster eligible; pose parity still experimental" :
+            "Multi-part caster eligible; pose/material parity still experimental";
         return readiness;
     }
 
@@ -632,7 +631,8 @@ namespace DX12Native
                                         (!previous->rayProbe ||
                                          previous->rayProbe->scene != old ||
                                          !previous->rayProbe->Ready() ||
-                                         !previous->rayOutcome);
+                                         previous->rayOutcomes.size() !=
+                                            previous->rayProbe->partCount);
                                     if (sameMembership || awaitingQuery)
                                         output->isolatedTLAS = old;
                                     else {
@@ -664,7 +664,8 @@ namespace DX12Native
                                     (!previous->rayProbe ||
                                      previous->rayProbe->scene != previous->isolatedTLAS ||
                                      !previous->rayProbe->Ready() ||
-                                     !previous->rayOutcome);
+                                     previous->rayOutcomes.size() !=
+                                        previous->rayProbe->partCount);
                                 // Never replace a TLAS mid-probe. Its old
                                 // BLAS, pose validation and ray outcome must
                                 // remain one immutable evidence generation.
@@ -694,11 +695,15 @@ namespace DX12Native
                                 previous->rayProbe->scene == output->isolatedTLAS) {
                                 output->rayProbe = previous->rayProbe;
                                 output->rayOutcome = previous->rayOutcome;
+                                output->rayOutcomes = previous->rayOutcomes;
                             }
                             if (output->rayProbe && output->rayProbe->Ready() &&
-                                !output->rayOutcome) {
-                                if (auto result = ReadCharacterRayOutcome(output->rayProbe))
-                                    output->rayOutcome = std::move(result);
+                                output->rayOutcomes.size() != output->rayProbe->partCount) {
+                                if (auto all = ReadCharacterRayOutcomes(output->rayProbe)) {
+                                    output->rayOutcomes = std::move(*all);
+                                    if (!output->rayOutcomes.empty())
+                                        output->rayOutcome = output->rayOutcomes.front();
+                                }
                             }
                             if (!output->rayProbe && output->isolatedTLAS->Ready()) {
                                 try {
@@ -745,10 +750,11 @@ namespace DX12Native
         }
 
         CharacterCasterReadiness GetCasterReadiness(
-            uint32_t renderFrame, uint32_t maxPoseAgeFrames = 12u) const
+            uint32_t renderFrame, uint32_t maxPoseAgeFrames = 12u,
+            bool allowMultiPart = false) const
         {
             return EvaluateCharacterCaster(GetPublished(), renderFrame,
-                maxPoseAgeFrames);
+                maxPoseAgeFrames, allowMultiPart);
         }
 
         json GetDiagnostics() const
@@ -865,6 +871,12 @@ namespace DX12Native
                 { "isolatedRayOutcomeReady", current && current->rayOutcome.has_value() },
                 { "isolatedRayStatus", current && current->rayOutcome ?
                     current->rayOutcome->status : 0u },
+                { "isolatedRayPartsTested", current ? current->rayOutcomes.size() : size_t{ 0 } },
+                { "isolatedRayPartsHit", current ?
+                    std::count_if(current->rayOutcomes.begin(),
+                        current->rayOutcomes.end(),
+                        [](const auto& result) { return result.status == 3u; }) :
+                    std::ptrdiff_t{ 0 } },
                 { "isolatedRayDistance", current && current->rayOutcome ?
                     current->rayOutcome->hitDistance : 0.0f },
                 { "isolatedRayPrimitive", current && current->rayOutcome ?

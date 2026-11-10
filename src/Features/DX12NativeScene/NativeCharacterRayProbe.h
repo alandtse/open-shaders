@@ -30,7 +30,7 @@ namespace DX12Native
         winrt::com_ptr<ID3D12Resource> output, readback;
         winrt::com_ptr<ID3D12Fence> completion;
         uint64_t fenceValue = 0, allocationBytes = 0;
-        uint32_t poseFrame = 0;
+        uint32_t poseFrame = 0, partCount = 0;
 
         bool Ready() const
         {
@@ -70,7 +70,7 @@ namespace DX12Native
             params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
             params[3].Descriptor.ShaderRegister = 0;
             params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-            params[4].Constants = { 0, 0, 4 };
+            params[4].Constants = { 0, 0, 5 };
             const D3D12_ROOT_SIGNATURE_DESC desc{
                 5, params, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE };
             winrt::com_ptr<ID3DBlob> serialized, errors;
@@ -131,31 +131,47 @@ namespace DX12Native
         }
     };
 
-    /** GPU-fence-complete readback, only from native CPU worker; never waits. */
-    inline std::optional<CharacterRayOutcome> ReadCharacterRayOutcome(
+    /** Read every independently targeted instance, after GPU completion. */
+    inline std::optional<std::vector<CharacterRayOutcome>> ReadCharacterRayOutcomes(
         const std::shared_ptr<const CharacterRayResult>& result)
     {
-        if (!result || !result->Ready() || !result->readback)
+        if (!result || !result->Ready() || !result->readback ||
+            !result->partCount || result->partCount > 8u)
             return std::nullopt;
-        const D3D12_RANGE readRange{ 0, 16 };
+        const size_t bytes = size_t(result->partCount) * 16u;
+        const D3D12_RANGE readRange{ 0, bytes };
         void* data = nullptr;
         if (FAILED(result->readback->Map(0, &readRange, &data)) || !data)
             return std::nullopt;
-        uint32_t output[4]{};
-        std::memcpy(output, data, sizeof(output));
+        std::vector<CharacterRayOutcome> all;
+        all.reserve(result->partCount);
+        for (uint32_t i = 0; i < result->partCount; ++i) {
+            uint32_t values[4]{};
+            std::memcpy(values, static_cast<const uint8_t*>(data) +
+                size_t(i) * sizeof(values), sizeof(values));
+            CharacterRayOutcome resultPart;
+            resultPart.status = values[0];
+            resultPart.hitDistance = std::bit_cast<float>(values[1]);
+            resultPart.primitiveIndex = values[2];
+            resultPart.instanceID = values[3];
+            // A hit on another part is NOT proof for this instance.
+            if (resultPart.status < 1u || resultPart.status > 3u ||
+                (resultPart.status == 3u &&
+                 (!std::isfinite(resultPart.hitDistance) ||
+                  resultPart.hitDistance < 0.0f || resultPart.instanceID != i)))
+                resultPart.status = 0u;
+            all.emplace_back(resultPart);
+        }
         result->readback->Unmap(0, nullptr);
+        return all;
+    }
 
-        CharacterRayOutcome outcome;
-        outcome.status = output[0];
-        outcome.hitDistance = std::bit_cast<float>(output[1]);
-        outcome.primitiveIndex = output[2];
-        outcome.instanceID = output[3];
-        if (outcome.status < 1 || outcome.status > 3)
-            outcome.status = 0;
-        if (outcome.status == 3 &&
-            (!std::isfinite(outcome.hitDistance) || outcome.hitDistance < 0))
-            outcome.status = 0;
-        return outcome;
+    inline std::optional<CharacterRayOutcome> ReadCharacterRayOutcome(
+        const std::shared_ptr<const CharacterRayResult>& result)
+    {
+        const auto outcomes = ReadCharacterRayOutcomes(result);
+        if (!outcomes || outcomes->empty()) return std::nullopt;
+        return outcomes->front();
     }
 
     /** A one-ray diagnostic only. The isolated TLAS and all buffers are
@@ -167,29 +183,44 @@ namespace DX12Native
         std::shared_ptr<const CharacterIsolatedTLAS> scene)
     {
         if (!device || !queue || !scene || !scene->Ready() ||
-            !scene->bottom || !scene->bottom->deformation ||
-            !scene->acceleration || !CharacterRayRetirement::CanSubmit())
+            !scene->acceleration || scene->bottoms.empty() ||
+            scene->bottoms.size() > 8u || !CharacterRayRetirement::CanSubmit())
             return {};
 
-        const auto deformation = scene->bottom->deformation;
-        std::shared_ptr<const CharacterStagedMesh> mesh;
-        for (const auto& entry : deformation->input->meshes) {
-            if (entry->skinned && entry->actorFormID == scene->actorFormID &&
-                entry->partOrdinal == scene->partOrdinal &&
-                entry->sourceToken == scene->bottom->sourceToken &&
-                entry->source && entry->vertices >= 3 && entry->indices >= 3 &&
-                entry->indexOffset <= UINT32_MAX &&
-                entry->indices % 3u == 0u) {
-                mesh = entry;
-                break;
+        struct RayInput
+        {
+            std::shared_ptr<const CharacterDeformedResult> pose;
+            std::shared_ptr<const CharacterStagedMesh> mesh;
+        };
+        std::vector<RayInput> rayInputs;
+        rayInputs.reserve(scene->bottoms.size());
+        for (const auto& bottom : scene->bottoms) {
+            if (!bottom || !bottom->Ready() || !bottom->deformation ||
+                !bottom->deformation->Ready() ||
+                !bottom->deformation->input || !bottom->deformation->positions)
+                return {};
+            const auto deformation = bottom->deformation;
+            std::shared_ptr<const CharacterStagedMesh> mesh;
+            for (const auto& entry : deformation->input->meshes) {
+                if (entry->skinned &&
+                    entry->actorFormID == bottom->actorFormID &&
+                    entry->partOrdinal == bottom->partOrdinal &&
+                    entry->sourceToken == bottom->sourceToken &&
+                    entry->source && entry->vertices >= 3 &&
+                    entry->indices >= 3 && entry->indices % 3u == 0u &&
+                    entry->indexOffset <= UINT32_MAX) {
+                    mesh = entry;
+                    break;
+                }
             }
+            if (!mesh) return {};
+            const uint64_t sourceBytes = mesh->source->GetDesc().Width;
+            const uint64_t indexBytes = uint64_t(mesh->indices) * 4ull;
+            if (mesh->indexOffset > sourceBytes ||
+                indexBytes > sourceBytes - mesh->indexOffset)
+                return {};
+            rayInputs.push_back({ deformation, mesh });
         }
-        if (!mesh) return {};
-        const uint64_t inputBytes = mesh->source->GetDesc().Width;
-        const uint64_t requiredIndexBytes = uint64_t(mesh->indices) * 4ull;
-        if (mesh->indexOffset > inputBytes ||
-            requiredIndexBytes > inputBytes - mesh->indexOffset)
-            return {};
 
         static std::mutex pipelineMutex;
         static std::shared_ptr<CharacterRayPipeline> cachedPipeline;
@@ -201,7 +232,7 @@ namespace DX12Native
             pipeline = cachedPipeline;
         }
 
-        constexpr uint64_t kResultSize = 16;
+        const uint64_t kResultSize = 16ull * rayInputs.size();
         const auto defaultDesc = CD3DX12_RESOURCE_DESC::Buffer(
             kResultSize, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         const auto readDesc = CD3DX12_RESOURCE_DESC::Buffer(kResultSize);
@@ -215,17 +246,15 @@ namespace DX12Native
             return {};
 
         uint64_t known = scene->allocationBytes;
-        if (scene->bottom->allocationBytes > UINT64_MAX - known)
-            return {};
-        known += scene->bottom->allocationBytes;
-        if (deformation->allocationBytes > UINT64_MAX - known)
-            return {};
-        known += deformation->allocationBytes;
-        if (deformation->input &&
-            deformation->input->residentBytes <= UINT64_MAX - known)
-            known += deformation->input->residentBytes;
-        else
-            return {};
+        for (const auto& bottom : scene->bottoms) {
+            const auto deformation = bottom->deformation;
+            for (const uint64_t bytes : {
+                bottom->allocationBytes, deformation->allocationBytes,
+                deformation->input->residentBytes }) {
+                if (bytes > UINT64_MAX - known) return {};
+                known += bytes;
+            }
+        }
         VideoMemoryBudget memory;
         const auto budget = memory.Query(device, known, 0);
         if (!budget.dxgiAvailable || known > budget.effectiveBytes ||
@@ -235,6 +264,7 @@ namespace DX12Native
         auto probe = std::make_shared<CharacterRayResult>();
         probe->scene = std::move(scene);
         probe->poseFrame = probe->scene->poseFrame;
+        probe->partCount = uint32_t(rayInputs.size());
         probe->allocationBytes = outputBytes + readBytes;
         const auto defaultHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         const auto readHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
@@ -259,25 +289,33 @@ namespace DX12Native
             throw std::runtime_error("Character RayQuery diagnostic commands unavailable");
 
         auto* commands = submitted->commands.get();
-        // Isolated skinning/BLAS leave the position buffer in UAV state.
-        // A raw ByteAddressBuffer read requires non-pixel SRV state.
-        const auto positionRead = CD3DX12_RESOURCE_BARRIER::Transition(
-            deformation->positions.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        commands->ResourceBarrier(1, &positionRead);
         commands->SetComputeRootSignature(submitted->pipeline->root.get());
         commands->SetComputeRootShaderResourceView(0,
             probe->scene->acceleration->GetGPUVirtualAddress());
-        commands->SetComputeRootShaderResourceView(1,
-            deformation->positions->GetGPUVirtualAddress());
-        commands->SetComputeRootShaderResourceView(2,
-            mesh->source->GetGPUVirtualAddress());
         commands->SetComputeRootUnorderedAccessView(3,
             probe->output->GetGPUVirtualAddress());
-        const uint32_t constants[4]{
-            mesh->vertices, mesh->indices, uint32_t(mesh->indexOffset), 0u };
-        commands->SetComputeRoot32BitConstants(4, 4, constants, 0);
-        commands->Dispatch(1, 1, 1);
+        for (size_t i = 0; i < rayInputs.size(); ++i) {
+            const auto& input = rayInputs[i];
+            // Isolated skinning/BLAS leave the position buffer in UAV state.
+            const auto positionRead = CD3DX12_RESOURCE_BARRIER::Transition(
+                input.pose->positions.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            commands->ResourceBarrier(1, &positionRead);
+            commands->SetComputeRootShaderResourceView(1,
+                input.pose->positions->GetGPUVirtualAddress());
+            commands->SetComputeRootShaderResourceView(2,
+                input.mesh->source->GetGPUVirtualAddress());
+            const uint32_t constants[5]{
+                input.mesh->vertices, input.mesh->indices,
+                uint32_t(input.mesh->indexOffset),
+                1u << uint32_t(i), uint32_t(i * 16u) };
+            commands->SetComputeRoot32BitConstants(4, 5, constants, 0);
+            commands->Dispatch(1, 1, 1);
+            const auto restore = CD3DX12_RESOURCE_BARRIER::Transition(
+                input.pose->positions.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commands->ResourceBarrier(1, &restore);
+        }
         const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(probe->output.get());
         commands->ResourceBarrier(1, &barrier);
         const auto copyReady = CD3DX12_RESOURCE_BARRIER::Transition(
@@ -286,10 +324,6 @@ namespace DX12Native
         commands->ResourceBarrier(1, &copyReady);
         commands->CopyBufferRegion(probe->readback.get(), 0,
             probe->output.get(), 0, kResultSize);
-        const auto positionRestore = CD3DX12_RESOURCE_BARRIER::Transition(
-            deformation->positions.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        commands->ResourceBarrier(1, &positionRestore);
         if (FAILED(commands->Close()))
             throw std::runtime_error("Character RayQuery diagnostic list invalid");
         ID3D12CommandList* lists[]{ commands };
