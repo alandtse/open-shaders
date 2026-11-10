@@ -387,6 +387,8 @@ void DX12NativeScene::DrawSettings()
     ImGui::Text("Owned DX12 character bind buffers: %zu (%.2f MiB)",
         characterStats.value("nativeStagedMeshes", size_t{ 0 }),
         double(characterStats.value("nativeStagedBytes", uint64_t{ 0 })) / (1024.0 * 1024.0));
+    ImGui::TextDisabled("Character mesh evictions: %u (actor/equipment identity changes)",
+        characterStats.value("nativeEvictedMeshes", 0u));
     ImGui::TextDisabled("Skin bind vertices, indices and raw bone registers are DX12-staged.");
     ImGui::TextDisabled("Deformation is an isolated GPU experiment; BLAS and character rays remain disabled.");
     ImGui::Text("Bone palette: %u VS registers (captured frame %u)",

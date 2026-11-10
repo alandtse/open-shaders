@@ -29,6 +29,7 @@ namespace DX12Native
     struct CharacterPartObservation
     {
         uint32_t actorFormID = 0, ordinal = 0;
+        uint64_t sourceToken = 0; // Runtime-only identity, never persisted.
         std::string shapeName;
         std::array<float, 4> worldBound{};
         uint32_t vertexCount = 0, triangleCount = 0;
@@ -97,17 +98,15 @@ namespace DX12Native
                 auto done = std::move(pending);
                 workerBusy.store(false, std::memory_order_release);
                 if (done->result && done->sceneEpoch == sceneEpoch) {
-                    // A failed allocation must remain eligible for a later
-                    // bounded retry rather than being silently marked cached.
-                    if (!done->attemptedKey.empty()) {
-                        bool resident = false;
-                        if (const auto staged = done->result->stagedGeometry) {
-                            for (const auto& part : staged->meshes)
-                                resident |= part->actorFormID == done->actorFormID &&
-                                    part->partOrdinal == done->partOrdinal &&
-                                    part->sourceToken == done->sourceToken;
+                    // Rebuild admission keys from actually resident meshes.
+                    // Evicted, replaced and failed uploads must be eligible
+                    // when their actor or mesh reappears in a later sample.
+                    attemptedMeshKeys.clear();
+                    if (const auto staged = done->result->stagedGeometry) {
+                        for (const auto& part : staged->meshes) {
+                            attemptedMeshKeys.emplace(std::format("{:08X}:{}:{:016X}",
+                                part->actorFormID, part->partOrdinal, part->sourceToken));
                         }
-                        if (!resident) attemptedMeshKeys.erase(done->attemptedKey);
                     }
                     published.store(std::move(done->result), std::memory_order_release);
                     completed.fetch_add(1, std::memory_order_relaxed);
@@ -159,7 +158,9 @@ namespace DX12Native
                     CharacterPartObservation part;
                     part.actorFormID = actor->GetFormID();
                     part.ordinal = ordinal++;
-                    if (!geometry->name.empty()) part.shapeName = geometry->name.c_str();
+                    part.sourceToken = CharacterMeshSourceToken(*geometry);
+                    part.shapeName = geometry->name.empty() ?
+                        std::string("unnamed") : std::string(geometry->name.c_str());
                     const auto& bounds = geometry->worldBound;
                     part.worldBound = { bounds.center.x, bounds.center.y, bounds.center.z, bounds.radius };
                     const auto& runtime = geometry->GetGeometryRuntimeData();
@@ -174,9 +175,10 @@ namespace DX12Native
                     part.gpuOnly = !runtime.rendererData ||
                         !runtime.rendererData->rawVertexData ||
                         !runtime.rendererData->rawIndexData;
+                    const bool partSkinned = part.skinned;
+                    const uint64_t sourceToken = part.sourceToken;
                     captured->parts.emplace_back(std::move(part));
-                    if (stageGeometry && device && part.skinned && !capturedPose) {
-                        const uint64_t sourceToken = CharacterMeshSourceToken(*geometry);
+                    if (stageGeometry && device && partSkinned && !capturedPose) {
                         bool hasBind = capturedMesh && capturedMesh->skinned &&
                             capturedMesh->actorFormID == actor->GetFormID() &&
                             capturedMesh->partOrdinal == ordinal - 1 &&
@@ -193,7 +195,6 @@ namespace DX12Native
                             *geometry, actor->GetFormID(), ordinal - 1, sourceToken, frame);
                     }
                     if (stageGeometry && device && !capturedMesh) {
-                        const uint64_t sourceToken = CharacterMeshSourceToken(*geometry);
                         const std::string key = std::format("{:08X}:{}:{:016X}",
                             actor->GetFormID(), ordinal - 1, sourceToken);
                         if (!attemptedMeshKeys.contains(key)) {
@@ -252,16 +253,65 @@ namespace DX12Native
                                 part.worldBound[3] <= 0 || !part.vertexCount || !part.triangleCount)
                                 ++output->invalidParts;
                         }
+                        // Retain only observed mesh identities from the
+                        // current third-person snapshot. Old actor/equipment
+                        // resources remain safe if an in-flight GPU frame still
+                        // retains a previous immutable generation.
+                        std::shared_ptr<const CharacterMeshGeneration> retained =
+                            previous ? previous->stagedGeometry : nullptr;
+                        if (retained && retained->sceneEpoch == work->sceneEpoch) {
+                            auto trimmed = std::make_shared<CharacterMeshGeneration>(*retained);
+                            std::erase_if(trimmed->meshes, [&](const auto& gpuMesh) {
+                                const bool present = std::ranges::any_of(
+                                    output->parts, [&](const auto& observed) {
+                                        return observed.actorFormID == gpuMesh->actorFormID &&
+                                            observed.ordinal == gpuMesh->partOrdinal &&
+                                            observed.sourceToken == gpuMesh->sourceToken &&
+                                            observed.shapeName == gpuMesh->shapeName;
+                                    });
+                                if (!present) {
+                                    trimmed->residentBytes -= std::min(trimmed->residentBytes,
+                                        gpuMesh->allocationBytes);
+                                    ++trimmed->evictedMeshes;
+                                }
+                                return !present;
+                            });
+                            if (trimmed->pose) {
+                                const bool hasMatchingSkin = std::ranges::any_of(
+                                    trimmed->meshes, [&](const auto& gpuMesh) {
+                                        return gpuMesh->skinned &&
+                                            gpuMesh->actorFormID == trimmed->pose->actorFormID &&
+                                            gpuMesh->partOrdinal == trimmed->pose->partOrdinal &&
+                                            gpuMesh->sourceToken == trimmed->pose->sourceToken;
+                                    });
+                                if (!hasMatchingSkin) {
+                                    trimmed->residentBytes -= std::min(trimmed->residentBytes,
+                                        trimmed->pose->allocationBytes);
+                                    trimmed->pose.reset();
+                                }
+                            }
+                            retained = std::move(trimmed);
+                        }
                         // DX12 upload and DXGI residency checks are performed
                         // on this native CPU worker. The renderer publishes
                         // the complete immutable generation only afterwards.
                         auto staged = PrepareCharacterMeshes(
                             nativeDevice.get(), mesh ? &*mesh : nullptr,
-                            previous ? previous->stagedGeometry : nullptr, work->sceneEpoch);
+                            retained, work->sceneEpoch);
                         output->stagedGeometry = StageCharacterPose(
                             nativeDevice.get(), pose ? &*pose : nullptr,
                             staged, work->sceneEpoch);
-                        if (runSkinning && previous) {
+                        if (runSkinning && previous && previous->deformed &&
+                            output->stagedGeometry &&
+                            std::ranges::any_of(output->stagedGeometry->meshes,
+                                [&](const auto& gpuMesh) {
+                                    return gpuMesh->skinned &&
+                                        gpuMesh->actorFormID == previous->deformed->actorFormID &&
+                                        gpuMesh->partOrdinal == previous->deformed->partOrdinal &&
+                                        previous->deformed->input->pose &&
+                                        gpuMesh->sourceToken ==
+                                            previous->deformed->input->pose->sourceToken;
+                                })) {
                             output->deformed = previous->deformed;
                             output->validation = previous->validation;
                             // Never wait for the GPU; consume completed debug
@@ -330,6 +380,8 @@ namespace DX12Native
                 { "capturedBytes", current ? current->capturedBytes : 0ull },
                 { "nativeStagedMeshes", current && current->stagedGeometry ?
                     current->stagedGeometry->meshes.size() : size_t{ 0 } },
+                { "nativeEvictedMeshes", current && current->stagedGeometry ?
+                    current->stagedGeometry->evictedMeshes : 0u },
                 { "nativeStagedBytes", current && current->stagedGeometry ?
                     current->stagedGeometry->residentBytes : 0ull },
                 { "poseFrame", current && current->stagedGeometry && current->stagedGeometry->pose ?

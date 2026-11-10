@@ -42,6 +42,7 @@ namespace DX12Native
     {
         uint64_t sceneEpoch = 0, residentBytes = 0, budgetBytes = 0;
         uint32_t uploadedMeshes = 0, rejectedMeshes = 0, dxgiDeferrals = 0;
+        uint32_t evictedMeshes = 0;
         uint32_t posedFrames = 0, poseDeferrals = 0;
         std::shared_ptr<const CharacterStagedPose> pose;
         std::vector<std::shared_ptr<const CharacterStagedMesh>> meshes;
@@ -128,6 +129,7 @@ namespace DX12Native
             out->uploadedMeshes = previous->uploadedMeshes;
             out->rejectedMeshes = previous->rejectedMeshes;
             out->dxgiDeferrals = previous->dxgiDeferrals;
+            out->evictedMeshes = previous->evictedMeshes;
             out->posedFrames = previous->posedFrames;
             out->poseDeferrals = previous->poseDeferrals;
             out->pose = previous->pose;
