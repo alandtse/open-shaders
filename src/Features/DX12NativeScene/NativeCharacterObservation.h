@@ -90,7 +90,8 @@ namespace DX12Native
          */
         void Advance(uint32_t frame, uint32_t maxActors, uint32_t periodFrames, bool playerOnly,
             bool stageGeometry, bool runSkinning, bool validateSkinning,
-            bool buildIsolatedBLAS, ID3D12Device* device, ID3D12CommandQueue* queue)
+            bool buildIsolatedBLAS, uint32_t blasIntervalFrames,
+            ID3D12Device* device, ID3D12CommandQueue* queue)
         {
             // Runtime toggles can reset the observer while the engine is
             // supplying input. Serialize only this bounded CPU acquisition;
@@ -116,6 +117,7 @@ namespace DX12Native
             }
             if (pending || !frame) return;
             periodFrames = std::clamp(periodFrames, 1u, 120u);
+            blasIntervalFrames = std::clamp(blasIntervalFrames, 1u, 120u);
             maxActors = std::clamp(maxActors, 1u, 32u);
             if (lastObservedFrame != UINT32_MAX &&
                 uint32_t(frame - lastObservedFrame) < periodFrames) return;
@@ -237,7 +239,7 @@ namespace DX12Native
                     mesh = std::move(capturedMesh),
                     pose = std::move(capturedPose), nativeDevice,
                     nativeQueue, runSkinning, validateSkinning,
-                    buildIsolatedBLAS] {
+                    buildIsolatedBLAS, blasIntervalFrames] {
                     try {
                         // All aggregation uses owned records, never engine pointers.
                         auto output = std::make_shared<CharacterObservationGeneration>(*captured);
@@ -366,7 +368,10 @@ namespace DX12Native
                             if (validPose && (!output->isolatedBLAS ||
                                 (output->isolatedBLAS->Ready() &&
                                     output->isolatedBLAS->poseFrame !=
-                                        output->deformed->poseFrame))) {
+                                        output->deformed->poseFrame &&
+                                    uint32_t(output->deformed->poseFrame -
+                                        output->isolatedBLAS->poseFrame) >=
+                                            blasIntervalFrames))) {
                                 try {
                                     if (auto candidate = BuildCharacterIsolatedBLAS(
                                         nativeDevice.get(), nativeQueue.get(),
