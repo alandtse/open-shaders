@@ -309,6 +309,9 @@ namespace DX12Native
                 // the frame thread. No hashing or key insertion is needed here.
                 if (pending->attempted) attempted = std::move(*pending->attempted);
                 pendingAttemptedCount = 0;
+                // Drain the next chunk even when the mailbox itself has not
+                // changed. No-op selection will restore the scanned revision.
+                if (!pending->keys.empty()) scannedMailboxRevision = UINT64_MAX;
                 if (pending->result) {
                     prepared = pending->result;
                     composed = pending->composed;
