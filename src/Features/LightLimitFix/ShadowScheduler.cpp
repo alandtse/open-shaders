@@ -1578,6 +1578,7 @@ namespace ShadowCasterManager
 			auto* sun = ssn->GetRuntimeData().sunShadowDirLight;
 			if (sun) {
 				uint8_t vrFlag = globals::game::isVR ? static_cast<uint8_t>(RE::BSShaderManager::IsSunShadowUpdateDue()) + 1 : 0;
+				SetSunCullCameras(sun);
 				sun->Accumulate(*GetAccumLightSlot(), 0, nullptr, vrFlag);
 
 				if (sun->lensFlareData && !globals::game::isVR)
