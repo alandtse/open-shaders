@@ -15,6 +15,8 @@ RWTexture2D<float4> DirectSpecularAlbedo : register(u4);
 RWTexture2D<float4> DirectDiffuseAlbedo : register(u5);
 RWTexture2D<float4> IndirectDiffuse : register(u6);
 RWTexture2D<float4> IndirectSpecular : register(u7);
+// One optional diagnostic counter, allocated separately from the shadow mask.
+RWByteAddressBuffer CharacterShadowHitCount : register(u8);
 struct RoomVolume { float4 inverse0; float4 inverse1; float4 inverse2; float4 halfExtents; };
 StructuredBuffer<RoomVolume> RoomVolumes : register(t6);
 static const uint OpaqueInstanceMask = 1;
@@ -104,8 +106,11 @@ bool TraceDirectVisibility(float3 origin, float3 direction, float distance, out 
         RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> character;
         character.TraceRayInline(CharacterCasters, RAY_FLAG_NONE, 0x01, ray);
         while (character.Proceed()) { }
-        if (character.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
+        if (character.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
             visible = false;
+            uint previousHits = 0u;
+            CharacterShadowHitCount.InterlockedAdd(0, 1u, previousHits);
+        }
     }
 	return valid;
 }

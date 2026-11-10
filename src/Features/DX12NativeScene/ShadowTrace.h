@@ -27,6 +27,10 @@ namespace DX12Native
 		std::unique_ptr<WrappedResource> mask, lights;
 		DirectX::SimpleMath::Matrix rayProjInverse, rayViewInverse;
         winrt::com_ptr<ID3D12Resource> cameraConstants; // Native DX12 camera matrices.
+        // Independent GPU counter; copied back only after the shadow fence.
+        winrt::com_ptr<ID3D12Resource> characterHitCounter;
+        winrt::com_ptr<ID3D12Resource> characterHitZero;
+        winrt::com_ptr<ID3D12Resource> characterHitReadback;
 		winrt::com_ptr<ID3D12CommandAllocator> allocator;
 		winrt::com_ptr<ID3D12GraphicsCommandList> commands;
 		GraphicsBackend retainedBackend;

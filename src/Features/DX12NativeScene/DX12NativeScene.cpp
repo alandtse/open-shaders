@@ -528,6 +528,13 @@ void DX12NativeScene::DrawSettings()
         settings.CharacterCasterMaxPoseAgeFrames);
     ImGui::TextWrapped("Character shadow eligibility: %s",
         casterReadiness.reason);
+    const auto shadowCounters = shadow.GetDiagnostics();
+    ImGui::Text("Character shadow visibility rays blocked: %u",
+        shadowCounters.value("characterShadowRayHits", 0u));
+    ImGui::TextDisabled("Latest completed shadow hit sample: %s (frame %u)",
+        shadowCounters.value("characterShadowHitCountReady", false) ?
+            "ready" : "pending/not offered",
+        shadowCounters.value("characterShadowHitSampleFrame", 0u));
     ImGui::TextDisabled("World-bound plausibility is not exact pose parity.");
     const auto characterDeformError = characterStats.value("deformError", std::string{});
     if (!characterDeformError.empty())
