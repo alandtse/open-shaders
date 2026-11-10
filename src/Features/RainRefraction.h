@@ -45,8 +45,8 @@ public:
 		bool Enable = false;
 		float MotionStretch = 2.0f;
 		float MotionTransparency = 0.91f;
-		float WindInfluence = 1.0f;
-		float CurtainStrength = 0.35f;
+		float WindInfluence = 0.0f;
+		float CurtainStrength = 0.0f;
 		float CurtainScale = 4096.0f;
 	} settings;
 
