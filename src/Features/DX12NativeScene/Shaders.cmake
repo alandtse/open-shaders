@@ -10,7 +10,7 @@ if(DX12_NATIVE_SCENE_DXC)
     add_custom_command(
         OUTPUT "${DX12_NATIVE_SCENE_DXIL}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${DX12_NATIVE_SCENE_DXIL_DIR}"
-        COMMAND "${DX12_NATIVE_SCENE_DXC}" -T cs_6_5 -E main -HV 2021 -O3 -Ges
+        COMMAND "${DX12_NATIVE_SCENE_DXC}" -T cs_6_5 -E main -HV 2021 -O3 -Ges -Gis
             -I "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders"
             -Fo "${DX12_NATIVE_SCENE_DXIL}"
             "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders/DX12NativeScene/ShadowTrace.hlsl6"

@@ -10,7 +10,7 @@ if(DX12_NATIVE_SCENE_DXC)
         add_custom_command(
             OUTPUT "${_output}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${NATIVE_LIGHTING_DXIL_DIR}"
-            COMMAND "${DX12_NATIVE_SCENE_DXC}" -T cs_6_5 -E main -HV 2021 -O3 -Ges ${_defines}
+            COMMAND "${DX12_NATIVE_SCENE_DXC}" -T cs_6_5 -E main -HV 2021 -O3 -Ges -Gis ${_defines}
                 -I "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders"
                 -I "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders"
                 -Fo "${_output}"
