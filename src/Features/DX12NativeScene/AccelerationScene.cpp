@@ -95,6 +95,8 @@ namespace DX12Native
 		for (const auto& build : builds) {
 			countBottom(build.bottom);
 			countTop(build.top);
+			// An in-flight UPDATE also owns its previous completed TLAS.
+			countTop(build.updateSource);
 			bytes += build.transientBytes;
 		}
 		return bytes;
@@ -202,10 +204,10 @@ namespace DX12Native
 		top->updateCapable = true;
 		D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
 		inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+		// Prebuild info is requested for the update-capable structure; the
+		// PERFORM_UPDATE flag belongs to the actual build invocation only.
 		inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE |
-			D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE |
-			(canUpdate ? D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE :
-			 D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE);
+			D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE;
 		inputs.NumDescs = uint32_t(instances.size());
 		inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
 		D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO info{};
@@ -236,6 +238,8 @@ namespace DX12Native
 		std::memcpy(mapped, instances.data(), size_t(uploadSize));
 		a_build.instanceUpload->Unmap(0, nullptr);
 		inputs.InstanceDescs = a_build.instanceUpload->GetGPUVirtualAddress();
+		if (canUpdate)
+			inputs.Flags |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE;
 		D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
 		build.Inputs = inputs;
 		build.DestAccelerationStructureData = a_build.top->result->GetGPUVirtualAddress();
