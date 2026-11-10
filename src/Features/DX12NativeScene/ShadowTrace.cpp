@@ -110,7 +110,7 @@ namespace DX12Native
 			failed = true;
 			return false;
 		}
-		if (pipeline && prepareRays) return true;
+		if (pipeline) return true;
 		try {
 			backend = a_backend;
 			if (!backend.d3d12Device || !backend.commandQueue || !backend.d3d11Device || !backend.d3d11Context)
@@ -130,8 +130,6 @@ namespace DX12Native
 				completion->SetName(L"DX12NativeScene::ShadowCompletion");
 			}
 			CreatePipeline();
-			if (!prepareRays) prepareRays.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\DX12NativeScene\\PrepareShadowRays.cs.hlsl", {}, "cs_5_0")));
-			if (!prepareRays) throw std::runtime_error("Shadow camera-ray shader unavailable");
 			return true;
 		} catch (const std::exception& error) {
 			if (producer.fence12 && !producer.fence11) producer.Reset();
@@ -233,6 +231,10 @@ namespace DX12Native
 		// Keep DX11 light snapshot upload for the shared texture, but do not
 		// dispatch the DX11 camera-ray shader when native DXC preparation is selected.
 		if (!a_frame.controls.nativeRayPreparation) {
+			if (!prepareRays)
+				prepareRays.attach(static_cast<ID3D11ComputeShader*>(
+					Util::CompileShader(L"Data\\Shaders\\DX12NativeScene\\PrepareShadowRays.cs.hlsl", {}, "cs_5_0")));
+			if (!prepareRays) throw std::runtime_error("Legacy shadow-ray reference shader unavailable");
 			const auto update = [&](const void* data, uint32_t bytes, winrt::com_ptr<ID3D11Buffer>& buffer, const char* name) {
 				if (!buffer) {
 					D3D11_BUFFER_DESC desc{};
@@ -247,7 +249,8 @@ namespace DX12Native
 			const std::array<uint32_t, 4> dimensions{ a_frame.width, a_frame.height, a_frame.width, a_frame.height };
 			update(dimensions.data(), uint32_t(sizeof(dimensions)), a_frame.grid, "DX12NativeScene::ShadowGrid CB");
 			update(&a_camera, uint32_t(sizeof(a_camera)), a_frame.camera, "DX12NativeScene::ShadowCamera CB");
-		}		constexpr uint32_t kMaximumLights = 32, kLightTexels = 8, kLightWidth = kMaximumLights * kLightTexels;
+		}
+		constexpr uint32_t kMaximumLights = 32, kLightTexels = 8, kLightWidth = kMaximumLights * kLightTexels;
 		std::array<std::array<float, 4>, kLightWidth * 2> snapshot{};
 		for (size_t i = 0; i < a_frame.lightSnapshot.size(); ++i) {
 			const auto& light = a_frame.lightSnapshot[i];
