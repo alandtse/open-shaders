@@ -445,7 +445,7 @@ namespace DX12Native
                         for (const auto& part : output->parts) {
                             if (part.skinned) ++output->skinnedParts;
                             else if (part.dynamic) ++output->dynamicParts;
-                            else ++output->rigidBLASParts;
+                            else ++output->rigidParts;
                             if (part.alpha) ++output->alphaParts;
                             if (part.gpuOnly) ++output->gpuOnlyParts;
                             if (!std::isfinite(part.worldBound[3]) ||
