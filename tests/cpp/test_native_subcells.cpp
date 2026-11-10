@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "Features/DX12NativeScene/SpatialSubcells.h"
+#include "Features/DX12Resources/CellRequest.h"
 
 #include <algorithm>
 #include <set>
@@ -57,4 +58,18 @@ TEST_CASE("3x3 preparation is followed by twelve sides and four corners", "[dx12
     REQUIRE(pending.size() == 4);
     for (auto point : order.predictive.corners) complete.emplace(point.x, point.y);
     CHECK(PendingWork(center, 1.0, 0.0, ready).empty());
+}
+
+TEST_CASE("Native exterior WRLD subcells keep a stable cache identity across CELL changes", "[dx12-native-scene][subcells][exterior]")
+{
+    using DX12ResourceService::CellRequest;
+    const CellRequest interior{ "Skyrim.esm", 0x123456, false };
+    const CellRequest exterior{ "Skyrim.esm", 0x123456, true };
+    REQUIRE(interior.Key() == exterior.Key()); // same serialized FormKey
+    CHECK(interior.ScopedKey() != exterior.ScopedKey());
+    CHECK(interior.CacheFamily() == "cells");
+    CHECK(exterior.CacheFamily() == "worldspaces");
+    CHECK(exterior.ScopedKey() == "WRLD:123456:Skyrim.esm");
+    // One WRLD-scoped grid remains stable even when the engine changes CELL.
+    CHECK(ReusedActiveCount({0, 0}, {1, 0}) == 6);
 }

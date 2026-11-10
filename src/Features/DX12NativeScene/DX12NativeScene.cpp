@@ -425,7 +425,8 @@ void DX12NativeScene::DrawSettings()
         resetRequested.store(true, std::memory_order_release);
     }
     ImGui::TextDisabled("Exteriors use WRLD-scoped 3x3 geometry; interiors keep CELL-scoped caches.");
-    ImGui::TextDisabled("Full-scene DXR stays active until partial TLAS integration is validated.");
+    ImGui::TextDisabled("Grid TLAS publication remains experimental and opt-in.");
+    ImGui::TextDisabled("Outdoor static geometry coverage is still provisional.");
     if (ImGui::Checkbox("Build isolated grid TLAS for diagnostic testing", &settings.BuildCandidateGridTLAS))
         resetRequested.store(true, std::memory_order_release);
     ImGui::BeginDisabled(!settings.BuildCandidateGridTLAS);
