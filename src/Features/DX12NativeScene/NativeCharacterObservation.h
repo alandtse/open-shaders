@@ -105,8 +105,10 @@ namespace DX12Native
             readiness.reason = "No completed matching character RayQuery hit";
             return readiness;
         }
-        if (!generation->validation || !generation->validation->sane ||
-            generation->validation->poseFrame != scene->poseFrame ||
+        // Validation belongs to the same immutable BLAS/TLAS generation.
+        // The observer's latest readback can already describe a newer pose.
+        if (!scene->bottom->validation || !scene->bottom->validation->sane ||
+            scene->bottom->validation->poseFrame != scene->poseFrame ||
             generation->rayProbe->poseFrame != scene->poseFrame) {
             readiness.reason = "Skinning readback does not match TLAS pose";
             return readiness;
@@ -126,8 +128,8 @@ namespace DX12Native
             return readiness;
         }
         const auto& bounds = actor->worldBound;
-        const auto& minimum = generation->validation->minimum;
-        const auto& maximum = generation->validation->maximum;
+        const auto& minimum = scene->bottom->validation->minimum;
+        const auto& maximum = scene->bottom->validation->maximum;
         if (!std::isfinite(bounds[3]) || bounds[3] <= 0 ||
             bounds[3] > 50000.0f) {
             readiness.reason = "Character world bound invalid";
@@ -501,7 +503,7 @@ namespace DX12Native
                                     if (auto candidate = BuildCharacterIsolatedBLAS(
                                         nativeDevice.get(), nativeQueue.get(),
                                         output->deformed, *output->blasPreflight,
-                                        output->isolatedBLAS))
+                                        *output->validation, output->isolatedBLAS))
                                         output->isolatedBLAS = std::move(candidate);
                                 } catch (const std::exception& e) {
                                     output->blasError = e.what();
@@ -518,9 +520,27 @@ namespace DX12Native
                             output->isolatedBLAS && output->isolatedBLAS->Ready() &&
                             nativeDevice && nativeQueue) {
                             if (previous && previous->isolatedTLAS &&
-                                previous->isolatedTLAS->bottom ==
-                                    output->isolatedBLAS)
-                                output->isolatedTLAS = previous->isolatedTLAS;
+                                output->stagedGeometry &&
+                                std::ranges::any_of(output->stagedGeometry->meshes,
+                                    [&](const auto& mesh) {
+                                        const auto& old = previous->isolatedTLAS;
+                                        return mesh->skinned &&
+                                            mesh->actorFormID == old->actorFormID &&
+                                            mesh->partOrdinal == old->partOrdinal &&
+                                            mesh->sourceToken == old->bottom->sourceToken;
+                                    })) {
+                                const bool awaitingQuery = runIsolatedRayProbe &&
+                                    (!previous->rayProbe ||
+                                     previous->rayProbe->scene != previous->isolatedTLAS ||
+                                     !previous->rayProbe->Ready() ||
+                                     !previous->rayOutcome);
+                                // Never replace a TLAS mid-probe. Its old
+                                // BLAS, pose validation and ray outcome must
+                                // remain one immutable evidence generation.
+                                if (previous->isolatedTLAS->bottom ==
+                                        output->isolatedBLAS || awaitingQuery)
+                                    output->isolatedTLAS = previous->isolatedTLAS;
+                            }
                             if (!output->isolatedTLAS) {
                                 try {
                                     output->isolatedTLAS = BuildCharacterIsolatedTLAS(

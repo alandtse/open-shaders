@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -18,6 +19,8 @@ namespace DX12Native
     {
         winrt::com_ptr<ID3D12Device> device;
         std::shared_ptr<const CharacterDeformedResult> deformation;
+        // Pose-specific validation travels with this immutable GPU generation.
+        std::optional<CharacterDeformValidation> validation;
         winrt::com_ptr<ID3D12Resource> acceleration;
         winrt::com_ptr<ID3D12Fence> completion;
         uint64_t completionValue = 0, allocationBytes = 0, scratchBytes = 0;
@@ -90,6 +93,7 @@ namespace DX12Native
         ID3D12Device* device, ID3D12CommandQueue* queue,
         const std::shared_ptr<const CharacterDeformedResult>& deformation,
         const CharacterBLASPreflight& planned,
+        const CharacterDeformValidation& validation,
         const std::shared_ptr<const CharacterIsolatedBLAS>& previous)
     {
         if (!device || !queue || !deformation || !deformation->Ready() ||
@@ -97,6 +101,7 @@ namespace DX12Native
             !deformation->input->pose ||
             !planned.dxrSupported || !planned.budgetAvailable ||
             planned.poseFrame != deformation->poseFrame ||
+            !validation.sane || validation.poseFrame != deformation->poseFrame ||
             !CharacterBLASRetirement::CanSubmit())
             return {};
 
@@ -201,6 +206,7 @@ namespace DX12Native
         auto output = std::make_shared<CharacterIsolatedBLAS>();
         output->device.copy_from(device);
         output->deformation = deformation;
+        output->validation = validation;
         output->sourceToken = mesh->sourceToken;
         output->actorFormID = mesh->actorFormID;
         output->partOrdinal = mesh->partOrdinal;
