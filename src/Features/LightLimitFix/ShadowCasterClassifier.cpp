@@ -451,7 +451,8 @@ namespace ShadowCasterManager
 	static bool CasterFilteredByPass(RE::BSGeometry& geom)
 	{
 		const bool useAtlas = AtlasActive();
-		if (!useAtlas && !s_nativeCasterCollecting) return false;
+		const auto casterPass = static_cast<CasterPass>(s_cullPassMode.load(std::memory_order_relaxed));
+		if (!useAtlas && !s_nativeCasterCollecting && casterPass == CasterPass::All) return false;
 		if (const auto passless = ShadowMapPassless(geom); passless != PasslessReason::kNone) {
 			s_passlessCasterSkipTotal.fetch_add(1, std::memory_order_relaxed);
 			s_passlessCasterSkipByReason[static_cast<int>(passless)].fetch_add(1, std::memory_order_relaxed);
@@ -475,12 +476,12 @@ namespace ShadowCasterManager
 		// Exactly-covered prepared triangles already intersect native DXR shadow rays.
 		// Leave unprepared static casters and all moving casters in the DX11 path.
 		if (preparedStatic) return true;
-		if (!useAtlas) return false;
+		if (!useAtlas && casterPass == CasterPass::All) return false;
 		// Every static caster folds into the hash regardless of pass, so a
 		// static-set change is seen during whichever accumulate runs this frame.
 		if (!dynamic)
 			FoldStaticCasterHash(geom, *rec);
-		switch (static_cast<CasterPass>(s_cullPassMode.load(std::memory_order_relaxed))) {
+		switch (casterPass) {
 		case CasterPass::StaticOnly:
 			if (dynamic) {
 				// Counted even though filtered: the mover latch must see

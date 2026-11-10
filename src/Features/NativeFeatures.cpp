@@ -88,7 +88,8 @@ void NativeSCMFeature::DrawSettings()
     const auto casters = ShadowCasterManager::GetNativeCasterFrame(frame);
     ImGui::Text("Tracked current-frame casters: %zu", casters ? casters->casters.size() : size_t{0});
     ImGui::TextDisabled("Prepared static casters belong to native TLAS; remaining casters use SCM tracking.");
-    ImGui::TextDisabled("Dynamic geometry still requires an exact native shadow representation.");
+    ImGui::TextDisabled("Matched LLF lights: raster dynamic caster depth only; prepared geometry: native DXR.");
+    ImGui::TextDisabled("A ray-traceable dynamic caster representation remains future work.");
 }
 void NativePBRFeature::LoadSettings(json& j) { enabled.store(j.value("Enabled", true), std::memory_order_relaxed); }
 void NativeLLFFeature::LoadSettings(json& j) { enabled.store(j.value("Enabled", true), std::memory_order_relaxed); }
