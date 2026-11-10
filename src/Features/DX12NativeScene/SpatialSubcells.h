@@ -2,10 +2,14 @@
 
 // Shared spatial rules for a future DX12-native incremental scene streamer.
 // This is a planning/identity contract, not an active renderer switch.
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
+#include <vector>
 
 namespace DX12Native::SpatialSubcells
 {
@@ -75,4 +79,72 @@ namespace DX12Native::SpatialSubcells
             }
         return result;
     }
+    // Order active cells first, predictive side cells second, outer corners
+    // last. Movement direction only reorders *within* these fixed stages.
+    struct WorkOrder
+    {
+        std::array<Coordinate, 9> active{};
+        Predictive5x5 predictive{};
+    };
+
+    template <typename Iter>
+    void PrioritizeForMovement(Iter begin, Iter end, Coordinate center, double movementX, double movementY)
+    {
+        if (!std::isfinite(movementX) || !std::isfinite(movementY)) return;
+        const auto projection = [&](Coordinate point) {
+            return double(point.x - center.x) * movementX +
+                   double(point.y - center.y) * movementY;
+        };
+        std::stable_sort(begin, end, [&](Coordinate left, Coordinate right) {
+            const double a = projection(left), b = projection(right);
+            return a > b;
+        });
+    }
+
+    inline WorkOrder OrderedWork(Coordinate center, double movementX, double movementY)
+    {
+        WorkOrder order{ Active3x3(center), OuterRing(center) };
+        std::swap(order.active[0], order.active[4]); // Center before any neighbors.
+        PrioritizeForMovement(order.active.begin() + 1, order.active.end(), center, movementX, movementY);
+        PrioritizeForMovement(order.predictive.sides.begin(), order.predictive.sides.end(),
+            center, movementX, movementY);
+        PrioritizeForMovement(order.predictive.corners.begin(), order.predictive.corners.end(),
+            center, movementX, movementY);
+        return order;
+    }
+
+    template <typename IsPrepared>
+    std::vector<Coordinate> PendingWork(Coordinate center, double movementX, double movementY,
+        IsPrepared&& isPrepared)
+    {
+        const auto order = OrderedWork(center, movementX, movementY);
+        std::vector<Coordinate> result;
+        result.reserve(25);
+        // Do not issue predictive work until all nine are ready. This stage
+        // checks disk preparation state, not GPU residency. Callers must still
+        // respect independent DXGI limits for speculative uploads.
+        for (auto coordinate : order.active)
+            if (!isPrepared(coordinate)) result.push_back(coordinate);
+        if (!result.empty()) return result;
+
+        for (auto coordinate : order.predictive.sides)
+            if (!isPrepared(coordinate)) result.push_back(coordinate);
+        if (!result.empty()) return result;
+
+        for (auto coordinate : order.predictive.corners)
+            if (!isPrepared(coordinate)) result.push_back(coordinate);
+        return result;
+    }
+
+    inline uint32_t ReusedActiveCount(Coordinate before, Coordinate after)
+    {
+        const auto oldWindow = Active3x3(before);
+        const auto newWindow = Active3x3(after);
+        uint32_t overlap = 0;
+        for (auto now : newWindow)
+            if (std::find(oldWindow.begin(), oldWindow.end(), now) != oldWindow.end())
+                ++overlap;
+        return overlap;
+    }
+
 }
