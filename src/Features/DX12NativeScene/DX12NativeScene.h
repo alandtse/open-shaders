@@ -27,7 +27,7 @@ struct DX12NativeScene final : Feature
 		bool Enabled = true, ShadowMask = true;
 		// Native features follow one DX12 pipeline ownership decision, never per-effect validity gates.
 		bool NativePBR = true, NativeLLF = true, NativeSCM = true;
-		uint32_t BudgetMB = 0, FrameBudgetMB = 0, MaterialBatchMB = 16; // BudgetMB=0: automatic DXGI
+		uint32_t BudgetMB = 0, FrameBudgetMB = 0, MaterialBatchMB = 16; // Retired manual caps; zero means dynamic DXGI.
         uint32_t BudgetPolicyVersion = 1; // Migrate legacy 512 MiB default to auto
         uint32_t GlobalDXGIHeadroomPercent = DX12Native::VideoMemoryBudget::kDefaultHeadroomPercent;
         uint32_t SubdivisionMode = 0; // 0 full; 1 auto after estimate; 2 forced companion prep.

@@ -20,7 +20,7 @@ struct NativeLightingFeature final : Feature
 		uint32_t NormalInfluence = 2, SelectedDirectLight = 0;
 		uint32_t TraceDensityMode = 0; // 0..7, native-resolution sparse ray eligibility.
 		bool StochasticShadows = false, UseAllPreparedLights = true;
-		uint32_t BudgetMB = 0; // 0 = dynamic DXGI local-memory-aware frame pool.
+		uint32_t BudgetMB = 0; // Compatibility only; always dynamic DXGI.
 		bool PersistLab = false;
 	};
 	struct ValidityLab

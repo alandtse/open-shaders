@@ -110,7 +110,7 @@ namespace DX12Native
 
             if (loading || resident == 9) return;
             const auto memory = videoBudget.Query(backend.d3d12Device.get(),tracked,budgetBytes);
-            if (memory.dxgiAvailable && memory.headroom <= memory.reserve) return;
+            if (!memory.dxgiAvailable || memory.effectiveBytes <= tracked) return;
             // One disk-to-GPU upload request per update. All additional GPU
             // allocations are rechecked against DXGI on the loader worker.
             for (auto pos : plan) {

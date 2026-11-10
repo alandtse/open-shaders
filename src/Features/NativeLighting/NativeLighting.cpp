@@ -77,12 +77,7 @@ void NativeLightingFeature::DrawSettings()
 		tuned = true;
 	}
 	if (tuned) ++validityRevision;
-	bool autoBudget = settings.BudgetMB == 0;
-	if (ImGui::Checkbox("Automatic lighting VRAM budget (DXGI)", &autoBudget)) settings.BudgetMB = autoBudget ? 0u : 512u;
-	if (!autoBudget) {
-		int manual = int(settings.BudgetMB);
-		if (ImGui::SliderInt("Lighting frame-pool limit (MiB)", &manual, 64, 4096)) settings.BudgetMB = uint32_t(manual);
-	}
+	ImGui::TextDisabled("Native Lighting VRAM: dynamic DXGI only (shared reserve applies).");
 	ImGui::TextDisabled("DXGI frame-budget telemetry is available in diagnostics; %zu lighting slots.", frames.size());
 	{ std::scoped_lock diagnosticsLock(diagnosticsMutex);
 		ImGui::TextDisabled("Skipped native lighting pixels (GPU completed, cumulative): %llu",
@@ -142,7 +137,7 @@ void NativeLightingFeature::LoadSettings(json& a_json)
 	selected.EmitterRadiusMultiplier = sanitize(selected.EmitterRadiusMultiplier, 1.0f, 0.0f, 8.0f);
 	selected.NormalInfluence = std::min(selected.NormalInfluence, 2u);
 	selected.TraceDensityMode = std::min(selected.TraceDensityMode, 7u);
-	selected.BudgetMB = selected.BudgetMB ? std::clamp(selected.BudgetMB, 64u, 4096u) : 0u;
+	selected.BudgetMB = 0; // Legacy manual cap is ignored.
 	std::scoped_lock lock(settingsMutex);
 	settings = selected;
 	lab = selected.PersistLab && a_json.contains("ValidityLab") ? a_json.at("ValidityLab").get<ValidityLab>() : ValidityLab{};
@@ -281,7 +276,7 @@ void NativeLightingFeature::RegisterUxActions()
 		if (args.contains("selectedLight")) { feature.settings.SelectedDirectLight = args.at("selectedLight").get<uint32_t>(); ++feature.validityRevision; }
 		if (args.contains("normalInfluence")) { feature.settings.NormalInfluence = std::min(args.at("normalInfluence").get<uint32_t>(), 2u); ++feature.validityRevision; }
 		if (args.contains("traceDensityMode")) { feature.settings.TraceDensityMode = std::min(args.at("traceDensityMode").get<uint32_t>(), 7u); ++feature.validityRevision; }
-		if (args.contains("budgetMB")) feature.settings.BudgetMB = args.at("budgetMB").get<uint32_t>() ? std::clamp(args.at("budgetMB").get<uint32_t>(), 64u, 4096u) : 0u;
+		feature.settings.BudgetMB = 0; // Retired budget command.
 	});
 	FEATURE_COMMAND("validityLab", "Set runtime validity controls: depthAgreement, diagnosticDepth, absoluteTolerance, relativeTolerance, materialPolicy (0 strict, 1 neutral, 2 geometry), requireMaskAuthority, assumeMaskAuthoritative, observeMask, runWithoutLighting, referenceVisibility, referencePrimaryTraversal, maskThreshold, maskDistanceTolerance, persistLab.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeLightingFeature*>(self);
@@ -410,8 +405,8 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			if (trackedBytes > UINT64_MAX - frame->bytes) throw std::runtime_error("Native lighting pool accounting overflow");
 			trackedBytes += frame->bytes;
 		}
-		const uint64_t budget = videoBudget.Query(backend.d3d12Device.get(), trackedBytes,
-			uint64_t(a_settings.BudgetMB) * 1024 * 1024).effectiveBytes;
+		const uint64_t budget = videoBudget.Query(
+            backend.d3d12Device.get(), trackedBytes, 0).effectiveBytes;
 		uint64_t bytes = 2 * 1024 * 1024;
 		for (size_t i = 0; i < formats.size(); ++i) {
 			if (!a_settings.CompareCulling && (i == 5 || i == 6)) continue;

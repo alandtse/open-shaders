@@ -41,7 +41,9 @@ namespace DX12Native
         static Snapshot Evaluate(uint64_t budget, uint64_t usage, uint64_t trackedBytes, uint64_t manualLimitBytes = 0)
         {
             Snapshot result{};
-            result.effectiveBytes = manualLimitBytes ? manualLimitBytes : 512ull * kMiB;
+            // Never guess a 512 MiB fallback without DXGI adapter telemetry.
+            // Consumers defer new allocations until the budget can be queried.
+            result.effectiveBytes = 0;
             if (!budget) return result;
             result.dxgiAvailable = true;
             result.localBudget = budget;
