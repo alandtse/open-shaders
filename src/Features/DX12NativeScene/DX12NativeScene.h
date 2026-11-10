@@ -45,6 +45,7 @@ struct DX12NativeScene final : Feature
         bool CacheRuntimeGeometry = false; // Optional background persistence and menu CPU prewarm.
         // Third-person character discovery only. It never changes DXR ownership.
         bool ObserveNativeCharacters = false;
+        bool CharacterPlayerOnly = false;
         uint32_t CharacterMaxActors = 16, CharacterObservationPeriod = 8;
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;

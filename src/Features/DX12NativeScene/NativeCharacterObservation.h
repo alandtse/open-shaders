@@ -40,6 +40,7 @@ namespace DX12Native
     {
         uint32_t frame = 0;
         uint64_t sceneEpoch = 0;
+        bool playerOnly = false;
         std::vector<CharacterActorObservation> actors;
         std::vector<CharacterPartObservation> parts;
         uint32_t droppedActors = 0, droppedParts = 0, invalidParts = 0;
@@ -69,7 +70,7 @@ namespace DX12Native
          * Bounded engine observation is synchronous. Validation, counting and
          * deterministic publication are handled on an independent CPU worker.
          */
-        void Advance(uint32_t frame, uint32_t maxActors, uint32_t periodFrames)
+        void Advance(uint32_t frame, uint32_t maxActors, uint32_t periodFrames, bool playerOnly)
         {
             if (pending && pending->done.load(std::memory_order_acquire)) {
                 auto done = std::move(pending);
@@ -89,12 +90,14 @@ namespace DX12Native
             auto captured = std::make_shared<CharacterObservationGeneration>();
             captured->sceneEpoch = sceneEpoch;
             captured->frame = frame;
+            captured->playerOnly = playerOnly;
             constexpr size_t kMaximumParts = 512;
             constexpr uint32_t kMaximumPartsPerActor = 96;
 
-            // This helper includes the player and high-process NPCs. Visit
-            // exactly Get3D(false): do not observe first-person geometry.
-            Util::ForEachLoadedActor([&](RE::Actor* actor) {
+            // Only Get3D(false): never inspect Skyrim's first-person root.
+            // In player-only mode, skip the high-process actor enumeration
+            // entirely so other actors add zero scenegraph traversal cost.
+            const auto captureActor = [&](RE::Actor* actor) {
                 if (!actor || !actor->Is3DLoaded()) return;
                 if (captured->actors.size() >= maxActors) {
                     ++captured->droppedActors;
@@ -137,7 +140,11 @@ namespace DX12Native
                         !runtime.rendererData->rawIndexData;
                     captured->parts.emplace_back(std::move(part));
                 });
-            });
+            };
+            if (playerOnly)
+                captureActor(RE::PlayerCharacter::GetSingleton());
+            else
+                Util::ForEachLoadedActor(captureActor);
 
             try {
                 auto work = std::make_shared<Work>();
@@ -185,7 +192,9 @@ namespace DX12Native
         {
             auto current = GetPublished();
             return {
-                { "mode", "third-person-observe-only" },
+                { "mode", current && current->playerOnly ?
+                    "third-person-player-only" : "third-person-observe-only" },
+                { "playerOnly", current ? current->playerOnly : false },
                 { "firstPersonIncluded", false },
                 { "nativeShadowOwnership", false },
                 { "workerBusy", workerBusy.load(std::memory_order_acquire) },

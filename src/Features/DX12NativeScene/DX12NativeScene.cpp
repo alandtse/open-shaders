@@ -20,7 +20,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterMaxActors, CharacterObservationPeriod, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterPlayerOnly, CharacterMaxActors, CharacterObservationPeriod, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -350,7 +350,11 @@ void DX12NativeScene::DrawSettings()
     ImGui::SeparatorText("Native Characters (third-person; observation only)");
     if (ImGui::Checkbox("Observe third-person character meshes", &settings.ObserveNativeCharacters) &&
         !settings.ObserveNativeCharacters) nativeCharacters.Reset();
-    ImGui::TextDisabled("Includes player, NPCs and creatures; never inspects Get3D(true).");
+    if (ImGui::Checkbox("Observe player only", &settings.CharacterPlayerOnly))
+        nativeCharacters.Reset();
+    ImGui::TextDisabled(settings.CharacterPlayerOnly ?
+        "Only the third-person player root is inspected." :
+        "Includes third-person player, NPCs and creatures.");
     ImGui::TextDisabled("No DXR character ownership, deformation or raster changes yet.");
     int maxActors = int(settings.CharacterMaxActors);
     if (ImGui::SliderInt("Maximum observed actors", &maxActors, 1, 32))
@@ -592,6 +596,9 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	settings.NativeSCM = selected.NativeSCM;
     settings.CaptureSCMRigidCasters = selected.CaptureSCMRigidCasters;
     settings.ObserveNativeCharacters = selected.ObserveNativeCharacters;
+    if (settings.CharacterPlayerOnly != selected.CharacterPlayerOnly)
+        nativeCharacters.Reset();
+    settings.CharacterPlayerOnly = selected.CharacterPlayerOnly;
     settings.CharacterMaxActors = std::clamp(selected.CharacterMaxActors, 1u, 32u);
     settings.CharacterObservationPeriod = std::clamp(selected.CharacterObservationPeriod, 1u, 120u);
     settings.GlobalDXGIHeadroomPercent = reservePercent;
@@ -892,6 +899,10 @@ void DX12NativeScene::EarlyPrepass()
 	const SKSE::stl::scope_exit publish([this]() noexcept { try { PublishDiagnostics(); } catch (...) {} });
 	AdvanceCoverage();
 	DX12Native::RetireMaterialUploads();
+    // DataLoaded starts the opt-in disk flush before any native CELL/WRLD
+    // material or geometry files may be requested. Never load stale cache
+    // data while deletion is in progress or failed; raster stays available.
+    if (!globals::features::dx12Resources.DiskGeometryCacheReady()) return;
 	{
 		std::scoped_lock lock(settingsMutex);
 		if (const auto enabled = requestedEnabled.exchange(-1); enabled >= 0) settings.Enabled = enabled != 0;
@@ -1299,7 +1310,8 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 		a_inputs.masks, a_inputs.masks2, a_inputs.reflectance, a_inputs.motion };
 	const auto frame = globals::game::graphicsState->GetFrameCount();
     if (settings.ObserveNativeCharacters)
-        nativeCharacters.Advance(frame, settings.CharacterMaxActors, settings.CharacterObservationPeriod);
+        nativeCharacters.Advance(frame, settings.CharacterMaxActors,
+            settings.CharacterObservationPeriod, settings.CharacterPlayerOnly);
 	const globals::FrameBuffer* camera = nullptr;
 	if (!globals::game::isVR && globals::game::frameBufferCachedValid && globals::game::frameBufferCachedFrame == frame) {
 		const auto& cached = globals::game::frameBufferCached.nonVR;
