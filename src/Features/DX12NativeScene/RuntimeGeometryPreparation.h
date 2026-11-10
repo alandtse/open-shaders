@@ -192,14 +192,30 @@ namespace DX12Native
      */
     inline std::shared_ptr<const PreparedCell> ComposeCurrentSceneGeometry(
         const std::shared_ptr<const PreparedCell>& baseline,
-        const std::shared_ptr<const PreparedCell>& runtime, uint64_t sceneEpoch)
+        const std::shared_ptr<const PreparedCell>& runtime, uint64_t sceneEpoch,
+        const std::shared_ptr<const PreparedCell>& previousCombined = {},
+        const std::shared_ptr<const PreparedCell>& previousRuntime = {},
+        const std::shared_ptr<const PreparedCell>& previousBaseline = {})
     {
         if (!baseline || !baseline->snapshot || !runtime || !runtime->snapshot ||
             baseline->snapshot->scope.scene != sceneEpoch ||
             runtime->snapshot->scope.scene != sceneEpoch) return {};
 
-        auto result = std::make_shared<PreparedCell>(*baseline);
-        auto snapshot = std::make_shared<Snapshot>(*baseline->snapshot);
+        // Immutable snapshots remain safe for in-flight rays. When the
+        // authoritative baseline is identical and runtime geometry only
+        // appended new instances, copy the previously composed generation
+        // and inspect just the runtime delta instead of merging it all again.
+        const bool incremental = previousBaseline == baseline &&
+            previousCombined && previousCombined->snapshot &&
+            previousRuntime && previousRuntime->snapshot &&
+            previousCombined->snapshot->scope.scene == sceneEpoch &&
+            previousRuntime->snapshot->scope.scene == sceneEpoch &&
+            runtime->snapshot->instances.size() >= previousRuntime->snapshot->instances.size();
+        const auto& source = incremental ? previousCombined : baseline;
+        auto result = std::make_shared<PreparedCell>(*source);
+        auto snapshot = std::make_shared<Snapshot>(*source->snapshot);
+        const size_t firstRuntime = incremental ?
+            previousRuntime->snapshot->instances.size() : 0;
         std::unordered_set<std::string> occupied;
         occupied.reserve(snapshot->instances.size() + runtime->snapshot->instances.size());
         const auto key = [](const Instance& value) {
@@ -209,7 +225,8 @@ namespace DX12Native
             if (!instance.preparedIdentity.referenceKey.empty() && !instance.preparedIdentity.shapeName.empty())
                 occupied.insert(key(instance));
         size_t appended = 0;
-        for (const auto& incoming : runtime->snapshot->instances) {
+        for (size_t i = firstRuntime; i < runtime->snapshot->instances.size(); ++i) {
+            const auto& incoming = runtime->snapshot->instances[i];
             if (snapshot->instances.size() >= 8192) {
                 ++snapshot->omissions["current-scene-instance-limit"];
                 break;
@@ -233,7 +250,10 @@ namespace DX12Native
         }
         if (!appended) return {};
         result->geometries.insert(runtime->geometries.begin(), runtime->geometries.end());
-        result->bytes += runtime->bytes;
+        // A previously composed generation already accounted for all earlier
+        // runtime allocations. Never add them a second time.
+        result->bytes += incremental ?
+            runtime->bytes - previousRuntime->bytes : runtime->bytes;
         snapshot->generation = baseline->snapshot->generation + runtime->snapshot->generation;
         snapshot->sweep = snapshot->generation;
         snapshot->scope.batch = snapshot->generation;
@@ -256,6 +276,7 @@ namespace DX12Native
             std::vector<std::string> keys;
             std::shared_ptr<const PreparedCell> result;
             std::shared_ptr<const PreparedCell> composed;
+            std::shared_ptr<const PreparedCell> baseline;
             std::string failure;
         };
     public:
@@ -264,6 +285,7 @@ namespace DX12Native
             pending.reset(); // Detached worker owns all its input data.
             prepared.reset();
             composed.reset();
+            composedBaseline.reset();
             attempted.clear();
             epoch = 0;
             batches = 0;
@@ -279,7 +301,12 @@ namespace DX12Native
             if (epoch != sceneEpoch) { Reset(); epoch = sceneEpoch; }
             if (pending && pending->done.load(std::memory_order_acquire)) {
                 for (const auto& key : pending->keys) attempted.insert(key);
-                if (pending->result) { prepared = pending->result; composed = pending->composed; ++batches; }
+                if (pending->result) {
+                    prepared = pending->result;
+                    composed = pending->composed;
+                    composedBaseline = pending->baseline;
+                    ++batches;
+                }
                 else ++failures;
                 cacheHits += pending->cacheHits;
                 pending.reset();
@@ -303,14 +330,18 @@ namespace DX12Native
             }
             if (next.empty()) return;
             try {
+                work->baseline = baseline;
                 static BS::thread_pool<> pool{ 1 };
                 pool.detach_task([work, source = std::move(next), backend,
-                    previous = prepared, budget, sceneEpoch, prewarm = std::move(prewarmed),
-                    baseline = std::move(baseline)] {
+                    previous = prepared, previousCombined = composed,
+                    previousBaseline = composedBaseline, budget, sceneEpoch,
+                    prewarm = std::move(prewarmed), baseline = std::move(baseline)] {
                     try {
                         work->result = PrepareRuntimeGeometryBatch(
                             backend, source, previous, sceneEpoch, budget, prewarm, &work->cacheHits);
-                        work->composed = ComposeCurrentSceneGeometry(baseline, work->result, sceneEpoch);
+                        work->composed = ComposeCurrentSceneGeometry(
+                            baseline, work->result, sceneEpoch,
+                            previousCombined, previous, previousBaseline);
                     }
                     catch (const std::exception& error) { work->failure = error.what(); }
                     work->done.store(true, std::memory_order_release);
@@ -331,7 +362,7 @@ namespace DX12Native
         uint64_t epoch = 0, scannedMailboxRevision = UINT64_MAX;
         uint32_t batches = 0, failures = 0, cacheHits = 0;
         std::unordered_set<std::string> attempted;
-        std::shared_ptr<const PreparedCell> prepared, composed;
+        std::shared_ptr<const PreparedCell> prepared, composed, composedBaseline;
         std::shared_ptr<Work> pending;
     };
 }
