@@ -77,6 +77,8 @@ TEST_CASE("Native exterior WRLD subcells keep a stable cache identity across CEL
 TEST_CASE("All native light transports have the same 64-source capacity", "[dx12-native-scene][lights]")
 {
     STATIC_REQUIRE(DX12Native::kMaximumNativePointLights == 64);
+    // Shader analogue: directContract.hlsli defines MaximumDirectLights = 64.
+    // Keep this contract synchronized before changing either buffer layout.
     STATIC_REQUIRE(DX12Native::kNativeLightRecordTexels == 8);
     STATIC_REQUIRE(DX12Native::kNativeShadowLightTextureWidth == 512);
 }
