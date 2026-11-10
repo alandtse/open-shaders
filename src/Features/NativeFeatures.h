@@ -51,6 +51,8 @@ struct NativeLLFFeature final : Feature
     // stays authoritative, while live observations remain available to SCM.
     std::atomic<bool> contributeUnmatched{ true };
     std::atomic<float> matchDistanceUnits{ 64.0f };
+    // Radiance gain for supplementary LLF-only emitters, never prepared scene lights.
+    std::atomic<float> contribution{ 1.0f };
     static constexpr uint32_t kMaxUnifiedLights = 32;
     struct SourceIdentity
     {
@@ -70,11 +72,14 @@ struct NativeLLFFeature final : Feature
     UnifiedLights BuildUnifiedLights(std::span<const DX12Native::PreparedPointLight> prepared,
         uint32_t frame, bool allowRecent = false) const;
     void PublishLights(const LightLimitFix::LightData* data, uint32_t count, const float3& eye, uint32_t frame);
+    /** Clear the native light snapshot when a cell changes or a loading screen opens/closes. */
+    void ClearCapturedLights();
     std::shared_ptr<const LightFrame> GetLightFrame(uint32_t frame) const;
     std::shared_ptr<const LightFrame> GetRecentLightFrame(uint32_t frame) const;
 private:
     mutable std::mutex lightMutex;
     std::shared_ptr<const LightFrame> lightFrame;
+    std::atomic<bool> transitionOpen{ false };
 public:
     std::string GetName() override { return "NativeLLF"; }
     std::string GetShortName() override { return "NativeLLF"; }
@@ -84,9 +89,12 @@ public:
     void DrawSettings() override;
     void LoadSettings(json&) override;
     void SaveSettings(json&) override;
+    void OnSceneTransitionReset(bool a_open) override;
+    void OnRuntimeDisabled() override { ClearCapturedLights(); }
+    void GameLoaded() override { ClearCapturedLights(); }
     void RestoreDefaultSettings() override
     {
-        enabled = true; contributeUnmatched = true; matchDistanceUnits = 64.0f;
+        enabled = true; contributeUnmatched = true; matchDistanceUnits = 64.0f; contribution = 1.0f;
     }
     json GetDiagnostics() override;
 };

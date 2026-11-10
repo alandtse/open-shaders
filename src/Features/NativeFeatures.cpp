@@ -61,11 +61,22 @@ bool NativeSCMFeature::OwnsStaticForLight(const RE::BSShadowLight* source, int32
     return false;
 }
 
+void NativeLLFFeature::ClearCapturedLights()
+{
+    std::scoped_lock lock(lightMutex);
+    lightFrame.reset();
+}
+
+void NativeLLFFeature::OnSceneTransitionReset(bool a_open)
+{
+    transitionOpen.store(a_open, std::memory_order_release);
+    ClearCapturedLights();
+}
+
 void NativeLLFFeature::PublishLights(const LightLimitFix::LightData* data, uint32_t count, const float3& eye, uint32_t frame)
 {
-    if (!IsActive()) {
-        std::scoped_lock lock(lightMutex);
-        lightFrame.reset();
+    if (!IsActive() || transitionOpen.load(std::memory_order_acquire)) {
+        ClearCapturedLights();
         return;
     }
     auto generation = std::make_shared<LightFrame>();
@@ -87,17 +98,20 @@ void NativeLLFFeature::PublishLights(const LightLimitFix::LightData* data, uint3
         generation->lights.push_back(light);
     }
     std::scoped_lock lock(lightMutex);
-    lightFrame = std::move(generation);
+    // A loading transition may have started while the new snapshot was built.
+    // Never republish the old cell after its clear operation.
+    if (transitionOpen.load(std::memory_order_acquire)) lightFrame.reset();
+    else lightFrame = std::move(generation);
 }
 std::shared_ptr<const NativeLLFFeature::LightFrame> NativeLLFFeature::GetLightFrame(uint32_t frame) const
 {
     std::scoped_lock lock(lightMutex);
-    return lightFrame && lightFrame->frame == frame ? lightFrame : nullptr;
+    return !transitionOpen.load(std::memory_order_acquire) && lightFrame && lightFrame->frame == frame ? lightFrame : nullptr;
 }
 std::shared_ptr<const NativeLLFFeature::LightFrame> NativeLLFFeature::GetRecentLightFrame(uint32_t frame) const
 {
     std::scoped_lock lock(lightMutex);
-    return lightFrame && uint32_t(frame - lightFrame->frame) <= 1u ? lightFrame : nullptr;
+    return !transitionOpen.load(std::memory_order_acquire) && lightFrame && uint32_t(frame - lightFrame->frame) <= 1u ? lightFrame : nullptr;
 }
 
 
@@ -117,7 +131,8 @@ NativeLLFFeature::UnifiedLights NativeLLFFeature::BuildUnifiedLights(
 
     const float units = std::clamp(matchDistanceUnits.load(std::memory_order_relaxed), 0.0f, 512.0f);
     const float radiusSquared = units * units;
-    const bool contribute = contributeUnmatched.load(std::memory_order_relaxed);
+    const float gain = std::clamp(contribution.load(std::memory_order_relaxed), 0.0f, 4.0f);
+    const bool contribute = contributeUnmatched.load(std::memory_order_relaxed) && gain > 0.0f;
     std::array<float, kMaxUnifiedLights> identityDistances{};
     identityDistances.fill(std::numeric_limits<float>::infinity());
     const auto distanceSquared = [](const float3& a, const float3& b) {
@@ -161,7 +176,9 @@ NativeLLFFeature::UnifiedLights NativeLLFFeature::BuildUnifiedLights(
         if (!contribute) { ++result.omitted; continue; }
         if (result.count == result.lights.size()) { ++result.overflow; continue; }
         const uint32_t target = result.count++;
-        result.lights[target] = { live.position, live.radiance, live.radius, live.sourceRadius, true };
+        result.lights[target] = { live.position,
+            { live.radiance.x * gain, live.radiance.y * gain, live.radiance.z * gain },
+            live.radius, live.sourceRadius, true };
         result.source[target] = { live.position, live.radius, live.flags, live.shadowSlot, true };
         identityDistances[target] = 0.0f;
         ++result.added;
@@ -196,6 +213,10 @@ void NativeLLFFeature::DrawSettings()
     bool add = contributeUnmatched.load(std::memory_order_relaxed);
     if (ImGui::Checkbox("Contribute unmatched LLF lights", &add))
         contributeUnmatched.store(add, std::memory_order_relaxed);
+    float gain = contribution.load(std::memory_order_relaxed);
+    if (ImGui::SliderFloat("NativeLLF contribution", &gain, 0.0f, 4.0f, "%.2fx"))
+        contribution.store(gain, std::memory_order_relaxed);
+    ImGui::TextDisabled("Scales unmatched LLF emitter radiance only; prepared lighting remains unchanged.");
     float units = matchDistanceUnits.load(std::memory_order_relaxed);
     if (ImGui::SliderFloat("Clustering distance (Skyrim units)", &units, 0.0f, 512.0f, "%.0f units"))
         matchDistanceUnits.store(units, std::memory_order_relaxed);
@@ -209,6 +230,8 @@ void NativeLLFFeature::DrawSettings()
         ImGui::Text("LLF clustered %u | omitted %u | overflow %u",
             merged.clusteredLive, merged.omitted, merged.overflow);
     }
+    ImGui::TextDisabled("LLF-only lights participate in DXR shadows against prepared TLAS geometry.");
+    ImGui::TextDisabled("Moving objects require their geometry in the TLAS for fully RT-cast shadows.");
     ImGui::TextDisabled("Up to 32 unified lights per current native dispatch.");
 }
 void NativeSCMFeature::DrawSettings()
@@ -229,6 +252,9 @@ void NativeLLFFeature::LoadSettings(json& j)
     const float value = j.value("MatchDistanceUnits", 64.0f);
     matchDistanceUnits.store(std::isfinite(value) ? std::clamp(value, 0.0f, 512.0f) : 64.0f,
         std::memory_order_relaxed);
+    const float strength = j.value("Contribution", 1.0f);
+    contribution.store(std::isfinite(strength) ? std::clamp(strength, 0.0f, 4.0f) : 1.0f,
+        std::memory_order_relaxed);
 }
 void NativeSCMFeature::LoadSettings(json& j) { enabled.store(j.value("Enabled", true), std::memory_order_relaxed); }
 void NativePBRFeature::SaveSettings(json& j) { j = { { "Enabled", enabled.load(std::memory_order_relaxed) } }; }
@@ -236,7 +262,8 @@ void NativeLLFFeature::SaveSettings(json& j)
 {
     j = { { "Enabled", enabled.load(std::memory_order_relaxed) },
         { "ContributeUnmatched", contributeUnmatched.load(std::memory_order_relaxed) },
-        { "MatchDistanceUnits", matchDistanceUnits.load(std::memory_order_relaxed) } };
+        { "MatchDistanceUnits", matchDistanceUnits.load(std::memory_order_relaxed) },
+        { "Contribution", contribution.load(std::memory_order_relaxed) } };
 }
 void NativeSCMFeature::SaveSettings(json& j) { j = { { "Enabled", enabled.load(std::memory_order_relaxed) } }; }
 json NativePBRFeature::GetDiagnostics()
@@ -251,6 +278,7 @@ json NativeLLFFeature::GetDiagnostics()
     json report{ { "selected", enabled.load() }, { "native", IsActive() },
         { "contributeUnmatched", contributeUnmatched.load() },
         { "matchDistanceUnits", matchDistanceUnits.load() },
+        { "contribution", contribution.load() },
         { "observedLights", lights ? lights->lights.size() : size_t{0} } };
     const auto scene = globals::features::dx12NativeScene.GetPublishedScene();
     if (scene && globals::game::graphicsState) {
@@ -259,6 +287,7 @@ json NativeLLFFeature::GetDiagnostics()
         report["unifiedLights"] = merged.count;
         report["matchedLLFLights"] = merged.matched;
         report["addedLLFLights"] = merged.added;
+        report["rtShadowEligibleLLFLights"] = merged.added;
         report["clusteredLLFLights"] = merged.clusteredLive;
         report["omittedLLFLights"] = merged.omitted;
         report["overflowLights"] = merged.overflow;

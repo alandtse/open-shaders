@@ -589,6 +589,9 @@ uint64_t DX12NativeScene::SceneMemoryLimit(uint64_t trackedBytes)
 
 void DX12NativeScene::ResetScene()
 {
+    // NativeLLF generations are cell-scoped. Do not retain old counts or
+    // shadow-slot identities after new cells, loading screens or scene resets.
+    globals::features::nativeLLF.ClearCapturedLights();
 	++revision;
 	cellID = 0;
 	submitted = false;
