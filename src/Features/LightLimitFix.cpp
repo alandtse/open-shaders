@@ -1498,7 +1498,8 @@ void LightLimitFix::UpdateLights()
 
 	// Export the already-gathered CPU buffer at the existing LLF boundary.
 	// All native allocation, conversion and publication live in NativeLLF.
-	globals::features::nativeLLF.PublishLights(lightsData.data(), lightCount, eyePositionCached[0],
+	globals::features::nativeLLF.PublishLights(lightsData.data(), lightCount,
+		float3{ eyePositionCached[0].x, eyePositionCached[0].y, eyePositionCached[0].z },
 		globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : globals::state->frameCount);
 
 	{

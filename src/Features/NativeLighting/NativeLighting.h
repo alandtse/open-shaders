@@ -79,6 +79,14 @@ struct NativeLightingFeature final : Feature
 	std::shared_ptr<const Contribution> GetContribution(uint32_t a_frame) const;
 	/** @brief Retains a contribution through a downstream GPU completion fence. */
 	bool RetainContribution(const std::shared_ptr<const Contribution>& a_frame, ID3D12Fence* a_fence, uint64_t a_value);
+	/** @brief NativeSCM queries direct-light selection through the owning feature,
+	 *  without reading NativeLighting's private settings from external code. */
+	bool SelectsLightForNativeShadows(uint32_t index)
+	{
+		std::scoped_lock lock(settingsMutex);
+		return loaded && settings.Enabled &&
+			(settings.UseAllPreparedLights || settings.SelectedDirectLight == index);
+	}
 	~NativeLightingFeature();
 
 private:

@@ -10,6 +10,7 @@
 #include "Features/DX12NativeScene/DX12NativeScene.h"
 #include "Features/DX12Resources/DX12Resources.h"
 #include "Features/NativeLighting/NativeLighting.h"
+#include "Features/NativeFeatures.h"
 #include "Features/NativeComposite/NativeComposite.h"
 #include "Features/ProceduralSun.h"
 #if defined(ENABLE_EFFECTS11)

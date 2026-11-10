@@ -41,8 +41,7 @@ bool NativeSCMFeature::OwnsStaticForLight(const RE::BSShadowLight* source, int32
 
         const bool maskSelected = nativeScene.settings.ShadowMask &&
             (nativeScene.settings.ShadowAllLights || nativeScene.settings.ShadowLightIndex == index);
-        const bool directSelected = direct.loaded && direct.settings.Enabled &&
-            (direct.settings.UseAllPreparedLights || direct.settings.SelectedDirectLight == index);
+        const bool directSelected = direct.SelectsLightForNativeShadows(static_cast<uint32_t>(index));
         if (!maskSelected && !directSelected) continue;
 
         const auto& p = niLight->world.translate;
