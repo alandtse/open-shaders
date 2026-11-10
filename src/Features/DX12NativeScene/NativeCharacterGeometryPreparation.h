@@ -216,7 +216,9 @@ namespace DX12Native
         const std::shared_ptr<const CharacterMeshGeneration>& prior,
         uint64_t sceneEpoch, uint64_t maxResidentBytes = 16ull * 1024 * 1024)
     {
-        if (!prior || !device || !incoming ||
+        // Never attach a pose to geometry retained from an earlier scene.
+        if (!prior || prior->sceneEpoch != sceneEpoch) return {};
+        if (!device || !incoming ||
             incoming->registers.size() != incoming->registerCount ||
             incoming->registerCount != incoming->boneCount * 3u ||
             incoming->registerCount > 240u) return prior;
