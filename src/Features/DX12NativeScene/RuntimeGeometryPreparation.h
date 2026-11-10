@@ -5,6 +5,7 @@
 #include "RuntimeGeometryCacheWorker.h"
 #include "Utils/D3D.h"
 #include <BS_thread_pool.hpp>
+#include <algorithm>
 #include <atomic>
 #include <directx/d3dx12.h>
 #include <exception>
@@ -274,6 +275,9 @@ namespace DX12Native
             uint64_t epoch = 0;
             uint32_t cacheHits = 0;
             std::vector<std::string> keys;
+            // Owned attempt history moves onto the worker while its batch is in flight.
+            std::shared_ptr<std::unordered_set<std::string>> attempted;
+            bool empty = false;
             std::shared_ptr<const PreparedCell> result;
             std::shared_ptr<const PreparedCell> composed;
             std::shared_ptr<const PreparedCell> baseline;
@@ -287,6 +291,7 @@ namespace DX12Native
             composed.reset();
             composedBaseline.reset();
             attempted.clear();
+            pendingAttemptedCount = 0;
             epoch = 0;
             batches = 0;
             failures = 0;
@@ -300,54 +305,75 @@ namespace DX12Native
         {
             if (epoch != sceneEpoch) { Reset(); epoch = sceneEpoch; }
             if (pending && pending->done.load(std::memory_order_acquire)) {
-                for (const auto& key : pending->keys) attempted.insert(key);
+                // Only a completed job can transfer its attempt set back onto
+                // the frame thread. No hashing or key insertion is needed here.
+                if (pending->attempted) attempted = std::move(*pending->attempted);
+                pendingAttemptedCount = 0;
                 if (pending->result) {
                     prepared = pending->result;
                     composed = pending->composed;
                     composedBaseline = pending->baseline;
                     ++batches;
-                }
-                else ++failures;
+                } else if (!pending->empty) ++failures;
                 cacheHits += pending->cacheHits;
                 pending.reset();
             }
-            if (pending || !backend.d3d12Device || !budget ||
-                scannedMailboxRevision == mailbox.Revision()) return;
-            scannedMailboxRevision = mailbox.Revision();
-            const auto items = mailbox.Export(0, mailbox.Count());
-            std::vector<std::shared_ptr<const RuntimeGeometryPacket>> next;
+            if (pending || !backend.d3d12Device || !budget) return;
+            const auto mailboxRevision = mailbox.Revision();
+            if (scannedMailboxRevision == mailboxRevision) return;
+            // Only immutable packet handles cross the scene thread; sorting,
+            // key construction and batch admission run on the native worker.
+            auto items = mailbox.SnapshotUnordered();
+            if (items.empty()) { scannedMailboxRevision = mailboxRevision; return; }
             auto work = std::make_shared<Work>();
             work->epoch = sceneEpoch;
-            const uint64_t batchBytes = std::max<uint64_t>(512ull * 1024, budget / 32);
-            uint64_t selectedBytes = 0;
-            for (const auto& item : items) {
-                const auto key = item->referenceKey + '\0' + item->shapeName;
-                if (attempted.contains(key)) continue;
-                if (selectedBytes && item->Bytes() > batchBytes - selectedBytes) break;
-                next.push_back(item);
-                work->keys.push_back(key);
-                selectedBytes += item->Bytes();
-            }
-            if (next.empty()) return;
+            work->baseline = baseline;
+            pendingAttemptedCount = attempted.size();
+            work->attempted = std::make_shared<std::unordered_set<std::string>>(std::move(attempted));
             try {
-                work->baseline = baseline;
                 static BS::thread_pool<> pool{ 1 };
-                pool.detach_task([work, source = std::move(next), backend,
+                pool.detach_task([work, source = std::move(items), backend,
                     previous = prepared, previousCombined = composed,
                     previousBaseline = composedBaseline, budget, sceneEpoch,
-                    prewarm = std::move(prewarmed), baseline = std::move(baseline)] {
+                    prewarm = std::move(prewarmed), baseline = std::move(baseline)]() mutable {
                     try {
-                        work->result = PrepareRuntimeGeometryBatch(
-                            backend, source, previous, sceneEpoch, budget, prewarm, &work->cacheHits);
-                        work->composed = ComposeCurrentSceneGeometry(
-                            baseline, work->result, sceneEpoch,
-                            previousCombined, previous, previousBaseline);
-                    }
-                    catch (const std::exception& error) { work->failure = error.what(); }
+                        std::sort(source.begin(), source.end(), [](const auto& a, const auto& b) {
+                            if (a->referenceKey != b->referenceKey)
+                                return a->referenceKey < b->referenceKey;
+                            return a->shapeName < b->shapeName;
+                        });
+                        std::vector<std::shared_ptr<const RuntimeGeometryPacket>> next;
+                        const uint64_t batchBytes = std::max<uint64_t>(512ull * 1024, budget / 32);
+                        uint64_t selectedBytes = 0;
+                        for (const auto& item : source) {
+                            const auto key = item->referenceKey + '\0' + item->shapeName;
+                            if (work->attempted->contains(key)) continue;
+                            if (selectedBytes && item->Bytes() > batchBytes - selectedBytes) break;
+                            next.push_back(item);
+                            work->keys.push_back(key);
+                            selectedBytes += item->Bytes();
+                        }
+                        for (const auto& key : work->keys) work->attempted->insert(key);
+                        if (next.empty()) {
+                            work->empty = true;
+                        } else {
+                            work->result = PrepareRuntimeGeometryBatch(
+                                backend, next, previous, sceneEpoch, budget, prewarm, &work->cacheHits);
+                            work->composed = ComposeCurrentSceneGeometry(
+                                baseline, work->result, sceneEpoch,
+                                previousCombined, previous, previousBaseline);
+                        }
+                    } catch (const std::exception& error) { work->failure = error.what(); }
+                    catch (...) { work->failure = "Unknown native geometry worker failure"; }
                     work->done.store(true, std::memory_order_release);
                 });
+                scannedMailboxRevision = mailboxRevision;
                 pending = std::move(work);
-            } catch (const std::exception&) { ++failures; }
+            } catch (const std::exception&) {
+                attempted = std::move(*work->attempted);
+                pendingAttemptedCount = 0;
+                ++failures;
+            }
         }
 
         std::shared_ptr<const PreparedCell> GetCell() const { return prepared; }
@@ -356,12 +382,13 @@ namespace DX12Native
         uint32_t Batches() const { return batches; }
         uint32_t Failures() const { return failures; }
         uint32_t CacheHits() const { return cacheHits; }
-        size_t Attempted() const { return attempted.size(); }
+        size_t Attempted() const { return pending ? pendingAttemptedCount : attempted.size(); }
 
     private:
         uint64_t epoch = 0, scannedMailboxRevision = UINT64_MAX;
         uint32_t batches = 0, failures = 0, cacheHits = 0;
         std::unordered_set<std::string> attempted;
+        size_t pendingAttemptedCount = 0;
         std::shared_ptr<const PreparedCell> prepared, composed, composedBaseline;
         std::shared_ptr<Work> pending;
     };

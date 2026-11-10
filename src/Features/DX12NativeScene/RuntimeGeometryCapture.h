@@ -171,6 +171,16 @@ namespace DX12Native
             if (removed) ++revision;
             return removed;
         }
+        // Render-side acquisition performs no sorting or filtering. Packet
+        // storage is already immutable, so workers own safe snapshots.
+        std::vector<std::shared_ptr<const RuntimeGeometryPacket>> SnapshotUnordered() const
+        {
+            std::scoped_lock lock(mutex);
+            std::vector<std::shared_ptr<const RuntimeGeometryPacket>> output;
+            output.reserve(entries.size());
+            for (const auto& [key, packet] : entries) output.push_back(packet);
+            return output;
+        }
         std::vector<std::shared_ptr<const RuntimeGeometryPacket>> Export(size_t start, size_t limit) const
         {
             std::scoped_lock lock(mutex);
