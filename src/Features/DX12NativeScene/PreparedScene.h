@@ -28,6 +28,7 @@ namespace DX12Native
 		std::vector<json> roomDefinitions;
 		std::string digest;
 		uint64_t bytes = 0;
+        uint32_t sharedGeometryHits = 0, sharedShadingHits = 0;
 		uint32_t maskedInstances = 0;
 		uint32_t shadedInstances = 0;
 		uint32_t tangentInstances = 0;

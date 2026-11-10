@@ -13,6 +13,8 @@
 #include <thread>
 #include <functional>
 #include <format>
+#include <mutex>
+#include <unordered_map>
 
 namespace DX12Native
 {
@@ -112,6 +114,20 @@ namespace DX12Native
 			return geometry;
 		}
 
+
+        // DX12 device + verified content hash: weak pointers never pin GPU
+        // resources beyond the owning, fenced scene.
+        struct SharedPreparedBuffers
+        {
+            std::mutex mutex;
+            std::unordered_map<std::string, std::weak_ptr<const Geometry>> geometry;
+            std::unordered_map<std::string, std::weak_ptr<const VertexAttributes>> shading;
+        };
+        SharedPreparedBuffers& PreparedBufferCache()
+        {
+            static SharedPreparedBuffers cache;
+            return cache;
+        }
 
         // Budget is a scene-wide ceiling: zero selects DXGI automatic mode.
         // Geometry uploads proceed in this owned worker, retaining completed
@@ -223,14 +239,30 @@ namespace DX12Native
 					throw std::runtime_error("Prepared geometry path invalid");
 				auto found = geometries.find(hash);
 				if (found == geometries.end()) {
-                    const auto bytes = geometryPack.Get(hash);
-                    if (bytes.size() < 16) throw std::runtime_error("Prepared RSGM geometry header truncated");
-                    const uint64_t allocation = uploads.Required(bytes.size() - 16);
-                    const uint64_t allowance = uploads.Available(allocation, true);
-                    auto geometry = Upload(a_backend, bytes, allowance);
-					result->bytes += geometry->allocationBytes;
-					result->geometries.emplace(geometry->source.get(), geometry);
-					found = geometries.emplace(hash, std::move(geometry)).first;
+                    const auto cacheKey = std::format("{:p}:{}",
+                        static_cast<const void*>(a_backend.d3d12Device.get()), hash);
+                    auto& shared = PreparedBufferCache();
+                    std::shared_ptr<const Geometry> geometry;
+                    {
+                        std::scoped_lock lock(shared.mutex);
+                        if (auto it = shared.geometry.find(cacheKey); it != shared.geometry.end())
+                            geometry = it->second.lock();
+                    }
+                    if (geometry) ++result->sharedGeometryHits;
+                    else {
+                        const auto bytes = geometryPack.Get(hash);
+                        if (bytes.size() < 16) throw std::runtime_error("Prepared RSGM geometry header truncated");
+                        const auto allocation = uploads.Required(bytes.size() - 16);
+                        const auto allowance = uploads.Available(allocation, true);
+                        geometry = Upload(a_backend, bytes, allowance);
+                        std::scoped_lock lock(shared.mutex);
+                        shared.geometry[cacheKey] = geometry;
+                        if (shared.geometry.size() > 4096)
+                            std::erase_if(shared.geometry, [](const auto& item) { return item.second.expired(); });
+                    }
+                    result->bytes += geometry->allocationBytes;
+                    result->geometries.emplace(geometry->source.get(), geometry);
+                    found = geometries.emplace(hash, std::move(geometry)).first;
                     if (progress) progress(geometries.size(), result->bytes);
 				}
 				Instance instance;
@@ -294,14 +326,31 @@ namespace DX12Native
 					if (IsDigest(shadingHash) && shadingFile == "shading/" + shadingHash + ".rsga") {
 						if (!shadingCache.contains(shadingHash) && !shadingFailures.contains(shadingHash)) {
 							try {
-								const auto bytes = shadingPack.Get(shadingHash);
-                                if (bytes.size() < 16) throw std::runtime_error("Prepared RSGA shading header truncated");
-                                const auto required = uploads.Required(bytes.size() - 16);
-                                const auto allowance = uploads.Available(required, false);
-                                if (!allowance) throw std::runtime_error("deferred:prepared-shading-headroom");
-                                auto shading = UploadShading(a_backend, bytes, instance.mesh->vertexCount, allowance);
-								result->bytes += shading->allocationBytes;
-								shadingCache.emplace(shadingHash, std::move(shading));
+								const auto key = std::format("{:p}:{}:{}",
+                                    static_cast<const void*>(a_backend.d3d12Device.get()),
+                                    shadingHash, instance.mesh->vertexCount);
+                                auto& shared = PreparedBufferCache();
+                                std::shared_ptr<const VertexAttributes> shading;
+                                {
+                                    std::scoped_lock lock(shared.mutex);
+                                    if (auto it = shared.shading.find(key); it != shared.shading.end())
+                                        shading = it->second.lock();
+                                }
+                                if (shading) ++result->sharedShadingHits;
+                                else {
+                                    const auto bytes = shadingPack.Get(shadingHash);
+                                    if (bytes.size() < 16) throw std::runtime_error("Prepared RSGA shading header truncated");
+                                    const auto required = uploads.Required(bytes.size() - 16);
+                                    const auto allowance = uploads.Available(required, false);
+                                    if (!allowance) throw std::runtime_error("deferred:prepared-shading-headroom");
+                                    shading = UploadShading(a_backend, bytes, instance.mesh->vertexCount, allowance);
+                                    std::scoped_lock lock(shared.mutex);
+                                    shared.shading[key] = shading;
+                                    if (shared.shading.size() > 4096)
+                                        std::erase_if(shared.shading, [](const auto& item) { return item.second.expired(); });
+                                }
+                                result->bytes += shading->allocationBytes;
+                                shadingCache.emplace(shadingHash, std::move(shading));
 							} catch (const std::exception& error) { shadingFailures.emplace(shadingHash, error.what()); }
 						}
 						if (const auto attributes = shadingCache.find(shadingHash); attributes != shadingCache.end() && attributes->second->vertexCount == instance.mesh->vertexCount) {
@@ -465,6 +514,8 @@ namespace DX12Native
 			{ "unsupportedLightCount", cell ? cell->nativeLights.size() - supportedLights : 0 },
 			{ "failure", state && !busy && state->completedRevision == revision ? state->failure : "" },
 			{ "geometryBytes", cell ? cell->bytes : 0 }, { "meshes", cell ? cell->geometries.size() : 0 },
+            { "sharedGeometryHits", cell ? cell->sharedGeometryHits : 0u },
+            { "sharedShadingHits", cell ? cell->sharedShadingHits : 0u },
 			{ "instances", cell ? cell->snapshot->instances.size() : 0 }, { "maskedInstances", cell ? cell->maskedInstances : 0 },
 			{ "shadedInstances", cell ? cell->shadedInstances : 0 },
 			{ "tangentInstances", cell ? cell->tangentInstances : 0 },
