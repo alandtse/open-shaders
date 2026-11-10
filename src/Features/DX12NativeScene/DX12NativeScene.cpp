@@ -20,7 +20,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterPlayerOnly, CharacterStageGeometryDX12, CharacterRunSkinningDX12, CharacterValidateSkinningDX12, CharacterBuildIsolatedBLASDX12, CharacterBuildIsolatedTLASDX12, CharacterRunIsolatedRayQueryDX12, CharacterMaxActors, CharacterObservationPeriod, CharacterBLASIntervalFrames, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CaptureSCMRigidCasters, CacheRuntimeGeometry, ObserveNativeCharacters, CharacterPlayerOnly, CharacterStageGeometryDX12, CharacterRunSkinningDX12, CharacterValidateSkinningDX12, CharacterBuildIsolatedBLASDX12, CharacterBuildIsolatedTLASDX12, CharacterRunIsolatedRayQueryDX12, CharacterShadowCasterVisibility, CharacterMaxActors, CharacterObservationPeriod, CharacterBLASIntervalFrames, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -394,6 +394,18 @@ void DX12NativeScene::DrawSettings()
     if (ImGui::Checkbox("Trace isolated character RayQuery (diagnostic only)",
         &settings.CharacterRunIsolatedRayQueryDX12)) nativeCharacters.Reset();
     ImGui::EndDisabled();
+    ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
+        !settings.CharacterStageGeometryDX12 ||
+        !settings.CharacterRunSkinningDX12 ||
+        !settings.CharacterValidateSkinningDX12 ||
+        !settings.CharacterBuildIsolatedBLASDX12 ||
+        !settings.CharacterBuildIsolatedTLASDX12 ||
+        !settings.CharacterRunIsolatedRayQueryDX12 || !settings.ShadowMask);
+    ImGui::Checkbox("Character shadows in native visibility (experimental)",
+        &settings.CharacterShadowCasterVisibility);
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Only secondary shadow rays use the character TLAS.");
+    ImGui::TextDisabled("Default off; no character receiver/material ownership.");
     ImGui::TextDisabled(settings.CharacterPlayerOnly ?
         "Only the third-person player root is inspected." :
         "Includes third-person player, NPCs and creatures.");
@@ -502,7 +514,12 @@ void DX12NativeScene::DrawSettings()
     const auto rayError = characterStats.value("isolatedRayError", std::string{});
     if (!rayError.empty())
         ImGui::TextWrapped("Isolated RayQuery: %s", rayError.c_str());
-    ImGui::TextDisabled("Character TLAS and RayQuery remain separate from production.");
+    const auto casterReadiness = nativeCharacters.GetCasterReadiness(
+        globals::game::graphicsState ?
+            globals::game::graphicsState->GetFrameCount() : 0u);
+    ImGui::TextWrapped("Character shadow eligibility: %s",
+        casterReadiness.reason);
+    ImGui::TextDisabled("World-bound plausibility is not exact pose parity.");
     const auto characterDeformError = characterStats.value("deformError", std::string{});
     if (!characterDeformError.empty())
         ImGui::TextWrapped("Deformation status: %s", characterDeformError.c_str());
@@ -756,6 +773,7 @@ void DX12NativeScene::LoadSettings(json& a_json)
     if (settings.CharacterRunIsolatedRayQueryDX12 != selected.CharacterRunIsolatedRayQueryDX12)
         nativeCharacters.Reset();
     settings.CharacterRunIsolatedRayQueryDX12 = selected.CharacterRunIsolatedRayQueryDX12;
+    settings.CharacterShadowCasterVisibility = selected.CharacterShadowCasterVisibility;
     settings.CharacterBLASIntervalFrames =
         std::clamp(selected.CharacterBLASIntervalFrames, 1u, 120u);
     settings.CharacterMaxActors = std::clamp(selected.CharacterMaxActors, 1u, 32u);
@@ -1438,8 +1456,19 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 		shadowSettings.ShadowStochastic, shadowSettings.ShadowDistanceFade, shadowSettings.ShadowNormalInfluence,
 		shadowSettings.ShadowTraceDensityMode
 	};
+    const bool requestCharacterCaster =
+        shadowSettings.CharacterShadowCasterVisibility &&
+        shadowSettings.ObserveNativeCharacters &&
+        shadowSettings.CharacterStageGeometryDX12 &&
+        shadowSettings.CharacterRunSkinningDX12 &&
+        shadowSettings.CharacterValidateSkinningDX12 &&
+        shadowSettings.CharacterBuildIsolatedBLASDX12 &&
+        shadowSettings.CharacterBuildIsolatedTLASDX12 &&
+        shadowSettings.CharacterRunIsolatedRayQueryDX12;
+    auto characterCaster = requestCharacterCaster ?
+        nativeCharacters.GetCasterReadiness(frame).tlas : nullptr;
 	shadow.Dispatch(*backend, scene->acceleration, scene->materials, selectedLights, camera, size, frame,
-		0ull, controls);
+		0ull, controls, std::move(characterCaster));
 	shadowStatus = shadow.Status();
 }
 

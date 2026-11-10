@@ -4,6 +4,7 @@
 #include "GraphicsInterop.h"
 #include "PreparedScene.h"
 #include "ShadowBindings.h"
+#include "NativeCharacterIsolatedTLAS.h"
 #include "VideoMemoryBudget.h"
 #include <span>
 
@@ -21,6 +22,8 @@ namespace DX12Native
 	{
 		std::shared_ptr<const TopLevel> scene;
 		std::shared_ptr<const ShadowBindings> bindings;
+        // Retained through native shadow GPU completion and every consumer.
+        std::shared_ptr<const CharacterIsolatedTLAS> characterCasters;
 		std::unique_ptr<WrappedResource> mask, lights;
 		DirectX::SimpleMath::Matrix rayProjInverse, rayViewInverse;
         winrt::com_ptr<ID3D12Resource> cameraConstants; // Native DX12 camera matrices.
@@ -47,7 +50,8 @@ namespace DX12Native
 		~ShadowTrace();
 		/** @brief Attempts current-frame shadow tracing without waiting for bindings or GPU work. */
 		void Dispatch(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, std::shared_ptr<const ShadowBindings> a_bindings, std::span<const PreparedPointLight> a_lights,
-			const globals::FrameBuffer& a_camera, std::array<uint32_t, 2> a_size, uint32_t a_frame, uint64_t a_budget, const ShadowTraceControls& a_controls);
+			const globals::FrameBuffer& a_camera, std::array<uint32_t, 2> a_size, uint32_t a_frame, uint64_t a_budget, const ShadowTraceControls& a_controls,
+            std::shared_ptr<const CharacterIsolatedTLAS> a_characterCasters = {});
 		/** @brief Returns a matching mask; consumers must wait on its completion fence. */
 		std::shared_ptr<const ShadowFrame> Get(uint32_t a_frame) const;
 		/** @brief Retains an offered mask until the registered consumer fence completes. */

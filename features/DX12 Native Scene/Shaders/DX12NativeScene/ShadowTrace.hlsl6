@@ -1,4 +1,6 @@
 RaytracingAccelerationStructure Scene : register(t0);
+// Separate optional third-person caster TLAS. Never used for primary receivers.
+RaytracingAccelerationStructure CharacterCasters : register(t7);
 // The t1 slot remains reserved for the existing descriptor heap layout;
 // receiver rays are now computed in the native DX12 RayQuery shader.
 Texture2D<float4> Receivers : register(t1);
@@ -16,6 +18,10 @@ RWTexture2D<float4> IndirectSpecular : register(u7);
 struct RoomVolume { float4 inverse0; float4 inverse1; float4 inverse2; float4 halfExtents; };
 StructuredBuffer<RoomVolume> RoomVolumes : register(t6);
 static const uint OpaqueInstanceMask = 1;
+cbuffer NativeCharacterCasterControl : register(b2)
+{
+    uint CharacterCasterEnabled;
+};
 
 cbuffer NativeRayCamera : register(b1)
 {
@@ -91,6 +97,16 @@ bool TraceDirectVisibility(float3 origin, float3 direction, float distance, out 
 		if (AdmitShadowCandidate(instance, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), valid)) query.CommitNonOpaqueTriangleHit();
 	}
 	visible = query.CommittedStatus() == COMMITTED_NOTHING;
+    // Only secondary light-visibility rays see character triangles. Receiver
+    // rays and the prepared material bindings continue using Scene alone.
+    // An invalid prepared-world candidate is never "rescued" by a character.
+    if (valid && visible && CharacterCasterEnabled != 0u) {
+        RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> character;
+        character.TraceRayInline(CharacterCasters, RAY_FLAG_NONE, 0x01, ray);
+        while (character.Proceed()) { }
+        if (character.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
+            visible = false;
+    }
 	return valid;
 }
 

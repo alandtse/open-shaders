@@ -25,7 +25,7 @@ namespace DX12Native
 		ranges[3] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3, 0, 0 };
 		ranges[4] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, ShadowBindings::kMaximumInstances, 0, 2, 0 };
 		ranges[5] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kMaximumTexturePools, 0, 3, 0 };
-		D3D12_ROOT_PARAMETER parameters[12]{};
+		D3D12_ROOT_PARAMETER parameters[14]{};
 		parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
 		parameters[0].Descriptor.ShaderRegister = 0;
 		for (uint32_t i = 0; i < 3; ++i) {
@@ -47,6 +47,12 @@ namespace DX12Native
         // Extra root CBV uses two DWORDs; remains within the 64-DWORD limit.
         parameters[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         parameters[11].Descriptor.ShaderRegister = 1;
+        // t7: optional character-caster TLAS. b2: independent one-DWORD
+        // enable gate. They do not change the 36-DWORD shadow constants.
+        parameters[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+        parameters[12].Descriptor.ShaderRegister = 7;
+        parameters[13].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        parameters[13].Constants = { 2, 0, 1 };
         D3D12_STATIC_SAMPLER_DESC samplers[4]{};
 		for (uint32_t i = 0; i < 4; ++i) {
 			samplers[i].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -175,6 +181,9 @@ namespace DX12Native
 			{ "lightCount", current ? current->lightSnapshot.size() : 0 },
 			{ "traceDensityMode", current ? current->controls.traceDensityMode : 0u },
 			{ "rayPreparationAPI", "DX12 SM6.5 fused RayQuery" },
+            { "characterCasterOffered", current && bool(current->characterCasters) },
+            { "characterCasterPoseFrame", current && current->characterCasters ?
+                current->characterCasters->poseFrame : 0u },
 			{ "fullWidth", current ? current->width : 0u }, { "fullHeight", current ? current->height : 0u } };
 	}
 
@@ -253,6 +262,15 @@ namespace DX12Native
         commands->SetComputeRootConstantBufferView(11,
             a_frame.cameraConstants->GetGPUVirtualAddress());
 		commands->SetComputeRootShaderResourceView(0, a_frame.scene->result->GetGPUVirtualAddress());
+        const bool useCharacter = a_frame.characterCasters &&
+            a_frame.characterCasters->Ready() &&
+            a_frame.characterCasters->acceleration;
+        // Root SRV must remain valid even when the character path is off.
+        commands->SetComputeRootShaderResourceView(12,
+            useCharacter ?
+                a_frame.characterCasters->acceleration->GetGPUVirtualAddress() :
+                a_frame.scene->result->GetGPUVirtualAddress());
+        commands->SetComputeRoot32BitConstant(13, useCharacter ? 1u : 0u, 0);
 		auto gpu = a_frame.bindings->heap->GetGPUDescriptorHandleForHeapStart();
 		gpu.ptr += uint64_t(a_descriptorBase) * step;
 		commands->SetComputeRootDescriptorTable(1, gpu);
@@ -311,7 +329,8 @@ namespace DX12Native
 		a_frame.readyValue = signal;
 	}
 	void ShadowTrace::Dispatch(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, std::shared_ptr<const ShadowBindings> a_bindings, std::span<const PreparedPointLight> a_lights,
-		const globals::FrameBuffer& a_camera, std::array<uint32_t, 2> a_size, uint32_t a_frame, uint64_t a_budget, const ShadowTraceControls& a_controls)
+		const globals::FrameBuffer& a_camera, std::array<uint32_t, 2> a_size, uint32_t a_frame, uint64_t a_budget, const ShadowTraceControls& a_controls,
+        std::shared_ptr<const CharacterIsolatedTLAS> a_characterCasters)
 	{
 		CS_GPU_PASS("DX12NativeScene::ShadowMaskDispatch");
 		if (current && current->frame == a_frame) return;
@@ -336,6 +355,10 @@ namespace DX12Native
 			}
 		}
 		if (!RetireScenesExcept(a_scene)) { status = "Previous shadow scene is still in use"; return; }
+        if (a_characterCasters &&
+            (!a_characterCasters->Ready() ||
+             !a_characterCasters->acceleration || !a_characterCasters->bottom))
+            a_characterCasters.reset();
 		auto tables = std::move(a_bindings);
 		if (!tables || tables->scene != a_scene) {
 			status = "Prepared scene material bindings unavailable";
@@ -404,6 +427,7 @@ namespace DX12Native
 			slot->consumers.clear();
 			slot->scene = std::move(a_scene);
 			slot->bindings = std::move(tables);
+            slot->characterCasters = std::move(a_characterCasters);
 			slot->frame = a_frame;
 			slot->lightSnapshot.assign(a_lights.begin(), a_lights.end());
 			slot->controls = a_controls;
