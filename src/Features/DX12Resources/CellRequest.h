@@ -15,6 +15,11 @@ namespace DX12ResourceService
     {
         std::string plugin;
         uint32_t localId = 0;
+        // Exterior uses a persistent WRLD FormKey, independent of the
+        // temporary exterior CELL under the player's feet.
+        bool worldspace = false;
+        std::string CacheFamily() const { return worldspace ? "worldspaces" : "cells"; }
+        std::string ScopedKey() const { return (worldspace ? "WRLD:" : "CELL:") + Key(); }
         std::string Key() const { return std::format("{:06X}:{}", localId, plugin); }
     };
 
