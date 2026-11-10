@@ -1,0 +1,173 @@
+# Release Process and Branch Model
+
+This document describes the branching model, semantic release workflow, patch flows, manual packaging targets, and release stages (Alpha / Beta) used in Open Shaders.
+
+## Conventional Commit Version Impact
+
+PRs are squash-merged, so the **PR title** becomes the commit message that semantic-release reads. The type of commit determines the version bump for the next release.
+
+### Type → release impact table
+
+| Type       | Use for                                                   | Release impact          |
+| ---------- | --------------------------------------------------------- | ----------------------- |
+| `feat`     | New user-facing feature or capability                     | **minor** (1.X.0)       |
+| `fix`      | Bug fix to user-facing behavior                           | **patch** (1.5.X)       |
+| `perf`     | Performance improvement to user-facing behavior           | **patch** (1.5.X)       |
+| `revert`   | Revert of a prior commit                                  | follows reverted commit |
+| `build`    | Build system, packaging, dependencies (CMake, vcpkg, AIO) | none                    |
+| `chore`    | Maintenance, misc tooling, repo hygiene                   | none                    |
+| `ci`       | CI workflows, GitHub Actions, lint configs                | none                    |
+| `docs`     | Documentation, comments, READMEs, CLAUDE.md               | none                    |
+| `refactor` | Code restructuring with no behavior change                | none                    |
+| `style`    | Formatting, whitespace, missing semicolons                | none                    |
+| `test`     | Tests, test fixtures, test infrastructure                 | none                    |
+
+-   **Breaking Changes:** Append `!` to the type (or add a `BREAKING CHANGE:` footer) for **major** release bumps (X.0.0).
+
+---
+
+## Release Branch Model
+
+| Branch         | Role                            | Releases produced                                                               |
+| -------------- | ------------------------------- | ------------------------------------------------------------------------------- |
+| `main`         | Stable release channel          | `vX.Y.Z`                                                                        |
+| `dev`          | Integration / RC                | `vX.Y.Z-rc.N` prereleases                                                       |
+| `hotfix/X.Y.x` | Maintenance for **older** lines | `vX.Y.Z` on the `X.Y` channel (also reused as staging for current-line patches) |
+
+### Branch Lineage Invariant
+
+After every release reconciles, `main` is an ancestor of `dev`, so every tag on `main` is reachable from `dev`. The `Release: Semantic Version` workflow keeps this invariant in two ways depending on the promotion source:
+
+-   **dev → main promotion** (minor/major): `main` fast-forwards to the `dev` SHA, semantic-release appends a `chore(release):` commit on top, then `dev` fast-forwards to absorb that commit. No history rewrites.
+-   **hotfix-staging → main promotion** (current-line patch): `main` fast-forwards to the hotfix-staging SHA, semantic-release appends the `chore(release):` commit, then `dev` is **rebase-reconciled** onto the new `main`. `git rebase` drops `dev`'s originals of the cherry-picked fixes (patch-id match) and replays any unique `dev` work on top. This is the only place the workflow force-pushes (`--force-with-lease`).
+
+After a hotfix release, open PRs targeting `dev` are auto-rebased by the `Auto-rebase open PRs` workflow. PRs from forks need "Allow edits by maintainers" enabled or the action silently skips them; drafts and PRs labeled `no-auto-rebase` are also excluded.
+
+---
+
+## Step-by-Step Walkthroughs
+
+### Patch Flow (Current line or Older line)
+
+1. Land the fix on `dev` via normal PR (if applicable).
+2. Dispatch **Actions → Release: Hotfix Candidate** — auto-creates/reuses `hotfix/X.Y.x` from the latest stable tag, cherry-picks eligible `fix:`/`perf:` commits, opens a PR.
+3. PR checks build a `vX.Y.Z-prNNNN` prerelease for verification.
+4. Merge the candidate PR.
+5. Cut the release:
+    - **Current line** (`main` is on `X.Y`): dispatch **Release: Semantic Version** on `main` with `ff_target = <hotfix/X.Y.x tip SHA>`.
+    - **Older line** (`main` has shipped a newer minor/major): dispatch **Release: Semantic Version** on `hotfix/X.Y.x` with `ff_target` empty.
+
+### Minor / Major Release Flow
+
+1. Cut RCs from `dev`: dispatch **Release: Semantic Version** on `dev`, `ff_target` empty → `vX.Y.Z-rc.N`.
+2. When ready, dispatch **Release: Semantic Version** on `main` with `ff_target = <dev SHA>` (typically the latest RC's SHA). The workflow FFs `main`, runs semantic-release to cut stable, then FFs `dev` to absorb the `chore(release):` commit.
+
+### Two-phase promotion
+
+A dispatch loads workflow and composite-action files from the dispatched ref, so a promotion whose `ff_target` changes `.github/workflows/` or `.github/actions/` would otherwise run main's stale copies. In that case the run fast-forwards `main`, then re-dispatches itself (phase 2) with `base_sha` set to main's previous tip, and phase 2 performs the release with the promoted workflow, action and `tools/` files. Phase 1 (`plan` and `promote`) runs `tools/release_plan.py` from the dispatched `main` checkout.
+
+-   If the re-dispatched run is superseded by a newer dispatch, main is promoted but no release exists. The stranded run's summary prints the recovery `gh workflow run ... -f ff_target=... -f base_sha=...` command.
+-   `single_phase=true` skips detection and is the only bypass if the plan itself is broken.
+-   The cut that first lands this mechanism still runs main's old workflow. For a coupled workflow-plus-tool change in that cut, fast-forward `main` to `ff_target` by hand, then dispatch with `base_sha` set to main's previous tip.
+
+---
+
+## Release Stages (Alpha / Beta)
+
+Features can declare a release-maturity stage in their `.ini` `[Info]` section. This drives the default-enabled state, a UI marker, and the version-audit policy.
+
+### Declaring a Stage
+
+In `features/<Feature>/Shaders/Features/<Feature>.ini`:
+
+```ini
+[Info]
+Version = 0-2-0
+Beta = True
+```
+
+-   **Flags:** `Alpha` or `Beta`. Truthy values are `true`, `1`, `yes`, `on` (case-insensitive). Absent or non-truthy means full **Release**.
+-   `Alpha` takes precedence over `Beta` when both are set.
+-   The flag line must start the line (after optional whitespace). The CMake parser in `CMakeLists.txt` and the Python parser in `tools/feature_version_audit.py` are both line-anchored; **keep these two regexes in sync**.
+
+### Build-time Baking
+
+`CMakeLists.txt` collects flagged features into `FEATURE_ALPHA_NAMES` / `FEATURE_BETA_NAMES` in the generated `FeatureVersions.h`.
+
+### Runtime API (`src/Feature.h`)
+
+-   `Feature::GetReleaseStage()` returns `ReleaseStage::{Release, Beta, Alpha}` by looking the short name up in the baked sets. Resolve it once and pass it around; it is not cached.
+-   `IsAlpha()` / `IsBeta()` convenience predicates.
+-   `static GetReleaseStageTag(ReleaseStage)` returns the localized `[ALPHA]` / `[BETA]` marker (empty for Release). It takes the stage so callers that already resolved it avoid a redundant lookup.
+-   `IsDisabledByDefault()` returns `true` for any non-Release stage, so **Alpha/Beta features start disabled on first install**. Users can still enable them via the "Disable at Boot" menu; do not add a redundant `IsDisabledByDefault` override on a feature that already carries a stage flag.
+
+### UI
+
+-   `FeatureListRenderer` draws the stage tag next to the feature name. Alpha uses the theme `StatusPalette.Error` color, Beta uses `StatusPalette.Warning`.
+
+### Versioning Convention (Enforced by `tools/feature_version_audit.py`)
+
+-   Pre-release features use `0.x` versions.
+-   Beta starts at `0-2-0`, Alpha at `0-1-0`.
+-   `alpha -> beta` bumps the minor and resets the patch.
+-   Within the same pre-release stage, normal semver applies inside `0.x`.
+-   A breaking change (`feat!:` / `BREAKING CHANGE:`) on a pre-release feature **promotes it to release `1-0-0` and strips the Alpha/Beta flag**. `--apply-bumps` performs both the version bump and the flag removal automatically.
+-   Stage transitions are exact-match enforced (and may legitimately LOWER the version, e.g. release `1.x` -> beta `0-2-0`), unlike the lenient `>` check used within a stage.
+
+---
+
+## Compiler Lanes
+
+The shared C++ build (`_shared-build.yaml`) builds each preset with two compilers: `vs2026` (MSVC, the `PR`/`ALL` presets) and `clang-cl` (the `PR-ClangCL`/`ALL-ClangCL` twins). Only the entry marked `primary: true` can fail the workflow and uploads `dist-artifacts`; the other is advisory, and its package is uploaded as `dist-artifacts-<name>` for 7 days so it can be downloaded and tested.
+
+To ship clang-cl, swap `primary` between the two matrix entries, after the SE and VR runtime gate has passed on clang binaries. A release dispatch loads the workflow from the dispatched ref, so the swap reaches RC cuts from `dev` at once and stable cuts through the two-phase promotion above; check the "Show clang-cl toolchain" step or the build log to confirm which compiler produced a release.
+
+### Experimental clang-cl DLL
+
+The FOMOD installer offers the advisory clang-cl build as a "Plugin Build" page with two radio choices: "Default build (recommended)", pre-selected, and "clang-cl build (experimental, may be faster)", whose text states the measured 3 to 13 percent CPU saving and its uncertainty. Each choice installs exactly one plugin DLL: when the page is offered, the default DLL and its PDB move out of `Core` into the default choice, so no installer has to resolve two files with one destination. A same-path overwrite at higher priority was tried and Vortex kept the `Core` DLL, so do not reintroduce it. The clang DLL comes from the clang-cl lane's AIO built from the same source as the release. If that build is missing, or its DLL is absent, under 1 MB or not a PE file, the FOMOD is built without the page and the default DLL stays in `Core`.
+
+The clang build has not passed the full SE and VR runtime gate that the MSVC build has, which is why it is an opt-in. Its performance edge is directional: single-leg tests showed 3 to 13 percent lower CPU time in render zones in 3 of 4 scenes, with leg-to-leg noise of 5 to 10 percent, no gain from AVX2, and a 1 to 2 percent cost from keeping `std::isfinite` correct (`-fno-finite-math-only`). One real undefined-behavior difference has already surfaced.
+
+To promote clang-cl to the default, follow the gate under Compiler Lanes above.
+
+## FOMOD and Prebuilt Cache Assets
+
+The release attach job (`_attach-release-artifacts.yaml`) wraps the AIO in a FOMOD whose installer offers the prebuilt shader caches as optional downloads. Every optional piece is dropped, never shipped broken:
+
+-   A fresh cache must pass `tools/verify_shader_cache.py structure` (readable `Info.ini`, a valid manifest that matches the blobs one to one, intact DXBC in every blob) before it is packaged. An existing cache asset reused from the release is checked the same way, and a cache archive that fails `7z t` is discarded.
+-   `build-fomod-package.py` re-checks each cache and omits any option whose cache is missing or fails the check, with a `::warning::` in the log. If every cache is dropped the FOMOD is just the AIO. It also fails if the plugin DLL is absent from the AIO, and if `ModuleConfig.xml` names a file that is not in the staged tree.
+-   If the FOMOD cannot be built or its archive fails `7z t` or lacks `ModuleConfig.xml` or the plugin DLL, the release ships the plain AIO instead of failing.
+
+A release with a dropped cache is still valid; look for these warnings in the attach job when a cache option is unexpectedly missing.
+
+Release caches combine the validation matrix with the live-captured engine variants and standalone feature shaders in `.github/configs/shader-cache-inputs.json`. To refresh that supplementary capture, run the default AIO profile with Debug logging, load an outdoor scene, and run `python tools/build-shader-cache.py --capture-inputs <OpenShaders.log> .github/configs/shader-cache-inputs.json`. The builder checks the captured feature profile, removes debug compiler flags, and maps engine descriptors and macros to SE or VR. Standalone cache names use relative shader paths, so the installed game location does not change them. VR caches exclude features that do not support VR.
+
+Both the local builder and release CI require zero shader warnings except the existing X1519 suppression. Verify extracted caches with `tools/verify_shader_cache.py artifact`, then use its `snapshot` and `session` commands for the live reuse check. A matching default installation must leave the cache unchanged and load every queued shader from disk; changing shader defines or installing shader overrides can require additional variants.
+
+The builder expands Screen Space Shadows' default sample counts across supported flat resolutions and supplies both VR eye variants and the VR-only synchronization and HMD-mask shaders. This coverage is generated from the captured request and the runtime's default rules rather than assuming the capture machine's resolution or upscaler.
+
+## Manual Packaging Targets
+
+These targets are defined in `CMakeLists.txt` and are useful when you want precise control over packaging (CI artifacts, local QA, or manual deployment):
+
+```bash
+# Create the Core package (includes CORE features + plugin DLL)
+cmake --build ./build/ALL --target Package-Core
+
+# Create a manual AIO package (.7z) via install + tar
+cmake --build ./build/ALL --target Package-AIO-Manual
+
+# Create an individual feature package (non-CORE features)
+cmake --build ./build/ALL --target Package-<Feature>
+
+# Install into the AIO folder (installs to build/<preset>/aio)
+cmake --build ./build/ALL --target AIO
+
+# Alternatively use cmake --install to install to a custom prefix
+cmake --install ./build/ALL --prefix <TARGET_DIR>
+```
+
+-   `Package-Core` collects everything marked as CORE and the built plugin into a temporary folder, then tars it to `dist/${PROJECT_NAME}-${UTC_NOW}.7z`.
+-   `Package-<Feature>` targets create `${FEATURE}-${UTC_NOW}.7z` in `dist/`.
+-   `Package-AIO-Manual` performs an install to the AIO folder and then creates a single AIO archive (similar to the automated `AIO_ZIP_PACKAGE`, but wired as an explicit file-producing target).
+-   `AIO` target runs `cmake --install` with the `aio` prefix to inspect the folder layout without creating an archive.
