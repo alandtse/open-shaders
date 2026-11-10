@@ -407,6 +407,21 @@ void DX12NativeScene::DrawSettings()
         ImGui::TextDisabled("Max displacement vs bind pose: %.2f game units",
             characterStats.value("validationMaximumBindDisplacement", 0.0f));
     ImGui::TextDisabled("Sanity checks do not prove Skyrim skinning parity.");
+    ImGui::Text("Dynamic BLAS preflight: DXR %s, DXGI headroom %s",
+        characterStats.value("blasPreflightDXR", false) ? "ready" : "unavailable",
+        characterStats.value("blasPreflightBudget", false) ? "sufficient" : "insufficient/unknown");
+    if (characterStats.value("blasPreflightReady", false)) {
+        constexpr double mib = 1024.0 * 1024.0;
+        ImGui::TextDisabled("BLAS result %.2f MiB, scratch %.2f MiB, update scratch %.2f MiB",
+            double(characterStats.value("blasPreflightResultBytes", uint64_t{ 0 })) / mib,
+            double(characterStats.value("blasPreflightScratchBytes", uint64_t{ 0 })) / mib,
+            double(characterStats.value("blasPreflightUpdateScratchBytes", uint64_t{ 0 })) / mib);
+        const auto preflightStatus =
+            characterStats.value("blasPreflightStatus", std::string{});
+        if (!preflightStatus.empty())
+            ImGui::TextWrapped("Character BLAS plan: %s", preflightStatus.c_str());
+    }
+    ImGui::TextDisabled("No character BLAS or TLAS is built or published.");
     const auto characterDeformError = characterStats.value("deformError", std::string{});
     if (!characterDeformError.empty())
         ImGui::TextWrapped("Deformation status: %s", characterDeformError.c_str());

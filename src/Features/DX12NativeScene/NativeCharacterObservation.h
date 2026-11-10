@@ -4,6 +4,7 @@
 #include "Features/DX12NativeScene/NativeCharacterMeshCapture.h"
 #include "Features/DX12NativeScene/NativeCharacterGeometryPreparation.h"
 #include "Features/DX12NativeScene/NativeCharacterDeformation.h"
+#include "Features/DX12NativeScene/NativeCharacterBLASPreflight.h"
 
 #include <BS_thread_pool.hpp>
 #include <algorithm>
@@ -51,6 +52,7 @@ namespace DX12Native
         std::shared_ptr<const CharacterMeshGeneration> stagedGeometry;
         std::shared_ptr<const CharacterDeformedResult> deformed;
         std::optional<CharacterDeformValidation> validation;
+        std::optional<CharacterBLASPreflight> blasPreflight;
         std::string deformationError;
         uint32_t capturedMeshes = 0;
         uint64_t capturedBytes = 0;
@@ -265,9 +267,21 @@ namespace DX12Native
                             // Never wait for the GPU; consume completed debug
                             // readbacks only on this native CPU worker.
                             if (previous->deformed && previous->deformed->Ready()) {
-                                if (auto checked =
-                                    InspectCharacterDeformation(previous->deformed))
-                                    output->validation = std::move(checked);
+                                if (!output->validation ||
+                                    output->validation->poseFrame !=
+                                        previous->deformed->poseFrame) {
+                                    if (auto checked =
+                                        InspectCharacterDeformation(previous->deformed))
+                                        output->validation = std::move(checked);
+                                }
+                                output->blasPreflight = previous->blasPreflight;
+                                if (!output->blasPreflight ||
+                                    output->blasPreflight->poseFrame !=
+                                        previous->deformed->poseFrame) {
+                                    if (auto estimated = PreflightCharacterDynamicBLAS(
+                                        nativeDevice.get(), previous->deformed))
+                                        output->blasPreflight = std::move(estimated);
+                                }
                             }
                         }
                         if (runSkinning && pose && output->stagedGeometry &&
@@ -352,6 +366,23 @@ namespace DX12Native
                     current->validation->minimum : std::array<float,3>{} },
                 { "validationMaximum", current && current->validation ?
                     current->validation->maximum : std::array<float,3>{} },
+                { "blasPreflightReady", current && current->blasPreflight.has_value() },
+                { "blasPreflightPoseFrame", current && current->blasPreflight ?
+                    current->blasPreflight->poseFrame : 0u },
+                { "blasPreflightDXR", current && current->blasPreflight &&
+                    current->blasPreflight->dxrSupported },
+                { "blasPreflightBudget", current && current->blasPreflight &&
+                    current->blasPreflight->budgetAvailable },
+                { "blasPreflightResultBytes", current && current->blasPreflight ?
+                    current->blasPreflight->resultBytes : 0ull },
+                { "blasPreflightScratchBytes", current && current->blasPreflight ?
+                    current->blasPreflight->scratchBytes : 0ull },
+                { "blasPreflightUpdateScratchBytes", current && current->blasPreflight ?
+                    current->blasPreflight->updateScratchBytes : 0ull },
+                { "blasPreflightAvailableBytes", current && current->blasPreflight ?
+                    current->blasPreflight->availableBytes : 0ull },
+                { "blasPreflightStatus", current && current->blasPreflight ?
+                    current->blasPreflight->status : std::string("No completed character pose") },
                 { "deformError", current ? current->deformationError : std::string{} },
                 { "dxgiCharacterBudget", current && current->stagedGeometry ?
                     current->stagedGeometry->budgetBytes : 0ull },
