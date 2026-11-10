@@ -548,6 +548,8 @@ public:
 
 	/**
 	 * @brief Updates the shared constant buffer data based on world state and rendering pass.
+	 * @note Every call re-uploads the whole buffer from a zeroed struct, so a field only set when a_inWorld is true
+	 * reads as zero after an out-of-world call. WaterData is carried over from the last in-world call.
 	 * @param a_inWorld Whether the camera is in world space.
 	 * @param a_prepass Whether this is a prepass rendering phase.
 	 */
