@@ -31,6 +31,7 @@ struct DX12NativeScene final : Feature
         uint32_t BudgetPolicyVersion = 1; // Migrate legacy 512 MiB default to auto
         uint32_t GlobalDXGIHeadroomPercent = DX12Native::VideoMemoryBudget::kDefaultHeadroomPercent;
         uint32_t SubdivisionMode = 0; // 0 full; 1 auto after estimate; 2 forced companion prep.
+        bool AutoGridMemoryScreening = true; // false: automatic mode uses grid directly.
         uint32_t SubcellSize = 4096; // 2048..16384 in 1024 unit steps
         bool BuildCandidateGridTLAS = false; // Disabled-by-default isolated DXR test.
         bool UseGridForNativeDXR = false; // Opt-in only, require matching TLAS/material generation.
@@ -137,6 +138,12 @@ private:
     DX12Native::AccelerationWorker candidateGridAcceleration;
     DX12Native::ShadowBindingWorker candidateGridBindings;
     std::shared_ptr<const DX12Native::PreparedCell> lastSubmittedGridCell;
+    // Atomic publication unit: keep all three resources together through
+    // candidate builds, GPU fences, and later 3x3 recentering.
+    std::optional<PublishedScene> stableGridPublished;
+    DX12Native::SpatialSubcells::Coordinate stableGridCenter{};
+    uint64_t gridHandoffs = 0;
+    bool autoGridDecisionLatched = false;
     std::shared_ptr<const DX12Native::TopLevel> requestedCandidateMaterialScene;
     uint64_t candidateMaterialAllowance = 0;
     DX12Native::RuntimeGeometryMailbox runtimeGeometry;

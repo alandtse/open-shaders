@@ -20,7 +20,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode, NativeShadowRayPreparation)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, AutoGridMemoryScreening, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode, NativeShadowRayPreparation)
 
 
 namespace
@@ -419,6 +419,12 @@ void DX12NativeScene::DrawSettings()
         settings.SubdivisionMode = static_cast<uint32_t>(gridMode);
         resetRequested.store(true, std::memory_order_release);
     }
+    if (settings.SubdivisionMode == 1) {
+        ImGui::Checkbox("Screen prepared scene size before automatic subdivision",
+            &settings.AutoGridMemoryScreening);
+        ImGui::TextDisabled("Off: automatic mode immediately selects the grid; on: DXGI-based scene screening.");
+        ImGui::TextDisabled("An automatic grid decision stays latched until scene reset.");
+    }
     int gridUnits = static_cast<int>(settings.SubcellSize / 1024);
     if (ImGui::SliderInt("Subcell width (x1024 units)", &gridUnits, 2, 16)) {
         settings.SubcellSize = uint32_t(gridUnits * 1024);
@@ -433,7 +439,8 @@ void DX12NativeScene::DrawSettings()
     if (ImGui::Checkbox("Experimental: publish ready grid to native DXR", &settings.UseGridForNativeDXR))
         resetRequested.store(true, std::memory_order_release);
     ImGui::EndDisabled();
-    ImGui::TextDisabled("Opt-in: only an exact matching current-center TLAS and materials become live.");
+    ImGui::TextDisabled("Opt-in: complete TLAS + material pair swaps together, with no blank frame.");
+    ImGui::TextDisabled("During grid rebuilds, the last published TLAS remains active.");
     ImGui::TextDisabled("Otherwise preserve the original full-scene renderer.");
     ImGui::TextDisabled("Forced + live grid skips expensive full-cell GPU preparation.");
     {
@@ -564,6 +571,7 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	settings.NativeSCM = selected.NativeSCM;
     settings.GlobalDXGIHeadroomPercent = reservePercent;
     settings.SubdivisionMode = std::min(selected.SubdivisionMode, 2u);
+    settings.AutoGridMemoryScreening = selected.AutoGridMemoryScreening;
     settings.SubcellSize = std::clamp(selected.SubcellSize / 1024, 2u, 16u) * 1024u;
     settings.BuildCandidateGridTLAS = selected.BuildCandidateGridTLAS;
     settings.UseGridForNativeDXR = selected.UseGridForNativeDXR;
@@ -709,6 +717,9 @@ void DX12NativeScene::ResetScene()
     requestedCandidateMaterialScene.reset();
     candidateMaterialAllowance = 0;
     lastSubmittedGridCell.reset();
+    stableGridPublished.reset();
+    stableGridCenter = {};
+    autoGridDecisionLatched = false;
     hasPreviousPlayer = false;
 	++revision;
 	cellID = 0;
@@ -819,13 +830,15 @@ void DX12NativeScene::EarlyPrepass()
         const auto estimate = spatialScope->exterior ? 0 :
             EstimateCachedCellFootprint(spatialScope->directory);
         if (backend) SceneMemoryLimit();
-        // With no worldspace-wide full package, exterior automatic mode
-        // selects the grid directly. Interior classification stays budgeted.
+        // A scene-size decision is made once per worldspace/scene generation;
+        // transient DXGI usage fluctuations must not toggle between renderers.
+        if (settings.SubdivisionMode == 1 && (!settings.AutoGridMemoryScreening ||
+            (estimate && preparedSceneBudgetStatus.dxgiAvailable &&
+                estimate > preparedSceneBudgetStatus.effectiveBytes)))
+            autoGridDecisionLatched = true;
         const bool grid = (spatialScope->exterior && settings.SubdivisionMode != 0) ||
             settings.SubdivisionMode == 2 ||
-            (settings.SubdivisionMode == 1 && estimate &&
-                preparedSceneBudgetStatus.dxgiAvailable &&
-                estimate > preparedSceneBudgetStatus.effectiveBytes);
+            (settings.SubdivisionMode == 1 && autoGridDecisionLatched);
         if (grid) {
             const double dx = hasPreviousPlayer ? position.x - previousPlayerX : 0.0;
             const double dy = hasPreviousPlayer ? position.y - previousPlayerY : 0.0;
@@ -898,11 +911,13 @@ void DX12NativeScene::EarlyPrepass()
     if (settings.SubdivisionMode != 0) {
         const auto estimated = spatialScope->exterior ? 0 :
             EstimateCachedCellFootprint(spatialScope->directory);
+        if (settings.SubdivisionMode == 1 && (!settings.AutoGridMemoryScreening ||
+            (estimated && preparedSceneBudgetStatus.dxgiAvailable &&
+                estimated > preparedSceneBudgetStatus.effectiveBytes)))
+            autoGridDecisionLatched = true;
         const bool gridSelected = spatialScope->exterior ||
             settings.SubdivisionMode == 2 ||
-            (settings.SubdivisionMode == 1 && estimated &&
-                preparedSceneBudgetStatus.dxgiAvailable &&
-                estimated > preparedSceneBudgetStatus.effectiveBytes);
+            (settings.SubdivisionMode == 1 && autoGridDecisionLatched);
         if (gridSelected) {
             const auto& position = globals::game::player->GetPosition();
             subcellManager.Advance(*backend, spatialScope->directory,
@@ -940,6 +955,31 @@ void DX12NativeScene::EarlyPrepass()
                     }
                 }
                 candidateGridBindings.Advance();
+                // Never expose a half-ready generation: promote the complete
+                // source/TLAS/material triple at once. Keep the last valid
+                // triple alive while new geometry and descriptors build.
+                const auto readyCell = subcellManager.GetCombined();
+                const auto readyTLAS = candidateGridAcceleration.GetScene();
+                const auto readyBindings = candidateGridBindings.Get();
+                const auto progress = subcellManager.GetDiagnostics();
+                const auto center = DX12Native::SpatialSubcells::FromPosition(
+                    position.x, position.y, settings.SubcellSize);
+                if (readyCell && readyCell == lastSubmittedGridCell &&
+                    readyCell->snapshot && readyTLAS && readyBindings &&
+                    readyTLAS->scope.scene == revision &&
+                    readyTLAS->scope.policy == 3 &&
+                    readyTLAS->scope == readyCell->snapshot->scope &&
+                    readyBindings->scene == readyTLAS &&
+                    progress.value("centerX", int64_t{INT64_MIN}) == center.x &&
+                    progress.value("centerY", int64_t{INT64_MIN}) == center.y &&
+                    (!stableGridPublished ||
+                        stableGridPublished->acceleration != readyTLAS ||
+                        stableGridPublished->materials != readyBindings)) {
+                    stableGridPublished = PublishedScene{
+                        readyCell, readyTLAS, readyBindings, cellID, revision };
+                    stableGridCenter = center;
+                    ++gridHandoffs;
+                }
             } else if (lastSubmittedGridCell) {
                 candidateGridAcceleration.Reset();
                 candidateGridBindings.Reset();
@@ -956,9 +996,11 @@ void DX12NativeScene::EarlyPrepass()
     // remains the normal fallback.
     const auto projected = spatialScope->exterior ? 0 :
         EstimateCachedCellFootprint(spatialScope->directory);
-    const bool autoGrid = settings.SubdivisionMode == 1 && projected &&
-        preparedSceneBudgetStatus.dxgiAvailable &&
-        projected > preparedSceneBudgetStatus.effectiveBytes;
+    if (settings.SubdivisionMode == 1 && (!settings.AutoGridMemoryScreening ||
+        (projected && preparedSceneBudgetStatus.dxgiAvailable &&
+            projected > preparedSceneBudgetStatus.effectiveBytes)))
+        autoGridDecisionLatched = true;
+    const bool autoGrid = settings.SubdivisionMode == 1 && autoGridDecisionLatched;
     // No full-WRLD package exists. Exteriors must never load a single
     // exterior CELL and accidentally claim it covers the 3x3 worldspace.
     const bool exclusiveGrid = spatialScope->exterior ||
@@ -1201,28 +1243,13 @@ std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScen
     const auto scope = ResolveNativeSpatialScope(globals::game::player, cell);
     if (!scope || scope->formID != cellID) return std::nullopt;
     if (settings.SubdivisionMode != 0 && settings.BuildCandidateGridTLAS &&
-        settings.UseGridForNativeDXR) {
-        const auto tileCell = subcellManager.GetCombined();
-        const auto tileScene = candidateGridAcceleration.GetScene();
-        const auto tileMaterials = candidateGridBindings.Get();
-        const auto progress = subcellManager.GetDiagnostics();
-        const auto* player = globals::game::player;
-        const auto target = player ? DX12Native::SpatialSubcells::FromPosition(
-            player->GetPosition().x, player->GetPosition().y, settings.SubcellSize) :
-            DX12Native::SpatialSubcells::Coordinate{};
-        // Do not publish resources built for an earlier grid center or for
-        // a partially rebuilt resource/descriptor generation. Consumers
-        // retain all three via independent shared_ptr and GPU fences.
-        if (player && tileCell && tileCell == lastSubmittedGridCell &&
-            tileCell->snapshot && tileScene && tileMaterials &&
-            tileScene->scope.scene == revision &&
-            tileScene->scope.policy == 3 &&
-            tileScene->scope == tileCell->snapshot->scope &&
-            tileMaterials->scene == tileScene &&
-            progress.value("centerX", int64_t{INT64_MIN}) == target.x &&
-            progress.value("centerY", int64_t{INT64_MIN}) == target.y)
-            return PublishedScene{ tileCell, tileScene, tileMaterials, cellID, revision };
-    }
+        settings.UseGridForNativeDXR && stableGridPublished &&
+        stableGridPublished->cellID == cellID &&
+        stableGridPublished->revision == revision &&
+        stableGridPublished->cell && stableGridPublished->acceleration &&
+        stableGridPublished->materials &&
+        stableGridPublished->materials->scene == stableGridPublished->acceleration)
+        return stableGridPublished;  // Last complete generation, even while recentering.
 	auto data = prepared.GetCell();
 	auto scene = currentSceneStableAcceleration ? currentSceneStableAcceleration : acceleration.GetScene();
 	if (!data || !scene || scene->scope.scene != revision) return std::nullopt;
@@ -1238,6 +1265,11 @@ void DX12NativeScene::PublishDiagnostics()
 	json snapshot{ { "enabled", settings.Enabled }, { "nativeOwnership", OwnsNativeFeatures() },
         { "globalDXGIHeadroomPercent", DX12Native::VideoMemoryBudget::HeadroomPercent() },
         { "subdivisionMode", settings.SubdivisionMode }, { "subcellSize", settings.SubcellSize },
+        { "autoGridMemoryScreening", settings.AutoGridMemoryScreening },
+        { "autoGridDecisionLatched", autoGridDecisionLatched },
+        { "stableGridTLAS", bool(stableGridPublished) },
+        { "gridHandoffs", gridHandoffs },
+        { "stableGridCenter", { stableGridCenter.x, stableGridCenter.y } },
         { "sceneScope", [&]() {
             auto* player = globals::game::player;
             const auto scope = ResolveNativeSpatialScope(player,
