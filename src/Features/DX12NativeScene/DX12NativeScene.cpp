@@ -1,4 +1,5 @@
 #include "DX12NativeScene.h"
+#include "Features/DX12NativeScene/CellPackedFile.h"
 #include "RE/B/BSTriShape.h"
 #include "Globals.h"
 #include "TruePBR.h"
