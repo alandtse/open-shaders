@@ -64,6 +64,7 @@ add_executable(
     test_bootsnapshot.cpp
     test_dynamicnearclip.cpp
     test_camera_reprojection.cpp
+    test_dlssg_dynamic.cpp
     test_subrect.cpp
     test_gaze_math.cpp
     test_perfutils.cpp

@@ -62,6 +62,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	frameGenerationAllowInMenus,
 	enableDLSSFrameGen,
 	dlssgFramesToGenerate,
+	dlssgDynamic,
+	dlssgDynamicTargetFPS,
 	streamlineLogLevel,
 	sharpnessFSR,
 	sharpnessEnabledDLSS,
@@ -1008,12 +1010,35 @@ void Upscaling::DrawFrameGenerationSettings()
 	if (fgMethod == FrameGenMethod::kDLSSG) {
 		ImGui::TextUnformatted(T(TKEY("frame_generation_dlssg_active"), "Method: NVIDIA DLSS-G"));
 		Util::DisableGuard disabled(!fgEnabled);
-		int multiplier = static_cast<int>(settings.dlssgFramesToGenerate) + 1;
-		int maxMultiplier = static_cast<int>(streamlineDX12.dlssgMaxFramesToGenerate) + 1;
-		if (ImGui::SliderInt(T(TKEY("dlssg_frame_multiplier"), "DLSS-G Frame Multiplier"), &multiplier, 2, maxMultiplier, "%dx"))
-			settings.dlssgFramesToGenerate = static_cast<uint>(multiplier - 1);
+		const bool dynamicActive = settings.dlssgDynamic && streamlineDX12.dlssgDynamicSupported;
+		{
+			Util::DisableGuard multiplierDisabled(dynamicActive);
+			int multiplier = static_cast<int>(settings.dlssgFramesToGenerate) + 1;
+			int maxMultiplier = static_cast<int>(streamlineDX12.dlssgMaxFramesToGenerate) + 1;
+			if (ImGui::SliderInt(T(TKEY("dlssg_frame_multiplier"), "DLSS-G Frame Multiplier"), &multiplier, 2, maxMultiplier, "%dx"))
+				settings.dlssgFramesToGenerate = static_cast<uint>(multiplier - 1);
+		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("dlssg_frame_multiplier_tooltip"), "How many total frames are shown per rendered frame. Higher values generate more frames."));
+
+		{
+			Util::DisableGuard dynamicDisabled(!streamlineDX12.dlssgDynamicSupported);
+			ImGui::Checkbox(T(TKEY("dlssg_dynamic"), "Dynamic Multi-Frame Generation"), &settings.dlssgDynamic);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("dlssg_dynamic_tooltip"),
+									  "NVIDIA Dynamic Multi-Frame Generation changes the multiplier each frame to hold the target frame rate.\n"
+									  "The DLSS-G Frame Multiplier is ignored while this is on.\n"
+									  "With VSync on, it targets the display refresh rate and ignores Target Frame Rate."));
+		}
+		if (!streamlineDX12.dlssgDynamicSupported)
+			ImGui::TextDisabled("%s", T(TKEY("dlssg_dynamic_unsupported"), "Dynamic Multi-Frame Generation is not supported by this GPU, driver or DLSS-G DLL."));
+		else if (settings.dlssgDynamic) {
+			ImGui::SliderFloat(T(TKEY("dlssg_dynamic_target_fps"), "Target Frame Rate"), &settings.dlssgDynamicTargetFPS, 0.0f, kDLSSGDynamicTargetFPSMax,
+				settings.dlssgDynamicTargetFPS <= 0.0f ? T(TKEY("dlssg_dynamic_target_fps_display"), "Display refresh rate") : "%.0f FPS",
+				ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("dlssg_dynamic_target_fps_tooltip"), "The output frame rate Dynamic Multi-Frame Generation aims for. 0 uses the display refresh rate."));
+		}
 	} else if (fgMethod == FrameGenMethod::kFSR) {
 		ImGui::TextUnformatted(T(TKEY("frame_generation_fsr_active"), "Method: AMD FSR"));
 		if (fgEnabled)
