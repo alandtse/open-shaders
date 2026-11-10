@@ -22,13 +22,17 @@ namespace DX12Native
         uint32_t captureFrame = 0;
         std::string shapeName;
         std::vector<Util::SkinnedVertex> bindVertices;
+        // Validated partition-local triangle indices, rebased into one
+        // concatenated bind-vertex stream. Never invent skin topology.
+        std::vector<uint32_t> skinIndices;
         std::shared_ptr<const RuntimeGeometryPacket> rigid;
         bool skinned = false;
 
         uint64_t Bytes() const
         {
             return rigid ? rigid->Bytes() :
-                uint64_t(bindVertices.size()) * sizeof(Util::SkinnedVertex);
+                uint64_t(bindVertices.size()) * sizeof(Util::SkinnedVertex) +
+                uint64_t(skinIndices.size()) * sizeof(uint32_t);
         }
     };
 
@@ -67,20 +71,43 @@ namespace DX12Native
             // skin-instance palette. Never read arbitrary-size partitions.
             const auto* skin = runtime.skinInstance.get();
             const auto* partition = skin ? skin->skinPartition.get() : nullptr;
-            if (!partition || !partition->partitions || !partition->numPartitions ||
-                partition->numPartitions > 64 || !skin->skinData || !skin->bones ||
+            if (!partition || !partition->numPartitions ||
+                partition->numPartitions > 64 ||
+                partition->partitions.size() < partition->numPartitions ||
+                !skin->skinData || !skin->bones ||
                 !skin->numMatrices || skin->numMatrices > 256) return std::nullopt;
-            uint64_t totalVertices = 0;
+            uint64_t totalVertices = 0, totalIndices = 0;
             for (uint32_t i = 0; i < partition->numPartitions; ++i) {
                 const auto& p = partition->partitions[i];
-                if (!p.vertices || p.vertices > 65535 ||
-                    uint64_t(p.vertices) > maxBytes / sizeof(Util::SkinnedVertex) - totalVertices)
-                    return std::nullopt;
+                const auto desc = p.vertexDesc;
+                if (!p.vertices || !p.triangles || p.strips ||
+                    !p.bones || !p.buffData ||
+                    !p.buffData->rawVertexData || !p.buffData->rawIndexData ||
+                    !desc.HasFlag(RE::BSGraphics::Vertex::VF_SKINNED) ||
+                    !desc.HasFlag(RE::BSGraphics::Vertex::VF_VERTEX) ||
+                    totalVertices + p.vertices > 65535) return std::nullopt;
                 totalVertices += p.vertices;
+                totalIndices += uint64_t(p.triangles) * 3u;
+                if (totalIndices > UINT32_MAX ||
+                    totalVertices * sizeof(Util::SkinnedVertex) +
+                    totalIndices * sizeof(uint32_t) > maxBytes)
+                    return std::nullopt;
             }
-            if (!totalVertices ||
+            if (!totalVertices || !totalIndices ||
                 !Util::ReadSkinnedVertices(&geometry, output.bindVertices) ||
-                output.Bytes() > maxBytes) return std::nullopt;
+                output.bindVertices.size() != totalVertices) return std::nullopt;
+            output.skinIndices.reserve(size_t(totalIndices));
+            uint32_t vertexBase = 0;
+            for (uint32_t i = 0; i < partition->numPartitions; ++i) {
+                const auto& p = partition->partitions[i];
+                for (uint32_t j = 0; j < uint32_t(p.triangles) * 3u; ++j) {
+                    const uint32_t index = p.buffData->rawIndexData[j];
+                    if (index >= p.vertices) return std::nullopt;
+                    output.skinIndices.push_back(vertexBase + index);
+                }
+                vertexBase += p.vertices;
+            }
+            if (output.Bytes() > maxBytes) return std::nullopt;
             output.skinned = true;
         } else {
             // First phase admits opaque, CPU-backed rigid attachments only.

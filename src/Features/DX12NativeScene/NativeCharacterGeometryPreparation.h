@@ -23,6 +23,7 @@ namespace DX12Native
         uint32_t actorFormID = 0, partOrdinal = 0, vertices = 0, indices = 0;
         uint64_t sourceToken = 0, allocationBytes = 0;
         uint32_t vertexStride = 0;
+        uint64_t indexOffset = 0;
         bool skinned = false;
         winrt::com_ptr<ID3D12Resource> source;
         std::string shapeName;
@@ -131,10 +132,22 @@ namespace DX12Native
         std::erase(out->meshes, nullptr);
         std::vector<uint8_t> bytes;
         uint32_t vertexCount = 0, indexCount = 0, stride = 0;
+        uint64_t indexOffset = 0;
         if (next->skinned) {
             bytes = EncodeCharacterBindVertices(next->bindVertices);
             vertexCount = uint32_t(next->bindVertices.size());
             stride = 44;
+            if (!bytes.empty() && !next->skinIndices.empty() &&
+                next->skinIndices.size() % 3 == 0) {
+                indexOffset = bytes.size();
+                for (uint32_t index : next->skinIndices) {
+                    if (index >= vertexCount) { bytes.clear(); break; }
+                    AppendGeometryU32(bytes, index);
+                }
+                indexCount = bytes.empty() ? 0 : uint32_t(next->skinIndices.size());
+            } else {
+                bytes.clear();
+            }
         } else if (next->rigid) {
             auto encoded = EncodeRuntimeGeometry(*next->rigid);
             if (encoded && encoded->geometry.size() > 16) {
@@ -142,6 +155,7 @@ namespace DX12Native
                 vertexCount = next->rigid->vertexCount;
                 indexCount = next->rigid->indexCount;
                 stride = 12;
+                indexOffset = uint64_t(vertexCount) * stride;
             }
         }
         if (bytes.empty() || !vertexCount) { ++out->rejectedMeshes; return out; }
@@ -161,6 +175,7 @@ namespace DX12Native
             mesh->vertices = vertexCount;
             mesh->indices = indexCount;
             mesh->vertexStride = stride;
+            mesh->indexOffset = indexOffset;
             mesh->skinned = next->skinned;
             mesh->source = UploadCharacterSourceBuffer(device, bytes,
                 out->budgetBytes - out->residentBytes, mesh->allocationBytes);
