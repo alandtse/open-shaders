@@ -628,7 +628,9 @@ void DX12NativeScene::ObserveRuntimeGeometry(RE::BSGeometry* geometry,
         runtimePreparedSkipped.fetch_add(1, std::memory_order_relaxed);
         return;
     }
-    if (runtimeGeometry.Contains(reference, shape)) return;
+    // A full mailbox or already-observed identity must not trigger renderer
+    // vertex/index validation, per-frame copy budgeting or CPU acquisition.
+    if (!runtimeGeometry.CanCapture(reference, shape)) return;
     // Only static BSTriShape CPU data is supported; never map D3D11 buffers.
     auto* tri = geometry->AsTriShape();
     if (!tri || geometry->AsDynamicTriShape()) return;
@@ -643,7 +645,10 @@ void DX12NativeScene::ObserveRuntimeGeometry(RE::BSGeometry* geometry,
     if (!counts.vertexCount || !counts.triangleCount || stride < 16 || stride > 256) return;
     const uint64_t length = uint64_t(counts.vertexCount) * stride +
         uint64_t(counts.triangleCount) * 3 * sizeof(uint16_t);
-    if (length > 256 * 1024) return; // Bound render-thread copy latency.
+    if (length > 256 * 1024 ||
+        !runtimeGeometry.CanCapture(reference, shape, length)) return;
+    // Bound render-thread copy latency AND reject packets that cannot fit
+    // before scanning or copying CPU vertex/index arrays.
     const uint32_t frame = globals::game::graphicsState ?
         globals::game::graphicsState->GetFrameCount() : 0;
     {

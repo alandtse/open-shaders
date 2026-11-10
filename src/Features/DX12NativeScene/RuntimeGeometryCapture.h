@@ -136,6 +136,15 @@ namespace DX12Native
             std::scoped_lock lock(mutex);
             return entries.contains(Key(reference, shape));
         }
+        /** @brief Cheap admission before validating or copying borrowed renderer arrays.
+         * Submit still enforces the limit under the same lock when the packet arrives. */
+        bool CanCapture(const std::string& reference, const std::string& shape,
+            uint64_t candidateBytes = 0) const
+        {
+            std::scoped_lock lock(mutex);
+            return !entries.contains(Key(reference, shape)) && entries.size() < itemLimit &&
+                candidateBytes <= byteLimit && bytes <= byteLimit - candidateBytes;
+        }
         bool Submit(std::shared_ptr<const RuntimeGeometryPacket> packet)
         {
             if (!packet || packet->referenceKey.empty() || packet->shapeName.empty()) return false;
