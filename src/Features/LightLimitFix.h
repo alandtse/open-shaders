@@ -9,8 +9,10 @@
 
 #include <array>
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <vector>
 
 struct LightLimitFix : OverlayFeature
 {
@@ -76,6 +78,30 @@ public:
 		float2 pad0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(LightData);
+
+	// Render-thread-owned LLF output exported without Skyrim pointers or DX11 resources.
+	// The DX12 consumer retains this immutable generation for its own frame.
+	struct NativeLight
+	{
+		float3 position{};
+		float3 radiance{};
+		float radius = 0.0f;
+		float sourceRadius = 0.0f;
+		float fadeZone = 0.0f;
+		uint32_t flags = 0;
+		uint32_t shadowSlot = 0;
+	};
+	struct NativeLightFrame
+	{
+		uint32_t frame = 0;
+		std::vector<NativeLight> lights;
+	};
+	/** @brief Current-frame LLF lighting data for NativeLLF, including particle lights. */
+	std::shared_ptr<const NativeLightFrame> GetNativeLightFrame(uint32_t a_frame) const
+	{
+		std::scoped_lock lock(nativeLightMutex);
+		return nativeLightFrame && nativeLightFrame->frame == a_frame ? nativeLightFrame : nullptr;
+	}
 
 	struct ClusterAABB
 	{
@@ -217,6 +243,8 @@ public:
 	// both the menu stat and GetDiagnostics() (see below).
 	std::atomic<uint32_t> particleLightCount{ 0 };
 	std::atomic<uint32_t> clusteredLightCount{ 0 };
+	mutable std::mutex nativeLightMutex;
+	std::shared_ptr<const NativeLightFrame> nativeLightFrame;
 
 	std::shared_mutex cachedParticleLightsMutex;
 	eastl::vector<CachedParticleLight> cachedParticleLights;
