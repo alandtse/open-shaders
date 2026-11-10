@@ -377,7 +377,12 @@ void DX12NativeScene::DrawSettings()
     ImGui::Text("Owned DX12 character bind buffers: %zu (%.2f MiB)",
         characterStats.value("nativeStagedMeshes", size_t{ 0 }),
         double(characterStats.value("nativeStagedBytes", uint64_t{ 0 })) / (1024.0 * 1024.0));
-    ImGui::TextDisabled("Skinned buffers are bind-pose vertices only; no pose, BLAS or rays yet.");
+    ImGui::TextDisabled("Skin bind vertices, indices and raw bone registers are DX12-staged.");
+    ImGui::TextDisabled("Pose-to-vertex deformation, BLAS and character ray tracing remain disabled.");
+    ImGui::Text("Bone palette: %u VS registers (captured frame %u)",
+        characterStats.value("poseRegisters", 0u), characterStats.value("poseFrame", 0u));
+    ImGui::TextDisabled("Pose stage deferrals: %u",
+        characterStats.value("poseDeferrals", 0u));
     ImGui::TextDisabled("DXGI character deferrals: %u  invalid uploads: %u",
         characterStats.value("nativeDxgiDeferrals", 0u),
         characterStats.value("nativeUploadRejections", 0u));

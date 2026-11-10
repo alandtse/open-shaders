@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Features/DX12NativeScene/NativeCharacterMeshCapture.h"
+#include "Features/DX12NativeScene/NativeCharacterPoseCapture.h"
 #include "Features/DX12NativeScene/RuntimeGeometryEncoding.h"
 #include "Features/DX12NativeScene/VideoMemoryBudget.h"
 
@@ -29,10 +30,20 @@ namespace DX12Native
         std::string shapeName;
     };
 
+    struct CharacterStagedPose
+    {
+        uint32_t actorFormID = 0, partOrdinal = 0, captureFrame = 0;
+        uint32_t skinFrameID = 0, boneCount = 0, registerCount = 0;
+        uint64_t sourceToken = 0, allocationBytes = 0;
+        winrt::com_ptr<ID3D12Resource> registers; // Raw float4 VS inputs.
+    };
+
     struct CharacterMeshGeneration
     {
         uint64_t sceneEpoch = 0, residentBytes = 0, budgetBytes = 0;
         uint32_t uploadedMeshes = 0, rejectedMeshes = 0, dxgiDeferrals = 0;
+        uint32_t posedFrames = 0, poseDeferrals = 0;
+        std::shared_ptr<const CharacterStagedPose> pose;
         std::vector<std::shared_ptr<const CharacterStagedMesh>> meshes;
     };
 
@@ -117,6 +128,9 @@ namespace DX12Native
             out->uploadedMeshes = previous->uploadedMeshes;
             out->rejectedMeshes = previous->rejectedMeshes;
             out->dxgiDeferrals = previous->dxgiDeferrals;
+            out->posedFrames = previous->posedFrames;
+            out->poseDeferrals = previous->poseDeferrals;
+            out->pose = previous->pose;
         }
         if (!device || !next) return out;
         // Reuse immutable GPU bytes for unchanged mesh identities. Identical
@@ -126,6 +140,11 @@ namespace DX12Native
                 existing->partOrdinal != next->partOrdinal) continue;
             if (existing->sourceToken == next->sourceToken) return out;
             out->residentBytes -= existing->allocationBytes;
+            if (out->pose && out->pose->actorFormID == existing->actorFormID &&
+                out->pose->partOrdinal == existing->partOrdinal) {
+                out->residentBytes -= out->pose->allocationBytes;
+                out->pose.reset();
+            }
             existing.reset();
             break;
         }
@@ -186,5 +205,58 @@ namespace DX12Native
             ++out->dxgiDeferrals; // Never touch raster or static TLAS on failure.
         }
         return out;
+    }
+
+    /** @brief Publish a new immutable DX12 palette buffer, if a matching
+     * skinned bind resource is already resident. No native deformation,
+     * shader dispatch or character shadow ownership is implied.
+     */
+    inline std::shared_ptr<const CharacterMeshGeneration> StageCharacterPose(
+        ID3D12Device* device, const CharacterPoseCapture* incoming,
+        const std::shared_ptr<const CharacterMeshGeneration>& prior,
+        uint64_t sceneEpoch, uint64_t maxResidentBytes = 16ull * 1024 * 1024)
+    {
+        if (!prior || !device || !incoming ||
+            incoming->registers.size() != incoming->registerCount ||
+            incoming->registerCount != incoming->boneCount * 3u ||
+            incoming->registerCount > 240u) return prior;
+        bool hasBind = false;
+        for (const auto& mesh : prior->meshes)
+            hasBind |= mesh->skinned &&
+                mesh->actorFormID == incoming->actorFormID &&
+                mesh->partOrdinal == incoming->partOrdinal &&
+                mesh->sourceToken == incoming->sourceToken;
+        if (!hasBind) return prior;
+        auto updated = std::make_shared<CharacterMeshGeneration>(*prior);
+        if (updated->pose) {
+            updated->residentBytes -= updated->pose->allocationBytes;
+            updated->pose.reset();
+        }
+        const auto* first = reinterpret_cast<const uint8_t*>(incoming->registers.data());
+        const std::span<const uint8_t> bytes(first,
+            incoming->registers.size() * sizeof(incoming->registers[0]));
+        VideoMemoryBudget policy;
+        const auto snapshot = policy.Query(device, updated->residentBytes, 0);
+        updated->budgetBytes = std::min(snapshot.effectiveBytes, maxResidentBytes);
+        if (!snapshot.dxgiAvailable || updated->residentBytes >= updated->budgetBytes) {
+            ++updated->poseDeferrals;
+            return updated;
+        }
+        try {
+            auto pose = std::make_shared<CharacterStagedPose>();
+            pose->actorFormID = incoming->actorFormID;
+            pose->partOrdinal = incoming->partOrdinal;
+            pose->sourceToken = incoming->sourceToken;
+            pose->captureFrame = incoming->capturedFrame;
+            pose->skinFrameID = incoming->skinFrameID;
+            pose->boneCount = incoming->boneCount;
+            pose->registerCount = incoming->registerCount;
+            pose->registers = UploadCharacterSourceBuffer(device, bytes,
+                updated->budgetBytes - updated->residentBytes, pose->allocationBytes);
+            updated->residentBytes += pose->allocationBytes;
+            updated->pose = std::move(pose);
+            ++updated->posedFrames;
+        } catch (...) { ++updated->poseDeferrals; }
+        return updated;
     }
 }

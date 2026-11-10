@@ -114,6 +114,7 @@ namespace DX12Native
             constexpr size_t kMaximumParts = 512;
             constexpr uint32_t kMaximumPartsPerActor = 96;
             std::optional<CharacterMeshCapture> capturedMesh;
+            std::optional<CharacterPoseCapture> capturedPose;
             std::string attemptedKey;
 
             // Only Get3D(false): never inspect Skyrim's first-person root.
@@ -161,6 +162,23 @@ namespace DX12Native
                         !runtime.rendererData->rawVertexData ||
                         !runtime.rendererData->rawIndexData;
                     captured->parts.emplace_back(std::move(part));
+                    if (stageGeometry && device && part.skinned && !capturedPose) {
+                        const uint64_t sourceToken = CharacterMeshSourceToken(*geometry);
+                        bool hasBind = capturedMesh && capturedMesh->skinned &&
+                            capturedMesh->actorFormID == actor->GetFormID() &&
+                            capturedMesh->partOrdinal == ordinal - 1 &&
+                            capturedMesh->sourceToken == sourceToken;
+                        if (const auto previous = GetPublished();
+                            previous && previous->stagedGeometry) {
+                            for (const auto& staged : previous->stagedGeometry->meshes)
+                                hasBind |= staged->skinned &&
+                                    staged->actorFormID == actor->GetFormID() &&
+                                    staged->partOrdinal == ordinal - 1 &&
+                                    staged->sourceToken == sourceToken;
+                        }
+                        if (hasBind) capturedPose = CaptureCharacterShaderPose(
+                            *geometry, actor->GetFormID(), ordinal - 1, sourceToken, frame);
+                    }
                     if (stageGeometry && device && !capturedMesh) {
                         const uint64_t sourceToken = CharacterMeshSourceToken(*geometry);
                         const std::string key = std::format("{:08X}:{}:{:016X}",
@@ -198,7 +216,8 @@ namespace DX12Native
                 if (stageGeometry && device) nativeDevice.copy_from(device);
                 static BS::thread_pool<> pool{ 1 };
                 pool.detach_task([work, captured, previous,
-                    mesh = std::move(capturedMesh), nativeDevice] {
+                    mesh = std::move(capturedMesh),
+                    pose = std::move(capturedPose), nativeDevice] {
                     try {
                         // All aggregation uses owned records, never engine pointers.
                         auto output = std::make_shared<CharacterObservationGeneration>(*captured);
@@ -220,9 +239,12 @@ namespace DX12Native
                         // DX12 upload and DXGI residency checks are performed
                         // on this native CPU worker. The renderer publishes
                         // the complete immutable generation only afterwards.
-                        output->stagedGeometry = PrepareCharacterMeshes(
+                        auto staged = PrepareCharacterMeshes(
                             nativeDevice.get(), mesh ? &*mesh : nullptr,
                             previous ? previous->stagedGeometry : nullptr, work->sceneEpoch);
+                        output->stagedGeometry = StageCharacterPose(
+                            nativeDevice.get(), pose ? &*pose : nullptr,
+                            staged, work->sceneEpoch);
                         work->result = std::move(output);
                     } catch (...) {
                         // A failed optional inventory cannot affect raster or TLAS.
@@ -258,6 +280,16 @@ namespace DX12Native
                     current->stagedGeometry->meshes.size() : size_t{ 0 } },
                 { "nativeStagedBytes", current && current->stagedGeometry ?
                     current->stagedGeometry->residentBytes : 0ull },
+                { "poseFrame", current && current->stagedGeometry && current->stagedGeometry->pose ?
+                    current->stagedGeometry->pose->captureFrame : 0u },
+                { "poseSkinFrame", current && current->stagedGeometry && current->stagedGeometry->pose ?
+                    current->stagedGeometry->pose->skinFrameID : 0u },
+                { "poseRegisters", current && current->stagedGeometry && current->stagedGeometry->pose ?
+                    current->stagedGeometry->pose->registerCount : 0u },
+                { "poseSamplesStaged", current && current->stagedGeometry ?
+                    current->stagedGeometry->posedFrames : 0u },
+                { "poseDeferrals", current && current->stagedGeometry ?
+                    current->stagedGeometry->poseDeferrals : 0u },
                 { "dxgiCharacterBudget", current && current->stagedGeometry ?
                     current->stagedGeometry->budgetBytes : 0ull },
                 { "nativeUploadRejections", current && current->stagedGeometry ?
