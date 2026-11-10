@@ -2851,16 +2851,16 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float wetness = 0.0;
 	float3 wetnessNormal = vertexNormal.xyz;
 
-#if defined(CHARACTER_RAIN_SURFACE) && \
-    !defined(SKINNED) && !defined(SKIN) && !defined(HAIR) && \
-    !defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
-    !defined(TREE_ANIM) && !defined(FUR_SHELLS) && \
-    !defined(LANDSCAPE) && !defined(LODLANDSCAPE) && \
-    !defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
-float environmentRainCoverage = 0.0f;
-float3 environmentRainNormal = float3(0.0f, 0.0f, 1.0f);
-float environmentRainBrightness = 1.0f;
-#endif
+#		if defined(CHARACTER_RAIN_SURFACE) &&                                  \
+			!defined(SKINNED) && !defined(SKIN) && !defined(HAIR) &&            \
+			!defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
+			!defined(TREE_ANIM) && !defined(FUR_SHELLS) &&                      \
+			!defined(LANDSCAPE) && !defined(LODLANDSCAPE) &&                    \
+			!defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
+	float environmentRainCoverage = 0.0f;
+	float3 environmentRainNormal = float3(0.0f, 0.0f, 1.0f);
+	float environmentRainBrightness = 1.0f;
+#		endif
 
 	// Calculate shore wetness factors
 	float wetnessDistToWater = abs(input.WorldPosition.z - waterHeight);
@@ -2980,12 +2980,12 @@ float environmentRainBrightness = 1.0f;
 
 	// Experimental environmental droplets using the character rain geometry.
 	// Character surfaces retain their existing, independent rendering path.
-#if defined(CHARACTER_RAIN_SURFACE) && \
-    !defined(SKINNED) && !defined(SKIN) && !defined(HAIR) && \
-    !defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
-    !defined(TREE_ANIM) && !defined(FUR_SHELLS) && \
-    !defined(LANDSCAPE) && !defined(LODLANDSCAPE) && \
-    !defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
+#		if defined(CHARACTER_RAIN_SURFACE) &&                                  \
+			!defined(SKINNED) && !defined(SKIN) && !defined(HAIR) &&            \
+			!defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
+			!defined(TREE_ANIM) && !defined(FUR_SHELLS) &&                      \
+			!defined(LANDSCAPE) && !defined(LODLANDSCAPE) &&                    \
+			!defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
 	bool evaluateEnvironmentDrops =
 		!characterRainSurface &&
 		SharedData::wetnessEffectsSettings.EnableRaindropFx &&
@@ -3013,10 +3013,10 @@ float environmentRainBrightness = 1.0f;
 			-environmentSize);
 
 		float environmentCoverage = environmentDrops.x *
-			saturate(SharedData::wetnessEffectsSettings.Raining);
+		                            saturate(SharedData::wetnessEffectsSettings.Raining);
 
 		environmentRainBrightness =
-    SharedData::wetnessEffectsSettings.EnvironmentDropBrightness;
+			SharedData::wetnessEffectsSettings.EnvironmentDropBrightness;
 
 		float environmentHeight =
 			environmentDrops.y *
@@ -3041,7 +3041,7 @@ float environmentRainBrightness = 1.0f;
 		// Dedicated droplet highlights are handled separately.
 		// Preserve the normal environmental wetness response.
 	}
-#endif
+#		endif
 
 	// Update flatness and normal calculations
 	flatnessAmount *= smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness, 1.0, wetnessGlossinessSpecular);
@@ -3348,14 +3348,14 @@ float environmentRainBrightness = 1.0f;
 #	if defined(CHARACTER_RAIN_SURFACE)
 	float3 characterRainSpecular = 0.0f;
 #	endif
-#if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) && \
-    !defined(SKINNED) && !defined(SKIN) && !defined(HAIR) && \
-    !defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
-    !defined(TREE_ANIM) && !defined(FUR_SHELLS) && \
-    !defined(LANDSCAPE) && !defined(LODLANDSCAPE) && \
-    !defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
+#	if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) &&      \
+		!defined(SKINNED) && !defined(SKIN) && !defined(HAIR) &&            \
+		!defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
+		!defined(TREE_ANIM) && !defined(FUR_SHELLS) &&                      \
+		!defined(LANDSCAPE) && !defined(LODLANDSCAPE) &&                    \
+		!defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
 	float3 environmentRainSpecular = 0.0f;
-#endif
+#	endif
 
 	float3 lodLandDiffuseColor = 0;
 
@@ -3392,12 +3392,12 @@ float environmentRainBrightness = 1.0f;
 		characterRainSpecular += CharacterRainSpots::EvaluateLighting(characterSpotSurfaceNormal, dirLightContext,
 			characterSpotRoughness, characterCoatMask, characterCoatIntensity);
 #		endif
-#if defined(CHARACTER_RAIN_SURFACE) && \
-    !defined(SKINNED) && !defined(SKIN) && !defined(HAIR) && \
-    !defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
-    !defined(TREE_ANIM) && !defined(FUR_SHELLS) && \
-    !defined(LANDSCAPE) && !defined(LODLANDSCAPE) && \
-    !defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
+#		if defined(CHARACTER_RAIN_SURFACE) &&                                  \
+			!defined(SKINNED) && !defined(SKIN) && !defined(HAIR) &&            \
+			!defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
+			!defined(TREE_ANIM) && !defined(FUR_SHELLS) &&                      \
+			!defined(LANDSCAPE) && !defined(LODLANDSCAPE) &&                    \
+			!defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
 	[branch] if (environmentRainCoverage > 0.0f)
 		environmentRainSpecular += CharacterRainSpots::EvaluateLighting(
 			environmentRainNormal,
@@ -3405,7 +3405,7 @@ float environmentRainBrightness = 1.0f;
 			0.12f,
 			environmentRainCoverage * environmentRainBrightness,
 			SharedData::wetnessEffectsSettings.EnvironmentDropReflectivity);
-#endif
+#		endif
 #	endif
 
 #	if defined(CAPTURE_REFLECTION_RADIANCE)
@@ -3513,12 +3513,12 @@ float environmentRainBrightness = 1.0f;
 			characterRainSpecular += CharacterRainSpots::EvaluateLighting(characterSpotSurfaceNormal, pointLightContext,
 				characterSpotRoughness, characterCoatMask, characterCoatIntensity);
 #				endif
-#if defined(CHARACTER_RAIN_SURFACE) && \
-    !defined(SKINNED) && !defined(SKIN) && !defined(HAIR) && \
-    !defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
-    !defined(TREE_ANIM) && !defined(FUR_SHELLS) && \
-    !defined(LANDSCAPE) && !defined(LODLANDSCAPE) && \
-    !defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
+#				if defined(CHARACTER_RAIN_SURFACE) &&                                  \
+					!defined(SKINNED) && !defined(SKIN) && !defined(HAIR) &&            \
+					!defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
+					!defined(TREE_ANIM) && !defined(FUR_SHELLS) &&                      \
+					!defined(LANDSCAPE) && !defined(LODLANDSCAPE) &&                    \
+					!defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
 		[branch] if (environmentRainCoverage > 0.0f)
 			environmentRainSpecular += CharacterRainSpots::EvaluateLighting(
 				environmentRainNormal,
@@ -3526,7 +3526,7 @@ float environmentRainBrightness = 1.0f;
 				0.12f,
 				environmentRainCoverage * environmentRainBrightness,
 				SharedData::wetnessEffectsSettings.EnvironmentDropReflectivity);
-#endif
+#				endif
 #			endif
 		lightsDiffuseColor += pointLightOutput.diffuse;
 		lightsSpecularColor += pointLightOutput.specular;
@@ -3955,12 +3955,12 @@ float environmentRainBrightness = 1.0f;
 			characterSpotRoughness, characterCoatMask, characterCoatIntensity);
 	float3 characterRainAmbientColor = directionalAmbientColor;
 #		endif
-#if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) && \
-    !defined(SKINNED) && !defined(SKIN) && !defined(HAIR) && \
-    !defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
-    !defined(TREE_ANIM) && !defined(FUR_SHELLS) && \
-    !defined(LANDSCAPE) && !defined(LODLANDSCAPE) && \
-    !defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
+#		if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) &&      \
+			!defined(SKINNED) && !defined(SKIN) && !defined(HAIR) &&            \
+			!defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
+			!defined(TREE_ANIM) && !defined(FUR_SHELLS) &&                      \
+			!defined(LANDSCAPE) && !defined(LODLANDSCAPE) &&                    \
+			!defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
 	float3 environmentRainReflectance = 0.0f;
 
 	[branch] if (environmentRainCoverage > 0.0f)
@@ -3970,7 +3970,7 @@ float environmentRainBrightness = 1.0f;
 			0.12f,
 			environmentRainCoverage * environmentRainBrightness,
 			SharedData::wetnessEffectsSettings.EnvironmentDropReflectivity);
-#endif
+#		endif
 #	endif
 #	if defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE)
 #		if defined(VANILLA_FRESNEL)
@@ -4101,21 +4101,21 @@ float environmentRainBrightness = 1.0f;
 	radianceSpecularColor += characterRainSpecular + radianceRainDifference;
 #		endif
 #	endif
-#if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) && \
-    !defined(SKINNED) && !defined(SKIN) && !defined(HAIR) && \
-    !defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
-    !defined(TREE_ANIM) && !defined(FUR_SHELLS) && \
-    !defined(LANDSCAPE) && !defined(LODLANDSCAPE) && \
-    !defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
+#	if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) &&      \
+		!defined(SKINNED) && !defined(SKIN) && !defined(HAIR) &&            \
+		!defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
+		!defined(TREE_ANIM) && !defined(FUR_SHELLS) &&                      \
+		!defined(LANDSCAPE) && !defined(LODLANDSCAPE) &&                    \
+		!defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
 
 	// Environmental water reflections.
 	specularColor += environmentRainSpecular;
 
-#if defined(CAPTURE_REFLECTION_RADIANCE)
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
 	radianceSpecularColor += environmentRainSpecular;
-#endif
+#		endif
 
-#endif
+#	endif
 #	if defined(LOD_LAND_BLEND) && defined(TRUE_PBR)
 	{
 		lodLandDiffuseColor += directionalAmbientColor;
@@ -4214,29 +4214,29 @@ float environmentRainBrightness = 1.0f;
 #			endif
 	}
 #		endif
-#if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) && \
-    !defined(SKINNED) && !defined(SKIN) && !defined(HAIR) && \
-    !defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
-    !defined(TREE_ANIM) && !defined(FUR_SHELLS) && \
-    !defined(LANDSCAPE) && !defined(LODLANDSCAPE) && \
-    !defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
+#		if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) &&      \
+			!defined(SKINNED) && !defined(SKIN) && !defined(HAIR) &&            \
+			!defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
+			!defined(TREE_ANIM) && !defined(FUR_SHELLS) &&                      \
+			!defined(LANDSCAPE) && !defined(LODLANDSCAPE) &&                    \
+			!defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
 	[branch] if (any(environmentRainReflectance > 0.0f))
 	{
-#if defined(DYNAMIC_CUBEMAPS)
-#if defined(SKYLIGHTING)
+#			if defined(DYNAMIC_CUBEMAPS)
+#				if defined(SKYLIGHTING)
 		color.xyz += environmentRainReflectance *
-			DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(
-				environmentRainNormal, viewDirection, 0.12f, skylightingSpecularSH, skylightingSpecularFadeOut);
-#else
+		             DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(
+						 environmentRainNormal, viewDirection, 0.12f, skylightingSpecularSH, skylightingSpecularFadeOut);
+#				else
 		color.xyz += environmentRainReflectance *
-			DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(
-				environmentRainNormal, viewDirection, 0.12f);
-#endif
-#else
+		             DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(
+						 environmentRainNormal, viewDirection, 0.12f);
+#				endif
+#			else
 		color.xyz += environmentRainReflectance * directionalAmbientColor;
-#endif
+#			endif
 	}
-#endif
+#		endif
 #		if defined(CAPTURE_REFLECTION_RADIANCE)
 	radianceColor = Color::IrradianceToGamma(radianceLinearColor + (color.xyz - directLinearColor));
 #		endif
@@ -4465,33 +4465,33 @@ float environmentRainBrightness = 1.0f;
 		indirectLobeWeights.specular += characterSpotReflectance;
 	}
 #			endif
-#if defined(CHARACTER_RAIN_SURFACE) && \
-    !defined(SKINNED) && !defined(SKIN) && !defined(HAIR) && \
-    !defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
-    !defined(TREE_ANIM) && !defined(FUR_SHELLS) && \
-    !defined(LANDSCAPE) && !defined(LODLANDSCAPE) && \
-    !defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
+#			if defined(CHARACTER_RAIN_SURFACE) &&                                  \
+				!defined(SKINNED) && !defined(SKIN) && !defined(HAIR) &&            \
+				!defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
+				!defined(TREE_ANIM) && !defined(FUR_SHELLS) &&                      \
+				!defined(LANDSCAPE) && !defined(LODLANDSCAPE) &&                    \
+				!defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
 
-    [branch] if (environmentRainCoverage > 0.0f)
-    {
-        float environmentReflectionWeight =
-            CharacterRainSpots::GetCoatWeight(
-                environmentRainCoverage * environmentRainBrightness,
-                SharedData::wetnessEffectsSettings.EnvironmentDropReflectivity);
+	[branch] if (environmentRainCoverage > 0.0f)
+	{
+		float environmentReflectionWeight =
+			CharacterRainSpots::GetCoatWeight(
+				environmentRainCoverage * environmentRainBrightness,
+				SharedData::wetnessEffectsSettings.EnvironmentDropReflectivity);
 
-        material.Roughness = lerp(
-            material.Roughness,
-            min(material.Roughness, 0.12f),
-            environmentReflectionWeight);
+		material.Roughness = lerp(
+			material.Roughness,
+			min(material.Roughness, 0.12f),
+			environmentReflectionWeight);
 
-        screenSpaceNormal = normalize(lerp(
-            screenSpaceNormal,
-            FrameBuffer::WorldToView(environmentRainNormal, false, eyeIndex),
-            environmentReflectionWeight));
+		screenSpaceNormal = normalize(lerp(
+			screenSpaceNormal,
+			FrameBuffer::WorldToView(environmentRainNormal, false, eyeIndex),
+			environmentReflectionWeight));
 
-        indirectLobeWeights.specular += environmentRainReflectance;
-    }
-#endif
+		indirectLobeWeights.specular += environmentRainReflectance;
+	}
+#			endif
 #		endif
 
 	psout.Reflectance = float4(indirectLobeWeights.specular, psout.Diffuse.w);
