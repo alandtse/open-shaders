@@ -1,0 +1,82 @@
+// Isolated third-person character RayQuery probe. Never connected to the
+// world TLAS, NativeSCM, NativeLighting or native shadow-mask output.
+// The one-instance TLAS intentionally uses the identity transform. A single
+// valid triangle on the deformed mesh supplies a reproducible diagnostic ray.
+RaytracingAccelerationStructure CharacterScene : register(t0);
+ByteAddressBuffer DeformedPositions : register(t1);
+ByteAddressBuffer IndexedBindSource : register(t2);
+RWByteAddressBuffer ProbeResult : register(u0);
+
+cbuffer ProbeConstants : register(b0)
+{
+    uint VertexCount;
+    uint IndexCount;
+    uint IndexByteOffset;
+    uint Reserved;
+};
+
+[numthreads(1, 1, 1)]
+void main(uint3 threadID : SV_DispatchThreadID)
+{
+    uint status = 1; // 1: no usable triangle
+    float hitDistance = 0.0;
+    uint primitive = 0xffffffffu;
+    uint instanceID = 0xffffffffu;
+
+    float3 center = 0.0.xxx;
+    float3 normal = 0.0.xxx;
+    float rayLength = 0.0;
+    bool hasTriangle = false;
+
+    [loop]
+    for (uint tri = 0; tri < min(IndexCount / 3u, 32u); ++tri)
+    {
+        const uint base = IndexByteOffset + tri * 12u;
+        const uint3 idx = IndexedBindSource.Load3(base);
+        if (any(idx >= VertexCount))
+            continue;
+
+        const float3 a = asfloat(DeformedPositions.Load3(idx.x * 12u));
+        const float3 b = asfloat(DeformedPositions.Load3(idx.y * 12u));
+        const float3 c = asfloat(DeformedPositions.Load3(idx.z * 12u));
+        if (!all(isfinite(a)) || !all(isfinite(b)) || !all(isfinite(c)))
+            continue;
+
+        const float3 crossProduct = cross(b - a, c - a);
+        const float areaSquared = dot(crossProduct, crossProduct);
+        if (!isfinite(areaSquared) || areaSquared <= 1e-12)
+            continue;
+
+        center = (a + b + c) / 3.0;
+        normal = crossProduct * rsqrt(areaSquared);
+        const float edgeSize = max(length(b - a), length(c - a));
+        if (!isfinite(edgeSize))
+            continue;
+        rayLength = clamp(edgeSize * 0.05, 0.05, 2.0);
+        hasTriangle = true;
+        break;
+    }
+
+    if (hasTriangle)
+    {
+        status = 2; // 2: issued diagnostic ray, no hit
+        RayDesc ray;
+        ray.Origin = center + normal * rayLength;
+        ray.Direction = -normal;
+        ray.TMin = 0.0005;
+        ray.TMax = rayLength * 2.5 + 0.01;
+
+        RayQuery<RAY_FLAG_NONE> query;
+        query.TraceRayInline(CharacterScene, RAY_FLAG_NONE, 0x01, ray);
+        while (query.Proceed()) { }
+        if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
+        {
+            status = 3; // 3: committed triangle intersection
+            hitDistance = query.CommittedRayT();
+            primitive = query.CommittedPrimitiveIndex();
+            instanceID = query.CommittedInstanceID();
+        }
+    }
+
+    ProbeResult.Store4(0, uint4(status, asuint(hitDistance), primitive, instanceID));
+}

@@ -52,6 +52,7 @@ struct DX12NativeScene final : Feature
         bool CharacterValidateSkinningDX12 = false; // Bounded GPU readback diagnostics only.
         bool CharacterBuildIsolatedBLASDX12 = false; // No production TLAS/ray ownership.
         bool CharacterBuildIsolatedTLASDX12 = false; // Single instance; diagnostic only.
+        bool CharacterRunIsolatedRayQueryDX12 = false; // One diagnostic ray, no shadows.
         uint32_t CharacterMaxActors = 16, CharacterObservationPeriod = 8;
         uint32_t CharacterBLASIntervalFrames = 8; // Bound experimental GPU AS work.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.

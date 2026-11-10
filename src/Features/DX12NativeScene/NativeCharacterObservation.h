@@ -7,6 +7,7 @@
 #include "Features/DX12NativeScene/NativeCharacterBLASPreflight.h"
 #include "Features/DX12NativeScene/NativeCharacterIsolatedBLAS.h"
 #include "Features/DX12NativeScene/NativeCharacterIsolatedTLAS.h"
+#include "Features/DX12NativeScene/NativeCharacterRayProbe.h"
 
 #include <BS_thread_pool.hpp>
 #include <algorithm>
@@ -58,7 +59,9 @@ namespace DX12Native
         std::optional<CharacterBLASPreflight> blasPreflight;
         std::shared_ptr<const CharacterIsolatedBLAS> isolatedBLAS;
         std::shared_ptr<const CharacterIsolatedTLAS> isolatedTLAS;
-        std::string deformationError, blasError, tlasError;
+        std::shared_ptr<const CharacterRayResult> rayProbe;
+        std::optional<CharacterRayOutcome> rayOutcome;
+        std::string deformationError, blasError, tlasError, rayError;
         uint32_t capturedMeshes = 0;
         uint64_t capturedBytes = 0;
         uint32_t droppedActors = 0, droppedParts = 0, invalidParts = 0;
@@ -93,7 +96,7 @@ namespace DX12Native
         void Advance(uint32_t frame, uint32_t maxActors, uint32_t periodFrames, bool playerOnly,
             bool stageGeometry, bool runSkinning, bool validateSkinning,
             bool buildIsolatedBLAS, bool buildIsolatedTLAS,
-            uint32_t blasIntervalFrames,
+            bool runIsolatedRayProbe, uint32_t blasIntervalFrames,
             ID3D12Device* device, ID3D12CommandQueue* queue)
         {
             // Runtime toggles can reset the observer while the engine is
@@ -242,7 +245,8 @@ namespace DX12Native
                     mesh = std::move(capturedMesh),
                     pose = std::move(capturedPose), nativeDevice,
                     nativeQueue, runSkinning, validateSkinning,
-                    buildIsolatedBLAS, buildIsolatedTLAS, blasIntervalFrames] {
+                    buildIsolatedBLAS, buildIsolatedTLAS,
+                    runIsolatedRayProbe, blasIntervalFrames] {
                     try {
                         // All aggregation uses owned records, never engine pointers.
                         auto output = std::make_shared<CharacterObservationGeneration>(*captured);
@@ -411,6 +415,33 @@ namespace DX12Native
                                 }
                             }
                         }
+                        // Only the isolated character TLAS is bound. The
+                        // query reports one triangle-intersection diagnostic
+                        // through a fenced readback, never a production mask.
+                        if (runIsolatedRayProbe && buildIsolatedTLAS &&
+                            output->isolatedTLAS && nativeDevice && nativeQueue) {
+                            if (previous && previous->rayProbe &&
+                                previous->rayProbe->scene == output->isolatedTLAS) {
+                                output->rayProbe = previous->rayProbe;
+                                output->rayOutcome = previous->rayOutcome;
+                            }
+                            if (output->rayProbe && output->rayProbe->Ready() &&
+                                !output->rayOutcome) {
+                                if (auto result = ReadCharacterRayOutcome(output->rayProbe))
+                                    output->rayOutcome = std::move(result);
+                            }
+                            if (!output->rayProbe && output->isolatedTLAS->Ready()) {
+                                try {
+                                    output->rayProbe = DispatchCharacterRayProbe(
+                                        nativeDevice.get(), nativeQueue.get(),
+                                        output->isolatedTLAS);
+                                } catch (const std::exception& e) {
+                                    output->rayError = e.what();
+                                } catch (...) {
+                                    output->rayError = "Isolated character RayQuery failed";
+                                }
+                            }
+                        }
                         if (runSkinning && pose && output->stagedGeometry &&
                             output->stagedGeometry->pose && nativeQueue &&
                             output->stagedGeometry->pose->captureFrame == pose->capturedFrame) {
@@ -540,6 +571,22 @@ namespace DX12Native
                     current->isolatedTLAS->allocationBytes : 0ull },
                 { "isolatedTLASPending", CharacterTLASRetirement::Pending() },
                 { "isolatedTLASError", current ? current->tlasError : std::string{} },
+                { "isolatedRaySubmitted", current && bool(current->rayProbe) },
+                { "isolatedRayReady", current && current->rayProbe &&
+                    current->rayProbe->Ready() },
+                { "isolatedRayFrame", current && current->rayProbe ?
+                    current->rayProbe->poseFrame : 0u },
+                { "isolatedRayOutcomeReady", current && current->rayOutcome.has_value() },
+                { "isolatedRayStatus", current && current->rayOutcome ?
+                    current->rayOutcome->status : 0u },
+                { "isolatedRayDistance", current && current->rayOutcome ?
+                    current->rayOutcome->hitDistance : 0.0f },
+                { "isolatedRayPrimitive", current && current->rayOutcome ?
+                    current->rayOutcome->primitiveIndex : UINT32_MAX },
+                { "isolatedRayInstance", current && current->rayOutcome ?
+                    current->rayOutcome->instanceID : UINT32_MAX },
+                { "isolatedRayPending", CharacterRayRetirement::Pending() },
+                { "isolatedRayError", current ? current->rayError : std::string{} },
                 { "deformError", current ? current->deformationError : std::string{} },
                 { "dxgiCharacterBudget", current && current->stagedGeometry ?
                     current->stagedGeometry->budgetBytes : 0ull },
