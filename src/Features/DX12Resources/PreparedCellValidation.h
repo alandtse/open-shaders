@@ -100,7 +100,7 @@ namespace DX12ResourceService
                 tile.value("x", INT64_MIN) == subcell->x &&
                 tile.value("y", INT64_MIN) == subcell->y;
         };
-        const checkScope = [&](const PrepJson& manifest) {
+        const auto checkScope = [&](const PrepJson& manifest) {
             return manifest.value("scopeType", std::string("cell")) ==
                 (request.worldspace ? "worldspace" : "cell");
         };

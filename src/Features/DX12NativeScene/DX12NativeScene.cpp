@@ -1239,7 +1239,7 @@ void DX12NativeScene::PublishDiagnostics()
         { "globalDXGIHeadroomPercent", DX12Native::VideoMemoryBudget::HeadroomPercent() },
         { "subdivisionMode", settings.SubdivisionMode }, { "subcellSize", settings.SubcellSize },
         { "sceneScope", [&]() {
-            const auto* player = globals::game::player;
+            auto* player = globals::game::player;
             const auto scope = ResolveNativeSpatialScope(player,
                 player ? player->GetParentCell() : nullptr);
             return scope ? scope->request.ScopedKey() : std::string("unavailable");
