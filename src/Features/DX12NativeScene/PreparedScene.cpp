@@ -195,7 +195,9 @@ namespace DX12Native
 			if (manifest.at("schemaVersion").get<uint32_t>() != 2 || manifest.at("rendererSchemaVersion").get<uint32_t>() != 2 || _stricmp(manifest.at("cell").get_ref<const std::string&>().c_str(), a_cell.c_str()) != 0)
 				throw std::runtime_error("Prepared cell identity/schema mismatch");
 			const auto& rows = manifest.at("instances");
-			if (!rows.is_array() || rows.empty() || rows.size() > kMaximumInstances) throw std::runtime_error("Prepared instance count invalid");
+			if (!rows.is_array() || rows.size() > kMaximumInstances ||
+                (rows.empty() && (!manifest.contains("subcell") || manifest.at("subcell").is_null())))
+                throw std::runtime_error("Prepared instance count invalid");
 			auto result = std::make_shared<PreparedCell>();
             PreparedUploadAllowance uploads(a_backend, a_budget, result->bytes);
 			result->digest = manifest.at("layoutDigest").get<std::string>();

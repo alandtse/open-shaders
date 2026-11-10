@@ -18,7 +18,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, SubcellSize, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode, NativeShadowRayPreparation)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, SubcellSize, BuildCandidateGridTLAS, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode, NativeShadowRayPreparation)
 
 
 namespace
@@ -370,6 +370,8 @@ void DX12NativeScene::DrawSettings()
     if (ImGui::SliderInt("Subcell width (x1024 units)", &gridUnits, 2, 16))
         settings.SubcellSize = uint32_t(gridUnits * 1024);
     ImGui::TextDisabled("Full-scene DXR stays active until partial TLAS integration is validated.");
+    ImGui::Checkbox("Build isolated grid TLAS for diagnostic testing", &settings.BuildCandidateGridTLAS);
+    ImGui::TextDisabled("Candidate grid TLAS is NOT supplied to lighting or shadows.");
     ImGui::SeparatorText("Prepared scene VRAM budget");
     const uint32_t pendingSceneBudget = requestedBudget.load();
     uint32_t selectedSceneBudget = pendingSceneBudget != UINT32_MAX ?
@@ -480,6 +482,7 @@ void DX12NativeScene::LoadSettings(json& a_json)
     settings.GlobalDXGIHeadroomPercent = reservePercent;
     settings.SubdivisionMode = std::min(selected.SubdivisionMode, 2u);
     settings.SubcellSize = std::clamp(selected.SubcellSize / 1024, 2u, 16u) * 1024u;
+    settings.BuildCandidateGridTLAS = selected.BuildCandidateGridTLAS;
         settings.ImportLoosePBR = selected.ImportLoosePBR;
         settings.ImportArchivePBR = selected.ImportArchivePBR;
         settings.RuntimeOnlyMaterials = selected.RuntimeOnlyMaterials;
@@ -616,6 +619,9 @@ void DX12NativeScene::ResetScene()
     // NativeLLF generations are cell-scoped. Do not retain old counts or
     // shadow-slot identities after new cells, loading screens or scene resets.
     globals::features::nativeLLF.ClearCapturedLights();
+    subcellManager.Reset();
+    candidateGridAcceleration.Reset();
+    lastSubmittedGridCell.reset();
     hasPreviousPlayer = false;
 	++revision;
 	cellID = 0;
@@ -802,6 +808,40 @@ void DX12NativeScene::EarlyPrepass()
             runtimeGeometryAllowedBytes,
             settings.CacheRuntimeGeometry ? runtimeGeometryCache.GetPrewarmed() : nullptr,
             currentCell);
+    }
+    // Prepare independently resident subcell GPU buffers and optional
+    // diagnostic TLAS without changing the authoritative live renderer.
+    if (settings.SubdivisionMode != 0 && cell->IsInteriorCell()) {
+        const auto* file = cell->GetFile(0);
+        const auto full = prepared.GetCell();
+        const uint64_t estimated = full && full->bytes <= UINT64_MAX / 2 ? full->bytes * 2 : 0;
+        const bool gridSelected = settings.SubdivisionMode == 2 ||
+            (settings.SubdivisionMode == 1 && estimated &&
+                preparedSceneBudgetStatus.dxgiAvailable &&
+                estimated > preparedSceneBudgetStatus.effectiveBytes);
+        if (gridSelected && file && file->GetFilename()) {
+            const auto local = cell->GetLocalFormID();
+            const auto identity = std::format("{:06X}:{}", local, file->GetFilename());
+            const auto root = std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") /
+                file->GetFilename() / std::format("{:06X}", local);
+            const auto& position = globals::game::player->world.translate;
+            subcellManager.Advance(*backend, root, identity, revision, settings.SubcellSize,
+                position.x, position.y, 0.0, 0.0,
+                uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB);
+            if (settings.BuildCandidateGridTLAS) {
+                const auto candidate = subcellManager.GetCombined();
+                if (candidate && candidate->snapshot && candidate != lastSubmittedGridCell &&
+                    (candidateGridAcceleration.Finished() || !lastSubmittedGridCell)) {
+                    candidateGridAcceleration.Start(*backend, candidate->snapshot, candidate->geometries,
+                        uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB);
+                    lastSubmittedGridCell = candidate;
+                }
+                candidateGridAcceleration.Advance();
+            } else if (lastSubmittedGridCell) {
+                candidateGridAcceleration.Reset();
+                lastSubmittedGridCell.reset();
+            }
+        }
     }
 	if (!prepared.Requested()) {
 		const auto* source = cell->GetFile(0);
@@ -1047,6 +1087,8 @@ void DX12NativeScene::PublishDiagnostics()
 	json snapshot{ { "enabled", settings.Enabled }, { "nativeOwnership", OwnsNativeFeatures() },
         { "globalDXGIHeadroomPercent", DX12Native::VideoMemoryBudget::HeadroomPercent() },
         { "subdivisionMode", settings.SubdivisionMode }, { "subcellSize", settings.SubcellSize },
+        { "subcellGpuLoader", subcellManager.GetDiagnostics() },
+        { "candidateGridTLAS", candidateGridAcceleration.GetDiagnostics() },
 		{ "nativePBR", globals::features::nativePBR.IsActive() }, { "nativeLLF", globals::features::nativeLLF.IsActive() },
 		{ "nativeSCM", globals::features::nativeSCM.IsActive() },
 		{ "nativeLightSource", OwnsNativeFeatures() ? "prepared-priority-unified" : "prepared-cell" },
