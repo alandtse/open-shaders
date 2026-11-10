@@ -25,7 +25,8 @@ namespace DX12Native
 		DirectX::SimpleMath::Matrix rayProjInverse, rayViewInverse;
 		winrt::com_ptr<ID3D12DescriptorHeap> rayPrepHeap;
 		winrt::com_ptr<ID3D12RootSignature> rayPrepRoot;
-		winrt::com_ptr<ID3D12PipelineState> rayPrepPipeline;
+		winrt::com_ptr<ID3D12PipelineState> rayPrepPipeline; // Retained for source compatibility; not dispatched.
+        winrt::com_ptr<ID3D12Resource> cameraConstants; // Native DX12 camera matrices.
 		winrt::com_ptr<ID3D12CommandAllocator> allocator;
 		winrt::com_ptr<ID3D12GraphicsCommandList> commands;
 		GraphicsBackend retainedBackend;

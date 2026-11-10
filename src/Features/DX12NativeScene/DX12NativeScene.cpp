@@ -378,7 +378,8 @@ void DX12NativeScene::DrawSettings()
 			changed = true;
 		}
 		ImGui::TextDisabled("All modes trace at render size; skipped pixels have validity -1.");
-		ImGui::TextDisabled("Ray preparation: native DX12 SM6.5 only; FXC/DX11 is not dispatched.");
+		ImGui::TextDisabled("Receiver rays generated inside native DX12 RayQuery.");
+        ImGui::TextDisabled("No separate camera-ray pipeline or DX11 compute dispatch.");
 		changed |= ImGui::Checkbox("Shadow all unified native point lights", &settings.ShadowAllLights);
 		if (!settings.ShadowAllLights) {
 			const auto scene = GetPublishedScene();
