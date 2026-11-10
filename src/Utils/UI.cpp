@@ -3283,6 +3283,11 @@ namespace Util
 		constexpr int kSearchableComboPruneIntervalFrames = 600;
 		constexpr int kSearchableComboStaleFrames = 3600;
 
+		float GetSearchFieldTextInset(float iconWidth)
+		{
+			return C::SEARCH_ICON_OFFSET_X * GetSearchUIScale() + iconWidth + C::ICON_LABEL_GAP * GetUIScale();
+		}
+
 		struct SearchableComboState
 		{
 			std::array<char, kSearchableComboBufferSize> filter{};
@@ -3409,10 +3414,7 @@ namespace Util
 				popupWidth = arrowWidth + previewWidth + style.FramePadding.x * 2.0f;
 			}
 
-			const float searchWidth = ImGui::CalcTextSize(T("ui.search", "Search...")).x +
-			                          Icons::CalcGlyphSize(Icons::TI(MenuIcons::kSearch)).x +
-			                          style.FramePadding.x * 4.0f;
-			popupWidth = std::max(popupWidth, searchWidth);
+			popupWidth = std::max(popupWidth, GetSearchableComboMinimumWidth());
 			ImGui::SetNextWindowSizeConstraints(
 				ImVec2(popupWidth, 0.0f),
 				ImVec2(popupWidth, GetSearchableComboPopupHeight(flags, maxVisibleItems)));
@@ -3429,6 +3431,13 @@ namespace Util
 			static std::unordered_map<std::string, ComboSearchState> states;
 			return states;
 		}
+	}
+
+	float GetSearchableComboMinimumWidth()
+	{
+		const float iconWidth = Icons::CalcGlyphSize(Icons::TI(MenuIcons::kSearch)).x;
+		const float padding = detail::GetSearchFieldTextInset(iconWidth) + ImGui::GetStyle().FramePadding.x;
+		return std::ceil(ImGui::CalcTextSize(T("ui.search", "Search...")).x + padding * 2.0f);
 	}
 
 	bool BeginComboWithAction(const char* label, const char* previewValue, ComboPreviewAction& action, ImGuiComboFlags flags)
@@ -3679,7 +3688,7 @@ namespace Util
 			const float searchScale = Util::GetSearchUIScale();
 			const float iconX = C::SEARCH_ICON_OFFSET_X * searchScale;
 			const float iconSize = Icons::CalcGlyphSize(Icons::TI(MenuIcons::kSearch)).x;
-			const float padLeft = iconX + iconSize + C::ICON_LABEL_GAP * GetUIScale();
+			const float padLeft = detail::GetSearchFieldTextInset(iconSize);
 			const float frameHeight = ImGui::GetFrameHeight();
 
 			if (ctrlFFocus && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&

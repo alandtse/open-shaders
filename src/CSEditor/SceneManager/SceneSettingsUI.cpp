@@ -750,14 +750,28 @@ namespace
 		return it->second;
 	}
 
-	bool BeginSceneTargetCombo(const char* id, const char* preview, bool current, SceneSettingMarker marker,
+	const char* GetSceneTargetManageLabel(SceneSettingsManager::SceneContextType type)
+	{
+		return type == SceneSettingsManager::SceneContextType::Weather ?
+		           T("feature.scene_manager.action.manage_weather", "Manage Weather") :
+		           T("feature.scene_manager.action.manage_location", "Manage Location");
+	}
+
+	bool BeginSceneTargetCombo(const char* id, const char* preview, bool current, SceneSettingMarker marker, SceneSettingsManager::SceneContextType type,
 		bool showStatus, float* scroll, Util::ComboPreviewAction& action, float popupRight)
 	{
 		const auto& style = ImGui::GetStyle();
 		const auto bounds = ImGui::GetPopupAllowedExtentRect(ImGui::GetCurrentWindowRead());
 		const float left = std::max(ImGui::GetCursorScreenPos().x, bounds.Min.x);
 		const float right = std::min(popupRight, bounds.Max.x);
-		float width = std::min(std::max(ImGui::CalcItemWidth(), right - left), bounds.GetWidth());
+		float minimumWidth = Util::GetSearchableComboMinimumWidth();
+		if (!showStatus) {
+			const float manageWidth = Util::MeasureLabeledButton({}, GetSceneTargetManageLabel(type));
+			const float rowWidth = ImGui::GetFrameHeight() + style.ItemSpacing.x + manageWidth + style.ItemInnerSpacing.x;
+			minimumWidth = std::max(minimumWidth, rowWidth + style.FramePadding.x * 2.0f);
+		}
+		minimumWidth = std::ceil(minimumWidth + style.ScrollbarSize);
+		float width = std::min(std::max({ ImGui::CalcItemWidth(), right - left, minimumWidth }), bounds.GetWidth());
 		const float height = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() * kSceneTargetComboVisibleItems + style.WindowPadding.y * 2.0f;
 		// BeginComboPopup raises the minimum to the opener width before applying the size callback.
 		ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, height), [](ImGuiSizeCallbackData* data) { data->DesiredSize.x = *static_cast<const float*>(data->UserData); }, &width);
@@ -808,10 +822,8 @@ namespace
 		const bool canManage = feature.empty() && presentation.configured;
 		const auto start = ImGui::GetCursorScreenPos();
 		const float right = start.x + ImGui::GetContentRegionAvail().x;
-		const char* manageLabel = context.type == SceneSettingsManager::SceneContextType::Weather ?
-		                              T("feature.scene_manager.action.manage_weather", "Manage Weather") :
-		                              T("feature.scene_manager.action.manage_location", "Manage Location");
-		const float buttonWidth = ImGui::CalcTextSize(manageLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+		const char* manageLabel = GetSceneTargetManageLabel(context.type);
+		const float buttonWidth = Util::MeasureLabeledButton({}, manageLabel);
 		const float buttonX = std::max(start.x, right - buttonWidth - ImGui::GetStyle().ItemInnerSpacing.x);
 		const bool manageHovered = canManage && ImGui::IsWindowHovered() &&
 		                           ImGui::IsMouseHoveringRect(ImVec2(buttonX, start.y), ImVec2(right, start.y + ImGui::GetTextLineHeight()));
@@ -913,7 +925,7 @@ namespace
 		const Context previewContext{ .type = Type::Weather, .weatherId = selectedWeather };
 		const bool canManage = feature.empty() && selected != targets.end() &&
 		                       GetScenePickerPresentation(previewContext, GetWeatherTargetLabel(*selected)).configured;
-		Util::ComboPreviewAction action{ .label = canManage ? T("feature.scene_manager.action.manage_weather", "Manage Weather") : nullptr };
+		Util::ComboPreviewAction action{ .label = canManage ? GetSceneTargetManageLabel(Type::Weather) : nullptr };
 		const SKSE::stl::scope_exit drawPreviewManagement([&] {
 			if (action.pressed)
 				RequestTargetManagement(previewContext, preview);
@@ -927,7 +939,7 @@ namespace
 		                    filter                                       ? GetFeatureSceneMarker(feature, previewContext, false) :
 		                                                                   GetScenePickerPresentation(previewContext, GetWeatherTargetLabel(*selected)).marker;
 		if (!BeginSceneTargetCombo("##SceneWeather", preview.c_str(), selected != targets.end() && isCurrent(*selected),
-				marker, !feature.empty(), scroll ? scroll : &weatherPickerScroll, action, popupRight))
+				marker, Type::Weather, !feature.empty(), scroll ? scroll : &weatherPickerScroll, action, popupRight))
 			return false;
 		std::vector<RE::TESWeather*> current;
 		std::vector<RE::TESWeather*> configured;
@@ -1026,7 +1038,7 @@ namespace
 			.locationType = selectedLocation ? selectedLocation->type : Type::Worldspace,
 			.locationFormKey = selectedLocation ? selectedLocation->formKey : std::string{} };
 		const bool canManage = feature.empty() && selectedLocation && getPresentation(*selectedLocation).configured;
-		Util::ComboPreviewAction action{ .label = canManage ? T("feature.scene_manager.action.manage_location", "Manage Location") : nullptr };
+		Util::ComboPreviewAction action{ .label = canManage ? GetSceneTargetManageLabel(ContextType::Location) : nullptr };
 		const SKSE::stl::scope_exit drawPreviewManagement([&] {
 			if (action.pressed)
 				RequestTargetManagement(previewContext, preview);
@@ -1036,7 +1048,7 @@ namespace
 		                    filter                               ? GetFeatureSceneMarker(feature, previewContext, false) :
 		                                                           getPresentation(*selectedLocation).marker;
 		if (!BeginSceneTargetCombo("##SceneLocation", preview.c_str(), selectedLocation && isCurrent(*selectedLocation),
-				marker, !feature.empty(), scroll ? scroll : &locationPickerScroll, action, popupRight))
+				marker, ContextType::Location, !feature.empty(), scroll ? scroll : &locationPickerScroll, action, popupRight))
 			return false;
 		std::vector<const Target*> currentTargets;
 		std::vector<const Target*> configured;
