@@ -371,7 +371,8 @@ void DX12NativeScene::DrawSettings()
         settings.SubcellSize = uint32_t(gridUnits * 1024);
     ImGui::TextDisabled("Full-scene DXR stays active until partial TLAS integration is validated.");
     ImGui::Checkbox("Build isolated grid TLAS for diagnostic testing", &settings.BuildCandidateGridTLAS);
-    ImGui::TextDisabled("Candidate grid TLAS is NOT supplied to lighting or shadows.");
+    ImGui::TextDisabled("Candidate TLAS and matched materials are built only for diagnostics.");
+    ImGui::TextDisabled("Live lighting and shadows remain on the original full-scene renderer.");
     ImGui::SeparatorText("Prepared scene VRAM budget");
     const uint32_t pendingSceneBudget = requestedBudget.load();
     uint32_t selectedSceneBudget = pendingSceneBudget != UINT32_MAX ?
@@ -621,6 +622,9 @@ void DX12NativeScene::ResetScene()
     globals::features::nativeLLF.ClearCapturedLights();
     subcellManager.Reset();
     candidateGridAcceleration.Reset();
+    candidateGridBindings.Reset();
+    requestedCandidateMaterialScene.reset();
+    candidateMaterialAllowance = 0;
     lastSubmittedGridCell.reset();
     hasPreviousPlayer = false;
 	++revision;
@@ -837,8 +841,33 @@ void DX12NativeScene::EarlyPrepass()
                     lastSubmittedGridCell = candidate;
                 }
                 candidateGridAcceleration.Advance();
+                // Canary path also builds a matching descriptor/material table.
+                // Never publish the TLAS alone: Native Lighting and DXR shadow
+                // queries need an exact matching binding set.
+                const auto candidateScene = candidateGridAcceleration.GetScene();
+                if (candidateScene && candidateScene->scope.scene == revision &&
+                    candidateScene->scope.policy == 3) {
+                    if (requestedCandidateMaterialScene != candidateScene) {
+                        requestedCandidateMaterialScene = candidateScene;
+                        const uint64_t occupied =
+                            (lastSubmittedGridCell ? lastSubmittedGridCell->bytes : 0) +
+                            NativeAccelerationResidentBytes(candidateScene);
+                        const uint64_t allowance = SceneMemoryLimit(occupied);
+                        candidateMaterialAllowance = allowance > occupied ? allowance - occupied : 0;
+                    }
+                    if (candidateMaterialAllowance) {
+                        candidateGridBindings.Request(*backend, candidateScene,
+                            candidateMaterialAllowance,
+                            uint64_t(settings.MaterialBatchMB) * DX12Native::VideoMemoryBudget::kMiB,
+                            {}, false, false, false);
+                    }
+                }
+                candidateGridBindings.Advance();
             } else if (lastSubmittedGridCell) {
                 candidateGridAcceleration.Reset();
+                candidateGridBindings.Reset();
+                requestedCandidateMaterialScene.reset();
+                candidateMaterialAllowance = 0;
                 lastSubmittedGridCell.reset();
             }
         }
@@ -1089,6 +1118,13 @@ void DX12NativeScene::PublishDiagnostics()
         { "subdivisionMode", settings.SubdivisionMode }, { "subcellSize", settings.SubcellSize },
         { "subcellGpuLoader", subcellManager.GetDiagnostics() },
         { "candidateGridTLAS", candidateGridAcceleration.GetDiagnostics() },
+        { "candidateGridMaterialReady", [&]() {
+            const auto scene = candidateGridAcceleration.GetScene();
+            const auto bindings = candidateGridBindings.Get();
+            return scene && bindings && bindings->scene == scene;
+        }() },
+        { "candidateGridMaterialFailure", candidateGridBindings.Failure() },
+        { "candidateGridMaterialBudgetBytes", candidateMaterialAllowance },
 		{ "nativePBR", globals::features::nativePBR.IsActive() }, { "nativeLLF", globals::features::nativeLLF.IsActive() },
 		{ "nativeSCM", globals::features::nativeSCM.IsActive() },
 		{ "nativeLightSource", OwnsNativeFeatures() ? "prepared-priority-unified" : "prepared-cell" },

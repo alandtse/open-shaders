@@ -134,7 +134,10 @@ private:
 	DX12Native::PreparedScene prepared;
     DX12Native::SubcellStreamingManager subcellManager;
     DX12Native::AccelerationWorker candidateGridAcceleration;
+    DX12Native::ShadowBindingWorker candidateGridBindings;
     std::shared_ptr<const DX12Native::PreparedCell> lastSubmittedGridCell;
+    std::shared_ptr<const DX12Native::TopLevel> requestedCandidateMaterialScene;
+    uint64_t candidateMaterialAllowance = 0;
     DX12Native::RuntimeGeometryMailbox runtimeGeometry;
     // Immutable completed-TLAS identity index is published atomically for the draw hook.
     std::atomic<std::shared_ptr<const DX12Native::PreparedRuntimeCoverage>> runtimePreparedCoverage;
