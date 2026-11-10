@@ -188,9 +188,12 @@ namespace
 
 bool DX12NativeScene::OwnsNativeFeatures() const
 {
-	const auto& upscaling = globals::features::upscaling;
+	// Ownership is selected by the native scene backend, not the upscaler,
+	// presentation path, frame generation, or per-effect validity checks.
+	// Native Lighting and the independent shadow producer remain separately
+	// runtime-toggleable consumers of this one backend decision.
 	return loaded && settings.Enabled && !transitionOpen && backend.has_value() &&
-		!globals::game::isVR && upscaling.settings.nativeUpscaleEnable;
+		!globals::game::isVR;
 }
 
 bool DX12NativeScene::IsPreparedStaticCaster(RE::BSGeometry& geometry) const
