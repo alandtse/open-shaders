@@ -3007,7 +3007,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 			environmentPosition,
 			input.WorldPosition.xyz,
 			vertexNormal.xyz,
-			1.0f,
+			wetnessOcclusion,
 			false,
 			eyeIndex,
 			-environmentSize);
