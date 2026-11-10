@@ -19,7 +19,7 @@
 #include <vector>
 #include <algorithm>
 #include <string_view>
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12Resources::Settings, Enabled)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12Resources::Settings, Enabled, AutoPrepareOnCellEntry)
 
 struct DX12Resources::ScanJob
 {
@@ -378,6 +378,35 @@ void DX12Resources::PollCellPreparation()
         std::format("CELL prepared and cached with {} unresolved source assets; NOT render-ready", missing);
 }
 
+void DX12Resources::AdvanceAutomaticInterior(const DX12ResourceService::CellRequest& request)
+{
+    std::scoped_lock lock(statusMutex);
+    // The companion job is independent of menu visibility; dispatch and
+    // publication polling happen on the native scene's normal frame path.
+    PollCellPreparation();
+    if (!settings.Enabled || !settings.AutoPrepareOnCellEntry ||
+        !dataLoaded.load(std::memory_order_acquire)) return;
+    const auto identity = request.Key();
+    if (identity.empty() || lastAutomaticInterior == identity) return;
+    lastAutomaticInterior = identity;
+    if (preparationJob) {
+        // Another request is running; retry the newly entered interior after
+        // that job completes rather than enqueue a concurrent full-cell build.
+        lastAutomaticInterior.clear();
+        return;
+    }
+    const auto cache = DX12ResourceService::SkyrimDataDirectory() /
+        "SKSE/Plugins/CommunityShaders/DX12-cache/cells" /
+        request.plugin / std::format("{:06X}", request.localId);
+    std::error_code ec;
+    const bool available = std::filesystem::is_regular_file(cache / "cell-layout.json", ec) &&
+        !ec && std::filesystem::is_regular_file(cache / "cell-geometry.rsgp", ec) &&
+        !ec && std::filesystem::is_regular_file(cache / "cell-shading.rssp", ec) && !ec;
+    if (available) { ++automaticCacheHits; return; }
+    ++automaticLaunches;
+    StartCellPreparation(request);
+}
+
 void DX12Resources::DrawSettings()
 {
     std::scoped_lock lock(statusMutex);
@@ -401,6 +430,8 @@ void DX12Resources::DrawSettings()
         RefreshLoadedPlugins();
     AdvancePluginCellScan();
     ImGui::Checkbox("Enable DX12 Resources preparation", &settings.Enabled);
+    ImGui::Checkbox("Automatically prepare missing native interior scenes", &settings.AutoPrepareOnCellEntry);
+    ImGui::TextDisabled("Companion runs off-thread; a matching cache is reused without restarting preparation.");
     ImGui::TextDisabled("Current interior or latest-save location; no manual IDs required.");
     ImGui::BeginDisabled(!settings.Enabled);
     ImGui::BeginDisabled(bool(scanJob));
@@ -531,6 +562,9 @@ json DX12Resources::GetDiagnostics()
     std::scoped_lock lock(statusMutex);
     PollCellPreparation();
     return { { "enabled", settings.Enabled },
+        { "autoPrepareOnCellEntry", settings.AutoPrepareOnCellEntry },
+        { "automaticLaunches", automaticLaunches }, { "automaticCacheHits", automaticCacheHits },
+        { "lastAutomaticInterior", lastAutomaticInterior },
         { "detection", { { "source", detectionSource },
             { "status", detectionStatus },
             { "location", detectionLocation }, { "save", detectionSave },

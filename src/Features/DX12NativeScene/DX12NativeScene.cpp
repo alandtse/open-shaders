@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "TruePBR.h"
 #include "Features/LightLimitFix.h"
+#include "Features/DX12Resources/DX12Resources.h"
 #include "Features/NativeFeatures.h"
 #include <BS_thread_pool.hpp>
 #include "Features/NativeComposite/NativeComposite.h"
@@ -705,6 +706,14 @@ void DX12NativeScene::EarlyPrepass()
 	runtimeGeometryCaptureActive.store(settings.Enabled && settings.CaptureRuntimeGeometry,
         std::memory_order_release);
     if (resetRequested.exchange(false)) ResetScene();
+    // Drive the independent DX12Resources companion on scene entry, not via
+    // the settings menu. Only request when a real native interior is active;
+    // the companion validates and publishes its cache off-thread.
+    if (settings.Enabled && !transitionOpen && cell && cell->IsInteriorCell()) {
+        if (const auto* file = cell->GetFile(0); file && file->GetFilename())
+            globals::features::dx12Resources.AdvanceAutomaticInterior(
+                { std::string(file->GetFilename()), cell->GetLocalFormID() });
+    }
     // This CPU-only cache scheduler operates before the native scene/cell
     // early returns, so the menu can prewarm cached meshes without a TLAS.
     // All disk I/O and decoding remain on its background worker.

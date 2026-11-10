@@ -16,7 +16,7 @@
 /** @brief Standalone interior preparation service with automatic CELL identification. */
 struct DX12Resources final : Feature
 {
-    struct Settings { bool Enabled = true; } settings;
+    struct Settings { bool Enabled = true; bool AutoPrepareOnCellEntry = true; } settings;
 
     std::string GetName() override { return "DX12 Resources"; }
     std::string GetShortName() override { return "DX12Resources"; }
@@ -28,6 +28,8 @@ struct DX12Resources final : Feature
     void LoadSettings(json& input) override;
     void SaveSettings(json& output) override;
     void RestoreDefaultSettings() override;
+    /** Render-thread poll and one-shot auto-prepare on entry into a missing native interior cache. */
+    void AdvanceAutomaticInterior(const DX12ResourceService::CellRequest& request);
     void DataLoaded() override { dataLoaded.store(true, std::memory_order_release); }
     json GetDiagnostics() override;
     std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
@@ -75,6 +77,9 @@ private:
     std::uint32_t pluginScanSequence = 0;
     std::uint32_t preparationSequence = 0;
     std::string preparationStatus = "No cell preparation started";
+    std::string lastAutomaticInterior;
+    uint64_t automaticLaunches = 0;
+    uint64_t automaticCacheHits = 0;
     std::string preparationCell;
     std::string preparationPath;
     std::string preparationLogPath;
