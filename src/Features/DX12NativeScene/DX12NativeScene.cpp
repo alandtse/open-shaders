@@ -1489,6 +1489,26 @@ std::optional<DX12NativeScene::SceneFrame> DX12NativeScene::GetSceneFrame(uint32
 	return frame;
 }
 
+std::shared_ptr<const DX12Native::CharacterIsolatedTLAS>
+DX12NativeScene::GetCharacterCasterForVisibility(uint32_t a_frame) const
+{
+    Settings selected;
+    { std::scoped_lock lock(settingsMutex); selected = settings; }
+    if (!loaded || !selected.Enabled || transitionOpen ||
+        !selected.ObserveNativeCharacters ||
+        !selected.CharacterStageGeometryDX12 ||
+        !selected.CharacterRunSkinningDX12 ||
+        !selected.CharacterValidateSkinningDX12 ||
+        !selected.CharacterBuildIsolatedBLASDX12 ||
+        !selected.CharacterBuildIsolatedTLASDX12 ||
+        !selected.CharacterRunIsolatedRayQueryDX12 ||
+        !globals::game::graphicsState ||
+        globals::game::graphicsState->GetFrameCount() != a_frame)
+        return {};
+    return nativeCharacters.GetCasterReadiness(
+        a_frame, selected.CharacterCasterMaxPoseAgeFrames).tlas;
+}
+
 std::shared_ptr<const DX12Native::ShadowFrame> DX12NativeScene::GetShadowMask(uint32_t a_frame) const
 {
 	if (!loaded || !settings.Enabled || !settings.ShadowMask || transitionOpen) return nullptr;

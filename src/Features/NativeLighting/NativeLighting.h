@@ -20,6 +20,8 @@ struct NativeLightingFeature final : Feature
 		uint32_t NormalInfluence = 2, SelectedDirectLight = 0;
 		uint32_t TraceDensityMode = 0; // 0..7, native-resolution sparse ray eligibility.
 		bool StochasticShadows = false, UseAllPreparedLights = true;
+        // Independent opt-in; only secondary occlusion rays inspect characters.
+        bool CharacterCasterOcclusion = false;
 		uint32_t BudgetMB = 0; // Compatibility only; always dynamic DXGI.
 		bool PersistLab = false;
 	};
@@ -52,6 +54,7 @@ struct NativeLightingFeature final : Feature
 		winrt::com_ptr<ID3D12Fence> readyFence;
 		GraphicsBackend backend;
 		DX12NativeScene::SceneFrame scene;
+        std::shared_ptr<const DX12Native::CharacterIsolatedTLAS> characterCasters;
 		std::weak_ptr<const DX12Native::ShadowBindings> descriptorBindings;
 		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 		uint64_t readyValue = 0, bytes = 0, sceneRevision = 0;

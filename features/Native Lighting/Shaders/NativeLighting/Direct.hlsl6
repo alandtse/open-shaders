@@ -1,4 +1,7 @@
 RaytracingAccelerationStructure Scene : register(t0);
+// Optional separate character-caster TLAS; never used for primary receivers.
+RaytracingAccelerationStructure CharacterCasters : register(t7);
+cbuffer CharacterVisibilityControl : register(b2) { uint CharacterOcclusionEnabled; };
 Texture2D<float> RasterDepth : register(t1);
 StructuredBuffer<uint> ValidationOffsets : register(t2);
 struct PointLight { float4 positionRadius; float4 radianceSourceRadius; uint4 flags; };
@@ -273,7 +276,14 @@ void main(uint2 pixel : SV_DispatchThreadID)
 			if (admitted) shadow.CommitNonOpaqueTriangleHit();
 		}
 		if (!valid) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 7 : originalReason); return; }
-		float shadowVisibility = shadow.CommittedStatus() == COMMITTED_NOTHING ? 1.0f : 1.0f - saturate(ShadowTuning.x);
+        bool blocked = shadow.CommittedStatus() != COMMITTED_NOTHING;
+        if (valid && !blocked && CharacterOcclusionEnabled != 0u) {
+            RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> actorShadow;
+            actorShadow.TraceRayInline(CharacterCasters, RAY_FLAG_NONE, 0x01, visibility);
+            while (actorShadow.Proceed()) { }
+            blocked = actorShadow.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+        }
+		float shadowVisibility = blocked ? 1.0f - saturate(ShadowTuning.x) : 1.0f;
 		if (shadowVisibility <= 0.0f) continue;
 		float3 halfVector = l + v;
 		float3 h = dot(halfVector, halfVector) > 1e-8f ? normalize(halfVector) : n;

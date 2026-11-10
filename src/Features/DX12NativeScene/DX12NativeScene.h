@@ -135,6 +135,12 @@ struct DX12NativeScene final : Feature
 	std::optional<SceneFrame> GetSceneFrame(uint32_t a_frame) const;
 	/** @brief Retains the current raster snapshot through the consumer GPU work. */
 	std::shared_ptr<const DX12Native::RasterFrame> GetRasterFrame(uint32_t a_frame) const { return loaded && settings.Enabled && !transitionOpen ? raster.Get(a_frame) : nullptr; }
+    /** @brief Eligible third-person character caster for independent native
+     * visibility consumers. This does not require the separate shadow-mask
+     * toggle, and does not promote characters to prepared receivers.
+     */
+    std::shared_ptr<const DX12Native::CharacterIsolatedTLAS>
+        GetCharacterCasterForVisibility(uint32_t a_frame) const;
 	/** @brief Returns a matching prepared-scene shadow mask and its completion fence. */
 	std::shared_ptr<const DX12Native::ShadowFrame> GetShadowMask(uint32_t a_frame) const;
 	/** @brief Retains a borrowed shadow mask until the consumer GPU fence completes. */
