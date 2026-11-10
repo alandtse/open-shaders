@@ -1,6 +1,7 @@
 #include "DX12NativeScene.h"
 #include "Features/DX12NativeScene/CellPackedFile.h"
 #include "RE/B/BSTriShape.h"
+#include "RE/T/TESWorldSpace.h"
 #include "Globals.h"
 #include "TruePBR.h"
 #include "Features/LightLimitFix.h"
@@ -40,6 +41,38 @@ namespace
         constexpr uint64_t kFixedASAndDescriptorEstimate = 64ull * 1024 * 1024;
         return uint64_t(geom) * 3ull + uint64_t(shading) * 2ull +
             kFixedASAndDescriptorEstimate;
+    }
+
+    // One logical interior CELL or exterior WRLD owns the native scene.
+    // Exterior CELL changes within a WRLD must not reset BLAS/light generations.
+    struct NativeSpatialScope
+    {
+        DX12ResourceService::CellRequest request;
+        std::filesystem::path directory;
+        uint32_t formID = 0;
+        bool exterior = false;
+    };
+
+    std::optional<NativeSpatialScope> ResolveNativeSpatialScope(
+        RE::PlayerCharacter* player, RE::TESObjectCELL* cell)
+    {
+        if (!player || !cell) return std::nullopt;
+        const bool exterior = cell->IsExteriorCell();
+        auto* world = exterior ? player->GetWorldspace() : nullptr;
+        if (exterior && !world) return std::nullopt;
+        const auto* file = exterior ? world->GetFile(0) : cell->GetFile(0);
+        const auto filename = file ? file->GetFilename() : std::string_view{};
+        const uint32_t local = exterior ? world->GetLocalFormID() : cell->GetLocalFormID();
+        const uint32_t id = exterior ? world->GetFormID() : cell->GetFormID();
+        if (filename.empty() || !local || !id) return std::nullopt;
+        NativeSpatialScope scope{};
+        scope.request = { std::string(filename), local, exterior };
+        scope.directory = std::filesystem::path(
+            "Data/SKSE/Plugins/CommunityShaders/DX12-cache") /
+            scope.request.CacheFamily() / scope.request.plugin / std::format("{:06X}", local);
+        scope.formID = id;
+        scope.exterior = exterior;
+        return scope;
     }
 
     uint64_t NativeAccelerationResidentBytes(const std::shared_ptr<const DX12Native::TopLevel>& scene)
@@ -391,6 +424,7 @@ void DX12NativeScene::DrawSettings()
         settings.SubcellSize = uint32_t(gridUnits * 1024);
         resetRequested.store(true, std::memory_order_release);
     }
+    ImGui::TextDisabled("Exteriors use WRLD-scoped 3x3 geometry; interiors keep CELL-scoped caches.");
     ImGui::TextDisabled("Full-scene DXR stays active until partial TLAS integration is validated.");
     if (ImGui::Checkbox("Build isolated grid TLAS for diagnostic testing", &settings.BuildCandidateGridTLAS))
         resetRequested.store(true, std::memory_order_release);
@@ -759,7 +793,8 @@ void DX12NativeScene::EarlyPrepass()
 		if (const auto batch = requestedMaterialBatch.exchange(0); batch) settings.MaterialBatchMB = batch;
 	}
 	auto* cell = globals::game::player ? globals::game::player->GetParentCell() : nullptr;
-	const auto currentID = cell ? cell->GetFormID() : 0;
+    const auto spatialScope = ResolveNativeSpatialScope(globals::game::player, cell);
+    const auto currentID = spatialScope ? spatialScope->formID : 0;
     // Publication can complete after an earlier missing-cache attempt.
     // Consume the matching notification on the scene thread, not the companion worker.
     if (const auto notification = pendingPreparedCellReload.exchange(0, std::memory_order_acq_rel);
@@ -776,35 +811,30 @@ void DX12NativeScene::EarlyPrepass()
 	runtimeGeometryCaptureActive.store(settings.Enabled && settings.CaptureRuntimeGeometry,
         std::memory_order_release);
     if (resetRequested.exchange(false)) ResetScene();
-    // Drive the independent DX12Resources companion on scene entry, not via
-    // the settings menu. Only request when a real native interior is active;
-    // the companion validates and publishes its cache off-thread.
-    if (settings.Enabled && !transitionOpen && cell && cell->IsInteriorCell()) {
-        if (const auto* file = cell->GetFile(0); file && !file->GetFilename().empty()) {
-            const DX12ResourceService::CellRequest key{
-                std::string(file->GetFilename()), cell->GetLocalFormID() };
-            const auto& player = globals::game::player->GetPosition();
-            const auto directory = std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") /
-                file->GetFilename() / std::format("{:06X}", cell->GetLocalFormID());
-            const auto estimate = EstimateCachedCellFootprint(directory);
-            // The global DXGI allowance is queried before full-CELL uploads
-            // begin, so cached oversized scenes can choose the grid first.
-            if (backend) SceneMemoryLimit();
-            const bool grid = settings.SubdivisionMode == 2 ||
-                (settings.SubdivisionMode == 1 && estimate &&
-                    preparedSceneBudgetStatus.dxgiAvailable &&
-                    estimate > preparedSceneBudgetStatus.effectiveBytes);
-            if (grid) {
-                const double dx = hasPreviousPlayer ? player.x - previousPlayerX : 0.0;
-                const double dy = hasPreviousPlayer ? player.y - previousPlayerY : 0.0;
-                globals::features::dx12Resources.AdvanceStreamingInterior(key,
-                    settings.SubcellSize, player.x, player.y, dx, dy);
-            } else
-                globals::features::dx12Resources.AdvanceAutomaticInterior(key);
-            previousPlayerX = player.x;
-            previousPlayerY = player.y;
-            hasPreviousPlayer = true;
-        }
+    // Interior requests use CELL identity; exterior requests retain WRLD
+    // identity across changing exterior CELLs. Companion runs asynchronously.
+    if (settings.Enabled && !transitionOpen && spatialScope) {
+        const auto position = globals::game::player->GetPosition();
+        const auto estimate = spatialScope->exterior ? 0 :
+            EstimateCachedCellFootprint(spatialScope->directory);
+        if (backend) SceneMemoryLimit();
+        // With no worldspace-wide full package, exterior automatic mode
+        // selects the grid directly. Interior classification stays budgeted.
+        const bool grid = (spatialScope->exterior && settings.SubdivisionMode != 0) ||
+            settings.SubdivisionMode == 2 ||
+            (settings.SubdivisionMode == 1 && estimate &&
+                preparedSceneBudgetStatus.dxgiAvailable &&
+                estimate > preparedSceneBudgetStatus.effectiveBytes);
+        if (grid) {
+            const double dx = hasPreviousPlayer ? position.x - previousPlayerX : 0.0;
+            const double dy = hasPreviousPlayer ? position.y - previousPlayerY : 0.0;
+            globals::features::dx12Resources.AdvanceStreamingScene(spatialScope->request,
+                settings.SubcellSize, position.x, position.y, dx, dy);
+        } else if (!spatialScope->exterior)
+            globals::features::dx12Resources.AdvanceAutomaticInterior(spatialScope->request);
+        previousPlayerX = position.x;
+        previousPlayerY = position.y;
+        hasPreviousPlayer = true;
     }
     // This CPU-only cache scheduler operates before the native scene/cell
     // early returns, so the menu can prewarm cached meshes without a TLAS.
@@ -823,10 +853,10 @@ void DX12NativeScene::EarlyPrepass()
 		backend = GraphicsBackend::Create(globals::d3d::device, globals::d3d::context, failure);
 		if (!backend) return;
 	}
-	if (!cell || !cell->IsInteriorCell()) {
-		if (cellID) ResetScene();
-		return;
-	}
+    if (!spatialScope || (spatialScope->exterior && settings.SubdivisionMode == 0)) {
+        if (cellID) ResetScene();
+        return;
+    }
 	if (cellID != currentID) {
 		ResetScene();
 		cellID = currentID;
@@ -864,25 +894,18 @@ void DX12NativeScene::EarlyPrepass()
     }
     // Prepare independently resident subcell GPU buffers and optional
     // diagnostic TLAS without changing the authoritative live renderer.
-    if (settings.SubdivisionMode != 0 && cell->IsInteriorCell()) {
-        const auto* file = cell->GetFile(0);
-        const auto fullPackage = file && !file->GetFilename().empty() ?
-            std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") /
-                file->GetFilename() / std::format("{:06X}", cell->GetLocalFormID()) :
-            std::filesystem::path{};
-        const uint64_t estimated = fullPackage.empty() ? 0 :
-            EstimateCachedCellFootprint(fullPackage);
-        const bool gridSelected = settings.SubdivisionMode == 2 ||
+    if (settings.SubdivisionMode != 0) {
+        const auto estimated = spatialScope->exterior ? 0 :
+            EstimateCachedCellFootprint(spatialScope->directory);
+        const bool gridSelected = spatialScope->exterior ||
+            settings.SubdivisionMode == 2 ||
             (settings.SubdivisionMode == 1 && estimated &&
                 preparedSceneBudgetStatus.dxgiAvailable &&
                 estimated > preparedSceneBudgetStatus.effectiveBytes);
-        if (gridSelected && file && !file->GetFilename().empty()) {
-            const auto local = cell->GetLocalFormID();
-            const auto identity = std::format("{:06X}:{}", local, file->GetFilename());
-            const auto root = std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") /
-                file->GetFilename() / std::format("{:06X}", local);
+        if (gridSelected) {
             const auto& position = globals::game::player->GetPosition();
-            subcellManager.Advance(*backend, root, identity, revision, settings.SubcellSize,
+            subcellManager.Advance(*backend, spatialScope->directory,
+                spatialScope->request.Key(), revision, settings.SubcellSize,
                 position.x, position.y, 0.0, 0.0,
                 uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB);
             if (settings.BuildCandidateGridTLAS) {
@@ -930,17 +953,16 @@ void DX12NativeScene::EarlyPrepass()
     // Raster continues while partial grid assets become available.
     // In diagnostic/auto mode the established complete-scene renderer
     // remains the normal fallback.
-    const auto* fullSource = cell->GetFile(0);
-    const auto cache = fullSource && !fullSource->GetFilename().empty() ?
-        std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") /
-            fullSource->GetFilename() / std::format("{:06X}", cell->GetLocalFormID()) :
-        std::filesystem::path{};
-    const auto projected = cache.empty() ? 0 : EstimateCachedCellFootprint(cache);
+    const auto projected = spatialScope->exterior ? 0 :
+        EstimateCachedCellFootprint(spatialScope->directory);
     const bool autoGrid = settings.SubdivisionMode == 1 && projected &&
         preparedSceneBudgetStatus.dxgiAvailable &&
         projected > preparedSceneBudgetStatus.effectiveBytes;
-    const bool exclusiveGrid = (settings.SubdivisionMode == 2 || autoGrid) &&
-        settings.BuildCandidateGridTLAS && settings.UseGridForNativeDXR;
+    // No full-WRLD package exists. Exteriors must never load a single
+    // exterior CELL and accidentally claim it covers the 3x3 worldspace.
+    const bool exclusiveGrid = spatialScope->exterior ||
+        ((settings.SubdivisionMode == 2 || autoGrid) &&
+            settings.BuildCandidateGridTLAS && settings.UseGridForNativeDXR);
 	if (!exclusiveGrid && !prepared.Requested()) {
 		const auto* source = cell->GetFile(0);
 		if (!source) { failure = "Cell source unavailable"; return; }
@@ -1175,7 +1197,8 @@ std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScen
 {
 	if (!loaded || !settings.Enabled || transitionOpen) return std::nullopt;
 	auto* cell = globals::game::player ? globals::game::player->GetParentCell() : nullptr;
-	if (!cell || cell->GetFormID() != cellID) return std::nullopt;
+    const auto scope = ResolveNativeSpatialScope(globals::game::player, cell);
+    if (!scope || scope->formID != cellID) return std::nullopt;
     if (settings.SubdivisionMode != 0 && settings.BuildCandidateGridTLAS &&
         settings.UseGridForNativeDXR) {
         const auto tileCell = subcellManager.GetCombined();
@@ -1214,6 +1237,12 @@ void DX12NativeScene::PublishDiagnostics()
 	json snapshot{ { "enabled", settings.Enabled }, { "nativeOwnership", OwnsNativeFeatures() },
         { "globalDXGIHeadroomPercent", DX12Native::VideoMemoryBudget::HeadroomPercent() },
         { "subdivisionMode", settings.SubdivisionMode }, { "subcellSize", settings.SubcellSize },
+        { "sceneScope", [&]() {
+            const auto* player = globals::game::player;
+            const auto scope = ResolveNativeSpatialScope(player,
+                player ? player->GetParentCell() : nullptr);
+            return scope ? scope->request.ScopedKey() : std::string("unavailable");
+        }() },
         { "useGridForNativeDXR", settings.UseGridForNativeDXR },
         { "subcellGpuLoader", subcellManager.GetDiagnostics() },
         { "candidateGridTLAS", candidateGridAcceleration.GetDiagnostics() },
