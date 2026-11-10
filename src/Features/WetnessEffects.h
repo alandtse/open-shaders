@@ -77,6 +77,11 @@ public:
 		// Used by CPU wetness decay; retained here to preserve the mirrored settings layout.
 		float CharacterDryTime = 10.0f;
 		uint EnableWeaponRainDrops = true;
+		// Independent environmental wall-droplet controls
+		float EnvironmentDropSize = 1.0f;
+		float EnvironmentDropBrightness = 1.0f;
+		float EnvironmentDropReflectivity = 1.0f;
+		float EnvironmentDropPadding = 0.0f;
 	};
 
 	/** @brief Stable debug-mode ordering shared by the character-rain UI and frame upload. */
@@ -91,7 +96,7 @@ public:
 		Weapons,
 		Count
 	};
-	static_assert(sizeof(Settings) == 160);
+	static_assert(sizeof(Settings) == 176);
 
 	struct alignas(16) PerFrame
 	{
@@ -106,7 +111,7 @@ public:
 		float2 CharacterStatePadding;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
-	static_assert(sizeof(PerFrame) == 256);
+	static_assert(sizeof(PerFrame) == 272);
 
 	struct DebugSettings
 	{

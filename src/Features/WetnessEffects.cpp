@@ -56,7 +56,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CharacterWetSheen,
 	CharacterRainActivityMultiplier,
 	CharacterDryTime,
-	EnableWeaponRainDrops)
+	EnableWeaponRainDrops,
+	EnvironmentDropSize,
+	EnvironmentDropBrightness,
+	EnvironmentDropReflectivity)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::DebugSettings,
@@ -679,7 +682,13 @@ void WetnessEffects::DrawEnvironmentWetnessSettings()
 
 		ImGui::TreePop();
 	}
-
+	ImGui::Spacing();
+	if (ImGui::TreeNodeEx(T(TKEY("environment_wall_droplets"), "Environmental Wall Droplets"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::SliderFloat(T(TKEY("environment_drop_size"), "Size"), &settings.EnvironmentDropSize, 0.25f, 2.0f, "%.2f");
+		ImGui::SliderFloat(T(TKEY("environment_drop_brightness"), "Brightness"), &settings.EnvironmentDropBrightness, 0.0f, 3.0f, "%.2f");
+		ImGui::SliderFloat(T(TKEY("environment_drop_reflectivity"), "Reflectivity"), &settings.EnvironmentDropReflectivity, 0.0f, 3.0f, "%.2f");
+		ImGui::TreePop();
+	}
 	// The weather picker and debug overrides have no scene-context meaning, so hide them while a
 	// Scene Manager replica is borrowing this panel to author overrides.
 	if (SettingsControl::IsReplicating())

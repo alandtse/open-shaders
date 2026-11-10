@@ -182,6 +182,10 @@ namespace SharedData
 		float CharacterRainActivityMultiplier;
 		float CharacterDryTime;
 		uint EnableWeaponRainDrops;
+		float EnvironmentDropSize;
+		float EnvironmentDropBrightness;
+		float EnvironmentDropReflectivity;
+		float EnvironmentDropPadding;
 		float CharacterImpactIntensity;
 		float CharacterRetainedWetness;
 		float2 CharacterStatePadding;
