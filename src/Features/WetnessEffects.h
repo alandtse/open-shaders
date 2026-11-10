@@ -222,20 +222,20 @@ public:
 	}
 
 private:
-        /** @brief Draws the environment wetness and environmental droplet settings. */
-        void DrawEnvironmentWetnessSettings();
+	/** @brief Draws the environment wetness and environmental droplet settings. */
+	void DrawEnvironmentWetnessSettings();
 
-        /** @brief Draws the character rain spot and wetness settings. */
-        void DrawCharacterRainSettings();
+	/** @brief Draws the character rain spot and wetness settings. */
+	void DrawCharacterRainSettings();
 
-        /** @brief Restores character rain settings to their default values. */
-        void RestoreCharacterRainDefaults();
+	/** @brief Restores character rain settings to their default values. */
+	void RestoreCharacterRainDefaults();
 
-        /** @brief Updates character rain parameters for the current frame. */
-        void UpdateCharacterRainData(PerFrame& a_data) const;
+	/** @brief Updates character rain parameters for the current frame. */
+	void UpdateCharacterRainData(PerFrame& a_data) const;
 
-        /** @brief Draws the weather analysis debug interface. */
-        void DrawWeatherAnalysis() const;
+	/** @brief Draws the weather analysis debug interface. */
+	void DrawWeatherAnalysis() const;
 
 	mutable float characterSurfaceWetness = 0.0f;
 	mutable Util::FrameLatch characterWetnessFrame;
