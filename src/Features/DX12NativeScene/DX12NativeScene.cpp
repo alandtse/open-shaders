@@ -780,10 +780,10 @@ void DX12NativeScene::EarlyPrepass()
     // the settings menu. Only request when a real native interior is active;
     // the companion validates and publishes its cache off-thread.
     if (settings.Enabled && !transitionOpen && cell && cell->IsInteriorCell()) {
-        if (const auto* file = cell->GetFile(0); file && file->GetFilename()) {
+        if (const auto* file = cell->GetFile(0); file && !file->GetFilename().empty()) {
             const DX12ResourceService::CellRequest key{
                 std::string(file->GetFilename()), cell->GetLocalFormID() };
-            const auto& player = globals::game::player->world.translate;
+            const auto& player = globals::game::player->GetPosition();
             const auto directory = std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") /
                 file->GetFilename() / std::format("{:06X}", cell->GetLocalFormID());
             const auto estimate = EstimateCachedCellFootprint(directory);
@@ -866,7 +866,7 @@ void DX12NativeScene::EarlyPrepass()
     // diagnostic TLAS without changing the authoritative live renderer.
     if (settings.SubdivisionMode != 0 && cell->IsInteriorCell()) {
         const auto* file = cell->GetFile(0);
-        const auto fullPackage = file && file->GetFilename() ?
+        const auto fullPackage = file && !file->GetFilename().empty() ?
             std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") /
                 file->GetFilename() / std::format("{:06X}", cell->GetLocalFormID()) :
             std::filesystem::path{};
@@ -876,12 +876,12 @@ void DX12NativeScene::EarlyPrepass()
             (settings.SubdivisionMode == 1 && estimated &&
                 preparedSceneBudgetStatus.dxgiAvailable &&
                 estimated > preparedSceneBudgetStatus.effectiveBytes);
-        if (gridSelected && file && file->GetFilename()) {
+        if (gridSelected && file && !file->GetFilename().empty()) {
             const auto local = cell->GetLocalFormID();
             const auto identity = std::format("{:06X}:{}", local, file->GetFilename());
             const auto root = std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") /
                 file->GetFilename() / std::format("{:06X}", local);
-            const auto& position = globals::game::player->world.translate;
+            const auto& position = globals::game::player->GetPosition();
             subcellManager.Advance(*backend, root, identity, revision, settings.SubcellSize,
                 position.x, position.y, 0.0, 0.0,
                 uint64_t(settings.BudgetMB) * DX12Native::VideoMemoryBudget::kMiB);
@@ -931,7 +931,7 @@ void DX12NativeScene::EarlyPrepass()
     // In diagnostic/auto mode the established complete-scene renderer
     // remains the normal fallback.
     const auto* fullSource = cell->GetFile(0);
-    const auto cache = fullSource && fullSource->GetFilename() ?
+    const auto cache = fullSource && !fullSource->GetFilename().empty() ?
         std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/DX12-cache/cells") /
             fullSource->GetFilename() / std::format("{:06X}", cell->GetLocalFormID()) :
         std::filesystem::path{};
@@ -1184,7 +1184,7 @@ std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScen
         const auto progress = subcellManager.GetDiagnostics();
         const auto* player = globals::game::player;
         const auto target = player ? DX12Native::SpatialSubcells::FromPosition(
-            player->world.translate.x, player->world.translate.y, settings.SubcellSize) :
+            player->GetPosition().x, player->GetPosition().y, settings.SubcellSize) :
             DX12Native::SpatialSubcells::Coordinate{};
         // Do not publish resources built for an earlier grid center or for
         // a partially rebuilt resource/descriptor generation. Consumers

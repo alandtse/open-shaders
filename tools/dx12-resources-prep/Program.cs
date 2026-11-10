@@ -255,7 +255,7 @@ try
         stage = "cell-packed-partial", geometryCompiled = compiledShapes.Length > 0, accelerationBuilt = false, runtimeCoverageValid = false,
         outstanding = new[] { "Runtime placement/state comparison", "Excluded mesh/material coverage", "Shader coordinator and DX12 integration" }
     }, options));
-    Console.WriteLine($"Prepared {rows.Count} selected references{(requestedSubcell is { } sub ? $" in subcell {sub.X},{sub.Y}" : "")}.");
+    Console.WriteLine($"Prepared {rows.Count} selected references{(requestedSubcell is { } printedTile ? $" in subcell {printedTile.X},{printedTile.Y}" : "")}.");
     Console.WriteLine($"CELL catalog had {staticCount} static-record candidates and {lightCount} placed lights.");
     Console.WriteLine($"PG inputs: {pgAssets.Count(asset => asset.CachedSource != null)} cached / {pgAssets.Count} requested; unresolved bases: {unresolvedBases}.");
     Console.WriteLine($"Compiled {compiledShapes.Length} shapes / {compiledShapes.Sum(shape => (long)shape.IndexCount / 3)} triangles; {compiledAssets.Count(asset => asset.CacheHit)} mesh cache hits.");
