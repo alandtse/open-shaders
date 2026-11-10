@@ -998,7 +998,7 @@ void Streamline::ConfigureDLSSG(bool enabled)
 	options.numFramesToGenerate = std::clamp<uint32_t>(
 		globals::features::upscaling.settings.dlssgFramesToGenerate, 1, dlssgMaxFramesToGenerate);
 	const auto& upscalingSettings = globals::features::upscaling.settings;
-	if (const auto dynamic = DLSSGDynamic::Select(enabled, dlssgDynamicSupported, upscalingSettings.dlssgDynamic, upscalingSettings.dlssgDynamicTargetFPS); dynamic.dynamic) {
+	if (const auto dynamic = DLSSGDynamic::Select(enabled, dlssgDynamicSupported, upscalingSettings.dlssgDynamic, upscalingSettings.dlssgDynamicTargetFPS, Upscaling::kDLSSGDynamicTargetFPSMax); dynamic.dynamic) {
 		options.mode = sl::DLSSGMode::eDynamic;
 		options.dynamicTargetFrameRate = dynamic.targetFrameRate;
 	}

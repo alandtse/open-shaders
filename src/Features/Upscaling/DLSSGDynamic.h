@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 
 namespace DLSSGDynamic
@@ -14,14 +15,15 @@ namespace DLSSGDynamic
 	/**
 	 * @brief Selects Dynamic Multi-Frame Generation when frame generation is on, the runtime reports
 	 * DLSSGState::bIsDynamicMFGSupported and the user enabled it. A target that is not a positive
-	 * finite number becomes 0, which Streamline treats as the display refresh rate.
+	 * finite number becomes 0, which Streamline treats as the display refresh rate; a larger one is
+	 * clamped to a_maxTargetFrameRate.
 	 */
-	inline Selection Select(bool a_frameGenerationEnabled, bool a_dynamicSupported, bool a_dynamicRequested, float a_targetFrameRate)
+	inline Selection Select(bool a_frameGenerationEnabled, bool a_dynamicSupported, bool a_dynamicRequested, float a_targetFrameRate, float a_maxTargetFrameRate)
 	{
 		Selection selection;
 		selection.dynamic = a_frameGenerationEnabled && a_dynamicSupported && a_dynamicRequested;
 		if (selection.dynamic && std::isfinite(a_targetFrameRate) && a_targetFrameRate > 0.0f)
-			selection.targetFrameRate = a_targetFrameRate;
+			selection.targetFrameRate = std::min(a_targetFrameRate, a_maxTargetFrameRate);
 		return selection;
 	}
 }
