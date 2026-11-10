@@ -274,6 +274,13 @@
             "targets": ["prepare_shaders"]
         },
         {
+            "name": "Native-DXIL",
+            "description": "Compile existing native DX12 shaders only, without DXBC cache compilation, DLL or packaging",
+            "configurePreset": "ALL",
+            "configuration": "Release",
+            "targets": ["native_shaders_only"]
+        },
+        {
             "name": "Debug",
             "description": "Debug build for CS SKSE plugin, generate an AIO folder thats ready to copy",
             "configurePreset": "ALL-DEBUG",

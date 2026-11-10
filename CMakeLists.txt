@@ -813,6 +813,16 @@ include(Streamline-Runtime)
 include(src/Features/DX12NativeScene/Shaders.cmake)
 include(src/Features/NativeLighting/Shaders.cmake)
 include(src/Features/NativeComposite/Shaders.cmake)
+if(DX12_NATIVE_SCENE_DXC)
+    add_custom_target(native_shaders_only)
+    add_dependencies(native_shaders_only
+        DX12NativeSceneDXIL NativeLightingDXIL NativeCompositeDXIL)
+else()
+    add_custom_target(native_shaders_only
+        COMMAND ${CMAKE_COMMAND} -E echo "DXC is required for native_shaders_only"
+        COMMAND ${CMAKE_COMMAND} -E false
+        VERBATIM)
+endif()
 # A package install fails on a payload file a skipped download left absent, so the only
 # path left to guard is the AIO archive, which is staged from the tree rather than installed.
 if(SKIP_RUNTIME_DOWNLOADS)
