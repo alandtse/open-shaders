@@ -50,6 +50,7 @@ namespace DX12Native
         std::vector<CharacterPartObservation> parts;
         std::shared_ptr<const CharacterMeshGeneration> stagedGeometry;
         std::shared_ptr<const CharacterDeformedResult> deformed;
+        std::optional<CharacterDeformValidation> validation;
         std::string deformationError;
         uint32_t capturedMeshes = 0;
         uint64_t capturedBytes = 0;
@@ -83,7 +84,7 @@ namespace DX12Native
          * deterministic publication are handled on an independent CPU worker.
          */
         void Advance(uint32_t frame, uint32_t maxActors, uint32_t periodFrames, bool playerOnly,
-            bool stageGeometry, bool runSkinning,
+            bool stageGeometry, bool runSkinning, bool validateSkinning,
             ID3D12Device* device, ID3D12CommandQueue* queue)
         {
             // Runtime toggles can reset the observer while the engine is
@@ -230,7 +231,7 @@ namespace DX12Native
                 pool.detach_task([work, captured, previous,
                     mesh = std::move(capturedMesh),
                     pose = std::move(capturedPose), nativeDevice,
-                    nativeQueue, runSkinning] {
+                    nativeQueue, runSkinning, validateSkinning] {
                     try {
                         // All aggregation uses owned records, never engine pointers.
                         auto output = std::make_shared<CharacterObservationGeneration>(*captured);
@@ -258,15 +259,24 @@ namespace DX12Native
                         output->stagedGeometry = StageCharacterPose(
                             nativeDevice.get(), pose ? &*pose : nullptr,
                             staged, work->sceneEpoch);
-                        if (runSkinning && previous)
+                        if (runSkinning && previous) {
                             output->deformed = previous->deformed;
+                            output->validation = previous->validation;
+                            // Never wait for the GPU; consume completed debug
+                            // readbacks only on this native CPU worker.
+                            if (previous->deformed && previous->deformed->Ready()) {
+                                if (auto checked =
+                                    InspectCharacterDeformation(previous->deformed))
+                                    output->validation = std::move(checked);
+                            }
+                        }
                         if (runSkinning && pose && output->stagedGeometry &&
                             output->stagedGeometry->pose && nativeQueue &&
                             output->stagedGeometry->pose->captureFrame == pose->capturedFrame) {
                             try {
                                 output->deformed = DispatchCharacterSkinning(
                                     nativeDevice.get(), nativeQueue.get(),
-                                    output->stagedGeometry);
+                                    output->stagedGeometry, validateSkinning);
                             } catch (const std::exception& e) {
                                 output->deformationError = e.what();
                             } catch (...) {
@@ -327,6 +337,21 @@ namespace DX12Native
                 { "deformGpuBytes", current && current->deformed ?
                     current->deformed->allocationBytes : 0ull },
                 { "deformInFlight", CharacterDeformationRetirement::InFlight() },
+                { "validationReady", current && current->validation.has_value() },
+                { "validationFrame", current && current->validation ?
+                    current->validation->poseFrame : 0u },
+                { "validationInspected", current && current->validation ?
+                    current->validation->inspected : 0u },
+                { "validationNonFinite", current && current->validation ?
+                    current->validation->nonFinite : 0u },
+                { "validationSane", current && current->validation &&
+                    current->validation->sane },
+                { "validationMaximumBindDisplacement", current && current->validation ?
+                    current->validation->maximumBindDisplacement : 0.0f },
+                { "validationMinimum", current && current->validation ?
+                    current->validation->minimum : std::array<float,3>{} },
+                { "validationMaximum", current && current->validation ?
+                    current->validation->maximum : std::array<float,3>{} },
                 { "deformError", current ? current->deformationError : std::string{} },
                 { "dxgiCharacterBudget", current && current->stagedGeometry ?
                     current->stagedGeometry->budgetBytes : 0ull },

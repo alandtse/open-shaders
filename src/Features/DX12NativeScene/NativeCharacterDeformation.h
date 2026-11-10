@@ -6,7 +6,11 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cmath>
+#include <cstring>
 #include <fstream>
+#include <limits>
+#include <optional>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -18,6 +22,9 @@ namespace DX12Native
     {
         std::shared_ptr<const CharacterMeshGeneration> input;
         winrt::com_ptr<ID3D12Resource> positions;
+        // Optional bounded debug readback; never used as a shading input.
+        winrt::com_ptr<ID3D12Resource> validationReadback;
+        uint64_t validationBytes = 0;
         winrt::com_ptr<ID3D12CommandAllocator> allocator;
         winrt::com_ptr<ID3D12GraphicsCommandList> commands;
         winrt::com_ptr<ID3D12Fence> completion;
@@ -30,6 +37,94 @@ namespace DX12Native
             return done != UINT64_MAX && done >= readyValue;
         }
     };
+
+    // Sanity checks only: this does not prove parity with Skyrim's raster
+    // skinning or establish native character-ray eligibility.
+    struct CharacterDeformValidation
+    {
+        uint32_t poseFrame = 0, inspected = 0, nonFinite = 0;
+        std::array<float, 3> minimum{}, maximum{};
+        float maximumBindDisplacement = 0.0f;
+        bool bindReferenceAvailable = false;
+        bool sane = false;
+    };
+
+    // Called exclusively on the independent CPU worker, AFTER the GPU fence
+    // completes. Readback is optional and at most 786,420 bytes per mesh.
+    inline std::optional<CharacterDeformValidation> InspectCharacterDeformation(
+        const std::shared_ptr<const CharacterDeformedResult>& frame)
+    {
+        if (!frame || !frame->Ready() || !frame->validationReadback ||
+            !frame->vertices || frame->validationBytes != uint64_t(frame->vertices) * 12ull)
+            return std::nullopt;
+        const D3D12_RANGE bytesRead{ 0, SIZE_T(frame->validationBytes) };
+        void* gpuBytes = nullptr;
+        if (FAILED(frame->validationReadback->Map(0, &bytesRead, &gpuBytes)) ||
+            !gpuBytes) return std::nullopt;
+
+        std::shared_ptr<const CharacterStagedMesh> source;
+        for (const auto& candidate : frame->input->meshes)
+            if (candidate->skinned && candidate->actorFormID == frame->actorFormID &&
+                candidate->partOrdinal == frame->partOrdinal &&
+                candidate->sourceToken == frame->input->pose->sourceToken)
+                { source = candidate; break; }
+        void* bindBytes = nullptr;
+        if (source && source->source) {
+            const D3D12_RANGE bindRead{ 0,
+                SIZE_T(source->vertexStride) * SIZE_T(frame->vertices) };
+            if (FAILED(source->source->Map(0, &bindRead, &bindBytes)))
+                bindBytes = nullptr;
+        }
+
+        CharacterDeformValidation result;
+        result.poseFrame = frame->poseFrame;
+        result.bindReferenceAvailable = bindBytes != nullptr;
+        result.minimum.fill(std::numeric_limits<float>::infinity());
+        result.maximum.fill(-std::numeric_limits<float>::infinity());
+        constexpr uint32_t maximumSamples = 1024;
+        const uint32_t count = std::min(frame->vertices, maximumSamples);
+        for (uint32_t i = 0; i < count; ++i) {
+            // Deterministic sampling covers the full vertex stream.
+            const uint32_t vertex = uint32_t(uint64_t(i) * frame->vertices / count);
+            float position[3]{};
+            std::memcpy(position,
+                static_cast<const uint8_t*>(gpuBytes) + size_t(vertex) * 12,
+                sizeof(position));
+            ++result.inspected;
+            if (!std::isfinite(position[0]) || !std::isfinite(position[1]) ||
+                !std::isfinite(position[2])) {
+                ++result.nonFinite;
+                continue;
+            }
+            for (uint32_t axis = 0; axis < 3; ++axis) {
+                result.minimum[axis] = std::min(result.minimum[axis], position[axis]);
+                result.maximum[axis] = std::max(result.maximum[axis], position[axis]);
+            }
+            if (bindBytes) {
+                float bind[3]{};
+                std::memcpy(bind,
+                    static_cast<const uint8_t*>(bindBytes) +
+                        size_t(vertex) * source->vertexStride, sizeof(bind));
+                const float dx = position[0] - bind[0];
+                const float dy = position[1] - bind[1];
+                const float dz = position[2] - bind[2];
+                const float distance = std::sqrt(dx*dx + dy*dy + dz*dz);
+                if (std::isfinite(distance))
+                    result.maximumBindDisplacement =
+                        std::max(result.maximumBindDisplacement, distance);
+                else
+                    ++result.nonFinite;
+            }
+        }
+        if (bindBytes) {
+            const D3D12_RANGE noWrite{ 0, 0 };
+            source->source->Unmap(0, &noWrite);
+        }
+        const D3D12_RANGE noWrite{ 0, 0 };
+        frame->validationReadback->Unmap(0, &noWrite);
+        result.sane = result.inspected > 0 && result.nonFinite == 0;
+        return result;
+    }
 
     // A reset may drop published scene references while an isolated compute
     // dispatch is in flight. Retain the input, output, allocator and fence
@@ -118,7 +213,8 @@ namespace DX12Native
      */
     inline std::shared_ptr<const CharacterDeformedResult> DispatchCharacterSkinning(
         ID3D12Device* device, ID3D12CommandQueue* queue,
-        std::shared_ptr<const CharacterMeshGeneration> input)
+        std::shared_ptr<const CharacterMeshGeneration> input,
+        bool validateOutput = false)
     {
         if (!device || !queue || !input || !input->pose ||
             !CharacterDeformationRetirement::CanSubmit()) return {};
@@ -167,6 +263,19 @@ namespace DX12Native
             IID_PPV_ARGS(result->positions.put()))))
             throw std::runtime_error("Native character deformed buffer allocation failed");
         result->positions->SetName(L"DX12NativeCharacter::DeformedPositions");
+        if (validateOutput) {
+            // Separate system-memory readback allocation. The GPU copy occurs
+            // on the SAME queue and before the existing completion fence.
+            const auto readbackHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
+            const auto readbackDesc =
+                CD3DX12_RESOURCE_DESC::Buffer(uint64_t(mesh->vertices) * 12ull);
+            if (FAILED(device->CreateCommittedResource(&readbackHeap,
+                D3D12_HEAP_FLAG_NONE, &readbackDesc, D3D12_RESOURCE_STATE_COPY_DEST,
+                nullptr, IID_PPV_ARGS(result->validationReadback.put()))))
+                throw std::runtime_error("Native character validation readback unavailable");
+            result->validationBytes = uint64_t(mesh->vertices) * 12ull;
+            result->validationReadback->SetName(L"DX12NativeCharacter::ValidationReadback");
+        }
         if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
             IID_PPV_ARGS(result->allocator.put()))) ||
             FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
@@ -190,6 +299,18 @@ namespace DX12Native
         commands->Dispatch((mesh->vertices + 63u) / 64u, 1, 1);
         const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(result->positions.get());
         commands->ResourceBarrier(1, &barrier);
+        if (result->validationReadback) {
+            const auto copySource = CD3DX12_RESOURCE_BARRIER::Transition(
+                result->positions.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                D3D12_RESOURCE_STATE_COPY_SOURCE);
+            commands->ResourceBarrier(1, &copySource);
+            commands->CopyBufferRegion(result->validationReadback.get(), 0,
+                result->positions.get(), 0, result->validationBytes);
+            const auto restore = CD3DX12_RESOURCE_BARRIER::Transition(
+                result->positions.get(), D3D12_RESOURCE_STATE_COPY_SOURCE,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commands->ResourceBarrier(1, &restore);
+        }
         if (FAILED(commands->Close()))
             throw std::runtime_error("Native character skinning command list invalid");
         ID3D12CommandList* list[]{ commands };
