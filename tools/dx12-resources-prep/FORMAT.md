@@ -47,3 +47,21 @@ The present `coordinateSpace` is CELL-local. Exterior worldspace scope,
 on-demand companion requests, per-subcell geometry packages, cross-subcell
 BLAS sharing, and GPU residency are subsequent stages. Consumers MUST NOT
 interpret this index as evidence that a subcell is renderable.
+
+## On-demand one-subcell preparation
+
+`DX12ResourcesPrep --subcell <Data> <plugin:local-cell-id> <work-output>
+<Plugins.txt> <quality 0..2> <size> <x> <y>` creates a **partial,
+anchor-selected** subcell package. Its `cell-layout.json` and
+`cell-preparation.json` carry the same `subcell = {size,x,y}` scope.
+Only references anchored to that square are considered for expensive PG
+source reads and NIF compilation. The output remains an ordinary verified
+RSGP/RSSP package, and a companion publication may place it under
+`DX12-cache/cells/<plugin>/<id>/subcells/<size>/<x>_<y>/`.
+
+This first on-demand producer is not yet complete spatial-coverage discovery:
+large instances originating outside the requested square are not found by
+anchor selection alone. Do **not** mark such a subcell as authoritative
+geometry coverage, and do not activate it for production DXR until bounds
+discovery and GPU residency integration have been validated. This path is
+separate from the unchanged full-CELL producer and baseline shader compiler.

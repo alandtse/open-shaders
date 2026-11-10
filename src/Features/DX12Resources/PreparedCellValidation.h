@@ -7,6 +7,8 @@
 #include <Windows.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <optional>
+#include <cstdint>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -18,6 +20,17 @@
 namespace DX12ResourceService
 {
     using PrepJson = nlohmann::json;
+    struct PreparedSubcellAddress
+    {
+        uint32_t size = 4096;
+        int64_t x = 0, y = 0;
+        bool Valid() const
+        {
+            return size >= 2048 && size <= 16384 && size % 1024 == 0 &&
+                x >= -1'000'000 && x <= 1'000'000 && y >= -1'000'000 && y <= 1'000'000;
+        }
+        std::string Name() const { return std::format("{}_{}", x, y); }
+    };
 
     inline PrepJson ReadPreparationJson(const std::filesystem::path& path)
     {
@@ -56,8 +69,10 @@ namespace DX12ResourceService
 
     /** @brief Validate Stage A producer data, not runtime renderability. */
     inline PrepJson ValidatePreparedCell(const std::filesystem::path& output,
-        const CellRequest& request)
+        const CellRequest& request, std::optional<PreparedSubcellAddress> subcell = std::nullopt)
     {
+        if (subcell && !subcell->Valid())
+            throw std::runtime_error("Invalid subcell validation request");
         const auto prep = ReadPreparationJson(output / "cell-preparation.json");
         const auto layout = ReadPreparationJson(output / "cell-layout.json");
         const auto meshes = ReadPreparationJson(output / "cell-meshes.json");
@@ -77,6 +92,16 @@ namespace DX12ResourceService
             layout.at("schemaVersion") != 2 || layout.at("rendererSchemaVersion") != 2)
             throw std::runtime_error("Prepared CELL identity or format contract mismatch");
 
+        const auto checkSubcell = [&](const PrepJson& manifest) {
+            if (!subcell) return !manifest.contains("subcell") || manifest.at("subcell").is_null();
+            if (!manifest.contains("subcell") || !manifest.at("subcell").is_object()) return false;
+            const auto& tile = manifest.at("subcell");
+            return tile.value("size", 0u) == subcell->size &&
+                tile.value("x", INT64_MIN) == subcell->x &&
+                tile.value("y", INT64_MIN) == subcell->y;
+        };
+        if (!checkSubcell(prep) || !checkSubcell(layout))
+            throw std::runtime_error("Prepared CELL subcell scope mismatch");
         const auto digest = prep.at("layoutDigest").get<std::string>();
         if (digest.empty() || layout.at("layoutDigest") != digest)
             throw std::runtime_error("Prepared layout digest inconsistency");
@@ -137,14 +162,18 @@ namespace DX12ResourceService
 
     /** @brief Keep the published CELL to three files; retain only compact JSON diagnostics. */
     inline std::filesystem::path PublishPreparedCell(const std::filesystem::path& staging,
-        const std::filesystem::path& data, const CellRequest& request)
+        const std::filesystem::path& data, const CellRequest& request,
+        std::optional<PreparedSubcellAddress> subcell = std::nullopt)
     {
+        if (subcell && !subcell->Valid()) throw std::runtime_error("Invalid prepared subcell destination");
         const auto parsed = ParseCellRequest(request.plugin,
             std::format("{:06X}", request.localId));
         if (!parsed) throw std::runtime_error("Invalid CELL identity for cache publication");
 
-        const auto final = data / "SKSE/Plugins/CommunityShaders/DX12-cache/cells" /
+        auto final = data / "SKSE/Plugins/CommunityShaders/DX12-cache/cells" /
             request.plugin / std::format("{:06X}", request.localId);
+        if (subcell)
+            final /= std::filesystem::path("subcells") / std::to_string(subcell->size) / subcell->Name();
         std::error_code ec;
         std::filesystem::create_directories(final.parent_path(), ec);
         if (ec || std::filesystem::is_symlink(
@@ -175,6 +204,13 @@ namespace DX12ResourceService
 
             // Verify the actual published bytes before making them visible to the DX12 loader.
             const auto manifest = ReadPreparationJson(incoming / "cell-layout.json");
+            if (subcell) {
+                const auto& tile = manifest.at("subcell");
+                if (tile.at("size").get<uint32_t>() != subcell->size ||
+                    tile.at("x").get<int64_t>() != subcell->x ||
+                    tile.at("y").get<int64_t>() != subcell->y)
+                    throw std::runtime_error("Published subcell has incorrect coordinates");
+            }
             (void)DX12Packed::Read(incoming, manifest.at("geometryPack"),
                 "cell-geometry.rsgp", DX12Packed::kGeometryMagic);
             (void)DX12Packed::Read(incoming, manifest.at("shadingPack"),

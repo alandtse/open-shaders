@@ -9,6 +9,11 @@ using Mutagen.Bethesda.Plugins.Cache;
 using Mutagen.Bethesda.Skyrim;
 
 return args.Length == 5 && args[0] == "--list-cells" ? PluginCellIndex.Run(args[1..]) :
+    args.Length == 9 && args[0] == "--subcell" ? ScenePreparation.Run(args[1..5],
+        int.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture),
+        int.Parse(args[6], System.Globalization.CultureInfo.InvariantCulture),
+        (long.Parse(args[7], System.Globalization.CultureInfo.InvariantCulture),
+         long.Parse(args[8], System.Globalization.CultureInfo.InvariantCulture))) :
     args.Length == 6 ? ScenePreparation.Run(args[..4],
         int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture),
         int.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture)) :
@@ -20,7 +25,8 @@ internal static class ScenePreparation
 {
     internal static string LastFailure = "";
 
-    internal static int Run(string[] args, int quality = 2, int subcellSize = 4096)
+    internal static int Run(string[] args, int quality = 2, int subcellSize = 4096,
+        (long X, long Y)? requestedSubcell = null)
     {
 if (args.Length != 4)
 {
@@ -34,6 +40,9 @@ try
     if (quality is < 0 or > 2) throw new ArgumentOutOfRangeException(nameof(quality));
     if (!SubcellIndex.ValidSize(subcellSize))
         throw new ArgumentOutOfRangeException(nameof(subcellSize), "Size must be 2048..16384 in increments of 1024.");
+    if (requestedSubcell is { } request && (Math.Abs(request.X) > 1_000_000 ||
+        Math.Abs(request.Y) > 1_000_000))
+        throw new ArgumentOutOfRangeException(nameof(requestedSubcell), "Subcell coordinates out of supported range.");
     var data = Path.GetFullPath(args[0]);
     var output = Path.GetFullPath(args[2]);
     // The companion may write only to the dedicated temporary work subtree.
@@ -150,6 +159,41 @@ try
             } : null
         });
     }
+    // On-demand subcell requests select only anchored references before NIF
+    // reading and mesh compilation. This avoids compiling the whole CELL merely
+    // to fill the current player region. Oversized cross-boundary models need
+    // an independent bounds catalog before this is suitable for full coverage.
+    if (requestedSubcell is { } subcell)
+    {
+        rows = rows.Where(record =>
+        {
+            var element = JsonSerializer.SerializeToElement(record);
+            if (!element.TryGetProperty("position", out var position) ||
+                position.ValueKind != JsonValueKind.Array || position.GetArrayLength() != 3)
+                return false;
+            var x = position[0].GetDouble();
+            var y = position[1].GetDouble();
+            return double.IsFinite(x) && double.IsFinite(y) &&
+                SubcellIndex.Coordinate(x, subcellSize) == subcell.X &&
+                SubcellIndex.Coordinate(y, subcellSize) == subcell.Y;
+        }).ToList();
+        paths.Clear();
+        staticPaths.Clear();
+        foreach (var record in rows)
+        {
+            var element = JsonSerializer.SerializeToElement(record);
+            var model = element.GetProperty("model").GetString();
+            if (string.IsNullOrWhiteSpace(model)) continue;
+            var normalized = PgAssets.Normalize(model);
+            if (!normalized.StartsWith("meshes\\", StringComparison.Ordinal))
+                normalized = "meshes\\" + normalized;
+            paths.Add(normalized);
+            var classification = element.GetProperty("classification").GetString();
+            if (classification is "static-record-nif-uninspected" or
+                "furniture-record-nif-uninspected" or "moveable-static-record-nif-uninspected")
+                staticPaths.Add(normalized);
+        }
+    }
     Directory.CreateDirectory(output);
     var options = new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     var pgAssets = new List<PgAsset>();
@@ -169,12 +213,12 @@ try
     }).ToArray();
     var inputDigest = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
     {
-        schemaVersion = 1, pluginSources, cell = target.FormKey.ToString(),
+        schemaVersion = 1, pluginSources, cell = target.FormKey.ToString(), requestedSubcell, subcellSize,
         pgDiffSha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(data, "ParallaxGen_Diff.json")))),
         assets = pgAssets.Select(asset => new { asset.Path, asset.Status, asset.Sha256 })
     }))).ToLowerInvariant();
     var layout = CellLayout.Write(output, target.FormKey.ToString(), target.EditorID,
-        inputDigest, rows, compiledAssets, options, subcellSize);
+        inputDigest, rows, compiledAssets, options, subcellSize, requestedSubcell);
     File.WriteAllText(Path.Combine(output, "cell-records.json"), JsonSerializer.Serialize(new
     {
         schemaVersion = 1, tool = "DX12ResourcesPrep", recordReader = "Mutagen.Bethesda.Skyrim/0.54.4",
@@ -190,6 +234,7 @@ try
     File.WriteAllText(Path.Combine(output, "cell-preparation.json"), JsonSerializer.Serialize(new
     {
         schemaVersion = 1, formatContract = "dx12-resources-cell", formatVersion = 2,
+        subcell = requestedSubcell is { } sub ? new { size = subcellSize, x = sub.X, y = sub.Y } : null,
         inputDigest, cell = target.FormKey.ToString(), editorId = target.EditorID,
         assetProvider = "PGPatcher deployed output; no conflict re-resolution", references = rows.Count, staticRecordCandidates = staticCount,
         furnitureRecordCandidates = furnitureCount, placedLights = lightCount, unresolvedBases, assets = pgAssets,
@@ -205,7 +250,8 @@ try
         stage = "cell-packed-partial", geometryCompiled = compiledShapes.Length > 0, accelerationBuilt = false, runtimeCoverageValid = false,
         outstanding = new[] { "Runtime placement/state comparison", "Excluded mesh/material coverage", "Shader coordinator and DX12 integration" }
     }, options));
-    Console.WriteLine($"Prepared {rows.Count} references, {staticCount} static-record candidates and {lightCount} placed lights.");
+    Console.WriteLine($"Prepared {rows.Count} selected references{(requestedSubcell is { } sub ? $" in subcell {sub.X},{sub.Y}" : "")}.");
+    Console.WriteLine($"CELL catalog had {staticCount} static-record candidates and {lightCount} placed lights.");
     Console.WriteLine($"PG inputs: {pgAssets.Count(asset => asset.CachedSource != null)} cached / {pgAssets.Count} requested; unresolved bases: {unresolvedBases}.");
     Console.WriteLine($"Compiled {compiledShapes.Length} shapes / {compiledShapes.Sum(shape => (long)shape.IndexCount / 3)} triangles; {compiledAssets.Count(asset => asset.CacheHit)} mesh cache hits.");
     Console.WriteLine($"Placed {layout.PlacedReferences} references / {layout.Instances} shape instances / {layout.Triangles} triangles; packed geometry + shading.");
