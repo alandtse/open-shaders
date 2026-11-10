@@ -744,7 +744,7 @@ void SkySync::FadeSunAtHorizon(const RE::Sky* sky, float sunHeight)
 	const float fade = std::clamp((sunHeight - DirectX::XMConvertToRadians(SunDiscFadeStartElevation)) / DirectX::XMConvertToRadians(SunDiscFadeElevation), 0.0f, 1.0f);
 	// Rebuilt the way Sun::Update blends it, since its own glare alpha already carries the clock-based fade
 	const auto weatherGlare = [](const RE::TESWeather* weather, float weight) {
-		return weather ? weather->data.sunGlare * SunGlareScale * weight : 0.0f;
+		return weather ? static_cast<uint8_t>(weather->data.sunGlare) * SunGlareScale * weight : 0.0f;
 	};
 	const float glare = weatherGlare(sky->currentWeather, sky->currentWeatherPct) + weatherGlare(sky->lastWeather, 1.0f - sky->currentWeatherPct);
 
