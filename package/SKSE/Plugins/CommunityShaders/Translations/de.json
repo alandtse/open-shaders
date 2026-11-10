@@ -2411,7 +2411,7 @@
     "feature.scene_manager.action.manage_weather": "Wetter verwalten",
     "feature.scene_manager.action.pause": "Pausieren",
     "feature.scene_manager.action.restore_all_presets": "Alle Preset-Werte wiederherstellen",
-    "feature.scene_manager.action.restore_preset": "Vorgabewerte wiederherstellen",
+    "feature.scene_manager.action.restore_preset": "Preset-Werte wiederherstellen",
     "feature.scene_manager.action.resume": "Fortsetzen",
     "feature.scene_manager.action.revert": "Auf Standardwert zurücksetzen",
     "feature.scene_manager.action.save": "Speichern",

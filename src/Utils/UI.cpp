@@ -4813,6 +4813,7 @@ namespace Util
 			const ImGuiID blockedHoverId = preserveHoverBlock ? state.blockedHoverId : 0;
 			state.isOpen = false;
 			state.closing = false;
+			state.measuring = false;
 			state.flyoutHovered = false;
 			state.flyoutHasActiveItem = false;
 			state.activeId = 0;
@@ -4970,15 +4971,12 @@ namespace Util
 			bool canOpen = true;
 			ImVec2 pivot;
 			const ImVec2 flyoutPos = GetFlyoutPos(state, slideOffset, scale, GetFlyoutWindowRect(), flyoutStyle, pivot, canOpen);
-			if (!canOpen) {
-				state.blockedHoverId = itemId;
-				ResetFlyout(state, true);
-				return false;
-			}
+			const bool focusAfterMeasurement = state.measuring && state.keepOpenForNavigation;
+			state.measuring = !canOpen;
 
 			ImGui::SetNextWindowPos(flyoutPos, ImGuiCond_Always, pivot);
 			ImGui::SetNextWindowBgAlpha(flyoutStyle.windowBackgroundAlpha * alpha);
-			if (focusOnOpen)
+			if (canOpen && (focusOnOpen || focusAfterMeasurement))
 				ImGui::SetNextWindowFocus();
 
 			constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
@@ -4992,22 +4990,25 @@ namespace Util
 			ImGui::PushStyleVar(ImGuiStyleVar_Alpha, flyoutStyle.contentAlpha * alpha);
 			SKSE::stl::scope_exit restoreStyle([]() noexcept { ImGui::PopStyleVar(3); });
 
-			const bool visible = ImGui::Begin(state.windowName.c_str(), nullptr, flags);
+			const bool visible = ImGui::Begin(state.windowName.c_str(), nullptr, flags | (state.measuring ? ImGuiWindowFlags_NoInputs : 0));
 			const ImVec2 mousePos = ImGui::GetIO().MousePos;
 			// Retain hover if resizing moves the flyout out from under a stationary pointer.
-			if (state.lastSize.x != ImGui::GetWindowWidth() && state.flyoutHovered &&
+			if (!state.measuring && state.lastSize.x != ImGui::GetWindowWidth() && state.flyoutHovered &&
 				ContainsPoint(state.flyoutMin, state.flyoutMax, mousePos))
 				state.resizeHoverPos = mousePos;
 			state.lastSize = ImGui::GetWindowSize();
 			state.flyoutMin = ImGui::GetWindowPos();
 			state.flyoutMax = ImVec2(state.flyoutMin.x + state.lastSize.x, state.flyoutMin.y + state.lastSize.y);
-			constexpr auto popupFlags = ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel;
-			if (visible && !ImGui::IsPopupOpen(nullptr, popupFlags))
-				ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
-
 			if (!visible) {
 				ImGui::End();
 				return false;
+			}
+			if (state.measuring) {
+				// Submit items to refresh the cached size without showing an overflowing flyout.
+				ImGui::GetCurrentWindow()->Hidden = true;
+				ImGui::BeginDisabled();
+			} else if (!ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+				ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
 			}
 
 			restoreStyle.release();
@@ -5016,8 +5017,10 @@ namespace Util
 
 		void EndFlyoutImpl(FlyoutState& state)
 		{
-			const bool flyoutHovered = ImGui::IsWindowHovered(
-				ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_RootAndChildWindows);
+			if (state.measuring)
+				ImGui::EndDisabled();
+			const bool flyoutHovered = !state.measuring && ImGui::IsWindowHovered(
+															   ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_RootAndChildWindows);
 			const bool flyoutFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 			const bool dismissRequested = flyoutFocused && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
 			const bool navigationActionClosed =

@@ -2496,6 +2496,7 @@ namespace Util
 		ImGuiID activeId = 0;
 		bool isOpen = false;
 		bool closing = false;
+		bool measuring = false;
 		bool flyoutHovered = false;
 		bool flyoutHasActiveItem = false;
 		float closeTimer = 0.0f;

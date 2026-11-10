@@ -1692,12 +1692,12 @@ namespace
 		return saved;
 	}
 
-	void DrawPresetSaveConfirmation(ViewState& state)
+	Util::ConfirmationPopup::Choice DrawPresetSaveConfirmation(ViewState& state)
 	{
 		using Choice = Util::ConfirmationPopup::Choice;
 		const auto choice = state.confirmPresetSave.DrawChoice();
 		if (choice == Choice::None)
-			return;
+			return choice;
 		if (choice == Choice::Confirm) {
 			auto& catalog = UnifiedPresetCatalog::GetSingleton();
 			const bool active = std::ranges::all_of(state.pendingPresetEdits, [&](const auto& edit) {
@@ -1709,6 +1709,7 @@ namespace
 		}
 		state.pendingPresetEdits.clear();
 		state.conflictingPacks.clear();
+		return choice;
 	}
 
 	void FinishPresetPreview(const Context& context, ViewState& state, bool visible)
@@ -2364,7 +2365,7 @@ const nlohmann::json* SceneEntryTable::GetFeaturePresetDraft(const Entry& entry)
 void SceneEntryTable::StageFeaturePresetEdit(const Entry& entry, nlohmann::json value)
 {
 	auto& draft = featurePresetDraft;
-	if (draft.lastFrame != ImGui::GetFrameCount() || draft.view.choosePreset.IsActive())
+	if (draft.lastFrame != ImGui::GetFrameCount() || draft.view.choosePreset.IsActive() || draft.view.confirmPresetSave.IsOpen())
 		return;
 	StagePresetValue(draft.edits, entry, std::move(value));
 }
@@ -2372,7 +2373,7 @@ void SceneEntryTable::StageFeaturePresetEdit(const Entry& entry, nlohmann::json 
 void SceneEntryTable::StageFeatureUserEdit(const Manager::SettingIdentity& setting, nlohmann::json value)
 {
 	auto& draft = featurePresetDraft;
-	if (draft.lastFrame == ImGui::GetFrameCount() && !draft.view.choosePreset.IsActive())
+	if (draft.lastFrame == ImGui::GetFrameCount() && !draft.view.choosePreset.IsActive() && !draft.view.confirmPresetSave.IsOpen())
 		draft.userEdits.insert_or_assign(setting, std::move(value));
 }
 
@@ -2404,23 +2405,33 @@ void SceneEntryTable::DrawFeatureTransition(const Context& context, std::span<co
 
 void SceneEntryTable::FinishFeaturePresetFrame()
 {
+	using Choice = Util::ConfirmationPopup::Choice;
 	auto& draft = featurePresetDraft;
 	auto* manager = Manager::GetSingleton();
+	const auto applyUserEdits = [&] {
+		if (!draft.userEdits.empty())
+			draft.view.presetEditFailed = !manager->BeginContextEdit(draft.feature, draft.context) ||
+			                              !manager->ApplyContextUserValues(draft.context, draft.userEdits);
+	};
 	if ((!draft.edits.empty() || !draft.userEdits.empty()) && !ImGui::IsAnyItemActive() && !draft.view.confirmPresetSave.IsOpen()) {
 		if (!draft.edits.empty() && manager->HasPendingContextEdit()) {
 			SceneSettingsUI::WarnPendingContextEdit();
 		} else {
 			draft.view.presetEditFailed = (!draft.edits.empty() && !manager->ApplyContextUserValues(draft.context, draft.userEdits, true)) ||
 			                              !SavePresetEdits(draft.view, draft.edits);
-			if (!draft.view.presetEditFailed && !draft.view.confirmPresetSave.IsOpen() && !draft.userEdits.empty())
-				draft.view.presetEditFailed = !manager->BeginContextEdit(draft.feature, draft.context) ||
-				                              !manager->ApplyContextUserValues(draft.context, draft.userEdits);
+			if (!draft.view.presetEditFailed && !draft.view.confirmPresetSave.IsOpen())
+				applyUserEdits();
 		}
 		draft.edits.clear();
-		draft.userEdits.clear();
+		if (!draft.view.confirmPresetSave.IsOpen())
+			draft.userEdits.clear();
 	}
 	DrawPresetChoice(draft.view);
-	DrawPresetSaveConfirmation(draft.view);
+	if (const auto choice = DrawPresetSaveConfirmation(draft.view); choice != Choice::None) {
+		if (choice == Choice::Confirm && !draft.view.presetEditFailed)
+			applyUserEdits();
+		draft.userEdits.clear();
+	}
 	if (draft.view.presetEditFailed)
 		Util::Text::WrappedWarning("%s", T("feature.scene_manager.preset_edit_failed", "Could not save preset settings. Check the log and try again."));
 }
