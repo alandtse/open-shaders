@@ -75,6 +75,7 @@ namespace DX12Native
         std::shared_ptr<const CharacterIsolatedTLAS> tlas;
         const char* reason = "Character observation not available";
         bool worldBoundsPlausible = false;
+        bool meshBoundsPlausible = false;
     };
 
     /** @brief Conservative readiness for experimental shadow-caster rays.
@@ -147,8 +148,41 @@ namespace DX12Native
             }
         }
         readiness.worldBoundsPlausible = true;
+        // The actor root may be far wider than a skinned body/armor part.
+        // Compare against the *same* skinned part and source generation
+        // before allowing an opaque character TLAS to block native light.
+        const auto part = std::ranges::find_if(generation->parts,
+            [&](const auto& observed) {
+                return observed.actorFormID == scene->actorFormID &&
+                    observed.ordinal == scene->partOrdinal &&
+                    observed.sourceToken == scene->bottom->sourceToken;
+            });
+        if (part == generation->parts.end() || !part->skinned ||
+            part->alpha || part->dynamic) {
+            readiness.reason = "Character part identity or material eligibility changed";
+            return readiness;
+        }
+        const auto& partBounds = part->worldBound;
+        const float partRadius = partBounds[3];
+        if (!std::isfinite(partRadius) || partRadius <= 0.0f ||
+            partRadius > 50000.0f) {
+            readiness.reason = "Character mesh world bound invalid";
+            return readiness;
+        }
+        // A small slack allows animation-frame latency and bounding-sphere
+        // conservatism, but refuses gross local/world-space mismatches.
+        const float partTolerance = std::max(2.0f, partRadius * 0.25f);
+        for (size_t axis = 0; axis < 3; ++axis) {
+            if (!std::isfinite(partBounds[axis]) ||
+                minimum[axis] < partBounds[axis] - partRadius - partTolerance ||
+                maximum[axis] > partBounds[axis] + partRadius + partTolerance) {
+                readiness.reason = "Skinned mesh does not match its world-space part bounds";
+                return readiness;
+            }
+        }
+        readiness.meshBoundsPlausible = true;
         readiness.tlas = scene;
-        readiness.reason = "Opt-in eligible (bounds plausible; parity not proven)";
+        readiness.reason = "Opt-in eligible (mesh bounds plausible; parity not proven)";
         return readiness;
     }
 
@@ -572,6 +606,7 @@ namespace DX12Native
                 current ? current->frame : 0u);
             return {
                 { "casterBoundsPlausible", eligibility.worldBoundsPlausible },
+                { "casterMeshBoundsPlausible", eligibility.meshBoundsPlausible },
                 { "casterEligibleAtObservation", bool(eligibility.tlas) },
                 { "casterEligibilityReason", eligibility.reason },
                 { "mode", current && current->playerOnly ?
