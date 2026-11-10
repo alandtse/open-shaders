@@ -18,7 +18,7 @@
 #include <string_view>
 #include <utility>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, SubcellSize, BuildCandidateGridTLAS, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode, NativeShadowRayPreparation)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, NativePBR, NativeLLF, NativeSCM, BudgetMB, BudgetPolicyVersion, GlobalDXGIHeadroomPercent, SubdivisionMode, SubcellSize, BuildCandidateGridTLAS, UseGridForNativeDXR, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode, NativeShadowRayPreparation)
 
 
 namespace
@@ -371,8 +371,11 @@ void DX12NativeScene::DrawSettings()
         settings.SubcellSize = uint32_t(gridUnits * 1024);
     ImGui::TextDisabled("Full-scene DXR stays active until partial TLAS integration is validated.");
     ImGui::Checkbox("Build isolated grid TLAS for diagnostic testing", &settings.BuildCandidateGridTLAS);
-    ImGui::TextDisabled("Candidate TLAS and matched materials are built only for diagnostics.");
-    ImGui::TextDisabled("Live lighting and shadows remain on the original full-scene renderer.");
+    ImGui::BeginDisabled(!settings.BuildCandidateGridTLAS);
+    ImGui::Checkbox("Experimental: publish ready grid to native DXR", &settings.UseGridForNativeDXR);
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Opt-in: only an exact matching current-center TLAS and materials become live.");
+    ImGui::TextDisabled("Otherwise preserve the original full-scene renderer.");
     ImGui::SeparatorText("Prepared scene VRAM budget");
     const uint32_t pendingSceneBudget = requestedBudget.load();
     uint32_t selectedSceneBudget = pendingSceneBudget != UINT32_MAX ?
@@ -484,6 +487,7 @@ void DX12NativeScene::LoadSettings(json& a_json)
     settings.SubdivisionMode = std::min(selected.SubdivisionMode, 2u);
     settings.SubcellSize = std::clamp(selected.SubcellSize / 1024, 2u, 16u) * 1024u;
     settings.BuildCandidateGridTLAS = selected.BuildCandidateGridTLAS;
+    settings.UseGridForNativeDXR = selected.UseGridForNativeDXR;
         settings.ImportLoosePBR = selected.ImportLoosePBR;
         settings.ImportArchivePBR = selected.ImportArchivePBR;
         settings.RuntimeOnlyMaterials = selected.RuntimeOnlyMaterials;
@@ -1101,6 +1105,29 @@ std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScen
 	if (!loaded || !settings.Enabled || transitionOpen) return std::nullopt;
 	auto* cell = globals::game::player ? globals::game::player->GetParentCell() : nullptr;
 	if (!cell || cell->GetFormID() != cellID) return std::nullopt;
+    if (settings.SubdivisionMode != 0 && settings.BuildCandidateGridTLAS &&
+        settings.UseGridForNativeDXR) {
+        const auto tileCell = subcellManager.GetCombined();
+        const auto tileScene = candidateGridAcceleration.GetScene();
+        const auto tileMaterials = candidateGridBindings.Get();
+        const auto progress = subcellManager.GetDiagnostics();
+        const auto* player = globals::game::player;
+        const auto target = player ? DX12Native::SpatialSubcells::FromPosition(
+            player->world.translate.x, player->world.translate.y, settings.SubcellSize) :
+            DX12Native::SpatialSubcells::Coordinate{};
+        // Do not publish resources built for an earlier grid center or for
+        // a partially rebuilt resource/descriptor generation. Consumers
+        // retain all three via independent shared_ptr and GPU fences.
+        if (player && tileCell && tileCell == lastSubmittedGridCell &&
+            tileCell->snapshot && tileScene && tileMaterials &&
+            tileScene->scope.scene == revision &&
+            tileScene->scope.policy == 3 &&
+            tileScene->scope == tileCell->snapshot->scope &&
+            tileMaterials->scene == tileScene &&
+            progress.value("centerX", int64_t{INT64_MIN}) == target.x &&
+            progress.value("centerY", int64_t{INT64_MIN}) == target.y)
+            return PublishedScene{ tileCell, tileScene, tileMaterials, cellID, revision };
+    }
 	auto data = prepared.GetCell();
 	auto scene = currentSceneStableAcceleration ? currentSceneStableAcceleration : acceleration.GetScene();
 	if (!data || !scene || scene->scope.scene != revision) return std::nullopt;
@@ -1116,6 +1143,7 @@ void DX12NativeScene::PublishDiagnostics()
 	json snapshot{ { "enabled", settings.Enabled }, { "nativeOwnership", OwnsNativeFeatures() },
         { "globalDXGIHeadroomPercent", DX12Native::VideoMemoryBudget::HeadroomPercent() },
         { "subdivisionMode", settings.SubdivisionMode }, { "subcellSize", settings.SubcellSize },
+        { "useGridForNativeDXR", settings.UseGridForNativeDXR },
         { "subcellGpuLoader", subcellManager.GetDiagnostics() },
         { "candidateGridTLAS", candidateGridAcceleration.GetDiagnostics() },
         { "candidateGridMaterialReady", [&]() {
@@ -1125,6 +1153,11 @@ void DX12NativeScene::PublishDiagnostics()
         }() },
         { "candidateGridMaterialFailure", candidateGridBindings.Failure() },
         { "candidateGridMaterialBudgetBytes", candidateMaterialAllowance },
+        { "publishedGridToNativeDXR", [&]() {
+            const auto selection = GetPublishedScene();
+            return selection && selection->acceleration &&
+                selection->acceleration->scope.policy == 3;
+        }() },
 		{ "nativePBR", globals::features::nativePBR.IsActive() }, { "nativeLLF", globals::features::nativeLLF.IsActive() },
 		{ "nativeSCM", globals::features::nativeSCM.IsActive() },
 		{ "nativeLightSource", OwnsNativeFeatures() ? "prepared-priority-unified" : "prepared-cell" },

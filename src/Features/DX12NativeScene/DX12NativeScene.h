@@ -33,6 +33,7 @@ struct DX12NativeScene final : Feature
         uint32_t SubdivisionMode = 0; // 0 full; 1 auto after estimate; 2 forced companion prep.
         uint32_t SubcellSize = 4096; // 2048..16384 in 1024 unit steps
         bool BuildCandidateGridTLAS = false; // Disabled-by-default isolated DXR test.
+        bool UseGridForNativeDXR = false; // Opt-in only, require matching TLAS/material generation.
 		bool UseLivePBR = false; // Legacy config field; NativePBR now follows DX12 ownership.
         bool ImportLoosePBR = false; // Separate opt-in for bounded loose-file DDS residency.
         bool ImportArchivePBR = false; // Further opt-in: archive resource manager fallback.
