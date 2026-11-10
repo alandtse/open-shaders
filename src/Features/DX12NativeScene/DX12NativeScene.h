@@ -131,7 +131,9 @@ private:
     uint64_t SceneMemoryLimit(uint64_t trackedBytes = 0);
 	void PublishDiagnostics();
 	void AdvanceCoverage();
+	void AdvanceNativeSCMCoverage();
 	struct CoverageTask;
+	struct NativeSCMCoverageTask;
 	void DispatchShadow(const char* a_stage);
 	std::optional<GraphicsBackend> backend;
 	DX12Native::PreparedScene prepared;
@@ -151,6 +153,7 @@ private:
     // Immutable completed-TLAS identity index is published atomically for the draw hook.
     std::atomic<std::shared_ptr<const DX12Native::PreparedRuntimeCoverage>> runtimePreparedCoverage;
     std::shared_ptr<const DX12Native::TopLevel> runtimeCoverageSource;
+    std::shared_ptr<NativeSCMCoverageTask> runtimeCoverageTask;
     std::atomic<uint64_t> runtimePreparedSkipped{ 0 };
     uint64_t runtimePreparedPruned = 0;
     DX12Native::RuntimeGeometryCacheWorker runtimeGeometryCache;

@@ -730,6 +730,7 @@ void DX12NativeScene::ResetScene()
     runtimeGeometry.Reset();
     runtimePreparedCoverage.store({}, std::memory_order_release);
     runtimeCoverageSource.reset();
+    runtimeCoverageTask.reset(); // Worker owns its immutable TLAS while running.
     runtimePreparedSkipped.store(0, std::memory_order_relaxed);
     runtimePreparedPruned = 0;
     runtimeGeometryCache.ResetScene();
@@ -783,6 +784,57 @@ void DX12NativeScene::AdvanceCoverage()
 		coverageFailed = false;
 		coverageTask = std::move(task);
 	} catch (const std::exception& error) { coverageFailed = true; logger::warn("Native PBR candidate analysis: {}", error.what()); }
+}
+
+// Completed TLAS identity generation is built away from Skyrim's render
+// callbacks. Only the exact published TLAS may suppress legacy SCM casters.
+struct DX12NativeScene::NativeSCMCoverageTask
+{
+    std::atomic<bool> done{ false };
+    uint64_t sceneRevision = 0;
+    std::shared_ptr<const DX12Native::TopLevel> source;
+    std::shared_ptr<const DX12Native::PreparedRuntimeCoverage> result;
+};
+
+void DX12NativeScene::AdvanceNativeSCMCoverage()
+{
+    const auto published = GetPublishedScene();
+    const auto candidate = published ? published->acceleration : acceleration.GetScene();
+    if (runtimeCoverageTask && runtimeCoverageTask->done.load(std::memory_order_acquire)) {
+        auto completed = std::move(runtimeCoverageTask);
+        if (completed->result && completed->sceneRevision == revision &&
+            completed->source == candidate &&
+            candidate && candidate->scope.scene == revision) {
+            // No publication until the worker's identity index and the
+            // currently offered TLAS are exactly the same generation.
+            runtimeCoverageSource = candidate;
+            runtimePreparedCoverage.store(completed->result, std::memory_order_release);
+            runtimePreparedPruned += runtimeGeometry.RemoveCovered(*completed->result);
+        }
+    }
+    if (runtimeCoverageTask || !candidate || candidate->scope.scene != revision ||
+        candidate == runtimeCoverageSource) return;
+    try {
+        auto work = std::make_shared<NativeSCMCoverageTask>();
+        work->sceneRevision = revision;
+        work->source = candidate;
+        static BS::thread_pool<> pool{ 1 };
+        pool.detach_task([work] {
+            try {
+                auto covered = std::make_shared<DX12Native::PreparedRuntimeCoverage>();
+                covered->sceneRevision = work->sceneRevision;
+                covered->completed.reserve(work->source->instances.size());
+                for (const auto& instance : work->source->instances) {
+                    const auto& identity = instance.preparedIdentity;
+                    if (!identity.referenceKey.empty() && !identity.shapeName.empty())
+                        covered->completed.insert(identity.referenceKey + '\0' + identity.shapeName);
+                }
+                work->result = std::move(covered);
+            } catch (...) { /* Keep raster fallback; retry without a GPU/CPU wait. */ }
+            work->done.store(true, std::memory_order_release);
+        });
+        runtimeCoverageTask = std::move(work);
+    } catch (...) { /* Native coverage may not suppress the original SCM. */ }
 }
 
 void DX12NativeScene::EarlyPrepass()
@@ -1038,22 +1090,7 @@ void DX12NativeScene::EarlyPrepass()
     // Match NativeSCM's static-caster coverage to the scene that Native DXR
     // actually exposes. When a partial grid becomes active, full-CELL TLAS
     // membership must no longer suppress raster fallback for absent casters.
-    const auto currentPublished = GetPublishedScene();
-    const auto coverageCandidate = currentPublished ?
-        currentPublished->acceleration : acceleration.GetScene();
-    if (auto current = coverageCandidate; current &&
-        current->scope.scene == revision && current != runtimeCoverageSource) {
-        auto covered = std::make_shared<DX12Native::PreparedRuntimeCoverage>();
-        covered->sceneRevision = revision;
-        for (const auto& instance : current->instances) {
-            const auto& identity = instance.preparedIdentity;
-            if (!identity.referenceKey.empty() && !identity.shapeName.empty())
-                covered->completed.insert(identity.referenceKey + '\0' + identity.shapeName);
-        }
-        runtimeCoverageSource = current;
-        runtimePreparedCoverage.store(covered, std::memory_order_release);
-        runtimePreparedPruned += runtimeGeometry.RemoveCovered(*covered);
-    }
+    AdvanceNativeSCMCoverage();
     if (auto scene = acceleration.GetScene(); scene &&
         shadow.RetireScenesExcept(currentSceneStableAcceleration ? currentSceneStableAcceleration : scene) &&
         retiredMaterials.expired()) {
