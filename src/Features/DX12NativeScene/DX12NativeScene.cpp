@@ -1343,11 +1343,24 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 	const std::array inputs{ a_inputs.litColor, a_inputs.litSpecular, a_inputs.albedo, a_inputs.normalRoughness,
 		a_inputs.masks, a_inputs.masks2, a_inputs.reflectance, a_inputs.motion };
 	const auto frame = globals::game::graphicsState->GetFrameCount();
-    if (settings.ObserveNativeCharacters)
-        nativeCharacters.Advance(frame, settings.CharacterMaxActors,
-            settings.CharacterObservationPeriod, settings.CharacterPlayerOnly,
-            settings.CharacterStageGeometryDX12,
-            settings.CharacterRunSkinningDX12 && settings.CharacterStageGeometryDX12,
+    // Copy only the character controls while holding the same mutex used
+    // by the developer UI. Mesh acquisition runs without a settings lock.
+    bool observeCharacters = false, playerOnly = false;
+    bool stageCharacterGeometry = false, runCharacterSkinning = false;
+    uint32_t actorLimit = 16, observationInterval = 8;
+    {
+        std::scoped_lock lock(settingsMutex);
+        observeCharacters = settings.ObserveNativeCharacters;
+        playerOnly = settings.CharacterPlayerOnly;
+        stageCharacterGeometry = settings.CharacterStageGeometryDX12;
+        runCharacterSkinning = settings.CharacterRunSkinningDX12;
+        actorLimit = settings.CharacterMaxActors;
+        observationInterval = settings.CharacterObservationPeriod;
+    }
+    if (observeCharacters)
+        nativeCharacters.Advance(frame, actorLimit,
+            observationInterval, playerOnly,
+            stageCharacterGeometry, runCharacterSkinning && stageCharacterGeometry,
             backend->d3d12Device.get(), backend->commandQueue.get());
 	const globals::FrameBuffer* camera = nullptr;
 	if (!globals::game::isVR && globals::game::frameBufferCachedValid && globals::game::frameBufferCachedFrame == frame) {

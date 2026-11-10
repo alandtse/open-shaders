@@ -14,6 +14,7 @@
 #include <limits>
 #include <format>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -66,6 +67,7 @@ namespace DX12Native
     public:
         void Reset()
         {
+            std::scoped_lock lock(stateMutex);
             ++sceneEpoch;
             pending.reset(); // Detached worker retains only owned values.
             published.store({}, std::memory_order_release);
@@ -84,6 +86,10 @@ namespace DX12Native
             bool stageGeometry, bool runSkinning,
             ID3D12Device* device, ID3D12CommandQueue* queue)
         {
+            // Runtime toggles can reset the observer while the engine is
+            // supplying input. Serialize only this bounded CPU acquisition;
+            // independent DX12 workers never acquire the state mutex.
+            std::scoped_lock lock(stateMutex);
             if (pending && pending->done.load(std::memory_order_acquire)) {
                 auto done = std::move(pending);
                 workerBusy.store(false, std::memory_order_release);
@@ -359,6 +365,7 @@ namespace DX12Native
             std::shared_ptr<const CharacterObservationGeneration> result;
         };
 
+        std::mutex stateMutex;
         uint64_t sceneEpoch = 1;
         uint32_t lastObservedFrame = UINT32_MAX;
         std::shared_ptr<Work> pending;
