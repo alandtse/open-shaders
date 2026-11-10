@@ -9,6 +9,7 @@
 #include <directx/d3dx12.h>
 #include <exception>
 #include <mutex>
+#include <unordered_map>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -63,6 +64,22 @@ namespace DX12Native
         snapshot->scope.policy = 1; // runtime-owned geometry, not offline package
         snapshot->materialSource.reset(); // diagnostic AS preview does not publish material tables
         result->digest = "runtime-captured";
+        // Reconstruct the content index from the immutable previous generation.
+        // Distinct reference/shape instances may share a single GPU mesh and BLAS.
+        std::unordered_map<std::string, std::shared_ptr<const Geometry>> geometryByDigest;
+        std::unordered_map<std::string, std::shared_ptr<const VertexAttributes>> attributesByDigest;
+        if (previous && previous->snapshot) {
+            for (const auto& old : previous->snapshot->instances) {
+                if (old.mesh) {
+                    if (const auto found = result->geometries.find(old.mesh.get());
+                        found != result->geometries.end() && found->second &&
+                        !found->second->contentDigest.empty())
+                        geometryByDigest.try_emplace(found->second->contentDigest, found->second);
+                }
+                if (old.material.attributes && !old.material.attributes->contentDigest.empty())
+                    attributesByDigest.try_emplace(old.material.attributes->contentDigest, old.material.attributes);
+            }
+        }
         for (const auto& packet : packets) {
             if (!packet || snapshot->instances.size() >= 8192) break;
             // Prewarm only avoids CPU re-encoding after the renderer has supplied
@@ -80,25 +97,44 @@ namespace DX12Native
             if (cached && cacheHitCounter) ++*cacheHitCounter;
             const auto& payload = cached ? *cached : *encoded;
             try {
-                if (budget <= result->bytes) { ++snapshot->omissions["geometry-budget"]; continue; }
-                auto geometry = std::make_shared<Geometry>();
-                auto mesh = std::make_shared<Mesh>();
-                mesh->stride = 12;
-                mesh->vertexCount = packet->vertexCount;
-                mesh->bytes = packet->Bytes();
-                geometry->source = mesh;
-                geometry->prepared = true;
-                geometry->indexOffset = uint64_t(mesh->vertexCount) * 12;
-                geometry->validationOffset = geometry->indexOffset + uint64_t(packet->indexCount) * 4;
-                geometry->buffer = UploadRuntimeGeometryBuffer(backend,
-                    std::span(payload.geometry).subspan(16), budget - result->bytes,
-                    geometry->allocationBytes, L"DX12NativeScene::RuntimeGeometry");
-                result->bytes += geometry->allocationBytes;
+                // Geometry hash deliberately excludes reference, shape, pose and
+                // shading attributes. The legacy disk-cache hash still includes
+                // them and retains its existing conservative matching policy.
+                const auto geometryDigest = Util::FileDigest::Sha256BytesHex(payload.geometry);
+                std::shared_ptr<const Geometry> geometry;
+                if (geometryDigest) {
+                    const auto found = geometryByDigest.find(*geometryDigest);
+                    if (found != geometryByDigest.end()) geometry = found->second;
+                }
+                if (!geometry) {
+                    if (budget <= result->bytes) {
+                        ++snapshot->omissions["geometry-budget"];
+                        continue;
+                    }
+                    auto uploaded = std::make_shared<Geometry>();
+                    auto mesh = std::make_shared<Mesh>();
+                    mesh->stride = 12;
+                    mesh->vertexCount = packet->vertexCount;
+                    mesh->bytes = packet->Bytes();
+                    uploaded->source = mesh;
+                    uploaded->prepared = true;
+                    uploaded->indexOffset = uint64_t(mesh->vertexCount) * 12;
+                    uploaded->validationOffset = uploaded->indexOffset + uint64_t(packet->indexCount) * 4;
+                    uploaded->buffer = UploadRuntimeGeometryBuffer(backend,
+                        std::span(payload.geometry).subspan(16), budget - result->bytes,
+                        uploaded->allocationBytes, L"DX12NativeScene::RuntimeGeometry");
+                    if (geometryDigest) uploaded->contentDigest = *geometryDigest;
+                    result->bytes += uploaded->allocationBytes;
+                    geometry = std::move(uploaded);
+                    result->geometries.emplace(mesh.get(), geometry);
+                    if (geometryDigest) geometryByDigest.emplace(*geometryDigest, geometry);
+                }
+
                 Instance instance;
                 instance.identity = snapshot->instances.size() + 1;
                 instance.preparedIdentity.referenceKey = packet->referenceKey;
                 instance.preparedIdentity.shapeName = packet->shapeName;
-                instance.mesh = mesh;
+                instance.mesh = geometry->source;
                 instance.indexCount = packet->indexCount;
                 instance.material.opaqueCandidate = true;
                 instance.material.shadingStatus = "runtime-captured";
@@ -106,26 +142,43 @@ namespace DX12Native
                 std::memcpy(instance.world.m, packet->transform.data(), sizeof(instance.world.m));
                 static_assert(sizeof(instance.bound) == sizeof(float) * 4);
                 std::memcpy(&instance.bound, packet->bound.data(), sizeof(instance.bound));
-                if (!payload.attributes.empty() && budget > result->bytes) {
-                    try {
-                        auto attrs = std::make_shared<VertexAttributes>();
-                        attrs->vertexCount = mesh->vertexCount;
-                        attrs->stride = payload.attributeStride;
-                        attrs->hasTangentFrame = payload.tangentFrame;
-                        attrs->buffer = UploadRuntimeGeometryBuffer(backend,
-                            std::span(payload.attributes).subspan(16), budget - result->bytes,
-                            attrs->allocationBytes, L"DX12NativeScene::RuntimeAttributes");
-                        result->bytes += attrs->allocationBytes;
+
+                if (!payload.attributes.empty()) {
+                    const auto attributeDigest = Util::FileDigest::Sha256BytesHex(payload.attributes);
+                    std::shared_ptr<const VertexAttributes> attrs;
+                    if (attributeDigest) {
+                        const auto found = attributesByDigest.find(*attributeDigest);
+                        if (found != attributesByDigest.end()) attrs = found->second;
+                    }
+                    if (!attrs && budget > result->bytes) {
+                        try {
+                            auto uploaded = std::make_shared<VertexAttributes>();
+                            uploaded->vertexCount = geometry->source->vertexCount;
+                            uploaded->stride = payload.attributeStride;
+                            uploaded->hasTangentFrame = payload.tangentFrame;
+                            uploaded->buffer = UploadRuntimeGeometryBuffer(backend,
+                                std::span(payload.attributes).subspan(16), budget - result->bytes,
+                                uploaded->allocationBytes, L"DX12NativeScene::RuntimeAttributes");
+                            if (attributeDigest) uploaded->contentDigest = *attributeDigest;
+                            result->bytes += uploaded->allocationBytes;
+                            attrs = std::move(uploaded);
+                            if (attributeDigest) attributesByDigest.emplace(*attributeDigest, attrs);
+                        } catch (const std::exception&) {
+                            ++snapshot->omissions["runtime-attributes-budget"];
+                        }
+                    }
+                    if (attrs) {
                         instance.material.attributes = std::move(attrs);
                         ++result->shadedInstances;
                         if (payload.tangentFrame) ++result->tangentInstances;
-                    } catch (const std::exception&) {
+                    } else if (budget <= result->bytes) {
                         ++snapshot->omissions["runtime-attributes-budget"];
                     }
                 }
-                result->geometries.emplace(mesh.get(), std::move(geometry));
                 snapshot->instances.push_back(std::move(instance));
-            } catch (const std::exception&) { ++snapshot->omissions["runtime-geometry-upload"]; }
+            } catch (const std::exception&) {
+                ++snapshot->omissions["runtime-geometry-upload"];
+            }
         }
         result->snapshot = std::move(snapshot);
         return result;

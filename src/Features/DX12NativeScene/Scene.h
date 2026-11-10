@@ -75,6 +75,7 @@ namespace DX12Native
 		uint32_t vertexCount = 0, stride = 0;
 		bool hasTangentFrame = false;
 		uint64_t allocationBytes = 0;
+		std::string contentDigest;
 	};
 
 	/** @brief Captures material coverage without a live Skyrim material pointer. */
