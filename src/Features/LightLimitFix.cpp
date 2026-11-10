@@ -6,6 +6,7 @@
 #include "Features/LightLimitFix/RadiusMath.h"
 #include "Features/LightLimitFix/SettingsSanitize.h"
 #include "Features/LightLimitFix/ShadowCasterMath.h"
+#include "Features/NativeFeatures.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
@@ -1495,10 +1496,11 @@ void LightLimitFix::UpdateLights()
 	lightCount = std::min((uint)lightsData.size(), MAX_LIGHTS);
 	clusteredLightCount.store(lightCount, std::memory_order_relaxed);
 
-	// NativeLLF consumes the same ordered, post-override CPU light list as DX11.
-	// Reconstruct the global position from LLF's camera-adjust-relative record;
-	// no NiLight/BSLight pointer or mapped DX11 allocation escapes this snapshot.
-	{
+	// The DX11 baseline does not pay for native copies. The existing LLF
+	// light gather and GPU upload remain unchanged in non-DX12 frames.
+	if (globals::features::nativeLLF.IsActive()) {
+		// NativeLLF consumes LLF's post-override list; reconstruct world space
+		// from the eye-relative record without exporting Skyrim pointers.
 		auto snapshot = std::make_shared<NativeLightFrame>();
 		snapshot->frame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : globals::state->frameCount;
 		snapshot->lights.reserve(lightCount);
@@ -1520,8 +1522,10 @@ void LightLimitFix::UpdateLights()
 		}
 		std::scoped_lock lock(nativeLightMutex);
 		nativeLightFrame = std::move(snapshot);
+	} else {
+		std::scoped_lock lock(nativeLightMutex);
+		nativeLightFrame.reset();
 	}
-
 
 	{
 		CS_PROFILE_CPU_SCOPE(globals::profiler, "LightLimitFix::UploadLightsCPU");
