@@ -1,0 +1,55 @@
+// Experimental native character deformation candidate.
+// Input is the owned 44-byte bind stream and a copied Skyrim float4 bone
+// register palette. Output is an independent xyz (12-byte) buffer suitable
+// for future deformable BLAS input, but it is NOT published as a caster until
+// parity with Skyrim's vertex shader is verified.
+ByteAddressBuffer BindVertices : register(t0);
+ByteAddressBuffer SkinPalette : register(t1);
+RWByteAddressBuffer DeformedPositions : register(u0);
+
+cbuffer CharacterSkinningConstants : register(b0)
+{
+    uint VertexCount;
+    uint BoneCount;
+    uint RegisterCount;
+    uint Reserved;
+}
+
+[numthreads(64, 1, 1)]
+void main(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    const uint vertex = dispatchThreadID.x;
+    if (vertex >= VertexCount) return;
+
+    const uint offset = vertex * 44u;
+    const float3 bindPosition = asfloat(BindVertices.Load3(offset));
+    const uint4 boneIndices = BindVertices.Load4(offset + 12u);
+    const float4 weights = asfloat(BindVertices.Load4(offset + 28u));
+
+    float3 position = 0.0.xxx;
+    float totalWeight = 0.0;
+    [unroll]
+    for (uint i = 0; i < 4u; ++i)
+    {
+        const uint bone = boneIndices[i];
+        const float weight = weights[i];
+        if (bone == 0xffffffffu || bone >= BoneCount ||
+            bone * 3u + 2u >= RegisterCount || weight <= 0.0)
+            continue;
+        const uint registerOffset = bone * 3u * 16u;
+        const float4 row0 = asfloat(SkinPalette.Load4(registerOffset));
+        const float4 row1 = asfloat(SkinPalette.Load4(registerOffset + 16u));
+        const float4 row2 = asfloat(SkinPalette.Load4(registerOffset + 32u));
+        const float3 transformed = float3(
+            dot(row0.xyz, bindPosition) + row0.w,
+            dot(row1.xyz, bindPosition) + row1.w,
+            dot(row2.xyz, bindPosition) + row2.w);
+        position += transformed * weight;
+        totalWeight += weight;
+    }
+    // This conservative fallback is only a debug output. Actual native
+    // ownership must also validate the engine pivot and material contracts.
+    position = totalWeight > 0.0 && all(isfinite(position)) ?
+        position / totalWeight : bindPosition;
+    DeformedPositions.Store3(vertex * 12u, asuint(position));
+}

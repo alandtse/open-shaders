@@ -24,10 +24,28 @@ if(DX12_NATIVE_SCENE_DXC)
             "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders/Common/Math.hlsli"
         VERBATIM
     )
-    add_custom_target(DX12NativeSceneDXIL DEPENDS "${DX12_NATIVE_SCENE_DXIL}")
+    # Compile the isolated DX12 compute-skinning candidate with the native
+    # compiler, never the legacy FXC path. Runtime dispatch remains opt-in and
+    # character rays cannot observe this shader until pose parity is validated.
+    set(DX12_NATIVE_CHARACTER_SKIN_DXIL "${DX12_NATIVE_SCENE_DXIL_DIR}/CharacterSkinning.dxil")
+    add_custom_command(
+        OUTPUT "${DX12_NATIVE_CHARACTER_SKIN_DXIL}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${DX12_NATIVE_SCENE_DXIL_DIR}"
+        COMMAND "${DX12_NATIVE_SCENE_DXC}" -T cs_6_5 -E main -HV 2021 -O3 -Ges -Gis
+            -Fo "${DX12_NATIVE_CHARACTER_SKIN_DXIL}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders/DX12NativeScene/CharacterSkinning.hlsl6"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders/DX12NativeScene/CharacterSkinning.hlsl6"
+        VERBATIM
+    )
+    add_custom_target(DX12NativeSceneDXIL
+        DEPENDS "${DX12_NATIVE_SCENE_DXIL}" "${DX12_NATIVE_CHARACTER_SKIN_DXIL}")
     add_dependencies(${PROJECT_NAME} DX12NativeSceneDXIL)
-    register_feature_payload(DX12NativeScene FILES "${DX12_NATIVE_SCENE_DXIL}" DESTINATION "Shaders/DX12NativeScene")
-    install(FILES "${DX12_NATIVE_SCENE_DXIL}" DESTINATION "Shaders/DX12NativeScene" COMPONENT Shaders)
+    register_feature_payload(DX12NativeScene
+        FILES "${DX12_NATIVE_SCENE_DXIL}" "${DX12_NATIVE_CHARACTER_SKIN_DXIL}"
+        DESTINATION "Shaders/DX12NativeScene")
+    install(FILES "${DX12_NATIVE_SCENE_DXIL}" "${DX12_NATIVE_CHARACTER_SKIN_DXIL}"
+        DESTINATION "Shaders/DX12NativeScene" COMPONENT Shaders)
 else()
     message(WARNING "DXC was not found; DX12 Native Scene shadow tracing bytecode will be unavailable")
 endif()
