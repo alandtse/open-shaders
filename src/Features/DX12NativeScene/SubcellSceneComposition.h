@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PreparedScene.h"
+#include "Utils/FileDigest.h"
 #include <algorithm>
 #include <span>
 #include <string>
@@ -39,12 +40,17 @@ namespace DX12Native
         json rooms = json::array();
         std::unordered_set<std::string> texturePaths, instanceKeys, lightKeys;
         std::unordered_set<const Geometry*> residentGeometry;
+        std::unordered_set<const VertexAttributes*> residentShading;
+        std::string combinedScope;
         std::shared_ptr<MaterialSource> materialSource;
         for (const auto& source : sources) {
             if (!source || !source->snapshot ||
+                source->snapshot->scope.scene != sceneEpoch ||
                 !source->snapshot->offline || !source->snapshot->materialSource)
                 continue;
             ++stats.sources;
+            combinedScope += source->digest;
+            combinedScope += ':';
             if (!materialSource)
                 materialSource = std::make_shared<MaterialSource>(*source->snapshot->materialSource);
             const uint32_t roomBase = uint32_t(rooms.size());
@@ -84,8 +90,11 @@ namespace DX12Native
                 }
                 Instance instance = input;
                 instance.identity = merged->instances.size() + 1;
-                if (instance.material.roomIndex != UINT32_MAX) {
-                    if (instance.material.roomIndex >= source->roomDefinitions.size())
+                // The prepared room contract uses 0 for the outside/unbound
+                // sentinel and positive one-based room indices.
+                if (instance.material.roomIndex != UINT32_MAX &&
+                    instance.material.roomIndex != 0) {
+                    if (instance.material.roomIndex > source->roomDefinitions.size())
                         instance.material.roomIndex = UINT32_MAX;
                     else
                         instance.material.roomIndex += roomBase;
@@ -95,6 +104,8 @@ namespace DX12Native
                     result->geometries.emplace(input.mesh.get(), geometry);
                     result->bytes += geometry->allocationBytes;
                 }
+                if (input.material.attributes && residentShading.insert(input.material.attributes.get()).second)
+                    result->bytes += input.material.attributes->allocationBytes;
                 merged->instances.push_back(std::move(instance));
                 ++stats.admittedInstances;
                 if (!input.material.opaqueCandidate) ++result->maskedInstances;
@@ -128,8 +139,12 @@ namespace DX12Native
         materialSource->textureReferences = std::make_shared<const json>(std::move(textures));
         materialSource->usePreparedTextureManifest = true;
         merged->materialSource = std::move(materialSource);
-        result->roomDefinitions = *merged->materialSource->rooms;
-        result->digest = "composed-active-subcells";
+        result->roomDefinitions = merged->materialSource->rooms->get<std::vector<json>>();
+        const auto hash = Util::FileDigest::Sha256BytesHex(
+            std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(combinedScope.data()),
+                combinedScope.size()));
+        if (!hash) return stats;
+        result->digest = *hash;
         result->snapshot = std::move(merged);
         stats.uniqueGeometries = uint32_t(result->geometries.size());
         stats.cell = std::move(result);
