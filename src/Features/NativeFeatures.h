@@ -1,7 +1,11 @@
 #pragma once
 
 #include "Feature.h"
+#include "LightLimitFix.h"
 #include <atomic>
+#include <memory>
+#include <mutex>
+#include <vector>
 namespace RE { class BSShadowLight; }
 
 /** Additional DX12 features. The original TruePBR/LLF/SCM implementations are
@@ -26,7 +30,27 @@ struct NativePBRFeature final : Feature
 
 struct NativeLLFFeature final : Feature
 {
+    // Native light generations belong to NativeLLF, never to the DX11 LLF baseline.
+    // The baseline exposes one post-override CPU buffer at its existing update boundary.
+    struct Light
+    {
+        float3 position{}, radiance{};
+        float radius = 0.0f, sourceRadius = 0.0f, fadeZone = 0.0f;
+        uint32_t flags = 0, shadowSlot = 0;
+    };
+    struct LightFrame
+    {
+        uint32_t frame = 0;
+        std::vector<Light> lights;
+    };
     std::atomic<bool> enabled{ true };
+    void PublishLights(const LightLimitFix::LightData* data, uint32_t count, const float3& eye, uint32_t frame);
+    std::shared_ptr<const LightFrame> GetLightFrame(uint32_t frame) const;
+    std::shared_ptr<const LightFrame> GetRecentLightFrame(uint32_t frame) const;
+private:
+    mutable std::mutex lightMutex;
+    std::shared_ptr<const LightFrame> lightFrame;
+public:
     std::string GetName() override { return "NativeLLF"; }
     std::string GetShortName() override { return "NativeLLF"; }
     std::string_view GetCategory() const override { return FeatureCategories::kLighting; }

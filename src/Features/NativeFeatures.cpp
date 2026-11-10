@@ -27,7 +27,7 @@ bool NativeSCMFeature::OwnsStaticForLight(const RE::BSShadowLight* source, int32
     // match BOTH slot and world-space light identity: a reassigned slot must
     // never inherit another light's native shadow ownership.
     const auto frame = globals::game::graphicsState->GetFrameCount();
-    const auto published = globals::features::lightLimitFix.GetRecentNativeLightFrame(frame);
+    const auto published = globals::features::nativeLLF.GetRecentLightFrame(frame);
     const auto* niLight = source->light.get();
     if (!published || !niLight) return false;
 
@@ -55,6 +55,45 @@ bool NativeSCMFeature::OwnsStaticForLight(const RE::BSShadowLight* source, int32
     return false;
 }
 
+void NativeLLFFeature::PublishLights(const LightLimitFix::LightData* data, uint32_t count, const float3& eye, uint32_t frame)
+{
+    if (!IsActive()) {
+        std::scoped_lock lock(lightMutex);
+        lightFrame.reset();
+        return;
+    }
+    auto generation = std::make_shared<LightFrame>();
+    generation->frame = frame;
+    generation->lights.reserve(count);
+    for (uint32_t i = 0; data && i < count; ++i) {
+        const auto& source = data[i];
+        if (source.lightFlags.any(LightLimitFix::LightFlags::Disabled)) continue;
+        const auto& p = source.positionWS[0].data;
+        const Light light{
+            { p.x + eye.x, p.y + eye.y, p.z + eye.z },
+            { source.color.x * source.fade, source.color.y * source.fade, source.color.z * source.fade },
+            source.radius, std::sqrt(std::max(source.sizeBias, 0.0f)), source.fadeZone,
+            static_cast<uint32_t>(source.lightFlags.underlying()), source.shadowMapIndex
+        };
+        if (!std::isfinite(light.position.x) || !std::isfinite(light.position.y) || !std::isfinite(light.position.z) ||
+            !std::isfinite(light.radiance.x) || !std::isfinite(light.radiance.y) || !std::isfinite(light.radiance.z) ||
+            !std::isfinite(light.radius) || light.radius <= 0.0f) continue;
+        generation->lights.push_back(light);
+    }
+    std::scoped_lock lock(lightMutex);
+    lightFrame = std::move(generation);
+}
+std::shared_ptr<const NativeLLFFeature::LightFrame> NativeLLFFeature::GetLightFrame(uint32_t frame) const
+{
+    std::scoped_lock lock(lightMutex);
+    return lightFrame && lightFrame->frame == frame ? lightFrame : nullptr;
+}
+std::shared_ptr<const NativeLLFFeature::LightFrame> NativeLLFFeature::GetRecentLightFrame(uint32_t frame) const
+{
+    std::scoped_lock lock(lightMutex);
+    return lightFrame && uint32_t(frame - lightFrame->frame) <= 1u ? lightFrame : nullptr;
+}
+
 namespace
 {
     void DrawOwnership(const char* title, std::atomic<bool>& enabled, bool active)
@@ -77,7 +116,7 @@ void NativeLLFFeature::DrawSettings()
 {
     DrawOwnership("Enable Native LLF", enabled, IsActive());
     const auto frame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : 0u;
-    const auto lights = globals::features::lightLimitFix.GetNativeLightFrame(frame);
+    const auto lights = globals::features::nativeLLF.GetLightFrame(frame);
     ImGui::Text("Captured current-frame LLF lights: %zu", lights ? lights->lights.size() : size_t{0});
     ImGui::TextDisabled("The existing DX12 shader batch supports up to 32 lights.");
 }
@@ -105,7 +144,7 @@ json NativePBRFeature::GetDiagnostics()
 json NativeLLFFeature::GetDiagnostics()
 {
     const auto frame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : 0u;
-    const auto lights = globals::features::lightLimitFix.GetNativeLightFrame(frame);
+    const auto lights = globals::features::nativeLLF.GetLightFrame(frame);
     return { { "selected", enabled.load() }, { "native", IsActive() },
         { "observedLights", lights ? lights->lights.size() : size_t{0} } };
 }

@@ -1496,36 +1496,10 @@ void LightLimitFix::UpdateLights()
 	lightCount = std::min((uint)lightsData.size(), MAX_LIGHTS);
 	clusteredLightCount.store(lightCount, std::memory_order_relaxed);
 
-	// The DX11 baseline does not pay for native copies. The existing LLF
-	// light gather and GPU upload remain unchanged in non-DX12 frames.
-	if (globals::features::nativeLLF.IsActive()) {
-		// NativeLLF consumes LLF's post-override list; reconstruct world space
-		// from the eye-relative record without exporting Skyrim pointers.
-		auto snapshot = std::make_shared<NativeLightFrame>();
-		snapshot->frame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : globals::state->frameCount;
-		snapshot->lights.reserve(lightCount);
-		for (uint32_t i = 0; i < lightCount; ++i) {
-			const auto& source = lightsData[i];
-			if (source.lightFlags.any(LightFlags::Disabled)) continue;
-			const auto& position = source.positionWS[0].data;
-			const auto& origin = eyePositionCached[0];
-			const NativeLight light{
-				{ position.x + origin.x, position.y + origin.y, position.z + origin.z },
-				{ source.color.x * source.fade, source.color.y * source.fade, source.color.z * source.fade },
-				source.radius, std::sqrt(std::max(source.sizeBias, 0.0f)), source.fadeZone,
-				static_cast<uint32_t>(source.lightFlags.underlying()), source.shadowMapIndex
-			};
-			if (!std::isfinite(light.position.x) || !std::isfinite(light.position.y) || !std::isfinite(light.position.z) ||
-				!std::isfinite(light.radiance.x) || !std::isfinite(light.radiance.y) || !std::isfinite(light.radiance.z) ||
-				!std::isfinite(light.radius) || light.radius <= 0.0f) continue;
-			snapshot->lights.push_back(light);
-		}
-		std::scoped_lock lock(nativeLightMutex);
-		nativeLightFrame = std::move(snapshot);
-	} else {
-		std::scoped_lock lock(nativeLightMutex);
-		nativeLightFrame.reset();
-	}
+	// Export the already-gathered CPU buffer at the existing LLF boundary.
+	// All native allocation, conversion and publication live in NativeLLF.
+	globals::features::nativeLLF.PublishLights(lightsData.data(), lightCount, eyePositionCached[0],
+		globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : globals::state->frameCount);
 
 	{
 		CS_PROFILE_CPU_SCOPE(globals::profiler, "LightLimitFix::UploadLightsCPU");

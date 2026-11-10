@@ -225,7 +225,7 @@ std::optional<DX12NativeScene::NativeLightBatch> DX12NativeScene::GetNativeLLFLi
 	if (!OwnsNativeFeatures()) return std::nullopt; // Original features own non-native frames.
 	NativeLightBatch batch{};
 	if (!globals::features::nativeLLF.IsActive()) return batch; // Native ownership remains selected; explicit feature opt-out.
-	const auto published = globals::features::lightLimitFix.GetNativeLightFrame(a_frame);
+	const auto published = globals::features::nativeLLF.GetLightFrame(a_frame);
 	if (!published) return batch; // Current frame has not been published yet.
 	batch.observed = static_cast<uint32_t>(published->lights.size());
 	for (const auto& light : published->lights) {
