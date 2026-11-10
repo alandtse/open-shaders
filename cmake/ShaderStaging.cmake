@@ -91,6 +91,12 @@ append_copy_if_different(_shader_copy_cmds _package_shaders "${CMAKE_SOURCE_DIR}
 if(DX12_NATIVE_SCENE_DXIL)
     append_copy_if_different(_shader_copy_cmds DX12_NATIVE_SCENE_DXIL "${DX12_NATIVE_SCENE_DXIL_DIR}" "${AIO_DIR}/Shaders/DX12NativeScene")
 endif()
+# DXC generates the native character skinning blob separately from the native
+# shadow pass. Explicitly stage it for both AIO packaging and live shader-only
+# deployment; registering an install() payload alone does not populate AIO.
+if(DX12_NATIVE_CHARACTER_SKIN_DXIL)
+    append_copy_if_different(_shader_copy_cmds DX12_NATIVE_CHARACTER_SKIN_DXIL "${DX12_NATIVE_SCENE_DXIL_DIR}" "${AIO_DIR}/Shaders/DX12NativeScene")
+endif()
 if(NATIVE_LIGHTING_DXIL)
     append_copy_if_different(_shader_copy_cmds NATIVE_LIGHTING_DXIL "${NATIVE_LIGHTING_DXIL_DIR}" "${AIO_DIR}/Shaders/NativeLighting")
 endif()
