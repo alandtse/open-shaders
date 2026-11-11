@@ -866,11 +866,10 @@ namespace ShadowCasterManager
 		return true;
 	}
 
-	// Fires at start of ShadowSceneNode::RemoveLight (ID 99697/106331).
-	static void Hook_ConvertLights_Remove(CONTEXT& ctx)
+	// The engine's queued removal searches the list IsShadowLight picks, so a light still in
+	// s_normalConvert is never found in activeShadowLights and stays there.
+	static void ForgetConvertedLight(RE::ShadowSceneNode* ssn, RE::NiLight* light)
 	{
-		auto* ssn = reinterpret_cast<RE::ShadowSceneNode*>(ctx.Rcx);
-		auto* light = reinterpret_cast<RE::NiLight*>(ctx.Rdx);
 		if (ssn != GetShadowSceneNode())
 			return;
 		RE::BSShadowLight* removed = nullptr;
@@ -891,6 +890,17 @@ namespace ShadowCasterManager
 			s_shadowConvertDescriptorInited.erase(light);
 		}
 	}
+
+	// Detours ShadowSceneNode::RemoveLight(BSLight) (ID 99698/106332); the NiLight overload calls it.
+	struct Hook_ConvertLights_Remove
+	{
+		static void thunk(RE::ShadowSceneNode* a_ssn, const RE::NiPointer<RE::BSLight>& a_light)
+		{
+			ForgetConvertedLight(a_ssn, a_light ? a_light->light.get() : nullptr);
+			func(a_ssn, a_light);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
 
 	// Detours the engine's bulk shadow-light teardown (bypasses RemoveLight):
 	// flags a session reset, then bounded-waits out any in-flight shadow render
@@ -1429,13 +1439,11 @@ namespace ShadowCasterManager
 		InstallCasterCullHook();
 
 		{
-			// ShadowSceneNode::RemoveLight -- fires at +0x9 (SE: 6 bytes, AE: 5 bytes).
+			// ShadowSceneNode::RemoveLight(BSLight) -- every single-light removal reaches it.
 			// Drains s_normalConvert / s_shadowConvert entries for the removed light.
 			// No-op when both containers are empty.
-			static REL::RelocationID uid(99697, 106331);
-			int sz = REL::Relocate(6, 5, 6);
-			if (!SKSE::stl::install_context_hook(uid.address() + REL::Relocate(0x9, 0x9, 0x9), sz, Hook_ConvertLights_Remove, sz))
-				logger::error("[SCM] Failed to install Hook_ConvertLights_Remove");
+			if (long rc = stl::detour_thunk<Hook_ConvertLights_Remove>(REL::RelocationID(99698, 106332)))
+				logger::error("[SCM] Failed to install Hook_ConvertLights_Remove ({})", rc);
 		}
 
 		{
