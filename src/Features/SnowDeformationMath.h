@@ -1,8 +1,10 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
+#include <string_view>
 
 namespace SnowDeformationMath
 {
@@ -114,5 +116,32 @@ namespace SnowDeformationMath
 	inline float FloorRiseSpeed(float a_depth, float a_spring, float a_maxRise)
 	{
 		return std::clamp(a_depth * a_spring, 0.0f, a_maxRise);
+	}
+
+	/** @brief Fraction of walking speed lost wading a_buried deep with legs a_legHeight long, reaching a_strength at full burial. */
+	inline float WadeSlowdown(float a_buried, float a_legHeight, float a_strength)
+	{
+		return std::clamp(a_strength, 0.0f, 1.0f) * std::clamp(a_buried / std::max(a_legHeight, 1e-3f), 0.0f, 1.0f);
+	}
+
+	/** @brief Whether a race name has a word starting with frost, ice, icy, snow or ghost, so the creature is at home in the cold. */
+	inline bool IsColdAdaptedName(std::string_view a_name)
+	{
+		constexpr std::string_view prefixes[] = { "frost", "ice", "icy", "snow", "ghost" };
+		size_t start = 0;
+		while (start < a_name.size()) {
+			while (start < a_name.size() && !std::isalpha(static_cast<unsigned char>(a_name[start])))
+				++start;
+			size_t end = start;
+			while (end < a_name.size() && std::isalpha(static_cast<unsigned char>(a_name[end])))
+				++end;
+			const std::string_view word = a_name.substr(start, end - start);
+			for (const auto prefix : prefixes) {
+				if (word.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), word.begin(), [](char a_prefix, char a_char) { return a_prefix == std::tolower(static_cast<unsigned char>(a_char)); }))
+					return true;
+			}
+			start = end;
+		}
+		return false;
 	}
 }

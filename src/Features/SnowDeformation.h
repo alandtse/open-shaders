@@ -61,6 +61,8 @@ struct SnowDeformation : Feature
 		bool SnowDrag = false;
 		bool DensityFloor = false;
 		float SnowDragStrength = 3.0f;
+		bool SnowSlowsMovers = false;
+		float SnowSlowStrength = 0.4f;
 		bool UseSnowCover = true;
 		bool DisplaceShadows = true;
 		bool SinkActors = true;
@@ -216,6 +218,13 @@ struct SnowDeformation : Feature
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		template <class T>
+		struct Actor_GetActorValue
+		{
+			static float thunk(RE::ActorValueOwner* a_owner, RE::ActorValue a_value);
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
 		static void Install();
 	};
 
@@ -273,6 +282,13 @@ private:
 		float sinceMeasure = 0.0f;
 		uint64_t frame = 0;
 		bool applied = false;
+	};
+
+	struct ActorSlow
+	{
+		float cut = 0.0f;
+		float target = 0.0f;
+		uint64_t frame = 0;
 	};
 
 	struct ProbeFrame
@@ -445,6 +461,8 @@ private:
 	void UpdateActorSinks(const std::vector<RE::ActorPtr>& a_actors);
 	void ApplySink(RE::TESObjectREFR* a_ref, ActorSink& a_state, float a_sink);
 	void RestoreActorSinks();
+	void UpdateMoverSlow(const std::vector<RE::ActorPtr>& a_actors);
+	void ClearMoverSlow();
 	bool IsSinkBlocked(RE::Actor* a_actor) const;
 	void DispatchProbes(uint32_t a_stampCount);
 	void ReadProbes();
@@ -529,12 +547,24 @@ private:
 	std::vector<Stamp> frameStamps;
 	std::unordered_map<const void*, TrackedShape> shapeMotion;
 	std::unordered_map<RE::FormID, bool> bootedRaces;
+	struct RaceTraits
+	{
+		bool ghost = false;
+		bool coldAdapted = false;
+	};
+	std::unordered_map<RE::FormID, RaceTraits> raceTraits;
+	const RaceTraits& TraitsOf(const RE::TESRace* a_race);
+	bool IsGhost(RE::Actor* a_actor);
+	bool IsColdAdapted(RE::Actor* a_actor);
+	std::unordered_map<RE::FormID, bool> coldBases;
 	std::unordered_map<RE::FormID, float> measuredSinks;
 	std::unordered_map<RE::FormID, float> measuredDepth;
 	std::unordered_set<RE::FormID> floatedObjects;
 	bool probeStampsPresent = false;
 	std::unordered_map<RE::FormID, float> gatherMeasured;
 	std::unordered_map<RE::FormID, ActorSink> actorSinks;
+	std::unordered_map<RE::FormID, ActorSlow> actorSlows;
+	uint64_t slowFrame = 0;
 	std::vector<Contact> contactScratch;
 	std::vector<RE::ObjectRefHandle> objectRefs;
 	uint64_t objectScanFrame = 0;
@@ -567,6 +597,11 @@ private:
 	std::atomic<bool> loadClearMotion = false;
 	bool gatherOnUpdate = false;
 	std::atomic<uint32_t> physicsBodies = 0;
+	std::atomic<uint32_t> slowedMovers = 0;
+	mutable std::mutex slowMutex;
+	std::ptrdiff_t actorValueOwnerOffset = 0;
+	std::atomic<float> playerSlowCut = 0.0f;
+	std::atomic<float> playerBuried = 0.0f;
 
 	bool inZPrepass = false;
 	CameraKey mainCamera;

@@ -32,6 +32,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SnowDrag,
 	DensityFloor,
 	SnowDragStrength,
+	SnowSlowsMovers,
+	SnowSlowStrength,
 	UseSnowCover,
 	DisplaceShadows,
 	SinkActors,
@@ -76,6 +78,12 @@ namespace
 	constexpr float kFloorDropMargin = 2.0f;
 	constexpr float kRestSpeedSquared = 1e-4f;
 	constexpr float kMaxDragStrength = 10.0f;
+	constexpr float kSlowLegFraction = 0.35f;
+	constexpr float kSlowMinLeg = 16.0f;
+	constexpr float kMaxSlowStrength = 0.9f;
+	constexpr float kSlowResponse = 0.3f;
+	constexpr float kSlowMinCut = 0.05f;
+	constexpr float kSlowMinCoverage = 0.5f;
 	constexpr float kHandRange = 800.0f;
 	constexpr float kHandBrushMotion = 0.25f;
 	constexpr float kHandMinRadius = 4.0f;
@@ -1348,11 +1356,13 @@ void SnowDeformation::GatherStamps()
 		shapeMotion.clear();
 		actorShapes.clear();
 		RestoreActorSinks();
+		ClearMoverSlow();
 	}
 	if (!gatherEnabled.load(std::memory_order_relaxed)) {
 		shapeMotion.clear();
 		actorShapes.clear();
 		RestoreActorSinks();
+		ClearMoverSlow();
 		std::scoped_lock lock(stampLock);
 		pendingStamps.clear();
 		measuredSinks.clear();
@@ -1387,7 +1397,7 @@ void SnowDeformation::GatherStamps()
 			if (auto lists = RE::ProcessLists::GetSingleton()) {
 				for (auto& handle : lists->highActorHandles) {
 					auto actor = handle.get();
-					if (actor && actor.get() != player && actor != mount && actor->Is3DLoaded())
+					if (actor && actor.get() != player && actor != mount && actor->Is3DLoaded() && !IsGhost(actor.get()))
 						actors.push_back(actor);
 				}
 			}
@@ -1408,6 +1418,7 @@ void SnowDeformation::GatherStamps()
 		AppendHeatStamps(gatherStamps);
 	}
 	UpdateActorSinks(actors);
+	UpdateMoverSlow(actors);
 	MeasureBlanket();
 	dirtyScratch.clear();
 	for (auto it = actorShapes.begin(); it != actorShapes.end();)
@@ -2050,6 +2061,93 @@ void SnowDeformation::UpdateActorSinks(const std::vector<RE::ActorPtr>& a_actors
 		}
 		it = actorSinks.erase(it);
 	}
+}
+
+const SnowDeformation::RaceTraits& SnowDeformation::TraitsOf(const RE::TESRace* a_race)
+{
+	auto found = raceTraits.find(a_race->GetFormID());
+	if (found == raceTraits.end()) {
+		RaceTraits traits;
+		traits.ghost = a_race->HasKeywordString("ActorTypeGhost");
+		const char* name = a_race->GetName();
+		traits.coldAdapted = traits.ghost || (name && SnowDeformationMath::IsColdAdaptedName(name));
+		found = raceTraits.emplace(a_race->GetFormID(), traits).first;
+	}
+	return found->second;
+}
+
+bool SnowDeformation::IsGhost(RE::Actor* a_actor)
+{
+	auto race = a_actor->GetRace();
+	return race && TraitsOf(race).ghost;
+}
+
+bool SnowDeformation::IsColdAdapted(RE::Actor* a_actor)
+{
+	auto base = a_actor->GetActorBase();
+	if (!base)
+		return false;
+	auto found = coldBases.find(base->GetFormID());
+	if (found == coldBases.end()) {
+		auto race = a_actor->GetRace();
+		const char* name = base->GetName();
+		const bool cold = (race && TraitsOf(race).coldAdapted) || (name && SnowDeformationMath::IsColdAdaptedName(name));
+		found = coldBases.emplace(base->GetFormID(), cold).first;
+	}
+	return found->second;
+}
+
+void SnowDeformation::ClearMoverSlow()
+{
+	std::scoped_lock lock(slowMutex);
+	actorSlows.clear();
+	slowedMovers.store(0, std::memory_order_relaxed);
+}
+
+void SnowDeformation::UpdateMoverSlow(const std::vector<RE::ActorPtr>& a_actors)
+{
+	auto tes = globals::game::tes;
+	++slowFrame;
+	const float blanket = std::clamp(settings.BlanketHeight, 0.0f, kMaxBlanketHeight);
+	const bool active = gatherOnUpdate && tes && settings.SnowSlowsMovers && blanket > 0.0f && !Util::IsInterior();
+	const bool coverActive = IsSnowCoverActive();
+	const float deltaTime = std::clamp(RE::GetSecondsSinceLastFrame(), 0.0f, kMaxDeltaTime);
+	const float response = 1.0f - std::exp(-deltaTime / kSlowResponse);
+
+	for (const auto& actor : a_actors) {
+		const RE::FormID id = actor->GetFormID();
+		float cut = 0.0f;
+		auto controller = active ? actor->GetCharController() : nullptr;
+		if (controller && !IsColdAdapted(actor.get()) && controller->context.currentState == RE::hkpCharacterStateType::kOnGround && !actor->IsDead() && !actor->IsInRagdollState() && !actor->IsOnMount()) {
+			const RE::NiPoint3 position = actor->GetPosition();
+			float landZ = 0.0f;
+			if (tes->GetLandHeight(position, landZ) && ((coverActive && globals::features::snowCover.SnowAmountAt(position) >= kSlowMinCoverage) || IsVanillaSnow(tes->GetLandMaterialType(position)))) {
+				const float legHeight = std::max(kSlowLegFraction * (actor->GetBoundMax().z - actor->GetBoundMin().z), kSlowMinLeg);
+				cut = SnowDeformationMath::WadeSlowdown(blanket - (position.z - landZ), legHeight, settings.SnowSlowStrength);
+				if (actor.get() == globals::game::player)
+					playerBuried.store(blanket - (position.z - landZ), std::memory_order_relaxed);
+			}
+		}
+
+		std::scoped_lock lock(slowMutex);
+		auto found = actorSlows.find(id);
+		if (found == actorSlows.end()) {
+			if (cut <= kSlowMinCut)
+				continue;
+			found = actorSlows.emplace(id, ActorSlow{}).first;
+		}
+		auto& state = found->second;
+		state.frame = slowFrame;
+		state.target = cut;
+		state.cut += (cut - state.cut) * response;
+		if (actor.get() == globals::game::player)
+			playerSlowCut.store(state.cut, std::memory_order_relaxed);
+	}
+
+	std::scoped_lock lock(slowMutex);
+	for (auto it = actorSlows.begin(); it != actorSlows.end();)
+		it = (it->second.frame != slowFrame || (it->second.cut <= kSlowMinCut && it->second.target <= kSlowMinCut)) ? actorSlows.erase(it) : std::next(it);
+	slowedMovers.store(static_cast<uint32_t>(actorSlows.size()), std::memory_order_relaxed);
 }
 
 void SnowDeformation::RebuildActivity(Level& a_level)
@@ -3432,6 +3530,19 @@ RE::BSEventNotifyControl SnowDeformation::SpellCastSink::ProcessEvent(const RE::
 	return RE::BSEventNotifyControl::kContinue;
 }
 
+template <class T>
+float SnowDeformation::Hooks::Actor_GetActorValue<T>::thunk(RE::ActorValueOwner* a_owner, RE::ActorValue a_value)
+{
+	const float value = func(a_owner, a_value);
+	auto& singleton = globals::features::snowDeformation;
+	if (a_value != RE::ActorValue::kSpeedMult || singleton.slowedMovers.load(std::memory_order_relaxed) == 0)
+		return value;
+	const auto* actor = reinterpret_cast<const RE::Actor*>(reinterpret_cast<const std::byte*>(a_owner) - singleton.actorValueOwnerOffset);
+	std::scoped_lock lock(singleton.slowMutex);
+	const auto found = singleton.actorSlows.find(actor->GetFormID());
+	return found == singleton.actorSlows.end() ? value : value * (1.0f - found->second.cut);
+}
+
 void SnowDeformation::Hooks::Install()
 {
 	stl::write_vfunc<0x6, BSLightingShader_SetupGeometry>(RE::VTABLE_BSLightingShader[0]);
@@ -3451,6 +3562,12 @@ void SnowDeformation::Hooks::Install()
 	writeSlot(Projectile_AddImpact<RE::GrenadeProjectile>::func, REL::Relocation<std::uintptr_t>{ RE::VTABLE_GrenadeProjectile[0] }, addImpactSlot, Projectile_AddImpact<RE::GrenadeProjectile>::thunk);
 	writeSlot(Explosion_Initialize::func, REL::Relocation<std::uintptr_t>{ RE::VTABLE_Explosion[0] }, REL::Relocate(0xA2, 0xA2, 0xA3), Explosion_Initialize::thunk);
 	stl::write_vfunc<0x25, BSTempEffectGeometryDecal_Initialize>(RE::VTABLE_BSTempEffectGeometryDecal[0]);
+	constexpr std::size_t kActorValueOwnerVtable = 5;
+	constexpr std::uintptr_t kProbeAddress = 0x1000;
+	globals::features::snowDeformation.actorValueOwnerOffset = static_cast<std::ptrdiff_t>(reinterpret_cast<std::uintptr_t>(reinterpret_cast<RE::Actor*>(kProbeAddress)->AsActorValueOwner()) - kProbeAddress);
+	writeSlot(Actor_GetActorValue<RE::Actor>::func, REL::Relocation<std::uintptr_t>{ RE::VTABLE_Actor[kActorValueOwnerVtable] }, 1, Actor_GetActorValue<RE::Actor>::thunk);
+	writeSlot(Actor_GetActorValue<RE::Character>::func, REL::Relocation<std::uintptr_t>{ RE::VTABLE_Character[kActorValueOwnerVtable] }, 1, Actor_GetActorValue<RE::Character>::thunk);
+	writeSlot(Actor_GetActorValue<RE::PlayerCharacter>::func, REL::Relocation<std::uintptr_t>{ RE::VTABLE_PlayerCharacter[kActorValueOwnerVtable] }, 1, Actor_GetActorValue<RE::PlayerCharacter>::thunk);
 
 	constexpr std::size_t kTrampolineHeadroom = 3 * 14;
 	auto& singleton = globals::features::snowDeformation;
@@ -3488,6 +3605,11 @@ void SnowDeformation::DrawSettings()
 		ImGui::TextWrapped("%s", T(TKEY("snow_drag_tooltip"), "Items buried in a snow drift slow down and stop rolling sooner. Needs a snow blanket height above zero."));
 	if (settings.SnowDrag)
 		ImGui::SliderFloat(T(TKEY("snow_drag_strength"), "Drag Strength"), &settings.SnowDragStrength, 0.0f, kMaxDragStrength, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::Checkbox(T(TKEY("snow_slows_movers"), "Snow Slows Movement"), &settings.SnowSlowsMovers);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("snow_slows_movers_tooltip"), "The player, NPCs and creatures wading through a snow drift walk slower the deeper it is. Ghosts and cold-adapted creatures are not slowed. Needs a snow blanket height above zero."));
+	if (settings.SnowSlowsMovers)
+		ImGui::SliderFloat(T(TKEY("snow_slow_strength"), "Slowdown Strength"), &settings.SnowSlowStrength, 0.0f, kMaxSlowStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::Checkbox(T(TKEY("density_floor"), "Light Items Float"), &settings.DensityFloor);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("density_floor_tooltip"), "Light, broad items settle near the top of a snow drift instead of sinking to the ground."));
@@ -3567,6 +3689,9 @@ json SnowDeformation::GetDiagnostics()
 	return {
 		{ "Objects", objects },
 		{ "PhysicsBodies", physicsBodies.load(std::memory_order_relaxed) },
+		{ "SlowedMovers", slowedMovers.load(std::memory_order_relaxed) },
+		{ "PlayerSlowCut", playerSlowCut.load(std::memory_order_relaxed) },
+		{ "PlayerBuried", playerBuried.load(std::memory_order_relaxed) },
 		{ "Active", IsActiveContext() },
 		{ "Stamps", debugShown.stamps },
 		{ "HandStamps", handStamps.load(std::memory_order_relaxed) },
@@ -3603,6 +3728,7 @@ void SnowDeformation::LoadSettings(json& o_json)
 	sanitize(settings.BlanketHeight, defaults.BlanketHeight, 0.0f, kMaxBlanketHeight);
 	sanitize(settings.Depth, defaults.Depth, 1.0f, 20.0f);
 	sanitize(settings.SnowDragStrength, defaults.SnowDragStrength, 0.0f, kMaxDragStrength);
+	sanitize(settings.SnowSlowStrength, defaults.SnowSlowStrength, 0.0f, kMaxSlowStrength);
 	sanitize(settings.Lifetime, defaults.Lifetime, 10.0f, 1800.0f);
 	sanitize(settings.TrianglePixels, defaults.TrianglePixels, 2.0f, 32.0f);
 }
