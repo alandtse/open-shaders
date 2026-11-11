@@ -262,6 +262,7 @@ struct NeuralRendering::Impl
 		float4 materialStrengthsA{};
 		float4 materialStrengthsB{};
 		uint32_t materialEdgeSoftness = 0;
+		uint32_t pad[3]{};
 	};
 	static_assert(offsetof(ColorTransferData, dynamicRangeProtect) == 64);
 	static_assert(offsetof(ColorTransferData, toneLowStrength) == 80);
