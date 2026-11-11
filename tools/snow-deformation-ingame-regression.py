@@ -238,14 +238,16 @@ def scenario_hands(bench, report):
     """VR only: crouch the body and reach both hands to the feet so the hand capsules press into landscape snow."""
     freecam_off(bench)
     bench.set_feature("SnowDeformation", {"Enabled": True, "IncludeHands": True, "BlanketHeight": 20.0, "SinkActors": False})
+    stale_probe = bench.diagnostics().get("HandProbe", [0.0, 0.0, 0.0])
     for axis, value in zip("xyz", HAND_SPOT):
         bench.console(f"player.setpos {axis} {value}")
     time.sleep(6)
     clear_modals(bench)
     rest = bench.diagnostics()
     probe = rest.get("HandProbe", [0.0, 0.0, 0.0])
-    on_landscape = probe[2] > 0 and probe[0] - probe[1] < 100
-    report.check("hands.spot", "PASS" if on_landscape else "FAIL", f"HandProbe={probe} (radius 0 means no hand sample; hand minus land over 100 means static ground, not landscape)")
+    fresh = probe != stale_probe
+    on_landscape = fresh and probe[2] > 0 and probe[0] - probe[1] < 100
+    report.check("hands.spot", "PASS" if on_landscape else "FAIL", f"HandProbe={probe} before the move={stale_probe} (an unchanged probe is a retained sample from the old spot; radius 0 means no hand sample; hand minus land over 100 means static ground, not landscape)")
     foot = {"front": 25, "offset": [0, 0, 3]}
     run = bench.call("input", {"action": "reach", "device": "vrTrackedSet", "owner": "snowreg", "holdMs": 12000, "toleranceUnits": 3,
                               "hands": {"left": {"node": "NPC L Foot [Lft ]", **foot}, "right": {"node": "NPC R Foot [Rft ]", **foot}},
