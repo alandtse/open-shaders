@@ -229,7 +229,7 @@ WindSharedData Wind::GetSharedWindData() const
 	data.transitionData = float4{
 		windFieldTransitionBlend,
 		previousWindFieldTransitionBlend,
-		0.0f,
+		windFieldAdvectionSpeed,
 		0.0f
 	};
 	data.springDebug = float4{
