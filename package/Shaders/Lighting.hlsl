@@ -2895,10 +2895,28 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	                                    max(SharedData::wetnessEffectsSettings.CharacterImpactIntensity,
 											SharedData::wetnessEffectsSettings.CharacterRetainedWetness) > 0.0f &&
 	                                    (!heldWeapon || SharedData::wetnessEffectsSettings.EnableWeaponRainDrops);
-	[branch] if (evaluateCharacterDrops)
+#			if defined(ENVIRONMENT_RAIN_DROPS)
+	const bool evaluateEnvironmentDrops =
+		!characterRainSurface &&
+		SharedData::wetnessEffectsSettings.EnableRaindropFx &&
+		SharedData::wetnessEffectsSettings.Raining > 0.01f &&
+		!SharedData::InInterior &&
+		inWorld &&
+		!SharedData::HideSky &&
+		abs(vertexNormal.z) < 0.60f;
+	const float environmentSize = SharedData::wetnessEffectsSettings.EnvironmentDropSize;
+#			else
+	const bool evaluateEnvironmentDrops = false;
+	const float environmentSize = 1.0f;
+#			endif
+	[branch] if (evaluateCharacterDrops || evaluateEnvironmentDrops)
 	{
-		characterDrop = CharacterRainSpots::Evaluate(input.ModelPosition.xyz,
-			input.WorldPosition.xyz, vertexNormal.xyz, characterRainSkyVisibility, heldWeapon, eyeIndex);
+		characterDrop = CharacterRainSpots::Evaluate(
+			evaluateEnvironmentDrops ? input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz : input.ModelPosition.xyz,
+			input.WorldPosition.xyz, vertexNormal.xyz,
+			evaluateEnvironmentDrops ? wetnessOcclusion : characterRainSkyVisibility,
+			evaluateEnvironmentDrops ? false : heldWeapon, eyeIndex,
+			evaluateEnvironmentDrops ? -environmentSize : 1.0f);
 	}
 	float characterSpotMask = characterDrop.x;
 #		endif
@@ -2983,31 +3001,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	// Experimental environmental droplets using the character rain geometry.
 	// Character surfaces retain their existing, independent rendering path.
 #		if defined(ENVIRONMENT_RAIN_DROPS)
-	bool evaluateEnvironmentDrops =
-		!characterRainSurface &&
-		SharedData::wetnessEffectsSettings.EnableRaindropFx &&
-		SharedData::wetnessEffectsSettings.Raining > 0.01f &&
-		!SharedData::InInterior &&
-		inWorld &&
-		!SharedData::HideSky &&
-		abs(vertexNormal.z) < 0.60f;
-
 	[branch] if (evaluateEnvironmentDrops)
 	{
-		float3 environmentPosition =
-			input.WorldPosition.xyz +
-			FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-
-		float environmentSize =
-			SharedData::wetnessEffectsSettings.EnvironmentDropSize;
-		float3 environmentDrops = CharacterRainSpots::Evaluate(
-			environmentPosition,
-			input.WorldPosition.xyz,
-			vertexNormal.xyz,
-			wetnessOcclusion,
-			false,
-			eyeIndex,
-			-environmentSize);
+		float3 environmentDrops = characterDrop;
 
 		float environmentCoverage = environmentDrops.x *
 		                            saturate(SharedData::wetnessEffectsSettings.Raining);
@@ -3088,6 +3084,15 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		                               saturate(characterRetainedWetness * SharedData::wetnessEffectsSettings.CharacterWetSheen);
 		characterCoatMask = max(characterSpotMask, characterSheenMask);
 	}
+#			if defined(ENVIRONMENT_RAIN_DROPS)
+	[branch] if (environmentRainCoverage > 0.0f)
+	{
+		characterSpotSurfaceNormal = environmentRainNormal;
+		characterSpotRoughness = 0.12f;
+		characterCoatMask = environmentRainCoverage * environmentRainBrightness;
+		characterCoatIntensity = SharedData::wetnessEffectsSettings.EnvironmentDropReflectivity;
+	}
+#			endif
 	// The thin surface film supplies broad gloss while localized drops retain their own normal and absorption.
 	[branch] if (characterRainSurface && characterCoatMask > 0.0f && inWorld)
 	{
@@ -3345,9 +3350,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	if defined(CHARACTER_RAIN_SURFACE)
 	float3 characterRainSpecular = 0.0f;
 #	endif
-#	if defined(ENVIRONMENT_RAIN_DROPS)
-	float3 environmentRainSpecular = 0.0f;
-#	endif
 
 	float3 lodLandDiffuseColor = 0;
 
@@ -3383,15 +3385,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	[branch] if (characterCoatMask > 0.0f)
 		characterRainSpecular += CharacterRainSpots::EvaluateLighting(characterSpotSurfaceNormal, dirLightContext,
 			characterSpotRoughness, characterCoatMask, characterCoatIntensity);
-#		endif
-#		if defined(ENVIRONMENT_RAIN_DROPS)
-	[branch] if (environmentRainCoverage > 0.0f)
-		environmentRainSpecular += CharacterRainSpots::EvaluateLighting(
-			environmentRainNormal,
-			dirLightContext,
-			0.12f,
-			environmentRainCoverage * environmentRainBrightness,
-			SharedData::wetnessEffectsSettings.EnvironmentDropReflectivity);
 #		endif
 #	endif
 
@@ -3499,15 +3492,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		[branch] if (characterCoatMask > 0.0f)
 			characterRainSpecular += CharacterRainSpots::EvaluateLighting(characterSpotSurfaceNormal, pointLightContext,
 				characterSpotRoughness, characterCoatMask, characterCoatIntensity);
-#				endif
-#				if defined(ENVIRONMENT_RAIN_DROPS)
-		[branch] if (environmentRainCoverage > 0.0f)
-			environmentRainSpecular += CharacterRainSpots::EvaluateLighting(
-				environmentRainNormal,
-				pointLightContext,
-				0.12f,
-				environmentRainCoverage * environmentRainBrightness,
-				SharedData::wetnessEffectsSettings.EnvironmentDropReflectivity);
 #				endif
 #			endif
 		lightsDiffuseColor += pointLightOutput.diffuse;
@@ -3937,17 +3921,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 			characterSpotRoughness, characterCoatMask, characterCoatIntensity);
 	float3 characterRainAmbientColor = directionalAmbientColor;
 #		endif
-#		if defined(ENVIRONMENT_RAIN_DROPS)
-	float3 environmentRainReflectance = 0.0f;
-
-	[branch] if (environmentRainCoverage > 0.0f)
-		environmentRainReflectance = CharacterRainSpots::EvaluateIndirect(
-			environmentRainNormal,
-			indirectContext,
-			0.12f,
-			environmentRainCoverage * environmentRainBrightness,
-			SharedData::wetnessEffectsSettings.EnvironmentDropReflectivity);
-#		endif
 #	endif
 #	if defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE)
 #		if defined(VANILLA_FRESNEL)
@@ -4078,16 +4051,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	radianceSpecularColor += characterRainSpecular + radianceRainDifference;
 #		endif
 #	endif
-#	if defined(ENVIRONMENT_RAIN_DROPS)
-
-	// Environmental water reflections.
-	specularColor += environmentRainSpecular;
-
-#		if defined(CAPTURE_REFLECTION_RADIANCE)
-	radianceSpecularColor += environmentRainSpecular;
-#		endif
-
-#	endif
 #	if defined(LOD_LAND_BLEND) && defined(TRUE_PBR)
 	{
 		lodLandDiffuseColor += directionalAmbientColor;
@@ -4183,24 +4146,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #				endif
 #			else
 		color.xyz += characterSpotReflectance * characterRainAmbientColor;
-#			endif
-	}
-#		endif
-#		if defined(ENVIRONMENT_RAIN_DROPS)
-	[branch] if (any(environmentRainReflectance > 0.0f))
-	{
-#			if defined(DYNAMIC_CUBEMAPS)
-#				if defined(SKYLIGHTING)
-		color.xyz += environmentRainReflectance *
-		             DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(
-						 environmentRainNormal, viewDirection, 0.12f, skylightingSpecularSH, skylightingSpecularFadeOut);
-#				else
-		color.xyz += environmentRainReflectance *
-		             DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(
-						 environmentRainNormal, viewDirection, 0.12f);
-#				endif
-#			else
-		color.xyz += environmentRainReflectance * directionalAmbientColor;
 #			endif
 	}
 #		endif
@@ -4430,28 +4375,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		screenSpaceNormal = normalize(lerp(screenSpaceNormal,
 			FrameBuffer::WorldToView(characterSpotSurfaceNormal, false, eyeIndex), characterReflectionWeight));
 		indirectLobeWeights.specular += characterSpotReflectance;
-	}
-#			endif
-#			if defined(ENVIRONMENT_RAIN_DROPS)
-
-	[branch] if (environmentRainCoverage > 0.0f)
-	{
-		float environmentReflectionWeight =
-			CharacterRainSpots::GetCoatWeight(
-				environmentRainCoverage * environmentRainBrightness,
-				SharedData::wetnessEffectsSettings.EnvironmentDropReflectivity);
-
-		material.Roughness = lerp(
-			material.Roughness,
-			min(material.Roughness, 0.12f),
-			environmentReflectionWeight);
-
-		screenSpaceNormal = normalize(lerp(
-			screenSpaceNormal,
-			FrameBuffer::WorldToView(environmentRainNormal, false, eyeIndex),
-			environmentReflectionWeight));
-
-		indirectLobeWeights.specular += environmentRainReflectance;
 	}
 #			endif
 #		endif
