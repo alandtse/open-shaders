@@ -8,7 +8,7 @@ namespace NeuralRenderingMaterial
 	/** @brief Clamps a source tap within its eye before applying the stereo offset. */
 	int2 SourcePixel(int2 pixel, uint2 size, uint eyeOffsetX)
 	{
-		return clamp(pixel, int2(0, 0), int2(size) - 1) + int2(int(eyeOffsetX), 0);
+		return clamp(pixel, int2(0, 0), int2(size) - 1) + int2((int)eyeOffsetX, 0);
 	}
 
 	/** @brief Decodes one material sample into its neural protection weight. */
@@ -22,7 +22,7 @@ namespace NeuralRenderingMaterial
 	float Protection(Texture2D<float2> categories, int2 pixel, uint2 size, uint eyeOffsetX,
 		uint edgeSoftness, float4 strengthsA, float4 strengthsB)
 	{
-		const int radius = int(edgeSoftness);
+		const int radius = (int)edgeSoftness;
 		if (radius == 0)
 			return ProtectionAt(categories, SourcePixel(pixel, size, eyeOffsetX), strengthsA, strengthsB);
 		float sum = 0.0;
