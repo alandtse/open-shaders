@@ -56,7 +56,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CharacterWetSheen,
 	CharacterRainActivityMultiplier,
 	CharacterDryTime,
-	EnableWeaponRainDrops)
+	EnableWeaponRainDrops,
+	EnvironmentDropSize,
+	EnvironmentDropBrightness,
+	EnvironmentDropReflectivity)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::DebugSettings,
@@ -90,6 +93,14 @@ namespace
 		static constexpr float kMaximumActivity = 8.0f;
 		static constexpr float kMinimumDryTime = 2.0f;
 		static constexpr float kMaximumDryTime = 60.0f;
+		static constexpr float kMinimumEnvironmentDropSize = 0.25f;
+		static constexpr float kMaximumEnvironmentDropSize = 2.0f;
+
+		static constexpr float kMinimumEnvironmentDropBrightness = 0.0f;
+		static constexpr float kMaximumEnvironmentDropBrightness = 3.0f;
+
+		static constexpr float kMinimumEnvironmentDropReflectivity = 0.0f;
+		static constexpr float kMaximumEnvironmentDropReflectivity = 3.0f;
 	};
 }
 
@@ -679,7 +690,13 @@ void WetnessEffects::DrawEnvironmentWetnessSettings()
 
 		ImGui::TreePop();
 	}
-
+	ImGui::Spacing();
+	if (ImGui::TreeNodeEx(T(TKEY("environment_wall_droplets"), "Environmental Wall Droplets"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::SliderFloat(T(TKEY("environment_drop_size"), "Size"), &settings.EnvironmentDropSize, 0.25f, 2.0f, "%.2f");
+		ImGui::SliderFloat(T(TKEY("environment_drop_brightness"), "Brightness"), &settings.EnvironmentDropBrightness, 0.0f, 3.0f, "%.2f");
+		ImGui::SliderFloat(T(TKEY("environment_drop_reflectivity"), "Reflectivity"), &settings.EnvironmentDropReflectivity, 0.0f, 3.0f, "%.2f");
+		ImGui::TreePop();
+	}
 	// The weather picker and debug overrides have no scene-context meaning, so hide them while a
 	// Scene Manager replica is borrowing this panel to author overrides.
 	if (SettingsControl::IsReplicating())
@@ -1135,7 +1152,7 @@ void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data) const
 		float minimum;
 		float maximum;
 	};
-	static constexpr std::array<SettingRange, 9> characterRainSettingRanges{ {
+	static constexpr std::array<SettingRange, 12> characterRainSettingRanges{ {
 		{ &Settings::CharacterSpotDensity, CharacterRainSettingLimits::kMinimumDensity, CharacterRainSettingLimits::kMaximumDensity },
 		{ &Settings::CharacterSpotRadius, CharacterRainSettingLimits::kMinimumRadius, CharacterRainSettingLimits::kMaximumRadius },
 		{ &Settings::CharacterSpotStrength, CharacterRainSettingLimits::kMinimumStrength, CharacterRainSettingLimits::kMaximumStrength },
@@ -1145,6 +1162,9 @@ void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data) const
 		{ &Settings::CharacterWetSheen, CharacterRainSettingLimits::kMinimumWetSheen, CharacterRainSettingLimits::kMaximumWetSheen },
 		{ &Settings::CharacterRainActivityMultiplier, CharacterRainSettingLimits::kMinimumActivity, CharacterRainSettingLimits::kMaximumActivity },
 		{ &Settings::CharacterDryTime, CharacterRainSettingLimits::kMinimumDryTime, CharacterRainSettingLimits::kMaximumDryTime },
+		{ &Settings::EnvironmentDropSize, CharacterRainSettingLimits::kMinimumEnvironmentDropSize, CharacterRainSettingLimits::kMaximumEnvironmentDropSize },
+		{ &Settings::EnvironmentDropBrightness, CharacterRainSettingLimits::kMinimumEnvironmentDropBrightness, CharacterRainSettingLimits::kMaximumEnvironmentDropBrightness },
+		{ &Settings::EnvironmentDropReflectivity, CharacterRainSettingLimits::kMinimumEnvironmentDropReflectivity, CharacterRainSettingLimits::kMaximumEnvironmentDropReflectivity },
 	} };
 	const Settings defaults{};
 	for (const auto& range : characterRainSettingRanges) {
