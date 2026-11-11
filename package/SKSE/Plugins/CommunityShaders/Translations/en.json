@@ -5569,6 +5569,7 @@
     "menu.home.constraint_header_forced_to": "Forced To",
     "menu.home.constraint_header_setting": "Setting",
     "menu.home.constraints_desc": "Some settings are constrained by other features. Hover over rows for details.",
+    "menu.home.content_store_usage": "Persistent store: {count} shaders, {size} (limit {cap})",
     "menu.home.dev_wiki": "Developer Wiki",
     "menu.home.disk_cache": "Disk cache: {status}",
     "menu.home.feature_issue_many": "{count} feature issues",
