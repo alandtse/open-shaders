@@ -10,6 +10,7 @@ BSLightingShaderMaterialPBRLandscape::BSLightingShaderMaterialPBRLandscape()
 
 BSLightingShaderMaterialPBRLandscape::~BSLightingShaderMaterialPBRLandscape()
 {
+	std::lock_guard lock(AllMutex);
 	All.erase(this);
 }
 
@@ -63,6 +64,7 @@ void BSLightingShaderMaterialPBRLandscape::CopyMembers(RE::BSShaderMaterial* tha
 	terrainTexFade = pbrThat->terrainTexFade;
 	glintParameters = pbrThat->glintParameters;
 
+	std::lock_guard lock(AllMutex);
 	All[this] = All[pbrThat];
 }
 
