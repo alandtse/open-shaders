@@ -92,7 +92,7 @@ bool SceneTransitionField::Draw(const char* a_id, std::optional<float>& a_value,
 	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
 	ImGui::PushStyleColor(ImGuiCol_ButtonActive, hover);
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-	if (Icons::Button("##ResetTransition", Icons::TI(ICON_TI_ERASER), ImVec2(height, height))) {
+	if (Util::LabeledButton("##ResetTransition", Icons::TI(ICON_TI_ERASER), ImVec2(height, height))) {
 		changed = a_value.has_value() || a_mixed;
 		a_value.reset();
 		buffer = FormatSeconds(a_inherited);

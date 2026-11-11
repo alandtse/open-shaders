@@ -1,8 +1,8 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO wolfpld/tracy
-    REF a8db9bd8445343ee171439b9479c0a594183bf62
-    SHA512 9b8697d8e5f1188975802b2f4d9ddd1fb85d744eddd1ca3a03842a4ecb98da8a898a8faa52a27140ba69268087a383906c9d0fe03e3a863107aef24030da1ffe
+    REF 20a293b3575118b15a33f5cdea8866df1fb07b64
+    SHA512 f008a750f58733236ef32799383f17745d7dd72ae54f35b12cfb06f05792a80e7e3db728ed34a2dac396b6bb026317ec45c327c8a3da12190c6f7442d11d40cd
     HEAD_REF master
 )
 
@@ -19,6 +19,11 @@ set(TOOLS_OPTIONS "")
 if("cli-tools" IN_LIST FEATURES OR "gui-tools" IN_LIST FEATURES)
     vcpkg_find_acquire_program(PKGCONFIG)
     list(APPEND TOOLS_OPTIONS "-DPKG_CONFIG_EXECUTABLE=${PKGCONFIG}")
+endif()
+
+if("gui-tools" IN_LIST FEATURES)
+    vcpkg_find_acquire_program(PYTHON3)
+    list(APPEND TOOLS_OPTIONS "-DPython3_EXECUTABLE=${PYTHON3}")
 endif()
 
 vcpkg_cmake_configure(

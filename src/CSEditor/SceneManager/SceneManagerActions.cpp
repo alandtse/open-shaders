@@ -406,7 +406,7 @@ void SceneManager::RegisterUxActions()
 			return { { "total", summary.total }, { "paused", summary.paused } };
 		}));
 	FEATURE_RENDER_COMMAND("setSceneLayerPaused",
-		"Pause or resume the Manage Settings source layer. Args: source=user|overwrite, paused=boolean, type=all|interior|timeOfDay|weather|location (all default), optional target object using sceneSets context args. Acts across all saved periods; a target period is ignored. User pause state persists; overwrite pauses are session-only and reset on reload. Refuses any unsaved retained scene draft and invalidates a clean retained draft. Verify sceneLayerSummary and live values afterward.",
+		"Pause or resume the Manage Settings source layer. Args: source=user|overwrite, paused=boolean, type=all|interior|timeOfDay|weather|location (all default), optional target object using sceneSets context args. Acts across all saved periods; a target period is ignored. User pause state persists; overwrite pauses preview until the editor or main menu Save. Refuses any unsaved retained scene draft and invalidates a clean retained draft. Verify sceneLayerSummary and live values afterward.",
 		([](Feature*, const json& args) {
 			auto& manager = RequireReady();
 			if (manager.HasPendingContextEdit())
@@ -533,7 +533,7 @@ void SceneManager::RegisterUxActions()
 		"Alias for openFeatureSceneToolbar. Args: feature=shortName. Opens or resumes the retained draft on the feature's main menu page without saving it.",
 		OpenFeatureToolbar);
 	FEATURE_RENDER_COMMAND("saveFeatureSceneEdit",
-		"Press the retained feature toolbar's Save. Args: feature=shortName. Requires its active preview. Atomically saves its User entries and mode; a failed write leaves the draft available for retry. Verify featureScenePauseState previewPendingEdits and sceneSets.",
+		"Press the retained feature toolbar's Save. Args: feature=shortName. Requires its active preview. Atomically saves its User entries, scene mode, and preset pauses; a failed write leaves the draft available for retry. Verify featureScenePauseState previewPendingEdits and sceneSets.",
 		[](Feature*, const json& args) {
 			auto& manager = RequireReady();
 			if (!manager.IsContextEditing(args.at("feature").get<std::string>()) || !manager.IsContextEditPreviewActive())
@@ -542,7 +542,7 @@ void SceneManager::RegisterUxActions()
 				throw std::runtime_error(T("feature.scene_manager.edit.save_failed", "Could not save scene settings. Your unsaved changes are kept. Try Save again."));
 		});
 	FEATURE_RENDER_COMMAND("hideFeatureSceneToolbar",
-		"Close the scene toolbar, discard unsaved changes and stop its environment preview. Args: none. Explicitly saved User entries remain unchanged. Verify featureScenePauseState and sceneSets afterward.",
+		"Close the scene toolbar, discard unsaved changes and stop its environment preview. Args: none. Explicitly saved User entries and preset pauses remain unchanged. Verify featureScenePauseState and sceneSets afterward.",
 		[](Feature*, const json&) { SceneSettingsUI::HideFeaturePageEditing(); });
 	FEATURE_RENDER_COMMAND("setEnvironmentPreviewPlaying",
 		"Press the retained feature toolbar's Play or Stop. Args: playing=boolean, feature=shortName required for Play. Locks selected weather/time and can travel to a location. Stop restores prior controls without rewinding the hour. Does not save scene entries. Verify environmentPreviewState.",

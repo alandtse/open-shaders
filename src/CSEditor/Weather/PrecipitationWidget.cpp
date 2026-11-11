@@ -54,7 +54,7 @@ void PrecipitationWidget::DrawWidget()
 
 		bool changed = false;
 
-		if (Util::BeginPillTabBar("PrecipitationTabs")) {
+		if (BeginSettingsTabBar("PrecipitationTabs")) {
 			const ImGuiTabItemFlags particleFlags = GetTabFlagsForOverride(PrecipitationTab::kParticle);
 			const ImGuiTabItemFlags positionFlags = GetTabFlagsForOverride(PrecipitationTab::kPosition);
 			const ImGuiTabItemFlags textureFlags = GetTabFlagsForOverride(PrecipitationTab::kTexture);
@@ -315,6 +315,7 @@ void PrecipitationWidget::RevertChanges()
 	lastCheckedBuffer.clear();
 	lastCheckedExists = false;
 	ApplyChanges();
+	TrackEdits();
 }
 
 std::vector<Widget::SearchResult> PrecipitationWidget::CollectSearchableSettings() const

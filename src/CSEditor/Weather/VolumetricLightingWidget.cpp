@@ -41,7 +41,7 @@ void VolumetricLightingWidget::DrawWidget()
 	}
 	bool changed = false;
 
-	if (Util::BeginPillTabBar("VolumetricLightingTabs")) {
+	if (BeginSettingsTabBar("VolumetricLightingTabs")) {
 		const ImGuiTabItemFlags basicFlags = GetTabFlagsForOverride(VolumetricLightingTab::kBasic);
 		const ImGuiTabItemFlags densityFlags = GetTabFlagsForOverride(VolumetricLightingTab::kDensity);
 		const ImGuiTabItemFlags advancedFlags = GetTabFlagsForOverride(VolumetricLightingTab::kAdvanced);

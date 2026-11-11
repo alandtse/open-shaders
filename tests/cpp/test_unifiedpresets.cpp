@@ -13,6 +13,7 @@
 
 #include "CSEditor/SceneManager/SceneEntryDraft.h"
 #include "CSEditor/SceneManager/SceneEntryPrecedence.h"
+#include "CSEditor/SceneManager/ScenePresetPauses.h"
 #include "Presets/LegacyPreset.h"
 #include "Presets/PresetActivation.h"
 #include "Presets/PresetContent.h"
@@ -31,6 +32,40 @@ TEST_CASE("Scene presets take precedence over values saved for the same scene", 
 	CHECK(preset < suppression);
 	CHECK(GetRank(true, true) == preset);
 	CHECK(kApplyOrder == std::array{ user, preset, suppression });
+}
+
+TEST_CASE("Saving toolbar preset pauses preserves other saved sources and excludes standalone previews", "[presets][scene-settings]")
+{
+	using namespace ScenePresetPauses;
+	using json = nlohmann::json;
+	const Key existing{ "Presets/A/Weather/Example.json", "Example", { "Group" }, "Value", "Day" };
+	const Key unrelated{ "Presets/B/Weather/Example.json", "Example", { "Group" }, "Value", "Day" };
+	const Key nextPeriod{ "Presets/A/Weather/Example.json", "Example", { "Group" }, "Value", "Night" };
+	const Key previewOnly{ "Presets/C/InteriorOnly/Example.json", "Example", {}, "Value", "Normal" };
+	const State saved{ existing, unrelated };
+	auto live = saved;
+	Set(live, previewOnly, true);
+
+	Changes toolbar;
+	Preview(toolbar, live, existing, false);
+	Preview(toolbar, live, nextPeriod, true);
+	Preview(toolbar, live, previewOnly, true);
+	REQUIRE(toolbar.size() == 2);
+	auto committed = saved;
+	Apply(committed, toolbar);
+
+	json document{ { "interiorOnly", json::array() } };
+	Write(document, committed);
+	const State expected{ unrelated, nextPeriod };
+	CHECK(Read(json::parse(document.dump())) == expected);
+	CHECK(document.at("interiorOnly") == json::array());
+	CHECK(live.contains(existing));
+	CHECK(live.contains(previewOnly));
+	Preview(toolbar, live, existing, true);
+	CHECK_FALSE(toolbar.contains(existing));
+	Write(document, {});
+	CHECK_FALSE(document.contains(kDocumentKey));
+	CHECK(Read(document).empty());
 }
 
 TEST_CASE("Legacy boot snapshots do not block preset boot values", "[presets]")
@@ -310,6 +345,30 @@ TEST_CASE("Preset value editing refuses stale, missing and internal paths", "[pr
 	REQUIRE(ReplaceSetting(document, "/Group/_hidden", 1, 2) == SettingEditResult::Missing);
 	REQUIRE(ReplaceSetting(document, "/~invalid", 1, 2) == SettingEditResult::InvalidValue);
 	REQUIRE(document == original);
+}
+
+TEST_CASE("Scene preset edits preserve the value authored before the first save", "[presets][preset-edit]")
+{
+	using namespace PresetContent;
+	using json = nlohmann::json;
+	const json competing{ { "_feature", "Example" }, { "Group", { { "Effect/Strength", 1.0 }, { "Keep", 2.0 } } } };
+	const auto file = std::filesystem::path("InteriorOnly/Example.json");
+	const auto competingFootprint = Describe(file, competing);
+	auto document = competing;
+	const std::string path = "/Group/Effect~1Strength";
+	REQUIRE(ReplaceSetting(document, path, 1.0, 0.75, nullptr, true) == SettingEditResult::Changed);
+	document = json::parse(document.dump());
+	REQUIRE(PresetActivation::Conflicts(Describe(file, document), competingFootprint));
+	REQUIRE(ReplaceSetting(document, path, 0.75, 0.5, nullptr, true) == SettingEditResult::Changed);
+	document = json::parse(document.dump());
+	const auto original = document.at("_metadata").at(kSceneDefaultsKey).at(path);
+	REQUIRE(original == 1.0);
+	REQUIRE(ReplaceSetting(document, path, 0.5, original, nullptr, true) == SettingEditResult::Changed);
+	REQUIRE(document.at(json::json_pointer(path)) == 1.0);
+	REQUIRE_FALSE(PresetActivation::Conflicts(Describe(file, json::parse(document.dump())), competingFootprint));
+	REQUIRE(RemoveSettings(document, std::array{ path }));
+	REQUIRE_FALSE(document.at("_metadata").contains(kSceneDefaultsKey));
+	REQUIRE(document.at("Group").at("Keep") == 2.0);
 }
 
 TEST_CASE("Preset value editing validates types, bounds and finite numbers", "[presets][preset-edit]")

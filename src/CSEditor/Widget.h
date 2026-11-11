@@ -5,18 +5,19 @@
 #include "UndoHistory.h"
 #include "Util.h"
 #include "Utils/Form.h"
+#include <algorithm>
 #include <array>
 #include <string_view>
 
 #include <initializer_list>
+#include <list>
+#include <optional>
 #include <type_traits>
 #include <vector>
 
 namespace WidgetUI
 {
-	// Search bar / dropdown
-	constexpr int kSearchBufferSize = 256;
-	constexpr float kSearchBarWidth = 200.0f;
+	// Search popup
 	constexpr float kSearchDropdownWidth = 300.0f;
 	constexpr size_t kSearchDropdownMaxResults = 5;
 
@@ -26,19 +27,12 @@ namespace WidgetUI
 	constexpr ImVec4 kHighlightFrameBg = ImVec4(0.3f, 0.6f, 1.0f, 1.0f);
 	constexpr ImVec4 kHighlightFrameBgHovered = ImVec4(0.4f, 0.7f, 1.0f, 1.0f);
 
-	// Transparent icon button styling
-	constexpr ImVec4 kIconButtonTransparent = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-	constexpr float kIconButtonHoverAlpha = 0.25f;
-
 	// Title-bar action chips: how much a filled text action brightens on hover
 	constexpr float kTextActionHoverBoost = 0.2f;
 
 	// Category section header text (light teal-blue)
 	constexpr ImVec4 kCategoryHeaderColor = ImVec4(0.7f, 0.9f, 1.0f, 1.0f);
 
-	// Icon button spacing
-	constexpr float kIconButtonSpacing = 4.0f;
-	constexpr float kIconButtonSizeRatio = 0.85f;
 }
 
 class Widget
@@ -175,33 +169,46 @@ public:
 	 * @brief Call instead of SetupWidgetWindowDefaults + ImGui::Begin. Tracks per-type window size.
 	 *
 	 * Action-button flags are consumed by the floating custom header (via drawExtras) when they
-	 * fit beside the title; otherwise DrawWidgetHeader falls back to an inline row. Docked windows
-	 * skip the custom header and place actions in the native title bar from DrawWidgetHeader.
-	 * When searchId is set, the search field is drawn in the title bar between the title and actions.
+	 * fit beside the title; otherwise DrawWidgetHeader falls back to an inline row, as in docked windows.
+	 * When searchId is set, a trailing search icon opens the settings search popup.
 	 */
 	bool BeginWidgetWindow(bool showApply = true, bool showSaveLoadRevert = false, bool showForceWeather = false, RE::TESWeather* weather = nullptr, const char* searchId = nullptr);
 
 	/** @brief Queue focus for the next BeginWidgetWindow call (use instead of SetWindowFocus on a not-yet-drawn window). */
-	void RequestFocus() { m_pendingFocus = true; }
+	void RequestFocus() { View().pendingFocus = true; }
 
-	bool open = false;
-
-	/** @brief Returns true if this widget's window is currently open. */
+	/** @brief Returns true if any of this widget's windows is open. */
 	bool IsOpen() const
 	{
-		return open;
+		return std::ranges::any_of(views, &WidgetView::open);
 	}
 
 	/**
-	 * @brief Set the open/closed state of this widget's window.
+	 * @brief Opens the window being drawn (the main one outside drawing), or closes every window.
 	 * @param state True to open, false to close.
 	 */
 	void SetOpen(bool state = true);
 
-	/** @brief Returns a window title with unique ImGui ID: "EditorID###FormID", marked with a dot while unsaved. */
+	/** @brief Opens one more window on this widget, cascaded from the one being drawn; all windows share the edited settings. */
+	void OpenAnotherView();
+
+	/** @brief Closes the window that last had focus, leaving the others open. */
+	void CloseFocusedView();
+
+	/** @brief Draws every open window of this widget, then drops the extra ones that were closed. */
+	void DrawViews();
+
+	/** @brief Title with unique ImGui ID ("EditorID###FormID") of the window being drawn, else the last focused open one; dotted while unsaved, numbered for extra windows. */
 	std::string GetWindowTitle() const
 	{
-		return std::format("{}{}###{}", HasUnsavedChanges() ? "\xE2\x80\xA2 " : "", GetEditorID(), GetFormID());
+		const char* unsavedMark = HasUnsavedChanges() ? "\xE2\x80\xA2 " : "";
+		auto openView = std::ranges::find_if(views, [this](const WidgetView& view) { return view.open && view.id == focusedViewId; });
+		if (openView == views.end())
+			openView = std::ranges::find_if(views, &WidgetView::open);
+		const int viewId = currentView ? currentView->id : (openView != views.end() ? openView->id : 0);
+		if (viewId == 0)
+			return std::format("{}{}###{}", unsavedMark, GetEditorID(), GetFormID());
+		return std::format("{}{} ({})###{}_{}", unsavedMark, GetEditorID(), viewId + 1, GetFormID(), viewId);
 	}
 
 	/** @brief Save the widget's current settings to its JSON file on disk. */
@@ -212,8 +219,20 @@ public:
 	 * @param showNotification If true, display a notification on successful load.
 	 */
 	void Load(bool showNotification = true);
-	/** @brief Applies a parsed document and reports typed-load rejection. */
-	bool ApplySavedDocument(const json& document);
+	/** @brief Applies a parsed document, optionally updating the saved baseline, and reports typed-load rejection. */
+	bool ApplySavedDocument(const json& document, bool updateSavedBaseline = true);
+
+	/** @brief Record values available from the toolbar. */
+	enum class SettingsSource
+	{
+		Game,
+		Preset,
+		Saved
+	};
+	/** @brief Whether the selected source supplies this record. */
+	bool HasSettingsSource(SettingsSource source) const;
+	/** @brief Restores this record from one source without writing any files. */
+	void RestoreSettings(SettingsSource source);
 	/** @brief Refreshes the editor dirty-record index. */
 	void TrackEdits();
 	/** @brief Commits the saved comparison baseline after a successful file write. */
@@ -245,7 +264,7 @@ public:
 	/** @brief Apply the current widget settings to the live game form. Must be implemented by subclasses. */
 	virtual void ApplyChanges() = 0;
 
-	/** @brief Revert widget settings to the last loaded state. Default implementation calls LoadSettings. */
+	/** @brief Restore original game values; editable widgets override the loading fallback. */
 	virtual void RevertChanges() { LoadSettings(); }
 
 	/** @brief Returns true if the widget has unsaved modifications relative to its saved file. */
@@ -270,27 +289,25 @@ public:
 	virtual bool RequiresManualApply() const { return false; }
 
 	/**
-	 * @brief Draw action buttons inside the native title bar (docked windows) or the floating
-	 *        custom header row (when called from BeginWithCustomHeader's drawExtras).
+	 * @brief Draw actions in the floating custom header or an inline row for docked and narrow windows.
 	 *
 	 * Returns false when there is no host row or the row is too narrow; the caller should then
-	 * draw the actions inline beside the search bar.
+	 * draw the actions inline.
 	 * @param customHeaderRow True when drawing inside BeginWithCustomHeader's drawExtras callback.
-	 * @param searchId When non-null, draws the search field centred between the title and actions.
+	 * @param searchId When non-null, adds a trailing settings search icon.
 	 */
 	bool DrawTitleBarActions(bool showApply, bool showSaveLoadRevert, bool showForceWeather, RE::TESWeather* weather, bool customHeaderRow = false, const char* searchId = nullptr);
 
 	/**
-	 * @brief Draw the common widget header with search bar and action buttons.
+	 * @brief Draw the common widget header with action buttons and settings search.
 	 *
-	 * Action buttons and search are placed in the title/custom header when BeginWidgetWindow
-	 * already drew them, or in the native title bar when docked; otherwise they sit inline.
+	 * Action buttons and search use the custom header when they fit; otherwise they sit inline.
 	 * Flags must match the values passed to BeginWidgetWindow.
 	 */
 	void DrawWidgetHeader(const char* searchId, bool showApply = true, bool showSaveLoadRevert = false, bool showForceWeather = false, RE::TESWeather* weather = nullptr);
+	/** @brief Opens the widget's tab strip with its trailing new-window action. */
+	bool BeginSettingsTabBar(const char* id);
 
-	// Search functionality
-	char searchBuffer[WidgetUI::kSearchBufferSize] = "";
 	int deleteConfirmationFrame = -1;
 
 	// Unified search dropdown + tab navigation + highlight helpers.
@@ -302,6 +319,37 @@ public:
 		std::string tabName;    // empty if widget has no tabs
 		std::string settingId;  // id used for highlight matching
 	};
+
+	/** @brief One window onto the widget: its open state, focus request and search are its own, the settings are shared. */
+	struct WidgetView
+	{
+		/// 0 is the main window, which is kept while closed; extra windows take the lowest free number from 1.
+		int id = 0;
+		bool open = false;
+		bool pendingFocus = false;
+		/// Where an extra window first appears, cascaded from the window that opened it.
+		std::optional<ImVec2> spawnPos;
+		bool customHeaderActionsDrawn = false;
+		std::string searchBuffer;
+		// The search popup opens below the trailing search icon.
+		ImVec2 searchDropdownAnchor{ 0.0f, 0.0f };
+		bool requestSearch = false;
+		bool searchPopupOpen = false;
+
+		// Navigation / highlight state shared by the search dropdown.
+		std::vector<SearchResult> searchResults;
+		std::string activeTabOverride;
+		std::string highlightedSetting;
+		std::string highlightedDisplaySetting;
+		float highlightStartTime = 0.0f;
+		bool scrollToHighlighted = false;
+		bool navigatedFromSearch = false;
+
+		// Cache the last query searchResults was built for, so per-frame work is skipped
+		// while the buffer is unchanged.
+		std::string searchResultsForQuery;
+	};
+
 	/** @brief Collect all searchable settings for the search dropdown. Override to provide entries. */
 	virtual std::vector<SearchResult> CollectSearchableSettings() const { return {}; }
 
@@ -377,7 +425,7 @@ public:
 	}
 
 	/** @brief Returns true if a search is active or the user navigated from search, indicating sections should be expanded. */
-	bool ShouldOpenSearchSection() const { return searchBuffer[0] != '\0' || navigatedFromSearch; }
+	bool ShouldOpenSearchSection() const { return !View().searchBuffer.empty() || View().navigatedFromSearch; }
 
 	/** @brief Applies the edits at once when they changed and the editor is set to apply changes as they are made. */
 	void AutoApply(bool changed);
@@ -463,6 +511,7 @@ public:
 	json js = json();
 
 protected:
+	bool preserveSavedBaseline = false;
 	/** @brief Marks a rejected typed load so its transaction can restore prior values. */
 	void MarkLoadFailed() { lastLoadSucceeded = false; }
 	bool lastLoadSucceeded = true;
@@ -472,29 +521,14 @@ protected:
 	virtual void DrawMenu();
 	std::string GetFolderName() const;
 
-	// Cached dropdown position from DrawWidgetHeader so DrawSearchDropdown() can anchor below the search bar.
-	ImVec2 searchDropdownAnchor{ 0.0f, 0.0f };
-	ImVec2 searchInputMin{ 0.0f, 0.0f };
-	ImVec2 searchInputMax{ 0.0f, 0.0f };
+	/** @brief The window being drawn, or the main window outside drawing. */
+	WidgetView& View() { return currentView ? *currentView : views.front(); }
+	const WidgetView& View() const { return currentView ? *currentView : views.front(); }
 
-	// Whether the search result dropdown is currently visible.
-	bool dropdownVisible = false;
-
-	// Navigation / highlight state shared by the search dropdown.
-	std::vector<SearchResult> searchResults;
-	std::string activeTabOverride;
-	std::string highlightedSetting;
-	std::string highlightedDisplaySetting;
-	float highlightStartTime = 0.0f;
-	bool scrollToHighlighted = false;
-	bool navigatedFromSearch = false;
-
-	// Cache the last query searchResults was built for, so per-frame work is skipped
-	// while the buffer is unchanged.
-	std::string searchResultsForQuery;
-	bool m_pendingFocus = false;
-	bool m_customHeaderActionsDrawn = false;
-	bool m_titleBarSearchDrawn = false;
+	/// A list so a window opened mid-draw leaves the one being drawn in place.
+	std::list<WidgetView> views = std::list<WidgetView>(1);
+	WidgetView* currentView = nullptr;
+	int focusedViewId = 0;
 
 	void ClearSearchState(bool clearBuffer);
 	virtual void NavigateToSearchResult(const SearchResult& result);
@@ -549,7 +583,8 @@ protected:
 				settings = vanillaSettings;
 			}
 		}
-		originalSettings = settings;
+		if (!preserveSavedBaseline)
+			originalSettings = settings;
 		ApplyChanges();
 	}
 

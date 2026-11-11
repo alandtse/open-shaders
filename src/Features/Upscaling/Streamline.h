@@ -47,10 +47,15 @@ public:
 	// Upper bound for DLSSGOptions::numFramesToGenerate, queried once via slDLSSGGetState
 	// after PostDevice binds the DLSS-G functions (DX12 instance only). 1 = 2x-only.
 	uint32_t dlssgMaxFramesToGenerate = 1;
+	// DLSSGState::bIsDynamicMFGSupported, queried alongside dlssgMaxFramesToGenerate.
+	bool dlssgDynamicSupported = false;
 	// Last slDLSSGGetState results, cached for GetDiagnostics (querying there would
 	// steal the since-last-query frame counter from the present path).
 	sl::DLSSGStatus lastDLSSGStatus = sl::DLSSGStatus::eOk;
 	uint32_t lastDLSSGFramesPresented = 0;
+	sl::DLSSGMode lastSentDLSSGMode = sl::DLSSGMode::eOff;
+	uint32_t lastSentDLSSGFrames = 0;
+	float lastSentDLSSGTargetFPS = -1.0f;
 	bool featureReflex = false;
 	bool featurePCL = false;
 	bool reflexSupportedOnCurrentAdapter = false;

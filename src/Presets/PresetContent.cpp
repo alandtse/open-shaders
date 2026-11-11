@@ -50,7 +50,8 @@ std::vector<PresetContent::File> PresetContent::List(const std::string& packId)
 		std::error_code error;
 		for (std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, error), end;
 			!error && it != end; it.increment(error)) {
-			if (!it->is_regular_file(error) || error)
+			std::error_code entryError;
+			if (!it->is_regular_file(entryError) || entryError)
 				continue;
 			const auto relative = it->path().lexically_relative(root);
 			if (relative.empty() || relative.extension() != ".json")

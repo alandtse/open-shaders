@@ -18,6 +18,7 @@
 #include "CSEditor/WeatherUtils.h"
 #include "Features/PerformanceOverlay.h"
 #include "Menu/CursorLoader.h"
+#include "Menu/FeatureListRenderer.h"
 #include "Menu/ThemeManager.h"
 #include "Utils/DevBenchUx.h"
 #include "imgui_internal.h"
@@ -821,7 +822,7 @@ void CSEditor::RenderFeatureWeatherAnalysis()
 				ImGui::Text("%s", T(TKEY("feature_weather_analysis_tooltip_0"), "Weather analysis provided by: "));
 				ImGui::Text("%s", feature->GetDisplayName().c_str());
 				ImGui::Text("%s", T(TKEY("feature_weather_analysis_tooltip_1"), "Feature category: "));
-				ImGui::Text("%s", feature->GetDisplayCategory().c_str());
+				ImGui::Text("%s", FeatureListRenderer::TranslateCategory(feature->GetCategory()).c_str());
 				ImGui::Text(T(TKEY("feature_weather_analysis_tooltip_2"), "Click to %s this feature's weather data"),
 					isExpanded ? T(TKEY("collapse"), "collapse") : T(TKEY("expand"), "expand"));
 			}

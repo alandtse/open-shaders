@@ -6,6 +6,7 @@
 #endif
 #include "../I18n/I18n.h"
 #include "Globals.h"
+#include "GpuPass.h"
 #include "State.h"
 #include "Utils/D3D.h"
 
@@ -82,7 +83,10 @@ void CloudShadows::CheckResourcesSide(int side)
 	auto context = globals::d3d::context;
 
 	float black[4] = { 0, 0, 0, 0 };
-	context->ClearRenderTargetView(cloudShadowLayerRTVs[0][side], black);
+	{
+		CS_GPU_PASS("CloudShadows::ClearLayer");
+		context->ClearRenderTargetView(cloudShadowLayerRTVs[0][side], black);
+	}
 	renderedLayersMask[side] = 0;
 }
 
@@ -94,6 +98,7 @@ void CloudShadows::PropagateToCompletion(int side)
 
 	auto context = globals::d3d::context;
 
+	CS_GPU_PASS("CloudShadows::Propagate");
 	uint32_t newLayers = mask & ~globalRenderedMask;
 	if (newLayers) {
 		unsigned long bit;
@@ -169,6 +174,7 @@ void CloudShadows::SkyShaderHacks()
 		UINT subresource = D3D11CalcSubresource(0, side, cubemapMipLevels);
 
 		if (layer > 0 && sourceLayer < layer) {
+			CS_GPU_PASS("CloudShadows::LayerSeed");
 			context->CopySubresourceRegion(
 				texCloudShadowLayers[layer]->resource.get(), subresource, 0, 0, 0,
 				texCloudShadowLayers[sourceLayer]->resource.get(), subresource, nullptr);
@@ -252,6 +258,7 @@ void CloudShadows::ReflectionsPrepass()
 
 		auto context = globals::d3d::context;
 
+		CS_GPU_PASS("CloudShadows::OcclusionCopy");
 		// No cloud layer draws, so nothing would overwrite the last weather's occlusion
 		auto clouds = globals::game::sky->clouds;
 		if (!clouds || clouds->numLayers == 0) {

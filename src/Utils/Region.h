@@ -342,8 +342,39 @@ namespace Util::Region
 	enum class ResetPolicy : uint8_t
 	{
 		kOnChange,  ///< Reset once the crop moved past the tolerance, or appeared or disappeared.
+		kOnResize,  ///< Reset only when the crop appeared, disappeared, resized past the tolerance or jumped past half its extent; a smaller move is the pass's to compensate.
 		kNever      ///< Keep the history across any crop change.
 	};
+
+	/**
+	 * @brief Origin shift of one eye's crop between two crops.
+	 * @return False when either crop is empty, so no shift describes the change.
+	 */
+	inline bool CropOriginShift(const Subrect::PixelRegion& a_current, const Subrect::PixelRegion& a_previous,
+		float& a_shiftX, float& a_shiftY)
+	{
+		a_shiftX = a_shiftY = 0.0f;
+		if (!a_current.w || !a_current.h || !a_previous.w || !a_previous.h)
+			return false;
+		a_shiftX = static_cast<float>(a_current.x) - static_cast<float>(a_previous.x);
+		a_shiftY = static_cast<float>(a_current.y) - static_cast<float>(a_previous.y);
+		return true;
+	}
+
+	/**
+	 * @brief True when a_current resized by at most a_sizeTolerancePixels and moved by under half its extent, so its history still overlaps.
+	 *        A crop whose edges snap to a pixel grid changes size by a grid step as it moves; that step only adds or drops margin.
+	 */
+	inline bool CropMoveIsCompensable(const Subrect::PixelRegion& a_current, const Subrect::PixelRegion& a_previous,
+		float a_sizeTolerancePixels)
+	{
+		float shiftX, shiftY;
+		return CropOriginShift(a_current, a_previous, shiftX, shiftY) &&
+		       std::abs(static_cast<float>(a_current.w) - static_cast<float>(a_previous.w)) <= a_sizeTolerancePixels &&
+		       std::abs(static_cast<float>(a_current.h) - static_cast<float>(a_previous.h)) <= a_sizeTolerancePixels &&
+		       std::abs(shiftX) * 2.0f < static_cast<float>(a_current.w) &&
+		       std::abs(shiftY) * 2.0f < static_cast<float>(a_current.h);
+	}
 
 	/** @brief Applies a_policy to this frame's crop change. */
 	inline bool ShouldResetForRegion(ResetPolicy a_policy, const StereoRegion& a_current,
@@ -351,6 +382,15 @@ namespace Util::Region
 	{
 		if (a_policy == ResetPolicy::kNever)
 			return false;
+		if (a_policy == ResetPolicy::kOnResize) {
+			if (a_current.active != a_previous.active)
+				return true;
+			for (size_t eye = 0; a_current.active && eye < a_current.eye.size(); ++eye) {
+				if (!CropMoveIsCompensable(a_current.eye[eye], a_previous.eye[eye], a_tolerancePixels))
+					return true;
+			}
+			return false;
+		}
 		return RegionChanged(a_current, a_previous, a_tolerancePixels);
 	}
 

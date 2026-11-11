@@ -68,6 +68,7 @@
 #define ICON_TI_PIN "\xee\xb2\x9c"	// U+ec9c
 #define ICON_TI_CLOUD_FOG "\xee\xb3\x99"	// U+ecd9
 #define ICON_TI_MOON_2 "\xee\xb3\xa6"	// U+ece6
+#define ICON_TI_PICTURE_IN_PICTURE_ON "\xee\xb5\x84"	// U+ed44
 #define ICON_TI_PLAYER_PAUSE "\xee\xb5\x85"	// U+ed45
 #define ICON_TI_PLAYER_PLAY "\xee\xb5\x86"	// U+ed46
 #define ICON_TI_PLAYER_STOP "\xee\xb5\x8a"	// U+ed4a
@@ -159,6 +160,7 @@ inline constexpr unsigned short ICON_TI_GLYPH_RANGES[] = {
 	0xec9c, 0xec9c,
 	0xecd9, 0xecd9,
 	0xece6, 0xece6,
+	0xed44, 0xed44,
 	0xed45, 0xed45,
 	0xed46, 0xed46,
 	0xed4a, 0xed4a,

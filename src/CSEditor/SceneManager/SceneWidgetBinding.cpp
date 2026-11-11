@@ -446,17 +446,21 @@ namespace
 
 	/** @brief The setting's value in one of the settings layers State holds for its feature. */
 	template <class Layer>
-	const json* FindStateLayerValue(const SettingMetadata& a_setting, Layer a_layer)
+	const json* FindStateLayerValue(const SettingMetadata& a_setting, Layer a_layer, json* contextualStorage = nullptr)
 	{
 		auto* feature = Feature::FindFeatureByShortName(std::string{ a_setting.featureShortName });
-		const auto* layer = feature ? (globals::state->*a_layer)(feature->GetName()) : nullptr;
-		return layer ? SceneSettingsInternal::GetCatalogSerializedValue(*layer, a_setting) : nullptr;
+		const auto* source = feature ? (globals::state->*a_layer)(feature->GetName()) : nullptr;
+		if (source && contextualStorage) {
+			*contextualStorage = *source;
+			feature->ApplyContextualDefaults(*contextualStorage);
+			source = contextualStorage;
+		}
+		return source ? SceneSettingsInternal::GetCatalogSerializedValue(*source, a_setting) : nullptr;
 	}
 
-	/** @brief The setting's value in the layers beneath the user's edits: defaults with Baseline packs applied. */
 	const json* FindLayeredBaseValue(const SettingMetadata& a_setting)
 	{
-		return FindStateLayerValue(a_setting, &State::GetFeatureBase);
+		return FindStateLayerValue(a_setting, &::State::GetFeatureBase);
 	}
 
 }
@@ -1016,7 +1020,7 @@ void SceneWidgetBinding::Guard::StoreHoldingValue()
 	const auto entries = SceneSettingsManager::GetSingleton()->GetContextEntries(contextId);
 	for (const auto& component : components) {
 		const auto setting = ComponentIdentity(component);
-		if (const auto preset = component.preset) {
+		if (const auto preset = component.preset; preset.IsApplying()) {
 			const auto* draft = SceneEntryTable::GetFeaturePresetDraft(*preset.entry);
 			WriteComponent(holding.Data(value.kind), component, draft ? *draft : preset.entry->value);
 		} else if (const auto* draft = SceneEntryTable::GetFeatureUserDraft(setting)) {
@@ -1149,9 +1153,7 @@ SceneSettingsManager::SettingLayer SceneWidgetBinding::Guard::ResolveVisibleLaye
 
 std::optional<ImVec4> SceneWidgetBinding::Guard::ResolveProvenanceColor() const
 {
-	if (std::ranges::any_of(components, [&](const Component& component) {
-			return static_cast<bool>(component.preset);
-		}))
+	if (std::ranges::any_of(components, [](const Component& component) { return component.preset.IsApplying(); }))
 		return Util::Colors::GetWarning();
 	switch (ResolveVisibleLayer()) {
 	case SettingLayer::User:
@@ -1200,11 +1202,13 @@ std::string SceneWidgetBinding::Guard::ResolveStatusTooltip() const
 		break;
 	}
 	for (const auto& component : components)
-		if (const auto preset = component.preset)
-			return preset.entry->paused ? SceneEntryTable::GetPresetSourceHint(preset.entry) + "\n" +
-			                                  T("feature.scene_manager.status.paused", "Paused") :
-			                              SceneEntryTable::GetPresetSourceHint(preset.entry);
-	return ResolveVisibleLayer() == SettingLayer::User ? T(TKEY("baseline_edited"), "Green: Your edited value.") : "";
+		if (component.preset.IsApplying())
+			return SceneEntryTable::GetPresetSourceHint(component.preset.entry);
+	if (ResolveVisibleLayer() == SettingLayer::User)
+		return T(TKEY("baseline_edited"), "Green: Your edited value.");
+	return std::ranges::any_of(components, [](const Component& component) { return static_cast<bool>(component.preset); }) ?
+	           T("feature.scene_manager.status.paused", "Paused") :
+	           "";
 }
 
 void SceneWidgetBinding::Guard::EnableOverride()
@@ -1259,11 +1263,11 @@ bool SceneWidgetBinding::Guard::TryResetFromGesture()
 	return ResetToSource(ResetSource::Defaults);
 }
 
-const json* SceneWidgetBinding::Guard::FindResetValue(const Component& component, ResetSource source) const
+const json* SceneWidgetBinding::Guard::FindResetValue(const Component& component, ResetSource source, json& storage) const
 {
 	switch (source) {
 	case ResetSource::Defaults:
-		return FindStateLayerValue(*component.setting, &::State::GetFeatureDefaults);
+		return FindStateLayerValue(*component.setting, &::State::GetFeatureDefaults, &storage);
 	case ResetSource::BaseSettings:
 		{
 			std::string packId;
@@ -1276,8 +1280,9 @@ const json* SceneWidgetBinding::Guard::FindResetValue(const Component& component
 bool SceneWidgetBinding::Guard::ResetToSource(ResetSource source)
 {
 	bool reset = false;
+	json contextualBase;
 	for (const auto& component : components) {
-		const auto* defaultValue = FindResetValue(component, source);
+		const auto* defaultValue = FindResetValue(component, source, contextualBase);
 		if (!defaultValue || SceneSettingsManager::AppliedValuesEqual(*defaultValue, ReadEditedValue(component)))
 			continue;
 		WriteComponent(value.data, component, *defaultValue);
@@ -1304,12 +1309,13 @@ bool SceneWidgetBinding::Guard::DrawBaselineContextMenu()
 			std::pair{ ResetSource::Defaults, T("menu.settings.reset_to_default", "Reset to default") },
 			std::pair{ ResetSource::BaseSettings, T("menu.settings.reset_to_base_settings", "Reset to Base Settings preset") }
 		};
+		json contextualBase;
 		for (const auto& [source, resetCaption] : resetSources) {
 			bool canReset = false;
 			bool hasSource = false;
 			std::string defaultText;
 			for (const auto& component : components) {
-				const auto* defaultValue = FindResetValue(component, source);
+				const auto* defaultValue = FindResetValue(component, source, contextualBase);
 				if (!defaultValue)
 					continue;
 				hasSource = true;
@@ -1369,7 +1375,7 @@ void SceneWidgetBinding::Guard::NavigateGreyedSetting() const
 {
 	if (state == State::Unbound) {
 		if (auto* menu = globals::menu) {
-			menu->IsEnabled = true;
+			menu->Open();
 			if (!identity.featureShortName.empty())
 				menu->SelectFeatureMenu(identity.featureShortName);
 		}
@@ -1405,7 +1411,7 @@ void SceneWidgetBinding::Guard::Commit(bool editingPreset)
 			if (SceneSettingsManager::AppliedValuesEqual(edited, ReadEditedValue(component, displayedBeforeEdit.Data(value.kind))))
 				continue;
 			const auto setting = ComponentIdentity(component);
-			if (const auto preset = component.preset)
+			if (const auto preset = component.preset; preset.IsApplying())
 				SceneEntryTable::StageFeaturePresetEdit(*preset.entry, std::move(edited));
 			else
 				SceneEntryTable::StageFeatureUserEdit(setting, std::move(edited));
@@ -1430,26 +1436,25 @@ void SceneWidgetBinding::Guard::Commit(bool editingPreset)
 
 bool SceneWidgetBinding::Guard::CanUseSceneActions() const
 {
-	if (state == State::Absent)
-		return true;
-	const bool editsPreset = state != State::Deleted && std::ranges::any_of(components, [](const Component& component) {
-		return static_cast<bool>(component.preset);
-	});
-	return editsPreset ? !SceneSettingsManager::GetSingleton()->HasPendingContextEdit() : !CollectOwnedEntries().empty();
+	return state == State::Absent || !CollectOwnedEntries().empty() ||
+	       (state != State::Deleted && std::ranges::any_of(components, [](const Component& component) {
+			   return static_cast<bool>(component.preset);
+		   }));
 }
 
 void SceneWidgetBinding::Guard::DrawSceneActions()
 {
-	if (state == State::Absent) {
-		const auto padding = ImGui::GetStyle().FramePadding;
-		const float height = std::ceil(std::max(ImGui::GetFontSize(), SceneEntryTable::GetActionButtonSize()));
-		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(std::round(std::min(padding.x, ImGui::CalcTextSize(" ").x)),
-															(height - ImGui::GetFontSize()) * 0.5f));
-		const SKSE::stl::scope_exit restorePadding([] { ImGui::PopStyleVar(); });
-		if (Util::Button(T("feature.scene_manager.action.add_setting", "Add Setting"), ImVec2(0.0f, height)))
-			EnableOverride();
-		return;
-	}
+	const float fontSize = ImGui::GetFontSize();
+	const float size = std::max(fontSize, SceneEntryTable::GetActionButtonSize());
+	const float paddingX = ImGui::GetStyle().FramePadding.x;
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(paddingX, (size - fontSize) * 0.5f));
+	const SKSE::stl::scope_exit restorePadding([] { ImGui::PopStyleVar(); });
+	const auto addSetting = [size] {
+		const auto* label = T("feature.scene_manager.action.add_setting", "Add Setting");
+		const float padding = std::min(ImGui::GetStyle().FramePadding.x, ImGui::CalcTextSize(" ").x);
+		const float width = std::ceil(ImGui::CalcTextSize(label).x + padding * 2.0f);
+		return Util::LabeledButton("##AddSceneSetting", {}, label, ImVec2(width, size));
+	};
 	using Manager = SceneSettingsManager;
 	auto* manager = Manager::GetSingleton();
 	auto owned = CollectOwnedEntries();
@@ -1460,90 +1465,96 @@ void SceneWidgetBinding::Guard::DrawSceneActions()
 			if (const auto target = component.preset)
 				presets.push_back(target);
 
+	if (state == State::Absent && presets.empty()) {
+		if (addSetting())
+			EnableOverride();
+		return;
+	}
 	const auto entries = manager->GetContextEntries(contextId);
-	const bool editsPreset = !presets.empty();
+	const bool editsPreset = std::ranges::any_of(presets, &PresetTarget::IsApplying);
 	const bool presetBlocked = editsPreset && manager->HasPendingContextEdit();
-	const bool available = CanUseSceneActions();
-	bool active = editsPreset ? std::ranges::any_of(presets, [](const auto& target) { return !target.entry->paused; }) :
-	                            std::ranges::any_of(owned, [&](size_t index) { return !entries[index].paused; });
-	const auto toggleSize = SceneEntryTable::GetActionToggleSize();
-	const float size = SceneEntryTable::GetActionButtonSize();
-	const auto row = ImGui::GetCursorScreenPos();
+	const bool paused = !presets.empty() ? std::ranges::none_of(presets, &PresetTarget::IsApplying) :
+	                                       std::ranges::all_of(owned, [&](size_t index) { return entries[index].paused; });
 	const auto nextAction = [&] {
 		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-		ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, row.y));
 	};
 
-	const auto* pauseLabel = available && !active ? T("feature.scene_manager.action.resume", "Resume") :
-	                                                T("feature.scene_manager.action.pause", "Pause");
+	bool togglePause = false;
 	{
-		const Util::DisableGuard disabled(!available || presetBlocked || suppressed);
-		ImGui::SetCursorScreenPos(ImVec2(row.x, row.y + (size - toggleSize.y) * 0.5f));
-		if (Util::FeatureToggle("##SceneOverrideActive", &active, toggleSize)) {
-			if (editsPreset) {
-				for (const auto& target : presets) {
-					auto scene = *target.context;
-					scene.period = target.entry->period;
-					if (target.entry->paused == active)
-						manager->TogglePauseContextEntry(scene, static_cast<size_t>(target.entry - manager->GetContextEntries(scene).data()));
-				}
-			} else {
-				for (const auto index : owned)
-					if (entries[index].paused == active)
-						manager->TogglePauseContextEntry(contextId, index);
-			}
-		}
-		Util::AddTooltip(presetBlocked ? SceneSettingsUI::PendingContextEditMessage() : pauseLabel, Util::kTooltipWhenDisabled);
+		const Util::DisableGuard disabled(suppressed);
+		togglePause = SceneEntryTable::DrawPauseAction(paused, size);
 	}
 	nextAction();
 
-	{
-		const Util::DisableGuard disabled(!available || presetBlocked);
-		if (Icons::Button("##SceneOverrideReset", Icons::TI(ICON_TI_ERASER), ImVec2(size, size))) {
-			if (suppressed) {
-				ClearSuppressions();
-			} else if (editsPreset) {
-				for (const auto& target : presets) {
-					auto scene = *target.context;
-					scene.period = target.entry->period;
-					if (auto defaultValue = manager->ResolveContextEntryDefault(scene, *target.entry))
-						SceneEntryTable::StageFeaturePresetEdit(*target.entry, std::move(*defaultValue));
-				}
-			} else {
-				for (const auto index : owned)
-					manager->RevertContextEntryToDefault(contextId, index);
-			}
+	std::optional<Manager::RestoreSource> restore;
+	bool add = false;
+	bool remove = false;
+	if (state == State::Absent && !editsPreset) {
+		add = addSetting();
+	} else {
+		for (const auto action : SceneEntryTable::GetRestoreActions(editsPreset ? Manager::EntrySource::Overwrite : Manager::EntrySource::User)) {
+			const bool presetCanRestore = std::ranges::any_of(presets, [&](const PresetTarget& target) {
+				return target.IsApplying() && SceneEntryTable::CanRestoreSetting(*target.entry, action, SceneEntryTable::GetFeaturePresetDraft(*target.entry));
+			});
+			const bool userCanRestore = action == Manager::RestoreSource::Defaults && std::ranges::any_of(owned, [&](size_t index) {
+				return SceneEntryTable::CanRestoreSetting(entries[index], action);
+			});
+			if (SceneEntryTable::DrawRestoreAction(action, !presetBlocked && (presetCanRestore || userCanRestore), size))
+				restore = action;
+			nextAction();
 		}
+		{
+			const Util::DisableGuard disabled(presetBlocked);
+			remove = SceneEntryTable::DrawActionButton("##SceneOverrideDelete", suppressed ? Icons::TI(ICON_TI_RESTORE) : SceneActionIcons::kDelete,
+				suppressed ? T(TKEY("scene_restore_preset_value"), "Restore Preset Value") : T("feature.scene_manager.action.delete", "Delete"), size);
+		}
+		if (contextId.type == Manager::SceneContextType::Location && !editsPreset && !suppressed && !owned.empty())
+			SceneEntryTable::DrawFeatureTransition(contextId, owned);
 	}
-	Util::AddTooltip(T("feature.scene_manager.action.revert", "Revert to default"), Util::kTooltipWhenDisabled);
-	nextAction();
 
-	{
-		const Util::DisableGuard disabled(!available || presetBlocked);
-		const auto icon = suppressed ? Icons::TI(ICON_TI_RESTORE) : SceneActionIcons::kDelete;
-		if (Icons::Button("##SceneOverrideDelete", icon, ImVec2(size, size))) {
-			if (suppressed) {
-				ClearSuppressions();
-			} else if (editsPreset) {
-				std::vector<const Manager::SettingEntry*> targets;
-				for (const auto& target : presets)
+	if (togglePause) {
+		if (!presets.empty()) {
+			for (const auto& target : presets) {
+				auto scene = *target.context;
+				scene.period = target.entry->period;
+				if (target.entry->paused == paused)
+					manager->TogglePauseContextEntry(scene, static_cast<size_t>(target.entry - manager->GetContextEntries(scene).data()), true);
+			}
+		} else {
+			for (const auto index : owned)
+				if (entries[index].paused == paused)
+					manager->TogglePauseContextEntry(contextId, index);
+		}
+	} else if (add) {
+		EnableOverride();
+	} else if (restore) {
+		for (const auto& target : presets)
+			if (target.IsApplying())
+				SceneEntryTable::RestorePresetSetting(*target.entry, *restore, true);
+		if (*restore != Manager::RestoreSource::Preset) {
+			Manager::SettingSelection selection{ std::in_place };
+			for (const auto& component : components)
+				if (suppressed || !component.preset.IsApplying())
+					selection->insert(ComponentIdentity(component));
+			if (!selection->empty())
+				manager->RestoreSceneDefaults({ .type = contextId.type, .target = contextId, .period = contextId.period, .selection = std::move(selection) });
+		}
+	} else if (remove) {
+		if (suppressed) {
+			ClearSuppressions();
+		} else if (editsPreset) {
+			std::vector<const Manager::SettingEntry*> targets;
+			for (const auto& target : presets)
+				if (target.IsApplying())
 					targets.push_back(target.entry);
-				SceneEntryTable::RequestFeaturePresetDeletion(targets);
-			} else {
-				std::ranges::sort(owned, std::greater{});
-				for (const auto index : owned)
-					manager->RemoveContextSetting(contextId, index);
-				ForgetEntries();
-				return;
-			}
+			SceneEntryTable::RequestFeaturePresetDeletion(targets);
+		} else {
+			std::ranges::sort(owned, std::greater{});
+			for (const auto index : owned)
+				manager->RemoveContextSetting(contextId, index);
+			ForgetEntries();
 		}
 	}
-	Util::AddTooltip(suppressed ? T(TKEY("scene_restore_preset_value"), "Restore Preset Value") :
-								  T("feature.scene_manager.action.delete", "Delete"),
-		Util::kTooltipWhenDisabled);
-
-	if (contextId.type == Manager::SceneContextType::Location && !editsPreset && !suppressed && !owned.empty())
-		SceneEntryTable::DrawFeatureTransition(contextId, owned);
 }
 
 void SceneWidgetBinding::Guard::DrawSceneActionFlyout()
@@ -1639,8 +1650,8 @@ bool SceneWidgetBinding::Guard::Finish(bool a_changed)
 		ReportSettingHint(ResolveStatusTooltip());
 
 	// A gesture on a paused or missing override starts editing its own value.
-	const bool editingPreset = std::ranges::any_of(components, [&](const Component& component) {
-		return static_cast<bool>(component.preset);
+	const bool editingPreset = std::ranges::any_of(components, [](const Component& component) {
+		return component.preset.IsApplying();
 	});
 	if (!editingPreset && TryEnableOverrideFromGesture()) {
 		ResolveState();

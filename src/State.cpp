@@ -477,7 +477,11 @@ void State::Reset()
 
 	// Disable "improved" snow shader, unsupported
 	if (!globals::game::isVR) {
-		RE::GetINISetting("bEnableImprovedSnow:Display")->data.b = false;
+		static RE::Setting* improvedSnow = nullptr;
+		if (!improvedSnow)
+			improvedSnow = RE::GetINISetting("bEnableImprovedSnow:Display");
+		if (improvedSnow)
+			improvedSnow->data.b = false;
 	}
 
 	activeReflections = false;
@@ -598,11 +602,9 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
 	const bool restoring = a_configMode == ConfigMode::USER && !defaultSettingsBaseline.is_null();
 	const bool restoringDefaults = a_configMode == ConfigMode::DEFAULT && !defaultSettingsBaseline.is_null();
-	if (restoring && !FormEditSources::CanChangePacks()) {
-		logger::warn("Save pending scene and editor form edits before restoring settings");
-		return;
-	}
 	auto& catalog = UnifiedPresetCatalog::GetSingleton();
+	const auto previousFormRoots = catalog.GetActiveFormPackRoots();
+	const bool reloadFormEdits = a_configMode == ConfigMode::USER && (!restoring || FormEditSources::CanChangePacks());
 	auto* overrideManager = SettingsOverrideManager::GetSingleton();
 	const json previousCatalog{ { UnifiedPresetCatalog::kUserSettingsKey, catalog.SerializeActiveState() } };
 	const auto previousFeatureBases = featureSettingsBases;
@@ -694,6 +696,12 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 	if (a_configMode == ConfigMode::USER)
 		catalog.LoadActiveState(userSettings);
 	catalog.Discover();
+	if (restoring && !reloadFormEdits && previousFormRoots != catalog.GetActiveFormPackRoots()) {
+		catalog.LoadActiveState(previousCatalog);
+		catalog.SaveActiveState();
+		logger::warn("Save or discard unsaved OS Editor record edits before restoring different preset record sources");
+		return;
+	}
 	auto* baselines = BaselineManager::GetSingleton();
 	baselines->DiscoverFiles();
 	featureSettingsBases = defaultSettingsBaseline;
@@ -785,7 +793,9 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		}
 
 		FeatureIssues::ScanForOrphanedFeatureINIs();
-		FormEditSources::ReloadHistoryGuard reloadHistory;
+		std::optional<FormEditSources::ReloadHistoryGuard> reloadHistory;
+		if (reloadFormEdits)
+			reloadHistory.emplace();
 		bool payloadsLoaded = true;
 		if (restoring && featureResourcesReady) {
 			try {
@@ -819,7 +829,8 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 
 		if (a_configMode == ConfigMode::USER) {
 			try {
-				payloadsLoaded = payloadsLoaded && SceneSettingsManager::GetSingleton()->ReloadSceneSettings() && FormEditSources::ReloadActivePack();
+				payloadsLoaded = payloadsLoaded && SceneSettingsManager::GetSingleton()->ReloadSceneSettings() &&
+				                 (!reloadFormEdits || FormEditSources::ReloadActivePack());
 			} catch (const std::exception& error) {
 				logger::error("Could not reload preset payloads: {}", error.what());
 				payloadsLoaded = false;
@@ -861,14 +872,16 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 			restore("settings bases", [&] { overrideManager->CaptureBaseSettings(previousOverrideBase); return true; });
 			restore("applied settings", [&] { overrideManager->CaptureAppliedSettings(previousApplied); return true; });
 			restore("scene settings", [] { return SceneSettingsManager::GetSingleton()->ReloadSceneSettings(); });
-			restore("editor form sources", [] { return FormEditSources::ReloadActivePack(); });
+			if (reloadFormEdits)
+				restore("editor form sources", [] { return FormEditSources::ReloadActivePack(); });
 			return;
 		}
 		if (restoringDefaults)
 			CheckSettingsChanged();
 		else
 			MarkSettingsSaved();
-		reloadHistory.Commit();
+		if (reloadHistory)
+			reloadHistory->Commit();
 		logger::info("Loading Settings Complete");
 	} catch (const json::exception& e) {
 		logger::warn("General JSON error accessing settings: {}", e.what());
@@ -923,7 +936,11 @@ json State::BuildSettingsSnapshot()
 	json current;
 	SaveToJson(current);
 	// These menu preferences are saved independently of the global Save action.
-	current["Menu"].erase("FeatureListSort");
+	for (const auto path : SELF_SAVING_SETTINGS) {
+		const json::json_pointer pointer{ std::string(path) };
+		if (current.contains(pointer))
+			current.at(pointer.parent_pointer()).erase(pointer.back());
+	}
 	current["Menu"].erase("ShowSettingInformation");
 	auto* overrides = SettingsOverrideManager::GetSingleton();
 	const auto pending = overrides->GetPendingEdits(current);
@@ -987,6 +1004,11 @@ void State::CheckSettingsChanged(const json& persistedFields)
 		settingsChanged = true;
 		logger::error("Could not check unsaved settings: {}", e.what());
 	}
+}
+
+json State::GetUnsavedSettingsChanges()
+{
+	return savedSettingsSnapshot.is_null() ? json::array() : json::diff(savedSettingsSnapshot, BuildSettingsSnapshot());
 }
 
 bool State::ReapplyPresetLayers()
@@ -1102,6 +1124,7 @@ void State::ReapplySettingsLayers()
 
 void State::InvalidateEditsUnderBaselines(Feature* feature)
 {
+	++userEditsRevision;
 	if (feature)
 		baselineOverlapCache.erase(feature->GetName());
 	else
@@ -1541,10 +1564,8 @@ bool State::DropPresetEdits(const std::string& packId, Feature* onlyFeature, std
 	return true;
 }
 
-void State::SaveToJson(nlohmann::json& settings)
+void State::SaveCoreToJson(json& settings)
 {
-	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
-	std::lock_guard<std::mutex> lock(m_mutex);
 	const auto shaderCache = globals::shaderCache;
 
 	globals::menu->Save(settings["Menu"]);
@@ -1593,6 +1614,21 @@ void State::SaveToJson(nlohmann::json& settings)
 	settings["Favorites"] = favoriteFeatures;
 
 	settings["Version"] = Plugin::VERSION.string();
+}
+
+json State::CaptureCoreSettings()
+{
+	json settings;
+	std::lock_guard<std::mutex> lock(m_mutex);
+	SaveCoreToJson(settings);
+	return settings;
+}
+
+void State::SaveToJson(nlohmann::json& settings)
+{
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
+	std::lock_guard<std::mutex> lock(m_mutex);
+	SaveCoreToJson(settings);
 
 	// Save feature settings
 	for (auto* feature : Feature::GetFeatureList()) {
@@ -1831,6 +1867,26 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 	}
 	if (a_configMode == ConfigMode::USER)
 		MarkSettingsSaved();
+}
+
+bool State::SaveCoreSettings(std::span<const std::string_view> paths)
+{
+	const auto configPath = GetConfigPath(ConfigMode::USER);
+	std::error_code ec;
+	const bool fileExists = std::filesystem::exists(configPath, ec);
+	if (ec)
+		return false;
+	const auto saved = fileExists ? Util::FileHelpers::ReadJsonObject(configPath, "user config") : std::optional<json>(json::object());
+	if (!saved)
+		return false;
+	const auto current = CaptureCoreSettings();
+	json patch = json::object();
+	for (const auto path : paths) {
+		const json::json_pointer pointer{ std::string(path) };
+		if (current.contains(pointer) && (!saved->contains(pointer) || saved->at(pointer) != current.at(pointer)))
+			patch[pointer] = current.at(pointer);
+	}
+	return patch.empty() || SaveFeaturePreference(patch, false);
 }
 
 bool State::SaveFeaturePreference(const json& patch, bool trackInSnapshot)
@@ -2450,14 +2506,22 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.FrameCount = frameCount * temporal;
 		data.FrameCountAlwaysActive = frameCount;
 
+		// Out-of-world refreshes (VR UI pass, upscaling) keep the last in-world tiles: zeroed tiles read as
+		// water at camera height and the VR underwater mask then floods everything below the horizon.
+		static std::array<float4, 25> waterTiles = [] {
+			std::array<float4, 25> tiles;
+			tiles.fill(float4(0.0f, 0.0f, 0.0f, -FLT_MAX));
+			return tiles;
+		}();
 		if (a_inWorld) {
 			for (int i = -2; i <= 2; i++) {
 				for (int k = -2; k <= 2; k++) {
 					int waterTile = (i + 2) + ((k + 2) * 5);
-					data.WaterData[waterTile] = Util::TryGetWaterData((float)i * 4096.0f, (float)k * 4096.0f);
+					waterTiles[waterTile] = Util::TryGetWaterData((float)i * 4096.0f, (float)k * 4096.0f);
 				}
 			}
 		}
+		std::copy(waterTiles.begin(), waterTiles.end(), data.WaterData);
 
 		// Fallback water height for the VR analytical mask when tile 12 returns the sentinel.
 		// Uses player->GetWaterHeight() (reads relevantWaterHeight from LOADED_REF_DATA) gated by

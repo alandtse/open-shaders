@@ -463,6 +463,11 @@ void SceneSelector::DisplayWeatherInfo(RE::TESWeather* weather, float weatherPct
 void SceneSelector::RenderWeatherControls(RE::Sky* sky)
 {
 	ImGui::SeparatorText(T(TKEY("weather_selection"), "Weather Selection"));
+	const auto* weather = sky ? sky->currentWeather : nullptr;
+	auto currentWeather = Util::GetFormEditorID(weather);
+	if (currentWeather.empty())
+		currentWeather = weather ? std::format("{:08X}", weather->GetFormID()) : T(TKEY("no_weather_found"), "No Weather Found");
+	ImGui::TextWrapped("%s: %s", T(TKEY("current_weather_column"), "Current Weather"), currentWeather.c_str());
 	const Util::DisableGuard disabled(!sky || sky->mode.get() != RE::Sky::Mode::kFull);
 	WeatherPickerWindow::GetSingleton()->DrawContents(true);
 }

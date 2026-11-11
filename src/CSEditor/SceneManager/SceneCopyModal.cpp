@@ -34,6 +34,7 @@
 
 namespace
 {
+	constexpr size_t kSearchBufferSize = 256;
 	using SceneContextId = SceneSettingsManager::SceneContextId;
 	using SceneContextType = SceneSettingsManager::SceneContextType;
 	using CopyCandidate = SceneSettingsManager::CopyCandidate;
@@ -60,8 +61,6 @@ namespace
 	/// The pick pane's share of the width; the review pane takes the rest.
 	constexpr float kPickPaneShare = 0.56f;
 	constexpr float kReviewSettingColumnWeight = 2.0f;
-
-	constexpr size_t kSearchBufferSize = 256;
 
 	constexpr ImGuiTableFlags kDetailsTableFlags =
 		ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY;
@@ -193,7 +192,7 @@ namespace
 		bool timeOfDayForEmptyDestinations = false;
 		std::string pageName;
 		TintedGlyph pageIcon;
-		char search[kSearchBufferSize]{};
+		std::string search;
 		/// Keyed by scene, so a ticked row stays ticked while a filter hides it.
 		std::set<SceneContextId> ticked;
 		/// From's source, and To's target while nothing is ticked.
@@ -749,7 +748,7 @@ namespace
 	{
 		if (std::exchange(session.focusSearch, false))
 			ImGui::SetKeyboardFocusHere();
-		BrowserUI::SearchField("##search", session.search, sizeof(session.search), T("ui.search", "Search..."),
+		Util::SearchField("##search", session.search, T("ui.search", "Search..."),
 			ImGui::GetFontSize() * kSearchWidthEm, true, ImGuiInputTextFlags_CallbackHistory, OnSearchHistory,
 			&session.cursorStep);
 		session.enterCommits = ImGui::IsItemFocused();

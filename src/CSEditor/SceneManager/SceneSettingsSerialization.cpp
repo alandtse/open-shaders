@@ -217,17 +217,15 @@ json SceneSettingsManager::BuildUserSettingsDocument(bool weatherLoaded, bool lo
 	return data;
 }
 
-bool SceneSettingsManager::WriteUserSettings()
+bool SceneSettingsManager::WriteUserSettings(bool savePresetPauses)
 {
 	if (!userSettingsDocumentLoaded)
 		LoadAllUserSettings();
 	const bool weatherLoaded = TryEnsureWeatherDataLoaded();
 	const bool locationLoaded = TryEnsureLocationDataLoaded();
 	if (!userSettingsDocumentWritable || !preservedUserSettingsRoot.is_object()) {
-		if (!userSettingsWriteBlockedWarning) {
+		if (userSettingsWriteBlockedWarning.First())
 			logger::error("[SceneSettings] Refusing to overwrite SceneManager.json because its existing document is invalid");
-			userSettingsWriteBlockedWarning = true;
-		}
 		deferredSceneChangesPending = ++deferredSaveFailures < kMaxDeferredSaveRetries;
 		deferredSceneChangesDeadline = std::chrono::steady_clock::now() + kDeferredSaveRetryDelay;
 		return false;
@@ -288,11 +286,22 @@ bool SceneSettingsManager::WriteUserSettings()
 		}
 		return document;
 	}();
+	std::optional<ScenePresetPauses::State> toolbarPauses;
+	const auto* pausesToWrite = savePresetPauses ? &presetPauses : nullptr;
+	if (contextEdit && contextEdit->saving && !contextEdit->presetPauseChanges.empty()) {
+		toolbarPauses = savedPresetPauses;
+		ScenePresetPauses::Apply(*toolbarPauses, contextEdit->presetPauseChanges);
+		pausesToWrite = &*toolbarPauses;
+	}
+	if (pausesToWrite)
+		ScenePresetPauses::Write(data, *pausesToWrite);
 	// Unchanged since the last write (or load): nothing to put on disk.
 	const bool unchanged = data == preservedUserSettingsRoot;
 	const bool saved = unchanged || Util::FileHelpers::WriteJsonAtomically(path, data, kOverwriteJsonIndent, "SceneManager.json");
 	if (saved) {
 		preservedUserSettingsRoot = data;
+		if (pausesToWrite)
+			savedPresetPauses = *pausesToWrite;
 		if (locationLoaded && locationTransitionModified) {
 			if (!unresolvedLocationUserSettings.is_object())
 				unresolvedLocationUserSettings = json::object();
@@ -304,7 +313,7 @@ bool SceneSettingsManager::WriteUserSettings()
 		weatherUserSettingsModified = false;
 		locationUserSettingsModified = false;
 		locationTransitionModified = false;
-		userSettingsWriteBlockedWarning = false;
+		userSettingsWriteBlockedWarning.Reset();
 		deferredSaveFailures = 0;
 		if (!unchanged)
 			logger::info("[SceneSettings] Saved SceneManager.json");
@@ -358,7 +367,12 @@ SceneSettingsManager::UserSettingsSnapshot SceneSettingsManager::CaptureUserSett
 		.weatherSceneConfigs = weatherSceneConfigs,
 		.locationSceneConfigs = locationSceneConfigs,
 		.userTransitionControls = userTransitionControls,
+		.presetPauses = presetPauses,
 	};
+	if (contextEdit) {
+		ScenePresetPauses::Apply(snapshot.presetPauses, contextEdit->presetPauseChanges);
+		snapshot.presetPauseOwner.emplace(contextEdit->context, contextEdit->feature);
+	}
 	if (contextEdit && !contextEdit->entries.IsActive()) {
 		const auto& edit = *contextEdit;
 		if (auto* target = FindSnapshotEntries(snapshot, edit.context))
@@ -379,6 +393,7 @@ SceneSettingsManager::UserSettingsSnapshot SceneSettingsManager::CaptureUserSett
 		}
 	}
 	snapshot.document = BuildUserSettingsDocument(weatherLoaded, locationLoaded, &snapshot);
+	snapshot.document.erase(ScenePresetPauses::kDocumentKey);
 	return snapshot;
 }
 
@@ -389,6 +404,19 @@ void SceneSettingsManager::RestoreUserSettings(const UserSettingsSnapshot& snaps
 	locationSceneConfigs = snapshot.locationSceneConfigs;
 	userTransitionControls = snapshot.userTransitionControls;
 	RefreshTransitionControls();
+	if (contextEdit && snapshot.presetPauseOwner && snapshot.presetPauseOwner->first == contextEdit->context &&
+		snapshot.presetPauseOwner->second == contextEdit->feature) {
+		auto& changes = contextEdit->presetPauseChanges;
+		changes.clear();
+		for (const auto& key : presetPauses)
+			if (std::get<1>(key) == contextEdit->feature && !snapshot.presetPauses.contains(key))
+				changes.emplace(key, false);
+		for (const auto& key : snapshot.presetPauses)
+			if (std::get<1>(key) == contextEdit->feature && !presetPauses.contains(key))
+				changes.emplace(key, true);
+	} else {
+		presetPauses = snapshot.presetPauses;
+	}
 	if (contextEdit) {
 		auto& edit = *contextEdit;
 		if (auto* target = GetContextEntriesMut(edit.context)) {
@@ -407,6 +435,7 @@ void SceneSettingsManager::RestoreUserSettings(const UserSettingsSnapshot& snaps
 			DiscardContextEdit();
 		}
 	}
+	ApplyPresetPauses();
 	// Every section may differ from the document now, so each is written over rather than kept.
 	interiorUserSettingsModified = true;
 	timeOfDayUserSettingsModified = true;
@@ -546,6 +575,8 @@ void SceneSettingsManager::LoadAllUserSettings()
 {
 	auto path = GetUserSettingsFilePath();
 	logger::info("[SceneSettings] Loading user settings from: {}", path.string());
+	savedPresetPauses.clear();
+	presetPauses.clear();
 	for (auto type : { SceneType::InteriorOnly, SceneType::TimeOfDay })
 		EraseUserEntries(entries[type]);
 	unresolvedUserEntries[SceneType::InteriorOnly].clear();
@@ -579,6 +610,8 @@ void SceneSettingsManager::LoadAllUserSettings()
 			return;
 		}
 		const json& data = *document;
+		savedPresetPauses = ScenePresetPauses::Read(data);
+		presetPauses = savedPresetPauses;
 		FeatureSettingsCache featureSettingsCache;
 
 		for (size_t index = 0; index < kTransitionControlCount; ++index)

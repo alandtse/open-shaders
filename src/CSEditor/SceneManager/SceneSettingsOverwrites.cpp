@@ -1,6 +1,7 @@
 #include "SceneSettingsOverwrites.h"
 
 #include "Feature.h"
+#include "Presets/PresetContent.h"
 #include "Utils/FileSystem.h"
 
 #include <algorithm>
@@ -10,6 +11,15 @@ using namespace SceneSettingsInternal;
 
 namespace SceneSettingsOverwrites
 {
+	static std::string SettingPointer(const std::vector<std::string>& path, const std::string& key)
+	{
+		json::json_pointer pointer;
+		for (const auto& part : path)
+			pointer /= part;
+		pointer /= key;
+		return pointer.to_string();
+	}
+
 	bool HasOverwriteEntryForPeriod(const std::vector<SceneSettingsManager::SettingEntry>& entries,
 		const SceneSettingsManager::SettingEntry& candidate)
 	{
@@ -123,6 +133,8 @@ namespace SceneSettingsOverwrites
 				return false;
 			}
 			(*node)[entry->settingKey] = entry->value;
+			if (metadata.contains(PresetContent::kSceneDefaultsKey))
+				PresetContent::ClearSceneDefault(metadata, SettingPointer(entry->settingPath, entry->settingKey));
 			if (entry->deleted) {
 				auto* deletionNode = GetOrCreateObjectAtPath(entryDeletions, entry->settingPath);
 				if (!deletionNode)
@@ -177,7 +189,10 @@ namespace SceneSettingsOverwrites
 
 		const json* entryTransitions = nullptr;
 		const json* entryDeletions = nullptr;
+		const json* entryDefaults = nullptr;
 		if (auto metadataIt = data.find(kMetadataKey); metadataIt != data.end() && metadataIt->is_object()) {
+			if (const auto defaults = metadataIt->find(PresetContent::kSceneDefaultsKey); defaults != metadataIt->end() && defaults->is_object())
+				entryDefaults = &*defaults;
 			if (auto deletedIt = metadataIt->find(kMetadataEntryDeletionsKey); deletedIt != metadataIt->end()) {
 				if (!deletedIt->is_object())
 					return false;
@@ -253,6 +268,14 @@ namespace SceneSettingsOverwrites
 			entry.displayName = GetSceneSettingDisplayName(featureShortName, settingPath, key);
 			entry.value = std::move(parsedValue);
 			entry.originalValue = entry.value;
+			if (entryDefaults)
+				if (const auto found = entryDefaults->find(SettingPointer(settingPath, key)); found != entryDefaults->end()) {
+					auto original = *found;
+					WidenParsedIntegerToFloat(featureShortName, settingPath, key, original);
+					if (ValidateSceneSettingEntry("Preset default", allowedType, featureShortName, settingPath, key, original,
+							requireNumeric, featureSettingsCache))
+						entry.originalValue = std::move(original);
+				}
 			entry.source = SSM::EntrySource::Overwrite;
 			entry.sourceFilename = Util::PathHelpers::ToUtf8(filePath.filename());
 			entry.sourcePath = filePath;

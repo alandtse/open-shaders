@@ -1,6 +1,8 @@
 #include "VR.h"
 #include "Menu.h"
 #include "RE/B/BSOpenVR.h"
+#include "RE/M/MapMenu.h"
+#include "RE/M/MenuOpenCloseEvent.h"
 #include "RE/P/PlayerCharacter.h"
 #include "ScreenSpaceGI.h"
 #include "Upscaling.h"
@@ -10,6 +12,7 @@
 #include "Utils/D3D.h"
 #include "Utils/VRUtils.h"
 
+#include <cstddef>
 #include <d3d11.h>
 #include <imgui_impl_dx11.h>
 #include <openvr.h>
@@ -192,10 +195,47 @@ void VR::PostPostLoad()
 	ConnectHelper();
 }
 
+namespace
+{
+	class WorldMapOcclusionRestore final : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
+	{
+	public:
+		static void Register()
+		{
+			if (!globals::game::isVR || !globals::game::ui)
+				return;
+
+			const auto mapOcclusionWrite = REL::Offset(0x917EFF).address();
+			if (!REL::verify_code(mapOcclusionWrite, REL::make_pattern<"F6 47 1C 40 0F 97 C1 48 8B 05 63 99 DD 02 88 88 C8 00 00 00">())) {
+				logger::warn("VR: world map occlusion signature changed");
+				return;
+			}
+
+			static WorldMapOcclusionRestore sink;
+			globals::game::ui->AddEventSink(&sink);
+		}
+
+		RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
+		{
+			if (event && !event->opening && event->menuName == RE::MapMenu::MENU_NAME) {
+				static const REL::Relocation<std::byte**> occlusionShader{ REL::Offset(0x36F1870) };
+				// MapMenu samples kOnStack before the UI removes it from the stack.
+				if (auto* shader = *occlusionShader)
+					shader[kOcclusionSuppressed] = std::byte{ 0 };
+			}
+			return RE::BSEventNotifyControl::kContinue;
+		}
+
+	private:
+		static constexpr std::size_t kOcclusionSuppressed = 0xC8;
+	};
+}
+
 void VR::DataLoaded()
 {
 	// Initialize occlusion culling based on user settings and current interior/exterior state.
 	UpdateDepthBufferCulling();
+	WorldMapOcclusionRestore::Register();
 
 	if (gMinOccludeeBoxExtent) {
 		*gMinOccludeeBoxExtent = settings.MinOccludeeBoxExtent;

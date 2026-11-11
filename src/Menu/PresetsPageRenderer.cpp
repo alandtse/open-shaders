@@ -33,7 +33,7 @@
 #include <vector>
 
 std::optional<UnifiedPresetCatalog::PresetType> PresetsPageRenderer::typeFilter;
-char PresetsPageRenderer::searchBuffer[128] = {};
+std::string PresetsPageRenderer::searchBuffer;
 std::string PresetsPageRenderer::selectedPackId;
 bool PresetsPageRenderer::discovered = false;
 float PresetsPageRenderer::stackedListRatio = ThemeManager::Constants::PRESET_STACKED_LIST_RATIO;
@@ -145,10 +145,19 @@ namespace
 		return pack.valid && (pack.hasEffects11 || pack.hasCSPresets || pack.hasBaseline || pack.hasFormEdits);
 	}
 
+	void ReportPresetChangeFailure()
+	{
+		EditorWindow::GetSingleton()->ShowNotification(
+			T("menu.presets.operation_failed", "Could not apply this preset change. Check the log for details."),
+			Util::Colors::GetWarning());
+	}
+
 	void ApplyPack(const UnifiedPresetCatalog::PackInfo& pack)
 	{
 		if (UnifiedPresetCatalog::GetSingleton().ApplyPack(pack.id, true, true))
 			logger::info("[Presets] Applied pack '{}'", pack.id);
+		else
+			ReportPresetChangeFailure();
 	}
 
 	Util::ConfirmationPopup applyConfirmation;
@@ -296,9 +305,10 @@ namespace
 					ImGui::PopStyleColor(4);
 			});
 			if (Util::ButtonWithFlash(enabled ? T("menu.presets.disable", "Disable Preset") : T("menu.presets.apply", "Enable Preset"))) {
-				if (enabled)
-					catalog.DisablePack(pack.id);
-				else
+				if (enabled) {
+					if (!catalog.DisablePack(pack.id))
+						ReportPresetChangeFailure();
+				} else
 					RequestApplyPack(pack);
 			}
 		}
@@ -315,7 +325,7 @@ namespace
 		{
 			auto _style = Util::TransparentIconButtonStyle();
 			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-			if (Icons::Button("##OpenPack", folderIcon))
+			if (Util::LabeledButton("##OpenPack", folderIcon))
 				catalog.OpenPackFolder(pack.id);
 			ImGui::PopStyleVar();
 		}
@@ -412,7 +422,7 @@ void PresetsPageRenderer::RenderToolbar()
 	const float createWidth = ImGui::CalcTextSize(createLabel).x + style.FramePadding.x * 2.0f;
 	const float width = ImGui::GetContentRegionAvail().x;
 	const bool inlineCreate = !g_showThemes && width >= ThemeManager::Constants::PRESET_SEARCH_WIDTH * Util::GetUIScale() + createWidth + style.ItemSpacing.x;
-	BrowserUI::SearchField("##PresetSearch", searchBuffer, IM_ARRAYSIZE(searchBuffer),
+	Util::SearchField("##PresetSearch", searchBuffer,
 		T("menu.presets.search", "Search presets..."), inlineCreate ? width - createWidth - style.ItemSpacing.x : -FLT_MIN, true);
 	if (!g_showThemes) {
 		if (inlineCreate)
@@ -450,9 +460,11 @@ void PresetsPageRenderer::RenderToolbar()
 	{
 		if (BrowserUI::IconButton("##PresetsRefresh", Icons::TI(ICON_TI_REFRESH),
 				T("menu.presets.refresh_tooltip", "Rescan unified packs and Effects 11 library presets."))) {
-			catalog.Refresh();
+			if (!catalog.Refresh())
+				ReportPresetChangeFailure();
+			else
+				discovered = true;
 			ThemeManager::GetSingleton()->RefreshThemes();
-			discovered = true;
 		}
 
 		ImGui::SameLine();
@@ -643,8 +655,8 @@ void PresetsPageRenderer::RenderList()
 
 		ImGui::PopID();
 	}
-	if (!moveId.empty())
-		catalog.MoveBaseline(moveId, moveRaise);
+	if (!moveId.empty() && !catalog.MoveBaseline(moveId, moveRaise))
+		ReportPresetChangeFailure();
 
 	ImGui::EndChild();
 }
@@ -720,15 +732,13 @@ void PresetsPageRenderer::RenderDetail(const ImVec2& size)
 			ImGui::BeginGroup();
 			{
 				const auto stage = PresetCompatibility::ReleaseStageFromVersion(pack->version);
-				const std::string stageTag = Feature::GetReleaseStageTag(stage);
 
 				MenuFonts::FontRoleGuard title(Menu::FontRole::Heading);
 				ImGui::SetWindowFontScale(1.35f);
 				ImGui::TextWrapped("%s", pack->name.c_str());
-				if (!stageTag.empty()) {
-					MenuFonts::FontRoleGuard body(Menu::FontRole::Body);
-					BrowserUI::SameLineIfFits(ImGui::CalcTextSize(stageTag.c_str()).x);
-					ImGui::TextColored(Feature::GetReleaseStageColor(stage), "%s", stageTag.c_str());
+				if (stage != Feature::ReleaseStage::Release) {
+					BrowserUI::SameLineIfFits(FeatureListRenderer::MeasureStageBadge(stage));
+					FeatureListRenderer::DrawStageBadge(stage, ImGui::GetTextLineHeight());
 				}
 				ImGui::SetWindowFontScale(1.0f);
 			}
@@ -746,7 +756,7 @@ void PresetsPageRenderer::RenderDetail(const ImVec2& size)
 					Util::Text::Secondary("%s", metaLine.c_str());
 				if (!pack->nexusUrl.empty()) {
 					ImGui::SameLine(0.0f, style.ItemSpacing.x);
-					if (Icons::Button("##NexusLink", Icons::TI(ICON_TI_EXTERNAL_LINK)))
+					if (Util::LabeledButton("##NexusLink", Icons::TI(ICON_TI_EXTERNAL_LINK)))
 						Util::FileHelpers::OpenWithShell(pack->nexusUrl);
 					Util::AddTooltip(T("menu.presets.nexus_link_tooltip", "Open this preset's Nexus Mods page."));
 				}

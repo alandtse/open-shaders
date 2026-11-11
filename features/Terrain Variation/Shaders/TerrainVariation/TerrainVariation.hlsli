@@ -6,6 +6,7 @@
 #define TERRAIN_VARIATION_HLSLI
 
 #include "Common/Color.hlsli"
+#include "Common/Math.hlsli"
 #include "Common/SharedData.hlsli"
 
 // --------------------- CONSTANTS AND STRUCTURES --------------------- //
@@ -53,19 +54,8 @@ inline float2 hashLOD(float2 p)
 	return frac(float2(dot(p, float2(1.0, 17.0)), dot(p, float2(1.0, 23.0))));
 }
 
-// Shared quad corners keep hashed offsets out of implicit texture gradients.
-inline float4 QuadReadTopLeft(float4 v, float2 quadPixel)
-{
-	v -= quadPixel.x * ddx_fine(v);
-	return v - quadPixel.y * ddy_fine(v);
-}
-
-inline float2 QuadReadTopLeft(float2 v, float2 quadPixel)
-{
-	v -= quadPixel.x * ddx_fine(v);
-	return v - quadPixel.y * ddy_fine(v);
-}
-
+// Barycentric weight of a lattice corner (hat function of the skewed triangular grid).
+// Equals the barycentric inside the corner's six triangles and 0 elsewhere.
 inline float StochasticCornerWeight(float2 skewUV, float2 cell)
 {
 	float2 d = skewUV - cell;
@@ -116,9 +106,9 @@ inline StochasticOffsets ComputeStochasticOffsetsScaled(float2 uv, float scale, 
 		c2 = t;
 	}
 
-	float2 quadPixel = float2(uint2(pixelPos) & 1u);
-	float4 tapCells = QuadReadTopLeft(float4(c0.cell, c1.cell), quadPixel);
-	float2 droppedCell = QuadReadTopLeft(c2.cell, quadPixel);
+	float2 quadPixel = Math::QuadPixel(pixelPos);
+	float4 tapCells = Math::QuadReadTopLeft(float4(c0.cell, c1.cell), quadPixel);
+	float2 droppedCell = Math::QuadReadTopLeft(c2.cell, quadPixel);
 
 	float b1 = StochasticCornerWeight(skewUV, tapCells.xy);
 	float b2 = StochasticCornerWeight(skewUV, tapCells.zw);

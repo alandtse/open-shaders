@@ -89,16 +89,23 @@ auto MakeMetricColumn(const auto& theme, auto valueGetter, auto colorGetter, aut
 }
 
 // --- Helper Functions ---
+/** @brief Smoothed CPU wait in Present, capped at the unattributed frame time it is carved from. */
+static float CalculatePresentTime(float unattributedTime)
+{
+	return std::min(globals::state->smoothPresentTimeMs, std::max(0.0f, unattributedTime));
+}
+
 /**
   * @brief Calculates summary data (Other frame time, percentages, cost per call) from measured sum
   * @param smoothedFrameTime The total smoothed frame time
   * @param measuredSum The sum of measured frame times
-  * @return Tuple of (otherFrameTime, otherPercent, totalCostPerCall)
+  * @return Tuple of (otherFrameTime excluding Present and clamped at zero, otherPercent, totalCostPerCall)
   */
 static std::tuple<float, float, float> CalculateSummaryData(float smoothedFrameTime, float measuredSum)
 {
 	float totalSmoothedDrawCalls = globals::state->GetTotalSmoothedDrawCalls();
-	float otherFrameTime = Util::CalculateOtherFrameTime(smoothedFrameTime, measuredSum);
+	float unattributedTime = Util::CalculateOtherFrameTime(smoothedFrameTime, measuredSum);
+	float otherFrameTime = std::max(0.0f, unattributedTime - CalculatePresentTime(unattributedTime));
 	float otherPercent = Util::CalculatePercentage(otherFrameTime, smoothedFrameTime);
 	float totalCostPerCall = Util::CalculateCostPerCall(smoothedFrameTime, totalSmoothedDrawCalls);
 	return { otherFrameTime, otherPercent, totalCostPerCall };
@@ -299,7 +306,7 @@ void PerformanceOverlay::DrawOverlay()
 	ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoDecoration;
 
 	// Only allow mouse interaction when the main menu is open
-	if (!menu->IsEnabled) {
+	if (!menu->IsOpen()) {
 		windowFlags |= ImGuiWindowFlags_NoInputs;
 	}
 
@@ -1826,9 +1833,7 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 		measuredSum += frameTime;
 	});
 
-	auto [otherFrameTime, otherPercent, totalCostPerCall] = CalculateSummaryData(smoothedFrameTime, measuredSum);
-	if (std::abs(otherFrameTime) < 1e-4f)
-		otherFrameTime = 0.0f;
+	const float totalCostPerCall = Util::CalculateCostPerCall(smoothedFrameTime, globals::state->GetTotalSmoothedDrawCalls());
 
 	// Requesting here (not just from the ShowCSPasses row) keeps the "Other"
 	// bucket below from overstating by the un-subtracted CS-passes cost when
@@ -1843,7 +1848,10 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 		}
 	}
 	float csPercent = smoothedFrameTime > 0.0f ? (csPassesTime / smoothedFrameTime) * 100.0f : 0.0f;
-	float remainingOtherTime = std::max(0.0f, otherFrameTime - csPassesTime);
+	float remainingUnattributedTime = std::max(0.0f, Util::CalculateOtherFrameTime(smoothedFrameTime, measuredSum) - csPassesTime);
+	float presentTime = CalculatePresentTime(remainingUnattributedTime);
+	float presentPercent = smoothedFrameTime > 0.0f ? (presentTime / smoothedFrameTime) * 100.0f : 0.0f;
+	float remainingOtherTime = std::max(0.0f, remainingUnattributedTime - presentTime);
 	float remainingOtherPercent = smoothedFrameTime > 0.0f ? (remainingOtherTime / smoothedFrameTime) * 100.0f : 0.0f;
 
 	std::optional<float> otherTestFrameTime, otherTestCostPerCall, totalTestFrameTime, totalTestCostPerCall;
@@ -1863,10 +1871,16 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 		std::string(T(TKEY("tip_cs_passes"), "GPU time spent in {brand} compute passes (profiled).")),
 		true, std::nullopt, std::nullopt
 	};
+	DrawCallRow presentRow = {
+		T(TKEY("present"), "Present:"), magic_enum::enum_integer(SpecialShaderType::Present), kDrawCallsNotApplicable, presentTime, presentPercent,
+		0.0f,
+		std::string(T(TKEY("tip_present"), "CPU time spent waiting inside the swap chain Present call. Capped at the frame time not attributed to shader types, so it can read lower than the measured wait.")),
+		true, std::nullopt, std::nullopt
+	};
 	DrawCallRow otherRow = {
 		"Other:", magic_enum::enum_integer(SpecialShaderType::Other), kDrawCallsNotApplicable, remainingOtherTime, remainingOtherPercent,
 		0.0f,
-		std::string(T(TKEY("tip_misc"), "Frame time not attributed to any measured shader type or {brand} compute pass. This includes UI, post-processing, engine work, and any GPU activity not directly measured.")),
+		std::string(T(TKEY("tip_misc"), "Frame time not attributed to any measured shader type, {brand} compute pass or Present. This includes UI, post-processing, engine work, and any GPU activity not directly measured.")),
 		true, otherTestFrameTime, otherTestCostPerCall
 	};
 	float totalFrameTime = smoothedFrameTime;
@@ -1880,6 +1894,7 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 	};
 	std::vector<DrawCallRow> summaryRows;
 	summaryRows.push_back(csPassesRow);
+	summaryRows.push_back(presentRow);
 	summaryRows.push_back(otherRow);
 	summaryRows.push_back(totalRow);
 	return { mainRows, summaryRows };

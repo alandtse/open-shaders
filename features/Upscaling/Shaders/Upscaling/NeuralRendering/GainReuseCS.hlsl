@@ -1,19 +1,20 @@
 #include "Common/NeuralRenderingReuse.hlsli"
+#include "Upscaling/NeuralRendering/ColorContract.hlsli"
 #include "Upscaling/NeuralRendering/ColorTransfer.hlsli"
 
 Texture2D<float4> ProxyInput : register(t0);
 Texture2D<float4> NeuralOutput : register(t1);
 Texture2D<float> GuideDepth : register(t2);
 Texture2D<float2> MotionGuide : register(t3);
-Texture2D<float2> GainHistory : register(t4);
+Texture2D<float4> GainHistory : register(t4);
 Texture2D<float> DepthHistory : register(t5);
 SamplerState LinearClamp : register(s0);
 
-RWTexture2D<float2> GainHistoryOutput : register(u0);
+RWTexture2D<float4> GainHistoryOutput : register(u0);
 RWTexture2D<float> DepthHistoryOutput : register(u1);
 RWTexture2D<float4> ReuseOutput : register(u2);
 
-Texture2D<float2> OtherGainHistory : register(t12);
+Texture2D<float4> OtherGainHistory : register(t12);
 Texture2D<float> OtherDepthHistory : register(t13);
 
 cbuffer GainReuse : register(b1)
@@ -36,32 +37,36 @@ cbuffer GainReuse : register(b1)
 	const float inputLuma = max(Color::RGBToLuminance(input, Luma), kLumaEpsilon);
 	const float outputLuma = max(Color::RGBToLuminance(output, Luma), kLumaEpsilon);
 	const float logInput = log2(inputLuma);
-	GainHistoryOutput[id.xy] = float2(logInput, log2(outputLuma) - logInput);
+	const float3 chroma = NR::ChromaOffset(input, output, Luma, NR::kChromaFloor);
+	GainHistoryOutput[id.xy] = float4(logInput, log2(outputLuma) - logInput, chroma.x, chroma.z);
 	DepthHistoryOutput[id.xy] = GuideDepth[id.xy];
 }
 
 // Four bilinear taps, each kept only where it agrees on surface and lighting; the kept weights are renormalised.
-bool SampleGain(Texture2D<float2> gains, Texture2D<float> depths, float2 uv, float currentDepth, float currentLogLuma, out float toneDelta)
+bool SampleGain(Texture2D<float4> gains, Texture2D<float> depths, float2 uv, float currentDepth, float currentLogLuma, out float toneDelta, out float2 chromaRedBlue)
 {
 	const float2 position = uv * float2(Width, Height) - 0.5;
 	const int2 base = int2(floor(position));
 	const float2 fraction = position - float2(base);
 	const int2 last = int2(int(Width) - 1, int(Height) - 1);
 	float weightedDelta = 0.0;
+	float2 weightedChroma = 0.0;
 	float weightSum = 0.0;
 	[unroll] for (int k = 0; k < 4; ++k)
 	{
 		const int2 offset = int2(k & 1, k >> 1);
 		const int3 tap = int3(clamp(base + offset, int2(0, 0), last), 0);
 		const float weight = (offset.x ? fraction.x : 1.0 - fraction.x) * (offset.y ? fraction.y : 1.0 - fraction.y);
-		const float2 history = gains.Load(tap);
+		const float4 history = gains.Load(tap);
 		if (NeuralRenderingReuse::SampleAgrees(true, currentDepth, depths.Load(tap), CameraData, DepthReversed != 0, currentLogLuma, history.x)) {
 			weightedDelta += weight * history.y;
+			weightedChroma += weight * history.zw;
 			weightSum += weight;
 		}
 	}
 	const bool found = weightSum > NeuralRenderingReuse::kReuseMinimumWeight;
 	toneDelta = found ? weightedDelta / weightSum : 0.0;
+	chromaRedBlue = found ? weightedChroma / weightSum : float2(0.0, 0.0);
 	return found;
 }
 
@@ -77,9 +82,10 @@ bool SampleGain(Texture2D<float2> gains, Texture2D<float> depths, float2 uv, flo
 	const float2 uv = (float2(id.xy) + 0.5) / float2(Width, Height);
 	const float2 previousUV = uv + MotionGuide[id.xy];
 	float toneDelta = 0.0;
+	float2 chromaRedBlue = 0.0;
 	bool resolved = false;
 	if (all(previousUV > 0.0) && all(previousUV < 1.0))
-		resolved = SampleGain(GainHistory, DepthHistory, previousUV, currentDepth, currentLogLuma, toneDelta);
+		resolved = SampleGain(GainHistory, DepthHistory, previousUV, currentDepth, currentLogLuma, toneDelta, chromaRedBlue);
 #ifdef VR
 	// A surface that just came into view has no earlier gain, but the other eye's model frame saw it this frame.
 	if (!resolved && CrossEye != 0) {
@@ -88,15 +94,19 @@ bool SampleGain(Texture2D<float2> gains, Texture2D<float> depths, float2 uv, flo
 		other /= other.w;
 		const float2 otherUV = other.xy * float2(0.5, -0.5) + 0.5;
 		if (all(otherUV > 0.0) && all(otherUV < 1.0))
-			resolved = SampleGain(OtherGainHistory, OtherDepthHistory, otherUV, other.z, currentLogLuma, toneDelta);
+			resolved = SampleGain(OtherGainHistory, OtherDepthHistory, otherUV, other.z, currentLogLuma, toneDelta, chromaRedBlue);
 	}
 #endif
 	// With no tap and no other-eye sample agreeing, the gain stored at this pixel still applies at reduced strength where its depth agrees.
 	if (!resolved) {
 		const int3 inPlace = int3(id.xy, 0);
-		const float2 history = GainHistory.Load(inPlace);
-		if (NeuralRenderingReuse::SampleAgrees(true, currentDepth, DepthHistory.Load(inPlace), CameraData, DepthReversed != 0, currentLogLuma, history.x))
+		const float4 history = GainHistory.Load(inPlace);
+		if (NeuralRenderingReuse::SampleAgrees(true, currentDepth, DepthHistory.Load(inPlace), CameraData, DepthReversed != 0, currentLogLuma, history.x)) {
 			toneDelta = NeuralRenderingReuse::kReuseFallbackStrength * history.y;
+			chromaRedBlue = NeuralRenderingReuse::kReuseFallbackStrength * history.zw;
+		}
 	}
-	ReuseOutput[id.xy] = float4(ProxyLinearToSrgb(NeuralRenderingReuse::ApplyGainLinear(currentLinear, toneDelta)), 1.0);
+	const float3 toned = NeuralRenderingReuse::ApplyGainLinear(currentLinear, toneDelta);
+	const float3 chromaGain = ColorStrength > 0.0 ? NR::LuminancePreservingGain(toned, NR::LinearChromaGain(NR::ChromaFromRedBlue(chromaRedBlue, Luma), 1.0, NR::kMaxChromaStops), Luma, NR::kMaxChromaStops) : float3(1.0, 1.0, 1.0);
+	ReuseOutput[id.xy] = float4(ProxyLinearToSrgb(toned * chromaGain), 1.0);
 }

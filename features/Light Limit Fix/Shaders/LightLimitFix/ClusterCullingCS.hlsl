@@ -17,6 +17,11 @@ StructuredBuffer<Light> lights : register(t1);
 RWStructuredBuffer<uint> lightIndexList : register(u1);
 RWStructuredBuffer<LightGrid> lightGrid : register(u2);
 
+groupshared float4 sharedLightsVS[GROUP_SIZE];
+#if defined(VR)
+groupshared float4 sharedLightsVSRight[GROUP_SIZE];
+#endif
+
 bool LightIntersectsCluster(float3 position, float radiusSquared, ClusterAABB cluster)
 {
 	float3 closest = max(cluster.minPoint.xyz, min(position, cluster.maxPoint.xyz));
@@ -27,6 +32,16 @@ bool LightIntersectsCluster(float3 position, float radiusSquared, ClusterAABB cl
 
 [numthreads(NUMTHREAD_X, NUMTHREAD_Y, NUMTHREAD_Z)] void main(
 	uint3 groupId : SV_GroupID, uint3 dispatchThreadId : SV_DispatchThreadID, uint3 groupThreadId : SV_GroupThreadID, uint groupIndex : SV_GroupIndex) {
+	if (groupIndex < LightCount) {
+		Light light = lights[groupIndex];
+		sharedLightsVS[groupIndex] = float4(FrameBuffer::WorldToView(light.positionWS[0].xyz, true, 0), light.radius * light.radius);
+#if defined(VR)
+		sharedLightsVSRight[groupIndex] = float4(FrameBuffer::WorldToView(light.positionWS[1].xyz, true, 1), light.radius * light.radius);
+#endif
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
 	if (any(dispatchThreadId >= uint3(ClusterSize.x, ClusterSize.y, ClusterSize.z)))
 		return;
 
@@ -39,27 +54,17 @@ bool LightIntersectsCluster(float3 position, float radiusSquared, ClusterAABB cl
 	uint offset = clusterIndex * MAX_CLUSTER_LIGHTS;
 	ClusterAABB cluster = clusters[clusterIndex];
 
-	// Threads read the global lights buffer directly (cached); with no
-	// inter-thread sharing there is nothing to synchronize, so no barriers. Dead
-	// groupshared staging was removed here -- do not re-add: Light[GROUP_SIZE] is
-	// 96 KB, over the 32 KB LDS limit, so a live read would not compile.
+	// Pack only view-space bounds; staging full Light structs exceeds the 32 KB LDS limit.
 	for (uint i = 0; i < LightCount; i++) {
-		Light light = lights[i];
-
-		float radiusSquared = light.radius * light.radius;
+		float4 lightVS = sharedLightsVS[i];
 
 #if defined(VR)
-		float3 positionVSLeft = FrameBuffer::WorldToView(light.positionWS[0].xyz, true, 0);
-		float3 positionVSRight = FrameBuffer::WorldToView(light.positionWS[1].xyz, true, 1);
-
-		[branch] if (LightIntersectsCluster(positionVSLeft, radiusSquared, cluster) || LightIntersectsCluster(positionVSRight, radiusSquared, cluster))
-		{
+		float4 lightVSRight = sharedLightsVSRight[i];
+		[branch] if (LightIntersectsCluster(lightVS.xyz, lightVS.w, cluster) || LightIntersectsCluster(lightVSRight.xyz, lightVSRight.w, cluster))
 #else
-		float3 positionVS = FrameBuffer::WorldToView(light.positionWS[0].xyz, true, 0);
-
-		[branch] if (LightIntersectsCluster(positionVS, radiusSquared, cluster))
-		{
+		[branch] if (LightIntersectsCluster(lightVS.xyz, lightVS.w, cluster))
 #endif
+		{
 			lightIndexList[offset + visibleLightCount] = i;
 			visibleLightCount++;
 			if (visibleLightCount >= MAX_CLUSTER_LIGHTS)

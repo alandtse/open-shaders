@@ -254,7 +254,8 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	float toneHigh = toneDelta - toneLow;
 	float tone = ToneLowStrength == ToneHighStrength ? toneDelta * ToneHighStrength :
 	                                                   toneLow * ToneLowStrength + toneHigh * ToneHighStrength;
-	tone *= FilteredCategoryStrength(int2(id.xy));
+	const float categoryStrength = FilteredCategoryStrength(int2(id.xy));
+	tone *= categoryStrength;
 	float toneGain = exp2(tone);
 	float sceneLuminance = Color::RGBToLuminance(originalLinear, Luma);
 	float logSceneLuminance = log2(max(sceneLuminance, ratioFloor));
@@ -264,8 +265,11 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	                         (1.0 - DynamicRangeProtect.y * (1.0 - highlightWeight));
 	float3 result = originalLinear * ratio;
 	const bool boundedGain = CompositeMode == NR::kCompositeProduction;
-	if (boundedGain)
+	if (boundedGain) {
 		result = original.rgb * NR::CompositeGain(tone * saturate(protectionWeight), NR::kMaxToneStops);
+		if (ColorStrength > 0.0)
+			result *= NR::CompositeChromaGain(original.rgb, NR::ChromaOffset(inputProxy, neuralProxy, Luma, NR::kChromaFloor), ColorStrength * categoryStrength * saturate(protectionWeight) * NR::ChromaHeadroom(inputSample), Luma, NR::kMaxChromaStops);
+	}
 	if (CompositeMode == NR::kCompositeReplacement)
 		result = neuralLinear;
 	else if (CompositeMode == NR::kCompositeMaskedLerp)

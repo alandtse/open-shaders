@@ -6,6 +6,8 @@
 #include "HDRDisplay.h"
 #include "Hooks.h"
 #include "Menu.h"
+#include "RenderDoc.h"
+#include "ScreenshotFeature.h"
 #include "State.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
@@ -35,7 +37,7 @@
 
 namespace NR
 {
-	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NR::Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength,
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NR::Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, colorStrength,
 		skinToneStrength, hairToneStrength, eyeToneStrength, foliageToneStrength, landscapeToneStrength,
 		style, useAutoMask, regionOfInterest, regionOverlay, regionFit, regionGroup, regionFollowFoveation,
 		parallelEyes, allowUnverifiedRuntime, runtimeVariant, materialStrength, strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape, strengthCloth, strengthMetal,
@@ -60,6 +62,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	frameGenerationAllowInMenus,
 	enableDLSSFrameGen,
 	dlssgFramesToGenerate,
+	dlssgDynamic,
+	dlssgDynamicTargetFPS,
 	streamlineLogLevel,
 	sharpnessFSR,
 	sharpnessEnabledDLSS,
@@ -1006,12 +1010,35 @@ void Upscaling::DrawFrameGenerationSettings()
 	if (fgMethod == FrameGenMethod::kDLSSG) {
 		ImGui::TextUnformatted(T(TKEY("frame_generation_dlssg_active"), "Method: NVIDIA DLSS-G"));
 		Util::DisableGuard disabled(!fgEnabled);
-		int multiplier = static_cast<int>(settings.dlssgFramesToGenerate) + 1;
-		int maxMultiplier = static_cast<int>(streamlineDX12.dlssgMaxFramesToGenerate) + 1;
-		if (ImGui::SliderInt(T(TKEY("dlssg_frame_multiplier"), "DLSS-G Frame Multiplier"), &multiplier, 2, maxMultiplier, "%dx"))
-			settings.dlssgFramesToGenerate = static_cast<uint>(multiplier - 1);
+		const bool dynamicActive = settings.dlssgDynamic && streamlineDX12.dlssgDynamicSupported;
+		{
+			Util::DisableGuard multiplierDisabled(dynamicActive);
+			int multiplier = static_cast<int>(settings.dlssgFramesToGenerate) + 1;
+			int maxMultiplier = static_cast<int>(streamlineDX12.dlssgMaxFramesToGenerate) + 1;
+			if (ImGui::SliderInt(T(TKEY("dlssg_frame_multiplier"), "DLSS-G Frame Multiplier"), &multiplier, 2, maxMultiplier, "%dx"))
+				settings.dlssgFramesToGenerate = static_cast<uint>(multiplier - 1);
+		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("dlssg_frame_multiplier_tooltip"), "How many total frames are shown per rendered frame. Higher values generate more frames."));
+
+		{
+			Util::DisableGuard dynamicDisabled(!streamlineDX12.dlssgDynamicSupported);
+			ImGui::Checkbox(T(TKEY("dlssg_dynamic"), "Dynamic Multi-Frame Generation"), &settings.dlssgDynamic);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("dlssg_dynamic_tooltip"),
+									  "NVIDIA Dynamic Multi-Frame Generation changes the multiplier each frame to hold the target frame rate.\n"
+									  "The DLSS-G Frame Multiplier is ignored while this is on.\n"
+									  "With VSync on, it targets the display refresh rate and ignores Target Frame Rate."));
+		}
+		if (!streamlineDX12.dlssgDynamicSupported)
+			ImGui::TextDisabled("%s", T(TKEY("dlssg_dynamic_unsupported"), "Dynamic Multi-Frame Generation is not supported by this GPU, driver or DLSS-G DLL."));
+		else if (settings.dlssgDynamic) {
+			ImGui::SliderFloat(T(TKEY("dlssg_dynamic_target_fps"), "Target Frame Rate"), &settings.dlssgDynamicTargetFPS, 0.0f, kDLSSGDynamicTargetFPSMax,
+				settings.dlssgDynamicTargetFPS <= 0.0f ? T(TKEY("dlssg_dynamic_target_fps_display"), "Display refresh rate") : "%.0f FPS",
+				ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("dlssg_dynamic_target_fps_tooltip"), "The output frame rate Dynamic Multi-Frame Generation aims for. 0 uses the display refresh rate."));
+		}
 	} else if (fgMethod == FrameGenMethod::kFSR) {
 		ImGui::TextUnformatted(T(TKEY("frame_generation_fsr_active"), "Method: AMD FSR"));
 		if (fgEnabled)
@@ -2555,12 +2582,32 @@ void Upscaling::PostDisplay()
 	globals::state->UpdateSharedData(false, false);
 }
 
-void Upscaling::TimerSleepQPC(int64_t targetQPC)
+void Upscaling::TimerSleepQPC(int64_t targetQPC, int64_t frequency)
 {
+	static const HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+
 	LARGE_INTEGER currentQPC;
-	do {
+	QueryPerformanceCounter(&currentQPC);
+	const int64_t duration = targetQPC - currentQPC.QuadPart;
+	if (duration <= 0)
+		return;
+
+	// Spin the tail like DXVK; timer wakes land late, more so on long waits
+	const int64_t spinTicks = frequency / 500 + duration / 6;
+	while (timer) {
+		const int64_t sleepTicks = targetQPC - currentQPC.QuadPart - spinTicks;
+		LARGE_INTEGER due;
+		due.QuadPart = -(sleepTicks * 10000000LL / frequency);
+		if (due.QuadPart >= 0 || !SetWaitableTimerEx(timer, &due, 0, nullptr, nullptr, nullptr, 0))
+			break;
+		WaitForSingleObject(timer, 100);
 		QueryPerformanceCounter(&currentQPC);
-	} while (currentQPC.QuadPart < targetQPC);
+	}
+
+	while (currentQPC.QuadPart < targetQPC) {
+		YieldProcessor();
+		QueryPerformanceCounter(&currentQPC);
+	}
 }
 
 void Upscaling::FrameLimiter()
@@ -2589,15 +2636,19 @@ void Upscaling::FrameLimiter()
 			int64_t targetFrameTimeNS = int64_t(static_cast<double>(kNanosecondsPerSecond) / (refreshRate * frameRateScale));
 			int64_t targetFrameTicks = (targetFrameTimeNS * qpf.QuadPart) / kNanosecondsPerSecond;
 
-			static LARGE_INTEGER lastFrame = {};
+			// Fixed cadence: a late frame is repaid next frame instead of drifting
+			static int64_t nextFrame = 0;
+			// FG toggles with menus; rebase the pending deadline onto the new interval
+			static int64_t lastFrameTicks = 0;
+			nextFrame += targetFrameTicks - lastFrameTicks;
+			lastFrameTicks = targetFrameTicks;
+
 			LARGE_INTEGER timeNow;
 			QueryPerformanceCounter(&timeNow);
-
-			int64_t delta = timeNow.QuadPart - lastFrame.QuadPart;
-			if (delta < targetFrameTicks) {
-				TimerSleepQPC(lastFrame.QuadPart + targetFrameTicks);
-			}
-			QueryPerformanceCounter(&lastFrame);
+			if (timeNow.QuadPart < nextFrame)
+				TimerSleepQPC(nextFrame, qpf.QuadPart);
+			// Over a whole interval behind (hitch, limiter re-enabled): restart from now
+			nextFrame = timeNow.QuadPart < nextFrame + targetFrameTicks ? nextFrame + targetFrameTicks : timeNow.QuadPart + targetFrameTicks;
 		}
 	}
 }
@@ -2981,7 +3032,11 @@ void Upscaling::Upscale()
 	else
 		menuCameraMVsValid = false;
 
-	{
+	// The foveated route encodes its own masks, so the standard encode only runs when it is skipped or fails.
+	const bool foveatedRouteCandidate = FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR &&
+	                                    !(globals::state && globals::state->IsMainOrLoadingMenuOpen());
+
+	auto encodeTextures = [&]() {
 		CS_GPU_PASS("Upscaling::EncodeTextures");
 
 		// VR: ensure per-eye intermediate textures exist before the dispatch writes into them
@@ -3054,7 +3109,10 @@ void Upscaling::Upscale()
 
 		ID3D11ComputeShader* shader = nullptr;
 		context->CSSetShader(shader, nullptr, 0);
-	}
+	};
+
+	if (!foveatedRouteCandidate)
+		encodeTextures();
 
 	{
 		CS_GPU_PASS("Upscaling::Upscale");
@@ -3065,12 +3123,12 @@ void Upscaling::Upscale()
 		// standard path on failure. Main/loading menus must stay off: their backdrop uses
 		// synthesized camera MVs or a per-frame reset that the subrect history cannot follow.
 		auto tryFoveatedRoute = [&](ID3D11Resource* a_depth, const char* a_methodLabel) -> bool {
-			auto* st = globals::state;
-			const bool menuBackdrop = st && st->IsMainOrLoadingMenuOpen();
-			if (!(FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR && !menuBackdrop))
+			if (!foveatedRouteCandidate)
 				return false;
-			if (!FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this))
+			if (!FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this)) {
+				encodeTextures();
 				return false;
+			}
 			const bool routeHandled = FoveatedRenderImpl::Core::ExecuteFoveatedRoute(streamline,
 				Util::AsReal(main.texture), a_depth,
 				reactiveMaskTexture->resource.get(),
@@ -3078,6 +3136,7 @@ void Upscaling::Upscale()
 				motionVectorCopyTexture->resource.get());
 			if (!routeHandled) {
 				logger::warn("[FOVEATED] route preflight failed — falling through to standard {} path", a_methodLabel);
+				encodeTextures();
 			}
 			return routeHandled;
 		};
@@ -3493,6 +3552,7 @@ void Upscaling::Main_UpdateJitter::thunk(RE::BSGraphics::State* a_state)
 void Upscaling::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
 {
 	globals::features::upscaling.PostDisplay();
+	globals::features::screenshotFeature.SnapshotCleanScene();
 
 	// For non-Frame Gen HDR: redirect kFRAMEBUFFER.RTV to UI texture before vanilla UI renders
 	// When FG is active, its SetUIBuffer redirects to uiBufferWrapped instead

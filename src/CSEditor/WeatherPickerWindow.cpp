@@ -164,7 +164,7 @@ void WeatherPickerWindow::DrawContents(bool expanded)
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
 		{
 			auto iconStyle = Util::TransparentIconButtonStyle();
-			if (Icons::Button("##WeatherPickerWindowReset", Icons::TI(MenuIcons::kRestore), ImVec2(iconSize, iconSize)))
+			if (Util::LabeledButton("##WeatherPickerWindowReset", Icons::TI(MenuIcons::kRestore), ImVec2(iconSize, iconSize)))
 				CSEditor::ResetWeatherToDefault(sky);
 		}
 		ImGui::PopStyleVar();

@@ -7,12 +7,14 @@ An agent or a person runs it, then looks at the listed screenshots.
 
 ## What it covers
 
-| Scenario         | Checks (FAIL)                                                                                           | Looks at (REVIEW)                                                           |
-| ---------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `blanket`        | blanket active, depth and lighting draws, landscape layout accepted, no layout rejects                  | raised snow drift versus flat, more than 1% of pixels changed               |
-| `sink`           | player sinks on landscape (`SunkActors` >= 1, `DeepestSink` > 0), sinking stops when the setting is off | trail of prints behind the player                                           |
-| `accumulation`   | Snow Cover on with gating active, at least 6 game hours advance under a snowstorm                       | frame not darker after the storm; same pose, nothing buried or tinted oddly |
-| `eyes` (VR only) | none                                                                                                    | left and right eye match (no veil, no tint, no unclipped geometry)          |
+| Scenario          | Checks (FAIL)                                                                                                     | Looks at (REVIEW)                                                           |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `blanket`         | blanket active, depth and lighting draws, landscape layout accepted, no layout rejects                            | raised snow drift versus flat, more than 1% of pixels changed               |
+| `sink`            | player sinks on landscape (`SunkActors` >= 1, `DeepestSink` > 0), sinking stops when the setting is off           | trail of prints behind the player                                           |
+| `accumulation`    | Snow Cover on with gating active, at least 6 game hours advance under a snowstorm                                 | frame not darker after the storm; same pose, nothing buried or tinted oddly |
+| `eyes` (VR only)  | none                                                                                                              | left and right eye match (no veil, no tint, no unclipped geometry)          |
+| `hands` (VR only) | spot is landscape, both hands reach the feet, `HandStamps` > 0 while held and 0 after release                     | dents under both hands in front of the feet                                 |
+| `objects`         | no physics writes with the toggles off, feather prints lighter than helmet, feather floats above where it settles | none                                                                        |
 
 FAIL exits non-zero. REVIEW means a screenshot metric is outside its expected range, so open the
 images named in `report.md` and judge them; do not call the run green until each REVIEW is explained.
@@ -33,7 +35,7 @@ images named in `report.md` and judge them; do not call the run green until each
 ## Run
 
 ```
-python tools/snow-deformation-ingame-regression.py --out <dir> [--port 8920|8921] [--save <name>] [--only blanket sink accumulation eyes]
+python tools/snow-deformation-ingame-regression.py --out <dir> [--port 8920|8921] [--save <name>] [--only blanket sink accumulation eyes hands objects]
 ```
 
 The port is probed (SE 8920, VR 8921) and `inspect state.vr` picks the runtime. The script moves the
@@ -61,6 +63,7 @@ accumulation time jumps and reloads to Whiterun. Output in `<dir>`:
   the weather forced to snowstorm (`fw c8221`) at hour 12, and leaves the weather that way. The
   Winterhold ground is already white, so the luma check only flags a darker frame; judge buildup by eye.
 - Keyboard input does not move the VR player, so on VR the `sink` scenario teleports onto landscape instead of walking.
+- The `hands` scenario uses devbench `input` `reach` with the head lowered to 0.6 m, because VRIK keeps the hands above hip height while the body stands. It runs at a second spot (110900, 104400) that is landscape; the main spot's ground is a static mesh there, so hands never reach snow on it.
 - The tutorial message box pauses the game; the script accepts it before shots and after walks.
 - `freecam` is not a toggle: the script turns it off with `{"action":"freecam","on":false}` before walking.
 - The pixel metrics are coarse guards, not image comparisons. Prints and veils are judged by eye.

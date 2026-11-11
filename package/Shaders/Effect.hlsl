@@ -826,7 +826,8 @@ float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPositio
 		dirColor = GetEffectDirectionalLighting() * EffectDirectionalLightScale;
 		ambientColor = ambientLighting;
 	} else {
-		ExtractEffectLighting(isSkyObject ? color : GetWeatherEffectLighting(false), ambientLighting, dirColor, ambientColor);
+		dirColor = GetEffectDirectionalLighting();
+		ambientColor = ambientLighting;
 	}
 
 	float shadow = isSkyObject ? GetViewRayShadow(worldPosition, depth, eyeIndex, noise, sampleDistantShadow) :
@@ -834,22 +835,23 @@ float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPositio
 
 	shadowVariance = 1.0 - sqrt(saturate(fwidth(shadow)));
 
-	dirColor *= shadow;
-
 #		if defined(EXP_HEIGHT_FOG)
 	if (SharedData::exponentialHeightFogSettings.enabled) {
-		dirColor *= ExponentialHeightFog::GetSunlightFogAttenuation(worldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
+		shadow *= ExponentialHeightFog::GetSunlightFogAttenuation(worldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 	}
 #		endif
 
 	if (useAmbientEffectLighting) {
+		dirColor *= shadow;
 		float brightness = isSkyObject ? SharedData::csUtilitySettings.skyStaticBrightness : SharedData::csUtilitySettings.effectBrightness;
 		float3 lighting = Color::EffectLightToGamma(Color::WeatherEffect(dirColor + ambientColor, isSkyObject));
 		color = materialColor * (isSkyObject ? lighting : Color::EffectLighting(lighting)) * brightness;
-	} else if (!isSkyObject) {
-		color = materialColor * Color::EffectLighting(dirColor + ambientColor);
 	} else {
-		color = dirColor + ambientColor;
+		float3 directionalReference = Color::EffectLightToGamma(dirColor);
+		float3 sceneReference = directionalReference + Color::EffectLightToGamma(ambientColor);
+		float3 shadowScale = 1.0 - saturate(directionalReference * (1.0 - shadow) / max(sceneReference, EPSILON_DIVISION));
+		float3 reference = Color::EffectLightToGamma(isSkyObject ? color : GetWeatherEffectLighting(false)) * shadowScale;
+		color = isSkyObject ? reference : materialColor * Color::EffectLighting(reference);
 	}
 	return color;
 }

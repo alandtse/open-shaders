@@ -248,7 +248,8 @@ namespace ExponentialHeightFog
 					fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
 #endif
 			}
-			fogInscatteringColor = fogColor * SharedData::exponentialHeightFogSettings.originalFogColorAmount;
+			float3 originalFogColor = lerp(fogColor, Color::GamutTransform(SharedData::exponentialHeightFogSettings.originalFogColorOverride.rgb), SharedData::exponentialHeightFogSettings.originalFogColorOverride.a);
+			fogInscatteringColor = originalFogColor * SharedData::exponentialHeightFogSettings.originalFogColorAmount;
 		}
 		fogInscatteringColor += Color::GamutTransform(SharedData::exponentialHeightFogSettings.fogInscatteringColor.rgb) * SharedData::exponentialHeightFogSettings.fogInscatteringColor.a;
 

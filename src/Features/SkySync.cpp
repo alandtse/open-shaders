@@ -442,8 +442,10 @@ bool SkySync::Update(const RE::Sky* sky)
 	active = false;
 	currentDim = 1.0f;
 
-	if (!settings.Enabled)
+	if (!settings.Enabled) {
+		ResetSkyRotation(sky);
 		return std::exchange(immediateTransitionReady, false);
+	}
 
 	if (!sky)
 		return false;
@@ -656,9 +658,24 @@ void SkySync::SetSkyRotation(const RE::Sky* sky, RE::TESObjectCELL* cell)
 		return;
 
 	currentSkyRotation = rotation;
+	skyRotationApplied = true;
 	sky->root->local.rotate = RE::NiMatrix3{ RE::NiPoint3{ 0.0f, 0.0f, -rotation } };
 	RE::NiUpdateData updateData;
 	sky->root->Update(updateData);
+}
+
+void SkySync::ResetSkyRotation(const RE::Sky* sky)
+{
+	// Clear the cache so re-enabling reapplies the cell's north rotation
+	currentSkyRotation = D3D11_FLOAT32_MAX;
+	currentCell = nullptr;
+	if (!skyRotationApplied || !sky || !sky->root)
+		return;
+
+	sky->root->local.rotate = RE::NiMatrix3{ RE::NiPoint3{ 0.0f, 0.0f, 0.0f } };
+	RE::NiUpdateData updateData;
+	sky->root->Update(updateData);
+	skyRotationApplied = false;
 }
 
 bool SkySync::IsWorldspaceDisabled(const RE::TESWorldSpace* worldspace) const
@@ -727,7 +744,7 @@ void SkySync::FadeSunAtHorizon(const RE::Sky* sky, float sunHeight)
 	const float fade = std::clamp((sunHeight - DirectX::XMConvertToRadians(SunDiscFadeStartElevation)) / DirectX::XMConvertToRadians(SunDiscFadeElevation), 0.0f, 1.0f);
 	// Rebuilt the way Sun::Update blends it, since its own glare alpha already carries the clock-based fade
 	const auto weatherGlare = [](const RE::TESWeather* weather, float weight) {
-		return weather ? weather->data.sunGlare * SunGlareScale * weight : 0.0f;
+		return weather ? static_cast<uint8_t>(weather->data.sunGlare) * SunGlareScale * weight : 0.0f;
 	};
 	const float glare = weatherGlare(sky->currentWeather, sky->currentWeatherPct) + weatherGlare(sky->lastWeather, 1.0f - sky->currentWeatherPct);
 

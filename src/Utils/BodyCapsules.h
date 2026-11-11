@@ -87,6 +87,9 @@ namespace Util::BodyCapsules
 
 		[[nodiscard]] size_t GetCount() const { return capsules.size(); }
 
+		/** @brief Every capsule built by the last Update, valid until the next Update on the thread that calls it. */
+		[[nodiscard]] std::span<const Capsule> GetCapsules() const { return capsules; }
+
 		/** @brief How many of the player's hand and finger skeleton nodes were found, out of 2 * HandNodeCount. */
 		[[nodiscard]] size_t GetHandNodeCount() const { return handNodesFound; }
 

@@ -402,6 +402,9 @@ namespace Util
 	/** @brief Finds fire geometry and appends visible positive-radius bounds, preserving ancestor culling. */
 	void CollectFireGeometry(RE::NiAVObject* a_object, bool a_hidden, bool& a_hasFire, std::vector<RE::NiBound>& a_samples);
 
+	/** @brief Sun disc visibility in [0, 1] from its sky shader blend alpha; 0 when the sun is missing or hidden. */
+	float GetSunVisibility(const RE::Sun* a_sun);
+
 	/**
 	 * @brief Converts a 2D world position to cell coordinates.
 	 *

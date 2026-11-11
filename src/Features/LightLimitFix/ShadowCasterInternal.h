@@ -391,6 +391,10 @@ namespace ShadowCasterManager
 	/// foreign thread sharing our hooked vtables (see s_cullThreadId).
 	RE::BSShadowLight* CurrentCullLight();
 
+	/// Publishes the sun's cascade cameras so the base cull hook drops casters
+	/// that register no shadow-map pass from the sun's collected-list replay.
+	void SetSunCullCameras(RE::BSShadowLight* a_sun);
+
 	/// Static/dynamic split-cache caster-pass selector, written by EnableLight
 	/// and read by the cull-append hooks.
 	enum class CasterPass : int
