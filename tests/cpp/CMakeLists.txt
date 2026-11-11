@@ -115,6 +115,7 @@ add_executable(
     test_nr_cadence.cpp
     test_nr_material_strength.cpp
     test_nr_model_scale.cpp
+    test_nr_peripheral_compression.cpp
     test_nr_eye_mode.cpp
     test_nr_context_profile.cpp
     test_nr_roi.cpp
