@@ -2185,6 +2185,10 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	}
 	if (ImGui::CollapsingHeader(T(TKEY("performance"), "Performance"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::PushID("performance");
+		if (globals::game::isVR && DrawEyeModeControls(tuning, developerMode)) {
+			changed = true;
+			resetHistory = true;
+		}
 		if (ImGui::Checkbox(T(TKEY("pause_in_combat"), "Pause NR During Combat"), &tuning.pauseInCombat)) {
 			changed = true;
 			resetHistory = true;
@@ -2192,10 +2196,6 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("pause_in_combat_tooltip"),
 				"Pauses Neural Rendering for both eyes during player combat. Ordinary upscaling continues. Resumes with fresh history after three continuous seconds of peaceful, unpaused gameplay; the runtime stays initialized."));
-		if (globals::game::isVR && DrawEyeModeControls(tuning, developerMode)) {
-			changed = true;
-			resetHistory = true;
-		}
 		if (globals::game::isVR) {
 			if (ImGui::Checkbox(T(TKEY("region_follow_foveation"), "Follow Foveation"), &tuning.regionFollowFoveation)) {
 				changed = true;
