@@ -216,6 +216,7 @@ struct NeuralRendering::Impl
 		std::unique_ptr<WrappedResource> lowColor, lowDepth, lowMotion, lowOutput;
 		/** @brief DLSSNR.UIAlpha built from the Masks2 category lane; created only while the material strength is on. */
 		std::unique_ptr<WrappedResource> materialAlpha;
+		bool materialAlphaIdentity = false;
 		NR::FrameParameters frame;
 		std::unique_ptr<Texture2D> resolved, toneData;
 		/** @brief Eye-stagger history: the model frame's log input luma and tone delta, its depth guide, and the proxy a reuse frame feeds the composite. Allocated only while the stagger can run. */
@@ -252,13 +253,16 @@ struct NeuralRendering::Impl
 		uint32_t regionOverlayEnabled = 0;
 		float regionOutlineThickness = kRegionOutlineThicknessPixels;
 		uint32_t regionActorBaseX = 0, regionActorBaseY = 0, regionActorWidth = 0, regionActorHeight = 0;
-		float colorStrength = 0.0f, pad = 0.0f;
+		float colorStrength = 0.0f;
+		uint32_t materialSelectionEnabled = 0;
 		// Per-category tone multipliers, Skin..Landscape in .x; the 16-byte rows mirror
 		// ColorTransferCS.hlsl's float4 CategoryStrength[5].
 		float4 categoryStrength[5]{};
 		uint32_t materialMapEnabled = 0, materialMapMode = 0, materialMapFilter = 0, materialMapStrengthBound = 0;
 		float4 materialStrengthsA{};
 		float4 materialStrengthsB{};
+		uint32_t materialEdgeSoftness = 0;
+		uint32_t pad[3]{};
 	};
 	static_assert(offsetof(ColorTransferData, dynamicRangeProtect) == 64);
 	static_assert(offsetof(ColorTransferData, toneLowStrength) == 80);
@@ -271,12 +275,14 @@ struct NeuralRendering::Impl
 	static_assert(offsetof(ColorTransferData, regionActorBaseX) == 120);
 	static_assert(offsetof(ColorTransferData, regionActorHeight) == 132);
 	static_assert(offsetof(ColorTransferData, colorStrength) == 136);
+	static_assert(offsetof(ColorTransferData, materialSelectionEnabled) == 140);
 	static_assert(offsetof(ColorTransferData, categoryStrength) == 144);
 	static_assert(offsetof(ColorTransferData, materialMapEnabled) == 224);
 	static_assert(offsetof(ColorTransferData, materialMapStrengthBound) == 236);
 	static_assert(offsetof(ColorTransferData, materialStrengthsA) == 240);
 	static_assert(offsetof(ColorTransferData, materialStrengthsB) == 256);
-	static_assert(sizeof(ColorTransferData) == 272);
+	static_assert(offsetof(ColorTransferData, materialEdgeSoftness) == 272);
+	static_assert(sizeof(ColorTransferData) == 288);
 	// ModeValues.hlsli carries these numbers for ColorTransferCS.hlsl's tint.
 	static_assert(static_cast<uint32_t>(NR::MaterialMap::Mode::kCategory) == 0);
 	static_assert(static_cast<uint32_t>(NR::MaterialMap::Mode::kStrength) == 1);
@@ -328,8 +334,12 @@ struct NeuralRendering::Impl
 	bool materialStrengthOn = false;
 	/** @brief The graded protection is bound for the evaluate now in flight, so a fault belongs to it. */
 	bool materialStrengthInFlight = false;
-	/** @brief Last evaluate bound the graded protection; reported by the status readout. */
+	/** @brief The frame applies graded protection through the provider or compositor. */
 	bool materialStrengthBound = false;
+	/** @brief Reduced models apply source-aligned material strengths in the existing composite. */
+	bool materialStrengthComposite = false;
+	/** @brief The source-resolution compositor could not read the material lane this session. */
+	bool materialCompositeDegraded = false;
 	/** @brief Latched setup failure: the material lane or the alpha texture is unusable for this session. */
 	bool materialStrengthDegraded = false;
 	std::unique_ptr<Texture2D> original;
@@ -388,6 +398,7 @@ struct NeuralRendering::Impl
 	uint32_t materialMapMode = 0, materialMapFilter = NR::MaterialMap::kAllCategories;
 	/** @brief Per-category by-material strengths of the last frame, in NeuralRenderingCategory id order. */
 	std::array<float, NR::MaterialStrength::kCount> materialMapStrength{};
+	uint32_t materialEdgeSoftness = 0;
 	NR::Diagnostics* captureDiagnostics = nullptr;
 	uint32_t captureFrame = UINT32_MAX;
 
@@ -445,7 +456,7 @@ struct NeuralRendering::Impl
 		eyes = {};
 		original.reset();
 		encodeMasks = {};
-		materialStrengthInFlight = materialStrengthBound = false;
+		materialStrengthInFlight = materialStrengthBound = materialStrengthComposite = false;
 		width = height = guideWidth = guideHeight = eyeCount = lowWidth = lowHeight = 0;
 		sbsWidth = sbsHeight = 0;
 		sbsAlpha.reset();
@@ -1033,6 +1044,8 @@ struct NeuralRendering::Impl
 		data.materialMapMode = materialMapMode;
 		data.materialMapFilter = materialMapFilter;
 		data.materialMapStrengthBound = materialStrengthBound ? 1u : 0u;
+		data.materialSelectionEnabled = !prepare && materialStrengthComposite ? 1u : 0u;
+		data.materialEdgeSoftness = materialEdgeSoftness;
 		data.materialStrengthsA = float4{ materialMapStrength[NR::MaterialStrength::kNone], materialMapStrength[NR::MaterialStrength::kSkin],
 			materialMapStrength[NR::MaterialStrength::kHair], materialMapStrength[NR::MaterialStrength::kEyes] };
 		data.materialStrengthsB = float4{ materialMapStrength[NR::MaterialStrength::kFoliage], materialMapStrength[NR::MaterialStrength::kLandscape],
@@ -1083,8 +1096,15 @@ struct NeuralRendering::Impl
 		if (!target.SRV)
 			return nullptr;
 		auto* srv = Util::AsReal(target.SRV);
+		D3D11_SHADER_RESOURCE_VIEW_DESC view{};
+		srv->GetDesc(&view);
+		if (view.Format != DXGI_FORMAT_R16G16_UNORM || view.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D || view.Texture2D.MostDetailedMip != 0)
+			return nullptr;
 		D3D11_TEXTURE2D_DESC desc{};
-		return Util::GetTexture2DDesc(srv, desc) && desc.Format == DXGI_FORMAT_R16G16_UNORM ? srv : nullptr;
+		return Util::GetTexture2DDesc(srv, desc) && desc.Format == DXGI_FORMAT_R16G16_UNORM &&
+		               desc.Width >= width * eyeCount && desc.Height >= height && desc.ArraySize == 1 && desc.SampleDesc.Count == 1 ?
+		           srv :
+		           nullptr;
 	}
 
 	/**
@@ -1096,9 +1116,11 @@ struct NeuralRendering::Impl
 	bool BuildMaterialAlpha(ID3D11ShaderResourceView* masks2, const NR::MaterialStrength::Values& strengths)
 	{
 		CS_GPU_PASS("Upscaling::NRMaterialAlpha");
-		auto* shader = materialAlphaShader.Get(L"Data/Shaders/Upscaling/NeuralRendering/CategoryAlphaCS.hlsl",
-			{}, "cs_5_0", "main", "NeuralRendering::CategoryAlpha CS");
-		if (!shader)
+		const bool edits = NR::MaterialStrength::HasEdits(strengths);
+		auto* shader = edits ? materialAlphaShader.Get(L"Data/Shaders/Upscaling/NeuralRendering/CategoryAlphaCS.hlsl",
+								   {}, "cs_5_0", "main", "NeuralRendering::CategoryAlpha CS") :
+		                       nullptr;
+		if (edits && !shader)
 			return false;
 		try {
 			for (uint32_t i = 0; i < eyeCount; ++i) {
@@ -1106,7 +1128,18 @@ struct NeuralRendering::Impl
 				if (!eye.materialAlpha) {
 					const auto name = eyeCount > 1 ? std::format("NeuralRendering::MaterialAlpha{}", i) : std::string("NeuralRendering::MaterialAlpha");
 					eye.materialAlpha = interop.CreateTexture(width, height, DXGI_FORMAT_R8_UNORM, name);
+					eye.materialAlphaIdentity = false;
 				}
+				const auto update = NR::MaterialStrength::PlanAlphaUpdate(strengths, eye.materialAlphaIdentity);
+				if (update != NR::MaterialStrength::AlphaUpdate::kDraw) {
+					if (update == NR::MaterialStrength::AlphaUpdate::kClear) {
+						constexpr float zero[4]{};
+						context->ClearUnorderedAccessViewFloat(eye.materialAlpha->uav, zero);
+						eye.materialAlphaIdentity = true;
+					}
+					continue;
+				}
+				eye.materialAlphaIdentity = false;
 				context->ClearState();
 				categoryAlphaBuffer->Update(CategoryAlphaData{ width, height, i * width, strengths.edgeSoftness,
 					{ strengths.strength[NR::MaterialStrength::kNone], strengths.strength[NR::MaterialStrength::kSkin],
@@ -1204,16 +1237,20 @@ struct NeuralRendering::Impl
 			diagnostics.FinishCapture(diagnostic.number);
 			return true;
 		}
-		materialStrengthInFlight = materialStrengthBound = false;
-		if (materialStrengthWanted && !materialStrengthDegraded && !lowRes) {
+		materialStrengthInFlight = materialStrengthBound = materialStrengthComposite = false;
+		if (materialStrengthWanted) {
+			auto& degraded = lowRes ? materialCompositeDegraded : materialStrengthDegraded;
 			auto* lane = MaterialLane();
 			if (!lane) {
-				materialStrengthDegraded = true;
+				degraded = true;
 				logger::warn("[NeuralRendering] material strength unavailable: the deferred material lane is not present, so the whole frame is processed");
+			} else if (lowRes) {
+				materialStrengthBound = true;
+				materialStrengthComposite = NR::MaterialStrength::HasEdits(materialStrengths);
 			} else if (BuildMaterialAlpha(lane, materialStrengths)) {
 				materialStrengthInFlight = materialStrengthBound = true;
 			} else {
-				materialStrengthDegraded = true;
+				degraded = true;
 				logger::warn("[NeuralRendering] material strength unavailable: its shader or texture could not be created, so the whole frame is processed");
 			}
 		}
@@ -1972,7 +2009,7 @@ namespace
 		ImGui::TextUnformatted(T(TKEY("material_apply_to"), "Apply Neural Rendering To"));
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("material_apply_to_tooltip"),
-				"Choose the materials Neural Rendering is applied to, using the labels the deferred pass writes. All selected is the normal behaviour. It changes where the effect shows, not how much GPU time it costs, and needs the deferred pass. Fine-Tune Strengths sets partial amounts."));
+				"Choose the materials Neural Rendering is applied to, using the labels the deferred pass writes. All selected is the normal behaviour. With a reduced Model Scale, strengths apply in the full-resolution composite. It changes where the effect shows, not how much model GPU time it costs, and needs the deferred pass. Fine-Tune Strengths sets partial amounts."));
 		ImGui::PushID("materialSelection");
 		MaterialSelection selected{};
 		for (uint32_t i = 0; i < selected.size(); ++i)
@@ -2469,7 +2506,9 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 	const auto materialStrengths = effective.MaterialStrengths();
 	const auto publishMaterialStrength = [this, &materialStrengths] {
 		materialStrengthActive.store(impl->materialStrengthBound, std::memory_order_relaxed);
-		materialStrengthAvailable.store(!impl->materialStrengthDegraded && !materialStrengthRejected.load(std::memory_order_relaxed), std::memory_order_relaxed);
+		materialStrengthAvailable.store(NR::MaterialStrength::IsAvailable(impl->lowWidth != 0,
+											materialStrengthRejected.load(std::memory_order_relaxed), impl->materialStrengthDegraded, impl->materialCompositeDegraded),
+			std::memory_order_relaxed);
 		for (size_t i = 0; i < materialStrengths.strength.size(); ++i)
 			materialStrengthValues[i].store(materialStrengths.strength[i], std::memory_order_relaxed);
 		materialEdgeSoftness.store(materialStrengths.edgeSoftness, std::memory_order_relaxed);
@@ -2552,14 +2591,17 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 				guide.ArraySize != 1 || guide.SampleDesc.Count != 1)
 				throw std::runtime_error("Missing or incompatible NR guide texture");
 		}
-		const bool materialStrengthWanted = effective.materialStrength && !materialStrengthRejected.load(std::memory_order_relaxed) && NR::ModelExtent(effective.modelScale, w, h).first == 0;
-		if (materialStrengthWanted != work.materialStrengthOn) {
+		const auto lowExtent = NR::ModelExtent(effective.modelScale, w, h);
+		const bool providerRejected = materialStrengthRejected.load(std::memory_order_relaxed);
+		const bool materialStrengthWanted = effective.materialStrength && NR::MaterialStrength::IsAvailable(lowExtent.first != 0,
+																			  providerRejected, work.materialStrengthDegraded, work.materialCompositeDegraded);
+		const bool providerStrengthWanted = effective.materialStrength && !providerRejected && lowExtent.first == 0;
+		if (providerStrengthWanted != work.materialStrengthOn) {
 			recreate = resetHistory = true;
-			work.materialStrengthOn = materialStrengthWanted;
+			work.materialStrengthOn = providerStrengthWanted;
 		}
 		const bool forceRecreate = recreate.exchange(false);
 		diagnostic.recreated = forceRecreate || work.width != w || work.height != h || work.guideWidth != gw || work.guideHeight != gh || work.eyeCount != count || work.format != desc.Format;
-		const auto lowExtent = NR::ModelExtent(effective.modelScale, w, h);
 		diagnostic.recreated |= work.lowWidth != lowExtent.first || work.lowHeight != lowExtent.second;
 		work.sbsEnabled = effective.sbsEvaluate && count == 2;
 		work.EnsureResources(w, h, gw, gh, count, desc.Format, forceRecreate, lowExtent.first, lowExtent.second);
@@ -2633,6 +2675,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		work.materialMapMode = boundedTuning.materialMapMode;
 		work.materialMapFilter = boundedTuning.materialMapFilter;
 		work.materialMapStrength = materialStrengths.strength;
+		work.materialEdgeSoftness = materialStrengths.edgeSoftness;
 		diagnostic.conversion = static_cast<uint32_t>(work.conversionMode);
 		diagnostic.exposureMode = static_cast<uint32_t>(work.exposureMode);
 		diagnostic.compositeMode = static_cast<uint32_t>(work.compositeMode);
