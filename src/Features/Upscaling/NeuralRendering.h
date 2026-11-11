@@ -5,6 +5,7 @@
 #include "NeuralRendering/CropCalibration.h"
 #include "NeuralRendering/Diagnostics.h"
 #include "NeuralRendering/MaterialStrength.h"
+#include "NeuralRendering/ModelReconstruction.h"
 #include "NeuralRendering/Runtime.h"
 #include "NeuralRendering/Tuning.h"
 

@@ -226,7 +226,7 @@ struct NeuralRendering::Impl
 	winrt::com_ptr<ID3D11DeviceContext1> context;
 	winrt::com_ptr<ID3DDeviceContextState> isolated;
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
-	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain, downsampleLow, expandLow, expandRgb, expandLanczos, offsetMotion;
+	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain, downsampleLow, expandLow, expandRgb, offsetMotion;
 	NR::Reconstruction::Mode reconstructionMode = NR::Reconstruction::Mode::Native;
 	bool reconstructionFallback = false;
 	/** @brief Cbuffer CategoryAlphaCS.hlsl reads: the eye extent, the stereo offset, the softness radius and the eight strengths. */
@@ -980,18 +980,12 @@ struct NeuralRendering::Impl
 	}
 
 	/** @brief Chooses one reconstruction for the stereo transaction, falling back if an optional shader is unavailable. */
-	ID3D11ComputeShader* SelectReconstructionShader(NR::Reconstruction::Mode& mode, uint32_t filter)
+	ID3D11ComputeShader* SelectReconstructionShader(NR::Reconstruction::Mode& mode)
 	{
 		using enum NR::Reconstruction::Mode;
 		if (mode == RgbGuided) {
 			if (auto* shader = expandRgb.Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
 					{ { "NR_RGB_GUIDED_RECONSTRUCTION", "1" } }, "cs_5_0", "ExpandGain", "NeuralRendering::ExpandRgbGain CS"))
-				return shader;
-			mode = NR::Reconstruction::BasicMode(filter);
-		}
-		if (mode == Lanczos3) {
-			if (auto* shader = expandLanczos.Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
-					{ { "NR_LANCZOS3_RECONSTRUCTION", "1" } }, "cs_5_0", "ExpandGain", "NeuralRendering::ExpandLanczosGain CS"))
 				return shader;
 			mode = Bilinear;
 		}
@@ -1191,10 +1185,10 @@ struct NeuralRendering::Impl
 			frameGenerationBlocked = frameGeneration;
 		}
 		const bool lowRes = lowWidth != 0;
-		const auto requestedReconstruction = NR::Reconstruction::Select(tuning.modelReconstructionFilter,
+		const auto requestedReconstruction = NR::Reconstruction::Select(
 			tuning.modelGuidedUpsample, tuning.modelRgbGuidedUpsample, tuning.modelScale, width, height, lowWidth, lowHeight);
 		auto selectedReconstruction = requestedReconstruction;
-		auto* reconstructionShader = lowRes ? SelectReconstructionShader(selectedReconstruction, tuning.modelReconstructionFilter) : nullptr;
+		auto* reconstructionShader = lowRes ? SelectReconstructionShader(selectedReconstruction) : nullptr;
 		if (selectedReconstruction != reconstructionMode)
 			reset |= NR::Diagnostics::Requested;
 		reconstructionMode = selectedReconstruction;
@@ -1997,17 +1991,8 @@ namespace
 		changed |= ImGui::Checkbox(T(TKEY("model_rgb_guided_upsample"), "RGB Guidance"), &tuning.modelRgbGuidedUpsample);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("model_rgb_guided_upsample_tooltip"),
-				"Uses colour similarity to keep the brightness change on the matching side of an edge. Experimental at Model Scale 0.5 or below; above it the basic reconstruction filter applies."));
+				"Uses colour similarity to keep the brightness change on the matching side of an edge. Applies whenever the model uses a reduced grid."));
 		ImGui::EndDisabled();
-		int filter = static_cast<int>(NR::Reconstruction::SanitizeFilter(tuning.modelReconstructionFilter));
-		const std::array<const char*, 2> filters{ "Bilinear", "Lanczos3" };
-		if (ImGui::Combo(T(TKEY("model_reconstruction_filter"), "Basic Reconstruction Filter"), &filter, filters.data(), static_cast<int>(filters.size()))) {
-			tuning.modelReconstructionFilter = static_cast<uint32_t>(filter);
-			changed = true;
-		}
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("model_reconstruction_filter_tooltip"),
-				"Used when guidance is off or RGB guidance is unavailable. Bilinear uses four samples; Lanczos3 uses 36 and can produce sharper edges with ringing. It filters only the model's brightness change."));
 		ImGui::EndDisabled();
 		ImGui::EndDisabled();
 		return changed;
@@ -2572,7 +2557,6 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			work.downsampleLow.Reset();
 			work.expandLow.Reset();
 			work.expandRgb.Reset();
-			work.expandLanczos.Reset();
 		}
 		auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
 		auto* color = Util::AsReal(targets[RE::RENDER_TARGETS::kMAIN].texture);
