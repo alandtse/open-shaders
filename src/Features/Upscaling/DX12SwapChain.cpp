@@ -509,8 +509,10 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 	// Present the frame
 	DX::ThrowIfFailed(swapChain->Present(SyncInterval, Flags));
 
-	if (useDLSSG)
+	if (useDLSSG) {
 		upscaling.streamlineDX12.EmitPCLMarker(sl::PCLMarker::ePresentEnd);
+		upscaling.streamlineDX12.TrackDLSSGInputFence();
+	}
 
 	// Wait for D3D12 to finish
 	const uint64_t d3d12SignalValue = interopFence.Next();

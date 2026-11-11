@@ -1031,6 +1031,7 @@ void Streamline::ConfigureDLSSG(bool enabled)
 			return;
 		}
 		dlssgResourcesRetained = false;
+		dlssgInputFence.Reset();
 	}
 
 	if (slDLSSGGetState && enabled) {
@@ -1064,6 +1065,30 @@ void Streamline::ConfigureDLSSG(bool enabled)
 			}
 		}
 	}
+}
+
+void Streamline::TrackDLSSGInputFence()
+{
+	if (!initialized || !slDLSSGGetState || !dlssgResourcesRetained)
+		return;
+
+	sl::DLSSGState state{};
+	if (SL_FAILED(result, slDLSSGGetState(viewport, state, nullptr)))
+		return;
+
+	dlssgInputFence.Track(static_cast<ID3D12Fence*>(state.inputsProcessingCompletionFence), state.lastPresentInputsProcessingCompletionFenceValue);
+}
+
+void Streamline::WaitForDLSSGInputs()
+{
+	auto* fence = dlssgInputFence.GetFence();
+	if (!fence || !dlssgInputFence.IsBehind(fence->GetCompletedValue()))
+		return;
+
+	if (!dlssgInputFenceEvent)
+		dlssgInputFenceEvent.attach(CreateEventW(nullptr, FALSE, FALSE, nullptr));
+	if (dlssgInputFenceEvent && SUCCEEDED(fence->SetEventOnCompletion(dlssgInputFence.GetTarget(), dlssgInputFenceEvent.get())))
+		WaitForSingleObject(dlssgInputFenceEvent.get(), kDLSSGInputWaitTimeoutMs);
 }
 
 void Streamline::TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
