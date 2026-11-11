@@ -728,6 +728,17 @@ void Upscaling::RegisterUxActions()
 		"Eye-tracked foveation gaze: whether Follow eye gaze is on (enabled), the selected source mode (sourceMode: 0 SteamVR then OSC, 1 SteamVR only, 2 OSC only), the source that supplied the last sample (source: kNone, kSteamVr or kOsc), whether that sample was valid (valid), the per-eye gaze centres in normalized eye UV with y down (centres, left then right), whether the gaze override is currently placing the crop (active), the lifetime count of valid frames (validFrames) and settings.gazeRecentreThreshold. The OSC listener reports oscListening, oscPort, oscPackets, oscBindFailed and lastOscAddress; a bind failure is logged once and not retried until the port changes. Settings live under foveatedRender in openshaders.feature: gazeFollow, gazeSource, gazeOscPort, gazeRecentreThreshold and gazeOffsetX/gazeOffsetY. Params: none.",
 		GazeStatus);
 
+	FEATURE_QUERY("dlssgPresetStatus",
+		"DLSS-G model preset: selected is settings.dlssgPreset (0 Default, 1 A, 2 B, 3 C; C is the faster model and needs DLSS-G 310.9.16 or newer), atBoot is the value this session started with, and driverProfileValue is the DLSS-FG preset key (0x10E41DF1) in the driver profile for Skyrim SE, or null when the key is unset or unreadable. nvngx_dlssg.dll reads that key when frame generation starts, so a change applies on the next launch. Setting dlssgPreset through openshaders.feature writes the key; Default removes it only when replacing an explicit preset. Flatrim only. Params: none.",
+		([](const Feature* self, const json&) -> json {
+			const auto& upscaling = *static_cast<const Upscaling*>(self);
+			return json{
+				{ "selected", upscaling.settings.dlssgPreset },
+				{ "atBoot", upscaling.bootSnapshot.Boot(&Settings::dlssgPreset) },
+				{ "driverProfileValue", optionalJson(Streamline::ReadDLSSGPresetFromDriverProfile()) }
+			};
+		}));
+
 	FEATURE_COMMAND("retryNeuralRendering",
 		"Queue one Neural Rendering retry: the same flag the Retry NR button sets. The next enabled world frame retires and rebuilds a failed runtime, and the request resets history; a healthy runtime is not rebuilt. Params: none.",
 		RetryNeuralRendering);

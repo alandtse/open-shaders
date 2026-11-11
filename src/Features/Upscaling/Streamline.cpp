@@ -437,6 +437,15 @@ void Streamline::ApplyDLSSGPresetToDriverProfile(uint32_t a_previousPreset, uint
 			magic_enum::enum_name(static_cast<DLSSGPreset::Preset>(a_preset)), Util::NvApiDrs::kKeyDLSSGPreset);
 }
 
+std::optional<uint32_t> Streamline::ReadDLSSGPresetFromDriverProfile()
+{
+	Util::NvApiDrs::Api drs{};
+	uint32_t value = 0;
+	if (!drs.TryGetSkyrimSetting(Util::NvApiDrs::kKeyDLSSGPreset, value))
+		return std::nullopt;
+	return value;
+}
+
 /**
  * @brief Updates and sets camera and frame constants for the current Streamline frame.
  *

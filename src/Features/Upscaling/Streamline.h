@@ -183,6 +183,9 @@ public:
 	 */
 	static void ApplyDLSSGPresetToDriverProfile(uint32_t a_previousPreset, uint32_t a_preset);
 
+	/** @brief Reads the driver profile's DLSS-FG preset key; empty when the key is unset or the profile is unreadable. */
+	static std::optional<uint32_t> ReadDLSSGPresetFromDriverProfile();
+
 	/** @brief Binds DLSS and Reflex feature functions after the D3D device is created. */
 	void PostDevice();
 
