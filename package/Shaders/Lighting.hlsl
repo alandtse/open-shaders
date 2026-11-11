@@ -2898,6 +2898,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #			if defined(ENVIRONMENT_RAIN_DROPS)
 	const bool evaluateEnvironmentDrops =
 		!characterRainSurface &&
+		(Permutation::PixelShaderDescriptor & Permutation::LightingFlags::CharacterLight) == 0 &&
 		SharedData::wetnessEffectsSettings.EnableRaindropFx &&
 		SharedData::wetnessEffectsSettings.Raining > 0.01f &&
 		!SharedData::InInterior &&
