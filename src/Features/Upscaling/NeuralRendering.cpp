@@ -1958,11 +1958,11 @@ namespace
 	}
 
 	/** @brief Draws the model scale and its guided upsample. The scale applies on release, because each size rebuilds the model. Returns true when it changed. */
-	bool DrawModelScaleControls(NR::Tuning& tuning, bool developerMode)
+	bool DrawModelScaleControls(NR::Tuning& tuning)
 	{
 		bool changed = false;
 		const bool unusedByMode = globals::game::isVR && NR::GetEyeMode(tuning) == NR::EyeMode::kAlternate;
-		ImGui::BeginDisabled(!developerMode || unusedByMode);
+		ImGui::BeginDisabled(unusedByMode);
 		const char* label = T(TKEY("model_scale"), "Model Scale");
 		const ImGuiID id = ImGui::GetID(label);
 		ImGuiStorage* storage = ImGui::GetStateStorage();
@@ -1981,17 +1981,17 @@ namespace
 		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("model_scale_tooltip"),
-				"Runs the model at a fraction of the eye size and carries only its brightness change back to the full image. 0.75 saves about 8% of the model's GPU time and 0.5 about 16%, with a loss of fine detail. It needs Developer Mode and does not apply with Alternate eyes."));
+				"Lower values can improve performance but reduce Neural Rendering quality and detail. Does not apply with Alternate eyes."));
 		ImGui::BeginDisabled(tuning.modelScale >= NR::Tuning::kMaxModelScale);
 		changed |= ImGui::Checkbox(T(TKEY("model_guided_upsample"), "Guided Upsample"), &tuning.modelGuidedUpsample);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("model_guided_upsample_tooltip"),
-				"Uses the source image to keep the upsampled brightness change aligned with edges."));
+				"Helps keep the Neural Rendering effect aligned with edges."));
 		ImGui::BeginDisabled(!tuning.modelGuidedUpsample);
 		changed |= ImGui::Checkbox(T(TKEY("model_rgb_guided_upsample"), "RGB Guidance"), &tuning.modelRgbGuidedUpsample);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("model_rgb_guided_upsample_tooltip"),
-				"Uses colour similarity to keep the brightness change on the matching side of an edge. Enabled by default whenever the model uses a reduced grid."));
+				"Helps keep the Neural Rendering effect from bleeding across colour edges. Enabled by default when needed."));
 		ImGui::EndDisabled();
 		ImGui::EndDisabled();
 		ImGui::EndDisabled();
@@ -2230,7 +2230,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 			ImGui::TextUnformatted(T(TKEY("region_overlay_tooltip"),
 				"Draws the evaluated crop: a green outline in the game frame and the same rectangle over the preview below. Only meaningful with Limit to Tracked Actor on, and it draws nothing while no character is tracked, since the whole frame is evaluated then."));
 		ImGui::EndDisabled();
-		if (DrawModelScaleControls(tuning, developerMode)) {
+		if (DrawModelScaleControls(tuning)) {
 			changed = true;
 			resetHistory = true;
 		}
@@ -2491,7 +2491,6 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 	const auto effective = [&] {
 		auto resolved = NR::Context::EffectiveTuning(tuning, contexts, context.kind);
 		if (!globals::state->IsDeveloperMode()) {
-			resolved.modelScale = NR::Tuning::kMaxModelScale;
 			resolved.sbsEvaluate = resolved.modelVerify = resolved.mirrorEyes = false;
 		}
 		if (globals::game::isVR && NR::GetEyeMode(resolved) == NR::EyeMode::kAlternate)
