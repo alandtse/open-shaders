@@ -18,6 +18,7 @@
 #include "../Upscaling.h"
 #include "CameraReprojection.h"
 #include "DLSSGDynamic.h"
+#include "DLSSGPreset.h"
 #include "DX12SwapChain.h"
 #include "FoveatedRender/Bridge.h"
 #include "FoveatedRender/Ops.h"
@@ -416,6 +417,24 @@ bool Streamline::IsSmoothMotionEnabledForProfile()
 	Util::NvApiDrs::Api drs{};
 	uint32_t enableValue = 0;
 	return drs.TryGetSkyrimSetting(Util::NvApiDrs::kKeySmoothMotionEnable, enableValue) && enableValue != 0;
+}
+
+void Streamline::ApplyDLSSGPresetToDriverProfile(uint32_t a_previousPreset, uint32_t a_preset)
+{
+	const auto action = DLSSGPreset::PlanProfileAction(a_previousPreset, a_preset);
+	if (action == DLSSGPreset::ProfileAction::kNone)
+		return;
+
+	Util::NvApiDrs::Api drs{};
+	const bool written = action == DLSSGPreset::ProfileAction::kSet ?
+	                         drs.TrySetSkyrimSetting(Util::NvApiDrs::kKeyDLSSGPreset, a_preset) :
+	                         drs.TryDeleteSkyrimSetting(Util::NvApiDrs::kKeyDLSSGPreset);
+	if (written)
+		logger::info("[Streamline DX12] DLSS-G preset {} written to the driver profile (DRS key {:#x}); applies on the next launch",
+			magic_enum::enum_name(static_cast<DLSSGPreset::Preset>(a_preset)), Util::NvApiDrs::kKeyDLSSGPreset);
+	else
+		logger::warn("[Streamline DX12] Failed to write DLSS-G preset {} to the driver profile (DRS key {:#x})",
+			magic_enum::enum_name(static_cast<DLSSGPreset::Preset>(a_preset)), Util::NvApiDrs::kKeyDLSSGPreset);
 }
 
 /**

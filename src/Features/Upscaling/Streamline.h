@@ -176,6 +176,13 @@ public:
 	/** @brief Reads the driver's "Smooth Motion" DRS setting (see NvApiDrs::kKeySmoothMotionEnable) for this executable; not a Streamline feature. */
 	static bool IsSmoothMotionEnabledForProfile();
 
+	/**
+	 * @brief Writes a change of the selected DLSS-G preset (DLSSGPreset::Preset) to the driver
+	 * profile's DLSS-FG preset key; nvngx_dlssg.dll reads it when frame generation starts, so it
+	 * applies on the next launch.
+	 */
+	static void ApplyDLSSGPresetToDriverProfile(uint32_t a_previousPreset, uint32_t a_preset);
+
 	/** @brief Binds DLSS and Reflex feature functions after the D3D device is created. */
 	void PostDevice();
 

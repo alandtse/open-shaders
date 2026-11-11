@@ -97,6 +97,7 @@ public:
 		uint dlssgFramesToGenerate = 1;
 		bool dlssgDynamic = false;
 		float dlssgDynamicTargetFPS = 0.0f;  // 0 = display refresh rate
+		uint dlssgPreset = 0;                // DLSSGPreset::Preset: 0=Default, 1=A, 2=B, 3=C
 		uint streamlineLogLevel = 0;         // 0=Off, 1=Default, 2=Verbose
 		// Both default to 0.8, matching AMD's own FSR3 sample default.
 		float sharpnessFSR = 0.8f;
@@ -139,10 +140,11 @@ public:
 	// presetDLSS is deliberately NOT here: Streamline::SetDLSSOptions reads
 	// settings.presetDLSS per-frame and applies it via slDLSSSetOptions, so
 	// it's already runtime-effective.
-	inline static constexpr Util::Settings::RestartTable<Settings, 9> kRestartFields{ {
+	inline static constexpr Util::Settings::RestartTable<Settings, 10> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Allow frame generation below 120 Hz"),
 		UTIL_RESTART_FIELD(Settings, enableDLSSFrameGen, "Use NVIDIA DLSS-G"),
+		UTIL_RESTART_FIELD(Settings, dlssgPreset, "DLSS-G Preset"),
 		UTIL_RESTART_FIELD(Settings, renderAtUpscaleRes, "Render at Upscaled Resolution"),
 		UTIL_RESTART_FIELD(Settings, streamlineLogLevel, "Streamline Logging"),
 		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
@@ -537,6 +539,8 @@ private:
 	void DrawFrameGenerationSettings();
 	void DrawReflexSettings();
 	void DrawBackendDiagnostics();
+	/** @brief Writes a change of settings.dlssgPreset from a_previousPreset to the driver profile (flatrim only). */
+	void SyncDLSSGPresetDriverProfile(uint a_previousPreset) const;
 
 	// OpenComposite conflict guard: when the OpenComposite VR shim runs its own
 	// DLSS/FSR/DLAA upscaling, ours stands down to avoid double upscaling.

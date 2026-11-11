@@ -9,6 +9,7 @@
 #include "RenderDoc.h"
 #include "ScreenshotFeature.h"
 #include "State.h"
+#include "Upscaling/DLSSGPreset.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/FoveatedRender.h"
@@ -64,6 +65,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	dlssgFramesToGenerate,
 	dlssgDynamic,
 	dlssgDynamicTargetFPS,
+	dlssgPreset,
 	streamlineLogLevel,
 	sharpnessFSR,
 	sharpnessEnabledDLSS,
@@ -981,6 +983,25 @@ void Upscaling::DrawFrameGenerationSettings()
 				"Selects NVIDIA DLSS-G instead of AMD FSR on supported hardware.\n"
 				"Leave off to use AMD FSR."));
 
+		{
+			Util::DisableGuard presetDisabled(!settings.enableDLSSFrameGen);
+			const char* dlssgPresets[DLSSGPreset::kCount] = {
+				T(TKEY("dlssg_preset_default"), "Default"),
+				T(TKEY("dlssg_preset_a"), "Preset A"),
+				T(TKEY("dlssg_preset_b"), "Preset B"),
+				T(TKEY("dlssg_preset_c"), "Preset C (Performance)")
+			};
+			const uint previousPreset = settings.dlssgPreset;
+			if (Util::Combo(T(TKEY("dlssg_preset"), "DLSS-G Preset"), &settings.dlssgPreset, dlssgPresets))
+				SyncDLSSGPresetDriverProfile(previousPreset);
+			Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::dlssgPreset,
+				T(TKEY("dlssg_preset_tooltip"),
+					"Choose which DLSS-G frame generation model to use.\n"
+					"Default leaves the choice to the driver and the NVIDIA App.\n"
+					"Preset C is a lighter, faster model and needs DLSS-G 310.9.16 or newer.\n"
+					"Saved to the driver profile for Skyrim, replacing an NVIDIA App DLSS-G model override."));
+		}
+
 		bool fgForce = settings.frameGenerationForceEnable != 0;
 		if (ImGui::Checkbox(T(TKEY("force_enable_frame_generation"), "Allow frame generation below 120 Hz"), &fgForce))
 			settings.frameGenerationForceEnable = fgForce ? 1 : 0;
@@ -1299,6 +1320,7 @@ void Upscaling::LoadSettings(json& o_json)
 	}
 	// Missing schema fields take the current default during deserialization, so legacy settings need an explicit migration version.
 	const bool hadFsr4SchemaVersion = o_json.contains("fsr4RuntimeSelectionSchemaVersion");
+	const uint previousDLSSGPreset = settings.dlssgPreset;
 	settings = o_json;
 	settings.neuralRenderingTuning.Sanitize();
 	settings.neuralRenderingContexts.Sanitize();
@@ -1337,6 +1359,11 @@ void Upscaling::LoadSettings(json& o_json)
 		logger::warn("[Upscaling] Loaded presetDLSS {} out of range, resetting to 0 (Default)", settings.presetDLSS);
 		settings.presetDLSS = 0;
 	}
+	if (settings.dlssgPreset >= DLSSGPreset::kCount) {
+		logger::warn("[Upscaling] Loaded dlssgPreset {} out of range, resetting to 0 (Default)", settings.dlssgPreset);
+		settings.dlssgPreset = 0;
+	}
+	SyncDLSSGPresetDriverProfile(previousDLSSGPreset);
 	if (settings.streamlineLogLevel > 2) {  // Off, Default, Verbose
 		logger::warn("[Upscaling] Loaded streamlineLogLevel {} out of range, clamping to 2", settings.streamlineLogLevel);
 		settings.streamlineLogLevel = 2;
@@ -1375,10 +1402,18 @@ void Upscaling::LoadSettings(json& o_json)
 
 void Upscaling::RestoreDefaultSettings()
 {
+	const uint previousDLSSGPreset = settings.dlssgPreset;
 	settings = {};
+	SyncDLSSGPresetDriverProfile(previousDLSSGPreset);
 	neuralRendering.ResetHistory();
 	foveatedRender.RestoreDefaultSettings();
 	ApplyOpenCompositeUpscalingBlocker(true);
+}
+
+void Upscaling::SyncDLSSGPresetDriverProfile(uint a_previousPreset) const
+{
+	if (!globals::game::isVR)
+		Streamline::ApplyDLSSGPresetToDriverProfile(a_previousPreset, settings.dlssgPreset);
 }
 
 void Upscaling::DataLoaded()
