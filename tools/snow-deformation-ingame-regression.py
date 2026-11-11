@@ -244,8 +244,8 @@ def scenario_hands(bench, report):
     clear_modals(bench)
     rest = bench.diagnostics()
     probe = rest.get("HandProbe", [0.0, 0.0, 0.0])
-    on_landscape = probe[0] - probe[1] < 100
-    report.check("hands.spot", "PASS" if on_landscape else "FAIL", f"HandProbe={probe} (hand minus land over 100 means static ground, not landscape)")
+    on_landscape = probe[2] > 0 and probe[0] - probe[1] < 100
+    report.check("hands.spot", "PASS" if on_landscape else "FAIL", f"HandProbe={probe} (radius 0 means no hand sample; hand minus land over 100 means static ground, not landscape)")
     foot = {"front": 25, "offset": [0, 0, 3]}
     run = bench.call("input", {"action": "reach", "device": "vrTrackedSet", "owner": "snowreg", "holdMs": 12000, "toleranceUnits": 3,
                               "hands": {"left": {"node": "NPC L Foot [Lft ]", **foot}, "right": {"node": "NPC R Foot [Rft ]", **foot}},
