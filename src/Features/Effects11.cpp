@@ -176,11 +176,11 @@ namespace
 		if (!a_moonRays)
 			return false;
 
-		const auto* moon = skySync.GetVisibleMoonLightSource(a_sky);
-		if (!moon)
+		const auto caster = skySync.GetMoonLightCaster(a_sky);
+		if (caster == SkySync::Caster::Zenith)
 			return false;
 
-		const bool masser = moon == a_sky->masser;
+		const bool masser = caster == SkySync::Caster::Masser;
 		const auto moonColor = Util::Moon::GetBlendColor(masser ? a_sky->masser : a_sky->secunda, masser ? Util::Moon::MasserBaseColor : Util::Moon::SecundaBaseColor,
 			skySync.settings.NewMoonIntensity, skySync.settings.CrescentMoonIntensity, skySync.settings.FullMoonIntensity);
 		a_light = { float3(moonColor.x, moonColor.y, moonColor.z), Util::GetMoonDirection(masser ? a_sky->masser : a_sky->secunda), masser ? a_perFrame.MasserBillboardTan : a_perFrame.SecundaBillboardTan, moonMaskExponent, false };
