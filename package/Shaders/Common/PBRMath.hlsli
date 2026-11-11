@@ -149,7 +149,7 @@ namespace PBR
 		// Light scattered inside the sheet is no longer available for surface reflection.
 		float3 weights = float3(subsurfaceShare * (1.0f - backShare), subsurfaceShare * backShare, 1.0f - subsurfaceShare);
 		float3 litFaceAlbedo = weights.z * baseColor + weights.x * scatteringColor;
-#if defined(TRUE_PBR) && (defined(TREE_ANIM) || defined(LIGHTING) || defined(GRASS_LIGHTING))
+#if defined(TRUE_PBR) && !defined(VSHADER) && (defined(TREE_ANIM) || defined(LIGHTING) || defined(GRASS_LIGHTING))
 		// Subsurface share and balance are linear energy shares, not gamma-encoded material colors.
 #	if !defined(GRASS_LIGHTING)
 		if (IsThinSurfaceMaterial(PBRFlags))
@@ -193,7 +193,7 @@ namespace PBR
 		out float3 reflection, out float3 transmission)
 	{
 		float3 transmittance = (1.0f - saturate(opacity)).xxx;
-#if defined(TRUE_PBR) && (defined(TREE_ANIM) || defined(LIGHTING) || defined(GRASS_LIGHTING))
+#if defined(TRUE_PBR) && !defined(VSHADER) && (defined(TREE_ANIM) || defined(LIGHTING) || defined(GRASS_LIGHTING))
 #	if !defined(GRASS_LIGHTING)
 		if (IsThinSurfaceMaterial(PBRFlags))
 #	endif

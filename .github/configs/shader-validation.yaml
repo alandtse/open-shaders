@@ -13021,10 +13021,17 @@ shaders:
                     defines: *id013
                   - entry: Grass:Pixel:10007
                     defines: *id014
+                  - entry: Grass:Pixel:10009
+                    defines:
+                        - DO_ALPHA_TEST
+                        - TRUE_PBR
                   - entry: Grass:Pixel:6
                     defines: *id001
                   - entry: Grass:Pixel:7
                     defines: *id012
+                  - entry: Grass:Pixel:9
+                    defines:
+                        - TRUE_PBR
           VSHADER:
               common_defines:
                   - CLOUD_SHADOWS
@@ -13057,8 +13064,15 @@ shaders:
                     defines: *id013
                   - entry: Grass:Vertex:10007
                     defines: *id014
+                  - entry: Grass:Vertex:10009
+                    defines:
+                        - DO_ALPHA_TEST
+                        - TRUE_PBR
                   - entry: Grass:Vertex:7
                     defines: *id012
+                  - entry: Grass:Vertex:9
+                    defines:
+                        - TRUE_PBR
     - file: Sky.hlsl
       configs:
           PSHADER:
