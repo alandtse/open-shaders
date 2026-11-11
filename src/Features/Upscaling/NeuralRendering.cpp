@@ -337,6 +337,8 @@ struct NeuralRendering::Impl
 	bool materialStrengthBound = false;
 	/** @brief Reduced models apply source-aligned material strengths in the existing composite. */
 	bool materialStrengthComposite = false;
+	/** @brief The source-resolution compositor could not read the material lane this session. */
+	bool materialCompositeDegraded = false;
 	/** @brief Latched setup failure: the material lane or the alpha texture is unusable for this session. */
 	bool materialStrengthDegraded = false;
 	std::unique_ptr<Texture2D> original;
@@ -1093,6 +1095,10 @@ struct NeuralRendering::Impl
 		if (!target.SRV)
 			return nullptr;
 		auto* srv = Util::AsReal(target.SRV);
+		D3D11_SHADER_RESOURCE_VIEW_DESC view{};
+		srv->GetDesc(&view);
+		if (view.Format != DXGI_FORMAT_R16G16_UNORM || view.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D || view.Texture2D.MostDetailedMip != 0)
+			return nullptr;
 		D3D11_TEXTURE2D_DESC desc{};
 		return Util::GetTexture2DDesc(srv, desc) && desc.Format == DXGI_FORMAT_R16G16_UNORM &&
 		               desc.Width >= width * eyeCount && desc.Height >= height && desc.ArraySize == 1 && desc.SampleDesc.Count == 1 ?
@@ -1231,10 +1237,11 @@ struct NeuralRendering::Impl
 			return true;
 		}
 		materialStrengthInFlight = materialStrengthBound = materialStrengthComposite = false;
-		if (materialStrengthWanted && !materialStrengthDegraded) {
+		if (materialStrengthWanted) {
+			auto& degraded = lowRes ? materialCompositeDegraded : materialStrengthDegraded;
 			auto* lane = MaterialLane();
 			if (!lane) {
-				materialStrengthDegraded = true;
+				degraded = true;
 				logger::warn("[NeuralRendering] material strength unavailable: the deferred material lane is not present, so the whole frame is processed");
 			} else if (lowRes) {
 				materialStrengthBound = true;
@@ -1242,7 +1249,7 @@ struct NeuralRendering::Impl
 			} else if (BuildMaterialAlpha(lane, materialStrengths)) {
 				materialStrengthInFlight = materialStrengthBound = true;
 			} else {
-				materialStrengthDegraded = true;
+				degraded = true;
 				logger::warn("[NeuralRendering] material strength unavailable: its shader or texture could not be created, so the whole frame is processed");
 			}
 		}
@@ -2498,7 +2505,9 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 	const auto materialStrengths = effective.MaterialStrengths();
 	const auto publishMaterialStrength = [this, &materialStrengths] {
 		materialStrengthActive.store(impl->materialStrengthBound, std::memory_order_relaxed);
-		materialStrengthAvailable.store(!impl->materialStrengthDegraded && !materialStrengthRejected.load(std::memory_order_relaxed), std::memory_order_relaxed);
+		materialStrengthAvailable.store(NR::MaterialStrength::IsAvailable(impl->lowWidth != 0,
+											materialStrengthRejected.load(std::memory_order_relaxed), impl->materialStrengthDegraded, impl->materialCompositeDegraded),
+			std::memory_order_relaxed);
 		for (size_t i = 0; i < materialStrengths.strength.size(); ++i)
 			materialStrengthValues[i].store(materialStrengths.strength[i], std::memory_order_relaxed);
 		materialEdgeSoftness.store(materialStrengths.edgeSoftness, std::memory_order_relaxed);
@@ -2582,8 +2591,10 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 				throw std::runtime_error("Missing or incompatible NR guide texture");
 		}
 		const auto lowExtent = NR::ModelExtent(effective.modelScale, w, h);
-		const bool materialStrengthWanted = effective.materialStrength && !materialStrengthRejected.load(std::memory_order_relaxed);
-		const bool providerStrengthWanted = materialStrengthWanted && lowExtent.first == 0;
+		const bool providerRejected = materialStrengthRejected.load(std::memory_order_relaxed);
+		const bool materialStrengthWanted = effective.materialStrength && NR::MaterialStrength::IsAvailable(lowExtent.first != 0,
+																			  providerRejected, work.materialStrengthDegraded, work.materialCompositeDegraded);
+		const bool providerStrengthWanted = effective.materialStrength && !providerRejected && lowExtent.first == 0;
 		if (providerStrengthWanted != work.materialStrengthOn) {
 			recreate = resetHistory = true;
 			work.materialStrengthOn = providerStrengthWanted;
