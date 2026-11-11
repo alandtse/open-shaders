@@ -4073,6 +4073,8 @@
     "feature.snow_deformation.triangle_size_tooltip": "On-screen size of the triangles generated over prints, in pixels. Lower is sharper and costs more.",
     "feature.snow_deformation.use_snow_cover": "Press Into Snow Cover Snow",
     "feature.snow_deformation.use_snow_cover_tooltip": "Ground that Snow Cover paints white takes prints too, not only vanilla snow textures.",
+    "feature.snow_deformation.weight_response": "Light Items Press Less",
+    "feature.snow_deformation.weight_response_tooltip": "Heavier items press deeper into the snow and very light ones, such as feathers, leave no print.",
     "feature.sss.albedo_handling": "Albedo Handling",
     "feature.sss.base_profile": "Base Profile",
     "feature.sss.blur_radius": "Blur Radius",

@@ -57,6 +57,7 @@ struct SnowDeformation : Feature
 		bool IncludeNPCs = true;
 		bool IncludeObjects = true;
 		bool IncludeHands = true;
+		bool WeightResponse = false;
 		bool UseSnowCover = true;
 		bool DisplaceShadows = true;
 		bool SinkActors = true;
@@ -283,6 +284,8 @@ private:
 		RE::NiPoint3 centre;
 		float radius = 0.0f;
 		RE::bhkNiCollisionObject* object = nullptr;
+		float weight = 0.0f;
+		float area = 0.0f;
 	};
 
 	struct HandBlob
@@ -296,6 +299,16 @@ private:
 
 		void Add(const Util::BodyCapsules::Capsule& a_capsule);
 		void Resolve(float a_minRadius, float3& a_centre, float& a_radius) const;
+	};
+
+	struct ObjectSample
+	{
+		std::string name;
+		float weight = 0.0f;
+		float radius = 0.0f;
+		float area = 0.0f;
+		float pressure = 0.0f;
+		float scale = 1.0f;
 	};
 
 	struct CachedShape
@@ -501,6 +514,8 @@ private:
 
 	std::mutex stampLock;
 	std::vector<Stamp> pendingStamps;
+	std::vector<ObjectSample> gatherObjectSamples;
+	std::vector<ObjectSample> objectSamples;
 	std::vector<Stamp> gatherStamps;
 	std::vector<Stamp> frameStamps;
 	std::unordered_map<const void*, TrackedShape> shapeMotion;
