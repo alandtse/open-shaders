@@ -29,6 +29,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	IncludeObjects,
 	IncludeHands,
 	WeightResponse,
+	SnowDrag,
+	DensityFloor,
+	SnowDragStrength,
 	UseSnowCover,
 	DisplaceShadows,
 	SinkActors,
@@ -65,6 +68,14 @@ namespace
 	constexpr float kHeavyPressure = 0.03f;
 	constexpr float kMinWeightScale = 0.05f;
 	constexpr size_t kMaxObjectSamples = 16;
+	constexpr float kRollDragScale = 2.0f;
+	constexpr float kFloorSpring = 6.0f;
+	constexpr float kFloorMaxRise = 60.0f;
+	constexpr float kFloorMinHeight = 1.0f;
+	constexpr float kFloorTolerance = 0.5f;
+	constexpr float kFloorDropMargin = 2.0f;
+	constexpr float kRestSpeedSquared = 1e-4f;
+	constexpr float kMaxDragStrength = 10.0f;
 	constexpr float kHandRange = 800.0f;
 	constexpr float kHandBrushMotion = 0.25f;
 	constexpr float kHandMinRadius = 4.0f;
@@ -91,6 +102,8 @@ namespace
 	constexpr uint8_t kKindPress = 0;
 	constexpr uint8_t kKindMelt = 1;
 	constexpr uint8_t kKindWade = 2;
+	constexpr uint8_t kKindProbe = 3;
+	constexpr float kProbeMaxRadius = 12.0f;
 	constexpr float kWadeSpread = 1.6f;
 	constexpr float kWadeMinDepth = 0.5f;
 	constexpr float kWadeReachMargin = 8.0f;
@@ -560,6 +573,19 @@ namespace
 			return SnowDeformationMath::CapsuleFootprint(length, radius);
 		}
 		return SnowDeformationMath::BoxFootprint(frame.Extent(0), frame.Extent(1));
+	}
+
+	bool IsDynamicMotion(RE::hkpMotion::MotionType a_type)
+	{
+		switch (a_type) {
+		case RE::hkpMotion::MotionType::kDynamic:
+		case RE::hkpMotion::MotionType::kSphereInertia:
+		case RE::hkpMotion::MotionType::kBoxInertia:
+		case RE::hkpMotion::MotionType::kThinBoxInertia:
+			return true;
+		default:
+			return false;
+		}
 	}
 
 	bool GetShapeSegment(RE::bhkNiCollisionObject* a_object, const RE::NiPoint3& a_centre, ShapeSegment& a_segment)
@@ -1330,6 +1356,7 @@ void SnowDeformation::GatherStamps()
 		std::scoped_lock lock(stampLock);
 		pendingStamps.clear();
 		measuredSinks.clear();
+		measuredDepth.clear();
 		return;
 	}
 
@@ -1433,6 +1460,65 @@ void SnowDeformation::MeasureBlanket()
 		blanketResults.insert(blanketResults.end(), results.begin(), results.end());
 }
 
+float SnowDeformation::FloatRestHeight(const Contact& a_contact, float a_blanket, float a_depression) const
+{
+	const float pressure = SnowDeformationMath::ContactPressure(a_contact.weight, a_contact.area > 0.0f ? a_contact.area : SnowDeformationMath::CircleFootprint(a_contact.radius));
+	return SnowDeformationMath::RestHeight(a_blanket, a_depression, SnowDeformationMath::WeightScale(pressure, kLightPressure, kHeavyPressure));
+}
+
+uint8_t SnowDeformation::ApplySnowPhysics(const Contact& a_contact, float a_bottom, float a_landZ, float a_blanket, float a_depression, RE::FormID a_ref)
+{
+	auto rigid = a_contact.object && a_contact.object->body ? a_contact.object->body->AsBhkRigidBody() : nullptr;
+	auto body = rigid ? skyrim_cast<RE::hkpRigidBody*>(rigid->referencedObject.get()) : nullptr;
+	if (!body)
+		return 0;
+	if (!IsDynamicMotion(body->motion.type.get()))
+		return 1;
+
+	float linear[4];
+	float angular[4];
+	_mm_storeu_ps(linear, body->motion.linearVelocity.quad);
+	_mm_storeu_ps(angular, body->motion.angularVelocity.quad);
+
+	const float speedSquared = linear[0] * linear[0] + linear[1] * linear[1] + linear[2] * linear[2] + angular[0] * angular[0] + angular[1] * angular[1] + angular[2] * angular[2];
+	const float surface = a_landZ + a_blanket;
+	bool changed = false;
+	if (settings.SnowDrag) {
+		const float submerged = SnowDeformationMath::SubmergedFraction(a_bottom, surface, 2.0f * a_contact.radius);
+		const float strength = std::clamp(settings.SnowDragStrength, 0.0f, kMaxDragStrength);
+		const float dt = std::clamp(RE::GetSecondsSinceLastFrame(), 0.0f, kMaxDeltaTime);
+		if (submerged > 0.0f && speedSquared > kRestSpeedSquared) {
+			const float linearFactor = SnowDeformationMath::DragFactor(strength, submerged, dt);
+			const float angularFactor = SnowDeformationMath::DragFactor(strength * kRollDragScale, submerged, dt);
+			for (size_t i = 0; i < 3; ++i) {
+				linear[i] *= linearFactor;
+				angular[i] *= angularFactor;
+			}
+			changed = true;
+		}
+	}
+	if (settings.DensityFloor) {
+		const float floorHeight = FloatRestHeight(a_contact, a_blanket, a_depression);
+		const float rest = a_landZ + floorHeight;
+		const float scale = RE::bhkWorld::GetWorldScaleInverse();
+		const float rise = SnowDeformationMath::FloorRiseSpeed(rest - a_bottom, kFloorSpring, kFloorMaxRise);
+		if (floorHeight > kFloorMinHeight && rest - a_bottom > kFloorTolerance && linear[2] * scale < rise) {
+			linear[2] = rise / scale;
+			floatedObjects.insert(a_ref);
+			changed = true;
+		} else if (a_bottom - rest > kFloorDropMargin && floatedObjects.erase(a_ref) > 0) {
+			changed = true;
+		}
+	}
+	if (!changed)
+		return 2;
+
+	rigid->SetLinearVelocity(RE::hkVector4{ linear[0], linear[1], linear[2], 0.0f });
+	rigid->SetAngularVelocity(RE::hkVector4{ angular[0], angular[1], angular[2], 0.0f });
+	physicsBodies.fetch_add(1, std::memory_order_relaxed);
+	return 3;
+}
+
 void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 {
 	auto tes = globals::game::tes;
@@ -1470,18 +1556,21 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 
 		const float weight = ref->GetWeight();
 		contactScratch.clear();
+		RE::bhkNiCollisionObject* anyCollision = nullptr;
 		RE::BSVisit::TraverseScenegraphCollision(root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
+			if (!anyCollision && a_object->body)
+				anyCollision = a_object;
 			RE::NiPoint3 centre;
 			float radius = 0.0f;
 			if (Util::GetShapeBound(a_object, centre, radius) && radius > 0.1f && radius <= 128.0f)
-				contactScratch.push_back({ a_object, centre, radius, nullptr, weight, ShapeFootprintArea(a_object) });
+				contactScratch.push_back({ a_object, centre, radius, a_object, weight, ShapeFootprintArea(a_object) });
 			return RE::BSVisit::BSVisitControl::kContinue;
 		});
 		if (contactScratch.empty()) {
 			const auto& bound = root->worldBound;
 			if (!(bound.radius > 0.1f) || bound.radius > 128.0f)
 				continue;
-			contactScratch.push_back({ root, bound.center, bound.radius, nullptr, weight, SnowDeformationMath::CircleFootprint(bound.radius) });
+			contactScratch.push_back({ root, bound.center, bound.radius, anyCollision, weight, SnowDeformationMath::CircleFootprint(bound.radius) });
 		}
 		std::sort(contactScratch.begin(), contactScratch.end(), [](const Contact& a_lhs, const Contact& a_rhs) { return a_lhs.radius > a_rhs.radius; });
 		if (contactScratch.size() > kMaxObjectShapes)
@@ -1498,8 +1587,37 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 		if (drop > kObjectContact || drop < -(carve + kBelowGroundLimit))
 			continue;
 
+		const RE::FormID refID = ref->GetFormID();
+		const bool physicsActive = gatherOnUpdate && carve > 0.0f;
+		float depression = 0.0f;
+		bool floating = false;
+		if (physicsActive && settings.DensityFloor) {
+			{
+				std::scoped_lock lock(stampLock);
+				if (const auto found = measuredDepth.find(refID); found != measuredDepth.end())
+					depression = std::clamp(found->second, 0.0f, carve);
+			}
+			floating = FloatRestHeight(contactScratch.front(), carve, depression) > kFloorMinHeight;
+		}
+		uint8_t physicsState = 0;
+		if (physicsActive && (settings.SnowDrag || settings.DensityFloor))
+			physicsState = ApplySnowPhysics(contactScratch.front(), bottom, landZ, carve, depression, refID);
+
 		const float normalZ = LandNormalZ(tes, probe, landZ);
 		const float vanillaSnow = IsVanillaSnow(tes->GetLandMaterialType(probe)) ? 1.0f : 0.0f;
+		if (floating && a_stamps.size() < kMaxStamps) {
+			const auto& front = contactScratch.front();
+			Stamp stamp{};
+			stamp.x = front.centre.x;
+			stamp.y = front.centre.y;
+			stamp.radius = std::min(front.radius, kProbeMaxRadius);
+			stamp.kind = kKindProbe;
+			stamp.owner = refID;
+			stamp.vanillaSnow = vanillaSnow;
+			stamp.landZ = landZ;
+			stamp.normalZ = normalZ;
+			a_stamps.push_back(stamp);
+		}
 		for (const auto& contact : contactScratch) {
 			if (a_stamps.size() >= kMaxStamps)
 				break;
@@ -1507,8 +1625,8 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 			const float pressure = SnowDeformationMath::ContactPressure(contact.weight, area);
 			const float weightScale = settings.WeightResponse ? SnowDeformationMath::WeightScale(pressure, kLightPressure, kHeavyPressure) : 1.0f;
 			if (gatherObjectSamples.size() < kMaxObjectSamples)
-				gatherObjectSamples.push_back({ ref->GetDisplayFullName(), contact.weight, contact.radius, area, pressure, weightScale });
-			if (weightScale < kMinWeightScale)
+				gatherObjectSamples.push_back({ ref->GetDisplayFullName(), contact.weight, contact.radius, area, pressure, weightScale, drop, physicsState, depression });
+			if (floating || weightScale < kMinWeightScale)
 				continue;
 			Stamp stamp{};
 			stamp.x = contact.centre.x;
@@ -2097,12 +2215,13 @@ void SnowDeformation::UpdateLevel(uint32_t a_index, const RE::NiPoint3& a_positi
 		const float highY = localY + std::max(0.0f, -stamp.motionY) + reach;
 		const bool wade = stamp.kind == kKindWade;
 		const float stampCarve = wade ? std::max(carve - stamp.clearance, 0.0f) : carve;
-		const float stampBound = stamp.kind == kKindMelt ? std::max(-stamp.rim, 2.0f * kActiveEpsilon) :
-		                                                   std::max(stamp.depth * (1.0f + kChurn) * snow + stampCarve, stamp.rim * (1.0f + kRimNoise) * snow);
+		const float stampBound = stamp.kind == kKindMelt  ? std::max(-stamp.rim, 2.0f * kActiveEpsilon) :
+		                         stamp.kind == kKindProbe ? 2.0f * kActiveEpsilon :
+		                                                    std::max(stamp.depth * (1.0f + kChurn) * snow + stampCarve, stamp.rim * (1.0f + kRimNoise) * snow);
 
 		updateParams.Stamps[i] = { localX, localY, stamp.radius, stamp.depth };
 		updateParams.StampShape[i] = { stamp.forwardX, stamp.forwardY, stamp.halfWidth, stamp.rim };
-		updateParams.StampMotion[i] = { stamp.motionX, stamp.motionY, stamp.vanillaSnow, carve };
+		updateParams.StampMotion[i] = { stamp.motionX, stamp.motionY, stamp.vanillaSnow, stamp.kind == kKindProbe ? 0.0f : carve };
 		updateParams.StampSurface[i] = { stamp.landZ, stamp.normalZ, stamp.kind == kKindMelt ? 1.0f : 0.0f, wade ? 1.0f + stamp.clearance : 0.0f };
 		updateParams.StampBounds[i] = { lowX, lowY, highX, highY };
 
@@ -2187,9 +2306,12 @@ void SnowDeformation::UpdateLevel(uint32_t a_index, const RE::NiPoint3& a_positi
 			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
 			context->CSSetShader(updateCS.get(), nullptr, 0);
 			context->Dispatch((kTileTexels / 8) * (kTileTexels / 8), entryCount, 1);
-			if (fine && a_sinking)
+			if (fine && (a_sinking || probeStampsPresent))
 				DispatchProbes(frameStampCount);
 		}
+
+		if (entryCount == 0 && fine && probeStampsPresent)
+			DispatchProbes(frameStampCount);
 
 		if (runBlanket) {
 			ID3D11ShaderResourceView* resources[5] = { nullptr, snowMap, probes, nullptr, blanketLandTexture->srv.get() };
@@ -2250,6 +2372,7 @@ void SnowDeformation::UpdateField()
 		std::scoped_lock lock(stampLock);
 		pendingStamps.clear();
 		measuredSinks.clear();
+		measuredDepth.clear();
 	}
 	if (!gatherOnUpdate)
 		GatherStamps();
@@ -2297,22 +2420,24 @@ void SnowDeformation::UpdateField()
 
 	const bool snowCover = IsSnowCoverActive();
 	probeOwners.clear();
+	probeStampsPresent = false;
 	stampSnow.clear();
 	stampReach.clear();
 	std::vector<std::pair<RE::FormID, float>> offSnow;
 	uint32_t kept = 0;
 	for (size_t s = 0; s < frameStamps.size() && kept < kMaxStamps; ++s) {
 		const auto& stamp = frameStamps[s];
-		if (stamp.kind == kKindWade && !blanketActive)
+		if ((stamp.kind == kKindWade || stamp.kind == kKindProbe) && !blanketActive)
 			continue;
 		const float reach = std::max(stamp.radius, stamp.halfWidth) * (1.0f + 2.0f * kRimWidth) + 2.0f * kCellSize * kCoarseScale;
 		const float snow = std::max(stamp.vanillaSnow, snowCover ? SnowCoverUpperBound(stamp, reach) : 0.0f);
 		const float wade = stamp.kind == kKindWade ? blanketHeight - stamp.clearance : 0.0f;
-		if (snow * std::max({ stamp.depth, stamp.rim, wade }) < kActiveEpsilon) {
+		if (stamp.kind != kKindProbe && snow * std::max({ stamp.depth, stamp.rim, wade }) < kActiveEpsilon) {
 			offSnow.emplace_back(stamp.owner, 0.0f);
 			continue;
 		}
 		frameStamps[kept++] = stamp;
+		probeStampsPresent = probeStampsPresent || stamp.kind == kKindProbe;
 		stampSnow.push_back(snow);
 		stampReach.push_back(reach);
 		probeOwners.push_back(stamp.owner);
@@ -2567,8 +2692,10 @@ void SnowDeformation::PublishMeasurements(const std::vector<std::pair<RE::FormID
 	if (a_measurements.empty())
 		return;
 	std::scoped_lock lock(stampLock);
-	for (const auto& [owner, depth] : a_measurements)
+	for (const auto& [owner, depth] : a_measurements) {
 		measuredSinks[owner] = depth;
+		measuredDepth[owner] = depth;
+	}
 }
 
 float SnowDeformation::SnowCoverUpperBound(const Stamp& a_stamp, float a_reach) const
@@ -3356,6 +3483,14 @@ void SnowDeformation::DrawSettings()
 	ImGui::Checkbox(T(TKEY("include_objects"), "Include Dropped Items"), &settings.IncludeObjects);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("include_objects_tooltip"), "Weapons, armour, loot, arrows and other items resting on the snow press into it too, and dig themselves out of the snow blanket."));
+	ImGui::Checkbox(T(TKEY("snow_drag"), "Snow Slows Rolling Items"), &settings.SnowDrag);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("snow_drag_tooltip"), "Items buried in a snow drift slow down and stop rolling sooner. Needs a snow blanket height above zero."));
+	if (settings.SnowDrag)
+		ImGui::SliderFloat(T(TKEY("snow_drag_strength"), "Drag Strength"), &settings.SnowDragStrength, 0.0f, kMaxDragStrength, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::Checkbox(T(TKEY("density_floor"), "Light Items Float"), &settings.DensityFloor);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("density_floor_tooltip"), "Light, broad items settle near the top of a snow drift instead of sinking to the ground."));
 	ImGui::Checkbox(T(TKEY("weight_response"), "Light Items Press Less"), &settings.WeightResponse);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("weight_response_tooltip"), "Heavier items press deeper into the snow and very light ones, such as feathers, leave no print."));
@@ -3427,10 +3562,11 @@ json SnowDeformation::GetDiagnostics()
 	{
 		std::scoped_lock lock(stampLock);
 		for (const auto& sample : objectSamples)
-			objects.push_back({ { "Name", sample.name }, { "Weight", sample.weight }, { "Radius", sample.radius }, { "Area", sample.area }, { "Pressure", sample.pressure }, { "Scale", sample.scale } });
+			objects.push_back({ { "Name", sample.name }, { "Weight", sample.weight }, { "Radius", sample.radius }, { "Area", sample.area }, { "Pressure", sample.pressure }, { "Scale", sample.scale }, { "Clearance", sample.clearance }, { "Physics", sample.physics }, { "Depression", sample.depression } });
 	}
 	return {
 		{ "Objects", objects },
+		{ "PhysicsBodies", physicsBodies.load(std::memory_order_relaxed) },
 		{ "Active", IsActiveContext() },
 		{ "Stamps", debugShown.stamps },
 		{ "HandStamps", handStamps.load(std::memory_order_relaxed) },
@@ -3466,6 +3602,7 @@ void SnowDeformation::LoadSettings(json& o_json)
 	};
 	sanitize(settings.BlanketHeight, defaults.BlanketHeight, 0.0f, kMaxBlanketHeight);
 	sanitize(settings.Depth, defaults.Depth, 1.0f, 20.0f);
+	sanitize(settings.SnowDragStrength, defaults.SnowDragStrength, 0.0f, kMaxDragStrength);
 	sanitize(settings.Lifetime, defaults.Lifetime, 10.0f, 1800.0f);
 	sanitize(settings.TrianglePixels, defaults.TrianglePixels, 2.0f, 32.0f);
 }

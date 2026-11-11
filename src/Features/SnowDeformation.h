@@ -58,6 +58,9 @@ struct SnowDeformation : Feature
 		bool IncludeObjects = true;
 		bool IncludeHands = true;
 		bool WeightResponse = false;
+		bool SnowDrag = false;
+		bool DensityFloor = false;
+		float SnowDragStrength = 3.0f;
 		bool UseSnowCover = true;
 		bool DisplaceShadows = true;
 		bool SinkActors = true;
@@ -309,6 +312,9 @@ private:
 		float area = 0.0f;
 		float pressure = 0.0f;
 		float scale = 1.0f;
+		float clearance = 0.0f;
+		uint8_t physics = 0;
+		float depression = 0.0f;
 	};
 
 	struct CachedShape
@@ -427,6 +433,9 @@ private:
 	void AppendActorStamps(RE::Actor* a_actor, const RE::NiPoint3& a_anchor, std::vector<Stamp>& a_stamps);
 	const std::vector<CachedShape>& ActorCollisions(RE::Actor* a_actor, RE::NiAVObject* a_root);
 	void AppendObjectStamps(std::vector<Stamp>& a_stamps);
+	/** @return 0 no rigid body, 1 not dynamic, 2 nothing to change, 3 velocity written. */
+	uint8_t ApplySnowPhysics(const Contact& a_contact, float a_bottom, float a_landZ, float a_blanket, float a_depression, RE::FormID a_ref);
+	[[nodiscard]] float FloatRestHeight(const Contact& a_contact, float a_blanket, float a_depression) const;
 	void AppendHandStamps(std::vector<Stamp>& a_stamps);
 	[[nodiscard]] Stamp MakePressStamp(RE::TES* a_tes, const RE::NiPoint3& a_position, float a_radius, float a_landZ, float a_motionX, float a_motionY) const;
 	void AppendHeatStamps(std::vector<Stamp>& a_stamps);
@@ -521,6 +530,9 @@ private:
 	std::unordered_map<const void*, TrackedShape> shapeMotion;
 	std::unordered_map<RE::FormID, bool> bootedRaces;
 	std::unordered_map<RE::FormID, float> measuredSinks;
+	std::unordered_map<RE::FormID, float> measuredDepth;
+	std::unordered_set<RE::FormID> floatedObjects;
+	bool probeStampsPresent = false;
 	std::unordered_map<RE::FormID, float> gatherMeasured;
 	std::unordered_map<RE::FormID, ActorSink> actorSinks;
 	std::vector<Contact> contactScratch;
@@ -554,6 +566,7 @@ private:
 	std::atomic<bool> loadClearField = false;
 	std::atomic<bool> loadClearMotion = false;
 	bool gatherOnUpdate = false;
+	std::atomic<uint32_t> physicsBodies = 0;
 
 	bool inZPrepass = false;
 	CameraKey mainCamera;
