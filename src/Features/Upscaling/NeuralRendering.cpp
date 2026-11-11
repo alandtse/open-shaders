@@ -798,8 +798,9 @@ struct NeuralRendering::Impl
 		float scaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
 		const uint64_t previous = cadence.lastModelFrame[i];
 		if (previous != NR::Cadence::kNoModelFrame && frameNumber - previous > 1 && tuning.skipFrameGapMode == 0) {
-			scaleX *= 2.0f;
-			scaleY *= 2.0f;
+			const float gapScale = NR::Cadence::GapScale(frameNumber, previous);
+			scaleX *= gapScale;
+			scaleY *= gapScale;
 		}
 		CS_GPU_PASS("Upscaling::NRCropMotion");
 		auto* shader = offsetMotion.Get(L"Data/Shaders/Upscaling/NeuralRendering/MotionOffsetCS.hlsl",
@@ -1178,8 +1179,9 @@ struct NeuralRendering::Impl
 			PlanSbs();
 		else
 			ReleaseSbs();
-		staggerActive = !lowRes && !sbs && tuning.skipFrameReuse && globals::game::isVR &&
-		                eyeCount == 2 && !frameGeneration;
+		const bool eyeStagger = tuning.skipFrameReuse && globals::game::isVR && eyeCount == 2;
+		const bool flatReuse = tuning.flatReuseInterval > 1 && !globals::game::isVR && eyeCount == 1;
+		staggerActive = !lowRes && !sbs && (eyeStagger || flatReuse) && !frameGeneration;
 		const bool calibrationRunning = globals::features::upscaling.neuralRendering.GetCalibration().state == NR::CropCalibration::State::kRunning;
 		reuseFrame = {};
 		const bool gainResourcesWanted = staggerActive || lowRes || (sbs && tuning.modelVerify);
@@ -1256,8 +1258,11 @@ struct NeuralRendering::Impl
 		for (uint32_t i = 0; i < eyeCount; ++i)
 			invalidate |= eyes[i].frame.reset;
 		const std::array<uint64_t, 2> previousModel = cadence.lastModelFrame;
+		const auto& cameraSample = diagnostic.camera[0];
+		const bool highMotion = NR::Cadence::IsHighMotion(cameraSample.directionDot, cameraSample.distance,
+			tuning.flatReuseMaxTurnDegrees, tuning.flatReuseMaxMoveUnits);
 		const NR::Cadence::Inputs cadenceInputs{ staggerActive, static_cast<bool>(globals::game::isVR), eyeCount,
-			static_cast<uint64_t>(diagnostic.number), invalidate };
+			static_cast<uint64_t>(diagnostic.number), invalidate, tuning.flatReuseInterval, highMotion };
 		const auto decision = NR::Cadence::Decide(cadenceInputs, cadence);
 		const bool verifyReuse = verifyRequested && staggerActive;
 		std::array<bool, 2> verifyEye{};
@@ -1353,9 +1358,10 @@ struct NeuralRendering::Impl
 					guides.depthInverted = globals::features::reverseZ.IsActive();
 					if (previousModel[i] != NR::Cadence::kNoModelFrame &&
 						static_cast<uint64_t>(diagnostic.number) - previousModel[i] > 1 && tuning.skipFrameGapMode == 0) {
-						guides.motionScaleX *= 2.0f;
-						guides.motionScaleY *= 2.0f;
-						eye.frame.frameTimeMs = NR::SanitizeFrameTimeMs(eye.frame.frameTimeMs * 2.0f);
+						const float gapScale = NR::Cadence::GapScale(static_cast<uint64_t>(diagnostic.number), previousModel[i]);
+						guides.motionScaleX *= gapScale;
+						guides.motionScaleY *= gapScale;
+						eye.frame.frameTimeMs = NR::SanitizeFrameTimeMs(eye.frame.frameTimeMs * gapScale);
 					}
 					const NR::ProtectionResources protection{
 						materialStrengthInFlight && eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr,
@@ -2174,6 +2180,29 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("region_follow_foveation_tooltip"),
 					"With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view."));
+		}
+		if (!globals::game::isVR && developerMode) {
+			int interval = static_cast<int>(tuning.flatReuseInterval);
+			if (ImGui::SliderInt(T(TKEY("flat_reuse_interval"), "Model Every Nth Frame"), &interval, 1, static_cast<int>(NR::Tuning::kMaxFlatReuseInterval))) {
+				tuning.flatReuseInterval = static_cast<uint32_t>(interval);
+				changed = true;
+				resetHistory = true;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("flat_reuse_interval_tooltip"),
+					"Runs the model once per this many frames and carries its reprojected tone gain onto the frames between, which saves the model's GPU time on those frames. A carried frame keeps the model's tone edit but not its detail, so fast motion and new surfaces can look softer. 1 runs the model every frame. Off while frame generation is active."));
+			if (tuning.flatReuseInterval > 1) {
+				if (ImGui::SliderFloat(T(TKEY("flat_reuse_max_turn"), "Run Model Above Turn (deg/frame)"), &tuning.flatReuseMaxTurnDegrees, 0.0f, NR::Tuning::kMaxFlatReuseTurnDegrees, "%.2f"))
+					changed = true;
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::TextUnformatted(T(TKEY("flat_reuse_max_turn_tooltip"),
+						"Runs the model on a frame where the camera turned more than this many degrees since the last frame, instead of carrying the old gain. 0 never falls back on turning."));
+				if (ImGui::SliderFloat(T(TKEY("flat_reuse_max_move"), "Run Model Above Move (units/frame)"), &tuning.flatReuseMaxMoveUnits, 0.0f, NR::Tuning::kMaxFlatReuseMoveUnits, "%.1f"))
+					changed = true;
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::TextUnformatted(T(TKEY("flat_reuse_max_move_tooltip"),
+						"Runs the model on a frame where the camera moved more than this many world units since the last frame, instead of carrying the old gain. 0 never falls back on movement."));
+			}
 		}
 		if (ImGui::Checkbox(T(TKEY("region_of_interest"), "Limit to Tracked Actor"), &tuning.regionOfInterest)) {
 			changed = true;

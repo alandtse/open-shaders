@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 
 namespace NR::Cadence
@@ -25,6 +27,10 @@ namespace NR::Cadence
 		 *        generation transition and the diagnostics that isolate history.
 		 */
 		bool invalidate = false;
+		/** @brief A one-view frame runs the model once per this many frames; 1 runs it every frame. */
+		uint32_t interval = 1;
+		/** @brief The camera moved or turned past the flat limits this frame, so a carried gain would be stale. */
+		bool highMotion = false;
 	};
 
 	/** @brief Per-eye memory the cadence keeps between frames. */
@@ -48,13 +54,23 @@ namespace NR::Cadence
 
 	/**
 	 * @brief Assigns one frame's model work to one eye.
-	 *        Without a two-eye frame every eye evaluates every frame. Otherwise the even frames evaluate
+	 *        A one-view frame with an interval above 1 runs the model on every interval-th frame, so a reused
+	 *        gain is at most interval - 1 frames old, and a high-motion frame runs the model off its turn. Without a two-eye frame every eye evaluates every frame. Otherwise the even frames evaluate
 	 *        eye 0 and the odd frames eye 1, and an eye whose last gain is missing or invalidated still
 	 *        evaluates off its turn, so a reused gain is never older than one frame.
 	 */
 	inline Decision Decide(const Inputs& inputs, State& state)
 	{
 		Decision decision;
+		if (inputs.enabled && !inputs.vr && inputs.eyeCount == 1 && inputs.interval > 1 && !inputs.invalidate) {
+			const bool due = inputs.frame % inputs.interval == 0;
+			decision.evaluate[0] = due || !state.valid[0] || inputs.highMotion;
+			if (decision.evaluate[0]) {
+				state.lastModelFrame[0] = inputs.frame;
+				state.valid[0] = false;
+			}
+			return decision;
+		}
 		const bool stagger = inputs.enabled && inputs.vr && inputs.eyeCount == 2;
 		if (!stagger || inputs.invalidate) {
 			for (uint32_t eye = 0; eye < 2; ++eye) {
@@ -74,5 +90,26 @@ namespace NR::Cadence
 			}
 		}
 		return decision;
+	}
+
+	/** @brief Frames since the eye's last model run; the model is told to expect this much motion and time. */
+	inline float GapScale(uint64_t frame, uint64_t lastModelFrame)
+	{
+		return lastModelFrame == kNoModelFrame || frame <= lastModelFrame ? 1.0f : static_cast<float>(frame - lastModelFrame);
+	}
+
+	/**
+	 * @brief Whether the camera turned or moved far enough since the last frame that a carried gain would be stale.
+	 *        A limit of 0 disables that test, and a non-finite sample counts as high motion so the model runs.
+	 * @param directionDot Dot product of the camera's forward direction this frame and last frame.
+	 * @param distance World units the camera moved since last frame.
+	 */
+	inline bool IsHighMotion(float directionDot, float distance, float maxTurnDegrees, float maxMoveUnits)
+	{
+		if (!std::isfinite(directionDot) || !std::isfinite(distance))
+			return true;
+		constexpr float kRadiansToDegrees = 57.2957795f;
+		const float turnDegrees = std::acos(std::clamp(directionDot, -1.0f, 1.0f)) * kRadiansToDegrees;
+		return (maxTurnDegrees > 0.0f && turnDegrees > maxTurnDegrees) || (maxMoveUnits > 0.0f && distance > maxMoveUnits);
 	}
 }

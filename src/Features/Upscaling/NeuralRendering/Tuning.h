@@ -46,6 +46,9 @@ namespace NR
 		static constexpr float kMinModelScale = 0.25f, kMaxModelScale = 1.0f;
 		static constexpr uint32_t kRegionFitPadded = 0, kRegionFitTight = 1, kMaxRegionFit = kRegionFitTight;
 		static constexpr uint32_t kMaxSkipFrameGapMode = 1;
+		static constexpr uint32_t kMaxFlatReuseInterval = 4;
+		static constexpr float kDefaultFlatReuseTurnDegrees = 1.0f, kMaxFlatReuseTurnDegrees = 10.0f;
+		static constexpr float kDefaultFlatReuseMoveUnits = 12.0f, kMaxFlatReuseMoveUnits = 100.0f;
 		static constexpr uint32_t kMaxModelPreset = 1;
 		uint32_t style = 0;
 		float intensity = kDefaultStrength;
@@ -132,6 +135,16 @@ namespace NR
 		bool skipFrameReuse = false;
 		/** @brief What a gap evaluation tells the model: 0 doubles its motion and frame time, 1 resets its history. */
 		uint32_t skipFrameGapMode = 0;
+		/**
+		 * @brief Flat only: runs the model once per this many frames and reuses its reprojected gain on the rest.
+		 *        1 runs it every frame. Developer-only and off by default, because a reused frame carries the
+		 *        model's tone edit but not its detail.
+		 */
+		uint32_t flatReuseInterval = 1;
+		/** @brief Flat reuse runs the model off its turn when the camera turns more than this many degrees in a frame; 0 never. */
+		float flatReuseMaxTurnDegrees = kDefaultFlatReuseTurnDegrees;
+		/** @brief Flat reuse runs the model off its turn when the camera moves more than this many world units in a frame; 0 never. */
+		float flatReuseMaxMoveUnits = kDefaultFlatReuseMoveUnits;
 		/**
 		 * @brief Runs the model at this fraction of the eye size and upsamples its tone gain onto the
 		 *        full-resolution frame. Developer-only; 1 is the full-resolution pass.
@@ -231,6 +244,9 @@ namespace NR
 			materialMapMode = std::min(materialMapMode, MaterialMap::kMaxMode);
 			materialMapFilter = MaterialMap::Sanitize(materialMapFilter);
 			skipFrameGapMode = std::min(skipFrameGapMode, kMaxSkipFrameGapMode);
+			flatReuseInterval = std::clamp(flatReuseInterval, 1u, kMaxFlatReuseInterval);
+			flatReuseMaxTurnDegrees = std::isfinite(flatReuseMaxTurnDegrees) ? std::clamp(flatReuseMaxTurnDegrees, 0.0f, kMaxFlatReuseTurnDegrees) : kDefaultFlatReuseTurnDegrees;
+			flatReuseMaxMoveUnits = std::isfinite(flatReuseMaxMoveUnits) ? std::clamp(flatReuseMaxMoveUnits, 0.0f, kMaxFlatReuseMoveUnits) : kDefaultFlatReuseMoveUnits;
 			modelPreset = std::min(modelPreset, kMaxModelPreset);
 			if (!IsValidRuntimeVariant(runtimeVariant))
 				runtimeVariant.clear();
