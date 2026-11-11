@@ -17,6 +17,7 @@
 #include "../../Utils/NvApiDrs.h"
 #include "../Upscaling.h"
 #include "CameraReprojection.h"
+#include "DLSSGDynamic.h"
 #include "DX12SwapChain.h"
 #include "FoveatedRender/Bridge.h"
 #include "FoveatedRender/Ops.h"
@@ -322,6 +323,7 @@ void Streamline::PostDevice()
 			if (!featureDLSSG) {
 				logger::warn("[Streamline DX12] DLSS-G functions missing; DLSS-G runtime controls will be disabled");
 				dlssgMaxFramesToGenerate = 1;
+				dlssgDynamicSupported = false;
 			} else {
 				logger::info("[Streamline DX12] DLSS-G runtime controls are available");
 
@@ -329,9 +331,12 @@ void Streamline::PostDevice()
 				if (SL_FAILED(result, slDLSSGGetState(viewport, state, nullptr))) {
 					logger::warn("[Streamline DX12] slDLSSGGetState failed querying numFramesToGenerateMax: {}", magic_enum::enum_name(result));
 					dlssgMaxFramesToGenerate = 1;
+					dlssgDynamicSupported = false;
 				} else {
 					dlssgMaxFramesToGenerate = std::max<uint32_t>(1, state.numFramesToGenerateMax);
-					logger::info("[Streamline DX12] DLSS-G supports up to {}x frame generation", dlssgMaxFramesToGenerate + 1);
+					dlssgDynamicSupported = state.bIsDynamicMFGSupported == sl::Boolean::eTrue;
+					logger::info("[Streamline DX12] DLSS-G supports up to {}x frame generation; dynamic multi-frame generation {}",
+						dlssgMaxFramesToGenerate + 1, dlssgDynamicSupported ? "supported" : "not supported");
 				}
 			}
 
@@ -992,6 +997,18 @@ void Streamline::ConfigureDLSSG(bool enabled)
 	options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
 	options.numFramesToGenerate = std::clamp<uint32_t>(
 		globals::features::upscaling.settings.dlssgFramesToGenerate, 1, dlssgMaxFramesToGenerate);
+	const auto& upscalingSettings = globals::features::upscaling.settings;
+	if (const auto dynamic = DLSSGDynamic::Select(enabled, dlssgDynamicSupported, upscalingSettings.dlssgDynamic, upscalingSettings.dlssgDynamicTargetFPS, Upscaling::kDLSSGDynamicTargetFPSMax); dynamic.dynamic) {
+		options.mode = sl::DLSSGMode::eDynamic;
+		options.dynamicTargetFrameRate = dynamic.targetFrameRate;
+	}
+	if (upscalingSettings.streamlineLogLevel >= 2 && (options.mode != lastSentDLSSGMode || options.numFramesToGenerate != lastSentDLSSGFrames || options.dynamicTargetFrameRate != lastSentDLSSGTargetFPS)) {
+		lastSentDLSSGMode = options.mode;
+		lastSentDLSSGFrames = options.numFramesToGenerate;
+		lastSentDLSSGTargetFPS = options.dynamicTargetFrameRate;
+		logger::info("[Streamline DX12] DLSS-G options: mode={}, numFramesToGenerate={}, dynamicTargetFrameRate={}",
+			magic_enum::enum_name(options.mode), options.numFramesToGenerate, options.dynamicTargetFrameRate);
+	}
 
 	if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
 		static bool errorLogged = false;
@@ -1041,8 +1058,8 @@ void Streamline::ConfigureDLSSG(bool enabled)
 			if (globals::features::upscaling.settings.streamlineLogLevel >= 2) {
 				static uint32_t callCount = 0;
 				if (++callCount % 120 == 0) {
-					logger::info("[Streamline DX12] DLSS-G presented {} frames since last query (requested {}x)",
-						state.numFramesActuallyPresented, options.numFramesToGenerate + 1);
+					logger::info("[Streamline DX12] DLSS-G presented {} frames since last query (mode={}, requested {}x)",
+						state.numFramesActuallyPresented, magic_enum::enum_name(options.mode), options.numFramesToGenerate + 1);
 				}
 			}
 		}
