@@ -1986,12 +1986,12 @@ namespace
 		changed |= ImGui::Checkbox(T(TKEY("model_guided_upsample"), "Guided Upsample"), &tuning.modelGuidedUpsample);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("model_guided_upsample_tooltip"),
-				"Weights the upsampled brightness change by how similar the pixels' brightness is, so it follows edges instead of blurring across them."));
+				"Uses the source image to keep the upsampled brightness change aligned with edges."));
 		ImGui::BeginDisabled(!tuning.modelGuidedUpsample);
 		changed |= ImGui::Checkbox(T(TKEY("model_rgb_guided_upsample"), "RGB Guidance"), &tuning.modelRgbGuidedUpsample);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("model_rgb_guided_upsample_tooltip"),
-				"Uses colour similarity to keep the brightness change on the matching side of an edge. Applies whenever the model uses a reduced grid."));
+				"Uses colour similarity to keep the brightness change on the matching side of an edge. Enabled by default whenever the model uses a reduced grid."));
 		ImGui::EndDisabled();
 		ImGui::EndDisabled();
 		ImGui::EndDisabled();
