@@ -1,3 +1,4 @@
+#include "Common/NeuralRenderingFinite.hlsli"
 #include "Common/NeuralRenderingReconstruction.hlsli"
 #include "Upscaling/NeuralRendering/ColorTransfer.hlsli"
 
@@ -52,7 +53,7 @@ bool ReadModelGain(int2 coordinate, out float gain, out float inputLog, out floa
 	inputLinear = ProxySrgbToLinear(input);
 	inputLog = LowLogLuma(input);
 	gain = LowLogLuma(output) - inputLog;
-	return all(isfinite(input)) && all(isfinite(output)) && all(isfinite(inputLinear)) && isfinite(gain);
+	return all(NeuralRenderingFinite::IsFinite(input)) && all(NeuralRenderingFinite::IsFinite(output)) && all(NeuralRenderingFinite::IsFinite(inputLinear)) && NeuralRenderingFinite::IsFinite(gain);
 }
 
 bool BilinearModelGain(float2 position, float3 reference, out float gain)
@@ -76,7 +77,7 @@ bool BilinearModelGain(float2 position, float3 reference, out float gain)
 	}
 #endif
 	gain = dot(gains, weights) / max(dot(weights, 1.0), NeuralRenderingReconstruction::kMinimumNormalization);
-	return valid && isfinite(gain);
+	return valid && NeuralRenderingFinite::IsFinite(gain);
 }
 
 #ifdef NR_LANCZOS3_RECONSTRUCTION
@@ -106,7 +107,7 @@ bool Lanczos3ModelGain(float2 position, out float gain)
 		gain += row * weightsY[y];
 	}
 	gain /= normalization.x * normalization.y;
-	return valid && isfinite(gain);
+	return valid && NeuralRenderingFinite::IsFinite(gain);
 }
 #endif
 
@@ -125,5 +126,5 @@ bool Lanczos3ModelGain(float2 position, out float gain)
 	const bool valid = BilinearModelGain(lowPosition, currentLinear, gain);
 #endif
 	const float3 candidate = ProxyLinearToSrgb(currentLinear * exp2(gain));
-	ExpandedProxy[id.xy] = valid && all(isfinite(candidate)) ? float4(candidate, source.a) : source;
+	ExpandedProxy[id.xy] = valid && all(NeuralRenderingFinite::IsFinite(candidate)) ? float4(candidate, source.a) : source;
 }
