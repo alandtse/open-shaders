@@ -1667,7 +1667,7 @@ NR::CombatPauseSnapshot NeuralRendering::ResolveCombatPause(bool enabled)
 	if (enabled && state && ui && !state->IsMainOrLoadingMenuOpen(ui) && globals::game::player)
 		inCombat = globals::game::player->IsInCombat();
 	const bool wasPaused = combatPause.GetSnapshot().IsPaused();
-	const auto decision = combatPause.Update(frame, enabled, GetTickCount64(), inCombat, ui && ui->GameIsPaused());
+	const auto decision = combatPause.Update(frame, enabled, GetTickCount64(), inCombat, state && state->IsPausedOrMenuOpen(ui));
 	if (wasPaused != decision.IsPaused())
 		resetHistory = true;
 	return decision;
