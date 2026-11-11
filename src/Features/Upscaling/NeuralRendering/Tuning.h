@@ -2,6 +2,7 @@
 
 #include "MaterialMap.h"
 #include "MaterialStrength.h"
+#include "PeripheralCompression.h"
 #include "Utils/MathUtils.h"
 #include "Utils/StringUtils.h"
 
@@ -137,6 +138,8 @@ namespace NR
 		 *        full-resolution frame. Developer-only; 1 is the full-resolution pass.
 		 */
 		float modelScale = kMaxModelScale;
+		/** @brief Experimental peripheral sampling, 0 off to 100 maximum compression; independent of modelScale. */
+		uint32_t peripheralCompressionPercent = 0;
 		/**
 		 * @brief Which network a 310.9 or newer runtime creates: 0 the original 310.8 network, 1 the
 		 *        newest it ships (the faster one). A 310.8 runtime has one network and ignores it.
@@ -235,6 +238,7 @@ namespace NR
 			if (!IsValidRuntimeVariant(runtimeVariant))
 				runtimeVariant.clear();
 			modelScale = Util::ClampFinite(modelScale, kMinModelScale, kMaxModelScale, kMaxModelScale);
+			peripheralCompressionPercent = std::min(peripheralCompressionPercent, kMaximumPeripheralCompressionPercent);
 			// The crop controls act only through a tracked crop, so none of them can stay set without
 			// it: a retained value reads as active while the pass ignores it, whether it came from a
 			// config file or from switching the crop off in the panel.
