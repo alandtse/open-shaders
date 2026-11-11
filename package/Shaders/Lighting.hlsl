@@ -4145,7 +4145,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		color.xyz += characterSpotReflectance * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(characterSpotSurfaceNormal, viewDirection, characterSpotRoughness);
 #				endif
 #			else
+#				if defined(ENVIRONMENT_RAIN_DROPS)
+		color.xyz += characterSpotReflectance * (environmentRainCoverage > 0.0f ? directionalAmbientColor : characterRainAmbientColor);
+#				else
 		color.xyz += characterSpotReflectance * characterRainAmbientColor;
+#				endif
 #			endif
 	}
 #		endif
