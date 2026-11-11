@@ -43,3 +43,16 @@ TEST_CASE("Conflicting flags in a hand-edited config resolve by the pass's prece
 	tuning.sbsEvaluate = true;
 	REQUIRE(NR::GetEyeMode(tuning) == NR::EyeMode::kSideBySide);
 }
+
+TEST_CASE("A profile's alternate eyes move a default per-eye interval and keep a chosen one", "[nr]")
+{
+	NR::Tuning tuning;
+	NR::SelectProfileEyeMode(tuning, NR::EyeMode::kAlternate);
+	REQUIRE(tuning.skipFrameInterval == NR::Tuning::kProfileSkipFrameInterval);
+	tuning.skipFrameInterval = 4;
+	NR::SelectProfileEyeMode(tuning, NR::EyeMode::kAlternate);
+	REQUIRE(tuning.skipFrameInterval == 4);
+	NR::Tuning other;
+	NR::SelectProfileEyeMode(other, NR::EyeMode::kParallel);
+	REQUIRE(other.skipFrameInterval == NR::Tuning::kDefaultSkipFrameInterval);
+}

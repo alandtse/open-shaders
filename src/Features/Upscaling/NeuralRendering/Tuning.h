@@ -47,6 +47,8 @@ namespace NR
 		static constexpr uint32_t kRegionFitPadded = 0, kRegionFitTight = 1, kMaxRegionFit = kRegionFitTight;
 		static constexpr uint32_t kMaxSkipFrameGapMode = 1;
 		static constexpr uint32_t kMaxFlatReuseInterval = 4;
+		static constexpr uint32_t kMinSkipFrameInterval = 2, kMaxSkipFrameInterval = 4;
+		static constexpr uint32_t kDefaultSkipFrameInterval = 2, kProfileSkipFrameInterval = 3;
 		static constexpr float kDefaultFlatReuseTurnDegrees = 1.0f, kMaxFlatReuseTurnDegrees = 10.0f;
 		static constexpr float kDefaultFlatReuseMoveUnits = 12.0f, kMaxFlatReuseMoveUnits = 100.0f;
 		static constexpr uint32_t kMaxModelPreset = 1;
@@ -135,10 +137,12 @@ namespace NR
 		bool skipFrameReuse = false;
 		/** @brief What a gap evaluation tells the model: 0 doubles its motion and frame time, 1 resets its history. */
 		uint32_t skipFrameGapMode = 0;
+		/** @brief VR only: frames between model runs on each eye while the stagger is on; 2 alternates the eyes. */
+		uint32_t skipFrameInterval = kDefaultSkipFrameInterval;
 		/**
 		 * @brief Flat only: runs the model once per this many frames and reuses its reprojected gain on the rest.
-		 *        1 runs it every frame. Developer-only and off by default, because a reused frame carries the
-		 *        model's tone edit but not its detail.
+		 *        1 runs it every frame and is the default, because a reused frame carries the model's tone edit
+		 *        but not its detail.
 		 */
 		uint32_t flatReuseInterval = 1;
 		/** @brief Flat reuse runs the model off its turn when the camera turns more than this many degrees in a frame; 0 never. */
@@ -244,6 +248,7 @@ namespace NR
 			materialMapMode = std::min(materialMapMode, MaterialMap::kMaxMode);
 			materialMapFilter = MaterialMap::Sanitize(materialMapFilter);
 			skipFrameGapMode = std::min(skipFrameGapMode, kMaxSkipFrameGapMode);
+			skipFrameInterval = std::clamp(skipFrameInterval, kMinSkipFrameInterval, kMaxSkipFrameInterval);
 			flatReuseInterval = std::clamp(flatReuseInterval, 1u, kMaxFlatReuseInterval);
 			flatReuseMaxTurnDegrees = std::isfinite(flatReuseMaxTurnDegrees) ? std::clamp(flatReuseMaxTurnDegrees, 0.0f, kMaxFlatReuseTurnDegrees) : kDefaultFlatReuseTurnDegrees;
 			flatReuseMaxMoveUnits = std::isfinite(flatReuseMaxMoveUnits) ? std::clamp(flatReuseMaxMoveUnits, 0.0f, kMaxFlatReuseMoveUnits) : kDefaultFlatReuseMoveUnits;

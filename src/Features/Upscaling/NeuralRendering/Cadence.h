@@ -31,6 +31,8 @@ namespace NR::Cadence
 		uint32_t interval = 1;
 		/** @brief The camera moved or turned past the flat limits this frame, so a carried gain would be stale. */
 		bool highMotion = false;
+		/** @brief Frames between model runs on each eye of a two-eye frame; 2 alternates the eyes, more spreads them further. */
+		uint32_t eyeInterval = 2;
 	};
 
 	/** @brief Per-eye memory the cadence keeps between frames. */
@@ -55,9 +57,10 @@ namespace NR::Cadence
 	/**
 	 * @brief Assigns one frame's model work to one eye.
 	 *        A one-view frame with an interval above 1 runs the model on every interval-th frame, so a reused
-	 *        gain is at most interval - 1 frames old, and a high-motion frame runs the model off its turn. Without a two-eye frame every eye evaluates every frame. Otherwise the even frames evaluate
-	 *        eye 0 and the odd frames eye 1, and an eye whose last gain is missing or invalidated still
-	 *        evaluates off its turn, so a reused gain is never older than one frame.
+	 *        gain is at most interval - 1 frames old, and a high-motion frame runs the model off its turn.
+	 *        Without a two-eye frame every eye evaluates every frame. Otherwise eye e runs the model on the
+	 *        frames where frame % eyeInterval == e, and an eye whose last gain is missing or invalidated
+	 *        still evaluates off its turn, so a reused gain is at most eyeInterval - 1 frames old.
 	 */
 	inline Decision Decide(const Inputs& inputs, State& state)
 	{
@@ -81,7 +84,8 @@ namespace NR::Cadence
 			return decision;
 		}
 		for (uint32_t eye = 0; eye < 2; ++eye) {
-			const bool due = (inputs.frame & 1u) == eye;
+			const uint32_t period = inputs.eyeInterval < 2 ? 2u : inputs.eyeInterval;
+			const bool due = inputs.frame % period == eye;
 			const bool evaluate = due || !state.valid[eye];
 			decision.evaluate[eye] = evaluate;
 			if (evaluate) {

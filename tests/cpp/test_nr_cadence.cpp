@@ -166,6 +166,29 @@ TEST_CASE("Decide runs the model off its turn on a high-motion one-view frame", 
 	REQUIRE_FALSE(state.valid[0]);
 }
 
+TEST_CASE("Decide spreads the stagger over a longer per-eye interval", "[nr]")
+{
+	for (const uint32_t interval : { 3u, 4u }) {
+		NR::Cadence::State state;
+		state.valid = { true, true };
+		std::array<uint32_t, 2> runs{};
+		for (uint64_t frame = 0; frame < 24; ++frame) {
+			const auto decision = NR::Cadence::Decide({ .enabled = true, .vr = true, .eyeCount = 2, .frame = frame, .invalidate = false, .eyeInterval = interval }, state);
+			for (uint32_t eye = 0; eye < 2; ++eye) {
+				if (decision.evaluate[eye]) {
+					++runs[eye];
+					REQUIRE(NR::Cadence::GapScale(frame, state.lastModelFrame[eye]) == 1.0f);
+				}
+				state.valid[eye] = true;
+			}
+			const bool both = decision.evaluate[0] && decision.evaluate[1];
+			REQUIRE_FALSE(both);
+		}
+		REQUIRE(runs[0] == 24 / interval);
+		REQUIRE(runs[1] == 24 / interval);
+	}
+}
+
 TEST_CASE("Decide leaves a one-view frame alone at interval 1 and on VR", "[nr]")
 {
 	NR::Cadence::State state = SteadyState(3);

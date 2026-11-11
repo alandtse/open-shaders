@@ -1262,7 +1262,7 @@ struct NeuralRendering::Impl
 		const bool highMotion = NR::Cadence::IsHighMotion(cameraSample.directionDot, cameraSample.distance,
 			tuning.flatReuseMaxTurnDegrees, tuning.flatReuseMaxMoveUnits);
 		const NR::Cadence::Inputs cadenceInputs{ staggerActive, static_cast<bool>(globals::game::isVR), eyeCount,
-			static_cast<uint64_t>(diagnostic.number), invalidate, tuning.flatReuseInterval, highMotion };
+			static_cast<uint64_t>(diagnostic.number), invalidate, tuning.flatReuseInterval, highMotion, tuning.skipFrameInterval };
 		const auto decision = NR::Cadence::Decide(cadenceInputs, cadence);
 		const bool verifyReuse = verifyRequested && staggerActive;
 		std::array<bool, 2> verifyEye{};
@@ -1919,8 +1919,16 @@ namespace
 		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("eye_mode_tooltip"),
-				"How the two eyes are evaluated. Parallel eyes runs each eye's model at once, the second on its own queue: the same image as separate eyes and about 1 ms faster (about 2 ms with Follow Foveation). Side by side evaluates both eyes as one image on a single instance: about 3 ms faster than separate eyes, with a small difference between the halves. Alternate eyes runs one eye's model per frame and reuses its gain on the other: about 3.5 ms faster than separate eyes, but it can mismatch the eyes where the reuse fails. Separate eyes runs one after the other and is the baseline to compare against. Side by side needs Developer Mode. The Performance profile selects Alternate eyes."));
+				"How the two eyes are evaluated. Parallel eyes runs each eye's model at once, the second on its own queue: the same image as separate eyes and about 1 ms faster (about 2 ms with Follow Foveation). Side by side evaluates both eyes as one image on a single instance: about 3 ms faster than separate eyes, with a small difference between the halves. Alternate eyes runs one eye's model per frame and reuses its gain on the other: about 3.5 ms faster than separate eyes, but it can mismatch the eyes where the reuse fails. Separate eyes runs one after the other and is the baseline to compare against. Side by side needs Developer Mode. The Performance profile selects Alternate eyes, with a per-eye interval of 3 unless you changed it."));
 		if (current == NR::EyeMode::kAlternate) {
+			int eyeInterval = static_cast<int>(tuning.skipFrameInterval);
+			if (ImGui::SliderInt(T(TKEY("skip_frame_interval"), "Model Every Nth Frame (Per Eye)"), &eyeInterval, static_cast<int>(NR::Tuning::kMinSkipFrameInterval), static_cast<int>(NR::Tuning::kMaxSkipFrameInterval))) {
+				tuning.skipFrameInterval = static_cast<uint32_t>(eyeInterval);
+				changed = true;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("skip_frame_interval_tooltip"),
+					"How many frames pass between model runs on each eye. 2 alternates the eyes every frame. 3 saves about 0.9 ms of GPU time per frame over 2 and 4 about 1.4 ms, at a small cost in accuracy that grows with the interval, so fast head and body motion can look softer."));
 			const std::array<const char*, NR::Tuning::kMaxSkipFrameGapMode + 1> gapModeLabels{
 				T(TKEY("skip_frame_gap_notify"), "Notify the model"),
 				T(TKEY("skip_frame_gap_reset"), "Reset the eye's history"),
@@ -1928,7 +1936,7 @@ namespace
 			changed |= Util::Combo(T(TKEY("skip_frame_gap_mode"), "Gap Handling"), &tuning.skipFrameGapMode, gapModeLabels);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("skip_frame_gap_mode_tooltip"),
-					"An eye the model skipped runs again two frames after its last run. Notify the model doubles the motion and the frame time it is given, so both frames are covered; Reset the eye's history drops what it accumulated instead."));
+					"An eye the model skipped runs again after the per-eye interval. Notify the model scales the motion and the frame time it is given to cover the skipped frames; Reset the eye's history drops what it accumulated instead."));
 			changed |= ImGui::Checkbox(T(TKEY("cross_eye_gain"), "Fill Gaps From The Other Eye"), &tuning.crossEyeGain);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("cross_eye_gain_tooltip"),
@@ -2181,7 +2189,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 				ImGui::TextUnformatted(T(TKEY("region_follow_foveation_tooltip"),
 					"With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view."));
 		}
-		if (!globals::game::isVR && developerMode) {
+		if (!globals::game::isVR) {
 			int interval = static_cast<int>(tuning.flatReuseInterval);
 			if (ImGui::SliderInt(T(TKEY("flat_reuse_interval"), "Model Every Nth Frame"), &interval, 1, static_cast<int>(NR::Tuning::kMaxFlatReuseInterval))) {
 				tuning.flatReuseInterval = static_cast<uint32_t>(interval);
@@ -2190,8 +2198,8 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 			}
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("flat_reuse_interval_tooltip"),
-					"Runs the model once per this many frames and carries its reprojected tone gain onto the frames between, which saves the model's GPU time on those frames. A carried frame keeps the model's tone edit but not its detail, so fast motion and new surfaces can look softer. 1 runs the model every frame. Off while frame generation is active."));
-			if (tuning.flatReuseInterval > 1) {
+					"Runs the model once per this many frames and carries its reprojected tone gain onto the frames between, which saves the model's GPU time on those frames: about 1.5 ms per frame at 2 and 2 ms at 3. A carried frame keeps the model's tone edit but not its detail, and a frame where the camera turns or moves quickly runs the model anyway. 1 runs the model every frame. Off while frame generation is active."));
+			if (tuning.flatReuseInterval > 1 && developerMode) {
 				if (ImGui::SliderFloat(T(TKEY("flat_reuse_max_turn"), "Run Model Above Turn (deg/frame)"), &tuning.flatReuseMaxTurnDegrees, 0.0f, NR::Tuning::kMaxFlatReuseTurnDegrees, "%.2f"))
 					changed = true;
 				if (auto _tt = Util::HoverTooltipWrapper())

@@ -34,4 +34,15 @@ namespace NR
 		tuning.sbsEvaluate = mode == EyeMode::kSideBySide;
 		tuning.skipFrameReuse = mode == EyeMode::kAlternate;
 	}
+
+	/**
+	 * @brief Selects a mode for a performance profile. Alternate eyes also moves a per-eye interval still at its
+	 *        default to the profile's, and leaves one the user changed alone.
+	 */
+	inline void SelectProfileEyeMode(Tuning& tuning, EyeMode mode)
+	{
+		SetEyeMode(tuning, mode);
+		if (mode == EyeMode::kAlternate && tuning.skipFrameInterval == Tuning::kDefaultSkipFrameInterval)
+			tuning.skipFrameInterval = Tuning::kProfileSkipFrameInterval;
+	}
 }

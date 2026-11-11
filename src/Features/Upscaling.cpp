@@ -42,7 +42,7 @@ namespace NR
 		style, useAutoMask, regionOfInterest, regionOverlay, regionFit, regionGroup, regionFollowFoveation,
 		parallelEyes, allowUnverifiedRuntime, runtimeVariant, materialStrength, strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape, strengthCloth, strengthMetal,
 		strengthOther, strengthEdgeSoftness, showMaterialMap, materialMapMode, materialMapFilter,
-		skipFrameReuse, skipFrameGapMode, flatReuseInterval, flatReuseMaxTurnDegrees, flatReuseMaxMoveUnits, modelPreset, modelScale, modelGuidedUpsample, sbsEvaluate, modelVerify, mirrorEyes, crossEyeGain);
+		skipFrameReuse, skipFrameGapMode, skipFrameInterval, flatReuseInterval, flatReuseMaxTurnDegrees, flatReuseMaxMoveUnits, modelPreset, modelScale, modelGuidedUpsample, sbsEvaluate, modelVerify, mirrorEyes, crossEyeGain);
 }
 
 namespace NR::Context
@@ -480,7 +480,7 @@ void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 			if (!foveatedRender.subrectController.HasCustomCrop())
 				foveatedRender.subrectController.ApplyPresetByName(preset.cropPresetName);
 		}
-		NR::SetEyeMode(settings.neuralRenderingTuning, preset.neuralEyeMode);
+		NR::SelectProfileEyeMode(settings.neuralRenderingTuning, preset.neuralEyeMode);
 	}
 }
 
