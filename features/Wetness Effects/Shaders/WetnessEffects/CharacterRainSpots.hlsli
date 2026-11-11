@@ -78,6 +78,7 @@ namespace CharacterRainSpots
 	static const uint FlowDebugMode = 4u;
 	static const uint SurfaceDebugMode = 5u;
 	static const uint WeaponDebugMode = 6u;
+	static const uint EnvironmentDebugMode = 7u;
 	static const uint SettledHashSeed = 191u;
 	static const uint ImpactHashSeed = 719u;
 	static const uint FlowColumnHashSeed = 137u;

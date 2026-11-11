@@ -873,7 +873,6 @@ void WetnessEffects::DrawCharacterRainSettings()
 	if (Util::Button(T(TKEY("character_restore_defaults"), "Restore Character Wet Defaults")))
 		RestoreCharacterRainDefaults();
 
-	ImGui::BeginDisabled(characterEffectsDisabled);
 	const char* debugModes[] = {
 		T(TKEY("character_debug_shading"), "Water Shading"),
 		T(TKEY("character_debug_combined"), "Combined Coverage"),
@@ -881,10 +880,21 @@ void WetnessEffects::DrawCharacterRainSettings()
 		T(TKEY("character_debug_impacts"), "Arriving Drops Only"),
 		T(TKEY("character_debug_flow"), "Flowing Rivulets Only"),
 		T(TKEY("character_debug_surfaces"), "Eligible Character Surfaces"),
-		T(TKEY("character_debug_weapons"), "Held Weapon Classification")
+		T(TKEY("character_debug_weapons"), "Held Weapon Classification"),
+		T(TKEY("character_debug_environment"), "Wall Droplet Coverage")
 	};
 	static_assert(std::size(debugModes) == static_cast<std::size_t>(CharacterDebugMode::Count));
-	Util::Combo(T(TKEY("character_spot_debug"), "Water Layer Debug"), &settings.CharacterSpotDebug, debugModes);
+	ImGui::BeginDisabled(!settings.EnableWetnessEffects);
+	const char* const waterLayerDebugLabel = T(TKEY("character_spot_debug"), "Water Layer Debug");
+	if (characterEffectsDisabled) {
+		const char* const environmentOnlyModes[] = { debugModes[0], debugModes[static_cast<std::size_t>(CharacterDebugMode::Environment)] };
+		static constexpr std::array<std::uint32_t, 2> environmentOnlyValues{ 0u, static_cast<std::uint32_t>(CharacterDebugMode::Environment) };
+		Util::Combo(waterLayerDebugLabel, &settings.CharacterSpotDebug, environmentOnlyModes, environmentOnlyValues);
+	} else {
+		Util::Combo(waterLayerDebugLabel, &settings.CharacterSpotDebug, debugModes);
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("character_debug_environment_tooltip"), "Wall Droplet Coverage works without character drops. Magenta: droplet hit. Green: evaluated, no hit. Yellow: draw has the CharacterLight flag and is skipped. Skin, skinned, hair and eye permutations compile out the wall droplet path, so no overlay there means excluded at compile time, not that the surface is not a character."));
 	ImGui::EndDisabled();
 }
 
@@ -1174,7 +1184,11 @@ void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data) const
 	a_data.settings.EnableCharacterRainSpots = settings.EnableWetnessEffects && settings.EnableCharacterRainSpots;
 	a_data.settings.EnableWeaponRainDrops = a_data.settings.EnableCharacterRainSpots &&
 	                                        settings.EnableWeaponRainDrops;
-	a_data.settings.CharacterSpotDebug = a_data.settings.EnableCharacterRainSpots ?
+	const auto environmentDebugMode = static_cast<std::uint32_t>(CharacterDebugMode::Environment);
+	const bool debugModeAllowed = settings.CharacterSpotDebug == environmentDebugMode ?
+	                                  settings.EnableWetnessEffects :
+	                                  a_data.settings.EnableCharacterRainSpots;
+	a_data.settings.CharacterSpotDebug = debugModeAllowed ?
 	                                         std::min(settings.CharacterSpotDebug, kMaximumCharacterRainDebugMode) :
 	                                         0u;
 	float weatherIntensity = std::sqrt(std::clamp(a_data.Wetness, 0.0f, 1.0f));

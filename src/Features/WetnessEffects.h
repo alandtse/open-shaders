@@ -94,6 +94,7 @@ public:
 		Flow,
 		Surfaces,
 		Weapons,
+		Environment,
 		Count
 	};
 	static_assert(sizeof(Settings) == 176);
@@ -217,7 +218,8 @@ public:
 	bool ShouldClassifyCharacterRainSurfaces() const
 	{
 		const bool characterEffectsEnabled = settings.EnableWetnessEffects && settings.EnableCharacterRainSpots;
-		const bool characterWaterVisible = characterSurfaceWetness > 0.0f || settings.CharacterSpotDebug != 0u;
+		const bool characterWaterVisible = characterSurfaceWetness > 0.0f || (settings.CharacterSpotDebug != 0u &&
+																				 settings.CharacterSpotDebug != static_cast<std::uint32_t>(CharacterDebugMode::Environment));
 		return loaded && characterEffectsEnabled && characterWaterVisible;
 	}
 
