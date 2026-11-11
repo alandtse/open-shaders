@@ -221,11 +221,13 @@ void CODBloom::Draw(TextureInfo& inout_tex)
 		pass.Draw();
 	}
 
+	const int usedMips = static_cast<int>(settings.MipBlendFactor[s_BloomMips - 2] == 0.f && settings.MipBlendFactor[s_BloomMips - 3] == 1.f ? s_BloomMips - 1 : s_BloomMips);
+
 	{
 		// Downsample
 		CS_GPU_PASS("PostProcessing::CODBloom::Downsample");
 		pass.SetShaders(vs, downsampleFirstMipPS.get());
-		for (int i = 0; i < static_cast<int>(s_BloomMips) - 1; i++) {
+		for (int i = 0; i < usedMips - 1; i++) {
 			if (i == 1)
 				pass.SetShaders(vs, downsamplePS.get());
 
@@ -244,7 +246,7 @@ void CODBloom::Draw(TextureInfo& inout_tex)
 		// upsample (ROP blend accumulates into the destination mip)
 		CS_GPU_PASS("PostProcessing::CODBloom::Upsample");
 		pass.SetShaders(vs, upsamplePS.get());
-		for (int i = s_BloomMips - 2; i >= 1; i--) {
+		for (int i = usedMips - 2; i >= 1; i--) {
 			cbData.UpsampleMult = 1.f;
 			if (i == static_cast<int>(s_BloomMips) - 2)
 				cbData.UpsampleMult = settings.MipBlendFactor[i];

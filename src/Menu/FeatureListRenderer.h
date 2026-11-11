@@ -8,7 +8,7 @@
 #include <variant>
 #include <vector>
 
-struct Feature;
+#include "Feature.h"
 
 namespace MenuPageIds
 {
@@ -129,6 +129,15 @@ public:
 
 	/** @brief Translated display label for a FeatureCategories value. */
 	static std::string TranslateCategory(std::string_view category);
+
+	/** @brief Width of a pre-release stage's badge; 0 for release features. */
+	static float MeasureStageBadge(Feature::ReleaseStage stage);
+
+	/** @brief Draws a pre-release stage's badge at the cursor, centred in rowHeight; nothing for release features. */
+	static void DrawStageBadge(Feature::ReleaseStage stage, float rowHeight);
+
+	/** @brief Draws an accent dot when a feature filter is active. */
+	static void DrawFilterDot(const ImVec2& buttonMin, const ImVec2& buttonMax);
 
 private:
 	static void RenderBuiltInRow(const BuiltInMenu& menu, size_t listId, size_t& selectedMenu, float width = 0.0f, bool compact = false);

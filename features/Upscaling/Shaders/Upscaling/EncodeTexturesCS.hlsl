@@ -19,7 +19,24 @@ RWTexture2D<float2> MotionVectorOutput : register(u2);
 RWTexture2D<float> DepthOutput : register(u3);
 #endif
 
-[numthreads(8, 8, 1)] void main(uint3 dispatchID : SV_DispatchThreadID) {
+#if defined(DLSS)
+#	define DILATE_TILE 12
+groupshared float TileDepth[DILATE_TILE * DILATE_TILE];
+groupshared float2 TileMotion[DILATE_TILE * DILATE_TILE];
+#endif
+
+[numthreads(8, 8, 1)] void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint3 groupID : SV_GroupID, uint groupIndex : SV_GroupIndex) {
+#if defined(DLSS)
+	const int2 tileOrigin = int2(groupID.xy) * 8 - 2;
+	[unroll] for (uint t = groupIndex; t < DILATE_TILE * DILATE_TILE; t += 64)
+	{
+		int2 tilePos = clamp(tileOrigin + int2(t % DILATE_TILE, t / DILATE_TILE), int2(0, 0), int2(TrueSamplingDim) - 1) + int2(EyeOffsetX, 0);
+		TileDepth[t] = DepthMask[tilePos];
+		TileMotion[t] = MotionVectorMask[tilePos];
+	}
+	GroupMemoryBarrierWithGroupSync();
+#endif
+
 	// Bounds check in per-eye space; EyeOffsetX=0 makes this identical to the old path for non-VR
 	if (any(dispatchID.xy >= uint2(TrueSamplingDim)))
 		return;
@@ -31,11 +48,12 @@ RWTexture2D<float> DepthOutput : register(u3);
 	float transparencyCompositionMask = NormalsWaterMask[srcCoord].z;
 
 #if defined(DLSS)
-	float depth = DepthMask[srcCoord];
+	const uint centerIndex = (groupThreadID.y + 2) * DILATE_TILE + groupThreadID.x + 2;
+	float depth = TileDepth[centerIndex];
 	float nearFactor = smoothstep(4096.0 * 2.5, 0.0, SharedData::GetScreenDepth(depth));
 
 	// Find longest motion vector in 5x5 neighborhood
-	float2 motionVector = MotionVectorMask[srcCoord];
+	float2 motionVector = TileMotion[centerIndex];
 	float2 longestMotionVector = motionVector;
 	float maxMotionLengthSq = dot(motionVector, motionVector);
 
@@ -50,13 +68,12 @@ RWTexture2D<float> DepthOutput : register(u3);
 			if (any(samplePos < 0) || any(samplePos >= int2(TrueSamplingDim)))
 				continue;
 
-			// Source read uses full stereo offset
-			int2 srcPos = samplePos + int2(EyeOffsetX, 0);
-			float neighborDepth = DepthMask[srcPos];
+			const uint neighborIndex = centerIndex + y * DILATE_TILE + x;
+			float neighborDepth = TileDepth[neighborIndex];
 
 			// Take neighbor if it's longer AND closer
 			if (FrameBuffer::IsNearerDepth(neighborDepth, depth)) {
-				float2 neighborMotionVector = MotionVectorMask[srcPos];
+				float2 neighborMotionVector = TileMotion[neighborIndex];
 
 				// Square motion vector for length
 				float motionLengthSq = dot(neighborMotionVector, neighborMotionVector);

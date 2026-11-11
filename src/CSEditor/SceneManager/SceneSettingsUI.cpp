@@ -35,6 +35,7 @@
 #include "Utils/SettingsCatalog.h"
 #include "Utils/UI.h"
 
+#include <imgui_internal.h>
 #include <imgui_stdlib.h>
 
 #define I18N_KEY_PREFIX "cs_editor."
@@ -46,7 +47,6 @@ namespace
 	constexpr float kManageModalWidthEm = 38.0f;
 	constexpr float kCopyModalWidthEm = 48.0f;
 	constexpr float kTargetManageWidthEm = 24.0f;
-	constexpr float kSceneTargetPopupWidthEm = 32.0f;
 	constexpr ImVec4 kCurrentSceneColor(0.77f, 0.60f, 0.95f, 1.0f);
 	std::string featurePageName;
 	std::optional<SceneSettingsManager::SceneContextId> featurePageContext;
@@ -68,25 +68,6 @@ namespace
 	int standalonePage = 0;
 	RE::FormID standaloneWeather = 0;
 	std::optional<SceneSettingsManager::LocationTarget> standaloneLocation;
-
-	template <class Action>
-	void ChooseFeatureActionLayer(const char* id, bool pressed, bool hasUser, bool hasPreset, bool presetBlocked, Action&& action)
-	{
-		using Source = SceneSettingsManager::EntrySource;
-		if (pressed) {
-			if (hasUser && hasPreset)
-				ImGui::OpenPopup(id);
-			else if (hasUser || (hasPreset && !presetBlocked))
-				action(hasUser ? Source::User : Source::Overwrite);
-		}
-		if (!ImGui::BeginPopup(id))
-			return;
-		if (Util::RoundedMenuItem(T("feature.scene_manager.section.user_settings", "User Settings"), nullptr, false, hasUser))
-			action(Source::User);
-		if (Util::RoundedMenuItem(T("feature.scene_manager.section.overwrite_files", "Preset Settings"), nullptr, false, hasPreset && !presetBlocked))
-			action(Source::Overwrite);
-		ImGui::EndPopup();
-	}
 
 	const char* GetPeriodLabel(int period)
 	{
@@ -151,11 +132,14 @@ namespace
 		return target.editorId.empty() ? target.formKey : target.editorId;
 	}
 
-	bool StartFeatureContext(const std::string& name, const SceneSettingsManager::SceneContextId& context)
+	bool StartFeatureContext(const std::string& name, const SceneSettingsManager::SceneContextId& context, bool discardPendingEdit = false)
 	{
-		if (!SceneSettingsManager::GetSingleton()->BeginContextEdit(name, context))
-			return false;
 		const bool retargetPreview = featurePageName == name && featureToolbarOpen && Util::EnvironmentControls::IsPreviewActive();
+		auto* manager = SceneSettingsManager::GetSingleton();
+		if (discardPendingEdit)
+			manager->DiscardContextEdit();
+		if (!manager->BeginContextEdit(name, context))
+			return false;
 		if (!retargetPreview)
 			Util::EnvironmentControls::StopPreview();
 		featurePageName = name;
@@ -190,8 +174,8 @@ namespace
 		if (!requestedFeatureContext || requestedFeatureContext->first != name)
 			return;
 		if (featureContextConfirmation.Draw()) {
-			SceneSettingsManager::GetSingleton()->DiscardContextEdit();
-			StartFeatureContext(name, requestedFeatureContext->second);
+			++featurePageScopeRevision;
+			StartFeatureContext(name, requestedFeatureContext->second, true);
 			requestedFeatureContext.reset();
 		} else if (!featureContextConfirmation.IsOpen()) {
 			requestedFeatureContext.reset();
@@ -294,8 +278,8 @@ namespace
 		return open;
 	}
 
-	bool DrawWeatherPicker(RE::FormID& selectedWeather, std::string_view feature = {}, float* scroll = nullptr);
-	bool DrawLocationPicker(std::optional<SceneSettingsManager::LocationTarget>& selectedLocation, std::string_view feature = {}, float* scroll = nullptr);
+	bool DrawWeatherPicker(RE::FormID& selectedWeather, float popupRight, std::string_view feature = {}, float* scroll = nullptr);
+	bool DrawLocationPicker(std::optional<SceneSettingsManager::LocationTarget>& selectedLocation, float popupRight, std::string_view feature = {}, float* scroll = nullptr);
 
 	float ComboWidth(float textWidth)
 	{
@@ -318,7 +302,7 @@ namespace
 		return ComboWidth(width);
 	}
 
-	void DrawFeatureTargetPicker(const std::string& name, SceneSettingsManager::SceneContextId context, float pickerWidth)
+	void DrawFeatureTargetPicker(const std::string& name, SceneSettingsManager::SceneContextId context, float pickerWidth, float popupRight)
 	{
 		using Type = SceneSettingsManager::SceneContextType;
 		const bool periodicTarget = context.type == Type::Weather || context.type == Type::Location;
@@ -329,7 +313,7 @@ namespace
 			ImGui::SetNextItemWidth(inlinePeriod ? available - periodWidth - ImGui::GetStyle().ItemSpacing.x : available);
 			if (context.type == Type::Weather) {
 				auto weather = context.weatherId;
-				if (DrawWeatherPicker(weather, name)) {
+				if (DrawWeatherPicker(weather, popupRight, name)) {
 					context.weatherId = weather;
 					context.period = SceneSettingsManager::GetSingleton()->IsSceneTimeOfDayEnabled(context) ? SceneSettingsManager::GetCurrentPeriod() : TimeOfDayPeriod::Count;
 					RequestFeatureContext(name, context);
@@ -342,7 +326,7 @@ namespace
 				std::optional<SceneSettingsManager::LocationTarget> target;
 				if (found != targets.end())
 					target = *found;
-				if (DrawLocationPicker(target, name) && target) {
+				if (DrawLocationPicker(target, popupRight, name) && target) {
 					context.locationType = target->type;
 					context.locationFormKey = target->formKey;
 					context.period = SceneSettingsManager::GetSingleton()->IsSceneTimeOfDayEnabled(context) ? SceneSettingsManager::GetCurrentPeriod() : TimeOfDayPeriod::Count;
@@ -434,45 +418,28 @@ namespace
 		if (manager->HasPendingContextEdit())
 			Util::Text::WrappedWarning("%s", SceneSettingsUI::PendingContextEditMessage());
 		const auto& style = ImGui::GetStyle();
-		const auto* pauseLabel = T("feature.scene_manager.action.pause_all", "Pause All");
-		const auto* resumeLabel = T("feature.scene_manager.action.unpause_all", "Unpause All");
-		const auto* deleteLabel = T("feature.scene_manager.action.delete_all", "Delete All");
-		const float deleteWidth = ImGui::CalcTextSize(deleteLabel).x + 2.0f * style.FramePadding.x;
-		const float gap = style.ItemInnerSpacing.x;
 		const auto drawActions = [&](Source source, const Manager::EntryLayerScope& scope, const char* heading = nullptr) {
 			ImGui::PushID(static_cast<int>(source));
 			const auto summary = manager->GetEntryLayerSummary(source, scope);
-			const auto* pauseAction = summary.AllPaused() ? resumeLabel : pauseLabel;
-			const float actionsWidth = ImGui::CalcTextSize(pauseAction).x + 2.0f * style.FramePadding.x + gap + deleteWidth;
-			const auto start = ImGui::GetCursorPosX();
-			const auto available = ImGui::GetContentRegionAvail().x;
 			const auto count = heading ? std::string{} : std::to_string(summary.total);
-			const auto* text = heading ? heading : count.c_str();
-			const float groupWidth = ImGui::CalcTextSize(text).x + style.ItemSpacing.x + actionsWidth;
-			ImGui::SetCursorPosX(start + std::max(0.0f, available - groupWidth));
-			ImGui::TextUnformatted(text);
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted(heading ? heading : count.c_str());
+			const float actionsWidth = std::ceil(SceneEntryTable::GetLayerActionsWidth(source));
 			BrowserUI::SameLineIfFits(actionsWidth);
-			const Util::DisableGuard disabled(manager->HasPendingContextEdit() || summary.total == 0);
-			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x, 0.0f));
-			const bool toggle = ImGui::Button(pauseAction);
-			ImGui::SameLine(0.0f, gap);
-			const bool remove = ImGui::Button(deleteLabel);
-			ImGui::PopStyleVar();
-			if (toggle)
-				globals::menu->GetUndoHistory().Change(SceneSettingsUI::MakeUndoTarget(), [&] {
-					manager->SetEntryLayerPaused(source, !summary.AllPaused(), scope);
-				});
-			if (remove) {
-				pendingDeleteScope = scope;
-				pendingDeleteSource = source;
-				deleteSceneChangesConfirmation.title = T(TKEY("scene_page_delete_changes_title"), "Delete changes");
-				deleteSceneChangesConfirmation.message = source == Source::User ?
-				                                             T(TKEY("scene_manage_delete_user"), "Delete your settings in this scene group? Installed settings remain. Undo restores your changes.") :
-				                                             T(TKEY("scene_manage_delete_presets"), "Delete the loaded preset scene files in this group? This removes files from disk.");
-				deleteSceneChangesConfirmation.confirmLabel = T("feature.scene_manager.action.delete", "Delete");
-				deleteSceneChangesConfirmation.cancelLabel = T(TKEY("cancel"), "Cancel");
-				deleteSceneChangesConfirmation.Request();
-			}
+			ImGui::SetCursorPosX(std::floor(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - actionsWidth)));
+			const bool canDelete = summary.total != 0;
+			SceneEntryTable::DrawLayerActions(scope, source, summary.AllPaused(), summary.total != 0, !manager->HasPendingContextEdit(), canDelete, [&] { globals::menu->GetUndoHistory().Change(SceneSettingsUI::MakeUndoTarget(), [&] {
+																																							  manager->SetEntryLayerPaused(source, !summary.AllPaused(), scope);
+																																						  }); }, [&] {
+					pendingDeleteScope = scope;
+					pendingDeleteSource = source;
+					deleteSceneChangesConfirmation.title = T(TKEY("scene_page_delete_changes_title"), "Delete changes");
+					deleteSceneChangesConfirmation.message = source == Source::User ?
+					                                             T(TKEY("scene_manage_delete_user"), "Delete your settings in this scene group? Installed settings remain. Undo restores your changes.") :
+					                                             T(TKEY("scene_manage_delete_presets"), "Delete the loaded preset scene files in this group? This removes files from disk.");
+					deleteSceneChangesConfirmation.confirmLabel = T("feature.scene_manager.action.delete", "Delete");
+					deleteSceneChangesConfirmation.cancelLabel = T(TKEY("cancel"), "Cancel");
+					deleteSceneChangesConfirmation.Request(); });
 			ImGui::PopID();
 		};
 		const auto drawGroup = [&](const char* label, const Manager::EntryLayerScope& scope) {
@@ -524,7 +491,7 @@ namespace
 			ImGui::EndTable();
 		}
 		ImGui::PopStyleVar();
-		Util::Text::WrappedDisabled("%s", T(TKEY("scene_manage_pause_session"), "Pausing installed settings lasts until they are reloaded."));
+		Util::Text::WrappedDisabled("%s", T(TKEY("scene_manage_pause_session"), "Use Save to keep preset pauses across restarts."));
 	}
 
 	void DrawLayerDeleteConfirmation()
@@ -558,6 +525,7 @@ namespace
 				break;
 			}
 			DrawLayerDeleteConfirmation();
+			SceneEntryTable::FinishPagePresetFrame();
 		});
 	}
 }
@@ -750,14 +718,31 @@ namespace
 		return it->second;
 	}
 
-	bool BeginSceneTargetCombo(const char* id, const char* preview, bool current, SceneSettingMarker marker,
-		bool showStatus, float* scroll, Util::ComboPreviewAction& action)
+	const char* GetSceneTargetManageLabel(SceneSettingsManager::SceneContextType type)
+	{
+		return type == SceneSettingsManager::SceneContextType::Weather ?
+		           T("feature.scene_manager.action.manage_weather", "Manage Weather") :
+		           T("feature.scene_manager.action.manage_location", "Manage Location");
+	}
+
+	bool BeginSceneTargetCombo(const char* id, const char* preview, bool current, SceneSettingMarker marker, SceneSettingsManager::SceneContextType type,
+		bool showStatus, float* scroll, Util::ComboPreviewAction& action, float popupRight)
 	{
 		const auto& style = ImGui::GetStyle();
-		const float width = std::min(ImGui::GetMainViewport()->WorkSize.x - style.WindowPadding.x * 2.0f,
-			std::max(ImGui::CalcItemWidth(), ThemeManager::Constants::Em(kSceneTargetPopupWidthEm)));
+		const auto bounds = ImGui::GetPopupAllowedExtentRect(ImGui::GetCurrentWindowRead());
+		const float left = std::max(ImGui::GetCursorScreenPos().x, bounds.Min.x);
+		const float right = std::min(popupRight, bounds.Max.x);
+		float minimumWidth = Util::GetSearchableComboMinimumWidth();
+		if (!showStatus) {
+			const float manageWidth = Util::MeasureLabeledButton({}, GetSceneTargetManageLabel(type));
+			const float rowWidth = ImGui::GetFrameHeight() + style.ItemSpacing.x + manageWidth + style.ItemInnerSpacing.x;
+			minimumWidth = std::max(minimumWidth, rowWidth + style.FramePadding.x * 2.0f);
+		}
+		minimumWidth = std::ceil(minimumWidth + style.ScrollbarSize);
+		float width = std::min(std::max({ ImGui::CalcItemWidth(), right - left, minimumWidth }), bounds.GetWidth());
 		const float height = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() * kSceneTargetComboVisibleItems + style.WindowPadding.y * 2.0f;
-		ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, height));
+		// BeginComboPopup raises the minimum to the opener width before applying the size callback.
+		ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, height), [](ImGuiSizeCallbackData* data) { data->DesiredSize.x = *static_cast<const float*>(data->UserData); }, &width);
 		if (showStatus)
 			action.previewColor = ImGui::GetColorU32(GetScenePickerTextColor(current, marker));
 		const bool open = Util::BeginSearchableCombo(id, preview, ImGuiComboFlags_None, nullptr, kSceneTargetComboVisibleItems, scroll, &action);
@@ -794,6 +779,7 @@ namespace
 				return;
 			DrawLayerManagement(managedTarget.first);
 			DrawLayerDeleteConfirmation();
+			SceneEntryTable::FinishPagePresetFrame();
 		}
 	}
 
@@ -805,10 +791,8 @@ namespace
 		const bool canManage = feature.empty() && presentation.configured;
 		const auto start = ImGui::GetCursorScreenPos();
 		const float right = start.x + ImGui::GetContentRegionAvail().x;
-		const char* manageLabel = context.type == SceneSettingsManager::SceneContextType::Weather ?
-		                              T("feature.scene_manager.action.manage_weather", "Manage Weather") :
-		                              T("feature.scene_manager.action.manage_location", "Manage Location");
-		const float buttonWidth = ImGui::CalcTextSize(manageLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+		const char* manageLabel = GetSceneTargetManageLabel(context.type);
+		const float buttonWidth = Util::MeasureLabeledButton({}, manageLabel);
 		const float buttonX = std::max(start.x, right - buttonWidth - ImGui::GetStyle().ItemInnerSpacing.x);
 		const bool manageHovered = canManage && ImGui::IsWindowHovered() &&
 		                           ImGui::IsMouseHoveringRect(ImVec2(buttonX, start.y), ImVec2(right, start.y + ImGui::GetTextLineHeight()));
@@ -834,7 +818,6 @@ namespace
 			ImGui::SetCursorScreenPos(ImVec2(buttonX, start.y));
 			if (ImGui::SmallButton(manageLabel)) {
 				RequestTargetManagement(context, presentation.label);
-				ImGui::CloseCurrentPopup();
 				return false;
 			}
 		}
@@ -887,7 +870,7 @@ namespace
 		return targets;
 	}
 
-	bool DrawWeatherPicker(RE::FormID& selectedWeather, std::string_view feature, float* scroll)
+	bool DrawWeatherPicker(RE::FormID& selectedWeather, float popupRight, std::string_view feature, float* scroll)
 	{
 		using Context = SceneSettingsManager::SceneContextId;
 		using Type = SceneSettingsManager::SceneContextType;
@@ -911,7 +894,7 @@ namespace
 		const Context previewContext{ .type = Type::Weather, .weatherId = selectedWeather };
 		const bool canManage = feature.empty() && selected != targets.end() &&
 		                       GetScenePickerPresentation(previewContext, GetWeatherTargetLabel(*selected)).configured;
-		Util::ComboPreviewAction action{ .label = canManage ? T("feature.scene_manager.action.manage_weather", "Manage Weather") : nullptr };
+		Util::ComboPreviewAction action{ .label = canManage ? GetSceneTargetManageLabel(Type::Weather) : nullptr };
 		const SKSE::stl::scope_exit drawPreviewManagement([&] {
 			if (action.pressed)
 				RequestTargetManagement(previewContext, preview);
@@ -924,8 +907,8 @@ namespace
 		const auto marker = selected == targets.end() || feature.empty() ? SceneSettingMarker::None :
 		                    filter                                       ? GetFeatureSceneMarker(feature, previewContext, false) :
 		                                                                   GetScenePickerPresentation(previewContext, GetWeatherTargetLabel(*selected)).marker;
-		if (!BeginSceneTargetCombo(feature.empty() ? T("feature.scene_manager.weather.target", "Weather") : "##FeatureSceneWeather",
-				preview.c_str(), selected != targets.end() && isCurrent(*selected), marker, !feature.empty(), scroll ? scroll : &weatherPickerScroll, action))
+		if (!BeginSceneTargetCombo("##SceneWeather", preview.c_str(), selected != targets.end() && isCurrent(*selected),
+				marker, Type::Weather, !feature.empty(), scroll ? scroll : &weatherPickerScroll, action, popupRight))
 			return false;
 		std::vector<RE::TESWeather*> current;
 		std::vector<RE::TESWeather*> configured;
@@ -974,6 +957,8 @@ namespace
 		drawGroup(T("feature.scene_manager.weather.group.current", "Current"), current);
 		drawGroup(T("feature.scene_manager.weather.group.configured", "Configured"), configured);
 		drawGroup(T("feature.scene_manager.weather.group.available", "Available"), available);
+		if (feature.empty())
+			DrawTargetManagement();
 		Util::EndSearchableCombo();
 		return changed;
 	}
@@ -985,7 +970,7 @@ namespace
 			std::make_format_args(target.name.empty() ? target.formKey : target.name, typeName));
 	}
 
-	bool DrawLocationPicker(std::optional<SceneSettingsManager::LocationTarget>& selectedLocation, std::string_view feature, float* scroll)
+	bool DrawLocationPicker(std::optional<SceneSettingsManager::LocationTarget>& selectedLocation, float popupRight, std::string_view feature, float* scroll)
 	{
 		using Target = SceneSettingsManager::LocationTarget;
 		using Type = SceneSettingsManager::LocationTargetType;
@@ -1022,7 +1007,7 @@ namespace
 			.locationType = selectedLocation ? selectedLocation->type : Type::Worldspace,
 			.locationFormKey = selectedLocation ? selectedLocation->formKey : std::string{} };
 		const bool canManage = feature.empty() && selectedLocation && getPresentation(*selectedLocation).configured;
-		Util::ComboPreviewAction action{ .label = canManage ? T("feature.scene_manager.action.manage_location", "Manage Location") : nullptr };
+		Util::ComboPreviewAction action{ .label = canManage ? GetSceneTargetManageLabel(ContextType::Location) : nullptr };
 		const SKSE::stl::scope_exit drawPreviewManagement([&] {
 			if (action.pressed)
 				RequestTargetManagement(previewContext, preview);
@@ -1031,8 +1016,8 @@ namespace
 		const auto marker = !selectedLocation || feature.empty() ? SceneSettingMarker::None :
 		                    filter                               ? GetFeatureSceneMarker(feature, previewContext, false) :
 		                                                           getPresentation(*selectedLocation).marker;
-		if (!BeginSceneTargetCombo(feature.empty() ? T("feature.scene_manager.location.target", "Target") : "##FeatureSceneLocation",
-				preview.c_str(), selectedLocation && isCurrent(*selectedLocation), marker, !feature.empty(), scroll ? scroll : &locationPickerScroll, action))
+		if (!BeginSceneTargetCombo("##SceneLocation", preview.c_str(), selectedLocation && isCurrent(*selectedLocation),
+				marker, ContextType::Location, !feature.empty(), scroll ? scroll : &locationPickerScroll, action, popupRight))
 			return false;
 		std::vector<const Target*> currentTargets;
 		std::vector<const Target*> configured;
@@ -1092,6 +1077,8 @@ namespace
 		drawGroup(T("feature.scene_manager.location.group.configured", "Configured"), configured);
 		drawGroup(T("feature.scene_manager.location.group.types", "Location Types"), locationTypes, true);
 		drawGroup(T("feature.scene_manager.location.group.available", "Available"), available);
+		if (feature.empty())
+			DrawTargetManagement();
 		Util::EndSearchableCombo();
 		return changed;
 	}
@@ -1099,8 +1086,10 @@ namespace
 
 void SceneSettingsUI::DrawStandalonePage()
 {
+	auto* manager = SceneSettingsManager::GetSingleton();
 	WatchSceneSettingsForUndo();
-	if (Util::Button(T("feature.scene_manager.action.manage_settings", "Manage Scene Settings"))) {
+	const auto* manageLabel = T("feature.scene_manager.action.manage_settings", "Manage Scene Settings");
+	if (Util::Button(manageLabel)) {
 		SceneEntryTable::EndPresetEditing();
 		SceneCopyModal::PrepareEmbedded();
 		manageSettingsModal.Request();
@@ -1110,11 +1099,13 @@ void SceneSettingsUI::DrawStandalonePage()
 		const Util::DisableGuard disabled(!PresetExportPanel::CanExport());
 		const auto style = Util::TransparentIconButtonStyle();
 		const float size = ImGui::GetFrameHeight();
-		if (Icons::Button("##ExportPreset", SceneActionIcons::kExport, ImVec2(size, size)))
+		if (Util::LabeledButton("##ExportPreset", SceneActionIcons::kExport, ImVec2(size, size)))
 			PresetExportPanel::Open();
 		Util::AddTooltip(T("cs_editor.export_preset", "Export Preset..."), Util::kTooltipWhenDisabled);
 	}
 	DrawManageSettings();
+	Util::Text::WrappedDisabled("%s", T("feature.scene_manager.feature_page_hint",
+										  "You can edit Scene Manager settings directly on feature pages by clicking the layers icon on the right."));
 	using ContextType = SceneSettingsManager::SceneContextType;
 	const char* labels[] = { T("feature.scene_manager.tab.interior", "Interior"),
 		T("feature.scene_manager.tab.time_of_day", "Time of Day"), T("feature.scene_manager.tab.locations", "Locations"),
@@ -1131,19 +1122,13 @@ void SceneSettingsUI::DrawStandalonePage()
 		previousPage = standalonePage;
 	}
 	ImGui::Spacing();
-	auto* manager = SceneSettingsManager::GetSingleton();
 	switch (standalonePage) {
 	case 0:
-		ImGui::TextUnformatted(T("feature.scene_manager.interior.title", "Interior Settings"));
-		ImGui::Separator();
 		SceneEntryTable::Draw({ .type = ContextType::Interior });
 		break;
 	case 1:
 		{
-			ImGui::TextUnformatted(T("feature.scene_manager.time_of_day.title", "Time of Day Settings"));
-			const auto* exteriorLabel = T("feature.scene_manager.time_of_day.exterior_only", "(Exterior Only)");
-			BrowserUI::SameLineIfFits(ImGui::CalcTextSize(exteriorLabel).x);
-			ImGui::TextDisabled("%s", exteriorLabel);
+			ImGui::TextDisabled("%s", T("feature.scene_manager.time_of_day.exterior_only", "(Exterior Only)"));
 			auto currentPeriod = SceneSettingsManager::GetCurrentPeriod();
 			const auto* currentPeriodName = SceneSettingsContextRules::GetCopyPeriodName(currentPeriod);
 			const float currentGameHour = SceneSettingsManager::GetCurrentGameHour();
@@ -1152,7 +1137,7 @@ void SceneSettingsUI::DrawStandalonePage()
 				std::make_format_args(currentPeriodName, currentGameHour));
 			BrowserUI::SameLineIfFits(ImGui::CalcTextSize(currentTimeLabel.c_str()).x);
 			ImGui::TextColored(globals::menu->GetTheme().StatusPalette.InfoColor, "%s", currentTimeLabel.c_str());
-			ImGui::Separator();
+			ImGui::Spacing();
 			SceneEntryTable::Draw({ .type = ContextType::TimeOfDay, .period = currentPeriod });
 			break;
 		}
@@ -1172,26 +1157,21 @@ void SceneSettingsUI::DrawStandalonePage()
 			}
 			{
 				const Util::DisableGuard lockTarget(SceneEntryTable::HasActiveDialog());
+				const float popupRight = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
 				ImGui::SetNextItemWidth(-FLT_MIN);
 				if (standalonePage == 2)
-					DrawLocationPicker(standaloneLocation);
+					DrawLocationPicker(standaloneLocation, popupRight);
 				else
-					DrawWeatherPicker(standaloneWeather);
+					DrawWeatherPicker(standaloneWeather, popupRight);
 			}
 			if (auto context = GetStandaloneContext()) {
-				if (standaloneLocation && context->type == ContextType::Location && !standaloneLocation->cocCode.empty())
-					ImGui::TextDisabled("%s: %s", T("feature.scene_manager.location.coc_code", "COC code"), standaloneLocation->cocCode.c_str());
 				if (manager->IsSceneTimeOfDayEnabled(*context))
 					context->period = SceneSettingsManager::GetCurrentPeriod();
 				SceneEntryTable::Draw(*context);
 			} else if (standalonePage == 2) {
 				Util::Text::WrappedDisabled("%s", T("feature.scene_manager.location.no_target", "No location target is selected."));
-				ImGui::TextWrapped("%s", T("feature.scene_manager.location.no_target_hint",
-											 "Choose any loaded worldspace, region, location type, location, or named cell to add or manage its settings."));
 			} else {
 				Util::Text::WrappedDisabled("%s", T("feature.scene_manager.weather.no_target", "No weather is selected."));
-				ImGui::TextWrapped("%s", T("feature.scene_manager.weather.no_target_hint",
-											 "Choose any loaded weather to add or manage its settings."));
 			}
 			break;
 		}
@@ -1200,6 +1180,7 @@ void SceneSettingsUI::DrawStandalonePage()
 		break;
 	}
 	DrawTargetManagement();
+	SceneEntryTable::FinishPagePresetFrame();
 }
 
 bool SceneSettingsUI::CanEditFeaturePage(Feature* feature)
@@ -1322,6 +1303,51 @@ bool SceneSettingsUI::SetFeaturePagePreviewPlaying(bool playing)
 	return true;
 }
 
+namespace
+{
+	void DrawFeatureLayerActions(const SceneSettingsManager::SceneContextId& scene, const std::string& name)
+	{
+		using Manager = SceneSettingsManager;
+		using Source = Manager::EntrySource;
+		auto* manager = Manager::GetSingleton();
+		const Manager::EntryLayerScope scope{ .type = scene.type, .target = scene, .period = scene.period, .feature = name, .selection = featurePageSelection };
+		const auto user = manager->GetContextUserEntrySummary(scene, name, featurePageSelection);
+		Manager::ContextEntrySummary preset;
+		std::vector<const Manager::SettingEntry*> presetEntries;
+		for (const auto& entry : manager->GetContextEntries(scene)) {
+			if (entry.source != Source::Overwrite || !Manager::IsInEntryScope(entry, scope))
+				continue;
+			presetEntries.push_back(&entry);
+			if (!entry.deleted) {
+				++preset.total;
+				preset.paused += entry.paused ? 1 : 0;
+			}
+		}
+		for (const auto source : { Source::User, Source::Overwrite }) {
+			ImGui::PushID(static_cast<int>(source));
+			const bool isUser = source == Source::User;
+			const auto& summary = isUser ? user : preset;
+			const bool canDelete = isUser ? user.total != 0 : !presetEntries.empty();
+			ImGui::TextUnformatted(isUser ? T("feature.scene_manager.section.user_settings", "User Settings") :
+											T("feature.scene_manager.section.overwrite_files", "Preset Settings"));
+			SceneEntryTable::DrawLayerActions(scope, source, summary.AllPaused(), summary.total != 0, true, canDelete, [&] { manager->SetContextEntriesPaused(scene, !summary.AllPaused(), name, featurePageSelection, source, true); }, [&] {
+					ImGui::CloseCurrentPopup();
+					if (!isUser) {
+						SceneEntryTable::RequestFeaturePresetDeletion(presetEntries);
+						return;
+					}
+					featureDeleteConfirmation.title = T("feature.scene_manager.edit.delete_title", "Delete Scene Settings?");
+					featureDeleteConfirmation.message = T("feature.scene_manager.edit.delete_message", "Delete this feature's User Settings from the selected scene?");
+					featureDeleteConfirmation.confirmLabel = T("feature.scene_manager.action.delete", "Delete");
+					featureDeleteConfirmation.cancelLabel = T("feature.scene_manager.action.cancel", "Cancel");
+					featureDeleteConfirmation.Request(); }, true);
+			ImGui::PopID();
+			if (isUser)
+				ImGui::Separator();
+		}
+	}
+}
+
 bool SceneSettingsUI::DrawFeaturePageControls(Feature* feature, bool enabled)
 {
 	if (!CanEditFeaturePage(feature))
@@ -1351,10 +1377,12 @@ bool SceneSettingsUI::DrawFeaturePageControls(Feature* feature, bool enabled)
 	const bool hasTargetPicker = featurePageContext->type == ContextType::Weather || featurePageContext->type == ContextType::Location;
 	const bool hasPeriodPicker = featurePageContext->type != ContextType::Interior;
 	const int pickerColumns = hasPeriodPicker ? 2 : 1;
-	constexpr int actionColumns = 6;
+	constexpr int actionColumns = 5;
 	const int inlineColumns = pickerColumns + actionColumns + (hasTargetPicker ? 0 : 1);
 	const float targetWidth = periodWidth + (hasTargetPicker ? ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x : 0.0f);
-	const bool singleRow = ImGui::GetContentRegionAvail().x >= typeWidth + targetWidth + actionWidth * actionColumns + cellPadding * inlineColumns;
+	const float availableWidth = ImGui::GetContentRegionAvail().x;
+	const float toolbarRight = ImGui::GetCursorScreenPos().x + availableWidth;
+	const bool singleRow = availableWidth >= typeWidth + targetWidth + actionWidth * actionColumns + cellPadding * inlineColumns;
 	if (ImGui::BeginTable("##FeatureSceneEditorBar", singleRow ? inlineColumns : pickerColumns, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings)) {
 		ImGui::TableSetupColumn("##type", ImGuiTableColumnFlags_WidthFixed, typeWidth);
 		if (hasPeriodPicker) {
@@ -1390,10 +1418,15 @@ bool SceneSettingsUI::DrawFeaturePageControls(Feature* feature, bool enabled)
 		}
 		if (hasPeriodPicker) {
 			ImGui::TableSetColumnIndex(1);
-			DrawFeatureTargetPicker(name, *featurePageContext, periodWidth);
+			const float popupRight = singleRow ? ImGui::GetCurrentTable()->Columns[inlineColumns - 1].WorkMinX + actionWidth : toolbarRight;
+			DrawFeatureTargetPicker(name, *featurePageContext, periodWidth, popupRight);
 		}
 		if (!singleRow) {
 			ImGui::EndTable();
+			if (hasTargetPicker) {
+				const float rowWidth = actionWidth * actionColumns + ImGui::GetStyle().ItemSpacing.x * (actionColumns - 1);
+				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - rowWidth));
+			}
 			ImGui::BeginGroup();
 		}
 		const auto nextAction = [&](int column) {
@@ -1402,6 +1435,8 @@ bool SceneSettingsUI::DrawFeaturePageControls(Feature* feature, bool enabled)
 			else if (column > 0)
 				BrowserUI::SameLineIfFits(actionWidth);
 		};
+		const auto scene = *featurePageContext;
+		SceneEntryTable::BeginFeaturePresetFrame(scene, name, featurePageScopeRevision);
 		nextAction(0);
 		const bool playing = Util::EnvironmentControls::IsPreviewActive();
 		{
@@ -1424,70 +1459,30 @@ bool SceneSettingsUI::DrawFeaturePageControls(Feature* feature, bool enabled)
 			if (BrowserUI::IconButton("##Copy", SceneActionIcons::kCopy, T("ui.copy", "Copy")))
 				SceneCopyModal::Open(*featurePageContext, name, featurePageSelection);
 		}
-		using Source = SceneSettingsManager::EntrySource;
-		const auto scene = *featurePageContext;
-		SceneEntryTable::BeginFeaturePresetFrame(scene, name, featurePageScopeRevision);
-		const auto isPresetTarget = [&](const SceneSettingsManager::SettingEntry& entry) {
-			return entry.source == Source::Overwrite && entry.featureShortName == name &&
-			       SceneSettingsContextRules::EntryBelongsToContext(entry, scene) &&
-			       (!featurePageSelection || featurePageSelection->contains({ entry.featureShortName, entry.settingPath, entry.settingKey }));
-		};
-		const auto summary = manager->GetContextUserEntrySummary(scene, name, featurePageSelection);
-		SceneSettingsManager::ContextEntrySummary presetSummary;
-		bool hasPreset = false;
-		for (const auto& entry : manager->GetContextEntries(scene))
-			if (isPresetTarget(entry)) {
-				hasPreset = true;
-				if (entry.deleted)
-					continue;
-				++presetSummary.total;
-				presetSummary.paused += entry.paused ? 1 : 0;
-			}
-		const bool hasUser = summary.total != 0;
-		const bool canPausePreset = presetSummary.total != 0;
-		const bool pending = manager->HasPendingContextEdit();
 		nextAction(3);
-		bool pausePressed;
-		{
-			const Util::DisableGuard disabled(pending || (!hasUser && !canPausePreset));
-			const bool paused = (!hasUser || summary.AllPaused()) && (!canPausePreset || presetSummary.AllPaused());
-			pausePressed = BrowserUI::IconButton("##Pause", paused ? SceneActionIcons::kResume : SceneActionIcons::kPause,
-				paused ? T("feature.scene_manager.action.resume", "Resume") : T("feature.scene_manager.action.pause", "Pause"));
+		constexpr auto* bulkPopup = "##AllSceneSettings";
+		const bool bulkActive = ImGui::IsPopupOpen(bulkPopup);
+		if (BrowserUI::IconButton("##SceneSettingsActions", Icons::TI(ICON_TI_ADJUSTMENTS_HORIZONTAL),
+				T("feature.scene_manager.action.all_settings", "All Settings"), bulkActive)) {
+			ImGui::OpenPopup(bulkPopup);
+			const auto min = ImGui::GetItemRectMin();
+			ImGui::SetNextWindowPos(ImVec2(min.x, ImGui::GetItemRectMax().y), ImGuiCond_Appearing);
 		}
-		ChooseFeatureActionLayer("##PauseSceneLayer", pausePressed, hasUser && !pending, canPausePreset, pending, [&](Source source) {
-			if (source == Source::User)
-				manager->DiscardContextEdit();
-			const auto& layer = source == Source::User ? summary : presetSummary;
-			manager->SetContextEntriesPaused(scene, !layer.AllPaused(), name, featurePageSelection, source);
-			if (source == Source::User)
-				manager->BeginContextEdit(name, scene);
-		});
-		nextAction(4);
-		bool deletePressed;
-		{
-			const Util::DisableGuard disabled(!hasUser && (!hasPreset || pending));
-			deletePressed = BrowserUI::IconButton("##Delete", SceneActionIcons::kDelete, T("feature.scene_manager.action.delete", "Delete"));
-		}
-		ChooseFeatureActionLayer("##DeleteSceneLayer", deletePressed, hasUser, hasPreset, pending, [&](Source source) {
-			if (source == Source::User) {
-				featureDeleteConfirmation.title = T("feature.scene_manager.edit.delete_title", "Delete Scene Settings?");
-				featureDeleteConfirmation.message = T("feature.scene_manager.edit.delete_message", "Delete this feature's User Settings from the selected scene?");
-				featureDeleteConfirmation.confirmLabel = T("feature.scene_manager.action.delete", "Delete");
-				featureDeleteConfirmation.cancelLabel = T("feature.scene_manager.action.cancel", "Cancel");
-				featureDeleteConfirmation.Request();
-			} else {
-				std::vector<const SceneSettingsManager::SettingEntry*> targets;
-				for (const auto& entry : manager->GetContextEntries(scene))
-					if (isPresetTarget(entry))
-						targets.push_back(&entry);
-				SceneEntryTable::RequestFeaturePresetDeletion(targets);
+		if (ImGui::IsPopupOpen(bulkPopup)) {
+			const float popupWidth = std::ceil(SceneEntryTable::GetLayerActionsWidth(SceneSettingsManager::EntrySource::Overwrite)) +
+			                         ImGui::GetStyle().WindowPadding.x * 2.0f;
+			ImGui::SetNextWindowSizeConstraints(ImVec2(popupWidth, 0.0f), ImVec2(FLT_MAX, FLT_MAX));
+			if (ImGui::BeginPopup(bulkPopup)) {
+				DrawFeatureLayerActions(scene, name);
+				ImGui::EndPopup();
 			}
-		});
+		}
 		if (singleRow) {
 			ImGui::TableSetColumnIndex(inlineColumns - 1);
 		} else {
 			BrowserUI::SameLineIfFits(actionWidth);
-			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - actionWidth));
+			if (!hasTargetPicker)
+				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - actionWidth));
 		}
 		if (BrowserUI::IconButton("##CloseSceneToolbar", Icons::TI(ICON_TI_X), T("feature.scene_manager.action.close", "Close")))
 			HideFeaturePageEditing();
@@ -1497,9 +1492,7 @@ bool SceneSettingsUI::DrawFeaturePageControls(Feature* feature, bool enabled)
 			ImGui::EndGroup();
 	}
 	if (featureDeleteConfirmation.Draw()) {
-		manager->DiscardContextEdit();
 		manager->ClearContextEntries(*featurePageContext, name, featurePageSelection);
-		manager->BeginContextEdit(name, *featurePageContext);
 	}
 	SceneCopyModal::Draw(*featurePageContext, name);
 	if (featureSaveFailed)
@@ -1525,10 +1518,10 @@ void SceneSettingsUI::DrawFeaturePageBody(Feature* feature)
 
 bool SceneSettingsUI::DrawWeatherTargetPicker(RE::FormID& selected, float& scroll)
 {
-	return DrawWeatherPicker(selected, {}, &scroll);
+	return DrawWeatherPicker(selected, ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x, {}, &scroll);
 }
 
 bool SceneSettingsUI::DrawLocationTargetPicker(std::optional<SceneSettingsManager::LocationTarget>& selected, float& scroll)
 {
-	return DrawLocationPicker(selected, {}, &scroll);
+	return DrawLocationPicker(selected, ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x, {}, &scroll);
 }

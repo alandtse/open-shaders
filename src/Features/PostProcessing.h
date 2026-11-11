@@ -73,6 +73,7 @@ struct PostProcessing : Feature
 
 	/** @brief Reports whether scene exposure is published and its luminance range and compensation. */
 	virtual json GetDiagnostics() override;
+	virtual void ApplyContextualDefaults(json& a_defaults) const override;
 
 	/**
 	 * @brief Whether Post Processing wants to replace the vanilla tonemap this frame.

@@ -527,6 +527,7 @@ void GrassCollision::UpdateCollisionTexture()
 	context->VSSetShaderResources(100, ARRAYSIZE(nullVertexSrvs), nullVertexSrvs);
 
 	if (!settings.EnableGrassCollision) {
+		CS_GPU_PASS("GrassCollision::Clear");
 		const float clearColor[4] = {};
 		for (uint textureIndex = 0; textureIndex < 2; ++textureIndex) {
 			context->ClearUnorderedAccessViewFloat(deformationTextures[textureIndex]->uav.get(), clearColor);

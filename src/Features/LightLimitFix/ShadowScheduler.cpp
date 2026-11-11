@@ -1558,6 +1558,7 @@ namespace ShadowCasterManager
 
 	static void ReserveFocusShadowSlots()
 	{
+		ZoneScopedN("SCM::Scheduler::ReserveFocus");
 		// Reserve pool slots matching the engine's focus-shadow actor count;
 		// eject any point light occupying a slot the engine now claims for
 		// focus rendering (reassigned to a free slot, or falls through to excess).
@@ -1570,12 +1571,14 @@ namespace ShadowCasterManager
 
 	static RE::BSShadowLight* SetupSunLight(RE::ShadowSceneNode* ssn)
 	{
+		ZoneScopedN("SCM::Scheduler::SetupSun");
 		RE::BSShadowLight* sunLight = nullptr;
 		// ---- Sun / directional light ----
 		if (!GetSunBool2()) {
 			auto* sun = ssn->GetRuntimeData().sunShadowDirLight;
 			if (sun) {
 				uint8_t vrFlag = globals::game::isVR ? static_cast<uint8_t>(RE::BSShaderManager::IsSunShadowUpdateDue()) + 1 : 0;
+				SetSunCullCameras(sun);
 				sun->Accumulate(*GetAccumLightSlot(), 0, nullptr, vrFlag);
 
 				if (sun->lensFlareData && !globals::game::isVR)
@@ -1594,6 +1597,7 @@ namespace ShadowCasterManager
 
 	static void ScrubFocusShadowFlags(RE::ShadowSceneNode* ssn)
 	{
+		ZoneScopedN("SCM::Scheduler::ScrubFocus");
 		// Extended mode: scrub drawFocusShadows on every active light and the sun --
 		// a stale flag on a parabolic light in slot [4..7] sends
 		// BSShadowParabolicLight::Render into its focus loop on a non-directional
@@ -3048,6 +3052,7 @@ namespace ShadowCasterManager
 
 	static void TrackRedrawStallStats()
 	{
+		ZoneScopedN("SCM::Scheduler::StallStats");
 		// Deliberately outside the maxRedraw>0/budgetRemain>0 guard above: a
 		// frame where the scheduler bails entirely is the worst case for a
 		// stall, and it must still be counted.
@@ -3245,6 +3250,7 @@ namespace ShadowCasterManager
 
 	static void ReinsertNonRedrawnLights(RE::ShadowSceneNode* ssn, RE::BSShadowLight* sunLight, const RE::NiCamera* camera)
 	{
+		ZoneScopedN("SCM::Scheduler::Reinsert");
 		auto* shadowSceneNodeRT = &ssn->GetRuntimeData();
 		// See IsLightAliveNow/IsVtableValid for the two-stage validity contract.
 		auto isAliveNow = [shadowSceneNodeRT, sunLight](RE::BSShadowLight* l) -> bool {
@@ -3342,6 +3348,7 @@ namespace ShadowCasterManager
 
 	static void FinalizeFrameBookkeeping(RE::ShadowSceneNode* ssn, int doneLightCount)
 	{
+		ZoneScopedN("SCM::Scheduler::Finalize");
 		// Update rolling redraw and budget statistics.
 		{
 			int redrawing = 0;
@@ -3371,6 +3378,7 @@ namespace ShadowCasterManager
 
 	static void EmitSchedulerDiagnostics(bool wantDiag)
 	{
+		ZoneScopedN("SCM::Scheduler::Diagnostics");
 		// Tracy per-frame plots: scheduler counters (scm.*) + live config (cfg.*),
 		// emitted together so a capture supports A/B queries without a rerun.
 		{

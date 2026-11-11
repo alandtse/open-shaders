@@ -76,6 +76,44 @@ namespace ShadowCasterManager
 		return s_currentCullLight.load(std::memory_order_relaxed);
 	}
 
+	/// Sun cascade replays run on any thread (VR queues jobs), so the cascade
+	/// camera, which no other cull shares, identifies them.
+	constexpr std::size_t kMaxSunCullCameras = 8;
+	std::array<std::atomic<const RE::NiCamera*>, kMaxSunCullCameras> s_sunCullCameras{};
+
+	void SetSunCullCameras(RE::BSShadowLight* a_sun)
+	{
+		std::size_t count = 0;
+		auto add = [&](const RE::NiCamera* a_camera) {
+			if (a_camera && count < kMaxSunCullCameras)
+				s_sunCullCameras[count++].store(a_camera, std::memory_order_relaxed);
+		};
+		if (a_sun) {
+			if (globals::game::isVR) {
+				for (auto& desc : a_sun->GetVRRuntimeData().shadowmapDescriptors) {
+					add(desc.camera[0].get());
+					add(desc.camera[1].get());
+				}
+			} else {
+				for (auto& desc : a_sun->GetRuntimeData().shadowmapDescriptors)
+					add(desc.camera.get());
+			}
+		}
+		for (; count < kMaxSunCullCameras; ++count)
+			s_sunCullCameras[count].store(nullptr, std::memory_order_relaxed);
+	}
+
+	static bool IsSunCullCamera(const RE::NiCamera* a_camera)
+	{
+		if (!a_camera)
+			return false;
+		for (const auto& camera : s_sunCullCameras) {
+			if (camera.load(std::memory_order_relaxed) == a_camera)
+				return true;
+		}
+		return false;
+	}
+
 	// True while accumulating a light with an EMPTY geomList: a light created
 	// after scene attach never gets geometry from AttachNearbyLights on its
 	// own, so the append hook rebuilds it via the engine's AttachGeometry.
@@ -546,6 +584,8 @@ namespace ShadowCasterManager
 			// Gate on `light`: null means a foreign cull walk sharing this
 			// vtable slot (see CurrentCullLight), not our accumulate.
 			if (light && CasterFilteredByPass(a_visible))
+				return;
+			if (IsSunCullCamera(a_this->camera) && ShadowMapPassless(a_visible) != PasslessReason::kNone)
 				return;
 			func(a_this, a_visible, a_alphaGroupIndex);
 		}

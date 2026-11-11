@@ -1,5 +1,8 @@
 #pragma once
 
+#include "Buffer.h"
+#include "Feature.h"
+
 /** @brief Replaces the vanilla sun texture with an angular procedural disc. */
 struct ProceduralSun : Feature
 {
@@ -8,7 +11,7 @@ struct ProceduralSun : Feature
 	{
 		uint enabled = false;
 		float sunDiskAngularRadius = DirectX::XMConvertToRadians(0.53f);
-		float diskIntensity = 6.0f;
+		float diskIntensity = 4.8f;
 		float edgeSoftness = 0.125f;
 		uint haloEnabled = true;
 		float haloAngularWidth = DirectX::XMConvertToRadians(4.0f);

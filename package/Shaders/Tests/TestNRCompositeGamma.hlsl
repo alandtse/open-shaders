@@ -24,3 +24,14 @@
 	ASSERT(AreEqual, NR::CompositeGain(asfloat(0x7F800000u), NR::kMaxToneStops), 1.0f);
 	ASSERT(AreEqual, NR::CompositeGain(-asfloat(0x7F800000u), NR::kMaxToneStops), 1.0f);
 }
+
+/// @tags nr, color
+/// The final chroma gain keeps linear luminance and the stop bound after the gamma re-encode
+[numthreads(1, 1, 1)] void TestNRCompositeGammaChromaGainKeepsLuminanceAndBound() {
+	const float3 luma = float3(0.2126f, 0.7152f, 0.0722f);
+	const float3 linearBase = float3(0.2f, 0.0f, 0.25f);
+	const float3 applied = NR::CompositeChromaGain(Color::LinearToSkyrimGamma(linearBase), float3(-2.0f, 0.3925f, 2.0f), 1.0f, luma, NR::kMaxChromaStops);
+	const float3 gain = Color::SkyrimGammaToLinear(applied);
+	ASSERT(IsTrue, abs(dot(luma, linearBase * gain) - dot(luma, linearBase)) < 1e-3f);
+	ASSERT(IsTrue, all(gain <= 2.0f + 1e-3f) && all(gain >= 0.5f - 1e-3f));
+}

@@ -11,7 +11,6 @@
 #include <windows.h>
 
 #include "BackgroundBlur.h"
-#include "CSEditor/Browser/BrowserWidgets.h"
 #include "CursorLoader.h"
 #include "Features/ScreenshotFeature.h"
 #include "FontAtlasState.h"
@@ -23,11 +22,13 @@
 #include "IconsTabler.h"
 #include "Menu.h"
 #include "MenuIcons.h"
+#include "SettingsPageRenderer.h"
 #include "ShaderCache.h"
 #include "ShaderCacheStatusWidget.h"
 #include "State.h"
 #include "ThemeManager.h"
 #include "Utils/UI.h"
+#include "Utils/UIAnim.h"
 
 using json = nlohmann::json;
 
@@ -103,7 +104,7 @@ namespace
 		{ Ids::kStyling, "menu.settings.surface_toast", "Notification Toasts" },
 		{ Ids::kStyling, "menu.settings.surface_overlay_card", "Status Card" },
 		{ Ids::kStyling, "menu.settings.surface_palette", "Go To Palette" },
-		{ Ids::kStyling, "menu.settings.surface_nav_selected", "Selected Navigation Row" },
+		{ Ids::kStyling, "menu.settings.surface_list_highlight", "List Highlight" },
 		{ Ids::kStyling, "menu.settings.surface_option_card", "Option Cards" },
 		{ Ids::kStyling, "menu.settings.surface_section_card", "Section Cards" },
 		{ Ids::kStyling, "menu.settings.surface_padding", "Inner Padding" },
@@ -142,6 +143,13 @@ namespace
 			fn(&color.x, 4);
 	}
 
+	/// Set by theme undo, which changes the theme without an edit or a click.
+	bool themeCheckPending = true;
+	bool themeDirty = false;
+	/// The selected theme as its file has it, and the file's Theme object it was read from.
+	Menu::ThemeSettings themeReference;
+	json themeReferenceSource;
+
 	/** @brief Every colour value of the live theme, flattened: the Colours page's undo snapshot. */
 	std::vector<float> CaptureThemeColors()
 	{
@@ -163,36 +171,15 @@ namespace
 				ForEachColorValue(globals::menu->GetSettings().Theme, [&](float* data, int count) {
 					for (int c = 0; c < count && i < values.size(); ++c)
 						data[c] = values[i++];
-				}); },
+				});
+				themeCheckPending = true; },
 		};
 	}
 
-	/**
-	 * @brief The selected theme as its file has it: what the Colours and Fonts resets put a value back to. Re-read when the selection
-	 * changes or the page is opened again, so a Save Theme in between is picked up.
-	 */
+	/** @brief The selected theme as its file has it: what the Colours and Fonts resets put a value back to. */
 	const Menu::ThemeSettings& GetThemeFileReference()
 	{
-		static Menu::ThemeSettings reference;
-		static std::string referenceName;
-		static int lastFrame = -2;
-		const std::string& selected = globals::menu->GetSettings().SelectedThemePreset;
-		const int frame = ImGui::GetFrameCount();
-		if (selected != referenceName || frame - lastFrame > 1) {
-			referenceName = selected;
-			reference = Menu::ThemeSettings{};
-			if (const auto* info = ThemeManager::GetSingleton()->GetThemeInfo(selected); info && info->themeData.contains("Theme")) {
-				try {
-					const json& theme = info->themeData["Theme"];
-					Menu::ThemeFromJson(theme, reference);
-				} catch (const std::exception& e) {
-					logger::warn("Colors page: could not read theme '{}' for reset: {}", selected, e.what());
-					reference = Menu::ThemeSettings{};
-				}
-			}
-		}
-		lastFrame = frame;
-		return reference;
+		return themeReference;
 	}
 
 	/** @brief Whether two colours differ by more than a picker step. */
@@ -303,6 +290,7 @@ namespace
 	/** @brief State of the Colours page's toolbar. UI state only. */
 	struct ColorsPageState
 	{
+		std::string filterText;
 		ImGuiTextFilter filter;
 		bool changedOnly = false;
 	};
@@ -351,7 +339,7 @@ namespace
 				const float buttonWidth = ImGui::GetFrameHeight();
 				ImGui::SameLine();
 				ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), cellStartX + cellWidth - buttonWidth));
-				if (BrowserUI::IconButton("##Reset", Icons::TI(MenuIcons::kRestore), T("menu.settings.color_reset_tooltip", "Reset to the theme's colour")))
+				if (Util::IconButton("##Reset", Icons::TI(MenuIcons::kRestore), T("menu.settings.color_reset_tooltip", "Reset to the theme's colour")))
 					std::copy_n(entry.reference, count, entry.value);
 			}
 			ImGui::PopID();
@@ -401,7 +389,8 @@ namespace
 					role.SizeScale = roles[i][3].get<float>();
 				}
 				settings.Theme.FontName = settings.Theme.FontRoles[static_cast<size_t>(Menu::FontRole::Body)].File;
-				MenuFonts::GetAtlasState().pendingFontReload = true; },
+				MenuFonts::GetAtlasState().pendingFontReload = true;
+				themeCheckPending = true; },
 		};
 	}
 
@@ -602,17 +591,6 @@ namespace
 		}
 	}
 
-	void SeparatorTextWithFont(const char* text, Menu::FontRole role)
-	{
-		MenuFonts::FontRoleGuard guard(role);
-		ImGui::SeparatorText(text);
-	}
-
-	void SeparatorTextWithFont(const std::string& text, Menu::FontRole role)
-	{
-		SeparatorTextWithFont(text.c_str(), role);
-	}
-
 	bool ComboWithFont(const char* label, int* currentItem, const char* const items[], int itemCount, Menu::FontRole role)
 	{
 		FontRoleGuard guard(role);
@@ -629,7 +607,7 @@ namespace
 		ImGui::SameLine();
 		const auto tooltip = I18n::GetSingleton()->Format("menu.settings.reset_keybinding_tooltip",
 			{ { "key", Util::Input::KeyIdToString(defaultCombo) } }, "Reset to default ({key})");
-		if (BrowserUI::IconButton(std::format("##Reset{}", id).c_str(), Icons::TI(ICON_TI_RESTORE), tooltip.c_str()))
+		if (Util::IconButton(std::format("##Reset{}", id).c_str(), Icons::TI(ICON_TI_RESTORE), tooltip.c_str()))
 			combo = defaultCombo;
 	}
 
@@ -638,6 +616,17 @@ namespace
 		std::string selected = globals::menu->GetSettings().SelectedThemePreset;
 		return !selected.empty() && ThemeManager::GetSingleton()->IsPresetTheme(selected);
 	}
+
+	/** @brief A theme save button whose fill pulses while `unsaved`. */
+	bool ThemeSaveButton(const char* id, const char* tablerIcon, const char* label, bool unsaved)
+	{
+		if (!unsaved)
+			return Util::ButtonWithFlash(id, tablerIcon, label);
+		const float alpha = 1.0f - ThemeManager::Constants::ANIM_PULSE_AMPLITUDE * Util::Anim::Pulse();
+		Util::StyledButtonWrapper _style(Util::Anim::ScaleAlpha(ImGui::GetStyleColorVec4(ImGuiCol_Button), alpha),
+			ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered), ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+		return Util::ButtonWithFlash(id, tablerIcon, label);
+	}
 }
 
 std::span<const SettingsSearchEntry> SettingsTabRenderer::GetSearchIndex()
@@ -645,15 +634,44 @@ std::span<const SettingsSearchEntry> SettingsTabRenderer::GetSearchIndex()
 	return kSearchIndex;
 }
 
-void SettingsTabRenderer::RenderThemeSaveNote()
+bool SettingsTabRenderer::IsThemeDirty()
 {
-	auto& ts = globals::menu->GetSettings().Theme;
-	MenuFonts::FontRoleGuard subtextFont(Menu::FontRole::Subtext);
-	ImGui::PushStyleColor(ImGuiCol_Text, ts.StatusPalette.InfoColor);
-	ImGui::TextWrapped("%s", T("menu.settings.theme_save_model",
-								 "Theme edits are saved into the theme file with Save Theme. "
-								 "Which theme is selected is saved with Save Settings (Ctrl+S)."));
-	ImGui::PopStyleColor();
+	return themeDirty;
+}
+
+void SettingsTabRenderer::CheckThemeChanged(bool interacted)
+{
+	const bool undone = std::exchange(themeCheckPending, false);
+	if (!interacted && !undone)
+		return;
+
+	static const json noFile;
+	const std::string& selected = globals::menu->GetSettings().SelectedThemePreset;
+	const auto* info = ThemeManager::GetSingleton()->GetThemeInfo(selected);
+	const json& source = info && info->themeData.contains("Theme") ? info->themeData["Theme"] : noFile;
+	if (source != themeReferenceSource) {
+		themeReferenceSource = source;
+		themeReference = Menu::ThemeSettings{};
+		if (!source.is_null()) {
+			try {
+				Menu::ThemeFromJson(source, themeReference);
+			} catch (const std::exception& e) {
+				logger::warn("Could not read theme '{}': {}", selected, e.what());
+				themeReference = Menu::ThemeSettings{};
+			}
+		}
+	}
+	themeDirty = Menu::ThemeToJson(globals::menu->GetSettings().Theme) != Menu::ThemeToJson(themeReference);
+}
+
+void SettingsTabRenderer::RenderThemeUnsavedBanner()
+{
+	if (!IsThemeDirty())
+		return;
+
+	if (Util::StatusBanner(MenuIcons::kSave, T("menu.settings.theme_unsaved_banner", "Unsaved theme changes. Click to open the Theme page, where they're saved."), Util::Colors::GetUnsaved()))
+		SettingsPageRenderer::OpenSection(Ids::kTheme);
+	ImGui::Spacing();
 }
 
 void SettingsTabRenderer::RenderShadersSection()
@@ -836,7 +854,7 @@ void SettingsTabRenderer::RenderInterfaceOptions()
 {
 	auto& themeSettings = globals::menu->GetSettings().Theme;
 
-	SeparatorTextWithFont(T("menu.settings.section_animations", "Animations"), Menu::FontRole::Subheading);
+	Util::SeparatorTextWithFont(T("menu.settings.section_animations", "Animations"), Menu::FontRole::Subheading);
 
 	// The master switch is stored as its opposite (ReduceUIAnimations), so settings files from before the
 	// animation speed option keep their meaning
@@ -849,7 +867,7 @@ void SettingsTabRenderer::RenderInterfaceOptions()
 		Util::SliderFloatTip(T("menu.settings.animation_speed", "Animation speed"), &menuSettings.AnimationSpeed, ThemeManager::Constants::ANIM_SPEED_MIN, ThemeManager::Constants::ANIM_SPEED_MAX, "%.2fx", T("menu.settings.animation_speed_tooltip", "How fast menu animations run: 0.5x is slower, 2x is quicker. 1x is the default."), ImGuiSliderFlags_AlwaysClamp);
 	}
 
-	SeparatorTextWithFont(T("menu.settings.section_window_layout", "Window & Layout"), Menu::FontRole::Subheading);
+	Util::SeparatorTextWithFont(T("menu.settings.section_window_layout", "Window & Layout"), Menu::FontRole::Subheading);
 
 	Util::CheckboxTip(T("menu.settings.auto_hide_feature_list", "Auto-hide Feature List"), &globals::menu->GetSettings().AutoHideFeatureList, T("menu.settings.auto_hide_feature_list_tooltip", "Automatically hides the left feature list panel. Move cursor to the left edge to show it."));
 
@@ -874,7 +892,7 @@ void SettingsTabRenderer::RenderInterfaceOptions()
 		ImGui::GetIO().ConfigDockingWithShift = globals::menu->GetSettings().RequireShiftToDock;
 	}
 
-	SeparatorTextWithFont(T("menu.settings.section_tooltips_warnings", "Tooltips & Warnings"), Menu::FontRole::Subheading);
+	Util::SeparatorTextWithFont(T("menu.settings.section_tooltips_warnings", "Tooltips & Warnings"), Menu::FontRole::Subheading);
 
 	Util::SliderFloatTip(T("menu.settings.tooltip_hover_delay", "Tooltip Hover Delay"), &themeSettings.TooltipHoverDelay, 0.0f, 2.0f, "%.2f s", T("menu.settings.tooltip_hover_delay_tooltip", "Time in seconds to wait before a tooltip appears when hovering over an item."), ImGuiSliderFlags_AlwaysClamp);
 
@@ -887,7 +905,7 @@ void SettingsTabRenderer::RenderHeaderEffectsSection()
 {
 	auto& themeSettings = globals::menu->GetSettings().Theme;
 
-	SeparatorTextWithFont(T("menu.settings.section_header", "Header"), Menu::FontRole::Subheading);
+	Util::SeparatorTextWithFont(T("menu.settings.section_header", "Header"), Menu::FontRole::Subheading);
 
 	if (Util::CheckboxTip(T("menu.settings.use_monochrome_icons", "Use Monochrome Icons"), &themeSettings.UseMonochromeIcons, T("menu.settings.use_monochrome_icons_tooltip", "Uses white monochrome icons that adapt to your theme's text color"))) {
 		Util::IconLoader::PendingReload() = true;
@@ -896,7 +914,7 @@ void SettingsTabRenderer::RenderHeaderEffectsSection()
 	Util::CheckboxTip(T("menu.settings.show_icon_buttons_in_header", "Show Icon Buttons in OS Editor"), &themeSettings.ShowActionIcons,
 		T("menu.settings.show_icon_buttons_in_header_tooltip", "Shows OS Editor widget actions as icons. Turn this off to use text buttons. The editor's text button option takes priority."));
 
-	SeparatorTextWithFont(T("menu.settings.visual_effects", "Visual Effects"), Menu::FontRole::Subheading);
+	Util::SeparatorTextWithFont(T("menu.settings.visual_effects", "Visual Effects"), Menu::FontRole::Subheading);
 
 	ImGui::BeginDisabled(globals::game::isVR);
 	if (Util::CheckboxTip(T("menu.settings.background_blur", "Background Blur"), &themeSettings.BackgroundBlurEnabled, T("menu.settings.background_blur_tooltip", "Applies a blur effect to the background behind the menu window."))) {
@@ -930,10 +948,9 @@ void SettingsTabRenderer::RenderThemesSection()
 	auto& themeSettings = globals::menu->GetSettings().Theme;
 
 	// Static variables for popup state and new theme creation
-	static Util::ConfirmationPopup deleteThemePopup(
-		T("menu.settings.delete_theme_title", "Delete Theme"), "",
-		T("menu.settings.delete_button", "Delete"),
-		T("menu.settings.cancel", "Cancel"));
+	static Util::ConfirmationPopup deleteThemePopup;
+	static Util::ConfirmationPopup switchThemePopup;
+	static std::string pendingTheme;
 	static bool showCreateThemePopup = false;
 	static char newThemeName[128] = "";
 	static char newThemeDisplayName[128] = "";
@@ -952,7 +969,7 @@ void SettingsTabRenderer::RenderThemesSection()
 	static bool updateSuccess = false;
 
 	// Theme Preset Selection
-	SeparatorTextWithFont(T("menu.settings.theme_preset", "Theme Preset"), Menu::FontRole::Subheading);
+	Util::SeparatorTextWithFont(T("menu.settings.theme_preset", "Theme Preset"), Menu::FontRole::Subheading);
 
 	// Get theme manager
 	auto themeManager = ThemeManager::GetSingleton();
@@ -999,16 +1016,31 @@ void SettingsTabRenderer::RenderThemesSection()
 	}
 
 	// Theme preset dropdown
+	const int previousItem = currentItem;
 	if (ComboWithFont("##ThemePreset", &currentItem, items.data(), static_cast<int>(items.size()), Menu::FontRole::Body)) {
 		std::string selectedTheme = themes[currentItem].name;
-		if (selectedTheme != currentThemePreset && globals::menu->LoadThemePreset(selectedTheme)) {
-			// Theme loaded successfully, update UI
-			currentThemePreset = selectedTheme;
-			showUpdateFeedback = false;
+		if (selectedTheme != currentThemePreset) {
+			if (IsThemeDirty()) {
+				pendingTheme = selectedTheme;
+				switchThemePopup.title = T("menu.settings.switch_theme_title", "Discard Theme Changes");
+				switchThemePopup.message = T("menu.settings.switch_theme_confirm", "Switching themes discards your unsaved theme changes.");
+				switchThemePopup.confirmLabel = T("menu.settings.discard_and_switch", "Discard & Switch");
+				switchThemePopup.cancelLabel = T("menu.settings.cancel", "Cancel");
+				switchThemePopup.Request();
+				currentItem = previousItem;
+			} else if (globals::menu->LoadThemePreset(selectedTheme)) {
+				// Theme loaded successfully, update UI
+				currentThemePreset = selectedTheme;
+				showUpdateFeedback = false;
+			}
 		}
 	}
+	if (switchThemePopup.Draw() && globals::menu->LoadThemePreset(pendingTheme)) {
+		currentThemePreset = pendingTheme;
+		showUpdateFeedback = false;
+	}
 
-	if (Icons::LabeledButton("##RefreshThemes", Icons::TI(ICON_TI_REFRESH), T("menu.settings.refresh", "Refresh"))) {
+	if (Util::LabeledButton("##RefreshThemes", Icons::TI(ICON_TI_REFRESH), T("menu.settings.refresh", "Refresh"))) {
 		themeManager->RefreshThemes();
 		// Ensure a valid theme is still selected
 		const auto* themeInfo = themeManager->GetThemeInfo(currentThemePreset);
@@ -1026,7 +1058,7 @@ void SettingsTabRenderer::RenderThemesSection()
 	}
 
 	ImGui::SameLine();
-	if (Icons::LabeledButton("##OpenThemesFolder", Icons::TI(MenuIcons::kFolder), T("menu.settings.open_themes_folder", "Open Themes Folder"))) {
+	if (Util::LabeledButton("##OpenThemesFolder", Icons::TI(MenuIcons::kFolder), T("menu.settings.open_themes_folder", "Open Themes Folder"))) {
 		std::filesystem::path themesPath = Util::PathHelpers::GetThemesRealPath();
 		ShellExecuteA(NULL, "open", themesPath.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
 	}
@@ -1055,7 +1087,7 @@ void SettingsTabRenderer::RenderThemesSection()
 	const auto* currentThemeInfo = themeManager->GetThemeInfo(currentThemePreset);
 
 	if (!isPreset) {
-		if (Util::ButtonWithFlash("##SaveTheme", MenuIcons::kSave, T("menu.settings.save_theme", "Save Theme"))) {
+		if (ThemeSaveButton("##SaveTheme", MenuIcons::kSave, T("menu.settings.save_theme", "Save Theme"), IsThemeDirty())) {
 			if (currentThemeInfo) {
 				// Get current settings
 				json currentThemeJson;
@@ -1120,7 +1152,8 @@ void SettingsTabRenderer::RenderThemesSection()
 		ImGui::SameLine();
 	}
 
-	if (Util::ButtonWithFlash("##SaveAsNewTheme", ICON_TI_PLUS, T("menu.settings.save_as_new_theme", "Save As New Theme"))) {
+	// Built-in themes can't be overwritten, so Save As New is their save
+	if (ThemeSaveButton("##SaveAsNewTheme", ICON_TI_PLUS, T("menu.settings.save_as_new_theme", "Save As New Theme"), isPreset && IsThemeDirty())) {
 		showCreateThemePopup = true;
 		memset(newThemeName, 0, sizeof(newThemeName));
 		memset(newThemeDisplayName, 0, sizeof(newThemeDisplayName));
@@ -1128,9 +1161,18 @@ void SettingsTabRenderer::RenderThemesSection()
 		showValidationError = false;
 	}
 
+	if (IsThemeDirty()) {
+		ImGui::SameLine();
+		if (Util::ButtonWithFlash("##RevertTheme", MenuIcons::kRestore, T("menu.settings.revert_theme", "Revert")))
+			globals::menu->LoadThemePreset(currentThemePreset);
+	}
+
 	if (!isPreset && currentThemeInfo && !currentThemeInfo->filePath.empty()) {
 		ImGui::SameLine();
 		if (Util::ErrorButtonWithFlash("##DeleteTheme", ICON_TI_TRASH, T("menu.settings.delete_theme", "Delete"))) {
+			deleteThemePopup.title = T("menu.settings.delete_theme_title", "Delete Theme");
+			deleteThemePopup.confirmLabel = T("menu.settings.delete_button", "Delete");
+			deleteThemePopup.cancelLabel = T("menu.settings.cancel", "Cancel");
 			deleteThemePopup.message =
 				std::string(T("menu.settings.delete_theme_confirm_part1",
 					"Are you sure you want to delete the theme '")) +
@@ -1274,7 +1316,7 @@ void SettingsTabRenderer::RenderThemesSection()
 		}
 
 		ImGui::SameLine();
-		if (Icons::LabeledButton("##CancelCreateTheme", Icons::TI(ICON_TI_X), T("menu.settings.cancel", "Cancel"))) {
+		if (Util::LabeledButton("##CancelCreateTheme", Icons::TI(ICON_TI_X), T("menu.settings.cancel", "Cancel"))) {
 			showCreateThemePopup = false;
 			ImGui::CloseCurrentPopup();
 		}
@@ -1348,7 +1390,7 @@ void SettingsTabRenderer::RenderFontsSection()
 	// Roles: pick one on the left, edit it on the right
 	{
 		Util::SectionCard card("##FontRoles", ICON_TI_TYPOGRAPHY, T("menu.settings.font_roles", "Font Roles"));
-		if (Icons::LabeledButton("##RefreshFonts", Icons::TI(ICON_TI_REFRESH), T("menu.settings.refresh_font_families", "Refresh Font Families"))) {
+		if (Util::LabeledButton("##RefreshFonts", Icons::TI(ICON_TI_REFRESH), T("menu.settings.refresh_font_families", "Refresh Font Families"))) {
 			refreshFontCatalog(true);
 			MenuFonts::GetAtlasState().pendingFontReload = true;
 		}
@@ -1400,7 +1442,7 @@ void SettingsTabRenderer::RenderFontsSection()
 
 			// Actions for this role
 			ImGui::Spacing();
-			if (Icons::LabeledButton("##UseEverywhere", Icons::TI(ICON_TI_COPY), T("menu.settings.font_use_everywhere", "Use for All Roles"))) {
+			if (Util::LabeledButton("##UseEverywhere", Icons::TI(ICON_TI_COPY), T("menu.settings.font_use_everywhere", "Use for All Roles"))) {
 				for (size_t i = 0; i < themeSettings.FontRoles.size(); ++i) {
 					auto& other = themeSettings.FontRoles[i];
 					other.Family = roleSettings.Family;
@@ -1413,7 +1455,7 @@ void SettingsTabRenderer::RenderFontsSection()
 			Util::HoverTip(T("menu.settings.font_use_everywhere_tooltip", "Give every role this family and style. Each role keeps its own scale."));
 			if (!FontRoleMatches(roleSettings, referenceRole)) {
 				ImGui::SameLine();
-				if (Icons::LabeledButton("##ResetRole", Icons::TI(MenuIcons::kRestore), T("menu.settings.font_reset_role", "Reset Role"))) {
+				if (Util::LabeledButton("##ResetRole", Icons::TI(MenuIcons::kRestore), T("menu.settings.font_reset_role", "Reset Role"))) {
 					roleSettings = referenceRole;
 					if (role == Menu::FontRole::Body)
 						themeSettings.FontName = roleSettings.File;
@@ -1438,12 +1480,12 @@ void SettingsTabRenderer::RenderStylingSection()
 			if (ImGui::SliderFloat(T("menu.settings.global_scale", "Global Scale"), &themeSettings.GlobalScale, -1.f, 1.f, "%.2f"))
 				ImGui::GetStyle().FontScaleMain = exp2(themeSettings.GlobalScale);
 			RenderInterfaceOptions();
-			SeparatorTextWithFont(T("menu.settings.scrollbar_opacity", "Scrollbar Opacity"), Menu::FontRole::Subheading);
+			Util::SeparatorTextWithFont(T("menu.settings.scrollbar_opacity", "Scrollbar Opacity"), Menu::FontRole::Subheading);
 			Util::SliderFloatTip(T("menu.settings.track_opacity", "Track Opacity"), &themeSettings.ScrollbarOpacity.Background, 0.0f, 1.0f, "%.2f", T("menu.settings.track_opacity_tooltip", "Controls the opacity of the scrollbar track/channel (the background area behind the scrollbar)."));
 			Util::SliderFloatTip(T("menu.settings.thumb_opacity", "Thumb Opacity"), &themeSettings.ScrollbarOpacity.Thumb, 0.0f, 1.0f, "%.2f", T("menu.settings.thumb_opacity_tooltip", "Controls the opacity of the scrollbar thumb (the draggable part)."));
 			Util::SliderFloatTip(T("menu.settings.thumb_hovered_opacity", "Thumb Hovered Opacity"), &themeSettings.ScrollbarOpacity.ThumbHovered, 0.0f, 1.0f, "%.2f", T("menu.settings.thumb_hovered_opacity_tooltip", "Controls the opacity of the scrollbar thumb when hovered."));
 			Util::SliderFloatTip(T("menu.settings.thumb_active_opacity", "Thumb Active Opacity"), &themeSettings.ScrollbarOpacity.ThumbActive, 0.0f, 1.0f, "%.2f", T("menu.settings.thumb_active_opacity_tooltip", "Controls the opacity of the scrollbar thumb when being dragged."));
-			SeparatorTextWithFont(T("menu.settings.section_scrollbar", "Scrollbar"), Menu::FontRole::Subheading);
+			Util::SeparatorTextWithFont(T("menu.settings.section_scrollbar", "Scrollbar"), Menu::FontRole::Subheading);
 			ImGui::SliderFloat(T("menu.settings.scrollbar_size", "Scrollbar Size"), &style.ScrollbarSize, 1.0f, 20.0f, "%.0f");
 			ImGui::SliderFloat(T("menu.settings.grab_min_size", "Grab Min Size"), &style.GrabMinSize, 1.0f, 20.0f, "%.0f");
 			Util::EndPillTabItem();
@@ -1454,7 +1496,7 @@ void SettingsTabRenderer::RenderStylingSection()
 			ImGui::SliderFloat2(T("menu.settings.item_spacing", "Item Spacing"), (float*)&style.ItemSpacing, 0.0f, 20.0f, "%.0f");
 			ImGui::SliderFloat2(T("menu.settings.item_inner_spacing", "Item Inner Spacing"), (float*)&style.ItemInnerSpacing, 0.0f, 20.0f, "%.0f");
 			ImGui::SliderFloat(T("menu.settings.indent_spacing", "Indent Spacing"), &style.IndentSpacing, 0.0f, 30.0f, "%.0f");
-			SeparatorTextWithFont(T("menu.settings.section_tables", "Tables"), Menu::FontRole::Subheading);
+			Util::SeparatorTextWithFont(T("menu.settings.section_tables", "Tables"), Menu::FontRole::Subheading);
 			ImGui::SliderFloat2(T("menu.settings.cell_padding", "Cell Padding"), (float*)&style.CellPadding, 0.0f, 20.0f, "%.0f");
 			ImGui::SliderAngle(T("menu.settings.table_angled_headers_angle", "Table Angled Headers Angle"), &style.TableAngledHeadersAngle, -50.0f, +50.0f);
 			Util::EndPillTabItem();
@@ -1498,7 +1540,7 @@ void SettingsTabRenderer::RenderStylingSection()
 			ImGui::SliderFloat2(T("menu.settings.separator_text_align", "Separator Text Align"), (float*)&style.SeparatorTextAlign, 0.0f, 1.0f, "%.2f");
 			ImGui::SliderFloat2(T("menu.settings.separator_text_padding", "Separator Text Padding"), (float*)&style.SeparatorTextPadding, 0.0f, 40.0f, "%.0f");
 			ImGui::SliderFloat(T("menu.settings.log_slider_deadzone", "Log Slider Deadzone"), &style.LogSliderDeadzone, 0.0f, 12.0f, "%.0f");
-			SeparatorTextWithFont(T("menu.settings.section_docking", "Docking"), Menu::FontRole::Subheading);
+			Util::SeparatorTextWithFont(T("menu.settings.section_docking", "Docking"), Menu::FontRole::Subheading);
 			ImGui::SliderFloat(T("menu.settings.docking_splitter_size", "Docking Splitter Size"), &style.DockingSeparatorSize, 0.0f, 12.0f, "%.0f");
 			Util::EndPillTabItem();
 		}
@@ -1525,8 +1567,8 @@ namespace
 			return T("menu.settings.surface_overlay_card", "Status Card");
 		case SurfaceRole::Palette:
 			return T("menu.settings.surface_palette", "Go To Palette");
-		case SurfaceRole::NavSelected:
-			return T("menu.settings.surface_nav_selected", "Selected Navigation Row");
+		case SurfaceRole::ListHighlight:
+			return T("menu.settings.surface_list_highlight", "List Highlight");
 		case SurfaceRole::OptionCard:
 			return T("menu.settings.surface_option_card", "Option Cards");
 		case SurfaceRole::SectionCard:
@@ -1547,8 +1589,8 @@ namespace
 			return T("menu.settings.surface_overlay_card_tooltip", "The card that shows shader compilation progress.");
 		case SurfaceRole::Palette:
 			return T("menu.settings.surface_palette_tooltip", "The Ctrl+K go-to palette.");
-		case SurfaceRole::NavSelected:
-			return T("menu.settings.surface_nav_selected_tooltip", "The highlight behind the selected row of the left navigation.");
+		case SurfaceRole::ListHighlight:
+			return T("menu.settings.surface_list_highlight_tooltip", "The highlight behind selected and hovered rows in lists, menus and dropdowns.");
 		case SurfaceRole::OptionCard:
 			return T("menu.settings.surface_option_card_tooltip", "Clickable cards that pick a tool or mode, such as the tools on the Developer Tools page. The selected card takes the accent colour as its border.");
 		case SurfaceRole::SectionCard:
@@ -1572,7 +1614,7 @@ namespace
 		const ImVec2 p0(origin.x + margin, origin.y + margin);
 		const ImVec2 p1(origin.x + width - margin, origin.y + margin + height);
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
-		if (role == SurfaceRole::NavSelected) {
+		if (role == SurfaceRole::ListHighlight) {
 			if (s.enabled) {
 				const float rounding = ImGui::GetStyle().FrameRounding;
 				ImVec4 fill = Util::Colors::GetAccent();
@@ -1580,7 +1622,7 @@ namespace
 				drawList->AddRectFilled(p0, p1, ImGui::GetColorU32(fill), rounding);
 				const float barWidth = s.accentBarWidth * scale;
 				if (s.accentBar && barWidth > 0.0f) {
-					const float inset = (p1.y - p0.y) * ThemeManager::Constants::NAV_SELECTED_BAR_INSET;
+					const float inset = (p1.y - p0.y) * ThemeManager::Constants::LIST_HIGHLIGHT_BAR_INSET;
 					drawList->AddRectFilled(ImVec2(p0.x, p0.y + inset), ImVec2(p0.x + barWidth, p1.y - inset),
 						ImGui::GetColorU32(Util::Colors::GetAccent()), barWidth * 0.5f);
 				}
@@ -1607,7 +1649,7 @@ namespace
 
 		Util::DisableGuard disabled(!s.enabled);
 
-		if (role == SurfaceRole::NavSelected) {
+		if (role == SurfaceRole::ListHighlight) {
 			Util::SliderFloatTip(T("menu.settings.surface_nav_fill_opacity", "Fill Opacity"), &s.fillAlpha, 0.0f, 1.0f, "%.2f", T("menu.settings.surface_nav_fill_opacity_tooltip", "Opacity of the accent colour fill behind the selected row."));
 			Util::CheckboxTip(T("menu.settings.surface_accent_bar", "Accent Bar"), &s.accentBar, T("menu.settings.surface_accent_bar_tooltip", "Draw a short accent bar on the left edge of the selected row."));
 			{
@@ -1621,7 +1663,7 @@ namespace
 			Util::SliderFloatTip(T("menu.settings.surface_padding", "Inner Padding"), &s.padding, 0.0f, 48.0f, "%.0f", T("menu.settings.surface_padding_tooltip", "Space between the card edge and its content, in pixels at 1080p. Applies even when the surface is disabled."));
 		}
 
-		SeparatorTextWithFont(T("menu.settings.surface_fill", "Fill"), Menu::FontRole::Subheading);
+		Util::SeparatorTextWithFont(T("menu.settings.surface_fill", "Fill"), Menu::FontRole::Subheading);
 		Util::SliderFloatTip(T("menu.settings.surface_fill_lift", "Fill Lift"), &s.fillLift, 0.0f, 0.5f, "%.3f", T("menu.settings.surface_fill_lift_tooltip", "How far the window colour is lightened toward white to make the surface read above the page."));
 		Util::SliderFloatTip(T("menu.settings.surface_fill_opacity", "Fill Opacity"), &s.fillAlpha, 0.0f, 1.0f, "%.2f", T("menu.settings.surface_fill_opacity_tooltip", "Multiplier on the fill opacity."));
 
@@ -1631,7 +1673,7 @@ namespace
 		if (!useStyleRounding)
 			Util::SliderFloatTip(T("menu.settings.surface_rounding", "Corner Radius"), &s.rounding, 0.0f, 24.0f, "%.0f", T("menu.settings.surface_rounding_tooltip", "Corner radius in pixels at 1080p."));
 
-		SeparatorTextWithFont(T("menu.settings.surface_border", "Border"), Menu::FontRole::Subheading);
+		Util::SeparatorTextWithFont(T("menu.settings.surface_border", "Border"), Menu::FontRole::Subheading);
 		Util::CheckboxTip(T("menu.settings.surface_border_enabled", "Border"), &s.border, T("menu.settings.surface_border_enabled_tooltip", "Draw a hairline border around the surface."));
 		{
 			Util::DisableGuard borderDisabled(!s.border);
@@ -1643,7 +1685,7 @@ namespace
 			}
 		}
 
-		SeparatorTextWithFont(T("menu.settings.surface_shadow", "Shadow"), Menu::FontRole::Subheading);
+		Util::SeparatorTextWithFont(T("menu.settings.surface_shadow", "Shadow"), Menu::FontRole::Subheading);
 		Util::CheckboxTip(T("menu.settings.surface_shadow_enabled", "Shadow"), &s.shadow, T("menu.settings.surface_shadow_enabled_tooltip", "Draw a soft drop shadow behind the surface."));
 		{
 			Util::DisableGuard shadowDisabled(!s.shadow);
@@ -1739,18 +1781,10 @@ void SettingsTabRenderer::RenderColorsSection()
 
 	// Toolbar: search, Changed only, then undo / redo / reset on the right
 	{
-		const float scale = Util::GetSearchUIScale();
-		const float iconSize = ThemeManager::Constants::SEARCH_ICON_SIZE * scale;
-		const float iconSpace = iconSize + ThemeManager::Constants::SEARCH_INPUT_PADDING_EXTRA * scale;
-		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(iconSpace, ThemeManager::Constants::SEARCH_INPUT_FRAME_PADDING_Y * scale));
-		pageState.filter.Draw(T("menu.settings.filter_colors", "Filter colors"), ImGui::GetFontSize() * 14.0f);
-		ImGui::PopStyleVar();
-		const ImVec2 filterMin = ImGui::GetItemRectMin();
-		const ImVec2 filterSize = ImGui::GetItemRectSize();
-		ImVec4 iconColor = ImGui::GetStyleColorVec4(ImGuiCol_Text);
-		iconColor.w *= ThemeManager::Constants::SEARCH_ICON_ALPHA;
-		Icons::DrawCenteredGlyph(ImGui::GetWindowDrawList(), ImVec2(filterMin.x + ThemeManager::Constants::SEARCH_ICON_OFFSET_X * scale, filterMin.y),
-			ImVec2(iconSize, filterSize.y), Icons::TI(MenuIcons::kSearch), ImGui::GetColorU32(iconColor));
+		if (Util::SearchField("##ColorFilter", pageState.filterText, T("menu.settings.filter_colors", "Filter colors"), ImGui::GetFontSize() * 14.0f, false)) {
+			strncpy_s(pageState.filter.InputBuf, pageState.filterText.c_str(), _TRUNCATE);
+			pageState.filter.Build();
+		}
 
 		Util::SameLineIfFits(ImGui::CalcTextSize(T("menu.settings.colors_changed_only", "Changed only")).x + ImGui::GetFrameHeight());
 		Util::CheckboxTip(T("menu.settings.colors_changed_only", "Changed only"), &pageState.changedOnly,
@@ -1759,28 +1793,28 @@ void SettingsTabRenderer::RenderColorsSection()
 		const char* undoLabel = T("menu.settings.colors_undo", "Undo");
 		const char* redoLabel = T("menu.settings.colors_redo", "Redo");
 		const char* resetLabel = T("menu.settings.colors_reset_all", "Reset All");
-		const float buttonsWidth = Icons::MeasureLabeledButton(Icons::TI(ICON_TI_ARROW_BACK_UP), undoLabel) +
-		                           Icons::MeasureLabeledButton(Icons::TI(ICON_TI_ARROW_FORWARD_UP), redoLabel) +
-		                           Icons::MeasureLabeledButton(Icons::TI(MenuIcons::kRestore), resetLabel) + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+		const float buttonsWidth = Util::MeasureLabeledButton(Icons::TI(ICON_TI_ARROW_BACK_UP), undoLabel) +
+		                           Util::MeasureLabeledButton(Icons::TI(ICON_TI_ARROW_FORWARD_UP), redoLabel) +
+		                           Util::MeasureLabeledButton(Icons::TI(MenuIcons::kRestore), resetLabel) + ImGui::GetStyle().ItemSpacing.x * 2.0f;
 		Util::SameLineIfFits(buttonsWidth);
 		ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - buttonsWidth));
 		{
 			Util::DisableGuard noUndo(!menu->CanUndo());
-			if (Icons::LabeledButton("##ColorsUndo", Icons::TI(ICON_TI_ARROW_BACK_UP), undoLabel))
+			if (Util::LabeledButton("##ColorsUndo", Icons::TI(ICON_TI_ARROW_BACK_UP), undoLabel))
 				menu->RequestUndo();
 		}
 		Util::AddTooltip(T("menu.settings.colors_undo_tooltip", "Undo the last change (Ctrl+Z)."), Util::kTooltipWhenDisabled);
 		ImGui::SameLine();
 		{
 			Util::DisableGuard noRedo(!menu->CanRedo());
-			if (Icons::LabeledButton("##ColorsRedo", Icons::TI(ICON_TI_ARROW_FORWARD_UP), redoLabel))
+			if (Util::LabeledButton("##ColorsRedo", Icons::TI(ICON_TI_ARROW_FORWARD_UP), redoLabel))
 				menu->RequestRedo();
 		}
 		Util::AddTooltip(T("menu.settings.colors_redo_tooltip", "Redo the last undone change (Ctrl+Y)."), Util::kTooltipWhenDisabled);
 		ImGui::SameLine();
 		{
 			Util::DisableGuard nothingChanged(changed == 0);
-			if (Icons::LabeledButton("##ColorsResetAll", Icons::TI(MenuIcons::kRestore), resetLabel)) {
+			if (Util::LabeledButton("##ColorsResetAll", Icons::TI(MenuIcons::kRestore), resetLabel)) {
 				// Copies the theme file's colours back; one undo step undoes it
 				std::vector<float> values;
 				ForEachColorValue(reference, [&](const float* data, int count) { values.insert(values.end(), data, data + count); });
@@ -1811,7 +1845,7 @@ void SettingsTabRenderer::RenderColorsSection()
 			ImGui::SliderFloat(T("menu.settings.color_minimized_transparency", "Minimized Transparency"), &themeSettings.FeatureHeading.MinimizedFactor, 0.0f, 1.0f, "%.2f");
 			if (minimizedChanged) {
 				ImGui::SameLine();
-				if (BrowserUI::IconButton("##ResetMinimized", Icons::TI(MenuIcons::kRestore), T("menu.settings.color_reset_tooltip", "Reset to the theme's colour")))
+				if (Util::IconButton("##ResetMinimized", Icons::TI(MenuIcons::kRestore), T("menu.settings.color_reset_tooltip", "Reset to the theme's colour")))
 					themeSettings.FeatureHeading.MinimizedFactor = reference.FeatureHeading.MinimizedFactor;
 			}
 		}) :

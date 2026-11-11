@@ -2,6 +2,7 @@
 
 #include "Buffer.h"
 #include "Feature.h"
+#include "Utils/BodyCapsules.h"
 
 struct SnowDeformation : Feature
 {
@@ -55,6 +56,13 @@ struct SnowDeformation : Feature
 		bool Enabled = true;
 		bool IncludeNPCs = true;
 		bool IncludeObjects = true;
+		bool IncludeHands = true;
+		bool WeightResponse = false;
+		bool SnowDrag = false;
+		bool DensityFloor = false;
+		float SnowDragStrength = 3.0f;
+		bool SnowSlowsMovers = false;
+		float SnowSlowStrength = 0.4f;
 		bool UseSnowCover = true;
 		bool DisplaceShadows = true;
 		bool SinkActors = true;
@@ -210,6 +218,13 @@ struct SnowDeformation : Feature
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		template <class T>
+		struct Actor_GetActorValue
+		{
+			static float thunk(RE::ActorValueOwner* a_owner, RE::ActorValue a_value);
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
 		static void Install();
 	};
 
@@ -269,6 +284,13 @@ private:
 		bool applied = false;
 	};
 
+	struct ActorSlow
+	{
+		float cut = 0.0f;
+		float target = 0.0f;
+		uint64_t frame = 0;
+	};
+
 	struct ProbeFrame
 	{
 		std::vector<RE::FormID> owners;
@@ -281,6 +303,34 @@ private:
 		RE::NiPoint3 centre;
 		float radius = 0.0f;
 		RE::bhkNiCollisionObject* object = nullptr;
+		float weight = 0.0f;
+		float area = 0.0f;
+	};
+
+	struct HandBlob
+	{
+		float3 sum;
+		float3 move;
+		float2 lowXY;
+		float2 highXY;
+		float lowest = 0.0f;
+		uint32_t count = 0;
+
+		void Add(const Util::BodyCapsules::Capsule& a_capsule);
+		void Resolve(float a_minRadius, float3& a_centre, float& a_radius) const;
+	};
+
+	struct ObjectSample
+	{
+		std::string name;
+		float weight = 0.0f;
+		float radius = 0.0f;
+		float area = 0.0f;
+		float pressure = 0.0f;
+		float scale = 1.0f;
+		float clearance = 0.0f;
+		uint8_t physics = 0;
+		float depression = 0.0f;
 	};
 
 	struct CachedShape
@@ -399,6 +449,11 @@ private:
 	void AppendActorStamps(RE::Actor* a_actor, const RE::NiPoint3& a_anchor, std::vector<Stamp>& a_stamps);
 	const std::vector<CachedShape>& ActorCollisions(RE::Actor* a_actor, RE::NiAVObject* a_root);
 	void AppendObjectStamps(std::vector<Stamp>& a_stamps);
+	/** @return 0 no rigid body, 1 not dynamic, 2 nothing to change, 3 velocity written. */
+	uint8_t ApplySnowPhysics(const Contact& a_contact, float a_bottom, float a_landZ, float a_blanket, float a_depression, RE::FormID a_ref);
+	[[nodiscard]] float FloatRestHeight(const Contact& a_contact, float a_blanket, float a_depression) const;
+	void AppendHandStamps(std::vector<Stamp>& a_stamps);
+	[[nodiscard]] Stamp MakePressStamp(RE::TES* a_tes, const RE::NiPoint3& a_position, float a_radius, float a_landZ, float a_motionX, float a_motionY) const;
 	void AppendHeatStamps(std::vector<Stamp>& a_stamps);
 	void AppendImpactStamps(std::vector<Stamp>& a_stamps);
 	void BuildImpact(const ImpactEvent& a_event, std::vector<Stamp>& a_stamps);
@@ -406,6 +461,8 @@ private:
 	void UpdateActorSinks(const std::vector<RE::ActorPtr>& a_actors);
 	void ApplySink(RE::TESObjectREFR* a_ref, ActorSink& a_state, float a_sink);
 	void RestoreActorSinks();
+	void UpdateMoverSlow(const std::vector<RE::ActorPtr>& a_actors);
+	void ClearMoverSlow();
 	bool IsSinkBlocked(RE::Actor* a_actor) const;
 	void DispatchProbes(uint32_t a_stampCount);
 	void ReadProbes();
@@ -484,13 +541,30 @@ private:
 
 	std::mutex stampLock;
 	std::vector<Stamp> pendingStamps;
+	std::vector<ObjectSample> gatherObjectSamples;
+	std::vector<ObjectSample> objectSamples;
 	std::vector<Stamp> gatherStamps;
 	std::vector<Stamp> frameStamps;
 	std::unordered_map<const void*, TrackedShape> shapeMotion;
 	std::unordered_map<RE::FormID, bool> bootedRaces;
+	struct RaceTraits
+	{
+		bool ghost = false;
+		bool coldAdapted = false;
+	};
+	std::unordered_map<RE::FormID, RaceTraits> raceTraits;
+	const RaceTraits& TraitsOf(const RE::TESRace* a_race);
+	bool IsGhost(RE::Actor* a_actor);
+	bool IsColdAdapted(RE::Actor* a_actor);
+	std::unordered_map<RE::FormID, bool> coldBases;
 	std::unordered_map<RE::FormID, float> measuredSinks;
+	std::unordered_map<RE::FormID, float> measuredDepth;
+	std::unordered_set<RE::FormID> floatedObjects;
+	bool probeStampsPresent = false;
 	std::unordered_map<RE::FormID, float> gatherMeasured;
 	std::unordered_map<RE::FormID, ActorSink> actorSinks;
+	std::unordered_map<RE::FormID, ActorSlow> actorSlows;
+	uint64_t slowFrame = 0;
 	std::vector<Contact> contactScratch;
 	std::vector<RE::ObjectRefHandle> objectRefs;
 	uint64_t objectScanFrame = 0;
@@ -509,10 +583,25 @@ private:
 	float deepestSink = 0.0f;
 	uint64_t gatherFrame = 0;
 	std::atomic<bool> gatherEnabled = false;
+	std::atomic<uint32_t> handStamps = 0;
+	std::atomic<uint32_t> handCapsules = 0;
+	std::atomic<uint32_t> handNodes = 0;
+	std::atomic<uint32_t> handNoLand = 0;
+	std::atomic<uint32_t> handOutOfReach = 0;
+	std::atomic<uint32_t> handResting = 0;
+	std::atomic<float> handProbeZ = 0.0f;
+	std::atomic<float> handProbeLandZ = 0.0f;
+	std::atomic<float> handProbeRadius = 0.0f;
 	std::atomic<bool> commandClearField = false;
 	std::atomic<bool> loadClearField = false;
 	std::atomic<bool> loadClearMotion = false;
 	bool gatherOnUpdate = false;
+	std::atomic<uint32_t> physicsBodies = 0;
+	std::atomic<uint32_t> slowedMovers = 0;
+	mutable std::mutex slowMutex;
+	std::ptrdiff_t actorValueOwnerOffset = 0;
+	std::atomic<float> playerSlowCut = 0.0f;
+	std::atomic<float> playerBuried = 0.0f;
 
 	bool inZPrepass = false;
 	CameraKey mainCamera;

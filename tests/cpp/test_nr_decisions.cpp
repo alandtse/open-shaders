@@ -390,17 +390,21 @@ TEST_CASE("Tuning::Sanitize bounds every strength knob", "[nr]")
 	tuning.localToneStrength = -3.0f;
 	tuning.localStructureStrength = std::numeric_limits<float>::quiet_NaN();
 	tuning.skinStructureStrength = 9.0f;
+	tuning.colorStrength = 4.0f;
 	tuning.Sanitize();
 	REQUIRE(tuning.style == NR::Tuning::kMaxStyle);
 	REQUIRE(tuning.intensity == NR::Tuning::kMaxStrength);
 	REQUIRE(tuning.localToneStrength == NR::Tuning::kMinStrength);
 	REQUIRE(tuning.localStructureStrength == NR::Tuning::kDefaultStrength);
 	REQUIRE(tuning.skinStructureStrength == NR::Tuning::kMaxStrength);
+	REQUIRE(tuning.colorStrength == NR::Tuning::kMaxColorStrength);
 
 	tuning.intensity = std::numeric_limits<float>::infinity();
 	tuning.localToneStrength = -std::numeric_limits<float>::infinity();
 	tuning.skinStructureStrength = std::numeric_limits<float>::quiet_NaN();
+	tuning.colorStrength = std::numeric_limits<float>::quiet_NaN();
 	tuning.Sanitize();
+	REQUIRE(tuning.colorStrength == NR::Tuning::kDefaultColorStrength);
 	REQUIRE(tuning.intensity == NR::Tuning::kDefaultStrength);
 	REQUIRE(tuning.localToneStrength == NR::Tuning::kDefaultStrength);
 	REQUIRE(tuning.skinStructureStrength == NR::Tuning::kAutomaticSkinStructure);

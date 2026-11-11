@@ -1192,29 +1192,63 @@ void SceneSettingsManager::LoadAll()
 		DiscoverOverwrites(SceneType::TimeOfDay);
 		DiscoverPresetMetadata();
 		LoadAllUserSettings();
+		ApplyPresetPauses();
 		MarkEntriesLoaded();
 	}
 	TryEnsureLocationDataLoaded();
 }
 
-SceneSettingsManager::PresetPauseState SceneSettingsManager::CapturePresetPauses() const
+ScenePresetPauses::Key SceneSettingsManager::GetPresetPauseKey(const SettingEntry& entry)
 {
-	PresetPauseState pausedEntries;
-	const auto capture = [&](const std::vector<SettingEntry>& sourceEntries) {
-		for (const auto& entry : sourceEntries)
-			if (entry.source == EntrySource::Overwrite && entry.paused)
-				pausedEntries.emplace(entry.sourcePath, entry.featureShortName, entry.settingPath, entry.settingKey, entry.period);
-	};
-	for (const auto& [type, sourceEntries] : entries)
-		capture(sourceEntries);
-	for (const auto& [weatherId, config] : weatherSceneConfigs)
-		capture(config.entries);
-	for (const auto& [configKey, config] : locationSceneConfigs)
-		capture(config.entries);
-	return pausedEntries;
+	return { Util::PathHelpers::ToGenericUtf8(entry.sourcePath.lexically_normal()), entry.featureShortName,
+		entry.settingPath, entry.settingKey, entry.period == TimeOfDayPeriod::Count ? "Normal" : GetPeriodName(entry.period) };
 }
 
-void SceneSettingsManager::ReloadOverwrites(const PresetPauseState& pausedEntries)
+bool SceneSettingsManager::SetPresetEntryPaused(SettingEntry& entry, bool paused, bool featureToolbar)
+{
+	if (entry.deleted || entry.sourcePath.empty() || entry.paused == paused)
+		return false;
+	const auto key = GetPresetPauseKey(entry);
+	if (featureToolbar) {
+		if (!contextEdit || !contextEdit->entries.IsActive() || contextEdit->feature != entry.featureShortName)
+			return false;
+		ScenePresetPauses::Preview(contextEdit->presetPauseChanges, presetPauses, key, paused);
+	} else {
+		ScenePresetPauses::Set(presetPauses, key, paused);
+	}
+	entry.paused = paused;
+	return true;
+}
+
+void SceneSettingsManager::ApplyPresetPauses(std::span<SettingEntry> sourceEntries) const
+{
+	const auto* changes = contextEdit && contextEdit->entries.IsActive() ? &contextEdit->presetPauseChanges : nullptr;
+	for (auto& entry : sourceEntries) {
+		if (entry.source != EntrySource::Overwrite || entry.deleted)
+			continue;
+		if (presetPauses.empty() && (!changes || changes->empty())) {
+			entry.paused = false;
+			continue;
+		}
+		const auto key = GetPresetPauseKey(entry);
+		entry.paused = presetPauses.contains(key);
+		if (changes)
+			if (const auto found = changes->find(key); found != changes->end())
+				entry.paused = found->second;
+	}
+}
+
+void SceneSettingsManager::ApplyPresetPauses()
+{
+	for (auto& [type, sourceEntries] : entries)
+		ApplyPresetPauses(sourceEntries);
+	for (auto& [weatherId, config] : weatherSceneConfigs)
+		ApplyPresetPauses(config.entries);
+	for (auto& [configKey, config] : locationSceneConfigs)
+		ApplyPresetPauses(config.entries);
+}
+
+void SceneSettingsManager::ReloadOverwrites()
 {
 	DiscardContextEdit();
 	// Nothing has been discovered yet, so the first load will read the current files anyway.
@@ -1244,18 +1278,7 @@ void SceneSettingsManager::ReloadOverwrites(const PresetPauseState& pausedEntrie
 		DiscoverWeatherOverwrites();
 	if (locationDataLoaded)
 		DiscoverLocationOverwrites();
-	const auto restorePauses = [&](std::vector<SettingEntry>& sourceEntries) {
-		for (auto& entry : sourceEntries)
-			if (entry.source == EntrySource::Overwrite &&
-				pausedEntries.contains({ entry.sourcePath, entry.featureShortName, entry.settingPath, entry.settingKey, entry.period }))
-				entry.paused = true;
-	};
-	for (auto& [type, sourceEntries] : entries)
-		restorePauses(sourceEntries);
-	for (auto& [weatherId, config] : weatherSceneConfigs)
-		restorePauses(config.entries);
-	for (auto& [configKey, config] : locationSceneConfigs)
-		restorePauses(config.entries);
+	ApplyPresetPauses();
 	RefreshTimeOfDayModes();
 
 	BumpEntryPresentationRevision();
@@ -1309,6 +1332,8 @@ bool SceneSettingsManager::TryEnsureLocationDataLoaded()
 		DiscoverLocationOverwrites();
 		if (userSettingsDocumentLoaded && userSettingsDocumentWritable && preservedUserSettingsRoot.is_object())
 			LoadLocationUserSettings(preservedUserSettingsRoot);
+		for (auto& [key, config] : locationSceneConfigs)
+			ApplyPresetPauses(config.entries);
 		RefreshTimeOfDayModes();
 		locationDataLoaded = true;
 		locationTargetsCached = false;
@@ -1340,6 +1365,8 @@ void SceneSettingsManager::LoadWeatherData()
 {
 	DiscoverWeatherOverwrites();
 	LoadWeatherUserSettings();
+	for (auto& [weatherId, config] : weatherSceneConfigs)
+		ApplyPresetPauses(config.entries);
 	RefreshTimeOfDayModes();
 }
 

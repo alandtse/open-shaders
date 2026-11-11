@@ -145,6 +145,7 @@ namespace SceneWidgetBinding
 			const SceneSettingsManager::SettingEntry* entry = nullptr;
 			const SceneSettingsManager::SceneContextId* context = nullptr;
 			explicit operator bool() const { return entry != nullptr; }
+			bool IsApplying() const { return entry && !entry->paused; }
 		};
 
 		/// One catalog component behind this control, and the entries that persist it.
@@ -229,7 +230,7 @@ namespace SceneWidgetBinding
 			BaseSettings
 		};
 		/** @brief Finds this setting's value in the requested installed or default layer. */
-		const json* FindResetValue(const Component& component, ResetSource source) const;
+		const json* FindResetValue(const Component& component, ResetSource source, json& storage) const;
 		/** @brief Restores the control's components from the requested settings layer. */
 		bool ResetToSource(ResetSource source);
 		/** @brief Offers resets to the available defaults, overwrites and Base Settings presets. */

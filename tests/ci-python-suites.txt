@@ -1,3 +1,0 @@
-test_feature_flip_impact
-test_release_plan
-test_scene_settings_policy

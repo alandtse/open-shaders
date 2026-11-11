@@ -47,7 +47,8 @@ namespace FormEditSources
 		for (const auto folder : Widget::kSaveFolderNames) {
 			std::error_code error;
 			for (std::filesystem::directory_iterator entry(root / folder, error), end; !error && entry != end; entry.increment(error)) {
-				if (entry->is_regular_file(error) && Util::IEquals(entry->path().extension().string(), ".json"))
+				std::error_code entryError;
+				if (entry->is_regular_file(entryError) && !entryError && Util::IEquals(entry->path().extension().string(), ".json"))
 					keys.emplace(folder, Util::PathHelpers::ToUtf8(entry->path().stem()));
 			}
 		}

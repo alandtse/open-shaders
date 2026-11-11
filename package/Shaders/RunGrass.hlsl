@@ -574,6 +574,7 @@ cbuffer PerMaterial : register(b1)
 	float4 PBRParams2 : packoffset(c1);    // subsurface color, subsurface opacity
 	float4 PBRParams3 : packoffset(c2);    // fuzz color, fuzz weight
 	float4 PBRParams4 : packoffset(c3);    // subsurface balance, front/back specular weights, back roughness scale
+	float4 PBRParams5 : packoffset(c4);    // fuzz roughness in x (negative uses base roughness)
 };
 
 #		endif
@@ -681,8 +682,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 	[branch] if (SharedData::grassLightingSettings.EnableNewLightingModel && pbrDetail && (PBRFlags & PBR::Flags::Fuzz) != 0)
 	{
-		material.FuzzColor = PBRParams3.xyz;
+		material.FuzzColor = Color::GamutTransform(PBRParams3.xyz);
 		material.FuzzWeight = PBRParams3.w;
+		material.FuzzRoughness = PBRParams5.x;
 		[branch] if ((PBRFlags & PBR::Flags::HasFeatureTexture1) != 0)
 		{
 			float4 fuzz = TexFuzzSampler.Sample(SampFuzzSampler, input.TexCoord.xy);
@@ -690,6 +692,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			material.FuzzWeight *= fuzz.w;
 		}
 	}
+	const float grassNdotV = clamp(abs(dot(normal, viewDirection)), EPSILON_DOT_CLAMP, 1.0f);
+	material.Fuzz = PBR::CreateFuzzLayer(material, grassNdotV, SharedData::grassLightingSettings.EnableNewLightingModel && pbrDetail);
+	PBR::CacheFuzzLTC(material.Fuzz, normal, viewDirection, grassNdotV);
 
 	float3 viewPosition = mul(FrameBuffer::CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
 	float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);

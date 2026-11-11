@@ -447,9 +447,9 @@ namespace
 				iconColor = CSEditor::GetWeatherTypeColor(weather);
 			}
 
-			const float maxLabelWidth = std::max(1.0f, rowWidth - spacing - BrowserUI::IconButtonSize() - BrowserUI::MeasureChip("", icon.IsValid()));
+			const float maxLabelWidth = std::max(1.0f, rowWidth - spacing - Util::IconButtonSize() - BrowserUI::MeasureChip("", icon.IsValid()));
 			const std::string label = FitText(fullLabel, maxLabelWidth);
-			const float width = BrowserUI::MeasureChip(label.c_str(), icon.IsValid()) + spacing + BrowserUI::IconButtonSize();
+			const float width = BrowserUI::MeasureChip(label.c_str(), icon.IsValid()) + spacing + Util::IconButtonSize();
 			BrowserUI::SameLineIfFits(width);
 
 			if (BrowserUI::Chip("##chip", label.c_str(), icon, &iconColor, record.outgoing ? nullptr : &live)) {
@@ -464,7 +464,7 @@ namespace
 			Util::AddTooltip(label == fullLabel ? tooltip : std::format("{}\n\n{}", fullLabel, tooltip).c_str());
 
 			ImGui::SameLine(0.0f, spacing);
-			if (BrowserUI::IconButton("##open", Icons::TI(ICON_TI_EXTERNAL_LINK), T(TKEY("open_editor_tooltip"), "Open its editor window.")))
+			if (Util::IconButton("##open", Icons::TI(ICON_TI_EXTERNAL_LINK), T(TKEY("open_editor_tooltip"), "Open its editor window.")))
 				record.open();
 			ImGui::PopID();
 		}
@@ -496,7 +496,7 @@ namespace
 		const bool filtersInline = avail - fixedWidth >= kMinSearchWidth * scale * 0.5f;
 		const float searchWidth = filtersInline ? avail - fixedWidth - (chipsInline ? chipsWidth + spacing : 0.0f) : avail;
 
-		BrowserUI::SearchField("##ObjectFilter", state.filter, sizeof(state.filter), T(TKEY("filter_hint"), "Filter... (Ctrl+F)"), searchWidth, true);
+		Util::SearchField("##ObjectFilter", state.filter, T(TKEY("filter_hint"), "Filter... (Ctrl+F)"), searchWidth, true);
 
 		BrowserUI::SameLineIfFits(scopeWidth);
 		ImGui::SetNextItemWidth(scopeWidth);
@@ -909,7 +909,7 @@ namespace
 	{
 		EditorWindow& editor = *context.editor;
 		const float spacing = ImGui::GetStyle().ItemSpacing.x;
-		const float button = BrowserUI::IconButtonSize();
+		const float button = Util::IconButtonSize();
 		const std::string editorId = widget.GetEditorID();
 		const bool favorite = editor.IsFavorite(editorId);
 
@@ -937,7 +937,7 @@ namespace
 		ImGui::AlignTextToFramePadding();
 		BrowserUI::MetaText(std::format("{} \xC2\xB7 {}", formId, widget.GetFilename()).c_str(), std::max(1.0f, ImGui::GetContentRegionAvail().x - button - spacing));
 		BrowserUI::RightAlign(button);
-		if (BrowserUI::IconButton("##CopyFormId", Icons::TI(ICON_TI_COPY), T(TKEY("copy_form_id"), "Copy form ID")))
+		if (Util::IconButton("##CopyFormId", Icons::TI(ICON_TI_COPY), T(TKEY("copy_form_id"), "Copy form ID")))
 			ImGui::SetClipboardText(std::format("0x{}", formId).c_str());
 
 		// State badges
@@ -1140,12 +1140,12 @@ namespace
 		BrowserUI::MetaText(fileName.c_str());
 		Util::AddTooltip(path.c_str());
 
-		if (Icons::LabeledButton("##RevealSaved", Icons::TI(ICON_TI_FOLDER_OPEN), T(TKEY("show_in_folder"), "Show in folder")))
+		if (Util::LabeledButton("##RevealSaved", Icons::TI(ICON_TI_FOLDER_OPEN), T(TKEY("show_in_folder"), "Show in folder")))
 			RevealInExplorer(path);
 		ImGui::SameLine();
 		{
 			auto _style = Util::StatusTextButtonStyle(Util::Colors::GetError());
-			if (Icons::LabeledButton("##DeleteSaved", Icons::TI(ICON_TI_TRASH), T(TKEY("delete"), "Delete")))
+			if (Util::LabeledButton("##DeleteSaved", Icons::TI(ICON_TI_TRASH), T(TKEY("delete"), "Delete")))
 				context.requestDeleteSavedFile(&widget);
 		}
 		Util::AddTooltip(T(TKEY("delete_json_file"), "Delete JSON file"));
@@ -1160,7 +1160,7 @@ namespace
 
 		{
 			auto _style = Util::StatusButtonStyle(Util::Colors::GetAccent());
-			if (Icons::LabeledButton("##OpenEditor", Icons::TI(ICON_TI_EXTERNAL_LINK), T(TKEY("open_editor"), "Open editor"),
+			if (Util::LabeledButton("##OpenEditor", Icons::TI(ICON_TI_EXTERNAL_LINK), T(TKEY("open_editor"), "Open editor"),
 					ImVec2(ImGui::GetContentRegionAvail().x - lockWidth, 0.0f)))
 				OpenWidget(editor, context.category, widget);
 		}
@@ -1253,7 +1253,7 @@ namespace
 
 			ImGui::Spacing();
 			auto _style = Util::StatusButtonStyle(Util::Colors::GetAccent());
-			if (Icons::LabeledButton("##OpenCellLighting", Icons::TI(ICON_TI_EXTERNAL_LINK), T(TKEY("open_editor"), "Open editor")))
+			if (Util::LabeledButton("##OpenCellLighting", Icons::TI(ICON_TI_EXTERNAL_LINK), T(TKEY("open_editor"), "Open editor")))
 				editor.OpenCellLighting(cell, true);
 		}
 		ImGui::EndChild();
@@ -1301,7 +1301,7 @@ void FormListPage::Draw(Browser::FormListState& state, const Context& context)
 			{ { "shown", std::to_string(state.rows.size()) }, { "total", std::to_string(state.total) } }, "{shown} of {total} records");
 	BrowserUI::PageHeader(context.icon, context.title, subtitle.c_str());
 	if (hasList) {
-		BrowserUI::RightAlign(Util::HelpMarkerWidth() + ImGui::GetStyle().ItemSpacing.x + BrowserUI::IconButtonSize());
+		BrowserUI::RightAlign(Util::HelpMarkerWidth() + ImGui::GetStyle().ItemSpacing.x + Util::IconButtonSize());
 		Util::HelpMarker(T(TKEY("browser_help"),
 			"Click a row to inspect it; double-click it or press Enter to open its editor.\n"
 			"The arrow keys move through the list. Ctrl+F focuses the filter.\n"
@@ -1309,7 +1309,7 @@ void FormListPage::Draw(Browser::FormListState& state, const Context& context)
 			"Right-click a row to mark it, copy its IDs or manage its saved JSON.\n"
 			"Right-click a column header to show Form ID or Status."));
 		ImGui::SameLine();
-		if (BrowserUI::IconButton("##InspectorToggle", Icons::TI(ICON_TI_LAYOUT_COLUMNS), T(TKEY("inspector_toggle_tooltip"), "Show or hide the inspector"),
+		if (Util::IconButton("##InspectorToggle", Icons::TI(ICON_TI_LAYOUT_COLUMNS), T(TKEY("inspector_toggle_tooltip"), "Show or hide the inspector"),
 				editor.settings.browserShowInspector)) {
 			editor.settings.browserShowInspector = !editor.settings.browserShowInspector;
 			editor.Save();

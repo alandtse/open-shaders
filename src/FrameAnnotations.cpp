@@ -1065,7 +1065,10 @@ namespace FrameAnnotations
 		stl::write_vfunc<0x2A, BSShaderAccumulator_FinishAccumulatingDispatch>(
 			RE::VTABLE_BSShaderAccumulator[0]);
 
-		stl::write_vfunc<0x35, BSCubeMapCamera_RenderCubemap>(RE::VTABLE_BSCubeMapCamera[0]);
+		if (globals::game::isVR)
+			stl::write_vfunc<0x36, BSCubeMapCamera_RenderCubemap>(RE::VTABLE_BSCubeMapCamera[0]);
+		else
+			stl::write_vfunc<0x35, BSCubeMapCamera_RenderCubemap>(RE::VTABLE_BSCubeMapCamera[0]);
 
 		stl::write_vfunc<0xA, BSShadowDirectionalLight_RenderShadowmaps>(
 			RE::VTABLE_BSShadowDirectionalLight[0]);

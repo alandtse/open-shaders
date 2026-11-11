@@ -529,6 +529,17 @@ Feature* Feature::FindFeatureByShortName(const std::string& shortName)
 	return it != featuresByShortName.end() && it->second->loaded ? it->second : nullptr;
 }
 
+const char* Feature::FindSettingsLockReason(std::string_view featureShortName)
+{
+	for (const auto* feature : GetFeatureList()) {
+		if (feature->loaded) {
+			if (const auto* reason = feature->GetSettingsLockReason(featureShortName))
+				return reason;
+		}
+	}
+	return nullptr;
+}
+
 bool Feature::FindSceneExposure(SceneExposure& a_out)
 {
 	return FindLoadedFeature([&](Feature* f) { return f->GetSceneExposure(a_out); }) != nullptr;

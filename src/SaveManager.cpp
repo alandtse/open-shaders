@@ -13,16 +13,17 @@ namespace SaveManager
 {
 	namespace
 	{
-		void WriteEditor(Trigger trigger)
+		bool WriteEditor(Trigger trigger)
 		{
 			// An automatic save commits only the scene edit behind it; widget edits wait for the user's save.
 			auto* editor = EditorWindow::GetSingleton();
 			if (trigger == Trigger::User)
 				editor->SaveUnsavedWidgets();
-			if (auto* sceneManager = SceneSettingsManager::GetSingleton())
-				sceneManager->WriteUserSettings();
+			auto* sceneManager = SceneSettingsManager::GetSingleton();
+			const bool sceneSaved = !sceneManager || sceneManager->WriteUserSettings(trigger == Trigger::User);
 			if (trigger == Trigger::User)
 				editor->Save();
+			return sceneSaved;
 		}
 
 		void ConfirmSaved(Trigger trigger)
@@ -47,22 +48,22 @@ namespace SaveManager
 
 	void SaveEditor(Trigger trigger)
 	{
-		WriteEditor(trigger);
-		ConfirmSaved(trigger);
+		if (WriteEditor(trigger))
+			ConfirmSaved(trigger);
 	}
 
 	void SaveAll(Trigger trigger)
 	{
 		if (auto* state = globals::state)
 			state->Save();
-		WriteEditor(trigger);
-		ConfirmSaved(trigger);
+		if (WriteEditor(trigger))
+			ConfirmSaved(trigger);
 	}
 
 	const char* GetEditorSaveTooltip(bool unsaved)
 	{
 		return unsaved ?
-		           T("cs_editor.save_unsaved_tooltip", "Unsaved changes. Save editor settings and record edits (Ctrl+S). Scene toolbar drafts require their own Save.") :
-		           T("cs_editor.save_tooltip_short", "Save editor settings and record edits (Ctrl+S). Scene toolbar drafts require their own Save.");
+		           T("cs_editor.save_unsaved_tooltip", "Unsaved changes. Save editor settings and record edits (Ctrl+S).") :
+		           T("cs_editor.save_tooltip_short", "Save editor settings and record edits (Ctrl+S).");
 	}
 }

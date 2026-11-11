@@ -37,10 +37,11 @@ namespace WaterEffects
 		float2 causticsUV = (worldPosition.xy + FrameBuffer::CameraPosAdjust[eyeIndex].xy) * (CausticsUVScale * SharedData::csUtilitySettings.waterCausticsTiling);
 		float dispersionAmount = CausticsDispersionScale * shoreFactorCaustics * saturate(causticsDistToWater / 256.0) * SharedData::csUtilitySettings.waterCausticsDispersion;
 		float2 dispersionOffset = float2(0.6, 0.8) * dispersionAmount;
-		float2 causticsUVDdx = ddx(causticsUV);
-		float2 causticsUVDdy = ddy(causticsUV);
-		float2 dispersionDdx = float2(0.6, 0.8) * ddx(dispersionAmount);
-		float2 dispersionDdy = float2(0.6, 0.8) * ddy(dispersionAmount);
+		const float mipScale = exp2(SharedData::MipBias);
+		float2 causticsUVDdx = ddx(causticsUV) * mipScale;
+		float2 causticsUVDdy = ddy(causticsUV) * mipScale;
+		float2 dispersionDdx = float2(0.6, 0.8) * ddx(dispersionAmount) * mipScale;
+		float2 dispersionDdy = float2(0.6, 0.8) * ddy(dispersionAmount) * mipScale;
 
 		if (shoreFactorCaustics > 0.0 && SharedData::csUtilitySettings.waterCausticsStrength > 0.0) {
 			float causticsFade = 1.0 - saturate(causticsDistToWater / 1024.0);

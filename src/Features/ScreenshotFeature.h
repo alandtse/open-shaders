@@ -43,8 +43,8 @@ struct ScreenshotFeature : public Feature
 	virtual void DrawSettings() override;
 	virtual void LoadSettings(json& a_json) override;
 	virtual void SaveSettings(json& a_json) override;
-	/** @brief Releases the screenshot compositor shader. */
-	virtual void ClearShaderCache() override;
+	/** @brief Invalidates the explicit UI capture compositor. */
+	void ClearShaderCache() override;
 	/** @brief Resets transient state (no-op for this feature). */
 	virtual void Reset() override;
 	/** @brief Called after all features are loaded (no-op for this feature). */
@@ -67,7 +67,7 @@ struct ScreenshotFeature : public Feature
 	{
 		std::filesystem::path outputPath;
 		std::optional<Util::Subrect::UVRegion> region;
-		/** @brief Use a HUD-free source when one exists (flat HDR only); otherwise the capture includes the HUD and reports it. */
+		/** @brief Use a HUD-free source when one exists (flat SDR or HDR); otherwise the capture includes the HUD and reports it. */
 		bool excludeUi = false;
 		std::function<void(const CaptureResult&)> onComplete;
 	};
@@ -100,6 +100,10 @@ struct ScreenshotFeature : public Feature
 #endif
 	/** Stops frame scheduling when the feature is disabled. */
 	void OnRuntimeDisabled() override;
+	/** @brief Copies the scene before the HUD draws when an SDR capture is pending, so screenshots exclude the HUD and menu blur. */
+	void SnapshotCleanScene();
+	/** @brief Returns this frame's pre-UI snapshot, or nullptr if none was taken. */
+	ID3D11Texture2D* GetFreshCleanScene() const;
 	bool applyCropToScreenshot = true;
 
 	// Settings
@@ -107,10 +111,12 @@ struct ScreenshotFeature : public Feature
 	// HDR PNG quantization (7-16); used when HDR Display captures the back buffer.
 	unsigned int hdrPngBitDepth = 11;
 	bool hdrUseAvif = false;
+	// Strip cICP from HDR PNGs so Discord falls back to the embedded ICC profile.
+	bool fixDiscordHdr = true;
 	// SDR output.
 	bool sdrUsePng = true;
 	// After save, put the file path on the clipboard (CF_HDROP).
-	bool copyToClipboard = false;
+	bool copyToClipboard = true;
 	// Suppress the game's own PrintScreen capture by clearing bAllowScreenShot in memory.
 	bool disableVanillaScreenshot = true;
 
@@ -141,6 +147,7 @@ private:
 		bool saveAsHdrAvif = false;
 		bool saveAsSdrPng = false;
 		int hdrPngBitDepth = 11;
+		bool fixDiscordHdr = true;
 		bool copyToClipboard = false;
 		bool silent = false;
 		bool uiExcluded = false;
@@ -169,6 +176,12 @@ private:
 	winrt::com_ptr<ID3D11ShaderResourceView> previewCacheSRV;
 	std::unique_ptr<Texture2D> compositeTexture;
 	winrt::com_ptr<ID3D11ComputeShader> compositeCS;
+	std::unique_ptr<Texture2D> cleanSceneTexture;
+	uint32_t cleanSceneFrame = UINT32_MAX;
+	// Render thread only: a request already waited one frame for its pre-UI snapshot.
+	bool captureDeferred = false;
+	// Render thread only: set while the crop preview is drawn so the next frame snapshots the clean scene.
+	bool previewVisible = false;
 
 	/** @brief Polls in-flight staging copies without stalling and enqueues the finished ones for encoding. */
 	void ProcessPendingReadbacks();

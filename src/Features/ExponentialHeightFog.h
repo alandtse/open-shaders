@@ -124,6 +124,7 @@ public:
 		uint mistFollowWind = 1;
 		float mistWindMultiplier = 1.0f;
 		float pad5 = 0.0f;
+		float4 originalFogColorOverride = { 1.0f, 1.0f, 1.0f, 0.0f };  // rgb = replaces the weather fog colour, a = blend amount
 	} settings;
 	STATIC_ASSERT_ALIGNAS_16(Settings);
 	static_assert(offsetof(Settings, vanillaFogNearColor) == 256);
@@ -132,7 +133,8 @@ public:
 	static_assert(offsetof(Settings, volumetricFogNoiseVelocity) == 320);
 	static_assert(offsetof(Settings, mistsEnabled) == 336);
 	static_assert(offsetof(Settings, mistDriftSpeed) == 352);
-	static_assert(sizeof(Settings) == 368);
+	static_assert(offsetof(Settings, originalFogColorOverride) == 368);
+	static_assert(sizeof(Settings) == 384);
 
 	/** @brief Supplies weather colors and derives density and start distance when following vanilla fog. */
 	Settings GetCommonBufferData() const;

@@ -415,19 +415,21 @@ namespace SharedData
 		float CloudsEdgeMoonMultiplier;
 
 		uint EnableProceduralSun;
-		float ProceduralSunDiskRadiusSq;
-		float ProceduralSunDiskEdgeScale;
-		float ProceduralSunGlowIntensity;
+		float ProceduralSunDiskCos;
+		float ProceduralSunDiskRadiance;
+		float ProceduralSunEdgeSoftness;
 
-		float ProceduralSunCoronaFalloff;
-		float ProceduralSunCoronaScale;
-		float SkyScaleMultiplier;
-		float ProceduralSunPad;
-
+		float ProceduralSunHaloCos;
+		float ProceduralSunHaloIntensity;
 		uint UseProceduralGradientWeights;
 		float ProceduralGradientWeightCurve;
 		float LightSpriteCurve;
 		uint EnableParticle;
+		float ProceduralSunHaloFalloff;
+		float ProceduralSunRadianceLimit;
+
+		float SkyScaleMultiplier;
+		float3 pad1;
 
 		float ParticleIntensity;
 		float ParticleLightingInfluence;
@@ -614,6 +616,7 @@ namespace SharedData
 		uint mistFollowWind;
 		float mistWindMultiplier;
 		float pad5;
+		float4 originalFogColorOverride;
 	};
 
 	struct TruePBRSettings
@@ -868,14 +871,9 @@ namespace SharedData
 	// camera-relative frame; defaults to 0 (no correction, backwards-compatible).
 	float4 GetWaterData(float3 worldPosition, uint eyeIndex = 0)
 	{
-		float2 cellF = (((worldPosition.xy + FrameBuffer::CameraPosAdjust[0].xy)) / 4096.0) + 64.0;  // always positive
-		int2 cellInt;
-		float2 cellFrac = modf(cellF, cellInt);
-
-		cellF = worldPosition.xy / float2(4096.0, 4096.0);  // remap to cell scale
-		cellF += 2.5;                                       // 5x5 cell grid
-		cellF -= cellFrac;                                  // align to cell borders
-		cellInt = round(cellF);
+		// floor keeps negative coordinates and cell borders exact
+		float2 absolutePosition = worldPosition.xy + FrameBuffer::CameraPosAdjust[0].xy;
+		int2 cellInt = (int2)(floor(absolutePosition / 4096.0) - floor(FrameBuffer::CameraPosAdjust[0].xy / 4096.0)) + 2;  // 5x5 cell grid
 
 		uint waterTile = (uint)clamp(cellInt.x + (cellInt.y * 5), 0, 24);  // remap xy to 0-24
 
