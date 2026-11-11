@@ -4773,6 +4773,8 @@
     "feature.wetness_effects.character_coat_intensity_tooltip": "Controls the independent water-reflection strength on skin, clothing and armor. Dynamic Cubemaps supplies environmental reflections; direct lights and the ambient fallback work without it.",
     "feature.wetness_effects.character_debug": "Debug",
     "feature.wetness_effects.character_debug_combined": "Combined Coverage",
+    "feature.wetness_effects.character_debug_environment": "Wall Droplet Coverage",
+    "feature.wetness_effects.character_debug_environment_tooltip": "Wall Droplet Coverage works without character drops. Magenta: droplet hit. Green: evaluated, no hit. Yellow: character geometry skipped. Skin, skinned, hair and eye permutations compile out the wall droplet path, so no overlay there means excluded at compile time, not that the surface is not a character.",
     "feature.wetness_effects.character_debug_flow": "Flowing Rivulets Only",
     "feature.wetness_effects.character_debug_impacts": "Arriving Drops Only",
     "feature.wetness_effects.character_debug_shading": "Water Shading",

@@ -4464,7 +4464,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	endif
 
 #	if defined(CHARACTER_RAIN_SURFACE)
-	if (SharedData::wetnessEffectsSettings.CharacterSpotDebug && characterRainSurface && inWorld) {
+	if (SharedData::wetnessEffectsSettings.CharacterSpotDebug && SharedData::wetnessEffectsSettings.CharacterSpotDebug != CharacterRainSpots::EnvironmentDebugMode && characterRainSurface && inWorld) {
 		float characterDebugMask = SharedData::wetnessEffectsSettings.CharacterSpotDebug == CharacterRainSpots::SurfaceDebugMode ? 1.0f :
 		                                                                                                                           (SharedData::wetnessEffectsSettings.CharacterSpotDebug == CharacterRainSpots::WeaponDebugMode ? float(heldWeapon) : characterSpotMask);
 		psout.Diffuse.xyz = characterDebugMask.xxx;
@@ -4472,6 +4472,26 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		psout.Specular.xyz = 0.0f;
 		psout.Albedo.xyz = 0.0f;
 		psout.Reflectance.xyz = 0.0f;
+#		endif
+	}
+#	endif
+
+#	if defined(ENVIRONMENT_RAIN_DROPS)
+	if (SharedData::wetnessEffectsSettings.CharacterSpotDebug == CharacterRainSpots::EnvironmentDebugMode && inWorld) {
+		const bool characterSkipped = (Permutation::PixelShaderDescriptor & Permutation::LightingFlags::CharacterLight) != 0;
+		if (environmentRainCoverage > 0.0f) {
+			psout.Diffuse.xyz = float3(1.0f, 0.0f, 1.0f);
+		} else if (evaluateEnvironmentDrops) {
+			psout.Diffuse.xyz = float3(0.0f, 1.0f, 0.0f);
+		} else if (characterSkipped) {
+			psout.Diffuse.xyz = float3(1.0f, 1.0f, 0.0f);
+		}
+#		if defined(DEFERRED)
+		if (environmentRainCoverage > 0.0f || evaluateEnvironmentDrops || characterSkipped) {
+			psout.Specular.xyz = 0.0f;
+			psout.Albedo.xyz = 0.0f;
+			psout.Reflectance.xyz = 0.0f;
+		}
 #		endif
 	}
 #	endif
