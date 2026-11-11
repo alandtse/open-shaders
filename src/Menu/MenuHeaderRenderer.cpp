@@ -6,6 +6,7 @@
 
 #include "BaselineManager.h"
 #include "CSEditor/Browser/BrowserWidgets.h"
+#include "CSEditor/SceneManager/SceneSettingsManager.h"
 #include "Fonts.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -94,7 +95,7 @@ void MenuHeaderRenderer::RenderActions(Menu& menu, bool& sidebarVisible, bool sh
 		BaselineManager::GetSingleton()->HasSettings(), [] { globals::state->ReapplyBaseSettings(); });
 	action("##RestoreSettings", SettingsActionIcons::kRestoreSaved, T("menu.restore_all_saved_settings", "Restore All Saved Settings"), false, globals::state->HasSavedSettings(),
 		[] { globals::state->Load(); });
-	const bool unsaved = globals::state->HasUnsavedChanges();
+	const bool unsaved = globals::state->HasUnsavedChanges() || SceneSettingsManager::GetSingleton()->HasPendingPresetPauses();
 	{
 		auto unsavedTint = Util::StateHoverButtonStyle(Util::Colors::GetUnsaved(), unsaved);
 		ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));

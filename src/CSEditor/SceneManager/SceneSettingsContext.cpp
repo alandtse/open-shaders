@@ -5,6 +5,7 @@
 #include "SceneSettingsContextRules.h"
 #include "SceneSettingsInternal.h"
 #include "SceneSettingsLocationTargets.h"
+#include "State.h"
 #include "Utils/FileSystem.h"
 #include "Utils/Game.h"
 #include "Utils/SettingsCatalog.h"
@@ -235,6 +236,8 @@ bool SceneSettingsManager::BeginContextEdit(const std::string& featureShortName,
 		contextEdit = std::move(edit);
 	} else {
 		contextEdit->entries.Resume(*target, matches);
+		if (!contextEdit->presetPauseChanges.empty())
+			ApplyPresetPauses();
 		RestoreContextUserMode(context, contextEdit->workingMode);
 		if (context.type == SceneContextType::Location)
 			GetLocationConfigMut(context.locationType, context.locationFormKey).userAuthored = contextEdit->workingLocationAuthored;
@@ -259,7 +262,7 @@ bool SceneSettingsManager::HasPendingContextEdit() const
 	const auto* target = GetCopyContextEntries(edit.context);
 	if (!target)
 		return false;
-	return edit.entries.HasChanges(*target, [&](const SettingEntry& entry) {
+	return !edit.presetPauseChanges.empty() || edit.entries.HasChanges(*target, [&](const SettingEntry& entry) {
 		return entry.source == EntrySource::User && entry.featureShortName == edit.feature && entry.period == edit.context.period;
 	}) || edit.savedMode != (edit.entries.IsActive() ? GetContextUserMode(edit.context) : edit.workingMode) ||
 	       (edit.context.type == SceneContextType::Location && edit.savedLocationAuthored != (edit.entries.IsActive() ? IsLocationTargetAuthored(edit.context.locationType, edit.context.locationFormKey) : edit.workingLocationAuthored));
@@ -297,6 +300,8 @@ void SceneSettingsManager::SuspendContextEdit()
 		edit.entries.Suspend(*target, [&](const SettingEntry& entry) {
 			return entry.source == EntrySource::User && entry.featureShortName == edit.feature && entry.period == edit.context.period;
 		});
+		if (!edit.presetPauseChanges.empty())
+			ApplyPresetPauses();
 		RestoreContextUserMode(edit.context, edit.savedMode);
 		if (edit.context.type == SceneContextType::Location)
 			GetLocationConfigMut(edit.context.locationType, edit.context.locationFormKey).userAuthored = edit.savedLocationAuthored;
@@ -325,6 +330,8 @@ bool SceneSettingsManager::SaveContextEdit()
 	if (edit.context.type == SceneContextType::Location)
 		edit.savedLocationAuthored = edit.workingLocationAuthored = IsLocationTargetAuthored(edit.context.locationType, edit.context.locationFormKey);
 	edit.savedDocument = preservedUserSettingsRoot;
+	ScenePresetPauses::Apply(presetPauses, edit.presetPauseChanges);
+	edit.presetPauseChanges.clear();
 	return true;
 }
 
@@ -529,9 +536,9 @@ SceneSettingsManager::ContextEntrySummary SceneSettingsManager::GetContextUserEn
 }
 
 void SceneSettingsManager::SetContextEntriesPaused(const SceneContextId& context, bool paused, std::string_view featureShortName,
-	const SettingSelection& selection, EntrySource source)
+	const SettingSelection& selection, EntrySource source, bool featureToolbar)
 {
-	if (source == EntrySource::Overwrite && HasPendingContextEdit())
+	if (source == EntrySource::Overwrite && !featureToolbar && HasPendingContextEdit())
 		return;
 	auto* contextEntries = GetContextEntriesMut(context);
 	if (!contextEntries)
@@ -544,8 +551,12 @@ void SceneSettingsManager::SetContextEntriesPaused(const SceneContextId& context
 			(selection && !selection->contains({ entry.featureShortName, entry.settingPath, entry.settingKey })) || entry.paused == paused ||
 			!EntryBelongsToContext(entry, context))
 			continue;
-		entry.paused = paused;
-		changed = true;
+		if (source == EntrySource::Overwrite)
+			changed |= SetPresetEntryPaused(entry, paused, featureToolbar);
+		else {
+			entry.paused = paused;
+			changed = true;
+		}
 	}
 	if (!changed)
 		return;
@@ -649,12 +660,75 @@ SceneSettingsManager::ContextEntrySummary SceneSettingsManager::GetEntryLayerSum
 	ContextEntrySummary summary;
 	VisitEntryLayers(scope, [&](const SceneContextId&, const std::vector<SettingEntry>& sourceEntries) {
 		for (const auto& entry : sourceEntries)
-			if (entry.source == source) {
+			if (entry.source == source && IsInEntryScope(entry, scope)) {
 				++summary.total;
 				summary.paused += entry.paused ? 1 : 0;
 			}
 	});
 	return summary;
+}
+
+bool SceneSettingsManager::IsInEntryScope(const SettingEntry& entry, const EntryLayerScope& scope)
+{
+	return (!scope.period || entry.period == *scope.period) &&
+	       (scope.feature.empty() || entry.featureShortName == scope.feature) &&
+	       (!scope.selection || scope.selection->contains({ entry.featureShortName, entry.settingPath, entry.settingKey }));
+}
+
+bool SceneSettingsManager::AnySceneSetting(const EntryLayerScope& scope, EntrySource source,
+	const std::function<bool(const SettingEntry&)>& predicate)
+{
+	bool found = false;
+	VisitEntryLayers(scope, [&](const SceneContextId&, const std::vector<SettingEntry>& entries) {
+		if (!found)
+			found = std::ranges::any_of(entries, [&](const SettingEntry& entry) {
+				return entry.source == source && IsInEntryScope(entry, scope) && predicate(entry);
+			});
+	});
+	return found;
+}
+
+void SceneSettingsManager::VisitPresetSettings(const EntryLayerScope& scope, const std::function<void(const SettingEntry&)>& visit)
+{
+	VisitEntryLayers(scope, [&](const SceneContextId&, const std::vector<SettingEntry>& sourceEntries) {
+		for (const auto& entry : sourceEntries)
+			if (entry.source == EntrySource::Overwrite && !entry.deleted && IsInEntryScope(entry, scope))
+				visit(entry);
+	});
+}
+
+std::optional<json> SceneSettingsManager::GetSceneDefault(const SettingEntry& entry) const
+{
+	auto* feature = Feature::FindFeatureByShortName(entry.featureShortName);
+	const auto* setting = FindAllowedCatalogSetting(entry.featureShortName, entry.settingPath, entry.settingKey);
+	const auto* defaults = feature ? globals::state->GetFeatureDefaults(feature->GetName()) : nullptr;
+	const auto* value = defaults && setting ? GetCatalogSerializedValue(*defaults, *setting) : nullptr;
+	return value && IsSceneSettingPrimitive(*value) ? std::optional{ *value } : std::nullopt;
+}
+
+void SceneSettingsManager::RestoreSceneDefaults(const EntryLayerScope& scope)
+{
+	bool changed = false;
+	VisitEntryLayers(scope, [&](const SceneContextId& target, std::vector<SettingEntry>& entries) {
+		bool restored = false;
+		for (auto& entry : entries) {
+			if (entry.source != EntrySource::User || !IsInEntryScope(entry, scope))
+				continue;
+			if (auto value = GetSceneDefault(entry); value && (entry.deleted || !AppliedValuesEqual(entry.value, *value))) {
+				entry.value = std::move(*value);
+				entry.deleted = false;
+				restored = true;
+			}
+		}
+		if (restored) {
+			MarkContextUserSettingsModified(target, false);
+			changed = true;
+		}
+	});
+	if (changed) {
+		BumpEntryPresentationRevision();
+		CommitSceneSettingChanges();
+	}
 }
 
 void SceneSettingsManager::SetEntryLayerPaused(EntrySource source, bool paused, const EntryLayerScope& scope)
@@ -665,11 +739,16 @@ void SceneSettingsManager::SetEntryLayerPaused(EntrySource source, bool paused, 
 	bool changed = false;
 	VisitEntryLayers(scope, [&](const SceneContextId& context, std::vector<SettingEntry>& sourceEntries) {
 		bool listChanged = false;
-		for (auto& entry : sourceEntries)
-			if (entry.source == source && entry.paused != paused) {
+		for (auto& entry : sourceEntries) {
+			if (entry.source != source || entry.paused == paused || !IsInEntryScope(entry, scope))
+				continue;
+			if (source == EntrySource::Overwrite)
+				listChanged |= SetPresetEntryPaused(entry, paused, false);
+			else {
 				entry.paused = paused;
 				listChanged = true;
 			}
+		}
 		if (listChanged && source == EntrySource::User)
 			MarkContextUserSettingsModified(context, false);
 		changed |= listChanged;
@@ -955,18 +1034,16 @@ void SceneSettingsManager::ClearContextTombstone(const SceneContextId& context,
 	CommitContextUserEntryMutation(context);
 }
 
-void SceneSettingsManager::TogglePauseContextEntry(const SceneContextId& context, size_t index)
+void SceneSettingsManager::TogglePauseContextEntry(const SceneContextId& context, size_t index, bool featureToolbar)
 {
 	auto* contextEntries = GetContextEntriesMut(context);
 	if (!contextEntries || index >= contextEntries->size())
 		return;
 	auto& entry = (*contextEntries)[index];
-	if (entry.source == EntrySource::Overwrite && HasPendingContextEdit())
-		return;
-	entry.paused = !entry.paused;
-	if (entry.source == EntrySource::User)
+	if (entry.source == EntrySource::User) {
+		entry.paused = !entry.paused;
 		CommitContextUserEntryMutation(context);
-	else {
+	} else if ((featureToolbar || !HasPendingContextEdit()) && SetPresetEntryPaused(entry, !entry.paused, featureToolbar)) {
 		BumpEntryPresentationRevision();
 		ReapplyIfActive();
 	}

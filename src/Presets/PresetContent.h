@@ -50,9 +50,11 @@ namespace PresetContent
 	std::vector<File> List(const std::string& packId);
 	/** @brief Reads one value using its registered numeric type when available. */
 	nlohmann::json EditableValue(const File& file, const std::string& path);
+	inline constexpr auto kSceneDefaultsKey = "entryDefaults";
+
 	/** @brief Replaces an unchanged value using declared types and preserving unrelated data. */
 	inline SettingEditResult ReplaceSetting(nlohmann::json& document, const std::string& path,
-		const nlohmann::json& expected, const nlohmann::json& value, const nlohmann::json* prototype = nullptr)
+		const nlohmann::json& expected, const nlohmann::json& value, const nlohmann::json* prototype = nullptr, bool scene = false)
 	try {
 		using json = nlohmann::json;
 		const json::json_pointer pointer(path);
@@ -97,6 +99,19 @@ namespace PresetContent
 		};
 		if (!normalizeValue(normalizeValue, prototype ? *prototype : current, normalized))
 			return SettingEditResult::InvalidValue;
+		if (scene) {
+			const auto metadata = document.find("_metadata");
+			if (metadata != document.end() && !metadata->is_null()) {
+				if (!metadata->is_object())
+					return SettingEditResult::InvalidValue;
+				const auto defaults = metadata->find(kSceneDefaultsKey);
+				if (defaults != metadata->end() && !defaults->is_object() && !defaults->is_null())
+					return SettingEditResult::InvalidValue;
+			}
+			auto& defaults = document["_metadata"][kSceneDefaultsKey];
+			if (!defaults.contains(path))
+				defaults[path] = current;
+		}
 		current = std::move(normalized);
 		return SettingEditResult::Changed;
 	} catch (const nlohmann::json::exception&) {
@@ -107,6 +122,17 @@ namespace PresetContent
 	{
 		return relative.parent_path() == "Baseline" && relative.extension() == ".json";
 	}
+	/** @brief Removes the retained default when an authored scene value is replaced or removed. */
+	inline void ClearSceneDefault(nlohmann::json& metadata, const std::string& path)
+	{
+		const auto defaults = metadata.find(kSceneDefaultsKey);
+		if (defaults != metadata.end() && defaults->is_object()) {
+			defaults->erase(path);
+			if (defaults->empty())
+				metadata.erase(defaults);
+		}
+	}
+
 	/** @brief Removes selected JSON paths and their per-setting scene metadata. */
 	inline bool RemoveSettings(nlohmann::json& document, std::span<const std::string> paths)
 	{
@@ -116,10 +142,12 @@ namespace PresetContent
 			if (path.empty() || value.starts_with("/_"))
 				continue;
 			changed |= Util::Settings::EraseSettingPath(document, path);
-			if (auto metadata = document.find("_metadata"); metadata != document.end() && metadata->is_object())
+			if (auto metadata = document.find("_metadata"); metadata != document.end() && metadata->is_object()) {
+				ClearSceneDefault(*metadata, value);
 				for (const auto key : { "entryTransitions", "entryDeletions" })
 					if (auto entries = metadata->find(key); entries != metadata->end() && entries->is_object())
 						Util::Settings::EraseSettingPath(*entries, path);
+			}
 		}
 		return changed;
 	}

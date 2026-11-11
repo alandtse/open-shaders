@@ -69,25 +69,6 @@ namespace
 	RE::FormID standaloneWeather = 0;
 	std::optional<SceneSettingsManager::LocationTarget> standaloneLocation;
 
-	template <class Action>
-	void ChooseFeatureActionLayer(const char* id, bool pressed, bool hasUser, bool hasPreset, bool presetBlocked, Action&& action)
-	{
-		using Source = SceneSettingsManager::EntrySource;
-		if (pressed) {
-			if (hasUser && hasPreset)
-				ImGui::OpenPopup(id);
-			else if (hasUser || (hasPreset && !presetBlocked))
-				action(hasUser ? Source::User : Source::Overwrite);
-		}
-		if (!ImGui::BeginPopup(id))
-			return;
-		if (Util::RoundedMenuItem(T("feature.scene_manager.section.user_settings", "User Settings"), nullptr, false, hasUser))
-			action(Source::User);
-		if (Util::RoundedMenuItem(T("feature.scene_manager.section.overwrite_files", "Preset Settings"), nullptr, false, hasPreset && !presetBlocked))
-			action(Source::Overwrite);
-		ImGui::EndPopup();
-	}
-
 	const char* GetPeriodLabel(int period)
 	{
 		switch (static_cast<TimeOfDayPeriod>(period)) {
@@ -151,11 +132,14 @@ namespace
 		return target.editorId.empty() ? target.formKey : target.editorId;
 	}
 
-	bool StartFeatureContext(const std::string& name, const SceneSettingsManager::SceneContextId& context)
+	bool StartFeatureContext(const std::string& name, const SceneSettingsManager::SceneContextId& context, bool discardPendingEdit = false)
 	{
-		if (!SceneSettingsManager::GetSingleton()->BeginContextEdit(name, context))
-			return false;
 		const bool retargetPreview = featurePageName == name && featureToolbarOpen && Util::EnvironmentControls::IsPreviewActive();
+		auto* manager = SceneSettingsManager::GetSingleton();
+		if (discardPendingEdit)
+			manager->DiscardContextEdit();
+		if (!manager->BeginContextEdit(name, context))
+			return false;
 		if (!retargetPreview)
 			Util::EnvironmentControls::StopPreview();
 		featurePageName = name;
@@ -190,8 +174,8 @@ namespace
 		if (!requestedFeatureContext || requestedFeatureContext->first != name)
 			return;
 		if (featureContextConfirmation.Draw()) {
-			SceneSettingsManager::GetSingleton()->DiscardContextEdit();
-			StartFeatureContext(name, requestedFeatureContext->second);
+			++featurePageScopeRevision;
+			StartFeatureContext(name, requestedFeatureContext->second, true);
 			requestedFeatureContext.reset();
 		} else if (!featureContextConfirmation.IsOpen()) {
 			requestedFeatureContext.reset();
@@ -434,45 +418,28 @@ namespace
 		if (manager->HasPendingContextEdit())
 			Util::Text::WrappedWarning("%s", SceneSettingsUI::PendingContextEditMessage());
 		const auto& style = ImGui::GetStyle();
-		const auto* pauseLabel = T("feature.scene_manager.action.pause_all", "Pause All");
-		const auto* resumeLabel = T("feature.scene_manager.action.unpause_all", "Unpause All");
-		const auto* deleteLabel = T("feature.scene_manager.action.delete_all", "Delete All");
-		const float deleteWidth = ImGui::CalcTextSize(deleteLabel).x + 2.0f * style.FramePadding.x;
-		const float gap = style.ItemInnerSpacing.x;
 		const auto drawActions = [&](Source source, const Manager::EntryLayerScope& scope, const char* heading = nullptr) {
 			ImGui::PushID(static_cast<int>(source));
 			const auto summary = manager->GetEntryLayerSummary(source, scope);
-			const auto* pauseAction = summary.AllPaused() ? resumeLabel : pauseLabel;
-			const float actionsWidth = ImGui::CalcTextSize(pauseAction).x + 2.0f * style.FramePadding.x + gap + deleteWidth;
-			const auto start = ImGui::GetCursorPosX();
-			const auto available = ImGui::GetContentRegionAvail().x;
 			const auto count = heading ? std::string{} : std::to_string(summary.total);
-			const auto* text = heading ? heading : count.c_str();
-			const float groupWidth = ImGui::CalcTextSize(text).x + style.ItemSpacing.x + actionsWidth;
-			ImGui::SetCursorPosX(start + std::max(0.0f, available - groupWidth));
-			ImGui::TextUnformatted(text);
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted(heading ? heading : count.c_str());
+			const float actionsWidth = std::ceil(SceneEntryTable::GetLayerActionsWidth(source));
 			BrowserUI::SameLineIfFits(actionsWidth);
-			const Util::DisableGuard disabled(manager->HasPendingContextEdit() || summary.total == 0);
-			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x, 0.0f));
-			const bool toggle = ImGui::Button(pauseAction);
-			ImGui::SameLine(0.0f, gap);
-			const bool remove = ImGui::Button(deleteLabel);
-			ImGui::PopStyleVar();
-			if (toggle)
-				globals::menu->GetUndoHistory().Change(SceneSettingsUI::MakeUndoTarget(), [&] {
-					manager->SetEntryLayerPaused(source, !summary.AllPaused(), scope);
-				});
-			if (remove) {
-				pendingDeleteScope = scope;
-				pendingDeleteSource = source;
-				deleteSceneChangesConfirmation.title = T(TKEY("scene_page_delete_changes_title"), "Delete changes");
-				deleteSceneChangesConfirmation.message = source == Source::User ?
-				                                             T(TKEY("scene_manage_delete_user"), "Delete your settings in this scene group? Installed settings remain. Undo restores your changes.") :
-				                                             T(TKEY("scene_manage_delete_presets"), "Delete the loaded preset scene files in this group? This removes files from disk.");
-				deleteSceneChangesConfirmation.confirmLabel = T("feature.scene_manager.action.delete", "Delete");
-				deleteSceneChangesConfirmation.cancelLabel = T(TKEY("cancel"), "Cancel");
-				deleteSceneChangesConfirmation.Request();
-			}
+			ImGui::SetCursorPosX(std::floor(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - actionsWidth)));
+			const bool canDelete = summary.total != 0;
+			SceneEntryTable::DrawLayerActions(scope, source, summary.AllPaused(), summary.total != 0, !manager->HasPendingContextEdit(), canDelete, [&] { globals::menu->GetUndoHistory().Change(SceneSettingsUI::MakeUndoTarget(), [&] {
+																																							  manager->SetEntryLayerPaused(source, !summary.AllPaused(), scope);
+																																						  }); }, [&] {
+					pendingDeleteScope = scope;
+					pendingDeleteSource = source;
+					deleteSceneChangesConfirmation.title = T(TKEY("scene_page_delete_changes_title"), "Delete changes");
+					deleteSceneChangesConfirmation.message = source == Source::User ?
+					                                             T(TKEY("scene_manage_delete_user"), "Delete your settings in this scene group? Installed settings remain. Undo restores your changes.") :
+					                                             T(TKEY("scene_manage_delete_presets"), "Delete the loaded preset scene files in this group? This removes files from disk.");
+					deleteSceneChangesConfirmation.confirmLabel = T("feature.scene_manager.action.delete", "Delete");
+					deleteSceneChangesConfirmation.cancelLabel = T(TKEY("cancel"), "Cancel");
+					deleteSceneChangesConfirmation.Request(); });
 			ImGui::PopID();
 		};
 		const auto drawGroup = [&](const char* label, const Manager::EntryLayerScope& scope) {
@@ -524,7 +491,7 @@ namespace
 			ImGui::EndTable();
 		}
 		ImGui::PopStyleVar();
-		Util::Text::WrappedDisabled("%s", T(TKEY("scene_manage_pause_session"), "Pausing installed settings lasts until they are reloaded."));
+		Util::Text::WrappedDisabled("%s", T(TKEY("scene_manage_pause_session"), "Use Save to keep preset pauses across restarts."));
 	}
 
 	void DrawLayerDeleteConfirmation()
@@ -558,6 +525,7 @@ namespace
 				break;
 			}
 			DrawLayerDeleteConfirmation();
+			SceneEntryTable::FinishPagePresetFrame();
 		});
 	}
 }
@@ -811,6 +779,7 @@ namespace
 				return;
 			DrawLayerManagement(managedTarget.first);
 			DrawLayerDeleteConfirmation();
+			SceneEntryTable::FinishPagePresetFrame();
 		}
 	}
 
@@ -1117,8 +1086,10 @@ namespace
 
 void SceneSettingsUI::DrawStandalonePage()
 {
+	auto* manager = SceneSettingsManager::GetSingleton();
 	WatchSceneSettingsForUndo();
-	if (Util::Button(T("feature.scene_manager.action.manage_settings", "Manage Scene Settings"))) {
+	const auto* manageLabel = T("feature.scene_manager.action.manage_settings", "Manage Scene Settings");
+	if (Util::Button(manageLabel)) {
 		SceneEntryTable::EndPresetEditing();
 		SceneCopyModal::PrepareEmbedded();
 		manageSettingsModal.Request();
@@ -1151,7 +1122,6 @@ void SceneSettingsUI::DrawStandalonePage()
 		previousPage = standalonePage;
 	}
 	ImGui::Spacing();
-	auto* manager = SceneSettingsManager::GetSingleton();
 	switch (standalonePage) {
 	case 0:
 		SceneEntryTable::Draw({ .type = ContextType::Interior });
@@ -1167,7 +1137,7 @@ void SceneSettingsUI::DrawStandalonePage()
 				std::make_format_args(currentPeriodName, currentGameHour));
 			BrowserUI::SameLineIfFits(ImGui::CalcTextSize(currentTimeLabel.c_str()).x);
 			ImGui::TextColored(globals::menu->GetTheme().StatusPalette.InfoColor, "%s", currentTimeLabel.c_str());
-			ImGui::Separator();
+			ImGui::Spacing();
 			SceneEntryTable::Draw({ .type = ContextType::TimeOfDay, .period = currentPeriod });
 			break;
 		}
@@ -1210,6 +1180,7 @@ void SceneSettingsUI::DrawStandalonePage()
 		break;
 	}
 	DrawTargetManagement();
+	SceneEntryTable::FinishPagePresetFrame();
 }
 
 bool SceneSettingsUI::CanEditFeaturePage(Feature* feature)
@@ -1332,6 +1303,51 @@ bool SceneSettingsUI::SetFeaturePagePreviewPlaying(bool playing)
 	return true;
 }
 
+namespace
+{
+	void DrawFeatureLayerActions(const SceneSettingsManager::SceneContextId& scene, const std::string& name)
+	{
+		using Manager = SceneSettingsManager;
+		using Source = Manager::EntrySource;
+		auto* manager = Manager::GetSingleton();
+		const Manager::EntryLayerScope scope{ .type = scene.type, .target = scene, .period = scene.period, .feature = name, .selection = featurePageSelection };
+		const auto user = manager->GetContextUserEntrySummary(scene, name, featurePageSelection);
+		Manager::ContextEntrySummary preset;
+		std::vector<const Manager::SettingEntry*> presetEntries;
+		for (const auto& entry : manager->GetContextEntries(scene)) {
+			if (entry.source != Source::Overwrite || !Manager::IsInEntryScope(entry, scope))
+				continue;
+			presetEntries.push_back(&entry);
+			if (!entry.deleted) {
+				++preset.total;
+				preset.paused += entry.paused ? 1 : 0;
+			}
+		}
+		for (const auto source : { Source::User, Source::Overwrite }) {
+			ImGui::PushID(static_cast<int>(source));
+			const bool isUser = source == Source::User;
+			const auto& summary = isUser ? user : preset;
+			const bool canDelete = isUser ? user.total != 0 : !presetEntries.empty();
+			ImGui::TextUnformatted(isUser ? T("feature.scene_manager.section.user_settings", "User Settings") :
+											T("feature.scene_manager.section.overwrite_files", "Preset Settings"));
+			SceneEntryTable::DrawLayerActions(scope, source, summary.AllPaused(), summary.total != 0, true, canDelete, [&] { manager->SetContextEntriesPaused(scene, !summary.AllPaused(), name, featurePageSelection, source, true); }, [&] {
+					ImGui::CloseCurrentPopup();
+					if (!isUser) {
+						SceneEntryTable::RequestFeaturePresetDeletion(presetEntries);
+						return;
+					}
+					featureDeleteConfirmation.title = T("feature.scene_manager.edit.delete_title", "Delete Scene Settings?");
+					featureDeleteConfirmation.message = T("feature.scene_manager.edit.delete_message", "Delete this feature's User Settings from the selected scene?");
+					featureDeleteConfirmation.confirmLabel = T("feature.scene_manager.action.delete", "Delete");
+					featureDeleteConfirmation.cancelLabel = T("feature.scene_manager.action.cancel", "Cancel");
+					featureDeleteConfirmation.Request(); }, true);
+			ImGui::PopID();
+			if (isUser)
+				ImGui::Separator();
+		}
+	}
+}
+
 bool SceneSettingsUI::DrawFeaturePageControls(Feature* feature, bool enabled)
 {
 	if (!CanEditFeaturePage(feature))
@@ -1361,7 +1377,7 @@ bool SceneSettingsUI::DrawFeaturePageControls(Feature* feature, bool enabled)
 	const bool hasTargetPicker = featurePageContext->type == ContextType::Weather || featurePageContext->type == ContextType::Location;
 	const bool hasPeriodPicker = featurePageContext->type != ContextType::Interior;
 	const int pickerColumns = hasPeriodPicker ? 2 : 1;
-	constexpr int actionColumns = 6;
+	constexpr int actionColumns = 5;
 	const int inlineColumns = pickerColumns + actionColumns + (hasTargetPicker ? 0 : 1);
 	const float targetWidth = periodWidth + (hasTargetPicker ? ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x : 0.0f);
 	const float availableWidth = ImGui::GetContentRegionAvail().x;
@@ -1407,6 +1423,10 @@ bool SceneSettingsUI::DrawFeaturePageControls(Feature* feature, bool enabled)
 		}
 		if (!singleRow) {
 			ImGui::EndTable();
+			if (hasTargetPicker) {
+				const float rowWidth = actionWidth * actionColumns + ImGui::GetStyle().ItemSpacing.x * (actionColumns - 1);
+				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - rowWidth));
+			}
 			ImGui::BeginGroup();
 		}
 		const auto nextAction = [&](int column) {
@@ -1415,6 +1435,8 @@ bool SceneSettingsUI::DrawFeaturePageControls(Feature* feature, bool enabled)
 			else if (column > 0)
 				BrowserUI::SameLineIfFits(actionWidth);
 		};
+		const auto scene = *featurePageContext;
+		SceneEntryTable::BeginFeaturePresetFrame(scene, name, featurePageScopeRevision);
 		nextAction(0);
 		const bool playing = Util::EnvironmentControls::IsPreviewActive();
 		{
@@ -1437,70 +1459,30 @@ bool SceneSettingsUI::DrawFeaturePageControls(Feature* feature, bool enabled)
 			if (BrowserUI::IconButton("##Copy", SceneActionIcons::kCopy, T("ui.copy", "Copy")))
 				SceneCopyModal::Open(*featurePageContext, name, featurePageSelection);
 		}
-		using Source = SceneSettingsManager::EntrySource;
-		const auto scene = *featurePageContext;
-		SceneEntryTable::BeginFeaturePresetFrame(scene, name, featurePageScopeRevision);
-		const auto isPresetTarget = [&](const SceneSettingsManager::SettingEntry& entry) {
-			return entry.source == Source::Overwrite && entry.featureShortName == name &&
-			       SceneSettingsContextRules::EntryBelongsToContext(entry, scene) &&
-			       (!featurePageSelection || featurePageSelection->contains({ entry.featureShortName, entry.settingPath, entry.settingKey }));
-		};
-		const auto summary = manager->GetContextUserEntrySummary(scene, name, featurePageSelection);
-		SceneSettingsManager::ContextEntrySummary presetSummary;
-		bool hasPreset = false;
-		for (const auto& entry : manager->GetContextEntries(scene))
-			if (isPresetTarget(entry)) {
-				hasPreset = true;
-				if (entry.deleted)
-					continue;
-				++presetSummary.total;
-				presetSummary.paused += entry.paused ? 1 : 0;
-			}
-		const bool hasUser = summary.total != 0;
-		const bool canPausePreset = presetSummary.total != 0;
-		const bool pending = manager->HasPendingContextEdit();
 		nextAction(3);
-		bool pausePressed;
-		{
-			const Util::DisableGuard disabled(pending || (!hasUser && !canPausePreset));
-			const bool paused = (!hasUser || summary.AllPaused()) && (!canPausePreset || presetSummary.AllPaused());
-			pausePressed = BrowserUI::IconButton("##Pause", paused ? SceneActionIcons::kResume : SceneActionIcons::kPause,
-				paused ? T("feature.scene_manager.action.resume", "Resume") : T("feature.scene_manager.action.pause", "Pause"));
+		constexpr auto* bulkPopup = "##AllSceneSettings";
+		const bool bulkActive = ImGui::IsPopupOpen(bulkPopup);
+		if (BrowserUI::IconButton("##SceneSettingsActions", Icons::TI(ICON_TI_ADJUSTMENTS_HORIZONTAL),
+				T("feature.scene_manager.action.all_settings", "All Settings"), bulkActive)) {
+			ImGui::OpenPopup(bulkPopup);
+			const auto min = ImGui::GetItemRectMin();
+			ImGui::SetNextWindowPos(ImVec2(min.x, ImGui::GetItemRectMax().y), ImGuiCond_Appearing);
 		}
-		ChooseFeatureActionLayer("##PauseSceneLayer", pausePressed, hasUser && !pending, canPausePreset, pending, [&](Source source) {
-			if (source == Source::User)
-				manager->DiscardContextEdit();
-			const auto& layer = source == Source::User ? summary : presetSummary;
-			manager->SetContextEntriesPaused(scene, !layer.AllPaused(), name, featurePageSelection, source);
-			if (source == Source::User)
-				manager->BeginContextEdit(name, scene);
-		});
-		nextAction(4);
-		bool deletePressed;
-		{
-			const Util::DisableGuard disabled(!hasUser && (!hasPreset || pending));
-			deletePressed = BrowserUI::IconButton("##Delete", SceneActionIcons::kDelete, T("feature.scene_manager.action.delete", "Delete"));
-		}
-		ChooseFeatureActionLayer("##DeleteSceneLayer", deletePressed, hasUser, hasPreset, pending, [&](Source source) {
-			if (source == Source::User) {
-				featureDeleteConfirmation.title = T("feature.scene_manager.edit.delete_title", "Delete Scene Settings?");
-				featureDeleteConfirmation.message = T("feature.scene_manager.edit.delete_message", "Delete this feature's User Settings from the selected scene?");
-				featureDeleteConfirmation.confirmLabel = T("feature.scene_manager.action.delete", "Delete");
-				featureDeleteConfirmation.cancelLabel = T("feature.scene_manager.action.cancel", "Cancel");
-				featureDeleteConfirmation.Request();
-			} else {
-				std::vector<const SceneSettingsManager::SettingEntry*> targets;
-				for (const auto& entry : manager->GetContextEntries(scene))
-					if (isPresetTarget(entry))
-						targets.push_back(&entry);
-				SceneEntryTable::RequestFeaturePresetDeletion(targets);
+		if (ImGui::IsPopupOpen(bulkPopup)) {
+			const float popupWidth = std::ceil(SceneEntryTable::GetLayerActionsWidth(SceneSettingsManager::EntrySource::Overwrite)) +
+			                         ImGui::GetStyle().WindowPadding.x * 2.0f;
+			ImGui::SetNextWindowSizeConstraints(ImVec2(popupWidth, 0.0f), ImVec2(FLT_MAX, FLT_MAX));
+			if (ImGui::BeginPopup(bulkPopup)) {
+				DrawFeatureLayerActions(scene, name);
+				ImGui::EndPopup();
 			}
-		});
+		}
 		if (singleRow) {
 			ImGui::TableSetColumnIndex(inlineColumns - 1);
 		} else {
 			BrowserUI::SameLineIfFits(actionWidth);
-			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - actionWidth));
+			if (!hasTargetPicker)
+				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - actionWidth));
 		}
 		if (BrowserUI::IconButton("##CloseSceneToolbar", Icons::TI(ICON_TI_X), T("feature.scene_manager.action.close", "Close")))
 			HideFeaturePageEditing();
@@ -1510,9 +1492,7 @@ bool SceneSettingsUI::DrawFeaturePageControls(Feature* feature, bool enabled)
 			ImGui::EndGroup();
 	}
 	if (featureDeleteConfirmation.Draw()) {
-		manager->DiscardContextEdit();
 		manager->ClearContextEntries(*featurePageContext, name, featurePageSelection);
-		manager->BeginContextEdit(name, *featurePageContext);
 	}
 	SceneCopyModal::Draw(*featurePageContext, name);
 	if (featureSaveFailed)

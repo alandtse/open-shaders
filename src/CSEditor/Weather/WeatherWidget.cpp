@@ -990,9 +990,6 @@ void WeatherWidget::DrawCloudSettings()
 	bool changed = false;
 	bool enableChanged = false;
 
-	// OpenOnArrow|OpenOnDoubleClick prevents accidental collapse when clicking
-	// the [Enabled] badge area that overlaps the right side of the header.
-	constexpr ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
 	const char* kEnabledBadge = T(TKEY("enabled_badge"), "[Enabled]");
 
 	for (int i = 0; i < TESWeather::kTotalLayers; i++) {
@@ -1021,7 +1018,7 @@ void WeatherWidget::DrawCloudSettings()
 			ImGui::PushStyleColor(ImGuiCol_HeaderActive, targetHeaderColor);
 		}
 		const auto layerLabel = WeatherSetting::CloudLayerLabel(i);
-		bool layerOpen = ImGui::CollapsingHeader(std::format("{}###{}", layerLabel, layerId).c_str(), flags);
+		bool layerOpen = ImGui::CollapsingHeader(std::format("{}###{}", layerLabel, layerId).c_str());
 		if (isTarget) {
 			ImGui::PopStyleColor(3);
 			if (auto& view = View(); view.scrollToHighlighted) {
