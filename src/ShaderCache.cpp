@@ -4894,11 +4894,11 @@ namespace SIE
 
 	static std::atomic<bool> g_contentStoreUsageStale{ true };
 
-	ShaderCache::ContentStoreUsage ShaderCache::GetCachedContentStoreUsage()
+	std::optional<ShaderCache::ContentStoreUsage> ShaderCache::GetCachedContentStoreUsage()
 	{
 		constexpr auto kRefreshInterval = std::chrono::seconds(5);
 		static std::mutex mutex;
-		static ContentStoreUsage usage;
+		static std::optional<ContentStoreUsage> usage;
 		static std::future<ContentStoreUsage> pending;
 		static std::chrono::steady_clock::time_point lastRefresh;
 		std::scoped_lock lock(mutex);
@@ -4921,7 +4921,10 @@ namespace SIE
 		store->SetMaxBytes(maxBytes);
 		g_contentStoreUsageStale = true;
 		// Walking and deleting can take a while on a large store; the store outlives the plugin, so detach.
-		std::thread([store, maxBytes] { store->Trim(maxBytes); }).detach();
+		std::thread([store, maxBytes] {
+			store->Trim(maxBytes);
+			g_contentStoreUsageStale = true;
+		}).detach();
 	}
 
 	void ShaderCache::ClearContentStore()

@@ -158,10 +158,10 @@ namespace
 		ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.home.disk_cache",
 														 { { "status", cache->IsDiskCacheActive() ? T("common.active", "Active") : T("common.inactive", "Inactive") } }, "Disk cache: {status}")
 									 .c_str());
-		if (globals::state->enableContentStore.load(std::memory_order_relaxed)) {
-			const auto usage = cache->GetCachedContentStoreUsage();
+		const auto usage = globals::state->enableContentStore.load(std::memory_order_relaxed) ? cache->GetCachedContentStoreUsage() : std::nullopt;
+		if (usage) {
 			ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.home.content_store_usage",
-															 { { "count", std::to_string(usage.blobs) }, { "size", Util::FormatFileSize(usage.bytes) }, { "cap", Util::FormatFileSize(usage.maxBytes) } },
+															 { { "count", std::to_string(usage->blobs) }, { "size", Util::FormatFileSize(usage->bytes) }, { "cap", Util::FormatFileSize(usage->maxBytes) } },
 															 "Persistent store: {count} shaders, {size} (limit {cap})")
 										 .c_str());
 			ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.advanced.content_store_hits", { { "count", std::to_string(cache->GetContentStoreHitTasks()) } }, "Restored this session: {count}").c_str());

@@ -956,8 +956,8 @@ namespace SIE
 			uint64_t maxBytes = 0;
 		};
 		ContentStoreUsage GetContentStoreUsage();
-		/** @brief Last measured usage, re-measured on a worker every few seconds so a UI frame never walks the store. */
-		ContentStoreUsage GetCachedContentStoreUsage();
+		/** @brief Last measured usage, re-measured on a worker every few seconds so a UI frame never walks the store; empty until the first measurement completes. */
+		std::optional<ContentStoreUsage> GetCachedContentStoreUsage();
 		uint64_t GetContentStoreHitTasks();
 		void ToggleErrorMessages();
 		void DisableShaderBlocking();

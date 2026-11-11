@@ -87,9 +87,10 @@ namespace
 	/// Location, size and restore count of the persistent shader store, with a size limit and a button to empty it.
 	void DrawContentStoreDetails(SIE::ShaderCache* a_cache, bool a_enabled)
 	{
-		const auto usage = a_cache->GetCachedContentStoreUsage();
-		if (!a_enabled && usage.blobs == 0)
+		const auto cached = a_cache->GetCachedContentStoreUsage();
+		if (!cached || (!a_enabled && cached->blobs == 0))
 			return;
+		const auto& usage = *cached;
 
 		ImGui::Indent();
 		ImGui::TextDisabled("%s", I18n::GetSingleton()->Format("menu.advanced.content_store_location", { { "path", usage.path } }, "Location: {path}").c_str());
