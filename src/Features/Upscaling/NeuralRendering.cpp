@@ -2029,6 +2029,8 @@ namespace
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("model_scale_tooltip"),
 				"Runs the model at a fraction of the eye size and carries only its brightness change back to the full image. 0.75 saves about 8% of the model's GPU time and 0.5 about 16%, with a loss of fine detail. It needs Developer Mode and does not apply with Alternate eyes."));
+		ImGui::EndDisabled();
+		ImGui::BeginDisabled(unusedByMode);
 		const ImGuiID compressionId = ImGui::GetID("peripheralCompression");
 		const ImGuiID compressionDraggingId = ImGui::GetID("peripheralCompressionDragging");
 		int compression = storage->GetBool(compressionDraggingId, false) ? storage->GetInt(compressionId, 0) : static_cast<int>(tuning.peripheralCompressionPercent);
@@ -2041,8 +2043,8 @@ namespace
 		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("peripheral_compression_tooltip"),
-				"Compresses model sampling from the eye rectangle inward, preserving the centre and the existing rectangular Neural Rendering coverage. The existing upscaler fills and blends the complete view. Independent of Model Scale; requires Developer Mode. Actor crops and material selection retain ordinary Neural Rendering."));
-		ImGui::BeginDisabled(tuning.modelScale >= NR::Tuning::kMaxModelScale && tuning.peripheralCompressionPercent == 0);
+				"Higher values can improve performance but reduce Neural Rendering quality toward the edges of the view. More detail is kept in the centre. Does not apply with Alternate eyes, when limited to a tracked actor, or with material selection."));
+		ImGui::BeginDisabled((!developerMode || tuning.modelScale >= NR::Tuning::kMaxModelScale) && tuning.peripheralCompressionPercent == 0);
 		changed |= ImGui::Checkbox(T(TKEY("model_guided_upsample"), "Guided Upsample"), &tuning.modelGuidedUpsample);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("model_guided_upsample_tooltip"),
@@ -2546,7 +2548,6 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		auto resolved = NR::Context::EffectiveTuning(tuning, contexts, context.kind);
 		if (!globals::state->IsDeveloperMode()) {
 			resolved.modelScale = NR::Tuning::kMaxModelScale;
-			resolved.peripheralCompressionPercent = 0;
 			resolved.sbsEvaluate = resolved.modelVerify = resolved.mirrorEyes = false;
 		}
 		if (globals::game::isVR && NR::GetEyeMode(resolved) == NR::EyeMode::kAlternate) {
