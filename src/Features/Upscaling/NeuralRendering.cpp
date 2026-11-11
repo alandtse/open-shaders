@@ -236,6 +236,8 @@ struct NeuralRendering::Impl
 		static constexpr UINT kUavs = D3D11_PS_CS_UAV_REGISTER_COUNT;
 		winrt::com_ptr<ID3D11ComputeShader> shader;
 		std::array<ID3D11Buffer*, kBuffers> buffers{};
+		std::array<UINT, kBuffers> bufferFirstConstants{};
+		std::array<UINT, kBuffers> bufferConstantCounts{};
 		std::array<ID3D11ShaderResourceView*, kViews> views{};
 		std::array<ID3D11SamplerState*, kSamplers> samplers{};
 		std::array<ID3D11UnorderedAccessView*, kUavs> uavs{};
@@ -252,15 +254,15 @@ struct NeuralRendering::Impl
 			ctx->CSSetSamplers(0, kSamplers, noSamplers.data());
 			ctx->CSSetUnorderedAccessViews(0, kUavs, noUavs.data(), nullptr);
 		}
-		void Save(ID3D11DeviceContext* ctx)
+		void Save(ID3D11DeviceContext1* ctx)
 		{
 			ctx->CSGetShader(shader.put(), nullptr, nullptr);
-			ctx->CSGetConstantBuffers(0, kBuffers, buffers.data());
+			ctx->CSGetConstantBuffers1(0, kBuffers, buffers.data(), bufferFirstConstants.data(), bufferConstantCounts.data());
 			ctx->CSGetShaderResources(0, kViews, views.data());
 			ctx->CSGetSamplers(0, kSamplers, samplers.data());
 			ctx->CSGetUnorderedAccessViews(0, kUavs, uavs.data());
 		}
-		void Restore(ID3D11DeviceContext* ctx)
+		void Restore(ID3D11DeviceContext1* ctx)
 		{
 			static constexpr std::array<UINT, kUavs> keepCounts = []() {
 				std::array<UINT, kUavs> counts{};
@@ -269,7 +271,7 @@ struct NeuralRendering::Impl
 			}();
 			Clear(ctx);
 			ctx->CSSetShader(shader.get(), nullptr, 0);
-			ctx->CSSetConstantBuffers(0, kBuffers, buffers.data());
+			ctx->CSSetConstantBuffers1(0, kBuffers, buffers.data(), bufferFirstConstants.data(), bufferConstantCounts.data());
 			ctx->CSSetShaderResources(0, kViews, views.data());
 			ctx->CSSetSamplers(0, kSamplers, samplers.data());
 			ctx->CSSetUnorderedAccessViews(0, kUavs, uavs.data(), keepCounts.data());
