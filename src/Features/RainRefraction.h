@@ -34,6 +34,7 @@ public:
 	static constexpr float kMinMotionStretch = 0.01f;
 	static constexpr float kMaxMotionStretch = 3.0f;
 	static constexpr float kMaxWindInfluence = 2.0f;
+	static constexpr float kMaxWindResponseSeconds = 2.0f;
 	static constexpr float kFallbackRainFallSpeed = 675.0f;
 	static constexpr float kMinCurtainScale = 512.0f;
 	static constexpr float kMaxCurtainScale = 16384.0f;
@@ -48,6 +49,7 @@ public:
 		float WindInfluence = 0.0f;
 		float CurtainStrength = 0.0f;
 		float CurtainScale = 4096.0f;
+		float WindResponseSeconds = 0.6f;
 	} settings;
 
 	/** @brief Feature buffer data, matching RainRefractionSettings in SharedData.hlsli; Enable is cleared when the raindrop texture or blend state is missing. */
@@ -60,7 +62,7 @@ public:
 		float4 TextureBounds{ 0, 0, 1, 1 };        ///< UV rectangle of the raindrop texture's alpha coverage
 		float2 TextureRadiusScale{ 1, 1 };         ///< Billboard half-extents per unit drop radius
 		float FallSpeed = kFallbackRainFallSpeed;  ///< Weather gravity velocity in game units per second
-		float pad0{};
+		float WindResponseSeconds = 0.6f;          ///< Time rain takes to follow a wind change
 		float CurtainStrength;
 		float CurtainScale;
 		float2 pad1{};

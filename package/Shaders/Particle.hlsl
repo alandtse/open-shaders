@@ -32,7 +32,25 @@ float2 GetRainProjectionJitter(uint eyeIndex)
 namespace RainWind
 {
 	static const float UnitsPerSecondPerFieldSpeed = 400.0;
-	static const float ResponseSeconds = 0.5;
+	static const uint ResponseTaps = 4;
+
+	// Gust velocity averaged over the response time: the gust pattern advects with the field's
+	// travel distance, so an earlier gust is the same field sampled at a smaller travel distance.
+	float3 SampleLaggedGust(float3 worldPosition, float responseSeconds)
+	{
+		WindField::Field current = SharedData::WindFieldCurrent;
+		WindField::Field transition = SharedData::WindFieldTransition;
+		float lagDistance = SharedData::WindFieldTransitionData.z * responseSeconds;
+		float3 gust = 0.0;
+		[unroll] for (uint tap = 0; tap < ResponseTaps; ++tap)
+		{
+			float back = (tap + 0.5) / ResponseTaps * lagDistance;
+			current.travelDistance = max(SharedData::WindFieldCurrent.travelDistance - back, 0.0);
+			transition.travelDistance = max(SharedData::WindFieldTransition.travelDistance - back, 0.0);
+			gust += WindField::Detail::SampleBlendedComponents(worldPosition, current, transition, SharedData::WindFieldTransitionData.x).gustVelocity;
+		}
+		return gust / ResponseTaps;
+	}
 }
 #	endif
 #endif
@@ -161,10 +179,14 @@ VS_OUTPUT main(VS_INPUT input)
 	if (SharedData::rainRefractionSettings.CurtainStrength > 0.0)
 		dropWeight = RainCurtain::Weight(worldPosition, RainCurtain::Drift(), RainCurtain::DropHash(input.Position.xyz), SharedData::rainRefractionSettings.CurtainScale, SharedData::rainRefractionSettings.CurtainStrength);
 	if (SharedData::rainRefractionSettings.WindInfluence > 0.0) {
-		WindField::Components wind = WindField::SampleCurrentComponents(worldPosition);
+		float responseSeconds = SharedData::rainRefractionSettings.WindResponseSeconds;
+		float3 laggedGust = responseSeconds > 0.0 ?
+		                        RainWind::SampleLaggedGust(worldPosition, responseSeconds) :
+		                        WindField::SampleCurrentComponents(worldPosition).gustVelocity;
 		WindField::TransientImpulseSample impulse = WindField::SampleCurrentTransientImpulses(worldPosition);
-		float3 gust = float3((wind.gustVelocity + impulse.velocity).xy, 0.0f) * (RainWind::UnitsPerSecondPerFieldSpeed * SharedData::rainRefractionSettings.WindInfluence);
-		msPosition.xyz += gust * RainWind::ResponseSeconds;
+		float3 gust = float3((laggedGust + impulse.velocity).xy, 0.0f) * (RainWind::UnitsPerSecondPerFieldSpeed * SharedData::rainRefractionSettings.WindInfluence);
+		float secondsFallen = (1.0 - normalizedPosition.z) * fVars2.x / max(abs(Velocity.z), EPSILON_DIVISION);
+		msPosition.xyz += gust * min(secondsFallen, responseSeconds);
 		rainVelocity += gust * (abs(Velocity.z) / max(SharedData::rainRefractionSettings.FallSpeed, EPSILON_DIVISION));
 	}
 #			endif

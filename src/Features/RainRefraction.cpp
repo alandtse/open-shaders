@@ -15,7 +15,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MotionTransparency,
 	WindInfluence,
 	CurtainStrength,
-	CurtainScale)
+	CurtainScale,
+	WindResponseSeconds)
 
 namespace
 {
@@ -108,6 +109,10 @@ void RainRefraction::DrawSettings()
 				ImGui::Text("%s", T(TKEY("curtain_scale_tooltip"), "Size of the rain sheets in game units."));
 			}
 		}
+		ImGui::SliderFloat(T(TKEY("wind_response"), "Wind Response Time"), &settings.WindResponseSeconds, 0.0f, kMaxWindResponseSeconds, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("wind_response_tooltip"), "How long the rain takes to follow a change in the wind, as raindrops have inertia.\n0 follows the wind instantly."));
+		}
 	};
 
 	{
@@ -143,6 +148,7 @@ void RainRefraction::LoadSettings(json& o_json)
 	settings.WindInfluence = std::clamp(settings.WindInfluence, 0.0f, kMaxWindInfluence);
 	settings.CurtainStrength = std::clamp(settings.CurtainStrength, 0.0f, 1.0f);
 	settings.CurtainScale = std::clamp(settings.CurtainScale, kMinCurtainScale, kMaxCurtainScale);
+	settings.WindResponseSeconds = std::clamp(settings.WindResponseSeconds, 0.0f, kMaxWindResponseSeconds);
 }
 
 void RainRefraction::SaveSettings(json& o_json)
@@ -214,6 +220,7 @@ RainRefraction::PerFrame RainRefraction::GetCommonBufferData()
 		data = *preset;
 	data.Enable = data.Enable && GetRaindropSRV() && alphaBlendState;
 	data.WindInfluence = settings.WindInfluence;
+	data.WindResponseSeconds = settings.WindResponseSeconds;
 	data.FallSpeed = GetWeatherFallSpeed();
 	data.CurtainStrength = settings.CurtainStrength;
 	data.CurtainScale = settings.CurtainScale;
