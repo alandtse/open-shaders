@@ -894,7 +894,7 @@ void WetnessEffects::DrawCharacterRainSettings()
 		Util::Combo(waterLayerDebugLabel, &settings.CharacterSpotDebug, debugModes);
 	}
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("character_debug_environment_tooltip"), "Wall Droplet Coverage works without character drops. Magenta: droplet hit. Green: evaluated, no hit. Yellow: character geometry skipped. Skin, skinned, hair and eye permutations compile out the wall droplet path, so no overlay there means excluded at compile time, not that the surface is not a character."));
+		ImGui::TextUnformatted(T(TKEY("character_debug_environment_tooltip"), "Wall Droplet Coverage works without character drops. Magenta: droplet hit. Green: evaluated, no hit. Yellow: draw has the CharacterLight flag and is skipped. Skin, skinned, hair and eye permutations compile out the wall droplet path, so no overlay there means excluded at compile time, not that the surface is not a character."));
 	ImGui::EndDisabled();
 }
 
