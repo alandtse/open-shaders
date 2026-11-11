@@ -29,6 +29,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "ThemeManager.h"
+#include "Utils/Format.h"
 #include "Utils/UIAnim.h"
 
 // Static member definitions
@@ -157,6 +158,14 @@ namespace
 		ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.home.disk_cache",
 														 { { "status", cache->IsDiskCacheActive() ? T("common.active", "Active") : T("common.inactive", "Inactive") } }, "Disk cache: {status}")
 									 .c_str());
+		if (globals::state->enableContentStore.load(std::memory_order_relaxed)) {
+			const auto usage = cache->GetCachedContentStoreUsage();
+			ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.home.content_store_usage",
+															 { { "count", std::to_string(usage.blobs) }, { "size", Util::FormatFileSize(usage.bytes) }, { "cap", Util::FormatFileSize(usage.maxBytes) } },
+															 "Persistent store: {count} shaders, {size} (limit {cap})")
+										 .c_str());
+			ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.advanced.content_store_hits", { { "count", std::to_string(cache->GetContentStoreHitTasks()) } }, "Restored this session: {count}").c_str());
+		}
 		ImGui::Spacing();
 		if (Util::LabeledButton("##ShaderSettings", Icons::TI(MenuIcons::kShaders), T("menu.settings.nav_shaders_cache", "Shaders & Cache")))
 			SettingsPageRenderer::OpenSection(SettingsSectionIds::kShadersCache);

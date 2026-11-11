@@ -15,6 +15,7 @@
 #include <cmath>
 #include <d3dcompiler.h>
 #include <fstream>
+#include <future>
 #include <mutex>
 #include <unordered_map>
 
@@ -4891,6 +4892,26 @@ namespace SIE
 		return { ContentStoreDisplayPath(), usage.blobs, usage.bytes, ContentStoreMaxBytes() };
 	}
 
+	static std::atomic<bool> g_contentStoreUsageStale{ true };
+
+	ShaderCache::ContentStoreUsage ShaderCache::GetCachedContentStoreUsage()
+	{
+		constexpr auto kRefreshInterval = std::chrono::seconds(5);
+		static std::mutex mutex;
+		static ContentStoreUsage usage;
+		static std::future<ContentStoreUsage> pending;
+		static std::chrono::steady_clock::time_point lastRefresh;
+		std::scoped_lock lock(mutex);
+		if (pending.valid() && pending.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+			usage = pending.get();
+		const auto now = std::chrono::steady_clock::now();
+		if (!pending.valid() && (g_contentStoreUsageStale.exchange(false) || now - lastRefresh >= kRefreshInterval)) {
+			pending = std::async(std::launch::async, [this] { return GetContentStoreUsage(); });
+			lastRefresh = now;
+		}
+		return usage;
+	}
+
 	void ShaderCache::ApplyContentStoreLimit()
 	{
 		auto* store = g_openedContentStore.load();
@@ -4898,6 +4919,7 @@ namespace SIE
 			return;
 		const auto maxBytes = ContentStoreMaxBytes();
 		store->SetMaxBytes(maxBytes);
+		g_contentStoreUsageStale = true;
 		// Walking and deleting can take a while on a large store; the store outlives the plugin, so detach.
 		std::thread([store, maxBytes] { store->Trim(maxBytes); }).detach();
 	}
@@ -4910,6 +4932,7 @@ namespace SIE
 			store->Clear(ec);
 		else
 			std::filesystem::remove_all(ContentStorePath(), ec);
+		g_contentStoreUsageStale = true;
 		if (ec)
 			logger::warn("Failed to clear the persistent shader store: {}", ec.message());
 	}

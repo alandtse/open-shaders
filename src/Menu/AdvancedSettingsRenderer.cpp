@@ -82,23 +82,12 @@ namespace
 			diskPath);
 	}
 
-	constexpr double kStoreUsageRefreshSeconds = 5.0;
 	constexpr double kBytesPerMB = 1024.0 * 1024.0;
 
 	/// Location, size and restore count of the persistent shader store, with a size limit and a button to empty it.
 	void DrawContentStoreDetails(SIE::ShaderCache* a_cache, bool a_enabled)
 	{
-		// Measuring walks the whole store, so it runs on a worker every few seconds instead of in the frame.
-		static SIE::ShaderCache::ContentStoreUsage usage;
-		static std::future<SIE::ShaderCache::ContentStoreUsage> pendingUsage;
-		static double lastRefresh = -kStoreUsageRefreshSeconds;
-		const double now = ImGui::GetTime();
-		if (pendingUsage.valid() && pendingUsage.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
-			usage = pendingUsage.get();
-		if (!pendingUsage.valid() && now - lastRefresh >= kStoreUsageRefreshSeconds) {
-			pendingUsage = std::async(std::launch::async, [a_cache] { return a_cache->GetContentStoreUsage(); });
-			lastRefresh = now;
-		}
+		const auto usage = a_cache->GetCachedContentStoreUsage();
 		if (!a_enabled && usage.blobs == 0)
 			return;
 
@@ -119,7 +108,6 @@ namespace
 			globals::state->contentStoreMaxMB.store(static_cast<uint32_t>(limitMB), std::memory_order_relaxed);
 		if (ImGui::IsItemDeactivatedAfterEdit()) {
 			a_cache->ApplyContentStoreLimit();
-			lastRefresh = -kStoreUsageRefreshSeconds;
 		}
 		Util::HoverTip(T("menu.advanced.content_store_limit_tooltip",
 			"Least recently used shaders are deleted once the store exceeds this. "
@@ -127,7 +115,6 @@ namespace
 			"so keep several builds' worth if you switch branches."));
 		if (Util::Button(T("menu.advanced.content_store_clear", "Clear Store"))) {
 			a_cache->ClearContentStore();
-			lastRefresh = -kStoreUsageRefreshSeconds;
 		}
 		Util::HoverTip(T("menu.advanced.content_store_clear_tooltip",
 			"Deletes every stored shader. Use this if a shader looks wrong after being restored; "
