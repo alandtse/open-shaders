@@ -2496,7 +2496,9 @@ namespace Util
 		ImGuiID activeId = 0;
 		bool isOpen = false;
 		bool closing = false;
+		bool measuring = false;
 		bool flyoutHovered = false;
+		bool flyoutHasActiveItem = false;
 		float closeTimer = 0.0f;
 		float openProgress = 0.0f;
 		ImVec2 sourceMin{};
@@ -2504,11 +2506,12 @@ namespace Util
 		ImVec2 flyoutMin{};
 		ImVec2 flyoutMax{};
 		ImVec2 lastSize{};
+		std::optional<ImVec2> resizeHoverPos;
 		ImGuiID blockedHoverId = 0;
 		ImGuiID pendingFocusReturnId = 0;
 		bool keepOpenForNavigation = false;
 		bool draggedFromFlyout = false;
-		int lastFrame = -1;
+		int lastSourceFrame = -1;
 		std::string windowName;
 	};
 

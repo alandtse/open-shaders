@@ -2,6 +2,7 @@
 
 #include "CSEditor/FormEditSources.h"
 #include "SceneEntryDraft.h"
+#include "ScenePresetPauses.h"
 #include "Utils/SettingsControl.h"
 
 #include <array>
@@ -336,10 +337,8 @@ public:
 
 	// --- Persistence ---
 
-	using PresetPauseState = std::set<std::tuple<std::filesystem::path, std::string,
-		std::vector<std::string>, std::string, TimeOfDayPeriod>>;
-	/** @brief Captures session pauses for the currently loaded preset entries. */
-	PresetPauseState CapturePresetPauses() const;
+	/** @brief Whether the standalone scene pages have preset pause previews awaiting Save. */
+	bool HasPendingPresetPauses() const { return presetPauses != savedPresetPauses; }
 
 	/// Commits a user edit: runs the CS editor's automatic save, which writes SceneManager.json.
 	void SaveAllUserSettings();
@@ -347,14 +346,14 @@ public:
 	/// Writes all user data (interior, TOD, weather, location) to unified SceneManager.json, unless it
 	/// matches what was last written. Only SaveManager calls this; everything else goes through
 	/// SaveAllUserSettings.
-	bool WriteUserSettings();
+	bool WriteUserSettings(bool savePresetPauses = false);
 
 	/** @brief Replaces one scene type's overwrite entries with those found in the active pack. */
 	void DiscoverOverwrites(SceneType type);
 
 	/// Re-reads every overwrite file from disk, replacing the mod layer. User entries are untouched.
 	/// Picks up files an export just wrote, and drops entries whose file is gone.
-	void ReloadOverwrites(const PresetPauseState& pausedEntries = {});
+	void ReloadOverwrites();
 	/** @brief Reloads personal and preset scenes after validating the personal document. */
 	bool ReloadSceneSettings();
 
@@ -412,6 +411,11 @@ public:
 	}
 	/** @brief Set and persist the user's value, clamped to the control's range; nullopt hands it back to the preset. */
 	void SetTransitionControl(TransitionControl control, std::optional<float> value, bool deferSave = false);
+	/// Returns the active preset value for this transition, when supplied.
+	std::optional<float> GetPresetTransitionControl(TransitionControl control) const
+	{
+		return activePresetMetadata ? activePresetMetadata->transitionControls[static_cast<size_t>(control)] : std::nullopt;
+	}
 	/** @brief Linear progress in 0..1 eased toward smootherstep by the Ease control. */
 	float EaseTransition(float linear) const;
 
@@ -802,7 +806,7 @@ public:
 	void ClearContextTombstone(const SceneContextId& context, const std::string& featureShortName,
 		const std::vector<std::string>& settingPath, const std::string& settingKey);
 	/// Toggle one entry's pause state; installed-file pauses are session-only.
-	void TogglePauseContextEntry(const SceneContextId& context, size_t index);
+	void TogglePauseContextEntry(const SceneContextId& context, size_t index, bool featureToolbar = false);
 	/// Revert one context entry's value to its originalValue.
 	void RevertContextEntryToDefault(const SceneContextId& context, size_t index);
 	/// Resolves the value beneath an entry, or the original value of a flat user entry.
@@ -892,9 +896,9 @@ public:
 	ContextEntrySummary GetFeatureSceneSummary(std::string_view featureShortName, const SceneContextId& context, bool matchPeriod = true, const SettingSelection& selection = std::nullopt) const;
 	/** @brief Summarizes a feature across every target of one scene type. */
 	ContextEntrySummary GetFeatureSceneSummary(std::string_view featureShortName, SceneContextType type, const SettingSelection& selection = std::nullopt) const;
-	/// Pauses selected user entries as one save, or preset entries for the session.
+	/// Pauses selected user entries or previews preset pauses until Save.
 	void SetContextEntriesPaused(const SceneContextId& context, bool paused, std::string_view featureShortName = {},
-		const SettingSelection& selection = std::nullopt, EntrySource source = EntrySource::User);
+		const SettingSelection& selection = std::nullopt, EntrySource source = EntrySource::User, bool featureToolbar = false);
 	/// Remove every user entry in a context as one save. Mod-authored overwrites are left alone,
 	/// as are raw entries this session could not resolve to a loaded feature.
 	void ClearContextEntries(const SceneContextId& context, std::string_view featureShortName = {}, const SettingSelection& selection = std::nullopt);
@@ -911,7 +915,26 @@ public:
 	{
 		std::optional<SceneContextType> type;
 		std::optional<SceneContextId> target;
+		std::optional<TimeOfDayPeriod> period;
+		std::string feature;
+		SettingSelection selection;
 	};
+
+	enum class RestoreSource
+	{
+		Defaults,
+		Preset
+	};
+	/// Whether a scene setting belongs to the selected feature, period and control scope.
+	static bool IsInEntryScope(const SettingEntry& entry, const EntryLayerScope& scope);
+	/// Returns whether any setting in the selected source and scope matches.
+	bool AnySceneSetting(const EntryLayerScope& scope, EntrySource source, const std::function<bool(const SettingEntry&)>& predicate);
+	/// Visits installed values in the selected scene scope without changing them.
+	void VisitPresetSettings(const EntryLayerScope& scope, const std::function<void(const SettingEntry&)>& visit);
+	/// The feature's factory value for a setting valid in this scene.
+	std::optional<json> GetSceneDefault(const SettingEntry& entry) const;
+	/// Restores defaults for the selected User Settings through the normal scene save path.
+	void RestoreSceneDefaults(const EntryLayerScope& scope);
 
 	/** @brief Loaded files affected by a layer export or deletion. */
 	struct EntryLayerFileResult
@@ -1067,19 +1090,23 @@ public:
 		std::map<RE::FormID, WeatherSceneConfig> weatherSceneConfigs;
 		std::map<std::string, LocationSceneConfig> locationSceneConfigs;
 		TransitionControlValues userTransitionControls;
+		ScenePresetPauses::State presetPauses;
+		std::optional<std::pair<SceneContextId, std::string>> presetPauseOwner;
 		json document;
 
-		bool operator==(const UserSettingsSnapshot& other) const { return document == other.document; }
+		bool operator==(const UserSettingsSnapshot& other) const
+		{
+			return document == other.document && presetPauses == other.presetPauses;
+		}
 	};
 
 	/** @brief Copies the user's scene settings, for undo. */
 	UserSettingsSnapshot CaptureUserSettings();
-
 	/** @brief Puts back scene settings CaptureUserSettings copied, then saves and reapplies them. */
 	void RestoreUserSettings(const UserSettingsSnapshot& snapshot);
 
 	/** @brief Whether an edit is waiting on the deferred save, or a failed save is being retried. */
-	bool HasUnsavedChanges() const { return deferredSceneChangesPending || HasPendingContextEdit(); }
+	bool HasUnsavedChanges() const { return deferredSceneChangesPending || HasPendingContextEdit() || HasPendingPresetPauses(); }
 
 protected:
 	SceneSettingsManager();
@@ -1094,6 +1121,12 @@ private:
 	std::map<SceneType, std::vector<json>> unresolvedUserEntries;
 	std::uint64_t entryPresentationRevision = 0;
 	json preservedUserSettingsRoot = json::object();
+	ScenePresetPauses::State savedPresetPauses;
+	ScenePresetPauses::State presetPauses;
+	static ScenePresetPauses::Key GetPresetPauseKey(const SettingEntry& entry);
+	bool SetPresetEntryPaused(SettingEntry& entry, bool paused, bool featureToolbar);
+	void ApplyPresetPauses(std::span<SettingEntry> sourceEntries) const;
+	void ApplyPresetPauses();
 	bool userSettingsDocumentLoaded = false;
 	bool userSettingsDocumentWritable = true;
 	Util::OnceFlag userSettingsWriteBlockedWarning;
@@ -1121,6 +1154,7 @@ private:
 		std::string feature;
 		std::vector<SettingIdentity> previewAddresses;
 		SceneEntryDraft<SettingEntry> entries;
+		ScenePresetPauses::Changes presetPauseChanges;
 		std::optional<bool> savedMode;
 		std::optional<bool> workingMode;
 		bool savedLocationAuthored = false;

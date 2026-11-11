@@ -145,6 +145,7 @@ namespace SceneWidgetBinding
 			const SceneSettingsManager::SettingEntry* entry = nullptr;
 			const SceneSettingsManager::SceneContextId* context = nullptr;
 			explicit operator bool() const { return entry != nullptr; }
+			bool IsApplying() const { return entry && !entry->paused; }
 		};
 
 		/// One catalog component behind this control, and the entries that persist it.
