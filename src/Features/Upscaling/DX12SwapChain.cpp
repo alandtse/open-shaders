@@ -523,8 +523,9 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 	// Update the frame index
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 
-	float clearColor[4]{ 0, 0, 0, 0 };
-	d3d11Context->ClearRenderTargetView(uiBufferWrapped->rtv, clearColor);
+	// DLSS-G reads the UI buffer after Present, so its clear waits for the input fence at UI start.
+	if (!useDLSSG)
+		ClearUIBuffer();
 
 	// If VSync is disabled, use frame limiter to prevent tearing and optimise pacing
 	if (SyncInterval == 0)
@@ -847,6 +848,16 @@ void DX12SwapChain::SetColorSpace(bool enableHDR)
 		swapChain->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
 		logger::info("[DX12SwapChain] Set color space to SDR (sRGB)");
 	}
+}
+
+void DX12SwapChain::ClearUIBuffer()
+{
+	if (!uiBufferWrapped)
+		return;
+
+	CS_GPU_PASS("DX12SwapChain::ClearUIBuffer");
+	const float clearColor[4]{};
+	d3d11Context->ClearRenderTargetView(uiBufferWrapped->rtv, clearColor);
 }
 
 DX12SwapChain::BlurResources DX12SwapChain::GetBlurResources() const

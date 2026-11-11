@@ -181,6 +181,9 @@ public:
 
 	void SetColorSpace(bool enableHDR);
 
+	/** @brief Clears the UI buffer to transparent for the next frame's UI. With DLSS-G, call only once its input fence is reached. */
+	void ClearUIBuffer();
+
 	// Resources needed by BackgroundBlur when D3D12 swap chain is active
 	struct BlurResources
 	{

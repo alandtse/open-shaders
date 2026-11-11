@@ -3565,6 +3565,11 @@ void Upscaling::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
 		globals::features::hdrDisplay.SetUIBuffer();
 	}
 
+	if (upscaling.UsesDLSSGFrameGen()) {
+		upscaling.streamlineDX12.WaitForDLSSGInputs();
+		upscaling.dx12SwapChain.ClearUIBuffer();
+	}
+
 	func(a1);
 }
 
