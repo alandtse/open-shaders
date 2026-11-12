@@ -729,7 +729,7 @@ void Upscaling::RegisterUxActions()
 		GazeStatus);
 
 	FEATURE_QUERY("dlssgPresetStatus",
-		"DLSS-G model preset: selected is settings.dlssgPreset (0 Default, 1 A, 2 B, 3 C; C is the faster model and needs DLSS-G 310.9.16 or newer), atBoot is the value this session started with, and driverProfileValue is the DLSS-FG preset key (0x10E41DF1) in the driver profile for Skyrim SE, or null when the key is unset or unreadable, and presetCSupported is whether the installed nvngx_dlssg.dll is 310.9.16 or newer (Preset C is hidden from the menu and never written otherwise). nvngx_dlssg.dll reads that key when frame generation starts, so a change applies on the next launch. Setting dlssgPreset through openshaders.feature writes the key, the launch-time settings load never does; Default removes it only when replacing an explicit preset. Flatrim only. Params: none.",
+		"DLSS-G model preset: selected is settings.dlssgPreset (0 Default, 1 A, 2 B, 3 C; C needs DLSS-G 310.9.16 or newer), atBoot is the value this session started with, and driverProfileValue is the DLSS-FG preset key (0x10E41DF1) in the driver profile for Skyrim SE, or null when the key is unset or unreadable, and presetCSupported is whether the installed nvngx_dlssg.dll is 310.9.16 or newer (Preset C is hidden from the menu and never written otherwise). nvngx_dlssg.dll reads that key when frame generation starts, so a change applies on the next launch. Setting dlssgPreset through openshaders.feature writes the key, the launch-time settings load never does; Default removes it only when replacing an explicit preset. Flatrim only. Params: none.",
 		([](const Feature* self, const json&) -> json {
 			const auto& upscaling = *static_cast<const Upscaling*>(self);
 			return json{
@@ -1011,7 +1011,7 @@ void Upscaling::DrawFrameGenerationSettings()
 				T(TKEY("dlssg_preset_tooltip"),
 					"Choose which DLSS-G frame generation model to use.\n"
 					"Default leaves the choice to the driver and the NVIDIA App.\n"
-					"Preset C is a lighter, faster model and needs DLSS-G 310.9.16 or newer.\n"
+					"Preset C needs DLSS-G 310.9.16 or newer.\n"
 					"Saved to the driver profile for Skyrim, replacing an NVIDIA App DLSS-G model override."));
 		}
 
