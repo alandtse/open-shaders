@@ -285,8 +285,9 @@ namespace GoToIndex
 				}
 				if (!found->second)
 					continue;
-				const std::string title = control.labelKey.empty() ? std::string(control.label) : std::string(I18n::GetSingleton()->Get(control.labelKey, control.label.data()));
-				if (title.empty() || title.starts_with("##") || titled.contains({ shortName, title }))
+				std::string title = control.labelKey.empty() ? std::string(control.label) : std::string(I18n::GetSingleton()->Get(control.labelKey, control.label.data()));
+				title.resize(std::min(title.size(), title.find("##")));  // drops the ImGui identity suffix
+				if (title.empty() || titled.contains({ shortName, title }))
 					continue;
 				Entry entry;
 				entry.kind = Kind::Setting;
