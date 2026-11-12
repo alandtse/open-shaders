@@ -65,7 +65,8 @@ namespace
 	constexpr uint64_t kObjectScanFrames = 12;
 	constexpr size_t kMaxObjectRefs = 256;
 	constexpr size_t kMaxObjectShapes = 3;
-	constexpr float kObjectContact = 48.0f;
+	constexpr float kImpactReferenceSpeed = 400.0f;
+	constexpr float kMaxImpactScale = 2.0f;
 	constexpr float kLightPressure = 0.001f;
 	constexpr float kHeavyPressure = 0.03f;
 	constexpr float kMinWeightScale = 0.05f;
@@ -594,6 +595,17 @@ namespace
 		default:
 			return false;
 		}
+	}
+
+	float DownwardSpeed(RE::bhkNiCollisionObject* a_object)
+	{
+		auto rigid = a_object && a_object->body ? a_object->body->AsBhkRigidBody() : nullptr;
+		auto body = rigid ? skyrim_cast<RE::hkpRigidBody*>(rigid->referencedObject.get()) : nullptr;
+		if (!body || !IsDynamicMotion(body->motion.type.get()))
+			return 0.0f;
+		float linear[4];
+		_mm_storeu_ps(linear, body->motion.linearVelocity.quad);
+		return std::max(-linear[2] * RE::bhkWorld::GetWorldScaleInverse(), 0.0f);
 	}
 
 	bool GetShapeSegment(RE::bhkNiCollisionObject* a_object, const RE::NiPoint3& a_centre, ShapeSegment& a_segment)
@@ -1595,8 +1607,11 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 		if (!tes->GetLandHeight(probe, landZ))
 			continue;
 		const float drop = bottom - landZ;
-		if (drop > kObjectContact || drop < -(carve + kBelowGroundLimit))
+		const float pressReach = std::max(kGroundClearance, carve);
+		if (drop > pressReach || drop < -(carve + kBelowGroundLimit))
 			continue;
+		const float impactScale = SnowDeformationMath::ImpactDepthScale(DownwardSpeed(contactScratch.front().object), kImpactReferenceSpeed, kMaxImpactScale);
+		const float pressFactor = SnowDeformationMath::ObjectPressFactor(drop, pressReach) * impactScale;
 
 		const RE::FormID refID = ref->GetFormID();
 		const bool physicsActive = gatherOnUpdate && carve > 0.0f;
@@ -1636,15 +1651,15 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 			const float pressure = SnowDeformationMath::ContactPressure(contact.weight, area);
 			const float weightScale = settings.WeightResponse ? SnowDeformationMath::WeightScale(pressure, kLightPressure, kHeavyPressure) : 1.0f;
 			if (gatherObjectSamples.size() < kMaxObjectSamples)
-				gatherObjectSamples.push_back({ ref->GetDisplayFullName(), contact.weight, contact.radius, area, pressure, weightScale, drop, physicsState, depression });
+				gatherObjectSamples.push_back({ ref->GetDisplayFullName(), contact.weight, contact.radius, area, pressure, weightScale, drop, physicsState, depression, impactScale });
 			if (floating || weightScale < kMinWeightScale)
 				continue;
 			Stamp stamp{};
 			stamp.x = contact.centre.x;
 			stamp.y = contact.centre.y;
 			stamp.radius = contact.radius;
-			stamp.depth = depth * weightScale;
-			stamp.rim = rim * weightScale;
+			stamp.depth = depth * weightScale * pressFactor;
+			stamp.rim = rim * weightScale * pressFactor;
 			TrackShapeMotion(contact.key, contact.centre, false, stamp.motionX, stamp.motionY);
 			stamp.vanillaSnow = vanillaSnow;
 			stamp.landZ = landZ;
@@ -3684,7 +3699,7 @@ json SnowDeformation::GetDiagnostics()
 	{
 		std::scoped_lock lock(stampLock);
 		for (const auto& sample : objectSamples)
-			objects.push_back({ { "Name", sample.name }, { "Weight", sample.weight }, { "Radius", sample.radius }, { "Area", sample.area }, { "Pressure", sample.pressure }, { "Scale", sample.scale }, { "Clearance", sample.clearance }, { "Physics", sample.physics }, { "Depression", sample.depression } });
+			objects.push_back({ { "Name", sample.name }, { "Weight", sample.weight }, { "Radius", sample.radius }, { "Area", sample.area }, { "Pressure", sample.pressure }, { "Scale", sample.scale }, { "Clearance", sample.clearance }, { "Physics", sample.physics }, { "Depression", sample.depression }, { "Impact", sample.impact } });
 	}
 	return {
 		{ "Objects", objects },
