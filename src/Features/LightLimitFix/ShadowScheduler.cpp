@@ -69,6 +69,8 @@ namespace ShadowCasterManager
 		return h;
 	}
 
+	static const RE::NiAVObject* CarrierBody(RE::BSShadowLight* light);
+
 	/// Hash of a shadow map's content-determining inputs (light pose+radius,
 	/// each caster's worldBound+identity); unchanged hash means the cached slot is current.
 	/// Also counts skinned casters on the same walk: pose animation never
@@ -89,6 +91,13 @@ namespace ShadowCasterManager
 						 AnchoredRadiusForHash(ni, ni->GetLightRuntimeData().radius.x) / 64.0f);
 
 		h = FoldLightPose(h, ni, posStep);
+		// A carried light's camera faces this body, so the node's own pose above does not see it turn.
+		if (const auto* body = CarrierBody(light)) {
+			const float kAimStep = std::max(posStep, 1.0f);
+			h = HashCombineFloat(h, QuantizeFloat(body->worldBound.center.x, kAimStep));
+			h = HashCombineFloat(h, QuantizeFloat(body->worldBound.center.y, kAimStep));
+			h = HashCombineFloat(h, QuantizeFloat(body->worldBound.center.z, kAimStep));
+		}
 
 		// Caster set + each caster's worldBound (engine-updated). Same steps
 		// the pose fold uses, so caster motion and light motion agree on what
