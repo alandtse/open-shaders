@@ -331,6 +331,7 @@ private:
 		float clearance = 0.0f;
 		uint8_t physics = 0;
 		float depression = 0.0f;
+		float impact = 1.0f;
 	};
 
 	struct CachedShape

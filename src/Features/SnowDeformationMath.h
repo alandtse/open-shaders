@@ -95,6 +95,12 @@ namespace SnowDeformationMath
 		return std::clamp(1.0f - a_clearance / std::max(a_reach, 1e-3f), 0.0f, 1.0f);
 	}
 
+	/** @brief Print depth multiplier for an object landing at a_downSpeed: 1 at rest, rising to a_maxScale at a_refSpeed or faster. */
+	inline float ImpactDepthScale(float a_downSpeed, float a_refSpeed, float a_maxScale)
+	{
+		return 1.0f + (std::max(a_maxScale, 1.0f) - 1.0f) * std::clamp(a_downSpeed / std::max(a_refSpeed, 1e-3f), 0.0f, 1.0f);
+	}
+
 	/** @brief Fraction of an object of a_height whose bottom at a_bottom sits under the snow surface at a_surface, from 0 (clear) to 1 (buried). */
 	inline float SubmergedFraction(float a_bottom, float a_surface, float a_height)
 	{
