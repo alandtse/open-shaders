@@ -1424,6 +1424,7 @@ void LightLimitFix::UpdateLights()
 						}
 						light.lightFlags.set(LightFlags::PortalStrict);
 					}
+					ApplyJsonPlacedLightIntensityScale(light, shadowLight, niLight, !IsGlobalLight(shadowLight), isInterior);
 
 					if (castsShadow) {
 						// Use the caller-provided stable slot index from s_lights
