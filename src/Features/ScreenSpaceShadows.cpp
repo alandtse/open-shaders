@@ -582,7 +582,7 @@ void ScreenSpaceShadows::DrawStereoSync()
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
-void ScreenSpaceShadows::Prepass()
+void ScreenSpaceShadows::PostPrepass()
 {
 	auto context = globals::d3d::context;
 

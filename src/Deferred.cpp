@@ -289,6 +289,7 @@ void Deferred::PrepassPasses()
 	Feature::DrainSceneTransitions();
 
 	Feature::ForEachLoadedFeature("Prepass", [](Feature* feature) { feature->Prepass(); }, true);
+	Feature::ForEachLoadedFeature("PostPrepass", [](Feature* feature) { feature->PostPrepass(); }, true);
 }
 
 void Deferred::StartDeferred()

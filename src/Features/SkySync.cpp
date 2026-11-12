@@ -460,11 +460,12 @@ bool SkySync::Update(const RE::Sky* sky)
 	bool resetTransition = false;
 
 	if (cell != currentCell) {
-		resetTransition = true;
 		const auto prevCell = currentCell;
 		const bool resetFaderForCellChange = cell && prevCell &&
 		                                     (cell->IsInteriorCell() != currentCellInterior ||
 												 cell->GetRuntimeData().worldSpace != currentCellWorldspace);
+		// Crossing exterior cells must not cut a sun/moon fade short; only a new space or a first cell snaps it
+		resetTransition = !prevCell || resetFaderForCellChange;
 		if (cell)
 			SetSkyRotation(sky, cell);
 		else
@@ -512,14 +513,19 @@ bool SkySync::Update(const RE::Sky* sky)
 	lastGameHour = hour;
 
 	const bool transitionCompleted = std::exchange(immediateTransitionReady, false);
+	const bool wasTransitioning = shadowFader.transitioning;
+	const Caster previousTarget = shadowFader.target;
 	shadowFader.Update(sky, directions, intensities, settings.ShadowTransitionDuration, fadeAdvance, transitionCompleted || resetTransition);
+	// A finished caster fade counts as a completed transition, so cached shadows (terrain) refresh to the new caster.
+	// A swap can also start and finish in one update (zero duration), so a changed target counts too.
+	const bool casterSettled = (wasTransitioning || shadowFader.target != previousTarget) && !shadowFader.transitioning;
 
 	twilightCap = GetTwilightCap(climate->timing, hour, sunHeight);
 	UpdateMoonlightFade(fadeAdvance / SecondsPerGameHour, transitionCompleted);
 	// At night follow the light's own direction, so the dim stays continuous while it swings between moons
 	currentDim = sunBelowHorizon ? moonlightFade * GetHorizonDim(GetHeightAboveHorizon(shadowFader.dimDir)) : GetHorizonDim(sunHeight);
 
-	return transitionCompleted;
+	return transitionCompleted || casterSettled;
 }
 
 float SkySync::GetHeightAboveHorizon(const RE::NiPoint3& dir) const
@@ -600,6 +606,15 @@ RE::NiPoint3 SkySync::CalculateVanillaSunDirection(float hour, float sunrise, fl
 	RE::NiPoint3 dir{ x, VanillaSunOffsetY, z };
 	dir.Unitize();
 	return dir;
+}
+
+float SkySync::GetAlternateSunPhase(float hour, float sunrise, float sunset)
+{
+	const float dayLength = sunset - sunrise;
+	const float hoursSinceSunrise = hour >= sunrise ? hour - sunrise : hour + HoursPerDay - sunrise;
+	if (hoursSinceSunrise < dayLength)
+		return DirectX::XM_PI * hoursSinceSunrise / dayLength;
+	return DirectX::XM_PI * (1.0f + (hoursSinceSunrise - dayLength) / (HoursPerDay - dayLength));
 }
 
 RE::NiPoint3 SkySync::CalculateAlternateSunDirection(float hour, float sunrise, float sunset, float sunAngle)
@@ -795,8 +810,27 @@ std::optional<RE::NiPoint3> SkySync::GetCelestialDirection(Caster caster) const
 	return direction;
 }
 
+namespace
+{
+	float GetMoonVisibility(const RE::Moon* moon)
+	{
+		if (!moon || !moon->root || !moon->moonNode || !moon->moonMesh ||
+			moon->root->GetFlags().any(RE::NiAVObject::Flag::kHidden) || moon->moonNode->GetFlags().any(RE::NiAVObject::Flag::kHidden))
+			return 0.0f;
+		const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(moon->moonMesh->GetGeometryRuntimeData().shaderProperty.get());
+		return prop ? prop->kBlendColor.alpha : 0.0f;
+	}
+}
+
 SkySync::Caster SkySync::GetMoonLightCaster(const RE::Sky* sky) const
 {
+	if (sky && active && sunBelowHorizon) {
+		const Caster target = shadowFader.target;
+		if (target != Caster::Masser && target != Caster::Secunda)
+			return Caster::Zenith;
+		return GetMoonVisibility(target == Caster::Masser ? sky->masser : sky->secunda) > 0.0f ? target : Caster::Zenith;
+	}
+
 	const RE::Moon* moon = GetVisibleMoonLightSource(sky);
 	if (!moon)
 		return Caster::Zenith;
@@ -998,15 +1032,8 @@ RE::Moon* SkySync::GetVisibleMoonLightSource(const RE::Sky* sky) const
 	if (!sky)
 		return nullptr;
 
-	auto visibility = [](const RE::Moon* moon) {
-		if (!moon || !moon->root || !moon->moonMesh || moon->root->GetFlags().any(RE::NiAVObject::Flag::kHidden))
-			return 0.0f;
-		const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(moon->moonMesh->GetGeometryRuntimeData().shaderProperty.get());
-		return prop ? prop->kBlendColor.alpha : 0.0f;
-	};
-
-	const float masser = visibility(sky->masser);
-	const float secunda = visibility(sky->secunda);
+	const float masser = GetMoonVisibility(sky->masser);
+	const float secunda = GetMoonVisibility(sky->secunda);
 
 	switch (static_cast<MoonLightSource>(settings.MoonLightSource)) {
 	case MoonLightSource::Masser:
