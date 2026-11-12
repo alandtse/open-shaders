@@ -1097,6 +1097,12 @@ void Streamline::WaitForDLSSGInputs()
 		if (now >= deadline || WaitForSingleObject(dlssgInputFenceEvent.get(), static_cast<DWORD>(deadline - now)) != WAIT_OBJECT_0)
 			break;
 	}
+
+	if (dlssgInputFence.IsBehind(fence->GetCompletedValue())) {
+		static uint32_t timeoutCount = 0;
+		if (++timeoutCount == 1 || timeoutCount % 60 == 0)
+			logger::warn("[Streamline DX12] DLSS-G input fence wait gave up after {} ms ({} times)", kDLSSGInputWaitTimeoutMs, timeoutCount);
+	}
 }
 
 void Streamline::TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
