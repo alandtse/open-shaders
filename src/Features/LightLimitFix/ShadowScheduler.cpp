@@ -173,16 +173,21 @@ namespace ShadowCasterManager
 		return nullptr;
 	}
 
-	/// Turns a carried omni light's front paraboloid at its carrier, so the seam never crosses the body it is closest to.
-	static void FaceCarrier(RE::BSShadowLight* light)
+	/// UpdateCamera with a carried omni light's front paraboloid turned at its carrier, so the seam never crosses the body it is
+	/// closest to; the node's rotation is put back right after the copy.
+	static bool UpdateCameraFacingCarrier(RE::BSShadowLight* light, RE::NiCamera* camera)
 	{
 		auto* ni = light->light.get();
 		auto* carrier = ni && light->dynamic && light->GetIsOmniLight() ? CarrierOf(ni) : nullptr;
 		const auto* body = carrier ? carrier->Get3D(false) : nullptr;
 		if (!body)
-			return;
+			return light->UpdateCamera(camera);
+		const auto rotate = ni->world.rotate;
 		const auto toBody = body->worldBound.center - ni->world.translate;
 		FacingRotation(toBody.x, toBody.y, toBody.z, ni->world.rotate.entry);
+		const bool valid = light->UpdateCamera(camera);
+		ni->world.rotate = rotate;
+		return valid;
 	}
 
 	/// Player-only dynamic-caster proxy, applied every frame on top of the
@@ -1569,7 +1574,7 @@ namespace ShadowCasterManager
 			const bool wasDynamic = e.Light->dynamic;
 			if (a_pinOrigin)
 				e.Light->dynamic = false;
-			e.Light->UpdateCamera(a_camera);
+			UpdateCameraFacingCarrier(e.Light, a_camera);
 			e.Light->dynamic = wasDynamic;
 			EnableLight(e.Light, a_camera, a_ssn, a_slot);
 			return e.Light && a_isUsable(e.Light);
@@ -1881,9 +1886,7 @@ namespace ShadowCasterManager
 					const bool wasDynamic = l->dynamic;
 					if (pinNow)
 						l->dynamic = false;
-					else
-						FaceCarrier(l);
-					cameraValid = l->UpdateCamera(camera);
+					cameraValid = UpdateCameraFacingCarrier(l, camera);
 					l->dynamic = wasDynamic;
 				}
 				c.updateCameraFailed = !cameraValid;
