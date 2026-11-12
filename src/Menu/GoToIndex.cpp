@@ -235,8 +235,9 @@ namespace GoToIndex
 			g_settingLoadedCount = loadedCount;
 			g_settingsBuilt = true;
 
-			std::unordered_map<std::string, Feature*> features;  // short name -> feature, or null when not loaded
-			std::set<std::string> seen;                          // a multi-component control is one entry
+			std::unordered_map<std::string, Feature*> features;    // short name -> feature, or null when not loaded
+			std::set<std::string> seen;                            // a multi-component control is one entry
+			std::set<std::pair<std::string, std::string>> titled;  // feature and title of each catalog entry
 			for (const auto& setting : Catalog::GetSettings()) {
 				if (Catalog::HasFlag(setting.flags, Catalog::SettingFlag::Hidden) || setting.serializedComponent > 0)
 					continue;
@@ -264,12 +265,38 @@ namespace GoToIndex
 				entry.id = std::format("setting:{}/{}/{}", shortName, setting.serializedPath, setting.serializedKey);
 				if (!seen.insert(entry.id).second)
 					continue;
+				titled.emplace(shortName, leaf);
 				entry.haystack = shortName;
 				entry.setting = &setting;
 				entry.run = [shortName, &setting] {
 					Navigate(shortName);
 					SettingReveal::Request(setting);
 				};
+				g_settingEntries.push_back(std::move(entry));
+			}
+
+			// Controls the settings catalog does not model (buttons, actions, UI-only options)
+			for (const auto& control : Catalog::GetUiControls()) {
+				const std::string shortName(control.featureShortName);
+				auto found = features.find(shortName);
+				if (found == features.end()) {
+					Feature* feature = Feature::FindFeatureByShortName(shortName);
+					found = features.emplace(shortName, feature && feature->loaded && feature->IsInMenu() ? feature : nullptr).first;
+				}
+				if (!found->second)
+					continue;
+				const std::string title = control.labelKey.empty() ? std::string(control.label) : std::string(I18n::GetSingleton()->Get(control.labelKey, control.label.data()));
+				if (title.empty() || title.starts_with("##") || titled.contains({ shortName, title }))
+					continue;
+				Entry entry;
+				entry.kind = Kind::Setting;
+				entry.title = title;
+				entry.breadcrumb = found->second->GetDisplayName();
+				entry.id = std::format("control:{}/{}", shortName, control.labelKey.empty() ? control.label : control.labelKey);
+				if (!seen.insert(entry.id).second)
+					continue;
+				entry.haystack = shortName + " " + std::string(control.label);  // English guides keep working in other locales
+				entry.run = [shortName] { Navigate(shortName); };
 				g_settingEntries.push_back(std::move(entry));
 			}
 		}
