@@ -162,6 +162,29 @@ namespace ShadowCasterManager
 		return s_settings.ProtectPlayerShadows && PlayerWithinLightRadius(light, kPlayerCasterReachUnits);
 	}
 
+	// SEH in its own function: GetUserData walks NiAVObject::parent, which is not refcounted and can dangle during scene teardown.
+	static RE::Actor* CarrierOf(const RE::NiLight* ni) noexcept
+	{
+		__try {
+			auto* ref = ni->GetUserData();
+			return ref ? ref->As<RE::Actor>() : nullptr;
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		}
+		return nullptr;
+	}
+
+	/// Turns a carried omni light's front paraboloid at its carrier, so the seam never crosses the body it is closest to.
+	static void FaceCarrier(RE::BSShadowLight* light)
+	{
+		auto* ni = light->light.get();
+		auto* carrier = ni && light->dynamic && light->GetIsOmniLight() ? CarrierOf(ni) : nullptr;
+		const auto* body = carrier ? carrier->Get3D(false) : nullptr;
+		if (!body)
+			return;
+		const auto toBody = body->worldBound.center - ni->world.translate;
+		FacingRotation(toBody.x, toBody.y, toBody.z, ni->world.rotate.entry);
+	}
+
 	/// Player-only dynamic-caster proxy, applied every frame on top of the
 	/// (possibly stale) cached geomList hash -- see ComputeShadowGeomHash's
 	/// walk cache below. Must never be folded into the cached hash itself: a
@@ -1858,6 +1881,8 @@ namespace ShadowCasterManager
 					const bool wasDynamic = l->dynamic;
 					if (pinNow)
 						l->dynamic = false;
+					else
+						FaceCarrier(l);
 					cameraValid = l->UpdateCamera(camera);
 					l->dynamic = wasDynamic;
 				}
