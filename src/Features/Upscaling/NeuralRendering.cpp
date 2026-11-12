@@ -2044,12 +2044,14 @@ namespace
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("peripheral_compression_tooltip"),
 				"Higher values can improve performance but reduce Neural Rendering quality toward the edges of the view. More detail is kept in the centre. Does not apply with Alternate eyes, when limited to a tracked actor, or with material selection."));
-		ImGui::BeginDisabled((!developerMode || tuning.modelScale >= NR::Tuning::kMaxModelScale) && tuning.peripheralCompressionPercent == 0);
-		changed |= ImGui::Checkbox(T(TKEY("model_guided_upsample"), "Guided Upsample"), &tuning.modelGuidedUpsample);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("model_guided_upsample_tooltip"),
-				"Weights the upsampled brightness change by how similar the pixels' brightness is, so it follows edges instead of blurring across them."));
-		ImGui::EndDisabled();
+		if (developerMode) {
+			ImGui::BeginDisabled(tuning.modelScale >= NR::Tuning::kMaxModelScale && tuning.peripheralCompressionPercent == 0);
+			changed |= ImGui::Checkbox(T(TKEY("model_guided_upsample"), "Improve low-resolution NR"), &tuning.modelGuidedUpsample);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("model_guided_upsample_tooltip"),
+					"Helps preserve edges when NR resolution is reduced or compression is used. On by default. Off can look softer."));
+			ImGui::EndDisabled();
+		}
 		ImGui::EndDisabled();
 		return changed;
 	}
