@@ -9,13 +9,12 @@ namespace NR::Reconstruction
 	enum class Mode : uint32_t
 	{
 		Bilinear,
-		BrightnessGuided,
 		RgbGuided,
 		Native
 	};
 
 	/** @brief Resolves the effective model scale and validated per-eye extents before either eye dispatches. */
-	[[nodiscard]] inline Mode Select(bool guided, bool rgbGuided, float scale,
+	[[nodiscard]] inline Mode Select(bool guided, float scale,
 		uint32_t width, uint32_t height, uint32_t modelWidth, uint32_t modelHeight)
 	{
 		if (!std::isfinite(scale) || scale <= 0.0f || scale > 1.0f || !width || !height || !modelWidth || !modelHeight ||
@@ -23,8 +22,6 @@ namespace NR::Reconstruction
 			return Mode::Native;
 		if (!guided)
 			return Mode::Bilinear;
-		if (!rgbGuided)
-			return Mode::BrightnessGuided;
 		return Mode::RgbGuided;
 	}
 
@@ -34,8 +31,6 @@ namespace NR::Reconstruction
 		switch (mode) {
 		case Mode::Bilinear:
 			return "bilinear";
-		case Mode::BrightnessGuided:
-			return "brightness_guided";
 		case Mode::RgbGuided:
 			return "rgb_guided";
 		default:
