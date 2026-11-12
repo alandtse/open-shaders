@@ -69,8 +69,6 @@ namespace ShadowCasterManager
 		return h;
 	}
 
-	static const RE::NiAVObject* CarrierBody(RE::BSShadowLight* light);
-
 	/// Hash of a shadow map's content-determining inputs (light pose+radius,
 	/// each caster's worldBound+identity); unchanged hash means the cached slot is current.
 	/// Also counts skinned casters on the same walk: pose animation never
@@ -91,13 +89,6 @@ namespace ShadowCasterManager
 						 AnchoredRadiusForHash(ni, ni->GetLightRuntimeData().radius.x) / 64.0f);
 
 		h = FoldLightPose(h, ni, posStep);
-		// A carried light's camera faces this body, so the node's own pose above does not see it turn.
-		if (const auto* body = CarrierBody(light)) {
-			const float kAimStep = std::max(posStep, 1.0f);
-			h = HashCombineFloat(h, QuantizeFloat(body->worldBound.center.x, kAimStep));
-			h = HashCombineFloat(h, QuantizeFloat(body->worldBound.center.y, kAimStep));
-			h = HashCombineFloat(h, QuantizeFloat(body->worldBound.center.z, kAimStep));
-		}
 
 		// Caster set + each caster's worldBound (engine-updated). Same steps
 		// the pose fold uses, so caster motion and light motion agree on what
@@ -226,6 +217,19 @@ namespace ShadowCasterManager
 		h = HashCombineFloat(h, QuantizeFloat(pp.x, actorStep));
 		h = HashCombineFloat(h, QuantizeFloat(pp.y, actorStep));
 		h = HashCombineFloat(h, QuantizeFloat(pp.z, actorStep));
+		return h;
+	}
+
+	/// A carried light's camera faces its carrier's body, which the node's own pose does not see turn; folded every frame, uncached.
+	static std::uint64_t FoldCarrierAim(std::uint64_t h, RE::BSShadowLight* light, float posStep)
+	{
+		const auto* body = CarrierBody(light);
+		if (!body)
+			return h;
+		const float aimStep = std::max(posStep, 1.0f);
+		h = HashCombineFloat(h, QuantizeFloat(body->worldBound.center.x, aimStep));
+		h = HashCombineFloat(h, QuantizeFloat(body->worldBound.center.y, aimStep));
+		h = HashCombineFloat(h, QuantizeFloat(body->worldBound.center.z, aimStep));
 		return h;
 	}
 
@@ -2638,7 +2642,7 @@ namespace ShadowCasterManager
 			// Player proxy folded in every frame, uncached -- see
 			// FoldPlayerCasterProxy's comment for why it can't ride the
 			// walk-cost cache above.
-			e->pendingGeomHash = FoldPlayerCasterProxy(e->cachedPendingGeomHash, e->Light, posStep);
+			e->pendingGeomHash = FoldCarrierAim(FoldPlayerCasterProxy(e->cachedPendingGeomHash, e->Light, posStep), e->Light, posStep);
 
 			// 0 (visible/unmeasured) unless a real GPU reading confirms absence. MAX
 			// channel + streak, not an EMA -- an EMA's magnitude scales with tile

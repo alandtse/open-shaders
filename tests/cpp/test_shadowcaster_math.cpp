@@ -106,6 +106,8 @@ TEST_CASE("FacingRotation aims its X column and stays a rotation", "[scm]")
 	// Straight up has no upright: it still makes a rotation.
 	REQUIRE(FacingRotation(0.0f, 0.0f, 10.0f, r));
 	REQUIRE(r[2][0] == Approx(1.0f));
+	REQUIRE(FacingRotation(0.0f, 0.0f, -10.0f, r));
+	REQUIRE(r[2][0] == Approx(-1.0f));
 	REQUIRE_FALSE(FacingRotation(0.1f, 0.0f, 0.0f, r));
 }
 
