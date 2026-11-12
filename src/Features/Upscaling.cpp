@@ -1423,7 +1423,7 @@ void Upscaling::RestoreDefaultSettings()
 
 void Upscaling::SyncDLSSGPresetDriverProfile(uint a_previousPreset) const
 {
-	if (!globals::game::isVR)
+	if (!globals::game::isVR && bootSnapshot.IsLatched())
 		Streamline::ApplyDLSSGPresetToDriverProfile(a_previousPreset, settings.dlssgPreset);
 }
 
