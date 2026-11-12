@@ -58,7 +58,6 @@ public:
 	uint32_t lastSentDLSSGFrames = 0;
 	float lastSentDLSSGTargetFPS = -1.0f;
 	DLSSGInputFenceTracker<ID3D12Fence> dlssgInputFence;    ///< DLSS-G input fence and the value of the last present (DX12 instance only).
-	uint32_t dlssgFramesPresentedSinceFenceQuery = 0;       ///< Frames counted by TrackDLSSGInputFence's query, added into lastDLSSGFramesPresented.
 	winrt::handle dlssgInputFenceEvent;                     ///< Reused event for the CPU wait on dlssgInputFence.
 	static constexpr DWORD kDLSSGInputWaitTimeoutMs = 100;  ///< Caps the wait so a lost fence signal cannot hang the game.
 	bool featureReflex = false;

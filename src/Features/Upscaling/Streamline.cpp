@@ -1034,7 +1034,6 @@ void Streamline::ConfigureDLSSG(bool enabled)
 		dlssgInputFence.Reset();
 	}
 
-	const uint32_t framesSinceFenceQuery = std::exchange(dlssgFramesPresentedSinceFenceQuery, 0u);
 	if (slDLSSGGetState && enabled) {
 		sl::DLSSGState state{};
 		if (SL_FAILED(stateResult, slDLSSGGetState(viewport, state, &options))) {
@@ -1044,7 +1043,7 @@ void Streamline::ConfigureDLSSG(bool enabled)
 			}
 		} else {
 			lastDLSSGStatus = state.status;
-			lastDLSSGFramesPresented = framesSinceFenceQuery + state.numFramesActuallyPresented;
+			lastDLSSGFramesPresented = state.numFramesActuallyPresented;
 
 			static sl::DLSSGStatus lastLoggedStatus = sl::DLSSGStatus::eOk;
 			if (state.status != sl::DLSSGStatus::eOk && state.status != lastLoggedStatus) {
@@ -1061,7 +1060,7 @@ void Streamline::ConfigureDLSSG(bool enabled)
 				static uint32_t callCount = 0;
 				if (++callCount % 120 == 0) {
 					logger::info("[Streamline DX12] DLSS-G presented {} frames since last query (mode={}, requested {}x)",
-						lastDLSSGFramesPresented, magic_enum::enum_name(options.mode), options.numFramesToGenerate + 1);
+						state.numFramesActuallyPresented, magic_enum::enum_name(options.mode), options.numFramesToGenerate + 1);
 				}
 			}
 		}
@@ -1077,8 +1076,6 @@ void Streamline::TrackDLSSGInputFence()
 	if (SL_FAILED(result, slDLSSGGetState(viewport, state, nullptr)))
 		return;
 
-	// Each slDLSSGGetState call resets numFramesActuallyPresented; ConfigureDLSSG adds these frames back.
-	dlssgFramesPresentedSinceFenceQuery += state.numFramesActuallyPresented;
 	dlssgInputFence.Track(static_cast<ID3D12Fence*>(state.inputsProcessingCompletionFence), state.lastPresentInputsProcessingCompletionFenceValue);
 }
 
