@@ -1090,8 +1090,16 @@ void Streamline::WaitForDLSSGInputs()
 
 	if (!dlssgInputFenceEvent)
 		dlssgInputFenceEvent.attach(CreateEventW(nullptr, FALSE, FALSE, nullptr));
-	if (dlssgInputFenceEvent && SUCCEEDED(fence->SetEventOnCompletion(dlssgInputFence.GetTarget(), dlssgInputFenceEvent.get())))
-		WaitForSingleObject(dlssgInputFenceEvent.get(), kDLSSGInputWaitTimeoutMs);
+	if (!dlssgInputFenceEvent || FAILED(fence->SetEventOnCompletion(dlssgInputFence.GetTarget(), dlssgInputFenceEvent.get())))
+		return;
+
+	// The event can carry a stale signal from an earlier timed-out wait, so a wake only means recheck.
+	const ULONGLONG deadline = GetTickCount64() + kDLSSGInputWaitTimeoutMs;
+	while (dlssgInputFence.IsBehind(fence->GetCompletedValue())) {
+		const ULONGLONG now = GetTickCount64();
+		if (now >= deadline || WaitForSingleObject(dlssgInputFenceEvent.get(), static_cast<DWORD>(deadline - now)) != WAIT_OBJECT_0)
+			break;
+	}
 }
 
 void Streamline::TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
