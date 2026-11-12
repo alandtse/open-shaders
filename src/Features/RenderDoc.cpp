@@ -36,6 +36,32 @@ namespace
 	{
 		return a_entry.is_regular_file() && _wcsicmp(a_entry.path().extension().c_str(), L".rdc") == 0;
 	}
+
+	constexpr uint32_t kNvidiaVendorId = 0x10DE;
+
+	/** @brief Lets NvAPI (and NGX, which depends on it) work under RenderDoc, which otherwise returns NULL from nvapi_QueryInterface. */
+	void EnableNvApiPassthrough(pRENDERDOC_SetCaptureOptionU32 a_setCaptureOption)
+	{
+		const int result = a_setCaptureOption(eRENDERDOC_Option_AllowUnsupportedVendorExtensions, kNvidiaVendorId);
+		if (result != 1) {
+			logger::warn("[RenderDoc] Failed to enable NvAPI passthrough (renderdoc.dll rejected vendor extensions, result {})", result);
+		}
+	}
+
+	/** @brief Enables NvAPI passthrough on a renderdoc.dll injected from outside, using the oldest API version that defines the option. */
+	void EnableInjectedNvApiPassthrough()
+	{
+		const auto injected = GetModuleHandleW(L"renderdoc.dll");
+		if (!injected)
+			return;
+		const auto getApi = reinterpret_cast<pRENDERDOC_GetAPI>(reinterpret_cast<void*>(GetProcAddress(injected, "RENDERDOC_GetAPI")));
+		RENDERDOC_API_1_3_0* api = nullptr;
+		if (!getApi || getApi(eRENDERDOC_API_Version_1_3_0, reinterpret_cast<void**>(&api)) != 1 || !api) {
+			logger::warn("[RenderDoc] Injected renderdoc.dll did not return an API; NvAPI passthrough not enabled");
+			return;
+		}
+		EnableNvApiPassthrough(api->SetCaptureOptionU32);
+	}
 }
 
 // Global feature instance implementation
@@ -61,6 +87,8 @@ void RenderDoc::Load()
 	// Only load RenderDoc if the user has enabled capture
 	if (!settings.enableCapture) {
 		logger::debug("[RenderDoc] RenderDoc capture disabled, skipping initialization");
+		// An externally injected RenderDoc still needs NvAPI passthrough or NGX init fails with PlatformError.
+		EnableInjectedNvApiPassthrough();
 		return;
 	}
 
@@ -68,6 +96,7 @@ void RenderDoc::Load()
 	std::filesystem::path renderdocPath = GetRenderDocDllPath();
 	if (renderdocPath.empty() || !std::filesystem::exists(renderdocPath)) {
 		logger::debug("[RenderDoc] renderdoc.dll not found at expected path: {}", renderdocPath.string());
+		EnableInjectedNvApiPassthrough();
 		return;
 	}
 
@@ -156,12 +185,8 @@ void RenderDoc::Load()
 	// NULL for unsupported NvAPI interfaces (known or whitelisted ones still pass through).
 	// Skyrim relies on NvAPI for D3D11, and on hybrid graphics systems this makes the
 	// driver remove the device at the first Present, crashing the game shortly after
-	// startup. 0x10DE is the NVIDIA vendor id, enabling NvAPI passthrough.
-	// Available since RenderDoc 1.3.0.
-	const int result = renderDocApi->SetCaptureOptionU32(eRENDERDOC_Option_AllowUnsupportedVendorExtensions, 0x10DE);
-	if (result != 1) {
-		logger::warn("[RenderDoc] Failed to enable NvAPI passthrough (renderdoc.dll rejected vendor extensions, result {})", result);
-	}
+	// startup.
+	EnableNvApiPassthrough(renderDocApi->SetCaptureOptionU32);
 
 	// Initialize capture count tracking
 	lastCaptureCount = renderDocApi->GetNumCaptures();

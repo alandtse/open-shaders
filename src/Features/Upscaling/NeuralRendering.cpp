@@ -1,5 +1,6 @@
 #include "NeuralRendering.h"
 
+#include "Features/RenderDoc.h"
 #include "Features/ReverseZ.h"
 #include "Features/Upscaling.h"
 #include "Globals.h"
@@ -225,6 +226,78 @@ struct NeuralRendering::Impl
 	std::array<Eye, 2> eyes;
 	winrt::com_ptr<ID3D11DeviceContext1> context;
 	winrt::com_ptr<ID3DDeviceContextState> isolated;
+	/** @brief True under RenderDoc, whose wrapped context cannot swap context states; NR then saves and clears only the compute bindings it uses. */
+	bool manualState = false;
+	struct ComputeBindings
+	{
+		static constexpr UINT kBuffers = D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT;
+		static constexpr UINT kViews = D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT;
+		static constexpr UINT kSamplers = D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT;
+		static constexpr UINT kUavs = D3D11_PS_CS_UAV_REGISTER_COUNT;
+		winrt::com_ptr<ID3D11ComputeShader> shader;
+		std::array<ID3D11Buffer*, kBuffers> buffers{};
+		std::array<UINT, kBuffers> bufferFirstConstants{};
+		std::array<UINT, kBuffers> bufferConstantCounts{};
+		std::array<ID3D11ShaderResourceView*, kViews> views{};
+		std::array<ID3D11SamplerState*, kSamplers> samplers{};
+		std::array<ID3D11UnorderedAccessView*, kUavs> uavs{};
+
+		static void Clear(ID3D11DeviceContext* ctx)
+		{
+			static constexpr std::array<ID3D11Buffer*, kBuffers> noBuffers{};
+			static constexpr std::array<ID3D11ShaderResourceView*, kViews> noViews{};
+			static constexpr std::array<ID3D11SamplerState*, kSamplers> noSamplers{};
+			static constexpr std::array<ID3D11UnorderedAccessView*, kUavs> noUavs{};
+			ctx->CSSetShader(nullptr, nullptr, 0);
+			ctx->CSSetConstantBuffers(0, kBuffers, noBuffers.data());
+			ctx->CSSetShaderResources(0, kViews, noViews.data());
+			ctx->CSSetSamplers(0, kSamplers, noSamplers.data());
+			ctx->CSSetUnorderedAccessViews(0, kUavs, noUavs.data(), nullptr);
+		}
+		void Save(ID3D11DeviceContext1* ctx)
+		{
+			ctx->CSGetShader(shader.put(), nullptr, nullptr);
+			ctx->CSGetConstantBuffers1(0, kBuffers, buffers.data(), bufferFirstConstants.data(), bufferConstantCounts.data());
+			ctx->CSGetShaderResources(0, kViews, views.data());
+			ctx->CSGetSamplers(0, kSamplers, samplers.data());
+			ctx->CSGetUnorderedAccessViews(0, kUavs, uavs.data());
+		}
+		void Restore(ID3D11DeviceContext1* ctx)
+		{
+			static constexpr std::array<UINT, kUavs> keepCounts = []() {
+				std::array<UINT, kUavs> counts{};
+				counts.fill(~0u);
+				return counts;
+			}();
+			Clear(ctx);
+			ctx->CSSetShader(shader.get(), nullptr, 0);
+			ctx->CSSetConstantBuffers1(0, kBuffers, buffers.data(), bufferFirstConstants.data(), bufferConstantCounts.data());
+			ctx->CSSetShaderResources(0, kViews, views.data());
+			ctx->CSSetSamplers(0, kSamplers, samplers.data());
+			ctx->CSSetUnorderedAccessViews(0, kUavs, uavs.data(), keepCounts.data());
+			for (auto* buffer : buffers)
+				if (buffer)
+					buffer->Release();
+			for (auto* view : views)
+				if (view)
+					view->Release();
+			for (auto* sampler : samplers)
+				if (sampler)
+					sampler->Release();
+			for (auto* uav : uavs)
+				if (uav)
+					uav->Release();
+			*this = {};
+		}
+	};
+
+	void ClearPipeline()
+	{
+		if (manualState)
+			ComputeBindings::Clear(context.get());
+		else
+			context->ClearState();
+	}
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
 	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain, downsampleLow, expandLow, offsetMotion;
 	/** @brief Cbuffer CategoryAlphaCS.hlsl reads: the eye extent, the stereo offset, the softness radius and the eight strengths. */
@@ -405,6 +478,7 @@ struct NeuralRendering::Impl
 
 	void Initialize()
 	{
+		manualState = RenderDoc::IsLoaded();
 		interop.Initialize();
 		// Reuse the interfaces the interop already queried: they are the same device and context, and
 		// the derived types satisfy the context-state and sampler calls below. Re-querying for the
@@ -414,9 +488,11 @@ struct NeuralRendering::Impl
 			throw std::runtime_error("NR needs a D3D11.1 device and immediate context");
 		context.copy_from(interop.Context1());
 		const auto level = globals::d3d::device->GetFeatureLevel();
-		DX::ThrowIfFailed(device->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION,
-			__uuidof(ID3D11Device), nullptr, isolated.put()));
-		Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
+		if (!manualState) {
+			DX::ThrowIfFailed(device->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION,
+				__uuidof(ID3D11Device), nullptr, isolated.put()));
+			Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
+		}
 		D3D11_SAMPLER_DESC samplerDesc{};
 		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
 		samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -658,7 +734,7 @@ struct NeuralRendering::Impl
 			texture->CreateUAV(uav);
 			eye.toneData = std::move(texture);
 		}
-		context->ClearState();
+		ClearPipeline();
 		ColorTransferData data{ width, height, i * width };
 		SetRegion(data, i);
 		colorBuffer->Update(data);
@@ -670,7 +746,7 @@ struct NeuralRendering::Impl
 		context->CSSetUnorderedAccessViews(2, 1, &output, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-		context->ClearState();
+		ClearPipeline();
 	}
 
 	/** @brief Creates one eye's stagger textures; only the eyes a stagger frame touches allocate them. */
@@ -728,7 +804,7 @@ struct NeuralRendering::Impl
 			reuse.stereoMap = frameBuffer.GetCameraViewProj(1 - i) * DirectX::SimpleMath::Matrix::CreateTranslation(offset.x, offset.y, offset.z).Transpose() * frameBuffer.GetCameraViewProjInverse(i);
 		}
 		gainReuseBuffer->Update(reuse);
-		context->ClearState();
+		ClearPipeline();
 		ID3D11Buffer* buffers[]{ colorBuffer->CB(), gainReuseBuffer->CB() };
 		context->CSSetConstantBuffers(0, ARRAYSIZE(buffers), buffers);
 		globals::state->BindSharedDataCS(context.get(), true);
@@ -750,7 +826,7 @@ struct NeuralRendering::Impl
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-		context->ClearState();
+		ClearPipeline();
 	}
 
 	/** @brief Rebuilds one eye's proxy from its stored gain reprojected by motion, so the composite applies the same tone edit for a frame the model did not run. */
@@ -776,7 +852,7 @@ struct NeuralRendering::Impl
 		context->CSSetUnorderedAccessViews(2, 1, &output, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-		context->ClearState();
+		ClearPipeline();
 	}
 
 	/**
@@ -815,7 +891,7 @@ struct NeuralRendering::Impl
 		context->CSSetUnorderedAccessViews(0, 1, &output, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((guideWidth + 7) / 8, (guideHeight + 7) / 8, 1);
-		context->ClearState();
+		ClearPipeline();
 		eye.cropMotionActive = true;
 	}
 
@@ -828,7 +904,7 @@ struct NeuralRendering::Impl
 		if (!shader)
 			throw std::runtime_error("NR downsample shader unavailable");
 		auto& eye = eyes[i];
-		context->ClearState();
+		ClearPipeline();
 		lowResBuffer->Update(LowResData{ lowWidth, lowHeight, guideWidth, guideHeight, 0.0f, 0 });
 		auto buffer = lowResBuffer->CB();
 		context->CSSetConstantBuffers(1, 1, &buffer);
@@ -840,7 +916,7 @@ struct NeuralRendering::Impl
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((lowWidth + 7) / 8, (lowHeight + 7) / 8, 1);
-		context->ClearState();
+		ClearPipeline();
 	}
 
 	/**
@@ -986,7 +1062,7 @@ struct NeuralRendering::Impl
 		if (!shader)
 			throw std::runtime_error("NR gain-expand shader unavailable");
 		auto& eye = eyes[i];
-		context->ClearState();
+		ClearPipeline();
 		ColorTransferData data{ width, height, i * width };
 		colorBuffer->Update(data);
 		lowResBuffer->Update(LowResData{ lowWidth, lowHeight, guideWidth, guideHeight, kModelGuideSigmaStops, guided ? 1u : 0u });
@@ -1000,13 +1076,13 @@ struct NeuralRendering::Impl
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-		context->ClearState();
+		ClearPipeline();
 	}
 
 	void TransferColor(uint32_t i, bool prepare)
 	{
 		CS_GPU_PASS_SELECT(prepare, "Upscaling::NRPrepare", "Upscaling::NRComposite");
-		context->ClearState();
+		ClearPipeline();
 		auto& eye = eyes[i];
 		ColorTransferData data{ width, height, i * width };
 		data.conversionMode = static_cast<uint32_t>((debugOptions & NR::Diagnostics::DisableColorTransform) ? NR::Diagnostics::ColorConversion::Raw : conversionMode);
@@ -1070,7 +1146,7 @@ struct NeuralRendering::Impl
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
 		context->CSSetShader(prepare ? prepareColor.get() : compositeColor.get(), nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-		context->ClearState();
+		ClearPipeline();
 	}
 
 	/**
@@ -1107,7 +1183,7 @@ struct NeuralRendering::Impl
 					const auto name = eyeCount > 1 ? std::format("NeuralRendering::MaterialAlpha{}", i) : std::string("NeuralRendering::MaterialAlpha");
 					eye.materialAlpha = interop.CreateTexture(width, height, DXGI_FORMAT_R8_UNORM, name);
 				}
-				context->ClearState();
+				ClearPipeline();
 				categoryAlphaBuffer->Update(CategoryAlphaData{ width, height, i * width, strengths.edgeSoftness,
 					{ strengths.strength[NR::MaterialStrength::kNone], strengths.strength[NR::MaterialStrength::kSkin],
 						strengths.strength[NR::MaterialStrength::kHair], strengths.strength[NR::MaterialStrength::kEyes] },
@@ -1120,7 +1196,7 @@ struct NeuralRendering::Impl
 				context->CSSetUnorderedAccessViews(0, 1, &output, nullptr);
 				context->CSSetShader(shader, nullptr, 0);
 				context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-				context->ClearState();
+				ClearPipeline();
 			}
 			if (sbsWidth) {
 				if (!sbsAlpha)
@@ -1148,18 +1224,29 @@ struct NeuralRendering::Impl
 		{
 			ID3D11DeviceContext1* context;
 			winrt::com_ptr<ID3DDeviceContextState> previous;
-			ContextScope(ID3D11DeviceContext1* ctx, ID3DDeviceContextState* isolated) :
-				context(ctx)
+			ComputeBindings saved;
+			bool manual;
+			ContextScope(ID3D11DeviceContext1* ctx, ID3DDeviceContextState* isolated, bool manualBindings) :
+				context(ctx), manual(manualBindings)
 			{
+				if (manual) {
+					saved.Save(context);
+					ComputeBindings::Clear(context);
+					return;
+				}
 				context->SwapDeviceContextState(isolated, previous.put());
 				context->ClearState();
 			}
 			~ContextScope()
 			{
+				if (manual) {
+					saved.Restore(context);
+					return;
+				}
 				context->ClearState();
 				context->SwapDeviceContextState(previous.get(), nullptr);
 			}
-		} scope(context.get(), isolated.get());
+		} scope(context.get(), isolated.get(), manualState);
 		// The stagger's own gain history would be blended into frame generation's interpolation, and a
 		// second eye's evaluation is what frame generation expects, so it is off whenever it is active.
 		const bool frameGeneration = FrameGenerationActive();
@@ -1240,7 +1327,7 @@ struct NeuralRendering::Impl
 				}
 			}
 		}
-		context->ClearState();
+		ClearPipeline();
 		for (uint32_t i = 0; i < eyeCount; ++i) {
 			eyes[i].cropMotionActive = false;
 			if (!eyes[i].frame.reset && !sbs && !lowRes && !(diagnostic.options & NR::Diagnostics::ZeroMotion))
