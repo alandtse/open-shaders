@@ -1423,10 +1423,12 @@ void Upscaling::RestoreDefaultSettings()
 	ApplyOpenCompositeUpscalingBlocker(true);
 }
 
-void Upscaling::SyncDLSSGPresetDriverProfile(uint a_previousPreset) const
+void Upscaling::SyncDLSSGPresetDriverProfile(uint a_previousPreset)
 {
-	if (!globals::game::isVR && bootSnapshot.IsLatched())
-		Streamline::ApplyDLSSGPresetToDriverProfile(a_previousPreset, settings.dlssgPreset, streamlineDX12.dlssgPresetCSupported);
+	if (globals::game::isVR || !bootSnapshot.IsLatched())
+		return;
+	if (!Streamline::ApplyDLSSGPresetToDriverProfile(a_previousPreset, settings.dlssgPreset, streamlineDX12.dlssgPresetCSupported))
+		settings.dlssgPreset = a_previousPreset;
 }
 
 void Upscaling::DataLoaded()

@@ -424,11 +424,11 @@ bool Streamline::IsSmoothMotionEnabledForProfile()
 	return drs.TryGetSkyrimSetting(Util::NvApiDrs::kKeySmoothMotionEnable, enableValue) && enableValue != 0;
 }
 
-void Streamline::ApplyDLSSGPresetToDriverProfile(uint32_t a_previousPreset, uint32_t a_preset, bool a_presetCSupported)
+bool Streamline::ApplyDLSSGPresetToDriverProfile(uint32_t a_previousPreset, uint32_t a_preset, bool a_presetCSupported)
 {
 	const auto action = DLSSGPreset::PlanProfileAction(a_previousPreset, a_preset, a_presetCSupported);
 	if (action == DLSSGPreset::ProfileAction::kNone)
-		return;
+		return true;
 
 	Util::NvApiDrs::Api drs{};
 	const bool written = action == DLSSGPreset::ProfileAction::kSet ?
@@ -440,6 +440,7 @@ void Streamline::ApplyDLSSGPresetToDriverProfile(uint32_t a_previousPreset, uint
 	else
 		logger::warn("[Streamline DX12] Failed to write DLSS-G preset {} to the driver profile (DRS key {:#x})",
 			magic_enum::enum_name(static_cast<DLSSGPreset::Preset>(a_preset)), Util::NvApiDrs::kKeyDLSSGPreset);
+	return written;
 }
 
 std::optional<uint32_t> Streamline::ReadDLSSGPresetFromDriverProfile()

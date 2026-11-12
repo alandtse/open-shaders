@@ -539,8 +539,8 @@ private:
 	void DrawFrameGenerationSettings();
 	void DrawReflexSettings();
 	void DrawBackendDiagnostics();
-	/** @brief Writes a change of settings.dlssgPreset from a_previousPreset to the driver profile (flatrim only, never during the launch-time settings load). */
-	void SyncDLSSGPresetDriverProfile(uint a_previousPreset) const;
+	/** @brief Writes a change of settings.dlssgPreset from a_previousPreset to the driver profile (flatrim only, never during the launch-time settings load), restoring a_previousPreset if the write fails. */
+	void SyncDLSSGPresetDriverProfile(uint a_previousPreset);
 
 	// OpenComposite conflict guard: when the OpenComposite VR shim runs its own
 	// DLSS/FSR/DLAA upscaling, ours stands down to avoid double upscaling.

@@ -182,8 +182,9 @@ public:
 	 * @brief Writes a change of the selected DLSS-G preset (DLSSGPreset::Preset) to the driver
 	 * profile's DLSS-FG preset key; nvngx_dlssg.dll reads it when frame generation starts, so it
 	 * applies on the next launch. Preset C is not written unless a_presetCSupported.
+	 * @return False when the driver profile could not be written; nothing to write counts as success.
 	 */
-	static void ApplyDLSSGPresetToDriverProfile(uint32_t a_previousPreset, uint32_t a_preset, bool a_presetCSupported);
+	static bool ApplyDLSSGPresetToDriverProfile(uint32_t a_previousPreset, uint32_t a_preset, bool a_presetCSupported);
 
 	/** @brief Reads the driver profile's DLSS-FG preset key; empty when the key is unset or the profile is unreadable. */
 	static std::optional<uint32_t> ReadDLSSGPresetFromDriverProfile();
