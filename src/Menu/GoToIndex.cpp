@@ -197,6 +197,30 @@ namespace GoToIndex
 			}
 		}
 
+		/// Settings a feature lists itself, for controls the catalog cannot see (a feature's own tools, say).
+		void AddFeatureListedSettings(std::vector<Entry>& out)
+		{
+			for (Feature* feature : Feature::GetFeatureList()) {
+				if (!feature->loaded || !feature->IsInMenu() || feature->IsHiddenUnreleased())
+					continue;
+				const std::string shortName = feature->GetShortName();
+				for (auto& listed : feature->GetSettingsSearchEntries()) {
+					Entry entry;
+					entry.kind = Kind::Setting;
+					entry.title = listed.label;
+					entry.breadcrumb = feature->GetDisplayName();
+					entry.id = std::format("listed:{}/{}", shortName, listed.id);
+					entry.haystack = shortName + " " + listed.description;
+					entry.run = [shortName, focus = std::move(listed.focusCallback)] {
+						Navigate(shortName);
+						if (focus)
+							focus();
+					};
+					out.push_back(std::move(entry));
+				}
+			}
+		}
+
 		void AddCatalogSettings()
 		{
 			const auto generation = I18n::GetSingleton()->GetGeneration();
@@ -211,8 +235,9 @@ namespace GoToIndex
 			g_settingLoadedCount = loadedCount;
 			g_settingsBuilt = true;
 
-			std::unordered_map<std::string, Feature*> features;  // short name -> feature, or null when not loaded
-			std::set<std::string> seen;                          // a multi-component control is one entry
+			std::unordered_map<std::string, Feature*> features;    // short name -> feature, or null when not loaded
+			std::set<std::string> seen;                            // a multi-component control is one entry
+			std::set<std::pair<std::string, std::string>> titled;  // feature and title of each catalog entry
 			for (const auto& setting : Catalog::GetSettings()) {
 				if (Catalog::HasFlag(setting.flags, Catalog::SettingFlag::Hidden) || setting.serializedComponent > 0)
 					continue;
@@ -240,12 +265,39 @@ namespace GoToIndex
 				entry.id = std::format("setting:{}/{}/{}", shortName, setting.serializedPath, setting.serializedKey);
 				if (!seen.insert(entry.id).second)
 					continue;
+				titled.emplace(shortName, leaf);
 				entry.haystack = shortName;
 				entry.setting = &setting;
 				entry.run = [shortName, &setting] {
 					Navigate(shortName);
 					SettingReveal::Request(setting);
 				};
+				g_settingEntries.push_back(std::move(entry));
+			}
+
+			// Controls the settings catalog does not model (buttons, actions, UI-only options)
+			for (const auto& control : Catalog::GetUiControls()) {
+				const std::string shortName(control.featureShortName);
+				auto found = features.find(shortName);
+				if (found == features.end()) {
+					Feature* feature = Feature::FindFeatureByShortName(shortName);
+					found = features.emplace(shortName, feature && feature->loaded && feature->IsInMenu() ? feature : nullptr).first;
+				}
+				if (!found->second)
+					continue;
+				std::string title = control.labelKey.empty() ? std::string(control.label) : std::string(I18n::GetSingleton()->Get(control.labelKey, control.label.data()));
+				title.resize(std::min(title.size(), title.find("##")));  // drops the ImGui identity suffix
+				if (title.empty() || titled.contains({ shortName, title }))
+					continue;
+				Entry entry;
+				entry.kind = Kind::Setting;
+				entry.title = title;
+				entry.breadcrumb = found->second->GetDisplayName();
+				entry.id = std::format("control:{}/{}", shortName, control.labelKey.empty() ? control.label : control.labelKey);
+				if (!seen.insert(entry.id).second)
+					continue;
+				entry.haystack = shortName + " " + std::string(control.label);  // English guides keep working in other locales
+				entry.run = [shortName] { Navigate(shortName); };
 				g_settingEntries.push_back(std::move(entry));
 			}
 		}
@@ -415,6 +467,7 @@ namespace GoToIndex
 		g_entries.clear();
 		AddPages(g_entries);
 		AddFeatures(g_entries);
+		AddFeatureListedSettings(g_entries);
 		AddSettingsPageLabels(g_entries);
 		AddCommands(g_entries, shortcuts);
 		AddCatalogSettings();

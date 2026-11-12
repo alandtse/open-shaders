@@ -45,6 +45,7 @@ struct DeveloperTools : Feature
 	const void* GetSettingsBlob() const override;
 	size_t GetSettingsBlobSize() const override;
 
+	std::vector<SettingSearchEntry> GetSettingsSearchEntries() override;
 	void DrawSettings() override;
 	void RestoreDefaultSettings() override;
 	void LoadSettings(json& o_json) override;
