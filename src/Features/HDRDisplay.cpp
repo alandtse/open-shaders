@@ -926,6 +926,8 @@ void HDRDisplay::SetUIBuffer()
 		                                                                   upscaling.dx12SwapChain.swapChainBufferWrapped->rtv;
 
 		if (uiBufferMode.useUIBuffer) {
+			if (upscaling.UsesDLSSGFrameGen())
+				upscaling.streamlineDX12.WaitForDLSSGInputs();
 			float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 			CS_GPU_PASS("HDRDisplay::ClearUI");
 			globals::d3d::context->ClearRenderTargetView(targetRTV, clearColor);
