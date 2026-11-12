@@ -136,3 +136,13 @@ TEST_CASE("Cold adapted races are recognised by name", "[snow-deformation]")
 	REQUIRE_FALSE(Math::IsColdAdaptedName("Sliceblade"));
 	REQUIRE_FALSE(Math::IsColdAdaptedName(""));
 }
+
+TEST_CASE("An object presses fully on the ground and not at all above reach", "[snow-deformation]")
+{
+	REQUIRE(Math::ObjectPressFactor(0.0f, 20.0f) == Approx(1.0f));
+	REQUIRE(Math::ObjectPressFactor(-5.0f, 20.0f) == Approx(1.0f));
+	REQUIRE(Math::ObjectPressFactor(10.0f, 20.0f) == Approx(0.5f));
+	REQUIRE(Math::ObjectPressFactor(20.0f, 20.0f) == Approx(0.0f));
+	REQUIRE(Math::ObjectPressFactor(48.0f, 20.0f) == Approx(0.0f));
+	REQUIRE(Math::ObjectPressFactor(1.0f, 0.0f) == Approx(0.0f));
+}

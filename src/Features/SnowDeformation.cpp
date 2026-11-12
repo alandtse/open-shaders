@@ -65,7 +65,6 @@ namespace
 	constexpr uint64_t kObjectScanFrames = 12;
 	constexpr size_t kMaxObjectRefs = 256;
 	constexpr size_t kMaxObjectShapes = 3;
-	constexpr float kObjectContact = 48.0f;
 	constexpr float kLightPressure = 0.001f;
 	constexpr float kHeavyPressure = 0.03f;
 	constexpr float kMinWeightScale = 0.05f;
@@ -1595,8 +1594,10 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 		if (!tes->GetLandHeight(probe, landZ))
 			continue;
 		const float drop = bottom - landZ;
-		if (drop > kObjectContact || drop < -(carve + kBelowGroundLimit))
+		const float pressReach = std::max(kGroundClearance, carve);
+		if (drop > pressReach || drop < -(carve + kBelowGroundLimit))
 			continue;
+		const float pressFactor = SnowDeformationMath::ObjectPressFactor(drop, pressReach);
 
 		const RE::FormID refID = ref->GetFormID();
 		const bool physicsActive = gatherOnUpdate && carve > 0.0f;
@@ -1643,8 +1644,8 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 			stamp.x = contact.centre.x;
 			stamp.y = contact.centre.y;
 			stamp.radius = contact.radius;
-			stamp.depth = depth * weightScale;
-			stamp.rim = rim * weightScale;
+			stamp.depth = depth * weightScale * pressFactor;
+			stamp.rim = rim * weightScale * pressFactor;
 			TrackShapeMotion(contact.key, contact.centre, false, stamp.motionX, stamp.motionY);
 			stamp.vanillaSnow = vanillaSnow;
 			stamp.landZ = landZ;
