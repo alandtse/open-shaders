@@ -173,12 +173,15 @@ namespace ShadowCasterManager
 		return nullptr;
 	}
 
-	/// The body a dynamic omni light is carried by, or null.
+	/// The body a dynamic omni light is carried by, or null: the first-person model while the player carrying it is seen in first person.
 	static const RE::NiAVObject* CarrierBody(RE::BSShadowLight* light)
 	{
 		auto* ni = light->light.get();
 		auto* carrier = ni && light->dynamic && light->GetIsOmniLight() ? CarrierOf(ni) : nullptr;
-		return carrier ? carrier->Get3D(false) : nullptr;
+		if (!carrier)
+			return nullptr;
+		const auto* camera = globals::game::playerCamera;
+		return carrier->Get3D(carrier == globals::game::player && camera && camera->IsInFirstPerson());
 	}
 
 	/// UpdateCamera with a carried omni light's front paraboloid turned at its carrier, so the seam never crosses the body it is
