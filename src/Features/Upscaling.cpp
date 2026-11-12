@@ -2837,6 +2837,10 @@ void Upscaling::LoadUpscalingSDKs()
 	streamlineDX12.interposerDllName = L"sl.interposer.dll";
 	streamlineDX12.instanceTag = "DX12";
 	streamlineDX12.LoadInterposer();
+	if (settings.dlssgPreset >= DLSSGPreset::AvailableCount(streamlineDX12.dlssgPresetCSupported)) {
+		logger::warn("[Upscaling] dlssgPreset {} needs nvngx_dlssg.dll 310.9.16 or newer, resetting to 0 (Default)", settings.dlssgPreset);
+		settings.dlssgPreset = 0;
+	}
 
 	fidelityFX.LoadFFX();  // AMD FSR frame generation
 }
