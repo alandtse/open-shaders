@@ -1001,7 +1001,7 @@ void Upscaling::DrawFrameGenerationSettings()
 				T(TKEY("dlssg_preset_default"), "Default"),
 				T(TKEY("dlssg_preset_a"), "Preset A"),
 				T(TKEY("dlssg_preset_b"), "Preset B"),
-				T(TKEY("dlssg_preset_c"), "Preset C (Performance)")
+				T(TKEY("dlssg_preset_c"), "Preset C")
 			};
 			const uint previousPreset = settings.dlssgPreset;
 			const int presetCount = static_cast<int>(DLSSGPreset::AvailableCount(streamlineDX12.dlssgPresetCSupported));

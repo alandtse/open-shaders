@@ -4243,7 +4243,7 @@
     "feature.upscaling.dlssg_preset": "DLSS-G Preset",
     "feature.upscaling.dlssg_preset_a": "Preset A",
     "feature.upscaling.dlssg_preset_b": "Preset B",
-    "feature.upscaling.dlssg_preset_c": "Preset C (Performance)",
+    "feature.upscaling.dlssg_preset_c": "Preset C",
     "feature.upscaling.dlssg_preset_default": "Default",
     "feature.upscaling.dlssg_preset_tooltip": "Choose which DLSS-G frame generation model to use.\nDefault leaves the choice to the driver and the NVIDIA App.\nPreset C is a lighter, faster model and needs DLSS-G 310.9.16 or newer.\nSaved to the driver profile for Skyrim, replacing an NVIDIA App DLSS-G model override.",
     "feature.upscaling.enable_sharpening": "Enable Sharpening",
