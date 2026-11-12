@@ -22,20 +22,35 @@ TEST_CASE("DLSS-G presets match the driver's DLSS-FG preset values", "[upscaling
 TEST_CASE("An unchanged DLSS-G preset leaves the driver profile alone", "[upscaling][dlssg]")
 {
 	for (uint32_t preset = 0; preset < DLSSGPreset::kCount; ++preset)
-		CHECK(DLSSGPreset::PlanProfileAction(preset, preset) == DLSSGPreset::ProfileAction::kNone);
+		CHECK(DLSSGPreset::PlanProfileAction(preset, preset, true) == DLSSGPreset::ProfileAction::kNone);
 }
 
 TEST_CASE("Selecting an explicit DLSS-G preset writes it to the driver profile", "[upscaling][dlssg]")
 {
 	using enum DLSSGPreset::Preset;
-	CHECK(DLSSGPreset::PlanProfileAction(Value(kDefault), Value(kC)) == DLSSGPreset::ProfileAction::kSet);
-	CHECK(DLSSGPreset::PlanProfileAction(Value(kA), Value(kC)) == DLSSGPreset::ProfileAction::kSet);
-	CHECK(DLSSGPreset::PlanProfileAction(Value(kC), Value(kB)) == DLSSGPreset::ProfileAction::kSet);
+	CHECK(DLSSGPreset::PlanProfileAction(Value(kDefault), Value(kC), true) == DLSSGPreset::ProfileAction::kSet);
+	CHECK(DLSSGPreset::PlanProfileAction(Value(kA), Value(kC), true) == DLSSGPreset::ProfileAction::kSet);
+	CHECK(DLSSGPreset::PlanProfileAction(Value(kC), Value(kB), true) == DLSSGPreset::ProfileAction::kSet);
 }
 
 TEST_CASE("Returning to the default DLSS-G preset removes the driver profile key", "[upscaling][dlssg]")
 {
 	using enum DLSSGPreset::Preset;
-	CHECK(DLSSGPreset::PlanProfileAction(Value(kA), Value(kDefault)) == DLSSGPreset::ProfileAction::kDelete);
-	CHECK(DLSSGPreset::PlanProfileAction(Value(kC), Value(kDefault)) == DLSSGPreset::ProfileAction::kDelete);
+	CHECK(DLSSGPreset::PlanProfileAction(Value(kA), Value(kDefault), true) == DLSSGPreset::ProfileAction::kDelete);
+	CHECK(DLSSGPreset::PlanProfileAction(Value(kC), Value(kDefault), true) == DLSSGPreset::ProfileAction::kDelete);
+}
+
+TEST_CASE("Preset C is offered only when the DLSS-G DLL accepts it", "[upscaling][dlssg]")
+{
+	CHECK(DLSSGPreset::AvailableCount(true) == DLSSGPreset::kCount);
+	CHECK(DLSSGPreset::AvailableCount(false) == Value(DLSSGPreset::Preset::kC));
+}
+
+TEST_CASE("Preset C is never written for a DLSS-G DLL that does not accept it", "[upscaling][dlssg]")
+{
+	using enum DLSSGPreset::Preset;
+	CHECK(DLSSGPreset::PlanProfileAction(Value(kDefault), Value(kC), false) == DLSSGPreset::ProfileAction::kNone);
+	CHECK(DLSSGPreset::PlanProfileAction(Value(kA), Value(kC), false) == DLSSGPreset::ProfileAction::kNone);
+	CHECK(DLSSGPreset::PlanProfileAction(Value(kDefault), Value(kB), false) == DLSSGPreset::ProfileAction::kSet);
+	CHECK(DLSSGPreset::PlanProfileAction(Value(kC), Value(kDefault), false) == DLSSGPreset::ProfileAction::kDelete);
 }

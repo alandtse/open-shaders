@@ -49,6 +49,8 @@ public:
 	uint32_t dlssgMaxFramesToGenerate = 1;
 	// DLSSGState::bIsDynamicMFGSupported, queried alongside dlssgMaxFramesToGenerate.
 	bool dlssgDynamicSupported = false;
+	static constexpr REL::Version kDLSSGPresetCMinimumVersion{ 310, 9, 16, 0 };  ///< First nvngx_dlssg.dll that accepts Preset C.
+	bool dlssgPresetCSupported = false;                                          ///< pluginDir's nvngx_dlssg.dll is kDLSSGPresetCMinimumVersion or newer (DX12 instance only).
 	// Last slDLSSGGetState results, cached for GetDiagnostics (querying there would
 	// steal the since-last-query frame counter from the present path).
 	sl::DLSSGStatus lastDLSSGStatus = sl::DLSSGStatus::eOk;
@@ -179,9 +181,9 @@ public:
 	/**
 	 * @brief Writes a change of the selected DLSS-G preset (DLSSGPreset::Preset) to the driver
 	 * profile's DLSS-FG preset key; nvngx_dlssg.dll reads it when frame generation starts, so it
-	 * applies on the next launch.
+	 * applies on the next launch. Preset C is not written unless a_presetCSupported.
 	 */
-	static void ApplyDLSSGPresetToDriverProfile(uint32_t a_previousPreset, uint32_t a_preset);
+	static void ApplyDLSSGPresetToDriverProfile(uint32_t a_previousPreset, uint32_t a_preset, bool a_presetCSupported);
 
 	/** @brief Reads the driver profile's DLSS-FG preset key; empty when the key is unset or the profile is unreadable. */
 	static std::optional<uint32_t> ReadDLSSGPresetFromDriverProfile();

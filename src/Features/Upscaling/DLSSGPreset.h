@@ -15,6 +15,12 @@ namespace DLSSGPreset
 
 	inline constexpr uint32_t kCount = 4;  ///< Number of Preset values, Default included.
 
+	/** @brief Number of leading Preset values the installed DLSS-G DLL accepts: all of them, or all but Preset C. */
+	inline constexpr uint32_t AvailableCount(bool a_presetCSupported)
+	{
+		return a_presetCSupported ? kCount : kCount - 1;
+	}
+
 	/** @brief What to do to the driver profile's DLSS-FG preset key after the selected preset changes. */
 	enum class ProfileAction
 	{
@@ -26,11 +32,11 @@ namespace DLSSGPreset
 	/**
 	 * @brief Plans the driver profile write for a change from a_previous to a_current. Default deletes
 	 * the key only when it replaces an explicit preset, so an untouched Default leaves an NVIDIA App
-	 * override in place.
+	 * override in place. A preset the installed DLL does not accept is never written.
 	 */
-	inline ProfileAction PlanProfileAction(uint32_t a_previous, uint32_t a_current)
+	inline ProfileAction PlanProfileAction(uint32_t a_previous, uint32_t a_current, bool a_presetCSupported)
 	{
-		if (a_current == a_previous)
+		if (a_current == a_previous || a_current >= AvailableCount(a_presetCSupported))
 			return ProfileAction::kNone;
 		return a_current == static_cast<uint32_t>(Preset::kDefault) ? ProfileAction::kDelete : ProfileAction::kSet;
 	}

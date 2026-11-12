@@ -107,6 +107,11 @@ void Streamline::LoadInterposer()
 			logger::info("[Streamline DX11] {} version: {}", name, versionStr);
 	}
 
+	if (renderAPI == sl::RenderAPI::eD3D12) {
+		const auto dlssgVersion = Util::GetDllVersion((pluginDirPath / L"nvngx_dlssg.dll").wstring());
+		dlssgPresetCSupported = dlssgVersion && *dlssgVersion >= kDLSSGPresetCMinimumVersion;
+	}
+
 	logger::info("[Streamline {}] Initializing Streamline", instanceTag);
 
 	sl::Preferences pref;
@@ -419,9 +424,9 @@ bool Streamline::IsSmoothMotionEnabledForProfile()
 	return drs.TryGetSkyrimSetting(Util::NvApiDrs::kKeySmoothMotionEnable, enableValue) && enableValue != 0;
 }
 
-void Streamline::ApplyDLSSGPresetToDriverProfile(uint32_t a_previousPreset, uint32_t a_preset)
+void Streamline::ApplyDLSSGPresetToDriverProfile(uint32_t a_previousPreset, uint32_t a_preset, bool a_presetCSupported)
 {
-	const auto action = DLSSGPreset::PlanProfileAction(a_previousPreset, a_preset);
+	const auto action = DLSSGPreset::PlanProfileAction(a_previousPreset, a_preset, a_presetCSupported);
 	if (action == DLSSGPreset::ProfileAction::kNone)
 		return;
 

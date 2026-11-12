@@ -729,13 +729,14 @@ void Upscaling::RegisterUxActions()
 		GazeStatus);
 
 	FEATURE_QUERY("dlssgPresetStatus",
-		"DLSS-G model preset: selected is settings.dlssgPreset (0 Default, 1 A, 2 B, 3 C; C is the faster model and needs DLSS-G 310.9.16 or newer), atBoot is the value this session started with, and driverProfileValue is the DLSS-FG preset key (0x10E41DF1) in the driver profile for Skyrim SE, or null when the key is unset or unreadable. nvngx_dlssg.dll reads that key when frame generation starts, so a change applies on the next launch. Setting dlssgPreset through openshaders.feature writes the key; Default removes it only when replacing an explicit preset. Flatrim only. Params: none.",
+		"DLSS-G model preset: selected is settings.dlssgPreset (0 Default, 1 A, 2 B, 3 C; C is the faster model and needs DLSS-G 310.9.16 or newer), atBoot is the value this session started with, and driverProfileValue is the DLSS-FG preset key (0x10E41DF1) in the driver profile for Skyrim SE, or null when the key is unset or unreadable, and presetCSupported is whether the installed nvngx_dlssg.dll is 310.9.16 or newer (Preset C is hidden from the menu and never written otherwise). nvngx_dlssg.dll reads that key when frame generation starts, so a change applies on the next launch. Setting dlssgPreset through openshaders.feature writes the key, the launch-time settings load never does; Default removes it only when replacing an explicit preset. Flatrim only. Params: none.",
 		([](const Feature* self, const json&) -> json {
 			const auto& upscaling = *static_cast<const Upscaling*>(self);
 			return json{
 				{ "selected", upscaling.settings.dlssgPreset },
 				{ "atBoot", upscaling.bootSnapshot.Boot(&Settings::dlssgPreset) },
-				{ "driverProfileValue", optionalJson(Streamline::ReadDLSSGPresetFromDriverProfile()) }
+				{ "driverProfileValue", optionalJson(Streamline::ReadDLSSGPresetFromDriverProfile()) },
+				{ "presetCSupported", upscaling.streamlineDX12.dlssgPresetCSupported }
 			};
 		}));
 
@@ -1003,7 +1004,8 @@ void Upscaling::DrawFrameGenerationSettings()
 				T(TKEY("dlssg_preset_c"), "Preset C (Performance)")
 			};
 			const uint previousPreset = settings.dlssgPreset;
-			if (Util::Combo(T(TKEY("dlssg_preset"), "DLSS-G Preset"), &settings.dlssgPreset, dlssgPresets))
+			const int presetCount = static_cast<int>(DLSSGPreset::AvailableCount(streamlineDX12.dlssgPresetCSupported));
+			if (Util::Combo(T(TKEY("dlssg_preset"), "DLSS-G Preset"), &settings.dlssgPreset, dlssgPresets, presetCount))
 				SyncDLSSGPresetDriverProfile(previousPreset);
 			Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::dlssgPreset,
 				T(TKEY("dlssg_preset_tooltip"),
@@ -1424,7 +1426,7 @@ void Upscaling::RestoreDefaultSettings()
 void Upscaling::SyncDLSSGPresetDriverProfile(uint a_previousPreset) const
 {
 	if (!globals::game::isVR && bootSnapshot.IsLatched())
-		Streamline::ApplyDLSSGPresetToDriverProfile(a_previousPreset, settings.dlssgPreset);
+		Streamline::ApplyDLSSGPresetToDriverProfile(a_previousPreset, settings.dlssgPreset, streamlineDX12.dlssgPresetCSupported);
 }
 
 void Upscaling::DataLoaded()
