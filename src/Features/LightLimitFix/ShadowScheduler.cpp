@@ -173,15 +173,22 @@ namespace ShadowCasterManager
 		return nullptr;
 	}
 
+	/// The body a dynamic omni light is carried by, or null.
+	static const RE::NiAVObject* CarrierBody(RE::BSShadowLight* light)
+	{
+		auto* ni = light->light.get();
+		auto* carrier = ni && light->dynamic && light->GetIsOmniLight() ? CarrierOf(ni) : nullptr;
+		return carrier ? carrier->Get3D(false) : nullptr;
+	}
+
 	/// UpdateCamera with a carried omni light's front paraboloid turned at its carrier, so the seam never crosses the body it is
 	/// closest to; the node's rotation is put back right after the copy.
 	static bool UpdateCameraFacingCarrier(RE::BSShadowLight* light, RE::NiCamera* camera)
 	{
-		auto* ni = light->light.get();
-		auto* carrier = ni && light->dynamic && light->GetIsOmniLight() ? CarrierOf(ni) : nullptr;
-		const auto* body = carrier ? carrier->Get3D(false) : nullptr;
+		const auto* body = CarrierBody(light);
 		if (!body)
 			return light->UpdateCamera(camera);
+		auto* ni = light->light.get();
 		const auto rotate = ni->world.rotate;
 		const auto toBody = body->worldBound.center - ni->world.translate;
 		FacingRotation(toBody.x, toBody.y, toBody.z, ni->world.rotate.entry);
@@ -737,7 +744,7 @@ namespace ShadowCasterManager
 	{
 		if (!StaticAtlasReady())
 			return false;
-		if (st.splitExcluded || st.bakeQueued || !staticValid)
+		if (st.splitExcluded || st.bakeQueued || !staticValid || CarrierBody(light))
 			return false;
 		// Static and dynamic depths must use the same projection and radius.
 		return SplitPoseMatches(light, st);
@@ -1111,7 +1118,8 @@ namespace ShadowCasterManager
 		// casters (RAII-cleared after); pick this accumulate's filter mode
 		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
-			bool split = StaticAtlasReady();
+			// A carried light's camera faces its holder, which the bake's pose does not record: it renders full.
+			bool split = StaticAtlasReady() && !CarrierBody(light);
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
 			st->fullThisFrame = !split;
