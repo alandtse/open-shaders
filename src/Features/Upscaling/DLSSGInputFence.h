@@ -1,6 +1,5 @@
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
 
 /**
@@ -11,15 +10,11 @@ template <class Fence>
 class DLSSGInputFenceTracker
 {
 public:
-	/** @brief Records a post-present fence value; a different fence (DLSS-G recreated) discards the old target. */
+	/** @brief Records the last present's fence value, replacing the old target so a fence recreated at the same address cannot keep a stale one. */
 	void Track(Fence* a_fence, std::uint64_t a_value)
 	{
-		if (a_fence != fence) {
-			fence = a_fence;
-			target = 0;
-		}
-		if (fence)
-			target = std::max(target, a_value);
+		fence = a_fence;
+		target = fence ? a_value : 0;
 	}
 
 	/** @brief Forgets the fence, for when DLSS-G frees the resources that own it. */

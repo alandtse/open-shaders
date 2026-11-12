@@ -30,13 +30,14 @@ TEST_CASE("The copy waits only while the fence is short of the last present", "[
 	CHECK_FALSE(tracker.IsBehind(6));
 }
 
-TEST_CASE("An older fence value does not lower the target", "[DLSSGInputFence]")
+TEST_CASE("A fence recreated at the same address drops the old target", "[DLSSGInputFence]")
 {
 	FakeFence fence;
 	DLSSGInputFenceTracker<FakeFence> tracker;
-	tracker.Track(&fence, 8);
-	tracker.Track(&fence, 7);
-	CHECK(tracker.GetTarget() == 8);
+	tracker.Track(&fence, 1000);
+	tracker.Track(&fence, 3);
+	CHECK(tracker.GetTarget() == 3);
+	CHECK_FALSE(tracker.IsBehind(3));
 }
 
 TEST_CASE("A recreated fence discards the old target", "[DLSSGInputFence]")
