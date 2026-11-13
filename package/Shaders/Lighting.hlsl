@@ -1395,7 +1395,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	// Lattice cell comes from the geometric UV, before the parallax block below rewrites uv.
 #	if !defined(LANDSCAPE) && (defined(TERRAIN_VARIATION_MESH) || defined(EMAT))
 	StochasticOffsets meshOffset = (StochasticOffsets)0;
-#		if defined(TERRAIN_VARIATION_MESH)
+#		if defined(TERRAIN_VARIATION_MESH) && !defined(NO_MESH_VARIATION)
 	const bool applyMeshTV = (Permutation::ExtraFeatureDescriptor & Permutation::ExtraFeatureFlags::TVMeshVariation) != 0;
 	[branch] if (applyMeshTV)
 	{
@@ -1406,7 +1406,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		endif
 #	endif
 
-#	if defined(TERRAIN_VARIATION_MESH) && !defined(LANDSCAPE)
+#	if defined(TERRAIN_VARIATION_MESH) && !defined(LANDSCAPE) && !defined(NO_MESH_VARIATION)
 #		define MESH_TV_SAMPLE(DEST, TEX, SAMP, UV)                     \
 			{                                                           \
 				[branch] if (applyMeshTV)                               \

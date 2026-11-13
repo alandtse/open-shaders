@@ -1057,6 +1057,8 @@ namespace SIE
 			MTLandLODBlend = 19,
 		};
 
+		static constexpr uint32_t kLightingNoMeshVariation = 1u << 9;
+
 		enum class LightingShaderFlags : uint32_t
 		{
 			VC = 1 << 0,
@@ -1087,6 +1089,25 @@ namespace SIE
 			FurShells = 1u << 30,
 			FurShellsDepth = 1u << 31
 		};
+
+		/** @brief True for the mesh techniques specialized for unvaried textures. */
+		static constexpr bool SupportsMeshVariationVariant(uint32_t a_descriptor)
+		{
+			if (a_descriptor & static_cast<uint32_t>(LightingShaderFlags::FurShells))
+				return false;
+
+			switch (static_cast<LightingShaderTechniques>((a_descriptor >> 24) & 0x3F)) {
+			case LightingShaderTechniques::None:
+			case LightingShaderTechniques::Envmap:
+			case LightingShaderTechniques::Glowmap:
+			case LightingShaderTechniques::Parallax:
+			case LightingShaderTechniques::ParallaxOcc:
+			case LightingShaderTechniques::MultilayerParallax:
+				return true;
+			default:
+				return false;
+			}
+		}
 
 		enum class BloodSplatterShaderTechniques
 		{

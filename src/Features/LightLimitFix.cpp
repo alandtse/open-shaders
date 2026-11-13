@@ -31,6 +31,21 @@
 
 namespace
 {
+	struct DeferredLightingVariant
+	{
+		RE::BSGraphics::PixelShader* shader = nullptr;
+		uint32_t requestFrame = std::numeric_limits<uint32_t>::max();
+	};
+
+	struct DeferredLightingShaders
+	{
+		RE::BSGraphics::PixelShader* standard = nullptr;
+		DeferredLightingVariant withoutMeshVariation;
+		uint32_t descriptor = 0;
+	};
+
+	thread_local DeferredLightingShaders deferredLightingShaders;
+
 	constexpr float kParticleLightsSaturationMin = 1.0f;
 	constexpr float kParticleLightsSaturationMax = 2.0f;
 	constexpr float kParticleBrightnessMin = 0.0f;
@@ -1022,6 +1037,62 @@ void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
 	}
 }
 
+namespace
+{
+	bool HasCompatiblePixelConstants(const RE::BSGraphics::PixelShader& standard, const RE::BSGraphics::PixelShader& variant)
+	{
+		return standard.constantTable == variant.constantTable &&
+		       std::ranges::equal(standard.constantBuffers, variant.constantBuffers,
+				   [](const auto& left, const auto& right) {
+					   return left.buffer == right.buffer && (left.buffer || left.data == right.data);
+				   });
+	}
+
+	void SelectDeferredLightingShader(RE::BSShader& shader, const RE::BSRenderPass* pass)
+	{
+		auto& state = *globals::state;
+		auto& variants = deferredLightingShaders;
+		auto* current = state.customPixelShader;
+		if (state.currentShader != &shader || !current) {
+			variants = {};
+			return;
+		}
+
+		using Cache = SIE::ShaderCache;
+		const auto descriptor = state.modifiedPixelDescriptor;
+		if (descriptor != variants.descriptor ||
+			(current != variants.standard && current != variants.withoutMeshVariation.shader))
+			variants = { .standard = current, .descriptor = descriptor };
+
+		auto* selected = variants.standard;
+		auto& engineShader = *globals::game::currentPixelShader;
+		const bool usesCustomConstantLayout = engineShader == current;
+		constexpr auto reflections = static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections);
+		constexpr auto meshVariation = static_cast<uint32_t>(State::ExtraFeatureDescriptors::TVMeshVariation);
+		if (Cache::SupportsMeshVariationVariant(descriptor) &&
+			(globals::deferred->deferredPass || (state.permutationData.ExtraShaderDescriptor & reflections)) &&
+			!(state.permutationData.ExtraFeatureDescriptor & meshVariation) && pass && pass->geometry) {
+			auto& variant = variants.withoutMeshVariation;
+			const auto expectedDescriptor = selected->id | Cache::kLightingNoMeshVariation;
+			if (variant.requestFrame != state.frameCount) {
+				variant.requestFrame = state.frameCount;
+				variant.shader = globals::shaderCache->GetPixelShader(shader, expectedDescriptor);
+			}
+			if (variant.shader && variant.shader->id == expectedDescriptor &&
+				(!usesCustomConstantLayout || variant.shader == current || HasCompatiblePixelConstants(*variants.standard, *variant.shader))) {
+				selected = variant.shader;
+			}
+		}
+
+		if (selected == current)
+			return;
+		globals::d3d::context->PSSetShader(Util::AsReal(selected->shader), nullptr, 0);
+		if (usesCustomConstantLayout)
+			engineShader = selected;
+		state.customPixelShader = selected;
+	}
+}
+
 void LightLimitFix::SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPoint3 a_initialPosition, bool a_cached)
 {
 	for (int eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++) {
@@ -1946,6 +2017,8 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* T
 	if (directionalSlotSafe)
 		func(This, Pass, RenderFlags);
 	singleton.BSLightingShader_SetupGeometry_After(Pass);
+	if (directionalSlotSafe)
+		SelectDeferredLightingShader(*This, Pass);
 }
 
 void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
