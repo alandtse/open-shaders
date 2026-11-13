@@ -347,7 +347,7 @@ void IBL::OnDraw()
 			captureFailed = true;
 			return;
 		}
-		auto* shader = globals::shaderCache->GetPixelShader(*currentShader, globals::state->modifiedPixelDescriptor);
+		auto* shader = globals::state->customPixelShader;
 		winrt::com_ptr<ID3D11PixelShader> boundShader;
 		context->PSGetShader(boundShader.put(), nullptr, nullptr);
 		if (!shader || Util::AsReal(shader->shader) != boundShader.get()) {
