@@ -303,7 +303,8 @@ void DX12SwapChain::RecreateWrappedResources(const DXGI_SWAP_CHAIN_DESC1& desc)
 
 	delete swapChainBufferWrapped;
 	delete uiBufferWrapped;
-	dlssgInputCopies = {};
+	for (auto& copy : dlssgInputCopies)
+		RetireDLSSGInputCopy(copy);
 	swapChainBufferWrapped = newSwapChainBuffer.release();
 	uiBufferWrapped = newUiBuffer.release();
 
@@ -440,6 +441,7 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 	}
 	DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
 	DX::ThrowIfFailed(commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr));
+	ReleaseRetiredDLSSGInputCopies();
 
 	// Copy shared texture to swap chain buffer
 	{
@@ -860,6 +862,27 @@ void DX12SwapChain::ClearUIBuffer()
 	d3d11Context->ClearRenderTargetView(uiBufferWrapped->rtv, clearColor);
 }
 
+void DX12SwapChain::RetireDLSSGInputCopy(winrt::com_ptr<ID3D12Resource>& a_copy)
+{
+	if (!a_copy)
+		return;
+	const auto& inputFence = globals::features::upscaling.streamlineDX12.dlssgInputFence;
+	retiredDLSSGInputCopies.push_back({ std::move(a_copy), *std::max_element(std::begin(frameFenceValues), std::end(frameFenceValues)), inputFence.GetFence(), inputFence.GetTarget() });
+}
+
+void DX12SwapChain::ReleaseRetiredDLSSGInputCopies()
+{
+	if (retiredDLSSGInputCopies.empty() || !interopFence.fence12)
+		return;
+	const uint64_t presentDone = interopFence.fence12->GetCompletedValue();
+	auto* inputFence = globals::features::upscaling.streamlineDX12.dlssgInputFence.GetFence();
+	const uint64_t dlssgDone = inputFence ? inputFence->GetCompletedValue() : 0;
+	std::erase_if(retiredDLSSGInputCopies, [&](const RetiredDLSSGInputCopy& a_retired) {
+		const bool dlssgFinished = !a_retired.dlssgFence || a_retired.dlssgFence != inputFence || dlssgDone >= a_retired.dlssgFenceValue;
+		return presentDone >= a_retired.presentFenceValue && dlssgFinished;
+	});
+}
+
 std::array<ID3D12Resource*, DX12SwapChain::kDLSSGInputCount> DX12SwapChain::CopyDLSSGInputs(ID3D12GraphicsCommandList* a_commandList)
 {
 	static constexpr const wchar_t* kCopyNames[kDLSSGInputCount] = {
@@ -883,7 +906,7 @@ std::array<ID3D12Resource*, DX12SwapChain::kDLSSGInputCount> DX12SwapChain::Copy
 		if (copy) {
 			const auto copyDesc = copy->GetDesc();
 			if (copyDesc.Width != sourceDesc.Width || copyDesc.Height != sourceDesc.Height || copyDesc.Format != sourceDesc.Format)
-				copy = nullptr;
+				RetireDLSSGInputCopy(copy);
 		}
 		if (!copy) {
 			sourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <vector>
 
 #include <Windows.Foundation.h>
 #include <stdio.h>
@@ -203,6 +204,21 @@ public:
 	 */
 	std::array<ID3D12Resource*, kDLSSGInputCount> CopyDLSSGInputs(ID3D12GraphicsCommandList* a_commandList);
 	std::array<winrt::com_ptr<ID3D12Resource>, kDLSSGInputCount> dlssgInputCopies;  ///< Read only by DLSS-G; see CopyDLSSGInputs.
+
+	/** @brief A replaced DLSS-G input copy, held until the present queue and DLSS-G have both passed its last use. */
+	struct RetiredDLSSGInputCopy
+	{
+		winrt::com_ptr<ID3D12Resource> resource;
+		uint64_t presentFenceValue = 0;
+		const ID3D12Fence* dlssgFence = nullptr;  ///< Compared only; a different live fence means DLSS-G was recreated after freeing its inputs.
+		uint64_t dlssgFenceValue = 0;
+	};
+	std::vector<RetiredDLSSGInputCopy> retiredDLSSGInputCopies;
+
+	/** @brief Moves a_copy to retiredDLSSGInputCopies instead of releasing it while GPU work may still use it. */
+	void RetireDLSSGInputCopy(winrt::com_ptr<ID3D12Resource>& a_copy);
+	/** @brief Releases retired copies whose last present-queue and DLSS-G uses have completed. */
+	void ReleaseRetiredDLSSGInputCopies();
 
 	// Resources needed by BackgroundBlur when D3D12 swap chain is active
 	struct BlurResources
