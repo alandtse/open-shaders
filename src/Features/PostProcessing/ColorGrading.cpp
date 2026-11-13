@@ -1185,6 +1185,7 @@ void ColorGrading::ReleaseActiveShaders()
 	{
 		std::lock_guard lock(shaderMutex);
 		Util::ClearShaders<ID3D11ComputeShader>({ lutgenCS });
+		Util::ClearShaders<ID3D11VertexShader>({ colorgradingVS });
 		Util::ClearShaders<ID3D11PixelShader>({ colorgradingPS });
 	}
 }
@@ -1217,10 +1218,13 @@ void ColorGrading::CompileShaders()
 	};
 
 	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\ColorGrading", shaderInfos);
+	const std::vector<VertexShaderCompileInfo> vertexInfos = {
+		{ &colorgradingVS, "colorgrading.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "VSColorGrading" },
+	};
 	const std::vector<PixelShaderCompileInfo> rasterInfos = {
 		{ &colorgradingPS, "colorgrading.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "PSColorGrading" },
 	};
-	CompileRasterShadersAsync(L"Data\\Shaders\\PostProcessing\\ColorGrading", {}, rasterInfos);
+	CompileRasterShadersAsync(L"Data\\Shaders\\PostProcessing\\ColorGrading", vertexInfos, rasterInfos);
 
 	recompileFlag = false;
 	curveNeedsUpdate = true;  // shader changed, curve must update
@@ -1229,7 +1233,7 @@ void ColorGrading::CompileShaders()
 bool ColorGrading::IsReadyForTonemapping() const
 {
 	std::lock_guard lock(shaderMutex);
-	return !recompileFlag && colorgradingPS && lutgenCS;
+	return !recompileFlag && colorgradingVS && colorgradingPS && lutgenCS;
 }
 
 PostProcessFeature::Gamut ColorGrading::GetDisplayGamut() const
@@ -1248,7 +1252,7 @@ void ColorGrading::Draw(TextureInfo& inout_tex)
 	if (recompileFlag)
 		ReloadActiveShaders();
 
-	if (!AllShadersReady({ &colorgradingPS }) || !AllShadersReady({ &lutgenCS }) || !owner || !owner->GetFullscreenVS())
+	if (!AllShadersReady({ &colorgradingVS }) || !AllShadersReady({ &colorgradingPS }) || !AllShadersReady({ &lutgenCS }) || !owner)
 		return;
 	if (settings.enableTonemap && globals::state->GetTonemapOwner() != State::TonemapOwner::kPostProcessing)
 		return;
@@ -1373,11 +1377,18 @@ void ColorGrading::Draw(TextureInfo& inout_tex)
 		{
 			PostProcessingRaster::RasterPass pass(context);
 			std::array<ID3D11ShaderResourceView*, 2> srvs = { inout_tex.srv, texLUT->srv.get() };
+			winrt::com_ptr<ID3D11Buffer> previousVertexCB;
+			context->VSGetConstantBuffers(1, 1, previousVertexCB.put());
+			const SKSE::stl::scope_exit restoreVertexCB([&] {
+				auto* previous = previousVertexCB.get();
+				context->VSSetConstantBuffers(1, 1, &previous);
+			});
+			context->VSSetConstantBuffers(1, 1, &cb);
 			context->PSSetConstantBuffers(1, 1, &cb);
 			context->PSSetSamplers(0, 1, samplers.data());
 			context->PSSetShaderResources(0, (UINT)(settings.skipLUT ? 1 : 2), srvs.data());
 			pass.SetTargets({ texColor->rtv.get() }, (float)texColor->desc.Width, (float)texColor->desc.Height);
-			pass.SetShaders(owner->GetFullscreenVS(), colorgradingPS.get());
+			pass.SetShaders(colorgradingVS.get(), colorgradingPS.get());
 			pass.Draw();
 		}
 
@@ -1410,11 +1421,18 @@ void ColorGrading::Draw(TextureInfo& inout_tex)
 			ID3D11Buffer* curveCB = colorCB->CB();
 			std::array<ID3D11SamplerState*, 1> curveSamplers = { linearSampler.get() };
 			std::array<ID3D11ShaderResourceView*, 2> curveSRVs = { texCurveInput->srv.get(), texLUT ? texLUT->srv.get() : nullptr };
+			winrt::com_ptr<ID3D11Buffer> previousVertexCB;
+			context->VSGetConstantBuffers(1, 1, previousVertexCB.put());
+			const SKSE::stl::scope_exit restoreVertexCB([&] {
+				auto* previous = previousVertexCB.get();
+				context->VSSetConstantBuffers(1, 1, &previous);
+			});
+			context->VSSetConstantBuffers(1, 1, &curveCB);
 			context->PSSetConstantBuffers(1, 1, &curveCB);
 			context->PSSetSamplers(0, 1, curveSamplers.data());
 			context->PSSetShaderResources(0, (UINT)(settings.skipLUT ? 1 : 2), curveSRVs.data());
 			pass.SetTargets({ texCurveOutput->rtv.get() }, (float)CurveSamples, 1.f);
-			pass.SetShaders(owner->GetFullscreenVS(), colorgradingPS.get());
+			pass.SetShaders(colorgradingVS.get(), colorgradingPS.get());
 			pass.Draw();
 		}
 
