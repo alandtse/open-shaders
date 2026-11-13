@@ -902,7 +902,7 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// Detours the engine's bulk shadow-light teardown (bypasses RemoveLight):
+	// Detours the engine's bulk shadow-light teardown:
 	// flags a session reset, then bounded-waits out any in-flight shadow render
 	// before letting the engine free -- freeing mid-render-walk zeroes nodes.
 	struct Hook_ClearLightArrays
