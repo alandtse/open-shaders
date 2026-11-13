@@ -158,16 +158,15 @@ namespace Skylighting
 					if (any(cellID < 0) || any((uint3)cellID >= ARRAY_DIM))
 						continue;
 
-					float3 cellCentreMS = (cellID + 0.5 - ARRAY_DIM / 2) * CELL_SIZE;
-
-					float3 trilinearWeights = 1 - abs(cellOffset - trilinearPos);
+					float3 probeOffset = cellOffset - trilinearPos;
+					float3 trilinearWeights = 1 - abs(probeOffset);
 					float triW = trilinearWeights.x * trilinearWeights.y * trilinearWeights.z;
 
 					uint3 cellTexID = (cellID + SharedData::skylightingSettings.ArrayOrigin.xyz) % ARRAY_DIM;
 
 					// https://handmade.network/p/75/monter/blog/p/7288-engine_work__global_illumination_with_irradiance_probes
 					// basic tangent checks
-					float tangentWeight = dot(normalize(cellCentreMS - positionMSAdjusted), normalWS) * 0.5 + 0.5;
+					float tangentWeight = dot(probeOffset, normalWS) * rsqrt(max(dot(probeOffset, probeOffset), EPSILON_WEIGHT_SUM)) * 0.5 + 0.5;
 					float shW = triW * tangentWeight;
 					shSum = SphericalHarmonics::Add(shSum, SphericalHarmonics::Scale(SkylightingProbeArray[cellTexID], shW));
 					shWsum += shW;
