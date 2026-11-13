@@ -57,9 +57,7 @@ public:
 	sl::DLSSGMode lastSentDLSSGMode = sl::DLSSGMode::eOff;
 	uint32_t lastSentDLSSGFrames = 0;
 	float lastSentDLSSGTargetFPS = -1.0f;
-	DLSSGInputFenceTracker<ID3D12Fence> dlssgInputFence;    ///< DLSS-G input fence and the value of the last present (DX12 instance only).
-	winrt::handle dlssgInputFenceEvent;                     ///< Reused event for the CPU wait on dlssgInputFence.
-	static constexpr DWORD kDLSSGInputWaitTimeoutMs = 100;  ///< Caps the wait so a lost fence signal cannot hang the game.
+	DLSSGInputFenceTracker<ID3D12Fence> dlssgInputFence;  ///< DLSS-G input fence and the value of the last present (DX12 instance only).
 	bool featureReflex = false;
 	bool featurePCL = false;
 	bool reflexSupportedOnCurrentAdapter = false;
@@ -200,8 +198,11 @@ public:
 	void EmitPCLMarker(sl::PCLMarker a_marker);
 	/** @brief Records the input fence value DLSS-G signals once it has consumed the frame just presented. */
 	void TrackDLSSGInputFence();
-	/** @brief Blocks the CPU until DLSS-G has consumed the last presented inputs, before D3D11 overwrites them. */
-	void WaitForDLSSGInputs();
+	/**
+	 * @brief Makes a_queue wait, on the GPU, until DLSS-G has read the inputs of the last present.
+	 * Submit before work that overwrites DLSS-G's input copies; skipped when DLSS-G is not behind.
+	 */
+	void QueueWaitForDLSSGInputs(ID3D12CommandQueue* a_queue);
 	void TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
 		ID3D12Resource* depth, ID3D12Resource* mvec, ID3D12Resource* hudLessColor,
 		ID3D12Resource* uiColorAndAlpha, uint32_t width, uint32_t height);

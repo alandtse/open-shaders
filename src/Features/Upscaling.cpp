@@ -2496,9 +2496,6 @@ bool Upscaling::CopySharedD3D12Resources()
 	if (!vs || !ps || !dx12SwapChain.motionVectorBufferShared12 || !dx12SwapChain.depthBufferShared12)
 		return false;
 
-	if (dx12SwapChain.useDLSSG)
-		streamlineDX12.WaitForDLSSGInputs();
-
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
 
@@ -3563,11 +3560,6 @@ void Upscaling::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
 	auto& upscaling = globals::features::upscaling;
 	if (!upscaling.d3d12SwapChainActive && globals::features::hdrDisplay.loaded) {
 		globals::features::hdrDisplay.SetUIBuffer();
-	}
-
-	if (upscaling.UsesDLSSGFrameGen()) {
-		upscaling.streamlineDX12.WaitForDLSSGInputs();
-		upscaling.dx12SwapChain.ClearUIBuffer();
 	}
 
 	func(a1);

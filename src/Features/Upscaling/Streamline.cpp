@@ -1079,29 +1079,16 @@ void Streamline::TrackDLSSGInputFence()
 	dlssgInputFence.Track(static_cast<ID3D12Fence*>(state.inputsProcessingCompletionFence), state.lastPresentInputsProcessingCompletionFenceValue);
 }
 
-void Streamline::WaitForDLSSGInputs()
+void Streamline::QueueWaitForDLSSGInputs(ID3D12CommandQueue* a_queue)
 {
 	auto* fence = dlssgInputFence.GetFence();
-	if (!fence || !dlssgInputFence.IsBehind(fence->GetCompletedValue()))
+	if (!a_queue || !fence || !dlssgResourcesRetained || !dlssgInputFence.IsBehind(fence->GetCompletedValue()))
 		return;
 
-	if (!dlssgInputFenceEvent)
-		dlssgInputFenceEvent.attach(CreateEventW(nullptr, FALSE, FALSE, nullptr));
-	if (!dlssgInputFenceEvent || FAILED(fence->SetEventOnCompletion(dlssgInputFence.GetTarget(), dlssgInputFenceEvent.get())))
-		return;
-
-	// The event can carry a stale signal from an earlier timed-out wait, so a wake only means recheck.
-	const ULONGLONG deadline = GetTickCount64() + kDLSSGInputWaitTimeoutMs;
-	while (dlssgInputFence.IsBehind(fence->GetCompletedValue())) {
-		const ULONGLONG now = GetTickCount64();
-		if (now >= deadline || WaitForSingleObject(dlssgInputFenceEvent.get(), static_cast<DWORD>(deadline - now)) != WAIT_OBJECT_0)
-			break;
-	}
-
-	if (dlssgInputFence.IsBehind(fence->GetCompletedValue())) {
-		static uint32_t timeoutCount = 0;
-		if (++timeoutCount == 1 || timeoutCount % 60 == 0)
-			logger::warn("[Streamline DX12] DLSS-G input fence wait gave up after {} ms ({} times)", kDLSSGInputWaitTimeoutMs, timeoutCount);
+	if (FAILED(a_queue->Wait(fence, dlssgInputFence.GetTarget()))) {
+		static bool errorLogged = false;
+		if (!std::exchange(errorLogged, true))
+			logger::warn("[Streamline DX12] Could not queue a wait on the DLSS-G input fence");
 	}
 }
 
