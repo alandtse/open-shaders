@@ -3506,11 +3506,12 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		transmissionColor += pointLightOutput.transmission;
 	}
 
-#		else
+#		elif !defined(LLF_NO_LOCAL_LIGHTS) || defined(LLFDEBUG)
 
+#			if !defined(LLF_SINGLE_CLUSTER_LIGHT) || defined(LLFDEBUG)
 	uint numClusteredLights = 0;
-	uint totalLightCount = LightLimitFix::NumStrictLights;
 	uint clusterIndex = 0;
+	uint totalLightCount = LightLimitFix::NumStrictLights;
 	uint lightOffset = 0;
 	// The viewmodel has no meaningful cluster cell, so it takes StrictLights
 	// exclusively -- mixing in the grid would re-add unrelated distant lights.
@@ -3519,6 +3520,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		totalLightCount += numClusteredLights;
 		lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
 	}
+#			endif
 
 #			if defined(LLFDEBUG)
 	LightLimitFix::LLFDebugInfo llfDebug = LightLimitFix::LLFDebugInfoInit();
@@ -3543,6 +3545,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	}
 #			endif
 
+#			if defined(LLF_SINGLE_CLUSTER_LIGHT) && !defined(LLFDEBUG)
+	[unroll] for (uint lightIndex = 0; lightIndex < 1; lightIndex++)
+	{
+		LightLimitFix::Light light = LightLimitFix::lights[0];
+#			else
 	[loop] for (uint lightIndex = 0; lightIndex < totalLightCount; lightIndex++)
 	{
 		LightLimitFix::Light light;
@@ -3555,8 +3562,18 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 			if (LightLimitFix::IsLightIgnored(light))
 				continue;
 		}
+#			endif
 
 		float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WorldPosition.xyz;
+#			if defined(LLF_SINGLE_CLUSTER_LIGHT) && !defined(LLFDEBUG)
+		const float reach = max(light.radius, rcp(light.invRadius)) * (1.0 + 1e-5) + 0.01;
+		[branch] if (any(abs(lightDirection) > reach)) continue;
+		uint clusterIndex = 0;
+		if (!LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex))
+			continue;
+		if (LightLimitFix::lightGrid[clusterIndex].lightCount == 0 || LightLimitFix::IsLightIgnored(light))
+			continue;
+#			endif
 		float lightDist = length(lightDirection);
 
 		float intensityMultiplier = LightLimitFix::GetAttenuation(lightDist, light);
@@ -3569,12 +3586,14 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 		float shadowComponent = 1.0;
 		bool shadowCoverage = false;
+#			if !defined(LLF_NO_LOCAL_LIGHT_SHADOWS)
 		if (inWorld && !inReflection) {
 			if (light.lightFlags & LightLimitFix::LightFlags::Shadow) {
 				shadowComponent = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS + (localShadowPosition - input.WorldPosition.xyz), rotationMatrix, shadowCoverage);
 				lightShadow *= shadowComponent;
 			}
 		}
+#			endif
 
 #			if defined(LLFDEBUG)
 		uint llfShadowType = (light.lightFlags & LightLimitFix::LightFlags::Shadow &&
@@ -3600,7 +3619,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 			// Clustered lights need a normalized falloff to compare against MinIntensity;
 			// recompute it, since GetAttenuation isn't [0,1]-normalized for inverse-square
 			// lights and the threshold would mean different things otherwise.
+#				if defined(LLF_SINGLE_CLUSTER_LIGHT) && !defined(LLFDEBUG)
+			const bool isClusteredLight = true;
+#				else
 			const bool isClusteredLight = lightIndex >= LightLimitFix::NumStrictLights;
+#				endif
 			bool passesIntensityGate = !isClusteredLight;
 			if (isClusteredLight) {
 				float falloffFactor = saturate(lightDist * light.invRadius);
