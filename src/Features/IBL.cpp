@@ -184,7 +184,7 @@ void IBL::RestoreDefaultSettings()
 	settings = {};
 }
 
-IBL::PerFrame IBL::GetCommonBufferData() const
+IBL::PerFrame IBL::PrepareFrameData()
 {
 	const bool sceneDisabled = IsDisabledForCurrentScene();
 	PerFrame data = {
@@ -222,6 +222,12 @@ IBL::PerFrame IBL::GetCommonBufferData() const
 	const bool useStatic = settings.UseStaticIBL && !globals::state->inWorld && !globals::state->activeReflections;
 	if (!useStatic && !dynamicIBLValid)
 		data.EnableIBL = 0;
+
+	constexpr auto luminanceRatio = static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio);
+	auto& flags = globals::state->deferredLightingShaderFlags;
+	flags &= ~luminanceRatio;
+	if (loaded && data.EnableIBL && data.DALCMode == kDALCLuminanceRatioMode)
+		flags |= luminanceRatio;
 
 	return data;
 }
