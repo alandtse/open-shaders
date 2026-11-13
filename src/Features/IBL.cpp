@@ -2,6 +2,7 @@
 
 #include "Deferred.h"
 #include "DynamicCubemaps.h"
+#include "LODShadows.h"
 #include "LinearLighting.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -280,6 +281,12 @@ std::function<void()> IBL::OnReflectionsRenderBegin()
 {
 	if (!reflectionRadiance || !globals::shaderCache->IsEnabled() || IsDisabledForCurrentScene() ||
 		Util::IsInterior() || (!settings.EnableIBL && !IsManagedByENB())) {
+		validFaces = 0;
+		return nullptr;
+	}
+
+	const auto& lodShadows = globals::features::lodShadows;
+	if (!globals::game::isVR && !lodShadows.loaded) {
 		validFaces = 0;
 		return nullptr;
 	}
