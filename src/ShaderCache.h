@@ -1057,6 +1057,8 @@ namespace SIE
 			MTLandLODBlend = 19,
 		};
 
+		static constexpr uint32_t kVertexNoTreeBend = 1u << 6;
+
 		enum class LightingShaderFlags : uint32_t
 		{
 			VC = 1 << 0,
