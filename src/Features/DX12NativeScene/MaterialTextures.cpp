@@ -498,7 +498,7 @@ namespace DX12Native
                 const bool externalReference = status == "referenced";
                 if (!externalReference && status != "cached")
                     throw std::runtime_error("Unresolved texture source: " + status.substr(0, 128));
-                const auto texturePath = entry.at("path").get<std::string>();
+                const auto texturePath = entry.at("path").template get<std::string>();
                 std::filesystem::path loosePath;
                 std::string archivePath;
                 std::vector<uint8_t> bytes;
@@ -523,7 +523,7 @@ namespace DX12Native
                         hash = std::move(loose.second);
                     }
                 } else {
-                    hash = entry.at("sha256").get<std::string>();
+                    hash = entry.at("sha256").template get<std::string>();
                     if (entry.at("file") != "textures/" + hash + ".dds")
                         throw std::runtime_error("Texture cache path mismatch");
                     std::ranges::transform(hash, hash.begin(),
