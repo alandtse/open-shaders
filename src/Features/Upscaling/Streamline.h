@@ -58,6 +58,8 @@ public:
 	uint32_t lastSentDLSSGFrames = 0;
 	float lastSentDLSSGTargetFPS = -1.0f;
 	DLSSGInputFenceTracker<ID3D12Fence> dlssgInputFence;  ///< DLSS-G input fence and the value of the last present (DX12 instance only).
+	uint64_t dlssgInputTargetsTracked = 0;                ///< Successful TrackDLSSGInputFence calls; tells a later target from an older one.
+	bool dlssgInputTargetStale = false;                   ///< The last present's state query failed, so dlssgInputFence holds an older present's target.
 	bool featureReflex = false;
 	bool featurePCL = false;
 	bool reflexSupportedOnCurrentAdapter = false;

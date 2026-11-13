@@ -212,6 +212,8 @@ public:
 		uint64_t presentFenceValue = 0;
 		const ID3D12Fence* dlssgFence = nullptr;  ///< Compared only; a different live fence means DLSS-G was recreated after freeing its inputs.
 		uint64_t dlssgFenceValue = 0;
+		uint64_t dlssgTargetsTracked = 0;  ///< When dlssgTargetStale, a target tracked after this count replaces dlssgFenceValue.
+		bool dlssgTargetStale = false;
 	};
 	std::vector<RetiredDLSSGInputCopy> retiredDLSSGInputCopies;
 

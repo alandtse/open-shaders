@@ -1073,10 +1073,14 @@ void Streamline::TrackDLSSGInputFence()
 		return;
 
 	sl::DLSSGState state{};
-	if (SL_FAILED(result, slDLSSGGetState(viewport, state, nullptr)))
+	if (SL_FAILED(result, slDLSSGGetState(viewport, state, nullptr))) {
+		dlssgInputTargetStale = true;
 		return;
+	}
 
 	dlssgInputFence.Track(static_cast<ID3D12Fence*>(state.inputsProcessingCompletionFence), state.lastPresentInputsProcessingCompletionFenceValue);
+	dlssgInputTargetStale = false;
+	++dlssgInputTargetsTracked;
 }
 
 void Streamline::QueueWaitForDLSSGInputs(ID3D12CommandQueue* a_queue)

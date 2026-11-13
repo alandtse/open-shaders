@@ -866,8 +866,9 @@ void DX12SwapChain::RetireDLSSGInputCopy(winrt::com_ptr<ID3D12Resource>& a_copy)
 {
 	if (!a_copy)
 		return;
-	const auto& inputFence = globals::features::upscaling.streamlineDX12.dlssgInputFence;
-	retiredDLSSGInputCopies.push_back({ std::move(a_copy), *std::max_element(std::begin(frameFenceValues), std::end(frameFenceValues)), inputFence.GetFence(), inputFence.GetTarget() });
+	const auto& streamline = globals::features::upscaling.streamlineDX12;
+	retiredDLSSGInputCopies.push_back({ std::move(a_copy), *std::max_element(std::begin(frameFenceValues), std::end(frameFenceValues)),
+		streamline.dlssgInputFence.GetFence(), streamline.dlssgInputFence.GetTarget(), streamline.dlssgInputTargetsTracked, streamline.dlssgInputTargetStale });
 }
 
 void DX12SwapChain::ReleaseRetiredDLSSGInputCopies()
@@ -875,11 +876,17 @@ void DX12SwapChain::ReleaseRetiredDLSSGInputCopies()
 	if (retiredDLSSGInputCopies.empty() || !interopFence.fence12)
 		return;
 	const uint64_t presentDone = interopFence.fence12->GetCompletedValue();
-	auto* inputFence = globals::features::upscaling.streamlineDX12.dlssgInputFence.GetFence();
+	const auto& streamline = globals::features::upscaling.streamlineDX12;
+	auto* inputFence = streamline.dlssgInputFence.GetFence();
 	const uint64_t dlssgDone = inputFence ? inputFence->GetCompletedValue() : 0;
 	std::erase_if(retiredDLSSGInputCopies, [&](const RetiredDLSSGInputCopy& a_retired) {
-		const bool dlssgFinished = !a_retired.dlssgFence || a_retired.dlssgFence != inputFence || dlssgDone >= a_retired.dlssgFenceValue;
-		return presentDone >= a_retired.presentFenceValue && dlssgFinished;
+		if (presentDone < a_retired.presentFenceValue)
+			return false;
+		if (!a_retired.dlssgFence || a_retired.dlssgFence != inputFence)
+			return true;
+		if (!a_retired.dlssgTargetStale)
+			return dlssgDone >= a_retired.dlssgFenceValue;
+		return streamline.dlssgInputTargetsTracked > a_retired.dlssgTargetsTracked && dlssgDone >= streamline.dlssgInputFence.GetTarget();
 	});
 }
 
