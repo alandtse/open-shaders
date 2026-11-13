@@ -203,7 +203,7 @@ WindPermutationContribution Wind::GetPermutationContribution() const
 	};
 }
 
-WindSharedData Wind::GetSharedWindData() const
+WindSharedData Wind::GetSharedWindData()
 {
 	WindSharedData data{};
 	data.tuning = windFieldTuning;
@@ -238,14 +238,13 @@ WindSharedData Wind::GetSharedWindData() const
 		grassState.springFieldAvailable[0] ? grassState.springWorldSizes[0] : 0.0f,
 		DirectX::XMConvertToRadians(settings.grassWindMaximumTilt)
 	};
-	data.activeCounts = {
-		activeTransientWindImpulseCount,
-		previousActiveTransientWindImpulseCount,
-		0u,
-		0u
-	};
-	data.transientImpulses = transientWindImpulses;
-	data.previousTransientImpulses = previousTransientWindImpulses;
+	{
+		const std::lock_guard lock(transientWindImpulseMutex);
+		data.activeCounts = { activeTransientWindImpulseCount, previousActiveTransientWindImpulseCount, 0u, 0u };
+		data.transientImpulses = transientWindImpulses;
+		data.previousTransientImpulses = previousTransientWindImpulses;
+	}
+	treeState.uploadedTransientCount = data.activeCounts.front();
 	return data;
 }
 

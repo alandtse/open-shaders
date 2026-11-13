@@ -37,6 +37,7 @@ namespace TreeWindSpring
 		uint TransientFieldMask;
 		float TransientSpringFrequency;
 		float TransientSpringDamping;
+		uint TransientHistoryMask;
 	};
 
 	float GetTransientHeightHalfRange(uint fieldIndex)
