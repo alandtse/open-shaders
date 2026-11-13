@@ -10,8 +10,6 @@
 #include "Utils/Game.h"
 #include "Utils/PerfUtils.h"
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(LODShadows::Settings, Enabled, UpdateBudgetMs, DepthBias)
-
 namespace
 {
 	constexpr uint32_t kIndicesPerTriangle = 3;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Buffer.h"
+#include "LODShadowSettings.h"
 #include "LODShadowUpdateBudget.h"
 #include "Utils/GpuTimestamps.h"
 #include "Utils/LazyShader.h"
@@ -20,12 +21,8 @@ struct LODShadows : Feature
 	bool IsCore() const override { return true; }
 	std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override;
 
-	struct Settings
-	{
-		bool Enabled = true;
-		float UpdateBudgetMs = 0.1f;
-		float DepthBias = 8.0f;
-	} settings;
+	using Settings = LODShadowSettings;
+	Settings settings;
 
 	/** @brief Loads and validates runtime settings. */
 	void LoadSettings(json& a_json) override;
