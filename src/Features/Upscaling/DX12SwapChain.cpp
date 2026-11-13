@@ -882,11 +882,13 @@ void DX12SwapChain::ReleaseRetiredDLSSGInputCopies()
 	std::erase_if(retiredDLSSGInputCopies, [&](const RetiredDLSSGInputCopy& a_retired) {
 		if (presentDone < a_retired.presentFenceValue)
 			return false;
+		if (!streamline.dlssgResourcesRetained)
+			return true;
+		if (a_retired.dlssgTargetStale)
+			return inputFence && streamline.dlssgInputTargetsTracked > a_retired.dlssgTargetsTracked && dlssgDone >= streamline.dlssgInputFence.GetTarget();
 		if (!a_retired.dlssgFence || a_retired.dlssgFence != inputFence)
 			return true;
-		if (!a_retired.dlssgTargetStale)
-			return dlssgDone >= a_retired.dlssgFenceValue;
-		return streamline.dlssgInputTargetsTracked > a_retired.dlssgTargetsTracked && dlssgDone >= streamline.dlssgInputFence.GetTarget();
+		return dlssgDone >= a_retired.dlssgFenceValue;
 	});
 }
 
