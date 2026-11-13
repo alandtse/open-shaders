@@ -879,13 +879,21 @@ void DX12SwapChain::ReleaseRetiredDLSSGInputCopies()
 	const auto& streamline = globals::features::upscaling.streamlineDX12;
 	auto* inputFence = streamline.dlssgInputFence.GetFence();
 	const uint64_t dlssgDone = inputFence ? inputFence->GetCompletedValue() : 0;
+	// Latch the first target tracked after a stale retirement; waiting on the newest one never ends while DLSS-G lags.
+	for (auto& retired : retiredDLSSGInputCopies) {
+		if (retired.dlssgTargetStale && inputFence && streamline.dlssgInputTargetsTracked > retired.dlssgTargetsTracked) {
+			retired.dlssgFence = inputFence;
+			retired.dlssgFenceValue = streamline.dlssgInputFence.GetTarget();
+			retired.dlssgTargetStale = false;
+		}
+	}
 	std::erase_if(retiredDLSSGInputCopies, [&](const RetiredDLSSGInputCopy& a_retired) {
 		if (presentDone < a_retired.presentFenceValue)
 			return false;
 		if (!streamline.dlssgResourcesRetained)
 			return true;
 		if (a_retired.dlssgTargetStale)
-			return inputFence && streamline.dlssgInputTargetsTracked > a_retired.dlssgTargetsTracked && dlssgDone >= streamline.dlssgInputFence.GetTarget();
+			return false;
 		if (!a_retired.dlssgFence || a_retired.dlssgFence != inputFence)
 			return true;
 		return dlssgDone >= a_retired.dlssgFenceValue;
