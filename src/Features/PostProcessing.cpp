@@ -21,6 +21,7 @@
 #include "Features/PostProcessing/PostProcessingUI.h"
 #include "Features/Upscaling.h"
 
+#include <algorithm>
 #include <format>
 
 namespace
@@ -865,15 +866,36 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_o
 			pipe->UpdateAutoEnabled();
 	}
 
+	const auto canDraw = [&](const auto& pipe) {
+		return pipe && pipe->IsActive() && !(inMainLoadingMenu && pipe->DisableInMainLoadingMenu()) &&
+		       (!pipe->DrawBeforeUpscaling() || !upscaling.loaded);
+	};
+	const auto gradingIndex = static_cast<size_t>(FeaturePipelineIndex::ColorGrading);
+	const auto firstLaterFeature = pipeline.begin() + gradingIndex + 1;
+	const auto canDrawAfterGrading = [&](const auto& pipe) { return canDraw(pipe) && pipe->DrawAfterColorGrading(); };
+	const bool directTarget = !hasInput && !inMainLoadingMenu &&
+	                          std::none_of(firstLaterFeature, pipeline.end(), canDraw) &&
+	                          std::none_of(pipeline.begin(), firstLaterFeature, canDrawAfterGrading);
+	bool gradingWroteAlternate = false;
+
 	// go through each fx
 	for (auto& pipe : pipeline) {
-		if (pipe && pipe->IsActive() && !pipe->DrawAfterColorGrading() && !(inMainLoadingMenu && pipe->DisableInMainLoadingMenu()) && (!pipe->DrawBeforeUpscaling() || !upscaling.loaded)) {
-			DrawFeature(*pipe, lastTexColor);
+		if (!canDraw(pipe) || pipe->DrawAfterColorGrading())
+			continue;
+		if (directTarget && pipe == pipeline[gradingIndex]) {
+			const auto gradingTarget = PostProcessFeature::TextureInfo{
+				Util::AsReal(gameTexMain.texture), Util::AsReal(gameTexMain.SRV)
+			};
+			gradingWroteAlternate = static_cast<ColorGrading&>(*pipe).DrawToTarget(
+				lastTexColor, gradingTarget, Util::AsReal(gameTexMain.RTV),
+				Util::AsReal(gameTexMainAlt.texture), Util::AsReal(gameTexMainAlt.RTV));
+			continue;
 		}
+		DrawFeature(*pipe, lastTexColor);
 	}
 
 	for (auto& pipe : pipeline) {
-		if (pipe && pipe->IsActive() && pipe->DrawAfterColorGrading() && !(inMainLoadingMenu && pipe->DisableInMainLoadingMenu()) && (!pipe->DrawBeforeUpscaling() || !upscaling.loaded)) {
+		if (canDraw(pipe) && pipe->DrawAfterColorGrading()) {
 			DrawFeature(*pipe, lastTexColor);
 		}
 	}
@@ -901,8 +923,9 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_o
 		}
 	} else {
 		CopyToRenderTarget(gameTexMain, useMainCopy ? mainCopyConvertTex : mainConvertTex, lastTexColor.tex, lastTexColor.srv, conversion);
-		CopyToRenderTarget(gameTexMainAlt, useMainCopy ? mainConvertTex : mainCopyConvertTex,
-			Util::AsReal(gameTexMain.texture), Util::AsReal(gameTexMain.SRV), CopyCB{});
+		if (!gradingWroteAlternate || conversion.gamma != 1.f || conversion.inputGamut != conversion.outputGamut)
+			CopyToRenderTarget(gameTexMainAlt, useMainCopy ? mainConvertTex : mainCopyConvertTex,
+				Util::AsReal(gameTexMain.texture), Util::AsReal(gameTexMain.SRV), CopyCB{});
 	}
 
 	isrefraction = false;
