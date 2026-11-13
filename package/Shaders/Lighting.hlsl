@@ -4,6 +4,10 @@
 #	undef SNOW_COVER
 #endif
 
+#if defined(SNOW_COVER_INACTIVE)
+#	undef SNOW_COVER
+#endif
+
 #define LIGHTING
 
 #include "Common/Color.hlsli"

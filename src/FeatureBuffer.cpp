@@ -95,5 +95,5 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::grassCollision.GetCommonBufferData(),
 		globals::features::horizonFix.GetCommonBufferData(),
 		globals::features::rainRefraction.GetCommonBufferData(),
-		globals::features::snowCover.GetCommonBufferData(a_inWorld));
+		globals::features::snowCover.PrepareFrameData(a_inWorld));
 }
