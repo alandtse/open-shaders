@@ -45,7 +45,10 @@ namespace
 	static_assert(offsetof(CameraStateEntry, previousPosAdjust) == 0x278);
 	static_assert(sizeof(CameraStateEntry) == 0x290);
 
-	/** @brief The world camera's frame from the engine camera table, or nullopt in VR or before the world camera exists. */
+	/**
+	 * @brief The world camera's frame from the engine camera table, which keys entries on (camera, useJitter):
+	 * the jittered entry the scene draws with, else the unjittered one; nullopt in VR or when neither exists.
+	 */
 	std::optional<UpscalingCamera::CameraFrame> GetWorldCameraFrame()
 	{
 		const auto* camera = RE::Main::WorldRootCamera();
@@ -53,16 +56,21 @@ namespace
 			return std::nullopt;
 		const auto& table = globals::game::graphicsState->GetRuntimeData().cameraDataCacheA;
 		const auto* entries = reinterpret_cast<const CameraStateEntry*>(table.data());
+		const CameraStateEntry* match = nullptr;
 		for (std::uint32_t i = 0; i < table.size(); ++i) {
 			const auto& entry = entries[i];
 			if (entry.referenceCamera != camera)
 				continue;
-			const auto& view = entry.viewData;
-			return UpscalingCamera::FromCameraTable(view.viewMat, view.viewProjMatrixUnjittered, view.previousViewProjMatrixUnjittered,
-				float3(entry.posAdjust.x, entry.posAdjust.y, entry.posAdjust.z),
-				float3(entry.previousPosAdjust.x, entry.previousPosAdjust.y, entry.previousPosAdjust.z));
+			match = &entry;
+			if (entry.useJitter)
+				break;
 		}
-		return std::nullopt;
+		if (!match)
+			return std::nullopt;
+		const auto& view = match->viewData;
+		return UpscalingCamera::FromCameraTable(view.viewMat, view.viewProjMatrixUnjittered, view.previousViewProjMatrixUnjittered,
+			float3(match->posAdjust.x, match->posAdjust.y, match->posAdjust.z),
+			float3(match->previousPosAdjust.x, match->previousPosAdjust.y, match->previousPosAdjust.z));
 	}
 }
 
