@@ -2,9 +2,9 @@
 
 #include "Globals.h"
 #include "GraphicsInterop.h"
+#include "NativeCharacterIsolatedTLAS.h"
 #include "PreparedScene.h"
 #include "ShadowBindings.h"
-#include "NativeCharacterIsolatedTLAS.h"
 #include "VideoMemoryBudget.h"
 #include <span>
 
@@ -22,15 +22,15 @@ namespace DX12Native
 	{
 		std::shared_ptr<const TopLevel> scene;
 		std::shared_ptr<const ShadowBindings> bindings;
-        // Retained through native shadow GPU completion and every consumer.
-        std::shared_ptr<const CharacterIsolatedTLAS> characterCasters;
+		// Retained through native shadow GPU completion and every consumer.
+		std::shared_ptr<const CharacterIsolatedTLAS> characterCasters;
 		std::unique_ptr<WrappedResource> mask, lights;
 		DirectX::SimpleMath::Matrix rayProjInverse, rayViewInverse;
-        winrt::com_ptr<ID3D12Resource> cameraConstants; // Native DX12 camera matrices.
-        // Independent GPU counter; copied back only after the shadow fence.
-        winrt::com_ptr<ID3D12Resource> characterHitCounter;
-        winrt::com_ptr<ID3D12Resource> characterHitZero;
-        winrt::com_ptr<ID3D12Resource> characterHitReadback;
+		winrt::com_ptr<ID3D12Resource> cameraConstants;  // Native DX12 camera matrices.
+		// Independent GPU counter; copied back only after the shadow fence.
+		winrt::com_ptr<ID3D12Resource> characterHitCounter;
+		winrt::com_ptr<ID3D12Resource> characterHitZero;
+		winrt::com_ptr<ID3D12Resource> characterHitReadback;
 		winrt::com_ptr<ID3D12CommandAllocator> allocator;
 		winrt::com_ptr<ID3D12GraphicsCommandList> commands;
 		GraphicsBackend retainedBackend;
@@ -55,7 +55,7 @@ namespace DX12Native
 		/** @brief Attempts current-frame shadow tracing without waiting for bindings or GPU work. */
 		void Dispatch(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, std::shared_ptr<const ShadowBindings> a_bindings, std::span<const PreparedPointLight> a_lights,
 			const globals::FrameBuffer& a_camera, std::array<uint32_t, 2> a_size, uint32_t a_frame, uint64_t a_budget, const ShadowTraceControls& a_controls,
-            std::shared_ptr<const CharacterIsolatedTLAS> a_characterCasters = {});
+			std::shared_ptr<const CharacterIsolatedTLAS> a_characterCasters = {});
 		/** @brief Returns a matching mask; consumers must wait on its completion fence. */
 		std::shared_ptr<const ShadowFrame> Get(uint32_t a_frame) const;
 		/** @brief Retains an offered mask until the registered consumer fence completes. */
@@ -70,6 +70,7 @@ namespace DX12Native
 		const std::string& Status() const { return status; }
 		/** @brief Reports submissions and fence completion without asserting visual consumption. */
 		json GetDiagnostics() const;
+
 	private:
 		bool Initialize(const GraphicsBackend& a_backend);
 		void CreatePipeline();

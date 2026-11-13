@@ -138,7 +138,7 @@ namespace globals
 		extern LinearLighting linearLighting;
 		extern LODBlending lodBlending;
 		extern DX12NativeScene dx12NativeScene;
-        extern DX12Resources dx12Resources;
+		extern DX12Resources dx12Resources;
 		extern NativeLightingFeature nativeLighting;
 		extern NativeCompositeFeature nativeComposite;
 		extern NativePBRFeature nativePBR;

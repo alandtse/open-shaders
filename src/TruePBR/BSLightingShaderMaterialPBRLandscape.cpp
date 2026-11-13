@@ -110,7 +110,7 @@ void BSLightingShaderMaterialPBRLandscape::ReceiveValuesFromRootMaterial(bool sk
 	}
 	for (uint32_t textureIndex = 0; textureIndex < std::min(numLandscapeTextures, NumTiles); ++textureIndex) {
 		changed |= landscapeBaseColorTextures[textureIndex] == nullptr || landscapeNormalTextures[textureIndex] == nullptr ||
-			landscapeDisplacementTextures[textureIndex] == nullptr || landscapeRMAOSTextures[textureIndex] == nullptr;
+		           landscapeDisplacementTextures[textureIndex] == nullptr || landscapeRMAOSTextures[textureIndex] == nullptr;
 		if (landscapeBaseColorTextures[textureIndex] == nullptr) {
 			landscapeBaseColorTextures[textureIndex] = stateData.defaultTextureBlack;
 		}
@@ -124,7 +124,8 @@ void BSLightingShaderMaterialPBRLandscape::ReceiveValuesFromRootMaterial(bool sk
 			landscapeRMAOSTextures[textureIndex] = stateData.defaultTextureWhite;
 		}
 	}
-	if (changed) globals::features::truePBR.nativeRegistry.MarkDirty(this);
+	if (changed)
+		globals::features::truePBR.nativeRegistry.MarkDirty(this);
 }
 
 uint32_t BSLightingShaderMaterialPBRLandscape::GetTextures(RE::NiSourceTexture** textures)

@@ -179,8 +179,11 @@ add_custom_target(
 # so parallel Visual Studio builds cannot launch a second compiler for the
 # same AddLighting/ShadowLayer/DXR bytecode. This keeps incremental shader
 # staging independent from full C++ compilation.
-foreach(_compiled_shader_target IN ITEMS
-    DX12NativeSceneDXIL NativeLightingDXIL NativeCompositeDXIL)
+foreach(
+    _compiled_shader_target
+    IN
+    ITEMS DX12NativeSceneDXIL NativeLightingDXIL NativeCompositeDXIL
+)
     if(TARGET ${_compiled_shader_target})
         add_dependencies(prepare_shaders ${_compiled_shader_target})
     endif()

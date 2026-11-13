@@ -34,30 +34,42 @@ namespace NativePBR
 		std::unordered_map<std::string, InstanceProperties> properties;
 		std::unordered_set<std::string> conflicts;
 		for (const auto& item : a_prepared)
-			if (!item.referenceKey.empty() && !item.shapeName.empty()) ++preparedCounts[key(item.referenceKey, item.shapeName)];
+			if (!item.referenceKey.empty() && !item.shapeName.empty())
+				++preparedCounts[key(item.referenceKey, item.shapeName)];
 		for (const auto& hint : a_hints) {
 			const auto hintKey = key(hint.referenceKey, hint.shapeName);
-			if (hint.propertiesConflict) conflicts.insert(hintKey);
+			if (hint.propertiesConflict)
+				conflicts.insert(hintKey);
 			const auto [prior, inserted] = properties.try_emplace(hintKey, hint.properties);
-			if (!inserted && prior->second != hint.properties) conflicts.insert(hintKey);
+			if (!inserted && prior->second != hint.properties)
+				conflicts.insert(hintKey);
 			auto& values = materials[hintKey];
-			if (std::find(values.begin(), values.end(), hint.materialIdentity) == values.end()) values.push_back(hint.materialIdentity);
+			if (std::find(values.begin(), values.end(), hint.materialIdentity) == values.end())
+				values.push_back(hint.materialIdentity);
 		}
 		InstanceCoverage result;
 		result.total = a_prepared.size();
 		result.recipeGenerationAvailable = a_recipes != nullptr;
-		if (a_recipes) result.recipeRevision = a_recipes->revision;
+		if (a_recipes)
+			result.recipeRevision = a_recipes->revision;
 		for (const auto& item : a_prepared) {
-			if (item.referenceKey.empty() || item.shapeName.empty()) { ++result.missingIdentity; continue; }
+			if (item.referenceKey.empty() || item.shapeName.empty()) {
+				++result.missingIdentity;
+				continue;
+			}
 			const auto identity = key(item.referenceKey, item.shapeName);
 			const auto found = materials.find(identity);
-			if (found == materials.end()) ++result.noObservation;
-			else if (preparedCounts[identity] != 1 || found->second.size() != 1 || conflicts.contains(identity)) ++result.ambiguous;
+			if (found == materials.end())
+				++result.noObservation;
+			else if (preparedCounts[identity] != 1 || found->second.size() != 1 || conflicts.contains(identity))
+				++result.ambiguous;
 			else {
 				++result.uniqueCandidates;
 				if (a_recipes) {
-					if (a_recipes->recipes.contains(found->second.front())) ++result.candidateRecipes;
-					else ++result.candidateRecipesMissing;
+					if (a_recipes->recipes.contains(found->second.front()))
+						++result.candidateRecipes;
+					else
+						++result.candidateRecipesMissing;
 				}
 			}
 		}

@@ -1,10 +1,10 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
-#include <string>
 #include <span>
-#include <cstdint>
+#include <string>
 
 // Separate from Utils/ContentHash.h: that one is explicitly non-cryptographic (XXH3, "no
 // adversarial threat model applies") and exists for fast shader-cache keys. This file exists to

@@ -1,9 +1,9 @@
 #pragma once
 
 #include "MaterialResources.h"
-#include "VideoMemoryBudget.h"
-#include "TruePBR/VerifiedBridge.h"
 #include "RuntimeTextureProgress.h"
+#include "TruePBR/VerifiedBridge.h"
+#include "VideoMemoryBudget.h"
 
 namespace DX12Native
 {
@@ -24,10 +24,10 @@ namespace DX12Native
 		VideoMemoryBudget::Snapshot materialBudget;
 		/** @brief Creates binding tables on a worker; material upload completion must be polled before use. */
 		static std::shared_ptr<const ShadowBindings> Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
-            uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr,
-            bool a_importLoose, bool a_importArchive, bool a_runtimeOnly = false,
-            std::shared_ptr<const ShadowBindings> a_previous = {},
-            std::unordered_set<std::string> a_attemptedPaths = {});
+			uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr,
+			bool a_importLoose, bool a_importArchive, bool a_runtimeOnly = false,
+			std::shared_ptr<const ShadowBindings> a_previous = {},
+			std::unordered_set<std::string> a_attemptedPaths = {});
 	};
 	/** @brief Loads shadow material bindings asynchronously with revision-safe publication. */
 	class ShadowBindingWorker
@@ -35,8 +35,8 @@ namespace DX12Native
 	public:
 		/** @brief Selects one scene, deferring a new load until an earlier worker retires. */
 		void Request(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
-            uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr = {},
-            bool a_importLoose = false, bool a_importArchive = false, bool a_runtimeOnly = false);
+			uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr = {},
+			bool a_importLoose = false, bool a_importArchive = false, bool a_runtimeOnly = false);
 		/** @brief Polls an owned worker without waiting and publishes only the selected revision. */
 		void Advance();
 		/** @brief Invalidates current bindings without waiting for the worker. */
@@ -45,23 +45,24 @@ namespace DX12Native
 		std::shared_ptr<const ShadowBindings> Get() const { return published; }
 		/** @brief Returns the most recent selected-scene load failure. */
 		const std::string& Failure() const { return failure; }
-        uint32_t StreamBatches() const { return textureProgress.Batches(); }
-        size_t StreamAttempted() const { return textureProgress.AttemptedCount(); }
-        uint32_t StreamSuccessful() const { return textureProgress.Successful(); }
-        uint32_t StreamFailed() const { return textureProgress.Failed(); }
-        bool StreamWaitingForNextBatch() const { return streamNextBatchAtMs != 0; }
+		uint32_t StreamBatches() const { return textureProgress.Batches(); }
+		size_t StreamAttempted() const { return textureProgress.AttemptedCount(); }
+		uint32_t StreamSuccessful() const { return textureProgress.Successful(); }
+		uint32_t StreamFailed() const { return textureProgress.Failed(); }
+		bool StreamWaitingForNextBatch() const { return streamNextBatchAtMs != 0; }
 		/** @brief Reports a completed worker awaiting its final GPU upload. */
 		bool UploadPending() const;
+
 	private:
 		struct State;
 		std::shared_ptr<State> pending;
 		std::shared_ptr<const TopLevel> desired;
-        std::shared_ptr<const NativePBR::LiveBindingSource> livePbr;
-        uint64_t liveRevision = 0;
-        bool importLoose = false, importArchive = false, runtimeOnly = false;
-        RuntimeTextureProgress textureProgress;
-        std::shared_ptr<const ShadowBindings> incrementalBase;
-        uint64_t streamNextBatchAtMs = 0;
+		std::shared_ptr<const NativePBR::LiveBindingSource> livePbr;
+		uint64_t liveRevision = 0;
+		bool importLoose = false, importArchive = false, runtimeOnly = false;
+		RuntimeTextureProgress textureProgress;
+		std::shared_ptr<const ShadowBindings> incrementalBase;
+		uint64_t streamNextBatchAtMs = 0;
 		std::shared_ptr<const ShadowBindings> published;
 		GraphicsBackend backend;
 		uint64_t revision = 0, budget = 0, uploadBatchBudget = 0;

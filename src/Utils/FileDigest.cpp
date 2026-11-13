@@ -3,14 +3,14 @@
 #include <Windows.h>
 #include <bcrypt.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <format>
 #include <fstream>
 #include <memory>
 #include <vector>
-#include <cstring>
-#include <algorithm>
 
 namespace Util::FileDigest
 {
@@ -96,7 +96,8 @@ namespace Util::FileDigest
 		size_t position = 0;
 		return Sha256Hex([&](char* buffer, size_t size) -> std::optional<size_t> {
 			const auto count = std::min(size, bytes.size() - position);
-			if (count) std::memcpy(buffer, bytes.data() + position, count);
+			if (count)
+				std::memcpy(buffer, bytes.data() + position, count);
 			position += count;
 			return count;
 		});

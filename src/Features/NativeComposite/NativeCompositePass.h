@@ -1,8 +1,8 @@
 #pragma once
 
-#include "GraphicsInterop.h"
-#include "Features/NativeLighting/NativeLighting.h"
 #include "Features/DX12NativeScene/VideoMemoryBudget.h"
+#include "Features/NativeLighting/NativeLighting.h"
+#include "GraphicsInterop.h"
 #include <array>
 #include <atomic>
 #include <memory>
@@ -13,8 +13,16 @@ class NativeComposite
 {
 public:
 	/** @brief Interpretation of the source values; the pass performs no conversion. */
-	enum class Transfer { Unknown, Linear, LegacyScene };
-	enum class Gamut { Unknown };
+	enum class Transfer
+	{
+		Unknown,
+		Linear,
+		LegacyScene
+	};
+	enum class Gamut
+	{
+		Unknown
+	};
 	struct ShadowSettings
 	{
 		float contribution = 1.0f, blend = 1.0f, radiusPixels = 0.0f, receiverTolerance = 2.0f;
@@ -23,7 +31,7 @@ public:
 	};
 	struct Policy
 	{
-		uint32_t diffuse = 1; // Effective validity: display reference-compatible recovered contributions.
+		uint32_t diffuse = 1;  // Effective validity: display reference-compatible recovered contributions.
 		uint32_t specular = 1;
 		uint32_t visual = 0;
 	};
@@ -103,7 +111,7 @@ private:
 	std::array<std::unique_ptr<Slot>, 4> slots;
 	winrt::com_ptr<ID3D12RootSignature> root;
 	winrt::com_ptr<ID3D12PipelineState> pipeline;
-	ID3D12Device* pipelineDevice = nullptr, *shadowPipelineDevice = nullptr;
+	ID3D12Device *pipelineDevice = nullptr, *shadowPipelineDevice = nullptr;
 	winrt::com_ptr<ID3D12RootSignature> shadowRoot;
 	winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
 	std::atomic<uint64_t> completedComposites{ 0 }, acceptedPixels{ 0 }, modifiedPixels{ 0 }, visualizationPixels{ 0 }, counterReadFailures{ 0 };

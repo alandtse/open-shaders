@@ -4,8 +4,8 @@
 #include "TruePBR/BSLightingShaderMaterialPBRLandscape.h"
 #include "TruePBR/NativePBRCompiler.h"
 
-#include "Features/InteriorSun.h"
 #include "Features/DX12NativeScene/DX12NativeScene.h"
+#include "Features/InteriorSun.h"
 #include "Hooks.h"
 #include "I18n/I18n.h"
 #include "ShaderCache.h"
@@ -71,7 +71,6 @@ static bool PBRMaterialHasRequiredTextures(RE::BSLightingShaderMaterialBase cons
 	return pbrMaterial->diffuseTexture && pbrMaterial->normalTexture && pbrMaterial->rmaosTexture;
 }
 
-
 static NativePBR::Glint SnapshotGlint(const GlintParameters& a_glint)
 {
 	return { a_glint.enabled, a_glint.screenSpaceScale, a_glint.logMicrofacetDensity,
@@ -124,12 +123,15 @@ static NativePBR::MaterialData SnapshotPBRMesh(const BSLightingShaderMaterialPBR
 	const std::array textures{ a_material.diffuseTexture.get(), a_material.normalTexture.get(), a_material.rmaosTexture.get(),
 		a_material.emissiveTexture.get(), a_material.displacementTexture.get(), a_material.featuresTexture0.get(), a_material.featuresTexture1.get() };
 	for (size_t role = 0; role < textures.size(); ++role) {
-		if (!textures[role]) continue;
+		if (!textures[role])
+			continue;
 		result.textureResourceNames[role] = textures[role]->name.c_str();
 		const auto* rendererTexture = textures[role]->rendererTexture;
-		if (!rendererTexture || !rendererTexture->texture) continue;
+		if (!rendererTexture || !rendererTexture->texture)
+			continue;
 		winrt::com_ptr<ID3D11Texture2D> texture;
-		if (FAILED(Util::AsReal(rendererTexture->texture)->QueryInterface(IID_PPV_ARGS(texture.put())))) continue;
+		if (FAILED(Util::AsReal(rendererTexture->texture)->QueryInterface(IID_PPV_ARGS(texture.put()))))
+			continue;
 		D3D11_TEXTURE2D_DESC desc{};
 		texture->GetDesc(&desc);
 		result.textureResources[role] = { desc.Width, desc.Height, desc.MipLevels, desc.ArraySize, uint32_t(desc.Format),
@@ -137,17 +139,20 @@ static NativePBR::MaterialData SnapshotPBRMesh(const BSLightingShaderMaterialPBR
 	}
 
 	auto* textureSet = a_material.textureSet.get();
-	if (!textureSet) return result;
+	if (!textureSet)
+		return result;
 	static const auto* textureSetRTTI = REL::Relocation<const RE::NiRTTI*>{ RE::BSTextureSet::Ni_RTTI }.get();
 	const auto* rtti = textureSet->GetRTTI();
-	if (!rtti || !rtti->IsKindOf(textureSetRTTI)) return result;
+	if (!rtti || !rtti->IsKindOf(textureSetRTTI))
+		return result;
 	constexpr std::array<uint32_t, 7> textureSlots{ 0, 1, 5, 2, 3, 7, 6 };
 	for (size_t index = 0; index < textureSlots.size(); ++index) {
 		const auto* path = textureSet->GetTexturePath(static_cast<RE::BSTextureSet::Texture>(textureSlots[index]));
-		if (path) result.texturePaths[index] = path;
+		if (path)
+			result.texturePaths[index] = path;
 	}
 	result.texturePathsComplete = !result.texturePaths[0].empty() &&
-		!result.texturePaths[1].empty() && !result.texturePaths[2].empty();
+	                              !result.texturePaths[1].empty() && !result.texturePaths[2].empty();
 	return result;
 }
 
@@ -168,7 +173,8 @@ static NativePBR::MaterialData SnapshotPBRLandscape(const BSLightingShaderMateri
 			a_material.landscapeNormalTextures[tile].get(), a_material.landscapeRMAOSTextures[tile].get(),
 			a_material.landscapeDisplacementTextures[tile].get() };
 		for (size_t role = 0; role < textures.size(); ++role) {
-			if (textures[role]) output.textureNames[role] = textures[role]->name.c_str();
+			if (textures[role])
+				output.textureNames[role] = textures[role]->name.c_str();
 		}
 		output.glint = SnapshotGlint(a_material.glintParameters[tile]);
 	}
@@ -249,7 +255,12 @@ void SetupPBRLandscapeTextureParameters(BSLightingShaderMaterialPBRLandscape& ma
 
 struct TruePBR::RecipeWorker
 {
-	struct Summary { size_t recipes = 0, pending = 0, incomplete = 0, observedTextures = 0, sharedCandidates = 0; std::array<size_t, 13> issues{}; bool failed = false; };
+	struct Summary
+	{
+		size_t recipes = 0, pending = 0, incomplete = 0, observedTextures = 0, sharedCandidates = 0;
+		std::array<size_t, 13> issues{};
+		bool failed = false;
+	};
 	NativePBR::RecipeCache cache;
 	std::mutex mutex;
 	Summary summary;
@@ -260,7 +271,8 @@ struct TruePBR::RecipeWorker
 
 std::shared_ptr<const NativePBR::RecipeGeneration> TruePBR::GetNativeRecipes() const
 {
-	if (!recipeWorker) return {};
+	if (!recipeWorker)
+		return {};
 	auto generation = recipeWorker->published.load(std::memory_order_acquire);
 	return generation && generation->revision == nativeRegistry.Revision() ? generation : nullptr;
 }
@@ -268,14 +280,18 @@ std::shared_ptr<const NativePBR::RecipeGeneration> TruePBR::GetNativeRecipes() c
 void TruePBR::DrawSettings()
 {
 	RecipeWorker::Summary summary;
-	if (recipeWorker) { std::scoped_lock lock(recipeWorker->mutex); summary = recipeWorker->summary; }
+	if (recipeWorker) {
+		std::scoped_lock lock(recipeWorker->mutex);
+		summary = recipeWorker->summary;
+	}
 	const auto& recipeIssues = summary.issues;
 	const auto nativePbr = nativeRegistry.GetStatistics();
 	ImGui::TextDisabled("Native PBR metadata: %zu mesh, %zu landscape | dirty: %zu | revision: %llu",
 		nativePbr.mesh, nativePbr.landscape, nativePbr.dirty, static_cast<unsigned long long>(nativePbr.revision));
 	ImGui::TextDisabled("Native PBR recipes: %zu | pending: %zu | unsupported or incomplete: %zu | opacity unverified",
 		summary.recipes, summary.pending, summary.incomplete);
-	if (summary.failed) ImGui::TextDisabled("Native PBR recipe compilation failed; retry after a material change.");
+	if (summary.failed)
+		ImGui::TextDisabled("Native PBR recipe compilation failed; retry after a material change.");
 	ImGui::TextDisabled("Unverified reference/shape observations: %zu | limit hits: %llu", nativePbr.instanceHints,
 		static_cast<unsigned long long>(nativePbr.hintLimitHits));
 	if (ImGui::TreeNode("Native PBR recipe details")) {
@@ -566,7 +582,8 @@ void TruePBR::SetupResources()
 
 void TruePBR::Prepass()
 {
-	if (!recipeWorker) recipeWorker = std::make_shared<RecipeWorker>();
+	if (!recipeWorker)
+		recipeWorker = std::make_shared<RecipeWorker>();
 	const auto worker = recipeWorker;
 	if (!worker->active.load(std::memory_order_acquire) &&
 		(worker->more.load(std::memory_order_relaxed) || worker->revision.load(std::memory_order_relaxed) != nativeRegistry.Revision())) {
@@ -578,26 +595,37 @@ void TruePBR::Prepass()
 					if (auto changes = registry->ExportChanges(worker->cache.Revision(), worker->cache.KnownRevisions())) {
 						worker->cache.Update(*changes);
 						worker->published.store(NativePBR::PublishRecipes(worker->cache, *changes,
-							worker->published.load(std::memory_order_relaxed)), std::memory_order_release);
+													worker->published.load(std::memory_order_relaxed)),
+							std::memory_order_release);
 						worker->more.store(changes->hasMore, std::memory_order_relaxed);
 					}
 					RecipeWorker::Summary summary;
 					summary.recipes = worker->cache.Recipes().size();
 					summary.pending = worker->cache.Pending();
 					for (const auto& [identity, recipe] : worker->cache.Recipes()) {
-						if (recipe.issues & ~NativePBR::UnknownOpacity) ++summary.incomplete;
+						if (recipe.issues & ~NativePBR::UnknownOpacity)
+							++summary.incomplete;
 						for (const auto& texture : recipe.textures) {
-							if (!texture.resource.texture2D) continue;
+							if (!texture.resource.texture2D)
+								continue;
 							++summary.observedTextures;
-							if (texture.resource.miscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE) ++summary.sharedCandidates;
+							if (texture.resource.miscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE)
+								++summary.sharedCandidates;
 						}
 						for (size_t issue = 0; issue < summary.issues.size(); ++issue)
-							if (recipe.issues & (1u << issue)) ++summary.issues[issue];
+							if (recipe.issues & (1u << issue))
+								++summary.issues[issue];
 					}
-					{ std::scoped_lock lock(worker->mutex); worker->summary = summary; }
+					{
+						std::scoped_lock lock(worker->mutex);
+						worker->summary = summary;
+					}
 					worker->revision.store(worker->cache.Revision(), std::memory_order_relaxed);
 				} catch (...) {
-					{ std::scoped_lock lock(worker->mutex); worker->summary.failed = true; }
+					{
+						std::scoped_lock lock(worker->mutex);
+						worker->summary.failed = true;
+					}
 					worker->revision.store(registry->Revision(), std::memory_order_relaxed);
 					worker->more.store(false, std::memory_order_relaxed);
 				}
@@ -605,7 +633,10 @@ void TruePBR::Prepass()
 			});
 		} catch (...) {
 			worker->active.store(false, std::memory_order_release);
-			{ std::scoped_lock lock(worker->mutex); worker->summary.failed = true; }
+			{
+				std::scoped_lock lock(worker->mutex);
+				worker->summary.failed = true;
+			}
 			worker->revision.store(nativeRegistry.Revision(), std::memory_order_relaxed);
 			worker->more.store(false, std::memory_order_relaxed);
 		}
@@ -1114,15 +1145,15 @@ struct BSLightingShaderProperty_GetRenderPasses
 		const auto issEnabledAndInteriorWithSun = globals::features::interiorSun.loaded && globals::features::interiorSun.isInteriorWithSun;
 
 		// Borrow engine geometry only during this render hook. The DX12 feature
-        // copies eligible CPU arrays immediately; no raw pointers escape.
-        if (geometry && !geometry->name.empty()) {
-            if (auto* reference = geometry->GetUserData(); reference && !reference->IsDynamicForm()) {
-                if (const auto* file = reference->GetFile(0))
-                    globals::features::dx12NativeScene.ObserveRuntimeGeometry(geometry,
-                        std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename()),
-                        geometry->name.c_str());
-            }
-        }
+		// copies eligible CPU arrays immediately; no raw pointers escape.
+		if (geometry && !geometry->name.empty()) {
+			if (auto* reference = geometry->GetUserData(); reference && !reference->IsDynamicForm()) {
+				if (const auto* file = reference->GetFile(0))
+					globals::features::dx12NativeScene.ObserveRuntimeGeometry(geometry,
+						std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename()),
+						geometry->name.c_str());
+			}
+		}
 
 		const bool isPbr = IsPBRShaderProperty(property);
 		if (isPbr && geometry && !geometry->name.empty()) {
@@ -1138,7 +1169,7 @@ struct BSLightingShaderProperty_GetRenderPasses
 						instance.alphaThreshold = alpha->alphaThreshold;
 					}
 					if (const auto* color = property->emissiveColor; color && std::isfinite(color->red) && std::isfinite(color->green) &&
-						std::isfinite(color->blue) && std::isfinite(property->emissiveMult)) {
+																	 std::isfinite(color->blue) && std::isfinite(property->emissiveMult)) {
 						instance.emissionKnown = true;
 						instance.emissiveColor = { color->red, color->green, color->blue };
 						instance.emissiveMultiplier = property->emissiveMult;
@@ -1239,8 +1270,9 @@ bool TruePBR::BSLightingShader_SetupMaterial(RE::BSLightingShader* shader, RE::B
 		auto smState = globals::game::smState;
 
 		const std::array<std::array<float, 4>, 2> uv{ { { material->texCoordOffset[0].x, material->texCoordOffset[0].y,
-			material->texCoordScale[0].x, material->texCoordScale[0].y }, { material->texCoordOffset[1].x, material->texCoordOffset[1].y,
-			material->texCoordScale[1].x, material->texCoordScale[1].y } } };
+															material->texCoordScale[0].x, material->texCoordScale[0].y },
+			{ material->texCoordOffset[1].x, material->texCoordOffset[1].y,
+				material->texCoordScale[1].x, material->texCoordScale[1].y } } };
 		if (lightingType == MTLand || lightingType == MTLandLODBlend) {
 			const auto* pbr = static_cast<const BSLightingShaderMaterialPBRLandscape*>(material);
 			std::array<const void*, 24> textures{};

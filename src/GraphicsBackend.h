@@ -2,10 +2,10 @@
 
 #include <d3d11_4.h>
 #include <d3d12.h>
-#include <winrt/base.h>
+#include <dxgi1_2.h>
 #include <optional>
 #include <string>
-#include <dxgi1_2.h>
+#include <winrt/base.h>
 
 /** @brief Retains a DX12 queue on the adapter used by the engine's DX11 device. */
 struct GraphicsBackend

@@ -9,12 +9,12 @@
 #include "../../EngineFixes/AlphaGeometryGroupCeilingFix.h"
 #include "../../EngineFixes/CullPoolExhaustionFix.h"
 #include "../../Globals.h"
-#include "../DX12NativeScene/DX12NativeScene.h"
 #include "../../GpuPass.h"
 #include "../../State.h"
 #include "../../Utils/Game.h"
 #include "../../Utils/PerfUtils.h"
 #include "../../Utils/UI.h"
+#include "../DX12NativeScene/DX12NativeScene.h"
 #include "../LightLimitFix.h"
 #include "../NativeFeatures.h"
 #include "../Upscaling.h"
@@ -338,13 +338,13 @@ namespace ShadowCasterManager
 	// atlas slot owns what's actually baked, so a realloc can't leave this stale.
 	struct SplitState
 	{
-		uint64_t pendingHash = 0;    ///< static hash observed on the latest accumulate
-		bool nativeDynamicOnly = false; ///< this light's static shadows belong to DX12, not the raster atlas
-		bool bakeQueued = true;      ///< a rebake is due -- next accumulate is StaticOnly
-		bool bakeThisFrame = false;  ///< this frame's accumulate was StaticOnly (render to cache)
-		uint8_t mismatchStreak = 0;  ///< consecutive accumulates whose hash differed from the bake
-		RE::NiPoint3 bakePos{};      ///< light position the static tile was baked at
-		RE::NiMatrix3 bakeRot{};     ///< light rotation the static tile was baked at
+		uint64_t pendingHash = 0;        ///< static hash observed on the latest accumulate
+		bool nativeDynamicOnly = false;  ///< this light's static shadows belong to DX12, not the raster atlas
+		bool bakeQueued = true;          ///< a rebake is due -- next accumulate is StaticOnly
+		bool bakeThisFrame = false;      ///< this frame's accumulate was StaticOnly (render to cache)
+		uint8_t mismatchStreak = 0;      ///< consecutive accumulates whose hash differed from the bake
+		RE::NiPoint3 bakePos{};          ///< light position the static tile was baked at
+		RE::NiMatrix3 bakeRot{};         ///< light rotation the static tile was baked at
 		float bakeRadius = 0.0f;
 		float bakeInvProj[16]{};  ///< light-to-world matrix the static tile was baked with
 		bool bakeInvProjValid = false;
@@ -369,9 +369,10 @@ namespace ShadowCasterManager
 
 	static void TransitionNativeShadowOwnership(SplitState& st, int32_t slot, bool nativeDynamicOnly)
 	{
-		if (st.nativeDynamicOnly == nativeDynamicOnly) return;
+		if (st.nativeDynamicOnly == nativeDynamicOnly)
+			return;
 		st.nativeDynamicOnly = nativeDynamicOnly;
-		st.bakeQueued = true; // Rebuild the legacy static cache if native ownership ends.
+		st.bakeQueued = true;  // Rebuild the legacy static cache if native ownership ends.
 		st.bakeThisFrame = false;
 		st.fullThisFrame = nativeDynamicOnly;
 		// A previous static bake/live atlas tile must NEVER be reused as a
@@ -3681,7 +3682,11 @@ namespace ShadowCasterManager
 			return;
 		struct Guard
 		{
-			~Guard() { EndNativeCasterFrame(); s_inSchedule.store(false, std::memory_order_release); }
+			~Guard()
+			{
+				EndNativeCasterFrame();
+				s_inSchedule.store(false, std::memory_order_release);
+			}
 		} guard;
 
 		// NativeSCM captures casters during this exact cull traversal; the
@@ -3943,13 +3948,15 @@ namespace ShadowCasterManager
 				if (s_pendingSessionReset.load(std::memory_order_acquire))
 					break;
 				auto& e = s_lights.Lights[i];
-				if (!e.Light) continue;
+				if (!e.Light)
+					continue;
 				// Retire stale static depth immediately when backend ownership
 				// changes, including for lights not admitted to redraw this frame.
 				if (auto it = s_splitState.find(e.Light); it != s_splitState.end())
 					TransitionNativeShadowOwnership(it->second, i,
 						globals::features::nativeSCM.OwnsStaticForLight(e.Light, i));
-				if (!e.RedrawFrame) continue;
+				if (!e.RedrawFrame)
+					continue;
 				bool keepPriorContent = false;
 				bool emptyRender = false;
 				if (AtlasActive()) {

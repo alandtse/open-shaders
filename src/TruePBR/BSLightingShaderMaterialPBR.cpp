@@ -369,7 +369,8 @@ void BSLightingShaderMaterialPBR::ReceiveValuesFromRootMaterial(bool skinned, bo
 	if (featuresTexture1 == nullptr) {
 		featuresTexture1 = stateData.defaultTextureWhite;
 	}
-	if (changed) globals::features::truePBR.nativeRegistry.MarkDirty(this);
+	if (changed)
+		globals::features::truePBR.nativeRegistry.MarkDirty(this);
 }
 
 uint32_t BSLightingShaderMaterialPBR::GetTextures(RE::NiSourceTexture** textures)

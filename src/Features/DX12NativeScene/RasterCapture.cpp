@@ -10,7 +10,7 @@ namespace DX12Native
 		const auto completed = producer.fence12 ? producer.fence12->GetCompletedValue() : 0;
 		for (auto& slot : slots) {
 			if (slot && (slot->readyValue == UINT64_MAX || completed == UINT64_MAX || slot->readyValue > completed ||
-				std::ranges::any_of(slot->consumers, [](const auto& consumer) { const auto done = consumer.first->GetCompletedValue(); return done == UINT64_MAX || done < consumer.second; })))
+							std::ranges::any_of(slot->consumers, [](const auto& consumer) { const auto done = consumer.first->GetCompletedValue(); return done == UINT64_MAX || done < consumer.second; })))
 				(void)new std::shared_ptr<RasterFrame>(std::move(slot));
 		}
 	}
@@ -29,7 +29,8 @@ namespace DX12Native
 			if (backend.d3d11Device.get() != a_backend.d3d11Device.get() || backend.d3d12Device.get() != a_backend.d3d12Device.get() || backend.commandQueue.get() != a_backend.commandQueue.get())
 				throw std::runtime_error("Raster backend changed; restart required");
 			const auto done = producer.fence12->GetCompletedValue();
-			if (done == UINT64_MAX) throw std::runtime_error("Raster device removed");
+			if (done == UINT64_MAX)
+				throw std::runtime_error("Raster device removed");
 			for (const auto& frame : slots) {
 				if (frame && !frame->completionCounted && frame->readyValue && frame->readyValue != UINT64_MAX && frame->readyValue <= done) {
 					frame->completionCounted = true;
@@ -38,45 +39,60 @@ namespace DX12Native
 			}
 			auto available = std::find_if(slots.begin(), slots.end(), [&](const auto& slot) {
 				const auto completed = producer.fence12->GetCompletedValue();
-				if (!slot) return completed != UINT64_MAX;
-				if (slot.use_count() != 1 || slot->readyValue == UINT64_MAX || completed == UINT64_MAX || completed < slot->readyValue) return false;
+				if (!slot)
+					return completed != UINT64_MAX;
+				if (slot.use_count() != 1 || slot->readyValue == UINT64_MAX || completed == UINT64_MAX || completed < slot->readyValue)
+					return false;
 				return std::ranges::all_of(slot->consumers, [](const auto& consumer) {
 					const auto done = consumer.first->GetCompletedValue();
 					return done != UINT64_MAX && done >= consumer.second;
 				});
 			});
-			if (available == slots.end()) { ++busyDeferrals; throw std::runtime_error("Raster snapshots are still in use"); }
-			uint64_t trackedBytes = 0;
-			for (const auto& frame : slots) if (frame) {
-				if (trackedBytes > UINT64_MAX - frame->allocationBytes) throw std::runtime_error("Raster frame pool byte count overflow");
-				trackedBytes += frame->allocationBytes;
+			if (available == slots.end()) {
+				++busyDeferrals;
+				throw std::runtime_error("Raster snapshots are still in use");
 			}
+			uint64_t trackedBytes = 0;
+			for (const auto& frame : slots)
+				if (frame) {
+					if (trackedBytes > UINT64_MAX - frame->allocationBytes)
+						throw std::runtime_error("Raster frame pool byte count overflow");
+					trackedBytes += frame->allocationBytes;
+				}
 			const uint64_t budget = videoBudget.Query(backend.d3d12Device.get(), trackedBytes, a_budget).effectiveBytes;
 			std::array<D3D11_TEXTURE2D_DESC, static_cast<size_t>(RasterFrame::Input::Count)> descriptions{};
 			uint32_t width = 0, height = 0;
 			for (size_t i = 0; i < a_inputs.size(); ++i) {
-				if (!a_inputs[i]) throw std::runtime_error("Opaque raster input unavailable");
+				if (!a_inputs[i])
+					throw std::runtime_error("Opaque raster input unavailable");
 				a_inputs[i]->GetDesc(&descriptions[i]);
 				const auto& desc = descriptions[i];
 				if (!desc.Width || !desc.Height || desc.ArraySize != 1 || desc.MipLevels != 1 || desc.SampleDesc.Count != 1)
 					throw std::runtime_error("Opaque raster input layout unsupported");
-				if (!width) { width = desc.Width; height = desc.Height; }
-				if (desc.Width != width || desc.Height != height) throw std::runtime_error("Opaque raster input dimensions differ");
+				if (!width) {
+					width = desc.Width;
+					height = desc.Height;
+				}
+				if (desc.Width != width || desc.Height != height)
+					throw std::runtime_error("Opaque raster input dimensions differ");
 			}
-			if (!a_depth) throw std::runtime_error("Opaque depth unavailable");
+			if (!a_depth)
+				throw std::runtime_error("Opaque depth unavailable");
 			D3D11_SHADER_RESOURCE_VIEW_DESC depthView{};
 			a_depth->GetDesc(&depthView);
 			winrt::com_ptr<ID3D11Resource> depthResource;
 			a_depth->GetResource(depthResource.put());
 			auto depthTexture = depthResource.try_as<ID3D11Texture2D>();
 			D3D11_TEXTURE2D_DESC depthDesc{};
-			if (depthTexture) depthTexture->GetDesc(&depthDesc);
+			if (depthTexture)
+				depthTexture->GetDesc(&depthDesc);
 			if (!depthTexture || depthView.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D || depthDesc.Width != width || depthDesc.Height != height ||
 				depthDesc.ArraySize != 1 || depthDesc.MipLevels != 1 || depthDesc.SampleDesc.Count != 1)
 				throw std::runtime_error("Opaque depth layout unsupported");
 			if (!depthShader)
 				depthShader.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\DX12NativeScene\\CaptureDepth.cs.hlsl", {}, "cs_5_0")));
-			if (!depthShader) throw std::runtime_error("Opaque depth capture shader unavailable");
+			if (!depthShader)
+				throw std::runtime_error("Opaque depth capture shader unavailable");
 			depthDesc.Format = DXGI_FORMAT_R32_FLOAT;
 			depthDesc.Usage = D3D11_USAGE_DEFAULT;
 			depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
@@ -115,8 +131,10 @@ namespace DX12Native
 			}
 			uint64_t otherBytes = 0;
 			for (auto it = slots.begin(); it != slots.end(); ++it)
-				if (it != available && *it) otherBytes += (*it)->allocationBytes;
-			if (otherBytes > budget || slotBytes > budget - otherBytes) throw std::runtime_error("Raster snapshot exceeds memory budget");
+				if (it != available && *it)
+					otherBytes += (*it)->allocationBytes;
+			if (otherBytes > budget || slotBytes > budget - otherBytes)
+				throw std::runtime_error("Raster snapshot exceeds memory budget");
 			if (recreate) {
 				slot.reset();
 				auto replacement = std::make_shared<RasterFrame>();
@@ -163,14 +181,17 @@ namespace DX12Native
 			DX::ThrowIfFailed(backend.commandQueue->Wait(producer.fence12.get(), ready));
 			slot->sourceDepthFormat = depthView.Format;
 			slot->cameraValid = a_camera != nullptr;
-			if (a_camera) slot->camera = *a_camera;
+			if (a_camera)
+				slot->camera = *a_camera;
 			slot->readyFence = producer.fence12;
 			slot->readyValue = ready;
 			slot->frame = a_frame;
 			current = slot;
 			++submissions;
 			status.clear();
-		} catch (const std::exception& error) { status = error.what(); }
+		} catch (const std::exception& error) {
+			status = error.what();
+		}
 	}
 
 	std::shared_ptr<const RasterFrame> RasterCapture::Get(uint32_t a_frame) const
@@ -191,9 +212,11 @@ namespace DX12Native
 
 	bool RasterCapture::RetainThrough(const std::shared_ptr<const RasterFrame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value)
 	{
-		if (!a_frame || !a_fence || !a_value || a_value == UINT64_MAX) return false;
+		if (!a_frame || !a_fence || !a_value || a_value == UINT64_MAX)
+			return false;
 		for (const auto& slot : slots) {
-			if (slot.get() != a_frame.get()) continue;
+			if (slot.get() != a_frame.get())
+				continue;
 			winrt::com_ptr<ID3D12Fence> fence;
 			fence.copy_from(a_fence);
 			slot->consumers.emplace_back(std::move(fence), a_value);

@@ -4,8 +4,8 @@
 #include "../I18n/I18n.h"
 #include "Deferred.h"
 #include "HDRDisplay.h"
-#include "LinearLighting.h"
 #include "Hooks.h"
+#include "LinearLighting.h"
 #include "Menu.h"
 #include "RenderDoc.h"
 #include "ScreenshotFeature.h"
@@ -41,15 +41,24 @@ namespace
 	const char* NativeUpscaleFallbackReason(uint32_t reason)
 	{
 		switch (reason) {
-		case 1: return "Native Composite is disabled";
-		case 2: return "VR uses the existing per-eye path";
-		case 3: return "Menu or no world frame";
-		case 4: return "Current-frame guidance is unavailable";
-		case 5: return "Current-frame composite is unavailable";
-		case 6: return "Frame dimensions or format do not match";
-		case 7: return "DX12 runtime FSR is unavailable or not selected";
-		case 8: return "Runtime FSR dispatch failed";
-		default: return "None";
+		case 1:
+			return "Native Composite is disabled";
+		case 2:
+			return "VR uses the existing per-eye path";
+		case 3:
+			return "Menu or no world frame";
+		case 4:
+			return "Current-frame guidance is unavailable";
+		case 5:
+			return "Current-frame composite is unavailable";
+		case 6:
+			return "Frame dimensions or format do not match";
+		case 7:
+			return "DX12 runtime FSR is unavailable or not selected";
+		case 8:
+			return "Runtime FSR dispatch failed";
+		default:
+			return "None";
 		}
 	}
 }
@@ -727,7 +736,9 @@ void Upscaling::RegisterUxActions()
 				{ "compositeFormat", feature.nativeCompositeFormat.load() },
 				{ "nativeSubmissions", feature.nativeUpscaleSubmissions.load() },
 				{ "returnCopies", feature.nativeReturnCopies.load() },
-				{ "route", route == 1 ? "native-dx12" : route == 2 ? "existing" : route == 3 ? "native-failed" : "inactive" },
+				{ "route", route == 1 ? "native-dx12" : route == 2 ? "existing" :
+													route == 3     ? "native-failed" :
+																	 "inactive" },
 				{ "fallbackReason", NativeUpscaleFallbackReason(feature.nativeUpscaleFallback.load()) }
 			};
 		}));
@@ -793,7 +804,9 @@ void Upscaling::DrawSettings()
 		DrawUpscalingSettings();
 		ImGui::Checkbox(T(TKEY("native_upscale_enable"), "Enable Native DX12 Upscaling"), &settings.nativeUpscaleEnable);
 		const auto route = nativeUpscaleRoute.load();
-		ImGui::TextDisabled("Native upscale route: %s", route == 1 ? "DX12 composite to FSR" : route == 2 ? "Existing upscaler" : route == 3 ? "Native submission failed" : "Inactive");
+		ImGui::TextDisabled("Native upscale route: %s", route == 1 ? "DX12 composite to FSR" : route == 2 ? "Existing upscaler" :
+																						   route == 3     ? "Native submission failed" :
+																											"Inactive");
 		if (settings.nativeUpscaleEnable && route != 1)
 			ImGui::TextDisabled("Fallback: %s", NativeUpscaleFallbackReason(nativeUpscaleFallback.load()));
 		if (nativeCompositeFrame) {
@@ -2912,7 +2925,9 @@ json Upscaling::GetDiagnostics()
 	diagnostics["nativeReturnCopies"] = nativeReturnCopies.load();
 	diagnostics["nativeLightingCompositeReturns"] = nativeLightingCompositeReturns.load();
 	const auto nativeRoute = nativeUpscaleRoute.load();
-	diagnostics["nativeUpscaleRoute"] = nativeRoute == 1 ? "native-dx12" : nativeRoute == 2 ? "existing" : nativeRoute == 3 ? "native-failed" : "inactive";
+	diagnostics["nativeUpscaleRoute"] = nativeRoute == 1 ? "native-dx12" : nativeRoute == 2 ? "existing" :
+	                                                                   nativeRoute == 3     ? "native-failed" :
+	                                                                                          "inactive";
 	diagnostics["nativeUpscaleFallbackReason"] = NativeUpscaleFallbackReason(nativeUpscaleFallback.load());
 	const auto method = GetFrameGenMethod();
 	diagnostics["frameGenMethod"] = method == FrameGenMethod::kDLSSG ? "DLSSG" :
@@ -3656,8 +3671,9 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		auto* renderer = globals::game::renderer;
 		auto* scene = Util::AsReal(renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture);
 		const auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
-		const auto transfer = globals::state->IsMainOrLoadingMenuOpen() ? NativeComposite::Transfer::Unknown :
-			globals::features::linearLighting.IsLinearLightingActive() ? NativeComposite::Transfer::Linear : NativeComposite::Transfer::LegacyScene;
+		const auto transfer = globals::state->IsMainOrLoadingMenuOpen()                  ? NativeComposite::Transfer::Unknown :
+		                      globals::features::linearLighting.IsLinearLightingActive() ? NativeComposite::Transfer::Linear :
+		                                                                                   NativeComposite::Transfer::LegacyScene;
 		upscaling.nativeCompositeFrame = globals::features::nativeComposite.Capture(upscaling.dx12SwapChain.d3d11Device.get(),
 			upscaling.dx12SwapChain.d3d11Context.get(), upscaling.dx12SwapChain.d3d12Device.get(),
 			upscaling.dx12SwapChain.commandQueue.get(), scene, globals::state->frameCount,

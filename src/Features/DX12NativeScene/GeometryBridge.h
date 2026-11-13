@@ -1,8 +1,8 @@
 #pragma once
 
 #include "GraphicsBackend.h"
-#include "Scene.h"
 #include "GraphicsInterop.h"
+#include "Scene.h"
 #include <directx/d3dx12.h>
 
 namespace DX12Native

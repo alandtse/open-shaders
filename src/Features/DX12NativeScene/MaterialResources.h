@@ -1,12 +1,12 @@
 #pragma once
 
 #include "AccelerationScene.h"
-#include "LogicalTextureRegistry.h"
-#include "VerifiedTextureSources.h"
-#include "LiveLooseTexturePlan.h"
 #include "LiveGpuTextureEligibility.h"
+#include "LiveLooseTexturePlan.h"
+#include "LogicalTextureRegistry.h"
 #include "MaterialUploadStatus.h"
 #include "TruePBR/VerifiedBridge.h"
+#include "VerifiedTextureSources.h"
 #include <array>
 #include <stdexcept>
 
@@ -59,7 +59,7 @@ namespace DX12Native
 	{
 		std::vector<MaterialTexturePool> pools;
 		std::unordered_map<std::string, uint64_t> locations;
-        VerifiedTextureSources verifiedTextureSources;
+		VerifiedTextureSources verifiedTextureSources;
 		std::unordered_map<uint64_t, std::array<uint32_t, 2>> logicalLocations;
 		std::vector<std::shared_ptr<const LogicalTextureRegistry::Ticket>> textureTickets;
 		std::shared_ptr<MaterialUploadCompletion> pendingUpload;
@@ -71,28 +71,28 @@ namespace DX12Native
 		uint64_t asyncBatchStagingBytes = 0;
 		uint32_t readyMaterials = 0, rejectedMaterials = 0, textures = 0, uploadedPages = 0, reusedPages = 0, reusedTextures = 0, rejectedTextureSources = 0, asyncBatchPages = 0;
 		uint32_t diskCacheHits = 0, diskCacheWrites = 0;
-        uint32_t livePbrMatched = 0, livePbrApplied = 0, livePbrEmissiveApplied = 0, livePbrAmbiguous = 0, livePbrIncompatible = 0, livePbrMissing = 0;
-        uint32_t livePbrSourcesMissing = 0, livePbrSourcesAmbiguous = 0, livePbrSourcesIncompatible = 0;
-        uint32_t livePbrUnsupported = 0, livePbrUnsafeOpacity = 0, livePbrMissingBasis = 0;
-        uint32_t livePbrMissingBindings = 0, livePbrOfflineFallback = 0;
-        uint32_t looseDdsPlanned = 0, looseDdsImported = 0, looseDdsRejected = 0, looseDdsDeferred = 0;
-        uint32_t looseDdsReadyRecipes = 0, looseDdsFeatureLimitedRecipes = 0, looseDdsSkippedRecipes = 0, looseDdsPrepared = 0, looseDdsInvalid = 0;
-        uint32_t looseDdsPreviouslyAttempted = 0;
-        std::vector<std::string> looseDdsAttemptedPaths;
-        uint64_t looseDdsBytes = 0, archiveDdsBytes = 0;
-        uint32_t archiveDdsPlanned = 0, archiveDdsImported = 0, archiveDdsRejected = 0;
-        LiveGpuTextureRoutes liveGpuRoutes;
-        NativePBR::RecipeIssueTally liveRecipeIssues;
+		uint32_t livePbrMatched = 0, livePbrApplied = 0, livePbrEmissiveApplied = 0, livePbrAmbiguous = 0, livePbrIncompatible = 0, livePbrMissing = 0;
+		uint32_t livePbrSourcesMissing = 0, livePbrSourcesAmbiguous = 0, livePbrSourcesIncompatible = 0;
+		uint32_t livePbrUnsupported = 0, livePbrUnsafeOpacity = 0, livePbrMissingBasis = 0;
+		uint32_t livePbrMissingBindings = 0, livePbrOfflineFallback = 0;
+		uint32_t looseDdsPlanned = 0, looseDdsImported = 0, looseDdsRejected = 0, looseDdsDeferred = 0;
+		uint32_t looseDdsReadyRecipes = 0, looseDdsFeatureLimitedRecipes = 0, looseDdsSkippedRecipes = 0, looseDdsPrepared = 0, looseDdsInvalid = 0;
+		uint32_t looseDdsPreviouslyAttempted = 0;
+		std::vector<std::string> looseDdsAttemptedPaths;
+		uint64_t looseDdsBytes = 0, archiveDdsBytes = 0;
+		uint32_t archiveDdsPlanned = 0, archiveDdsImported = 0, archiveDdsRejected = 0;
+		LiveGpuTextureRoutes liveGpuRoutes;
+		NativePBR::RecipeIssueTally liveRecipeIssues;
 		std::string failure, firstTextureSourceFailure;
 		/** @brief Loads one owned package on the binding worker; never accesses engine objects. */
 		static std::shared_ptr<const MaterialResources> Load(const GraphicsBackend& a_backend, const TopLevel& a_scene,
-            const NativePBR::LiveBindingSource* a_livePbr = nullptr,
-            const MaterialResources* a_previous = nullptr);
+			const NativePBR::LiveBindingSource* a_livePbr = nullptr,
+			const MaterialResources* a_previous = nullptr);
 	};
 
 	/** @brief Validates and uploads original DDS mip chains into bounded compatible array pages. */
 	void LoadMaterialTextures(const GraphicsBackend& a_backend, const MaterialSource& a_source, MaterialResources& a_result,
-        const NativePBR::LiveMatchResult* a_matches = nullptr);
+		const NativePBR::LiveMatchResult* a_matches = nullptr);
 	/** @brief Releases a completed or device-removed failed upload without waiting. */
 	void RetireMaterialUploads();
 	/** @brief Checks the single upload slot without waiting. */

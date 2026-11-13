@@ -30,8 +30,8 @@ TEST_CASE("Reference primary traversal skips rejected candidates without losing 
 
 TEST_CASE("Validity Lab tolerances and experimental mask remain bounded", "[native-lighting]")
 {
-	using NativeLighting::DepthMatches;
 	using NativeLighting::CanCullExperimentalMask;
+	using NativeLighting::DepthMatches;
 	CHECK(DepthMatches(true, 2.0f, 100, 2.0f, 0.00001f));
 	CHECK_FALSE(DepthMatches(true, 3.0f, 100, 2.0f, 0.00001f));
 	CHECK(DepthMatches(true, 3.0f, 100, 5.0f, 0.00001f));

@@ -4,15 +4,15 @@ Branch-specific implementation map, checked against `open-RT` source on 2026-11-
 
 ## Owners
 
-| Component | Current responsibility | Source |
-| --- | --- | --- |
-| DX12 Resources | Interior discovery, companion CELL preparation, on-disk cache and streaming requests | `src/Features/DX12Resources/`, `tools/dx12-resources-prep/` |
-| DX12 Native Scene | Prepared/current geometry, material residency, BLAS/TLAS generations, runtime capture, independent early ray-shadow mask | `src/Features/DX12NativeScene/` |
-| Native LLF / SCM | Prepared + observed light unification; shadow-slot/caster ownership from Skyrim observations | `src/Features/NativeFeatures.{h,cpp}` |
-| Native PBR | TruePBR capture/registry and native material bridge | `src/TruePBR/`, `src/Features/DX12NativeScene/Material*.cpp` |
-| Native Lighting | Optional native direct diffuse/specular and early-shadow culling; separately controlled from independent shadows | `src/Features/NativeLighting/` |
-| Native Composite | Frame-scoped DX12 raster composition with optional native direct lighting and independent shadow layer | `src/Features/NativeComposite/` |
-| Upscaling | Runtime FSR interop and native frame input/output contracts | `src/Features/Upscaling/` |
+| Component         | Current responsibility                                                                                                   | Source                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| DX12 Resources    | Interior discovery, companion CELL preparation, on-disk cache and streaming requests                                     | `src/Features/DX12Resources/`, `tools/dx12-resources-prep/`  |
+| DX12 Native Scene | Prepared/current geometry, material residency, BLAS/TLAS generations, runtime capture, independent early ray-shadow mask | `src/Features/DX12NativeScene/`                              |
+| Native LLF / SCM  | Prepared + observed light unification; shadow-slot/caster ownership from Skyrim observations                             | `src/Features/NativeFeatures.{h,cpp}`                        |
+| Native PBR        | TruePBR capture/registry and native material bridge                                                                      | `src/TruePBR/`, `src/Features/DX12NativeScene/Material*.cpp` |
+| Native Lighting   | Optional native direct diffuse/specular and early-shadow culling; separately controlled from independent shadows         | `src/Features/NativeLighting/`                               |
+| Native Composite  | Frame-scoped DX12 raster composition with optional native direct lighting and independent shadow layer                   | `src/Features/NativeComposite/`                              |
+| Upscaling         | Runtime FSR interop and native frame input/output contracts                                                              | `src/Features/Upscaling/`                                    |
 
 ## Current boundaries
 

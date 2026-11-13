@@ -13,7 +13,8 @@ namespace NativeLighting
 	/** @brief Creates the direct-lighting root signature shared by the runtime and validation. */
 	inline HRESULT CreateRootSignature(ID3D12Device* a_device, ID3D12RootSignature** a_root)
 	{
-		if (!a_device || !a_root) return E_INVALIDARG;
+		if (!a_device || !a_root)
+			return E_INVALIDARG;
 		D3D12_DESCRIPTOR_RANGE ranges[6]{};
 		ranges[0] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 0, 0 };
 		ranges[1] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kMaximumInstances, 0, 1, 0 };
@@ -35,12 +36,12 @@ namespace NativeLighting
 		}
 		params[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 		params[11].Descriptor.ShaderRegister = 0;
-        // Isolated third-person caster TLAS for direct-light shadow rays.
-        // The prepared-world TLAS remains the sole primary receiver source.
-        params[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
-        params[12].Descriptor.ShaderRegister = 7;
-        params[13].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-        params[13].Constants = { 2, 0, 2 }; // occlusion and receiver probe gates
+		// Isolated third-person caster TLAS for direct-light shadow rays.
+		// The prepared-world TLAS remains the sole primary receiver source.
+		params[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+		params[12].Descriptor.ShaderRegister = 7;
+		params[13].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+		params[13].Constants = { 2, 0, 2 };  // occlusion and receiver probe gates
 		D3D12_STATIC_SAMPLER_DESC samplers[4]{};
 		for (uint32_t i = 0; i < 4; ++i) {
 			samplers[i].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -56,8 +57,13 @@ namespace NativeLighting
 		ID3DBlob* serialized = nullptr;
 		ID3DBlob* errors = nullptr;
 		auto result = D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors);
-		if (errors) errors->Release();
-		if (FAILED(result)) { if (serialized) serialized->Release(); return result; }
+		if (errors)
+			errors->Release();
+		if (FAILED(result)) {
+			if (serialized)
+				serialized->Release();
+			return result;
+		}
 		result = a_device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(a_root));
 		serialized->Release();
 		return result;

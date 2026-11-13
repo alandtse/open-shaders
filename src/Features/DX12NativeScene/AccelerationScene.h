@@ -37,7 +37,11 @@ namespace DX12Native
 		/** @brief Invalidates publication and retires pending builds by generation. */
 		void Reset();
 		/** @brief Replaces the observed light scope without discarding completed immutable BLASes. */
-		void ReplaceScope() { ++generation; published.reset(); }
+		void ReplaceScope()
+		{
+			++generation;
+			published.reset();
+		}
 		using GeometryMap = std::unordered_map<const Mesh*, std::shared_ptr<const Geometry>>;
 		/** @brief Advances one missing BLAS and one ready TLAS per worker step, retaining two GPU slots. */
 		void Advance(const Snapshot* a_snapshot, const GeometryMap& a_geometries, uint64_t a_budgetBytes);
@@ -48,7 +52,7 @@ namespace DX12Native
 		/** @brief Reports whether submitted builds still own GPU work. */
 		bool HasPendingBuilds() const;
 		/** @brief Account for completed/pending GPU resources when checking DXGI. */
-        uint64_t TrackedBytes() const { return ResidentBytes(); }
+		uint64_t TrackedBytes() const { return ResidentBytes(); }
 		/** @brief Reports allocation deferrals without rebuilding diagnostics. */
 		uint64_t BudgetDeferrals() const { return budgetDeferrals; }
 		/** @brief Returns the latched device/build failure. */
@@ -111,7 +115,7 @@ namespace DX12Native
 	public:
 		/** @brief Starts one owned batch; never queues another worker task while busy. */
 		void Start(const GraphicsBackend& a_backend, std::shared_ptr<const Snapshot> a_snapshot,
-			AccelerationScene::GeometryMap a_geometries, uint64_t a_manualBudgetBytes); // 0 = DXGI auto
+			AccelerationScene::GeometryMap a_geometries, uint64_t a_manualBudgetBytes);  // 0 = DXGI auto
 		/** @brief Polls publication and GPU completion, then schedules one progress step. */
 		void Advance();
 		/** @brief Cancels eligibility and requests asynchronous resource retirement. */

@@ -1,9 +1,9 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cmath>
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
@@ -14,8 +14,22 @@
 
 namespace NativePBR
 {
-	enum class MaterialKind : uint8_t { Mesh, Landscape };
-	enum class TextureRole : size_t { BaseColor, Normal, Rmaos, Emission, Displacement, Features0, Features1, Count };
+	enum class MaterialKind : uint8_t
+	{
+		Mesh,
+		Landscape
+	};
+	enum class TextureRole : size_t
+	{
+		BaseColor,
+		Normal,
+		Rmaos,
+		Emission,
+		Displacement,
+		Features0,
+		Features1,
+		Count
+	};
 
 	struct Glint
 	{
@@ -73,15 +87,20 @@ namespace NativePBR
 		auto glint = [&](const Glint& value) {
 			return finite(value.screenScale) && finite(value.microfacetDensity) && finite(value.roughness) && finite(value.randomness);
 		};
-		for (const auto& uv : a_data.uvOffsetScale) if (!floats(uv)) return false;
+		for (const auto& uv : a_data.uvOffsetScale)
+			if (!floats(uv))
+				return false;
 		if (!floats(a_data.coatColor) || !floats(a_data.subsurfaceColor) || !floats(a_data.fuzzColor) ||
-			!floats(a_data.projectedColor) || !glint(a_data.glint) || !glint(a_data.projectedGlint)) return false;
+			!floats(a_data.projectedColor) || !glint(a_data.glint) || !glint(a_data.projectedGlint))
+			return false;
 		const std::array scalars{ a_data.materialAlpha, a_data.roughnessScale, a_data.displacementScale, a_data.specularLevel,
 			a_data.coatStrength, a_data.coatRoughness, a_data.coatSpecularLevel, a_data.subsurfaceOpacity,
 			a_data.fuzzWeight, a_data.projectedRoughness, a_data.projectedSpecularLevel };
-		if (!floats(scalars) || a_data.landscapeTileCount > a_data.landscapeTiles.size()) return false;
+		if (!floats(scalars) || a_data.landscapeTileCount > a_data.landscapeTiles.size())
+			return false;
 		for (const auto& tile : a_data.landscapeTiles)
-			if (!finite(tile.roughnessScale) || !finite(tile.displacementScale) || !finite(tile.specularLevel) || !glint(tile.glint)) return false;
+			if (!finite(tile.roughnessScale) || !finite(tile.displacementScale) || !finite(tile.specularLevel) || !glint(tile.glint))
+				return false;
 		return true;
 	}
 
@@ -133,14 +152,19 @@ namespace NativePBR
 		/** @brief Claims the current material generation for a render-thread snapshot. */
 		Capture BeginCapture(const void* a_source)
 		{
-			if (!a_source) return {};
+			if (!a_source)
+				return {};
 			{
 				std::shared_lock lock(mutex);
-				if (auto it = entries.find(a_source); it != entries.end() && !it->second.dirty) return {};
+				if (auto it = entries.find(a_source); it != entries.end() && !it->second.dirty)
+					return {};
 			}
 			std::unique_lock lock(mutex);
 			auto [it, inserted] = entries.try_emplace(a_source);
-			if (inserted) { it->second.identity = nextIdentity++; ++revision; }
+			if (inserted) {
+				it->second.identity = nextIdentity++;
+				++revision;
+			}
 			const auto& entry = it->second;
 			return entry.dirty ? Capture{ entry.identity, entry.mutation, entry.textureGeneration } : Capture{};
 		}
@@ -152,34 +176,49 @@ namespace NativePBR
 			const std::array<const void*, static_cast<size_t>(TextureRole::Count) * 2>& a_resources = {})
 		{
 			static_assert(N == static_cast<size_t>(TextureRole::Count) + 1 || N == 24);
-			if (!a_source) return {};
+			if (!a_source)
+				return {};
 			auto unchanged = [&](const Entry& entry) {
 				const bool base = entry.baseObserved && entry.observedUv == a_uv && entry.observedAlpha == a_alpha && entry.observedClamp == a_clamp;
-				if constexpr (N == 24) return base && entry.landscapeTexturesObserved && entry.landscapeTextures == a_textures;
-				else return base && entry.texturesObserved && entry.textures == a_textures && entry.resourcesObserved && entry.resources == a_resources;
+				if constexpr (N == 24)
+					return base && entry.landscapeTexturesObserved && entry.landscapeTextures == a_textures;
+				else
+					return base && entry.texturesObserved && entry.textures == a_textures && entry.resourcesObserved && entry.resources == a_resources;
 			};
 			{
 				std::shared_lock lock(mutex);
 				auto it = entries.find(a_source);
-				if (it != entries.end() && !it->second.dirty && unchanged(it->second)) return {};
+				if (it != entries.end() && !it->second.dirty && unchanged(it->second))
+					return {};
 			}
 			std::unique_lock lock(mutex);
 			auto [it, inserted] = entries.try_emplace(a_source);
 			auto& entry = it->second;
-			if (inserted) { entry.identity = nextIdentity++; ++revision; }
+			if (inserted) {
+				entry.identity = nextIdentity++;
+				++revision;
+			}
 			if (!unchanged(entry)) {
 				entry.baseObserved = true;
 				entry.observedUv = a_uv;
 				entry.observedAlpha = a_alpha;
 				entry.observedClamp = a_clamp;
-				if constexpr (N == 24) { entry.landscapeTextures = a_textures; entry.landscapeTexturesObserved = true; }
-				else {
-					if (!entry.texturesObserved || entry.textures != a_textures || !entry.resourcesObserved || entry.resources != a_resources) ++entry.textureGeneration;
-					entry.textures = a_textures; entry.texturesObserved = true;
-					entry.resources = a_resources; entry.resourcesObserved = true;
+				if constexpr (N == 24) {
+					entry.landscapeTextures = a_textures;
+					entry.landscapeTexturesObserved = true;
+				} else {
+					if (!entry.texturesObserved || entry.textures != a_textures || !entry.resourcesObserved || entry.resources != a_resources)
+						++entry.textureGeneration;
+					entry.textures = a_textures;
+					entry.texturesObserved = true;
+					entry.resources = a_resources;
+					entry.resourcesObserved = true;
 				}
 				++entry.mutation;
-				if (!entry.dirty) { entry.dirty = true; ++revision; }
+				if (!entry.dirty) {
+					entry.dirty = true;
+					++revision;
+				}
 			}
 			return entry.dirty ? Capture{ entry.identity, entry.mutation, entry.textureGeneration } : Capture{};
 		}
@@ -193,11 +232,13 @@ namespace NativePBR
 			{
 				std::shared_lock lock(mutex);
 				auto it = entries.find(a_source);
-				if (it == entries.end() || unchanged(it->second)) return;
+				if (it == entries.end() || unchanged(it->second))
+					return;
 			}
 			std::unique_lock lock(mutex);
 			auto it = entries.find(a_source);
-			if (it == entries.end() || unchanged(it->second)) return;
+			if (it == entries.end() || unchanged(it->second))
+				return;
 			auto& entry = it->second;
 			entry.baseObserved = true;
 			entry.observedUv = a_uv;
@@ -228,7 +269,10 @@ namespace NativePBR
 			std::unique_lock lock(mutex);
 			if (auto it = entries.find(a_source); it != entries.end()) {
 				++it->second.mutation;
-				if (!it->second.dirty) { it->second.dirty = true; ++revision; }
+				if (!it->second.dirty) {
+					it->second.dirty = true;
+					++revision;
+				}
 			}
 		}
 
@@ -238,22 +282,28 @@ namespace NativePBR
 			std::unique_lock lock(mutex);
 			for (auto& [source, entry] : entries) {
 				++entry.mutation;
-				if (!entry.dirty) { entry.dirty = true; ++revision; }
+				if (!entry.dirty) {
+					entry.dirty = true;
+					++revision;
+				}
 			}
 		}
 
 		/** @brief Publishes only if the captured identity and mutation are still current. */
 		bool Publish(const void* a_source, Capture a_capture, MaterialData a_data)
 		{
-			if (!IsFinite(a_data)) return false;
+			if (!IsFinite(a_data))
+				return false;
 			std::unique_lock lock(mutex);
 			auto it = entries.find(a_source);
 			if (it == entries.end() || !a_capture || it->second.identity != a_capture.identity ||
-				it->second.mutation != a_capture.mutation || !it->second.dirty) return false;
+				it->second.mutation != a_capture.mutation || !it->second.dirty)
+				return false;
 			auto& entry = it->second;
 			a_data.textureGeneration = a_capture.textureGeneration;
 			if (entry.baseObserved && (entry.observedUv != a_data.uvOffsetScale || entry.observedAlpha != a_data.materialAlpha ||
-				entry.observedClamp != a_data.clampMode)) return false;
+										  entry.observedClamp != a_data.clampMode))
+				return false;
 			if (entry.revision && entry.data == a_data) {
 				entry.dirty = false;
 				++revision;
@@ -269,23 +319,34 @@ namespace NativePBR
 		/** @brief Records a bounded, unverified reference-and-shape association. */
 		void ObserveInstance(const void* a_source, std::string a_reference, std::string a_shape, InstanceProperties a_properties = {})
 		{
-			if (!a_source || a_reference.empty() || a_reference.size() > 256 || a_shape.empty() || a_shape.size() > 1024) return;
+			if (!a_source || a_reference.empty() || a_reference.size() > 256 || a_shape.empty() || a_shape.size() > 1024)
+				return;
 			{
 				std::shared_lock lock(mutex);
 				if (auto it = entries.find(a_source); it != entries.end())
 					for (const auto& hint : it->second.hints)
-						if (hint.referenceKey == a_reference && hint.shapeName == a_shape && (hint.propertiesConflict || hint.properties == a_properties)) return;
+						if (hint.referenceKey == a_reference && hint.shapeName == a_shape && (hint.propertiesConflict || hint.properties == a_properties))
+							return;
 			}
 			std::unique_lock lock(mutex);
 			auto [it, inserted] = entries.try_emplace(a_source);
 			auto& entry = it->second;
-			if (inserted) { entry.identity = nextIdentity++; ++revision; }
+			if (inserted) {
+				entry.identity = nextIdentity++;
+				++revision;
+			}
 			for (auto& hint : entry.hints)
 				if (hint.referenceKey == a_reference && hint.shapeName == a_shape) {
-					if (!hint.propertiesConflict && hint.properties != a_properties) { hint.propertiesConflict = true; ++revision; }
+					if (!hint.propertiesConflict && hint.properties != a_properties) {
+						hint.propertiesConflict = true;
+						++revision;
+					}
 					return;
 				}
-			if (entry.hints.size() >= kMaximumHintsPerMaterial || totalHints >= kMaximumInstanceHints) { ++hintLimitHits; return; }
+			if (entry.hints.size() >= kMaximumHintsPerMaterial || totalHints >= kMaximumInstanceHints) {
+				++hintLimitHits;
+				return;
+			}
 			entry.hints.push_back({ entry.identity, std::move(a_reference), std::move(a_shape), a_properties });
 			++totalHints;
 			++revision;
@@ -305,7 +366,8 @@ namespace NativePBR
 		void ClearInstanceHints()
 		{
 			std::unique_lock lock(mutex);
-			if (!totalHints) return;
+			if (!totalHints)
+				return;
 			for (auto& [source, entry] : entries) entry.hints.clear();
 			totalHints = 0;
 			++revision;
@@ -330,7 +392,8 @@ namespace NativePBR
 			std::vector<Snapshot> result;
 			result.reserve(entries.size());
 			for (const auto& [source, entry] : entries)
-				if (!entry.dirty) result.push_back({ entry.identity, entry.revision, entry.data });
+				if (!entry.dirty)
+					result.push_back({ entry.identity, entry.revision, entry.data });
 			return result;
 		}
 
@@ -345,13 +408,16 @@ namespace NativePBR
 		std::optional<ExportedGeneration> ExportIfChanged(uint64_t a_revision) const
 		{
 			std::shared_lock lock(mutex);
-			if (revision == a_revision) return std::nullopt;
+			if (revision == a_revision)
+				return std::nullopt;
 			ExportedGeneration result;
 			result.revision = revision;
 			result.snapshots.reserve(entries.size());
 			for (const auto& [source, entry] : entries) {
-				if (entry.dirty) result.pendingIdentities.push_back(entry.identity);
-				else result.snapshots.push_back({ entry.identity, entry.revision, entry.data });
+				if (entry.dirty)
+					result.pendingIdentities.push_back(entry.identity);
+				else
+					result.snapshots.push_back({ entry.identity, entry.revision, entry.data });
 			}
 			return result;
 		}
@@ -368,17 +434,24 @@ namespace NativePBR
 		std::optional<ChangeSet> ExportChanges(uint64_t a_revision, const std::unordered_map<uint64_t, uint64_t>& a_known, size_t a_limit = 32) const
 		{
 			std::shared_lock lock(mutex);
-			if (revision == a_revision) return std::nullopt;
+			if (revision == a_revision)
+				return std::nullopt;
 			ChangeSet result;
-			if (!a_limit) a_limit = 1;
+			if (!a_limit)
+				a_limit = 1;
 			result.revision = revision;
 			result.liveIdentities.reserve(entries.size());
 			for (const auto& [source, entry] : entries) {
 				result.liveIdentities.push_back(entry.identity);
-				if (entry.dirty) result.pendingIdentities.push_back(entry.identity);
+				if (entry.dirty)
+					result.pendingIdentities.push_back(entry.identity);
 				else if (auto known = a_known.find(entry.identity); known == a_known.end() || known->second != entry.revision) {
-					if (result.changed.size() < a_limit) result.changed.push_back({ entry.identity, entry.revision, entry.data });
-					else { result.hasMore = true; result.pendingIdentities.push_back(entry.identity); }
+					if (result.changed.size() < a_limit)
+						result.changed.push_back({ entry.identity, entry.revision, entry.data });
+					else {
+						result.hasMore = true;
+						result.pendingIdentities.push_back(entry.identity);
+					}
 				}
 			}
 			return result;
@@ -431,21 +504,29 @@ namespace NativePBR
 		void ObserveTextureSet(const void* a_source, const std::array<const void*, N>& a_textures,
 			std::array<const void*, N> Entry::* a_values, bool Entry::* a_observed)
 		{
-			if (!a_source) return;
+			if (!a_source)
+				return;
 			{
 				std::shared_lock lock(mutex);
 				auto it = entries.find(a_source);
-				if (it != entries.end() && it->second.*a_observed && it->second.*a_values == a_textures) return;
+				if (it != entries.end() && it->second.*a_observed && it->second.*a_values == a_textures)
+					return;
 			}
 			std::unique_lock lock(mutex);
 			auto [it, inserted] = entries.try_emplace(a_source);
 			auto& entry = it->second;
-			if (inserted) { entry.identity = nextIdentity++; ++revision; }
+			if (inserted) {
+				entry.identity = nextIdentity++;
+				++revision;
+			}
 			if (!(entry.*a_observed) || entry.*a_values != a_textures) {
 				entry.*a_values = a_textures;
 				entry.*a_observed = true;
 				++entry.mutation;
-				if (!entry.dirty) { entry.dirty = true; ++revision; }
+				if (!entry.dirty) {
+					entry.dirty = true;
+					++revision;
+				}
 			}
 		}
 

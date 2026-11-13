@@ -18,12 +18,12 @@ struct NativeLightingFeature final : Feature
 		float PointLightRadiusMultiplier = 4.0f, PointLightFalloffFraction = 0.1f, PointLightFalloffExponent = 1.0f;
 		float ShadowStrength = 1.0f, EmitterRadiusMultiplier = 1.0f;
 		uint32_t NormalInfluence = 2, SelectedDirectLight = 0;
-		uint32_t TraceDensityMode = 0; // 0..7, native-resolution sparse ray eligibility.
+		uint32_t TraceDensityMode = 0;  // 0..7, native-resolution sparse ray eligibility.
 		bool StochasticShadows = false, UseAllPreparedLights = true;
-        // Independent opt-in; only secondary occlusion rays inspect characters.
-        bool CharacterCasterOcclusion = false;
-        bool CharacterReceiverProbe = false; // Raster-aligned hits, no shading.
-		uint32_t BudgetMB = 0; // Compatibility only; always dynamic DXGI.
+		// Independent opt-in; only secondary occlusion rays inspect characters.
+		bool CharacterCasterOcclusion = false;
+		bool CharacterReceiverProbe = false;  // Raster-aligned hits, no shading.
+		uint32_t BudgetMB = 0;                // Compatibility only; always dynamic DXGI.
 		bool PersistLab = false;
 	};
 	struct ValidityLab
@@ -44,7 +44,19 @@ struct NativeLightingFeature final : Feature
 	};
 	struct Contribution
 	{
-		enum class Output : size_t { Diffuse, Specular, Validity, ReceiverGuide, Debug, ComparisonDiffuse, ComparisonSpecular, EffectiveValidity, RejectionReason, LabGuide };
+		enum class Output : size_t
+		{
+			Diffuse,
+			Specular,
+			Validity,
+			ReceiverGuide,
+			Debug,
+			ComparisonDiffuse,
+			ComparisonSpecular,
+			EffectiveValidity,
+			RejectionReason,
+			LabGuide
+		};
 		std::array<winrt::com_ptr<ID3D12Resource>, 10> textures;
 		winrt::com_ptr<ID3D12Resource> counters, counterReset, counterReadback, lights, constants;
 		winrt::com_ptr<ID3D12DescriptorHeap> heap;
@@ -55,8 +67,8 @@ struct NativeLightingFeature final : Feature
 		winrt::com_ptr<ID3D12Fence> readyFence;
 		GraphicsBackend backend;
 		DX12NativeScene::SceneFrame scene;
-        std::shared_ptr<const DX12Native::CharacterIsolatedTLAS> characterCasters;
-        bool characterProbeEnabled = false;
+		std::shared_ptr<const DX12Native::CharacterIsolatedTLAS> characterCasters;
+		bool characterProbeEnabled = false;
 		std::weak_ptr<const DX12Native::ShadowBindings> descriptorBindings;
 		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 		uint64_t readyValue = 0, bytes = 0, sceneRevision = 0;
@@ -90,7 +102,7 @@ struct NativeLightingFeature final : Feature
 	{
 		std::scoped_lock lock(settingsMutex);
 		return loaded && settings.Enabled &&
-			(settings.UseAllPreparedLights || settings.SelectedDirectLight == index);
+		       (settings.UseAllPreparedLights || settings.SelectedDirectLight == index);
 	}
 	~NativeLightingFeature();
 

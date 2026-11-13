@@ -9,8 +9,8 @@
 #include "../ScreenshotFeature.h"
 #include "../Upscaling.h"
 #include "FidelityFX.h"
-#include "Hooks.h"
 #include "GraphicsBackend.h"
+#include "Hooks.h"
 #include "Streamline.h"
 #include "Utils/D3D.h"
 

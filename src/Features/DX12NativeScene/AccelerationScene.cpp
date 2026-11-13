@@ -1,10 +1,10 @@
 #include "AccelerationScene.h"
 #include "VideoMemoryBudget.h"
 
+#include "../../../extern/FidelityFX-SDK/framework/cauldron/framework/libs/pix/pix3.h"
 #include <BS_thread_pool.hpp>
 #include <atomic>
 #include <chrono>
-#include "../../../extern/FidelityFX-SDK/framework/cauldron/framework/libs/pix/pix3.h"
 
 namespace DX12Native
 {
@@ -25,16 +25,21 @@ namespace DX12Native
 			return failure.empty();
 		}
 		backend = a_backend;
-		if (!backend.d3d12Device || !backend.commandQueue) return false;
+		if (!backend.d3d12Device || !backend.commandQueue)
+			return false;
 		try {
 			DX::ThrowIfFailed(backend.d3d12Device->QueryInterface(IID_PPV_ARGS(device.put())));
 			D3D12_FEATURE_DATA_D3D12_OPTIONS5 options{};
 			DX::ThrowIfFailed(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options, sizeof(options)));
-			if (options.RaytracingTier < D3D12_RAYTRACING_TIER_1_1) throw std::runtime_error("Inline shadows require DXR 1.1");
+			if (options.RaytracingTier < D3D12_RAYTRACING_TIER_1_1)
+				throw std::runtime_error("Inline shadows require DXR 1.1");
 			DX::ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(completion.put())));
 			completion->SetName(L"DX12NativeScene::AccelerationCompletion");
 			return true;
-		} catch (const std::exception& error) { failure = error.what(); return false; }
+		} catch (const std::exception& error) {
+			failure = error.what();
+			return false;
+		}
 	}
 
 	AccelerationScene::~AccelerationScene()
@@ -42,11 +47,13 @@ namespace DX12Native
 		const uint64_t done = completion ? completion->GetCompletedValue() : 0;
 		bool inFlight = false;
 		for (auto& build : builds) {
-			if (!build.submitted || (build.fence && build.fence <= done)) continue;
+			if (!build.submitted || (build.fence && build.fence <= done))
+				continue;
 			inFlight = true;
 			(void)new Build(std::move(build));
 		}
-		if (inFlight) (void)completion.detach();
+		if (inFlight)
+			(void)completion.detach();
 	}
 
 	void AccelerationScene::Reset()
@@ -61,7 +68,8 @@ namespace DX12Native
 		const auto flags = a_heap == D3D12_HEAP_TYPE_UPLOAD ? D3D12_RESOURCE_FLAG_NONE : D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 		const auto desc = CD3DX12_RESOURCE_DESC::Buffer(a_bytes, flags);
 		const auto info = device->GetResourceAllocationInfo(0, 1, &desc);
-		if (!a_bytes || info.SizeInBytes == UINT64_MAX) throw std::runtime_error("Invalid acceleration allocation size");
+		if (!a_bytes || info.SizeInBytes == UINT64_MAX)
+			throw std::runtime_error("Invalid acceleration allocation size");
 		return info.SizeInBytes;
 	}
 
@@ -86,7 +94,8 @@ namespace DX12Native
 				bytes += bottom->bytes + bottom->geometry->allocationBytes + bottom->geometry->source->bytes;
 		};
 		auto countTop = [&](const std::shared_ptr<const TopLevel>& top) {
-			if (!top || !seenTop.insert(top.get()).second) return;
+			if (!top || !seenTop.insert(top.get()).second)
+				return;
 			bytes += top->bytes;
 			for (const auto& bottom : top->bottoms) countBottom(bottom);
 		};
@@ -146,7 +155,10 @@ namespace DX12Native
 		const auto resultBytes = AllocationBytes(info.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT);
 		const auto scratchBytes = AllocationBytes(info.ScratchDataSizeInBytes, D3D12_HEAP_TYPE_DEFAULT);
 		const auto required = resultBytes + scratchBytes + a_geometry->allocationBytes + mesh.bytes;
-		if (required > a_budgetBytes || ResidentBytes() > a_budgetBytes - required) { ++budgetDeferrals; return false; }
+		if (required > a_budgetBytes || ResidentBytes() > a_budgetBytes - required) {
+			++budgetDeferrals;
+			return false;
+		}
 		Begin(a_build);
 		BeginBuildEvent(a_build.commands.get(), L"DX12NativeScene::BuildBLAS");
 		a_build.bottom = std::make_shared<BottomLevel>();
@@ -173,7 +185,8 @@ namespace DX12Native
 
 	bool AccelerationScene::BuildTop(Build& a_build, const Snapshot& a_snapshot, uint64_t a_budgetBytes)
 	{
-		if (published && published->generation == a_snapshot.generation && published->sweep == a_snapshot.sweep && published->blasRevision == bottomCompletions) return false;
+		if (published && published->generation == a_snapshot.generation && published->sweep == a_snapshot.sweep && published->blasRevision == bottomCompletions)
+			return false;
 		auto top = std::make_shared<TopLevel>();
 		top->generation = a_snapshot.generation;
 		top->sweep = a_snapshot.sweep;
@@ -183,7 +196,8 @@ namespace DX12Native
 		std::vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
 		for (const auto& instance : a_snapshot.instances) {
 			const auto found = bottoms.find({ instance.mesh.get(), instance.firstIndex, instance.indexCount });
-			if (instance.material.alphaTest || found == bottoms.end() || instances.size() >= kMaximumInstances) return false;
+			if (instance.material.alphaTest || found == bottoms.end() || instances.size() >= kMaximumInstances)
+				return false;
 			D3D12_RAYTRACING_INSTANCE_DESC desc{};
 			std::memcpy(desc.Transform, instance.world.m, sizeof(desc.Transform));
 			desc.InstanceID = uint32_t(instances.size());
@@ -194,20 +208,21 @@ namespace DX12Native
 			top->bottoms.push_back(found->second);
 			top->instances.push_back(instance);
 		}
-		if (instances.empty()) return false;
+		if (instances.empty())
+			return false;
 		// Refit only when the complete ordered BLAS membership is identical.
 		// Changes to topology or missing casters must trigger a full rebuild.
 		const bool canUpdate = published && published->updateCapable &&
-			published->result && published->scope.scene == a_snapshot.scope.scene &&
-			published->bottoms.size() == top->bottoms.size() &&
-			std::equal(published->bottoms.begin(), published->bottoms.end(), top->bottoms.begin());
+		                       published->result && published->scope.scene == a_snapshot.scope.scene &&
+		                       published->bottoms.size() == top->bottoms.size() &&
+		                       std::equal(published->bottoms.begin(), published->bottoms.end(), top->bottoms.begin());
 		top->updateCapable = true;
 		D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
 		inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
 		// Prebuild info is requested for the update-capable structure; the
 		// PERFORM_UPDATE flag belongs to the actual build invocation only.
 		inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE |
-			D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE;
+		               D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE;
 		inputs.NumDescs = uint32_t(instances.size());
 		inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
 		D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO info{};
@@ -219,13 +234,17 @@ namespace DX12Native
 		const uint64_t uploadSize = instances.size() * sizeof(D3D12_RAYTRACING_INSTANCE_DESC);
 		const auto uploadBytes = AllocationBytes(uploadSize, D3D12_HEAP_TYPE_UPLOAD);
 		const auto required = resultBytes + scratchBytes + uploadBytes;
-		if (required > a_budgetBytes || ResidentBytes() > a_budgetBytes - required) { ++budgetDeferrals; return false; }
+		if (required > a_budgetBytes || ResidentBytes() > a_budgetBytes - required) {
+			++budgetDeferrals;
+			return false;
+		}
 		Begin(a_build);
 		BeginBuildEvent(a_build.commands.get(), L"DX12NativeScene::BuildTLAS");
 		top->result = Buffer(info.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"DX12NativeScene::TLAS");
 		top->bytes = resultBytes;
 		a_build.top = std::move(top);
-		if (canUpdate) a_build.updateSource = published;
+		if (canUpdate)
+			a_build.updateSource = published;
 		a_build.scratch = Buffer(
 			canUpdate ? info.UpdateScratchDataSizeInBytes : info.ScratchDataSizeInBytes,
 			D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
@@ -244,7 +263,8 @@ namespace DX12Native
 		build.Inputs = inputs;
 		build.DestAccelerationStructureData = a_build.top->result->GetGPUVirtualAddress();
 		build.SourceAccelerationStructureData = canUpdate ?
-			a_build.updateSource->result->GetGPUVirtualAddress() : 0;
+		                                            a_build.updateSource->result->GetGPUVirtualAddress() :
+		                                            0;
 		build.ScratchAccelerationStructureData = a_build.scratch->GetGPUVirtualAddress();
 		a_build.commands->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
 		const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(a_build.top->result.get());
@@ -252,23 +272,31 @@ namespace DX12Native
 		a_build.commands->EndEvent();
 		Submit(a_build);
 		++topSubmissions;
-		if (canUpdate) ++topUpdates;
+		if (canUpdate)
+			++topUpdates;
 		return true;
 	}
 
 	void AccelerationScene::Retire()
 	{
 		const uint64_t done = completion->GetCompletedValue();
-		if (done == UINT64_MAX) { failure = "Acceleration device removed"; return; }
+		if (done == UINT64_MAX) {
+			failure = "Acceleration device removed";
+			return;
+		}
 		for (auto& build : builds) {
-			if (!build.submitted || !build.fence || build.fence > done) continue;
+			if (!build.submitted || !build.fence || build.fence > done)
+				continue;
 			if (build.generation == generation) {
 				if (build.bottom) {
 					const auto& bottom = build.bottom;
 					bottoms.emplace(RangeKey{ bottom->geometry->source.get(), bottom->firstIndex, bottom->indexCount }, bottom);
 					++bottomCompletions;
 				}
-				if (build.top) { published = build.top; ++topCompletions; }
+				if (build.top) {
+					published = build.top;
+					++topCompletions;
+				}
 			}
 			build = {};
 		}
@@ -276,34 +304,49 @@ namespace DX12Native
 
 	void AccelerationScene::Advance(const Snapshot* a_snapshot, const GeometryMap& a_geometries, uint64_t a_budgetBytes)
 	{
-		if (!completion || !failure.empty()) return;
+		if (!completion || !failure.empty())
+			return;
 		Retire();
-		if (!a_snapshot || !failure.empty()) return;
+		if (!a_snapshot || !failure.empty())
+			return;
 		std::unordered_set<const Mesh*> current;
 		for (const auto& instance : a_snapshot->instances) current.insert(instance.mesh.get());
 		std::erase_if(bottoms, [&](const auto& pair) { return !current.contains(pair.first.mesh); });
 		Build* available = nullptr;
-		for (auto& build : builds) if (!build.allocator) { available = &build; break; }
-		if (!available) { ++busyFrames; return; }
+		for (auto& build : builds)
+			if (!build.allocator) {
+				available = &build;
+				break;
+			}
+		if (!available) {
+			++busyFrames;
+			return;
+		}
 		try {
 			for (size_t attempt = 0; attempt < a_snapshot->instances.size(); ++attempt) {
 				const auto& instance = a_snapshot->instances[buildCursor++ % a_snapshot->instances.size()];
 				const RangeKey key{ instance.mesh.get(), instance.firstIndex, instance.indexCount };
 				if (instance.material.alphaTest || bottoms.contains(key) || std::ranges::any_of(builds, [&](const Build& build) {
-					return build.bottom && build.bottom->geometry->source.get() == key.mesh && build.bottom->firstIndex == key.first && build.bottom->indexCount == key.count;
-				})) continue;
-				if (const auto found = a_geometries.find(key.mesh); found != a_geometries.end()) BuildBottom(*available, instance, found->second, a_budgetBytes);
+						return build.bottom && build.bottom->geometry->source.get() == key.mesh && build.bottom->firstIndex == key.first && build.bottom->indexCount == key.count;
+					}))
+					continue;
+				if (const auto found = a_geometries.find(key.mesh); found != a_geometries.end())
+					BuildBottom(*available, instance, found->second, a_budgetBytes);
 				break;
 			}
 			for (auto& build : builds) {
-				if (build.allocator) continue;
-				if (std::ranges::any_of(builds, [](const Build& queued) { return bool(queued.top); })) break;
+				if (build.allocator)
+					continue;
+				if (std::ranges::any_of(builds, [](const Build& queued) { return bool(queued.top); }))
+					break;
 				BuildTop(build, *a_snapshot, a_budgetBytes);
 				break;
 			}
 		} catch (const std::exception& error) {
 			failure = error.what();
-			for (auto& build : builds) if (!build.submitted) build = {};
+			for (auto& build : builds)
+				if (!build.submitted)
+					build = {};
 		}
 	}
 
@@ -325,12 +368,12 @@ namespace DX12Native
 	}
 
 	struct AccelerationWorker::Input
-    {
-        GraphicsBackend backend;
-        std::shared_ptr<const Snapshot> snapshot;
-        AccelerationScene::GeometryMap geometries;
-        uint64_t manualBudget = 0; // 0 -> DXGI budget, otherwise scene-wide upper cap
-    };
+	{
+		GraphicsBackend backend;
+		std::shared_ptr<const Snapshot> snapshot;
+		AccelerationScene::GeometryMap geometries;
+		uint64_t manualBudget = 0;  // 0 -> DXGI budget, otherwise scene-wide upper cap
+	};
 
 	struct AccelerationWorker::Output
 	{
@@ -342,8 +385,8 @@ namespace DX12Native
 		std::string failure;
 		double cpuMs = 0;
 		bool terminal = false, budgetDeferred = false;
-        uint64_t effectiveBudget = 0;
-        std::chrono::steady_clock::time_point retryAt{};
+		uint64_t effectiveBudget = 0;
+		std::chrono::steady_clock::time_point retryAt{};
 	};
 
 	struct AccelerationWorker::State
@@ -353,13 +396,14 @@ namespace DX12Native
 		AccelerationScene acceleration;
 		std::shared_ptr<const Output> completed;
 		uint64_t appliedRevision = 0, sceneEpoch = 0;
-        std::chrono::steady_clock::time_point firstBudgetStall{};
+		std::chrono::steady_clock::time_point firstBudgetStall{};
 	};
 
 	void AccelerationWorker::Start(const GraphicsBackend& a_backend, std::shared_ptr<const Snapshot> a_snapshot,
 		AccelerationScene::GeometryMap a_geometries, uint64_t a_manualBudgetBytes)
 	{
-		if (!state) state = std::make_shared<State>();
+		if (!state)
+			state = std::make_shared<State>();
 		auto prepared = std::make_shared<Input>();
 		prepared->backend = a_backend;
 		prepared->snapshot = std::move(a_snapshot);
@@ -381,31 +425,41 @@ namespace DX12Native
 		dispatchFailure.clear();
 		finished = true;
 		retiring = bool(state);
-		if (state) state->desired.store(revision, std::memory_order_release);
+		if (state)
+			state->desired.store(revision, std::memory_order_release);
 	}
 
 	void AccelerationWorker::Advance()
 	{
-		if (!state || state->busy.load(std::memory_order_acquire)) return;
+		if (!state || state->busy.load(std::memory_order_acquire))
+			return;
 		if (state->completed && state->completed->revision == revision) {
-            if (state->completed->budgetDeferred &&
-                std::chrono::steady_clock::now() < state->completed->retryAt) return;
+			if (state->completed->budgetDeferred &&
+				std::chrono::steady_clock::now() < state->completed->retryAt)
+				return;
 			output = state->completed;
 			if (!output->diagnostics.empty()) {
 				lastDiagnostics = output->diagnostics;
 				lastDiagnosticScope = output->scope;
 			}
 			if (output->terminal) {
-				if (output->scene && output->scene->scope == output->scope) lastCompletedScope = output->scope;
-				if (!output->failure.empty()) { lastBatchFailure = output->failure; lastFailedBatch = output->scope.batch; }
+				if (output->scene && output->scene->scope == output->scope)
+					lastCompletedScope = output->scope;
+				if (!output->failure.empty()) {
+					lastBatchFailure = output->failure;
+					lastFailedBatch = output->scope.batch;
+				}
 				finished = true;
 				retiring = false;
 				return;
 			}
-			if (output->fence && output->fenceValue > output->fence->GetCompletedValue()) return;
+			if (output->fence && output->fenceValue > output->fence->GetCompletedValue())
+				return;
 		}
-		if (!retiring && (finished || !input)) return;
-		if (state->busy.exchange(true, std::memory_order_acq_rel)) return;
+		if (!retiring && (finished || !input))
+			return;
+		if (state->busy.exchange(true, std::memory_order_acq_rel))
+			return;
 		try {
 			auto result = std::make_shared<Output>();
 			result->revision = revision;
@@ -417,38 +471,43 @@ namespace DX12Native
 					owned->completed = result;
 					owned->busy.store(false, std::memory_order_release);
 				});
-				if (owned->desired.load(std::memory_order_acquire) != result->revision) return;
+				if (owned->desired.load(std::memory_order_acquire) != result->revision)
+					return;
 				try {
 					auto& acceleration = owned->acceleration;
 					const auto* snapshot = prepared ? prepared->snapshot.get() : nullptr;
 					if (owned->appliedRevision != result->revision) {
-						if (!snapshot || owned->sceneEpoch != snapshot->scope.scene) acceleration.Reset();
-						else acceleration.ReplaceScope();
+						if (!snapshot || owned->sceneEpoch != snapshot->scope.scene)
+							acceleration.Reset();
+						else
+							acceleration.ReplaceScope();
 						owned->sceneEpoch = snapshot ? snapshot->scope.scene : 0;
 						owned->appliedRevision = result->revision;
-                        owned->firstBudgetStall = {};
+						owned->firstBudgetStall = {};
 					}
 					const auto deferrals = acceleration.BudgetDeferrals();
 					if (snapshot) {
 						result->scope = snapshot->scope;
-                        if (acceleration.Initialize(prepared->backend)) {
-                            uint64_t knownGeometryBytes = 0;
-                            for (const auto& [mesh, geometry] : prepared->geometries)
-                                if (geometry) knownGeometryBytes += geometry->allocationBytes;
-                            const uint64_t tracked = std::max(
-                                knownGeometryBytes, acceleration.TrackedBytes());
-                            VideoMemoryBudget budget;
-                            const auto memory = budget.Query(prepared->backend.d3d12Device.get(),
-                                tracked, prepared->manualBudget);
-                            result->effectiveBudget = memory.effectiveBytes;
-                            acceleration.Advance(snapshot, prepared->geometries,
-                                memory.effectiveBytes);
-                        }
-						else if (acceleration.Failure().empty()) result->failure = "Acceleration backend unavailable";
+						if (acceleration.Initialize(prepared->backend)) {
+							uint64_t knownGeometryBytes = 0;
+							for (const auto& [mesh, geometry] : prepared->geometries)
+								if (geometry)
+									knownGeometryBytes += geometry->allocationBytes;
+							const uint64_t tracked = std::max(
+								knownGeometryBytes, acceleration.TrackedBytes());
+							VideoMemoryBudget budget;
+							const auto memory = budget.Query(prepared->backend.d3d12Device.get(),
+								tracked, prepared->manualBudget);
+							result->effectiveBudget = memory.effectiveBytes;
+							acceleration.Advance(snapshot, prepared->geometries,
+								memory.effectiveBytes);
+						} else if (acceleration.Failure().empty())
+							result->failure = "Acceleration backend unavailable";
 					} else {
 						acceleration.Advance(nullptr, {}, 0);
 					}
-					if (!acceleration.Failure().empty()) result->failure = acceleration.Failure();
+					if (!acceleration.Failure().empty())
+						result->failure = acceleration.Failure();
 					result->fence = acceleration.CompletionFence();
 					result->fenceValue = acceleration.SubmittedFence();
 					result->scene = acceleration.GetScene();
@@ -456,21 +515,21 @@ namespace DX12Native
 					const bool pending = acceleration.HasPendingBuilds();
 					const bool built = snapshot && result->scene && result->scene->scope == snapshot->scope;
 					result->terminal = !result->failure.empty() || (!pending && (!snapshot || snapshot->instances.empty() || built));
-                    if (!pending && acceleration.BudgetDeferrals() != deferrals) {
-                        const auto now = std::chrono::steady_clock::now();
-                        if (owned->firstBudgetStall == std::chrono::steady_clock::time_point{})
-                            owned->firstBudgetStall = now;
-                        if (now - owned->firstBudgetStall >= std::chrono::seconds(20)) {
-                            result->failure = "Acceleration budget still exhausted after DXGI retry window";
-                            result->terminal = true;
-                        } else {
-                            result->budgetDeferred = true;
-                            result->retryAt = now + std::chrono::milliseconds(200);
-                            result->terminal = false;
-                        }
-                    } else if (acceleration.BudgetDeferrals() == deferrals) {
-                        owned->firstBudgetStall = {};
-                    }
+					if (!pending && acceleration.BudgetDeferrals() != deferrals) {
+						const auto now = std::chrono::steady_clock::now();
+						if (owned->firstBudgetStall == std::chrono::steady_clock::time_point{})
+							owned->firstBudgetStall = now;
+						if (now - owned->firstBudgetStall >= std::chrono::seconds(20)) {
+							result->failure = "Acceleration budget still exhausted after DXGI retry window";
+							result->terminal = true;
+						} else {
+							result->budgetDeferred = true;
+							result->retryAt = now + std::chrono::milliseconds(200);
+							result->terminal = false;
+						}
+					} else if (acceleration.BudgetDeferrals() == deferrals) {
+						owned->firstBudgetStall = {};
+					}
 				} catch (const std::exception& error) {
 					result->failure = error.what();
 					result->terminal = true;
@@ -489,7 +548,7 @@ namespace DX12Native
 		json status = lastDiagnostics.is_object() ? lastDiagnostics : json::object();
 		const auto* snapshot = input ? input->snapshot.get() : nullptr;
 		const bool matching = output && snapshot && output->revision == revision && output->scope == snapshot->scope &&
-			snapshot->offline;
+		                      snapshot->offline;
 		status["workerBusy"] = state && state->busy.load(std::memory_order_acquire);
 		status["countersAvailable"] = lastDiagnostics.is_object() && !lastDiagnostics.empty();
 		status["counterBatch"] = lastDiagnosticScope.batch;
@@ -504,8 +563,8 @@ namespace DX12Native
 		status["submittedFence"] = output ? output->fenceValue : 0;
 		status["completedFence"] = output && output->fence ? output->fence->GetCompletedValue() : 0;
 		status["batchFinished"] = finished;
-        status["dxgiBudgetDeferred"] = output && output->budgetDeferred;
-        status["effectiveBudgetBytes"] = output ? output->effectiveBudget : 0;
+		status["dxgiBudgetDeferred"] = output && output->budgetDeferred;
+		status["effectiveBudgetBytes"] = output ? output->effectiveBudget : 0;
 		status["publicationMatchesBatch"] = matching && bool(output->scene);
 		status["sourceFrame"] = snapshot ? snapshot->scope.frame : 0;
 		status["sourceIsCurrentFrame"] = false;
@@ -515,7 +574,8 @@ namespace DX12Native
 		status["sourceBatch"] = snapshot ? snapshot->scope.batch : 0;
 		status["sourceIncomplete"] = snapshot && snapshot->truncated;
 		status["lastWorkerCPUms"] = output ? output->cpuMs : 0;
-		status["failure"] = !dispatchFailure.empty() ? dispatchFailure : output ? output->failure : "";
+		status["failure"] = !dispatchFailure.empty() ? dispatchFailure : output ? output->failure :
+		                                                                          "";
 		status["coverageValid"] = false;
 		status["publicationEligible"] = false;
 		return status;
@@ -524,6 +584,8 @@ namespace DX12Native
 	std::shared_ptr<const TopLevel> AccelerationWorker::GetScene() const
 	{
 		return finished && output && input && output->scene && output->revision == revision && output->scope == input->snapshot->scope &&
-			output->scene->scope == input->snapshot->scope ? output->scene : nullptr;
+		               output->scene->scope == input->snapshot->scope ?
+		           output->scene :
+		           nullptr;
 	}
 }

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "PreparedScene.h"
-#include "RuntimeGeometryEncoding.h"
 #include "RuntimeGeometryCacheWorker.h"
+#include "RuntimeGeometryEncoding.h"
 #include "Utils/D3D.h"
 #include <BS_thread_pool.hpp>
 #include <algorithm>
@@ -10,390 +10,427 @@
 #include <directx/d3dx12.h>
 #include <exception>
 #include <mutex>
-#include <unordered_map>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 namespace DX12Native
 {
-    /** @brief Upload heap is owned by the published geometry and never mapped by the draw hook. */
-    inline winrt::com_ptr<ID3D12Resource> UploadRuntimeGeometryBuffer(
-        const GraphicsBackend& backend, std::span<const uint8_t> bytes,
-        uint64_t budget, uint64_t& allocation, const wchar_t* name)
-    {
-        if (!backend.d3d12Device || bytes.empty() || bytes.size() > budget)
-            throw std::runtime_error("Runtime geometry upload unavailable or outside budget");
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(bytes.size() + 4);
-        const auto info = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &desc);
-        if (info.SizeInBytes == UINT64_MAX || info.SizeInBytes > budget)
-            throw std::runtime_error("Runtime geometry GPU allocation exceeds budget");
-        winrt::com_ptr<ID3D12Resource> resource;
-        DX::ThrowIfFailed(backend.d3d12Device->CreateCommittedResource(
-            &heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ,
-            nullptr, IID_PPV_ARGS(resource.put())));
-        resource->SetName(name);
-        void* mapped = nullptr;
-        const D3D12_RANGE noRead{ 0, 0 };
-        DX::ThrowIfFailed(resource->Map(0, &noRead, &mapped));
-        std::memcpy(mapped, bytes.data(), bytes.size());
-        std::memset(static_cast<uint8_t*>(mapped) + bytes.size(), 0, 4);
-        resource->Unmap(0, nullptr);
-        allocation = info.SizeInBytes;
-        return resource;
-    }
+	/** @brief Upload heap is owned by the published geometry and never mapped by the draw hook. */
+	inline winrt::com_ptr<ID3D12Resource> UploadRuntimeGeometryBuffer(
+		const GraphicsBackend& backend, std::span<const uint8_t> bytes,
+		uint64_t budget, uint64_t& allocation, const wchar_t* name)
+	{
+		if (!backend.d3d12Device || bytes.empty() || bytes.size() > budget)
+			throw std::runtime_error("Runtime geometry upload unavailable or outside budget");
+		const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+		const auto desc = CD3DX12_RESOURCE_DESC::Buffer(bytes.size() + 4);
+		const auto info = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &desc);
+		if (info.SizeInBytes == UINT64_MAX || info.SizeInBytes > budget)
+			throw std::runtime_error("Runtime geometry GPU allocation exceeds budget");
+		winrt::com_ptr<ID3D12Resource> resource;
+		DX::ThrowIfFailed(backend.d3d12Device->CreateCommittedResource(
+			&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr, IID_PPV_ARGS(resource.put())));
+		resource->SetName(name);
+		void* mapped = nullptr;
+		const D3D12_RANGE noRead{ 0, 0 };
+		DX::ThrowIfFailed(resource->Map(0, &noRead, &mapped));
+		std::memcpy(mapped, bytes.data(), bytes.size());
+		std::memset(static_cast<uint8_t*>(mapped) + bytes.size(), 0, 4);
+		resource->Unmap(0, nullptr);
+		allocation = info.SizeInBytes;
+		return resource;
+	}
 
-    /** @brief Builds another immutable runtime-only native geometry generation. */
-    inline std::shared_ptr<const PreparedCell> PrepareRuntimeGeometryBatch(
-        const GraphicsBackend& backend,
-        const std::vector<std::shared_ptr<const RuntimeGeometryPacket>>& packets,
-        const std::shared_ptr<const PreparedCell>& previous, uint64_t epoch, uint64_t budget,
-        const std::shared_ptr<const PrewarmedRuntimeGeometry>& prewarmed = {},
-        uint32_t* cacheHitCounter = nullptr)
-    {
-        auto result = previous ? std::make_shared<PreparedCell>(*previous) : std::make_shared<PreparedCell>();
-        auto snapshot = previous && previous->snapshot ?
-            std::make_shared<Snapshot>(*previous->snapshot) : std::make_shared<Snapshot>();
-        snapshot->offline = false;
-        snapshot->generation = previous && previous->snapshot ? previous->snapshot->generation + 1 : 1;
-        snapshot->sweep = snapshot->generation;
-        snapshot->scope.scene = epoch;
-        snapshot->scope.batch = snapshot->generation;
-        snapshot->scope.policy = 1; // runtime-owned geometry, not offline package
-        snapshot->materialSource.reset(); // diagnostic AS preview does not publish material tables
-        result->digest = "runtime-captured";
-        // Reconstruct the content index from the immutable previous generation.
-        // Distinct reference/shape instances may share a single GPU mesh and BLAS.
-        std::unordered_map<std::string, std::shared_ptr<const Geometry>> geometryByDigest;
-        std::unordered_map<std::string, std::shared_ptr<const VertexAttributes>> attributesByDigest;
-        if (previous && previous->snapshot) {
-            for (const auto& old : previous->snapshot->instances) {
-                if (old.mesh) {
-                    if (const auto found = result->geometries.find(old.mesh.get());
-                        found != result->geometries.end() && found->second &&
-                        !found->second->contentDigest.empty())
-                        geometryByDigest.try_emplace(found->second->contentDigest, found->second);
-                }
-                if (old.material.attributes && !old.material.attributes->contentDigest.empty())
-                    attributesByDigest.try_emplace(old.material.attributes->contentDigest, old.material.attributes);
-            }
-        }
-        for (const auto& packet : packets) {
-            if (!packet || snapshot->instances.size() >= 8192) break;
-            // Prewarm only avoids CPU re-encoding after the renderer has supplied
-            // byte-identical geometry. A saved reference/shape alone is insufficient.
-            std::shared_ptr<const EncodedRuntimeGeometry> cached;
-            if (prewarmed && !prewarmed->empty()) {
-                if (const auto digest = RuntimeGeometryContentId(*packet)) {
-                    const auto it = prewarmed->find(*digest);
-                    if (it != prewarmed->end()) cached = it->second;
-                }
-            }
-            const auto encoded = cached ? std::optional<EncodedRuntimeGeometry>{} :
-                EncodeRuntimeGeometry(*packet);
-            if (!cached && !encoded) { ++snapshot->omissions["invalid-runtime-packet"]; continue; }
-            if (cached && cacheHitCounter) ++*cacheHitCounter;
-            const auto& payload = cached ? *cached : *encoded;
-            try {
-                // Geometry hash deliberately excludes reference, shape, pose and
-                // shading attributes. The legacy disk-cache hash still includes
-                // them and retains its existing conservative matching policy.
-                const auto geometryDigest = Util::FileDigest::Sha256BytesHex(payload.geometry);
-                std::shared_ptr<const Geometry> geometry;
-                if (geometryDigest) {
-                    const auto found = geometryByDigest.find(*geometryDigest);
-                    if (found != geometryByDigest.end()) geometry = found->second;
-                }
-                if (!geometry) {
-                    if (budget <= result->bytes) {
-                        ++snapshot->omissions["geometry-budget"];
-                        continue;
-                    }
-                    auto uploaded = std::make_shared<Geometry>();
-                    auto mesh = std::make_shared<Mesh>();
-                    mesh->stride = 12;
-                    mesh->vertexCount = packet->vertexCount;
-                    mesh->bytes = packet->Bytes();
-                    uploaded->source = mesh;
-                    uploaded->prepared = true;
-                    uploaded->indexOffset = uint64_t(mesh->vertexCount) * 12;
-                    uploaded->validationOffset = uploaded->indexOffset + uint64_t(packet->indexCount) * 4;
-                    uploaded->buffer = UploadRuntimeGeometryBuffer(backend,
-                        std::span(payload.geometry).subspan(16), budget - result->bytes,
-                        uploaded->allocationBytes, L"DX12NativeScene::RuntimeGeometry");
-                    if (geometryDigest) uploaded->contentDigest = *geometryDigest;
-                    result->bytes += uploaded->allocationBytes;
-                    geometry = std::move(uploaded);
-                    result->geometries.emplace(mesh.get(), geometry);
-                    if (geometryDigest) geometryByDigest.emplace(*geometryDigest, geometry);
-                }
+	/** @brief Builds another immutable runtime-only native geometry generation. */
+	inline std::shared_ptr<const PreparedCell> PrepareRuntimeGeometryBatch(
+		const GraphicsBackend& backend,
+		const std::vector<std::shared_ptr<const RuntimeGeometryPacket>>& packets,
+		const std::shared_ptr<const PreparedCell>& previous, uint64_t epoch, uint64_t budget,
+		const std::shared_ptr<const PrewarmedRuntimeGeometry>& prewarmed = {},
+		uint32_t* cacheHitCounter = nullptr)
+	{
+		auto result = previous ? std::make_shared<PreparedCell>(*previous) : std::make_shared<PreparedCell>();
+		auto snapshot = previous && previous->snapshot ?
+		                    std::make_shared<Snapshot>(*previous->snapshot) :
+		                    std::make_shared<Snapshot>();
+		snapshot->offline = false;
+		snapshot->generation = previous && previous->snapshot ? previous->snapshot->generation + 1 : 1;
+		snapshot->sweep = snapshot->generation;
+		snapshot->scope.scene = epoch;
+		snapshot->scope.batch = snapshot->generation;
+		snapshot->scope.policy = 1;        // runtime-owned geometry, not offline package
+		snapshot->materialSource.reset();  // diagnostic AS preview does not publish material tables
+		result->digest = "runtime-captured";
+		// Reconstruct the content index from the immutable previous generation.
+		// Distinct reference/shape instances may share a single GPU mesh and BLAS.
+		std::unordered_map<std::string, std::shared_ptr<const Geometry>> geometryByDigest;
+		std::unordered_map<std::string, std::shared_ptr<const VertexAttributes>> attributesByDigest;
+		if (previous && previous->snapshot) {
+			for (const auto& old : previous->snapshot->instances) {
+				if (old.mesh) {
+					if (const auto found = result->geometries.find(old.mesh.get());
+						found != result->geometries.end() && found->second &&
+						!found->second->contentDigest.empty())
+						geometryByDigest.try_emplace(found->second->contentDigest, found->second);
+				}
+				if (old.material.attributes && !old.material.attributes->contentDigest.empty())
+					attributesByDigest.try_emplace(old.material.attributes->contentDigest, old.material.attributes);
+			}
+		}
+		for (const auto& packet : packets) {
+			if (!packet || snapshot->instances.size() >= 8192)
+				break;
+			// Prewarm only avoids CPU re-encoding after the renderer has supplied
+			// byte-identical geometry. A saved reference/shape alone is insufficient.
+			std::shared_ptr<const EncodedRuntimeGeometry> cached;
+			if (prewarmed && !prewarmed->empty()) {
+				if (const auto digest = RuntimeGeometryContentId(*packet)) {
+					const auto it = prewarmed->find(*digest);
+					if (it != prewarmed->end())
+						cached = it->second;
+				}
+			}
+			const auto encoded = cached ? std::optional<EncodedRuntimeGeometry>{} :
+			                              EncodeRuntimeGeometry(*packet);
+			if (!cached && !encoded) {
+				++snapshot->omissions["invalid-runtime-packet"];
+				continue;
+			}
+			if (cached && cacheHitCounter)
+				++*cacheHitCounter;
+			const auto& payload = cached ? *cached : *encoded;
+			try {
+				// Geometry hash deliberately excludes reference, shape, pose and
+				// shading attributes. The legacy disk-cache hash still includes
+				// them and retains its existing conservative matching policy.
+				const auto geometryDigest = Util::FileDigest::Sha256BytesHex(payload.geometry);
+				std::shared_ptr<const Geometry> geometry;
+				if (geometryDigest) {
+					const auto found = geometryByDigest.find(*geometryDigest);
+					if (found != geometryByDigest.end())
+						geometry = found->second;
+				}
+				if (!geometry) {
+					if (budget <= result->bytes) {
+						++snapshot->omissions["geometry-budget"];
+						continue;
+					}
+					auto uploaded = std::make_shared<Geometry>();
+					auto mesh = std::make_shared<Mesh>();
+					mesh->stride = 12;
+					mesh->vertexCount = packet->vertexCount;
+					mesh->bytes = packet->Bytes();
+					uploaded->source = mesh;
+					uploaded->prepared = true;
+					uploaded->indexOffset = uint64_t(mesh->vertexCount) * 12;
+					uploaded->validationOffset = uploaded->indexOffset + uint64_t(packet->indexCount) * 4;
+					uploaded->buffer = UploadRuntimeGeometryBuffer(backend,
+						std::span(payload.geometry).subspan(16), budget - result->bytes,
+						uploaded->allocationBytes, L"DX12NativeScene::RuntimeGeometry");
+					if (geometryDigest)
+						uploaded->contentDigest = *geometryDigest;
+					result->bytes += uploaded->allocationBytes;
+					geometry = std::move(uploaded);
+					result->geometries.emplace(mesh.get(), geometry);
+					if (geometryDigest)
+						geometryByDigest.emplace(*geometryDigest, geometry);
+				}
 
-                Instance instance;
-                instance.identity = snapshot->instances.size() + 1;
-                instance.preparedIdentity.referenceKey = packet->referenceKey;
-                instance.preparedIdentity.shapeName = packet->shapeName;
-                instance.mesh = geometry->source;
-                instance.indexCount = packet->indexCount;
-                instance.material.opaqueCandidate = true;
-                instance.material.shadingStatus = "runtime-captured";
-                instance.observationFrame = packet->captureFrame;
-                std::memcpy(instance.world.m, packet->transform.data(), sizeof(instance.world.m));
-                static_assert(sizeof(instance.bound) == sizeof(float) * 4);
-                std::memcpy(&instance.bound, packet->bound.data(), sizeof(instance.bound));
+				Instance instance;
+				instance.identity = snapshot->instances.size() + 1;
+				instance.preparedIdentity.referenceKey = packet->referenceKey;
+				instance.preparedIdentity.shapeName = packet->shapeName;
+				instance.mesh = geometry->source;
+				instance.indexCount = packet->indexCount;
+				instance.material.opaqueCandidate = true;
+				instance.material.shadingStatus = "runtime-captured";
+				instance.observationFrame = packet->captureFrame;
+				std::memcpy(instance.world.m, packet->transform.data(), sizeof(instance.world.m));
+				static_assert(sizeof(instance.bound) == sizeof(float) * 4);
+				std::memcpy(&instance.bound, packet->bound.data(), sizeof(instance.bound));
 
-                if (!payload.attributes.empty()) {
-                    const auto attributeDigest = Util::FileDigest::Sha256BytesHex(payload.attributes);
-                    std::shared_ptr<const VertexAttributes> attrs;
-                    if (attributeDigest) {
-                        const auto found = attributesByDigest.find(*attributeDigest);
-                        if (found != attributesByDigest.end()) attrs = found->second;
-                    }
-                    if (!attrs && budget > result->bytes) {
-                        try {
-                            auto uploaded = std::make_shared<VertexAttributes>();
-                            uploaded->vertexCount = geometry->source->vertexCount;
-                            uploaded->stride = payload.attributeStride;
-                            uploaded->hasTangentFrame = payload.tangentFrame;
-                            uploaded->buffer = UploadRuntimeGeometryBuffer(backend,
-                                std::span(payload.attributes).subspan(16), budget - result->bytes,
-                                uploaded->allocationBytes, L"DX12NativeScene::RuntimeAttributes");
-                            if (attributeDigest) uploaded->contentDigest = *attributeDigest;
-                            result->bytes += uploaded->allocationBytes;
-                            attrs = std::move(uploaded);
-                            if (attributeDigest) attributesByDigest.emplace(*attributeDigest, attrs);
-                        } catch (const std::exception&) {
-                            ++snapshot->omissions["runtime-attributes-budget"];
-                        }
-                    }
-                    if (attrs) {
-                        instance.material.attributes = std::move(attrs);
-                        ++result->shadedInstances;
-                        if (payload.tangentFrame) ++result->tangentInstances;
-                    } else if (budget <= result->bytes) {
-                        ++snapshot->omissions["runtime-attributes-budget"];
-                    }
-                }
-                snapshot->instances.push_back(std::move(instance));
-            } catch (const std::exception&) {
-                ++snapshot->omissions["runtime-geometry-upload"];
-            }
-        }
-        result->snapshot = std::move(snapshot);
-        return result;
-    }
+				if (!payload.attributes.empty()) {
+					const auto attributeDigest = Util::FileDigest::Sha256BytesHex(payload.attributes);
+					std::shared_ptr<const VertexAttributes> attrs;
+					if (attributeDigest) {
+						const auto found = attributesByDigest.find(*attributeDigest);
+						if (found != attributesByDigest.end())
+							attrs = found->second;
+					}
+					if (!attrs && budget > result->bytes) {
+						try {
+							auto uploaded = std::make_shared<VertexAttributes>();
+							uploaded->vertexCount = geometry->source->vertexCount;
+							uploaded->stride = payload.attributeStride;
+							uploaded->hasTangentFrame = payload.tangentFrame;
+							uploaded->buffer = UploadRuntimeGeometryBuffer(backend,
+								std::span(payload.attributes).subspan(16), budget - result->bytes,
+								uploaded->allocationBytes, L"DX12NativeScene::RuntimeAttributes");
+							if (attributeDigest)
+								uploaded->contentDigest = *attributeDigest;
+							result->bytes += uploaded->allocationBytes;
+							attrs = std::move(uploaded);
+							if (attributeDigest)
+								attributesByDigest.emplace(*attributeDigest, attrs);
+						} catch (const std::exception&) {
+							++snapshot->omissions["runtime-attributes-budget"];
+						}
+					}
+					if (attrs) {
+						instance.material.attributes = std::move(attrs);
+						++result->shadedInstances;
+						if (payload.tangentFrame)
+							++result->tangentInstances;
+					} else if (budget <= result->bytes) {
+						++snapshot->omissions["runtime-attributes-budget"];
+					}
+				}
+				snapshot->instances.push_back(std::move(instance));
+			} catch (const std::exception&) {
+				++snapshot->omissions["runtime-geometry-upload"];
+			}
+		}
+		result->snapshot = std::move(snapshot);
+		return result;
+	}
 
-
-    /** @brief Build an immutable CELL/TLAS input from already owned prepared and
+	/** @brief Build an immutable CELL/TLAS input from already owned prepared and
      * runtime geometry. CPU composition happens on the geometry worker, not the
      * frame thread. The offline material source, lights and rooms remain
      * authoritative; only distinct runtime instances are appended.
      */
-    inline std::shared_ptr<const PreparedCell> ComposeCurrentSceneGeometry(
-        const std::shared_ptr<const PreparedCell>& baseline,
-        const std::shared_ptr<const PreparedCell>& runtime, uint64_t sceneEpoch,
-        const std::shared_ptr<const PreparedCell>& previousCombined = {},
-        const std::shared_ptr<const PreparedCell>& previousRuntime = {},
-        const std::shared_ptr<const PreparedCell>& previousBaseline = {})
-    {
-        if (!baseline || !baseline->snapshot || !runtime || !runtime->snapshot ||
-            baseline->snapshot->scope.scene != sceneEpoch ||
-            runtime->snapshot->scope.scene != sceneEpoch) return {};
+	inline std::shared_ptr<const PreparedCell> ComposeCurrentSceneGeometry(
+		const std::shared_ptr<const PreparedCell>& baseline,
+		const std::shared_ptr<const PreparedCell>& runtime, uint64_t sceneEpoch,
+		const std::shared_ptr<const PreparedCell>& previousCombined = {},
+		const std::shared_ptr<const PreparedCell>& previousRuntime = {},
+		const std::shared_ptr<const PreparedCell>& previousBaseline = {})
+	{
+		if (!baseline || !baseline->snapshot || !runtime || !runtime->snapshot ||
+			baseline->snapshot->scope.scene != sceneEpoch ||
+			runtime->snapshot->scope.scene != sceneEpoch)
+			return {};
 
-        // Immutable snapshots remain safe for in-flight rays. When the
-        // authoritative baseline is identical and runtime geometry only
-        // appended new instances, copy the previously composed generation
-        // and inspect just the runtime delta instead of merging it all again.
-        const bool incremental = previousBaseline == baseline &&
-            previousCombined && previousCombined->snapshot &&
-            previousRuntime && previousRuntime->snapshot &&
-            previousCombined->snapshot->scope.scene == sceneEpoch &&
-            previousRuntime->snapshot->scope.scene == sceneEpoch &&
-            runtime->snapshot->instances.size() >= previousRuntime->snapshot->instances.size();
-        const auto& source = incremental ? previousCombined : baseline;
-        auto result = std::make_shared<PreparedCell>(*source);
-        auto snapshot = std::make_shared<Snapshot>(*source->snapshot);
-        const size_t firstRuntime = incremental ?
-            previousRuntime->snapshot->instances.size() : 0;
-        std::unordered_set<std::string> occupied;
-        occupied.reserve(snapshot->instances.size() + runtime->snapshot->instances.size());
-        const auto key = [](const Instance& value) {
-            return value.preparedIdentity.referenceKey + '\0' + value.preparedIdentity.shapeName;
-        };
-        for (const auto& instance : snapshot->instances)
-            if (!instance.preparedIdentity.referenceKey.empty() && !instance.preparedIdentity.shapeName.empty())
-                occupied.insert(key(instance));
-        size_t appended = 0;
-        for (size_t i = firstRuntime; i < runtime->snapshot->instances.size(); ++i) {
-            const auto& incoming = runtime->snapshot->instances[i];
-            if (snapshot->instances.size() >= 8192) {
-                ++snapshot->omissions["current-scene-instance-limit"];
-                break;
-            }
-            if (incoming.preparedIdentity.referenceKey.empty() ||
-                incoming.preparedIdentity.shapeName.empty() ||
-                !occupied.insert(key(incoming)).second) continue;
-            if (!incoming.mesh || !runtime->geometries.contains(incoming.mesh.get())) {
-                ++snapshot->omissions["current-scene-geometry-missing"];
-                continue;
-            }
-            Instance instance = incoming;
-            instance.identity = snapshot->instances.size() + 1;
-            snapshot->instances.push_back(std::move(instance));
-            ++appended;
-            if (!incoming.material.opaqueCandidate) ++result->maskedInstances;
-            if (incoming.material.attributes) {
-                ++result->shadedInstances;
-                if (incoming.material.attributes->hasTangentFrame) ++result->tangentInstances;
-            }
-        }
-        if (!appended) return {};
-        result->geometries.insert(runtime->geometries.begin(), runtime->geometries.end());
-        // A previously composed generation already accounted for all earlier
-        // runtime allocations. Never add them a second time.
-        result->bytes += incremental ?
-            runtime->bytes - previousRuntime->bytes : runtime->bytes;
-        snapshot->generation = baseline->snapshot->generation + runtime->snapshot->generation;
-        snapshot->sweep = snapshot->generation;
-        snapshot->scope.batch = snapshot->generation;
-        snapshot->scope.policy = 2; // prepared baseline plus eligible runtime geometry
-        snapshot->offline = false;
-        // Material tables must still use the validated prepared CELL package.
-        snapshot->materialSource = baseline->snapshot->materialSource;
-        result->snapshot = std::move(snapshot);
-        return result;
-    }
+		// Immutable snapshots remain safe for in-flight rays. When the
+		// authoritative baseline is identical and runtime geometry only
+		// appended new instances, copy the previously composed generation
+		// and inspect just the runtime delta instead of merging it all again.
+		const bool incremental = previousBaseline == baseline &&
+		                         previousCombined && previousCombined->snapshot &&
+		                         previousRuntime && previousRuntime->snapshot &&
+		                         previousCombined->snapshot->scope.scene == sceneEpoch &&
+		                         previousRuntime->snapshot->scope.scene == sceneEpoch &&
+		                         runtime->snapshot->instances.size() >= previousRuntime->snapshot->instances.size();
+		const auto& source = incremental ? previousCombined : baseline;
+		auto result = std::make_shared<PreparedCell>(*source);
+		auto snapshot = std::make_shared<Snapshot>(*source->snapshot);
+		const size_t firstRuntime = incremental ?
+		                                previousRuntime->snapshot->instances.size() :
+		                                0;
+		std::unordered_set<std::string> occupied;
+		occupied.reserve(snapshot->instances.size() + runtime->snapshot->instances.size());
+		const auto key = [](const Instance& value) {
+			return value.preparedIdentity.referenceKey + '\0' + value.preparedIdentity.shapeName;
+		};
+		for (const auto& instance : snapshot->instances)
+			if (!instance.preparedIdentity.referenceKey.empty() && !instance.preparedIdentity.shapeName.empty())
+				occupied.insert(key(instance));
+		size_t appended = 0;
+		for (size_t i = firstRuntime; i < runtime->snapshot->instances.size(); ++i) {
+			const auto& incoming = runtime->snapshot->instances[i];
+			if (snapshot->instances.size() >= 8192) {
+				++snapshot->omissions["current-scene-instance-limit"];
+				break;
+			}
+			if (incoming.preparedIdentity.referenceKey.empty() ||
+				incoming.preparedIdentity.shapeName.empty() ||
+				!occupied.insert(key(incoming)).second)
+				continue;
+			if (!incoming.mesh || !runtime->geometries.contains(incoming.mesh.get())) {
+				++snapshot->omissions["current-scene-geometry-missing"];
+				continue;
+			}
+			Instance instance = incoming;
+			instance.identity = snapshot->instances.size() + 1;
+			snapshot->instances.push_back(std::move(instance));
+			++appended;
+			if (!incoming.material.opaqueCandidate)
+				++result->maskedInstances;
+			if (incoming.material.attributes) {
+				++result->shadedInstances;
+				if (incoming.material.attributes->hasTangentFrame)
+					++result->tangentInstances;
+			}
+		}
+		if (!appended)
+			return {};
+		result->geometries.insert(runtime->geometries.begin(), runtime->geometries.end());
+		// A previously composed generation already accounted for all earlier
+		// runtime allocations. Never add them a second time.
+		result->bytes += incremental ?
+		                     runtime->bytes - previousRuntime->bytes :
+		                     runtime->bytes;
+		snapshot->generation = baseline->snapshot->generation + runtime->snapshot->generation;
+		snapshot->sweep = snapshot->generation;
+		snapshot->scope.batch = snapshot->generation;
+		snapshot->scope.policy = 2;  // prepared baseline plus eligible runtime geometry
+		snapshot->offline = false;
+		// Material tables must still use the validated prepared CELL package.
+		snapshot->materialSource = baseline->snapshot->materialSource;
+		result->snapshot = std::move(snapshot);
+		return result;
+	}
 
-    /** @brief One owned batch at a time; publication never waits on the render thread. */
-    class RuntimeGeometryPreparation
-    {
-        struct Work
-        {
-            std::atomic<bool> done{ false };
-            uint64_t epoch = 0;
-            uint32_t cacheHits = 0;
-            std::vector<std::string> keys;
-            // Owned attempt history moves onto the worker while its batch is in flight.
-            std::shared_ptr<std::unordered_set<std::string>> attempted;
-            bool empty = false;
-            std::shared_ptr<const PreparedCell> result;
-            std::shared_ptr<const PreparedCell> composed;
-            std::shared_ptr<const PreparedCell> baseline;
-            std::string failure;
-        };
-    public:
-        void Reset()
-        {
-            pending.reset(); // Detached worker owns all its input data.
-            prepared.reset();
-            composed.reset();
-            composedBaseline.reset();
-            attempted.clear();
-            pendingAttemptedCount = 0;
-            epoch = 0;
-            batches = 0;
-            failures = 0;
-            cacheHits = 0;
-            scannedMailboxRevision = UINT64_MAX;
-        }
-        void Advance(const GraphicsBackend& backend, const RuntimeGeometryMailbox& mailbox,
-            uint64_t sceneEpoch, uint64_t budget,
-            std::shared_ptr<const PrewarmedRuntimeGeometry> prewarmed = {},
-            std::shared_ptr<const PreparedCell> baseline = {})
-        {
-            if (epoch != sceneEpoch) { Reset(); epoch = sceneEpoch; }
-            if (pending && pending->done.load(std::memory_order_acquire)) {
-                // Only a completed job can transfer its attempt set back onto
-                // the frame thread. No hashing or key insertion is needed here.
-                if (pending->attempted) attempted = std::move(*pending->attempted);
-                pendingAttemptedCount = 0;
-                // Drain the next chunk even when the mailbox itself has not
-                // changed. No-op selection will restore the scanned revision.
-                if (!pending->keys.empty()) scannedMailboxRevision = UINT64_MAX;
-                if (pending->result) {
-                    prepared = pending->result;
-                    composed = pending->composed;
-                    composedBaseline = pending->baseline;
-                    ++batches;
-                } else if (!pending->empty) ++failures;
-                cacheHits += pending->cacheHits;
-                pending.reset();
-            }
-            if (pending || !backend.d3d12Device || !budget) return;
-            const auto mailboxRevision = mailbox.Revision();
-            if (scannedMailboxRevision == mailboxRevision) return;
-            // Only immutable packet handles cross the scene thread; sorting,
-            // key construction and batch admission run on the native worker.
-            auto items = mailbox.SnapshotUnordered();
-            if (items.empty()) { scannedMailboxRevision = mailboxRevision; return; }
-            auto work = std::make_shared<Work>();
-            work->epoch = sceneEpoch;
-            work->baseline = baseline;
-            pendingAttemptedCount = attempted.size();
-            work->attempted = std::make_shared<std::unordered_set<std::string>>(std::move(attempted));
-            try {
-                static BS::thread_pool<> pool{ 1 };
-                pool.detach_task([work, source = std::move(items), backend,
-                    previous = prepared, previousCombined = composed,
-                    previousBaseline = composedBaseline, budget, sceneEpoch,
-                    prewarm = std::move(prewarmed), baseline = std::move(baseline)]() mutable {
-                    try {
-                        std::sort(source.begin(), source.end(), [](const auto& a, const auto& b) {
-                            if (a->referenceKey != b->referenceKey)
-                                return a->referenceKey < b->referenceKey;
-                            return a->shapeName < b->shapeName;
-                        });
-                        std::vector<std::shared_ptr<const RuntimeGeometryPacket>> next;
-                        const uint64_t batchBytes = std::max<uint64_t>(512ull * 1024, budget / 32);
-                        uint64_t selectedBytes = 0;
-                        for (const auto& item : source) {
-                            const auto key = item->referenceKey + '\0' + item->shapeName;
-                            if (work->attempted->contains(key)) continue;
-                            if (selectedBytes && (selectedBytes >= batchBytes ||
-                                item->Bytes() > batchBytes - selectedBytes)) break;
-                            next.push_back(item);
-                            work->keys.push_back(key);
-                            selectedBytes += item->Bytes();
-                        }
-                        for (const auto& key : work->keys) work->attempted->insert(key);
-                        if (next.empty()) {
-                            work->empty = true;
-                        } else {
-                            work->result = PrepareRuntimeGeometryBatch(
-                                backend, next, previous, sceneEpoch, budget, prewarm, &work->cacheHits);
-                            work->composed = ComposeCurrentSceneGeometry(
-                                baseline, work->result, sceneEpoch,
-                                previousCombined, previous, previousBaseline);
-                        }
-                    } catch (const std::exception& error) { work->failure = error.what(); }
-                    catch (...) { work->failure = "Unknown native geometry worker failure"; }
-                    work->done.store(true, std::memory_order_release);
-                });
-                scannedMailboxRevision = mailboxRevision;
-                pending = std::move(work);
-            } catch (const std::exception&) {
-                attempted = std::move(*work->attempted);
-                pendingAttemptedCount = 0;
-                ++failures;
-            }
-        }
+	/** @brief One owned batch at a time; publication never waits on the render thread. */
+	class RuntimeGeometryPreparation
+	{
+		struct Work
+		{
+			std::atomic<bool> done{ false };
+			uint64_t epoch = 0;
+			uint32_t cacheHits = 0;
+			std::vector<std::string> keys;
+			// Owned attempt history moves onto the worker while its batch is in flight.
+			std::shared_ptr<std::unordered_set<std::string>> attempted;
+			bool empty = false;
+			std::shared_ptr<const PreparedCell> result;
+			std::shared_ptr<const PreparedCell> composed;
+			std::shared_ptr<const PreparedCell> baseline;
+			std::string failure;
+		};
 
-        std::shared_ptr<const PreparedCell> GetCell() const { return prepared; }
-        std::shared_ptr<const PreparedCell> GetCurrentSceneCell() const { return composed; }
-        bool Busy() const { return pending != nullptr; }
-        uint32_t Batches() const { return batches; }
-        uint32_t Failures() const { return failures; }
-        uint32_t CacheHits() const { return cacheHits; }
-        size_t Attempted() const { return pending ? pendingAttemptedCount : attempted.size(); }
+	public:
+		void Reset()
+		{
+			pending.reset();  // Detached worker owns all its input data.
+			prepared.reset();
+			composed.reset();
+			composedBaseline.reset();
+			attempted.clear();
+			pendingAttemptedCount = 0;
+			epoch = 0;
+			batches = 0;
+			failures = 0;
+			cacheHits = 0;
+			scannedMailboxRevision = UINT64_MAX;
+		}
+		void Advance(const GraphicsBackend& backend, const RuntimeGeometryMailbox& mailbox,
+			uint64_t sceneEpoch, uint64_t budget,
+			std::shared_ptr<const PrewarmedRuntimeGeometry> prewarmed = {},
+			std::shared_ptr<const PreparedCell> baseline = {})
+		{
+			if (epoch != sceneEpoch) {
+				Reset();
+				epoch = sceneEpoch;
+			}
+			if (pending && pending->done.load(std::memory_order_acquire)) {
+				// Only a completed job can transfer its attempt set back onto
+				// the frame thread. No hashing or key insertion is needed here.
+				if (pending->attempted)
+					attempted = std::move(*pending->attempted);
+				pendingAttemptedCount = 0;
+				// Drain the next chunk even when the mailbox itself has not
+				// changed. No-op selection will restore the scanned revision.
+				if (!pending->keys.empty())
+					scannedMailboxRevision = UINT64_MAX;
+				if (pending->result) {
+					prepared = pending->result;
+					composed = pending->composed;
+					composedBaseline = pending->baseline;
+					++batches;
+				} else if (!pending->empty)
+					++failures;
+				cacheHits += pending->cacheHits;
+				pending.reset();
+			}
+			if (pending || !backend.d3d12Device || !budget)
+				return;
+			const auto mailboxRevision = mailbox.Revision();
+			if (scannedMailboxRevision == mailboxRevision)
+				return;
+			// Only immutable packet handles cross the scene thread; sorting,
+			// key construction and batch admission run on the native worker.
+			auto items = mailbox.SnapshotUnordered();
+			if (items.empty()) {
+				scannedMailboxRevision = mailboxRevision;
+				return;
+			}
+			auto work = std::make_shared<Work>();
+			work->epoch = sceneEpoch;
+			work->baseline = baseline;
+			pendingAttemptedCount = attempted.size();
+			work->attempted = std::make_shared<std::unordered_set<std::string>>(std::move(attempted));
+			try {
+				static BS::thread_pool<> pool{ 1 };
+				pool.detach_task([work, source = std::move(items), backend,
+									 previous = prepared, previousCombined = composed,
+									 previousBaseline = composedBaseline, budget, sceneEpoch,
+									 prewarm = std::move(prewarmed), baseline = std::move(baseline)]() mutable {
+					try {
+						std::sort(source.begin(), source.end(), [](const auto& a, const auto& b) {
+							if (a->referenceKey != b->referenceKey)
+								return a->referenceKey < b->referenceKey;
+							return a->shapeName < b->shapeName;
+						});
+						std::vector<std::shared_ptr<const RuntimeGeometryPacket>> next;
+						const uint64_t batchBytes = std::max<uint64_t>(512ull * 1024, budget / 32);
+						uint64_t selectedBytes = 0;
+						for (const auto& item : source) {
+							const auto key = item->referenceKey + '\0' + item->shapeName;
+							if (work->attempted->contains(key))
+								continue;
+							if (selectedBytes && (selectedBytes >= batchBytes ||
+													 item->Bytes() > batchBytes - selectedBytes))
+								break;
+							next.push_back(item);
+							work->keys.push_back(key);
+							selectedBytes += item->Bytes();
+						}
+						for (const auto& key : work->keys) work->attempted->insert(key);
+						if (next.empty()) {
+							work->empty = true;
+						} else {
+							work->result = PrepareRuntimeGeometryBatch(
+								backend, next, previous, sceneEpoch, budget, prewarm, &work->cacheHits);
+							work->composed = ComposeCurrentSceneGeometry(
+								baseline, work->result, sceneEpoch,
+								previousCombined, previous, previousBaseline);
+						}
+					} catch (const std::exception& error) {
+						work->failure = error.what();
+					} catch (...) {
+						work->failure = "Unknown native geometry worker failure";
+					}
+					work->done.store(true, std::memory_order_release);
+				});
+				scannedMailboxRevision = mailboxRevision;
+				pending = std::move(work);
+			} catch (const std::exception&) {
+				attempted = std::move(*work->attempted);
+				pendingAttemptedCount = 0;
+				++failures;
+			}
+		}
 
-    private:
-        uint64_t epoch = 0, scannedMailboxRevision = UINT64_MAX;
-        uint32_t batches = 0, failures = 0, cacheHits = 0;
-        std::unordered_set<std::string> attempted;
-        size_t pendingAttemptedCount = 0;
-        std::shared_ptr<const PreparedCell> prepared, composed, composedBaseline;
-        std::shared_ptr<Work> pending;
-    };
+		std::shared_ptr<const PreparedCell> GetCell() const { return prepared; }
+		std::shared_ptr<const PreparedCell> GetCurrentSceneCell() const { return composed; }
+		bool Busy() const { return pending != nullptr; }
+		uint32_t Batches() const { return batches; }
+		uint32_t Failures() const { return failures; }
+		uint32_t CacheHits() const { return cacheHits; }
+		size_t Attempted() const { return pending ? pendingAttemptedCount : attempted.size(); }
+
+	private:
+		uint64_t epoch = 0, scannedMailboxRevision = UINT64_MAX;
+		uint32_t batches = 0, failures = 0, cacheHits = 0;
+		std::unordered_set<std::string> attempted;
+		size_t pendingAttemptedCount = 0;
+		std::shared_ptr<const PreparedCell> prepared, composed, composedBaseline;
+		std::shared_ptr<Work> pending;
+	};
 }

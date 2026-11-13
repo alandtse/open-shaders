@@ -8,6 +8,8 @@
 #include "Features/CSUtility.h"
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
+#include "Features/DX12NativeScene/DX12NativeScene.h"
+#include "Features/DX12Resources/DX12Resources.h"
 #include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/Effects11.h"
@@ -24,15 +26,13 @@
 #include "Features/HorizonFix.h"
 #include "Features/IBL.h"
 #include "Features/InteriorSun.h"
-#include "Features/DX12NativeScene/DX12NativeScene.h"
-#include "Features/DX12Resources/DX12Resources.h"
-#include "Features/NativeLighting/NativeLighting.h"
-#include "Features/NativeComposite/NativeComposite.h"
-#include "Features/NativeFeatures.h"
 #include "Features/LODBlending.h"
 #include "Features/LODShadows.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
+#include "Features/NativeComposite/NativeComposite.h"
+#include "Features/NativeFeatures.h"
+#include "Features/NativeLighting/NativeLighting.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
 #include "Features/ProceduralSun.h"
@@ -100,7 +100,7 @@ namespace globals
 		HairSpecular hairSpecular{};
 		HorizonFix horizonFix{};
 		DX12NativeScene dx12NativeScene{};
-        DX12Resources dx12Resources{};
+		DX12Resources dx12Resources{};
 		NativeLightingFeature nativeLighting{};
 		NativeCompositeFeature nativeComposite{};
 		NativePBRFeature nativePBR{};
@@ -361,7 +361,8 @@ namespace globals
 			CopyMappedFrameBuffer(frameBufferCached.nonVR, frameBuffer);
 		}
 		frameBufferCachedValid = graphicsState && globals::state && !(globals::state->permutationData.ExtraShaderDescriptor & static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections));
-		if (frameBufferCachedValid) frameBufferCachedFrame = graphicsState->GetFrameCount();
+		if (frameBufferCachedValid)
+			frameBufferCachedFrame = graphicsState->GetFrameCount();
 		mappedFrameBuffer = nullptr;
 	}
 

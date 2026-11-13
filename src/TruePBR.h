@@ -3,7 +3,10 @@
 #include "Feature.h"
 #include "TruePBR/NativePBRRegistry.h"
 
-namespace NativePBR { struct RecipeGeneration; }
+namespace NativePBR
+{
+	struct RecipeGeneration;
+}
 
 class BSLightingShaderMaterialPBR;
 

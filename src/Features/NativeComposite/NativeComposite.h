@@ -17,8 +17,8 @@ struct NativeCompositeFeature final : Feature
 		bool PersistLab = false;
 		// Independent DX12 shadow layer. Does not require Native Lighting.
 		bool ShadowLayerEnabled = true;
-		float ShadowContribution = 2.0f; // 0..4, boosts weighted occlusion beyond 1x.
-		float ShadowBlend = 0.70f;       // 0..1, mixes shadow effect with unshadowed scene.
+		float ShadowContribution = 2.0f;  // 0..4, boosts weighted occlusion beyond 1x.
+		float ShadowBlend = 0.70f;        // 0..1, mixes shadow effect with unshadowed scene.
 		float ShadowRadiusPixels = 2.0f, ShadowReceiverTolerance = 16.0f;
 		bool ShadowPreview = false;
 		bool ShadowAfterLighting = true;  // false: raster only; true: combined raster + native direct.
@@ -41,7 +41,9 @@ struct NativeCompositeFeature final : Feature
 		ID3D11Texture2D*, uint32_t, uint32_t, uint32_t, NativeComposite::Transfer);
 	/** @brief Retains a published frame through a downstream GPU fence. */
 	bool Retain(const std::shared_ptr<const NativeComposite::Frame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value)
-	{ return pass.Retain(a_frame, a_fence, a_value); }
+	{
+		return pass.Retain(a_frame, a_fence, a_value);
+	}
 	bool IsEnabled() const { return loaded && enabled.load(); }
 
 private:

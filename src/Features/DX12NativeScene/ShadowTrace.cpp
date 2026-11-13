@@ -1,23 +1,27 @@
 #include "ShadowTrace.h"
 #include "GpuPass.h"
 #include "Utils/D3D.h"
+#include <cstring>
 #include <directx/d3dx12.h>
 #include <fstream>
-#include <cstring>
 
 namespace DX12Native
 {
 	void ShadowTrace::CreatePipeline()
 	{
-		if (pipeline) return;
+		if (pipeline)
+			return;
 		std::ifstream file("Data/Shaders/DX12NativeScene/ShadowTrace.dxil", std::ios::binary | std::ios::ate);
-		if (!file) throw std::runtime_error("Packaged shadow trace DXIL unavailable");
+		if (!file)
+			throw std::runtime_error("Packaged shadow trace DXIL unavailable");
 		const std::streamoff size = file.tellg();
 		constexpr std::streamoff kMaximumShaderBytes = 16 * 1024 * 1024;
-		if (size <= 0 || size > kMaximumShaderBytes) throw std::runtime_error("Invalid directional DXIL size");
+		if (size <= 0 || size > kMaximumShaderBytes)
+			throw std::runtime_error("Invalid directional DXIL size");
 		std::vector<char> bytecode(static_cast<size_t>(size));
 		file.seekg(0);
-		if (!file.read(bytecode.data(), std::streamsize(bytecode.size()))) throw std::runtime_error("Cannot read directional DXIL");
+		if (!file.read(bytecode.data(), std::streamsize(bytecode.size())))
+			throw std::runtime_error("Cannot read directional DXIL");
 		D3D12_DESCRIPTOR_RANGE ranges[6]{};
 		ranges[0] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 0, 0 };
 		ranges[1] = { D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0 };
@@ -44,18 +48,18 @@ namespace DX12Native
 			parameters[9 + i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
 			parameters[9 + i].Descriptor.ShaderRegister = 4 + i;
 		}
-        // Extra root CBV uses two DWORDs; remains within the 64-DWORD limit.
-        parameters[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-        parameters[11].Descriptor.ShaderRegister = 1;
-        // t7: optional character-caster TLAS. b2: independent one-DWORD
-        // enable gate. They do not change the 36-DWORD shadow constants.
-        parameters[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
-        parameters[12].Descriptor.ShaderRegister = 7;
-        parameters[13].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-        parameters[13].Constants = { 2, 0, 1 };
-        parameters[14].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
-        parameters[14].Descriptor.ShaderRegister = 8;
-        D3D12_STATIC_SAMPLER_DESC samplers[4]{};
+		// Extra root CBV uses two DWORDs; remains within the 64-DWORD limit.
+		parameters[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+		parameters[11].Descriptor.ShaderRegister = 1;
+		// t7: optional character-caster TLAS. b2: independent one-DWORD
+		// enable gate. They do not change the 36-DWORD shadow constants.
+		parameters[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+		parameters[12].Descriptor.ShaderRegister = 7;
+		parameters[13].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+		parameters[13].Constants = { 2, 0, 1 };
+		parameters[14].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+		parameters[14].Descriptor.ShaderRegister = 8;
+		D3D12_STATIC_SAMPLER_DESC samplers[4]{};
 		for (uint32_t i = 0; i < 4; ++i) {
 			samplers[i].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
 			samplers[i].AddressU = (i & 2) ? D3D12_TEXTURE_ADDRESS_MODE_WRAP : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -80,28 +84,34 @@ namespace DX12Native
 
 	bool ShadowTrace::Initialize(const GraphicsBackend& a_backend)
 	{
-		if (failed) return false;
+		if (failed)
+			return false;
 		if (producer.fence12 && (backend.d3d12Device.get() != a_backend.d3d12Device.get() ||
-			backend.commandQueue.get() != a_backend.commandQueue.get() || backend.d3d11Device.get() != a_backend.d3d11Device.get())) {
+									backend.commandQueue.get() != a_backend.commandQueue.get() || backend.d3d11Device.get() != a_backend.d3d11Device.get())) {
 			status = "Shadow backend changed; restart required";
 			failed = true;
 			return false;
 		}
-		if (pipeline) return true;
+		if (pipeline)
+			return true;
 		try {
 			backend = a_backend;
 			if (!backend.d3d12Device || !backend.commandQueue || !backend.d3d11Device || !backend.d3d11Context)
 				throw std::runtime_error("Shadow backend unavailable");
 			D3D12_FEATURE_DATA_D3D12_OPTIONS options{};
 			DX::ThrowIfFailed(backend.d3d12Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options, sizeof(options)));
-			if (options.ResourceBindingTier < D3D12_RESOURCE_BINDING_TIER_3) throw std::runtime_error("Shadow geometry requires resource binding tier 3");
+			if (options.ResourceBindingTier < D3D12_RESOURCE_BINDING_TIER_3)
+				throw std::runtime_error("Shadow geometry requires resource binding tier 3");
 			D3D12_FEATURE_DATA_D3D12_OPTIONS5 raytracing{};
 			DX::ThrowIfFailed(backend.d3d12Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &raytracing, sizeof(raytracing)));
-			if (raytracing.RaytracingTier < D3D12_RAYTRACING_TIER_1_1) throw std::runtime_error("Shadow tracing requires DXR 1.1");
+			if (raytracing.RaytracingTier < D3D12_RAYTRACING_TIER_1_1)
+				throw std::runtime_error("Shadow tracing requires DXR 1.1");
 			D3D12_FEATURE_DATA_SHADER_MODEL model{ D3D_SHADER_MODEL_6_5 };
 			DX::ThrowIfFailed(backend.d3d12Device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &model, sizeof(model)));
-			if (model.HighestShaderModel < D3D_SHADER_MODEL_6_5) throw std::runtime_error("Shadow tracing requires shader model 6.5");
-			if (!producer.fence12) producer.Create(backend.d3d12Device.get(), backend.d3d11Device.get(), "DX12NativeScene::ShadowProducer");
+			if (model.HighestShaderModel < D3D_SHADER_MODEL_6_5)
+				throw std::runtime_error("Shadow tracing requires shader model 6.5");
+			if (!producer.fence12)
+				producer.Create(backend.d3d12Device.get(), backend.d3d11Device.get(), "DX12NativeScene::ShadowProducer");
 			if (!completion) {
 				DX::ThrowIfFailed(backend.d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(completion.put())));
 				completion->SetName(L"DX12NativeScene::ShadowCompletion");
@@ -109,7 +119,8 @@ namespace DX12Native
 			CreatePipeline();
 			return true;
 		} catch (const std::exception& error) {
-			if (producer.fence12 && !producer.fence11) producer.Reset();
+			if (producer.fence12 && !producer.fence11)
+				producer.Reset();
 			status = error.what();
 			failed = true;
 			return false;
@@ -122,7 +133,8 @@ namespace DX12Native
 		const auto done = completion ? completion->GetCompletedValue() : 0;
 		const auto produced = producer.fence12 ? producer.fence12->GetCompletedValue() : 0;
 		for (auto& frame : frames) {
-			if (!frame) continue;
+			if (!frame)
+				continue;
 			const bool pendingConsumer = std::ranges::any_of(frame->consumers, [](const auto& consumer) {
 				const auto value = consumer.first->GetCompletedValue();
 				return value == UINT64_MAX || value < consumer.second;
@@ -144,15 +156,18 @@ namespace DX12Native
 	{
 		const auto done = completion ? completion->GetCompletedValue() : 0;
 		const auto produced = producer.fence12 ? producer.fence12->GetCompletedValue() : 0;
-		if (done == UINT64_MAX || produced == UINT64_MAX) return false;
+		if (done == UINT64_MAX || produced == UINT64_MAX)
+			return false;
 		for (auto& old : frames) {
-			if (!old || !old->scene || old->scene == a_scene) continue;
+			if (!old || !old->scene || old->scene == a_scene)
+				continue;
 			const bool busy = old.use_count() != 1 || old->readyValue == UINT64_MAX || old->producerValue == UINT64_MAX ||
-				old->readyValue > done || old->producerValue > produced || std::ranges::any_of(old->consumers, [](const auto& consumer) {
-					const auto value = consumer.first->GetCompletedValue();
-					return value == UINT64_MAX || value < consumer.second;
-				});
-			if (busy) return false;
+			                  old->readyValue > done || old->producerValue > produced || std::ranges::any_of(old->consumers, [](const auto& consumer) {
+								  const auto value = consumer.first->GetCompletedValue();
+								  return value == UINT64_MAX || value < consumer.second;
+							  });
+			if (busy)
+				return false;
 			old.reset();
 		}
 		return true;
@@ -173,25 +188,25 @@ namespace DX12Native
 	json ShadowTrace::GetDiagnostics() const
 	{
 		const auto completed = completion ? completion->GetCompletedValue() : 0;
-        uint32_t characterHits = 0, characterHitFrame = 0;
-        bool hitsReady = false;
-        // The newest frame may still be running; read the latest completed
-        // retained caster frame instead. No CPU/GPU fence wait is issued.
-        for (const auto& frame : frames) {
-            if (!frame || !frame->characterCasters || !frame->characterHitReadback ||
-                !frame->readyValue || frame->readyValue == UINT64_MAX ||
-                completed == UINT64_MAX || completed < frame->readyValue ||
-                (hitsReady && frame->frame <= characterHitFrame))
-                continue;
-            const D3D12_RANGE read{ 0, sizeof(characterHits) };
-            void* bytes = nullptr;
-            if (SUCCEEDED(frame->characterHitReadback->Map(0, &read, &bytes)) && bytes) {
-                std::memcpy(&characterHits, bytes, sizeof(characterHits));
-                frame->characterHitReadback->Unmap(0, nullptr);
-                characterHitFrame = frame->frame;
-                hitsReady = true;
-            }
-        }
+		uint32_t characterHits = 0, characterHitFrame = 0;
+		bool hitsReady = false;
+		// The newest frame may still be running; read the latest completed
+		// retained caster frame instead. No CPU/GPU fence wait is issued.
+		for (const auto& frame : frames) {
+			if (!frame || !frame->characterCasters || !frame->characterHitReadback ||
+				!frame->readyValue || frame->readyValue == UINT64_MAX ||
+				completed == UINT64_MAX || completed < frame->readyValue ||
+				(hitsReady && frame->frame <= characterHitFrame))
+				continue;
+			const D3D12_RANGE read{ 0, sizeof(characterHits) };
+			void* bytes = nullptr;
+			if (SUCCEEDED(frame->characterHitReadback->Map(0, &read, &bytes)) && bytes) {
+				std::memcpy(&characterHits, bytes, sizeof(characterHits));
+				frame->characterHitReadback->Unmap(0, nullptr);
+				characterHitFrame = frame->frame;
+				hitsReady = true;
+			}
+		}
 		return { { "status", status }, { "submissions", submissions }, { "gpuCompletions", completions },
 			{ "frameSlots", frames.size() }, { "busyDeferrals", busyDeferrals },
 			{ "dxgiAvailable", videoBudget.last.dxgiAvailable }, { "effectiveFrameBudgetBytes", videoBudget.last.effectiveBytes },
@@ -202,20 +217,23 @@ namespace DX12Native
 			{ "lightCount", current ? current->lightSnapshot.size() : 0 },
 			{ "traceDensityMode", current ? current->controls.traceDensityMode : 0u },
 			{ "rayPreparationAPI", "DX12 SM6.5 fused RayQuery" },
-            { "characterCasterOffered", current && bool(current->characterCasters) },
-            { "characterCasterPoseFrame", current && current->characterCasters ?
-                current->characterCasters->poseFrame : 0u },
-            { "characterShadowHitCountReady", hitsReady },
-            { "characterShadowRayHits", hitsReady ? characterHits : 0u },
-            { "characterShadowHitSampleFrame", hitsReady ? characterHitFrame : 0u },
+			{ "characterCasterOffered", current && bool(current->characterCasters) },
+			{ "characterCasterPoseFrame", current && current->characterCasters ?
+											  current->characterCasters->poseFrame :
+											  0u },
+			{ "characterShadowHitCountReady", hitsReady },
+			{ "characterShadowRayHits", hitsReady ? characterHits : 0u },
+			{ "characterShadowHitSampleFrame", hitsReady ? characterHitFrame : 0u },
 			{ "fullWidth", current ? current->width : 0u }, { "fullHeight", current ? current->height : 0u } };
 	}
 
 	bool ShadowTrace::RetainThrough(const std::shared_ptr<const ShadowFrame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value)
 	{
-		if (!a_frame || !a_fence || !a_value || a_value == UINT64_MAX) return false;
+		if (!a_frame || !a_fence || !a_value || a_value == UINT64_MAX)
+			return false;
 		for (const auto& frame : frames) {
-			if (frame.get() != a_frame.get()) continue;
+			if (frame.get() != a_frame.get())
+				continue;
 			winrt::com_ptr<ID3D12Fence> fence;
 			fence.copy_from(a_fence);
 			frame->consumers.emplace_back(std::move(fence), a_value);
@@ -224,15 +242,15 @@ namespace DX12Native
 		return false;
 	}
 
-    void ShadowTrace::UploadLightSnapshot(ShadowFrame& a_frame)
-    {
-        CS_GPU_PASS("DX12NativeScene::UploadShadowLightSnapshot");
-        // DX11 is source transport only. Native ray directions and shadow
-        // evaluation are computed exclusively by the DX12 SM6.5 dispatch.
+	void ShadowTrace::UploadLightSnapshot(ShadowFrame& a_frame)
+	{
+		CS_GPU_PASS("DX12NativeScene::UploadShadowLightSnapshot");
+		// DX11 is source transport only. Native ray directions and shadow
+		// evaluation are computed exclusively by the DX12 SM6.5 dispatch.
 		constexpr uint32_t kMaximumLights = kMaximumNativePointLights;
-        constexpr uint32_t kLightTexels = kNativeLightRecordTexels;
-        constexpr uint32_t kLightWidth = kNativeShadowLightTextureWidth;
-        static_assert(kMaximumLights * kLightTexels == kLightWidth);
+		constexpr uint32_t kLightTexels = kNativeLightRecordTexels;
+		constexpr uint32_t kLightWidth = kNativeShadowLightTextureWidth;
+		static_assert(kMaximumLights * kLightTexels == kLightWidth);
 		std::array<std::array<float, 4>, kLightWidth * 2> snapshot{};
 		for (size_t i = 0; i < a_frame.lightSnapshot.size(); ++i) {
 			const auto& light = a_frame.lightSnapshot[i];
@@ -254,10 +272,14 @@ namespace DX12Native
 	void ShadowTrace::Record(ShadowFrame& a_frame, uint32_t a_descriptorBase)
 	{
 		CS_GPU_PASS("DX12NativeScene::TraceShadowMask");
-		if (a_frame.allocator) DX::ThrowIfFailed(a_frame.allocator->Reset());
-		else DX::ThrowIfFailed(backend.d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(a_frame.allocator.put())));
-		if (a_frame.commands) DX::ThrowIfFailed(a_frame.commands->Reset(a_frame.allocator.get(), pipeline.get()));
-		else DX::ThrowIfFailed(backend.d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, a_frame.allocator.get(), pipeline.get(), IID_PPV_ARGS(a_frame.commands.put())));
+		if (a_frame.allocator)
+			DX::ThrowIfFailed(a_frame.allocator->Reset());
+		else
+			DX::ThrowIfFailed(backend.d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(a_frame.allocator.put())));
+		if (a_frame.commands)
+			DX::ThrowIfFailed(a_frame.commands->Reset(a_frame.allocator.get(), pipeline.get()));
+		else
+			DX::ThrowIfFailed(backend.d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, a_frame.allocator.get(), pipeline.get(), IID_PPV_ARGS(a_frame.commands.put())));
 		const auto step = backend.d3d12Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 		auto cpu = a_frame.bindings->heap->GetCPUDescriptorHandleForHeapStart();
 		cpu.ptr += uint64_t(a_descriptorBase) * step;
@@ -277,34 +299,36 @@ namespace DX12Native
 		auto* commands = a_frame.commands.get();
 		ID3D12DescriptorHeap* heaps[]{ a_frame.bindings->heap.get() };
 
-        // Generate rays in the DX12 RayQuery shader itself.
-        // The shader shares the shadow output's full-resolution pixel grid.
+		// Generate rays in the DX12 RayQuery shader itself.
+		// The shader shares the shadow output's full-resolution pixel grid.
 		commands->SetDescriptorHeaps(1, heaps);
 		commands->SetComputeRootSignature(root.get());
-        if (!a_frame.cameraConstants)
-            throw std::runtime_error("Native shadow camera constants unavailable");
-        commands->SetComputeRootConstantBufferView(11,
-            a_frame.cameraConstants->GetGPUVirtualAddress());
+		if (!a_frame.cameraConstants)
+			throw std::runtime_error("Native shadow camera constants unavailable");
+		commands->SetComputeRootConstantBufferView(11,
+			a_frame.cameraConstants->GetGPUVirtualAddress());
 		commands->SetComputeRootShaderResourceView(0, a_frame.scene->result->GetGPUVirtualAddress());
-        const bool useCharacter = a_frame.characterCasters &&
-            a_frame.characterCasters->Ready() &&
-            a_frame.characterCasters->acceleration;
-        // Root SRV must remain valid even when the character path is off.
-        commands->SetComputeRootShaderResourceView(12,
-            useCharacter ?
-                a_frame.characterCasters->acceleration->GetGPUVirtualAddress() :
-                a_frame.scene->result->GetGPUVirtualAddress());
-        commands->SetComputeRoot32BitConstant(13, useCharacter ? 1u : 0u, 0);
-        if (!a_frame.characterHitCounter || !a_frame.characterHitZero ||
-            !a_frame.characterHitReadback)
-            throw std::runtime_error("Native character shadow diagnostics unavailable");
-        commands->SetComputeRootUnorderedAccessView(14,
-            a_frame.characterHitCounter->GetGPUVirtualAddress());
+		const bool useCharacter = a_frame.characterCasters &&
+		                          a_frame.characterCasters->Ready() &&
+		                          a_frame.characterCasters->acceleration;
+		// Root SRV must remain valid even when the character path is off.
+		commands->SetComputeRootShaderResourceView(12,
+			useCharacter ?
+				a_frame.characterCasters->acceleration->GetGPUVirtualAddress() :
+				a_frame.scene->result->GetGPUVirtualAddress());
+		commands->SetComputeRoot32BitConstant(13, useCharacter ? 1u : 0u, 0);
+		if (!a_frame.characterHitCounter || !a_frame.characterHitZero ||
+			!a_frame.characterHitReadback)
+			throw std::runtime_error("Native character shadow diagnostics unavailable");
+		commands->SetComputeRootUnorderedAccessView(14,
+			a_frame.characterHitCounter->GetGPUVirtualAddress());
 		auto gpu = a_frame.bindings->heap->GetGPUDescriptorHandleForHeapStart();
 		gpu.ptr += uint64_t(a_descriptorBase) * step;
 		commands->SetComputeRootDescriptorTable(1, gpu);
-		gpu.ptr += step; commands->SetComputeRootDescriptorTable(2, gpu);
-		gpu.ptr += step; commands->SetComputeRootDescriptorTable(6, gpu);
+		gpu.ptr += step;
+		commands->SetComputeRootDescriptorTable(2, gpu);
+		gpu.ptr += step;
+		commands->SetComputeRootDescriptorTable(6, gpu);
 		gpu = a_frame.bindings->heap->GetGPUDescriptorHandleForHeapStart();
 		gpu.ptr += uint64_t(ShadowBindings::kGeometryDescriptorBase) * step;
 		commands->SetComputeRootDescriptorTable(3, gpu);
@@ -338,30 +362,30 @@ namespace DX12Native
 		static_assert(sizeof(Constants) == 36 * sizeof(uint32_t));
 		commands->SetComputeRoot32BitConstants(5, 36, &constants, 0);
 		commands->CopyBufferRegion(a_frame.characterHitCounter.get(), 0,
-            a_frame.characterHitZero.get(), 0, sizeof(uint32_t));
+			a_frame.characterHitZero.get(), 0, sizeof(uint32_t));
 		std::array begin{
 			CD3DX12_RESOURCE_BARRIER::Transition(a_frame.lights->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
 			CD3DX12_RESOURCE_BARRIER::Transition(a_frame.mask->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-            CD3DX12_RESOURCE_BARRIER::Transition(a_frame.characterHitCounter.get(),
-                D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+			CD3DX12_RESOURCE_BARRIER::Transition(a_frame.characterHitCounter.get(),
+				D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
 		};
 		commands->ResourceBarrier(uint32_t(begin.size()), begin.data());
 		commands->Dispatch((a_frame.width + 7) / 8, (a_frame.height + 7) / 8, 1);
 		const std::array ordered{
-            CD3DX12_RESOURCE_BARRIER::UAV(a_frame.mask->resource.get()),
-            CD3DX12_RESOURCE_BARRIER::UAV(a_frame.characterHitCounter.get())
-        };
+			CD3DX12_RESOURCE_BARRIER::UAV(a_frame.mask->resource.get()),
+			CD3DX12_RESOURCE_BARRIER::UAV(a_frame.characterHitCounter.get())
+		};
 		commands->ResourceBarrier(uint32_t(ordered.size()), ordered.data());
-        const auto readyToCopy = CD3DX12_RESOURCE_BARRIER::Transition(
-            a_frame.characterHitCounter.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-            D3D12_RESOURCE_STATE_COPY_SOURCE);
-        commands->ResourceBarrier(1, &readyToCopy);
-        commands->CopyBufferRegion(a_frame.characterHitReadback.get(), 0,
-            a_frame.characterHitCounter.get(), 0, sizeof(uint32_t));
-        const auto restoreCounter = CD3DX12_RESOURCE_BARRIER::Transition(
-            a_frame.characterHitCounter.get(), D3D12_RESOURCE_STATE_COPY_SOURCE,
-            D3D12_RESOURCE_STATE_COPY_DEST);
-        commands->ResourceBarrier(1, &restoreCounter);
+		const auto readyToCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+			a_frame.characterHitCounter.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+			D3D12_RESOURCE_STATE_COPY_SOURCE);
+		commands->ResourceBarrier(1, &readyToCopy);
+		commands->CopyBufferRegion(a_frame.characterHitReadback.get(), 0,
+			a_frame.characterHitCounter.get(), 0, sizeof(uint32_t));
+		const auto restoreCounter = CD3DX12_RESOURCE_BARRIER::Transition(
+			a_frame.characterHitCounter.get(), D3D12_RESOURCE_STATE_COPY_SOURCE,
+			D3D12_RESOURCE_STATE_COPY_DEST);
+		commands->ResourceBarrier(1, &restoreCounter);
 		std::array end{
 			CD3DX12_RESOURCE_BARRIER::Transition(a_frame.lights->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
 			CD3DX12_RESOURCE_BARRIER::Transition(a_frame.mask->resource.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON)
@@ -376,10 +400,11 @@ namespace DX12Native
 	}
 	void ShadowTrace::Dispatch(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, std::shared_ptr<const ShadowBindings> a_bindings, std::span<const PreparedPointLight> a_lights,
 		const globals::FrameBuffer& a_camera, std::array<uint32_t, 2> a_size, uint32_t a_frame, uint64_t a_budget, const ShadowTraceControls& a_controls,
-        std::shared_ptr<const CharacterIsolatedTLAS> a_characterCasters)
+		std::shared_ptr<const CharacterIsolatedTLAS> a_characterCasters)
 	{
 		CS_GPU_PASS("DX12NativeScene::ShadowMaskDispatch");
-		if (current && current->frame == a_frame) return;
+		if (current && current->frame == a_frame)
+			return;
 		current.reset();
 		if (!a_scene || !a_scene->result || a_scene->instances.empty() || a_lights.empty() || a_lights.size() > kMaximumNativePointLights ||
 			!a_size[0] || !a_size[1] || a_size[0] > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION || a_size[1] > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION) {
@@ -390,45 +415,65 @@ namespace DX12Native
 			status = "No supported prepared point lights";
 			return;
 		}
-		if (!Initialize(a_backend)) return;
+		if (!Initialize(a_backend))
+			return;
 		const auto done = completion->GetCompletedValue();
 		const auto produced = producer.fence12->GetCompletedValue();
-		if (done == UINT64_MAX || produced == UINT64_MAX) { status = "Shadow device removed"; return; }
+		if (done == UINT64_MAX || produced == UINT64_MAX) {
+			status = "Shadow device removed";
+			return;
+		}
 		for (const auto& frame : frames) {
 			if (frame && !frame->completionCounted && frame->readyValue && frame->readyValue != UINT64_MAX && frame->readyValue <= done) {
 				frame->completionCounted = true;
 				++completions;
 			}
 		}
-		if (!RetireScenesExcept(a_scene)) { status = "Previous shadow scene is still in use"; return; }
-        if (a_characterCasters &&
-            (!a_characterCasters->Ready() ||
-             !a_characterCasters->acceleration || !a_characterCasters->bottom))
-            a_characterCasters.reset();
+		if (!RetireScenesExcept(a_scene)) {
+			status = "Previous shadow scene is still in use";
+			return;
+		}
+		if (a_characterCasters &&
+			(!a_characterCasters->Ready() ||
+				!a_characterCasters->acceleration || !a_characterCasters->bottom))
+			a_characterCasters.reset();
 		auto tables = std::move(a_bindings);
 		if (!tables || tables->scene != a_scene) {
 			status = "Prepared scene material bindings unavailable";
 			return;
 		}
 		auto available = std::find_if(frames.begin(), frames.end(), [&](const auto& frame) {
-			if (!frame) return true;
+			if (!frame)
+				return true;
 			if (frame.use_count() != 1 || frame->readyValue == UINT64_MAX || frame->producerValue == UINT64_MAX ||
-				frame->readyValue > done || frame->producerValue > produced) return false;
+				frame->readyValue > done || frame->producerValue > produced)
+				return false;
 			return std::ranges::all_of(frame->consumers, [](const auto& consumer) {
 				const auto completed = consumer.first->GetCompletedValue();
 				return completed != UINT64_MAX && completed >= consumer.second;
 			});
 		});
-		if (available == frames.end()) { ++busyDeferrals; status = "Shadow frames are still in use"; return; }
-		uint64_t trackedBytes = tables->bytes;
-		for (const auto& frame : frames) if (frame) {
-			if (trackedBytes > UINT64_MAX - frame->bytes) { status = "Shadow budget accounting overflow"; return; }
-			trackedBytes += frame->bytes;
-			if (frame->bindings && frame->bindings != tables) {
-				if (trackedBytes > UINT64_MAX - frame->bindings->bytes) { status = "Shadow binding budget accounting overflow"; return; }
-				trackedBytes += frame->bindings->bytes;
-			}
+		if (available == frames.end()) {
+			++busyDeferrals;
+			status = "Shadow frames are still in use";
+			return;
 		}
+		uint64_t trackedBytes = tables->bytes;
+		for (const auto& frame : frames)
+			if (frame) {
+				if (trackedBytes > UINT64_MAX - frame->bytes) {
+					status = "Shadow budget accounting overflow";
+					return;
+				}
+				trackedBytes += frame->bytes;
+				if (frame->bindings && frame->bindings != tables) {
+					if (trackedBytes > UINT64_MAX - frame->bindings->bytes) {
+						status = "Shadow binding budget accounting overflow";
+						return;
+					}
+					trackedBytes += frame->bindings->bytes;
+				}
+			}
 		const uint64_t budget = videoBudget.Query(backend.d3d12Device.get(), trackedBytes, a_budget).effectiveBytes;
 		try {
 			// ShadowTrace.dxil builds camera rays directly inside DX12 RayQuery.
@@ -438,80 +483,86 @@ namespace DX12Native
 				D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
 			const auto textureBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &textureDesc).SizeInBytes;
 			const auto lightBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &lightDesc).SizeInBytes;
-            // Receiver rays are generated in the same DX12 shader; reserve
-            // only the full-size shadow mask plus the tiny light snapshot.
-            if (textureBytes == UINT64_MAX || lightBytes == UINT64_MAX ||
-                textureBytes > budget || lightBytes > budget - textureBytes)
-                throw std::runtime_error("Shadow frame allocation exceeds DXGI budget");
-            // Count actual character occlusions without changing the mask
-            // format or disturbing existing raster/native consumers.
-            const auto hitDesc = CD3DX12_RESOURCE_DESC::Buffer(
-                sizeof(uint32_t), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-            const auto smallDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(uint32_t));
-            const uint64_t hitBytes = backend.d3d12Device->
-                GetResourceAllocationInfo(0, 1, &hitDesc).SizeInBytes;
-            const uint64_t smallBytes = backend.d3d12Device->
-                GetResourceAllocationInfo(0, 1, &smallDesc).SizeInBytes;
-            uint64_t bytes = textureBytes + lightBytes;
-            for (const uint64_t extra : { hitBytes, smallBytes, smallBytes }) {
-                if (!extra || extra == UINT64_MAX || bytes > budget ||
-                    extra > budget - bytes)
-                    throw std::runtime_error("Character shadow diagnostic budget exceeded");
-                bytes += extra;
-            }
+			// Receiver rays are generated in the same DX12 shader; reserve
+			// only the full-size shadow mask plus the tiny light snapshot.
+			if (textureBytes == UINT64_MAX || lightBytes == UINT64_MAX ||
+				textureBytes > budget || lightBytes > budget - textureBytes)
+				throw std::runtime_error("Shadow frame allocation exceeds DXGI budget");
+			// Count actual character occlusions without changing the mask
+			// format or disturbing existing raster/native consumers.
+			const auto hitDesc = CD3DX12_RESOURCE_DESC::Buffer(
+				sizeof(uint32_t), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+			const auto smallDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(uint32_t));
+			const uint64_t hitBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &hitDesc).SizeInBytes;
+			const uint64_t smallBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &smallDesc).SizeInBytes;
+			uint64_t bytes = textureBytes + lightBytes;
+			for (const uint64_t extra : { hitBytes, smallBytes, smallBytes }) {
+				if (!extra || extra == UINT64_MAX || bytes > budget ||
+					extra > budget - bytes)
+					throw std::runtime_error("Character shadow diagnostic budget exceeded");
+				bytes += extra;
+			}
 			uint64_t retained = tables->bytes;
 			for (auto it = frames.begin(); it != frames.end(); ++it) {
-				if (it == available || !*it) continue;
-				if ((*it)->bytes > budget || retained > budget - (*it)->bytes) throw std::runtime_error("Shadow frames exceed budget");
+				if (it == available || !*it)
+					continue;
+				if ((*it)->bytes > budget || retained > budget - (*it)->bytes)
+					throw std::runtime_error("Shadow frames exceed budget");
 				retained += (*it)->bytes;
 				if ((*it)->bindings && (*it)->bindings != tables) {
-					if ((*it)->bindings->bytes > budget || retained > budget - (*it)->bindings->bytes) throw std::runtime_error("Retired shadow bindings exceed budget");
+					if ((*it)->bindings->bytes > budget || retained > budget - (*it)->bindings->bytes)
+						throw std::runtime_error("Retired shadow bindings exceed budget");
 					retained += (*it)->bindings->bytes;
 				}
 			}
-			if (retained > budget || bytes > budget - retained) throw std::runtime_error("Shadow frame budget exhausted");
+			if (retained > budget || bytes > budget - retained)
+				throw std::runtime_error("Shadow frame budget exhausted");
 			auto& slot = *available;
 			if (!slot || slot->width != a_size[0] || slot->height != a_size[1]) {
 				slot.reset();
 				auto frame = std::make_shared<ShadowFrame>();
-				frame->width = a_size[0]; frame->height = a_size[1]; frame->bytes = bytes;
+				frame->width = a_size[0];
+				frame->height = a_size[1];
+				frame->bytes = bytes;
 				D3D11_TEXTURE2D_DESC desc{};
-				desc.Width = frame->width; desc.Height = frame->height;
+				desc.Width = frame->width;
+				desc.Height = frame->height;
 				desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
 				desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
 				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 				frame->mask = std::make_unique<WrappedResource>(desc, backend.d3d11Device.get(), backend.d3d12Device.get(), "DX12NativeScene::ShadowMask");
-				desc.Width = kNativeShadowLightTextureWidth; desc.Height = 2;
+				desc.Width = kNativeShadowLightTextureWidth;
+				desc.Height = 2;
 				frame->lights = std::make_unique<WrappedResource>(desc, backend.d3d11Device.get(), backend.d3d12Device.get(), "DX12NativeScene::ShadowLights");
-                const auto heapDefault = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-                const auto heapUpload = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-                const auto heapReadback = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
-                DX::ThrowIfFailed(backend.d3d12Device->CreateCommittedResource(
-                    &heapDefault, D3D12_HEAP_FLAG_NONE, &hitDesc,
-                    D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                    IID_PPV_ARGS(frame->characterHitCounter.put())));
-                DX::ThrowIfFailed(backend.d3d12Device->CreateCommittedResource(
-                    &heapUpload, D3D12_HEAP_FLAG_NONE, &smallDesc,
-                    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                    IID_PPV_ARGS(frame->characterHitZero.put())));
-                DX::ThrowIfFailed(backend.d3d12Device->CreateCommittedResource(
-                    &heapReadback, D3D12_HEAP_FLAG_NONE, &smallDesc,
-                    D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                    IID_PPV_ARGS(frame->characterHitReadback.put())));
-                frame->characterHitCounter->SetName(L"DX12NativeScene::CharacterShadowHits");
-                frame->characterHitZero->SetName(L"DX12NativeScene::CharacterHitReset");
-                frame->characterHitReadback->SetName(L"DX12NativeScene::CharacterHitReadback");
-                void* zero = nullptr;
-                const D3D12_RANGE noRead{ 0, 0 };
-                DX::ThrowIfFailed(frame->characterHitZero->Map(0, &noRead, &zero));
-                std::memset(zero, 0, sizeof(uint32_t));
-                frame->characterHitZero->Unmap(0, nullptr);
+				const auto heapDefault = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+				const auto heapUpload = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+				const auto heapReadback = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
+				DX::ThrowIfFailed(backend.d3d12Device->CreateCommittedResource(
+					&heapDefault, D3D12_HEAP_FLAG_NONE, &hitDesc,
+					D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+					IID_PPV_ARGS(frame->characterHitCounter.put())));
+				DX::ThrowIfFailed(backend.d3d12Device->CreateCommittedResource(
+					&heapUpload, D3D12_HEAP_FLAG_NONE, &smallDesc,
+					D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+					IID_PPV_ARGS(frame->characterHitZero.put())));
+				DX::ThrowIfFailed(backend.d3d12Device->CreateCommittedResource(
+					&heapReadback, D3D12_HEAP_FLAG_NONE, &smallDesc,
+					D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+					IID_PPV_ARGS(frame->characterHitReadback.put())));
+				frame->characterHitCounter->SetName(L"DX12NativeScene::CharacterShadowHits");
+				frame->characterHitZero->SetName(L"DX12NativeScene::CharacterHitReset");
+				frame->characterHitReadback->SetName(L"DX12NativeScene::CharacterHitReadback");
+				void* zero = nullptr;
+				const D3D12_RANGE noRead{ 0, 0 };
+				DX::ThrowIfFailed(frame->characterHitZero->Map(0, &noRead, &zero));
+				std::memset(zero, 0, sizeof(uint32_t));
+				frame->characterHitZero->Unmap(0, nullptr);
 				slot = std::move(frame);
 			}
 			slot->consumers.clear();
 			slot->scene = std::move(a_scene);
 			slot->bindings = std::move(tables);
-            slot->characterCasters = std::move(a_characterCasters);
+			slot->characterCasters = std::move(a_characterCasters);
 			slot->frame = a_frame;
 			slot->lightSnapshot.assign(a_lights.begin(), a_lights.end());
 			slot->controls = a_controls;
@@ -519,35 +570,41 @@ namespace DX12Native
 				a_camera.CameraPosAdjust.y + a_camera.CameraViewInverse._24, a_camera.CameraPosAdjust.z + a_camera.CameraViewInverse._34 };
 			slot->rayProjInverse = a_camera.CameraProjInverse;
 			slot->rayViewInverse = a_camera.CameraViewInverse;
-            if (!slot->cameraConstants) {
-                const auto desc = CD3DX12_RESOURCE_DESC::Buffer(256);
-                const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-                DX::ThrowIfFailed(backend.d3d12Device->CreateCommittedResource(
-                    &heap, D3D12_HEAP_FLAG_NONE, &desc,
-                    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                    IID_PPV_ARGS(slot->cameraConstants.put())));
-                slot->cameraConstants->SetName(L"DX12NativeScene::ShadowNativeCamera");
-            }
-            struct NativeCameraConstants {
-                DirectX::SimpleMath::Matrix projectionInverse, viewInverse;
-            };
-            static_assert(sizeof(NativeCameraConstants) == 128);
-            const NativeCameraConstants cameraData{ slot->rayProjInverse, slot->rayViewInverse };
-            void* mapped = nullptr;
-            const D3D12_RANGE noRead{ 0, 0 };
-            DX::ThrowIfFailed(slot->cameraConstants->Map(0, &noRead, &mapped));
-            std::memcpy(mapped, &cameraData, sizeof(cameraData));
-            slot->cameraConstants->Unmap(0, nullptr);
+			if (!slot->cameraConstants) {
+				const auto desc = CD3DX12_RESOURCE_DESC::Buffer(256);
+				const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+				DX::ThrowIfFailed(backend.d3d12Device->CreateCommittedResource(
+					&heap, D3D12_HEAP_FLAG_NONE, &desc,
+					D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+					IID_PPV_ARGS(slot->cameraConstants.put())));
+				slot->cameraConstants->SetName(L"DX12NativeScene::ShadowNativeCamera");
+			}
+			struct NativeCameraConstants
+			{
+				DirectX::SimpleMath::Matrix projectionInverse, viewInverse;
+			};
+			static_assert(sizeof(NativeCameraConstants) == 128);
+			const NativeCameraConstants cameraData{ slot->rayProjInverse, slot->rayViewInverse };
+			void* mapped = nullptr;
+			const D3D12_RANGE noRead{ 0, 0 };
+			DX::ThrowIfFailed(slot->cameraConstants->Map(0, &noRead, &mapped));
+			std::memcpy(mapped, &cameraData, sizeof(cameraData));
+			slot->cameraConstants->Unmap(0, nullptr);
 			slot->retainedBackend = backend;
-			slot->root = root; slot->pipeline = pipeline;
-			slot->producerFence = producer.fence12; slot->producerFence11 = producer.fence11; slot->readyFence = completion;
+			slot->root = root;
+			slot->pipeline = pipeline;
+			slot->producerFence = producer.fence12;
+			slot->producerFence11 = producer.fence11;
+			slot->readyFence = completion;
 			slot->readyValue = slot->producerValue = UINT64_MAX;
 			slot->completionCounted = false;
-			UploadLightSnapshot(*slot); // DX11 input transfer only; all shadow math is DX12.
+			UploadLightSnapshot(*slot);  // DX11 input transfer only; all shadow math is DX12.
 			Record(*slot, uint32_t(available - frames.begin()) * ShadowBindings::kFrameDescriptorCount);
 			current = slot;
 			++submissions;
 			status = slot->bindings->materials->failure;
-		} catch (const std::exception& error) { status = error.what(); }
+		} catch (const std::exception& error) {
+			status = error.what();
+		}
 	}
 }

@@ -1,13 +1,13 @@
 #ifndef REDSTONE_DIRECT_CONTRACT_HLSLI
 #define REDSTONE_DIRECT_CONTRACT_HLSLI
-#include "ReceiverRoom.hlsli"
 #include "Common/PointLightFlags.hlsli"
+#include "ReceiverRoom.hlsli"
 
 static const uint DirectDiffuseView = 10;
 static const uint DirectSpecularView = 11;
 static const uint DirectCombinedView = 12;
 static const float DirectRadianceTag = 4;
-static const uint MaximumDirectLights = 64; // Must match DX12Native::kMaximumNativePointLights.
+static const uint MaximumDirectLights = 64;  // Must match DX12Native::kMaximumNativePointLights.
 static const uint LightSnapshotTexels = 8;
 static const float UnavailableTag = 5;
 static const uint MissingReceiver = 1;

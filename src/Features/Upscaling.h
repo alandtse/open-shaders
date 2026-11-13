@@ -1,12 +1,12 @@
 #pragma once
 
+#include "Features/NativeComposite/NativeComposite.h"
 #include "OverlayFeature.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/FoveatedRender.h"
-#include "Upscaling/NeuralRendering.h"
-#include "Features/NativeComposite/NativeComposite.h"
 #include "Upscaling/NativeUpscaling.h"
+#include "Upscaling/NeuralRendering.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/RainLayer.h"
@@ -297,7 +297,11 @@ public:
 	/** @brief NR reads the Masks2 material-category lane whenever it is on. */
 	bool WantsForwardMaterialCategory() const override { return settings.neuralRenderingEnabled; }
 	/** @brief Resets NR history across loading transitions. */
-	void OnSceneTransitionReset(bool) override { neuralRendering.ResetHistory(); ++nativeHistoryGeneration; }
+	void OnSceneTransitionReset(bool) override
+	{
+		neuralRendering.ResetHistory();
+		++nativeHistoryGeneration;
+	}
 	/** @brief Exposes the display-sized scene to post-processing through the shared feature contract. */
 	PostProcessingInput GetPostProcessingInput() const override;
 

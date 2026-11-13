@@ -161,4 +161,3 @@ SharedFence::WaitOutcome SharedFence::CpuWaitOutcome(uint64_t a_value, DWORD a_t
 
 	return WaitOutcome::kTimeout;
 }
-

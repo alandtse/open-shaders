@@ -31,7 +31,10 @@ namespace DX12Native
 	class LogicalTextureRegistry
 	{
 	public:
-		struct Ticket { uint64_t handle = 0; };
+		struct Ticket
+		{
+			uint64_t handle = 0;
+		};
 		explicit LogicalTextureRegistry(size_t a_capacity = 8192) : capacity(a_capacity) {}
 
 		/** @brief Reuses an active identity or assigns a never-reused handle within the bound. */
@@ -39,14 +42,19 @@ namespace DX12Native
 		{
 			std::scoped_lock lock(mutex);
 			if (auto it = entries.find(a_identity); it != entries.end()) {
-				if (auto active = it->second.lock()) return active;
+				if (auto active = it->second.lock())
+					return active;
 				entries.erase(it);
 			}
 			if (entries.size() >= capacity) {
 				for (auto it = entries.begin(); it != entries.end();)
-					if (it->second.expired()) it = entries.erase(it); else ++it;
+					if (it->second.expired())
+						it = entries.erase(it);
+					else
+						++it;
 			}
-			if (entries.size() >= capacity || nextHandle == 0) return {};
+			if (entries.size() >= capacity || nextHandle == 0)
+				return {};
 			auto ticket = std::make_shared<const Ticket>(Ticket{ nextHandle++ });
 			entries.emplace(a_identity, ticket);
 			return ticket;

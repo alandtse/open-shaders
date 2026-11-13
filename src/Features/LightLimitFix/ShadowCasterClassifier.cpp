@@ -6,11 +6,11 @@
 #include <fstream>
 
 #include "../../Globals.h"
-#include "../DX12NativeScene/DX12NativeScene.h"
 #include "../../State.h"
 #include "../../Utils/ActorUtils.h"
 #include "../../Utils/FileSystem.h"
 #include "../../Utils/Game.h"
+#include "../DX12NativeScene/DX12NativeScene.h"
 #include "ShadowCasterInternal.h"
 
 namespace ShadowCasterManager
@@ -295,7 +295,8 @@ namespace ShadowCasterManager
 		s_nativeCasterCollecting = active;
 		s_nativeCasterSeen.clear();
 		s_nativeCasterScratch = active ? std::make_shared<NativeCasterFrame>() : nullptr;
-		if (s_nativeCasterScratch) s_nativeCasterScratch->frame = frame;
+		if (s_nativeCasterScratch)
+			s_nativeCasterScratch->frame = frame;
 	}
 
 	void EndNativeCasterFrame()
@@ -310,35 +311,38 @@ namespace ShadowCasterManager
 	{
 		std::scoped_lock lock(s_nativeCasterPublishMutex);
 		return s_nativeCasterPublished && s_nativeCasterPublished->frame == frame ?
-			s_nativeCasterPublished : nullptr;
+		           s_nativeCasterPublished :
+		           nullptr;
 	}
 
 	static void ObserveNativeCaster(RE::BSGeometry& geom, bool dynamic, bool preparedStatic)
 	{
-		if (!s_nativeCasterCollecting || !s_nativeCasterScratch || !s_nativeCasterSeen.insert(&geom).second) return;
+		if (!s_nativeCasterCollecting || !s_nativeCasterScratch || !s_nativeCasterSeen.insert(&geom).second)
+			return;
 		if (s_nativeCasterScratch->casters.size() == kNativeCasterLimit) {
 			++s_nativeCasterScratch->dropped;
 			return;
 		}
 		const auto& b = geom.worldBound;
-		s_nativeCasterScratch->casters.push_back({
-			{ b.center.x, b.center.y, b.center.z, b.radius },
+		s_nativeCasterScratch->casters.push_back({ { b.center.x, b.center.y, b.center.z, b.radius },
 			bool(geom.GetGeometryRuntimeData().skinInstance), dynamic, preparedStatic });
-		if (preparedStatic) ++s_nativeCasterScratch->preparedStaticRetired;
-        else {
-            ++s_nativeCasterScratch->rasterFallback;
-            if (dynamic) ++s_nativeCasterScratch->moving;
-            else {
-                ++s_nativeCasterScratch->uncoveredRigid;
-                // The deduplicating SCM collector is the only legal CPU
-                // acquisition point. One source copy per rigid caster per
-                // frame, regardless of the number of lights that visit it.
-                globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
-            }
-            if (geom.GetGeometryRuntimeData().skinInstance) ++s_nativeCasterScratch->skinned;
-        }
+		if (preparedStatic)
+			++s_nativeCasterScratch->preparedStaticRetired;
+		else {
+			++s_nativeCasterScratch->rasterFallback;
+			if (dynamic)
+				++s_nativeCasterScratch->moving;
+			else {
+				++s_nativeCasterScratch->uncoveredRigid;
+				// The deduplicating SCM collector is the only legal CPU
+				// acquisition point. One source copy per rigid caster per
+				// frame, regardless of the number of lights that visit it.
+				globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
+			}
+			if (geom.GetGeometryRuntimeData().skinInstance)
+				++s_nativeCasterScratch->skinned;
+		}
 	}
-
 
 	bool GetActorAttachedDynamic() { return s_actorAttachedDynamic.load(std::memory_order_relaxed); }
 	void SetActorAttachedDynamic(bool a_value) { s_actorAttachedDynamic.store(a_value, std::memory_order_relaxed); }
@@ -502,7 +506,8 @@ namespace ShadowCasterManager
 	{
 		const bool useAtlas = AtlasActive();
 		const auto casterPass = static_cast<CasterPass>(s_cullPassMode.load(std::memory_order_relaxed));
-		if (!useAtlas && !s_nativeCasterCollecting && casterPass == CasterPass::All) return false;
+		if (!useAtlas && !s_nativeCasterCollecting && casterPass == CasterPass::All)
+			return false;
 		if (const auto passless = ShadowMapPassless(geom); passless != PasslessReason::kNone) {
 			s_passlessCasterSkipTotal.fetch_add(1, std::memory_order_relaxed);
 			s_passlessCasterSkipByReason[static_cast<int>(passless)].fetch_add(1, std::memory_order_relaxed);
@@ -525,8 +530,10 @@ namespace ShadowCasterManager
 		ObserveNativeCaster(geom, dynamic, preparedStatic);
 		// Exactly-covered prepared triangles already intersect native DXR shadow rays.
 		// Leave unprepared static casters and all moving casters in the DX11 path.
-		if (preparedStatic) return true;
-		if (!useAtlas && casterPass == CasterPass::All) return false;
+		if (preparedStatic)
+			return true;
+		if (!useAtlas && casterPass == CasterPass::All)
+			return false;
 		// Every static caster folds into the hash regardless of pass, so a
 		// static-set change is seen during whichever accumulate runs this frame.
 		if (!dynamic)

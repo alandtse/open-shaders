@@ -1,9 +1,9 @@
 #pragma once
 
+#include "Globals.h"
 #include "GraphicsBackend.h"
 #include "GraphicsInterop.h"
 #include "VideoMemoryBudget.h"
-#include "Globals.h"
 #include <array>
 #include <memory>
 #include <vector>
@@ -13,7 +13,18 @@ namespace DX12Native
 	/** @brief Retains copied opaque raster resources until every GPU consumer completes. */
 	struct RasterFrame
 	{
-		enum class Input : size_t { LitColor, LitSpecular, Albedo, NormalRoughness, Masks, Masks2, Reflectance, Motion, Count };
+		enum class Input : size_t
+		{
+			LitColor,
+			LitSpecular,
+			Albedo,
+			NormalRoughness,
+			Masks,
+			Masks2,
+			Reflectance,
+			Motion,
+			Count
+		};
 		std::array<std::unique_ptr<WrappedResource>, static_cast<size_t>(Input::Count)> inputs;
 		std::array<DXGI_FORMAT, static_cast<size_t>(Input::Count)> formats{};
 		std::unique_ptr<WrappedResource> depth;
@@ -41,11 +52,16 @@ namespace DX12Native
 		/** @brief Invalidates publication while retaining slots for GPU retirement. */
 		void Reset();
 		/** @brief Drops the depth shader for a later shader-cache retry. */
-		void ReloadShader() { Reset(); depthShader = nullptr; }
+		void ReloadShader()
+		{
+			Reset();
+			depthShader = nullptr;
+		}
 		/** @brief Returns the latest capture failure or availability status. */
 		const std::string& Status() const { return status; }
 		/** @brief Reports source capture and producer completion independently of consumption. */
 		json GetDiagnostics() const;
+
 	private:
 		std::array<std::shared_ptr<RasterFrame>, 4> slots;
 		std::shared_ptr<RasterFrame> current;

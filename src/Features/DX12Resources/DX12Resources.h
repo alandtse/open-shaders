@@ -1,119 +1,123 @@
 #pragma once
 
-#include "Feature.h"
-#include "CellRequest.h"
 #include "AutoCellResolver.h"
+#include "CellRequest.h"
+#include "Feature.h"
 #include "PluginCellCatalog.h"
 #include "PreparedCellValidation.h"
-#include <optional>
+#include <array>
 #include <atomic>
 #include <cstdint>
-#include <mutex>
-#include <array>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
-#include <vector>
-#include <unordered_set>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 /** @brief Standalone interior preparation service with automatic CELL identification. */
 struct DX12Resources final : Feature
 {
-    struct Settings { bool Enabled = true; bool AutoPrepareOnCellEntry = true; bool FlushDiskGeometryOnStartup = false; } settings;
+	struct Settings
+	{
+		bool Enabled = true;
+		bool AutoPrepareOnCellEntry = true;
+		bool FlushDiskGeometryOnStartup = false;
+	} settings;
 
-    std::string GetName() override { return "DX12 Resources"; }
-    std::string GetShortName() override { return "DX12Resources"; }
-    std::string_view GetCategory() const override { return FeatureCategories::kUtility; }
-    bool IsCore() const override { return true; }
-    bool IsInMenu() const override { return true; }
-    bool SupportsVR() override { return false; }
-    void DrawSettings() override;
-    void LoadSettings(json& input) override;
-    void SaveSettings(json& output) override;
-    void RestoreDefaultSettings() override;
-    /** Render-thread poll and one-shot auto-prepare on entry into a missing native interior cache. */
-    void AdvanceAutomaticInterior(const DX12ResourceService::CellRequest& request);
-    void AdvanceStreamingScene(const DX12ResourceService::CellRequest& request,
-        uint32_t size, double x, double y, double velocityX, double velocityY);
-    void DataLoaded() override;
-    /** Block native cache consumers while a startup flush is pending/failed. */
-    bool DiskGeometryCacheReady();
-    json GetDiagnostics() override;
-    std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
-    {
-        return { "Automatic interior identification and companion-based CELL processing.",
-                 { "Latest-save or current interior detection", "Plugin-scoped interior selection",
-                   "Independent on-disk CELL preparation job",
-                   "Versioned DX12-cache reports" } };
-    }
+	std::string GetName() override { return "DX12 Resources"; }
+	std::string GetShortName() override { return "DX12Resources"; }
+	std::string_view GetCategory() const override { return FeatureCategories::kUtility; }
+	bool IsCore() const override { return true; }
+	bool IsInMenu() const override { return true; }
+	bool SupportsVR() override { return false; }
+	void DrawSettings() override;
+	void LoadSettings(json& input) override;
+	void SaveSettings(json& output) override;
+	void RestoreDefaultSettings() override;
+	/** Render-thread poll and one-shot auto-prepare on entry into a missing native interior cache. */
+	void AdvanceAutomaticInterior(const DX12ResourceService::CellRequest& request);
+	void AdvanceStreamingScene(const DX12ResourceService::CellRequest& request,
+		uint32_t size, double x, double y, double velocityX, double velocityY);
+	void DataLoaded() override;
+	/** Block native cache consumers while a startup flush is pending/failed. */
+	bool DiskGeometryCacheReady();
+	json GetDiagnostics() override;
+	std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
+	{
+		return { "Automatic interior identification and companion-based CELL processing.",
+			{ "Latest-save or current interior detection", "Plugin-scoped interior selection",
+				"Independent on-disk CELL preparation job",
+				"Versioned DX12-cache reports" } };
+	}
 
 private:
-    struct ScanJob;
-    struct CatalogJob;
-    struct PreparationJob;
-    struct DiskCacheFlushJob;
-    void BeginAutomaticDetection(bool mainMenu);
-    void PollAutomaticDetection();
-    void RefreshLoadedPlugins();
-    void StartPluginCellScan(std::string plugin);
-    void AdvancePluginCellScan();
-    void StartCellPreparation(const DX12ResourceService::CellRequest& request,
-        std::optional<DX12ResourceService::PreparedSubcellAddress> tile = std::nullopt,
-        bool predictive = false);
-    void PollCellPreparation();
-    void StartDiskCacheFlush();
-    void PollDiskCacheFlush();
-    std::atomic<bool> dataLoaded{ false };
-    std::mutex statusMutex;
-    std::shared_ptr<ScanJob> scanJob;
-    std::shared_ptr<CatalogJob> pluginScanJob;
-    std::shared_ptr<PreparationJob> preparationJob;
-    std::shared_ptr<DiskCacheFlushJob> diskCacheFlushJob;
-    // Session-only barrier: if opted in, the first native cache read must
-    // follow a successful disk deletion, never a stale cached scene.
-    bool startupFlushTriggered = false, startupFlushComplete = false;
-    bool diskCacheFlushConfirm = false;
-    uint64_t diskCacheFlushes = 0, diskCacheFlushRemoved = 0;
-    std::string diskCacheFlushStatus = "Not requested";
-    std::optional<DX12ResourceService::CellRequest> detectedCell;
-    bool detectionRequested = false;
-    std::optional<bool> lastDetectionMainMenu;
-    std::string detectionSource = "Not detected";
-    std::string detectionLocation;
-    std::string detectionSave;
-    std::string detectionStatus = "Waiting for Skyrim data";
+	struct ScanJob;
+	struct CatalogJob;
+	struct PreparationJob;
+	struct DiskCacheFlushJob;
+	void BeginAutomaticDetection(bool mainMenu);
+	void PollAutomaticDetection();
+	void RefreshLoadedPlugins();
+	void StartPluginCellScan(std::string plugin);
+	void AdvancePluginCellScan();
+	void StartCellPreparation(const DX12ResourceService::CellRequest& request,
+		std::optional<DX12ResourceService::PreparedSubcellAddress> tile = std::nullopt,
+		bool predictive = false);
+	void PollCellPreparation();
+	void StartDiskCacheFlush();
+	void PollDiskCacheFlush();
+	std::atomic<bool> dataLoaded{ false };
+	std::mutex statusMutex;
+	std::shared_ptr<ScanJob> scanJob;
+	std::shared_ptr<CatalogJob> pluginScanJob;
+	std::shared_ptr<PreparationJob> preparationJob;
+	std::shared_ptr<DiskCacheFlushJob> diskCacheFlushJob;
+	// Session-only barrier: if opted in, the first native cache read must
+	// follow a successful disk deletion, never a stale cached scene.
+	bool startupFlushTriggered = false, startupFlushComplete = false;
+	bool diskCacheFlushConfirm = false;
+	uint64_t diskCacheFlushes = 0, diskCacheFlushRemoved = 0;
+	std::string diskCacheFlushStatus = "Not requested";
+	std::optional<DX12ResourceService::CellRequest> detectedCell;
+	bool detectionRequested = false;
+	std::optional<bool> lastDetectionMainMenu;
+	std::string detectionSource = "Not detected";
+	std::string detectionLocation;
+	std::string detectionSave;
+	std::string detectionStatus = "Waiting for Skyrim data";
 
-    // One on-demand browser; engine CELL metadata is copied incrementally on
-    // the UI thread and never accessed by a detached worker.
-    std::vector<std::string> loadedPlugins;
-    std::string selectedPlugin;
-    std::vector<DX12ResourceService::PluginInteriorEntry> pluginInteriors;
-    std::optional<DX12ResourceService::CellRequest> chosenInterior;
-    std::string pluginScanStatus = "Choose a loaded plugin to enumerate its interiors";
-    std::array<char, 96> pluginFilter{};
-    std::array<char, 96> interiorFilter{};
-    std::uint32_t pluginScanCursor = 0; // Number of records delivered by the companion.
-    std::uint32_t pluginScanSequence = 0;
-    std::uint32_t preparationSequence = 0;
-    std::string preparationStatus = "No cell preparation started";
-    std::string lastAutomaticInterior;
-    uint64_t automaticLaunches = 0;
-    uint64_t automaticCacheHits = 0;
-    std::string streamingScope, streamingStatus = "Not active";
-    uint64_t lastStreamingPollMs = 0, streamingLaunches = 0;
-    uint32_t streamingSize = 4096, streamingActive = 0, streamingSides = 0, streamingCorners = 0;
-    struct TileRetry
-    {
-        uint32_t failures = 0;
-        uint64_t nextAttemptAtMs = 0;
-    };
-    std::unordered_map<std::string, TileRetry> failedStreamingTiles;
-    std::string preparationCell;
-    std::string preparationPath;
-    std::string preparationLogPath;
-    double preparationElapsedMs = 0;
-    json preparationReport = json::object();
-    bool pluginListReady = false;
-    bool pluginScanActive = false;
-
+	// One on-demand browser; engine CELL metadata is copied incrementally on
+	// the UI thread and never accessed by a detached worker.
+	std::vector<std::string> loadedPlugins;
+	std::string selectedPlugin;
+	std::vector<DX12ResourceService::PluginInteriorEntry> pluginInteriors;
+	std::optional<DX12ResourceService::CellRequest> chosenInterior;
+	std::string pluginScanStatus = "Choose a loaded plugin to enumerate its interiors";
+	std::array<char, 96> pluginFilter{};
+	std::array<char, 96> interiorFilter{};
+	std::uint32_t pluginScanCursor = 0;  // Number of records delivered by the companion.
+	std::uint32_t pluginScanSequence = 0;
+	std::uint32_t preparationSequence = 0;
+	std::string preparationStatus = "No cell preparation started";
+	std::string lastAutomaticInterior;
+	uint64_t automaticLaunches = 0;
+	uint64_t automaticCacheHits = 0;
+	std::string streamingScope, streamingStatus = "Not active";
+	uint64_t lastStreamingPollMs = 0, streamingLaunches = 0;
+	uint32_t streamingSize = 4096, streamingActive = 0, streamingSides = 0, streamingCorners = 0;
+	struct TileRetry
+	{
+		uint32_t failures = 0;
+		uint64_t nextAttemptAtMs = 0;
+	};
+	std::unordered_map<std::string, TileRetry> failedStreamingTiles;
+	std::string preparationCell;
+	std::string preparationPath;
+	std::string preparationLogPath;
+	double preparationElapsedMs = 0;
+	json preparationReport = json::object();
+	bool pluginListReady = false;
+	bool pluginScanActive = false;
 };

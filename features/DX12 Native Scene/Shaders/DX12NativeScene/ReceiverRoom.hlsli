@@ -20,7 +20,8 @@ namespace ReceiverRoom
 	/** @brief Packs a known native room classification and current table generation into UNORM16. */
 	float Encode(int room, uint generation)
 	{
-		if (room < -1 || room >= int(MaximumRooms) || generation == 0 || generation > GenerationMask) return 0;
+		if (room < -1 || room >= int(MaximumRooms) || generation == 0 || generation > GenerationMask)
+			return 0;
 		return float((generation << 8) | uint(room + 2)) / MetadataScale;
 	}
 
@@ -28,16 +29,22 @@ namespace ReceiverRoom
 	uint Decode(float4 metadata, uint generation)
 	{
 		if (metadata.w != 1) {
-			if (metadata.w == 0 && metadata.z == 0) return UnwrittenMetadata;
+			if (metadata.w == 0 && metadata.z == 0)
+				return UnwrittenMetadata;
 			return metadata.z != 0 ? PartialCoverageWithCode : MissingCoverage;
 		}
-		if (generation == 0 || generation > GenerationMask) return MissingGeneration;
-		if (!isfinite(metadata.z) || metadata.z < 0 || metadata.z > 1) return InvalidCode;
+		if (generation == 0 || generation > GenerationMask)
+			return MissingGeneration;
+		if (!isfinite(metadata.z) || metadata.z < 0 || metadata.z > 1)
+			return InvalidCode;
 		uint packed = uint(round(saturate(metadata.z) * MetadataScale));
 		uint room = packed & GenerationMask;
-		if (packed == 0) return MissingCode;
-		if (room == 0 || room > MaximumRooms + 1) return InvalidCode;
-		if ((packed >> 8) != generation) return StaleGeneration;
+		if (packed == 0)
+			return MissingCode;
+		if (room == 0 || room > MaximumRooms + 1)
+			return InvalidCode;
+		if ((packed >> 8) != generation)
+			return StaleGeneration;
 		return room + 1;
 	}
 
@@ -45,8 +52,10 @@ namespace ReceiverRoom
 	int Admission(float receiverCode, uint4 rooms)
 	{
 		uint code = uint(round(receiverCode));
-		if (code == NoRoom) return 1;
-		if (code < FirstRoom || code >= FirstRoom + MaximumRooms) return -1;
+		if (code == NoRoom)
+			return 1;
+		if (code < FirstRoom || code >= FirstRoom + MaximumRooms)
+			return -1;
 		uint room = code - FirstRoom;
 		return int((rooms[room >> 5] >> (room & 31)) & 1);
 	}

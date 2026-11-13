@@ -9,10 +9,13 @@ if(DX12_NATIVE_SCENE_DXC)
         endif()
         add_custom_command(
             OUTPUT "${_output}"
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${NATIVE_LIGHTING_DXIL_DIR}"
-            COMMAND "${DX12_NATIVE_SCENE_DXC}" -T cs_6_5 -E main -HV 2021 -O3 -Ges -Gis ${_defines}
-                -I "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders"
-                -I "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders"
+            COMMAND
+                ${CMAKE_COMMAND} -E make_directory "${NATIVE_LIGHTING_DXIL_DIR}"
+            COMMAND
+                "${DX12_NATIVE_SCENE_DXC}" -T cs_6_5 -E main -HV 2021 -O3 -Ges
+                -Gis ${_defines} -I
+                "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders" -I
+                "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders"
                 -Fo "${_output}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/features/Native Lighting/Shaders/NativeLighting/Direct.hlsl6"
             DEPENDS
@@ -34,5 +37,9 @@ if(DX12_NATIVE_SCENE_DXC)
     add_custom_target(NativeLightingDXIL DEPENDS ${NATIVE_LIGHTING_DXIL})
     add_dependencies(${PROJECT_NAME} NativeLightingDXIL)
     register_feature_payload(NativeLighting FILES ${NATIVE_LIGHTING_DXIL} DESTINATION "Shaders/NativeLighting")
-    install(FILES ${NATIVE_LIGHTING_DXIL} DESTINATION "Shaders/NativeLighting" COMPONENT Shaders)
+    install(
+        FILES ${NATIVE_LIGHTING_DXIL}
+        DESTINATION "Shaders/NativeLighting"
+        COMPONENT Shaders
+    )
 endif()

@@ -28,29 +28,29 @@ namespace DX12Native
 		std::vector<json> roomDefinitions;
 		std::string digest;
 		uint64_t bytes = 0;
-        uint32_t sharedGeometryHits = 0, sharedShadingHits = 0;
+		uint32_t sharedGeometryHits = 0, sharedShadingHits = 0;
 		uint32_t maskedInstances = 0;
 		uint32_t shadedInstances = 0;
 		uint32_t tangentInstances = 0;
 	};
 
-    /** Immutable, scene-owned native lighting overlay.
+	/** Immutable, scene-owned native lighting overlay.
      * Captured LLF-only emitters live outside the authoritative prepared
      * manifest, so lighting changes cannot rebuild BLAS/TLAS or materials.
      * This runtime bake is intentionally NOT persisted without form identity. */
-    struct NativeSceneLightBake
-    {
-        struct Tracked
-        {
-            PreparedPointLight light;
-            uint32_t lastSeenFrame = 0;
-            uint32_t consecutiveObservations = 0;
-        };
-        std::shared_ptr<const PreparedCell> baseline;
-        std::vector<Tracked> candidates;
-        uint32_t generationFrame = 0;
-        float matchUnits = 0.0f, contributionGain = 0.0f;
-    };
+	struct NativeSceneLightBake
+	{
+		struct Tracked
+		{
+			PreparedPointLight light;
+			uint32_t lastSeenFrame = 0;
+			uint32_t consecutiveObservations = 0;
+		};
+		std::shared_ptr<const PreparedCell> baseline;
+		std::vector<Tracked> candidates;
+		uint32_t generationFrame = 0;
+		float matchUnits = 0.0f, contributionGain = 0.0f;
+	};
 
 	/** @brief Loads one bounded package on an owned worker without D3D11 capture. */
 	class PreparedScene
@@ -66,6 +66,7 @@ namespace DX12Native
 		std::shared_ptr<const PreparedCell> GetCell() const;
 		/** @brief Reports loader state independently of traversal and runtime validity. */
 		json GetDiagnostics() const;
+
 	private:
 		struct State;
 		std::shared_ptr<State> state;

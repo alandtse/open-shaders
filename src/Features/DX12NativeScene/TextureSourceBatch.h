@@ -10,9 +10,13 @@ namespace DX12Native
 	void ProcessTextureSources(const Entries& a_entries, Process&& a_process, OnError&& a_onError)
 	{
 		for (const auto& entry : a_entries) {
-			try { a_process(entry); }
-			catch (const std::bad_alloc&) { throw; }
-			catch (const std::exception& error) { a_onError(error); }
+			try {
+				a_process(entry);
+			} catch (const std::bad_alloc&) {
+				throw;
+			} catch (const std::exception& error) {
+				a_onError(error);
+			}
 		}
 	}
 }

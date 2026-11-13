@@ -858,13 +858,20 @@ include(src/Features/NativeLighting/Shaders.cmake)
 include(src/Features/NativeComposite/Shaders.cmake)
 if(DX12_NATIVE_SCENE_DXC)
     add_custom_target(native_shaders_only)
-    add_dependencies(native_shaders_only
-        DX12NativeSceneDXIL NativeLightingDXIL NativeCompositeDXIL)
+    add_dependencies(
+        native_shaders_only
+        DX12NativeSceneDXIL
+        NativeLightingDXIL
+        NativeCompositeDXIL
+    )
 else()
-    add_custom_target(native_shaders_only
-        COMMAND ${CMAKE_COMMAND} -E echo "DXC is required for native_shaders_only"
+    add_custom_target(
+        native_shaders_only
+        COMMAND
+            ${CMAKE_COMMAND} -E echo "DXC is required for native_shaders_only"
         COMMAND ${CMAKE_COMMAND} -E false
-        VERBATIM)
+        VERBATIM
+    )
 endif()
 include(cmake/NativeDXCCandidates.cmake)
 # A package install fails on a payload file a skipped download left absent, so the only
@@ -1213,9 +1220,8 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                     "/XD" "${AIO_DIR}/Shaders"
                     # The main PDB is optional while Skyrim/VS holds it open.
                     # Copy it separately with a non-fatal, explicit warning.
-                    "/XF" "$<TARGET_PDB_FILE_NAME:${PROJECT_NAME}>"
-                    "/COPY:DAT" "/R:1" "/W:1" "/NFL"
-                    "/NDL" "/NJH" "/NJS"
+                    "/XF" "$<TARGET_PDB_FILE_NAME:${PROJECT_NAME}>" "/COPY:DAT"
+                    "/R:1" "/W:1" "/NFL" "/NDL" "/NJH" "/NJS"
                 COMMAND
                     ${CMAKE_COMMAND} -E touch ${DEPLOY_TARGET_HASH}_deploy.stamp
                 # Depend on the PREPARE_AIO target AND its stamp file: the
@@ -1249,8 +1255,7 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                 # locked by a live debugger. Deploy the DLL strictly, then
                 # warn and continue if only the PDB cannot be overwritten.
                 COMMAND
-                    ${CMAKE_COMMAND}
-                    "-DSRC=$<TARGET_PDB_FILE:${PROJECT_NAME}>"
+                    ${CMAKE_COMMAND} "-DSRC=$<TARGET_PDB_FILE:${PROJECT_NAME}>"
                     "-DDST=${DEPLOY_TARGET}/SKSE/Plugins/$<TARGET_PDB_FILE_NAME:${PROJECT_NAME}>"
                     -P "${CMAKE_SOURCE_DIR}/cmake/CopyOptionalPDB.cmake"
                 COMMAND
@@ -1616,7 +1621,13 @@ set(CORE_PACKAGE "${DIST_PATH}/${PROJECT_NAME}-${UTC_NOW}.7z")
 file(GLOB_RECURSE CORE_SOURCES "${CMAKE_SOURCE_DIR}/package/*")
 # Add SKSE plugin dll as dependency (use target-file generator expression so CMake
 # knows the actual output path of the target at build time)
-list(APPEND CORE_SOURCES "$<TARGET_FILE:${PROJECT_NAME}>" ${DX12_NATIVE_SCENE_DXIL} ${NATIVE_LIGHTING_DXIL} ${NATIVE_COMPOSITE_DXIL})
+list(
+    APPEND CORE_SOURCES
+    "$<TARGET_FILE:${PROJECT_NAME}>"
+    ${DX12_NATIVE_SCENE_DXIL}
+    ${NATIVE_LIGHTING_DXIL}
+    ${NATIVE_COMPOSITE_DXIL}
+)
 
 set(CORE_FEATURE_PATHS "${CMAKE_SOURCE_DIR}/package/")
 

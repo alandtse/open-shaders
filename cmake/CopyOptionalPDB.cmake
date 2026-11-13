@@ -7,7 +7,10 @@ if(NOT DEFINED SRC OR NOT DEFINED DST OR SRC STREQUAL "" OR DST STREQUAL "")
 endif()
 
 if(NOT EXISTS "${SRC}")
-    message(WARNING "Optional PDB source is missing: ${SRC}. DLL deployment continues.")
+    message(
+        WARNING
+        "Optional PDB source is missing: ${SRC}. DLL deployment continues."
+    )
     return()
 endif()
 
@@ -20,7 +23,8 @@ execute_process(
 
 if(NOT "${_pdb_copy_result}" STREQUAL "0")
     string(STRIP "${_pdb_copy_error}" _pdb_copy_error)
-    message(WARNING
+    message(
+        WARNING
         "Optional PDB copy skipped (destination may be locked by Skyrim or Visual Studio). "
         "The DLL was deployed; the installed PDB may be older than the DLL. "
         "Close the process/debugger to refresh symbols on a subsequent deploy. "

@@ -3,23 +3,23 @@
 #include <unordered_set>
 
 #include "GraphicsBackend.h"
+#include <bit>
 #include <d3d11.h>
 #include <d3d12.h>
-#include <winrt/base.h>
+#include <filesystem>
 #include <memory>
-#include <bit>
 #include <unordered_map>
 #include <unordered_set>
-#include <filesystem>
+#include <winrt/base.h>
 
 namespace DX12Native
 {
-    // Shared native-only light ABI: prepared-first LLF, direct RayQuery,
-    // and independent RayQuery shadow tracing must agree on capacity.
-    inline constexpr uint32_t kMaximumNativePointLights = 64;
-    inline constexpr uint32_t kNativeLightRecordTexels = 8;
-    inline constexpr uint32_t kNativeShadowLightTextureWidth =
-        kMaximumNativePointLights * kNativeLightRecordTexels;
+	// Shared native-only light ABI: prepared-first LLF, direct RayQuery,
+	// and independent RayQuery shadow tracing must agree on capacity.
+	inline constexpr uint32_t kMaximumNativePointLights = 64;
+	inline constexpr uint32_t kNativeLightRecordTexels = 8;
+	inline constexpr uint32_t kNativeShadowLightTextureWidth =
+		kMaximumNativePointLights * kNativeLightRecordTexels;
 	struct SceneScope
 	{
 		uint64_t scene = 0, light = 0, batch = 0;
@@ -35,12 +35,12 @@ namespace DX12Native
 		std::string cell, layoutDigest;
 		uint64_t budget = 0;
 		std::shared_ptr<const json> rooms;
-        std::shared_ptr<const json> textureReferences; // Existing Data/BSA path references from the packed CELL.
+		std::shared_ptr<const json> textureReferences;  // Existing Data/BSA path references from the packed CELL.
 		uint64_t uploadBatchBytes = 16ull * 1024 * 1024;
-        bool importLoosePbr = false; // Worker-owned loose DDS supplement, explicitly opt-in.
-        bool importArchivePbr = false; // Optional archive fallback when the loose file is absent.
-        bool usePreparedTextureManifest = true; // Legacy atlas compatibility. Runtime-source mode may omit it.
-        std::unordered_set<std::string> attemptedRuntimePaths; // Worker-owned stream history.
+		bool importLoosePbr = false;                            // Worker-owned loose DDS supplement, explicitly opt-in.
+		bool importArchivePbr = false;                          // Optional archive fallback when the loose file is absent.
+		bool usePreparedTextureManifest = true;                 // Legacy atlas compatibility. Runtime-source mode may omit it.
+		std::unordered_set<std::string> attemptedRuntimePaths;  // Worker-owned stream history.
 	};
 	/** @brief Preserves offline material work classes without rediscovering them during traversal. */
 	enum class OfflineMaterialFlags : uint32_t

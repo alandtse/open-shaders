@@ -1178,24 +1178,25 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 
 	const auto composite = upscaling.nativeCompositeFrame;
 	const bool nativeColor = upscaling.settings.nativeUpscaleEnable && globals::features::nativeComposite.IsEnabled() &&
-		!globals::game::isVR && state->worldRenderedThisFrame && !state->IsMainOrLoadingMenuOpen() &&
-		upscaling.nativeUpscaleGuidesReady && upscaling.runtimeFsrDepthTexture && upscaling.runtimeFsrDepthTexture->uav &&
-		composite && composite->frame == state->frameCount && composite->width == a_renderWidth &&
-		composite->height == a_renderHeight && composite->format == colorDesc.Format &&
-		composite->valid && composite->color && composite->producerFence && composite->producerValue &&
-		depthDesc.Width >= a_renderWidth && depthDesc.Height >= a_renderHeight &&
-		motionDesc.Width >= a_renderWidth && motionDesc.Height >= a_renderHeight &&
-		reactiveDesc.Width >= a_renderWidth && reactiveDesc.Height >= a_renderHeight &&
-		transparencyDesc.Width >= a_renderWidth && transparencyDesc.Height >= a_renderHeight &&
-		outputDesc.Width >= a_displayWidth && outputDesc.Height >= a_displayHeight;
+	                         !globals::game::isVR && state->worldRenderedThisFrame && !state->IsMainOrLoadingMenuOpen() &&
+	                         upscaling.nativeUpscaleGuidesReady && upscaling.runtimeFsrDepthTexture && upscaling.runtimeFsrDepthTexture->uav &&
+	                         composite && composite->frame == state->frameCount && composite->width == a_renderWidth &&
+	                         composite->height == a_renderHeight && composite->format == colorDesc.Format &&
+	                         composite->valid && composite->color && composite->producerFence && composite->producerValue &&
+	                         depthDesc.Width >= a_renderWidth && depthDesc.Height >= a_renderHeight &&
+	                         motionDesc.Width >= a_renderWidth && motionDesc.Height >= a_renderHeight &&
+	                         reactiveDesc.Width >= a_renderWidth && reactiveDesc.Height >= a_renderHeight &&
+	                         transparencyDesc.Width >= a_renderWidth && transparencyDesc.Height >= a_renderHeight &&
+	                         outputDesc.Width >= a_displayWidth && outputDesc.Height >= a_displayHeight;
 	if (nativeColor) {
 		upscaling.nativeUpscaleFallback = 0;
 	} else if (upscaling.settings.nativeUpscaleEnable) {
-		upscaling.nativeUpscaleFallback = !globals::features::nativeComposite.IsEnabled() ? 1 :
-			globals::game::isVR ? 2 :
-			(!state->worldRenderedThisFrame || state->IsMainOrLoadingMenuOpen()) ? 3 :
-			(!upscaling.nativeUpscaleGuidesReady || !upscaling.runtimeFsrDepthTexture || !upscaling.runtimeFsrDepthTexture->uav) ? 4 :
-			(!composite || composite->frame != state->frameCount || !composite->color || !composite->producerFence || !composite->producerValue) ? 5 : 6;
+		upscaling.nativeUpscaleFallback = !globals::features::nativeComposite.IsEnabled()                                                                                      ? 1 :
+		                                  globals::game::isVR                                                                                                                  ? 2 :
+		                                  (!state->worldRenderedThisFrame || state->IsMainOrLoadingMenuOpen())                                                                 ? 3 :
+		                                  (!upscaling.nativeUpscaleGuidesReady || !upscaling.runtimeFsrDepthTexture || !upscaling.runtimeFsrDepthTexture->uav)                 ? 4 :
+		                                  (!composite || composite->frame != state->frameCount || !composite->color || !composite->producerFence || !composite->producerValue) ? 5 :
+		                                                                                                                                                                         6;
 	}
 
 	auto isValidShared = [](WrappedResource* a_resource) {
@@ -1233,9 +1234,9 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 	const uint64_t historyGeneration = upscaling.nativeHistoryGeneration.load();
 	if (nativeColor)
 		inputs.resetHistory = inputs.resetHistory || historyGeneration != upscaling.nativeHistoryGenerationUsed ||
-			upscaling.nativeUpscaleLastFrame.load() + 1u != inputs.frame ||
-			composite->lightingSubmitted != upscaling.nativeLastCompositeHadLighting ||
-			composite->validityRevision != upscaling.nativeLastValidityRevision;
+		                      upscaling.nativeUpscaleLastFrame.load() + 1u != inputs.frame ||
+		                      composite->lightingSubmitted != upscaling.nativeLastCompositeHadLighting ||
+		                      composite->validityRevision != upscaling.nativeLastValidityRevision;
 
 	auto* commandContext = AcquireRuntimeCommandContext();
 	if (!commandContext)
@@ -1447,7 +1448,8 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 					swapChain.d3d11Context->CopySubresourceRegion(a_output, 0, 0, 0, 0, runtimeOutputShared[a_contextIndex]->resource11, 0, &outputBox);
 					if (nativeColor) {
 						++upscaling.nativeReturnCopies;
-						if (composite->lightingSubmitted) ++upscaling.nativeLightingCompositeReturns;
+						if (composite->lightingSubmitted)
+							++upscaling.nativeLightingCompositeReturns;
 						upscaling.nativeUpscaleRoute = 1;
 					}
 				}
