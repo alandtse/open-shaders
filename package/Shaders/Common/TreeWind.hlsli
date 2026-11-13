@@ -181,6 +181,14 @@ namespace TreeWind
 
 	namespace Detail
 	{
+		Sample ResolveAmbientSample(float2 velocity)
+		{
+			Sample sample;
+			sample.trunkVelocity = float3(velocity, 0.0f);
+			sample.leafAnimationStrength = length(velocity) * GetLeafFlutterGain();
+			return sample;
+		}
+
 		float3 LimitTrunkTransientVelocity(float3 transientVelocity)
 		{
 			float bendSensitivity = max(Permutation::TrunkWindBendSensitivity, 0.0f) *
@@ -198,8 +206,7 @@ namespace TreeWind
 			WindField::TransientImpulseSample leafTransientSample,
 			float2 filteredAmbientVelocity, float2 transientInfluence)
 		{
-			Sample sample;
-			float3 trunkAmbientVelocity = float3(filteredAmbientVelocity, 0.0f);
+			Sample sample = ResolveAmbientSample(filteredAmbientVelocity);
 			float3 trunkTransientVelocity = LimitTrunkTransientVelocity(
 				trunkTransientSample.velocity * max(transientInfluence.x, 0.0f));
 			float leafTransientInfluence = max(transientInfluence.y, 0.0f);
@@ -209,10 +216,8 @@ namespace TreeWind
 			float transientLeafAnimationStrength = min(
 				transientLeafSpeed * TRANSIENT_LEAF_FLUTTER_GAIN * leafTransientInfluence,
 				max(Permutation::TreeLeafTransientFlutterMaximum, 0.0f));
-			sample.trunkVelocity = trunkAmbientVelocity + trunkTransientVelocity;
-			sample.leafAnimationStrength =
-				length(filteredAmbientVelocity) * GetLeafFlutterGain() +
-				transientLeafAnimationStrength;
+			sample.trunkVelocity += trunkTransientVelocity;
+			sample.leafAnimationStrength += transientLeafAnimationStrength;
 			return sample;
 		}
 
@@ -255,38 +260,54 @@ namespace TreeWind
 
 	Sample SampleCurrent(SamplePositions positions, float2 transientInfluence)
 	{
-		return Detail::ResolveSample(
-			Detail::SampleCurrentTransient(positions),
-			Detail::SampleCurrentImmediateTransient(positions),
-			TreeWindSpring::SampleCurrent(positions.root.xy), transientInfluence);
+		const float2 ambient = TreeWindSpring::SampleCurrent(positions.root.xy);
+		Sample sample = Detail::ResolveAmbientSample(ambient);
+		[branch] if (TreeWindSpring::TransientHistoryMask != 0u)
+			sample = Detail::ResolveSample(
+				Detail::SampleCurrentTransient(positions),
+				Detail::SampleCurrentImmediateTransient(positions),
+				ambient, transientInfluence);
+		return sample;
 	}
 
 	Sample SampleCurrent(
 		SamplePositions positions, float3 leafWorldPosition,
 		float2 transientInfluence)
 	{
-		return Detail::ResolveSample(
-			Detail::SampleCurrentTransient(positions),
-			Detail::SampleCurrentImmediateTransientAt(leafWorldPosition),
-			TreeWindSpring::SampleCurrent(positions.root.xy), transientInfluence);
+		const float2 ambient = TreeWindSpring::SampleCurrent(positions.root.xy);
+		Sample sample = Detail::ResolveAmbientSample(ambient);
+		[branch] if (TreeWindSpring::TransientHistoryMask != 0u)
+			sample = Detail::ResolveSample(
+				Detail::SampleCurrentTransient(positions),
+				Detail::SampleCurrentImmediateTransientAt(leafWorldPosition),
+				ambient, transientInfluence);
+		return sample;
 	}
 
 	Sample SamplePrevious(SamplePositions positions, float2 transientInfluence)
 	{
-		return Detail::ResolveSample(
-			Detail::SamplePreviousTransient(positions),
-			Detail::SamplePreviousImmediateTransient(positions),
-			TreeWindSpring::SamplePrevious(positions.root.xy), transientInfluence);
+		const float2 ambient = TreeWindSpring::SamplePrevious(positions.root.xy);
+		Sample sample = Detail::ResolveAmbientSample(ambient);
+		[branch] if (TreeWindSpring::TransientHistoryMask != 0u)
+			sample = Detail::ResolveSample(
+				Detail::SamplePreviousTransient(positions),
+				Detail::SamplePreviousImmediateTransient(positions),
+				ambient, transientInfluence);
+		return sample;
 	}
 
 	Sample SamplePrevious(
 		SamplePositions positions, float3 leafWorldPosition,
 		float2 transientInfluence)
 	{
-		return Detail::ResolveSample(
-			Detail::SamplePreviousTransient(positions),
-			Detail::SamplePreviousImmediateTransientAt(leafWorldPosition),
-			TreeWindSpring::SamplePrevious(positions.root.xy), transientInfluence);
+		const float2 ambient = TreeWindSpring::SamplePrevious(positions.root.xy);
+		Sample sample = Detail::ResolveAmbientSample(ambient);
+		[branch] if (TreeWindSpring::TransientHistoryMask != 0u)
+			sample = Detail::ResolveSample(
+				Detail::SamplePreviousTransient(positions),
+				Detail::SamplePreviousImmediateTransientAt(leafWorldPosition),
+				ambient, transientInfluence);
+		return sample;
 	}
 }
 
