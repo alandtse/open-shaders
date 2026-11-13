@@ -1057,6 +1057,8 @@ namespace SIE
 			MTLandLODBlend = 19,
 		};
 
+		static constexpr uint32_t kLightingLinearACEScg = 1u << 13;
+
 		enum class LightingShaderFlags : uint32_t
 		{
 			VC = 1 << 0,
@@ -1163,6 +1165,8 @@ namespace SIE
 			Flowmap = 1 << 9,           // 0x200
 			BlendNormals = 1 << 10,     // 0x400
 		};
+
+		static constexpr uint32_t kEffectLinearACEScg = 1u << 9;
 
 		enum class EffectShaderFlags
 		{

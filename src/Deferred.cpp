@@ -773,6 +773,8 @@ void Deferred::ClearShaderCache()
 {
 	mainCompositeCS.Reset();
 	mainCompositeInteriorCS.Reset();
+	mainCompositeLinearACEScgCS.Reset();
+	mainCompositeInteriorLinearACEScgCS.Reset();
 }
 
 ID3D11ComputeShader* Deferred::GetComputeMainComposite()
@@ -802,6 +804,13 @@ ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 	if (globals::features::terrainBlending.loaded)
 		defines.push_back({ "TERRAIN_BLENDING", nullptr });
 
+	if (globals::state->deferredLightingShaderFlags & SIE::ShaderCache::kLightingLinearACEScg) {
+		defines.push_back({ "LINEAR_ACESCG", nullptr });
+		if (auto* shader = mainCompositeLinearACEScgCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0"))
+			return shader;
+		defines.pop_back();
+	}
+
 	return mainCompositeCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
 }
 
@@ -829,6 +838,13 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 	// (R24_UNORM_X8_TYPELESS game depth) to `Texture2D<float>` (R32_FLOAT blendedDepth).
 	if (globals::features::terrainBlending.loaded)
 		defines.push_back({ "TERRAIN_BLENDING", nullptr });
+
+	if (globals::state->deferredLightingShaderFlags & SIE::ShaderCache::kLightingLinearACEScg) {
+		defines.push_back({ "LINEAR_ACESCG", nullptr });
+		if (auto* shader = mainCompositeInteriorLinearACEScgCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0"))
+			return shader;
+		defines.pop_back();
+	}
 
 	return mainCompositeInteriorCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
 }
