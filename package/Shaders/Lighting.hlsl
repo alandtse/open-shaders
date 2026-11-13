@@ -1119,7 +1119,7 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		undef WETNESS_EFFECTS
 #	endif
 
-#	if defined(WETNESS_EFFECTS) && !defined(HAIR) && !defined(EYE) && !defined(LANDSCAPE)
+#	if defined(WETNESS_EFFECTS) && !defined(DRY_WEATHER) && !defined(HAIR) && !defined(EYE) && !defined(LANDSCAPE)
 #		define CHARACTER_RAIN_SURFACE
 #	endif
 #	if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) &&      \
@@ -2926,23 +2926,24 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		endif
 	// Calculate raindrop effects
 	float4 raindropInfo = float4(0, 0, 1, 0);
+#		if !defined(DRY_WEATHER)
 	bool shouldCalculateRaindrops = (worldNormal.z > 0.0) &&
 	                                (SharedData::wetnessEffectsSettings.Raining > 0.0) &&
 	                                (SharedData::wetnessEffectsSettings.EnableRaindropFx) &&
 	                                (wetnessOcclusion > 0.5);
-#		if defined(CHARACTER_RAIN_SURFACE)
+#			if defined(CHARACTER_RAIN_SURFACE)
 	shouldCalculateRaindrops = shouldCalculateRaindrops &&
 	                           !(characterRainSurface && SharedData::wetnessEffectsSettings.EnableCharacterRainSpots);
-#		endif
+#			endif
 
 	if (shouldCalculateRaindrops) {
-#		if defined(SKINNED)
+#			if defined(SKINNED)
 		float3 ripplePosition = input.ModelPosition.xyz;
-#		elif defined(DEFERRED)
+#			elif defined(DEFERRED)
 		float3 ripplePosition = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-#		else
+#			else
 		float3 ripplePosition = !FrameBuffer::FrameParams.y ? input.ModelPosition.xyz : input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-#		endif
+#			endif
 		raindropInfo = WetnessEffects::GetRainDrops(ripplePosition, SharedData::wetnessEffectsSettings.Time, wetnessNormal, flatnessAmount);
 	}
 
@@ -2950,14 +2951,18 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float rainWetness = SharedData::wetnessEffectsSettings.Wetness * minWetnessAngle * SharedData::wetnessEffectsSettings.MaxRainWetness;
 	rainWetness = max(rainWetness, raindropInfo.w);
 
-#		if defined(HAIR)
+#			if defined(HAIR)
 	rainWetness = SharedData::wetnessEffectsSettings.HairWetness * SharedData::wetnessEffectsSettings.Wetness;
-#		elif defined(SKIN)
+#			elif defined(SKIN)
 	rainWetness = 0.0f;
-#		endif
-#		if defined(CHARACTER_RAIN_SURFACE)
+#			endif
+#			if defined(CHARACTER_RAIN_SURFACE)
 	if (characterRainSurface)
 		rainWetness = 0.0f;
+#			endif
+
+#		else
+	float rainWetness = 0.0f;
 #		endif
 
 #		if defined(CS_SKIN) && !defined(SKIN)
@@ -2977,7 +2982,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	wetness = max(shoreWetness, rainWetness);
 
 	// Calculate puddle effects
+#		if defined(DRY_WEATHER)
+	const float puddleWetness = 0.0f;
+#		else
 	float puddleWetness = SharedData::wetnessEffectsSettings.PuddleWetness * minWetnessAngle;
+#		endif
 	float puddle = wetness;
 
 #		if !defined(SKINNED) && !defined(SKIN)
