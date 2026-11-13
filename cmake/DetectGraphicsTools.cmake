@@ -21,18 +21,28 @@ if(WIN32)
 
     if(EXISTS "${D3D12_SDK_LAYERS_DLL_64}")
         message(STATUS "Graphics Tools detected: ${D3D12_SDK_LAYERS_DLL_64}")
-        set(GRAPHICS_TOOLS_INSTALLED TRUE CACHE BOOL "Windows Graphics Tools are installed")
+        set(GRAPHICS_TOOLS_INSTALLED
+            TRUE
+            CACHE BOOL
+            "Windows Graphics Tools are installed"
+        )
     else()
         message(WARNING "Graphics Tools NOT detected!")
         message(WARNING "")
         message(WARNING "The D3D12 Debug Layer DLL was not found at:")
         message(WARNING "  ${D3D12_SDK_LAYERS_DLL_64}")
         message(WARNING "")
-        message(WARNING "This will cause shader tests (ShaderTestFramework) to fail with:")
+        message(
+            WARNING
+            "This will cause shader tests (ShaderTestFramework) to fail with:"
+        )
         message(WARNING "  DXGI_ERROR_SDK_COMPONENT_MISSING (0x887A002D)")
         message(WARNING "")
         message(WARNING "TO FIX:")
-        message(WARNING "  1. Open Windows Settings -> Apps -> Optional Features")
+        message(
+            WARNING
+            "  1. Open Windows Settings -> Apps -> Optional Features"
+        )
         message(WARNING "  2. Click 'Add a feature'")
         message(WARNING "  3. Search for 'Graphics Tools'")
         message(WARNING "  4. Install it")
@@ -40,13 +50,24 @@ if(WIN32)
         message(WARNING "  6. Re-run CMake")
         message(WARNING "")
         message(WARNING "Or run this PowerShell command as Administrator:")
-        message(WARNING "  Enable-WindowsOptionalFeature -Online -FeatureName GraphicsTools -All")
+        message(
+            WARNING
+            "  Enable-WindowsOptionalFeature -Online -FeatureName GraphicsTools -All"
+        )
         message(WARNING "")
 
-        set(GRAPHICS_TOOLS_INSTALLED FALSE CACHE BOOL "Windows Graphics Tools are NOT installed")
+        set(GRAPHICS_TOOLS_INSTALLED
+            FALSE
+            CACHE BOOL
+            "Windows Graphics Tools are NOT installed"
+        )
 
         # Optional: Automatically open the Optional Features dialog
-        option(AUTO_OPEN_OPTIONAL_FEATURES "Automatically open Windows Optional Features dialog if Graphics Tools missing" OFF)
+        option(
+            AUTO_OPEN_OPTIONAL_FEATURES
+            "Automatically open Windows Optional Features dialog if Graphics Tools missing"
+            OFF
+        )
 
         if(AUTO_OPEN_OPTIONAL_FEATURES)
             message(STATUS "Opening Windows Optional Features dialog...")
@@ -55,10 +76,16 @@ if(WIN32)
                 COMMAND cmd /c start ms-settings:optionalfeatures
                 ERROR_QUIET
             )
-            message(STATUS "Please install 'Graphics Tools' from the dialog and reboot.")
+            message(
+                STATUS
+                "Please install 'Graphics Tools' from the dialog and reboot."
+            )
         else()
             message(STATUS "")
-            message(STATUS "Tip: Add -DAUTO_OPEN_OPTIONAL_FEATURES=ON to automatically open the")
+            message(
+                STATUS
+                "Tip: Add -DAUTO_OPEN_OPTIONAL_FEATURES=ON to automatically open the"
+            )
             message(STATUS "     Windows Optional Features dialog next time.")
         endif()
     endif()
@@ -68,6 +95,10 @@ if(WIN32)
 
 else()
     # Non-Windows platforms don't need Graphics Tools
-    set(GRAPHICS_TOOLS_INSTALLED TRUE CACHE BOOL "Graphics Tools check not needed on non-Windows")
+    set(GRAPHICS_TOOLS_INSTALLED
+        TRUE
+        CACHE BOOL
+        "Graphics Tools check not needed on non-Windows"
+    )
     message(STATUS "Graphics Tools check skipped (non-Windows platform)")
 endif()

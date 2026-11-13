@@ -122,6 +122,16 @@ namespace Util::EnvironmentControls
 	bool IsPreviewActive();
 }
 
+namespace Util::SceneTravel
+{
+	/** @brief Cache location-to-cell fallbacks after plugin records finish loading. */
+	void CacheLocationDestinations();
+	/** @brief Resolve a cell, worldspace or location to its validated console travel command. */
+	std::optional<std::string> GetCommand(RE::TESForm* destination, std::string_view cellEditorId = {});
+	/** @brief Queue travel on the game thread; return false if the destination is unavailable. */
+	bool Go(RE::TESForm* destination, std::string_view cellEditorId = {});
+}
+
 namespace Util
 {
 	inline constexpr float kFallbackCameraAspect = 16.0f / 9.0f;
@@ -134,6 +144,8 @@ namespace Util
 
 	/** @brief Forces weather and refreshes its cloud passes and sky model. */
 	void ForceWeather(RE::Sky* a_sky, RE::TESWeather* a_weather, bool a_override);
+	/** @brief Holds settled weather without resetting the sky, forcing only a different or transitioning weather. */
+	void ReapplyWeatherLock(RE::Sky* a_sky, RE::TESWeather* a_weather);
 
 	/** @brief Pending celestial synchronization requests consumed by the sky update hook. */
 	struct CelestialTransitionRequest
@@ -390,6 +402,9 @@ namespace Util
 	/** @brief Finds fire geometry and appends visible positive-radius bounds, preserving ancestor culling. */
 	void CollectFireGeometry(RE::NiAVObject* a_object, bool a_hidden, bool& a_hasFire, std::vector<RE::NiBound>& a_samples);
 
+	/** @brief Sun disc visibility in [0, 1] from its sky shader blend alpha; 0 when the sun is missing or hidden. */
+	float GetSunVisibility(const RE::Sun* a_sun);
+
 	/**
 	 * @brief Converts a 2D world position to cell coordinates.
 	 *
@@ -407,6 +422,15 @@ namespace Util
 	 * @param y Output parameter for the cell Y coordinate.
 	 */
 	void WorldToCell(const RE::NiPoint3& worldPos, int32_t& x, int32_t& y);
+
+	/**
+	 * @brief Derives inward-facing world-space frustum planes from a camera frustum and transform.
+	 * @param edgePadding World units the four side planes are pushed outward.
+	 */
+	void ComputeFrustumPlanes(RE::NiFrustumPlanes& out, const RE::NiFrustum& viewFrustum, const RE::NiTransform& transform, float edgePadding = 0.0f);
+
+	/** @brief True when a sphere is not fully outside any of the frustum's planes. */
+	[[nodiscard]] bool IsSphereInFrustum(const RE::NiFrustumPlanes& frustum, const RE::NiPoint3& center, float radius);
 
 	/**
 	 * @brief Converts a four-character string to a uint32_t for efficient comparison.

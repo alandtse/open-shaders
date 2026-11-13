@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT AND (LicenseRef-GPL-3.0-with-Modding-Exception WITH GPL-3.0-linking-source-exception)
+// Original code Copyright (c) 2022 Ilya Perapechka (MIT), modifications GPL-3.0 with Modding Exception (see EXCEPTIONS.md)
+
 #if defined(HORIZON_FIX)
 namespace HorizonFix
 {
@@ -924,21 +927,27 @@ float3 GetWaterSpecularColor(PS_INPUT input, float3 normal, float3 viewDirection
 		specularIrradiance = Color::IrradianceToLinear(DynamicCubemaps::EnvTexture.SampleLevel(CubeMapSampler, R, 0).xyz);
 
 	float3 specularIrradianceReflections = 0.0;
-	if (skylightingSpecular > 0.0)
+	if (skylightingSpecular > 0.0) {
 		specularIrradianceReflections = Color::IrradianceToLinear(DynamicCubemaps::EnvReflectionsTexture.SampleLevel(CubeMapSampler, R, 0).xyz);
-
-	float3 dynamicCubemap = Color::IrradianceToGamma(lerp(specularIrradiance, specularIrradianceReflections, skylightingSpecular));
-
-	float3 reflectionColor = dynamicCubemap;
-	if ((Permutation::PixelShaderDescriptor & Permutation::WaterFlags::Reflections) && !SharedData::HideSky) {
-		float reflectionAmount = saturate(length(input.WPosition.xyz) / 1024.0);
-#				if defined(VR)
-		// Reflection cubemap is incorrect for interiors in VR, ignore it
-		if (Permutation::PixelShaderDescriptor & Permutation::WaterFlags::Interior)
-			reflectionAmount = 0.0;
+		if ((Permutation::PixelShaderDescriptor & Permutation::WaterFlags::Reflections) && !SharedData::HideSky) {
+			// Only the sky-visible lobe, without the specular floor, fades to the engine cube
+#				if defined(SKYLIGHTING)
+			float minVisibility = SharedData::skylightingSettings.MinSpecularVisibility;
+			float skyVisibility = minVisibility < 1.0 ? saturate((skylightingSpecular - minVisibility) / (1.0 - minVisibility)) : 1.0;
+#				else
+			float skyVisibility = 1.0;
 #				endif
-		reflectionColor = lerp(dynamicCubemap, CubeMapTex.SampleLevel(CubeMapSampler, R, 0).xyz, reflectionAmount);
+			float reflectionAmount = saturate(length(input.WPosition.xyz) / 1024.0) * skyVisibility;
+#				if defined(VR)
+			// Reflection cubemap is incorrect for interiors in VR, ignore it
+			if (Permutation::PixelShaderDescriptor & Permutation::WaterFlags::Interior)
+				reflectionAmount = 0.0;
+#				endif
+			specularIrradianceReflections = lerp(specularIrradianceReflections, Color::IrradianceToLinear(CubeMapTex.SampleLevel(CubeMapSampler, R, 0).xyz), reflectionAmount);
+		}
 	}
+
+	float3 reflectionColor = Color::IrradianceToGamma(lerp(specularIrradiance, specularIrradianceReflections, skylightingSpecular));
 #			else
 	float3 reflectionColor = CubeMapTex.SampleLevel(CubeMapSampler, R, 0).xyz;
 #			endif
@@ -1227,7 +1236,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 positionMSSkylight = input.WPosition.xyz;
 #				endif
 
-	sh2 skylightingSH = Skylighting::SampleNoBias(positionMSSkylight);
+	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, float3(0, 0, 1));
 	float skylighting = SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1));
 
 	float skylightingDiffuse = Skylighting::EvaluateDiffuse(skylightingSH, float3(0, 0, 1), Skylighting::GetFadeOutFactor(input.WPosition.xyz));

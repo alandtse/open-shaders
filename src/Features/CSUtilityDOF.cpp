@@ -715,7 +715,7 @@ void CSUtility::SanitizeDepthOfFieldOverride(DepthOfFieldOverride& a_override)
 
 void CSUtility::DrawDepthOfFieldSettings()
 {
-	if (ImGui::BeginTabItem(T(TKEY("tab_vanilla_dof"), "Vanilla DOF"))) {
+	if (Util::BeginPillTabItem(T(TKEY("tab_vanilla_dof"), "Vanilla DOF"))) {
 		activeSettingsPage = SettingsPage::VanillaDepthOfField;
 		static Util::ConfirmationPopup sceneLockPopup;
 		static Util::ConfirmationPopup underwaterLockPopup;
@@ -742,7 +742,7 @@ void CSUtility::DrawDepthOfFieldSettings()
 			false,
 			T(TKEY("dof_underwater_no_data"), "No underwater image space record is currently applied."));
 
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
 }
 

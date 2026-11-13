@@ -193,8 +193,20 @@ namespace ShadowCasterManager
 		bool enableValid{ false };
 		EnableInputs lastEnable{};
 		std::uint32_t lastEnableFrame{ 0 };
+		RE::NiLight* niLight{ nullptr };
 	};
 	extern std::vector<ConvertedLight> s_normalConvert;
+
+	// Cell detach calls RemoveLight on a job thread while the main thread schedules, so every
+	// s_normalConvert access takes this; engine calls stay outside it.
+	extern std::shared_mutex s_normalConvertMutex;
+
+	/// Copies the converted lights under the lock, holding a reference to each so a concurrent
+	/// RemoveLight cannot free one while the caller iterates and calls into the engine.
+	void SnapshotConvertedLights(std::vector<RE::NiPointer<RE::BSShadowLight>>& out);
+
+	/// Number of converted lights, read under the lock.
+	std::size_t ConvertedLightCount();
 	extern std::set<RE::NiLight*> s_shadowConvert;
 	extern std::set<RE::NiLight*> s_shadowConvertDescriptorInited;
 	extern std::mutex s_shadowConvertMutex;
@@ -378,6 +390,10 @@ namespace ShadowCasterManager
 	/// The light this thread is accumulating, or null if the caller is a
 	/// foreign thread sharing our hooked vtables (see s_cullThreadId).
 	RE::BSShadowLight* CurrentCullLight();
+
+	/// Publishes the sun's cascade cameras so the base cull hook drops casters
+	/// that register no shadow-map pass from the sun's collected-list replay.
+	void SetSunCullCameras(RE::BSShadowLight* a_sun);
 
 	/// Static/dynamic split-cache caster-pass selector, written by EnableLight
 	/// and read by the cull-append hooks.

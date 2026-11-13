@@ -1,4 +1,5 @@
 #include "WetnessEffects.h"
+#include "CSEditor.h"
 #include "CharacterRainSurfaces.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -6,6 +7,7 @@
 #include "SceneSelector.h"
 #include "State.h"
 #include "Utils/MathUtils.h"
+#include "Utils/SettingsControl.h"
 #include "Utils/UI.h"
 
 #include <array>
@@ -54,7 +56,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CharacterWetSheen,
 	CharacterRainActivityMultiplier,
 	CharacterDryTime,
-	EnableWeaponRainDrops)
+	EnableWeaponRainDrops,
+	EnvironmentDropSize,
+	EnvironmentDropBrightness,
+	EnvironmentDropReflectivity)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::DebugSettings,
@@ -88,6 +93,14 @@ namespace
 		static constexpr float kMaximumActivity = 8.0f;
 		static constexpr float kMinimumDryTime = 2.0f;
 		static constexpr float kMaximumDryTime = 60.0f;
+		static constexpr float kMinimumEnvironmentDropSize = 0.25f;
+		static constexpr float kMaximumEnvironmentDropSize = 2.0f;
+
+		static constexpr float kMinimumEnvironmentDropBrightness = 0.0f;
+		static constexpr float kMaximumEnvironmentDropBrightness = 3.0f;
+
+		static constexpr float kMinimumEnvironmentDropReflectivity = 0.0f;
+		static constexpr float kMaximumEnvironmentDropReflectivity = 3.0f;
 	};
 }
 
@@ -445,26 +458,26 @@ void WetnessEffects::GameLoaded()
 
 void WetnessEffects::DrawSettings()
 {
-	if (!ImGui::BeginTabBar("##WetnessEffectsTabs"))
+	if (!Util::BeginPillTabBar("##WetnessEffectsTabs"))
 		return;
 
-	if (ImGui::BeginTabItem(T(TKEY("tab_environment_wetness"), "Environment Wetness"))) {
+	if (Util::BeginPillTabItem(T(TKEY("tab_environment_wetness"), "Environment Wetness"))) {
 		DrawEnvironmentWetnessSettings();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
 
-	if (ImGui::BeginTabItem(T(TKEY("tab_character_wet_effects"), "Character Wet Effects"))) {
+	if (Util::BeginPillTabItem(T(TKEY("tab_character_wet_effects"), "Character Wet Effects"))) {
 		DrawCharacterRainSettings();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
 
-	ImGui::EndTabBar();
+	Util::EndPillTabBar();
 }
 
 void WetnessEffects::DrawEnvironmentWetnessSettings()
 {
 	// Climate Preset Selection - Always visible at the top
-	Util::DrawSectionHeader(T(TKEY("climate_presets"), "Climate Presets"), false, false);
+	ImGui::SeparatorText(T(TKEY("climate_presets"), "Climate Presets"));
 
 	ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.2f, 0.3f, 0.4f, 0.6f));    // Subtle blue background
 	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.35f, 0.45f, 0.8f));  // Slightly darker for button
@@ -677,20 +690,32 @@ void WetnessEffects::DrawEnvironmentWetnessSettings()
 
 		ImGui::TreePop();
 	}
+	ImGui::Spacing();
+	if (ImGui::TreeNodeEx(T(TKEY("environment_wall_droplets"), "Environmental Wall Droplets"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::SliderFloat(T(TKEY("environment_drop_size"), "Size"), &settings.EnvironmentDropSize, 0.25f, 2.0f, "%.2f");
+		ImGui::SliderFloat(T(TKEY("environment_drop_brightness"), "Brightness"), &settings.EnvironmentDropBrightness, 0.0f, 3.0f, "%.2f");
+		ImGui::SliderFloat(T(TKEY("environment_drop_reflectivity"), "Reflectivity"), &settings.EnvironmentDropReflectivity, 0.0f, 3.0f, "%.2f");
+		ImGui::TreePop();
+	}
+	// The weather picker and debug overrides have no scene-context meaning, so hide them while a
+	// Scene Manager replica is borrowing this panel to author overrides.
+	if (SettingsControl::IsReplicating())
+		return;
 
 	ImGui::Spacing();
 	ImGui::Spacing();
-	auto& sceneSelector = globals::features::sceneSelector;
-	if (sceneSelector.loaded) {
-		if (ImGui::SmallButton(T(TKEY("open_weather_picker"), "Open Scene Selector"))) {
-			Menu::GetSingleton()->SelectFeatureMenu(sceneSelector.GetShortName());
+	auto& csEditor = globals::features::csEditor;
+	if (csEditor.loaded) {
+		if (ImGui::SmallButton(T(TKEY("open_weather_picker"), "Open Weather Picker"))) {
+			globals::features::sceneSelector.OpenWeatherOverlay();
+			globals::state->MarkSettingsChanged();
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("open_weather_picker_tooltip"), "Open Scene Selector feature"));
+			ImGui::Text("%s", T(TKEY("open_weather_picker_tooltip"), "Open the Weather Picker widget, which stays open when the main menu is closed"));
 		}
 	}
 
-	if (ImGui::TreeNodeEx(T(TKEY("debug"), "Debug"), ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (Util::ShowDebugSections() && ImGui::TreeNodeEx(T(TKEY("debug"), "Debug"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox(T(TKEY("enable_wetness_override"), "Enable Wetness Override"), &debugSettings.EnableWetnessOverride);
 		ImGui::Checkbox(T(TKEY("enable_puddle_override"), "Enable Puddle Override"), &debugSettings.EnablePuddleOverride);
 		ImGui::Checkbox(T(TKEY("enable_rain_override"), "Enable Rain Override"), &debugSettings.EnableRainOverride);
@@ -770,7 +795,7 @@ static void DrawRainTypeLabel(const char* prefix, float rate)
 
 void WetnessEffects::DrawCharacterRainSettings()
 {
-	Util::DrawSectionHeader(T(TKEY("character_activation_exposure"), "Activation & Exposure"), false, false);
+	ImGui::SeparatorText(T(TKEY("character_activation_exposure"), "Activation & Exposure"));
 	bool wetnessEnabled = settings.EnableWetnessEffects != 0;
 	if (ImGui::Checkbox(T(TKEY("enable_wetness"), "Enable Wetness"), &wetnessEnabled)) {
 		settings.EnableWetnessEffects = wetnessEnabled;
@@ -800,7 +825,7 @@ void WetnessEffects::DrawCharacterRainSettings()
 	ImGui::EndDisabled();
 
 	ImGui::Spacing();
-	Util::DrawSectionHeader(T(TKEY("character_drops_trails"), "Drops & Trails"), false, false);
+	ImGui::SeparatorText(T(TKEY("character_drops_trails"), "Drops & Trails"));
 
 	ImGui::BeginDisabled(characterEffectsDisabled);
 	ImGui::SliderFloat(T(TKEY("character_spot_density"), "Drop Density"), &settings.CharacterSpotDensity,
@@ -812,7 +837,7 @@ void WetnessEffects::DrawCharacterRainSettings()
 	ImGui::EndDisabled();
 
 	ImGui::Spacing();
-	Util::DrawSectionHeader(T(TKEY("character_surface_lighting"), "Wet Surface Lighting"), false, false);
+	ImGui::SeparatorText(T(TKEY("character_surface_lighting"), "Wet Surface Lighting"));
 	ImGui::BeginDisabled(!settings.EnableWetnessEffects);
 	ImGui::SliderFloat(T(TKEY("hair_wetness"), "Hair Wetness"), &settings.HairWetness, 0.0f, 1.0f);
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -834,7 +859,7 @@ void WetnessEffects::DrawCharacterRainSettings()
 	ImGui::EndDisabled();
 
 	ImGui::Spacing();
-	Util::DrawSectionHeader(T(TKEY("character_equipped_weapons"), "Equipped Weapons"), false, false);
+	ImGui::SeparatorText(T(TKEY("character_equipped_weapons"), "Equipped Weapons"));
 	ImGui::BeginDisabled(characterEffectsDisabled);
 	bool weaponDrops = settings.EnableWeaponRainDrops != 0;
 	if (ImGui::Checkbox(T(TKEY("enable_weapon_rain_drops"), "Stationary Water Beads"), &weaponDrops))
@@ -844,11 +869,10 @@ void WetnessEffects::DrawCharacterRainSettings()
 	ImGui::EndDisabled();
 
 	ImGui::Spacing();
-	Util::DrawSectionHeader(T(TKEY("character_debug"), "Debug"), false, false);
-	if (ImGui::Button(T(TKEY("character_restore_defaults"), "Restore Character Wet Defaults")))
+	ImGui::SeparatorText(T(TKEY("character_debug"), "Debug"));
+	if (Util::Button(T(TKEY("character_restore_defaults"), "Restore Character Wet Defaults")))
 		RestoreCharacterRainDefaults();
 
-	ImGui::BeginDisabled(characterEffectsDisabled);
 	const char* debugModes[] = {
 		T(TKEY("character_debug_shading"), "Water Shading"),
 		T(TKEY("character_debug_combined"), "Combined Coverage"),
@@ -856,10 +880,21 @@ void WetnessEffects::DrawCharacterRainSettings()
 		T(TKEY("character_debug_impacts"), "Arriving Drops Only"),
 		T(TKEY("character_debug_flow"), "Flowing Rivulets Only"),
 		T(TKEY("character_debug_surfaces"), "Eligible Character Surfaces"),
-		T(TKEY("character_debug_weapons"), "Held Weapon Classification")
+		T(TKEY("character_debug_weapons"), "Held Weapon Classification"),
+		T(TKEY("character_debug_environment"), "Wall Droplet Coverage")
 	};
 	static_assert(std::size(debugModes) == static_cast<std::size_t>(CharacterDebugMode::Count));
-	Util::Combo(T(TKEY("character_spot_debug"), "Water Layer Debug"), &settings.CharacterSpotDebug, debugModes);
+	ImGui::BeginDisabled(!settings.EnableWetnessEffects);
+	const char* const waterLayerDebugLabel = T(TKEY("character_spot_debug"), "Water Layer Debug");
+	if (characterEffectsDisabled) {
+		const char* const environmentOnlyModes[] = { debugModes[0], debugModes[static_cast<std::size_t>(CharacterDebugMode::Environment)] };
+		static constexpr std::array<std::uint32_t, 2> environmentOnlyValues{ 0u, static_cast<std::uint32_t>(CharacterDebugMode::Environment) };
+		Util::Combo(waterLayerDebugLabel, &settings.CharacterSpotDebug, environmentOnlyModes, environmentOnlyValues);
+	} else {
+		Util::Combo(waterLayerDebugLabel, &settings.CharacterSpotDebug, debugModes);
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("character_debug_environment_tooltip"), "Wall Droplet Coverage works without character drops. Magenta: droplet hit. Green: evaluated, no hit. Yellow: draw has the CharacterLight flag and is skipped. Skin, skinned, hair and eye permutations compile out the wall droplet path, so no overlay there means excluded at compile time, not that the surface is not a character."));
 	ImGui::EndDisabled();
 }
 
@@ -1127,7 +1162,7 @@ void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data) const
 		float minimum;
 		float maximum;
 	};
-	static constexpr std::array<SettingRange, 9> characterRainSettingRanges{ {
+	static constexpr std::array<SettingRange, 12> characterRainSettingRanges{ {
 		{ &Settings::CharacterSpotDensity, CharacterRainSettingLimits::kMinimumDensity, CharacterRainSettingLimits::kMaximumDensity },
 		{ &Settings::CharacterSpotRadius, CharacterRainSettingLimits::kMinimumRadius, CharacterRainSettingLimits::kMaximumRadius },
 		{ &Settings::CharacterSpotStrength, CharacterRainSettingLimits::kMinimumStrength, CharacterRainSettingLimits::kMaximumStrength },
@@ -1137,6 +1172,9 @@ void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data) const
 		{ &Settings::CharacterWetSheen, CharacterRainSettingLimits::kMinimumWetSheen, CharacterRainSettingLimits::kMaximumWetSheen },
 		{ &Settings::CharacterRainActivityMultiplier, CharacterRainSettingLimits::kMinimumActivity, CharacterRainSettingLimits::kMaximumActivity },
 		{ &Settings::CharacterDryTime, CharacterRainSettingLimits::kMinimumDryTime, CharacterRainSettingLimits::kMaximumDryTime },
+		{ &Settings::EnvironmentDropSize, CharacterRainSettingLimits::kMinimumEnvironmentDropSize, CharacterRainSettingLimits::kMaximumEnvironmentDropSize },
+		{ &Settings::EnvironmentDropBrightness, CharacterRainSettingLimits::kMinimumEnvironmentDropBrightness, CharacterRainSettingLimits::kMaximumEnvironmentDropBrightness },
+		{ &Settings::EnvironmentDropReflectivity, CharacterRainSettingLimits::kMinimumEnvironmentDropReflectivity, CharacterRainSettingLimits::kMaximumEnvironmentDropReflectivity },
 	} };
 	const Settings defaults{};
 	for (const auto& range : characterRainSettingRanges) {
@@ -1146,7 +1184,11 @@ void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data) const
 	a_data.settings.EnableCharacterRainSpots = settings.EnableWetnessEffects && settings.EnableCharacterRainSpots;
 	a_data.settings.EnableWeaponRainDrops = a_data.settings.EnableCharacterRainSpots &&
 	                                        settings.EnableWeaponRainDrops;
-	a_data.settings.CharacterSpotDebug = a_data.settings.EnableCharacterRainSpots ?
+	const auto environmentDebugMode = static_cast<std::uint32_t>(CharacterDebugMode::Environment);
+	const bool debugModeAllowed = settings.CharacterSpotDebug == environmentDebugMode ?
+	                                  settings.EnableWetnessEffects :
+	                                  a_data.settings.EnableCharacterRainSpots;
+	a_data.settings.CharacterSpotDebug = debugModeAllowed ?
 	                                         std::min(settings.CharacterSpotDebug, kMaximumCharacterRainDebugMode) :
 	                                         0u;
 	float weatherIntensity = std::sqrt(std::clamp(a_data.Wetness, 0.0f, 1.0f));

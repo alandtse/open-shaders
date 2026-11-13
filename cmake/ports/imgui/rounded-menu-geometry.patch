@@ -1,0 +1,145 @@
+--- a/imgui.cpp
++++ b/imgui.cpp
+@@ -7096,8 +7096,8 @@
+ {
+     { ImVec2(1, 1), ImVec2(-1, -1), 0, 3 },  // Lower-right
+     { ImVec2(0, 1), ImVec2(+1, -1), 3, 6 },  // Lower-left
+-    { ImVec2(0, 0), ImVec2(+1, +1), 6, 9 },  // Upper-left (Unused)
+-    { ImVec2(1, 0), ImVec2(-1, +1), 9, 12 }  // Upper-right (Unused)
++    { ImVec2(0, 0), ImVec2(+1, +1), 6, 9 },  // Upper-left
++    { ImVec2(1, 0), ImVec2(-1, +1), 9, 12 }  // Upper-right
+ };
+
+ // Data for resizing from borders
+@@ -7128,7 +7128,7 @@
+     return ImRect();
+ }
+
+-// 0..3: corners (Lower-right, Lower-left, Unused, Unused)
++// 0..3: corners (Lower-right, Lower-left, Upper-left, Upper-right)
+ ImGuiID ImGui::GetWindowResizeCornerID(ImGuiWindow* window, int n)
+ {
+     IM_ASSERT(n >= 0 && n < 4);
+@@ -7208,7 +7208,8 @@
+         if (hovered || held)
+             SetMouseCursor((resize_grip_n & 1) ? ImGuiMouseCursor_ResizeNESW : ImGuiMouseCursor_ResizeNWSE);
+
+-        if (held && g.IO.MouseDoubleClicked[0])
++        // Let foreground controls claim the double-click before auto-fit moves them.
++        if (held && g.IO.MouseClickedLastCount[0] == 2 && g.ActiveIdTimer > 0.0f)
+         {
+             // Auto-fit when double-clicking
+             ImVec2 size_auto_fit = CalcWindowAutoFitSize(window, window->ContentSizeIdeal, ~0);
+@@ -7227,10 +7227,10 @@
+             CalcResizePosSizeFromAnyCorner(window, corner_target, def.CornerPosN, &pos_target, &size_target);
+         }
+
+-        // Only lower-left grip is visible before hovering/activating
+-        const bool resize_grip_visible = held || hovered || (resize_grip_n == 0 && (window->Flags & ImGuiWindowFlags_ChildWindow) == 0);
++        // Corner highlights are visible only while hovering or resizing.
++        const bool resize_grip_visible = held || hovered;
+         if (resize_grip_visible)
+-            resize_grip_col[resize_grip_n] = GetColorU32(held ? ImGuiCol_ResizeGripActive : hovered ? ImGuiCol_ResizeGripHovered : ImGuiCol_ResizeGrip);
++            resize_grip_col[resize_grip_n] = GetColorU32(held ? ImGuiCol_SeparatorActive : ImGuiCol_SeparatorHovered);
+     }
+
+     int resize_border_mask = 0x00;
+@@ -7551,6 +7551,10 @@
+         if (window->ScrollbarY)
+             Scrollbar(ImGuiAxis_Y);
+
++        // Borders (for dock node host they will be rendered over after the tab bar)
++        if (handle_borders_and_resize_grips && !window->DockNodeAsHost)
++            RenderWindowOuterBorders(window);
++
+         // Render resize grips (after their input handling so we don't have a frame of latency)
+         if (handle_borders_and_resize_grips && !(flags & ImGuiWindowFlags_NoResize))
+         {
+@@ -7562,16 +7566,13 @@
+                 const ImGuiResizeGripDef& grip = resize_grip_def[resize_grip_n];
+                 const ImVec2 corner = ImLerp(window->Pos, window->Pos + window->Size, grip.CornerPosN);
+-                const float border_inner = IM_ROUND(window_border_size * 0.5f);
++                const float border_thickness = ImMax(g.Style._MainScale, ImMax(window_border_size, g.Style.SeparatorTextBorderSize));
++                const float border_inner = 0.5f;
+-                window->DrawList->PathLineTo(corner + grip.InnerDir * ((resize_grip_n & 1) ? ImVec2(border_inner, resize_grip_draw_size) : ImVec2(resize_grip_draw_size, border_inner)));
+                 window->DrawList->PathLineTo(corner + grip.InnerDir * ((resize_grip_n & 1) ? ImVec2(resize_grip_draw_size, border_inner) : ImVec2(border_inner, resize_grip_draw_size)));
+                 window->DrawList->PathArcToFast(ImVec2(corner.x + grip.InnerDir.x * (window_rounding + border_inner), corner.y + grip.InnerDir.y * (window_rounding + border_inner)), window_rounding, grip.AngleMin12, grip.AngleMax12);
+-                window->DrawList->PathFillConvex(col);
++                window->DrawList->PathLineTo(corner + grip.InnerDir * ((resize_grip_n & 1) ? ImVec2(border_inner, resize_grip_draw_size) : ImVec2(resize_grip_draw_size, border_inner)));
++                window->DrawList->PathStroke(col, ImDrawFlags_None, border_thickness);
+             }
+         }
+-
+-        // Borders (for dock node host they will be rendered over after the tab bar)
+-        if (handle_borders_and_resize_grips && !window->DockNodeAsHost)
+-            RenderWindowOuterBorders(window);
+     }
+     window->DC.NavLayerCurrent = ImGuiNavLayer_Main;
+ }
+@@ -8270,7 +8270,7 @@
+         if ((flags & ImGuiWindowFlags_ChildWindow) && !(flags & ImGuiWindowFlags_Popup))
+             resize_grip_count = ((window->ChildFlags & ImGuiChildFlags_ResizeX) && (window->ChildFlags & ImGuiChildFlags_ResizeY)) ? 1 : 0;
+         else
+-            resize_grip_count = g.IO.ConfigWindowsResizeFromEdges ? 2 : 1; // Allow resize from lower-left if we have the mouse cursor feedback for it.
++            resize_grip_count = g.IO.ConfigWindowsResizeFromEdges ? IM_ARRAYSIZE(resize_grip_def) : 1;
+
+         const float resize_grip_draw_size = IM_TRUNC(ImMax(g.FontSize * 1.10f, window->WindowRounding + 1.0f + g.FontSize * 0.2f));
+         if (handle_borders_and_resize_grips && !window->Collapsed)
+--- a/imgui_widgets.cpp
++++ b/imgui_widgets.cpp
+@@ -551,6 +551,27 @@
+     if (item_flags & ImGuiItemFlags_NoFocus)
+         flags |= ImGuiButtonFlags_NoFocus | ImGuiButtonFlags_NoNavFocus;
+
++    if ((flags & ImGuiButtonFlags_FlattenChildren) == 0 && (item_flags & (ImGuiItemFlags_Disabled | ImGuiItemFlags_AllowOverlap)) == 0 && g.HoveredId != 0 && g.HoveredId != id && bb.Contains(g.IO.MousePos) && g.HoveredWindow == window)
++    {
++        ImGuiWindow* resize_window = window->RootWindowDockTree;
++        for (int corner_n = 0; corner_n < 4; corner_n++)
++        {
++            const ImGuiID corner_id = GetWindowResizeCornerID(resize_window, corner_n);
++            if (g.HoveredId != corner_id)
++                continue;
++            if (g.ActiveId == corner_id)
++            {
++                if (!g.IO.MouseClicked[0])
++                    break;
++                ClearActiveID();
++                SetKeyOwner(ImGuiKey_MouseLeft, ImGuiKeyOwner_NoOwner);
++            }
++            SetHoveredID(0);
++            SetMouseCursor(ImGuiMouseCursor_Arrow);
++            break;
++        }
++    }
++
+     // Default only reacts to left mouse button
+     if ((flags & ImGuiButtonFlags_MouseButtonMask_) == 0)
+         flags |= ImGuiButtonFlags_MouseButtonLeft;
+@@ -979,3 +979,12 @@
+     else
+-        return ImRect(ImMax(outer_rect.Min.x, outer_rect.Max.x - border_size - scrollbar_size), inner_rect.Min.y + border_top, outer_rect.Max.x - border_size, inner_rect.Max.y - border_size);
++    {
++        ImRect bb(ImMax(outer_rect.Min.x, outer_rect.Max.x - border_size - scrollbar_size), inner_rect.Min.y + border_top, outer_rect.Max.x - border_size, inner_rect.Max.y - border_size);
++        if ((window->Flags & ImGuiWindowFlags_Popup) && (window->Flags & ImGuiWindowFlags_NoTitleBar) && window->WindowRounding > 0.0f)
++        {
++            const float inset = ImMin(window->WindowRounding * 0.5f, ImMax(0.0f, (bb.GetHeight() - g.Style.GrabMinSize) * 0.5f));
++            bb.Min.y += inset;
++            bb.Max.y -= inset;
++        }
++        return bb;
++    }
+ }
+@@ -7066,7 +7096,7 @@
+             if (hovered || selected)
+             {
+                 const ImU32 bg_col = GetColorU32((held && hovered) ? ImGuiCol_HeaderActive : hovered ? ImGuiCol_HeaderHovered : ImGuiCol_Header);
+-                RenderFrame(frame_bb.Min, frame_bb.Max, bg_col, false);
++                RenderFrame(frame_bb.Min, frame_bb.Max, bg_col, false, g.CurrentTable ? 0.0f : style.FrameRounding);
+             }
+             RenderNavCursor(frame_bb, id, nav_render_cursor_flags);
+             if (span_all_columns && !span_all_columns_label)
+@@ -7448,3 +7457,3 @@
+             ImU32 col = GetColorU32((held && highlighted) ? ImGuiCol_HeaderActive : highlighted ? ImGuiCol_HeaderHovered : ImGuiCol_Header);
+-            RenderFrame(bb.Min, bb.Max, col, false, 0.0f);
++            RenderFrame(bb.Min, bb.Max, col, false, g.CurrentTable ? 0.0f : style.FrameRounding);
+         }

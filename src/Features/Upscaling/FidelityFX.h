@@ -23,6 +23,7 @@
 #include "../../Buffer.h"
 #include "../../State.h"
 #include "DX12SwapChain.h"
+#include "Utils/Logging.h"
 
 /** @brief Manages FidelityFX upscaling and frame generation with host FSR3 fallback and runtime provider discovery. */
 class FidelityFX
@@ -151,7 +152,7 @@ private:
 	void* fsrScratchBuffer = nullptr;
 
 	// Flag to prevent spamming the log with FSR3 dispatch crash messages
-	bool fsrDispatchCrashLogged = false;
+	Util::OnceFlag fsrDispatchCrashLogged;
 
 	uint32_t runtimeUpscalerContextCount = 0;
 	uint32_t runtimeUpscalerMaxRenderWidth = 0;

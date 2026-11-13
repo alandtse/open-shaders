@@ -120,6 +120,8 @@ struct PostProcessFeature : public std::enable_shared_from_this<PostProcessFeatu
 
 	virtual void LoadSettings(json& o_json) = 0;
 	virtual void SaveSettings(json& o_json) = 0;
+	/// Rewrites defaults that depend on the current settings; a_settings is shaped like SaveSettings output.
+	virtual void ApplyContextualDefaults(json& a_settings) const { (void)a_settings; }
 	virtual void DrawSettings() = 0;
 
 	enum class Gamut : uint
@@ -136,6 +138,4 @@ struct PostProcessFeature : public std::enable_shared_from_this<PostProcessFeatu
 		Gamut gamut = Gamut::Rec709;
 	};
 	virtual void Draw(TextureInfo& inout_tex) = 0;  // read from last pass, do the thing, and replace it with output texture
-
-	virtual inline void Reset() {};
 };

@@ -43,7 +43,7 @@ public:
 	{
 		bool enableHDR = false;           // false = vanilla SDR, true = HDR output
 		uint hdrPaperWhite = 203;         // Reference white brightness in nits for HDR
-		uint hdrPeakNits = 800;           // Maximum display brightness in nits for HDR
+		uint hdrPeakNits = 1000;          // Maximum display brightness in nits for HDR
 		float hdrUIBrightness = 1.0f;     // UI brightness multiplier for HDR mode
 		bool dontShowHDRWarning = false;  // User preference to suppress HDR warning popup
 		bool hdrAutoDetected = false;     // Has auto-detection run at least once?
@@ -71,11 +71,11 @@ public:
 	/** @brief Draws the ImGui settings UI for HDR enable, paper white, peak brightness, and UI brightness. */
 	virtual void DrawSettings() override;
 
-	/** @brief Enables the bUse64bitsHDRRenderTarget INI setting for float16 render targets. */
-	virtual void DataLoaded() override;
+	/** @brief Forces bUse64bitsHDRRenderTarget for float16 targets; call right before BSShaderRenderTargets::Create. */
+	virtual void PreCreateRenderTargets() override;
 	/** @brief Creates HDR, output, and UI textures, constant buffer, and upgrades LDR render targets. */
 	virtual void SetupResources() override;
-	/** @brief Releases cached HDR output and UI brightness compute shaders. */
+	/** @brief Releases cached compute shaders and patched blend states. */
 	virtual void ClearShaderCache() override;
 	/** @brief Installs HDR pipeline hooks when the Upscaling feature is not loaded. */
 	virtual void PostPostLoad() override;
@@ -139,8 +139,9 @@ public:
 	/**
 	 * @brief Installs swap chain Present vtable hooks and OMSetBlendState detour for HDR pipeline.
 	 * @param swapChain The DXGI swap chain to hook.
+	 * @param originalPresent Present before other plugins patched its vtable slot.
 	 */
-	static void InstallSwapChainPresentHooks(IDXGISwapChain* swapChain);
+	static void InstallSwapChainPresentHooks(IDXGISwapChain* swapChain, std::uintptr_t originalPresent);
 	/**
 	 * @brief Handles the swap chain Present call, drawing ImGui overlay and running HDR compositing.
 	 * @param swapChain The DXGI swap chain.
@@ -200,6 +201,7 @@ public:
 	uint64_t sceneGeneration = 0;
 	/** @brief Vanilla UI redraw count used to invalidate the menu blur's retained UI copy. */
 	uint64_t uiGeneration = 0;
+	uint movieDrawnFrame = UINT32_MAX;
 
 	ID3D11ComputeShader* hdrOutputCS = nullptr;
 	/** @brief Returns the HDR output compute shader, compiling it on first use. */

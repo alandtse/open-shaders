@@ -7,6 +7,7 @@
 #include "Utils/FileSystem.h"
 #include "Utils/Format.h"
 #include "Utils/HeightMap.h"
+#include "Utils/Logging.h"
 #include <DDSTextureLoader.h>
 #include <DirectXTex.h>
 #include <cassert>
@@ -249,6 +250,27 @@ namespace Util
 		return regShader;
 	}
 
+	bool SupportsMaterialAlpha(DXGI_FORMAT format)
+	{
+		static constexpr std::array formats{
+			DXGI_FORMAT_BC2_UNORM,
+			DXGI_FORMAT_BC3_UNORM,
+			DXGI_FORMAT_BC7_UNORM,
+			DXGI_FORMAT_R8G8B8A8_UNORM,
+			DXGI_FORMAT_R8G8B8A8_SNORM,
+			DXGI_FORMAT_B8G8R8A8_UNORM,
+			DXGI_FORMAT_B4G4R4A4_UNORM,
+			DXGI_FORMAT_A8_UNORM,
+			DXGI_FORMAT_R10G10B10A2_UNORM,
+			DXGI_FORMAT_R16G16B16A16_UNORM,
+			DXGI_FORMAT_R16G16B16A16_SNORM,
+			DXGI_FORMAT_R16G16B16A16_FLOAT,
+			DXGI_FORMAT_R32G32B32A32_FLOAT
+		};
+
+		return std::ranges::contains(formats, DirectX::MakeLinear(format));
+	}
+
 	// RAII wrapper for D3D mapped resources
 	class ScopedD3DMap
 	{
@@ -314,11 +336,10 @@ namespace Util
 		const UINT pixelCount = desc.Width * desc.Height;
 		const UINT largeTextureThreshold = 1024 * 1024;  // 1 megapixel
 		if (pixelCount > largeTextureThreshold) {
-			static std::once_flag largeTextureWarning;
-			std::call_once(largeTextureWarning, [&]() {
+			static Util::OnceFlag largeTextureWarning;
+			if (largeTextureWarning.First())
 				logger::warn("ApplyHighlightTintToTexture: Processing large texture ({}x{} = {} pixels). Consider using compute shader for better performance. This warning will only be shown once.",
 					desc.Width, desc.Height, pixelCount);
-			});
 		}  // Create a temporary staging texture to read from
 		ID3D11Texture2D* stagingTexture = nullptr;
 		desc.Usage = D3D11_USAGE_STAGING;
@@ -600,15 +621,17 @@ namespace Util
 		return view;
 	}
 
-	FullscreenPassScope::FullscreenPassScope(ID3D11DeviceContext* a_context, UINT a_psSRVCount, UINT a_psCBStart, UINT a_psCBCount) :
+	FullscreenPassScope::FullscreenPassScope(ID3D11DeviceContext* a_context, UINT a_psSRVCount, UINT a_psCBStart, UINT a_psCBCount, UINT a_psSamplerCount) :
 		ctx(a_context),
 		psSRVCount(a_psSRVCount),
 		psCBStart(a_psCBStart),
-		psCBCount(a_psCBCount)
+		psCBCount(a_psCBCount),
+		psSamplerCount(a_psSamplerCount)
 	{
 		assert(ctx && psSRVCount <= D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT &&
 			   psCBStart <= D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT &&
-			   psCBCount <= D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - psCBStart);
+			   psCBCount <= D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - psCBStart &&
+			   psSamplerCount <= D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT);
 		// Save all MRT slots, not just slot 0 — a caller may enter with multiple RTVs bound.
 		ctx->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTV, &savedDSV);
 		ctx->RSGetViewports(&numVP, savedVP);
@@ -620,7 +643,7 @@ namespace Util
 		ctx->HSGetShader(&savedHS, nullptr, nullptr);
 		ctx->DSGetShader(&savedDS, nullptr, nullptr);
 		ctx->RSGetState(&savedRS);
-		ctx->PSGetSamplers(0, 1, &savedSampler0);
+		ctx->PSGetSamplers(0, psSamplerCount, savedPSSamplers);
 		ctx->PSGetShaderResources(0, psSRVCount, savedPSSRVs);
 		ctx->PSGetConstantBuffers(psCBStart, psCBCount, savedPSCBs);
 		ctx->IAGetInputLayout(&savedIL);
@@ -646,7 +669,7 @@ namespace Util
 		ctx->HSSetShader(savedHS, nullptr, 0);
 		ctx->DSSetShader(savedDS, nullptr, 0);
 		ctx->RSSetState(savedRS);
-		ctx->PSSetSamplers(0, 1, &savedSampler0);
+		ctx->PSSetSamplers(0, psSamplerCount, savedPSSamplers);
 		ctx->PSSetConstantBuffers(psCBStart, psCBCount, savedPSCBs);
 		ctx->IASetInputLayout(savedIL);
 		ctx->IASetVertexBuffers(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT, savedVB, savedVBStride, savedVBOffset);
@@ -663,7 +686,8 @@ namespace Util
 		SafeRelease(savedHS);
 		SafeRelease(savedDS);
 		SafeRelease(savedRS);
-		SafeRelease(savedSampler0);
+		for (UINT i = 0; i < psSamplerCount; ++i)
+			SafeRelease(savedPSSamplers[i]);
 		for (UINT i = 0; i < psSRVCount; ++i)
 			SafeRelease(savedPSSRVs[i]);
 		for (UINT i = 0; i < psCBCount; ++i)

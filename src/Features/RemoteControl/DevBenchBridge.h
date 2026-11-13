@@ -8,9 +8,24 @@
 // `devbench-api` port is available); otherwise this file compiles to an empty Install().
 // When built in, Install() is still a runtime no-op if no devbench host is present — so
 // it is always safe to call.
+
+#include <filesystem>
+#include <optional>
+#include <string>
+
 namespace DevBenchBridge
 {
 	// Fetch the devbench interface (after kPostLoad) and register our tools. No-op if
 	// devbench is not present or the bridge was built disabled. Safe to call always.
 	void Install();
+
+	/** @brief One tool call devbench routed to Community Shaders. */
+	struct Request
+	{
+		std::string tool;                     /**< @brief Registered tool name, e.g. communityshaders.feature. */
+		std::filesystem::file_time_type time; /**< @brief When it arrived (file clock, for Util::FormatTimeAgo). */
+	};
+
+	/** @brief The most recent tool call; nothing before the first one or when the bridge is not built. Thread-safe. */
+	std::optional<Request> GetLastRequest();
 }

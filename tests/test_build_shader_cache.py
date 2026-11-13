@@ -6,6 +6,9 @@ import unittest
 from unittest.mock import Mock, patch
 from pathlib import Path
 
+if importlib.util.find_spec("hlslkit") is None:
+    raise unittest.SkipTest("hlslkit is not installed")
+
 ROOT = Path(__file__).parents[1]
 SPEC = importlib.util.spec_from_file_location("build_shader_cache", ROOT / "tools/build-shader-cache.py")
 builder = importlib.util.module_from_spec(SPEC)
@@ -36,6 +39,7 @@ class ShaderCacheManifestTests(unittest.TestCase):
         builder.write_info_ini(self.cache, self.root / "stage", "1-7-1-0", "SE")
         text = (self.cache / "Info.ini").read_bytes().decode("utf-8-sig")
         self.assertIn("PluginVersion = 1-7-1-0\r\nCompileFlags = pp=0;afc=0\r\nRuntime = SE\r\n", text)
+        self.assertIn("RequireDigestForReuse = false\r\n", text)
         self.assertIn("[Sample]\r\nEnabled = true\r\nVersion = 1-0-0", text)
 
     def test_companion_disable_retains_the_loaded_version(self):
@@ -127,6 +131,49 @@ class ShaderCacheManifestTests(unittest.TestCase):
         entries = yaml.safe_load(output.read_text())["shaders"][0]["configs"]["PSHADER"]["entries"]
         for entry in entries:
             self.assertEqual(entry["defines"], [], entry["entry"])
+
+    def test_profile_matches_default_feature_shader_options(self):
+        import yaml
+
+        headers = self.root / "src/Features"
+        headers.mkdir(parents=True)
+        header = headers / "Sample.h"
+        header.write_text(
+            'std::string GetShortName() override { return "Sample"; }\n'
+            'std::string_view GetShaderDefineName() override { return "SAMPLE"; }\n'
+            'bool HasShaderDefine(RE::BSShader::Type type) override { return true; }\n'
+            'uint EnableReflections = true;\n', encoding="utf-8")
+        (headers / "Sample.cpp").write_text(
+            'Options Sample::GetShaderDefineOptions()\n{\n'
+            ' if (settings.EnableReflections) { result.push_back({ "REFLECTIONS", "" }); }\n'
+            ' return result;\n}\n', encoding="utf-8")
+        self.write_config(entries=[{"entry": "BloodSplatter:Pixel:1", "defines": []},
+                                   {"entry": "Utility:Pixel:1", "defines": []}])
+        output = self.root / "profile.yaml"
+        builder.filter_profile_defines(self.config, output, set(), self.root)
+        entries = yaml.safe_load(output.read_text())["shaders"][0]["configs"]["PSHADER"]["entries"]
+        self.assertEqual(entries[0]["defines"], ["REFLECTIONS", "SAMPLE"])
+        self.assertEqual(entries[1]["defines"], [])
+        original = output.read_bytes()
+        builder.filter_profile_defines(output, output, set(), self.root)
+        self.assertEqual(output.read_bytes(), original)
+        builder.filter_profile_defines(output, output, {"SAMPLE"}, self.root)
+        entries = yaml.safe_load(output.read_text())["shaders"][0]["configs"]["PSHADER"]["entries"]
+        self.assertEqual(entries[0]["defines"], [])
+        header.write_text(header.read_text().replace("= true", "= false"), encoding="utf-8")
+        builder.filter_profile_defines(self.config, output, set(), self.root)
+        entries = yaml.safe_load(output.read_text())["shaders"][0]["configs"]["PSHADER"]["entries"]
+        self.assertEqual(entries[0]["defines"], ["SAMPLE"])
+        self.write_extra_capture([{"kind": "engine", "runtime": "SE", "source": "BloodSplatter.hlsl",
+                                   "shader": "BloodSplatter", "type": "BloodSplatter", "descriptor": 1,
+                                   "stage": "Pixel", "key": "BloodSplatter:Pixel:SAMPLE ",
+                                   "path": "BloodSplatter/1.pso"}])
+        captured = builder.extra_shader_requests(self.root, "SE")["BloodSplatter/1.pso"]
+        self.assertNotIn("REFLECTIONS", captured["key"])
+        header.write_text(header.read_text().replace("= false", "= true"), encoding="utf-8")
+        captured = builder.extra_shader_requests(self.root, "SE")["BloodSplatter/1.pso"]
+        self.assertIn("REFLECTIONS ", captured["key"])
+        self.assertIn(("REFLECTIONS", None), captured["defines"])
 
     def test_profile_keeps_reverse_z_disabled_for_older_defaults(self):
         import yaml
@@ -247,6 +294,20 @@ class ShaderCacheManifestTests(unittest.TestCase):
         request = builder.extra_shader_requests(self.root, "VR")["LensFlareVisibility/68.pso"]
         self.assertEqual(request["key"], "LensFlareVisibility:Pixel:REVERSE_Z ")
         self.assertIn(("VR", None), request["defines"])
+
+    def test_sss_cache_covers_both_prepasses_and_all_blur_directions(self):
+        self.write_extra_capture([])
+        shaders = self.root / "features/SSS/Shaders/SubsurfaceScattering"
+        shaders.mkdir(parents=True)
+        for source in ("DiffuseExtractionCS.hlsl", "SeparableSSSCS.hlsl"):
+            (shaders / source).write_text("", encoding="utf-8")
+        for runtime in ("SE", "VR"):
+            requests = list(builder.extra_shader_requests(self.root, runtime).values())
+            prepasses = [dict(r["defines"]) for r in requests if "DiffuseExtractionCS" in r["source"]]
+            blurs = [dict(r["defines"]) for r in requests if "SeparableSSSCS" in r["source"]]
+            self.assertEqual(sorted("BURLEY" in d for d in prepasses), [False, True])
+            self.assertEqual(sorted(("BURLEY" in d, "HORIZONTAL" in d) for d in blurs),
+                             [(False, False), (False, True), (True, False)])
 
     def test_captured_reverse_z_variants_follow_disabled_boot_default(self):
         self.write_extra_capture([{"kind": "engine", "runtime": "SE", "source": "Lighting.hlsl",

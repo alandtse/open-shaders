@@ -97,6 +97,7 @@ void TerrainVariation::DataLoaded()
 	landscapeDiffuseFileNames.clear();
 	meshTextureCache.clear();
 	meshTextureKeepAlive.clear();
+	meshTextureGeneration.fetch_add(1, std::memory_order_release);
 
 	auto addTextureSet = [this](RE::BGSTextureSet* textureSet) {
 		if (textureSet == nullptr) {
@@ -142,6 +143,9 @@ bool TerrainVariation::IsLandscapeDiffuseTexture(const RE::BSFixedString& a_name
 	const std::unique_lock lock(meshTextureMutex);
 	auto [it, inserted] = meshTextureCache.try_emplace(key, false);
 	if (inserted) {
+		// Only textures painted on the landscape surface qualify, wherever they live, so branches and roots
+		// sharing a landscape/ subfolder with a ground texture are left alone. A mesh copy of a ground texture
+		// in another landscape/ subfolder (landscape/mountains/mountainslab01.dds) still matches by file name.
 		const auto canonical = CanonicaliseTexturePath(key);
 		it->second = landscapeDiffusePaths.contains(canonical) ||
 		             (IsInLandscapeDirectory(canonical) && landscapeDiffuseFileNames.contains(std::string(GetFileName(canonical))));
@@ -193,7 +197,14 @@ void TerrainVariation::BSLightingShader_SetupGeometry(RE::BSRenderPass* a_pass)
 		return;
 	}
 
-	if (IsLandscapeDiffuseTexture(baseTexture->name)) {
+	const char* key = baseTexture->name.c_str();
+	const uint32_t generation = meshTextureGeneration.load(std::memory_order_acquire);
+	if (key != lastMeshTextureKey || generation != lastMeshTextureGeneration) {
+		lastMeshTextureResult = IsLandscapeDiffuseTexture(baseTexture->name);
+		lastMeshTextureKey = key;
+		lastMeshTextureGeneration = generation;
+	}
+	if (lastMeshTextureResult) {
 		descriptor |= uint(State::ExtraFeatureDescriptors::TVMeshVariation);
 	}
 }

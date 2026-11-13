@@ -6,6 +6,9 @@
 struct ExponentialHeightFog : Feature
 {
 private:
+	/** @brief Returns whether another pipeline or the flat map owns fog. */
+	bool IsSuppressed() const;
+
 	static constexpr std::string_view MOD_ID = "180146";
 
 public:
@@ -121,6 +124,7 @@ public:
 		uint mistFollowWind = 1;
 		float mistWindMultiplier = 1.0f;
 		float pad5 = 0.0f;
+		float4 originalFogColorOverride = { 1.0f, 1.0f, 1.0f, 0.0f };  // rgb = replaces the weather fog colour, a = blend amount
 	} settings;
 	STATIC_ASSERT_ALIGNAS_16(Settings);
 	static_assert(offsetof(Settings, vanillaFogNearColor) == 256);
@@ -129,7 +133,8 @@ public:
 	static_assert(offsetof(Settings, volumetricFogNoiseVelocity) == 320);
 	static_assert(offsetof(Settings, mistsEnabled) == 336);
 	static_assert(offsetof(Settings, mistDriftSpeed) == 352);
-	static_assert(sizeof(Settings) == 368);
+	static_assert(offsetof(Settings, originalFogColorOverride) == 368);
+	static_assert(sizeof(Settings) == 384);
 
 	/** @brief Supplies weather colors and derives density and start distance when following vanilla fog. */
 	Settings GetCommonBufferData() const;
@@ -178,8 +183,8 @@ private:
 	void BindIntegratedLightScattering();
 	ID3D11ComputeShader* GetMaterialSetupCS();
 	ID3D11ComputeShader* GetFarMaterialSetupCS();
-	ID3D11ComputeShader* GetConservativeDepthCS();
-	ID3D11ComputeShader* GetFarConservativeDepthCS();
+	ID3D11ComputeShader* GetConservativeDepthCS(bool a_groupReduce);
+	ID3D11ComputeShader* GetFarConservativeDepthCS(bool a_groupReduce);
 	ID3D11ComputeShader* GetLightScatteringCS();
 	ID3D11ComputeShader* GetFarLightScatteringCS();
 	ID3D11ComputeShader* GetIntegrationCS();
@@ -205,6 +210,8 @@ private:
 	Util::LazyShader<ID3D11ComputeShader> farMaterialSetupCS;
 	Util::LazyShader<ID3D11ComputeShader> conservativeDepthCS;
 	Util::LazyShader<ID3D11ComputeShader> farConservativeDepthCS;
+	Util::LazyShader<ID3D11ComputeShader> conservativeDepthGroupCS;
+	Util::LazyShader<ID3D11ComputeShader> farConservativeDepthGroupCS;
 	Util::LazyShader<ID3D11ComputeShader> lightScatteringCS;
 	Util::LazyShader<ID3D11ComputeShader> farLightScatteringCS;
 	Util::LazyShader<ID3D11ComputeShader> integrationCS;

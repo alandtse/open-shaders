@@ -20,7 +20,9 @@ vcpkg_from_github(
 # DirectXTex compiles its own BC6H-encode shaders at build time; reuse the same fxc2-under-Wine
 # stand-in as the directxtk port (duplicated -- vcpkg ports can't share build logic).
 if(CMAKE_HOST_UNIX)
-    file(WRITE "${SOURCE_PATH}/DirectXTex/Shaders/wine-compile-shaders.sh" "#!/bin/sh
+    file(
+        WRITE "${SOURCE_PATH}/DirectXTex/Shaders/wine-compile-shaders.sh"
+        "#!/bin/sh
 set -u
 CompileShadersOutput=\"$1\"
 FxcTool=\"$2\"
@@ -39,7 +41,8 @@ if [ \"\$expected_count\" -eq 0 ] || [ \"\$inc_count\" -ne \"\$expected_count\" 
     exit 1
 fi
 exit 0
-")
+"
+    )
 endif()
 
 vcpkg_check_features(
@@ -56,14 +59,28 @@ vcpkg_check_features(
 
 set(EXTRA_OPTIONS -DBUILD_SAMPLE=OFF)
 
-if(VCPKG_TARGET_IS_WINDOWS AND NOT (VCPKG_TARGET_IS_XBOX OR VCPKG_TARGET_IS_MINGW) AND NOT "dx12" IN_LIST FEATURES)
-  list(APPEND EXTRA_OPTIONS "-DCMAKE_DISABLE_FIND_PACKAGE_directx-headers=TRUE")
+if(
+    VCPKG_TARGET_IS_WINDOWS
+    AND NOT (VCPKG_TARGET_IS_XBOX OR VCPKG_TARGET_IS_MINGW)
+    AND NOT "dx12" IN_LIST FEATURES
+)
+    list(
+        APPEND EXTRA_OPTIONS
+        "-DCMAKE_DISABLE_FIND_PACKAGE_directx-headers=TRUE"
+    )
 endif()
 
 if(CMAKE_HOST_UNIX AND ("dx11" IN_LIST FEATURES))
-    find_program(FXC2_MINGW_CLANGXX NAMES x86_64-w64-mingw32-clang++ HINTS "$ENV{LLVM_MINGW_BIN}")
+    find_program(
+        FXC2_MINGW_CLANGXX
+        NAMES x86_64-w64-mingw32-clang++
+        HINTS "$ENV{LLVM_MINGW_BIN}"
+    )
     if(NOT FXC2_MINGW_CLANGXX)
-        message(FATAL_ERROR "${PORT}: cross-compiling from a Linux host needs an llvm-mingw toolchain (x86_64-w64-mingw32-clang++) on PATH, or pointed at via the LLVM_MINGW_BIN environment variable, to build the fxc2 shader-compiler stand-in. See https://github.com/WasabiIceCream/fxc2.")
+        message(
+            FATAL_ERROR
+            "${PORT}: cross-compiling from a Linux host needs an llvm-mingw toolchain (x86_64-w64-mingw32-clang++) on PATH, or pointed at via the LLVM_MINGW_BIN environment variable, to build the fxc2 shader-compiler stand-in. See https://github.com/WasabiIceCream/fxc2."
+        )
     endif()
 
     vcpkg_from_github(
@@ -76,13 +93,21 @@ if(CMAKE_HOST_UNIX AND ("dx11" IN_LIST FEATURES))
 
     set(FXC2_EXE "${CURRENT_BUILDTREES_DIR}/fxc2.exe")
     execute_process(
-        COMMAND "${FXC2_MINGW_CLANGXX}" -static "${FXC2_SOURCE_PATH}/fxc2.cpp" -o "${FXC2_EXE}"
+        COMMAND
+            "${FXC2_MINGW_CLANGXX}" -static "${FXC2_SOURCE_PATH}/fxc2.cpp" -o
+            "${FXC2_EXE}"
         RESULT_VARIABLE FXC2_BUILD_RESULT
     )
     if(NOT FXC2_BUILD_RESULT EQUAL 0)
-        message(FATAL_ERROR "${PORT}: failed to build fxc2.exe from ${FXC2_SOURCE_PATH}")
+        message(
+            FATAL_ERROR
+            "${PORT}: failed to build fxc2.exe from ${FXC2_SOURCE_PATH}"
+        )
     endif()
-    file(COPY "${FXC2_SOURCE_PATH}/d3dcompiler_47.dll" DESTINATION "${CURRENT_BUILDTREES_DIR}")
+    file(
+        COPY "${FXC2_SOURCE_PATH}/d3dcompiler_47.dll"
+        DESTINATION "${CURRENT_BUILDTREES_DIR}"
+    )
 
     list(APPEND EXTRA_OPTIONS "-DDIRECTX_FXC_TOOL=${FXC2_EXE}")
 endif()
@@ -98,5 +123,8 @@ vcpkg_cmake_config_fixup(CONFIG_PATH share/directxtex)
 
 file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/include")
 
-file(INSTALL "${CMAKE_CURRENT_LIST_DIR}/usage" DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}")
+file(
+    INSTALL "${CMAKE_CURRENT_LIST_DIR}/usage"
+    DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}"
+)
 vcpkg_install_copyright(FILE_LIST "${SOURCE_PATH}/LICENSE")

@@ -67,19 +67,19 @@ void Bloom::DrawSettings(PresetSettings& settings)
 		settings.Enabled = enabled;
 	}
 
-	if (ImGui::Button(T(TKEY("preset_default"), "Default")))
+	if (Util::Button(T(TKEY("preset_default"), "Default")))
 		settings.SelectedPreset = 0;
 	ImGui::SameLine();
-	if (ImGui::Button(T(TKEY("preset_fantasy"), "Fantasy")))
+	if (Util::Button(T(TKEY("preset_fantasy"), "Fantasy")))
 		settings.SelectedPreset = 1;
 	ImGui::SameLine();
-	if (ImGui::Button(T(TKEY("preset_dreamy"), "Dreamy")))
+	if (Util::Button(T(TKEY("preset_dreamy"), "Dreamy")))
 		settings.SelectedPreset = 2;
 
 	const char* resetLabel = T(TKEY("preset_reset"), "Reset Preset");
 	ImGui::SameLine();
 	ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(resetLabel).x - ImGui::GetStyle().FramePadding.x * 2.0f);
-	if (ImGui::Button(resetLabel))
+	if (Util::Button(resetLabel))
 		GetSelectedProfile(settings) = GetPresetDefaults(settings.SelectedPreset);
 
 	Profile& profile = GetSelectedProfile(settings);

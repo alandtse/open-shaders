@@ -69,6 +69,9 @@ public:
 		return type == RE::BSShader::Type::Lighting || type == RE::BSShader::Type::Grass || type == RE::BSShader::Type::DistantTree;
 	}
 	bool SupportsVR() override { return true; }
+
+	/** @brief Snow coverage from 0 (bare) to 1 (fully covered) at a world position, from altitude, season and current snowfall. */
+	float SnowAmountAt(const RE::NiPoint3& a_position) const;
 	std::string GetDisplayName() override { return T("feature.snow_cover.name", "Snow Cover"); }
 	std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
@@ -257,6 +260,9 @@ public:
 	void OnSceneTransitionReset(bool opening) override;
 	void RegisterUxActions() override;
 	json GetDiagnostics() override;
+
+	/** @brief Returns the largest altitude-map value in a UV rectangle, or nothing when the map is not loaded or the rectangle leaves it. */
+	std::optional<float> GetSnowMapMaximum(float u0, float v0, float u1, float v1) const { return snowMap.Maximum(u0, v0, u1, v1); }
 
 private:
 	std::atomic<bool> active{ false };

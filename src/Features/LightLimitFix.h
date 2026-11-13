@@ -25,11 +25,15 @@ private:
 	void DrawLightDebugSettings();
 
 	static constexpr uint32_t MAX_LIGHTS = 1024;
+	static_assert(MAX_LIGHTS <= 16 * 16 * 4);
 	// Per-cluster visible-light cap; sizes the global lightIndexList pool as
 	// clusterCount * CLUSTER_MAX_LIGHTS. MUST match MAX_CLUSTER_LIGHTS in the
 	// shader-side Common.hlsli or the cull pass can overrun the pool.
 	static constexpr uint32_t CLUSTER_MAX_LIGHTS = 128;
 	eastl::hash_map<RE::BSLight*, RE::NiLight*> effectLightValidationCache;
+
+	/** @brief Queues or culls a candidate particle light pass. Kept out of line so other passes skip its vector register saves. */
+	[[msvc::noinline]] bool CheckParticleLightPass(RE::BSRenderPass* a_pass);
 
 public:
 	virtual inline std::string GetName() override { return "Light Limit Fix"; }
@@ -219,6 +223,8 @@ public:
 	// both the menu stat and GetDiagnostics() (see below).
 	std::atomic<uint32_t> particleLightCount{ 0 };
 	std::atomic<uint32_t> clusteredLightCount{ 0 };
+	/** @brief Particle lights accepted after expansion, clustering, and buffer filtering. */
+	std::atomic<uint32_t> bufferedParticleLightCount{ 0 };
 
 	std::shared_mutex cachedParticleLightsMutex;
 	eastl::vector<CachedParticleLight> cachedParticleLights;

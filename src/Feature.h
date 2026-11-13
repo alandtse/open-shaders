@@ -17,6 +17,8 @@
 
 struct ID3D11ShaderResourceView;
 struct ID3D11Texture2D;
+struct ImVec4;
+class PresetProvider;
 
 namespace globals
 {
@@ -26,15 +28,15 @@ namespace globals
 
 struct Feature
 {
-	// For global settings search
+	/** @brief A setting the Go To palette lists for a feature, for controls the settings catalog cannot see. */
 	struct SettingSearchEntry
 	{
-		std::string label;
-		std::string description;
-		std::function<void()> focusCallback;  // Called to focus/highlight this setting in the UI
-		std::string featureName;              // For display context
+		std::string id;                       ///< Stable per feature; keys the recent picks
+		std::string label;                    ///< Shown as the result title
+		std::string description;              ///< Extra searchable text
+		std::function<void()> focusCallback;  ///< Runs after the feature opens, to bring this setting into view
 	};
-	// Override in features to expose settings for search
+	/** @brief Override to list settings the Go To palette should find; none by default. */
 	virtual std::vector<SettingSearchEntry> GetSettingsSearchEntries() { return {}; }
 
 	// Restart-required settings introspection. Default: none.
@@ -93,6 +95,7 @@ struct Feature
 	virtual std::string GetName() = 0;
 	virtual std::string GetShortName() = 0;
 	virtual std::string GetDisplayName() { return GetName(); }
+	/** @brief Returns the localized feature category for presentation. */
 	std::string GetDisplayCategory() const;
 	virtual std::string GetFeatureModLink() { return ""; }
 	virtual std::string_view GetShaderDefineName() { return ""; }
@@ -183,6 +186,8 @@ public:
 	 * it (see GetReleaseStage) avoid a redundant lookup.
 	 */
 	static std::string GetReleaseStageTag(ReleaseStage stage);
+	/** @brief Returns the active theme's color for a pre-release stage. */
+	static ImVec4 GetReleaseStageColor(ReleaseStage stage);
 
 	/**
 	 * Whether the feature is disabled at boot by default (before any user override).
@@ -192,12 +197,22 @@ public:
 	virtual bool IsDisabledByDefault() const { return GetReleaseStage() != ReleaseStage::Release; }
 	virtual bool IsAlwaysEnabled() const { return false; }
 	virtual bool UsesMainSettings() const { return true; }
+	/** @brief Whether personal settings are persisted independently of portable settings eligibility. */
+	virtual bool HasPersonalSettings() const { return UsesMainSettings(); }
+	/** @brief Returns this feature's optional preset payload integration. */
+	virtual PresetProvider* GetPresetProvider() { return nullptr; }
 	virtual bool HasRestoreDefaults() const { return true; }
 
 	/**
 	 * Whether the feature will show up in the GUI menu
 	 */
 	virtual bool IsInMenu() const { return true; }
+	/** @brief Returns a localized runtime availability reason, or null when available. */
+	virtual const char* GetUnavailableMessage() const { return nullptr; }
+	/** @brief Returns a localized reason while this feature owns another feature's settings. */
+	virtual const char* GetSettingsLockReason(std::string_view) const { return nullptr; }
+	/** @brief Finds an active provider that owns the target feature's settings. */
+	static const char* FindSettingsLockReason(std::string_view featureShortName);
 
 	/**
 	 * Whether to print the INI version missing message when this feature is unloaded
@@ -210,8 +225,13 @@ public:
 	 */
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() { return {}; }
 
+	/** @brief Applies feature-owned render-target configuration before engine allocation. */
+	virtual void PreCreateRenderTargets() {}
+
 	/** @brief Allocates GPU resources (textures, buffers) needed by this feature. */
 	virtual void SetupResources() {}
+	/** @brief Finalizes resources after all features and the shared renderer are initialized. */
+	virtual void PostSetupResources() {}
 
 	/**
 	 * @brief Adjusts the engine's newly created render targets in place.
@@ -320,6 +340,9 @@ public:
 
 	/** @brief Per-frame work executed before the main rendering pass. */
 	virtual void Prepass() {}
+
+	/** @brief Per-frame work after every feature's Prepass, so it sees the depth they wrote. */
+	virtual void PostPrepass() {}
 
 	/** @brief Per-frame work executed before Prepass, earliest per-frame hook. */
 	virtual void EarlyPrepass() {}
@@ -443,6 +466,15 @@ public:
 	virtual void OnDraw() {}
 
 	/**
+	 * @brief Opt-in flag checked once, when the hook's feature list is built: return true to have
+	 * PreShadowMaps() called once per frame, before the engine renders its shadow maps.
+	 */
+	virtual bool WantsPreShadowMapsHook() const { return false; }
+
+	/** @brief Called on the render thread once per frame before the shadow maps render, for every loaded feature that opted in via WantsPreShadowMapsHook(). */
+	virtual void PreShadowMaps() {}
+
+	/**
 	 * @brief True while the feature reads the Masks2 material-category lane, so forward eye draws write it.
 	 * Default false keeps the extra render-target bind off the eye draws for everyone else.
 	 */
@@ -520,10 +552,25 @@ public:
 	void Save(json& o_json);
 	virtual void SaveSettings(json&) {}
 	virtual void LoadSettings(json&) {}
+	/** @brief Migrates legacy sections before configuration defaults and user settings are layered. */
+	virtual void MigrateLegacySettings(json&) const {}
+	/** @brief Runs each registered feature's configuration migration. */
+	static void MigrateConfigSettings(json& settings);
 	virtual void RestoreDefaultSettings() {}
 
 	/** @brief Whether Restore Defaults targets the current settings page instead of the entire feature. */
 	virtual bool HasScopedDefaultSettings() const { return false; }
+	/** @brief Whether the visible settings scope is labeled as a tab rather than a page. */
+	virtual bool IsSettingsScopeTab() const { return true; }
+
+	/** @brief Top-level serialized keys owned by the current settings page. */
+	virtual std::vector<std::string> GetCurrentPageSettingKeys() const { return {}; }
+
+	/** @brief Selects the current page from a feature settings document. */
+	json SelectCurrentPageSettings(const json& settings) const;
+
+	/** @brief Restores saved settings for the visible page, including external page data. */
+	virtual bool RestoreCurrentPageSavedSettings();
 
 	/** @brief Restores defaults for the currently visible settings page or subfeature. */
 	virtual void RestoreCurrentPageDefaultSettings() { RestoreDefaultSettings(); }
@@ -568,6 +615,9 @@ public:
 	 * Leaves failedLoadedMessage unset: an expected conflict is not a load failure, and a failure would hold the disk cache.
 	 */
 	void DisableForConflict(std::string_view a_conflict);
+	/** @brief Rewrites defaults that depend on the current settings, so a middle-click reset restores the right value.
+	 *  @param a_defaults The feature's default settings, in the shape SaveSettings writes. */
+	virtual void ApplyContextualDefaults(json& a_defaults) const { (void)a_defaults; }
 
 	/**
 	 * @brief Toggles the "disabled at boot" state for this feature.
@@ -575,17 +625,14 @@ public:
 	 */
 	virtual bool ToggleAtBootSetting();
 
-	/**
-	 * @brief Reapplies override settings for this feature if available
-	 * @return True if overrides were found and applied, false otherwise
-	 */
+	/** @brief Reapplies Base Settings values, discarding personal edits at the preset's keys. */
 	virtual bool ReapplyOverrideSettings();
 
-	/** @brief Whether Apply Override targets the current settings page instead of the entire feature. */
+	/** @brief Whether Reapply Base Settings targets the current page instead of the entire feature. */
 	virtual bool HasScopedOverrideSettings() const { return false; }
 
-	/** @brief Reapplies overrides for the current page or the entire feature. */
-	virtual bool ReapplyCurrentPageOverrideSettings() { return ReapplyOverrideSettings(); }
+	/** @brief Reapplies Base Settings for the current page or the entire feature. */
+	virtual bool ReapplyCurrentPageOverrideSettings();
 
 	/**
 	 * Weather analysis configuration for features that want to provide weather analysis.
@@ -656,6 +703,9 @@ public:
 
 	/** @brief Visits OnDraw() on every loaded feature that opted in via WantsDrawHook(); the list is cached once. */
 	static void ApplyDrawHooks();
+
+	/** @brief Visits PreShadowMaps() on every loaded feature that opted in via WantsPreShadowMapsHook(); the list is cached once. */
+	static void ApplyPreShadowMapsHooks();
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();
@@ -809,7 +859,7 @@ public:
 		for (auto* feature : features) {
 			if (feature->loaded) {
 #ifdef TRACY_ENABLE
-				if (!emitCpuZone) {
+				if (!emitCpuZone || !TracyIsConnected) {
 					callback(feature);
 					continue;
 				}
@@ -857,6 +907,6 @@ public:
 	};
 
 protected:
-	/** Reapplies override-controlled values for the selected top-level setting keys. */
+	/** Reapplies Base Settings values for the selected top-level setting keys. */
 	bool ReapplyOverrideSettingsForKeys(std::span<const std::string_view> a_settingKeys);
 };

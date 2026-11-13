@@ -44,7 +44,8 @@ Texture2D<float4> srcPrevY : register(t5);             // maybe half-res
 Texture2D<float2> srcPrevCoCg : register(t6);          // maybe half-res
 Texture2D<float4> srcPrevGISpecular : register(t7);    // maybe half-res
 Texture2D<float2> srcNormal : register(t8);
-Texture2D<uint> srcMode : register(t9);  // VRStereoOptimizations' per-pixel classification; unbound unless UseModeTexture
+Texture2D<unorm float> srcPrevAo : register(t9);  // maybe half-res
+Texture2D<uint> srcMode : register(t10);          // VRStereoOptimizations' per-pixel classification; unbound unless UseModeTexture
 
 RWTexture2D<unorm float> outAo : register(u0);
 RWTexture2D<float4> outY : register(u1);
@@ -85,6 +86,12 @@ float GetVisibilityFunctionSmithJointApprox(float roughness, float NdotV, float 
 	return vis > 0 ? (0.5 / vis) : 0;
 }
 
+uint HorizonBitmask(float2 angleRange)
+{
+	uint2 bitsRange = uint2(round(angleRange.x * 32u), round((angleRange.y - angleRange.x) * 32u));
+	return (bitsRange.y >= 32u ? 0xFFFFFFFFu : ((1u << bitsRange.y) - 1u)) << bitsRange.x;
+}
+
 void CalculateGI(
 	uint2 dtid, float2 uv, float viewspaceZ, float3 viewspaceNormal,
 	out float o_ao, out sh2 o_currY, out float2 o_currCoCg, out float4 o_currGIAOSpecular)
@@ -113,7 +120,7 @@ void CalculateGI(
 	// Use mono screen-space position for noise indexing so both eyes
 	// sample the same noise for corresponding world positions.
 	uint2 noiseCoord = uint2(normalizedScreenPos * OUT_FRAME_DIM);
-	const float2 localNoise = SpatioTemporalNoise(noiseCoord, FrameIndex);
+	const float2 localNoise = SpatioTemporalNoise(noiseCoord, SharedData::FrameCount);
 	const float noiseSlice = localNoise.x;
 	const float noiseStep = localNoise.y;
 
@@ -277,8 +284,7 @@ void CalculateGI(
 				// Using smoothstep for cos: https://discord.com/channels/586242553746030596/586245736413528082/1102228968247144570
 				angleRange = smoothstep(0, 1, (angleRange + n) * Math::INV_PI + .5);
 
-				uint2 bitsRange = uint2(round(angleRange.x * 32u), round((angleRange.y - angleRange.x) * 32u));
-				uint maskedBits = s < AORadius ? ((1 << bitsRange.y) - 1) << bitsRange.x : 0;
+				uint maskedBits = s < AORadius ? HorizonBitmask(angleRange) : 0;
 
 #ifdef GI
 				// Back-side horizon vector for GI-radius sampling depth (~300 units).
@@ -290,16 +296,14 @@ void CalculateGI(
 				float coneHalfAngles = max(5e-2, specularLobeHalfAngle(roughness));  // not too small
 				float2 angleRangeSpecular = clamp((angleRangeGI + nDom) * 0.5 / coneHalfAngles, -1, 1) * 0.5 + 0.5;
 
-				uint2 bitsRangeGISpecular = uint2(round(angleRangeSpecular.x * 32u), round((angleRangeSpecular.y - angleRangeSpecular.x) * 32u));
-				uint maskedBitsGISpecular = s < GIRadius ? ((1 << bitsRangeGISpecular.y) - 1) << bitsRangeGISpecular.x : 0;
+				uint maskedBitsGISpecular = s < GIRadius ? HorizonBitmask(angleRangeSpecular) : 0;
 #	endif
 
 				// The math: https://www.desmos.com/calculator/je4y5ved2j
 				// Using smoothstep for cos: https://discord.com/channels/586242553746030596/586245736413528082/1102228968247144570
 				angleRangeGI = smoothstep(0, 1, (angleRangeGI + n) * Math::INV_PI + .5);
 
-				uint2 bitsRangeGI = uint2(round(angleRangeGI.x * 32u), round((angleRangeGI.y - angleRangeGI.x) * 32u));
-				uint maskedBitsGI = s < GIRadius ? ((1 << bitsRangeGI.y) - 1) << bitsRangeGI.x : 0;
+				uint maskedBitsGI = s < GIRadius ? HorizonBitmask(angleRangeGI) : 0;
 
 				uint validBits = maskedBitsGI & ~bitmaskGI;
 				bool checkGI = validBits;
@@ -440,6 +444,7 @@ void CalculateGI(
 #ifdef TEMPORAL_DENOISER
 		float lerpFactor = rcp(srcAccumFrames[pxCoord] * 255);
 
+		float prevAo = srcPrevAo[pxCoord];
 		float4 prevY = srcPrevY[pxCoord];
 		float2 prevCoCg = srcPrevCoCg[pxCoord];
 
@@ -450,24 +455,43 @@ void CalculateGI(
 		// so the marginal bounding effect doesn't justify the bandwidth.
 		[branch] if (lerpFactor >= 0.15)
 		{
-			float4 yL = srcPrevY[pxCoord + int2(-1, 0)];
-			float4 yR = srcPrevY[pxCoord + int2(1, 0)];
-			float4 yU = srcPrevY[pxCoord + int2(0, -1)];
-			float4 yD = srcPrevY[pxCoord + int2(0, 1)];
-			float2 cL = srcPrevCoCg[pxCoord + int2(-1, 0)];
-			float2 cR = srcPrevCoCg[pxCoord + int2(1, 0)];
-			float2 cU = srcPrevCoCg[pxCoord + int2(0, -1)];
-			float2 cD = srcPrevCoCg[pxCoord + int2(0, 1)];
+			int2 historyMin = int2(0, 0);
+			int2 historyMax = int2(OUT_FRAME_DIM) - 1;
+#	ifdef VR
+			const int eyeWidth = int(uint(OUT_FRAME_DIM.x) / 2u);
+			historyMin.x = int(eyeIndex) * eyeWidth;
+			historyMax.x = historyMin.x + eyeWidth - 1;
+#	endif
+			int2 historyLeft = clamp(int2(pxCoord) + int2(-1, 0), historyMin, historyMax);
+			int2 historyRight = clamp(int2(pxCoord) + int2(1, 0), historyMin, historyMax);
+			int2 historyUp = clamp(int2(pxCoord) + int2(0, -1), historyMin, historyMax);
+			int2 historyDown = clamp(int2(pxCoord) + int2(0, 1), historyMin, historyMax);
+			float4 yL = srcPrevY[historyLeft];
+			float4 yR = srcPrevY[historyRight];
+			float4 yU = srcPrevY[historyUp];
+			float4 yD = srcPrevY[historyDown];
+			float2 cL = srcPrevCoCg[historyLeft];
+			float2 cR = srcPrevCoCg[historyRight];
+			float2 cU = srcPrevCoCg[historyUp];
+			float2 cD = srcPrevCoCg[historyDown];
+			float aL = srcPrevAo[historyLeft];
+			float aR = srcPrevAo[historyRight];
+			float aU = srcPrevAo[historyUp];
+			float aD = srcPrevAo[historyDown];
 
+			float nMinAo = min(min(min(aL, aR), min(aU, aD)), currAo);
+			float nMaxAo = max(max(max(aL, aR), max(aU, aD)), currAo);
 			float4 nMinY = min(min(min(yL, yR), min(yU, yD)), currY);
 			float4 nMaxY = max(max(max(yL, yR), max(yU, yD)), currY);
 			float2 nMinCoCg = min(min(min(cL, cR), min(cU, cD)), currCoCg);
 			float2 nMaxCoCg = max(max(max(cL, cR), max(cU, cD)), currCoCg);
 
+			prevAo = clamp(prevAo, nMinAo, nMaxAo);
 			prevY = clamp(prevY, nMinY, nMaxY);
 			prevCoCg = clamp(prevCoCg, nMinCoCg, nMaxCoCg);
 		}
 
+		currAo = lerp(prevAo, currAo, lerpFactor);
 		currY = lerp(prevY, currY, lerpFactor);
 		currCoCg = lerp(prevCoCg, currCoCg, lerpFactor);
 #	ifdef GI_SPECULAR

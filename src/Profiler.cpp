@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <span>
 #include <unordered_map>
 #include <utility>
 
@@ -51,10 +52,6 @@ void Profiler::Initialize(ID3D11Device* a_device, ID3D11DeviceContext* a_context
 	device = a_device;
 	context = a_context;
 
-	LARGE_INTEGER freq;
-	QueryPerformanceFrequency(&freq);
-	cpuTicksToMs = 1000.0 / static_cast<double>(freq.QuadPart);
-
 	for (auto& frame : frames) {
 		frame.batch.Configure(kMaxTimers, "Profiler::Frame");
 		frame.batch.Preallocate(a_device);
@@ -99,10 +96,12 @@ void Profiler::Release()
 		frame.batch.ReleaseQueries();
 		frame.timers.clear();
 		frame.activeStack.clear();
+		frame.skipped = {};
 		frame.acquiredTimerCount = 0;
 		frame.captureCycle = false;
 		frame.inFlight = false;
 	}
+	pendingSkipped = {};
 	results.clear();
 	knownTimers.clear();
 	knownTimerIndex.clear();
@@ -168,6 +167,7 @@ void Profiler::RequestCapture(CaptureMode a_mode, std::string_view a_namePrefix)
 
 void Profiler::LatchCaptureRequest()
 {
+	pendingSkipped.count = 0;
 	std::scoped_lock lock(captureRequestLock);
 	const bool requested = captureRequested.exchange(false, std::memory_order_acq_rel) && IsUserEnabled();
 	activeCaptureMode = requested ? requestedCaptureMode : CaptureMode::None;
@@ -188,6 +188,9 @@ void Profiler::BeginFrame()
 	}
 
 	auto& frame = frames[writeFrame];
+	frame.skipped.count = 0;
+	std::swap(frame.skipped, pendingSkipped);
+	frame.overflowed = false;
 	frame.batch.Reset();
 	frame.activeStack.clear();
 	frame.captureCycle = true;
@@ -229,6 +232,7 @@ bool Profiler::BeginPass(std::string_view name, bool fireCallbacks)
 	auto& frame = frames[writeFrame];
 	const int slot = frame.batch.AcquireInterval(device, context);
 	if (slot < 0) {
+		frame.overflowed = true;
 		slotRefusals++;
 		if (HasCaptureMode(activeCaptureMode, CaptureMode::CPU) && BeginCpuPass(name)) {
 			activePassUsesGpu.push_back(false);
@@ -295,8 +299,33 @@ void Profiler::EndPass(bool fireCallbacks)
 		endPerfEvent({});
 }
 
+void Profiler::MarkPassSkipped(std::string_view name)
+{
+	if (!initialized || !IsEnabled() || !MatchesActiveFilter(name) || !HasCaptureMode(activeCaptureMode, CaptureMode::GPU))
+		return;
+	(frameActive ? frames[writeFrame].skipped : pendingSkipped).Add(name);
+}
+
+void Profiler::SkipMarks::Add(std::string_view name)
+{
+	const auto live = std::span(names).first(count);
+	if (std::ranges::find(live, name) != live.end())
+		return;
+	if (count < names.size())
+		names[count].assign(name);
+	else
+		names.emplace_back(name);
+	++count;
+}
+
 void Profiler::EndFrame(uint32_t a_frameCount)
 {
+	LARGE_INTEGER now;
+	QueryPerformanceCounter(&now);
+	if (lastFrameTicks != 0)
+		frameHistory.PushSample(static_cast<float>(static_cast<double>(now.QuadPart - lastFrameTicks) * cpuTicksToMs));
+	lastFrameTicks = now.QuadPart;
+
 	const bool refused = std::exchange(frameRefused, false);
 	if (!initialized || !context) {
 		LatchCaptureRequest();
@@ -340,6 +369,9 @@ void Profiler::EndFrame(uint32_t a_frameCount)
 		}
 
 		auto& frame = frames[writeFrame];
+		frame.skipped.count = 0;
+		std::swap(frame.skipped, pendingSkipped);
+		frame.overflowed = false;
 		frame.batch.Reset();
 		frame.activeStack.clear();
 		frame.acquiredTimerCount = 0;
@@ -497,12 +529,16 @@ bool Profiler::CollectResults()
 		auto it = activeTimers.find(known.name);
 		const bool includedByFilter = frame.namePrefix.empty() || known.name.starts_with(frame.namePrefix);
 		const bool freshGpu = it != activeTimers.end() && it->second.hasGpu;
+		const auto skippedNames = std::span(frame.skipped.names).first(frame.skipped.count);
+		const bool explicitlySkipped = !freshGpu && !gpuFrameResolved && includedByFilter && known.hasGpu && !frame.overflowed &&
+		                               std::ranges::find(skippedNames, known.name) != skippedNames.end() &&
+		                               !std::ranges::any_of(std::span(frame.timers).first(frame.acquiredTimerCount), [&](const auto& timer) { return timer.name == known.name; });
 		if (freshGpu) {
 			known.hasGpu = true;
 			known.gpu.PushSample(it->second.gpuMs);
 			known.activeGpu = true;
 			known.topLevelMs = it->second.topLevelMs;
-		} else if (gpuFrameResolved && includedByFilter && known.hasGpu) {
+		} else if (includedByFilter && known.hasGpu && (gpuFrameResolved || explicitlySkipped)) {
 			known.gpu.PushSample(0.0f);
 		}
 		if (freshGpu)
@@ -576,6 +612,24 @@ void Profiler::RebuildResults()
 		result.cpuHistoryCount = known.cpu.count;
 		results.push_back(std::move(result));
 	}
+}
+
+double Profiler::QpcTicksToMs()
+{
+	LARGE_INTEGER freq;
+	QueryPerformanceFrequency(&freq);
+	return 1000.0 / static_cast<double>(freq.QuadPart);
+}
+
+Profiler::FrameStats Profiler::GetFrameStats() const
+{
+	return {
+		.lastMs = frameHistory.lastMs,
+		.avgMs = frameHistory.GetAverage(),
+		.p95Ms = frameHistory.GetPercentile(95.0f),
+		.p99Ms = frameHistory.GetPercentile(99.0f),
+		.count = frameHistory.count
+	};
 }
 
 std::vector<Profiler::TimerResult> Profiler::GetStatistics(std::string_view timerPrefix) const

@@ -3,7 +3,6 @@
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
-#include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
@@ -54,8 +53,8 @@ void HistogramAutoExposure::DrawCameraExposureReadout()
 	const auto parameters = GetExposureParameters();
 	float iso = cam->ISO;
 	if (cam->Exposure == CinematicCamera::ExposureMode::AutoISO) {
-		exposureReadbackRequestFrame = ImGui::GetFrameCount();
-		if (resetAdaptation || adaptationReadbackFrame < 0 || adaptationReadbackFrame < ImGui::GetFrameCount() - 1) {
+		exposureReadbackRequestFrame = static_cast<int64_t>(globals::state->frameCount);
+		if (resetAdaptation || adaptationReadbackFrame < 0 || adaptationReadbackFrame < static_cast<int64_t>(globals::state->frameCount) - 1) {
 			ImGui::TextDisabled("%s", T("feature.post_processing.cinematic_camera.metering", "Metering..."));
 			return;
 		}
@@ -121,7 +120,7 @@ void HistogramAutoExposure::DrawSettings()
 
 	if (ImGui::CollapsingHeader(T("feature.post_processing.histogram_auto_exposure.histogram", "Histogram"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		histogramReadbackRequested = true;
-		histogramReadbackRequestFrame = ImGui::GetFrameCount();
+		histogramReadbackRequestFrame = static_cast<int64_t>(globals::state->frameCount);
 
 		constexpr float kMinEV100 = -10.f;
 		constexpr float kMaxEV100 = 21.f;
@@ -157,8 +156,8 @@ void HistogramAutoExposure::DrawSettings()
 		ImGui::InvisibleButton("##histogram_canvas", canvasSize);
 
 		auto* drawList = ImGui::GetWindowDrawList();
-		drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(18, 18, 18, 255));
-		drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(80, 80, 80, 255), 0.f, 0, uiScale);
+		drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), ImGui::GetColorU32(IM_COL32(18, 18, 18, 255)));
+		drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), ImGui::GetColorU32(IM_COL32(80, 80, 80, 255)), 0.f, 0, uiScale);
 
 		const float binWidth = canvasSize.x / static_cast<float>(kHistogramBins);
 		for (int i = 0; i < kHistogramBins; i++) {
@@ -168,7 +167,7 @@ void HistogramAutoExposure::DrawSettings()
 			const float x1 = canvasPos.x + static_cast<float>(i + 1) * binWidth;
 			const float y0 = canvasPos.y + canvasSize.y - barHeight;
 			const ImU32 color = i == 0 ? IM_COL32(90, 90, 90, 180) : IM_COL32(90, 150, 220, 220);
-			drawList->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, canvasPos.y + canvasSize.y), color);
+			drawList->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, canvasPos.y + canvasSize.y), ImGui::GetColorU32(color));
 		}
 
 		auto evToX = [&](float ev) {
@@ -179,7 +178,7 @@ void HistogramAutoExposure::DrawSettings()
 
 		auto drawMarker = [&](float ev, ImU32 color) {
 			const float x = evToX(ev);
-			drawList->AddLine(ImVec2(x, canvasPos.y), ImVec2(x, canvasPos.y + canvasSize.y), color, kMarkerThickness * uiScale);
+			drawList->AddLine(ImVec2(x, canvasPos.y), ImVec2(x, canvasPos.y + canvasSize.y), ImGui::GetColorU32(color), kMarkerThickness * uiScale);
 		};
 
 		drawMarker(log2(parameters.LuminanceRange.x) + 3.0f, IM_COL32(255, 200, 0, 255));
@@ -329,17 +328,15 @@ void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 	context->CSSetConstantBuffers(1, 1, &cb);
 
 	const bool histogramReadbackActive =
-		globals::menu->IsEnabled &&
 		histogramReadbackRequested &&
 		ImGui::GetCurrentContext() &&
-		histogramReadbackRequestFrame >= ImGui::GetFrameCount() - 1;
+		histogramReadbackRequestFrame >= static_cast<int64_t>(globals::state->frameCount) - 1;
 	if (!histogramReadbackActive)
 		histogramReadbackRequested = false;
 	const bool exposureReadbackActive =
-		globals::menu->IsEnabled &&
 		ImGui::GetCurrentContext() &&
 		exposureReadbackRequestFrame >= 0 &&
-		exposureReadbackRequestFrame >= ImGui::GetFrameCount() - 1;
+		exposureReadbackRequestFrame >= static_cast<int64_t>(globals::state->frameCount) - 1;
 
 	{
 		// UI readback stays outside the profiled GPU pass.
@@ -422,7 +419,7 @@ void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 		D3D11_MAPPED_SUBRESOURCE adaptMapped{};
 		if (SUCCEEDED(context->Map(adaptationStagingBuffer.get(), 0, D3D11_MAP_READ, 0, &adaptMapped))) {
 			adaptationValue = *reinterpret_cast<float*>(adaptMapped.pData);
-			adaptationReadbackFrame = ImGui::GetFrameCount();
+			adaptationReadbackFrame = static_cast<int64_t>(globals::state->frameCount);
 			context->Unmap(adaptationStagingBuffer.get(), 0);
 		}
 	}

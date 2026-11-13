@@ -1,6 +1,7 @@
 #pragma once
 
 #include <unordered_map>
+#include <vector>
 
 namespace Util
 {
@@ -49,6 +50,12 @@ namespace Util
 	 * @return A string in the format "EditorID (localFormId)", or a SPID fallback.
 	 */
 	std::string GetFormDisplayName(RE::FormID formId);
+
+	/** @brief Cell/worldspace editor ID or location full name, with a same-record fallback. */
+	std::string GetSpatialFormDisplayName(const RE::TESForm* form);
+
+	/** @brief Snapshot registered interior and exterior cells under the engine's form-map lock. */
+	std::vector<RE::TESObjectCELL*> GetLoadedCells();
 
 	/** @brief Owns a lazy editor-ID map snapshot for one initialization batch. */
 	class FormEditorIDIndex

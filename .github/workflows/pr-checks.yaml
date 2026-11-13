@@ -28,6 +28,8 @@ on:
             - "src/Features/**"
             - "package/Shaders/**"
             - "tests/shaders/**"
+            - "tests/test_scene_settings_catalog_generator.py"
+            - "tests/test_scene_settings_policy.py"
             - ".github/configs/shader-validation*.yaml"
             - ".github/configs/shader-cache-inputs.json"
             - ".github/configs/generate-shader-configs.ps1"

@@ -5,6 +5,7 @@
 #ifdef DEVBENCH_BRIDGE_ENABLED
 #	include "Features/Screenshot/BurstAdapter.h"
 #endif
+#include <DirectXTex.h>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -18,12 +19,9 @@
 #include <thread>
 #include <vector>
 
-class ScreenshotSequenceCapture;
+class Texture2D;
 
-namespace DirectX
-{
-	class ScratchImage;
-}
+class ScreenshotSequenceCapture;
 
 struct ScreenshotFeature : public Feature
 {
@@ -45,6 +43,8 @@ struct ScreenshotFeature : public Feature
 	virtual void DrawSettings() override;
 	virtual void LoadSettings(json& a_json) override;
 	virtual void SaveSettings(json& a_json) override;
+	/** @brief Invalidates the explicit UI capture compositor. */
+	void ClearShaderCache() override;
 	/** @brief Resets transient state (no-op for this feature). */
 	virtual void Reset() override;
 	/** @brief Called after all features are loaded (no-op for this feature). */
@@ -67,7 +67,7 @@ struct ScreenshotFeature : public Feature
 	{
 		std::filesystem::path outputPath;
 		std::optional<Util::Subrect::UVRegion> region;
-		/** @brief Use a HUD-free source when one exists (flat HDR only); otherwise the capture includes the HUD and reports it. */
+		/** @brief Use a HUD-free source when one exists (flat SDR or HDR); otherwise the capture includes the HUD and reports it. */
 		bool excludeUi = false;
 		std::function<void(const CaptureResult&)> onComplete;
 	};
@@ -82,7 +82,7 @@ struct ScreenshotFeature : public Feature
 
 	/** @brief Captures a screenshot from the current back buffer and enqueues it for async encoding and save. A request saves to its own path instead of the user's screenshot folder. */
 	void Capture(std::optional<CaptureRequest> request = std::nullopt);
-	/** @brief Checks for a pending capture request and executes Capture() if one is pending. Should be called before the wrapped buffers are cleared. */
+	/** @brief Polls GPU readbacks and requested captures on the render thread before wrapped buffers are cleared. */
 	void ProcessCaptureRequest();
 	/** Dispatches the explicit, versioned native frame-sequence API. */
 	json HandleSequenceRequest(const json& request);
@@ -100,16 +100,25 @@ struct ScreenshotFeature : public Feature
 #endif
 	/** Stops frame scheduling when the feature is disabled. */
 	void OnRuntimeDisabled() override;
+	/** @brief Copies the scene before the HUD draws when an SDR capture is pending, so screenshots exclude the HUD and menu blur. */
+	void SnapshotCleanScene();
+	/** @brief Returns this frame's pre-UI snapshot, or nullptr if none was taken. */
+	ID3D11Texture2D* GetFreshCleanScene() const;
 	bool applyCropToScreenshot = true;
 
 	// Settings
 	std::string screenshotPath = "Screenshots";
 	// HDR PNG quantization (7-16); used when HDR Display captures the back buffer.
 	unsigned int hdrPngBitDepth = 11;
-	// SDR output (HDR captures always use PNG).
+	bool hdrUseAvif = false;
+	// Strip cICP from HDR PNGs so Discord falls back to the embedded ICC profile.
+	bool fixDiscordHdr = true;
+	// SDR output.
 	bool sdrUsePng = true;
 	// After save, put the file path on the clipboard (CF_HDROP).
-	bool copyToClipboard = false;
+	bool copyToClipboard = true;
+	// Suppress the game's own PrintScreen capture by clearing bAllowScreenShot in memory.
+	bool disableVanillaScreenshot = true;
 
 	std::atomic<bool> captureRequested{ false };
 
@@ -129,15 +138,16 @@ private:
 	struct PendingScreenshot
 	{
 		winrt::com_ptr<ID3D11Texture2D> stagingTexture;
-		/// Filled on the render thread once the GPU copy lands; null if the readback failed.
-		std::shared_ptr<DirectX::ScratchImage> image;
+		DirectX::ScratchImage image;
 		DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 		uint32_t width = 0;
 		uint32_t height = 0;
 		std::filesystem::path outputPath;
 		bool saveAsHdrPng = false;
+		bool saveAsHdrAvif = false;
 		bool saveAsSdrPng = false;
 		int hdrPngBitDepth = 11;
+		bool fixDiscordHdr = true;
 		bool copyToClipboard = false;
 		bool silent = false;
 		bool uiExcluded = false;
@@ -154,21 +164,35 @@ private:
 	std::thread screenshotWorker;
 	bool screenshotWorkerRunning = false;
 	std::atomic<uint32_t> screenshotsInFlight{ 0 };
-	/// Render thread only: captures whose GPU copy has not been read back yet.
-	std::vector<PendingScreenshot> copiesInFlight;
+	// Render thread only: the worker never touches the immediate context.
+	std::vector<PendingScreenshot> pendingReadbacks;
 	Util::Subrect::Controller subrect;
+	// bAllowScreenShot as loaded from Skyrim.ini, captured before we first override it.
+	std::optional<bool> vanillaScreenshotDefault;
 
 	// SRV-readable copy used when the capture source's own SRV can't be sampled
 	// directly (kFRAMEBUFFER on flat aliases the swap-chain backbuffer).
 	winrt::com_ptr<ID3D11Texture2D> previewCacheTexture;
 	winrt::com_ptr<ID3D11ShaderResourceView> previewCacheSRV;
+	std::unique_ptr<Texture2D> compositeTexture;
+	winrt::com_ptr<ID3D11ComputeShader> compositeCS;
+	std::unique_ptr<Texture2D> cleanSceneTexture;
+	uint32_t cleanSceneFrame = UINT32_MAX;
+	// Render thread only: a request already waited one frame for its pre-UI snapshot.
+	bool captureDeferred = false;
+	// Render thread only: set while the crop preview is drawn so the next frame snapshots the clean scene.
+	bool previewVisible = false;
 
+	/** @brief Polls in-flight staging copies without stalling and enqueues the finished ones for encoding. */
+	void ProcessPendingReadbacks();
+	/** @brief Writes bAllowScreenShot:Display in memory from disableVanillaScreenshot, restoring the ini value when off. */
+	void ApplyVanillaScreenshotSetting();
 	void EnsureWorkerThread();
 	void StopWorkerThread();
 	void EnqueueScreenshot(PendingScreenshot&& screenshot);
-	/** @brief Reads back every finished GPU copy without waiting and hands it to the worker; render thread only. */
-	void EnqueueFinishedCopies();
 	void ScreenshotWorkerLoop();
 	void EnsurePreviewCache(ID3D11Texture2D* sourceTexture);
+	/** @brief Combines frame-generation scene and UI buffers for a displayed-frame capture. */
+	ID3D11Texture2D* CompositeCapture(ID3D11Texture2D* sourceTexture, ID3D11ShaderResourceView* sceneSRV, ID3D11ShaderResourceView* uiSRV);
 	static void ShowInGameNotification(std::string message);
 };

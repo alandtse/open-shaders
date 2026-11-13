@@ -68,7 +68,12 @@ namespace SharedData
 		// Only read by the GRASS_OPTIMIZATIONS permutation, for grass drawn with an LOD mesh.
 		float MidLODBrightness;
 		float FarLODBrightness;
-		float3 pad0;
+		float PBRWrappedLightingAmount;
+		float SubsurfaceBalance;
+		float CanopyOcclusion;
+		float ClumpShading;
+		bool EnableNewLightingModel;
+		float2 pad0;
 	};
 
 	struct CPMSettings
@@ -177,6 +182,10 @@ namespace SharedData
 		float CharacterRainActivityMultiplier;
 		float CharacterDryTime;
 		uint EnableWeaponRainDrops;
+		float EnvironmentDropSize;
+		float EnvironmentDropBrightness;
+		float EnvironmentDropReflectivity;
+		float EnvironmentDropPadding;
 		float CharacterImpactIntensity;
 		float CharacterRetainedWetness;
 		float2 CharacterStatePadding;
@@ -293,9 +302,9 @@ namespace SharedData
 		float EnvIBLSaturation;
 		float SkyIBLSaturation;
 		float FogAmount;
-		uint DALCMode;  // 0: Luminance Ratio, 1: Color Ratio, 2: DALC + Sky, 3: DALC + Sky (Directional)
+		uint DALCMode;       // 0: Luminance Ratio, 1: Color Ratio, 2: DALC + Sky, 3: DALC + Sky (Directional)
+		uint ENBSkyFalloff;  // Effects 11 owns IBL: darken sky irradiance from below
 		float pad0;
-		float pad1;
 	};
 
 	struct ExtendedTranslucencySettings
@@ -410,19 +419,21 @@ namespace SharedData
 		float CloudsEdgeMoonMultiplier;
 
 		uint EnableProceduralSun;
-		float ProceduralSunDiskRadiusSq;
-		float ProceduralSunDiskEdgeScale;
-		float ProceduralSunGlowIntensity;
+		float ProceduralSunDiskCos;
+		float ProceduralSunDiskRadiance;
+		float ProceduralSunEdgeSoftness;
 
-		float ProceduralSunCoronaFalloff;
-		float ProceduralSunCoronaScale;
-		float SkyScaleMultiplier;
-		float ProceduralSunPad;
-
+		float ProceduralSunHaloCos;
+		float ProceduralSunHaloIntensity;
 		uint UseProceduralGradientWeights;
 		float ProceduralGradientWeightCurve;
 		float LightSpriteCurve;
 		uint EnableParticle;
+		float ProceduralSunHaloFalloff;
+		float ProceduralSunRadianceLimit;
+
+		float SkyScaleMultiplier;
+		float3 pad1;
 
 		float ParticleIntensity;
 		float ParticleLightingInfluence;
@@ -609,6 +620,7 @@ namespace SharedData
 		uint mistFollowWind;
 		float mistWindMultiplier;
 		float pad5;
+		float4 originalFogColorOverride;
 	};
 
 	struct TruePBRSettings
@@ -704,7 +716,7 @@ namespace SharedData
 		float2 pad1;
 	};
 
-#if defined(SNOW_COVER) && defined(PSHADER)
+#if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
 	struct SnowCoverSettings
 	{
 		float Month;
@@ -792,7 +804,7 @@ namespace SharedData
 		GrassCollisionData grassCollisionData;
 		HorizonFixSettings horizonFixSettings;
 		RainRefractionSettings rainRefractionSettings;
-#if defined(SNOW_COVER) && defined(PSHADER)
+#if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
 		SnowCoverSettings snowCoverSettings;
 #endif
 	};
@@ -859,14 +871,9 @@ namespace SharedData
 	// camera-relative frame; defaults to 0 (no correction, backwards-compatible).
 	float4 GetWaterData(float3 worldPosition, uint eyeIndex = 0)
 	{
-		float2 cellF = (((worldPosition.xy + FrameBuffer::CameraPosAdjust[0].xy)) / 4096.0) + 64.0;  // always positive
-		int2 cellInt;
-		float2 cellFrac = modf(cellF, cellInt);
-
-		cellF = worldPosition.xy / float2(4096.0, 4096.0);  // remap to cell scale
-		cellF += 2.5;                                       // 5x5 cell grid
-		cellF -= cellFrac;                                  // align to cell borders
-		cellInt = round(cellF);
+		// floor keeps negative coordinates and cell borders exact
+		float2 absolutePosition = worldPosition.xy + FrameBuffer::CameraPosAdjust[0].xy;
+		int2 cellInt = (int2)(floor(absolutePosition / 4096.0) - floor(FrameBuffer::CameraPosAdjust[0].xy / 4096.0)) + 2;  // 5x5 cell grid
 
 		uint waterTile = (uint)clamp(cellInt.x + (cellInt.y * 5), 0, 24);  // remap xy to 0-24
 

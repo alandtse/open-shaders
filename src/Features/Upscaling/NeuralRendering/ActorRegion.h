@@ -72,6 +72,9 @@ namespace NR::ActorRegion
 	/** @brief When a change to the published crop invalidates NR's temporal history. */
 	inline constexpr Util::Region::ResetPolicy kResetPolicy = Util::Region::ResetPolicy::kOnChange;
 
+	/** @brief The policy while the evaluation shifts its motion vectors by a crop move, so a move alone keeps the history. */
+	inline constexpr Util::Region::ResetPolicy kCompensatedResetPolicy = Util::Region::ResetPolicy::kOnResize;
+
 	/** @brief Largest crop-edge drift that leaves NR's temporal history usable, in pixels. */
 	inline constexpr float kHistoryTolerancePixels = static_cast<float>(Util::Region::kDefaultPixelAlignment);
 

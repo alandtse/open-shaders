@@ -14,8 +14,8 @@ namespace DevBenchBridge::ToolSpecs
 		R"(default every outermost range), samples (1-64, default 1), delayFrames (default 0), nestingLevels (1-8, default 1; each level multiplies the passes) -> {queued,captureId}; )"
 		R"(runs over the next frames, one profiler pass per frame. cancel: stop the running capture. result: optional captureId (default latest), )"
 		R"(detail (boolean: include every range of every sample) -> {pending,capture} while running, )"
-		R"(else {captureId,success,error,chip,startFrame,endFrame,samples,passesPerSample,metrics:[{metric,label}],unsupportedMetrics,summary:[{range,perFrame,incomplete,values:{label:value}}],csvPath}. )"
-		R"(Summary values are per frame: counters summed (gpu__time_duration in ns), rates weighted by range time. Event openshaders.nvperf.completed {captureId,success,error} fires when a capture ends.")"
+		R"(else {captureId,success,error,chip,startFrame,endFrame,samples,passesPerSample,metrics:[{metric,label}],unsupportedMetrics,summary:[{range,perFrame,incomplete,values:{label:value},perSample:{label:[one value per sample]}}],csvPath}. )"
+		R"(Summary values are per frame: counters summed (gpu__time_duration in ns), rates weighted by range time. perSample gives the same values for each sample (zero counters or null rates when its range is absent). Event openshaders.nvperf.completed {captureId,success,error} fires when a capture ends.")"
 		R"(,"inputSchema":{
 	"type": "object",
 	"properties": {

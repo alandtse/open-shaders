@@ -8,7 +8,6 @@
 #include "Menu.h"
 #include "Menu/ThemeManager.h"
 #include "NativeMenu/NativeMenu.h"
-#include "SceneSettingsManager.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/FileSystem.h"
@@ -54,6 +53,8 @@ SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
 	InitializeLog();
 	logger::info("Loaded {} {}", Plugin::NAME, Plugin::VERSION.string());
 	SKSE::Init(a_skse, { .log = false });
+	if (Plugin::BUILD_DESCRIBE != std::format("v{}", Util::GetFormattedVersion(Plugin::VERSION)))
+		logger::info("Build {}", Util::GetBuildLabel());
 	SKSE::AllocTrampoline(1 << 12);
 	return Load();
 }
@@ -165,7 +166,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 bool Load()
 {
 	if (REL::Module::IsVR()) {  // Pre-ReInit check; globals::game::isVR not populated yet
-		REL::IDDB::get().IsVRAddressLibraryAtLeastVersion("0.281.0", true);
+		REL::IDDB::get().IsVRAddressLibraryAtLeastVersion("0.282.0", true);
 	}
 
 	auto privateProfileRedirectorVersion = Util::GetDllVersion(L"Data/SKSE/Plugins/PrivateProfileRedirector.dll");
@@ -197,7 +198,7 @@ bool Load()
 	I18n::GetSingleton()->Init();
 
 	state->Load();
-	state->LoadTheme();  // Load theme settings from SettingsTheme.json
+	state->LoadTheme();  // Load the active theme preset
 
 	// Initialize theme system - create default themes and discover existing ones
 	globals::menu->CreateDefaultThemes();  // Creates JSON files if they don't exist
@@ -208,7 +209,7 @@ bool Load()
 	log->set_level(state->GetLogLevel());
 
 	for (const auto& plugin : Compatibility::incompatiblePlugins) {
-		if (LoadLibrary(plugin.dll)) {
+		if (std::filesystem::exists(plugin.dll)) {
 			auto dllName = stl::utf16_to_utf8(plugin.dll).value_or("<unicode conversion error>"s);
 			auto errorMessage = plugin.reason.empty() ?
 			                        std::format("Incompatible DLL {} detected. Remove it to use {}.", dllName, Plugin::DISPLAY_NAME) :

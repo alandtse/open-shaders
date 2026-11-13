@@ -1,5 +1,6 @@
 #include "NeuralRendering.h"
 
+#include "Features/RenderDoc.h"
 #include "Features/ReverseZ.h"
 #include "Features/Upscaling.h"
 #include "Globals.h"
@@ -209,6 +210,9 @@ struct NeuralRendering::Impl
 	struct Eye
 	{
 		std::unique_ptr<WrappedResource> color, depth, motion, output;
+		/** @brief The eye's motion shifted by the crop's move since the model last ran; the game's motion stays untouched for the gain reuse. */
+		std::unique_ptr<WrappedResource> cropMotion;
+		bool cropMotionActive = false;
 		/** @brief The model's own inputs and output at the reduced model size; created only while the model runs below the eye size. */
 		std::unique_ptr<WrappedResource> lowColor, lowDepth, lowMotion, lowOutput;
 		/** @brief DLSSNR.UIAlpha built from the Masks2 category lane; created only while the material strength is on. */
@@ -222,8 +226,80 @@ struct NeuralRendering::Impl
 	std::array<Eye, 2> eyes;
 	winrt::com_ptr<ID3D11DeviceContext1> context;
 	winrt::com_ptr<ID3DDeviceContextState> isolated;
+	/** @brief True under RenderDoc, whose wrapped context cannot swap context states; NR then saves and clears only the compute bindings it uses. */
+	bool manualState = false;
+	struct ComputeBindings
+	{
+		static constexpr UINT kBuffers = D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT;
+		static constexpr UINT kViews = D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT;
+		static constexpr UINT kSamplers = D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT;
+		static constexpr UINT kUavs = D3D11_PS_CS_UAV_REGISTER_COUNT;
+		winrt::com_ptr<ID3D11ComputeShader> shader;
+		std::array<ID3D11Buffer*, kBuffers> buffers{};
+		std::array<UINT, kBuffers> bufferFirstConstants{};
+		std::array<UINT, kBuffers> bufferConstantCounts{};
+		std::array<ID3D11ShaderResourceView*, kViews> views{};
+		std::array<ID3D11SamplerState*, kSamplers> samplers{};
+		std::array<ID3D11UnorderedAccessView*, kUavs> uavs{};
+
+		static void Clear(ID3D11DeviceContext* ctx)
+		{
+			static constexpr std::array<ID3D11Buffer*, kBuffers> noBuffers{};
+			static constexpr std::array<ID3D11ShaderResourceView*, kViews> noViews{};
+			static constexpr std::array<ID3D11SamplerState*, kSamplers> noSamplers{};
+			static constexpr std::array<ID3D11UnorderedAccessView*, kUavs> noUavs{};
+			ctx->CSSetShader(nullptr, nullptr, 0);
+			ctx->CSSetConstantBuffers(0, kBuffers, noBuffers.data());
+			ctx->CSSetShaderResources(0, kViews, noViews.data());
+			ctx->CSSetSamplers(0, kSamplers, noSamplers.data());
+			ctx->CSSetUnorderedAccessViews(0, kUavs, noUavs.data(), nullptr);
+		}
+		void Save(ID3D11DeviceContext1* ctx)
+		{
+			ctx->CSGetShader(shader.put(), nullptr, nullptr);
+			ctx->CSGetConstantBuffers1(0, kBuffers, buffers.data(), bufferFirstConstants.data(), bufferConstantCounts.data());
+			ctx->CSGetShaderResources(0, kViews, views.data());
+			ctx->CSGetSamplers(0, kSamplers, samplers.data());
+			ctx->CSGetUnorderedAccessViews(0, kUavs, uavs.data());
+		}
+		void Restore(ID3D11DeviceContext1* ctx)
+		{
+			static constexpr std::array<UINT, kUavs> keepCounts = []() {
+				std::array<UINT, kUavs> counts{};
+				counts.fill(~0u);
+				return counts;
+			}();
+			Clear(ctx);
+			ctx->CSSetShader(shader.get(), nullptr, 0);
+			ctx->CSSetConstantBuffers1(0, kBuffers, buffers.data(), bufferFirstConstants.data(), bufferConstantCounts.data());
+			ctx->CSSetShaderResources(0, kViews, views.data());
+			ctx->CSSetSamplers(0, kSamplers, samplers.data());
+			ctx->CSSetUnorderedAccessViews(0, kUavs, uavs.data(), keepCounts.data());
+			for (auto* buffer : buffers)
+				if (buffer)
+					buffer->Release();
+			for (auto* view : views)
+				if (view)
+					view->Release();
+			for (auto* sampler : samplers)
+				if (sampler)
+					sampler->Release();
+			for (auto* uav : uavs)
+				if (uav)
+					uav->Release();
+			*this = {};
+		}
+	};
+
+	void ClearPipeline()
+	{
+		if (manualState)
+			ComputeBindings::Clear(context.get());
+		else
+			context->ClearState();
+	}
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
-	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain, downsampleLow, expandLow;
+	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain, downsampleLow, expandLow, offsetMotion;
 	/** @brief Cbuffer CategoryAlphaCS.hlsl reads: the eye extent, the stereo offset, the softness radius and the eight strengths. */
 	struct alignas(16) CategoryAlphaData
 	{
@@ -249,7 +325,7 @@ struct NeuralRendering::Impl
 		uint32_t regionOverlayEnabled = 0;
 		float regionOutlineThickness = kRegionOutlineThicknessPixels;
 		uint32_t regionActorBaseX = 0, regionActorBaseY = 0, regionActorWidth = 0, regionActorHeight = 0;
-		float2 pad{};
+		float colorStrength = 0.0f, pad = 0.0f;
 		// Per-category tone multipliers, Skin..Landscape in .x; the 16-byte rows mirror
 		// ColorTransferCS.hlsl's float4 CategoryStrength[5].
 		float4 categoryStrength[5]{};
@@ -267,7 +343,7 @@ struct NeuralRendering::Impl
 	static_assert(offsetof(ColorTransferData, regionOutlineThickness) == 116);
 	static_assert(offsetof(ColorTransferData, regionActorBaseX) == 120);
 	static_assert(offsetof(ColorTransferData, regionActorHeight) == 132);
-	static_assert(offsetof(ColorTransferData, pad) == 136);
+	static_assert(offsetof(ColorTransferData, colorStrength) == 136);
 	static_assert(offsetof(ColorTransferData, categoryStrength) == 144);
 	static_assert(offsetof(ColorTransferData, materialMapEnabled) == 224);
 	static_assert(offsetof(ColorTransferData, materialMapStrengthBound) == 236);
@@ -303,6 +379,16 @@ struct NeuralRendering::Impl
 	};
 	static_assert(sizeof(LowResData) == 32);
 	std::unique_ptr<ConstantBuffer> lowResBuffer;
+	/** @brief Cbuffer MotionOffsetCS.hlsl reads. */
+	struct alignas(16) MotionOffsetData
+	{
+		uint32_t width, height;
+		float shiftX, shiftY;
+	};
+	static_assert(sizeof(MotionOffsetData) == 16);
+	std::unique_ptr<ConstantBuffer> motionOffsetBuffer;
+	/** @brief Crop each eye's model last evaluated with; empty until it has, and while no crop applies. */
+	std::array<Util::Subrect::PixelRegion, 2> modelCrop{};
 	/** @brief Per-eye eye-stagger schedule and the gains it may reuse; cleared by any history reset. */
 	NR::Cadence::State cadence;
 	/** @brief Whether the last frame's composite reads each eye's synthesized proxy instead of the model output. */
@@ -363,6 +449,8 @@ struct NeuralRendering::Impl
 	float manualExposure = 1.0f, differenceStrength = 1.0f, splitPosition = 0.5f;
 	float shadowProtect = 0.0f, highlightProtect = 0.0f;
 	float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f;
+	/** @brief Share of the model's colour shift the composite applies, from the tuning. */
+	float colorStrength = 0.0f;
 	/** @brief Per-category tone multipliers from the tuning, consumed by TransferColor's cbuffer. */
 	std::array<float, 5> categoryToneStrength{ 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 	bool useResolutionMotionScale = true;
@@ -390,6 +478,7 @@ struct NeuralRendering::Impl
 
 	void Initialize()
 	{
+		manualState = RenderDoc::IsLoaded();
 		interop.Initialize();
 		// Reuse the interfaces the interop already queried: they are the same device and context, and
 		// the derived types satisfy the context-state and sampler calls below. Re-querying for the
@@ -399,9 +488,11 @@ struct NeuralRendering::Impl
 			throw std::runtime_error("NR needs a D3D11.1 device and immediate context");
 		context.copy_from(interop.Context1());
 		const auto level = globals::d3d::device->GetFeatureLevel();
-		DX::ThrowIfFailed(device->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION,
-			__uuidof(ID3D11Device), nullptr, isolated.put()));
-		Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
+		if (!manualState) {
+			DX::ThrowIfFailed(device->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION,
+				__uuidof(ID3D11Device), nullptr, isolated.put()));
+			Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
+		}
 		D3D11_SAMPLER_DESC samplerDesc{};
 		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
 		samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -414,6 +505,7 @@ struct NeuralRendering::Impl
 		categoryAlphaBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<CategoryAlphaData>(), "NeuralRendering::CategoryAlpha CB");
 		gainReuseBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<GainReuseData>(), "NeuralRendering::GainReuse CB");
 		lowResBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<LowResData>(), "NeuralRendering::LowRes CB");
+		motionOffsetBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<MotionOffsetData>(), "NeuralRendering::MotionOffset CB");
 		runtime.Initialize(interop.Device(), RuntimeDirectory(runtimeVariant), globals::state->IsDeveloperMode(), allowUnverifiedRuntime);
 		ready = true;
 	}
@@ -437,6 +529,7 @@ struct NeuralRendering::Impl
 		format = DXGI_FORMAT_UNKNOWN;
 		lastFrame = UINT32_MAX;
 		lastRegion = {};
+		modelCrop = {};
 		cadence = {};
 		reuseFrame = {};
 		staggerActive = false;
@@ -505,6 +598,7 @@ struct NeuralRendering::Impl
 			eye.color = interop.CreateTexture(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " HDRInput");
 			eye.depth = interop.CreateTexture(gw, gh, DXGI_FORMAT_R32_FLOAT, name + " Depth");
 			eye.motion = interop.CreateTexture(gw, gh, DXGI_FORMAT_R16G16_FLOAT, name + " Motion");
+			eye.cropMotion = interop.CreateTexture(gw, gh, DXGI_FORMAT_R16G16_FLOAT, name + " CropMotion");
 			eye.output = interop.CreateTexture(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " HDROutput");
 			if (lw) {
 				eye.lowColor = interop.CreateTexture(lw, lh, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " LowHDRInput");
@@ -578,7 +672,8 @@ struct NeuralRendering::Impl
 
 	void Transition(ID3D12GraphicsCommandList* commands, Eye& eye, bool enter, bool low = false)
 	{
-		TransitionResources(commands, { (low ? eye.lowColor : eye.color)->resource.get(), (low ? eye.lowDepth : eye.depth)->resource.get(), (low ? eye.lowMotion : eye.motion)->resource.get(), (low ? eye.lowOutput : eye.output)->resource.get(), eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr },
+		const auto& motion = low ? eye.lowMotion : (eye.cropMotionActive ? eye.cropMotion : eye.motion);
+		TransitionResources(commands, { (low ? eye.lowColor : eye.color)->resource.get(), (low ? eye.lowDepth : eye.depth)->resource.get(), motion->resource.get(), (low ? eye.lowOutput : eye.output)->resource.get(), eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr },
 			enter);
 	}
 
@@ -639,7 +734,7 @@ struct NeuralRendering::Impl
 			texture->CreateUAV(uav);
 			eye.toneData = std::move(texture);
 		}
-		context->ClearState();
+		ClearPipeline();
 		ColorTransferData data{ width, height, i * width };
 		SetRegion(data, i);
 		colorBuffer->Update(data);
@@ -651,7 +746,7 @@ struct NeuralRendering::Impl
 		context->CSSetUnorderedAccessViews(2, 1, &output, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-		context->ClearState();
+		ClearPipeline();
 	}
 
 	/** @brief Creates one eye's stagger textures; only the eyes a stagger frame touches allocate them. */
@@ -670,7 +765,7 @@ struct NeuralRendering::Impl
 		srv.Texture2D.MipLevels = 1;
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uav{};
 		uav.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-		desc.Format = srv.Format = uav.Format = DXGI_FORMAT_R16G16_FLOAT;
+		desc.Format = srv.Format = uav.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 		eye.gainHistory = std::make_unique<Texture2D>(desc, std::format("NeuralRendering::Eye{} GainHistory", i).c_str());
 		eye.gainHistory->CreateSRV(srv);
 		eye.gainHistory->CreateUAV(uav);
@@ -699,6 +794,7 @@ struct NeuralRendering::Impl
 	{
 		ColorTransferData data{ width, height, i * width };
 		SetRegion(data, i);
+		data.colorStrength = colorStrength;
 		colorBuffer->Update(data);
 		GainReuseData reuse{ Util::GetCameraData(), globals::features::reverseZ.IsActive() ? 1u : 0u, crossEye ? 1u : 0u };
 		if (crossEye) {
@@ -708,7 +804,7 @@ struct NeuralRendering::Impl
 			reuse.stereoMap = frameBuffer.GetCameraViewProj(1 - i) * DirectX::SimpleMath::Matrix::CreateTranslation(offset.x, offset.y, offset.z).Transpose() * frameBuffer.GetCameraViewProjInverse(i);
 		}
 		gainReuseBuffer->Update(reuse);
-		context->ClearState();
+		ClearPipeline();
 		ID3D11Buffer* buffers[]{ colorBuffer->CB(), gainReuseBuffer->CB() };
 		context->CSSetConstantBuffers(0, ARRAYSIZE(buffers), buffers);
 		globals::state->BindSharedDataCS(context.get(), true);
@@ -730,7 +826,7 @@ struct NeuralRendering::Impl
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-		context->ClearState();
+		ClearPipeline();
 	}
 
 	/** @brief Rebuilds one eye's proxy from its stored gain reprojected by motion, so the composite applies the same tone edit for a frame the model did not run. */
@@ -756,7 +852,48 @@ struct NeuralRendering::Impl
 		context->CSSetUnorderedAccessViews(2, 1, &output, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-		context->ClearState();
+		ClearPipeline();
+	}
+
+	/**
+	 * @brief Writes the eye's motion plus the crop's origin move since the model last ran, so the model's crop-local
+	 *        history follows the scene when the crop moves. NGX motion points from the current to the previous
+	 *        position, so the shift is the current origin minus the previous one, in the units the model reads.
+	 */
+	void ApplyCropMotion(uint32_t i, const NR::Tuning& tuning, uint64_t frameNumber)
+	{
+		auto& eye = eyes[i];
+		eye.cropMotionActive = false;
+		if (!region.active || !eye.cropMotion)
+			return;
+		float shiftX, shiftY;
+		if (!Util::Region::CropOriginShift(Util::Region::ClampToFrame(region.eye[i], width, height), modelCrop[i], shiftX, shiftY) ||
+			(shiftX == 0.0f && shiftY == 0.0f))
+			return;
+		float scaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
+		float scaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
+		const uint64_t previous = cadence.lastModelFrame[i];
+		if (previous != NR::Cadence::kNoModelFrame && frameNumber - previous > 1 && tuning.skipFrameGapMode == 0) {
+			const float gapScale = NR::Cadence::GapScale(frameNumber, previous);
+			scaleX *= gapScale;
+			scaleY *= gapScale;
+		}
+		CS_GPU_PASS("Upscaling::NRCropMotion");
+		auto* shader = offsetMotion.Get(L"Data/Shaders/Upscaling/NeuralRendering/MotionOffsetCS.hlsl",
+			{}, "cs_5_0", "Offset", "NeuralRendering::MotionOffset CS");
+		if (!shader)
+			throw std::runtime_error("NR motion-offset shader unavailable");
+		motionOffsetBuffer->Update(MotionOffsetData{ guideWidth, guideHeight, shiftX / scaleX, shiftY / scaleY });
+		auto buffer = motionOffsetBuffer->CB();
+		context->CSSetConstantBuffers(0, 1, &buffer);
+		ID3D11ShaderResourceView* input = eye.motion->srv;
+		context->CSSetShaderResources(0, 1, &input);
+		ID3D11UnorderedAccessView* output = eye.cropMotion->uav;
+		context->CSSetUnorderedAccessViews(0, 1, &output, nullptr);
+		context->CSSetShader(shader, nullptr, 0);
+		context->Dispatch((guideWidth + 7) / 8, (guideHeight + 7) / 8, 1);
+		ClearPipeline();
+		eye.cropMotionActive = true;
 	}
 
 	/** @brief Averages one eye's proxy down to the model's size and takes its depth and motion at the footprint centres. */
@@ -768,7 +905,7 @@ struct NeuralRendering::Impl
 		if (!shader)
 			throw std::runtime_error("NR downsample shader unavailable");
 		auto& eye = eyes[i];
-		context->ClearState();
+		ClearPipeline();
 		lowResBuffer->Update(LowResData{ lowWidth, lowHeight, guideWidth, guideHeight, 0.0f, 0 });
 		auto buffer = lowResBuffer->CB();
 		context->CSSetConstantBuffers(1, 1, &buffer);
@@ -780,7 +917,7 @@ struct NeuralRendering::Impl
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((lowWidth + 7) / 8, (lowHeight + 7) / 8, 1);
-		context->ClearState();
+		ClearPipeline();
 	}
 
 	/**
@@ -926,7 +1063,7 @@ struct NeuralRendering::Impl
 		if (!shader)
 			throw std::runtime_error("NR gain-expand shader unavailable");
 		auto& eye = eyes[i];
-		context->ClearState();
+		ClearPipeline();
 		ColorTransferData data{ width, height, i * width };
 		colorBuffer->Update(data);
 		lowResBuffer->Update(LowResData{ lowWidth, lowHeight, guideWidth, guideHeight, kModelGuideSigmaStops, guided ? 1u : 0u });
@@ -940,13 +1077,13 @@ struct NeuralRendering::Impl
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-		context->ClearState();
+		ClearPipeline();
 	}
 
 	void TransferColor(uint32_t i, bool prepare)
 	{
 		CS_GPU_PASS_SELECT(prepare, "Upscaling::NRPrepare", "Upscaling::NRComposite");
-		context->ClearState();
+		ClearPipeline();
 		auto& eye = eyes[i];
 		ColorTransferData data{ width, height, i * width };
 		data.conversionMode = static_cast<uint32_t>((debugOptions & NR::Diagnostics::DisableColorTransform) ? NR::Diagnostics::ColorConversion::Raw : conversionMode);
@@ -962,6 +1099,7 @@ struct NeuralRendering::Impl
 		data.toneLowStrength = toneLowStrength;
 		data.toneRadius = toneRadius;
 		data.toneHighStrength = toneHighStrength;
+		data.colorStrength = colorStrength;
 		for (size_t category = 0; category < categoryToneStrength.size(); ++category)
 			data.categoryStrength[category].x = categoryToneStrength[category];
 		data.hasToneData = !prepare && NeedsToneData();
@@ -1009,7 +1147,7 @@ struct NeuralRendering::Impl
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
 		context->CSSetShader(prepare ? prepareColor.get() : compositeColor.get(), nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-		context->ClearState();
+		ClearPipeline();
 	}
 
 	/**
@@ -1046,7 +1184,7 @@ struct NeuralRendering::Impl
 					const auto name = eyeCount > 1 ? std::format("NeuralRendering::MaterialAlpha{}", i) : std::string("NeuralRendering::MaterialAlpha");
 					eye.materialAlpha = interop.CreateTexture(width, height, DXGI_FORMAT_R8_UNORM, name);
 				}
-				context->ClearState();
+				ClearPipeline();
 				categoryAlphaBuffer->Update(CategoryAlphaData{ width, height, i * width, strengths.edgeSoftness,
 					{ strengths.strength[NR::MaterialStrength::kNone], strengths.strength[NR::MaterialStrength::kSkin],
 						strengths.strength[NR::MaterialStrength::kHair], strengths.strength[NR::MaterialStrength::kEyes] },
@@ -1059,7 +1197,7 @@ struct NeuralRendering::Impl
 				context->CSSetUnorderedAccessViews(0, 1, &output, nullptr);
 				context->CSSetShader(shader, nullptr, 0);
 				context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-				context->ClearState();
+				ClearPipeline();
 			}
 			if (sbsWidth) {
 				if (!sbsAlpha)
@@ -1087,18 +1225,29 @@ struct NeuralRendering::Impl
 		{
 			ID3D11DeviceContext1* context;
 			winrt::com_ptr<ID3DDeviceContextState> previous;
-			ContextScope(ID3D11DeviceContext1* ctx, ID3DDeviceContextState* isolated) :
-				context(ctx)
+			ComputeBindings saved;
+			bool manual;
+			ContextScope(ID3D11DeviceContext1* ctx, ID3DDeviceContextState* isolated, bool manualBindings) :
+				context(ctx), manual(manualBindings)
 			{
+				if (manual) {
+					saved.Save(context);
+					ComputeBindings::Clear(context);
+					return;
+				}
 				context->SwapDeviceContextState(isolated, previous.put());
 				context->ClearState();
 			}
 			~ContextScope()
 			{
+				if (manual) {
+					saved.Restore(context);
+					return;
+				}
 				context->ClearState();
 				context->SwapDeviceContextState(previous.get(), nullptr);
 			}
-		} scope(context.get(), isolated.get());
+		} scope(context.get(), isolated.get(), manualState);
 		// The stagger's own gain history would be blended into frame generation's interpolation, and a
 		// second eye's evaluation is what frame generation expects, so it is off whenever it is active.
 		const bool frameGeneration = FrameGenerationActive();
@@ -1117,8 +1266,9 @@ struct NeuralRendering::Impl
 			PlanSbs();
 		else
 			ReleaseSbs();
-		staggerActive = !lowRes && !sbs && tuning.skipFrameReuse && globals::game::isVR &&
-		                eyeCount == 2 && !frameGeneration;
+		const bool eyeStagger = tuning.skipFrameReuse && globals::game::isVR && eyeCount == 2;
+		const bool flatReuse = tuning.flatReuseInterval > 1 && !globals::game::isVR && eyeCount == 1;
+		staggerActive = !lowRes && !sbs && (eyeStagger || flatReuse) && !frameGeneration;
 		const bool calibrationRunning = globals::features::upscaling.neuralRendering.GetCalibration().state == NR::CropCalibration::State::kRunning;
 		reuseFrame = {};
 		const bool gainResourcesWanted = staggerActive || lowRes || (sbs && tuning.modelVerify);
@@ -1179,7 +1329,12 @@ struct NeuralRendering::Impl
 				}
 			}
 		}
-		context->ClearState();
+		ClearPipeline();
+		for (uint32_t i = 0; i < eyeCount; ++i) {
+			eyes[i].cropMotionActive = false;
+			if (!eyes[i].frame.reset && !sbs && !lowRes && !(diagnostic.options & NR::Diagnostics::ZeroMotion))
+				ApplyCropMotion(i, tuning, static_cast<uint64_t>(diagnostic.number));
+		}
 		if (lowRes) {
 			for (uint32_t i = 0; i < eyeCount; ++i)
 				DownsampleModelInputs(i);
@@ -1190,8 +1345,11 @@ struct NeuralRendering::Impl
 		for (uint32_t i = 0; i < eyeCount; ++i)
 			invalidate |= eyes[i].frame.reset;
 		const std::array<uint64_t, 2> previousModel = cadence.lastModelFrame;
+		const auto& cameraSample = diagnostic.camera[0];
+		const bool highMotion = NR::Cadence::IsHighMotion(cameraSample.directionDot, cameraSample.distance,
+			tuning.flatReuseMaxTurnDegrees, tuning.flatReuseMaxMoveUnits);
 		const NR::Cadence::Inputs cadenceInputs{ staggerActive, static_cast<bool>(globals::game::isVR), eyeCount,
-			static_cast<uint64_t>(diagnostic.number), invalidate };
+			static_cast<uint64_t>(diagnostic.number), invalidate, tuning.flatReuseInterval, highMotion, tuning.skipFrameInterval };
 		const auto decision = NR::Cadence::Decide(cadenceInputs, cadence);
 		const bool verifyReuse = verifyRequested && staggerActive;
 		std::array<bool, 2> verifyEye{};
@@ -1287,9 +1445,10 @@ struct NeuralRendering::Impl
 					guides.depthInverted = globals::features::reverseZ.IsActive();
 					if (previousModel[i] != NR::Cadence::kNoModelFrame &&
 						static_cast<uint64_t>(diagnostic.number) - previousModel[i] > 1 && tuning.skipFrameGapMode == 0) {
-						guides.motionScaleX *= 2.0f;
-						guides.motionScaleY *= 2.0f;
-						eye.frame.frameTimeMs = NR::SanitizeFrameTimeMs(eye.frame.frameTimeMs * 2.0f);
+						const float gapScale = NR::Cadence::GapScale(static_cast<uint64_t>(diagnostic.number), previousModel[i]);
+						guides.motionScaleX *= gapScale;
+						guides.motionScaleY *= gapScale;
+						eye.frame.frameTimeMs = NR::SanitizeFrameTimeMs(eye.frame.frameTimeMs * gapScale);
 					}
 					const NR::ProtectionResources protection{
 						materialStrengthInFlight && eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr,
@@ -1299,7 +1458,7 @@ struct NeuralRendering::Impl
 					};
 					const auto& modelColor = lowRes ? eye.lowColor : eye.color;
 					const auto& modelDepth = lowRes ? eye.lowDepth : eye.depth;
-					const auto& modelMotion = lowRes ? eye.lowMotion : eye.motion;
+					const auto& modelMotion = lowRes ? eye.lowMotion : (eye.cropMotionActive ? eye.cropMotion : eye.motion);
 					const auto& modelOutput = lowRes ? eye.lowOutput : eye.output;
 					success = runtime.Evaluate(eyeCommands, i, modelColor->resource.get(), modelDepth->resource.get(),
 						modelMotion->resource.get(), modelOutput->resource.get(), protection,
@@ -1308,6 +1467,7 @@ struct NeuralRendering::Impl
 				diagnostic.result[i] = eye.frame.result;
 				if (success)
 					diagnostic.evaluated |= 1u << i;
+				modelCrop[i] = success && !sbs && !lowRes ? Util::Region::ClampToFrame(region.eye[i], width, height) : Util::Region::kEmptyRegion;
 				if (eye.frame.created) {
 					diagnostic.created |= 1u << i;
 					diagnostic.reset[i] |= NR::Diagnostics::FeatureCreated;
@@ -1836,7 +1996,7 @@ namespace
 				const auto mode = static_cast<NR::EyeMode>(i);
 				const bool experimental = mode == NR::EyeMode::kSideBySide;
 				ImGui::BeginDisabled(experimental && !developerMode);
-				if (ImGui::Selectable(labels[i], mode == current)) {
+				if (Util::RoundedSelectable(labels[i], mode == current)) {
 					NR::SetEyeMode(tuning, mode);
 					changed = true;
 				}
@@ -1846,8 +2006,16 @@ namespace
 		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("eye_mode_tooltip"),
-				"How the two eyes are evaluated. Parallel eyes runs each eye's model at once, the second on its own queue: the same image as separate eyes and about 1 ms faster (about 2 ms with Follow Foveation). Side by side evaluates both eyes as one image on a single instance: about 3 ms faster than separate eyes, with a small difference between the halves. Alternate eyes runs one eye's model per frame and reuses its gain on the other: about 3.5 ms faster than separate eyes, but it can mismatch the eyes where the reuse fails. Separate eyes runs one after the other and is the baseline to compare against. Side by side needs Developer Mode. The Performance profile selects Alternate eyes."));
+				"How the two eyes are evaluated. Parallel eyes runs each eye's model at once, the second on its own queue: the same image as separate eyes and about 1 ms faster (about 2 ms with Follow Foveation). Side by side evaluates both eyes as one image on a single instance: about 3 ms faster than separate eyes, with a small difference between the halves. Alternate eyes runs one eye's model per frame and reuses its gain on the other: about 3.5 ms faster than separate eyes, but it can mismatch the eyes where the reuse fails. Separate eyes runs one after the other and is the baseline to compare against. Side by side needs Developer Mode. The Performance profile selects Alternate eyes, with a per-eye interval of 3 unless you changed it."));
 		if (current == NR::EyeMode::kAlternate) {
+			int eyeInterval = static_cast<int>(tuning.skipFrameInterval);
+			if (ImGui::SliderInt(T(TKEY("skip_frame_interval"), "Model Every Nth Frame (Per Eye)"), &eyeInterval, static_cast<int>(NR::Tuning::kMinSkipFrameInterval), static_cast<int>(NR::Tuning::kMaxSkipFrameInterval))) {
+				tuning.skipFrameInterval = static_cast<uint32_t>(eyeInterval);
+				changed = true;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("skip_frame_interval_tooltip"),
+					"How many frames pass between model runs on each eye. 2 alternates the eyes every frame. 3 saves about 0.9 ms of GPU time per frame over 2 and 4 about 1.4 ms, at a small cost in accuracy that grows with the interval, so fast head and body motion can look softer."));
 			const std::array<const char*, NR::Tuning::kMaxSkipFrameGapMode + 1> gapModeLabels{
 				T(TKEY("skip_frame_gap_notify"), "Notify the model"),
 				T(TKEY("skip_frame_gap_reset"), "Reset the eye's history"),
@@ -1855,7 +2023,7 @@ namespace
 			changed |= Util::Combo(T(TKEY("skip_frame_gap_mode"), "Gap Handling"), &tuning.skipFrameGapMode, gapModeLabels);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("skip_frame_gap_mode_tooltip"),
-					"An eye the model skipped runs again two frames after its last run. Notify the model doubles the motion and the frame time it is given, so both frames are covered; Reset the eye's history drops what it accumulated instead."));
+					"An eye the model skipped runs again after the per-eye interval. Notify the model scales the motion and the frame time it is given to cover the skipped frames; Reset the eye's history drops what it accumulated instead."));
 			changed |= ImGui::Checkbox(T(TKEY("cross_eye_gain"), "Fill Gaps From The Other Eye"), &tuning.crossEyeGain);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("cross_eye_gain_tooltip"),
@@ -2071,7 +2239,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		}
 		if (ImGui::BeginCombo(T(TKEY("runtime_variant"), "Runtime Build"), RuntimeBuildLabel(builds[selected]).c_str())) {
 			for (size_t i = 0; i < builds.size(); ++i) {
-				if (ImGui::Selectable(RuntimeBuildLabel(builds[i]).c_str(), i == selected) && i != selected) {
+				if (Util::RoundedSelectable(RuntimeBuildLabel(builds[i]).c_str(), i == selected) && i != selected) {
 					tuning.runtimeVariant = builds[i].variant;
 					changed = true;
 					resetHistory = true;
@@ -2107,6 +2275,29 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("region_follow_foveation_tooltip"),
 					"With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view."));
+		}
+		if (!globals::game::isVR) {
+			int interval = static_cast<int>(tuning.flatReuseInterval);
+			if (ImGui::SliderInt(T(TKEY("flat_reuse_interval"), "Model Every Nth Frame"), &interval, 1, static_cast<int>(NR::Tuning::kMaxFlatReuseInterval))) {
+				tuning.flatReuseInterval = static_cast<uint32_t>(interval);
+				changed = true;
+				resetHistory = true;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("flat_reuse_interval_tooltip"),
+					"Runs the model once per this many frames and carries its reprojected tone gain onto the frames between, which saves the model's GPU time on those frames: about 1.5 ms per frame at 2 and 2 ms at 3. A carried frame keeps the model's tone edit but not its detail, and a frame where the camera turns or moves quickly runs the model anyway. 1 runs the model every frame. Off while frame generation is active."));
+			if (tuning.flatReuseInterval > 1 && developerMode) {
+				if (ImGui::SliderFloat(T(TKEY("flat_reuse_max_turn"), "Run Model Above Turn (deg/frame)"), &tuning.flatReuseMaxTurnDegrees, 0.0f, NR::Tuning::kMaxFlatReuseTurnDegrees, "%.2f"))
+					changed = true;
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::TextUnformatted(T(TKEY("flat_reuse_max_turn_tooltip"),
+						"Runs the model on a frame where the camera turned more than this many degrees since the last frame, instead of carrying the old gain. 0 never falls back on turning."));
+				if (ImGui::SliderFloat(T(TKEY("flat_reuse_max_move"), "Run Model Above Move (units/frame)"), &tuning.flatReuseMaxMoveUnits, 0.0f, NR::Tuning::kMaxFlatReuseMoveUnits, "%.1f"))
+					changed = true;
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::TextUnformatted(T(TKEY("flat_reuse_max_move_tooltip"),
+						"Runs the model on a frame where the camera moved more than this many world units since the last frame, instead of carrying the old gain. 0 never falls back on movement."));
+			}
 		}
 		if (ImGui::Checkbox(T(TKEY("region_of_interest"), "Limit to Tracked Actor"), &tuning.regionOfInterest)) {
 			changed = true;
@@ -2154,11 +2345,15 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	changed |= ImGui::SliderFloat(T(TKEY("skin_structure"), "Skin Structure Strength"), &tuning.skinStructureStrength, NR::Tuning::kAutomaticSkinStructure, NR::Tuning::kMaxStrength,
 		tuning.skinStructureStrength == NR::Tuning::kAutomaticSkinStructure ? T(TKEY("skin_auto"), "Auto") : "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
+	changed |= ImGui::SliderFloat(T(TKEY("color_strength"), "Colour Strength"), &tuning.colorStrength, NR::Tuning::kMinColorStrength, NR::Tuning::kMaxColorStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("color_strength_tooltip"),
+			"How much of Neural Rendering's colour shift is applied on top of its brightness edit. 0 keeps the game's own colours; 1 takes the model's shift in full. Also scaled by the Category Tone Strengths. High values can tint skin and flicker."));
 	if (ImGui::CollapsingHeader(T(TKEY("category_tone"), "Category Tone Strengths"))) {
 		ImGui::PushID("categoryTone");
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("category_tone_tooltip"),
-				"Scales Neural Rendering's tone edit per material: 0 leaves a material's brightness untouched, 1 is the normal edit, and 2 doubles it. Materials the deferred buffer does not label are unaffected."));
+				"Scales Neural Rendering's tone edit and colour shift per material: 0 leaves a material's brightness and colour untouched, 1 is the normal edit, and 2 doubles the tone edit. Materials the deferred buffer does not label are unaffected."));
 		changed |= ImGui::SliderFloat(T(TKEY("category_skin"), "Skin"), &tuning.skinToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		changed |= ImGui::SliderFloat(T(TKEY("category_hair"), "Hair"), &tuning.hairToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		changed |= ImGui::SliderFloat(T(TKEY("category_eyes"), "Eyes"), &tuning.eyeToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
@@ -2170,15 +2365,15 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	const bool cropDisabled = !tuning.regionOfInterest;
 	if (DrawContextProfiles(contexts, cropDisabled))
 		resetHistory = true;
-	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
+	if (Util::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
 		tuning = {};
 		contexts = {};
 		changed = recreateTuning = true;
 	}
 	ImGui::SameLine();
-	if (ImGui::Button(T(TKEY("reset_history"), "Reset NR History")))
+	if (Util::Button(T(TKEY("reset_history"), "Reset NR History")))
 		resetHistory = true;
-	if (enabled && ImGui::Button(T(TKEY("retry"), "Retry NR")))
+	if (enabled && Util::Button(T(TKEY("retry"), "Retry NR")))
 		RequestRetry();
 	if (globals::state->IsDeveloperMode() && ImGui::TreeNodeEx(T(TKEY("developer"), "Developer"), ImGuiTreeNodeFlags_None)) {
 		ImGui::SeparatorText(T(TKEY("developer_model"), "Model input"));
@@ -2203,7 +2398,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 				"How much margin the crop keeps around the tracked character. Padded keeps the normal margin; Tight evaluates the character's own outline with no margin, for checking what the crop covers."));
 		ImGui::EndDisabled();
 		// The sweep forces its own centred crops, so it stays usable without a tracked actor.
-		if (ImGui::Button(T(TKEY("crop_calibrate"), "Calibrate Crop Cost")))
+		if (Util::Button(T(TKEY("crop_calibrate"), "Calibrate Crop Cost")))
 			RequestCalibration();
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("crop_calibrate_tooltip"),
@@ -2542,7 +2737,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		else if (foveaClip)
 			source = RegionSource::kFovea;
 		regionSource.store(static_cast<uint32_t>(source), std::memory_order_relaxed);
-		if (Util::Region::ShouldResetForRegion(NR::ActorRegion::kResetPolicy, work.region, work.lastRegion, NR::ActorRegion::kHistoryTolerancePixels))
+		const auto regionPolicy = work.sbsEnabled ? NR::ActorRegion::kResetPolicy : NR::ActorRegion::kCompensatedResetPolicy;
+		if (Util::Region::ShouldResetForRegion(regionPolicy, work.region, work.lastRegion, NR::ActorRegion::kHistoryTolerancePixels))
 			reset |= NR::Diagnostics::RegionChanged;
 		work.lastRegion = work.region;
 		if (diagnostic.options & NR::Diagnostics::DisableTone)
@@ -2553,6 +2749,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			boundedTuning.skinStructureStrength = NR::Tuning::kAutomaticSkinStructure;
 		work.toneLowStrength = boundedTuning.localToneStrength;
 		work.toneHighStrength = boundedTuning.localStructureStrength;
+		work.colorStrength = boundedTuning.colorStrength;
 		work.categoryToneStrength = { boundedTuning.skinToneStrength, boundedTuning.hairToneStrength,
 			boundedTuning.eyeToneStrength, boundedTuning.foliageToneStrength, boundedTuning.landscapeToneStrength };
 		work.regionOverlay = boundedTuning.regionOverlay;

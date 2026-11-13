@@ -78,6 +78,7 @@ namespace CharacterRainSpots
 	static const uint FlowDebugMode = 4u;
 	static const uint SurfaceDebugMode = 5u;
 	static const uint WeaponDebugMode = 6u;
+	static const uint EnvironmentDebugMode = 7u;
 	static const uint SettledHashSeed = 191u;
 	static const uint ImpactHashSeed = 719u;
 	static const uint FlowColumnHashSeed = 137u;
@@ -231,10 +232,13 @@ namespace CharacterRainSpots
 
 	/** @brief Blends independent settled, arriving, and flowing water layers with bounded per-cell work. */
 	float3 EvaluateProjection(float2 surfacePosition, float3 surfaceMetric, float footprint, uint projectionIndex,
-		float rainDensity, float settledDensity, float flowSlope, bool stationaryOnly)
+		float rainDensity, float settledDensity, float flowSlope, bool stationaryOnly, float radiusMultiplier)
 	{
 		const SharedData::WetnessEffectsSettings settings = SharedData::wetnessEffectsSettings;
-		float configuredRadius = settings.CharacterSpotRadius * (stationaryOnly ? WeaponRadiusScale : 1.0f);
+		float configuredRadius =
+			(radiusMultiplier < 0.0f ? 1.0f : settings.CharacterSpotRadius) *
+			abs(radiusMultiplier) *
+			(stationaryOnly ? WeaponRadiusScale : 1.0f);
 		float baseRadius = max(configuredRadius, MinimumBeadRadius) * BeadRadiusScale;
 		float3 settled = float3(0.0f, 0.0f, 0.0f);
 		float3 arriving = float3(0.0f, 0.0f, 0.0f);
@@ -257,7 +261,7 @@ namespace CharacterRainSpots
 
 	/** @brief Returns surface-attached coverage, water height, and trail absorption shared by both eyes. */
 	float3 Evaluate(float3 modelPosition, float3 relativeWorldPosition, float3 worldNormal, float skyVisibility,
-		bool heldWeapon, uint eyeIndex)
+		bool heldWeapon, uint eyeIndex, float radiusMultiplier)
 	{
 		const SharedData::WetnessEffectsSettings settings = SharedData::wetnessEffectsSettings;
 		float retainedWetness = settings.CharacterRetainedWetness;
@@ -310,7 +314,7 @@ namespace CharacterRainSpots
 						float3 surfaceV = (worldDy * surfaceDx.x - worldDx * surfaceDy.x) * inverseDeterminant;
 						float3 surfaceMetric = abs(determinant) > EPSILON_DIVISION ? float3(dot(surfaceU, surfaceU), dot(surfaceU, surfaceV), dot(surfaceV, surfaceV)) : float3(1, 0, 1);
 						water += EvaluateProjection(surfacePosition, surfaceMetric, footprint, projectionIndex,
-									 rainDensity, settledDensity, flowSlope, heldWeapon) *
+									 rainDensity, settledDensity, flowSlope, heldWeapon, radiusMultiplier) *
 						         projectionWeights[projectionIndex];
 					}
 				}
@@ -321,6 +325,14 @@ namespace CharacterRainSpots
 		}
 		return saturate(water);
 	}
+
+	/** @brief Preserve existing character and weapon droplet calls. */
+	float3 Evaluate(float3 modelPosition, float3 relativeWorldPosition, float3 worldNormal, float skyVisibility,
+		bool heldWeapon, uint eyeIndex)
+	{
+		return Evaluate(modelPosition, relativeWorldPosition, worldNormal, skyVisibility, heldWeapon, eyeIndex, 1.0f);
+	}
+
 }
 
 #endif

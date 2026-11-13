@@ -98,7 +98,9 @@ public:
 		// Generated frames per real frame (1=2x). Clamped at apply time to the
 		// hardware-reported DLSSGState::numFramesToGenerateMax.
 		uint dlssgFramesToGenerate = 1;
-		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
+		bool dlssgDynamic = false;
+		float dlssgDynamicTargetFPS = 0.0f;  // 0 = display refresh rate
+		uint streamlineLogLevel = 0;         // 0=Off, 1=Default, 2=Verbose
 		// Both default to 0.8, matching AMD's own FSR3 sample default.
 		float sharpnessFSR = 0.8f;
 		bool sharpnessEnabledDLSS = false;
@@ -129,6 +131,7 @@ public:
 
 	static constexpr float kVRRenderScaleMin = 0.33f;
 	static constexpr float kVRRenderScaleMax = 0.95f;
+	static constexpr float kDLSSGDynamicTargetFPSMax = 360.0f;
 
 	Settings settings;
 
@@ -514,7 +517,7 @@ public:
 		       IsDlssSharpeningEnabled() && GetUpscaleMethod() == UpscaleMethod::kDLSS;
 	}
 
-	static void TimerSleepQPC(int64_t targetQPC);
+	static void TimerSleepQPC(int64_t targetQPC, int64_t frequency);
 
 	void FrameLimiter();
 
@@ -523,7 +526,6 @@ public:
 	// Unified interface methods - external code should use these instead of direct access
 	void LoadUpscalingSDKs();  // Loads all SDKs at once
 	HANDLE GetFrameLatencyWaitableObject() const;
-	float GetFrameTime() const;
 
 	// Backend interface methods
 	bool IsBackendInitialized() const;

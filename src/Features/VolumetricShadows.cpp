@@ -187,8 +187,12 @@ void VolumetricShadows::CopyShadowLightData()
 
 						context->CSSetSamplers(0, 1, &linearSampler);
 
-						// Dispatch covers full input: each thread gathers 2x2, 8 threads per group
-						auto dispatchSize = srcDesc.Width / 16;
+						// A group spans 16 source texels; a 32x reduction gathers twice per thread.
+						auto dispatchSize = [&](uint32_t outputSize) {
+							return srcDesc.Width / 16 / std::max(srcDesc.Width / outputSize / 16, 1u);
+						};
+						auto mip0Groups = dispatchSize(SHADOW_COPY_SIZE);
+						auto mip1Groups = dispatchSize(SHADOW_COPY_SIZE / 2);
 
 						// Mip 0 (cascade 1)
 						ID3D11UnorderedAccessView* csUavs[1]{ shadowCopyMip0UAV };
@@ -196,7 +200,7 @@ void VolumetricShadows::CopyShadowLightData()
 						context->CSSetShader(downsampleMip0, nullptr, 0);
 						{
 							CS_GPU_PASS("VolumetricShadows::DownsampleMip0");
-							context->Dispatch(dispatchSize, dispatchSize, 1);
+							context->Dispatch(mip0Groups, mip0Groups, 1);
 						}
 
 						// Mip 1 (cascade 0)
@@ -205,7 +209,7 @@ void VolumetricShadows::CopyShadowLightData()
 						context->CSSetShader(downsampleMip1, nullptr, 0);
 						{
 							CS_GPU_PASS("VolumetricShadows::DownsampleMip1");
-							context->Dispatch(dispatchSize, dispatchSize, 1);
+							context->Dispatch(mip1Groups, mip1Groups, 1);
 						}
 
 						// Unbind SRVs before blur passes
@@ -333,21 +337,24 @@ void VolumetricShadows::DrawSettings()
 		static float debugRescale = .3f;
 		ImGui::SliderFloat(T(TKEY("view_resize"), "View Resize"), &debugRescale, 0.f, 1.f);
 
-		auto DisplayRT = [&](const char* label, ID3D11Texture2D* tex, ID3D11ShaderResourceView* srv) {
+		auto DisplayRT = [&](const char* label, ID3D11Texture2D* tex, ID3D11ShaderResourceView* srv, uint32_t mip) {
 			if (srv && tex) {
 				D3D11_TEXTURE2D_DESC desc;
 				tex->GetDesc(&desc);
+				const uint32_t width = std::max(desc.Width >> mip, 1u);
+				const uint32_t height = std::max(desc.Height >> mip, 1u);
 				char buf[128];
-				snprintf(buf, sizeof(buf), "%s (%ux%u)", label, desc.Width, desc.Height);
+				snprintf(buf, sizeof(buf), "%s (%ux%u)", label, width, height);
 				if (ImGui::TreeNode(buf)) {
-					ImGui::Image(srv, { desc.Width * debugRescale, desc.Height * debugRescale });
+					ImGui::Image(srv, { width * debugRescale, height * debugRescale });
 					ImGui::TreePop();
 				}
 			}
 		};
 
-		DisplayRT(T(TKEY("vsm_cascade_0"), "VSM Cascade 0"), shadowCopyTexture, shadowCopyMip0SRV);
-		DisplayRT(T(TKEY("vsm_cascade_1"), "VSM Cascade 1"), shadowCopyTexture, shadowCopyMip1SRV);
+		// Mip 0 holds cascade 1, mip 1 holds cascade 0.
+		DisplayRT(T(TKEY("vsm_cascade_0"), "VSM Cascade 0"), shadowCopyTexture, shadowCopyMip1SRV, 1);
+		DisplayRT(T(TKEY("vsm_cascade_1"), "VSM Cascade 1"), shadowCopyTexture, shadowCopyMip0SRV, 0);
 
 		ImGui::TreePop();
 	}

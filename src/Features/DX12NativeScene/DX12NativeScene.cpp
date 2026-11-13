@@ -865,13 +865,12 @@ void DX12NativeScene::LoadSettings(json& a_json)
 void DX12NativeScene::SaveSettings(json& a_json)
 {
 	std::scoped_lock lock(settingsMutex);
-	auto selected = settings;
-	if (const auto enabled = requestedEnabled.load(); enabled >= 0) selected.Enabled = enabled != 0;
-	if (const auto shadowEnabled = requestedShadow.load(); shadowEnabled >= 0) selected.ShadowMask = shadowEnabled != 0;
-	selected.BudgetMB = 0;
-	selected.FrameBudgetMB = 0;
-	if (const auto batch = requestedMaterialBatch.load(); batch) selected.MaterialBatchMB = batch;
-	a_json = selected;
+	a_json = settings;
+	if (const auto enabled = requestedEnabled.load(); enabled >= 0) a_json["Enabled"] = enabled != 0;
+	if (const auto shadowEnabled = requestedShadow.load(); shadowEnabled >= 0) a_json["ShadowMask"] = shadowEnabled != 0;
+	a_json["BudgetMB"] = 0;
+	a_json["FrameBudgetMB"] = 0;
+	if (const auto batch = requestedMaterialBatch.load(); batch) a_json["MaterialBatchMB"] = batch;
 }
 void DX12NativeScene::RestoreDefaultSettings()
 {

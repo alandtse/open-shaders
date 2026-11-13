@@ -62,26 +62,19 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SkyIBLSaturation,
 	FogAmount,
 	DALCMode,
-	DisableInInteriors,
 	DisableInWorldMap,
 	DisableInLoadingScreen)
 
 void IBL::DrawSettings()
 {
-	if (IsManagedByENB()) {
-		ImGui::TextColored(globals::menu->GetSettings().Theme.StatusPalette.Warning, "%s", T("common.settings_managed_by_enb", "Settings are currently managed by ENB."));
-		return;
-	}
+	const Util::LockedSection enbLock(IsManagedByENB(),
+		T("common.settings_managed_by_enb", "This setting is managed by Effects 11."));
 
 	Util::CheckboxFlag(T(TKEY("enable_ibl"), "Enable IBL"), settings.EnableIBL);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("enable_ibl_tooltip"), "Toggle IBL. When enabled, ambient lighting is derived from cubemap spherical harmonics instead of the vanilla system."));
 	}
 	if (ImGui::TreeNodeEx(T(TKEY("enable_ibl_options"), "Enable IBL Options"), ImGuiTreeNodeFlags_None)) {
-		DrawEnableCheckbox(T(TKEY("enable_in_interiors"), "Enable Interior IBL"), settings.DisableInInteriors);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("enable_in_interiors_tooltip"), "Enables IBL in interior cells."));
-		}
 		DrawEnableCheckbox(T(TKEY("enable_in_world_map"), "Enable World Map IBL"), settings.DisableInWorldMap);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("enable_in_world_map_tooltip"), "Enables IBL while the world map is open."));
@@ -204,7 +197,12 @@ IBL::PerFrame IBL::GetCommonBufferData() const
 		.EnvIBLSaturation = settings.EnvIBLSaturation,
 		.SkyIBLSaturation = settings.SkyIBLSaturation,
 		.FogAmount = settings.FogAmount,
-		.DALCMode = GetEffectiveDALCMode(settings)
+		.DALCMode = GetEffectiveDALCMode(settings),
+#if defined(ENABLE_EFFECTS11)
+		.ENBSkyFalloff = globals::features::effects11.OwnsFeature(E11Handoff::Feature::IBL)
+#else
+		.ENBSkyFalloff = false
+#endif
 	};
 
 #if defined(ENABLE_EFFECTS11)
@@ -232,7 +230,7 @@ bool IBL::IsManagedByENB() const
 {
 #if defined(ENABLE_EFFECTS11)
 	auto& enb = globals::features::effects11;
-	if (!enb.loaded || !enb.enableEffect)
+	if (!enb.OwnsFeature(E11Handoff::Feature::IBL))
 		return false;
 	return SettingManager::GetSingleton().GetValue<bool>("EnableImageBasedLighting", "EFFECT");
 #else
@@ -252,7 +250,7 @@ bool IBL::IsDisabledForCurrentScene() const
 	if (state->isMapMenuOpen)
 		return settings.DisableInWorldMap;
 
-	return settings.DisableInInteriors && Util::IsInterior();
+	return false;
 }
 
 void IBL::ReflectionsPrepass()

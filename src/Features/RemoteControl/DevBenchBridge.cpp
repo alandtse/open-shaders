@@ -20,10 +20,15 @@
 
 #ifdef DEVBENCH_BRIDGE_ENABLED
 
+#	include "BaselineManager.h"
 #	include "CSEditor/EditorWindow.h"
+#	include "CSEditor/SceneManager/SceneSettingsManager.h"
 #	include "Feature.h"
 #	include "FeatureIssues.h"
 #	include "Features/LightLimitFix/ShadowCasterManager.h"
+#	include "Features/DeveloperTools.h"
+#	include "Features/RemoteControl/DevFlags.h"
+#	include "Features/RemoteControl/FrameRecorder.h"
 #	include "Features/RemoteControl/NvPerf.h"
 #	include "Features/RemoteControl/ToolSpecs/ActionsTool.h"
 #	include "Features/RemoteControl/ToolSpecs/CaptureNativeExt.h"
@@ -44,13 +49,14 @@
 #	include "Features/RemoteControl/ToolSpecs/ShadercacheTool.h"
 #	include "Features/RenderDoc.h"
 #	include "Features/ScreenshotFeature.h"
+#	include "Features/Upscaling.h"
 #	include "Globals.h"
 #	include "I18n/I18n.h"
 #	include "Menu.h"
 #	include "Profiler.h"
-#	include "SceneSettingsManager.h"
 #	include "ShaderCache.h"
 #	include "State.h"
+#	include "Utils/DevBenchNotices.h"
 #	include "Utils/DevBenchUx.h"
 #	include "Utils/SettingsCatalog.h"
 #	include "Utils/SettingsDefaults.h"
@@ -62,6 +68,7 @@
 #	include <nlohmann/json.hpp>
 
 #	include <algorithm>
+#	include <atomic>
 #	include <chrono>
 #	include <cmath>
 #	include <cstring>
@@ -69,8 +76,10 @@
 #	include <functional>
 #	include <future>
 #	include <memory>
+#	include <mutex>
 #	include <optional>
 #	include <stdexcept>
+#	include <thread>
 #	include <unordered_map>
 #	include <unordered_set>
 
@@ -106,9 +115,16 @@ namespace
 	// Shared C-ABI handler body. The whole request — parse, dispatch, dump — is wrapped
 	// so NO exception ever crosses the DLL boundary, and a_write is called exactly once.
 	// `a_build` is a plain function pointer (no captures) so this composes with the
+	std::mutex g_lastRequestMutex;
+	std::optional<DevBenchBridge::Request> g_lastRequest;
+
 	// captureless-handler contract devbench requires. JSON strings only across the ABI.
-	void RunHandler(json (*a_build)(const json&), const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	void RunHandler(const char* a_tool, json (*a_build)(const json&), const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
+		{
+			std::scoped_lock lock(g_lastRequestMutex);
+			g_lastRequest = DevBenchBridge::Request{ a_tool, std::filesystem::file_time_type::clock::now() };
+		}
 		json out;
 		try {
 			json args = json::object();
@@ -126,40 +142,66 @@ namespace
 		a_write(a_sink, dumped.c_str());
 	}
 
-	// Run a task on the main thread and return its result. Bridge handlers run on devbench's
+	bool QueueOnThread(std::function<void()> a_run, Util::DevBenchUx::ExecutionThread a_thread)
+	{
+		if (a_thread == Util::DevBenchUx::ExecutionThread::Render) {
+			if (!globals::menu)
+				return false;
+			globals::menu->RequestRenderTask(std::move(a_run));
+			return true;
+		}
+		auto* task = SKSE::GetTaskInterface();
+		if (!task)
+			return false;
+		task->AddTask(std::move(a_run));
+		return true;
+	}
+
+	json UnavailableTaskQueue(Util::DevBenchUx::ExecutionThread a_thread)
+	{
+		return json{ { "error", a_thread == Util::DevBenchUx::ExecutionThread::Render ? "Menu render queue unavailable" : "SKSE task interface unavailable" } };
+	}
+
+	// Run a task on its registered owner thread and return its result. Bridge handlers run on devbench's
 	// listener thread; work that touches state the render/UI thread mutates (A/B fields, JSON
 	// snapshots, feature settings, capture triggers) must marshal or it races. Blocks the
-	// handler briefly, bounded so a stalled main thread (e.g. mid-load) can't hang it.
+	// handler briefly, bounded so a stalled owner thread (e.g. mid-load) can't hang it.
 	//
 	// The body may have SIDE EFFECTS (set/reset apply settings; capture triggers a frame), so a
 	// `cancelled` flag is checked at task entry: if we already gave up waiting, the task skips
 	// the body rather than mutating state after we reported a timeout. shared_ptr state so a
 	// task that runs after we return doesn't dangle. (Best-effort: a task that starts exactly at
 	// the timeout boundary can still run — the flag eliminates the common stalled-thread case.)
-	json RunOnMainThread(std::function<json()> a_run)
+	json RunOnThread(std::function<json()> a_run, Util::DevBenchUx::ExecutionThread a_thread)
 	{
-		auto* task = SKSE::GetTaskInterface();
-		if (!task)
-			return json{ { "error", "SKSE task interface unavailable" } };
+		const std::string threadName = a_thread == Util::DevBenchUx::ExecutionThread::Render ? "render" : "main";
 		auto prom = std::make_shared<std::promise<json>>();
 		auto cancelled = std::make_shared<std::atomic<bool>>(false);
 		auto fut = prom->get_future();
-		task->AddTask([prom, cancelled, run = std::move(a_run)]() {
+		const bool queued = QueueOnThread([prom, cancelled, threadName, run = std::move(a_run)]() {
 			if (cancelled->load(std::memory_order_acquire))
 				return;  // handler already timed out and returned — don't run a side-effecting body late
 			try {
 				prom->set_value(run());
 			} catch (const std::exception& e) {
-				prom->set_value(json{ { "error", "task threw on main thread" }, { "detail", e.what() } });
+				prom->set_value(json{ { "error", std::format("task threw on {} thread", threadName) }, { "detail", e.what() } });
 			} catch (...) {
-				prom->set_value(json{ { "error", "task threw on main thread" }, { "detail", "non-std exception" } });
+				prom->set_value(json{ { "error", std::format("task threw on {} thread", threadName) }, { "detail", "non-std exception" } });
 			}
-		});
+		},
+			a_thread);
+		if (!queued)
+			return UnavailableTaskQueue(a_thread);
 		if (fut.wait_for(std::chrono::milliseconds(5000)) != std::future_status::ready) {
 			cancelled->store(true, std::memory_order_release);
-			return json{ { "error", "main thread did not run within 5000ms (mid-load?)" } };
+			return json{ { "error", std::format("{} thread did not run within 5000ms (mid-load?)", threadName) } };
 		}
 		return fut.get();
+	}
+
+	json RunOnMainThread(std::function<json()> a_run)
+	{
+		return RunOnThread(std::move(a_run), Util::DevBenchUx::ExecutionThread::Main);
 	}
 
 	// ---- feature: list / get / set / reset / toggle -----------------------------------
@@ -215,6 +257,9 @@ namespace
 			// Marshal: FeatureEntry reads Feature::loaded and restart-gated settings bytes that
 			// main-thread toggles / settings-loads mutate.
 			return RunOnMainThread([]() {
+				// One guard for the whole listing: FeatureEntry diffs live settings bytes against
+				// boot values, which a scene override would otherwise report as a pending restart.
+				State::SettingsLayerGuard settingsLayerGuard;
 				json out = json::array();
 				for (auto* f : Feature::GetFeatureList())
 					out.push_back(FeatureEntry(f));
@@ -258,6 +303,8 @@ namespace
 			}
 			if (!target)
 				return json{ { "error", "unknown or missing shortName" }, { "shortName", shortName } };
+			if (target->IsAlwaysEnabled())
+				return json{ { "error", "feature is always enabled" }, { "shortName", shortName } };
 			auto* task = SKSE::GetTaskInterface();
 			if (!task)
 				return json{ { "error", "SKSE task interface unavailable" }, { "shortName", shortName } };
@@ -297,11 +344,13 @@ namespace
 				}
 				if (wantsUnsupportedRuntime)
 					logger::warn("DevBenchBridge: enabling '{}' via Developer Mode override despite being unsupported on the current runtime", shortName);
+				State::SettingsLayerGuard settingsLayerGuard;
 				if (target->loaded && !applied) {
 					target->OnRuntimeDisabled();
 					g_toggledOffFeatures.insert(target);
 				}
 				target->loaded = applied;
+				globals::shaderCache->ResetActiveShaderTracking();
 				if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 					const std::string payload = json{ { "shortName", shortName }, { "enabled", applied } }.dump();
 					dvb->EmitEvent("openshaders.feature.changed", payload.c_str());
@@ -325,6 +374,7 @@ namespace
 				auto* feature = Feature::FindFeatureByShortName(shortName);
 				if (!feature)
 					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
+				State::SettingsLayerGuard settingsLayerGuard;
 				json blob;
 				feature->SaveSettings(blob);
 				return blob;
@@ -388,9 +438,8 @@ namespace
 				auto* feature = Feature::FindFeatureByShortName(shortName);
 				if (!feature)
 					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
+				State::SettingsLayerGuard settingsLayerGuard;
 				try {
-					SceneSettingsManager::SceneLayerGuard sceneLayerGuard(
-						*SceneSettingsManager::GetSingleton());
 					std::vector<std::string> unknown;
 					if (!Util::Settings::ApplyPatch(*feature, blob, unknown))
 						return json{
@@ -416,9 +465,8 @@ namespace
 				auto* feature = Feature::FindFeatureByShortName(shortName);
 				if (!feature)
 					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
+				State::SettingsLayerGuard settingsLayerGuard;
 				try {
-					SceneSettingsManager::SceneLayerGuard sceneLayerGuard(
-						*SceneSettingsManager::GetSingleton());
 					if (!settingKey.empty()) {
 						const auto* setting = SceneSettingsCatalog::FindSetting(shortName, settingPath, settingKey);
 						if (!setting || !Util::Settings::ResetSettingToDefault(*feature, *setting))
@@ -440,7 +488,7 @@ namespace
 
 	void FeatureToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildFeatureResult, a_argsJson, a_sink, a_write);
+		RunHandler("openshaders.feature", &BuildFeatureResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- actions: devbench-registered UX commands / queries ----------------------------
@@ -521,12 +569,10 @@ namespace
 			Feature* target = Feature::FindRegisteredFeatureByShortName(shortName);
 			if (!target)
 				return json{ { "error", "unknown or missing shortName" }, { "shortName", shortName } };
-			auto* task = SKSE::GetTaskInterface();
-			if (!task)
-				return json{ { "error", "SKSE task interface unavailable" } };
 			const uint frame = EnqueuedFrame();
 			const auto fn = entry->fn;
-			task->AddTask([target, fn, actionArgs, shortName, name]() {
+			const auto executionThread = entry->executionThread;
+			const bool queued = QueueOnThread([target, fn, actionArgs, shortName, name]() {
 				try {
 					fn(target, actionArgs);
 					logger::info("DevBenchBridge: menu(invokeCommand, {}.{}) ran", shortName, name);
@@ -535,7 +581,10 @@ namespace
 				} catch (...) {
 					logger::error("DevBenchBridge: menu(invokeCommand, {}.{}) threw (unknown)", shortName, name);
 				}
-			});
+			},
+				executionThread);
+			if (!queued)
+				return UnavailableTaskQueue(executionThread);
 			return json{ { "action", "invokeCommand" }, { "shortName", shortName }, { "name", name }, { "queued", true }, { "enqueued_at_frame", frame } };
 		}
 
@@ -546,11 +595,12 @@ namespace
 			Feature* target = Feature::FindRegisteredFeatureByShortName(shortName);
 			if (!target)
 				return json{ { "error", "unknown or missing shortName" }, { "shortName", shortName } };
-			// Marshal: query implementations read live feature settings the render/UI thread mutates.
+			// Copy request data before handing it to the registered state owner's queue.
 			const auto fn = entry->fn;
-			return RunOnMainThread([target, fn, actionArgs]() {
+			return RunOnThread([target, fn, actionArgs]() {
 				return fn(target, actionArgs);
-			});
+			},
+				entry->executionThread);
 		}
 
 		return json{ { "error", "unknown action (listCommands|listQueries|invokeCommand|invokeQuery)" }, { "action", action } };
@@ -558,7 +608,7 @@ namespace
 
 	void ActionsToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildActionsResult, a_argsJson, a_sink, a_write);
+		RunHandler("openshaders.actions", &BuildActionsResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- inspect: engine state / shader-cache status ----------------------------------
@@ -683,7 +733,7 @@ namespace
 
 	void InspectFeatureIssuesHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildInspectFeatureIssuesResult, a_argsJson, a_sink, a_write);
+		RunHandler("inspect featureissues", &BuildInspectFeatureIssuesResult, a_argsJson, a_sink, a_write);
 	}
 
 	// Light Limit Fix shadow-scheduler diagnostics. RequestSchedSnapshot is thread-safe
@@ -898,17 +948,17 @@ namespace
 
 	void InspectStateHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildInspectStateResult, a_argsJson, a_sink, a_write);
+		RunHandler("inspect openshaders", &BuildInspectStateResult, a_argsJson, a_sink, a_write);
 	}
 
 	void InspectShadercacheHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildInspectShadercacheResult, a_argsJson, a_sink, a_write);
+		RunHandler("inspect shadercache", &BuildInspectShadercacheResult, a_argsJson, a_sink, a_write);
 	}
 
 	void InspectShadowsHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildInspectShadowsResult, a_argsJson, a_sink, a_write);
+		RunHandler("inspect llfshadows", &BuildInspectShadowsResult, a_argsJson, a_sink, a_write);
 	}
 
 	// Marshaled to the main thread: GetResults() returns a live reference the
@@ -920,7 +970,7 @@ namespace
 		auto* profiler = globals::profiler;
 		if (!profiler)
 			return json{ { "error", "profiler unavailable" } };
-		return RunOnMainThread([profiler]() -> json {
+		return RunOnThread([profiler]() -> json {
 			// Calling this tool is itself a capture request, the same as any
 			// visible consumer (the Profiling menu, a feature panel).
 			profiler->RequestCapture();
@@ -951,7 +1001,16 @@ namespace
 				});
 			}
 
+			const auto frame = profiler->GetFrameStats();
 			return json{
+				{ "frame", {
+							   { "ms", frame.lastMs },
+							   { "avgMs", frame.avgMs },
+							   { "p95Ms", frame.p95Ms },
+							   { "p99Ms", frame.p99Ms },
+							   { "samples", frame.count },
+							   { "frameGeneration", globals::features::upscaling.IsFrameGenerationActive() },
+						   } },
 				{ "enabled", profiler->IsUserEnabled() },
 				{ "capturing", profiler->IsEnabled() },
 				{ "frame_count", EnqueuedFrame() },
@@ -968,12 +1027,13 @@ namespace
 				{ "maxTimers", Profiler::kMaxTimers },
 				{ "timers", timers },
 			};
-		});
+		},
+			Util::DevBenchUx::ExecutionThread::Render);
 	}
 
 	void InspectProfilerHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildInspectProfilerResult, a_argsJson, a_sink, a_write);
+		RunHandler("inspect profiler", &BuildInspectProfilerResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- shadercache: clear / delete the compiled cache -------------------------------
@@ -990,7 +1050,7 @@ namespace
 		const uint frame = EnqueuedFrame();
 
 		// Mutating cache ops touch the live ShaderCache (and, for deleteDisk, the filesystem)
-		// — marshal to the main thread. Recompiles are observable via inspect(kind=shadercache)
+		// - marshal to the owning thread. Recompiles are observable via inspect(kind=shadercache)
 		// + the openshaders.shaderRecompiled event. NOTE clear vs deleteDisk: clear only drops
 		// the in-memory maps, so with the disk cache enabled shaders reload from Data/ShaderCache
 		// rather than recompiling — only deleteDisk guarantees a cold recompile.
@@ -1036,7 +1096,8 @@ namespace
 		if (action == "restorePrevious") {
 			// Mirrors the in-game held-cache prompt's "restore previous" button; cancels an
 			// in-progress compile if one is running. Only takes effect after a restart.
-			task->AddTask([cache]() { cache->RestorePreviousDiskCache(); });
+			if (!QueueOnThread([cache]() { cache->RestorePreviousDiskCache(); }, Util::DevBenchUx::ExecutionThread::Render))
+				return UnavailableTaskQueue(Util::DevBenchUx::ExecutionThread::Render);
 			return json{ { "action", "restorePrevious" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "cancels any in-progress compile and needs a compatible previous cache; check OpenShaders.log or inspect(kind=shadercache).featureSetRevertPending for the outcome, then restart to load it" } };
 		}
 		if (action == "discardPrevious") {
@@ -1085,12 +1146,12 @@ namespace
 
 	void LightHighlightToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildLightHighlightResult, a_argsJson, a_sink, a_write);
+		RunHandler("openshaders.lighthighlight", &BuildLightHighlightResult, a_argsJson, a_sink, a_write);
 	}
 
 	void ShadercacheToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildShadercacheResult, a_argsJson, a_sink, a_write);
+		RunHandler("openshaders.shadercache", &BuildShadercacheResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- profiler: enable / disable runtime capture ----------------------------------
@@ -1127,7 +1188,7 @@ namespace
 
 	void ProfilerToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildProfilerResult, a_argsJson, a_sink, a_write);
+		RunHandler("openshaders.profiler", &BuildProfilerResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- capture: renderdoc / screenshot ----------------------------------------------
@@ -1148,8 +1209,8 @@ namespace
 			// UI/render thread reads.
 			return RunOnMainThread([frameCount, frame]() -> json {
 				auto* renderDoc = &globals::features::renderDoc;
-				if (!renderDoc->loaded)
-					return json{ { "error", "RenderDoc feature is not loaded" }, { "hint", "openshaders.feature(action='list') shows RenderDoc.loaded" } };
+				if (!globals::features::developerTools.loaded)
+					return json{ { "error", "Developer Tools feature is not loaded" }, { "hint", "openshaders.feature(action='list') shows DeveloperTools.loaded" } };
 				if (!renderDoc->IsAvailable())
 					return json{ { "error", "RenderDoc API not available — attach RenderDoc or load the in-app DLL" } };
 				if (frameCount == 1)
@@ -1197,7 +1258,7 @@ namespace
 
 	void CaptureToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildCaptureResult, a_argsJson, a_sink, a_write);
+		RunHandler("openshaders.capture", &BuildCaptureResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- nvperf: status / metrics / capture / cancel / result ---------------------------
@@ -1234,7 +1295,7 @@ namespace
 	/**
 	 * @brief Serializes a capture result: the per-filter summary always, every range of every sample on request.
 	 *
-	 * Summary values are per frame and keyed by metric label; a value no replay pass completed is null.
+	 * Summary values are per frame and keyed by metric label, perSample holds them per sample; a value no replay pass completed is null.
 	 */
 	json CaptureResultJson(const NvPerf::CaptureResult& a_result, bool a_detail)
 	{
@@ -1247,16 +1308,27 @@ namespace
 		json unsupported = json::array();
 		for (const auto& metric : a_result.unsupportedMetrics)
 			unsupported.push_back(MetricJson(metric));
+		const auto number = [](double a_value) { return std::isnan(a_value) ? json(nullptr) : json(a_value); };
 		const auto values = [&](const std::vector<double>& a_values) {
 			json out = json::object();
 			for (std::size_t m = 0; m < labels.size() && m < a_values.size(); ++m)
-				out[labels[m]] = std::isnan(a_values[m]) ? json(nullptr) : json(a_values[m]);
+				out[labels[m]] = number(a_values[m]);
+			return out;
+		};
+		const auto perSample = [&](const std::vector<std::vector<double>>& a_series) {
+			json out = json::object();
+			for (std::size_t m = 0; m < labels.size() && m < a_series.size(); ++m) {
+				json column = json::array();
+				for (const double value : a_series[m])
+					column.push_back(number(value));
+				out[labels[m]] = std::move(column);
+			}
 			return out;
 		};
 		json summary = json::array();
 		for (const auto& entry : a_result.summary)
 			summary.push_back(json{ { "range", entry.name }, { "perFrame", entry.occurrencesPerFrame }, { "incomplete", entry.incomplete },
-				{ "values", values(entry.values) } });
+				{ "values", values(entry.values) }, { "perSample", perSample(entry.perSample) } });
 		json out{ { "captureId", a_result.id }, { "success", a_result.success }, { "error", a_result.error }, { "chip", a_result.chipName },
 			{ "startFrame", a_result.startFrame }, { "endFrame", a_result.endFrame }, { "samples", a_result.samples },
 			{ "passesPerSample", a_result.passesPerSample }, { "droppedRanges", a_result.droppedRanges },
@@ -1356,7 +1428,7 @@ namespace
 
 	void NvPerfToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildNvPerfResult, a_argsJson, a_sink, a_write);
+		RunHandler("openshaders.nvperf", &BuildNvPerfResult, a_argsJson, a_sink, a_write);
 	}
 
 	/** @brief Starts a frame-locked burst on the capture provider; completion is the capture.burst.ready event. */
@@ -1472,7 +1544,7 @@ namespace
 
 	void CaptureProviderHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildCaptureProviderResult, a_argsJson, a_sink, a_write);
+		RunHandler("capture openshaders", &BuildCaptureProviderResult, a_argsJson, a_sink, a_write);
 	}
 
 	void ScreenshotReferenceHandler(void* context, const char* args, void* sink, DevBenchAPI::WriteFn write) noexcept
@@ -1502,7 +1574,74 @@ namespace
 		}
 	}
 
-	// ---- settings: save / load / reset the GLOBAL CS config ---------------------------
+	// ---- frames: start / stop / status / read --------------------------------------------
+
+	constexpr double kMsRounding = 1e4;  // 4 decimals keeps a 10 s window around 60 KB
+
+	/** @brief Serializes the recorder state without the frames. */
+	json FrameStatusJson(const FrameRecorder::Status& a_status)
+	{
+		return json{ { "id", a_status.id }, { "recording", a_status.recording }, { "frames", a_status.frames }, { "full", a_status.full } };
+	}
+
+	/** @brief Rounds a duration to kMsRounding precision. */
+	json RoundedMs(double a_ms)
+	{
+		return json(std::round(a_ms * kMsRounding) / kMsRounding);
+	}
+
+	/** @brief Serializes a recording as one array per column, one entry per frame. */
+	json RecordingJson(const FrameRecorder::Recording& a_recording)
+	{
+		json frameMs = json::array(), threadCpu = json::array(), processCpu = json::array(), frameGeneration = json::array();
+		for (const auto& frame : a_recording.frames) {
+			frameMs.push_back(RoundedMs(frame.frameMs));
+			threadCpu.push_back(RoundedMs(frame.presentThreadCpuMs));
+			processCpu.push_back(RoundedMs(frame.processCpuMs));
+			frameGeneration.push_back(frame.frameGeneration);
+		}
+		auto out = FrameStatusJson({ .id = a_recording.id, .recording = a_recording.recording, .full = a_recording.full, .frames = a_recording.frames.size() });
+		out["tscHz"] = a_recording.tscHz;
+		out["presentThreadId"] = a_recording.presentThreadId;
+		out["columns"] = json{ { "frameMs", std::move(frameMs) }, { "presentThreadCpuMs", std::move(threadCpu) },
+			{ "processCpuMs", std::move(processCpu) }, { "frameGeneration", std::move(frameGeneration) } };
+		return out;
+	}
+
+	/**
+	 * @brief Builds the response of the openshaders.frames tool.
+	 *
+	 * Start and stop take effect at the next Present on the render thread; nothing here touches game state, so none
+	 * marshals to the main thread.
+	 */
+	json BuildFramesResult(const json& a_args)
+	{
+		const std::string action = a_args.value("action", std::string{});
+		if (action == "start") {
+			std::uint64_t id = 0;
+			std::string error;
+			if (!FrameRecorder::Start(id, error))
+				return json{ { "error", error } };
+			return json{ { "id", id } };
+		}
+		if (action == "stop") {
+			FrameRecorder::Stop();
+			return FrameStatusJson(FrameRecorder::GetStatus());
+		}
+		if (action == "status")
+			return FrameStatusJson(FrameRecorder::GetStatus());
+		if (action == "read")
+			return RecordingJson(*FrameRecorder::Read());
+		return json{ { "error", "unknown action (start|stop|status|read)" }, { "action", action } };
+	}
+
+	/** @brief DevBench entry point of the openshaders.frames tool. */
+	void FramesToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler("openshaders.frames", &BuildFramesResult, a_argsJson, a_sink, a_write);
+	}
+
+	// ---- settings: global configuration and scoped saved-feature restoration -----------
 
 	json BuildSettingsResult(const json& a_args)
 	{
@@ -1512,20 +1651,19 @@ namespace
 		auto* state = globals::state;
 		if (!state)
 			return json{ { "error", "State singleton unavailable" } };
-		auto* task = SKSE::GetTaskInterface();
-		if (!task)
-			return json{ { "error", "SKSE task interface unavailable" } };
+		if (!globals::menu)
+			return UnavailableTaskQueue(Util::DevBenchUx::ExecutionThread::Render);
 		const uint frame = EnqueuedFrame();
 
 		// State::Save/Load read and write the on-disk USER config and touch every feature's
-		// settings; both must run on the main thread for the same reason feature(set) does.
+		// settings; both must run on the render thread, matching UI configuration and active preset access.
 		// Contain failures inside the task: RunHandler's guard no longer applies once this runs
-		// on SKSE's queue, so a malformed config / Save|Load throw would unwind on the game
+		// on the render queue, so a malformed config / Save|Load throw would unwind on the render
 		// thread after we already replied "queued". Degrade to a logged error instead.
 		if (action == "save") {
-			task->AddTask([state]() {
+			globals::menu->RequestRenderTask([state]() {
 				try {
-					state->Save(State::ConfigMode::USER);
+					state->Save();
 					logger::info("DevBenchBridge: settings(save) applied");
 				} catch (const std::exception& e) {
 					logger::error("DevBenchBridge: settings(save) failed: {}", e.what());
@@ -1536,9 +1674,9 @@ namespace
 			return json{ { "action", "save" }, { "queued", true }, { "enqueued_at_frame", frame } };
 		}
 		if (action == "load") {
-			task->AddTask([state]() {
+			globals::menu->RequestRenderTask([state]() {
 				try {
-					state->Load(State::ConfigMode::USER, /*allowReload=*/true);
+					state->Load(/*allowReload=*/true);
 					logger::info("DevBenchBridge: settings(load) applied");
 				} catch (const std::exception& e) {
 					logger::error("DevBenchBridge: settings(load) failed: {}", e.what());
@@ -1548,12 +1686,55 @@ namespace
 			});
 			return json{ { "action", "load" }, { "queued", true }, { "enqueued_at_frame", frame } };
 		}
+		if (action == "status") {
+			const auto shortName = a_args.value("shortName", std::string{});
+			const bool currentTab = a_args.value("currentTab", false);
+			return RunOnThread([state, shortName, currentTab]() -> json {
+				auto* feature = shortName.empty() ? nullptr : Feature::FindFeatureByShortName(shortName);
+				if (!shortName.empty() && !feature)
+					return json{ { "error", "feature not found" }, { "shortName", shortName } };
+				const auto keys = feature && currentTab && feature->HasScopedDefaultSettings() ? feature->GetCurrentPageSettingKeys() : std::vector<std::string>{};
+				json records = json::array();
+				EditorWindow::GetSingleton()->ForEachWidget([&](Widget& widget) {
+					if (widget.HasUnsavedChanges())
+						records.push_back({ { "name", widget.GetEditorID() }, { "type", widget.GetWidgetTypeName() } });
+				});
+				return json{ { "canRestoreSaved", state->HasSavedSettings(feature, currentTab) },
+					{ "canReapplyBaseSettings", BaselineManager::GetSingleton()->HasSettings(shortName, keys) },
+					{ "canUndo", globals::menu->CanUndo() }, { "canRedo", globals::menu->CanRedo() },
+					{ "unsavedSettings", state->HasUnsavedChanges() }, { "settingsChanges", state->GetUnsavedSettingsChanges() },
+					{ "unsavedRecords", records }, { "unsavedSceneSettings", SceneSettingsManager::GetSingleton()->HasUnsavedChanges() } };
+			},
+				Util::DevBenchUx::ExecutionThread::Render);
+		}
+		if (action == "reapplyBaseSettings") {
+			return RunOnThread([state]() -> json { return { { "applied", state->ReapplyBaseSettings() } }; }, Util::DevBenchUx::ExecutionThread::Render);
+		}
+		if (action == "loadFeature") {
+			const auto featureName = a_args.find("shortName");
+			if (featureName == a_args.end() || !featureName->is_string() || featureName->get_ref<const std::string&>().empty())
+				return json{ { "error", "missing required nonempty string parameter 'shortName'" }, { "action", action } };
+			const auto shortName = featureName->get<std::string>();
+			return RunOnThread([state, shortName]() -> json {
+				auto* feature = Feature::FindFeatureByShortName(shortName);
+				if (!feature)
+					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
+				if (const auto unavailable = feature->GetUnavailableMessage())
+					return json{ { "error", unavailable }, { "shortName", shortName } };
+				if (!feature->HasPersonalSettings())
+					return json{ { "error", "feature has no saved personal settings" }, { "shortName", shortName } };
+				if (!state->RestoreSavedFeatureSettings(feature))
+					return json{ { "error", "could not restore saved feature settings; check OpenShaders.log" }, { "shortName", shortName } };
+				logger::info("DevBenchBridge: settings(loadFeature, {}) applied", shortName);
+				return json{ { "action", "loadFeature" }, { "shortName", shortName }, { "applied", true } };
+			},
+				Util::DevBenchUx::ExecutionThread::Render);
+		}
 		if (action == "reset") {
-			// Restore every feature to its defaults, then persist. Mirrors what the UI's
-			// global reset does: per-feature RestoreDefaultSettings followed by a Save.
-			task->AddTask([state]() {
-				SceneSettingsManager::SceneLayerGuard sceneLayerGuard(
-					*SceneSettingsManager::GetSingleton());
+			// Restore every feature to its defaults, then persist.
+			globals::menu->RequestRenderTask([state]() {
+				State::SettingsLayerGuard settingsLayerGuard;
+				SceneSettingsManager::GetSingleton()->DiscardContextEdit();
 				for (auto* f : Feature::GetFeatureList()) {
 					try {
 						f->RestoreDefaultSettings();
@@ -1562,7 +1743,7 @@ namespace
 					}
 				}
 				try {
-					state->Save(State::ConfigMode::USER);
+					state->Save();
 					logger::info("DevBenchBridge: settings(reset) applied");
 				} catch (const std::exception& e) {
 					logger::error("DevBenchBridge: settings(reset) save failed: {}", e.what());
@@ -1585,9 +1766,8 @@ namespace
 			else
 				return json{ { "error", "unknown profile (performance|balanced|quality)" }, { "profile", profileName } };
 
-			task->AddTask([state, profile]() {
-				SceneSettingsManager::SceneLayerGuard sceneLayerGuard(
-					*SceneSettingsManager::GetSingleton());
+			globals::menu->RequestRenderTask([state, profile]() {
+				State::SettingsLayerGuard settingsLayerGuard;
 				try {
 					Feature::ApplyPerformanceProfileToAll(profile);
 				} catch (const std::exception& e) {
@@ -1606,12 +1786,12 @@ namespace
 			});
 			return json{ { "action", "applyVRProfile" }, { "profile", profileName }, { "queued", true }, { "enqueued_at_frame", frame } };
 		}
-		return json{ { "error", "unknown action (save|load|reset|applyVRProfile)" }, { "action", action } };
+		return json{ { "error", "unknown action (save|load|loadFeature|reset|applyVRProfile)" }, { "action", action } };
 	}
 
 	void SettingsToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildSettingsResult, a_argsJson, a_sink, a_write);
+		RunHandler("openshaders.settings", &BuildSettingsResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- menu handler: open / close / toggle the Community Shaders settings menu -------
@@ -1667,7 +1847,7 @@ namespace
 
 	void MenuHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildMenuResult, a_argsJson, a_sink, a_write);
+		RunHandler("menu CommunityShaders", &BuildMenuResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- pluginapi: exercise the real SKSE ICSInterface001 ABI ------------------------
@@ -1785,7 +1965,102 @@ namespace
 
 	void PluginApiHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildPluginApiResult, a_argsJson, a_sink, a_write);
+		RunHandler("openshaders.pluginapi", &BuildPluginApiResult, a_argsJson, a_sink, a_write);
+	}
+
+	/** @brief Every known dev flag and its value, as {"flags": {name: value}}. */
+	json DevFlagsJson()
+	{
+		json flags = json::object();
+		for (const auto& [name, value] : DevFlags::List())
+			flags[name] = value;
+		return json{ { "flags", std::move(flags) } };
+	}
+
+	/**
+	 * @brief Builds the response of the openshaders.devflags tool.
+	 *
+	 * Flags are atomics read on any thread, so nothing marshals to the main thread.
+	 */
+	json BuildDevFlagsResult(const json& a_args)
+	{
+		const std::string action = a_args.value("action", std::string{ "list" });
+		if (action == "set") {
+			const auto flags = a_args.find("flags");
+			if (flags == a_args.end() || !flags->is_object())
+				return json{ { "error", "set needs flags: {name: bool}" } };
+			for (const auto& item : flags->items()) {
+				if (!item.value().is_boolean())
+					return json{ { "error", "flag values must be booleans" }, { "flag", item.key() } };
+			}
+			for (const auto& item : flags->items())
+				DevFlags::Set(item.key(), item.value().get<bool>());
+			return DevFlagsJson();
+		}
+		if (action == "reset")
+			DevFlags::Reset();
+		else if (action != "list")
+			return json{ { "error", "unknown action (set|list|reset)" }, { "action", action } };
+		return DevFlagsJson();
+	}
+
+	/** @brief DevBench entry point of the openshaders.devflags tool. */
+	void DevFlagsToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler("openshaders.devflags", &BuildDevFlagsResult, a_argsJson, a_sink, a_write);
+	}
+}
+
+namespace
+{
+	/** @brief Reads the renderer state the notices are derived from. Game thread only: it walks feature settings. */
+	Util::DevBenchNotices::Conditions GatherNoticeConditions()
+	{
+		Util::DevBenchNotices::Conditions conditions;
+		if (auto* cache = globals::shaderCache) {
+			conditions.shadersCompiling = cache->IsCompiling();
+			conditions.failedShaders = cache->GetCurrentFailedCount();
+			const auto rollback = cache->GetRollbackState();
+			conditions.cacheAwaitingDecision = rollback.diskCacheHeld || rollback.featureSetChanged || rollback.featureSetRevertPending;
+		}
+		for (const auto& issue : FeatureIssues::GetFeatureIssues()) {
+			if (issue.IsObsolete() || issue.IsVersionMismatch() || issue.IsUnknown())
+				conditions.rejectedFeatures.push_back(issue.displayName.empty() ? issue.shortName : issue.displayName);
+		}
+		for (auto* feature : Feature::GetFeatureList()) {
+			if (feature->loaded && feature->HasAnyPendingRestart())
+				conditions.restartPendingFeatures.push_back(feature->GetDisplayName());
+		}
+		return conditions;
+	}
+
+	/** @brief Keeps devbench's notice board in step with the renderer once a second; needs devbench 1.34.0+. */
+	void StartNoticeWatcher(DevBenchAPI::IDevBenchInterface001* a_dvb)
+	{
+		constexpr unsigned int kNoticeBuild = 13400;
+		if (a_dvb->GetBuildNumber() < kNoticeBuild) {
+			logger::info("DevBenchBridge: devbench build {} < {}; agent notices need 1.34.0", a_dvb->GetBuildNumber(), kNoticeBuild);
+			return;
+		}
+
+		// Detached because joining at DLL unload under the loader lock could deadlock; it only paces, the reads run on the game thread.
+		std::thread([a_dvb, reconciler = std::make_shared<Util::DevBenchNotices::Reconciler>(), inFlight = std::make_shared<std::atomic<bool>>(false)] {
+			for (;;) {
+				std::this_thread::sleep_for(std::chrono::seconds(1));
+				auto* task = SKSE::GetTaskInterface();
+				if (!task || inFlight->exchange(true))
+					continue;
+				task->AddTask([a_dvb, reconciler, inFlight] {
+					State::SettingsLayerGuard settingsLayerGuard;
+					const auto delta = reconciler->Update(Util::DevBenchNotices::Evaluate(GatherNoticeConditions()));
+					for (const auto& key : delta.clear)
+						a_dvb->ClearNotice(key.c_str());
+					for (const auto& notice : delta.post)
+						a_dvb->PostNotice(notice.key.c_str(), "openshaders", Util::DevBenchNotices::SeverityName(notice.severity), notice.text.c_str(), 0);
+					inFlight->store(false);
+				});
+			}
+		}).detach();
 	}
 }
 
@@ -1858,6 +2133,21 @@ namespace DevBenchBridge
 		} else {
 			logger::info("DevBenchBridge: devbench build {} < 10500; CS menu + inspect extensions need 1.5.0", dvb->GetBuildNumber());
 		}
+		static constexpr const char* framesDesc =
+			R"({"description":"Per-frame timings for benchmarks: QPC Present-to-Present frame time, estimated CPU time of the Present thread and of the whole process, frame-generation flag. CPU milliseconds are cycle counts scaled by the measured TSC rate, not guaranteed elapsed CPU time across CPUs or clock changes. Idle until started. Action-dispatched. start -> {id} or {error} while a recording is pending or running; recording begins at the next Present and ends at stop or after 16384 frames (full). stop -> {id,recording,frames,full}; takes effect at the next Present, so poll status until recording is false. status -> {id,recording,frames,full}. read -> {id,recording,frames,full,tscHz,presentThreadId,columns:{frameMs,presentThreadCpuMs,processCpuMs,frameGeneration}}: equal-length arrays, one entry per frame, ms rounded to 4 decimals.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["start","stop","status","read"]}},"required":["action"]}})";
+		dvb->RegisterTool("openshaders.frames", framesDesc, &FramesToolHandler, nullptr);
+
+		static constexpr const char* devflagsDesc =
+			R"({"description":"Named runtime booleans guarding temporary candidate code paths (DEV_FLAG(\"tmp::name\") in C++), for screening a change on and off in one launch. Flags read false until set and reset at every launch. Action-dispatched. set: params flags (object of name -> boolean; all validated before any is applied). list (default): every flag a call site has read or set. reset: every flag false. All return {flags:{name:bool}}.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["set","list","reset"]},"flags":{"type":"object","additionalProperties":{"type":"boolean"}}}}})";
+		dvb->RegisterTool("openshaders.devflags", devflagsDesc, &DevFlagsToolHandler, nullptr);
+
+		StartNoticeWatcher(dvb);
+	}
+
+	std::optional<Request> GetLastRequest()
+	{
+		std::scoped_lock lock(g_lastRequestMutex);
+		return g_lastRequest;
 	}
 }
 
@@ -1866,6 +2156,8 @@ namespace DevBenchBridge
 namespace DevBenchBridge
 {
 	void Install() {}  // inert until built with DEVBENCH_BRIDGE_ENABLED
+
+	std::optional<Request> GetLastRequest() { return std::nullopt; }
 }
 
 #endif

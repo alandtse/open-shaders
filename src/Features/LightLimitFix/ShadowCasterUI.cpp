@@ -604,7 +604,7 @@ namespace ShadowCasterManager
 					}
 					ImGui::PushStyleColor(ImGuiCol_Button, col4);
 					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colH);
-					if (ImGui::Button(label, overrideButtonSize)) {
+					if (Util::Button(label, overrideButtonSize)) {
 						// Cycle to next state.
 						if (pinShadow) {
 							SetPinnedShadow(key, false);
@@ -632,12 +632,12 @@ namespace ShadowCasterManager
 					// Full pointer (see the Mode column's PushID above for why).
 					ImGui::PushID(reinterpret_cast<void*>(key ^ 0xA1));
 					ImVec4 col4 = isSolo ?
-				                      ImVec4(0.85f, 0.7f, 0.15f, 1) :  // bright yellow when active
-				                      ImVec4(0.30f, 0.30f, 0.30f, 1);
+					                  ImVec4(0.85f, 0.7f, 0.15f, 1) :  // bright yellow when active
+					                  ImVec4(0.30f, 0.30f, 0.30f, 1);
 					ImVec4 colH = isSolo ? ImVec4(1.0f, 0.85f, 0.25f, 1) : ImVec4(0.45f, 0.45f, 0.45f, 1);
 					ImGui::PushStyleColor(ImGuiCol_Button, col4);
 					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colH);
-					if (ImGui::Button(isSolo ? "!" : "##solo", overrideButtonSize))
+					if (Util::Button(isSolo ? "!" : "##solo", overrideButtonSize))
 						SetSoloLight(isSolo ? 0 : key);
 					ImGui::PopStyleColor(2);
 					noteHover();
@@ -832,10 +832,10 @@ namespace ShadowCasterManager
 		if (shadowUnshadowedLightCount > 0)
 			ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1),
 				T(TKEY("shadow_lights_dropped"), "Shadow lights  : %u / %u  (%u wanted, %u dropped, %zu converted)"),
-				slotUsage, slots, requested, shadowUnshadowedLightCount, s_normalConvert.size());
+				slotUsage, slots, requested, shadowUnshadowedLightCount, ConvertedLightCount());
 		else
 			ImGui::Text(T(TKEY("shadow_lights"), "Shadow lights  : %u / %u  (%u wanted, 0 dropped, %zu converted)"),
-				slotUsage, slots, requested, s_normalConvert.size());
+				slotUsage, slots, requested, ConvertedLightCount());
 
 		if (s_highImportanceLightCount > 0 && ImGui::IsItemHovered())
 			ImGui::SetTooltip(T(TKEY("high_importance_tooltip"), "%u high-importance (near camera/player)."),
@@ -1446,7 +1446,7 @@ namespace ShadowCasterManager
 				if (ImGui::BeginCombo(T(TKEY("shadow_map_resolution"), "Shadow Map Resolution"), preview)) {
 					for (int i = 0; i < kTierCount; ++i) {
 						const bool selected = (i == tierIdx);
-						if (ImGui::Selectable(T(kResTiers[i].key, kResTiers[i].label), selected) &&
+						if (Util::RoundedSelectable(T(kResTiers[i].key, kResTiers[i].label), selected) &&
 							kResTiers[i].value != currentRes) {
 							setting->SetInteger(kResTiers[i].value);
 							s_shadowResolutionDirty = true;
@@ -1826,7 +1826,7 @@ namespace ShadowCasterManager
 					for (uint32_t option : kAtlasResOptions) {
 						char label[16];
 						snprintf(label, sizeof(label), "%u", option);
-						if (ImGui::Selectable(label, settings.AtlasResolution == option))
+						if (Util::RoundedSelectable(label, settings.AtlasResolution == option))
 							settings.AtlasResolution = option;
 					}
 					ImGui::EndCombo();
@@ -1965,7 +1965,7 @@ namespace ShadowCasterManager
 				ImGui::Text(T(TKEY("dynamic_range"), "Dynamic range: %.0fx  (unimportant lights wait %.0fx longer)"), ratio, ratio);
 			}
 
-			if (ImGui::Button(T(TKEY("reset_importance_defaults"), "Reset Importance Defaults"))) {
+			if (Util::Button(T(TKEY("reset_importance_defaults"), "Reset Importance Defaults"))) {
 				settings.ImportanceMinScale = 0.05f;
 				settings.ImportanceMaxScale = 2.0f;
 			}

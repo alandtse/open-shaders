@@ -11,6 +11,8 @@ enum class PBRFlags : uint32_t
 	CoatNormal = 1 << 4,
 	Fuzz = 1 << 5,
 	HairMarschner = 1 << 6,
+	Foliage = 1 << 7,
+	ThinSurface = 1 << 8,
 };
 
 enum class PBRShaderFlags : uint32_t
@@ -28,6 +30,9 @@ enum class PBRShaderFlags : uint32_t
 	HairMarschner = 1 << 10,
 	Glint = 1 << 11,
 	ProjectedGlint = 1 << 12,
+	Foliage = 1 << 13,
+	ThinSurface = 1 << 14,
+	HasFuzzRoughnessTexture = 1 << 15,
 };
 
 /**
@@ -45,6 +50,8 @@ public:
 	{
 		TruePBR::PBRTextureSetData* textureSetData = nullptr;
 		TruePBR::PBRMaterialObjectData* materialObjectData = nullptr;
+		std::optional<std::array<float, 4>> nifThinSurfaceParameters;
+		std::optional<std::array<float, 2>> nifFuzzParameters;
 		/**
 		 * FormID of the TESObjectREFR whose Clone3D call last wrote MATO data to this
 		 * material.  Used by the fork-before-write check to detect when a pooled material
@@ -139,6 +146,10 @@ public:
 	 * @param textureSetData The texture set configuration to apply.
 	 */
 	void ApplyTextureSetData(const TruePBR::PBRTextureSetData& textureSetData);
+	/** @brief Applies the four finite values in the NIF PBRThinSurface extra-data block. */
+	bool ApplyNifThinSurfaceParameters(std::span<const float> parameters);
+	/** @brief Applies PBRFuzz extra data: roughness (negative uses base) and slot 4 green roughness enable (0 or 1). */
+	bool ApplyNifFuzzParameters(std::span<const float> parameters);
 	/**
 	 * @brief Applies projected material object parameters (base color scale, roughness, specular, glint) to this material.
 	 * @param materialObjectData The material object configuration to apply.
@@ -164,6 +175,10 @@ public:
 	const RE::NiColor& GetSubsurfaceColor() const;
 	/** @brief Returns the subsurface scattering opacity (stored in subSurfaceLightRolloff). */
 	float GetSubsurfaceOpacity() const;
+	/** @brief Returns the back-side share of subsurface scattering. */
+	float GetSubsurfaceBalance() const;
+	/** @brief Returns front/back thin-surface specular weights and back-face roughness scale. */
+	const std::array<float, 3>& GetThinSurfaceParameters() const;
 
 	/** @brief Returns the clearcoat layer color (stored in specularColor). */
 	const RE::NiColor& GetCoatColor() const;
@@ -187,22 +202,39 @@ public:
 	const RE::NiColor& GetFuzzColor() const;
 	/** @brief Returns the fuzz layer weight/intensity. */
 	float GetFuzzWeight() const;
+	/** @brief Returns fuzz roughness clamped to [0, 1], or a negative value to use base roughness. */
+	float GetFuzzRoughness() const;
 
 	/** @brief Returns the glint rendering parameters for this material's base surface. */
 	const GlintParameters& GetGlintParameters() const;
 
 	inline static std::unordered_map<BSLightingShaderMaterialPBR*, MaterialExtensions> All;
+	/** @brief Guards All: materials are created, copied and destroyed on the main thread and on background loader threads (Clone3D, NIF loads). Recursive for ApplyTextureSetData inside the settings iterations; never held across engine calls. */
+	inline static std::recursive_mutex AllMutex;
+
+	/** @brief Returns the material's extensions, creating them on first use; locks AllMutex for the lookup only. */
+	static MaterialExtensions& GetExtensions(BSLightingShaderMaterialPBR* material)
+	{
+		std::lock_guard lock(AllMutex);
+		return All[material];
+	}
 
 	// members
 	RE::BSShaderMaterial::Feature loadedWithFeature = RE::BSShaderMaterial::Feature::kDefault;
 
 	stl::enumeration<PBRFlags> pbrFlags;
+	// Retain NIF defaults when texture-set parameters are reapplied.
+	stl::enumeration<PBRFlags> nifThinSurfaceFlags;
+	float subsurfaceBalance = 0.75f;
+	std::array<float, 3> thinSurfaceParameters = { 0.5f, 0.5f, 1.f };
 
 	float coatRoughness = 1.f;
 	float coatSpecularLevel = 0.04f;
 
 	RE::NiColor fuzzColor;
 	float fuzzWeight = 0.f;
+	float fuzzRoughness = -1.f;
+	bool fuzzRoughnessTexture = false;
 
 	GlintParameters glintParameters;
 
@@ -212,7 +244,7 @@ public:
 	// Emission color in rgb
 	RE::NiPointer<RE::NiSourceTexture> emissiveTexture;
 
-	// Displacement in r
+	// Displacement in r, fuzz roughness in g when fuzzRoughnessTexture is set
 	RE::NiPointer<RE::NiSourceTexture> displacementTexture;
 
 	// Subsurface map (subsurface color in rgb, thickness in a) / Coat map (coat color in rgb, coat strength in a)
