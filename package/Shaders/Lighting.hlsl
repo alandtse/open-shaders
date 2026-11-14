@@ -3543,7 +3543,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	LightLimitFix::LLFDebugInfo llfDebug = LightLimitFix::LLFDebugInfoInit();
 #			endif
 
-#			if defined(DEFERRED)
+#			if defined(DEFERRED) && !defined(LLF_NO_CONTACT_SHADOWS)
 	// Contact-shadow setup, gated on the runtime toggle so we don't pay the
 	// noise hash + step-count math for every pixel when the feature is off
 	// (it defaults off). The step count and noise are reused across every
@@ -3625,7 +3625,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 		float contactShadow = 1.0;
 
-#			if defined(DEFERRED)
+#			if defined(DEFERRED) && !defined(LLF_NO_CONTACT_SHADOWS)
 		// Outer guard: contactShadowSteps > 0 covers both "feature off" and "pixel past
 		// MaxDistance", so all per-light intensity-gate math is paid only when a raymarch
 		// is actually possible. Without this, the falloff math fires for every clustered
