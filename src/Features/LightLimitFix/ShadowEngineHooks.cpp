@@ -938,6 +938,16 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	// AE's ~BSLight inlines ClearGeometryList, so the detour above never sees a destroyed light there.
+	struct Hook_LightDestructor
+	{
+		static void thunk(RE::BSLight* a_light)
+		{
+			WithObjectListLock([&] { func(a_light); });
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	// Detours ShadowSceneNode::ResetScene (99741/106385) -- the portalGraph setter, called from
 	// ResetCellGrid on cell transitions. This is the coc-time nuller (not ClearSceneAndFog, which
 	// only fires on SSN teardown). Hold the graph lock exclusive so it can't swap mid-read.
@@ -1433,6 +1443,10 @@ namespace ShadowCasterManager
 		stl::write_vfunc<0x0A, Hook_ParabolicRender>(RE::VTABLE_BSShadowParabolicLight[0]);
 		if (long rc = stl::detour_thunk<Hook_ClearGeometryList>(REL::RelocationID(101298, 108285)))
 			logger::error("[SCM] Hook_ClearGeometryList detour FAILED ({})", rc);
+		if (REL::Module::IsAE()) {
+			if (long rc = stl::detour_thunk<Hook_LightDestructor>(REL::ID(108277).address()))
+				logger::error("[SCM] Hook_LightDestructor detour FAILED ({})", rc);
+		}
 		InstallPassRegistrationHooks();
 
 		// Contribution-cull point-light shadow casters (parabolic AppendVirtual).
