@@ -775,6 +775,13 @@ namespace SIE
 			const bool linearACEScg = pixel && (descriptor & ShaderCache::kLightingLinearACEScg);
 			if (linearACEScg)
 				descriptor &= ~ShaderCache::kLightingLinearACEScg;
+			const bool deferredPixel = pixel && (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::Deferred));
+			const bool omitLocalLights = deferredPixel && (descriptor & ShaderCache::kLightingNoLocalLights);
+			const bool singleClusterLight = deferredPixel && (descriptor & ShaderCache::kLightingSingleClusterLight);
+			if (omitLocalLights)
+				descriptor &= ~ShaderCache::kLightingNoLocalLights;
+			if (singleClusterLight)
+				descriptor &= ~ShaderCache::kLightingSingleClusterLight;
 			RE::GetLightingShaderDefines(descriptor, reinterpret_cast<REX::W32::D3D_SHADER_MACRO*>(defines.data()));
 
 			size_t lastIndex = std::ranges::find_if(defines, [](const D3D_SHADER_MACRO& macro) { return macro.Name == nullptr; }) - defines.begin();
@@ -789,6 +796,10 @@ namespace SIE
 				defines[lastIndex++] = { "NO_TREE_BEND", nullptr };
 			if (linearACEScg)
 				defines[lastIndex++] = { "LINEAR_ACESCG", nullptr };
+			if (omitLocalLights)
+				defines[lastIndex++] = { "LLF_NO_LOCAL_LIGHTS", nullptr };
+			if (singleClusterLight)
+				defines[lastIndex++] = { "LLF_SINGLE_CLUSTER_LIGHT", nullptr };
 			if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::Deferred)) {
 				defines[lastIndex++] = { "DEFERRED", nullptr };
 				if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::IBLLuminanceRatio))
