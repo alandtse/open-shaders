@@ -764,6 +764,10 @@ namespace SIE
 			const bool dryWeather = pixel && (descriptor & ShaderCache::kLightingDryWeather);
 			if (dryWeather)
 				descriptor &= ~ShaderCache::kLightingDryWeather;
+			const bool noMeshVariation = pixel && ShaderCache::SupportsMeshVariationVariant(descriptor) &&
+			                             (descriptor & ShaderCache::kLightingNoMeshVariation);
+			if (noMeshVariation)
+				descriptor &= ~ShaderCache::kLightingNoMeshVariation;
 			RE::GetLightingShaderDefines(descriptor, reinterpret_cast<REX::W32::D3D_SHADER_MACRO*>(defines.data()));
 
 			size_t lastIndex = std::ranges::find_if(defines, [](const D3D_SHADER_MACRO& macro) { return macro.Name == nullptr; }) - defines.begin();
@@ -772,6 +776,8 @@ namespace SIE
 				defines[lastIndex++] = { "SNOW_COVER_INACTIVE", nullptr };
 			if (dryWeather)
 				defines[lastIndex++] = { "DRY_WEATHER", nullptr };
+			if (noMeshVariation)
+				defines[lastIndex++] = { "NO_MESH_VARIATION", nullptr };
 			if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::Deferred)) {
 				defines[lastIndex++] = { "DEFERRED", nullptr };
 			}
