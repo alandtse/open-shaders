@@ -60,6 +60,24 @@ TEST_CASE("Streamline reprojection follows camera movement and projection change
 	}
 }
 
+TEST_CASE("The engine camera table and the constant buffer give the same camera frame", "[upscaling][camera]")
+{
+	const float4x4 projection(DirectX::XMMatrixPerspectiveFovLH(1.2f, 16.0f / 9.0f, 15.0f, 353840.0f));
+	const auto view = float4x4::CreateRotationY(0.3f) * float4x4::CreateRotationX(-0.1f);
+	const auto previousView = float4x4::CreateRotationY(0.28f) * float4x4::CreateRotationX(-0.1f);
+	const float3 origin(21366.6f, -3318.3f, -2584.2f);
+	const float3 previousOrigin(21360.0f, -3318.3f, -2580.0f);
+	const auto table = UpscalingCamera::FromCameraTable(view, view * projection, previousView * projection, origin, previousOrigin);
+	const auto constantBuffer = UpscalingCamera::FromConstantBuffer(view.Invert().Transpose(), (view * projection).Transpose(),
+		(previousView * projection).Transpose(), origin, previousOrigin);
+	RequireMatrixNear(table.viewInverse, constantBuffer.viewInverse);
+	RequireMatrixNear(table.viewProjection, constantBuffer.viewProjection);
+	RequireMatrixNear(table.previousViewProjection, constantBuffer.previousViewProjection);
+	RequireMatrixNear(table.viewInverse * table.viewProjection, projection);
+	REQUIRE(table.origin == constantBuffer.origin);
+	REQUIRE(table.previousOrigin == constantBuffer.previousOrigin);
+}
+
 TEST_CASE("DLSS and frame generation share repeatable camera transforms", "[upscaling][camera]")
 {
 	const float4x4 projection(DirectX::XMMatrixPerspectiveFovLH(1.2f, 16.0f / 9.0f, 15.0f, 370000.0f));
