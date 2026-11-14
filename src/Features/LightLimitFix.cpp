@@ -31,6 +31,15 @@
 
 namespace
 {
+	struct DeferredLocalLightBounds
+	{
+		uint32_t frame = std::numeric_limits<uint32_t>::max();
+		bool empty = false;
+		std::optional<RE::NiBound> singleLight;
+	};
+
+	DeferredLocalLightBounds deferredLocalLightBounds;
+
 	struct DeferredLightingVariant
 	{
 		RE::BSGraphics::PixelShader* shader = nullptr;
@@ -40,7 +49,9 @@ namespace
 	struct DeferredLightingShaders
 	{
 		RE::BSGraphics::PixelShader* standard = nullptr;
-		DeferredLightingVariant withoutMeshVariation;
+		DeferredLightingVariant withoutLocalLights;
+		DeferredLightingVariant singleClusterLight;
+		std::array<DeferredLightingVariant, 3> withoutMeshVariation;
 		uint32_t descriptor = 0;
 	};
 
@@ -998,21 +1009,18 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 #endif
 }
 
-void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
+bool LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
 {
 	auto shaderCache = globals::shaderCache;
 	auto context = globals::d3d::context;
 	auto smState = globals::game::smState;
 
-	if (!shaderCache->IsEnabled())
-		return;
-
-	if (!smState || !strictLightDataCB)
-		return;
+	if (!shaderCache->IsEnabled() || !smState || !strictLightDataCB)
+		return false;
 
 	auto accumulator = *globals::game::currentAccumulator.get();
 	if (!accumulator)
-		return;
+		return false;
 
 	auto shadowSceneNode = smState->shadowSceneNode[0];
 
@@ -1035,10 +1043,42 @@ void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
 		ID3D11Buffer* buffer = { strictLightDataCB->CB() };
 		context->PSSetConstantBuffers(3, 1, &buffer);
 	}
+	return isWorld && isEmpty && !isFirstPerson;
 }
 
 namespace
 {
+	bool IsOutsideLocalLight(const State& state, const RE::BSRenderPass& pass, const RE::NiPoint3& eye)
+	{
+		using Flags = SIE::ShaderCache::LightingShaderFlags;
+		using Technique = SIE::ShaderCache::LightingShaderTechniques;
+		using PropertyFlag = RE::BSShaderProperty::EShaderPropertyFlag;
+		constexpr auto unboundedVertices = static_cast<uint32_t>(Flags::Skinned) | static_cast<uint32_t>(Flags::FurShells);
+		const auto technique = static_cast<Technique>((state.currentVertexDescriptor >> 24) & 0x3F);
+		const auto& geometry = *pass.geometry;
+		if (!deferredLocalLightBounds.singleLight ||
+			geometry.GetType().get() != RE::BSGeometry::Type::kTriShape ||
+			!pass.shaderProperty ||
+			pass.shaderProperty->flags.any(PropertyFlag::kMultiTextureLandscape, PropertyFlag::kLODLandscape,
+				PropertyFlag::kLODObjects, PropertyFlag::kHDLODObjects, PropertyFlag::kDecal, PropertyFlag::kDynamicDecal) ||
+			(state.currentVertexDescriptor & unboundedVertices) ||
+			(state.modifiedPixelDescriptor & static_cast<uint32_t>(Flags::FurShells)) ||
+			(state.permutationData.ExtraShaderDescriptor & static_cast<uint32_t>(State::ExtraShaderDescriptors::TreeBend)) ||
+			technique == Technique::TreeAnim || technique == Technique::LODLand || technique == Technique::LODLandNoise ||
+			technique == Technique::MTLandLODBlend ||
+			geometry.GetGeometryRuntimeData().skinInstance)
+			return false;
+
+		const auto& bound = geometry.worldBound;
+		const auto& light = *deferredLocalLightBounds.singleLight;
+		const auto center = (bound.center - eye) - light.center;
+		const float distanceSquared = center.SqrLength();
+		// Allow for camera-relative rounding and the one-unit viewmodel rebase threshold.
+		constexpr float boundsPadding = 8.0f;
+		const float radius = (light.radius + bound.radius) * (1.0f + 1e-5f) + boundsPadding;
+		return bound.radius > 0.0f && std::isfinite(distanceSquared) && distanceSquared > radius * radius;
+	}
+
 	bool HasCompatiblePixelConstants(const RE::BSGraphics::PixelShader& standard, const RE::BSGraphics::PixelShader& variant)
 	{
 		return standard.constantTable == variant.constantTable &&
@@ -1057,7 +1097,7 @@ namespace
 		return active;
 	}
 
-	void SelectDeferredLightingShader(RE::BSShader& shader, const RE::BSRenderPass* pass)
+	void SelectDeferredLightingShader(RE::BSShader& shader, const RE::BSRenderPass* pass, bool directionalSlotSafe, bool noStrictLights, const RE::NiPoint3& eye)
 	{
 		auto& state = *globals::state;
 		auto& variants = deferredLightingShaders;
@@ -1069,19 +1109,44 @@ namespace
 
 		using Cache = SIE::ShaderCache;
 		const auto descriptor = state.modifiedPixelDescriptor;
+		const auto isCurrentMeshVariant = [&] {
+			return (current->id & Cache::kLightingNoMeshVariation) && Cache::SupportsMeshVariationVariant(descriptor) &&
+			       std::ranges::any_of(variants.withoutMeshVariation,
+					   [current](const auto& a_variant) { return a_variant.shader == current; });
+		};
 		if (descriptor != variants.descriptor ||
-			(current != variants.standard && current != variants.withoutMeshVariation.shader))
+			(current != variants.standard && current != variants.withoutLocalLights.shader && current != variants.singleClusterLight.shader &&
+				!isCurrentMeshVariant()))
 			variants = { .standard = current, .descriptor = descriptor };
 
 		auto* selected = variants.standard;
 		auto& engineShader = *globals::game::currentPixelShader;
 		const bool usesCustomConstantLayout = engineShader == current;
+		if (directionalSlotSafe && globals::deferred->deferredPass && noStrictLights && deferredLocalLightBounds.frame == state.frameCount &&
+			pass && pass->geometry && (deferredLocalLightBounds.empty || deferredLocalLightBounds.singleLight)) {
+			const bool outside = deferredLocalLightBounds.empty || IsOutsideLocalLight(state, *pass, eye);
+			auto& variant = outside ? variants.withoutLocalLights : variants.singleClusterLight;
+			if (variant.requestFrame != state.frameCount) {
+				variant.requestFrame = state.frameCount;
+				const auto flag = outside ? SIE::ShaderCache::kLightingNoLocalLights : SIE::ShaderCache::kLightingSingleClusterLight;
+				const auto expectedDescriptor = variants.standard->id | flag;
+				auto* candidate = globals::shaderCache->GetPixelShader(shader, expectedDescriptor);
+				variant.shader = candidate && candidate->id == expectedDescriptor ? candidate : nullptr;
+			}
+			if (variant.shader && (!usesCustomConstantLayout || variant.shader == current ||
+									  HasCompatiblePixelConstants(*variants.standard, *variant.shader)))
+				selected = variant.shader;
+		}
+
 		constexpr auto reflections = static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections);
 		constexpr auto meshVariation = static_cast<uint32_t>(State::ExtraFeatureDescriptors::TVMeshVariation);
-		if (LightingDefinesMeshVariation() && Cache::SupportsMeshVariationVariant(descriptor) &&
+		if (directionalSlotSafe && LightingDefinesMeshVariation() && Cache::SupportsMeshVariationVariant(descriptor) &&
 			(globals::deferred->deferredPass || (state.permutationData.ExtraShaderDescriptor & reflections)) &&
 			!(state.permutationData.ExtraFeatureDescriptor & meshVariation) && pass && pass->geometry) {
-			auto& variant = variants.withoutMeshVariation;
+			const size_t index = (selected->id & Cache::kLightingNoLocalLights)      ? 1 :
+			                     (selected->id & Cache::kLightingSingleClusterLight) ? 2 :
+			                                                                           0;
+			auto& variant = variants.withoutMeshVariation[index];
 			const auto expectedDescriptor = selected->id | Cache::kLightingNoMeshVariation;
 			if (variant.requestFrame != state.frameCount) {
 				variant.requestFrame = state.frameCount;
@@ -1373,6 +1438,7 @@ void LightLimitFix::UpdateLights()
 {
 	ZoneScopedN("LLF::UpdateLights");
 
+	deferredLocalLightBounds = {};
 	auto context = globals::d3d::context;
 	if (!context || !lights || !lights->resource) {
 		// Drop last frame's particle lights so AddParticleLightLuminance (gameplay
@@ -1605,6 +1671,17 @@ void LightLimitFix::UpdateLights()
 	}
 
 	UpdateStructure();
+	if (!globals::game::isVR && lightCount <= 1 && !currentEnableLightsVisualisation) {
+		deferredLocalLightBounds.frame = globals::state->frameCount;
+		deferredLocalLightBounds.empty = lightCount == 0;
+		if (lightCount == 1) {
+			const auto& light = lightsData.front();
+			const auto& pos = light.positionWS[0].data;
+			const auto radius = std::max(light.radius, 1.0f / light.invRadius);
+			if (light.radius > 0.0f && light.invRadius > 0.0f && std::isfinite(radius))
+				deferredLocalLightBounds.singleLight = RE::NiBound{ { pos.x, pos.y, pos.z }, radius };
+		}
+	}
 }
 
 void LightLimitFix::UpdateStructure()
@@ -2025,9 +2102,8 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* T
 	singleton.BSLightingShader_SetupGeometry_Before(Pass);
 	if (directionalSlotSafe)
 		func(This, Pass, RenderFlags);
-	singleton.BSLightingShader_SetupGeometry_After(Pass);
-	if (directionalSlotSafe)
-		SelectDeferredLightingShader(*This, Pass);
+	const bool noStrictLights = singleton.BSLightingShader_SetupGeometry_After(Pass);
+	SelectDeferredLightingShader(*This, Pass, directionalSlotSafe, noStrictLights, singleton.eyePositionCached[0]);
 }
 
 void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)

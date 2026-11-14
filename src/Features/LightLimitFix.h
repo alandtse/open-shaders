@@ -554,7 +554,7 @@ public:
 	void BSLightingShader_SetupGeometry_GeometrySetupConstantPointLights(RE::BSRenderPass* a_pass);
 
 	/** @brief Post-geometry setup: uploads the strict light constant buffer to the GPU if changed. */
-	void BSLightingShader_SetupGeometry_After(RE::BSRenderPass* a_pass);
+	bool BSLightingShader_SetupGeometry_After(RE::BSRenderPass* a_pass);
 
 	eastl::hash_map<RE::NiNode*, uint8_t> roomNodes;
 
