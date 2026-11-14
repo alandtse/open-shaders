@@ -1061,6 +1061,7 @@ namespace SIE
 		static constexpr uint32_t kLightingSnowCoverInactive = 1u << 19;
 		static constexpr uint32_t kLightingNoMeshVariation = 1u << 9;
 		static constexpr uint32_t kVertexNoTreeBend = 1u << 6;
+		static constexpr uint32_t kLightingLinearACEScg = 1u << 7;
 
 		enum class LightingShaderFlags : uint32_t
 		{
@@ -1188,6 +1189,8 @@ namespace SIE
 			Flowmap = 1 << 9,           // 0x200
 			BlendNormals = 1 << 10,     // 0x400
 		};
+
+		static constexpr uint32_t kEffectLinearACEScg = 1u << 9;
 
 		enum class EffectShaderFlags
 		{

@@ -775,6 +775,10 @@ void Deferred::ClearShaderCache()
 	mainCompositeInteriorCS.Reset();
 	mainCompositeIBLLuminanceRatioCS.Reset();
 	mainCompositeInteriorIBLLuminanceRatioCS.Reset();
+	mainCompositeLinearACEScgCS.Reset();
+	mainCompositeInteriorLinearACEScgCS.Reset();
+	mainCompositeIBLLuminanceRatioLinearACEScgCS.Reset();
+	mainCompositeInteriorIBLLuminanceRatioLinearACEScgCS.Reset();
 }
 
 ID3D11ComputeShader* Deferred::GetComputeMainComposite()
@@ -804,12 +808,21 @@ ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 	if (globals::features::terrainBlending.loaded)
 		defines.push_back({ "TERRAIN_BLENDING", nullptr });
 
-	constexpr auto luminanceRatio = static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio);
-	if (globals::state->deferredLightingShaderFlags & luminanceRatio) {
-		defines.push_back({ "IBL_LUMINANCE_RATIO", nullptr });
-		if (auto* shader = mainCompositeIBLLuminanceRatioCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0"))
+	const auto specialization = globals::state->deferredLightingShaderFlags;
+	const bool luminanceRatio = (specialization & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio)) != 0;
+	const bool linearACEScg = (specialization & SIE::ShaderCache::kLightingLinearACEScg) != 0;
+	if (luminanceRatio || linearACEScg) {
+		const size_t baseDefineCount = defines.size();
+		if (luminanceRatio)
+			defines.push_back({ "IBL_LUMINANCE_RATIO", nullptr });
+		if (linearACEScg)
+			defines.push_back({ "LINEAR_ACESCG", nullptr });
+		auto& variant = luminanceRatio && linearACEScg ? mainCompositeIBLLuminanceRatioLinearACEScgCS :
+		                luminanceRatio                 ? mainCompositeIBLLuminanceRatioCS :
+		                                                 mainCompositeLinearACEScgCS;
+		if (auto* shader = variant.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0"))
 			return shader;
-		defines.pop_back();
+		defines.resize(baseDefineCount);
 	}
 
 	return mainCompositeCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
@@ -840,12 +853,21 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 	if (globals::features::terrainBlending.loaded)
 		defines.push_back({ "TERRAIN_BLENDING", nullptr });
 
-	constexpr auto luminanceRatio = static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio);
-	if (globals::state->deferredLightingShaderFlags & luminanceRatio) {
-		defines.push_back({ "IBL_LUMINANCE_RATIO", nullptr });
-		if (auto* shader = mainCompositeInteriorIBLLuminanceRatioCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0"))
+	const auto specialization = globals::state->deferredLightingShaderFlags;
+	const bool luminanceRatio = (specialization & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio)) != 0;
+	const bool linearACEScg = (specialization & SIE::ShaderCache::kLightingLinearACEScg) != 0;
+	if (luminanceRatio || linearACEScg) {
+		const size_t baseDefineCount = defines.size();
+		if (luminanceRatio)
+			defines.push_back({ "IBL_LUMINANCE_RATIO", nullptr });
+		if (linearACEScg)
+			defines.push_back({ "LINEAR_ACESCG", nullptr });
+		auto& variant = luminanceRatio && linearACEScg ? mainCompositeInteriorIBLLuminanceRatioLinearACEScgCS :
+		                luminanceRatio                 ? mainCompositeInteriorIBLLuminanceRatioCS :
+		                                                 mainCompositeInteriorLinearACEScgCS;
+		if (auto* shader = variant.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0"))
 			return shader;
-		defines.pop_back();
+		defines.resize(baseDefineCount);
 	}
 
 	return mainCompositeInteriorCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
