@@ -2267,7 +2267,7 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 				if (deferred->deferredPass || a_forceDeferred)
 					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::LightingShaderFlags::Deferred | deferredLightingShaderFlags;
 				else if (permutationData.ExtraShaderDescriptor & static_cast<uint32_t>(ExtraShaderDescriptors::IsReflections))
-					a_pixelDescriptor |= deferredLightingShaderFlags;
+					a_pixelDescriptor |= deferredLightingShaderFlags & ~(SIE::ShaderCache::kLightingNoLocalShadowMaps);
 
 				{
 					uint32_t technique = 0x3F & (a_vertexDescriptor >> 24);
