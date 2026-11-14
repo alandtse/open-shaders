@@ -1088,6 +1088,15 @@ namespace
 				   });
 	}
 
+	bool LightingDefinesMeshVariation()
+	{
+		static const bool active = std::ranges::any_of(Feature::GetFeatureList(), [](Feature* feature) {
+			return feature->loaded && feature->HasShaderDefine(RE::BSShader::Type::Lighting) &&
+			       feature->GetShaderDefineName() == "TERRAIN_VARIATION";
+		});
+		return active;
+	}
+
 	void SelectDeferredLightingShader(RE::BSShader& shader, const RE::BSRenderPass* pass, bool directionalSlotSafe, bool noStrictLights, const RE::NiPoint3& eye)
 	{
 		auto& state = *globals::state;
@@ -1131,7 +1140,7 @@ namespace
 
 		constexpr auto reflections = static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections);
 		constexpr auto meshVariation = static_cast<uint32_t>(State::ExtraFeatureDescriptors::TVMeshVariation);
-		if (directionalSlotSafe && Cache::SupportsMeshVariationVariant(descriptor) &&
+		if (directionalSlotSafe && LightingDefinesMeshVariation() && Cache::SupportsMeshVariationVariant(descriptor) &&
 			(globals::deferred->deferredPass || (state.permutationData.ExtraShaderDescriptor & reflections)) &&
 			!(state.permutationData.ExtraFeatureDescriptor & meshVariation) && pass && pass->geometry) {
 			const size_t index = (selected->id & Cache::kLightingNoLocalLights)      ? 1 :

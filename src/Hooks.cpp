@@ -58,7 +58,6 @@ namespace
 		RE::BSGraphics::VertexShader* selected = nullptr;
 		std::array<RE::BSGraphics::VertexShader*, 2> shaders{};
 		std::array<bool, 2> requested{};
-		bool compatibleNoTreeBend = false;
 		uint64_t frame = 0;
 		uint32_t descriptor = 0;
 	};
@@ -86,13 +85,11 @@ namespace
 		if (variant != 0 && !variants.requested[variant]) {
 			variants.requested[variant] = true;
 			const auto descriptor = variants.descriptor | SIE::ShaderCache::kVertexNoTreeBend;
-			auto* candidate = globals::shaderCache->GetVertexShader(shader, descriptor);
-			variants.shaders[variant] = candidate;
-			variants.compatibleNoTreeBend = candidate && HasCompatibleVertexConstants(*variants.shaders[0], *candidate);
+			variants.shaders[variant] = globals::shaderCache->GetVertexShader(shader, descriptor);
 		}
 		auto* vertexShader = variants.shaders[variant];
 		const bool usesCustomConstantLayout = *globals::game::currentVertexShader == state.customVertexShader;
-		if (!vertexShader || (variant != 0 && usesCustomConstantLayout && !variants.compatibleNoTreeBend))
+		if (!vertexShader || (usesCustomConstantLayout && variants.shaders[0] && !HasCompatibleVertexConstants(*variants.shaders[0], *vertexShader)))
 			vertexShader = variants.shaders[0];
 		if (state.customVertexShader == vertexShader)
 			return;

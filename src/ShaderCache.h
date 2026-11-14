@@ -1059,9 +1059,9 @@ namespace SIE
 
 		static constexpr uint32_t kLightingDryWeather = 1u << 21;
 		static constexpr uint32_t kLightingSnowCoverInactive = 1u << 19;
-		static constexpr uint32_t kLightingLinearACEScg = 1u << 7;
+		static constexpr uint32_t kLightingNoMeshVariation = 1u << 9;
 		static constexpr uint32_t kVertexNoTreeBend = 1u << 6;
-		static constexpr uint32_t kLightingNoMeshVariation = 1u << 6;
+		static constexpr uint32_t kLightingLinearACEScg = 1u << 7;
 		static constexpr uint32_t kLightingNoLocalLights = 1u << 22;
 		static constexpr uint32_t kLightingSingleClusterLight = 1u << 14;
 

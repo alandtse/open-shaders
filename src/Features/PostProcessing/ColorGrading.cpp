@@ -1292,6 +1292,12 @@ bool ColorGrading::DrawToTarget(TextureInfo& inout_tex, const TextureInfo& targe
 		auto* cb = colorCB->CB();
 		auto* sampler = linearSampler.get();
 		const std::array srvs{ source, texLUT ? texLUT->srv.get() : nullptr };
+		winrt::com_ptr<ID3D11Buffer> previousVertexCB;
+		context->VSGetConstantBuffers(1, 1, previousVertexCB.put());
+		const SKSE::stl::scope_exit restoreVertexCB([&] {
+			auto* previous = previousVertexCB.get();
+			context->VSSetConstantBuffers(1, 1, &previous);
+		});
 		context->VSSetConstantBuffers(1, 1, &cb);
 		context->PSSetConstantBuffers(1, 1, &cb);
 		context->PSSetSamplers(0, 1, &sampler);
