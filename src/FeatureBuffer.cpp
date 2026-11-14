@@ -63,7 +63,7 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::dynamicCubemaps.settings,
 		globals::features::terrainShadows.GetCommonBufferData(),
 		globals::features::lightLimitFix.GetCommonBufferData(),
-		globals::features::wetnessEffects.GetCommonBufferData(),
+		globals::features::wetnessEffects.PrepareFrameData(),
 		globals::features::skylighting.GetCommonBufferData(a_inWorld),
 		globals::features::cloudShadows.GetCommonBufferData(),
 		globals::features::cloudRelight.GetCommonBufferData(),
