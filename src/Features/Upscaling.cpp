@@ -9,6 +9,7 @@
 #include "RenderDoc.h"
 #include "ScreenshotFeature.h"
 #include "State.h"
+#include "Upscaling/DLSSGPreset.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/FoveatedRender.h"
@@ -64,6 +65,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	dlssgFramesToGenerate,
 	dlssgDynamic,
 	dlssgDynamicTargetFPS,
+	dlssgPreset,
 	streamlineLogLevel,
 	sharpnessFSR,
 	sharpnessEnabledDLSS,
@@ -726,6 +728,18 @@ void Upscaling::RegisterUxActions()
 		"Eye-tracked foveation gaze: whether Follow eye gaze is on (enabled), the selected source mode (sourceMode: 0 SteamVR then OSC, 1 SteamVR only, 2 OSC only), the source that supplied the last sample (source: kNone, kSteamVr or kOsc), whether that sample was valid (valid), the per-eye gaze centres in normalized eye UV with y down (centres, left then right), whether the gaze override is currently placing the crop (active), the lifetime count of valid frames (validFrames) and settings.gazeRecentreThreshold. The OSC listener reports oscListening, oscPort, oscPackets, oscBindFailed and lastOscAddress; a bind failure is logged once and not retried until the port changes. Settings live under foveatedRender in openshaders.feature: gazeFollow, gazeSource, gazeOscPort, gazeRecentreThreshold and gazeOffsetX/gazeOffsetY. Params: none.",
 		GazeStatus);
 
+	FEATURE_QUERY("dlssgPresetStatus",
+		"DLSS-G model preset: selected is settings.dlssgPreset (0 Default, 1 A, 2 B, 3 C; C needs DLSS-G 310.9.16 or newer), atBoot is the value this session started with, and driverProfileValue is the DLSS-FG preset key (0x10E41DF1) in the driver profile for Skyrim SE, or null when the key is unset or unreadable, and presetCSupported is whether the installed nvngx_dlssg.dll is 310.9.16 or newer (Preset C is hidden from the menu and never written otherwise). nvngx_dlssg.dll reads that key when frame generation starts, so a change applies on the next launch. Setting dlssgPreset through openshaders.feature writes the key, the launch-time settings load never does; Default removes it only when replacing an explicit preset. Flatrim only. Params: none.",
+		([](const Feature* self, const json&) -> json {
+			const auto& upscaling = *static_cast<const Upscaling*>(self);
+			return json{
+				{ "selected", upscaling.settings.dlssgPreset },
+				{ "atBoot", upscaling.bootSnapshot.Boot(&Settings::dlssgPreset) },
+				{ "driverProfileValue", optionalJson(Streamline::ReadDLSSGPresetFromDriverProfile()) },
+				{ "presetCSupported", upscaling.streamlineDX12.dlssgPresetCSupported }
+			};
+		}));
+
 	FEATURE_COMMAND("retryNeuralRendering",
 		"Queue one Neural Rendering retry: the same flag the Retry NR button sets. The next enabled world frame retires and rebuilds a failed runtime, and the request resets history; a healthy runtime is not rebuilt. Params: none.",
 		RetryNeuralRendering);
@@ -980,6 +994,26 @@ void Upscaling::DrawFrameGenerationSettings()
 			T(TKEY("prefer_fsr_frame_gen_tooltip"),
 				"Selects NVIDIA DLSS-G instead of AMD FSR on supported hardware.\n"
 				"Leave off to use AMD FSR."));
+
+		{
+			Util::DisableGuard presetDisabled(!settings.enableDLSSFrameGen);
+			const char* dlssgPresets[DLSSGPreset::kCount] = {
+				T(TKEY("dlssg_preset_default"), "Default"),
+				T(TKEY("dlssg_preset_a"), "Preset A"),
+				T(TKEY("dlssg_preset_b"), "Preset B"),
+				T(TKEY("dlssg_preset_c"), "Preset C")
+			};
+			const uint previousPreset = settings.dlssgPreset;
+			const int presetCount = static_cast<int>(DLSSGPreset::AvailableCount(streamlineDX12.dlssgPresetCSupported));
+			if (Util::Combo(T(TKEY("dlssg_preset"), "DLSS-G Preset"), &settings.dlssgPreset, dlssgPresets, presetCount))
+				SyncDLSSGPresetDriverProfile(previousPreset);
+			Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::dlssgPreset,
+				T(TKEY("dlssg_preset_tooltip"),
+					"Choose which DLSS-G frame generation model to use.\n"
+					"Default leaves the choice to the driver and the NVIDIA App.\n"
+					"Preset C needs DLSS-G 310.9.16 or newer.\n"
+					"Saved to the driver profile for Skyrim, replacing an NVIDIA App DLSS-G model override."));
+		}
 
 		bool fgForce = settings.frameGenerationForceEnable != 0;
 		if (ImGui::Checkbox(T(TKEY("force_enable_frame_generation"), "Allow frame generation below 120 Hz"), &fgForce))
@@ -1299,6 +1333,7 @@ void Upscaling::LoadSettings(json& o_json)
 	}
 	// Missing schema fields take the current default during deserialization, so legacy settings need an explicit migration version.
 	const bool hadFsr4SchemaVersion = o_json.contains("fsr4RuntimeSelectionSchemaVersion");
+	const uint previousDLSSGPreset = settings.dlssgPreset;
 	settings = o_json;
 	settings.neuralRenderingTuning.Sanitize();
 	settings.neuralRenderingContexts.Sanitize();
@@ -1337,6 +1372,11 @@ void Upscaling::LoadSettings(json& o_json)
 		logger::warn("[Upscaling] Loaded presetDLSS {} out of range, resetting to 0 (Default)", settings.presetDLSS);
 		settings.presetDLSS = 0;
 	}
+	if (settings.dlssgPreset >= DLSSGPreset::kCount) {
+		logger::warn("[Upscaling] Loaded dlssgPreset {} out of range, resetting to 0 (Default)", settings.dlssgPreset);
+		settings.dlssgPreset = 0;
+	}
+	SyncDLSSGPresetDriverProfile(previousDLSSGPreset);
 	if (settings.streamlineLogLevel > 2) {  // Off, Default, Verbose
 		logger::warn("[Upscaling] Loaded streamlineLogLevel {} out of range, clamping to 2", settings.streamlineLogLevel);
 		settings.streamlineLogLevel = 2;
@@ -1375,10 +1415,20 @@ void Upscaling::LoadSettings(json& o_json)
 
 void Upscaling::RestoreDefaultSettings()
 {
+	const uint previousDLSSGPreset = settings.dlssgPreset;
 	settings = {};
+	SyncDLSSGPresetDriverProfile(previousDLSSGPreset);
 	neuralRendering.ResetHistory();
 	foveatedRender.RestoreDefaultSettings();
 	ApplyOpenCompositeUpscalingBlocker(true);
+}
+
+void Upscaling::SyncDLSSGPresetDriverProfile(uint a_previousPreset)
+{
+	if (globals::game::isVR || !bootSnapshot.IsLatched())
+		return;
+	if (!Streamline::ApplyDLSSGPresetToDriverProfile(a_previousPreset, settings.dlssgPreset, streamlineDX12.dlssgPresetCSupported))
+		settings.dlssgPreset = a_previousPreset;
 }
 
 void Upscaling::DataLoaded()
@@ -2787,6 +2837,10 @@ void Upscaling::LoadUpscalingSDKs()
 	streamlineDX12.interposerDllName = L"sl.interposer.dll";
 	streamlineDX12.instanceTag = "DX12";
 	streamlineDX12.LoadInterposer();
+	if (settings.dlssgPreset >= DLSSGPreset::AvailableCount(streamlineDX12.dlssgPresetCSupported)) {
+		logger::warn("[Upscaling] dlssgPreset {} needs nvngx_dlssg.dll 310.9.16 or newer, resetting to 0 (Default)", settings.dlssgPreset);
+		settings.dlssgPreset = 0;
+	}
 
 	fidelityFX.LoadFFX();  // AMD FSR frame generation
 }
