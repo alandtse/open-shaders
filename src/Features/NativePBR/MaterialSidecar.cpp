@@ -228,17 +228,7 @@ namespace NativePBR
 
 	void MaterialSidecar::EndInputOnlyDraw()
 	{
-		if (inputPassActive && inputContext) {
-			ID3D11Buffer* priorConstants = priorInputConstants.get();
-			inputContext->PSSetConstantBuffers(13, 1, &priorConstants);
-			inputContext->PSSetShader(priorInputPixelShader.get(), nullptr, 0);
-			inputContext->OMSetBlendState(priorInputBlend.get(), priorInputBlendFactor.data(), priorInputSampleMask);
-		}
 		inputPassActive = false;
-		inputContext = nullptr;
-		priorInputPixelShader = nullptr;
-		priorInputConstants = nullptr;
-		priorInputBlend = nullptr;
 	}
 
 	bool MaterialSidecar::StageInputOnlyShader(ID3D11PixelShader* a_shader)
@@ -286,16 +276,6 @@ namespace NativePBR
 			return false;
 		}
 		++nextDraw;
-		inputContext.copy_from(a_context);
-		a_context->PSGetShader(priorInputPixelShader.put(), nullptr, nullptr);
-		a_context->PSGetConstantBuffers(13, 1, priorInputConstants.put());
-		a_context->OMGetBlendState(priorInputBlend.put(), priorInputBlendFactor.data(), &priorInputSampleMask);
-		const Constants constants{ ordinal, 0, static_cast<uint32_t>(activeMaterial), static_cast<uint32_t>(activeMaterial >> 32) };
-		a_context->UpdateSubresource(drawConstants.get(), 0, nullptr, &constants, 0, 0);
-		ID3D11Buffer* identity = drawConstants.get();
-		a_context->PSSetConstantBuffers(13, 1, &identity);
-		a_context->PSSetShader(stagedInputShader.get(), nullptr, 0);
-		a_context->OMSetBlendState(writeAll.get(), nullptr, 0xffffffffu);
 		inputPassActive = true;
 		++inputDrawsThisFrame;
 		++replayed;

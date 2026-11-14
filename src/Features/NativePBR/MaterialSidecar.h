@@ -103,13 +103,7 @@ namespace NativePBR
 		winrt::com_ptr<ID3D11Buffer> drawConstants, validationConstants;
 		winrt::com_ptr<ID3D11BlendState> writeAll;
 		winrt::com_ptr<ID3D11RenderTargetView> expectedMain;
-		winrt::com_ptr<ID3D11DeviceContext> inputContext;
 		winrt::com_ptr<ID3D11PixelShader> stagedInputShader;
-		winrt::com_ptr<ID3D11PixelShader> priorInputPixelShader;
-		winrt::com_ptr<ID3D11Buffer> priorInputConstants;
-		winrt::com_ptr<ID3D11BlendState> priorInputBlend;
-		std::array<float, 4> priorInputBlendFactor{};
-		UINT priorInputSampleMask = 0;
 		struct DepthState
 		{
 			winrt::com_ptr<ID3D11DepthStencilState> source, replay;

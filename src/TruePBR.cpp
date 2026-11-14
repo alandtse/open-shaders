@@ -61,7 +61,7 @@ void SetupPBRLandscapeTextureParameters(BSLightingShaderMaterialPBRLandscape& ma
 void TruePBR::DrawSettings()
 {
 	if (globals::features::nativePBR.OwnsInputOnlyShading())
-		ImGui::TextDisabled("NativePBR input-only FXC active for eligible opaque/projected PBR; material hooks still require migration.");
+		ImGui::TextDisabled("NativePBR stages input-only FXC for independent capture; legacy deferred shading remains intact.");
 	const auto summary = globals::features::nativePBR.GetMaterialSummary();
 	const auto& recipeIssues = summary.issues;
 	const auto nativePbr = globals::features::nativePBR.materialRegistry.GetStatistics();
@@ -644,8 +644,7 @@ void TruePBR::GenerateShaderPermutations(RE::BSShader* shader)
 			const bool inputPermutation = SIE::ShaderCache::IsNativePBRInputPermutation(pixelShaderDescriptor);
 			if (buildNativeInputs && inputPermutation)
 				shaderCache->EnqueueNativePBRInputPixelShader(*shader, pixelShaderDescriptor);
-			if (!inputPermutation || !globals::features::nativePBR.OwnsInputOnlyShading())
-				std::ignore = shaderCache->GetPixelShader(*shader, pixelShaderDescriptor, true);
+			std::ignore = shaderCache->GetPixelShader(*shader, pixelShaderDescriptor, true);
 		}
 	} else if (shader->shaderType == RE::BSShader::Type::Utility) {
 		for (auto descriptor : Permutations::GeneratePBRUtilityPixelPermutations()) {
