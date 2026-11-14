@@ -581,14 +581,15 @@ namespace PostProcessingExtensions
 			if (replacesTonemap)
 				func(a1, a2, a3, a4, a5, a6);
 
-			if (state->HandlePostProcessing(input, output) || replacesTonemap)
+			if (state->HandlePostProcessing(input, output))
 				return;
 
 			auto& postProcessing = globals::features::postProcessing;
 			if (postProcessing.loaded)
 				postProcessing.PreProcess(input, output);
 
-			func(a1, a2, a3, a4, a5, a6);
+			if (!replacesTonemap)
+				func(a1, a2, a3, a4, a5, a6);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
