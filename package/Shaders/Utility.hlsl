@@ -56,7 +56,7 @@ struct VS_OUTPUT
 #	endif
 
 #	if defined(RENDER_SHADOWMAP_PB)
-	float3 TexCoord1: TEXCOORD2;
+	float4 TexCoord1: TEXCOORD2;
 #	elif defined(ALPHA_TEST) && (defined(RENDER_DEPTH) || defined(RENDER_SHADOWMAP))
 	float4 TexCoord1: TEXCOORD2;
 #	elif defined(ADDITIONAL_ALPHA_MASK)
@@ -99,6 +99,9 @@ cbuffer PerTechnique : register(b0)
 	float2 ParabolaParam : packoffset(c2);       // inverse radius in x, y is 1 for forward hemisphere or -1 for backward hemisphere
 #	endif  // VR
 };
+
+static const float ParaboloidCasterNearDistance = 12.0;
+static const float ParaboloidCasterNearRadiusFraction = ParaboloidCasterNearDistance / 256.0;
 
 cbuffer PerMaterial : register(b1)
 {
@@ -299,6 +302,7 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.TexCoord1.y = positionCS.w;
 	precise float parabolaParam = ParabolaParam.y * positionCS.z;
 	vsout.TexCoord1.z = parabolaParam * 0.5 + 0.5;
+	vsout.TexCoord1.w = min(ParabolaParam.x * ParaboloidCasterNearDistance, ParaboloidCasterNearRadiusFraction);
 #		elif defined(ALPHA_TEST) && (defined(RENDER_DEPTH) || defined(RENDER_SHADOWMAP))
 	float4 texCoord1 = float4(0, 0, 0, 0);
 	texCoord1.xy = positionCS.zw;
@@ -529,7 +533,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 baseColor = TexBaseSampler.SampleBias(SampBaseSampler, baseTexCoord, SharedData::MipBias);
 
 #	if defined(RENDER_SHADOWMAP_PB)
-	if (input.TexCoord1.z < 0) {
+	if (input.TexCoord1.z < 0 || input.TexCoord1.x < input.TexCoord1.w) {
 		discard;
 	}
 #	endif
