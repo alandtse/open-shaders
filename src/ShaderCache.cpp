@@ -2963,8 +2963,8 @@ namespace SIE
 
 		if (IsAsync()) {
 			compilationSet.Add({ ShaderClass::Pixel, shader, descriptor, a_precompile });
-			constexpr uint32_t specialization = kLightingDryWeather | kLightingSnowCoverInactive | kLightingLinearACEScg |
-			                                    static_cast<uint32_t>(LightingShaderFlags::IBLLuminanceRatio);
+			constexpr uint32_t specialization = kLightingDryWeather | kLightingSnowCoverInactive | kLightingNoMeshVariation |
+			                                    kLightingLinearACEScg | static_cast<uint32_t>(LightingShaderFlags::IBLLuminanceRatio);
 			if (shader.shaderType == RE::BSShader::Type::Lighting && (descriptor & specialization))
 				return GetPixelShader(shader, descriptor & ~specialization, a_precompile);
 			if (shader.shaderType == RE::BSShader::Type::Effect && (descriptor & kEffectLinearACEScg))
