@@ -202,6 +202,7 @@ void NativePBRFeature::BeginOpaqueSidecar()
 {
 	if (!IsActive() || globals::game::isVR || !globals::game::renderer || !globals::game::graphicsState)
 		return;
+	surfaceHandoffStatus = "Awaiting opaque raster completion";
 	const auto& target = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kMAIN];
 	auto* texture = Util::AsReal(target.texture);
 	if (!texture)
@@ -270,22 +271,35 @@ void NativePBRFeature::BindSurfaceInterop(ID3D11Device5* a_device11, ID3D11Devic
 
 void NativePBRFeature::OnOpaqueRasterReady(const OpaqueRasterInputs&)
 {
-	if (!IsActive() || globals::game::isVR || !globals::game::graphicsState ||
-		!globals::features::nativeComposite.WantsNativePbrSurfaceDiagnostic() || !surfacePublisher ||
-		!surfaceDevice11 || !surfaceContext11 || !surfaceDevice12 || !surfaceQueue12)
+	++surfaceHandoffCalls;
+	if (!IsActive() || globals::game::isVR || !globals::game::graphicsState) {
+		surfaceHandoffStatus = "Native material capture inactive for this runtime";
 		return;
+	}
+	if (!globals::features::nativeComposite.WantsNativePbrSurfaceDiagnostic()) {
+		surfaceHandoffStatus = "Native Composite material diagnostic disabled";
+		return;
+	}
+	if (!surfacePublisher || !surfaceDevice11 || !surfaceContext11 || !surfaceDevice12 || !surfaceQueue12) {
+		surfaceHandoffStatus = "DX12 surface publisher or interop device not initialized";
+		return;
+	}
 	const auto frame = globals::game::graphicsState->GetFrameCount();
 	const auto attachments = materialSidecar.GetSources(frame);
 	const auto draws = materialSidecar.GetDrawTable();
-	if (!attachments[0] || !draws || draws->empty())
+	if (!attachments[0] || !draws || draws->empty()) {
+		surfaceHandoffStatus = std::format("Sidecar not ready: requested frame={}, recorded frame={}, draw count={}, status={}",
+			frame, materialSidecar.GetFrame(), materialSidecar.PublishedDrawCount(), materialSidecar.Status());
 		return;
+	}
 	NativePBR::SurfaceFramePublisher::Sources sources;
 	sources.textures = attachments;
 	sources.draws = draws;
 	sources.frame = frame;
 	sources.nativeOwnedDraws = true;
-	surfacePublisher->Publish(surfaceDevice11.get(), surfaceContext11.get(),
+	const bool published = surfacePublisher->Publish(surfaceDevice11.get(), surfaceContext11.get(),
 		surfaceDevice12.get(), surfaceQueue12.get(), sources);
+	surfaceHandoffStatus = published ? "Independent ABI-v3 surface published" : surfacePublisher->GetDiagnostics().status;
 }
 
 std::shared_ptr<const NativePBR::SurfaceFrame> NativePBRFeature::GetSurfaceFrame(uint32_t a_frame) const
@@ -759,6 +773,7 @@ void NativePBRFeature::DrawSettings()
 			publication.published, publication.busySlots, publication.budgetDeferrals);
 		ImGui::TextDisabled("Surface publisher: %s", publication.status.c_str());
 	}
+	ImGui::TextDisabled("Surface handoff (%llu opaque hooks): %s", surfaceHandoffCalls, surfaceHandoffStatus.c_str());
 	if (materialSidecar.InputOnly())
 		ImGui::Text("FXC input draws this frame: %u | shader unavailable: %u | RT rejected: %u",
 			materialSidecar.InputOnlyDrawsThisFrame(), materialSidecar.InputShaderMissesThisFrame(),
@@ -774,10 +789,10 @@ void NativePBRFeature::DrawSettings()
 	}
 	bool projected = captureProjectedUv.load(std::memory_order_relaxed);
 	bool inputOnly = experimentalInputOnly.load(std::memory_order_relaxed);
-	if (ImGui::Checkbox("Run input-only FXC with DX12 experimental evaluation", &inputOnly))
+	if (ImGui::Checkbox("Capture input-only FXC draws (keep raster shading)", &inputOnly))
 		experimentalInputOnly.store(inputOnly, std::memory_order_relaxed);
 	if (inputOnly)
-		ImGui::TextDisabled("NativePBR owns recipes and input-only FXC; engine material hooks remain shared during migration.");
+		ImGui::TextDisabled("NativePBR stages input shaders and replays surface data; original deferred shading stays active.");
 	if (ImGui::Checkbox("Capture ProjectedUV material inputs (experimental)", &projected))
 		captureProjectedUv.store(projected, std::memory_order_relaxed);
 	if (projected) {
@@ -826,7 +841,7 @@ void NativePBRFeature::DrawSettings()
 	ImGui::TextDisabled("Depth-equal raster preview only; no GPU readback or native PBR lighting.");
 	if (!materialSidecar.Status().empty())
 		ImGui::TextWrapped("Sidecar: %s", materialSidecar.Status().c_str());
-	ImGui::TextDisabled(inputOnly ? "Experimental SM6.5 geometry shading; texture PBR and projected sampling not wired yet." :
+	ImGui::TextDisabled(inputOnly ? "Capture-only until SM6.5 material replacement is ready; final color remains raster." :
 		"Commit 3 captures surface identity only; native shading is not enabled yet.");
 }
 void NativeLLFFeature::DrawSettings()
@@ -971,6 +986,8 @@ json NativePBRFeature::GetDiagnostics()
 		{ "gpuFullyResident", gpuMaterials ? gpuMaterials->fullyResident : 0 },
 		{ "gpuPartiallyResident", gpuMaterials ? gpuMaterials->partiallyResident : 0 },
 		{ "gpuFeatureLimited", gpuMaterials ? gpuMaterials->featureLimited : 0 },
+		{ "surfaceHandoffStatus", surfaceHandoffStatus },
+		{ "surfaceHandoffCalls", surfaceHandoffCalls },
 		{ "gpuMaterialFailure", materialWorker ? materialWorker->gpu.Failure() : std::string{} },
 		{ "surfacePublication", surfacePublisher ? json{ { "published", surfacePublisher->GetDiagnostics().published },
 			{ "busySlots", surfacePublisher->GetDiagnostics().busySlots },

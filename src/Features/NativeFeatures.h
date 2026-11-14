@@ -81,6 +81,8 @@ struct NativePBRFeature final : Feature
 	winrt::com_ptr<ID3D11DeviceContext4> surfaceContext11;
 	winrt::com_ptr<ID3D12Device> surfaceDevice12;
 	winrt::com_ptr<ID3D12CommandQueue> surfaceQueue12;
+	std::string surfaceHandoffStatus = "Awaiting opaque raster completion";
+	uint64_t surfaceHandoffCalls = 0;
 	void PrepareSidecar(ID3D11Device* a_device);
 	void BeginOpaqueSidecar();
 	void BeginSidecarPass(uint64_t a_materialIdentity, uint64_t a_materialRevision = 0, std::string a_referenceKey = {},
@@ -116,7 +118,7 @@ struct NativePBRFeature final : Feature
 	/** @brief Selects the PBR backend independently of DX12 device readiness. */
 	NativePBR::Backend SelectedBackend() const;
 	bool IsActive() const;
-	/** @brief True when eligible TruePBR pixel permutations are owned by FXC-input-only NativePBR. */
+	/** @brief True when eligible FXC input permutations are staged for raster-safe native capture. */
 	bool OwnsInputOnlyShading() const;
 	void DrawSettings() override;
 	void LoadSettings(json&) override;
