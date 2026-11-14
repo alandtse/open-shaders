@@ -3199,7 +3199,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float dirSoftShadow = 1.0;
 	float dirVSMDetailedShadow = 1.0;
 
-#	if defined(VOLUMETRIC_SHADOWS)
+#	if defined(VOLUMETRIC_SHADOWS) && (!defined(DEFERRED) || defined(LOD))
 	if (inWorld && !inReflection && ShadowSampling::HasDirectionalShadows()
 #		if defined(DEFERRED)
 	    && !UseSkylightingShadowVisibility()
