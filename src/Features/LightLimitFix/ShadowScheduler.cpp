@@ -179,13 +179,14 @@ namespace ShadowCasterManager
 	{
 		static PerFrameCache<RE::BSShadowLight*, RE::NiPointer<RE::NiAVObject>> bodies;
 		return bodies.Get(static_cast<uint32_t>(*globals::game::frameCounter), light, [light]() -> RE::NiPointer<RE::NiAVObject> {
-			auto* ni = light->light.get();
-			auto* carrier = ni && light->dynamic && light->GetIsOmniLight() ? CarrierOf(ni) : nullptr;
-			if (!carrier)
-				return nullptr;
-			const auto* camera = globals::game::playerCamera;
-			return RE::NiPointer<RE::NiAVObject>(carrier->Get3D(carrier == globals::game::player && camera && camera->IsInFirstPerson()));
-		}).get();
+						 auto* ni = light->light.get();
+						 auto* carrier = ni && light->dynamic && light->GetIsOmniLight() ? CarrierOf(ni) : nullptr;
+						 if (!carrier)
+							 return nullptr;
+						 const auto* camera = globals::game::playerCamera;
+						 return RE::NiPointer<RE::NiAVObject>(carrier->Get3D(carrier == globals::game::player && camera && camera->IsInFirstPerson()));
+					 })
+		    .get();
 	}
 
 	/// UpdateCamera with a carried omni light's front paraboloid turned at its carrier, so the seam never crosses the body it is
