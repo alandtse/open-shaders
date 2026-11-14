@@ -100,8 +100,8 @@ public:
 	eastl::unique_ptr<Texture2D> staticDiffuseIBLTexture = nullptr;
 	eastl::unique_ptr<Texture2D> staticSpecularIBLTexture = nullptr;
 
-	/** @brief Builds the GPU constant-buffer data, forcing EnableIBL off when IsDisabledForCurrentScene(). */
-	PerFrame GetCommonBufferData() const;
+	/** @brief Builds the GPU constant-buffer data and selects the matching shader permutation. */
+	PerFrame PrepareFrameData();
 	/** @brief Returns true when IBL should be suppressed in the current scene for menus or interior cells. */
 	bool IsDisabledForCurrentScene() const;
 	/** @brief Returns true when Effects 11 owns IBL (not handed off to CS) with its own image based lighting enabled, overriding these settings. */

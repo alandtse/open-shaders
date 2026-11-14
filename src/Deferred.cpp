@@ -773,6 +773,8 @@ void Deferred::ClearShaderCache()
 {
 	mainCompositeCS.Reset();
 	mainCompositeInteriorCS.Reset();
+	mainCompositeIBLLuminanceRatioCS.Reset();
+	mainCompositeInteriorIBLLuminanceRatioCS.Reset();
 }
 
 ID3D11ComputeShader* Deferred::GetComputeMainComposite()
@@ -802,6 +804,14 @@ ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 	if (globals::features::terrainBlending.loaded)
 		defines.push_back({ "TERRAIN_BLENDING", nullptr });
 
+	constexpr auto luminanceRatio = static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio);
+	if (globals::state->deferredLightingShaderFlags & luminanceRatio) {
+		defines.push_back({ "IBL_LUMINANCE_RATIO", nullptr });
+		if (auto* shader = mainCompositeIBLLuminanceRatioCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0"))
+			return shader;
+		defines.pop_back();
+	}
+
 	return mainCompositeCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
 }
 
@@ -829,6 +839,14 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 	// (R24_UNORM_X8_TYPELESS game depth) to `Texture2D<float>` (R32_FLOAT blendedDepth).
 	if (globals::features::terrainBlending.loaded)
 		defines.push_back({ "TERRAIN_BLENDING", nullptr });
+
+	constexpr auto luminanceRatio = static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio);
+	if (globals::state->deferredLightingShaderFlags & luminanceRatio) {
+		defines.push_back({ "IBL_LUMINANCE_RATIO", nullptr });
+		if (auto* shader = mainCompositeInteriorIBLLuminanceRatioCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0"))
+			return shader;
+		defines.pop_back();
+	}
 
 	return mainCompositeInteriorCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
 }

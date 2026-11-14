@@ -755,14 +755,39 @@ namespace SIE
 			return 0x3F & (descriptor >> 24);
 		}
 
-		static void GetLightingShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
+		static void GetLightingShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines, ShaderClass shaderClass)
 		{
+			const bool pixel = shaderClass == ShaderClass::Pixel;
+			const bool snowCoverInactive = pixel && (descriptor & ShaderCache::kLightingSnowCoverInactive);
+			if (snowCoverInactive)
+				descriptor &= ~ShaderCache::kLightingSnowCoverInactive;
+			const bool dryWeather = pixel && (descriptor & ShaderCache::kLightingDryWeather);
+			if (dryWeather)
+				descriptor &= ~ShaderCache::kLightingDryWeather;
+			const bool noMeshVariation = pixel && ShaderCache::SupportsMeshVariationVariant(descriptor) &&
+			                             (descriptor & ShaderCache::kLightingNoMeshVariation);
+			if (noMeshVariation)
+				descriptor &= ~ShaderCache::kLightingNoMeshVariation;
+			constexpr auto noTreeBend = ShaderCache::kVertexNoTreeBend;
+			const bool omitTreeBend = shaderClass == ShaderClass::Vertex && (descriptor & noTreeBend) != 0;
+			if (omitTreeBend)
+				descriptor &= ~noTreeBend;
 			RE::GetLightingShaderDefines(descriptor, reinterpret_cast<REX::W32::D3D_SHADER_MACRO*>(defines.data()));
 
 			size_t lastIndex = std::ranges::find_if(defines, [](const D3D_SHADER_MACRO& macro) { return macro.Name == nullptr; }) - defines.begin();
 
+			if (snowCoverInactive)
+				defines[lastIndex++] = { "SNOW_COVER_INACTIVE", nullptr };
+			if (dryWeather)
+				defines[lastIndex++] = { "DRY_WEATHER", nullptr };
+			if (noMeshVariation)
+				defines[lastIndex++] = { "NO_MESH_VARIATION", nullptr };
+			if (omitTreeBend)
+				defines[lastIndex++] = { "NO_TREE_BEND", nullptr };
 			if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::Deferred)) {
 				defines[lastIndex++] = { "DEFERRED", nullptr };
+				if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::IBLLuminanceRatio))
+					defines[lastIndex++] = { "IBL_LUMINANCE_RATIO", nullptr };
 			}
 			if ((descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::TruePbr)) != 0) {
 				defines[lastIndex++] = { "TRUE_PBR", nullptr };
@@ -1195,11 +1220,13 @@ namespace SIE
 			defines[lastIndex] = { nullptr, nullptr };
 		}
 
-		static void GetUtilityShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
+		static void GetUtilityShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines, ShaderClass shaderClass)
 		{
 			using enum ShaderCache::UtilityShaderFlags;
 
 			size_t lastIndex = 0;
+			if (shaderClass == ShaderClass::Vertex && (descriptor & ShaderCache::kVertexNoTreeBend))
+				defines[lastIndex++] = { "NO_TREE_BEND", nullptr };
 			const auto shadowMaskFlags = static_cast<uint32_t>(RenderShadowmask) |
 			                             static_cast<uint32_t>(RenderShadowmaskDpb) |
 			                             static_cast<uint32_t>(RenderShadowmaskPb) |
@@ -1387,7 +1414,7 @@ namespace SIE
 			return;
 		}
 
-		static void GetShaderDefines(const RE::BSShader& shader, uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
+		static void GetShaderDefines(const RE::BSShader& shader, uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines, ShaderClass shaderClass = ShaderClass::Total)
 		{
 			switch (shader.shaderType.get()) {
 			case RE::BSShader::Type::Grass:
@@ -1406,7 +1433,7 @@ namespace SIE
 				GetImagespaceShaderDefines(shader, defines);
 				break;
 			case RE::BSShader::Type::Lighting:
-				GetLightingShaderDefines(descriptor, defines);
+				GetLightingShaderDefines(descriptor, defines, shaderClass);
 				break;
 			case RE::BSShader::Type::DistantTree:
 				GetDistantTreeShaderDefines(descriptor, defines);
@@ -1418,7 +1445,7 @@ namespace SIE
 				GetEffectShaderDefines(descriptor, defines);
 				break;
 			case RE::BSShader::Type::Utility:
-				GetUtilityShaderDefines(descriptor, defines);
+				GetUtilityShaderDefines(descriptor, defines, shaderClass);
 				break;
 			case RE::BSShader::Type::None:
 			case RE::BSShader::Type::Total:
@@ -2071,7 +2098,7 @@ namespace SIE
 		{
 			auto sourceShaderFile = shader.fxpFilename;
 			std::array<D3D_SHADER_MACRO, 64> defines{};
-			SIE::SShaderCache::GetShaderDefines(shader, descriptor, std::span{ defines });
+			SIE::SShaderCache::GetShaderDefines(shader, descriptor, std::span{ defines }, shaderClass);
 			std::string result;
 			if (hashkey)  // generate hashkey so don't include descriptor
 				result = fmt::format("{}:{}:{}", sourceShaderFile, magic_enum::enum_name(shaderClass), SIE::SShaderCache::MergeDefinesString(defines, true));
@@ -2306,7 +2333,7 @@ namespace SIE
 					defines[lastIndex++] = { shaderDefines->at(i).first.c_str(), shaderDefines->at(i).second.c_str() };
 			}
 			defines[lastIndex] = { nullptr, nullptr };  // do final entry
-			GetShaderDefines(shader, descriptor, std::span{ defines }.subspan(lastIndex));
+			GetShaderDefines(shader, descriptor, std::span{ defines }.subspan(lastIndex), shaderClass);
 
 			const std::wstring path = GetShaderPath(
 				shader.shaderType == RE::BSShader::Type::ImageSpace ?
@@ -2929,6 +2956,10 @@ namespace SIE
 
 		if (IsAsync()) {
 			compilationSet.Add({ ShaderClass::Pixel, shader, descriptor, a_precompile });
+			constexpr uint32_t specialization = kLightingDryWeather | kLightingSnowCoverInactive |
+			                                    static_cast<uint32_t>(LightingShaderFlags::IBLLuminanceRatio);
+			if (shader.shaderType == RE::BSShader::Type::Lighting && (descriptor & specialization))
+				return GetPixelShader(shader, descriptor & ~specialization, a_precompile);
 		} else {
 			return MakeAndAddPixelShader(shader, descriptor);
 		}

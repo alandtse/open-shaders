@@ -1,6 +1,7 @@
 #include "SnowCover.h"
 
 #include "Profiler.h"
+#include "ShaderCache.h"
 #include "SnowCoverMath.h"
 #include "TruePBR/BSLightingShaderMaterialPBR.h"
 #include "Utils/D3D.h"
@@ -52,6 +53,17 @@ SnowCover::PerFrame SnowCover::GetCommonBufferData(bool inWorld)
 	if (frame.IsNewFrame())
 		UpdateFrame();
 	return perFrame;
+}
+
+SnowCover::PerFrame SnowCover::PrepareFrameData(bool inWorld)
+{
+	const auto data = GetCommonBufferData(inWorld);
+	auto& flags = globals::state->deferredLightingShaderFlags;
+	constexpr auto snowCoverInactive = SIE::ShaderCache::kLightingSnowCoverInactive;
+	flags &= ~snowCoverInactive;
+	if (loaded && !data.wsettings.EnableSnowCover)
+		flags |= snowCoverInactive;
+	return data;
 }
 
 void SnowCover::UpdateFrame()

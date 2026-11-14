@@ -4,6 +4,10 @@
 #	undef SNOW_COVER
 #endif
 
+#if defined(SNOW_COVER_INACTIVE)
+#	undef SNOW_COVER
+#endif
+
 #define LIGHTING
 
 #include "Common/Color.hlsli"
@@ -247,7 +251,11 @@ VS_OUTPUT main(VS_INPUT input)
 	float3x4 worldMatrix =
 		Skinned::GetBoneTransformMatrix(Bones, actualIndices, BonesPivot[eyeIndex], input.BoneWeights);
 #	endif
+#	if defined(NO_TREE_BEND)
+	const bool treeBendEnabled = false;
+#	else
 	const bool treeBendEnabled = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0;
+#	endif
 	TreeWind::Sample treeWindSample;
 	treeWindSample.trunkVelocity = 0.0.xxx;
 	treeWindSample.leafAnimationStrength = 0.0;
@@ -1119,7 +1127,7 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		undef WETNESS_EFFECTS
 #	endif
 
-#	if defined(WETNESS_EFFECTS) && !defined(HAIR) && !defined(EYE) && !defined(LANDSCAPE)
+#	if defined(WETNESS_EFFECTS) && !defined(DRY_WEATHER) && !defined(HAIR) && !defined(EYE) && !defined(LANDSCAPE)
 #		define CHARACTER_RAIN_SURFACE
 #	endif
 #	if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) &&      \
@@ -1395,7 +1403,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	// Lattice cell comes from the geometric UV, before the parallax block below rewrites uv.
 #	if !defined(LANDSCAPE) && (defined(TERRAIN_VARIATION_MESH) || defined(EMAT))
 	StochasticOffsets meshOffset = (StochasticOffsets)0;
-#		if defined(TERRAIN_VARIATION_MESH)
+#		if defined(TERRAIN_VARIATION_MESH) && !defined(NO_MESH_VARIATION)
 	const bool applyMeshTV = (Permutation::ExtraFeatureDescriptor & Permutation::ExtraFeatureFlags::TVMeshVariation) != 0;
 	[branch] if (applyMeshTV)
 	{
@@ -1406,7 +1414,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		endif
 #	endif
 
-#	if defined(TERRAIN_VARIATION_MESH) && !defined(LANDSCAPE)
+#	if defined(TERRAIN_VARIATION_MESH) && !defined(LANDSCAPE) && !defined(NO_MESH_VARIATION)
 #		define MESH_TV_SAMPLE(DEST, TEX, SAMP, UV)                     \
 			{                                                           \
 				[branch] if (applyMeshTV)                               \
@@ -2411,7 +2419,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	material.GlintDensityRandomization = clamp(glintParameters.w, PBR::Constants::MinGlintDensityRandomization, PBR::Constants::MaxGlintDensityRandomization);
 
 #		if defined(GLINT) && !defined(SNOW_COVER)
-	float glintNoise = Random::R1Modified(float(SharedData::FrameCount), (Random::pcg2d(uint2(input.Position.xy)) / 4294967296.0).x);
+	float glintNoise = Random::R1Modified(float(SharedData::FrameCount), (Random::pcg2d(uint2(Stereo::EyeStableNoiseCoord(input.Position.xy, SharedData::BufferDim.xy))) / 4294967296.0).x);
 	Glints::PrecomputeGlints(glintNoise, uvOriginal, ddx(uvOriginal), ddy(uvOriginal), material.GlintScreenSpaceScale, material.GlintCache);
 #		endif
 
@@ -2926,23 +2934,24 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		endif
 	// Calculate raindrop effects
 	float4 raindropInfo = float4(0, 0, 1, 0);
+#		if !defined(DRY_WEATHER)
 	bool shouldCalculateRaindrops = (worldNormal.z > 0.0) &&
 	                                (SharedData::wetnessEffectsSettings.Raining > 0.0) &&
 	                                (SharedData::wetnessEffectsSettings.EnableRaindropFx) &&
 	                                (wetnessOcclusion > 0.5);
-#		if defined(CHARACTER_RAIN_SURFACE)
+#			if defined(CHARACTER_RAIN_SURFACE)
 	shouldCalculateRaindrops = shouldCalculateRaindrops &&
 	                           !(characterRainSurface && SharedData::wetnessEffectsSettings.EnableCharacterRainSpots);
-#		endif
+#			endif
 
 	if (shouldCalculateRaindrops) {
-#		if defined(SKINNED)
+#			if defined(SKINNED)
 		float3 ripplePosition = input.ModelPosition.xyz;
-#		elif defined(DEFERRED)
+#			elif defined(DEFERRED)
 		float3 ripplePosition = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-#		else
+#			else
 		float3 ripplePosition = !FrameBuffer::FrameParams.y ? input.ModelPosition.xyz : input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-#		endif
+#			endif
 		raindropInfo = WetnessEffects::GetRainDrops(ripplePosition, SharedData::wetnessEffectsSettings.Time, wetnessNormal, flatnessAmount);
 	}
 
@@ -2950,14 +2959,18 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float rainWetness = SharedData::wetnessEffectsSettings.Wetness * minWetnessAngle * SharedData::wetnessEffectsSettings.MaxRainWetness;
 	rainWetness = max(rainWetness, raindropInfo.w);
 
-#		if defined(HAIR)
+#			if defined(HAIR)
 	rainWetness = SharedData::wetnessEffectsSettings.HairWetness * SharedData::wetnessEffectsSettings.Wetness;
-#		elif defined(SKIN)
+#			elif defined(SKIN)
 	rainWetness = 0.0f;
-#		endif
-#		if defined(CHARACTER_RAIN_SURFACE)
+#			endif
+#			if defined(CHARACTER_RAIN_SURFACE)
 	if (characterRainSurface)
 		rainWetness = 0.0f;
+#			endif
+
+#		else
+	float rainWetness = 0.0f;
 #		endif
 
 #		if defined(CS_SKIN) && !defined(SKIN)
@@ -2977,7 +2990,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	wetness = max(shoreWetness, rainWetness);
 
 	// Calculate puddle effects
+#		if defined(DRY_WEATHER)
+	const float puddleWetness = 0.0f;
+#		else
 	float puddleWetness = SharedData::wetnessEffectsSettings.PuddleWetness * minWetnessAngle;
+#		endif
 	float puddle = wetness;
 
 #		if !defined(SKINNED) && !defined(SKIN)
@@ -3799,7 +3816,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float3 directionalAmbientColor = Color::Ambient(max(0, mul(DirectionalAmbient, float4(ambientNormal, 1.0))));
 
 #	if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
+	if (ImageBasedLighting::IsEnabled()) {
 		if (SharedData::iblSettings.UseStaticIBL && !inWorld && !inReflection) {
 			directionalAmbientColor = ImageBasedLighting::GetStaticDiffuseIBL(ambientNormal, SampColorSampler);
 		}
@@ -3855,7 +3872,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	endif  // defined (HAIR)
 
 #	if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
+	if (ImageBasedLighting::IsEnabled()) {
 		if (!(SharedData::iblSettings.UseStaticIBL && !inWorld && !inReflection)) {
 #		if defined(SKYLIGHTING) && !defined(INTERIOR)
 			directionalAmbientColor = ImageBasedLighting::GetDiffuseIBLOccluded(directionalAmbientColor, -ambientNormal, skylightingDiffuse);
@@ -4092,7 +4109,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	skylightingAlbedo /= Color::PBRLightingScale;
 #		endif
 #		if defined(IBL) && !defined(INTERIOR)
-	if (!SharedData::iblSettings.EnableIBL)
+	if (!ImageBasedLighting::IsEnabled())
 #		endif
 	{
 #		if defined(CAPTURE_REFLECTION_RADIANCE)
@@ -4164,7 +4181,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float3 fogColor = Color::Fog(input.FogParam.xyz);
 	float fogFactor = input.FogParam.w;
 #		if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
+	if (ImageBasedLighting::IsEnabled()) {
 		fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
 	}
 #		endif

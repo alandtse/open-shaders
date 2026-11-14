@@ -40,6 +40,7 @@
 #include "Features/VolumetricLighting.h"
 #include "Features/Wind/Wind.h"
 
+#include <array>
 #include <optional>
 #include <unordered_map>
 
@@ -50,6 +51,56 @@ namespace
 	std::unordered_map<void*, std::shared_ptr<const ShaderBytecode>> ShaderBytecodeMap;
 	std::mutex ShaderBytecodeMutex;
 	std::mutex ShaderDumpMutex;
+
+	struct VertexShaderVariants
+	{
+		RE::BSShader* owner = nullptr;
+		RE::BSGraphics::VertexShader* selected = nullptr;
+		std::array<RE::BSGraphics::VertexShader*, 2> shaders{};
+		std::array<bool, 2> requested{};
+		uint64_t frame = 0;
+		uint32_t descriptor = 0;
+	};
+
+	thread_local VertexShaderVariants vertexShaderVariants;
+
+	bool HasCompatibleVertexConstants(const RE::BSGraphics::VertexShader& standard, const RE::BSGraphics::VertexShader& variant)
+	{
+		return standard.constantTable == variant.constantTable &&
+		       std::ranges::equal(standard.constantBuffers, variant.constantBuffers,
+				   [](const auto& left, const auto& right) {
+					   return left.buffer == right.buffer && (left.buffer || left.data == right.data);
+				   });
+	}
+
+	void SelectVertexShader(State& state, RE::BSShader& shader, bool allowNoTreeBend)
+	{
+		auto& variants = vertexShaderVariants;
+		if (variants.frame != state.frameCount || variants.owner != &shader || variants.descriptor != state.modifiedVertexDescriptor ||
+			!variants.selected || state.currentShader != &shader || state.customVertexShader != variants.selected)
+			return;
+
+		constexpr auto treeBend = static_cast<uint32_t>(State::ExtraShaderDescriptors::TreeBend);
+		const size_t variant = allowNoTreeBend && (state.permutationData.ExtraShaderDescriptor & treeBend) == 0;
+		if (variant != 0 && !variants.requested[variant]) {
+			variants.requested[variant] = true;
+			const auto descriptor = variants.descriptor | SIE::ShaderCache::kVertexNoTreeBend;
+			variants.shaders[variant] = globals::shaderCache->GetVertexShader(shader, descriptor);
+		}
+		auto* vertexShader = variants.shaders[variant];
+		const bool usesCustomConstantLayout = *globals::game::currentVertexShader == state.customVertexShader;
+		if (!vertexShader || (usesCustomConstantLayout && variants.shaders[0] && !HasCompatibleVertexConstants(*variants.shaders[0], *vertexShader)))
+			vertexShader = variants.shaders[0];
+		if (state.customVertexShader == vertexShader)
+			return;
+
+		globals::d3d::context->VSSetShader(Util::AsReal(vertexShader->shader), nullptr, 0);
+		if (usesCustomConstantLayout)
+			*globals::game::currentVertexShader = vertexShader;
+		state.customVertexShader = vertexShader;
+		variants.selected = vertexShader;
+		globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
+	}
 
 	void NormalizeLegacyUtilityDescriptors(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor)
 	{
@@ -242,6 +293,14 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 
 	state->lastModifiedVertexDescriptor = state->modifiedVertexDescriptor;
 	state->lastModifiedPixelDescriptor = state->modifiedPixelDescriptor;
+	auto* standardVertexShader = type == RE::BSShader::Type::Lighting || type == RE::BSShader::Type::Utility ? state->customVertexShader : nullptr;
+	vertexShaderVariants = {
+		.owner = shader,
+		.selected = standardVertexShader,
+		.shaders = { standardVertexShader },
+		.frame = state->frameCount,
+		.descriptor = state->modifiedVertexDescriptor
+	};
 
 	return shaderFound;
 }
@@ -252,8 +311,12 @@ namespace LightingExtensions
 	{
 		static void thunk(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags)
 		{
-			globals::state->UpdateLightingShaderPermutation(pass);
+			auto* state = globals::state;
+			state->UpdateLightingShaderPermutation(pass);
 			func(shader, pass, renderFlags);
+			const bool specializeReflection = (state->permutationData.ExtraShaderDescriptor & static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections)) &&
+			                                  !globals::game::isVR;
+			SelectVertexShader(*state, *shader, globals::deferred->deferredPass || specializeReflection);
 			globals::deferred->BindForwardHairMasks();
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -654,9 +717,16 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 void Hooks::BSGraphics_SetDirtyStates::thunk(bool isCompute)
 {
 	func(isCompute);
-	globals::state->Draw();
+	auto& state = *globals::state;
+	if (!isCompute && state.currentShader && state.currentShader->shaderType.get() == RE::BSShader::Type::Utility) {
+		constexpr uint32_t depthPass =
+			static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderDepth) |
+			static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmap);
+		SelectVertexShader(state, *state.currentShader, (state.modifiedVertexDescriptor & depthPass) != 0);
+	}
+	state.Draw();
 	if (!isCompute) {
-		globals::state->BindVertexPermutationData();
+		state.BindVertexPermutationData();
 		VanillaBinding::BindDrawResources();
 	}
 }

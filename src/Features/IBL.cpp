@@ -2,6 +2,7 @@
 
 #include "Deferred.h"
 #include "DynamicCubemaps.h"
+#include "LODShadows.h"
 #include "LinearLighting.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -184,7 +185,7 @@ void IBL::RestoreDefaultSettings()
 	settings = {};
 }
 
-IBL::PerFrame IBL::GetCommonBufferData() const
+IBL::PerFrame IBL::PrepareFrameData()
 {
 	const bool sceneDisabled = IsDisabledForCurrentScene();
 	PerFrame data = {
@@ -222,6 +223,12 @@ IBL::PerFrame IBL::GetCommonBufferData() const
 	const bool useStatic = settings.UseStaticIBL && !globals::state->inWorld && !globals::state->activeReflections;
 	if (!useStatic && !dynamicIBLValid)
 		data.EnableIBL = 0;
+
+	constexpr auto luminanceRatio = static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio);
+	auto& flags = globals::state->deferredLightingShaderFlags;
+	flags &= ~luminanceRatio;
+	if (loaded && data.EnableIBL && data.DALCMode == kDALCLuminanceRatioMode)
+		flags |= luminanceRatio;
 
 	return data;
 }
@@ -280,6 +287,12 @@ std::function<void()> IBL::OnReflectionsRenderBegin()
 {
 	if (!reflectionRadiance || !globals::shaderCache->IsEnabled() || IsDisabledForCurrentScene() ||
 		Util::IsInterior() || (!settings.EnableIBL && !IsManagedByENB())) {
+		validFaces = 0;
+		return nullptr;
+	}
+
+	const auto& lodShadows = globals::features::lodShadows;
+	if (!globals::game::isVR && !lodShadows.loaded) {
 		validFaces = 0;
 		return nullptr;
 	}
@@ -347,7 +360,7 @@ void IBL::OnDraw()
 			captureFailed = true;
 			return;
 		}
-		auto* shader = globals::shaderCache->GetPixelShader(*currentShader, globals::state->modifiedPixelDescriptor);
+		auto* shader = globals::state->customPixelShader;
 		winrt::com_ptr<ID3D11PixelShader> boundShader;
 		context->PSGetShader(boundShader.put(), nullptr, nullptr);
 		if (!shader || Util::AsReal(shader->shader) != boundShader.get()) {

@@ -158,17 +158,18 @@ struct ColorGrading : public PostProcessFeature
 
 	bool recompileFlag = true;
 	bool saveImagesFlag = false;
+	winrt::com_ptr<ID3D11VertexShader> colorgradingVS = nullptr;
 	winrt::com_ptr<ID3D11PixelShader> colorgradingPS = nullptr;
 	winrt::com_ptr<ID3D11PixelShader> colorgradingMirrorPS = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> lutgenCS = nullptr;
-	/** Returns whether both shader stages are ready for the active display mode. */
+	/** Returns whether the grading shaders are ready for the active display mode. */
 	bool IsReadyForTonemapping() const;
 
 	winrt::com_ptr<ID3D11SamplerState> linearSampler = nullptr;
 
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
-	/** @brief Drop in-memory PS/CS and recompile for the current tonemapper; keeps disk cache. */
+	/** @brief Drop in-memory grading shaders and recompile for the current tonemapper; keeps disk cache. */
 	void ReloadActiveShaders();
 	void ReleaseActiveShaders();
 	void CompileShaders();

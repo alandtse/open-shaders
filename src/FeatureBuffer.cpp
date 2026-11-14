@@ -63,7 +63,7 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::dynamicCubemaps.settings,
 		globals::features::terrainShadows.GetCommonBufferData(),
 		globals::features::lightLimitFix.GetCommonBufferData(),
-		globals::features::wetnessEffects.GetCommonBufferData(),
+		globals::features::wetnessEffects.PrepareFrameData(),
 		globals::features::skylighting.GetCommonBufferData(a_inWorld),
 		globals::features::cloudShadows.GetCommonBufferData(),
 		globals::features::cloudRelight.GetCommonBufferData(),
@@ -71,7 +71,7 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::lodBlending.settings,
 		globals::features::hairSpecular.settings,
 		globals::features::terrainVariation.settings,
-		globals::features::ibl.GetCommonBufferData(),
+		globals::features::ibl.PrepareFrameData(),
 		globals::features::extendedTranslucency.GetCommonBufferData(),
 		globals::features::csUtility.GetCommonBufferData(),
 		globals::features::wind.GetCommonBufferData(),
@@ -95,5 +95,5 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::grassCollision.GetCommonBufferData(),
 		globals::features::horizonFix.GetCommonBufferData(),
 		globals::features::rainRefraction.GetCommonBufferData(),
-		globals::features::snowCover.GetCommonBufferData(a_inWorld));
+		globals::features::snowCover.PrepareFrameData(a_inWorld));
 }

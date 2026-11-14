@@ -1185,6 +1185,7 @@ void ColorGrading::ReleaseActiveShaders()
 	{
 		std::lock_guard lock(shaderMutex);
 		Util::ClearShaders<ID3D11ComputeShader>({ lutgenCS });
+		Util::ClearShaders<ID3D11VertexShader>({ colorgradingVS });
 		Util::ClearShaders<ID3D11PixelShader>({ colorgradingPS, colorgradingMirrorPS });
 	}
 }
@@ -1217,11 +1218,14 @@ void ColorGrading::CompileShaders()
 	};
 
 	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\ColorGrading", shaderInfos);
+	const std::vector<VertexShaderCompileInfo> vertexInfos = {
+		{ &colorgradingVS, "colorgrading.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "VSColorGrading" },
+	};
 	const std::vector<PixelShaderCompileInfo> rasterInfos = {
 		{ &colorgradingPS, "colorgrading.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "PSColorGrading" },
 		{ &colorgradingMirrorPS, "colorgrading.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "PSColorGradingMirror" },
 	};
-	CompileRasterShadersAsync(L"Data\\Shaders\\PostProcessing\\ColorGrading", {}, rasterInfos);
+	CompileRasterShadersAsync(L"Data\\Shaders\\PostProcessing\\ColorGrading", vertexInfos, rasterInfos);
 
 	recompileFlag = false;
 	curveNeedsUpdate = true;  // shader changed, curve must update
@@ -1230,7 +1234,7 @@ void ColorGrading::CompileShaders()
 bool ColorGrading::IsReadyForTonemapping() const
 {
 	std::lock_guard lock(shaderMutex);
-	return !recompileFlag && colorgradingPS && lutgenCS;
+	return !recompileFlag && colorgradingVS && colorgradingPS && lutgenCS;
 }
 
 PostProcessFeature::Gamut ColorGrading::GetDisplayGamut() const
@@ -1255,7 +1259,7 @@ bool ColorGrading::DrawToTarget(TextureInfo& inout_tex, const TextureInfo& targe
 	if (recompileFlag)
 		ReloadActiveShaders();
 
-	if (!AllShadersReady({ &colorgradingPS }) || !AllShadersReady({ &lutgenCS }) || !owner || !owner->GetFullscreenVS())
+	if (!AllShadersReady({ &colorgradingVS }) || !AllShadersReady({ &colorgradingPS }) || !AllShadersReady({ &lutgenCS }) || !owner)
 		return false;
 	if (settings.enableTonemap && globals::state->GetTonemapOwner() != State::TonemapOwner::kPostProcessing)
 		return false;
@@ -1288,6 +1292,13 @@ bool ColorGrading::DrawToTarget(TextureInfo& inout_tex, const TextureInfo& targe
 		auto* cb = colorCB->CB();
 		auto* sampler = linearSampler.get();
 		const std::array srvs{ source, texLUT ? texLUT->srv.get() : nullptr };
+		winrt::com_ptr<ID3D11Buffer> previousVertexCB;
+		context->VSGetConstantBuffers(1, 1, previousVertexCB.put());
+		const SKSE::stl::scope_exit restoreVertexCB([&] {
+			auto* previous = previousVertexCB.get();
+			context->VSSetConstantBuffers(1, 1, &previous);
+		});
+		context->VSSetConstantBuffers(1, 1, &cb);
 		context->PSSetConstantBuffers(1, 1, &cb);
 		context->PSSetSamplers(0, 1, &sampler);
 		context->PSSetShaderResources(0, settings.skipLUT ? 1u : 2u, srvs.data());
@@ -1295,7 +1306,7 @@ bool ColorGrading::DrawToTarget(TextureInfo& inout_tex, const TextureInfo& targe
 			pass.SetTargets({ drawTarget, mirror }, width, height);
 		else
 			pass.SetTargets({ drawTarget }, width, height);
-		pass.SetShaders(owner->GetFullscreenVS(), mirror ? colorgradingMirrorPS.get() : colorgradingPS.get());
+		pass.SetShaders(colorgradingVS.get(), mirror ? colorgradingMirrorPS.get() : colorgradingPS.get());
 		pass.Draw();
 	};
 
