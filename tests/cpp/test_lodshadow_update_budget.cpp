@@ -1,3 +1,4 @@
+#include "Features/LODShadowSettings.h"
 #include "Features/LODShadowUpdateBudget.h"
 
 #include <catch2/catch_approx.hpp>
@@ -52,4 +53,22 @@ TEST_CASE("LOD shadow budget bounds work and growth", "[lod-shadows]")
 	for (int i = 0; i < 16; ++i)
 		budget.Record(1, 1.0, 0.1);
 	REQUIRE(budget.Triangles() == 256);
+}
+
+TEST_CASE("LOD Shadows require an opt-in under the new settings key", "[lod-shadows]")
+{
+	const auto defaults = nlohmann::json::object().get<LODShadowSettings>();
+	CHECK_FALSE(defaults.Enabled);
+
+	const nlohmann::json legacy{ { "Enabled", true }, { "UpdateBudgetMs", 0.2f }, { "DepthBias", 4.0f } };
+	auto settings = legacy.get<LODShadowSettings>();
+	CHECK_FALSE(settings.Enabled);
+	CHECK(settings.UpdateBudgetMs == Catch::Approx(0.2f));
+	CHECK(settings.DepthBias == Catch::Approx(4.0f));
+
+	settings.Enabled = true;
+	const nlohmann::json saved = settings;
+	CHECK_FALSE(saved.contains("Enabled"));
+	CHECK(saved.at("EnableLODShadows") == true);
+	CHECK(saved.get<LODShadowSettings>().Enabled);
 }

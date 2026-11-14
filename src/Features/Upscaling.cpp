@@ -2987,7 +2987,6 @@ void Upscaling::FillMenuCameraMotionVectors()
 
 		ID3D11ShaderResourceView* srvs[] = { Util::AsReal(depth.depthSRV) };
 		context->PSSetShaderResources(0, 1, srvs);
-		// b1: the slot FullscreenPassScope saves and restores.
 		auto* constantBuffer = cameraMotionVectorsCB->CB();
 		context->PSSetConstantBuffers(1, 1, &constantBuffer);
 
@@ -3267,6 +3266,7 @@ void Upscaling::UpscaleDepth()
 	// (kNONE/kTAA VR path) without going through Upscale() first — match the
 	// same precondition here to avoid a debug-layer hazard when depth happens
 	// to still be bound as a DSV from a prior pass.
+	Util::FullscreenPassScope stateScope(context);
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
 	// Set up Input Assembler for fullscreen triangle (no vertex/index buffers needed)
@@ -3394,9 +3394,6 @@ void Upscaling::UpscaleDepth()
 		CS_GPU_PASS("Upscaling::DepthVRPropagate");
 		copyIfNonAliased(Util::AsReal(depthCopy.texture), Util::AsReal(depth.texture));
 	}
-
-	ID3D11ShaderResourceView* nullPSResources[3] = { nullptr, nullptr, nullptr };
-	context->PSSetShaderResources(0, ARRAYSIZE(nullPSResources), nullPSResources);
 }
 
 void Upscaling::RunUnderwaterMaskRepair()

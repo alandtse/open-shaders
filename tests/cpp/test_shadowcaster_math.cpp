@@ -16,10 +16,12 @@ using ShadowCasterManager::HashCombineFloat;
 using ShadowCasterManager::HemisphereSeamMargin;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
 using ShadowCasterManager::kShadowSizeToTexels;
+using ShadowCasterManager::kSlotHoldMargin;
 using ShadowCasterManager::kTileScaleFloor;
 using ShadowCasterManager::kVanillaShadowSliceCount;
 using ShadowCasterManager::QuantizeFloat;
 using ShadowCasterManager::SliceCappedLightCount;
+using ShadowCasterManager::SlotHeldScore;
 using ShadowCasterManager::SphereWhollyBehindPlane;
 using ShadowCasterManager::StallBucket;
 using ShadowCasterManager::TileScaleForCoverage;
@@ -232,6 +234,18 @@ TEST_CASE("SliceCappedLightCount keeps the highest point index inside the array"
 	for (int32_t slices = 1; slices <= 129; ++slices)
 		for (int32_t count = 0; count <= 127; ++count)
 			REQUIRE(SliceCappedLightCount(count, slices) < slices);
+}
+
+TEST_CASE("SlotHeldScore keeps a holder against a near-equal challenger", "[scm]")
+{
+	REQUIRE(SlotHeldScore(0.5, false) == 0.5);
+	REQUIRE(SlotHeldScore(0.5, true) == Approx(0.5 * kSlotHoldMargin));
+	// A challenger inside the margin stays below the holder; one past it wins at once.
+	REQUIRE(SlotHeldScore(0.5, true) > SlotHeldScore(0.5 * (kSlotHoldMargin - 0.01), false));
+	REQUIRE(SlotHeldScore(0.5, true) < SlotHeldScore(0.5 * (kSlotHoldMargin + 0.01), false));
+	// A user formula can score at or below zero, where scaling would demote the holder.
+	REQUIRE(SlotHeldScore(0.0, true) == 0.0);
+	REQUIRE(SlotHeldScore(-2.0, true) == -2.0);
 }
 
 TEST_CASE("Every light count fits the slices allocated for it", "[scm]")

@@ -153,6 +153,8 @@ public:
 	 * Animation and retained-wetness state advance at most once per rendered frame, however often this is called.
 	 */
 	PerFrame GetCommonBufferData() const;
+	/** @brief Builds the uploaded constants and selects the matching dry-weather lighting permutation. */
+	PerFrame PrepareFrameData() const;
 
 	/** @brief Updates wetness state and binds the per-frame constant buffer. */
 	virtual void Prepass() override;

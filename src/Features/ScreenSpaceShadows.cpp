@@ -282,8 +282,20 @@ void ScreenSpaceShadows::DrawShadows()
 
 	auto context = globals::d3d::context;
 
+	auto smState = globals::game::smState;
 	auto accumulator = *globals::game::currentAccumulator.get();
-	auto dirLight = skyrim_cast<RE::NiDirectionalLight*>(accumulator->GetRuntimeData().activeShadowSceneNode->GetRuntimeData().sunLight->light.get());
+	if (!smState || !accumulator)
+		return;
+
+	// Other accumulators carry a non-ShadowSceneNode value here, as LightLimitFix's inWorld check assumes.
+	const auto* scene = accumulator->GetRuntimeData().activeShadowSceneNode;
+	if (scene != smState->shadowSceneNode[0])
+		return;
+
+	const auto* sunLight = scene->GetRuntimeData().sunLight;
+	auto dirLight = sunLight ? skyrim_cast<RE::NiDirectionalLight*>(sunLight->light.get()) : nullptr;
+	if (!dirLight)
+		return;
 
 	auto& directionNi = dirLight->GetWorldDirection();
 	float3 light = { directionNi.x, directionNi.y, directionNi.z };
@@ -310,8 +322,7 @@ void ScreenSpaceShadows::DrawShadows()
 	float2 nativeEndSplitDistances{};
 	const bool limitToNativeShadows = globals::features::lodShadows.ReplacesTerrainShadows();
 	if (limitToNativeShadows) {
-		const auto* scene = accumulator->GetRuntimeData().activeShadowSceneNode;
-		if (const auto* shadowLight = scene ? scene->GetRuntimeData().sunShadowDirLight : nullptr) {
+		if (const auto* shadowLight = scene->GetRuntimeData().sunShadowDirLight) {
 			const auto& shadowData = shadowLight->GetShadowDirectionalLightRuntimeData();
 			nativeEndSplitDistances = float2{ shadowData.endSplitDistances[0], shadowData.endSplitDistances[1] };
 		}

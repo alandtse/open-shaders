@@ -742,6 +742,7 @@ public:
 	Util::FrameChecker frameChecker;
 	Util::FrameChecker shaderTrackingFrameChecker;
 	uint frameCount = 0;
+	uint32_t deferredLightingShaderFlags = 0;
 	// Thread-safe mirror of frameCount maintained by the render thread.
 	// Off-thread readers (MCP listener, future telemetry) must read this
 	// instead of touching frameCount directly to avoid a data race.
