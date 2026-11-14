@@ -62,6 +62,16 @@ namespace ShadowCasterManager
 		return raw >= 0x10000ull && raw < 0x0000800000000000ull && (raw & 0x7) == 0;
 	}
 
+	/// How far a challenger must out-score a light already holding a shadow slot.
+	inline constexpr double kSlotHoldMargin = 1.25;
+
+	/// A light's rank score once its slot is counted. A non-positive score stays
+	/// as it is: scaling it would rank the holder lower.
+	inline double SlotHeldScore(double a_score, bool a_holdsSlot) noexcept
+	{
+		return a_holdsSlot && a_score > 0.0 ? a_score * kSlotHoldMargin : a_score;
+	}
+
 	// Casters reaching the equatorial plane keep the engine's hemisphere choice;
 	// the margin floor keeps a zero-radius light from collapsing the seam.
 	inline constexpr float kHemisphereSeamMarginMin = 1.0f;

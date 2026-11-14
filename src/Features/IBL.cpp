@@ -2,6 +2,7 @@
 
 #include "Deferred.h"
 #include "DynamicCubemaps.h"
+#include "LODShadows.h"
 #include "LinearLighting.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -290,6 +291,12 @@ std::function<void()> IBL::OnReflectionsRenderBegin()
 		return nullptr;
 	}
 
+	const auto& lodShadows = globals::features::lodShadows;
+	if (!globals::game::isVR && !lodShadows.loaded) {
+		validFaces = 0;
+		return nullptr;
+	}
+
 	const auto lighting = globals::features::linearLighting.GetCommonBufferData();
 	const std::array<uint, 2> colorSpace{ lighting.enableLinearLighting, lighting.enableACEScg };
 	if (captureColorSpace != colorSpace) {
@@ -353,7 +360,7 @@ void IBL::OnDraw()
 			captureFailed = true;
 			return;
 		}
-		auto* shader = globals::shaderCache->GetPixelShader(*currentShader, globals::state->modifiedPixelDescriptor);
+		auto* shader = globals::state->customPixelShader;
 		winrt::com_ptr<ID3D11PixelShader> boundShader;
 		context->PSGetShader(boundShader.put(), nullptr, nullptr);
 		if (!shader || Util::AsReal(shader->shader) != boundShader.get()) {
