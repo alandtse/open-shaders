@@ -85,10 +85,32 @@ void AdvanceResponse(uint2 outputCell, int2 previousCell, float2 target, bool hi
 	Velocity[outputCell] = velocity;
 }
 
-[numthreads(8, 8, 1)] void UpdateField(
-	uint3 dispatchThreadId : SV_DispatchThreadID,
-	uint3 groupId : SV_GroupID,
-	uint3 groupThreadId : SV_GroupThreadID) {
+void AdvanceAmbientResponse(TreeWindSpring::FieldData field, uint2 outputCell, float2 worldPosition,
+	int2 previousCell, bool historyValid)
+{
+	WindField::Components components = WindField::SampleCurrentComponents(float3(worldPosition, field.FieldHeight));
+	float2 target = components.baseAmbientVelocity.xy + ApplyGustResponse(components.gustVelocity.xy);
+	AdvanceResponse(outputCell, previousCell, target, historyValid, field.FrameTime);
+}
+
+[numthreads(8, 8, 1)] void UpdateAmbientField(uint2 dispatchThreadId : SV_DispatchThreadID) {
+	TreeWindSpring::FieldData field = TreeWindSpring::Fields[TreeWindSpring::ActiveField];
+	if (any(dispatchThreadId >= field.TextureSize))
+		return;
+
+	float cellSize = field.FieldSize / field.TextureSize;
+	float2 worldPosition = field.FieldMinimum + (float2(dispatchThreadId) + 0.5f) * cellSize;
+	int2 previousCell = int2(floor((worldPosition - field.PreviousFieldMinimum) / cellSize));
+	bool historyValid = field.Initialize == 0u && all(previousCell >= 0) &&
+	                    all(previousCell < int2(field.TextureSize, field.TextureSize));
+	AdvanceAmbientResponse(field, dispatchThreadId, worldPosition, previousCell, historyValid);
+}
+
+	[numthreads(8, 8, 1)] void UpdateField(
+		uint3 dispatchThreadId : SV_DispatchThreadID,
+		uint3 groupId : SV_GroupID,
+		uint3 groupThreadId : SV_GroupThreadID)
+{
 	TreeWindSpring::FieldData field = TreeWindSpring::Fields[TreeWindSpring::ActiveField];
 	uint2 fieldDimensions = uint2(field.TextureSize, field.TextureSize);
 	float cellSize = field.FieldSize / field.TextureSize;
@@ -198,9 +220,5 @@ void AdvanceResponse(uint2 outputCell, int2 previousCell, float2 target, bool hi
 
 	if (dispatchThreadId.z != 0u)
 		return;
-	WindField::Components components = WindField::SampleCurrentComponents(
-		float3(worldPosition, field.FieldHeight));
-	float2 target = components.baseAmbientVelocity.xy + ApplyGustResponse(components.gustVelocity.xy);
-	AdvanceResponse(
-		dispatchThreadId.xy, previousCell, target, horizontalHistoryValid, field.FrameTime);
+	AdvanceAmbientResponse(field, dispatchThreadId.xy, worldPosition, previousCell, horizontalHistoryValid);
 }

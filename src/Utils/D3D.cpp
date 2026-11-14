@@ -621,17 +621,14 @@ namespace Util
 		return view;
 	}
 
-	FullscreenPassScope::FullscreenPassScope(ID3D11DeviceContext* a_context, UINT a_psSRVCount, UINT a_psCBStart, UINT a_psCBCount, UINT a_psSamplerCount) :
-		ctx(a_context),
-		psSRVCount(a_psSRVCount),
-		psCBStart(a_psCBStart),
-		psCBCount(a_psCBCount),
-		psSamplerCount(a_psSamplerCount)
+	FullscreenPassScope::FullscreenPassScope(ID3D11DeviceContext* a_context) :
+		ctx(a_context)
 	{
-		assert(ctx && psSRVCount <= D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT &&
-			   psCBStart <= D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT &&
-			   psCBCount <= D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - psCBStart &&
-			   psSamplerCount <= D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT);
+		assert(ctx);
+		// Offset-aware CB getters keep firstConstant/numConstants windows; absent on a pre-11.1 context.
+		ctx->QueryInterface(IID_PPV_ARGS(&ctx1));
+		for (UINT i = 0; i < kCBCount; ++i)
+			psNumConstants[i] = vsNumConstants[i] = D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT;
 		// Save all MRT slots, not just slot 0 — a caller may enter with multiple RTVs bound.
 		ctx->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTV, &savedDSV);
 		ctx->RSGetViewports(&numVP, savedVP);
@@ -643,9 +640,15 @@ namespace Util
 		ctx->HSGetShader(&savedHS, nullptr, nullptr);
 		ctx->DSGetShader(&savedDS, nullptr, nullptr);
 		ctx->RSGetState(&savedRS);
-		ctx->PSGetSamplers(0, psSamplerCount, savedPSSamplers);
-		ctx->PSGetShaderResources(0, psSRVCount, savedPSSRVs);
-		ctx->PSGetConstantBuffers(psCBStart, psCBCount, savedPSCBs);
+		ctx->PSGetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, savedPSSamplers);
+		ctx->PSGetShaderResources(0, kPSSRVCount, savedPSSRVs);
+		if (ctx1) {
+			ctx1->PSGetConstantBuffers1(0, kCBCount, savedPSCBs, psFirstConstant, psNumConstants);
+			ctx1->VSGetConstantBuffers1(0, kCBCount, savedVSCBs, vsFirstConstant, vsNumConstants);
+		} else {
+			ctx->PSGetConstantBuffers(0, kCBCount, savedPSCBs);
+			ctx->VSGetConstantBuffers(0, kCBCount, savedVSCBs);
+		}
 		ctx->IAGetInputLayout(&savedIL);
 		ctx->IAGetVertexBuffers(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT, savedVB, savedVBStride, savedVBOffset);
 		ctx->IAGetIndexBuffer(&savedIB, &savedIBFormat, &savedIBOffset);
@@ -656,10 +659,10 @@ namespace Util
 	{
 		// Restore targets before SRVs so an outgoing target cannot suppress a saved input.
 		ID3D11ShaderResourceView* nullSRVs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
-		ctx->PSSetShaderResources(0, psSRVCount, nullSRVs);
+		ctx->PSSetShaderResources(0, kPSSRVCount, nullSRVs);
 
 		ctx->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTV, savedDSV);
-		ctx->PSSetShaderResources(0, psSRVCount, savedPSSRVs);
+		ctx->PSSetShaderResources(0, kPSSRVCount, savedPSSRVs);
 		ctx->RSSetViewports(numVP, savedVP);
 		ctx->OMSetBlendState(savedBlend, savedBlendFactor, savedSampleMask);
 		ctx->OMSetDepthStencilState(savedDSState, savedStencilRef);
@@ -669,8 +672,14 @@ namespace Util
 		ctx->HSSetShader(savedHS, nullptr, 0);
 		ctx->DSSetShader(savedDS, nullptr, 0);
 		ctx->RSSetState(savedRS);
-		ctx->PSSetSamplers(0, psSamplerCount, savedPSSamplers);
-		ctx->PSSetConstantBuffers(psCBStart, psCBCount, savedPSCBs);
+		ctx->PSSetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, savedPSSamplers);
+		if (ctx1) {
+			ctx1->PSSetConstantBuffers1(0, kCBCount, savedPSCBs, psFirstConstant, psNumConstants);
+			ctx1->VSSetConstantBuffers1(0, kCBCount, savedVSCBs, vsFirstConstant, vsNumConstants);
+		} else {
+			ctx->PSSetConstantBuffers(0, kCBCount, savedPSCBs);
+			ctx->VSSetConstantBuffers(0, kCBCount, savedVSCBs);
+		}
 		ctx->IASetInputLayout(savedIL);
 		ctx->IASetVertexBuffers(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT, savedVB, savedVBStride, savedVBOffset);
 		ctx->IASetIndexBuffer(savedIB, savedIBFormat, savedIBOffset);
@@ -686,12 +695,13 @@ namespace Util
 		SafeRelease(savedHS);
 		SafeRelease(savedDS);
 		SafeRelease(savedRS);
-		for (UINT i = 0; i < psSamplerCount; ++i)
-			SafeRelease(savedPSSamplers[i]);
-		for (UINT i = 0; i < psSRVCount; ++i)
+		SafeReleaseArray(savedPSSamplers);
+		for (UINT i = 0; i < kPSSRVCount; ++i)
 			SafeRelease(savedPSSRVs[i]);
-		for (UINT i = 0; i < psCBCount; ++i)
-			SafeRelease(savedPSCBs[i]);
+		SafeReleaseArray(savedPSCBs);
+		SafeReleaseArray(savedVSCBs);
+		if (ctx1)
+			ctx1->Release();
 		SafeRelease(savedIL);
 		SafeReleaseArray(savedVB);
 		SafeRelease(savedIB);

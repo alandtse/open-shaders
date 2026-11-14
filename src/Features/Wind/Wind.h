@@ -193,7 +193,7 @@ struct Wind : Feature
 
 	[[nodiscard]] PerFrameData GetCommonBufferData() const;
 	[[nodiscard]] WindPermutationContribution GetPermutationContribution() const;
-	[[nodiscard]] WindSharedData GetSharedWindData() const;
+	[[nodiscard]] WindSharedData GetSharedWindData();
 	[[nodiscard]] WindField::WindSample SampleWind(const float3& a_worldPosition) const noexcept;
 	[[nodiscard]] WindField::WindSample SampleWind(const float3& a_worldPosition,
 		const float3& a_windDirection, float a_windSpeed) const noexcept;

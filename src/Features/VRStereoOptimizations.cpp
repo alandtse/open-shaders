@@ -778,9 +778,6 @@ void VRStereoOptimizations::ExecuteDepthFillPass()
 
 	context->Draw(3, 0);
 
-	ID3D11ShaderResourceView* nullSRV = nullptr;
-	context->PSSetShaderResources(1, 1, &nullSRV);
-
 	// Remaining pipeline state restored by `scope` dtor.
 }
 

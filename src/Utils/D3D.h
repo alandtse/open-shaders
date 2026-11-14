@@ -4,6 +4,7 @@
 #include "ShaderInclude.h"
 #include <array>
 #include <d3d11.h>
+#include <d3d11_1.h>
 #include <d3dcompiler.h>
 #include <filesystem>
 #include <functional>
@@ -236,15 +237,15 @@ namespace Util
 	 *
 	 * Covers OM (RTV/DSV, blend, depth-stencil), RS (state, viewports),
 	 * the VS/PS/GS/HS/DS shaders, IA (input layout, vertex/index buffers,
-	 * topology), and the requested PS sampler/resource/constant-buffer ranges.
+	 * topology), PS samplers, PS SRVs t0..t15, and all PS and VS constant buffers b0..b13
+	 * (with their firstConstant/numConstants windows when ID3D11DeviceContext1 is available).
 	 * The destructor nulls the saved PS SRV range before restoring to break any SRV-vs-RTV
 	 * hazard left by the wrapped pass. Construct it, set up + issue the pass,
 	 * then let it go out of scope.
 	 */
 	struct FullscreenPassScope
 	{
-		/** @brief Saves PS SRVs starting at zero and the specified CB range; defaults preserve SRV0 and CB1. */
-		explicit FullscreenPassScope(ID3D11DeviceContext* a_context, UINT a_psSRVCount = 1, UINT a_psCBStart = 1, UINT a_psCBCount = 1, UINT a_psSamplerCount = 1);
+		explicit FullscreenPassScope(ID3D11DeviceContext* a_context);
 		~FullscreenPassScope();
 		FullscreenPassScope(const FullscreenPassScope&) = delete;
 		FullscreenPassScope& operator=(const FullscreenPassScope&) = delete;
@@ -266,13 +267,17 @@ namespace Util
 		ID3D11HullShader* savedHS = nullptr;
 		ID3D11DomainShader* savedDS = nullptr;
 		ID3D11RasterizerState* savedRS = nullptr;
+		static constexpr UINT kPSSRVCount = 16;
+		static constexpr UINT kCBCount = D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT;
 		ID3D11SamplerState* savedPSSamplers[D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT] = {};
-		UINT psSRVCount = 1;
-		UINT psCBStart = 1;
-		UINT psCBCount = 1;
-		UINT psSamplerCount = 1;
 		ID3D11ShaderResourceView* savedPSSRVs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
-		ID3D11Buffer* savedPSCBs[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
+		ID3D11Buffer* savedPSCBs[kCBCount] = {};
+		ID3D11Buffer* savedVSCBs[kCBCount] = {};
+		UINT psFirstConstant[kCBCount] = {};
+		UINT psNumConstants[kCBCount] = {};
+		UINT vsFirstConstant[kCBCount] = {};
+		UINT vsNumConstants[kCBCount] = {};
+		ID3D11DeviceContext1* ctx1 = nullptr;
 		ID3D11InputLayout* savedIL = nullptr;
 		ID3D11Buffer* savedVB[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
 		UINT savedVBStride[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};

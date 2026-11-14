@@ -304,7 +304,7 @@ namespace ShadowCasterManager
 		FormulaHelper::SetParam(kFormulaParam_PlayerLightDistance, 0.0);  // overridden below after light position is known
 
 		// Temporal stickiness signals. Both derived from the slot pool in one
-		// pass: chosenLastFrame is the boolean kept for backward-compat with
+		// pass: chosenLastFrame is the boolean behind the slot-hold margin and
 		// user formulas; framesSinceRender is a continuous age that decays to
 		// zero stickiness once the slot has been stale long enough to no
 		// longer represent a true rank-drift case. Sentinel 1e6 covers the
@@ -460,7 +460,7 @@ namespace ShadowCasterManager
 			// out-of-bounds introsort crash. Engine light data can be garbage
 			// mid-load and user formulas can divide by zero; sanitize here.
 			const double v = s_formulaScore->Calculate();
-			return std::isfinite(v) ? v : 0.0;
+			return SlotHeldScore(std::isfinite(v) ? v : 0.0, FormulaHelper::GetParam(kFormulaParam_LightChosenLastFrame) != 0.0);
 		}
 
 		return 0.0;
