@@ -64,6 +64,15 @@ namespace
 
 	thread_local VertexShaderVariants vertexShaderVariants;
 
+	bool HasCompatibleVertexConstants(const RE::BSGraphics::VertexShader& standard, const RE::BSGraphics::VertexShader& variant)
+	{
+		return standard.constantTable == variant.constantTable &&
+		       std::ranges::equal(standard.constantBuffers, variant.constantBuffers,
+				   [](const auto& left, const auto& right) {
+					   return left.buffer == right.buffer && (left.buffer || left.data == right.data);
+				   });
+	}
+
 	void SelectVertexShader(State& state, RE::BSShader& shader, bool allowNoTreeBend)
 	{
 		auto& variants = vertexShaderVariants;
@@ -79,13 +88,14 @@ namespace
 			variants.shaders[variant] = globals::shaderCache->GetVertexShader(shader, descriptor);
 		}
 		auto* vertexShader = variants.shaders[variant];
-		if (!vertexShader)
+		const bool usesCustomConstantLayout = *globals::game::currentVertexShader == state.customVertexShader;
+		if (!vertexShader || (usesCustomConstantLayout && variants.shaders[0] && !HasCompatibleVertexConstants(*variants.shaders[0], *vertexShader)))
 			vertexShader = variants.shaders[0];
 		if (state.customVertexShader == vertexShader)
 			return;
 
 		globals::d3d::context->VSSetShader(Util::AsReal(vertexShader->shader), nullptr, 0);
-		if (*globals::game::currentVertexShader == state.customVertexShader)
+		if (usesCustomConstantLayout)
 			*globals::game::currentVertexShader = vertexShader;
 		state.customVertexShader = vertexShader;
 		variants.selected = vertexShader;
