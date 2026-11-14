@@ -181,7 +181,7 @@ namespace ShadowSampling
 		float3 ambientColor = Color::Ambient(GetRawAmbientLighting());
 
 #if defined(IBL)
-		if (SharedData::iblSettings.EnableIBL) {
+		if (ImageBasedLighting::IsEnabled()) {
 			ambientColor = ImageBasedLighting::GetDiffuseIBL(ambientColor, ImageBasedLightingNormal);
 		}
 #endif
@@ -195,7 +195,7 @@ namespace ShadowSampling
 		float3 ambientColor = Color::Ambient(GetRawAmbientLighting());
 
 #	if defined(IBL)
-		if (SharedData::iblSettings.EnableIBL) {
+		if (ImageBasedLighting::IsEnabled()) {
 			ambientColor = ImageBasedLighting::GetDiffuseIBLOccluded(ambientColor, ImageBasedLightingNormal, skylightingDiffuse);
 		}
 #	endif
