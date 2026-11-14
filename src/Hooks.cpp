@@ -576,7 +576,12 @@ namespace PostProcessingExtensions
 
 			Feature::ForEachLoadedFeature("OnBeforePostProcessing", [input](Feature* feature) { feature->OnBeforePostProcessing(input); });
 
-			if (state->HandlePostProcessing(input, output))
+			// The vanilla HDR effect also adapts the luminance the character light samples; skipped, characters read whatever texture is left bound.
+			const bool replacesTonemap = state->ReplacesTonemap(output);
+			if (replacesTonemap)
+				func(a1, a2, a3, a4, a5, a6);
+
+			if (state->HandlePostProcessing(input, output) || replacesTonemap)
 				return;
 
 			auto& postProcessing = globals::features::postProcessing;
