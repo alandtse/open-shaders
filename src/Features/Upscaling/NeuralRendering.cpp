@@ -299,7 +299,9 @@ struct NeuralRendering::Impl
 			context->ClearState();
 	}
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
-	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain, downsampleLow, expandLow, offsetMotion;
+	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain, downsampleLow, expandLow, expandRgb, offsetMotion;
+	NR::Reconstruction::Mode reconstructionMode = NR::Reconstruction::Mode::Native;
+	bool reconstructionFallback = false;
 	/** @brief Cbuffer CategoryAlphaCS.hlsl reads: the eye extent, the stereo offset, the softness radius and the eight strengths. */
 	struct alignas(16) CategoryAlphaData
 	{
@@ -1054,19 +1056,32 @@ struct NeuralRendering::Impl
 		return ok;
 	}
 
-	/** @brief Writes the proxy the composite reads for a model-size evaluation: the eye's own colour scaled by the model's gain, upsampled to the eye size. */
-	void ExpandModelGain(uint32_t i, bool guided)
+	/** @brief Chooses one reconstruction for the stereo transaction, falling back if an optional shader is unavailable. */
+	ID3D11ComputeShader* SelectReconstructionShader(NR::Reconstruction::Mode& mode)
 	{
-		CS_GPU_PASS("Upscaling::NRExpandGain");
+		using enum NR::Reconstruction::Mode;
+		if (mode == RgbGuided) {
+			if (auto* shader = expandRgb.Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
+					{ { "NR_RGB_GUIDED_RECONSTRUCTION", "1" } }, "cs_5_0", "ExpandGain", "NeuralRendering::ExpandRgbGain CS"))
+				return shader;
+			mode = Bilinear;
+		}
 		auto* shader = expandLow.Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
 			{}, "cs_5_0", "ExpandGain", "NeuralRendering::ExpandGain CS");
 		if (!shader)
 			throw std::runtime_error("NR gain-expand shader unavailable");
+		return shader;
+	}
+
+	/** @brief Writes the eye's source proxy scaled by its reconstructed model gain. */
+	void ExpandModelGain(uint32_t i, ID3D11ComputeShader* shader)
+	{
+		CS_GPU_PASS("Upscaling::NRExpandGain");
 		auto& eye = eyes[i];
 		ClearPipeline();
 		ColorTransferData data{ width, height, i * width };
 		colorBuffer->Update(data);
-		lowResBuffer->Update(LowResData{ lowWidth, lowHeight, guideWidth, guideHeight, kModelGuideSigmaStops, guided ? 1u : 0u });
+		lowResBuffer->Update(LowResData{ lowWidth, lowHeight, guideWidth, guideHeight, kModelGuideSigmaStops, 0u });
 		ID3D11Buffer* buffers[]{ colorBuffer->CB(), lowResBuffer->CB() };
 		context->CSSetConstantBuffers(0, ARRAYSIZE(buffers), buffers);
 		ID3D11ShaderResourceView* inputs[]{ eye.color->srv, eye.lowColor->srv, eye.lowOutput->srv };
@@ -1257,6 +1272,14 @@ struct NeuralRendering::Impl
 			frameGenerationBlocked = frameGeneration;
 		}
 		const bool lowRes = lowWidth != 0;
+		const auto requestedReconstruction = NR::Reconstruction::Select(
+			tuning.modelGuidedUpsample, tuning.modelScale, width, height, lowWidth, lowHeight);
+		auto selectedReconstruction = requestedReconstruction;
+		auto* reconstructionShader = lowRes ? SelectReconstructionShader(selectedReconstruction) : nullptr;
+		if (selectedReconstruction != reconstructionMode)
+			reset |= NR::Diagnostics::Requested;
+		reconstructionMode = selectedReconstruction;
+		reconstructionFallback = requestedReconstruction != selectedReconstruction;
 		const bool sbs = sbsEnabled;
 		if (lowRes) {
 			region = {};
@@ -1502,7 +1525,7 @@ struct NeuralRendering::Impl
 		if (lowRes) {
 			for (uint32_t i = 0; i < eyeCount; ++i) {
 				EnsureGainResources(i);
-				ExpandModelGain(i, tuning.modelGuidedUpsample);
+				ExpandModelGain(i, reconstructionShader);
 				reuseFrame[i] = true;
 			}
 		}
@@ -1813,6 +1836,8 @@ NeuralRendering::Status NeuralRendering::GetStatus() const
 	snapshot.skipFrameReuseActive = skipFrameReuseActive.load(std::memory_order_relaxed);
 	snapshot.modelFrames = modelFrames.load(std::memory_order_relaxed);
 	snapshot.reuseFrames = reuseFrames.load(std::memory_order_relaxed);
+	snapshot.modelReconstruction = modelReconstruction.load(std::memory_order_relaxed);
+	snapshot.modelReconstructionFallback = modelReconstructionFallback.load(std::memory_order_relaxed);
 	const auto reuseMask = eyeReuseMask.load(std::memory_order_relaxed);
 	snapshot.eyeReuse = { (reuseMask & 1u) != 0, (reuseMask & 2u) != 0 };
 	for (size_t i = 0; i < snapshot.materialStrength.size(); ++i)
@@ -2037,7 +2062,7 @@ namespace
 	{
 		bool changed = false;
 		const bool unusedByMode = globals::game::isVR && NR::GetEyeMode(tuning) == NR::EyeMode::kAlternate;
-		ImGui::BeginDisabled(!developerMode || unusedByMode);
+		ImGui::BeginDisabled(unusedByMode);
 		const char* label = T(TKEY("model_scale"), "Model Scale");
 		const ImGuiID id = ImGui::GetID(label);
 		ImGuiStorage* storage = ImGui::GetStateStorage();
@@ -2056,13 +2081,15 @@ namespace
 		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("model_scale_tooltip"),
-				"Runs the model at a fraction of the eye size and carries only its brightness change back to the full image. 0.75 saves about 8% of the model's GPU time and 0.5 about 16%, with a loss of fine detail. It needs Developer Mode and does not apply with Alternate eyes."));
-		ImGui::BeginDisabled(tuning.modelScale >= NR::Tuning::kMaxModelScale);
-		changed |= ImGui::Checkbox(T(TKEY("model_guided_upsample"), "Guided Upsample"), &tuning.modelGuidedUpsample);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("model_guided_upsample_tooltip"),
-				"Weights the upsampled brightness change by how similar the pixels' brightness is, so it follows edges instead of blurring across them."));
-		ImGui::EndDisabled();
+				"Lower values can improve performance but reduce Neural Rendering quality and detail. Does not apply with Alternate eyes."));
+		if (developerMode) {
+			ImGui::BeginDisabled(tuning.modelScale >= NR::Tuning::kMaxModelScale);
+			changed |= ImGui::Checkbox(T(TKEY("model_guided_upsample"), "Improve low-resolution NR"), &tuning.modelGuidedUpsample);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("model_guided_upsample_tooltip"),
+					"Helps preserve edges when NR resolution is reduced or compression is used. On by default. Off can look softer."));
+			ImGui::EndDisabled();
+		}
 		ImGui::EndDisabled();
 		return changed;
 	}
@@ -2583,7 +2610,6 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 	const auto effective = [&] {
 		auto resolved = NR::Context::EffectiveTuning(tuning, contexts, context.kind);
 		if (!globals::state->IsDeveloperMode()) {
-			resolved.modelScale = NR::Tuning::kMaxModelScale;
 			resolved.sbsEvaluate = resolved.modelVerify = resolved.mirrorEyes = false;
 		}
 		if (globals::game::isVR && NR::GetEyeMode(resolved) == NR::EyeMode::kAlternate)
@@ -2646,6 +2672,9 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			work.prepareToneData.Reset();
 			work.compositeColor.Reset();
 			work.materialAlphaShader.Reset();
+			work.downsampleLow.Reset();
+			work.expandLow.Reset();
+			work.expandRgb.Reset();
 		}
 		auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
 		auto* color = Util::AsReal(targets[RE::RENDER_TARGETS::kMAIN].texture);
@@ -2778,6 +2807,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			throw std::runtime_error(std::format("the NVIDIA runtime failed to process a frame. Update the GPU driver, then press Retry (NGX L/R 0x{:08X}/0x{:08X})",
 				diagnostic.result[0], diagnostic.result[1]));
 		appliedFrame.store(state->frameCount, std::memory_order_relaxed);
+		modelReconstruction.store(work.reconstructionMode, std::memory_order_relaxed);
+		modelReconstructionFallback.store(work.reconstructionFallback, std::memory_order_relaxed);
 		appliedFrames.fetch_add(1, std::memory_order_relaxed);
 		const uint32_t frameResets = diagnostic.reset[0] | diagnostic.reset[1];
 		diagnostics.RecordFrame(frameResets, diagnostic.resetDrainMs);

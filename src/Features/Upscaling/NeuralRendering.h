@@ -5,6 +5,7 @@
 #include "NeuralRendering/CropCalibration.h"
 #include "NeuralRendering/Diagnostics.h"
 #include "NeuralRendering/MaterialStrength.h"
+#include "NeuralRendering/ModelReconstruction.h"
 #include "NeuralRendering/Runtime.h"
 #include "NeuralRendering/Tuning.h"
 
@@ -65,6 +66,10 @@ struct NeuralRendering
 		std::array<bool, 2> eyeReuse{};
 		/** @brief Frames the model ran for an eye, and eye-frames it was reused instead, since startup. */
 		uint32_t modelFrames = 0, reuseFrames = 0;
+		/** @brief Reconstruction used by both eyes of the last applied frame. */
+		NR::Reconstruction::Mode modelReconstruction = NR::Reconstruction::Mode::Native;
+		/** @brief An unavailable optional shader made the last applied frame use a basic reconstruction. */
+		bool modelReconstructionFallback = false;
 	};
 
 	/** @brief Which sources chose the crop NR last evaluated, as the settings panel and devbench report it. */
@@ -193,6 +198,9 @@ private:
 	/** @brief Eye-stagger mirrors for the status snapshot, written on the render thread. */
 	std::atomic_bool skipFrameReuseActive = false;
 	std::atomic<uint32_t> eyeReuseMask = 0, modelFrames = 0, reuseFrames = 0;
+	/** @brief Reconstruction mirrors for the last applied frame's status snapshot. */
+	std::atomic<NR::Reconstruction::Mode> modelReconstruction = NR::Reconstruction::Mode::Native;
+	std::atomic_bool modelReconstructionFallback = false;
 	/** @brief Material-strength mirrors for the status snapshot, written on the render thread. */
 	std::atomic_bool materialStrengthActive = false, materialStrengthAvailable = true;
 	std::array<std::atomic<float>, NR::MaterialStrength::kCount> materialStrengthValues{};

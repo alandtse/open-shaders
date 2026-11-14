@@ -151,7 +151,7 @@ namespace NR
 		float flatReuseMaxMoveUnits = kDefaultFlatReuseMoveUnits;
 		/**
 		 * @brief Runs the model at this fraction of the eye size and upsamples its tone gain onto the
-		 *        full-resolution frame. Developer-only; 1 is the full-resolution pass.
+		 *        full-resolution frame. 1 is the full-resolution pass.
 		 */
 		float modelScale = kMaxModelScale;
 		/**
@@ -159,7 +159,7 @@ namespace NR
 		 *        newest it ships (the faster one). A 310.8 runtime has one network and ignores it.
 		 */
 		uint32_t modelPreset = 0;
-		/** @brief Weights the model-size gain by how close each sample's brightness is to the full-resolution pixel, instead of a plain bilinear blend. */
+		/** @brief Uses RGB-guided reconstruction for reduced grids; the developer-only control applies at every log level. */
 		bool modelGuidedUpsample = true;
 		/**
 		 * @brief Evaluates both eyes as one side-by-side image on a single Feature 18 instance, which saves

@@ -1,3 +1,5 @@
+#include "Common/NeuralRenderingFinite.hlsli"
+#include "Common/NeuralRenderingReconstruction.hlsli"
 #include "Upscaling/NeuralRendering/ColorTransfer.hlsli"
 
 Texture2D<float4> ProxyInput : register(t0);
@@ -43,28 +45,51 @@ float LowLogLuma(float3 proxy)
 	return log2(max(Color::RGBToLuminance(ProxySrgbToLinear(proxy), Luma), kLumaEpsilon));
 }
 
+bool ReadModelGain(int2 coordinate, out float gain, out float inputLog, out float3 inputLinear)
+{
+	const int2 tap = clamp(coordinate, int2(0, 0), int2(LowWidth - 1, LowHeight - 1));
+	const float3 input = LowInput[tap].rgb;
+	const float3 output = LowOutput[tap].rgb;
+	inputLinear = ProxySrgbToLinear(input);
+	inputLog = LowLogLuma(input);
+	gain = LowLogLuma(output) - inputLog;
+	return all(NeuralRenderingFinite::IsFinite(input)) && all(NeuralRenderingFinite::IsFinite(output)) && all(NeuralRenderingFinite::IsFinite(inputLinear)) && NeuralRenderingFinite::IsFinite(gain);
+}
+
+bool BilinearModelGain(float2 position, float3 reference, out float gain)
+{
+	const int2 base = int2(floor(position));
+	const float2 phase = frac(position);
+	const float4 spatial = float4((1.0 - phase.x) * (1.0 - phase.y), phase.x * (1.0 - phase.y), (1.0 - phase.x) * phase.y, phase.x * phase.y);
+	float4 gains, inputLogs;
+	float3 p00, p10, p01, p11;
+	bool valid = ReadModelGain(base, gains.x, inputLogs.x, p00);
+	valid = ReadModelGain(base + int2(1, 0), gains.y, inputLogs.y, p10) && valid;
+	valid = ReadModelGain(base + int2(0, 1), gains.z, inputLogs.z, p01) && valid;
+	valid = ReadModelGain(base + int2(1, 1), gains.w, inputLogs.w, p11) && valid;
+	float4 weights = spatial;
+#ifdef NR_RGB_GUIDED_RECONSTRUCTION
+	NeuralRenderingReconstruction::RgbWeights(reference, p00, p10, p01, p11, spatial, Luma, weights);
+#else
+	if (Guided != 0) {
+		const float referenceLog = log2(max(Color::RGBToLuminance(reference, Luma), kLumaEpsilon));
+		weights *= exp(-abs(referenceLog - inputLogs) / max(GuideSigma, 1e-3)) + 1e-3;
+	}
+#endif
+	gain = dot(gains, weights) / max(dot(weights, 1.0), NeuralRenderingReconstruction::kMinimumNormalization);
+	return valid && NeuralRenderingFinite::IsFinite(gain);
+}
+
 // The composite takes only the model's luminance ratio, so the low-resolution gain is all that has to cross
 // back: the full-resolution proxy scaled by it reads, to the composite, as a model frame of its own size.
 [numthreads(8, 8, 1)] void ExpandGain(uint3 id : SV_DispatchThreadID) {
 	if (id.x >= Width || id.y >= Height)
 		return;
-	const float3 currentLinear = ProxySrgbToLinear(ProxyInput[id.xy].rgb);
-	const float currentLogLuma = log2(max(Color::RGBToLuminance(currentLinear, Luma), kLumaEpsilon));
+	const float4 source = ProxyInput[id.xy];
+	const float3 currentLinear = ProxySrgbToLinear(source.rgb);
 	const float2 lowPosition = (float2(id.xy) + 0.5) / float2(Width, Height) * float2(LowWidth, LowHeight) - 0.5;
-	const int2 base = int2(floor(lowPosition));
-	const float2 fraction = lowPosition - float2(base);
-	const int2 limit = int2(LowWidth - 1, LowHeight - 1);
-	float gainSum = 0.0, weightSum = 0.0;
-	[unroll] for (int i = 0; i < 4; ++i)
-	{
-		const int2 tap = clamp(base + int2(i & 1, i >> 1), int2(0, 0), limit);
-		const float2 axis = float2((i & 1) ? fraction.x : 1.0 - fraction.x, (i & 2) ? fraction.y : 1.0 - fraction.y);
-		const float inputLog = LowLogLuma(LowInput[tap].rgb);
-		const float gain = LowLogLuma(LowOutput[tap].rgb) - inputLog;
-		const float guide = Guided != 0 ? exp(-abs(currentLogLuma - inputLog) / max(GuideSigma, 1e-3)) : 1.0;
-		const float weight = axis.x * axis.y * (guide + 1e-3);
-		gainSum += gain * weight;
-		weightSum += weight;
-	}
-	ExpandedProxy[id.xy] = float4(ProxyLinearToSrgb(currentLinear * exp2(gainSum / max(weightSum, 1e-6))), 1.0);
+	float gain;
+	const bool valid = BilinearModelGain(lowPosition, currentLinear, gain);
+	const float3 candidate = ProxyLinearToSrgb(currentLinear * exp2(gain));
+	ExpandedProxy[id.xy] = NeuralRenderingFinite::ResolveHalfOutput(source, candidate, valid);
 }
