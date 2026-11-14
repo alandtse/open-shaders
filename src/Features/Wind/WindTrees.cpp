@@ -13,6 +13,7 @@
 namespace
 {
 	static_assert(kTreeWindSpringFieldCount == WindSettingsLimits::kGrassWindSpringQualityRangeCount);
+	constexpr uint32_t kAllTreeWindFields = (1u << kTreeWindSpringFieldCount) - 1u;
 	constexpr UINT kTreeWindSpringVertexConstantBufferSlot = 3;
 	constexpr UINT kTreeWindSpringCurrentTextureSlot = 111;
 	constexpr UINT kTreeWindSpringPreviousTextureSlot = 114;
@@ -154,6 +155,16 @@ namespace
 		return texture;
 	}
 
+	void ClearTreeWindTransientTextures(ID3D11DeviceContext* context,
+		const TreeWindState::TexturePair& response, const TreeWindState::TexturePair& velocity)
+	{
+		constexpr float zero[4]{};
+		for (uint32_t index = 0; index < response.size(); ++index) {
+			context->ClearUnorderedAccessViewFloat(response[index]->uav.get(), zero);
+			context->ClearUnorderedAccessViewFloat(velocity[index]->uav.get(), zero);
+		}
+	}
+
 	bool AdvanceTreeWindSpringTextures(
 		ID3D11DeviceContext* a_context,
 		ID3D11ComputeShader* a_shader,
@@ -165,7 +176,7 @@ namespace
 		bool& a_initialized,
 		UINT a_dispatchWidth,
 		UINT a_dispatchHeight,
-		UINT a_dispatchDepth,
+		bool a_updateTransients,
 		TreeWindSpringPass a_pass)
 	{
 		const uint32_t currentTextureIndex = a_textureIndex;
@@ -173,14 +184,14 @@ namespace
 		ID3D11ShaderResourceView* srvs[]{
 			a_responseTextures[currentTextureIndex]->srv.get(),
 			a_velocityTextures[currentTextureIndex]->srv.get(),
-			a_transientTextures[currentTextureIndex]->srv.get(),
-			a_transientVelocityTextures[currentTextureIndex]->srv.get()
+			a_updateTransients ? a_transientTextures[currentTextureIndex]->srv.get() : nullptr,
+			a_updateTransients ? a_transientVelocityTextures[currentTextureIndex]->srv.get() : nullptr
 		};
 		ID3D11UnorderedAccessView* uavs[]{
 			a_responseTextures[outputTextureIndex]->uav.get(),
 			a_velocityTextures[outputTextureIndex]->uav.get(),
-			a_transientTextures[outputTextureIndex]->uav.get(),
-			a_transientVelocityTextures[outputTextureIndex]->uav.get()
+			a_updateTransients ? a_transientTextures[outputTextureIndex]->uav.get() : nullptr,
+			a_updateTransients ? a_transientVelocityTextures[outputTextureIndex]->uav.get() : nullptr
 		};
 		a_context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 		a_context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
@@ -190,7 +201,8 @@ namespace
 		}
 
 		a_context->CSSetShader(a_shader, nullptr, 0);
-		DispatchTreeWindSpring(a_context, a_dispatchWidth, a_dispatchHeight, a_dispatchDepth, a_pass);
+		DispatchTreeWindSpring(a_context, a_dispatchWidth, a_dispatchHeight,
+			a_updateTransients ? kTreeWindTransientHeightCount : 1u, a_pass);
 		a_textureIndex = outputTextureIndex;
 		if (!a_initialized) {
 			ID3D11ShaderResourceView* nullSrvs[4]{};
@@ -204,12 +216,14 @@ namespace
 			a_context->CopyResource(
 				a_velocityTextures[previousTextureIndex]->resource.get(),
 				a_velocityTextures[a_textureIndex]->resource.get());
-			a_context->CopyResource(
-				a_transientTextures[previousTextureIndex]->resource.get(),
-				a_transientTextures[a_textureIndex]->resource.get());
-			a_context->CopyResource(
-				a_transientVelocityTextures[previousTextureIndex]->resource.get(),
-				a_transientVelocityTextures[a_textureIndex]->resource.get());
+			if (a_updateTransients) {
+				a_context->CopyResource(
+					a_transientTextures[previousTextureIndex]->resource.get(),
+					a_transientTextures[a_textureIndex]->resource.get());
+				a_context->CopyResource(
+					a_transientVelocityTextures[previousTextureIndex]->resource.get(),
+					a_transientVelocityTextures[a_textureIndex]->resource.get());
+			}
 		}
 		a_initialized = true;
 		return true;
@@ -257,6 +271,9 @@ void Wind::RecreateTreeWindSpringTextures(uint32_t a_qualityIndex)
 		treeState.transientVelocityTextures[a_qualityIndex][textureIndex] =
 			CreateTreeWindTransientVelocityTexture(textureSize, transientVelocityName);
 	}
+	ClearTreeWindTransientTextures(globals::d3d::context,
+		treeState.transientTextures[a_qualityIndex], treeState.transientVelocityTextures[a_qualityIndex]);
+	treeState.transientHistoryMask &= ~(1u << a_qualityIndex);
 	treeState.springTextureIndices[a_qualityIndex] = 0;
 	treeState.springInitialized[a_qualityIndex] = false;
 	treeState.springFieldAvailable[a_qualityIndex] = false;
@@ -299,8 +316,10 @@ void Wind::UpdateTreeWindSpring()
 	const bool newFrame = !treeState.hasUpdated || treeState.lastUpdateFrame != currentFrame;
 	if (newFrame) {
 		const bool historyContinuous = treeState.hasUpdated && currentFrame - treeState.lastUpdateFrame == 1u;
+		const uint32_t previousTransientHistory = treeState.transientHistoryMask;
 		if (!historyContinuous) {
 			treeState.springInitialized.fill(false);
+			treeState.transientHistoryMask = 0;
 		}
 		treeState.hasUpdated = true;
 		treeState.lastUpdateFrame = currentFrame;
@@ -355,6 +374,7 @@ void Wind::UpdateTreeWindSpring()
 		data.gustScale = settings.treeWindGustScale;
 		data.gustSoftLimit = settings.treeWindGustSoftLimit;
 		data.transientFieldMask = GetTransientFieldMask();
+		const uint32_t activeTransientFields = treeState.uploadedTransientCount ? data.transientFieldMask : 0u;
 		data.transientSpringFrequency = settings.treeTransientSpringFrequency;
 		data.transientSpringDamping = settings.treeTransientSpringDamping;
 
@@ -364,15 +384,27 @@ void Wind::UpdateTreeWindSpring()
 		auto* fieldShader = treeState.springFieldComputeShader.Get(
 			L"Data\\Shaders\\TreeWindSpringCS.hlsl", {}, "cs_5_0", "UpdateField",
 			"Wind::TreeWindSpringCS");
+		ID3D11ComputeShader* ambientShader = nullptr;
+		if ((activeTransientFields | treeState.transientHistoryMask) != kAllTreeWindFields) {
+			ambientShader = treeState.ambientFieldComputeShader.Get(
+				L"Data\\Shaders\\TreeWindSpringCS.hlsl", {}, "cs_5_0", "UpdateAmbientField",
+				"Wind::TreeWindAmbientSpringCS");
+		}
 		ID3D11ShaderResourceView* nullSrvs[4]{};
 		ID3D11UnorderedAccessView* nullUavs[4]{};
 
 		for (uint32_t qualityIndex = 0; qualityIndex < kTreeWindSpringFieldCount; ++qualityIndex) {
+			const uint32_t fieldBit = 1u << qualityIndex;
+			const bool updateTransients = !ambientShader || ((activeTransientFields | treeState.transientHistoryMask) & fieldBit);
+			if (!updateTransients && !historyContinuous && (previousTransientHistory & fieldBit)) {
+				ClearTreeWindTransientTextures(context,
+					treeState.transientTextures[qualityIndex], treeState.transientVelocityTextures[qualityIndex]);
+			}
 			data.activeField = qualityIndex;
 			data.fields[qualityIndex].fieldAvailable = 0u;
 			treeState.springConstantBuffer->Update(data);
 			treeState.springFieldAvailable[qualityIndex] = AdvanceTreeWindSpringTextures(
-				context, fieldShader,
+				context, updateTransients ? fieldShader : ambientShader,
 				treeState.springResponseTextures[qualityIndex],
 				treeState.springVelocityTextures[qualityIndex],
 				treeState.transientTextures[qualityIndex],
@@ -381,8 +413,10 @@ void Wind::UpdateTreeWindSpring()
 				treeState.springInitialized[qualityIndex],
 				(data.fields[qualityIndex].textureSize + 7) / 8,
 				(data.fields[qualityIndex].textureSize + 7) / 8,
-				kTreeWindTransientHeightCount,
+				updateTransients,
 				kTreeWindSpringFieldPasses[qualityIndex]);
+			if (treeState.springFieldAvailable[qualityIndex])
+				treeState.transientHistoryMask |= activeTransientFields & fieldBit;
 		}
 
 		context->CSSetShader(nullptr, nullptr, 0);
@@ -392,6 +426,7 @@ void Wind::UpdateTreeWindSpring()
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullUavs), nullUavs, nullptr);
 
 		data.activeField = 0u;
+		data.transientHistoryMask = treeState.transientHistoryMask;
 		for (uint32_t qualityIndex = 0; qualityIndex < kTreeWindSpringFieldCount; ++qualityIndex) {
 			data.fields[qualityIndex].initialize = 0u;
 			data.fields[qualityIndex].fieldAvailable = treeState.springFieldAvailable[qualityIndex] ? 1u : 0u;
