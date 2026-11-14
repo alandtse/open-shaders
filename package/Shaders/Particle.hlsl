@@ -25,6 +25,33 @@ float2 GetRainProjectionJitter(uint eyeIndex)
 	float4 stableProbe = mul(FrameBuffer::CameraProjUnjittered[eyeIndex], float4(0, 0, 1, 0));
 	return probe.xy / probe.w - stableProbe.xy / stableProbe.w;
 }
+
+#	if defined(VSHADER)
+#		include "Common/WindField.hlsli"
+namespace RainWind
+{
+	static const float UnitsPerSecondPerFieldSpeed = 400.0;
+	static const uint ResponseTaps = 4;
+
+	// Gust velocity averaged over the response time: the gust pattern advects with the field's
+	// travel distance, so an earlier gust is the same field sampled at a smaller travel distance.
+	float3 SampleLaggedGust(float3 worldPosition, float responseSeconds)
+	{
+		WindField::Field current = SharedData::WindFieldCurrent;
+		WindField::Field transition = SharedData::WindFieldTransition;
+		float lagDistance = SharedData::WindFieldTransitionData.z * responseSeconds;
+		float3 gust = 0.0;
+		[unroll] for (uint tap = 0; tap < ResponseTaps; ++tap)
+		{
+			float back = (tap + 0.5) / ResponseTaps * lagDistance;
+			current.travelDistance = max(SharedData::WindFieldCurrent.travelDistance - back, 0.0);
+			transition.travelDistance = max(SharedData::WindFieldTransition.travelDistance - back, 0.0);
+			gust += WindField::Detail::SampleBlendedComponents(worldPosition, current, transition, SharedData::WindFieldTransitionData.x).gustVelocity;
+		}
+		return gust / ResponseTaps;
+	}
+}
+#	endif
 #endif
 
 #if !defined(DYNAMIC_CUBEMAPS) && defined(IBL)
@@ -143,12 +170,30 @@ VS_OUTPUT main(VS_INPUT input)
 	msPosition.xyz = normalizedPosition * fVars2.xxx + (-(fVars2.x * 0.5).xxx + fVars1.xyz);
 	msPosition.w = 1;
 
+#		if defined(RAIN)
+	float3 rainVelocity = Velocity.xyz;
+#			if defined(RAIN_REFRACTION)
+	if (SharedData::rainRefractionSettings.WindInfluence > 0.0) {
+		float3 worldPosition = mul(FrameBuffer::CameraViewInverse[eyeIndex], mul(WorldView[eyeIndex], msPosition)).xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+		float responseSeconds = SharedData::rainRefractionSettings.WindResponseSeconds;
+		float3 laggedGust = responseSeconds > 0.0 ?
+		                        RainWind::SampleLaggedGust(worldPosition, responseSeconds) :
+		                        WindField::SampleCurrentComponents(worldPosition).gustVelocity;
+		WindField::TransientImpulseSample impulse = WindField::SampleCurrentTransientImpulses(worldPosition);
+		float3 gust = float3((laggedGust + impulse.velocity).xy, 0.0f) * (RainWind::UnitsPerSecondPerFieldSpeed * SharedData::rainRefractionSettings.WindInfluence);
+		float secondsFallen = (1.0 - normalizedPosition.z) * fVars2.x / max(abs(Velocity.z), EPSILON_DIVISION);
+		msPosition.xyz += gust * min(secondsFallen, responseSeconds);
+		rainVelocity += gust * (abs(Velocity.z) / max(SharedData::rainRefractionSettings.FallSpeed, EPSILON_DIVISION));
+	}
+#			endif
+#		endif
+
 #		if defined(REFRACTIVE_RAIN)
 	vsout.RaindropData.z = 1.0;
 	if (SharedData::rainRefractionSettings.Enable) {
 		float2 corner = sign(input.TexCoord1.xy);
-		float3 motion = Velocity.xyz * abs(input.TexCoord1.y) * SharedData::rainRefractionSettings.MotionStretch;
-		float4 center = msPosition - float4(Velocity.xyz * 0.5, 0);
+		float3 motion = rainVelocity * abs(input.TexCoord1.y) * SharedData::rainRefractionSettings.MotionStretch;
+		float4 center = msPosition - float4(rainVelocity * 0.5, 0);
 		float4 leading = mul(WorldViewProj[eyeIndex], center + float4(motion * 0.5, 0));
 		float4 trailing = mul(WorldViewProj[eyeIndex], center - float4(motion * 0.5, 0));
 		float4 dropPosition = lerp(trailing, leading, corner.y * 0.5 + 0.5);
@@ -173,7 +218,7 @@ VS_OUTPUT main(VS_INPUT input)
 	{
 		float4 viewPosition = mul(WorldViewProj[eyeIndex], msPosition);
 #		if defined(RAIN)
-		float4 adjustedMsPosition = msPosition - float4(Velocity.xyz, 0);
+		float4 adjustedMsPosition = msPosition - float4(rainVelocity, 0);
 		float positionBlendParam = 0.5 * (1 + input.TexCoord1.y);
 		float4 adjustedViewPosition = mul(WorldViewProj[eyeIndex], adjustedMsPosition);
 		float4 finalViewPosition = lerp(adjustedViewPosition, viewPosition, positionBlendParam);

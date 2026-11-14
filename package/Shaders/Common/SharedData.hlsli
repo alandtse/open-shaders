@@ -48,7 +48,7 @@ namespace SharedData
 		WindField::Field WindFieldPrevious;
 		WindField::Field WindFieldTransition;
 		WindField::Field WindFieldPreviousTransition;
-		float4 WindFieldTransitionData;  // x/y: current/previous blend, z/w: reserved
+		float4 WindFieldTransitionData;  // x/y: current/previous blend, z: gust advection speed in units/s, w: reserved
 		float4 WindFieldSpringDebug;     // xy: field minimum, z: field size, w: maximum tilt radians
 		uint4 WindFieldActiveCounts;     // x/y: current/previous transient impulse counts, z/w: reserved
 		WindField::TransientWindSource WindFieldTransientImpulses[WindField::TransientImpulseCapacity];
@@ -710,10 +710,11 @@ namespace SharedData
 		uint Enable;
 		float MotionStretch;
 		float MotionTransparency;
-		float pad0;
+		float WindInfluence;
 		float4 TextureBounds;
 		float2 TextureRadiusScale;
-		float2 pad1;
+		float FallSpeed;
+		float WindResponseSeconds;
 	};
 
 #if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
