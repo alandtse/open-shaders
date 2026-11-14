@@ -159,6 +159,12 @@ public:
 
 	Util::LazyShader<ID3D11ComputeShader> mainCompositeCS;
 	Util::LazyShader<ID3D11ComputeShader> mainCompositeInteriorCS;
+	Util::LazyShader<ID3D11ComputeShader> mainCompositeIBLLuminanceRatioCS;
+	Util::LazyShader<ID3D11ComputeShader> mainCompositeInteriorIBLLuminanceRatioCS;
+	Util::LazyShader<ID3D11ComputeShader> mainCompositeLinearACEScgCS;
+	Util::LazyShader<ID3D11ComputeShader> mainCompositeInteriorLinearACEScgCS;
+	Util::LazyShader<ID3D11ComputeShader> mainCompositeIBLLuminanceRatioLinearACEScgCS;
+	Util::LazyShader<ID3D11ComputeShader> mainCompositeInteriorIBLLuminanceRatioLinearACEScgCS;
 
 	// Directional shadow structured buffer (t98): cascade splits and projections.
 	Buffer* directionalShadowLights = nullptr;

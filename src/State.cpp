@@ -2267,7 +2267,7 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 				if (deferred->deferredPass || a_forceDeferred)
 					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::LightingShaderFlags::Deferred | deferredLightingShaderFlags;
 				else if (permutationData.ExtraShaderDescriptor & static_cast<uint32_t>(ExtraShaderDescriptors::IsReflections))
-					a_pixelDescriptor |= deferredLightingShaderFlags;
+					a_pixelDescriptor |= deferredLightingShaderFlags & ~static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio);
 
 				{
 					uint32_t technique = 0x3F & (a_vertexDescriptor >> 24);
@@ -2304,7 +2304,9 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 							   (uint32_t)SIE::ShaderCache::EffectShaderFlags::GrayscaleToAlpha |
 							   (uint32_t)SIE::ShaderCache::EffectShaderFlags::IgnoreTexAlpha);
 				a_vertexDescriptor &= flags;
-				a_pixelDescriptor &= flags;
+				a_pixelDescriptor &= flags & ~SIE::ShaderCache::kEffectLinearACEScg;
+				if (deferredLightingShaderFlags & SIE::ShaderCache::kLightingLinearACEScg)
+					a_pixelDescriptor |= SIE::ShaderCache::kEffectLinearACEScg;
 
 				if (deferred->deferredPass || a_forceDeferred)
 					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::EffectShaderFlags::Deferred;
@@ -2332,6 +2334,9 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 
 uint32_t State::GetRuntimePixelBits(const RE::BSShader& a_shader)
 {
+	if (a_shader.shaderType.get() == RE::BSShader::Type::Lighting)
+		return static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::BaseObjectIsSnow);
+
 	// Water's pixel stage branches on Wading at runtime; losing the bit skips the wading displacement without any error.
 	return a_shader.shaderType.get() == RE::BSShader::Type::Water ? static_cast<uint32_t>(SIE::ShaderCache::WaterShaderFlags::Wading) : 0u;
 }

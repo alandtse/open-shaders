@@ -160,6 +160,7 @@ struct ColorGrading : public PostProcessFeature
 	bool saveImagesFlag = false;
 	winrt::com_ptr<ID3D11VertexShader> colorgradingVS = nullptr;
 	winrt::com_ptr<ID3D11PixelShader> colorgradingPS = nullptr;
+	winrt::com_ptr<ID3D11PixelShader> colorgradingMirrorPS = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> lutgenCS = nullptr;
 	/** Returns whether the grading shaders are ready for the active display mode. */
 	bool IsReadyForTonemapping() const;
@@ -181,6 +182,9 @@ struct ColorGrading : public PostProcessFeature
 	virtual void DrawSettings() override;
 
 	virtual void Draw(TextureInfo&) override;
+	/** @brief Grades to compatible engine targets and reports whether the alternate target was written. */
+	bool DrawToTarget(TextureInfo& color, const TextureInfo& target, ID3D11RenderTargetView* targetView,
+		ID3D11Texture2D* alternate = nullptr, ID3D11RenderTargetView* alternateView = nullptr);
 	void ResolveTonemapperFromSettings();
 	void UpdateColorSpaceTransforms(bool hdrEnabled, Gamut inputGamut);
 

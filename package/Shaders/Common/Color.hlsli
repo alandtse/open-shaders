@@ -7,8 +7,13 @@
 #include "Common/SharedData.hlsli"
 
 #ifndef VSHADER
-#	define ENABLE_LL SharedData::linearLightingSettings.enableLinearLighting
-#	define ENABLE_ACEScg SharedData::linearLightingSettings.enableACEScg
+#	if defined(LINEAR_ACESCG)
+#		define ENABLE_LL true
+#		define ENABLE_ACEScg true
+#	else
+#		define ENABLE_LL SharedData::linearLightingSettings.enableLinearLighting
+#		define ENABLE_ACEScg SharedData::linearLightingSettings.enableACEScg
+#	endif
 #endif
 
 #if defined(PSHADER) && defined(LIGHTING)

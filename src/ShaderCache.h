@@ -1058,6 +1058,10 @@ namespace SIE
 		};
 
 		static constexpr uint32_t kLightingDryWeather = 1u << 21;
+		static constexpr uint32_t kLightingSnowCoverInactive = 1u << 19;
+		static constexpr uint32_t kLightingLinearACEScg = 1u << 7;
+		static constexpr uint32_t kVertexNoTreeBend = 1u << 6;
+		static constexpr uint32_t kLightingNoMeshVariation = 1u << 6;
 		static constexpr uint32_t kLightingNoLocalLights = 1u << 22;
 		static constexpr uint32_t kLightingSingleClusterLight = 1u << 14;
 
@@ -1071,6 +1075,7 @@ namespace SIE
 			TruePbr = 1 << 3,
 			Deferred = 1 << 4,
 			LandscapeSeams = 1 << 5,
+			IBLLuminanceRatio = 1 << 8,
 			// Community Shaders end
 			Specular = 1 << 9,
 			SoftLighting = 1 << 10,
@@ -1091,6 +1096,25 @@ namespace SIE
 			FurShells = 1u << 30,
 			FurShellsDepth = 1u << 31
 		};
+
+		/** @brief True for the mesh techniques specialized for unvaried textures. */
+		static constexpr bool SupportsMeshVariationVariant(uint32_t a_descriptor)
+		{
+			if (a_descriptor & static_cast<uint32_t>(LightingShaderFlags::FurShells))
+				return false;
+
+			switch (static_cast<LightingShaderTechniques>((a_descriptor >> 24) & 0x3F)) {
+			case LightingShaderTechniques::None:
+			case LightingShaderTechniques::Envmap:
+			case LightingShaderTechniques::Glowmap:
+			case LightingShaderTechniques::Parallax:
+			case LightingShaderTechniques::ParallaxOcc:
+			case LightingShaderTechniques::MultilayerParallax:
+				return true;
+			default:
+				return false;
+			}
+		}
 
 		enum class BloodSplatterShaderTechniques
 		{
@@ -1167,6 +1191,8 @@ namespace SIE
 			Flowmap = 1 << 9,           // 0x200
 			BlendNormals = 1 << 10,     // 0x400
 		};
+
+		static constexpr uint32_t kEffectLinearACEScg = 1u << 9;
 
 		enum class EffectShaderFlags
 		{

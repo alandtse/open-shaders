@@ -32,6 +32,8 @@
 #include "Features/VanillaFresnel.h"
 #include "Features/WetnessEffects.h"
 #include "Features/Wind/Wind.h"
+#include "ShaderCache.h"
+#include "State.h"
 #include "TruePBR.h"
 #include "Utils/Game.h"
 
@@ -57,6 +59,12 @@ std::pair<unsigned char*, size_t> _GetFeatureBufferData(Ts... feat_datas)
 std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 {
 	const auto& bloomSettings = globals::features::csUtility.settings.bloomEnhancement;
+	const auto linearLightingData = globals::features::linearLighting.GetCommonBufferData();
+	auto& lightingFlags = globals::state->deferredLightingShaderFlags;
+	lightingFlags &= ~SIE::ShaderCache::kLightingLinearACEScg;
+	if (linearLightingData.enableLinearLighting && linearLightingData.enableACEScg)
+		lightingFlags |= SIE::ShaderCache::kLightingLinearACEScg;
+
 	return _GetFeatureBufferData(
 		globals::features::grassLighting.settings,
 		globals::features::extendedMaterials.settings,
@@ -71,11 +79,11 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::lodBlending.settings,
 		globals::features::hairSpecular.settings,
 		globals::features::terrainVariation.settings,
-		globals::features::ibl.GetCommonBufferData(),
+		globals::features::ibl.PrepareFrameData(),
 		globals::features::extendedTranslucency.GetCommonBufferData(),
 		globals::features::csUtility.GetCommonBufferData(),
 		globals::features::wind.GetCommonBufferData(),
-		globals::features::linearLighting.GetCommonBufferData(),
+		linearLightingData,
 #if defined(ENABLE_EFFECTS11)
 		globals::features::effects11.GetCommonBufferData(),
 #else
@@ -95,5 +103,5 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::grassCollision.GetCommonBufferData(),
 		globals::features::horizonFix.GetCommonBufferData(),
 		globals::features::rainRefraction.GetCommonBufferData(),
-		globals::features::snowCover.GetCommonBufferData(a_inWorld));
+		globals::features::snowCover.PrepareFrameData(a_inWorld));
 }
