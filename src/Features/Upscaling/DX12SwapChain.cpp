@@ -303,6 +303,8 @@ void DX12SwapChain::RecreateWrappedResources(const DXGI_SWAP_CHAIN_DESC1& desc)
 
 	delete swapChainBufferWrapped;
 	delete uiBufferWrapped;
+	for (auto& copy : dlssgInputCopies)
+		RetireDLSSGInputCopy(copy);
 	swapChainBufferWrapped = newSwapChainBuffer.release();
 	uiBufferWrapped = newUiBuffer.release();
 
@@ -439,6 +441,7 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 	}
 	DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
 	DX::ThrowIfFailed(commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr));
+	ReleaseRetiredDLSSGInputCopies();
 
 	// Copy shared texture to swap chain buffer
 	{
@@ -478,11 +481,9 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 		// Skip tagging/interpolation without valid per-frame constants -- otherwise
 		// DLSS-G interpolates against stale or default camera data.
 		if (streamlineDX12.CheckFrameConstants(streamlineDX12.viewport)) {
+			const auto inputs = CopyDLSSGInputs(commandLists[frameIndex].get());
 			streamlineDX12.TagDX12Resources(commandLists[frameIndex].get(),
-				depthBufferShared12 ? depthBufferShared12->resource.get() : nullptr,
-				motionVectorBufferShared12 ? motionVectorBufferShared12->resource.get() : nullptr,
-				swapChainBufferWrapped ? swapChainBufferWrapped->resource.get() : nullptr,
-				uiBufferWrapped ? uiBufferWrapped->resource.get() : nullptr,
+				inputs[kDLSSGDepth], inputs[kDLSSGMotionVectors], inputs[kDLSSGHUDLessColor], inputs[kDLSSGUIColorAndAlpha],
 				swapChainDesc.Width, swapChainDesc.Height);
 			streamlineDX12.ConfigureDLSSG(upscaling.ShouldUseFrameGenerationThisFrame());
 		} else {
@@ -495,6 +496,9 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 	}
 
 	DX::ThrowIfFailed(commandLists[frameIndex]->Close());
+
+	if (useDLSSG)
+		upscaling.streamlineDX12.QueueWaitForDLSSGInputs(commandQueue.get());
 
 	ID3D12CommandList* commandListsToExecute[] = { commandLists[frameIndex].get() };
 	commandQueue->ExecuteCommandLists(1, commandListsToExecute);
@@ -509,8 +513,10 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 	// Present the frame
 	DX::ThrowIfFailed(swapChain->Present(SyncInterval, Flags));
 
-	if (useDLSSG)
+	if (useDLSSG) {
 		upscaling.streamlineDX12.EmitPCLMarker(sl::PCLMarker::ePresentEnd);
+		upscaling.streamlineDX12.TrackDLSSGInputFence();
+	}
 
 	// Wait for D3D12 to finish
 	const uint64_t d3d12SignalValue = interopFence.Next();
@@ -521,8 +527,7 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 	// Update the frame index
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 
-	float clearColor[4]{ 0, 0, 0, 0 };
-	d3d11Context->ClearRenderTargetView(uiBufferWrapped->rtv, clearColor);
+	ClearUIBuffer();
 
 	// If VSync is disabled, use frame limiter to prevent tearing and optimise pacing
 	if (SyncInterval == 0)
@@ -845,6 +850,105 @@ void DX12SwapChain::SetColorSpace(bool enableHDR)
 		swapChain->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
 		logger::info("[DX12SwapChain] Set color space to SDR (sRGB)");
 	}
+}
+
+void DX12SwapChain::ClearUIBuffer()
+{
+	if (!uiBufferWrapped)
+		return;
+
+	CS_GPU_PASS("DX12SwapChain::ClearUIBuffer");
+	const float clearColor[4]{};
+	d3d11Context->ClearRenderTargetView(uiBufferWrapped->rtv, clearColor);
+}
+
+void DX12SwapChain::RetireDLSSGInputCopy(winrt::com_ptr<ID3D12Resource>& a_copy)
+{
+	if (!a_copy)
+		return;
+	const auto& streamline = globals::features::upscaling.streamlineDX12;
+	retiredDLSSGInputCopies.push_back({ std::move(a_copy), *std::max_element(std::begin(frameFenceValues), std::end(frameFenceValues)),
+		streamline.dlssgInputFence.GetFence(), streamline.dlssgInputFence.GetTarget(), streamline.dlssgInputTargetsTracked, streamline.dlssgInputTargetStale });
+}
+
+void DX12SwapChain::ReleaseRetiredDLSSGInputCopies()
+{
+	if (retiredDLSSGInputCopies.empty() || !interopFence.fence12)
+		return;
+	const uint64_t presentDone = interopFence.fence12->GetCompletedValue();
+	const auto& streamline = globals::features::upscaling.streamlineDX12;
+	auto* inputFence = streamline.dlssgInputFence.GetFence();
+	const uint64_t dlssgDone = inputFence ? inputFence->GetCompletedValue() : 0;
+	// Latch the first target tracked after a stale retirement; waiting on the newest one never ends while DLSS-G lags.
+	for (auto& retired : retiredDLSSGInputCopies) {
+		if (retired.dlssgTargetStale && inputFence && streamline.dlssgInputTargetsTracked > retired.dlssgTargetsTracked) {
+			retired.dlssgFence = inputFence;
+			retired.dlssgFenceValue = streamline.dlssgInputFence.GetTarget();
+			retired.dlssgTargetStale = false;
+		}
+	}
+	std::erase_if(retiredDLSSGInputCopies, [&](const RetiredDLSSGInputCopy& a_retired) {
+		if (presentDone < a_retired.presentFenceValue)
+			return false;
+		if (!streamline.dlssgResourcesRetained)
+			return true;
+		if (a_retired.dlssgTargetStale)
+			return false;
+		if (!a_retired.dlssgFence || a_retired.dlssgFence != inputFence)
+			return true;
+		return dlssgDone >= a_retired.dlssgFenceValue;
+	});
+}
+
+std::array<ID3D12Resource*, DX12SwapChain::kDLSSGInputCount> DX12SwapChain::CopyDLSSGInputs(ID3D12GraphicsCommandList* a_commandList)
+{
+	static constexpr const wchar_t* kCopyNames[kDLSSGInputCount] = {
+		L"DX12SwapChain::DLSSGDepthCopy",
+		L"DX12SwapChain::DLSSGMotionVectorCopy",
+		L"DX12SwapChain::DLSSGHUDLessColorCopy",
+		L"DX12SwapChain::DLSSGUIColorAndAlphaCopy",
+	};
+	const WrappedResource* sources[kDLSSGInputCount] = { depthBufferShared12, motionVectorBufferShared12, swapChainBufferWrapped, uiBufferWrapped };
+
+	std::array<ID3D12Resource*, kDLSSGInputCount> copies{};
+	std::array<D3D12_RESOURCE_BARRIER, kDLSSGInputCount * 2> toCopy{};
+	std::array<D3D12_RESOURCE_BARRIER, kDLSSGInputCount * 2> toCommon{};
+	uint32_t barrierCount = 0;
+	for (uint32_t i = 0; i < kDLSSGInputCount; ++i) {
+		auto* source = sources[i] ? sources[i]->resource.get() : nullptr;
+		if (!source)
+			continue;
+		auto sourceDesc = source->GetDesc();
+		auto& copy = dlssgInputCopies[i];
+		if (copy) {
+			const auto copyDesc = copy->GetDesc();
+			if (copyDesc.Width != sourceDesc.Width || copyDesc.Height != sourceDesc.Height || copyDesc.Format != sourceDesc.Format)
+				RetireDLSSGInputCopy(copy);
+		}
+		if (!copy) {
+			sourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+			sourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+			sourceDesc.Alignment = 0;
+			const CD3DX12_HEAP_PROPERTIES heap(D3D12_HEAP_TYPE_DEFAULT);
+			DX::ThrowIfFailed(d3d12Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &sourceDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(copy.put())));
+			copy->SetName(kCopyNames[i]);
+		}
+		copies[i] = copy.get();
+		toCopy[barrierCount] = CD3DX12_RESOURCE_BARRIER::Transition(source, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
+		toCommon[barrierCount++] = CD3DX12_RESOURCE_BARRIER::Transition(source, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
+		toCopy[barrierCount] = CD3DX12_RESOURCE_BARRIER::Transition(copies[i], D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+		toCommon[barrierCount++] = CD3DX12_RESOURCE_BARRIER::Transition(copies[i], D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
+	}
+	if (!barrierCount)
+		return copies;
+
+	a_commandList->ResourceBarrier(barrierCount, toCopy.data());
+	for (uint32_t i = 0; i < kDLSSGInputCount; ++i) {
+		if (copies[i])
+			a_commandList->CopyResource(copies[i], sources[i]->resource.get());
+	}
+	a_commandList->ResourceBarrier(barrierCount, toCommon.data());
+	return copies;
 }
 
 DX12SwapChain::BlurResources DX12SwapChain::GetBlurResources() const

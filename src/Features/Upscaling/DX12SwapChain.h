@@ -1,5 +1,8 @@
 #pragma once
 
+#include <array>
+#include <vector>
+
 #include <Windows.Foundation.h>
 #include <stdio.h>
 #include <winrt/base.h>
@@ -180,6 +183,44 @@ public:
 	HANDLE GetFrameLatencyWaitableObject();
 
 	void SetColorSpace(bool enableHDR);
+
+	/** @brief Clears the UI buffer to transparent for the next frame's UI. */
+	void ClearUIBuffer();
+
+	/** @brief DLSS-G inputs, in tag order: depth, motion vectors, HUD-less colour, UI colour and alpha. */
+	enum DLSSGInput : uint32_t
+	{
+		kDLSSGDepth,
+		kDLSSGMotionVectors,
+		kDLSSGHUDLessColor,
+		kDLSSGUIColorAndAlpha,
+		kDLSSGInputCount
+	};
+
+	/**
+	 * @brief Records copies of this frame's DLSS-G inputs into textures only DLSS-G reads.
+	 * D3D11 can then rewrite the originals for the next frame without waiting for DLSS-G.
+	 * @return The copies in DLSSGInput order; an entry is null when its source does not exist.
+	 */
+	std::array<ID3D12Resource*, kDLSSGInputCount> CopyDLSSGInputs(ID3D12GraphicsCommandList* a_commandList);
+	std::array<winrt::com_ptr<ID3D12Resource>, kDLSSGInputCount> dlssgInputCopies;  ///< Read only by DLSS-G; see CopyDLSSGInputs.
+
+	/** @brief A replaced DLSS-G input copy, held until the present queue and DLSS-G have both passed its last use. */
+	struct RetiredDLSSGInputCopy
+	{
+		winrt::com_ptr<ID3D12Resource> resource;
+		uint64_t presentFenceValue = 0;
+		const ID3D12Fence* dlssgFence = nullptr;  ///< Compared only; a different live fence means DLSS-G was recreated after freeing its inputs.
+		uint64_t dlssgFenceValue = 0;
+		uint64_t dlssgTargetsTracked = 0;  ///< When dlssgTargetStale, a target tracked after this count replaces dlssgFenceValue.
+		bool dlssgTargetStale = false;
+	};
+	std::vector<RetiredDLSSGInputCopy> retiredDLSSGInputCopies;
+
+	/** @brief Moves a_copy to retiredDLSSGInputCopies instead of releasing it while GPU work may still use it. */
+	void RetireDLSSGInputCopy(winrt::com_ptr<ID3D12Resource>& a_copy);
+	/** @brief Releases retired copies whose last present-queue and DLSS-G uses have completed. */
+	void ReleaseRetiredDLSSGInputCopies();
 
 	// Resources needed by BackgroundBlur when D3D12 swap chain is active
 	struct BlurResources

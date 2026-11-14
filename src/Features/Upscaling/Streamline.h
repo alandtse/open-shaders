@@ -2,6 +2,7 @@
 
 #include "../../Buffer.h"
 #include "../../State.h"
+#include "DLSSGInputFence.h"
 
 #include <cstdint>
 #include <d3d11_4.h>
@@ -56,6 +57,9 @@ public:
 	sl::DLSSGMode lastSentDLSSGMode = sl::DLSSGMode::eOff;
 	uint32_t lastSentDLSSGFrames = 0;
 	float lastSentDLSSGTargetFPS = -1.0f;
+	DLSSGInputFenceTracker<ID3D12Fence> dlssgInputFence;  ///< DLSS-G input fence and the value of the last present (DX12 instance only).
+	uint64_t dlssgInputTargetsTracked = 0;                ///< Successful TrackDLSSGInputFence calls; tells a later target from an older one.
+	bool dlssgInputTargetStale = false;                   ///< The last present's state query failed, so dlssgInputFence holds an older present's target.
 	bool featureReflex = false;
 	bool featurePCL = false;
 	bool reflexSupportedOnCurrentAdapter = false;
@@ -194,6 +198,13 @@ public:
 	 * index is how DLSS-G's pacer matches presents to constants -- structural for FG.
 	 */
 	void EmitPCLMarker(sl::PCLMarker a_marker);
+	/** @brief Records the input fence value DLSS-G signals once it has consumed the frame just presented. */
+	void TrackDLSSGInputFence();
+	/**
+	 * @brief Makes a_queue wait, on the GPU, until DLSS-G has read the inputs of the last present.
+	 * Submit before work that overwrites DLSS-G's input copies; skipped when DLSS-G is not behind.
+	 */
+	void QueueWaitForDLSSGInputs(ID3D12CommandQueue* a_queue);
 	void TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
 		ID3D12Resource* depth, ID3D12Resource* mvec, ID3D12Resource* hudLessColor,
 		ID3D12Resource* uiColorAndAlpha, uint32_t width, uint32_t height);

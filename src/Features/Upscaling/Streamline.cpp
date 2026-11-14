@@ -1084,6 +1084,7 @@ void Streamline::ConfigureDLSSG(bool enabled)
 			return;
 		}
 		dlssgResourcesRetained = false;
+		dlssgInputFence.Reset();
 	}
 
 	if (slDLSSGGetState && enabled) {
@@ -1116,6 +1117,35 @@ void Streamline::ConfigureDLSSG(bool enabled)
 				}
 			}
 		}
+	}
+}
+
+void Streamline::TrackDLSSGInputFence()
+{
+	if (!initialized || !slDLSSGGetState || !dlssgResourcesRetained)
+		return;
+
+	sl::DLSSGState state{};
+	if (SL_FAILED(result, slDLSSGGetState(viewport, state, nullptr))) {
+		dlssgInputTargetStale = true;
+		return;
+	}
+
+	dlssgInputFence.Track(static_cast<ID3D12Fence*>(state.inputsProcessingCompletionFence), state.lastPresentInputsProcessingCompletionFenceValue);
+	dlssgInputTargetStale = false;
+	++dlssgInputTargetsTracked;
+}
+
+void Streamline::QueueWaitForDLSSGInputs(ID3D12CommandQueue* a_queue)
+{
+	auto* fence = dlssgInputFence.GetFence();
+	if (!a_queue || !fence || !dlssgResourcesRetained || !dlssgInputFence.IsBehind(fence->GetCompletedValue()))
+		return;
+
+	if (FAILED(a_queue->Wait(fence, dlssgInputFence.GetTarget()))) {
+		static bool errorLogged = false;
+		if (!std::exchange(errorLogged, true))
+			logger::warn("[Streamline DX12] Could not queue a wait on the DLSS-G input fence");
 	}
 }
 
