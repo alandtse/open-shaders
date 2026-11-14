@@ -3,6 +3,7 @@
 #include "../../Utils/MathUtils.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 // Pure helpers extracted from ShadowCasterManager so they can be unit-tested
@@ -161,5 +162,27 @@ namespace ShadowCasterManager
 	inline constexpr int32_t SliceCappedLightCount(int32_t a_shadowLightCount, int32_t a_slices) noexcept
 	{
 		return std::min(a_shadowLightCount, std::max(a_slices - 1, 0));
+	}
+
+	/// Rotation whose X column, a paraboloid shadow camera's view axis, is the direction given, kept upright; false under one unit.
+	inline bool FacingRotation(float a_x, float a_y, float a_z, float (&a_out)[3][3]) noexcept
+	{
+		const float length = std::sqrt(a_x * a_x + a_y * a_y + a_z * a_z);
+		if (!(length >= 1.0f))
+			return false;
+		const float view[3]{ a_x / length, a_y / length, a_z / length };
+		const bool vertical = std::abs(view[2]) > 0.99f;
+		const float up[3]{ 0.0f, vertical ? 1.0f : 0.0f, vertical ? 0.0f : 1.0f };
+		float side[3]{ view[1] * up[2] - view[2] * up[1], view[2] * up[0] - view[0] * up[2], view[0] * up[1] - view[1] * up[0] };
+		const float sideLength = std::sqrt(side[0] * side[0] + side[1] * side[1] + side[2] * side[2]);
+		for (float& v : side)
+			v /= sideLength;
+		const float upright[3]{ side[1] * view[2] - side[2] * view[1], side[2] * view[0] - side[0] * view[2], side[0] * view[1] - side[1] * view[0] };
+		for (int i = 0; i < 3; ++i) {
+			a_out[i][0] = view[i];
+			a_out[i][1] = upright[i];
+			a_out[i][2] = side[i];
+		}
+		return true;
 	}
 }

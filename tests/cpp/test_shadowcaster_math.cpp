@@ -10,6 +10,7 @@
 using Catch::Approx;
 using ShadowCasterManager::DemandStreakBucket;
 using ShadowCasterManager::EngineShadowSliceCount;
+using ShadowCasterManager::FacingRotation;
 using ShadowCasterManager::FrameTimePercentile;
 using ShadowCasterManager::HashCombine;
 using ShadowCasterManager::HashCombineFloat;
@@ -91,6 +92,25 @@ TEST_CASE("HemisphereSeamMargin floors a small light radius", "[scm]")
 	// Degenerate and small radii clamp to the floor instead of collapsing to 0.
 	REQUIRE(HemisphereSeamMargin(0.0f) == Approx(1.0f));
 	REQUIRE(HemisphereSeamMargin(100.0f) == Approx(1.0f));
+}
+
+TEST_CASE("FacingRotation aims its X column and stays a rotation", "[scm]")
+{
+	float r[3][3]{};
+	REQUIRE(FacingRotation(30.0f, -40.0f, 0.0f, r));
+	REQUIRE(r[0][0] == Approx(0.6f));
+	REQUIRE(r[1][0] == Approx(-0.8f));
+	REQUIRE(r[2][0] == Approx(0.0f).margin(1e-6));
+	REQUIRE(r[2][1] == Approx(1.0f));
+	const float det = r[0][0] * (r[1][1] * r[2][2] - r[1][2] * r[2][1]) - r[0][1] * (r[1][0] * r[2][2] - r[1][2] * r[2][0]) +
+	                  r[0][2] * (r[1][0] * r[2][1] - r[1][1] * r[2][0]);
+	REQUIRE(det == Approx(1.0f));
+	// Straight up has no upright: it still makes a rotation.
+	REQUIRE(FacingRotation(0.0f, 0.0f, 10.0f, r));
+	REQUIRE(r[2][0] == Approx(1.0f));
+	REQUIRE(FacingRotation(0.0f, 0.0f, -10.0f, r));
+	REQUIRE(r[2][0] == Approx(-1.0f));
+	REQUIRE_FALSE(FacingRotation(0.1f, 0.0f, 0.0f, r));
 }
 
 TEST_CASE("SphereWhollyBehindPlane splits straddling from wholly behind", "[scm]")

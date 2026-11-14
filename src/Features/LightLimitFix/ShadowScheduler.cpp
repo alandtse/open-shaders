@@ -162,6 +162,44 @@ namespace ShadowCasterManager
 		return s_settings.ProtectPlayerShadows && PlayerWithinLightRadius(light, kPlayerCasterReachUnits);
 	}
 
+	// SEH in its own function: GetUserData walks NiAVObject::parent, which is not refcounted and can dangle during scene teardown.
+	static RE::Actor* CarrierOf(const RE::NiLight* ni) noexcept
+	{
+		__try {
+			auto* ref = ni->GetUserData();
+			return ref ? ref->As<RE::Actor>() : nullptr;
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		}
+		return nullptr;
+	}
+
+	/// The body a dynamic omni light is carried by, or null: the first-person model while the player carrying it is seen in first person.
+	static const RE::NiAVObject* CarrierBody(RE::BSShadowLight* light)
+	{
+		auto* ni = light->light.get();
+		auto* carrier = ni && light->dynamic && light->GetIsOmniLight() ? CarrierOf(ni) : nullptr;
+		if (!carrier)
+			return nullptr;
+		const auto* camera = globals::game::playerCamera;
+		return carrier->Get3D(carrier == globals::game::player && camera && camera->IsInFirstPerson());
+	}
+
+	/// UpdateCamera with a carried omni light's front paraboloid turned at its carrier, so the seam never crosses the body it is
+	/// closest to; the node's rotation is put back right after the copy.
+	static bool UpdateCameraFacingCarrier(RE::BSShadowLight* light, RE::NiCamera* camera)
+	{
+		const auto* body = CarrierBody(light);
+		if (!body)
+			return light->UpdateCamera(camera);
+		auto* ni = light->light.get();
+		const auto rotate = ni->world.rotate;
+		const auto toBody = body->worldBound.center - ni->world.translate;
+		FacingRotation(toBody.x, toBody.y, toBody.z, ni->world.rotate.entry);
+		const bool valid = light->UpdateCamera(camera);
+		ni->world.rotate = rotate;
+		return valid;
+	}
+
 	/// Player-only dynamic-caster proxy, applied every frame on top of the
 	/// (possibly stale) cached geomList hash -- see ComputeShadowGeomHash's
 	/// walk cache below. Must never be folded into the cached hash itself: a
@@ -179,6 +217,19 @@ namespace ShadowCasterManager
 		h = HashCombineFloat(h, QuantizeFloat(pp.x, actorStep));
 		h = HashCombineFloat(h, QuantizeFloat(pp.y, actorStep));
 		h = HashCombineFloat(h, QuantizeFloat(pp.z, actorStep));
+		return h;
+	}
+
+	/// A carried light's camera faces its carrier's body, which the node's own pose does not see turn; folded every frame, uncached.
+	static std::uint64_t FoldCarrierAim(std::uint64_t h, RE::BSShadowLight* light, float posStep)
+	{
+		const auto* body = CarrierBody(light);
+		if (!body)
+			return h;
+		const float aimStep = std::max(posStep, 1.0f);
+		h = HashCombineFloat(h, QuantizeFloat(body->worldBound.center.x, aimStep));
+		h = HashCombineFloat(h, QuantizeFloat(body->worldBound.center.y, aimStep));
+		h = HashCombineFloat(h, QuantizeFloat(body->worldBound.center.z, aimStep));
 		return h;
 	}
 
@@ -709,7 +760,7 @@ namespace ShadowCasterManager
 	{
 		if (!StaticAtlasReady())
 			return false;
-		if (st.splitExcluded || st.bakeQueued || !staticValid)
+		if (st.splitExcluded || st.bakeQueued || !staticValid || CarrierBody(light))
 			return false;
 		// Static and dynamic depths must use the same projection and radius.
 		return SplitPoseMatches(light, st);
@@ -1083,7 +1134,8 @@ namespace ShadowCasterManager
 		// casters (RAII-cleared after); pick this accumulate's filter mode
 		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
-			bool split = StaticAtlasReady();
+			// A carried light's camera faces its holder, which the bake's pose does not record: it renders full.
+			bool split = StaticAtlasReady() && !CarrierBody(light);
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
 			st->fullThisFrame = !split;
@@ -1546,7 +1598,7 @@ namespace ShadowCasterManager
 			const bool wasDynamic = e.Light->dynamic;
 			if (a_pinOrigin)
 				e.Light->dynamic = false;
-			e.Light->UpdateCamera(a_camera);
+			UpdateCameraFacingCarrier(e.Light, a_camera);
 			e.Light->dynamic = wasDynamic;
 			EnableLight(e.Light, a_camera, a_ssn, a_slot);
 			return e.Light && a_isUsable(e.Light);
@@ -1858,7 +1910,7 @@ namespace ShadowCasterManager
 					const bool wasDynamic = l->dynamic;
 					if (pinNow)
 						l->dynamic = false;
-					cameraValid = l->UpdateCamera(camera);
+					cameraValid = UpdateCameraFacingCarrier(l, camera);
 					l->dynamic = wasDynamic;
 				}
 				c.updateCameraFailed = !cameraValid;
@@ -2590,7 +2642,7 @@ namespace ShadowCasterManager
 			// Player proxy folded in every frame, uncached -- see
 			// FoldPlayerCasterProxy's comment for why it can't ride the
 			// walk-cost cache above.
-			e->pendingGeomHash = FoldPlayerCasterProxy(e->cachedPendingGeomHash, e->Light, posStep);
+			e->pendingGeomHash = FoldCarrierAim(FoldPlayerCasterProxy(e->cachedPendingGeomHash, e->Light, posStep), e->Light, posStep);
 
 			// 0 (visible/unmeasured) unless a real GPU reading confirms absence. MAX
 			// channel + streak, not an EMA -- an EMA's magnitude scales with tile
