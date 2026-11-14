@@ -2335,7 +2335,7 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 uint32_t State::GetRuntimePixelBits(const RE::BSShader& a_shader)
 {
 	if (a_shader.shaderType.get() == RE::BSShader::Type::Lighting)
-		return static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::ShadowDir);
+		return static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::BaseObjectIsSnow);
 
 	// Water's pixel stage branches on Wading at runtime; losing the bit skips the wading displacement without any error.
 	return a_shader.shaderType.get() == RE::BSShader::Type::Water ? static_cast<uint32_t>(SIE::ShaderCache::WaterShaderFlags::Wading) : 0u;

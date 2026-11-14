@@ -267,6 +267,7 @@ GrassOptimizations::GrassPassSetup GrassOptimizations::SetupGrassPass(RE::BSShad
 		if (!HasCurrentCull() || !bucket->optimizedReady || !bucket->sliceTableCount)
 			return GrassPassSetup::kCovered;
 
+		CaptureEngineBindings();
 		SetupOptimizedPass(*bucket);
 		return GrassPassSetup::kOptimized;
 	}
@@ -300,6 +301,31 @@ void GrassOptimizations::SetupOptimizedPass(const GrassBucket& b)
 		UINT materialNum = 16;
 		ctx1->PSSetConstantBuffers1(1, 1, &bucketCB, &windowFirst, &materialNum);
 	}
+}
+
+void GrassOptimizations::CaptureEngineBindings()
+{
+	if (engineBindings.valid || !ctx1)
+		return;
+	ctx1->VSGetConstantBuffers1(2, 1, engineBindings.buffers, engineBindings.first, engineBindings.count);
+	ctx1->PSGetConstantBuffers1(1, 2, engineBindings.buffers + 1, engineBindings.first + 1, engineBindings.count + 1);
+	engineBindings.valid = true;
+}
+
+void GrassOptimizations::TakeEngineBindings(ID3D11Buffer* (&a_saved)[5], UINT (&a_first)[5], UINT (&a_count)[5])
+{
+	if (!engineBindings.valid)
+		return;
+	static constexpr size_t kSavedSlots[3] = { 0, 3, 4 };
+	for (size_t i = 0; i < 3; ++i) {
+		const size_t slot = kSavedSlots[i];
+		Util::SafeRelease(a_saved[slot]);
+		a_saved[slot] = engineBindings.buffers[i];
+		a_first[slot] = engineBindings.first[i];
+		a_count[slot] = engineBindings.count[i];
+		engineBindings.buffers[i] = nullptr;
+	}
+	engineBindings.valid = false;
 }
 
 void GrassOptimizations::DrawBucket(GrassBucket& b)
@@ -609,6 +635,7 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass*, R
 		context->VSGetConstantBuffers(kEyeConstantSlot, 2, savedBuffers + 1);
 		context->PSGetConstantBuffers(1, 2, savedBuffers + 3);
 	}
+	self.TakeEngineBindings(savedBuffers, firstConstants, constantCounts);
 	const SKSE::stl::scope_exit restoreBindings([&]() noexcept {
 		context->VSSetShaderResources(2, ARRAYSIZE(savedInstanceViews), savedInstanceViews);
 		if (context1) {

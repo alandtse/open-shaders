@@ -1185,7 +1185,8 @@ void ColorGrading::ReleaseActiveShaders()
 	{
 		std::lock_guard lock(shaderMutex);
 		Util::ClearShaders<ID3D11ComputeShader>({ lutgenCS });
-		Util::ClearShaders<ID3D11PixelShader>({ colorgradingPS });
+		Util::ClearShaders<ID3D11VertexShader>({ colorgradingVS });
+		Util::ClearShaders<ID3D11PixelShader>({ colorgradingPS, colorgradingMirrorPS });
 	}
 }
 
@@ -1217,10 +1218,14 @@ void ColorGrading::CompileShaders()
 	};
 
 	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\ColorGrading", shaderInfos);
+	const std::vector<VertexShaderCompileInfo> vertexInfos = {
+		{ &colorgradingVS, "colorgrading.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "VSColorGrading" },
+	};
 	const std::vector<PixelShaderCompileInfo> rasterInfos = {
 		{ &colorgradingPS, "colorgrading.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "PSColorGrading" },
+		{ &colorgradingMirrorPS, "colorgrading.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "PSColorGradingMirror" },
 	};
-	CompileRasterShadersAsync(L"Data\\Shaders\\PostProcessing\\ColorGrading", {}, rasterInfos);
+	CompileRasterShadersAsync(L"Data\\Shaders\\PostProcessing\\ColorGrading", vertexInfos, rasterInfos);
 
 	recompileFlag = false;
 	curveNeedsUpdate = true;  // shader changed, curve must update
@@ -1229,7 +1234,7 @@ void ColorGrading::CompileShaders()
 bool ColorGrading::IsReadyForTonemapping() const
 {
 	std::lock_guard lock(shaderMutex);
-	return !recompileFlag && colorgradingPS && lutgenCS;
+	return !recompileFlag && colorgradingVS && colorgradingPS && lutgenCS;
 }
 
 PostProcessFeature::Gamut ColorGrading::GetDisplayGamut() const
@@ -1240,6 +1245,12 @@ PostProcessFeature::Gamut ColorGrading::GetDisplayGamut() const
 
 void ColorGrading::Draw(TextureInfo& inout_tex)
 {
+	DrawToTarget(inout_tex, {}, nullptr);
+}
+
+bool ColorGrading::DrawToTarget(TextureInfo& inout_tex, const TextureInfo& target, ID3D11RenderTargetView* targetView,
+	ID3D11Texture2D* alternate, ID3D11RenderTargetView* alternateView)
+{
 	auto context = globals::d3d::context;
 	const auto desc = owner->GetPipelineTextureDesc();
 	if (texColorAlternate && (texColor->desc.Width != desc.Width || texColor->desc.Height != desc.Height))
@@ -1248,10 +1259,56 @@ void ColorGrading::Draw(TextureInfo& inout_tex)
 	if (recompileFlag)
 		ReloadActiveShaders();
 
-	if (!AllShadersReady({ &colorgradingPS }) || !AllShadersReady({ &lutgenCS }) || !owner || !owner->GetFullscreenVS())
-		return;
+	if (!AllShadersReady({ &colorgradingVS }) || !AllShadersReady({ &colorgradingPS }) || !AllShadersReady({ &lutgenCS }) || !owner)
+		return false;
 	if (settings.enableTonemap && globals::state->GetTonemapOwner() != State::TonemapOwner::kPostProcessing)
-		return;
+		return false;
+
+	TextureInfo output{ texColor->resource.get(), texColor->srv.get(), GetDisplayGamut() };
+	auto* outputView = texColor->rtv.get();
+	const auto compatibleTarget = [&](ID3D11Texture2D* texture, ID3D11RenderTargetView* view) {
+		if (!view || !texture || texture == inout_tex.tex)
+			return false;
+		D3D11_TEXTURE2D_DESC textureDesc{};
+		D3D11_RENDER_TARGET_VIEW_DESC viewDesc{};
+		texture->GetDesc(&textureDesc);
+		view->GetDesc(&viewDesc);
+		return textureDesc.Width == texColor->desc.Width && textureDesc.Height == texColor->desc.Height &&
+		       textureDesc.SampleDesc.Count == 1 && textureDesc.Format == texColor->desc.Format &&
+		       viewDesc.Format == texColor->desc.Format && viewDesc.ViewDimension == D3D11_RTV_DIMENSION_TEXTURE2D &&
+		       viewDesc.Texture2D.MipSlice == 0;
+	};
+	bool wroteAlternate = false;
+	if (target.srv && !saveImagesFlag && compatibleTarget(target.tex, targetView)) {
+		output = { target.tex, target.srv, output.gamut };
+		outputView = targetView;
+		wroteAlternate = alternate != target.tex && compatibleTarget(alternate, alternateView) &&
+		                 AllShadersReady({ &colorgradingMirrorPS });
+	}
+
+	const auto drawGrading = [&](ID3D11RenderTargetView* drawTarget, ID3D11RenderTargetView* mirror,
+								 ID3D11ShaderResourceView* source, float width, float height) {
+		PostProcessingRaster::RasterPass pass(context);
+		auto* cb = colorCB->CB();
+		auto* sampler = linearSampler.get();
+		const std::array srvs{ source, texLUT ? texLUT->srv.get() : nullptr };
+		winrt::com_ptr<ID3D11Buffer> previousVertexCB;
+		context->VSGetConstantBuffers(1, 1, previousVertexCB.put());
+		const SKSE::stl::scope_exit restoreVertexCB([&] {
+			auto* previous = previousVertexCB.get();
+			context->VSSetConstantBuffers(1, 1, &previous);
+		});
+		context->VSSetConstantBuffers(1, 1, &cb);
+		context->PSSetConstantBuffers(1, 1, &cb);
+		context->PSSetSamplers(0, 1, &sampler);
+		context->PSSetShaderResources(0, settings.skipLUT ? 1u : 2u, srvs.data());
+		if (mirror)
+			pass.SetTargets({ drawTarget, mirror }, width, height);
+		else
+			pass.SetTargets({ drawTarget }, width, height);
+		pass.SetShaders(colorgradingVS.get(), mirror ? colorgradingMirrorPS.get() : colorgradingPS.get());
+		pass.Draw();
+	};
 
 	{
 		// Debug curve readback stays outside the grading pass's profiled GPU cost.
@@ -1370,16 +1427,8 @@ void ColorGrading::Draw(TextureInfo& inout_tex)
 			memcpy(lutKey.data(), &colorCBData, sizeof(ColorCB));
 		}
 
-		{
-			PostProcessingRaster::RasterPass pass(context);
-			std::array<ID3D11ShaderResourceView*, 2> srvs = { inout_tex.srv, texLUT->srv.get() };
-			context->PSSetConstantBuffers(1, 1, &cb);
-			context->PSSetSamplers(0, 1, samplers.data());
-			context->PSSetShaderResources(0, (UINT)(settings.skipLUT ? 1 : 2), srvs.data());
-			pass.SetTargets({ texColor->rtv.get() }, (float)texColor->desc.Width, (float)texColor->desc.Height);
-			pass.SetShaders(owner->GetFullscreenVS(), colorgradingPS.get());
-			pass.Draw();
-		}
+		drawGrading(outputView, wroteAlternate ? alternateView : nullptr, inout_tex.srv,
+			static_cast<float>(texColor->desc.Width), static_cast<float>(texColor->desc.Height));
 
 		cb = nullptr;
 		samplers.fill(nullptr);
@@ -1391,7 +1440,7 @@ void ColorGrading::Draw(TextureInfo& inout_tex)
 			OutputTextures();
 		}
 
-		inout_tex = { texColor->resource.get(), texColor->srv.get(), GetDisplayGamut() };
+		inout_tex = output;
 	}
 
 	const bool curveReadbackActive =
@@ -1405,18 +1454,7 @@ void ColorGrading::Draw(TextureInfo& inout_tex)
 	if (curveReadbackActive && curveNeedsUpdate && texCurveInput && texCurveOutput && colorgradingPS) {
 		CS_GPU_PASS("PostProcessing::ColorGradingCurve");
 		curveNeedsUpdate = false;
-		{
-			PostProcessingRaster::RasterPass pass(context);
-			ID3D11Buffer* curveCB = colorCB->CB();
-			std::array<ID3D11SamplerState*, 1> curveSamplers = { linearSampler.get() };
-			std::array<ID3D11ShaderResourceView*, 2> curveSRVs = { texCurveInput->srv.get(), texLUT ? texLUT->srv.get() : nullptr };
-			context->PSSetConstantBuffers(1, 1, &curveCB);
-			context->PSSetSamplers(0, 1, curveSamplers.data());
-			context->PSSetShaderResources(0, (UINT)(settings.skipLUT ? 1 : 2), curveSRVs.data());
-			pass.SetTargets({ texCurveOutput->rtv.get() }, (float)CurveSamples, 1.f);
-			pass.SetShaders(owner->GetFullscreenVS(), colorgradingPS.get());
-			pass.Draw();
-		}
+		drawGrading(texCurveOutput->rtv.get(), nullptr, texCurveInput->srv.get(), static_cast<float>(CurveSamples), 1.f);
 
 		// Readback
 		if (curveStaging) {
@@ -1433,6 +1471,7 @@ void ColorGrading::Draw(TextureInfo& inout_tex)
 			}
 		}
 	}
+	return wroteAlternate;
 }
 
 void ColorGrading::OutputTextures()

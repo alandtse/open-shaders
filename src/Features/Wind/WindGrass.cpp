@@ -102,6 +102,7 @@ void Wind::ClearShaderCache()
 {
 	grassState.springComputeShader.Reset();
 	treeState.springFieldComputeShader.Reset();
+	treeState.ambientFieldComputeShader.Reset();
 }
 
 void Wind::UpdateGrassWindSpring(bool a_compute)
