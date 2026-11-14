@@ -174,14 +174,18 @@ namespace ShadowCasterManager
 	}
 
 	/// The body a dynamic omni light is carried by, or null: the first-person model while the player carrying it is seen in first person.
+	/// Looked up once per light per frame and held until the next frame, so the culling jobs never see it freed mid-frame.
 	static const RE::NiAVObject* CarrierBody(RE::BSShadowLight* light)
 	{
-		auto* ni = light->light.get();
-		auto* carrier = ni && light->dynamic && light->GetIsOmniLight() ? CarrierOf(ni) : nullptr;
-		if (!carrier)
-			return nullptr;
-		const auto* camera = globals::game::playerCamera;
-		return carrier->Get3D(carrier == globals::game::player && camera && camera->IsInFirstPerson());
+		static PerFrameCache<RE::BSShadowLight*, RE::NiPointer<RE::NiAVObject>> bodies;
+		return bodies.Get(static_cast<uint32_t>(*globals::game::frameCounter), light, [light]() -> RE::NiPointer<RE::NiAVObject> {
+			auto* ni = light->light.get();
+			auto* carrier = ni && light->dynamic && light->GetIsOmniLight() ? CarrierOf(ni) : nullptr;
+			if (!carrier)
+				return nullptr;
+			const auto* camera = globals::game::playerCamera;
+			return RE::NiPointer<RE::NiAVObject>(carrier->Get3D(carrier == globals::game::player && camera && camera->IsInFirstPerson()));
+		}).get();
 	}
 
 	/// UpdateCamera with a carried omni light's front paraboloid turned at its carrier, so the seam never crosses the body it is

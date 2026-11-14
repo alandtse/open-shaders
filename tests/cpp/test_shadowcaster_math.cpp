@@ -259,3 +259,16 @@ TEST_CASE("Every light count fits the slices allocated for it", "[scm]")
 	for (int32_t count = 0; count <= 127; ++count)
 		REQUIRE(SliceCappedLightCount(count, EngineShadowSliceCount(count)) == count);
 }
+
+TEST_CASE("PerFrameCache works a key out once per frame and drops it on the next", "[scm]")
+{
+	ShadowCasterManager::PerFrameCache<int, int> cache;
+	int made = 0;
+	const auto make = [&made] { return ++made; };
+	REQUIRE(cache.Get(10, 1, make) == 1);
+	REQUIRE(cache.Get(10, 1, make) == 1);
+	REQUIRE(cache.Get(10, 2, make) == 2);
+	REQUIRE(made == 2);
+	REQUIRE(cache.Get(11, 1, make) == 3);
+	REQUIRE(cache.entries.size() == 1);
+}

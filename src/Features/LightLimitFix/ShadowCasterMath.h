@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 // Pure helpers extracted from ShadowCasterManager so they can be unit-tested
 // without the game/RE runtime.
@@ -175,4 +177,27 @@ namespace ShadowCasterManager
 		}
 		return true;
 	}
+
+	/// Values worked out once per key per frame; the first lookup of a later frame drops every entry.
+	/// A flat list: it keeps its capacity across frames, so a steady frame allocates nothing.
+	template <class Key, class Value>
+	struct PerFrameCache
+	{
+		std::uint32_t frame{ UINT32_MAX };
+		std::vector<std::pair<Key, Value>> entries;
+
+		/// The entry for a_key in a_frame, made by a_make on its first lookup that frame.
+		template <class Make>
+		Value& Get(std::uint32_t a_frame, const Key& a_key, Make&& a_make)
+		{
+			if (frame != a_frame) {
+				entries.clear();
+				frame = a_frame;
+			}
+			for (auto& [key, value] : entries)
+				if (key == a_key)
+					return value;
+			return entries.emplace_back(a_key, a_make()).second;
+		}
+	};
 }
