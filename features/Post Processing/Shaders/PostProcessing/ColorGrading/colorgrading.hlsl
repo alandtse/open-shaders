@@ -922,7 +922,7 @@ ColorGradingVSOutput VSColorGrading(uint vertexID : SV_VertexID)
 	return output;
 }
 
-float4 PSColorGrading(ColorGradingVSOutput input) : SV_Target
+float4 GradePixel(ColorGradingVSOutput input)
 {
 	uint2 pixel = (uint2)input.Position.xy;
 	// Game cinematic
@@ -958,6 +958,25 @@ float4 PSColorGrading(ColorGradingVSOutput input) : SV_Target
 	}
 
 	return float4(color, 1);
+}
+
+float4 PSColorGrading(ColorGradingVSOutput input) : SV_Target
+{
+	return GradePixel(input);
+}
+
+struct ColorGradingMirrorOutput
+{
+	float4 Primary: SV_Target0;
+	float4 Alternate: SV_Target1;
+};
+
+ColorGradingMirrorOutput PSColorGradingMirror(ColorGradingVSOutput input)
+{
+	ColorGradingMirrorOutput output;
+	output.Primary = GradePixel(input);
+	output.Alternate = output.Primary;
+	return output;
 }
 
 RWTexture3D<float4> RWLUT : register(u0);
