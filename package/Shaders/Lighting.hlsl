@@ -4,6 +4,10 @@
 #	undef SNOW_COVER
 #endif
 
+#if defined(SNOW_COVER_INACTIVE)
+#	undef SNOW_COVER
+#endif
+
 #define LIGHTING
 
 #include "Common/Color.hlsli"
@@ -2411,7 +2415,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	material.GlintDensityRandomization = clamp(glintParameters.w, PBR::Constants::MinGlintDensityRandomization, PBR::Constants::MaxGlintDensityRandomization);
 
 #		if defined(GLINT) && !defined(SNOW_COVER)
-	float glintNoise = Random::R1Modified(float(SharedData::FrameCount), (Random::pcg2d(uint2(input.Position.xy)) / 4294967296.0).x);
+	float glintNoise = Random::R1Modified(float(SharedData::FrameCount), (Random::pcg2d(uint2(Stereo::EyeStableNoiseCoord(input.Position.xy, SharedData::BufferDim.xy))) / 4294967296.0).x);
 	Glints::PrecomputeGlints(glintNoise, uvOriginal, ddx(uvOriginal), ddy(uvOriginal), material.GlintScreenSpaceScale, material.GlintCache);
 #		endif
 

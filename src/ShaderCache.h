@@ -1058,6 +1058,7 @@ namespace SIE
 		};
 
 		static constexpr uint32_t kLightingDryWeather = 1u << 21;
+		static constexpr uint32_t kLightingSnowCoverInactive = 1u << 19;
 
 		enum class LightingShaderFlags : uint32_t
 		{
