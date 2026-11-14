@@ -768,6 +768,10 @@ namespace SIE
 			                             (descriptor & ShaderCache::kLightingNoMeshVariation);
 			if (noMeshVariation)
 				descriptor &= ~ShaderCache::kLightingNoMeshVariation;
+			constexpr auto noTreeBend = ShaderCache::kVertexNoTreeBend;
+			const bool omitTreeBend = shaderClass == ShaderClass::Vertex && (descriptor & noTreeBend) != 0;
+			if (omitTreeBend)
+				descriptor &= ~noTreeBend;
 			RE::GetLightingShaderDefines(descriptor, reinterpret_cast<REX::W32::D3D_SHADER_MACRO*>(defines.data()));
 
 			size_t lastIndex = std::ranges::find_if(defines, [](const D3D_SHADER_MACRO& macro) { return macro.Name == nullptr; }) - defines.begin();
@@ -778,6 +782,8 @@ namespace SIE
 				defines[lastIndex++] = { "DRY_WEATHER", nullptr };
 			if (noMeshVariation)
 				defines[lastIndex++] = { "NO_MESH_VARIATION", nullptr };
+			if (omitTreeBend)
+				defines[lastIndex++] = { "NO_TREE_BEND", nullptr };
 			if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::Deferred)) {
 				defines[lastIndex++] = { "DEFERRED", nullptr };
 			}
@@ -1212,11 +1218,13 @@ namespace SIE
 			defines[lastIndex] = { nullptr, nullptr };
 		}
 
-		static void GetUtilityShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
+		static void GetUtilityShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines, ShaderClass shaderClass)
 		{
 			using enum ShaderCache::UtilityShaderFlags;
 
 			size_t lastIndex = 0;
+			if (shaderClass == ShaderClass::Vertex && (descriptor & ShaderCache::kVertexNoTreeBend))
+				defines[lastIndex++] = { "NO_TREE_BEND", nullptr };
 			const auto shadowMaskFlags = static_cast<uint32_t>(RenderShadowmask) |
 			                             static_cast<uint32_t>(RenderShadowmaskDpb) |
 			                             static_cast<uint32_t>(RenderShadowmaskPb) |
@@ -1435,7 +1443,7 @@ namespace SIE
 				GetEffectShaderDefines(descriptor, defines);
 				break;
 			case RE::BSShader::Type::Utility:
-				GetUtilityShaderDefines(descriptor, defines);
+				GetUtilityShaderDefines(descriptor, defines, shaderClass);
 				break;
 			case RE::BSShader::Type::None:
 			case RE::BSShader::Type::Total:

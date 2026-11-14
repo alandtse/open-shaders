@@ -251,7 +251,11 @@ VS_OUTPUT main(VS_INPUT input)
 	float3x4 worldMatrix =
 		Skinned::GetBoneTransformMatrix(Bones, actualIndices, BonesPivot[eyeIndex], input.BoneWeights);
 #	endif
+#	if defined(NO_TREE_BEND)
+	const bool treeBendEnabled = false;
+#	else
 	const bool treeBendEnabled = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0;
+#	endif
 	TreeWind::Sample treeWindSample;
 	treeWindSample.trunkVelocity = 0.0.xxx;
 	treeWindSample.leafAnimationStrength = 0.0;
