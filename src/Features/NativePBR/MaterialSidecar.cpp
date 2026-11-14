@@ -128,20 +128,9 @@ namespace NativePBR
 		setupPassesThisFrame = pbrCandidatesThisFrame = missingPbrIdentitiesThisFrame = 0;
 		unsupportedReasonsThisFrame.fill(0);
 		if (!a_device || !a_context || !a_mainTarget || !drawConstants || !writeAll ||
-			(!inputOnly && (!shader || !validation || !validationConstants)) || !a_width || !a_height) {
+			!shader || !validation || !validationConstants || !a_width || !a_height) {
 			status = "Raster input resources, shaders, or dimensions unavailable";
 			++failedFrames;
-			return;
-		}
-		if (inputOnly) {
-			targets = {};
-			expectedMain.copy_from(a_mainTarget);
-			frame = a_frame;
-			width = a_width;
-			height = a_height;
-			captureProjectedUv = true;
-			recording = true;
-			status.clear();
 			return;
 		}
 		if (a_captureProjectedUv && !projectedShader) {
@@ -315,9 +304,9 @@ namespace NativePBR
 		return true;
 	}
 
-	void MaterialSidecar::ReplayDrawIndexed(ID3D11DeviceContext* a_context, UINT a_count, UINT a_first, INT a_base, PreviewMode a_previewMode)
+	void MaterialSidecar::ReplayDrawIndexed(ID3D11DeviceContext* a_context, UINT a_count, UINT a_first, INT a_base, PreviewMode a_previewMode, bool a_inputBound)
 	{
-		if (inputOnly)
+		if (inputOnly && (!a_inputBound || !MatchesInputOnlyReplay(nextDraw, draws, activeMaterial, activeRevision)))
 			return;
 		const bool projectedDraw = activeMaterial && captureProjectedUv &&
 			(activeUnsupportedReasons & ProjectedUvReason) != 0;
@@ -390,7 +379,7 @@ namespace NativePBR
 		winrt::com_ptr<ID3D11Buffer> oldConstant;
 		a_context->PSGetConstantBuffers(13, 1, oldConstant.put());
 		// Survey-only geometry is previewed, never recorded as a native PBR material.
-		const uint32_t ordinal = activeMaterial ? nextDraw++ : 0;
+		const uint32_t ordinal = activeMaterial ? (inputOnly ? nextDraw - 1 : nextDraw++) : 0;
 		const uint32_t surveyCode = surveyDraw || projectedDraw ? static_cast<uint32_t>(activeSurveyClass) : 0u;
 		const uint32_t previewFlags = static_cast<uint32_t>(a_previewMode) | (surveyCode << 8);
 		const Constants constants{ ordinal, previewFlags, static_cast<uint32_t>(activeMaterial), static_cast<uint32_t>(activeMaterial >> 32) };
@@ -438,7 +427,7 @@ namespace NativePBR
 		a_context->OMSetBlendState(oldBlend.get(), oldFactor, oldMask);
 		a_context->OMSetDepthStencilState(oldDepth.get(), stencilRef);
 		a_context->OMSetRenderTargets(static_cast<UINT>(oldRaw.size()), oldRaw.data(), dsv.get());
-		if (activeMaterial) {
+		if (activeMaterial && !inputOnly) {
 			try {
 				draws.push_back({ ordinal, activeMaterial, activeRevision, activeReference, activeShape, projectedDraw });
 				++replayed;
@@ -460,23 +449,6 @@ namespace NativePBR
 		if (!recording)
 			return;
 		recording = false;
-		if (inputOnly) {
-			if (draws.empty()) {
-				status = std::format("No input-only PBR draws (FXC unavailable: {}, target rejected: {})",
-					inputShaderMissesThisFrame, inputTargetRejectionsThisFrame);
-				return;
-			}
-			try {
-				publishedDraws = std::make_shared<const std::vector<SidecarDraw>>(std::move(draws));
-			} catch (const std::bad_alloc&) {
-				status = "Input-only publication allocation exhausted";
-				++failedFrames;
-				return;
-			}
-			ready = true;
-			status.clear();
-			return;
-		}
 		if (!a_context || !a_finalDepth || !validation || draws.empty()) {
 			status = draws.empty() ? "No eligible PBR draws" : "Final opaque depth unavailable";
 			return;
@@ -559,7 +531,7 @@ namespace NativePBR
 	MaterialSidecar::Sources MaterialSidecar::GetSources(uint32_t a_frame) const
 	{
 		Sources sources{};
-		if (!ready || inputOnly || frame != a_frame)
+		if (!ready || frame != a_frame)
 			return sources;
 		for (size_t i = 0; i < kCount; ++i)
 			sources[i] = targets[i].texture.get();

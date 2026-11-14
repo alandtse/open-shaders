@@ -25,6 +25,19 @@ TEST_CASE("NativePBR projected draw keeps its capture-only classification", "[Na
 	REQUIRE(NativePBR::ResolveSidecarMaterial(2, draws) == 43);
 }
 
+TEST_CASE("NativePBR input-only replay reuses the original draw ordinal", "[NativePBR]")
+{
+	using namespace NativePBR;
+	const std::array<SidecarDraw, 2> draws{ { { 1, 42, 10, "ref", "mesh", false },
+		{ 2, 43, 11, "ref", "mesh", false } } };
+	REQUIRE(MatchesInputOnlyReplay(3, draws, 43, 11));
+	REQUIRE_FALSE(MatchesInputOnlyReplay(2, draws, 43, 11));
+	REQUIRE_FALSE(MatchesInputOnlyReplay(3, draws, 42, 11));
+	REQUIRE_FALSE(MatchesInputOnlyReplay(3, draws, 43, 10));
+	REQUIRE_FALSE(MatchesInputOnlyReplay(1, draws, 43, 11));
+	REQUIRE_FALSE(MatchesInputOnlyReplay(3, std::span<const SidecarDraw>{}, 43, 11));
+}
+
 TEST_CASE("NativePBR input-only identity survives R16G16 UNORM packing", "[NativePBR]")
 {
 	using namespace NativePBR;

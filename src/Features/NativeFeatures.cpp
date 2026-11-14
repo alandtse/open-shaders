@@ -234,14 +234,14 @@ bool NativePBRFeature::BeginInputOnlyDraw(ID3D11DeviceContext* a_context)
 	return IsActive() && !globals::game::isVR && materialSidecar.BeginInputOnlyPass(a_context);
 }
 void NativePBRFeature::EndInputOnlyDraw() { materialSidecar.EndInputOnlyDraw(); }
-void NativePBRFeature::ReplaySidecarDraw(ID3D11DeviceContext* a_context, UINT a_count, UINT a_first, INT a_base)
+void NativePBRFeature::ReplaySidecarDraw(ID3D11DeviceContext* a_context, UINT a_count, UINT a_first, INT a_base, bool a_inputBound)
 {
 	if (IsActive() && !globals::game::isVR)
 	{
 		const auto mode = previewOpaqueReplacement.load(std::memory_order_relaxed) ?
 			static_cast<NativePBR::PreviewMode>(1u + std::min(previewVisualization.load(std::memory_order_relaxed), 2u)) :
 			NativePBR::PreviewMode::Off;
-		materialSidecar.ReplayDrawIndexed(a_context, a_count, a_first, a_base, mode);
+		materialSidecar.ReplayDrawIndexed(a_context, a_count, a_first, a_base, mode, a_inputBound);
 	}
 }
 void NativePBRFeature::FinishOpaqueSidecar(ID3D11ShaderResourceView* a_finalDepth)

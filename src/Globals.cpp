@@ -444,7 +444,7 @@ namespace globals
 			if (replaying || a_context != globals::d3d::context)
 				return;
 			replaying = true;
-			globals::features::nativePBR.ReplaySidecarDraw(a_context, a_count, a_first, a_base);
+			globals::features::nativePBR.ReplaySidecarDraw(a_context, a_count, a_first, a_base, inputBound);
 			replaying = false;
 		}
 		static inline REL::Relocation<decltype(thunk)> func;

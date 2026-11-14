@@ -54,7 +54,7 @@ namespace NativePBR
 		bool BeginInputOnlyPass(ID3D11DeviceContext* a_context);
 		void EndInputOnlyDraw();
 		void EndPass();
-		void ReplayDrawIndexed(ID3D11DeviceContext* a_context, UINT a_count, UINT a_first, INT a_base, PreviewMode a_previewMode);
+		void ReplayDrawIndexed(ID3D11DeviceContext* a_context, UINT a_count, UINT a_first, INT a_base, PreviewMode a_previewMode, bool a_inputBound);
 		void FinishFrame(ID3D11DeviceContext* a_context, ID3D11ShaderResourceView* a_finalDepth);
 		Sources GetSources(uint32_t a_frame) const;
 		std::shared_ptr<const std::vector<SidecarDraw>> GetDrawTable() const { return publishedDraws; }

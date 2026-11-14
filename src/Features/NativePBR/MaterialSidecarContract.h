@@ -68,6 +68,16 @@ namespace NativePBR
 		bool projectedUv = false;
 	};
 
+	inline bool MatchesInputOnlyReplay(uint32_t a_nextOrdinal, std::span<const SidecarDraw> a_draws,
+		uint64_t a_materialIdentity, uint64_t a_materialRevision)
+	{
+		if (a_nextOrdinal <= 1 || a_draws.empty())
+			return false;
+		const auto& draw = a_draws.back();
+		return draw.ordinal == a_nextOrdinal - 1 && draw.materialIdentity == a_materialIdentity &&
+			draw.materialRevision == a_materialRevision;
+	}
+
 	/** Zero is uncovered. Nonzero ordinals address an exact frame-local 64-bit material ID. */
 	inline uint64_t ResolveSidecarMaterial(uint32_t a_ordinal, std::span<const SidecarDraw> a_draws)
 	{
