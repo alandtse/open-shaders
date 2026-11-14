@@ -45,10 +45,12 @@ struct alignas(16) TreeWindSpringData
 	uint32_t transientFieldMask;
 	float transientSpringFrequency;
 	float transientSpringDamping;
+	uint32_t transientHistoryMask;
 };
 
 STATIC_ASSERT_ALIGNAS_16(TreeWindSpringData);
-static_assert(sizeof(TreeWindSpringData) == 176);
+static_assert(sizeof(TreeWindSpringData) == 192);
+static_assert(offsetof(TreeWindSpringData, transientHistoryMask) == 176);
 static_assert(offsetof(TreeWindSpringData, activeField) == 144);
 static_assert(offsetof(TreeWindSpringData, gustSoftLimit) == 160);
 static_assert(offsetof(TreeWindSpringData, transientFieldMask) == 164);
@@ -74,5 +76,8 @@ struct TreeWindState
 	std::array<bool, kTreeWindSpringFieldCount> springFieldAvailable{};
 	uint32_t lastUpdateFrame = 0;
 	bool hasUpdated = false;
+	uint32_t uploadedTransientCount = 0;
+	uint32_t transientHistoryMask = 0;
 	Util::LazyShader<ID3D11ComputeShader> springFieldComputeShader;
+	Util::LazyShader<ID3D11ComputeShader> ambientFieldComputeShader;
 };

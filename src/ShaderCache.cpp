@@ -758,17 +758,22 @@ namespace SIE
 		static void GetLightingShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines, ShaderClass shaderClass)
 		{
 			const bool pixel = shaderClass == ShaderClass::Pixel;
+			const bool dryWeather = pixel && (descriptor & ShaderCache::kLightingDryWeather);
 			const bool deferredPixel = pixel && (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::Deferred));
 			const bool omitLocalLights = deferredPixel && (descriptor & ShaderCache::kLightingNoLocalLights);
+			const bool singleClusterLight = deferredPixel && (descriptor & ShaderCache::kLightingSingleClusterLight);
+			if (dryWeather)
+				descriptor &= ~ShaderCache::kLightingDryWeather;
 			if (omitLocalLights)
 				descriptor &= ~ShaderCache::kLightingNoLocalLights;
-			const bool singleClusterLight = deferredPixel && (descriptor & ShaderCache::kLightingSingleClusterLight);
 			if (singleClusterLight)
 				descriptor &= ~ShaderCache::kLightingSingleClusterLight;
 			RE::GetLightingShaderDefines(descriptor, reinterpret_cast<REX::W32::D3D_SHADER_MACRO*>(defines.data()));
 
 			size_t lastIndex = std::ranges::find_if(defines, [](const D3D_SHADER_MACRO& macro) { return macro.Name == nullptr; }) - defines.begin();
 
+			if (dryWeather)
+				defines[lastIndex++] = { "DRY_WEATHER", nullptr };
 			if (omitLocalLights)
 				defines[lastIndex++] = { "LLF_NO_LOCAL_LIGHTS", nullptr };
 			if (singleClusterLight)
@@ -2941,6 +2946,9 @@ namespace SIE
 
 		if (IsAsync()) {
 			compilationSet.Add({ ShaderClass::Pixel, shader, descriptor, a_precompile });
+			constexpr uint32_t specialization = kLightingDryWeather;
+			if (shader.shaderType == RE::BSShader::Type::Lighting && (descriptor & specialization))
+				return GetPixelShader(shader, descriptor & ~specialization, a_precompile);
 		} else {
 			return MakeAndAddPixelShader(shader, descriptor);
 		}

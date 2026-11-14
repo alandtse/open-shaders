@@ -1057,12 +1057,14 @@ namespace
 		const auto& geometry = *pass.geometry;
 		if (!deferredLocalLightBounds.singleLight ||
 			geometry.GetType().get() != RE::BSGeometry::Type::kTriShape ||
-			(pass.shaderProperty && pass.shaderProperty->flags.any(PropertyFlag::kMultiTextureLandscape,
-										PropertyFlag::kLODLandscape, PropertyFlag::kDecal, PropertyFlag::kDynamicDecal)) ||
+			!pass.shaderProperty ||
+			pass.shaderProperty->flags.any(PropertyFlag::kMultiTextureLandscape, PropertyFlag::kLODLandscape,
+				PropertyFlag::kLODObjects, PropertyFlag::kHDLODObjects, PropertyFlag::kDecal, PropertyFlag::kDynamicDecal) ||
 			(state.currentVertexDescriptor & unboundedVertices) ||
 			(state.modifiedPixelDescriptor & static_cast<uint32_t>(Flags::FurShells)) ||
 			(state.permutationData.ExtraShaderDescriptor & static_cast<uint32_t>(State::ExtraShaderDescriptors::TreeBend)) ||
 			technique == Technique::TreeAnim || technique == Technique::LODLand || technique == Technique::LODLandNoise ||
+			technique == Technique::MTLandLODBlend ||
 			geometry.GetGeometryRuntimeData().skinInstance)
 			return false;
 
@@ -1111,7 +1113,9 @@ namespace
 			if (variant.requestFrame != state.frameCount) {
 				variant.requestFrame = state.frameCount;
 				const auto flag = outside ? SIE::ShaderCache::kLightingNoLocalLights : SIE::ShaderCache::kLightingSingleClusterLight;
-				variant.shader = globals::shaderCache->GetPixelShader(shader, descriptor | flag);
+				const auto expectedDescriptor = variants.standard->id | flag;
+				auto* candidate = globals::shaderCache->GetPixelShader(shader, expectedDescriptor);
+				variant.shader = candidate && candidate->id == expectedDescriptor ? candidate : nullptr;
 			}
 			if (variant.shader && (!usesCustomConstantLayout || variant.shader == current ||
 									  HasCompatiblePixelConstants(*variants.standard, *variant.shader)))

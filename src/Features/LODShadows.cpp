@@ -10,8 +10,6 @@
 #include "Utils/Game.h"
 #include "Utils/PerfUtils.h"
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(LODShadows::Settings, Enabled, UpdateBudgetMs, DepthBias)
-
 namespace
 {
 	constexpr uint32_t kIndicesPerTriangle = 3;
@@ -1004,13 +1002,7 @@ void LODShadows::RenderBatch(bool a_refreshImmediately)
 		pendingMap.buildDurationMs += frameDurationMs;
 	const auto batchTriangles = BatchTriangleBudget(updateBudget.Triangles());
 	{
-		Util::FullscreenPassScope scope(context, 1, 0, 1);
-		winrt::com_ptr<ID3D11Buffer> savedVSConstant;
-		context->VSGetConstantBuffers(0, 1, savedVSConstant.put());
-		const SKSE::stl::scope_exit restoreVS([&]() noexcept {
-			auto saved = savedVSConstant.get();
-			context->VSSetConstantBuffers(0, 1, &saved);
-		});
+		Util::FullscreenPassScope scope(context);
 		ID3D11ShaderResourceView* nullView = nullptr;
 		context->PSSetShaderResources(kDepthSlot, 1, &nullView);
 		context->CSSetShaderResources(kDepthSlot, 1, &nullView);
