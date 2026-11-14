@@ -1066,6 +1066,11 @@ namespace SIE
 			size_t lastIndex = 0;
 			if (shaderClass == ShaderClass::Pixel && (descriptor & ShaderCache::kEffectLinearACEScg))
 				defines[lastIndex++] = { "LINEAR_ACESCG", nullptr };
+			if (shaderClass == ShaderClass::Pixel && (descriptor & ShaderCache::kEffectAmbientWorldIBL)) {
+				defines[lastIndex++] = { "AMBIENT_WORLD_EFFECT_LIGHTING", nullptr };
+				defines[lastIndex++] = { "IBL_LUMINANCE_RATIO", nullptr };
+				defines[lastIndex++] = { "IBL_NO_DALC", nullptr };
+			}
 
 			if (descriptor & static_cast<uint32_t>(ShaderCache::EffectShaderFlags::Vc)) {
 				defines[lastIndex++] = { "VC", nullptr };
@@ -2978,8 +2983,12 @@ namespace SIE
 			                                    kLightingLinearACEScg | static_cast<uint32_t>(LightingShaderFlags::IBLLuminanceRatio);
 			if (shader.shaderType == RE::BSShader::Type::Lighting && (descriptor & specialization))
 				return GetPixelShader(shader, descriptor & ~specialization, a_precompile);
-			if (shader.shaderType == RE::BSShader::Type::Effect && (descriptor & kEffectLinearACEScg))
-				return GetPixelShader(shader, descriptor & ~kEffectLinearACEScg, a_precompile);
+			if (shader.shaderType == RE::BSShader::Type::Effect) {
+				if (descriptor & kEffectAmbientWorldIBL)
+					return GetPixelShader(shader, descriptor & ~kEffectAmbientWorldIBL, a_precompile);
+				if (descriptor & kEffectLinearACEScg)
+					return GetPixelShader(shader, descriptor & ~kEffectLinearACEScg, a_precompile);
+			}
 		} else {
 			return MakeAndAddPixelShader(shader, descriptor);
 		}

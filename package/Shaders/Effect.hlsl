@@ -551,10 +551,22 @@ cbuffer PerGeometry : register(b2)
 
 static const float EffectDirectionalLightScale = 0.5;
 
+bool IsWorldEffect()
+{
+#	if defined(AMBIENT_WORLD_EFFECT_LIGHTING)
+	return true;
+#	else
+	return (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld) != 0;
+#	endif
+}
+
 bool UseAmbientEffectLighting()
 {
-	return SharedData::csUtilitySettings.useAmbientEffectLighting &&
-	       (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
+#	if defined(AMBIENT_WORLD_EFFECT_LIGHTING)
+	return true;
+#	else
+	return SharedData::csUtilitySettings.useAmbientEffectLighting && IsWorldEffect();
+#	endif
 }
 
 float3 GetEffectDirectionalLighting()
@@ -684,7 +696,7 @@ float3 GetLightingColor(
 	float unusedSurfaceShadow;
 #		endif
 
-	const bool inWorld = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
+	const bool inWorld = IsWorldEffect();
 
 	if (inWorld && ShadowSampling::HasDirectionalShadows()) {
 #		if defined(SOFT) && defined(LIGHT_LIMIT_FIX)
@@ -747,7 +759,7 @@ float3 GetLightingColor(
 	}
 
 #		if defined(LIGHT_LIMIT_FIX)
-	if (!(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld))
+	if (!IsWorldEffect())
 #		endif
 	{
 		float4 lightDistanceSquared = (PLightPositionX[eyeIndex] - msPosition.xxxx) * (PLightPositionX[eyeIndex] - msPosition.xxxx) + (PLightPositionY[eyeIndex] - msPosition.yyyy) * (PLightPositionY[eyeIndex] - msPosition.yyyy) + (PLightPositionZ[eyeIndex] - msPosition.zzzz) * (PLightPositionZ[eyeIndex] - msPosition.zzzz);
@@ -781,7 +793,7 @@ float GetViewRayShadow(float3 worldPosition, float depth, uint eyeIndex, float n
 
 	float shadow = 1.0;
 
-	const bool inWorld = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
+	const bool inWorld = IsWorldEffect();
 
 	if (inWorld && !SharedData::InInterior) {
 		shadow = 0.0;
@@ -1069,7 +1081,7 @@ PS_OUTPUT ShadeEffect(PS_INPUT input, bool sampleDistantShadow)
 #		if defined(LIGHT_LIMIT_FIX)
 	float3 viewPosition = mul(FrameBuffer::CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
 	float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);
-	bool inWorld = Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld;
+	bool inWorld = IsWorldEffect();
 
 	uint numClusteredLights = 0;
 	uint lightOffset = 0;
@@ -1181,7 +1193,7 @@ PS_OUTPUT ShadeEffect(PS_INPUT input, bool sampleDistantShadow)
 	const bool useWeatherLighting = false;
 #		else
 	const bool useAmbientLighting = UseAmbientEffectLighting();
-	const bool useWeatherLighting = ENABLE_LL && !SharedData::InInterior && !isSkyObject && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
+	const bool useWeatherLighting = ENABLE_LL && !SharedData::InInterior && !isSkyObject && IsWorldEffect();
 #		endif
 	bool applyLighting = isSkyStatic || (lightingInfluence > 0.0 && (useAmbientLighting || useWeatherLighting));
 #		if defined(EFFECTS11) && defined(IS_VOLUMETRIC_FOG)
