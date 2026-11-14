@@ -64,6 +64,14 @@ add_executable(
     test_bootsnapshot.cpp
     test_dynamicnearclip.cpp
     test_camera_reprojection.cpp
+    test_dx12_native_shadow.cpp
+    test_native_subcells.cpp
+    test_native_trace_density.cpp
+    test_native_subcell_residency.cpp
+    test_dxgi_native_reserve.cpp
+    test_subcell_composition.cpp
+    test_native_lighting_cull.cpp
+    test_native_composite_validity.cpp
     test_dlssg_dynamic.cpp
     test_subrect.cpp
     test_gaze_math.cpp
@@ -87,6 +95,7 @@ add_executable(
     test_passchainguard.cpp
     test_hdr_png_metadata.cpp
     test_cacheinvalidation.cpp
+    test_native_pbr_registry.cpp
     test_compilededupe.cpp
     test_shaderdescriptor.cpp
     test_contenthash.cpp

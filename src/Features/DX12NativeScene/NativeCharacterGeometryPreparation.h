@@ -1,0 +1,382 @@
+#pragma once
+
+#include "Features/DX12NativeScene/NativeCharacterMeshCapture.h"
+#include "Features/DX12NativeScene/NativeCharacterPoseCapture.h"
+#include "Features/DX12NativeScene/RuntimeGeometryEncoding.h"
+#include "Features/DX12NativeScene/VideoMemoryBudget.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstring>
+#include <directx/d3dx12.h>
+#include <limits>
+#include <memory>
+#include <span>
+#include <stdexcept>
+#include <vector>
+
+namespace DX12Native
+{
+	// Only native-owned DX12 buffers are published here. No DX11 staging
+	// resources, bone-node pointers, mesh pointers or raster overrides.
+	struct CharacterStagedMesh
+	{
+		uint32_t actorFormID = 0, partOrdinal = 0, vertices = 0, indices = 0;
+		uint64_t sourceToken = 0, allocationBytes = 0;
+		uint32_t vertexStride = 0, requiredBones = 0;
+		uint32_t captureFrame = 0;
+		uint64_t indexOffset = 0;
+		std::array<float, 12> rigidWorldTransform{};
+		std::array<float, 3> rigidLocalMin{}, rigidLocalMax{};
+		bool rigidLocalBoundsValid = false;
+		bool skinned = false;
+		bool normalAvailable = false, uvAvailable = false, tangentAvailable = false;
+		uint32_t attributeStride = 0;
+		winrt::com_ptr<ID3D12Resource> source, attributes;
+		std::string shapeName;
+	};
+
+	struct CharacterStagedPose
+	{
+		uint32_t actorFormID = 0, partOrdinal = 0, captureFrame = 0;
+		uint32_t skinFrameID = 0, boneCount = 0, registerCount = 0;
+		uint64_t sourceToken = 0, allocationBytes = 0;
+		winrt::com_ptr<ID3D12Resource> registers;  // Raw float4 VS inputs.
+	};
+
+	struct CharacterMeshGeneration
+	{
+		uint64_t sceneEpoch = 0, residentBytes = 0, budgetBytes = 0;
+		uint32_t uploadedMeshes = 0, rejectedMeshes = 0, dxgiDeferrals = 0;
+		uint32_t evictedMeshes = 0;
+		uint32_t posedFrames = 0, poseDeferrals = 0;
+		uint32_t posePaletteRejections = 0;
+		uint32_t lastPoseRequiredBones = 0, lastPoseAvailableBones = 0;
+		std::shared_ptr<const CharacterStagedPose> pose;
+		std::vector<std::shared_ptr<const CharacterStagedMesh>> meshes;
+	};
+
+	inline std::vector<uint8_t> EncodeCharacterBindVertices(
+		const std::vector<Util::SkinnedVertex>& source)
+	{
+		// 44-byte independent ABI: xyz(float3), bone indices(uint4),
+		// weights(float4). Shader-side interpretation will be introduced
+		// together with a validated pose-palette contract.
+		constexpr size_t stride = 12 + 16 + 16;
+		std::vector<uint8_t> bytes;
+		if (source.empty() || source.size() > 65535)
+			return bytes;
+		bytes.reserve(source.size() * stride);
+		for (const auto& v : source) {
+			const float pos[3]{ v.position.x, v.position.y, v.position.z };
+			const uint32_t bones[4]{
+				v.bone[0] == Util::InvalidSkinBone ? UINT32_MAX : v.bone[0],
+				v.bone[1] == Util::InvalidSkinBone ? UINT32_MAX : v.bone[1],
+				v.bone[2] == Util::InvalidSkinBone ? UINT32_MAX : v.bone[2],
+				v.bone[3] == Util::InvalidSkinBone ? UINT32_MAX : v.bone[3]
+			};
+			float sum = 0.0f;
+			for (size_t j = 0; j < 4; ++j) {
+				if (!std::isfinite(v.weight[j]) || v.weight[j] < 0.0f)
+					return {};
+				if (bones[j] != UINT32_MAX)
+					sum += v.weight[j];
+			}
+			if (!std::isfinite(pos[0]) || !std::isfinite(pos[1]) ||
+				!std::isfinite(pos[2]) || !std::isfinite(sum) || sum <= 0.0f)
+				return {};
+			float weights[4]{};
+			for (size_t j = 0; j < 4; ++j)
+				if (bones[j] != UINT32_MAX)
+					weights[j] = v.weight[j] / sum;
+			AppendGeometryBytes(bytes, pos, sizeof(pos));
+			AppendGeometryBytes(bytes, bones, sizeof(bones));
+			AppendGeometryBytes(bytes, weights, sizeof(weights));
+		}
+		return bytes;
+	}
+
+	inline winrt::com_ptr<ID3D12Resource> UploadCharacterSourceBuffer(
+		ID3D12Device* device, std::span<const uint8_t> bytes, uint64_t budget,
+		uint64_t& allocationBytes)
+	{
+		if (!device || bytes.empty() || bytes.size() >= UINT64_MAX - 4)
+			throw std::runtime_error("Character source data unavailable");
+		const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+		const auto desc = CD3DX12_RESOURCE_DESC::Buffer(uint64_t(bytes.size()) + 4ull);
+		const auto info = device->GetResourceAllocationInfo(0, 1, &desc);
+		if (info.SizeInBytes == UINT64_MAX || !info.SizeInBytes ||
+			info.SizeInBytes > budget)
+			throw std::runtime_error("DXGI character buffer budget exhausted");
+		winrt::com_ptr<ID3D12Resource> result;
+		const HRESULT created = device->CreateCommittedResource(
+			&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr, IID_PPV_ARGS(result.put()));
+		if (FAILED(created))
+			throw std::runtime_error("Character DX12 source allocation failed");
+		result->SetName(L"DX12NativeCharacter::BindSource");
+		void* mapped = nullptr;
+		const D3D12_RANGE noRead{ 0, 0 };
+		if (FAILED(result->Map(0, &noRead, &mapped)))
+			throw std::runtime_error("Character DX12 upload map failed");
+		std::memcpy(mapped, bytes.data(), bytes.size());
+		std::memset(static_cast<uint8_t*>(mapped) + bytes.size(), 0, 4);
+		result->Unmap(0, nullptr);
+		allocationBytes = info.SizeInBytes;
+		return result;
+	}
+
+	/** @brief Independent CPU worker routine; DX12 upload is the only GPU API.
+     * This is bind-pose staging, not GPU deformation or BLAS admission.
+     */
+	inline std::shared_ptr<const CharacterMeshGeneration> PrepareCharacterMeshes(
+		ID3D12Device* device, const CharacterMeshCapture* next,
+		std::shared_ptr<const CharacterMeshGeneration> previous,
+		uint64_t sceneEpoch, uint64_t maxResidentBytes = 16ull * 1024 * 1024)
+	{
+		auto out = std::make_shared<CharacterMeshGeneration>();
+		out->sceneEpoch = sceneEpoch;
+		if (previous && previous->sceneEpoch == sceneEpoch) {
+			out->meshes = previous->meshes;
+			out->residentBytes = previous->residentBytes;
+			out->uploadedMeshes = previous->uploadedMeshes;
+			out->rejectedMeshes = previous->rejectedMeshes;
+			out->dxgiDeferrals = previous->dxgiDeferrals;
+			out->evictedMeshes = previous->evictedMeshes;
+			out->posedFrames = previous->posedFrames;
+			out->poseDeferrals = previous->poseDeferrals;
+			out->posePaletteRejections = previous->posePaletteRejections;
+			out->lastPoseRequiredBones = previous->lastPoseRequiredBones;
+			out->lastPoseAvailableBones = previous->lastPoseAvailableBones;
+			out->pose = previous->pose;
+		}
+		if (!device || !next)
+			return out;
+		// Reuse immutable GPU bytes for unchanged mesh identities. Identical
+		// actor/ordinal with a different renderer token is a new mesh version.
+		for (auto& existing : out->meshes) {
+			if (existing->actorFormID != next->actorFormID ||
+				existing->partOrdinal != next->partOrdinal)
+				continue;
+			if (existing->sourceToken == next->sourceToken)
+				return out;
+			out->residentBytes -= existing->allocationBytes;
+			if (out->pose && out->pose->actorFormID == existing->actorFormID &&
+				out->pose->partOrdinal == existing->partOrdinal) {
+				out->residentBytes -= out->pose->allocationBytes;
+				out->pose.reset();
+			}
+			existing.reset();
+			break;
+		}
+		std::erase(out->meshes, nullptr);
+		std::vector<uint8_t> bytes, attributeBytes;
+		uint32_t vertexCount = 0, indexCount = 0, stride = 0;
+		uint32_t attributeStride = 0;
+		bool tangentFrame = false;
+		uint64_t indexOffset = 0;
+		if (next->skinned) {
+			bytes = EncodeCharacterBindVertices(next->bindVertices);
+			vertexCount = uint32_t(next->bindVertices.size());
+			stride = 44;
+			if (!bytes.empty() && !next->skinIndices.empty() &&
+				next->skinIndices.size() % 3 == 0) {
+				indexOffset = bytes.size();
+				for (uint32_t index : next->skinIndices) {
+					if (index >= vertexCount) {
+						bytes.clear();
+						break;
+					}
+					AppendGeometryU32(bytes, index);
+				}
+				indexCount = bytes.empty() ? 0 : uint32_t(next->skinIndices.size());
+			} else {
+				bytes.clear();
+			}
+		} else if (next->rigid) {
+			auto encoded = EncodeRuntimeGeometry(*next->rigid);
+			if (encoded && encoded->geometry.size() > 16) {
+				bytes.assign(encoded->geometry.begin() + 16, encoded->geometry.end());
+				vertexCount = next->rigid->vertexCount;
+				indexCount = next->rigid->indexCount;
+				stride = 12;
+				indexOffset = uint64_t(vertexCount) * stride;
+				if (!encoded->attributes.empty() &&
+					(encoded->attributeStride == 36u ||
+						encoded->attributeStride == 60u)) {
+					attributeBytes = std::move(encoded->attributes);
+					attributeStride = encoded->attributeStride;
+					tangentFrame = encoded->tangentFrame;
+				}
+			}
+		}
+		if (bytes.empty() || !vertexCount) {
+			++out->rejectedMeshes;
+			return out;
+		}
+		VideoMemoryBudget policy;
+		const auto dxgi = policy.Query(device, out->residentBytes, 0);
+		out->budgetBytes = std::min(dxgi.effectiveBytes, maxResidentBytes);
+		if (!dxgi.dxgiAvailable || out->residentBytes >= out->budgetBytes) {
+			++out->dxgiDeferrals;
+			return out;
+		}
+		try {
+			auto mesh = std::make_shared<CharacterStagedMesh>();
+			mesh->actorFormID = next->actorFormID;
+			mesh->partOrdinal = next->partOrdinal;
+			mesh->sourceToken = next->sourceToken;
+			mesh->shapeName = next->shapeName;
+			mesh->vertices = vertexCount;
+			mesh->indices = indexCount;
+			mesh->vertexStride = stride;
+			mesh->captureFrame = next->captureFrame;
+			if (next->rigid) {
+				mesh->rigidWorldTransform = next->rigid->transform;
+				// The encoded stream is local-space float3 positions followed
+				// by uint32 triangle indices. Capture exact bounds before the
+				// resource crosses the GPU worker boundary.
+				if (vertexCount && bytes.size() >= uint64_t(vertexCount) * 12ull) {
+					mesh->rigidLocalMin.fill(std::numeric_limits<float>::infinity());
+					mesh->rigidLocalMax.fill(-std::numeric_limits<float>::infinity());
+					for (uint32_t vertex = 0; vertex < vertexCount; ++vertex) {
+						float xyz[3]{};
+						std::memcpy(xyz, bytes.data() + size_t(vertex) * 12u, sizeof(xyz));
+						for (size_t axis = 0; axis < 3; ++axis) {
+							mesh->rigidLocalMin[axis] =
+								std::min(mesh->rigidLocalMin[axis], xyz[axis]);
+							mesh->rigidLocalMax[axis] =
+								std::max(mesh->rigidLocalMax[axis], xyz[axis]);
+						}
+					}
+					mesh->rigidLocalBoundsValid = true;
+				}
+				// Flags reflect GPU-owned, decoded attributes, not optimistic
+				// source flags from the Skyrim renderer.
+				mesh->normalAvailable = false;
+				mesh->uvAvailable = false;
+				mesh->tangentAvailable = false;
+			}
+			if (next->skinned) {
+				for (const auto& vertex : next->bindVertices) {
+					for (size_t influence = 0; influence < vertex.bone.size(); ++influence) {
+						if (vertex.bone[influence] != Util::InvalidSkinBone &&
+							vertex.weight[influence] > 0.0f)
+							mesh->requiredBones = std::max(mesh->requiredBones,
+								uint32_t(vertex.bone[influence]) + 1u);
+					}
+				}
+			}
+			mesh->indexOffset = indexOffset;
+			mesh->skinned = next->skinned;
+			uint64_t sourceAllocation = 0;
+			mesh->source = UploadCharacterSourceBuffer(device, bytes,
+				out->budgetBytes - out->residentBytes, sourceAllocation);
+			mesh->allocationBytes = sourceAllocation;
+			if (!attributeBytes.empty() && attributeStride &&
+				sourceAllocation < out->budgetBytes - out->residentBytes) {
+				try {
+					uint64_t attributeAllocation = 0;
+					mesh->attributes = UploadCharacterSourceBuffer(
+						device, attributeBytes,
+						out->budgetBytes - out->residentBytes - sourceAllocation,
+						attributeAllocation);
+					if (attributeAllocation <=
+						UINT64_MAX - mesh->allocationBytes) {
+						mesh->allocationBytes += attributeAllocation;
+						mesh->attributeStride = attributeStride;
+						mesh->normalAvailable = true;
+						mesh->uvAvailable = true;
+						mesh->tangentAvailable = tangentFrame;
+					} else {
+						mesh->attributes = nullptr;
+					}
+				} catch (...) {
+					// Geometry remains available for BLAS, but never claim
+					// native materials are staged when the upload failed.
+					++out->dxgiDeferrals;
+				}
+			}
+			out->residentBytes += mesh->allocationBytes;
+			out->meshes.push_back(std::move(mesh));
+			++out->uploadedMeshes;
+		} catch (...) {
+			++out->dxgiDeferrals;  // Never touch raster or static TLAS on failure.
+		}
+		return out;
+	}
+
+	/** @brief Publish a new immutable DX12 palette buffer, if a matching
+     * skinned bind resource is already resident. No native deformation,
+     * shader dispatch or character shadow ownership is implied.
+     */
+	inline std::shared_ptr<const CharacterMeshGeneration> StageCharacterPose(
+		ID3D12Device* device, const CharacterPoseCapture* incoming,
+		const std::shared_ptr<const CharacterMeshGeneration>& prior,
+		uint64_t sceneEpoch, uint64_t maxResidentBytes = 16ull * 1024 * 1024)
+	{
+		// Never attach a pose to geometry retained from an earlier scene.
+		if (!prior || prior->sceneEpoch != sceneEpoch)
+			return {};
+		if (!device || !incoming ||
+			incoming->registers.size() != incoming->registerCount ||
+			incoming->registerCount != incoming->boneCount * 3u ||
+			incoming->registerCount > 240u)
+			return prior;
+		const CharacterStagedMesh* bindMesh = nullptr;
+		for (const auto& mesh : prior->meshes) {
+			if (mesh->skinned &&
+				mesh->actorFormID == incoming->actorFormID &&
+				mesh->partOrdinal == incoming->partOrdinal &&
+				mesh->sourceToken == incoming->sourceToken) {
+				bindMesh = mesh.get();
+				break;
+			}
+		}
+		if (!bindMesh)
+			return prior;
+		auto updated = std::make_shared<CharacterMeshGeneration>(*prior);
+		updated->lastPoseRequiredBones = bindMesh->requiredBones;
+		updated->lastPoseAvailableBones = incoming->boneCount;
+		if (!bindMesh->requiredBones ||
+			bindMesh->requiredBones > incoming->boneCount) {
+			++updated->posePaletteRejections;
+			// Never dispatch a shader that would silently ignore out-of-range
+			// bone indices. Keep previous, independently validated results.
+			return updated;
+		}
+		if (updated->pose) {
+			updated->residentBytes -= updated->pose->allocationBytes;
+			updated->pose.reset();
+		}
+		const auto* first = reinterpret_cast<const uint8_t*>(incoming->registers.data());
+		const std::span<const uint8_t> bytes(first,
+			incoming->registers.size() * sizeof(incoming->registers[0]));
+		VideoMemoryBudget policy;
+		const auto snapshot = policy.Query(device, updated->residentBytes, 0);
+		updated->budgetBytes = std::min(snapshot.effectiveBytes, maxResidentBytes);
+		if (!snapshot.dxgiAvailable || updated->residentBytes >= updated->budgetBytes) {
+			++updated->poseDeferrals;
+			return updated;
+		}
+		try {
+			auto pose = std::make_shared<CharacterStagedPose>();
+			pose->actorFormID = incoming->actorFormID;
+			pose->partOrdinal = incoming->partOrdinal;
+			pose->sourceToken = incoming->sourceToken;
+			pose->captureFrame = incoming->capturedFrame;
+			pose->skinFrameID = incoming->skinFrameID;
+			pose->boneCount = incoming->boneCount;
+			pose->registerCount = incoming->registerCount;
+			pose->registers = UploadCharacterSourceBuffer(device, bytes,
+				updated->budgetBytes - updated->residentBytes, pose->allocationBytes);
+			updated->residentBytes += pose->allocationBytes;
+			updated->pose = std::move(pose);
+			++updated->posedFrames;
+		} catch (...) {
+			++updated->poseDeferrals;
+		}
+		return updated;
+	}
+}

@@ -8,6 +8,8 @@
 #include "Features/CSUtility.h"
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
+#include "Features/DX12NativeScene/DX12NativeScene.h"
+#include "Features/DX12Resources/DX12Resources.h"
 #include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/Effects11.h"
@@ -28,6 +30,9 @@
 #include "Features/LODShadows.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
+#include "Features/NativeComposite/NativeComposite.h"
+#include "Features/NativeFeatures.h"
+#include "Features/NativeLighting/NativeLighting.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
 #include "Features/ProceduralSun.h"
@@ -94,6 +99,13 @@ namespace globals
 		LODBlending lodBlending{};
 		HairSpecular hairSpecular{};
 		HorizonFix horizonFix{};
+		DX12NativeScene dx12NativeScene{};
+		DX12Resources dx12Resources{};
+		NativeLightingFeature nativeLighting{};
+		NativeCompositeFeature nativeComposite{};
+		NativePBRFeature nativePBR{};
+		NativeLLFFeature nativeLLF{};
+		NativeSCMFeature nativeSCM{};
 		InteriorSun interiorSun{};
 		FurShells furShells{};
 		RainRefraction rainRefraction{};
@@ -182,6 +194,8 @@ namespace globals
 
 		D3D11_MAPPED_SUBRESOURCE* mappedFrameBuffer = nullptr;
 		FrameBufferCache frameBufferCached{};
+		uint32_t frameBufferCachedFrame = 0;
+		bool frameBufferCachedValid = false;
 
 		int32_t* frameCounter = nullptr;
 		int* viewWidth = nullptr;
@@ -346,6 +360,9 @@ namespace globals
 				feature->FixupMappedFrameBuffer(frameBuffer);
 			CopyMappedFrameBuffer(frameBufferCached.nonVR, frameBuffer);
 		}
+		frameBufferCachedValid = graphicsState && globals::state && !(globals::state->permutationData.ExtraShaderDescriptor & static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections));
+		if (frameBufferCachedValid)
+			frameBufferCachedFrame = graphicsState->GetFrameCount();
 		mappedFrameBuffer = nullptr;
 	}
 

@@ -5,6 +5,7 @@
 #include "Deferred.h"
 #include "HDRDisplay.h"
 #include "Hooks.h"
+#include "LinearLighting.h"
 #include "Menu.h"
 #include "RenderDoc.h"
 #include "ScreenshotFeature.h"
@@ -34,6 +35,33 @@
 #include "Features/PostProcessing.h"
 
 #define I18N_KEY_PREFIX "feature.upscaling."
+
+namespace
+{
+	const char* NativeUpscaleFallbackReason(uint32_t reason)
+	{
+		switch (reason) {
+		case 1:
+			return "Native Composite is disabled";
+		case 2:
+			return "VR uses the existing per-eye path";
+		case 3:
+			return "Menu or no world frame";
+		case 4:
+			return "Current-frame guidance is unavailable";
+		case 5:
+			return "Current-frame composite is unavailable";
+		case 6:
+			return "Frame dimensions or format do not match";
+		case 7:
+			return "DX12 runtime FSR is unavailable or not selected";
+		case 8:
+			return "Runtime FSR dispatch failed";
+		default:
+			return "None";
+		}
+	}
+}
 
 namespace NR
 {
@@ -80,6 +108,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	renderAtUpscaleRes,
 	vrRenderScale,
 	fsr4RuntimeEnable,
+	nativeUpscaleEnable,
 	fsr4RuntimeSelectionSchemaVersion);
 
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscaling;
@@ -694,6 +723,26 @@ void Upscaling::OnRuntimeDisabled()
 /** @brief Registers upscaling and frame-generation commands for menu and devbench use. */
 void Upscaling::RegisterUxActions()
 {
+	FEATURE_QUERY("nativeUpscaleStatus",
+		"Reports Native Composite captures, DX12 FSR submissions, return copies, current route and fallback reason. The nativeUpscaleEnable setting controls the upscaler path.",
+		([](const Feature* self, const json&) -> json {
+			const auto& feature = *static_cast<const Upscaling*>(self);
+			const auto route = feature.nativeUpscaleRoute.load();
+			return {
+				{ "compositeCaptures", feature.nativeCompositeCaptures.load() },
+				{ "compositeFrame", feature.nativeCompositeFrameId.load() },
+				{ "compositeWidth", feature.nativeCompositeWidth.load() },
+				{ "compositeHeight", feature.nativeCompositeHeight.load() },
+				{ "compositeFormat", feature.nativeCompositeFormat.load() },
+				{ "nativeSubmissions", feature.nativeUpscaleSubmissions.load() },
+				{ "returnCopies", feature.nativeReturnCopies.load() },
+				{ "route", route == 1 ? "native-dx12" : route == 2 ? "existing" :
+													route == 3     ? "native-failed" :
+																	 "inactive" },
+				{ "fallbackReason", NativeUpscaleFallbackReason(feature.nativeUpscaleFallback.load()) }
+			};
+		}));
+
 	FEATURE_COMMAND("applyFoveationPreset",
 		"Apply a named foveation crop preset (see openshaders.feature get shortName=Upscaling -> foveatedRender.CropPresets[].name, e.g. \"Center 75%\") -- the same code path as clicking the preset dropdown, including right-eye auto-mirror. Params: name (string).",
 		[](Feature*, const json& args) {
@@ -753,6 +802,18 @@ void Upscaling::DrawSettings()
 
 	if (Util::BeginPillTabItem(GetDisplayName().c_str())) {
 		DrawUpscalingSettings();
+		ImGui::Checkbox(T(TKEY("native_upscale_enable"), "Enable Native DX12 Upscaling"), &settings.nativeUpscaleEnable);
+		const auto route = nativeUpscaleRoute.load();
+		ImGui::TextDisabled("Native upscale route: %s", route == 1 ? "DX12 composite to FSR" : route == 2 ? "Existing upscaler" :
+																						   route == 3     ? "Native submission failed" :
+																											"Inactive");
+		if (settings.nativeUpscaleEnable && route != 1)
+			ImGui::TextDisabled("Fallback: %s", NativeUpscaleFallbackReason(nativeUpscaleFallback.load()));
+		if (nativeCompositeFrame) {
+			ImGui::TextDisabled("Frame %u, %u x %u, format %u", nativeCompositeFrame->frame,
+				nativeCompositeFrame->width, nativeCompositeFrame->height, static_cast<unsigned>(nativeCompositeFrame->format));
+			ImGui::TextDisabled("Composite GPU work: %s", nativeCompositeFrame->IsComplete() ? "complete" : "pending");
+		}
 		Util::EndPillTabItem();
 	}
 
@@ -2855,6 +2916,19 @@ uint Upscaling::GetFrameGenerationMultiplier() const
 json Upscaling::GetDiagnostics()
 {
 	json diagnostics = json::object();
+	diagnostics["nativeCompositeCaptures"] = nativeCompositeCaptures.load();
+	diagnostics["nativeCompositeFrame"] = nativeCompositeFrameId.load();
+	diagnostics["nativeCompositeWidth"] = nativeCompositeWidth.load();
+	diagnostics["nativeCompositeHeight"] = nativeCompositeHeight.load();
+	diagnostics["nativeCompositeFormat"] = nativeCompositeFormat.load();
+	diagnostics["nativeUpscaleSubmissions"] = nativeUpscaleSubmissions.load();
+	diagnostics["nativeReturnCopies"] = nativeReturnCopies.load();
+	diagnostics["nativeLightingCompositeReturns"] = nativeLightingCompositeReturns.load();
+	const auto nativeRoute = nativeUpscaleRoute.load();
+	diagnostics["nativeUpscaleRoute"] = nativeRoute == 1 ? "native-dx12" : nativeRoute == 2 ? "existing" :
+	                                                                   nativeRoute == 3     ? "native-failed" :
+	                                                                                          "inactive";
+	diagnostics["nativeUpscaleFallbackReason"] = NativeUpscaleFallbackReason(nativeUpscaleFallback.load());
 	const auto method = GetFrameGenMethod();
 	diagnostics["frameGenMethod"] = method == FrameGenMethod::kDLSSG ? "DLSSG" :
 	                                method == FrameGenMethod::kFSR   ? "FSR" :
@@ -3013,6 +3087,10 @@ void Upscaling::FillMenuCameraMotionVectors()
 void Upscaling::Upscale()
 {
 	ZoneScoped;
+	nativeUpscaleGuidesReady = false;
+	nativeUpscaleSubmittedThisFrame = false;
+	nativeUpscaleRoute = 2;
+	nativeUpscaleFallback = settings.nativeUpscaleEnable ? 7 : 0;
 	auto upscaleMethod = GetUpscaleMethod();
 
 	auto context = globals::d3d::context;
@@ -3095,6 +3173,7 @@ void Upscaling::Upscale()
 
 				context->Dispatch((eyeRenderWidth + 7) / 8, (eyeRenderHeight + 7) / 8, 1);
 			}
+			nativeUpscaleGuidesReady = true;
 		}
 
 		ID3D11ShaderResourceView* nullViews[4] = { nullptr, nullptr, nullptr, nullptr };
@@ -3580,6 +3659,29 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		if (postProcessing.loaded)
 			postProcessing.ClearBorderMotionVectorsForFrameGen();
 		upscaling.frameGenerationPrepared = upscaling.CopySharedD3D12Resources();
+	}
+
+	upscaling.nativeCompositeFrame.reset();
+	upscaling.nativeUpscaleOutput = {};
+	upscaling.nativeUpscaleRoute = 0;
+	if (upscaling.loaded && globals::features::nativeComposite.IsEnabled() && upscaling.fidelityFX.EnsureRuntimeUpscalerInterop()) {
+		auto* renderer = globals::game::renderer;
+		auto* scene = Util::AsReal(renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture);
+		const auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
+		const auto transfer = globals::state->IsMainOrLoadingMenuOpen()                  ? NativeComposite::Transfer::Unknown :
+		                      globals::features::linearLighting.IsLinearLightingActive() ? NativeComposite::Transfer::Linear :
+		                                                                                   NativeComposite::Transfer::LegacyScene;
+		upscaling.nativeCompositeFrame = globals::features::nativeComposite.Capture(upscaling.dx12SwapChain.d3d11Device.get(),
+			upscaling.dx12SwapChain.d3d11Context.get(), upscaling.dx12SwapChain.d3d12Device.get(),
+			upscaling.dx12SwapChain.commandQueue.get(), scene, globals::state->frameCount,
+			static_cast<uint32_t>(renderSize.x), static_cast<uint32_t>(renderSize.y), transfer);
+		if (upscaling.nativeCompositeFrame) {
+			++upscaling.nativeCompositeCaptures;
+			upscaling.nativeCompositeFrameId = upscaling.nativeCompositeFrame->frame;
+			upscaling.nativeCompositeWidth = upscaling.nativeCompositeFrame->width;
+			upscaling.nativeCompositeHeight = upscaling.nativeCompositeFrame->height;
+			upscaling.nativeCompositeFormat = static_cast<uint32_t>(upscaling.nativeCompositeFrame->format);
+		}
 	}
 
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {

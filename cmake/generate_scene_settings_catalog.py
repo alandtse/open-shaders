@@ -5641,7 +5641,8 @@ namespace SceneSettingsCatalog
         feature_blocks.append(f'''\tconst SceneSettingsCatalog::SettingMetadata* {resolver_name}(
 \t\tFeature* feature, const void* valueAddress)
 \t{{
-\t\tauto* typedFeature = static_cast<{feature_class}*>(feature);
+\t\t[[maybe_unused]] auto* typedFeature = static_cast<{feature_class}*>(feature);
+\t\t(void)valueAddress;
 {checks}
 \t\treturn nullptr;
 \t}}

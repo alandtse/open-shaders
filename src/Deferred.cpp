@@ -412,6 +412,10 @@ void Deferred::DeferredPasses()
 
 	auto motionVectors = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
+	const Feature::OpaqueRasterInputs opaqueInputs{ Util::AsReal(main.texture), Util::AsReal(specular.texture), Util::AsReal(albedo.texture),
+		Util::AsReal(normalRoughness.texture), Util::AsReal(masks.texture), Util::AsReal(masks2.texture), Util::AsReal(reflectance.texture), Util::AsReal(motionVectors.texture) };
+	Feature::ForEachLoadedFeature("OnOpaqueRasterReady", [&](Feature* feature) { feature->OnOpaqueRasterReady(opaqueInputs); }, true);
+
 	bool interior = Util::IsInterior();
 
 	auto& skylighting = globals::features::skylighting;
@@ -876,6 +880,7 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 void Deferred::Hooks::Main_RenderShadowMaps::thunk()
 {
 	Feature::ApplyPreShadowMapsHooks();
+	Feature::ForEachLoadedFeature("OnBeforeShadowMapRendering", [](Feature* feature) { feature->OnBeforeShadowMapRendering(); });
 	func();
 	globals::deferred->EarlyPrepasses();
 };

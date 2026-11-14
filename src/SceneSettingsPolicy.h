@@ -5,6 +5,13 @@
 
 namespace SceneSettingsPolicy
 {
+	// Opt-in diagnostic settings are saved only for developer testing and must not
+	// become scene-controllable. Keep their existing JSON persistence unchanged.
+	inline constexpr std::string_view kUncatalogedPersistedAggregateTypes[] = {
+		"NativeComposite::Policy",
+		"ValidityLab",
+	};
+
 	/// Catalog address prefix: feature short name, then setting path segments, then the key.
 	/// A bare feature name covers everything the feature exposes.
 	using SettingPolicyPath = std::vector<std::string_view>;

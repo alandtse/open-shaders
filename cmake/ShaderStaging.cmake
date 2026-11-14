@@ -88,6 +88,31 @@ list(
 )
 
 append_copy_if_different(_shader_copy_cmds _package_shaders "${CMAKE_SOURCE_DIR}/package/Shaders" "${AIO_DIR}/Shaders")
+if(DX12_NATIVE_SCENE_DXIL)
+    append_copy_if_different(_shader_copy_cmds DX12_NATIVE_SCENE_DXIL "${DX12_NATIVE_SCENE_DXIL_DIR}" "${AIO_DIR}/Shaders/DX12NativeScene")
+endif()
+# DXC generates the native character skinning blob separately from the native
+# shadow pass. Explicitly stage it for both AIO packaging and live shader-only
+# deployment; registering an install() payload alone does not populate AIO.
+if(DX12_NATIVE_CHARACTER_SKIN_DXIL)
+    append_copy_if_different(_shader_copy_cmds DX12_NATIVE_CHARACTER_SKIN_DXIL "${DX12_NATIVE_SCENE_DXIL_DIR}" "${AIO_DIR}/Shaders/DX12NativeScene")
+endif()
+if(DX12_NATIVE_CHARACTER_RAY_DXIL)
+    append_copy_if_different(_shader_copy_cmds DX12_NATIVE_CHARACTER_RAY_DXIL "${DX12_NATIVE_SCENE_DXIL_DIR}" "${AIO_DIR}/Shaders/DX12NativeScene")
+endif()
+if(NATIVE_LIGHTING_DXIL)
+    append_copy_if_different(_shader_copy_cmds NATIVE_LIGHTING_DXIL "${NATIVE_LIGHTING_DXIL_DIR}" "${AIO_DIR}/Shaders/NativeLighting")
+endif()
+# The Native Composite build emits both AddLighting.dxil and ShadowLayer.dxil.
+# Every compiled DXIL output must be staged before SyncShaderDeploy can copy it
+# to the game. The previous rule staged AddLighting alone, leaving the new
+# independent shadow pass unavailable despite a successful DXC build.
+if(NATIVE_COMPOSITE_DXIL)
+    append_copy_if_different(_shader_copy_cmds NATIVE_COMPOSITE_DXIL "${NATIVE_COMPOSITE_DXIL_DIR}" "${AIO_DIR}/Shaders/NativeComposite")
+endif()
+if(NATIVE_COMPOSITE_SHADOW_DXIL)
+    append_copy_if_different(_shader_copy_cmds NATIVE_COMPOSITE_SHADOW_DXIL "${NATIVE_COMPOSITE_DXIL_DIR}" "${AIO_DIR}/Shaders/NativeComposite")
+endif()
 append_copy_if_different(_shader_copy_cmds FFX_RUNTIME_FILES "${FFX_RUNTIME_SHADER_ROOT}" "${AIO_DIR}/Shaders")
 # Streamline-Runtime.cmake's payload is a build-tree dir, not a FEATURE_PATH, so
 # the glob below never discovers it -- wire it in explicitly, same as FFX above.
@@ -118,13 +143,26 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E touch copy_shaders.stamp
     DEPENDS
         ${HLSL_FILES}
+        # Never reference compiled DXIL OUTPUT files directly here. Doing so
+        # causes the VS/MSBuild generator to attach duplicate producing rules
+        # to prepare_shaders.vcxproj while their dedicated *DXIL targets run
+        # concurrently. NativeComposite/AddLighting.dxil then races itself.
+        # The source shader files above/below retain incremental invalidation,
+        # and the target-level edges below supply producer-before-copy ordering.
         ${FFX_RUNTIME_FILES}
         ${STREAMLINE_RUNTIME_FILES}
         ${STREAMLINE_RUNTIME_DX12_FILES}
         ${_package_shaders}
         ${_all_feature_shader_files}
+        # Also re-stage if a compiled DXIL recipe changes with no HLSL edit.
+        ${CMAKE_SOURCE_DIR}/src/Features/DX12NativeScene/Shaders.cmake
+        ${CMAKE_SOURCE_DIR}/src/Features/NativeLighting/Shaders.cmake
+        ${CMAKE_SOURCE_DIR}/src/Features/NativeComposite/Shaders.cmake
         ${CMAKE_SOURCE_DIR}/cmake/CleanupStaleEntries.cmake
         ${CMAKE_SOURCE_DIR}/cmake/PreservedRuntimePaths.cmake
+        # Re-stage once after staging rules change, even when all compiled
+        # DXIL files predate an existing copy_shaders.stamp.
+        ${CMAKE_SOURCE_DIR}/cmake/ShaderStaging.cmake
     COMMENT "Copying changed shaders into AIO/Shaders"
 )
 
@@ -135,6 +173,21 @@ add_custom_target(
     DEPENDS copy_shaders.stamp
     COMMENT "Preparing shaders for validation"
 )
+
+# Only the dedicated DXIL targets own the compiled shader output rules.
+# Use target dependencies (not output-file dependencies on the copy stamp)
+# so parallel Visual Studio builds cannot launch a second compiler for the
+# same AddLighting/ShadowLayer/DXR bytecode. This keeps incremental shader
+# staging independent from full C++ compilation.
+foreach(
+    _compiled_shader_target
+    IN
+    ITEMS DX12NativeSceneDXIL NativeLightingDXIL NativeCompositeDXIL
+)
+    if(TARGET ${_compiled_shader_target})
+        add_dependencies(prepare_shaders ${_compiled_shader_target})
+    endif()
+endforeach()
 
 # Incremental local validation: compile only the shaders affected by the
 # current working-tree diff (vs HEAD). Mirrors the CI incremental path but
