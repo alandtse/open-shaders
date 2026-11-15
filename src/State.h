@@ -136,6 +136,8 @@ public:
 
 	/** Resolves and caches the tonemap owner for the current frame. */
 	TonemapOwner GetTonemapOwner();
+	/** Whether a feature replaces the vanilla tonemap that writes a_output this frame. */
+	bool ReplacesTonemap(RE::RENDER_TARGET a_output);
 	/** Dispatches the HDR tonemap pass when a feature replaces vanilla rendering. */
 	bool HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output);
 	/** Binds a_output as the sole render target (no depth-stencil) and syncs shadowState's
@@ -707,7 +709,7 @@ public:
 		WindField::Field WindFieldPrevious;
 		WindField::Field WindFieldTransition;
 		WindField::Field WindFieldPreviousTransition;
-		float4 WindFieldTransitionData;  // x/y: current/previous blend, z/w: reserved
+		float4 WindFieldTransitionData;  // x/y: current/previous blend, z: gust advection speed in units/s, w: reserved
 		float4 WindFieldSpringDebug;     // xy: field minimum, z: field size, w: maximum tilt radians
 		std::array<uint32_t, 4> WindFieldActiveCounts;
 		std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> WindFieldTransientImpulses;
