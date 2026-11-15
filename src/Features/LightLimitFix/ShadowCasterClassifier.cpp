@@ -365,8 +365,8 @@ namespace ShadowCasterManager
 	// Reset with the hash seed in EnableLight, latched into SplitState for
 	// the sleep skip and the due-gate's dynamic-caster dirty term.
 	std::atomic<uint32_t> s_visitDynamicCount{ 0 };
-	// Static casters the current StaticOnly bake appended, so an empty bake
-	// is never advertised as real cached content.
+	// Static casters the current StaticOnly pass met, baked or left to the
+	// composites, so a light with none never advertises its bake as content.
 	std::atomic<uint32_t> s_visitStaticCount{ 0 };
 
 	// Folds one static caster into the running per-light static hash during the
@@ -453,10 +453,11 @@ namespace ShadowCasterManager
 		                          nullptr :
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
-		// Every static caster inside the light's flicker core folds into the hash regardless of pass, so a
-		// static-set change is seen during whichever accumulate runs this frame.
-		if (!dynamic && (!std::isfinite(s_foldCoreRadius) ||
-							SphereTouches(rec->cx - s_foldCoreCenter.x, rec->cy - s_foldCoreCenter.y, rec->cz - s_foldCoreCenter.z, rec->cr, s_foldCoreRadius)))
+		// Only static casters inside the light's flicker core are baked and folded into the hash, the rest are drawn over the
+		// bake, so any change to what the bake holds is seen during whichever accumulate runs this frame.
+		const bool baked = !dynamic && InFlickerCore(rec->cx - s_foldCoreCenter.x, rec->cy - s_foldCoreCenter.y,
+										   rec->cz - s_foldCoreCenter.z, rec->cr, s_foldCoreRadius);
+		if (baked)
 			FoldStaticCasterHash(geom, *rec);
 		switch (static_cast<CasterPass>(s_cullPassMode.load(std::memory_order_relaxed))) {
 		case CasterPass::StaticOnly:
@@ -467,11 +468,14 @@ namespace ShadowCasterManager
 				return true;  // bake pass skips movers
 			}
 			s_visitStaticCount.fetch_add(1, std::memory_order_relaxed);
+			if (!baked)
+				return true;
 			break;
 		case CasterPass::DynamicOnly:
-			if (!dynamic)
+			if (baked)
 				return true;  // composite pass skips baked static geometry
-			s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+			if (dynamic)
+				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
 			break;
 		case CasterPass::All:
 			(dynamic ? s_dynamicCasterDraws : s_staticCasterDraws).fetch_add(1, std::memory_order_relaxed);

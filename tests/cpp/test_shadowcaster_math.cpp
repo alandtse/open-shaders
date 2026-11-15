@@ -7,6 +7,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <limits>
+
 using Catch::Approx;
 using ShadowCasterManager::DemandStreakBucket;
 using ShadowCasterManager::EngineShadowSliceCount;
@@ -19,6 +21,7 @@ using ShadowCasterManager::HashCombine;
 using ShadowCasterManager::HashCombineFloat;
 using ShadowCasterManager::HeldFlickerRadius;
 using ShadowCasterManager::HemisphereSeamMargin;
+using ShadowCasterManager::InFlickerCore;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
 using ShadowCasterManager::kFlickerReachPerAmplitude;
 using ShadowCasterManager::kMaxFlickerRadiusTolerance;
@@ -29,7 +32,6 @@ using ShadowCasterManager::kVanillaShadowSliceCount;
 using ShadowCasterManager::QuantizeFloat;
 using ShadowCasterManager::SliceCappedLightCount;
 using ShadowCasterManager::SlotHeldScore;
-using ShadowCasterManager::SphereTouches;
 using ShadowCasterManager::SphereWhollyBehindPlane;
 using ShadowCasterManager::StallBucket;
 using ShadowCasterManager::TileScaleForCoverage;
@@ -213,11 +215,18 @@ TEST_CASE("FlickerRadiusTolerance covers a bake and a live radius anywhere in th
 	REQUIRE(FlickerRadiusTolerance(FlickerRadiusBand(0.9f), 0.1f) == kMaxFlickerRadiusTolerance);
 }
 
-TEST_CASE("SphereTouches counts a caster whose bounds reach the sphere", "[scm]")
+TEST_CASE("InFlickerCore bakes only the static casters a flickering light always reaches", "[scm]")
 {
-	REQUIRE(SphereTouches(10.0f, 0.0f, 0.0f, 1.0f, 9.5f));
-	REQUIRE_FALSE(SphereTouches(10.0f, 0.0f, 0.0f, 0.4f, 9.5f));
-	REQUIRE(SphereTouches(0.0f, 0.0f, 0.0f, 0.0f, 1.0f));
+	// Radius 520 at intensity amplitude 0.3 with no movement: a core of about 434 units.
+	const float core = FlickerCoreRadius(520.0f, FlickerRadiusBand(0.3f), 0.0f);
+	REQUIRE(core == Approx(434.06f).margin(0.05f));
+	REQUIRE_FALSE(InFlickerCore(480.0f, 0.0f, 0.0f, 40.0f, core));
+	REQUIRE(InFlickerCore(480.0f, 0.0f, 0.0f, 50.0f, core));
+	REQUIRE(InFlickerCore(0.0f, 300.0f, 0.0f, 1.0f, core));
+	REQUIRE(InFlickerCore(10.0f, 0.0f, 0.0f, 1.0f, 9.5f));
+	REQUIRE_FALSE(InFlickerCore(10.0f, 0.0f, 0.0f, 0.4f, 9.5f));
+	REQUIRE(InFlickerCore(0.0f, 0.0f, 0.0f, 0.0f, 1.0f));
+	REQUIRE(InFlickerCore(1.0e6f, 0.0f, 0.0f, 1.0f, std::numeric_limits<float>::infinity()));
 }
 
 TEST_CASE("FrameTimePercentile returns the 60fps fallback with no samples", "[scm]")

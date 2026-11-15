@@ -137,10 +137,13 @@ namespace ShadowCasterManager
 		return std::max(a_floor, std::min(a_band / (1.0f - a_band), kMaxFlickerRadiusTolerance));
 	}
 
-	/// True when a caster's bounding sphere, a_dx/a_dy/a_dz from a sphere's centre with radius a_casterRadius, touches that sphere.
-	inline bool SphereTouches(float a_dx, float a_dy, float a_dz, float a_casterRadius, float a_radius) noexcept
+	/// True when a static caster belongs in a light's split-cache bake and static hash: its bounding sphere, a_dx/a_dy/a_dz from the
+	/// flicker core's centre with radius a_casterRadius, touches the core, whose radius is infinite for a light that does not flicker.
+	inline bool InFlickerCore(float a_dx, float a_dy, float a_dz, float a_casterRadius, float a_coreRadius) noexcept
 	{
-		const float reach = a_radius + a_casterRadius;
+		if (!std::isfinite(a_coreRadius))
+			return true;
+		const float reach = a_coreRadius + a_casterRadius;
 		return a_dx * a_dx + a_dy * a_dy + a_dz * a_dz < reach * reach;
 	}
 

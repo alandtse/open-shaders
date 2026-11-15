@@ -128,7 +128,8 @@ namespace ShadowCasterManager
 		return rest.value_or(ni->world.translate);
 	}
 
-	/// Publishes the sphere a light reaches at every point of its flicker for the static hash; infinite when it does not flicker.
+	/// Publishes the sphere a light reaches at every point of its flicker for the static hash, infinite when it does not flicker; the
+	/// engine tests the radius against world distances unscaled, so only the flicker offset, a local translate, takes the node's scale.
 	static void SetFoldCore(RE::NiLight* ni)
 	{
 		s_foldCoreRadius = std::numeric_limits<float>::infinity();
@@ -139,7 +140,7 @@ namespace ShadowCasterManager
 		const auto it = s_hashRadiusAnchor.find(ni);
 		const float held = it != s_hashRadiusAnchor.end() ? it->second : ni->GetLightRuntimeData().radius.x;
 		s_foldCoreCenter = ShadowOrigin(ni);
-		s_foldCoreRadius = FlickerCoreRadius(held, FlickerRadiusBand(intensity), movement);
+		s_foldCoreRadius = FlickerCoreRadius(held, FlickerRadiusBand(intensity), movement * ni->world.scale);
 	}
 
 	/// Shared by the redraw hash and static-cache hash so both agree on what
