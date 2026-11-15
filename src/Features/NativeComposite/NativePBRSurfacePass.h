@@ -19,6 +19,7 @@ public:
 		uint32_t opaque = 0, projected = 0, missingMaterial = 0, revisionMismatch = 0;
 		uint32_t missingInstance = 0, ambiguousInstance = 0, mismatchedInstance = 0, instanceIssues = 0;
 		uint32_t sourceIssues = 0, featureIssues = 0, unresolvedInstance = 0, missingDds = 0;
+		uint32_t sourceIssueBits = 0, featureIssueBits = 0, pbrFlagBits = 0, instanceIssueBits = 0;
 	};
 	static constexpr uint32_t kSurfaceInputs = NativePBR::kSurfaceTransportAttachmentCount;
 	static constexpr uint32_t kSurfaceOutputs = 5;

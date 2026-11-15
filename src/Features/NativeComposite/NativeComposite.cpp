@@ -74,6 +74,19 @@ void NativeCompositeFeature::DrawSettings()
 			blockers.missingInstance, blockers.ambiguousInstance, blockers.mismatchedInstance);
 		ImGui::TextDisabled("Instance flags/unresolved %u/%u | recipe source/features %u/%u",
 			blockers.instanceIssues, blockers.unresolvedInstance, blockers.sourceIssues, blockers.featureIssues);
+		if (blockers.opaque && (blockers.sourceIssueBits || blockers.featureIssueBits || blockers.instanceIssueBits || blockers.pbrFlagBits)) {
+			std::string causes;
+			const auto issueBits = blockers.sourceIssueBits | blockers.featureIssueBits;
+			for (size_t bit = 0; bit < NativePBR::kRecipeIssueNames.size(); ++bit)
+				if ((issueBits & (1u << bit)) != 0) {
+					if (!causes.empty())
+						causes += ", ";
+					causes += NativePBR::kRecipeIssueNames[bit];
+				}
+			ImGui::TextWrapped("Opaque recipe reasons: %s", causes.empty() ? "none" : causes.c_str());
+			ImGui::TextDisabled("Opaque PBR flags: 0x%X | instance issue bits: 0x%X",
+				blockers.pbrFlagBits, blockers.instanceIssueBits);
+		}
 		ImGui::TextDisabled("Missing DDS/material/revision %u/%u/%u",
 			blockers.missingDds, blockers.missingMaterial, blockers.revisionMismatch);
 	}
@@ -305,7 +318,9 @@ json NativeCompositeFeature::GetDiagnostics()
 			{ "ambiguousInstance", blockers.ambiguousInstance }, { "mismatchedInstance", blockers.mismatchedInstance },
 			{ "instanceIssues", blockers.instanceIssues }, { "sourceIssues", blockers.sourceIssues },
 			{ "featureIssues", blockers.featureIssues }, { "unresolvedInstance", blockers.unresolvedInstance },
-			{ "missingDds", blockers.missingDds } } },
+			{ "missingDds", blockers.missingDds }, { "sourceIssueBits", blockers.sourceIssueBits },
+			{ "featureIssueBits", blockers.featureIssueBits }, { "pbrFlagBits", blockers.pbrFlagBits },
+			{ "instanceIssueBits", blockers.instanceIssueBits } } },
 		{ "completedComposites", pass.CompletedComposites() }, { "acceptedPixels", pass.AcceptedPixels() },
 		{ "modifiedPixels", pass.ModifiedPixels() }, { "visualizationPixels", pass.VisualizationPixels() },
 		{ "effectiveRecoveredPixels", pass.EffectiveRecoveredPixels() }, { "finiteOnlyPixels", pass.FiniteOnlyPixels() },

@@ -214,6 +214,11 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 				lastEligibility.featureIssues += readiness.unsupportedFeatures != 0;
 				lastEligibility.unresolvedInstance += readiness.unresolvedInstance != 0;
 				lastEligibility.missingDds += exact && !resident;
+				lastEligibility.sourceIssueBits |= readiness.sourceIssues;
+				lastEligibility.featureIssueBits |= readiness.unsupportedFeatures;
+				lastEligibility.instanceIssueBits |= instance.instanceIssues;
+				if (matchedInstance)
+					lastEligibility.pbrFlagBits |= instance.recipe->parameters.pbrFlags;
 			}
 			if (exact) {
 				if (!resident)
