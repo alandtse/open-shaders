@@ -136,6 +136,8 @@ public:
 
 	/** Resolves and caches the tonemap owner for the current frame. */
 	TonemapOwner GetTonemapOwner();
+	/** Whether a feature replaces the vanilla tonemap that writes a_output this frame. */
+	bool ReplacesTonemap(RE::RENDER_TARGET a_output);
 	/** Dispatches the HDR tonemap pass when a feature replaces vanilla rendering. */
 	bool HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output);
 	/** Binds a_output as the sole render target (no depth-stencil) and syncs shadowState's
