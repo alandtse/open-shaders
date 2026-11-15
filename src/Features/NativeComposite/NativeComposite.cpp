@@ -347,11 +347,15 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 		a_pbrSurface ? "Independent ABI-v3 NativePBR surface received" : "Waiting for independent ABI-v3 NativePBR surface";
 	const auto pbrMaterials = evaluatePbr && globals::features::nativePBR.IsActive() ?
 		globals::features::nativePBR.GetNativeGpuMaterials() : nullptr;
+	const auto pbrPublication = evaluatePbr && globals::features::nativePBR.IsActive() ?
+		globals::features::nativePBR.GetMaterialPublication() : nullptr;
 	if (evaluatePbr && a_pbrSurface && !pbrMaterials)
 		surfaceSourceStatus = "NativePBR GPU material generation not yet published";
+	else if (evaluatePbr && a_pbrSurface && !pbrPublication)
+		surfaceSourceStatus = "NativePBR instance bindings not yet published";
 	auto frame = pass.Capture(a_device11, a_context11, a_device12, a_queue, a_source, a_frame, a_width, a_height,
 		a_transfer, lighting, shadow, raster, shadowSettings, selected.LightingStrength, selected.DirectSpatialReconstruction, selectedPolicy, revision,
-		std::move(a_pbrSurface), pbrMaterials, evaluatePbr, selected.NativePbrInputPreview, materialLighting, finalRequested);
+		std::move(a_pbrSurface), pbrMaterials, pbrPublication, evaluatePbr, selected.NativePbrInputPreview, materialLighting, finalRequested);
 	{
 		std::scoped_lock lock(settingsMutex);
 		pbrSurfaceSourceStatus = std::move(surfaceSourceStatus);

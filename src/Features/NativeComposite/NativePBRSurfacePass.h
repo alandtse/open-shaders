@@ -7,6 +7,8 @@
 #include <array>
 #include <memory>
 
+namespace NativePBR { struct MaterialPublication; }
+
 /** @brief DX12-only consumer of a producer-owned opaque surface frame. */
 class NativePBRSurfacePass
 {
@@ -38,6 +40,7 @@ public:
 	/** @brief Records and binds a fully fenced material evaluation, without changing final scene color. */
 	bool Record(ID3D12Device* a_device, ID3D12GraphicsCommandList* a_commands, Slot& a_slot,
 		std::shared_ptr<const InputFrame> a_input, std::shared_ptr<const NativePBR::GpuMaterialResources> a_materials,
+		std::shared_ptr<const NativePBR::MaterialPublication> a_publication,
 		uint32_t a_frame, uint32_t a_width, uint32_t a_height, uint64_t a_additionalBudget);
 	/** @brief Records optional BRDF-based opaque replacement after surface evaluation. */
 	bool RecordFinalColor(ID3D12Device* a_device, ID3D12GraphicsCommandList* a_commands,

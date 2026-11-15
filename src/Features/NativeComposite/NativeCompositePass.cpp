@@ -152,7 +152,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 	const ShadowSettings& a_shadowSettings,
 	float a_strength, bool a_directSpatialReconstruction, const Policy& a_policy, uint64_t a_revision,
 	std::shared_ptr<const NativePBRSurfacePass::InputFrame> a_pbrSurface,
-	std::shared_ptr<const NativePBR::GpuMaterialResources> a_pbrMaterials, bool a_pbrDiagnostic,
+	std::shared_ptr<const NativePBR::GpuMaterialResources> a_pbrMaterials,
+	std::shared_ptr<const NativePBR::MaterialPublication> a_pbrPublication, bool a_pbrDiagnostic,
 	bool a_pbrInputPreview,
 	std::shared_ptr<const NativeLightingFeature::Contribution> a_materialLighting, bool a_pbrFinalColor)
 {
@@ -629,7 +630,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			const auto budget = videoBudget.Query(a_device12, retained).effectiveBytes;
 			const auto additional = budget > retained ? budget - retained : 0;
 			pbrSurfaceRecorded = pbrSurfacePass.Record(a_device12, slot->commands.get(), slot->pbrSurface,
-				a_pbrSurface, a_pbrMaterials, a_frame, a_width, a_height, additional);
+				a_pbrSurface, a_pbrMaterials, a_pbrPublication, a_frame, a_width, a_height, additional);
 		} else if (a_pbrDiagnostic && !canRecordPbr) {
 			pbrSurfacePass.DeferForSlotBudget();
 		}

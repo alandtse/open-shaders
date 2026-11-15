@@ -1,6 +1,7 @@
 #include "NativePBRSurfacePass.h"
 
 #include "Features/NativePBR/MaterialReadiness.h"
+#include "Features/NativePBR/MaterialService.h"
 #include "GpuPass.h"
 #include "PCH.h"
 #include <directx/d3dx12.h>
@@ -105,11 +106,12 @@ bool NativePBRSurfacePass::Initialize(ID3D12Device* a_device)
 
 bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandList* a_commands, Slot& a_slot,
 	std::shared_ptr<const InputFrame> a_input, std::shared_ptr<const NativePBR::GpuMaterialResources> a_materials,
+	std::shared_ptr<const NativePBR::MaterialPublication> a_publication,
 	uint32_t a_frame, uint32_t a_width, uint32_t a_height, uint64_t a_additionalBudget)
 {
 	CS_GPU_PASS("NativePBR::MaterialEvaluation");
 	status = "Waiting for synchronized NativePBR screen inputs";
-	if (!a_input || !a_materials || !a_commands || !a_device)
+	if (!a_input || !a_materials || !a_publication || !a_publication->recipes || !a_commands || !a_device)
 		return false;
 	if (a_input->abiVersion != kProvisionalSurfaceAbiVersion || !a_input->nativeOwnedDraws ||
 		a_input->frame != a_frame || a_input->width < a_width || a_input->height < a_height ||
@@ -170,20 +172,24 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 			const auto identity = a_materials->Find(draw.materialIdentity);
 			const auto candidate = a_materials->Find(draw.materialIdentity, draw.materialRevision);
 			const auto exact = candidate && candidate->revision == draw.materialRevision && draw.materialRevision ? candidate : std::nullopt;
+			const auto instance = a_publication->FindInstance(draw.referenceKey, draw.shapeName);
+			const bool matchedInstance = instance && instance.recipe && instance.recipe->identity == draw.materialIdentity &&
+				instance.recipe->revision == draw.materialRevision && instance.instanceIssues == 0;
 			if (!identity)
 				++missingMaterials;
 			else if (!exact)
 				++missingRevisions;
 			const bool resident = exact && exact->availability == NativePBR::GpuMaterialAvailability::Resident;
-			const auto readiness = exact ? NativePBR::ClassifyRecipeReadiness(exact->recipeIssues) : NativePBR::RecipeReadiness{};
-			const bool compatible = readiness.IsOpaqueFeatureCompatible() && readiness.unresolvedInstance == 0;
+			const auto readiness = matchedInstance ? instance.Readiness() :
+				exact ? NativePBR::ClassifyRecipeReadiness(exact->recipeIssues) : NativePBR::RecipeReadiness{};
+			const bool compatible = matchedInstance && readiness.IsOpaqueFeatureCompatible() && readiness.unresolvedInstance == 0;
 			if (exact) {
 				if (!resident)
 					++missingTextures;
 				if (!readiness.IsOpaqueFeatureCompatible())
 					++unsupportedRecipes;
 			}
-			if (draw.projectedUv || readiness.unresolvedInstance != 0)
+			if (draw.projectedUv || !matchedInstance || readiness.unresolvedInstance != 0)
 				++unsupportedInputs;
 			if (draw.ordinal != index + 1)
 				++ordinalMismatches;

@@ -74,7 +74,8 @@ public:
 		const ShadowSettings& a_shadowSettings,
 		float a_strength, bool a_directSpatialReconstruction, const Policy& a_policy, uint64_t a_revision,
 		std::shared_ptr<const NativePBRSurfacePass::InputFrame> a_pbrSurface = {},
-		std::shared_ptr<const NativePBR::GpuMaterialResources> a_pbrMaterials = {}, bool a_pbrDiagnostic = false,
+		std::shared_ptr<const NativePBR::GpuMaterialResources> a_pbrMaterials = {},
+		std::shared_ptr<const NativePBR::MaterialPublication> a_pbrPublication = {}, bool a_pbrDiagnostic = false,
 		bool a_pbrInputPreview = false,
 		std::shared_ptr<const NativeLightingFeature::Contribution> a_materialLighting = {}, bool a_pbrFinalColor = false);
 	/** @brief Retains a frame until a downstream consumer's GPU fence completes. */

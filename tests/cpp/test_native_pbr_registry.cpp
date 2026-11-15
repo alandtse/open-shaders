@@ -1930,6 +1930,11 @@ TEST_CASE("Published instance readiness preserves unsupported projected and anim
 	instance.projectedUv = true;
 	instance.materialObjectEditorId = "missing-mato";
 	registry.ObserveInstance(&source, "ref", "shape", instance);
+	NativePBR::InstanceProperties opaque;
+	opaque.opacity = NativePBR::InstanceProperties::Opacity::Opaque;
+	opaque.normalMode = NativePBR::InstanceProperties::NormalMode::TangentSpace;
+	opaque.uvAnimation = NativePBR::InstanceProperties::UvAnimation::Static;
+	registry.ObserveInstance(&source, "opaque-ref", "opaque-shape", opaque);
 	const auto changes = *registry.ExportChanges(0, {});
 	cache.Update(changes);
 	const auto generation = NativePBR::PublishRecipes(cache, changes, {});
@@ -1949,4 +1954,11 @@ TEST_CASE("Published instance readiness preserves unsupported projected and anim
 	REQUIRE(bound.instanceIssues & NativePBR::MissingMatoConfiguration);
 	REQUIRE(bound.missingMatoEditorId == "missing-mato");
 	REQUIRE(material.recipe->revision == bound.recipe->revision);
+	const auto safe = publication->FindInstance("opaque-ref", "opaque-shape");
+	REQUIRE(safe);
+	REQUIRE(safe.recipe->identity == token.identity);
+	REQUIRE(safe.recipe->revision == material.recipe->revision);
+	REQUIRE(safe.Readiness().IsOpaqueFeatureCompatible());
+	REQUIRE(safe.Readiness().unresolvedInstance == 0);
+	REQUIRE(safe.instanceIssues == 0);
 }
