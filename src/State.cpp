@@ -782,6 +782,17 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 			}
 		}
 
+		for (auto* owner : Feature::GetFeatureList()) {
+			if (!owner->loaded)
+				continue;
+			for (const auto excluded : owner->GetBootSuppressedFeatures())
+				for (auto* feature : Feature::GetFeatureList())
+					if (feature != owner && feature->loaded && feature->GetShortName() == excluded) {
+						feature->loaded = false;
+						logger::info("Boot ownership: '{}' suppresses '{}'", owner->GetShortName(), excluded);
+					}
+		}
+
 		json appliedSettings;
 		SaveToJson(appliedSettings);
 		if (restoringDefaults)
