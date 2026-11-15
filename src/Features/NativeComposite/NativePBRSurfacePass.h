@@ -13,6 +13,13 @@ namespace NativePBR { struct MaterialPublication; }
 class NativePBRSurfacePass
 {
 public:
+	/** @brief In-memory overlapping rejection counts for the last evaluated surface frame. */
+	struct EligibilityCounts
+	{
+		uint32_t opaque = 0, projected = 0, missingMaterial = 0, revisionMismatch = 0;
+		uint32_t missingInstance = 0, ambiguousInstance = 0, mismatchedInstance = 0, instanceIssues = 0;
+		uint32_t sourceIssues = 0, featureIssues = 0, unresolvedInstance = 0, missingDds = 0;
+	};
 	static constexpr uint32_t kSurfaceInputs = NativePBR::kSurfaceTransportAttachmentCount;
 	static constexpr uint32_t kSurfaceOutputs = 5;
 	static constexpr uint32_t kMaterialPages = NativePBR::GpuMaterialResources::kTextureDescriptorCount;
@@ -64,6 +71,7 @@ public:
 	uint64_t NoEligibleFrames() const { return noEligibleFrames; }
 	uint32_t LastDraws() const { return lastDraws; }
 	uint32_t LastEligibleDraws() const { return lastEligibleDraws; }
+	const EligibilityCounts& LastEligibility() const { return lastEligibility; }
 	/** @brief Count a recorded dispatch only after the owning command queue signals successfully. */
 	void MarkSubmitted();
 	/** Diagnostic output slots are VRAM-limited; another frame may still be composited normally. */
@@ -82,4 +90,5 @@ private:
 	uint64_t submissions = 0, missingMaterials = 0, missingRevisions = 0, missingTextures = 0, unsupportedRecipes = 0, unsupportedInputs = 0;
 	uint64_t ordinalMismatches = 0, noEligibleFrames = 0;
 	uint32_t lastDraws = 0, lastEligibleDraws = 0;
+	EligibilityCounts lastEligibility;
 };

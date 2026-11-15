@@ -106,6 +106,7 @@ public:
 	uint64_t PbrNoEligibleFrames() const { return pbrSurfacePass.NoEligibleFrames(); }
 	uint32_t PbrLastDraws() const { return pbrSurfacePass.LastDraws(); }
 	uint32_t PbrLastEligibleDraws() const { return pbrSurfacePass.LastEligibleDraws(); }
+	const NativePBRSurfacePass::EligibilityCounts& PbrLastEligibility() const { return pbrSurfacePass.LastEligibility(); }
 	~NativeComposite();
 
 private:

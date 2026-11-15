@@ -67,6 +67,15 @@ void NativeCompositeFeature::DrawSettings()
 			static_cast<unsigned long long>(pass.PbrNoEligibleFrames()));
 		ImGui::TextDisabled("Last evaluated draw table: %u draws | %u eligible opaque draws",
 			pass.PbrLastDraws(), pass.PbrLastEligibleDraws());
+		const auto& blockers = pass.PbrLastEligibility();
+		ImGui::TextDisabled("Last-frame PBR candidates: %u opaque | %u projected",
+			blockers.opaque, blockers.projected);
+		ImGui::TextDisabled("Opaque blockers (overlap): instance missing/ambiguous/mismatch %u/%u/%u",
+			blockers.missingInstance, blockers.ambiguousInstance, blockers.mismatchedInstance);
+		ImGui::TextDisabled("Instance flags/unresolved %u/%u | recipe source/features %u/%u",
+			blockers.instanceIssues, blockers.unresolvedInstance, blockers.sourceIssues, blockers.featureIssues);
+		ImGui::TextDisabled("Missing DDS/material/revision %u/%u/%u",
+			blockers.missingDds, blockers.missingMaterial, blockers.revisionMismatch);
 	}
 	ImGui::SeparatorText("Independent RT shadows");
 	bool shadowChanged = false;
@@ -270,6 +279,7 @@ json NativeCompositeFeature::GetDiagnostics()
 	std::scoped_lock lock(settingsMutex);
 	const auto state = lightingStatus.load();
 	const auto sceneDiagnostics = globals::features::dx12NativeScene.GetDiagnostics();
+	const auto& blockers = pass.PbrLastEligibility();
 	return { { "enabled", enabled.load() }, { "captures", captures.load() }, { "lightingSubmissions", lightingSubmissions.load() }, { "shadowSubmissions", shadowSubmissions.load() },
 		{ "nativePbrInputSubmissions", pass.PbrInputSubmissions() },
 		{ "nativePbrSurfaceDiagnosticEnabled", settings.NativePbrDiagnosticDispatch },
@@ -288,6 +298,14 @@ json NativeCompositeFeature::GetDiagnostics()
 		{ "nativePbrSurfaceUnsupportedInputs", pass.PbrUnsupportedInputs() },
 		{ "nativePbrSurfaceOrdinalMismatches", pass.PbrOrdinalMismatches() },
 		{ "nativePbrSurfaceNoEligibleFrames", pass.PbrNoEligibleFrames() },
+		{ "nativePbrSurfaceLastFrame", {
+			{ "opaque", blockers.opaque }, { "projected", blockers.projected },
+			{ "eligible", pass.PbrLastEligibleDraws() }, { "missingMaterial", blockers.missingMaterial },
+			{ "revisionMismatch", blockers.revisionMismatch }, { "missingInstance", blockers.missingInstance },
+			{ "ambiguousInstance", blockers.ambiguousInstance }, { "mismatchedInstance", blockers.mismatchedInstance },
+			{ "instanceIssues", blockers.instanceIssues }, { "sourceIssues", blockers.sourceIssues },
+			{ "featureIssues", blockers.featureIssues }, { "unresolvedInstance", blockers.unresolvedInstance },
+			{ "missingDds", blockers.missingDds } } },
 		{ "completedComposites", pass.CompletedComposites() }, { "acceptedPixels", pass.AcceptedPixels() },
 		{ "modifiedPixels", pass.ModifiedPixels() }, { "visualizationPixels", pass.VisualizationPixels() },
 		{ "effectiveRecoveredPixels", pass.EffectiveRecoveredPixels() }, { "finiteOnlyPixels", pass.FiniteOnlyPixels() },

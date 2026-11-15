@@ -113,6 +113,7 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 	status = "Waiting for synchronized NativePBR screen inputs";
 	lastDraws = 0;
 	lastEligibleDraws = 0;
+	lastEligibility = {};
 	if (!a_input || !a_materials || !a_publication || !a_publication->recipes || !a_commands || !a_device)
 		return false;
 	if (a_input->abiVersion != kProvisionalSurfaceAbiVersion || !a_input->nativeOwnedDraws ||
@@ -172,12 +173,31 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 		uint32_t eligibleDraws = 0;
 		for (uint32_t index = 0; index < drawCount; ++index) {
 			const auto& draw = (*a_input->draws)[index];
+			if (draw.projectedUv)
+				++lastEligibility.projected;
+			else
+				++lastEligibility.opaque;
 			const auto identity = a_materials->Find(draw.materialIdentity);
 			const auto candidate = a_materials->Find(draw.materialIdentity, draw.materialRevision);
 			const auto exact = candidate && candidate->revision == draw.materialRevision && draw.materialRevision ? candidate : std::nullopt;
 			const auto instance = a_publication->FindInstance(draw.referenceKey, draw.shapeName);
 			const bool matchedInstance = instance && instance.recipe && instance.recipe->identity == draw.materialIdentity &&
 				instance.recipe->revision == draw.materialRevision && instance.instanceIssues == 0;
+			if (!draw.projectedUv) {
+				if (!identity)
+					++lastEligibility.missingMaterial;
+				else if (!exact)
+					++lastEligibility.revisionMismatch;
+				if (instance.status == NativePBR::MaterialLookupStatus::MissingInstance)
+					++lastEligibility.missingInstance;
+				else if (instance.status == NativePBR::MaterialLookupStatus::AmbiguousInstance)
+					++lastEligibility.ambiguousInstance;
+				else if (!instance || !instance.recipe || instance.recipe->identity != draw.materialIdentity ||
+					instance.recipe->revision != draw.materialRevision)
+					++lastEligibility.mismatchedInstance;
+				if (instance && instance.instanceIssues)
+					++lastEligibility.instanceIssues;
+			}
 			if (!identity)
 				++missingMaterials;
 			else if (!exact)
@@ -187,6 +207,12 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 				exact ? NativePBR::ClassifyRecipeReadiness(exact->recipeIssues) : NativePBR::RecipeReadiness{},
 				matchedInstance && !draw.projectedUv);
 			const bool compatible = matchedInstance && readiness.IsOpaqueFeatureCompatible() && readiness.unresolvedInstance == 0;
+			if (!draw.projectedUv) {
+				lastEligibility.sourceIssues += readiness.sourceIssues != 0;
+				lastEligibility.featureIssues += readiness.unsupportedFeatures != 0;
+				lastEligibility.unresolvedInstance += readiness.unresolvedInstance != 0;
+				lastEligibility.missingDds += exact && !resident;
+			}
 			if (exact) {
 				if (!resident)
 					++missingTextures;
