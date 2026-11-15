@@ -60,6 +60,23 @@ namespace NativePBR
 		return a_readiness;
 	}
 
+	/** @brief Keeps incomplete-preview opt-in separate from fully verified material evaluation. */
+	struct OpaqueDispatchReadiness
+	{
+		bool verified = false, previewOnly = false;
+		bool Eligible() const { return verified || previewOnly; }
+	};
+
+	inline OpaqueDispatchReadiness ClassifyOpaqueDispatch(RecipeReadiness a_readiness, bool a_resident,
+		bool a_matchedInstance, bool a_validOrdinal, bool a_projectedUv, bool a_allowIncompletePreview)
+	{
+		if (!a_resident || !a_matchedInstance || !a_validOrdinal || a_projectedUv ||
+			a_readiness.sourceIssues != 0 || a_readiness.unresolvedInstance != 0)
+			return {};
+		const bool verified = a_readiness.unsupportedFeatures == 0;
+		return { verified, a_allowIncompletePreview && !verified };
+	}
+
 	/** @brief Counts overlapping causes without confusing source or shading readiness with texture residency. */
 	struct MaterialReadinessCounts
 	{

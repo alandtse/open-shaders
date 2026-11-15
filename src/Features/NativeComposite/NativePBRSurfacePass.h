@@ -20,6 +20,7 @@ public:
 		uint32_t missingInstance = 0, ambiguousInstance = 0, mismatchedInstance = 0, instanceIssues = 0;
 		uint32_t sourceIssues = 0, featureIssues = 0, unresolvedInstance = 0, missingDds = 0;
 		uint32_t sourceIssueBits = 0, featureIssueBits = 0, pbrFlagBits = 0, instanceIssueBits = 0;
+		uint32_t previewOnly = 0;
 	};
 	static constexpr uint32_t kSurfaceInputs = NativePBR::kSurfaceTransportAttachmentCount;
 	static constexpr uint32_t kSurfaceOutputs = 5;
@@ -49,14 +50,19 @@ public:
 	bool Record(ID3D12Device* a_device, ID3D12GraphicsCommandList* a_commands, Slot& a_slot,
 		std::shared_ptr<const InputFrame> a_input, std::shared_ptr<const NativePBR::GpuMaterialResources> a_materials,
 		std::shared_ptr<const NativePBR::MaterialPublication> a_publication,
-		uint32_t a_frame, uint32_t a_width, uint32_t a_height, uint64_t a_additionalBudget);
+		uint32_t a_frame, uint32_t a_width, uint32_t a_height, uint64_t a_additionalBudget, bool a_incompletePreview);
 	/** @brief Records optional BRDF-based opaque replacement after surface evaluation. */
 	bool RecordFinalColor(ID3D12Device* a_device, ID3D12GraphicsCommandList* a_commands,
 		Slot& a_slot, ID3D12Resource* a_sceneColor, DXGI_FORMAT a_sceneFormat,
 		const NativeLightingFeature::Contribution& a_lighting, uint32_t a_frame,
 		uint32_t a_width, uint32_t a_height, float a_compositeStrength, bool a_legacyTransfer);
 	/** @brief Count final-color submissions after the owning queue is signaled. */
-	void MarkFinalSubmitted() { ++finalSubmissions; finalStatus = "NativePBR opaque final-color pass submitted"; }
+	void MarkFinalSubmitted()
+	{
+		++finalSubmissions;
+		finalStatus = lastEligibility.previewOnly ? "NativePBR feature-incomplete opaque final-color preview submitted" :
+			"NativePBR opaque final-color pass submitted";
+	}
 	const std::string& FinalStatus() const { return finalStatus; }
 	uint64_t FinalSubmissions() const { return finalSubmissions; }
 	void DeferFinal(const char* a_reason) { finalStatus = a_reason; }

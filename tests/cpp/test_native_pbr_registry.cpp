@@ -1927,6 +1927,28 @@ TEST_CASE("NativePBR opaque captures ignore only projected and inactive feature 
 	CHECK(readiness.unsupportedFeatures == NativePBR::UnsupportedFeatureTextures);
 }
 
+TEST_CASE("NativePBR incomplete opaque preview never bypasses source or ownership validation", "[native_pbr]")
+{
+	using namespace NativePBR;
+	RecipeReadiness readiness{};
+	CHECK(ClassifyOpaqueDispatch(readiness, true, true, true, false, false).verified);
+	readiness.unsupportedFeatures = UnsupportedPbrFeatures;
+	CHECK_FALSE(ClassifyOpaqueDispatch(readiness, true, true, true, false, false).Eligible());
+	const auto preview = ClassifyOpaqueDispatch(readiness, true, true, true, false, true);
+	CHECK_FALSE(preview.verified);
+	CHECK(preview.previewOnly);
+	CHECK(preview.Eligible());
+	CHECK_FALSE(ClassifyOpaqueDispatch(readiness, false, true, true, false, true).Eligible());
+	CHECK_FALSE(ClassifyOpaqueDispatch(readiness, true, false, true, false, true).Eligible());
+	CHECK_FALSE(ClassifyOpaqueDispatch(readiness, true, true, false, false, true).Eligible());
+	CHECK_FALSE(ClassifyOpaqueDispatch(readiness, true, true, true, true, true).Eligible());
+	readiness.sourceIssues = MissingRequiredTextures;
+	CHECK_FALSE(ClassifyOpaqueDispatch(readiness, true, true, true, false, true).Eligible());
+	readiness.sourceIssues = 0;
+	readiness.unresolvedInstance = UnknownOpacity;
+	CHECK_FALSE(ClassifyOpaqueDispatch(readiness, true, true, true, false, true).Eligible());
+}
+
 TEST_CASE("Material observations resolve only authoritatively known instance modes", "[native_pbr]")
 {
 	NativePBR::InstanceProperties opaque;

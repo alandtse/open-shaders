@@ -107,7 +107,7 @@ bool NativePBRSurfacePass::Initialize(ID3D12Device* a_device)
 bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandList* a_commands, Slot& a_slot,
 	std::shared_ptr<const InputFrame> a_input, std::shared_ptr<const NativePBR::GpuMaterialResources> a_materials,
 	std::shared_ptr<const NativePBR::MaterialPublication> a_publication,
-	uint32_t a_frame, uint32_t a_width, uint32_t a_height, uint64_t a_additionalBudget)
+	uint32_t a_frame, uint32_t a_width, uint32_t a_height, uint64_t a_additionalBudget, bool a_incompletePreview)
 {
 	CS_GPU_PASS("NativePBR::MaterialEvaluation");
 	status = "Waiting for synchronized NativePBR screen inputs";
@@ -208,7 +208,6 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 				matchedInstance && !draw.projectedUv);
 			if (matchedInstance)
 				readiness = NativePBR::ResolveCapturedOpaqueFeatures(readiness, *instance.recipe, !draw.projectedUv);
-			const bool compatible = matchedInstance && readiness.IsOpaqueFeatureCompatible() && readiness.unresolvedInstance == 0;
 			if (!draw.projectedUv) {
 				lastEligibility.sourceIssues += readiness.sourceIssues != 0;
 				lastEligibility.featureIssues += readiness.unsupportedFeatures != 0;
@@ -230,7 +229,10 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 				++unsupportedInputs;
 			if (draw.ordinal != index + 1)
 				++ordinalMismatches;
-			const bool eligible = resident && compatible && draw.ordinal == index + 1 && !draw.projectedUv;
+			const auto dispatch = NativePBR::ClassifyOpaqueDispatch(readiness, resident, matchedInstance,
+				draw.ordinal == index + 1, draw.projectedUv, a_incompletePreview);
+			const bool eligible = dispatch.Eligible();
+			lastEligibility.previewOnly += dispatch.previewOnly;
 			if (eligible)
 				++eligibleDraws;
 			drawBindings[index] = NativePBR::PackGpuDrawBinding(draw.materialIdentity, draw.materialRevision,
@@ -341,7 +343,8 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 		a_commands->ResourceBarrier(uint32_t(barriers.size()), barriers.data());
 		a_slot.input = std::move(a_input);
 		a_slot.materials = std::move(a_materials);
-		status = "NativePBR SM6.5 material dispatch recorded; awaiting queue submission";
+		status = lastEligibility.previewOnly ? "NativePBR incomplete opaque preview recorded; awaiting GPU submission" :
+			"NativePBR SM6.5 material dispatch recorded; awaiting queue submission";
 		return true;
 	} catch (const std::exception& error) {
 		status = error.what();
@@ -538,5 +541,6 @@ bool NativePBRSurfacePass::RecordFinalColor(ID3D12Device* a_device, ID3D12Graphi
 void NativePBRSurfacePass::MarkSubmitted()
 {
 	++submissions;
-	status = "NativePBR SM6.5 dispatch submitted; final composition unchanged";
+	status = lastEligibility.previewOnly ? "NativePBR feature-incomplete opaque preview submitted" :
+		"NativePBR SM6.5 dispatch submitted; final composition unchanged";
 }
