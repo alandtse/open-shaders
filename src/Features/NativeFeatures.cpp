@@ -806,7 +806,7 @@ void NativePBRFeature::DrawSettings()
 	if (ImGui::Checkbox("Capture input-only FXC draws (keep raster shading)", &inputOnly))
 		experimentalInputOnly.store(inputOnly, std::memory_order_relaxed);
 	if (inputOnly)
-		ImGui::TextDisabled("NativePBR stages input shaders and replays surface data; original deferred shading stays active.");
+		ImGui::TextDisabled("FXC sidecar captures inputs even when optional input-only shader variants are unavailable; raster shading stays active.");
 	if (ImGui::Checkbox("Capture ProjectedUV material inputs (experimental)", &projected))
 		captureProjectedUv.store(projected, std::memory_order_relaxed);
 	if (projected) {

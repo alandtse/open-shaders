@@ -246,7 +246,7 @@ namespace NativePBR
 
 	bool MaterialSidecar::BeginInputOnlyPass(ID3D11DeviceContext* a_context)
 	{
-		if (!recording || !inputOnly || !activeMaterial || !a_context || !stagedInputShader ||
+		if (!recording || !inputOnly || !activeMaterial || !a_context ||
 			!drawConstants || !writeAll || inputPassActive)
 			return false;
 		if (nextDraw > kSurveyDrawLimit) {
