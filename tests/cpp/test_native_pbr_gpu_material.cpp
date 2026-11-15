@@ -72,19 +72,25 @@ TEST_CASE("NativePBR GPU descriptor ABI keeps linear and sRGB views within 512 s
 	CHECK(GpuTextureDescriptorIndex(UINT32_MAX, TextureInterpretation::DataLinear) == kGpuMissingTexture);
 }
 
-TEST_CASE("NativePBR material availability reports missing optional sources separately from unsupported shading", "[NativePBR][gpu-material]")
+TEST_CASE("NativePBR material availability requires only sampled opaque roles", "[NativePBR][gpu-material]")
 {
 	using namespace NativePBR;
 	Recipe recipe;
 	recipe.identity = 11;
 	recipe.issues = UnsupportedDisplacement | UnsupportedFeatureTextures;
+	recipe.textures[3].canonicalPath = "textures/emission.dds";
 	recipe.textures[4].canonicalPath = "textures/displacement.dds";
+	recipe.textures[5].canonicalPath = "textures/features0.dds";
 	const auto requested = GpuRequestedTextureRoles(recipe);
-	CHECK(requested == 0x17u);
-	CHECK(ClassifyGpuMaterialAvailability(0x17u, requested) == GpuMaterialAvailability::Resident);
+	CHECK(requested == 0x0fu);
+	CHECK(ClassifyGpuMaterialAvailability(0x0fu, requested) == GpuMaterialAvailability::Resident);
+	CHECK(ClassifyGpuMaterialAvailability(0x17u, requested) == GpuMaterialAvailability::PartiallyResident);
 	CHECK(ClassifyGpuMaterialAvailability(0x07u, requested) == GpuMaterialAvailability::PartiallyResident);
 	CHECK(ClassifyGpuMaterialAvailability(0x04u, requested) == GpuMaterialAvailability::PartiallyResident);
 	CHECK(ClassifyGpuMaterialAvailability(0, requested) == GpuMaterialAvailability::Unavailable);
+	recipe.textures[3].canonicalPath.clear();
+	CHECK(GpuRequestedTextureRoles(recipe) == kGpuRequiredTextureRoles);
+	CHECK(ClassifyGpuMaterialAvailability(0x07u, GpuRequestedTextureRoles(recipe)) == GpuMaterialAvailability::Resident);
 	CHECK(recipe.issues == (UnsupportedDisplacement | UnsupportedFeatureTextures));
 }
 

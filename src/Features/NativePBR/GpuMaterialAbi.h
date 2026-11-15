@@ -37,11 +37,11 @@ namespace NativePBR
 			a_pool + (a_interpretation == TextureInterpretation::ColorSrgb ? kGpuTexturePoolCapacity : 0) :
 			kGpuMissingTexture;
 	}
-	/** @brief Includes required base textures plus optional roles requested by an immutable recipe. */
+	/** @brief Requires only the texture roles sampled by the current opaque SM6.5 evaluator. */
 	inline uint32_t GpuRequestedTextureRoles(const Recipe& a_recipe)
 	{
 		uint32_t result = kGpuRequiredTextureRoles;
-		for (size_t role = 0; role < a_recipe.textures.size(); ++role)
+		for (size_t role = 0; role <= static_cast<size_t>(TextureRole::Emission); ++role)
 			if (!a_recipe.textures[role].canonicalPath.empty())
 				result |= 1u << role;
 		return result;
