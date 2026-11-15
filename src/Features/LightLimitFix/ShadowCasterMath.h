@@ -120,6 +120,30 @@ namespace ShadowCasterManager
 		return a_live >= a_held * keep - 1.0f && a_live * keep <= a_held + 1.0f ? a_held : a_live;
 	}
 
+	/// Radius around its shadow origin that a light held at a_held still reaches at every point of its flicker: the smallest live
+	/// radius HeldFlickerRadius keeps, less the farthest its movement puts it from that origin.
+	inline float FlickerCoreRadius(float a_held, float a_band, float a_movementAmplitude) noexcept
+	{
+		return std::max(0.0f, a_held * (1.0f - a_band) - 1.0f - a_movementAmplitude * kFlickerReachPerAmplitude);
+	}
+
+	/// Largest radius difference a flicker lets a cached bake serve; past it a bake made at a dim moment would miss the casters
+	/// a bright moment lights.
+	inline constexpr float kMaxFlickerRadiusTolerance = 0.25f;
+
+	/// Share a cached bake's radius may differ from the live radius by, when both stay within a_band of the brightest radius.
+	inline float FlickerRadiusTolerance(float a_band, float a_floor) noexcept
+	{
+		return std::max(a_floor, std::min(a_band / (1.0f - a_band), kMaxFlickerRadiusTolerance));
+	}
+
+	/// True when a caster's bounding sphere, a_dx/a_dy/a_dz from a sphere's centre with radius a_casterRadius, touches that sphere.
+	inline bool SphereTouches(float a_dx, float a_dy, float a_dz, float a_casterRadius, float a_radius) noexcept
+	{
+		const float reach = a_radius + a_casterRadius;
+		return a_dx * a_dx + a_dy * a_dy + a_dz * a_dz < reach * reach;
+	}
+
 	// The tile class ladder, shared by the coverage classifier below and the
 	// atlas allocator's order mapping (the floor class == one allocator cell).
 	inline constexpr float kTileScaleFull = 1.0f;

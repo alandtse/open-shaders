@@ -106,9 +106,11 @@ namespace ShadowCasterManager
 		return FlickerOf(ni).movement;
 	}
 
+	/// Intensity amplitude of an inverse-square light's flickering Light record, the only kind whose radius follows its fade; 0
+	/// for any other light.
 	static float FlickerIntensityAmplitude(RE::NiLight* ni)
 	{
-		return FlickerOf(ni).intensity;
+		return LLFCommon::RuntimeLightDataExt::Get(ni)->flags.any(LightLimitFix::LightFlags::InverseSquare) ? FlickerOf(ni).intensity : 0.0f;
 	}
 
 	/// Where a light's shadow is drawn from: the engine and Light Placer move a flickering light inside its parent node every
@@ -124,6 +126,20 @@ namespace ShadowCasterManager
 			return std::nullopt;
 		});
 		return rest.value_or(ni->world.translate);
+	}
+
+	/// Publishes the sphere a light reaches at every point of its flicker for the static hash; infinite when it does not flicker.
+	static void SetFoldCore(RE::NiLight* ni)
+	{
+		s_foldCoreRadius = std::numeric_limits<float>::infinity();
+		const float intensity = ni ? FlickerIntensityAmplitude(ni) : 0.0f;
+		const float movement = ni ? FlickerMovementAmplitude(ni) : 0.0f;
+		if (intensity <= 0.0f && movement <= 0.0f)
+			return;
+		const auto it = s_hashRadiusAnchor.find(ni);
+		const float held = it != s_hashRadiusAnchor.end() ? it->second : ni->GetLightRuntimeData().radius.x;
+		s_foldCoreCenter = ShadowOrigin(ni);
+		s_foldCoreRadius = FlickerCoreRadius(held, FlickerRadiusBand(intensity), movement);
 	}
 
 	/// Shared by the redraw hash and static-cache hash so both agree on what
@@ -438,6 +454,8 @@ namespace ShadowCasterManager
 	/// Camera position when the current light's accumulate begins. The contribution
 	/// cull measures caster size from here (viewer footprint), not the light.
 	RE::NiPoint3 s_cullCameraPos{};
+	RE::NiPoint3 s_foldCoreCenter{};
+	float s_foldCoreRadius = std::numeric_limits<float>::infinity();
 
 	/// StaticOnly re-bakes issued this frame. A bake re-rasterizes a light's
 	/// whole static caster set into its cache tile, so this is the cost the
@@ -834,7 +852,8 @@ namespace ShadowCasterManager
 		if (!ni || !st.bakePoseValid || ni->world.rotate != st.bakeRot)
 			return false;
 		const float radius = ni->GetLightRuntimeData().radius.x;
-		return std::abs(radius - st.bakeRadius) <= kSplitRadiusTolerance * st.bakeRadius &&
+		const float tolerance = FlickerRadiusTolerance(FlickerRadiusBand(FlickerIntensityAmplitude(ni)), kSplitRadiusTolerance);
+		return std::abs(radius - st.bakeRadius) <= tolerance * st.bakeRadius &&
 		       ShadowOrigin(ni).GetSquaredDistance(st.bakePos) <= kSplitPositionToleranceSq;
 	}
 
@@ -1330,6 +1349,7 @@ namespace ShadowCasterManager
 				s_visitStaticHash = 0x9e3779b97f4a7c15ull;
 				if (auto* ni = light->light.get())
 					s_visitStaticHash = FoldLightPose(s_visitStaticHash, ni, 16.0f);
+				SetFoldCore(light->light.get());
 			}
 			s_visitDynamicCount.store(0, std::memory_order_relaxed);
 			s_visitStaticCount.store(0, std::memory_order_relaxed);
@@ -1347,6 +1367,7 @@ namespace ShadowCasterManager
 					// when `split` is false, which would otherwise leave a stale
 					// DynamicOnly filtering the next walk.
 					s_cullPassMode.store(static_cast<int>(CasterPass::All), std::memory_order_relaxed);
+					s_foldCoreRadius = std::numeric_limits<float>::infinity();
 				}
 			} clearGuard;
 

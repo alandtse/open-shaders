@@ -493,6 +493,11 @@ namespace ShadowCasterManager
 	// contribution-cull hooks (reader) measure caster screen size from here.
 	extern RE::NiPoint3 s_cullCameraPos;
 
+	// Sphere the accumulating light reaches at every point of its flicker (EnableLight, writer); only static casters touching it
+	// fold into the static hash, so casters a pulsing radius takes in and out cannot queue a rebake. Infinite for other lights.
+	extern RE::NiPoint3 s_foldCoreCenter;
+	extern float s_foldCoreRadius;
+
 	// True only across a static-cache bake pass, written by
 	// RenderScheduledShadowLights; read via StaticPassRedirectActive() below.
 	extern std::atomic<bool> s_staticPassActive;
