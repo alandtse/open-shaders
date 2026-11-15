@@ -736,7 +736,7 @@ void Upscaling::RegisterUxActions()
 				{ "selected", upscaling.settings.dlssgPreset },
 				{ "atBoot", upscaling.bootSnapshot.Boot(&Settings::dlssgPreset) },
 				{ "driverProfileValue", optionalJson(Streamline::ReadDLSSGPresetFromDriverProfile()) },
-				{ "presetCSupported", upscaling.streamlineDX12.dlssgPresetCSupported }
+				{ "presetCSupported", upscaling.streamlineDX12.PresetCSupported() }
 			};
 		}));
 
@@ -1004,7 +1004,7 @@ void Upscaling::DrawFrameGenerationSettings()
 				T(TKEY("dlssg_preset_c"), "Preset C")
 			};
 			const uint previousPreset = settings.dlssgPreset;
-			const int presetCount = static_cast<int>(DLSSGPreset::AvailableCount(streamlineDX12.dlssgPresetCSupported));
+			const int presetCount = static_cast<int>(DLSSGPreset::AvailableCount(streamlineDX12.PresetCSupported()));
 			if (Util::Combo(T(TKEY("dlssg_preset"), "DLSS-G Preset"), &settings.dlssgPreset, dlssgPresets, presetCount))
 				SyncDLSSGPresetDriverProfile(previousPreset);
 			Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::dlssgPreset,
@@ -1372,7 +1372,7 @@ void Upscaling::LoadSettings(json& o_json)
 		logger::warn("[Upscaling] Loaded presetDLSS {} out of range, resetting to 0 (Default)", settings.presetDLSS);
 		settings.presetDLSS = 0;
 	}
-	if (settings.dlssgPreset >= DLSSGPreset::kCount) {
+	if (settings.dlssgPreset >= DLSSGPreset::AvailableCount(streamlineDX12.PresetCSupported())) {
 		logger::warn("[Upscaling] Loaded dlssgPreset {} out of range, resetting to 0 (Default)", settings.dlssgPreset);
 		settings.dlssgPreset = 0;
 	}
@@ -1427,7 +1427,7 @@ void Upscaling::SyncDLSSGPresetDriverProfile(uint a_previousPreset)
 {
 	if (globals::game::isVR || !bootSnapshot.IsLatched())
 		return;
-	if (!Streamline::ApplyDLSSGPresetToDriverProfile(a_previousPreset, settings.dlssgPreset, streamlineDX12.dlssgPresetCSupported))
+	if (!Streamline::ApplyDLSSGPresetToDriverProfile(a_previousPreset, settings.dlssgPreset, streamlineDX12.PresetCSupported()))
 		settings.dlssgPreset = a_previousPreset;
 }
 
@@ -2837,7 +2837,7 @@ void Upscaling::LoadUpscalingSDKs()
 	streamlineDX12.interposerDllName = L"sl.interposer.dll";
 	streamlineDX12.instanceTag = "DX12";
 	streamlineDX12.LoadInterposer();
-	if (settings.dlssgPreset >= DLSSGPreset::AvailableCount(streamlineDX12.dlssgPresetCSupported)) {
+	if (settings.dlssgPreset >= DLSSGPreset::AvailableCount(streamlineDX12.PresetCSupported())) {
 		logger::warn("[Upscaling] dlssgPreset {} needs nvngx_dlssg.dll 310.9.16 or newer, resetting to 0 (Default)", settings.dlssgPreset);
 		settings.dlssgPreset = 0;
 	}

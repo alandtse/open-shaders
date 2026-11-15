@@ -50,7 +50,10 @@ public:
 	// DLSSGState::bIsDynamicMFGSupported, queried alongside dlssgMaxFramesToGenerate.
 	bool dlssgDynamicSupported = false;
 	static constexpr REL::Version kDLSSGPresetCMinimumVersion{ 310, 9, 16, 0 };  ///< First nvngx_dlssg.dll that accepts Preset C.
-	bool dlssgPresetCSupported = false;                                          ///< pluginDir's nvngx_dlssg.dll is kDLSSGPresetCMinimumVersion or newer (DX12 instance only).
+	bool dlssgPresetCKnownUnsupported = false;                                   ///< pluginDir's nvngx_dlssg.dll was read and is older than kDLSSGPresetCMinimumVersion (DX12 instance only).
+
+	/** @brief False only when the installed DLL is known to predate Preset C, so an unreadable DLL never discards a saved preset. */
+	bool PresetCSupported() const { return !dlssgPresetCKnownUnsupported; }
 	// Last slDLSSGGetState results, cached for GetDiagnostics (querying there would
 	// steal the since-last-query frame counter from the present path).
 	sl::DLSSGStatus lastDLSSGStatus = sl::DLSSGStatus::eOk;

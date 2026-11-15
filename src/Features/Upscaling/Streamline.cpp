@@ -90,6 +90,11 @@ void Streamline::LoadInterposer()
 
 	std::filesystem::path pluginDirPath = std::filesystem::path(pluginDir);
 
+	if (renderAPI == sl::RenderAPI::eD3D12) {
+		const auto dlssgVersion = Util::GetDllVersion((pluginDirPath / L"nvngx_dlssg.dll").wstring());
+		dlssgPresetCKnownUnsupported = dlssgVersion && *dlssgVersion < kDLSSGPresetCMinimumVersion;
+	}
+
 	std::wstring interposerPath = (pluginDirPath / interposerDllName).wstring();
 	interposer = LoadLibraryW(interposerPath.c_str());
 	if (interposer == nullptr) {
@@ -105,11 +110,6 @@ void Streamline::LoadInterposer()
 		Streamline::dllVersions = Util::EnumerateDllVersions(pluginDirPath);
 		for (const auto& [name, versionStr] : Streamline::dllVersions)
 			logger::info("[Streamline DX11] {} version: {}", name, versionStr);
-	}
-
-	if (renderAPI == sl::RenderAPI::eD3D12) {
-		const auto dlssgVersion = Util::GetDllVersion((pluginDirPath / L"nvngx_dlssg.dll").wstring());
-		dlssgPresetCSupported = dlssgVersion && *dlssgVersion >= kDLSSGPresetCMinimumVersion;
 	}
 
 	logger::info("[Streamline {}] Initializing Streamline", instanceTag);
