@@ -153,7 +153,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 	float a_strength, bool a_directSpatialReconstruction, const Policy& a_policy, uint64_t a_revision,
 	std::shared_ptr<const NativePBRSurfacePass::InputFrame> a_pbrSurface,
 	std::shared_ptr<const NativePBR::GpuMaterialResources> a_pbrMaterials, bool a_pbrDiagnostic,
-	bool a_pbrInputPreview)
+	bool a_pbrInputPreview,
+	std::shared_ptr<const NativeLightingFeature::Contribution> a_materialLighting, bool a_pbrFinalColor)
 {
 	CS_GPU_PASS("NativeComposite::RasterPassThrough");
 	status = "Invalid capture input";
@@ -312,6 +313,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 	bool submitted = false;
 	bool producerSignalled = false;
 	bool pbrSurfaceRecorded = false;
+	bool pbrFinalRecorded = false;
 	try {
 		const bool recreate = !slot->frame || slot->device != a_device12 || slot->device11 != a_device11 ||
 		                      slot->sourceDesc.Width != desc.Width || slot->sourceDesc.Height != desc.Height || slot->sourceDesc.Format != desc.Format || slot->supportsLighting != supportsLighting;
@@ -631,6 +633,17 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		} else if (a_pbrDiagnostic && !canRecordPbr) {
 			pbrSurfacePass.DeferForSlotBudget();
 		}
+		// Execute after diagnostic material evaluation, overwriting only the
+		// covered opaque pixels. The raster pass remains authoritative elsewhere.
+		if (pbrSurfaceRecorded && a_pbrFinalColor && supportsLighting && a_materialLighting)
+			pbrFinalRecorded = pbrSurfacePass.RecordFinalColor(a_device12, slot->commands.get(),
+				slot->pbrSurface, slot->frame->color.get(), desc.Format, *a_materialLighting,
+				a_frame, a_width, a_height, a_strength, a_transfer == Transfer::LegacyScene);
+		if (a_pbrFinalColor && !pbrSurfaceRecorded)
+			pbrSurfacePass.DeferFinal(canRecordPbr ? "No verified NativePBR material output for this frame" :
+				"Material outputs limited to one fenced composite slot; raster remains");
+		else if (a_pbrFinalColor && pbrSurfaceRecorded && !a_materialLighting)
+			pbrSurfacePass.DeferFinal("Current-frame native raw-light contribution unavailable");
 		DX::ThrowIfFailed(slot->commands->Close());
 		if (applyShadow) {
 			DX::ThrowIfFailed(a_queue->Wait(a_shadow->readyFence.get(), a_shadow->readyValue));
@@ -638,6 +651,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		}
 		if (blend)
 			DX::ThrowIfFailed(a_queue->Wait(a_lighting->readyFence.get(), a_lighting->readyValue));
+		if (pbrFinalRecorded)
+			DX::ThrowIfFailed(a_queue->Wait(a_materialLighting->readyFence.get(), a_materialLighting->readyValue));
 		if (pbrInput)
 			DX::ThrowIfFailed(a_queue->Wait(a_raster->readyFence.get(), a_raster->readyValue));
 		if (pbrSurfaceRecorded)
@@ -653,6 +668,12 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		if (blend && !globals::features::nativeLighting.RetainContribution(a_lighting, slot->fence.fence12.get(), done)) {
 			if (applyShadow)
 				shadowStatus = "Shadow submission blocked by native-lighting retention failure";
+			slot->untracked = true;
+			return {};
+		}
+		if (pbrFinalRecorded && (!blend || a_materialLighting != a_lighting) &&
+			!globals::features::nativeLighting.RetainContribution(a_materialLighting, slot->fence.fence12.get(), done)) {
+			status = "NativePBR raw-light consumer-fence retention failed";
 			slot->untracked = true;
 			return {};
 		}
@@ -678,6 +699,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			a_pbrMaterials->RetainUntil(slot->fence.fence12, done);
 		if (pbrSurfaceRecorded)
 			pbrSurfacePass.MarkSubmitted();
+		if (pbrFinalRecorded)
+			pbrSurfacePass.MarkFinalSubmitted();
 		auto& frame = *slot->frame;
 		frame.producerFence = slot->fence.fence12;
 		frame.producerValue = done;
@@ -691,11 +714,13 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		frame.shadowSubmitted = applyShadow;
 		frame.pbrInputSubmitted = pbrInput;
 		frame.pbrSurfaceSubmitted = pbrSurfaceRecorded;
+		frame.pbrFinalColorSubmitted = pbrFinalRecorded;
 		if (pbrInput)
 			++pbrInputSubmissions;
 		slot->countersRead = !blend || !recordCounters;
 		frame.validityRevision = a_revision ^ (blend ? (a_lighting->validityRevision * 0x9e3779b97f4a7c15ull) : 0) ^
-		                         (applyShadow ? (a_shadowSettings.revision * 0xbf58476d1ce4e5b9ull) : 0);
+		                         (applyShadow ? (a_shadowSettings.revision * 0xbf58476d1ce4e5b9ull) : 0) ^
+		                         (pbrFinalRecorded ? (a_materialLighting->validityRevision * 0x94d049bb133111ebull) : 0);
 		status = "Submitted";
 		if (applyShadow)
 			shadowStatus = "Independent shadow layer submitted";

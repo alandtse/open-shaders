@@ -48,6 +48,7 @@ public:
 	void MarkFinalSubmitted() { ++finalSubmissions; finalStatus = "NativePBR opaque final-color pass submitted"; }
 	const std::string& FinalStatus() const { return finalStatus; }
 	uint64_t FinalSubmissions() const { return finalSubmissions; }
+	void DeferFinal(const char* a_reason) { finalStatus = a_reason; }
 	/** @brief Reports why an attempted material dispatch was deferred. */
 	const std::string& Status() const { return status; }
 	uint64_t Submissions() const { return submissions; }

@@ -16,6 +16,7 @@ struct NativeCompositeFeature final : Feature
 		bool DirectSpatialReconstruction = true;
 		bool NativePbrDiagnosticDispatch = false;
 		bool NativePbrSurfaceEvaluation = false;
+		bool NativePbrFinalColor = false;  // Explicit opt-in: verified opaque materials replace final scene color.
 		bool NativePbrInputPreview = false;  // Old test-color shader; never part of normal final composition.
 		bool PersistLab = false;
 		// Independent DX12 shadow layer. Does not require Native Lighting.
@@ -52,7 +53,7 @@ struct NativeCompositeFeature final : Feature
 	bool WantsNativePbrSurfaceDiagnostic()
 	{
 		std::scoped_lock lock(settingsMutex);
-		return IsEnabled() && (settings.NativePbrSurfaceEvaluation || settings.NativePbrDiagnosticDispatch);
+		return IsEnabled() && (settings.NativePbrSurfaceEvaluation || settings.NativePbrDiagnosticDispatch || settings.NativePbrFinalColor);
 	}
 
 private:
