@@ -134,6 +134,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				while (shaderCache->IsCompiling() && !shaderCache->backgroundCompilation && !globals::game::quitGame) {
 					std::this_thread::sleep_for(100ms);
 				}
+				shaderCache->FinishStartupCompilation();
 
 				if (globals::game::quitGame) {
 					logger::info("Game was closed, skipping feature DataLoaded methods");

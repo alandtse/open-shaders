@@ -509,14 +509,25 @@ namespace SIE
 		return Util::ContentHash::HashString(key);
 	}
 
+	static Util::ContentHash::Hash128 GetFastPixelDigest(Util::ContentHash::Hash128 digest)
+	{
+		static const auto skipOptimization = Util::ContentHash::HashString("fxc-pixel-skip-optimization");
+		return Util::ContentHash::CombineHashes(digest, skipOptimization);
+	}
+
 	// Batches manifest writes instead of re-serializing the whole file per
 	// shader; CompilationSet::Complete() guarantees a final flush per batch.
 	constexpr uint64_t kManifestFlushBatchSize = 25;
 	std::atomic<uint64_t> g_manifestPendingWrites = 0;
+	std::atomic<bool> g_startupCompilationActive = true;
 
 	static void RecordDigestAndMaybeFlush(Util::ShaderCacheManifest::Manifest& manifest, const std::string& key, const std::string& digestHex)
 	{
 		manifest.Set(key, digestHex);
+		if (g_startupCompilationActive.load(std::memory_order_relaxed) &&
+			!globals::shaderCache->backgroundCompilation.load(std::memory_order_relaxed)) {
+			return;
+		}
 		if (g_manifestPendingWrites.fetch_add(1, std::memory_order_relaxed) + 1 >= kManifestFlushBatchSize) {
 			g_manifestPendingWrites.store(0, std::memory_order_relaxed);
 			manifest.Save();
@@ -591,6 +602,39 @@ namespace SIE
 	// Custom include handler to track all includes during shader compilation
 	class TrackingIncludeHandler : public ID3DInclude
 	{
+		struct FileStamp
+		{
+			uint64_t modified;
+			uint64_t size;
+
+			bool operator==(const FileStamp&) const = default;
+		};
+
+		struct IncludeSnapshot
+		{
+			FileStamp stamp;
+			std::string trackedPath;
+			std::string bytes;
+		};
+
+		static inline std::mutex snapshotsMutex;
+		static inline std::unordered_map<std::filesystem::path, std::shared_ptr<const IncludeSnapshot>> snapshots;
+
+		static std::optional<FileStamp> ReadStamp(const std::filesystem::path& path)
+		{
+			WIN32_FILE_ATTRIBUTE_DATA attributes;
+			if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attributes) ||
+				(attributes.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) {
+				return std::nullopt;
+			}
+			return FileStamp{
+				(static_cast<uint64_t>(attributes.ftLastWriteTime.dwHighDateTime) << 32) | attributes.ftLastWriteTime.dwLowDateTime,
+				(static_cast<uint64_t>(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow,
+			};
+		}
+
+		const bool shareStartupIncludes;
+
 	public:
 		// Captured include paths (normalized)
 		std::vector<std::string> includes;
@@ -599,8 +643,16 @@ namespace SIE
 		std::filesystem::path baseDir;
 		std::filesystem::path sourcePath;
 
-		TrackingIncludeHandler(const std::filesystem::path& source) :
+		TrackingIncludeHandler(const std::filesystem::path& source, bool shareIncludes = false) :
+			shareStartupIncludes(shareIncludes && g_startupCompilationActive.load(std::memory_order_relaxed)),
 			baseDir(source.parent_path()), sourcePath(source) {}
+
+		static void ReleaseStartupSnapshots()
+		{
+			const std::scoped_lock lock(snapshotsMutex);
+			g_startupCompilationActive.store(false, std::memory_order_relaxed);
+			snapshots.clear();
+		}
 
 		HRESULT Open(D3D_INCLUDE_TYPE IncludeType, LPCSTR pFileName, LPCVOID /*pParentData*/, LPCVOID* ppData, UINT* pBytes) noexcept override
 		{
@@ -610,6 +662,25 @@ namespace SIE
 			std::filesystem::path includePath;
 			try {
 				includePath = baseDir / pFileName;
+				const auto stamp = shareStartupIncludes ? ReadStamp(includePath) : std::nullopt;
+				if (stamp) {
+					std::shared_ptr<const IncludeSnapshot> snapshot;
+					{
+						const std::scoped_lock lock(snapshotsMutex);
+						if (auto it = snapshots.find(includePath); it != snapshots.end() && it->second->stamp == *stamp)
+							snapshot = it->second;
+					}
+					if (snapshot) {
+						includes.push_back(snapshot->trackedPath);
+						auto buffer = std::make_unique_for_overwrite<char[]>(std::max<size_t>(snapshot->bytes.size(), 1));
+						std::memcpy(buffer.get(), snapshot->bytes.data(), snapshot->bytes.size());
+						buffers.push_back(std::move(buffer));
+						*ppData = buffers.back().get();
+						*pBytes = static_cast<UINT>(snapshot->bytes.size());
+						return S_OK;
+					}
+				}
+
 				// Normalize path to reduce duplicates (weakly_canonical may throw)
 				std::error_code ec;
 				auto canonical = std::filesystem::weakly_canonical(includePath, ec);
@@ -626,6 +697,13 @@ namespace SIE
 				if (!Util::ShaderInclude::Read(openPath, contents, error)) {
 					Util::ShaderInclude::Report(sourcePath, openPath, error);
 					return E_FAIL;
+				}
+				if (stamp && stamp->size == contents.size && ReadStamp(includePath) == stamp) {
+					auto snapshot = std::make_shared<const IncludeSnapshot>(
+						*stamp, pathStr, std::string(contents.data.get(), contents.size));
+					const std::scoped_lock lock(snapshotsMutex);
+					if (g_startupCompilationActive.load(std::memory_order_relaxed))
+						snapshots.insert_or_assign(includePath, std::move(snapshot));
 				}
 				buffers.push_back(std::move(contents.data));
 				*ppData = buffers.back().get();
@@ -690,6 +768,28 @@ namespace SIE
 
 	namespace SShaderCache
 	{
+		static bool UseFastPixelCompile(RE::BSShader::Type type, uint32_t descriptor)
+		{
+			if (type != RE::BSShader::Type::Lighting)
+				return false;
+
+			constexpr uint32_t materialSpecializations = ShaderCache::kLightingDryWeather |
+			                                             ShaderCache::kLightingSnowCoverInactive |
+			                                             ShaderCache::kLightingLinearACEScg;
+			constexpr uint32_t deferredSpecializations = ShaderCache::kLightingNoLocalLights |
+			                                             ShaderCache::kLightingSingleClusterLight |
+			                                             ShaderCache::kLightingNoLocalShadowMaps |
+			                                             ShaderCache::kLightingNoLocalContactShadows |
+			                                             ShaderCache::kLightingNoLegacySubsurface |
+			                                             static_cast<uint32_t>(ShaderCache::LightingShaderFlags::IBLLuminanceRatio);
+			const bool deferred = (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::Deferred)) != 0;
+			const bool noMeshVariation = (descriptor & ShaderCache::kLightingNoMeshVariation) &&
+			                             ShaderCache::SupportsMeshVariationVariant(descriptor);
+			return (descriptor & materialSpecializations) == 0 &&
+			       (!deferred || (descriptor & deferredSpecializations) == 0) &&
+			       !noMeshVariation;
+		}
+
 		static std::string GetShaderString(ShaderClass, const RE::BSShader&, uint32_t, bool = false);
 		/**
 		 * @brief Resolve image-space shader descriptor when applicable.
@@ -2171,13 +2271,13 @@ namespace SIE
 			const D3D_SHADER_MACRO* a_defines, uint32_t a_flags, TrackingIncludeHandler& a_includes, const std::wstring* a_reusableFrom)
 		{
 			SharedCompile result;
-			std::ifstream sourceFile(a_path, std::ios::binary);
-			const std::string source((std::istreambuf_iterator<char>(sourceFile)), std::istreambuf_iterator<char>());
-			if (source.empty())
+			Util::ShaderInclude::File source;
+			Util::ShaderInclude::ReadError error;
+			if (!Util::ShaderInclude::Read(a_path, source, error) || source.size == 0)
 				return result;
 			winrt::com_ptr<ID3DBlob> preprocessed;
 			winrt::com_ptr<ID3DBlob> errors;
-			if (FAILED(D3DPreprocess(source.data(), source.size(), a_pathString.c_str(), a_defines, &a_includes, preprocessed.put(), errors.put())) || !preprocessed)
+			if (FAILED(D3DPreprocess(source.data.get(), source.size, a_pathString.c_str(), a_defines, &a_includes, preprocessed.put(), errors.put())) || !preprocessed)
 				return result;
 			result.source.assign(static_cast<const char*>(preprocessed->GetBufferPointer()), preprocessed->GetBufferSize());
 			if (!result.source.empty() && result.source.back() == '\0')
@@ -2260,6 +2360,10 @@ namespace SIE
 
 			// Read once: Developer Mode can toggle mid-compile
 			const bool debugCompile = ShaderCache::IsDebugCompile();
+			const bool partialPrecision = globals::state->enablePartialPrecision.load(std::memory_order_relaxed);
+			const bool avoidFlowControl = globals::state->enableAvoidFlowControl.load(std::memory_order_relaxed);
+			const bool fastCompile = useDiskCache && shaderClass == ShaderClass::Pixel && !debugCompile &&
+			                         !partialPrecision && !avoidFlowControl && UseFastPixelCompile(type, descriptor);
 
 			// check diskcache
 			auto diskPath = GetDiskPath(shader, descriptor, shaderClass);
@@ -2285,7 +2389,8 @@ namespace SIE
 						if (const auto digest = GetShaderContentDigestTimed(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path(), cache)) {
 							decidedByDigest = true;
 							const auto combined = Util::ContentHash::CombineHashes(Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest()), GetPerShaderDefinesDigest(key));
-							diskCacheOutdated = *recorded != combined.ToHex();
+							diskCacheOutdated = *recorded != combined.ToHex() &&
+							                    (!fastCompile || *recorded != GetFastPixelDigest(combined).ToHex());
 							if (diskCacheOutdated) {
 								logger::debug("Disk-cached shader {} outdated: content digest changed", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
 								cache.IncDigestMissTasks();
@@ -2388,11 +2493,12 @@ namespace SIE
 
 			// compile shaders â€” match Utils/D3D.cpp CompileShader flag policy (strictness, optional toggles, validation).
 			winrt::com_ptr<ID3DBlob> errorBlob;
-			uint32_t flags = !debugCompile ? (D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3) : D3DCOMPILE_DEBUG;
-			if (globals::state->enablePartialPrecision.load(std::memory_order_relaxed)) {
+			const uint32_t optimization = fastCompile ? D3DCOMPILE_SKIP_OPTIMIZATION : D3DCOMPILE_OPTIMIZATION_LEVEL3;
+			uint32_t flags = debugCompile ? D3DCOMPILE_DEBUG : (D3DCOMPILE_ENABLE_STRICTNESS | optimization);
+			if (partialPrecision) {
 				flags |= D3DCOMPILE_PARTIAL_PRECISION;
 			}
-			if (globals::state->enableAvoidFlowControl.load(std::memory_order_relaxed)) {
+			if (avoidFlowControl) {
 				flags |= D3DCOMPILE_AVOID_FLOW_CONTROL;
 			}
 			if (useDiskCache) {
@@ -2407,7 +2513,7 @@ namespace SIE
 			// Track includes
 			TrackingIncludeHandler includeHandler(path);
 
-			TrackingIncludeHandler preprocessHandler(path);
+			TrackingIncludeHandler preprocessHandler(path, useDiskCache && !debugCompile && !cache.UseFileWatcher() && !cache.backgroundCompilation);
 			auto shared = AcquireSharedCompile(shaderClass, path, pathString, defines.data(), flags, preprocessHandler,
 				useDiskCache ? &diskPath : nullptr);
 			shaderBlob = std::move(shared.blob);
@@ -2547,7 +2653,8 @@ namespace SIE
 					// check above reads this back to decide disk-cache validity.
 					if (const auto digest = GetShaderContentDigestTimed(path, std::filesystem::path(path).parent_path(), cache)) {
 						const auto combined = Util::ContentHash::CombineHashes(Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest()), GetPerShaderDefinesDigest(key));
-						RecordDigestAndMaybeFlush(GetShaderCacheManifest(), GetManifestKey(diskPath), combined.ToHex());
+						RecordDigestAndMaybeFlush(GetShaderCacheManifest(), GetManifestKey(diskPath),
+							(fastCompile ? GetFastPixelDigest(combined) : combined).ToHex());
 					}
 					if (contentKey)
 						GetShaderCacheManifest().SetContentKey(GetManifestKey(diskPath), contentKey->ToHex());
@@ -4575,6 +4682,11 @@ namespace SIE
 	bool ShaderCache::UseFileWatcher() const
 	{
 		return useFileWatcher;
+	}
+
+	void ShaderCache::FinishStartupCompilation()
+	{
+		TrackingIncludeHandler::ReleaseStartupSnapshots();
 	}
 
 	void ShaderCache::SetFileWatcher(bool value)

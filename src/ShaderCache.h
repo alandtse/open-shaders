@@ -1006,24 +1006,19 @@ namespace SIE
 
 		ShaderFileDependencyTracker* GetDependencyTracker() { return dependencyTracker.get(); }
 
-		static constexpr int32_t kLowCoreCompilationThreadThreshold = 8;
-		static constexpr int32_t kLowCoreReservedCompilationThreads = 1;
-		static constexpr int32_t kDefaultReservedCompilationThreads = 2;
-
 		static int32_t GetDefaultCompilationThreadCount()
 		{
-			const auto threadCount = static_cast<int32_t>(std::thread::hardware_concurrency());
-			const auto reservedThreads = threadCount <= kLowCoreCompilationThreadThreshold ? kLowCoreReservedCompilationThreads : kDefaultReservedCompilationThreads;
-			return std::max(threadCount - reservedThreads, 1);
+			return std::max(static_cast<int32_t>(std::thread::hardware_concurrency()), 1);
 		}
 
-		// Reserve fewer threads on low-core systems to avoid overly slow startup compilation.
 		// Management and file watcher run on dedicated jthreads, not pool slots.
 		// Background (in-game): half of P-cores only, to avoid starving the render thread.
 		int32_t compilationThreadCount = GetDefaultCompilationThreadCount();
 		int32_t backgroundCompilationThreadCount = std::max(static_cast<int32_t>(Util::GetPerformanceCoreCount()) / 2, 1);
 		BS::thread_pool<> compilationPool{ static_cast<std::size_t>(compilationThreadCount) };
 		std::jthread managementJthread;  // dedicated thread for ManageCompilationSet (not in pool)
+		/** @brief Ends startup-only compilation shortcuts and releases their source snapshots. */
+		void FinishStartupCompilation();
 		/** Switches compilation mode, dropping unstarted precompiles when entering background mode. */
 		void SetBackgroundCompilation(bool value);
 		// atomic: written from the menu/input thread (boot setting + Skip Compilation hotkey),
