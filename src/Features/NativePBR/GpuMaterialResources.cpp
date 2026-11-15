@@ -213,7 +213,7 @@ namespace NativePBR
 			result->indices.emplace(identity, index);
 			const auto requestedRoles = GpuRequestedTextureRoles(recipe);
 			const auto availability = ClassifyGpuMaterialAvailability(record.controls[0], requestedRoles);
-			result->entries.push_back({ index, record.controls[0], requestedRoles, recipe.issues,
+			result->entries.push_back({ index, record.controls[0], requestedRoles, EffectiveNativeIssues(recipe),
 				recipe.revision, availability });
 			if (availability == GpuMaterialAvailability::Resident)
 				++result->fullyResident;
