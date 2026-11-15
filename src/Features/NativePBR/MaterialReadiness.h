@@ -37,6 +37,29 @@ namespace NativePBR
 		return a_readiness;
 	}
 
+	/** @brief Excludes projected-only parameters and feature textures unused by the opaque shader permutation. */
+	inline RecipeReadiness ResolveCapturedOpaqueFeatures(RecipeReadiness a_readiness, const Recipe& a_recipe,
+		bool a_currentFrameOpaqueCapture)
+	{
+		if (!a_currentFrameOpaqueCapture)
+			return a_readiness;
+		const auto flags = a_recipe.parameters.pbrFlags;
+		constexpr uint32_t kSubsurface = uint32_t(PBRFlags::Subsurface);
+		constexpr uint32_t kTwoLayer = uint32_t(PBRFlags::TwoLayer);
+		constexpr uint32_t kFuzz = uint32_t(PBRFlags::Fuzz);
+		constexpr uint32_t kHair = uint32_t(PBRFlags::HairMarschner);
+		a_readiness.unsupportedFeatures &= ~UnsupportedProjection;
+		if (!a_recipe.parameters.glint.enabled || (flags & (kTwoLayer | kHair | kFuzz)) != 0)
+			a_readiness.unsupportedFeatures &= ~UnsupportedGlint;
+		const bool usesFeatures0 = (flags & kSubsurface) != 0 && (flags & (kTwoLayer | kHair)) == 0 &&
+			!a_recipe.textures[static_cast<size_t>(TextureRole::Features0)].canonicalPath.empty();
+		const bool usesFeatures1 = (flags & (kTwoLayer | kFuzz)) != 0 &&
+			!a_recipe.textures[static_cast<size_t>(TextureRole::Features1)].canonicalPath.empty();
+		if (!usesFeatures0 && !usesFeatures1)
+			a_readiness.unsupportedFeatures &= ~UnsupportedFeatureTextures;
+		return a_readiness;
+	}
+
 	/** @brief Counts overlapping causes without confusing source or shading readiness with texture residency. */
 	struct MaterialReadinessCounts
 	{

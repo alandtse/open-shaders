@@ -1889,6 +1889,44 @@ TEST_CASE("Material readiness separates unresolved instance state from unsupport
 	REQUIRE(counts.sourceLimited == 1);
 }
 
+TEST_CASE("NativePBR opaque captures ignore only projected and inactive feature roles", "[native_pbr]")
+{
+	NativePBR::Snapshot snapshot{ 533, 9, {} };
+	snapshot.material.texturePaths = { "textures/base.dds", "textures/normal.dds", "textures/rmaos.dds", "", "", "", "" };
+	snapshot.material.texturePathsComplete = true;
+	snapshot.material.projectedColor = { 0.5f, 0.8f, 1.0f };
+	snapshot.material.projectedGlint.enabled = true;
+	auto recipe = NativePBR::CompileRecipe(snapshot);
+	auto readiness = NativePBR::ClassifyRecipeReadiness(recipe);
+	REQUIRE((readiness.unsupportedFeatures & (NativePBR::UnsupportedGlint | NativePBR::UnsupportedProjection)) != 0);
+	CHECK(NativePBR::ResolveCapturedOpaqueFeatures(readiness, recipe, true).unsupportedFeatures == 0);
+	CHECK(NativePBR::ResolveCapturedOpaqueFeatures(readiness, recipe, false).unsupportedFeatures == readiness.unsupportedFeatures);
+
+	snapshot.material.glint.enabled = true;
+	recipe = NativePBR::CompileRecipe(snapshot);
+	readiness = NativePBR::ResolveCapturedOpaqueFeatures(NativePBR::ClassifyRecipeReadiness(recipe), recipe, true);
+	CHECK(readiness.unsupportedFeatures == NativePBR::UnsupportedGlint);
+
+	snapshot.material.glint.enabled = false;
+	snapshot.material.texturePaths[static_cast<size_t>(NativePBR::TextureRole::Features0)] = "textures/features0.dds";
+	recipe = NativePBR::CompileRecipe(snapshot);
+	readiness = NativePBR::ResolveCapturedOpaqueFeatures(NativePBR::ClassifyRecipeReadiness(recipe), recipe, true);
+	CHECK(readiness.unsupportedFeatures == 0);
+
+	snapshot.material.pbrFlags = uint32_t(PBRFlags::Subsurface);
+	recipe = NativePBR::CompileRecipe(snapshot);
+	readiness = NativePBR::ResolveCapturedOpaqueFeatures(NativePBR::ClassifyRecipeReadiness(recipe), recipe, true);
+	CHECK((readiness.unsupportedFeatures & NativePBR::UnsupportedFeatureTextures) != 0);
+	CHECK((readiness.unsupportedFeatures & NativePBR::UnsupportedPbrFeatures) != 0);
+
+	snapshot.material.pbrFlags = uint32_t(PBRFlags::Fuzz);
+	snapshot.material.fuzzWeight = 0.0f;
+	snapshot.material.texturePaths[static_cast<size_t>(NativePBR::TextureRole::Features1)] = "textures/features1.dds";
+	recipe = NativePBR::CompileRecipe(snapshot);
+	readiness = NativePBR::ResolveCapturedOpaqueFeatures(NativePBR::ClassifyRecipeReadiness(recipe), recipe, true);
+	CHECK(readiness.unsupportedFeatures == NativePBR::UnsupportedFeatureTextures);
+}
+
 TEST_CASE("Material observations resolve only authoritatively known instance modes", "[native_pbr]")
 {
 	NativePBR::InstanceProperties opaque;
