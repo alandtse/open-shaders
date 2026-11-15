@@ -180,8 +180,9 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 			else if (!exact)
 				++missingRevisions;
 			const bool resident = exact && exact->availability == NativePBR::GpuMaterialAvailability::Resident;
-			const auto readiness = matchedInstance ? instance.Readiness() :
-				exact ? NativePBR::ClassifyRecipeReadiness(exact->recipeIssues) : NativePBR::RecipeReadiness{};
+			const auto readiness = NativePBR::ResolveCapturedOpaqueUv(matchedInstance ? instance.Readiness() :
+				exact ? NativePBR::ClassifyRecipeReadiness(exact->recipeIssues) : NativePBR::RecipeReadiness{},
+				matchedInstance && !draw.projectedUv);
 			const bool compatible = matchedInstance && readiness.IsOpaqueFeatureCompatible() && readiness.unresolvedInstance == 0;
 			if (exact) {
 				if (!resident)

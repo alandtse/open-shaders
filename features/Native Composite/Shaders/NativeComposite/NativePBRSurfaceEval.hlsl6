@@ -94,9 +94,10 @@ void main(uint3 threadId : SV_DispatchThreadID)
 	uint4 vertexColorBytes = VertexColorBytes[pixel];
 	surface.vertexColor = float3(vertexColorBytes.xyz) / 255.0f;
 	surface.facing = ddyDepthFacing.w;
-	float2 uv = surface.uv * record.uv[0].zw + record.uv[0].xy;
-	float2 uvDx = surface.uvDx * record.uv[0].zw;
-	float2 uvDy = surface.uvDy * record.uv[0].zw;
+	// Skyrim's original lighting vertex shader has already applied the UV transform.
+	float2 uv = surface.uv;
+	float2 uvDx = surface.uvDx;
+	float2 uvDy = surface.uvDy;
 	float4 base = SampleTexture(record.textures[0].xy, record.properties.z, uv, uvDx, uvDy, 1.0f);
 	float4 normal = SampleTexture(record.textures[0].zw, record.properties.z, uv, uvDx, uvDy, float4(0.5f, 0.5f, 1.0f, 1.0f));
 	float4 packed = SampleTexture(record.textures[1].xy, record.properties.z, uv, uvDx, uvDy, float4(1.0f, 0.0f, 1.0f, 1.0f));

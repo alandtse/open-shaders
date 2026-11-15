@@ -29,6 +29,14 @@ namespace NativePBR
 		return ClassifyRecipeReadiness(EffectiveNativeIssues(a_recipe));
 	}
 
+	/** @brief Uses original vertex-shader UVs from a verified same-frame opaque sidecar. */
+	inline RecipeReadiness ResolveCapturedOpaqueUv(RecipeReadiness a_readiness, bool a_currentFrameOpaqueCapture)
+	{
+		if (a_currentFrameOpaqueCapture)
+			a_readiness.unresolvedInstance &= ~UnknownUvAnimation;
+		return a_readiness;
+	}
+
 	/** @brief Counts overlapping causes without confusing source or shading readiness with texture residency. */
 	struct MaterialReadinessCounts
 	{

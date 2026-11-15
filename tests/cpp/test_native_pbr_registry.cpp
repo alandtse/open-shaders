@@ -1844,6 +1844,9 @@ TEST_CASE("Material readiness separates unresolved instance state from unsupport
 	REQUIRE(readiness.unsupportedFeatures == 0);
 	REQUIRE(readiness.unresolvedInstance == NativePBR::kUnresolvedInstanceIssues);
 	REQUIRE(readiness.IsOpaqueFeatureCompatible());
+	const auto captured = NativePBR::ResolveCapturedOpaqueUv(readiness, true);
+	REQUIRE(captured.unresolvedInstance == (NativePBR::kUnresolvedInstanceIssues & ~NativePBR::UnknownUvAnimation));
+	REQUIRE(NativePBR::ResolveCapturedOpaqueUv(readiness, false).unresolvedInstance == NativePBR::kUnresolvedInstanceIssues);
 	NativePBR::MaterialReadinessCounts counts;
 	counts.Observe(recipe);
 	REQUIRE(counts.recipes == 1);
