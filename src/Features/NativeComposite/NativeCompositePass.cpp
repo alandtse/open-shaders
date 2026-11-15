@@ -82,7 +82,7 @@ bool NativeComposite::InitializeLighting(ID3D12Device* a_device)
 		CD3DX12_ROOT_PARAMETER parameters[3];
 		parameters[0].InitAsDescriptorTable(1, &ranges[0]);
 		parameters[1].InitAsDescriptorTable(1, &ranges[1]);
-		parameters[2].InitAsConstants(40, 0);
+		parameters[2].InitAsConstants(41, 0);
 		const CD3DX12_ROOT_SIGNATURE_DESC desc(3, parameters);
 		winrt::com_ptr<ID3DBlob> serialized, errors;
 		DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
@@ -237,6 +237,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 	                   a_lighting->textures[0] && a_lighting->textures[1] && a_lighting->textures[2] && a_lighting->textures[3] && a_lighting->textures[7] && a_lighting->textures[8] && a_lighting->textures[9] &&
 	                   a_lighting->scene.raster && a_lighting->scene.raster->depth && a_lighting->scene.raster->depth->resource &&
 	                   a_lighting->width == a_width && a_lighting->height == a_height && (a_policy.visual != 0 || a_transfer != Transfer::Unknown) && InitializeLighting(a_device12);
+	const bool recordCounters = a_policy.visual != 0;
 	const bool pbrInput = supportsLighting && a_raster && a_raster->pbrInputOnly && a_raster->pbrDraws &&
 		!a_raster->pbrDraws->empty() && a_raster->frame == a_frame && a_raster->width >= a_width &&
 		a_raster->height >= a_height && a_raster->readyFence && a_raster->readyValue &&
@@ -512,7 +513,10 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			counterUav.Buffer.NumElements = 6;
 			counterUav.Buffer.StructureByteStride = sizeof(uint32_t);
 			a_device12->CreateUnorderedAccessView(slot->counters.get(), nullptr, &counterUav, cpu);
-			slot->commands->CopyBufferRegion(slot->counters.get(), 0, slot->counterReset.get(), 0, 6 * sizeof(uint32_t));
+			if (recordCounters)
+				slot->commands->CopyBufferRegion(slot->counters.get(), 0, slot->counterReset.get(), 0, 6 * sizeof(uint32_t));
+			// Keep a valid UAV resource state even when the shader's uniform
+			// diagnostics branch skips all counter writes.
 			const auto counterBegin = CD3DX12_RESOURCE_BARRIER::Transition(slot->counters.get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 			slot->commands->ResourceBarrier(1, &counterBegin);
 			slot->commands->ResourceBarrier(static_cast<UINT>(lightingBarriers.size()), lightingBarriers.data());
@@ -531,18 +535,25 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 				uint32_t legacy;
 				uint32_t diffuse, specular, visual, spatialReconstruction;
 				DirectX::SimpleMath::Matrix inverseProjection, inverseView;
+				uint32_t recordDiagnostics;
 			};
-			static_assert(sizeof(Constants) == 40 * sizeof(uint32_t));
+			static_assert(sizeof(Constants) == 41 * sizeof(uint32_t));
 			const auto& camera = a_lighting->scene.raster->camera;
 			const Constants constants{ a_width, a_height, a_strength, a_transfer == Transfer::LegacyScene ? 1u : 0u, a_policy.diffuse, a_policy.specular, a_policy.visual,
-				a_directSpatialReconstruction && a_lighting->traceDensityMode != 0u ? 1u : 0u, camera.CameraProjInverse, camera.CameraViewInverse };
-			slot->commands->SetComputeRoot32BitConstants(2, 40, &constants, 0);
+				a_directSpatialReconstruction && a_lighting->traceDensityMode != 0u ? 1u : 0u, camera.CameraProjInverse, camera.CameraViewInverse,
+				recordCounters ? 1u : 0u };
+			slot->commands->SetComputeRoot32BitConstants(2, 41, &constants, 0);
 			slot->commands->Dispatch((a_width + 7) / 8, (a_height + 7) / 8, 1);
-			const auto counterEnd = CD3DX12_RESOURCE_BARRIER::Transition(slot->counters.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-			slot->commands->ResourceBarrier(1, &counterEnd);
-			slot->commands->CopyBufferRegion(slot->counterReadback.get(), 0, slot->counters.get(), 0, 6 * sizeof(uint32_t));
-			const auto counterRestore = CD3DX12_RESOURCE_BARRIER::Transition(slot->counters.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
-			slot->commands->ResourceBarrier(1, &counterRestore);
+			if (recordCounters) {
+				const auto counterEnd = CD3DX12_RESOURCE_BARRIER::Transition(slot->counters.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+				slot->commands->ResourceBarrier(1, &counterEnd);
+				slot->commands->CopyBufferRegion(slot->counterReadback.get(), 0, slot->counters.get(), 0, 6 * sizeof(uint32_t));
+				const auto counterRestore = CD3DX12_RESOURCE_BARRIER::Transition(slot->counters.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+				slot->commands->ResourceBarrier(1, &counterRestore);
+			} else {
+				const auto counterRestore = CD3DX12_RESOURCE_BARRIER::Transition(slot->counters.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+				slot->commands->ResourceBarrier(1, &counterRestore);
+			}
 			for (size_t i = 0; i < resources.size(); ++i)
 				lightingBarriers[i] = CD3DX12_RESOURCE_BARRIER::Transition(resources[i], D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON);
 			slot->commands->ResourceBarrier(static_cast<UINT>(lightingBarriers.size()), lightingBarriers.data());
@@ -681,7 +692,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		frame.pbrSurfaceSubmitted = pbrSurfaceRecorded;
 		if (pbrInput)
 			++pbrInputSubmissions;
-		slot->countersRead = !blend;
+		slot->countersRead = !blend || !recordCounters;
 		frame.validityRevision = a_revision ^ (blend ? (a_lighting->validityRevision * 0x9e3779b97f4a7c15ull) : 0) ^
 		                         (applyShadow ? (a_shadowSettings.revision * 0xbf58476d1ce4e5b9ull) : 0);
 		status = "Submitted";

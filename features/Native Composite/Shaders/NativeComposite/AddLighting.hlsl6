@@ -21,7 +21,14 @@ cbuffer CompositeConstants : register(b0)
 	uint SpatialReconstruction;
 	row_major float4x4 InverseProjection;
 	row_major float4x4 InverseView;
+	uint RecordDiagnostics;
 };
+
+void Count(uint index)
+{
+	if (RecordDiagnostics != 0u)
+		InterlockedAdd(CompositeCounts[index], 1);
+}
 
 float3 SignedPower(float3 value, float exponent)
 {
@@ -116,7 +123,7 @@ void main(uint3 id : SV_DispatchThreadID)
 	float3 diffuse = Diffuse[id.xy].rgb, specular = Specular[id.xy].rgb;
 	bool strict = original == 1, accepted = effective == 1;
 	if (VisualMode != 0) {
-		InterlockedAdd(CompositeCounts[2], 1);
+		Count(2);
 		float3 display = 0;
 		if (VisualMode == 1) display = original == 1 ? float3(0, 1, 0) : original == 2 ? float3(0, 1, 1) : original == 3 ? float3(1, 0, 1) : 0;
 		else if (VisualMode == 2) display = effective == 1 ? float3(0, 1, 0) : effective == 2 ? float3(0, 1, 1) : effective == 3 ? float3(1, 0, 1) : 0;
@@ -147,16 +154,16 @@ void main(uint3 id : SV_DispatchThreadID)
 		if (ReconstructDirect(id.xy, diffuse, specular, reconstructedDiffuse, reconstructedSpecular)) {
 			acceptDiffuse = reconstructedDiffuse;
 			acceptSpecular = reconstructedSpecular;
-			InterlockedAdd(CompositeCounts[5], 1);
+			Count(5);
 		}
 	}
-	if (acceptDiffuse || acceptSpecular) InterlockedAdd(CompositeCounts[0], 1);
-	if ((acceptDiffuse || acceptSpecular) && original != 1 && effective == 1) InterlockedAdd(CompositeCounts[3], 1);
-	if ((acceptDiffuse || acceptSpecular) && original != 1 && effective != 1) InterlockedAdd(CompositeCounts[4], 1);
+	if (acceptDiffuse || acceptSpecular) Count(0);
+	if ((acceptDiffuse || acceptSpecular) && original != 1 && effective == 1) Count(3);
+	if ((acceptDiffuse || acceptSpecular) && original != 1 && effective != 1) Count(4);
 	float3 lighting = (acceptDiffuse ? diffuse : 0) + (acceptSpecular ? specular : 0);
 	if (!all(isfinite(lighting)) || !any(lighting != 0))
 		return;
-	InterlockedAdd(CompositeCounts[1], 1);
+	Count(1);
 	float4 color = Scene[id.xy];
 	float3 linearColor = LegacyTransfer != 0 ? SignedPower(color.rgb, 1.6) : color.rgb;
 	linearColor += lighting * Strength;

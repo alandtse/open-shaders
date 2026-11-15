@@ -94,6 +94,7 @@ void NativeCompositeFeature::DrawSettings()
 		ImGui::TextDisabled("blue no lights, yellow visibility, white non-finite, green success.");
 		ImGui::TextDisabled("Comparison: cyan effective only, orange strict only, black equal.");
 		ImGui::TextDisabled("Mask: magenta absent, yellow invalid, cyan rejected, orange not rejected; red/green visibility.");
+		ImGui::TextDisabled("GPU counters update only while a validity visualization is selected.");
 		ImGui::TextDisabled("GPU completed: %llu  Accepted: %llu  Modified: %llu  Debug: %llu",
 			static_cast<unsigned long long>(pass.CompletedComposites()), static_cast<unsigned long long>(pass.AcceptedPixels()),
 			static_cast<unsigned long long>(pass.ModifiedPixels()), static_cast<unsigned long long>(pass.VisualizationPixels()));
