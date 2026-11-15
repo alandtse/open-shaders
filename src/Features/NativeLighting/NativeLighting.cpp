@@ -660,13 +660,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		slot->countersRead = true;
 		const auto& scene = *slot->scene.prepared;
 		const auto& camera = slot->scene.raster->camera;
-		struct Light
-		{
-			float4 positionRadius, radianceSourceRadius;
-			std::array<uint32_t, 4> flags;
-		};
-		static_assert(sizeof(Light) == 48);
-		std::array<Light, DX12Native::kMaximumNativePointLights> lights{};
+		std::array<DX12Native::NativeDirectPointLight, DX12Native::kMaximumNativePointLights> lights{};
 		const auto nativeLights = globals::features::dx12NativeScene.GetNativeLLFLights(slot->scene.frame);
 		const std::span<const DX12Native::PreparedPointLight> lightSource = nativeLights ?
 		                                                                        std::span<const DX12Native::PreparedPointLight>(nativeLights->lights.data(), nativeLights->count) :
@@ -705,6 +699,10 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			a_lab.ReferenceVisibility ? 1u : 0u, a_lab.ReferencePrimaryTraversal ? 1u : 0u, slot->scene.frame, a_settings.TraceDensityMode,
 			{ a_settings.PointLightRadiusMultiplier, a_settings.PointLightFalloffFraction, a_settings.PointLightFalloffExponent, a_settings.DirectStrength },
 			{ a_settings.ShadowStrength, a_settings.EmitterRadiusMultiplier, a_settings.StochasticShadows ? 1.0f : 0.0f, a_settings.EmissionStrength } };
+		slot->nativePointLightCount = selectedCount;
+		slot->nativeMinimumDistance = constants.minimum;
+		slot->nativeLightTuning = constants.lightTuning;
+		slot->nativeShadowTuning = constants.shadowTuning;
 		const D3D12_RANGE noRead{ 0, 0 };
 		void* mapped = nullptr;
 		DX::ThrowIfFailed(slot->lights->Map(0, &noRead, &mapped));

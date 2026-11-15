@@ -3,6 +3,7 @@
 #include "Feature.h"
 #include "Features/DX12NativeScene/DX12NativeScene.h"
 #include "Features/DX12NativeScene/VideoMemoryBudget.h"
+#include "NativeDirectLightContract.h"
 #include <atomic>
 #include <mutex>
 
@@ -74,6 +75,10 @@ struct NativeLightingFeature final : Feature
 		uint64_t readyValue = 0, bytes = 0, sceneRevision = 0;
 		uint64_t validityRevision = 0;
 		uint32_t frame = 0, width = 0, height = 0, enabledLobes = 0, traceDensityMode = 0;
+		// Immutable current-frame raw direct-light inputs for material-aware consumers.
+		uint32_t nativePointLightCount = 0;
+		float nativeMinimumDistance = 0.5f;
+		float4 nativeLightTuning{}, nativeShadowTuning{};
 		float diffuseIntensity = 0, specularIntensity = 0;
 		bool countersRead = false, comparisonEnabled = false, geometryOnly = false, maskAvailable = false, maskExperimental = false;
 	};
