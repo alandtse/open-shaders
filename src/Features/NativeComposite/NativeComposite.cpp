@@ -304,59 +304,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 	const bool wantShadow = shadowSettings.preview || shadowSettings.contribution * shadowSettings.blend > 0.0f;
 	const auto shadow = wantShadow && !unsupportedGamut ? globals::features::dx12NativeScene.GetShadowMask(a_frame) : nullptr;
 	const auto raster = shadow || selected.NativePbrDiagnosticDispatch ? globals::features::dx12NativeScene.GetRasterFrame(a_frame) : nullptr;
-	std::string surfaceSourceStatus = "Diagnostic evaluation disabled";
-	if (selected.NativePbrDiagnosticDispatch) {
-		surfaceSourceStatus = "Waiting for synchronized ABI-v2 surface publication";
-		if (a_pbrSurface)
-			surfaceSourceStatus = "Consuming explicit DX12 surface publication";
-		else if (!raster)
-			surfaceSourceStatus = "No current-frame DX12 raster snapshot";
-		else if (!raster->pbrSidecarValid || !raster->pbrDraws || raster->pbrDraws->empty())
-			surfaceSourceStatus = "Opaque replay sidecar and draw table not published";
-		else {
-			bool complete = true;
-			for (size_t index = 0; index < NativePBR::kSurfaceFrameAttachmentCount; ++index) {
-				if (index >= 6 && !raster->pbrSidecar[index])
-					continue;
-				if (!raster->pbrSidecar[index] || !raster->pbrSidecar[index]->resource) {
-					complete = false;
-					surfaceSourceStatus = "Opaque replay surface attachment missing";
-					break;
-				}
-			}
-			if (complete) {
-				const auto format = raster->pbrSidecar[0]->resource->GetDesc().Format;
-				if (format != DXGI_FORMAT_R32G32_UINT)
-					surfaceSourceStatus = "Waiting for ABI-v2 R32G32_UINT identity and packed color";
-				else if (!raster->readyFence || !raster->readyValue || raster->readyValue == UINT64_MAX)
-					surfaceSourceStatus = "Opaque replay producer fence unavailable";
-				else {
-					try {
-						auto published = std::make_shared<NativePBRSurfacePass::InputFrame>();
-						for (size_t index = 0; index < NativePBR::kSurfaceFrameAttachmentCount; ++index)
-							if (raster->pbrSidecar[index])
-								published->textures[index] = raster->pbrSidecar[index]->resource;
-						published->draws = raster->pbrDraws;
-						published->readyFence = raster->readyFence;
-						published->readyValue = raster->readyValue;
-						published->frame = raster->frame;
-						published->width = raster->width;
-						published->height = raster->height;
-						published->abiVersion = NativePBR::kSurfaceSourceAbiVersion;
-						published->nativeOwnedDraws = true;
-						std::weak_ptr<const DX12Native::RasterFrame> retained = raster;
-						published->retainThrough = [retained](ID3D12Fence* fence, uint64_t value) {
-							return globals::features::dx12NativeScene.RetainRasterFrame(retained.lock(), fence, value);
-						};
-						a_pbrSurface = std::move(published);
-						surfaceSourceStatus = "Synchronized opaque ABI-v2 surface offered";
-					} catch (const std::bad_alloc&) {
-						surfaceSourceStatus = "NativePBR surface publication allocation deferred";
-					}
-				}
-			}
-		}
-	}
+	std::string surfaceSourceStatus = !selected.NativePbrDiagnosticDispatch ? "NativePBR surface evaluation disabled" :
+		a_pbrSurface ? "Independent ABI-v3 NativePBR surface received" : "Waiting for independent ABI-v3 NativePBR surface";
 	const auto pbrMaterials = selected.NativePbrDiagnosticDispatch && globals::features::nativePBR.IsActive() ?
 		globals::features::nativePBR.GetNativeGpuMaterials() : nullptr;
 	if (selected.NativePbrDiagnosticDispatch && a_pbrSurface && !pbrMaterials)
