@@ -54,6 +54,7 @@ public:
 	// steal the since-last-query frame counter from the present path).
 	sl::DLSSGStatus lastDLSSGStatus = sl::DLSSGStatus::eOk;
 	uint32_t lastDLSSGFramesPresented = 0;
+	uint32_t dlssgFramesPresentedSinceConfigure = 0;      ///< Frames TrackDLSSGInputFence's query consumed; ConfigureDLSSG adds them back so its count still spans the whole frame.
 	sl::DLSSGMode lastSentDLSSGMode = sl::DLSSGMode::eOff;
 	uint32_t lastSentDLSSGFrames = 0;
 	float lastSentDLSSGTargetFPS = -1.0f;

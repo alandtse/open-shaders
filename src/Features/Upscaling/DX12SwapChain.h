@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <optional>
 #include <vector>
 
 #include <Windows.Foundation.h>
@@ -200,9 +201,9 @@ public:
 	/**
 	 * @brief Records copies of this frame's DLSS-G inputs into textures only DLSS-G reads.
 	 * D3D11 can then rewrite the originals for the next frame without waiting for DLSS-G.
-	 * @return The copies in DLSSGInput order; an entry is null when its source does not exist.
+	 * @return The copies in DLSSGInput order; an entry is null when its source does not exist. Empty when a copy could not be allocated.
 	 */
-	std::array<ID3D12Resource*, kDLSSGInputCount> CopyDLSSGInputs(ID3D12GraphicsCommandList* a_commandList);
+	std::optional<std::array<ID3D12Resource*, kDLSSGInputCount>> CopyDLSSGInputs(ID3D12GraphicsCommandList* a_commandList);
 	std::array<winrt::com_ptr<ID3D12Resource>, kDLSSGInputCount> dlssgInputCopies;  ///< Read only by DLSS-G; see CopyDLSSGInputs.
 
 	/** @brief A replaced DLSS-G input copy, held until the present queue and DLSS-G have both passed its last use. */

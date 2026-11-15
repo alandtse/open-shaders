@@ -1034,6 +1034,9 @@ void Streamline::ConfigureDLSSG(bool enabled)
 		dlssgInputFence.Reset();
 	}
 
+	if (!enabled)
+		dlssgFramesPresentedSinceConfigure = 0;
+
 	if (slDLSSGGetState && enabled) {
 		sl::DLSSGState state{};
 		if (SL_FAILED(stateResult, slDLSSGGetState(viewport, state, &options))) {
@@ -1043,7 +1046,8 @@ void Streamline::ConfigureDLSSG(bool enabled)
 			}
 		} else {
 			lastDLSSGStatus = state.status;
-			lastDLSSGFramesPresented = state.numFramesActuallyPresented;
+			lastDLSSGFramesPresented = state.numFramesActuallyPresented + dlssgFramesPresentedSinceConfigure;
+			dlssgFramesPresentedSinceConfigure = 0;
 
 			static sl::DLSSGStatus lastLoggedStatus = sl::DLSSGStatus::eOk;
 			if (state.status != sl::DLSSGStatus::eOk && state.status != lastLoggedStatus) {
@@ -1081,6 +1085,7 @@ void Streamline::TrackDLSSGInputFence()
 	dlssgInputFence.Track(static_cast<ID3D12Fence*>(state.inputsProcessingCompletionFence), state.lastPresentInputsProcessingCompletionFenceValue);
 	dlssgInputTargetStale = false;
 	++dlssgInputTargetsTracked;
+	dlssgFramesPresentedSinceConfigure += state.numFramesActuallyPresented;
 }
 
 void Streamline::QueueWaitForDLSSGInputs(ID3D12CommandQueue* a_queue)

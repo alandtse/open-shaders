@@ -481,11 +481,14 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 		// Skip tagging/interpolation without valid per-frame constants -- otherwise
 		// DLSS-G interpolates against stale or default camera data.
 		if (streamlineDX12.CheckFrameConstants(streamlineDX12.viewport)) {
-			const auto inputs = CopyDLSSGInputs(commandLists[frameIndex].get());
-			streamlineDX12.TagDX12Resources(commandLists[frameIndex].get(),
-				inputs[kDLSSGDepth], inputs[kDLSSGMotionVectors], inputs[kDLSSGHUDLessColor], inputs[kDLSSGUIColorAndAlpha],
-				swapChainDesc.Width, swapChainDesc.Height);
-			streamlineDX12.ConfigureDLSSG(upscaling.ShouldUseFrameGenerationThisFrame());
+			if (const auto inputs = CopyDLSSGInputs(commandLists[frameIndex].get())) {
+				streamlineDX12.TagDX12Resources(commandLists[frameIndex].get(),
+					(*inputs)[kDLSSGDepth], (*inputs)[kDLSSGMotionVectors], (*inputs)[kDLSSGHUDLessColor], (*inputs)[kDLSSGUIColorAndAlpha],
+					swapChainDesc.Width, swapChainDesc.Height);
+				streamlineDX12.ConfigureDLSSG(upscaling.ShouldUseFrameGenerationThisFrame());
+			} else {
+				streamlineDX12.ConfigureDLSSG(false);
+			}
 		} else {
 			streamlineDX12.ConfigureDLSSG(false);
 		}
@@ -892,15 +895,13 @@ void DX12SwapChain::ReleaseRetiredDLSSGInputCopies()
 			return false;
 		if (!streamline.dlssgResourcesRetained)
 			return true;
-		if (a_retired.dlssgTargetStale)
-			return false;
 		if (!a_retired.dlssgFence || a_retired.dlssgFence != inputFence)
 			return true;
 		return dlssgDone >= a_retired.dlssgFenceValue;
 	});
 }
 
-std::array<ID3D12Resource*, DX12SwapChain::kDLSSGInputCount> DX12SwapChain::CopyDLSSGInputs(ID3D12GraphicsCommandList* a_commandList)
+std::optional<std::array<ID3D12Resource*, DX12SwapChain::kDLSSGInputCount>> DX12SwapChain::CopyDLSSGInputs(ID3D12GraphicsCommandList* a_commandList)
 {
 	static constexpr const wchar_t* kCopyNames[kDLSSGInputCount] = {
 		L"DX12SwapChain::DLSSGDepthCopy",
@@ -930,7 +931,12 @@ std::array<ID3D12Resource*, DX12SwapChain::kDLSSGInputCount> DX12SwapChain::Copy
 			sourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 			sourceDesc.Alignment = 0;
 			const CD3DX12_HEAP_PROPERTIES heap(D3D12_HEAP_TYPE_DEFAULT);
-			DX::ThrowIfFailed(d3d12Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &sourceDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(copy.put())));
+			if (FAILED(d3d12Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &sourceDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(copy.put())))) {
+				static bool errorLogged = false;
+				if (!std::exchange(errorLogged, true))
+					logger::error("[DX12SwapChain] Could not allocate a DLSS-G input copy; frame generation is skipped this frame");
+				return std::nullopt;
+			}
 			copy->SetName(kCopyNames[i]);
 		}
 		copies[i] = copy.get();
