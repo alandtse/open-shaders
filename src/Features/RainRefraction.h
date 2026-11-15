@@ -33,13 +33,19 @@ public:
 
 	static constexpr float kMinMotionStretch = 0.01f;
 	static constexpr float kMaxMotionStretch = 3.0f;
+	static constexpr float kMaxWindInfluence = 2.0f;
+	static constexpr float kMaxWindResponseSeconds = 2.0f;
+	static constexpr float kFallbackRainFallSpeed = 675.0f;
+	static constexpr float kMinRainFallSpeed = 100.0f;
 
-	/** @brief User settings, used while Effects 11 is not active; mirrors the preset's [RAIN] Enable, MotionStretch and MotionTransparency. */
+	/** @brief User settings, used while Effects 11 is not active; mirrors the preset's [RAIN] Enable, MotionStretch and MotionTransparency. WindInfluence is always user-owned. */
 	struct Settings
 	{
 		bool Enable = false;
 		float MotionStretch = 2.0f;
 		float MotionTransparency = 0.91f;
+		float WindInfluence = 0.0f;
+		float WindResponseSeconds = 0.6f;
 	} settings;
 
 	/** @brief Feature buffer data, matching RainRefractionSettings in SharedData.hlsli; Enable is cleared when the raindrop texture or blend state is missing. */
@@ -48,10 +54,11 @@ public:
 		uint Enable;
 		float MotionStretch;
 		float MotionTransparency;
-		float pad0;
-		float4 TextureBounds{ 0, 0, 1, 1 };  ///< UV rectangle of the raindrop texture's alpha coverage
-		float2 TextureRadiusScale{ 1, 1 };   ///< Billboard half-extents per unit drop radius
-		float2 pad1{};
+		float WindInfluence;
+		float4 TextureBounds{ 0, 0, 1, 1 };        ///< UV rectangle of the raindrop texture's alpha coverage
+		float2 TextureRadiusScale{ 1, 1 };         ///< Billboard half-extents per unit drop radius
+		float FallSpeed = kFallbackRainFallSpeed;  ///< Weather gravity velocity in game units per second
+		float WindResponseSeconds = 0.6f;          ///< Time rain takes to follow a wind change
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 
@@ -116,6 +123,9 @@ private:
 	STATIC_ASSERT_ALIGNAS_16(DrawData);
 
 	bool CaptureSceneColor();
+
+	/** @brief Current weather's rain gravity velocity, or the fallback when no rain weather is active. */
+	float GetWeatherFallSpeed() const;
 
 	/** @brief Returns true when the current particle pass is rain and refractive rain is active this frame. */
 	bool IsRefractiveRainPass();
