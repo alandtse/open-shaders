@@ -97,6 +97,7 @@ add_executable(
     test_shadercacheclear.cpp
     test_generationclaim.cpp
     test_framelatch.cpp
+    test_dlssg_input_fence.cpp
     test_lightattachgate.cpp
     test_pointersearch.cpp
     test_splitlatchbackoff.cpp
