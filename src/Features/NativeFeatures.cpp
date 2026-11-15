@@ -202,6 +202,16 @@ void NativePBRFeature::BeginOpaqueSidecar()
 {
 	if (!IsActive() || globals::game::isVR || !globals::game::renderer || !globals::game::graphicsState)
 		return;
+	// The expensive full-resolution MRT sidecar only exists while an explicit
+	// consumer needs it. Material recipes and DX12 DDS residency are independent.
+	// Keep the preview and projected-input experiments available on demand.
+	const bool captureRequested = globals::features::nativeComposite.WantsNativePbrSurfaceDiagnostic() ||
+		OwnsInputOnlyShading() || previewOpaqueReplacement.load(std::memory_order_relaxed) ||
+		captureProjectedUv.load(std::memory_order_relaxed);
+	if (!captureRequested) {
+		surfaceHandoffStatus = "NativePBR surface capture idle (no active consumer)";
+		return;
+	}
 	surfaceHandoffStatus = "Awaiting opaque raster completion";
 	const auto& target = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kMAIN];
 	auto* texture = Util::AsReal(target.texture);
