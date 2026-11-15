@@ -95,6 +95,7 @@ add_executable(
     test_passchainguard.cpp
     test_hdr_png_metadata.cpp
     test_cacheinvalidation.cpp
+    test_dx12_compact_diagnostics.cpp
     test_native_pbr_registry.cpp
     test_native_pbr_sidecar.cpp
     test_native_pbr_surface_publication.cpp
