@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Features/NativePBR/GpuMaterialResources.h"
+#include "Features/NativeLighting/NativeLighting.h"
 #include "Features/NativePBR/SurfaceFrameContract.h"
 
 #include <array>
@@ -20,7 +21,9 @@ public:
 	struct Slot
 	{
 		std::array<winrt::com_ptr<ID3D12Resource>, kSurfaceOutputs> outputs;
-		winrt::com_ptr<ID3D12DescriptorHeap> descriptors;
+		winrt::com_ptr<ID3D12DescriptorHeap> descriptors, finalDescriptors;
+		winrt::com_ptr<ID3D12RootSignature> finalRoot;
+		winrt::com_ptr<ID3D12PipelineState> finalPipeline;
 		winrt::com_ptr<ID3D12Resource> drawBindings;
 		winrt::com_ptr<ID3D12RootSignature> root;
 		winrt::com_ptr<ID3D12PipelineState> pipeline;
@@ -36,6 +39,15 @@ public:
 	bool Record(ID3D12Device* a_device, ID3D12GraphicsCommandList* a_commands, Slot& a_slot,
 		std::shared_ptr<const InputFrame> a_input, std::shared_ptr<const NativePBR::GpuMaterialResources> a_materials,
 		uint32_t a_frame, uint32_t a_width, uint32_t a_height, uint64_t a_additionalBudget);
+	/** @brief Records optional BRDF-based opaque replacement after surface evaluation. */
+	bool RecordFinalColor(ID3D12Device* a_device, ID3D12GraphicsCommandList* a_commands,
+		Slot& a_slot, ID3D12Resource* a_sceneColor, DXGI_FORMAT a_sceneFormat,
+		const NativeLightingFeature::Contribution& a_lighting, uint32_t a_frame,
+		uint32_t a_width, uint32_t a_height, float a_compositeStrength, bool a_legacyTransfer);
+	/** @brief Count final-color submissions after the owning queue is signaled. */
+	void MarkFinalSubmitted() { ++finalSubmissions; finalStatus = "NativePBR opaque final-color pass submitted"; }
+	const std::string& FinalStatus() const { return finalStatus; }
+	uint64_t FinalSubmissions() const { return finalSubmissions; }
 	/** @brief Reports why an attempted material dispatch was deferred. */
 	const std::string& Status() const { return status; }
 	uint64_t Submissions() const { return submissions; }
@@ -54,7 +66,12 @@ public:
 private:
 	winrt::com_ptr<ID3D12RootSignature> root;
 	winrt::com_ptr<ID3D12PipelineState> pipeline;
-	ID3D12Device* device = nullptr;
+	ID3D12Device* device = nullptr, *finalDevice = nullptr;
+	winrt::com_ptr<ID3D12RootSignature> finalRoot;
+	winrt::com_ptr<ID3D12PipelineState> finalPipeline;
+	bool InitializeFinal(ID3D12Device* a_device);
+	std::string finalStatus = "NativePBR final-color composition disabled";
+	uint64_t finalSubmissions = 0;
 	std::string status = "Waiting for surface input producer";
 	uint64_t submissions = 0, missingMaterials = 0, missingRevisions = 0, missingTextures = 0, unsupportedRecipes = 0, unsupportedInputs = 0;
 	uint64_t ordinalMismatches = 0, noEligibleFrames = 0;
