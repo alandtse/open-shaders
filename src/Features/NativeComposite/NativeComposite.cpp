@@ -5,7 +5,7 @@
 #include "State.h"
 #include "Utils/DevBenchUx.h"
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeCompositeFeature::Settings, Enabled, AddLighting, LightingStrength, DirectSpatialReconstruction, NativePbrDiagnosticDispatch, NativePbrSurfaceEvaluation, PersistLab, ShadowLayerEnabled, ShadowContribution, ShadowBlend, ShadowRadiusPixels, ShadowReceiverTolerance, ShadowPreview, ShadowAfterLighting, ShadowSpatialReconstruction)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeCompositeFeature::Settings, Enabled, AddLighting, LightingStrength, DirectSpatialReconstruction, NativePbrDiagnosticDispatch, NativePbrSurfaceEvaluation, NativePbrInputPreview, PersistLab, ShadowLayerEnabled, ShadowContribution, ShadowBlend, ShadowRadiusPixels, ShadowReceiverTolerance, ShadowPreview, ShadowAfterLighting, ShadowSpatialReconstruction)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeComposite::Policy, diffuse, specular, visual)
 
 namespace
@@ -41,7 +41,9 @@ void NativeCompositeFeature::DrawSettings()
 	ImGui::SeparatorText("NativePBR SM6.5 surface evaluation");
 	ImGui::Checkbox("Evaluate native materials on DX12 (isolated)", &settings.NativePbrSurfaceEvaluation);
 	ImGui::Checkbox("Record NativePBR material diagnostics", &settings.NativePbrDiagnosticDispatch);
-	ImGui::TextDisabled("Uses independent ABI-v3 surfaces; does not yet replace final scene color.");
+	if (ImGui::Checkbox("Preview legacy input-only test colors (experimental)", &settings.NativePbrInputPreview))
+		++validityRevision;
+	ImGui::TextDisabled("ABI-v3 SM6.5 evaluation leaves final scene color unchanged. Test-color preview is separate.");
 	if (settings.NativePbrSurfaceEvaluation || settings.NativePbrDiagnosticDispatch) {
 		ImGui::TextWrapped("Surface producer: %s", pbrSurfaceSourceStatus.c_str());
 		ImGui::TextWrapped("Material evaluation: %s", pass.PbrSurfaceStatus().c_str());
@@ -195,7 +197,7 @@ void NativeCompositeFeature::ConfigureShadowLayer(const json& args)
 
 void NativeCompositeFeature::RegisterUxActions()
 {
-	FEATURE_COMMAND("configure", "Set Native Composite enabled, addLighting, lightingStrength, directSpatialReconstruction, pbrSurfaceEvaluation, and pbrDiagnosticDispatch.", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("configure", "Set Native Composite enabled, addLighting, lightingStrength, directSpatialReconstruction, pbrSurfaceEvaluation, pbrInputPreview, and pbrDiagnosticDispatch.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeCompositeFeature*>(self);
 		std::scoped_lock lock(feature.settingsMutex);
 		if (args.contains("enabled"))
@@ -206,6 +208,13 @@ void NativeCompositeFeature::RegisterUxActions()
 			feature.settings.NativePbrDiagnosticDispatch = args.at("pbrDiagnosticDispatch").get<bool>();
 		if (args.contains("pbrSurfaceEvaluation"))
 			feature.settings.NativePbrSurfaceEvaluation = args.at("pbrSurfaceEvaluation").get<bool>();
+		if (args.contains("pbrInputPreview")) {
+			const bool next = args.at("pbrInputPreview").get<bool>();
+			if (feature.settings.NativePbrInputPreview != next) {
+				feature.settings.NativePbrInputPreview = next;
+				++feature.validityRevision;
+			}
+		}
 		if (args.contains("directSpatialReconstruction")) {
 			feature.settings.DirectSpatialReconstruction = args.at("directSpatialReconstruction").get<bool>();
 			++feature.validityRevision;
@@ -249,6 +258,7 @@ json NativeCompositeFeature::GetDiagnostics()
 		{ "nativePbrInputSubmissions", pass.PbrInputSubmissions() },
 		{ "nativePbrSurfaceDiagnosticEnabled", settings.NativePbrDiagnosticDispatch },
 		{ "nativePbrSurfaceEvaluationEnabled", settings.NativePbrSurfaceEvaluation },
+		{ "nativePbrInputPreviewEnabled", settings.NativePbrInputPreview },
 		{ "nativePbrSurfaceDiagnosticDispatches", pass.PbrSurfaceSubmissions() },
 		{ "nativePbrSurfaceDiagnosticStatus", pass.PbrSurfaceStatus() },
 		{ "nativePbrSurfaceSourceStatus", pbrSurfaceSourceStatus },
@@ -309,7 +319,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 	const bool wantShadow = shadowSettings.preview || shadowSettings.contribution * shadowSettings.blend > 0.0f;
 	const auto shadow = wantShadow && !unsupportedGamut ? globals::features::dx12NativeScene.GetShadowMask(a_frame) : nullptr;
 	const bool evaluatePbr = selected.NativePbrSurfaceEvaluation || selected.NativePbrDiagnosticDispatch;
-	const auto raster = shadow || evaluatePbr ? globals::features::dx12NativeScene.GetRasterFrame(a_frame) : nullptr;
+	const auto raster = shadow || evaluatePbr || selected.NativePbrInputPreview ?
+		globals::features::dx12NativeScene.GetRasterFrame(a_frame) : nullptr;
 	std::string surfaceSourceStatus = !evaluatePbr ? "NativePBR surface evaluation disabled" :
 		a_pbrSurface ? "Independent ABI-v3 NativePBR surface received" : "Waiting for independent ABI-v3 NativePBR surface";
 	const auto pbrMaterials = evaluatePbr && globals::features::nativePBR.IsActive() ?
@@ -318,7 +329,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 		surfaceSourceStatus = "NativePBR GPU material generation not yet published";
 	auto frame = pass.Capture(a_device11, a_context11, a_device12, a_queue, a_source, a_frame, a_width, a_height,
 		a_transfer, lighting, shadow, raster, shadowSettings, selected.LightingStrength, selected.DirectSpatialReconstruction, selectedPolicy, revision,
-		std::move(a_pbrSurface), pbrMaterials, evaluatePbr);
+		std::move(a_pbrSurface), pbrMaterials, evaluatePbr, selected.NativePbrInputPreview);
 	{
 		std::scoped_lock lock(settingsMutex);
 		pbrSurfaceSourceStatus = std::move(surfaceSourceStatus);

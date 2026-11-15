@@ -152,7 +152,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 	const ShadowSettings& a_shadowSettings,
 	float a_strength, bool a_directSpatialReconstruction, const Policy& a_policy, uint64_t a_revision,
 	std::shared_ptr<const NativePBRSurfacePass::InputFrame> a_pbrSurface,
-	std::shared_ptr<const NativePBR::GpuMaterialResources> a_pbrMaterials, bool a_pbrDiagnostic)
+	std::shared_ptr<const NativePBR::GpuMaterialResources> a_pbrMaterials, bool a_pbrDiagnostic,
+	bool a_pbrInputPreview)
 {
 	CS_GPU_PASS("NativeComposite::RasterPassThrough");
 	status = "Invalid capture input";
@@ -238,7 +239,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 	                   a_lighting->scene.raster && a_lighting->scene.raster->depth && a_lighting->scene.raster->depth->resource &&
 	                   a_lighting->width == a_width && a_lighting->height == a_height && (a_policy.visual != 0 || a_transfer != Transfer::Unknown) && InitializeLighting(a_device12);
 	const bool recordCounters = a_policy.visual != 0;
-	const bool pbrInput = supportsLighting && a_raster && a_raster->pbrInputOnly && a_raster->pbrDraws &&
+	const bool pbrInput = a_pbrInputPreview && supportsLighting && a_raster && a_raster->pbrInputOnly && a_raster->pbrDraws &&
 		!a_raster->pbrDraws->empty() && a_raster->frame == a_frame && a_raster->width >= a_width &&
 		a_raster->height >= a_height && a_raster->readyFence && a_raster->readyValue &&
 		a_raster->readyValue != UINT64_MAX &&

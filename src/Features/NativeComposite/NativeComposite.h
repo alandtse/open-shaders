@@ -16,6 +16,7 @@ struct NativeCompositeFeature final : Feature
 		bool DirectSpatialReconstruction = true;
 		bool NativePbrDiagnosticDispatch = false;
 		bool NativePbrSurfaceEvaluation = false;
+		bool NativePbrInputPreview = false;  // Old test-color shader; never part of normal final composition.
 		bool PersistLab = false;
 		// Independent DX12 shadow layer. Does not require Native Lighting.
 		bool ShadowLayerEnabled = true;

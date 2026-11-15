@@ -73,7 +73,8 @@ public:
 		const ShadowSettings& a_shadowSettings,
 		float a_strength, bool a_directSpatialReconstruction, const Policy& a_policy, uint64_t a_revision,
 		std::shared_ptr<const NativePBRSurfacePass::InputFrame> a_pbrSurface = {},
-		std::shared_ptr<const NativePBR::GpuMaterialResources> a_pbrMaterials = {}, bool a_pbrDiagnostic = false);
+		std::shared_ptr<const NativePBR::GpuMaterialResources> a_pbrMaterials = {}, bool a_pbrDiagnostic = false,
+		bool a_pbrInputPreview = false);
 	/** @brief Retains a frame until a downstream consumer's GPU fence completes. */
 	bool Retain(const std::shared_ptr<const Frame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value);
 	/** @brief Returns a short explanation of the latest capture result. */
