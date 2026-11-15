@@ -15,6 +15,7 @@ struct NativeCompositeFeature final : Feature
 		float LightingStrength = 1.0f;
 		bool DirectSpatialReconstruction = true;
 		bool NativePbrDiagnosticDispatch = false;
+		bool NativePbrSurfaceEvaluation = false;
 		bool PersistLab = false;
 		// Independent DX12 shadow layer. Does not require Native Lighting.
 		bool ShadowLayerEnabled = true;
@@ -50,7 +51,7 @@ struct NativeCompositeFeature final : Feature
 	bool WantsNativePbrSurfaceDiagnostic()
 	{
 		std::scoped_lock lock(settingsMutex);
-		return IsEnabled() && settings.NativePbrDiagnosticDispatch;
+		return IsEnabled() && (settings.NativePbrSurfaceEvaluation || settings.NativePbrDiagnosticDispatch);
 	}
 
 private:
