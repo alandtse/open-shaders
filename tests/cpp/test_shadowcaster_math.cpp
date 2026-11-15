@@ -27,6 +27,7 @@ using ShadowCasterManager::SphereWhollyBehindPlane;
 using ShadowCasterManager::StallBucket;
 using ShadowCasterManager::TileScaleForCoverage;
 using ShadowCasterManager::TileScaleTarget;
+using ShadowCasterManager::WithinFlickerReach;
 
 namespace
 {
@@ -128,6 +129,27 @@ TEST_CASE("SphereWhollyBehindPlane splits straddling from wholly behind", "[scm]
 	// Behind by more than the margin: nothing of it reaches the front map.
 	REQUIRE(SphereWhollyBehindPlane(-10.0f - margin - 0.01f, 10.0f, margin));
 	REQUIRE(SphereWhollyBehindPlane(-500.0f, 10.0f, margin));
+}
+
+TEST_CASE("WithinFlickerReach covers every flicker and pulse offset", "[scm]")
+{
+	constexpr float amplitude = 6.0f;
+	for (int i = 0; i < 64; ++i) {
+		const float a = static_cast<float>(i) * 0.1f;
+		// Pulse: a circle of the amplitude, their product on z.
+		REQUIRE(WithinFlickerReach(amplitude * std::cos(a), amplitude * std::sin(a), amplitude * std::sin(a) * std::cos(a), amplitude));
+		for (int j = 0; j < 64; ++j) {
+			const float b = static_cast<float>(j) * 0.1f;
+			// Flicker: two sines scale half the amplitude, which then moves along them and a third sine.
+			const float scaled = amplitude * std::sin(a) * std::sin(b) * 0.5f;
+			REQUIRE(WithinFlickerReach(scaled * std::sin(a), scaled * std::sin(b), scaled, amplitude));
+		}
+	}
+	REQUIRE(WithinFlickerReach(0.0f, 0.0f, 0.0f, amplitude));
+	// No movement amplitude, or a translate the movement cannot reach.
+	REQUIRE_FALSE(WithinFlickerReach(0.0f, 0.0f, 0.0f, 0.0f));
+	REQUIRE_FALSE(WithinFlickerReach(0.0f, 0.0f, 8.0f, amplitude));
+	REQUIRE_FALSE(WithinFlickerReach(40.0f, 0.0f, 0.0f, amplitude));
 }
 
 TEST_CASE("FrameTimePercentile returns the 60fps fallback with no samples", "[scm]")

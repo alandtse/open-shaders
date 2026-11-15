@@ -95,6 +95,16 @@ namespace ShadowCasterManager
 		return a_planeDistance + a_radius <= -a_margin;
 	}
 
+	/// Farthest a flicker or pulse movement puts a light from its parent node, per unit of the Light record's movement amplitude.
+	inline constexpr float kFlickerReachPerAmplitude = 1.125f;
+
+	/// True when a light's local translate is within reach of its flicker movement, so its parent node holds its rest position.
+	inline bool WithinFlickerReach(float a_x, float a_y, float a_z, float a_amplitude) noexcept
+	{
+		const float reach = a_amplitude * kFlickerReachPerAmplitude;
+		return a_amplitude > 0.0f && a_x * a_x + a_y * a_y + a_z * a_z <= reach * reach;
+	}
+
 	// The tile class ladder, shared by the coverage classifier below and the
 	// atlas allocator's order mapping (the floor class == one allocator cell).
 	inline constexpr float kTileScaleFull = 1.0f;

@@ -17,6 +17,7 @@
 #include "../LightLimitFix.h"
 #include "../Upscaling.h"
 #include "../VR.h"
+#include "Common.h"
 #include "I18n/I18n.h"
 #include "LitCap.h"
 #include "LitRegion.h"
@@ -44,6 +45,63 @@ namespace ShadowCasterManager
 		return it->second;
 	}
 
+	// SEH in their own functions: GetUserData and NiAVObject::parent walk pointers that are not refcounted and can dangle during
+	// scene teardown.
+	static RE::TESObjectLIGH* OwnerLight(const RE::NiLight* ni) noexcept
+	{
+		__try {
+			auto* ref = ni->GetUserData();
+			auto* base = ref ? ref->GetObjectReference() : nullptr;
+			return base ? base->As<RE::TESObjectLIGH>() : nullptr;
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		}
+		return nullptr;
+	}
+
+	static bool ParentTranslate(const RE::NiAVObject* ni, RE::NiPoint3& out) noexcept
+	{
+		__try {
+			if (const auto* parent = ni->parent) {
+				out = parent->world.translate;
+				return true;
+			}
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		}
+		return false;
+	}
+
+	/// Movement amplitude of the flickering Light record a light was made from, 0 when it does not flicker; cached per NiLight and
+	/// Light record, so a light made at a freed light's address is read again.
+	static float FlickerMovementAmplitude(RE::NiLight* ni)
+	{
+		static std::unordered_map<const RE::NiLight*, std::pair<RE::FormID, float>> s_flickerAmplitude;
+		PruneIfOversized(s_flickerAmplitude, 1024);
+		const auto formId = LLFCommon::RuntimeLightDataExt::Get(ni)->lighFormId;
+		auto [it, isNew] = s_flickerAmplitude.try_emplace(ni, formId, 0.0f);
+		if (isNew || it->second.first != formId) {
+			const RE::TESObjectLIGH* ligh = OwnerLight(ni);
+			if (!ligh && formId)
+				ligh = RE::TESForm::LookupByID<RE::TESObjectLIGH>(formId);
+			it->second = { formId, ligh && !ligh->GetNoFlicker() ? ligh->data.flickerMovementAmplitude : 0.0f };
+		}
+		return it->second.second;
+	}
+
+	/// Where a light's shadow is drawn from: the engine and Light Placer move a flickering light inside its parent node every
+	/// frame, so its shadow is drawn from the parent and its fixture's shadow holds still while the light flickers.
+	static RE::NiPoint3 ShadowOrigin(RE::NiLight* ni)
+	{
+		static PerFrameCache<const RE::NiLight*, std::optional<RE::NiPoint3>> rests;
+		const auto& rest = rests.Get(static_cast<uint32_t>(*globals::game::frameCounter), ni, [ni]() -> std::optional<RE::NiPoint3> {
+			const auto& local = ni->local.translate;
+			RE::NiPoint3 parent;
+			if (WithinFlickerReach(local.x, local.y, local.z, FlickerMovementAmplitude(ni)) && ParentTranslate(ni, parent))
+				return parent;
+			return std::nullopt;
+		});
+		return rest.value_or(ni->world.translate);
+	}
+
 	/// Shared by the redraw hash and static-cache hash so both agree on what
 	/// "moved" means.
 	static std::uint64_t FoldLightPose(std::uint64_t h, RE::NiLight* ni, float posStep)
@@ -52,7 +110,7 @@ namespace ShadowCasterManager
 		constexpr float kRotStep = 0.01f;
 		constexpr float kRadiusStep = 1.0f;
 
-		const auto& t = ni->world.translate;
+		const auto t = ShadowOrigin(ni);
 		h = HashCombineFloat(h, QuantizeFloat(t.x, kPosStep));
 		h = HashCombineFloat(h, QuantizeFloat(t.y, kPosStep));
 		h = HashCombineFloat(h, QuantizeFloat(t.z, kPosStep));
@@ -189,19 +247,25 @@ namespace ShadowCasterManager
 		    .get();
 	}
 
-	/// UpdateCamera with a carried omni light's front paraboloid turned at its carrier, so the seam never crosses the body it is
-	/// closest to; the node's rotation is put back right after the copy.
+	/// UpdateCamera from the light's shadow origin, with a carried omni light's front paraboloid turned at its carrier, so the seam
+	/// never crosses the body it is closest to; the node's pose is put back right after the copy.
 	static bool UpdateCameraFacingCarrier(RE::BSShadowLight* light, RE::NiCamera* camera)
 	{
-		const auto* body = CarrierBody(light);
-		if (!body)
-			return light->UpdateCamera(camera);
 		auto* ni = light->light.get();
+		const auto* body = CarrierBody(light);
+		const auto origin = ni ? ShadowOrigin(ni) : RE::NiPoint3{};
+		if (!body && (!ni || origin == ni->world.translate))
+			return light->UpdateCamera(camera);
 		const auto rotate = ni->world.rotate;
-		const auto toBody = body->worldBound.center - ni->world.translate;
-		FacingRotation(toBody.x, toBody.y, toBody.z, ni->world.rotate.entry);
+		const auto translate = ni->world.translate;
+		ni->world.translate = origin;
+		if (body) {
+			const auto toBody = body->worldBound.center - origin;
+			FacingRotation(toBody.x, toBody.y, toBody.z, ni->world.rotate.entry);
+		}
 		const bool valid = light->UpdateCamera(camera);
 		ni->world.rotate = rotate;
+		ni->world.translate = translate;
 		return valid;
 	}
 
@@ -738,16 +802,16 @@ namespace ShadowCasterManager
 	/// Tests whether a cached bake is still usable at this light's current transform and radius.
 	static bool SplitPoseMatches(RE::BSShadowLight* light, const SplitState& st)
 	{
-		const auto* ni = light->light.get();
+		auto* ni = light->light.get();
 		if (!TolerantSplit())
 			return ni && st.bakePoseValid &&
 			       ni->GetLightRuntimeData().radius.x == st.bakeRadius &&
-			       ni->world.translate == st.bakePos && ni->world.rotate == st.bakeRot;
+			       ShadowOrigin(ni) == st.bakePos && ni->world.rotate == st.bakeRot;
 		if (!ni || !st.bakePoseValid || ni->world.rotate != st.bakeRot)
 			return false;
 		const float radius = ni->GetLightRuntimeData().radius.x;
 		return std::abs(radius - st.bakeRadius) <= kSplitRadiusTolerance * st.bakeRadius &&
-		       ni->world.translate.GetSquaredDistance(st.bakePos) <= kSplitPositionToleranceSq;
+		       ShadowOrigin(ni).GetSquaredDistance(st.bakePos) <= kSplitPositionToleranceSq;
 	}
 
 	/// Factor taking baked depth (normalised by the bake radius) to the live radius.
@@ -814,7 +878,7 @@ namespace ShadowCasterManager
 			return false;
 		// A held tile was drawn at the exact bake pose, so drifted depth scale or position must wake it.
 		if (StaticDepthScale(e.Light, st) != 1.0f ||
-			e.Light->light.get()->world.translate != st.bakePos)
+			ShadowOrigin(e.Light->light.get()) != st.bakePos)
 			return false;
 		// Staleness backstop: never skip once the backstop redraw is due,
 		// and keep pressing for it every frame until the budget grants it.
@@ -1200,7 +1264,7 @@ namespace ShadowCasterManager
 					if (st->bakePoseValid && !SplitPoseMatches(light, *st))
 						s_splitLatchMismatchTotal.fetch_add(1, std::memory_order_relaxed);
 					if (auto* ni = light->light.get()) {
-						st->bakePos = ni->world.translate;
+						st->bakePos = ShadowOrigin(ni);
 						if (TolerantSplit()) {
 							// A pinned bake renders from the shadow camera's pose, not the live light's.
 							RE::NiPoint3 cameraPos;
@@ -1561,8 +1625,8 @@ namespace ShadowCasterManager
 				if (GetSlotStaticState(static_cast<int32_t>(slot), bakedHash, staticValid) &&
 					SplitDynamicOnlyEligible(light, it->second, staticValid)) {
 					pin = true;
-					if (const auto* ni = light->light.get())
-						drift = std::sqrt(ni->world.translate.GetSquaredDistance(it->second.bakePos));
+					if (auto* ni = light->light.get())
+						drift = std::sqrt(ShadowOrigin(ni).GetSquaredDistance(it->second.bakePos));
 				}
 			}
 		}
@@ -1839,10 +1903,10 @@ namespace ShadowCasterManager
 				return false;
 			}
 		}
-		const auto* ni = light->light.get();
+		auto* ni = light->light.get();
 		if (!ni)
 			return true;
-		const float drift = std::sqrt(ni->world.translate.GetSquaredDistance(st.bakePos));
+		const float drift = std::sqrt(ShadowOrigin(ni).GetSquaredDistance(st.bakePos));
 		const float radius = ni->GetLightRuntimeData().radius.x;
 		float nearestEyeDistance = 0.0f;
 		if (!OwnSphereInFrustum(ni->world.translate, radius, nearestEyeDistance)) {
@@ -2499,7 +2563,7 @@ namespace ShadowCasterManager
 			double displacementMagnitude = 0.0;
 			double formulaDisplacement = 0.0;
 			if (auto* nilight = e->Light->light.get()) {
-				auto& curr = nilight->world.translate;
+				const auto curr = ShadowOrigin(nilight);
 				float dx = curr.x - e->lastRenderedPos.x;
 				float dy = curr.y - e->lastRenderedPos.y;
 				float dz = curr.z - e->lastRenderedPos.z;
@@ -2514,19 +2578,8 @@ namespace ShadowCasterManager
 					                            std::max(baseTileTexels * std::max(e->pendingScale, kTileScaleFloor), 1.0f);
 					// approxPosStep shrinks as tile resolution grows, but flicker jitter is
 					// a fixed world-space wobble that can exceed one texel at full class --
-					// floor at the light's own flicker amplitude (cached per NiLight).
-					static std::unordered_map<const RE::NiLight*, float> s_flickerAmplitude;
-					PruneIfOversized(s_flickerAmplitude, 1024);
-					auto [ampIt, ampNew] = s_flickerAmplitude.try_emplace(nilight, 0.0f);
-					if (ampNew) {
-						if (auto* ref = nilight->GetUserData()) {
-							if (auto* base = ref->GetObjectReference()) {
-								if (auto* ligh = base->As<RE::TESObjectLIGH>(); ligh && !ligh->GetNoFlicker())
-									ampIt->second = ligh->data.flickerMovementAmplitude;
-							}
-						}
-					}
-					const float deadzone = std::max(approxPosStep, ampIt->second);
+					// floor at the light's own flicker amplitude unless its shadow origin already holds still.
+					const float deadzone = std::max(approxPosStep, curr == nilight->world.translate ? FlickerMovementAmplitude(nilight) : 0.0f);
 					if (formulaDisplacement < static_cast<double>(std::max(deadzone, 1e-4f)))
 						formulaDisplacement = 0.0;
 				}
@@ -3275,7 +3328,7 @@ namespace ShadowCasterManager
 						s_budget.EndLight(lightSnapshot, 0);
 
 						if (auto* nilight = e.Light->light.get())
-							e.lastRenderedPos = nilight->world.translate;
+							e.lastRenderedPos = ShadowOrigin(nilight);
 
 						ShadowField(e.Light, maskIndex) = static_cast<uint32_t>(slot);
 						doneLightCount++;
