@@ -1080,7 +1080,7 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		undef SKYLIGHTING
 #	endif
 
-#	if defined(SKYLIGHTING)
+#	if defined(SKYLIGHTING) && (!defined(NO_LEGACY_SUBSURFACE) || defined(TRUE_PBR))
 #		define SKYLIGHTING_SHADOW_VIS
 #	endif
 
@@ -1151,7 +1151,7 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 
 #	if defined(LODOBJECTS) || defined(LODOBJECTSHD) || defined(LODLANDSCAPE)
 static const uint RuntimeLightingFlags = 0;
-#	elif defined(LANDSCAPE)
+#	elif defined(LANDSCAPE) || defined(NO_LEGACY_SUBSURFACE)
 static const uint RuntimeLightingFlags = Permutation::LightingFlags::Specular;
 #	else
 static const uint RuntimeLightingFlags = Permutation::LightingFlags::Specular | Permutation::LightingFlags::SoftLighting | Permutation::LightingFlags::RimLighting | Permutation::LightingFlags::BackLighting;
