@@ -1,5 +1,6 @@
 #include "NativePBRSurfacePass.h"
 
+#include "Features/NativePBR/MaterialReadiness.h"
 #include "GpuPass.h"
 #include "PCH.h"
 #include <directx/d3dx12.h>
@@ -173,18 +174,20 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 				++missingMaterials;
 			else if (!exact)
 				++missingRevisions;
-			const bool resident = exact && (exact->residentRoles & NativePBR::kGpuRequiredTextureRoles) == NativePBR::kGpuRequiredTextureRoles;
+			const bool resident = exact && exact->availability == NativePBR::GpuMaterialAvailability::Resident;
+			const auto readiness = exact ? NativePBR::ClassifyRecipeReadiness(exact->recipeIssues) : NativePBR::RecipeReadiness{};
+			const bool compatible = readiness.IsOpaqueFeatureCompatible() && readiness.unresolvedInstance == 0;
 			if (exact) {
 				if (!resident)
 					++missingTextures;
-				if (exact->recipeIssues != 0)
+				if (!readiness.IsOpaqueFeatureCompatible())
 					++unsupportedRecipes;
 			}
-			if (draw.projectedUv)
+			if (draw.projectedUv || readiness.unresolvedInstance != 0)
 				++unsupportedInputs;
 			if (draw.ordinal != index + 1)
 				++ordinalMismatches;
-			const bool eligible = resident && draw.ordinal == index + 1 && !draw.projectedUv;
+			const bool eligible = resident && compatible && draw.ordinal == index + 1 && !draw.projectedUv;
 			if (eligible)
 				++eligibleDraws;
 			drawBindings[index] = NativePBR::PackGpuDrawBinding(draw.materialIdentity, draw.materialRevision,
