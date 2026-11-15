@@ -117,6 +117,12 @@ struct NativePBRFeature final : Feature
 	void PostPostLoad() override;
 	/** @brief Selects the PBR backend independently of DX12 device readiness. */
 	NativePBR::Backend SelectedBackend() const;
+	std::span<const std::string_view> GetBootSuppressedFeatures() const override
+	{
+		static constexpr std::array<std::string_view, 2> kLegacyFeatures{ "TruePBR", "ExtendedMaterials" };
+		return SelectedBackend() == NativePBR::Backend::NativeDX12 ?
+			std::span<const std::string_view>(kLegacyFeatures) : std::span<const std::string_view>{};
+	}
 	bool IsActive() const;
 	/** @brief True when eligible FXC input permutations are staged for raster-safe native capture. */
 	bool OwnsInputOnlyShading() const;
