@@ -1,13 +1,16 @@
 #include "Features/NativePBR/SurfaceFrameContract.h"
 #include <catch2/catch_test_macros.hpp>
 
-TEST_CASE("NativePBR ABI-v2 surface attachments match the native evaluator", "[NativePBR][surface]")
+TEST_CASE("NativePBR ABI-v3 transport preserves the ABI-v2 sidecar inputs", "[NativePBR][surface]")
 {
 	using namespace NativePBR;
-	CHECK(kSurfaceFrameAbiVersion == 2);
+	CHECK(kSurfaceSourceAbiVersion == 2);
+	CHECK(kSurfaceFrameAbiVersion == 3);
 	CHECK(kSurfaceFrameAttachmentCount == 8);
 	CHECK(kSurfaceFrameBaseAttachments == 6);
-	CHECK(kSurfaceFrameSlotCount == 5);
+	CHECK(kSurfaceTransportAttachmentCount == 9);
+	CHECK(kSurfaceTransportBaseAttachments == 7);
+	CHECK(kSurfaceFrameSlotCount == 2);
 	CHECK(kSurfaceFrameFormats[0] == DXGI_FORMAT_R32G32_UINT);
 	CHECK(kSurfaceFrameFormats[1] == DXGI_FORMAT_R32G32B32A32_FLOAT);
 	CHECK(kSurfaceFrameFormats[2] == DXGI_FORMAT_R32G32B32A32_FLOAT);
@@ -16,6 +19,11 @@ TEST_CASE("NativePBR ABI-v2 surface attachments match the native evaluator", "[N
 	CHECK(kSurfaceFrameFormats[5] == DXGI_FORMAT_R16G16B16A16_FLOAT);
 	CHECK(kSurfaceFrameFormats[6] == DXGI_FORMAT_R32G32B32A32_FLOAT);
 	CHECK(kSurfaceFrameFormats[7] == DXGI_FORMAT_R32G32B32A32_FLOAT);
+	CHECK(kSurfaceTransportFormats[0] == DXGI_FORMAT_R8G8B8A8_UINT);
+	CHECK(kSurfaceTransportFormats[1] == DXGI_FORMAT_R8G8B8A8_UINT);
+	CHECK(kSurfaceTransportFormats[2] == kSurfaceFrameFormats[1]);
+	for (size_t i = 3; i < kSurfaceTransportAttachmentCount; ++i)
+		CHECK(kSurfaceTransportFormats[i] == kSurfaceFrameFormats[i - 1]);
 	CHECK(sizeof(GpuMaterialRecord) == 304);
 	CHECK(sizeof(GpuDrawBinding) == 24);
 	CHECK(kGpuTextureDescriptorCapacity == 512);
