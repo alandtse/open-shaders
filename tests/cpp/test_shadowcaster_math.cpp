@@ -11,9 +11,11 @@ using Catch::Approx;
 using ShadowCasterManager::DemandStreakBucket;
 using ShadowCasterManager::EngineShadowSliceCount;
 using ShadowCasterManager::FacingRotation;
+using ShadowCasterManager::FlickerRadiusBand;
 using ShadowCasterManager::FrameTimePercentile;
 using ShadowCasterManager::HashCombine;
 using ShadowCasterManager::HashCombineFloat;
+using ShadowCasterManager::HeldFlickerRadius;
 using ShadowCasterManager::HemisphereSeamMargin;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
 using ShadowCasterManager::kShadowSizeToTexels;
@@ -150,6 +152,25 @@ TEST_CASE("WithinFlickerReach covers every flicker and pulse offset", "[scm]")
 	REQUIRE_FALSE(WithinFlickerReach(0.0f, 0.0f, 0.0f, 0.0f));
 	REQUIRE_FALSE(WithinFlickerReach(0.0f, 0.0f, 8.0f, amplitude));
 	REQUIRE_FALSE(WithinFlickerReach(40.0f, 0.0f, 0.0f, amplitude));
+}
+
+TEST_CASE("HeldFlickerRadius holds through every flickered radius and follows a real change", "[scm]")
+{
+	constexpr float brightest = 520.0f;
+	constexpr float amplitude = 0.3f;
+	const float band = FlickerRadiusBand(amplitude);
+	// The fade scales between 1 - amplitude and 1; the radius follows its square root.
+	for (int start = 0; start <= 10; ++start) {
+		const float held = brightest * std::sqrt(1.0f - amplitude * static_cast<float>(start) / 10.0f);
+		for (int i = 0; i <= 100; ++i)
+			REQUIRE(HeldFlickerRadius(held, brightest * std::sqrt(1.0f - amplitude * static_cast<float>(i) / 100.0f), band) == held);
+	}
+	REQUIRE(HeldFlickerRadius(brightest, brightest * 1.5f, band) == brightest * 1.5f);
+	REQUIRE(HeldFlickerRadius(brightest, brightest * 0.5f, band) == brightest * 0.5f);
+	// No flicker: only a sub-unit change is held.
+	REQUIRE(FlickerRadiusBand(0.0f) == 0.0f);
+	REQUIRE(HeldFlickerRadius(brightest, brightest + 0.5f, 0.0f) == brightest);
+	REQUIRE(HeldFlickerRadius(brightest, brightest + 2.0f, 0.0f) == brightest + 2.0f);
 }
 
 TEST_CASE("FrameTimePercentile returns the 60fps fallback with no samples", "[scm]")

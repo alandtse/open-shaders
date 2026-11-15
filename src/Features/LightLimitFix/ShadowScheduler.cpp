@@ -36,11 +36,17 @@ namespace ShadowCasterManager
 	/// hashes so flicker-jitter alone can't defeat either.
 	static std::unordered_map<const RE::NiLight*, float> s_hashRadiusAnchor;
 
-	static float AnchoredRadiusForHash(const RE::NiLight* ni, float liveRadius)
+	static float FlickerIntensityAmplitude(RE::NiLight* ni);
+
+	static float AnchoredRadiusForHash(RE::NiLight* ni, float liveRadius)
 	{
 		PruneIfOversized(s_hashRadiusAnchor, 1024);
 		auto [it, isNew] = s_hashRadiusAnchor.try_emplace(ni, liveRadius);
-		if (!isNew)
+		if (isNew)
+			return it->second;
+		if (const float amplitude = FlickerIntensityAmplitude(ni); amplitude > 0.0f)
+			it->second = HeldFlickerRadius(it->second, liveRadius, FlickerRadiusBand(amplitude));
+		else
 			it->second += 0.15f * (liveRadius - it->second);
 		return it->second;
 	}
@@ -70,21 +76,39 @@ namespace ShadowCasterManager
 		return false;
 	}
 
-	/// Movement amplitude of the flickering Light record a light was made from, 0 when it does not flicker; cached per NiLight and
-	/// Light record, so a light made at a freed light's address is read again.
-	static float FlickerMovementAmplitude(RE::NiLight* ni)
+	struct FlickerAmplitudes
 	{
-		static std::unordered_map<const RE::NiLight*, std::pair<RE::FormID, float>> s_flickerAmplitude;
-		PruneIfOversized(s_flickerAmplitude, 1024);
+		float movement = 0.0f;
+		float intensity = 0.0f;
+	};
+
+	/// Movement and intensity amplitudes of the flickering Light record a light was made from, 0 when it does not flicker; cached
+	/// per NiLight and Light record, so a light made at a freed light's address is read again.
+	static FlickerAmplitudes FlickerOf(RE::NiLight* ni)
+	{
+		static std::unordered_map<const RE::NiLight*, std::pair<RE::FormID, FlickerAmplitudes>> s_flickerAmplitudes;
+		PruneIfOversized(s_flickerAmplitudes, 1024);
 		const auto formId = LLFCommon::RuntimeLightDataExt::Get(ni)->lighFormId;
-		auto [it, isNew] = s_flickerAmplitude.try_emplace(ni, formId, 0.0f);
+		auto [it, isNew] = s_flickerAmplitudes.try_emplace(ni, formId, FlickerAmplitudes{});
 		if (isNew || it->second.first != formId) {
 			const RE::TESObjectLIGH* ligh = OwnerLight(ni);
 			if (!ligh && formId)
 				ligh = RE::TESForm::LookupByID<RE::TESObjectLIGH>(formId);
-			it->second = { formId, ligh && !ligh->GetNoFlicker() ? ligh->data.flickerMovementAmplitude : 0.0f };
+			it->second = { formId, ligh && !ligh->GetNoFlicker() ?
+									   FlickerAmplitudes{ ligh->data.flickerMovementAmplitude, ligh->data.flickerIntensityAmplitude } :
+									   FlickerAmplitudes{} };
 		}
 		return it->second.second;
+	}
+
+	static float FlickerMovementAmplitude(RE::NiLight* ni)
+	{
+		return FlickerOf(ni).movement;
+	}
+
+	static float FlickerIntensityAmplitude(RE::NiLight* ni)
+	{
+		return FlickerOf(ni).intensity;
 	}
 
 	/// Where a light's shadow is drawn from: the engine and Light Placer move a flickering light inside its parent node every

@@ -105,6 +105,21 @@ namespace ShadowCasterManager
 		return a_amplitude > 0.0f && a_x * a_x + a_y * a_y + a_z * a_z <= reach * reach;
 	}
 
+	/// Share of its brightest radius a flicker or pulse can take from an inverse-square light, whose radius follows the square
+	/// root of a fade the flicker scales down by up to the Light record's intensity amplitude.
+	inline float FlickerRadiusBand(float a_intensityAmplitude) noexcept
+	{
+		return 1.0f - std::sqrt(1.0f - std::clamp(a_intensityAmplitude, 0.0f, 0.99f));
+	}
+
+	/// The radius to hash for a light flickering within a_band of its brightest: a_held while every radius that flicker reaches
+	/// stays within that band of it, else the live radius.
+	inline float HeldFlickerRadius(float a_held, float a_live, float a_band) noexcept
+	{
+		const float keep = 1.0f - a_band;
+		return a_live >= a_held * keep - 1.0f && a_live * keep <= a_held + 1.0f ? a_held : a_live;
+	}
+
 	// The tile class ladder, shared by the coverage classifier below and the
 	// atlas allocator's order mapping (the floor class == one allocator cell).
 	inline constexpr float kTileScaleFull = 1.0f;
