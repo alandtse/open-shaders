@@ -645,6 +645,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 				"Material outputs limited to one fenced composite slot; raster remains");
 		else if (a_pbrFinalColor && pbrSurfaceRecorded && !a_materialLighting)
 			pbrSurfacePass.DeferFinal("Current-frame native raw-light contribution unavailable");
+		else if (a_pbrFinalColor && pbrSurfaceRecorded && !supportsLighting)
+			pbrSurfacePass.DeferFinal("Composite scene-color format lacks DX12 typed UAV support");
 		DX::ThrowIfFailed(slot->commands->Close());
 		if (applyShadow) {
 			DX::ThrowIfFailed(a_queue->Wait(a_shadow->readyFence.get(), a_shadow->readyValue));

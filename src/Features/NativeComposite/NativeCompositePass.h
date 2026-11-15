@@ -104,6 +104,8 @@ public:
 	uint64_t PbrUnsupportedInputs() const { return pbrSurfacePass.UnsupportedInputs(); }
 	uint64_t PbrOrdinalMismatches() const { return pbrSurfacePass.OrdinalMismatches(); }
 	uint64_t PbrNoEligibleFrames() const { return pbrSurfacePass.NoEligibleFrames(); }
+	uint32_t PbrLastDraws() const { return pbrSurfacePass.LastDraws(); }
+	uint32_t PbrLastEligibleDraws() const { return pbrSurfacePass.LastEligibleDraws(); }
 	~NativeComposite();
 
 private:

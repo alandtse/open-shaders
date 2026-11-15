@@ -111,6 +111,8 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 {
 	CS_GPU_PASS("NativePBR::MaterialEvaluation");
 	status = "Waiting for synchronized NativePBR screen inputs";
+	lastDraws = 0;
+	lastEligibleDraws = 0;
 	if (!a_input || !a_materials || !a_publication || !a_publication->recipes || !a_commands || !a_device)
 		return false;
 	if (a_input->abiVersion != kProvisionalSurfaceAbiVersion || !a_input->nativeOwnedDraws ||
@@ -160,6 +162,7 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 		if (a_input->draws->size() > NativePBR::kMaximumFrameDraws)
 			throw std::runtime_error("NativePBR frame-local draw table exceeds supported capacity");
 		const uint32_t drawCount = uint32_t(a_input->draws->size());
+		lastDraws = drawCount;
 		const uint32_t materialCount = uint32_t(a_materials->entries.size());
 		if (uint64_t(materialCount) * sizeof(NativePBR::GpuMaterialRecord) > a_materials->records->GetDesc().Width) {
 			status = "NativePBR material record allocation is smaller than its immutable generation";
@@ -201,6 +204,7 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 				eligible ? exact->index : UINT32_MAX,
 				NativePBR::kGpuDrawUsesVertexColor | (draw.projectedUv ? NativePBR::kGpuDrawProjected : 0u));
 		}
+		lastEligibleDraws = eligibleDraws;
 		if (!eligibleDraws) {
 			++noEligibleFrames;
 			status = "NativePBR surface frame has no eligible opaque draw bindings";
@@ -370,18 +374,29 @@ bool NativePBRSurfacePass::RecordFinalColor(ID3D12Device* a_device, ID3D12Graphi
 {
 	CS_GPU_PASS("NativePBR::FinalMaterialComposite");
 	finalStatus = "NativePBR final color awaits exact material and light frames";
-	if (!a_device || !a_commands || !a_sceneColor || !a_slot.input || !a_slot.materials ||
-		a_slot.input->frame != a_frame || a_slot.width != a_width || a_slot.height != a_height ||
-		a_lighting.frame != a_frame || a_lighting.width != a_width || a_lighting.height != a_height ||
-		!a_lighting.readyFence || !a_lighting.readyValue ||
-		a_lighting.readyValue == UINT64_MAX || !a_lighting.lights ||
-		a_lighting.nativePointLightCount == 0 ||
-		a_lighting.nativePointLightCount > DX12Native::kMaximumNativePointLights ||
-		!a_lighting.textures[7] || !a_lighting.scene.prepared ||
-		!a_lighting.scene.prepared->acceleration || !a_lighting.scene.prepared->acceleration->result ||
-		!a_lighting.scene.raster || !a_lighting.scene.raster->cameraValid ||
-		!a_slot.input->textures[3] || !std::isfinite(a_compositeStrength) ||
-		a_compositeStrength < 0.0f) {
+	if (!a_device || !a_commands || !a_sceneColor || !a_slot.input || !a_slot.materials) {
+		finalStatus = "NativePBR final output or evaluated material slot missing";
+		return false;
+	}
+	if (a_slot.input->frame != a_frame || a_slot.width != a_width || a_slot.height != a_height ||
+		a_lighting.frame != a_frame || a_lighting.width != a_width || a_lighting.height != a_height) {
+		finalStatus = "NativePBR surface and native-light frames or dimensions differ";
+		return false;
+	}
+	if (!a_lighting.readyFence || !a_lighting.readyValue || a_lighting.readyValue == UINT64_MAX ||
+		!a_lighting.lights || !a_lighting.nativePointLightCount ||
+		a_lighting.nativePointLightCount > DX12Native::kMaximumNativePointLights || !a_lighting.textures[7]) {
+		finalStatus = "NativePBR raw DX12 lights or native validity texture unavailable";
+		return false;
+	}
+	if (!a_lighting.scene.prepared || !a_lighting.scene.prepared->acceleration ||
+		!a_lighting.scene.prepared->acceleration->result) {
+		finalStatus = "NativePBR final direct lighting awaits native scene acceleration";
+		return false;
+	}
+	if (!a_lighting.scene.raster || !a_lighting.scene.raster->cameraValid ||
+		!a_slot.input->textures[3] || !std::isfinite(a_compositeStrength) || a_compositeStrength < 0.0f) {
+		finalStatus = "NativePBR current camera, depth, or composite strength invalid";
 		return false;
 	}
 	if (a_sceneColor->GetDesc().Format != a_sceneFormat ||

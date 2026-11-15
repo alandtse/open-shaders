@@ -65,6 +65,8 @@ void NativeCompositeFeature::DrawSettings()
 		ImGui::TextDisabled("Draw ordinal mismatches: %llu | no eligible frames: %llu",
 			static_cast<unsigned long long>(pass.PbrOrdinalMismatches()),
 			static_cast<unsigned long long>(pass.PbrNoEligibleFrames()));
+		ImGui::TextDisabled("Last evaluated draw table: %u draws | %u eligible opaque draws",
+			pass.PbrLastDraws(), pass.PbrLastEligibleDraws());
 	}
 	ImGui::SeparatorText("Independent RT shadows");
 	bool shadowChanged = false;

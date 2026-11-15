@@ -62,6 +62,8 @@ public:
 	uint64_t UnsupportedInputs() const { return unsupportedInputs; }
 	uint64_t OrdinalMismatches() const { return ordinalMismatches; }
 	uint64_t NoEligibleFrames() const { return noEligibleFrames; }
+	uint32_t LastDraws() const { return lastDraws; }
+	uint32_t LastEligibleDraws() const { return lastEligibleDraws; }
 	/** @brief Count a recorded dispatch only after the owning command queue signals successfully. */
 	void MarkSubmitted();
 	/** Diagnostic output slots are VRAM-limited; another frame may still be composited normally. */
@@ -79,4 +81,5 @@ private:
 	std::string status = "Waiting for surface input producer";
 	uint64_t submissions = 0, missingMaterials = 0, missingRevisions = 0, missingTextures = 0, unsupportedRecipes = 0, unsupportedInputs = 0;
 	uint64_t ordinalMismatches = 0, noEligibleFrames = 0;
+	uint32_t lastDraws = 0, lastEligibleDraws = 0;
 };
