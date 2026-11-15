@@ -318,14 +318,33 @@ void VolumetricShadows::CopyShadowLightData()
 	}
 }
 
+namespace
+{
+	// Per-draw callers rebind at most once per frame per SRV: slot 18 is only written through
+	// SetSharedShadowMapSRV, so a repeat bind in the same frame is redundant.
+	ID3D11ShaderResourceView* boundSharedShadowSRV = nullptr;
+	uint32_t boundSharedShadowFrame = UINT32_MAX;
+	uint32_t directionalShadowsFrame = UINT32_MAX;
+	bool directionalShadowsLatched = false;
+}
+
 void VolumetricShadows::SetSharedShadowMapSRV(ID3D11DeviceContext* a_context, ID3D11ShaderResourceView* a_srv)
 {
 	a_context->PSSetShaderResources(kSharedShadowMapShaderSlot, 1, &a_srv);
+	boundSharedShadowSRV = a_srv;
+	boundSharedShadowFrame = globals::state->frameCountAtomic.load(std::memory_order_relaxed);
 }
 
 void VolumetricShadows::SetShaderResources(ID3D11DeviceContext* a_context)
 {
-	ID3D11ShaderResourceView* srv = globals::state->HasDirectionalShadows() ? shadowCopySRV : nullptr;
+	const auto frame = globals::state->frameCountAtomic.load(std::memory_order_relaxed);
+	if (directionalShadowsFrame != frame) {
+		directionalShadowsLatched = globals::state->HasDirectionalShadows();
+		directionalShadowsFrame = frame;
+	}
+	ID3D11ShaderResourceView* srv = directionalShadowsLatched ? shadowCopySRV : nullptr;
+	if (srv == boundSharedShadowSRV && frame == boundSharedShadowFrame)
+		return;
 	SetSharedShadowMapSRV(a_context, srv);
 }
 
