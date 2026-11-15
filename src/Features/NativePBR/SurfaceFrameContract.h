@@ -20,7 +20,8 @@ namespace NativePBR
 	inline constexpr uint32_t kSurfaceFrameBaseAttachments = 6;
 	inline constexpr uint32_t kSurfaceTransportAttachmentCount = kSurfaceFrameAttachmentCount + 1;
 	inline constexpr uint32_t kSurfaceTransportBaseAttachments = kSurfaceFrameBaseAttachments + 1;
-	inline constexpr uint32_t kSurfaceFrameSlotCount = 5;
+	// Diagnostic surface transport may skip a frame rather than reserve five full-resolution copies.
+	inline constexpr uint32_t kSurfaceFrameSlotCount = 3;
 	inline constexpr std::array<DXGI_FORMAT, kSurfaceFrameAttachmentCount> kSurfaceFrameFormats{
 		DXGI_FORMAT_R32G32_UINT, DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT,

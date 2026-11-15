@@ -273,10 +273,14 @@ void NativePBRFeature::OnOpaqueRasterReady(const OpaqueRasterInputs&)
 {
 	++surfaceHandoffCalls;
 	if (!IsActive() || globals::game::isVR || !globals::game::graphicsState) {
+		if (surfacePublisher)
+			surfacePublisher->ReleaseIdle();
 		surfaceHandoffStatus = "Native material capture inactive for this runtime";
 		return;
 	}
 	if (!globals::features::nativeComposite.WantsNativePbrSurfaceDiagnostic()) {
+		if (surfacePublisher)
+			surfacePublisher->ReleaseIdle();
 		surfaceHandoffStatus = "Native Composite material diagnostic disabled";
 		return;
 	}

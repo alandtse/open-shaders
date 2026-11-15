@@ -48,6 +48,8 @@ public:
 	uint64_t NoEligibleFrames() const { return noEligibleFrames; }
 	/** @brief Count a recorded dispatch only after the owning command queue signals successfully. */
 	void MarkSubmitted();
+	/** Diagnostic output slots are VRAM-limited; another frame may still be composited normally. */
+	void DeferForSlotBudget() { status = "NativePBR diagnostic output limited to one fenced composite slot"; }
 
 private:
 	winrt::com_ptr<ID3D12RootSignature> root;

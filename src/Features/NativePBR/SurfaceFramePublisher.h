@@ -33,6 +33,8 @@ namespace NativePBR
 		~SurfaceFramePublisher();
 		SurfaceFramePublisher(const SurfaceFramePublisher&) = delete;
 		SurfaceFramePublisher& operator=(const SurfaceFramePublisher&) = delete;
+		/** Release completed diagnostic snapshots when the diagnostic consumer is disabled. */
+		void ReleaseIdle();
 
 		/** @brief Copies ABI-v2 DX11 attachments and signals a shared producer fence without CPU waiting. */
 		bool Publish(ID3D11Device5* a_device11, ID3D11DeviceContext4* a_context11,

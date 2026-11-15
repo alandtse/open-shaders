@@ -219,6 +219,21 @@ namespace NativePBR
 	SurfaceFramePublisher::SurfaceFramePublisher() : state(std::make_unique<State>()) {}
 	SurfaceFramePublisher::~SurfaceFramePublisher() = default;
 
+	void SurfaceFramePublisher::ReleaseIdle()
+	{
+		RetiredSurfaceSlots::Global().Collect();
+		std::scoped_lock lock(state->mutex);
+		state->current.reset();
+		uint64_t retained = 0;
+		for (auto& slot : state->slots) {
+			if (slot && slot->Reusable())
+				slot.reset();
+			if (slot)
+				retained += slot->bytes;
+		}
+		state->diagnostics.allocatedBytes = retained;
+	}
+
 	bool SurfaceFramePublisher::Publish(ID3D11Device5* a_device11, ID3D11DeviceContext4* a_context11,
 		ID3D12Device* a_device12, ID3D12CommandQueue* a_queue12, const Sources& a_sources,
 		uint64_t a_optionalBudgetBytes)

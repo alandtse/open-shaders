@@ -297,6 +297,15 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			shadowStatus = "Shadow compositor frame slots are still occupied";
 		return {};
 	}
+	// Diagnostic output never affects final color; one fenced set avoids
+	// retaining a full-resolution allocation in every composite slot.
+	const auto diagnosticOwner = std::ranges::find_if(slots, [](const auto& candidate) {
+		return candidate && candidate->pbrSurface.bytes != 0;
+	});
+	const bool canRecordPbr = a_pbrDiagnostic &&
+		(diagnosticOwner == slots.end() || diagnosticOwner->get() == slot);
+	if (!canRecordPbr)
+		slot->pbrSurface = {};
 
 	bool submitted = false;
 	bool producerSignalled = false;
@@ -594,7 +603,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 				D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
 			slot->commands->ResourceBarrier(1, &outputEnd);
 		}
-		if (a_pbrDiagnostic && a_pbrSurface && a_pbrMaterials) {
+		if (canRecordPbr && a_pbrSurface && a_pbrMaterials) {
 			uint64_t retained = 0;
 			for (const auto& candidate : slots)
 				if (candidate) {
@@ -607,6 +616,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			const auto additional = budget > retained ? budget - retained : 0;
 			pbrSurfaceRecorded = pbrSurfacePass.Record(a_device12, slot->commands.get(), slot->pbrSurface,
 				a_pbrSurface, a_pbrMaterials, a_frame, a_width, a_height, additional);
+		} else if (a_pbrDiagnostic && !canRecordPbr) {
+			pbrSurfacePass.DeferForSlotBudget();
 		}
 		DX::ThrowIfFailed(slot->commands->Close());
 		if (applyShadow) {
