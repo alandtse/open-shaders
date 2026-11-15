@@ -17,6 +17,22 @@ The producer records omitted or unresolved sources and does not claim runtime
 coverage or acceleration-structure completion. A successful process exit is
 not a validation or publication of the resulting scene.
 
+## Geometry and texture-reference ownership
+
+The companion preserves original NIF triangle topology and source shading attributes
+(normals, UVs, tangents). It never samples height or normal textures to subdivide,
+displace, or otherwise regenerate triangles. Preparation quality `2` is retained
+as a compatibility alias for quality `1`, with no texture-driven geometry bake.
+The semantic mesh cache key was changed to reject older displaced products.
+
+Each placed shape's `material` member contains only `twoSided` and the ordered
+source `textures` path references; `materialSchemaVersion: 2` identifies this
+reference-only record. The `textureReferences` catalog records canonical paths,
+not copied DDS payloads. No offline shader flags, PBR classification, colors,
+UV transform, alpha thresholds, roughness, or other material appearance are baked
+into companion output. The native runtime owns material resolution and evaluation.
+Geometry opacity exclusions remain conservative for safe RT traversal.
+
 ## Plugin-scoped interior catalog (Stage B)
 
 Command: DX12ResourcesPrep --list-cells <Data directory> <SelectedPlugin.esm> <Plugins.txt> <output.json>
@@ -72,9 +88,8 @@ The companion stores source-hash/quality/semantic-compiler-keyed compiled
 NIF geometry and shading products under the approved
 `DX12-cache/work/cells/.shared-mesh-cache` subtree. Metadata and every
 restored binary blob are SHA-256-checked before reuse. A poisoned/stale cache
-falls back to normal compilation. Displacement-enabled preparation does not
-reuse cached products until displacement texture provenance is hashed.
-The cache survives work-package cleanup and is independent of CPU/GPU
+falls back to normal compilation. The cache never contains texture-expanded geometry, regardless of preparation
+quality. The cache survives work-package cleanup and is independent of CPU/GPU
 subcell residency; it never pins BLAS or DDS textures in GPU memory.
 
 ## Exterior WRLD subcell preparation

@@ -41,6 +41,10 @@ namespace DX12Native
 			if (!a_source.offlineDescription)
 				return result;
 			const auto& source = *a_source.offlineDescription;
+			// Reference-only companion manifests deliberately do not contain baked
+			// material parameters. NativePBR supplies runtime material evaluation.
+			if (!source.contains("shaderFlags1") || !source.contains("shaderFlags2"))
+				return result;
 			const auto flags1 = source.at("shaderFlags1").get<uint32_t>(), flags2 = source.at("shaderFlags2").get<uint32_t>();
 			const auto diffuse = Find(a_resources, source, 0), normal = Find(a_resources, source, 1);
 			const bool pbr = (flags2 & kPbrSourceFlag) != 0;
