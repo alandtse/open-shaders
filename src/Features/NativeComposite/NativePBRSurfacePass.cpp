@@ -114,7 +114,7 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 	if (a_input->abiVersion != kProvisionalSurfaceAbiVersion || !a_input->nativeOwnedDraws ||
 		a_input->frame != a_frame || a_input->width < a_width || a_input->height < a_height ||
 		!a_input->readyFence || !a_input->readyValue || a_input->readyValue == UINT64_MAX || !a_input->retainThrough ||
-		!a_input->draws || a_input->draws->empty()) {
+		!a_input->draws || !NativePBR::ValidSurfaceDrawTable(*a_input->draws)) {
 		status = "NativePBR opaque surface ABI, draw ownership, or producer retention unconfirmed";
 		return false;
 	}
@@ -133,7 +133,7 @@ bool NativePBRSurfacePass::Record(ID3D12Device* a_device, ID3D12GraphicsCommandL
 		return false;
 	}
 	for (uint32_t index = 0; index < kSurfaceInputs; ++index) {
-		if (index >= NativePBR::kSurfaceTransportBaseAttachments && !a_input->textures[index])
+		if (index >= NativePBR::kSurfaceTransportBaseAttachments && !a_input->projectedAvailable && !a_input->textures[index])
 			continue;
 		const auto& resource = a_input->textures[index];
 		if (!resource || resource->GetDesc().Format != kInputFormats[index] ||
