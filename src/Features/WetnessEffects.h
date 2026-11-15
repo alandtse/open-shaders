@@ -77,11 +77,19 @@ public:
 		// Used by CPU wetness decay; retained here to preserve the mirrored settings layout.
 		float CharacterDryTime = 10.0f;
 		uint EnableWeaponRainDrops = true;
-		// Independent environmental wall-droplet controls
-		float EnvironmentDropSize = 1.0f;
-		float EnvironmentDropBrightness = 1.0f;
-		float EnvironmentDropReflectivity = 1.0f;
-		float EnvironmentDropPadding = 0.0f;
+		// Community Shaders Surface Rain Flow controls
+		float WallRainDensity = 1.0f;
+		float WallRainDropSize = 1.0f;
+		float WallRainSpeed = 1.0f;
+		float WallRainLayering = 1.0f;
+		float WallRainNormalStrength = 2.0f;
+		float WallRainWetness = 1.0f;
+		float WallRainDarkening = 0.65f;
+		uint EnableWallRain = true;
+		float WallRainTrailLength = 1.0f;
+		float WallRainPadding0 = 0.0f;
+		float WallRainPadding1 = 0.0f;
+		float WallRainPadding2 = 0.0f;
 	};
 
 	/** @brief Stable debug-mode ordering shared by the character-rain UI and frame upload. */
@@ -94,10 +102,9 @@ public:
 		Flow,
 		Surfaces,
 		Weapons,
-		Environment,
 		Count
 	};
-	static_assert(sizeof(Settings) == 176);
+	static_assert(sizeof(Settings) == 208);
 
 	struct alignas(16) PerFrame
 	{
@@ -112,7 +119,7 @@ public:
 		float2 CharacterStatePadding;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
-	static_assert(sizeof(PerFrame) == 272);
+	static_assert(sizeof(PerFrame) == 304);
 
 	struct DebugSettings
 	{
@@ -220,13 +227,12 @@ public:
 	bool ShouldClassifyCharacterRainSurfaces() const
 	{
 		const bool characterEffectsEnabled = settings.EnableWetnessEffects && settings.EnableCharacterRainSpots;
-		const bool characterWaterVisible = characterSurfaceWetness > 0.0f || (settings.CharacterSpotDebug != 0u &&
-																				 settings.CharacterSpotDebug != static_cast<std::uint32_t>(CharacterDebugMode::Environment));
+		const bool characterWaterVisible = characterSurfaceWetness > 0.0f || (settings.CharacterSpotDebug != 0u);
 		return loaded && characterEffectsEnabled && characterWaterVisible;
 	}
 
 private:
-	/** @brief Draws the environment wetness and environmental droplet settings. */
+	/** @brief Draws the environment wetness settings. */
 	void DrawEnvironmentWetnessSettings();
 
 	/** @brief Draws the character rain spot and wetness settings. */

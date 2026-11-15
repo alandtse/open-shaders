@@ -78,7 +78,6 @@ namespace CharacterRainSpots
 	static const uint FlowDebugMode = 4u;
 	static const uint SurfaceDebugMode = 5u;
 	static const uint WeaponDebugMode = 6u;
-	static const uint EnvironmentDebugMode = 7u;
 	static const uint SettledHashSeed = 191u;
 	static const uint ImpactHashSeed = 719u;
 	static const uint FlowColumnHashSeed = 137u;
@@ -177,20 +176,26 @@ namespace CharacterRainSpots
 	}
 
 	/** @brief Advects separate tapered rivulets with rounded heads, uneven necks, and thin residual trails. */
-	float3 FlowingRivulets(float2 surfacePosition, float3 surfaceMetric, float footprint, float baseRadius, uint projectionIndex, float density)
+	float3 FlowingRivulets(float2 surfacePosition, float3 surfaceMetric, float footprint, float baseRadius, uint projectionIndex, float density, float flowSlope)
 	{
 		float3 result = float3(0.0f, 0.0f, 0.0f);
 		const SharedData::WetnessEffectsSettings settings = SharedData::wetnessEffectsSettings;
 		[branch] if (projectionIndex < SlidingProjectionCount)
 		{
-			float activityRate = GetActivityRate(settings.CharacterRainActivityMultiplier);
+			float activityRate = GetActivityRate(settings.CharacterRainActivityMultiplier) * lerp(0.7f, 1.0f, saturate(flowSlope));
 			float streakLength = DropTrailLength;
 			float2 cellSize = float2(baseRadius * FlowCellWidth, streakLength + baseRadius * FlowCellPadding);
 			int column = int(floor(surfacePosition.x / cellSize.x));
 			uint3 columnHash = Random::pcg3d(uint3(asuint(column), projectionIndex + FlowColumnHashSeed, 0u));
 			float flowCycle = max(SharedData::Timer, 0.0f) * activityRate / SpotLifetime + float(columnHash.x >> HashFractionShift) * UintToUnit;
-			float pause = DropPause / SpotLifetime;
-			float progress = smoothstep(pause, 1.0f, frac(flowCycle));
+			float pause = (DropPause / SpotLifetime) * lerp(0.7f, 1.3f, float(columnHash.y >> HashFractionShift) * UintToUnit);
+			float flowAge = max(frac(flowCycle) - pause, 0.0f);
+                   float releaseTime = max((1.0f - pause) * 0.35f, 0.001f);
+                   float releaseAge = min(flowAge, releaseTime);
+                   float travel = flowAge - releaseAge + releaseAge * releaseAge / (2.0f * releaseTime);
+                   float availableTime = 1.0f - pause;
+                   float totalTravel = availableTime - releaseTime * 0.5f;
+                   float progress = saturate(travel / max(totalTravel, 0.001f));
 			float2 flowPosition = surfacePosition;
 			flowPosition.y += (floor(flowCycle) + progress) * DropTravel;
 			int2 cell = int2(floor(flowPosition / cellSize));
@@ -220,9 +225,11 @@ namespace CharacterRainSpots
 					baseRadius * TrailEdgeMinimumInRadii, baseRadius * TrailEdgeMaximumInRadii);
 				float trailFade = smoothstep(-edgeWidth, edgeWidth, behindHead) *
 				                  (1.0f - smoothstep(TrailFadeOutStart, 1.0f, trailAge));
-				trailFade *= saturate(width / max(footprint * 0.5f, width)) * DropTrailStrength;
+				float filmLevel = rsqrt(1.0f + trailAge * lerp(0.35f, 0.65f, variation.x));
+
+                          trailFade *= saturate(width / max(footprint * 0.5f, width)) * DropTrailStrength;
 				float trailCoverage = (1.0f - smoothstep(max(width - edgeWidth, 0.0f), width + edgeWidth, lateralDistance)) * trailFade;
-				float trailHeight = sqrt(saturate(1.0f - lateralDistance * lateralDistance / max(width * width, EPSILON_DIVISION))) * width / baseRadius * trailFade;
+				float trailHeight = sqrt(saturate(1.0f - lateralDistance * lateralDistance / max(width * width, EPSILON_DIVISION))) * width / baseRadius * trailFade * filmLevel;
 				float detailFade = 1.0f - smoothstep(TrailDetailFadeStart, TrailDetailFadeEnd, footprint / baseRadius);
 				result = float3(max(head.x, trailCoverage), max(head.y, trailHeight), trailCoverage * (1.0f - head.x)) * selection * detailFade;
 			}
@@ -232,13 +239,10 @@ namespace CharacterRainSpots
 
 	/** @brief Blends independent settled, arriving, and flowing water layers with bounded per-cell work. */
 	float3 EvaluateProjection(float2 surfacePosition, float3 surfaceMetric, float footprint, uint projectionIndex,
-		float rainDensity, float settledDensity, float flowSlope, bool stationaryOnly, float radiusMultiplier)
+		float rainDensity, float settledDensity, float flowSlope, bool stationaryOnly)
 	{
 		const SharedData::WetnessEffectsSettings settings = SharedData::wetnessEffectsSettings;
-		float configuredRadius =
-			(radiusMultiplier < 0.0f ? 1.0f : settings.CharacterSpotRadius) *
-			abs(radiusMultiplier) *
-			(stationaryOnly ? WeaponRadiusScale : 1.0f);
+		float configuredRadius = settings.CharacterSpotRadius * (stationaryOnly ? WeaponRadiusScale : 1.0f);
 		float baseRadius = max(configuredRadius, MinimumBeadRadius) * BeadRadiusScale;
 		float3 settled = float3(0.0f, 0.0f, 0.0f);
 		float3 arriving = float3(0.0f, 0.0f, 0.0f);
@@ -248,7 +252,7 @@ namespace CharacterRainSpots
 		[branch] if (!stationaryOnly)
 			arriving = ArrivingDrops(surfacePosition, surfaceMetric, footprint, baseRadius, projectionIndex, rainDensity);
 		[branch] if (!stationaryOnly && flowSlope > 0.0f)
-			flowing = FlowingRivulets(surfacePosition, surfaceMetric, footprint, baseRadius, projectionIndex, settledDensity) * flowSlope;
+			flowing = FlowingRivulets(surfacePosition, surfaceMetric, footprint, baseRadius, projectionIndex, settledDensity, flowSlope) * flowSlope;
 		if (settings.CharacterSpotDebug == SettledDebugMode)
 			return settled;
 		if (settings.CharacterSpotDebug == ImpactDebugMode)
@@ -261,7 +265,7 @@ namespace CharacterRainSpots
 
 	/** @brief Returns surface-attached coverage, water height, and trail absorption shared by both eyes. */
 	float3 Evaluate(float3 modelPosition, float3 relativeWorldPosition, float3 worldNormal, float skyVisibility,
-		bool heldWeapon, uint eyeIndex, float radiusMultiplier)
+		bool heldWeapon, uint eyeIndex)
 	{
 		const SharedData::WetnessEffectsSettings settings = SharedData::wetnessEffectsSettings;
 		float retainedWetness = settings.CharacterRetainedWetness;
@@ -314,7 +318,7 @@ namespace CharacterRainSpots
 						float3 surfaceV = (worldDy * surfaceDx.x - worldDx * surfaceDy.x) * inverseDeterminant;
 						float3 surfaceMetric = abs(determinant) > EPSILON_DIVISION ? float3(dot(surfaceU, surfaceU), dot(surfaceU, surfaceV), dot(surfaceV, surfaceV)) : float3(1, 0, 1);
 						water += EvaluateProjection(surfacePosition, surfaceMetric, footprint, projectionIndex,
-									 rainDensity, settledDensity, flowSlope, heldWeapon, radiusMultiplier) *
+									 rainDensity, settledDensity, flowSlope, heldWeapon) *
 						         projectionWeights[projectionIndex];
 					}
 				}
@@ -325,14 +329,6 @@ namespace CharacterRainSpots
 		}
 		return saturate(water);
 	}
-
-	/** @brief Preserve existing character and weapon droplet calls. */
-	float3 Evaluate(float3 modelPosition, float3 relativeWorldPosition, float3 worldNormal, float skyVisibility,
-		bool heldWeapon, uint eyeIndex)
-	{
-		return Evaluate(modelPosition, relativeWorldPosition, worldNormal, skyVisibility, heldWeapon, eyeIndex, 1.0f);
-	}
-
 }
 
 #endif
