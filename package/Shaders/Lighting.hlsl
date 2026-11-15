@@ -1132,7 +1132,7 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #	endif
 #	if defined(WETNESS_EFFECTS)
 #		include "WetnessEffects/WetnessEffects.hlsli"
-#         include "WetnessEffects/CSWallRain.hlsli"
+#		include "WetnessEffects/CSWallRain.hlsli"
 #		if defined(CHARACTER_RAIN_SURFACE)
 #			include "WetnessEffects/CharacterRainSpots.hlsli"
 #		endif
@@ -2862,8 +2862,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float wetness = 0.0;
 	float3 wetnessNormal = vertexNormal.xyz;
 
-
-
 	// Calculate shore wetness factors
 	float wetnessDistToWater = abs(input.WorldPosition.z - waterHeight);
 	float shoreFactor = saturate(1.0 - (wetnessDistToWater / SharedData::wetnessEffectsSettings.ShoreRange));
@@ -2896,11 +2894,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 											SharedData::wetnessEffectsSettings.CharacterRetainedWetness) > 0.0f &&
 	                                    (!heldWeapon || SharedData::wetnessEffectsSettings.EnableWeaponRainDrops);
 	[branch] if (evaluateCharacterDrops)
-  {
-          characterDrop = CharacterRainSpots::Evaluate(input.ModelPosition.xyz,
-                  input.WorldPosition.xyz, vertexNormal.xyz, characterRainSkyVisibility, heldWeapon, eyeIndex);
-  }
-  float characterSpotMask = characterDrop.x;
+	{
+		characterDrop = CharacterRainSpots::Evaluate(input.ModelPosition.xyz,
+			input.WorldPosition.xyz, vertexNormal.xyz, characterRainSkyVisibility, heldWeapon, eyeIndex);
+	}
+	float characterSpotMask = characterDrop.x;
 #		endif
 	// Calculate raindrop effects
 	float4 raindropInfo = float4(0, 0, 1, 0);
@@ -2995,34 +2993,33 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	// Apply ripple normal effects
 	float3 rippleNormal = normalize(lerp(float3(0, 0, 1), raindropInfo.xyz, lerp(flatnessAmount, 1.0, 0.5)));
 	wetnessNormal = ReorientNormal(rippleNormal, wetnessNormal);
-#                if !defined(SKINNED) && !defined(SKIN) && !defined(HAIR) && !defined(EYE)
-  float3 csRainPosition = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-  float3 csRainDx = ddx(input.WorldPosition.xyz);
-  float3 csRainDy = ddy(input.WorldPosition.xyz);
-  float csRainSlope = length(normalize(vertexNormal.xyz).xy);
-  float csRainSlopeBlend = smoothstep(0.25f, 0.65f, csRainSlope);
-#                if defined(CHARACTER_RAIN_SURFACE)
-  bool csRainEligible = !characterRainSurface && !heldWeapon;
-#                else
-  bool csRainEligible = true;
-#                endif
-  float csRainFlowRange = max(SharedData::wetnessEffectsSettings.RaindropFxRange, 1.0f);
-  float csRainDistanceFade = 1.0f - smoothstep(csRainFlowRange * 0.7f, csRainFlowRange, length(input.WorldPosition.xyz));
-  csRainEligible = csRainEligible && inWorld && !SharedData::HideSky && !SharedData::InInterior && wetnessOcclusion > 0.05f && csRainSlopeBlend > 0.0f && SharedData::wetnessEffectsSettings.MaxRainWetness > 0.0f && input.WorldPosition.z > waterHeight && csRainDistanceFade > 0.0f;
-  [branch] if (csRainEligible)
-  {
-    float csRainBlend = CSWallRain::GetWallRainFlowBlend(wetnessOcclusion, nearFactor) * csRainDistanceFade * csRainSlopeBlend * saturate(SharedData::wetnessEffectsSettings.MaxRainWetness);
-    if (csRainBlend > 0.0f)
-    {
-      CSWallRain::WallRainState csRain = CSWallRain::GetWallRainState(csRainPosition, normalize(vertexNormal.xyz), csRainDx, csRainDy, csRainDx, csRainDy, false);
-      wetnessNormal = normalize(wetnessNormal - csRain.gradient * csRainBlend);
-      float csRainWater = saturate(csRain.water * csRainBlend * SharedData::wetnessEffectsSettings.WallRainWetness);
-      float csRainDamp = saturate(csRain.damp * csRainBlend * SharedData::wetnessEffectsSettings.WallRainDarkening);
-      wetnessGlossinessSpecular = lerp(wetnessGlossinessSpecular, max(wetnessGlossinessSpecular, 0.9f), csRainWater);
-      wetnessGlossinessAlbedo = lerp(wetnessGlossinessAlbedo, max(wetnessGlossinessAlbedo, 1.0f), csRainDamp);
-    }
-  }
-#                endif
+#		if !defined(SKINNED) && !defined(SKIN) && !defined(HAIR) && !defined(EYE)
+	float3 csRainPosition = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+	float3 csRainDx = ddx(input.WorldPosition.xyz);
+	float3 csRainDy = ddy(input.WorldPosition.xyz);
+	float csRainSlope = length(normalize(vertexNormal.xyz).xy);
+	float csRainSlopeBlend = smoothstep(0.25f, 0.65f, csRainSlope);
+#			if defined(CHARACTER_RAIN_SURFACE)
+	bool csRainEligible = !characterRainSurface && !heldWeapon;
+#			else
+	bool csRainEligible = true;
+#			endif
+	float csRainFlowRange = max(SharedData::wetnessEffectsSettings.RaindropFxRange, 1.0f);
+	float csRainDistanceFade = 1.0f - smoothstep(csRainFlowRange * 0.7f, csRainFlowRange, length(input.WorldPosition.xyz));
+	csRainEligible = csRainEligible && inWorld && !SharedData::HideSky && !SharedData::InInterior && wetnessOcclusion > 0.05f && csRainSlopeBlend > 0.0f && SharedData::wetnessEffectsSettings.MaxRainWetness > 0.0f && input.WorldPosition.z > waterHeight && csRainDistanceFade > 0.0f;
+	[branch] if (csRainEligible)
+	{
+		float csRainBlend = CSWallRain::GetWallRainFlowBlend(wetnessOcclusion, nearFactor) * csRainDistanceFade * csRainSlopeBlend * saturate(SharedData::wetnessEffectsSettings.MaxRainWetness);
+		if (csRainBlend > 0.0f) {
+			CSWallRain::WallRainState csRain = CSWallRain::GetWallRainState(csRainPosition, normalize(vertexNormal.xyz), csRainDx, csRainDy, csRainDx, csRainDy, false);
+			wetnessNormal = normalize(wetnessNormal - csRain.gradient * csRainBlend);
+			float csRainWater = saturate(csRain.water * csRainBlend * SharedData::wetnessEffectsSettings.WallRainWetness);
+			float csRainDamp = saturate(csRain.damp * csRainBlend * SharedData::wetnessEffectsSettings.WallRainDarkening);
+			wetnessGlossinessSpecular = lerp(wetnessGlossinessSpecular, max(wetnessGlossinessSpecular, 0.9f), csRainWater);
+			wetnessGlossinessAlbedo = lerp(wetnessGlossinessAlbedo, max(wetnessGlossinessAlbedo, 1.0f), csRainDamp);
+		}
+	}
+#		endif
 
 #		if defined(CS_SKIN_SHADING)
 	if (skinEnabled && (skinWetness > 0.0f)) {
@@ -4140,7 +4137,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		color.xyz += characterSpotReflectance * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(characterSpotSurfaceNormal, viewDirection, characterSpotRoughness);
 #				endif
 #			else
-          color.xyz += characterSpotReflectance * characterRainAmbientColor;
+		color.xyz += characterSpotReflectance * characterRainAmbientColor;
 #			endif
 	}
 #		endif

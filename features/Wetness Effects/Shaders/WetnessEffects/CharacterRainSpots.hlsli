@@ -190,12 +190,12 @@ namespace CharacterRainSpots
 			float flowCycle = max(SharedData::Timer, 0.0f) * activityRate / SpotLifetime + float(columnHash.x >> HashFractionShift) * UintToUnit;
 			float pause = (DropPause / SpotLifetime) * lerp(0.7f, 1.3f, float(columnHash.y >> HashFractionShift) * UintToUnit);
 			float flowAge = max(frac(flowCycle) - pause, 0.0f);
-                   float releaseTime = max((1.0f - pause) * 0.35f, 0.001f);
-                   float releaseAge = min(flowAge, releaseTime);
-                   float travel = flowAge - releaseAge + releaseAge * releaseAge / (2.0f * releaseTime);
-                   float availableTime = 1.0f - pause;
-                   float totalTravel = availableTime - releaseTime * 0.5f;
-                   float progress = saturate(travel / max(totalTravel, 0.001f));
+			float releaseTime = max((1.0f - pause) * 0.35f, 0.001f);
+			float releaseAge = min(flowAge, releaseTime);
+			float travel = flowAge - releaseAge + releaseAge * releaseAge / (2.0f * releaseTime);
+			float availableTime = 1.0f - pause;
+			float totalTravel = availableTime - releaseTime * 0.5f;
+			float progress = saturate(travel / max(totalTravel, 0.001f));
 			float2 flowPosition = surfacePosition;
 			flowPosition.y += (floor(flowCycle) + progress) * DropTravel;
 			int2 cell = int2(floor(flowPosition / cellSize));
@@ -227,7 +227,7 @@ namespace CharacterRainSpots
 				                  (1.0f - smoothstep(TrailFadeOutStart, 1.0f, trailAge));
 				float filmLevel = rsqrt(1.0f + trailAge * lerp(0.35f, 0.65f, variation.x));
 
-                          trailFade *= saturate(width / max(footprint * 0.5f, width)) * DropTrailStrength;
+				trailFade *= saturate(width / max(footprint * 0.5f, width)) * DropTrailStrength;
 				float trailCoverage = (1.0f - smoothstep(max(width - edgeWidth, 0.0f), width + edgeWidth, lateralDistance)) * trailFade;
 				float trailHeight = sqrt(saturate(1.0f - lateralDistance * lateralDistance / max(width * width, EPSILON_DIVISION))) * width / baseRadius * trailFade * filmLevel;
 				float detailFade = 1.0f - smoothstep(TrailDetailFadeStart, TrailDetailFadeEnd, footprint / baseRadius);

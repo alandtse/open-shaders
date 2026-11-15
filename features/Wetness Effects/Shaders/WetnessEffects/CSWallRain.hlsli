@@ -1,6 +1,6 @@
 #include "Common/Game.hlsli"
 #ifndef CS_WALL_RAIN_HLSLI
-#define CS_WALL_RAIN_HLSLI
+#	define CS_WALL_RAIN_HLSLI
 
 namespace CSWallRain
 {
@@ -427,7 +427,7 @@ namespace CSWallRain
 			!SharedData::wetnessEffectsSettings.EnableRaindropFx ||
 			!SharedData::wetnessEffectsSettings.EnableWallRain ||
 			SharedData::wetnessEffectsSettings.WallRainDensity <= 0.0)
-	return 0.0;
+			return 0.0;
 
 		float rainAmount = smoothstep(0.0, 0.15, SharedData::wetnessEffectsSettings.Raining);
 		return rainAmount * saturate(wetnessOcclusion * 2.0) * nearFactor;

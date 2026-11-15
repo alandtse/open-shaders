@@ -100,8 +100,6 @@ namespace
 		static constexpr float kMaximumActivity = 8.0f;
 		static constexpr float kMinimumDryTime = 2.0f;
 		static constexpr float kMaximumDryTime = 60.0f;
-
-
 	};
 }
 
