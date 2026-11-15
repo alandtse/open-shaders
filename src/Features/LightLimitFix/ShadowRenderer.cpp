@@ -82,9 +82,11 @@ void LightLimitFix::EarlyPrepass()
 	CopyShadowLightData();
 	using Cache = SIE::ShaderCache;
 	auto& flags = globals::state->deferredLightingShaderFlags;
-	flags &= ~(Cache::kLightingNoLocalShadowMaps);
+	flags &= ~(Cache::kLightingNoLocalShadowMaps | Cache::kLightingNoLocalContactShadows);
 	if (shadowLightCount == 0)
 		flags |= Cache::kLightingNoLocalShadowMaps;
+	if (!settings.EnableContactShadows)
+		flags |= Cache::kLightingNoLocalContactShadows;
 }
 
 void LightLimitFix::CopyShadowLightData()

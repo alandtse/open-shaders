@@ -779,12 +779,15 @@ namespace SIE
 			const bool omitLocalLights = deferredPixel && (descriptor & ShaderCache::kLightingNoLocalLights);
 			const bool singleClusterLight = deferredPixel && (descriptor & ShaderCache::kLightingSingleClusterLight);
 			const bool omitLocalShadowMaps = deferredPixel && (descriptor & ShaderCache::kLightingNoLocalShadowMaps);
+			const bool omitLocalContactShadows = deferredPixel && (descriptor & ShaderCache::kLightingNoLocalContactShadows);
 			if (omitLocalLights)
 				descriptor &= ~ShaderCache::kLightingNoLocalLights;
 			if (singleClusterLight)
 				descriptor &= ~ShaderCache::kLightingSingleClusterLight;
 			if (omitLocalShadowMaps)
 				descriptor &= ~ShaderCache::kLightingNoLocalShadowMaps;
+			if (omitLocalContactShadows)
+				descriptor &= ~ShaderCache::kLightingNoLocalContactShadows;
 			RE::GetLightingShaderDefines(descriptor, reinterpret_cast<REX::W32::D3D_SHADER_MACRO*>(defines.data()));
 
 			size_t lastIndex = std::ranges::find_if(defines, [](const D3D_SHADER_MACRO& macro) { return macro.Name == nullptr; }) - defines.begin();
@@ -805,8 +808,10 @@ namespace SIE
 				defines[lastIndex++] = { "LLF_SINGLE_CLUSTER_LIGHT", nullptr };
 			if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::Deferred)) {
 				defines[lastIndex++] = { "DEFERRED", nullptr };
-				if (deferredSpecializations & ShaderCache::kLightingNoLocalShadowMaps)
+				if (omitLocalShadowMaps)
 					defines[lastIndex++] = { "LLF_NO_LOCAL_LIGHT_SHADOWS", nullptr };
+				if (omitLocalContactShadows)
+					defines[lastIndex++] = { "LLF_NO_CONTACT_SHADOWS", nullptr };
 				if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::IBLLuminanceRatio))
 					defines[lastIndex++] = { "IBL_LUMINANCE_RATIO", nullptr };
 			}
@@ -2986,7 +2991,7 @@ namespace SIE
 			compilationSet.Add({ ShaderClass::Pixel, shader, descriptor, a_precompile });
 			constexpr uint32_t specialization = kLightingDryWeather | kLightingSnowCoverInactive | kLightingNoMeshVariation |
 			                                    kLightingLinearACEScg | static_cast<uint32_t>(LightingShaderFlags::IBLLuminanceRatio);
-			const auto deferredSpecializations = (descriptor & static_cast<uint32_t>(LightingShaderFlags::Deferred)) ? (kLightingNoLocalShadowMaps) : 0u;
+			const auto deferredSpecializations = (descriptor & static_cast<uint32_t>(LightingShaderFlags::Deferred)) ? (kLightingNoLocalShadowMaps | kLightingNoLocalContactShadows) : 0u;
 			if (shader.shaderType == RE::BSShader::Type::Lighting && (descriptor & (specialization | deferredSpecializations)))
 				return GetPixelShader(shader, descriptor & ~(specialization | deferredSpecializations), a_precompile);
 			if (shader.shaderType == RE::BSShader::Type::Effect) {

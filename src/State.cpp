@@ -358,7 +358,7 @@ State::TonemapOwner State::GetTonemapOwner()
 	return cachedOwner;
 }
 
-bool State::HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output)
+bool State::ReplacesTonemap(RE::RENDER_TARGET a_output)
 {
 #if defined(ENABLE_EFFECTS11)
 	// VR-only: world-space menus need vanilla's kMENUBG compositor handoff, which
@@ -366,8 +366,17 @@ bool State::HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_
 	if (globals::game::isVR && a_output == RE::RENDER_TARGETS::kMENUBG)
 		return false;
 
-	if (GetTonemapOwner() != TonemapOwner::kEffects11 ||
-		!globals::features::effects11.RenderTonemap(a_input, a_output))
+	return GetTonemapOwner() == TonemapOwner::kEffects11;
+#else
+	(void)a_output;
+	return false;
+#endif
+}
+
+bool State::HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output)
+{
+#if defined(ENABLE_EFFECTS11)
+	if (!ReplacesTonemap(a_output) || !globals::features::effects11.RenderTonemap(a_input, a_output))
 		return false;
 
 	SetOutputRenderTarget(a_output);
@@ -2267,7 +2276,7 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 				if (deferred->deferredPass || a_forceDeferred)
 					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::LightingShaderFlags::Deferred | deferredLightingShaderFlags;
 				else if (permutationData.ExtraShaderDescriptor & static_cast<uint32_t>(ExtraShaderDescriptors::IsReflections))
-					a_pixelDescriptor |= deferredLightingShaderFlags & ~(SIE::ShaderCache::kLightingNoLocalShadowMaps);
+					a_pixelDescriptor |= deferredLightingShaderFlags & ~(SIE::ShaderCache::kLightingNoLocalShadowMaps | SIE::ShaderCache::kLightingNoLocalContactShadows);
 
 				{
 					uint32_t technique = 0x3F & (a_vertexDescriptor >> 24);
