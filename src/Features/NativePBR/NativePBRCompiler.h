@@ -62,21 +62,51 @@ namespace NativePBR
 		std::array<TextureRequest, static_cast<size_t>(TextureRole::Count)> textures{};
 	};
 
-	/** @brief Removes only zero-contribution lobes and coat modifiers that are inert without TwoLayer. */
-	inline uint32_t EffectiveNativeIssues(const Recipe& recipe)
+	/** @brief Identifies material lobes that can affect the current opaque surface. */
+	inline uint32_t ActiveOpaquePbrFlags(const Recipe& recipe)
 	{
-		uint32_t effective = recipe.issues;
 		constexpr uint32_t kSubsurface = uint32_t(PBRFlags::Subsurface);
 		constexpr uint32_t kFuzz = uint32_t(PBRFlags::Fuzz);
 		constexpr uint32_t kTwoLayer = uint32_t(PBRFlags::TwoLayer);
 		constexpr uint32_t kCoatOnly = uint32_t(PBRFlags::ColoredCoat) |
 			uint32_t(PBRFlags::InterlayerParallax) | uint32_t(PBRFlags::CoatNormal);
-		const auto flags = recipe.parameters.pbrFlags;
-		const auto activeFlags = (flags & kTwoLayer) != 0 ? flags : flags & ~kCoatOnly;
-		if ((activeFlags & ~(kSubsurface | kFuzz)) == 0 &&
-			((flags & kSubsurface) == 0 || recipe.parameters.subsurfaceOpacity == 1.0f) &&
-			((flags & kFuzz) == 0 || recipe.parameters.fuzzWeight == 0.0f))
+		uint32_t active = recipe.parameters.pbrFlags;
+		if ((active & kTwoLayer) == 0)
+			active &= ~kCoatOnly;
+		if (recipe.parameters.subsurfaceOpacity == 1.0f &&
+			recipe.textures[static_cast<size_t>(TextureRole::Features0)].canonicalPath.empty())
+			active &= ~kSubsurface;
+		if (recipe.parameters.fuzzWeight == 0.0f)
+			active &= ~kFuzz;
+		if (recipe.parameters.coatStrength == 0.0f)
+			active &= ~(kTwoLayer | kCoatOnly);
+		return active;
+	}
+
+	/** @brief Accepts the native direct-light clearcoat path without separate coat normals or transmission. */
+	inline bool SupportsOpaqueClearcoat(const Recipe& recipe)
+	{
+		return ActiveOpaquePbrFlags(recipe) == uint32_t(PBRFlags::TwoLayer);
+	}
+
+	/** @brief Classifies only features that contribute to the current native opaque material. */
+	inline uint32_t EffectiveNativeIssues(const Recipe& recipe)
+	{
+		uint32_t effective = recipe.issues;
+		const auto active = ActiveOpaquePbrFlags(recipe);
+		constexpr uint32_t kSubsurface = uint32_t(PBRFlags::Subsurface);
+		constexpr uint32_t kTwoLayer = uint32_t(PBRFlags::TwoLayer);
+		constexpr uint32_t kFuzz = uint32_t(PBRFlags::Fuzz);
+		if (active == 0 || active == kTwoLayer)
 			effective &= ~UnsupportedPbrFeatures;
+		const bool feature0Used = (active & (kSubsurface | kTwoLayer)) != 0;
+		const bool feature1Used = (active & (kFuzz | kTwoLayer)) != 0;
+		const bool unsupportedFeature0 = feature0Used && !SupportsOpaqueClearcoat(recipe) &&
+			!recipe.textures[static_cast<size_t>(TextureRole::Features0)].canonicalPath.empty();
+		const bool unsupportedFeature1 = feature1Used &&
+			!recipe.textures[static_cast<size_t>(TextureRole::Features1)].canonicalPath.empty();
+		if (!unsupportedFeature0 && !unsupportedFeature1)
+			effective &= ~UnsupportedFeatureTextures;
 		return effective;
 	}
 

@@ -95,6 +95,28 @@ TEST_CASE("NativePBR material availability requires only sampled opaque roles", 
 	CHECK(recipe.issues == (UnsupportedDisplacement | UnsupportedFeatureTextures));
 }
 
+TEST_CASE("NativePBR clearcoat requests its geometry-sampled feature texture", "[NativePBR][gpu-material]")
+{
+	using namespace NativePBR;
+	Recipe recipe;
+	recipe.parameters.pbrFlags = uint32_t(PBRFlags::TwoLayer);
+	recipe.parameters.coatStrength = 0.8f;
+	recipe.textures[static_cast<size_t>(TextureRole::Features0)].canonicalPath = "textures/coat.dds";
+	CHECK(SupportsOpaqueClearcoat(recipe));
+	CHECK(GpuRequestedTextureRoles(recipe) == (kGpuRequiredTextureRoles | (1u << 5u)));
+	CHECK(ClassifyGpuMaterialAvailability(0x07u, GpuRequestedTextureRoles(recipe)) ==
+		GpuMaterialAvailability::PartiallyResident);
+	CHECK(ClassifyGpuMaterialAvailability(0x27u, GpuRequestedTextureRoles(recipe)) ==
+		GpuMaterialAvailability::Resident);
+	GpuTextureLocations locations{};
+	for (auto& location : locations)
+		location = { kGpuMissingTexture, 0 };
+	const auto record = PackGpuMaterialRecord(recipe, locations);
+	CHECK(record.controls[3] == uint32_t(PBRFlags::TwoLayer));
+	CHECK(record.coat[0] == 0.8f);
+	CHECK(record.coat[2] == 0.04f);
+}
+
 TEST_CASE("NativePBR retained DDS pages are remapped without copying unrelated pages", "[NativePBR][gpu-material]")
 {
 	const std::unordered_set<std::string> required{ "textures\\base.dds", "textures\\other.dds" };

@@ -44,6 +44,9 @@ namespace NativePBR
 		for (size_t role = 0; role <= static_cast<size_t>(TextureRole::Emission); ++role)
 			if (!a_recipe.textures[role].canonicalPath.empty())
 				result |= 1u << role;
+		if (SupportsOpaqueClearcoat(a_recipe) &&
+			!a_recipe.textures[static_cast<size_t>(TextureRole::Features0)].canonicalPath.empty())
+			result |= 1u << static_cast<size_t>(TextureRole::Features0);
 		return result;
 	}
 
@@ -133,7 +136,7 @@ namespace NativePBR
 			uint32_t(a_recipe.revision), uint32_t(a_recipe.revision >> 32) };
 		result.controls = { residentRoles,
 			(source.glint.enabled ? 1u : 0u) | (source.projectedGlint.enabled ? 2u : 0u) |
-			(source.fuzzRoughnessTexture ? 4u : 0u), uint32_t(source.kind), 0u };
+			(source.fuzzRoughnessTexture ? 4u : 0u), uint32_t(source.kind), ActiveOpaquePbrFlags(a_recipe) };
 		return result;
 	}
 }

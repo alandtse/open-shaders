@@ -1909,6 +1909,7 @@ TEST_CASE("Material readiness separates unresolved instance state from unsupport
 	REQUIRE(NativePBR::ClassifyRecipeReadiness(recipe).unsupportedFeatures == 0);
 	REQUIRE(NativePBR::NativeMeshRecipeSupported(recipe));
 	snapshot.material.pbrFlags |= uint32_t(PBRFlags::TwoLayer);
+	snapshot.material.coatStrength = 0.8f;
 	recipe = NativePBR::CompileRecipe(snapshot);
 	REQUIRE(NativePBR::ClassifyRecipeReadiness(recipe).unsupportedFeatures & NativePBR::UnsupportedPbrFeatures);
 	snapshot.material.pbrFlags = uint32_t(PBRFlags::Fuzz);
@@ -1974,7 +1975,39 @@ TEST_CASE("NativePBR opaque captures ignore only projected and inactive feature 
 	snapshot.material.texturePaths[static_cast<size_t>(NativePBR::TextureRole::Features1)] = "textures/features1.dds";
 	recipe = NativePBR::CompileRecipe(snapshot);
 	readiness = NativePBR::ResolveCapturedOpaqueFeatures(NativePBR::ClassifyRecipeReadiness(recipe), recipe, true);
-	CHECK(readiness.unsupportedFeatures == NativePBR::UnsupportedFeatureTextures);
+	CHECK(readiness.unsupportedFeatures == 0);
+}
+
+TEST_CASE("NativePBR admits only simple evaluated clearcoat and keeps dependent features gated", "[native_pbr]")
+{
+	using namespace NativePBR;
+	Snapshot snapshot{ 129, 4, {} };
+	snapshot.material.texturePaths = { "textures/base.dds", "textures/normal.dds", "textures/rmaos.dds", "", "", "textures/coat.dds", "" };
+	snapshot.material.texturePathsComplete = true;
+	snapshot.material.pbrFlags = uint32_t(PBRFlags::TwoLayer);
+	snapshot.material.coatStrength = 0.75f;
+	auto recipe = CompileRecipe(snapshot);
+	CHECK((recipe.issues & (UnsupportedPbrFeatures | UnsupportedFeatureTextures)) ==
+		(UnsupportedPbrFeatures | UnsupportedFeatureTextures));
+	CHECK(SupportsOpaqueClearcoat(recipe));
+	CHECK(ClassifyRecipeReadiness(recipe).unsupportedFeatures == 0);
+
+	snapshot.material.pbrFlags |= uint32_t(PBRFlags::CoatNormal);
+	recipe = CompileRecipe(snapshot);
+	CHECK_FALSE(SupportsOpaqueClearcoat(recipe));
+	CHECK((ClassifyRecipeReadiness(recipe).unsupportedFeatures & UnsupportedPbrFeatures) != 0);
+	snapshot.material.pbrFlags = uint32_t(PBRFlags::TwoLayer);
+	snapshot.material.texturePaths[static_cast<size_t>(TextureRole::Features1)] = "textures/coatroughness.dds";
+	recipe = CompileRecipe(snapshot);
+	CHECK((ClassifyRecipeReadiness(recipe).unsupportedFeatures & UnsupportedFeatureTextures) != 0);
+
+	snapshot.material.pbrFlags = uint32_t(PBRFlags::Subsurface);
+	snapshot.material.subsurfaceOpacity = 1.0f;
+	recipe = CompileRecipe(snapshot);
+	CHECK((ClassifyRecipeReadiness(recipe).unsupportedFeatures & UnsupportedPbrFeatures) != 0);
+	snapshot.material.texturePaths[static_cast<size_t>(TextureRole::Features0)].clear();
+	recipe = CompileRecipe(snapshot);
+	CHECK((ClassifyRecipeReadiness(recipe).unsupportedFeatures & UnsupportedPbrFeatures) == 0);
 }
 
 TEST_CASE("NativePBR incomplete opaque preview never bypasses source or ownership validation", "[native_pbr]")
