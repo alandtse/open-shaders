@@ -458,18 +458,21 @@ namespace SIE
 	{
 		const auto relative = GetManifestKey(a_diskPath);
 		const auto keyHex = a_key.ToHex();
-		if (GetShaderCacheManifest().GetContentKey(relative) == keyHex && IsSavedBeforeManifest(a_diskPath, DiskCachePath() / L"Manifest.json")) {
-			if (auto blob = ReadIntactBlob(a_diskPath)) {
-				a_source = SharedCompileSource::ActiveCache;
-				return blob;
-			}
+		const auto read = [&](const Util::ShaderCacheManifest::Manifest& manifest, const std::wstring& path) -> winrt::com_ptr<ID3DBlob> {
+			const auto entry = manifest.Get(relative);
+			if (!entry || entry->contentKey != keyHex || entry->bytecodeHash.empty())
+				return nullptr;
+			auto blob = ReadIntactBlob(path);
+			return blob && entry->MatchesBytecode(blob->GetBufferPointer(), blob->GetBufferSize()) ? blob : nullptr;
+		};
+		if (auto blob = read(GetShaderCacheManifest(), a_diskPath)) {
+			a_source = SharedCompileSource::ActiveCache;
+			return blob;
 		}
 		const auto previousBlob = (PreviousDiskCachePath() / relative).wstring();
-		if (GetPreviousManifest()->GetContentKey(relative) == keyHex && IsSavedBeforeManifest(previousBlob, PreviousDiskCachePath() / L"Manifest.json")) {
-			if (auto blob = ReadIntactBlob(previousBlob)) {
-				a_source = SharedCompileSource::PreviousCache;
-				return blob;
-			}
+		if (auto blob = read(*GetPreviousManifest(), previousBlob)) {
+			a_source = SharedCompileSource::PreviousCache;
+			return blob;
 		}
 		return nullptr;
 	}
@@ -480,6 +483,21 @@ namespace SIE
 		static std::once_flag loaded;
 		std::call_once(loaded, [] { manifest.Load(L"Data/ShaderCache/Manifest.json"); });
 		return manifest;
+	}
+
+	static bool MatchesActiveManifestBlob(const std::wstring& path, const std::string& key, const Util::ShaderCacheManifest::Entry& entry, ID3DBlob* blob)
+	{
+		if (!entry.bytecodeHash.empty())
+			return entry.MatchesBytecode(blob->GetBufferPointer(), blob->GetBufferSize());
+		return IsSavedBeforeManifest(path, DiskCachePath() / L"Manifest.json") && GetShaderCacheManifest().Get(key) == entry;
+	}
+
+	static bool WriteManifestBlob(const std::wstring& path, const std::string& key, ID3DBlob* blob, std::string digest, std::string contentKey = {})
+	{
+		// Publish metadata before file I/O so another worker cannot save a legacy record for the replacement.
+		auto hash = Util::ContentHash::HashBytes(blob->GetBufferPointer(), blob->GetBufferSize()).ToHex();
+		GetShaderCacheManifest().Set(key, { std::move(digest), std::move(contentKey), std::move(hash) });
+		return WriteBlobAtomic(path, blob);
 	}
 
 	// Developer Mode and the custom Shader Defines setting affect every compile
@@ -522,9 +540,8 @@ namespace SIE
 	std::atomic<uint64_t> g_manifestPendingWrites = 0;
 	std::atomic<bool> g_startupCompilationActive = true;
 
-	static void RecordDigestAndMaybeFlush(Util::ShaderCacheManifest::Manifest& manifest, const std::string& key, const std::string& digestHex)
+	static void MaybeFlushShaderCacheManifest()
 	{
-		manifest.Set(key, digestHex);
 		if (g_startupCompilationActive.load(std::memory_order_relaxed) &&
 			!globals::shaderCache->backgroundCompilation.load(std::memory_order_relaxed)) {
 			constexpr auto interval = std::chrono::seconds(30);
@@ -532,12 +549,12 @@ namespace SIE
 			static std::atomic<std::chrono::steady_clock::time_point> nextCheckpoint{ now + interval };
 			auto due = nextCheckpoint.load(std::memory_order_relaxed);
 			if (now >= due && nextCheckpoint.compare_exchange_strong(due, now + interval, std::memory_order_relaxed))
-				manifest.Save();
+				GetShaderCacheManifest().Save();
 			return;
 		}
 		if (g_manifestPendingWrites.fetch_add(1, std::memory_order_relaxed) + 1 >= kManifestFlushBatchSize) {
 			g_manifestPendingWrites.store(0, std::memory_order_relaxed);
-			manifest.Save();
+			GetShaderCacheManifest().Save();
 		}
 	}
 
@@ -2327,11 +2344,12 @@ namespace SIE
 			// A failed filesystem probe is a cache miss, not a failed compilation task.
 			std::error_code diskCacheProbeError;
 			if (useDiskCache && std::filesystem::exists(diskPath, diskCacheProbeError)) {
+				const auto manifestKey = GetManifestKey(diskPath);
+				const auto recorded = GetShaderCacheManifest().Get(manifestKey);
 				// Determine whether the disk-cached shader is still valid.
-				bool diskCacheOutdated = false;
+				bool diskCacheOutdated = !recorded;
 
-				// Manifest-first: a recorded digest is authoritative, falling back
-				// to the mtime checks below only when no digest is on record yet.
+				// Manifest-first: compare the source digest before validating the bytecode.
 				bool decidedByDigest = false;
 				const std::wstring shaderSourcePath = GetShaderPath(GetShaderSourceName(shader));
 				// Manifest lookup is a cheap map Get; gate the expensive digest walk
@@ -2339,13 +2357,13 @@ namespace SIE
 				// something to compare against, not the other way around -- a blob
 				// with no recorded entry yet (e.g. a cache from before this manifest
 				// existed) would otherwise pay that cost every boot, forever.
-				if (const auto recorded = GetShaderCacheManifest().Get(GetManifestKey(diskPath))) {
+				if (recorded) {
 					if (std::filesystem::exists(shaderSourcePath)) {
 						if (const auto digest = GetShaderContentDigestTimed(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path(), cache)) {
 							decidedByDigest = true;
 							const auto combined = Util::ContentHash::CombineHashes(Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest()), GetPerShaderDefinesDigest(key));
-							diskCacheOutdated = *recorded != combined.ToHex() &&
-							                    (!fastCompile || *recorded != GetFastPixelDigest(combined).ToHex());
+							diskCacheOutdated = recorded->digest != combined.ToHex() &&
+							                    (!fastCompile || recorded->digest != GetFastPixelDigest(combined).ToHex());
 							if (diskCacheOutdated) {
 								logger::debug("Disk-cached shader {} outdated: content digest changed", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
 								cache.IncDigestMissTasks();
@@ -2358,7 +2376,7 @@ namespace SIE
 
 				if (!decidedByDigest && cache.RequiresDigestForReuse()) {
 					diskCacheOutdated = true;
-				} else if (!decidedByDigest && cache.UseFileWatcher()) {
+				} else if (recorded && !decidedByDigest && cache.UseFileWatcher()) {
 					// File watcher tracks runtime changes in memory: compare disk-cache mtime against tracked source mtime.
 					// An unreadable timestamp means freshness can't be verified; treat it as a miss.
 					std::error_code ec;
@@ -2372,7 +2390,7 @@ namespace SIE
 						if (diskCacheOutdated)
 							logger::debug("Diskcached shader {} older than {}", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true), std::format("{:%Y%m%d%H%M}", diskCacheTime));
 					}
-				} else if (!decidedByDigest && cache.IsSkipUnchangedShaders()) {
+				} else if (recorded && !decidedByDigest && cache.IsSkipUnchangedShaders()) {
 					// Compare disk cache mtime against max mtime over the entire include tree to handle shared include changes.
 					std::error_code ec;
 					const auto diskCacheTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(diskPath, ec));
@@ -2394,7 +2412,7 @@ namespace SIE
 
 				if (diskCacheOutdated) {
 					// Fall through to recompile from source.
-				} else if (auto intactBlob = ReadIntactBlob(diskPath); !intactBlob) {
+				} else if (auto intactBlob = ReadIntactBlob(diskPath); !intactBlob || !MatchesActiveManifestBlob(diskPath, manifestKey, *recorded, intactBlob.get())) {
 					logger::error("Failed to load {} shader {}::{:X}", magic_enum::enum_name(shaderClass), magic_enum::enum_name(type), descriptor);
 				} else if (HasDebugInfo(intactBlob.get()) != debugCompile) {
 					logger::debug("Recompiling shader {}: cached copy was compiled {} debug info", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true), debugCompile ? "without" : "with");
@@ -2596,7 +2614,10 @@ namespace SIE
 			}
 
 			// save shader to disk
-			if (useDiskCache && cache.IsDiskCacheActive()) {
+			const auto digest = useDiskCache && cache.IsDiskCacheActive() ?
+			                        GetShaderContentDigestTimed(path, std::filesystem::path(path).parent_path(), cache) :
+			                        std::nullopt;
+			if (digest) {
 				auto directoryPath = std::format("Data/ShaderCache/{}", shader.fxpFilename);
 				if (!std::filesystem::is_directory(directoryPath)) {
 					try {
@@ -2609,19 +2630,15 @@ namespace SIE
 					}
 				}
 
-				if (!WriteBlobAtomic(diskPath, shaderBlob.get())) {
+				// Record the digest of what just got compiled; the manifest-first
+				// check above reads this back to decide disk-cache validity.
+				const auto combined = Util::ContentHash::CombineHashes(Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest()), GetPerShaderDefinesDigest(key));
+				if (!WriteManifestBlob(diskPath, GetManifestKey(diskPath), shaderBlob.get(),
+						(fastCompile ? GetFastPixelDigest(combined) : combined).ToHex(), contentKey ? contentKey->ToHex() : std::string{})) {
 					logger::error("Failed to save shader to {}", Util::WStringToString(diskPath));
 				} else {
 					logger::debug("Saved shader to {}", Util::WStringToString(diskPath));
-					// Record the digest of what just got compiled; the manifest-first
-					// check above reads this back to decide disk-cache validity.
-					if (const auto digest = GetShaderContentDigestTimed(path, std::filesystem::path(path).parent_path(), cache)) {
-						const auto combined = Util::ContentHash::CombineHashes(Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest()), GetPerShaderDefinesDigest(key));
-						RecordDigestAndMaybeFlush(GetShaderCacheManifest(), GetManifestKey(diskPath),
-							(fastCompile ? GetFastPixelDigest(combined) : combined).ToHex());
-					}
-					if (contentKey)
-						GetShaderCacheManifest().SetContentKey(GetManifestKey(diskPath), contentKey->ToHex());
+					MaybeFlushShaderCacheManifest();
 				}
 			}
 			if (!cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, false, a_taskGeneration)) {
@@ -3686,12 +3703,15 @@ namespace SIE
 			const auto recorded = GetShaderCacheManifest().Get(manifestKey);
 			if (!recorded)
 				return nullptr;
-			if (*recorded != digest) {
+			if (recorded->digest != digest) {
 				cache.IncDigestMissTasks();
 				return nullptr;
 			}
+			auto blob = ReadIntactBlob(diskPath);
+			if (!blob || !MatchesActiveManifestBlob(diskPath, manifestKey, *recorded, blob.get()))
+				return nullptr;
 			cache.IncDigestHitTasks();
-			return ReadIntactBlob(diskPath);
+			return blob;
 		}
 
 		HRESULT CompileStandaloneSource(
@@ -3713,11 +3733,11 @@ namespace SIE
 			return D3DCompileFromFile(srcPath.c_str(), macros.data(), &include, entryPoint, profile, flags, 0, blob.put(), errors.put());
 		}
 
-		bool WriteStandaloneBlob(const std::wstring& diskPath, ID3DBlob* blob)
+		bool WriteStandaloneBlob(const std::wstring& diskPath, const std::string& key, ID3DBlob* blob, const std::string& digest)
 		{
 			std::error_code ec;
 			std::filesystem::create_directories(std::filesystem::path(diskPath).parent_path(), ec);
-			if (WriteBlobAtomic(diskPath, blob))
+			if (WriteManifestBlob(diskPath, key, blob, digest))
 				return true;
 			logger::warn("Failed to save standalone shader to {}", Util::WStringToString(diskPath));
 			return false;
@@ -3818,8 +3838,8 @@ namespace SIE
 								if (shader && useDiskCache && IsDiskCacheActive()) {
 									std::scoped_lock lock(compilationSet.compilationMutex);
 									if (!IsGenerationStale(diskGeneration) && taskGeneration == compilationSet.standaloneGeneration.load(std::memory_order_acquire)) {
-										if (WriteStandaloneBlob(diskPath, shaderBlob.get()) && digest)
-											RecordDigestAndMaybeFlush(GetShaderCacheManifest(), manifestKey, *digest);
+										if (digest && WriteStandaloneBlob(diskPath, manifestKey, shaderBlob.get(), *digest))
+											MaybeFlushShaderCacheManifest();
 									}
 								}
 							}
@@ -3905,11 +3925,8 @@ namespace SIE
 
 		if (useDiskCache && digest && IsDiskCacheActive()) {
 			std::scoped_lock lock(compilationSet.compilationMutex);
-			if (!IsGenerationStale(diskGeneration) && WriteStandaloneBlob(key->diskPath, shaderBlob.get())) {
-				auto& manifest = GetShaderCacheManifest();
-				manifest.Set(key->manifestKey, *digest);
-				manifest.Save();
-			}
+			if (!IsGenerationStale(diskGeneration) && WriteStandaloneBlob(key->diskPath, key->manifestKey, shaderBlob.get(), *digest))
+				GetShaderCacheManifest().Save();
 		}
 		return shaderBlob;
 	}
@@ -6097,7 +6114,7 @@ namespace SIE
 			GetCompileDedupe().Clear();
 
 			// Flush while writable: the per-shader writes during the batch were
-			// debounced (RecordDigestAndMaybeFlush), so guarantee the manifest is
+			// debounced (MaybeFlushShaderCacheManifest), so guarantee the manifest is
 			// durable on disk the moment the batch actually finishes, not left
 			// waiting on the next batch to cross the flush threshold.
 			if (cache.IsDiskCacheActive()) {
