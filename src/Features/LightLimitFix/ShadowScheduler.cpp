@@ -113,9 +113,9 @@ namespace ShadowCasterManager
 		return LLFCommon::RuntimeLightDataExt::Get(ni)->flags.any(LightLimitFix::LightFlags::InverseSquare) ? FlickerOf(ni).intensity : 0.0f;
 	}
 
-	/// Where a light's shadow is drawn from: the engine and Light Placer move a flickering light inside its parent node every
-	/// frame, so its shadow is drawn from the parent and its fixture's shadow holds still while the light flickers.
-	static RE::NiPoint3 ShadowOrigin(RE::NiLight* ni)
+	/// Where a flickering light rests: the engine and Light Placer move it inside its parent node every frame, so the parent's
+	/// position; the live position for any other light.
+	static RE::NiPoint3 RestOrigin(RE::NiLight* ni)
 	{
 		static PerFrameCache<const RE::NiLight*, std::optional<RE::NiPoint3>> rests;
 		const auto& rest = rests.Get(static_cast<uint32_t>(*globals::game::frameCounter), ni, [ni]() -> std::optional<RE::NiPoint3> {
@@ -126,6 +126,13 @@ namespace ShadowCasterManager
 			return std::nullopt;
 		});
 		return rest.value_or(ni->world.translate);
+	}
+
+	/// Where a light's shadow is drawn from: the rest position in the pinned flicker mode, so a fixture's shadow holds still while
+	/// the light flickers; the live position otherwise, so the warped and live modes keep the shadow dancing with the flame.
+	static RE::NiPoint3 ShadowOrigin(RE::NiLight* ni)
+	{
+		return GetFlickerMode() == static_cast<int>(FlickerShadowModeEnum::Pinned) ? RestOrigin(ni) : ni->world.translate;
 	}
 
 	/// Publishes the sphere a light reaches at every point of its flicker for the static hash, infinite when it does not flicker; the
@@ -139,7 +146,7 @@ namespace ShadowCasterManager
 			return;
 		const auto it = s_hashRadiusAnchor.find(ni);
 		const float held = it != s_hashRadiusAnchor.end() ? it->second : ni->GetLightRuntimeData().radius.x;
-		s_foldCoreCenter = ShadowOrigin(ni);
+		s_foldCoreCenter = RestOrigin(ni);
 		s_foldCoreRadius = FlickerCoreRadius(held, FlickerRadiusBand(intensity), movement * ni->world.scale);
 	}
 
