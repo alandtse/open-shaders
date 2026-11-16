@@ -37,14 +37,14 @@ bool SampleNativePBR(uint2 location, uint clampMode, float2 uv, float lod, out f
 	return all(isfinite(value));
 }
 
-float NativePBRLod(NativePBR::MaterialRecord material, TriangleSurface triangle,
+float NativePBRLod(NativePBR::MaterialRecord material, TriangleSurface hitSurface,
 	float3x4 objectToWorld, float footprint)
 {
-	float3 edge0 = mul((float3x3)objectToWorld, triangle.position1 - triangle.position0);
-	float3 edge1 = mul((float3x3)objectToWorld, triangle.position2 - triangle.position0);
+	float3 edge0 = mul((float3x3)objectToWorld, hitSurface.position1 - hitSurface.position0);
+	float3 edge1 = mul((float3x3)objectToWorld, hitSurface.position2 - hitSurface.position0);
 	float worldArea = length(cross(edge0, edge1));
-	float2 uvEdge0 = (triangle.uv1 - triangle.uv0) * material.uv[0].zw;
-	float2 uvEdge1 = (triangle.uv2 - triangle.uv0) * material.uv[0].zw;
+	float2 uvEdge0 = (hitSurface.uv1 - hitSurface.uv0) * material.uv[0].zw;
+	float2 uvEdge1 = (hitSurface.uv2 - hitSurface.uv0) * material.uv[0].zw;
 	float uvArea = abs(uvEdge0.x * uvEdge1.y - uvEdge0.y * uvEdge1.x);
 	return log2(max(footprint * sqrt(uvArea / max(worldArea, 1e-12f)), 1e-10f));
 }
@@ -61,11 +61,11 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	NativePBR::MaterialRecord material = NativePBRRecords[binding.materialIndex];
 	if (any(material.identity.xy != binding.identity) || any(material.identity.zw != binding.revision))
 		return false;
-	TriangleSurface triangle;
-	if (!LoadTriangle(instance, primitive, barycentric, triangle))
+	TriangleSurface hitSurface;
+	if (!LoadTriangle(instance, primitive, barycentric, hitSurface))
 		return false;
-	float2 uv = triangle.uv * material.uv[0].zw + material.uv[0].xy;
-	float lod = NativePBRLod(material, triangle, objectToWorld, footprint);
+	float2 uv = hitSurface.uv * material.uv[0].zw + material.uv[0].xy;
+	float lod = NativePBRLod(material, hitSurface, objectToWorld, footprint);
 	if (!all(isfinite(uv)) || !isfinite(lod))
 		return false;
 	float4 base, normal, packed, emission = 0.0f;
@@ -80,10 +80,10 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	surface.uv = uv;
 	surface.uvDx = 0.0f;
 	surface.uvDy = 0.0f;
-	surface.geometricNormal = normalize(mul(triangle.normal, (float3x3)worldToObject));
-	surface.tangent = mul((float3x3)objectToWorld, triangle.tangent);
-	surface.bitangent = mul((float3x3)objectToWorld, triangle.bitangent);
-	surface.vertexColor = triangle.color.rgb;
+	surface.geometricNormal = normalize(mul(hitSurface.normal, (float3x3)worldToObject));
+	surface.tangent = mul((float3x3)objectToWorld, hitSurface.tangent);
+	surface.bitangent = mul((float3x3)objectToWorld, hitSurface.bitangent);
+	surface.vertexColor = hitSurface.color.rgb;
 	surface.facing = 1.0f;
 	if (!all(isfinite(surface.geometricNormal)) ||
 		!all(isfinite(surface.tangent)) || !all(isfinite(surface.bitangent)))

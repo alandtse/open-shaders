@@ -79,7 +79,7 @@ namespace NativePBR
 		SurfaceMaterial result;
 		result.baseColor = baseTexel.rgb;
 		if ((drawFlags & DrawVertexColorFlag) != 0u)
-			result.baseColor *= SrgbToLinear(surface.vertexColor);
+			result.baseColor *= NativePBR::SrgbToLinear(surface.vertexColor);
 		result.normal = DecodeNormal(surface, normalTexel.xyz);
 		result.roughness = clamp(packedTexel.r * material.base.y, PBR::Constants::MinRoughness, PBR::Constants::MaxRoughness);
 		result.metallic = saturate(packedTexel.g);
