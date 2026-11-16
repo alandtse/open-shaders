@@ -296,6 +296,16 @@ void Wind::SetupTreeWindResources()
 	Util::SetResourceName(treeState.springSampler.get(), "Wind::TreeWindSpringSampler");
 }
 
+ID3D11ComputeShader* Wind::GetTreeWindSpringShader()
+{
+	return treeState.springFieldComputeShader.Get(L"Data\\Shaders\\TreeWindSpringCS.hlsl", {}, "cs_5_0", "UpdateField", "Wind::TreeWindSpringCS");
+}
+
+ID3D11ComputeShader* Wind::GetTreeWindAmbientSpringShader()
+{
+	return treeState.ambientFieldComputeShader.Get(L"Data\\Shaders\\TreeWindSpringCS.hlsl", {}, "cs_5_0", "UpdateAmbientField", "Wind::TreeWindAmbientSpringCS");
+}
+
 void Wind::UpdateTreeWindSpring()
 {
 	if (!treeState.springConstantBuffer || !treeState.springSampler.get() || !globals::state)
@@ -381,14 +391,10 @@ void Wind::UpdateTreeWindSpring()
 		ID3D11Buffer* constantBuffers[]{ treeState.springConstantBuffer->CB() };
 		context->CSSetConstantBuffers(0, 1, constantBuffers);
 		globals::state->BindSharedDataCS(context, false);
-		auto* fieldShader = treeState.springFieldComputeShader.Get(
-			L"Data\\Shaders\\TreeWindSpringCS.hlsl", {}, "cs_5_0", "UpdateField",
-			"Wind::TreeWindSpringCS");
+		auto* fieldShader = GetTreeWindSpringShader();
 		ID3D11ComputeShader* ambientShader = nullptr;
 		if ((activeTransientFields | treeState.transientHistoryMask) != kAllTreeWindFields) {
-			ambientShader = treeState.ambientFieldComputeShader.Get(
-				L"Data\\Shaders\\TreeWindSpringCS.hlsl", {}, "cs_5_0", "UpdateAmbientField",
-				"Wind::TreeWindAmbientSpringCS");
+			ambientShader = GetTreeWindAmbientSpringShader();
 		}
 		ID3D11ShaderResourceView* nullSrvs[4]{};
 		ID3D11UnorderedAccessView* nullUavs[4]{};

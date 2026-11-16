@@ -96,6 +96,7 @@ add_executable(
     test_featureflipimpact.cpp
     test_devbenchnotices.cpp
     test_shadercacheclear.cpp
+    test_shadercompilationgate.cpp
     test_generationclaim.cpp
     test_framelatch.cpp
     test_dlssg_input_fence.cpp

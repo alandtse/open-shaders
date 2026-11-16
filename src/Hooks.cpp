@@ -172,8 +172,8 @@ struct BSShader_LoadShaders
 
 		auto state = globals::state;
 		auto shaderCache = globals::shaderCache;
-		if ((shaderCache->IsDiskCache() && !shaderCache->backgroundCompilation) || shaderCache->IsDump()) {
-			if (shaderCache->IsDiskCache() && !shaderCache->backgroundCompilation) {
+		if ((shaderCache->IsDiskCache() && !shaderCache->IsShaderCacheReadOnly()) || shaderCache->IsDump()) {
+			if (shaderCache->IsDiskCache() && !shaderCache->IsShaderCacheReadOnly()) {
 				Feature::ForEachLoadedFeature("GenerateShaderPermutations", [shader](Feature* feature) {
 					feature->GenerateShaderPermutations(shader);
 				});

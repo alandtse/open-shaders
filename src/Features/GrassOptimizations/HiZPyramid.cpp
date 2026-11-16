@@ -2,11 +2,41 @@
 
 #include "Features/TerrainBlending.h"
 #include "GpuPass.h"
+#include "ShaderCache.h"
 #include "State.h"
 
 void HiZPyramid::SetupResources()
 {
 	paramsCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<BaseParams>(), "GrassOptimizations::HiZParamsCB");
+	if (globals::shaderCache->IsDiskCacheActive())
+		PrepareShaders();
+}
+
+bool HiZPyramid::PrepareShaders()
+{
+	if (!baseCS) {
+		if (baseCSFailed)
+			return false;
+
+		baseCS.attach(static_cast<ID3D11ComputeShader*>(
+			Util::CompileShader(L"Data\\Shaders\\GrassOptimizations\\GrassHiZCS.hlsl", {}, "cs_5_0")));
+		if (!baseCS) {
+			baseCSFailed = true;
+			logger::error("[GRASS OPTIMIZATIONS] HiZ CS load failed ; occlusion culling disabled");
+			return false;
+		}
+	}
+
+	if (!spdCS && !spdCSFailed) {
+		spdCS.attach(static_cast<ID3D11ComputeShader*>(
+			Util::CompileShader(L"Data\\Shaders\\GrassOptimizations\\SPD\\SPD.hlsl", {}, "cs_5_0")));
+		if (!spdCS) {
+			spdCSFailed = true;
+			logger::error("[GRASS OPTIMIZATIONS] SPD load failed ; large instances will not be occlusion culled");
+		}
+	}
+
+	return true;
 }
 
 void HiZPyramid::ClearShaderCache()
@@ -133,27 +163,8 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 	width = validW;
 	height = validH;
 
-	if (!baseCS) {
-		if (baseCSFailed)
-			return false;
-
-		baseCS.attach(static_cast<ID3D11ComputeShader*>(
-			Util::CompileShader(L"Data\\Shaders\\GrassOptimizations\\GrassHiZCS.hlsl", {}, "cs_5_0")));
-		if (!baseCS) {
-			baseCSFailed = true;
-			logger::error("[GRASS OPTIMIZATIONS] HiZ CS load failed ; occlusion culling disabled");
-			return false;
-		}
-	}
-
-	if (!spdCS && !spdCSFailed) {
-		spdCS.attach(static_cast<ID3D11ComputeShader*>(
-			Util::CompileShader(L"Data\\Shaders\\GrassOptimizations\\SPD\\SPD.hlsl", {}, "cs_5_0")));
-		if (!spdCS) {
-			spdCSFailed = true;
-			logger::error("[GRASS OPTIMIZATIONS] SPD load failed ; large instances will not be occlusion culled");
-		}
-	}
+	if (!PrepareShaders())
+		return false;
 
 	// Fill unrendered margins with far depth so padding cannot occlude grass.
 	paramsCB->Update(BaseParams{ srcW, srcH, padW, padH });

@@ -634,6 +634,11 @@ ID3D11ComputeShader* TerrainBlending::GetDepthBlendShader()
 
 void TerrainBlending::SetupResources()
 {
+	if (globals::shaderCache->IsDiskCacheActive()) {
+		GetTerrainOffsetVertexShader();
+		GetDepthBlendShader();
+	}
+
 	auto renderer = globals::game::renderer;
 	auto device = globals::d3d::device;
 

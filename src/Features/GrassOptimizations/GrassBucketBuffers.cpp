@@ -1,5 +1,6 @@
 #include "Features/GrassLighting.h"
 #include "Features/GrassOptimizations.h"
+#include "ShaderCache.h"
 
 #include <bit>
 
@@ -16,6 +17,11 @@ void GrassOptimizations::SetupResources()
 	}
 
 	hiZ.SetupResources();
+
+	if (globals::shaderCache->IsDiskCacheActive()) {
+		GetCullCS();
+		meshLibrary.PrepareShaders();
+	}
 
 	if (FAILED(globals::d3d::context->QueryInterface(__uuidof(ID3D11DeviceContext1), ctx1.put_void())) || !ctx1) {
 		logger::error("[GRASS OPTIMIZATIONS] ID3D11DeviceContext1 unavailable ; feature disabled");

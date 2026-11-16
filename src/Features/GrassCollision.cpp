@@ -4,6 +4,7 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Utils/ActorUtils.h"
 #include "Utils/D3D.h"
@@ -396,6 +397,9 @@ void GrassCollision::PostPostLoad()
 
 void GrassCollision::SetupResources()
 {
+	if (globals::shaderCache->IsDiskCacheActive())
+		GetCollisionUpdateCS();
+
 	perFrame = new ConstantBuffer(ConstantBufferDesc<PerFrame>());
 
 	for (uint textureIndex = 0; textureIndex < 2; ++textureIndex) {

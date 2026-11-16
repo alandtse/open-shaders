@@ -332,6 +332,22 @@ namespace ShadowCasterManager
 			return true;
 		}
 
+		bool PrepareStaticCopyShaders()
+		{
+			constexpr auto shaderPath = L"Data\\Shaders\\LightLimitFix\\ShadowDepthCopy.hlsl";
+			return s_atlas.copyVS.Get(shaderPath, { { "VSHADER", "" } }, "vs_5_0", "main", "SCM::ShadowDepthCopy VS") &&
+			       s_atlas.copyPS.Get(shaderPath, { { "PSHADER", "" } }, "ps_5_0", "main", "SCM::ShadowDepthCopy PS");
+		}
+
+		auto GetWarpShaders()
+		{
+			constexpr auto shaderPath = L"Data\\Shaders\\LightLimitFix\\ShadowDepthWarp.hlsl";
+			return std::pair{
+				s_atlas.warpCS.Get(shaderPath, { { "CSHADER", "" } }, "cs_5_0", "main", "SCM::ShadowDepthWarp CS"),
+				s_atlas.warpResolvePS.Get(shaderPath, { { "PSHADER", "" } }, "ps_5_0", "main", "SCM::ShadowDepthWarp Resolve PS")
+			};
+		}
+
 		// Lazily create the parallel static-cache atlas: a second depth texture
 		// of identical dimensions/format so a slot's tile rect maps 1:1 into it.
 		// Returns false (and latches off) if creation fails -- the caller then
@@ -342,9 +358,7 @@ namespace ShadowCasterManager
 				return true;
 			if (s_atlas.staticFailed || !s_atlas.ready)
 				return false;
-			constexpr auto shaderPath = L"Data\\Shaders\\LightLimitFix\\ShadowDepthCopy.hlsl";
-			if (!s_atlas.copyVS.Get(shaderPath, { { "VSHADER", "" } }, "vs_5_0", "main", "SCM::ShadowDepthCopy VS") ||
-				!s_atlas.copyPS.Get(shaderPath, { { "PSHADER", "" } }, "ps_5_0", "main", "SCM::ShadowDepthCopy PS"))
+			if (!PrepareStaticCopyShaders())
 				return false;
 			if (s_atlas.staticReady)
 				return true;
@@ -1181,6 +1195,12 @@ namespace ShadowCasterManager
 		context->OMSetRenderTargets(0, nullptr, nullptr);
 	}
 
+	void PrepareAtlasShaders()
+	{
+		PrepareStaticCopyShaders();
+		GetWarpShaders();
+	}
+
 	bool WarpStaticTileToLive(int32_t poolSlot, const float* invBake, const float* liveProj, float bakeRadius, float liveRadius, uint32_t isOmni)
 	{
 		AtlasTileTexels t{};
@@ -1190,9 +1210,7 @@ namespace ShadowCasterManager
 		auto* context = globals::d3d::context;
 		if (!device || !context)
 			return false;
-		constexpr auto shaderPath = L"Data\\Shaders\\LightLimitFix\\ShadowDepthWarp.hlsl";
-		auto* cs = s_atlas.warpCS.Get(shaderPath, { { "CSHADER", "" } }, "cs_5_0", "main", "SCM::ShadowDepthWarp CS");
-		auto* ps = s_atlas.warpResolvePS.Get(shaderPath, { { "PSHADER", "" } }, "ps_5_0", "main", "SCM::ShadowDepthWarp Resolve PS");
+		const auto [cs, ps] = GetWarpShaders();
 		if (!cs || !ps)
 			return false;
 

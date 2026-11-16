@@ -98,6 +98,11 @@ void Wind::SetupGrassWindResources()
 	Util::SetResourceName(grassState.springSampler.get(), "Wind::GrassWindSpringSampler");
 }
 
+ID3D11ComputeShader* Wind::GetGrassWindSpringShader()
+{
+	return grassState.springComputeShader.Get(L"Data\\Shaders\\GrassWindSpringCS.hlsl", {}, "cs_5_0", "main", "Wind::GrassWindSpringCS");
+}
+
 void Wind::ClearShaderCache()
 {
 	grassState.springComputeShader.Reset();
@@ -194,11 +199,7 @@ void Wind::UpdateGrassWindSpring(bool a_compute)
 		ID3D11Buffer* constantBuffers[]{ grassState.springConstantBuffer->CB() };
 		context->CSSetConstantBuffers(0, 1, constantBuffers);
 		globals::state->BindSharedDataCS(context, false);
-		auto* shader = sanitizedSettings.enableAmbientGrassWind ?
-		                   grassState.springComputeShader.Get(
-							   L"Data\\Shaders\\GrassWindSpringCS.hlsl", {}, "cs_5_0", "main",
-							   "Wind::GrassWindSpringCS") :
-		                   nullptr;
+		auto* shader = sanitizedSettings.enableAmbientGrassWind ? GetGrassWindSpringShader() : nullptr;
 		for (uint32_t qualityIndex = 0; qualityIndex < kGrassWindSpringQualityRangeCount; ++qualityIndex) {
 			data.activeField = qualityIndex;
 			data.fields[qualityIndex].fieldAvailable = 0u;

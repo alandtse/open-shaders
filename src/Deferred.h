@@ -131,13 +131,13 @@ public:
 	 * @brief Gets or compiles the exterior deferred composite compute shader.
 	 * @return Cached or freshly compiled compute shader with feature-dependent defines, or nullptr if compilation failed.
 	 */
-	ID3D11ComputeShader* GetComputeMainComposite();
+	ID3D11ComputeShader* GetComputeMainComposite(uint32_t a_specialization);
 
 	/**
 	 * @brief Gets or compiles the interior deferred composite compute shader.
 	 * @return Cached or freshly compiled compute shader with INTERIOR and feature-dependent defines, or nullptr if compilation failed.
 	 */
-	ID3D11ComputeShader* GetComputeMainCompositeInterior();
+	ID3D11ComputeShader* GetComputeMainCompositeInterior(uint32_t a_specialization);
 
 	/**
 	 * @brief Uploads directional shadow parameters from BSShadowDirectionalLight to the t98 structured buffer.

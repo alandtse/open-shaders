@@ -17,6 +17,7 @@
 #include "Features/Effects11/ShaderPatches.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/ShaderInclude.h"
@@ -260,6 +261,10 @@ void Effect::Save()
 
 bool Effect::Apply()
 {
+	auto compile = globals::shaderCache->AcquireShaderCompilation();
+	if (!compile)
+		return false;
+
 	logger::info("[EFFECTS11] Applying effect '{}'", GetName());
 
 	Unload();
@@ -278,6 +283,7 @@ bool Effect::Apply()
 		logger::error("[EFFECTS11] Failed to load '{}': {}", GetFilePath().string(), errors.empty() ? "unknown error" : errors.back());
 		return false;
 	}
+	compile.unlock();
 
 	if (!Load()) {
 		errors.push_back(T("feature.effects11.error.settings", "Failed to load settings"));
@@ -381,6 +387,7 @@ bool Effect::LoadFXFile()
 
 	auto compile = [&](const std::string& source, ID3DInclude* include) -> bool {
 		winrt::com_ptr<ID3DBlob> compiled, err;
+		globals::shaderCache->CountSourceCompile();
 		HRESULT hr = D3DCompile(source.c_str(), source.size(), filePathStr.c_str(),
 			nullptr, include, nullptr, "fx_5_0", 0, 0, compiled.put(), err.put());
 		if (FAILED(hr)) {
@@ -430,6 +437,7 @@ bool Effect::LoadFXFile()
 	if (!compiled) {
 		ENBExtender::PresetInclude includeHandler(enbseriesPath, uiDefines, iniPathStr, iniSection);
 		winrt::com_ptr<ID3DBlob> compiledShader, errorBlob;
+		globals::shaderCache->CountSourceCompile();
 		HRESULT hr = D3DCompile(sourceCode.c_str(), sourceCode.size(), filePathStr.c_str(),
 			nullptr, &includeHandler, nullptr, "fx_5_0", 0, 0, compiledShader.put(), errorBlob.put());
 		if (FAILED(hr)) {

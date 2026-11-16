@@ -284,5 +284,8 @@ private:
 	void DrawGrassWindSettings();
 	void SetupGrassWindResources();
 	void SetupTreeWindResources();
+	ID3D11ComputeShader* GetGrassWindSpringShader();
+	ID3D11ComputeShader* GetTreeWindSpringShader();
+	ID3D11ComputeShader* GetTreeWindAmbientSpringShader();
 	void RecreateTreeWindSpringTextures(uint32_t a_qualityIndex);
 };

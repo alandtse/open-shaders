@@ -14,6 +14,7 @@
 #include "Features/IBL.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LightLimitFix/ShadowCasterManager.h"
+#include "Features/LinearLighting.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/Skylighting.h"
 #include "Features/SubsurfaceScattering.h"
@@ -220,6 +221,15 @@ void Deferred::SetupResources()
 		delete directionalShadowLights;
 		directionalShadowLights = new Buffer(sbDesc, nullptr, "Deferred::DirectionalShadowLights");
 		directionalShadowLights->CreateSRV(srvDesc);
+	}
+
+	if (globals::shaderCache->IsDiskCacheActive()) {
+		const uint32_t ibl = globals::features::ibl.loaded ? static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio) : 0u;
+		const uint32_t aces = globals::features::linearLighting.loaded ? SIE::ShaderCache::kLightingLinearACEScg : 0u;
+		for (const uint32_t specialization : { 0u, ibl, aces, ibl | aces }) {
+			GetComputeMainComposite(specialization);
+			GetComputeMainCompositeInterior(specialization);
+		}
 	}
 }
 
@@ -474,7 +484,8 @@ void Deferred::DeferredPasses()
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 		globals::state->BindSharedDataCS(context);
 
-		if (auto* shader = interior ? GetComputeMainCompositeInterior() : GetComputeMainComposite()) {
+		const auto specialization = globals::state->deferredLightingShaderFlags;
+		if (auto* shader = interior ? GetComputeMainCompositeInterior(specialization) : GetComputeMainComposite(specialization)) {
 			context->CSSetShader(shader, nullptr, 0);
 			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
 		}
@@ -781,7 +792,7 @@ void Deferred::ClearShaderCache()
 	mainCompositeInteriorIBLLuminanceRatioLinearACEScgCS.Reset();
 }
 
-ID3D11ComputeShader* Deferred::GetComputeMainComposite()
+ID3D11ComputeShader* Deferred::GetComputeMainComposite(uint32_t a_specialization)
 {
 	std::vector<std::pair<const char*, const char*>> defines;
 
@@ -808,9 +819,8 @@ ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 	if (globals::features::terrainBlending.loaded)
 		defines.push_back({ "TERRAIN_BLENDING", nullptr });
 
-	const auto specialization = globals::state->deferredLightingShaderFlags;
-	const bool luminanceRatio = (specialization & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio)) != 0;
-	const bool linearACEScg = (specialization & SIE::ShaderCache::kLightingLinearACEScg) != 0;
+	const bool luminanceRatio = (a_specialization & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio)) != 0;
+	const bool linearACEScg = (a_specialization & SIE::ShaderCache::kLightingLinearACEScg) != 0;
 	if (luminanceRatio || linearACEScg) {
 		const size_t baseDefineCount = defines.size();
 		if (luminanceRatio)
@@ -828,7 +838,7 @@ ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 	return mainCompositeCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
 }
 
-ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
+ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior(uint32_t a_specialization)
 {
 	std::vector<std::pair<const char*, const char*>> defines;
 	defines.push_back({ "INTERIOR", nullptr });
@@ -853,9 +863,8 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 	if (globals::features::terrainBlending.loaded)
 		defines.push_back({ "TERRAIN_BLENDING", nullptr });
 
-	const auto specialization = globals::state->deferredLightingShaderFlags;
-	const bool luminanceRatio = (specialization & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio)) != 0;
-	const bool linearACEScg = (specialization & SIE::ShaderCache::kLightingLinearACEScg) != 0;
+	const bool luminanceRatio = (a_specialization & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio)) != 0;
+	const bool linearACEScg = (a_specialization & SIE::ShaderCache::kLightingLinearACEScg) != 0;
 	if (luminanceRatio || linearACEScg) {
 		const size_t baseDefineCount = defines.size();
 		if (luminanceRatio)

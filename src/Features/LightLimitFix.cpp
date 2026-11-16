@@ -611,6 +611,8 @@ void LightLimitFix::SetupResources()
 
 	{
 		CompileComputeShaders();
+		if (globals::shaderCache->IsDiskCacheActive())
+			ShadowCasterManager::PrepareAtlasShaders();
 
 		lightBuildingCB = new ConstantBuffer(ConstantBufferDesc<LightBuildingCB>(), "LLF::LightBuildingCB");
 		lightCullingCB = new ConstantBuffer(ConstantBufferDesc<LightCullingCB>(), "LLF::LightCullingCB");

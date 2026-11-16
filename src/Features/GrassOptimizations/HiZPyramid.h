@@ -50,6 +50,7 @@ private:
 	static ID3D11ShaderResourceView* GetLiveDepthSRV();
 
 	bool CreateTexture(ID3D11Device* device, uint32_t dstW, uint32_t dstH);
+	bool PrepareShaders();
 
 	std::unique_ptr<Texture2D> texture;
 	std::vector<winrt::com_ptr<ID3D11UnorderedAccessView>> mipUAVs;

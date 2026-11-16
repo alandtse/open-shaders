@@ -17,6 +17,9 @@ struct ImVec4;
 
 namespace ShadowCasterManager
 {
+	/** Prepares the GPU programs used to copy and reproject cached shadow tiles. */
+	void PrepareAtlasShaders();
+
 	/// Checks intrinsic BSShadowLight type, bypassing IsShadowLight vtable overrides.
 	inline bool IsShadowLightType(RE::BSLight* bsLight)
 	{

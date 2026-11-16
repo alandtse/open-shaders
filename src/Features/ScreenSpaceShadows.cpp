@@ -7,6 +7,7 @@
 #include "FoveatedCommon.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Upscaling.h"
 #include "Util.h"
@@ -639,6 +640,12 @@ bool ScreenSpaceShadows::HasShaderDefine(RE::BSShader::Type)
 
 void ScreenSpaceShadows::SetupResources()
 {
+	if (globals::shaderCache->IsDiskCacheActive()) {
+		GetComputeRaymarch();
+		if (globals::game::isVR)
+			GetComputeRaymarchRight();
+	}
+
 	raymarchCB = new ConstantBuffer(ConstantBufferDesc<RaymarchCB>(), "SSS::RaymarchCB");
 
 	if (globals::game::isVR) {

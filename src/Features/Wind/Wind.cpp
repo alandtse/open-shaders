@@ -706,6 +706,11 @@ void Wind::SetupResources()
 {
 	SetupGrassWindResources();
 	SetupTreeWindResources();
+	if (globals::shaderCache->IsDiskCacheActive()) {
+		GetGrassWindSpringShader();
+		GetTreeWindSpringShader();
+		GetTreeWindAmbientSpringShader();
+	}
 }
 
 bool Wind::IsTreeBendRenderPass(const RE::BSRenderPass* a_pass) const

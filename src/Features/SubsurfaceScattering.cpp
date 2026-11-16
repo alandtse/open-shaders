@@ -368,6 +368,16 @@ void SubsurfaceScattering::DrawSSS()
 
 void SubsurfaceScattering::SetupResources()
 {
+	if (globals::shaderCache->IsDiskCacheActive()) {
+		GetComputeShaderPrepass();
+		if (settings.SSMode == 1) {
+			GetComputeShaderBurley();
+		} else {
+			GetComputeShaderHorizontalBlur();
+			GetComputeShaderVerticalBlur();
+		}
+	}
+
 	{
 		blurCB = new ConstantBuffer(ConstantBufferDesc<BlurCB>(), "SSS::BlurCB");
 	}

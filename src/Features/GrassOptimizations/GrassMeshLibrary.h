@@ -17,6 +17,8 @@ class GrassMeshLibrary
 public:
 	/** @brief Stops mesh loading before cached resources and their locks are destroyed. */
 	~GrassMeshLibrary();
+	/** @brief Creates the texture classification shader before first use. */
+	void PrepareShaders() { GetDetectCS(); }
 
 	/** @brief Identifies the distance band served by an LOD mesh. */
 	enum class LODTier : uint32_t

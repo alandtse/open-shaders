@@ -210,6 +210,12 @@ void VolumetricLighting::PostPostLoad()
 void VolumetricLighting::SetupResources()
 {
 	vlDataCB = new ConstantBuffer(ConstantBufferDesc<VLData>(), "VolumetricLighting::VLDataCB");
+
+	if (auto* cache = globals::shaderCache; cache->IsDiskCacheActive()) {
+		for (auto* shader : { GetOrCreateGenerateCS(nullptr), GetOrCreateRaymarchCS(nullptr),
+				 GetOrCreateBlurHCS(nullptr), GetOrCreateBlurVCS(nullptr) })
+			cache->GetComputeShader(*shader, 0);
+	}
 }
 
 void VolumetricLighting::EarlyPrepass()
@@ -304,6 +310,8 @@ RE::BSImagespaceShader* VolumetricLighting::GetOrCreateGenerateCS(RE::BSComputeS
 {
 	if (generateCS == nullptr)
 		generateCS = CreateShader("BSImagespaceShaderVolumetricLightingGenerateCS", "ISVolumetricLightingGenerateCS", computeShader);
+	else if (!generateCS->computeShader)
+		generateCS->computeShader = computeShader;
 	return generateCS;
 }
 
@@ -311,6 +319,8 @@ RE::BSImagespaceShader* VolumetricLighting::GetOrCreateRaymarchCS(RE::BSComputeS
 {
 	if (raymarchCS == nullptr)
 		raymarchCS = CreateShader("BSImagespaceShaderVolumetricLightingRaymarchCS", "ISVolumetricLightingRaymarchCS", computeShader);
+	else if (!raymarchCS->computeShader)
+		raymarchCS->computeShader = computeShader;
 	return raymarchCS;
 }
 
@@ -318,6 +328,8 @@ RE::BSImagespaceShader* VolumetricLighting::GetOrCreateBlurHCS(RE::BSComputeShad
 {
 	if (blurHCS == nullptr)
 		blurHCS = CreateShader("BSImagespaceShaderVolumetricLightingBlurHCS", "ISVolumetricLightingBlurHCS", computeShader);
+	else if (!blurHCS->computeShader)
+		blurHCS->computeShader = computeShader;
 	return blurHCS;
 }
 
@@ -325,6 +337,8 @@ RE::BSImagespaceShader* VolumetricLighting::GetOrCreateBlurVCS(RE::BSComputeShad
 {
 	if (blurVCS == nullptr)
 		blurVCS = CreateShader("BSImagespaceShaderVolumetricLightingBlurVCS", "ISVolumetricLightingBlurVCS", computeShader);
+	else if (!blurVCS->computeShader)
+		blurVCS->computeShader = computeShader;
 	return blurVCS;
 }
 
