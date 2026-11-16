@@ -1404,7 +1404,7 @@ void DX12NativeScene::EarlyPrepass()
 						candidateGridBindings.Request(*backend, candidateScene,
 							candidateMaterialAllowance,
 							uint64_t(settings.MaterialBatchMB) * DX12Native::VideoMemoryBudget::kMiB,
-							{}, false, false, false);
+							{});
 					}
 				}
 				candidateGridBindings.Advance();
