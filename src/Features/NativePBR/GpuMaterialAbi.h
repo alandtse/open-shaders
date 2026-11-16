@@ -28,6 +28,8 @@ namespace NativePBR
 	}
 	inline constexpr uint32_t kGpuDrawUsesVertexColor = 1u;
 	inline constexpr uint32_t kGpuDrawProjected = 2u;
+	/** @brief A companion-prepared opaque instance may only use an authoritative NativePBR material. */
+	inline constexpr uint32_t kGpuDrawPreparedOpaque = 4u;
 	using GpuTextureLocation = std::array<uint32_t, 2>;
 	using GpuTextureLocations = std::array<GpuTextureLocation, static_cast<size_t>(TextureRole::Count)>;
 	/** @brief Converts one physical DDS page to the matching linear or sRGB SRV index. */

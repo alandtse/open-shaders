@@ -174,6 +174,7 @@ TEST_CASE("NativePBR ray bindings follow the exact scene and resident material g
 	instance.identity = 100;
 	instance.preparedIdentity.referenceKey = "Ref";
 	instance.preparedIdentity.shapeName = "Mesh";
+	instance.preparedIdentity.sourceDigest = "companion-shape-digest";
 	instance.material.offlineDescription = std::make_shared<nlohmann::json>(nlohmann::json{ { "shaderFlags2", 1u << 5 } });
 	auto attributes = std::make_shared<DX12Native::VertexAttributes>();
 	attributes->stride = 60;
@@ -196,12 +197,13 @@ TEST_CASE("NativePBR ray bindings follow the exact scene and resident material g
 	CHECK(bound->instances[0].materialIndex == 0);
 	CHECK((bound->instances[0].identity == std::array<uint32_t, 2>{ 42, 0 }));
 	CHECK((bound->instances[0].revision == std::array<uint32_t, 2>{ 7, 0 }));
-	CHECK(bound->instances[0].flags == kGpuDrawUsesVertexColor);
+	CHECK(bound->instances[0].flags == (kGpuDrawUsesVertexColor | kGpuDrawPreparedOpaque));
 	gpu->entries[0].availability = GpuMaterialAvailability::PartiallyResident;
 	const auto partial = PrepareRayMaterialBindings(prepared, gpu);
 	REQUIRE(partial);
 	CHECK(partial->eligible == 0);
 	CHECK(partial->instances[0].materialIndex == UINT32_MAX);
+	CHECK(partial->instances[0].flags == kGpuDrawPreparedOpaque);
 	const auto forced = PrepareRayMaterialBindings(prepared, gpu, true);
 	REQUIRE(forced);
 	CHECK(forced->forcedAdmission);

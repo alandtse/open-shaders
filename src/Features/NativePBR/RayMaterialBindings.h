@@ -75,6 +75,13 @@ namespace NativePBR
 		result->materials = std::move(a_materials);
 		result->forcedAdmission = a_forceAdmission;
 		result->instances.resize(result->prepared->instances.size(), PackGpuDrawBinding(0, 0, UINT32_MAX, 0));
+		for (size_t index = 0; index < result->instances.size(); ++index) {
+			const auto& instance = result->prepared->geometry->instances[index];
+			const auto& identity = instance.preparedIdentity;
+			if (instance.material.opaqueCandidate && !identity.sourceDigest.empty() &&
+				!identity.referenceKey.empty() && !identity.shapeName.empty())
+				result->instances[index].flags |= kGpuDrawPreparedOpaque;
+		}
 		for (const auto& binding : result->prepared->instances) {
 			if (binding.instanceIndex >= result->instances.size() ||
 				binding.geometryIdentity != result->prepared->geometry->instances[binding.instanceIndex].identity ||
@@ -91,7 +98,7 @@ namespace NativePBR
 			}
 			// Match the legacy scene compiler's shaderFlags2 vertex-color interpretation.
 			// Other material flags remain unsupported until their per-hit inputs are established.
-			uint32_t flags = 0;
+			uint32_t flags = result->instances[binding.instanceIndex].flags;
 			const auto& description = result->prepared->geometry->instances[binding.instanceIndex].material.offlineDescription;
 			if (description) {
 				const auto shaderFlags = description->find("shaderFlags2");

@@ -217,6 +217,8 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	float footprint = max(distance * 2.0f / max(float(Size.x), 1.0f), 1e-6f);
 	bool nativePbrUsedFallback = false;
 	float3 nativeClearcoat = 0.0f;
+	const bool preparedOpaque = NativePBRReady != 0u &&
+		(NativePBRInstances[instance].flags & 4u) != 0u;
 	if (NativePBRReady != 0u && NativePBRInstances[instance].materialIndex != 0xffffffffu)
 		Count(29);
 	const bool nativeMaterialValid = LoadNativePBRMaterial(instance, primitive, query.CommittedTriangleBarycentrics(),
@@ -225,11 +227,15 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		Count(28);
 	if (nativeMaterialValid && nativePbrUsedFallback)
 		Count(30);
-	bool materialValid = nativeMaterialValid || (supportedMaterial && LoadSourceMaterial(instance, primitive,
+	// Prepared static geometry has a single material authority. A missing native
+	// recipe remains with the untouched DX11 fallback; never substitute the
+	// older scene material compiler's interpretation for this instance.
+	bool materialValid = nativeMaterialValid || (!preparedOpaque && supportedMaterial && LoadSourceMaterial(instance, primitive,
 		query.CommittedTriangleBarycentrics(), query.CommittedObjectToWorld3x4(),
 		query.CommittedWorldToObject3x4(), footprint, material));
 	if (!materialValid) {
 		if (originalReason == 0) originalReason = supportedMaterial ? 5 : 4;
+		if (preparedOpaque) { Finish(pixel, originalReason == 3 ? 0 : 3, 3, originalReason); return; }
 		if (MaterialPolicy != 1 && NativePBRPadding.x == 0u) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 3 ? 0 : 3, 3, originalReason); return; }
 		TriangleSurface surface;
 		if (!LoadTriangle(instance, primitive, query.CommittedTriangleBarycentrics(), surface)) { Count(10); Finish(pixel, originalReason == 3 ? 0 : 3, 3, originalReason); return; }
