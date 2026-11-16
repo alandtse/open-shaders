@@ -217,11 +217,12 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	const bool preparedOpaque = NativePBRReady != 0u && (NativePBRInstances[instance].flags & 4u) != 0u;
 	const float overlapTolerance = max(2.0f, distance * 1e-5f);
 	const bool nativeAhead = preparedOpaque && rasterValid && distance + overlapTolerance < rasterDistance;
+	const bool nativeWithoutRaster = preparedOpaque && !rasterValid;
 	const bool rasterOccludesNative = rasterValid && rasterDistance + overlapTolerance < distance;
 	if (preparedOpaque && !rasterOccludesNative)
 		RejectionReason[pixel] |= 0x08000000u; // native geometry hit, independent of material evaluation
 	if (preparedOpaque && rasterOccludesNative) { Finish(pixel, 0, 0, 3); return; }
-	if (rejectSelectedDepth && !originalDepth && !nativeAhead) { Finish(pixel, 0, 0, 3); return; }
+	if (rejectSelectedDepth && !originalDepth && !nativeAhead && !nativeWithoutRaster) { Finish(pixel, 0, 0, 3); return; }
 	// A rejected primary candidate would have invalidated the old strict traversal.
 	// Preserve that original verdict while the reference traversal can continue.
 	uint originalReason = rejectedPrimaryCandidate ? 4 : (originalDepth ? 0 : 3);
@@ -381,7 +382,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	}
 	ReceiverGuide[pixel] = float4(n, float(instance + 1));
 	uint original = originalReason == 0 ? 1 : (originalReason == 3 ? 0 : 3);
-	uint effective = NativePBRPadding.x != 0u ? 1u : (rejectSelectedDepth && !nativeAhead ? 0 : (culled ? 2 : 1));
+	uint effective = NativePBRPadding.x != 0u ? 1u : (rejectSelectedDepth && !nativeAhead && !nativeWithoutRaster ? 0 : (culled ? 2 : 1));
 	Finish(pixel, original, effective, originalReason == 0 ? 10 : originalReason);
 	RejectionReason[pixel] |= 0x20000000u;
 	if (effective == 1 && (EnabledLobes & 1u)) Count(9);
