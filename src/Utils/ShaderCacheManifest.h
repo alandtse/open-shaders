@@ -20,9 +20,25 @@
 #include <random>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace Util::ShaderCacheManifest
 {
+	struct Entry
+	{
+		std::string digest;
+		std::string contentKey;
+		std::string bytecodeHash;
+
+		bool operator==(const Entry&) const = default;
+
+		/// Checks that the bytes are the ones recorded with this digest and content key.
+		bool MatchesBytecode(const void* data, size_t size) const
+		{
+			return !bytecodeHash.empty() && ContentHash::HashBytes(data, size).ToHex() == bytecodeHash;
+		}
+	};
+
 	class Manifest
 	{
 	public:
@@ -32,7 +48,6 @@ namespace Util::ShaderCacheManifest
 			std::lock_guard lock(mutex);
 			path = manifestPath;
 			entries.clear();
-			contentKeys.clear();
 			std::ifstream ifs(manifestPath, std::ios::binary);
 			if (!ifs.is_open())
 				return;
@@ -46,14 +61,19 @@ namespace Util::ShaderCacheManifest
 				return;
 			for (const auto& [key, value] : j["entries"].items()) {
 				if (value.is_string())
-					entries[key] = value.get<std::string>();
+					entries[key].digest = value.get<std::string>();
 			}
-			if (j.contains("contentKeys") && j["contentKeys"].is_object()) {
-				for (const auto& [key, value] : j["contentKeys"].items()) {
-					if (value.is_string())
-						contentKeys[key] = value.get<std::string>();
+			const auto loadField = [&](const char* field, std::string Entry::* member) {
+				const auto object = j.find(field);
+				if (object == j.end() || !object->is_object())
+					return;
+				for (const auto& [key, value] : object->items()) {
+					if (auto it = entries.find(key); it != entries.end() && value.is_string())
+						it->second.*member = value.get<std::string>();
 				}
-			}
+			};
+			loadField("contentKeys", &Entry::contentKey);
+			loadField("bytecodeHashes", &Entry::bytecodeHash);
 		}
 
 		/// True when no digest is on record, so no cached blob can be validated against its source.
@@ -63,8 +83,8 @@ namespace Util::ShaderCacheManifest
 			return entries.empty();
 		}
 
-		/// Digest last recorded for this relative blob path, if any.
-		std::optional<std::string> Get(const std::string& relativePath) const
+		/// Metadata last recorded for this relative blob path, if any.
+		std::optional<Entry> Get(const std::string& relativePath) const
 		{
 			std::lock_guard lock(mutex);
 			const auto it = entries.find(relativePath);
@@ -73,30 +93,12 @@ namespace Util::ShaderCacheManifest
 			return it->second;
 		}
 
-		/// Record/overwrite a digest. Does not itself write to disk; call Save()
+		/// Record/overwrite the blob metadata together. Does not itself write to disk; call Save()
 		/// (directly, or via a debounced caller) to persist.
-		void Set(const std::string& relativePath, const std::string& digestHex)
+		void Set(const std::string& relativePath, Entry entry)
 		{
 			std::lock_guard lock(mutex);
-			entries[relativePath] = digestHex;
-			dirty = true;
-		}
-
-		/// Content key of the code this blob was compiled from, if one was recorded.
-		std::optional<std::string> GetContentKey(const std::string& relativePath) const
-		{
-			std::lock_guard lock(mutex);
-			const auto it = contentKeys.find(relativePath);
-			if (it == contentKeys.end())
-				return std::nullopt;
-			return it->second;
-		}
-
-		/// Record/overwrite a blob's content key. Persist with Save().
-		void SetContentKey(const std::string& relativePath, const std::string& keyHex)
-		{
-			std::lock_guard lock(mutex);
-			contentKeys[relativePath] = keyHex;
+			entries.insert_or_assign(relativePath, std::move(entry));
 			dirty = true;
 		}
 
@@ -112,7 +114,6 @@ namespace Util::ShaderCacheManifest
 			size_t removed = 0;
 			for (auto it = entries.begin(); it != entries.end();) {
 				if (shouldRemove(it->first)) {
-					contentKeys.erase(it->first);
 					it = entries.erase(it);
 					++removed;
 					dirty = true;
@@ -135,9 +136,16 @@ namespace Util::ShaderCacheManifest
 				return true;
 			nlohmann::json j;
 			j["schemaVersion"] = 1;
-			j["entries"] = entries;
-			if (!contentKeys.empty())
-				j["contentKeys"] = contentKeys;
+			auto& digests = j["entries"] = nlohmann::json::object();
+			auto& keys = j["contentKeys"] = nlohmann::json::object();
+			auto& hashes = j["bytecodeHashes"] = nlohmann::json::object();
+			for (const auto& [key, entry] : entries) {
+				digests[key] = entry.digest;
+				if (!entry.contentKey.empty())
+					keys[key] = entry.contentKey;
+				if (!entry.bytecodeHash.empty())
+					hashes[key] = entry.bytecodeHash;
+			}
 			std::error_code ec;
 			std::filesystem::create_directories(path.parent_path(), ec);
 			const auto tempPath = path.parent_path() / std::format("{}.{}.tmp", path.filename().string(), std::random_device{}());
@@ -161,8 +169,7 @@ namespace Util::ShaderCacheManifest
 	private:
 		mutable std::mutex mutex;
 		std::filesystem::path path;
-		std::unordered_map<std::string, std::string> entries;
-		std::unordered_map<std::string, std::string> contentKeys;
+		std::unordered_map<std::string, Entry> entries;
 		bool dirty = false;
 	};
 }

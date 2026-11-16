@@ -64,7 +64,7 @@ TEST_CASE("Set then Save then Load round-trips an entry", "[ShaderCacheManifest]
 	{
 		Manifest m;
 		m.Load(path);  // no file yet -- establishes the save path
-		m.Set("Lighting/1A2B.pso", "deadbeefdeadbeefdeadbeefdeadbeef");
+		m.Set("Lighting/1A2B.pso", { .digest = "deadbeefdeadbeefdeadbeefdeadbeef" });
 		REQUIRE(m.Save());
 	}
 	REQUIRE(fs::exists(path));
@@ -72,7 +72,7 @@ TEST_CASE("Set then Save then Load round-trips an entry", "[ShaderCacheManifest]
 	m2.Load(path);
 	const auto v = m2.Get("Lighting/1A2B.pso");
 	REQUIRE(v.has_value());
-	CHECK(*v == "deadbeefdeadbeefdeadbeefdeadbeef");
+	CHECK(v->digest == "deadbeefdeadbeefdeadbeefdeadbeef");
 	CHECK_FALSE(m2.Empty());
 }
 
@@ -92,12 +92,12 @@ TEST_CASE("A later Set overwrites an earlier one for the same path", "[ShaderCac
 	const auto path = dir.path / "Manifest.json";
 	Manifest m;
 	m.Load(path);
-	m.Set("Water/00.pso", "aaaa");
-	m.Set("Water/00.pso", "bbbb");
+	m.Set("Water/00.pso", { .digest = "aaaa" });
+	m.Set("Water/00.pso", { .digest = "bbbb" });
 	REQUIRE(m.Save());
 	Manifest m2;
 	m2.Load(path);
-	CHECK(*m2.Get("Water/00.pso") == "bbbb");
+	CHECK(m2.Get("Water/00.pso")->digest == "bbbb");
 }
 
 TEST_CASE("PruneIf removes only entries the predicate flags, and reports the count", "[ShaderCacheManifest]")
@@ -105,9 +105,9 @@ TEST_CASE("PruneIf removes only entries the predicate flags, and reports the cou
 	TempDir dir;
 	Manifest m;
 	m.Load(dir.path / "Manifest.json");
-	m.Set("Water/00.pso", "aaaa");
-	m.Set("Sky/01.pso", "bbbb");
-	m.Set("Water/01.pso", "cccc");
+	m.Set("Water/00.pso", { .digest = "aaaa" });
+	m.Set("Sky/01.pso", { .digest = "bbbb" });
+	m.Set("Water/01.pso", { .digest = "cccc" });
 
 	const size_t removed = m.PruneIf([](const std::string& relativePath) {
 		return relativePath.starts_with("Water/");
@@ -117,7 +117,7 @@ TEST_CASE("PruneIf removes only entries the predicate flags, and reports the cou
 	CHECK_FALSE(m.Get("Water/00.pso").has_value());
 	CHECK_FALSE(m.Get("Water/01.pso").has_value());
 	REQUIRE(m.Get("Sky/01.pso").has_value());
-	CHECK(*m.Get("Sky/01.pso") == "bbbb");
+	CHECK(m.Get("Sky/01.pso")->digest == "bbbb");
 }
 
 TEST_CASE("PruneIf with nothing matching removes nothing and leaves entries intact", "[ShaderCacheManifest]")
@@ -125,7 +125,7 @@ TEST_CASE("PruneIf with nothing matching removes nothing and leaves entries inta
 	TempDir dir;
 	Manifest m;
 	m.Load(dir.path / "Manifest.json");
-	m.Set("Sky/01.pso", "bbbb");
+	m.Set("Sky/01.pso", { .digest = "bbbb" });
 
 	const size_t removed = m.PruneIf([](const std::string&) { return false; });
 
@@ -133,22 +133,59 @@ TEST_CASE("PruneIf with nothing matching removes nothing and leaves entries inta
 	REQUIRE(m.Get("Sky/01.pso").has_value());
 }
 
-TEST_CASE("Content keys round-trip alongside digests", "[ShaderCacheManifest]")
+TEST_CASE("A checkpoint records a shader's digest, content key and bytecode together", "[ShaderCacheManifest]")
 {
 	TempDir dir;
 	const auto file = dir.path / "Manifest.json";
+	const std::string_view oldBytes = "old shader";
+	const std::string_view newBytes = "new shader";
+	const Entry oldEntry{ "old digest", "old key", Util::ContentHash::HashString(oldBytes).ToHex() };
+	const Entry newEntry{ "new digest", "new key", Util::ContentHash::HashString(newBytes).ToHex() };
+	const std::string relativePath = "Lighting/10.pso";
+	Manifest m;
+	m.Load(file);
+	m.Set(relativePath, oldEntry);
+	REQUIRE(m.Save());
+	m.Set(relativePath, newEntry);
+
+	Manifest loaded;
+
+	SECTION("Interruption after replacing the blob and before saving the manifest")
 	{
-		Manifest m;
-		m.Load(file);
-		m.Set("Lighting/10.pso", "digest");
-		m.SetContentKey("Lighting/10.pso", "key");
-		REQUIRE(m.Save());
+		loaded.Load(file);
+		const auto entry = loaded.Get(relativePath);
+		REQUIRE(entry == oldEntry);
+		CHECK_FALSE(entry->MatchesBytecode(newBytes.data(), newBytes.size()));
 	}
+
+	SECTION("Checkpoint while the replacement is being written")
+	{
+		REQUIRE(m.Save());
+		loaded.Load(file);
+		const auto entry = loaded.Get(relativePath);
+		REQUIRE(entry == newEntry);
+		CHECK_FALSE(entry->MatchesBytecode(oldBytes.data(), oldBytes.size()));
+		CHECK(entry->MatchesBytecode(newBytes.data(), newBytes.size()));
+	}
+}
+
+TEST_CASE("Replacing a blob without a content key clears the old key", "[ShaderCacheManifest]")
+{
+	TempDir dir;
+	const auto file = dir.path / "Manifest.json";
+	Manifest m;
+	m.Load(file);
+	m.Set("Lighting/10.pso", { .digest = "old digest", .contentKey = "old key", .bytecodeHash = "old hash" });
+	m.Set("Lighting/10.pso", { .digest = "digest", .bytecodeHash = "hash" });
+	REQUIRE(m.Save());
 	Manifest loaded;
 	loaded.Load(file);
-	CHECK(loaded.Get("Lighting/10.pso") == "digest");
-	CHECK(loaded.GetContentKey("Lighting/10.pso") == "key");
-	CHECK_FALSE(loaded.GetContentKey("Lighting/11.pso").has_value());
+	const auto entry = loaded.Get("Lighting/10.pso");
+	REQUIRE(entry);
+	CHECK(entry->digest == "digest");
+	CHECK(entry->contentKey.empty());
+	CHECK(entry->bytecodeHash == "hash");
+	CHECK_FALSE(loaded.Get("Lighting/11.pso").has_value());
 }
 
 TEST_CASE("A manifest written before content keys existed loads with none", "[ShaderCacheManifest]")
@@ -158,8 +195,11 @@ TEST_CASE("A manifest written before content keys existed loads with none", "[Sh
 	std::ofstream(file) << R"({"schemaVersion":1,"entries":{"a.pso":"d"}})";
 	Manifest m;
 	m.Load(file);
-	CHECK(m.Get("a.pso") == "d");
-	CHECK_FALSE(m.GetContentKey("a.pso").has_value());
+	const auto entry = m.Get("a.pso");
+	REQUIRE(entry);
+	CHECK(entry->digest == "d");
+	CHECK(entry->contentKey.empty());
+	CHECK(entry->bytecodeHash.empty());
 }
 
 TEST_CASE("Malformed content keys are ignored without dropping digests", "[ShaderCacheManifest]")
@@ -169,26 +209,27 @@ TEST_CASE("Malformed content keys are ignored without dropping digests", "[Shade
 	std::ofstream(file) << R"({"entries":{"a.pso":"d"},"contentKeys":{"a.pso":7,"b.pso":"k"}})";
 	Manifest m;
 	m.Load(file);
-	CHECK(m.Get("a.pso") == "d");
-	CHECK_FALSE(m.GetContentKey("a.pso").has_value());
-	CHECK(m.GetContentKey("b.pso") == "k");
+	const auto entry = m.Get("a.pso");
+	REQUIRE(entry);
+	CHECK(entry->digest == "d");
+	CHECK(entry->contentKey.empty());
+	CHECK_FALSE(m.Get("b.pso").has_value());
 }
 
-TEST_CASE("SetContentKey alone is persisted by Save and Load of a missing file clears keys", "[ShaderCacheManifest]")
+TEST_CASE("A legacy content key alone cannot validate bytecode", "[ShaderCacheManifest]")
 {
 	TempDir dir;
 	const auto file = dir.path / "Manifest.json";
+	std::ofstream(file) << R"({"entries":{"a.pso":"d"},"contentKeys":{"a.pso":"k"}})";
 	Manifest m;
 	m.Load(file);
-	m.SetContentKey("a.pso", "k");
-	REQUIRE(m.Save());
-	CHECK(fs::exists(file));
+	const auto entry = m.Get("a.pso");
+	REQUIRE(entry);
+	CHECK(entry->contentKey == "k");
+	CHECK_FALSE(entry->MatchesBytecode("blob", 4));
 
-	Manifest other;
-	other.Load(dir.path / "missing.json");
-	CHECK_FALSE(other.GetContentKey("a.pso").has_value());
 	m.Load(dir.path / "missing.json");
-	CHECK_FALSE(m.GetContentKey("a.pso").has_value());
+	CHECK_FALSE(m.Get("a.pso").has_value());
 }
 
 TEST_CASE("PruneIf removes a pruned entry's content key too", "[ShaderCacheManifest]")
@@ -196,11 +237,10 @@ TEST_CASE("PruneIf removes a pruned entry's content key too", "[ShaderCacheManif
 	TempDir dir;
 	Manifest m;
 	m.Load(dir.path / "Manifest.json");
-	m.Set("a.pso", "d");
-	m.SetContentKey("a.pso", "k");
-	m.Set("b.pso", "d2");
-	m.SetContentKey("b.pso", "k2");
+	m.Set("a.pso", { .digest = "d", .contentKey = "k" });
+	m.Set("b.pso", { .digest = "d2", .contentKey = "k2" });
 	CHECK(m.PruneIf([](const std::string& p) { return p == "a.pso"; }) == 1);
-	CHECK_FALSE(m.GetContentKey("a.pso").has_value());
-	CHECK(m.GetContentKey("b.pso") == "k2");
+	CHECK_FALSE(m.Get("a.pso").has_value());
+	REQUIRE(m.Get("b.pso"));
+	CHECK(m.Get("b.pso")->contentKey == "k2");
 }
