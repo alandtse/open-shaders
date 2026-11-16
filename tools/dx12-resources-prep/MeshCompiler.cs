@@ -5,8 +5,9 @@ using NiflySharp;
 using NiflySharp.Blocks;
 using NiflySharp.Enums;
 
-// Geometry preparation records source texture references, never evaluated material parameters.
-internal sealed record CompiledMaterial(bool TwoSided, string[] Textures);
+// Geometry preparation copies original NIF inputs; native material evaluation stays at runtime.
+internal sealed record CompiledMaterial(bool TwoSided, string[] Textures, uint ShaderFlags1, uint ShaderFlags2,
+    float Alpha, uint TextureClampMode, float[]? UvOffsetScale);
 internal sealed record CompiledShape(int BlockIndex, string Name, string BlockType, string Status, string? GeometryFile,
     string? GeometrySha256, int VertexCount, int IndexCount, float[]? ShapeToModel, float[]? LocalBounds, CompiledMaterial? Material,
     bool OpaqueOccluderCandidate = false, string ShadingStatus = "not-compiled", string? ShadingFile = null, string? ShadingSha256 = null,
@@ -39,7 +40,7 @@ internal sealed class MeshCompiler
         // Mesh products are governed by a semantic cache schema, not the .NET
         // assembly hash: unrelated CLI and UI edits must not invalidate every NIF.
         // New cache identity rejects any older height-expanded geometry products.
-        const string meshSchema = "dx12-resources-rigid-v2-references-only/Nifly-1.1.0";
+        const string meshSchema = "dx12-resources-rigid-v3-native-material-source/Nifly-1.1.0";
         compilerKey = Convert.ToHexString(SHA256.HashData(
             Encoding.UTF8.GetBytes(meshSchema + "/quality=" + quality))).ToLowerInvariant();
     }
@@ -126,7 +127,9 @@ internal sealed class MeshCompiler
         if (shader != null)
         {
             var textures = file.GetBlock(shader.TextureSetRef)?.Textures?.Select(texture => texture.Content).ToArray() ?? [];
-            material = new(shader.ShaderFlags_SSPF2.HasFlag(SkyrimShaderPropertyFlags2.Double_Sided), textures);
+            material = new(shader.ShaderFlags_SSPF2.HasFlag(SkyrimShaderPropertyFlags2.Double_Sided), textures,
+                (uint)shader.ShaderFlags_SSPF1, (uint)shader.ShaderFlags_SSPF2, shader.Alpha,
+                (uint)shader.TextureClampMode, ReadUvTransform(shader));
         }
         var reason = shape is not BSTriShape || type is not ("BSTriShape" or "BSSubIndexTriShape") ? "unsupported-shape-type" :
             shape.HasSkinInstance || shape.IsSkinned ? "skinned-shape" : transform.Exclusion;
@@ -161,5 +164,29 @@ internal sealed class MeshCompiler
         {
             return new(index, name, type, "excluded:" + error.Message, null, null, 0, 0, transform.Matrix, null, material);
         }
+    }
+
+    private static float[]? ReadUvTransform(BSLightingShaderProperty shader)
+    {
+        static float? Component(object value, string first, string second)
+        {
+            var type = value.GetType();
+            var member = type.GetProperty(first) ?? type.GetProperty(second);
+            var field = type.GetField(first) ?? type.GetField(second);
+            var component = member?.GetValue(value) ?? field?.GetValue(value);
+            return component is IConvertible number ? Convert.ToSingle(number) : null;
+        }
+        var type = shader.GetType();
+        var offset = (type.GetProperty("UVOffset") ?? type.GetProperty("UvOffset"))?.GetValue(shader);
+        var scale = (type.GetProperty("UVScale") ?? type.GetProperty("UvScale"))?.GetValue(shader);
+        if (offset == null || scale == null) return null;
+        var ox = Component(offset, "X", "U");
+        var oy = Component(offset, "Y", "V");
+        var sx = Component(scale, "X", "U");
+        var sy = Component(scale, "Y", "V");
+        return ox.HasValue && oy.HasValue && sx.HasValue && sy.HasValue &&
+            float.IsFinite(ox.Value) && float.IsFinite(oy.Value) &&
+            float.IsFinite(sx.Value) && float.IsFinite(sy.Value) ?
+            [ox.Value, oy.Value, sx.Value, sy.Value] : null;
     }
 }

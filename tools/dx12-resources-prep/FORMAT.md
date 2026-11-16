@@ -25,12 +25,14 @@ displace, or otherwise regenerate triangles. Preparation quality `2` is retained
 as a compatibility alias for quality `1`, with no texture-driven geometry bake.
 The semantic mesh cache key was changed to reject older displaced products.
 
-Each placed shape's `material` member contains only `twoSided` and the ordered
-source `textures` path references; `materialSchemaVersion: 2` identifies this
-reference-only record. The `textureReferences` catalog records canonical paths,
-not copied DDS payloads. No offline shader flags, PBR classification, colors,
-UV transform, alpha thresholds, roughness, or other material appearance are baked
-into companion output. The native runtime owns material resolution and evaluation.
+Each placed shape's `material` member carries `twoSided`, the ordered source
+`textures` paths, raw NIF shader flags, alpha, clamp mode, and the UV transform
+where NiflySharp exposes all four finite components. `materialSchemaVersion: 3`
+identifies these unevaluated source values; older version-2 records are still
+accepted for geometry but cannot establish native material readiness.
+The `textureReferences` catalog records canonical paths, not copied DDS payloads.
+No evaluated roughness, BRDF or DX11 TruePBR material output is baked into the
+companion. NativePBR resolves material interpretation and residency at runtime.
 Geometry opacity exclusions remain conservative for safe RT traversal.
 
 ## Plugin-scoped interior catalog (Stage B)

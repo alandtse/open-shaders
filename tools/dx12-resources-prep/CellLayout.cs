@@ -119,7 +119,7 @@ internal static class CellLayout
         var placedReferences = instances.Select(instance => instance.ReferenceKey).Distinct().Count();
         var layout = new
         {
-            schemaVersion = 2, rendererSchemaVersion = 2, shadingSchemaVersion = 2, materialSchemaVersion = 2, roomSchemaVersion = 1, rooms, cell, editorId, inputDigest, layoutDigest = digest,
+            schemaVersion = 2, rendererSchemaVersion = 2, shadingSchemaVersion = 2, materialSchemaVersion = 3, roomSchemaVersion = 1, rooms, cell, editorId, inputDigest, layoutDigest = digest,
             subcell = requestedSubcell is { } sub ? new { size = subcellSize, x = sub.X, y = sub.Y } : null,
             scopeType,
             geometryPack, shadingPack, textureReferences,

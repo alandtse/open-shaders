@@ -138,6 +138,8 @@ namespace NativePBR
 
 		/** @brief Material service consumes only this registry's immutable exports. */
 		const Registry& GetRegistry() const { return registry; }
+		/** @brief NativePBR's worker observes the same registry as asset discovery. */
+		Registry& MutableRegistry() { return registry; }
 
 	private:
 		struct Source

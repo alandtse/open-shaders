@@ -4,6 +4,7 @@
 #include "Features/DX12NativeScene/PreparedScene.h"
 #include "LightLimitFix.h"
 #include "Features/NativePBR/MaterialRouting.h"
+#include "Features/NativePBR/MaterialDiscovery.h"
 #include "Features/NativePBR/MaterialSidecar.h"
 #include "Features/NativePBR/NativePBRRegistry.h"
 #include "Features/NativePBR/MaterialCatalog.h"
@@ -14,6 +15,7 @@
 #include <mutex>
 #include <span>
 #include <vector>
+#include <unordered_set>
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <winrt/base.h>
@@ -59,10 +61,12 @@ struct NativePBRFeature final : Feature
 		bool failed = false;
 	};
 	struct MaterialWorker;
-	// NativePBR owns identities, revisions, immutable snapshots and recipe generations.
-	// TruePBR only produces observations from Skyrim's existing hooks.
-	NativePBR::Registry materialRegistry;
+	NativePBR::MaterialDiscovery materialDiscovery;
+	NativePBR::Registry& materialRegistry = materialDiscovery.MutableRegistry();
 	NativePBR::MaterialCatalog materialCatalog;
+	std::shared_ptr<const DX12Native::TopLevel> discoveredGeometry;
+	std::unordered_set<std::string> discoveredMaterialKeys;
+	void DiscoverPreparedAssets();
 	std::shared_ptr<MaterialWorker> materialWorker;
 	void PollMaterialRegistry();
 	void Prepass() override;

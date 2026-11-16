@@ -47,6 +47,89 @@ void NativePBRFeature::SetupResources()
 		materialCatalog.Load();
 }
 
+void NativePBRFeature::DiscoverPreparedAssets()
+{
+	const auto scene = globals::features::dx12NativeScene.GetPublishedScene();
+	if (!scene || !scene->acceleration || discoveredGeometry == scene->acceleration)
+		return;
+	const auto catalog = materialCatalog.GetSnapshot();
+	std::unordered_set<std::string> currentKeys;
+	materialDiscovery.BeginInstanceEpoch();
+	for (const auto& instance : scene->acceleration->instances) {
+		const auto& identity = instance.preparedIdentity;
+		const auto& material = instance.material;
+		if (!material.opaqueCandidate || !material.offlineDescription ||
+			identity.sourceDigest.empty() || identity.blockIndex == UINT32_MAX ||
+			identity.referenceKey.empty() || identity.shapeName.empty())
+			continue;
+		const auto& source = *material.offlineDescription;
+		if (!source.is_object() || !source.contains("shaderFlags1") || !source.contains("shaderFlags2") ||
+			!source.contains("alpha") || !source.contains("textureClampMode") ||
+			!source.contains("uvOffsetScale") || !source.at("uvOffsetScale").is_array() ||
+			!source.contains("textures") || !source.at("textures").is_array())
+			continue;
+		const auto& uv = source.at("uvOffsetScale");
+		const auto& textures = source.at("textures");
+		if (uv.size() != 4 || textures.size() < 8)
+			continue;
+		try {
+			const auto flags1 = source.at("shaderFlags1").get<uint32_t>();
+			const auto flags2 = source.at("shaderFlags2").get<uint32_t>();
+			const auto clamp = source.at("textureClampMode").get<uint32_t>();
+			const auto alpha = source.at("alpha").get<float>();
+			const std::array<float, 4> transform{ uv[0].get<float>(), uv[1].get<float>(), uv[2].get<float>(), uv[3].get<float>() };
+			if (!std::isfinite(alpha) || alpha != 1.0f || clamp > 3 ||
+				!std::ranges::all_of(transform, [](float value) { return std::isfinite(value); }))
+				continue;
+			NativePBR::MaterialSource materialSource;
+			materialSource.base.materialAlpha = alpha;
+			materialSource.base.clampMode = clamp;
+			materialSource.base.uvOffsetScale = { transform, transform };
+			constexpr std::array<size_t, 7> nifSlots{ 0, 1, 5, 2, 3, 7, 6 };
+			for (size_t role = 0; role < nifSlots.size(); ++role) {
+				const auto& value = textures.at(nifSlots[role]);
+				if (!value.is_string())
+					continue;
+				materialSource.base.texturePaths[role] = value.get<std::string>();
+			}
+			const uint64_t flags = (uint64_t(flags2) << 32) | flags1;
+			if ((flags2 & (1u << 23)) != 0) {
+				auto has = [flags](RE::BSShaderProperty::EShaderPropertyFlag flag) {
+					return (flags & uint64_t(flag)) != 0;
+				};
+				materialSource.nifFlags = PBRRecords::NifSurfaceFlags{
+					.multiLayerParallax = has(RE::BSShaderProperty::EShaderPropertyFlag::kMultiLayerParallax),
+					.backLighting = has(RE::BSShaderProperty::EShaderPropertyFlag::kBackLighting),
+					.effectLighting = has(RE::BSShaderProperty::EShaderPropertyFlag::kEffectLighting),
+					.anisotropicLighting = has(RE::BSShaderProperty::EShaderPropertyFlag::kAnisotropicLighting),
+					.rimLighting = has(RE::BSShaderProperty::EShaderPropertyFlag::kRimLighting),
+					.softLighting = has(RE::BSShaderProperty::EShaderPropertyFlag::kSoftLighting),
+					.fitSlope = has(RE::BSShaderProperty::EShaderPropertyFlag::kFitSlope)
+				};
+			}
+			const auto key = std::format("{}:{}", identity.sourceDigest, identity.blockIndex);
+			if (currentKeys.insert(key).second) {
+				const auto report = materialDiscovery.Register(key, std::move(materialSource), catalog);
+				if (report.status == NativePBR::MaterialSourceReport::Status::InvalidParameters)
+					continue;
+			}
+			NativePBR::InstanceProperties properties;
+			properties.opacity = NativePBR::InstanceProperties::Opacity::Opaque;
+			properties.normalMode = (flags1 & (1u << 12)) != 0 ?
+				NativePBR::InstanceProperties::NormalMode::ModelSpace : NativePBR::InstanceProperties::NormalMode::TangentSpace;
+			properties.uvAnimation = NativePBR::InstanceProperties::UvAnimation::Static;
+			materialDiscovery.ObserveInstance(key, identity.referenceKey, identity.shapeName, std::move(properties));
+		} catch (const std::exception&) {
+			continue;
+		}
+	}
+	for (const auto& key : discoveredMaterialKeys)
+		if (!currentKeys.contains(key))
+			materialDiscovery.Retire(key);
+	discoveredMaterialKeys = std::move(currentKeys);
+	discoveredGeometry = scene->acceleration;
+}
+
 std::shared_ptr<const NativePBR::RecipeGeneration> NativePBRFeature::GetNativeRecipes() const
 {
 	if (!materialWorker)
@@ -156,6 +239,7 @@ void NativePBRFeature::Prepass()
 		rayMaterialBindings.store({}, std::memory_order_release);
 		return;
 	}
+	DiscoverPreparedAssets();
 	PollMaterialRegistry();
 	const auto scene = globals::features::dx12NativeScene.GetPublishedScene();
 	const auto materialPublication = GetMaterialPublication();
@@ -189,6 +273,11 @@ void NativePBRFeature::OnSceneTransitionReset(bool)
 {
 	preparedSceneMaterials.store({}, std::memory_order_release);
 	rayMaterialBindings.store({}, std::memory_order_release);
+	discoveredGeometry.reset();
+	materialDiscovery.BeginInstanceEpoch();
+	for (const auto& key : discoveredMaterialKeys)
+		materialDiscovery.Retire(key);
+	discoveredMaterialKeys.clear();
 }
 
 // Backend selection is the ONLY automatic execution switch. Feature toggles
