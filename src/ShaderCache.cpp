@@ -4713,6 +4713,8 @@ namespace SIE
 	void ShaderCache::FinishStartupCompilation()
 	{
 		TrackingIncludeHandler::ReleaseStartupSnapshots();
+		if (globals::game::quitGame && IsDiskCacheActive())
+			GetShaderCacheManifest().Save();
 	}
 
 	void ShaderCache::SetFileWatcher(bool value)
