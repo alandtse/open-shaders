@@ -1040,6 +1040,8 @@ namespace SIE
 		int32_t backgroundCompilationThreadCount = std::max(static_cast<int32_t>(Util::GetPerformanceCoreCount()) / 2, 1);
 		BS::thread_pool<> compilationPool{ static_cast<std::size_t>(compilationThreadCount) };
 		std::jthread managementJthread;  // dedicated thread for ManageCompilationSet (not in pool)
+		/** @brief Ends startup-only compilation shortcuts and releases their source snapshots. */
+		void FinishStartupCompilation();
 		/** Switches compilation mode, dropping unstarted precompiles when entering background mode. */
 		void SetBackgroundCompilation(bool value);
 		/** Uses the background worker budget for runtime work and diskless background compilation. */
