@@ -173,6 +173,7 @@ struct ColorGrading : public PostProcessFeature
 	void ReloadActiveShaders();
 	void ReleaseActiveShaders();
 	void CompileShaders();
+	void CompileTonemapShaders(const char* a_tonemapFunction, bool a_makeActive);
 
 	virtual void RestoreDefaultSettings() override;
 	virtual void LoadSettings(json&) override;

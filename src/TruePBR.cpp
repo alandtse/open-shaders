@@ -405,10 +405,17 @@ void TruePBR::RestoreDefaultSettings()
 
 #undef I18N_KEY_PREFIX
 
+namespace
+{
+	constexpr wchar_t kGlintsNoiseShaderPath[] = L"Data\\Shaders\\Common\\Glints\\noisegen.cs.hlsl";
+}
+
 void TruePBR::SetupResources()
 {
 	SetupTextureSetData();
 	SetupMaterialObjectData();
+	if (auto* cache = globals::shaderCache; loaded && cache->IsDiskCacheActive() && !cache->IsShaderCacheReadOnly())
+		Util::CompileShaderBlob(kGlintsNoiseShaderPath, {}, "cs_5_0");
 }
 
 void TruePBR::Prepass()
@@ -456,7 +463,7 @@ void TruePBR::SetupGlintsTexture()
 	glintsNoiseTexture->CreateUAV(uav_desc);
 
 	// Compile
-	auto noiseGenProgram = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\Common\\Glints\\noisegen.cs.hlsl", {}, "cs_5_0"));
+	auto noiseGenProgram = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(kGlintsNoiseShaderPath, {}, "cs_5_0"));
 	if (!noiseGenProgram) {
 		logger::error("Failed to compile glints noise generation shader!");
 		return;

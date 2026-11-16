@@ -20,7 +20,7 @@ void GrassOptimizations::SetupResources()
 
 	if (globals::shaderCache->IsDiskCacheActive()) {
 		GetCullCS();
-		meshLibrary.PrepareShaders();
+		bucketStore.meshLibrary.PrepareShaders();
 	}
 
 	if (FAILED(globals::d3d::context->QueryInterface(__uuidof(ID3D11DeviceContext1), ctx1.put_void())) || !ctx1) {
