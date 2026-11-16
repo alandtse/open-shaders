@@ -81,7 +81,7 @@ bool NativeComposite::InitializeLighting(ID3D12Device* a_device)
 		CD3DX12_ROOT_PARAMETER parameters[3];
 		parameters[0].InitAsDescriptorTable(1, &ranges[0]);
 		parameters[1].InitAsDescriptorTable(1, &ranges[1]);
-		parameters[2].InitAsConstants(41, 0);
+		parameters[2].InitAsConstants(42, 0);
 		const CD3DX12_ROOT_SIGNATURE_DESC desc(3, parameters);
 		winrt::com_ptr<ID3DBlob> serialized, errors;
 		DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
@@ -108,7 +108,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 	const std::shared_ptr<const DX12Native::ShadowFrame>& a_shadow,
 	const std::shared_ptr<const DX12Native::RasterFrame>& a_raster,
 	const ShadowSettings& a_shadowSettings,
-	float a_strength, bool a_directSpatialReconstruction, const Policy& a_policy, uint64_t a_revision)
+	float a_strength, bool a_directSpatialReconstruction, const Policy& a_policy, uint64_t a_revision,
+	uint32_t a_nativeReadinessStage)
 {
 	CS_GPU_PASS("NativeComposite::RasterPassThrough");
 	status = "Invalid capture input";
@@ -462,13 +463,14 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 				uint32_t diffuse, specular, visual, spatialReconstruction;
 				DirectX::SimpleMath::Matrix inverseProjection, inverseView;
 				uint32_t recordDiagnostics;
+				uint32_t nativeReadinessStage;
 			};
-			static_assert(sizeof(Constants) == 41 * sizeof(uint32_t));
+			static_assert(sizeof(Constants) == 42 * sizeof(uint32_t));
 			const auto& camera = a_lighting->scene.raster->camera;
 			const Constants constants{ a_width, a_height, a_strength, a_transfer == Transfer::LegacyScene ? 1u : 0u, a_policy.diffuse, a_policy.specular, a_policy.visual,
 				a_directSpatialReconstruction && a_lighting->traceDensityMode != 0u ? 1u : 0u, camera.CameraProjInverse, camera.CameraViewInverse,
-				recordCounters ? 1u : 0u };
-			slot->commands->SetComputeRoot32BitConstants(2, 41, &constants, 0);
+				recordCounters ? 1u : 0u, std::min(a_nativeReadinessStage, 3u) };
+			slot->commands->SetComputeRoot32BitConstants(2, 42, &constants, 0);
 			slot->commands->Dispatch((a_width + 7) / 8, (a_height + 7) / 8, 1);
 			if (recordCounters) {
 				const auto counterEnd = CD3DX12_RESOURCE_BARRIER::Transition(slot->counters.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -529,7 +531,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		frame.shadowSubmitted = applyShadow;
 		slot->countersRead = !blend || !recordCounters;
 		frame.validityRevision = a_revision ^ (blend ? (a_lighting->validityRevision * 0x9e3779b97f4a7c15ull) : 0) ^
-			(applyShadow ? (a_shadowSettings.revision * 0xbf58476d1ce4e5b9ull) : 0);
+			(applyShadow ? (a_shadowSettings.revision * 0xbf58476d1ce4e5b9ull) : 0) ^
+			(uint64_t(a_nativeReadinessStage) * 0x94d049bb133111ebull);
 		status = "Submitted";
 		if (applyShadow)
 			shadowStatus = "Independent shadow layer submitted";

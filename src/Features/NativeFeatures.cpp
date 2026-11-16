@@ -742,6 +742,12 @@ void NativePBRFeature::DrawSettings()
 	if (bootSnapshot.HasPendingChange(backendSettings, &BackendSettings::NativeBackend))
 		Util::Text::RestartNeeded("%s", "PBR backend change pending restart");
 	DrawOwnership("Enable Native PBR", enabled, IsActive());
+	int stage = static_cast<int>(readinessStage.load(std::memory_order_relaxed)) - 1;
+	if (ImGui::Combo("DX12 ownership readiness (testing)", &stage,
+		"Geometry confirmed (incomplete)\0NativePBR evaluated (incomplete)\0Native lighting completed (safe)\0"))
+		readinessStage.store(static_cast<uint32_t>(stage + 1), std::memory_order_relaxed);
+	if (stage < 2)
+		ImGui::TextDisabled("Diagnostic: native-first pixels may be black or missing light; DX11 fallback remains for other pixels.");
 	bool forceAdmission = forceRayAdmission.load(std::memory_order_relaxed);
 	if (ImGui::Checkbox("Force opaque ray-material admission (testing)", &forceAdmission))
 		forceRayAdmission.store(forceAdmission, std::memory_order_relaxed);
@@ -843,6 +849,7 @@ void NativePBRFeature::LoadSettings(json& j)
 	backendSettings.NativeBackend = j.value("NativeBackend", true);
 	enabled.store(j.value("Enabled", true), std::memory_order_relaxed);
 	forceRayAdmission.store(false, std::memory_order_relaxed);
+	readinessStage.store(std::clamp(j.value("NativeReadinessStage", 3u), 1u, 3u), std::memory_order_relaxed);
 }
 void NativeLLFFeature::LoadSettings(json& j)
 {
@@ -860,7 +867,8 @@ void NativeSCMFeature::LoadSettings(json& j) { enabled.store(j.value("Enabled", 
 void NativePBRFeature::SaveSettings(json& j)
 {
 	j = { { "Enabled", enabled.load(std::memory_order_relaxed) },
-		{ "NativeBackend", backendSettings.NativeBackend } };
+		{ "NativeBackend", backendSettings.NativeBackend },
+		{ "NativeReadinessStage", readinessStage.load(std::memory_order_relaxed) } };
 }
 void NativeLLFFeature::SaveSettings(json& j)
 {
@@ -893,6 +901,7 @@ json NativePBRFeature::GetDiagnostics()
 		.scope = NativePBR::MaterialScope::OpaqueStaticMesh
 	});
 	return { { "selected", enabled.load() }, { "native", state.owner == NativePBR::RenderingOwner::Native },
+		{ "nativeFirstReadinessStage", NativeFirstReadinessStage() },
 		{ "nativeJsonTextureSets", catalog ? catalog->textureSets.size() : 0 },
 		{ "nativeJsonMaterialObjects", catalog ? catalog->materialObjects.size() : 0 },
 		{ "nativeJsonRejectedTextureSets", catalog ? catalog->rejectedTextureSets : 0 },

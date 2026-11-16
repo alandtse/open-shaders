@@ -78,6 +78,10 @@ bool AdmitReceiverCandidate(uint instance, uint primitive, float2 barycentric, i
 	}
 	if (NativePBRPadding.x != 0u)
 		return true;
+	// Companion-prepared opaque triangles are authoritative native geometry
+	// even when their material is not ready. Material failure is handled later.
+	if (NativePBRReady != 0u && (NativePBRInstances[instance].flags & 4u) != 0u)
+		return true;
 	const SurfaceRecord binding = Surfaces[instance];
 	if (binding.material.z != 0) return true;
 	const MaterialRecord material = Materials[binding.material.x];
@@ -103,7 +107,10 @@ void Finish(uint2 pixel, uint original, uint effective, uint reason)
 	DirectValidity[pixel] = original;
 	EffectiveValidity[pixel] = effective;
 	const bool forced = effective == 1 && original != 1;
-	RejectionReason[pixel] = reason | (forced ? 0x80000000u : 0u) | (effective == 2 && original != 2 ? 0x40000000u : 0u);
+	// Retain independently proven geometry/material readiness across the
+	// early-return paths; these bits never grant direct-light validity.
+	const uint readiness = RejectionReason[pixel] & 0x0c000000u;
+	RejectionReason[pixel] = reason | readiness | (forced ? 0x80000000u : 0u) | (effective == 2 && original != 2 ? 0x40000000u : 0u);
 	if (reason >= 1 && reason <= 10) Count(11 + reason);
 	if (forced) Count(22);
 	if (effective == 2 && original != 2) Count(23);
@@ -207,7 +214,14 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	bool originalDepth = DepthMatches(rasterValid, depthError, distance, 2.0f, 1e-5f);
 	bool selectedDepth = DepthMatches(rasterValid, depthError, distance, AbsoluteTolerance, RelativeTolerance);
 	bool rejectSelectedDepth = !selectedDepth && DepthMode == 0 && NativePBRPadding.x == 0u;
-	if (rejectSelectedDepth && !originalDepth) { Finish(pixel, 0, 0, 3); return; }
+	const bool preparedOpaque = NativePBRReady != 0u && (NativePBRInstances[instance].flags & 4u) != 0u;
+	const float overlapTolerance = max(2.0f, distance * 1e-5f);
+	const bool nativeAhead = preparedOpaque && rasterValid && distance + overlapTolerance < rasterDistance;
+	const bool rasterOccludesNative = rasterValid && rasterDistance + overlapTolerance < distance;
+	if (preparedOpaque && !rasterOccludesNative)
+		RejectionReason[pixel] |= 0x08000000u; // native geometry hit, independent of material evaluation
+	if (preparedOpaque && rasterOccludesNative) { Finish(pixel, 0, 0, 3); return; }
+	if (rejectSelectedDepth && !originalDepth && !nativeAhead) { Finish(pixel, 0, 0, 3); return; }
 	// A rejected primary candidate would have invalidated the old strict traversal.
 	// Preserve that original verdict while the reference traversal can continue.
 	uint originalReason = rejectedPrimaryCandidate ? 4 : (originalDepth ? 0 : 3);
@@ -217,14 +231,14 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	float footprint = max(distance * 2.0f / max(float(Size.x), 1.0f), 1e-6f);
 	bool nativePbrUsedFallback = false;
 	float3 nativeClearcoat = 0.0f;
-	const bool preparedOpaque = NativePBRReady != 0u &&
-		(NativePBRInstances[instance].flags & 4u) != 0u;
 	if (NativePBRReady != 0u && NativePBRInstances[instance].materialIndex != 0xffffffffu)
 		Count(29);
 	const bool nativeMaterialValid = LoadNativePBRMaterial(instance, primitive, query.CommittedTriangleBarycentrics(),
 		query.CommittedObjectToWorld3x4(), query.CommittedWorldToObject3x4(), footprint, material, nativePbrUsedFallback, nativeClearcoat);
 	if (nativeMaterialValid)
 		Count(28);
+	if (nativeMaterialValid && preparedOpaque && !rasterOccludesNative)
+		RejectionReason[pixel] |= 0x04000000u; // usable NativePBR output
 	if (nativeMaterialValid && nativePbrUsedFallback)
 		Count(30);
 	// Prepared static geometry has a single material authority. A missing native
@@ -367,7 +381,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	}
 	ReceiverGuide[pixel] = float4(n, float(instance + 1));
 	uint original = originalReason == 0 ? 1 : (originalReason == 3 ? 0 : 3);
-	uint effective = NativePBRPadding.x != 0u ? 1u : (rejectSelectedDepth ? 0 : (culled ? 2 : 1));
+	uint effective = NativePBRPadding.x != 0u ? 1u : (rejectSelectedDepth && !nativeAhead ? 0 : (culled ? 2 : 1));
 	Finish(pixel, original, effective, originalReason == 0 ? 10 : originalReason);
 	RejectionReason[pixel] |= 0x20000000u;
 	if (effective == 1 && (EnabledLobes & 1u)) Count(9);

@@ -81,6 +81,9 @@ struct NativePBRFeature final : Feature
 	std::atomic<std::shared_ptr<const NativePBR::RayMaterialBindings>> rayMaterialBindings;
 	std::atomic<bool> enabled{ true };
 	std::atomic<bool> forceRayAdmission{ false };
+	// 1 geometry, 2 evaluated NativePBR, 3 accepted Native Lighting. Early stages are deliberate diagnostics.
+	std::atomic<uint32_t> readinessStage{ 3 };
+	uint32_t NativeFirstReadinessStage() const { return IsActive() ? std::clamp(readinessStage.load(std::memory_order_relaxed), 1u, 3u) : 0u; }
 	std::string GetName() override { return "NativePBR"; }
 	std::string GetShortName() override { return "NativePBR"; }
 	std::string_view GetCategory() const override { return FeatureCategories::kMaterials; }
@@ -107,7 +110,7 @@ struct NativePBRFeature final : Feature
 	void DrawSettings() override;
 	void LoadSettings(json&) override;
 	void SaveSettings(json&) override;
-	void RestoreDefaultSettings() override { backendSettings = {}; enabled = true; forceRayAdmission = false; }
+	void RestoreDefaultSettings() override { backendSettings = {}; enabled = true; forceRayAdmission = false; readinessStage = 3; }
 	json GetDiagnostics() override;
 };
 

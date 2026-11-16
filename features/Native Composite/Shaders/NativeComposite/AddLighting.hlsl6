@@ -22,6 +22,7 @@ cbuffer CompositeConstants : register(b0)
 	row_major float4x4 InverseProjection;
 	row_major float4x4 InverseView;
 	uint RecordDiagnostics;
+	uint NativeReadinessStage;
 };
 
 void Count(uint index)
@@ -161,6 +162,17 @@ void main(uint3 id : SV_DispatchThreadID)
 	if ((acceptDiffuse || acceptSpecular) && original != 1 && effective == 1) Count(3);
 	if ((acceptDiffuse || acceptSpecular) && original != 1 && effective != 1) Count(4);
 	float3 lighting = (acceptDiffuse ? diffuse : 0) + (acceptSpecular ? specular : 0);
+	// Three explicitly selectable ownership thresholds. Geometry and material
+	// previews intentionally display incomplete pixels, including black output.
+	// No native pixel may cover a closer DX11 fallback receiver: the producer
+	// only sets readiness bits after comparing the traced hit to raster depth.
+	if (NativeFirstReady(NativeReadinessStage, effective, reason, acceptDiffuse || acceptSpecular)) {
+		float4 originalColor = Scene[id.xy];
+		float3 nativeColor = all(isfinite(lighting)) ? lighting * Strength : 0.0f;
+		Scene[id.xy] = float4(LegacyTransfer != 0 ? SignedPower(nativeColor, 1.0f / 1.6f) : nativeColor,
+			originalColor.a);
+		return;
+	}
 	if (!all(isfinite(lighting)) || !any(lighting != 0))
 		return;
 	Count(1);
