@@ -12,6 +12,8 @@ public:
 
 	/** @brief Returns the last completed exposure, shared by both eyes, or null when adaptation is unavailable. */
 	ID3D11ShaderResourceView* GetHistorySRV() const;
+	/** @brief Loads the procedural sun mask shader. */
+	bool EnsureSunMaskShader();
 	/** @brief Releases the sun mask shader so it recompiles on the next frame it is needed. */
 	void ClearShaderCache();
 

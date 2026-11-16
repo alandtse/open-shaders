@@ -378,6 +378,9 @@ public:
 
 	Util::LazyShader<ID3D11VertexShader> upscaleVS;
 	ID3D11VertexShader* GetUpscaleVS();
+	ID3D11PixelShader* GetCopyDepthToSharedBufferPS();
+	ID3D11ComputeShader* GetClearHMDMaskCS();
+	void PrepareUpscalingShaders();
 
 	winrt::com_ptr<ID3D11DepthStencilState> upscaleDepthStencilState;
 	winrt::com_ptr<ID3D11BlendState> upscaleBlendState;

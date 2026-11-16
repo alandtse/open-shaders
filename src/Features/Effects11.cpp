@@ -761,6 +761,10 @@ void Effects11::SetupResources()
 	if (const auto presetId = UnifiedPresetCatalog::GetSingleton().GetActivePayloadPresetId(*GetPresetProvider()))
 		presetManager.SetActivePreset(*presetId);
 	EffectManager::GetSingleton().Initialize();
+	if (globals::shaderCache->IsDiskCacheActive()) {
+		EnsureVolumetricRaysShaders();
+		EnsureSunRaysShaders();
+	}
 }
 
 void Effects11::PostSetupResources()
@@ -1412,6 +1416,40 @@ void Effects11::DrawVolumetricRays()
 	draw(&Effects11::DrawSunRays, sunRaysFailed, "Sun rays");
 }
 
+bool Effects11::EnsureVolumetricRaysShaders()
+{
+	if (!raymarchVolumetricRaysPS) {
+		std::vector<std::pair<const char*, const char*>> defines;
+		if (globals::features::cloudShadows.loaded)
+			defines.push_back({ "CLOUD_SHADOWS", nullptr });
+		if (globals::features::terrainShadows.loaded)
+			defines.push_back({ "TERRAIN_SHADOWS", nullptr });
+		if (globals::features::lodShadows.loaded)
+			defines.push_back({ "LOD_SHADOWS", nullptr });
+
+		raymarchVolumetricRaysPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\RaymarchVolumetricRaysPS.hlsl", defines, "ps_5_0")));
+		if (!raymarchVolumetricRaysPS)
+			return false;
+	}
+
+	if (!applyVolumetricRaysPS) {
+		applyVolumetricRaysPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\ApplyVolumetricRaysPS.hlsl", {}, "ps_5_0")));
+		if (!applyVolumetricRaysPS)
+			return false;
+	}
+
+	if (!blurHCS) {
+		blurHCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\BlurVolumetricRaysCS.hlsl", { { "HORIZONTAL", nullptr } }, "cs_5_0")));
+		if (!blurHCS)
+			return false;
+	}
+
+	if (!blurVCS) {
+		blurVCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\BlurVolumetricRaysCS.hlsl", {}, "cs_5_0")));
+	}
+	return static_cast<bool>(blurVCS);
+}
+
 void Effects11::DrawVolumetricScattering()
 {
 	if (!enableEffect)
@@ -1440,47 +1478,7 @@ void Effects11::DrawVolumetricScattering()
 
 	CS_GPU_PASS("Effects11::DrawVolumetricRays");
 
-	if (!raymarchVolumetricRaysPS) {
-		std::vector<std::pair<const char*, const char*>> defines;
-		if (globals::features::cloudShadows.loaded)
-			defines.push_back({ "CLOUD_SHADOWS", nullptr });
-		if (globals::features::terrainShadows.loaded)
-			defines.push_back({ "TERRAIN_SHADOWS", nullptr });
-		if (globals::features::lodShadows.loaded)
-			defines.push_back({ "LOD_SHADOWS", nullptr });
-
-		raymarchVolumetricRaysPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\RaymarchVolumetricRaysPS.hlsl", defines, "ps_5_0")));
-		if (!raymarchVolumetricRaysPS) {
-			volumetricRaysFailed = true;
-			return;
-		}
-	}
-
-	if (!applyVolumetricRaysPS) {
-		applyVolumetricRaysPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\ApplyVolumetricRaysPS.hlsl", {}, "ps_5_0")));
-		if (!applyVolumetricRaysPS) {
-			volumetricRaysFailed = true;
-			return;
-		}
-	}
-
-	if (!blurHCS) {
-		blurHCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\BlurVolumetricRaysCS.hlsl", { { "HORIZONTAL", nullptr } }, "cs_5_0")));
-		if (!blurHCS) {
-			volumetricRaysFailed = true;
-			return;
-		}
-	}
-
-	if (!blurVCS) {
-		blurVCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\BlurVolumetricRaysCS.hlsl", {}, "cs_5_0")));
-		if (!blurVCS) {
-			volumetricRaysFailed = true;
-			return;
-		}
-	}
-
-	if (!EnsureScatteringBlendState()) {
+	if (!EnsureVolumetricRaysShaders() || !EnsureScatteringBlendState()) {
 		volumetricRaysFailed = true;
 		return;
 	}
@@ -1639,7 +1637,7 @@ bool Effects11::EnsureScatteringBlendState()
 	return true;
 }
 
-bool Effects11::EnsureSunRaysResources(uint32_t a_width, uint32_t a_height)
+bool Effects11::EnsureSunRaysShaders()
 {
 	auto compile = [](winrt::com_ptr<ID3D11PixelShader>& a_shader, const char* a_mode, bool a_cloudShadows) {
 		if (a_shader)
@@ -1650,14 +1648,14 @@ bool Effects11::EnsureSunRaysResources(uint32_t a_width, uint32_t a_height)
 		a_shader.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\SunRaysPS.hlsl", defines, "ps_5_0")));
 		return static_cast<bool>(a_shader);
 	};
-	if (!compile(sunRaysMaskPS, "MASK", globals::features::cloudShadows.loaded) ||
-		!compile(sunRaysBlurPS, "BLUR", false) ||
-		!compile(sunRaysCompositePS, "COMPOSITE", false)) {
-		sunRaysFailed = true;
-		return false;
-	}
+	return compile(sunRaysMaskPS, "MASK", globals::features::cloudShadows.loaded) &&
+	       compile(sunRaysBlurPS, "BLUR", false) &&
+	       compile(sunRaysCompositePS, "COMPOSITE", false);
+}
 
-	if (!EnsureScatteringBlendState()) {
+bool Effects11::EnsureSunRaysResources(uint32_t a_width, uint32_t a_height)
+{
+	if (!EnsureSunRaysShaders() || !EnsureScatteringBlendState()) {
 		sunRaysFailed = true;
 		return false;
 	}

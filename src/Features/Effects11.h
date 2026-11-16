@@ -337,6 +337,8 @@ private:
 	bool EnsureScatteringBlendState();
 	/** @brief Compiles the sun ray shaders and (re)creates their half-res targets; false if anything failed. */
 	bool EnsureSunRaysResources(uint32_t a_width, uint32_t a_height);
+	bool EnsureSunRaysShaders();
+	bool EnsureVolumetricRaysShaders();
 
 	uint tonemapReplacedFrame = UINT32_MAX;  ///< frameCount when the effect chain last wrote the tonemap output
 	std::array<bool, static_cast<size_t>(E11Handoff::Feature::Count)> handedOff{};

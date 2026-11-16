@@ -43,6 +43,8 @@ struct ScreenshotFeature : public Feature
 	virtual void DrawSettings() override;
 	virtual void LoadSettings(json& a_json) override;
 	virtual void SaveSettings(json& a_json) override;
+	/** @brief Prepares the capture compositor while the disk cache is writable. */
+	void SetupResources() override;
 	/** @brief Invalidates the explicit UI capture compositor. */
 	void ClearShaderCache() override;
 	/** @brief Resets transient state (no-op for this feature). */
@@ -193,6 +195,7 @@ private:
 	void ScreenshotWorkerLoop();
 	void EnsurePreviewCache(ID3D11Texture2D* sourceTexture);
 	/** @brief Combines frame-generation scene and UI buffers for a displayed-frame capture. */
+	bool EnsureCompositeShader();
 	ID3D11Texture2D* CompositeCapture(ID3D11Texture2D* sourceTexture, ID3D11ShaderResourceView* sceneSRV, ID3D11ShaderResourceView* uiSRV);
 	static void ShowInGameNotification(std::string message);
 };

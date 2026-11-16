@@ -9,6 +9,7 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "Menu.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Utils/Game.h"
 
@@ -23,6 +24,12 @@
 #include <filesystem>
 #include <fstream>
 #include <vector>
+
+namespace
+{
+	constexpr auto kEyeCropShader = L"Data\\Shaders\\Effects11\\EyeCropCopyPS.hlsl";
+	constexpr auto kEyeCropDepthShader = L"Data\\Shaders\\Effects11\\EyeCropCopyDepthPS.hlsl";
+}
 
 namespace
 {
@@ -63,6 +70,13 @@ void EffectManager::Initialize()
 	SettingManager::GetSingleton().Load();
 	CreateCommonResources();
 	Apply();
+	if (globals::shaderCache->IsDiskCacheActive()) {
+		enbAdaptation.EnsureSunMaskShader();
+		if (globals::game::isVR) {
+			EnsureEyeCropShader(eyeCropCopyPS, eyeCropCopyPSCompileAttempted, kEyeCropShader);
+			EnsureEyeCropShader(eyeCropCopyDepthPS, eyeCropCopyDepthPSCompileAttempted, kEyeCropDepthShader);
+		}
+	}
 
 	// Verify all critical common resources are initialized correctly
 	struct ResourceCheck
@@ -1259,7 +1273,7 @@ bool EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 	eyeSourceData.SRVCopy = nullptr;
 	eyeSourceData.UAV = Util::AsW32(eyeSourceUAV.get());
 
-	return CropCopyEyeHalf(sourceSRV, mainDesc.Width, mainDesc.Height, eyeSourceRTV.get(), a_eyeIndex, eyeCropCopyPS, eyeCropCopyPSCompileAttempted, L"Data\\Shaders\\Effects11\\EyeCropCopyPS.hlsl");
+	return CropCopyEyeHalf(sourceSRV, mainDesc.Width, mainDesc.Height, eyeSourceRTV.get(), a_eyeIndex, eyeCropCopyPS, eyeCropCopyPSCompileAttempted, kEyeCropShader);
 }
 
 ID3D11ShaderResourceView* EffectManager::GetEyeCroppedSRV(TextureManager::Texture& a_source)
@@ -1275,7 +1289,7 @@ ID3D11ShaderResourceView* EffectManager::GetEyeCroppedSRV(TextureManager::Textur
 	auto& target = inputCropTargets[a_source.texture.get()];
 	if (!EnsureCropTarget(target.texture, target.rtv, target.srv, nullptr, srcDesc, "Effects11::InputCrop"))
 		return a_source.srv.get();
-	if (!CropCopyEyeHalf(a_source.srv.get(), srcDesc.Width, srcDesc.Height, target.rtv.get(), currentEyeIndex, eyeCropCopyPS, eyeCropCopyPSCompileAttempted, L"Data\\Shaders\\Effects11\\EyeCropCopyPS.hlsl"))
+	if (!CropCopyEyeHalf(a_source.srv.get(), srcDesc.Width, srcDesc.Height, target.rtv.get(), currentEyeIndex, eyeCropCopyPS, eyeCropCopyPSCompileAttempted, kEyeCropShader))
 		return a_source.srv.get();
 	return target.srv.get();
 }
@@ -1295,9 +1309,18 @@ ID3D11ShaderResourceView* EffectManager::GetEyeCroppedDepthSRV(ID3D11Texture2D* 
 	// R32_FLOAT scratch: the source's own depth-stencil format can't be bound as a color RTV.
 	if (!EnsureCropTarget(depthCropTexture, depthCropRTV, depthCropSRV, nullptr, srcDesc, "Effects11::DepthCrop", DXGI_FORMAT_R32_FLOAT))
 		return a_sourceSRV;
-	if (!CropCopyEyeHalf(a_sourceSRV, srcDesc.Width, srcDesc.Height, depthCropRTV.get(), currentEyeIndex, eyeCropCopyDepthPS, eyeCropCopyDepthPSCompileAttempted, L"Data\\Shaders\\Effects11\\EyeCropCopyDepthPS.hlsl"))
+	if (!CropCopyEyeHalf(a_sourceSRV, srcDesc.Width, srcDesc.Height, depthCropRTV.get(), currentEyeIndex, eyeCropCopyDepthPS, eyeCropCopyDepthPSCompileAttempted, kEyeCropDepthShader))
 		return a_sourceSRV;
 	return depthCropSRV.get();
+}
+
+bool EffectManager::EnsureEyeCropShader(winrt::com_ptr<ID3D11PixelShader>& a_shader, bool& a_attempted, const wchar_t* a_path)
+{
+	if (!a_shader && !a_attempted) {
+		a_attempted = true;
+		a_shader.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(a_path, {}, "ps_5_0")));
+	}
+	return static_cast<bool>(a_shader);
 }
 
 bool EffectManager::CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t a_srcWidth, uint32_t a_srcHeight, ID3D11RenderTargetView* a_destRTV, int a_eyeIndex, winrt::com_ptr<ID3D11PixelShader>& a_pixelShader, bool& a_pixelShaderCompileAttempted, const wchar_t* a_shaderPath)
@@ -1306,15 +1329,8 @@ bool EffectManager::CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t
 	auto context = globals::d3d::context;
 	const uint32_t halfWidth = a_srcWidth / 2;
 
-	if (!a_pixelShader) {
-		if (a_pixelShaderCompileAttempted)
-			return false;
-		a_pixelShaderCompileAttempted = true;
-		a_pixelShader.attach(static_cast<ID3D11PixelShader*>(
-			Util::CompileShader(a_shaderPath, {}, "ps_5_0")));
-		if (!a_pixelShader)
-			return false;
-	}
+	if (!EnsureEyeCropShader(a_pixelShader, a_pixelShaderCompileAttempted, a_shaderPath))
+		return false;
 	if (!eyeCropCB) {
 		D3D11_BUFFER_DESC cbDesc{};
 		cbDesc.ByteWidth = 16;

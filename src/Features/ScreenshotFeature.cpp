@@ -17,6 +17,7 @@
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/FileSystem.h"
@@ -775,6 +776,12 @@ void ScreenshotFeature::ApplyVanillaScreenshotSetting()
 	}
 }
 
+void ScreenshotFeature::SetupResources()
+{
+	if (globals::shaderCache->IsDiskCacheActive())
+		EnsureCompositeShader();
+}
+
 void ScreenshotFeature::ClearShaderCache()
 {
 	compositeCS = nullptr;
@@ -1026,21 +1033,24 @@ void ScreenshotFeature::DrawSequenceSettings()
 		ImGui::TextWrapped("%s", uiSequenceMessage.c_str());
 }
 
-ID3D11Texture2D* ScreenshotFeature::CompositeCapture(ID3D11Texture2D* sourceTexture, ID3D11ShaderResourceView* sceneSRV, ID3D11ShaderResourceView* uiSRV)
+bool ScreenshotFeature::EnsureCompositeShader()
 {
-	CS_GPU_PASS("Screenshot::Composite");
-	if (!sourceTexture || !sceneSRV || !uiSRV)
-		return nullptr;
-
 	if (!compositeCS) {
-		std::vector<std::pair<const char*, const char*>> defines;
-		compositeCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\Screenshot\\CompositeCS.hlsl", defines, "cs_5_0")));
+		compositeCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\Screenshot\\CompositeCS.hlsl", {}, "cs_5_0")));
 		if (!compositeCS) {
 			logger::error("Failed to compile screenshot compositor.");
-			return nullptr;
+			return false;
 		}
 		Util::SetResourceName(compositeCS.get(), "Screenshot::Composite CS");
 	}
+	return true;
+}
+
+ID3D11Texture2D* ScreenshotFeature::CompositeCapture(ID3D11Texture2D* sourceTexture, ID3D11ShaderResourceView* sceneSRV, ID3D11ShaderResourceView* uiSRV)
+{
+	CS_GPU_PASS("Screenshot::Composite");
+	if (!sourceTexture || !sceneSRV || !uiSRV || !EnsureCompositeShader())
+		return nullptr;
 
 	D3D11_TEXTURE2D_DESC desc{};
 	sourceTexture->GetDesc(&desc);

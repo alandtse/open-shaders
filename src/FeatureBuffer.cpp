@@ -56,6 +56,14 @@ std::pair<unsigned char*, size_t> _GetFeatureBufferData(Ts... feat_datas)
 	return std::make_pair(storage.data(), storage.size());
 }
 
+uint32_t GetEffectPixelSpecializationMask()
+{
+	using Cache = SIE::ShaderCache;
+	const uint32_t ambient = globals::features::ibl.loaded && globals::features::csUtility.loaded ? Cache::kEffectAmbientWorldIBL : 0u;
+	const uint32_t aces = globals::features::linearLighting.loaded ? Cache::kEffectLinearACEScg : 0u;
+	return ambient | aces;
+}
+
 std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 {
 	const auto& bloomSettings = globals::features::csUtility.settings.bloomEnhancement;
@@ -76,7 +84,7 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::dynamicCubemaps.settings,
 		globals::features::terrainShadows.GetCommonBufferData(),
 		globals::features::lightLimitFix.GetCommonBufferData(),
-		globals::features::wetnessEffects.PrepareFrameData(),
+		globals::features::wetnessEffects.GetCommonBufferData(),
 		globals::features::skylighting.GetCommonBufferData(a_inWorld),
 		globals::features::cloudShadows.GetCommonBufferData(),
 		globals::features::cloudRelight.GetCommonBufferData(),
@@ -108,5 +116,5 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::grassCollision.GetCommonBufferData(),
 		globals::features::horizonFix.GetCommonBufferData(),
 		globals::features::rainRefraction.GetCommonBufferData(),
-		globals::features::snowCover.PrepareFrameData(a_inWorld));
+		globals::features::snowCover.GetCommonBufferData(a_inWorld));
 }

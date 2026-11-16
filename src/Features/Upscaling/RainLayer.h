@@ -7,6 +7,8 @@
 class RainLayer
 {
 public:
+	/** @brief Prepares the rain composite shader when the disk cache is writable. */
+	void PrepareShader();
 	/** @brief Redirects the current rain draw when all composite resources are available. */
 	void CaptureDraw(ID3D11UnorderedAccessView* a_output);
 	/** @brief Composites this frame's rain into the upscaler's output. */
@@ -22,6 +24,7 @@ private:
 	};
 
 	bool PrepareResources(ID3D11UnorderedAccessView* a_output);
+	ID3D11ComputeShader* GetCompositeCS();
 
 	std::unique_ptr<Texture2D> texture;
 	std::unique_ptr<ConstantBuffer> compositeCB;

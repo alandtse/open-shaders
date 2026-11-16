@@ -4,10 +4,6 @@
 #	undef SNOW_COVER
 #endif
 
-#if defined(SNOW_COVER_INACTIVE)
-#	undef SNOW_COVER
-#endif
-
 #define LIGHTING
 
 #include "Common/Color.hlsli"
@@ -1127,7 +1123,7 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		undef WETNESS_EFFECTS
 #	endif
 
-#	if defined(WETNESS_EFFECTS) && !defined(DRY_WEATHER) && !defined(HAIR) && !defined(EYE) && !defined(LANDSCAPE)
+#	if defined(WETNESS_EFFECTS) && !defined(HAIR) && !defined(EYE) && !defined(LANDSCAPE)
 #		define CHARACTER_RAIN_SURFACE
 #	endif
 #	if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) &&      \
@@ -1403,7 +1399,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	// Lattice cell comes from the geometric UV, before the parallax block below rewrites uv.
 #	if !defined(LANDSCAPE) && (defined(TERRAIN_VARIATION_MESH) || defined(EMAT))
 	StochasticOffsets meshOffset = (StochasticOffsets)0;
-#		if defined(TERRAIN_VARIATION_MESH) && !defined(NO_MESH_VARIATION)
+#		if defined(TERRAIN_VARIATION_MESH)
 	const bool applyMeshTV = (Permutation::ExtraFeatureDescriptor & Permutation::ExtraFeatureFlags::TVMeshVariation) != 0;
 	[branch] if (applyMeshTV)
 	{
@@ -1414,7 +1410,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		endif
 #	endif
 
-#	if defined(TERRAIN_VARIATION_MESH) && !defined(LANDSCAPE) && !defined(NO_MESH_VARIATION)
+#	if defined(TERRAIN_VARIATION_MESH) && !defined(LANDSCAPE)
 #		define MESH_TV_SAMPLE(DEST, TEX, SAMP, UV)                     \
 			{                                                           \
 				[branch] if (applyMeshTV)                               \
@@ -2934,24 +2930,23 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		endif
 	// Calculate raindrop effects
 	float4 raindropInfo = float4(0, 0, 1, 0);
-#		if !defined(DRY_WEATHER)
 	bool shouldCalculateRaindrops = (worldNormal.z > 0.0) &&
 	                                (SharedData::wetnessEffectsSettings.Raining > 0.0) &&
 	                                (SharedData::wetnessEffectsSettings.EnableRaindropFx) &&
 	                                (wetnessOcclusion > 0.5);
-#			if defined(CHARACTER_RAIN_SURFACE)
+#		if defined(CHARACTER_RAIN_SURFACE)
 	shouldCalculateRaindrops = shouldCalculateRaindrops &&
 	                           !(characterRainSurface && SharedData::wetnessEffectsSettings.EnableCharacterRainSpots);
-#			endif
+#		endif
 
 	if (shouldCalculateRaindrops) {
-#			if defined(SKINNED)
+#		if defined(SKINNED)
 		float3 ripplePosition = input.ModelPosition.xyz;
-#			elif defined(DEFERRED)
+#		elif defined(DEFERRED)
 		float3 ripplePosition = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-#			else
+#		else
 		float3 ripplePosition = !FrameBuffer::FrameParams.y ? input.ModelPosition.xyz : input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-#			endif
+#		endif
 		raindropInfo = WetnessEffects::GetRainDrops(ripplePosition, SharedData::wetnessEffectsSettings.Time, wetnessNormal, flatnessAmount);
 	}
 
@@ -2959,18 +2954,14 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float rainWetness = SharedData::wetnessEffectsSettings.Wetness * minWetnessAngle * SharedData::wetnessEffectsSettings.MaxRainWetness;
 	rainWetness = max(rainWetness, raindropInfo.w);
 
-#			if defined(HAIR)
+#		if defined(HAIR)
 	rainWetness = SharedData::wetnessEffectsSettings.HairWetness * SharedData::wetnessEffectsSettings.Wetness;
-#			elif defined(SKIN)
+#		elif defined(SKIN)
 	rainWetness = 0.0f;
-#			endif
-#			if defined(CHARACTER_RAIN_SURFACE)
+#		endif
+#		if defined(CHARACTER_RAIN_SURFACE)
 	if (characterRainSurface)
 		rainWetness = 0.0f;
-#			endif
-
-#		else
-	float rainWetness = 0.0f;
 #		endif
 
 #		if defined(CS_SKIN) && !defined(SKIN)
@@ -2990,11 +2981,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	wetness = max(shoreWetness, rainWetness);
 
 	// Calculate puddle effects
-#		if defined(DRY_WEATHER)
-	const float puddleWetness = 0.0f;
-#		else
 	float puddleWetness = SharedData::wetnessEffectsSettings.PuddleWetness * minWetnessAngle;
-#		endif
 	float puddle = wetness;
 
 #		if !defined(SKINNED) && !defined(SKIN)
@@ -3523,12 +3510,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		transmissionColor += pointLightOutput.transmission;
 	}
 
-#		elif !defined(LLF_NO_LOCAL_LIGHTS) || defined(LLFDEBUG)
+#		else
 
-#			if !defined(LLF_SINGLE_CLUSTER_LIGHT) || defined(LLFDEBUG)
 	uint numClusteredLights = 0;
-	uint clusterIndex = 0;
 	uint totalLightCount = LightLimitFix::NumStrictLights;
+	uint clusterIndex = 0;
 	uint lightOffset = 0;
 	// The viewmodel has no meaningful cluster cell, so it takes StrictLights
 	// exclusively -- mixing in the grid would re-add unrelated distant lights.
@@ -3537,13 +3523,12 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		totalLightCount += numClusteredLights;
 		lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
 	}
-#			endif
 
 #			if defined(LLFDEBUG)
 	LightLimitFix::LLFDebugInfo llfDebug = LightLimitFix::LLFDebugInfoInit();
 #			endif
 
-#			if defined(DEFERRED) && !defined(LLF_NO_CONTACT_SHADOWS)
+#			if defined(DEFERRED)
 	// Contact-shadow setup, gated on the runtime toggle so we don't pay the
 	// noise hash + step-count math for every pixel when the feature is off
 	// (it defaults off). The step count and noise are reused across every
@@ -3562,11 +3547,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	}
 #			endif
 
-#			if defined(LLF_SINGLE_CLUSTER_LIGHT) && !defined(LLFDEBUG)
-	[unroll] for (uint lightIndex = 0; lightIndex < 1; lightIndex++)
-	{
-		LightLimitFix::Light light = LightLimitFix::lights[0];
-#			else
 	[loop] for (uint lightIndex = 0; lightIndex < totalLightCount; lightIndex++)
 	{
 		LightLimitFix::Light light;
@@ -3579,18 +3559,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 			if (LightLimitFix::IsLightIgnored(light))
 				continue;
 		}
-#			endif
 
 		float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WorldPosition.xyz;
-#			if defined(LLF_SINGLE_CLUSTER_LIGHT) && !defined(LLFDEBUG)
-		const float reach = max(light.radius, rcp(light.invRadius)) * (1.0 + 1e-5) + 0.01;
-		[branch] if (any(abs(lightDirection) > reach)) continue;
-		uint clusterIndex = 0;
-		if (!inWorld || LightLimitFix::FirstPerson || !LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex))
-			continue;
-		if (LightLimitFix::lightGrid[clusterIndex].lightCount == 0 || LightLimitFix::IsLightIgnored(light))
-			continue;
-#			endif
 		float lightDist = length(lightDirection);
 
 		float intensityMultiplier = LightLimitFix::GetAttenuation(lightDist, light);
@@ -3603,14 +3573,12 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 		float shadowComponent = 1.0;
 		bool shadowCoverage = false;
-#			if !defined(LLF_NO_LOCAL_LIGHT_SHADOWS)
 		if (inWorld && !inReflection) {
 			if (light.lightFlags & LightLimitFix::LightFlags::Shadow) {
 				shadowComponent = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS + (localShadowPosition - input.WorldPosition.xyz), rotationMatrix, shadowCoverage);
 				lightShadow *= shadowComponent;
 			}
 		}
-#			endif
 
 #			if defined(LLFDEBUG)
 		uint llfShadowType = (light.lightFlags & LightLimitFix::LightFlags::Shadow &&
@@ -3625,7 +3593,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 		float contactShadow = 1.0;
 
-#			if defined(DEFERRED) && !defined(LLF_NO_CONTACT_SHADOWS)
+#			if defined(DEFERRED)
 		// Outer guard: contactShadowSteps > 0 covers both "feature off" and "pixel past
 		// MaxDistance", so all per-light intensity-gate math is paid only when a raymarch
 		// is actually possible. Without this, the falloff math fires for every clustered
@@ -3636,11 +3604,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 			// Clustered lights need a normalized falloff to compare against MinIntensity;
 			// recompute it, since GetAttenuation isn't [0,1]-normalized for inverse-square
 			// lights and the threshold would mean different things otherwise.
-#				if defined(LLF_SINGLE_CLUSTER_LIGHT) && !defined(LLFDEBUG)
-			const bool isClusteredLight = true;
-#				else
 			const bool isClusteredLight = lightIndex >= LightLimitFix::NumStrictLights;
-#				endif
 			bool passesIntensityGate = !isClusteredLight;
 			if (isClusteredLight) {
 				float falloffFactor = saturate(lightDist * light.invRadius);

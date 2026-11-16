@@ -1,10 +1,13 @@
 import importlib.util
 import json
+import os
+import re
 import shutil
 import struct
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -216,6 +219,60 @@ class RuntimeTests(unittest.TestCase):
     def test_clean_session_and_unrelated_effect_error(self):
         verifier.verify_log(self.log + "[EFFECTS11] Required effect file not found: 'enbeffect.fx'\n", self.snapshot, 101)
         verifier.check_runtime_status(self.status)
+
+    def test_gameplay_log_rejects_late_misses_compiles_writes_and_slow_startup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cache = Path(temp)
+            blob = cache / "test.pso"
+            blob.write_bytes(dxbc())
+            old = datetime(2026, 11, 15, 19, 0, 1).timestamp()
+            os.utime(blob, (old, old))
+            start = "[2026-11-15 19:00:00.000] Loaded CommunityShaders 2-22-0-0\n"
+            seal = "[2026-11-15 19:00:02.000] Shader disk cache is read-only after startup (17 source compiler calls)\n"
+            self.assertEqual(verifier.verify_gameplay_log(start + seal, cache, 3)["startupCompilerCalls"], 17)
+            with self.assertRaisesRegex(ValueError, "Expected one startup cache seal"):
+                verifier.verify_gameplay_log(start, cache)
+            with self.assertRaisesRegex(ValueError, "target under 2s"):
+                verifier.verify_gameplay_log(start + seal, cache, 2)
+            for failure in ("Shader compilation completed: 16/17 tasks (1 failed) in 00:00:01",
+                            "Failed to create pixel shader Lighting::2A2059"):
+                with self.subTest(failure=failure), self.assertRaisesRegex(ValueError, "Shader startup failed"):
+                    verifier.verify_gameplay_log(start + failure + "\n" + seal, cache)
+            for event in ("Shader compilation started", "Shader missing from the read-only disk cache: Lighting:Pixel:1"):
+                with self.subTest(event=event), self.assertRaisesRegex(ValueError, re.escape(event)):
+                    verifier.verify_gameplay_log(start + seal + event, cache)
+            newer = datetime(2026, 11, 15, 19, 0, 3).timestamp()
+            os.utime(blob, (newer, newer))
+            with self.assertRaisesRegex(ValueError, "cache writes after startup"):
+                verifier.verify_gameplay_log(start + seal, cache)
+
+    def test_gameplay_log_checks_startup_lighting_coverage_without_loading_a_save(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cache = Path(temp)
+            lighting = cache / "Lighting"
+            lighting.mkdir()
+            existing = "Lighting/20019.pso"
+            required = "Lighting/2A2059.pso"
+            digest = "a" * 32
+            manifest = cache / "Manifest.json"
+            manifest.write_text(json.dumps({"schemaVersion": 1, "entries": {existing: digest, required: digest}}))
+            start = "[2026-11-15 19:00:00.000] Loaded CommunityShaders 2-22-0-0\n"
+            coverage = f"LightingFrameCacheCoverage {json.dumps([existing, required])}\n"
+            seal = "[2026-11-15 19:00:02.000] Shader disk cache is read-only after startup (17 source compiler calls)\n"
+            timestamp = datetime(2026, 11, 15, 19, 0, 1).timestamp()
+            (cache / existing).write_bytes(dxbc())
+            for path in (cache / existing, manifest):
+                os.utime(path, (timestamp, timestamp))
+            with self.assertRaisesRegex(ValueError, "Missing 1/2 Lighting frame variants at startup: Lighting/2A2059.pso"):
+                verifier.verify_gameplay_log(start + coverage + seal, cache, lighting_frame_coverage=True)
+            with self.assertRaisesRegex(ValueError, "No Lighting frame coverage records before the startup seal"):
+                verifier.verify_gameplay_log(start + seal + coverage, cache, lighting_frame_coverage=True)
+
+            blob = cache / required
+            blob.write_bytes(dxbc())
+            os.utime(blob, (timestamp, timestamp))
+            result = verifier.verify_gameplay_log(start + coverage + seal, cache, lighting_frame_coverage=True)
+            self.assertEqual(result["lightingFrameVariants"], 2)
 
     def test_legacy_log_header_remains_supported(self):
         verifier.verify_log(self.log.replace("Loaded CommunityShaders ", "CommunityShaders v"), self.snapshot, 101)

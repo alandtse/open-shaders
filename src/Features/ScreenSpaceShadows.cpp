@@ -27,6 +27,80 @@ using RE::RENDER_TARGETS;
 
 namespace
 {
+	constexpr uint32_t kMinSampleMultiplier = 1;
+	constexpr uint32_t kMaxSampleMultiplier = 4;
+	constexpr uint32_t kVRSampleStep = 64;
+	constexpr uint32_t kFlatSampleStep = 8;
+	constexpr uint32_t kSamplesAt1080p = 60;
+	constexpr float kReferenceArea = 1920.0f * 1080.0f;
+	constexpr auto kRaymarchSource = L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl";
+	constexpr auto kStereoSyncSource = L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl";
+
+	uint32_t GetFlatSampleCount(float2 a_renderSize, uint32_t a_multiplier)
+	{
+		// Scale sample count based on both dimensions relative to 1920x1080 reference
+		const float areaScale = std::sqrt(a_renderSize.x * a_renderSize.y / kReferenceArea);
+		const auto scaled = static_cast<uint32_t>(std::round(std::clamp(a_multiplier, kMinSampleMultiplier, kMaxSampleMultiplier) * kSamplesAt1080p * areaScale));
+		// Quantize to steps of 8 to prevent frequent recompilation from small DRS oscillations
+		const auto quantized = ((scaled + kFlatSampleStep - 1) / kFlatSampleStep) * kFlatSampleStep;
+		return std::max(quantized, kFlatSampleStep);
+	}
+
+	void AddTerrainBlendingDefine(std::vector<std::pair<const char*, const char*>>& a_defines)
+	{
+		// TERRAIN_BLENDING flips DepthTexture's HLSL type from `Texture2D<unorm float>`
+		// (R24_UNORM_X8_TYPELESS game depth) to `Texture2D<float>` (R32_FLOAT blendedDepth).
+		if (globals::features::terrainBlending.loaded)
+			a_defines.push_back({ "TERRAIN_BLENDING", "" });
+	}
+
+	decltype(auto) WithRaymarchDefines(uint32_t a_sampleCount, bool a_rightEye, auto&& a_request)
+	{
+		const auto sampleCount = std::format("{}", a_sampleCount);
+		std::vector<std::pair<const char*, const char*>> defines{ { "SAMPLE_COUNT", sampleCount.c_str() } };
+		if (a_rightEye)
+			defines.push_back({ "RIGHT", "" });
+		AddTerrainBlendingDefine(defines);
+		return a_request(std::move(defines));
+	}
+
+	std::vector<std::pair<const char*, const char*>> GetStereoSyncDefines()
+	{
+		std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
+		AddTerrainBlendingDefine(defines);
+		return defines;
+	}
+
+	void PrepareScreenSpaceShadowShaders(SIE::ShaderCache& a_cache, uint32_t a_initialSamples)
+	{
+		const auto release = [](ID3D11ComputeShader* shader) {
+			if (shader)
+				shader->Release();
+		};
+		const auto enqueueRaymarch = [&](uint32_t samples, bool rightEye) {
+			WithRaymarchDefines(samples, rightEye, [&](auto defines) {
+				a_cache.EnqueueComputeShaderCompile(kRaymarchSource, "main", std::move(defines), release);
+			});
+		};
+		if (globals::game::isVR) {
+			for (auto multiplier = kMinSampleMultiplier; multiplier <= kMaxSampleMultiplier; ++multiplier) {
+				const auto samples = multiplier * kVRSampleStep;
+				if (samples != a_initialSamples) {
+					enqueueRaymarch(samples, false);
+					enqueueRaymarch(samples, true);
+				}
+			}
+			a_cache.EnqueueComputeShaderCompile(kStereoSyncSource, "main", GetStereoSyncDefines(), release);
+			return;
+		}
+
+		const auto maxSamples = GetFlatSampleCount(globals::state->screenSize, kMaxSampleMultiplier);
+		for (auto samples = kFlatSampleStep; samples <= maxSamples; samples += kFlatSampleStep) {
+			if (samples != a_initialSamples)
+				enqueueRaymarch(samples, false);
+		}
+	}
+
 	struct FoveatedShadowState
 	{
 		bool available = false;
@@ -184,7 +258,7 @@ void ScreenSpaceShadows::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("enable_tooltip"), "Enable screen-space contact shadows from the sun/moon direction."));
 
-		ImGui::SliderInt(T(TKEY("sample_count"), "Sample Count Multiplier"), (int*)&bendSettings.SampleCount, 1, 4, "%d", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderInt(T(TKEY("sample_count"), "Sample Count Multiplier"), (int*)&bendSettings.SampleCount, kMinSampleMultiplier, kMaxSampleMultiplier, "%d", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("sample_count_tooltip"), "Multiplier for shadow ray sample count. Higher values increase shadow reach at the cost of performance. Adapts to render resolution."));
 
@@ -229,23 +303,10 @@ uint ScreenSpaceShadows::GetScaledSampleCount()
 		// In VR, SAMPLE_COUNT is a pixel-space ray length that is FOV-driven, not resolution-driven.
 		// Resolution-scaling produced 2-8x excess samples at VR resolutions with no quality benefit.
 		// WAVE_SIZE (64) alignment is required for correct Bend READ_COUNT computation.
-		return bendSettings.SampleCount * 64;
+		return bendSettings.SampleCount * kVRSampleStep;
 	}
 
-	float2 renderSize = Util::ConvertToDynamic(globals::state->screenSize);
-
-	// Scale sample count based on both dimensions relative to 1920x1080 reference
-	float2 referenceRes = { 1920.0f, 1080.0f };
-	float referenceArea = referenceRes.x * referenceRes.y;
-	float currentArea = renderSize.x * renderSize.y;
-	float areaScale = std::sqrt(currentArea / referenceArea);
-	uint scaledSampleCount = static_cast<uint>(std::round(std::clamp(bendSettings.SampleCount, 1u, 4u) * 60 * areaScale));
-
-	// Quantize to steps of 8 to prevent frequent recompilation from small DRS oscillations
-	scaledSampleCount = ((scaledSampleCount + 7u) / 8u) * 8u;
-	scaledSampleCount = std::max(scaledSampleCount, 8u);
-
-	return scaledSampleCount;
+	return GetFlatSampleCount(Util::ConvertToDynamic(globals::state->screenSize), bendSettings.SampleCount);
 }
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
@@ -257,23 +318,16 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 		InvalidateRaymarchShaders();
 	}
 
-	auto sampleCount = std::format("{}", scaledSampleCount);
-	std::vector<std::pair<const char*, const char*>> defines{ { "SAMPLE_COUNT", sampleCount.c_str() } };
-	// TERRAIN_BLENDING flips DepthTexture's HLSL type from `Texture2D<unorm float>`
-	// (R24_UNORM_X8_TYPELESS game depth) to `Texture2D<float>` (R32_FLOAT blendedDepth).
-	if (globals::features::terrainBlending.loaded)
-		defines.push_back({ "TERRAIN_BLENDING", "" });
-	return raymarchCS.Get(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", defines, "cs_5_0");
+	return WithRaymarchDefines(scaledSampleCount, false, [&](const auto& defines) {
+		return raymarchCS.Get(kRaymarchSource, defines, "cs_5_0");
+	});
 }
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarchRight()
 {
-	uint scaledSampleCount = GetScaledSampleCount();
-	auto sampleCount = std::format("{}", scaledSampleCount);
-	std::vector<std::pair<const char*, const char*>> defines{ { "SAMPLE_COUNT", sampleCount.c_str() }, { "RIGHT", "" } };
-	if (globals::features::terrainBlending.loaded)
-		defines.push_back({ "TERRAIN_BLENDING", "" });
-	return raymarchRightCS.Get(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", defines, "cs_5_0");
+	return WithRaymarchDefines(GetScaledSampleCount(), true, [&](const auto& defines) {
+		return raymarchRightCS.Get(kRaymarchSource, defines, "cs_5_0");
+	});
 }
 
 void ScreenSpaceShadows::DrawShadows()
@@ -462,10 +516,7 @@ void ScreenSpaceShadows::DrawStereoSync()
 	if (!globals::game::isVR || !enableStereoSync || !stereoSyncCopyTex || !stereoSyncCB)
 		return;
 
-	std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
-	if (globals::features::terrainBlending.loaded)
-		defines.push_back({ "TERRAIN_BLENDING", "" });
-	ID3D11ComputeShader* stereoCS = stereoSyncCS.Get(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", defines, "cs_5_0");
+	ID3D11ComputeShader* stereoCS = stereoSyncCS.Get(kStereoSyncSource, GetStereoSyncDefines(), "cs_5_0");
 	if (!stereoCS)
 		return;
 
@@ -640,10 +691,12 @@ bool ScreenSpaceShadows::HasShaderDefine(RE::BSShader::Type)
 
 void ScreenSpaceShadows::SetupResources()
 {
-	if (globals::shaderCache->IsDiskCacheActive()) {
+	if (auto& cache = *globals::shaderCache; cache.IsDiskCacheActive() && !cache.IsShaderCacheReadOnly()) {
+		const auto initialSamples = GetScaledSampleCount();
 		GetComputeRaymarch();
 		if (globals::game::isVR)
 			GetComputeRaymarchRight();
+		PrepareScreenSpaceShadowShaders(cache, initialSamples);
 	}
 
 	raymarchCB = new ConstantBuffer(ConstantBufferDesc<RaymarchCB>(), "SSS::RaymarchCB");

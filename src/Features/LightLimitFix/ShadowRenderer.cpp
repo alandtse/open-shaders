@@ -6,9 +6,7 @@
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Menu/ThemeManager.h"
-#include "ShaderCache.h"
 #include "ShadowCasterInternal.h"
-#include "State.h"
 #include "Util.h"
 #include "Utils/D3D.h"
 
@@ -80,13 +78,6 @@ static bool SetShadowParameters(T& lightData, Deferred::ShadowLightData& sd)
 void LightLimitFix::EarlyPrepass()
 {
 	CopyShadowLightData();
-	using Cache = SIE::ShaderCache;
-	auto& flags = globals::state->deferredLightingShaderFlags;
-	flags &= ~(Cache::kLightingNoLocalShadowMaps | Cache::kLightingNoLocalContactShadows);
-	if (shadowLightCount == 0)
-		flags |= Cache::kLightingNoLocalShadowMaps;
-	if (!settings.EnableContactShadows)
-		flags |= Cache::kLightingNoLocalContactShadows;
 }
 
 void LightLimitFix::CopyShadowLightData()

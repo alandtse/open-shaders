@@ -414,6 +414,7 @@ public:
 	void SetAdapterDescription(const std::wstring& description);
 
 	bool frameAnnotations = false;
+	bool auditLightingFrameCoverage = false;
 
 	/// frameAnnotations while a capture tool is attached; refreshed once per frame
 	/// so per-draw Begin/End events stay paired.

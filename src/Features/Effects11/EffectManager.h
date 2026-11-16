@@ -94,6 +94,7 @@ public:
 	void CreateCopyShaders();
 	void CreateColorCorrectionShader();
 	void CreateStandardDepthShader();
+	static bool EnsureEyeCropShader(winrt::com_ptr<ID3D11PixelShader>& a_shader, bool& a_attempted, const wchar_t* a_path);
 
 	/** @brief Depth SRV for .fx files: the scene depth, or a standard-Z (1 - z) copy of it when Reverse Z is active. */
 	ID3D11ShaderResourceView* GetEffectDepthSRV();

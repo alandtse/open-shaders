@@ -58,11 +58,8 @@ ID3D11ShaderResourceView* ENBAdaptation::GetHistorySRV() const
 	return IsCompiled() && adaptationTextures[historyIndex] ? adaptationTextures[historyIndex]->srv.get() : nullptr;
 }
 
-bool ENBAdaptation::EnsureSunMaskResources()
+bool ENBAdaptation::EnsureSunMaskShader()
 {
-	if (!textureSunMasked.texture || !textureSunMasked.rtv || !textureSunMasked.srv)
-		return false;
-
 	if (!sunMaskPS && !sunMaskPSFailed) {
 		sunMaskPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\AdaptationSunMaskPS.hlsl", {}, "ps_5_0")));
 		if (sunMaskPS)
@@ -72,7 +69,12 @@ bool ENBAdaptation::EnsureSunMaskResources()
 			sunMaskPSFailed = true;
 		}
 	}
-	if (!sunMaskPS)
+	return static_cast<bool>(sunMaskPS);
+}
+
+bool ENBAdaptation::EnsureSunMaskResources()
+{
+	if (!textureSunMasked.texture || !textureSunMasked.rtv || !textureSunMasked.srv || !EnsureSunMaskShader())
 		return false;
 
 	auto device = globals::d3d::device;

@@ -15,6 +15,7 @@
 
 #include "Utils/CacheInvalidation.h"
 #include "Utils/ShaderCompilationGate.h"
+#include "Utils/ShaderDescriptor.h"
 #include "Utils/WinApi.h"
 
 struct ID3D11ComputeShader;
@@ -263,6 +264,8 @@ namespace SIE
 		static size_t MakeId(ShaderClass shaderClass, RE::BSShader::Type shaderType, uint32_t descriptor);
 		/** @brief Returns a human-readable string describing this task (shader file, class, defines). */
 		std::string GetString() const;
+		/** @brief Identifies the compiled shader result used by the task. */
+		std::string GetCacheKey() const;
 		/** @brief Path to the actual HLSL source this task compiles from (not always fxpFilename -- see ImageSpace shaders). */
 		std::wstring GetSourcePath() const;
 		/** @brief At debug level, logs the inputs that identify this task's cached shader; called once when the task is first queued. */
@@ -641,6 +644,8 @@ namespace SIE
 		uint64_t GetSourceCompileCount() const { return sourceCompileCount.load(std::memory_order_relaxed); }
 		/** Records a request that could not be served from the read-only cache. */
 		void RecordReadOnlyShaderMiss(std::string_view a_key);
+		/** Queues the normalized Lighting pixel shader before gameplay. */
+		void PrecompileLightingPixel(const RE::BSShader& a_shader, uint32_t a_descriptor);
 		/** Gets the number of cache-only requests for which bytecode was unavailable. */
 		uint64_t GetReadOnlyShaderMissCount() const { return readOnlyShaderMissCount.load(std::memory_order_relaxed); }
 		/** @brief Whether shaders compile with debug info: Developer Mode, or RenderDoc attached. */
@@ -1077,19 +1082,9 @@ namespace SIE
 			MTLandLODBlend = 19,
 		};
 
-		static constexpr uint32_t kLightingDryWeather = 1u << 21;
-		static constexpr uint32_t kLightingSnowCoverInactive = 1u << 19;
-		static constexpr uint32_t kLightingNoMeshVariation = 1u << 9;
 		static constexpr uint32_t kVertexNoTreeBend = 1u << 6;
-		static constexpr uint32_t kLightingLinearACEScg = 1u << 7;
-		static constexpr uint32_t kLightingNoLocalLights = 1u << 22;
-		static constexpr uint32_t kLightingSingleClusterLight = 1u << 14;
-
-		static constexpr uint32_t kLightingNoLocalShadowMaps = 1u << 6;
-
-		static constexpr uint32_t kLightingNoLocalContactShadows = 1u << 13;
-
-		static constexpr uint32_t kLightingNoLegacySubsurface = 1u << 17;
+		static constexpr uint32_t kLightingLinearACEScg = Util::ShaderDescriptor::kLightingLinearACEScg;
+		static constexpr uint32_t kLightingNoLegacySubsurface = Util::ShaderDescriptor::kLightingNoLegacySubsurface;
 
 		enum class LightingShaderFlags : uint32_t
 		{
@@ -1101,7 +1096,7 @@ namespace SIE
 			TruePbr = 1 << 3,
 			Deferred = 1 << 4,
 			LandscapeSeams = 1 << 5,
-			IBLLuminanceRatio = 1 << 8,
+			IBLLuminanceRatio = Util::ShaderDescriptor::kLightingIBLLuminanceRatio,
 			// Community Shaders end
 			Specular = 1 << 9,
 			SoftLighting = 1 << 10,
@@ -1122,25 +1117,6 @@ namespace SIE
 			FurShells = 1u << 30,
 			FurShellsDepth = 1u << 31
 		};
-
-		/** @brief True for the mesh techniques specialized for unvaried textures. */
-		static constexpr bool SupportsMeshVariationVariant(uint32_t a_descriptor)
-		{
-			if (a_descriptor & static_cast<uint32_t>(LightingShaderFlags::FurShells))
-				return false;
-
-			switch (static_cast<LightingShaderTechniques>((a_descriptor >> 24) & 0x3F)) {
-			case LightingShaderTechniques::None:
-			case LightingShaderTechniques::Envmap:
-			case LightingShaderTechniques::Glowmap:
-			case LightingShaderTechniques::Parallax:
-			case LightingShaderTechniques::ParallaxOcc:
-			case LightingShaderTechniques::MultilayerParallax:
-				return true;
-			default:
-				return false;
-			}
-		}
 
 		enum class BloodSplatterShaderTechniques
 		{
@@ -1220,6 +1196,7 @@ namespace SIE
 
 		static constexpr uint32_t kEffectLinearACEScg = 1u << 9;
 		static constexpr uint32_t kEffectAmbientWorldIBL = 1u << 28;
+		static constexpr uint32_t kEffectPixelSpecializations = kEffectLinearACEScg | kEffectAmbientWorldIBL;
 
 		enum class EffectShaderFlags
 		{

@@ -6,7 +6,22 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <vector>
+
+using Util::ShaderDescriptor::ForEachSpecialization;
 using Util::ShaderDescriptor::UploadedPixelDescriptor;
+
+TEST_CASE("Shader specialization enumeration produces every combination once", "[ShaderDescriptor]")
+{
+	std::vector<std::uint32_t> descriptors;
+	ForEachSpecialization(0x1200, 0x10000200, [&](auto descriptor) { descriptors.push_back(descriptor); });
+	const std::vector<std::uint32_t> expected{ 0x10001200, 0x10001000, 0x1200, 0x1000 };
+	CHECK(descriptors == expected);
+
+	descriptors.clear();
+	ForEachSpecialization(0x1200, 0, [&](auto descriptor) { descriptors.push_back(descriptor); });
+	CHECK(descriptors == std::vector<std::uint32_t>{ 0x1200 });
+}
 
 TEST_CASE("UploadedPixelDescriptor clears lookup bits and keeps the rest", "[ShaderDescriptor]")
 {

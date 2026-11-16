@@ -690,6 +690,32 @@ void FurShells::GenerateShaderPermutations(RE::BSShader* a_shader)
 	constexpr std::array skinnedFlags{ 0u, static_cast<uint32_t>(Flags::Skinned) };
 
 	auto* shaderCache = globals::shaderCache;
+	auto* state = globals::state;
+	const auto precompilePixels = [&](uint32_t a_base) {
+		for (auto fur : { FurFlag, FurDepthFlag }) {
+			auto vertex = a_base;
+			auto pixel = a_base;
+			state->ModifyShaderLookup(*a_shader, vertex, pixel);
+			shaderCache->PrecompileLightingPixel(*a_shader, pixel | fur);
+			vertex = a_base;
+			pixel = a_base;
+			state->ModifyShaderLookup(*a_shader, vertex, pixel, true);
+			shaderCache->PrecompileLightingPixel(*a_shader, pixel | fur);
+		}
+	};
+	for (const auto& entry : a_shader->pixelShaders) {
+		if (IsFurTechnique(entry->id))
+			precompilePixels(entry->id);
+	}
+	for (const auto& entry : a_shader->vertexShaders) {
+		if (!IsFurTechnique(entry->id))
+			continue;
+		auto vertex = entry->id;
+		auto pixel = entry->id;
+		state->ModifyShaderLookup(*a_shader, vertex, pixel);
+		std::ignore = shaderCache->GetVertexShader(*a_shader, vertex | FurFlag, true);
+	}
+
 	for (const auto technique : techniques) {
 		const uint32_t type = static_cast<uint32_t>(technique) << 24;
 		for (const uint32_t alphaTest : alphaTestFlags)
@@ -705,8 +731,7 @@ void FurShells::GenerateShaderPermutations(RE::BSShader* a_shader)
 	if (globals::features::truePBR.loaded) {
 		for (const uint32_t alphaTest : alphaTestFlags)
 			for (const uint32_t deferred : deferredFlags) {
-				std::ignore = shaderCache->GetPixelShader(*a_shader, static_cast<uint32_t>(Flags::TruePbr) | vertexColor | alphaTest | deferred | FurFlag, true);
-				std::ignore = shaderCache->GetPixelShader(*a_shader, static_cast<uint32_t>(Flags::TruePbr) | vertexColor | alphaTest | deferred | FurDepthFlag, true);
+				precompilePixels(static_cast<uint32_t>(Flags::TruePbr) | vertexColor | alphaTest | deferred);
 			}
 	}
 }

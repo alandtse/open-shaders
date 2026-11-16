@@ -694,11 +694,18 @@ void TruePBR::GenerateShaderPermutations(RE::BSShader* shader)
 	auto shaderCache = globals::shaderCache;
 	if (shader->shaderType == RE::BSShader::Type::Lighting) {
 		const auto pixelPermutations = Permutations::GeneratePBRLightingPixelPermutations();
+		constexpr auto deferred = static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::Deferred);
 		for (auto descriptor : pixelPermutations) {
-			auto vertexShaderDesriptor = descriptor;
+			auto vertexShaderDescriptor = descriptor;
 			auto pixelShaderDescriptor = descriptor;
-			state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
-			std::ignore = shaderCache->GetPixelShader(*shader, pixelShaderDescriptor, true);
+			state->ModifyShaderLookup(*shader, vertexShaderDescriptor, pixelShaderDescriptor);
+			shaderCache->PrecompileLightingPixel(*shader, pixelShaderDescriptor);
+			if (!(descriptor & deferred))
+				continue;
+			vertexShaderDescriptor = descriptor;
+			pixelShaderDescriptor = descriptor;
+			state->ModifyShaderLookup(*shader, vertexShaderDescriptor, pixelShaderDescriptor, true);
+			shaderCache->PrecompileLightingPixel(*shader, pixelShaderDescriptor);
 		}
 	} else if (shader->shaderType == RE::BSShader::Type::Utility) {
 		for (auto descriptor : Permutations::GeneratePBRUtilityPixelPermutations()) {

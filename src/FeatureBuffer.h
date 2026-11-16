@@ -7,3 +7,6 @@
  *         Do NOT delete the returned pointer.
  */
 std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_early);
+
+/** @brief Effect pixel shader flags that can change during the current session. */
+uint32_t GetEffectPixelSpecializationMask();

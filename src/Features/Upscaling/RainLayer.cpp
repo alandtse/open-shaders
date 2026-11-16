@@ -10,6 +10,20 @@ namespace
 	constexpr auto kGammaRenderTarget = static_cast<uint32_t>(State::ExtraShaderDescriptors::GammaRenderTarget);
 }
 
+ID3D11ComputeShader* RainLayer::GetCompositeCS()
+{
+	const std::vector<std::pair<const char*, const char*>> defines = globals::game::isVR ?
+	                                                                     std::vector<std::pair<const char*, const char*>>{ { "VR", "" } } :
+	                                                                     std::vector<std::pair<const char*, const char*>>{};
+	return compositeCS.Get(L"Data\\Shaders\\Upscaling\\CompositeRainCS.hlsl", defines, "cs_5_0", "main", "Upscaling::CompositeRain");
+}
+
+void RainLayer::PrepareShader()
+{
+	if (globals::features::rainRefraction.loaded)
+		GetCompositeCS();
+}
+
 bool RainLayer::PrepareResources(ID3D11UnorderedAccessView* a_output)
 {
 	if (failed)
@@ -22,10 +36,7 @@ bool RainLayer::PrepareResources(ID3D11UnorderedAccessView* a_output)
 		return compositeCS.get() != nullptr;
 
 	try {
-		const std::vector<std::pair<const char*, const char*>> defines = globals::game::isVR ?
-		                                                                     std::vector<std::pair<const char*, const char*>>{ { "VR", "" } } :
-		                                                                     std::vector<std::pair<const char*, const char*>>{};
-		if (!compositeCS.Get(L"Data\\Shaders\\Upscaling\\CompositeRainCS.hlsl", defines, "cs_5_0", "main", "Upscaling::CompositeRain"))
+		if (!GetCompositeCS())
 			return false;
 
 		desc.MipLevels = 1;

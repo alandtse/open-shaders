@@ -1588,6 +1588,7 @@ void State::SaveCoreToJson(json& settings)
 	advanced["Background Compiler Threads"] = shaderCache->backgroundCompilationThreadCount;
 	advanced["Use FileWatcher"] = shaderCache->UseFileWatcher();
 	advanced["Frame Annotations"] = frameAnnotations;
+	advanced["Audit Lighting Frame Coverage"] = auditLightingFrameCoverage;
 	advanced["Tracy Per-Draw Zones"] = TracyZones::PerDrawZonesEnabled();
 	advanced["Partial Precision"] = enablePartialPrecision.load(std::memory_order_relaxed);
 	advanced["Content Store"] = enableContentStore.load(std::memory_order_relaxed);
@@ -1709,6 +1710,8 @@ void State::LoadFromJson(nlohmann::json& settings)
 			shaderCache->SetFileWatcher(advanced["Use FileWatcher"]);
 		if (advanced.contains("Frame Annotations") && advanced["Frame Annotations"].is_boolean())
 			frameAnnotations = advanced["Frame Annotations"];
+		if (advanced.contains("Audit Lighting Frame Coverage") && advanced["Audit Lighting Frame Coverage"].is_boolean())
+			auditLightingFrameCoverage = advanced["Audit Lighting Frame Coverage"];
 		if (advanced.contains("Tracy Per-Draw Zones") && advanced["Tracy Per-Draw Zones"].is_boolean())
 			TracyZones::SetPerDrawZones(advanced["Tracy Per-Draw Zones"]);
 		if (advanced.contains("Partial Precision") && advanced["Partial Precision"].is_boolean())
@@ -2279,11 +2282,10 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 				a_pixelDescriptor &= ~((uint32_t)SIE::ShaderCache::LightingShaderFlags::Snow);
 
 				if (deferred->deferredPass || a_forceDeferred) {
-					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::LightingShaderFlags::Deferred | deferredLightingShaderFlags;
+					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::LightingShaderFlags::Deferred;
 					if (!hasLegacyScattering)
 						a_pixelDescriptor |= SIE::ShaderCache::kLightingNoLegacySubsurface;
-				} else if (permutationData.ExtraShaderDescriptor & static_cast<uint32_t>(ExtraShaderDescriptors::IsReflections))
-					a_pixelDescriptor |= deferredLightingShaderFlags & ~(SIE::ShaderCache::kLightingNoLocalShadowMaps | SIE::ShaderCache::kLightingNoLocalContactShadows);
+				}
 
 				{
 					uint32_t technique = 0x3F & (a_vertexDescriptor >> 24);
@@ -2320,7 +2322,7 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 							   (uint32_t)SIE::ShaderCache::EffectShaderFlags::GrayscaleToAlpha |
 							   (uint32_t)SIE::ShaderCache::EffectShaderFlags::IgnoreTexAlpha);
 				a_vertexDescriptor &= flags;
-				a_pixelDescriptor &= flags & ~(SIE::ShaderCache::kEffectLinearACEScg | SIE::ShaderCache::kEffectAmbientWorldIBL);
+				a_pixelDescriptor &= flags & ~SIE::ShaderCache::kEffectPixelSpecializations;
 				if (effectAmbientIBLUploaded &&
 					(permutationData.ExtraShaderDescriptor & static_cast<uint32_t>(ExtraShaderDescriptors::InWorld)))
 					a_pixelDescriptor |= SIE::ShaderCache::kEffectAmbientWorldIBL;

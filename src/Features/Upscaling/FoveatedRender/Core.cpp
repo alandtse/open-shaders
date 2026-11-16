@@ -10,6 +10,20 @@
 #include <cstring>
 #include <mutex>
 
+namespace
+{
+	constexpr auto kDepthCopyShader = L"Data/Shaders/Upscaling/FoveatedRender/DepthToPerEyeCS.hlsl";
+	constexpr auto kStretchShader = L"Data/Shaders/Upscaling/FoveatedRender/SubrectStretchCS.hlsl";
+	constexpr auto kTemporalSmoothShader = L"Data/Shaders/Upscaling/FoveatedRender/PeripheryTemporalSmoothCS.hlsl";
+	constexpr auto kSubrectBlendShader = L"Data/Shaders/Upscaling/FoveatedRender/SubrectBlendCS.hlsl";
+}
+
+void FoveatedRenderImpl::Core::PrepareShaders()
+{
+	for (auto path : { kDepthCopyShader, kStretchShader, kTemporalSmoothShader, kSubrectBlendShader })
+		Util::CompileShaderBlob(path, {}, "cs_5_0");
+}
+
 namespace FoveatedRenderImpl::Ops
 {
 	namespace
@@ -27,7 +41,7 @@ namespace FoveatedRenderImpl::Ops
 		{
 			if (!globals::d3d::device)
 				return false;
-			if (!Core::vrDepthCopyCS.Get(L"Data/Shaders/Upscaling/FoveatedRender/DepthToPerEyeCS.hlsl", {}, "cs_5_0", "main", "FoveatedRender::DepthToPerEyeCS")) {
+			if (!Core::vrDepthCopyCS.Get(kDepthCopyShader, {}, "cs_5_0", "main", "FoveatedRender::DepthToPerEyeCS")) {
 				static std::once_flag loggedFailure;
 				std::call_once(loggedFailure, [] { logger::error("[FOVEATED] DepthToPerEyeCS unavailable; depth conversion disabled, the foveated route falls back"); });
 				return false;
@@ -411,7 +425,7 @@ namespace FoveatedRenderImpl::Ops
 			return false;
 
 		if (!Core::vrSubrectStretchCS) {
-			Core::vrSubrectStretchCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/FoveatedRender/SubrectStretchCS.hlsl", {}, "cs_5_0"));
+			Core::vrSubrectStretchCS.attach((ID3D11ComputeShader*)Util::CompileShader(kStretchShader, {}, "cs_5_0"));
 			Util::SetResourceName(Core::vrSubrectStretchCS.get(), "FoveatedRender::SubrectStretchCS");
 
 			D3D11_BUFFER_DESC cbDesc = {};
@@ -607,7 +621,7 @@ namespace FoveatedRenderImpl::Ops
 		// Lazy-create CS resources
 		if (!Core::vrTemporalSmoothCS) {
 			Core::vrTemporalSmoothCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(
-				L"Data/Shaders/Upscaling/FoveatedRender/PeripheryTemporalSmoothCS.hlsl", {}, "cs_5_0")));
+				kTemporalSmoothShader, {}, "cs_5_0")));
 			Util::SetResourceName(Core::vrTemporalSmoothCS.get(), "FoveatedRender::TemporalSmoothCS");
 
 			D3D11_BUFFER_DESC cbDesc = {};
@@ -812,7 +826,7 @@ namespace FoveatedRenderImpl::Ops
 		// Lazy-create CS resources
 		if (!Core::vrSubrectBlendCS) {
 			Core::vrSubrectBlendCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(
-				L"Data/Shaders/Upscaling/FoveatedRender/SubrectBlendCS.hlsl", {}, "cs_5_0")));
+				kSubrectBlendShader, {}, "cs_5_0")));
 			Util::SetResourceName(Core::vrSubrectBlendCS.get(), "FoveatedRender::SubrectBlendCS");
 
 			D3D11_BUFFER_DESC cbDesc = {};

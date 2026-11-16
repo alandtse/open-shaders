@@ -14,6 +14,7 @@
 
 #include "Features/Effects11/ShaderPatches.h"
 #include "Globals.h"
+#include "ShaderCache.h"
 
 namespace ENBExtender
 {
@@ -1251,6 +1252,7 @@ namespace ENBExtender
 		{
 			activeRedirect = redirecting ? &redirect : nullptr;
 			const SKSE::stl::scope_exit clearRedirect([]() noexcept { activeRedirect = nullptr; });
+			globals::shaderCache->CountSourceCompile();
 			hr = compile(*index, code.put(), errors.put());
 		}
 		if (redirecting && !redirect.opens) {

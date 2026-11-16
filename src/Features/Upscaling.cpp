@@ -8,6 +8,7 @@
 #include "Menu.h"
 #include "RenderDoc.h"
 #include "ScreenshotFeature.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Upscaling/DLSSGPreset.h"
 #include "Upscaling/DX12SwapChain.h"
@@ -1997,6 +1998,34 @@ ID3D11VertexShader* Upscaling::GetUpscaleVS()
 	return upscaleVS.Get(L"Data/Shaders/Upscaling/UpscaleVS.hlsl", { { "VSHADER", "" } }, "vs_5_0");
 }
 
+ID3D11PixelShader* Upscaling::GetCopyDepthToSharedBufferPS()
+{
+	return copyDepthToSharedBufferPS.Get(L"Data\\Shaders\\Upscaling\\CopyDepthToSharedBufferPS.hlsl", { { "PSHADER", "" } }, "ps_5_0");
+}
+
+ID3D11ComputeShader* Upscaling::GetClearHMDMaskCS()
+{
+	return vrClearHMDMaskCS.Get(L"Data/Shaders/Upscaling/ClearHMDMaskCS.hlsl", {}, "cs_5_0", "main", "Upscaling::ClearHMDMaskCS");
+}
+
+void Upscaling::PrepareUpscalingShaders()
+{
+	rainLayer.PrepareShader();
+	for (const auto method : { UpscaleMethod::kNONE, UpscaleMethod::kFSR, UpscaleMethod::kDLSS }) {
+		GetEncodeTexturesCS(method, EncodeOutput::kMasksOnly);
+		GetEncodeTexturesCS(method, EncodeOutput::kTypedDepth);
+	}
+
+	GetUpscaleVS();
+	GetDepthRefractionUpscalePS();
+	GetUnderwaterMaskUpscalePS();
+	GetCameraMotionVectorsPS();
+	if (d3d12SwapChainActive)
+		GetCopyDepthToSharedBufferPS();
+	if (globals::game::isVR)
+		GetClearHMDMaskCS();
+}
+
 eastl::unique_ptr<Texture2D> Upscaling::CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
 	bool copyBindFlags, bool createSRV, bool createUAV, const char* name)
 {
@@ -2192,7 +2221,7 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 
 	auto context = globals::d3d::context;
 
-	auto* shader = vrClearHMDMaskCS.Get(L"Data/Shaders/Upscaling/ClearHMDMaskCS.hlsl", {}, "cs_5_0", "main", "Upscaling::ClearHMDMaskCS");
+	auto* shader = GetClearHMDMaskCS();
 	if (!shader)
 		return;
 
@@ -2415,6 +2444,9 @@ void Upscaling::SetupResources()
 		return;
 	}
 
+	if (globals::game::isVR && globals::shaderCache->IsDiskCacheActive())
+		FoveatedRenderImpl::Core::PrepareShaders();
+
 	const auto displaySize = perfMode.IsHookActive() ? perfMode.GetDisplayScreenSize() : globals::state->screenSize;
 	fidelityFX.ProbeRuntimeUpscalerUpgrade(static_cast<uint32_t>(globals::game::isVR ? displaySize.x / 2 : displaySize.x), static_cast<uint32_t>(displaySize.y));
 
@@ -2499,6 +2531,8 @@ void Upscaling::SetupResources()
 	Util::SetResourceName(upscaleRasterizerState.get(), "Upscaling::DepthUpscaleRasterizerState");
 
 	CheckResources(GetUpscaleMethod());
+	if (globals::shaderCache->IsDiskCacheActive())
+		PrepareUpscalingShaders();
 
 	rcas.Initialize();
 
@@ -2542,7 +2576,7 @@ bool Upscaling::CopySharedD3D12Resources()
 	CS_GPU_PASS("Upscaling::CopySharedD3D12Resources");
 
 	auto* vs = GetUpscaleVS();
-	auto* ps = copyDepthToSharedBufferPS.Get(L"Data\\Shaders\\Upscaling\\CopyDepthToSharedBufferPS.hlsl", { { "PSHADER", "" } }, "ps_5_0");
+	auto* ps = GetCopyDepthToSharedBufferPS();
 	if (!vs || !ps || !dx12SwapChain.motionVectorBufferShared12 || !dx12SwapChain.depthBufferShared12)
 		return false;
 

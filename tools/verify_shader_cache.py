@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -186,6 +187,71 @@ def verify_log(text, snapshot, modified_ns):
     require("Using disk cache" in text, "Runtime did not accept the shipped feature profile")
 
 
+def verify_lighting_frame_coverage(lines, cache):
+    expected = set()
+    marker = "LightingFrameCacheCoverage "
+    for line in lines:
+        if marker not in line:
+            continue
+        paths = json.loads(line.split(marker, 1)[1])
+        require(isinstance(paths, list) and paths and all(isinstance(path, str) and
+                re.fullmatch(r"[\w-]+/[\w-]+\.pso", path) for path in paths),
+                "Invalid Lighting frame coverage record")
+        expected.update(paths)
+    require(expected, "No Lighting frame coverage records before the startup seal")
+
+    entries = read_manifest(cache)
+    missing = sorted(path for path in expected if path not in entries or not (cache / path).is_file())
+    require(not missing, f"Missing {len(missing)}/{len(expected)} Lighting frame variants at startup: {', '.join(missing[:12])}")
+    for path in sorted(expected):
+        check_dxbc(cache / path)
+    return len(expected)
+
+
+def verify_gameplay_log(text, cache, max_startup_seconds=None, lighting_frame_coverage=False):
+    lines = text.splitlines()
+    require(lines and "Loaded CommunityShaders " in lines[0], "Expected a log starting at plugin load")
+    seal_pattern = re.compile(r"Shader disk cache is read-only after startup \((\d+) source compiler calls\)$")
+    seals = [(index, match) for index, line in enumerate(lines) if (match := seal_pattern.search(line))]
+    require(len(seals) == 1, "Expected one startup cache seal in a single game session")
+    seal_index, seal_match = seals[0]
+
+    def timestamp(line):
+        return datetime.strptime(line.split("]", 1)[0].removeprefix("["), "%Y-%m-%d %H:%M:%S.%f")
+
+    seal = timestamp(lines[seal_index])
+    startup_seconds = (seal - timestamp(lines[0])).total_seconds()
+    require(startup_seconds >= 0, "Startup seal predates plugin load")
+
+    issues = []
+    startup_failures = [line for line in lines[:seal_index] if
+                        re.search(r"Shader compilation completed: .*\([1-9]\d* failed\)", line) or
+                        re.search(r"Failed to create (?:vertex|pixel|compute) shader \w+::[\dA-F]+", line)]
+    if startup_failures:
+        issues.append("Shader startup failed:\n" + "\n".join(startup_failures[:8]))
+    late = [line for line in lines[seal_index + 1:] if
+            "Shader missing from the read-only disk cache:" in line or
+            "Shader compilation started" in line or "Shader compilation completed" in line]
+    if late:
+        issues.append(f"{len(late)} late shader misses or compile events:\n" + "\n".join(late[:8]))
+    if max_startup_seconds is not None and startup_seconds >= max_startup_seconds:
+        issues.append(f"Startup took {startup_seconds:.3f}s (target under {max_startup_seconds:g}s)")
+    files = [path for path in cache.rglob("*") if path.is_file()]
+    require(files, f"Shader cache is empty: {cache}")
+    seal_ms = round(seal.timestamp() * 1000)
+    writes = [path.relative_to(cache).as_posix() for path in files if path.stat().st_mtime_ns // 1_000_000 > seal_ms]
+    if writes:
+        issues.append(f"{len(writes)} cache writes after startup:\n" + "\n".join(sorted(writes)[:8]))
+    result = {"startupSeconds": startup_seconds, "startupCompilerCalls": int(seal_match.group(1)), "cacheFiles": len(files)}
+    if lighting_frame_coverage:
+        try:
+            result["lightingFrameVariants"] = verify_lighting_frame_coverage(lines[:seal_index], cache)
+        except ValueError as exc:
+            issues.append(str(exc))
+    require(not issues, "\n".join(issues))
+    return result
+
+
 def check_runtime_status(status):
     require(status.get("compiling") is False, "Shaders are still compiling")
     for key in ("failedTasks", "currentFailedCount", "digestMissTasks", "totalTasks", "completedTasks",
@@ -268,6 +334,12 @@ def main():
     verify = commands.add_parser("session", help="After loading the test save: verify live cache reuse")
     verify.add_argument("--snapshot", type=Path, required=True)
     verify.add_argument("--endpoint", required=True, help="Live devbench base URL, e.g. http://127.0.0.1:8920")
+    gameplay = commands.add_parser("gameplay-log", help="Check a captured gameplay session for late shader work and cache writes")
+    gameplay.add_argument("--log", type=Path, required=True)
+    gameplay.add_argument("--cache", type=Path, required=True)
+    gameplay.add_argument("--max-startup-seconds", type=float)
+    gameplay.add_argument("--require-lighting-frame-coverage", action="store_true",
+                          help="verify Lighting startup records against the sealed cache")
     args = parser.parse_args()
     try:
         if args.command == "artifact":
@@ -279,6 +351,9 @@ def main():
             args.out.parent.mkdir(parents=True, exist_ok=True)
             args.out.write_text(json.dumps(result, indent=2), encoding="utf-8")
             result = {"snapshot": str(args.out), "entries": len(result["cache"]["entries"])}
+        elif args.command == "gameplay-log":
+            result = verify_gameplay_log(args.log.read_text(encoding="utf-8-sig"), args.cache, args.max_startup_seconds,
+                                         args.require_lighting_frame_coverage)
         else:
             result = verify_session(json.loads(args.snapshot.read_text(encoding="utf-8")), args.endpoint)
     except (OSError, ValueError, KeyError, configparser.Error) as error:

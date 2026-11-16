@@ -10,6 +10,7 @@
 #include "Deferred.h"
 #include "EngineFix.h"
 #include "Feature.h"
+#include "FeatureBuffer.h"
 #include "Globals.h"
 #include "Menu.h"
 #include "Menu/BackgroundBlur.h"
@@ -63,6 +64,13 @@ namespace
 	};
 
 	thread_local VertexShaderVariants vertexShaderVariants;
+	constexpr uint32_t kUtilityDepthPass = static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderDepth) |
+	                                       static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmap);
+
+	uint32_t VertexWithoutTreeBend(uint32_t a_descriptor)
+	{
+		return a_descriptor | SIE::ShaderCache::kVertexNoTreeBend;
+	}
 
 	bool HasCompatibleVertexConstants(const RE::BSGraphics::VertexShader& standard, const RE::BSGraphics::VertexShader& variant)
 	{
@@ -84,7 +92,7 @@ namespace
 		const size_t variant = allowNoTreeBend && (state.permutationData.ExtraShaderDescriptor & treeBend) == 0;
 		if (variant != 0 && !variants.requested[variant]) {
 			variants.requested[variant] = true;
-			const auto descriptor = variants.descriptor | SIE::ShaderCache::kVertexNoTreeBend;
+			const auto descriptor = VertexWithoutTreeBend(variants.descriptor);
 			variants.shaders[variant] = globals::shaderCache->GetVertexShader(shader, descriptor);
 		}
 		auto* vertexShader = variants.shaders[variant];
@@ -110,6 +118,20 @@ namespace
 		}
 		a_vertexDescriptor = LegacyGraphicsCompatibility::NormalizeLegacyUtilityDescriptor(a_vertexDescriptor);
 		a_pixelDescriptor = LegacyGraphicsCompatibility::NormalizeLegacyUtilityDescriptor(a_pixelDescriptor);
+	}
+
+	void PrecompileEffectPixel(SIE::ShaderCache& a_cache, const RE::BSShader& a_shader, uint32_t a_descriptor)
+	{
+		Util::ShaderDescriptor::ForEachSpecialization(a_descriptor & ~SIE::ShaderCache::kEffectPixelSpecializations, GetEffectPixelSpecializationMask(),
+			[&](uint32_t descriptor) { a_cache.GetPixelShader(a_shader, descriptor, true); });
+	}
+
+	void PrecompileVertex(SIE::ShaderCache& a_cache, const RE::BSShader& a_shader, uint32_t a_descriptor)
+	{
+		a_cache.GetVertexShader(a_shader, a_descriptor, true);
+		const auto type = a_shader.shaderType.get();
+		if (type == RE::BSShader::Type::Lighting || (type == RE::BSShader::Type::Utility && (a_descriptor & kUtilityDepthPass)))
+			a_cache.GetVertexShader(a_shader, VertexWithoutTreeBend(a_descriptor), true);
 	}
 }
 
@@ -173,6 +195,9 @@ struct BSShader_LoadShaders
 		auto state = globals::state;
 		auto shaderCache = globals::shaderCache;
 		if ((shaderCache->IsDiskCache() && !shaderCache->IsShaderCacheReadOnly()) || shaderCache->IsDump()) {
+			const auto type = shader->shaderType.get();
+			const bool precompileEffectVariants = shaderCache->IsDiskCache() && type == RE::BSShader::Type::Effect;
+			const bool precompileLightingVariants = shaderCache->IsDiskCache() && type == RE::BSShader::Type::Lighting;
 			if (shaderCache->IsDiskCache() && !shaderCache->IsShaderCacheReadOnly()) {
 				Feature::ForEachLoadedFeature("GenerateShaderPermutations", [shader](Feature* feature) {
 					feature->GenerateShaderPermutations(shader);
@@ -192,7 +217,10 @@ struct BSShader_LoadShaders
 				auto pixelShaderDescriptor = entry->id;
 				NormalizeLegacyUtilityDescriptors(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
 				state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
-				shaderCache->GetVertexShader(*shader, vertexShaderDesriptor, true);
+				if (shaderCache->IsDiskCache())
+					PrecompileVertex(*shaderCache, *shader, vertexShaderDesriptor);
+				else
+					shaderCache->GetVertexShader(*shader, vertexShaderDesriptor, true);
 			}
 			for (const auto& entry : shader->pixelShaders) {
 				if (entry->shader && shaderCache->IsDump()) {
@@ -208,20 +236,31 @@ struct BSShader_LoadShaders
 				auto forwardVertexDescriptor = vertexShaderDesriptor;
 				auto forwardPixelDescriptor = pixelShaderDescriptor;
 				state->ModifyShaderLookup(*shader, forwardVertexDescriptor, forwardPixelDescriptor);
-				shaderCache->GetPixelShader(*shader, forwardPixelDescriptor, true);
 				state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor, true);
-				shaderCache->GetPixelShader(*shader, pixelShaderDescriptor, true);
+				constexpr auto utilityTree = static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::TreeAnim);
+				if (shaderCache->IsDiskCache() && type == RE::BSShader::Type::Utility &&
+					(vertexShaderDesriptor & utilityTree) && (vertexShaderDesriptor & kUtilityDepthPass))
+					PrecompileVertex(*shaderCache, *shader, vertexShaderDesriptor);
+				if (precompileEffectVariants) {
+					PrecompileEffectPixel(*shaderCache, *shader, forwardPixelDescriptor);
+					PrecompileEffectPixel(*shaderCache, *shader, pixelShaderDescriptor);
+				} else if (precompileLightingVariants) {
+					shaderCache->PrecompileLightingPixel(*shader, forwardPixelDescriptor);
+					shaderCache->PrecompileLightingPixel(*shader, pixelShaderDescriptor);
+				} else {
+					shaderCache->GetPixelShader(*shader, forwardPixelDescriptor, true);
+					shaderCache->GetPixelShader(*shader, pixelShaderDescriptor, true);
+				}
 			}
 
-			if (shaderCache->IsDiskCache() && shader->shaderType.get() == RE::BSShader::Type::Effect) {
+			if (precompileEffectVariants) {
 				constexpr auto sharedRuntimeUnionDescriptor =
 					static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::MultBlend) |
 					static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::MotionVectorsNormals);
-				shaderCache->GetPixelShader(*shader, sharedRuntimeUnionDescriptor, true);
-				shaderCache->GetPixelShader(*shader,
+				PrecompileEffectPixel(*shaderCache, *shader, sharedRuntimeUnionDescriptor);
+				PrecompileEffectPixel(*shaderCache, *shader,
 					sharedRuntimeUnionDescriptor |
-						static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::Deferred),
-					true);
+						static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::Deferred));
 			}
 		}
 		BSShaderHooks::hk_LoadShaders(shader, stream);
@@ -727,10 +766,7 @@ void Hooks::BSGraphics_SetDirtyStates::thunk(bool isCompute)
 	func(isCompute);
 	auto& state = *globals::state;
 	if (!isCompute && state.currentShader && state.currentShader->shaderType.get() == RE::BSShader::Type::Utility) {
-		constexpr uint32_t depthPass =
-			static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderDepth) |
-			static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmap);
-		SelectVertexShader(state, *state.currentShader, (state.modifiedVertexDescriptor & depthPass) != 0);
+		SelectVertexShader(state, *state.currentShader, (state.modifiedVertexDescriptor & kUtilityDepthPass) != 0);
 	}
 	state.Draw();
 	if (!isCompute) {

@@ -52,6 +52,8 @@ namespace FoveatedRenderImpl
 		// Release all GPU resources owned by Core.
 		static void ClearResources();
 		static void ClearShaderCache();
+		/** @brief Prepares the per-eye shader bytecode before the cache becomes read-only. */
+		static void PrepareShaders();
 
 		// ── Own VR resources (independent from Upscaling) ──
 
