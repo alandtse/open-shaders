@@ -2808,7 +2808,7 @@ namespace SIE
 		std::unordered_map<std::string, bool> shaderExists;  // shader name -> source .hlsl still on disk
 		size_t removedBlobs = 0;
 		const size_t removedEntries = manifest.PruneIf([&](const std::string& relativePath) {
-			const auto sourcePath = NativePBR::SourceRelativePath(relativePath);
+			const auto& sourcePath = relativePath;
 			const auto sep = sourcePath.find('/');
 			if (sep == std::string::npos)
 				return false;  // unrecognized key shape -- never delete on a shape we don't understand
