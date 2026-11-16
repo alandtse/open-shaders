@@ -68,6 +68,7 @@ struct PostProcessFeature : public std::enable_shared_from_this<PostProcessFeatu
 	///        captures a weak_ptr, not `this`, and no-ops if it can't lock).
 	/// @param sourceDir Directory the entries' filenames are relative to (e.g.
 	///        "Data\\Shaders\\PostProcessing\\DoF").
+	/// A null programPtr prepares cached bytecode without attaching the shader.
 	void CompileComputeShadersAsync(std::wstring_view sourceDir, std::span<const ComputeShaderCompileInfo> infos);
 
 	/// @brief Same as CompileComputeShadersAsync(), but for the raster (VS/PS)

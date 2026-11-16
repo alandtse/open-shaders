@@ -18,6 +18,10 @@ namespace
 			[weak = feature.weak_from_this(), ptr = programPtr, generation = feature.shaderGeneration.load(std::memory_order_relaxed)](ID3D11DeviceChild* shader) {
 				if (!shader)
 					return;
+				if (!ptr) {
+					shader->Release();
+					return;
+				}
 				auto self = weak.lock();
 				if (!self) {
 					shader->Release();

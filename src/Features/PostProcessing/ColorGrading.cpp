@@ -1177,6 +1177,15 @@ void ColorGrading::SetupResources()
 	}
 
 	CompileShaders();
+	if (auto* cache = globals::shaderCache; cache->IsDiskCacheActive() && !cache->IsShaderCacheReadOnly()) {
+		const auto& tonemappers = TonemapperInfo::GetTonemappers();
+		for (const auto& tonemapper : tonemappers) {
+			if (settings.useOpenDrt || tonemapper.func_name != tonemappers[tonemapperType].func_name)
+				CompileTonemapShaders(tonemapper.func_name.data(), false);
+		}
+		if (!settings.useOpenDrt)
+			CompileTonemapShaders("OpenDRTTransform", false);
+	}
 }
 
 void ColorGrading::ReleaseActiveShaders()
@@ -1210,25 +1219,26 @@ void ColorGrading::ReloadActiveShaders()
 void ColorGrading::CompileShaders()
 {
 	const auto& tonemappers = TonemapperInfo::GetTonemappers();
+	CompileTonemapShaders(settings.useOpenDrt ? "OpenDRTTransform" : tonemappers[tonemapperType].func_name.data(), true);
+	recompileFlag = false;
+	curveNeedsUpdate = true;  // shader changed, curve must update
+}
 
-	auto tonemapFuncName = settings.useOpenDrt ? "OpenDRTTransform" : tonemappers[tonemapperType].func_name.data();
-
+void ColorGrading::CompileTonemapShaders(const char* a_tonemapFunction, bool a_makeActive)
+{
 	const std::vector<ComputeShaderCompileInfo> shaderInfos = {
-		{ &lutgenCS, "colorgrading.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "CSLUTGen" },
+		{ a_makeActive ? &lutgenCS : nullptr, "colorgrading.hlsl", { { "TONEMAP_FUNC", a_tonemapFunction } }, "CSLUTGen" },
 	};
 
 	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\ColorGrading", shaderInfos);
 	const std::vector<VertexShaderCompileInfo> vertexInfos = {
-		{ &colorgradingVS, "colorgrading.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "VSColorGrading" },
+		{ a_makeActive ? &colorgradingVS : nullptr, "colorgrading.hlsl", { { "TONEMAP_FUNC", a_tonemapFunction } }, "VSColorGrading" },
 	};
 	const std::vector<PixelShaderCompileInfo> rasterInfos = {
-		{ &colorgradingPS, "colorgrading.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "PSColorGrading" },
-		{ &colorgradingMirrorPS, "colorgrading.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "PSColorGradingMirror" },
+		{ a_makeActive ? &colorgradingPS : nullptr, "colorgrading.hlsl", { { "TONEMAP_FUNC", a_tonemapFunction } }, "PSColorGrading" },
+		{ a_makeActive ? &colorgradingMirrorPS : nullptr, "colorgrading.hlsl", { { "TONEMAP_FUNC", a_tonemapFunction } }, "PSColorGradingMirror" },
 	};
 	CompileRasterShadersAsync(L"Data\\Shaders\\PostProcessing\\ColorGrading", vertexInfos, rasterInfos);
-
-	recompileFlag = false;
-	curveNeedsUpdate = true;  // shader changed, curve must update
 }
 
 bool ColorGrading::IsReadyForTonemapping() const
