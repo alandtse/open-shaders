@@ -99,6 +99,9 @@ void NativeLightingFeature::DrawSettings()
 		std::scoped_lock diagnosticsLock(diagnosticsMutex);
 		ImGui::TextDisabled("Skipped native lighting pixels (GPU completed, cumulative): %llu",
 			static_cast<unsigned long long>(diagnostics.value("skippedPixels", uint64_t{ 0 })));
+		ImGui::TextDisabled("NativePBR ray hits (GPU completed, cumulative): %llu candidates | %llu evaluated",
+			static_cast<unsigned long long>(diagnostics.value("nativePbrCandidates", uint64_t{ 0 })),
+			static_cast<unsigned long long>(diagnostics.value("nativePbrEvaluated", uint64_t{ 0 })));
 	}
 	if (ImGui::Checkbox("Early shadow-mask culling", &settings.EarlyShadowCull))
 		++validityRevision;
