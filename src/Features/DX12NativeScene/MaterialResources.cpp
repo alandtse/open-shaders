@@ -196,9 +196,7 @@ namespace DX12Native
 		}
 		if (a_scene.materialSource) {
 			auto loaded = LoadResidency(a_backend, *a_scene.materialSource,
-					(a_scene.materialSource->importLoosePbr || a_scene.materialSource->importArchivePbr) && a_livePbr ?
-						&liveMatch :
-						nullptr, a_previous);
+				a_livePbr ? &liveMatch : nullptr, a_previous);
 			loaded->livePbrMatched = result->livePbrMatched;
 			loaded->livePbrAmbiguous = result->livePbrAmbiguous;
 			loaded->livePbrIncompatible = result->livePbrIncompatible;

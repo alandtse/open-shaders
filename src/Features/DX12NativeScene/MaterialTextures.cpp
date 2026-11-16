@@ -481,7 +481,7 @@ namespace DX12Native
 			entries = manifest.at("textures");
 			if (!entries.is_array() || entries.size() > 4096)
 				throw std::runtime_error("Texture source count exceeds limit");
-		} else if (!a_source.importLoosePbr || !a_matches) {
+		} else if (!a_matches) {
 			// A runtime-only load requires a runtime-owned material generation.
 			// Never silently construct empty tables due to absent provenance.
 			throw std::runtime_error("Runtime material sources require live recipe matches and DDS acquisition");
@@ -572,7 +572,7 @@ namespace DX12Native
 			if (FAILED(a_backend.d3d12Device->GetDeviceRemovedReason())) throw MaterialUploadError("Material texture device removed");
 			++a_result.rejectedTextureSources;
 			if (a_result.firstTextureSourceFailure.empty()) a_result.firstTextureSourceFailure = std::string(error.what()).substr(0, 256); });
-		if (a_source.importLoosePbr && a_matches) {
+		if (a_matches) {
 			std::unordered_set<std::string> present;
 			for (const auto& [hash, texture] : textures)
 				for (const auto& textureAlias : texture->paths)
@@ -605,7 +605,7 @@ namespace DX12Native
 					const DWORD lookupError = attributes == INVALID_FILE_ATTRIBUTES ? GetLastError() : ERROR_SUCCESS;
 					const bool missingLoose = attributes == INVALID_FILE_ATTRIBUTES &&
 					                          (lookupError == ERROR_FILE_NOT_FOUND || lookupError == ERROR_PATH_NOT_FOUND);
-					if (missingLoose && a_source.importArchivePbr) {
+					if (missingLoose) {
 						triedArchive = true;
 						++a_result.archiveDdsPlanned;
 						auto archived = ReadArchiveDds(canonical);

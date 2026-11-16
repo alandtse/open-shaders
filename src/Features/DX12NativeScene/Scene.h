@@ -37,8 +37,6 @@ namespace DX12Native
 		std::shared_ptr<const json> rooms;
 		std::shared_ptr<const json> textureReferences;  // Existing Data/BSA path references from the packed CELL.
 		uint64_t uploadBatchBytes = 16ull * 1024 * 1024;
-		bool importLoosePbr = false;                            // Worker-owned loose DDS supplement, explicitly opt-in.
-		bool importArchivePbr = false;                          // Optional archive fallback when the loose file is absent.
 		bool usePreparedTextureManifest = true;                 // Legacy atlas compatibility. Runtime-source mode may omit it.
 		std::unordered_set<std::string> attemptedRuntimePaths;  // Worker-owned stream history.
 	};

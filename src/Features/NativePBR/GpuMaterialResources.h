@@ -62,7 +62,7 @@ namespace NativePBR
 		/** @brief Prepare immutable material records and shared texture pages on a worker. */
 		static std::shared_ptr<const GpuMaterialResources> Create(const GraphicsBackend& a_backend,
 			std::shared_ptr<const RecipeGeneration> a_generation, uint64_t a_budgetLimit,
-			uint64_t a_batchLimit, bool a_importArchives,
+			uint64_t a_batchLimit,
 			std::shared_ptr<const GpuMaterialResources> a_previous = {},
 			std::shared_ptr<const DX12Native::MaterialResources> a_sharedResidency = {},
 			std::unordered_set<std::string> a_attemptedPaths = {});
@@ -74,7 +74,7 @@ namespace NativePBR
 	public:
 		void Request(const GraphicsBackend& a_backend, std::shared_ptr<const RecipeGeneration> a_generation,
 			uint64_t a_budgetLimit = 0, uint64_t a_batchLimit = 16ull * 1024 * 1024,
-			bool a_importArchives = true, std::shared_ptr<const DX12Native::MaterialResources> a_sharedResidency = {});
+			std::shared_ptr<const DX12Native::MaterialResources> a_sharedResidency = {});
 		void Advance();
 		void Reset();
 		std::shared_ptr<const GpuMaterialResources> Get() const { return published; }
@@ -93,7 +93,7 @@ namespace NativePBR
 		DX12Native::RuntimeTextureProgress textureProgress;
 		GraphicsBackend backend;
 		uint64_t requestRevision = 0, budgetLimit = 0, batchLimit = 0, nextBatchAtMs = 0;
-		bool importArchives = true, attempted = false;
+		bool attempted = false;
 		DX12Native::MaterialUploadRetry retry;
 		std::string failure;
 	};

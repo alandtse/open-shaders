@@ -14,7 +14,6 @@ namespace DX12Native
 	}
 	std::shared_ptr<const ShadowBindings> ShadowBindings::Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
 		uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr,
-		bool a_importLoose, bool a_importArchive, bool a_runtimeOnly,
 		std::shared_ptr<const ShadowBindings> a_previous,
 		std::unordered_set<std::string> a_attemptedPaths)
 	{
@@ -43,17 +42,18 @@ namespace DX12Native
 			throw std::runtime_error("Shadow binding overhead exceeds budget");
 		auto boundedScene = *result->scene;
 		const bool canInherit = a_previous && a_previous->scene == result->scene &&
-		                        a_previous->materials && a_importLoose && a_livePbr;
+		                        a_previous->materials && a_livePbr;
 		if (boundedScene.materialSource) {
 			auto source = std::make_shared<MaterialSource>(*boundedScene.materialSource);
 			source->budget = std::min(source->budget, a_budget - tables - kDescriptorAndRoomReserve);
 			source->uploadBatchBytes = a_uploadBatchBudget;
-			source->importLoosePbr = a_importLoose && a_livePbr != nullptr;
-			source->importArchivePbr = source->importLoosePbr && a_importArchive;
 			source->attemptedRuntimePaths = std::move(a_attemptedPaths);
-			// Skip the legacy manifest on later batches; previously published
-			// atlas and runtime pages are inherited through a_previous.
-			source->usePreparedTextureManifest = UsePreparedMaterialManifest(a_runtimeOnly, canInherit);
+			// Use prepared texture references when present. Otherwise acquire verified
+			// runtime DDS sources automatically, without requiring an import switch.
+			// Later batches retain the preceding generation's texture pages.
+			const bool hasPreparedReferences = source->textureReferences ||
+				std::filesystem::exists(source->directory / "cell-textures.json");
+			source->usePreparedTextureManifest = UsePreparedMaterialManifest(canInherit) && hasPreparedReferences;
 			boundedScene.materialSource = std::move(source);
 		}
 		result->bytes = offsetsBytes + kDescriptorAndRoomReserve;
@@ -130,13 +130,11 @@ namespace DX12Native
 	};
 
 	void ShadowBindingWorker::Request(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
-		uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr,
-		bool a_importLoose, bool a_importArchive, bool a_runtimeOnly)
+		uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr)
 	{
 		const uint64_t incomingRevision = a_livePbr && a_livePbr->generation ? a_livePbr->generation->revision : 0;
 		if (desired == a_scene && budget == a_budget && uploadBatchBudget == a_uploadBatchBudget &&
-			liveRevision == incomingRevision && importLoose == a_importLoose && importArchive == a_importArchive &&
-			runtimeOnly == a_runtimeOnly && backend.d3d12Device.get() == a_backend.d3d12Device.get() &&
+			liveRevision == incomingRevision && backend.d3d12Device.get() == a_backend.d3d12Device.get() &&
 			backend.commandQueue.get() == a_backend.commandQueue.get())
 			return;
 		const bool sameScene = desired == a_scene && backend.d3d12Device.get() == a_backend.d3d12Device.get();
@@ -147,9 +145,6 @@ namespace DX12Native
 		textureProgress.Reset();
 		incrementalBase.reset();
 		streamNextBatchAtMs = 0;
-		importLoose = a_importLoose;
-		importArchive = a_importArchive;
-		runtimeOnly = a_runtimeOnly;
 		backend = a_backend;
 		budget = a_budget;
 		uploadBatchBudget = a_uploadBatchBudget;
@@ -187,7 +182,7 @@ namespace DX12Native
 					textureProgress.Record(material.looseDdsAttemptedPaths, resident);
 					published = pending->bindings;
 					incrementalBase = published;
-					if (importLoose && livePbr && material.looseDdsDeferred &&
+					if (livePbr && material.looseDdsDeferred &&
 						!material.looseDdsAttemptedPaths.empty()) {
 						attempted = false;
 						streamNextBatchAtMs = MaterialClockMs() + 500;
@@ -221,11 +216,11 @@ namespace DX12Native
 		task->revision = revision;
 		try {
 			static BS::thread_pool<> pool{ 1 };
-			pool.detach_task([task, backend = backend, scene = desired, budget = budget, uploadBudget = uploadBatchBudget, live = livePbr, import = importLoose, archives = importArchive, runtime = runtimeOnly,
+			pool.detach_task([task, backend = backend, scene = desired, budget = budget, uploadBudget = uploadBatchBudget, live = livePbr,
 								 previous = incrementalBase, priorAttempts = textureProgress.Attempted()] {
 				try {
 					task->bindings = ShadowBindings::Create(backend, scene, budget, uploadBudget,
-						live, import, archives, runtime, previous, priorAttempts);
+						live, previous, priorAttempts);
 				} catch (const MaterialUploadBusy& error) {
 					task->failure = error.what();
 					task->deferred = true;
@@ -250,9 +245,6 @@ namespace DX12Native
 		desired.reset();
 		livePbr.reset();
 		liveRevision = 0;
-		importLoose = false;
-		importArchive = false;
-		runtimeOnly = false;
 		textureProgress.Reset();
 		incrementalBase.reset();
 		streamNextBatchAtMs = 0;

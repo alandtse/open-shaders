@@ -43,9 +43,6 @@ struct DX12NativeScene final : Feature
 		bool BuildCandidateGridTLAS = false;  // Disabled-by-default isolated DXR test.
 		bool UseGridForNativeDXR = false;     // Opt-in only, require matching TLAS/material generation.
 		bool UseLivePBR = false;              // Legacy config field; NativePBR now follows DX12 ownership.
-		bool ImportLoosePBR = false;          // Separate opt-in for bounded loose-file DDS residency.
-		bool ImportArchivePBR = false;        // Further opt-in: archive resource manager fallback.
-		bool RuntimeOnlyMaterials = false;    // Optional manifest-free runtime texture acquisition.
 		bool CaptureRuntimeGeometry = false;  // Explicit static-geometry debug.
 		bool CaptureSCMRigidCasters = true;   // Bounded native acquisition from SCM's cull data.
 		bool CacheRuntimeGeometry = false;    // Optional background persistence and menu CPU prewarm.

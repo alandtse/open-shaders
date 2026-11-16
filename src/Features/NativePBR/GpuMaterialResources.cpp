@@ -139,7 +139,7 @@ namespace NativePBR
 
 	std::shared_ptr<const GpuMaterialResources> GpuMaterialResources::Create(const GraphicsBackend& a_backend,
 		std::shared_ptr<const RecipeGeneration> a_generation, uint64_t a_budgetLimit, uint64_t a_batchLimit,
-		bool a_importArchives, std::shared_ptr<const GpuMaterialResources> a_previous,
+		std::shared_ptr<const GpuMaterialResources> a_previous,
 		std::shared_ptr<const DX12Native::MaterialResources> a_sharedResidency,
 		std::unordered_set<std::string> a_attemptedPaths)
 	{
@@ -186,8 +186,6 @@ namespace NativePBR
 		DX12Native::MaterialSource source;
 		source.budget = usable.effectiveBytes - result->tableBytes - kDescriptorReserveBytes;
 		source.uploadBatchBytes = a_batchLimit;
-		source.importLoosePbr = true;
-		source.importArchivePbr = a_importArchives;
 		source.usePreparedTextureManifest = false;
 		source.attemptedRuntimePaths = std::move(a_attemptedPaths);
 		LiveMatchResult matches;
@@ -252,11 +250,11 @@ namespace NativePBR
 
 	void GpuMaterialWorker::Request(const GraphicsBackend& a_backend,
 		std::shared_ptr<const RecipeGeneration> a_generation, uint64_t a_budgetLimit,
-		uint64_t a_batchLimit, bool a_importArchives,
+		uint64_t a_batchLimit,
 		std::shared_ptr<const DX12Native::MaterialResources> a_sharedResidency)
 	{
 		if (desired == a_generation && budgetLimit == a_budgetLimit && batchLimit == a_batchLimit &&
-			importArchives == a_importArchives && backend.d3d12Device.get() == a_backend.d3d12Device.get() &&
+			backend.d3d12Device.get() == a_backend.d3d12Device.get() &&
 			backend.commandQueue.get() == a_backend.commandQueue.get() && initialResidency == a_sharedResidency)
 			return;
 		const bool sameDevice = backend.d3d12Device.get() == a_backend.d3d12Device.get();
@@ -266,7 +264,6 @@ namespace NativePBR
 		backend = a_backend;
 		budgetLimit = a_budgetLimit;
 		batchLimit = a_batchLimit;
-		importArchives = a_importArchives;
 		textureProgress.Reset();
 		nextBatchAtMs = 0;
 		attempted = false;
@@ -333,10 +330,10 @@ namespace NativePBR
 		try {
 			static BS::thread_pool<> pool{ 1 };
 			pool.detach_task([task, backend = backend, recipes = desired, limit = budgetLimit,
-				batch = batchLimit, archives = importArchives, previous = published,
+				batch = batchLimit, previous = published,
 				shared = initialResidency, attempts = textureProgress.Attempted()] {
 				try {
-					task->resources = GpuMaterialResources::Create(backend, recipes, limit, batch, archives,
+					task->resources = GpuMaterialResources::Create(backend, recipes, limit, batch,
 						previous, shared, attempts);
 				} catch (const DX12Native::MaterialUploadBusy& error) {
 					task->failure = error.what();

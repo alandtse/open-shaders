@@ -21,6 +21,7 @@
 #include "Features/NativePBR/MaterialService.h"
 #include "Features/NativePBR/MaterialDiscovery.h"
 #include "Features/NativePBR/MaterialReadiness.h"
+#include "Features/NativePBR/PreparedSceneMaterials.h"
 #include "Features/NativePBR/VerifiedBridge.h"
 #include <catch2/catch_test_macros.hpp>
 #include <fstream>
@@ -1346,13 +1347,61 @@ TEST_CASE("Native runtime PBR accepts only provably neutral fuzz and subsurface 
 	REQUIRE_FALSE(NativePBR::NativeMeshRecipeSupported(recipe));
 }
 
+TEST_CASE("Prepared scene material handoff retains identities and rejects duplicate scene keys", "[native_pbr]")
+{
+	NativePBR::MaterialPublication publication;
+	auto recipes = std::make_shared<NativePBR::RecipeGeneration>();
+	auto recipe = std::make_shared<NativePBR::Recipe>();
+	recipe->identity = 42;
+	recipe->revision = 7;
+	recipes->recipes.emplace(42, recipe);
+	publication.recipes = std::move(recipes);
+	publication.instances[NativePBR::MaterialPublication::Key("RefA", "ShapeA")].materialIdentity = 42;
+	DX12Native::Instance first, repeated, missing;
+	first.identity = 101;
+	first.preparedIdentity.referenceKey = "RefA";
+	first.preparedIdentity.shapeName = "ShapeA";
+	repeated = first;
+	repeated.identity = 102;
+	missing.identity = 103;
+	missing.preparedIdentity.referenceKey = "RefB";
+	missing.preparedIdentity.shapeName = "ShapeB";
+	const auto unique = NativePBR::BindPreparedSceneMaterials({ first, missing }, publication);
+	REQUIRE(unique.size() == 2);
+	REQUIRE(unique[0].instanceIndex == 0);
+	REQUIRE(unique[0].geometryIdentity == 101);
+	REQUIRE(unique[0].material.status == NativePBR::MaterialLookupStatus::Available);
+	REQUIRE(unique[0].material.recipe->identity == 42);
+	REQUIRE(unique[1].material.status == NativePBR::MaterialLookupStatus::MissingInstance);
+	const auto duplicates = NativePBR::BindPreparedSceneMaterials({ first, repeated }, publication);
+	REQUIRE(duplicates.size() == 2);
+	REQUIRE(duplicates[0].material.status == NativePBR::MaterialLookupStatus::AmbiguousInstance);
+	REQUIRE(duplicates[1].material.status == NativePBR::MaterialLookupStatus::AmbiguousInstance);
+	auto geometry = std::make_shared<DX12Native::TopLevel>();
+	geometry->instances = { first, missing };
+	auto resources = std::make_shared<DX12Native::ShadowBindings>();
+	resources->scene = geometry;
+	resources->materials = std::make_shared<DX12Native::MaterialResources>();
+	auto publishedMaterials = std::make_shared<const NativePBR::MaterialPublication>(publication);
+	const auto prepared = NativePBR::PrepareSceneMaterials(geometry, resources, publishedMaterials, 811, 12);
+	REQUIRE(prepared);
+	REQUIRE(prepared->geometry == geometry);
+	REQUIRE(prepared->sceneResources == resources);
+	REQUIRE(prepared->materialPublication == publishedMaterials);
+	REQUIRE(prepared->cellID == 811);
+	REQUIRE(prepared->sceneRevision == 12);
+	REQUIRE(prepared->available == 1);
+	REQUIRE(prepared->missing == 1);
+	REQUIRE(prepared->ambiguous == 0);
+	REQUIRE_FALSE(NativePBR::PrepareSceneMaterials(std::make_shared<DX12Native::TopLevel>(),
+		resources, publishedMaterials, 811, 13));
+}
+
 TEST_CASE("Native material source supports future manifest-free runtime acquisition", "[native_pbr]")
 {
 	DX12Native::MaterialSource source;
 	REQUIRE(source.usePreparedTextureManifest);
-	REQUIRE_FALSE(source.importLoosePbr);
 	source.usePreparedTextureManifest = false;
-	source.importLoosePbr = true;
 	REQUIRE_FALSE(source.usePreparedTextureManifest);
 	// The source loader can omit cell-textures.json when runtime sources
 	// and a verified live match plan are supplied; prepared geometry is separate.
@@ -1402,18 +1451,14 @@ TEST_CASE("Progressive source request planner does not retry failed batches", "[
 	REQUIRE(progress.Batches() == 0);
 }
 
-TEST_CASE("Runtime-only DDS acquisition bypasses legacy manifest without changing geometry", "[native_pbr]")
+TEST_CASE("Prepared material manifest is skipped only when scene residency is inherited", "[native_pbr]")
 {
-	REQUIRE(DX12Native::UsePreparedMaterialManifest(false, false));
-	REQUIRE_FALSE(DX12Native::UsePreparedMaterialManifest(true, false));
-	REQUIRE_FALSE(DX12Native::UsePreparedMaterialManifest(false, true));
-	REQUIRE_FALSE(DX12Native::UsePreparedMaterialManifest(true, true));
+	REQUIRE(DX12Native::UsePreparedMaterialManifest(false));
+	REQUIRE_FALSE(DX12Native::UsePreparedMaterialManifest(true));
 	DX12Native::MaterialSource source;
 	REQUIRE(source.usePreparedTextureManifest);
-	source.usePreparedTextureManifest = DX12Native::UsePreparedMaterialManifest(true, false);
-	source.importLoosePbr = true;
+	source.usePreparedTextureManifest = DX12Native::UsePreparedMaterialManifest(true);
 	REQUIRE_FALSE(source.usePreparedTextureManifest);
-	REQUIRE(source.importLoosePbr);
 }
 
 TEST_CASE("Live geometry capture owns bounded static mesh data and rejects unsafe layouts", "[native_geometry]")
