@@ -105,8 +105,8 @@ void NativeLightingFeature::DrawSettings()
 			static_cast<unsigned long long>(diagnostics.value("submissions", uint64_t{ 0 })),
 			static_cast<unsigned long long>(diagnostics.value("primaryQueries", uint64_t{ 0 })),
 			static_cast<unsigned long long>(diagnostics.value("primaryHits", uint64_t{ 0 })));
-		if (const auto status = diagnostics.value("status", std::string{}); !status.empty())
-			ImGui::TextDisabled("Native Lighting status: %s", status.c_str());
+		if (const auto lightingStatus = diagnostics.value("status", std::string{}); !lightingStatus.empty())
+			ImGui::TextDisabled("Native Lighting status: %s", lightingStatus.c_str());
 		ImGui::TextDisabled("Skipped native lighting pixels (GPU completed, cumulative): %llu",
 			static_cast<unsigned long long>(diagnostics.value("skippedPixels", uint64_t{ 0 })));
 		ImGui::TextDisabled("NativePBR ray hits (GPU completed, cumulative): %llu candidates | %llu evaluated",
