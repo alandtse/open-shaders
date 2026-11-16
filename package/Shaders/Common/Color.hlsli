@@ -55,6 +55,7 @@ namespace Color
 	static const float SRGBOffset = 0.055;
 	static const float SRGBScale = 1.055;
 	static const float SRGBExponent = 2.4;
+	static const float MinEmissiveDivisor = 1e-5f;
 
 	// Copyright 2019 Google LLC.
 	// SPDX-License-Identifier: Apache-2.0
@@ -582,9 +583,11 @@ namespace Color
 #	if defined(LIGHTING)
 	float3 EmitColor(float3 color)
 	{
-		if (ENABLE_LL)
-			color = AdjustUtilityColor(AuthoredColor(color / max(emissiveMult, 1e-5)), SharedData::csUtilitySettings.emitColor) * emissiveMult;
-		else
+		if (ENABLE_LL) {
+			const float emissiveSign = emissiveMult < 0.0f ? -1.0f : 1.0f;
+			const float emissiveDivisor = emissiveSign * max(abs(emissiveMult), MinEmissiveDivisor);
+			color = AdjustUtilityColor(AuthoredColor(color / emissiveDivisor), SharedData::csUtilitySettings.emitColor) * emissiveMult;
+		} else
 			color = AdjustUtilityColor(color, SharedData::csUtilitySettings.emitColor);
 		return color * SharedData::csUtilitySettings.emitColorMult;
 	}
