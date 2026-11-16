@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace NativePBR
@@ -38,12 +37,6 @@ namespace NativePBR
 	inline std::vector<PreparedSceneMaterialBinding> BindPreparedSceneMaterials(
 		const std::vector<DX12Native::Instance>& a_instances, const MaterialPublication& a_publication)
 	{
-		std::unordered_map<std::string, uint32_t> occurrences;
-		for (const auto& instance : a_instances) {
-			const auto& identity = instance.preparedIdentity;
-			if (!identity.referenceKey.empty() && !identity.shapeName.empty())
-				++occurrences[MaterialPublication::Key(identity.referenceKey, identity.shapeName)];
-		}
 		std::vector<PreparedSceneMaterialBinding> result;
 		result.reserve(a_instances.size());
 		for (uint32_t index = 0; index < a_instances.size(); ++index) {
@@ -52,8 +45,6 @@ namespace NativePBR
 			MaterialLookup material;
 			if (identity.referenceKey.empty() || identity.shapeName.empty())
 				material.status = MaterialLookupStatus::MissingInstance;
-			else if (occurrences[MaterialPublication::Key(identity.referenceKey, identity.shapeName)] != 1)
-				material.status = MaterialLookupStatus::AmbiguousInstance;
 			else
 				material = a_publication.FindInstance(identity.referenceKey, identity.shapeName);
 			result.push_back({ index, instance.identity, std::move(material) });

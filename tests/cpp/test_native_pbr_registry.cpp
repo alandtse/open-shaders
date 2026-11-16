@@ -1347,7 +1347,7 @@ TEST_CASE("Native runtime PBR accepts only provably neutral fuzz and subsurface 
 	REQUIRE_FALSE(NativePBR::NativeMeshRecipeSupported(recipe));
 }
 
-TEST_CASE("Prepared scene material handoff retains identities and rejects duplicate scene keys", "[native_pbr]")
+TEST_CASE("Prepared scene material handoff retains identities and permits unambiguous reused scene keys", "[native_pbr]")
 {
 	NativePBR::MaterialPublication publication;
 	auto recipes = std::make_shared<NativePBR::RecipeGeneration>();
@@ -1375,8 +1375,13 @@ TEST_CASE("Prepared scene material handoff retains identities and rejects duplic
 	REQUIRE(unique[1].material.status == NativePBR::MaterialLookupStatus::MissingInstance);
 	const auto duplicates = NativePBR::BindPreparedSceneMaterials({ first, repeated }, publication);
 	REQUIRE(duplicates.size() == 2);
-	REQUIRE(duplicates[0].material.status == NativePBR::MaterialLookupStatus::AmbiguousInstance);
-	REQUIRE(duplicates[1].material.status == NativePBR::MaterialLookupStatus::AmbiguousInstance);
+	REQUIRE(duplicates[0].material.status == NativePBR::MaterialLookupStatus::Available);
+	REQUIRE(duplicates[1].material.status == NativePBR::MaterialLookupStatus::Available);
+	publication.instances[NativePBR::MaterialPublication::Key("RefA", "ShapeA")].ambiguous = true;
+	const auto conflicting = NativePBR::BindPreparedSceneMaterials({ first, repeated }, publication);
+	REQUIRE(conflicting[0].material.status == NativePBR::MaterialLookupStatus::AmbiguousInstance);
+	REQUIRE(conflicting[1].material.status == NativePBR::MaterialLookupStatus::AmbiguousInstance);
+	publication.instances[NativePBR::MaterialPublication::Key("RefA", "ShapeA")].ambiguous = false;
 	auto geometry = std::make_shared<DX12Native::TopLevel>();
 	geometry->instances = { first, missing };
 	auto resources = std::make_shared<DX12Native::ShadowBindings>();

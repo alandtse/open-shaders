@@ -164,7 +164,10 @@ void NativePBRFeature::Prepass()
 	}
 	if (auto backend = globals::features::dx12NativeScene.GetGraphicsBackend())
 		if (auto recipes = GetNativeRecipes(); recipes && recipes->batchesComplete)
-			materialWorker->gpu.Request(*backend, std::move(recipes));
+			if (const auto prepared = GetPreparedSceneMaterials(); prepared && prepared->sceneResources &&
+				prepared->sceneResources->materials)
+				materialWorker->gpu.Request(*backend, std::move(recipes), 0, 16ull * 1024 * 1024,
+					prepared->sceneResources->materials);
 	materialWorker->gpu.Advance();
 }
 
