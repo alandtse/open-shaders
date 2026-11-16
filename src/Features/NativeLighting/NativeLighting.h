@@ -33,7 +33,7 @@ struct NativeLightingFeature final : Feature
 		bool DiagnosticDepth = false;
 		float AbsoluteTolerance = 5.0f;
 		float RelativeTolerance = 0.00001f;
-		uint32_t MaterialPolicy = 0;
+		uint32_t MaterialPolicy = 2;
 		bool RequireMaskAuthority = true;
 		bool AssumeMaskAuthoritative = false;
 		bool ObserveMask = false;

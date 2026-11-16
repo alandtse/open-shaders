@@ -14,11 +14,6 @@ struct NativeCompositeFeature final : Feature
 		bool AddLighting = true;
 		float LightingStrength = 1.0f;
 		bool DirectSpatialReconstruction = true;
-		bool NativePbrDiagnosticDispatch = false;
-		bool NativePbrSurfaceEvaluation = false;
-		bool NativePbrFinalColor = false;  // Incomplete recipes require the additional preview opt-in.
-		bool NativePbrIncompletePreview = false;
-		bool NativePbrInputPreview = false;  // Old test-color shader; never part of normal final composition.
 		bool PersistLab = false;
 		// Independent DX12 shadow layer. Does not require Native Lighting.
 		bool ShadowLayerEnabled = true;
@@ -34,6 +29,10 @@ struct NativeCompositeFeature final : Feature
 	bool IsCore() const override { return true; }
 	std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
 	void DrawSettings() override;
+	/** @brief Draws independent-shadow composition settings in Native Lighting. */
+	void DrawShadowSettings();
+	/** @brief Draws final direct-light composition settings in Native Lighting. */
+	void DrawDirectSettings();
 	void LoadSettings(json& a_json) override;
 	void SaveSettings(json& a_json) override;
 	void RestoreDefaultSettings() override;
@@ -43,24 +42,19 @@ struct NativeCompositeFeature final : Feature
 	json GetDiagnostics() override;
 	/** @brief Produces a frame on the provided shared graphics backend. */
 	std::shared_ptr<const NativeComposite::Frame> Capture(ID3D11Device5*, ID3D11DeviceContext4*, ID3D12Device*, ID3D12CommandQueue*,
-		ID3D11Texture2D*, uint32_t, uint32_t, uint32_t, NativeComposite::Transfer,
-		std::shared_ptr<const NativePBRSurfacePass::InputFrame> a_pbrSurface = {});
+		ID3D11Texture2D*, uint32_t, uint32_t, uint32_t, NativeComposite::Transfer);
 	/** @brief Retains a published frame through a downstream GPU fence. */
 	bool Retain(const std::shared_ptr<const NativeComposite::Frame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value)
 	{
 		return pass.Retain(a_frame, a_fence, a_value);
 	}
-	bool IsEnabled() const { return loaded && enabled.load(); }
-	bool WantsNativePbrSurfaceDiagnostic()
-	{
-		std::scoped_lock lock(settingsMutex);
-		return IsEnabled() && (settings.NativePbrSurfaceEvaluation || settings.NativePbrDiagnosticDispatch || settings.NativePbrFinalColor);
-	}
+	bool IsEnabled() const;
+	bool WantsNativePbrSurfaceDiagnostic() const { return false; }
 
 private:
 	NativeComposite pass;
 	Settings settings;
-	NativeComposite::Policy policy;
+	NativeComposite::Policy policy{ 2u, 2u, 0u };
 	uint64_t validityRevision = 1;
 	std::mutex settingsMutex;
 	std::atomic<bool> enabled{ true };
@@ -68,5 +62,4 @@ private:
 	std::atomic<uint64_t> lightingSubmissions{ 0 };
 	std::atomic<uint64_t> shadowSubmissions{ 0 };
 	std::atomic<uint32_t> lightingStatus{ 0 };
-	std::string pbrSurfaceSourceStatus = "Diagnostic evaluation disabled";
 };

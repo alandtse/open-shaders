@@ -1,4 +1,5 @@
 #include "NativeLighting.h"
+#include "Features/NativeComposite/NativeComposite.h"
 #include "Features/ReverseZ.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -16,6 +17,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::ValidityL
 
 void NativeLightingFeature::DrawSettings()
 {
+	ImGui::SeparatorText("Independent Shadows");
+	globals::features::nativeComposite.DrawShadowSettings();
+	globals::features::dx12NativeScene.DrawShadowSettings();
+	ImGui::SeparatorText("Direct Lighting");
+	globals::features::nativeComposite.DrawDirectSettings();
 	std::scoped_lock lock(settingsMutex);
 	ImGui::Checkbox("Enable native lighting", &settings.Enabled);
 	ImGui::Checkbox("Diffuse", &settings.Diffuse);
@@ -27,7 +33,6 @@ void NativeLightingFeature::DrawSettings()
 	}
 	ImGui::TextDisabled("Full-size raw signals. Spatial reconstruction is independent in Native Composite.");
 	bool tuned = false;
-	ImGui::SeparatorText("Direct lighting (reference controls)");
 	tuned |= ImGui::SliderFloat("Direct strength", &settings.DirectStrength, 0.0f, 8.0f, "%.2fx");
 	tuned |= ImGui::SliderFloat("Diffuse intensity", &settings.DiffuseIntensity, 0.0f, 8.0f, "%.2fx");
 	tuned |= ImGui::SliderFloat("Specular intensity", &settings.SpecularIntensity, 0.0f, 8.0f, "%.2fx");
@@ -96,47 +101,6 @@ void NativeLightingFeature::DrawSettings()
 	}
 	if (ImGui::Checkbox("Early shadow-mask culling", &settings.EarlyShadowCull))
 		++validityRevision;
-	ImGui::Checkbox("Publish validity debug texture", &settings.Debug);
-	ImGui::Checkbox("Compare culling on and off", &settings.CompareCulling);
-	if (ImGui::CollapsingHeader("Validity Lab")) {
-		bool changed = false;
-		ImGui::Checkbox("Persist experimental validity settings", &settings.PersistLab);
-		changed |= ImGui::Checkbox("Require raster-depth agreement", &lab.DepthAgreement);
-		changed |= ImGui::Checkbox("Depth mismatch: diagnose and continue", &lab.DiagnosticDepth);
-		changed |= ImGui::DragFloat("Absolute depth tolerance", &lab.AbsoluteTolerance, 0.1f, 0.0f, 10000.0f);
-		changed |= ImGui::DragFloat("Relative depth tolerance", &lab.RelativeTolerance, 0.000001f, 0.0f, 1.0f, "%.6f");
-		const char* materialPolicies[]{ "Strict", "Diagnostic fallback", "Geometry only" };
-		int materialPolicy = static_cast<int>(lab.MaterialPolicy);
-		if (ImGui::Combo("Material policy", &materialPolicy, materialPolicies, 3)) {
-			lab.MaterialPolicy = static_cast<uint32_t>(materialPolicy);
-			changed = true;
-		}
-		changed |= ImGui::Checkbox("Require authoritative shadow mask", &lab.RequireMaskAuthority);
-		changed |= ImGui::Checkbox("Experimental: assume current mask authoritative", &lab.AssumeMaskAuthoritative);
-		changed |= ImGui::Checkbox("Sample mask for diagnostics", &lab.ObserveMask);
-		changed |= ImGui::Checkbox("Run diagnostics without lights or lobes", &lab.RunWithoutLighting);
-		changed |= ImGui::Checkbox("Reference-like primary candidate traversal", &lab.ReferencePrimaryTraversal);
-		ImGui::TextDisabled("Skip unsupported primary candidates; keep strict original validity for A/B.");
-		changed |= ImGui::Checkbox("Reference-like permissive visibility", &lab.ReferenceVisibility);
-		ImGui::TextDisabled("Skips unsupported shadow candidates; may cause light leaks.");
-		changed |= ImGui::SliderFloat("Experimental mask visibility threshold", &lab.MaskThreshold, 0.0f, 1.0f);
-		changed |= ImGui::DragFloat("Mask receiver distance tolerance", &lab.MaskDistanceTolerance, 0.1f, 0.0f, 10000.0f);
-		ImGui::TextDisabled("Prepared receiver identity is not available in the raster inputs.");
-		if (!settings.PersistLab)
-			ImGui::TextDisabled("Experimental settings reset to strict on restart.");
-		if (changed)
-			++validityRevision;
-		std::scoped_lock diagnosticsLock(diagnosticsMutex);
-		ImGui::TextDisabled("Submitted: %llu  GPU completed: %llu  Recovered: %llu",
-			static_cast<unsigned long long>(diagnostics.value("submissions", uint64_t{})),
-			static_cast<unsigned long long>(diagnostics.value("gpuCompletions", uint64_t{})),
-			static_cast<unsigned long long>(diagnostics.value("recoveredPixels", uint64_t{})));
-		if (diagnostics.contains("originalRejections")) {
-			const auto& reasons = diagnostics["originalRejections"];
-			for (auto it = reasons.begin(); it != reasons.end(); ++it)
-				ImGui::TextDisabled("%s: %llu", it.key().c_str(), static_cast<unsigned long long>(it.value().get<uint64_t>()));
-		}
-	}
 }
 
 void NativeLightingFeature::LoadSettings(json& a_json)

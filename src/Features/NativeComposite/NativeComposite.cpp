@@ -5,7 +5,7 @@
 #include "State.h"
 #include "Utils/DevBenchUx.h"
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeCompositeFeature::Settings, Enabled, AddLighting, LightingStrength, DirectSpatialReconstruction, NativePbrDiagnosticDispatch, NativePbrSurfaceEvaluation, NativePbrFinalColor, NativePbrIncompletePreview, NativePbrInputPreview, PersistLab, ShadowLayerEnabled, ShadowContribution, ShadowBlend, ShadowRadiusPixels, ShadowReceiverTolerance, ShadowPreview, ShadowAfterLighting, ShadowSpatialReconstruction)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeCompositeFeature::Settings, Enabled, AddLighting, LightingStrength, DirectSpatialReconstruction, PersistLab, ShadowLayerEnabled, ShadowContribution, ShadowBlend, ShadowRadiusPixels, ShadowReceiverTolerance, ShadowPreview, ShadowAfterLighting, ShadowSpatialReconstruction)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeComposite::Policy, diffuse, specular, visual)
 
 namespace
@@ -29,117 +29,21 @@ namespace
 	}
 }
 
+bool NativeCompositeFeature::IsEnabled() const
+{
+	return loaded && (enabled.load() || globals::features::nativePBR.SelectedBackend() == NativePBR::Backend::NativeDX12);
+}
+
 void NativeCompositeFeature::DrawSettings()
 {
 	std::scoped_lock lock(settingsMutex);
-	ImGui::Checkbox(T("feature.nativecomposite.enabled", "Enable Native Composite"), &settings.Enabled);
-	ImGui::Checkbox(T("feature.nativecomposite.add_lighting", "Add native direct lighting"), &settings.AddLighting);
-	ImGui::SliderFloat(T("feature.nativecomposite.lighting_strength", "Lighting strength"), &settings.LightingStrength, 0.0f, 2.0f);
-	if (ImGui::Checkbox("Spatially reconstruct missing native direct pixels", &settings.DirectSpatialReconstruction))
+	int denoiser = 0;
+	ImGui::Combo("Denoiser", &denoiser, "Spatial reconstruction\0");
+	if (ImGui::Checkbox("Spatially reconstruct missing direct-light pixels", &settings.DirectSpatialReconstruction))
 		++validityRevision;
-	ImGui::TextDisabled("Full-resolution diffuse/specular fill; raw RT signals remain untouched.");
-	ImGui::SeparatorText("NativePBR SM6.5 surface evaluation");
-	ImGui::Checkbox("Evaluate native materials on DX12 (isolated)", &settings.NativePbrSurfaceEvaluation);
-	ImGui::Checkbox("Record NativePBR material diagnostics", &settings.NativePbrDiagnosticDispatch);
-	if (ImGui::Checkbox("Replace eligible opaque final pixels with NativePBR (experimental)", &settings.NativePbrFinalColor))
+	if (ImGui::Checkbox("Spatially reconstruct missing shadow pixels", &settings.ShadowSpatialReconstruction))
 		++validityRevision;
-	if (ImGui::Checkbox("Preview opaque materials with unsupported shading features (incomplete)", &settings.NativePbrIncompletePreview))
-		++validityRevision;
-	if (settings.NativePbrIncompletePreview)
-		ImGui::TextWrapped("Incomplete test only: missing coat, fuzz, subsurface and other lobes are not evaluated. ProjectedUV and invalid resources remain excluded.");
-	if (ImGui::Checkbox("Preview legacy input-only test colors (experimental)", &settings.NativePbrInputPreview))
-		++validityRevision;
-	ImGui::TextDisabled("Isolated SM6.5 evaluation does not change final color; replacement requires the separate opt-in.");
-	ImGui::TextDisabled("Final replacement is direct-light-only; noneligible pixels retain the existing raster composite.");
-	if (settings.NativePbrFinalColor) {
-		ImGui::TextWrapped("NativePBR final color: %s", pass.PbrFinalStatus().c_str());
-		ImGui::TextDisabled("Final-color submissions: %llu", static_cast<unsigned long long>(pass.PbrFinalSubmissions()));
-	}
-	if (settings.NativePbrSurfaceEvaluation || settings.NativePbrDiagnosticDispatch || settings.NativePbrFinalColor) {
-		ImGui::TextWrapped("Surface producer: %s", pbrSurfaceSourceStatus.c_str());
-		ImGui::TextWrapped("Material evaluation: %s", pass.PbrSurfaceStatus().c_str());
-		ImGui::TextDisabled("SM6.5 dispatches: %llu | missing materials: %llu | revision mismatch: %llu",
-			static_cast<unsigned long long>(pass.PbrSurfaceSubmissions()),
-			static_cast<unsigned long long>(pass.PbrMissingMaterials()),
-			static_cast<unsigned long long>(pass.PbrMissingRevisions()));
-		ImGui::TextDisabled("Missing DDS roles: %llu | unsupported recipes: %llu | unsupported inputs: %llu",
-			static_cast<unsigned long long>(pass.PbrMissingTextures()),
-			static_cast<unsigned long long>(pass.PbrUnsupportedRecipes()),
-			static_cast<unsigned long long>(pass.PbrUnsupportedInputs()));
-		ImGui::TextDisabled("Draw ordinal mismatches: %llu | no eligible frames: %llu",
-			static_cast<unsigned long long>(pass.PbrOrdinalMismatches()),
-			static_cast<unsigned long long>(pass.PbrNoEligibleFrames()));
-		ImGui::TextDisabled("Last evaluated draw table: %u draws | %u evaluable opaque draws",
-			pass.PbrLastDraws(), pass.PbrLastEligibleDraws());
-		const auto& blockers = pass.PbrLastEligibility();
-		ImGui::TextDisabled("Last-frame PBR candidates: %u opaque | %u projected",
-			blockers.opaque, blockers.projected);
-		ImGui::TextDisabled("Opaque blockers (overlap): instance missing/ambiguous/mismatch %u/%u/%u",
-			blockers.missingInstance, blockers.ambiguousInstance, blockers.mismatchedInstance);
-		ImGui::TextDisabled("Instance flags/unresolved %u/%u | recipe source/features %u/%u",
-			blockers.instanceIssues, blockers.unresolvedInstance, blockers.sourceIssues, blockers.featureIssues);
-		if (blockers.opaque && (blockers.sourceIssueBits || blockers.featureIssueBits || blockers.instanceIssueBits || blockers.pbrFlagBits)) {
-			std::string causes;
-			const auto issueBits = blockers.sourceIssueBits | blockers.featureIssueBits;
-			for (size_t bit = 0; bit < NativePBR::kRecipeIssueNames.size(); ++bit)
-				if ((issueBits & (1u << bit)) != 0) {
-					if (!causes.empty())
-						causes += ", ";
-					causes += NativePBR::kRecipeIssueNames[bit];
-				}
-			ImGui::TextWrapped("Opaque recipe reasons: %s", causes.empty() ? "none" : causes.c_str());
-			ImGui::TextDisabled("Opaque PBR flags: 0x%X | instance issue bits: 0x%X",
-				blockers.pbrFlagBits, blockers.instanceIssueBits);
-		}
-		ImGui::TextDisabled("Missing DDS/material/revision %u/%u/%u",
-			blockers.missingDds, blockers.missingMaterial, blockers.revisionMismatch);
-		if (settings.NativePbrIncompletePreview)
-			ImGui::TextDisabled("Feature-incomplete opaque preview draws: %u", blockers.previewOnly);
-	}
-	ImGui::SeparatorText("Independent RT shadows");
-	bool shadowChanged = false;
-	if (ImGui::Checkbox("Enable independent shadow layer", &settings.ShadowLayerEnabled)) {
-		shadowChanged = true;
-		if (settings.ShadowLayerEnabled)
-			globals::features::dx12NativeScene.RequestShadowProducerForComposite();
-	}
-	shadowChanged |= ImGui::SliderFloat("Shadow contribution", &settings.ShadowContribution, 0.0f, 4.0f, "%.2fx");
-	shadowChanged |= ImGui::SliderFloat("Shadow blend", &settings.ShadowBlend, 0.0f, 1.0f, "%.2f");
-	shadowChanged |= ImGui::SliderFloat("Shadow softness (pixels)", &settings.ShadowRadiusPixels, 0.0f, 32.0f, "%.1f");
-	shadowChanged |= ImGui::SliderFloat("Shadow receiver tolerance", &settings.ShadowReceiverTolerance, 0.1f, 64.0f, "%.2f");
-	shadowChanged |= ImGui::Checkbox("Preview independent shadow mask", &settings.ShadowPreview);
-	shadowChanged |= ImGui::Checkbox("Spatially reconstruct missing shadow pixels", &settings.ShadowSpatialReconstruction);
-	shadowChanged |= ImGui::Checkbox("Apply shadows to final combined lighting", &settings.ShadowAfterLighting);
-	ImGui::TextDisabled("Off: shadow raster first. On: shadow raster + native direct.");
-	ImGui::TextDisabled("Boost >1 deepens partial shadows. Native Lighting may be disabled.");
-	if (shadowChanged)
-		++validityRevision;
-	if (ImGui::CollapsingHeader("Validity Lab")) {
-		ImGui::Checkbox("Persist experimental compositor policies", &settings.PersistLab);
-		const char* policies[]{ "Strict", "Effective", "Force finite contributions" };
-		int diffuse = static_cast<int>(policy.diffuse), specular = static_cast<int>(policy.specular), visual = static_cast<int>(policy.visual);
-		bool changed = ImGui::Combo("Diffuse acceptance", &diffuse, policies, 3);
-		changed |= ImGui::Combo("Specular acceptance", &specular, policies, 3);
-		const char* views[]{ "Normal", "Original validity", "Effective validity", "Forced acceptance", "Rejection reasons", "Primary hits", "Depth mismatch", "Shadow mask", "Direct diffuse", "Direct specular", "Strict vs effective" };
-		changed |= ImGui::Combo("Validity visualization", &visual, views, static_cast<int>(std::size(views)));
-		if (changed) {
-			policy.diffuse = static_cast<uint32_t>(diffuse);
-			policy.specular = static_cast<uint32_t>(specular);
-			policy.visual = static_cast<uint32_t>(visual);
-			++validityRevision;
-		}
-		ImGui::TextDisabled("Validity: green evaluated, cyan culled, magenta unsupported, black unavailable.");
-		ImGui::TextDisabled("Reasons: red camera, dark red miss, orange depth, magenta material, purple evaluation,");
-		ImGui::TextDisabled("blue no lights, yellow visibility, white non-finite, green success.");
-		ImGui::TextDisabled("Comparison: cyan effective only, orange strict only, black equal.");
-		ImGui::TextDisabled("Mask: magenta absent, yellow invalid, cyan rejected, orange not rejected; red/green visibility.");
-		ImGui::TextDisabled("GPU counters update only while a validity visualization is selected.");
-		ImGui::TextDisabled("GPU completed: %llu  Accepted: %llu  Modified: %llu  Debug: %llu",
-			static_cast<unsigned long long>(pass.CompletedComposites()), static_cast<unsigned long long>(pass.AcceptedPixels()),
-			static_cast<unsigned long long>(pass.ModifiedPixels()), static_cast<unsigned long long>(pass.VisualizationPixels()));
-		ImGui::TextDisabled("Direct spatially reconstructed pixels (GPU-completed): %llu", static_cast<unsigned long long>(pass.ReconstructedPixels()));
-		ImGui::TextDisabled("Displayed-pixel consumption is not measured.");
-	}
+	ImGui::TextDisabled("Spatial reconstruction fills missing pixels after native tracing.");
 	enabled = settings.Enabled;
 	ImGui::TextDisabled("%s", pass.Status().c_str());
 	ImGui::TextDisabled("%s", LightingStatus(lightingStatus.load()));
@@ -162,11 +66,38 @@ void NativeCompositeFeature::DrawSettings()
 		static_cast<unsigned long long>(pass.PbrInputSubmissions()));
 }
 
+void NativeCompositeFeature::DrawShadowSettings()
+{
+	std::scoped_lock lock(settingsMutex);
+	bool shadowChanged = false;
+	if (ImGui::Checkbox("Enable independent shadow layer", &settings.ShadowLayerEnabled)) {
+		shadowChanged = true;
+		globals::features::dx12NativeScene.SetIndependentShadowProducerEnabled(settings.ShadowLayerEnabled);
+	}
+	shadowChanged |= ImGui::SliderFloat("Shadow contribution", &settings.ShadowContribution, 0.0f, 4.0f, "%.2fx");
+	shadowChanged |= ImGui::SliderFloat("Shadow blend", &settings.ShadowBlend, 0.0f, 1.0f, "%.2f");
+	shadowChanged |= ImGui::SliderFloat("Shadow softness (pixels)", &settings.ShadowRadiusPixels, 0.0f, 32.0f, "%.1f");
+	shadowChanged |= ImGui::SliderFloat("Shadow receiver tolerance", &settings.ShadowReceiverTolerance, 0.1f, 64.0f, "%.2f");
+	shadowChanged |= ImGui::Checkbox("Preview independent shadow mask", &settings.ShadowPreview);
+	shadowChanged |= ImGui::Checkbox("Apply shadows to final combined lighting", &settings.ShadowAfterLighting);
+	ImGui::TextDisabled("Off: shadow raster first. On: shadow raster + native direct.");
+	ImGui::TextDisabled("Boost >1 deepens partial shadows. Native Lighting may be disabled.");
+	if (shadowChanged)
+		++validityRevision;
+}
+
+void NativeCompositeFeature::DrawDirectSettings()
+{
+	std::scoped_lock lock(settingsMutex);
+	ImGui::Checkbox(T("feature.nativecomposite.add_lighting", "Add native direct lighting"), &settings.AddLighting);
+	ImGui::SliderFloat(T("feature.nativecomposite.lighting_strength", "Lighting strength"), &settings.LightingStrength, 0.0f, 2.0f);
+}
+
 void NativeCompositeFeature::LoadSettings(json& a_json)
 {
 	std::scoped_lock lock(settingsMutex);
 	settings = a_json;
-	policy = settings.PersistLab && a_json.contains("ValidityLab") ? a_json.at("ValidityLab").get<NativeComposite::Policy>() : NativeComposite::Policy{};
+	policy = settings.PersistLab && a_json.contains("ValidityLab") ? a_json.at("ValidityLab").get<NativeComposite::Policy>() : NativeComposite::Policy{ 2u, 2u, 0u };
 	policy.diffuse = std::min(policy.diffuse, 2u);
 	policy.specular = std::min(policy.specular, 2u);
 	policy.visual = std::min(policy.visual, 10u);
@@ -178,8 +109,7 @@ void NativeCompositeFeature::LoadSettings(json& a_json)
 	settings.ShadowRadiusPixels = safe(settings.ShadowRadiusPixels, Settings{}.ShadowRadiusPixels, 0.0f, 32.0f);
 	settings.ShadowReceiverTolerance = safe(settings.ShadowReceiverTolerance, Settings{}.ShadowReceiverTolerance, 0.1f, 64.0f);
 	enabled = settings.Enabled;
-	if (settings.ShadowLayerEnabled)
-		globals::features::dx12NativeScene.RequestShadowProducerForComposite();
+	globals::features::dx12NativeScene.SetIndependentShadowProducerEnabled(settings.ShadowLayerEnabled);
 }
 
 void NativeCompositeFeature::SaveSettings(json& a_json)
@@ -194,11 +124,10 @@ void NativeCompositeFeature::RestoreDefaultSettings()
 {
 	std::scoped_lock lock(settingsMutex);
 	settings = {};
-	policy = {};
+	policy = { 2u, 2u, 0u };
 	++validityRevision;
 	enabled = settings.Enabled;
-	if (settings.ShadowLayerEnabled)
-		globals::features::dx12NativeScene.RequestShadowProducerForComposite();
+	globals::features::dx12NativeScene.SetIndependentShadowProducerEnabled(settings.ShadowLayerEnabled);
 }
 
 void NativeCompositeFeature::ConfigureShadowLayer(const json& args)
@@ -227,45 +156,19 @@ void NativeCompositeFeature::ConfigureShadowLayer(const json& args)
 		settings.ShadowSpatialReconstruction = args.at("spatialReconstruction").get<bool>();
 	if (args.contains("afterLighting"))
 		settings.ShadowAfterLighting = args.at("afterLighting").get<bool>();
-	if (settings.ShadowLayerEnabled)
-		globals::features::dx12NativeScene.RequestShadowProducerForComposite();
+	globals::features::dx12NativeScene.SetIndependentShadowProducerEnabled(settings.ShadowLayerEnabled);
 	++validityRevision;
 }
 
 void NativeCompositeFeature::RegisterUxActions()
 {
-	FEATURE_COMMAND("configure", "Set Native Composite enabled, addLighting, lightingStrength, directSpatialReconstruction, pbrSurfaceEvaluation, pbrFinalColor, pbrIncompletePreview, pbrInputPreview, and pbrDiagnosticDispatch.", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("configure", "Set Native Composite enabled, addLighting, lightingStrength, and directSpatialReconstruction.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeCompositeFeature*>(self);
 		std::scoped_lock lock(feature.settingsMutex);
 		if (args.contains("enabled"))
 			feature.settings.Enabled = args.at("enabled").get<bool>();
 		if (args.contains("addLighting"))
 			feature.settings.AddLighting = args.at("addLighting").get<bool>();
-		if (args.contains("pbrDiagnosticDispatch"))
-			feature.settings.NativePbrDiagnosticDispatch = args.at("pbrDiagnosticDispatch").get<bool>();
-		if (args.contains("pbrSurfaceEvaluation"))
-			feature.settings.NativePbrSurfaceEvaluation = args.at("pbrSurfaceEvaluation").get<bool>();
-		if (args.contains("pbrIncompletePreview")) {
-			const bool next = args.at("pbrIncompletePreview").get<bool>();
-			if (feature.settings.NativePbrIncompletePreview != next) {
-				feature.settings.NativePbrIncompletePreview = next;
-				++feature.validityRevision;
-			}
-		}
-		if (args.contains("pbrFinalColor")) {
-			const bool next = args.at("pbrFinalColor").get<bool>();
-			if (feature.settings.NativePbrFinalColor != next) {
-				feature.settings.NativePbrFinalColor = next;
-				++feature.validityRevision;
-			}
-		}
-		if (args.contains("pbrInputPreview")) {
-			const bool next = args.at("pbrInputPreview").get<bool>();
-			if (feature.settings.NativePbrInputPreview != next) {
-				feature.settings.NativePbrInputPreview = next;
-				++feature.validityRevision;
-			}
-		}
 		if (args.contains("directSpatialReconstruction")) {
 			feature.settings.DirectSpatialReconstruction = args.at("directSpatialReconstruction").get<bool>();
 			++feature.validityRevision;
@@ -303,43 +206,15 @@ void NativeCompositeFeature::RegisterUxActions()
 json NativeCompositeFeature::GetDiagnostics()
 {
 	std::scoped_lock lock(settingsMutex);
-	const auto state = lightingStatus.load();
 	const auto sceneDiagnostics = globals::features::dx12NativeScene.GetDiagnostics();
-	const auto& blockers = pass.PbrLastEligibility();
-	return { { "enabled", enabled.load() }, { "captures", captures.load() }, { "lightingSubmissions", lightingSubmissions.load() }, { "shadowSubmissions", shadowSubmissions.load() },
+	return { { "enabled", IsEnabled() }, { "captures", captures.load() },
+		{ "lightingSubmissions", lightingSubmissions.load() }, { "shadowSubmissions", shadowSubmissions.load() },
 		{ "nativePbrInputSubmissions", pass.PbrInputSubmissions() },
-		{ "nativePbrSurfaceDiagnosticEnabled", settings.NativePbrDiagnosticDispatch },
-		{ "nativePbrSurfaceEvaluationEnabled", settings.NativePbrSurfaceEvaluation },
-		{ "nativePbrFinalColorEnabled", settings.NativePbrFinalColor },
-		{ "nativePbrIncompletePreviewEnabled", settings.NativePbrIncompletePreview },
-		{ "nativePbrFinalColorSubmissions", pass.PbrFinalSubmissions() },
-		{ "nativePbrFinalColorStatus", pass.PbrFinalStatus() },
-		{ "nativePbrInputPreviewEnabled", settings.NativePbrInputPreview },
-		{ "nativePbrSurfaceDiagnosticDispatches", pass.PbrSurfaceSubmissions() },
-		{ "nativePbrSurfaceDiagnosticStatus", pass.PbrSurfaceStatus() },
-		{ "nativePbrSurfaceSourceStatus", pbrSurfaceSourceStatus },
-		{ "nativePbrSurfaceMissingMaterials", pass.PbrMissingMaterials() },
-		{ "nativePbrSurfaceMissingRevisions", pass.PbrMissingRevisions() },
-		{ "nativePbrSurfaceMissingTextures", pass.PbrMissingTextures() },
-		{ "nativePbrSurfaceUnsupportedRecipes", pass.PbrUnsupportedRecipes() },
-		{ "nativePbrSurfaceUnsupportedInputs", pass.PbrUnsupportedInputs() },
-		{ "nativePbrSurfaceOrdinalMismatches", pass.PbrOrdinalMismatches() },
-		{ "nativePbrSurfaceNoEligibleFrames", pass.PbrNoEligibleFrames() },
-		{ "nativePbrSurfaceLastFrame", {
-			{ "opaque", blockers.opaque }, { "projected", blockers.projected },
-			{ "eligible", pass.PbrLastEligibleDraws() }, { "missingMaterial", blockers.missingMaterial },
-			{ "revisionMismatch", blockers.revisionMismatch }, { "missingInstance", blockers.missingInstance },
-			{ "ambiguousInstance", blockers.ambiguousInstance }, { "mismatchedInstance", blockers.mismatchedInstance },
-			{ "instanceIssues", blockers.instanceIssues }, { "sourceIssues", blockers.sourceIssues },
-			{ "featureIssues", blockers.featureIssues }, { "unresolvedInstance", blockers.unresolvedInstance },
-			{ "missingDds", blockers.missingDds }, { "sourceIssueBits", blockers.sourceIssueBits },
-			{ "featureIssueBits", blockers.featureIssueBits }, { "pbrFlagBits", blockers.pbrFlagBits },
-			{ "instanceIssueBits", blockers.instanceIssueBits }, { "previewOnly", blockers.previewOnly } } },
 		{ "completedComposites", pass.CompletedComposites() }, { "acceptedPixels", pass.AcceptedPixels() },
 		{ "modifiedPixels", pass.ModifiedPixels() }, { "visualizationPixels", pass.VisualizationPixels() },
 		{ "effectiveRecoveredPixels", pass.EffectiveRecoveredPixels() }, { "finiteOnlyPixels", pass.FiniteOnlyPixels() },
 		{ "counterReadFailures", pass.CounterReadFailures() }, { "directReconstructedPixels", pass.ReconstructedPixels() }, { "visuallyConsumedPixels", nullptr },
-		{ "lightingStatus", LightingStatus(state) },
+		{ "lightingStatus", LightingStatus(lightingStatus.load()) },
 		{ "shadowAdmissionStatus", pass.ShadowStatus() },
 		{ "shadowProducerStatus", sceneDiagnostics.value("shadowStatus", std::string{}) },
 		{ "shadowProducerStage", sceneDiagnostics.value("shadowStage", std::string{}) },
@@ -353,10 +228,9 @@ json NativeCompositeFeature::GetDiagnostics()
 
 std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID3D11Device5* a_device11, ID3D11DeviceContext4* a_context11,
 	ID3D12Device* a_device12, ID3D12CommandQueue* a_queue, ID3D11Texture2D* a_source,
-	uint32_t a_frame, uint32_t a_width, uint32_t a_height, NativeComposite::Transfer a_transfer,
-	std::shared_ptr<const NativePBRSurfacePass::InputFrame> a_pbrSurface)
+	uint32_t a_frame, uint32_t a_width, uint32_t a_height, NativeComposite::Transfer a_transfer)
 {
-	if (!loaded || !enabled)
+	if (!IsEnabled())
 		return {};
 	Settings selected;
 	NativeComposite::Policy selectedPolicy;
@@ -371,8 +245,6 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 	const bool unsupportedGamut = a_transfer == NativeComposite::Transfer::Unknown ||
 	                              (a_transfer == NativeComposite::Transfer::Linear && globals::features::linearLighting.settings.enableACEScg);
 	const auto candidate = globals::game::graphicsState ? globals::features::nativeLighting.GetContribution(globals::game::graphicsState->GetFrameCount()) : nullptr;
-	if (candidate && candidate->geometryOnly && selectedPolicy.visual == 0)
-		selectedPolicy.visual = 5;
 	lightingStatus = (!selected.AddLighting || selected.LightingStrength <= 0) && selectedPolicy.visual == 0 ? 0 : unsupportedGamut && selectedPolicy.visual == 0 ? 2 :
 	                                                                                                                                                                1;
 	if ((selected.AddLighting && selected.LightingStrength > 0 && !unsupportedGamut) || selectedPolicy.visual != 0)
@@ -384,32 +256,9 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 	};
 	const bool wantShadow = shadowSettings.preview || shadowSettings.contribution * shadowSettings.blend > 0.0f;
 	const auto shadow = wantShadow && !unsupportedGamut ? globals::features::dx12NativeScene.GetShadowMask(a_frame) : nullptr;
-	// Raw light ownership is distinct from the additive lighting path. Material
-	// replacement uses the light records without first blending shaded RGB.
-	const bool finalRequested = selected.NativePbrFinalColor && !unsupportedGamut &&
-		selectedPolicy.visual == 0 && !selected.NativePbrInputPreview;
-	const auto materialLighting = finalRequested ? candidate : nullptr;
-	const bool evaluatePbr = selected.NativePbrSurfaceEvaluation || selected.NativePbrDiagnosticDispatch || finalRequested;
-	const auto raster = shadow || evaluatePbr || selected.NativePbrInputPreview ?
-		globals::features::dx12NativeScene.GetRasterFrame(a_frame) : nullptr;
-	std::string surfaceSourceStatus = !evaluatePbr ? "NativePBR surface evaluation disabled" :
-		a_pbrSurface ? "Independent ABI-v3 NativePBR surface received" : "Waiting for independent ABI-v3 NativePBR surface";
-	const auto pbrMaterials = evaluatePbr && globals::features::nativePBR.IsActive() ?
-		globals::features::nativePBR.GetNativeGpuMaterials() : nullptr;
-	const auto pbrPublication = evaluatePbr && globals::features::nativePBR.IsActive() ?
-		globals::features::nativePBR.GetMaterialPublication() : nullptr;
-	if (evaluatePbr && a_pbrSurface && !pbrMaterials)
-		surfaceSourceStatus = "NativePBR GPU material generation not yet published";
-	else if (evaluatePbr && a_pbrSurface && !pbrPublication)
-		surfaceSourceStatus = "NativePBR instance bindings not yet published";
+	const auto raster = shadow ? globals::features::dx12NativeScene.GetRasterFrame(a_frame) : nullptr;
 	auto frame = pass.Capture(a_device11, a_context11, a_device12, a_queue, a_source, a_frame, a_width, a_height,
-		a_transfer, lighting, shadow, raster, shadowSettings, selected.LightingStrength, selected.DirectSpatialReconstruction, selectedPolicy, revision,
-		std::move(a_pbrSurface), pbrMaterials, pbrPublication, evaluatePbr, selected.NativePbrInputPreview,
-		materialLighting, finalRequested, selected.NativePbrIncompletePreview);
-	{
-		std::scoped_lock lock(settingsMutex);
-		pbrSurfaceSourceStatus = std::move(surfaceSourceStatus);
-	}
+		a_transfer, lighting, shadow, raster, shadowSettings, selected.LightingStrength, selected.DirectSpatialReconstruction, selectedPolicy, revision);
 	if (frame)
 		++captures;
 	if (frame && frame->lightingSubmitted) {

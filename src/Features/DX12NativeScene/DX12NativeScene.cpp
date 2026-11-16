@@ -245,8 +245,7 @@ namespace
 
 bool DX12NativeScene::IsNativeBackendRequested() const
 {
-	const int requested = requestedEnabled.load(std::memory_order_relaxed);
-	return loaded && (requested >= 0 ? requested != 0 : settings.Enabled);
+	return loaded;
 }
 
 bool DX12NativeScene::OwnsNativeFeatures() const
@@ -342,433 +341,6 @@ std::optional<DX12NativeScene::NativeLightBatch> DX12NativeScene::GetNativeLLFLi
 
 void DX12NativeScene::DrawSettings()
 {
-	std::scoped_lock lock(settingsMutex);
-	if (ImGui::Button("Analyze live PBR candidates"))
-		coverageRequested = true;
-	ImGui::TextDisabled("Native DX12 ownership: %s", OwnsNativeFeatures() ? "active" : "inactive");
-	ImGui::TextDisabled("NativePBR, NativeLLF and NativeSCM are now independent feature entries.");
-	ImGui::TextDisabled("Native feature ownership follows this DX12 backend, without readiness fallback.");
-	ImGui::TextDisabled("Scene DDS streaming uses bounded batches and archive fallback automatically.");
-	ImGui::TextDisabled("Prepared geometry is still required; unsupported materials can lack native shading.");
-	if (ImGui::Checkbox("Experimental: capture runtime static geometry", &settings.CaptureRuntimeGeometry))
-		runtimeGeometryCaptureActive.store(settings.CaptureRuntimeGeometry, std::memory_order_release);
-	ImGui::TextDisabled("Copies CPU-backed static mesh bytes only; GPU-only/skinned/dynamic meshes are excluded.");
-	if (ImGui::Checkbox("NativeSCM: capture uncovered rigid caster geometry", &settings.CaptureSCMRigidCasters))
-		runtimeGeometryCaptureActive.store(settings.Enabled &&
-											   (settings.CaptureRuntimeGeometry || (settings.CaptureSCMRigidCasters &&
-																					   globals::features::nativeSCM.IsActive())),
-			std::memory_order_release);
-	ImGui::TextDisabled("SCM supplies CPU geometry; native DX12 owns BLAS, RayQuery and shading.");
-	ImGui::TextDisabled("Skinned, moving and GPU-only casters are not yet native-covered.");
-	ImGui::SeparatorText("Native Characters (third-person; observation only)");
-	if (ImGui::Checkbox("Observe third-person character meshes", &settings.ObserveNativeCharacters) &&
-		!settings.ObserveNativeCharacters)
-		nativeCharacters.Reset();
-	if (ImGui::Checkbox("Observe player only", &settings.CharacterPlayerOnly))
-		nativeCharacters.Reset();
-	ImGui::BeginDisabled(!settings.ObserveNativeCharacters);
-	if (ImGui::Checkbox("Stage owned character geometry in DX12 (experimental)",
-			&settings.CharacterStageGeometryDX12))
-		nativeCharacters.Reset();
-	ImGui::EndDisabled();
-	ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
-						 !settings.CharacterStageGeometryDX12);
-	if (ImGui::Checkbox("Dispatch isolated DX12 skinning test (no TLAS ownership)",
-			&settings.CharacterRunSkinningDX12))
-		nativeCharacters.Reset();
-	ImGui::EndDisabled();
-	ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
-						 !settings.CharacterStageGeometryDX12 || !settings.CharacterRunSkinningDX12);
-	if (ImGui::Checkbox("Validate deformed DX12 vertex buffer (readback)",
-			&settings.CharacterValidateSkinningDX12))
-		nativeCharacters.Reset();
-	ImGui::EndDisabled();
-	ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
-						 !settings.CharacterStageGeometryDX12 ||
-						 !settings.CharacterRunSkinningDX12 ||
-						 !settings.CharacterValidateSkinningDX12);
-	if (ImGui::Checkbox("Build isolated dynamic character BLAS (no TLAS)",
-			&settings.CharacterBuildIsolatedBLASDX12))
-		nativeCharacters.Reset();
-	int blasInterval = int(settings.CharacterBLASIntervalFrames);
-	if (ImGui::SliderInt("Isolated BLAS update interval (frames)",
-			&blasInterval, 1, 120))
-		settings.CharacterBLASIntervalFrames = uint32_t(blasInterval);
-	ImGui::EndDisabled();
-	ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
-						 !settings.CharacterStageGeometryDX12 ||
-						 !settings.CharacterRunSkinningDX12 ||
-						 !settings.CharacterValidateSkinningDX12 ||
-						 !settings.CharacterBuildIsolatedBLASDX12);
-	if (ImGui::Checkbox("Build isolated character TLAS (single instance)",
-			&settings.CharacterBuildIsolatedTLASDX12))
-		nativeCharacters.Reset();
-	ImGui::EndDisabled();
-	ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
-						 !settings.CharacterStageGeometryDX12 ||
-						 !settings.CharacterRunSkinningDX12 ||
-						 !settings.CharacterValidateSkinningDX12 ||
-						 !settings.CharacterBuildIsolatedBLASDX12 ||
-						 !settings.CharacterBuildIsolatedTLASDX12);
-	if (ImGui::Checkbox("Trace isolated character RayQuery (diagnostic only)",
-			&settings.CharacterRunIsolatedRayQueryDX12))
-		nativeCharacters.Reset();
-	ImGui::EndDisabled();
-	ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
-						 !settings.CharacterStageGeometryDX12 || !settings.CharacterRunSkinningDX12 ||
-						 !settings.CharacterValidateSkinningDX12 ||
-						 !settings.CharacterBuildIsolatedBLASDX12);
-	if (ImGui::Checkbox("Accumulate character-part BLAS (isolated testing)",
-			&settings.CharacterAccumulatePartBLAS))
-		nativeCharacters.Reset();
-	ImGui::EndDisabled();
-	ImGui::BeginDisabled(!settings.CharacterAccumulatePartBLAS ||
-						 !settings.CharacterStageGeometryDX12 ||
-						 !settings.CharacterBuildIsolatedBLASDX12);
-	if (ImGui::Checkbox("Include opaque rigid attachments (experimental)",
-			&settings.CharacterIncludeRigidAttachments))
-		nativeCharacters.Reset();
-	ImGui::EndDisabled();
-	ImGui::TextDisabled("Rigid geometry uses its DX12 bind BLAS plus the observed world transform.");
-	ImGui::TextDisabled("Up to eight opaque caster parts; each needs an individual GPU self-hit.");
-	ImGui::BeginDisabled(!settings.CharacterAccumulatePartBLAS ||
-						 !settings.CharacterRunIsolatedRayQueryDX12 ||
-						 !settings.CharacterBuildIsolatedTLASDX12);
-	ImGui::Checkbox("Allow validated multi-part caster rays (experimental)",
-		&settings.CharacterMultiPartCasterVisibility);
-	ImGui::EndDisabled();
-	ImGui::TextDisabled("Independent opt-in for native shadow and direct-light visibility.");
-	ImGui::BeginDisabled(!settings.ObserveNativeCharacters ||
-						 !settings.CharacterStageGeometryDX12 ||
-						 !settings.CharacterRunSkinningDX12 ||
-						 !settings.CharacterValidateSkinningDX12 ||
-						 !settings.CharacterBuildIsolatedBLASDX12 ||
-						 !settings.CharacterBuildIsolatedTLASDX12 ||
-						 !settings.CharacterRunIsolatedRayQueryDX12 || !settings.ShadowMask);
-	ImGui::Checkbox("Character shadows in native visibility (experimental)",
-		&settings.CharacterShadowCasterVisibility);
-	int maximumCasterAge = int(settings.CharacterCasterMaxPoseAgeFrames);
-	if (ImGui::SliderInt("Maximum character-caster pose age (frames)",
-			&maximumCasterAge, 1, 30))
-		settings.CharacterCasterMaxPoseAgeFrames = uint32_t(maximumCasterAge);
-	ImGui::EndDisabled();
-	ImGui::TextDisabled("Only secondary shadow rays use the character TLAS.");
-	ImGui::TextDisabled("Default off; receiver BRDF and alpha/PBR materials still use raster.");
-	ImGui::TextDisabled(settings.CharacterPlayerOnly ?
-							"Only the third-person player root is inspected." :
-							"Includes third-person player, NPCs and creatures.");
-	ImGui::TextDisabled("Isolated DX12 tests do not replace raster or native SCM ownership.");
-	int maxActors = int(settings.CharacterMaxActors);
-	if (ImGui::SliderInt("Maximum observed actors", &maxActors, 1, 32))
-		settings.CharacterMaxActors = uint32_t(maxActors);
-	int interval = int(settings.CharacterObservationPeriod);
-	if (ImGui::SliderInt("Observation interval (frames)", &interval, 1, 120))
-		settings.CharacterObservationPeriod = uint32_t(interval);
-	int captureBatch = int(settings.CharacterMeshCaptureBatch);
-	if (ImGui::SliderInt("Character mesh captures per observation",
-			&captureBatch, 1, 4))
-		settings.CharacterMeshCaptureBatch = uint32_t(captureBatch);
-	const auto characterStats = nativeCharacters.GetDiagnostics();
-	ImGui::Text("Actor samples: %u  Meshes: %u  Skinned: %u  Rigid: %u  Dynamic: %u",
-		characterStats.value("actors", 0u), characterStats.value("parts", 0u),
-		characterStats.value("skinned", 0u), characterStats.value("rigid", 0u),
-		characterStats.value("dynamic", 0u));
-	ImGui::TextDisabled("Character worker: %s, last sample frame %u",
-		characterStats.value("workerBusy", false) ? "busy" : "idle",
-		characterStats.value("generationFrame", 0u));
-	ImGui::Text("Owned DX12 character bind buffers: %zu (%.2f MiB)",
-		characterStats.value("nativeStagedMeshes", size_t{ 0 }),
-		double(characterStats.value("nativeStagedBytes", uint64_t{ 0 })) / (1024.0 * 1024.0));
-	ImGui::TextDisabled("Character mesh evictions: %u (actor/equipment identity changes)",
-		characterStats.value("nativeEvictedMeshes", 0u));
-	ImGui::TextDisabled("Skin bind vertices, indices and raw bone registers are DX12-staged.");
-	ImGui::Text("Rigid attachments staged: %u; receiver geometry attributes: %u",
-		characterStats.value("nativeRigidStagedMeshes", 0u),
-		characterStats.value("nativeReceiverAttributeReady", 0u));
-	ImGui::TextDisabled("No native character BRDF without verified normals, UVs and material descriptors.");
-	ImGui::TextDisabled("Unsupported skinned/alpha materials remain raster-authoritative.");
-	ImGui::TextDisabled("DX12 skinning/BLAS/TLAS/RayQuery are opt-in; native visibility needs eligibility.");
-	ImGui::Text("Bone palette: %u VS registers (captured frame %u)",
-		characterStats.value("poseRegisters", 0u), characterStats.value("poseFrame", 0u));
-	ImGui::TextDisabled("Pose stage deferrals: %u",
-		characterStats.value("poseDeferrals", 0u));
-	const auto poseNeeded = characterStats.value("poseRequiredBones", 0u);
-	const auto poseProvided = characterStats.value("poseAvailableBones", 0u);
-	ImGui::Text("Last skin-palette check: %u available / %u required bones",
-		poseProvided, poseNeeded);
-	const auto poseRejected = characterStats.value("posePaletteRejections", 0u);
-	if (poseRejected)
-		ImGui::TextDisabled("Incompatible palettes rejected: %u (no GPU dispatch)",
-			poseRejected);
-	ImGui::Text("Deformed output: %u vertices, submitted %s, GPU ready %s",
-		characterStats.value("deformOutputVertices", 0u),
-		characterStats.value("deformSubmitted", false) ? "yes" : "no",
-		characterStats.value("deformGpuReady", false) ? "yes" : "no");
-	ImGui::Text("Deformation sanity: %s, sampled %u, non-finite %u (pose frame %u)",
-		characterStats.value("validationReady", false) ?
-			(characterStats.value("validationSane", false) ? "finite" : "FAILED") :
-			"pending/off",
-		characterStats.value("validationInspected", 0u),
-		characterStats.value("validationNonFinite", 0u),
-		characterStats.value("validationFrame", 0u));
-	if (characterStats.value("validationReady", false))
-		ImGui::TextDisabled("Max displacement vs bind pose: %.2f game units",
-			characterStats.value("validationMaximumBindDisplacement", 0.0f));
-	ImGui::TextDisabled("Sanity checks do not prove Skyrim skinning parity.");
-	ImGui::Text("Dynamic BLAS preflight: DXR %s, DXGI headroom %s",
-		characterStats.value("blasPreflightDXR", false) ? "ready" : "unavailable",
-		characterStats.value("blasPreflightBudget", false) ? "sufficient" : "insufficient/unknown");
-	if (characterStats.value("blasPreflightReady", false)) {
-		constexpr double mib = 1024.0 * 1024.0;
-		ImGui::TextDisabled("BLAS result %.2f MiB, scratch %.2f MiB, update scratch %.2f MiB",
-			double(characterStats.value("blasPreflightResultBytes", uint64_t{ 0 })) / mib,
-			double(characterStats.value("blasPreflightScratchBytes", uint64_t{ 0 })) / mib,
-			double(characterStats.value("blasPreflightUpdateScratchBytes", uint64_t{ 0 })) / mib);
-		const auto preflightStatus =
-			characterStats.value("blasPreflightStatus", std::string{});
-		if (!preflightStatus.empty())
-			ImGui::TextWrapped("Character BLAS plan: %s", preflightStatus.c_str());
-	}
-	ImGui::Text("Isolated character BLAS: %s, %s, pose frame %u",
-		characterStats.value("isolatedBLASSubmitted", false) ?
-			(characterStats.value("isolatedBLASReady", false) ? "GPU ready" : "submitted") :
-			"not submitted",
-		characterStats.value("isolatedBLASRefit", false) ? "refit" : "build",
-		characterStats.value("isolatedBLASFrame", 0u));
-	ImGui::Text("Accumulated character-part BLAS: %zu, rigid BLAS: %zu",
-		characterStats.value("accumulatedBLASParts", size_t{ 0 }),
-		characterStats.value("rigidBLASParts", size_t{ 0 }));
-	ImGui::TextDisabled("BLAS resources %.2f MiB, scratch %.2f MiB, pending %u",
-		double(characterStats.value("isolatedBLASBytes", uint64_t{ 0 })) / (1024.0 * 1024.0),
-		double(characterStats.value("isolatedBLASScratchBytes", uint64_t{ 0 })) /
-			(1024.0 * 1024.0),
-		characterStats.value("isolatedBLASPending", 0u));
-	const auto isolatedBlasFailure =
-		characterStats.value("isolatedBLASError", std::string{});
-	if (!isolatedBlasFailure.empty())
-		ImGui::TextWrapped("Isolated BLAS: %s", isolatedBlasFailure.c_str());
-	ImGui::Text("Isolated TLAS instances: %zu (multi-part diagnostics only)",
-		characterStats.value("isolatedTLASInstances", size_t{ 0 }));
-	ImGui::Text("Isolated character TLAS: %s, pose frame %u",
-		characterStats.value("isolatedTLASSubmitted", false) ?
-			(characterStats.value("isolatedTLASReady", false) ? "GPU ready" : "submitted") :
-			"not submitted",
-		characterStats.value("isolatedTLASFrame", 0u));
-	ImGui::TextDisabled("TLAS %.2f MiB, pending %u",
-		double(characterStats.value("isolatedTLASBytes", uint64_t{ 0 })) /
-			(1024.0 * 1024.0),
-		characterStats.value("isolatedTLASPending", 0u));
-	const auto tlasFailure = characterStats.value("isolatedTLASError", std::string{});
-	if (!tlasFailure.empty())
-		ImGui::TextWrapped("Isolated TLAS: %s", tlasFailure.c_str());
-	const auto rayStatus = characterStats.value("isolatedRayStatus", 0u);
-	const char* rayState = rayStatus == 3u ? "triangle hit" :
-	                       rayStatus == 2u ? "miss" :
-	                       rayStatus == 1u ? "no valid triangle" :
-	                                         "not ready/invalid";
-	ImGui::Text("Per-part RayQuery self-hits: %u / %zu",
-		characterStats.value("isolatedRayPartsHit", 0u),
-		characterStats.value("isolatedRayPartsTested", size_t{ 0 }));
-	ImGui::Text("Isolated RayQuery: %s; %s (pose frame %u)",
-		characterStats.value("isolatedRayReady", false)     ? "GPU ready" :
-		characterStats.value("isolatedRaySubmitted", false) ? "submitted" :
-															  "not submitted",
-		rayState, characterStats.value("isolatedRayFrame", 0u));
-	if (rayStatus == 3u)
-		ImGui::TextDisabled("Ray hit t %.4f; primitive %u; instance %u",
-			characterStats.value("isolatedRayDistance", 0.0f),
-			characterStats.value("isolatedRayPrimitive", UINT32_MAX),
-			characterStats.value("isolatedRayInstance", UINT32_MAX));
-	const auto rayError = characterStats.value("isolatedRayError", std::string{});
-	if (!rayError.empty())
-		ImGui::TextWrapped("Isolated RayQuery: %s", rayError.c_str());
-	const auto casterReadiness = nativeCharacters.GetCasterReadiness(
-		globals::game::graphicsState ?
-			globals::game::graphicsState->GetFrameCount() :
-			0u,
-		settings.CharacterCasterMaxPoseAgeFrames,
-		settings.CharacterAccumulatePartBLAS &&
-			settings.CharacterMultiPartCasterVisibility);
-	ImGui::TextWrapped("Character shadow eligibility: %s",
-		casterReadiness.reason);
-	const auto shadowCounters = shadow.GetDiagnostics();
-	ImGui::Text("Character shadow visibility rays blocked: %u",
-		shadowCounters.value("characterShadowRayHits", 0u));
-	ImGui::TextDisabled("Latest completed shadow hit sample: %s (frame %u)",
-		shadowCounters.value("characterShadowHitCountReady", false) ?
-			"ready" :
-			"pending/not offered",
-		shadowCounters.value("characterShadowHitSampleFrame", 0u));
-	ImGui::TextDisabled("World-bound plausibility is not exact pose parity.");
-	const auto characterDeformError = characterStats.value("deformError", std::string{});
-	if (!characterDeformError.empty())
-		ImGui::TextWrapped("Deformation status: %s", characterDeformError.c_str());
-	ImGui::TextDisabled("DXGI character deferrals: %u  invalid uploads: %u",
-		characterStats.value("nativeDxgiDeferrals", 0u),
-		characterStats.value("nativeUploadRejections", 0u));
-	ImGui::BeginDisabled(!settings.CaptureRuntimeGeometry);
-	ImGui::Checkbox("Experimental: persist and menu-prewarm runtime geometry",
-		&settings.CacheRuntimeGeometry);
-	ImGui::EndDisabled();
-	ImGui::TextDisabled("CPU-only prewarm; reuse requires identical live geometry after scene entry.");
-	ImGui::Text("Geometry cache: saved %u  failed %u  prewarmed %u / %u (%.2f MiB)%s",
-		runtimeGeometryCache.Stored(), runtimeGeometryCache.Rejected(),
-		runtimeGeometryCache.MenuAccepted(), runtimeGeometryCache.MenuChecked(),
-		double(runtimeGeometryCache.MenuBytes()) / (1024.0 * 1024.0),
-		runtimeGeometryCache.Busy() ? "  [working]" : "");
-	if (!runtimeGeometryCache.Failure().empty())
-		ImGui::TextWrapped("Geometry cache: %s", runtimeGeometryCache.Failure().c_str());
-	ImGui::Text("Cache-assisted geometry encodes: %u", runtimeGeometryPrepare.CacheHits());
-	ImGui::Text("Runtime mesh captures: %zu  bytes: %.2f MiB",
-		runtimeGeometry.Count(), double(runtimeGeometry.Bytes()) / (1024.0 * 1024.0));
-	ImGui::Text("Prepared native meshes: %zu  GPU bytes: %.2f MiB",
-		runtimeGeometryPrepare.GetCell() && runtimeGeometryPrepare.GetCell()->snapshot ?
-			runtimeGeometryPrepare.GetCell()->snapshot->instances.size() :
-			0,
-		runtimeGeometryPrepare.GetCell() ? double(runtimeGeometryPrepare.GetCell()->bytes) / (1024.0 * 1024.0) : 0.0);
-	ImGui::Text("Runtime geometry batches: %u  attempts: %zu  failures: %u",
-		runtimeGeometryPrepare.Batches(), runtimeGeometryPrepare.Attempted(),
-		runtimeGeometryPrepare.Failures());
-	ImGui::Text("Current-scene TLAS: %s",
-		currentSceneStableAcceleration && currentSceneStableAcceleration->scope.policy == 2 ?
-			"Prepared + runtime geometry" :
-			"Prepared geometry only");
-	ImGui::TextDisabled("Runtime shapes enter the production scene after completion and material binding.");
-	if (ImGui::CollapsingHeader("Native PBR Diagnostics"))
-		DrawNativePBRDiagnostics(GetDiagnostics());
-	{
-		std::scoped_lock coverageLock(coverageMutex);
-		if (coverageFailed)
-			ImGui::TextDisabled("Candidate analysis unavailable or failed.");
-		if (coverageTask)
-			ImGui::TextDisabled("Analyzing live PBR candidates...");
-		if (coverageResult) {
-			const auto scene = GetPublishedScene();
-			ImGui::TextDisabled("Unverified snapshot candidates%s: %zu unique, %zu ambiguous, %zu unobserved, %zu without source identity",
-				!scene || scene->revision != coverageRevision ? " (previous scene)" : "", coverageResult->uniqueCandidates,
-				coverageResult->ambiguous, coverageResult->noObservation, coverageResult->missingIdentity);
-			if (coverageResult->recipeGenerationAvailable)
-				ImGui::TextDisabled("Candidate recipes at revision %llu: %zu available, %zu pending or unavailable",
-					static_cast<unsigned long long>(coverageResult->recipeRevision), coverageResult->candidateRecipes, coverageResult->candidateRecipesMissing);
-		}
-	}
-	if (ImGui::Checkbox("Load prepared scene", &settings.Enabled))
-		resetRequested = true;
-	if (ImGui::Checkbox("Produce RT shadow mask", &settings.ShadowMask))
-		shadowResetRequested = true;
-	if (settings.ShadowMask && !shadowStatus.empty())
-		ImGui::TextUnformatted(shadowStatus.c_str());
-	if (settings.ShadowMask)
-		ImGui::TextDisabled("Opaque-frame shadow recoveries: %llu / %llu",
-			static_cast<unsigned long long>(shadowOpaqueRetryRecovered),
-			static_cast<unsigned long long>(shadowOpaqueRetryAttempts));
-	if (ImGui::CollapsingHeader("Early DX12 shadow-mask controls")) {
-		bool changed = false;
-		ImGui::TextDisabled("This panel owns raw shadow visibility; its final-image contribution is independent in Native Composite.");
-		int traceDensity = int(settings.ShadowTraceDensityMode);
-		if (ImGui::Combo("Independent shadow trace density", &traceDensity, "Full\0Two-thirds\0Half\0One-third\0Quarter\0One-sixth\0One-ninth\0Four-ninths\0")) {
-			settings.ShadowTraceDensityMode = uint32_t(traceDensity);
-			changed = true;
-		}
-		ImGui::TextDisabled("All modes trace at render size; skipped pixels have validity -1.");
-		ImGui::TextDisabled("Receiver rays generated inside native DX12 RayQuery.");
-		ImGui::TextDisabled("No separate camera-ray pipeline or DX11 compute dispatch.");
-		changed |= ImGui::Checkbox("Shadow all unified native point lights", &settings.ShadowAllLights);
-		if (!settings.ShadowAllLights) {
-			const auto scene = GetPublishedScene();
-			int index = int(settings.ShadowLightIndex);
-			const auto unified = scene && globals::game::graphicsState ?
-			                         GetNativeLLFLights(globals::game::graphicsState->GetFrameCount()) :
-			                         std::nullopt;
-			const int maxIndex = unified ? int(unified->count ? unified->count - 1 : 0) : 0;
-			if (ImGui::SliderInt("Shadow point light index", &index, 0, maxIndex)) {
-				settings.ShadowLightIndex = uint32_t(index);
-				changed = true;
-			}
-		}
-		changed |= ImGui::Checkbox("Stochastic shadow emitter sampling", &settings.ShadowStochastic);
-		ImGui::BeginDisabled(!settings.ShadowStochastic);
-		changed |= ImGui::SliderFloat("Shadow emitter radius multiplier", &settings.ShadowEmitterRadius, 0.0f, 8.0f);
-		ImGui::EndDisabled();
-		changed |= ImGui::SliderFloat("Shadow light reach multiplier", &settings.ShadowReachMultiplier, 0.1f, 64.0f, "%.2fx", ImGuiSliderFlags_Logarithmic);
-		changed |= ImGui::SliderFloat("Shadow fade range fraction", &settings.ShadowFalloffFraction, 0.02f, 1.0f);
-		changed |= ImGui::SliderFloat("Shadow falloff curve", &settings.ShadowFalloffExponent, 0.25f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
-		changed |= ImGui::Checkbox("Fade shadows near light reach", &settings.ShadowDistanceFade);
-		int normal = int(settings.ShadowNormalInfluence);
-		if (ImGui::Combo("Shadow normal influence", &normal, "Legacy flat\0Geometry normals\0Full material normals\0")) {
-			settings.ShadowNormalInfluence = uint32_t(normal);
-			changed = true;
-		}
-		if (ImGui::Button("Reset shadow reach / falloff")) {
-			const Settings defaults{};
-			settings.ShadowReachMultiplier = defaults.ShadowReachMultiplier;
-			settings.ShadowFalloffFraction = defaults.ShadowFalloffFraction;
-			settings.ShadowFalloffExponent = defaults.ShadowFalloffExponent;
-			settings.ShadowDistanceFade = defaults.ShadowDistanceFade;
-			changed = true;
-		}
-		if (changed)
-			++shadowControlsRevision;
-	}
-	ImGui::SeparatorText("Global native DXGI budget policy");
-	int globalReserve = int(settings.GlobalDXGIHeadroomPercent);
-	if (ImGui::SliderInt("Global DXGI reserve (% of local budget)", &globalReserve, 1, 50)) {
-		settings.GlobalDXGIHeadroomPercent = static_cast<uint32_t>(globalReserve);
-		DX12Native::VideoMemoryBudget::SetHeadroomPercent(settings.GlobalDXGIHeadroomPercent);
-	}
-	ImGui::TextDisabled("Shared by native scene, materials, BLAS/TLAS, lighting, shadows and composite.");
-	ImGui::TextDisabled("Reserve policy changes future admissions; current GPU allocations retire via their fences.");
-	ImGui::SeparatorText("Native subdivision preparation (experimental)");
-	const char* gridModes[]{ "Full scene", "Automatic (after scene estimate)", "Forced grid preparation" };
-	int gridMode = static_cast<int>(settings.SubdivisionMode);
-	if (ImGui::Combo("Subdivision preparation mode", &gridMode, gridModes, 3)) {
-		settings.SubdivisionMode = static_cast<uint32_t>(gridMode);
-		resetRequested.store(true, std::memory_order_release);
-	}
-	if (settings.SubdivisionMode == 1) {
-		ImGui::Checkbox("Screen prepared scene size before automatic subdivision",
-			&settings.AutoGridMemoryScreening);
-		ImGui::TextDisabled("Off: automatic mode immediately selects the grid; on: DXGI-based scene screening.");
-		ImGui::TextDisabled("An automatic grid decision stays latched until scene reset.");
-	}
-	int gridUnits = static_cast<int>(settings.SubcellSize / 1024);
-	if (ImGui::SliderInt("Subcell width (x1024 units)", &gridUnits, 2, 16)) {
-		settings.SubcellSize = uint32_t(gridUnits * 1024);
-		resetRequested.store(true, std::memory_order_release);
-	}
-	ImGui::TextDisabled("Exteriors use WRLD-scoped 3x3 geometry; interiors keep CELL-scoped caches.");
-	ImGui::TextDisabled("Grid TLAS publication remains experimental and opt-in.");
-	ImGui::TextDisabled("Outdoor static geometry coverage is still provisional.");
-	if (ImGui::Checkbox("Build isolated grid TLAS for diagnostic testing", &settings.BuildCandidateGridTLAS))
-		resetRequested.store(true, std::memory_order_release);
-	ImGui::BeginDisabled(!settings.BuildCandidateGridTLAS);
-	if (ImGui::Checkbox("Experimental: publish ready grid to native DXR", &settings.UseGridForNativeDXR))
-		resetRequested.store(true, std::memory_order_release);
-	ImGui::EndDisabled();
-	ImGui::TextDisabled("Opt-in: complete TLAS + material pair swaps together, with no blank frame.");
-	ImGui::TextDisabled("During grid rebuilds, the last published TLAS remains active.");
-	ImGui::TextDisabled("Otherwise preserve the original full-scene renderer.");
-	ImGui::TextDisabled("Forced + live grid skips expensive full-cell GPU preparation.");
-	{
-		const auto grid = subcellManager.GetDiagnostics();
-		const auto candidate = candidateGridAcceleration.GetScene();
-		const auto bindings = candidateGridBindings.Get();
-		const auto active = GetPublishedScene();
-		ImGui::Text("Grid center: (%lld, %lld) | loaded %u/9 | loading %u",
-			static_cast<long long>(grid.value("centerX", int64_t{ 0 })),
-			static_cast<long long>(grid.value("centerY", int64_t{ 0 })),
-			grid.value("resident", 0u), grid.value("loading", 0u));
-		ImGui::Text("Grid CPU snapshot: %zu instances | %llu MiB",
-			static_cast<size_t>(grid.value("candidateInstances", uint64_t{ 0 })),
-			static_cast<unsigned long long>(grid.value("candidateBytes", uint64_t{ 0 }) /
-											DX12Native::VideoMemoryBudget::kMiB));
-		ImGui::Text("TLAS: %s | materials: %s | native DXR: %s",
-			candidate && candidate->scope.policy == 3 ? "ready" : "pending",
-			candidate && bindings && bindings->scene == candidate ? "ready" : "pending",
-			active && active->acceleration && active->acceleration->scope.policy == 3 ?
-				"active grid" :
-				"full scene / raster fallback");
-	}
 	ImGui::SeparatorText("Dynamic DXGI VRAM budgeting");
 	ImGui::TextDisabled("Scene and frame-pool memory follow live DXGI; no manual ceilings.");
 	const auto budgetInfo = GetDiagnostics().value("preparedSceneBudget", json::object());
@@ -776,59 +348,61 @@ void DX12NativeScene::DrawSettings()
 		double(budgetInfo.value("localUsageBytes", uint64_t{ 0 })) / (1024.0 * 1024.0),
 		double(budgetInfo.value("localBudgetBytes", uint64_t{ 0 })) / (1024.0 * 1024.0),
 		double(budgetInfo.value("effectiveBytes", uint64_t{ 0 })) / (1024.0 * 1024.0));
-	ImGui::TextDisabled("Prepared geometry, BLAS/TLAS, frames and materials honor the shared DXGI reserve.");
+	ImGui::TextDisabled("Prepared geometry, BLAS/TLAS and materials honor the shared DXGI reserve.");
 	ImGui::SeparatorText("Prepared DX12 CELL loading");
 	if (ImGui::Button("Reload prepared CELL from cache"))
 		resetRequested.store(true, std::memory_order_release);
-	ImGui::TextDisabled("Read the published 3-file CELL package without running preparation.");
-	{
-		// UI only reads a cached JSON snapshot; disk IO and DX12 work stay off the menu thread.
-		const auto snapshot = GetDiagnostics();
-		const auto preparedStatus = snapshot.value("prepared", json::object());
-		const auto as = snapshot.value("acceleration", json::object());
-		const auto value = [](const json& node, const char* key) -> uint64_t {
-			return node.is_object() ? node.value(key, uint64_t{ 0 }) : 0;
-		};
-		ImGui::Text("CELL loading: %s",
-			preparedStatus.value("loading", false)   ? "In progress" :
-			preparedStatus.value("loaded", false)    ? "Geometry loaded" :
-			preparedStatus.value("requested", false) ? "Attempt finished" :
-													   "Not requested");
-		ImGui::Text("Geometry upload progress: %llu meshes / %.2f MiB",
-			static_cast<unsigned long long>(value(preparedStatus, "uploadProgressMeshes")),
-			double(value(preparedStatus, "uploadProgressBytes")) / (1024.0 * 1024.0));
-		ImGui::Text("Geometry: %llu meshes / %llu instances / %.2f MiB",
-			static_cast<unsigned long long>(value(preparedStatus, "meshes")),
-			static_cast<unsigned long long>(value(preparedStatus, "instances")),
-			double(value(preparedStatus, "geometryBytes")) / (1024.0 * 1024.0));
-		ImGui::Text("Shading: %llu instances / %llu tangent frames",
-			static_cast<unsigned long long>(value(preparedStatus, "shadedInstances")),
-			static_cast<unsigned long long>(value(preparedStatus, "tangentInstances")));
-		ImGui::Text("BLAS: %llu/%llu | TLAS: %llu/%llu",
-			static_cast<unsigned long long>(value(as, "bottomCompletions")),
-			static_cast<unsigned long long>(value(as, "bottomSubmissions")),
-			static_cast<unsigned long long>(value(as, "topCompletions")),
-			static_cast<unsigned long long>(value(as, "topSubmissions")));
-		ImGui::Text("Published DX12 scene: %s", snapshot.value("published", false) ? "Yes" : "No");
-		const auto loadFailure = preparedStatus.value("failure", std::string{});
-		if (!loadFailure.empty())
-			ImGui::TextWrapped("CELL load failure: %s", loadFailure.c_str());
-		const auto asFailure = as.value("failure", std::string{});
-		if (!asFailure.empty())
-			ImGui::TextWrapped("Acceleration failure: %s", asFailure.c_str());
-		const auto workerFailure = as.value("lastBatchFailure", std::string{});
-		if (!workerFailure.empty())
-			ImGui::TextWrapped("AS worker failure: %s", workerFailure.c_str());
-		ImGui::TextDisabled("Geometry and acceleration are reported independently of material readiness.");
+}
+
+void DX12NativeScene::DrawShadowSettings()
+{
+	std::scoped_lock lock(settingsMutex);
+	bool changed = false;
+	ImGui::TextDisabled("This panel owns raw shadow visibility; its final-image contribution is independent in Native Composite.");
+	int traceDensity = int(settings.ShadowTraceDensityMode);
+	if (ImGui::Combo("Independent shadow trace density", &traceDensity, "Full\0Two-thirds\0Half\0One-third\0Quarter\0One-sixth\0One-ninth\0Four-ninths\0")) {
+		settings.ShadowTraceDensityMode = uint32_t(traceDensity);
+		changed = true;
 	}
-	ImGui::TextUnformatted(failure.empty() ? "Prepared static scenes" : failure.c_str());
-	ImGui::TextDisabled("Native frame-pool budgeting: automatic DXGI only.");
-	ImGui::TextDisabled("Pool allocations respect DXGI headroom; independent of the prepared-scene budget.");
-	const auto requestedBatch = requestedMaterialBatch.load();
-	int batchMB = int(requestedBatch ? requestedBatch : settings.MaterialBatchMB);
-	if (ImGui::SliderInt("Prepared material batch limit (MiB)", &batchMB, 1, 64))
-		requestedMaterialBatch = uint32_t(batchMB);
-	ImGui::TextDisabled("Applies to the next prepared material load; larger sets use the existing worker path.");
+	ImGui::TextDisabled("All modes trace at render size; skipped pixels have validity -1.");
+	ImGui::TextDisabled("Receiver rays generated inside native DX12 RayQuery.");
+	ImGui::TextDisabled("No separate camera-ray pipeline or DX11 compute dispatch.");
+	changed |= ImGui::Checkbox("Shadow all unified native point lights", &settings.ShadowAllLights);
+	if (!settings.ShadowAllLights) {
+		const auto scene = GetPublishedScene();
+		int index = int(settings.ShadowLightIndex);
+		const auto unified = scene && globals::game::graphicsState ?
+		                         GetNativeLLFLights(globals::game::graphicsState->GetFrameCount()) :
+		                         std::nullopt;
+		const int maxIndex = unified ? int(unified->count ? unified->count - 1 : 0) : 0;
+		if (ImGui::SliderInt("Shadow point light index", &index, 0, maxIndex)) {
+			settings.ShadowLightIndex = uint32_t(index);
+			changed = true;
+		}
+	}
+	changed |= ImGui::Checkbox("Stochastic shadow emitter sampling", &settings.ShadowStochastic);
+	ImGui::BeginDisabled(!settings.ShadowStochastic);
+	changed |= ImGui::SliderFloat("Shadow emitter radius multiplier", &settings.ShadowEmitterRadius, 0.0f, 8.0f);
+	ImGui::EndDisabled();
+	changed |= ImGui::SliderFloat("Shadow light reach multiplier", &settings.ShadowReachMultiplier, 0.1f, 64.0f, "%.2fx", ImGuiSliderFlags_Logarithmic);
+	changed |= ImGui::SliderFloat("Shadow fade range fraction", &settings.ShadowFalloffFraction, 0.02f, 1.0f);
+	changed |= ImGui::SliderFloat("Shadow falloff curve", &settings.ShadowFalloffExponent, 0.25f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+	changed |= ImGui::Checkbox("Fade shadows near light reach", &settings.ShadowDistanceFade);
+	int normal = int(settings.ShadowNormalInfluence);
+	if (ImGui::Combo("Shadow normal influence", &normal, "Legacy flat\0Geometry normals\0Full material normals\0")) {
+		settings.ShadowNormalInfluence = uint32_t(normal);
+		changed = true;
+	}
+	if (ImGui::Button("Reset shadow reach / falloff")) {
+		const Settings defaults{};
+		settings.ShadowReachMultiplier = defaults.ShadowReachMultiplier;
+		settings.ShadowFalloffFraction = defaults.ShadowFalloffFraction;
+		settings.ShadowFalloffExponent = defaults.ShadowFalloffExponent;
+		settings.ShadowDistanceFade = defaults.ShadowDistanceFade;
+		changed = true;
+	}
+	if (changed)
+		++shadowControlsRevision;
 }
 
 void DX12NativeScene::LoadSettings(json& a_json)
@@ -839,9 +413,8 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	DX12Native::VideoMemoryBudget::SetHeadroomPercent(reservePercent);
 	// A compositor requesting the independent layer takes precedence over the
 	// scene configuration's possibly older disabled producer state.
-	if (requestedEnabled.load() != 1)
-		requestedEnabled = selected.Enabled ? 1 : 0;
-	if (requestedShadow.load() != 1)
+	requestedEnabled = 1;
+	if (requestedShadow.load() < 0)
 		requestedShadow = selected.ShadowMask ? 1 : 0;
 	requestedBudget = 0u;
 	requestedFrameBudget = 0u;
@@ -853,7 +426,9 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	settings.NativePBR = selected.NativePBR;
 	settings.NativeLLF = selected.NativeLLF;
 	settings.NativeSCM = selected.NativeSCM;
+	settings.CaptureRuntimeGeometry = selected.CaptureRuntimeGeometry;
 	settings.CaptureSCMRigidCasters = selected.CaptureSCMRigidCasters;
+	settings.CacheRuntimeGeometry = selected.CacheRuntimeGeometry;
 	settings.ObserveNativeCharacters = selected.ObserveNativeCharacters;
 	if (settings.CharacterPlayerOnly != selected.CharacterPlayerOnly)
 		nativeCharacters.Reset();
@@ -1236,6 +811,10 @@ void DX12NativeScene::EarlyPrepass()
 		std::scoped_lock lock(settingsMutex);
 		if (const auto enabled = requestedEnabled.exchange(-1); enabled >= 0)
 			settings.Enabled = enabled != 0;
+		const bool nativeSelected = globals::features::nativePBR.SelectedBackend() == NativePBR::Backend::NativeDX12;
+		if (settings.Enabled != nativeSelected)
+			resetRequested = true;
+		settings.Enabled = nativeSelected;
 		if (const auto shadowEnabled = requestedShadow.exchange(-1); shadowEnabled >= 0)
 			settings.ShadowMask = shadowEnabled != 0;
 		requestedBudget.store(UINT32_MAX, std::memory_order_relaxed);
@@ -1908,7 +1487,7 @@ void DX12NativeScene::RegisterUxActions()
 		++feature.shadowControlsRevision;
 		globals::features::nativeComposite.ConfigureShadowLayer(args);
 	});
-	FEATURE_COMMAND("setPreparedScene", "Queue prepared scene settings. Params: enabled (boolean), budgetMB (optional integer; 0 = automatic DXGI, otherwise 64..4096), materialBatchMB (optional integer, 1..64).", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("setPreparedScene", "Compatibility settings: enabled follows the selected NativePBR backend, budgetMB is ignored (dynamic DXGI), and materialBatchMB sets the next upload batch size (1..64).", [](Feature* self, const json& args) {
 		auto& scene = *static_cast<DX12NativeScene*>(self);
 		scene.requestedEnabled = args.at("enabled").get<bool>() ? 1 : 0;
 		if (args.contains("budgetMB")) {

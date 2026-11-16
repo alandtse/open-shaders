@@ -3681,8 +3681,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		upscaling.nativeCompositeFrame = globals::features::nativeComposite.Capture(upscaling.dx12SwapChain.d3d11Device.get(),
 			upscaling.dx12SwapChain.d3d11Context.get(), upscaling.dx12SwapChain.d3d12Device.get(),
 			upscaling.dx12SwapChain.commandQueue.get(), scene, globals::state->frameCount,
-			static_cast<uint32_t>(renderSize.x), static_cast<uint32_t>(renderSize.y), transfer,
-			globals::features::nativePBR.GetSurfaceFrame(globals::state->frameCount));
+			static_cast<uint32_t>(renderSize.x), static_cast<uint32_t>(renderSize.y), transfer);
 		if (upscaling.nativeCompositeFrame) {
 			++upscaling.nativeCompositeCaptures;
 			upscaling.nativeCompositeFrameId = upscaling.nativeCompositeFrame->frame;
