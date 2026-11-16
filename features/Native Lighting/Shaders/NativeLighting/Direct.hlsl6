@@ -216,10 +216,11 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	EvaluatedSourceMaterial material;
 	float footprint = max(distance * 2.0f / max(float(Size.x), 1.0f), 1e-6f);
 	bool nativePbrUsedFallback = false;
+	float3 nativeClearcoat = 0.0f;
 	if (NativePBRReady != 0u && NativePBRInstances[instance].materialIndex != 0xffffffffu)
 		Count(29);
 	const bool nativeMaterialValid = LoadNativePBRMaterial(instance, primitive, query.CommittedTriangleBarycentrics(),
-		query.CommittedObjectToWorld3x4(), query.CommittedWorldToObject3x4(), footprint, material, nativePbrUsedFallback);
+		query.CommittedObjectToWorld3x4(), query.CommittedWorldToObject3x4(), footprint, material, nativePbrUsedFallback, nativeClearcoat);
 	if (nativeMaterialValid)
 		Count(28);
 	if (nativeMaterialValid && nativePbrUsedFallback)
@@ -327,8 +328,18 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		float3 microfacet = PBR::SpecularMicrofacet(material.roughness, material.f0, max(ndotl, 1e-5f),
 			saturate(abs(dot(n, v)) + 1e-5f), saturate(dot(n, h)), saturate(dot(v, h)), fresnel);
 		float3 irradiance = light.radianceSourceRadius.rgb * attenuation * ndotl * shadowVisibility;
-		if (EnabledLobes & 1u) diffuse += (1 - material.metallic) * material.baseColor *
-			(NormalInfluence == 0u ? 1.0f : (1 - fresnel)) * BRDF::Diffuse_Lambert() * irradiance;
+		float3 diffuseResponse = (1 - material.metallic) * material.baseColor *
+			(NormalInfluence == 0u ? 1.0f : (1 - fresnel)) * BRDF::Diffuse_Lambert();
+		if (NormalInfluence != 0u && nativeClearcoat.x > 0.0f) {
+			float3 coatFresnel;
+			float3 coatSpecular = PBR::SpecularMicrofacet(nativeClearcoat.y, nativeClearcoat.z.xxx,
+				max(ndotl, 1e-5f), saturate(abs(dot(n, v)) + 1e-5f), saturate(dot(n, h)),
+				saturate(dot(v, h)), coatFresnel);
+			float3 layerAttenuation = 1.0f - coatFresnel * nativeClearcoat.x;
+			diffuseResponse *= layerAttenuation;
+			microfacet = microfacet * layerAttenuation + coatSpecular * nativeClearcoat.x;
+		}
+		if (EnabledLobes & 1u) diffuse += diffuseResponse * irradiance;
 		if ((EnabledLobes & 2u) && NormalInfluence != 0u) specular += microfacet * irradiance;
 	}
 	if (strictVisibilityRejected && originalReason == 0) originalReason = 7;

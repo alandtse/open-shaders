@@ -51,10 +51,11 @@ float NativePBRLod(NativePBR::MaterialRecord material, TriangleSurface hitSurfac
 
 bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	float3x4 objectToWorld, float3x4 worldToObject, float footprint, out EvaluatedSourceMaterial evaluated,
-	out bool usedFallback)
+	out bool usedFallback, out float3 clearcoat)
 {
 	evaluated = (EvaluatedSourceMaterial)0;
 	usedFallback = false;
+	clearcoat = 0.0f;
 	if (NativePBRReady == 0u || instance >= InstanceCount)
 		return false;
 	NativePBRRayBinding binding = NativePBRInstances[instance];
@@ -87,6 +88,13 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 		emission = 0.0f;
 		usedFallback = true;
 	}
+	float4 coat = 1.0f;
+	if (material.controls.w == (1u << 1u) && material.textures[2].z != NativePBR::MissingTexture &&
+		!SampleNativePBR(material.textures[2].zw, material.properties.z, uv, lod, coat)) {
+		if (NativePBRPadding.y == 0u) return false;
+		coat = 1.0f;
+		usedFallback = true;
+	}
 	NativePBR::SurfaceInput surface;
 	surface.uv = uv;
 	surface.uvDx = 0.0f;
@@ -99,7 +107,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	if (!all(isfinite(surface.geometricNormal)) ||
 		!all(isfinite(surface.tangent)) || !all(isfinite(surface.bitangent)))
 		return false;
-	NativePBR::SurfaceMaterial result = NativePBR::EvaluateOpaque(material, surface, base, normal, packed, emission, binding.flags);
+	NativePBR::SurfaceMaterial result = NativePBR::EvaluateOpaque(material, surface, base, normal, packed, emission, coat, binding.flags);
 	evaluated.baseColor = result.baseColor;
 	evaluated.normal = result.normal;
 	evaluated.f0 = result.f0;
@@ -108,10 +116,11 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	evaluated.metallic = result.metallic;
 	evaluated.ao = result.ao;
 	evaluated.opacity = result.opacity;
+	clearcoat = float3(result.coatStrength, result.coatRoughness, result.coatF0);
 	return all(isfinite(evaluated.baseColor)) && all(isfinite(evaluated.normal)) &&
 		all(isfinite(evaluated.f0)) && all(isfinite(evaluated.emission)) &&
 		isfinite(evaluated.roughness) && isfinite(evaluated.metallic) &&
-		isfinite(evaluated.ao) && isfinite(evaluated.opacity);
+		isfinite(evaluated.ao) && isfinite(evaluated.opacity) && all(isfinite(clearcoat));
 }
 
 #endif

@@ -49,6 +49,9 @@ namespace NativePBR
 		float metallic;
 		float ao;
 		float opacity;
+		float coatStrength;
+		float coatRoughness;
+		float coatF0;
 	};
 
 	float3 SrgbToLinear(float3 value)
@@ -74,7 +77,7 @@ namespace NativePBR
 	}
 
 	SurfaceMaterial EvaluateOpaque(MaterialRecord material, SurfaceInput surface, float4 baseTexel,
-		float4 normalTexel, float4 packedTexel, float4 emissionTexel, uint drawFlags)
+		float4 normalTexel, float4 packedTexel, float4 emissionTexel, float4 coatTexel, uint drawFlags)
 	{
 		SurfaceMaterial result;
 		result.baseColor = baseTexel.rgb;
@@ -87,6 +90,10 @@ namespace NativePBR
 		result.f0 = lerp(saturate(packedTexel.a * material.base.w).xxx, result.baseColor, result.metallic);
 		result.opacity = saturate(baseTexel.a * material.base.x);
 		result.emission = material.textures[1].z != MissingTexture ? emissionTexel.rgb : 0.0f;
+		const bool simpleCoat = material.controls.w == (1u << 1u);
+		result.coatStrength = simpleCoat ? saturate(material.coat.x * coatTexel.a) : 0.0f;
+		result.coatRoughness = clamp(material.coat.y, PBR::Constants::MinRoughness, PBR::Constants::MaxRoughness);
+		result.coatF0 = saturate(material.coat.z);
 		return result;
 	}
 }

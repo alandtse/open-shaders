@@ -102,7 +102,9 @@ void main(uint3 threadId : SV_DispatchThreadID)
 	float4 normal = SampleTexture(record.textures[0].zw, record.properties.z, uv, uvDx, uvDy, float4(0.5f, 0.5f, 1.0f, 1.0f));
 	float4 packed = SampleTexture(record.textures[1].xy, record.properties.z, uv, uvDx, uvDy, float4(1.0f, 0.0f, 1.0f, 1.0f));
 	float4 emission = SampleTexture(record.textures[1].zw, record.properties.z, uv, uvDx, uvDy, 0.0f);
-	NativePBR::SurfaceMaterial material = NativePBR::EvaluateOpaque(record, surface, base, normal, packed, emission, binding.flags);
+	float4 coat = record.controls.w == (1u << 1u) ?
+		SampleTexture(record.textures[2].zw, record.properties.z, uv, uvDx, uvDy, 1.0f) : 1.0f;
+	NativePBR::SurfaceMaterial material = NativePBR::EvaluateOpaque(record, surface, base, normal, packed, emission, coat, binding.flags);
 	BaseOpacity[pixel] = float4(material.baseColor, material.opacity);
 	NormalRoughness[pixel] = float4(material.normal, material.roughness);
 	F0Metallic[pixel] = float4(material.f0, material.metallic);
