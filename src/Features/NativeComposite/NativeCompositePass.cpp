@@ -195,6 +195,10 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 	                   a_lighting->scene.raster && a_lighting->scene.raster->depth && a_lighting->scene.raster->depth->resource &&
 	                   a_lighting->width == a_width && a_lighting->height == a_height && (a_policy.visual != 0 || a_transfer != Transfer::Unknown) && InitializeLighting(a_device12);
 	const bool recordCounters = a_policy.visual != 0;
+	// The independent shadow layer belongs to DX11 fallback pixels. Apply it
+	// before native-first replacement so authoritative native light is not
+	// shadowed a second time when both producers are enabled.
+	const bool shadowBeforeLighting = applyShadow && (!a_shadowSettings.afterLighting || a_nativeReadinessStage != 0u);
 
 	Slot* slot = nullptr;
 	for (auto& candidate : slots) {
@@ -342,7 +346,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		const std::array endBarriers{
 			CD3DX12_RESOURCE_BARRIER::Transition(slot->shared->resource.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON),
 			CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_COPY_DEST,
-				(blend && !(applyShadow && !a_shadowSettings.afterLighting)) ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_COMMON)
+				(blend && !shadowBeforeLighting) ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_COMMON)
 		};
 		slot->commands->ResourceBarrier(static_cast<UINT>(endBarriers.size()), endBarriers.data());
 		auto recordShadow = [&]() {
@@ -403,10 +407,10 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			};
 			slot->commands->ResourceBarrier(static_cast<UINT>(end.size()), end.data());
 		};
-		if (applyShadow && !a_shadowSettings.afterLighting)
+		if (shadowBeforeLighting)
 			recordShadow();
 		if (blend) {
-			if (applyShadow && !a_shadowSettings.afterLighting) {
+			if (shadowBeforeLighting) {
 				// Shadow pass resolved the raster back to COMMON before native direct lighting.
 				const auto startDirect = CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(),
 					D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -488,7 +492,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			const auto outputBarrier = CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
 			slot->commands->ResourceBarrier(1, &outputBarrier);
 		}
-		if (applyShadow && a_shadowSettings.afterLighting)
+		if (applyShadow && !shadowBeforeLighting)
 			recordShadow();
 		DX::ThrowIfFailed(slot->commands->Close());
 		if (applyShadow) {
