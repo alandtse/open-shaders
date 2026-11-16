@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -127,9 +128,11 @@ internal sealed class MeshCompiler
         if (shader != null)
         {
             var textures = file.GetBlock(shader.TextureSetRef)?.Textures?.Select(texture => texture.Content).ToArray() ?? [];
-            material = new(shader.ShaderFlags_SSPF2.HasFlag(SkyrimShaderPropertyFlags2.Double_Sided), textures,
-                (uint)shader.ShaderFlags_SSPF1, (uint)shader.ShaderFlags_SSPF2, shader.Alpha,
-                (uint)shader.TextureClampMode, ReadUvTransform(shader));
+            var clampMode = ReadTextureClampMode(shader);
+            if (clampMode.HasValue)
+                material = new(shader.ShaderFlags_SSPF2.HasFlag(SkyrimShaderPropertyFlags2.Double_Sided), textures,
+                    (uint)shader.ShaderFlags_SSPF1, (uint)shader.ShaderFlags_SSPF2, shader.Alpha,
+                    clampMode.Value, ReadUvTransform(shader));
         }
         var reason = shape is not BSTriShape || type is not ("BSTriShape" or "BSSubIndexTriShape") ? "unsupported-shape-type" :
             shape.HasSkinInstance || shape.IsSkinned ? "skinned-shape" : transform.Exclusion;
@@ -164,6 +167,17 @@ internal sealed class MeshCompiler
         {
             return new(index, name, type, "excluded:" + error.Message, null, null, 0, 0, transform.Matrix, null, material);
         }
+    }
+
+    private static uint? ReadTextureClampMode(BSLightingShaderProperty shader)
+    {
+        var type = shader.GetType();
+        // Nifly 1.1.0 generates the clamp field but has no public accessor.
+        var value = type.GetProperty("TextureClampMode")?.GetValue(shader) ??
+            type.GetField("_textureClampMode", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(shader);
+        if (value is not IConvertible number) return null;
+        var mode = number.ToInt64(null);
+        return mode is >= 0 and <= 3 ? (uint)mode : null;
     }
 
     private static float[]? ReadUvTransform(BSLightingShaderProperty shader)
