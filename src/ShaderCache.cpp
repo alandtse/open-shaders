@@ -526,6 +526,12 @@ namespace SIE
 		manifest.Set(key, digestHex);
 		if (g_startupCompilationActive.load(std::memory_order_relaxed) &&
 			!globals::shaderCache->backgroundCompilation.load(std::memory_order_relaxed)) {
+			constexpr auto interval = std::chrono::seconds(30);
+			const auto now = std::chrono::steady_clock::now();
+			static std::atomic<std::chrono::steady_clock::time_point> nextCheckpoint{ now + interval };
+			auto due = nextCheckpoint.load(std::memory_order_relaxed);
+			if (now >= due && nextCheckpoint.compare_exchange_strong(due, now + interval, std::memory_order_relaxed))
+				manifest.Save();
 			return;
 		}
 		if (g_manifestPendingWrites.fetch_add(1, std::memory_order_relaxed) + 1 >= kManifestFlushBatchSize) {
@@ -4687,6 +4693,8 @@ namespace SIE
 	void ShaderCache::FinishStartupCompilation()
 	{
 		TrackingIncludeHandler::ReleaseStartupSnapshots();
+		if (globals::game::quitGame && IsDiskCacheActive())
+			GetShaderCacheManifest().Save();
 	}
 
 	void ShaderCache::SetFileWatcher(bool value)
