@@ -1,5 +1,6 @@
 #include "NativeLighting.h"
 #include "Features/NativeComposite/NativeComposite.h"
+#include "Features/NativeFeatures.h"
 #include "Features/ReverseZ.h"
 #include "Globals.h"
 #include "GpuPass.h"
