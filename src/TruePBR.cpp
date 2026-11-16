@@ -3,7 +3,6 @@
 #include "TruePBR/BSLightingShaderMaterialPBR.h"
 #include "TruePBR/BSLightingShaderMaterialPBRLandscape.h"
 #include "Features/NativePBR/NativePBRCompiler.h"
-#include "Features/NativePBR/MaterialObservation.h"
 
 #include "Features/DX12NativeScene/DX12NativeScene.h"
 #include "Features/InteriorSun.h"
@@ -354,7 +353,6 @@ void TruePBR::RestoreDefaultSettings()
 
 void TruePBR::SetupResources()
 {
-	globals::features::nativePBR.materialRegistry.MarkAllDirty();
 	SetupTextureSetData();
 	SetupMaterialObjectData();
 }
@@ -865,10 +863,6 @@ struct BSLightingShaderProperty_GetRenderPasses
 						geometry->name.c_str());
 			}
 		}
-
-		const bool isPbr = IsPBRShaderProperty(property);
-		if (isPbr && geometry)
-			NativePBR::ObserveVisibleInstance(globals::features::nativePBR.materialRegistry, *property, *geometry);
 
 		auto currentPass = renderPasses->head;
 		while (currentPass != nullptr) {
@@ -1413,7 +1407,6 @@ void SetupPBRLandscapeTextureParameters(BSLightingShaderMaterialPBRLandscape& ma
 	material.roughnessScales[textureIndex] = textureSetData.roughnessScale;
 	material.specularLevels[textureIndex] = textureSetData.specularLevel;
 	material.glintParameters[textureIndex] = textureSetData.glintParameters;
-	globals::features::nativePBR.materialRegistry.MarkDirty(&material);
 }
 
 void SetupLandscapeTexture(BSLightingShaderMaterialPBRLandscape& material, RE::TESLandTexture& landTexture, uint32_t textureIndex, std::array<TruePBR::PBRTextureSetData*, BSLightingShaderMaterialPBRLandscape::NumTiles>& textureSets)
@@ -1446,7 +1439,6 @@ void SetupLandscapeTexture(BSLightingShaderMaterialPBRLandscape& material, RE::T
 	if (material.landscapeBaseColorTextures[textureIndex] != nullptr) {
 		material.numLandscapeTextures = std::max(material.numLandscapeTextures, textureIndex + 1);
 	}
-	globals::features::nativePBR.materialRegistry.MarkDirty(&material);
 }
 
 RE::TESLandTexture* GetDefaultLandTexture()
@@ -2009,21 +2001,6 @@ struct PBR_BSLightingShader_SetupMaterial
 		if (!material) {
 			return;
 		}
-		using enum SIE::ShaderCache::LightingShaderTechniques;
-		const auto technique = shader->currentRawTechnique;
-		const auto flags = technique & 0xFFFFFFu;
-		const auto kind = static_cast<SIE::ShaderCache::LightingShaderTechniques>((technique >> 24) & 0x3Fu);
-		if ((flags & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::TruePbr)) != 0 &&
-			kind != LODLand && kind != LODLandNoise) {
-			if (kind == MTLand || kind == MTLandLODBlend) {
-				NativePBR::ObserveLightingMaterial(globals::features::nativePBR.materialRegistry,
-					*material, NativePBR::MaterialKind::Landscape);
-			} else if (kind == None || kind == TreeAnim || kind == LODObjects || kind == LODObjectHD) {
-				NativePBR::ObserveLightingMaterial(globals::features::nativePBR.materialRegistry,
-					*material, NativePBR::MaterialKind::Mesh);
-			}
-		}
-
 		if (globals::features::truePBR.BSLightingShader_SetupMaterial(shader, material)) {
 			return;
 		}

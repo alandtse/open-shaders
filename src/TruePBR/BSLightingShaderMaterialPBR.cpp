@@ -1,6 +1,5 @@
 #include "BSLightingShaderMaterialPBR.h"
 
-#include "Features/NativeFeatures.h"
 #include "TruePBR.h"
 
 static bool IsValidTextureSet(const RE::BSTextureSet* textureSet)
@@ -24,7 +23,6 @@ static void DiscardMislinkedTextureSet(RE::NiPointer<RE::BSTextureSet>& textureS
 
 BSLightingShaderMaterialPBR::~BSLightingShaderMaterialPBR()
 {
-	globals::features::nativePBR.materialRegistry.Forget(this);
 	std::lock_guard lock(AllMutex);
 	All.erase(this);
 }
@@ -84,7 +82,6 @@ void BSLightingShaderMaterialPBR::CopyMembers(RE::BSShaderMaterial* that)
 
 	std::lock_guard lock(AllMutex);
 	All[this] = All[pbrThat];
-	globals::features::nativePBR.materialRegistry.MarkDirty(this);
 }
 
 std::uint32_t BSLightingShaderMaterialPBR::ComputeCRC32(uint32_t srcHash)
@@ -230,7 +227,6 @@ void BSLightingShaderMaterialPBR::ApplyTextureSetData(const TruePBR::PBRTextureS
 			ApplyNifFuzzParameters(*it->second.nifFuzzParameters);
 		}
 	}
-	globals::features::nativePBR.materialRegistry.MarkDirty(this);
 }
 
 bool BSLightingShaderMaterialPBR::ApplyNifFuzzParameters(std::span<const float> parameters)
@@ -275,7 +271,6 @@ void BSLightingShaderMaterialPBR::ApplyMaterialObjectData(const TruePBR::PBRMate
 	projectedMaterialRoughness = materialObjectData.roughness;
 	projectedMaterialSpecularLevel = materialObjectData.specularLevel;
 	projectedMaterialGlintParameters = materialObjectData.glintParameters;
-	globals::features::nativePBR.materialRegistry.MarkDirty(this);
 }
 
 void BSLightingShaderMaterialPBR::ClearMaterialObjectData()
@@ -284,7 +279,6 @@ void BSLightingShaderMaterialPBR::ClearMaterialObjectData()
 	projectedMaterialRoughness = 1.f;
 	projectedMaterialSpecularLevel = 0.04f;
 	projectedMaterialGlintParameters = GlintParameters{};
-	globals::features::nativePBR.materialRegistry.MarkDirty(this);
 }
 
 void BSLightingShaderMaterialPBR::OnLoadTextureSet(std::uint64_t arg1, RE::BSTextureSet* inTextureSet)
@@ -336,7 +330,6 @@ void BSLightingShaderMaterialPBR::OnLoadTextureSet(std::uint64_t arg1, RE::BSTex
 			_mm_mfence();
 		}
 	}
-	globals::features::nativePBR.materialRegistry.MarkDirty(this);
 }
 
 void BSLightingShaderMaterialPBR::ClearTextures()
@@ -347,14 +340,12 @@ void BSLightingShaderMaterialPBR::ClearTextures()
 	displacementTexture.reset();
 	featuresTexture0.reset();
 	featuresTexture1.reset();
-	globals::features::nativePBR.materialRegistry.MarkDirty(this);
 }
 
 void BSLightingShaderMaterialPBR::ReceiveValuesFromRootMaterial(bool skinned, bool rimLighting, bool softLighting, bool backLighting, bool MSN)
 {
 	BSLightingShaderMaterialBase::ReceiveValuesFromRootMaterial(skinned, rimLighting, softLighting, backLighting, MSN);
 	const auto& stateData = globals::game::graphicsState->GetRuntimeData();
-	const bool changed = !rmaosTexture || !emissiveTexture || !displacementTexture || !featuresTexture0 || !featuresTexture1;
 	if (rmaosTexture == nullptr) {
 		rmaosTexture = stateData.defaultTextureWhite;
 	}
@@ -370,8 +361,6 @@ void BSLightingShaderMaterialPBR::ReceiveValuesFromRootMaterial(bool skinned, bo
 	if (featuresTexture1 == nullptr) {
 		featuresTexture1 = stateData.defaultTextureWhite;
 	}
-	if (changed)
-		globals::features::nativePBR.materialRegistry.MarkDirty(this);
 }
 
 uint32_t BSLightingShaderMaterialPBR::GetTextures(RE::NiSourceTexture** textures)
