@@ -439,6 +439,10 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 	baseColor = PParams.xxxx * (-baseColor + blendColor) + baseColor;
 #		endif
+#		if defined(CLOUDS) && defined(EFFECTS11)
+	float3 unrelitCloudTexture = baseColor.xyz;
+#		endif
+
 #		if defined(CR_CLOUDS)
 	if (SharedData::cloudRelightSettings.enabled) {
 		if (composeAuthoredSky)
@@ -605,7 +609,7 @@ PS_OUTPUT main(PS_INPUT input)
 		{
 			float3 viewDirection = normalize(input.WorldPosition.xyz);
 			float cloudTextureAlpha = saturate(baseColor.w);
-			float cloudTextureBrightness = max(dot(baseColor.xyz, 1.0 / 3.0), 0.0);
+			float cloudTextureBrightness = max(dot(unrelitCloudTexture, 1.0 / 3.0), 0.0);
 			float cloudTextureGray = pow(cloudTextureBrightness, SharedData::enbSettings.CloudsCurve);
 
 			float3 cloudColor = pow(max(ComposeSkyColor(input.Color.xyz, baseColor.xyz, 0.0, composeAuthoredSky), 0.0), SharedData::enbSettings.CloudsCurve);
