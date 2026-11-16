@@ -857,6 +857,7 @@ struct BSLightingShaderProperty_GetRenderPasses
 			}
 		}
 
+		const bool isPbr = IsPBRShaderProperty(property);
 		auto currentPass = renderPasses->head;
 		while (currentPass != nullptr) {
 			if (currentPass->shader->shaderType == RE::BSShader::Type::Lighting) {
