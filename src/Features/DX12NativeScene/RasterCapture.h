@@ -4,7 +4,6 @@
 #include "GraphicsBackend.h"
 #include "GraphicsInterop.h"
 #include "VideoMemoryBudget.h"
-#include "Features/NativePBR/MaterialSidecar.h"
 #include <array>
 #include <memory>
 #include <span>
@@ -30,11 +29,6 @@ namespace DX12Native
 		std::array<std::unique_ptr<WrappedResource>, static_cast<size_t>(Input::Count)> inputs;
 		std::array<DXGI_FORMAT, static_cast<size_t>(Input::Count)> formats{};
 		std::unique_ptr<WrappedResource> depth;
-		std::array<std::unique_ptr<WrappedResource>, NativePBR::MaterialSidecar::kCount> pbrSidecar;
-		std::shared_ptr<const std::vector<NativePBR::SidecarDraw>> pbrDraws;
-		bool pbrSidecarValid = false;
-		bool pbrInputOnly = false;
-		bool pbrSidecarAttempted = false;
 		DXGI_FORMAT sourceDepthFormat = DXGI_FORMAT_UNKNOWN;
 		globals::FrameBuffer camera{};
 		bool cameraValid = false;
@@ -51,8 +45,7 @@ namespace DX12Native
 	public:
 		~RasterCapture();
 		/** @brief Captures one coherent frame; callers retain returned frames until GPU consumption completes. */
-		void Capture(const GraphicsBackend& a_backend, const std::array<ID3D11Texture2D*, static_cast<size_t>(RasterFrame::Input::Count)>& a_inputs, ID3D11ShaderResourceView* a_depth, const globals::FrameBuffer* a_camera, uint32_t a_frame, uint64_t a_budget,
-			const NativePBR::MaterialSidecar::Sources& a_pbrSidecar = {}, std::shared_ptr<const std::vector<NativePBR::SidecarDraw>> a_pbrDraws = {});
+		void Capture(const GraphicsBackend& a_backend, const std::array<ID3D11Texture2D*, static_cast<size_t>(RasterFrame::Input::Count)>& a_inputs, ID3D11ShaderResourceView* a_depth, const globals::FrameBuffer* a_camera, uint32_t a_frame, uint64_t a_budget);
 		/** @brief Borrows a matching snapshot, whose ready fence must be waited on by the consumer queue. */
 		std::shared_ptr<const RasterFrame> Get(uint32_t a_frame) const;
 		/** @brief Retains a borrowed snapshot until a submitted consumer fence completes. */
@@ -77,7 +70,6 @@ namespace DX12Native
 		winrt::com_ptr<ID3D11ComputeShader> depthShader;
 		GraphicsBackend backend;
 		std::string status;
-		std::string sidecarStatus;
 		uint64_t submissions = 0, completions = 0, busyDeferrals = 0;
 		VideoMemoryBudget videoBudget;
 	};

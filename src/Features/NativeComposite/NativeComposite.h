@@ -49,7 +49,6 @@ struct NativeCompositeFeature final : Feature
 		return pass.Retain(a_frame, a_fence, a_value);
 	}
 	bool IsEnabled() const;
-	bool WantsNativePbrSurfaceDiagnostic() const { return false; }
 
 private:
 	NativeComposite pass;

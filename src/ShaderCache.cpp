@@ -35,7 +35,6 @@
 
 #include "Features/DynamicCubemaps.h"
 #include "Features/NativeFeatures.h"
-#include "Features/NativePBR/ShaderDomainCache.h"
 #include "Features/RenderDoc.h"
 #include "Features/ReverseZ.h"
 
@@ -692,7 +691,7 @@ namespace SIE
 
 	namespace SShaderCache
 	{
-		static std::string GetShaderString(ShaderClass, const RE::BSShader&, uint32_t, bool = false, NativePBR::ShaderDomain = NativePBR::ShaderDomain::LegacyTruePBR);
+		static std::string GetShaderString(ShaderClass, const RE::BSShader&, uint32_t, bool = false);
 		/**
 		 * @brief Resolve image-space shader descriptor when applicable.
 		 *
@@ -2043,8 +2042,7 @@ namespace SIE
 			return SUCCEEDED(D3DGetBlobPart(a_blob->GetBufferPointer(), a_blob->GetBufferSize(), D3D_BLOB_PDB, 0, pdb.put()));
 		}
 
-		std::wstring GetDiskPath(const RE::BSShader& shader, uint32_t descriptor, ShaderClass shaderClass,
-			NativePBR::ShaderDomain domain = NativePBR::ShaderDomain::LegacyTruePBR)
+		std::wstring GetDiskPath(const RE::BSShader& shader, uint32_t descriptor, ShaderClass shaderClass)
 		{
 			const std::string_view name = shader.fxpFilename;
 			// Both grass depth techniques share bytecode and must use the same disk entry.
@@ -2057,9 +2055,7 @@ namespace SIE
 			const std::wstring suffix(suffixNarrow.begin(), suffixNarrow.end());
 
 			const std::wstring wname(name.begin(), name.end());
-			const std::wstring directory = domain == NativePBR::ShaderDomain::NativePBRInput ?
-				std::format(L"Data/ShaderCache/{}/{}", NativePBR::kInputDomainDirectory, wname) :
-				std::format(L"Data/ShaderCache/{}", wname);
+			const std::wstring directory = std::format(L"Data/ShaderCache/{}", wname);
 			switch (shaderClass) {
 			case ShaderClass::Pixel:
 				return std::format(L"{}/{:X}{}.pso", directory, descriptor, suffix);
@@ -2073,8 +2069,7 @@ namespace SIE
 			return {};
 		}
 
-		static std::string GetShaderString(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, bool hashkey,
-			NativePBR::ShaderDomain domain)
+		static std::string GetShaderString(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, bool hashkey)
 		{
 			auto sourceShaderFile = shader.fxpFilename;
 			std::array<D3D_SHADER_MACRO, 64> defines{};
@@ -2084,7 +2079,7 @@ namespace SIE
 				result = fmt::format("{}:{}:{}", sourceShaderFile, magic_enum::enum_name(shaderClass), SIE::SShaderCache::MergeDefinesString(defines, true));
 			else
 				result = fmt::format("{}:{}:{:X}:{}", sourceShaderFile, magic_enum::enum_name(shaderClass), descriptor, SIE::SShaderCache::MergeDefinesString(defines, true));
-			return NativePBR::CacheKeyForDomain(std::move(result), domain);
+			return result;
 		}
 
 		std::string GetTypeFromShaderString(const std::string& a_key)
@@ -2111,7 +2106,7 @@ namespace SIE
 
 		static SharedCompile AcquireSharedCompile(ShaderClass a_class, const std::wstring& a_path, const std::string& a_pathString,
 			const D3D_SHADER_MACRO* a_defines, uint32_t a_flags, TrackingIncludeHandler& a_includes,
-			const std::wstring* a_reusableFrom, NativePBR::ShaderDomain a_domain)
+			const std::wstring* a_reusableFrom)
 		{
 			SharedCompile result;
 			std::ifstream sourceFile(a_path, std::ios::binary);
@@ -2128,8 +2123,6 @@ namespace SIE
 			// Debug compiles keep #line in the key: stripping it would share debug info with another variant's source lines.
 			const auto keyText = (a_flags & D3DCOMPILE_DEBUG) ? result.source : Util::CompileDedupe::StripLineDirectives(result.source);
 			result.key = Util::CompileDedupe::MakeKey({ keyText, "main", GetShaderProfile(a_class), a_flags, GetCompilerIdentity() });
-			if (a_domain == NativePBR::ShaderDomain::NativePBRInput)
-				result.key = Util::ContentHash::CombineHashes(*result.key, Util::ContentHash::HashString(NativePBR::kInputDomainIdentity));
 			auto acquired = GetCompileDedupe().Acquire(*result.key);
 			result.compileFailed = acquired.compileFailed;
 			if (acquired.compileFailed)
@@ -2179,15 +2172,14 @@ namespace SIE
 		 * @return Compiled shader blob, or nullptr if compilation failed or source file not found.
 		 */
 		static winrt::com_ptr<ID3DBlob> CompileShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, bool useDiskCache,
-			ShaderFileDependencyTracker* dependencyTracker, std::optional<uint64_t> a_taskGeneration = std::nullopt,
-			NativePBR::ShaderDomain a_domain = NativePBR::ShaderDomain::LegacyTruePBR)
+			ShaderFileDependencyTracker* dependencyTracker, std::optional<uint64_t> a_taskGeneration = std::nullopt)
 		{
 			if (!SShaderCache::ResolveImageSpaceDescriptor(shader, descriptor)) {
 				return nullptr;
 			}
 
 			auto& cache = ShaderCache::Instance();
-			auto key = SShaderCache::GetShaderString(shaderClass, shader, descriptor, true, a_domain);
+			auto key = SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
 
 			// Atomically check the shaderMap and either:
 			//  - return the blob if already Completed (cache hit),
@@ -2209,7 +2201,7 @@ namespace SIE
 			const bool debugCompile = ShaderCache::IsDebugCompile();
 
 			// check diskcache
-			auto diskPath = GetDiskPath(shader, descriptor, shaderClass, a_domain);
+			auto diskPath = GetDiskPath(shader, descriptor, shaderClass);
 			winrt::com_ptr<ID3DBlob> shaderBlob;
 
 			// A failed filesystem probe is a cache miss, not a failed compilation task.
@@ -2288,7 +2280,7 @@ namespace SIE
 				} else {
 					shaderBlob = std::move(intactBlob);
 					logger::debug("Loaded shader from {}", Util::WStringToString(diskPath));
-					if (!cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, /*fromDisk=*/true, a_taskGeneration, a_domain)) {
+					if (!cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, /*fromDisk=*/true, a_taskGeneration)) {
 						// Stale generation or a concurrent Clear(path) eviction: see AddCompletedShader.
 						return nullptr;
 					}
@@ -2312,8 +2304,6 @@ namespace SIE
 			}
 			if (globals::game::isVR)
 				defines[lastIndex++] = { "VR", nullptr };
-			if (a_domain == NativePBR::ShaderDomain::NativePBRInput)
-				defines[lastIndex++] = { "NATIVE_PBR_INPUT", nullptr };
 			auto shaderDefines = globals::state->GetDefines();
 			if (!shaderDefines->empty()) {
 				for (unsigned int i = 0; i < shaderDefines->size(); i++)
@@ -2330,7 +2320,7 @@ namespace SIE
 			if (!std::filesystem::exists(path)) {
 				logger::error("Failed to compile {} shader {}::{:X}: {} does not exist", magic_enum::enum_name(shaderClass), magic_enum::enum_name(type), descriptor, pathString);
 				cache.RecordCompileFailure(key, pathString, pathString + " does not exist");
-				cache.AddCompletedShader(shaderClass, shader, descriptor, nullptr, false, a_taskGeneration, a_domain);
+				cache.AddCompletedShader(shaderClass, shader, descriptor, nullptr, false, a_taskGeneration);
 				return nullptr;
 			}
 			logger::debug("Compiling {} {}:{}:{:X} to {}", pathString, magic_enum::enum_name(type), magic_enum::enum_name(shaderClass), descriptor, MergeDefinesString(defines));
@@ -2358,7 +2348,7 @@ namespace SIE
 
 			TrackingIncludeHandler preprocessHandler(path);
 			auto shared = AcquireSharedCompile(shaderClass, path, pathString, defines.data(), flags, preprocessHandler,
-				useDiskCache ? &diskPath : nullptr, a_domain);
+				useDiskCache ? &diskPath : nullptr);
 			shaderBlob = std::move(shared.blob);
 			auto& dedupeTicket = shared.ticket;
 			const auto& contentKey = shared.key;
@@ -2426,7 +2416,7 @@ namespace SIE
 				}
 #endif
 
-				cache.AddCompletedShader(shaderClass, shader, descriptor, nullptr, false, a_taskGeneration, a_domain);
+				cache.AddCompletedShader(shaderClass, shader, descriptor, nullptr, false, a_taskGeneration);
 				return nullptr;
 			}
 			if (errorBlob) {
@@ -2470,7 +2460,7 @@ namespace SIE
 
 			// Relinquish this task's Pending claim before skipping a stale disk-cache write.
 			if (cache.IsGenerationStale(a_taskGeneration, shader.shaderType.get())) {
-				cache.AddCompletedShader(shaderClass, shader, descriptor, nullptr, false, a_taskGeneration, a_domain);
+				cache.AddCompletedShader(shaderClass, shader, descriptor, nullptr, false, a_taskGeneration);
 				return nullptr;
 			}
 
@@ -2502,7 +2492,7 @@ namespace SIE
 						GetShaderCacheManifest().SetContentKey(GetManifestKey(diskPath), contentKey->ToHex());
 				}
 			}
-			if (!cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, false, a_taskGeneration, a_domain)) {
+			if (!cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, false, a_taskGeneration)) {
 				// Stale generation or a concurrent Clear(path) eviction: see AddCompletedShader.
 				return nullptr;
 			}
@@ -2951,62 +2941,6 @@ namespace SIE
 		return nullptr;
 	}
 
-	bool ShaderCache::IsNativePBRInputPermutation(uint32_t descriptor)
-	{
-		using enum LightingShaderFlags;
-		constexpr uint32_t required = static_cast<uint32_t>(TruePbr) | static_cast<uint32_t>(Deferred);
-		constexpr uint32_t excluded = static_cast<uint32_t>(DoAlphaTest) | static_cast<uint32_t>(Skinned) |
-			static_cast<uint32_t>(ModelSpaceNormals) | static_cast<uint32_t>(FurShells) |
-			static_cast<uint32_t>(FurShellsDepth) | static_cast<uint32_t>(WorldMap) |
-			static_cast<uint32_t>(LandscapeSeams) | static_cast<uint32_t>(CharacterLight) |
-			static_cast<uint32_t>(AdditionalAlphaMask);
-		return ((descriptor >> 24) & 0x3Fu) == 0 && (descriptor & required) == required &&
-			(descriptor & excluded) == 0;
-	}
-
-	void ShaderCache::EnqueueNativePBRInputPixelShader(const RE::BSShader& shader, uint32_t descriptor, bool a_priority)
-	{
-		if (shader.shaderType != RE::BSShader::Type::Lighting || !IsNativePBRInputPermutation(descriptor))
-			return;
-		{
-			std::lock_guard lock(pixelShadersMutex);
-			if (nativePbrInputShaders.contains(descriptor) || !nativePbrInputRequests.insert(descriptor).second)
-				return;
-		}
-		const auto generation = compilationSet.LiveGeneration(shader.shaderType.get());
-		compilationSet.EnqueueAux([this, &shader, descriptor, generation] {
-			if (IsGenerationStale(generation, shader.shaderType.get()))
-				return;
-			std::ignore = SShaderCache::CompileShader(ShaderClass::Pixel, shader, descriptor,
-				IsDiskCacheActive(), dependencyTracker.get(), generation, NativePBR::ShaderDomain::NativePBRInput);
-		}, a_priority);
-	}
-
-	ID3D11PixelShader* ShaderCache::GetNativePBRInputPixelShader(const RE::BSShader& shader, uint32_t descriptor)
-	{
-		if (shader.shaderType != RE::BSShader::Type::Lighting || !IsNativePBRInputPermutation(descriptor))
-			return nullptr;
-		{
-			std::lock_guard lock(pixelShadersMutex);
-			if (const auto found = nativePbrInputShaders.find(descriptor); found != nativePbrInputShaders.end())
-				return found->second.get();
-		}
-		const auto key = SShaderCache::GetShaderString(ShaderClass::Pixel, shader, descriptor, true,
-			NativePBR::ShaderDomain::NativePBRInput);
-		const auto blob = GetCompletedShader(key);
-		if (!blob) {
-			EnqueueNativePBRInputPixelShader(shader, descriptor, true);
-			return nullptr;
-		}
-		if (!globals::d3d::device)
-			return nullptr;
-		winrt::com_ptr<ID3D11PixelShader> shader11;
-		if (FAILED(globals::d3d::device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, shader11.put())))
-			return nullptr;
-		std::lock_guard lock(pixelShadersMutex);
-		return nativePbrInputShaders.try_emplace(descriptor, std::move(shader11)).first->second.get();
-	}
-
 	bool ShaderCache::HasPixelShaders(RE::BSShader::Type type, std::span<const uint32_t> descriptors)
 	{
 		if (type <= RE::BSShader::Type::None || type >= RE::BSShader::Type::Total)
@@ -3102,8 +3036,6 @@ namespace SIE
 		}
 		{
 			std::lock_guard lockGuardP(pixelShadersMutex);
-			nativePbrInputShaders.clear();
-			nativePbrInputRequests.clear();
 			for (auto& shaders : pixelShaders) {
 				for (auto& [id, shader] : shaders) {
 					shader->shader->Release();
@@ -3187,8 +3119,6 @@ namespace SIE
 
 		if (!entries.empty()) {
 			std::lock_guard lock(pixelShadersMutex);
-			nativePbrInputShaders.clear();
-			nativePbrInputRequests.clear();
 			logger::debug("Marked {} entries for recompile due to change to {}", entries.size(), a_path);
 			compilationSet.Clear();
 		}
@@ -3211,8 +3141,6 @@ namespace SIE
 		std::lock_guard lockGuardP(pixelShadersMutex);
 		{
 			if (a_type == RE::BSShader::Type::Lighting) {
-				nativePbrInputShaders.clear();
-				nativePbrInputRequests.clear();
 			}
 			for (auto& [id, shader] : pixelShaders[static_cast<size_t>(a_type)]) {
 				shader->shader->Release();
@@ -3245,11 +3173,11 @@ namespace SIE
 	}
 
 	bool ShaderCache::AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, winrt::com_ptr<ID3DBlob> a_blob,
-		bool fromDisk, std::optional<uint64_t> a_taskGeneration, NativePBR::ShaderDomain a_domain)
+		bool fromDisk, std::optional<uint64_t> a_taskGeneration)
 	{
-		auto key = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true, a_domain);
+		auto key = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
 		const auto keyWithDescriptor = spdlog::should_log(spdlog::level::debug) ?
-		                                   SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, false, a_domain) :
+		                                   SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, false) :
 		                                   std::string{};
 		// The map's blob is shared across threads; the caller's d3dcompiler blob stays with the caller.
 		winrt::com_ptr<ID3DBlob> shared;
@@ -3293,7 +3221,7 @@ namespace SIE
 		{
 			std::unique_lock lockH{ hlslMapMutex };
 			auto it = hlslToShaderMap.find(lowerFilePath);
-			hlslRecord newRecord{ key, shader.shaderType.get(), descriptor, shaderClass, SIE::SShaderCache::GetDiskPath(shader, descriptor, shaderClass, a_domain) };
+			hlslRecord newRecord{ key, shader.shaderType.get(), descriptor, shaderClass, SIE::SShaderCache::GetDiskPath(shader, descriptor, shaderClass) };
 
 			if (it != hlslToShaderMap.end()) {
 				auto& entries = it->second;

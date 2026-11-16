@@ -1,15 +1,5 @@
 // SPDX-License-Identifier: MIT AND (LicenseRef-GPL-3.0-with-Modding-Exception WITH GPL-3.0-linking-source-exception)
 // Original code Copyright (c) 2022 Ilya Perapechka (MIT), modifications GPL-3.0 with Modding Exception (see EXCEPTIONS.md)
-#if defined(NATIVE_PBR_INPUT) && defined(PSHADER)
-#	if !defined(TRUE_PBR) || !defined(DEFERRED) || defined(DO_ALPHA_TEST) || defined(SKINNED) || defined(MODELSPACENORMALS) || defined(LANDSCAPE) || defined(LODLANDSCAPE) || defined(LODLANDNOISE) || defined(LODOBJECTS) || defined(LODOBJECTSHD) || defined(TREE_ANIM) || defined(FUR_SHELLS) || defined(FACEGEN) || defined(FACEGEN_RGB_TINT) || defined(EYE) || defined(HAIR)
-#		error NativePBR input-only FXC supports opaque static deferred PBR meshes only
-#	endif
-#	if defined(PROJECTED_UV)
-#		include "NativePBR/ProjectedInputs.ps.hlsli"
-#	else
-#		include "NativePBR/OpaqueInputs.ps.hlsli"
-#	endif
-#else
 #if defined(SKINNED) || defined(SKIN) || defined(FACEGEN) || defined(FACEGEN_RGB_TINT) || defined(EYE) || defined(HAIR)
 #	undef SNOW_COVER
 #endif
@@ -4550,4 +4540,3 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 }
 
 #endif  // PSHADER
-#endif  // NATIVE_PBR_INPUT pixel-domain isolation

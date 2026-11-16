@@ -59,8 +59,6 @@ void SetupPBRLandscapeTextureParameters(BSLightingShaderMaterialPBRLandscape& ma
 
 void TruePBR::DrawSettings()
 {
-	if (globals::features::nativePBR.OwnsInputOnlyShading())
-		ImGui::TextDisabled("NativePBR stages input-only FXC for independent capture; legacy deferred shading remains intact.");
 	const auto summary = globals::features::nativePBR.GetMaterialSummary();
 	const auto& recipeIssues = summary.issues;
 	const auto nativePbr = globals::features::nativePBR.materialRegistry.GetStatistics();
@@ -633,15 +631,10 @@ void TruePBR::GenerateShaderPermutations(RE::BSShader* shader)
 	auto shaderCache = globals::shaderCache;
 	if (shader->shaderType == RE::BSShader::Type::Lighting) {
 		const auto pixelPermutations = Permutations::GeneratePBRLightingPixelPermutations();
-		const bool buildNativeInputs = globals::features::nativePBR.SelectedBackend() == NativePBR::Backend::NativeDX12 &&
-			globals::features::nativePBR.enabled.load(std::memory_order_relaxed);
 		for (auto descriptor : pixelPermutations) {
 			auto vertexShaderDesriptor = descriptor;
 			auto pixelShaderDescriptor = descriptor;
 			state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
-			const bool inputPermutation = SIE::ShaderCache::IsNativePBRInputPermutation(pixelShaderDescriptor);
-			if (buildNativeInputs && inputPermutation)
-				shaderCache->EnqueueNativePBRInputPixelShader(*shader, pixelShaderDescriptor);
 			std::ignore = shaderCache->GetPixelShader(*shader, pixelShaderDescriptor, true);
 		}
 	} else if (shader->shaderType == RE::BSShader::Type::Utility) {
@@ -1282,105 +1275,6 @@ struct BSLightingShader_SetupGeometry
 		func(shader, pass, renderFlags);
 
 		shader->currentRawTechnique = originalTechnique;
-		uint64_t materialId = 0, materialRevision = 0;
-		auto surveyClass = NativePBR::PreviewSurveyClass::None;
-		uint32_t unsupportedReasons = 0;
-		std::string referenceKey, shapeName;
-		const bool captureProjectedUv = globals::features::nativePBR.captureProjectedUv.load(std::memory_order_relaxed);
-		if (pass && pass->shaderProperty && pass->geometry &&
-			(originalTechnique & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::ModelSpaceNormals)) == 0 &&
-			(originalTechnique & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::DoAlphaTest)) == 0 &&
-			(originalTechnique & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::Skinned)) == 0 &&
-			(originalTechnique & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::FurShells)) == 0 &&
-			pass->geometry->GetType() == RE::BSGeometry::Type::kTriShape &&
-			!pass->geometry->HasAnimation() &&
-			!pass->geometry->GetGeometryRuntimeData().skinInstance &&
-			!pass->geometry->GetGeometryRuntimeData().alphaProperty &&
-			IsPBRShaderProperty(pass->shaderProperty) &&
-			!pass->shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kMultiTextureLandscape,
-				RE::BSShaderProperty::EShaderPropertyFlag::kRefraction,
-				RE::BSShaderProperty::EShaderPropertyFlag::kTempRefraction,
-				RE::BSShaderProperty::EShaderPropertyFlag::kDecal,
-				RE::BSShaderProperty::EShaderPropertyFlag::kDynamicDecal,
-				RE::BSShaderProperty::EShaderPropertyFlag::kLODLandscape,
-				RE::BSShaderProperty::EShaderPropertyFlag::kSkinned) &&
-			(captureProjectedUv || !pass->shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kProjectedUV))) {
-			const bool projected = pass->shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kProjectedUV);
-			const bool supportedProjectedTechnique = !projected || ((originalTechnique >> 24) & 0x3Fu) == 0;
-			// A rigid opaque PBR pass qualifies for the lightweight coverage preview even
-			// when its TruePBR registry identity/reference could not be resolved.
-			surveyClass = projected ? NativePBR::PreviewSurveyClass::UnsupportedProjectedUv :
-				NativePBR::PreviewSurveyClass::OpaquePbrCandidate;
-			if (projected)
-				unsupportedReasons |= NativePBR::ProjectedUvReason;
-			auto* reference = pass->geometry->GetUserData();
-			if (supportedProjectedTechnique && reference && !reference->IsDynamicForm()) {
-				if (const auto* file = reference->GetFile(0)) {
-					if (const auto published = globals::features::nativePBR.materialRegistry.FindPublishedMeshIdentity(pass->shaderProperty->material)) {
-						materialId = published->identity;
-						materialRevision = published->revision;
-						referenceKey = std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename());
-						shapeName = pass->geometry->name.c_str();
-						if (referenceKey.empty() || referenceKey.size() > 256 || shapeName.empty() || shapeName.size() > 1024)
-							materialId = materialRevision = 0;
-					}
-				}
-			}
-		}
-		// Only the explicitly selected survey mode will replay these additional draws.
-		// Never grant a native material identity to non-PBR or unsupported geometry.
-		if (surveyClass == NativePBR::PreviewSurveyClass::None && pass && pass->shaderProperty && pass->geometry &&
-			pass->geometry->GetType() == RE::BSGeometry::Type::kTriShape &&
-			!pass->geometry->HasAnimation() && !pass->geometry->GetGeometryRuntimeData().skinInstance &&
-			!pass->geometry->GetGeometryRuntimeData().alphaProperty &&
-			(originalTechnique & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::DoAlphaTest)) == 0 &&
-			(originalTechnique & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::Skinned)) == 0 &&
-			(originalTechnique & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::FurShells)) == 0 &&
-			!pass->shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kRefraction,
-				RE::BSShaderProperty::EShaderPropertyFlag::kTempRefraction,
-				RE::BSShaderProperty::EShaderPropertyFlag::kDecal,
-				RE::BSShaderProperty::EShaderPropertyFlag::kDynamicDecal)) {
-			if (IsPBRShaderProperty(pass->shaderProperty)) {
-				const auto& flags = pass->shaderProperty->flags;
-				if (flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kProjectedUV))
-					unsupportedReasons |= NativePBR::ProjectedUvReason;
-				if ((originalTechnique & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::ModelSpaceNormals)) != 0)
-					unsupportedReasons |= NativePBR::ModelSpaceNormalsReason;
-				if (flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kMultiTextureLandscape,
-					RE::BSShaderProperty::EShaderPropertyFlag::kLODLandscape))
-					unsupportedReasons |= NativePBR::LandscapeReason;
-				if (flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kSkinned) || !unsupportedReasons)
-					unsupportedReasons |= NativePBR::OtherReason;
-				// Visual priority for overlaps: landscape, model-space normals, projected UV, other.
-				if (unsupportedReasons & NativePBR::LandscapeReason)
-					surveyClass = NativePBR::PreviewSurveyClass::UnsupportedLandscape;
-				else if (unsupportedReasons & NativePBR::ModelSpaceNormalsReason)
-					surveyClass = NativePBR::PreviewSurveyClass::UnsupportedModelSpaceNormals;
-				else if (unsupportedReasons & NativePBR::ProjectedUvReason)
-					surveyClass = NativePBR::PreviewSurveyClass::UnsupportedProjectedUv;
-				else
-					surveyClass = NativePBR::PreviewSurveyClass::UnsupportedOther;
-			} else if (auto* reference = pass->geometry->GetUserData(); reference && !reference->IsDynamicForm() &&
-				!reference->IsActor() && reference->GetFile(0)) {
-				if (const auto* base = reference->GetBaseObject(); base &&
-					base->Is(RE::FormType::Static, RE::FormType::MovableStatic))
-					surveyClass = NativePBR::PreviewSurveyClass::OrdinaryStatic;
-			}
-		}
-		globals::features::nativePBR.BeginSidecarPass(materialId, materialRevision, std::move(referenceKey), std::move(shapeName),
-			surveyClass, unsupportedReasons);
-		if (materialId)
-			globals::features::nativePBR.TryInputOnlyPass(*shader, globals::state->modifiedPixelDescriptor);
-	}
-	static inline REL::Relocation<decltype(thunk)> func;
-};
-
-struct BSLightingShader_RestoreGeometry
-{
-	static void thunk(RE::BSLightingShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags)
-	{
-		globals::features::nativePBR.EndSidecarPass();
-		func(shader, pass, renderFlags);
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
 };
@@ -2036,7 +1930,6 @@ static void InstallPBRHookTargets()
 
 	logger::info("[TruePBR] Hooking BSLightingShader");
 	stl::write_vfunc<0x6, BSLightingShader_SetupGeometry>(RE::VTABLE_BSLightingShader[0]);
-	stl::write_vfunc<0x7, BSLightingShader_RestoreGeometry>(RE::VTABLE_BSLightingShader[0]);
 	stl::detour_thunk_ignore_func<BSLightingShader_GetPixelTechnique>(REL::RelocationID(101633, 108700));
 
 	logger::info("[TruePBR] Hooking TESLandTexture");

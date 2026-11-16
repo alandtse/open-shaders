@@ -5,7 +5,6 @@
 #include "LightLimitFix.h"
 #include "Features/NativePBR/MaterialRouting.h"
 #include "Features/NativePBR/MaterialDiscovery.h"
-#include "Features/NativePBR/MaterialSidecar.h"
 #include "Features/NativePBR/NativePBRRegistry.h"
 #include "Features/NativePBR/MaterialCatalog.h"
 #include "Utils/BootSnapshot.h"
@@ -30,8 +29,6 @@ namespace NativePBR
 	struct GpuMaterialResources;
 	struct PreparedSceneMaterials;
 	struct RayMaterialBindings;
-struct SurfaceFrame;
-class SurfaceFramePublisher;
 }
 
 /** Additional DX12 features. The original TruePBR/LLF/SCM implementations are
@@ -84,37 +81,6 @@ struct NativePBRFeature final : Feature
 	std::atomic<std::shared_ptr<const NativePBR::RayMaterialBindings>> rayMaterialBindings;
 	std::atomic<bool> enabled{ true };
 	std::atomic<bool> forceRayAdmission{ false };
-	std::atomic<bool> previewOpaqueReplacement{ false };
-	std::atomic<bool> captureProjectedUv{ false };
-	std::atomic<bool> experimentalInputOnly{ false };
-	// 0 = material identity; 1 = UV/derivatives; 2 = PBR coverage comparison.
-	std::atomic<uint32_t> previewVisualization{ 0 };
-	NativePBR::MaterialSidecar materialSidecar;
-	std::unique_ptr<NativePBR::SurfaceFramePublisher> surfacePublisher;
-	winrt::com_ptr<ID3D11Device5> surfaceDevice11;
-	winrt::com_ptr<ID3D11DeviceContext4> surfaceContext11;
-	winrt::com_ptr<ID3D12Device> surfaceDevice12;
-	winrt::com_ptr<ID3D12CommandQueue> surfaceQueue12;
-	std::string surfaceHandoffStatus = "Awaiting opaque raster completion";
-	uint64_t surfaceHandoffCalls = 0;
-	void PrepareSidecar(ID3D11Device* a_device);
-	void BeginOpaqueSidecar();
-	void BeginSidecarPass(uint64_t a_materialIdentity, uint64_t a_materialRevision = 0, std::string a_referenceKey = {},
-		std::string a_shapeName = {}, NativePBR::PreviewSurveyClass a_surveyClass = NativePBR::PreviewSurveyClass::None,
-		uint32_t a_unsupportedReasons = 0);
-	void EndSidecarPass();
-	bool TryInputOnlyPass(const RE::BSShader& a_shader, uint32_t a_descriptor);
-	bool BeginInputOnlyDraw(ID3D11DeviceContext* a_context);
-	void EndInputOnlyDraw();
-	void ReplaySidecarDraw(ID3D11DeviceContext* a_context, UINT a_count, UINT a_first, INT a_base, bool a_inputBound);
-	void FinishOpaqueSidecar(ID3D11ShaderResourceView* a_finalDepth);
-	/** @brief Registers the DX12 presentation backend without depending on its owning feature. */
-	void BindSurfaceInterop(ID3D11Device5*, ID3D11DeviceContext4*, ID3D12Device*, ID3D12CommandQueue*);
-	/** @brief Publishes this frame's opaque material attachments after DX11 raster completion. */
-	void OnOpaqueRasterReady(const OpaqueRasterInputs&) override;
-	/** @brief Returns the independently published material frame, if the IDs match. */
-	std::shared_ptr<const NativePBR::SurfaceFrame> GetSurfaceFrame(uint32_t a_frame) const;
-	NativePBR::MaterialSidecar::Sources GetSidecarSources(uint32_t a_frame) const;
 	std::string GetName() override { return "NativePBR"; }
 	std::string GetShortName() override { return "NativePBR"; }
 	std::string_view GetCategory() const override { return FeatureCategories::kMaterials; }
@@ -138,12 +104,10 @@ struct NativePBRFeature final : Feature
 			std::span<const std::string_view>(kLegacyFeatures) : std::span<const std::string_view>{};
 	}
 	bool IsActive() const;
-	/** @brief True when eligible FXC input permutations are staged for raster-safe native capture. */
-	bool OwnsInputOnlyShading() const;
 	void DrawSettings() override;
 	void LoadSettings(json&) override;
 	void SaveSettings(json&) override;
-	void RestoreDefaultSettings() override { backendSettings = {}; enabled = true; forceRayAdmission = false; previewOpaqueReplacement = false; captureProjectedUv = false; experimentalInputOnly = false; previewVisualization = 0; }
+	void RestoreDefaultSettings() override { backendSettings = {}; enabled = true; forceRayAdmission = false; }
 	json GetDiagnostics() override;
 };
 

@@ -3002,9 +3002,6 @@ void Upscaling::CreateProxySwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAI
 void Upscaling::CreateProxyInterop()
 {
 	dx12SwapChain.CreateInterop();
-	globals::features::nativePBR.BindSurfaceInterop(dx12SwapChain.d3d11Device.get(),
-		dx12SwapChain.d3d11Context.get(), dx12SwapChain.d3d12Device.get(),
-		dx12SwapChain.commandQueue.get());
 }
 
 IDXGISwapChain* Upscaling::GetProxySwapChain()

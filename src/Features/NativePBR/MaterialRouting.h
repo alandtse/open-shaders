@@ -23,13 +23,6 @@ namespace NativePBR
 		Unmigrated
 	};
 
-	enum class ShaderDomain : uint8_t
-	{
-		LegacyTruePBR,
-		NativePBRInput,
-		Unavailable
-	};
-
 	enum class RenderingOwner : uint8_t
 	{
 		Legacy,
@@ -50,11 +43,10 @@ namespace NativePBR
 		MaterialScope scope = MaterialScope::Unmigrated;
 	};
 
-	/** @brief Separates the compilation policy from current rendering readiness. */
+	/** @brief Separates renderer ownership from current material readiness. */
 	struct RoutingState
 	{
 		Backend backend = Backend::LegacyDX11;
-		ShaderDomain shaderDomain = ShaderDomain::LegacyTruePBR;
 		RenderingOwner owner = RenderingOwner::Legacy;
 		bool materialInputsAvailable = false;
 		uint64_t publishedNativeMaterialGeneration = 0;
@@ -73,11 +65,9 @@ namespace NativePBR
 			return result;
 
 		result.owner = RenderingOwner::NativeUnavailable;
-		result.shaderDomain = ShaderDomain::Unavailable;
 		if (a_inputs.scope == MaterialScope::Unmigrated)
 			return result;
 
-		result.shaderDomain = ShaderDomain::NativePBRInput;
 		result.owner = a_inputs.nativeFeatureEnabled && a_inputs.featureLoaded && a_inputs.sceneOwnsNative ?
 			RenderingOwner::Native : RenderingOwner::NativeUnavailable;
 		return result;

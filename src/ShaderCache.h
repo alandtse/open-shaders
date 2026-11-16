@@ -14,7 +14,6 @@
 #include <winrt/base.h>
 
 #include "Utils/CacheInvalidation.h"
-#include "Features/NativePBR/MaterialRouting.h"
 #include "Utils/WinApi.h"
 
 struct ID3D11ComputeShader;
@@ -791,7 +790,7 @@ namespace SIE
 
 		/** @brief Publishes a_blob as this task's result. Returns false if the compile
 		 *  failed, a_taskGeneration is stale, or Clear(path) evicted this key mid-flight. */
-		bool AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, winrt::com_ptr<ID3DBlob> a_blob, bool fromDisk = false, std::optional<uint64_t> a_taskGeneration = std::nullopt, NativePBR::ShaderDomain a_domain = NativePBR::ShaderDomain::LegacyTruePBR);
+		bool AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, winrt::com_ptr<ID3DBlob> a_blob, bool fromDisk = false, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 
 		enum class ClaimResult
 		{
@@ -818,12 +817,6 @@ namespace SIE
 		/** Requests a pixel shader; optional startup precompiles are skipped in background mode. */
 		RE::BSGraphics::PixelShader* GetPixelShader(const RE::BSShader& shader,
 			uint32_t descriptor, bool a_precompile = false);
-		/** Precompile the NativePBR FXC input domain without publishing a live DX11 pixel shader. */
-		void EnqueueNativePBRInputPixelShader(const RE::BSShader& shader, uint32_t descriptor, bool a_priority = false);
-		/** @brief Returns a compiled input-only FXC shader without substituting an uncompiled legacy permutation. */
-		ID3D11PixelShader* GetNativePBRInputPixelShader(const RE::BSShader& shader, uint32_t descriptor);
-		/** @brief Scope where input-only FXC can replace a full TruePBR deferred pixel shader. */
-		static bool IsNativePBRInputPermutation(uint32_t descriptor);
 		/** @brief Checks that every requested pixel-shader permutation is ready. */
 		bool HasPixelShaders(RE::BSShader::Type type, std::span<const uint32_t> descriptors);
 		RE::BSGraphics::ComputeShader* GetComputeShader(const RE::BSShader& shader,
@@ -1376,8 +1369,6 @@ namespace SIE
 
 		ShaderMapArray<RE::BSGraphics::VertexShader, SShaderCache::VertexShaderDeleter> vertexShaders;
 		ShaderMapArray<RE::BSGraphics::PixelShader> pixelShaders;
-		ankerl::unordered_dense::map<uint32_t, winrt::com_ptr<ID3D11PixelShader>> nativePbrInputShaders;
-		ankerl::unordered_dense::set<uint32_t> nativePbrInputRequests;
 		ShaderMapArray<RE::BSGraphics::ComputeShader> computeShaders;
 
 		bool isEnabled = true;
