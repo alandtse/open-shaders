@@ -79,6 +79,7 @@ struct NativePBRFeature final : Feature
 	std::shared_ptr<const NativePBR::RayMaterialBindings> GetRayMaterialBindings() const;
 	std::atomic<std::shared_ptr<const NativePBR::RayMaterialBindings>> rayMaterialBindings;
 	std::atomic<bool> enabled{ true };
+	std::atomic<bool> forceRayAdmission{ false };
 	std::atomic<bool> previewOpaqueReplacement{ false };
 	std::atomic<bool> captureProjectedUv{ false };
 	std::atomic<bool> experimentalInputOnly{ false };
@@ -138,7 +139,7 @@ struct NativePBRFeature final : Feature
 	void DrawSettings() override;
 	void LoadSettings(json&) override;
 	void SaveSettings(json&) override;
-	void RestoreDefaultSettings() override { backendSettings = {}; enabled = true; previewOpaqueReplacement = false; captureProjectedUv = false; experimentalInputOnly = false; previewVisualization = 0; }
+	void RestoreDefaultSettings() override { backendSettings = {}; enabled = true; forceRayAdmission = false; previewOpaqueReplacement = false; captureProjectedUv = false; experimentalInputOnly = false; previewVisualization = 0; }
 	json GetDiagnostics() override;
 };
 

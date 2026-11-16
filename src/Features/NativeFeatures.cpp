@@ -179,8 +179,10 @@ void NativePBRFeature::Prepass()
 	const auto prepared = GetPreparedSceneMaterials();
 	const auto materials = GetNativeGpuMaterials();
 	const auto previous = rayMaterialBindings.load(std::memory_order_acquire);
-	if (!previous || previous->prepared != prepared || previous->materials != materials)
-		rayMaterialBindings.store(NativePBR::PrepareRayMaterialBindings(prepared, materials), std::memory_order_release);
+	const bool forceAdmission = forceRayAdmission.load(std::memory_order_relaxed);
+	if (!previous || previous->prepared != prepared || previous->materials != materials ||
+		previous->forcedAdmission != forceAdmission)
+		rayMaterialBindings.store(NativePBR::PrepareRayMaterialBindings(prepared, materials, forceAdmission), std::memory_order_release);
 }
 
 void NativePBRFeature::OnSceneTransitionReset(bool)
@@ -792,6 +794,11 @@ void NativePBRFeature::DrawSettings()
 	if (bootSnapshot.HasPendingChange(backendSettings, &BackendSettings::NativeBackend))
 		Util::Text::RestartNeeded("%s", "PBR backend change pending restart");
 	DrawOwnership("Enable Native PBR", enabled, IsActive());
+	bool forceAdmission = forceRayAdmission.load(std::memory_order_relaxed);
+	if (ImGui::Checkbox("Force opaque ray-material admission (testing)", &forceAdmission))
+		forceRayAdmission.store(forceAdmission, std::memory_order_relaxed);
+	if (forceAdmission)
+		ImGui::TextDisabled("Unsafe test: ignores recipe/instance readiness and missing DDS roles; requires a real matched recipe and safe geometry.");
 	if (const auto catalog = materialCatalog.GetSnapshot())
 		ImGui::Text("Native JSON sources: %zu texture sets / %zu MATO | rejected: %zu / %zu",
 			catalog->textureSets.size(), catalog->materialObjects.size(),
@@ -813,6 +820,7 @@ void NativePBRFeature::DrawSettings()
 	const auto materialView = GetMaterialPublication();
 	const auto gpuMaterials = GetNativeGpuMaterials();
 	const auto preparedMaterials = GetPreparedSceneMaterials();
+	const auto rayBindings = GetRayMaterialBindings();
 	ImGui::Text("Material publication: %llu | instance bindings: %zu",
 		materialView ? materialView->serial : 0, materialView ? materialView->instances.size() : 0);
 	ImGui::Text("Prepared scene handoff: %zu instances | matched: %u | missing: %u | ambiguous: %u",
@@ -823,6 +831,9 @@ void NativePBRFeature::DrawSettings()
 	ImGui::Text("DX12 GPU materials: %zu | fully resident: %u | partial: %u | limited: %u",
 		gpuMaterials ? gpuMaterials->entries.size() : 0, gpuMaterials ? gpuMaterials->fullyResident : 0,
 		gpuMaterials ? gpuMaterials->partiallyResident : 0, gpuMaterials ? gpuMaterials->featureLimited : 0);
+	ImGui::Text("NativePBR ray bindings: %u eligible | %u unsupported | %u unavailable%s",
+		rayBindings ? rayBindings->eligible : 0, rayBindings ? rayBindings->unsupported : 0,
+		rayBindings ? rayBindings->unavailable : 0, rayBindings ? "" : " (not published)");
 	if (materialWorker && !materialWorker->gpu.Failure().empty())
 		ImGui::TextDisabled("Native material GPU preparation: %s", materialWorker->gpu.Failure().c_str());
 	ImGui::Text("%s: %llu | rejected: %llu", materialSidecar.InputOnly() ? "Input-only raster draws" : "Sidecar raster draws",
@@ -962,6 +973,7 @@ void NativePBRFeature::LoadSettings(json& j)
 {
 	backendSettings.NativeBackend = j.value("NativeBackend", true);
 	enabled.store(j.value("Enabled", true), std::memory_order_relaxed);
+	forceRayAdmission.store(false, std::memory_order_relaxed);
 	captureProjectedUv.store(j.value("CaptureProjectedUv", false), std::memory_order_relaxed);
 	experimentalInputOnly.store(j.value("ExperimentalInputOnly", false), std::memory_order_relaxed);
 	previewOpaqueReplacement.store(j.value("PreviewOpaqueReplacement", false), std::memory_order_relaxed);
@@ -1005,6 +1017,7 @@ json NativePBRFeature::GetDiagnostics()
 	const auto materialView = GetMaterialPublication();
 	const auto gpuMaterials = GetNativeGpuMaterials();
 	const auto preparedMaterials = GetPreparedSceneMaterials();
+	const auto rayBindings = GetRayMaterialBindings();
 	const auto catalog = materialCatalog.GetSnapshot();
 	const auto summary = GetMaterialSummary();
 	json issueCounts = json::object();
@@ -1055,6 +1068,11 @@ json NativePBRFeature::GetDiagnostics()
 		{ "gpuFullyResident", gpuMaterials ? gpuMaterials->fullyResident : 0 },
 		{ "gpuPartiallyResident", gpuMaterials ? gpuMaterials->partiallyResident : 0 },
 		{ "gpuFeatureLimited", gpuMaterials ? gpuMaterials->featureLimited : 0 },
+		{ "rayMaterialBindings", { { "published", bool(rayBindings) },
+			{ "forcedAdmission", forceRayAdmission.load(std::memory_order_relaxed) },
+			{ "eligible", rayBindings ? rayBindings->eligible : 0 },
+			{ "unsupported", rayBindings ? rayBindings->unsupported : 0 },
+			{ "unavailable", rayBindings ? rayBindings->unavailable : 0 } } },
 		{ "surfaceHandoffStatus", surfaceHandoffStatus },
 		{ "surfaceHandoffCalls", surfaceHandoffCalls },
 		{ "gpuMaterialFailure", materialWorker ? materialWorker->gpu.Failure() : std::string{} },

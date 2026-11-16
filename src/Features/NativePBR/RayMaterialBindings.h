@@ -14,11 +14,17 @@ namespace NativePBR
 		std::shared_ptr<const GpuMaterialResources> materials;
 		std::vector<GpuDrawBinding> instances;
 		uint32_t eligible = 0, unsupported = 0, unavailable = 0;
+		bool forcedAdmission = false;
 	};
 
 	/** @brief Selects only opaque meshes whose complete native shading inputs are known. */
-	inline bool RayOpaqueEligible(const DX12Native::Instance& a_instance, const MaterialLookup& a_material)
+	inline bool RayOpaqueEligible(const DX12Native::Instance& a_instance, const MaterialLookup& a_material,
+		bool a_forceAdmission = false)
 	{
+		if (a_forceAdmission)
+			return a_material && a_material.recipe && a_material.recipe->parameters.kind == MaterialKind::Mesh &&
+				a_instance.material.opaqueCandidate && a_instance.material.attributes &&
+				(a_instance.material.attributes->stride == 36 || a_instance.material.attributes->stride == 60);
 		if (!a_material || a_material.instanceIssues || a_material.instanceOverride ||
 			!a_material.recipe || a_material.recipe->parameters.kind != MaterialKind::Mesh ||
 			!a_instance.material.opaqueCandidate || a_instance.material.alphaTest ||
@@ -57,7 +63,7 @@ namespace NativePBR
 	/** @brief Emits compact per-instance lookups while retaining scene and texture generations. */
 	inline std::shared_ptr<const RayMaterialBindings> PrepareRayMaterialBindings(
 		std::shared_ptr<const PreparedSceneMaterials> a_prepared,
-		std::shared_ptr<const GpuMaterialResources> a_materials)
+		std::shared_ptr<const GpuMaterialResources> a_materials, bool a_forceAdmission = false)
 	{
 		if (!a_prepared || !a_prepared->geometry || !a_prepared->materialPublication ||
 			!a_materials || !a_materials->generation ||
@@ -67,17 +73,19 @@ namespace NativePBR
 		auto result = std::make_shared<RayMaterialBindings>();
 		result->prepared = std::move(a_prepared);
 		result->materials = std::move(a_materials);
+		result->forcedAdmission = a_forceAdmission;
 		result->instances.resize(result->prepared->instances.size(), PackGpuDrawBinding(0, 0, UINT32_MAX, 0));
 		for (const auto& binding : result->prepared->instances) {
 			if (binding.instanceIndex >= result->instances.size() ||
 				binding.geometryIdentity != result->prepared->geometry->instances[binding.instanceIndex].identity ||
-				!RayOpaqueEligible(result->prepared->geometry->instances[binding.instanceIndex], binding.material)) {
+				!RayOpaqueEligible(result->prepared->geometry->instances[binding.instanceIndex], binding.material, a_forceAdmission)) {
 				++result->unsupported;
 				continue;
 			}
 			const auto& recipe = *binding.material.recipe;
 			const auto gpu = result->materials->Find(recipe.identity, recipe.revision);
-			if (!gpu || gpu->availability != GpuMaterialAvailability::Resident || gpu->index >= result->materials->entries.size()) {
+			if (!gpu || (!a_forceAdmission && gpu->availability != GpuMaterialAvailability::Resident) ||
+				gpu->index >= result->materials->entries.size()) {
 				++result->unavailable;
 				continue;
 			}

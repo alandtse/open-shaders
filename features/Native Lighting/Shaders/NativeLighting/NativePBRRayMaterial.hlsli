@@ -50,9 +50,11 @@ float NativePBRLod(NativePBR::MaterialRecord material, TriangleSurface hitSurfac
 }
 
 bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
-	float3x4 objectToWorld, float3x4 worldToObject, float footprint, out EvaluatedSourceMaterial evaluated)
+	float3x4 objectToWorld, float3x4 worldToObject, float footprint, out EvaluatedSourceMaterial evaluated,
+	out bool usedFallback)
 {
 	evaluated = (EvaluatedSourceMaterial)0;
+	usedFallback = false;
 	if (NativePBRReady == 0u || instance >= InstanceCount)
 		return false;
 	NativePBRRayBinding binding = NativePBRInstances[instance];
@@ -69,13 +71,22 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	if (!all(isfinite(uv)) || !isfinite(lod))
 		return false;
 	float4 base, normal, packed, emission = 0.0f;
-	if (!SampleNativePBR(material.textures[0].xy, material.properties.z, uv, lod, base) ||
-		!SampleNativePBR(material.textures[0].zw, material.properties.z, uv, lod, normal) ||
-		!SampleNativePBR(material.textures[1].xy, material.properties.z, uv, lod, packed))
-		return false;
+	const bool baseReady = SampleNativePBR(material.textures[0].xy, material.properties.z, uv, lod, base);
+	if (!baseReady && NativePBRPadding.y == 0u) return false;
+	const bool normalReady = SampleNativePBR(material.textures[0].zw, material.properties.z, uv, lod, normal);
+	if (!normalReady && NativePBRPadding.y == 0u) return false;
+	const bool packedReady = SampleNativePBR(material.textures[1].xy, material.properties.z, uv, lod, packed);
+	if (!packedReady && NativePBRPadding.y == 0u) return false;
+	if (!baseReady) base = float4(1, 1, 1, 1);
+	if (!normalReady) normal = float4(0.5f, 0.5f, 1, 1);
+	if (!packedReady) packed = float4(0.7f, 0, 1, 0.04f);
+	usedFallback = !baseReady || !normalReady || !packedReady;
 	if (material.textures[1].z != NativePBR::MissingTexture &&
-		!SampleNativePBR(material.textures[1].zw, material.properties.z, uv, lod, emission))
-		return false;
+		!SampleNativePBR(material.textures[1].zw, material.properties.z, uv, lod, emission)) {
+		if (NativePBRPadding.y == 0u) return false;
+		emission = 0.0f;
+		usedFallback = true;
+	}
 	NativePBR::SurfaceInput surface;
 	surface.uv = uv;
 	surface.uvDx = 0.0f;

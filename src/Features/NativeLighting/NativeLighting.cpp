@@ -25,6 +25,10 @@ void NativeLightingFeature::DrawSettings()
 	globals::features::nativeComposite.DrawDirectSettings();
 	std::scoped_lock lock(settingsMutex);
 	ImGui::Checkbox("Enable native lighting", &settings.Enabled);
+	if (ImGui::Checkbox("Force positive native validity (testing)", &settings.ForcePositiveValidity))
+		++validityRevision;
+	if (settings.ForcePositiveValidity)
+		ImGui::TextDisabled("Unsafe test: admits geometry hits through depth, alpha and material policy checks; invalid resources still skip.");
 	ImGui::Checkbox("Diffuse", &settings.Diffuse);
 	ImGui::Checkbox("Specular", &settings.Specular);
 	int traceDensity = int(settings.TraceDensityMode);
@@ -97,11 +101,19 @@ void NativeLightingFeature::DrawSettings()
 	ImGui::TextDisabled("DXGI frame-budget telemetry is available in diagnostics; %zu lighting slots.", frames.size());
 	{
 		std::scoped_lock diagnosticsLock(diagnosticsMutex);
+		ImGui::TextDisabled("Native Lighting: %llu submissions | %llu primary queries | %llu primary hits",
+			static_cast<unsigned long long>(diagnostics.value("submissions", uint64_t{ 0 })),
+			static_cast<unsigned long long>(diagnostics.value("primaryQueries", uint64_t{ 0 })),
+			static_cast<unsigned long long>(diagnostics.value("primaryHits", uint64_t{ 0 })));
+		if (const auto status = diagnostics.value("status", std::string{}); !status.empty())
+			ImGui::TextDisabled("Native Lighting status: %s", status.c_str());
 		ImGui::TextDisabled("Skipped native lighting pixels (GPU completed, cumulative): %llu",
 			static_cast<unsigned long long>(diagnostics.value("skippedPixels", uint64_t{ 0 })));
 		ImGui::TextDisabled("NativePBR ray hits (GPU completed, cumulative): %llu candidates | %llu evaluated",
 			static_cast<unsigned long long>(diagnostics.value("nativePbrCandidates", uint64_t{ 0 })),
 			static_cast<unsigned long long>(diagnostics.value("nativePbrEvaluated", uint64_t{ 0 })));
+		ImGui::TextDisabled("NativePBR forced missing-texture fallbacks: %llu",
+			static_cast<unsigned long long>(diagnostics.value("nativePbrForcedTextures", uint64_t{ 0 })));
 	}
 	if (ImGui::Checkbox("Early shadow-mask culling", &settings.EarlyShadowCull))
 		++validityRevision;
@@ -122,6 +134,7 @@ void NativeLightingFeature::LoadSettings(json& a_json)
 	selected.EmitterRadiusMultiplier = sanitize(selected.EmitterRadiusMultiplier, 1.0f, 0.0f, 8.0f);
 	selected.NormalInfluence = std::min(selected.NormalInfluence, 2u);
 	selected.TraceDensityMode = std::min(selected.TraceDensityMode, 7u);
+	selected.ForcePositiveValidity = false;
 	selected.BudgetMB = 0;  // Legacy manual cap is ignored.
 	std::scoped_lock lock(settingsMutex);
 	settings = selected;
@@ -244,6 +257,8 @@ void NativeLightingFeature::PublishDiagnostics()
 		{ "primaryQueries", totals[3] }, { "primaryHits", totals[4] }, { "primaryMisses", totals[5] },
 		{ "materials", totals[6] }, { "shadowQueries", totals[7] }, { "lights", totals[8] },
 		{ "nativePbrEvaluated", totals[28] }, { "nativePbrCandidates", totals[29] },
+		{ "nativePbrForcedTextures", totals[30] },
+		{ "forcePositiveValidity", current && current->forcePositiveValidity },
 		{ "validDiffuse", totals[9] }, { "unsupported", totals[10] }, { "validSpecular", totals[11] },
 		{ "currentMaskAuthoritative", false }, { "comparisonFrames", comparisonFrames }, { "visualConsumptionVerified", false } };
 	constexpr std::array reasonNames{ "invalidCamera", "noPrimaryHit", "depthMismatch", "unsupportedMaterial", "materialEvaluationFailure", "noEligibleLights", "invalidVisibility", "nonfiniteLighting", "authoritativeMaskCull", "successfulEvaluation" };
@@ -274,11 +289,15 @@ json NativeLightingFeature::GetDiagnostics()
 
 void NativeLightingFeature::RegisterUxActions()
 {
-	FEATURE_COMMAND("configure", "Set native direct lighting; optional enabled/diffuse/specular, directStrength, diffuseIntensity, specularIntensity, emissionStrength, normalInfluence (0 flat, 1 geometry, 2 material), allLights, selectedLight, radiusMultiplier, falloffFraction, falloffExponent, shadowStrength, stochasticShadows, emitterRadiusMultiplier, earlyShadowCull, debug, compareCulling, traceDensityMode (0 Full, 1 Two-thirds, 2 Half, 3 One-third, 4 Quarter, 5 One-sixth, 6 One-ninth, 7 Four-ninths), budgetMB.", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("configure", "Set native direct lighting; optional enabled/diffuse/specular, directStrength, diffuseIntensity, specularIntensity, emissionStrength, normalInfluence (0 flat, 1 geometry, 2 material), allLights, selectedLight, radiusMultiplier, falloffFraction, falloffExponent, shadowStrength, stochasticShadows, emitterRadiusMultiplier, earlyShadowCull, debug, compareCulling, traceDensityMode (0 Full, 1 Two-thirds, 2 Half, 3 One-third, 4 Quarter, 5 One-sixth, 6 One-ninth, 7 Four-ninths), forcePositiveValidity (session-only test), budgetMB.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeLightingFeature*>(self);
 		std::scoped_lock lock(feature.settingsMutex);
 		if (args.contains("enabled"))
 			feature.settings.Enabled = args.at("enabled").get<bool>();
+		if (args.contains("forcePositiveValidity")) {
+			feature.settings.ForcePositiveValidity = args.at("forcePositiveValidity").get<bool>();
+			++feature.validityRevision;
+		}
 		if (args.contains("diffuse"))
 			feature.settings.Diffuse = args.at("diffuse").get<bool>();
 		if (args.contains("specular"))
@@ -449,7 +468,7 @@ void NativeLightingFeature::OnOpaqueRasterReady(const OpaqueRasterInputs&)
 		selectedLab = lab;
 		revision = validityRevision;
 	}
-	if (!selected.Enabled || (!selected.Diffuse && !selected.Specular && selectedLab.MaterialPolicy != 2 && !selectedLab.RunWithoutLighting) || transitionOpen || globals::game::isVR) {
+	if (!selected.Enabled || (!selected.Diffuse && !selected.Specular && selectedLab.MaterialPolicy != 2 && !selectedLab.RunWithoutLighting && !selected.ForcePositiveValidity) || transitionOpen || globals::game::isVR) {
 		current.reset();
 		active = false;
 		status = "Native direct lighting disabled or unavailable";
@@ -479,8 +498,8 @@ void NativeLightingFeature::OnOpaqueRasterReady(const OpaqueRasterInputs&)
 	const auto nativeLights = owner.GetNativeLLFLights(frame);
 	const auto availableLights = nativeLights ? size_t(nativeLights->count) : scene->prepared->cell->nativeLights.size();
 	if ((!nativeLights && selected.UseAllPreparedLights && availableLights > DX12Native::kMaximumNativePointLights) ||
-		(!selected.UseAllPreparedLights && selected.SelectedDirectLight >= availableLights && !nativeLights) ||
-		(availableLights == 0 && !nativeLights && !selectedLab.RunWithoutLighting && selectedLab.MaterialPolicy != 2)) {
+		(!selected.UseAllPreparedLights && selected.SelectedDirectLight >= availableLights && !nativeLights && !selected.ForcePositiveValidity) ||
+		(availableLights == 0 && !nativeLights && !selectedLab.RunWithoutLighting && selectedLab.MaterialPolicy != 2 && !selected.ForcePositiveValidity)) {
 		status = "Prepared point-light selection unavailable or exceeds 64";
 		return;
 	}
@@ -629,6 +648,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		slot->sceneRevision = slot->scene.prepared->revision;
 		slot->validityRevision = a_revision;
 		slot->geometryOnly = a_lab.MaterialPolicy == 2;
+		slot->forcePositiveValidity = a_settings.ForcePositiveValidity;
 		slot->maskAvailable = static_cast<bool>(slot->scene.shadow);
 		slot->maskExperimental = slot->maskAvailable && a_settings.EarlyShadowCull && !a_lab.RequireMaskAuthority && a_lab.AssumeMaskAuthoritative;
 		slot->frame = slot->scene.frame;
@@ -685,7 +705,8 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			a_lab.ReferenceVisibility ? 1u : 0u, a_lab.ReferencePrimaryTraversal ? 1u : 0u, slot->scene.frame, a_settings.TraceDensityMode,
 			{ a_settings.PointLightRadiusMultiplier, a_settings.PointLightFalloffFraction, a_settings.PointLightFalloffExponent, a_settings.DirectStrength },
 			{ a_settings.ShadowStrength, a_settings.EmitterRadiusMultiplier, a_settings.StochasticShadows ? 1.0f : 0.0f, a_settings.EmissionStrength },
-			slot->rayMaterials ? 1u : 0u, { 0u, 0u, 0u } };
+			slot->rayMaterials ? 1u : 0u, { a_settings.ForcePositiveValidity ? 1u : 0u,
+				slot->rayMaterials && slot->rayMaterials->forcedAdmission ? 1u : 0u, 0u } };
 		slot->nativePointLightCount = selectedCount;
 		slot->nativeMinimumDistance = constants.minimum;
 		slot->nativeLightTuning = constants.lightTuning;

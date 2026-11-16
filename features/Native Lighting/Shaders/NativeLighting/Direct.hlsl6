@@ -76,6 +76,8 @@ bool AdmitReceiverCandidate(uint instance, uint primitive, float2 barycentric, i
 		valid = false;
 		return false;
 	}
+	if (NativePBRPadding.x != 0u)
+		return true;
 	const SurfaceRecord binding = Surfaces[instance];
 	if (binding.material.z != 0) return true;
 	const MaterialRecord material = Materials[binding.material.x];
@@ -193,7 +195,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		}
 	}
 	LabGuide[pixel].x = primaryGeometry ? 1 : 0;
-	if (!valid) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, 3, 3, 4); return; }
+	if (!valid && NativePBRPadding.x == 0u) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, 3, 3, 4); return; }
 	if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) { Count(5); Finish(pixel, rejectedPrimaryCandidate ? 3 : 0, 0, rejectedPrimaryCandidate ? 4 : 2); return; }
 	Count(4);
 	LabGuide[pixel].x = 1;
@@ -204,7 +206,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	LabGuide[pixel].y = depthError;
 	bool originalDepth = DepthMatches(rasterValid, depthError, distance, 2.0f, 1e-5f);
 	bool selectedDepth = DepthMatches(rasterValid, depthError, distance, AbsoluteTolerance, RelativeTolerance);
-	bool rejectSelectedDepth = !selectedDepth && DepthMode == 0;
+	bool rejectSelectedDepth = !selectedDepth && DepthMode == 0 && NativePBRPadding.x == 0u;
 	if (rejectSelectedDepth && !originalDepth) { Finish(pixel, 0, 0, 3); return; }
 	// A rejected primary candidate would have invalidated the old strict traversal.
 	// Preserve that original verdict while the reference traversal can continue.
@@ -213,18 +215,21 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	bool supportedMaterial = (materialRecord.flags.x & 3u) == 3u && materialRecord.flags.w == 0u;
 	EvaluatedSourceMaterial material;
 	float footprint = max(distance * 2.0f / max(float(Size.x), 1.0f), 1e-6f);
+	bool nativePbrUsedFallback = false;
 	if (NativePBRReady != 0u && NativePBRInstances[instance].materialIndex != 0xffffffffu)
 		Count(29);
 	const bool nativeMaterialValid = LoadNativePBRMaterial(instance, primitive, query.CommittedTriangleBarycentrics(),
-		query.CommittedObjectToWorld3x4(), query.CommittedWorldToObject3x4(), footprint, material);
+		query.CommittedObjectToWorld3x4(), query.CommittedWorldToObject3x4(), footprint, material, nativePbrUsedFallback);
 	if (nativeMaterialValid)
 		Count(28);
+	if (nativeMaterialValid && nativePbrUsedFallback)
+		Count(30);
 	bool materialValid = nativeMaterialValid || (supportedMaterial && LoadSourceMaterial(instance, primitive,
 		query.CommittedTriangleBarycentrics(), query.CommittedObjectToWorld3x4(),
 		query.CommittedWorldToObject3x4(), footprint, material));
 	if (!materialValid) {
 		if (originalReason == 0) originalReason = supportedMaterial ? 5 : 4;
-		if (MaterialPolicy != 1) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 3 ? 0 : 3, 3, originalReason); return; }
+		if (MaterialPolicy != 1 && NativePBRPadding.x == 0u) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 3 ? 0 : 3, 3, originalReason); return; }
 		TriangleSurface surface;
 		if (!LoadTriangle(instance, primitive, query.CommittedTriangleBarycentrics(), surface)) { Count(10); Finish(pixel, originalReason == 3 ? 0 : 3, 3, originalReason); return; }
 		float3 fallbackNormal = mul(surface.normal, (float3x3)query.CommittedWorldToObject3x4());
@@ -286,7 +291,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		visibility.Direction = shadowLength > MinimumDistance ? shadowDelta / shadowLength : l;
 		visibility.TMin = MinimumDistance; visibility.TMax = shadowLength - MinimumDistance;
 		if (visibility.TMax <= visibility.TMin) {
-			if (ReferenceVisibility != 0) { strictVisibilityRejected = true; continue; }
+			if (ReferenceVisibility != 0 || NativePBRPadding.x != 0u) { strictVisibilityRejected = true; continue; }
 			if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 7 : originalReason); return;
 		}
 		RayQuery<RAY_FLAG_FORCE_NON_OPAQUE | RAY_FLAG_CULL_BACK_FACING_TRIANGLES> shadow;
@@ -300,13 +305,13 @@ void main(uint2 pixel : SV_DispatchThreadID)
 			bool strictCandidateValid = true;
 			bool admitted = AdmitReceiverCandidate(candidateInstance, shadow.CandidatePrimitiveIndex(), shadow.CandidateTriangleBarycentrics(), strictCandidateValid);
 			if (!strictCandidateValid) {
-				if (ReferenceVisibility == 0) { valid = false; continue; }
+				if (ReferenceVisibility == 0 && NativePBRPadding.x == 0u) { valid = false; continue; }
 				strictVisibilityRejected = true;
 				admitted = AdmitCandidate(candidateInstance, shadow.CandidatePrimitiveIndex(), shadow.CandidateTriangleBarycentrics());
 			}
 			if (admitted) shadow.CommitNonOpaqueTriangleHit();
 		}
-		if (!valid) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 7 : originalReason); return; }
+		if (!valid && NativePBRPadding.x == 0u) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 7 : originalReason); return; }
         bool blocked = shadow.CommittedStatus() != COMMITTED_NOTHING;
         if (valid && !blocked && CharacterOcclusionEnabled != 0u) {
             RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> actorShadow;
@@ -327,7 +332,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		if ((EnabledLobes & 2u) && NormalInfluence != 0u) specular += microfacet * irradiance;
 	}
 	if (strictVisibilityRejected && originalReason == 0) originalReason = 7;
-	if (eligibleLights == 0) { Finish(pixel, 0, 0, originalReason == 0 ? 6 : originalReason); return; }
+	if (eligibleLights == 0 && NativePBRPadding.x == 0u) { Finish(pixel, 0, 0, originalReason == 0 ? 6 : originalReason); return; }
 	if (!all(isfinite(diffuse)) || !all(isfinite(specular))) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 8 : originalReason); return; }
 	// Emission is independent of direct intensity, as in the reference.
 	// The owner-selected 1x default may double-count existing raster emission.
@@ -345,7 +350,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	}
 	ReceiverGuide[pixel] = float4(n, float(instance + 1));
 	uint original = originalReason == 0 ? 1 : (originalReason == 3 ? 0 : 3);
-	uint effective = rejectSelectedDepth ? 0 : (culled ? 2 : 1);
+	uint effective = NativePBRPadding.x != 0u ? 1u : (rejectSelectedDepth ? 0 : (culled ? 2 : 1));
 	Finish(pixel, original, effective, originalReason == 0 ? 10 : originalReason);
 	RejectionReason[pixel] |= 0x20000000u;
 	if (effective == 1 && (EnabledLobes & 1u)) Count(9);

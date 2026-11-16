@@ -180,7 +180,16 @@ TEST_CASE("NativePBR ray bindings follow the exact scene and resident material g
 	REQUIRE(partial);
 	CHECK(partial->eligible == 0);
 	CHECK(partial->instances[0].materialIndex == UINT32_MAX);
+	const auto forced = PrepareRayMaterialBindings(prepared, gpu, true);
+	REQUIRE(forced);
+	CHECK(forced->forcedAdmission);
+	CHECK(forced->eligible == 1);
+	CHECK(forced->instances[0].materialIndex == 0);
+	attributes->stride = 36;
+	CHECK_FALSE(RayOpaqueEligible(scene->instances[0], prepared->instances[0].material));
+	CHECK(RayOpaqueEligible(scene->instances[0], prepared->instances[0].material, true));
 	auto unrelated = std::make_shared<RecipeGeneration>();
 	gpu->generation = unrelated;
 	CHECK_FALSE(PrepareRayMaterialBindings(prepared, gpu));
+	CHECK_FALSE(PrepareRayMaterialBindings(prepared, gpu, true));
 }

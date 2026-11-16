@@ -25,6 +25,7 @@ struct NativeLightingFeature final : Feature
 		// Independent opt-in; only secondary occlusion rays inspect characters.
 		bool CharacterCasterOcclusion = false;
 		bool CharacterReceiverProbe = false;  // Raster-aligned hits, no shading.
+		bool ForcePositiveValidity = false;  // Session-only diagnostic bypass.
 		uint32_t BudgetMB = 0;                // Compatibility only; always dynamic DXGI.
 		bool PersistLab = false;
 	};
@@ -84,6 +85,7 @@ struct NativeLightingFeature final : Feature
 		float4 nativeLightTuning{}, nativeShadowTuning{};
 		float diffuseIntensity = 0, specularIntensity = 0;
 		bool countersRead = false, comparisonEnabled = false, geometryOnly = false, maskAvailable = false, maskExperimental = false;
+		bool forcePositiveValidity = false;
 	};
 	std::string GetName() override { return "Native Lighting"; }
 	std::string GetShortName() override { return "NativeLighting"; }
@@ -132,7 +134,7 @@ private:
 	winrt::com_ptr<ID3D12PipelineState> pipeline;
 	std::array<std::shared_ptr<Contribution>, 4> frames;
 	std::shared_ptr<Contribution> current;
-	std::array<uint64_t, 30> totals{};
+	std::array<uint64_t, 31> totals{};
 	// Derived after the existing GPU candidate counter readback; no extra per-pixel atomic.
 	uint64_t skippedPixels = 0;
 	std::string status;
