@@ -3,6 +3,7 @@
 #include "Feature.h"
 #include "Features/DX12NativeScene/DX12NativeScene.h"
 #include "Features/DX12NativeScene/VideoMemoryBudget.h"
+#include "Features/NativePBR/RayMaterialBindings.h"
 #include "NativeDirectLightContract.h"
 #include <atomic>
 #include <mutex>
@@ -59,7 +60,7 @@ struct NativeLightingFeature final : Feature
 			LabGuide
 		};
 		std::array<winrt::com_ptr<ID3D12Resource>, 10> textures;
-		winrt::com_ptr<ID3D12Resource> counters, counterReset, counterReadback, lights, constants;
+		winrt::com_ptr<ID3D12Resource> counters, counterReset, counterReadback, lights, constants, rayBindings;
 		winrt::com_ptr<ID3D12DescriptorHeap> heap;
 		winrt::com_ptr<ID3D12CommandAllocator> allocator;
 		winrt::com_ptr<ID3D12GraphicsCommandList> commands;
@@ -68,9 +69,11 @@ struct NativeLightingFeature final : Feature
 		winrt::com_ptr<ID3D12Fence> readyFence;
 		GraphicsBackend backend;
 		DX12NativeScene::SceneFrame scene;
+		std::shared_ptr<const NativePBR::RayMaterialBindings> rayMaterials;
 		std::shared_ptr<const DX12Native::CharacterIsolatedTLAS> characterCasters;
 		bool characterProbeEnabled = false;
 		std::weak_ptr<const DX12Native::ShadowBindings> descriptorBindings;
+		std::weak_ptr<const NativePBR::GpuMaterialResources> descriptorPbr;
 		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 		uint64_t readyValue = 0, bytes = 0, sceneRevision = 0;
 		uint64_t validityRevision = 0;
@@ -129,7 +132,7 @@ private:
 	winrt::com_ptr<ID3D12PipelineState> pipeline;
 	std::array<std::shared_ptr<Contribution>, 4> frames;
 	std::shared_ptr<Contribution> current;
-	std::array<uint64_t, 28> totals{};
+	std::array<uint64_t, 30> totals{};
 	// Derived after the existing GPU candidate counter readback; no extra per-pixel atomic.
 	uint64_t skippedPixels = 0;
 	std::string status;

@@ -203,6 +203,7 @@ void NativeLightingFeature::Retire()
 		frame->counterReadback->Unmap(0, &noWrite);
 		frame->countersRead = true;
 		frame->scene = {};
+		frame->rayMaterials.reset();
 		++completions;
 	}
 }
@@ -238,6 +239,7 @@ void NativeLightingFeature::PublishDiagnostics()
 		{ "maskCulled", totals[1] }, { "maskUnavailable", totals[2] },
 		{ "primaryQueries", totals[3] }, { "primaryHits", totals[4] }, { "primaryMisses", totals[5] },
 		{ "materials", totals[6] }, { "shadowQueries", totals[7] }, { "lights", totals[8] },
+		{ "nativePbrEvaluated", totals[28] }, { "nativePbrCandidates", totals[29] },
 		{ "validDiffuse", totals[9] }, { "unsupported", totals[10] }, { "validSpecular", totals[11] },
 		{ "currentMaskAuthoritative", false }, { "comparisonFrames", comparisonFrames }, { "visualConsumptionVerified", false } };
 	constexpr std::array reasonNames{ "invalidCamera", "noPrimaryHit", "depthMismatch", "unsupportedMaterial", "materialEvaluationFailure", "noEligibleLights", "invalidVisibility", "nonfiniteLighting", "authoritativeMaskCull", "successfulEvaluation" };
@@ -525,6 +527,11 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 											   backend.d3d12Device.get(), trackedBytes, 0)
 		                            .effectiveBytes;
 		uint64_t bytes = 2 * 1024 * 1024;
+		const auto rayTable = CD3DX12_RESOURCE_DESC::Buffer(NativeLighting::kMaximumInstances * sizeof(NativePBR::GpuDrawBinding));
+		const auto rayBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &rayTable).SizeInBytes;
+		if (rayBytes == UINT64_MAX || rayBytes > budget || bytes > budget - rayBytes)
+			throw std::runtime_error("Native lighting PBR binding budget exceeded");
+		bytes += rayBytes;
 		for (size_t i = 0; i < formats.size(); ++i) {
 			if (!a_settings.CompareCulling && (i == 5 || i == 6))
 				continue;
@@ -571,14 +578,15 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			created->counterReset = make(plain, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::CounterReset");
 			created->counterReadback = make(plain, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, L"NativeLighting::CounterReadback");
 			created->lights = make(CD3DX12_RESOURCE_DESC::Buffer(DX12Native::kMaximumNativePointLights * 48), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Lights");
-			// 272-byte Trace ABI rounds to 512 for the D3D12 CBV 256-byte alignment.
+			created->rayBindings = make(rayTable, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::RayMaterialBindings");
+			// 288-byte Trace ABI rounds to 512 for the D3D12 CBV 256-byte alignment.
 			created->constants = make(CD3DX12_RESOURCE_DESC::Buffer(512), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Constants");
 			void* zeros = nullptr;
 			const D3D12_RANGE noRead{ 0, 0 };
 			DX::ThrowIfFailed(created->counterReset->Map(0, &noRead, &zeros));
 			std::memset(zeros, 0, totals.size() * sizeof(uint32_t));
 			created->counterReset->Unmap(0, nullptr);
-			constexpr uint32_t kDescriptors = 13 + 2 * DX12Native::ShadowBindings::kMaximumInstances + DX12Native::kMaximumTexturePools;
+			constexpr uint32_t kDescriptors = 13 + 2 * DX12Native::ShadowBindings::kMaximumInstances + DX12Native::kMaximumTexturePools + NativePBR::kGpuTextureDescriptorCapacity;
 			const D3D12_DESCRIPTOR_HEAP_DESC heapDesc{ D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kDescriptors, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0 };
 			DX::ThrowIfFailed(backend.d3d12Device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(created->heap.put())));
 			created->heap->SetName(L"NativeLighting::Descriptors");
@@ -586,6 +594,15 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			slot = std::move(created);
 		}
 		slot->scene = std::move(a_scene);
+		slot->rayMaterials = globals::features::nativePBR.GetRayMaterialBindings();
+		if (slot->rayMaterials &&
+			(slot->rayMaterials->eligible == 0 ||
+			slot->rayMaterials->prepared->geometry != slot->scene.prepared->acceleration ||
+			slot->rayMaterials->prepared->sceneResources != slot->scene.prepared->materials ||
+			slot->rayMaterials->instances.size() != slot->scene.prepared->acceleration->instances.size() ||
+			!slot->rayMaterials->materials->records || !slot->rayMaterials->materials->textureDescriptors ||
+			slot->rayMaterials->materials->device.get() != backend.d3d12Device.get()))
+			slot->rayMaterials.reset();
 		// Independent Native Lighting visibility never assumes the separate
 		// shadow-mask feature is enabled. Retain the exact TLAS until this
 		// contribution's GPU fence and downstream consumers complete.
@@ -651,8 +668,9 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			uint32_t referenceVisibility, referencePrimaryTraversal, frameIndex, traceDensityMode;
 			float4 lightTuning;   // reach, cutoff width, exponent, common direct strength
 			float4 shadowTuning;  // shadow strength, emitter scale, stochastic enabled, emission
+			uint32_t nativePbrReady, nativePbrPadding[3];
 		};
-		static_assert(sizeof(Constants) == 272);
+		static_assert(sizeof(Constants) == 288);
 		const Constants constants{ width, height, uint32_t(scene.acceleration->instances.size()), selectedCount,
 			{ camera.CameraPosAdjust.x + camera.CameraViewInverse._14, camera.CameraPosAdjust.y + camera.CameraViewInverse._24, camera.CameraPosAdjust.z + camera.CameraViewInverse._34 },
 			0.5f, a_settings.DiffuseIntensity, a_settings.SpecularIntensity, (a_settings.Diffuse ? 1u : 0u) | (a_settings.Specular ? 2u : 0u),
@@ -662,7 +680,8 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			slot->scene.shadow ? 1u : 0u, !a_lab.RequireMaskAuthority && a_lab.AssumeMaskAuthoritative ? 1u : 0u,
 			a_lab.ReferenceVisibility ? 1u : 0u, a_lab.ReferencePrimaryTraversal ? 1u : 0u, slot->scene.frame, a_settings.TraceDensityMode,
 			{ a_settings.PointLightRadiusMultiplier, a_settings.PointLightFalloffFraction, a_settings.PointLightFalloffExponent, a_settings.DirectStrength },
-			{ a_settings.ShadowStrength, a_settings.EmitterRadiusMultiplier, a_settings.StochasticShadows ? 1.0f : 0.0f, a_settings.EmissionStrength } };
+			{ a_settings.ShadowStrength, a_settings.EmitterRadiusMultiplier, a_settings.StochasticShadows ? 1.0f : 0.0f, a_settings.EmissionStrength },
+			slot->rayMaterials ? 1u : 0u, { 0u, 0u, 0u } };
 		slot->nativePointLightCount = selectedCount;
 		slot->nativeMinimumDistance = constants.minimum;
 		slot->nativeLightTuning = constants.lightTuning;
@@ -675,10 +694,16 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		DX::ThrowIfFailed(slot->constants->Map(0, &noRead, &mapped));
 		std::memcpy(mapped, &constants, sizeof(constants));
 		slot->constants->Unmap(0, nullptr);
+		DX::ThrowIfFailed(slot->rayBindings->Map(0, &noRead, &mapped));
+		if (slot->rayMaterials)
+			std::memcpy(mapped, slot->rayMaterials->instances.data(),
+				slot->rayMaterials->instances.size() * sizeof(NativePBR::GpuDrawBinding));
+		slot->rayBindings->Unmap(0, nullptr);
 		const auto step = backend.d3d12Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 		constexpr uint32_t kGeometry = 13;
 		constexpr uint32_t kAttributes = kGeometry + DX12Native::ShadowBindings::kMaximumInstances;
 		constexpr uint32_t kTextures = kAttributes + DX12Native::ShadowBindings::kMaximumInstances;
+		constexpr uint32_t kNativePbrTextures = kTextures + DX12Native::kMaximumTexturePools;
 		auto cpu = slot->heap->GetCPUDescriptorHandleForHeapStart();
 		D3D12_SHADER_RESOURCE_VIEW_DESC textureSrv{};
 		textureSrv.Format = DXGI_FORMAT_R32_FLOAT;
@@ -747,6 +772,14 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			}
 			slot->descriptorBindings = scene.materials;
 		}
+		if (slot->rayMaterials && slot->descriptorPbr.lock() != slot->rayMaterials->materials) {
+			auto destination = slot->heap->GetCPUDescriptorHandleForHeapStart();
+			destination.ptr += uint64_t(kNativePbrTextures) * step;
+			backend.d3d12Device->CopyDescriptorsSimple(NativePBR::kGpuTextureDescriptorCapacity,
+				destination, slot->rayMaterials->materials->textureDescriptors->GetCPUDescriptorHandleForHeapStart(),
+				D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+			slot->descriptorPbr = slot->rayMaterials->materials;
+		}
 		DX::ThrowIfFailed(slot->allocator->Reset());
 		if (slot->commands)
 			DX::ThrowIfFailed(slot->commands->Reset(slot->allocator.get(), pipeline.get()));
@@ -781,6 +814,10 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		commands->SetComputeRootShaderResourceView(3, slot->lights->GetGPUVirtualAddress());
 		commands->SetComputeRootShaderResourceView(5, scene.materials->materials->surfaces->GetGPUVirtualAddress());
 		commands->SetComputeRootShaderResourceView(6, scene.materials->materials->materials->GetGPUVirtualAddress());
+		commands->SetComputeRootShaderResourceView(14, slot->rayBindings->GetGPUVirtualAddress());
+		commands->SetComputeRootShaderResourceView(15, slot->rayMaterials ?
+			slot->rayMaterials->materials->records->GetGPUVirtualAddress() :
+			scene.materials->materials->materials->GetGPUVirtualAddress());
 		commands->SetComputeRootConstantBufferView(11, slot->constants->GetGPUVirtualAddress());
 		auto gpu = slot->heap->GetGPUDescriptorHandleForHeapStart();
 		commands->SetComputeRootDescriptorTable(1, gpu);
@@ -797,6 +834,9 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		gpu = slot->heap->GetGPUDescriptorHandleForHeapStart();
 		gpu.ptr += uint64_t(kTextures) * step;
 		commands->SetComputeRootDescriptorTable(8, gpu);
+		gpu = slot->heap->GetGPUDescriptorHandleForHeapStart();
+		gpu.ptr += uint64_t(kNativePbrTextures) * step;
+		commands->SetComputeRootDescriptorTable(16, gpu);
 		commands->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
 		std::vector<D3D12_RESOURCE_BARRIER> end;
 		end.push_back(CD3DX12_RESOURCE_BARRIER::Transition(slot->counters.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE));

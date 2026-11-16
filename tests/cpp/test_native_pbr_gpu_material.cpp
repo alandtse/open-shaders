@@ -1,6 +1,7 @@
 #include "Features/NativePBR/GpuMaterialAbi.h"
 #include "Features/NativePBR/GpuMaterialResidency.h"
 #include "Features/NativePBR/GpuMaterialResources.h"
+#include "Features/NativePBR/RayMaterialBindings.h"
 #include <catch2/catch_test_macros.hpp>
 
 TEST_CASE("NativePBR GPU material ABI preserves all seven texture roles", "[NativePBR][gpu-material]")
@@ -131,4 +132,55 @@ TEST_CASE("NativePBR material generations retain provenance only for active DDS 
 	CHECK(selected.Assess(recipe) == DX12Native::LiveTextureSourceStatus::Available);
 	recipe.textures[0].canonicalPath = "textures/a.dds";
 	CHECK(selected.Assess(recipe) == DX12Native::LiveTextureSourceStatus::Missing);
+}
+
+TEST_CASE("NativePBR ray bindings follow the exact scene and resident material generation", "[NativePBR][gpu-material]")
+{
+	using namespace NativePBR;
+	auto recipes = std::make_shared<RecipeGeneration>();
+	auto recipe = std::make_shared<Recipe>();
+	recipe->identity = 42;
+	recipe->revision = 7;
+	recipes->recipes.emplace(42, recipe);
+	auto publication = std::make_shared<MaterialPublication>();
+	publication->recipes = recipes;
+	auto& observed = publication->instances[MaterialPublication::Key("Ref", "Mesh")];
+	observed.materialIdentity = 42;
+	observed.properties.opacity = InstanceProperties::Opacity::Opaque;
+	observed.properties.normalMode = InstanceProperties::NormalMode::TangentSpace;
+	DX12Native::Instance instance;
+	instance.identity = 100;
+	instance.preparedIdentity.referenceKey = "Ref";
+	instance.preparedIdentity.shapeName = "Mesh";
+	instance.material.offlineDescription = std::make_shared<nlohmann::json>(nlohmann::json{ { "shaderFlags2", 1u << 5 } });
+	auto attributes = std::make_shared<DX12Native::VertexAttributes>();
+	attributes->stride = 60;
+	attributes->hasTangentFrame = true;
+	instance.material.attributes = attributes;
+	auto scene = std::make_shared<DX12Native::TopLevel>();
+	scene->instances = { instance };
+	auto resources = std::make_shared<DX12Native::ShadowBindings>();
+	resources->scene = scene;
+	resources->materials = std::make_shared<DX12Native::MaterialResources>();
+	const auto prepared = PrepareSceneMaterials(scene, resources, publication, 12, 9);
+	REQUIRE(prepared);
+	auto gpu = std::make_shared<GpuMaterialResources>();
+	gpu->generation = recipes;
+	gpu->indices.emplace(42, 0);
+	gpu->entries.push_back({ 0, 7, 7, 0, 7, GpuMaterialAvailability::Resident });
+	const auto bound = PrepareRayMaterialBindings(prepared, gpu);
+	REQUIRE(bound);
+	REQUIRE(bound->eligible == 1);
+	CHECK(bound->instances[0].materialIndex == 0);
+	CHECK((bound->instances[0].identity == std::array<uint32_t, 2>{ 42, 0 }));
+	CHECK((bound->instances[0].revision == std::array<uint32_t, 2>{ 7, 0 }));
+	CHECK(bound->instances[0].flags == kGpuDrawUsesVertexColor);
+	gpu->entries[0].availability = GpuMaterialAvailability::PartiallyResident;
+	const auto partial = PrepareRayMaterialBindings(prepared, gpu);
+	REQUIRE(partial);
+	CHECK(partial->eligible == 0);
+	CHECK(partial->instances[0].materialIndex == UINT32_MAX);
+	auto unrelated = std::make_shared<RecipeGeneration>();
+	gpu->generation = unrelated;
+	CHECK_FALSE(PrepareRayMaterialBindings(prepared, gpu));
 }

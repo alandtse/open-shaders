@@ -55,10 +55,13 @@ cbuffer Trace : register(b0)
 	uint TraceDensityMode;
 	float4 LightTuning; // radius multiplier, cutoff fraction, cutoff exponent, direct strength
 	float4 ShadowTuning; // shadow strength, emitter radius scale, stochastic visibility, emission strength
+	uint NativePBRReady;
+	uint3 NativePBRPadding;
 };
 
 #include "Common/ReverseZ.hlsli"
 #include "DX12NativeScene/materials.hlsli"
+#include "NativePBRRayMaterial.hlsli"
 #include "ShadowCull.hlsli"
 #include "DX12NativeScene/NativeTraceDensity.hlsli"
 #include "ValidityLab.hlsli"
@@ -210,7 +213,15 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	bool supportedMaterial = (materialRecord.flags.x & 3u) == 3u && materialRecord.flags.w == 0u;
 	EvaluatedSourceMaterial material;
 	float footprint = max(distance * 2.0f / max(float(Size.x), 1.0f), 1e-6f);
-	bool materialValid = supportedMaterial && LoadSourceMaterial(instance, primitive, query.CommittedTriangleBarycentrics(), query.CommittedObjectToWorld3x4(), query.CommittedWorldToObject3x4(), footprint, material);
+	if (NativePBRReady != 0u && NativePBRInstances[instance].materialIndex != 0xffffffffu)
+		Count(29);
+	const bool nativeMaterialValid = LoadNativePBRMaterial(instance, primitive, query.CommittedTriangleBarycentrics(),
+		query.CommittedObjectToWorld3x4(), query.CommittedWorldToObject3x4(), footprint, material);
+	if (nativeMaterialValid)
+		Count(28);
+	bool materialValid = nativeMaterialValid || (supportedMaterial && LoadSourceMaterial(instance, primitive,
+		query.CommittedTriangleBarycentrics(), query.CommittedObjectToWorld3x4(),
+		query.CommittedWorldToObject3x4(), footprint, material));
 	if (!materialValid) {
 		if (originalReason == 0) originalReason = supportedMaterial ? 5 : 4;
 		if (MaterialPolicy != 1) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 3 ? 0 : 3, 3, originalReason); return; }

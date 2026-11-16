@@ -15,6 +15,7 @@
 #include "Features/NativePBR/MaterialService.h"
 #include "Features/NativePBR/GpuMaterialResources.h"
 #include "Features/NativePBR/PreparedSceneMaterials.h"
+#include "Features/NativePBR/RayMaterialBindings.h"
 #include "Features/NativePBR/SurfaceFramePublisher.h"
 #include "Utils/PointLightFlags.h"
 #include <BS_thread_pool.hpp>
@@ -67,6 +68,11 @@ std::shared_ptr<const NativePBR::GpuMaterialResources> NativePBRFeature::GetNati
 std::shared_ptr<const NativePBR::PreparedSceneMaterials> NativePBRFeature::GetPreparedSceneMaterials() const
 {
 	return IsActive() ? preparedSceneMaterials.load(std::memory_order_acquire) : nullptr;
+}
+
+std::shared_ptr<const NativePBR::RayMaterialBindings> NativePBRFeature::GetRayMaterialBindings() const
+{
+	return IsActive() ? rayMaterialBindings.load(std::memory_order_acquire) : nullptr;
 }
 
 NativePBRFeature::MaterialSummary NativePBRFeature::GetMaterialSummary() const
@@ -147,6 +153,7 @@ void NativePBRFeature::Prepass()
 {
 	if (SelectedBackend() != NativePBR::Backend::NativeDX12 || !enabled.load(std::memory_order_relaxed)) {
 		preparedSceneMaterials.store({}, std::memory_order_release);
+		rayMaterialBindings.store({}, std::memory_order_release);
 		return;
 	}
 	PollMaterialRegistry();
@@ -169,11 +176,17 @@ void NativePBRFeature::Prepass()
 				materialWorker->gpu.Request(*backend, std::move(recipes), 0, 16ull * 1024 * 1024,
 					prepared->sceneResources->materials);
 	materialWorker->gpu.Advance();
+	const auto prepared = GetPreparedSceneMaterials();
+	const auto materials = GetNativeGpuMaterials();
+	const auto previous = rayMaterialBindings.load(std::memory_order_acquire);
+	if (!previous || previous->prepared != prepared || previous->materials != materials)
+		rayMaterialBindings.store(NativePBR::PrepareRayMaterialBindings(prepared, materials), std::memory_order_release);
 }
 
 void NativePBRFeature::OnSceneTransitionReset(bool)
 {
 	preparedSceneMaterials.store({}, std::memory_order_release);
+	rayMaterialBindings.store({}, std::memory_order_release);
 }
 
 // Backend selection is the ONLY automatic execution switch. Feature toggles
