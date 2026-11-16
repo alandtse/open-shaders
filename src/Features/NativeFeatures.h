@@ -26,6 +26,7 @@ namespace NativePBR
 	struct RecipeGeneration;
 	struct MaterialPublication;
 	struct GpuMaterialResources;
+	struct PreparedSceneMaterials;
 struct SurfaceFrame;
 class SurfaceFramePublisher;
 }
@@ -64,11 +65,15 @@ struct NativePBRFeature final : Feature
 	std::shared_ptr<MaterialWorker> materialWorker;
 	void PollMaterialRegistry();
 	void Prepass() override;
+	void OnSceneTransitionReset(bool) override;
 	void SetupResources() override;
 	MaterialSummary GetMaterialSummary() const;
 	std::shared_ptr<const NativePBR::RecipeGeneration> GetNativeRecipes() const;
 	std::shared_ptr<const NativePBR::MaterialPublication> GetMaterialPublication() const;
 	std::shared_ptr<const NativePBR::GpuMaterialResources> GetNativeGpuMaterials() const;
+	/** @brief Returns scene-owned geometry and textures with identity-only material attachments. */
+	std::shared_ptr<const NativePBR::PreparedSceneMaterials> GetPreparedSceneMaterials() const;
+	std::atomic<std::shared_ptr<const NativePBR::PreparedSceneMaterials>> preparedSceneMaterials;
 	std::atomic<bool> enabled{ true };
 	std::atomic<bool> previewOpaqueReplacement{ false };
 	std::atomic<bool> captureProjectedUv{ false };

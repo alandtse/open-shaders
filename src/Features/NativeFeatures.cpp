@@ -14,6 +14,7 @@
 #include "Features/NativePBR/NativePBRCompiler.h"
 #include "Features/NativePBR/MaterialService.h"
 #include "Features/NativePBR/GpuMaterialResources.h"
+#include "Features/NativePBR/PreparedSceneMaterials.h"
 #include "Features/NativePBR/SurfaceFramePublisher.h"
 #include "Utils/PointLightFlags.h"
 #include <BS_thread_pool.hpp>
@@ -61,6 +62,11 @@ std::shared_ptr<const NativePBR::MaterialPublication> NativePBRFeature::GetMater
 std::shared_ptr<const NativePBR::GpuMaterialResources> NativePBRFeature::GetNativeGpuMaterials() const
 {
 	return materialWorker ? materialWorker->gpu.Get() : nullptr;
+}
+
+std::shared_ptr<const NativePBR::PreparedSceneMaterials> NativePBRFeature::GetPreparedSceneMaterials() const
+{
+	return IsActive() ? preparedSceneMaterials.load(std::memory_order_acquire) : nullptr;
 }
 
 NativePBRFeature::MaterialSummary NativePBRFeature::GetMaterialSummary() const
@@ -139,13 +145,32 @@ void NativePBRFeature::PollMaterialRegistry()
 
 void NativePBRFeature::Prepass()
 {
-	if (SelectedBackend() != NativePBR::Backend::NativeDX12 || !enabled.load(std::memory_order_relaxed))
+	if (SelectedBackend() != NativePBR::Backend::NativeDX12 || !enabled.load(std::memory_order_relaxed)) {
+		preparedSceneMaterials.store({}, std::memory_order_release);
 		return;
+	}
 	PollMaterialRegistry();
+	const auto scene = globals::features::dx12NativeScene.GetPublishedScene();
+	const auto materialPublication = GetMaterialPublication();
+	if (scene && scene->acceleration && scene->materials && materialPublication) {
+		const auto previous = preparedSceneMaterials.load(std::memory_order_acquire);
+		if (!previous || previous->geometry != scene->acceleration ||
+			previous->sceneResources != scene->materials || previous->materialPublication != materialPublication ||
+			previous->cellID != scene->cellID || previous->sceneRevision != scene->revision)
+			preparedSceneMaterials.store(NativePBR::PrepareSceneMaterials(scene->acceleration,
+				scene->materials, materialPublication, scene->cellID, scene->revision), std::memory_order_release);
+	} else {
+		preparedSceneMaterials.store({}, std::memory_order_release);
+	}
 	if (auto backend = globals::features::dx12NativeScene.GetGraphicsBackend())
 		if (auto recipes = GetNativeRecipes(); recipes && recipes->batchesComplete)
 			materialWorker->gpu.Request(*backend, std::move(recipes));
 	materialWorker->gpu.Advance();
+}
+
+void NativePBRFeature::OnSceneTransitionReset(bool)
+{
+	preparedSceneMaterials.store({}, std::memory_order_release);
 }
 
 // Backend selection is the ONLY automatic execution switch. Feature toggles
@@ -771,8 +796,14 @@ void NativePBRFeature::DrawSettings()
 	ImGui::TextDisabled("NativePBR owns live material recipes; current engine observations still originate in TruePBR hooks.");
 	const auto materialView = GetMaterialPublication();
 	const auto gpuMaterials = GetNativeGpuMaterials();
+	const auto preparedMaterials = GetPreparedSceneMaterials();
 	ImGui::Text("Material publication: %llu | instance bindings: %zu",
 		materialView ? materialView->serial : 0, materialView ? materialView->instances.size() : 0);
+	ImGui::Text("Prepared scene handoff: %zu instances | matched: %u | missing: %u | ambiguous: %u",
+		preparedMaterials ? preparedMaterials->instances.size() : 0,
+		preparedMaterials ? preparedMaterials->available : 0,
+		preparedMaterials ? preparedMaterials->missing : 0,
+		preparedMaterials ? preparedMaterials->ambiguous : 0);
 	ImGui::Text("DX12 GPU materials: %zu | fully resident: %u | partial: %u | limited: %u",
 		gpuMaterials ? gpuMaterials->entries.size() : 0, gpuMaterials ? gpuMaterials->fullyResident : 0,
 		gpuMaterials ? gpuMaterials->partiallyResident : 0, gpuMaterials ? gpuMaterials->featureLimited : 0);
@@ -957,6 +988,7 @@ json NativePBRFeature::GetDiagnostics()
 	const auto recipes = GetNativeRecipes();
 	const auto materialView = GetMaterialPublication();
 	const auto gpuMaterials = GetNativeGpuMaterials();
+	const auto preparedMaterials = GetPreparedSceneMaterials();
 	const auto catalog = materialCatalog.GetSnapshot();
 	const auto summary = GetMaterialSummary();
 	json issueCounts = json::object();
@@ -996,6 +1028,13 @@ json NativePBRFeature::GetDiagnostics()
 		{ "recipeIssueCounts", std::move(issueCounts) },
 		{ "materialPublicationSerial", materialView ? materialView->serial : 0 },
 		{ "materialInstanceBindings", materialView ? materialView->instances.size() : 0 },
+		{ "preparedSceneHandoff", { { "version", NativePBR::kPreparedSceneMaterialsVersion },
+			{ "sceneRevision", preparedMaterials ? preparedMaterials->sceneRevision : 0 },
+			{ "materialSerial", preparedMaterials ? preparedMaterials->materialSerial : 0 },
+			{ "instances", preparedMaterials ? preparedMaterials->instances.size() : 0 },
+			{ "matched", preparedMaterials ? preparedMaterials->available : 0 },
+			{ "missing", preparedMaterials ? preparedMaterials->missing : 0 },
+			{ "ambiguous", preparedMaterials ? preparedMaterials->ambiguous : 0 } } },
 		{ "gpuMaterialCount", gpuMaterials ? gpuMaterials->entries.size() : 0 },
 		{ "gpuFullyResident", gpuMaterials ? gpuMaterials->fullyResident : 0 },
 		{ "gpuPartiallyResident", gpuMaterials ? gpuMaterials->partiallyResident : 0 },
