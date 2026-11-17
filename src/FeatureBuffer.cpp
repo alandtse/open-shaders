@@ -60,11 +60,6 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 {
 	const auto& bloomSettings = globals::features::csUtility.settings.bloomEnhancement;
 	const auto linearLightingData = globals::features::linearLighting.GetCommonBufferData();
-	const auto utilityData = globals::features::csUtility.GetCommonBufferData();
-	const auto iblData = globals::features::ibl.PrepareFrameData();
-	globals::state->effectAmbientIBLUploaded = utilityData.useAmbientEffectLighting &&
-	                                           globals::features::ibl.loaded && iblData.EnableIBL &&
-	                                           iblData.DALCMode == 0 && iblData.DALCAmount == 0.0f;
 	auto& lightingFlags = globals::state->deferredLightingShaderFlags;
 	lightingFlags &= ~SIE::ShaderCache::kLightingLinearACEScg;
 	if (linearLightingData.enableLinearLighting && linearLightingData.enableACEScg)
@@ -84,9 +79,9 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::lodBlending.settings,
 		globals::features::hairSpecular.settings,
 		globals::features::terrainVariation.settings,
-		iblData,
+		globals::features::ibl.PrepareFrameData(),
 		globals::features::extendedTranslucency.GetCommonBufferData(),
-		utilityData,
+		globals::features::csUtility.GetCommonBufferData(),
 		globals::features::wind.GetCommonBufferData(),
 		linearLightingData,
 #if defined(ENABLE_EFFECTS11)

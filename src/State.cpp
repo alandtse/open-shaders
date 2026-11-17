@@ -2313,10 +2313,7 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 							   (uint32_t)SIE::ShaderCache::EffectShaderFlags::GrayscaleToAlpha |
 							   (uint32_t)SIE::ShaderCache::EffectShaderFlags::IgnoreTexAlpha);
 				a_vertexDescriptor &= flags;
-				a_pixelDescriptor &= flags & ~(SIE::ShaderCache::kEffectLinearACEScg | SIE::ShaderCache::kEffectAmbientWorldIBL);
-				if (effectAmbientIBLUploaded &&
-					(permutationData.ExtraShaderDescriptor & static_cast<uint32_t>(ExtraShaderDescriptors::InWorld)))
-					a_pixelDescriptor |= SIE::ShaderCache::kEffectAmbientWorldIBL;
+				a_pixelDescriptor &= flags & ~SIE::ShaderCache::kEffectLinearACEScg;
 				if (deferredLightingShaderFlags & SIE::ShaderCache::kLightingLinearACEScg)
 					a_pixelDescriptor |= SIE::ShaderCache::kEffectLinearACEScg;
 

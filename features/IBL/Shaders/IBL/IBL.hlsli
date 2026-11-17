@@ -72,9 +72,6 @@ namespace ImageBasedLighting
 	/// Compute ratio between DALC and IBL for brightness/color matching.
 	float3 GetIBLRatio()
 	{
-#if defined(IBL_NO_DALC)
-		return 1.0.xxx;
-#else
 		const float dalcAmount = SharedData::iblSettings.DALCAmount;
 		float3 matchedRatio = 1.0f.xxx;
 		[branch] if (dalcAmount != 0.0f)
@@ -101,7 +98,6 @@ namespace ImageBasedLighting
 			}
 		}
 		return matchedRatio;
-#endif
 	}
 
 	// ============================================================================

@@ -1193,7 +1193,6 @@ namespace SIE
 		};
 
 		static constexpr uint32_t kEffectLinearACEScg = 1u << 9;
-		static constexpr uint32_t kEffectAmbientWorldIBL = 1u << 28;
 
 		enum class EffectShaderFlags
 		{
