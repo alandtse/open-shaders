@@ -758,9 +758,6 @@ namespace SIE
 		static void GetLightingShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines, ShaderClass shaderClass)
 		{
 			const bool pixel = shaderClass == ShaderClass::Pixel;
-			const bool snowCoverInactive = pixel && (descriptor & ShaderCache::kLightingSnowCoverInactive);
-			if (snowCoverInactive)
-				descriptor &= ~ShaderCache::kLightingSnowCoverInactive;
 			const bool dryWeather = pixel && (descriptor & ShaderCache::kLightingDryWeather);
 			if (dryWeather)
 				descriptor &= ~ShaderCache::kLightingDryWeather;
@@ -768,8 +765,6 @@ namespace SIE
 
 			size_t lastIndex = std::ranges::find_if(defines, [](const D3D_SHADER_MACRO& macro) { return macro.Name == nullptr; }) - defines.begin();
 
-			if (snowCoverInactive)
-				defines[lastIndex++] = { "SNOW_COVER_INACTIVE", nullptr };
 			if (dryWeather)
 				defines[lastIndex++] = { "DRY_WEATHER", nullptr };
 			if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::Deferred)) {
@@ -2940,7 +2935,7 @@ namespace SIE
 
 		if (IsAsync()) {
 			compilationSet.Add({ ShaderClass::Pixel, shader, descriptor, a_precompile });
-			constexpr uint32_t specialization = kLightingDryWeather | kLightingSnowCoverInactive;
+			constexpr uint32_t specialization = kLightingDryWeather;
 			if (shader.shaderType == RE::BSShader::Type::Lighting && (descriptor & specialization))
 				return GetPixelShader(shader, descriptor & ~specialization, a_precompile);
 		} else {
