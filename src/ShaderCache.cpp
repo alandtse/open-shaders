@@ -29,6 +29,7 @@
 #include "Utils/GenerationClaim.h"
 #include "Utils/Logging.h"
 #include "Utils/ShaderCacheManifest.h"
+#include "Utils/ShaderCompileFlags.h"
 #include "Utils/ShaderContentStore.h"
 #include "Utils/StandaloneShaderCacheKey.h"
 #include "Utils/StringUtils.h"
@@ -2394,6 +2395,11 @@ namespace SIE
 			}
 			if (globals::state->enableAvoidFlowControl.load(std::memory_order_relaxed)) {
 				flags |= D3DCOMPILE_AVOID_FLOW_CONTROL;
+			}
+			if (Util::ShaderCompileFlags::SkipsOptimization(
+					shaderClass == ShaderClass::Pixel && type == RE::BSShader::Type::Lighting, debugCompile,
+					(flags & D3DCOMPILE_PARTIAL_PRECISION) != 0, (flags & D3DCOMPILE_AVOID_FLOW_CONTROL) != 0)) {
+				flags = (flags & ~D3DCOMPILE_OPTIMIZATION_LEVEL3) | D3DCOMPILE_SKIP_OPTIMIZATION;
 			}
 			if (useDiskCache) {
 				flags |= D3DCOMPILE_SKIP_VALIDATION;
