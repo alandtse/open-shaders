@@ -54,6 +54,8 @@ namespace ImageBasedLighting
 	/// Compute ratio between DALC and IBL for brightness/color matching.
 	float3 GetIBLRatio()
 	{
+		[branch] if (SharedData::iblSettings.DALCAmount == 0.0f) return 1.0f.xxx;
+
 		float3 dalc0 = Color::Ambient(SharedData::GetAmbient(0.f));
 
 		sh2 iblSHR = EnvIBLTexture.Load(int3(0, 0, 0));
