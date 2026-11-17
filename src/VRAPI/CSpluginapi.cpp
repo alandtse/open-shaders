@@ -150,10 +150,7 @@ namespace CSPluginAPI
 			slot = std::move(merged);
 		}
 
-		// Rewrites kDeferredUpscaleMethod to the field it actually targets, now that
-		// Streamline's DLSS availability is known. Mirrors GetUpscaleMethod()'s
-		// no-PerfMode branch: without DLSS the no-DLSS preference is the live field,
-		// and DLSS there coerces to FSR.
+		// Resolve the API selection once the boot capture state and DLSS availability are known.
 		void ResolveDeferredKeys(json& a_patch)
 		{
 			const auto it = a_patch.find(kDeferredUpscaleMethod);
@@ -161,10 +158,9 @@ namespace CSPluginAPI
 				return;
 			const auto method = it->get<uint32_t>();
 			a_patch.erase(it);
-			if (globals::features::upscaling.streamline.featureDLSS)
-				a_patch["upscaleMethod"] = method;
-			else
-				a_patch["upscaleMethodNoDLSS"] = std::min(method, static_cast<uint32_t>(UpscaleMethod::kFSR));
+			const auto& upscaling = globals::features::upscaling;
+			const auto selected = upscaling.streamline.featureDLSS ? method : std::min(method, static_cast<uint32_t>(UpscaleMethod::kFSR));
+			a_patch[upscaling.GetSelectedUpscaleMethodKey()] = selected;
 		}
 	}
 

@@ -56,6 +56,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Upscaling::Settings,
 	upscaleMethod,
 	upscaleMethodNoDLSS,
+	upscaleMethodRenderDoc,
 	qualityMode,
 	frameLimitMode,
 	frameGenerationMode,
@@ -457,17 +458,12 @@ void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 	settings.qualityMode = preset.qualityMode;
 	settings.vrRenderScale = 0.0f;
 	// Only fills the gap (never overrides an existing DLSS-or-FSR choice); Quality never
-	// forces one. GetUpscaleMethod() reads upscaleMethod/upscaleMethodNoDLSS depending on
-	// DLSS availability -- write whichever field it reads.
+	// forces one. Write the method preference for the current capture and DLSS state.
 	if (profile != PerfProfile::Quality) {
 		const auto currentMethod = GetUpscaleMethod();
 		const bool needsUpscaler = currentMethod != UpscaleMethod::kDLSS && currentMethod != UpscaleMethod::kFSR;
-		if (needsUpscaler) {
-			if (streamline.featureDLSS)
-				settings.upscaleMethod = (uint)UpscaleMethod::kDLSS;
-			else
-				settings.upscaleMethodNoDLSS = (uint)UpscaleMethod::kFSR;
-		}
+		if (needsUpscaler)
+			settings.*GetSelectedUpscaleMethodField() = (uint)(streamline.featureDLSS ? UpscaleMethod::kDLSS : UpscaleMethod::kFSR);
 	}
 	// Foveation is VR-only (DrawFoveationControls/IsRuntimeSupported); leave it alone on Flat.
 	if (globals::game::isVR) {
@@ -820,14 +816,14 @@ void Upscaling::DrawUpscalingSettings()
 	bool featureDLSS = streamline.featureDLSS;
 	bool featureFSR = true;  // FSR is always available
 
-	uint32_t* currentUpscaleMode = &settings.upscaleMethod;
+	const auto methodField = GetSelectedUpscaleMethodField();
+	uint32_t blockedMode = (uint)UpscaleMethod::kNONE;
+	uint32_t* currentUpscaleMode = openCompositeBlocksUpscaling ? &blockedMode : &(settings.*methodField);
 	uint32_t availableModes = 1;  // Start with TAA
 	if (featureFSR)
 		availableModes = 2;  // Add FSR
 	if (featureDLSS)
 		availableModes = 3;  // Add DLSS if available
-	else
-		currentUpscaleMode = &settings.upscaleMethodNoDLSS;
 
 	// Dropdown for method selection
 	std::vector<const char*> modeLabels;
@@ -872,13 +868,11 @@ void Upscaling::DrawUpscalingSettings()
 									 "Render-at-upscaled-resolution is active: Method and Upscale Preset changes only take effect after a game restart. "
 									 "Sharpness / model preset / Reflex remain live."));
 
-		// Method pending-diff. Only fires when the user is editing the DLSS-
-		// path mode slot (upscaleMethod, not upscaleMethodNoDLSS), since
-		// that's the one the boot snapshot locked.
-		if (currentUpscaleMode == &settings.upscaleMethod &&
-			bootSnapshot.HasPendingChange(settings, &Settings::upscaleMethod)) {
-			const uint live = std::clamp<uint>(settings.upscaleMethod, 0u, availableModes);
-			const uint boot = std::clamp<uint>(bootSnapshot.Boot(&Settings::upscaleMethod), 0u, availableModes);
+		// PerfMode locks the RenderDoc method or the normal DLSS-path method at boot.
+		if (!openCompositeBlocksUpscaling && methodField != &Settings::upscaleMethodNoDLSS &&
+			bootSnapshot.HasPendingChange(settings, methodField)) {
+			const uint live = std::min(settings.*methodField, availableModes);
+			const uint boot = std::min(bootSnapshot.Boot(methodField), availableModes);
 			Util::Text::RestartNeeded(
 				"Pending restart: currently active method = %s (selected = %s).",
 				upscaleModes[boot].c_str(), upscaleModes[live].c_str());
@@ -1355,6 +1349,8 @@ void Upscaling::LoadSettings(json& o_json)
 		logger::warn("[Upscaling] Loaded upscaleMethodNoDLSS {} out of range, clamping to {}", settings.upscaleMethodNoDLSS, static_cast<uint>(UpscaleMethod::kFSR));
 		settings.upscaleMethodNoDLSS = static_cast<uint>(UpscaleMethod::kFSR);
 	}
+	if (settings.upscaleMethodRenderDoc >= enumCount)
+		settings.upscaleMethodRenderDoc = static_cast<uint>(UpscaleMethod::kTAA);
 	if (settings.vrRenderScale != 0.0f &&
 		(!std::isfinite(settings.vrRenderScale) ||
 			settings.vrRenderScale < kVRRenderScaleMin || settings.vrRenderScale > kVRRenderScaleMax)) {
@@ -1648,28 +1644,35 @@ float Upscaling::GetQualityModeRatio(uint qualityMode)
 	return std::isfinite(ratio) && ratio > 0.0f ? ratio : 3.0f;
 }
 
+uint Upscaling::Settings::* Upscaling::GetSelectedUpscaleMethodField() const
+{
+	if (globals::features::renderDoc.IsAvailable())
+		return &Settings::upscaleMethodRenderDoc;
+	return streamline.featureDLSS ? &Settings::upscaleMethod : &Settings::upscaleMethodNoDLSS;
+}
+
+std::string_view Upscaling::GetSelectedUpscaleMethodKey() const
+{
+	const auto field = GetSelectedUpscaleMethodField();
+	if (field == &Settings::upscaleMethodRenderDoc)
+		return "upscaleMethodRenderDoc";
+	return field == &Settings::upscaleMethod ? "upscaleMethod" : "upscaleMethodNoDLSS";
+}
+
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 {
 	// OpenComposite owning upscaling wins over everything (incl. PerfMode); VR-only.
 	if (globals::game::isVR && GetOpenCompositeUpscalingBlocker().active)
 		return UpscaleMethod::kNONE;
 
-	// PerfMode sizes the engine RTs at boot for a testTexture-redirecting upscaler. Keep the
-	// boot-latched method while DLSS is available; if DLSS drops out (RenderDoc / no-DLSS GPU)
-	// fall to FSR — the only other redirecting method — never a live or non-redirecting choice
-	// that would desync the fixed RT sizing.
-	if (globals::features::upscaling.perfMode.IsHookActive())
-		return streamline.featureDLSS ?
-		           static_cast<UpscaleMethod>(bootSnapshot.Boot(&Settings::upscaleMethod)) :
-		           UpscaleMethod::kFSR;
+	const auto methodField = GetSelectedUpscaleMethodField();
+	// PerfMode fixes RT sizing at boot, so keep its latched method or the redirecting FSR fallback.
+	const bool methodLatched = perfMode.IsHookActive();
+	if (methodLatched && methodField == &Settings::upscaleMethodNoDLSS)
+		return UpscaleMethod::kFSR;
 
-	// No PerfMode: the DLSS-capable preference, or the no-DLSS preference when DLSS is unavailable —
-	// coerced off DLSS so an out-of-range config can't re-select an unresolved DLSS path.
-	if (!streamline.featureDLSS) {
-		const auto noDlss = static_cast<UpscaleMethod>(settings.upscaleMethodNoDLSS);
-		return noDlss == UpscaleMethod::kDLSS ? UpscaleMethod::kFSR : noDlss;
-	}
-	return static_cast<UpscaleMethod>(settings.upscaleMethod);
+	const auto method = static_cast<UpscaleMethod>(methodLatched ? bootSnapshot.Boot(methodField) : settings.*methodField);
+	return !streamline.featureDLSS && method == UpscaleMethod::kDLSS ? UpscaleMethod::kFSR : method;
 }
 
 bool Upscaling::PerfModePrerequisitesMet() const

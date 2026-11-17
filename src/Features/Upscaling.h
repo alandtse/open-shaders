@@ -86,6 +86,7 @@ public:
 	{
 		uint upscaleMethod = (uint)UpscaleMethod::kDLSS;
 		uint upscaleMethodNoDLSS = (uint)UpscaleMethod::kFSR;
+		uint upscaleMethodRenderDoc = (uint)UpscaleMethod::kTAA;
 		uint qualityMode = (uint)QualityMode::kQuality;
 		uint frameLimitMode = 1;
 		uint frameGenerationMode = 1;
@@ -140,7 +141,7 @@ public:
 	// presetDLSS is deliberately NOT here: Streamline::SetDLSSOptions reads
 	// settings.presetDLSS per-frame and applies it via slDLSSSetOptions, so
 	// it's already runtime-effective.
-	inline static constexpr Util::Settings::RestartTable<Settings, 10> kRestartFields{ {
+	inline static constexpr Util::Settings::RestartTable<Settings, 11> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Allow frame generation below 120 Hz"),
 		UTIL_RESTART_FIELD(Settings, enableDLSSFrameGen, "Use NVIDIA DLSS-G"),
@@ -148,6 +149,7 @@ public:
 		UTIL_RESTART_FIELD(Settings, renderAtUpscaleRes, "Render at Upscaled Resolution"),
 		UTIL_RESTART_FIELD(Settings, streamlineLogLevel, "Streamline Logging"),
 		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
+		UTIL_RESTART_FIELD(Settings, upscaleMethodRenderDoc, "Upscaling Method"),
 		UTIL_RESTART_FIELD(Settings, qualityMode, "Upscale Preset"),
 		UTIL_RESTART_FIELD(Settings, vrRenderScale, "VR Render Scale"),
 		// CreateUpscalingTextureResources (which allocates runtimeFsrDepthTexture)
@@ -220,19 +222,23 @@ public:
 		static thread_local std::vector<Util::Settings::RestartFieldInfo> scratch;
 		scratch.clear();
 		if (perfMode.IsHookActive()) {
-			if (!perfMode.IsExplicitScaleLatched())
-				return { kRestartFields.data(), kRestartFields.size() };
+			const bool capture = GetSelectedUpscaleMethodField() == &Settings::upscaleMethodRenderDoc;
+			const bool explicitScale = perfMode.IsExplicitScaleLatched();
 			// An explicit scale owns the render res, so the preset is inert until
 			// the scale is cleared; don't demand a restart for an inert field.
 			for (const auto& f : kRestartFields) {
-				if (f.offset != offsetof(Settings, qualityMode))
-					scratch.push_back(f);
+				if ((explicitScale && f.offset == offsetof(Settings, qualityMode)) ||
+					(capture && f.offset == offsetof(Settings, upscaleMethod)) ||
+					(!capture && f.offset == offsetof(Settings, upscaleMethodRenderDoc)))
+					continue;
+				scratch.push_back(f);
 			}
 			return { scratch.data(), scratch.size() };
 		}
 		const bool gatePerfFields = PerfModePrerequisitesMet();
 		for (const auto& f : kRestartFields) {
-			if (f.offset == offsetof(Settings, qualityMode) || f.offset == offsetof(Settings, upscaleMethod))
+			if (f.offset == offsetof(Settings, qualityMode) || f.offset == offsetof(Settings, upscaleMethod) ||
+				f.offset == offsetof(Settings, upscaleMethodRenderDoc))
 				continue;
 			if ((f.offset == offsetof(Settings, renderAtUpscaleRes) || f.offset == offsetof(Settings, vrRenderScale)) && !gatePerfFields)
 				continue;
@@ -300,6 +306,8 @@ public:
 	PostProcessingInput GetPostProcessingInput() const override;
 
 	UpscaleMethod GetUpscaleMethod() const;
+	/** @brief Returns the settings key edited by the current upscaler selection. */
+	std::string_view GetSelectedUpscaleMethodKey() const;
 	FrameGenMethod GetFrameGenMethod() const;
 	bool UsesDLSSGFrameGen() const;
 
@@ -548,6 +556,7 @@ private:
 	// forceRefresh re-probes the config; otherwise the cached result is returned.
 	const VRDetection::OpenCompositeUpscalingState& GetOpenCompositeUpscalingBlocker(bool a_forceRefresh = false) const;
 	void ApplyOpenCompositeUpscalingBlocker(bool a_forceRefresh = false);
+	uint Settings::* GetSelectedUpscaleMethodField() const;
 
 	mutable VRDetection::OpenCompositeUpscalingState openCompositeUpscalingBlocker;
 	mutable bool openCompositeUpscalingBlockerCacheValid = false;
