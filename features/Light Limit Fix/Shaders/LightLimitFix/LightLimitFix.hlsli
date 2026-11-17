@@ -617,7 +617,7 @@ namespace LightLimitFix
 	static const float ParaboloidUVPerRadian = 0.25;
 
 	// PCF radius for a contact-hardened edge: wider the farther the receiver lies behind the blockers in front of it,
-	// for a light whose source radius is sourceRadius of its range; 0 when nothing in the search region blocks.
+	// for a light whose source radius is sourceRadius of its range; the stock radius when the search finds no blocker.
 	float GetParaboloidSoftRadius(uint shadowIndex, float2 sampleUV, float depth, float sourceRadius, float2x2 rotationMatrix, bool isDualParaboloid, float tileScale, float4 atlasRect)
 	{
 		const bool useAtlas = atlasRect.x > 0.0;
@@ -637,7 +637,7 @@ namespace LightLimitFix
 			blockerSum += dot(depths, blocks);
 			blockerCount += dot(blocks, 1.0);
 		}
-		[branch] if (blockerCount < 1.0) return 0.0;
+		[branch] if (blockerCount < 1.0) return PCFRadius2D;
 		const float blockerDepth = max(blockerSum / blockerCount, 1e-4);
 		const float penumbraAngle = SharedData::lightLimitFixSettings.SoftShadowScale * sourceRadius * (depth - blockerDepth) / (blockerDepth * max(depth, 1e-4));
 		return clamp(penumbraAngle * ParaboloidUVPerRadian, PCFRadius2D, SoftShadowMaxRadius);
@@ -683,10 +683,7 @@ namespace LightLimitFix
 
 		float pcfRadius = PCFRadius2D;
 		[branch] if (sourceRadius > 0.0 && SharedData::lightLimitFixSettings.SoftShadowScale > 0.0 && sampleCount > 1)
-		{
 			pcfRadius = GetParaboloidSoftRadius(shadowIndex, sampleUV, depth, sourceRadius / shadowLightData.ShadowLightParam.y, rotationMatrix, isOmni, tileScale, shadowLightData.AtlasRect);
-			[branch] if (pcfRadius <= 0.0) return 1.0;
-		}
 		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni, tileScale, shadowLightData.AtlasRect, sampleCount, pcfRadius);
 	}
 
