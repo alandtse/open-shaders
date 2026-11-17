@@ -786,8 +786,6 @@ namespace SIE
 				defines[lastIndex++] = { "NO_TREE_BEND", nullptr };
 			if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::Deferred)) {
 				defines[lastIndex++] = { "DEFERRED", nullptr };
-				if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::IBLLuminanceRatio))
-					defines[lastIndex++] = { "IBL_LUMINANCE_RATIO", nullptr };
 			}
 			if ((descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::TruePbr)) != 0) {
 				defines[lastIndex++] = { "TRUE_PBR", nullptr };
@@ -2956,8 +2954,7 @@ namespace SIE
 
 		if (IsAsync()) {
 			compilationSet.Add({ ShaderClass::Pixel, shader, descriptor, a_precompile });
-			constexpr uint32_t specialization = kLightingDryWeather | kLightingSnowCoverInactive |
-			                                    kLightingNoMeshVariation | static_cast<uint32_t>(LightingShaderFlags::IBLLuminanceRatio);
+			constexpr uint32_t specialization = kLightingDryWeather | kLightingSnowCoverInactive;
 			if (shader.shaderType == RE::BSShader::Type::Lighting && (descriptor & specialization))
 				return GetPixelShader(shader, descriptor & ~specialization, a_precompile);
 		} else {

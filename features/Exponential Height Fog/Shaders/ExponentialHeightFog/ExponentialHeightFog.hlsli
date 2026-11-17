@@ -244,7 +244,7 @@ namespace ExponentialHeightFog
 			if (!SharedData::InInterior) {
 				fogColor = Color::Fog(SharedData::exponentialHeightFogSettings.vanillaFogNearColor.rgb);
 #if defined(IBL)
-				if (ImageBasedLighting::IsEnabled())
+				if (SharedData::iblSettings.EnableIBL)
 					fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
 #endif
 			}

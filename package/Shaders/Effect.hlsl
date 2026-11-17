@@ -713,7 +713,7 @@ float3 GetLightingColor(
 
 #		if defined(SKYLIGHTING)
 #			if defined(IBL)
-	if (!ImageBasedLighting::IsEnabled())
+	if (!SharedData::iblSettings.EnableIBL)
 #			endif
 	{
 		if (useWeatherEffectLighting)
@@ -1207,7 +1207,7 @@ PS_OUTPUT ShadeEffect(PS_INPUT input, bool sampleDistantShadow)
 	float fogFactor = Color::FogAlpha(input.FogParam.w);
 	float3 fogColor = Color::Fog(input.FogParam.xyz);
 #		if defined(IBL)
-	if (ImageBasedLighting::IsEnabled()) {
+	if (SharedData::iblSettings.EnableIBL) {
 		fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
 	}
 #		endif
