@@ -772,9 +772,6 @@ namespace SIE
 			const bool omitTreeBend = shaderClass == ShaderClass::Vertex && (descriptor & noTreeBend) != 0;
 			if (omitTreeBend)
 				descriptor &= ~noTreeBend;
-			const bool linearACEScg = pixel && (descriptor & ShaderCache::kLightingLinearACEScg);
-			if (linearACEScg)
-				descriptor &= ~ShaderCache::kLightingLinearACEScg;
 			RE::GetLightingShaderDefines(descriptor, reinterpret_cast<REX::W32::D3D_SHADER_MACRO*>(defines.data()));
 
 			size_t lastIndex = std::ranges::find_if(defines, [](const D3D_SHADER_MACRO& macro) { return macro.Name == nullptr; }) - defines.begin();
@@ -787,8 +784,6 @@ namespace SIE
 				defines[lastIndex++] = { "NO_MESH_VARIATION", nullptr };
 			if (omitTreeBend)
 				defines[lastIndex++] = { "NO_TREE_BEND", nullptr };
-			if (linearACEScg)
-				defines[lastIndex++] = { "LINEAR_ACESCG", nullptr };
 			if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::Deferred)) {
 				defines[lastIndex++] = { "DEFERRED", nullptr };
 				if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::IBLLuminanceRatio))
@@ -1050,11 +1045,9 @@ namespace SIE
 			defines[lastIndex] = { nullptr, nullptr };
 		}
 
-		static void GetEffectShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines, ShaderClass shaderClass)
+		static void GetEffectShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
 			size_t lastIndex = 0;
-			if (shaderClass == ShaderClass::Pixel && (descriptor & ShaderCache::kEffectLinearACEScg))
-				defines[lastIndex++] = { "LINEAR_ACESCG", nullptr };
 
 			if (descriptor & static_cast<uint32_t>(ShaderCache::EffectShaderFlags::Vc)) {
 				defines[lastIndex++] = { "VC", nullptr };
@@ -1449,7 +1442,7 @@ namespace SIE
 				GetParticleShaderDefines(descriptor, defines);
 				break;
 			case RE::BSShader::Type::Effect:
-				GetEffectShaderDefines(descriptor, defines, shaderClass);
+				GetEffectShaderDefines(descriptor, defines);
 				break;
 			case RE::BSShader::Type::Utility:
 				GetUtilityShaderDefines(descriptor, defines, shaderClass);
@@ -2963,12 +2956,10 @@ namespace SIE
 
 		if (IsAsync()) {
 			compilationSet.Add({ ShaderClass::Pixel, shader, descriptor, a_precompile });
-			constexpr uint32_t specialization = kLightingDryWeather | kLightingSnowCoverInactive | kLightingNoMeshVariation |
-			                                    kLightingLinearACEScg | static_cast<uint32_t>(LightingShaderFlags::IBLLuminanceRatio);
+			constexpr uint32_t specialization = kLightingDryWeather | kLightingSnowCoverInactive |
+			                                    kLightingNoMeshVariation | static_cast<uint32_t>(LightingShaderFlags::IBLLuminanceRatio);
 			if (shader.shaderType == RE::BSShader::Type::Lighting && (descriptor & specialization))
 				return GetPixelShader(shader, descriptor & ~specialization, a_precompile);
-			if (shader.shaderType == RE::BSShader::Type::Effect && (descriptor & kEffectLinearACEScg))
-				return GetPixelShader(shader, descriptor & ~kEffectLinearACEScg, a_precompile);
 		} else {
 			return MakeAndAddPixelShader(shader, descriptor);
 		}
