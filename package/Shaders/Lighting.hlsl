@@ -4092,7 +4092,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	skylightingAlbedo /= Color::PBRLightingScale;
 #		endif
 #		if defined(IBL) && !defined(INTERIOR)
-	if (!SharedData::iblSettings.EnableIBL)
+	if (!ImageBasedLighting::UseForDraw())
 #		endif
 	{
 #		if defined(CAPTURE_REFLECTION_RADIANCE)

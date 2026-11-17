@@ -329,7 +329,7 @@ float3 GetThinSurfaceTransmissionLighting(float3 ambientColor, float3 transmissi
 	float3 diffuseColor = transmittedAmbientColor;
 #	if defined(SKYLIGHTING)
 #		if defined(IBL) && !defined(INTERIOR)
-	if (!SharedData::iblSettings.EnableIBL)
+	if (!ImageBasedLighting::UseForDraw())
 #		endif
 		Skylighting::ApplySkylighting(diffuseColor, transmittedAmbientColor, transmissionWeight, skylightingDiffuse);
 #	endif
