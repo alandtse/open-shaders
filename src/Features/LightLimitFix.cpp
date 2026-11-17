@@ -1119,9 +1119,6 @@ namespace
 				!isCurrentMeshVariant()))
 			variants = { .standard = current, .descriptor = descriptor };
 
-		if (variants.standard->id != descriptor)
-			return;
-
 		auto* selected = variants.standard;
 		auto& engineShader = *globals::game::currentPixelShader;
 		const bool usesCustomConstantLayout = engineShader == current;

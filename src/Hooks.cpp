@@ -205,10 +205,8 @@ struct BSShader_LoadShaders
 				auto vertexShaderDesriptor = entry->id;
 				auto pixelShaderDescriptor = entry->id;
 				NormalizeLegacyUtilityDescriptors(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
-				auto forwardVertexDescriptor = vertexShaderDesriptor;
-				auto forwardPixelDescriptor = pixelShaderDescriptor;
-				state->ModifyShaderLookup(*shader, forwardVertexDescriptor, forwardPixelDescriptor);
-				shaderCache->GetPixelShader(*shader, forwardPixelDescriptor, true);
+				state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
+				shaderCache->GetPixelShader(*shader, pixelShaderDescriptor, true);
 				state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor, true);
 				shaderCache->GetPixelShader(*shader, pixelShaderDescriptor, true);
 			}
