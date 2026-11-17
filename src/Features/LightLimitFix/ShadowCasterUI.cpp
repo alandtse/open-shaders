@@ -1804,6 +1804,13 @@ namespace ShadowCasterManager
 											"redraw budget, so shadows on the player do not flicker. Costs GPU time\n"
 											"when many lights surround the player."));
 
+			ImGui::Checkbox(T(TKEY("skip_flame_enclosure"), "Skip a Light's Own Flame Holder"), &settings.SkipFlameEnclosure);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("skip_flame_enclosure_tooltip"),
+											"Leaves out of a light's shadow the small part of its own fixture that holds its\n"
+											"flame, such as a lantern's candle or a gem's glass, so it does not throw one big\n"
+											"hard shadow over the floor and walls. The rest of the fixture still casts."));
+
 			// Atlas is boot-latched (the engine texture allocation depends on
 			// it), so show restart state against the captured boot value.
 			ImGui::BeginDisabled(s_installedShadowLightCount <= 4);

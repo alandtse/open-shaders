@@ -481,9 +481,6 @@ namespace ShadowCasterManager
 		return false;
 	}
 
-	constexpr float kFlameEnclosureMaxRadius = 12.0f;
-	constexpr float kFlameEnclosureReachMargin = 4.0f;
-
 	// SEH in its own function: GetUserData walks NiAVObject::parent, which is not refcounted and can dangle during scene teardown.
 	static RE::TESObjectREFR* OwnerOf(const RE::NiAVObject* a_object) noexcept
 	{
@@ -499,11 +496,11 @@ namespace ShadowCasterManager
 	static bool EnclosesOwnFlame(const RE::BSShadowLight& a_light, const RE::BSGeometry& a_geometry)
 	{
 		const auto* ni = a_light.light.get();
-		const auto& bound = a_geometry.worldBound;
-		if (!ni || bound.radius <= 0.0f || bound.radius > kFlameEnclosureMaxRadius)
+		if (!ni)
 			return false;
-		const float reach = bound.radius + kFlameEnclosureReachMargin;
-		if (bound.center.GetSquaredDistance(ni->world.translate) > reach * reach)
+		const auto& bound = a_geometry.worldBound;
+		const auto d = bound.center - ni->world.translate;
+		if (!HoldsFlame(d.x, d.y, d.z, bound.radius, a_geometry.world.scale))
 			return false;
 		const auto* owner = OwnerOf(ni);
 		return owner && owner == OwnerOf(&a_geometry);
@@ -516,7 +513,8 @@ namespace ShadowCasterManager
 
 	/// Hook of BSCullingProcess::AppendVirtual on the parabolic culling vtable.
 	/// Drops a caster (skips the append) when below the contribution-cull
-	/// threshold, or when it does not belong to the active split-cache pass.
+	/// threshold, when it is the small part holding the light's own flame,
+	/// or when it does not belong to the active split-cache pass.
 	struct Hook_ParabolicCullAppend
 	{
 		static void thunk(RE::BSCullingProcess* a_this, RE::BSGeometry& a_visible, std::int32_t a_alphaGroupIndex)

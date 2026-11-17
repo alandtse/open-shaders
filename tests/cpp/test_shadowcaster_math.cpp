@@ -15,6 +15,7 @@ using ShadowCasterManager::FrameTimePercentile;
 using ShadowCasterManager::HashCombine;
 using ShadowCasterManager::HashCombineFloat;
 using ShadowCasterManager::HemisphereSeamMargin;
+using ShadowCasterManager::HoldsFlame;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
 using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kSlotHoldMargin;
@@ -285,4 +286,19 @@ TEST_CASE("PerFrameCache works a key out once per frame and drops it on the next
 	REQUIRE(made == 2);
 	REQUIRE(cache.Get(11, 1, make) == 3);
 	REQUIRE(cache.entries.size() == 1);
+}
+
+TEST_CASE("HoldsFlame takes only a small part close round the flame", "[scm]")
+{
+	REQUIRE(HoldsFlame(0.0f, 0.0f, 2.0f, 3.0f, 1.0f));
+	REQUIRE(HoldsFlame(0.0f, 0.0f, 7.0f, 3.0f, 1.0f));
+	REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 7.5f, 3.0f, 1.0f));
+	REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 12.0f, 1.0f));
+	REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 12.5f, 1.0f));
+	REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 0.0f, 1.0f));
+	// a fixture placed at twice its size keeps its holder in
+	REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 24.0f, 2.0f));
+	REQUIRE(HoldsFlame(0.0f, 0.0f, 14.0f, 6.0f, 2.0f));
+	REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 24.5f, 2.0f));
+	REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 12.0f, 0.0f));
 }

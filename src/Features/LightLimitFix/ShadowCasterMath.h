@@ -16,6 +16,21 @@ namespace ShadowCasterManager
 	using Util::HashCombineFloat;
 	using Util::QuantizeFloat;
 
+	/// Largest unscaled bound radius of a part that can hold a light's flame, and how far past its bound the flame may sit.
+	inline constexpr float kFlameEnclosureMaxRadius = 12.0f;
+	inline constexpr float kFlameEnclosureReachMargin = 4.0f;
+
+	/// True when a part whose world bound has radius a_radius, at a_dx/a_dy/a_dz from the flame, is small enough at its world scale
+	/// a_scale to be the part holding that flame and holds it within its bound plus the margin.
+	inline bool HoldsFlame(float a_dx, float a_dy, float a_dz, float a_radius, float a_scale) noexcept
+	{
+		const float scale = a_scale > 0.0f ? a_scale : 1.0f;
+		if (a_radius <= 0.0f || a_radius > kFlameEnclosureMaxRadius * scale)
+			return false;
+		const float reach = a_radius + kFlameEnclosureReachMargin * scale;
+		return a_dx * a_dx + a_dy * a_dy + a_dz * a_dz <= reach * reach;
+	}
+
 	/// Buckets a stall length for ShadowScheduler's stallHistogram: 0, 1-2,
 	/// 3-7, 8-15, 16-44, 45+ (top boundary matches kSleepRedrawIntervalFrames).
 	inline uint32_t StallBucket(uint32_t v) noexcept
