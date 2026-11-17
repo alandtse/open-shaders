@@ -12,7 +12,7 @@
 
 namespace ImageBasedLighting
 {
-	bool UseDiffuseIBL()
+	bool UseForDraw()
 	{
 #if defined(LIGHTING) && !defined(DEFERRED)
 		if (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::MenuItem)

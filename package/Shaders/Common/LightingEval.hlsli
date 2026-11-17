@@ -310,7 +310,7 @@ float3 GetThinSurfaceTransmissionLighting(float3 ambientColor, float3 transmissi
 	skylightingDiffuse = PBR::GetFoliageShadowVisibility(skylightingDiffuse, skyOccluderOpacity);
 #	endif
 #	if defined(IBL)
-	if (ImageBasedLighting::UseDiffuseIBL()) {
+	if (ImageBasedLighting::UseForDraw()) {
 #		if defined(LIGHTING)
 		if (useStaticIBL)
 			ambientColor = ImageBasedLighting::GetStaticDiffuseIBL(transmissionNormal, iblSampler);
