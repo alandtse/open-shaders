@@ -43,9 +43,13 @@ struct NativePBRFeature final : Feature
 	struct BackendSettings
 	{
 		bool NativeBackend = true;
+		// Restore Extended Materials only for the remaining DX11 raster passes.
+		// This never re-enables legacy TruePBR or transfers raster material authority to DX12.
+		bool LegacyCompatibilityMaterials = false;
 	} backendSettings;
-	inline static constexpr Util::Settings::RestartTable<BackendSettings, 1> kRestartFields{ {
+	inline static constexpr Util::Settings::RestartTable<BackendSettings, 2> kRestartFields{ {
 		UTIL_RESTART_FIELD(BackendSettings, NativeBackend, "PBR Backend"),
+		UTIL_RESTART_FIELD(BackendSettings, LegacyCompatibilityMaterials, "Legacy Compatibility Materials"),
 	} };
 	Util::Settings::BootSnapshot<BackendSettings> bootSnapshot{ kRestartFields };
 	std::once_flag backendLatchOnce;
@@ -103,8 +107,13 @@ struct NativePBRFeature final : Feature
 	std::span<const std::string_view> GetBootSuppressedFeatures() const override
 	{
 		static constexpr std::array<std::string_view, 2> kLegacyFeatures{ "TruePBR", "ExtendedMaterials" };
+		static constexpr std::array<std::string_view, 1> kTruePbrOnly{ "TruePBR" };
+		const bool compatibility = backendLatched.load(std::memory_order_acquire) ?
+			bootSnapshot.Boot(&BackendSettings::LegacyCompatibilityMaterials) : backendSettings.LegacyCompatibilityMaterials;
 		return SelectedBackend() == NativePBR::Backend::NativeDX12 ?
-			std::span<const std::string_view>(kLegacyFeatures) : std::span<const std::string_view>{};
+			(compatibility ?
+				std::span<const std::string_view>(kTruePbrOnly) : std::span<const std::string_view>(kLegacyFeatures)) :
+			std::span<const std::string_view>{};
 	}
 	bool IsActive() const;
 	void DrawSettings() override;

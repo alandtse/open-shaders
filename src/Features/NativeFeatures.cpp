@@ -743,6 +743,13 @@ void NativePBRFeature::DrawSettings()
 	ImGui::TextDisabled("Boot PBR backend: %s", SelectedBackend() == NativePBR::Backend::NativeDX12 ? "DX12-Native" : "Legacy DX11");
 	if (bootSnapshot.HasPendingChange(backendSettings, &BackendSettings::NativeBackend))
 		Util::Text::RestartNeeded("%s", "PBR backend change pending restart");
+	bool compatibility = backendSettings.LegacyCompatibilityMaterials;
+	if (ImGui::Checkbox("Legacy Compatibility Materials (DX11 fallback; restart required)", &compatibility))
+		backendSettings.LegacyCompatibilityMaterials = compatibility;
+	if (bootSnapshot.HasPendingChange(backendSettings, &BackendSettings::LegacyCompatibilityMaterials))
+		Util::Text::RestartNeeded("%s", "Legacy material shader change pending restart");
+	ImGui::TextDisabled("Opt-in: preserves Extended Materials parallax and complex shading on raster characters and other DX11 fallback objects.");
+	ImGui::TextDisabled("TruePBR remains disabled in native mode; DX12 prepared materials are evaluated independently.");
 	DrawOwnership("Enable Native PBR", enabled, IsActive());
 	int stage = static_cast<int>(readinessStage.load(std::memory_order_relaxed)) - 1;
 	if (ImGui::Combo("DX12 ownership readiness (testing)", &stage,
@@ -849,6 +856,7 @@ void NativeSCMFeature::DrawSettings()
 void NativePBRFeature::LoadSettings(json& j)
 {
 	backendSettings.NativeBackend = j.value("NativeBackend", true);
+	backendSettings.LegacyCompatibilityMaterials = j.value("LegacyCompatibilityMaterials", false);
 	enabled.store(j.value("Enabled", true), std::memory_order_relaxed);
 	forceRayAdmission.store(false, std::memory_order_relaxed);
 	readinessStage.store(std::clamp(j.value("NativeReadinessStage", 3u), 1u, 3u), std::memory_order_relaxed);
@@ -870,6 +878,7 @@ void NativePBRFeature::SaveSettings(json& j)
 {
 	j = { { "Enabled", enabled.load(std::memory_order_relaxed) },
 		{ "NativeBackend", backendSettings.NativeBackend },
+		{ "LegacyCompatibilityMaterials", backendSettings.LegacyCompatibilityMaterials },
 		{ "NativeReadinessStage", readinessStage.load(std::memory_order_relaxed) } };
 }
 void NativeLLFFeature::SaveSettings(json& j)
@@ -904,6 +913,8 @@ json NativePBRFeature::GetDiagnostics()
 	});
 	return { { "selected", enabled.load() }, { "native", state.owner == NativePBR::RenderingOwner::Native },
 		{ "nativeFirstReadinessStage", NativeFirstReadinessStage() },
+		{ "legacyCompatibilityMaterials", SelectedBackend() == NativePBR::Backend::NativeDX12 &&
+			bootSnapshot.Boot(&BackendSettings::LegacyCompatibilityMaterials) },
 		{ "nativeJsonTextureSets", catalog ? catalog->textureSets.size() : 0 },
 		{ "nativeJsonMaterialObjects", catalog ? catalog->materialObjects.size() : 0 },
 		{ "nativeJsonRejectedTextureSets", catalog ? catalog->rejectedTextureSets : 0 },
