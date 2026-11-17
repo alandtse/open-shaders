@@ -481,6 +481,34 @@ namespace ShadowCasterManager
 		return false;
 	}
 
+	constexpr float kFlameEnclosureMaxRadius = 12.0f;
+	constexpr float kFlameEnclosureReachMargin = 4.0f;
+
+	// SEH in its own function: GetUserData walks NiAVObject::parent, which is not refcounted and can dangle during scene teardown.
+	static RE::TESObjectREFR* OwnerOf(const RE::NiAVObject* a_object) noexcept
+	{
+		__try {
+			return a_object->GetUserData();
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		}
+		return nullptr;
+	}
+
+	/// True for a small part of the light's own reference whose bound holds the flame: a flame moving with its flicker slices
+	/// such a part at any near cut, so it is left out of that light's shadow while the rest of the fixture still casts.
+	static bool EnclosesOwnFlame(const RE::BSShadowLight& a_light, const RE::BSGeometry& a_geometry)
+	{
+		const auto* ni = a_light.light.get();
+		const auto& bound = a_geometry.worldBound;
+		if (!ni || bound.radius <= 0.0f || bound.radius > kFlameEnclosureMaxRadius)
+			return false;
+		const float reach = bound.radius + kFlameEnclosureReachMargin;
+		if (bound.center.GetSquaredDistance(ni->world.translate) > reach * reach)
+			return false;
+		const auto* owner = OwnerOf(ni);
+		return owner && owner == OwnerOf(&a_geometry);
+	}
+
 	// BSParabolicCullingProcess::GetHemisphereMask values: bit 0 appends the
 	// caster to the front list, bit 1 accumulates it into the back hemisphere.
 	constexpr std::uint32_t kHemisphereFrontBit = 1u;
@@ -517,6 +545,8 @@ namespace ShadowCasterManager
 					return;  // skip append -- caster dropped from this shadow
 				}
 			}
+			if (light && s_settings.SkipFlameEnclosure && EnclosesOwnFlame(*light, a_visible))
+				return;
 			if (s_recLeft.load(std::memory_order_relaxed) > 0) {
 				const int32_t recSlot = s_recTargetSlot.load(std::memory_order_relaxed);
 				if (recSlot >= 0 && light && recSlot < s_lights.Size &&

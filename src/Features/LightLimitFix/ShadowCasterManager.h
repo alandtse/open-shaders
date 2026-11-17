@@ -332,6 +332,9 @@ namespace ShadowCasterManager
 
 		/// Ranks lights that reach the player first and lets them past the redraw budget, so shadows on the player do not flicker.
 		bool ProtectPlayerShadows = true;
+
+		/// Leaves out of a light's shadow the small parts of its own fixture that enclose its flame, such as a lantern's candle.
+		bool SkipFlameEnclosure = true;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
@@ -378,7 +381,8 @@ namespace ShadowCasterManager
 		WarpVisibilityGate,
 		WarpZeroDemandSkip,
 		SpotLitRegion,
-		ProtectPlayerShadows)
+		ProtectPlayerShadows,
+		SkipFlameEnclosure)
 
 	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
