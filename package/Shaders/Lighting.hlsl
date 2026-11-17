@@ -48,6 +48,10 @@ float GetFurWet()
 #	undef IBL
 #endif
 
+#if defined(IBL) && !defined(DEFERRED) && !defined(HDR_OUTPUT) && !defined(TRUE_PBR) && !defined(LANDSCAPE) && !defined(WORLD_MAP)
+#	define BOOK_PAGE_AMBIENT
+#endif
+
 #if defined(IBL) && !defined(DEFERRED)
 #	define CAPTURE_REFLECTION_RADIANCE
 #endif
@@ -1302,6 +1306,12 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	endif
 	const bool inReflection = Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection;
 
+#	if defined(BOOK_PAGE_AMBIENT)
+	const bool bookPageAmbient = ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::BookPage) &&
+	                             SharedData::iblSettings.UseStaticIBL && ImageBasedLighting::IsEnabled();
+	float3 bookPageDiffuse = 0;
+#	endif
+
 	float nearFactor = smoothstep(4096.0 * 2.5, 0.0, viewPosition.z);
 
 #	if defined(SKINNED) || !defined(MODELSPACENORMALS)
@@ -1857,7 +1867,18 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	MESH_TV_SAMPLE_BIAS(rawBaseColor, TexColorSampler, SampColorSampler, diffuseUv, false);
 	baseColor = float4(Color::Diffuse(rawBaseColor.rgb), rawBaseColor.a);
 #		else
-	MESH_TV_SAMPLE_BIAS(rawBaseColor, TexColorSampler, SampColorSampler, diffuseUv, true);
+#			if defined(BOOK_PAGE_AMBIENT)
+	[branch] if (bookPageAmbient)
+	{
+		rawBaseColor = TexColorSampler.SampleBias(SampColorSampler, diffuseUv, SharedData::MipBias);
+		bookPageDiffuse = rawBaseColor.rgb;
+		rawBaseColor = Color::DiffuseToWorking(rawBaseColor);
+	}
+	else
+#			endif
+	{
+		MESH_TV_SAMPLE_BIAS(rawBaseColor, TexColorSampler, SampColorSampler, diffuseUv, true);
+	}
 #			if defined(FUR_SHELLS)
 	[branch] if (FurShells::ShellColor > 0.0 && input.FurShell > 0.0)
 		rawBaseColor.rgb = lerp(rawBaseColor.rgb, Color::DiffuseToWorking(furSample.rgb, pbrTextures), FurShells::ShellColor);
@@ -3969,7 +3990,13 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	color.xyz += diffuseColor * material.BaseColor;
 #	endif
 
-	color.xyz += indirectLobeWeights.diffuse * directionalAmbientColor;
+#	if defined(BOOK_PAGE_AMBIENT)
+	// The static ambient term was authored for the composed page in display gamma.
+	if (bookPageAmbient)
+		color.xyz += Color::GamutTransform(Color::SrgbToLinear(bookPageDiffuse * directionalAmbientColor));
+	else
+#	endif
+		color.xyz += indirectLobeWeights.diffuse * directionalAmbientColor;
 	color.xyz += transmissionColor;
 
 #	if defined(TRUE_PBR)
@@ -4462,6 +4489,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 #	if !defined(HDR_OUTPUT)  // Do not apply gamma correction before we pass to ISHDR.
 	if ((!inWorld && !inReflection) && SharedData::linearLightingSettings.enableLinearLighting) {
+#		if defined(BOOK_PAGE_AMBIENT)
+		if (bookPageAmbient && ENABLE_ACEScg)
+			psout.Diffuse.xyz = AP1TosRGB(psout.Diffuse.xyz);
+#		endif
 		psout.Diffuse.xyz = Color::LinearToSrgb(psout.Diffuse.xyz);
 	}
 #	endif

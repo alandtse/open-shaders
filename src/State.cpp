@@ -242,6 +242,24 @@ void State::Draw()
 			volumetricShadows.SetShaderResources(context);
 		}
 
+		constexpr auto bookPage = static_cast<uint32_t>(ExtraShaderDescriptors::BookPage);
+		constexpr auto sceneDraw = static_cast<uint32_t>(ExtraShaderDescriptors::InWorld) |
+		                           static_cast<uint32_t>(ExtraShaderDescriptors::IsReflections);
+		permutationData.ExtraShaderDescriptor &= ~bookPage;
+		if (!(permutationData.ExtraShaderDescriptor & sceneDraw) && currentShader &&
+			currentShader->shaderType.get() == RE::BSShader::Type::Lighting && globals::game::renderer && globals::game::shadowState) {
+			const auto diffuseView = globals::game::shadowState->GetRuntimeData().PSTexture[0];
+			if (diffuseView) {
+				const auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
+				for (int index = RE::RENDER_TARGET::kBOOK_TEXT_0; index <= RE::RENDER_TARGET::kBOOK_TEXT_3; ++index) {
+					if (diffuseView == targets[index].SRV) {
+						permutationData.ExtraShaderDescriptor |= bookPage;
+						break;
+					}
+				}
+			}
+		}
+
 		UpdatePermutationBuffer();
 
 		if (currentShader && updateShader) {
