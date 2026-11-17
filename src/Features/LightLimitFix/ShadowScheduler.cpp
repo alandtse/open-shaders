@@ -1878,11 +1878,12 @@ namespace ShadowCasterManager
 		return true;
 	}
 
-	/// True while a light that fell outside the shadow count still holds its slot and its shadow is fading out.
-	static bool HoldsSlotWhileFading(RE::BSShadowLight* a_light)
+	/// Starts or continues the fade-out of a light that fell outside the shadow count; true while it keeps its slot to fade.
+	/// Spot lights take no fade in the shader, so they give their slot up at once.
+	static bool HoldForFadeOut(RE::BSShadowLight* a_light)
 	{
 		const int32_t slot = GetShadowSlot(a_light);
-		if (slot < 0 || slot >= s_lights.Size || s_lights.Lights[slot].Light != a_light)
+		if (slot < 0 || slot >= s_lights.Size || s_lights.Lights[slot].Light != a_light || a_light->GetIsFrustumLight())
 			return false;
 		auto& entry = s_lights.Lights[slot];
 		const double now = Util::GetNowSecs();
@@ -1900,10 +1901,9 @@ namespace ShadowCasterManager
 		auto& entry = s_lights.Lights[slot];
 		if (entry.ReleaseStartSeconds < 0.0)
 			return;
-		const double now = Util::GetNowSecs();
-		const double reached = std::clamp(1.0 - (now - entry.ReleaseStartSeconds) / kShadowFadeInSeconds, 0.0, 1.0);
+		const float shown = GetShadowFadeAlpha(slot);
 		entry.ReleaseStartSeconds = -1.0;
-		entry.FadeStartSeconds = now - reached * kShadowFadeInSeconds;
+		entry.FadeStartSeconds = ResumedFadeStart(Util::GetNowSecs(), shown, kShadowFadeInSeconds);
 	}
 
 	static void ValidateCandidates(RE::NiCamera* camera, bool wantDiag, std::vector<CandidateLight>& candidates)
@@ -2015,9 +2015,8 @@ namespace ShadowCasterManager
 				else if (wantCount < s_settings.ShadowLightCount - s_focusShadowSlots) {
 					c.chosen = true;
 					wantCount++;
-					if (s_settings.FadeShadowSwaps)
-						ResumeAfterRelease(l);
-				} else if (s_settings.FadeShadowSwaps && HoldsSlotWhileFading(l)) {
+					ResumeAfterRelease(l);
+				} else if (s_settings.FadeShadowSwaps && HoldForFadeOut(l)) {
 					// Kept past the count while it fades out; the newcomer finds no free slot until then.
 					c.chosen = true;
 				} else {
@@ -2238,6 +2237,8 @@ namespace ShadowCasterManager
 					// A tile can be parked at any light-free index; reclaim it only inside the point range.
 					if (ownerIdx >= pointFirst && ownerIdx < pointEnd && !s_lights.Lights[ownerIdx].Light) {
 						s_lights.Lights[ownerIdx].Light = c.light;
+						if (s_settings.FadeShadowSwaps)
+							s_lights.Lights[ownerIdx].FadeStartSeconds = Util::GetNowSecs();
 						reclaimed = true;
 					}
 				}

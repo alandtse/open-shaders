@@ -2138,6 +2138,8 @@
     "feature.light_limit_fix.enable_shadow_limit_fix_tooltip": "Extends Skyrim's hard limit of 4 simultaneous shadow-casting lights.\nIntelligently selects which lights cast shadows each frame based on\ndistance, intensity, and a configurable priority formula.\n\nBased on Intellightent by meh321.\nhttps://www.nexusmods.com/skyrimspecialedition/mods/172423\n\nRestart required to take effect in either direction. The boot-time\npatches (extended atlas slices, depth buffer creation loop, color-mask\npass replacement) cannot be safely reversed at runtime -- vanilla\nshadow scheduling crashes when run on top of them. Toggle and restart.",
     "feature.light_limit_fix.exterior_shadow_distance": "Exterior Shadow Distance",
     "feature.light_limit_fix.exterior_shadow_distance_tooltip": "Distance (game units) past which exterior shadows are culled\n(fShadowDistance:Display). Also drives the directional sun cascade\nrange, so higher values soften distant outdoor shadow transitions\nat a GPU cost. Applies live; persisted on Save Settings.",
+    "feature.light_limit_fix.fade_shadow_swaps": "Fade Shadows Between Lights",
+    "feature.light_limit_fix.fade_shadow_swaps_tooltip": "A light that loses its shadow slot fades its shadow out before handing the\nslot on, and a light given a slot again fades in, so shadows do not pop in\nand out as you walk among many lights.",
     "feature.light_limit_fix.filter_hint": "filter (yes/conv/no/type/range/addr)",
     "feature.light_limit_fix.filter_hint_scene_only": "filter (yes/conv/type/range/addr)",
     "feature.light_limit_fix.flicker_label": "Flicker Shadow Mode",

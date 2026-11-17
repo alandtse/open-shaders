@@ -16,6 +16,24 @@ namespace ShadowCasterManager
 	using Util::HashCombineFloat;
 	using Util::QuantizeFloat;
 
+	/// Shadow strength of a slot: the fade-in ramp from a_fadeStart capped by the fade-out ramp from a_releaseStart (a negative
+	/// start means no ramp); both ramps take a_duration seconds.
+	inline float ShadowFadeAlpha(double a_now, double a_fadeStart, double a_releaseStart, float a_duration) noexcept
+	{
+		float alpha = 1.0f;
+		if (a_fadeStart >= 0.0)
+			alpha = std::clamp(static_cast<float>(a_now - a_fadeStart) / a_duration, 0.0f, 1.0f);
+		if (a_releaseStart >= 0.0)
+			alpha = std::min(alpha, 1.0f - std::clamp(static_cast<float>(a_now - a_releaseStart) / a_duration, 0.0f, 1.0f));
+		return alpha;
+	}
+
+	/// The fade-in start that shows a_shown at a_now, so a leaving light chosen again fades back in from where it stood.
+	inline double ResumedFadeStart(double a_now, float a_shown, float a_duration) noexcept
+	{
+		return a_now - static_cast<double>(std::clamp(a_shown, 0.0f, 1.0f)) * a_duration;
+	}
+
 	/// Buckets a stall length for ShadowScheduler's stallHistogram: 0, 1-2,
 	/// 3-7, 8-15, 16-44, 45+ (top boundary matches kSleepRedrawIntervalFrames).
 	inline uint32_t StallBucket(uint32_t v) noexcept
