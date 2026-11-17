@@ -6,25 +6,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ArchitectureLintTests(unittest.TestCase):
-    def test_shader_compiler_entrypoints_remain_in_gated_code(self):
-        compiler_call = re.compile(
-            r'\b(?:D3DCompile(?:2|FromFile)?|D3DX11CompileFrom\w+|DxcCreateInstance2?)\s*\('
-            r'|\bGetProcAddress\s*\([^,]+,\s*"(?:D3DCompile\w*|DxcCreateInstance2?|ENBExt_Compile)"'
-        )
-        allowed = {
-            "src/ShaderCache.cpp": 3,
-            "src/Features/Effects11/Effects/Effect.cpp": 2,
-            "src/Features/Effects11/ENBExtender.cpp": 1,
-        }
-        found = {}
-        for path in sorted((ROOT / "src").rglob("*")):
-            if path.suffix not in {".cpp", ".h", ".hpp", ".inl"}:
-                continue
-            matches = compiler_call.findall(path.read_text(encoding="utf-8", errors="replace"))
-            if matches:
-                found[path.relative_to(ROOT).as_posix()] = len(matches)
-        self.assertEqual(found, allowed)
-
     def test_dynamic_gpu_passes_are_limited_to_names_built_at_run_time(self):
         # CS_GPU_PASS_DYNAMIC allocates per call: fixed names use CS_GPU_PASS, _SELECT or _INDEXED.
         allowed = {

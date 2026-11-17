@@ -131,7 +131,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				auto shaderCache = globals::shaderCache;
 				shaderCache->menuLoaded = true;
 
-				while (shaderCache->IsCompiling() && !shaderCache->UsesBackgroundCompilation() && !globals::game::quitGame) {
+				while (shaderCache->IsCompiling() && !shaderCache->backgroundCompilation && !globals::game::quitGame) {
 					std::this_thread::sleep_for(100ms);
 				}
 				shaderCache->FinishStartupCompilation();
@@ -148,9 +148,11 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				}
 
 				Feature::ForEachLoadedFeature("DataLoaded", [](Feature* feature) { feature->DataLoaded(); });
-				while (shaderCache->IsDiskCache() && shaderCache->IsCompiling() && !globals::game::quitGame)
+				while (shaderCache->IsDiskCache() && !shaderCache->backgroundCompilation && !globals::game::quitGame &&
+					   (shaderCache->IsCompiling() || shaderCache->compilationPool.get_tasks_total()))
 					std::this_thread::sleep_for(100ms);
-				shaderCache->FinishShaderStartup();
+				if (shaderCache->IsDiskCacheActive() && !shaderCache->backgroundCompilation && !globals::game::quitGame)
+					logger::info("Shader startup prewarm finished ({} source compiler calls)", shaderCache->GetSourceCompileCount());
 				globals::state->startupMenuInitializationComplete.store(true, std::memory_order_release);
 
 				NativeMenu::Register();

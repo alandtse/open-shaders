@@ -1177,7 +1177,7 @@ void ColorGrading::SetupResources()
 	}
 
 	CompileShaders();
-	if (auto* cache = globals::shaderCache; cache->IsDiskCacheActive() && !cache->IsShaderCacheReadOnly()) {
+	if (auto* cache = globals::shaderCache; cache->IsDiskCacheActive()) {
 		const auto& tonemappers = TonemapperInfo::GetTonemappers();
 		for (const auto& tonemapper : tonemappers) {
 			if (settings.useOpenDrt || tonemapper.func_name != tonemappers[tonemapperType].func_name)

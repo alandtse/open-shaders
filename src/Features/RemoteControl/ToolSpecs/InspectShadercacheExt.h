@@ -5,11 +5,10 @@ namespace DevBenchBridge::ToolSpecs
 	/** Devbench descriptor JSON for inspect extension shadercache. {brand} is expanded at registration. */
 	inline constexpr const char* kInspectShadercacheExt =
 		R"({"description":")"
-		R"({brand} shader-cache status -> {compiling,diskCacheReadOnly,sourceCompileCount,readOnlyShaderMissCount,completedTasks,totalTasks,failedTasks,currentFailedCount,recentFailures,diskHitTasks,digestHitTasks,digestMissTasks,contentStoreHitTasks,digestComputeCount,)"
+		R"({brand} shader-cache status -> {compiling,sourceCompileCount,completedTasks,totalTasks,failedTasks,currentFailedCount,recentFailures,diskHitTasks,digestHitTasks,digestMissTasks,contentStoreHitTasks,digestComputeCount,)"
 		R"(digestComputeTimeUs,frame_count,diskCacheHeld,featureSetChanged,featureSetRevertPending,featureSetCacheBackedUp,previousDiskCacheAvailable,cacheMismatches,)"
 		R"(previousCacheMismatches}. Poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished; )"
-		R"(sourceCompileCount counts actual HLSL compiler calls in this process; diskCacheReadOnly marks the gameplay cache-only phase. )"
-		R"(readOnlyShaderMissCount counts requests for unavailable bytecode during that phase. )"
+		R"(sourceCompileCount counts actual HLSL compiler calls in this process. )"
 		R"(watch failedTasks/currentFailedCount for failed compiles. recentFailures is the last 32 compile failures this session, each {key,path,error,epoch,frame} -- key is GetShaderString's cache key (shader class + merged feature #defines, identifying WHICH feature's shader broke without a separate lookup; )"
 		R"(for ImageSpace shaders the filename embedded in key can differ from path), path is the actual source file that was compiled, )"
 		R"(error is the compiler's own message (truncated to 2000 chars). digestHitTasks/digestMissTasks count disk-cache validity checks where the content-digest manifest matched (hit) or differed (miss); )"

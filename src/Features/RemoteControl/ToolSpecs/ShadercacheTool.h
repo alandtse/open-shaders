@@ -10,7 +10,7 @@ namespace DevBenchBridge::ToolSpecs
 		R"(with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, )"
 		R"(forcing a full cold recompile (use this for compile benchmarks). activeOnly: the in-game 'smart clear' -- captures whatever shaders are on screen over two windows, )"
 		R"(then evicts+recompiles just those (needs something rendering; )"
-		R"(a menu-only screen may capture nothing). backgroundCompile: with Disk Cache disabled, skip the boot-time wait and discard unstarted startup precompiles -- same effect as the in-game 'Skip Compilation' hotkey. Only rendering-requested permutations are queued afterward, with fewer threads; )"
+		R"(a menu-only screen may capture nothing). backgroundCompile: skip the boot-time wait and discard unstarted startup precompiles -- same effect as the in-game 'Skip Compilation' hotkey. Only rendering-requested permutations are queued afterward, with fewer threads; )"
 		R"(already dispatched jobs and required feature setup finish normally. For a benchmark harness: call this once right after launch, )"
 		R"(then drive one throwaway replay to demand-compile just that scene's own shaders before the timed run, )"
 		R"(instead of waiting out every permutation the whole install could ever need (can be 20-30 minutes on a large AIO modlist). acceptRebuild: when a feature-set change is holding the disk cache (see inspect(kind=shadercache).diskCacheHeld/cacheMismatches), )"
@@ -26,7 +26,7 @@ namespace DevBenchBridge::ToolSpecs
 	"properties": {
 		"action": {
 			"type": "string",
-			"description": "restorePrevious queues on render; other queued cache operations use main. backgroundCompile requires Disk Cache off and switches to rendering-requested compilation. backgroundCompile, contentStore, and exportTrace run on the calling thread.",
+			"description": "restorePrevious queues on render; other queued cache operations use main. backgroundCompile drops unstarted precompiles and switches to rendering-requested compilation. backgroundCompile, contentStore, and exportTrace run on the calling thread.",
 			"enum": [
 				"clear",
 				"deleteDisk",

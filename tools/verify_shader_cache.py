@@ -198,7 +198,7 @@ def verify_lighting_frame_coverage(lines, cache):
                 re.fullmatch(r"[\w-]+/[\w-]+\.pso", path) for path in paths),
                 "Invalid Lighting frame coverage record")
         expected.update(paths)
-    require(expected, "No Lighting frame coverage records before the startup seal")
+    require(expected, "No Lighting frame coverage records before the startup prewarm completion")
 
     entries = read_manifest(cache)
     missing = sorted(path for path in expected if path not in entries or not (cache / path).is_file())
@@ -211,41 +211,40 @@ def verify_lighting_frame_coverage(lines, cache):
 def verify_gameplay_log(text, cache, max_startup_seconds=None, lighting_frame_coverage=False):
     lines = text.splitlines()
     require(lines and "Loaded CommunityShaders " in lines[0], "Expected a log starting at plugin load")
-    seal_pattern = re.compile(r"Shader disk cache is read-only after startup \((\d+) source compiler calls\)$")
-    seals = [(index, match) for index, line in enumerate(lines) if (match := seal_pattern.search(line))]
-    require(len(seals) == 1, "Expected one startup cache seal in a single game session")
-    seal_index, seal_match = seals[0]
+    prewarm_pattern = re.compile(r"Shader startup prewarm finished \((\d+) source compiler calls\)$")
+    prewarm_events = [(index, match) for index, line in enumerate(lines) if (match := prewarm_pattern.search(line))]
+    require(len(prewarm_events) == 1, "Expected one startup prewarm completion in a single game session")
+    prewarm_index, prewarm_match = prewarm_events[0]
 
     def timestamp(line):
         return datetime.strptime(line.split("]", 1)[0].removeprefix("["), "%Y-%m-%d %H:%M:%S.%f")
 
-    seal = timestamp(lines[seal_index])
-    startup_seconds = (seal - timestamp(lines[0])).total_seconds()
-    require(startup_seconds >= 0, "Startup seal predates plugin load")
+    prewarm_time = timestamp(lines[prewarm_index])
+    startup_seconds = (prewarm_time - timestamp(lines[0])).total_seconds()
+    require(startup_seconds >= 0, "Startup prewarm completion predates plugin load")
 
     issues = []
-    startup_failures = [line for line in lines[:seal_index] if
+    startup_failures = [line for line in lines[:prewarm_index] if
                         re.search(r"Shader compilation completed: .*\([1-9]\d* failed\)", line) or
                         re.search(r"Failed to create (?:vertex|pixel|compute) shader \w+::[\dA-F]+", line)]
     if startup_failures:
         issues.append("Shader startup failed:\n" + "\n".join(startup_failures[:8]))
-    late = [line for line in lines[seal_index + 1:] if
-            "Shader missing from the read-only disk cache:" in line or
+    late = [line for line in lines[prewarm_index + 1:] if
             "Shader compilation started" in line or "Shader compilation completed" in line]
     if late:
-        issues.append(f"{len(late)} late shader misses or compile events:\n" + "\n".join(late[:8]))
+        issues.append(f"{len(late)} late shader compile events:\n" + "\n".join(late[:8]))
     if max_startup_seconds is not None and startup_seconds >= max_startup_seconds:
         issues.append(f"Startup took {startup_seconds:.3f}s (target under {max_startup_seconds:g}s)")
     files = [path for path in cache.rglob("*") if path.is_file()]
     require(files, f"Shader cache is empty: {cache}")
-    seal_ms = round(seal.timestamp() * 1000)
-    writes = [path.relative_to(cache).as_posix() for path in files if path.stat().st_mtime_ns // 1_000_000 > seal_ms]
+    prewarm_ms = round(prewarm_time.timestamp() * 1000)
+    writes = [path.relative_to(cache).as_posix() for path in files if path.stat().st_mtime_ns // 1_000_000 > prewarm_ms]
     if writes:
         issues.append(f"{len(writes)} cache writes after startup:\n" + "\n".join(sorted(writes)[:8]))
-    result = {"startupSeconds": startup_seconds, "startupCompilerCalls": int(seal_match.group(1)), "cacheFiles": len(files)}
+    result = {"startupSeconds": startup_seconds, "startupCompilerCalls": int(prewarm_match.group(1)), "cacheFiles": len(files)}
     if lighting_frame_coverage:
         try:
-            result["lightingFrameVariants"] = verify_lighting_frame_coverage(lines[:seal_index], cache)
+            result["lightingFrameVariants"] = verify_lighting_frame_coverage(lines[:prewarm_index], cache)
         except ValueError as exc:
             issues.append(str(exc))
     require(not issues, "\n".join(issues))
@@ -339,7 +338,7 @@ def main():
     gameplay.add_argument("--cache", type=Path, required=True)
     gameplay.add_argument("--max-startup-seconds", type=float)
     gameplay.add_argument("--require-lighting-frame-coverage", action="store_true",
-                          help="verify Lighting startup records against the sealed cache")
+                          help="verify Lighting startup records against the disk cache")
     args = parser.parse_args()
     try:
         if args.command == "artifact":

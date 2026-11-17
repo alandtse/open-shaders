@@ -261,10 +261,6 @@ void Effect::Save()
 
 bool Effect::Apply()
 {
-	auto compile = globals::shaderCache->AcquireShaderCompilation();
-	if (!compile)
-		return false;
-
 	logger::info("[EFFECTS11] Applying effect '{}'", GetName());
 
 	Unload();
@@ -283,7 +279,6 @@ bool Effect::Apply()
 		logger::error("[EFFECTS11] Failed to load '{}': {}", GetFilePath().string(), errors.empty() ? "unknown error" : errors.back());
 		return false;
 	}
-	compile.unlock();
 
 	if (!Load()) {
 		errors.push_back(T("feature.effects11.error.settings", "Failed to load settings"));

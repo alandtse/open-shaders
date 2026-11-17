@@ -14,7 +14,6 @@
 #include <winrt/base.h>
 
 #include "Utils/CacheInvalidation.h"
-#include "Utils/ShaderCompilationGate.h"
 #include "Utils/ShaderDescriptor.h"
 #include "Utils/WinApi.h"
 
@@ -248,8 +247,7 @@ namespace SIE
 		{
 			Pending,
 			Failed,
-			Completed,
-			MissingFromDisk
+			Completed
 		};
 		ShaderCompilationTask(ShaderClass shaderClass, const RE::BSShader& shader,
 			uint32_t descriptor, bool a_precompile = false);
@@ -632,22 +630,12 @@ namespace SIE
 		bool IsDiskCache() const;
 		/** Sets whether the persistent disk cache is enabled. */
 		void SetDiskCache(bool value);
-		/** Closes the source compilation window before handing control to gameplay. */
-		void FinishShaderStartup();
-		/** Admits a source compile and its cache writes while the current policy permits them. */
-		[[nodiscard]] auto AcquireShaderCompilation() const { return compilationGate.Acquire(); }
-		/** Whether gameplay can only read the compiled shader cache. */
-		bool IsShaderCacheReadOnly() const { return compilationGate.IsReadOnly(); }
 		/** Counts calls into the HLSL compiler, excluding tasks resolved from cached bytecode. */
 		void CountSourceCompile() { sourceCompileCount.fetch_add(1, std::memory_order_relaxed); }
 		/** Returns the number of source compiler calls this process has made. */
 		uint64_t GetSourceCompileCount() const { return sourceCompileCount.load(std::memory_order_relaxed); }
-		/** Records a request that could not be served from the read-only cache. */
-		void RecordReadOnlyShaderMiss(std::string_view a_key);
 		/** Queues the normalized Lighting pixel shader before gameplay. */
 		void PrecompileLightingPixel(const RE::BSShader& a_shader, uint32_t a_descriptor);
-		/** Gets the number of cache-only requests for which bytecode was unavailable. */
-		uint64_t GetReadOnlyShaderMissCount() const { return readOnlyShaderMissCount.load(std::memory_order_relaxed); }
 		/** @brief Whether shaders compile with debug info: Developer Mode, or RenderDoc attached. */
 		static bool IsDebugCompile();
 		/** @brief Deletes the on-disk shader cache directory (including the content store) plus the rollback and swap slots. Main-thread only: also resets UI-facing mismatch state. */
@@ -812,7 +800,7 @@ namespace SIE
 
 		/** @brief Publishes a_blob as this task's result. Returns false if the compile
 		 *  failed, a_taskGeneration is stale, or Clear(path) evicted this key mid-flight. */
-		bool AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, winrt::com_ptr<ID3DBlob> a_blob, bool fromDisk = false, std::optional<uint64_t> a_taskGeneration = std::nullopt, bool a_missingFromDisk = false);
+		bool AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, winrt::com_ptr<ID3DBlob> a_blob, bool fromDisk = false, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 
 		enum class ClaimResult
 		{
@@ -1049,8 +1037,6 @@ namespace SIE
 		void FinishStartupCompilation();
 		/** Switches compilation mode, dropping unstarted precompiles when entering background mode. */
 		void SetBackgroundCompilation(bool value);
-		/** Uses the background worker budget for runtime work and diskless background compilation. */
-		bool UsesBackgroundCompilation() const { return IsShaderCacheReadOnly() || (!IsDiskCache() && backgroundCompilation.load(std::memory_order_relaxed)); }
 		// atomic: written from the menu/input thread (boot setting + Skip Compilation hotkey),
 		// read on the management/compile and render threads.
 		std::atomic<bool> backgroundCompilation = false;
@@ -1407,9 +1393,9 @@ namespace SIE
 		ShaderMapArray<RE::BSGraphics::ComputeShader> computeShaders;
 
 		bool isEnabled = true;
-		Util::ShaderCompilationGate compilationGate;
+		// Read by compile workers through IsDiskCacheActive() while the menu or a settings load sets it.
+		std::atomic<bool> isDiskCache = true;
 		std::atomic_uint64_t sourceCompileCount{ 0 };
-		std::atomic_uint64_t readOnlyShaderMissCount{ 0 };
 		bool requireDigestForReuse = false;
 		// Written only on the main thread under mismatchesMutex; compile workers, the menu and devbench read
 		// single flags lock-free, and GetRollbackState() reads all of them together.

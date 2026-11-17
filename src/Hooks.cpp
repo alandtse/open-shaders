@@ -194,11 +194,11 @@ struct BSShader_LoadShaders
 
 		auto state = globals::state;
 		auto shaderCache = globals::shaderCache;
-		if ((shaderCache->IsDiskCache() && !shaderCache->IsShaderCacheReadOnly()) || shaderCache->IsDump()) {
+		if (shaderCache->IsDiskCache() || shaderCache->IsDump()) {
 			const auto type = shader->shaderType.get();
 			const bool precompileEffectVariants = shaderCache->IsDiskCache() && type == RE::BSShader::Type::Effect;
 			const bool precompileLightingVariants = shaderCache->IsDiskCache() && type == RE::BSShader::Type::Lighting;
-			if (shaderCache->IsDiskCache() && !shaderCache->IsShaderCacheReadOnly()) {
+			if (shaderCache->IsDiskCache()) {
 				Feature::ForEachLoadedFeature("GenerateShaderPermutations", [shader](Feature* feature) {
 					feature->GenerateShaderPermutations(shader);
 				});

@@ -667,9 +667,7 @@ namespace
 		const auto rollback = cache->GetRollbackState();
 		return json{
 			{ "compiling", cache->IsCompiling() },
-			{ "diskCacheReadOnly", cache->IsShaderCacheReadOnly() },
 			{ "sourceCompileCount", cache->GetSourceCompileCount() },
-			{ "readOnlyShaderMissCount", cache->GetReadOnlyShaderMissCount() },
 			{ "completedTasks", cache->GetCompletedTasks() },
 			{ "totalTasks", cache->GetTotalTasks() },
 			{ "failedTasks", cache->GetFailedTasks() },
@@ -1079,10 +1077,8 @@ namespace
 			return json{ { "action", "activeOnly" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "scoped (smart) clear started; captures on-screen shaders over two windows, then evicts+recompiles just those (see inspect(kind=shadercache) and openshaders.shaderRecompiled)" } };
 		}
 		if (action == "backgroundCompile") {
-			if (cache->IsDiskCache())
-				return json{ { "action", "backgroundCompile" }, { "backgroundCompilation", false }, { "error", "Disk Cache requires shader work to finish at startup" } };
 			cache->SetBackgroundCompilation(true);
-			return json{ { "action", "backgroundCompile" }, { "backgroundCompilation", cache->UsesBackgroundCompilation() } };
+			return json{ { "action", "backgroundCompile" }, { "backgroundCompilation", true } };
 		}
 		if (action == "contentStore") {
 			// Same atomic the Advanced menu checkbox flips; read per compile, so no marshalling needed.

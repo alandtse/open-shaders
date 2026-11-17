@@ -414,7 +414,7 @@ void TruePBR::SetupResources()
 {
 	SetupTextureSetData();
 	SetupMaterialObjectData();
-	if (auto* cache = globals::shaderCache; loaded && cache->IsDiskCacheActive() && !cache->IsShaderCacheReadOnly())
+	if (auto* cache = globals::shaderCache; loaded && cache->IsDiskCacheActive())
 		Util::CompileShaderBlob(kGlintsNoiseShaderPath, {}, "cs_5_0");
 }
 

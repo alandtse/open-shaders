@@ -691,7 +691,7 @@ bool ScreenSpaceShadows::HasShaderDefine(RE::BSShader::Type)
 
 void ScreenSpaceShadows::SetupResources()
 {
-	if (auto& cache = *globals::shaderCache; cache.IsDiskCacheActive() && !cache.IsShaderCacheReadOnly()) {
+	if (auto& cache = *globals::shaderCache; cache.IsDiskCacheActive()) {
 		const auto initialSamples = GetScaledSampleCount();
 		GetComputeRaymarch();
 		if (globals::game::isVR)

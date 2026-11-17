@@ -380,10 +380,10 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 	                      renderDocAvailable                ? themeSettings.StatusPalette.Warning :
 	                                                          themeSettings.StatusPalette.InfoColor;
 
-	if (shaderCache->IsCompiling() && !shaderCache->IsShaderCacheReadOnly()) {
+	if (shaderCache->IsCompiling()) {
 		// VR immersion: suppress only the routine background-compile readout; the
 		// blocking-compile path and anything exceptional still show below.
-		const bool hideRoutineHud = globals::game::isVR && shaderCache->UsesBackgroundCompilation() &&
+		const bool hideRoutineHud = globals::game::isVR && shaderCache->backgroundCompilation &&
 		                            Menu::GetSingleton()->GetSettings().HideCompilationHUDInVR;
 		const bool hasExceptionalInfo = shaderCache->IsDiskCacheHeld() || shaderCache->HasFeatureSetChanges() || FeatureIssues::CountLoadFailures() > 0 ||
 		                                (failed && !hide) || effectFailed || renderDocAvailable || state->IsDeveloperMode();
@@ -395,7 +395,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 			return;
 		}
 		if (!hideRoutineHud) {
-			std::string compilePrefix = shaderCache->UsesBackgroundCompilation() ? T("overlay.background_prefix", "Background ") : "";
+			std::string compilePrefix = shaderCache->backgroundCompilation ? T("overlay.background_prefix", "Background ") : "";
 			std::string shaderStats = shaderCache->GetShaderStatsString(!state->IsDeveloperMode());
 			auto progressTitle = std::vformat(T("overlay.compiling_shaders", "{}Compiling Shaders: {}"),
 				std::make_format_args(compilePrefix, shaderStats));
@@ -438,7 +438,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 				issueCount);
 		}
 		if (state->IsDeveloperMode()) {
-			int32_t threadLimit = shaderCache->UsesBackgroundCompilation() ? shaderCache->backgroundCompilationThreadCount : shaderCache->compilationThreadCount;
+			int32_t threadLimit = shaderCache->backgroundCompilation ? shaderCache->backgroundCompilationThreadCount : shaderCache->compilationThreadCount;
 			int compilationRunning = (int)shaderCache->compilationPool.get_tasks_running();
 			int heavyInFlight = shaderCache->GetHeavyTasksInFlight();
 			int heavyLimit = static_cast<int>(Util::GetPerformanceCoreCount());
@@ -454,7 +454,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 				ImGui::Text(T("overlay.slow_shaders", "Slow shaders: %llu (very slow: %llu)"), slow, verySlow);
 			}
 		}
-		if (!shaderCache->IsDiskCache() && !shaderCache->UsesBackgroundCompilation() && shaderCache->menuLoaded) {
+		if (!shaderCache->backgroundCompilation && shaderCache->menuLoaded) {
 			const char* skipKeyName = keyIdToString(Menu::GetSingleton()->GetSettings().SkipCompilationKey);
 			auto skipShadersText = std::vformat(
 				T("overlay.skip_compilation", "Press {} to proceed without completing shader compilation. "),
