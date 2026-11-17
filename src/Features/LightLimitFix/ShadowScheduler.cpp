@@ -163,10 +163,10 @@ namespace ShadowCasterManager
 	}
 
 	// SEH in its own function: GetUserData walks NiAVObject::parent, which is not refcounted and can dangle during scene teardown.
-	static RE::Actor* CarrierOf(const RE::NiLight* ni) noexcept
+	RE::Actor* ActorOwnerOf(const RE::NiAVObject* a_object) noexcept
 	{
 		__try {
-			auto* ref = ni->GetUserData();
+			auto* ref = a_object->GetUserData();
 			return ref ? ref->As<RE::Actor>() : nullptr;
 		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
 		}
@@ -180,7 +180,7 @@ namespace ShadowCasterManager
 		static PerFrameCache<RE::BSShadowLight*, RE::NiPointer<RE::NiAVObject>> bodies;
 		return bodies.Get(static_cast<uint32_t>(*globals::game::frameCounter), light, [light]() -> RE::NiPointer<RE::NiAVObject> {
 						 auto* ni = light->light.get();
-						 auto* carrier = ni && light->dynamic && light->GetIsOmniLight() ? CarrierOf(ni) : nullptr;
+						 auto* carrier = ni && light->dynamic && light->GetIsOmniLight() ? ActorOwnerOf(ni) : nullptr;
 						 if (!carrier)
 							 return nullptr;
 						 const auto* camera = globals::game::playerCamera;
@@ -188,6 +188,31 @@ namespace ShadowCasterManager
 					 })
 		    .get();
 	}
+
+	/// Flags the draws of a carried light's shadow so the paraboloid pass drops the casters hugging it, its holder's hand among them.
+	class CarriedShadowScope
+	{
+	public:
+		explicit CarriedShadowScope(bool a_carried) :
+			state(a_carried ? globals::state : nullptr),
+			wasSet(state && (state->permutationData.ExtraShaderDescriptor & kCarried) != 0)
+		{
+			if (state)
+				state->permutationData.ExtraShaderDescriptor |= kCarried;
+		}
+		~CarriedShadowScope()
+		{
+			if (state && !wasSet)
+				state->permutationData.ExtraShaderDescriptor &= ~kCarried;
+		}
+		CarriedShadowScope(const CarriedShadowScope&) = delete;
+		CarriedShadowScope& operator=(const CarriedShadowScope&) = delete;
+
+	private:
+		static constexpr uint32_t kCarried = static_cast<uint32_t>(State::ExtraShaderDescriptors::CarriedShadowLight);
+		State* state;
+		bool wasSet;
+	};
 
 	/// UpdateCamera with a carried omni light's front paraboloid turned at its carrier, so the seam never crosses the body it is
 	/// closest to; the node's rotation is put back right after the copy.
@@ -3979,6 +4004,7 @@ namespace ShadowCasterManager
 				auto& e = s_lights.Lights[i];
 				if (!e.Light || !e.RedrawFrame)
 					continue;
+				const CarriedShadowScope carriedShadow(CarrierBody(e.Light) != nullptr);
 				bool keepPriorContent = false;
 				bool emptyRender = false;
 				if (AtlasActive()) {

@@ -491,7 +491,8 @@ public:
 		NoFoliageTint = 1u << 24,
 		SnowRooftop = 1u << 23,
 		SnowLODTree = 1u << 22,
-		SnowInactive = 1u << 21
+		SnowInactive = 1u << 21,
+		CarriedShadowLight = 1u << 20
 	};
 
 	/** @brief Bitflags describing extra feature-specific properties related to terrain displacement and material models. */

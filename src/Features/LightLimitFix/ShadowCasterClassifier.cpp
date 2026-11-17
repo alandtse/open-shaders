@@ -481,6 +481,17 @@ namespace ShadowCasterManager
 		return false;
 	}
 
+	/// True for a rigid part of the actor carrying this light (the weapon, torch or cage it hangs on); the skinned body still
+	/// casts, so a torch-bearer keeps their shadow.
+	static bool HeldByCarrier(RE::BSShadowLight& a_light, const RE::BSGeometry& a_geometry)
+	{
+		if (a_geometry.GetGeometryRuntimeData().skinInstance || !a_light.dynamic || !a_light.GetIsOmniLight())
+			return false;
+		const auto* ni = a_light.light.get();
+		const auto* carrier = ni ? ActorOwnerOf(ni) : nullptr;
+		return carrier && carrier == ActorOwnerOf(&a_geometry);
+	}
+
 	// BSParabolicCullingProcess::GetHemisphereMask values: bit 0 appends the
 	// caster to the front list, bit 1 accumulates it into the back hemisphere.
 	constexpr std::uint32_t kHemisphereFrontBit = 1u;
@@ -517,6 +528,8 @@ namespace ShadowCasterManager
 					return;  // skip append -- caster dropped from this shadow
 				}
 			}
+			if (light && HeldByCarrier(*light, a_visible))
+				return;
 			if (s_recLeft.load(std::memory_order_relaxed) > 0) {
 				const int32_t recSlot = s_recTargetSlot.load(std::memory_order_relaxed);
 				if (recSlot >= 0 && light && recSlot < s_lights.Size &&
