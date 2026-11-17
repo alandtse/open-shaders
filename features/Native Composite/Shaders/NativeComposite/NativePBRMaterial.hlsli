@@ -7,6 +7,7 @@ namespace NativePBR
 {
 	static const uint MissingTexture = 0xffffffffu;
 	static const uint DrawVertexColorFlag = 1u;
+	static const uint LegacyComplexMaskFlag = 1u << 8u;
 
 	struct MaterialRecord
 	{
@@ -77,17 +78,31 @@ namespace NativePBR
 	}
 
 	SurfaceMaterial EvaluateOpaque(MaterialRecord material, SurfaceInput surface, float4 baseTexel,
-		float4 normalTexel, float4 packedTexel, float4 emissionTexel, float4 coatTexel, uint drawFlags)
+		float4 normalTexel, float4 packedTexel, float4 emissionTexel, float4 coatTexel,
+		bool complexMaskDetected, uint drawFlags)
 	{
 		SurfaceMaterial result;
 		result.baseColor = baseTexel.rgb;
 		if ((drawFlags & DrawVertexColorFlag) != 0u)
 			result.baseColor *= NativePBR::SrgbToLinear(surface.vertexColor);
 		result.normal = DecodeNormal(surface, normalTexel.xyz);
-		result.roughness = clamp(packedTexel.r * material.base.y, PBR::Constants::MinRoughness, PBR::Constants::MaxRoughness);
-		result.metallic = saturate(packedTexel.g);
-		result.ao = saturate(packedTexel.b);
-		result.f0 = lerp(saturate(packedTexel.a * material.base.w).xxx, result.baseColor, result.metallic);
+		if ((material.controls.y & LegacyComplexMaskFlag) != 0u) {
+			// Vanilla environment masks are not RMAOS. Alpha identifies complex masks;
+			// Y is their gloss multiplier and Z controls conductive/specular color.
+			// Preserve normal-alpha gloss when the mask has no complex payload.
+			const bool complex = complexMaskDetected && packedTexel.g > (4.0f / 255.0f);
+			result.roughness = clamp(1.0f - normalTexel.a * (complex ? packedTexel.g : 1.0f),
+				PBR::Constants::MinRoughness, PBR::Constants::MaxRoughness);
+			result.metallic = complex ? saturate(packedTexel.b) : 0.0f;
+			result.ao = 1.0f;
+			result.f0 = lerp(saturate(material.base.w * packedTexel.r).xxx, result.baseColor,
+				result.metallic);
+		} else {
+			result.roughness = clamp(packedTexel.r * material.base.y, PBR::Constants::MinRoughness, PBR::Constants::MaxRoughness);
+			result.metallic = saturate(packedTexel.g);
+			result.ao = saturate(packedTexel.b);
+			result.f0 = lerp(saturate(packedTexel.a * material.base.w).xxx, result.baseColor, result.metallic);
+		}
 		result.opacity = saturate(baseTexel.a * material.base.x);
 		result.emission = material.textures[1].z != MissingTexture ? emissionTexel.rgb : 0.0f;
 		const bool simpleCoat = material.controls.w == (1u << 1u);

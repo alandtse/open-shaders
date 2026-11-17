@@ -83,6 +83,9 @@ void NativePBRFeature::DiscoverPreparedAssets()
 			materialSource.base.materialAlpha = alpha;
 			materialSource.base.clampMode = clamp;
 			materialSource.base.uvOffsetScale = { transform, transform };
+			const uint64_t flags = (uint64_t(flags2) << 32) | flags1;
+			materialSource.base.legacyComplexMask =
+				(flags & uint64_t(RE::BSShaderProperty::EShaderPropertyFlag::kEnvMap)) != 0;
 			constexpr std::array<size_t, 7> nifSlots{ 0, 1, 5, 2, 3, 7, 6 };
 			for (size_t role = 0; role < nifSlots.size(); ++role) {
 				const auto& value = textures.at(nifSlots[role]);
@@ -90,7 +93,6 @@ void NativePBRFeature::DiscoverPreparedAssets()
 					continue;
 				materialSource.base.texturePaths[role] = value.get<std::string>();
 			}
-			const uint64_t flags = (uint64_t(flags2) << 32) | flags1;
 			if ((flags2 & (1u << 23)) != 0) {
 				auto has = [flags](RE::BSShaderProperty::EShaderPropertyFlag flag) {
 					return (flags & uint64_t(flag)) != 0;

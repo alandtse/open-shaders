@@ -83,16 +83,50 @@ TEST_CASE("NativePBR material availability requires only sampled opaque roles", 
 	recipe.textures[4].canonicalPath = "textures/displacement.dds";
 	recipe.textures[5].canonicalPath = "textures/features0.dds";
 	const auto requested = GpuRequestedTextureRoles(recipe);
-	CHECK(requested == 0x0fu);
-	CHECK(ClassifyGpuMaterialAvailability(0x0fu, requested) == GpuMaterialAvailability::Resident);
+	CHECK(requested == 0x1fu);
+	CHECK(ClassifyGpuMaterialAvailability(0x1fu, requested) == GpuMaterialAvailability::Resident);
+	CHECK(ClassifyGpuMaterialAvailability(0x0fu, requested) == GpuMaterialAvailability::PartiallyResident);
 	CHECK(ClassifyGpuMaterialAvailability(0x17u, requested) == GpuMaterialAvailability::PartiallyResident);
 	CHECK(ClassifyGpuMaterialAvailability(0x07u, requested) == GpuMaterialAvailability::PartiallyResident);
 	CHECK(ClassifyGpuMaterialAvailability(0x04u, requested) == GpuMaterialAvailability::PartiallyResident);
 	CHECK(ClassifyGpuMaterialAvailability(0, requested) == GpuMaterialAvailability::Unavailable);
 	recipe.textures[3].canonicalPath.clear();
-	CHECK(GpuRequestedTextureRoles(recipe) == kGpuRequiredTextureRoles);
-	CHECK(ClassifyGpuMaterialAvailability(0x07u, GpuRequestedTextureRoles(recipe)) == GpuMaterialAvailability::Resident);
+	CHECK(GpuRequestedTextureRoles(recipe) == (kGpuRequiredTextureRoles | (1u << 4u)));
+	CHECK(ClassifyGpuMaterialAvailability(0x07u, GpuRequestedTextureRoles(recipe)) == GpuMaterialAvailability::PartiallyResident);
+	CHECK(ClassifyGpuMaterialAvailability(0x17u, GpuRequestedTextureRoles(recipe)) == GpuMaterialAvailability::Resident);
 	CHECK(recipe.issues == (UnsupportedDisplacement | UnsupportedFeatureTextures));
+}
+
+TEST_CASE("NativePBR classifies resident displacement and complex mask without altering the material ABI", "[NativePBR][gpu-material]")
+{
+	using namespace NativePBR;
+	Snapshot snapshot{ 321, 12, {} };
+	snapshot.material.texturePathsComplete = true;
+	snapshot.material.texturePaths = { "textures/diffuse.dds", "textures/normal.dds", "textures/environment.dds",
+		"", "textures/height.dds", "", "" };
+	snapshot.material.legacyComplexMask = true;
+	const auto recipe = CompileRecipe(snapshot);
+	CHECK((recipe.issues & UnsupportedDisplacement) != 0);
+	CHECK((EffectiveNativeIssues(recipe) & UnsupportedDisplacement) == 0);
+	CHECK((GpuRequestedTextureRoles(recipe) & (1u << static_cast<uint32_t>(TextureRole::Displacement))) != 0);
+	GpuTextureLocations locations{};
+	for (auto& location : locations)
+		location = { kGpuMissingTexture, 0u };
+	const auto packed = PackGpuMaterialRecord(recipe, locations);
+	CHECK((packed.controls[1] & kGpuLegacyComplexMask) != 0);
+	CHECK(sizeof(packed) == 304);
+	snapshot.material.displacementScale = 0.0f;
+	const auto flatRecipe = CompileRecipe(snapshot);
+	CHECK((EffectiveNativeIssues(flatRecipe) & UnsupportedDisplacement) != 0);
+	CHECK((GpuRequestedTextureRoles(flatRecipe) & (1u << static_cast<uint32_t>(TextureRole::Displacement))) == 0);
+	snapshot.material.displacementScale = 1.0f;
+	snapshot.material.pbrFlags = uint32_t(PBRFlags::TwoLayer) | uint32_t(PBRFlags::InterlayerParallax);
+	snapshot.material.coatStrength = 1.0f;
+	const auto layeredRecipe = CompileRecipe(snapshot);
+	CHECK_FALSE(SupportsOpaqueParallax(layeredRecipe));
+	CHECK((EffectiveNativeIssues(layeredRecipe) & UnsupportedDisplacement) != 0);
+	const auto layeredRecord = PackGpuMaterialRecord(layeredRecipe, locations);
+	CHECK((layeredRecord.controls[1] & kGpuLegacyComplexMask) == 0);
 }
 
 TEST_CASE("NativePBR clearcoat requests its geometry-sampled feature texture", "[NativePBR][gpu-material]")

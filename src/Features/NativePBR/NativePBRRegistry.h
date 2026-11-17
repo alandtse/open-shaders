@@ -63,6 +63,9 @@ namespace NativePBR
 		MaterialKind kind = MaterialKind::Mesh;
 		uint64_t textureGeneration = 0;
 		uint32_t pbrFlags = 0, nifThinSurfaceFlags = 0, clampMode = 0, landscapeTileCount = 0;
+		// Directly interpreted from the prepared NIF's environment mapping flag;
+		// slot 5 is a vanilla complex/environment mask, not a PBR RMAOS map.
+		bool legacyComplexMask = false;
 		std::array<std::array<float, 4>, 2> uvOffsetScale{ { { 0, 0, 1, 1 }, { 0, 0, 1, 1 } } };
 		float materialAlpha = 1.0f;
 		float roughnessScale = 1.0f, displacementScale = 1.0f, specularLevel = 0.04f;

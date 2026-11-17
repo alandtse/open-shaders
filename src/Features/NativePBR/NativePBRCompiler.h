@@ -89,6 +89,14 @@ namespace NativePBR
 		return ActiveOpaquePbrFlags(recipe) == uint32_t(PBRFlags::TwoLayer);
 	}
 
+	/** @brief Restrict parallax to single-surface mesh displacement; layered refraction is not represented by ray hits yet. */
+	inline bool SupportsOpaqueParallax(const Recipe& recipe)
+	{
+		return recipe.parameters.kind == MaterialKind::Mesh &&
+			recipe.parameters.displacementScale > 0.0f &&
+			(ActiveOpaquePbrFlags(recipe) & uint32_t(PBRFlags::InterlayerParallax)) == 0;
+	}
+
 	/** @brief Classifies only features that contribute to the current native opaque material. */
 	inline uint32_t EffectiveNativeIssues(const Recipe& recipe)
 	{
@@ -107,6 +115,8 @@ namespace NativePBR
 			!recipe.textures[static_cast<size_t>(TextureRole::Features1)].canonicalPath.empty();
 		if (!unsupportedFeature0 && !unsupportedFeature1)
 			effective &= ~UnsupportedFeatureTextures;
+		if (SupportsOpaqueParallax(recipe))
+			effective &= ~UnsupportedDisplacement;
 		return effective;
 	}
 

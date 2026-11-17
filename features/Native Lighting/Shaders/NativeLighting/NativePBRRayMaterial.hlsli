@@ -49,6 +49,62 @@ float NativePBRLod(NativePBR::MaterialRecord material, TriangleSurface hitSurfac
 	return log2(max(footprint * sqrt(uvArea / max(worldArea, 1e-12f)), 1e-10f));
 }
 
+// Native ray-hit POM uses the same resident DDS texture pages as the other
+// material inputs. It must use an explicit mip: pixel derivatives do not exist
+// in RayQuery's compute shader. The shallow, bounded march follows the
+// single-layer Extended Materials height convention without FXC dependencies.
+bool NativePBRParallaxUV(NativePBR::MaterialRecord material, TriangleSurface hitSurface, float2 barycentric,
+	float3x4 objectToWorld, float3x4 worldToObject, uint2 heightLocation,
+	uint heightChannel, float lod, inout float2 uv)
+{
+	if (heightLocation.x == NativePBR::MissingTexture || heightChannel > 3u)
+		return false;
+	float3 position = hitSurface.position0 * (1.0f - barycentric.x - barycentric.y) +
+		hitSurface.position1 * barycentric.x + hitSurface.position2 * barycentric.y;
+	float3 normalWS = mul(hitSurface.normal, (float3x3)worldToObject);
+	if (!all(isfinite(normalWS)) || dot(normalWS, normalWS) <= 1e-8f)
+		return false;
+	normalWS = normalize(normalWS);
+	float3 tangentWS = mul((float3x3)objectToWorld, hitSurface.tangent);
+	tangentWS -= normalWS * dot(normalWS, tangentWS);
+	if (!all(isfinite(tangentWS)) || dot(tangentWS, tangentWS) <= 1e-8f)
+		return false;
+	tangentWS = normalize(tangentWS);
+	float3 bitangentWS = cross(normalWS, tangentWS) *
+		(dot(cross(normalWS, tangentWS), mul((float3x3)objectToWorld, hitSurface.bitangent)) < 0.0f ? -1.0f : 1.0f);
+	float3 worldPosition = mul(objectToWorld, float4(position, 1.0f));
+	float3 viewWS = CameraOrigin - worldPosition;
+	if (!all(isfinite(viewWS)) || dot(viewWS, viewWS) <= 1e-8f)
+		return false;
+	viewWS = normalize(viewWS);
+	float3 viewTS = float3(dot(viewWS, tangentWS), dot(viewWS, bitangentWS), dot(viewWS, normalWS));
+	float scale = clamp(material.base.z, 0.0f, 4.0f) * 0.1f;
+	float2 span = viewTS.xy * (scale / max(0.3f, viewTS.z * 0.7f + 0.3f));
+	if (!all(isfinite(span)))
+		return false;
+	const uint steps = 16u;
+	float2 previousUV = uv + span * 0.5f;
+	float previousDifference = -1.0f;
+	[loop] for (uint step = 1u; step <= steps; ++step) {
+		float bound = 1.0f - float(step) / float(steps);
+		float2 candidate = previousUV - span / float(steps);
+		float4 heightSample;
+		if (!SampleNativePBR(heightLocation, material.properties.z, candidate, lod + 1.0f, heightSample))
+			return false;
+		float height = heightSample[heightChannel];
+		float difference = height - bound;
+		if (difference >= 0.0f) {
+			float t = saturate((-previousDifference) / max(difference - previousDifference, 1e-5f));
+			uv = lerp(previousUV, candidate, t);
+			return all(isfinite(uv));
+		}
+		previousUV = candidate;
+		previousDifference = difference;
+	}
+	uv = previousUV;
+	return all(isfinite(uv));
+}
+
 bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	float3x4 objectToWorld, float3x4 worldToObject, float footprint, out EvaluatedSourceMaterial evaluated,
 	out bool usedFallback, out float3 clearcoat)
@@ -71,6 +127,35 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	float lod = NativePBRLod(material, hitSurface, objectToWorld, footprint);
 	if (!all(isfinite(uv)) || !isfinite(lod))
 		return false;
+	// Standard displacement takes precedence. Vanilla complex materials also
+	// encode height in the alpha channel of their environment mask.
+	const bool legacyComplex = (material.controls.y & NativePBR::LegacyComplexMaskFlag) != 0u;
+	bool complexMaskDetected = false;
+	float4 coarseMask = 0.0f;
+	if (legacyComplex) {
+		if (!SampleNativePBR(material.textures[1].xy, material.properties.z, uv, 32.0f, coarseMask))
+			return false;
+		const float epsilon = 4.0f / 255.0f;
+		const bool grayscale = abs(coarseMask.r - coarseMask.g) < epsilon &&
+			abs(coarseMask.g - coarseMask.b) < epsilon && abs(coarseMask.r - coarseMask.b) < epsilon;
+		const bool blackHeight = all(coarseMask.rgb < epsilon) &&
+			coarseMask.a > epsilon && coarseMask.a < 1.0f - epsilon;
+		complexMaskDetected = coarseMask.a < 1.0f - epsilon && (!grayscale || blackHeight);
+	}
+	if (material.textures[2].x != NativePBR::MissingTexture) {
+		if (!NativePBRParallaxUV(material, hitSurface, barycentric, objectToWorld, worldToObject,
+			material.textures[2].xy, 0u, lod, uv))
+			return false;
+	} else if (legacyComplex && complexMaskDetected) {
+		float4 originalMask;
+		if (!SampleNativePBR(material.textures[1].xy, material.properties.z, uv, lod, originalMask))
+			return false;
+		const float epsilon = 4.0f / 255.0f;
+		if (originalMask.a > epsilon && originalMask.a < 1.0f - epsilon &&
+			!NativePBRParallaxUV(material, hitSurface, barycentric, objectToWorld, worldToObject,
+				material.textures[1].xy, 3u, lod, uv))
+			return false;
+	}
 	float4 base, normal, packed, emission = 0.0f;
 	const bool baseReady = SampleNativePBR(material.textures[0].xy, material.properties.z, uv, lod, base);
 	if (!baseReady && NativePBRPadding.y == 0u) return false;
@@ -107,7 +192,8 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	if (!all(isfinite(surface.geometricNormal)) ||
 		!all(isfinite(surface.tangent)) || !all(isfinite(surface.bitangent)))
 		return false;
-	NativePBR::SurfaceMaterial result = NativePBR::EvaluateOpaque(material, surface, base, normal, packed, emission, coat, binding.flags);
+	NativePBR::SurfaceMaterial result = NativePBR::EvaluateOpaque(material, surface, base, normal, packed, emission,
+		coat, complexMaskDetected, binding.flags);
 	evaluated.baseColor = result.baseColor;
 	evaluated.normal = result.normal;
 	evaluated.f0 = result.f0;
