@@ -1057,8 +1057,6 @@ namespace SIE
 			MTLandLODBlend = 19,
 		};
 
-		static constexpr uint32_t kLightingDryWeather = 1u << 21;
-
 		enum class LightingShaderFlags : uint32_t
 		{
 			VC = 1 << 0,
