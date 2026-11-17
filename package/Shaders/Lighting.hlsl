@@ -1308,7 +1308,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 #	if defined(BOOK_PAGE_AMBIENT)
 	const bool bookPageAmbient = ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::BookPage) &&
-	                             SharedData::iblSettings.UseStaticIBL && ImageBasedLighting::IsEnabled();
+	                             SharedData::iblSettings.UseStaticIBL && SharedData::iblSettings.EnableIBL;
 	float3 bookPageDiffuse = 0;
 #	endif
 
