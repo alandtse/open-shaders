@@ -151,7 +151,7 @@ public:
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
 		uint EnableParticleContactShadows;
-		uint pad1;
+		float SoftShadowScale;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	// Compile-time size lock catches CPU/GPU cbuffer layout drift. STATIC_ASSERT_ALIGNAS_16
@@ -518,6 +518,9 @@ public:
 
 		/// Hair takes the directional shadow the deferred pass computed instead of the engine's cheaper forward lookup, so it is lit by the sun like the rest of the scene.
 		bool SunLitHair = true;
+
+		/// Widens a point light's shadow edge with the distance between caster and receiver, sized by the light's own size; 0 keeps every edge hard.
+		float SoftShadowScale = 0.0f;
 
 		// Particle Lights.
 		bool EnableParticleLights = true;

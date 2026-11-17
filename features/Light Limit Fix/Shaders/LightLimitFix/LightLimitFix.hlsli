@@ -509,6 +509,13 @@ namespace LightLimitFix
 		return shadow;
 	}
 
+	// The four stored depths around a tap through either storage; uv is full-slice space.
+	float4 GatherShadowDepths(uint shadowIndex, float2 uv, bool useAtlas, float4 atlasRect, float tileScale, float2 clampLo, float2 clampHi)
+	{
+		[branch] if (useAtlas) return ShadowAtlasTex.GatherRed(LinearSampler, AtlasUV(uv, atlasRect, clampLo, clampHi));
+		return ShadowMaps.GatherRed(LinearSampler, float3(TileUV(uv, tileScale, clampLo.x, clampHi.x), shadowIndex));
+	}
+
 	// Bilinear-weighted compare (one Gather, fractional-texel lerp) so a lone tap
 	// has smooth edges instead of the four-step box of SampleShadowGather.
 	float BilinearCompare(float4 samples, float receiverDepth, float2 weight)
@@ -578,7 +585,7 @@ namespace LightLimitFix
 	//   isDualParaboloid = false : the slice contains a single paraboloid filling
 	//                              the whole y∈[0,1] (hemi). No clamping needed;
 	//                              the entire slice is valid shadow data.
-	float SampleParaboloidShadow(uint shadowIndex, float2 sampleUV, float depth, float2x2 rotationMatrix, bool isDualParaboloid, float tileScale, float4 atlasRect, uint sampleCount)
+	float SampleParaboloidShadow(uint shadowIndex, float2 sampleUV, float depth, float2x2 rotationMatrix, bool isDualParaboloid, float tileScale, float4 atlasRect, uint sampleCount, float pcfRadius)
 	{
 		const bool useAtlas = atlasRect.x > 0.0;
 		float2 clampLo, clampHi;
@@ -590,7 +597,7 @@ namespace LightLimitFix
 		// branchy tap body 8x.
 		[loop] for (int i = 0; i < 8; i++)
 		{
-			float2 offset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix) * PCFRadius2D;
+			float2 offset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix) * pcfRadius;
 			float2 uv = sampleUV + offset;
 
 			if (isDualParaboloid) {
@@ -605,7 +612,38 @@ namespace LightLimitFix
 		return shadow / 8.0;
 	}
 
-	float GetOmnidirectionalShadow(ShadowLightData shadowLightData, uint shadowIndex, float4 positionLS, float2x2 rotationMatrix, uint sampleCount)
+	static const float SoftShadowSearchRadius = 0.012;
+	static const float SoftShadowMaxRadius = 0.03;
+	static const float ParaboloidUVPerRadian = 0.25;
+
+	// PCF radius for a contact-hardened edge: wider the farther the receiver lies behind the blockers in front of it,
+	// for a light whose source radius is sourceRadius of its range; 0 when nothing in the search region blocks.
+	float GetParaboloidSoftRadius(uint shadowIndex, float2 sampleUV, float depth, float sourceRadius, float2x2 rotationMatrix, bool isDualParaboloid, float tileScale, float4 atlasRect)
+	{
+		const bool useAtlas = atlasRect.x > 0.0;
+		float2 clampLo, clampHi;
+		GetShadowTapClamp(useAtlas, atlasRect, tileScale, clampLo, clampHi);
+		float4 depths = GatherShadowDepths(shadowIndex, sampleUV, useAtlas, atlasRect, tileScale, clampLo, clampHi);
+		float4 blocks = float4(depths < depth);
+		float blockerSum = dot(depths, blocks);
+		float blockerCount = dot(blocks, 1.0);
+		[loop] for (int i = 0; i < 8; i++)
+		{
+			float2 uv = sampleUV + mul(Random::SpiralSampleOffsets8[i], rotationMatrix) * SoftShadowSearchRadius;
+			if (isDualParaboloid)
+				uv.y = (sampleUV.y >= 0.5) ? max(uv.y, 0.5) : min(uv.y, 0.5);
+			depths = GatherShadowDepths(shadowIndex, uv, useAtlas, atlasRect, tileScale, clampLo, clampHi);
+			blocks = float4(depths < depth);
+			blockerSum += dot(depths, blocks);
+			blockerCount += dot(blocks, 1.0);
+		}
+		[branch] if (blockerCount < 1.0) return 0.0;
+		const float blockerDepth = max(blockerSum / blockerCount, 1e-4);
+		const float penumbraAngle = SharedData::lightLimitFixSettings.SoftShadowScale * sourceRadius * (depth - blockerDepth) / (blockerDepth * max(depth, 1e-4));
+		return clamp(penumbraAngle * ParaboloidUVPerRadian, PCFRadius2D, SoftShadowMaxRadius);
+	}
+
+	float GetOmnidirectionalShadow(ShadowLightData shadowLightData, uint shadowIndex, float4 positionLS, float2x2 rotationMatrix, uint sampleCount, float sourceRadius)
 	{
 		// ShadowLightParam.x:
 		//   0 = spot/frustum (handled in GetShadowLightShadow before reaching here)
@@ -643,7 +681,13 @@ namespace LightLimitFix
 		// Bias scales with the tile's texel size, matching the spot path.
 		depth -= shadowLightData.ShadowLightParam.z / tileScale;
 
-		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni, tileScale, shadowLightData.AtlasRect, sampleCount);
+		float pcfRadius = PCFRadius2D;
+		[branch] if (sourceRadius > 0.0 && SharedData::lightLimitFixSettings.SoftShadowScale > 0.0 && sampleCount > 1)
+		{
+			pcfRadius = GetParaboloidSoftRadius(shadowIndex, sampleUV, depth, sourceRadius / shadowLightData.ShadowLightParam.y, rotationMatrix, isOmni, tileScale, shadowLightData.AtlasRect);
+			[branch] if (pcfRadius <= 0.0) return 1.0;
+		}
+		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni, tileScale, shadowLightData.AtlasRect, sampleCount, pcfRadius);
 	}
 
 	// Single-assignment of hasCoverage at function entry keeps FXC's flow
@@ -659,7 +703,7 @@ namespace LightLimitFix
 	// read is safe -- it falls into the `ShadowLightParam.y == 0` branch below
 	// and returns 1.0. The `hasCoverage` flag tells the caller whether the
 	// sample was real, so suppression still works correctly upstream.
-	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, uint sampleCount, out bool hasCoverage)
+	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, uint sampleCount, float sourceRadius, out bool hasCoverage)
 	{
 		hasCoverage = shadowIndex < SharedData::lightLimitFixSettings.ShadowMapSlots;
 
@@ -681,15 +725,20 @@ namespace LightLimitFix
 			return shadowBaseVisibility * spotFalloff;
 		}
 
-		float rawShadow = GetOmnidirectionalShadow(shadowLightData, shadowIndex, positionLS, rotationMatrix, sampleCount);
+		float rawShadow = GetOmnidirectionalShadow(shadowLightData, shadowIndex, positionLS, rotationMatrix, sampleCount, sourceRadius);
 		// Blend toward fully lit while the shadow fades in after this caster
 		// first gained a shadow slot, so the shadow eases in instead of
 		// popping on top of a light that was already visible.
 		return lerp(1.0, rawShadow, shadowLightData.FadeParam.x);
 	}
 
+	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, uint sampleCount, out bool hasCoverage)
+	{
+		return GetShadowLightShadow(shadowIndex, worldPositionWS, rotationMatrix, sampleCount, 0.0, hasCoverage);
+	}
+
 	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, out bool hasCoverage)
 	{
-		return GetShadowLightShadow(shadowIndex, worldPositionWS, rotationMatrix, 8u, hasCoverage);
+		return GetShadowLightShadow(shadowIndex, worldPositionWS, rotationMatrix, 8u, 0.0, hasCoverage);
 	}
 }

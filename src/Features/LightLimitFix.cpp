@@ -51,6 +51,7 @@ namespace
 	constexpr float kJsonPlacedLightIntensityMax = 8.0f;
 	constexpr int kLightAttachRefreshFramesMin = 1;
 	constexpr int kLightAttachRefreshFramesMax = 600;
+	constexpr float kSoftShadowScaleMax = 2.0f;
 
 	void SanitizeSettings(LightLimitFix::Settings& a_settings)
 	{
@@ -131,6 +132,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ShadowSettings,
 	EnableParticleContactShadows,
 	SunLitHair,
+	SoftShadowScale,
 	EnableParticleLights,
 	EnableParticleLightsCulling,
 	EnableParticleLightsDetection,
@@ -259,6 +261,10 @@ void LightLimitFix::DrawSettings()
 		ImGui::Checkbox(T("feature.light_limit_fix.sun_lit_hair", "Sun-Lit Hair"), &settings.SunLitHair);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T("feature.light_limit_fix.sun_lit_hair_tooltip", "Hair takes the directional shadow the deferred pass computed instead of the engine's forward lookup, so it is lit by the sun like the rest of the scene. Off keeps the engine's original hair shadowing, which can leave hair much darker."));
+		}
+		ImGui::SliderFloat(T("feature.light_limit_fix.soft_shadow_scale", "Soft Shadows by Light Size"), &settings.SoftShadowScale, 0.0f, kSoftShadowScaleMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("feature.light_limit_fix.soft_shadow_scale_tooltip", "Softens a point light's shadow the farther it falls from what casts it, by the light's own size. 0 keeps every shadow edge hard."));
 		}
 		Util::EndPillTabItem();
 	}
@@ -566,6 +572,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	perFrame.ContactShadowMinIntensity = sanitizeFloat(settings.ContactShadowMinIntensity, 0.0f, 1.0f);
 	perFrame.ShadowMapSlots = ShadowCasterManager::GetInstalledSlotCount();
 	perFrame.SunLitHair = settings.SunLitHair ? 1u : 0u;
+	perFrame.SoftShadowScale = sanitizeFloat(settings.SoftShadowScale, 0.0f, kSoftShadowScaleMax);
 	perFrame.EnableParticleContactShadows = settings.EnableContactShadows && settings.EnableParticleContactShadows;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
 	perFrame.EnableLightsVisualisation = EnableLightsVisualisation;
