@@ -463,7 +463,7 @@ void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 		const auto currentMethod = GetUpscaleMethod();
 		const bool needsUpscaler = currentMethod != UpscaleMethod::kDLSS && currentMethod != UpscaleMethod::kFSR;
 		if (needsUpscaler)
-			settings.*GetSelectedUpscaleMethodField() = (uint)(streamline.featureDLSS ? UpscaleMethod::kDLSS : UpscaleMethod::kFSR);
+			settings.*GetUpscaleMethodSetting().field = (uint)(streamline.featureDLSS ? UpscaleMethod::kDLSS : UpscaleMethod::kFSR);
 	}
 	// Foveation is VR-only (DrawFoveationControls/IsRuntimeSupported); leave it alone on Flat.
 	if (globals::game::isVR) {
@@ -816,7 +816,7 @@ void Upscaling::DrawUpscalingSettings()
 	bool featureDLSS = streamline.featureDLSS;
 	bool featureFSR = true;  // FSR is always available
 
-	const auto methodField = GetSelectedUpscaleMethodField();
+	const auto methodField = GetUpscaleMethodSetting().field;
 	uint32_t blockedMode = (uint)UpscaleMethod::kNONE;
 	uint32_t* currentUpscaleMode = openCompositeBlocksUpscaling ? &blockedMode : &(settings.*methodField);
 	uint32_t availableModes = 1;  // Start with TAA
@@ -1644,19 +1644,13 @@ float Upscaling::GetQualityModeRatio(uint qualityMode)
 	return std::isfinite(ratio) && ratio > 0.0f ? ratio : 3.0f;
 }
 
-uint Upscaling::Settings::* Upscaling::GetSelectedUpscaleMethodField() const
+Upscaling::UpscaleMethodSetting Upscaling::GetUpscaleMethodSetting() const
 {
 	if (globals::features::renderDoc.IsAvailable())
-		return &Settings::upscaleMethodRenderDoc;
-	return streamline.featureDLSS ? &Settings::upscaleMethod : &Settings::upscaleMethodNoDLSS;
-}
-
-std::string_view Upscaling::GetSelectedUpscaleMethodKey() const
-{
-	const auto field = GetSelectedUpscaleMethodField();
-	if (field == &Settings::upscaleMethodRenderDoc)
-		return "upscaleMethodRenderDoc";
-	return field == &Settings::upscaleMethod ? "upscaleMethod" : "upscaleMethodNoDLSS";
+		return { &Settings::upscaleMethodRenderDoc, "upscaleMethodRenderDoc" };
+	if (!streamline.featureDLSS)
+		return { &Settings::upscaleMethodNoDLSS, "upscaleMethodNoDLSS" };
+	return { &Settings::upscaleMethod, "upscaleMethod" };
 }
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
@@ -1665,7 +1659,7 @@ Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 	if (globals::game::isVR && GetOpenCompositeUpscalingBlocker().active)
 		return UpscaleMethod::kNONE;
 
-	const auto methodField = GetSelectedUpscaleMethodField();
+	const auto methodField = GetUpscaleMethodSetting().field;
 	// PerfMode fixes RT sizing at boot, so keep its latched method or the redirecting FSR fallback.
 	const bool methodLatched = perfMode.IsHookActive();
 	if (methodLatched && methodField == &Settings::upscaleMethodNoDLSS)

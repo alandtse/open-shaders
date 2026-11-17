@@ -160,7 +160,7 @@ namespace CSPluginAPI
 			a_patch.erase(it);
 			const auto& upscaling = globals::features::upscaling;
 			const auto selected = upscaling.streamline.featureDLSS ? method : std::min(method, static_cast<uint32_t>(UpscaleMethod::kFSR));
-			a_patch[upscaling.GetSelectedUpscaleMethodKey()] = selected;
+			a_patch[upscaling.GetUpscaleMethodSetting().key] = selected;
 		}
 	}
 

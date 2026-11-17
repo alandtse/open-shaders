@@ -221,24 +221,15 @@ public:
 		// same thread before the next call.
 		static thread_local std::vector<Util::Settings::RestartFieldInfo> scratch;
 		scratch.clear();
-		if (perfMode.IsHookActive()) {
-			const bool capture = GetSelectedUpscaleMethodField() == &Settings::upscaleMethodRenderDoc;
-			const bool explicitScale = perfMode.IsExplicitScaleLatched();
-			// An explicit scale owns the render res, so the preset is inert until
-			// the scale is cleared; don't demand a restart for an inert field.
-			for (const auto& f : kRestartFields) {
-				if ((explicitScale && f.offset == offsetof(Settings, qualityMode)) ||
-					(capture && f.offset == offsetof(Settings, upscaleMethod)) ||
-					(!capture && f.offset == offsetof(Settings, upscaleMethodRenderDoc)))
-					continue;
-				scratch.push_back(f);
-			}
-			return { scratch.data(), scratch.size() };
-		}
-		const bool gatePerfFields = PerfModePrerequisitesMet();
+		const bool hookActive = perfMode.IsHookActive();
+		// An explicit scale owns the render res, so the preset is inert until the scale is cleared.
+		const bool gatePreset = hookActive && !perfMode.IsExplicitScaleLatched();
+		const bool gatePerfFields = hookActive || PerfModePrerequisitesMet();
+		const auto methodKey = hookActive ? GetUpscaleMethodSetting().key : std::string_view{};
 		for (const auto& f : kRestartFields) {
-			if (f.offset == offsetof(Settings, qualityMode) || f.offset == offsetof(Settings, upscaleMethod) ||
-				f.offset == offsetof(Settings, upscaleMethodRenderDoc))
+			if (f.offset == offsetof(Settings, qualityMode) && !gatePreset)
+				continue;
+			if ((f.offset == offsetof(Settings, upscaleMethod) || f.offset == offsetof(Settings, upscaleMethodRenderDoc)) && f.jsonKey != methodKey)
 				continue;
 			if ((f.offset == offsetof(Settings, renderAtUpscaleRes) || f.offset == offsetof(Settings, vrRenderScale)) && !gatePerfFields)
 				continue;
@@ -306,8 +297,13 @@ public:
 	PostProcessingInput GetPostProcessingInput() const override;
 
 	UpscaleMethod GetUpscaleMethod() const;
-	/** @brief Returns the settings key edited by the current upscaler selection. */
-	std::string_view GetSelectedUpscaleMethodKey() const;
+	struct UpscaleMethodSetting
+	{
+		uint Settings::* field;
+		std::string_view key;
+	};
+	/** @brief Identifies the method preference for the current capture and DLSS state. */
+	UpscaleMethodSetting GetUpscaleMethodSetting() const;
 	FrameGenMethod GetFrameGenMethod() const;
 	bool UsesDLSSGFrameGen() const;
 
@@ -556,7 +552,6 @@ private:
 	// forceRefresh re-probes the config; otherwise the cached result is returned.
 	const VRDetection::OpenCompositeUpscalingState& GetOpenCompositeUpscalingBlocker(bool a_forceRefresh = false) const;
 	void ApplyOpenCompositeUpscalingBlocker(bool a_forceRefresh = false);
-	uint Settings::* GetSelectedUpscaleMethodField() const;
 
 	mutable VRDetection::OpenCompositeUpscalingState openCompositeUpscalingBlocker;
 	mutable bool openCompositeUpscalingBlockerCacheValid = false;
