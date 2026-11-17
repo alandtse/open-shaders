@@ -293,12 +293,15 @@ TEST_CASE("HoldsFlame takes only a small part close round the flame", "[scm]")
 	REQUIRE(HoldsFlame(0.0f, 0.0f, 2.0f, 3.0f, 1.0f));
 	REQUIRE(HoldsFlame(0.0f, 0.0f, 7.0f, 3.0f, 1.0f));
 	REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 7.5f, 3.0f, 1.0f));
-	REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 12.0f, 1.0f));
-	REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 12.5f, 1.0f));
+	REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 20.0f, 1.0f));
+	REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 20.5f, 1.0f));
 	REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 0.0f, 1.0f));
+	// a Grand soul gem's crystal is taken, a whole hanging lantern is not
+	REQUIRE(HoldsFlame(0.0f, 0.0f, 12.0f, 17.0f, 1.0f));
+	REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 24.0f, 1.0f));
 	// a fixture placed at twice its size keeps its holder in
-	REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 24.0f, 2.0f));
+	REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 40.0f, 2.0f));
 	REQUIRE(HoldsFlame(0.0f, 0.0f, 14.0f, 6.0f, 2.0f));
-	REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 24.5f, 2.0f));
-	REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 12.0f, 0.0f));
+	REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 40.5f, 2.0f));
+	REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 20.0f, 0.0f));
 }

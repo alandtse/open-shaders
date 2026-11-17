@@ -17,7 +17,7 @@ namespace ShadowCasterManager
 	using Util::QuantizeFloat;
 
 	/// Largest unscaled bound radius of a part that can hold a light's flame, and how far past its bound the flame may sit.
-	inline constexpr float kFlameEnclosureMaxRadius = 12.0f;
+	inline constexpr float kFlameEnclosureMaxRadius = 20.0f;
 	inline constexpr float kFlameEnclosureReachMargin = 4.0f;
 
 	/// True when a part whose world bound has radius a_radius, at a_dx/a_dy/a_dz from the flame, is small enough at its world scale
