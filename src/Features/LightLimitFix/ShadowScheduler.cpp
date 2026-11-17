@@ -1878,6 +1878,34 @@ namespace ShadowCasterManager
 		return true;
 	}
 
+	/// True while a light that fell outside the shadow count still holds its slot and its shadow is fading out.
+	static bool HoldsSlotWhileFading(RE::BSShadowLight* a_light)
+	{
+		const int32_t slot = GetShadowSlot(a_light);
+		if (slot < 0 || slot >= s_lights.Size || s_lights.Lights[slot].Light != a_light)
+			return false;
+		auto& entry = s_lights.Lights[slot];
+		const double now = Util::GetNowSecs();
+		if (entry.ReleaseStartSeconds < 0.0)
+			entry.ReleaseStartSeconds = now;
+		return now - entry.ReleaseStartSeconds < kShadowFadeInSeconds;
+	}
+
+	/// A leaving light chosen again fades back in from where its fade-out had reached.
+	static void ResumeAfterRelease(RE::BSShadowLight* a_light)
+	{
+		const int32_t slot = GetShadowSlot(a_light);
+		if (slot < 0 || slot >= s_lights.Size || s_lights.Lights[slot].Light != a_light)
+			return;
+		auto& entry = s_lights.Lights[slot];
+		if (entry.ReleaseStartSeconds < 0.0)
+			return;
+		const double now = Util::GetNowSecs();
+		const double reached = std::clamp(1.0 - (now - entry.ReleaseStartSeconds) / kShadowFadeInSeconds, 0.0, 1.0);
+		entry.ReleaseStartSeconds = -1.0;
+		entry.FadeStartSeconds = now - reached * kShadowFadeInSeconds;
+	}
+
 	static void ValidateCandidates(RE::NiCamera* camera, bool wantDiag, std::vector<CandidateLight>& candidates)
 	{
 		// ---- Validation pass (no game mutations) ----
@@ -1987,6 +2015,11 @@ namespace ShadowCasterManager
 				else if (wantCount < s_settings.ShadowLightCount - s_focusShadowSlots) {
 					c.chosen = true;
 					wantCount++;
+					if (s_settings.FadeShadowSwaps)
+						ResumeAfterRelease(l);
+				} else if (s_settings.FadeShadowSwaps && HoldsSlotWhileFading(l)) {
+					// Kept past the count while it fades out; the newcomer finds no free slot until then.
+					c.chosen = true;
 				} else {
 					c.excess = true;
 				}
@@ -2238,6 +2271,7 @@ namespace ShadowCasterManager
 					s_hashRadiusAnchor.erase(ni);
 				}
 				s_lights.Lights[idx].Light = cp->light;
+				s_lights.Lights[idx].fadeOnAdmit = s_settings.FadeShadowSwaps;
 			}
 
 			// Update sun slot (slot 0).
@@ -2795,9 +2829,10 @@ namespace ShadowCasterManager
 		if (e->LastDrawnFrame < 0) {
 			const auto* ni = e->Light ? e->Light->light.get() : nullptr;
 			PruneIfOversized(s_everHadShadow, 1024);
-			if (!ni || s_everHadShadow.insert(ni).second)
+			if (!ni || s_everHadShadow.insert(ni).second || e->fadeOnAdmit)
 				e->FadeStartSeconds = Util::GetNowSecs();
 		}
+		e->fadeOnAdmit = false;
 		e->LastDrawnFrame = now;
 		// Consumed by the next scoring pass to tell a genuine tile-invalid
 		// failure apart from a light that simply hasn't been tried yet.

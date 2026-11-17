@@ -332,6 +332,9 @@ namespace ShadowCasterManager
 
 		/// Ranks lights that reach the player first and lets them past the redraw budget, so shadows on the player do not flicker.
 		bool ProtectPlayerShadows = true;
+
+		/// A light that falls outside the shadow count fades its shadow out before giving up its slot, and one given a slot again fades in.
+		bool FadeShadowSwaps = false;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
@@ -378,7 +381,8 @@ namespace ShadowCasterManager
 		WarpVisibilityGate,
 		WarpZeroDemandSkip,
 		SpotLitRegion,
-		ProtectPlayerShadows)
+		ProtectPlayerShadows,
+		FadeShadowSwaps)
 
 	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
@@ -408,6 +412,12 @@ namespace ShadowCasterManager
 		/// fade-in ramp. -1 = complete/n-a. Wall-clock (not frame count) so ramp
 		/// duration is fps-independent; set once when LastDrawnFrame leaves -1.
 		double FadeStartSeconds{ -1.0 };
+
+		/// Util::GetNowSecs() when the light fell outside the shadow count while holding this slot -- start of its fade-out; -1 = not leaving.
+		double ReleaseStartSeconds{ -1.0 };
+
+		/// Starts the fade-in at the next redraw admission: a light given this slot after it had none.
+		bool fadeOnAdmit{ false };
 
 		/// Set each frame by scheduler; consumed by render hook.
 		bool RedrawFrame{ false };
@@ -499,6 +509,8 @@ namespace ShadowCasterManager
 			Light = nullptr;
 			LastDrawnFrame = -1;
 			FadeStartSeconds = -1.0;
+			ReleaseStartSeconds = -1.0;
+			fadeOnAdmit = false;
 			RedrawFrame = false;
 			lastRenderedPos = { 0.0f, 0.0f, 0.0f };
 			lastImportance = 0.0f;

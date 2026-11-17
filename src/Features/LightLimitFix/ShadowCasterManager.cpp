@@ -494,11 +494,14 @@ namespace ShadowCasterManager
 	{
 		if (!s_lights.Lights || poolSlot < 0 || poolSlot >= s_lights.Size)
 			return 1.0f;
-		const double start = s_lights.Lights[poolSlot].FadeStartSeconds;
-		if (start < 0.0)
-			return 1.0f;
-		const float elapsedSeconds = static_cast<float>(Util::GetNowSecs() - start);
-		return std::clamp(elapsedSeconds / kShadowFadeInSeconds, 0.0f, 1.0f);
+		const auto& entry = s_lights.Lights[poolSlot];
+		const double now = Util::GetNowSecs();
+		float alpha = 1.0f;
+		if (entry.FadeStartSeconds >= 0.0)
+			alpha = std::clamp(static_cast<float>(now - entry.FadeStartSeconds) / kShadowFadeInSeconds, 0.0f, 1.0f);
+		if (entry.ReleaseStartSeconds >= 0.0)
+			alpha = std::min(alpha, 1.0f - std::clamp(static_cast<float>(now - entry.ReleaseStartSeconds) / kShadowFadeInSeconds, 0.0f, 1.0f));
+		return alpha;
 	}
 
 	void SnapshotConvertedLights(std::vector<RE::NiPointer<RE::BSShadowLight>>& out)
