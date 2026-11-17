@@ -201,8 +201,6 @@ public:
 	void UploadFireMelt();
 
 	PerFrame GetCommonBufferData(bool inWorld);
-	/** @brief Builds the uploaded constants and selects the matching lighting permutation. */
-	PerFrame PrepareFrameData(bool inWorld);
 
 	std::array<winrt::com_ptr<ID3D11ShaderResourceView>, 7> views;
 
