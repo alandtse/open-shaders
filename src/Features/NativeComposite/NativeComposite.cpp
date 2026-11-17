@@ -79,7 +79,7 @@ void NativeCompositeFeature::DrawShadowSettings()
 	shadowChanged |= ImGui::Checkbox("Preview independent shadow mask", &settings.ShadowPreview);
 	shadowChanged |= ImGui::Checkbox("Apply shadows to final combined lighting", &settings.ShadowAfterLighting);
 	ImGui::TextDisabled("Off: shadow raster first. On: shadow raster + native direct.");
-	ImGui::TextDisabled("Native-first mode always shadows fallback before replacing native-owned pixels.");
+	ImGui::TextDisabled("Post-light shadows also affect native-owned pixels.");
 	ImGui::TextDisabled("Boost >1 deepens partial shadows. Native Lighting may be disabled.");
 	if (shadowChanged)
 		++validityRevision;

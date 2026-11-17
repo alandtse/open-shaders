@@ -195,10 +195,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 	                   a_lighting->scene.raster && a_lighting->scene.raster->depth && a_lighting->scene.raster->depth->resource &&
 	                   a_lighting->width == a_width && a_lighting->height == a_height && (a_policy.visual != 0 || a_transfer != Transfer::Unknown) && InitializeLighting(a_device12);
 	const bool recordCounters = a_policy.visual != 0;
-	// The independent shadow layer belongs to DX11 fallback pixels. Apply it
-	// before native-first replacement so authoritative native light is not
-	// shadowed a second time when both producers are enabled.
-	const bool shadowBeforeLighting = applyShadow && (!a_shadowSettings.afterLighting || a_nativeReadinessStage != 0u);
+	// Post-light shadows must reach native-owned pixels after native-first replacement.
+	const bool shadowBeforeLighting = applyShadow && !a_shadowSettings.afterLighting;
 
 	Slot* slot = nullptr;
 	for (auto& candidate : slots) {
@@ -539,7 +537,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			(uint64_t(a_nativeReadinessStage) * 0x94d049bb133111ebull);
 		status = "Submitted";
 		if (applyShadow)
-			shadowStatus = "Independent shadow layer submitted";
+			shadowStatus = shadowBeforeLighting ? "Independent shadow layer submitted before native lighting" :
+			                                   "Independent shadow layer submitted after native lighting";
 		return slot->frame;
 	} catch (const std::exception& error) {
 		status = error.what();
