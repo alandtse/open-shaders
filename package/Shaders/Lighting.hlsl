@@ -2163,6 +2163,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	else
 	float3 worldNormal = normalize(mul(tbn, normal.xyz));
 #		if defined(TREE_ANIM) && !defined(TRUE_PBR) && !defined(VR)
+#			if defined(SNOW_COVER)
+	const float3 treeSnowCoverageNormal = worldNormal;
+#			endif
 	float3 viewNormal = normalize(FrameBuffer::WorldToView(worldNormal, false, eyeIndex));
 	viewNormal = float3(viewNormal.xy, -abs(viewNormal.z));
 	worldNormal = normalize(FrameBuffer::ViewToWorld(viewNormal, false, eyeIndex));
@@ -2788,6 +2791,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		if defined(TREE_ANIM)
 		snowNormal = normalize(snowNormal + float3(0, 0, SnowCover::FoliageNormalBias));
 		float3 treeSnowNormal = snowNormal;
+#			if !defined(TRUE_PBR) && !defined(VR) && (!defined(MODELSPACENORMALS) || defined(SKINNED))
+		snowNormal = normalize(treeSnowCoverageNormal + float3(0, 0, SnowCover::FoliageNormalBias));
+#			endif
 		if (SharedData::snowCoverSettings.AffectTreeTint && !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::NoFoliageTint))
 			SnowCover::ApplyFoliageColor(material.BaseColor, SnowCover::GetEnvironmentalMultiplier(adjustedWorldPos));
 #		elif defined(DO_ALPHA_TEST)
