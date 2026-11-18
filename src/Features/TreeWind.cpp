@@ -329,11 +329,11 @@ void TreeWind::Reset()
 	swayActive = settings.Enabled && !globals::state->isMapMenuOpen;
 
 	WindCB data{};
-	data.Wind = { static_cast<float>(phase), static_cast<float>(prevPhase), windSpeed, windAngle };
-	data.Params = { settings.Amplitude, settings.MinDistance, swayActive ? 1.0f : 0.0f, 0.0f };
-	data.Shape = { settings.BendExponent, 1.0f, settings.Flutter, settings.TreeSpread };
-	data.Detail = { settings.FlutterShare, settings.FlutterSpeed, settings.NearScale, settings.NearRampEnd };
-	data.Gusts = { gustStrength, gustRarity, 0.0f, 0.0f };
+	data.Wind = float4{ static_cast<float>(phase), static_cast<float>(prevPhase), windSpeed, windAngle };
+	data.Params = float4{ settings.Amplitude, settings.MinDistance, swayActive ? 1.0f : 0.0f, 0.0f };
+	data.Shape = float4{ settings.BendExponent, 1.0f, settings.Flutter, settings.TreeSpread };
+	data.Detail = float4{ settings.FlutterShare, settings.FlutterSpeed, settings.NearScale, settings.NearRampEnd };
+	data.Gusts = float4{ gustStrength, gustRarity, 0.0f, 0.0f };
 	windOnCB->Update(data);
 
 	data.Params.z = 0.0f;

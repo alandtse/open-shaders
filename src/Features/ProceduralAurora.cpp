@@ -277,10 +277,10 @@ ProceduralAurora::CommonBufferData ProceduralAurora::GetCommonBufferData()
 	lower[2] = RouteHue(middle[2], lower[2]);
 	const auto middleDisplay = LchToDisplay(middle);
 	const auto topDisplay = LchToDisplay(ToAuroraLch(night.crown));
-	data.FringeColor = { lower[0], lower[1], lower[2], night.fringeAmount };
-	data.BodyColor = { middle[0], middle[1], middle[2], night.storm };
-	data.CrownColor = { topDisplay[0], topDisplay[1], topDisplay[2], night.crownStart };
-	data.BodyDisplayColor = { middleDisplay[0], middleDisplay[1], middleDisplay[2] };
+	data.FringeColor = float4{ lower[0], lower[1], lower[2], night.fringeAmount };
+	data.BodyColor = float4{ middle[0], middle[1], middle[2], night.storm };
+	data.CrownColor = float4{ topDisplay[0], topDisplay[1], topDisplay[2], night.crownStart };
+	data.BodyDisplayColor = float3{ middleDisplay[0], middleDisplay[1], middleDisplay[2] };
 	data.Brightness = settings.Brightness;
 
 	// Advance the animation clock by real time, paused while the game is paused; it restarts each in-game night
@@ -309,7 +309,7 @@ ProceduralAurora::CommonBufferData ProceduralAurora::GetCommonBufferData()
 	const float vanilla = vanillaVisibility.load(std::memory_order_relaxed);
 	const float visibilityStep = static_cast<float>(std::clamp(delta, 0.0, 0.1)) * 0.5f;
 	auroraVisibility = firstFrame ? vanilla : auroraVisibility + std::clamp(vanilla - auroraVisibility, -visibilityStep, visibilityStep);
-	data.Atmosphere = { auroraVisibility, settings.Haze, settings.Nebula };
+	data.Atmosphere = float3{ auroraVisibility, settings.Haze, settings.Nebula };
 	data.CurtainSize = std::clamp(settings.CurtainSize, 0.5f, 2.0f);
 	data.CurtainCount = curtainCount;
 	data.FoldStrength = settings.FoldStrength;
