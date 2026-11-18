@@ -29,6 +29,10 @@ struct NativeCompositeFeature final : Feature
 	bool IsCore() const override { return true; }
 	std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
 	void DrawSettings() override;
+	/** @brief Draws independent-shadow composition settings in Native Lighting. */
+	void DrawShadowSettings();
+	/** @brief Draws final direct-light composition settings in Native Lighting. */
+	void DrawDirectSettings();
 	void LoadSettings(json& a_json) override;
 	void SaveSettings(json& a_json) override;
 	void RestoreDefaultSettings() override;
@@ -44,12 +48,12 @@ struct NativeCompositeFeature final : Feature
 	{
 		return pass.Retain(a_frame, a_fence, a_value);
 	}
-	bool IsEnabled() const { return loaded && enabled.load(); }
+	bool IsEnabled() const;
 
 private:
 	NativeComposite pass;
 	Settings settings;
-	NativeComposite::Policy policy;
+	NativeComposite::Policy policy{ 2u, 2u, 0u };
 	uint64_t validityRevision = 1;
 	std::mutex settingsMutex;
 	std::atomic<bool> enabled{ true };

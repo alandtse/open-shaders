@@ -43,6 +43,8 @@ struct Feature
 	// Features with restart-gated fields override these to expose them to UI
 	// helpers and MCP/RemoteControl without per-feature glue.
 	virtual std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const { return {}; }
+	/** @brief Lists feature IDs whose boot-time execution this feature owns. */
+	virtual std::span<const std::string_view> GetBootSuppressedFeatures() const { return {}; }
 	/**
  * Retrieves the boot configuration value for a given JSON key.
  * @param jsonKey The JSON key identifying which boot value to retrieve.

@@ -2,7 +2,7 @@
 
 #include "MaterialTextureLookup.h"
 #include "RE/B/BSResourceNiBinaryStream.h"
-#include "TruePBR/NativePBRCompiler.h"
+#include "Features/NativePBR/NativePBRCompiler.h"
 #include "Utils/FileDigest.h"
 #include <algorithm>
 #include <cstdint>

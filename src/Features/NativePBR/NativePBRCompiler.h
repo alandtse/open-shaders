@@ -1,6 +1,7 @@
 #pragma once
 
 #include "NativePBRRegistry.h"
+#include "Materials/PBRFlags.h"
 #include "Utils/StringUtils.h"
 #include <memory>
 #include <unordered_set>
@@ -22,6 +23,12 @@ namespace NativePBR
 		UnknownUvAnimation = 1u << 10,
 		UnmatchedSceneInstance = 1u << 11,
 		InvalidTexturePath = 1u << 12
+	};
+	inline constexpr std::array<std::string_view, 13> kRecipeIssueNames{
+		"missing-required-textures", "unsupported-landscape", "unsupported-pbr-features", "unsupported-glint",
+		"unknown-opacity", "invalid-snapshot", "unsupported-displacement", "unsupported-feature-textures",
+		"unsupported-projection", "unknown-normal-mode", "unknown-uv-animation", "unmatched-scene-instance",
+		"invalid-texture-path"
 	};
 
 	enum class TextureInterpretation : uint8_t
@@ -55,25 +62,61 @@ namespace NativePBR
 		std::array<TextureRequest, static_cast<size_t>(TextureRole::Count)> textures{};
 	};
 
-	/** @brief Ignores only proven zero-contribution optional lobes.
-     *
-     * Fuzz specular is a lerp with the captured fuzz weight. A weight of zero
-     * makes it identical to the base specular response. Subsurface uses
-     * (1 - Thickness) for both transmission and lobe weights, so captured
-     * thickness one makes it neutral. No other active PBR feature is
-     * discarded. In particular coat, glint, projection, displacement and
-     * feature textures remain unsupported.
-     */
+	/** @brief Identifies material lobes that can affect the current opaque surface. */
+	inline uint32_t ActiveOpaquePbrFlags(const Recipe& recipe)
+	{
+		constexpr uint32_t kSubsurface = uint32_t(PBRFlags::Subsurface);
+		constexpr uint32_t kFuzz = uint32_t(PBRFlags::Fuzz);
+		constexpr uint32_t kTwoLayer = uint32_t(PBRFlags::TwoLayer);
+		constexpr uint32_t kCoatOnly = uint32_t(PBRFlags::ColoredCoat) |
+			uint32_t(PBRFlags::InterlayerParallax) | uint32_t(PBRFlags::CoatNormal);
+		uint32_t active = recipe.parameters.pbrFlags;
+		if ((active & kTwoLayer) == 0)
+			active &= ~kCoatOnly;
+		if (recipe.parameters.subsurfaceOpacity == 1.0f &&
+			recipe.textures[static_cast<size_t>(TextureRole::Features0)].canonicalPath.empty())
+			active &= ~kSubsurface;
+		if (recipe.parameters.fuzzWeight == 0.0f)
+			active &= ~kFuzz;
+		if (recipe.parameters.coatStrength == 0.0f)
+			active &= ~(kTwoLayer | kCoatOnly);
+		return active;
+	}
+
+	/** @brief Accepts the native direct-light clearcoat path without separate coat normals or transmission. */
+	inline bool SupportsOpaqueClearcoat(const Recipe& recipe)
+	{
+		return ActiveOpaquePbrFlags(recipe) == uint32_t(PBRFlags::TwoLayer);
+	}
+
+	/** @brief Restrict parallax to single-surface mesh displacement; layered refraction is not represented by ray hits yet. */
+	inline bool SupportsOpaqueParallax(const Recipe& recipe)
+	{
+		return recipe.parameters.kind == MaterialKind::Mesh &&
+			recipe.parameters.displacementScale > 0.0f &&
+			(ActiveOpaquePbrFlags(recipe) & uint32_t(PBRFlags::InterlayerParallax)) == 0;
+	}
+
+	/** @brief Classifies only features that contribute to the current native opaque material. */
 	inline uint32_t EffectiveNativeIssues(const Recipe& recipe)
 	{
 		uint32_t effective = recipe.issues;
-		constexpr uint32_t kSubsurface = 1u << 0;
-		constexpr uint32_t kFuzz = 1u << 5;
-		const auto flags = recipe.parameters.pbrFlags;
-		if ((flags & ~(kSubsurface | kFuzz)) == 0 &&
-			((flags & kSubsurface) == 0 || recipe.parameters.subsurfaceOpacity == 1.0f) &&
-			((flags & kFuzz) == 0 || recipe.parameters.fuzzWeight == 0.0f))
+		const auto active = ActiveOpaquePbrFlags(recipe);
+		constexpr uint32_t kSubsurface = uint32_t(PBRFlags::Subsurface);
+		constexpr uint32_t kTwoLayer = uint32_t(PBRFlags::TwoLayer);
+		constexpr uint32_t kFuzz = uint32_t(PBRFlags::Fuzz);
+		if (active == 0 || active == kTwoLayer)
 			effective &= ~UnsupportedPbrFeatures;
+		const bool feature0Used = (active & (kSubsurface | kTwoLayer)) != 0;
+		const bool feature1Used = (active & (kFuzz | kTwoLayer)) != 0;
+		const bool unsupportedFeature0 = feature0Used && !SupportsOpaqueClearcoat(recipe) &&
+			!recipe.textures[static_cast<size_t>(TextureRole::Features0)].canonicalPath.empty();
+		const bool unsupportedFeature1 = feature1Used &&
+			!recipe.textures[static_cast<size_t>(TextureRole::Features1)].canonicalPath.empty();
+		if (!unsupportedFeature0 && !unsupportedFeature1)
+			effective &= ~UnsupportedFeatureTextures;
+		if (SupportsOpaqueParallax(recipe))
+			effective &= ~UnsupportedDisplacement;
 		return effective;
 	}
 
@@ -84,17 +127,18 @@ namespace NativePBR
 	struct RecipeIssueTally
 	{
 		std::array<uint32_t, 13> issues{};
-		std::array<uint32_t, 7> pbrFlags{};
+		std::array<uint32_t, 9> pbrFlags{};
 		uint32_t affected = 0;
 
 		void Observe(const Recipe& recipe)
 		{
 			constexpr uint32_t resolved = UnknownOpacity | UnknownNormalMode |
 			                              UnknownUvAnimation | UnmatchedSceneInstance;
-			const auto mask = recipe.issues & ~resolved;
+			const auto mask = EffectiveNativeIssues(recipe) & ~resolved;
 			if (mask == 0 && recipe.parameters.pbrFlags == 0)
 				return;
-			++affected;
+			if (mask)
+				++affected;
 			for (size_t i = 0; i < issues.size(); ++i)
 				if ((mask & (1u << i)) != 0)
 					++issues[i];
@@ -245,6 +289,7 @@ namespace NativePBR
 		uint64_t revision = 0;
 		bool batchesComplete = false;
 		std::unordered_map<uint64_t, std::shared_ptr<const Recipe>> recipes;
+		std::unordered_set<uint64_t> pendingIdentities;
 	};
 
 	/** @brief Publishes owned recipes while excluding dirty and not-yet-compiled entries. */
@@ -254,6 +299,7 @@ namespace NativePBR
 		auto result = std::make_shared<RecipeGeneration>();
 		result->revision = a_changes.revision;
 		result->batchesComplete = !a_changes.hasMore;
+		result->pendingIdentities.insert(a_changes.pendingIdentities.begin(), a_changes.pendingIdentities.end());
 		result->recipes.reserve(a_cache.Recipes().size());
 		for (const auto& [identity, recipe] : a_cache.Recipes()) {
 			if (a_cache.IsPending(identity))

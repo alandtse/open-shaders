@@ -98,11 +98,11 @@ namespace DX12Native
 			depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 			depthDesc.CPUAccessFlags = depthDesc.MiscFlags = 0;
 			auto& slot = *available;
-			bool recreate = !slot || slot->width != width || slot->height != height;
-			if (slot && !recreate)
-				for (size_t i = 0; i < descriptions.size(); ++i) recreate |= slot->formats[i] != descriptions[i].Format;
-			uint64_t slotBytes = recreate ? 0 : slot->allocationBytes;
-			if (recreate) {
+			bool recreateBase = !slot || slot->width != width || slot->height != height;
+			if (slot && !recreateBase)
+				for (size_t i = 0; i < descriptions.size(); ++i) recreateBase |= slot->formats[i] != descriptions[i].Format;
+			uint64_t slotBytes = recreateBase ? 0 : slot->allocationBytes;
+			if (recreateBase) {
 				for (const auto& source : descriptions) {
 					D3D12_RESOURCE_DESC desc{};
 					desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -135,7 +135,7 @@ namespace DX12Native
 					otherBytes += (*it)->allocationBytes;
 			if (otherBytes > budget || slotBytes > budget - otherBytes)
 				throw std::runtime_error("Raster snapshot exceeds memory budget");
-			if (recreate) {
+			if (recreateBase) {
 				slot.reset();
 				auto replacement = std::make_shared<RasterFrame>();
 				replacement->width = width;

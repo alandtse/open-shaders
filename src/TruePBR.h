@@ -1,26 +1,14 @@
 #pragma once
 
 #include "Feature.h"
-#include "TruePBR/NativePBRRegistry.h"
-
-namespace NativePBR
-{
-	struct RecipeGeneration;
-}
+#include "Materials/PBRRecordData.h"
 
 class BSLightingShaderMaterialPBR;
 
 /** @brief The engine's default land texture, used where a land quad names none. */
 RE::TESLandTexture* GetDefaultLandTexture();
 
-struct GlintParameters
-{
-	bool enabled = false;
-	float screenSpaceScale = 1.5f;
-	float logMicrofacetDensity = 40.f;
-	float microfacetRoughness = .015f;
-	float densityRandomization = 2.f;
-};
+using GlintParameters = PBRRecords::GlintParameters;
 
 /**
  * @brief Feature that replaces Skyrim's legacy material system with physically-based rendering.
@@ -32,6 +20,7 @@ struct GlintParameters
 struct TruePBR : Feature
 {
 public:
+	TruePBR() = default;
 	/** @brief Returns the internal name of the feature. */
 	virtual std::string GetName() override { return "True PBR"; }
 	/** @brief Returns the user-facing translated display name. */
@@ -99,14 +88,6 @@ public:
 	static_assert(sizeof(Settings) == 16);
 
 	Settings settings;
-
-	/** @brief Current live PBR metadata, exposed to native workers as value snapshots. */
-	NativePBR::Registry nativeRegistry;
-
-	struct RecipeWorker;
-	std::shared_ptr<RecipeWorker> recipeWorker;
-	/** @brief On the render thread, retains a generation if it still matches the registry. */
-	std::shared_ptr<const NativePBR::RecipeGeneration> GetNativeRecipes() const;
 
 	/** @brief When true, logs each PBR JSON file path during load. Off by default. */
 	bool enableVerboseJsonLogging = false;
@@ -180,36 +161,7 @@ public:
 	void SetupGlintsTexture();
 	eastl::unique_ptr<Texture2D> glintsNoiseTexture = nullptr;
 
-	std::unordered_map<uint32_t, std::string> editorIDs;
-
-	struct PBRTextureSetData
-	{
-		float roughnessScale = 1.f;
-		float displacementScale = 1.f;
-		float specularLevel = 0.04f;
-
-		RE::NiColor subsurfaceColor;
-		float subsurfaceOpacity = 0.f;
-		float subsurfaceBalance = 0.75f;
-		bool thinSurface = false;
-		bool foliage = false;
-		float thinSurfaceSpecularWeight = 0.5f;
-		float thinSurfaceBackSpecularWeight = 0.5f;
-		float thinSurfaceBackRoughnessScale = 1.f;
-
-		RE::NiColor coatColor = { 1.f, 1.f, 1.f };
-		float coatStrength = 1.f;
-		float coatRoughness = 1.f;
-		float coatSpecularLevel = 0.04f;
-		float innerLayerDisplacementOffset = 0.f;
-
-		RE::NiColor fuzzColor;
-		float fuzzWeight = 0.f;
-		float fuzzRoughness = -1.f;
-		bool fuzzRoughnessTexture = false;
-
-		GlintParameters glintParameters;
-	};
+	using PBRTextureSetData = PBRRecords::TextureSetData;
 
 	/** @brief Loads all PBR texture set configurations from JSON files in Data/PBRTextureSets. */
 	void SetupTextureSetData();
@@ -245,14 +197,7 @@ public:
 	std::string selectedPbrTextureSetName;
 	PBRTextureSetData* selectedPbrTextureSet = nullptr;
 
-	struct PBRMaterialObjectData
-	{
-		std::array<float, 3> baseColorScale = { 1.f, 1.f, 1.f };
-		float roughness = 1.f;
-		float specularLevel = 0.04f;
-
-		GlintParameters glintParameters;
-	};
+	using PBRMaterialObjectData = PBRRecords::MaterialObjectData;
 
 	/** @brief Loads all PBR material object configurations from JSON files in Data/PBRMaterialObjects. */
 	void SetupMaterialObjectData();

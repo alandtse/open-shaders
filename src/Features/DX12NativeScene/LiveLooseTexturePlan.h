@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TruePBR/VerifiedBridge.h"
+#include "Features/NativePBR/VerifiedBridge.h"
 #include <array>
 #include <cstddef>
 #include <string>
@@ -26,7 +26,7 @@ namespace DX12Native
      */
 	inline LiveLooseTexturePlan PlanLiveLooseTextures(const NativePBR::LiveMatchResult& a_matches,
 		const std::unordered_set<std::string>& a_present, size_t a_maxTextures = 8,
-		const std::unordered_set<std::string>& a_attempted = {})
+		const std::unordered_set<std::string>& a_attempted = {}, bool a_extendedRoles = false)
 	{
 		LiveLooseTexturePlan plan;
 		std::array<std::vector<const NativePBR::Recipe*>, 2> priority;
@@ -53,11 +53,14 @@ namespace DX12Native
 				++plan.featureLimitedRecipes;
 		}
 		constexpr std::array roles{ NativePBR::TextureRole::BaseColor, NativePBR::TextureRole::Normal,
-			NativePBR::TextureRole::Rmaos, NativePBR::TextureRole::Emission };
+			NativePBR::TextureRole::Rmaos, NativePBR::TextureRole::Emission, NativePBR::TextureRole::Displacement,
+			NativePBR::TextureRole::Features0, NativePBR::TextureRole::Features1 };
 		std::unordered_set<std::string> visited;
 		for (const auto& group : priority) {
 			for (const auto* recipe : group) {
 				for (const auto role : roles) {
+					if (!a_extendedRoles && role > NativePBR::TextureRole::Emission)
+						break;
 					const auto& request = recipe->textures[static_cast<size_t>(role)];
 					if (request.canonicalPath.empty()) {
 						if (request.required || !request.assetPath.empty())

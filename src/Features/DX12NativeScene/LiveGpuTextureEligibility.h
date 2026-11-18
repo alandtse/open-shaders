@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TruePBR/NativePBRCompiler.h"
+#include "Features/NativePBR/NativePBRCompiler.h"
 #include <array>
 #include <cstdint>
 #include <d3d11.h>

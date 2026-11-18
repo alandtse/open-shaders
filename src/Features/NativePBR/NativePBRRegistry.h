@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -61,12 +62,19 @@ namespace NativePBR
 	{
 		MaterialKind kind = MaterialKind::Mesh;
 		uint64_t textureGeneration = 0;
-		uint32_t pbrFlags = 0, clampMode = 0, landscapeTileCount = 0;
+		uint32_t pbrFlags = 0, nifThinSurfaceFlags = 0, clampMode = 0, landscapeTileCount = 0;
+		// Directly interpreted from the prepared NIF's environment mapping flag;
+		// slot 5 is a vanilla complex/environment mask, not a PBR RMAOS map.
+		bool legacyComplexMask = false;
 		std::array<std::array<float, 4>, 2> uvOffsetScale{ { { 0, 0, 1, 1 }, { 0, 0, 1, 1 } } };
 		float materialAlpha = 1.0f;
 		float roughnessScale = 1.0f, displacementScale = 1.0f, specularLevel = 0.04f;
 		float coatStrength = 0.0f, coatRoughness = 1.0f, coatSpecularLevel = 0.04f;
 		float subsurfaceOpacity = 0.0f, fuzzWeight = 0.0f;
+		// Effective per-NIF overrides, copied from the canonical TruePBR material on the render thread.
+		float subsurfaceBalance = 0.75f, fuzzRoughness = -1.0f;
+		std::array<float, 3> thinSurfaceParameters{ 0.5f, 0.5f, 1.0f };
+		bool fuzzRoughnessTexture = false;
 		std::array<float, 3> coatColor{ 1.0f, 1.0f, 1.0f }, subsurfaceColor{}, fuzzColor{};
 		std::array<float, 3> projectedColor{ 1.0f, 1.0f, 1.0f };
 		float projectedRoughness = 1.0f, projectedSpecularLevel = 0.04f;
@@ -91,11 +99,13 @@ namespace NativePBR
 			if (!floats(uv))
 				return false;
 		if (!floats(a_data.coatColor) || !floats(a_data.subsurfaceColor) || !floats(a_data.fuzzColor) ||
+			!floats(a_data.thinSurfaceParameters) ||
 			!floats(a_data.projectedColor) || !glint(a_data.glint) || !glint(a_data.projectedGlint))
 			return false;
 		const std::array scalars{ a_data.materialAlpha, a_data.roughnessScale, a_data.displacementScale, a_data.specularLevel,
 			a_data.coatStrength, a_data.coatRoughness, a_data.coatSpecularLevel, a_data.subsurfaceOpacity,
-			a_data.fuzzWeight, a_data.projectedRoughness, a_data.projectedSpecularLevel };
+			a_data.fuzzWeight, a_data.subsurfaceBalance, a_data.fuzzRoughness,
+			a_data.projectedRoughness, a_data.projectedSpecularLevel };
 		if (!floats(scalars) || a_data.landscapeTileCount > a_data.landscapeTiles.size())
 			return false;
 		for (const auto& tile : a_data.landscapeTiles)
@@ -113,12 +123,19 @@ namespace NativePBR
 	/** @brief Captures per-geometry shader and alpha state without retaining engine objects. */
 	struct InstanceProperties
 	{
+		enum class Opacity : uint8_t { Unknown, Opaque, NonOpaque };
+		enum class NormalMode : uint8_t { Unknown, TangentSpace, ModelSpace };
+		enum class UvAnimation : uint8_t { Unknown, Static, Animated };
 		uint64_t shaderFlags = 0;
 		uint16_t alphaFlags = 0;
 		uint8_t alphaThreshold = 0;
-		bool alphaProperty = false, skinned = false, emissionKnown = false;
+		bool alphaProperty = false, skinned = false, emissionKnown = false, projectedUv = false;
 		std::array<float, 3> emissiveColor{};
 		float emissiveMultiplier = 0;
+		Opacity opacity = Opacity::Unknown;
+		NormalMode normalMode = NormalMode::Unknown;
+		UvAnimation uvAnimation = UvAnimation::Unknown;
+		std::string materialObjectEditorId;
 		bool operator==(const InstanceProperties&) const = default;
 	};
 
@@ -352,6 +369,26 @@ namespace NativePBR
 			++revision;
 		}
 
+		/** @brief Replace a known instance after a verified mutation, without revising its base material. */
+		bool ReplaceInstance(const void* a_source, std::string_view a_reference, std::string_view a_shape,
+			InstanceProperties a_properties)
+		{
+			std::unique_lock lock(mutex);
+			const auto it = entries.find(a_source);
+			if (it == entries.end())
+				return false;
+			for (auto& hint : it->second.hints)
+				if (hint.referenceKey == a_reference && hint.shapeName == a_shape) {
+					if (hint.properties != a_properties || hint.propertiesConflict) {
+						hint.properties = std::move(a_properties);
+						hint.propertiesConflict = false;
+						++revision;
+					}
+					return true;
+				}
+			return false;
+		}
+
 		/** @brief Copies unverified instance associations without engine pointers. */
 		std::vector<InstanceHint> ExportInstanceHints() const
 		{
@@ -370,6 +407,17 @@ namespace NativePBR
 				return;
 			for (auto& [source, entry] : entries) entry.hints.clear();
 			totalHints = 0;
+			++instanceEpoch;
+			++revision;
+		}
+
+		/** @brief Starts a new scene epoch even if the old scene contained no observations. */
+		void BeginInstanceEpoch()
+		{
+			std::unique_lock lock(mutex);
+			for (auto& [source, entry] : entries) entry.hints.clear();
+			totalHints = 0;
+			++instanceEpoch;
 			++revision;
 		}
 
@@ -383,6 +431,23 @@ namespace NativePBR
 				++revision;
 				++forgotten;
 			}
+		}
+
+		/** @brief Copies only owned metadata, safe for background and DX12 preparation. */
+		struct PublishedMeshIdentity
+		{
+			uint64_t identity = 0, revision = 0;
+		};
+		std::optional<PublishedMeshIdentity> FindPublishedMeshIdentity(const void* a_source) const
+		{
+			if (!a_source)
+				return std::nullopt;
+			std::shared_lock lock(mutex);
+			const auto it = entries.find(a_source);
+			if (it == entries.end() || it->second.dirty || !it->second.revision ||
+				it->second.data.kind != MaterialKind::Mesh || it->second.data.materialAlpha < 1.0f)
+				return std::nullopt;
+			return PublishedMeshIdentity{ it->second.identity, it->second.revision };
 		}
 
 		/** @brief Copies only owned metadata, safe for background and DX12 preparation. */
@@ -424,10 +489,11 @@ namespace NativePBR
 
 		struct ChangeSet
 		{
-			uint64_t revision = 0;
+			uint64_t revision = 0, instanceEpoch = 0;
 			bool hasMore = false;
 			std::vector<Snapshot> changed;
 			std::vector<uint64_t> liveIdentities, pendingIdentities;
+			std::vector<InstanceHint> instanceHints;
 		};
 
 		/** @brief Exports changed metadata and current identities against consumer-owned revisions. */
@@ -440,17 +506,25 @@ namespace NativePBR
 			if (!a_limit)
 				a_limit = 1;
 			result.revision = revision;
+			result.instanceEpoch = instanceEpoch;
 			result.liveIdentities.reserve(entries.size());
-			for (const auto& [source, entry] : entries) {
-				result.liveIdentities.push_back(entry.identity);
-				if (entry.dirty)
-					result.pendingIdentities.push_back(entry.identity);
-				else if (auto known = a_known.find(entry.identity); known == a_known.end() || known->second != entry.revision) {
+			result.instanceHints.reserve(totalHints);
+			std::vector<const Entry*> ordered;
+			ordered.reserve(entries.size());
+			for (const auto& [source, entry] : entries)
+				ordered.push_back(&entry);
+			std::sort(ordered.begin(), ordered.end(), [](const Entry* a, const Entry* b) { return a->identity < b->identity; });
+			for (const Entry* entry : ordered) {
+				result.liveIdentities.push_back(entry->identity);
+				result.instanceHints.insert(result.instanceHints.end(), entry->hints.begin(), entry->hints.end());
+				if (entry->dirty)
+					result.pendingIdentities.push_back(entry->identity);
+				else if (auto known = a_known.find(entry->identity); known == a_known.end() || known->second != entry->revision) {
 					if (result.changed.size() < a_limit)
-						result.changed.push_back({ entry.identity, entry.revision, entry.data });
+						result.changed.push_back({ entry->identity, entry->revision, entry->data });
 					else {
 						result.hasMore = true;
-						result.pendingIdentities.push_back(entry.identity);
+						result.pendingIdentities.push_back(entry->identity);
 					}
 				}
 			}
@@ -462,6 +536,13 @@ namespace NativePBR
 		{
 			std::shared_lock lock(mutex);
 			return revision;
+		}
+
+		/** @brief Returns the current scene-observation epoch. */
+		uint64_t InstanceEpoch() const
+		{
+			std::shared_lock lock(mutex);
+			return instanceEpoch;
 		}
 
 		/** @brief Returns registration diagnostics without exposing engine pointers. */
@@ -534,5 +615,6 @@ namespace NativePBR
 		std::unordered_map<const void*, Entry> entries;
 		size_t totalHints = 0;
 		uint64_t nextIdentity = 1, revision = 0, published = 0, forgotten = 0, hintLimitHits = 0;
+		uint64_t instanceEpoch = 0;
 	};
 }

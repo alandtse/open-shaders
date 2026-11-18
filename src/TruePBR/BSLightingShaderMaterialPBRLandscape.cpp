@@ -10,7 +10,6 @@ BSLightingShaderMaterialPBRLandscape::BSLightingShaderMaterialPBRLandscape()
 
 BSLightingShaderMaterialPBRLandscape::~BSLightingShaderMaterialPBRLandscape()
 {
-	globals::features::truePBR.nativeRegistry.Forget(this);
 	std::lock_guard lock(AllMutex);
 	All.erase(this);
 }
@@ -67,8 +66,6 @@ void BSLightingShaderMaterialPBRLandscape::CopyMembers(RE::BSShaderMaterial* tha
 
 	std::lock_guard lock(AllMutex);
 	All[this] = All[pbrThat];
-	globals::features::truePBR.nativeRegistry.MarkDirty(this);
-	globals::features::truePBR.nativeRegistry.MarkDirty(pbrThat);
 }
 
 RE::BSShaderMaterial::Feature BSLightingShaderMaterialPBRLandscape::GetFeature() const
@@ -94,14 +91,12 @@ void BSLightingShaderMaterialPBRLandscape::ClearTextures()
 	}
 	terrainOverlayTexture.reset();
 	terrainNoiseTexture.reset();
-	globals::features::truePBR.nativeRegistry.MarkDirty(this);
 }
 
 void BSLightingShaderMaterialPBRLandscape::ReceiveValuesFromRootMaterial(bool skinned, bool rimLighting, bool softLighting, bool backLighting, bool MSN)
 {
 	BSLightingShaderMaterialBase::ReceiveValuesFromRootMaterial(skinned, rimLighting, softLighting, backLighting, MSN);
 	const auto& stateData = globals::game::graphicsState->GetRuntimeData();
-	bool changed = terrainOverlayTexture == nullptr || terrainNoiseTexture == nullptr;
 	if (terrainOverlayTexture == nullptr) {
 		terrainOverlayTexture = stateData.defaultTextureNormalMap;
 	}
@@ -109,8 +104,6 @@ void BSLightingShaderMaterialPBRLandscape::ReceiveValuesFromRootMaterial(bool sk
 		terrainNoiseTexture = stateData.defaultTextureNormalMap;
 	}
 	for (uint32_t textureIndex = 0; textureIndex < std::min(numLandscapeTextures, NumTiles); ++textureIndex) {
-		changed |= landscapeBaseColorTextures[textureIndex] == nullptr || landscapeNormalTextures[textureIndex] == nullptr ||
-		           landscapeDisplacementTextures[textureIndex] == nullptr || landscapeRMAOSTextures[textureIndex] == nullptr;
 		if (landscapeBaseColorTextures[textureIndex] == nullptr) {
 			landscapeBaseColorTextures[textureIndex] = stateData.defaultTextureBlack;
 		}
@@ -124,8 +117,6 @@ void BSLightingShaderMaterialPBRLandscape::ReceiveValuesFromRootMaterial(bool sk
 			landscapeRMAOSTextures[textureIndex] = stateData.defaultTextureWhite;
 		}
 	}
-	if (changed)
-		globals::features::truePBR.nativeRegistry.MarkDirty(this);
 }
 
 uint32_t BSLightingShaderMaterialPBRLandscape::GetTextures(RE::NiSourceTexture** textures)

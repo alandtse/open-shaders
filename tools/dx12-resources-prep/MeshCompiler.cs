@@ -1,16 +1,14 @@
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Reflection;
 using NiflySharp;
 using NiflySharp.Blocks;
 using NiflySharp.Enums;
 
-internal sealed record CompiledMaterial(uint ShaderFlags1, uint ShaderFlags2, string ShaderType, bool TwoSided,
-    float Alpha, uint? AlphaFlags, string[] Textures, float[] UvOffsetScale,
-    byte? AlphaThreshold, uint TextureClampMode, float[] EmissiveColor, float EmissiveMultiple,
-    float[] SpecularColor, float SpecularStrength, float Glossiness, float EnvironmentMapScale,
-    string Interpretation = "raw-patched-nif-parameters; material evaluation and reference overrides unresolved");
+// Geometry preparation copies original NIF inputs; native material evaluation stays at runtime.
+internal sealed record CompiledMaterial(bool TwoSided, string[] Textures, uint ShaderFlags1, uint ShaderFlags2,
+    float Alpha, uint TextureClampMode, float[]? UvOffsetScale);
 internal sealed record CompiledShape(int BlockIndex, string Name, string BlockType, string Status, string? GeometryFile,
     string? GeometrySha256, int VertexCount, int IndexCount, float[]? ShapeToModel, float[]? LocalBounds, CompiledMaterial? Material,
     bool OpaqueOccluderCandidate = false, string ShadingStatus = "not-compiled", string? ShadingFile = null, string? ShadingSha256 = null,
@@ -20,15 +18,12 @@ internal sealed record CompiledNif(string SourcePath, string SourceSha256, strin
 
 internal sealed class MeshCompiler
 {
-    private static readonly FieldInfo TextureClampField = typeof(BSLightingShaderProperty).GetField("_textureClampMode", BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new InvalidOperationException("Pinned Nifly texture clamp field is unavailable.");
     private readonly string output;
     private readonly JsonSerializerOptions options;
     private readonly string compilerKey;
     private readonly int quality;
     private readonly string sourceRoot;
     private readonly SharedMeshCache? sharedCache;
-    private readonly bool displacementInputsEnabled;
     // SHA-check each immutable content-addressed blob once per compilation run.
     private readonly HashSet<string> verifiedCachedFiles = new(StringComparer.OrdinalIgnoreCase);
 
@@ -36,39 +31,28 @@ internal sealed class MeshCompiler
         SharedMeshCache? sharedCache = null)
     {
         if (preparationQuality is < 0 or > 2) throw new ArgumentOutOfRangeException(nameof(preparationQuality));
-        quality = preparationQuality;
-        displacementInputsEnabled = quality == 2 &&
-            ((int.TryParse(Environment.GetEnvironmentVariable("DX12_RESOURCES_DXR_HEIGHT_ENABLED"), out var h) && h != 0) ||
-             (int.TryParse(Environment.GetEnvironmentVariable("DX12_RESOURCES_DXR_NORMAL_ENABLED"), out var n) && n != 0));
+        // Quality 2 used to activate texture-driven displacement. It is now a
+        // compatibility alias for quality 1: original mesh topology plus shading.
+        quality = preparationQuality == 2 ? 1 : preparationQuality;
         sourceRoot = outputDirectory;
         output = outputDirectory;
         options = jsonOptions;
         this.sharedCache = sharedCache;
         // Mesh products are governed by a semantic cache schema, not the .NET
         // assembly hash: unrelated CLI and UI edits must not invalidate every NIF.
-        // Bump this when shape classification/serialization/displacement changes.
-        const string meshSchema = "dx12-resources-rigid-v1/Nifly-1.1.0";
-        var variant = quality == 2
-            ? string.Join("/", new[] {
-                "DX12_RESOURCES_DXR_HEIGHT_ENABLED", "DX12_RESOURCES_DXR_HEIGHT_SCALE", "DX12_RESOURCES_DXR_AO_SCALE",
-                "DX12_RESOURCES_DXR_SUBDIV", "DX12_RESOURCES_DXR_TRI_CAP", "DX12_RESOURCES_DXR_HEIGHT_REF",
-                "DX12_RESOURCES_DXR_HEIGHT_TARGET", "DX12_RESOURCES_DXR_FLIP_V", "DX12_RESOURCES_DXR_NORMAL_ENABLED",
-                "DX12_RESOURCES_DXR_NORMAL_MICRO_SCALE", "DX12_RESOURCES_DXR_NORMAL_GRID", "DX12_RESOURCES_DXR_NORMAL_FLIP_Y"
-            }.Select(k => Environment.GetEnvironmentVariable(k) ?? ""))
-            : "no-displacement";
+        // New cache identity rejects any older height-expanded geometry products.
+        const string meshSchema = "dx12-resources-rigid-v3-native-material-source/Nifly-1.1.0";
         compilerKey = Convert.ToHexString(SHA256.HashData(
-            Encoding.UTF8.GetBytes(meshSchema + "/quality=" + quality + "/" + variant))).ToLowerInvariant();
+            Encoding.UTF8.GetBytes(meshSchema + "/quality=" + quality))).ToLowerInvariant();
     }
 
     public CompiledNif Compile(PgAsset asset)
     {
         if (asset.CachedSource == null || asset.Sha256 == null) return new(asset.Path, "", compilerKey, asset.Status, false, 0, []);
         var cacheFile = Path.Combine(output, "compiled", compilerKey, asset.Sha256 + ".json");
-        if (!displacementInputsEnabled && !File.Exists(cacheFile))
+        if (!File.Exists(cacheFile))
             sharedCache?.TryRestore(compilerKey, asset.Sha256);
-        // External height/normal DDS can change without modifying the NIF.
-        // Until their hashes are part of the cache key, never reuse potentially stale displaced geometry.
-        if (!displacementInputsEnabled && File.Exists(cacheFile))
+        if (File.Exists(cacheFile))
         {
             try
             {
@@ -100,7 +84,7 @@ internal sealed class MeshCompiler
         Directory.CreateDirectory(Path.GetDirectoryName(cacheFile)!);
         File.WriteAllText(cacheFile + ".tmp", JsonSerializer.Serialize(result, options));
         File.Move(cacheFile + ".tmp", cacheFile, true);
-        if (!displacementInputsEnabled) sharedCache?.TryStore(result);
+        sharedCache?.TryStore(result);
         return result;
     }
 
@@ -144,15 +128,11 @@ internal sealed class MeshCompiler
         if (shader != null)
         {
             var textures = file.GetBlock(shader.TextureSetRef)?.Textures?.Select(texture => texture.Content).ToArray() ?? [];
-            material = new((uint)shader.ShaderFlags_SSPF1, (uint)shader.ShaderFlags_SSPF2, shader.ShaderType_SK_FO4.ToString(),
-                shader.ShaderFlags_SSPF2.HasFlag(SkyrimShaderPropertyFlags2.Double_Sided), shader.Alpha,
-                alpha == null ? null : alpha.Flags.Value, textures, [shader.UVOffset.U, shader.UVOffset.V, shader.UVScale.U, shader.UVScale.V],
-                alpha?.Threshold, Convert.ToUInt32(TextureClampField.GetValue(shader)),
-                [shader.EmissiveColor.R, shader.EmissiveColor.G, shader.EmissiveColor.B], shader.EmissiveMultiple,
-                [shader.SpecularColor.R, shader.SpecularColor.G, shader.SpecularColor.B], shader.SpecularStrength, shader.Glossiness, shader.EnvironmentMapScale);
-            var scalars = new[] { material.Alpha, material.EmissiveMultiple, material.SpecularStrength, material.Glossiness, material.EnvironmentMapScale };
-            if (!scalars.Concat(material.EmissiveColor).Concat(material.SpecularColor).Concat(material.UvOffsetScale).All(float.IsFinite))
-                throw new InvalidDataException("Non-finite patched material parameters.");
+            var clampMode = ReadTextureClampMode(shader);
+            if (clampMode.HasValue)
+                material = new(shader.ShaderFlags_SSPF2.HasFlag(SkyrimShaderPropertyFlags2.Double_Sided), textures,
+                    (uint)shader.ShaderFlags_SSPF1, (uint)shader.ShaderFlags_SSPF2, shader.Alpha,
+                    clampMode.Value, ReadUvTransform(shader));
         }
         var reason = shape is not BSTriShape || type is not ("BSTriShape" or "BSSubIndexTriShape") ? "unsupported-shape-type" :
             shape.HasSkinInstance || shape.IsSkinned ? "skinned-shape" : transform.Exclusion;
@@ -178,17 +158,49 @@ internal sealed class MeshCompiler
             var triangles = shape.Triangles;
             var blob = GeometryBlob.Write(output, vertices, triangles);
             var shading = quality == 0 ? new ShadingAttributes("absent:quality") : ShadingBlob.Write(output, (BSTriShape)shape);
-            var quick = quality == 2
-                ? DxrHeightQuick.Apply(output, material, blob, shading, vertices.Count, checked(triangles.Count * 3))
-                : new DxrHeightQuick.Result(blob.Path, blob.Sha256, blob.Bounds, vertices.Count,
-                    checked(triangles.Count * 3), shading.Status, shading.File, shading.Sha256, shading.TangentStatus);
+            // Preserve source NIF topology: never subdivide or displace vertices from texture data.
             return new(index, name, type, previewOnly ? "preview-only:" + reason : "compiled",
-                quick.GeometryFile, quick.GeometrySha, quick.VertexCount, quick.IndexCount, transform.Matrix,
-                quick.Bounds, quality == 0 ? null : material, !previewOnly, quick.ShadingStatus, quick.ShadingFile, quick.ShadingSha, quick.TangentStatus);
+                blob.Path, blob.Sha256, vertices.Count, checked(triangles.Count * 3), transform.Matrix,
+                blob.Bounds, quality == 0 ? null : material, !previewOnly, shading.Status, shading.File, shading.Sha256, shading.TangentStatus);
         }
         catch (InvalidDataException error)
         {
             return new(index, name, type, "excluded:" + error.Message, null, null, 0, 0, transform.Matrix, null, material);
         }
+    }
+
+    private static uint? ReadTextureClampMode(BSLightingShaderProperty shader)
+    {
+        var type = shader.GetType();
+        // Nifly 1.1.0 generates the clamp field but has no public accessor.
+        var value = type.GetProperty("TextureClampMode")?.GetValue(shader) ??
+            type.GetField("_textureClampMode", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(shader);
+        if (value is not IConvertible number) return null;
+        var mode = number.ToInt64(null);
+        return mode is >= 0 and <= 3 ? (uint)mode : null;
+    }
+
+    private static float[]? ReadUvTransform(BSLightingShaderProperty shader)
+    {
+        static float? Component(object value, string first, string second)
+        {
+            var type = value.GetType();
+            var member = type.GetProperty(first) ?? type.GetProperty(second);
+            var field = type.GetField(first) ?? type.GetField(second);
+            var component = member?.GetValue(value) ?? field?.GetValue(value);
+            return component is IConvertible number ? Convert.ToSingle(number) : null;
+        }
+        var type = shader.GetType();
+        var offset = (type.GetProperty("UVOffset") ?? type.GetProperty("UvOffset"))?.GetValue(shader);
+        var scale = (type.GetProperty("UVScale") ?? type.GetProperty("UvScale"))?.GetValue(shader);
+        if (offset == null || scale == null) return null;
+        var ox = Component(offset, "X", "U");
+        var oy = Component(offset, "Y", "V");
+        var sx = Component(scale, "X", "U");
+        var sy = Component(scale, "Y", "V");
+        return ox.HasValue && oy.HasValue && sx.HasValue && sy.HasValue &&
+            float.IsFinite(ox.Value) && float.IsFinite(oy.Value) &&
+            float.IsFinite(sx.Value) && float.IsFinite(sy.Value) ?
+            [ox.Value, oy.Value, sx.Value, sy.Value] : null;
     }
 }

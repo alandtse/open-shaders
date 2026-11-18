@@ -41,6 +41,10 @@ namespace DX12Native
 			if (!a_source.offlineDescription)
 				return result;
 			const auto& source = *a_source.offlineDescription;
+			// Reference-only companion manifests deliberately do not contain baked
+			// material parameters. NativePBR supplies runtime material evaluation.
+			if (!source.contains("shaderFlags1") || !source.contains("shaderFlags2"))
+				return result;
 			const auto flags1 = source.at("shaderFlags1").get<uint32_t>(), flags2 = source.at("shaderFlags2").get<uint32_t>();
 			const auto diffuse = Find(a_resources, source, 0), normal = Find(a_resources, source, 1);
 			const bool pbr = (flags2 & kPbrSourceFlag) != 0;
@@ -115,14 +119,12 @@ namespace DX12Native
 		}
 	}
 
-	std::shared_ptr<const MaterialResources> MaterialResources::Load(const GraphicsBackend& a_backend, const TopLevel& a_scene,
-		const NativePBR::LiveBindingSource* a_livePbr, const MaterialResources* a_previous)
+	std::shared_ptr<MaterialResources> MaterialResources::LoadResidency(const GraphicsBackend& a_backend,
+		const MaterialSource& a_source, const NativePBR::LiveMatchResult* a_matches,
+		const MaterialResources* a_previous, bool a_extendedRoles)
 	{
-		static_assert(sizeof(MaterialRecord) == 128 && sizeof(SurfaceRecord) == 32);
 		auto result = std::make_shared<MaterialResources>();
 		if (a_previous) {
-			// Only published, completed pages can be inherited. Their resource
-			// owners are copied and each new generation gets its own descriptors.
 			if (a_previous->pendingUpload && a_previous->pendingUpload->Poll() != MaterialUploadStatus::Ready)
 				throw MaterialUploadBusy("Previous native material generation has an unfinished upload");
 			result->pools = a_previous->pools;
@@ -133,7 +135,35 @@ namespace DX12Native
 			result->bytes = a_previous->bytes;
 			result->textures = a_previous->textures;
 		}
+		try {
+			LoadMaterialTextures(a_backend, a_source, *result, a_matches, a_extendedRoles);
+		} catch (const MaterialUploadError&) {
+			throw;
+		} catch (const std::bad_alloc&) {
+			throw;
+		} catch (const std::exception& error) {
+			if (a_previous)
+				throw MaterialUploadError(error.what());
+			result->failure = error.what();
+			result->pools.clear();
+			result->locations.clear();
+			result->logicalLocations.clear();
+			result->textureTickets.clear();
+			result->verifiedTextureSources = {};
+			result->bytes = result->textures = 0;
+			result->peakStagingBytes = result->uploadedBytes = result->uploadWaitMicroseconds = result->uploadedPages = result->reusedPages = result->reusedTextures = 0;
+			result->asyncBatchPages = 0;
+			result->asyncBatchStagingBytes = 0;
+		}
+		return result;
+	}
+
+	std::shared_ptr<const MaterialResources> MaterialResources::Load(const GraphicsBackend& a_backend, const TopLevel& a_scene,
+		const NativePBR::LiveBindingSource* a_livePbr, const MaterialResources* a_previous)
+	{
+		static_assert(sizeof(MaterialRecord) == 128 && sizeof(SurfaceRecord) == 32);
 		NativePBR::LiveMatchResult liveMatch;
+		auto result = std::make_shared<MaterialResources>();
 		if (a_livePbr) {
 			std::vector<NativePBR::PreparedMatchInput> inputs;
 			inputs.reserve(a_scene.instances.size());
@@ -165,31 +195,25 @@ namespace DX12Native
 					result->liveGpuRoutes += AssessLiveGpuRecipe(*match->recipe);
 		}
 		if (a_scene.materialSource) {
-			try {
-				LoadMaterialTextures(a_backend, *a_scene.materialSource, *result,
-					(a_scene.materialSource->importLoosePbr || a_scene.materialSource->importArchivePbr) && a_livePbr ?
-						&liveMatch :
-						nullptr);
-			} catch (const MaterialUploadError&) {
-				throw;
-			} catch (const std::bad_alloc&) {
-				throw;
-			} catch (const std::exception& error) {
-				// An incremental load must not publish a generation missing
-				// the previously valid native residency. Keep old bindings alive.
-				if (a_previous)
-					throw MaterialUploadError(error.what());
-				result->failure = error.what();
-				result->pools.clear();
-				result->locations.clear();
-				result->logicalLocations.clear();
-				result->textureTickets.clear();
-				result->verifiedTextureSources = {};
-				result->bytes = result->textures = 0;
-				result->peakStagingBytes = result->uploadedBytes = result->uploadWaitMicroseconds = result->uploadedPages = result->reusedPages = result->reusedTextures = 0;
-				result->asyncBatchPages = 0;
-				result->asyncBatchStagingBytes = 0;
-			}
+			auto loaded = LoadResidency(a_backend, *a_scene.materialSource,
+				a_livePbr ? &liveMatch : nullptr, a_previous);
+			loaded->livePbrMatched = result->livePbrMatched;
+			loaded->livePbrAmbiguous = result->livePbrAmbiguous;
+			loaded->livePbrIncompatible = result->livePbrIncompatible;
+			loaded->livePbrMissing = result->livePbrMissing;
+			loaded->liveRecipeIssues = result->liveRecipeIssues;
+			loaded->liveGpuRoutes = result->liveGpuRoutes;
+			result = std::move(loaded);
+		} else if (a_previous) {
+			if (a_previous->pendingUpload && a_previous->pendingUpload->Poll() != MaterialUploadStatus::Ready)
+				throw MaterialUploadBusy("Previous native material generation has an unfinished upload");
+			result->pools = a_previous->pools;
+			result->locations = a_previous->locations;
+			result->logicalLocations = a_previous->logicalLocations;
+			result->verifiedTextureSources = a_previous->verifiedTextureSources;
+			result->textureTickets = a_previous->textureTickets;
+			result->bytes = a_previous->bytes;
+			result->textures = a_previous->textures;
 		}
 		std::vector<MaterialRecord> materials;
 		std::vector<SurfaceRecord> surfaces;

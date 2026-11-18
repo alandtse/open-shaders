@@ -3,15 +3,32 @@
 #include "Feature.h"
 #include "Features/DX12NativeScene/PreparedScene.h"
 #include "LightLimitFix.h"
+#include "Features/NativePBR/MaterialRouting.h"
+#include "Features/NativePBR/MaterialDiscovery.h"
+#include "Features/NativePBR/NativePBRRegistry.h"
+#include "Features/NativePBR/MaterialCatalog.h"
+#include "Utils/BootSnapshot.h"
 #include <array>
 #include <atomic>
 #include <memory>
 #include <mutex>
 #include <span>
 #include <vector>
+#include <unordered_set>
+#include <d3d11_4.h>
+#include <d3d12.h>
+#include <winrt/base.h>
 namespace RE
 {
 	class BSShadowLight;
+}
+namespace NativePBR
+{
+	struct RecipeGeneration;
+	struct MaterialPublication;
+	struct GpuMaterialResources;
+	struct PreparedSceneMaterials;
+	struct RayMaterialBindings;
 }
 
 /** Additional DX12 features. The original TruePBR/LLF/SCM implementations are
@@ -21,16 +38,90 @@ namespace RE
  */
 struct NativePBRFeature final : Feature
 {
+	NativePBRFeature();
+	~NativePBRFeature();
+	struct BackendSettings
+	{
+		bool NativeBackend = true;
+		// Restore Extended Materials only for the remaining DX11 raster passes.
+		// This never re-enables legacy TruePBR or transfers raster material authority to DX12.
+		bool LegacyCompatibilityMaterials = false;
+	} backendSettings;
+	inline static constexpr Util::Settings::RestartTable<BackendSettings, 2> kRestartFields{ {
+		UTIL_RESTART_FIELD(BackendSettings, NativeBackend, "PBR Backend"),
+		UTIL_RESTART_FIELD(BackendSettings, LegacyCompatibilityMaterials, "Legacy Compatibility Materials"),
+	} };
+	Util::Settings::BootSnapshot<BackendSettings> bootSnapshot{ kRestartFields };
+	std::once_flag backendLatchOnce;
+	std::atomic<bool> backendLatched{ false };
+	std::atomic<NativePBR::Backend> bootBackend{ NativePBR::Backend::LegacyDX11 };
+	struct MaterialSummary
+	{
+		size_t recipes = 0, pending = 0, incomplete = 0, observedTextures = 0, sharedCandidates = 0;
+		std::array<size_t, 13> issues{};
+		bool failed = false;
+	};
+	struct MaterialWorker;
+	NativePBR::MaterialDiscovery materialDiscovery;
+	NativePBR::Registry& materialRegistry = materialDiscovery.MutableRegistry();
+	NativePBR::MaterialCatalog materialCatalog;
+	std::shared_ptr<const DX12Native::TopLevel> discoveredGeometry;
+	std::unordered_set<std::string> discoveredMaterialKeys;
+	void DiscoverPreparedAssets();
+	std::shared_ptr<MaterialWorker> materialWorker;
+	void PollMaterialRegistry();
+	void Prepass() override;
+	void OnSceneTransitionReset(bool) override;
+	void SetupResources() override;
+	MaterialSummary GetMaterialSummary() const;
+	std::shared_ptr<const NativePBR::RecipeGeneration> GetNativeRecipes() const;
+	std::shared_ptr<const NativePBR::MaterialPublication> GetMaterialPublication() const;
+	std::shared_ptr<const NativePBR::GpuMaterialResources> GetNativeGpuMaterials() const;
+	/** @brief Returns scene-owned geometry and textures with identity-only material attachments. */
+	std::shared_ptr<const NativePBR::PreparedSceneMaterials> GetPreparedSceneMaterials() const;
+	std::atomic<std::shared_ptr<const NativePBR::PreparedSceneMaterials>> preparedSceneMaterials;
+	/** @brief Returns generation-matched material records indexed by TLAS instance ID. */
+	std::shared_ptr<const NativePBR::RayMaterialBindings> GetRayMaterialBindings() const;
+	std::atomic<std::shared_ptr<const NativePBR::RayMaterialBindings>> rayMaterialBindings;
 	std::atomic<bool> enabled{ true };
+	std::atomic<bool> nativeParallax{ false };
+	std::atomic<bool> nativeComplexMaterials{ false };
+	std::atomic<bool> forceRayAdmission{ false };
+	// 1 geometry, 2 evaluated NativePBR, 3 accepted Native Lighting. Early stages are deliberate diagnostics.
+	std::atomic<uint32_t> readinessStage{ 3 };
+	uint32_t NativeFirstReadinessStage() const { return IsActive() ? std::clamp(readinessStage.load(std::memory_order_relaxed), 1u, 3u) : 0u; }
 	std::string GetName() override { return "NativePBR"; }
 	std::string GetShortName() override { return "NativePBR"; }
 	std::string_view GetCategory() const override { return FeatureCategories::kMaterials; }
 	bool IsCore() const override { return true; }
+	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
+	{
+		return { kRestartFields.data(), kRestartFields.size() };
+	}
+	const void* GetBootValue(std::string_view a_key) const override { return bootSnapshot.RawBoot(a_key); }
+	const void* GetSettingsBlob() const override { return &backendSettings; }
+	size_t GetSettingsBlobSize() const override { return sizeof(backendSettings); }
+	/** @brief Captures the selected rendering backend exactly once for this session. */
+	void LatchBackendAtBoot();
+	void PostPostLoad() override;
+	/** @brief Selects the PBR backend independently of DX12 device readiness. */
+	NativePBR::Backend SelectedBackend() const;
+	std::span<const std::string_view> GetBootSuppressedFeatures() const override
+	{
+		static constexpr std::array<std::string_view, 2> kLegacyFeatures{ "TruePBR", "ExtendedMaterials" };
+		static constexpr std::array<std::string_view, 1> kTruePbrOnly{ "TruePBR" };
+		const bool compatibility = backendLatched.load(std::memory_order_acquire) ?
+			bootSnapshot.Boot(&BackendSettings::LegacyCompatibilityMaterials) : backendSettings.LegacyCompatibilityMaterials;
+		return SelectedBackend() == NativePBR::Backend::NativeDX12 ?
+			(compatibility ?
+				std::span<const std::string_view>(kTruePbrOnly) : std::span<const std::string_view>(kLegacyFeatures)) :
+			std::span<const std::string_view>{};
+	}
 	bool IsActive() const;
 	void DrawSettings() override;
 	void LoadSettings(json&) override;
 	void SaveSettings(json&) override;
-	void RestoreDefaultSettings() override { enabled = true; }
+	void RestoreDefaultSettings() override { backendSettings = {}; enabled = true; nativeParallax = false; nativeComplexMaterials = false; forceRayAdmission = false; readinessStage = 3; }
 	json GetDiagnostics() override;
 };
 

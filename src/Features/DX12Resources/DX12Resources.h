@@ -24,6 +24,7 @@ struct DX12Resources final : Feature
 		bool Enabled = true;
 		bool AutoPrepareOnCellEntry = true;
 		bool FlushDiskGeometryOnStartup = false;
+		bool RetainPreparationDiagnostics = false;
 	} settings;
 
 	std::string GetName() override { return "DX12 Resources"; }
@@ -66,7 +67,7 @@ private:
 		std::optional<DX12ResourceService::PreparedSubcellAddress> tile = std::nullopt,
 		bool predictive = false);
 	void PollCellPreparation();
-	void StartDiskCacheFlush();
+	void StartDiskCacheFlush(bool diagnosticsOnly = false);
 	void PollDiskCacheFlush();
 	std::atomic<bool> dataLoaded{ false };
 	std::mutex statusMutex;
@@ -78,6 +79,7 @@ private:
 	// follow a successful disk deletion, never a stale cached scene.
 	bool startupFlushTriggered = false, startupFlushComplete = false;
 	bool diskCacheFlushConfirm = false;
+	bool diskDiagnosticsFlushConfirm = false;
 	uint64_t diskCacheFlushes = 0, diskCacheFlushRemoved = 0;
 	std::string diskCacheFlushStatus = "Not requested";
 	std::optional<DX12ResourceService::CellRequest> detectedCell;

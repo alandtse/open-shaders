@@ -527,6 +527,7 @@ namespace DX12Native
 									return gpuMesh->skinned &&
 									       gpuMesh->actorFormID == previous->deformed->actorFormID &&
 									       gpuMesh->partOrdinal == previous->deformed->partOrdinal &&
+									       previous->deformed->input &&
 									       previous->deformed->input->pose &&
 									       gpuMesh->sourceToken ==
 									           previous->deformed->input->pose->sourceToken;
@@ -587,6 +588,7 @@ namespace DX12Native
 								output->isolatedBLAS = previous->isolatedBLAS;
 							const bool validPose =
 								output->deformed && output->deformed->Ready() &&
+								output->deformed->input && output->deformed->input->pose &&
 								output->validation && output->validation->sane &&
 								output->validation->poseFrame ==
 									output->deformed->poseFrame &&
@@ -597,16 +599,18 @@ namespace DX12Native
 							auto previousPart = output->isolatedBLAS;
 							if (accumulatePartBLAS) {
 								previousPart.reset();
-								const auto found = std::ranges::find_if(output->blasParts,
-									[&](const auto& item) {
-										return item->actorFormID == output->deformed->actorFormID &&
-										       item->partOrdinal == output->deformed->partOrdinal &&
-										       output->deformed->input->pose &&
-										       item->sourceToken ==
-										           output->deformed->input->pose->sourceToken;
-									});
-								if (found != output->blasParts.end())
-									previousPart = *found;
+								if (validPose) {
+									const auto found = std::ranges::find_if(output->blasParts,
+										[&](const auto& item) {
+											return item &&
+											       item->actorFormID == output->deformed->actorFormID &&
+											       item->partOrdinal == output->deformed->partOrdinal &&
+											       item->sourceToken ==
+											           output->deformed->input->pose->sourceToken;
+										});
+									if (found != output->blasParts.end())
+										previousPart = *found;
+								}
 							}
 							if (validPose && (!previousPart ||
 												 (previousPart->Ready() &&
@@ -623,7 +627,8 @@ namespace DX12Native
 										if (accumulatePartBLAS) {
 											const auto at = std::ranges::find_if(
 												output->blasParts, [&](const auto& item) {
-													return item->actorFormID == candidate->actorFormID &&
+													return item &&
+													       item->actorFormID == candidate->actorFormID &&
 													       item->partOrdinal == candidate->partOrdinal &&
 													       item->sourceToken == candidate->sourceToken;
 												});

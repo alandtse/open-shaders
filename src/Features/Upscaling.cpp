@@ -7,6 +7,7 @@
 #include "Hooks.h"
 #include "LinearLighting.h"
 #include "Menu.h"
+#include "NativeFeatures.h"
 #include "RenderDoc.h"
 #include "ScreenshotFeature.h"
 #include "State.h"

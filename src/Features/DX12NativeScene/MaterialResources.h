@@ -5,7 +5,7 @@
 #include "LiveLooseTexturePlan.h"
 #include "LogicalTextureRegistry.h"
 #include "MaterialUploadStatus.h"
-#include "TruePBR/VerifiedBridge.h"
+#include "Features/NativePBR/VerifiedBridge.h"
 #include "VerifiedTextureSources.h"
 #include <array>
 #include <stdexcept>
@@ -88,11 +88,15 @@ namespace DX12Native
 		static std::shared_ptr<const MaterialResources> Load(const GraphicsBackend& a_backend, const TopLevel& a_scene,
 			const NativePBR::LiveBindingSource* a_livePbr = nullptr,
 			const MaterialResources* a_previous = nullptr);
+		/** @brief Loads independent DDS residency from immutable recipes without geometry or TLAS. */
+		static std::shared_ptr<MaterialResources> LoadResidency(const GraphicsBackend& a_backend, const MaterialSource& a_source,
+			const NativePBR::LiveMatchResult* a_matches, const MaterialResources* a_previous = nullptr,
+			bool a_extendedRoles = false);
 	};
 
 	/** @brief Validates and uploads original DDS mip chains into bounded compatible array pages. */
 	void LoadMaterialTextures(const GraphicsBackend& a_backend, const MaterialSource& a_source, MaterialResources& a_result,
-		const NativePBR::LiveMatchResult* a_matches = nullptr);
+		const NativePBR::LiveMatchResult* a_matches = nullptr, bool a_extendedRoles = false);
 	/** @brief Releases a completed or device-removed failed upload without waiting. */
 	void RetireMaterialUploads();
 	/** @brief Checks the single upload slot without waiting. */

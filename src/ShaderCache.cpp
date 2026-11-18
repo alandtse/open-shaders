@@ -34,6 +34,7 @@
 #include "Utils/StringUtils.h"
 
 #include "Features/DynamicCubemaps.h"
+#include "Features/NativeFeatures.h"
 #include "Features/RenderDoc.h"
 #include "Features/ReverseZ.h"
 
@@ -2054,13 +2055,14 @@ namespace SIE
 			const std::wstring suffix(suffixNarrow.begin(), suffixNarrow.end());
 
 			const std::wstring wname(name.begin(), name.end());
+			const std::wstring directory = std::format(L"Data/ShaderCache/{}", wname);
 			switch (shaderClass) {
 			case ShaderClass::Pixel:
-				return std::format(L"Data/ShaderCache/{}/{:X}{}.pso", wname, descriptor, suffix);
+				return std::format(L"{}/{:X}{}.pso", directory, descriptor, suffix);
 			case ShaderClass::Vertex:
-				return std::format(L"Data/ShaderCache/{}/{:X}{}.vso", wname, descriptor, suffix);
+				return std::format(L"{}/{:X}{}.vso", directory, descriptor, suffix);
 			case ShaderClass::Compute:
-				return std::format(L"Data/ShaderCache/{}/{:X}{}.cso", wname, descriptor, suffix);
+				return std::format(L"{}/{:X}{}.cso", directory, descriptor, suffix);
 			case ShaderClass::Total:
 				break;
 			}
@@ -2103,7 +2105,8 @@ namespace SIE
 		};
 
 		static SharedCompile AcquireSharedCompile(ShaderClass a_class, const std::wstring& a_path, const std::string& a_pathString,
-			const D3D_SHADER_MACRO* a_defines, uint32_t a_flags, TrackingIncludeHandler& a_includes, const std::wstring* a_reusableFrom)
+			const D3D_SHADER_MACRO* a_defines, uint32_t a_flags, TrackingIncludeHandler& a_includes,
+			const std::wstring* a_reusableFrom)
 		{
 			SharedCompile result;
 			std::ifstream sourceFile(a_path, std::ios::binary);
@@ -2168,7 +2171,8 @@ namespace SIE
 		 *
 		 * @return Compiled shader blob, or nullptr if compilation failed or source file not found.
 		 */
-		static winrt::com_ptr<ID3DBlob> CompileShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, bool useDiskCache, ShaderFileDependencyTracker* dependencyTracker, std::optional<uint64_t> a_taskGeneration = std::nullopt)
+		static winrt::com_ptr<ID3DBlob> CompileShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, bool useDiskCache,
+			ShaderFileDependencyTracker* dependencyTracker, std::optional<uint64_t> a_taskGeneration = std::nullopt)
 		{
 			if (!SShaderCache::ResolveImageSpaceDescriptor(shader, descriptor)) {
 				return nullptr;
@@ -2462,7 +2466,7 @@ namespace SIE
 
 			// save shader to disk
 			if (useDiskCache && cache.IsDiskCacheActive()) {
-				auto directoryPath = std::format("Data/ShaderCache/{}", shader.fxpFilename);
+				const auto directoryPath = std::filesystem::path(diskPath).parent_path();
 				if (!std::filesystem::is_directory(directoryPath)) {
 					try {
 						std::filesystem::create_directories(directoryPath);
@@ -2804,17 +2808,18 @@ namespace SIE
 		std::unordered_map<std::string, bool> shaderExists;  // shader name -> source .hlsl still on disk
 		size_t removedBlobs = 0;
 		const size_t removedEntries = manifest.PruneIf([&](const std::string& relativePath) {
-			const auto sep = relativePath.find('/');
+			const auto& sourcePath = relativePath;
+			const auto sep = sourcePath.find('/');
 			if (sep == std::string::npos)
 				return false;  // unrecognized key shape -- never delete on a shape we don't understand
 			// Manifest.json is plain user-writable JSON; reject any key that could
 			// escape Data/ShaderCache via a traversal segment before ever deleting.
 			if (relativePath.find("..") != std::string::npos)
 				return false;
-			const auto standaloneSourceEnd = relativePath.find(".hlsl.", sep);
+			const auto standaloneSourceEnd = sourcePath.find(".hlsl.", sep);
 			const std::string source = standaloneSourceEnd != std::string::npos ?
-			                               relativePath.substr(0, standaloneSourceEnd + std::string_view(".hlsl").size()) :
-			                               relativePath.substr(0, sep) + ".hlsl";
+			                               std::string(sourcePath.substr(0, standaloneSourceEnd + std::string_view(".hlsl").size())) :
+			                               std::string(sourcePath.substr(0, sep)) + ".hlsl";
 			auto [it, inserted] = shaderExists.try_emplace(source, false);
 			if (inserted)
 				it->second = std::filesystem::exists(Util::PathHelpers::GetShadersPath() / source);
@@ -3113,6 +3118,7 @@ namespace SIE
 		}
 
 		if (!entries.empty()) {
+			std::lock_guard lock(pixelShadersMutex);
 			logger::debug("Marked {} entries for recompile due to change to {}", entries.size(), a_path);
 			compilationSet.Clear();
 		}
@@ -3134,6 +3140,8 @@ namespace SIE
 		}
 		std::lock_guard lockGuardP(pixelShadersMutex);
 		{
+			if (a_type == RE::BSShader::Type::Lighting) {
+			}
 			for (auto& [id, shader] : pixelShaders[static_cast<size_t>(a_type)]) {
 				shader->shader->Release();
 			}
@@ -3164,7 +3172,8 @@ namespace SIE
 		};
 	}
 
-	bool ShaderCache::AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, winrt::com_ptr<ID3DBlob> a_blob, bool fromDisk, std::optional<uint64_t> a_taskGeneration)
+	bool ShaderCache::AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, winrt::com_ptr<ID3DBlob> a_blob,
+		bool fromDisk, std::optional<uint64_t> a_taskGeneration)
 	{
 		auto key = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
 		const auto keyWithDescriptor = spdlog::should_log(spdlog::level::debug) ?
@@ -5638,7 +5647,8 @@ namespace SIE
 		auto shaderCache = globals::shaderCache;
 		if (!conditionVariable.wait(
 				lock, stoken,
-				[this, &shaderCache]() { return (!availableTasks.empty() || !demandedTasks.empty() || !pendingAuxTasks.empty()) &&
+				[this, &shaderCache]() { return (!availableTasks.empty() || !demandedTasks.empty() ||
+				                                    !pendingPriorityAuxTasks.empty() || !pendingAuxTasks.empty()) &&
 			                                    // Count matrix and auxiliary tasks; ReleaseDispatchSlot()
 			                                    // decrements under this mutex before notifying the waiter.
 			                                    static_cast<int32_t>(dispatchedTasksInFlight.load(std::memory_order_relaxed)) <
@@ -5655,8 +5665,15 @@ namespace SIE
 			lastCalculation = lastReset;
 		}
 
-		// Matrix tasks are checked before aux so queued shader work always wins
-		// admission over standalone compute-shader work when both are ready.
+		// NativePBR owns these pixel permutations in exclusive input-only mode.
+		// Do not starve them behind full legacy permutation-matrix compiles.
+		if (!pendingPriorityAuxTasks.empty()) {
+			auto work = std::move(pendingPriorityAuxTasks.front());
+			pendingPriorityAuxTasks.pop_front();
+			dispatchedTasksInFlight.fetch_add(1, std::memory_order_relaxed);
+			return std::variant<ShaderCompilationTask, std::function<void()>>(std::in_place_index<1>, std::move(work));
+		}
+		// Regular matrix tasks still outrank non-native standalone compute work.
 		if (!availableTasks.empty() || !demandedTasks.empty()) {
 			// Startup policy: keep dispatching the hardest queued work first.
 			// This preserves the existing priority score while preventing light tasks
@@ -5696,11 +5713,11 @@ namespace SIE
 		conditionVariable.notify_one();
 	}
 
-	void CompilationSet::EnqueueAux(std::function<void()> work)
+	void CompilationSet::EnqueueAux(std::function<void()> work, bool a_priority)
 	{
 		{
 			std::scoped_lock lock(compilationMutex);
-			pendingAuxTasks.push_back(std::move(work));
+			(a_priority ? pendingPriorityAuxTasks : pendingAuxTasks).push_back(std::move(work));
 		}
 		conditionVariable.notify_one();
 	}
@@ -5938,6 +5955,7 @@ namespace SIE
 		if (a_includeStandalone) {
 			standaloneGeneration.fetch_add(1, std::memory_order_release);
 			pendingAuxTasks.clear();
+			pendingPriorityAuxTasks.clear();
 		}
 		tasksInProgress.clear();
 		processedTasks.clear();

@@ -10,8 +10,8 @@
 #include "Features/DX12NativeScene/ShadowTrace.h"
 #include "Features/DX12NativeScene/SubcellStreamingManager.h"
 #include "Features/DX12NativeScene/VideoMemoryBudget.h"
-#include "TruePBR/InstanceCoverage.h"
-#include "TruePBR/VerifiedBridge.h"
+#include "Features/NativePBR/InstanceCoverage.h"
+#include "Features/NativePBR/VerifiedBridge.h"
 #include <atomic>
 #include <mutex>
 #include <optional>
@@ -43,9 +43,6 @@ struct DX12NativeScene final : Feature
 		bool BuildCandidateGridTLAS = false;  // Disabled-by-default isolated DXR test.
 		bool UseGridForNativeDXR = false;     // Opt-in only, require matching TLAS/material generation.
 		bool UseLivePBR = false;              // Legacy config field; NativePBR now follows DX12 ownership.
-		bool ImportLoosePBR = false;          // Separate opt-in for bounded loose-file DDS residency.
-		bool ImportArchivePBR = false;        // Further opt-in: archive resource manager fallback.
-		bool RuntimeOnlyMaterials = false;    // Optional manifest-free runtime texture acquisition.
 		bool CaptureRuntimeGeometry = false;  // Explicit static-geometry debug.
 		bool CaptureSCMRigidCasters = true;   // Bounded native acquisition from SCM's cull data.
 		bool CacheRuntimeGeometry = false;    // Optional background persistence and menu CPU prewarm.
@@ -103,6 +100,8 @@ struct DX12NativeScene final : Feature
 	std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
 	bool IsCore() const override { return true; }
 	void DrawSettings() override;
+	/** @brief Draws the scene-owned independent shadow-ray controls in Native Lighting. */
+	void DrawShadowSettings();
 	void LoadSettings(json& a_json) override;
 	void SaveSettings(json& a_json) override;
 	void RestoreDefaultSettings() override;
@@ -121,17 +120,18 @@ struct DX12NativeScene final : Feature
 	void ClearShaderCache() override { reloadRequested = true; }
 	json GetDiagnostics() override;
 	void RegisterUxActions() override;
-	/** @brief Requests only prepared geometry and the independent early shadow producer.
-	 *  Does not enable Native Lighting or alter its settings. */
-	void RequestShadowProducerForComposite()
+	/** @brief Couples independent shadow production to its lighting-menu switch. */
+	void SetIndependentShadowProducerEnabled(bool a_enabled)
 	{
 		requestedEnabled = 1;
-		requestedShadow = 1;
+		requestedShadow = a_enabled ? 1 : 0;
 		shadowResetRequested = true;
 	}
 	/** @brief The selected DX12 pipeline owns native materials, lights and casters.
 	 *  Not dependent on material/scene/effect validity. */
 	bool OwnsNativeFeatures() const;
+	/** @brief Reports availability of automatic DX12 scene ownership for NativePBR selection. */
+	bool IsNativeBackendRequested() const;
 	/** @brief True only when this exact static reference/shape exists in the active native TLAS. */
 	bool IsPreparedStaticCaster(RE::BSGeometry& geometry) const;
 	/** @brief Retains the scene graphics session for DX12-only consumers. */

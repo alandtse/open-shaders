@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TruePBR/NativePBRCompiler.h"
+#include "Features/NativePBR/NativePBRCompiler.h"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace DX12Native
 {
@@ -79,6 +80,15 @@ namespace DX12Native
 		}
 
 		size_t Size() const { return sources.size(); }
+		/** @brief Carries verified provenance only for paths retained in the next material generation. */
+		VerifiedTextureSources Select(const std::unordered_set<std::string>& a_paths) const
+		{
+			VerifiedTextureSources result;
+			for (const auto& path : a_paths)
+				if (auto found = sources.find(path); found != sources.end())
+					result.sources.emplace(*found);
+			return result;
+		}
 
 	private:
 		std::unordered_map<std::string, VerifiedTextureSource> sources;

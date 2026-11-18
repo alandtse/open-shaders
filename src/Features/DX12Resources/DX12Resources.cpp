@@ -21,7 +21,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <vector>
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12Resources::Settings, Enabled, AutoPrepareOnCellEntry, FlushDiskGeometryOnStartup)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12Resources::Settings, Enabled, AutoPrepareOnCellEntry, FlushDiskGeometryOnStartup, RetainPreparationDiagnostics)
 
 struct DX12Resources::ScanJob
 {
@@ -50,12 +50,12 @@ struct DX12Resources::PreparationJob
 	double elapsedMs = 0;
 };
 
-/** Only generated, published CELL/WRLD geometry is deleted.
- * Workspaces, logs, reports and the separate NativePBRCache remain intact. */
+/** Only exact generated cache folders are deleted; diagnostics and geometry are separate targets. */
 struct DX12Resources::DiskCacheFlushJob
 {
 	std::atomic<bool> done{ false };
 	uintmax_t removed = 0;
+	bool diagnosticsOnly = false;
 	std::string error;
 };
 
@@ -298,10 +298,15 @@ void DX12Resources::StartPluginCellScan(std::string plugin)
 						next->entries.push_back(std::move(entry));
 					}
 					DX12ResourceService::SortInteriorCatalog(next->entries);
+					std::error_code ignored;
+					std::filesystem::remove(output, ignored);
+					std::filesystem::remove(log, ignored);
 				}
 			} catch (const std::exception& error) {
 				next->error = error.what();
 			}
+			(void)DX12ResourceService::PruneGeneratedJobFiles(output.parent_path());
+			(void)DX12ResourceService::PruneGeneratedJobFiles(log.parent_path());
 			next->done.store(true, std::memory_order_release);
 		});
 		pluginScanJob = std::move(next);
@@ -333,13 +338,14 @@ void DX12Resources::AdvancePluginCellScan()
 }
 
 // Called under statusMutex, from DataLoaded or the main-menu testing control.
-void DX12Resources::StartDiskCacheFlush()
+void DX12Resources::StartDiskCacheFlush(bool diagnosticsOnly)
 {
 	if (diskCacheFlushJob || preparationJob)
 		return;
 	const auto root = DX12ResourceService::SkyrimDataDirectory() /
 	                  "SKSE/Plugins/CommunityShaders/DX12-cache";
 	auto task = std::make_shared<DiskCacheFlushJob>();
+	task->diagnosticsOnly = diagnosticsOnly;
 	try {
 		static BS::thread_pool<> pool{ 1 };
 		pool.detach_task([task, root] {
@@ -363,8 +369,14 @@ void DX12Resources::StartDiskCacheFlush()
 					if (ec || std::filesystem::is_symlink(rootState) ||
 						!std::filesystem::is_directory(rootState))
 						throw std::runtime_error("DX12 cache root is not a safe directory");
-					removeGenerated(root / "cells");
-					removeGenerated(root / "worldspaces");
+					if (task->diagnosticsOnly) {
+						removeGenerated(root / "diagnostics");
+						removeGenerated(root / "reports");
+						removeGenerated(root / "logs");
+					} else {
+						removeGenerated(root / "cells");
+						removeGenerated(root / "worldspaces");
+					}
 				}
 			} catch (const std::exception& e) {
 				task->error = e.what();
@@ -375,7 +387,9 @@ void DX12Resources::StartDiskCacheFlush()
 		});
 		diskCacheFlushJob = std::move(task);
 		diskCacheFlushConfirm = false;
-		diskCacheFlushStatus = "Clearing published CELL/WRLD geometry files on background worker...";
+		diskDiagnosticsFlushConfirm = false;
+		diskCacheFlushStatus = diagnosticsOnly ? "Clearing DX12 diagnostic files on background worker..." :
+			"Clearing published CELL/WRLD geometry files on background worker...";
 	} catch (const std::exception& e) {
 		diskCacheFlushStatus = e.what();
 	}
@@ -393,6 +407,10 @@ void DX12Resources::PollDiskCacheFlush()
 		return;
 	}
 	++diskCacheFlushes;
+	if (finished->diagnosticsOnly) {
+		diskCacheFlushStatus = std::format("Cleared {} generated DX12 diagnostic entries; geometry cache preserved.", diskCacheFlushRemoved);
+		return;
+	}
 	if (startupFlushTriggered)
 		startupFlushComplete = true;
 	// Published geometry no longer exists on disk; next CELL entry should
@@ -462,6 +480,7 @@ void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest&
 							   request.localId, GetTickCount64(), preparationSequence++);
 	const auto logPath = data / "SKSE/Plugins/CommunityShaders/DX12-cache/logs" /
 	                     std::format("prepare-{}-{}-{}.log", request.localId, GetCurrentProcessId(), GetTickCount64());
+	const bool retainDiagnostics = settings.RetainPreparationDiagnostics;
 	auto next = std::make_shared<PreparationJob>();
 	next->request = request;
 	next->tile = tile;
@@ -474,7 +493,7 @@ void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest&
 	preparationCell = request.Key();
 	try {
 		static BS::thread_pool<> pool{ 1 };
-		pool.detach_task([next, request, tile, predictive, data, pluginsFile, workspace, logPath] {
+		pool.detach_task([next, request, tile, predictive, data, pluginsFile, workspace, logPath, retainDiagnostics] {
 			const auto started = std::chrono::steady_clock::now();
 			next->logPath = logPath.string();
 			try {
@@ -498,11 +517,15 @@ void DX12Resources::StartCellPreparation(const DX12ResourceService::CellRequest&
 					throw std::runtime_error(process.error + ": " + process.log);
 				next->report = DX12ResourceService::ValidatePreparedCell(workspace, request, tile);
 				const auto published = DX12ResourceService::PublishPreparedCell(
-					workspace, data, request, tile);
+					workspace, data, request, tile, retainDiagnostics);
 				next->path = published.string();
+				std::error_code ignored;
+				std::filesystem::remove(logPath, ignored);
+				next->logPath.clear();
 			} catch (const std::exception& error) {
 				next->error = error.what();
 			}
+			(void)DX12ResourceService::PruneGeneratedJobFiles(logPath.parent_path());
 			next->elapsedMs = std::chrono::duration<double, std::milli>(
 				std::chrono::steady_clock::now() - started)
 			                      .count();
@@ -686,7 +709,7 @@ void DX12Resources::DrawSettings()
 	ImGui::TextDisabled("Clears generated DX12-cache/cells and DX12-cache/worldspaces, including subcells.");
 	ImGui::TextDisabled("Does not delete original meshes, staging work, logs, reports or NativePBRCache.");
 	if (!mainMenu)
-		diskCacheFlushConfirm = false;
+		diskCacheFlushConfirm = diskDiagnosticsFlushConfirm = false;
 	ImGui::BeginDisabled(!mainMenu || bool(preparationJob) || bool(diskCacheFlushJob));
 	if (!diskCacheFlushConfirm) {
 		if (ImGui::Button("Flush DX12 disk geometry cache"))
@@ -703,6 +726,22 @@ void DX12Resources::DrawSettings()
 		&settings.FlushDiskGeometryOnStartup);
 	ImGui::TextDisabled("Opt-in: runs once after Skyrim data loads, before native cached scene reads.");
 	ImGui::TextDisabled("Takes effect on next game launch; no menu interaction required.");
+	ImGui::SeparatorText("DX12 diagnostics storage");
+	ImGui::Checkbox("Retain compact CELL preparation diagnostics", &settings.RetainPreparationDiagnostics);
+	ImGui::TextDisabled("Off by default. On: last report per CELL, 256 KiB/file; 64 MiB or 256 reports total.");
+	ImGui::BeginDisabled(!mainMenu || bool(preparationJob) || bool(pluginScanJob) || bool(diskCacheFlushJob));
+	if (!diskDiagnosticsFlushConfirm) {
+		if (ImGui::Button("Clear DX12 diagnostics, reports and logs"))
+			diskDiagnosticsFlushConfirm = true;
+	} else {
+		if (ImGui::Button("Confirm diagnostic deletion"))
+			StartDiskCacheFlush(true);
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel diagnostic deletion"))
+			diskDiagnosticsFlushConfirm = false;
+	}
+	ImGui::EndDisabled();
+	ImGui::TextDisabled("Only DX12-cache/diagnostics, reports and logs; published geometry and NativePBRCache remain intact.");
 	if (startupFlushTriggered && !startupFlushComplete && settings.FlushDiskGeometryOnStartup)
 		ImGui::TextDisabled("Automatic flush incomplete: native disk-scene loading is deferred.");
 	if (!mainMenu)
@@ -859,6 +898,7 @@ json DX12Resources::GetDiagnostics()
 	PollCellPreparation();
 	PollDiskCacheFlush();
 	return { { "enabled", settings.Enabled },
+		{ "retainPreparationDiagnostics", settings.RetainPreparationDiagnostics },
 		{ "diskGeometryCache", { { "flushRunning", bool(diskCacheFlushJob) },
 								   { "flushOnStartup", settings.FlushDiskGeometryOnStartup },
 								   { "startupTriggered", startupFlushTriggered },

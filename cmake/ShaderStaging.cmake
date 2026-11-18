@@ -113,6 +113,12 @@ endif()
 if(NATIVE_COMPOSITE_SHADOW_DXIL)
     append_copy_if_different(_shader_copy_cmds NATIVE_COMPOSITE_SHADOW_DXIL "${NATIVE_COMPOSITE_DXIL_DIR}" "${AIO_DIR}/Shaders/NativeComposite")
 endif()
+if(NATIVE_COMPOSITE_PBR_INPUT_DXIL)
+    append_copy_if_different(_shader_copy_cmds NATIVE_COMPOSITE_PBR_INPUT_DXIL "${NATIVE_COMPOSITE_DXIL_DIR}" "${AIO_DIR}/Shaders/NativeComposite")
+endif()
+if(NATIVE_COMPOSITE_PBR_SURFACE_DXIL)
+    append_copy_if_different(_shader_copy_cmds NATIVE_COMPOSITE_PBR_SURFACE_DXIL "${NATIVE_COMPOSITE_DXIL_DIR}" "${AIO_DIR}/Shaders/NativeComposite")
+endif()
 append_copy_if_different(_shader_copy_cmds FFX_RUNTIME_FILES "${FFX_RUNTIME_SHADER_ROOT}" "${AIO_DIR}/Shaders")
 # Streamline-Runtime.cmake's payload is a build-tree dir, not a FEATURE_PATH, so
 # the glob below never discovers it -- wire it in explicitly, same as FFX above.

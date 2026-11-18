@@ -6,6 +6,7 @@
 #include "VideoMemoryBudget.h"
 #include <array>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace DX12Native

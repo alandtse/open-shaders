@@ -1,4 +1,6 @@
 #include "NativeLighting.h"
+#include "Features/NativeComposite/NativeComposite.h"
+#include "Features/NativeFeatures.h"
 #include "Features/ReverseZ.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -16,8 +18,17 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::ValidityL
 
 void NativeLightingFeature::DrawSettings()
 {
+	ImGui::SeparatorText("Independent Shadows");
+	globals::features::nativeComposite.DrawShadowSettings();
+	globals::features::dx12NativeScene.DrawShadowSettings();
+	ImGui::SeparatorText("Direct Lighting");
+	globals::features::nativeComposite.DrawDirectSettings();
 	std::scoped_lock lock(settingsMutex);
 	ImGui::Checkbox("Enable native lighting", &settings.Enabled);
+	if (ImGui::Checkbox("Force positive native validity (testing)", &settings.ForcePositiveValidity))
+		++validityRevision;
+	if (settings.ForcePositiveValidity)
+		ImGui::TextDisabled("Unsafe test: admits geometry hits through depth, alpha and material policy checks; invalid resources still skip.");
 	ImGui::Checkbox("Diffuse", &settings.Diffuse);
 	ImGui::Checkbox("Specular", &settings.Specular);
 	int traceDensity = int(settings.TraceDensityMode);
@@ -27,7 +38,6 @@ void NativeLightingFeature::DrawSettings()
 	}
 	ImGui::TextDisabled("Full-size raw signals. Spatial reconstruction is independent in Native Composite.");
 	bool tuned = false;
-	ImGui::SeparatorText("Direct lighting (reference controls)");
 	tuned |= ImGui::SliderFloat("Direct strength", &settings.DirectStrength, 0.0f, 8.0f, "%.2fx");
 	tuned |= ImGui::SliderFloat("Diffuse intensity", &settings.DiffuseIntensity, 0.0f, 8.0f, "%.2fx");
 	tuned |= ImGui::SliderFloat("Specular intensity", &settings.SpecularIntensity, 0.0f, 8.0f, "%.2fx");
@@ -91,52 +101,22 @@ void NativeLightingFeature::DrawSettings()
 	ImGui::TextDisabled("DXGI frame-budget telemetry is available in diagnostics; %zu lighting slots.", frames.size());
 	{
 		std::scoped_lock diagnosticsLock(diagnosticsMutex);
+		ImGui::TextDisabled("Native Lighting: %llu submissions | %llu primary queries | %llu primary hits",
+			static_cast<unsigned long long>(diagnostics.value("submissions", uint64_t{ 0 })),
+			static_cast<unsigned long long>(diagnostics.value("primaryQueries", uint64_t{ 0 })),
+			static_cast<unsigned long long>(diagnostics.value("primaryHits", uint64_t{ 0 })));
+		if (const auto lightingStatus = diagnostics.value("status", std::string{}); !lightingStatus.empty())
+			ImGui::TextDisabled("Native Lighting status: %s", lightingStatus.c_str());
 		ImGui::TextDisabled("Skipped native lighting pixels (GPU completed, cumulative): %llu",
 			static_cast<unsigned long long>(diagnostics.value("skippedPixels", uint64_t{ 0 })));
+		ImGui::TextDisabled("NativePBR ray hits (GPU completed, cumulative): %llu candidates | %llu evaluated",
+			static_cast<unsigned long long>(diagnostics.value("nativePbrCandidates", uint64_t{ 0 })),
+			static_cast<unsigned long long>(diagnostics.value("nativePbrEvaluated", uint64_t{ 0 })));
+		ImGui::TextDisabled("NativePBR forced missing-texture fallbacks: %llu",
+			static_cast<unsigned long long>(diagnostics.value("nativePbrForcedTextures", uint64_t{ 0 })));
 	}
 	if (ImGui::Checkbox("Early shadow-mask culling", &settings.EarlyShadowCull))
 		++validityRevision;
-	ImGui::Checkbox("Publish validity debug texture", &settings.Debug);
-	ImGui::Checkbox("Compare culling on and off", &settings.CompareCulling);
-	if (ImGui::CollapsingHeader("Validity Lab")) {
-		bool changed = false;
-		ImGui::Checkbox("Persist experimental validity settings", &settings.PersistLab);
-		changed |= ImGui::Checkbox("Require raster-depth agreement", &lab.DepthAgreement);
-		changed |= ImGui::Checkbox("Depth mismatch: diagnose and continue", &lab.DiagnosticDepth);
-		changed |= ImGui::DragFloat("Absolute depth tolerance", &lab.AbsoluteTolerance, 0.1f, 0.0f, 10000.0f);
-		changed |= ImGui::DragFloat("Relative depth tolerance", &lab.RelativeTolerance, 0.000001f, 0.0f, 1.0f, "%.6f");
-		const char* materialPolicies[]{ "Strict", "Diagnostic fallback", "Geometry only" };
-		int materialPolicy = static_cast<int>(lab.MaterialPolicy);
-		if (ImGui::Combo("Material policy", &materialPolicy, materialPolicies, 3)) {
-			lab.MaterialPolicy = static_cast<uint32_t>(materialPolicy);
-			changed = true;
-		}
-		changed |= ImGui::Checkbox("Require authoritative shadow mask", &lab.RequireMaskAuthority);
-		changed |= ImGui::Checkbox("Experimental: assume current mask authoritative", &lab.AssumeMaskAuthoritative);
-		changed |= ImGui::Checkbox("Sample mask for diagnostics", &lab.ObserveMask);
-		changed |= ImGui::Checkbox("Run diagnostics without lights or lobes", &lab.RunWithoutLighting);
-		changed |= ImGui::Checkbox("Reference-like primary candidate traversal", &lab.ReferencePrimaryTraversal);
-		ImGui::TextDisabled("Skip unsupported primary candidates; keep strict original validity for A/B.");
-		changed |= ImGui::Checkbox("Reference-like permissive visibility", &lab.ReferenceVisibility);
-		ImGui::TextDisabled("Skips unsupported shadow candidates; may cause light leaks.");
-		changed |= ImGui::SliderFloat("Experimental mask visibility threshold", &lab.MaskThreshold, 0.0f, 1.0f);
-		changed |= ImGui::DragFloat("Mask receiver distance tolerance", &lab.MaskDistanceTolerance, 0.1f, 0.0f, 10000.0f);
-		ImGui::TextDisabled("Prepared receiver identity is not available in the raster inputs.");
-		if (!settings.PersistLab)
-			ImGui::TextDisabled("Experimental settings reset to strict on restart.");
-		if (changed)
-			++validityRevision;
-		std::scoped_lock diagnosticsLock(diagnosticsMutex);
-		ImGui::TextDisabled("Submitted: %llu  GPU completed: %llu  Recovered: %llu",
-			static_cast<unsigned long long>(diagnostics.value("submissions", uint64_t{})),
-			static_cast<unsigned long long>(diagnostics.value("gpuCompletions", uint64_t{})),
-			static_cast<unsigned long long>(diagnostics.value("recoveredPixels", uint64_t{})));
-		if (diagnostics.contains("originalRejections")) {
-			const auto& reasons = diagnostics["originalRejections"];
-			for (auto it = reasons.begin(); it != reasons.end(); ++it)
-				ImGui::TextDisabled("%s: %llu", it.key().c_str(), static_cast<unsigned long long>(it.value().get<uint64_t>()));
-		}
-	}
 }
 
 void NativeLightingFeature::LoadSettings(json& a_json)
@@ -154,6 +134,7 @@ void NativeLightingFeature::LoadSettings(json& a_json)
 	selected.EmitterRadiusMultiplier = sanitize(selected.EmitterRadiusMultiplier, 1.0f, 0.0f, 8.0f);
 	selected.NormalInfluence = std::min(selected.NormalInfluence, 2u);
 	selected.TraceDensityMode = std::min(selected.TraceDensityMode, 7u);
+	selected.ForcePositiveValidity = false;
 	selected.BudgetMB = 0;  // Legacy manual cap is ignored.
 	std::scoped_lock lock(settingsMutex);
 	settings = selected;
@@ -239,6 +220,7 @@ void NativeLightingFeature::Retire()
 		frame->counterReadback->Unmap(0, &noWrite);
 		frame->countersRead = true;
 		frame->scene = {};
+		frame->rayMaterials.reset();
 		++completions;
 	}
 }
@@ -274,6 +256,9 @@ void NativeLightingFeature::PublishDiagnostics()
 		{ "maskCulled", totals[1] }, { "maskUnavailable", totals[2] },
 		{ "primaryQueries", totals[3] }, { "primaryHits", totals[4] }, { "primaryMisses", totals[5] },
 		{ "materials", totals[6] }, { "shadowQueries", totals[7] }, { "lights", totals[8] },
+		{ "nativePbrEvaluated", totals[28] }, { "nativePbrCandidates", totals[29] },
+		{ "nativePbrForcedTextures", totals[30] },
+		{ "forcePositiveValidity", current && current->forcePositiveValidity },
 		{ "validDiffuse", totals[9] }, { "unsupported", totals[10] }, { "validSpecular", totals[11] },
 		{ "currentMaskAuthoritative", false }, { "comparisonFrames", comparisonFrames }, { "visualConsumptionVerified", false } };
 	constexpr std::array reasonNames{ "invalidCamera", "noPrimaryHit", "depthMismatch", "unsupportedMaterial", "materialEvaluationFailure", "noEligibleLights", "invalidVisibility", "nonfiniteLighting", "authoritativeMaskCull", "successfulEvaluation" };
@@ -304,11 +289,15 @@ json NativeLightingFeature::GetDiagnostics()
 
 void NativeLightingFeature::RegisterUxActions()
 {
-	FEATURE_COMMAND("configure", "Set native direct lighting; optional enabled/diffuse/specular, directStrength, diffuseIntensity, specularIntensity, emissionStrength, normalInfluence (0 flat, 1 geometry, 2 material), allLights, selectedLight, radiusMultiplier, falloffFraction, falloffExponent, shadowStrength, stochasticShadows, emitterRadiusMultiplier, earlyShadowCull, debug, compareCulling, traceDensityMode (0 Full, 1 Two-thirds, 2 Half, 3 One-third, 4 Quarter, 5 One-sixth, 6 One-ninth, 7 Four-ninths), budgetMB.", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("configure", "Set native direct lighting; optional enabled/diffuse/specular, directStrength, diffuseIntensity, specularIntensity, emissionStrength, normalInfluence (0 flat, 1 geometry, 2 material), allLights, selectedLight, radiusMultiplier, falloffFraction, falloffExponent, shadowStrength, stochasticShadows, emitterRadiusMultiplier, earlyShadowCull, debug, compareCulling, traceDensityMode (0 Full, 1 Two-thirds, 2 Half, 3 One-third, 4 Quarter, 5 One-sixth, 6 One-ninth, 7 Four-ninths), forcePositiveValidity (session-only test), budgetMB.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeLightingFeature*>(self);
 		std::scoped_lock lock(feature.settingsMutex);
 		if (args.contains("enabled"))
 			feature.settings.Enabled = args.at("enabled").get<bool>();
+		if (args.contains("forcePositiveValidity")) {
+			feature.settings.ForcePositiveValidity = args.at("forcePositiveValidity").get<bool>();
+			++feature.validityRevision;
+		}
 		if (args.contains("diffuse"))
 			feature.settings.Diffuse = args.at("diffuse").get<bool>();
 		if (args.contains("specular"))
@@ -479,7 +468,7 @@ void NativeLightingFeature::OnOpaqueRasterReady(const OpaqueRasterInputs&)
 		selectedLab = lab;
 		revision = validityRevision;
 	}
-	if (!selected.Enabled || (!selected.Diffuse && !selected.Specular && selectedLab.MaterialPolicy != 2 && !selectedLab.RunWithoutLighting) || transitionOpen || globals::game::isVR) {
+	if (!selected.Enabled || (!selected.Diffuse && !selected.Specular && selectedLab.MaterialPolicy != 2 && !selectedLab.RunWithoutLighting && !selected.ForcePositiveValidity) || transitionOpen || globals::game::isVR) {
 		current.reset();
 		active = false;
 		status = "Native direct lighting disabled or unavailable";
@@ -509,8 +498,8 @@ void NativeLightingFeature::OnOpaqueRasterReady(const OpaqueRasterInputs&)
 	const auto nativeLights = owner.GetNativeLLFLights(frame);
 	const auto availableLights = nativeLights ? size_t(nativeLights->count) : scene->prepared->cell->nativeLights.size();
 	if ((!nativeLights && selected.UseAllPreparedLights && availableLights > DX12Native::kMaximumNativePointLights) ||
-		(!selected.UseAllPreparedLights && selected.SelectedDirectLight >= availableLights && !nativeLights) ||
-		(availableLights == 0 && !nativeLights && !selectedLab.RunWithoutLighting && selectedLab.MaterialPolicy != 2)) {
+		(!selected.UseAllPreparedLights && selected.SelectedDirectLight >= availableLights && !nativeLights && !selected.ForcePositiveValidity) ||
+		(availableLights == 0 && !nativeLights && !selectedLab.RunWithoutLighting && selectedLab.MaterialPolicy != 2 && !selected.ForcePositiveValidity)) {
 		status = "Prepared point-light selection unavailable or exceeds 64";
 		return;
 	}
@@ -561,6 +550,11 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 											   backend.d3d12Device.get(), trackedBytes, 0)
 		                            .effectiveBytes;
 		uint64_t bytes = 2 * 1024 * 1024;
+		const auto rayTable = CD3DX12_RESOURCE_DESC::Buffer(NativeLighting::kMaximumInstances * sizeof(NativePBR::GpuDrawBinding));
+		const auto rayBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &rayTable).SizeInBytes;
+		if (rayBytes == UINT64_MAX || rayBytes > budget || bytes > budget - rayBytes)
+			throw std::runtime_error("Native lighting PBR binding budget exceeded");
+		bytes += rayBytes;
 		for (size_t i = 0; i < formats.size(); ++i) {
 			if (!a_settings.CompareCulling && (i == 5 || i == 6))
 				continue;
@@ -607,14 +601,15 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			created->counterReset = make(plain, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::CounterReset");
 			created->counterReadback = make(plain, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, L"NativeLighting::CounterReadback");
 			created->lights = make(CD3DX12_RESOURCE_DESC::Buffer(DX12Native::kMaximumNativePointLights * 48), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Lights");
-			// 272-byte Trace ABI rounds to 512 for the D3D12 CBV 256-byte alignment.
+			created->rayBindings = make(rayTable, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::RayMaterialBindings");
+			// 288-byte Trace ABI rounds to 512 for the D3D12 CBV 256-byte alignment.
 			created->constants = make(CD3DX12_RESOURCE_DESC::Buffer(512), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Constants");
 			void* zeros = nullptr;
 			const D3D12_RANGE noRead{ 0, 0 };
 			DX::ThrowIfFailed(created->counterReset->Map(0, &noRead, &zeros));
 			std::memset(zeros, 0, totals.size() * sizeof(uint32_t));
 			created->counterReset->Unmap(0, nullptr);
-			constexpr uint32_t kDescriptors = 13 + 2 * DX12Native::ShadowBindings::kMaximumInstances + DX12Native::kMaximumTexturePools;
+			constexpr uint32_t kDescriptors = 13 + 2 * DX12Native::ShadowBindings::kMaximumInstances + DX12Native::kMaximumTexturePools + NativePBR::kGpuTextureDescriptorCapacity;
 			const D3D12_DESCRIPTOR_HEAP_DESC heapDesc{ D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kDescriptors, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0 };
 			DX::ThrowIfFailed(backend.d3d12Device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(created->heap.put())));
 			created->heap->SetName(L"NativeLighting::Descriptors");
@@ -622,6 +617,15 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			slot = std::move(created);
 		}
 		slot->scene = std::move(a_scene);
+		slot->rayMaterials = globals::features::nativePBR.GetRayMaterialBindings();
+		if (slot->rayMaterials &&
+			(slot->rayMaterials->eligible == 0 ||
+			slot->rayMaterials->prepared->geometry != slot->scene.prepared->acceleration ||
+			slot->rayMaterials->prepared->sceneResources != slot->scene.prepared->materials ||
+			slot->rayMaterials->instances.size() != slot->scene.prepared->acceleration->instances.size() ||
+			!slot->rayMaterials->materials->records || !slot->rayMaterials->materials->textureDescriptors ||
+			slot->rayMaterials->materials->device.get() != backend.d3d12Device.get()))
+			slot->rayMaterials.reset();
 		// Independent Native Lighting visibility never assumes the separate
 		// shadow-mask feature is enabled. Retain the exact TLAS until this
 		// contribution's GPU fence and downstream consumers complete.
@@ -644,6 +648,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		slot->sceneRevision = slot->scene.prepared->revision;
 		slot->validityRevision = a_revision;
 		slot->geometryOnly = a_lab.MaterialPolicy == 2;
+		slot->forcePositiveValidity = a_settings.ForcePositiveValidity;
 		slot->maskAvailable = static_cast<bool>(slot->scene.shadow);
 		slot->maskExperimental = slot->maskAvailable && a_settings.EarlyShadowCull && !a_lab.RequireMaskAuthority && a_lab.AssumeMaskAuthoritative;
 		slot->frame = slot->scene.frame;
@@ -660,13 +665,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		slot->countersRead = true;
 		const auto& scene = *slot->scene.prepared;
 		const auto& camera = slot->scene.raster->camera;
-		struct Light
-		{
-			float4 positionRadius, radianceSourceRadius;
-			std::array<uint32_t, 4> flags;
-		};
-		static_assert(sizeof(Light) == 48);
-		std::array<Light, DX12Native::kMaximumNativePointLights> lights{};
+		std::array<DX12Native::NativeDirectPointLight, DX12Native::kMaximumNativePointLights> lights{};
 		const auto nativeLights = globals::features::dx12NativeScene.GetNativeLLFLights(slot->scene.frame);
 		const std::span<const DX12Native::PreparedPointLight> lightSource = nativeLights ?
 		                                                                        std::span<const DX12Native::PreparedPointLight>(nativeLights->lights.data(), nativeLights->count) :
@@ -693,8 +692,9 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			uint32_t referenceVisibility, referencePrimaryTraversal, frameIndex, traceDensityMode;
 			float4 lightTuning;   // reach, cutoff width, exponent, common direct strength
 			float4 shadowTuning;  // shadow strength, emitter scale, stochastic enabled, emission
+			uint32_t nativePbrReady, nativePbrPadding[2], nativePbrMaterialOptions;
 		};
-		static_assert(sizeof(Constants) == 272);
+		static_assert(sizeof(Constants) == 288);
 		const Constants constants{ width, height, uint32_t(scene.acceleration->instances.size()), selectedCount,
 			{ camera.CameraPosAdjust.x + camera.CameraViewInverse._14, camera.CameraPosAdjust.y + camera.CameraViewInverse._24, camera.CameraPosAdjust.z + camera.CameraViewInverse._34 },
 			0.5f, a_settings.DiffuseIntensity, a_settings.SpecularIntensity, (a_settings.Diffuse ? 1u : 0u) | (a_settings.Specular ? 2u : 0u),
@@ -704,7 +704,15 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			slot->scene.shadow ? 1u : 0u, !a_lab.RequireMaskAuthority && a_lab.AssumeMaskAuthoritative ? 1u : 0u,
 			a_lab.ReferenceVisibility ? 1u : 0u, a_lab.ReferencePrimaryTraversal ? 1u : 0u, slot->scene.frame, a_settings.TraceDensityMode,
 			{ a_settings.PointLightRadiusMultiplier, a_settings.PointLightFalloffFraction, a_settings.PointLightFalloffExponent, a_settings.DirectStrength },
-			{ a_settings.ShadowStrength, a_settings.EmitterRadiusMultiplier, a_settings.StochasticShadows ? 1.0f : 0.0f, a_settings.EmissionStrength } };
+			{ a_settings.ShadowStrength, a_settings.EmitterRadiusMultiplier, a_settings.StochasticShadows ? 1.0f : 0.0f, a_settings.EmissionStrength },
+			slot->rayMaterials ? 1u : 0u, { a_settings.ForcePositiveValidity ? 1u : 0u,
+				slot->rayMaterials && slot->rayMaterials->forcedAdmission ? 1u : 0u },
+			(globals::features::nativePBR.nativeParallax.load(std::memory_order_relaxed) ? NativePBR::kRayMaterialOptionParallax : 0u) |
+			(globals::features::nativePBR.nativeComplexMaterials.load(std::memory_order_relaxed) ? NativePBR::kRayMaterialOptionComplex : 0u) };
+		slot->nativePointLightCount = selectedCount;
+		slot->nativeMinimumDistance = constants.minimum;
+		slot->nativeLightTuning = constants.lightTuning;
+		slot->nativeShadowTuning = constants.shadowTuning;
 		const D3D12_RANGE noRead{ 0, 0 };
 		void* mapped = nullptr;
 		DX::ThrowIfFailed(slot->lights->Map(0, &noRead, &mapped));
@@ -713,10 +721,16 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		DX::ThrowIfFailed(slot->constants->Map(0, &noRead, &mapped));
 		std::memcpy(mapped, &constants, sizeof(constants));
 		slot->constants->Unmap(0, nullptr);
+		DX::ThrowIfFailed(slot->rayBindings->Map(0, &noRead, &mapped));
+		if (slot->rayMaterials)
+			std::memcpy(mapped, slot->rayMaterials->instances.data(),
+				slot->rayMaterials->instances.size() * sizeof(NativePBR::GpuDrawBinding));
+		slot->rayBindings->Unmap(0, nullptr);
 		const auto step = backend.d3d12Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 		constexpr uint32_t kGeometry = 13;
 		constexpr uint32_t kAttributes = kGeometry + DX12Native::ShadowBindings::kMaximumInstances;
 		constexpr uint32_t kTextures = kAttributes + DX12Native::ShadowBindings::kMaximumInstances;
+		constexpr uint32_t kNativePbrTextures = kTextures + DX12Native::kMaximumTexturePools;
 		auto cpu = slot->heap->GetCPUDescriptorHandleForHeapStart();
 		D3D12_SHADER_RESOURCE_VIEW_DESC textureSrv{};
 		textureSrv.Format = DXGI_FORMAT_R32_FLOAT;
@@ -785,6 +799,14 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			}
 			slot->descriptorBindings = scene.materials;
 		}
+		if (slot->rayMaterials && slot->descriptorPbr.lock() != slot->rayMaterials->materials) {
+			auto destination = slot->heap->GetCPUDescriptorHandleForHeapStart();
+			destination.ptr += uint64_t(kNativePbrTextures) * step;
+			backend.d3d12Device->CopyDescriptorsSimple(NativePBR::kGpuTextureDescriptorCapacity,
+				destination, slot->rayMaterials->materials->textureDescriptors->GetCPUDescriptorHandleForHeapStart(),
+				D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+			slot->descriptorPbr = slot->rayMaterials->materials;
+		}
 		DX::ThrowIfFailed(slot->allocator->Reset());
 		if (slot->commands)
 			DX::ThrowIfFailed(slot->commands->Reset(slot->allocator.get(), pipeline.get()));
@@ -819,6 +841,10 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		commands->SetComputeRootShaderResourceView(3, slot->lights->GetGPUVirtualAddress());
 		commands->SetComputeRootShaderResourceView(5, scene.materials->materials->surfaces->GetGPUVirtualAddress());
 		commands->SetComputeRootShaderResourceView(6, scene.materials->materials->materials->GetGPUVirtualAddress());
+		commands->SetComputeRootShaderResourceView(14, slot->rayBindings->GetGPUVirtualAddress());
+		commands->SetComputeRootShaderResourceView(15, slot->rayMaterials ?
+			slot->rayMaterials->materials->records->GetGPUVirtualAddress() :
+			scene.materials->materials->materials->GetGPUVirtualAddress());
 		commands->SetComputeRootConstantBufferView(11, slot->constants->GetGPUVirtualAddress());
 		auto gpu = slot->heap->GetGPUDescriptorHandleForHeapStart();
 		commands->SetComputeRootDescriptorTable(1, gpu);
@@ -835,6 +861,9 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		gpu = slot->heap->GetGPUDescriptorHandleForHeapStart();
 		gpu.ptr += uint64_t(kTextures) * step;
 		commands->SetComputeRootDescriptorTable(8, gpu);
+		gpu = slot->heap->GetGPUDescriptorHandleForHeapStart();
+		gpu.ptr += uint64_t(kNativePbrTextures) * step;
+		commands->SetComputeRootDescriptorTable(16, gpu);
 		commands->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
 		std::vector<D3D12_RESOURCE_BARRIER> end;
 		end.push_back(CD3DX12_RESOURCE_BARRIER::Transition(slot->counters.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE));

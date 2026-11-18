@@ -1,5 +1,7 @@
 #pragma once
 
+#include "CompactDiagnosticRetention.h"
+
 #include "../DX12NativeScene/CellPackedFile.h"
 #include "CellRequest.h"
 #include "PluginCellCatalog.h"
@@ -174,7 +176,7 @@ namespace DX12ResourceService
 	/** @brief Keep the published CELL to three files; retain only compact JSON diagnostics. */
 	inline std::filesystem::path PublishPreparedCell(const std::filesystem::path& staging,
 		const std::filesystem::path& data, const CellRequest& request,
-		std::optional<PreparedSubcellAddress> subcell = std::nullopt)
+		std::optional<PreparedSubcellAddress> subcell = std::nullopt, bool retainDiagnostics = false)
 	{
 		if (subcell && !subcell->Valid())
 			throw std::runtime_error("Invalid prepared subcell destination");
@@ -195,16 +197,7 @@ namespace DX12ResourceService
 			throw std::runtime_error("Refusing to replace an unsafe prepared CELL");
 		ec.clear();
 
-		// Keep compact diagnostic JSON beneath DX12-cache/diagnostics; never in published cells/.
 		const auto stamp = std::to_wstring(GetTickCount64());
-		const auto diagnostics = data / "SKSE/Plugins/CommunityShaders/DX12-cache/diagnostics" /
-		                         request.CacheFamily() / request.plugin /
-		                         (std::format(L"{:06X}-", request.localId) + stamp);
-		std::filesystem::create_directories(diagnostics);
-		for (const char* report : { "cell-preparation.json", "cell-records.json",
-				 "cell-index.json", "cell-meshes.json" }) {
-			std::filesystem::copy_file(staging / report, diagnostics / report);
-		}
 
 		const auto incoming = final.parent_path() / (final.filename().wstring() + L".incoming." + stamp);
 		const auto backup = final.parent_path() / (final.filename().wstring() + L".previous." + stamp);
@@ -253,6 +246,29 @@ namespace DX12ResourceService
 		if (hadPrevious) {
 			std::error_code ignored;
 			std::filesystem::remove_all(backup, ignored);
+		}
+		if (retainDiagnostics) {
+			const auto report = staging / "cell-preparation.json";
+			const auto diagnostics = data / "SKSE/Plugins/CommunityShaders/DX12-cache/diagnostics" /
+			                         request.CacheFamily() / request.plugin;
+			std::error_code diagnosticError;
+			constexpr uintmax_t kMaxDiagnosticReportBytes = 256 * 1024;
+			const auto bytes = std::filesystem::file_size(report, diagnosticError);
+			if (!diagnosticError && bytes <= kMaxDiagnosticReportBytes) {
+				std::filesystem::create_directories(diagnostics, diagnosticError);
+				if (!diagnosticError && !std::filesystem::is_symlink(std::filesystem::symlink_status(diagnostics, diagnosticError)) &&
+					!diagnosticError) {
+					const auto destination = diagnostics / std::format("{:06X}.json", request.localId);
+					const auto destinationState = std::filesystem::symlink_status(destination, diagnosticError);
+					if (destinationState.type() == std::filesystem::file_type::not_found)
+						diagnosticError.clear();
+					if (!diagnosticError && !std::filesystem::is_symlink(destinationState)) {
+						std::filesystem::copy_file(report, destination, std::filesystem::copy_options::overwrite_existing, diagnosticError);
+						if (!diagnosticError)
+							(void)PruneCompactDiagnostics(data / "SKSE/Plugins/CommunityShaders/DX12-cache/diagnostics");
+					}
+				}
+			}
 		}
 		// All intermediate NIF, source-cache, per-shape blobs and compiler files are staging-only.
 		std::filesystem::remove_all(staging, ec);

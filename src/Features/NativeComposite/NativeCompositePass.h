@@ -68,7 +68,8 @@ public:
 		const std::shared_ptr<const DX12Native::ShadowFrame>& a_shadow,
 		const std::shared_ptr<const DX12Native::RasterFrame>& a_raster,
 		const ShadowSettings& a_shadowSettings,
-		float a_strength, bool a_directSpatialReconstruction, const Policy& a_policy, uint64_t a_revision);
+		float a_strength, bool a_directSpatialReconstruction, const Policy& a_policy, uint64_t a_revision,
+		uint32_t a_nativeReadinessStage = 0);
 	/** @brief Retains a frame until a downstream consumer's GPU fence completes. */
 	bool Retain(const std::shared_ptr<const Frame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value);
 	/** @brief Returns a short explanation of the latest capture result. */
