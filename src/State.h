@@ -745,6 +745,9 @@ public:
 	Util::FrameChecker frameChecker;
 	Util::FrameChecker shaderTrackingFrameChecker;
 	uint frameCount = 0;
+	uint historyResetFrame = UINT_MAX;
+	void RequestHistoryReset() { historyResetFrame = frameCount + 1u; }
+	bool ShouldResetHistory() const { return frameCount == historyResetFrame; }
 	// Thread-safe mirror of frameCount maintained by the render thread.
 	// Off-thread readers (MCP listener, future telemetry) must read this
 	// instead of touching frameCount directly to avoid a data race.
