@@ -252,16 +252,6 @@ void PhysicalLens::ClearShaderCache()
 		CompileShaders();
 }
 
-bool PhysicalLens::IsVisible() const
-{
-	return !globals::game::isVR;
-}
-
-bool PhysicalLens::IsActive() const
-{
-	return enabled && !globals::game::isVR;
-}
-
 void PhysicalLens::SetupResources()
 {
 	resourcesReady = false;
@@ -894,7 +884,7 @@ void PhysicalLens::Draw(TextureInfo& input)
 	SanitizeSettings();
 	D3D11_TEXTURE2D_DESC inputDesc;
 	input.tex->GetDesc(&inputDesc);
-	const float aspect = float(inputDesc.Width) / inputDesc.Height;
+	const float aspect = float(inputDesc.Width) / (globals::game::isVR ? 2.f : 1.f) / inputDesc.Height;
 	const auto* camera = owner ? owner->GetActivePhysicalCameraState() : nullptr;
 	optical = { settings.FNumber, settings.FocusDistanceM, settings.ApertureRotation, 0, 0, 0, ApertureBladeCount(), false };
 	if (camera) {
@@ -962,6 +952,8 @@ void PhysicalLens::Draw(TextureInfo& input)
 	const auto& lens = cachedLens;
 	Parameters data{};
 	UpdateCameraMapping(aspect);
+	if (globals::game::isVR)
+		return;
 	const bool renderWave = buildWaveSources && buildWaveTiles && buildWaveTail && UpdateDiffraction(inputDesc.Width, inputDesc.Height);
 	if (settings.Intensity == 0 && !renderWave)
 		return;
