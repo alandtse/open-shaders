@@ -1076,6 +1076,8 @@
     "feature.ibl.enable_ibl": "Включить IBL",
     "feature.ibl.enable_ibl_options": "",
     "feature.ibl.enable_ibl_tooltip": "Переключить IBL. При включении рассеянное освещение берётся из сферических гармоник кубической карты вместо ванильной системы.",
+    "feature.ibl.enable_in_interiors": "Включить IBL в помещениях",
+    "feature.ibl.enable_in_interiors_tooltip": "Включает IBL во внутренних ячейках.",
     "feature.ibl.enable_in_loading_screen": "",
     "feature.ibl.enable_in_loading_screen_tooltip": "",
     "feature.ibl.enable_in_world_map": "",

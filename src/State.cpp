@@ -2248,11 +2248,6 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 										(uint32_t)SIE::ShaderCache::LightingShaderFlags::TruePbr |
 										(uint32_t)SIE::ShaderCache::LightingShaderFlags::LandscapeSeams);
 
-				using LightingFlags = SIE::ShaderCache::LightingShaderFlags;
-				constexpr auto legacyScattering = static_cast<uint32_t>(LightingFlags::SoftLighting) |
-				                                  static_cast<uint32_t>(LightingFlags::RimLighting) |
-				                                  static_cast<uint32_t>(LightingFlags::BackLighting);
-				const bool hasLegacyScattering = (a_pixelDescriptor & legacyScattering) != 0;
 				a_pixelDescriptor &= ~((uint32_t)SIE::ShaderCache::LightingShaderFlags::AmbientSpecular |
 									   (uint32_t)SIE::ShaderCache::LightingShaderFlags::ShadowDir |
 									   (uint32_t)SIE::ShaderCache::LightingShaderFlags::DefShadow |
@@ -2278,12 +2273,8 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 
 				a_pixelDescriptor &= ~((uint32_t)SIE::ShaderCache::LightingShaderFlags::Snow);
 
-				if (deferred->deferredPass || a_forceDeferred) {
-					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::LightingShaderFlags::Deferred | deferredLightingShaderFlags;
-					if (!hasLegacyScattering)
-						a_pixelDescriptor |= SIE::ShaderCache::kLightingNoLegacySubsurface;
-				} else if (permutationData.ExtraShaderDescriptor & static_cast<uint32_t>(ExtraShaderDescriptors::IsReflections))
-					a_pixelDescriptor |= deferredLightingShaderFlags & ~(SIE::ShaderCache::kLightingNoLocalShadowMaps | SIE::ShaderCache::kLightingNoLocalContactShadows);
+				if (deferred->deferredPass || a_forceDeferred)
+					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::LightingShaderFlags::Deferred;
 
 				{
 					uint32_t technique = 0x3F & (a_vertexDescriptor >> 24);
@@ -2320,12 +2311,7 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 							   (uint32_t)SIE::ShaderCache::EffectShaderFlags::GrayscaleToAlpha |
 							   (uint32_t)SIE::ShaderCache::EffectShaderFlags::IgnoreTexAlpha);
 				a_vertexDescriptor &= flags;
-				a_pixelDescriptor &= flags & ~(SIE::ShaderCache::kEffectLinearACEScg | SIE::ShaderCache::kEffectAmbientWorldIBL);
-				if (effectAmbientIBLUploaded &&
-					(permutationData.ExtraShaderDescriptor & static_cast<uint32_t>(ExtraShaderDescriptors::InWorld)))
-					a_pixelDescriptor |= SIE::ShaderCache::kEffectAmbientWorldIBL;
-				if (deferredLightingShaderFlags & SIE::ShaderCache::kLightingLinearACEScg)
-					a_pixelDescriptor |= SIE::ShaderCache::kEffectLinearACEScg;
+				a_pixelDescriptor &= flags;
 
 				if (deferred->deferredPass || a_forceDeferred)
 					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::EffectShaderFlags::Deferred;
@@ -2353,9 +2339,6 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 
 uint32_t State::GetRuntimePixelBits(const RE::BSShader& a_shader)
 {
-	if (a_shader.shaderType.get() == RE::BSShader::Type::Lighting)
-		return static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::BaseObjectIsSnow);
-
 	// Water's pixel stage branches on Wading at runtime; losing the bit skips the wading displacement without any error.
 	return a_shader.shaderType.get() == RE::BSShader::Type::Water ? static_cast<uint32_t>(SIE::ShaderCache::WaterShaderFlags::Wading) : 0u;
 }

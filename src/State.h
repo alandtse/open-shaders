@@ -491,7 +491,8 @@ public:
 		NoFoliageTint = 1u << 24,
 		SnowRooftop = 1u << 23,
 		SnowLODTree = 1u << 22,
-		SnowInactive = 1u << 21
+		SnowInactive = 1u << 21,
+		MenuItem = 1u << 20
 	};
 
 	/** @brief Bitflags describing extra feature-specific properties related to terrain displacement and material models. */
@@ -744,8 +745,6 @@ public:
 	Util::FrameChecker frameChecker;
 	Util::FrameChecker shaderTrackingFrameChecker;
 	uint frameCount = 0;
-	uint32_t deferredLightingShaderFlags = 0;
-	bool effectAmbientIBLUploaded = false;
 	// Thread-safe mirror of frameCount maintained by the render thread.
 	// Off-thread readers (MCP listener, future telemetry) must read this
 	// instead of touching frameCount directly to avoid a data race.

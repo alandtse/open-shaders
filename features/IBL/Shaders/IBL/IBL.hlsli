@@ -3,28 +3,22 @@
 
 #include "Common/Color.hlsli"
 #include "Common/Math.hlsli"
+#if defined(LIGHTING) && !defined(DEFERRED)
+#	include "Common/Permutation.hlsli"
+#endif
 #include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 
 namespace ImageBasedLighting
 {
-	bool IsEnabled()
+	bool UseForDraw()
 	{
-#if defined(IBL_LUMINANCE_RATIO)
-		return true;
-#else
+#if defined(LIGHTING) && !defined(DEFERRED)
+		if (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::MenuItem)
+			return false;
+#endif
 		return SharedData::iblSettings.EnableIBL != 0;
-#endif
-	}
-
-	uint GetDALCMode()
-	{
-#if defined(IBL_LUMINANCE_RATIO)
-		return 0;
-#else
-		return SharedData::iblSettings.DALCMode;
-#endif
 	}
 
 #if defined(IBL_DEFERRED)
@@ -72,9 +66,6 @@ namespace ImageBasedLighting
 	/// Compute ratio between DALC and IBL for brightness/color matching.
 	float3 GetIBLRatio()
 	{
-#if defined(IBL_NO_DALC)
-		return 1.0.xxx;
-#else
 		const float dalcAmount = SharedData::iblSettings.DALCAmount;
 		float3 matchedRatio = 1.0f.xxx;
 		[branch] if (dalcAmount != 0.0f)
@@ -90,7 +81,7 @@ namespace ImageBasedLighting
 			float colorB = SphericalHarmonics::SHHallucinateZH3Irradiance(iblSHB, float3(0, 0, 0));
 			float3 ibl0 = max(0, float3(colorR, colorG, colorB) / Math::PI);
 
-			if (GetDALCMode() == 1) {
+			if (SharedData::iblSettings.DALCMode == 1) {
 				float3 ratio = dalc0 / max(ibl0, 0.001);
 				matchedRatio = lerp(1.0, ratio, dalcAmount);
 			} else {
@@ -101,7 +92,6 @@ namespace ImageBasedLighting
 			}
 		}
 		return matchedRatio;
-#endif
 	}
 
 	// ============================================================================
@@ -130,7 +120,7 @@ namespace ImageBasedLighting
 	float3 GetDiffuseIBL(float3 vanillaDALC, float3 rayDir)
 	{
 		float3 linEnv, linSky;
-		if (GetDALCMode() >= 2) {
+		if (SharedData::iblSettings.DALCMode >= 2) {
 			linEnv = Color::IrradianceToLinear(vanillaDALC * SharedData::iblSettings.DALCAmount);
 			linSky = GetSkyIBLColor(rayDir);
 		} else {
@@ -149,10 +139,10 @@ namespace ImageBasedLighting
 	float3 GetDiffuseIBLOccluded(float3 vanillaDALC, float3 rayDir, float visibility)
 	{
 		float3 linEnv, linSky;
-		if (GetDALCMode() == 3) {
+		if (SharedData::iblSettings.DALCMode == 3) {
 			linEnv = Color::IrradianceToLinear(vanillaDALC * SharedData::iblSettings.DALCAmount) * visibility;
 			linSky = GetSkyIBLColor(rayDir) * visibility;
-		} else if (GetDALCMode() == 2) {
+		} else if (SharedData::iblSettings.DALCMode == 2) {
 			linEnv = Color::IrradianceToLinear(vanillaDALC * SharedData::iblSettings.DALCAmount);
 			linSky = GetSkyIBLColor(rayDir) * visibility;
 		} else {
@@ -178,11 +168,11 @@ namespace ImageBasedLighting
 		float3 linFullSample = Color::IrradianceToLinear(fullTexture.SampleLevel(samp, rayDir, level));
 		float envLum = Color::RGBToLuminance(Color::IrradianceToLinear(envTexture.SampleLevel(samp, rayDir, 15)));
 
-		if (GetDALCMode() >= 2) {
+		if (SharedData::iblSettings.DALCMode >= 2) {
 			envSpecular = (linEnvSample / max(envLum, 0.001)) * Color::IrradianceToLinear(directionalAmbientColorSpecular) * SharedData::iblSettings.DALCAmount;
 			skySpecular = max(0, linFullSample - linEnvSample) * SharedData::iblSettings.SkyIBLScale;
 #if defined(SKYLIGHTING)
-			envSpecular *= (GetDALCMode() == 3) ? skylightingVisibility : 1.0;
+			envSpecular *= (SharedData::iblSettings.DALCMode == 3) ? skylightingVisibility : 1.0;
 			skySpecular *= skylightingSpecular;
 #endif
 		} else {
@@ -224,7 +214,7 @@ namespace ImageBasedLighting
 	float3 GetFogIBLColorBlend(float3 fogColor)
 	{
 		float3 iblColor;
-		if (GetDALCMode() >= 2) {
+		if (SharedData::iblSettings.DALCMode >= 2) {
 			float3 dalc0 = Color::Ambient(SharedData::GetAmbient(0.f));
 			iblColor = Color::IrradianceToLinear(dalc0 * SharedData::iblSettings.DALCAmount) + GetSkyIBLColor(float3(0, 0, 0));
 		} else {

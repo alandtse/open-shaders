@@ -130,6 +130,8 @@ public:
 
 	struct CapsuleHistory
 	{
+		// Retain the previous object so a replacement cannot reuse its address.
+		RE::NiPointer<RE::bhkNiCollisionObject> object;
 		float3 pointA;
 		float3 pointB;
 	};

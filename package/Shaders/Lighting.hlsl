@@ -4,10 +4,6 @@
 #	undef SNOW_COVER
 #endif
 
-#if defined(SNOW_COVER_INACTIVE)
-#	undef SNOW_COVER
-#endif
-
 #define LIGHTING
 
 #include "Common/Color.hlsli"
@@ -251,11 +247,7 @@ VS_OUTPUT main(VS_INPUT input)
 	float3x4 worldMatrix =
 		Skinned::GetBoneTransformMatrix(Bones, actualIndices, BonesPivot[eyeIndex], input.BoneWeights);
 #	endif
-#	if defined(NO_TREE_BEND)
-	const bool treeBendEnabled = false;
-#	else
 	const bool treeBendEnabled = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0;
-#	endif
 	TreeWind::Sample treeWindSample;
 	treeWindSample.trunkVelocity = 0.0.xxx;
 	treeWindSample.leafAnimationStrength = 0.0;
@@ -1080,7 +1072,7 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		undef SKYLIGHTING
 #	endif
 
-#	if defined(SKYLIGHTING) && (!defined(NO_LEGACY_SUBSURFACE) || defined(TRUE_PBR))
+#	if defined(SKYLIGHTING)
 #		define SKYLIGHTING_SHADOW_VIS
 #	endif
 
@@ -1127,7 +1119,7 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		undef WETNESS_EFFECTS
 #	endif
 
-#	if defined(WETNESS_EFFECTS) && !defined(DRY_WEATHER) && !defined(HAIR) && !defined(EYE) && !defined(LANDSCAPE)
+#	if defined(WETNESS_EFFECTS) && !defined(HAIR) && !defined(EYE) && !defined(LANDSCAPE)
 #		define CHARACTER_RAIN_SURFACE
 #	endif
 #	if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) &&      \
@@ -1151,7 +1143,7 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 
 #	if defined(LODOBJECTS) || defined(LODOBJECTSHD) || defined(LODLANDSCAPE)
 static const uint RuntimeLightingFlags = 0;
-#	elif defined(LANDSCAPE) || defined(NO_LEGACY_SUBSURFACE)
+#	elif defined(LANDSCAPE)
 static const uint RuntimeLightingFlags = Permutation::LightingFlags::Specular;
 #	else
 static const uint RuntimeLightingFlags = Permutation::LightingFlags::Specular | Permutation::LightingFlags::SoftLighting | Permutation::LightingFlags::RimLighting | Permutation::LightingFlags::BackLighting;
@@ -1403,7 +1395,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	// Lattice cell comes from the geometric UV, before the parallax block below rewrites uv.
 #	if !defined(LANDSCAPE) && (defined(TERRAIN_VARIATION_MESH) || defined(EMAT))
 	StochasticOffsets meshOffset = (StochasticOffsets)0;
-#		if defined(TERRAIN_VARIATION_MESH) && !defined(NO_MESH_VARIATION)
+#		if defined(TERRAIN_VARIATION_MESH)
 	const bool applyMeshTV = (Permutation::ExtraFeatureDescriptor & Permutation::ExtraFeatureFlags::TVMeshVariation) != 0;
 	[branch] if (applyMeshTV)
 	{
@@ -1414,7 +1406,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		endif
 #	endif
 
-#	if defined(TERRAIN_VARIATION_MESH) && !defined(LANDSCAPE) && !defined(NO_MESH_VARIATION)
+#	if defined(TERRAIN_VARIATION_MESH) && !defined(LANDSCAPE)
 #		define MESH_TV_SAMPLE(DEST, TEX, SAMP, UV)                     \
 			{                                                           \
 				[branch] if (applyMeshTV)                               \
@@ -2171,6 +2163,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	else
 	float3 worldNormal = normalize(mul(tbn, normal.xyz));
 #		if defined(TREE_ANIM) && !defined(TRUE_PBR) && !defined(VR)
+#			if defined(SNOW_COVER)
+#				define TREE_SNOW_COVERAGE_NORMAL
+	float3 treeSnowCoverageNormal = worldNormal;
+#			endif
 	float3 viewNormal = normalize(FrameBuffer::WorldToView(worldNormal, false, eyeIndex));
 	viewNormal = float3(viewNormal.xy, -abs(viewNormal.z));
 	worldNormal = normalize(FrameBuffer::ViewToWorld(viewNormal, false, eyeIndex));
@@ -2254,6 +2250,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		if defined(LODOBJECTSHD)
 	projWeight += (-0.5 + input.Color.w) * 2.5;
 #		endif  // LODOBJECTSHD
+#		if defined(TREE_SNOW_COVERAGE_NORMAL)
+	const float treeSnowProjWeight = projWeight + (dot(treeSnowCoverageNormal, texProj) - dot(worldNormal.xyz, texProj)) * vertexAlpha;
+#		endif
 #		if defined(SPARKLE)
 	if (projWeight < 0)
 		discard;
@@ -2284,6 +2283,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		projBaseColor.xyz = pow(abs(projBaseColor.xyz), SharedData::lodBlendingSettings.LODObjectSnowGamma) * SharedData::lodBlendingSettings.LODObjectSnowBrightness;
 #			endif  // LOD_BLENDING
 		float3 projectedWorldNormal = normalize(mul(transpose(tbnTr), finalProjNormal));
+#			if defined(TREE_SNOW_COVERAGE_NORMAL)
+		treeSnowCoverageNormal = normalize(lerp(treeSnowCoverageNormal, ReorientNormal(projectedWorldNormal, treeSnowCoverageNormal, tbnTr[2]), smoothstep(0, 1, 5 * (0.1 + treeSnowProjWeight))));
+#			endif
 #			if defined(SKINNED) || !defined(MODELSPACENORMALS)
 		projectedWorldNormal = ReorientNormal(projectedWorldNormal, worldNormal, tbnTr[2]);
 #			endif
@@ -2326,8 +2328,13 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		const float buriedDepth = max(viewPosition.z - visibleDepth - depthStep, 0.0);
 		[branch] if (buriedDepth > 0.0)
 		{
-			const float3 blendedNormal = lerp(worldNormal, float3(0, 0, 1), saturate(buriedDepth / TerrainBlending::ObjectNormalBlendDepth));
+			const float normalBlend = saturate(buriedDepth / TerrainBlending::ObjectNormalBlendDepth);
+			const float3 blendedNormal = lerp(worldNormal, float3(0, 0, 1), normalBlend);
 			worldNormal = dot(blendedNormal, blendedNormal) > TerrainBlending::MinimumBlendedNormalLengthSquared ? normalize(blendedNormal) : float3(0, 0, 1);
+#		if defined(TREE_SNOW_COVERAGE_NORMAL)
+			const float3 treeSnowBlendedNormal = lerp(treeSnowCoverageNormal, float3(0, 0, 1), normalBlend);
+			treeSnowCoverageNormal = dot(treeSnowBlendedNormal, treeSnowBlendedNormal) > TerrainBlending::MinimumBlendedNormalLengthSquared ? normalize(treeSnowBlendedNormal) : float3(0, 0, 1);
+#		endif
 			localShadowPosition *= 1.0 - buriedDepth / viewPosition.z;
 		}
 	}
@@ -2796,6 +2803,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		if defined(TREE_ANIM)
 		snowNormal = normalize(snowNormal + float3(0, 0, SnowCover::FoliageNormalBias));
 		float3 treeSnowNormal = snowNormal;
+#			if defined(TREE_SNOW_COVERAGE_NORMAL)
+		snowNormal = normalize(treeSnowCoverageNormal + float3(0, 0, SnowCover::FoliageNormalBias));
+#			endif
 		if (SharedData::snowCoverSettings.AffectTreeTint && !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::NoFoliageTint))
 			SnowCover::ApplyFoliageColor(material.BaseColor, SnowCover::GetEnvironmentalMultiplier(adjustedWorldPos));
 #		elif defined(DO_ALPHA_TEST)
@@ -2934,24 +2944,23 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		endif
 	// Calculate raindrop effects
 	float4 raindropInfo = float4(0, 0, 1, 0);
-#		if !defined(DRY_WEATHER)
 	bool shouldCalculateRaindrops = (worldNormal.z > 0.0) &&
 	                                (SharedData::wetnessEffectsSettings.Raining > 0.0) &&
 	                                (SharedData::wetnessEffectsSettings.EnableRaindropFx) &&
 	                                (wetnessOcclusion > 0.5);
-#			if defined(CHARACTER_RAIN_SURFACE)
+#		if defined(CHARACTER_RAIN_SURFACE)
 	shouldCalculateRaindrops = shouldCalculateRaindrops &&
 	                           !(characterRainSurface && SharedData::wetnessEffectsSettings.EnableCharacterRainSpots);
-#			endif
+#		endif
 
 	if (shouldCalculateRaindrops) {
-#			if defined(SKINNED)
+#		if defined(SKINNED)
 		float3 ripplePosition = input.ModelPosition.xyz;
-#			elif defined(DEFERRED)
+#		elif defined(DEFERRED)
 		float3 ripplePosition = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-#			else
+#		else
 		float3 ripplePosition = !FrameBuffer::FrameParams.y ? input.ModelPosition.xyz : input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-#			endif
+#		endif
 		raindropInfo = WetnessEffects::GetRainDrops(ripplePosition, SharedData::wetnessEffectsSettings.Time, wetnessNormal, flatnessAmount);
 	}
 
@@ -2959,18 +2968,14 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float rainWetness = SharedData::wetnessEffectsSettings.Wetness * minWetnessAngle * SharedData::wetnessEffectsSettings.MaxRainWetness;
 	rainWetness = max(rainWetness, raindropInfo.w);
 
-#			if defined(HAIR)
+#		if defined(HAIR)
 	rainWetness = SharedData::wetnessEffectsSettings.HairWetness * SharedData::wetnessEffectsSettings.Wetness;
-#			elif defined(SKIN)
+#		elif defined(SKIN)
 	rainWetness = 0.0f;
-#			endif
-#			if defined(CHARACTER_RAIN_SURFACE)
+#		endif
+#		if defined(CHARACTER_RAIN_SURFACE)
 	if (characterRainSurface)
 		rainWetness = 0.0f;
-#			endif
-
-#		else
-	float rainWetness = 0.0f;
 #		endif
 
 #		if defined(CS_SKIN) && !defined(SKIN)
@@ -2990,11 +2995,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	wetness = max(shoreWetness, rainWetness);
 
 	// Calculate puddle effects
-#		if defined(DRY_WEATHER)
-	const float puddleWetness = 0.0f;
-#		else
 	float puddleWetness = SharedData::wetnessEffectsSettings.PuddleWetness * minWetnessAngle;
-#		endif
 	float puddle = wetness;
 
 #		if !defined(SKINNED) && !defined(SKIN)
@@ -3523,12 +3524,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		transmissionColor += pointLightOutput.transmission;
 	}
 
-#		elif !defined(LLF_NO_LOCAL_LIGHTS) || defined(LLFDEBUG)
+#		else
 
-#			if !defined(LLF_SINGLE_CLUSTER_LIGHT) || defined(LLFDEBUG)
 	uint numClusteredLights = 0;
-	uint clusterIndex = 0;
 	uint totalLightCount = LightLimitFix::NumStrictLights;
+	uint clusterIndex = 0;
 	uint lightOffset = 0;
 	// The viewmodel has no meaningful cluster cell, so it takes StrictLights
 	// exclusively -- mixing in the grid would re-add unrelated distant lights.
@@ -3537,13 +3537,12 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		totalLightCount += numClusteredLights;
 		lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
 	}
-#			endif
 
 #			if defined(LLFDEBUG)
 	LightLimitFix::LLFDebugInfo llfDebug = LightLimitFix::LLFDebugInfoInit();
 #			endif
 
-#			if defined(DEFERRED) && !defined(LLF_NO_CONTACT_SHADOWS)
+#			if defined(DEFERRED)
 	// Contact-shadow setup, gated on the runtime toggle so we don't pay the
 	// noise hash + step-count math for every pixel when the feature is off
 	// (it defaults off). The step count and noise are reused across every
@@ -3562,11 +3561,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	}
 #			endif
 
-#			if defined(LLF_SINGLE_CLUSTER_LIGHT) && !defined(LLFDEBUG)
-	[unroll] for (uint lightIndex = 0; lightIndex < 1; lightIndex++)
-	{
-		LightLimitFix::Light light = LightLimitFix::lights[0];
-#			else
 	[loop] for (uint lightIndex = 0; lightIndex < totalLightCount; lightIndex++)
 	{
 		LightLimitFix::Light light;
@@ -3579,18 +3573,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 			if (LightLimitFix::IsLightIgnored(light))
 				continue;
 		}
-#			endif
 
 		float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WorldPosition.xyz;
-#			if defined(LLF_SINGLE_CLUSTER_LIGHT) && !defined(LLFDEBUG)
-		const float reach = max(light.radius, rcp(light.invRadius)) * (1.0 + 1e-5) + 0.01;
-		[branch] if (any(abs(lightDirection) > reach)) continue;
-		uint clusterIndex = 0;
-		if (!inWorld || LightLimitFix::FirstPerson || !LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex))
-			continue;
-		if (LightLimitFix::lightGrid[clusterIndex].lightCount == 0 || LightLimitFix::IsLightIgnored(light))
-			continue;
-#			endif
 		float lightDist = length(lightDirection);
 
 		float intensityMultiplier = LightLimitFix::GetAttenuation(lightDist, light);
@@ -3603,14 +3587,12 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 		float shadowComponent = 1.0;
 		bool shadowCoverage = false;
-#			if !defined(LLF_NO_LOCAL_LIGHT_SHADOWS)
 		if (inWorld && !inReflection) {
 			if (light.lightFlags & LightLimitFix::LightFlags::Shadow) {
 				shadowComponent = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS + (localShadowPosition - input.WorldPosition.xyz), rotationMatrix, shadowCoverage);
 				lightShadow *= shadowComponent;
 			}
 		}
-#			endif
 
 #			if defined(LLFDEBUG)
 		uint llfShadowType = (light.lightFlags & LightLimitFix::LightFlags::Shadow &&
@@ -3625,7 +3607,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 		float contactShadow = 1.0;
 
-#			if defined(DEFERRED) && !defined(LLF_NO_CONTACT_SHADOWS)
+#			if defined(DEFERRED)
 		// Outer guard: contactShadowSteps > 0 covers both "feature off" and "pixel past
 		// MaxDistance", so all per-light intensity-gate math is paid only when a raymarch
 		// is actually possible. Without this, the falloff math fires for every clustered
@@ -3636,11 +3618,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 			// Clustered lights need a normalized falloff to compare against MinIntensity;
 			// recompute it, since GetAttenuation isn't [0,1]-normalized for inverse-square
 			// lights and the threshold would mean different things otherwise.
-#				if defined(LLF_SINGLE_CLUSTER_LIGHT) && !defined(LLFDEBUG)
-			const bool isClusteredLight = true;
-#				else
 			const bool isClusteredLight = lightIndex >= LightLimitFix::NumStrictLights;
-#				endif
 			bool passesIntensityGate = !isClusteredLight;
 			if (isClusteredLight) {
 				float falloffFactor = saturate(lightDist * light.invRadius);
@@ -3839,7 +3817,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float3 directionalAmbientColor = Color::Ambient(max(0, mul(DirectionalAmbient, float4(ambientNormal, 1.0))));
 
 #	if defined(IBL)
-	if (ImageBasedLighting::IsEnabled()) {
+	if (ImageBasedLighting::UseForDraw()) {
 		if (SharedData::iblSettings.UseStaticIBL && !inWorld && !inReflection) {
 			directionalAmbientColor = ImageBasedLighting::GetStaticDiffuseIBL(ambientNormal, SampColorSampler);
 		}
@@ -3895,7 +3873,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	endif  // defined (HAIR)
 
 #	if defined(IBL)
-	if (ImageBasedLighting::IsEnabled()) {
+	if (ImageBasedLighting::UseForDraw()) {
 		if (!(SharedData::iblSettings.UseStaticIBL && !inWorld && !inReflection)) {
 #		if defined(SKYLIGHTING) && !defined(INTERIOR)
 			directionalAmbientColor = ImageBasedLighting::GetDiffuseIBLOccluded(directionalAmbientColor, -ambientNormal, skylightingDiffuse);
@@ -4132,7 +4110,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	skylightingAlbedo /= Color::PBRLightingScale;
 #		endif
 #		if defined(IBL) && !defined(INTERIOR)
-	if (!ImageBasedLighting::IsEnabled())
+	if (!ImageBasedLighting::UseForDraw())
 #		endif
 	{
 #		if defined(CAPTURE_REFLECTION_RADIANCE)
@@ -4204,7 +4182,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float3 fogColor = Color::Fog(input.FogParam.xyz);
 	float fogFactor = input.FogParam.w;
 #		if defined(IBL)
-	if (ImageBasedLighting::IsEnabled()) {
+	if (SharedData::iblSettings.EnableIBL) {
 		fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
 	}
 #		endif

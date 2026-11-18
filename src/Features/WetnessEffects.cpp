@@ -5,7 +5,6 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "SceneSelector.h"
-#include "ShaderCache.h"
 #include "State.h"
 #include "Utils/MathUtils.h"
 #include "Utils/SettingsControl.h"
@@ -1148,20 +1147,6 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	data.settings.RippleLifetime = settings.RaindropInterval / settings.RippleLifetime;
 	UpdateCharacterRainData(data);
 
-	return data;
-}
-
-WetnessEffects::PerFrame WetnessEffects::PrepareFrameData() const
-{
-	const auto data = GetCommonBufferData();
-	auto& state = *globals::state;
-	constexpr auto dryWeather = SIE::ShaderCache::kLightingDryWeather;
-	state.deferredLightingShaderFlags &= ~dryWeather;
-	if (loaded &&
-		data.Raining == 0.0f && data.Wetness == 0.0f && data.PuddleWetness == 0.0f &&
-		data.CharacterImpactIntensity == 0.0f && data.CharacterRetainedWetness == 0.0f &&
-		data.settings.CharacterSpotDebug == 0 && std::isfinite(data.settings.MaxRainWetness) && std::isfinite(data.settings.HairWetness))
-		state.deferredLightingShaderFlags |= dryWeather;
 	return data;
 }
 

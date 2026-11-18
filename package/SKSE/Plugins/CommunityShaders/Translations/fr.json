@@ -1001,6 +1001,8 @@
     "feature.ibl.enable_ibl": "",
     "feature.ibl.enable_ibl_options": "",
     "feature.ibl.enable_ibl_tooltip": "",
+    "feature.ibl.enable_in_interiors": "Activer l’IBL en intérieur",
+    "feature.ibl.enable_in_interiors_tooltip": "Active l’IBL dans les cellules intérieures.",
     "feature.ibl.enable_in_loading_screen": "",
     "feature.ibl.enable_in_loading_screen_tooltip": "",
     "feature.ibl.enable_in_world_map": "",

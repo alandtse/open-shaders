@@ -42,6 +42,29 @@ namespace
 		return settings.DALCMode;
 	}
 
+	/** @brief Flags Lighting passes drawn into the inventory, magic or book 3D menu scene so shaders can skip IBL for them. */
+	void UpdateMenuItemDescriptor(const RE::BSRenderPass* a_pass)
+	{
+		constexpr auto menuItem = static_cast<uint32_t>(State::ExtraShaderDescriptors::MenuItem);
+		constexpr auto worldDraw = static_cast<uint32_t>(State::ExtraShaderDescriptors::InWorld) |
+		                           static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections);
+		auto& descriptor = globals::state->permutationData.ExtraShaderDescriptor;
+		descriptor &= ~menuItem;
+		if ((descriptor & worldDraw) || !a_pass || !a_pass->shader || a_pass->shader->shaderType.get() != RE::BSShader::Type::Lighting)
+			return;
+
+		const auto* menuScene = RE::UI3DSceneManager::GetSingleton();
+		const auto* accumulator = *globals::game::currentAccumulator.get();
+		if (!menuScene || !menuScene->shadowSceneNode || !accumulator ||
+			accumulator->GetRuntimeData().activeShadowSceneNode != menuScene->shadowSceneNode)
+			return;
+
+		const auto scheme = menuScene->currentlightScheme;
+		if (scheme == RE::INTERFACE_LIGHT_SCHEME::kInventory || scheme == RE::INTERFACE_LIGHT_SCHEME::kInventoryMagic ||
+			scheme == RE::INTERFACE_LIGHT_SCHEME::kBook)
+			descriptor |= menuItem;
+	}
+
 	void DrawEnableCheckbox(const char* label, bool& disableSetting)
 	{
 		bool enableSetting = !disableSetting;
@@ -63,6 +86,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SkyIBLSaturation,
 	FogAmount,
 	DALCMode,
+	DisableInInteriors,
 	DisableInWorldMap,
 	DisableInLoadingScreen)
 
@@ -76,6 +100,10 @@ void IBL::DrawSettings()
 		ImGui::Text("%s", T(TKEY("enable_ibl_tooltip"), "Toggle IBL. When enabled, ambient lighting is derived from cubemap spherical harmonics instead of the vanilla system."));
 	}
 	if (ImGui::TreeNodeEx(T(TKEY("enable_ibl_options"), "Enable IBL Options"), ImGuiTreeNodeFlags_None)) {
+		DrawEnableCheckbox(T(TKEY("enable_in_interiors"), "Enable Interior IBL"), settings.DisableInInteriors);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("enable_in_interiors_tooltip"), "Enables IBL in interior cells."));
+		}
 		DrawEnableCheckbox(T(TKEY("enable_in_world_map"), "Enable World Map IBL"), settings.DisableInWorldMap);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("enable_in_world_map_tooltip"), "Enables IBL while the world map is open."));
@@ -185,7 +213,7 @@ void IBL::RestoreDefaultSettings()
 	settings = {};
 }
 
-IBL::PerFrame IBL::PrepareFrameData()
+IBL::PerFrame IBL::GetCommonBufferData() const
 {
 	const bool sceneDisabled = IsDisabledForCurrentScene();
 	PerFrame data = {
@@ -224,12 +252,6 @@ IBL::PerFrame IBL::PrepareFrameData()
 	if (!useStatic && !dynamicIBLValid)
 		data.EnableIBL = 0;
 
-	constexpr auto luminanceRatio = static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::IBLLuminanceRatio);
-	auto& flags = globals::state->deferredLightingShaderFlags;
-	flags &= ~luminanceRatio;
-	if (loaded && data.EnableIBL && data.DALCMode == kDALCLuminanceRatioMode)
-		flags |= luminanceRatio;
-
 	return data;
 }
 
@@ -257,7 +279,7 @@ bool IBL::IsDisabledForCurrentScene() const
 	if (state->isMapMenuOpen)
 		return settings.DisableInWorldMap;
 
-	return false;
+	return settings.DisableInInteriors && Util::IsInterior();
 }
 
 void IBL::ReflectionsPrepass()
@@ -331,8 +353,9 @@ json IBL::GetDiagnostics()
 	};
 }
 
-std::function<void()> IBL::OnRenderPassBegin(const RE::BSRenderPass*)
+std::function<void()> IBL::OnRenderPassBegin(const RE::BSRenderPass* a_pass)
 {
+	UpdateMenuItemDescriptor(a_pass);
 	if (!capturingRadiance)
 		return nullptr;
 	return [this]() { RestoreCaptureTargets(); };
