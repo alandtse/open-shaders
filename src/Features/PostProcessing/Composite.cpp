@@ -27,7 +27,7 @@ void Composite::UpdateAutoEnabled()
 	auto* exposure = owner->GetPipelineFeature<HistogramAutoExposure>(PostProcessing::FeaturePipelineIndex::AutoExposure);
 	auto* localExposure = owner->GetPipelineFeature<LocalExposure>(PostProcessing::FeaturePipelineIndex::LocalExposure);
 
-	enabled = (bloom && bloom->enabled) || (flare && flare->enabled) || (glare && glare->enabled) || (physicalLens && physicalLens->enabled) || (exposure && exposure->IsActive()) || (localExposure && localExposure->enabled);
+	enabled = (bloom && bloom->enabled) || (flare && flare->enabled) || (glare && glare->enabled) || (physicalLens && physicalLens->IsActive()) || (exposure && exposure->IsActive()) || (localExposure && localExposure->enabled);
 }
 
 void Composite::SetupResources()
@@ -125,9 +125,9 @@ void Composite::Draw(TextureInfo& inout_tex)
 
 	bool hasBloom = bloom && bloom->enabled && bloom->GetBloomOutput().srv;
 	bool hasFlare = flare && flare->enabled && flare->GetGhostHaloOutput().srv;
-	bool hasPhysicalFlare = physicalLens && physicalLens->enabled && physicalLens->GetOutput().srv;
-	bool hasPhysicalLens = physicalLens && physicalLens->enabled && physicalLens->GetCameraMapSRV();
-	bool hasPhysicalWave = physicalLens && physicalLens->enabled && physicalLens->GetDiffractionCB();
+	bool hasPhysicalFlare = physicalLens && physicalLens->IsActive() && physicalLens->GetOutput().srv;
+	bool hasPhysicalLens = physicalLens && physicalLens->IsActive() && physicalLens->GetCameraMapSRV();
+	bool hasPhysicalWave = physicalLens && physicalLens->IsActive() && physicalLens->GetDiffractionCB();
 	bool hasGlare = glare && glare->enabled && glare->GetGlareOutput().srv;
 	bool hasExposure = exposure && exposure->HasActiveAdaptation();
 	bool hasLocalExposure = localExposure && localExposure->enabled && localExposure->GetLogLuminanceSRV();

@@ -2,6 +2,7 @@
 #include "PhysicalLensBindings.h"
 
 #include "Features/PostProcessing.h"
+#include "GpuPass.h"
 #include "RasterPass.h"
 #include "State.h"
 #include "Util.h"
@@ -249,6 +250,16 @@ void PhysicalLens::ClearShaderCache()
 	shadersRequested = false;
 	if (IsActive() && resourcesReady)
 		CompileShaders();
+}
+
+bool PhysicalLens::IsVisible() const
+{
+	return !globals::game::isVR;
+}
+
+bool PhysicalLens::IsActive() const
+{
+	return enabled && !globals::game::isVR;
 }
 
 void PhysicalLens::SetupResources()
@@ -686,8 +697,8 @@ void PhysicalLens::UpdateCameraMapping(float aspect)
 		cameraParameters->Update(data);
 		cameraTableParameters->Update(table);
 		auto* ctx = globals::d3d::context;
-		globals::profiler->BeginPass("PostProcessing::PhysicalLensMapping");
 		{
+			CS_GPU_PASS("PostProcessing::PhysicalLensMapping");
 			PostProcessingRaster::RasterPass raster(ctx);
 			OpticalBindings bindings(ctx);
 			ctx->OMSetRenderTargets(0, nullptr, nullptr);
@@ -698,7 +709,6 @@ void PhysicalLens::UpdateCameraMapping(float aspect)
 			ctx->CSSetShader(shader.get(), nullptr, 0);
 			ctx->Dispatch(table.width, table.height, 3);
 		}
-		globals::profiler->EndPass();
 		cachedCameraParameters = data;
 		cachedCameraTable = table;
 		cameraValid = true;
@@ -762,8 +772,8 @@ bool PhysicalLens::UpdateDiffraction(unsigned width, unsigned height)
 		cameraTableParameters->Update(table);
 		waveParameters->Update(sampling);
 		auto* ctx = globals::d3d::context;
-		globals::profiler->BeginPass("PostProcessing::PhysicalLensDiffractionCache");
 		{
+			CS_GPU_PASS("PostProcessing::PhysicalLensDiffractionCache");
 			PostProcessingRaster::RasterPass raster(ctx);
 			OpticalBindings bindings(ctx);
 			ctx->OMSetRenderTargets(0, nullptr, nullptr);
@@ -797,7 +807,6 @@ bool PhysicalLens::UpdateDiffraction(unsigned width, unsigned height)
 			dispatch(6, waveTextures[1]->srv.get(), waveMaxMipUAVs[0].get(), 3, 64, 64, 3);
 			for (unsigned mip = 1; mip < 7; ++mip) dispatch(7, waveMaxMipSRVs[mip - 1].get(), waveMaxMipUAVs[mip].get(), 3, std::max(1u, (64u >> mip) / 8), std::max(1u, (64u >> mip) / 8), 3);
 		}
-		globals::profiler->EndPass();
 		cachedWaveOptics = optics;
 		cachedWaveTable = table;
 		cachedWaveParameters = sampling;
@@ -826,8 +835,8 @@ bool PhysicalLens::UpdateGhostWave()
 	if (ghostWaveValid && data.aperture == cachedGhostWave.aperture && data.surface == cachedGhostWave.surface)
 		return true;
 	auto* ctx = globals::d3d::context;
-	globals::profiler->BeginPass("PostProcessing::PhysicalLensGhostWaveCache");
 	{
+		CS_GPU_PASS("PostProcessing::PhysicalLensGhostWaveCache");
 		PostProcessingRaster::RasterPass raster(ctx);
 		OpticalBindings bindings(ctx);
 		ctx->OMSetRenderTargets(0, nullptr, nullptr);
@@ -840,7 +849,6 @@ bool PhysicalLens::UpdateGhostWave()
 			{ waveTextures[0]->uav.get(), waveTextures[2]->uav.get() }, ghostMaterial->srv.get(), ghostMaterial->uav.get(),
 			ghostDiffraction->srv.get(), ghostDiffraction->uav.get());
 	}
-	globals::profiler->EndPass();
 	cachedGhostWave = data;
 	ghostWaveValid = true;
 	return true;
@@ -1000,8 +1008,8 @@ void PhysicalLens::Draw(TextureInfo& input)
 	data.manualExposure = local && local->enabled && local->GetLogLuminanceSRV() ? local->settings.Exposure : 1.f;
 	parameters->Update(data);
 	auto* ctx = globals::d3d::context;
-	globals::profiler->BeginPass("PostProcessing::PhysicalLensFlare");
 	{
+		CS_GPU_PASS("PostProcessing::PhysicalLensFlare");
 		PostProcessingRaster::RasterPass raster(ctx);
 		OpticalBindings bindings(ctx);
 		ctx->OMSetRenderTargets(0, nullptr, nullptr);
@@ -1223,6 +1231,5 @@ void PhysicalLens::Draw(TextureInfo& input)
 			ctx->Dispatch((unsigned(data.outputWidth) + 7) / 8, (unsigned(data.outputHeight) + 7) / 8, 1);
 		}
 	}
-	globals::profiler->EndPass();
 	outputReady = settings.Intensity > 0;
 }
