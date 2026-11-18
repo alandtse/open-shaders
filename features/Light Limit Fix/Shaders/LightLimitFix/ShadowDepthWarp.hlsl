@@ -8,6 +8,13 @@
 // LightLimitFix.hlsli: depth = |lightSpace| / radius, paraboloid UV from the half vector,
 // omni tiles stack the upper (y < 0.5) and lower (y >= 0.5) paraboloid.
 
+/// Paraboloid coordinates of a tile UV; |q| <= 1 inside the paraboloid's rim.
+float2 TileToParaboloid(float2 uv, bool omni)
+{
+	const bool upper = uv.y < 0.5;
+	return float2(2.0 * uv.x - 1.0, omni ? (upper ? 4.0 * uv.y - 1.0 : 4.0 * (1.0 - uv.y) - 1.0) : (2.0 * uv.y - 1.0));
+}
+
 #ifdef CSHADER
 
 Texture2D<float> StaticDepth : register(t0);
@@ -36,12 +43,8 @@ cbuffer WarpParams : register(b0)
 	const bool omni = IsOmni == 2;
 	const float2 uv = (float2(id.xy) + 0.5) / TileSize;
 	const bool upper = omni ? (uv.y < 0.5) : true;
-	float2 q;
-	q.x = 2.0 * uv.x - 1.0;
-	q.y = omni ? (upper ? 4.0 * uv.y - 1.0 : 4.0 * (1.0 - uv.y) - 1.0) : (2.0 * uv.y - 1.0);
+	const float2 q = TileToParaboloid(uv, omni);
 	const float q2 = dot(q, q);
-	if (q2 > 0.96)
-		return;  // corners of the square tile hold no paraboloid data
 
 	const float inv = 1.0 / (1.0 + q2);
 	const float sgn = upper ? 1.0 : -1.0;
@@ -85,8 +88,20 @@ cbuffer ResolveParams : register(b0)
 {
 	uint2 DstOrigin;  // tile origin in the live atlas
 	uint TileSize;
-	uint _pad;
+	uint IsOmni;  // 2 = dual paraboloid, 1 = single paraboloid
 };
+
+/// True when texel s belongs to texel p's paraboloid: the same half of an omni tile, and
+/// within a texel of the rim.
+bool SameParaboloid(int2 p, int2 s)
+{
+	const bool omni = IsOmni == 2;
+	const int seamRow = int(TileSize) / 2;
+	if (any(s < 0) || any(s >= int(TileSize)) || (omni && (p.y < seamRow) != (s.y < seamRow)))
+		return false;
+	const float2 q = TileToParaboloid((float2(s) + 0.5) / TileSize, omni);
+	return dot(q, q) <= 1.0 + 8.0 / TileSize;
+}
 
 float main(float4 position : SV_Position) : SV_Depth
 {
@@ -99,13 +114,15 @@ float main(float4 position : SV_Position) : SV_Depth
 	// of the neighbourhood was written, otherwise leave the texel at far depth.
 	float nearest = 1e9;
 	uint neighbours = 0;
+	uint eligible = 0;
 	[unroll] for (int dy = -1; dy <= 1; dy++)
 	{
 		[unroll] for (int dx = -1; dx <= 1; dx++)
 		{
-			if (dx == 0 && dy == 0)
+			const int2 s = p + int2(dx, dy);
+			if ((dx == 0 && dy == 0) || !SameParaboloid(p, s))
 				continue;
-			const int2 s = clamp(p + int2(dx, dy), 0, int(TileSize) - 1);
+			eligible++;
 			const uint v = Warped.Load(int3(s, 0));
 			if (v != 0xFFFFFFFFu) {
 				nearest = min(nearest, asfloat(v));
@@ -113,7 +130,7 @@ float main(float4 position : SV_Position) : SV_Depth
 			}
 		}
 	}
-	return neighbours >= 5 ? saturate(nearest) : 1.0;
+	return neighbours >= 2 && neighbours * 8 >= eligible * 5 ? saturate(nearest) : 1.0;
 }
 
 #endif

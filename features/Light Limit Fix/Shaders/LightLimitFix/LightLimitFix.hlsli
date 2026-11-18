@@ -570,6 +570,37 @@ namespace LightLimitFix
 		return shadow / 8.0;
 	}
 
+	/// Radius, in paraboloid units, of the rim a PCF tap is held inside: one texel of the tile's
+	/// coarser axis short of the edge the paraboloid pass rasterizes to.
+	float GetParaboloidRimRadius(bool useAtlas, float4 atlasRect, float tileScale, bool isDualParaboloid)
+	{
+		float width, height, slices;
+		[branch] if (useAtlas)
+		{
+			ShadowAtlasTex.GetDimensions(width, height);
+			height *= atlasRect.y;
+		}
+		else
+		{
+			ShadowMaps.GetDimensions(width, height, slices);
+			height *= tileScale;
+		}
+		return 1.0 - (isDualParaboloid ? 4.0 : 2.0) / max(height, 1.0);
+	}
+
+	/// Pulls a tap back inside its own paraboloid: past the rim the map holds no depth and reads
+	/// as lit, which lightens every shadow along the seam between the two halves.
+	float2 ClampToParaboloid(float2 uv, bool lowerHalf, bool isDualParaboloid, float rimRadius)
+	{
+		float2 q;
+		q.x = 2.0 * uv.x - 1.0;
+		q.y = isDualParaboloid ? (lowerHalf ? 3.0 - 4.0 * uv.y : 4.0 * uv.y - 1.0) : 2.0 * uv.y - 1.0;
+		const float q2 = dot(q, q);
+		[branch] if (q2 <= rimRadius * rimRadius) return uv;
+		q *= rimRadius * rsqrt(q2);
+		return float2(q.x * 0.5 + 0.5, isDualParaboloid ? (lowerHalf ? 3.0 - q.y : q.y + 1.0) * 0.25 : q.y * 0.5 + 0.5);
+	}
+
 	// PCF sample around a paraboloid UV.
 	//   isDualParaboloid = true  : the slice contains two stacked paraboloids
 	//                              (omni: upper in y∈[0,0.5], lower in y∈[0.5,1]).
@@ -585,19 +616,15 @@ namespace LightLimitFix
 		GetShadowTapClamp(useAtlas, atlasRect, tileScale, clampLo, clampHi);
 		[branch] if (sampleCount <= 1) return SampleShadowTapBilinear(shadowIndex, sampleUV, depth, useAtlas, atlasRect, tileScale, clampLo, clampHi);
 		float shadow = 0.0;
+		const bool lowerHalf = isDualParaboloid && sampleUV.y >= 0.5;
+		const float rimRadius = GetParaboloidRimRadius(useAtlas, atlasRect, tileScale, isDualParaboloid);
 
 		// See GetSpotlightShadow: dynamic loop instead of unrolling the
 		// branchy tap body 8x.
 		[loop] for (int i = 0; i < 8; i++)
 		{
 			float2 offset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix) * PCFRadius2D;
-			float2 uv = sampleUV + offset;
-
-			if (isDualParaboloid) {
-				// Clamp PCF samples to the originating paraboloid half
-				// (full-slice space; the tile/atlas mapping below preserves it).
-				uv.y = (sampleUV.y >= 0.5) ? max(uv.y, 0.5) : min(uv.y, 0.5);
-			}
+			float2 uv = ClampToParaboloid(sampleUV + offset, lowerHalf, isDualParaboloid, rimRadius);
 
 			shadow += SampleShadowTap(shadowIndex, uv, depth, useAtlas, atlasRect, tileScale, clampLo, clampHi);
 		}

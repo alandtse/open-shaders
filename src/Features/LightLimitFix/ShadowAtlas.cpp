@@ -1269,7 +1269,7 @@ namespace ShadowCasterManager
 		context->CSSetConstantBuffers(0, 1, &nullCb);
 		context->CSSetShader(nullptr, nullptr, 0);
 
-		const uint32_t resolve[4] = { t.x, t.y, t.size, 0 };
+		const uint32_t resolve[4] = { t.x, t.y, t.size, isOmni };
 		context->UpdateSubresource(s_atlas.warpResolveParams.get(), 0, nullptr, resolve, 0, 0);
 		Util::FullscreenPassScope savedState(context);
 		context->OMSetRenderTargets(0, nullptr, s_atlas.dsv.get());
