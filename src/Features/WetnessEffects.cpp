@@ -58,9 +58,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CharacterRainActivityMultiplier,
 	CharacterDryTime,
 	EnableWeaponRainDrops,
-	EnvironmentDropSize,
-	EnvironmentDropBrightness,
-	EnvironmentDropReflectivity,
 	WallRainDensity,
 	WallRainDropSize,
 	WallRainSpeed,
@@ -120,14 +117,6 @@ namespace
 		static constexpr float kMaximumActivity = 8.0f;
 		static constexpr float kMinimumDryTime = 2.0f;
 		static constexpr float kMaximumDryTime = 60.0f;
-		static constexpr float kMinimumEnvironmentDropSize = 0.25f;
-		static constexpr float kMaximumEnvironmentDropSize = 2.0f;
-
-		static constexpr float kMinimumEnvironmentDropBrightness = 0.0f;
-		static constexpr float kMaximumEnvironmentDropBrightness = 3.0f;
-
-		static constexpr float kMinimumEnvironmentDropReflectivity = 0.0f;
-		static constexpr float kMaximumEnvironmentDropReflectivity = 3.0f;
 	};
 }
 
@@ -758,13 +747,6 @@ void WetnessEffects::DrawEnvironmentWetnessSettings()
 
 		ImGui::TreePop();
 	}
-	ImGui::Spacing();
-	if (ImGui::TreeNodeEx(T(TKEY("environment_wall_droplets"), "Environmental Wall Droplets"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::SliderFloat(T(TKEY("environment_drop_size"), "Size"), &settings.EnvironmentDropSize, 0.25f, 2.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("environment_drop_brightness"), "Brightness"), &settings.EnvironmentDropBrightness, 0.0f, 3.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("environment_drop_reflectivity"), "Reflectivity"), &settings.EnvironmentDropReflectivity, 0.0f, 3.0f, "%.2f");
-		ImGui::TreePop();
-	}
 	// The weather picker has no scene-context meaning, so hide it while a Scene Manager replica is
 	// borrowing this panel to author overrides.
 	if (SettingsControl::IsReplicating())
@@ -950,6 +932,7 @@ void WetnessEffects::DrawCharacterRainSettings()
 	if (Util::Button(T(TKEY("character_restore_defaults"), "Restore Character Wet Defaults")))
 		RestoreCharacterRainDefaults();
 
+	ImGui::BeginDisabled(characterEffectsDisabled);
 	const char* debugModes[] = {
 		T(TKEY("character_debug_shading"), "Water Shading"),
 		T(TKEY("character_debug_combined"), "Combined Coverage"),
@@ -957,21 +940,10 @@ void WetnessEffects::DrawCharacterRainSettings()
 		T(TKEY("character_debug_impacts"), "Arriving Drops Only"),
 		T(TKEY("character_debug_flow"), "Flowing Rivulets Only"),
 		T(TKEY("character_debug_surfaces"), "Eligible Character Surfaces"),
-		T(TKEY("character_debug_weapons"), "Held Weapon Classification"),
-		T(TKEY("character_debug_environment"), "Wall Droplet Coverage")
+		T(TKEY("character_debug_weapons"), "Held Weapon Classification")
 	};
 	static_assert(std::size(debugModes) == static_cast<std::size_t>(CharacterDebugMode::Count));
-	ImGui::BeginDisabled(!settings.EnableWetnessEffects);
-	const char* const waterLayerDebugLabel = T(TKEY("character_spot_debug"), "Water Layer Debug");
-	if (characterEffectsDisabled) {
-		const char* const environmentOnlyModes[] = { debugModes[0], debugModes[static_cast<std::size_t>(CharacterDebugMode::Environment)] };
-		static constexpr std::array<std::uint32_t, 2> environmentOnlyValues{ 0u, static_cast<std::uint32_t>(CharacterDebugMode::Environment) };
-		Util::Combo(waterLayerDebugLabel, &settings.CharacterSpotDebug, environmentOnlyModes, environmentOnlyValues);
-	} else {
-		Util::Combo(waterLayerDebugLabel, &settings.CharacterSpotDebug, debugModes);
-	}
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("character_debug_environment_tooltip"), "Wall Droplet Coverage works without character drops. Magenta: droplet hit. Green: evaluated, no hit. Yellow: draw has the CharacterLight flag and is skipped. Skin, skinned, hair and eye permutations compile out the wall droplet path, so no overlay there means excluded at compile time, not that the surface is not a character."));
+	Util::Combo(T(TKEY("character_spot_debug"), "Water Layer Debug"), &settings.CharacterSpotDebug, debugModes);
 	ImGui::EndDisabled();
 }
 
@@ -1238,7 +1210,7 @@ void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data) const
 		float minimum;
 		float maximum;
 	};
-	static constexpr std::array<SettingRange, 12> characterRainSettingRanges{ {
+	static constexpr std::array<SettingRange, 9> characterRainSettingRanges{ {
 		{ &Settings::CharacterSpotDensity, CharacterRainSettingLimits::kMinimumDensity, CharacterRainSettingLimits::kMaximumDensity },
 		{ &Settings::CharacterSpotRadius, CharacterRainSettingLimits::kMinimumRadius, CharacterRainSettingLimits::kMaximumRadius },
 		{ &Settings::CharacterSpotStrength, CharacterRainSettingLimits::kMinimumStrength, CharacterRainSettingLimits::kMaximumStrength },
@@ -1248,9 +1220,6 @@ void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data) const
 		{ &Settings::CharacterWetSheen, CharacterRainSettingLimits::kMinimumWetSheen, CharacterRainSettingLimits::kMaximumWetSheen },
 		{ &Settings::CharacterRainActivityMultiplier, CharacterRainSettingLimits::kMinimumActivity, CharacterRainSettingLimits::kMaximumActivity },
 		{ &Settings::CharacterDryTime, CharacterRainSettingLimits::kMinimumDryTime, CharacterRainSettingLimits::kMaximumDryTime },
-		{ &Settings::EnvironmentDropSize, CharacterRainSettingLimits::kMinimumEnvironmentDropSize, CharacterRainSettingLimits::kMaximumEnvironmentDropSize },
-		{ &Settings::EnvironmentDropBrightness, CharacterRainSettingLimits::kMinimumEnvironmentDropBrightness, CharacterRainSettingLimits::kMaximumEnvironmentDropBrightness },
-		{ &Settings::EnvironmentDropReflectivity, CharacterRainSettingLimits::kMinimumEnvironmentDropReflectivity, CharacterRainSettingLimits::kMaximumEnvironmentDropReflectivity },
 	} };
 	const Settings defaults{};
 	for (const auto& range : characterRainSettingRanges) {
@@ -1260,11 +1229,7 @@ void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data) const
 	a_data.settings.EnableCharacterRainSpots = settings.EnableWetnessEffects && settings.EnableCharacterRainSpots;
 	a_data.settings.EnableWeaponRainDrops = a_data.settings.EnableCharacterRainSpots &&
 	                                        settings.EnableWeaponRainDrops;
-	const auto environmentDebugMode = static_cast<std::uint32_t>(CharacterDebugMode::Environment);
-	const bool debugModeAllowed = settings.CharacterSpotDebug == environmentDebugMode ?
-	                                  settings.EnableWetnessEffects :
-	                                  a_data.settings.EnableCharacterRainSpots;
-	a_data.settings.CharacterSpotDebug = debugModeAllowed ?
+	a_data.settings.CharacterSpotDebug = a_data.settings.EnableCharacterRainSpots ?
 	                                         std::min(settings.CharacterSpotDebug, kMaximumCharacterRainDebugMode) :
 	                                         0u;
 	float weatherIntensity = std::sqrt(std::clamp(a_data.Wetness, 0.0f, 1.0f));

@@ -1142,14 +1142,6 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #	if defined(WETNESS_EFFECTS) && !defined(HAIR) && !defined(EYE) && !defined(LANDSCAPE)
 #		define CHARACTER_RAIN_SURFACE
 #	endif
-#	if defined(WETNESS_EFFECTS) && defined(CHARACTER_RAIN_SURFACE) &&      \
-		!defined(SKINNED) && !defined(SKIN) && !defined(HAIR) &&            \
-		!defined(EYE) && !defined(FACEGEN) && !defined(FACEGEN_RGB_TINT) && \
-		!defined(TREE_ANIM) && !defined(FUR_SHELLS) &&                      \
-		!defined(LANDSCAPE) && !defined(LODLANDSCAPE) &&                    \
-		!defined(LODLANDNOISE) && !defined(LOD) && !defined(WORLD_MAP)
-#		define ENVIRONMENT_RAIN_DROPS
-#	endif
 #	if defined(WETNESS_EFFECTS)
 #		include "WetnessEffects/WetnessEffects.hlsli"
 #		if defined(CHARACTER_RAIN_SURFACE)
@@ -2902,12 +2894,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float waterRoughnessSpecular = 1;
 
 #	if defined(WETNESS_EFFECTS)
-#		if defined(ENVIRONMENT_RAIN_DROPS)
-	float environmentRainCoverage = 0.0f;
-	float3 environmentRainNormal = float3(0.0f, 0.0f, 1.0f);
-	float environmentRainBrightness = 1.0f;
-#		endif
-
 #		if defined(SKYLIGHTING)
 	float wetnessOcclusion = inWorld ? saturate(SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1))) : 0.0;
 #		else
@@ -2930,29 +2916,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	                                    max(SharedData::wetnessEffectsSettings.CharacterImpactIntensity,
 											SharedData::wetnessEffectsSettings.CharacterRetainedWetness) > 0.0f &&
 	                                    (!heldWeapon || SharedData::wetnessEffectsSettings.EnableWeaponRainDrops);
-#			if defined(ENVIRONMENT_RAIN_DROPS)
-	const bool evaluateEnvironmentDrops =
-		!characterRainSurface &&
-		(Permutation::PixelShaderDescriptor & Permutation::LightingFlags::CharacterLight) == 0 &&
-		SharedData::wetnessEffectsSettings.EnableRaindropFx &&
-		SharedData::wetnessEffectsSettings.Raining > 0.01f &&
-		!SharedData::InInterior &&
-		inWorld &&
-		!SharedData::HideSky &&
-		abs(vertexNormal.z) < 0.60f;
-	const float environmentSize = SharedData::wetnessEffectsSettings.EnvironmentDropSize;
-#			else
-	const bool evaluateEnvironmentDrops = false;
-	const float environmentSize = 1.0f;
-#			endif
-	[branch] if (evaluateCharacterDrops || evaluateEnvironmentDrops)
+	[branch] if (evaluateCharacterDrops)
 	{
-		characterDrop = CharacterRainSpots::Evaluate(
-			evaluateEnvironmentDrops ? input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz : input.ModelPosition.xyz,
-			input.WorldPosition.xyz, vertexNormal.xyz,
-			evaluateEnvironmentDrops ? wetnessOcclusion : characterRainSkyVisibility,
-			evaluateEnvironmentDrops ? false : heldWeapon, eyeIndex,
-			evaluateEnvironmentDrops ? -environmentSize : 1.0f);
+		characterDrop = CharacterRainSpots::Evaluate(input.ModelPosition.xyz,
+			input.WorldPosition.xyz, vertexNormal.xyz, characterRainSkyVisibility, heldWeapon, eyeIndex);
 	}
 	float characterSpotMask = characterDrop.x;
 #		endif
@@ -3027,44 +2994,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float3 wetnessNormal = wetnessState.normal;
 	waterRoughnessSpecular = wetnessState.roughness;
 
-	// Experimental environmental droplets using the character rain geometry.
-	// Character surfaces retain their existing, independent rendering path.
-#		if defined(ENVIRONMENT_RAIN_DROPS)
-	[branch] if (evaluateEnvironmentDrops)
-	{
-		float3 environmentDrops = characterDrop;
-
-		float environmentCoverage = environmentDrops.x *
-		                            saturate(SharedData::wetnessEffectsSettings.Raining);
-
-		environmentRainBrightness =
-			SharedData::wetnessEffectsSettings.EnvironmentDropBrightness;
-
-		float environmentHeight =
-			environmentDrops.y *
-			environmentSize *
-			CharacterRainSpots::DropHeightScale;
-
-		float3 environmentNormal =
-			CharacterRainSpots::CalculateWorldNormalFromHeight(
-				environmentHeight,
-				input.WorldPosition.xyz,
-				normalize(lerp(worldNormal.xyz, vertexNormal.xyz, 0.75f)));
-
-		// Save droplet information for the lighting calculations.
-		environmentRainCoverage = environmentCoverage;
-		environmentRainNormal = environmentNormal;
-
-		wetnessNormal = normalize(lerp(
-			wetnessNormal,
-			environmentNormal,
-			saturate(environmentCoverage * environmentRainBrightness)));
-
-		// Dedicated droplet highlights are handled separately.
-		// Preserve the normal environmental wetness response.
-	}
-#		endif
-
 #		if defined(CHARACTER_RAIN_SURFACE)
 	float3 characterSpotSurfaceNormal = worldNormal.xyz;
 	float characterSpotRoughness = 1.0f;
@@ -3093,15 +3022,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		                               saturate(characterRetainedWetness * SharedData::wetnessEffectsSettings.CharacterWetSheen);
 		characterCoatMask = max(characterSpotMask, characterSheenMask);
 	}
-#			if defined(ENVIRONMENT_RAIN_DROPS)
-	[branch] if (environmentRainCoverage > 0.0f)
-	{
-		characterSpotSurfaceNormal = environmentRainNormal;
-		characterSpotRoughness = 0.12f;
-		characterCoatMask = environmentRainCoverage * environmentRainBrightness;
-		characterCoatIntensity = SharedData::wetnessEffectsSettings.EnvironmentDropReflectivity;
-	}
-#			endif
 	// The thin surface film supplies broad gloss while localized drops retain their own normal and absorption.
 	[branch] if (characterRainSurface && characterCoatMask > 0.0f && inWorld)
 	{
@@ -4154,11 +4074,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		color.xyz += characterSpotReflectance * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(characterSpotSurfaceNormal, viewDirection, characterSpotRoughness);
 #				endif
 #			else
-#				if defined(ENVIRONMENT_RAIN_DROPS)
-		color.xyz += characterSpotReflectance * (environmentRainCoverage > 0.0f ? directionalAmbientColor : characterRainAmbientColor);
-#				else
 		color.xyz += characterSpotReflectance * characterRainAmbientColor;
-#				endif
 #			endif
 	}
 #		endif
@@ -4477,7 +4393,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	endif
 
 #	if defined(CHARACTER_RAIN_SURFACE)
-	if (SharedData::wetnessEffectsSettings.CharacterSpotDebug && SharedData::wetnessEffectsSettings.CharacterSpotDebug != CharacterRainSpots::EnvironmentDebugMode && characterRainSurface && inWorld) {
+	if (SharedData::wetnessEffectsSettings.CharacterSpotDebug && characterRainSurface && inWorld) {
 		float characterDebugMask = SharedData::wetnessEffectsSettings.CharacterSpotDebug == CharacterRainSpots::SurfaceDebugMode ? 1.0f :
 		                                                                                                                           (SharedData::wetnessEffectsSettings.CharacterSpotDebug == CharacterRainSpots::WeaponDebugMode ? float(heldWeapon) : characterSpotMask);
 		psout.Diffuse.xyz = characterDebugMask.xxx;
@@ -4485,26 +4401,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		psout.Specular.xyz = 0.0f;
 		psout.Albedo.xyz = 0.0f;
 		psout.Reflectance.xyz = 0.0f;
-#		endif
-	}
-#	endif
-
-#	if defined(ENVIRONMENT_RAIN_DROPS)
-	if (SharedData::wetnessEffectsSettings.CharacterSpotDebug == CharacterRainSpots::EnvironmentDebugMode && inWorld) {
-		const bool characterSkipped = (Permutation::PixelShaderDescriptor & Permutation::LightingFlags::CharacterLight) != 0;
-		if (environmentRainCoverage > 0.0f) {
-			psout.Diffuse.xyz = float3(1.0f, 0.0f, 1.0f);
-		} else if (evaluateEnvironmentDrops) {
-			psout.Diffuse.xyz = float3(0.0f, 1.0f, 0.0f);
-		} else if (characterSkipped) {
-			psout.Diffuse.xyz = float3(1.0f, 1.0f, 0.0f);
-		}
-#		if defined(DEFERRED)
-		if (environmentRainCoverage > 0.0f || evaluateEnvironmentDrops || characterSkipped) {
-			psout.Specular.xyz = 0.0f;
-			psout.Albedo.xyz = 0.0f;
-			psout.Reflectance.xyz = 0.0f;
-		}
 #		endif
 	}
 #	endif
