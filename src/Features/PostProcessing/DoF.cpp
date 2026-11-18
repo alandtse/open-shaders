@@ -608,6 +608,7 @@ void DoF::Draw(TextureInfo& inout_tex)
 	const Settings renderSettings = settings;
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
+	auto state = globals::state;
 	auto* depthSRV = Util::AsReal(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
 	if (!depthSRV) {
 		return;
