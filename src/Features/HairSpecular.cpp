@@ -3,6 +3,7 @@
 #include "../I18n/I18n.h"
 #include "../Utils/UI.h"
 #include "Utils/D3D.h"
+#include "Utils/MathUtils.h"
 #include "Utils/Serialize.h"
 #include <DirectXTex.h>
 
@@ -84,9 +85,9 @@ void HairSpecular::LoadSettings(json& o_json)
 	settings = o_json;
 	const Settings defaults{};
 	settings.HairMode = std::min(settings.HairMode, 1u);
-	settings.HairGlossiness = Util::ClampFinite(settings.HairGlossiness, defaults.HairGlossiness, 0.0f, 256.0f);
-	settings.SelfShadowExponent = Util::ClampFinite(settings.SelfShadowExponent, defaults.SelfShadowExponent, 0.01f, 10.0f);
-	settings.SelfShadowScale = Util::ClampFinite(settings.SelfShadowScale, defaults.SelfShadowScale, 0.0f, 10.0f);
+	settings.HairGlossiness = Util::ClampFinite(settings.HairGlossiness, 0.0f, 256.0f, defaults.HairGlossiness);
+	settings.SelfShadowExponent = Util::ClampFinite(settings.SelfShadowExponent, 0.01f, 10.0f, defaults.SelfShadowExponent);
+	settings.SelfShadowScale = Util::ClampFinite(settings.SelfShadowScale, 0.0f, 10.0f, defaults.SelfShadowScale);
 }
 
 void HairSpecular::SaveSettings(json& o_json)

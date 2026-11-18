@@ -4,6 +4,7 @@
 #include "../ShaderCache.h"
 #include "../State.h"
 #include "../Util.h"
+#include "../Utils/MathUtils.h"
 
 #define I18N_KEY_PREFIX "feature.extended_translucency."
 
@@ -128,9 +129,9 @@ void ExtendedTranslucency::LoadSettings(json& o_json)
 {
 	settings = o_json;
 	const Settings defaults{};
-	settings.AlphaReduction = Util::ClampFinite(settings.AlphaReduction, defaults.AlphaReduction, 0.0f, 1.0f);
-	settings.AlphaSoftness = Util::ClampFinite(settings.AlphaSoftness, defaults.AlphaSoftness, 0.0f, 1.0f);
-	settings.AlphaStrength = Util::ClampFinite(settings.AlphaStrength, defaults.AlphaStrength, 0.0f, 1.0f);
+	settings.AlphaReduction = Util::ClampFinite(settings.AlphaReduction, 0.0f, 1.0f, defaults.AlphaReduction);
+	settings.AlphaSoftness = Util::ClampFinite(settings.AlphaSoftness, 0.0f, 1.0f, defaults.AlphaSoftness);
+	settings.AlphaStrength = Util::ClampFinite(settings.AlphaStrength, 0.0f, 1.0f, defaults.AlphaStrength);
 }
 
 void ExtendedTranslucency::SaveSettings(json& o_json)
