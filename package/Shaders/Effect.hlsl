@@ -1192,6 +1192,13 @@ PS_OUTPUT ShadeEffect(PS_INPUT input, bool sampleDistantShadow)
 		float3 materialColor = baseColor.xyz * (useAmbientLighting ? 1.0.xxx : propertyColor);
 		lightColor = lerp(unlitColor, GetLightingShadow(lightColor, materialColor, input.WorldPosition.xyz, input.Position.xy, depth, eyeIndex, shadowVariance, screenNoise, isSkyObject, sampleDistantShadow), lightingInfluence);
 	}
+#		if defined(PARTICLES) && !defined(ADDBLEND) && !defined(MULTBLEND) && !defined(MULTBLEND_DECAL)
+	else if (!isSkyObject && lightingInfluence > 0.0 && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld)) {
+		float3 lighting = Color::EffectLightToGamma(Color::WeatherEffect(Color::EffectLight(propertyColor), false, true));
+		lighting = Color::EffectLighting(lighting) * SharedData::csUtilitySettings.effectBrightness;
+		lightColor = baseColor.xyz * lerp(1.0.xxx, lighting, lightingInfluence);
+	}
+#		endif
 #	endif
 
 	[branch] if (isSkyStatic)

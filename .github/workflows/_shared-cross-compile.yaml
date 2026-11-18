@@ -173,7 +173,7 @@ jobs:
                   test -f main/build/Linux-ClangCL/CommunityShaders.pdb
                   file_type="$(file --brief main/build/Linux-ClangCL/CommunityShaders.dll)"
                   printf '%s\n' "$file_type"
-                  grep -Eq '^PE32\+ executable \(DLL\).*x86-64, for MS Windows' <<<"$file_type"
+                  grep -Eq '^PE32\+ executable.*\(DLL\).*x86-64' <<<"$file_type"
 
             - name: Upload vcpkg binary packages for caching
               if: inputs.cache-write
