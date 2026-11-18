@@ -2250,6 +2250,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		if defined(LODOBJECTSHD)
 	projWeight += (-0.5 + input.Color.w) * 2.5;
 #		endif  // LODOBJECTSHD
+#		if defined(TREE_SNOW_COVERAGE_NORMAL)
+	const float treeSnowProjWeight = projWeight + (dot(treeSnowCoverageNormal, texProj) - dot(worldNormal.xyz, texProj)) * vertexAlpha;
+#		endif
 #		if defined(SPARKLE)
 	if (projWeight < 0)
 		discard;
@@ -2281,7 +2284,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #			endif  // LOD_BLENDING
 		float3 projectedWorldNormal = normalize(mul(transpose(tbnTr), finalProjNormal));
 #			if defined(TREE_SNOW_COVERAGE_NORMAL)
-		treeSnowCoverageNormal = normalize(lerp(treeSnowCoverageNormal, ReorientNormal(projectedWorldNormal, treeSnowCoverageNormal, tbnTr[2]), projectedMaterialWeight));
+		treeSnowCoverageNormal = normalize(lerp(treeSnowCoverageNormal, ReorientNormal(projectedWorldNormal, treeSnowCoverageNormal, tbnTr[2]), smoothstep(0, 1, 5 * (0.1 + treeSnowProjWeight))));
 #			endif
 #			if defined(SKINNED) || !defined(MODELSPACENORMALS)
 		projectedWorldNormal = ReorientNormal(projectedWorldNormal, worldNormal, tbnTr[2]);
