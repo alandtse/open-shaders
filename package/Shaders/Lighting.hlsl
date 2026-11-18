@@ -2163,6 +2163,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	else
 	float3 worldNormal = normalize(mul(tbn, normal.xyz));
 #		if defined(TREE_ANIM) && !defined(TRUE_PBR) && !defined(VR)
+#			if defined(SNOW_COVER)
+#				define TREE_SNOW_COVERAGE_NORMAL
+	float3 treeSnowCoverageNormal = worldNormal;
+#			endif
 	float3 viewNormal = normalize(FrameBuffer::WorldToView(worldNormal, false, eyeIndex));
 	viewNormal = float3(viewNormal.xy, -abs(viewNormal.z));
 	worldNormal = normalize(FrameBuffer::ViewToWorld(viewNormal, false, eyeIndex));
@@ -2246,6 +2250,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		if defined(LODOBJECTSHD)
 	projWeight += (-0.5 + input.Color.w) * 2.5;
 #		endif  // LODOBJECTSHD
+#		if defined(TREE_SNOW_COVERAGE_NORMAL)
+	const float treeSnowProjWeight = projWeight + (dot(treeSnowCoverageNormal, texProj) - dot(worldNormal.xyz, texProj)) * vertexAlpha;
+#		endif
 #		if defined(SPARKLE)
 	if (projWeight < 0)
 		discard;
@@ -2276,6 +2283,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		projBaseColor.xyz = pow(abs(projBaseColor.xyz), SharedData::lodBlendingSettings.LODObjectSnowGamma) * SharedData::lodBlendingSettings.LODObjectSnowBrightness;
 #			endif  // LOD_BLENDING
 		float3 projectedWorldNormal = normalize(mul(transpose(tbnTr), finalProjNormal));
+#			if defined(TREE_SNOW_COVERAGE_NORMAL)
+		treeSnowCoverageNormal = normalize(lerp(treeSnowCoverageNormal, ReorientNormal(projectedWorldNormal, treeSnowCoverageNormal, tbnTr[2]), smoothstep(0, 1, 5 * (0.1 + treeSnowProjWeight))));
+#			endif
 #			if defined(SKINNED) || !defined(MODELSPACENORMALS)
 		projectedWorldNormal = ReorientNormal(projectedWorldNormal, worldNormal, tbnTr[2]);
 #			endif
@@ -2318,8 +2328,13 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		const float buriedDepth = max(viewPosition.z - visibleDepth - depthStep, 0.0);
 		[branch] if (buriedDepth > 0.0)
 		{
-			const float3 blendedNormal = lerp(worldNormal, float3(0, 0, 1), saturate(buriedDepth / TerrainBlending::ObjectNormalBlendDepth));
+			const float normalBlend = saturate(buriedDepth / TerrainBlending::ObjectNormalBlendDepth);
+			const float3 blendedNormal = lerp(worldNormal, float3(0, 0, 1), normalBlend);
 			worldNormal = dot(blendedNormal, blendedNormal) > TerrainBlending::MinimumBlendedNormalLengthSquared ? normalize(blendedNormal) : float3(0, 0, 1);
+#		if defined(TREE_SNOW_COVERAGE_NORMAL)
+			const float3 treeSnowBlendedNormal = lerp(treeSnowCoverageNormal, float3(0, 0, 1), normalBlend);
+			treeSnowCoverageNormal = dot(treeSnowBlendedNormal, treeSnowBlendedNormal) > TerrainBlending::MinimumBlendedNormalLengthSquared ? normalize(treeSnowBlendedNormal) : float3(0, 0, 1);
+#		endif
 			localShadowPosition *= 1.0 - buriedDepth / viewPosition.z;
 		}
 	}
@@ -2788,6 +2803,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		if defined(TREE_ANIM)
 		snowNormal = normalize(snowNormal + float3(0, 0, SnowCover::FoliageNormalBias));
 		float3 treeSnowNormal = snowNormal;
+#			if defined(TREE_SNOW_COVERAGE_NORMAL)
+		snowNormal = normalize(treeSnowCoverageNormal + float3(0, 0, SnowCover::FoliageNormalBias));
+#			endif
 		if (SharedData::snowCoverSettings.AffectTreeTint && !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::NoFoliageTint))
 			SnowCover::ApplyFoliageColor(material.BaseColor, SnowCover::GetEnvironmentalMultiplier(adjustedWorldPos));
 #		elif defined(DO_ALPHA_TEST)
@@ -3799,7 +3817,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float3 directionalAmbientColor = Color::Ambient(max(0, mul(DirectionalAmbient, float4(ambientNormal, 1.0))));
 
 #	if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
+	if (ImageBasedLighting::UseForDraw()) {
 		if (SharedData::iblSettings.UseStaticIBL && !inWorld && !inReflection) {
 			directionalAmbientColor = ImageBasedLighting::GetStaticDiffuseIBL(ambientNormal, SampColorSampler);
 		}
@@ -3855,7 +3873,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	endif  // defined (HAIR)
 
 #	if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
+	if (ImageBasedLighting::UseForDraw()) {
 		if (!(SharedData::iblSettings.UseStaticIBL && !inWorld && !inReflection)) {
 #		if defined(SKYLIGHTING) && !defined(INTERIOR)
 			directionalAmbientColor = ImageBasedLighting::GetDiffuseIBLOccluded(directionalAmbientColor, -ambientNormal, skylightingDiffuse);
@@ -4092,7 +4110,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	skylightingAlbedo /= Color::PBRLightingScale;
 #		endif
 #		if defined(IBL) && !defined(INTERIOR)
-	if (!SharedData::iblSettings.EnableIBL)
+	if (!ImageBasedLighting::UseForDraw())
 #		endif
 	{
 #		if defined(CAPTURE_REFLECTION_RADIANCE)
