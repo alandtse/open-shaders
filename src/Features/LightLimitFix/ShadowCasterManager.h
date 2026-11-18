@@ -334,7 +334,7 @@ namespace ShadowCasterManager
 		bool ProtectPlayerShadows = true;
 
 		/// A light that falls outside the shadow count fades its shadow out before giving up its slot, and one given a slot again fades in.
-		bool FadeShadowSwaps = false;
+		bool FadeShadowSwaps = true;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
