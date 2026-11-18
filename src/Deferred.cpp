@@ -527,18 +527,13 @@ void Deferred::DeferredPasses()
 
 void Deferred::EndDeferred()
 {
-	if (!globals::state->inWorld || !deferredPass)
+	if (!deferredPass)
 		return;
 
 #ifdef TRACY_ENABLE
 	// Close the engine deferred-geometry GPU zone opened in StartDeferred, before CS lighting.
 	g_deferredGeoZone.reset();
 #endif
-
-	auto shaderCache = globals::shaderCache;
-
-	if (!shaderCache->IsEnabled())
-		return;
 
 	auto shadowState = globals::game::shadowState;
 	GET_INSTANCE_MEMBER(renderTargets, shadowState)
