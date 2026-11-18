@@ -1853,6 +1853,8 @@
     "feature.ibl.enable_ibl": "Enable IBL",
     "feature.ibl.enable_ibl_options": "Enable IBL Options",
     "feature.ibl.enable_ibl_tooltip": "Toggle IBL. When enabled, ambient lighting is derived from cubemap spherical harmonics instead of the vanilla system.",
+    "feature.ibl.enable_in_interiors": "Enable Interior IBL",
+    "feature.ibl.enable_in_interiors_tooltip": "Enables IBL in interior cells.",
     "feature.ibl.enable_in_loading_screen": "Enable Loading Screen IBL",
     "feature.ibl.enable_in_loading_screen_tooltip": "Enables IBL during loading screens and the main menu.",
     "feature.ibl.enable_in_world_map": "Enable World Map IBL",
