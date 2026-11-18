@@ -42,6 +42,8 @@ struct PhysicalLens : PostProcessFeature
 	std::string GetDisplayName() const override { return T("feature.post_processing.physical_lens.name", "Physical Lens"); }
 	std::string GetDesc() const override { return T("feature.post_processing.physical_lens.description", "Lens ghosts, starbursts, distortion, vignetting and chromatic aberration from highlights visible on screen."); }
 	bool IsExperimental() const override { return true; }
+	bool IsVisible() const override;
+	bool IsActive() const override;
 	bool WritesToMainTexture() const override { return false; }
 	bool DisableInMainLoadingMenu() const override { return true; }
 	void SetupResources() override;
