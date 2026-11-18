@@ -82,18 +82,18 @@ namespace ShadowCasterManager
 		float intensity = 0.0f;
 	};
 
-	/// Movement and intensity amplitudes of the flickering Light record a light was made from, 0 when it does not flicker; cached
-	/// per NiLight and Light record, so a light made at a freed light's address is read again.
+	/// Movement and intensity amplitudes of the flickering Light record a light was made from (its owner's when none is known), 0 when
+	/// it does not flicker; cached per NiLight and Light record, so a light made at a freed light's address is read again.
 	static FlickerAmplitudes FlickerOf(RE::NiLight* ni)
 	{
 		static std::unordered_map<const RE::NiLight*, std::pair<RE::FormID, FlickerAmplitudes>> s_flickerAmplitudes;
 		PruneIfOversized(s_flickerAmplitudes, 1024);
 		const auto formId = LLFCommon::RuntimeLightDataExt::Get(ni)->lighFormId;
 		auto [it, isNew] = s_flickerAmplitudes.try_emplace(ni, formId, FlickerAmplitudes{});
-		if (isNew || it->second.first != formId) {
-			const RE::TESObjectLIGH* ligh = OwnerLight(ni);
-			if (!ligh && formId)
-				ligh = RE::TESForm::LookupByID<RE::TESObjectLIGH>(formId);
+		if (isNew || it->second.first != formId || !formId) {
+			const RE::TESObjectLIGH* ligh = formId ? RE::TESForm::LookupByID<RE::TESObjectLIGH>(formId) : nullptr;
+			if (!ligh)
+				ligh = OwnerLight(ni);
 			it->second = { formId, ligh && !ligh->GetNoFlicker() ?
 									   FlickerAmplitudes{ ligh->data.flickerMovementAmplitude, ligh->data.flickerIntensityAmplitude } :
 									   FlickerAmplitudes{} };
@@ -108,9 +108,14 @@ namespace ShadowCasterManager
 
 	/// Intensity amplitude of an inverse-square light's flickering Light record, the only kind whose radius follows its fade; 0
 	/// for any other light.
+	static float FlickerIntensityAmplitude(RE::NiLight* ni, const FlickerAmplitudes& a_flicker)
+	{
+		return LLFCommon::RuntimeLightDataExt::Get(ni)->flags.any(LightLimitFix::LightFlags::InverseSquare) ? a_flicker.intensity : 0.0f;
+	}
+
 	static float FlickerIntensityAmplitude(RE::NiLight* ni)
 	{
-		return LLFCommon::RuntimeLightDataExt::Get(ni)->flags.any(LightLimitFix::LightFlags::InverseSquare) ? FlickerOf(ni).intensity : 0.0f;
+		return FlickerIntensityAmplitude(ni, FlickerOf(ni));
 	}
 
 	/// Where a flickering light rests: the engine and Light Placer move it inside its parent node every frame, so the parent's
@@ -128,11 +133,17 @@ namespace ShadowCasterManager
 		return rest.value_or(ni->world.translate);
 	}
 
+	/// True in the Pinned flicker mode, which the menu offers only while cached shadows are kept across flicker.
+	static bool ShadowsFromRest()
+	{
+		return TolerantSplit() && GetFlickerMode() == static_cast<int>(FlickerShadowModeEnum::Pinned);
+	}
+
 	/// Where a light's shadow is drawn from: the rest position in the pinned flicker mode, so a fixture's shadow holds still while
 	/// the light flickers; the live position otherwise, so the warped and live modes keep the shadow dancing with the flame.
 	static RE::NiPoint3 ShadowOrigin(RE::NiLight* ni)
 	{
-		return GetFlickerMode() == static_cast<int>(FlickerShadowModeEnum::Pinned) ? RestOrigin(ni) : ni->world.translate;
+		return ShadowsFromRest() ? RestOrigin(ni) : ni->world.translate;
 	}
 
 	/// Publishes the sphere a light reaches at every point of its flicker for the static hash, infinite when it does not flicker; the
@@ -140,8 +151,9 @@ namespace ShadowCasterManager
 	static void SetFoldCore(RE::NiLight* ni)
 	{
 		s_foldCoreRadius = std::numeric_limits<float>::infinity();
-		const float intensity = ni ? FlickerIntensityAmplitude(ni) : 0.0f;
-		const float movement = ni ? FlickerMovementAmplitude(ni) : 0.0f;
+		const auto flicker = ni ? FlickerOf(ni) : FlickerAmplitudes{};
+		const float intensity = ni ? FlickerIntensityAmplitude(ni, flicker) : 0.0f;
+		const float movement = flicker.movement;
 		if (intensity <= 0.0f && movement <= 0.0f)
 			return;
 		const auto it = s_hashRadiusAnchor.find(ni);
@@ -511,6 +523,7 @@ namespace ShadowCasterManager
 		bool bakeThisFrame = false;  ///< this frame's accumulate was StaticOnly (render to cache)
 		uint8_t mismatchStreak = 0;  ///< consecutive accumulates whose hash differed from the bake
 		RE::NiPoint3 bakePos{};      ///< light position the static tile was baked at
+		bool bakePinned = false;     ///< baked from the rest origin of the Pinned flicker mode
 		RE::NiMatrix3 bakeRot{};     ///< light rotation the static tile was baked at
 		float bakeRadius = 0.0f;
 		float bakeInvProj[16]{};  ///< light-to-world matrix the static tile was baked with
@@ -857,7 +870,7 @@ namespace ShadowCasterManager
 			return ni && st.bakePoseValid &&
 			       ni->GetLightRuntimeData().radius.x == st.bakeRadius &&
 			       ShadowOrigin(ni) == st.bakePos && ni->world.rotate == st.bakeRot;
-		if (!ni || !st.bakePoseValid || ni->world.rotate != st.bakeRot)
+		if (!ni || !st.bakePoseValid || ni->world.rotate != st.bakeRot || st.bakePinned != ShadowsFromRest())
 			return false;
 		const float radius = ni->GetLightRuntimeData().radius.x;
 		const float tolerance = FlickerRadiusTolerance(FlickerRadiusBand(FlickerIntensityAmplitude(ni)), kSplitRadiusTolerance);
@@ -1297,14 +1310,18 @@ namespace ShadowCasterManager
 				mode = (slotInRange && SplitDynamicOnlyEligible(light, *st, staticValid)) ?
 				           CasterPass::DynamicOnly :
 				           CasterPass::StaticOnly;
+				SetFoldCore(light->light.get());
+				// A flickering light's bake holds only its core casters, so a tile with nothing rendered yet is drawn full first.
+				AtlasTileTexels liveTile{};
+				const bool coreOnlySeed = std::isfinite(s_foldCoreRadius) && !(GetSlotTileTexels(slotIndex, liveTile) && liveTile.contentValid);
 				// Bake budget: a hash-upset wave (scene entry, cell attach)
 				// otherwise bakes every light in the same few frames and
 				// starves the redraw budget. Deferred bakes stay queued; with
 				// no valid seed the light renders full instead.
 				if (mode == CasterPass::StaticOnly &&
-					s_staticBakeCount.load(std::memory_order_relaxed) >= 2u) {
+					(coreOnlySeed || s_staticBakeCount.load(std::memory_order_relaxed) >= 2u)) {
 					st->bakeQueued = true;
-					if (staticValid) {
+					if (staticValid && !coreOnlySeed) {
 						mode = CasterPass::DynamicOnly;
 					} else {
 						mode = CasterPass::All;
@@ -1316,6 +1333,7 @@ namespace ShadowCasterManager
 						s_splitLatchMismatchTotal.fetch_add(1, std::memory_order_relaxed);
 					if (auto* ni = light->light.get()) {
 						st->bakePos = ShadowOrigin(ni);
+						st->bakePinned = ShadowsFromRest();
 						if (TolerantSplit()) {
 							// A pinned bake renders from the shadow camera's pose, not the live light's.
 							RE::NiPoint3 cameraPos;
@@ -1357,7 +1375,6 @@ namespace ShadowCasterManager
 				s_visitStaticHash = 0x9e3779b97f4a7c15ull;
 				if (auto* ni = light->light.get())
 					s_visitStaticHash = FoldLightPose(s_visitStaticHash, ni, 16.0f);
-				SetFoldCore(light->light.get());
 			}
 			s_visitDynamicCount.store(0, std::memory_order_relaxed);
 			s_visitStaticCount.store(0, std::memory_order_relaxed);
