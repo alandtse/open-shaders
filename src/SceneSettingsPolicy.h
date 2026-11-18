@@ -22,6 +22,7 @@ namespace SceneSettingsPolicy
 		{ "ExponentialHeightFog", "volumetricHistoryMissSampleCount" },
 		{ "ExponentialHeightFog", "volumetricSampleJitterMultiplier" },
 		{ "ExponentialHeightFog", "volumetricUpsampleJitterMultiplier" },
+		{ "ImageBasedLighting", "DisableInInteriors" },
 		{ "ImageBasedLighting", "DisableInWorldMap" },
 		{ "ImageBasedLighting", "DisableInLoadingScreen" },
 		{ "PostProcessing", "Border" },

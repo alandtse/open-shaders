@@ -63,6 +63,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SkyIBLSaturation,
 	FogAmount,
 	DALCMode,
+	DisableInInteriors,
 	DisableInWorldMap,
 	DisableInLoadingScreen)
 
@@ -76,6 +77,10 @@ void IBL::DrawSettings()
 		ImGui::Text("%s", T(TKEY("enable_ibl_tooltip"), "Toggle IBL. When enabled, ambient lighting is derived from cubemap spherical harmonics instead of the vanilla system."));
 	}
 	if (ImGui::TreeNodeEx(T(TKEY("enable_ibl_options"), "Enable IBL Options"), ImGuiTreeNodeFlags_None)) {
+		DrawEnableCheckbox(T(TKEY("enable_in_interiors"), "Enable Interior IBL"), settings.DisableInInteriors);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("enable_in_interiors_tooltip"), "Enables IBL in interior cells."));
+		}
 		DrawEnableCheckbox(T(TKEY("enable_in_world_map"), "Enable World Map IBL"), settings.DisableInWorldMap);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("enable_in_world_map_tooltip"), "Enables IBL while the world map is open."));
@@ -251,7 +256,7 @@ bool IBL::IsDisabledForCurrentScene() const
 	if (state->isMapMenuOpen)
 		return settings.DisableInWorldMap;
 
-	return false;
+	return settings.DisableInInteriors && Util::IsInterior();
 }
 
 void IBL::ReflectionsPrepass()
