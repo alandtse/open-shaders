@@ -83,6 +83,7 @@ add_executable(
     test_snowdeformation_math.cpp
     test_rain_texture_footprint.cpp
     test_llf_sanitize.cpp
+    test_llf_perframe.cpp
     test_litregion.cpp
     test_litcap.cpp
     test_passchainguard.cpp

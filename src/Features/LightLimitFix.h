@@ -2,6 +2,7 @@
 
 #include "Buffer.h"
 #include "Features/LightLimitFix/ParticleLights.h"
+#include "Features/LightLimitFix/PerFrame.h"
 #include "LightLimitFix/ShadowCasterManager.h"
 #include "OverlayFeature.h"
 #include "Utils/LazyShader.h"
@@ -133,36 +134,7 @@ public:
 	// Must match MAX_SHADOW_DEMAND_SLOTS in ShadowDemandCS.hlsl.
 	static constexpr uint32_t MAX_SHADOW_DEMAND_SLOTS = 128;
 
-	struct alignas(16) PerFrame
-	{
-		uint EnableContactShadows;
-		uint ContactShadowMaxSteps;
-		float ContactShadowMaxDistance;
-		float ContactShadowLength;
-		float ContactShadowDepthThickness;
-		float ContactShadowMinIntensity;
-		uint32_t ShadowMapSlots;  // total shadow map texture-array capacity
-		// Removing this shifts ClusterSize off its required 16-byte boundary and the GPU reads
-		// the cluster config from the wrong offsets. SharedData::LightLimitFixSettings mirrors it.
-		uint SunLitHair;  // 1: the forward hair pass reuses the directional shadow the deferred hair pass stored
-		// Cluster config (computed)
-		uint ClusterSize[4];
-		// Debug (last)
-		uint EnableLightsVisualisation;
-		uint LightsVisualisationMode;
-		uint EnableParticleContactShadows;
-		uint ClusteredLightCount;
-	};
-	STATIC_ASSERT_ALIGNAS_16(PerFrame);
-	// Compile-time size lock catches CPU/GPU cbuffer layout drift. STATIC_ASSERT_ALIGNAS_16
-	// only enforces the 16-byte alignment / multiple-of-16 contract that HLSL constant
-	// buffers require; it doesn't notice if a field is added, removed, or resized in a
-	// way that still happens to land on a 16-byte boundary. The shader-side mirror is
-	// SharedData::LightLimitFixSettings in package/Shaders/Common/SharedData.hlsli
-	// (embedded in the shared FeatureData cbuffer at b6), and must match this layout
-	// field-for-field. Update both sides when the layout changes, then bump this constant.
-	static_assert(sizeof(PerFrame) == 64,
-		"LightLimitFix::PerFrame layout drifted -- update SharedData::LightLimitFixSettings in package/Shaders/Common/SharedData.hlsli to match, then update this assert.");
+	using PerFrame = LightLimitFixCB::PerFrame;
 
 	/** @brief Populates and returns the per-frame constant buffer data for light visualization settings. */
 	PerFrame GetCommonBufferData();
