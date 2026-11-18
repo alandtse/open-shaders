@@ -265,9 +265,6 @@ namespace ShadowCasterManager
 	constexpr int kStaticPromoteBackoffMax = 8;  // 8 * 8 = 64 frames, ~1s at 60fps
 	// Bounds framesSinceMove; must clear the longest decay threshold below.
 	constexpr int kStaticFramesCap = kStaticStabilityFrames * kStaticPromoteBackoffMax * 4;
-	// Settled casters re-verify worldBound only every N epochs; kept well
-	// inside kSleepRedrawIntervalFrames (45) so a missed move is still caught.
-	constexpr int kSettledRecheckFrames = 16;
 	constexpr int kSettledAtFactor = 4;  // matches the promoteAt * 4 backoff-reset below
 	constexpr int kAncestryRecheckEpochs = 16;
 	std::atomic<bool> s_actorAttachedDynamic{ true };
@@ -276,17 +273,17 @@ namespace ShadowCasterManager
 	// Accumulate-thread only (see CurrentCullLight) -- a concurrent insert
 	// would rehash under another thread's probe.
 	ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;
-	ankerl::unordered_dense::map<const RE::TESObjectREFR*, int> s_ownerMoveEpoch;
+	ankerl::unordered_dense::map<const RE::TESObjectREFR*, int> s_ownerMovingUntil;
 	int s_casterClassEpoch{ 0 };
 
 	bool GetActorAttachedDynamic() { return s_actorAttachedDynamic.load(std::memory_order_relaxed); }
 	void SetActorAttachedDynamic(bool a_value) { s_actorAttachedDynamic.store(a_value, std::memory_order_relaxed); }
 
-	/// Epoch at which any part of the caster's object last moved, or never.
-	static int OwnerMoveEpoch(const CasterMobility& r)
+	/// Epoch until which some part of the caster's object is still moving, or kNotMoving.
+	static int OwnerMovingUntil(const CasterMobility& r)
 	{
-		const auto it = r.owner ? s_ownerMoveEpoch.find(r.owner) : s_ownerMoveEpoch.end();
-		return it != s_ownerMoveEpoch.end() ? it->second : kNeverMoved;
+		const auto it = r.owner ? s_ownerMovingUntil.find(r.owner) : s_ownerMovingUntil.end();
+		return it != s_ownerMovingUntil.end() ? it->second : kNotMoving;
 	}
 
 	/// Classifies a caster static vs dynamic from quantized worldBound
@@ -298,22 +295,12 @@ namespace ShadowCasterManager
 		if (r.lastEpoch == s_casterClassEpoch)
 			return r;  // already classified this frame
 
-		// Settled fast path: trust the cached classification instead of
-		// re-quantizing worldBound. A move mid-window is still caught at the next checkpoint.
-		const int settledAt = kStaticStabilityFrames * r.promoteBackoff * kSettledAtFactor;
-		if (!inserted && !r.dynamic && r.framesSinceMove >= settledAt &&
-			s_casterClassEpoch - r.lastVerifyEpoch < kSettledRecheckFrames &&
-			!MovedWithin(s_casterClassEpoch, OwnerMoveEpoch(r), kStaticStabilityFrames)) {
-			r.lastEpoch = s_casterClassEpoch;  // keep same-frame memo + prune liveness
-			return r;
-		}
-
 		const auto& wb = geom.worldBound;
 		const float cx = std::round(wb.center.x), cy = std::round(wb.center.y),
 					cz = std::round(wb.center.z), cr = std::round(wb.radius);
 		const bool moved = inserted || cx != r.cx || cy != r.cy || cz != r.cz || cr != r.cr;
-		// Settled casters verify sparsely, so framesSinceMove must advance by
-		// the elapsed epoch count to keep real-time semantics.
+		// A caster is classified only on frames a light visits it, so framesSinceMove
+		// must advance by the elapsed epoch count to keep real-time semantics.
 		const int elapsed = r.lastVerifyEpoch < 0 ? 1 : std::max(1, s_casterClassEpoch - r.lastVerifyEpoch);
 		if (moved) {
 			// Leaving the static set is an oscillation (not a first sighting): make
@@ -322,8 +309,6 @@ namespace ShadowCasterManager
 				r.promoteBackoff = std::min(r.promoteBackoff * 2, kStaticPromoteBackoffMax);
 			r.framesSinceMove = 0;
 			r.foldHashValid = false;  // quantized bound changed
-			if (!inserted && r.owner)
-				s_ownerMoveEpoch[r.owner] = s_casterClassEpoch;
 		} else {
 			r.framesSinceMove = std::min(r.framesSinceMove + elapsed, kStaticFramesCap);
 		}
@@ -340,13 +325,17 @@ namespace ShadowCasterManager
 			r.actorAttached = r.owner && r.owner->IsActor();
 			r.ancestryEpoch = s_casterClassEpoch;
 		}
+		if (moved && !inserted && r.owner) {
+			auto& until = s_ownerMovingUntil.try_emplace(r.owner, kNotMoving).first->second;
+			until = ObjectMovingUntil(until, s_casterClassEpoch, promoteAt);
+		}
 		// Parented under an actor: it rests and moves with the actor, so each pause would
 		// promote it into the static set and force a rebake when it moves again.
 		if (r.actorAttached && s_actorAttachedDynamic.load(std::memory_order_relaxed))
 			r.dynamic = true;
-		// A swinging fixture's parts near its pivot move under a unit a frame; held to the whole object's
-		// movement, they are never baked while its far parts are drawn live, which splits its shadow.
-		if (MovedWithin(s_casterClassEpoch, OwnerMoveEpoch(r), promoteAt))
+		// A swinging fixture's parts near its pivot move under a unit a frame: held live as long as its moving part is,
+		// they are never baked while the rest of it is drawn live, which splits its shadow.
+		if (s_casterClassEpoch < OwnerMovingUntil(r))
 			r.dynamic = true;
 		// Held still far past its (backed-off) window: it has settled rather than
 		// oscillating, so restore the base window for its next move.

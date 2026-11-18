@@ -18,12 +18,12 @@ using ShadowCasterManager::HashCombine;
 using ShadowCasterManager::HashCombineFloat;
 using ShadowCasterManager::HemisphereSeamMargin;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
-using ShadowCasterManager::kNeverMoved;
+using ShadowCasterManager::kNotMoving;
 using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kSlotHoldMargin;
 using ShadowCasterManager::kTileScaleFloor;
 using ShadowCasterManager::kVanillaShadowSliceCount;
-using ShadowCasterManager::MovedWithin;
+using ShadowCasterManager::ObjectMovingUntil;
 using ShadowCasterManager::QuantizeFloat;
 using ShadowCasterManager::SliceCappedLightCount;
 using ShadowCasterManager::SlotHeldScore;
@@ -134,13 +134,16 @@ TEST_CASE("SphereWhollyBehindPlane splits straddling from wholly behind", "[scm]
 	REQUIRE(SphereWhollyBehindPlane(-500.0f, 10.0f, margin));
 }
 
-TEST_CASE("MovedWithin holds a caster to its object's last movement", "[scm]")
+TEST_CASE("ObjectMovingUntil holds every part as long as its longest-moving part", "[scm]")
 {
-	REQUIRE(MovedWithin(100, 100, 8));
-	REQUIRE(MovedWithin(107, 100, 8));
-	REQUIRE_FALSE(MovedWithin(108, 100, 8));
-	REQUIRE_FALSE(MovedWithin(100, kNeverMoved, 8));
-	REQUIRE_FALSE(MovedWithin(std::numeric_limits<int>::max(), kNeverMoved, 64));
+	int until = ObjectMovingUntil(kNotMoving, 100, 8);
+	REQUIRE(until == 108);
+	until = ObjectMovingUntil(until, 101, 64);
+	REQUIRE(until == 165);
+	REQUIRE(ObjectMovingUntil(until, 102, 8) == 165);
+	REQUIRE_FALSE(std::numeric_limits<int>::max() < kNotMoving);
+	REQUIRE(164 < until);
+	REQUIRE_FALSE(165 < until);
 }
 
 TEST_CASE("FrameTimePercentile returns the 60fps fallback with no samples", "[scm]")

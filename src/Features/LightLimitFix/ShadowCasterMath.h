@@ -96,13 +96,13 @@ namespace ShadowCasterManager
 		return a_planeDistance + a_radius <= -a_margin;
 	}
 
-	/// The classifier epoch of an object that has not moved since it was seen.
-	inline constexpr int kNeverMoved = std::numeric_limits<int>::min();
+	/// The moving-until epoch of an object none of whose parts has moved since it was seen.
+	inline constexpr int kNotMoving = std::numeric_limits<int>::min();
 
-	/// True when a caster's object last moved, at epoch a_lastMove, fewer than a_window epochs before a_now.
-	inline bool MovedWithin(int a_now, int a_lastMove, int a_window) noexcept
+	/// Extends an object's moving-until epoch to cover a part that moved at a_moveEpoch and stays live for a_partWindow epochs.
+	inline int ObjectMovingUntil(int a_until, int a_moveEpoch, int a_partWindow) noexcept
 	{
-		return a_lastMove != kNeverMoved && a_now - a_lastMove < a_window;
+		return std::max(a_until, a_moveEpoch + a_partWindow);
 	}
 
 	// The tile class ladder, shared by the coverage classifier below and the
