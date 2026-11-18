@@ -284,13 +284,13 @@ Skin::SkinData Skin::MakeData(const SkinMaterials::Material& a_material, bool a_
 		value = std::isfinite(value) ? std::clamp(value, field.minimum, field.maximum) : field.initial;
 	}
 	SkinData data{};
-	data.skinParams = { p[Parameter::Roughness], p[Parameter::SecondaryRoughness], p[Parameter::SpecularTextureMultiplier], float(settings.EnableSkin) };
-	data.skinParams2 = { p[Parameter::SecondarySpecularStrength], settings.ExtraSkinWetness, p[Parameter::Reflectance], p[Parameter::BaseColorMultiplier] };
+	data.skinParams = float4{ p[Parameter::Roughness], p[Parameter::SecondaryRoughness], p[Parameter::SpecularTextureMultiplier], float(settings.EnableSkin) };
+	data.skinParams2 = float4{ p[Parameter::SecondarySpecularStrength], settings.ExtraSkinWetness, p[Parameter::Reflectance], p[Parameter::BaseColorMultiplier] };
 	const float bodyTiling = a_head ? 1.0f : p[Parameter::BodyTilingMultiplier];
-	data.skinDetailParams = { p[Parameter::DetailTiling] * bodyTiling, bodyTiling, p[Parameter::DetailStrength], float(p[Parameter::DetailEnabled] != 0) };
-	data.sssParams = { p[Parameter::Transmission], p[Parameter::TransmissionDepth], p[Parameter::SSSAmount], p[Parameter::TransmissionEnabled] };
-	data.fuzzParams = { p[Parameter::Fuzz], p[Parameter::FuzzRoughness], p[Parameter::FuzzF0], p[Parameter::ExtraEdgeRoughness] };
-	data.physicalParams = { p[Parameter::PhysicalMainRoughnessMultiplier], p[Parameter::PhysicalSecondRoughnessMultiplier], p[Parameter::PhysicalSpecularStrength], p[Parameter::WetResponse] };
+	data.skinDetailParams = float4{ p[Parameter::DetailTiling] * bodyTiling, bodyTiling, p[Parameter::DetailStrength], float(p[Parameter::DetailEnabled] != 0) };
+	data.sssParams = float4{ p[Parameter::Transmission], p[Parameter::TransmissionDepth], p[Parameter::SSSAmount], p[Parameter::TransmissionEnabled] };
+	data.fuzzParams = float4{ p[Parameter::Fuzz], p[Parameter::FuzzRoughness], p[Parameter::FuzzF0], p[Parameter::ExtraEdgeRoughness] };
+	data.physicalParams = float4{ p[Parameter::PhysicalMainRoughnessMultiplier], p[Parameter::PhysicalSecondRoughnessMultiplier], p[Parameter::PhysicalSpecularStrength], p[Parameter::WetResponse] };
 	data.wetParams = settings.WetParams;
 	return data;
 }
@@ -335,14 +335,14 @@ void Skin::BSLightingShader_SetupGeometry(RE::BSRenderPass* a_pass)
 					if (entry.textures[i] && (i == 2 || !entry.textures[i]->resource.reconstructNormal))
 						pendingViews[i] = entry.textures[i]->resource.view;
 				}
-				data.materialFlags = { float(bool(pendingViews[0])), float(bool(pendingViews[1])),
+				data.materialFlags = float4{ float(bool(pendingViews[0])), float(bool(pendingViews[1])),
 					float(entry.textures[2] && entry.textures[2]->resource.reconstructNormal), float(entry.thickness) };
 				if (!pendingViews[2])
 					data.profile.skinDetailParams.w = 0;
 				if (editor.open && editor.previewWetness >= 0 &&
 					((!editor.draftKey.empty() && (entry.activeKey == editor.draftKey || entry.diffuseKey == editor.draftKey || entry.normalKey == editor.draftKey)) ||
 						(!entry.target.empty() && entry.target == editor.draftTarget.key)))
-					data.skinPerGeometry = { editor.previewWetness, 0, 0, 0 };
+					data.skinPerGeometry = float4{ editor.previewWetness, 0, 0, 0 };
 			}
 		}
 	}
