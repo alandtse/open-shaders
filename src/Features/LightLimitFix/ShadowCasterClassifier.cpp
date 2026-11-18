@@ -481,14 +481,16 @@ namespace ShadowCasterManager
 		return false;
 	}
 
-	/// True for a rigid part of the actor carrying this light (the weapon, torch or cage it hangs on); the skinned body still
-	/// casts, so a torch-bearer keeps their shadow.
+	/// True for the rigid part of the actor carrying this light whose bounds hold it (the weapon, torch or cage it hangs on);
+	/// the skinned body and the rest of the actor's gear still cast, so a torch-bearer keeps their shadow.
 	static bool HeldByCarrier(RE::BSShadowLight& a_light, const RE::BSGeometry& a_geometry)
 	{
 		if (a_geometry.GetGeometryRuntimeData().skinInstance || !a_light.dynamic || !a_light.GetIsOmniLight())
 			return false;
 		const auto* ni = a_light.light.get();
-		const auto* carrier = ni ? CarrierOf(ni) : nullptr;
+		if (!ni || a_geometry.worldBound.center.GetDistance(ni->world.translate) > a_geometry.worldBound.radius)
+			return false;
+		const auto* carrier = CarrierOf(ni);
 		return carrier && carrier == CarrierOf(&a_geometry);
 	}
 
