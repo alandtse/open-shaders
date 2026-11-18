@@ -3,8 +3,8 @@
 #include <d3d11_1.h>
 
 #include "Buffer.h"
-#include "GrassOptimizations/GrassBucketStore.h"
 #include "GpuPass.h"
+#include "GrassOptimizations/GrassBucketStore.h"
 #include "HiZPyramid.h"
 #include "Utils/LazyShader.h"
 

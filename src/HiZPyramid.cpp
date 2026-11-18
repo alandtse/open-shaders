@@ -216,7 +216,6 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx, bool forc
 			if (dsv)
 				dsv->Release();
 		}
-
 	}
 
 	// Each group reduces one 64x64 base tile in shared memory.

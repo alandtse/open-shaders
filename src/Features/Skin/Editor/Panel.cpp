@@ -2,8 +2,8 @@
 
 #include "CSEditor/Browser/BrowserWidgets.h"
 #include "CSEditor/EditorWindow.h"
-#include "Menu.h"
 #include "IconsTabler.h"
+#include "Menu.h"
 #include "Menu/Icons/helpers/IconFonts.h"
 #include "Menu/Icons/helpers/SceneActionIcons.h"
 #include "Utils/UI.h"
