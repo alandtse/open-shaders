@@ -121,7 +121,7 @@ namespace Overlays
 				else if constexpr (std::is_same_v<T, TimeOfDayValue>)
 					value.values[a_slot.part] = v[0];
 				else
-					value.values[a_slot.part] = { v[0], v[1], v[2] };
+					value.values[a_slot.part] = float3{ v[0], v[1], v[2] };
 			},
 				stored.value);
 			if (weatherID) {
