@@ -75,6 +75,18 @@ namespace ShadowCasterManager
 		return a_holdsSlot && a_score > 0.0 ? a_score * kSlotHoldMargin : a_score;
 	}
 
+	/// Share of the live fade a light's score fade takes each frame: a flicker averages out over about twenty frames.
+	inline constexpr float kScoreFadeSmoothing = 0.05f;
+
+	/// Live fade at or below which a light counts as going out, so its score follows the live fade at once.
+	inline constexpr float kScoreFadeOutFloor = 0.05f;
+
+	/// The fade a light is ranked with, from its running average a_average and its live fade a_live.
+	inline float SteadyScoreFade(float a_average, float a_live) noexcept
+	{
+		return a_live <= kScoreFadeOutFloor ? a_live : a_average + kScoreFadeSmoothing * (a_live - a_average);
+	}
+
 	// Casters reaching the equatorial plane keep the engine's hemisphere choice;
 	// the margin floor keeps a zero-radius light from collapsing the seam.
 	inline constexpr float kHemisphereSeamMarginMin = 1.0f;

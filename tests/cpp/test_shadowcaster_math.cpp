@@ -25,6 +25,7 @@ using ShadowCasterManager::SliceCappedLightCount;
 using ShadowCasterManager::SlotHeldScore;
 using ShadowCasterManager::SphereWhollyBehindPlane;
 using ShadowCasterManager::StallBucket;
+using ShadowCasterManager::SteadyScoreFade;
 using ShadowCasterManager::TileScaleForCoverage;
 using ShadowCasterManager::TileScaleTarget;
 
@@ -285,4 +286,21 @@ TEST_CASE("PerFrameCache works a key out once per frame and drops it on the next
 	REQUIRE(made == 2);
 	REQUIRE(cache.Get(11, 1, make) == 3);
 	REQUIRE(cache.entries.size() == 1);
+}
+
+TEST_CASE("SteadyScoreFade averages a flicker but follows a light going out at once", "[scm]")
+{
+	float fade = 1.0f;
+	float lowest = 2.0f, highest = 0.0f;
+	for (int frame = 0; frame < 200; ++frame) {
+		fade = SteadyScoreFade(fade, frame % 2 == 0 ? 0.6f : 1.0f);
+		if (frame > 100) {
+			lowest = std::min(lowest, fade);
+			highest = std::max(highest, fade);
+		}
+	}
+	REQUIRE(highest - lowest < 0.05f);
+	REQUIRE(fade == Approx(0.8f).margin(0.03f));
+	REQUIRE(SteadyScoreFade(0.8f, 0.0f) == 0.0f);
+	REQUIRE(SteadyScoreFade(0.8f, 0.05f) == 0.05f);
 }
