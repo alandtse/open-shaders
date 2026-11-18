@@ -700,8 +700,10 @@ namespace ShadowCasterManager
 						snprintf(addrFull, sizeof(addrFull), "0x%016llX", static_cast<unsigned long long>(row.info.lightKey));
 						// Show the resolved world-light name when one exists;
 						// the raw address stays available in the tooltip/copy.
+						ImGui::PushID(reinterpret_cast<const void*>(key));
 						ImGui::Selectable(!row.info.name.empty() ? row.info.name.c_str() : addrFull + 10,
 							false, ImGuiSelectableFlags_None);
+						ImGui::PopID();
 						if (ImGui::IsItemClicked())
 							ImGui::SetClipboardText(addrFull);
 						noteHover();
@@ -713,9 +715,11 @@ namespace ShadowCasterManager
 					auto ri = static_cast<uint8_t>(c.x * 255.0f);
 					auto gi = static_cast<uint8_t>(c.y * 255.0f);
 					auto bi = static_cast<uint8_t>(c.z * 255.0f);
+					ImGui::PushID(reinterpret_cast<const void*>(key));
 					ImGui::ColorButton("##col", c,
 						ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder,
 						ImVec2(C::SHADOW_LIGHT_SWATCH_WIDTH * uiScale, C::SHADOW_LIGHT_SWATCH_HEIGHT * uiScale));
+					ImGui::PopID();
 					if (ImGui::IsItemHovered())
 						ImGui::SetTooltip("#%02X%02X%02X", ri, gi, bi);
 				} else if (col == typeColIdx) {
