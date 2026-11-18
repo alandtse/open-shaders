@@ -85,6 +85,25 @@ namespace LightLimitFix
 
 	static const float CONTACT_SHADOW_DEPTH_BIAS = 2.0 / 65536.0;
 
+	static const float CONTACT_SHADOW_DISTANCE_FADE = 4.0;
+
+	static const float CONTACT_SHADOW_INTENSITY_FADE = 10.0;
+
+	/// Contact shadow strength at a view depth: full until the last quarter of Max Distance, then
+	/// fading to none at it, so the shadow never switches off at one depth.
+	float GetContactShadowDistanceFade(float viewDepth)
+	{
+		return saturate((1.0 - viewDepth / SharedData::lightLimitFixSettings.ContactShadowMaxDistance) * CONTACT_SHADOW_DISTANCE_FADE);
+	}
+
+	/// Contact shadow strength of a clustered light by its normalized falloff, easing in above Min
+	/// Light Intensity, so a flickering radius never switches the shadow on and off.
+	float GetContactShadowIntensityFade(float lightDistance, float invRadius)
+	{
+		const float falloff = saturate(lightDistance * invRadius);
+		return saturate((1.0 - falloff * falloff - SharedData::lightLimitFixSettings.ContactShadowMinIntensity) * CONTACT_SHADOW_INTENSITY_FADE);
+	}
+
 	// Depth buffer raymarching for contact shadows, after Tomasz Stachowiak's (h3r2tic) gist
 	// https://gist.github.com/h3r2tic/9c8356bdaefbe80b1a22ae0aaee192db (Apache-2.0 / MIT).
 	struct ContactShadowRay

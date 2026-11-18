@@ -331,7 +331,7 @@ void LightLimitFix::DrawContactShadowSettings()
 		ImGui::SliderScalar(T("feature.light_limit_fix.contact_shadow_max_steps", "Max Steps"), ImGuiDataType_U32, &settings.ContactShadowMaxSteps,
 			&kMinSteps, &kMaxSteps, "%u", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T("feature.light_limit_fix.contact_shadow_max_steps_tooltip", "Raymarch steps at zero depth, packed toward the shaded point. A ray spends only as many steps as its length on screen allows, and above four steps rays that never approach an occluder are rejected early."));
+			ImGui::Text("%s", T("feature.light_limit_fix.contact_shadow_max_steps_tooltip", "Raymarch steps, packed toward the shaded point. A ray spends only as many steps as its length on screen allows, and above four steps rays that never approach an occluder are rejected early."));
 		}
 
 		// AlwaysClamp on every float slider too: without it, Ctrl+Click text entry can
@@ -339,7 +339,7 @@ void LightLimitFix::DrawContactShadowSettings()
 		// boundary clamp catches them at the GPU side.
 		ImGui::SliderFloat(T("feature.light_limit_fix.contact_shadow_max_distance", "Max Distance"), &settings.ContactShadowMaxDistance, 64.0f, 4096.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T("feature.light_limit_fix.contact_shadow_max_distance_tooltip", "View-space depth at which contact shadows fade to zero steps. Avoids paying for shadows on distant surfaces where they don't read."));
+			ImGui::Text("%s", T("feature.light_limit_fix.contact_shadow_max_distance_tooltip", "View-space depth by which contact shadows have faded out, over the last quarter of it. Avoids paying for shadows on distant surfaces where they don't read."));
 		}
 
 		ImGui::SliderFloat(T("feature.light_limit_fix.contact_shadow_length", "Length"), &settings.ContactShadowLength, 1.0f, 256.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
@@ -356,8 +356,8 @@ void LightLimitFix::DrawContactShadowSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s",
 				T("feature.light_limit_fix.contact_shadow_min_intensity_tooltip",
-					"Skip contact shadows for CLUSTERED lights whose normalized distance falloff "
-					"`1 - (lightDist/radius)^2` at the pixel is below this threshold. "
+					"Contact shadows of CLUSTERED lights fade out as the normalized distance falloff "
+					"`1 - (lightDist/radius)^2` at the pixel drops to this threshold, and are skipped below it. "
 					"Strict lights are always raymarched regardless of this threshold. "
 					"Higher = larger perf win, may drop subtle shadows from weak lights at their reach edge."));
 		}
