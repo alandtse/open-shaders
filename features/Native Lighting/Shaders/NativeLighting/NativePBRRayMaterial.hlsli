@@ -141,6 +141,10 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	float lod = NativePBRLod(material, hitSurface, objectToWorld, footprint);
 	if (!all(isfinite(uv)) || !isfinite(lod))
 		return false;
+	const bool enableParallax = (NativePBRMaterialOptions & NativePBR::MaterialOptionParallax) != 0u;
+	const bool enableComplex = (NativePBRMaterialOptions & NativePBR::MaterialOptionComplex) != 0u;
+	if (!enableComplex)
+		material.controls.y &= ~NativePBR::LegacyComplexMaskFlag;
 	// Standard displacement takes precedence. Vanilla complex materials also
 	// encode height in the alpha channel of their environment mask.
 	const bool legacyComplex = (material.controls.y & NativePBR::LegacyComplexMaskFlag) != 0u;
@@ -156,11 +160,11 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 			coarseMask.a > epsilon && coarseMask.a < 1.0f - epsilon;
 		complexMaskDetected = coarseMask.a < 1.0f - epsilon && (!grayscale || blackHeight);
 	}
-	if (material.textures[2].x != NativePBR::MissingTexture) {
+	if (enableParallax && material.textures[2].x != NativePBR::MissingTexture) {
 		if (!NativePBRParallaxUV(material, hitSurface, objectToWorld, worldToObject, viewDirectionWS,
 			material.textures[2].xy, 0u, lod, uv))
 			return false;
-	} else if (legacyComplex && complexMaskDetected) {
+	} else if (enableParallax && legacyComplex && complexMaskDetected) {
 		float4 originalMask;
 		if (!SampleNativePBR(material.textures[1].xy, material.properties.z, uv, lod, originalMask))
 			return false;

@@ -32,6 +32,12 @@ namespace NativePBR
 	inline constexpr uint32_t kGpuDrawPreparedOpaque = 4u;
 	/** @brief Controls.y bit 8 switches the packed map from PBR RMAOS to legacy environment/complex channels. */
 	inline constexpr uint32_t kGpuLegacyComplexMask = 1u << 8;
+	inline constexpr uint32_t kRayMaterialOptionParallax = 1u << 0;
+	inline constexpr uint32_t kRayMaterialOptionComplex = 1u << 1;
+	inline constexpr uint32_t RayRequiredTextureRoles(uint32_t a_requested, bool a_parallaxEnabled)
+	{
+		return a_parallaxEnabled ? a_requested : a_requested & ~(1u << static_cast<uint32_t>(TextureRole::Displacement));
+	}
 	using GpuTextureLocation = std::array<uint32_t, 2>;
 	using GpuTextureLocations = std::array<GpuTextureLocation, static_cast<size_t>(TextureRole::Count)>;
 	/** @brief Converts one physical DDS page to the matching linear or sRGB SRV index. */

@@ -692,7 +692,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			uint32_t referenceVisibility, referencePrimaryTraversal, frameIndex, traceDensityMode;
 			float4 lightTuning;   // reach, cutoff width, exponent, common direct strength
 			float4 shadowTuning;  // shadow strength, emitter scale, stochastic enabled, emission
-			uint32_t nativePbrReady, nativePbrPadding[3];
+			uint32_t nativePbrReady, nativePbrPadding[2], nativePbrMaterialOptions;
 		};
 		static_assert(sizeof(Constants) == 288);
 		const Constants constants{ width, height, uint32_t(scene.acceleration->instances.size()), selectedCount,
@@ -706,7 +706,9 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			{ a_settings.PointLightRadiusMultiplier, a_settings.PointLightFalloffFraction, a_settings.PointLightFalloffExponent, a_settings.DirectStrength },
 			{ a_settings.ShadowStrength, a_settings.EmitterRadiusMultiplier, a_settings.StochasticShadows ? 1.0f : 0.0f, a_settings.EmissionStrength },
 			slot->rayMaterials ? 1u : 0u, { a_settings.ForcePositiveValidity ? 1u : 0u,
-				slot->rayMaterials && slot->rayMaterials->forcedAdmission ? 1u : 0u, 0u } };
+				slot->rayMaterials && slot->rayMaterials->forcedAdmission ? 1u : 0u },
+			(globals::features::nativePBR.nativeParallax.load(std::memory_order_relaxed) ? NativePBR::kRayMaterialOptionParallax : 0u) |
+			(globals::features::nativePBR.nativeComplexMaterials.load(std::memory_order_relaxed) ? NativePBR::kRayMaterialOptionComplex : 0u) };
 		slot->nativePointLightCount = selectedCount;
 		slot->nativeMinimumDistance = constants.minimum;
 		slot->nativeLightTuning = constants.lightTuning;

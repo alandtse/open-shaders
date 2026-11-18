@@ -15,6 +15,7 @@ namespace NativePBR
 		std::vector<GpuDrawBinding> instances;
 		uint32_t eligible = 0, unsupported = 0, unavailable = 0;
 		bool forcedAdmission = false;
+		bool parallaxRequired = true;
 	};
 
 	/** @brief Selects only opaque meshes whose complete native shading inputs are known. */
@@ -63,7 +64,8 @@ namespace NativePBR
 	/** @brief Emits compact per-instance lookups while retaining scene and texture generations. */
 	inline std::shared_ptr<const RayMaterialBindings> PrepareRayMaterialBindings(
 		std::shared_ptr<const PreparedSceneMaterials> a_prepared,
-		std::shared_ptr<const GpuMaterialResources> a_materials, bool a_forceAdmission = false)
+		std::shared_ptr<const GpuMaterialResources> a_materials, bool a_forceAdmission = false,
+		bool a_parallaxRequired = true)
 	{
 		if (!a_prepared || !a_prepared->geometry || !a_prepared->materialPublication ||
 			!a_materials || !a_materials->generation ||
@@ -74,6 +76,7 @@ namespace NativePBR
 		result->prepared = std::move(a_prepared);
 		result->materials = std::move(a_materials);
 		result->forcedAdmission = a_forceAdmission;
+		result->parallaxRequired = a_parallaxRequired;
 		result->instances.resize(result->prepared->instances.size(), PackGpuDrawBinding(0, 0, UINT32_MAX, 0));
 		for (size_t index = 0; index < result->instances.size(); ++index) {
 			const auto& instance = result->prepared->geometry->instances[index];
@@ -91,7 +94,9 @@ namespace NativePBR
 			}
 			const auto& recipe = *binding.material.recipe;
 			const auto gpu = result->materials->Find(recipe.identity, recipe.revision);
-			if (!gpu || (!a_forceAdmission && gpu->availability != GpuMaterialAvailability::Resident) ||
+			if (!gpu || (!a_forceAdmission &&
+				(a_parallaxRequired ? gpu->availability : ClassifyGpuMaterialAvailability(gpu->residentRoles,
+					RayRequiredTextureRoles(gpu->requestedRoles, false))) != GpuMaterialAvailability::Resident) ||
 				gpu->index >= result->materials->entries.size()) {
 				++result->unavailable;
 				continue;

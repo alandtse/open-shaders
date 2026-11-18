@@ -56,7 +56,8 @@ cbuffer Trace : register(b0)
 	float4 LightTuning; // radius multiplier, cutoff fraction, cutoff exponent, direct strength
 	float4 ShadowTuning; // shadow strength, emitter radius scale, stochastic visibility, emission strength
 	uint NativePBRReady;
-	uint3 NativePBRPadding;
+	uint2 NativePBRPadding;
+	uint NativePBRMaterialOptions;
 };
 
 #include "Common/ReverseZ.hlsli"

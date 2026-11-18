@@ -8,6 +8,8 @@ namespace NativePBR
 	static const uint MissingTexture = 0xffffffffu;
 	static const uint DrawVertexColorFlag = 1u;
 	static const uint LegacyComplexMaskFlag = 1u << 8u;
+	static const uint MaterialOptionParallax = 1u << 0u;
+	static const uint MaterialOptionComplex = 1u << 1u;
 
 	struct MaterialRecord
 	{

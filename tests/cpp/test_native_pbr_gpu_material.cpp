@@ -84,6 +84,10 @@ TEST_CASE("NativePBR material availability requires only sampled opaque roles", 
 	recipe.textures[5].canonicalPath = "textures/features0.dds";
 	const auto requested = GpuRequestedTextureRoles(recipe);
 	CHECK(requested == 0x1fu);
+	CHECK(RayRequiredTextureRoles(requested, false) == 0x0fu);
+	CHECK(RayRequiredTextureRoles(requested, true) == requested);
+	CHECK(ClassifyGpuMaterialAvailability(0x0fu, RayRequiredTextureRoles(requested, false)) ==
+		GpuMaterialAvailability::Resident);
 	CHECK(ClassifyGpuMaterialAvailability(0x1fu, requested) == GpuMaterialAvailability::Resident);
 	CHECK(ClassifyGpuMaterialAvailability(0x0fu, requested) == GpuMaterialAvailability::PartiallyResident);
 	CHECK(ClassifyGpuMaterialAvailability(0x17u, requested) == GpuMaterialAvailability::PartiallyResident);
@@ -243,6 +247,15 @@ TEST_CASE("NativePBR ray bindings follow the exact scene and resident material g
 	CHECK(forced->forcedAdmission);
 	CHECK(forced->eligible == 1);
 	CHECK(forced->instances[0].materialIndex == 0);
+	gpu->entries[0].residentRoles = 0x07u;
+	gpu->entries[0].requestedRoles = 0x17u;
+	const auto baseOnly = PrepareRayMaterialBindings(prepared, gpu, false, false);
+	REQUIRE(baseOnly);
+	CHECK_FALSE(baseOnly->parallaxRequired);
+	CHECK(baseOnly->eligible == 1);
+	const auto withParallax = PrepareRayMaterialBindings(prepared, gpu, false, true);
+	REQUIRE(withParallax);
+	CHECK(withParallax->eligible == 0);
 	attributes->stride = 36;
 	CHECK_FALSE(RayOpaqueEligible(scene->instances[0], prepared->instances[0].material));
 	CHECK(RayOpaqueEligible(scene->instances[0], prepared->instances[0].material, true));

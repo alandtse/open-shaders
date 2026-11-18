@@ -264,9 +264,10 @@ void NativePBRFeature::Prepass()
 	const auto materials = GetNativeGpuMaterials();
 	const auto previous = rayMaterialBindings.load(std::memory_order_acquire);
 	const bool forceAdmission = forceRayAdmission.load(std::memory_order_relaxed);
+	const bool requireParallax = nativeParallax.load(std::memory_order_relaxed);
 	if (!previous || previous->prepared != prepared || previous->materials != materials ||
-		previous->forcedAdmission != forceAdmission)
-		rayMaterialBindings.store(NativePBR::PrepareRayMaterialBindings(prepared, materials, forceAdmission), std::memory_order_release);
+		previous->forcedAdmission != forceAdmission || previous->parallaxRequired != requireParallax)
+		rayMaterialBindings.store(NativePBR::PrepareRayMaterialBindings(prepared, materials, forceAdmission, requireParallax), std::memory_order_release);
 }
 
 void NativePBRFeature::OnSceneTransitionReset(bool)
@@ -751,6 +752,14 @@ void NativePBRFeature::DrawSettings()
 	ImGui::TextDisabled("Opt-in: preserves Extended Materials parallax and complex shading on raster characters and other DX11 fallback objects.");
 	ImGui::TextDisabled("TruePBR remains disabled in native mode; DX12 prepared materials are evaluated independently.");
 	DrawOwnership("Enable Native PBR", enabled, IsActive());
+	bool parallax = nativeParallax.load(std::memory_order_relaxed);
+	if (ImGui::Checkbox("Native DX12 parallax (experimental)", &parallax))
+		nativeParallax.store(parallax, std::memory_order_relaxed);
+	bool complex = nativeComplexMaterials.load(std::memory_order_relaxed);
+	if (ImGui::Checkbox("Native DX12 complex materials (experimental)", &complex))
+		nativeComplexMaterials.store(complex, std::memory_order_relaxed);
+	ImGui::TextDisabled("Both are opt-in and affect only native ray-hit shading; basic PBR remains active.");
+	ImGui::TextDisabled("Legacy Compatibility Materials is a separate DX11 raster setting.");
 	int stage = static_cast<int>(readinessStage.load(std::memory_order_relaxed)) - 1;
 	if (ImGui::Combo("DX12 ownership readiness (testing)", &stage,
 		"Geometry confirmed (incomplete)\0NativePBR evaluated (incomplete)\0Native lighting completed (safe)\0"))
@@ -858,6 +867,8 @@ void NativePBRFeature::LoadSettings(json& j)
 	backendSettings.NativeBackend = j.value("NativeBackend", true);
 	backendSettings.LegacyCompatibilityMaterials = j.value("LegacyCompatibilityMaterials", false);
 	enabled.store(j.value("Enabled", true), std::memory_order_relaxed);
+	nativeParallax.store(j.value("NativeParallax", false), std::memory_order_relaxed);
+	nativeComplexMaterials.store(j.value("NativeComplexMaterials", false), std::memory_order_relaxed);
 	forceRayAdmission.store(false, std::memory_order_relaxed);
 	readinessStage.store(std::clamp(j.value("NativeReadinessStage", 3u), 1u, 3u), std::memory_order_relaxed);
 }
@@ -879,6 +890,8 @@ void NativePBRFeature::SaveSettings(json& j)
 	j = { { "Enabled", enabled.load(std::memory_order_relaxed) },
 		{ "NativeBackend", backendSettings.NativeBackend },
 		{ "LegacyCompatibilityMaterials", backendSettings.LegacyCompatibilityMaterials },
+		{ "NativeParallax", nativeParallax.load(std::memory_order_relaxed) },
+		{ "NativeComplexMaterials", nativeComplexMaterials.load(std::memory_order_relaxed) },
 		{ "NativeReadinessStage", readinessStage.load(std::memory_order_relaxed) } };
 }
 void NativeLLFFeature::SaveSettings(json& j)
@@ -912,6 +925,8 @@ json NativePBRFeature::GetDiagnostics()
 		.scope = NativePBR::MaterialScope::OpaqueStaticMesh
 	});
 	return { { "selected", enabled.load() }, { "native", state.owner == NativePBR::RenderingOwner::Native },
+		{ "nativeParallax", nativeParallax.load(std::memory_order_relaxed) },
+		{ "nativeComplexMaterials", nativeComplexMaterials.load(std::memory_order_relaxed) },
 		{ "nativeFirstReadinessStage", NativeFirstReadinessStage() },
 		{ "legacyCompatibilityMaterials", SelectedBackend() == NativePBR::Backend::NativeDX12 &&
 			bootSnapshot.Boot(&BackendSettings::LegacyCompatibilityMaterials) },
