@@ -9,6 +9,9 @@
 /** @brief Shared building blocks for the Effects 11 editor windows. */
 namespace Effects11UI
 {
+	/** @brief Wrap width of editor tooltips, in font sizes. */
+	inline constexpr float kTooltipWrapEm = 30.0f;
+
 	/** @brief Returns the translated setting label, falling back to the shared identifier formatter. */
 	std::string PrettifyName(std::string_view a_key);
 
