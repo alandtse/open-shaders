@@ -20,6 +20,7 @@
 #if defined(ENABLE_EFFECTS11)
 #	include "Features/Effects11.h"
 #	include "Features/Effects11/EffectManager.h"
+#	include "Features/Effects11/Overlays/PresetOverlays.h"
 #	include "Features/Effects11/SettingManager.h"
 #endif
 #include "Features/ExponentialHeightFog.h"
@@ -1877,8 +1878,7 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 		// Effects11's ENB state lives in enbseries.ini, not the Settings JSON -- persist
 		// it here too, not just via MenuManager's own "Save"/"Save & Apply" buttons.
 		if (a_isExplicitUserSave && EffectManager::GetSingleton().IsPresetLoaded()) {
-			SettingManager::GetSingleton().Save();
-			EffectManager::GetSingleton().Save();
+			Overlays::Manager::GetSingleton().SavePreset();
 		}
 #endif
 	}

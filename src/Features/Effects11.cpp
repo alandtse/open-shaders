@@ -5,6 +5,7 @@
 #include "Effects11/ENBHelper.h"
 #include "Effects11/Editor/Effects11Editor.h"
 #include "Effects11/EffectManager.h"
+#include "Effects11/Overlays/PresetOverlays.h"
 #include "Effects11/PresetManager.h"
 #include "Effects11/SettingManager.h"
 #include "Effects11/WeatherManager.h"
@@ -482,8 +483,7 @@ namespace
 	{
 		auto& settingManager = SettingManager::GetSingleton();
 		auto& effectManager = EffectManager::GetSingleton();
-		settingManager.Save();
-		effectManager.Save();
+		Overlays::Manager::GetSingleton().SavePreset();
 		settingManager.Load();
 		effectManager.Apply();
 	}
@@ -1864,10 +1864,8 @@ namespace
 						manager.ReloadActive();
 					return true;
 				}
-				if (saveCurrent && manager.CanExportActivePreset()) {
-					SettingManager::GetSingleton().Save();
-					EffectManager::GetSingleton().Save();
-				}
+				if (saveCurrent && manager.CanExportActivePreset() && !Overlays::Manager::GetSingleton().SavePreset())
+					return false;
 				manager.SetActiveLocation(location->root);
 				manager.ReloadActive();
 				return true;

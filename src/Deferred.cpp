@@ -477,7 +477,7 @@ void Deferred::DeferredPasses()
 		ID3D11ShaderResourceView* modeSRV = nullptr;
 		context->CSSetShaderResources(16, 1, &modeSRV);
 		ID3D11ShaderResourceView* springDebugSRV = globals::features::wind.GetGrassWindSpringDebugSRV();
-		context->CSSetShaderResources(18, 1, &springDebugSRV);
+		context->CSSetShaderResources(27, 1, &springDebugSRV);
 
 		ID3D11UnorderedAccessView* uavs[3]{ Util::AsReal(main.UAV), Util::AsReal(normals.UAV), Util::AsReal(motionVectors.UAV) };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
@@ -491,7 +491,7 @@ void Deferred::DeferredPasses()
 		// Unbind mode texture SRV
 		ID3D11ShaderResourceView* nullSRV = nullptr;
 		context->CSSetShaderResources(16, 1, &nullSRV);
-		context->CSSetShaderResources(18, 1, &nullSRV);
+		context->CSSetShaderResources(27, 1, &nullSRV);
 	}
 
 	// VR: Bilateral stereo blend (the reprojection color-overwrite path is gone —

@@ -6,7 +6,7 @@
 // (DistantTree) draw.
 namespace TreeLodWind
 {
-	cbuffer TreeLodWindCB : register(b9)
+	cbuffer TreeLodWindCB : register(b8)
 	{
 		float4 Wind;    // phase, previous phase, wind speed 0-1, wind angle (radians)
 		float4 Params;  // amplitude, near distance, enabled, unused
