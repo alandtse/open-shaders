@@ -288,7 +288,7 @@ TEST_CASE("PerFrameCache works a key out once per frame and drops it on the next
 	REQUIRE(cache.entries.size() == 1);
 }
 
-TEST_CASE("HoldsFlame takes only a small part close round the flame", "[scm]")
+TEST_CASE("HoldsFlame takes only a small part round or under the flame", "[scm]")
 {
 	REQUIRE(HoldsFlame(0.0f, 0.0f, 2.0f, 3.0f, 1.0f));
 	REQUIRE(HoldsFlame(0.0f, 0.0f, 7.0f, 3.0f, 1.0f));
