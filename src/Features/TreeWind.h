@@ -67,6 +67,7 @@ public:
 	virtual inline std::string GetName() override { return "Tree Wind"; }
 	virtual inline std::string GetDisplayName() override { return T("feature.tree_wind.name", "Tree Wind"); }
 	virtual inline std::string GetShortName() override { return "TreeWind"; }
+	virtual bool SupportsVR() override { return true; }
 	virtual inline std::string_view GetShaderDefineName() override { return "TREE_WIND"; }
 	virtual inline bool HasShaderDefine(RE::BSShader::Type t) override
 	{
