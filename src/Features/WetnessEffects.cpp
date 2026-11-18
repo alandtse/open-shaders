@@ -797,6 +797,20 @@ void WetnessEffects::DrawDebugSection()
 	if (debugSettings.EnableRainOverride) {
 		ImGui::SliderFloat2(T(TKEY("rain_in_exterior"), "Rain In/Exterior"), &debugSettings.RainOverride.x, 0.0f, 1.0f);
 	}
+
+	ImGui::BeginDisabled(!settings.EnableWetnessEffects || !settings.EnableCharacterRainSpots);
+	const char* debugModes[] = {
+		T(TKEY("character_debug_shading"), "Water Shading"),
+		T(TKEY("character_debug_combined"), "Combined Coverage"),
+		T(TKEY("character_debug_static"), "Settled Beads Only"),
+		T(TKEY("character_debug_impacts"), "Arriving Drops Only"),
+		T(TKEY("character_debug_flow"), "Flowing Rivulets Only"),
+		T(TKEY("character_debug_surfaces"), "Eligible Character Surfaces"),
+		T(TKEY("character_debug_weapons"), "Held Weapon Classification")
+	};
+	static_assert(std::size(debugModes) == static_cast<std::size_t>(CharacterDebugMode::Count));
+	Util::Combo(T(TKEY("character_spot_debug"), "Water Layer Debug"), &settings.CharacterSpotDebug, debugModes);
+	ImGui::EndDisabled();
 }
 
 // =====================
@@ -928,23 +942,8 @@ void WetnessEffects::DrawCharacterRainSettings()
 	ImGui::EndDisabled();
 
 	ImGui::Spacing();
-	ImGui::SeparatorText(T(TKEY("character_debug"), "Debug"));
 	if (Util::Button(T(TKEY("character_restore_defaults"), "Restore Character Wet Defaults")))
 		RestoreCharacterRainDefaults();
-
-	ImGui::BeginDisabled(characterEffectsDisabled);
-	const char* debugModes[] = {
-		T(TKEY("character_debug_shading"), "Water Shading"),
-		T(TKEY("character_debug_combined"), "Combined Coverage"),
-		T(TKEY("character_debug_static"), "Settled Beads Only"),
-		T(TKEY("character_debug_impacts"), "Arriving Drops Only"),
-		T(TKEY("character_debug_flow"), "Flowing Rivulets Only"),
-		T(TKEY("character_debug_surfaces"), "Eligible Character Surfaces"),
-		T(TKEY("character_debug_weapons"), "Held Weapon Classification")
-	};
-	static_assert(std::size(debugModes) == static_cast<std::size_t>(CharacterDebugMode::Count));
-	Util::Combo(T(TKEY("character_spot_debug"), "Water Layer Debug"), &settings.CharacterSpotDebug, debugModes);
-	ImGui::EndDisabled();
 }
 
 void WetnessEffects::RestoreCharacterRainDefaults()
