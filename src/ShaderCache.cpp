@@ -3492,6 +3492,9 @@ namespace SIE
 			} else if (!_stricmp(profile, "vs_5_0") || !_stricmp(profile, "vs_4_0")) {
 				stageDefine = "VSHADER";
 				cacheExt = L".vso";
+			} else if (!_stricmp(profile, "gs_5_0")) {
+				stageDefine = "GEOMETRYSHADER";
+				cacheExt = L".gso";
 			} else if (!_stricmp(profile, "hs_5_0")) {
 				stageDefine = "HULLSHADER";
 			} else if (!_stricmp(profile, "ds_5_0")) {
