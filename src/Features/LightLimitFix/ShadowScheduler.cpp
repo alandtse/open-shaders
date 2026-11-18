@@ -2840,9 +2840,11 @@ namespace ShadowCasterManager
 		anyCostRejected = false;
 
 		for (auto* e : pending) {
-			if (!e->playerProtected && (maxRedraw <= 0 || budgetRemain <= 0))
+			// Player-protected lights ignore the budget, so they must not also take the starvation floor.
+			const bool floorAdmit = isFirst && !e->playerProtected;
+			if (!e->playerProtected && !floorAdmit && (maxRedraw <= 0 || budgetRemain <= 0))
 				break;
-			DueGate gate = DueGateFor(e, now, isFirst);
+			DueGate gate = DueGateFor(e, now, floorAdmit);
 			if (e->playerProtected && gate == DueGate::Stop)
 				gate = DueGate::Skip;
 			if (gate == DueGate::Stop)
@@ -2854,7 +2856,7 @@ namespace ShadowCasterManager
 				s_schedDiag.player_forced_past_budget++;
 				s_playerForcedPastBudgetTotal.fetch_add(1, std::memory_order_relaxed);
 			}
-			if (isFirst) {
+			if (floorAdmit) {
 				if (!s_lights.Sun || e->Index > 0)
 					budgetRemain -= budgetEstimate;
 				maxRedraw--;
