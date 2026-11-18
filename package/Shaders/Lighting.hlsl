@@ -2371,6 +2371,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	endif
 
 	MaterialProperties material = (MaterialProperties)0;
+	float2 uvOriginal_ddx = ddx(uvOriginal);
+	float2 uvOriginal_ddy = ddy(uvOriginal);
 
 	material.F0 = 0;
 	material.Roughness = 1;
@@ -2426,8 +2428,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	material.GlintDensityRandomization = clamp(glintParameters.w, PBR::Constants::MinGlintDensityRandomization, PBR::Constants::MaxGlintDensityRandomization);
 
 #		if defined(GLINT) && !defined(SNOW_COVER)
-	float glintNoise = Random::R1Modified(float(SharedData::FrameCount), (Random::pcg2d(uint2(Stereo::EyeStableNoiseCoord(input.Position.xy, SharedData::BufferDim.xy))) / 4294967296.0).x);
-	Glints::PrecomputeGlints(glintNoise, uvOriginal, ddx(uvOriginal), ddy(uvOriginal), material.GlintScreenSpaceScale, material.GlintCache);
+	[branch] if (material.GlintLogMicrofacetDensity > 1.1)
+	{
+		float glintNoise = Random::R1Modified(float(SharedData::FrameCount), (Random::pcg2d(uint2(Stereo::EyeStableNoiseCoord(input.Position.xy, SharedData::BufferDim.xy))) / 4294967296.0).x);
+		Glints::PrecomputeGlints(glintNoise, uvOriginal, uvOriginal_ddx, uvOriginal_ddy, material.GlintScreenSpaceScale, material.GlintCache);
+	}
 #		endif
 
 	baseColor.xyz *= 1 - material.Metallic;
@@ -2749,39 +2754,39 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 #	if defined(SNOW_COVER)
 	bool snowActive = SnowCover::IsActive() && !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::SnowInactive);
+	float snowFactor = 0;
+	[branch] if (snowActive
+#		if !defined(TREE_ANIM)
+	             && !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::NoSnow)
+#		endif
+	)
+	{
 #		if defined(SKYLIGHTING)
-	float snowSkyVisibility = (inWorld || inReflection) ? SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1)) : 0;
-	float snowOcclusion = smoothstep(0, SnowCover::SkyVisibilityThreshold, snowSkyVisibility);
+		float snowSkyVisibility = (inWorld || inReflection) ? SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1)) : 0;
+		float snowOcclusion = smoothstep(0, SnowCover::SkyVisibilityThreshold, snowSkyVisibility);
 #		else
-	float snowSkyVisibility = inWorld || inReflection;
-	float snowOcclusion = inWorld || inReflection;
+		float snowSkyVisibility = inWorld || inReflection;
+		float snowOcclusion = inWorld || inReflection;
 #		endif
 
 #		if !defined(TREE_ANIM)
-	bool snowBillboard = false;
+		bool snowBillboard = false;
 #		endif
 #		if defined(DO_ALPHA_TEST) && defined(LOD_BLENDING) && !defined(TREE_ANIM)  // should only match object lod trees (ultra trees), they have no special define
-	float3 snowCardNormal = normalize(cross(ddx(input.WorldPosition.xyz), ddy(input.WorldPosition.xyz)));
-	if (snowActive && HasSoftLighting()) {
-		float rx;
-		float ry;
-		TexColorSampler.GetDimensions(rx, ry);
-		snowBillboard = abs(dot(snowCardNormal, vertexNormal)) < 0.5;
-		float hasAlpha = 1 - TexColorSampler.SampleLevel(SampColorSampler, uv, 6).a;
-		if (snowBillboard || hasAlpha > 0.001) {
-			snowOcclusion = 1 - TexColorSampler.Sample(SampColorSampler, uv - float2(0, 2. / ry)).a;
+		float3 snowCardNormal = normalize(cross(ddx(input.WorldPosition.xyz), ddy(input.WorldPosition.xyz)));
+		if (HasSoftLighting()) {
+			float rx;
+			float ry;
+			TexColorSampler.GetDimensions(rx, ry);
+			snowBillboard = abs(dot(snowCardNormal, vertexNormal)) < 0.5;
+			float hasAlpha = 1 - TexColorSampler.SampleLevel(SampColorSampler, uv, 6).a;
+			if (snowBillboard || hasAlpha > 0.001) {
+				snowOcclusion = 1 - TexColorSampler.Sample(SampColorSampler, uv - float2(0, 2. / ry)).a;
+			}
 		}
-	}
 #		endif
 
-	float3 adjustedWorldPos = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-
-	float snowFactor = 0;
-	if (snowActive
-#		if !defined(TREE_ANIM)
-	    && !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::NoSnow)
-#		endif
-	) {
+		float3 adjustedWorldPos = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 #		if defined(TRUE_PBR)
 #			if defined(TREE_ANIM)
 		float disp = 0;
@@ -2866,9 +2871,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		endif
 #	endif  // SNOW_COVER
 #	if defined(GLINT) && defined(SNOW_COVER)
-	if (material.GlintLogMicrofacetDensity > SnowCover::GlintEnableThreshold) {
+	[branch] if (material.GlintLogMicrofacetDensity > SnowCover::GlintEnableThreshold)
+	{
 		float glintNoise = Random::R1Modified(float(SharedData::FrameCount), (Random::pcg2d(uint2(Stereo::EyeStableNoiseCoord(input.Position.xy, SharedData::BufferDim.xy))) / 4294967296.0).x);
-		Glints::PrecomputeGlints(glintNoise, uvOriginal, ddx(uvOriginal), ddy(uvOriginal), material.GlintScreenSpaceScale, material.GlintCache);
+		Glints::PrecomputeGlints(glintNoise, uvOriginal, uvOriginal_ddx, uvOriginal_ddy, material.GlintScreenSpaceScale, material.GlintCache);
 	}
 #	endif
 
@@ -3396,8 +3402,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		endif
 #	endif
 
-	float2 uvOriginal_ddx = ddx(uvOriginal);
-	float2 uvOriginal_ddy = ddy(uvOriginal);
 	EvaluateLighting(dirLightContext, material,
 		tbnTr, uvOriginal, uvOriginal_ddx, uvOriginal_ddy, dirLightOutput);
 	dirLightOutput.transmission *= dirTransmissionContactShadow;
