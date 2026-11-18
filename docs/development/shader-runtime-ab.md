@@ -156,6 +156,25 @@ So to point it at a different shader you change only:
 - **The permutation defines** — compile A′/B with the exact `/D` set the running build used.
 - **The capture state** — pick a frame that actually exercises the code path (see lessons).
 
+## Weather sweep (GPU time, base vs PR)
+
+`tools/weather-sweep-ab.py` measures how shader branching changes GPU cost across weather in a
+static exterior scene (the #1185 method). It runs `coc WhiterunExterior01`, `set gamehour to 12`,
+`set timescale to 0`, then forces `SkyrimClear`, `SkyrimOvercastRain` and `SkyrimOvercastSnow`.
+Each weather gets a settle (20, 30 and 60 s) and then a `--hold` window (default 30 s), and the
+wall-clock bounds of every window land in `windows.json`.
+
+1. Build the base (`dev`) and the PR as separate Tracy builds (`-DTRACY_SUPPORT=ON`) and deploy one
+   at a time. Run `openshaders.shadercache {"action":"backgroundCompile"}` and load a save first.
+2. Connect Tracy (server port 8086), then run
+   `python tools/weather-sweep-ab.py --out <dir> --label base` and save the capture.
+3. Repeat with the PR (`--label pr`), then base again and PR again (ABBA) so drift averages out.
+4. Slice each capture by the `windows.json` bounds and compare the per-pass median (for example
+   `Deferred::World`) per weather. State the delta against the frame budget, not raw milliseconds.
+
+Take no other game or heavy CPU, GPU or disk work during a run: the scene is static, so any
+frame-time variation is noise. VR and one flat runtime should both run; `--port` selects one.
+
 ## Lessons (generalizable RE technique)
 
 These transfer to any GPU-shader RE/validation work, not just TAA:
