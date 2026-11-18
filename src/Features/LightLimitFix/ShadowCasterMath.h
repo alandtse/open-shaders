@@ -21,6 +21,8 @@ namespace ShadowCasterManager
 	inline constexpr float kFlameEnclosureReachMargin = 4.0f;
 	/// How far over the top of a small part standing under it a light may hang and still count that part as its holder.
 	inline constexpr float kFlameAboveHolderMax = 24.0f;
+	/// Largest local offset of a light from its parent still read as flicker wobble rather than a placed offset.
+	inline constexpr float kFlickerWobbleMaxOffset = 16.0f;
 
 	/// True when a part whose world bound has radius a_radius, at a_dx/a_dy/a_dz from the flame, is small enough at its world scale
 	/// a_scale to be the part holding that flame: it holds the flame within its bound plus the margin, or stands under it with the

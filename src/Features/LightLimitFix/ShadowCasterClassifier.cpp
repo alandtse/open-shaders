@@ -36,6 +36,7 @@ namespace ShadowCasterManager
 	std::atomic<uint32_t> s_hemisphereDropCount{ 0 };
 	std::atomic<uint64_t> s_hemisphereDropTotal{ 0 };
 	std::atomic<uint64_t> s_passlessCasterSkipTotal{ 0 };
+	std::atomic<uint64_t> s_flameHolderSkipTotal{ 0 };
 
 	/// Appends by destination list, so the front pass's caster count is readable
 	/// without RenderDoc: front-list appends vs back-only appends.
@@ -491,19 +492,31 @@ namespace ShadowCasterManager
 		return nullptr;
 	}
 
-	/// True for a small part of the light's own reference whose bound holds the flame: a flame moving with its flicker slices
-	/// such a part at any near cut, so it is left out of that light's shadow while the rest of the fixture still casts.
+	/// The flame's rest spot: flicker writes its wobble into the light's local translate, so a part at the holder's edge
+	/// would flip in and out of the shadow (and churn the static cache) if measured from the live flame.
+	static RE::NiPoint3 FlameRestOrigin(const RE::NiAVObject* a_light) noexcept
+	{
+		__try {
+			if (a_light->parent && a_light->local.translate.SqrLength() <= kFlickerWobbleMaxOffset * kFlickerWobbleMaxOffset)
+				return a_light->parent->world.translate;
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		}
+		return a_light->world.translate;
+	}
+
+	/// True for a small part of the light's own placed reference whose bound holds the flame: a flame moving with its flicker
+	/// slices such a part at any near cut, so it is left out of that light's shadow while the rest of the fixture still casts.
 	static bool EnclosesOwnFlame(const RE::BSShadowLight& a_light, const RE::BSGeometry& a_geometry)
 	{
 		const auto* ni = a_light.light.get();
 		if (!ni)
 			return false;
 		const auto& bound = a_geometry.worldBound;
-		const auto d = bound.center - ni->world.translate;
+		const auto d = bound.center - FlameRestOrigin(ni);
 		if (!HoldsFlame(d.x, d.y, d.z, bound.radius, a_geometry.world.scale))
 			return false;
 		const auto* owner = OwnerOf(ni);
-		return owner && owner == OwnerOf(&a_geometry);
+		return owner && !owner->Is(RE::FormType::ActorCharacter) && owner == OwnerOf(&a_geometry);
 	}
 
 	// BSParabolicCullingProcess::GetHemisphereMask values: bit 0 appends the
@@ -543,8 +556,10 @@ namespace ShadowCasterManager
 					return;  // skip append -- caster dropped from this shadow
 				}
 			}
-			if (light && s_settings.SkipFlameEnclosure && EnclosesOwnFlame(*light, a_visible))
+			if (light && s_settings.SkipFlameEnclosure && EnclosesOwnFlame(*light, a_visible)) {
+				s_flameHolderSkipTotal.fetch_add(1, std::memory_order_relaxed);
 				return;
+			}
 			if (s_recLeft.load(std::memory_order_relaxed) > 0) {
 				const int32_t recSlot = s_recTargetSlot.load(std::memory_order_relaxed);
 				if (recSlot >= 0 && light && recSlot < s_lights.Size &&
