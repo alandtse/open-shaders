@@ -700,9 +700,11 @@ namespace ShadowCasterManager
 						snprintf(addrFull, sizeof(addrFull), "0x%016llX", static_cast<unsigned long long>(row.info.lightKey));
 						// Show the resolved world-light name when one exists;
 						// the raw address stays available in the tooltip/copy.
+						ImGui::PushID("address");
 						ImGui::PushID(reinterpret_cast<const void*>(key));
 						ImGui::Selectable(!row.info.name.empty() ? row.info.name.c_str() : addrFull + 10,
 							false, ImGuiSelectableFlags_None);
+						ImGui::PopID();
 						ImGui::PopID();
 						if (ImGui::IsItemClicked())
 							ImGui::SetClipboardText(addrFull);
