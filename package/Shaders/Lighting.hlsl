@@ -2164,7 +2164,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float3 worldNormal = normalize(mul(tbn, normal.xyz));
 #		if defined(TREE_ANIM) && !defined(TRUE_PBR) && !defined(VR)
 #			if defined(SNOW_COVER)
-	const float3 treeSnowCoverageNormal = worldNormal;
+#				define TREE_SNOW_COVERAGE_NORMAL
+	float3 treeSnowCoverageNormal = worldNormal;
 #			endif
 	float3 viewNormal = normalize(FrameBuffer::WorldToView(worldNormal, false, eyeIndex));
 	viewNormal = float3(viewNormal.xy, -abs(viewNormal.z));
@@ -2279,6 +2280,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		projBaseColor.xyz = pow(abs(projBaseColor.xyz), SharedData::lodBlendingSettings.LODObjectSnowGamma) * SharedData::lodBlendingSettings.LODObjectSnowBrightness;
 #			endif  // LOD_BLENDING
 		float3 projectedWorldNormal = normalize(mul(transpose(tbnTr), finalProjNormal));
+#			if defined(TREE_SNOW_COVERAGE_NORMAL)
+		treeSnowCoverageNormal = normalize(lerp(treeSnowCoverageNormal, ReorientNormal(projectedWorldNormal, treeSnowCoverageNormal, tbnTr[2]), projectedMaterialWeight));
+#			endif
 #			if defined(SKINNED) || !defined(MODELSPACENORMALS)
 		projectedWorldNormal = ReorientNormal(projectedWorldNormal, worldNormal, tbnTr[2]);
 #			endif
@@ -2321,8 +2325,13 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		const float buriedDepth = max(viewPosition.z - visibleDepth - depthStep, 0.0);
 		[branch] if (buriedDepth > 0.0)
 		{
-			const float3 blendedNormal = lerp(worldNormal, float3(0, 0, 1), saturate(buriedDepth / TerrainBlending::ObjectNormalBlendDepth));
+			const float normalBlend = saturate(buriedDepth / TerrainBlending::ObjectNormalBlendDepth);
+			const float3 blendedNormal = lerp(worldNormal, float3(0, 0, 1), normalBlend);
 			worldNormal = dot(blendedNormal, blendedNormal) > TerrainBlending::MinimumBlendedNormalLengthSquared ? normalize(blendedNormal) : float3(0, 0, 1);
+#		if defined(TREE_SNOW_COVERAGE_NORMAL)
+			const float3 treeSnowBlendedNormal = lerp(treeSnowCoverageNormal, float3(0, 0, 1), normalBlend);
+			treeSnowCoverageNormal = dot(treeSnowBlendedNormal, treeSnowBlendedNormal) > TerrainBlending::MinimumBlendedNormalLengthSquared ? normalize(treeSnowBlendedNormal) : float3(0, 0, 1);
+#		endif
 			localShadowPosition *= 1.0 - buriedDepth / viewPosition.z;
 		}
 	}
@@ -2791,7 +2800,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		if defined(TREE_ANIM)
 		snowNormal = normalize(snowNormal + float3(0, 0, SnowCover::FoliageNormalBias));
 		float3 treeSnowNormal = snowNormal;
-#			if !defined(TRUE_PBR) && !defined(VR) && (!defined(MODELSPACENORMALS) || defined(SKINNED))
+#			if defined(TREE_SNOW_COVERAGE_NORMAL)
 		snowNormal = normalize(treeSnowCoverageNormal + float3(0, 0, SnowCover::FoliageNormalBias));
 #			endif
 		if (SharedData::snowCoverSettings.AffectTreeTint && !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::NoFoliageTint))
