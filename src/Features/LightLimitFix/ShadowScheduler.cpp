@@ -1214,8 +1214,6 @@ namespace ShadowCasterManager
 						st->bakePoseValid = true;
 					}
 					st->bakeQueued = false;
-					st->bakeEpoch = s_casterClassEpoch;
-					st->bakeStale = false;
 				}
 				st->bakeThisFrame = (mode == CasterPass::StaticOnly);
 				if (st->bakeThisFrame) {
@@ -4029,6 +4027,8 @@ namespace ShadowCasterManager
 								MarkSlotStaticRendered(i, st.pendingHash, st.bakeSawStatic);  // atlas slot = source of truth
 								float bakeProj[16];
 								st.bakeInvProjValid = GetLightProjection(e.Light, bakeProj, st.bakeInvProj);
+								st.bakeEpoch = s_casterClassEpoch;
+								st.bakeStale = false;
 							} else
 								InvalidateSlotStaticBake(i);
 							st.bakeThisFrame = false;
