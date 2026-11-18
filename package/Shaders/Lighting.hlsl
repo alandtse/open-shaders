@@ -3072,7 +3072,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	}
 #		endif
 
-	if (wetnessGlossinessSpecular > 0.0 || raindropInfo.w > 0.0) {
+	if (wetnessGlossinessSpecular > 0.0 || raindropInfo.w > 0.0 || any(raindropInfo.xyz != float3(0, 0, 1))) {
 		flatnessAmount *= smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness, 1.0, wetnessGlossinessSpecular);
 		float3 rippleNormal = normalize(lerp(float3(0, 0, 1), raindropInfo.xyz, lerp(flatnessAmount, 1.0, 0.5)));
 		wetnessNormal = ReorientNormal(rippleNormal, wetnessNormal);

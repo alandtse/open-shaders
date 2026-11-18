@@ -136,7 +136,7 @@ VS_OUTPUT main(VS_INPUT input)
 		input.InstanceID
 #	endif
 	);
-#	if defined(LOD_OBJECTS)
+#	if defined(LOD_OBJECT)
 	const bool treeBendEnabled = false;
 #	else
 	const bool treeBendEnabled = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0;
