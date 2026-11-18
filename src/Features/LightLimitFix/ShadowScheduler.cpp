@@ -417,6 +417,8 @@ namespace ShadowCasterManager
 		bool bakeSawStatic = false;
 		/// Baked, and no DynamicOnly accumulate has reused the cache yet.
 		bool bakeUnproven = false;
+		int bakeEpoch = -1;      ///< classifier epoch of the latest StaticOnly bake
+		bool bakeStale = false;  ///< a caster changed class since that bake: render full until it is rebaked
 	};
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
 
@@ -1189,7 +1191,7 @@ namespace ShadowCasterManager
 				if (mode == CasterPass::StaticOnly &&
 					s_staticBakeCount.load(std::memory_order_relaxed) >= 2u) {
 					st->bakeQueued = true;
-					if (staticValid) {
+					if (staticValid && !st->bakeStale) {
 						mode = CasterPass::DynamicOnly;
 					} else {
 						mode = CasterPass::All;
@@ -1212,6 +1214,8 @@ namespace ShadowCasterManager
 						st->bakePoseValid = true;
 					}
 					st->bakeQueued = false;
+					st->bakeEpoch = s_casterClassEpoch;
+					st->bakeStale = false;
 				}
 				st->bakeThisFrame = (mode == CasterPass::StaticOnly);
 				if (st->bakeThisFrame) {
@@ -1242,7 +1246,9 @@ namespace ShadowCasterManager
 				s_visitStaticHash = 0x9e3779b97f4a7c15ull;
 				if (auto* ni = light->light.get())
 					s_visitStaticHash = FoldLightPose(s_visitStaticHash, ni, 16.0f);
+				s_visitBakeEpoch = st->bakeEpoch;
 			}
+			s_visitBakeStale = false;
 			s_visitDynamicCount.store(0, std::memory_order_relaxed);
 			s_visitStaticCount.store(0, std::memory_order_relaxed);
 			s_cullPassMode.store(static_cast<int>(mode), std::memory_order_relaxed);
@@ -1308,6 +1314,10 @@ namespace ShadowCasterManager
 				st->pendingHash = s_visitStaticHash;
 				if (mode == CasterPass::StaticOnly && !skipAccumulate)
 					st->bakeSawStatic = s_visitStaticCount.load(std::memory_order_relaxed) != 0;
+				if (mode == CasterPass::DynamicOnly && s_visitBakeStale) {
+					st->bakeQueued = true;
+					st->bakeStale = true;
+				}
 				// Queue a rebake only once the hash divergence PERSISTS (3
 				// accumulates), so a flickering hash that oscillates back to the
 				// baked value doesn't rebake, but a genuine set change does.

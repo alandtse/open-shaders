@@ -291,6 +291,7 @@ namespace ShadowCasterManager
 		auto& r = it->second;
 		if (r.lastEpoch == s_casterClassEpoch)
 			return r;  // already classified this frame
+		const bool wasDynamic = r.dynamic;
 
 		// Settled fast path: trust the cached classification instead of
 		// re-quantizing worldBound. A move mid-window is still caught at the next checkpoint.
@@ -343,6 +344,8 @@ namespace ShadowCasterManager
 		// oscillating, so restore the base window for its next move.
 		if (!r.dynamic && r.framesSinceMove >= promoteAt * kSettledAtFactor)
 			r.promoteBackoff = 1;
+		if (!inserted && r.dynamic != wasDynamic)
+			r.classEpoch = s_casterClassEpoch;
 		return r;
 	}
 
@@ -368,6 +371,8 @@ namespace ShadowCasterManager
 	// Static casters the current StaticOnly bake appended, so an empty bake
 	// is never advertised as real cached content.
 	std::atomic<uint32_t> s_visitStaticCount{ 0 };
+	int s_visitBakeEpoch{ -1 };
+	bool s_visitBakeStale{ false };
 
 	// Folds one static caster into the running per-light static hash during the
 	// same accumulate that appends the movers -- no second caster walk needed.
@@ -453,6 +458,10 @@ namespace ShadowCasterManager
 		                          nullptr :
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
+		// A caster that settled since the bake is missing from it and is drawn live; one that started moving is still in
+		// it at its old pose. Either way the light is rebaked at once rather than showing a gap or a frozen copy.
+		const bool bakeStale = rec && rec->classEpoch > s_visitBakeEpoch;
+		s_visitBakeStale |= bakeStale;
 		// Every static caster folds into the hash regardless of pass, so a
 		// static-set change is seen during whichever accumulate runs this frame.
 		if (!dynamic)
@@ -468,7 +477,7 @@ namespace ShadowCasterManager
 			s_visitStaticCount.fetch_add(1, std::memory_order_relaxed);
 			break;
 		case CasterPass::DynamicOnly:
-			if (!dynamic)
+			if (!dynamic && !bakeStale)
 				return true;  // composite pass skips baked static geometry
 			s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
 			break;
