@@ -30,7 +30,7 @@ void Camera::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T("feature.post_processing.camera.lens_distortion_tooltip", "Positive values create barrel distortion; negative values create pincushion distortion. The mapping crops inward to avoid clamped edges."));
 
-	const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
+	const auto* cam = owner && !globals::game::isVR ? owner->GetActivePhysicalCameraState() : nullptr;
 	float lensFOV = settings.LensFOV;
 	if (cam)
 		lensFOV = cam->HorizontalFOVDeg;
@@ -201,7 +201,7 @@ void Camera::Draw(TextureInfo& inout_tex)
 	const float eyeWidth = globals::game::isVR ? res.x * 0.5f : res.x;
 	const float aspect = eyeWidth / res.y;
 	const float cornerRadius = sqrt(aspect * aspect * 0.25f + 0.25f);
-	const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
+	const auto* cam = owner && !globals::game::isVR ? owner->GetActivePhysicalCameraState() : nullptr;
 	const float lensFOV = std::clamp(cam ? cam->HorizontalFOVDeg : settings.LensFOV, 20.0f, 160.0f);
 
 	CameraCB data = {
