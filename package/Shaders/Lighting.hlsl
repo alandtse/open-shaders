@@ -2953,7 +2953,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	                           !(characterRainSurface && SharedData::wetnessEffectsSettings.EnableCharacterRainSpots);
 #		endif
 
-	if (shouldCalculateRaindrops) {
+	[branch] if (shouldCalculateRaindrops)
+	{
 #		if defined(SKINNED)
 		float3 ripplePosition = input.ModelPosition.xyz;
 #		elif defined(DEFERRED)
@@ -2999,7 +3000,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float puddle = wetness;
 
 #		if !defined(SKINNED) && !defined(SKIN)
-	if (wetness > 0.0 || puddleWetness > 0.0) {
+	[branch] if (wetness > 0.0 || puddleWetness > 0.0)
+	{
 		float3 puddleCoords = ((input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz) * 0.5 + 0.5) * 0.01 / SharedData::wetnessEffectsSettings.PuddleRadius;
 		puddle = Random::perlinNoise(puddleCoords) * 0.5 + 0.5;
 		puddle = puddle * ((minWetnessAngle / SharedData::wetnessEffectsSettings.PuddleMaxAngle) * SharedData::wetnessEffectsSettings.MaxPuddleWetness * 0.25) + 0.5;
@@ -3058,12 +3060,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	}
 #		endif
 
-	// Update flatness and normal calculations
-	flatnessAmount *= smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness, 1.0, wetnessGlossinessSpecular);
-
-	// Apply ripple normal effects
-	float3 rippleNormal = normalize(lerp(float3(0, 0, 1), raindropInfo.xyz, lerp(flatnessAmount, 1.0, 0.5)));
-	wetnessNormal = ReorientNormal(rippleNormal, wetnessNormal);
+	if (wetnessGlossinessSpecular > 0.0 || raindropInfo.w > 0.0) {
+		flatnessAmount *= smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness, 1.0, wetnessGlossinessSpecular);
+		float3 rippleNormal = normalize(lerp(float3(0, 0, 1), raindropInfo.xyz, lerp(flatnessAmount, 1.0, 0.5)));
+		wetnessNormal = ReorientNormal(rippleNormal, wetnessNormal);
+	}
 
 #		if defined(CS_SKIN_SHADING)
 	if (skinEnabled && (skinWetness > 0.0f)) {
@@ -3084,7 +3085,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float characterCoatIntensity = 0.0f;
 	float characterCoatMask = 0.0f;
 	float3 characterDropNormal = worldNormal.xyz;
-	[branch] if (characterRainSurface)
+	const float characterRetainedWetness = SharedData::wetnessEffectsSettings.CharacterRetainedWetness;
+	[branch] if (characterRainSurface && max(SharedData::wetnessEffectsSettings.CharacterImpactIntensity, characterRetainedWetness) > 0.0f)
 	{
 		// Keep derivative-based drop normals outside the per-pixel coverage branch.
 		float3 characterDropBaseNormal = normalize(lerp(worldNormal.xyz, vertexNormal.xyz,
@@ -3100,7 +3102,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 			CharacterRainSpots::MinimumWaterRoughness, CharacterRainSpots::MaximumWaterRoughness);
 		characterCoatIntensity = SharedData::wetnessEffectsSettings.CharacterCoatIntensity *
 		                         (heldWeapon ? CharacterRainSpots::WeaponCoatIntensityScale : 1.0f);
-		float characterRetainedWetness = SharedData::wetnessEffectsSettings.CharacterRetainedWetness;
 		float characterSheenMask = heldWeapon && !SharedData::wetnessEffectsSettings.EnableWeaponRainDrops ?
 		                               0.0f :
 		                               saturate(characterRetainedWetness * SharedData::wetnessEffectsSettings.CharacterWetSheen);
@@ -3913,7 +3914,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	porosity = lerp(porosity, 0.0, saturate(sqrt(envMask)));
 #			endif
 	float wetnessDarkeningAmount = porosity * wetnessGlossinessAlbedo;
-	material.BaseColor = lerp(material.BaseColor, pow(abs(material.BaseColor), 1.0 + wetnessDarkeningAmount), 0.5);
+	if (wetnessDarkeningAmount > 0.0)
+		material.BaseColor = lerp(material.BaseColor, pow(abs(material.BaseColor), 1.0 + wetnessDarkeningAmount), 0.5);
 #		endif
 #	endif
 
@@ -3931,10 +3933,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		uvOriginal);
 
 #	if defined(WETNESS_EFFECTS)
-#		if defined(DYNAMIC_CUBEMAPS)
-	float3 wetnessReflectance = GetWetnessIndirectLobeWeights(indirectLobeWeights, wetnessNormal, waterRoughnessSpecular, indirectContext);
-#		else
 	float3 wetnessReflectance = 0.0;
+#		if defined(DYNAMIC_CUBEMAPS)
+	if (waterRoughnessSpecular < 1.0)
+		wetnessReflectance = GetWetnessIndirectLobeWeights(indirectLobeWeights, wetnessNormal, waterRoughnessSpecular, indirectContext);
 #		endif
 #		if defined(CHARACTER_RAIN_SURFACE)
 	float3 characterSpotReflectance = 0.0f;
