@@ -3533,10 +3533,12 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	uint lightOffset = 0;
 	// The viewmodel has no meaningful cluster cell, so it takes StrictLights
 	// exclusively -- mixing in the grid would re-add unrelated distant lights.
-	if (inWorld && !LightLimitFix::FirstPerson && LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
-		numClusteredLights = LightLimitFix::lightGrid[clusterIndex].lightCount;
+	[branch] if (SharedData::lightLimitFixSettings.ClusteredLightCount > 0 && inWorld && !LightLimitFix::FirstPerson && LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex))
+	{
+		LightLimitFix::LightGrid clusterGrid = LightLimitFix::lightGrid[clusterIndex];
+		numClusteredLights = clusterGrid.lightCount;
 		totalLightCount += numClusteredLights;
-		lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
+		lightOffset = clusterGrid.offset;
 	}
 
 #			if defined(LLFDEBUG)
@@ -3550,7 +3552,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	// clustered light in this pixel so we hoist them out of the per-light loop.
 	uint contactShadowSteps = 0;
 	float contactShadowNoise = 0.0;
-	[branch] if (SharedData::lightLimitFixSettings.EnableContactShadows)
+	[branch] if (totalLightCount > 0 && SharedData::lightLimitFixSettings.EnableContactShadows)
 	{
 		contactShadowSteps = round(SharedData::lightLimitFixSettings.ContactShadowMaxSteps *
 								   (1.0 - saturate(viewPosition.z / SharedData::lightLimitFixSettings.ContactShadowMaxDistance)));
@@ -3589,7 +3591,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		float shadowComponent = 1.0;
 		bool shadowCoverage = false;
 		if (inWorld && !inReflection) {
-			if (light.lightFlags & LightLimitFix::LightFlags::Shadow) {
+			[branch] if (light.lightFlags & LightLimitFix::LightFlags::Shadow)
+			{
 				shadowComponent = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS + (localShadowPosition - input.WorldPosition.xyz), rotationMatrix, shadowCoverage);
 				lightShadow *= shadowComponent;
 			}

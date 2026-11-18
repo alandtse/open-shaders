@@ -1084,9 +1084,11 @@ PS_OUTPUT ShadeEffect(PS_INPUT input, bool sampleDistantShadow)
 		// Clustered lights are already inWorld-gated below; strict needs
 		// the same treatment for symmetry.
 		numStrictLights = LightLimitFix::NumStrictLights;
-		if (LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
-			numClusteredLights = LightLimitFix::lightGrid[clusterIndex].lightCount;
-			lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
+		[branch] if (SharedData::lightLimitFixSettings.ClusteredLightCount > 0 && LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex))
+		{
+			LightLimitFix::LightGrid clusterGrid = LightLimitFix::lightGrid[clusterIndex];
+			numClusteredLights = clusterGrid.lightCount;
+			lightOffset = clusterGrid.offset;
 		}
 	}
 	uint totalLightCount = numStrictLights + numClusteredLights;
