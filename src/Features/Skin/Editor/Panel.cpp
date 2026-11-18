@@ -2,6 +2,7 @@
 
 #include "CSEditor/Browser/BrowserWidgets.h"
 #include "CSEditor/EditorWindow.h"
+#include "Menu.h"
 #include "IconsTabler.h"
 #include "Menu/Icons/helpers/IconFonts.h"
 #include "Menu/Icons/helpers/SceneActionIcons.h"
@@ -202,8 +203,7 @@ void Skin::DrawLayerStack()
 	ImGui::PushID("##skin_layer_stack");
 	ImGui::AlignTextToFramePadding();
 	if (BrowserUI::Link("##common", T("feature.skin.layer_common", "Common")))
-		if (auto* window = EditorWindow::GetSingleton())
-			window->OpenBaseSettings(GetShortName());
+		globals::menu->OpenFeaturePage(GetShortName());
 	Util::AddTooltip(describe(std::nullopt).c_str());
 	for (const auto layer : { Layer::Material, Layer::CharacterAll, Layer::CharacterMaterial }) {
 		ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
