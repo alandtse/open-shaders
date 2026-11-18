@@ -1966,8 +1966,9 @@ namespace ShadowCasterManager
 						c.cameraHold = true;
 						s_cameraHold.insert(l);
 						float eyeDistance = 0.0f;
-						if (!c.playerProtected && !hiddenNow &&
-							!OwnSphereInFrustum(nilightNow->world.translate, nilightNow->GetLightRuntimeData().radius.x, eyeDistance)) {
+						const bool ownInView = !hiddenNow &&
+						                       OwnSphereInFrustum(nilightNow->world.translate, nilightNow->GetLightRuntimeData().radius.x, eyeDistance);
+						if (HeldLightYields(ownInView, c.playerProtected, hiddenNow)) {
 							heldOffView.push_back(&c);
 							continue;
 						}
