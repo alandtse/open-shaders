@@ -818,6 +818,8 @@ namespace SIE
 		/** Requests a pixel shader; optional startup precompiles are skipped in background mode. */
 		RE::BSGraphics::PixelShader* GetPixelShader(const RE::BSShader& shader,
 			uint32_t descriptor, bool a_precompile = false);
+		/** @brief The Utility geometry shader that cuts a paraboloid shadow draw's triangles at its hemisphere plane, for a vertex descriptor; null if it cannot compile. */
+		ID3D11GeometryShader* GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor);
 		/** @brief Checks that every requested pixel-shader permutation is ready. */
 		bool HasPixelShaders(RE::BSShader::Type type, std::span<const uint32_t> descriptors);
 		RE::BSGraphics::ComputeShader* GetComputeShader(const RE::BSShader& shader,
@@ -1418,6 +1420,8 @@ namespace SIE
 		std::mutex vertexShadersMutex;
 		std::mutex pixelShadersMutex;
 		std::mutex computeShadersMutex;
+		std::mutex paraboloidClipMutex;
+		ankerl::unordered_dense::map<uint32_t, winrt::com_ptr<ID3D11GeometryShader>> paraboloidClipShaders;
 		CompilationSet compilationSet;
 		ankerl::unordered_dense::map<std::string, ShaderCacheResult> shaderMap{};
 		std::mutex mapMutex;                                                                      // guard for shaderMap

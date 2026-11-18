@@ -2840,6 +2840,34 @@ namespace SIE
 		}
 	}
 
+	ID3D11GeometryShader* ShaderCache::GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor)
+	{
+		std::scoped_lock lock(paraboloidClipMutex);
+		if (const auto it = paraboloidClipShaders.find(vertexDescriptor); it != paraboloidClipShaders.end())
+			return it->second.get();
+		std::array<D3D_SHADER_MACRO, 64> macros{};
+		SShaderCache::GetShaderDefines(shader, vertexDescriptor, std::span{ macros });
+		std::vector<std::pair<const char*, const char*>> defines{ { "GSHADER", nullptr } };
+		if (globals::game::isVR)
+			defines.emplace_back("VR", nullptr);
+		for (const auto& [name, value] : *globals::state->GetDefines())
+			defines.emplace_back(name.c_str(), value.c_str());
+		for (const auto& macro : macros) {
+			if (!macro.Name)
+				break;
+			defines.emplace_back(macro.Name, macro.Definition);
+		}
+		winrt::com_ptr<ID3D11GeometryShader> geometryShader;
+		const std::wstring path = SShaderCache::GetShaderPath(shader.fxpFilename);
+		if (const auto blob = Util::CompileShaderBlob(path.c_str(), defines, "gs_5_0")) {
+			if (FAILED(globals::d3d::device->CreateGeometryShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, geometryShader.put())))
+				geometryShader = nullptr;
+		}
+		if (!geometryShader)
+			logger::warn("[SCM] Paraboloid clip shader for Utility {:X} did not compile; that draw keeps the vertex shader's projection", vertexDescriptor);
+		return paraboloidClipShaders.emplace(vertexDescriptor, std::move(geometryShader)).first->second.get();
+	}
+
 	RE::BSGraphics::VertexShader* ShaderCache::GetVertexShader(const RE::BSShader& shader,
 		uint32_t descriptor, bool a_precompile)
 	{

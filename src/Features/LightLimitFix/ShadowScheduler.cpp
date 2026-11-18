@@ -4114,6 +4114,8 @@ namespace ShadowCasterManager
 			}
 		}
 
+		// The paraboloid clip geometry shader never outlives the shadow pass.
+		globals::d3d::context->GSSetShader(nullptr, nullptr, 0);
 		ServiceShadowFrameRecord();
 		s_budget.EndRenderBatch();
 
