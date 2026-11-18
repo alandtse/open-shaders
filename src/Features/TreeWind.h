@@ -7,7 +7,7 @@
 /**
  * @brief Wind sway for DynDOLOD tree LOD.
  *
- * Keeps a wind clock that follows the weather and binds it to the vertex shader (b3) for Lighting and
+ * Keeps a wind clock that follows the weather and binds it to the vertex shader (b8) for Lighting and
  * Utility draws. The TREE_WIND define adds the matching vertex offset to Lighting.hlsl and Utility.hlsl,
  * so the colour, depth and shadow passes move together. The object LOD vertex shaders cannot tell tree
  * LOD apart at compile time, so each draw gets either the swaying (on) or the still (off) buffer.
