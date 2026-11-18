@@ -1186,7 +1186,7 @@ namespace ShadowCasterManager
 				// A turning light (a swinging lantern) leaves its bake's rotation by the next frame, and a bake frame
 				// keeps the previous frame's shadow, so it renders full until it holds still for a frame.
 				if (auto* ni = light->light.get()) {
-					const bool turning = ni->world.rotate != st->lastRot;
+					const bool turning = st->bakePoseValid && ni->world.rotate != st->lastRot;
 					st->lastRot = ni->world.rotate;
 					if (mode == CasterPass::StaticOnly && turning) {
 						st->bakeQueued = true;
