@@ -77,11 +77,6 @@ public:
 		// Used by CPU wetness decay; retained here to preserve the mirrored settings layout.
 		float CharacterDryTime = 10.0f;
 		uint EnableWeaponRainDrops = true;
-		// Independent environmental wall-droplet controls
-		float EnvironmentDropSize = 1.0f;
-		float EnvironmentDropBrightness = 1.0f;
-		float EnvironmentDropReflectivity = 1.0f;
-		float EnvironmentDropPadding = 0.0f;
 		float WallRainDensity = 1.0f;
 		float WallRainDropSize = 1.0f;
 		float WallRainSpeed = 1.0f;
@@ -103,10 +98,9 @@ public:
 		Flow,
 		Surfaces,
 		Weapons,
-		Environment,
 		Count
 	};
-	static_assert(sizeof(Settings) == 212);
+	static_assert(sizeof(Settings) == 196);
 
 	struct alignas(16) PerFrame
 	{
@@ -123,7 +117,7 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	static_assert(offsetof(PerFrame, settings) == 80);
-	static_assert(sizeof(PerFrame) == 320);
+	static_assert(sizeof(PerFrame) == 304);
 
 	struct DebugSettings
 	{
@@ -231,13 +225,12 @@ public:
 	bool ShouldClassifyCharacterRainSurfaces() const
 	{
 		const bool characterEffectsEnabled = settings.EnableWetnessEffects && settings.EnableCharacterRainSpots;
-		const bool characterWaterVisible = characterSurfaceWetness > 0.0f || (settings.CharacterSpotDebug != 0u &&
-																				 settings.CharacterSpotDebug != static_cast<std::uint32_t>(CharacterDebugMode::Environment));
+		const bool characterWaterVisible = characterSurfaceWetness > 0.0f || settings.CharacterSpotDebug != 0u;
 		return loaded && characterEffectsEnabled && characterWaterVisible;
 	}
 
 private:
-	/** @brief Draws the environment wetness and environmental droplet settings. */
+	/** @brief Draws the environment wetness settings. */
 	void DrawEnvironmentWetnessSettings();
 
 	/** @brief Draws the character rain spot and wetness settings. */
