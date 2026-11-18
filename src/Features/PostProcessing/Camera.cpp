@@ -198,7 +198,8 @@ void Camera::Draw(TextureInfo& inout_tex)
 	auto context = globals::d3d::context;
 	float2 res = { (float)texOutput->desc.Width, (float)texOutput->desc.Height };
 	res = Util::ConvertToDynamic(res);
-	const float aspect = res.x / res.y;
+	const float eyeWidth = globals::game::isVR ? res.x * 0.5f : res.x;
+	const float aspect = eyeWidth / res.y;
 	const float cornerRadius = sqrt(aspect * aspect * 0.25f + 0.25f);
 	const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
 	const float lensFOV = std::clamp(cam ? cam->HorizontalFOVDeg : settings.LensFOV, 20.0f, 160.0f);

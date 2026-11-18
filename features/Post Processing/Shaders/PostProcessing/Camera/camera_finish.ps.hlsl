@@ -31,9 +31,10 @@ float3 GrainHash(float3 p)
 
 float4 main(FullscreenTriangleVSOutput input) : SV_Target
 {
-	float2 uv = input.Position.xy * CameraScreen.zw;
+	uint eyeIndex;
+	float2 uv = CameraEyeUV(input.Position.xy * CameraScreen.zw, eyeIndex);
 	float radius = saturate(CameraNormalizedRadius(uv));
-	float3 sharp = InputTexture.SampleLevel(ColorSampler, uv, 0).rgb;
+	float3 sharp = InputTexture.SampleLevel(ColorSampler, Stereo::ConvertToStereoUV(uv, eyeIndex), 0).rgb;
 	float3 color = sharp;
 
 	float softnessEdge = pow(radius, max(CameraSoftness.z, 0.001));
@@ -45,6 +46,8 @@ float4 main(FullscreenTriangleVSOutput input) : SV_Target
 		sincos(rotation, rotationSin, rotationCos);
 
 		float pixelRadius = CameraSoftness.x * (CameraScreen.y / 720.0) * softnessEdge;
+		// Eye-local x spans two packed texels in VR.
+		const float2 texelStep = CameraScreen.zw * float2(CameraEyeTexelScale, 1.0);
 		float3 blurred = 0.0;
 		[unroll] for (uint i = 0; i < 16; ++i)
 		{
@@ -52,14 +55,14 @@ float4 main(FullscreenTriangleVSOutput input) : SV_Target
 			float2 offset = float2(
 				kernelUV.x * rotationCos - kernelUV.y * rotationSin,
 				kernelUV.x * rotationSin + kernelUV.y * rotationCos);
-			blurred += InputTexture.SampleLevel(ColorSampler, uv + offset * pixelRadius * CameraScreen.zw, 0).rgb;
+			blurred += InputTexture.SampleLevel(ColorSampler, Stereo::ConvertToStereoUV(uv + offset * pixelRadius * texelStep, eyeIndex), 0).rgb;
 		}
 		color = lerp(sharp, blurred * (1.0 / 16.0), blurAmount);
 	}
 
 	[branch] if (CameraGrain.z > 0.0)
 	{
-		float2 grainPixel = floor(input.Position.xy / max(CameraGrain.x, 0.5));
+		float2 grainPixel = floor(Stereo::EyeStableNoiseCoord(input.Position.xy, CameraScreen.xy) / max(CameraGrain.x, 0.5));
 		float frame = fmod((float)SharedData::FrameCount, 4096.0);
 		float3 noise = GrainHash(float3(grainPixel, frame));
 		float3 grain = lerp(noise.xxx, noise, saturate(CameraGrain.y));

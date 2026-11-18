@@ -342,7 +342,7 @@ VS_OUTPUT main(VS_INPUT input)
 
 #	if defined(TREE_WIND_VS)
 	if (TreeLodWind::IsEnabled()) {
-		float nearScale = TreeLodWind::GetNearScale(World, input.Position.xyz);
+		float nearScale = TreeLodWind::GetNearScale(World[eyeIndex], input.Position.xyz);
 		inputPosition.xy += TreeLodWind::GetOffset(input.Position.xyz, TreeLodWind::Wind.x, vertexID, nearScale);
 		previousInputPosition.xy += TreeLodWind::GetOffset(input.Position.xyz, TreeLodWind::Wind.y, vertexID, nearScale);
 	}

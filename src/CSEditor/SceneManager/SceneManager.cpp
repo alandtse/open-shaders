@@ -6,7 +6,6 @@
 #include "SceneEntryTable.h"
 #include "SceneSettingsManager.h"
 #include "SceneSettingsUI.h"
-#include "Utils/DebugSection.h"
 #include "Utils/UI.h"
 
 std::pair<std::string, std::vector<std::string>> SceneManager::GetFeatureSummary()

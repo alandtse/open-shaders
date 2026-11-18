@@ -9,8 +9,6 @@
 
 #define I18N_KEY_PREFIX "feature.volumetric_shadows."
 
-#define I18N_KEY_PREFIX "feature.volumetric_shadows."
-
 void VolumetricShadows::SetupResources()
 {
 	auto device = globals::d3d::device;

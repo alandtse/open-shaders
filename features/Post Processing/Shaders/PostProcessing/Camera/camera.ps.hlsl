@@ -2,7 +2,8 @@
 
 float4 main(FullscreenTriangleVSOutput input) : SV_Target
 {
-	float2 uv = input.Position.xy * CameraScreen.zw;
+	uint eyeIndex;
+	float2 uv = CameraEyeUV(input.Position.xy * CameraScreen.zw, eyeIndex);
 	float2 aspectScale = CameraAspectScale();
 	float2 lensPosition = (uv - 0.5) * aspectScale;
 	float cornerRadiusSquared = CameraLens.z * CameraLens.z;
@@ -23,11 +24,11 @@ float4 main(FullscreenTriangleVSOutput input) : SV_Target
 		float2 greenOffset = radialDirection * (CameraAberration.y * fringe * 0.0015);
 		float2 blueOffset = radialDirection * (CameraAberration.z * fringe * 0.0015);
 		float3 color;
-		color.r = InputTexture.SampleLevel(ColorSampler, sampleUV + redOffset, 0).r;
-		color.g = InputTexture.SampleLevel(ColorSampler, sampleUV + greenOffset, 0).g;
-		color.b = InputTexture.SampleLevel(ColorSampler, sampleUV + blueOffset, 0).b;
+		color.r = InputTexture.SampleLevel(ColorSampler, Stereo::ConvertToStereoUV(sampleUV + redOffset, eyeIndex), 0).r;
+		color.g = InputTexture.SampleLevel(ColorSampler, Stereo::ConvertToStereoUV(sampleUV + greenOffset, eyeIndex), 0).g;
+		color.b = InputTexture.SampleLevel(ColorSampler, Stereo::ConvertToStereoUV(sampleUV + blueOffset, eyeIndex), 0).b;
 		return float4(color, 1.0);
 	}
 
-	return float4(InputTexture.SampleLevel(ColorSampler, sampleUV, 0).rgb, 1.0);
+	return float4(InputTexture.SampleLevel(ColorSampler, Stereo::ConvertToStereoUV(sampleUV, eyeIndex), 0).rgb, 1.0);
 }

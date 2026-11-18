@@ -35,6 +35,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 namespace
 {
+	// Vertex cbuffer slot of TreeLodWindCB; Wind's spring field owns VS b3.
+	constexpr UINT kWindVertexSlot = 9;
+	// Vertex SRV slot of VertexData; Wind's spring fields own VS t111-t124.
+	constexpr UINT kWindVertexDataSlot = 127;
+
 	void SliderWithTooltip(const char* a_label, float* a_value, float a_min, float a_max, const char* a_format, const char* a_tooltip)
 	{
 		ImGui::SliderFloat(a_label, a_value, a_min, a_max, a_format, ImGuiSliderFlags_AlwaysClamp);
@@ -320,7 +325,7 @@ void TreeWind::Reset()
 	}
 
 	// The map menus draw the LOD too, and it should stand still there. While off, the draws skip all
-	// per-draw work; both buffers then read as off, whatever is still bound at VS b3.
+	// per-draw work; both buffers then read as off, whatever is still bound at VS b9.
 	swayActive = settings.Enabled && !globals::state->isMapMenuOpen;
 
 	WindCB data{};
@@ -354,16 +359,16 @@ void TreeWind::SetShaderResources(ID3D11DeviceContext* a_context)
 	// Standard tree LOD draws only trees, and sways from its instance data without bend data
 	if (type == RE::BSShader::Type::DistantTree) {
 		ID3D11Buffer* buffer = windOnCB->CB();
-		a_context->VSSetConstantBuffers(3, 1, &buffer);
+		a_context->VSSetConstantBuffers(kWindVertexSlot, 1, &buffer);
 		return;
 	}
 	if (type != RE::BSShader::Type::Lighting && type != RE::BSShader::Type::Utility)
 		return;
 
 	ID3D11Buffer* buffer = drawBendWeights ? windOnCB->CB() : windOffCB->CB();
-	a_context->VSSetConstantBuffers(3, 1, &buffer);
+	a_context->VSSetConstantBuffers(kWindVertexSlot, 1, &buffer);
 	if (drawBendWeights)
-		a_context->VSSetShaderResources(120, 1, &drawBendWeights);
+		a_context->VSSetShaderResources(kWindVertexDataSlot, 1, &drawBendWeights);
 }
 
 #undef I18N_KEY_PREFIX
