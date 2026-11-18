@@ -1337,6 +1337,8 @@
     "feature.ibl.description": "Ersätter spelets omgivningsbelysning med fysikbaserad IBL från sfäriska harmoniska funktioner för kubkartor.",
     "feature.ibl.enable_ibl": "Aktivera IBL",
     "feature.ibl.enable_ibl_tooltip": "Växlar IBL. När den är aktiverad härleds omgivningsbelysningen från sfäriska harmoniska funktioner för kubkartor i stället för det vanliga systemet.",
+    "feature.ibl.enable_in_interiors": "Aktivera IBL inomhus",
+    "feature.ibl.enable_in_interiors_tooltip": "Aktiverar IBL i interiörceller.",
     "feature.ibl.env_ibl_saturation": "Mättnad för miljö-IBL",
     "feature.ibl.env_ibl_saturation_tooltip": "Färgmättnad för miljö-IBL.\nLägre värden ger mer neutral omgivningsbelysning, högre värden ger livligare färg.",
     "feature.ibl.env_ibl_scale": "Skala för miljö-IBL",
