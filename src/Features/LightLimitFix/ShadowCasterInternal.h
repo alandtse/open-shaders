@@ -296,7 +296,7 @@ namespace ShadowCasterManager
 	bool IsPlayerAttachedLight(const RE::NiLight* ni);
 
 	/// The actor whose 3D holds this object, or null; safe while the scene tears down.
-	RE::Actor* ActorOwnerOf(const RE::NiAVObject* a_object) noexcept;
+	RE::Actor* CarrierOf(const RE::NiAVObject* ni) noexcept;
 
 	/// Geometric + photometric per-light signals computed once per candidate.
 	struct LightGeometry

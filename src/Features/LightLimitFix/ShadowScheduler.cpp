@@ -163,10 +163,10 @@ namespace ShadowCasterManager
 	}
 
 	// SEH in its own function: GetUserData walks NiAVObject::parent, which is not refcounted and can dangle during scene teardown.
-	RE::Actor* ActorOwnerOf(const RE::NiAVObject* a_object) noexcept
+	RE::Actor* CarrierOf(const RE::NiAVObject* ni) noexcept
 	{
 		__try {
-			auto* ref = a_object->GetUserData();
+			auto* ref = ni->GetUserData();
 			return ref ? ref->As<RE::Actor>() : nullptr;
 		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
 		}
@@ -180,7 +180,7 @@ namespace ShadowCasterManager
 		static PerFrameCache<RE::BSShadowLight*, RE::NiPointer<RE::NiAVObject>> bodies;
 		return bodies.Get(static_cast<uint32_t>(*globals::game::frameCounter), light, [light]() -> RE::NiPointer<RE::NiAVObject> {
 						 auto* ni = light->light.get();
-						 auto* carrier = ni && light->dynamic && light->GetIsOmniLight() ? ActorOwnerOf(ni) : nullptr;
+						 auto* carrier = ni && light->dynamic && light->GetIsOmniLight() ? CarrierOf(ni) : nullptr;
 						 if (!carrier)
 							 return nullptr;
 						 const auto* camera = globals::game::playerCamera;

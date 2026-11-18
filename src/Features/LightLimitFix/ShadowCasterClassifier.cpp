@@ -488,8 +488,8 @@ namespace ShadowCasterManager
 		if (a_geometry.GetGeometryRuntimeData().skinInstance || !a_light.dynamic || !a_light.GetIsOmniLight())
 			return false;
 		const auto* ni = a_light.light.get();
-		const auto* carrier = ni ? ActorOwnerOf(ni) : nullptr;
-		return carrier && carrier == ActorOwnerOf(&a_geometry);
+		const auto* carrier = ni ? CarrierOf(ni) : nullptr;
+		return carrier && carrier == CarrierOf(&a_geometry);
 	}
 
 	// BSParabolicCullingProcess::GetHemisphereMask values: bit 0 appends the
