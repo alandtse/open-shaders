@@ -3,12 +3,24 @@
 
 #include "Common/Color.hlsli"
 #include "Common/Math.hlsli"
+#if defined(LIGHTING) && !defined(DEFERRED)
+#	include "Common/Permutation.hlsli"
+#endif
 #include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 
 namespace ImageBasedLighting
 {
+	bool UseForDraw()
+	{
+#if defined(LIGHTING) && !defined(DEFERRED)
+		if (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::MenuItem)
+			return false;
+#endif
+		return SharedData::iblSettings.EnableIBL != 0;
+	}
+
 #if defined(IBL_DEFERRED)
 	Texture2D<sh2> EnvIBLTexture : register(t14);
 	Texture2D<sh2> SkyIBLTexture : register(t15);

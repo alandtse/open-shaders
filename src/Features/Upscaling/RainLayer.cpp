@@ -1,5 +1,7 @@
 #include "RainLayer.h"
 
+#include <DirectXTex.h>
+
 #include "Features/RainRefraction.h"
 #include "GpuPass.h"
 #include "ShaderCache.h"
@@ -18,6 +20,8 @@ bool RainLayer::PrepareResources(ID3D11UnorderedAccessView* a_output)
 	D3D11_TEXTURE2D_DESC desc{};
 	if (!Util::GetTexture2DDesc(a_output, desc) || desc.SampleDesc.Count != 1)
 		return false;
+	if (!DirectX::HasAlpha(desc.Format))
+		desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 	if (texture && texture->desc.Width == desc.Width && texture->desc.Height == desc.Height && texture->desc.Format == desc.Format)
 		return compositeCS.get() != nullptr;
 
