@@ -1888,6 +1888,23 @@ namespace ShadowCasterManager
 		RE::BSCullingProcess* globalCull = globalCullingProcesses.empty() ? nullptr : globalCullingProcesses.front();
 
 		int wantCount = 0;
+		const auto seat = [&wantCount](CandidateLight& c) {
+			// Impact floor: a below-floor light converts to a non-shadow light
+			// (keeps diffuse via clusters, drops redraw), same path as over-budget.
+			if (c.belowFloor) {
+				c.excess = true;
+			}
+			// Effective point-light capacity excludes engine-claimed focus shadow slots.
+			else if (wantCount < s_settings.ShadowLightCount - s_focusShadowSlots) {
+				c.chosen = true;
+				wantCount++;
+			} else {
+				c.excess = true;
+			}
+		};
+		// Lights the camera has left are seated after every light still in view, so turning back never waits out their hold.
+		static std::vector<CandidateLight*> heldOffView;
+		heldOffView.clear();
 
 		// Per-candidate UpdateCamera vfunc + portal-graph visibility walk
 		// + chosen/excess tagging. Captured separately so memoization or
@@ -1948,6 +1965,12 @@ namespace ShadowCasterManager
 					if (recentlyValid) {
 						c.cameraHold = true;
 						s_cameraHold.insert(l);
+						float eyeDistance = 0.0f;
+						if (!c.playerProtected && !hiddenNow &&
+							!OwnSphereInFrustum(nilightNow->world.translate, nilightNow->GetLightRuntimeData().radius.x, eyeDistance)) {
+							heldOffView.push_back(&c);
+							continue;
+						}
 					} else {
 						c.invalidCamera = true;
 						c.invalid = true;
@@ -1978,19 +2001,10 @@ namespace ShadowCasterManager
 					}
 				}
 
-				// Impact floor: a below-floor light converts to a non-shadow light
-				// (keeps diffuse via clusters, drops redraw), same path as over-budget.
-				if (c.belowFloor) {
-					c.excess = true;
-				}
-				// Effective point-light capacity excludes engine-claimed focus shadow slots.
-				else if (wantCount < s_settings.ShadowLightCount - s_focusShadowSlots) {
-					c.chosen = true;
-					wantCount++;
-				} else {
-					c.excess = true;
-				}
+				seat(c);
 			}
+			for (auto* held : heldOffView)
+				seat(*held);
 			// s_cameraHold just finished repopulating -- publish freshness now, not at
 			// the earlier clear, so a reader can never observe a generation match
 			// against a partially-populated set.
