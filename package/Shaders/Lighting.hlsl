@@ -247,7 +247,11 @@ VS_OUTPUT main(VS_INPUT input)
 	float3x4 worldMatrix =
 		Skinned::GetBoneTransformMatrix(Bones, actualIndices, BonesPivot[eyeIndex], input.BoneWeights);
 #	endif
+#	if defined(LODOBJECTS) || defined(LODOBJECTSHD)
+	const bool treeBendEnabled = false;
+#	else
 	const bool treeBendEnabled = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0;
+#	endif
 	TreeWind::Sample treeWindSample;
 	treeWindSample.trunkVelocity = 0.0.xxx;
 	treeWindSample.leafAnimationStrength = 0.0;
@@ -1203,10 +1207,10 @@ bool UseSkylightingShadowVisibility()
 {
 #	if defined(SKYLIGHTING_SHADOW_VIS)
 #		if defined(TRUE_PBR)
-	if (PBR::IsFoliageMaterial(PBRFlags) && (PBRFlags & PBR::Flags::Subsurface) != 0)
-		return true;
-#		endif
+	return PBR::IsFoliageMaterial(PBRFlags) && (PBRFlags & PBR::Flags::Subsurface) != 0;
+#		else
 	return HasLightingFlag(Permutation::LightingFlags::SoftLighting | Permutation::LightingFlags::RimLighting | Permutation::LightingFlags::BackLighting);
+#		endif
 #	else
 	return false;
 #	endif
@@ -2135,23 +2139,25 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	useSnowSpecular = landSnowMask != 0.0;
 #	endif  // SNOW
 
+#	if !defined(TRUE_PBR)
 	float4 backLightColor = 0.0;
 	float4 rimSoftLightColor = 0.0;
-#	if !defined(LANDSCAPE)
+#		if !defined(LANDSCAPE)
 	[branch] if (HasBackLighting())
 	{
 		backLightColor = TexBackLightSampler.Sample(SampBackLightSampler, uv);
-#		if defined(CS_HAIR_SHADING)
+#			if defined(CS_HAIR_SHADING)
 		if (useHairFlowMap) {
 			backLightColor = 0.0f;
 		}
-#		endif
+#			endif
 	}
 
 	[branch] if (HasRimLighting() || HasSoftLighting())
 	{
 		rimSoftLightColor = TexRimSoftLightWorldMapOverlaySampler.Sample(SampRimSoftLightWorldMapOverlaySampler, uv);
 	}
+#		endif
 #	endif
 
 	uint numLights = min(7, uint(NumLightNumShadowLight.x));
