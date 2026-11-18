@@ -1671,8 +1671,8 @@ namespace ShadowCasterManager
 											"How a cached shadow follows a flickering light:\n"
 											"Live: the shadow origin follows the light and the cached depth is\n"
 											"copied unmoved, which leaves a small mismatch near occluders.\n"
-											"Pinned: the shadow origin stays at the bake pose, so the shadow\n"
-											"does not move with the flame.\n"
+											"Pinned: the shadow is drawn from where the light rests, so it holds\n"
+											"still while the flame flickers.\n"
 											"Warped: the cached depth is reprojected to the live origin on the\n"
 											"GPU, so the shadow moves with the flame.\n"
 											"P / W in the shadow light table marks lights using Pinned / Warped."));
