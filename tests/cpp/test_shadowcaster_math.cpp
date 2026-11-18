@@ -304,4 +304,10 @@ TEST_CASE("HoldsFlame takes only a small part close round the flame", "[scm]")
 	REQUIRE(HoldsFlame(0.0f, 0.0f, 14.0f, 6.0f, 2.0f));
 	REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 40.5f, 2.0f));
 	REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 20.0f, 0.0f));
+	// a candle standing under a light hung over its wick is taken; one too far under it, beside it or over it is not
+	REQUIRE(HoldsFlame(0.0f, 0.0f, -31.0f, 11.8f, 1.0f));
+	REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, -40.0f, 11.8f, 1.0f));
+	REQUIRE_FALSE(HoldsFlame(20.0f, 0.0f, -31.0f, 11.8f, 1.0f));
+	REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 31.0f, 11.8f, 1.0f));
+	REQUIRE(HoldsFlame(0.0f, 0.0f, -62.0f, 23.6f, 2.0f));
 }

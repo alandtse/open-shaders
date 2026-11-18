@@ -19,16 +19,22 @@ namespace ShadowCasterManager
 	/// Largest unscaled bound radius of a part that can hold a light's flame, and how far past its bound the flame may sit.
 	inline constexpr float kFlameEnclosureMaxRadius = 20.0f;
 	inline constexpr float kFlameEnclosureReachMargin = 4.0f;
+	/// How far over the top of a small part standing under it a light may hang and still count that part as its holder.
+	inline constexpr float kFlameAboveHolderMax = 24.0f;
 
 	/// True when a part whose world bound has radius a_radius, at a_dx/a_dy/a_dz from the flame, is small enough at its world scale
-	/// a_scale to be the part holding that flame and holds it within its bound plus the margin.
+	/// a_scale to be the part holding that flame: it holds the flame within its bound plus the margin, or stands under it with the
+	/// flame at most kFlameAboveHolderMax over its top.
 	inline bool HoldsFlame(float a_dx, float a_dy, float a_dz, float a_radius, float a_scale) noexcept
 	{
 		const float scale = a_scale > 0.0f ? a_scale : 1.0f;
 		if (a_radius <= 0.0f || a_radius > kFlameEnclosureMaxRadius * scale)
 			return false;
 		const float reach = a_radius + kFlameEnclosureReachMargin * scale;
-		return a_dx * a_dx + a_dy * a_dy + a_dz * a_dz <= reach * reach;
+		const float horizontal = a_dx * a_dx + a_dy * a_dy;
+		if (horizontal + a_dz * a_dz <= reach * reach)
+			return true;
+		return a_dz < 0.0f && horizontal <= reach * reach && -a_dz - a_radius <= kFlameAboveHolderMax * scale;
 	}
 
 	/// Buckets a stall length for ShadowScheduler's stallHistogram: 0, 1-2,
