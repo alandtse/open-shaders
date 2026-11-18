@@ -11,6 +11,7 @@ public:
 	virtual inline std::string GetName() override { return "Procedural Aurora"; }
 	virtual std::string GetDisplayName() override { return T("feature.procedural_aurora.name", "Procedural Aurora"); }
 	virtual inline std::string GetShortName() override { return "ProceduralAurora"; }
+	virtual bool SupportsVR() override { return true; }
 	virtual inline std::string_view GetShaderDefineName() override { return "PROCEDURAL_AURORA"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kSky; }
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
