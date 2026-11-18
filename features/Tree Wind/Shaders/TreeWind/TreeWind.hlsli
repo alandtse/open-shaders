@@ -4,9 +4,9 @@
 // Wind sway for tree LOD. The Tree Wind feature binds the wind buffer for every Lighting and Utility
 // draw, with Params.z set only while it draws a DynDOLOD tree LOD shape, and for every standard tree LOD
 // (DistantTree) draw.
-namespace TreeWind
+namespace TreeLodWind
 {
-	cbuffer TreeWindCB : register(b3)
+	cbuffer TreeLodWindCB : register(b9)
 	{
 		float4 Wind;    // phase, previous phase, wind speed 0-1, wind angle (radians)
 		float4 Params;  // amplitude, near distance, enabled, unused
@@ -16,7 +16,7 @@ namespace TreeWind
 	};
 
 	// Per vertex: bend weight, tree random, tree scale, distance from the trunk
-	Buffer<float4> VertexData : register(t120);
+	Buffer<float4> VertexData : register(t127);
 
 	bool IsEnabled()
 	{

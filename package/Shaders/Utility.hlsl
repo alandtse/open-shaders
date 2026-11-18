@@ -209,9 +209,9 @@ VS_OUTPUT main(VS_INPUT input)
 
 #		if defined(TREE_WIND_VS)
 	// Same offset as Lighting.hlsl, so depth and shadow passes match the swaying trees
-	if (TreeWind::IsEnabled()) {
-		float nearScale = TreeWind::GetNearScale(float3x4(World[0], World[1], World[2]), input.PositionMS.xyz);
-		positionMS.xy += TreeWind::GetOffset(input.PositionMS.xyz, TreeWind::Wind.x, vertexID, nearScale);
+	if (TreeLodWind::IsEnabled()) {
+		float nearScale = TreeLodWind::GetNearScale((float3x4)World[eyeIndex], input.PositionMS.xyz);
+		positionMS.xy += TreeLodWind::GetOffset(input.PositionMS.xyz, TreeLodWind::Wind.x, vertexID, nearScale);
 	}
 #		endif
 
