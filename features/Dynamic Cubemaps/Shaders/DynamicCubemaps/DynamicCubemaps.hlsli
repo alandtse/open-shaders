@@ -37,10 +37,14 @@ namespace DynamicCubemaps
 													max(0, SharedData::GetAmbient(R)))) *
 		                                        Color::ReflectionNormalisationScale;
 
+#		if defined(IBL)
+		const bool useIBL = ImageBasedLighting::UseForDraw();
+#		endif
+
 #		if defined(IBL) && defined(LIGHTING)
 		const bool inWorld = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
 		const bool inReflection = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection);
-		const bool useStaticIBL = SharedData::iblSettings.EnableIBL && SharedData::iblSettings.UseStaticIBL && !inWorld && !inReflection;
+		const bool useStaticIBL = useIBL && SharedData::iblSettings.UseStaticIBL && !inWorld && !inReflection;
 #		else
 		const bool useStaticIBL = false;
 #		endif
@@ -59,7 +63,7 @@ namespace DynamicCubemaps
 #		endif
 
 #		if defined(IBL)
-			if (SharedData::iblSettings.EnableIBL) {
+			if (useIBL) {
 				float3 envSpecular;
 				float3 skySpecular;
 				ImageBasedLighting::ComputeSpecularIBL(
