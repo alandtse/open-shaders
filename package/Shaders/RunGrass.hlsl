@@ -732,7 +732,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	);
 #					if defined(SKYLIGHTING_SHADOW_VIS)
 	if (!SharedData::InInterior)
-		dirSoftShadow = skylightingShadowVisibility;
+		dirSoftShadow = SharedData::grassLightingSettings.EnableNewLightingModel ? skylightingShadowVisibility : min(skylightingShadowVisibility, dirDetailedShadow);
 #					endif
 #				endif
 
@@ -1166,8 +1166,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif
 
 	// Receiver opacity cannot determine whether the object blocking sunlight transmits it.
-	if (SharedData::grassLightingSettings.EnableNewLightingModel)
-		dirTransmissionShadow = min(dirTransmissionShadow, dirShadow);
+	const float2 materialTransmissionShadow = min(dirTransmissionShadow, dirShadow);
 
 	float canopyVisibility = GrassLighting::GetCanopyVisibility(input.VertexNormal.w);
 	float dirClumpVisibility = canopyVisibility * (useClumpOcclusion ? GrassLighting::GetClumpLightVisibility(clumpNormal, SharedData::DirLightDirection.xyz) : 1.0);
@@ -1194,10 +1193,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 shineThroughAlbedo = hasSubsurface ? albedo : 0.0;
 	float3 transmissionRadiance;
 	GrassLighting::GetDirectLighting(albedo, reflectionAlbedo, frontTransmissionAlbedo, backTransmissionAlbedo, shineThroughAlbedo, grassOpacity, dirLightColor * Color::VanillaNormalization(),
-		dirNdotL, dot(viewDirection, SharedData::DirLightDirection.xyz), SharedData::grassLightingSettings.EnableWrappedLighting ? wrapAmount : 0.0, dirDetailedShadow, dirTransmissionShadow, lightsDiffuseColor, transmissionRadiance);
+		dirNdotL, dot(viewDirection, SharedData::DirLightDirection.xyz), SharedData::grassLightingSettings.EnableWrappedLighting ? wrapAmount : 0.0, dirDetailedShadow, materialTransmissionShadow * dirClumpVisibility, lightsDiffuseColor, transmissionRadiance);
 	[branch] if (SharedData::foliageLightingSettings.EnableGrassScattering != 0)
 	{
 		float foliageShadow = min(dirTransmissionShadow.x, dirTransmissionShadow.y) * (SharedData::grassLightingSettings.EnableNewLightingModel ? 1.0 : legacyTransmissionShadowMask);
+		foliageShadow = min(foliageShadow, dirShadow * dirClumpVisibility);
 		lightsDiffuseColor += albedo * dirLightColor * foliageShadow * grassDirectionalShadowScale * GetFoliageTransmission(dirNdotL, dot(viewDirection, SharedData::DirLightDirection.xyz)) * Color::VanillaNormalization();
 	}
 
