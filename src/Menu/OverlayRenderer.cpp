@@ -123,9 +123,10 @@ namespace
 
 		uint32_t effectFailed = effectManager.GetFailedEffectCount();
 		if (effectFailed) {
-			ImGui::TextColored(themeSettings.StatusPalette.Error,
-				"ERROR: %u effect(s) failed to compile",
-				effectFailed);
+			ImGui::TextColored(themeSettings.StatusPalette.Error, "%s",
+				I18n::GetSingleton()->Format("overlay.effects_failed", { { "count", std::to_string(effectFailed) } },
+										"ERROR: {count} effect(s) failed to compile")
+					.c_str());
 			for (const auto& err : effectManager.GetAllErrors())
 				ImGui::TextColored(themeSettings.StatusPalette.Error, "  %s", err.c_str());
 		}

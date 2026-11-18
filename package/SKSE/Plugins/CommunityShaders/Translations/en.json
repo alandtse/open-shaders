@@ -6857,6 +6857,7 @@
     "overlay.blocked_shader_detail": "Type: %s | Class: %s | Descriptor: 0x%X",
     "overlay.cache_held": "Saved shader cache cannot be used.\nA required feature is missing or failed to load.",
     "overlay.compiling_shaders": "{}Compiling Shaders: {}",
+    "overlay.effects_failed": "ERROR: {count} effect(s) failed to compile",
     "overlay.feature_changed_backup": "Feature setup changed. Building a new shader cache for this setup.\nPrevious cache saved.",
     "overlay.feature_changed_no_backup": "Feature setup changed. Building shaders in memory until the cache can be rebuilt.\nPrevious cache is not available for restore.",
     "overlay.feature_issues_compiling": "WARNING: %zu feature(s) failed to load (bad install or version mismatch).\nQuit, fix them in the menu's Feature Issues tab, and restart - compiling now\nbakes the wrong shaders and you will have to recompile after fixing.",

@@ -35,8 +35,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 namespace
 {
-	// Vertex cbuffer slot of TreeLodWindCB; Wind's spring field owns VS b3.
-	constexpr UINT kWindVertexSlot = 9;
+	// Vertex cbuffer slot of TreeLodWindCB; Wind's spring field owns VS b3 and vanilla skinning owns b9 and b10.
+	constexpr UINT kWindVertexSlot = 8;
 	// Vertex SRV slot of VertexData; Wind's spring fields own VS t111-t124.
 	constexpr UINT kWindVertexDataSlot = 127;
 
@@ -325,7 +325,7 @@ void TreeWind::Reset()
 	}
 
 	// The map menus draw the LOD too, and it should stand still there. While off, the draws skip all
-	// per-draw work; both buffers then read as off, whatever is still bound at VS b9.
+	// per-draw work; both buffers then read as off, whatever is still bound at VS b8.
 	swayActive = settings.Enabled && !globals::state->isMapMenuOpen;
 
 	WindCB data{};
