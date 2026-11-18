@@ -1853,6 +1853,8 @@
     "feature.ibl.enable_ibl": "启用IBL",
     "feature.ibl.enable_ibl_options": "启用 IBL 选项",
     "feature.ibl.enable_ibl_tooltip": "切换IBL。启用时，环境光来自立方体贴图球谐函数，而非原版系统。",
+    "feature.ibl.enable_in_interiors": "启用室内 IBL",
+    "feature.ibl.enable_in_interiors_tooltip": "在室内单元格中启用 IBL。",
     "feature.ibl.enable_in_loading_screen": "启用加载界面 IBL",
     "feature.ibl.enable_in_loading_screen_tooltip": "在加载界面与主菜单中启用 IBL。",
     "feature.ibl.enable_in_world_map": "启用世界地图 IBL",
