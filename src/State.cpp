@@ -242,23 +242,6 @@ void State::Draw()
 			volumetricShadows.SetShaderResources(context);
 		}
 
-		constexpr auto menuItem = static_cast<uint32_t>(ExtraShaderDescriptors::MenuItem);
-		constexpr auto worldDraw = static_cast<uint32_t>(ExtraShaderDescriptors::InWorld) |
-		                           static_cast<uint32_t>(ExtraShaderDescriptors::IsReflections);
-		permutationData.ExtraShaderDescriptor &= ~menuItem;
-		if (!(permutationData.ExtraShaderDescriptor & worldDraw) && currentShader &&
-			currentShader->shaderType.get() == RE::BSShader::Type::Lighting) {
-			const auto* menuScene = RE::UI3DSceneManager::GetSingleton();
-			const auto* accumulator = RE::BSShaderAccumulator::GetCurrentAccumulator();
-			if (menuScene && menuScene->shadowSceneNode && accumulator &&
-				accumulator->GetRuntimeData().activeShadowSceneNode == menuScene->shadowSceneNode) {
-				const auto scheme = menuScene->currentlightScheme;
-				if (scheme == RE::INTERFACE_LIGHT_SCHEME::kInventory || scheme == RE::INTERFACE_LIGHT_SCHEME::kInventoryMagic ||
-					scheme == RE::INTERFACE_LIGHT_SCHEME::kBook)
-					permutationData.ExtraShaderDescriptor |= menuItem;
-			}
-		}
-
 		UpdatePermutationBuffer();
 
 		if (currentShader && updateShader) {
