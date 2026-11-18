@@ -53,27 +53,41 @@ float NativePBRLod(NativePBR::MaterialRecord material, TriangleSurface hitSurfac
 // material inputs. It must use an explicit mip: pixel derivatives do not exist
 // in RayQuery's compute shader. The shallow, bounded march follows the
 // single-layer Extended Materials height convention without FXC dependencies.
-bool NativePBRParallaxUV(NativePBR::MaterialRecord material, TriangleSurface hitSurface, float2 barycentric,
-	float3x4 objectToWorld, float3x4 worldToObject, uint2 heightLocation,
-	uint heightChannel, float lod, inout float2 uv)
+bool NativePBRParallaxUV(NativePBR::MaterialRecord material, TriangleSurface hitSurface,
+	float3x4 objectToWorld, float3x4 worldToObject, float3 viewDirectionWS,
+	uint2 heightLocation, uint heightChannel, float lod, inout float2 uv)
 {
 	if (heightLocation.x == NativePBR::MissingTexture || heightChannel > 3u)
 		return false;
-	float3 position = hitSurface.position0 * (1.0f - barycentric.x - barycentric.y) +
-		hitSurface.position1 * barycentric.x + hitSurface.position2 * barycentric.y;
 	float3 normalWS = mul(hitSurface.normal, (float3x3)worldToObject);
 	if (!all(isfinite(normalWS)) || dot(normalWS, normalWS) <= 1e-8f)
 		return false;
 	normalWS = normalize(normalWS);
+	float3 edge0 = mul((float3x3)objectToWorld, hitSurface.position1 - hitSurface.position0);
+	float3 edge1 = mul((float3x3)objectToWorld, hitSurface.position2 - hitSurface.position0);
+	float2 uvEdge0 = (hitSurface.uv1 - hitSurface.uv0) * material.uv[0].zw;
+	float2 uvEdge1 = (hitSurface.uv2 - hitSurface.uv0) * material.uv[0].zw;
+	float determinant = uvEdge0.x * uvEdge1.y - uvEdge1.x * uvEdge0.y;
 	float3 tangentWS = mul((float3x3)objectToWorld, hitSurface.tangent);
+	float3 bitangentRawWS = mul((float3x3)objectToWorld, hitSurface.bitangent);
+	if (isfinite(determinant) && abs(determinant) > 1e-8f) {
+		float3 uvTangent = (edge0 * uvEdge1.y - edge1 * uvEdge0.y) / determinant;
+		float3 uvBitangent = (edge1 * uvEdge0.x - edge0 * uvEdge1.x) / determinant;
+		if (all(isfinite(uvTangent)) && all(isfinite(uvBitangent)) &&
+			dot(uvTangent, uvTangent) > 1e-8f && dot(uvBitangent, uvBitangent) > 1e-8f) {
+			tangentWS = uvTangent;
+			bitangentRawWS = uvBitangent;
+		}
+	}
 	tangentWS -= normalWS * dot(normalWS, tangentWS);
 	if (!all(isfinite(tangentWS)) || dot(tangentWS, tangentWS) <= 1e-8f)
 		return false;
 	tangentWS = normalize(tangentWS);
+	if (!all(isfinite(bitangentRawWS)) || dot(bitangentRawWS, bitangentRawWS) <= 1e-8f)
+		return false;
 	float3 bitangentWS = cross(normalWS, tangentWS) *
-		(dot(cross(normalWS, tangentWS), mul((float3x3)objectToWorld, hitSurface.bitangent)) < 0.0f ? -1.0f : 1.0f);
-	float3 worldPosition = mul(objectToWorld, float4(position, 1.0f));
-	float3 viewWS = CameraOrigin - worldPosition;
+		(dot(cross(normalWS, tangentWS), bitangentRawWS) < 0.0f ? -1.0f : 1.0f);
+	float3 viewWS = viewDirectionWS;
 	if (!all(isfinite(viewWS)) || dot(viewWS, viewWS) <= 1e-8f)
 		return false;
 	viewWS = normalize(viewWS);
@@ -106,7 +120,7 @@ bool NativePBRParallaxUV(NativePBR::MaterialRecord material, TriangleSurface hit
 }
 
 bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
-	float3x4 objectToWorld, float3x4 worldToObject, float footprint, out EvaluatedSourceMaterial evaluated,
+	float3x4 objectToWorld, float3x4 worldToObject, float footprint, float3 viewDirectionWS, out EvaluatedSourceMaterial evaluated,
 	out bool usedFallback, out float3 clearcoat)
 {
 	evaluated = (EvaluatedSourceMaterial)0;
@@ -143,7 +157,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 		complexMaskDetected = coarseMask.a < 1.0f - epsilon && (!grayscale || blackHeight);
 	}
 	if (material.textures[2].x != NativePBR::MissingTexture) {
-		if (!NativePBRParallaxUV(material, hitSurface, barycentric, objectToWorld, worldToObject,
+		if (!NativePBRParallaxUV(material, hitSurface, objectToWorld, worldToObject, viewDirectionWS,
 			material.textures[2].xy, 0u, lod, uv))
 			return false;
 	} else if (legacyComplex && complexMaskDetected) {
@@ -152,7 +166,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 			return false;
 		const float epsilon = 4.0f / 255.0f;
 		if (originalMask.a > epsilon && originalMask.a < 1.0f - epsilon &&
-			!NativePBRParallaxUV(material, hitSurface, barycentric, objectToWorld, worldToObject,
+			!NativePBRParallaxUV(material, hitSurface, objectToWorld, worldToObject, viewDirectionWS,
 				material.textures[1].xy, 3u, lod, uv))
 			return false;
 	}
