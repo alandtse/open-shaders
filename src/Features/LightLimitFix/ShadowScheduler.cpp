@@ -1763,6 +1763,26 @@ namespace ShadowCasterManager
 			std::erase_if(s_splitState, [&](const auto& kv) { return !std::binary_search(liveLights.begin(), liveLights.end(), kv.first); });
 		}
 
+		// Past the cap, protection would hand every slot to lights reaching the player and none to the lights in view.
+		{
+			static std::vector<CandidateLight*> protectedCandidates;
+			protectedCandidates.clear();
+			for (auto& c : candidates)
+				if (c.playerProtected)
+					protectedCandidates.push_back(&c);
+			const auto cap = static_cast<size_t>(PlayerProtectionCap(s_settings.ShadowLightCount));
+			if (protectedCandidates.size() > cap) {
+				std::nth_element(protectedCandidates.begin(), protectedCandidates.begin() + cap, protectedCandidates.end(),
+					[](const CandidateLight* a, const CandidateLight* b) {
+						if (a->score != b->score)
+							return a->score > b->score;
+						return reinterpret_cast<uintptr_t>(a->light) < reinterpret_cast<uintptr_t>(b->light);
+					});
+				for (size_t i = cap; i < protectedCandidates.size(); ++i)
+					protectedCandidates[i]->playerProtected = false;
+			}
+		}
+
 		// Apply debug pins: bias scoring so pinned-shadow lights sort to the top
 		// (forced chosen) and pinned-convert lights to the bottom (forced excess).
 		// Pin sets are exclusive; a stale entry in both defers to pin-shadow.
