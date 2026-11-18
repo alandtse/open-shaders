@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -93,6 +94,15 @@ namespace ShadowCasterManager
 	inline bool SphereWhollyBehindPlane(float a_planeDistance, float a_radius, float a_margin) noexcept
 	{
 		return a_planeDistance + a_radius <= -a_margin;
+	}
+
+	/// The classifier epoch of an object that has not moved since it was seen.
+	inline constexpr int kNeverMoved = std::numeric_limits<int>::min();
+
+	/// True when a caster's object last moved, at epoch a_lastMove, fewer than a_window epochs before a_now.
+	inline bool MovedWithin(int a_now, int a_lastMove, int a_window) noexcept
+	{
+		return a_lastMove != kNeverMoved && a_now - a_lastMove < a_window;
 	}
 
 	// The tile class ladder, shared by the coverage classifier below and the

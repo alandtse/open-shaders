@@ -7,7 +7,6 @@
 
 #include "../../Globals.h"
 #include "../../State.h"
-#include "../../Utils/ActorUtils.h"
 #include "../../Utils/FileSystem.h"
 #include "../../Utils/Game.h"
 #include "ShadowCasterInternal.h"
@@ -271,17 +270,24 @@ namespace ShadowCasterManager
 	constexpr int kSettledRecheckFrames = 16;
 	constexpr int kSettledAtFactor = 4;  // matches the promoteAt * 4 backoff-reset below
 	constexpr int kAncestryRecheckEpochs = 16;
-	constexpr int kAncestryStale = -kAncestryRecheckEpochs;
 	std::atomic<bool> s_actorAttachedDynamic{ true };
 	// Open-addressing map: probed once per appended caster by the cull-walk
 	// hook, so lookup cost lands directly on EnableLight's accumulate time.
 	// Accumulate-thread only (see CurrentCullLight) -- a concurrent insert
 	// would rehash under another thread's probe.
 	ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;
+	ankerl::unordered_dense::map<const RE::TESObjectREFR*, int> s_ownerMoveEpoch;
 	int s_casterClassEpoch{ 0 };
 
 	bool GetActorAttachedDynamic() { return s_actorAttachedDynamic.load(std::memory_order_relaxed); }
 	void SetActorAttachedDynamic(bool a_value) { s_actorAttachedDynamic.store(a_value, std::memory_order_relaxed); }
+
+	/// Epoch at which any part of the caster's object last moved, or never.
+	static int OwnerMoveEpoch(const CasterMobility& r)
+	{
+		const auto it = r.owner ? s_ownerMoveEpoch.find(r.owner) : s_ownerMoveEpoch.end();
+		return it != s_ownerMoveEpoch.end() ? it->second : kNeverMoved;
+	}
 
 	/// Classifies a caster static vs dynamic from quantized worldBound
 	/// movement (1-unit, matching the redraw hash), memoized once per frame.
@@ -296,7 +302,8 @@ namespace ShadowCasterManager
 		// re-quantizing worldBound. A move mid-window is still caught at the next checkpoint.
 		const int settledAt = kStaticStabilityFrames * r.promoteBackoff * kSettledAtFactor;
 		if (!inserted && !r.dynamic && r.framesSinceMove >= settledAt &&
-			s_casterClassEpoch - r.lastVerifyEpoch < kSettledRecheckFrames) {
+			s_casterClassEpoch - r.lastVerifyEpoch < kSettledRecheckFrames &&
+			!MovedWithin(s_casterClassEpoch, OwnerMoveEpoch(r), kStaticStabilityFrames)) {
 			r.lastEpoch = s_casterClassEpoch;  // keep same-frame memo + prune liveness
 			return r;
 		}
@@ -315,6 +322,8 @@ namespace ShadowCasterManager
 				r.promoteBackoff = std::min(r.promoteBackoff * 2, kStaticPromoteBackoffMax);
 			r.framesSinceMove = 0;
 			r.foldHashValid = false;  // quantized bound changed
+			if (!inserted && r.owner)
+				s_ownerMoveEpoch[r.owner] = s_casterClassEpoch;
 		} else {
 			r.framesSinceMove = std::min(r.framesSinceMove + elapsed, kStaticFramesCap);
 		}
@@ -326,19 +335,19 @@ namespace ShadowCasterManager
 		r.lastVerifyEpoch = s_casterClassEpoch;
 		const int promoteAt = kStaticStabilityFrames * r.promoteBackoff;
 		r.dynamic = r.framesSinceMove < promoteAt;
-		if (s_actorAttachedDynamic.load(std::memory_order_relaxed)) {
-			if (inserted || s_casterClassEpoch - r.ancestryEpoch >= kAncestryRecheckEpochs) {
-				r.actorAttached = Util::IsOwnedByActor(geom);
-				r.ancestryEpoch = s_casterClassEpoch;
-			}
-			// Parented under an actor: it rests and moves with the actor, so each pause would
-			// promote it into the static set and force a rebake when it moves again.
-			if (r.actorAttached)
-				r.dynamic = true;
-		} else {
-			r.actorAttached = false;
-			r.ancestryEpoch = kAncestryStale;
+		if (inserted || s_casterClassEpoch - r.ancestryEpoch >= kAncestryRecheckEpochs) {
+			r.owner = geom.GetUserData();
+			r.actorAttached = r.owner && r.owner->IsActor();
+			r.ancestryEpoch = s_casterClassEpoch;
 		}
+		// Parented under an actor: it rests and moves with the actor, so each pause would
+		// promote it into the static set and force a rebake when it moves again.
+		if (r.actorAttached && s_actorAttachedDynamic.load(std::memory_order_relaxed))
+			r.dynamic = true;
+		// A swinging fixture's parts near its pivot move under a unit a frame; held to the whole object's
+		// movement, they are never baked while its far parts are drawn live, which splits its shadow.
+		if (MovedWithin(s_casterClassEpoch, OwnerMoveEpoch(r), promoteAt))
+			r.dynamic = true;
 		// Held still far past its (backed-off) window: it has settled rather than
 		// oscillating, so restore the base window for its next move.
 		if (!r.dynamic && r.framesSinceMove >= promoteAt * kSettledAtFactor)

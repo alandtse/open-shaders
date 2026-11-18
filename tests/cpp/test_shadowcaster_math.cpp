@@ -7,6 +7,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <limits>
+
 using Catch::Approx;
 using ShadowCasterManager::DemandStreakBucket;
 using ShadowCasterManager::EngineShadowSliceCount;
@@ -16,10 +18,12 @@ using ShadowCasterManager::HashCombine;
 using ShadowCasterManager::HashCombineFloat;
 using ShadowCasterManager::HemisphereSeamMargin;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
+using ShadowCasterManager::kNeverMoved;
 using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kSlotHoldMargin;
 using ShadowCasterManager::kTileScaleFloor;
 using ShadowCasterManager::kVanillaShadowSliceCount;
+using ShadowCasterManager::MovedWithin;
 using ShadowCasterManager::QuantizeFloat;
 using ShadowCasterManager::SliceCappedLightCount;
 using ShadowCasterManager::SlotHeldScore;
@@ -128,6 +132,15 @@ TEST_CASE("SphereWhollyBehindPlane splits straddling from wholly behind", "[scm]
 	// Behind by more than the margin: nothing of it reaches the front map.
 	REQUIRE(SphereWhollyBehindPlane(-10.0f - margin - 0.01f, 10.0f, margin));
 	REQUIRE(SphereWhollyBehindPlane(-500.0f, 10.0f, margin));
+}
+
+TEST_CASE("MovedWithin holds a caster to its object's last movement", "[scm]")
+{
+	REQUIRE(MovedWithin(100, 100, 8));
+	REQUIRE(MovedWithin(107, 100, 8));
+	REQUIRE_FALSE(MovedWithin(108, 100, 8));
+	REQUIRE_FALSE(MovedWithin(100, kNeverMoved, 8));
+	REQUIRE_FALSE(MovedWithin(std::numeric_limits<int>::max(), kNeverMoved, 64));
 }
 
 TEST_CASE("FrameTimePercentile returns the 60fps fallback with no samples", "[scm]")
