@@ -70,37 +70,34 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void GrassCollision::DrawSettings()
 {
-	if (ImGui::TreeNodeEx(T(TKEY("grass_collision"), "Grass Collision"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		Util::CheckboxFlag(T(TKEY("enable"), "Enable Grass Collision"), settings.EnableGrassCollision);
-		ImGui::SliderFloat(T(TKEY("radius_scale"), "Collision Radius Scale"), &settings.CollisionRadiusScale,
-			MIN_COLLISION_RADIUS_SCALE, MAX_COLLISION_RADIUS_SCALE, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderFloat(T(TKEY("grass_interaction_radius"), "Grass Interaction Radius"),
-			&settings.GrassInteractionRadius, MIN_GRASS_INTERACTION_RADIUS, MAX_GRASS_INTERACTION_RADIUS,
-			"%.0f units", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderFloat(T(TKEY("impact_strength"), "Collision Impact"), &settings.CollisionImpactStrength,
-			MIN_COLLISION_IMPACT_STRENGTH, MAX_COLLISION_IMPACT_STRENGTH, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderFloat(T(TKEY("spring_strength"), "Spring Strength"), &settings.SpringStrength,
-			MIN_SPRING_STRENGTH, MAX_SPRING_STRENGTH, "%.2f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
-		ImGui::SliderFloat(T(TKEY("damping"), "Damping"), &settings.Damping,
-			MIN_DAMPING, MAX_DAMPING, "%.1f", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderFloat(T(TKEY("maximum_bend"), "Maximum Bend"), &settings.MaximumBend,
-			MIN_MAXIMUM_BEND, MAX_MAXIMUM_BEND, "%.0f degrees", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderFloat(T(TKEY("maximum_compression"), "Maximum Compression"), &settings.MaximumCompression,
-			MIN_MAXIMUM_COMPRESSION, MAX_MAXIMUM_COMPRESSION, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderFloat(T(TKEY("compression_height"), "Compression Reach"), &settings.CompressionHeight,
-			MIN_COMPRESSION_HEIGHT, MAX_COMPRESSION_HEIGHT, "%.0f%% of blade", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderFloat(T(TKEY("maximum_compressible_grass_height"), "Maximum Compressible Grass Height"),
-			&settings.MaximumCompressibleGrassHeight, MIN_MAXIMUM_COMPRESSIBLE_GRASS_HEIGHT,
-			MAX_MAXIMUM_COMPRESSIBLE_GRASS_HEIGHT, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("maximum_compressible_grass_height_tooltip"),
-				"Grass taller than this can still bend around actors but will not be vertically compressed."));
-		ImGui::SliderFloat(T(TKEY("compression_recovery"), "Compression Recovery"), &settings.CompressionRecovery,
-			MIN_COMPRESSION_RECOVERY, MAX_COMPRESSION_RECOVERY, "%.2f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("compression_recovery_tooltip"), "Lower values keep grass compressed longer after an actor moves away."));
-		ImGui::TreePop();
-	}
+	Util::CheckboxFlag(T(TKEY("enable"), "Enable Grass Collision"), settings.EnableGrassCollision);
+	ImGui::SliderFloat(T(TKEY("radius_scale"), "Collision Radius Scale"), &settings.CollisionRadiusScale,
+		MIN_COLLISION_RADIUS_SCALE, MAX_COLLISION_RADIUS_SCALE, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("grass_interaction_radius"), "Grass Interaction Radius"),
+		&settings.GrassInteractionRadius, MIN_GRASS_INTERACTION_RADIUS, MAX_GRASS_INTERACTION_RADIUS,
+		"%.0f units", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("impact_strength"), "Collision Impact"), &settings.CollisionImpactStrength,
+		MIN_COLLISION_IMPACT_STRENGTH, MAX_COLLISION_IMPACT_STRENGTH, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("spring_strength"), "Spring Strength"), &settings.SpringStrength,
+		MIN_SPRING_STRENGTH, MAX_SPRING_STRENGTH, "%.2f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+	ImGui::SliderFloat(T(TKEY("damping"), "Damping"), &settings.Damping,
+		MIN_DAMPING, MAX_DAMPING, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("maximum_bend"), "Maximum Bend"), &settings.MaximumBend,
+		MIN_MAXIMUM_BEND, MAX_MAXIMUM_BEND, "%.0f degrees", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("maximum_compression"), "Maximum Compression"), &settings.MaximumCompression,
+		MIN_MAXIMUM_COMPRESSION, MAX_MAXIMUM_COMPRESSION, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("compression_height"), "Compression Reach"), &settings.CompressionHeight,
+		MIN_COMPRESSION_HEIGHT, MAX_COMPRESSION_HEIGHT, "%.0f%% of blade", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("maximum_compressible_grass_height"), "Maximum Compressible Grass Height"),
+		&settings.MaximumCompressibleGrassHeight, MIN_MAXIMUM_COMPRESSIBLE_GRASS_HEIGHT,
+		MAX_MAXIMUM_COMPRESSIBLE_GRASS_HEIGHT, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("maximum_compressible_grass_height_tooltip"),
+			"Grass taller than this can still bend around actors but will not be vertically compressed."));
+	ImGui::SliderFloat(T(TKEY("compression_recovery"), "Compression Recovery"), &settings.CompressionRecovery,
+		MIN_COMPRESSION_RECOVERY, MAX_COMPRESSION_RECOVERY, "%.2f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("compression_recovery_tooltip"), "Lower values keep grass compressed longer after an actor moves away."));
 }
 
 GrassCollision::ShaderData GrassCollision::GetCommonBufferData() const noexcept
@@ -168,7 +165,7 @@ void GrassCollision::QueueCollisions()
 			float distance = std::sqrt(actorCandidate.sqDistance);
 			eastl::vector<GrassCollisionShapeCandidate> collisionShapes{};
 
-			RE::BSVisit::TraverseScenegraphCollision(root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
+			Util::TraverseCollision(root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
 				Util::ShapeCollisionCapsule capsule;
 				if (Util::GetShapeCollisionCapsule(a_object, capsule)) {
 					capsule.radius *= collisionRadiusScale;
