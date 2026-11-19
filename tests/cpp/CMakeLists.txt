@@ -86,6 +86,8 @@ add_executable(
     test_litregion.cpp
     test_litcap.cpp
     test_passchainguard.cpp
+    test_alpha_pass_list.cpp
+    test_alpha_pass_list_hooks.cpp
     test_hdr_png_metadata.cpp
     test_cacheinvalidation.cpp
     test_compilededupe.cpp
@@ -225,6 +227,8 @@ foreach(cpp_test_target IN ITEMS cpp_tests screenshot_tests_devbench)
         PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN
     )
 endforeach()
+
+target_link_libraries(cpp_tests PRIVATE unordered_dense::unordered_dense)
 
 enable_testing()
 add_test(

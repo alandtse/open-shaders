@@ -12,6 +12,7 @@
 #include "EngineFixes/ShadowmapCascadeRasterizerFix.h"
 #include "EngineFixes/SunOcclusionPollFix.h"
 #include "EngineFixes/SunShadowMaskFix.h"
+#include "EngineFixes/VRAlphaPassListFix.h"
 #include "EngineFixes/WaterReflectionCubemapFix.h"
 
 const std::vector<EngineFix*>& EngineFix::GetOnPostPostLoadFixesList()
@@ -26,6 +27,7 @@ const std::vector<EngineFix*>& EngineFix::GetOnPostPostLoadFixesList()
 	static ShadowParabolicNullAccumulatorFix shadowParabolicNullAccumulatorFix;
 	static SunShadowMaskFix sunShadowMaskFix;
 	static SunOcclusionPollFix sunOcclusionPollFix;
+	static VRAlphaPassListFix vrAlphaPassListFix;
 	static WaterReflectionCubemapFix waterReflectionCubemapFix;
 
 	static std::vector<EngineFix*> fixes = {
@@ -41,6 +43,7 @@ const std::vector<EngineFix*>& EngineFix::GetOnPostPostLoadFixesList()
 		&shadowParabolicNullAccumulatorFix,
 		&sunShadowMaskFix,
 		&sunOcclusionPollFix,
+		&vrAlphaPassListFix,
 		&waterReflectionCubemapFix
 	};
 

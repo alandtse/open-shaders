@@ -23,6 +23,7 @@
 #	include "BaselineManager.h"
 #	include "CSEditor/EditorWindow.h"
 #	include "CSEditor/SceneManager/SceneSettingsManager.h"
+#	include "EngineFixes/VRAlphaPassListFix.h"
 #	include "Feature.h"
 #	include "FeatureIssues.h"
 #	include "Features/LightLimitFix/ShadowCasterManager.h"
@@ -31,6 +32,7 @@
 #	include "Features/RemoteControl/FrameRecorder.h"
 #	include "Features/RemoteControl/NvPerf.h"
 #	include "Features/RemoteControl/ToolSpecs/ActionsTool.h"
+#	include "Features/RemoteControl/ToolSpecs/AlphaPassListTool.h"
 #	include "Features/RemoteControl/ToolSpecs/CaptureNativeExt.h"
 #	include "Features/RemoteControl/ToolSpecs/CaptureProviderExt.h"
 #	include "Features/RemoteControl/ToolSpecs/CaptureTool.h"
@@ -202,6 +204,16 @@ namespace
 	json RunOnMainThread(std::function<json()> a_run)
 	{
 		return RunOnThread(std::move(a_run), Util::DevBenchUx::ExecutionThread::Main);
+	}
+
+	json BuildAlphaPassListResult(const json& a_args)
+	{
+		return RunOnThread([a_args] { return VRAlphaPassListFix::Control(a_args); }, Util::DevBenchUx::ExecutionThread::Render);
+	}
+
+	void AlphaPassListHandler(const char* a_argsJson, void*, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler("openshaders.alphapasslist", &BuildAlphaPassListResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- feature: list / get / set / reset / toggle -----------------------------------
@@ -2093,6 +2105,8 @@ namespace DevBenchBridge
 		dvb->RegisterTool("openshaders.lighthighlight", BrandedDescription(ToolSpecs::kLightHighlightTool), &LightHighlightToolHandler, nullptr);
 
 		dvb->RegisterTool("openshaders.profiler", BrandedDescription(ToolSpecs::kProfilerTool), &ProfilerToolHandler, nullptr);
+
+		dvb->RegisterTool("openshaders.alphapasslist", BrandedDescription(ToolSpecs::kAlphaPassListTool), &AlphaPassListHandler, nullptr);
 
 		dvb->RegisterTool("openshaders.capture", BrandedDescription(ToolSpecs::kCaptureTool), &CaptureToolHandler, nullptr);
 
