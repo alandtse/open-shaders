@@ -866,7 +866,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 #endif
 
-#if defined(GSHADER) && defined(RENDER_SHADOWMAP_PB)
+#if defined(GEOMETRYSHADER) && defined(RENDER_SHADOWMAP_PB)
 #	if defined(VR)
 #		define PARABOLOID_MAX_SPLITS 2
 #	else

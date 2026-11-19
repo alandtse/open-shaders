@@ -2847,11 +2847,7 @@ namespace SIE
 			return it->second.get();
 		std::array<D3D_SHADER_MACRO, 64> macros{};
 		SShaderCache::GetShaderDefines(shader, vertexDescriptor, std::span{ macros });
-		std::vector<std::pair<const char*, const char*>> defines{ { "GSHADER", nullptr } };
-		if (globals::game::isVR)
-			defines.emplace_back("VR", nullptr);
-		for (const auto& [name, value] : *globals::state->GetDefines())
-			defines.emplace_back(name.c_str(), value.c_str());
+		std::vector<std::pair<const char*, const char*>> defines;
 		for (const auto& macro : macros) {
 			if (!macro.Name)
 				break;
