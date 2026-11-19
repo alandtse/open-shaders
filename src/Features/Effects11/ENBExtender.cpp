@@ -14,6 +14,7 @@
 
 #include "Features/Effects11/ShaderPatches.h"
 #include "Globals.h"
+#include "Overlays/PresetOverlays.h"
 
 namespace ENBExtender
 {
@@ -222,6 +223,7 @@ namespace ENBExtender
 		std::string uiGroup = ann("UIGroup");
 
 		std::string finalVal = defaultVal;
+		std::string compiledVal;
 		if (!iniPath.empty() && !iniSection.empty() && !uiName.empty()) {
 			std::string iniKey = ann("UniqueName");
 			if (iniKey.empty())
@@ -236,6 +238,9 @@ namespace ENBExtender
 					iniVal = "1";
 				finalVal = iniVal;
 			}
+			// The UI keeps the stored value; OnStoresLoaded applies overlays to it like any other slot
+			compiledVal = finalVal;
+			Overlays::Manager::GetSingleton().TransformDefine(iniSection, iniKey, typeName, compiledVal);
 		}
 
 		if (!uiName.empty()) {
@@ -275,7 +280,7 @@ namespace ENBExtender
 			}
 		}
 
-		result += "#define " + defineName + " " + finalVal + "\n";
+		result += "#define " + defineName + " " + (compiledVal.empty() ? finalVal : compiledVal) + "\n";
 		result += "string __uidef_" + defineName + ";\n";
 		return true;
 	}

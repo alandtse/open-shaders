@@ -3,6 +3,7 @@
 #include "Skylighting/Skylighting.hlsli"
 
 Texture2D<unorm float> srcOcclusionDepth : register(t0);
+Texture2D<float> srcZenithDepth : register(t4);
 #if !defined(OCCLUSION_ONLY)
 Texture2DArray<float4> ESRAMShadow : register(t3);
 
@@ -27,6 +28,7 @@ RWTexture3D<uint> outAccumFramesArray : register(u1);
 RWTexture3D<uint> outShadowBitmask : register(u2);
 RWTexture3D<float> outShadowVisibility : register(u3);
 #endif
+RWTexture3D<uint> outCoverage : register(u4);
 
 SamplerComparisonState comparisonSampler : register(s0);
 
@@ -89,7 +91,9 @@ static const float3 noise3D[32] = {
 	cellCentreOS.y = -cellCentreOS.y;
 	float2 occlusionUV = cellCentreOS.xy * 0.5 + 0.5;
 
-	if (all(occlusionUV > 0) && all(occlusionUV < 1)) {
+	outCoverage[probeTexID] = Skylighting::GetZenithCoverage(srcZenithDepth, cellCentreMS);
+
+	if (settings.AccumulateOcclusion && all(occlusionUV > 0) && all(occlusionUV < 1)) {
 		uint accumFrames = storedAccumFrames + 1;
 		float visibility = srcOcclusionDepth.SampleCmpLevelZero(comparisonSampler, occlusionUV, cellCentreOS.z);
 

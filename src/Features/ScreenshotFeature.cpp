@@ -780,6 +780,15 @@ void ScreenshotFeature::ClearShaderCache()
 	compositeCS = nullptr;
 }
 
+void ScreenshotFeature::SuppressVanillaMultiScreenshot() const
+{
+	// The engine's Multi-Screenshot toggle ignores bAllowScreenShot, so the queued request is cleared directly.
+	if (!disableVanillaScreenshot)
+		return;
+	if (auto* controls = RE::MenuControls::GetSingleton(); controls && controls->screenshotHandler)
+		controls->screenshotHandler->multiScreenshotQueued = false;
+}
+
 void ScreenshotFeature::LoadSettings(json& a_json)
 {
 	if (a_json.contains("ScreenshotPath"))

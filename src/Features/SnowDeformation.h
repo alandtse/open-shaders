@@ -84,6 +84,8 @@ struct SnowDeformation : Feature
 	virtual void GameLoaded() override;
 	virtual void Reset() override;
 	virtual void DrawSettings() override;
+	virtual bool HasDebugSection() const override { return true; }
+	virtual void DrawDebugSection() override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
