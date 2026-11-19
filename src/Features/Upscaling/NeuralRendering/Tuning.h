@@ -151,7 +151,7 @@ namespace NR
 		float flatReuseMaxMoveUnits = kDefaultFlatReuseMoveUnits;
 		/**
 		 * @brief Runs the model at this fraction of the eye size and upsamples its tone gain onto the
-		 *        full-resolution frame. Developer-only; 1 is the full-resolution pass.
+		 *        full-resolution frame. 1 is the full-resolution pass.
 		 */
 		float modelScale = kMaxModelScale;
 		/**
