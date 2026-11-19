@@ -28,14 +28,6 @@ public:
 		CPU
 	};
 
-	/** @brief Per-feature profiling state: disabled, or displaying GPU/CPU timings. */
-	enum class FeatureTimingMode
-	{
-		Off,
-		GPU,
-		CPU
-	};
-
 	/**
 	 * @brief Renders the main profiling statistics view with timing graph and pass table.
 	 *
@@ -50,30 +42,25 @@ public:
 	static void RenderCompactGraph(float height);
 
 	/**
-	 * @brief Renders per-feature profiling through a bottom-aligned disclosure.
+	 * @brief Draws a feature's cost chip at the cursor: its total average time, which opens a popover with the
+	 * graph, the per-pass table and the overlay toggle. Draws nothing when the feature has no timers or the chip
+	 * would cross `rightLimit`.
 	 *
-	 * A compact Profiling button uses the bottom of the window on short pages
-	 * and follows the end of the feature material on long pages. Active timing
-	 * data appears above the CPU, GPU, and Off controls, with the button beneath
-	 * both. A small gap separates profiling from feature settings.
+	 * Call it every frame the feature page is shown: it also records the feature's graph, so the popover opens
+	 * on a filled history.
 	 *
-	 * @param featurePrefix The profiler timer name prefix identifying the feature
-	 *        (e.g. "ScreenSpaceGI").
-	 * @pre PrepareFeatureTimers was called for the same feature this frame.
+	 * @param featurePrefix The profiler timer name prefix identifying the feature (e.g. "ScreenSpaceGI").
+	 * @param rightLimit Screen x the chip must end before.
+	 * @return True when the chip was drawn.
 	 */
-	static void RenderFeatureTimers(const std::string& featurePrefix);
+	static bool RenderFeatureCostChip(const std::string& featurePrefix, float rightLimit);
 
 	/**
-	 * @brief Prepares per-feature timing data and returns its rendered height.
-	 *
+	 * @brief Width RenderFeatureCostChip would draw its chip at this frame, so a header can reserve room for it.
 	 * @param featurePrefix The profiler timer name prefix identifying the feature.
-	 * @param showProfiling Whether profiling controls are available on the active page.
-	 * @return Height of the prepared profiling content.
+	 * @return The chip width, or 0 when the feature has no timers and no chip would be drawn.
 	 */
-	static float PrepareFeatureTimers(const std::string& featurePrefix, bool showProfiling);
-
-	/** @brief Clears prepared timing data when leaving a feature page. */
-	static void DeactivateFeatureTimers();
+	static float MeasureFeatureCostChip(const std::string& featurePrefix);
 
 	/**
 	 * @brief Checks whether per-feature profiling can be shown.
@@ -84,6 +71,37 @@ public:
 	 * @param featurePrefix The profiler timer name prefix identifying the feature.
 	 */
 	static bool IsFeatureProfilingAvailable(const std::string& featurePrefix);
+
+	/**
+	 * @brief Renders the Performance Overlay's render-pass graph, leaving out the groups it hides.
+	 *
+	 * Uses its own graph history, so the Profiling page's unfiltered graph is unaffected.
+	 */
+	static void RenderOverlayGraph();
+
+	/**
+	 * @brief Gets the profiler groups (timer name prefixes before "::") reporting right now, in pass order.
+	 */
+	static std::vector<std::string> GetActiveGroups();
+
+	/**
+	 * @brief Gets the name to show for a profiler group: its feature's display name, or the group itself.
+	 * @param group Profiler group, which for a feature is its short name.
+	 */
+	static std::string GetGroupDisplayName(const std::string& group);
+
+	/**
+	 * @brief Draws a checkbox that shows or hides a profiler group in the Performance Overlay's graph.
+	 * Draws nothing while the Performance Overlay is not loaded.
+	 * @param group Profiler group, which for a feature is its short name.
+	 */
+	static void RenderOverlayGroupToggle(const std::string& group);
+
+	/**
+	 * @brief Opens the Profiling page with a group expanded and scrolled into view.
+	 * @param group Profiler group, which for a feature is its short name.
+	 */
+	static void OpenProfilingPage(const std::string& group);
 
 private:
 	static inline TimingMode timingMode = TimingMode::GPU;
@@ -114,15 +132,8 @@ private:
 	static inline ImGuiUtils::ProfilerGraph gpuGraph{ Profiler::kHistorySize };
 	static inline Util::GraphSampleGate gpuGraphGate;
 
-	struct FeatureGraphState
-	{
-		ImGuiUtils::ProfilerGraph gpuGraph{ Profiler::kHistorySize };
-		ImGuiUtils::ProfilerGraph cpuGraph{ Profiler::kHistorySize };
-		Util::GraphSampleGate gpuGate;
-		Util::GraphSampleGate cpuGate;
-	};
-	static inline std::unordered_map<std::string, FeatureGraphState> featureGraphs;
-	static inline std::unordered_map<std::string, FeatureTimingMode> featureTimingModes;
+	static inline ImGuiUtils::ProfilerGraph overlayGraph{ Profiler::kHistorySize };
+	static inline Util::GraphSampleGate overlayGraphGate;
 
 	struct FeatureTimingEntry
 	{
@@ -145,15 +156,19 @@ private:
 		float maxP95 = 0.0f;
 		float maxP99 = 0.0f;
 	};
-	struct FeatureTimingViewState
+	struct FeatureGraphState
 	{
-		bool controlsVisible = false;
-		bool profilingDisabled = false;
-		FeatureTimingMode mode = FeatureTimingMode::Off;
+		ImGuiUtils::ProfilerGraph gpuGraph{ Profiler::kHistorySize };
+		ImGuiUtils::ProfilerGraph cpuGraph{ Profiler::kHistorySize };
+		Util::GraphSampleGate gpuGate;
+		Util::GraphSampleGate cpuGate;
 		FeatureTimingData data;
-		float contentHeight = 0.0f;
+		int dataFrame = -1;
 	};
-	static inline std::unordered_map<std::string, FeatureTimingViewState> featureTimingViews;
+	static inline std::unordered_map<std::string, FeatureGraphState> featureGraphs;
+
+	/** @brief Group the Profiling page expands and scrolls to on its next draw; empty when none. */
+	static inline std::string focusGroup;
 
 	static ImU32 GetGroupColor(std::string_view groupName);
 	static uint32_t ToLegitColor(ImU32 imColor);
@@ -164,14 +179,18 @@ private:
 	static bool RenderGraph(float height, bool showLegend);
 	static void UpdateStatistics(bool cpuMode);
 	static std::string GetFeatureTimerPrefix(const std::string& featurePrefix);
+	static std::string GetGroupName(std::string_view timerName);
 	static bool IsFeatureTimerResult(const Profiler::TimerResult& result, std::string_view prefix);
 
 	static FeatureTimingData CollectFeatureTimingData(const std::string& featurePrefix, bool cpuMode);
-	static float GetFeatureTimingDataHeight(const FeatureTimingData& data);
+	/** @brief The feature's timings in the current mode, collected at most once a frame; requests their capture. */
+	static const FeatureTimingData& GetFeatureTimings(const std::string& featurePrefix);
 	static int ComputeFeatureGraphLegendWidth(const FeatureTimingData& data, int totalWidth);
-	static bool RenderFeatureTimingGraph(const FeatureTimingData& data, ImGuiUtils::ProfilerGraph& graph, Util::GraphSampleGate& gate, float graphHeight);
-	static void RenderFeatureTimingData(const std::string& featurePrefix, FeatureTimingMode featureMode, const FeatureTimingData& data);
-	static void RenderFeatureTimingModeControls(const std::string& featurePrefix, FeatureTimingMode& featureMode);
-	static void RenderFeatureTimingButton(const std::string& featurePrefix);
-	static bool RenderFeatureOverview();
+	/** @brief Records this frame's passes into the graph history, if the gate allows. */
+	static void RecordFeatureTimingGraph(const FeatureTimingData& data, ImGuiUtils::ProfilerGraph& graph, Util::GraphSampleGate& gate);
+	static void DrawFeatureTimingGraph(const FeatureTimingData& data, ImGuiUtils::ProfilerGraph& graph, float graphHeight);
+	/** @brief The cost chip's text: the timing mode and the feature's total average time. */
+	static std::string FeatureCostChipLabel(const FeatureTimingData& data);
+	/** @brief The popover's body: mode toggle, graph, per-pass table, overlay toggle and the Profiling page link. */
+	static void RenderFeatureTimersPopover(const std::string& featurePrefix, FeatureGraphState& state, const FeatureTimingData& data);
 };

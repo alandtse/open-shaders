@@ -139,17 +139,6 @@ namespace
 		return clicked;
 	}
 
-	struct FeaturePageLayoutState
-	{
-		bool measured = false;
-		float materialHeight = 0.0f;
-		float contentHeight = 0.0f;
-		float scrollY = 0.0f;
-		float scrollMaxY = 0.0f;
-	};
-
-	std::unordered_map<std::string, FeaturePageLayoutState> g_featurePageLayouts;
-
 	struct SettingHint
 	{
 		std::string message;
@@ -300,6 +289,11 @@ namespace
 			const ImGuiID buttonId = ImGui::GetID("###FeatureSort");
 			const bool lit = ImGui::IsWindowHovered() || ImGui::GetFocusID() == buttonId || ImGui::IsPopupOpen("##FeatureSortPopup");
 			const float alpha = std::lerp(ThemeManager::Constants::PALETTE_DIMMED_ALPHA, 1.0f, Util::Anim::Toggle(ImGui::GetID("##Visibility"), lit));
+			// Quiet backing plate at full alpha, under the hover layer, so the icon stays readable over row text
+			const ImVec2 plateMin = ImGui::GetCursorScreenPos();
+			const ImVec2 plateMax = ImVec2(plateMin.x + size, plateMin.y + size);
+			ImGui::GetWindowDrawList()->AddRectFilled(plateMin, plateMax, ImGui::GetColorU32(ImGuiCol_FrameBg), ImGui::GetStyle().FrameRounding);
+			ImGui::GetWindowDrawList()->AddRect(plateMin, plateMax, ImGui::GetColorU32(ImGuiCol_Border), ImGui::GetStyle().FrameRounding);
 			ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * alpha);
 			if (Util::IconButton("###FeatureSort", GetSortModeIcon(globals::menu->GetSettings().FeatureListSort), nullptr))
 				ImGui::OpenPopup("##FeatureSortPopup");
@@ -389,109 +383,98 @@ namespace
 		return MenuFonts::BeginTabItemWithFont(label, role, flags);
 	}
 
+	/** @brief Where the title block of a feature header sits, handed to the toolbar callback of DrawFeatureHeader. */
+	struct FeatureHeaderSlot
+	{
+		ImVec2 titleMin;       ///< Screen position of the title's top-left corner
+		float titleHeight;     ///< Height of just the title line
+		float trailingX;       ///< Screen x just past the title, stage badge and version
+		ImVec2 belowTitle;     ///< Screen position of the line under the title, where an own-row toolbar goes
+		float availableWidth;  ///< Content width the header spans
+	};
+
 	/**
-	 * @brief Draws a feature header with the feature name in large text and version in smaller text
+	 * @brief Draws a feature header: the name in large text, then the stage badge and version bottom-aligned beside it,
+	 * the toolbar, the description below and a separator.
 	 * @param featureName The display name of the feature
 	 * @param version The version string (can be empty)
-	 * @param description Short description shown below the title (single line, truncated if too long)
+	 * @param description Short description shown below the title, wrapped to the content width
+	 * @param stage Release stage; pre-release stages get a badge
+	 * @param drawToolbar Called once the title block is down, before the description, to draw controls around it. Returns the
+	 * height it used under the title, which pushes the description down; 0 when it stayed on the title's line.
 	 * @return The height of just the title line (for button alignment)
 	 */
-	float DrawFeatureHeader(const std::string& featureName, const std::string& version, const std::string& description = "", Feature::ReleaseStage stage = Feature::ReleaseStage::Release)
+	float DrawFeatureHeader(const std::string& featureName, const std::string& version, const std::string& description = "", Feature::ReleaseStage stage = Feature::ReleaseStage::Release, const std::function<float(const FeatureHeaderSlot&)>& drawToolbar = {})
 	{
-		auto& themeSettings = globals::menu->GetTheme();
-		auto& palette = themeSettings.Palette;
-		auto& featureHeading = themeSettings.FeatureHeading;
+		const auto& themeSettings = globals::menu->GetTheme();
+		const ImVec4 textColor = themeSettings.Palette.Text;
 
-		// Sanitize and clamp to UI slider range to prevent malformed theme JSON from destabilizing layout
-		float titleScale = featureHeading.FeatureTitleScale;
-		if (!std::isfinite(titleScale)) {
-			titleScale = ThemeManager::Constants::DEFAULT_FEATURE_TITLE_SCALE;
-		}
-		titleScale = std::clamp(titleScale, 1.0f, 3.0f);
+		const float titleScale = globals::menu->GetFeatureTitleScale();
 
-		ImVec2 startPos = ImGui::GetCursorScreenPos();
-		const float headerRight = startPos.x + ImGui::GetContentRegionAvail().x;
-
-		// Calculate title size and draw feature name with Title font
-		ImVec2 titleSize;
-		ImVec2 titleMax;
-		float titleBaseline;
-		float titleInkCenter;
-		{
-			MenuFonts::FontRoleGuard titleGuard(Menu::FontRole::Title);
+		// Size and draw text in a font role at the title scale
+		const auto scaledSize = [titleScale](Menu::FontRole role, const char* text) {
+			MenuFonts::FontRoleGuard guard(role);
+			const ImVec2 size = ImGui::CalcTextSize(text);
+			return ImVec2(size.x * titleScale, size.y * titleScale);
+		};
+		const auto drawScaled = [titleScale](Menu::FontRole role, const ImVec4& color, const char* text) {
+			MenuFonts::FontRoleGuard guard(role);
 			ImGui::SetWindowFontScale(titleScale);
-			ImGui::TextWrapped("%s", featureName.c_str());
-			titleSize = ImGui::GetItemRectSize();
-			titleMax = ImGui::GetItemRectMax();
-			titleBaseline = ImGui::GetItemRectMin().y + ImGui::GetFontBaked()->Ascent;
-			titleInkCenter = ImGui::GetItemRectMin().y + Util::GetTextInkCenterY(featureName);
+			ImGui::TextColored(color, "%s", text);
 			ImGui::SetWindowFontScale(1.0f);
+		};
+
+		const ImVec2 startPos = ImGui::GetCursorScreenPos();
+		const float availableWidth = ImGui::GetContentRegionAvail().x;
+		const float itemSpacingX = ImGui::GetStyle().ItemSpacing.x;
+		const ImVec2 titleSize = scaledSize(Menu::FontRole::Title, featureName.c_str());
+		drawScaled(Menu::FontRole::Title, ImGui::GetStyleColorVec4(ImGuiCol_Text), featureName.c_str());
+
+		// Running x for the bottom-aligned annotations (stage badge, then version) right of the title
+		float annotationX = ImGui::GetItemRectMax().x + itemSpacingX;
+
+		const bool hasStageBadge = stage != Feature::ReleaseStage::Release;
+		if (hasStageBadge) {
+			// Centred on the version's line
+			const float lineHeight = scaledSize(Menu::FontRole::Body, featureName.c_str()).y;
+			ImGui::SetCursorScreenPos(ImVec2(annotationX, startPos.y + titleSize.y - lineHeight));
+			ImGui::SetWindowFontScale(titleScale);
+			FeatureListRenderer::DrawStageBadge(stage, lineHeight);
+			ImGui::SetWindowFontScale(1.0f);
+			annotationX += ImGui::GetItemRectSize().x + itemSpacingX;
 		}
 
-		// Store the title-only height for return value
-		float titleOnlyHeight = titleSize.y;
-
-		// Running x for baseline-aligned annotations (stage tag, then version) to the right of the title
-		float annotationX = titleMax.x + ImGui::GetStyle().ItemSpacing.x;
-
-		if (stage != Feature::ReleaseStage::Release) {
-			const float badgeWidth = FeatureListRenderer::MeasureStageBadge(stage);
-			const float badgeHeight = ImGui::GetTextLineHeight();
-			if (annotationX + badgeWidth > headerRight) {
-				annotationX = startPos.x;
-				titleSize.y += ImGui::GetStyle().ItemInnerSpacing.y + badgeHeight;
-				titleBaseline = startPos.y + titleSize.y - badgeHeight + ImGui::GetFontBaked()->Ascent;
-				titleInkCenter = startPos.y + titleSize.y - badgeHeight * 0.5f;
-			}
-			ImGui::SetCursorScreenPos(ImVec2(annotationX, titleInkCenter - badgeHeight * 0.5f));
-			FeatureListRenderer::DrawStageBadge(stage, badgeHeight);
-			annotationX += badgeWidth + ImGui::GetStyle().ItemSpacing.x;
-		}
-
-		// Draw version with the title font on the same baseline if version exists
 		if (!version.empty()) {
-			// Format version: replace dashes with dots for consistency
-			std::string formattedVersion = version;
-			std::replace(formattedVersion.begin(), formattedVersion.end(), '-', '.');
-
-			// Position version text right of the stage tag (or title)
-			float versionX = annotationX;
-
-			// Use dimmed text color for version
-			ImVec4 versionColor = palette.Text;
-			versionColor.w *= ThemeManager::Constants::VERSION_TEXT_OPACITY;
-
-			{
-				MenuFonts::FontRoleGuard titleGuard(Menu::FontRole::Title);
-				ImGui::SetWindowFontScale(titleScale * ThemeManager::Constants::FEATURE_VERSION_TEXT_SCALE);
-				const float versionWidth = ImGui::CalcTextSize(("v" + formattedVersion).c_str()).x;
-				if (versionX + versionWidth > headerRight) {
-					versionX = startPos.x;
-					titleBaseline = startPos.y + titleSize.y + ImGui::GetStyle().ItemInnerSpacing.y + ImGui::GetFontBaked()->Ascent;
-					titleSize.y = titleBaseline - ImGui::GetFontBaked()->Ascent + ImGui::GetFontSize() - startPos.y;
-				}
-				ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
-					ImVec2(versionX, titleBaseline - ImGui::GetFontBaked()->Ascent), ImGui::GetColorU32(versionColor), ("v" + formattedVersion).c_str());
-				ImGui::SetWindowFontScale(1.0f);
-			}
+			std::string formattedVersion = "v" + version;
+			std::ranges::replace(formattedVersion, '-', '.');
+			const ImVec2 versionSize = scaledSize(Menu::FontRole::Body, formattedVersion.c_str());
+			ImGui::SetCursorScreenPos(ImVec2(annotationX, startPos.y + titleSize.y - versionSize.y));
+			drawScaled(Menu::FontRole::Body, Util::Anim::ScaleAlpha(textColor, ThemeManager::Constants::VERSION_TEXT_OPACITY), formattedVersion.c_str());
+			annotationX += versionSize.x + itemSpacingX;
 		}
-		// Reset cursor to after the title block
-		ImGui::SetCursorScreenPos(ImVec2(startPos.x, startPos.y + titleSize.y + ImGui::GetStyle().ItemSpacing.y * 0.25f));
 
-		// Draw description if provided (wrapped to content width)
+		// Back under the title block
+		const ImVec2 belowTitle(startPos.x, startPos.y + titleSize.y + ImGui::GetStyle().ItemSpacing.y * 0.25f);
+		if (hasStageBadge || !version.empty() || drawToolbar)
+			ImGui::SetCursorScreenPos(belowTitle);
+
+		if (drawToolbar) {
+			const float usedBelow = drawToolbar({ startPos, titleSize.y, annotationX, belowTitle, availableWidth });
+			if (usedBelow > 0.0f)
+				ImGui::SetCursorScreenPos(ImVec2(belowTitle.x, belowTitle.y + usedBelow));
+			else
+				ImGui::SetCursorScreenPos(belowTitle);
+		}
+
 		if (!description.empty()) {
 			MenuFonts::FontRoleGuard subtextGuard(Menu::FontRole::Subtext);
-			ImVec4 descColor = palette.Text;
-			descColor.w *= 0.7f;  // Slightly dimmed
-			ImGui::PushStyleColor(ImGuiCol_Text, descColor);
+			ImGui::PushStyleColor(ImGuiCol_Text, Util::Anim::ScaleAlpha(textColor, ThemeManager::Constants::FEATURE_DESCRIPTION_OPACITY));
 			ImGui::TextWrapped("%s", description.c_str());
 			ImGui::PopStyleColor();
 		}
 
-		// Draw plain separator below
 		ImGui::Separator();
-
-		return titleOnlyHeight;
+		return titleSize.y;
 	}
 
 	// ---------------------------------------------------------------------------
@@ -603,6 +586,99 @@ float FeatureListRenderer::MeasureStageBadge(Feature::ReleaseStage stage)
 		return 0.0f;
 	MenuFonts::FontRoleGuard badgeFont(Menu::FontRole::Subtext);
 	return Util::MeasureBadgeWidth(label);
+}
+
+/**
+ * Drives the current window's vertical scroll so it always rests on a row edge.
+ * The mouse wheel steps whole rows (the window must be created with
+ * ImGuiWindowFlags_NoScrollWithMouse); releasing the scrollbar settles on the
+ * nearest row. Keyboard/gamepad navigation is left to ImGui.
+ * @param rowTops Content-space Y of each drawn row's top edge, in order.
+ */
+static void SnapScrollToRows(const std::vector<float>& rowTops)
+{
+	constexpr int kRowsPerNotch = 3;
+	constexpr float kEaseRate = 30.0f;  // exponential ease rate (1/s)
+
+	static float s_target = -1.0f;    // scroll we are animating to, < 0 when idle
+	static float s_expected = -1.0f;  // scroll we asked ImGui for last frame
+	static bool s_wasDragging = false;
+	static float s_wheelRemainder = 0.0f;  // wheel input not yet worth a whole notch (precision wheels, touchpads)
+
+	const float scroll = ImGui::GetScrollY();
+	const float maxScroll = ImGui::GetScrollMaxY();
+	if (rowTops.empty() || maxScroll <= 0.0f) {
+		s_target = -1.0f;
+		return;
+	}
+
+	// Snap offsets: each row placed where the first row sits at scroll 0, plus the list end.
+	// ImGui rounds scroll to whole pixels, so the offsets are rounded too.
+	std::vector<float> snaps;
+	snaps.reserve(rowTops.size() + 1);
+	for (const float top : rowTops)
+		snaps.push_back(std::round(std::clamp(top - rowTops.front(), 0.0f, maxScroll)));
+	snaps.push_back(std::round(maxScroll));
+	std::ranges::sort(snaps);
+	snaps.erase(std::unique(snaps.begin(), snaps.end()), snaps.end());
+
+	const auto nearestIndex = [&](float value) {
+		size_t best = 0;
+		for (size_t i = 1; i < snaps.size(); i++) {
+			if (std::abs(snaps[i] - value) < std::abs(snaps[best] - value))
+				best = i;
+		}
+		return best;
+	};
+
+	const ImGuiIO& io = ImGui::GetIO();
+	auto* window = ImGui::GetCurrentWindow();
+	const bool dragging = ImGui::GetActiveID() == ImGui::GetWindowScrollbarID(window, ImGuiAxis_Y);
+
+	// Something else moved the list (keyboard nav, scroll-to-item): stop animating
+	if (s_target >= 0.0f && std::abs(scroll - s_expected) > 1.0f)
+		s_target = -1.0f;
+
+	if (dragging) {
+		s_target = -1.0f;
+	} else if (s_wasDragging) {
+		s_target = snaps[nearestIndex(scroll)];
+	}
+	s_wasDragging = dragging;
+
+	const bool wheelApplies = !dragging && !io.KeyCtrl &&
+	                          ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+	if (!wheelApplies) {
+		s_wheelRemainder = 0.0f;
+	} else if (io.MouseWheel != 0.0f) {
+		// Only whole notches move the list; the fraction carries over, so split input scrolls like the same input combined
+		s_wheelRemainder += io.MouseWheel;
+		const int notches = static_cast<int>(s_wheelRemainder);
+		s_wheelRemainder -= static_cast<float>(notches);
+		if (notches != 0) {
+			const int step = -notches * kRowsPerNotch;
+			const auto from = static_cast<int>(nearestIndex(s_target >= 0.0f ? s_target : scroll));
+			const int to = std::clamp(from + step, 0, static_cast<int>(snaps.size()) - 1);
+			s_target = snaps[to];
+		}
+	}
+
+	if (s_target < 0.0f)
+		return;
+
+	const float diff = s_target - scroll;
+	float next;
+	if (std::abs(diff) <= 1.0f) {
+		next = s_target;
+		s_target = -1.0f;
+	} else {
+		// Ease, but always move at least a pixel so ImGui's rounding cannot stall it
+		const float delta = diff * (1.0f - std::exp(-kEaseRate * io.DeltaTime));
+		next = scroll + (std::abs(delta) < 1.0f ? std::copysign(1.0f, diff) : delta);
+	}
+	if (next != scroll)
+		ImGui::SetScrollY(next);
+	s_expected = next;
 }
 
 void FeatureListRenderer::DrawStageBadge(Feature::ReleaseStage stage, float rowHeight)
@@ -926,7 +1002,7 @@ void FeatureListRenderer::RenderLeftColumn(
 			}
 			ImGui::EndChild();
 		} else {
-			if (ImGui::BeginChild("##FeatureListScroll")) {
+			if (ImGui::BeginChild("##FeatureListScroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollWithMouse)) {
 				const auto first = std::ranges::find_if(menuList, [](const auto& entry) { return !std::holds_alternative<BuiltInMenu>(entry); });
 				const float headerPad = first != menuList.end() && std::holds_alternative<CategoryHeader>(*first) ?
 				                            ThemeManager::Constants::CATEGORY_HEADER_PAD * scale * 0.5f :
@@ -943,6 +1019,14 @@ void FeatureListRenderer::RenderLeftColumn(
 				};
 				bool expanded = true;
 				bool hasMatches = false;
+				std::vector<float> rowTops;
+				rowTops.reserve(menuList.size());
+				const auto drawRow = [&](auto&& draw) {
+					const float top = ImGui::GetCursorPosY();
+					draw();
+					if (ImGui::GetCursorPosY() > top)
+						rowTops.push_back(top);
+				};
 				float sortTextTop = ImGui::GetCursorScreenPos().y + headerPad;
 				bool sortPositionSet = false;
 				for (size_t i = 0; i < menuList.size(); ++i) {
@@ -962,13 +1046,13 @@ void FeatureListRenderer::RenderLeftColumn(
 							sortTextTop = ImGui::GetCursorScreenPos().y + ThemeManager::Constants::CATEGORY_HEADER_PAD * scale * 0.5f;
 							sortPositionSet = true;
 						}
-						ListMenuVisitor{ i, selectedMenu, categoryExpansionStates, showVersions }(CategoryHeader{ category->name, count });
+						drawRow([&] { ListMenuVisitor{ i, selectedMenu, categoryExpansionStates, showVersions }(CategoryHeader{ category->name, count }); });
 						expanded = categoryExpansionStates[category->name];
 						continue;
 					}
 					if (std::holds_alternative<std::string>(menuList[i])) {
 						expanded = true;
-						std::visit(ListMenuVisitor{ i, selectedMenu, categoryExpansionStates, showVersions }, menuList[i]);
+						drawRow([&] { std::visit(ListMenuVisitor{ i, selectedMenu, categoryExpansionStates, showVersions }, menuList[i]); });
 						continue;
 					}
 					if (const auto* feature = std::get_if<Feature*>(&menuList[i]); feature && matches(*feature)) {
@@ -978,7 +1062,7 @@ void FeatureListRenderer::RenderLeftColumn(
 							sortPositionSet = true;
 						}
 						if (expanded)
-							std::visit(ListMenuVisitor{ i, selectedMenu, categoryExpansionStates, showVersions }, menuList[i]);
+							drawRow([&] { std::visit(ListMenuVisitor{ i, selectedMenu, categoryExpansionStates, showVersions }, menuList[i]); });
 						if (!sortPositionSet)
 							sortTextTop = ImGui::GetCursorScreenPos().y;
 					}
@@ -990,6 +1074,7 @@ void FeatureListRenderer::RenderLeftColumn(
 						globals::menu->GetSettings().FeatureListFilter = 0;
 				}
 				ImGui::Dummy(ImVec2(0.0f, inset));
+				SnapScrollToRows(rowTops);
 				DrawFloatingSortButton(sortTextTop);
 			}
 			ImGui::EndChild();
@@ -1259,9 +1344,6 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 	const bool disabled = globals::state->IsFeatureDisabled(featureName);
 	if (feat->loaded && feat->UsesMainSettings() && !disabled && !SceneSettingsUI::IsFeaturePageEditing(feat))
 		globals::menu->WatchFeatureUndo(feat);
-	const bool featureProfilingAvailable = feat != &globals::features::csEditor && !disabled && feat->loaded &&
-	                                       ProfilingRenderer::IsFeatureProfilingAvailable(featureName);
-	const float profilingHeight = ProfilingRenderer::PrepareFeatureTimers(featureName, featureProfilingAvailable);
 	const auto& style = ImGui::GetStyle();
 	const float railWidth = BrowserUI::IconButtonSize() + style.FramePadding.x * 2.0f;
 	const bool showRail = featureName != "SceneManager";
@@ -1274,23 +1356,6 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 			if (showRail)
 				RenderFeatureHeader(feat, feat->loaded);
 			SceneSettingsUI::DrawFeaturePageControls(feat, !disabled && feat->loaded);
-			const float pageViewportHeight = std::max(ImGui::GetContentRegionAvail().y, 0.0f);
-			if (!featureProfilingAvailable) {
-				g_featurePageLayouts.erase(featureName);
-			} else {
-				auto& pageLayout = g_featurePageLayouts[featureName];
-				const float predictedProfilingStart = std::max(pageLayout.materialHeight, pageViewportHeight - profilingHeight);
-				const float predictedContentHeight = predictedProfilingStart + profilingHeight;
-				const float contentHeightDelta = predictedContentHeight - pageLayout.contentHeight;
-				const float scale = Util::GetUIScale();
-				const float bottomTolerance = ThemeManager::Constants::FEATURE_PAGE_BOTTOM_TOLERANCE * scale;
-				const bool profilingWasAtBottom = pageLayout.scrollMaxY <= bottomTolerance ||
-				                                  pageLayout.scrollY >= pageLayout.scrollMaxY - bottomTolerance;
-				ImGui::SetNextWindowContentSize(ImVec2(0.0f, predictedContentHeight));
-				if (pageLayout.measured && profilingWasAtBottom &&
-					std::abs(contentHeightDelta) >= ThemeManager::Constants::FEATURE_PAGE_LAYOUT_EPSILON * scale)
-					ImGui::SetNextWindowScroll(ImVec2(-1.0f, std::max(pageLayout.scrollY + contentHeightDelta, 0.0f)));
-			}
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(style.ItemSpacing.x, 0.0f));
 			const bool settingsVisible = ImGui::BeginChild("##FeatureSettingsScroll", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoBackground);
 			ImGui::PopStyleVar();
@@ -1304,20 +1369,7 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 					RenderFavoriteButton(feat);
 					ImGui::SetCursorPos(afterHeader);
 				}
-				const float materialStartY = ImGui::GetCursorPosY();
 				RenderFeatureSettings(feat, disabled, feat->loaded, !feat->failedLoadedMessage.empty());
-				if (featureProfilingAvailable) {
-					auto& pageLayout = g_featurePageLayouts[featureName];
-					const float materialHeight = std::max(ImGui::GetCursorPosY() - materialStartY, 0.0f);
-					const float profilingStart = std::max(materialHeight, pageViewportHeight - profilingHeight);
-					ImGui::SetCursorPosY(materialStartY + profilingStart);
-					ProfilingRenderer::RenderFeatureTimers(featureName);
-					pageLayout.measured = true;
-					pageLayout.materialHeight = materialHeight;
-					pageLayout.contentHeight = profilingStart + profilingHeight;
-					pageLayout.scrollY = ImGui::GetScrollY();
-					pageLayout.scrollMaxY = ImGui::GetScrollMaxY();
-				}
 			}
 			ImGui::EndChild();
 		}
@@ -1336,8 +1388,24 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureHeader(Feature* feat, bo
 {
 	auto [description, details] = feat->GetFeatureSummary();
 	const auto stage = feat->GetReleaseStage();
+	const auto featureName = feat->GetShortName();
+	const bool showCost = loaded && feat != &globals::features::csEditor && !globals::state->IsFeatureDisabled(featureName);
+	const float costChipWidth = showCost ? ProfilingRenderer::MeasureFeatureCostChip(featureName) : 0.0f;
+
+	// The cost chip follows the title, or drops under it when the title leaves no room
+	const auto drawToolbar = [&](const FeatureHeaderSlot& slot) {
+		if (costChipWidth <= 0.0f)
+			return 0.0f;
+		const auto& style = ImGui::GetStyle();
+		const float iconSize = ImGui::GetFrameHeight();
+		const bool ownRow = slot.trailingX - slot.titleMin.x + costChipWidth > slot.availableWidth;
+		ImGui::SetCursorScreenPos(ownRow ? slot.belowTitle : ImVec2(slot.trailingX, slot.titleMin.y + slot.titleHeight - iconSize));
+		ProfilingRenderer::RenderFeatureCostChip(featureName, slot.titleMin.x + slot.availableWidth + 1.0f);
+		return ownRow ? iconSize + style.ItemSpacing.y * 0.5f : 0.0f;
+	};
+
 	DrawFeatureHeader(feat->GetDisplayName(), loaded && !IsUtilityFeature(feat) ? feat->version : "", description,
-		stage);
+		stage, drawToolbar);
 }
 
 void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(Feature* feat, bool disabled, bool loaded)
@@ -1457,6 +1525,8 @@ void FeatureListRenderer::DrawFeatureBody(Feature* feat)
 		const bool editedBefore = context.ActiveIdHasBeenEditedThisFrame;
 		SettingReveal::BeginFeatureBody(feat);
 		feat->DrawSettings();
+		if (feat->HasDebugSection())
+			feat->DrawDebugSection();
 		SettingReveal::EndFeatureBody();
 		if (feat->UsesMainSettings()) {
 			auto* state = globals::state;
