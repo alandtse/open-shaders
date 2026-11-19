@@ -25,6 +25,21 @@ cbuffer WarpParams : register(b0)
 	float2 _pad;
 };
 
+static const float HemisphereOverlapDepth = 1.0;
+
+void StoreWarpedDepth(float3 direction, bool upper, bool omni, float depth)
+{
+	const float2 q = upper ? direction.xy / (1.0 + direction.z) : direction.xy / (direction.z - 1.0);
+	const float2 faceUV = q * 0.5 + 0.5;
+	if (any(faceUV < 0.0) || any(faceUV >= 1.0))
+		return;
+
+	const float2 uv = float2(faceUV.x, omni ? (upper ? 0.5 * faceUV.y : 1.0 - 0.5 * faceUV.y) : faceUV.y);
+	const uint2 texel = min(uint2(uv * TileSize), TileSize - 1);
+	uint original;
+	InterlockedMin(Scratch[texel], asuint(depth), original);
+}
+
 [numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID) {
 	if (any(id.xy >= TileSize))
 		return;
@@ -40,8 +55,6 @@ cbuffer WarpParams : register(b0)
 	q.x = 2.0 * uv.x - 1.0;
 	q.y = omni ? (upper ? 4.0 * uv.y - 1.0 : 4.0 * (1.0 - uv.y) - 1.0) : (2.0 * uv.y - 1.0);
 	const float q2 = dot(q, q);
-	if (q2 > 0.96)
-		return;  // corners of the square tile hold no paraboloid data
 
 	const float inv = 1.0 / (1.0 + q2);
 	const float sgn = upper ? 1.0 : -1.0;
@@ -57,22 +70,12 @@ cbuffer WarpParams : register(b0)
 		return;
 
 	const float3 d1 = pLS / len;
-	const bool up1 = d1.z >= 0.0;
-	if (!omni && !up1)
-		return;  // hemi tiles only cover the +Z paraboloid
-	const float2 q1 = up1 ? d1.xy / (1.0 + d1.z) : d1.xy / (d1.z - 1.0);
-	float2 uv1;
-	uv1.x = q1.x * 0.5 + 0.5;
-	const float vRaw = q1.y * 0.5 + 0.5;
-	uv1.y = omni ? (up1 ? 0.5 * vRaw : 1.0 - 0.5 * vRaw) : vRaw;
-
-	const int2 texel = int2(floor(uv1 * TileSize));
-	if (any(texel < 0) || any(texel >= int(TileSize)))
-		return;
-
-	// Positive floats order like their bit patterns, so integer min keeps the nearest depth.
-	uint original;
-	InterlockedMin(Scratch[texel], asuint(newDepth), original);
+	const bool front = pLS.z >= 0.0;
+	if (front || omni)
+		StoreWarpedDepth(d1, front, omni, newDepth);
+	// The shadow caster rasterizes one light-space unit past the hemisphere boundary.
+	if (abs(pLS.z) <= HemisphereOverlapDepth && (omni || !front))
+		StoreWarpedDepth(d1, !front, omni, newDepth);
 }
 
 #endif
