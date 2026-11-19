@@ -342,6 +342,7 @@ void GrassOptimizations::TakeEngineBindings(ID3D11Buffer* (&a_saved)[5], UINT (&
 
 void GrassOptimizations::DrawBucket(GrassBucket& b)
 {
+	CS_GPU_PASS("GrassOptimizations::Draw");
 	auto* ctx = globals::d3d::context;
 	const uint64_t descVal = b.drawResources.key.vertexDesc;
 	auto* meshVB = b.drawResources.vertexBuffer.get();
