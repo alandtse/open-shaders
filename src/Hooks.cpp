@@ -70,12 +70,12 @@ namespace
 		using enum SIE::ShaderCache::UtilityShaderFlags;
 		// The paraboloid bit is shared with AdditionalAlphaMask, so only a shadow-map draw outside OpaqueEffect is paraboloid.
 		constexpr auto paraboloidShadow = static_cast<uint32_t>(RenderShadowmap) | static_cast<uint32_t>(RenderShadowmapPb);
-		ID3D11GeometryShader* geometryShader = nullptr;
+		winrt::com_ptr<ID3D11GeometryShader> geometryShader;
 		if (ParaboloidClipAllowed && a_customVertexShader && a_shader && a_shader->shaderType.get() == RE::BSShader::Type::Utility &&
 			(a_vertexDescriptor & paraboloidShadow) == paraboloidShadow && !(a_vertexDescriptor & static_cast<uint32_t>(OpaqueEffect)))
 			geometryShader = globals::shaderCache->GetParaboloidClipShader(*a_shader, a_vertexDescriptor);
 		if (geometryShader || ParaboloidClipBound) {
-			globals::d3d::context->GSSetShader(geometryShader, nullptr, 0);
+			globals::d3d::context->GSSetShader(geometryShader.get(), nullptr, 0);
 			ParaboloidClipBound = geometryShader != nullptr;
 		}
 	}

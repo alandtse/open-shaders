@@ -2840,11 +2840,11 @@ namespace SIE
 		}
 	}
 
-	ID3D11GeometryShader* ShaderCache::GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor)
+	winrt::com_ptr<ID3D11GeometryShader> ShaderCache::GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor)
 	{
 		std::scoped_lock lock(paraboloidClipMutex);
 		if (const auto it = paraboloidClipShaders.find(vertexDescriptor); it != paraboloidClipShaders.end())
-			return it->second.get();
+			return it->second;
 		std::array<D3D_SHADER_MACRO, 64> macros{};
 		SShaderCache::GetShaderDefines(shader, vertexDescriptor, std::span{ macros });
 		std::vector<std::pair<const char*, const char*>> defines;
@@ -2863,7 +2863,7 @@ namespace SIE
 		}
 		if (!geometryShader)
 			logger::warn("[SCM] Paraboloid clip shader for Utility {:X} did not compile; that draw keeps the vertex shader's projection", vertexDescriptor);
-		return paraboloidClipShaders.emplace(vertexDescriptor, std::move(geometryShader)).first->second.get();
+		return paraboloidClipShaders.emplace(vertexDescriptor, std::move(geometryShader)).first->second;
 	}
 
 	RE::BSGraphics::VertexShader* ShaderCache::GetVertexShader(const RE::BSShader& shader,
@@ -3126,6 +3126,11 @@ namespace SIE
 	{
 		ResetActiveShaderTracking();
 		std::string lowerFilePath = Util::FixFilePath(a_path);
+		// The clip shaders compile from Utility.hlsl and its includes outside hlslToShaderMap, so any such change drops them.
+		if (lowerFilePath.ends_with("utility.hlsl") || lowerFilePath.ends_with(".hlsli")) {
+			std::scoped_lock lockPC(paraboloidClipMutex);
+			paraboloidClipShaders.clear();
+		}
 
 		// Step 1: Lock hlslMapMutex to find and copy the relevant entries
 		std::set<hlslRecord> entries;
@@ -3143,15 +3148,9 @@ namespace SIE
 
 		// Step 2: Process the copied entries without holding hlslMapMutex. A Pending
 		// entry gets parked (TryDeferEviction) instead of evicted immediately.
-		bool utilityChanged = false;
 		for (auto& entry : entries) {
-			utilityChanged |= entry.type == RE::BSShader::Type::Utility;
 			if (!TryDeferEviction(entry))
 				EvictShader(entry.key, entry.type, entry.descriptor, entry.shaderClass, entry.diskPath);
-		}
-		if (utilityChanged) {
-			std::scoped_lock lockPC(paraboloidClipMutex);
-			paraboloidClipShaders.clear();
 		}
 
 		if (!entries.empty()) {
