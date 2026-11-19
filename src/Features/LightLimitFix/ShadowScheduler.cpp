@@ -3982,10 +3982,15 @@ namespace ShadowCasterManager
 				bool keepPriorContent = false;
 				bool emptyRender = false;
 				if (AtlasActive()) {
+					auto* split = StaticAtlasReady() ? &s_splitState[e.Light] : nullptr;
+					const bool useSplit = split && !split->splitExcluded && !split->fullThisFrame;
+					AtlasTileTexels live{};
+					const bool resizeAfterComposite = useSplit && !split->bakeThisFrame &&
+					                                  !SlotTileFits(i, e.pendingScale) && GetSlotTileTexels(i, live) && live.contentValid;
 					// Tile before raster: (re)size for the pending class and rect-clear
 					// once per redraw -- the paraboloid halves share the tile, so
 					// clearing inside the cascade would wipe the first half.
-					if (!EnsureSlotTile(i, e.pendingScale)) {
+					if (!resizeAfterComposite && !EnsureSlotTile(i, e.pendingScale)) {
 						// Atlas exhausted even at the quarter class: raster must still run --
 						// EnableLight already registered this light's passes, and an unconsumed
 						// group is freed-but-not-unlinked at frame end. The viewport hook
@@ -4002,9 +4007,8 @@ namespace ShadowCasterManager
 					}
 					// On a bake frame, render the static subset into the cache atlas;
 					// otherwise copy the cache into the tile and composite movers over it.
-					if (StaticAtlasReady() &&
-						!s_splitState[e.Light].splitExcluded && !s_splitState[e.Light].fullThisFrame) {
-						SplitState& st = s_splitState[e.Light];
+					if (useSplit) {
+						SplitState& st = *split;
 						if (st.bakeThisFrame) {
 							ZoneNamedN(zBake, "SCM::Render::StaticBake", true);
 							s_staticPassActive.store(true, std::memory_order_relaxed);
@@ -4078,8 +4082,14 @@ namespace ShadowCasterManager
 							// A movers-only frame (invalid seed) must not swap a staged promotion
 							// in: keep sampling the old complete tile until a seeded composite lands.
 							if (rendered && !compositeKeepPrior && composedContent) {
-								e.renderedScale = e.pendingScale;
+								if (!resizeAfterComposite)
+									e.renderedScale = e.pendingScale;
 								MarkSlotTileRendered(i, compositeValid);
+							}
+							if (resizeAfterComposite) {
+								// Staging a larger tile invalidates the static seed this draw was queued to use.
+								EnsureSlotTile(i, e.pendingScale);
+								e.awaitingTileResult = false;
 							}
 							continue;
 						}
