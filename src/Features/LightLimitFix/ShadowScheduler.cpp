@@ -2914,10 +2914,12 @@ namespace ShadowCasterManager
 				for (auto* e : pending) {
 					if (DemandSkipCandidate(*e))
 						continue;
-					if (cfMaxRedraw <= 0 || cfBudget <= 0)
-						break;
 					const bool cfFloor = TakesStarvationFloor(cfIsFirst, e->playerProtected);
-					const DueGate gate = DueGateFor(e, now, cfFloor);
+					if (!e->playerProtected && !cfFloor && (cfMaxRedraw <= 0 || cfBudget <= 0))
+						break;
+					DueGate gate = DueGateFor(e, now, cfFloor);
+					if (e->playerProtected && gate == DueGate::Stop)
+						gate = DueGate::Skip;
 					if (gate == DueGate::Stop)
 						break;
 					if (gate == DueGate::Skip)
@@ -2931,7 +2933,7 @@ namespace ShadowCasterManager
 						admit(e);
 						continue;
 					}
-					if (cost <= cfBudget) {
+					if (e->playerProtected || cost <= cfBudget) {
 						cfBudget -= cost;
 						cfMaxRedraw--;
 						admit(e);
@@ -2963,10 +2965,12 @@ namespace ShadowCasterManager
 				});
 
 				for (auto* e : s_cfUnion) {
-					if (cfMaxRedraw <= 0 || cfBudget <= 0)
-						break;
 					const bool cfFloor = TakesStarvationFloor(cfIsFirst, e->playerProtected);
-					const DueGate gate = DueGateFor(e, now, cfFloor);
+					if (!e->playerProtected && !cfFloor && (cfMaxRedraw <= 0 || cfBudget <= 0))
+						break;
+					DueGate gate = DueGateFor(e, now, cfFloor);
+					if (e->playerProtected && gate == DueGate::Stop)
+						gate = DueGate::Skip;
 					if (gate == DueGate::Stop)
 						break;
 					if (gate == DueGate::Skip)
@@ -2980,7 +2984,7 @@ namespace ShadowCasterManager
 						cfAdmittedUnion++;
 						continue;
 					}
-					if (cost <= cfBudget) {
+					if (e->playerProtected || cost <= cfBudget) {
 						cfBudget -= cost;
 						cfMaxRedraw--;
 						cfAdmittedUnion++;
