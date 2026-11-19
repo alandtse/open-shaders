@@ -36,6 +36,7 @@ on:
             - "tools/build-shader-cache.py"
             - "tools/feature-flip-impact.py"
             - "tools/release_plan.py"
+            - "tools/verify-fork-lines.py"
             - "tests/*.py"
 
 # Least-privilege defaults; individual jobs override where needed.
