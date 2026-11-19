@@ -1879,6 +1879,8 @@
     "feature.ibl.sky_ibl_scale_tooltip": "Intensity multiplier for the sky IBL (from the game's native reflections cubemap).\nControls how strongly the sky contributes to ambient lighting.",
     "feature.ibl.use_static_ibl": "Use Static IBL For Out-of-World Objects",
     "feature.ibl.use_static_ibl_tooltip": "Uses pre-baked static IBL cubemap textures for objects rendered outside the game world (e.g. inventory items, loading screens).",
+    "feature.interior_sun.auto_sunlit_interiors": "Automatic Sunlit Interiors",
+    "feature.interior_sun.auto_sunlit_interiors_tooltip": "Lets the sun into any interior with window glass or openings, even when no mod has set it up for sun. Caves and dungeons are left out. Takes effect after entering the interior.",
     "feature.interior_sun.description": "Allows for the sun and moon to cast light and shadows into interior spaces.",
     "feature.interior_sun.detect_openings": "Detect Openings",
     "feature.interior_sun.detect_openings_tooltip": "Also lets light in through see-through shapes in the outer walls, such as lattices, that have nothing behind them. Found automatically when entering an interior.",

@@ -49,6 +49,7 @@ public:
 		bool HideFakeWindowGlows = true;
 		bool SkyLitGlass = false;
 		float SkyLitGlassStrength = 1.0f;
+		bool AutoSunlitInteriors = false;
 		bool SunFacingHolesOnly = true;
 		bool LightOnlyPastWindow = true;
 		bool FrameShadowsFromGlowMaps = true;
@@ -257,6 +258,7 @@ private:
 
 	std::vector<RE::NiPointer<RE::NiAVObject>> hiddenFakeGlows;
 	std::vector<GlassEmissive> glassEmissives;
+	std::unordered_map<RE::TESObjectCELL*, uint16_t> autoSunlitCells;  // cells given the sun, with their own flags to restore
 
 	std::vector<float3> windowGlassVertices;
 	std::vector<float2> windowGlassUVs;
@@ -310,6 +312,12 @@ private:
 
 	/** @brief The shell test: marks the candidates that have the room on one side and nothing on the other. */
 	static void RunOpeningScan(OpeningScan& scan);
+
+	/** @brief Gives a cell with windows or openings the sun, unless it is a cave or dungeon. */
+	void UpdateAutoSunlit(RE::TESObjectCELL* cell);
+
+	/** @brief Puts back the flags of every cell given the sun automatically. */
+	void RestoreAutoSunlitCells();
 
 	void RestoreFakeGlows();
 

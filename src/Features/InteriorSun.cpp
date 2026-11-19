@@ -17,6 +17,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	HideFakeWindowGlows,
 	SkyLitGlass,
 	SkyLitGlassStrength,
+	AutoSunlitInteriors,
 	SunFacingHolesOnly,
 	LightOnlyPastWindow,
 	FrameShadowsFromGlowMaps,
@@ -66,6 +67,18 @@ namespace
 		std::string lower(model);
 		std::ranges::transform(lower, lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 		return std::ranges::any_of(patterns, [&](std::string_view pattern) { return lower.find(pattern) != std::string::npos; });
+	}
+
+	// Caves and dungeons have no windows to let the sun in by; Helios excludes the same location types
+	bool IsUndergroundLocation(const RE::BGSLocation* location)
+	{
+		static constexpr std::string_view keywords[] = { "LocSetCave", "LocSetCaveIce", "LocSetDwarvenRuin", "LocSetNordicRuin", "LocTypeDungeon",
+			"LocTypeDraugrCrypt", "LocTypeMine", "LocTypeDragonPriestLair", "LocTypeHagravenNest" };
+		for (int depth = 0; location && depth < 8; ++depth, location = location->parentLoc) {
+			if (std::ranges::any_of(keywords, [&](std::string_view keyword) { return location->HasKeywordString(keyword); }))
+				return true;
+		}
+		return false;
 	}
 }
 
@@ -122,6 +135,12 @@ void InteriorSun::DrawSettings()
 		ImGui::TextDisabled("%s", T(TKEY("sky_lit_glass_helios"), "Off while Helios is loaded: Helios drives window glow itself."));
 	if (settings.SkyLitGlass && !heliosLoaded)
 		ImGui::SliderFloat(T(TKEY("sky_lit_glass_strength"), "Sky-Lit Glass Strength"), &settings.SkyLitGlassStrength, 0.0f, 4.0f);
+	ImGui::Checkbox(T(TKEY("auto_sunlit_interiors"), "Automatic Sunlit Interiors"), &settings.AutoSunlitInteriors);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("auto_sunlit_interiors_tooltip"),
+							  "Lets the sun into any interior with window glass or openings, even when no mod has set it up for sun. "
+							  "Caves and dungeons are left out. Takes effect after entering the interior."));
+	}
 	ImGui::Checkbox(T(TKEY("light_only_past_window"), "Light Only Past The Window"), &settings.LightOnlyPastWindow);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("light_only_past_window_tooltip"),
@@ -201,7 +220,11 @@ void InteriorSun::EarlyPrepass()
 		currentPortalGraph = nullptr;
 	}
 
-	if (cell && isInteriorWithSun)
+	if (!settings.AutoSunlitInteriors && !autoSunlitCells.empty())
+		RestoreAutoSunlitCells();
+
+	// Automatic mode scans interiors without the sun too, to decide whether to give them it
+	if (cell && (isInteriorWithSun || settings.AutoSunlitInteriors))
 		UpdateWindowGlass(cell);
 	else if (windowGlassCell)
 		ReleaseWindowGlass();
@@ -424,6 +447,7 @@ void InteriorSun::CollectWindowGlass(RE::TESObjectCELL* cell)
 		logger::info("[Interior Sun] Window glass in cell {:08X}: {} shapes ({} with glow maps), {} triangles, {} unreadable shapes", cell->GetFormID(), windowGlassShapes, windowGlassShapesWithGlow, windowGlassVertices.size() / 3, windowGlassShapesSkipped);
 		UploadWindowHoles(cell);
 	}
+	UpdateAutoSunlit(cell);
 }
 
 void InteriorSun::CollectOccluders(RE::TESObjectCELL* cell, OpeningScan& scan)
@@ -564,6 +588,7 @@ void InteriorSun::TakeOpeningScan()
 		std::ranges::count_if(scan->candidates, [](const auto& candidate) { return candidate.opening; }), scan->candidates.size(), windowOpeningVertices.size() / 3);
 
 	UploadWindowHoles(scan->cell);
+	UpdateAutoSunlit(scan->cell);
 }
 
 void InteriorSun::RunOpeningScan(OpeningScan& scan)
@@ -697,6 +722,25 @@ void InteriorSun::RunOpeningScan(OpeningScan& scan)
 	// The room's geometry can run to tens of MB, and the result no longer needs it
 	scan.occluders = {};
 	scan.occluderShapes = {};
+}
+
+void InteriorSun::UpdateAutoSunlit(RE::TESObjectCELL* cell)
+{
+	if (!settings.AutoSunlitInteriors || !cell || IsInteriorWithSun(cell) || autoSunlitCells.contains(cell) || !windowGlassVertexCount)
+		return;
+	if (IsUndergroundLocation(cell->GetLocation()))
+		return;
+
+	autoSunlitCells.emplace(cell, cell->cellFlags.underlying());
+	cell->cellFlags.set(RE::TESObjectCELL::Flag::kShowSky, RE::TESObjectCELL::Flag::kUseSkyLighting, static_cast<RE::TESObjectCELL::Flag>(CellFlagExt::kSunlightShadows));
+	logger::info("[Interior Sun] Gave cell {:08X} the sun automatically ({} window and opening triangles)", cell->GetFormID(), windowGlassVertexCount / 3);
+}
+
+void InteriorSun::RestoreAutoSunlitCells()
+{
+	for (const auto& [cell, flags] : autoSunlitCells)
+		cell->cellFlags = static_cast<RE::TESObjectCELL::Flag>(flags);
+	autoSunlitCells.clear();
 }
 
 void InteriorSun::RestoreFakeGlows()
