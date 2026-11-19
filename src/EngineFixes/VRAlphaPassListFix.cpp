@@ -91,7 +91,7 @@ namespace
 	{
 		if (!a_group || !a_pass || !(a_group->flags & AlphaPassList::LinkedGroup)
 #ifdef DEVBENCH_BRIDGE_ENABLED
-			|| !enabled.load(std::memory_order_acquire)
+		    || !enabled.load(std::memory_order_acquire)
 #endif
 		) {
 			original(a_group, a_pass, a_front);
