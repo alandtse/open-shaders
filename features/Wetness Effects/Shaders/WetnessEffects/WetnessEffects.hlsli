@@ -709,16 +709,20 @@ namespace WetnessEffects
 			state.glossinessSpecular *= shoreFactor;
 		}
 
-		flatnessAmount *= smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness, 1.0, state.glossinessSpecular);
+		float beadCoverage = 1.0;
+		[branch] if (state.glossinessSpecular > 0.0 || raindropInfo.w > 0.0 || any(raindropInfo.xyz != float3(0, 0, 1)))
+		{
+			flatnessAmount *= smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness, 1.0, state.glossinessSpecular);
 
-		float standingWater = enablePuddleEffects ? flatnessAmount : 0.0;
-		float waterLevel = saturate((state.glossinessSpecular - SharedData::wetnessEffectsSettings.PuddleMinWetness) / max(1.0 - SharedData::wetnessEffectsSettings.PuddleMinWetness, 1e-4));
-		float heightCoverage = smoothstep(0.0, heightEdge, waterLevel - surfaceHeight.x);
-		standingWater *= lerp(1.0, heightCoverage, surfaceHeight.y);
-		float puddleCoverage = smoothstep(0.02, 0.1, standingWater);
-		float beadCoverage = 1.0 - smoothstep(0.0, 0.02, standingWater);
-		float3 rippleNormal = normalize(lerp(float3(0, 0, 1), raindropInfo.xyz, lerp(flatnessAmount, 1.0, 0.5)));
-		state.normal = normalize(lerp(shadingNormal, rippleNormal, puddleCoverage));
+			float standingWater = enablePuddleEffects ? flatnessAmount : 0.0;
+			float waterLevel = saturate((state.glossinessSpecular - SharedData::wetnessEffectsSettings.PuddleMinWetness) / max(1.0 - SharedData::wetnessEffectsSettings.PuddleMinWetness, 1e-4));
+			float heightCoverage = smoothstep(0.0, heightEdge, waterLevel - surfaceHeight.x);
+			standingWater *= lerp(1.0, heightCoverage, surfaceHeight.y);
+			float puddleCoverage = smoothstep(0.02, 0.1, standingWater);
+			beadCoverage = 1.0 - smoothstep(0.0, 0.02, standingWater);
+			float3 rippleNormal = normalize(lerp(float3(0, 0, 1), raindropInfo.xyz, lerp(flatnessAmount, 1.0, 0.5)));
+			state.normal = normalize(lerp(shadingNormal, rippleNormal, puddleCoverage));
+		}
 
 		if (enableRainFlowEffects) {
 			float flowRange = max(SharedData::wetnessEffectsSettings.RaindropFxRange, 1.0);
