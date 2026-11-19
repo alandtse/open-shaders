@@ -4060,6 +4060,7 @@
     "menu.setup.new_install_line2": "",
     "menu.setup.press_any_key": "",
     "menu.setup.press_hotkey_to_continue": "Naciśnij {key}, aby kontynuować",
+    "menu.shortcuts.save": "Zapisz ustawienia",
     "menu.show_background": "Pokaż tło",
     "menu.show_sidebar": "Pokaż pasek boczny",
     "menu.toggle_error_message": "",
