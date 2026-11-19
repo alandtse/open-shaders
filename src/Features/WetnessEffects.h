@@ -82,6 +82,15 @@ public:
 		float EnvironmentDropBrightness = 1.0f;
 		float EnvironmentDropReflectivity = 1.0f;
 		float EnvironmentDropPadding = 0.0f;
+		float WallRainDensity = 1.0f;
+		float WallRainDropSize = 1.0f;
+		float WallRainSpeed = 1.0f;
+		float WallRainLayering = 1.0f;
+		float WallRainNormalStrength = 2.0f;
+		float WallRainWetness = 1.0f;
+		float WallRainDarkening = 0.65f;
+		uint EnableWallRain = true;
+		float WallRainTrailLength = 1.0f;
 	};
 
 	/** @brief Stable debug-mode ordering shared by the character-rain UI and frame upload. */
@@ -97,7 +106,7 @@ public:
 		Environment,
 		Count
 	};
-	static_assert(sizeof(Settings) == 176);
+	static_assert(sizeof(Settings) == 212);
 
 	struct alignas(16) PerFrame
 	{
@@ -110,9 +119,11 @@ public:
 		float CharacterImpactIntensity;
 		float CharacterRetainedWetness;
 		float2 CharacterStatePadding;
+		float TailPadding[3]{};
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
-	static_assert(sizeof(PerFrame) == 272);
+	static_assert(offsetof(PerFrame, settings) == 80);
+	static_assert(sizeof(PerFrame) == 320);
 
 	struct DebugSettings
 	{
@@ -165,6 +176,8 @@ public:
 
 	/** @brief Draws the ImGui settings panel for wetness effects configuration. */
 	virtual void DrawSettings() override;
+	virtual bool HasDebugSection() const override { return true; }
+	virtual void DrawDebugSection() override;
 
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;

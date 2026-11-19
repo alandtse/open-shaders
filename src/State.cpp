@@ -37,11 +37,13 @@
 #include "Features/Skylighting.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
+#include "Features/TreeWind.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
 #include "Features/VRStereoOptimizations.h"
 #include "Features/VolumetricShadows.h"
 #include "Features/Wind/Wind.h"
+#include "HiZPyramid.h"
 #include "Menu.h"
 #include "PostProcessingMode.h"
 #include "Presets/BaseSettingsCustomization.h"
@@ -240,6 +242,11 @@ void State::Draw()
 		if (volumetricShadows.loaded) {
 			CS_DRAW_ZONE("VolumetricShadows::SetShaderResources");
 			volumetricShadows.SetShaderResources(context);
+		}
+
+		if (globals::features::treeWind.loaded) {
+			CS_DRAW_ZONE("TreeWind::SetShaderResources");
+			globals::features::treeWind.SetShaderResources(context);
 		}
 
 		UpdatePermutationBuffer();
@@ -500,6 +507,7 @@ void State::Setup()
 {
 	globals::features::truePBR.SetupResources();
 	SetupResources();
+	globals::hiZPyramid->SetupResources();
 
 	// Probe typed UAV load support before features set up their resources, so any
 	// gating logic that wants to read the log can run during feature SetupResources.

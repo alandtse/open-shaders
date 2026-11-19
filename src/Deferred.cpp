@@ -434,11 +434,15 @@ void Deferred::DeferredPasses()
 
 	auto& ibl = globals::features::ibl;
 
+	// Matches SKYLIGHTING_COVERAGE_REGISTER in DeferredCompositeCS.hlsl; t17 is SharedData::DepthTexture
+	constexpr UINT SKYLIGHTING_COVERAGE_SLOT = 18;
+
 	// Deferred Composite
 	{
 		CS_GPU_PASS("Deferred::DeferredComposite");
 
-		ID3D11ShaderResourceView* skylightingProbes = skylighting.loaded && skylighting.texProbeArray ? skylighting.texProbeArray->srv.get() : nullptr;
+		const bool skylightingReady = skylighting.loaded && skylighting.texProbeArray;
+		ID3D11ShaderResourceView* skylightingProbes = skylightingReady ? skylighting.texProbeArray->srv.get() : nullptr;
 		ID3D11ShaderResourceView* srvs[16]{
 			Util::AsReal(specular.SRV),                                                                      // t0  SpecularTexture
 			Util::AsReal(albedo.SRV),                                                                        // t1  AlbedoTexture
@@ -457,11 +461,16 @@ void Deferred::DeferredPasses()
 			ibl.loaded ? ibl.envIBLTexture->srv.get() : nullptr,                                             // t14 EnvIBLTexture
 			ibl.loaded ? ibl.skyIBLTexture->srv.get() : nullptr,                                             // t15 SkyIBLTexture
 		};
+		ID3D11ShaderResourceView* skylightingCoverageSrvs[2]{
+			skylightingReady ? skylighting.texProbeCoverage->srv.get() : nullptr,    // t18 SkylightingProbeCoverage
+			skylightingReady ? skylighting.texZenithOcclusion->srv.get() : nullptr,  // t19 SkylightingZenithDepth
+		};
 
 		if (dynamicCubemaps.loaded)
 			context->CSSetSamplers(0, 1, &linearSampler);
 
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+		context->CSSetShaderResources(SKYLIGHTING_COVERAGE_SLOT, ARRAYSIZE(skylightingCoverageSrvs), skylightingCoverageSrvs);
 
 		// G-buffer fill materializes valid Eye 1 data before this point, so composite
 		// lights Eye 1 natively — no mode-texture skip (null SRV reads 0 = MODE_DISOCCLUDED).
@@ -496,6 +505,7 @@ void Deferred::DeferredPasses()
 	{
 		ID3D11ShaderResourceView* views[16]{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+		context->CSSetShaderResources(SKYLIGHTING_COVERAGE_SLOT, 2, views);
 
 		ID3D11UnorderedAccessView* uavs[3]{ nullptr, nullptr, nullptr };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
@@ -517,7 +527,7 @@ void Deferred::DeferredPasses()
 
 void Deferred::EndDeferred()
 {
-	if (!globals::state->inWorld)
+	if (!globals::state->inWorld || !deferredPass)
 		return;
 
 #ifdef TRACY_ENABLE

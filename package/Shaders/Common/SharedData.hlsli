@@ -186,6 +186,19 @@ namespace SharedData
 		float EnvironmentDropBrightness;
 		float EnvironmentDropReflectivity;
 		float EnvironmentDropPadding;
+
+		float WallRainDensity;
+
+		float WallRainDropSize;
+		float WallRainSpeed;
+		float WallRainLayering;
+		float WallRainNormalStrength;
+
+		float WallRainWetness;
+		float WallRainDarkening;
+		bool EnableWallRain;
+		float WallRainTrailLength;
+
 		float CharacterImpactIntensity;
 		float CharacterRetainedWetness;
 		float2 CharacterStatePadding;
@@ -194,11 +207,15 @@ namespace SharedData
 	struct SkylightingSettings
 	{
 		row_major float4x4 OcclusionViewProj;
-		float4 OcclusionSHBasis4Pi;
+		row_major float4x4 ZenithViewProj;
+		float4 OcclusionSHBasis4Pi;  // SH basis of the occlusion direction, times 4 pi (Monte Carlo weight)
 
 		float4 PosOffset;   // xyz: cell origin in camera model space
 		uint4 ArrayOrigin;  // xyz: array origin
 		int4 ValidMargin;
+
+		float3 ZenithOffset;  // eye movement since the zenith capture
+		uint ZenithValid;
 
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
@@ -208,7 +225,8 @@ namespace SharedData
 		float ProbeArrayWorldSize;
 
 		uint Enabled;
-		uint3 pad0;
+		uint AccumulateOcclusion;
+		uint2 pad0;
 
 		uint SliceStart;
 		uint SliceCount;
@@ -776,6 +794,25 @@ namespace SharedData
 	};
 #endif
 
+	struct ProceduralAuroraSettings
+	{
+		float4 FringeColor;  // xyz: lower edge color, w: lower edge amount
+		float4 BodyColor;    // xyz: main curtain color, w: storm level of the current night (0..1)
+		float4 CrownColor;   // xyz: top color in display space, w: height where the top color starts
+		float Brightness;
+		float Time;  // animation clock (speed and night strength already applied)
+		float RayDetail;
+		float Softness;  // 0 crisp .. 1 soft and see-through
+		float FoldStrength;
+		float RayStrength;
+		float Seed;
+		uint Enabled;
+		float3 Atmosphere;        // x: vanilla aurora visibility (0..1), y: haze amount, z: nebula glow
+		float CurtainSize;        // curtain width and height relative to the default
+		float CurtainCount;       // curtains drawn, 1 .. 7; a fraction fades the last one in or out
+		float3 BodyDisplayColor;  // main curtain color in display space
+	};
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
@@ -808,6 +845,7 @@ namespace SharedData
 		GrassCollisionData grassCollisionData;
 		HorizonFixSettings horizonFixSettings;
 		RainRefractionSettings rainRefractionSettings;
+		ProceduralAuroraSettings proceduralAuroraSettings;
 #if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
 		SnowCoverSettings snowCoverSettings;
 #endif
