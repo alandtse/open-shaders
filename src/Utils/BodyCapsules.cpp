@@ -229,7 +229,7 @@ namespace Util::BodyCapsules
 
 		const float distance = a_camera.GetDistance(a_actor->GetPosition());
 		std::vector<Util::ShapeCollisionCapsule> shapes;
-		RE::BSVisit::TraverseScenegraphCollision(root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
+		Util::TraverseCollision(root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
 			Util::ShapeCollisionCapsule capsule;
 			if (Util::GetShapeCollisionCapsule(a_object, capsule) && capsule.radius >= MinActorCapsuleRadius &&
 				capsule.radius >= distance * MinRadiusPerDistance)
@@ -400,7 +400,7 @@ namespace Util::BodyCapsules
 
 		struct Candidate
 		{
-			RE::Actor* actor;
+			RE::ActorHandle actor;
 			float squaredDistance;
 		};
 		std::vector<Candidate> candidates;
@@ -409,14 +409,16 @@ namespace Util::BodyCapsules
 				return;
 			const float squaredDistance = camera.GetSquaredDistance(a_actor->GetPosition());
 			if (squaredDistance <= maxSquared)
-				candidates.push_back({ a_actor, squaredDistance });
+				candidates.push_back({ a_actor->GetHandle(), squaredDistance });
 		});
 		std::ranges::sort(candidates, [](const auto& a, const auto& b) { return a.squaredDistance < b.squaredDistance; });
 		if (candidates.size() > MaxActors)
 			candidates.resize(MaxActors);
 
-		for (const auto& candidate : candidates)
-			AddActorCapsules(candidate.actor, camera);
+		for (const auto& candidate : candidates) {
+			if (const auto actor = candidate.actor.get())
+				AddActorCapsules(actor.get(), camera);
+		}
 
 		if (auto* player = globals::game::player; globals::game::isVR && player && player->Is3DLoaded()) {
 			RefreshHandNodes(player);
