@@ -130,6 +130,8 @@ private:
 	bool UpdateGhostWave();
 	std::array<std::array<winrt::com_ptr<ID3D11RenderTargetView>, 2>, 2> channelTargets;
 	std::array<winrt::com_ptr<ID3D11UnorderedAccessView>, 2> outputUAVs, tileUAVs;
+	std::array<winrt::com_ptr<ID3D11UnorderedAccessView>, 2> regionUAVs, waveSourceUAVs, tailUAVs;
+	std::array<winrt::com_ptr<ID3D11ShaderResourceView>, 2> regionSRVs, waveSourceSRVs, tileSRVs;
 	std::unique_ptr<StructuredBuffer> rightSources;
 	std::unique_ptr<Texture2D> eyeInput;
 	ID3D11ShaderResourceView* EyeInputSRV(TextureInfo& input, const D3D11_TEXTURE2D_DESC& inputDesc, unsigned eye);

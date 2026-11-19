@@ -246,7 +246,6 @@ float3 SampleBicubicCatmullRom(Texture2D<float4> tex, SamplerState samp, float2 
 #	include "PostProcessing/PhysicalLensFlare/reconstruction.hlsli"
 float3 SamplePhysicalFlare(float2 stereoUV, float2 texSize)
 {
-	// VR ghosts are rendered per eye into layers 3*eye.. with eye-local tile occupancy.
 	const uint eye = Stereo::GetEyeIndexFromTexCoord(stereoUV);
 	const float2 uv = Stereo::ConvertFromStereoUV(stereoUV, eye);
 	// Include the filter halo, including partial tiles at odd render sizes.
