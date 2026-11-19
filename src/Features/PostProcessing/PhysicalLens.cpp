@@ -382,7 +382,8 @@ void PhysicalLens::SetupResources()
 	waveSources->CreateSRV();
 	waveSources->CreateUAV();
 	D3D11_TEXTURE2D_DESC sourceDescription{};
-	Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY].texture)->GetDesc(&sourceDescription);
+	sourceDescription.Width = setupWidth;
+	sourceDescription.Height = setupHeight;
 	const unsigned eyeTiles = (((sourceDescription.Width / eyeCount + 1) / 2 + 7) / 8) * (((sourceDescription.Height + 1) / 2 + 7) / 8);
 	unsigned waveTileCount = std::max(((sourceDescription.Width + 15) / 16) * ((sourceDescription.Height + 15) / 16), eyeTiles * eyeCount);
 	waveTiles = std::make_unique<StructuredBuffer>(StructuredBufferDesc<unsigned>(uint64_t(waveTileCount), true, false), waveTileCount, "PhysicalLens::DiffractionTiles");
@@ -516,9 +517,8 @@ void PhysicalLens::SetupResources()
 	DX::ThrowIfFailed(globals::d3d::device->CreateUnorderedAccessView(planArguments.get(), &argView, planArgumentsUAV.put()));
 	Util::SetResourceName(planArgumentsUAV.get(), "PhysicalLens::PlanningDispatch UAV");
 	D3D11_TEXTURE2D_DESC desc{};
-	Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY].texture)->GetDesc(&desc);
-	desc.Width = std::max(1u, (desc.Width / eyeCount + 1) / 2);
-	desc.Height = std::max(1u, (desc.Height + 1) / 2);
+	desc.Width = std::max(1u, (setupWidth / eyeCount + 1) / 2);
+	desc.Height = std::max(1u, (setupHeight + 1) / 2);
 	desc.MipLevels = 1;
 	desc.ArraySize = 3 * eyeCount;
 	// Floating-point blending must not overflow on concentrated caustics.
@@ -953,6 +953,16 @@ void PhysicalLens::Draw(TextureInfo& input)
 	outputReady = false;
 	cameraReady = false;
 	waveReady = false;
+	if (input.tex) {
+		D3D11_TEXTURE2D_DESC setupDesc;
+		input.tex->GetDesc(&setupDesc);
+		if (setupDesc.Width != setupWidth || setupDesc.Height != setupHeight) {
+			setupWidth = setupDesc.Width;
+			setupHeight = setupDesc.Height;
+			resourcesReady = false;
+			waveRadiance.reset();
+		}
+	}
 	if (!resourcesReady)
 		SetupResources();
 	if (!shadersRequested)

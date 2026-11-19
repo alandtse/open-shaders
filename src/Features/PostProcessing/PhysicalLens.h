@@ -150,6 +150,7 @@ private:
 	PhysicalLensImaging::CameraTableParameters cachedCameraTable{};
 	void UpdateCameraMapping(float aspect);
 	bool waveReady = false, waveValid = false;
+	unsigned setupWidth = 0, setupHeight = 0;
 	std::array<std::unique_ptr<Texture2D>, 3> waveTextures;
 	std::unique_ptr<Texture2D> waveMax, waveRadiance;
 	std::unique_ptr<StructuredBuffer> waveWorkTiles;
