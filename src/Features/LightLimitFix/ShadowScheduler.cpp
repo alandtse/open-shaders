@@ -2004,8 +2004,12 @@ namespace ShadowCasterManager
 
 				seat(c);
 			}
-			for (auto* held : heldOffView)
+			for (auto* held : heldOffView) {
 				seat(*held);
+				// One that found no slot has no shadow left to keep, so its tile may go to the lights in view.
+				if (!held->chosen)
+					s_cameraHold.erase(held->light);
+			}
 			// s_cameraHold just finished repopulating -- publish freshness now, not at
 			// the earlier clear, so a reader can never observe a generation match
 			// against a partially-populated set.
