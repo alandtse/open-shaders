@@ -1125,6 +1125,8 @@ PS_OUTPUT ShadeEffect(PS_INPUT input, bool sampleDistantShadow)
 		float lightDist = length(lightDirection);
 
 		float intensityMultiplier = LightLimitFix::GetAttenuation(lightDist, light);
+		[branch] if ((light.lightFlags & LightLimitFix::LightFlags::Shadow) && light.shadowMapIndex < SharedData::lightLimitFixSettings.ShadowMapSlots)
+			intensityMultiplier *= LightLimitFix::GetShadowLightFootprint(light.shadowMapIndex, input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 		if (intensityMultiplier < 1e-5)
 			continue;
 

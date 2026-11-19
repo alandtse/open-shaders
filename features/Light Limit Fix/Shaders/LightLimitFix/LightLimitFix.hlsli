@@ -646,6 +646,13 @@ namespace LightLimitFix
 		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni, tileScale, shadowLightData.AtlasRect, sampleCount);
 	}
 
+	/// A spotlight's falloff toward the edge of its cone at a position in its shadow projection: 1 on its axis, 0 at the edge and outside.
+	float GetSpotlightFalloff(float4 positionLS)
+	{
+		positionLS.xy /= positionLS.w;
+		return saturate(1.0 - dot(positionLS.xy, positionLS.xy));
+	}
+
 	// Single-assignment of hasCoverage at function entry keeps FXC's flow
 	// analyser quiet: prior versions used an early-return overflow guard
 	// that wrote hasCoverage on two paths, which tripped X4000 "potentially
@@ -677,9 +684,7 @@ namespace LightLimitFix
 			[branch] if (shadowLightData.ShadowLightParam.x == 0)
 			{
 				float shadowBaseVisibility = GetSpotlightShadow(shadowLightData, shadowIndex, positionLS, rotationMatrix, sampleCount);
-				positionLS.xyz /= positionLS.w;
-
-				float spotFalloff = saturate(1.0 - dot(positionLS.xy, positionLS.xy));
+				float spotFalloff = GetSpotlightFalloff(positionLS);
 
 				// Spotlight shadows define the light's footprint and must not fade toward fully lit.
 				result = shadowBaseVisibility * spotFalloff;
@@ -699,5 +704,17 @@ namespace LightLimitFix
 	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, out bool hasCoverage)
 	{
 		return GetShadowLightShadow(shadowIndex, worldPositionWS, rotationMatrix, 8u, hasCoverage);
+	}
+
+	/// Where a shadow light reaches when its shadow map is not sampled: 0 for a suppressed light and outside a spotlight's cone, else 1.
+	float GetShadowLightFootprint(uint shadowIndex, float3 worldPositionWS)
+	{
+		ShadowLightData shadowLightData = Shadows[shadowIndex];
+		if (shadowLightData.ShadowLightParam.y < 0)
+			return 0.0;
+		if (shadowLightData.ShadowLightParam.x != 0 || shadowLightData.ShadowLightParam.y == 0)
+			return 1.0;
+		float4 positionLS = mul(shadowLightData.ShadowProj, float4(worldPositionWS, 1));
+		return positionLS.w > 0 ? GetSpotlightFalloff(positionLS) : 0.0;
 	}
 }
