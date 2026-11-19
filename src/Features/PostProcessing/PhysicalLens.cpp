@@ -346,10 +346,26 @@ void PhysicalLens::SetupResources()
 	waveSources->CreateUAV();
 	D3D11_TEXTURE2D_DESC sourceDescription{};
 	Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY].texture)->GetDesc(&sourceDescription);
-	unsigned waveTileCount = ((sourceDescription.Width + 15) / 16) * ((sourceDescription.Height + 15) / 16);
+	const unsigned eyeCount = globals::game::isVR ? 2 : 1;
+	const unsigned eyeTiles = (((sourceDescription.Width / eyeCount + 1) / 2 + 7) / 8) * (((sourceDescription.Height + 1) / 2 + 7) / 8);
+	unsigned waveTileCount = std::max(((sourceDescription.Width + 15) / 16) * ((sourceDescription.Height + 15) / 16), eyeTiles * eyeCount);
 	waveTiles = std::make_unique<StructuredBuffer>(StructuredBufferDesc<unsigned>(uint64_t(waveTileCount), true, false), waveTileCount, "PhysicalLens::DiffractionTiles");
 	waveTiles->CreateSRV();
 	waveTiles->CreateUAV();
+	{
+		winrt::com_ptr<ID3D11Resource> tileResource;
+		waveTiles->UAV()->GetResource(tileResource.put());
+		D3D11_UNORDERED_ACCESS_VIEW_DESC tileUAV{};
+		tileUAV.Format = DXGI_FORMAT_UNKNOWN;
+		tileUAV.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+		for (unsigned eye = 0; eye < eyeCount; ++eye) {
+			tileUAV.Buffer.FirstElement = eye * eyeTiles;
+			tileUAV.Buffer.NumElements = eyeCount > 1 ? eyeTiles : waveTileCount;
+			tileUAVs[eye] = nullptr;
+			DX::ThrowIfFailed(globals::d3d::device->CreateUnorderedAccessView(tileResource.get(), &tileUAV, tileUAVs[eye].put()));
+			Util::SetResourceName(tileUAVs[eye].get(), "PhysicalLens::GhostTiles UAV");
+		}
+	}
 	waveWorkTiles = std::make_unique<StructuredBuffer>(StructuredBufferDesc<unsigned>(uint64_t(waveTileCount), true, false), waveTileCount, "PhysicalLens::ActiveDiffractionTiles");
 	waveWorkTiles->CreateSRV();
 	waveWorkTiles->CreateUAV();
@@ -387,6 +403,12 @@ void PhysicalLens::SetupResources()
 	sources = std::make_unique<StructuredBuffer>(StructuredBufferDesc<std::array<float, 8>>(uint64_t(SourceCount), true, false), SourceCount, "PhysicalLens::Sources");
 	sources->CreateSRV();
 	sources->CreateUAV();
+	rightSources.reset();
+	if (globals::game::isVR) {
+		rightSources = std::make_unique<StructuredBuffer>(StructuredBufferDesc<std::array<float, 8>>(uint64_t(SourceCount), true, false), SourceCount, "PhysicalLens::SourcesRight");
+		rightSources->CreateSRV();
+		rightSources->CreateUAV();
+	}
 	constexpr unsigned rayCount = 6 * PhysicalLensOptics::PathsPerSource * 3 * PhysicalLensOptics::Vertices;
 	paths = std::make_unique<StructuredBuffer>(StructuredBufferDesc<PhysicalLensOptics::GhostPath>(uint64_t(PhysicalLensOptics::MaxPaths), false, true), PhysicalLensOptics::MaxPaths, "PhysicalLens::Paths");
 	paths->CreateSRV();
@@ -450,10 +472,10 @@ void PhysicalLens::SetupResources()
 	Util::SetResourceName(planArgumentsUAV.get(), "PhysicalLens::PlanningDispatch UAV");
 	D3D11_TEXTURE2D_DESC desc{};
 	Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY].texture)->GetDesc(&desc);
-	desc.Width = std::max(1u, (desc.Width + 1) / 2);
+	desc.Width = std::max(1u, (desc.Width / eyeCount + 1) / 2);
 	desc.Height = std::max(1u, (desc.Height + 1) / 2);
 	desc.MipLevels = 1;
-	desc.ArraySize = 3;
+	desc.ArraySize = 3 * eyeCount;
 	// Floating-point blending must not overflow on concentrated caustics.
 	desc.Format = DXGI_FORMAT_R32_FLOAT;
 	desc.SampleDesc = { 1, 0 };
@@ -465,25 +487,30 @@ void PhysicalLens::SetupResources()
 	srv.Format = desc.Format;
 	srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
 	srv.Texture2DArray.MipLevels = 1;
-	srv.Texture2DArray.ArraySize = 3;
+	srv.Texture2DArray.ArraySize = desc.ArraySize;
 	output->CreateSRV(srv);
 
 	D3D11_UNORDERED_ACCESS_VIEW_DESC resolved{};
 	resolved.Format = desc.Format;
 	resolved.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2DARRAY;
 	resolved.Texture2DArray.ArraySize = 3;
-	output->CreateUAV(resolved);
 	D3D11_RENDER_TARGET_VIEW_DESC rtv{};
 	rtv.Format = desc.Format;
 	rtv.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
 	rtv.Texture2DArray.ArraySize = 1;
-	for (unsigned channel = 0; channel < 3; ++channel) {
-		if (channel < 2) {
-			rtv.Texture2DArray.FirstArraySlice = channel;
-			channelTargets[channel] = nullptr;
-			DX::ThrowIfFailed(globals::d3d::device->CreateRenderTargetView(output->resource.get(), &rtv, channelTargets[channel].put()));
-			Util::SetResourceName(channelTargets[channel].get(), "PhysicalLens::SpectralTarget");
+	for (unsigned eye = 0; eye < eyeCount; ++eye) {
+		resolved.Texture2DArray.FirstArraySlice = 3 * eye;
+		outputUAVs[eye] = nullptr;
+		DX::ThrowIfFailed(globals::d3d::device->CreateUnorderedAccessView(output->resource.get(), &resolved, outputUAVs[eye].put()));
+		Util::SetResourceName(outputUAVs[eye].get(), "PhysicalLens::Ghosts Eye UAV");
+		for (unsigned channel = 0; channel < 2; ++channel) {
+			rtv.Texture2DArray.FirstArraySlice = 3 * eye + channel;
+			channelTargets[eye][channel] = nullptr;
+			DX::ThrowIfFailed(globals::d3d::device->CreateRenderTargetView(output->resource.get(), &rtv, channelTargets[eye][channel].put()));
+			Util::SetResourceName(channelTargets[eye][channel].get(), "PhysicalLens::SpectralTarget");
 		}
+	}
+	for (unsigned channel = 0; channel < 3; ++channel) {
 		channelParameters[channel] = std::make_unique<ConstantBuffer>(ConstantBufferDesc<std::array<unsigned, 4>>(), "PhysicalLens::SpectralBand");
 		channelParameters[channel]->Update(std::array<unsigned, 4>{ channel, 0, 0, 0 });
 	}
@@ -844,6 +871,31 @@ bool PhysicalLens::UpdateGhostWave()
 	return true;
 }
 
+ID3D11ShaderResourceView* PhysicalLens::EyeInputSRV(TextureInfo& input, const D3D11_TEXTURE2D_DESC& inputDesc, unsigned eye)
+{
+	if (!globals::game::isVR)
+		return input.srv;
+	const unsigned eyeWidth = inputDesc.Width / 2;
+	if (!eyeInput || eyeInput->desc.Width != eyeWidth || eyeInput->desc.Height != inputDesc.Height || eyeInput->desc.Format != inputDesc.Format) {
+		D3D11_TEXTURE2D_DESC desc = inputDesc;
+		desc.Width = eyeWidth;
+		desc.MipLevels = desc.ArraySize = 1;
+		desc.SampleDesc = { 1, 0 };
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		desc.CPUAccessFlags = desc.MiscFlags = 0;
+		eyeInput = std::make_unique<Texture2D>(desc, "PhysicalLens::EyeInput");
+		D3D11_SHADER_RESOURCE_VIEW_DESC srv{};
+		input.srv->GetDesc(&srv);
+		srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srv.Texture2D = { 0, 1 };
+		eyeInput->CreateSRV(srv);
+	}
+	const D3D11_BOX box{ eye * eyeWidth, 0, 0, (eye + 1) * eyeWidth, inputDesc.Height, 1 };
+	globals::d3d::context->CopySubresourceRegion(eyeInput->resource.get(), 0, 0, 0, 0, input.tex, 0, &box);
+	return eyeInput->srv.get();
+}
+
 void PhysicalLens::Draw(TextureInfo& input)
 {
 	outputReady = false;
@@ -952,12 +1004,12 @@ void PhysicalLens::Draw(TextureInfo& input)
 	const auto& lens = cachedLens;
 	Parameters data{};
 	UpdateCameraMapping(aspect);
-	if (globals::game::isVR)
-		return;
-	const bool renderWave = buildWaveSources && buildWaveTiles && buildWaveTail && UpdateDiffraction(inputDesc.Width, inputDesc.Height);
+	const unsigned eyeCount = globals::game::isVR ? 2 : 1;
+	const unsigned eyeWidth = inputDesc.Width / eyeCount;
+	const bool renderWave = !globals::game::isVR && buildWaveSources && buildWaveTiles && buildWaveTail && UpdateDiffraction(inputDesc.Width, inputDesc.Height);
 	if (settings.Intensity == 0 && !renderWave)
 		return;
-	data.width = inputDesc.Width;
+	data.width = eyeWidth;
 	data.height = inputDesc.Height;
 	data.surfaceCount = lens.count;
 	data.surfaces = lens.interfaces;
@@ -1000,8 +1052,11 @@ void PhysicalLens::Draw(TextureInfo& input)
 	data.manualExposure = local && local->enabled && local->GetLogLuminanceSRV() ? local->settings.Exposure : 1.f;
 	parameters->Update(data);
 	auto* ctx = globals::d3d::context;
-	{
+	for (unsigned eye = 0; eye < eyeCount; ++eye) {
 		CS_GPU_PASS("PostProcessing::PhysicalLensFlare");
+		if (eye == 1)
+			sources.swap(rightSources);
+		auto* eyeSRV = EyeInputSRV(input, inputDesc, eye);
 		PostProcessingRaster::RasterPass raster(ctx);
 		OpticalBindings bindings(ctx);
 		ctx->OMSetRenderTargets(0, nullptr, nullptr);
@@ -1009,7 +1064,7 @@ void PhysicalLens::Draw(TextureInfo& input)
 		ctx->CSSetConstantBuffers(0, 1, &cb);
 		ID3D11Buffer* exposureCB = hasExposure ? exposure->GetConstantBuffer() : nullptr;
 		ctx->CSSetConstantBuffers(1, 1, &exposureCB);
-		ID3D11ShaderResourceView* srvs[6]{ input.srv, nullptr, nullptr, nullptr };
+		ID3D11ShaderResourceView* srvs[6]{ eyeSRV, nullptr, nullptr, nullptr };
 		srvs[5] = hasExposure ? exposure->GetAdaptationSRV() : nullptr;
 		ID3D11UnorderedAccessView* uavs[5]{ candidates->UAV(), nullptr, nullptr, nullptr, regions->UAV() };
 		ctx->CSSetShaderResources(0, 6, srvs);
@@ -1167,7 +1222,7 @@ void PhysicalLens::Draw(TextureInfo& input)
 			ctx->CSSetUnorderedAccessViews(0, 5, uavs, nullptr);
 			ctx->CSSetShaderResources(0, 6, srvs);
 			const float clear[4]{};
-			for (auto& target : channelTargets) ctx->ClearRenderTargetView(target.get(), clear);
+			for (auto& target : channelTargets[eye]) ctx->ClearRenderTargetView(target.get(), clear);
 			ctx->ClearRenderTargetView(blueViolet->rtv.get(), clear);
 			raster.SetShaders(vs.get(), ps.get());
 			raster.SetBlendState(additive.get(), clear);
@@ -1190,7 +1245,7 @@ void PhysicalLens::Draw(TextureInfo& input)
 					ctx->PSSetShader(violetPS.get(), nullptr, 0);
 					raster.SetTargets({ blueViolet->rtv.get() }, data.outputWidth, data.outputHeight);
 				} else
-					raster.SetTargets({ channelTargets[channel].get() }, data.outputWidth, data.outputHeight);
+					raster.SetTargets({ channelTargets[eye][channel].get() }, data.outputWidth, data.outputHeight);
 				ID3D11Buffer* band = channelParameters[channel]->CB();
 				ctx->VSSetConstantBuffers(5, 1, &band);
 				ctx->PSSetConstantBuffers(5, 1, &band);
@@ -1214,14 +1269,16 @@ void PhysicalLens::Draw(TextureInfo& input)
 			srvs[0] = indirectSRV.get();
 			srvs[1] = blueViolet->srv.get();
 			for (unsigned level = 0; level < areaLayers.size(); ++level) srvs[2 + level] = areaLayers[level]->srv.get();
-			uavs[0] = output->uav.get();
-			uavs[1] = waveTiles->UAV();
+			uavs[0] = outputUAVs[eye].get();
+			uavs[1] = tileUAVs[eye].get();
 			ctx->CSSetShaderResources(0, 5, srvs);
 			ctx->CSSetSamplers(0, 1, &edgeSampler);
 			ctx->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
 			ctx->CSSetShader(resolve.get(), nullptr, 0);
 			ctx->Dispatch((unsigned(data.outputWidth) + 7) / 8, (unsigned(data.outputHeight) + 7) / 8, 1);
 		}
+		if (eye == 1)
+			sources.swap(rightSources);
 	}
 	outputReady = settings.Intensity > 0;
 }

@@ -128,7 +128,11 @@ private:
 	bool ghostWaveValid = false;
 	unsigned lastGhostFrame = ~0u;
 	bool UpdateGhostWave();
-	std::array<winrt::com_ptr<ID3D11RenderTargetView>, 2> channelTargets;
+	std::array<std::array<winrt::com_ptr<ID3D11RenderTargetView>, 2>, 2> channelTargets;
+	std::array<winrt::com_ptr<ID3D11UnorderedAccessView>, 2> outputUAVs, tileUAVs;
+	std::unique_ptr<StructuredBuffer> rightSources;
+	std::unique_ptr<Texture2D> eyeInput;
+	ID3D11ShaderResourceView* EyeInputSRV(TextureInfo& input, const D3D11_TEXTURE2D_DESC& inputDesc, unsigned eye);
 	std::array<std::unique_ptr<ConstantBuffer>, 3> channelParameters;
 	winrt::com_ptr<ID3D11ComputeShader> extractCS, prepareCS, splitCS, selectCS, jobsCS, expandCS, traceCS, shadeCS, reduceCS, resolveCS;
 	winrt::com_ptr<ID3D11VertexShader> ghostVS;
