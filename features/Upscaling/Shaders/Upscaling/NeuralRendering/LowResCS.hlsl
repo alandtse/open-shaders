@@ -1,3 +1,4 @@
+#include "Common/NeuralRenderingFinite.hlsli"
 #include "Upscaling/NeuralRendering/ColorTransfer.hlsli"
 #ifdef NR_PERIPHERAL_COMPRESSION
 #	include "Common/NeuralRenderingPeripheral.hlsli"
@@ -59,11 +60,11 @@ void PreparePeripheral(uint2 pixel)
 			if (weight <= 0.0)
 				continue;
 			const float4 value = ProxyInput.Load(int3(source, 0));
-			color += (all(isfinite(value)) ? value : 0.0) * weight;
+			color += (all(NeuralRenderingFinite::IsFinite(value)) ? value : 0.0) * weight;
 			area += weight;
 			const float depth = DepthInput.Load(int3(source, 0));
 			const float2 velocity = MotionInput.Load(int3(source, 0));
-			if (isfinite(depth) && depth >= 0.0 && depth <= 1.0 && all(isfinite(velocity)) && (!foundDepth || FrameBuffer::IsNearerDepth(depth, nearest))) {
+			if (NeuralRenderingFinite::IsFinite(depth) && depth >= 0.0 && depth <= 1.0 && all(NeuralRenderingFinite::IsFinite(velocity)) && (!foundDepth || FrameBuffer::IsNearerDepth(depth, nearest))) {
 				nearest = depth;
 				motion = velocity;
 				foundDepth = true;
@@ -128,7 +129,7 @@ float LowLogLuma(float3 proxy)
 #endif
 	float gainSum = 0.0, weightSum = 0.0;
 #ifdef NR_PERIPHERAL_COMPRESSION
-	bool valid = all(isfinite(ProxyInput[id.xy]));
+	bool valid = all(NeuralRenderingFinite::IsFinite(ProxyInput[id.xy]));
 #endif
 	[unroll] for (int i = 0; i < 4; ++i)
 	{
@@ -137,7 +138,7 @@ float LowLogLuma(float3 proxy)
 		const float inputLog = LowLogLuma(LowInput[tap].rgb);
 		const float gain = LowLogLuma(LowOutput[tap].rgb) - inputLog;
 #ifdef NR_PERIPHERAL_COMPRESSION
-		valid = valid && all(isfinite(LowInput[tap])) && all(isfinite(LowOutput[tap])) && isfinite(gain);
+		valid = valid && all(NeuralRenderingFinite::IsFinite(LowInput[tap])) && all(NeuralRenderingFinite::IsFinite(LowOutput[tap])) && NeuralRenderingFinite::IsFinite(gain);
 #endif
 		const float guide = Guided != 0 ? exp(-abs(currentLogLuma - inputLog) / max(GuideSigma, 1e-3)) : 1.0;
 		const float weight = axis.x * axis.y * (guide + 1e-3);
@@ -146,7 +147,7 @@ float LowLogLuma(float3 proxy)
 	}
 	const float3 expanded = ProxyLinearToSrgb(currentLinear * exp2(gainSum / max(weightSum, 1e-6)));
 #ifdef NR_PERIPHERAL_COMPRESSION
-	ExpandedProxy[id.xy] = valid && all(isfinite(expanded)) ? float4(expanded, 1.0) : ProxyInput[id.xy];
+	ExpandedProxy[id.xy] = valid && all(NeuralRenderingFinite::IsFinite(expanded)) ? float4(expanded, 1.0) : ProxyInput[id.xy];
 #else
 	ExpandedProxy[id.xy] = float4(expanded, 1.0);
 #endif

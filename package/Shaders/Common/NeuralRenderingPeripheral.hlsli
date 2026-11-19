@@ -1,6 +1,8 @@
 #ifndef NR_PERIPHERAL_COMPRESSION_HLSLI
 #define NR_PERIPHERAL_COMPRESSION_HLSLI
 
+#include "NeuralRenderingFinite.hlsli"
+
 // Analytic curve adapted from Yuri Grib (BeliyG3), optimizer-fps-dlss5, MIT.
 // See SKSE/Plugins/CommunityShaders/Licenses/NeuralRendering/PeripheralCompression.txt.
 namespace NeuralRenderingPeripheral
@@ -66,7 +68,7 @@ namespace NeuralRenderingPeripheral
 	float2 Motion(float2 anchor, float2 velocity, Mapping map)
 	{
 		const float2 transformed = Forward(anchor + velocity, map) - Forward(anchor, map);
-		return all(isfinite(transformed)) ? transformed : 0.0;
+		return all(NeuralRenderingFinite::IsFinite(transformed)) ? transformed : 0.0;
 	}
 }
 
