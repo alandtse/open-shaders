@@ -8,7 +8,7 @@
     },
     "common.active": "Aktywny",
     "common.inactive": "Nieaktywny",
-    "common.restart_required": "",
+    "common.restart_required": "Wymagane ponowne uruchomienie",
     "common.settings_managed_by_enb": "Tym ustawieniem zarządza Effects 11.",
     "cs_editor.actions": "Akcje",
     "cs_editor.active": "Aktywny:",
