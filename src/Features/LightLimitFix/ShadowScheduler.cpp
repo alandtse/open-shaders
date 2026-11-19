@@ -162,15 +162,9 @@ namespace ShadowCasterManager
 		return s_settings.ProtectPlayerShadows && PlayerWithinLightRadius(light, kPlayerCasterReachUnits);
 	}
 
-	// SEH in its own function: GetUserData walks NiAVObject::parent, which is not refcounted and can dangle during scene teardown.
 	static RE::Actor* CarrierOf(const RE::NiLight* ni) noexcept
 	{
-		__try {
-			auto* ref = ni->GetUserData();
-			return ref ? ref->As<RE::Actor>() : nullptr;
-		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-		}
-		return nullptr;
+		return OwnerAs<RE::Actor>(ni);
 	}
 
 	/// The body a dynamic omni light is carried by, or null: the first-person model while the player carrying it is seen in first person.

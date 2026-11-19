@@ -482,14 +482,19 @@ namespace ShadowCasterManager
 		return false;
 	}
 
-	// SEH in its own function: GetUserData walks NiAVObject::parent, which is not refcounted and can dangle during scene teardown.
-	static RE::TESObjectREFR* OwnerOf(const RE::NiAVObject* a_object) noexcept
+	/// The light's own reference, looked up once per light per frame: every near caster of one cull walk asks for the same one.
+	static const RE::TESObjectREFR* LightOwner(const RE::NiLight* a_light) noexcept
 	{
-		__try {
-			return a_object->GetUserData();
-		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		thread_local const RE::NiLight* cachedLight = nullptr;
+		thread_local std::uint32_t cachedFrame = 0;
+		thread_local const RE::TESObjectREFR* cachedOwner = nullptr;
+		const auto frame = static_cast<std::uint32_t>(*globals::game::frameCounter);
+		if (a_light != cachedLight || frame != cachedFrame) {
+			cachedLight = a_light;
+			cachedFrame = frame;
+			cachedOwner = OwnerAs<RE::TESObjectREFR>(a_light);
 		}
-		return nullptr;
+		return cachedOwner;
 	}
 
 	/// The flame's rest spot: flicker writes its wobble into the light's local translate, so a part at the holder's edge
@@ -515,8 +520,8 @@ namespace ShadowCasterManager
 		const auto d = bound.center - FlameRestOrigin(ni);
 		if (!HoldsFlame(d.x, d.y, d.z, bound.radius, a_geometry.world.scale))
 			return false;
-		const auto* owner = OwnerOf(ni);
-		return owner && !owner->Is(RE::FormType::ActorCharacter) && owner == OwnerOf(&a_geometry);
+		const auto* owner = LightOwner(ni);
+		return owner && !owner->Is(RE::FormType::ActorCharacter) && owner == OwnerAs<RE::TESObjectREFR>(&a_geometry);
 	}
 
 	// BSParabolicCullingProcess::GetHemisphereMask values: bit 0 appends the
