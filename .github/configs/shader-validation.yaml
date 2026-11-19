@@ -222,6 +222,7 @@ file_common_defines:
             - IBL
             - LIGHT_LIMIT_FIX
             - LOD_BLENDING
+            - PROCEDURAL_AURORA
             - PROCEDURAL_SUN
             - SCREEN_SPACE_SHADOWS
             - SKYLIGHTING
@@ -13088,6 +13089,7 @@ shaders:
                   - IBL
                   - LIGHT_LIMIT_FIX
                   - LOD_BLENDING
+                  - PROCEDURAL_AURORA
                   - PROCEDURAL_SUN
                   - PSHADER
                   - SCREEN_SPACE_SHADOWS
@@ -13191,6 +13193,7 @@ shaders:
                   - IBL
                   - LIGHT_LIMIT_FIX
                   - LOD_BLENDING
+                  - PROCEDURAL_AURORA
                   - PROCEDURAL_SUN
                   - SCREEN_SPACE_SHADOWS
                   - SKYLIGHTING

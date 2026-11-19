@@ -336,10 +336,35 @@ struct PerformanceOverlay : OverlayFeature
 		bool ShowBorder = true;
 		ImVec2 Position = ImVec2(10.f, 10.f);
 		bool PositionSet = false;
+
+		// Profiler groups (a feature's short name, or another timer prefix) left out of the render pass graph.
+		// A list of hidden groups, so a feature that starts reporting later shows up by default.
+		std::vector<std::string> HiddenProfilerGroups;
 	};
 	Settings settings;
 
 	RenderTargetStats renderTargetStats;
+
+	/**
+	 * @brief Whether the overlay's render pass graph includes a profiler group.
+	 * @param group Profiler group: the timer name prefix before "::", a feature's short name for features.
+	 */
+	bool IsProfilerGroupShown(std::string_view group) const;
+
+	/**
+	 * @brief Shows or hides a profiler group in the overlay's render pass graph, and marks the settings changed.
+	 * Safe to call from any feature's page, not only this one's.
+	 * @param group Profiler group: the timer name prefix before "::", a feature's short name for features.
+	 * @param shown True to include the group's passes.
+	 */
+	void SetProfilerGroupShown(std::string_view group, bool shown);
+
+	/**
+	 * @brief Turns the overlay window on or off (Settings::ShowInOverlay). Safe to call from outside this feature's
+	 * settings, like SetProfilerGroupShown.
+	 * @param shown True to show the overlay while the global overlay toggle is on.
+	 */
+	void SetShowInOverlay(bool shown);
 
 private:
 	// ============================================================================
@@ -367,6 +392,9 @@ private:
 	bool hadWideContent = false;
 	float currentWindowWidth = 0.0f;
 	float lastContentHeight = 0.0f;
+
+	/** @brief The settings' render pass picker: a filter chip per profiler group, with Show All / Hide All. */
+	void DrawProfilerGroupFilter();
 
 	// Test data management
 	void CaptureTestData();
