@@ -495,13 +495,12 @@ float3 GetDirLightColor(float3 positionWS, float2 screenPosition, uint eyeIndex,
 
 	float3 dirLightColor = Color::GamutTransform(SharedData::DirLightColor.xyz);
 	dirLightColor = Color::AdjustUtilityColor(dirLightColor, SharedData::csUtilitySettings.directionalLightColor);
-	[branch] if (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld)
+	if (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld)
 		dirLightColor *= ShadowSampling::GetWorldShadow(positionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 
 	// HasDirectionalShadows() admits Interior Sun cells to the directional shadow
 	// sampling path (matching Lighting.hlsl).
-	[branch] if (ShadowSampling::HasDirectionalShadows())
-	{
+	if (ShadowSampling::HasDirectionalShadows()) {
 		// Use the cheaper VSM shadows if available; otherwise route through the
 		// shared SLF-vs-vanilla helper (LLF cascades under SLF, else lit).
 #	if defined(VOLUMETRIC_SHADOWS)
@@ -633,21 +632,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			if (FrameBuffer::IsNearerDepth(depth, input.Position.z))
 				refractedUV = screenPosition * SharedData::BufferDim.zw;
 			float3 scene = TexRainScene.SampleLevel(SampSourceTexture, refractedUV, 0).rgb;
-			[branch] if (ENABLE_LL)
-			{
-				[branch] if (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget)
-				{
-					refractColor = Color::SceneGammaToLinear(scene);
-				}
-				else
-				{
-					refractColor = scene;
-				}
-			}
-			else
-			{
-				refractColor = Color::IrradianceToLinear(scene);
-			}
+			refractColor = ENABLE_LL ? ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget) ? Color::SceneGammaToLinear(scene) : scene) : Color::IrradianceToLinear(scene);
 		} else {
 			refractColor = Color::IrradianceToLinear(DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, refractDir, 0).xyz);
 		}
@@ -701,8 +686,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 dirLightColor = GetDirLightColor(positionWS.xyz, screenPosition, eyeIndex, dirShadow);
 	float3 ambientColor = Color::Ambient(max(0, SharedData::GetAmbient(float3(0, 0, 1))));
 #	if defined(IBL)
-	[branch] if (SharedData::iblSettings.EnableIBL)
-	{
+	if (SharedData::iblSettings.EnableIBL) {
 		ambientColor = ImageBasedLighting::GetDiffuseIBL(ambientColor, float3(0, 0, -1));
 	}
 #	endif

@@ -202,8 +202,7 @@ namespace Hair
 		dirTransmission = 0;
 		const float roughness = max(1 - saturate(shininess * 0.01), 0.01);
 
-		[branch] if (SharedData::hairSpecularSettings.EnableTangentShift)
-		{
+		if (SharedData::hairSpecularSettings.EnableTangentShift) {
 			const float shift = TexTangentShift.SampleLevel(SampColorSampler, uv, 0).x - 0.5;
 			T = ShiftTangent(T, N, shift);
 		}
@@ -222,12 +221,9 @@ namespace Hair
 		const float3 VN = normalize(tbnTr[2]);
 		const float3 L = normalize(context.lightDir);
 
-		[branch] if (SharedData::hairSpecularSettings.HairMode == 0)
-		{
+		if (SharedData::hairSpecularSettings.HairMode == 0) {
 			GetHairDirectLightScheuermann(lightingOutput.diffuse, lightingOutput.specular, lightingOutput.transmission, T, L, V, N, VN, context, material.Shininess, uv, material.BaseColor);
-		}
-		else
-		{
+		} else {
 			GetHairDirectLightMarschner(lightingOutput.diffuse, lightingOutput.specular, lightingOutput.transmission, T, L, V, N, VN, context, material.Shininess, uv, material.BaseColor);
 		}
 	}
@@ -240,10 +236,8 @@ namespace Hair
 		const float3 V = normalize(context.viewDir);
 		const float3 N = normalize(context.vertexNormal);
 
-		[branch] if (SharedData::hairSpecularSettings.HairMode == 1)
-		{
-			[branch] if (SharedData::hairSpecularSettings.EnableTangentShift)
-			{
+		if (SharedData::hairSpecularSettings.HairMode == 1) {
+			if (SharedData::hairSpecularSettings.EnableTangentShift) {
 				const float shift = TexTangentShift.SampleLevel(SampColorSampler, uv, 0).x - 0.5;
 				T = ShiftTangent(T, N, shift);
 			}
@@ -252,9 +246,7 @@ namespace Hair
 			lobeWeights.diffuse = D_Marschner(L, V, T, 1 - saturate(material.Shininess * 0.01), material.BaseColor, 0.2, 0) * Math::PI * SharedData::hairSpecularSettings.SpecularIndirectMult;
 			lobeWeights.diffuse += GetHairDiffuseAttenuationKajiyaKay(T, V, L, 1, material.BaseColor) * Math::PI * SharedData::hairSpecularSettings.DiffuseIndirectMult;
 			return;
-		}
-		else
-		{
+		} else {
 			lobeWeights.diffuse = saturate(material.BaseColor * SharedData::hairSpecularSettings.DiffuseIndirectMult);
 			float2 hairBRDF = BRDF::EnvBRDF(material.Roughness, saturate(dot(N, V)));
 			float3 hairSpecularLobe = material.F0 * hairBRDF.x + hairBRDF.y;

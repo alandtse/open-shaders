@@ -257,8 +257,7 @@ PS_OUTPUT ShadeDistantTree(PS_INPUT input, bool sampleDistantShadow)
 
 	float3 directionalAmbientColor = max(0, Color::Ambient(SharedData::GetAmbient(normal)));
 #		if defined(IBL)
-	[branch] if (SharedData::iblSettings.EnableIBL)
-	{
+	if (SharedData::iblSettings.EnableIBL) {
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(directionalAmbientColor, -normal);
 	}
 #		endif
@@ -275,8 +274,7 @@ PS_OUTPUT ShadeDistantTree(PS_INPUT input, bool sampleDistantShadow)
 	float3 diffuseColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * dirShadow * 0.5 * llDirLightMult * Color::VanillaNormalization();
 
 #			if defined(EXP_HEIGHT_FOG)
-	[branch] if (SharedData::exponentialHeightFogSettings.enabled)
-	{
+	if (SharedData::exponentialHeightFogSettings.enabled) {
 		diffuseColor *= ExponentialHeightFog::GetSunlightFogAttenuation(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 	}
 #			endif
@@ -290,8 +288,7 @@ PS_OUTPUT ShadeDistantTree(PS_INPUT input, bool sampleDistantShadow)
 	psout.Diffuse.w = 1;
 
 #			if defined(EXP_HEIGHT_FOG)
-	[branch] if (inReflection && SharedData::exponentialHeightFogSettings.enabled)
-	{
+	if (inReflection && SharedData::exponentialHeightFogSettings.enabled) {
 		ApplyReflectionExponentialHeightFog(psout.Diffuse.xyz, input.WorldPosition.xyz, input.Position, eyeIndex);
 	}
 #			endif
@@ -310,8 +307,7 @@ PS_OUTPUT ShadeDistantTree(PS_INPUT input, bool sampleDistantShadow)
 	float3 diffuseColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * dirShadow * 0.5 * llDirLightMult * Color::VanillaNormalization();
 
 #			if defined(EXP_HEIGHT_FOG)
-	[branch] if (SharedData::exponentialHeightFogSettings.enabled)
-	{
+	if (SharedData::exponentialHeightFogSettings.enabled) {
 		diffuseColor *= ExponentialHeightFog::GetSunlightFogAttenuation(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 	}
 #			endif
@@ -323,8 +319,7 @@ PS_OUTPUT ShadeDistantTree(PS_INPUT input, bool sampleDistantShadow)
 
 	float3 color = diffuseColor * baseColor.xyz;
 #			if defined(EXP_HEIGHT_FOG)
-	[branch] if (inReflection && SharedData::exponentialHeightFogSettings.enabled)
-	{
+	if (inReflection && SharedData::exponentialHeightFogSettings.enabled) {
 		ApplyReflectionExponentialHeightFog(color, input.WorldPosition.xyz, input.Position, eyeIndex);
 	}
 #			endif
