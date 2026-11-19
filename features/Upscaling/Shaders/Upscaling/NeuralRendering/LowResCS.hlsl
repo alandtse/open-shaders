@@ -80,37 +80,6 @@ bool BilinearModelGain(float2 position, float3 reference, out float gain)
 	return valid && NeuralRenderingFinite::IsFinite(gain);
 }
 
-#ifdef NR_LANCZOS3_RECONSTRUCTION
-bool Lanczos3ModelGain(float2 position, out float gain)
-{
-	const int2 origin = int2(floor(position)) - 2;
-	float weightsX[6], weightsY[6];
-	float2 normalization = 0.0;
-	[unroll] for (int i = 0; i < 6; ++i)
-	{
-		weightsX[i] = NeuralRenderingReconstruction::Lanczos3Weight(position.x - float(origin.x + i));
-		weightsY[i] = NeuralRenderingReconstruction::Lanczos3Weight(position.y - float(origin.y + i));
-		normalization += float2(weightsX[i], weightsY[i]);
-	}
-	gain = 0.0;
-	bool valid = true;
-	[unroll] for (int y = 0; y < 6; ++y)
-	{
-		float row = 0.0;
-		[unroll] for (int x = 0; x < 6; ++x)
-		{
-			float tapGain, inputLog;
-			float3 inputLinear;
-			valid = ReadModelGain(origin + int2(x, y), tapGain, inputLog, inputLinear) && valid;
-			row += tapGain * weightsX[x];
-		}
-		gain += row * weightsY[y];
-	}
-	gain /= normalization.x * normalization.y;
-	return valid && NeuralRenderingFinite::IsFinite(gain);
-}
-#endif
-
 // The composite takes only the model's luminance ratio, so the low-resolution gain is all that has to cross
 // back: the full-resolution proxy scaled by it reads, to the composite, as a model frame of its own size.
 [numthreads(8, 8, 1)] void ExpandGain(uint3 id : SV_DispatchThreadID) {
@@ -120,11 +89,7 @@ bool Lanczos3ModelGain(float2 position, out float gain)
 	const float3 currentLinear = ProxySrgbToLinear(source.rgb);
 	const float2 lowPosition = (float2(id.xy) + 0.5) / float2(Width, Height) * float2(LowWidth, LowHeight) - 0.5;
 	float gain;
-#ifdef NR_LANCZOS3_RECONSTRUCTION
-	const bool valid = Lanczos3ModelGain(lowPosition, gain);
-#else
 	const bool valid = BilinearModelGain(lowPosition, currentLinear, gain);
-#endif
 	const float3 candidate = ProxyLinearToSrgb(currentLinear * exp2(gain));
-	ExpandedProxy[id.xy] = valid && all(NeuralRenderingFinite::IsFinite(candidate)) ? float4(candidate, source.a) : source;
+	ExpandedProxy[id.xy] = NeuralRenderingFinite::ResolveHalfOutput(source, candidate, valid);
 }

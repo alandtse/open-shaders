@@ -8,17 +8,6 @@ namespace NeuralRenderingReconstruction
 	static const float kGuidanceStrength = 16.0;
 	static const float kMinimumNormalization = 1e-6;
 
-	float Lanczos3Weight(float distance)
-	{
-		const float x = abs(distance);
-		if (x < 1e-5)
-			return 1.0;
-		if (x >= 3.0)
-			return 0.0;
-		const float angle = 3.14159265358979323846 * x;
-		return (sin(angle) / angle) * (sin(angle / 3.0) / (angle / 3.0));
-	}
-
 	float Similarity(float3 reference, float3 proxy, float3 luma)
 	{
 		const float3 difference = reference - proxy;

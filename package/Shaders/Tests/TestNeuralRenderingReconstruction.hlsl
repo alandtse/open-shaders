@@ -50,17 +50,3 @@ static const float3 kLuma = float3(0.2126, 0.7152, 0.0722);
 	ASSERT(IsTrue, NeuralRenderingReconstruction::RgbWeights(0.0, 0.0, 0.0, 0.0, 0.0, spatial, kLuma, weights));
 	ASSERT(IsTrue, all(weights == spatial));
 }
-
-/// @tags neural-rendering
-/// Lanczos3 has unit centre, bounded support and a nonzero phase normalization
-[numthreads(1, 1, 1)] void TestLanczos3KernelHasBoundedSupport() {
-	ASSERT(IsTrue, NeuralRenderingReconstruction::Lanczos3Weight(0.0) == 1.0);
-	ASSERT(IsTrue, NeuralRenderingReconstruction::Lanczos3Weight(3.0) == 0.0);
-	ASSERT(IsTrue, NeuralRenderingReconstruction::Lanczos3Weight(-4.0) == 0.0);
-	for (uint phase = 0; phase < 16; ++phase) {
-		float sum = 0.0;
-		for (int tap = -2; tap <= 3; ++tap)
-			sum += NeuralRenderingReconstruction::Lanczos3Weight(float(phase) / 16.0 - float(tap));
-		ASSERT(IsTrue, isfinite(sum) && sum > 0.9 && sum < 1.1);
-	}
-}

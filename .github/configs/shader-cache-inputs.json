@@ -47,21 +47,6 @@
         },
         {
             "defines": [
-                ["COMPUTESHADER", ""],
-                ["DX11", ""],
-                ["NR_LANCZOS3_RECONSTRUCTION", "1"],
-                ["REVERSE_Z", ""],
-                ["WINPC", ""]
-            ],
-            "entryPoint": "ExpandGain",
-            "flags": 34818,
-            "kind": "standalone",
-            "profile": "cs_5_0",
-            "runtime": "SE",
-            "source": "Upscaling/NeuralRendering/LowResCS.hlsl"
-        },
-        {
-            "defines": [
                 ["BLUR_HORIZONTAL", null],
                 ["COMPUTESHADER", ""],
                 ["DX11", ""],
