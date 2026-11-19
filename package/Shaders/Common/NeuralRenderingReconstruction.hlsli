@@ -1,6 +1,8 @@
 #ifndef NEURAL_RENDERING_RECONSTRUCTION_HLSLI
 #define NEURAL_RENDERING_RECONSTRUCTION_HLSLI
 
+#include "NeuralRenderingFinite.hlsli"
+
 namespace NeuralRenderingReconstruction
 {
 	static const float kGuidanceStrength = 16.0;
@@ -27,8 +29,8 @@ namespace NeuralRenderingReconstruction
 		float4 spatial, float3 luma, out float4 weights)
 	{
 		weights = spatial;
-		if (!all(isfinite(reference)) || !all(isfinite(p00)) || !all(isfinite(p10)) ||
-			!all(isfinite(p01)) || !all(isfinite(p11)))
+		if (!all(NeuralRenderingFinite::IsFinite(reference)) || !all(NeuralRenderingFinite::IsFinite(p00)) || !all(NeuralRenderingFinite::IsFinite(p10)) ||
+			!all(NeuralRenderingFinite::IsFinite(p01)) || !all(NeuralRenderingFinite::IsFinite(p11)))
 			return false;
 		const float3 magnitude = max(abs(reference), max(max(abs(p00), abs(p10)), max(abs(p01), abs(p11))));
 		const float scale = max(magnitude.x, max(magnitude.y, magnitude.z));
@@ -38,7 +40,7 @@ namespace NeuralRenderingReconstruction
 		const float4 candidate = spatial * float4(Similarity(normalized, p00 / scale, luma),
 											   Similarity(normalized, p10 / scale, luma), Similarity(normalized, p01 / scale, luma), Similarity(normalized, p11 / scale, luma));
 		const float normalization = dot(candidate, 1.0);
-		if (!all(isfinite(candidate)) || any(candidate < 0.0) || !isfinite(normalization) || normalization <= kMinimumNormalization)
+		if (!all(NeuralRenderingFinite::IsFinite(candidate)) || any(candidate < 0.0) || !NeuralRenderingFinite::IsFinite(normalization) || normalization <= kMinimumNormalization)
 			return false;
 		weights = candidate / normalization;
 		return true;
