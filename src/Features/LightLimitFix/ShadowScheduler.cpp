@@ -2840,8 +2840,7 @@ namespace ShadowCasterManager
 		anyCostRejected = false;
 
 		for (auto* e : pending) {
-			// Player-protected lights ignore the budget, so they must not also take the starvation floor.
-			const bool floorAdmit = isFirst && !e->playerProtected;
+			const bool floorAdmit = TakesStarvationFloor(isFirst, e->playerProtected);
 			if (!e->playerProtected && !floorAdmit && (maxRedraw <= 0 || budgetRemain <= 0))
 				break;
 			DueGate gate = DueGateFor(e, now, floorAdmit);
@@ -2917,13 +2916,14 @@ namespace ShadowCasterManager
 						continue;
 					if (cfMaxRedraw <= 0 || cfBudget <= 0)
 						break;
-					const DueGate gate = DueGateFor(e, now, cfIsFirst);
+					const bool cfFloor = TakesStarvationFloor(cfIsFirst, e->playerProtected);
+					const DueGate gate = DueGateFor(e, now, cfFloor);
 					if (gate == DueGate::Stop)
 						break;
 					if (gate == DueGate::Skip)
 						continue;
 					const int32_t cost = s_budget.GetCost(e->Light);
-					if (cfIsFirst) {
+					if (cfFloor) {
 						if (!s_lights.Sun || e->Index > 0)
 							cfBudget -= cost;
 						cfMaxRedraw--;
@@ -2965,13 +2965,14 @@ namespace ShadowCasterManager
 				for (auto* e : s_cfUnion) {
 					if (cfMaxRedraw <= 0 || cfBudget <= 0)
 						break;
-					const DueGate gate = DueGateFor(e, now, cfIsFirst);
+					const bool cfFloor = TakesStarvationFloor(cfIsFirst, e->playerProtected);
+					const DueGate gate = DueGateFor(e, now, cfFloor);
 					if (gate == DueGate::Stop)
 						break;
 					if (gate == DueGate::Skip)
 						continue;
 					const int32_t cost = s_budget.GetCost(e->Light);
-					if (cfIsFirst) {
+					if (cfFloor) {
 						if (!s_lights.Sun || e->Index > 0)
 							cfBudget -= cost;
 						cfMaxRedraw--;

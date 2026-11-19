@@ -25,6 +25,7 @@ using ShadowCasterManager::SliceCappedLightCount;
 using ShadowCasterManager::SlotHeldScore;
 using ShadowCasterManager::SphereWhollyBehindPlane;
 using ShadowCasterManager::StallBucket;
+using ShadowCasterManager::TakesStarvationFloor;
 using ShadowCasterManager::TileScaleForCoverage;
 using ShadowCasterManager::TileScaleTarget;
 
@@ -266,6 +267,15 @@ TEST_CASE("SlotHeldScore keeps a holder against a near-equal challenger", "[scm]
 	// A user formula can score at or below zero, where scaling would demote the holder.
 	REQUIRE(SlotHeldScore(0.0, true) == 0.0);
 	REQUIRE(SlotHeldScore(-2.0, true) == -2.0);
+}
+
+TEST_CASE("TakesStarvationFloor leaves the floor to a light the budget can starve", "[scm]")
+{
+	REQUIRE(TakesStarvationFloor(true, false));
+	// A player-protected light already ignores the budget, so the floor passes on to the next light.
+	REQUIRE_FALSE(TakesStarvationFloor(true, true));
+	REQUIRE_FALSE(TakesStarvationFloor(false, false));
+	REQUIRE_FALSE(TakesStarvationFloor(false, true));
 }
 
 TEST_CASE("Every light count fits the slices allocated for it", "[scm]")

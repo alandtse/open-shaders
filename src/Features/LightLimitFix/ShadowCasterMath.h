@@ -75,6 +75,13 @@ namespace ShadowCasterManager
 		return a_holdsSlot && a_score > 0.0 ? a_score * kSlotHoldMargin : a_score;
 	}
 
+	/// Whether a light takes the one-per-frame starvation floor: the first admission, never a player-protected light, which
+	/// already ignores the redraw budget.
+	inline bool TakesStarvationFloor(bool a_isFirst, bool a_playerProtected) noexcept
+	{
+		return a_isFirst && !a_playerProtected;
+	}
+
 	// Casters reaching the equatorial plane keep the engine's hemisphere choice;
 	// the margin floor keeps a zero-radius light from collapsing the seam.
 	inline constexpr float kHemisphereSeamMarginMin = 1.0f;
