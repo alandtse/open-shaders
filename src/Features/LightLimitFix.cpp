@@ -570,6 +570,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
 	perFrame.EnableLightsVisualisation = EnableLightsVisualisation;
 	perFrame.LightsVisualisationMode = LightsVisualisationMode;
+	perFrame.ClusteredLightCount = lightCount;
 	return perFrame;
 }
 
@@ -1109,7 +1110,10 @@ void LightLimitFix::Prepass()
 	demandSample.tileCount = clusterSize[0] * clusterSize[1];
 	ShadowCasterManager::SetShadowDemand(demandSample);
 	ShadowCasterManager::Update(settings.ShadowSettings, globals::game::smState->shadowSceneNode[0], nullptr);
+	const uint32_t previousLightCount = lightCount;
 	UpdateLights();
+	if (lightCount != previousLightCount)
+		globals::state->UpdateFeatureData(globals::state->inWorld);
 
 	ID3D11ShaderResourceView* views[3]{};
 	views[0] = lights->srv.get();
