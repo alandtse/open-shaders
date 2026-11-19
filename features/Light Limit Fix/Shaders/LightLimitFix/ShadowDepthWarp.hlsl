@@ -45,6 +45,8 @@ cbuffer WarpParams : register(b0)
 	const bool upper = omni ? (uv.y < 0.5) : true;
 	const float2 q = TileToParaboloid(uv, omni);
 	const float q2 = dot(q, q);
+	if (q2 > 1.0 + 8.0 / TileSize)
+		return;  // past the rim: no paraboloid data, only depth flung there by bars crossing the plane
 
 	const float inv = 1.0 / (1.0 + q2);
 	const float sgn = upper ? 1.0 : -1.0;
