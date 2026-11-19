@@ -66,9 +66,12 @@ namespace
 	/// Binds the paraboloid clip geometry shader with our Utility paraboloid shadow vertex shader, and unbinds it for every other one.
 	void SetParaboloidClipShader(const RE::BSShader* a_shader, uint32_t a_vertexDescriptor, bool a_customVertexShader)
 	{
+		using enum SIE::ShaderCache::UtilityShaderFlags;
+		// The paraboloid bit is shared with AdditionalAlphaMask, so only a shadow-map draw outside OpaqueEffect is paraboloid.
+		constexpr auto paraboloidShadow = static_cast<uint32_t>(RenderShadowmap) | static_cast<uint32_t>(RenderShadowmapPb);
 		ID3D11GeometryShader* geometryShader = nullptr;
 		if (a_customVertexShader && a_shader && a_shader->shaderType.get() == RE::BSShader::Type::Utility &&
-			(a_vertexDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmapPb)) != 0)
+			(a_vertexDescriptor & paraboloidShadow) == paraboloidShadow && !(a_vertexDescriptor & static_cast<uint32_t>(OpaqueEffect)))
 			geometryShader = globals::shaderCache->GetParaboloidClipShader(*a_shader, a_vertexDescriptor);
 		if (geometryShader || ParaboloidClipBound) {
 			globals::d3d::context->GSSetShader(geometryShader, nullptr, 0);
