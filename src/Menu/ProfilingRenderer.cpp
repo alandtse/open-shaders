@@ -3,17 +3,29 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cfloat>
 #include <cmath>
 #include <cstdint>
+#include <format>
 #include <imgui.h>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 
+#include "CSEditor/Browser/BrowserWidgets.h"
+#include "Feature.h"
+#include "Features/PerformanceOverlay.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "Menu/FeatureListRenderer.h"
+#include "Menu/Fonts.h"
+#include "Menu/Icons/helpers/IconFonts.h"
+#include "Menu/MenuIcons.h"
+#include "Menu/ThemeManager.h"
 #include "State.h"
+#include "Utils/Format.h"
 #include "Utils/MathUtils.h"
 #include "Utils/UI.h"
 
@@ -22,17 +34,11 @@ static constexpr float kMaxDisplayTimingSampleMs = 1000.0f;
 static constexpr float kGraphHeadroomScale = 1.2f;
 static constexpr float kMainGraphHeight = 180.0f;
 static constexpr float kFeatureGraphHeight = 100.0f;
-static constexpr float kFeatureOverviewGraphHeight = 85.0f;
 static constexpr float kMainGraphMinFrameTimeSec = 0.0001f;
 static constexpr float kFeatureGraphMinFrameTimeSec = 0.00001f;
 static constexpr float kTimingTableMetricColumnWidth = 55.0f;
 static constexpr float kTimingTablePercentColumnWidth = 45.0f;
 static constexpr float kStatsRefreshSeconds = 1.0f;
-static constexpr float kFeatureDisclosureChevronSpeed = 10.0f;
-[[maybe_unused]] static constexpr float kFeatureTimingHeightTolerance = 1.0f;  // only read inside IM_ASSERT, compiled out in release
-static std::unordered_map<std::string, bool> g_featureProfilingDisclosuresOpen;
-static std::unordered_map<std::string, float> g_featureProfilingChevronProgress;
-static std::string g_currentFeatureProfilingPage;
 
 static ImU32 HslToImU32(float h, float s, float l)
 {
@@ -320,6 +326,23 @@ static bool HasLiveTimingMode(const Profiler::TimerResult& result, bool cpuMode)
 	return cpuMode ? result.hasCpu : result.hasGpu;
 }
 
+static void RenderTaskGraph(ImGuiUtils::ProfilerGraph& graph, Util::GraphSampleGate& gate, const std::vector<legit::ProfilerTask>& tasks, float height, bool showLegend)
+{
+	if (gate.ShouldSample())
+		graph.LoadFrameData(tasks.data(), tasks.size());
+
+	float maxFrameTimeSec = graph.GetPeakFrameTime() * kGraphHeadroomScale;
+	if (maxFrameTimeSec < kMainGraphMinFrameTimeSec)
+		maxFrameTimeSec = kMainGraphMinFrameTimeSec;
+
+	const float uiScale = Util::GetUIScale();
+	const int totalWidth = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x));
+	const int legendWidth = showLegend ? ComputeGraphLegendWidth(totalWidth, ScaleToUiInt(100.0f), 0.42f, ScaleToUiInt(280.0f), ScaleToUiInt(420.0f)) : 0;
+	const int graphWidth = std::max(1, totalWidth - legendWidth);
+
+	graph.RenderTimings(static_cast<float>(graphWidth), static_cast<float>(legendWidth), height, 0, maxFrameTimeSec, uiScale);
+}
+
 bool ProfilingRenderer::RenderGraph(float height, bool showLegend)
 {
 	auto& profiler = (*globals::profiler);
@@ -338,12 +361,7 @@ bool ProfilingRenderer::RenderGraph(float height, bool showLegend)
 
 		float timeMs = cpuMode ? result.cpuTimeMs : result.gpuTimeMs;
 
-		std::string groupName;
-		auto pos = result.name.find("::");
-		if (pos != std::string::npos)
-			groupName = result.name.substr(0, pos);
-		else
-			groupName = result.name;
+		const std::string groupName = GetGroupName(result.name);
 
 		legit::ProfilerTask task;
 		task.startTime = accumulated / 1000.0;
@@ -358,20 +376,7 @@ bool ProfilingRenderer::RenderGraph(float height, bool showLegend)
 	if (tasks.empty())
 		return false;
 
-	if (gpuGraphGate.ShouldSample())
-		gpuGraph.LoadFrameData(tasks.data(), tasks.size());
-
-	float maxFrameTimeSec = gpuGraph.GetPeakFrameTime() * kGraphHeadroomScale;
-	if (maxFrameTimeSec < kMainGraphMinFrameTimeSec)
-		maxFrameTimeSec = kMainGraphMinFrameTimeSec;
-
-	const float uiScale = Util::GetUIScale();
-	const int totalWidth = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x));
-	const int legendWidth = showLegend ? ComputeGraphLegendWidth(totalWidth, ScaleToUiInt(100.0f), 0.42f, ScaleToUiInt(280.0f), ScaleToUiInt(420.0f)) : 0;
-	const int graphWidth = std::max(1, totalWidth - legendWidth);
-
-	gpuGraph.RenderTimings(static_cast<float>(graphWidth), static_cast<float>(legendWidth), height, 0, maxFrameTimeSec, uiScale);
-
+	RenderTaskGraph(gpuGraph, gpuGraphGate, tasks, height, showLegend);
 	return true;
 }
 
@@ -434,15 +439,10 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 		UpdateStatistics(cpuMode);
 	}
 
-	const bool renderedFeatureOverview = showModeToggle && RenderFeatureOverview();
 	if (cachedGroups.empty()) {
-		if (!renderedFeatureOverview)
-			ImGui::TextDisabled("%s", T("menu.profiling.no_timing_data_world", "No timing data available (enter game world)"));
+		ImGui::TextDisabled("%s", T("menu.profiling.no_timing_data_world", "No timing data available (enter game world)"));
 		return;
 	}
-
-	if (renderedFeatureOverview)
-		ImGui::SeparatorText(T("menu.profiling.all_timings", "All Timings"));
 
 	RenderGraph(kMainGraphHeight * Util::GetUIScale(), true);
 	ImGui::Spacing();
@@ -490,21 +490,41 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 					TextHeat("%5.1f", (avg / cachedTotalAvgMs) * 100.0f, 100.0f);
 			};
 
+			// Consumed on the first draw, so a group that is not reporting does not grab the view later.
+			const std::string focus = std::exchange(focusGroup, {});
+
+			// Right-click a group to pick it in or out of the Performance Overlay's graph.
+			// Keyed on the tree node just drawn, so each group gets its own menu.
+			const auto groupContextMenu = [](const std::string& a_group) {
+				if (ImGui::BeginPopupContextItem()) {
+					RenderOverlayGroupToggle(a_group);
+					ImGui::EndPopup();
+				}
+			};
+
 			for (const GroupEntry* groupRow : groups) {
 				const auto& group = *groupRow;
 				ImGui::TableNextRow();
 				ImGui::TableNextColumn();
 
+				// A feature's popover asked for this group: open it and scroll to it.
+				if (!focus.empty() && group.name == focus) {
+					ImGui::SetScrollHereY(0.25f);
+					ImGui::SetNextItemOpen(true);
+				}
+
 				const ImU32 groupColor = GetGroupColor(group.name);
 				if (group.passes.empty()) {
 					RenderColorMarker(groupColor);
 					ImGui::TreeNodeEx(group.name.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+					groupContextMenu(group.name);
 					metricCells(group.totalAvgMs, group.totalP95Ms, group.totalP99Ms);
 					continue;
 				}
 
 				RenderColorMarker(groupColor);
 				const bool open = ImGui::TreeNodeEx(group.name.c_str(), 0);
+				groupContextMenu(group.name);
 				metricCells(group.totalAvgMs, group.totalP95Ms, group.totalP99Ms);
 				if (!open)
 					continue;
@@ -713,23 +733,23 @@ ProfilingRenderer::FeatureTimingData ProfilingRenderer::CollectFeatureTimingData
 	return data;
 }
 
-float ProfilingRenderer::GetFeatureTimingDataHeight(const FeatureTimingData& data)
+const ProfilingRenderer::FeatureTimingData& ProfilingRenderer::GetFeatureTimings(const std::string& featurePrefix)
 {
-	if (data.entries.empty())
-		return ImGui::GetTextLineHeightWithSpacing();
-
-	const auto& style = ImGui::GetStyle();
-	const float rowHeight = ImGui::GetTextLineHeight() + style.CellPadding.y * 2.0f;
-	const float tableHeight = rowHeight * static_cast<float>(data.entries.size() + 2);
-	return kFeatureGraphHeight * Util::GetUIScale() + tableHeight + style.ItemSpacing.y * 3.0f;
+	auto& state = featureGraphs[featurePrefix];
+	const int frame = ImGui::GetFrameCount();
+	if (state.dataFrame != frame) {
+		const bool cpuMode = (timingMode == TimingMode::CPU);
+		globals::profiler->RequestCapture(cpuMode ? Profiler::CaptureMode::CPU : Profiler::CaptureMode::GPU, GetFeatureTimerPrefix(featurePrefix));
+		state.data = CollectFeatureTimingData(featurePrefix, cpuMode);
+		state.dataFrame = frame;
+	}
+	return state.data;
 }
 
-bool ProfilingRenderer::RenderFeatureTimingGraph(const FeatureTimingData& data, ImGuiUtils::ProfilerGraph& graph, Util::GraphSampleGate& gate, float graphHeight)
+void ProfilingRenderer::RecordFeatureTimingGraph(const FeatureTimingData& data, ImGuiUtils::ProfilerGraph& graph, Util::GraphSampleGate& gate)
 {
-	if (data.entries.empty())
-		return false;
-
 	std::vector<legit::ProfilerTask> tasks;
+	tasks.reserve(data.entries.size());
 	double accumulated = 0.0;
 	for (const auto& e : data.entries) {
 		legit::ProfilerTask task;
@@ -741,12 +761,12 @@ bool ProfilingRenderer::RenderFeatureTimingGraph(const FeatureTimingData& data, 
 		tasks.push_back(task);
 		accumulated += e.timeMs;
 	}
-	if (tasks.empty())
-		return false;
-
-	if (gate.ShouldSample())
+	if (!tasks.empty() && gate.ShouldSample())
 		graph.LoadFrameData(tasks.data(), tasks.size());
+}
 
+void ProfilingRenderer::DrawFeatureTimingGraph(const FeatureTimingData& data, ImGuiUtils::ProfilerGraph& graph, float graphHeight)
+{
 	float maxFrameTimeSec = graph.GetPeakFrameTime() * kGraphHeadroomScale;
 	if (maxFrameTimeSec < kFeatureGraphMinFrameTimeSec)
 		maxFrameTimeSec = kFeatureGraphMinFrameTimeSec;
@@ -755,24 +775,96 @@ bool ProfilingRenderer::RenderFeatureTimingGraph(const FeatureTimingData& data, 
 	const int totalWidth = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x));
 	const int legendWidth = ComputeFeatureGraphLegendWidth(data, totalWidth);
 	const int graphWidth = std::max(1, totalWidth - legendWidth);
-	const float scaledGraphHeight = graphHeight * uiScale;
 
-	graph.RenderTimings(static_cast<float>(graphWidth), static_cast<float>(legendWidth), scaledGraphHeight, 0, maxFrameTimeSec, uiScale);
+	graph.RenderTimings(static_cast<float>(graphWidth), static_cast<float>(legendWidth), graphHeight * uiScale, 0, maxFrameTimeSec, uiScale);
+}
+
+std::string ProfilingRenderer::FeatureCostChipLabel(const FeatureTimingData& data)
+{
+	const bool cpuMode = (timingMode == TimingMode::CPU);
+	return std::format("{} {}", cpuMode ? T("menu.profiling.cpu", "CPU") : T("menu.profiling.gpu", "GPU"),
+		Util::FormatMilliseconds(data.totalAvg));
+}
+
+float ProfilingRenderer::MeasureFeatureCostChip(const std::string& featurePrefix)
+{
+	if (!globals::profiler || !globals::profiler->IsUserEnabled() || !IsFeatureProfilingAvailable(featurePrefix))
+		return 0.0f;
+
+	const auto& data = GetFeatureTimings(featurePrefix);
+	if (data.entries.empty())
+		return 0.0f;
+
+	MenuFonts::FontRoleGuard subtext(Menu::FontRole::Subtext);
+	return BrowserUI::MeasureChip(FeatureCostChipLabel(data).c_str(), true);
+}
+
+bool ProfilingRenderer::RenderFeatureCostChip(const std::string& featurePrefix, float rightLimit)
+{
+	if (!globals::profiler || !globals::profiler->IsUserEnabled() || !IsFeatureProfilingAvailable(featurePrefix))
+		return false;
+
+	auto& state = featureGraphs[featurePrefix];
+	const auto& data = GetFeatureTimings(featurePrefix);
+	if (data.entries.empty())
+		return false;
+	// Recorded whether or not the popover is open, so it opens on a filled history.
+	const bool cpuMode = (timingMode == TimingMode::CPU);
+	RecordFeatureTimingGraph(data, cpuMode ? state.cpuGraph : state.gpuGraph, cpuMode ? state.cpuGate : state.gpuGate);
+
+	const auto& theme = globals::menu->GetTheme();
+	const std::string label = FeatureCostChipLabel(data);
+	const ImVec4 costColor = Util::GetThresholdColor(data.totalAvg, ThemeManager::Constants::FEATURE_COST_GOOD_MS,
+		ThemeManager::Constants::FEATURE_COST_WARNING_MS, theme.StatusPalette.SuccessColor, theme.StatusPalette.Warning, theme.StatusPalette.Error);
+
+	const char* popupId = "##FeatureProfilingPopover";
+	{
+		MenuFonts::FontRoleGuard subtext(Menu::FontRole::Subtext);
+		if (ImGui::GetCursorScreenPos().x + BrowserUI::MeasureChip(label.c_str(), true) > rightLimit)
+			return false;
+		const ImVec4 secondary = Util::Colors::GetSecondary();
+		ImGui::PushStyleColor(ImGuiCol_Text, secondary);
+		if (BrowserUI::Chip("##FeatureCost", label.c_str(), Icons::TI(MenuIcons::kProfiling), &costColor))
+			ImGui::OpenPopup(popupId);
+		ImGui::PopStyleColor();
+	}
+	// The popover already shows everything the tooltip would.
+	if (!ImGui::IsPopupOpen(popupId)) {
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted(T("menu.profiling.cost_chip_tooltip", "Average time this feature's passes take each frame. Click for the breakdown."));
+			if (ImGui::BeginTable("##FeatureCostTooltip", 2, ImGuiTableFlags_SizingFixedFit)) {
+				for (const auto& e : data.entries) {
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn();
+					ImGui::TextUnformatted(e.label.c_str());
+					ImGui::TableNextColumn();
+					ImGui::TextUnformatted(Util::FormatMilliseconds(e.avgMs).c_str());
+				}
+				ImGui::EndTable();
+			}
+		}
+	}
+
+	const float popoverWidth = ThemeManager::Constants::FEATURE_PROFILING_POPOVER_WIDTH * Util::GetUIScale();
+	ImGui::SetNextWindowSizeConstraints(ImVec2(popoverWidth, 0.0f), ImVec2(popoverWidth, FLT_MAX));
+	if (ImGui::BeginPopup(popupId)) {
+		{
+			MenuFonts::FontRoleGuard body(Menu::FontRole::Body);
+			RenderFeatureTimersPopover(featurePrefix, state, data);
+		}
+		ImGui::EndPopup();
+	}
 	return true;
 }
 
-void ProfilingRenderer::RenderFeatureTimingData(const std::string& featurePrefix, FeatureTimingMode featureMode, const FeatureTimingData& data)
+void ProfilingRenderer::RenderFeatureTimersPopover(const std::string& featurePrefix, FeatureGraphState& state, const FeatureTimingData& data)
 {
-	bool cpuMode = featureMode == FeatureTimingMode::CPU;
+	Util::SeparatorTextWithFont(GetGroupDisplayName(featurePrefix).c_str(), Menu::FontRole::Subheading);
+	RenderTimingModeToggle();
 
-	if (data.entries.empty()) {
-		ImGui::TextDisabled("%s", T("menu.profiling.no_timing_data", "No timing data"));
-		return;
-	}
-
-	auto& state = featureGraphs[featurePrefix];
-	if (RenderFeatureTimingGraph(data, cpuMode ? state.cpuGraph : state.gpuGraph, cpuMode ? state.cpuGate : state.gpuGate, kFeatureGraphHeight))
-		ImGui::Spacing();
+	const bool cpuMode = (timingMode == TimingMode::CPU);
+	DrawFeatureTimingGraph(data, cpuMode ? state.cpuGraph : state.gpuGraph, kFeatureGraphHeight);
+	ImGui::Spacing();
 
 	if (ImGui::BeginTable("##FeatureTimers", 4, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_Sortable | ImGuiTableFlags_SortTristate)) {
 		std::vector<std::string> passLabels;
@@ -819,195 +911,113 @@ void ProfilingRenderer::RenderFeatureTimingData(const std::string& featurePrefix
 
 		ImGui::EndTable();
 	}
-}
-
-bool ProfilingRenderer::RenderFeatureOverview()
-{
-	std::vector<std::string> activeFeatures;
-	for (const auto& [featurePrefix, featureMode] : featureTimingModes) {
-		if (featureMode != FeatureTimingMode::Off)
-			activeFeatures.push_back(featurePrefix);
-	}
-	if (activeFeatures.empty())
-		return false;
-
-	globals::profiler->RequestCapture(Profiler::CaptureMode::Both);
-
-	std::sort(activeFeatures.begin(), activeFeatures.end());
-
-	ImGui::SeparatorText(T("menu.profiling.feature_overview", "Feature Profiling Overview"));
-
-	if (ImGui::BeginTable("##FeatureProfilingOverview", 3,
-			ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_RowBg)) {
-		ImGui::TableSetupColumn(T("menu.profiling.feature", "Feature"), ImGuiTableColumnFlags_WidthFixed, GetTextColumnWidth(T("menu.profiling.feature", "Feature"), activeFeatures));
-		ImGui::TableSetupColumn(T("menu.profiling.gpu", "GPU"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
-		ImGui::TableSetupColumn(T("menu.profiling.cpu", "CPU"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
-		ImGui::TableHeadersRow();
-
-		for (const auto& featurePrefix : activeFeatures) {
-			ImGui::TableNextRow();
-			ImGui::TableNextColumn();
-			ImGui::TextUnformatted(featurePrefix.c_str());
-
-			const auto gpuData = CollectFeatureTimingData(featurePrefix, false);
-			const auto cpuData = CollectFeatureTimingData(featurePrefix, true);
-			// Distinct key from RenderFeatureTimingData's: the two views are
-			// mutually exclusive today (a single-page menu), but sharing one
-			// ProfilerGraph would silently double-advance it if that changes.
-			auto& state = featureGraphs[featurePrefix + "::overview"];
-
-			ImGui::TableNextColumn();
-			ImGui::PushID((featurePrefix + "::GPU").c_str());
-			if (!RenderFeatureTimingGraph(gpuData, state.gpuGraph, state.gpuGate, kFeatureOverviewGraphHeight))
-				ImGui::TextDisabled("%s", T("menu.profiling.no_gpu_timing_data", "No GPU timing data"));
-			ImGui::PopID();
-
-			ImGui::TableNextColumn();
-			ImGui::PushID((featurePrefix + "::CPU").c_str());
-			if (!RenderFeatureTimingGraph(cpuData, state.cpuGraph, state.cpuGate, kFeatureOverviewGraphHeight))
-				ImGui::TextDisabled("%s", T("menu.profiling.no_cpu_timing_data", "No CPU timing data"));
-			ImGui::PopID();
-		}
-
-		ImGui::EndTable();
-	}
 
 	ImGui::Spacing();
-	return true;
+	RenderOverlayGroupToggle(featurePrefix);
+	if (globals::features::performanceOverlay.loaded)
+		ImGui::SameLine();
+	// Right-aligned so it reads as the way out rather than another setting
+	const char* openLabel = T("menu.profiling.open_page", "Open Profiling Page");
+	const float openWidth = ImGui::CalcTextSize(openLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+	ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - openWidth));
+	if (Util::Button(openLabel)) {
+		OpenProfilingPage(featurePrefix);
+		ImGui::CloseCurrentPopup();
+	}
+	Util::HoverTip(T("menu.profiling.open_page_tooltip", "Every feature's passes side by side, with this feature expanded"));
 }
 
-void ProfilingRenderer::RenderFeatureTimingModeControls(const std::string& featurePrefix, FeatureTimingMode& featureMode)
+void ProfilingRenderer::RenderOverlayGroupToggle(const std::string& group)
 {
-	ImGui::PushID(featurePrefix.c_str());
-	int mode = static_cast<int>(featureMode);
-	ImGui::PushID("FeatureProfilingMode");
-	ImGui::RadioButton(T("menu.profiling.cpu", "CPU"), &mode, static_cast<int>(FeatureTimingMode::CPU));
-	ImGui::SameLine();
-	ImGui::RadioButton(T("menu.profiling.gpu", "GPU"), &mode, static_cast<int>(FeatureTimingMode::GPU));
-	ImGui::SameLine();
-	ImGui::RadioButton(T("menu.profiling.off", "Off"), &mode, static_cast<int>(FeatureTimingMode::Off));
+	auto& overlay = globals::features::performanceOverlay;
+	if (!overlay.loaded)
+		return;
+	bool shown = overlay.IsProfilerGroupShown(group);
+	ImGui::PushID(group.c_str());
+	if (ImGui::Checkbox(T("menu.profiling.show_in_overlay", "Show in Performance Overlay"), &shown))
+		overlay.SetProfilerGroupShown(group, shown);
 	ImGui::PopID();
-
-	const auto selectedMode = static_cast<FeatureTimingMode>(mode);
-	if (selectedMode != featureMode) {
-		featureMode = selectedMode;
-		if (featureMode != FeatureTimingMode::Off)
-			globals::profiler->SetUserEnabled(true);
-	}
-	ImGui::PopID();
+	Util::HoverTip(T("menu.profiling.show_in_overlay_tooltip", "Include these passes in the Performance Overlay's render pass graph"));
 }
 
-void ProfilingRenderer::RenderFeatureTimingButton(const std::string& featurePrefix)
+void ProfilingRenderer::OpenProfilingPage(const std::string& group)
 {
-	ImGui::PushID(featurePrefix.c_str());
-	auto& disclosureOpen = g_featureProfilingDisclosuresOpen[featurePrefix];
-	auto& chevronProgress = g_featureProfilingChevronProgress.try_emplace(featurePrefix, disclosureOpen ? 0.0f : 1.0f).first->second;
-	const char* label = T("menu.features.profiling", "Profiling");
-	const auto& style = ImGui::GetStyle();
-	const float buttonHeight = ImGui::GetFrameHeight();
-	const float chevronSize = buttonHeight;
-	const float chevronSlotWidth = ImGui::GetTextLineHeight();
-	IM_ASSERT(chevronSize > 0.0f && chevronSlotWidth > 0.0f);
-	const ImVec2 labelSize = ImGui::CalcTextSize(label);
-	const float contentWidth = labelSize.x + style.ItemInnerSpacing.x + chevronSlotWidth;
-	const ImVec2 buttonSize(
-		std::ceil(contentWidth + style.FramePadding.x * 2.0f),
-		buttonHeight);
-
-	const bool pressed = Util::Button("##FeatureProfiling", buttonSize);
-	const ImVec2 buttonMin = ImGui::GetItemRectMin();
-	auto* drawList = ImGui::GetWindowDrawList();
-	if (pressed)
-		disclosureOpen = !disclosureOpen;
-
-	const float targetProgress = disclosureOpen ? 0.0f : 1.0f;
-	const float progressStep = kFeatureDisclosureChevronSpeed * ImGui::GetIO().DeltaTime;
-	if (chevronProgress < targetProgress)
-		chevronProgress = std::min(chevronProgress + progressStep, targetProgress);
-	else
-		chevronProgress = std::max(chevronProgress - progressStep, targetProgress);
-
-	const float contentX = buttonMin.x + (buttonSize.x - contentWidth) * 0.5f;
-	const float textY = buttonMin.y + (buttonHeight - labelSize.y) * 0.5f;
-	drawList->AddText(ImVec2(contentX, textY), ImGui::GetColorU32(ImGuiCol_Text), label);
-	const float chevronY = buttonMin.y + (buttonHeight - chevronSize) * 0.5f;
-	const float chevronCenterX = contentX + labelSize.x + style.ItemInnerSpacing.x + chevronSlotWidth * 0.5f;
-	const ImVec2 chevronMin(chevronCenterX - chevronSize * 0.5f, chevronY);
-	const ImVec2 chevronMax(chevronMin.x + chevronSize, chevronY + chevronSize);
-	Util::DrawDisclosureChevron(drawList, chevronMin, chevronMax, chevronProgress);
-
-	ImGui::PopID();
+	focusGroup = group;
+	globals::menu->SelectFeatureMenu(std::string(MenuPageIds::kProfiling));
 }
 
-float ProfilingRenderer::PrepareFeatureTimers(const std::string& featurePrefix, bool showProfiling)
+void ProfilingRenderer::RenderOverlayGraph()
 {
-	if (g_currentFeatureProfilingPage != featurePrefix) {
-		DeactivateFeatureTimers();
-		g_currentFeatureProfilingPage = featurePrefix;
-	}
-	if (!showProfiling || globals::profiler == nullptr) {
-		featureTimingViews.erase(featurePrefix);
-		return 0.0f;
-	}
-
 	auto& profiler = (*globals::profiler);
-	auto& featureMode = featureTimingModes[featurePrefix];
-	auto& view = featureTimingViews[featurePrefix];
-	view.controlsVisible = g_featureProfilingDisclosuresOpen[featurePrefix];
-	view.mode = featureMode;
-	view.profilingDisabled = view.controlsVisible && view.mode != FeatureTimingMode::Off && !profiler.IsUserEnabled();
-	view.data = {};
-
-	float timingDataHeight = 0.0f;
-	if (view.profilingDisabled) {
-		timingDataHeight = ImGui::GetTextLineHeightWithSpacing();
-	} else if (view.controlsVisible && view.mode != FeatureTimingMode::Off) {
-		profiler.RequestCapture(
-			view.mode == FeatureTimingMode::CPU ? Profiler::CaptureMode::CPU : Profiler::CaptureMode::GPU,
-			GetFeatureTimerPrefix(featurePrefix));
-		view.data = CollectFeatureTimingData(featurePrefix, view.mode == FeatureTimingMode::CPU);
-		timingDataHeight = GetFeatureTimingDataHeight(view.data);
-	}
-
-	view.contentHeight = timingDataHeight +
-	                     (view.controlsVisible ? ImGui::GetFrameHeightWithSpacing() : 0.0f) +
-	                     ImGui::GetFrameHeight();
-	return view.contentHeight;
-}
-
-void ProfilingRenderer::DeactivateFeatureTimers()
-{
-	if (g_currentFeatureProfilingPage.empty())
-		return;
-
-	const auto modeIt = featureTimingModes.find(g_currentFeatureProfilingPage);
-	if (modeIt != featureTimingModes.end() && modeIt->second == FeatureTimingMode::Off) {
-		g_featureProfilingDisclosuresOpen[g_currentFeatureProfilingPage] = false;
-		g_featureProfilingChevronProgress[g_currentFeatureProfilingPage] = 1.0f;
-	}
-	featureTimingViews.erase(g_currentFeatureProfilingPage);
-	g_currentFeatureProfilingPage.clear();
-}
-
-void ProfilingRenderer::RenderFeatureTimers(const std::string& featurePrefix)
-{
-	auto viewIt = featureTimingViews.find(featurePrefix);
-	IM_ASSERT(viewIt != featureTimingViews.end());
-	if (viewIt == featureTimingViews.end())
-		return;
-
-	const auto& view = viewIt->second;
-	[[maybe_unused]] const float contentStartY = ImGui::GetCursorPosY();
-	if (view.profilingDisabled)
+	if (!profiler.IsUserEnabled()) {
 		ImGui::TextDisabled("%s", T("menu.profiling.disabled", "Profiling is disabled"));
-	else if (view.controlsVisible && view.mode != FeatureTimingMode::Off)
-		RenderFeatureTimingData(featurePrefix, view.mode, view.data);
+		return;
+	}
+	const bool cpuMode = (timingMode == TimingMode::CPU);
+	profiler.RequestCapture(cpuMode ? Profiler::CaptureMode::CPU : Profiler::CaptureMode::GPU);
+	const auto& overlay = globals::features::performanceOverlay;
 
-	if (view.controlsVisible)
-		RenderFeatureTimingModeControls(featurePrefix, featureTimingModes[featurePrefix]);
+	bool anyTimers = false;
+	std::vector<legit::ProfilerTask> tasks;
+	double accumulated = 0.0;
+	for (const auto& result : profiler.GetResults()) {
+		if (!result.valid || !HasLiveTimingMode(result, cpuMode))
+			continue;
+		anyTimers = true;
+		const std::string groupName = GetGroupName(result.name);
+		if (!overlay.IsProfilerGroupShown(groupName))
+			continue;
 
-	RenderFeatureTimingButton(featurePrefix);
-	IM_ASSERT(std::abs(ImGui::GetCursorPosY() - contentStartY - ImGui::GetStyle().ItemSpacing.y - view.contentHeight) <= kFeatureTimingHeightTolerance);
+		const float timeMs = cpuMode ? result.cpuTimeMs : result.gpuTimeMs;
+		legit::ProfilerTask task;
+		task.startTime = accumulated / 1000.0;
+		task.endTime = (accumulated + timeMs) / 1000.0;
+		task.name = result.name;
+		task.displayName = BuildProfilerGraphLabel(result.name);
+		task.color = ToLegitColor(GetGroupColor(groupName));
+		tasks.push_back(task);
+		accumulated += timeMs;
+	}
+
+	if (!anyTimers) {
+		ImGui::TextDisabled("%s", T("menu.profiling.no_timing_data_world", "No timing data available (enter game world)"));
+		return;
+	}
+	if (tasks.empty()) {
+		ImGui::TextDisabled("%s", T("menu.profiling.all_groups_hidden", "Every render pass is hidden. Pick some in the Performance Overlay settings."));
+		return;
+	}
+	RenderTaskGraph(overlayGraph, overlayGraphGate, tasks, kMainGraphHeight * Util::GetUIScale(), true);
+}
+
+std::vector<std::string> ProfilingRenderer::GetActiveGroups()
+{
+	auto& profiler = (*globals::profiler);
+	profiler.RequestCapture(timingMode == TimingMode::CPU ? Profiler::CaptureMode::CPU : Profiler::CaptureMode::GPU);
+	std::vector<std::string> groups;
+	for (const auto& result : profiler.GetResults()) {
+		if (!result.valid)
+			continue;
+		auto group = GetGroupName(result.name);
+		if (std::ranges::find(groups, group) == groups.end())
+			groups.push_back(std::move(group));
+	}
+	return groups;
+}
+
+std::string ProfilingRenderer::GetGroupDisplayName(const std::string& group)
+{
+	for (auto* feature : Feature::GetFeatureList()) {
+		if (feature->GetShortName() == group)
+			return feature->GetDisplayName();
+	}
+	return group;
+}
+
+std::string ProfilingRenderer::GetGroupName(std::string_view timerName)
+{
+	const auto pos = timerName.find("::");
+	return std::string(pos != std::string_view::npos ? timerName.substr(0, pos) : timerName);
 }
 
 bool ProfilingRenderer::IsFeatureProfilingAvailable(const std::string& featurePrefix)

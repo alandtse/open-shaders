@@ -5,6 +5,7 @@
 #include "Effects11/ENBHelper.h"
 #include "Effects11/Editor/Effects11Editor.h"
 #include "Effects11/EffectManager.h"
+#include "Effects11/Overlays/PresetOverlays.h"
 #include "Effects11/PresetManager.h"
 #include "Effects11/SettingManager.h"
 #include "Effects11/WeatherManager.h"
@@ -19,6 +20,7 @@
 #include "PostProcessingMode.h"
 #include "Presets/PresetProvider.h"
 #include "Presets/UnifiedPresetCatalog.h"
+#include "ProceduralAurora.h"
 #include "ShaderCache.h"
 #include "SkySync.h"
 #include "State.h"
@@ -481,8 +483,7 @@ namespace
 	{
 		auto& settingManager = SettingManager::GetSingleton();
 		auto& effectManager = EffectManager::GetSingleton();
-		settingManager.Save();
-		effectManager.Save();
+		Overlays::Manager::GetSingleton().SavePreset();
 		settingManager.Load();
 		effectManager.Apply();
 	}
@@ -601,8 +602,10 @@ Effects11::PerFrame Effects11::GetCommonBufferData()
 	data.StarsAnimationTime = settingManager.GetValue<float>("StarsAnimationTime", "SKY");
 	data.StarsAnimationDensity = settingManager.GetValue<float>("StarsAnimationDensity", "SKY");
 	data.StarsAnimationIntensity = settingManager.GetValue<float>("StarsAnimationIntensity", "SKY");
-	data.AuroraIntensity = settingManager.GetInterpolatedTimeOfDayValue("AuroraBorealisIntensity", "SKY");
-	data.AuroraCurve = settingManager.GetInterpolatedTimeOfDayValue("AuroraBorealisCurve", "SKY");
+	// The procedural aurora passes through unchanged so only its own settings shape it
+	const bool proceduralAurora = globals::features::proceduralAurora.IsActive();
+	data.AuroraIntensity = proceduralAurora ? 1.0f : settingManager.GetInterpolatedTimeOfDayValue("AuroraBorealisIntensity", "SKY");
+	data.AuroraCurve = proceduralAurora ? 1.0f : settingManager.GetInterpolatedTimeOfDayValue("AuroraBorealisCurve", "SKY");
 
 	data.VolumetricRaysDesaturation = settingManager.GetInterpolatedTimeOfDayValue("Desaturation", "GAMEVOLUMETRICRAYS");
 	auto colorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("ColorFilter", "GAMEVOLUMETRICRAYS");
@@ -1861,10 +1864,8 @@ namespace
 						manager.ReloadActive();
 					return true;
 				}
-				if (saveCurrent && manager.CanExportActivePreset()) {
-					SettingManager::GetSingleton().Save();
-					EffectManager::GetSingleton().Save();
-				}
+				if (saveCurrent && manager.CanExportActivePreset() && !Overlays::Manager::GetSingleton().SavePreset())
+					return false;
 				manager.SetActiveLocation(location->root);
 				manager.ReloadActive();
 				return true;

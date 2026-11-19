@@ -129,7 +129,16 @@ float2 SmoothSaturate(float2 value)
 	return value * value * (3 - 2 * value);
 }
 
+#	if defined(TREE_WIND) && defined(VC) && !defined(TREE_ANIM) && !defined(LOD_LANDSCAPE) && !defined(SKINNED)
+#		define TREE_WIND_VS
+#		include "TreeWind/TreeWind.hlsli"
+#	endif
+
+#	if defined(TREE_WIND_VS)
+VS_OUTPUT main(VS_INPUT input, uint vertexID : SV_VertexID)
+#	else
 VS_OUTPUT main(VS_INPUT input)
+#	endif
 {
 	VS_OUTPUT vsout;
 
@@ -202,6 +211,14 @@ VS_OUTPUT main(VS_INPUT input)
 	float2 treeTmp1 = SmoothSaturate(abs(2 * frac(leafPhase) - 1));
 	float normalMult = (treeTmp1.x + 0.1 * treeTmp1.y) * input.Color.w * leafAnimationStrength;
 	positionMS.xyz += normalMS.xyz * normalMult;
+#		endif
+
+#		if defined(TREE_WIND_VS)
+	// Same offset as Lighting.hlsl, so depth and shadow passes match the swaying trees
+	if (TreeLodWind::IsEnabled()) {
+		float nearScale = TreeLodWind::GetNearScale((float3x4)World[eyeIndex], input.PositionMS.xyz);
+		positionMS.xy += TreeLodWind::GetOffset(input.PositionMS.xyz, TreeLodWind::Wind.x, vertexID, nearScale);
+	}
 #		endif
 
 #		if defined(LOD_LANDSCAPE)

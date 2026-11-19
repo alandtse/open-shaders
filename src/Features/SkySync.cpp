@@ -156,54 +156,6 @@ void SkySync::DrawSettings()
 
 		ImGui::TreePop();
 	}
-
-	if (Util::ShowDebugSections() && ImGui::TreeNodeEx(T(TKEY("debug"), "Debug"), ImGuiTreeNodeFlags_None)) {
-		const char* CasterNames[] = { T(TKEY("caster_sun"), "Sun"), T(TKEY("caster_masser"), "Masser"), T(TKEY("caster_secunda"), "Secunda"), T(TKEY("caster_zenith"), "Zenith") };
-		const char* PhaseNames[] = { T(TKEY("phase_full"), "Full"), T(TKEY("phase_waning_gibbous"), "Waning Gibbous"), T(TKEY("phase_waning_quarter"), "Waning Quarter"), T(TKEY("phase_waning_crescent"), "Waning Crescent"), T(TKEY("phase_new"), "New"), T(TKEY("phase_waxing_crescent"), "Waxing Crescent"), T(TKEY("phase_waxing_quarter"), "Waxing Quarter"), T(TKEY("phase_waxing_gibbous"), "Waxing Gibbous") };
-
-		auto getPhase = [&](const RE::Moon* moon) -> const char* {
-			if (!moon || !moon->moonMesh)
-				return T(TKEY("phase_unknown"), "Unknown");
-			if (const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(moon->moonMesh->GetGeometryRuntimeData().shaderProperty.get())) {
-				if (auto tex = prop->GetBaseTexture())
-					return PhaseNames[static_cast<int>(Util::Moon::GetPhaseFromTexture(tex->name.c_str()))];
-			}
-			return T(TKEY("phase_unknown"), "Unknown");
-		};
-
-		auto drawMoonEntry = [&](const char* label, Caster caster, const char* phase) {
-			auto& color = colors[static_cast<int>(caster)];
-			ImVec4 swatch = { color.x, color.y, color.z, 1.0f };
-			ImGui::ColorButton(label, swatch, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, { ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight() });
-			ImGui::SameLine();
-			ImGui::Text("%s  [%s]  color (%.3f, %.3f, %.3f, %.3f)", label, phase, color.x, color.y, color.z, color.w);
-		};
-
-		const auto sky = globals::game::sky;
-		drawMoonEntry(T(TKEY("caster_masser"), "Masser"), Caster::Masser, sky ? getPhase(sky->masser) : T(TKEY("phase_unknown"), "Unknown"));
-		drawMoonEntry(T(TKEY("caster_secunda"), "Secunda"), Caster::Secunda, sky ? getPhase(sky->secunda) : T(TKEY("phase_unknown"), "Unknown"));
-
-		ImGui::Text(T(TKEY("debug_dim"), "Dim: %.3f"), currentDim);
-
-		ImGui::Spacing();
-		ImGui::Separator();
-		ImGui::Spacing();
-
-		ImGui::Text(T(TKEY("debug_shadow_target"), "Shadow target: %s"), CasterNames[static_cast<int>(shadowFader.target)]);
-		ImGui::Text(T(TKEY("debug_shadow_dir"), "Shadow dir:    (%.2f, %.2f, %.2f)"), shadowFader.currentDir.x, shadowFader.currentDir.y, shadowFader.currentDir.z);
-		ImGui::Text(T(TKEY("debug_transition_intensity"), "Transition intensity factor: %.3f"), shadowFader.intensityFactor);
-		ImGui::Text(T(TKEY("debug_vl_fade"), "Caster fade: %.3f"), shadowFader.casterFade);
-		if (shadowFader.transitioning) {
-			const float t = shadowFader.Progress(settings.ShadowTransitionDuration);
-			ImGui::ProgressBar(t, { -1.0f, 0.0f }, "");
-			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-			ImGui::Text(T(TKEY("debug_transitioning"), "Transitioning %.0f%%"), t * 100.0f);
-		} else {
-			ImGui::TextDisabled("%s", T(TKEY("debug_no_transition"), "No transition"));
-		}
-
-		ImGui::TreePop();
-	}
 }
 
 void SkySync::LoadSettings(json& o_json)

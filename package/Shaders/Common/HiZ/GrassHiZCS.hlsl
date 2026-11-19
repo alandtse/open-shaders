@@ -1,5 +1,6 @@
 #include "Common/ReverseZ.hlsli"
 
+// Reduce 4x4 blocks to farthest depth.
 Texture2D<SCENE_DEPTH_FORMAT> SrcDepth : register(t0);
 
 RWTexture2D<float> HiZ : register(u0);
@@ -17,19 +18,19 @@ cbuffer HiZParams : register(b0)
 	if (any(tid.xy >= DstSize))
 		return;
 
-	const int2 src = int2(tid.xy) * HIZ_DOWNSAMPLE_FACTOR;
+	const int2 sourceOrigin = int2(tid.xy) * HIZ_DOWNSAMPLE_FACTOR;
 
 	// Out of bounds reads as far, so an edge tile reduces to the far value and can only under-cull.
-	float d = FrameBuffer::NearPlaneDepth();
+	float farthestDepth = FrameBuffer::NearPlaneDepth();
 	[unroll] for (int y = 0; y < HIZ_DOWNSAMPLE_FACTOR; ++y)
 	{
 		[unroll] for (int x = 0; x < HIZ_DOWNSAMPLE_FACTOR; ++x)
 		{
-			const int2 p = src + int2(x, y);
-			const float texel = all(p < int2(SrcSize)) ? SrcDepth.Load(int3(p, 0)) : FrameBuffer::FarPlaneDepth();
-			d = FrameBuffer::FartherDepth(d, texel);
+			const int2 sourcePixel = sourceOrigin + int2(x, y);
+			const float texel = all(sourcePixel < int2(SrcSize)) ? SrcDepth.Load(int3(sourcePixel, 0)) : FrameBuffer::FarPlaneDepth();
+			farthestDepth = FrameBuffer::FartherDepth(farthestDepth, texel);
 		}
 	}
 
-	HiZ[tid.xy] = d;
+	HiZ[tid.xy] = farthestDepth;
 }
