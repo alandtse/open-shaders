@@ -1,4 +1,5 @@
 ﻿#include "InteriorSun.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "State.h"
 
@@ -9,7 +10,48 @@
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	InteriorSun::Settings,
 	ForceDoubleSidedRendering,
-	InteriorShadowDistance)
+	InteriorShadowDistance,
+	WindowLightOnly,
+	FrameShadowsFromGlowMaps,
+	GlowMapThreshold)
+
+namespace
+{
+	// Appends a shape's triangles in world space from its CPU geometry copy. False when the shape keeps none in a readable layout.
+	bool AppendWorldTriangles(RE::BSGeometry* geometry, std::vector<float3>& vertices, std::vector<float2>* uvs = nullptr, float2 uvScale = { 1, 1 }, float2 uvOffset = { 0, 0 })
+	{
+		const auto triShape = geometry->AsTriShape();
+		const auto rendererData = geometry->GetGeometryRuntimeData().rendererData;
+		if (!triShape || !rendererData || !rendererData->rawVertexData || !rendererData->rawIndexData)
+			return false;
+
+		// Positions must be full-precision floats at offset 0
+		auto& desc = rendererData->vertexDesc;
+		const uint32_t stride = desc.GetSize();
+		if (stride < 16 || desc.GetAttributeOffset(RE::BSGraphics::Vertex::Attribute::VA_TEXCOORD0) != 16)
+			return false;
+
+		const auto& counts = triShape->GetTrishapeRuntimeData();
+		const size_t firstVertex = vertices.size();
+		for (uint32_t i = 0; i < counts.triangleCount * 3u; ++i) {
+			const uint32_t index = rendererData->rawIndexData[i];
+			if (index >= counts.vertexCount) {
+				vertices.resize(firstVertex);
+				if (uvs)
+					uvs->resize(firstVertex);
+				return false;
+			}
+			const auto position = reinterpret_cast<const float*>(rendererData->rawVertexData + static_cast<size_t>(index) * stride);
+			const auto world = geometry->world * RE::NiPoint3(position[0], position[1], position[2]);
+			vertices.emplace_back(world.x, world.y, world.z);
+			if (uvs) {
+				const auto uv = reinterpret_cast<const uint16_t*>(rendererData->rawVertexData + static_cast<size_t>(index) * stride + 16);
+				uvs->emplace_back(DirectX::PackedVector::XMConvertHalfToFloat(uv[0]) * uvScale.x + uvOffset.x, DirectX::PackedVector::XMConvertHalfToFloat(uv[1]) * uvScale.y + uvOffset.y);
+			}
+		}
+		return true;
+	}
+}
 
 void InteriorSun::DrawSettings()
 {
@@ -29,6 +71,20 @@ void InteriorSun::DrawSettings()
 							  "Sets the distance shadows are rendered at in interiors. "
 							  "Lower values provide higher quality shadows and improved performance but may cause distant interior spaces to light up incorrectly. "));
 	}
+	ImGui::Checkbox(T(TKEY("window_light_only"), "Sunlight Through Windows Only"), &settings.WindowLightOnly);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("window_light_only_tooltip"),
+							  "Only lets the sun and moon into an interior through its window glass, which stops light leaking through walls, seams and roofs. "
+							  "Has no effect in interiors whose windows are not marked as glass."));
+	}
+	ImGui::Checkbox(T(TKEY("frame_shadows_from_glow_maps"), "Window Frames Cast Shadows"), &settings.FrameShadowsFromGlowMaps);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("frame_shadows_from_glow_maps_tooltip"),
+							  "Lets light through only the bright parts of each window's glow map, so frames and mullions cast shadows. "
+							  "Works with window retextures through their own glow maps. Takes effect on entering an interior."));
+	}
+	if (settings.FrameShadowsFromGlowMaps)
+		ImGui::SliderFloat(T(TKEY("glow_map_threshold"), "Window Frame Threshold"), &settings.GlowMapThreshold, 0.05f, 0.95f);
 }
 
 void InteriorSun::LoadSettings(json& o_json)
@@ -79,17 +135,353 @@ void InteriorSun::PostPostLoad()
 
 	rasterStateCullMode = globals::game::isVR ? &globals::game::shadowState->GetVRRuntimeData().rasterStateCullMode : &globals::game::shadowState->GetRuntimeData().rasterStateCullMode;
 
+	// Hook to draw window holes into the sun shadow maps before their casters. VR keeps a camera per eye in its descriptors, which is not handled.
+	if (!globals::game::isVR)
+		stl::write_vfunc<0x25, BSShaderAccumulator_StartAccumulating>(RE::VTABLE_BSShaderAccumulator[0]);
+
 	logger::info("[Interior Sun] Installed hooks");
 }
 
 void InteriorSun::EarlyPrepass()
 {
-	isInteriorWithSun = IsInteriorWithSun(RE::TES::GetSingleton()->interiorCell);
+	const auto cell = globals::game::tes->interiorCell;
+	isInteriorWithSun = IsInteriorWithSun(cell);
 	if (!isInteriorWithSun && !arraysCleared) {
 		ClearArrays();
 		currentCell = nullptr;
 		currentPortalGraph = nullptr;
 	}
+
+	if (cell && isInteriorWithSun)
+		UpdateWindowGlass(cell);
+	else if (windowGlassCell)
+		ReleaseWindowGlass();
+
+	// Changing this needs the cell scanned again and the holes rebuilt
+	if (settings.FrameShadowsFromGlowMaps != lastFrameShadows) {
+		lastFrameShadows = settings.FrameShadowsFromGlowMaps;
+		windowGlassCellFrames = 0;
+		forceHolesUpload = true;
+	}
+
+	renderThread = std::this_thread::get_id();
+}
+
+void InteriorSun::SetupResources()
+{
+	auto device = globals::d3d::device;
+
+	windowHolesCB = new ConstantBuffer(ConstantBufferDesc<WindowHolesCB>(), "InteriorSun::WindowHolesCB");
+
+	D3D11_SAMPLER_DESC samplerDesc{};
+	samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+	samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+	samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+	DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, windowHolesSampler.put()));
+	Util::SetResourceName(windowHolesSampler.get(), "InteriorSun::WindowHolesSampler");
+
+	D3D11_RASTERIZER_DESC rasterDesc{};
+	rasterDesc.FillMode = D3D11_FILL_SOLID;
+	rasterDesc.CullMode = D3D11_CULL_NONE;
+	DX::ThrowIfFailed(device->CreateRasterizerState(&rasterDesc, windowHolesRasterState.put()));
+	Util::SetResourceName(windowHolesRasterState.get(), "InteriorSun::WindowHolesRasterState");
+
+	D3D11_DEPTH_STENCIL_DESC depthDesc{};
+	depthDesc.DepthEnable = true;
+	depthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+	depthDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+	DX::ThrowIfFailed(device->CreateDepthStencilState(&depthDesc, windowHolesDepthState.put()));
+	Util::SetResourceName(windowHolesDepthState.get(), "InteriorSun::WindowHolesDepthState");
+}
+
+void InteriorSun::ClearShaderCache()
+{
+	windowHolesVS = nullptr;
+	windowHolesPS = nullptr;
+}
+
+ID3D11PixelShader* InteriorSun::GetWindowHolesPS()
+{
+	if (!windowHolesPS)
+		windowHolesPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\InteriorSun\\WindowHolesVS.hlsl", {}, "ps_5_0", "psmain")));
+	return windowHolesPS.get();
+}
+
+ID3D11VertexShader* InteriorSun::GetWindowHolesVS()
+{
+	if (!windowHolesVS)
+		windowHolesVS.attach(static_cast<ID3D11VertexShader*>(Util::CompileShader(L"Data\\Shaders\\InteriorSun\\WindowHolesVS.hlsl", {}, "vs_5_0")));
+	return windowHolesVS.get();
+}
+
+void InteriorSun::UpdateWindowGlass(RE::TESObjectCELL* cell)
+{
+	if (cell != windowGlassCell) {
+		ReleaseWindowGlass();
+		windowGlassCell = cell;
+	}
+
+	++windowGlassCellFrames;
+	if (std::ranges::find(WindowGlassScanFrames, windowGlassCellFrames) != std::end(WindowGlassScanFrames))
+		CollectWindowGlass(cell);
+}
+
+void InteriorSun::CollectWindowGlass(RE::TESObjectCELL* cell)
+{
+	std::vector<float3> vertices;
+	std::vector<float2> uvs;
+	std::vector<HoleDraw> runs;
+	uint32_t windowGlassShapes = 0, windowGlassShapesWithGlow = 0, windowGlassShapesSkipped = 0;
+
+	cell->ForEachReference([&](RE::TESObjectREFR* ref) {
+		const auto base = ref->GetBaseObject();
+		const auto root = base ? ref->Get3D() : nullptr;
+		if (!root)
+			return RE::BSContainer::ForEachResult::kContinue;
+
+		// Windows and walls are statics; skipping everything else keeps the scan short
+		if (!base->Is(RE::FormType::Static))
+			return RE::BSContainer::ForEachResult::kContinue;
+
+		RE::BSVisit::TraverseScenegraphGeometries(root, [&](RE::BSGeometry* geometry) {
+			const auto& data = geometry->GetGeometryRuntimeData();
+			const auto property = data.shaderProperty.get();
+			if (!property)
+				return RE::BSVisit::BSVisitControl::kContinue;
+
+			// The flag mesh authors put on window glass, which also keeps it out of forced double-sided rendering
+			if (property->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kAssumeShadowmask)) {
+				// Its glow map marks the panes, white on glass and black on the frame, so the frame can stay shadowed
+				const auto lighting = netimmerse_cast<RE::BSLightingShaderProperty*>(property);
+				const auto material = lighting ? static_cast<const RE::BSLightingShaderMaterialBase*>(lighting->material) : nullptr;
+				RE::NiPointer<RE::NiSourceTexture> glow;
+				if (material && material->GetFeature() == RE::BSShaderMaterial::Feature::kGlowMap)
+					glow = static_cast<const RE::BSLightingShaderMaterialGlowmap*>(material)->glowTexture;
+				const float2 uvScale = material ? float2(material->texCoordScale[0].x, material->texCoordScale[0].y) : float2(1, 1);
+				const float2 uvOffset = material ? float2(material->texCoordOffset[0].x, material->texCoordOffset[0].y) : float2(0, 0);
+				const auto first = static_cast<uint32_t>(vertices.size());
+				if (AppendWorldTriangles(geometry, vertices, &uvs, uvScale, uvOffset)) {
+					++windowGlassShapes;
+					if (glow && glow->rendererTexture && glow->rendererTexture->resourceView)
+						++windowGlassShapesWithGlow;
+					else
+						glow = nullptr;
+					runs.push_back({ first, static_cast<uint32_t>(vertices.size()) - first, glow });
+				} else
+					++windowGlassShapesSkipped;
+				return RE::BSVisit::BSVisitControl::kContinue;
+			}
+			return RE::BSVisit::BSVisitControl::kContinue;
+		});
+		return RE::BSContainer::ForEachResult::kContinue;
+	});
+
+	if (vertices != windowGlassVertices || std::exchange(forceHolesUpload, false)) {
+		windowGlassVertices = std::move(vertices);
+		windowGlassUVs = std::move(uvs);
+		windowGlassRuns = std::move(runs);
+		logger::info("[Interior Sun] Window glass in cell {:08X}: {} shapes ({} with glow maps), {} triangles, {} unreadable shapes", cell->GetFormID(), windowGlassShapes, windowGlassShapesWithGlow, windowGlassVertices.size() / 3, windowGlassShapesSkipped);
+		UploadWindowHoles(cell);
+	}
+}
+
+void InteriorSun::UploadWindowHoles(const RE::TESObjectCELL* cell)
+{
+	struct HoleVertex
+	{
+		float3 position;
+		float2 uv;
+	};
+	std::vector<HoleVertex> holes;
+	windowHoleDraws.clear();
+
+	// Glass grouped by glow map, so each map is bound once; without frame shadows every pane opens whole
+	std::vector<HoleDraw> runs;
+	for (auto run : windowGlassRuns) {
+		if (!settings.FrameShadowsFromGlowMaps)
+			run.texture = nullptr;
+		run.mode = run.texture ? kBrightGlow : kWhole;
+		runs.push_back(run);
+	}
+	const auto sameDraw = [](const HoleDraw& a, const HoleDraw& b) { return a.texture == b.texture && a.mode == b.mode; };
+	const auto byTexture = [](const HoleDraw& run) { return run.texture.get(); };
+	std::ranges::stable_sort(runs, {}, byTexture);
+	const auto append = [&](const std::vector<HoleDraw>& list, const std::vector<float3>& positions, const std::vector<float2>& uvs) {
+		for (const auto& run : list) {
+			if (windowHoleDraws.empty() || !sameDraw(windowHoleDraws.back(), run))
+				windowHoleDraws.push_back({ static_cast<uint32_t>(holes.size()), 0, run.texture, run.mode });
+			for (uint32_t i = run.first; i < run.first + run.count; ++i)
+				holes.push_back({ positions[i], uvs[i] });
+			windowHoleDraws.back().count += run.count;
+		}
+	};
+	append(runs, windowGlassVertices, windowGlassUVs);
+
+	windowGlass.reset();
+	windowGlassVertexCount = 0;
+	if (holes.empty())
+		return;
+
+	try {
+		const uint64_t count = holes.size();
+		D3D11_SUBRESOURCE_DATA init{ holes.data(), 0, 0 };
+		windowGlass = std::make_unique<Buffer>(StructuredBufferDesc<HoleVertex>(count, false), &init, "InteriorSun::WindowGlass");
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srvDesc.Buffer.NumElements = static_cast<UINT>(count);
+		windowGlass->CreateSRV(srvDesc);
+		windowGlassVertexCount = static_cast<uint32_t>(count);
+	} catch (...) {
+		logger::error("[Interior Sun] Failed to create the window holes buffer for cell {:08X}", cell->GetFormID());
+		windowGlass.reset();
+		windowHoleDraws.clear();
+	}
+}
+
+void InteriorSun::ReleaseWindowGlass()
+{
+	windowGlass.reset();
+	windowGlassVertices.clear();
+	windowGlassUVs.clear();
+	windowGlassRuns.clear();
+	windowHoleDraws.clear();
+	windowGlassCell = nullptr;
+	windowGlassCellFrames = 0;
+	windowGlassVertexCount = 0;
+}
+
+void InteriorSun::DrawWindowHoles(const RE::NiCamera* camera)
+{
+	const auto shadowSceneNode = globals::game::smState->shadowSceneNode[0];
+	const auto sunLight = shadowSceneNode ? shadowSceneNode->GetRuntimeData().sunShadowDirLight : nullptr;
+	if (!sunLight)
+		return;
+
+	// Only the sun's cascades: one of their descriptors holds the camera about to be rendered
+	const auto& descriptors = sunLight->GetRuntimeData().shadowmapDescriptors;
+	const auto descriptorsEnd = descriptors.begin() + std::min(sunLight->shadowMapCount, descriptors.size());
+	const auto descriptor = std::find_if(descriptors.begin(), descriptorsEnd, [&](const auto& a_descriptor) { return a_descriptor.camera.get() == camera; });
+	if (descriptor == descriptorsEnd)
+		return;
+
+	// The engine has just bound and cleared the cascade's slice. Anything else bound means this is not that moment, so leave it alone.
+	auto context = globals::d3d::context;
+	const auto& depthStencils = globals::game::renderer->GetDepthStencilData().depthStencils;
+	const auto target = static_cast<uint32_t>(descriptor->renderTarget);
+	const auto slice = descriptor->shadowmapIndex;
+	winrt::com_ptr<ID3D11DepthStencilView> dsv;
+	context->OMGetRenderTargets(0, nullptr, dsv.put());
+	if (target >= RE::RENDER_TARGETS_DEPTHSTENCIL::kTOTAL || slice >= std::size(depthStencils[target].views) || !dsv || dsv.get() != Util::AsReal(depthStencils[target].views[slice]))
+		return;
+
+	D3D11_TEXTURE2D_DESC textureDesc;
+	Util::AsReal(depthStencils[target].texture)->GetDesc(&textureDesc);
+
+	// The engine set this camera up right before, so these are the matrices its casters will use
+	auto& shadowState = globals::game::shadowState->GetRuntimeData();
+	const auto eye = shadowState.cameraData.getEye();
+	const auto posAdjust = shadowState.posAdjust.getEye();
+
+	WindowHolesCB data{};
+	data.ViewProj = eye.viewProjMat;
+	data.PosAdjust = { posAdjust.x, posAdjust.y, posAdjust.z };
+	data.GlowThreshold = settings.GlowMapThreshold;
+
+	// Same viewport as the engine derives from the camera's port (left, right, top, bottom)
+	D3D11_VIEWPORT viewport{};
+	viewport.TopLeftX = eye.viewPort[0] * textureDesc.Width;
+	viewport.TopLeftY = (1.0f - eye.viewPort[2]) * textureDesc.Height;
+	viewport.Width = (eye.viewPort[1] - eye.viewPort[0]) * textureDesc.Width;
+	viewport.Height = (eye.viewPort[2] - eye.viewPort[3]) * textureDesc.Height;
+	viewport.MaxDepth = 1.0f;
+
+	{
+		CS_GPU_PASS("InteriorSun::WindowHoles");
+		// Everything is shadowed from the sun except through the panes; the casters drawn next still shadow that light
+		context->ClearDepthStencilView(dsv.get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
+		DrawHolesInto(data, viewport);
+	}
+}
+
+void InteriorSun::DrawHolesInto(WindowHolesCB data, const D3D11_VIEWPORT& viewport)
+{
+	auto context = globals::d3d::context;
+	const auto vs = GetWindowHolesVS();
+	if (!vs || !windowGlass)
+		return;
+
+	// The engine caches its D3D state, so everything this draw changes is put back
+	winrt::com_ptr<ID3D11InputLayout> oldInputLayout;
+	D3D11_PRIMITIVE_TOPOLOGY oldTopology;
+	winrt::com_ptr<ID3D11VertexShader> oldVS;
+	winrt::com_ptr<ID3D11PixelShader> oldPS;
+	winrt::com_ptr<ID3D11Buffer> oldCB;
+	winrt::com_ptr<ID3D11ShaderResourceView> oldSRV;
+	winrt::com_ptr<ID3D11Buffer> oldPSCB;
+	winrt::com_ptr<ID3D11ShaderResourceView> oldPSSRV;
+	winrt::com_ptr<ID3D11SamplerState> oldSampler;
+	winrt::com_ptr<ID3D11RasterizerState> oldRasterState;
+	winrt::com_ptr<ID3D11DepthStencilState> oldDepthState;
+	UINT oldStencilRef;
+	D3D11_VIEWPORT oldViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+	UINT oldViewportCount = static_cast<UINT>(std::size(oldViewports));
+	context->IAGetInputLayout(oldInputLayout.put());
+	context->IAGetPrimitiveTopology(&oldTopology);
+	context->VSGetShader(oldVS.put(), nullptr, nullptr);
+	context->PSGetShader(oldPS.put(), nullptr, nullptr);
+	context->VSGetConstantBuffers(0, 1, oldCB.put());
+	context->VSGetShaderResources(0, 1, oldSRV.put());
+	context->PSGetConstantBuffers(0, 1, oldPSCB.put());
+	context->PSGetShaderResources(0, 1, oldPSSRV.put());
+	context->PSGetSamplers(0, 1, oldSampler.put());
+	context->RSGetState(oldRasterState.put());
+	context->RSGetViewports(&oldViewportCount, oldViewports);
+	context->OMGetDepthStencilState(oldDepthState.put(), &oldStencilRef);
+
+	auto cb = windowHolesCB->CB();
+	auto srv = windowGlass->srv.get();
+	context->IASetInputLayout(nullptr);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	context->VSSetShader(vs, nullptr, 0);
+	context->VSSetConstantBuffers(0, 1, &cb);
+	context->VSSetShaderResources(0, 1, &srv);
+	context->PSSetConstantBuffers(0, 1, &cb);
+	auto sampler = windowHolesSampler.get();
+	context->PSSetSamplers(0, 1, &sampler);
+	context->RSSetState(windowHolesRasterState.get());
+	context->RSSetViewports(1, &viewport);
+	context->OMSetDepthStencilState(windowHolesDepthState.get(), 0);
+	const auto ps = GetWindowHolesPS();
+	for (const auto& draw : windowHoleDraws) {
+		// With a glow map, a pixel shader keeps the frame shadowed; without one, depth only
+		const bool textured = draw.mode != kWhole && draw.texture && ps;
+		data.Mode = textured ? draw.mode : kWhole;
+		windowHolesCB->Update(data);
+		ID3D11ShaderResourceView* texture = textured ? Util::AsReal(draw.texture->rendererTexture->resourceView) : nullptr;
+		context->PSSetShader(textured ? ps : nullptr, nullptr, 0);
+		context->PSSetShaderResources(0, 1, &texture);
+		context->Draw(draw.count, draw.first);
+	}
+
+	cb = oldCB.get();
+	srv = oldSRV.get();
+	context->IASetInputLayout(oldInputLayout.get());
+	context->IASetPrimitiveTopology(oldTopology);
+	context->VSSetShader(oldVS.get(), nullptr, 0);
+	context->PSSetShader(oldPS.get(), nullptr, 0);
+	context->VSSetConstantBuffers(0, 1, &cb);
+	context->VSSetShaderResources(0, 1, &srv);
+	cb = oldPSCB.get();
+	srv = oldPSSRV.get();
+	sampler = oldSampler.get();
+	context->PSSetConstantBuffers(0, 1, &cb);
+	context->PSSetShaderResources(0, 1, &srv);
+	context->PSSetSamplers(0, 1, &sampler);
+	context->RSSetState(oldRasterState.get());
+	context->RSSetViewports(oldViewportCount, oldViewports);
+	context->OMSetDepthStencilState(oldDepthState.get(), oldStencilRef);
 }
 
 bool InteriorSun::IsInteriorWithSun(const RE::TESObjectCELL* cell)
@@ -146,6 +538,15 @@ void InteriorSun::BSBatchRenderer_RenderPassImmediately::thunk(RE::BSRenderPass*
 {
 	globals::features::interiorSun.UpdateRasterStateCullMode(a_pass, a_technique);
 	func(a_pass, a_technique, a_alphaTest, a_renderFlags);
+}
+
+void InteriorSun::BSShaderAccumulator_StartAccumulating::thunk(RE::BSShaderAccumulator* a_accumulator, RE::NiCamera* a_camera)
+{
+	auto& singleton = globals::features::interiorSun;
+	// Accumulators are also started from culling jobs, which must not touch the D3D context
+	if (singleton.isInteriorWithSun && singleton.settings.WindowLightOnly && singleton.windowGlassVertexCount && std::this_thread::get_id() == singleton.renderThread)
+		singleton.DrawWindowHoles(a_camera);
+	func(a_accumulator, a_camera);
 }
 
 RE::BSEventNotifyControl InteriorSun::MenuOpenCloseEventHandler::ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*)

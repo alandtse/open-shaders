@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "Buffer.h"
 #include "ShaderCache.h"
 
 struct InteriorSun : Feature
@@ -11,7 +12,7 @@ public:
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return { T("feature.interior_sun.description", "Allows for the sun and moon to cast light and shadows into interior spaces."),
-			{ T("feature.interior_sun.key_feature_1", "Functions only for explicitly enabled interiors"),
+			{ T("feature.interior_sun.key_feature_1", "Lets the sun in only through windows and openings, so it does not leak through walls"),
 				T("feature.interior_sun.key_feature_2", "Utilizes existing sun, moon, and weather systems"),
 				T("feature.interior_sun.key_feature_3", "Includes an option to force double-sided rendering for unprepared interiors"),
 				T("feature.interior_sun.key_feature_4", "Fixes geometry culling issues that cause light leakage") } };
@@ -26,7 +27,9 @@ public:
 	virtual void PostPostLoad() override;
 	/** @brief Updates the interior sun state based on the current cell during the early prepass. */
 	virtual void EarlyPrepass() override;
-
+	/** @brief Creates the GPU resources used to draw window glass into the sun shadow maps. */
+	virtual void SetupResources() override;
+	virtual void ClearShaderCache() override;
 	/** @brief Registers the menu open/close event handler for tracking main menu state. */
 	virtual void DataLoaded() override
 	{
@@ -37,6 +40,9 @@ public:
 	{
 		bool ForceDoubleSidedRendering = true;
 		float InteriorShadowDistance = 5000;
+		bool WindowLightOnly = true;
+		bool FrameShadowsFromGlowMaps = true;
+		float GlowMapThreshold = 0.5f;
 	};
 
 	Settings settings;
@@ -61,6 +67,13 @@ public:
 	struct BSBatchRenderer_RenderPassImmediately
 	{
 		static void thunk(RE::BSRenderPass* a_pass, uint32_t a_technique, bool a_alphaTest, uint32_t a_renderFlags);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	/** @brief Hook that runs before a camera's accumulated geometry is drawn, once its targets are bound and cleared. */
+	struct BSShaderAccumulator_StartAccumulating
+	{
+		static void thunk(RE::BSShaderAccumulator* a_accumulator, RE::NiCamera* a_camera);
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
@@ -147,4 +160,72 @@ private:
 	void PopulateReplacementJobArrays(RE::TESObjectCELL* cell, const RE::NiPointer<RE::BSPortalGraph>& portalGraph, const RE::BSShadowDirectionalLight* dirLight, RE::BSTArray<RE::BSTArray<RE::NiPointer<RE::NiAVObject>>>& jobArrays);
 
 	static void SetShadowDistance(bool inInterior);
+
+	struct alignas(16) WindowHolesCB
+	{
+		float4x4 ViewProj;
+		float3 PosAdjust;
+		float GlowThreshold;  // glass opens only where its glow map is at least this bright
+		uint32_t Mode;        // HoleMode: how the bound texture decides where the hole opens
+		float pad0[3];
+	};
+
+	enum HoleMode : uint32_t
+	{
+		kWhole = 0,       // the whole shape opens
+		kBrightGlow = 1,  // glass: opens where its glow map is bright (panes), not on the frame
+	};
+
+	/** @brief A run of hole triangles sharing one glow map (none: the whole shape opens). */
+	struct HoleDraw
+	{
+		uint32_t first;
+		uint32_t count;
+		RE::NiPointer<RE::NiSourceTexture> texture;
+		HoleMode mode = kWhole;
+	};
+
+	// Rescans after entering a cell, in frames: its 3D can still be loading on the first ones
+	static constexpr uint32_t WindowGlassScanFrames[] = { 1, 60, 300 };
+
+	std::thread::id renderThread;
+	RE::TESObjectCELL* windowGlassCell = nullptr;
+	uint32_t windowGlassCellFrames = 0;
+	uint32_t windowGlassVertexCount = 0;
+
+	std::vector<float3> windowGlassVertices;
+	std::vector<float2> windowGlassUVs;
+	std::vector<HoleDraw> windowGlassRuns;  // per glass shape, in windowGlassVertices
+
+	std::vector<HoleDraw> windowHoleDraws;  // what the hole pass draws, grouped by glow map
+	winrt::com_ptr<ID3D11PixelShader> windowHolesPS;
+	winrt::com_ptr<ID3D11SamplerState> windowHolesSampler;
+	std::unique_ptr<Buffer> windowGlass;
+	ConstantBuffer* windowHolesCB = nullptr;
+	winrt::com_ptr<ID3D11VertexShader> windowHolesVS;
+	winrt::com_ptr<ID3D11RasterizerState> windowHolesRasterState;
+	winrt::com_ptr<ID3D11DepthStencilState> windowHolesDepthState;
+
+	ID3D11VertexShader* GetWindowHolesVS();
+
+	ID3D11PixelShader* GetWindowHolesPS();
+
+	void UpdateWindowGlass(RE::TESObjectCELL* cell);
+
+	void CollectWindowGlass(RE::TESObjectCELL* cell);
+
+	/** @brief Rebuilds the GPU triangle list from the window glass. */
+	void UploadWindowHoles(const RE::TESObjectCELL* cell);
+
+	void ReleaseWindowGlass();
+
+	/** @brief Turns the bound sun shadow map into "all shadowed" with a hole at each window pane. */
+	void DrawWindowHoles(const RE::NiCamera* camera);
+
+	/** @brief Draws the holes into the bound depth target with the given camera data; puts back every state it changes. */
+	void DrawHolesInto(WindowHolesCB data, const D3D11_VIEWPORT& viewport);
+
+	// Settings whose change needs the cell scanned again
+	bool lastFrameShadows = true;
+	bool forceHolesUpload = false;
 };
