@@ -77,6 +77,7 @@ add_executable(
     test_shadowcaster_math.cpp
     test_lodshadow_update_budget.cpp
     test_gpupassnames.cpp
+    test_interiorsun_rays.cpp
     test_atlas_allocator.cpp
     test_mathutils.cpp
     test_snowcover_math.cpp
