@@ -9,6 +9,7 @@
 #include "Features/VR.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/DebugSection.h"
 #include "Utils/Game.h"
 #include "Utils/SettingsControl.h"
 
@@ -190,7 +191,7 @@ void ScreenSpaceGI::DrawSettings()
 				recompileFlag = true;
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted(select("1 Slice, 6 Steps, blur enabled, no GI\n", "3 Slices, 8 Steps, blur enabled, no GI\n"));
+				ImGui::TextUnformatted(select(T(TKEY("minimal_preset_tooltip"), "1 Slice, 6 Steps, blur enabled, no GI\n"), "3 Slices, 8 Steps, blur enabled, no GI\n"));
 			}
 
 			ImGui::TableNextColumn();
@@ -416,39 +417,39 @@ void ScreenSpaceGI::DrawSettings()
 			}
 		}
 	}
+}
 
+void ScreenSpaceGI::DrawDebugSection()
+{
 	// The buffer viewer has no scene-context meaning, so hide it while a Scene Manager replica
 	// is borrowing this panel to author overrides.
 	if (SettingsControl::IsReplicating())
 		return;
 
-	///////////////////////////////
-	ImGui::SeparatorText(T(TKEY("debug"), "Debug"));
+	Util::DebugSection section;
+	if (!section)
+		return;
 
-	if (globals::game::isVR && showAdvanced) {
+	if (globals::game::isVR) {
 		ImGui::Checkbox(T(TKEY("debug_unjittered_vr"), "Use Unjittered VR Camera"), &settings.DebugUseUnjitteredCameraReconstruction);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("debug_unjittered_vr_tooltip"), "May reduce jitter-induced depth swim during head movement. Compare against the default before enabling."));
 		}
 	}
 
-	if (ImGui::TreeNode(T(TKEY("buffer_viewer"), "Buffer Viewer"))) {
-		static float debugRescale = .3f;
-		ImGui::SliderFloat(T(TKEY("view_resize"), "View Resize"), &debugRescale, 0.f, 1.f);
+	static float debugRescale = .3f;
+	ImGui::SliderFloat(T(TKEY("view_resize"), "View Resize"), &debugRescale, 0.f, 1.f);
 
-		BUFFER_VIEWER_NODE(texNoise, debugRescale)
-		BUFFER_VIEWER_NODE(texWorkingDepth, debugRescale)
-		BUFFER_VIEWER_NODE(texPrevGeo, debugRescale)
-		BUFFER_VIEWER_NODE(texRadiance, debugRescale)
-		BUFFER_VIEWER_NODE(texAo[0], debugRescale)
-		BUFFER_VIEWER_NODE(texAo[1], debugRescale)
-		BUFFER_VIEWER_NODE(texIlY[0], debugRescale)
-		BUFFER_VIEWER_NODE(texIlY[1], debugRescale)
-		BUFFER_VIEWER_NODE(texIlCoCg[0], debugRescale)
-		BUFFER_VIEWER_NODE(texIlCoCg[1], debugRescale)
-
-		ImGui::TreePop();
-	}
+	BUFFER_VIEWER_NODE(texNoise, debugRescale)
+	BUFFER_VIEWER_NODE(texWorkingDepth, debugRescale)
+	BUFFER_VIEWER_NODE(texPrevGeo, debugRescale)
+	BUFFER_VIEWER_NODE(texRadiance, debugRescale)
+	BUFFER_VIEWER_NODE(texAo[0], debugRescale)
+	BUFFER_VIEWER_NODE(texAo[1], debugRescale)
+	BUFFER_VIEWER_NODE(texIlY[0], debugRescale)
+	BUFFER_VIEWER_NODE(texIlY[1], debugRescale)
+	BUFFER_VIEWER_NODE(texIlCoCg[0], debugRescale)
+	BUFFER_VIEWER_NODE(texIlCoCg[1], debugRescale)
 }
 
 void ScreenSpaceGI::LoadSettings(json& o_json)

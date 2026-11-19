@@ -1,4 +1,5 @@
 #include "VRStereoOptimizations.h"
+#include "Utils/DebugSection.h"
 
 #include "Deferred.h"
 #include "ExtendedMaterials.h"
@@ -404,7 +405,8 @@ void VRStereoOptimizations::DrawSettings()
 	Util::AddTooltip(T("feature.vr_stereo.directional_occlusion_ratio_tooltip", "Catches silhouette edges a plain depth-match check misses.\nFires when Eye 0 depth is less than this fraction of Eye 1 depth (e.g. 0.9 = Eye 0 more than 10% closer).\nHigher = more aggressive. 0 = disabled."));
 
 	if (globals::state->IsDeveloperMode()) {
-		if (ImGui::TreeNode(T("feature.vr_stereo.debug", "Debug"))) {
+		Util::DebugSection section;
+		if (section) {
 			ImGui::SliderFloat(T("feature.vr_stereo.full_blend_distance", "Full Blend Distance"), &settings.fullBlendDistance, 0.0f, 10000.0f, "%.0f");
 			Util::AddTooltip(T("feature.vr_stereo.full_blend_distance_tooltip", "Geometry closer than this distance (game units) is excluded from culling and rendered natively in both eyes. 0 = disabled."));
 
@@ -419,7 +421,6 @@ void VRStereoOptimizations::DrawSettings()
 
 			ImGui::Checkbox(T("feature.vr_stereo.skip_pixel_reprojection", "Skip Pixel Reprojection"), &settings.debugSkipMerge);
 			ImGui::Text(T("feature.vr_stereo.stencil_swaps_this_frame", "Stencil swaps this frame: %u"), stencilSwapCount);
-			ImGui::TreePop();
 		}
 	}
 }

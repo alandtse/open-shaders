@@ -15,6 +15,7 @@
 #include "I18n/I18n.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/DebugSection.h"
 #include "Utils/Game.h"
 #include "Utils/MathUtils.h"
 #include "Utils/PerfUtils.h"
@@ -290,8 +291,10 @@ bool ExponentialHeightFog::IsSuppressed() const
 void ExponentialHeightFog::DrawSettings()
 {
 #if defined(ENABLE_EFFECTS11)
-	const Util::LockedSection enbLock(globals::features::effects11.OwnsFeature(E11Handoff::Feature::HeightFog),
+	const bool managedByEffects11 = globals::features::effects11.OwnsFeature(E11Handoff::Feature::HeightFog);
+	const Util::LockedSection enbLock(managedByEffects11,
 		T("common.settings_managed_by_enb", "This setting is managed by Effects 11."));
+	const Util::DefaultsWhileActive<Settings> shownDefaults(settings, managedByEffects11);
 #endif
 	Util::CheckboxFlag(T(TKEY("enable_exp_height_fog"), "Enable Exponential Height Fog"), settings.enabled);
 	if (!Util::BeginPillTabBar("##ExponentialHeightFogTabs"))
@@ -530,43 +533,50 @@ void ExponentialHeightFog::DrawVolumetricSettings()
 		}
 		ImGui::TreePop();
 	}
+	ImGui::EndDisabled();
+}
 
-	if (!SettingsControl::IsReplicating() && Util::ShowDebugSections() && ImGui::TreeNode(T(TKEY("debug"), "Quality and Temporal Filtering"))) {
-		uint32_t minGridPixelSize = 4;
-		uint32_t maxGridPixelSize = 64;
-		uint32_t minGridSizeZ = 16;
-		uint32_t maxGridSizeZ = 160;
-		ImGui::SliderScalar(T(TKEY("grid_pixel_size"), "Grid Pixel Size"), ImGuiDataType_U32, &settings.volumetricGridPixelSize, &minGridPixelSize, &maxGridPixelSize, "%u", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderScalar(T(TKEY("grid_depth_slices"), "Grid Depth Slices"), ImGuiDataType_U32, &settings.volumetricGridSizeZ, &minGridSizeZ, &maxGridSizeZ, "%u", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderScalar(T(TKEY("far_grid_pixel_size"), "Far Grid Pixel Size"), ImGuiDataType_U32, &settings.volumetricFarGridPixelSize, &minGridPixelSize, &maxGridPixelSize, "%u", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderScalar(T(TKEY("far_grid_depth_slices"), "Far Grid Depth Slices"), ImGuiDataType_U32, &settings.volumetricFarGridSizeZ, &minGridSizeZ, &maxGridSizeZ, "%u", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderFloat(T(TKEY("depth_distribution_scale"), "Depth Distribution Scale"), &settings.volumetricDepthDistributionScale, 1.0f, 128.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
-		const bool temporalReprojection = Util::GetTemporal();
-		ImGui::BeginDisabled(!temporalReprojection);
-		ImGui::SliderFloat(T(TKEY("temporal_history_weight"), "Temporal History Weight"), &settings.volumetricHistoryWeight, 0.0f, 0.99f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::EndDisabled();
-		uint32_t minHistoryMissSampleCount = 1;
-		uint32_t maxHistoryMissSampleCount = 16;
-		ImGui::SliderScalar(T(TKEY("history_miss_samples"), "History Miss Samples"), ImGuiDataType_U32, &settings.volumetricHistoryMissSampleCount, &minHistoryMissSampleCount, &maxHistoryMissSampleCount, "%u", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::BeginDisabled(!temporalReprojection);
-		ImGui::SliderFloat(T(TKEY("sample_jitter_multiplier"), "Sample Jitter Multiplier"), &settings.volumetricSampleJitterMultiplier, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("sample_jitter_multiplier_tooltip"),
-								  "Matches UE's r.VolumetricFog.LightScatteringSampleJitterMultiplier.\n"
-								  "Adds per-voxel random offset on top of the Halton sequence.\n"
-								  "0 = UE default; nonzero values need stronger temporal filtering."));
-		}
-		ImGui::EndDisabled();
-		ImGui::SliderFloat(T(TKEY("upsample_jitter_multiplier"), "Upsample Jitter Multiplier"), &settings.volumetricUpsampleJitterMultiplier, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("upsample_jitter_multiplier_tooltip"),
-								  "Matches UE's r.VolumetricFog.UpsampleJitterMultiplier.\n"
-								  "Jitters the final 3D fog lookup in screen space to hide\n"
-								  "low-resolution froxel pixelization. 0 = UE default."));
-		}
-		ImGui::TreePop();
+void ExponentialHeightFog::DrawDebugSection()
+{
+	if (SettingsControl::IsReplicating())
+		return;
+
+	Util::DebugSection section;
+	if (!section)
+		return;
+
+	uint32_t minGridPixelSize = 4;
+	uint32_t maxGridPixelSize = 64;
+	uint32_t minGridSizeZ = 16;
+	uint32_t maxGridSizeZ = 160;
+	ImGui::SliderScalar(T(TKEY("grid_pixel_size"), "Grid Pixel Size"), ImGuiDataType_U32, &settings.volumetricGridPixelSize, &minGridPixelSize, &maxGridPixelSize, "%u", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderScalar(T(TKEY("grid_depth_slices"), "Grid Depth Slices"), ImGuiDataType_U32, &settings.volumetricGridSizeZ, &minGridSizeZ, &maxGridSizeZ, "%u", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderScalar(T(TKEY("far_grid_pixel_size"), "Far Grid Pixel Size"), ImGuiDataType_U32, &settings.volumetricFarGridPixelSize, &minGridPixelSize, &maxGridPixelSize, "%u", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderScalar(T(TKEY("far_grid_depth_slices"), "Far Grid Depth Slices"), ImGuiDataType_U32, &settings.volumetricFarGridSizeZ, &minGridSizeZ, &maxGridSizeZ, "%u", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("depth_distribution_scale"), "Depth Distribution Scale"), &settings.volumetricDepthDistributionScale, 1.0f, 128.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+	const bool temporalReprojection = Util::GetTemporal();
+	ImGui::BeginDisabled(!temporalReprojection);
+	ImGui::SliderFloat(T(TKEY("temporal_history_weight"), "Temporal History Weight"), &settings.volumetricHistoryWeight, 0.0f, 0.99f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::EndDisabled();
+	uint32_t minHistoryMissSampleCount = 1;
+	uint32_t maxHistoryMissSampleCount = 16;
+	ImGui::SliderScalar(T(TKEY("history_miss_samples"), "History Miss Samples"), ImGuiDataType_U32, &settings.volumetricHistoryMissSampleCount, &minHistoryMissSampleCount, &maxHistoryMissSampleCount, "%u", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::BeginDisabled(!temporalReprojection);
+	ImGui::SliderFloat(T(TKEY("sample_jitter_multiplier"), "Sample Jitter Multiplier"), &settings.volumetricSampleJitterMultiplier, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("sample_jitter_multiplier_tooltip"),
+							  "Matches UE's r.VolumetricFog.LightScatteringSampleJitterMultiplier.\n"
+							  "Adds per-voxel random offset on top of the Halton sequence.\n"
+							  "0 = UE default; nonzero values need stronger temporal filtering."));
 	}
 	ImGui::EndDisabled();
+	ImGui::SliderFloat(T(TKEY("upsample_jitter_multiplier"), "Upsample Jitter Multiplier"), &settings.volumetricUpsampleJitterMultiplier, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("upsample_jitter_multiplier_tooltip"),
+							  "Matches UE's r.VolumetricFog.UpsampleJitterMultiplier.\n"
+							  "Jitters the final 3D fog lookup in screen space to hide\n"
+							  "low-resolution froxel pixelization. 0 = UE default."));
+	}
 }
 
 void ExponentialHeightFog::SetupResources()
