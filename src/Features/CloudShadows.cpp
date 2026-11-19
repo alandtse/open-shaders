@@ -19,8 +19,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void CloudShadows::DrawSettings()
 {
 #if defined(ENABLE_EFFECTS11)
-	const Util::LockedSection enbLock(globals::features::effects11.OwnsFeature(E11Handoff::Feature::CloudShadows),
+	const bool managedByEffects11 = globals::features::effects11.OwnsFeature(E11Handoff::Feature::CloudShadows);
+	const Util::LockedSection enbLock(managedByEffects11,
 		T("common.settings_managed_by_enb", "This setting is managed by Effects 11."));
+	const Util::DefaultsWhileActive<Settings> shownDefaults(settings, managedByEffects11);
 #endif
 
 	ImGui::SliderFloat(T(TKEY("opacity"), "Opacity"), &settings.Opacity, 0.0f, 4.0f, "%.1f");
@@ -52,18 +54,16 @@ CloudShadows::Settings CloudShadows::GetCommonBufferData()
 	if (!loaded)
 		return settings;
 
-	auto data = settings;
+	Settings data = settings;
 
 #if defined(ENABLE_EFFECTS11)
-	if (globals::features::effects11.loaded) {
-		auto& enb = globals::features::effects11;
-		if (enb.OwnsFeature(E11Handoff::Feature::CloudShadows)) {
-			auto& settingManager = SettingManager::GetSingleton();
-			if (settingManager.GetValue<bool>("EnableCloudShadows", "EFFECT")) {
-				data.Opacity = settingManager.GetInterpolatedTimeOfDayValue("Amount", "CLOUDSHADOWS");
-			} else {
-				data.Opacity = 0.0f;
-			}
+	if (globals::features::effects11.loaded && globals::features::effects11.OwnsFeature(E11Handoff::Feature::CloudShadows)) {
+		data = Settings{};
+		auto& settingManager = SettingManager::GetSingleton();
+		if (settingManager.GetValue<bool>("EnableCloudShadows", "EFFECT")) {
+			data.Opacity = settingManager.GetInterpolatedTimeOfDayValue("Amount", "CLOUDSHADOWS");
+		} else {
+			data.Opacity = 0.0f;
 		}
 	}
 #endif

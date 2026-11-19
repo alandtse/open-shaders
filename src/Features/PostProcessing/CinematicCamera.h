@@ -1,5 +1,7 @@
 #pragma once
 
+struct PhysicalLens;
+
 namespace CinematicCamera
 {
 	constexpr float kMotionBlurReferenceScale = 300.0f;
@@ -174,7 +176,7 @@ namespace CinematicCamera
 		[[nodiscard]] const char* GetFovStateText() const;
 
 		/** @brief Draws camera parameters and effective optical readouts. */
-		void DrawSettings();
+		void DrawSettings(PhysicalLens* physicalLens = nullptr);
 
 	private:
 		void DrawExposureSettings();

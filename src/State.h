@@ -121,7 +121,7 @@ public:
 	/** @brief Per-frame reset: advances timer, caches menu state, resets descriptors and frame counters. */
 	void Reset();
 
-	/** @brief Selects sphere-normal lighting and the TruePBR material for the next grass draw. */
+	/** @brief Selects sphere-normal lighting and TruePBR for the next grass draw. */
 	void SetGrassFlags(bool sphereNormal, bool pbr);
 	/** @brief One-time post-D3D setup: creates resources, probes GPU caps, initializes features. */
 	void Setup();
@@ -745,6 +745,9 @@ public:
 	Util::FrameChecker frameChecker;
 	Util::FrameChecker shaderTrackingFrameChecker;
 	uint frameCount = 0;
+	uint historyResetFrame = UINT_MAX;
+	void RequestHistoryReset() { historyResetFrame = frameCount + 1u; }
+	bool ShouldResetHistory() const { return frameCount == historyResetFrame; }
 	// Thread-safe mirror of frameCount maintained by the render thread.
 	// Off-thread readers (MCP listener, future telemetry) must read this
 	// instead of touching frameCount directly to avoid a data race.
