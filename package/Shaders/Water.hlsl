@@ -1375,7 +1375,7 @@ PS_OUTPUT main(PS_INPUT input)
 			float lightShadow = 1.0;
 			if (inWorld && !inReflection && light.lightFlags & LightLimitFix::LightFlags::Shadow) {
 				bool shadowCoverage = false;
-				lightShadow = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, rotationMatrix, shadowCoverage);
+				lightShadow = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, rotationMatrix, 8u, sqrt(light.sizeBias), shadowCoverage);
 			}
 
 			float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WPosition.xyz;

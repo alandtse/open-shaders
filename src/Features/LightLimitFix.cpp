@@ -249,6 +249,10 @@ void LightLimitFix::DrawSettings()
 	if (Util::BeginPillTabItem(T("feature.light_limit_fix.shadow_limit_fix_header", "Shadow Limit Fix"), nullptr,
 			selectShadows ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None)) {
 		ShadowCasterManager::DrawSettings(settings.ShadowSettings);
+		ImGui::SliderFloat(T("feature.light_limit_fix.soft_shadow_scale", "Soft Shadows by Light Size"), &settings.SoftShadowScale, 0.0f, kSoftShadowScaleMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("feature.light_limit_fix.soft_shadow_scale_tooltip", "Softens an inverse-square point light's shadow the farther it falls from what casts it, by the light's own size; linear lights have no size and stay hard. 0 keeps every shadow edge hard."));
+		}
 		Util::EndPillTabItem();
 	}
 
@@ -261,10 +265,6 @@ void LightLimitFix::DrawSettings()
 		ImGui::Checkbox(T("feature.light_limit_fix.sun_lit_hair", "Sun-Lit Hair"), &settings.SunLitHair);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T("feature.light_limit_fix.sun_lit_hair_tooltip", "Hair takes the directional shadow the deferred pass computed instead of the engine's forward lookup, so it is lit by the sun like the rest of the scene. Off keeps the engine's original hair shadowing, which can leave hair much darker."));
-		}
-		ImGui::SliderFloat(T("feature.light_limit_fix.soft_shadow_scale", "Soft Shadows by Light Size"), &settings.SoftShadowScale, 0.0f, kSoftShadowScaleMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T("feature.light_limit_fix.soft_shadow_scale_tooltip", "Softens a point light's shadow the farther it falls from what casts it, by the light's own size. 0 keeps every shadow edge hard."));
 		}
 		Util::EndPillTabItem();
 	}

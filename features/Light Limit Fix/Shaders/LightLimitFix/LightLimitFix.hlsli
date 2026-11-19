@@ -612,6 +612,7 @@ namespace LightLimitFix
 		return shadow / 8.0;
 	}
 
+	// In full-slice paraboloid UV like PCFRadius2D: TileUV / AtlasUV scale it into the tile, so it spans the same angle on every tile class.
 	static const float SoftShadowSearchRadius = 0.012;
 	static const float SoftShadowMaxRadius = 0.03;
 	static const float ParaboloidUVPerRadian = 0.25;
