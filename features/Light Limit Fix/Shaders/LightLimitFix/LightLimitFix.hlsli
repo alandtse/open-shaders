@@ -600,9 +600,13 @@ namespace LightLimitFix
 		q.x = 2.0 * uv.x - 1.0;
 		q.y = isDualParaboloid ? (lowerHalf ? 3.0 - 4.0 * uv.y : 4.0 * uv.y - 1.0) : 2.0 * uv.y - 1.0;
 		const float q2 = dot(q, q);
-		[branch] if (q2 <= rimRadius * rimRadius) return uv;
-		q *= rimRadius * rsqrt(q2);
-		return float2(q.x * 0.5 + 0.5, isDualParaboloid ? (lowerHalf ? 3.0 - q.y : q.y + 1.0) * 0.25 : q.y * 0.5 + 0.5);
+		float2 clamped = uv;
+		[branch] if (q2 > rimRadius * rimRadius)
+		{
+			q *= rimRadius * rsqrt(q2);
+			clamped = float2(q.x * 0.5 + 0.5, isDualParaboloid ? (lowerHalf ? 3.0 - q.y : q.y + 1.0) * 0.25 : q.y * 0.5 + 0.5);
+		}
+		return clamped;
 	}
 
 	// PCF sample around a paraboloid UV.
