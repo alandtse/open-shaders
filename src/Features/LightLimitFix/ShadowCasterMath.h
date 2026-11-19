@@ -16,15 +16,15 @@ namespace ShadowCasterManager
 	using Util::HashCombineFloat;
 	using Util::QuantizeFloat;
 
-	/// Shadow strength of a slot: the fade-in ramp from a_fadeStart capped by the fade-out ramp from a_releaseStart (a negative
-	/// start means no ramp); both ramps take a_duration seconds.
-	inline float ShadowFadeAlpha(double a_now, double a_fadeStart, double a_releaseStart, float a_duration) noexcept
+	/// Shadow strength of a slot: the fade-in ramp from a_fadeStart (a_fadeIn seconds) capped by the fade-out ramp from
+	/// a_releaseStart (a_fadeOut seconds); a negative start means no ramp.
+	inline float ShadowFadeAlpha(double a_now, double a_fadeStart, double a_releaseStart, float a_fadeIn, float a_fadeOut) noexcept
 	{
 		float alpha = 1.0f;
 		if (a_fadeStart >= 0.0)
-			alpha = std::clamp(static_cast<float>(a_now - a_fadeStart) / a_duration, 0.0f, 1.0f);
+			alpha = std::clamp(static_cast<float>(a_now - a_fadeStart) / a_fadeIn, 0.0f, 1.0f);
 		if (a_releaseStart >= 0.0)
-			alpha = std::min(alpha, 1.0f - std::clamp(static_cast<float>(a_now - a_releaseStart) / a_duration, 0.0f, 1.0f));
+			alpha = std::min(alpha, 1.0f - std::clamp(static_cast<float>(a_now - a_releaseStart) / a_fadeOut, 0.0f, 1.0f));
 		return alpha;
 	}
 

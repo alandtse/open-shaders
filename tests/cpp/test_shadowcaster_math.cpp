@@ -291,16 +291,17 @@ TEST_CASE("PerFrameCache works a key out once per frame and drops it on the next
 
 TEST_CASE("ShadowFadeAlpha caps the fade-in by the fade-out", "[scm]")
 {
-	constexpr float duration = 0.25f;
-	REQUIRE(ShadowFadeAlpha(10.0, -1.0, -1.0, duration) == 1.0f);
-	REQUIRE(ShadowFadeAlpha(10.0, 10.0, -1.0, duration) == 0.0f);
-	REQUIRE(ShadowFadeAlpha(10.125, 10.0, -1.0, duration) == Approx(0.5f));
-	REQUIRE(ShadowFadeAlpha(11.0, 10.0, -1.0, duration) == 1.0f);
-	REQUIRE(ShadowFadeAlpha(10.0, -1.0, 10.0, duration) == 1.0f);
-	REQUIRE(ShadowFadeAlpha(10.125, -1.0, 10.0, duration) == Approx(0.5f));
-	REQUIRE(ShadowFadeAlpha(10.5, -1.0, 10.0, duration) == 0.0f);
-	REQUIRE(ShadowFadeAlpha(10.1, 10.05, 10.0, duration) == Approx(0.2f));
-	REQUIRE(ShadowFadeAlpha(10.2, 10.0, 10.15, duration) == Approx(0.8f));
+	constexpr float fadeIn = 0.25f;
+	constexpr float fadeOut = 0.5f;
+	REQUIRE(ShadowFadeAlpha(10.0, -1.0, -1.0, fadeIn, fadeOut) == 1.0f);
+	REQUIRE(ShadowFadeAlpha(10.0, 10.0, -1.0, fadeIn, fadeOut) == 0.0f);
+	REQUIRE(ShadowFadeAlpha(10.125, 10.0, -1.0, fadeIn, fadeOut) == Approx(0.5f));
+	REQUIRE(ShadowFadeAlpha(11.0, 10.0, -1.0, fadeIn, fadeOut) == 1.0f);
+	REQUIRE(ShadowFadeAlpha(10.0, -1.0, 10.0, fadeIn, fadeOut) == 1.0f);
+	REQUIRE(ShadowFadeAlpha(10.25, -1.0, 10.0, fadeIn, fadeOut) == Approx(0.5f));
+	REQUIRE(ShadowFadeAlpha(10.5, -1.0, 10.0, fadeIn, fadeOut) == 0.0f);
+	REQUIRE(ShadowFadeAlpha(10.1, 10.05, 10.0, fadeIn, fadeOut) == Approx(0.2f));
+	REQUIRE(ShadowFadeAlpha(10.2, 10.0, 10.1, fadeIn, fadeOut) == Approx(0.8f));
 }
 
 TEST_CASE("ResumedFadeStart continues from the strength shown", "[scm]")
@@ -308,8 +309,8 @@ TEST_CASE("ResumedFadeStart continues from the strength shown", "[scm]")
 	constexpr float duration = 0.25f;
 	for (const float shown : { 0.0f, 0.2f, 0.5f, 1.0f }) {
 		const double start = ResumedFadeStart(20.0, shown, duration);
-		REQUIRE(ShadowFadeAlpha(20.0, start, -1.0, duration) == Approx(shown).margin(1e-5));
-		REQUIRE(ShadowFadeAlpha(20.0 + duration, start, -1.0, duration) == 1.0f);
+		REQUIRE(ShadowFadeAlpha(20.0, start, -1.0, duration, duration) == Approx(shown).margin(1e-5));
+		REQUIRE(ShadowFadeAlpha(20.0 + duration, start, -1.0, duration, duration) == 1.0f);
 	}
 	REQUIRE(ResumedFadeStart(20.0, 2.0f, duration) == Approx(20.0 - duration));
 	REQUIRE(ResumedFadeStart(20.0, -1.0f, duration) == Approx(20.0));

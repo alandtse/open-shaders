@@ -1373,6 +1373,9 @@ namespace ShadowCasterManager
 		// held a slot last frame: keep slot/tile, skip redraw, stay `chosen`.
 		bool cameraHold{ false };
 
+		/// Past ShadowLightCount but keeping its slot while its shadow fades out: `chosen`, never redrawn, not counted as chosen.
+		bool fadingOut{ false };
+
 		/// Raw UpdateCamera failure, true for held lights too (invalidCamera is not).
 		bool updateCameraFailed{ false };
 
@@ -1889,7 +1892,7 @@ namespace ShadowCasterManager
 		const double now = Util::GetNowSecs();
 		if (entry.ReleaseStartSeconds < 0.0)
 			entry.ReleaseStartSeconds = now;
-		return now - entry.ReleaseStartSeconds < kShadowFadeInSeconds;
+		return now - entry.ReleaseStartSeconds < kShadowFadeOutSeconds;
 	}
 
 	/// A leaving light chosen again fades back in from where its fade-out had reached.
@@ -2019,6 +2022,7 @@ namespace ShadowCasterManager
 				} else if (s_settings.FadeShadowSwaps && HoldForFadeOut(l)) {
 					// Kept past the count while it fades out; the newcomer finds no free slot until then.
 					c.chosen = true;
+					c.fadingOut = true;
 				} else {
 					c.excess = true;
 				}
@@ -2059,7 +2063,7 @@ namespace ShadowCasterManager
 					s_visAudit.push_back(std::move(v));
 				}
 				s_schedDiag.candidates_total++;
-				if (c.chosen)
+				if (c.chosen && !c.fadingOut)
 					s_schedDiag.candidates_chosen++;
 				if (c.excess)
 					s_schedDiag.candidates_excess++;
@@ -2430,6 +2434,10 @@ namespace ShadowCasterManager
 			if (s_cameraHold.count(e.Light)) {
 				e.skippedThisFrame = true;
 				cameraHoldSkips.push_back(&e);
+				continue;
+			}
+			if (e.ReleaseStartSeconds >= 0.0) {
+				e.skippedThisFrame = true;
 				continue;
 			}
 			// Honour AllowDrawNewLight: when disabled, brand-new entries wait for the
