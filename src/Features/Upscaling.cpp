@@ -1,5 +1,6 @@
 #include "Upscaling.h"
 #include "GpuPass.h"
+#include "Utils/DebugSection.h"
 
 #include "../I18n/I18n.h"
 #include "Deferred.h"
@@ -1197,72 +1198,81 @@ void Upscaling::DrawBackendDiagnostics()
 			"Verbosity of the NVIDIA Streamline backend logs. Useful for debugging issues with DLSS / "
 			"DLSS-G."));
 
-	// VR Debug visualization -- per-eye buffers and native inputs
-	if (globals::game::isVR) {
-		ImGui::Separator();
-		static float debugRescale = 0.15f;
-		ImGui::SliderFloat(T(TKEY("view_resize"), "View Resize"), &debugRescale, 0.05f, 1.f);
-
-		if (ImGui::TreeNode(T(TKEY("upscaling_intermediates"), "Upscaling Intermediates"))) {
-			if (vrIntermediateMotionVectors[0]) {
-				bool isDLSS = GetUpscaleMethod() == UpscaleMethod::kDLSS;
-				if (vrIntermediateColorIn[0] && vrIntermediateColorOut[0]) {
-					BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorIn[0], "Left Eye In", debugRescale)
-					BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorIn[1], "Right Eye In", debugRescale)
-					if (!isDLSS)
-						BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorOut[0], "Left Eye Out", debugRescale)
-					BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorOut[1], "Right Eye Out", debugRescale)
-				}
-				BUFFER_VIEWER_NODE_TITLE(vrIntermediateMotionVectors[0], "Left Eye MVec", debugRescale)
-				BUFFER_VIEWER_NODE_TITLE(vrIntermediateMotionVectors[1], "Right Eye MVec", debugRescale)
-				BUFFER_VIEWER_NODE_TITLE(vrIntermediateReactiveMask[0], "Left Eye Reactive", debugRescale)
-				BUFFER_VIEWER_NODE_TITLE(vrIntermediateReactiveMask[1], "Right Eye Reactive", debugRescale)
-				if (vrIntermediateTransparencyMask[0]) {
-					BUFFER_VIEWER_NODE_TITLE(vrIntermediateTransparencyMask[0], "Left Eye Transparency", debugRescale)
-					BUFFER_VIEWER_NODE_TITLE(vrIntermediateTransparencyMask[1], "Right Eye Transparency", debugRescale)
-				}
-			} else {
-				ImGui::TextDisabled("%s", T(TKEY("vr_intermediates_not_created"), "VR intermediates not yet created (enter game world)"));
-			}
-			ImGui::TreePop();
-		}
-
-		if (ImGui::TreeNode(T(TKEY("native_inputs"), "Native Inputs"))) {
-			auto renderer = globals::game::renderer;
-			auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-			auto& mvec = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
-			auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-
-			auto DisplayRT = [&](const char* label, ID3D11Texture2D* tex, ID3D11ShaderResourceView* srv) {
-				if (srv && tex) {
-					D3D11_TEXTURE2D_DESC desc;
-					tex->GetDesc(&desc);
-					char buf[128];
-					snprintf(buf, sizeof(buf), "%s (%ux%u)", label, desc.Width, desc.Height);
-					if (ImGui::TreeNode(buf)) {
-						ImGui::Image(srv, { desc.Width * debugRescale, desc.Height * debugRescale });
-						ImGui::TreePop();
-					}
-				}
-			};
-
-			DisplayRT("kMAIN (Color Input)", Util::AsReal(main.texture), Util::AsReal(main.SRV));
-			DisplayRT("Motion Vectors", Util::AsReal(mvec.texture), Util::AsReal(mvec.SRV));
-			DisplayRT("Depth", Util::AsReal(depth.texture), Util::AsReal(depth.depthSRV));
-
-			if (reactiveMaskTexture)
-				BUFFER_VIEWER_NODE_TITLE(reactiveMaskTexture, "Reactive Mask", debugRescale)
-			if (transparencyCompositionMaskTexture)
-				BUFFER_VIEWER_NODE_TITLE(transparencyCompositionMaskTexture, "Transparency Mask", debugRescale)
-
-			ImGui::TreePop();
-		}
-	}
-
 	ImGui::Separator();
 	Util::DrawDllVersionTable(T(TKEY("ffx_dll_table_title"), "AMD FidelityFX DLLs (click to open folder)"), FidelityFX::PluginDir, FidelityFX::dllVersions, "ffx_dll_versions");
 	Util::DrawDllVersionTable(T(TKEY("sl_dll_table_title"), "NVIDIA Streamline DLLs (click to open folder)"), streamline.pluginDir.c_str(), Streamline::dllVersions, "sl_dll_versions");
 	neuralRendering.DrawRuntimeDiagnostics();
+}
+
+bool Upscaling::HasDebugSection() const
+{
+	return globals::game::isVR;
+}
+
+void Upscaling::DrawDebugSection()
+{
+	Util::DebugSection section;
+	if (!section)
+		return;
+
+	ImGui::Separator();
+	static float debugRescale = 0.15f;
+	ImGui::SliderFloat(T(TKEY("view_resize"), "View Resize"), &debugRescale, 0.05f, 1.f);
+
+	if (ImGui::TreeNode(T(TKEY("upscaling_intermediates"), "Upscaling Intermediates"))) {
+		if (vrIntermediateMotionVectors[0]) {
+			bool isDLSS = GetUpscaleMethod() == UpscaleMethod::kDLSS;
+			if (vrIntermediateColorIn[0] && vrIntermediateColorOut[0]) {
+				BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorIn[0], "Left Eye In", debugRescale)
+				BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorIn[1], "Right Eye In", debugRescale)
+				if (!isDLSS)
+					BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorOut[0], "Left Eye Out", debugRescale)
+				BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorOut[1], "Right Eye Out", debugRescale)
+			}
+			BUFFER_VIEWER_NODE_TITLE(vrIntermediateMotionVectors[0], "Left Eye MVec", debugRescale)
+			BUFFER_VIEWER_NODE_TITLE(vrIntermediateMotionVectors[1], "Right Eye MVec", debugRescale)
+			BUFFER_VIEWER_NODE_TITLE(vrIntermediateReactiveMask[0], "Left Eye Reactive", debugRescale)
+			BUFFER_VIEWER_NODE_TITLE(vrIntermediateReactiveMask[1], "Right Eye Reactive", debugRescale)
+			if (vrIntermediateTransparencyMask[0]) {
+				BUFFER_VIEWER_NODE_TITLE(vrIntermediateTransparencyMask[0], "Left Eye Transparency", debugRescale)
+				BUFFER_VIEWER_NODE_TITLE(vrIntermediateTransparencyMask[1], "Right Eye Transparency", debugRescale)
+			}
+		} else {
+			ImGui::TextDisabled("%s", T(TKEY("vr_intermediates_not_created"), "VR intermediates not yet created (enter game world)"));
+		}
+		ImGui::TreePop();
+	}
+
+	if (ImGui::TreeNode(T(TKEY("native_inputs"), "Native Inputs"))) {
+		auto renderer = globals::game::renderer;
+		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+		auto& mvec = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
+		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+
+		auto DisplayRT = [&](const char* label, ID3D11Texture2D* tex, ID3D11ShaderResourceView* srv) {
+			if (srv && tex) {
+				D3D11_TEXTURE2D_DESC desc;
+				tex->GetDesc(&desc);
+				char buf[128];
+				snprintf(buf, sizeof(buf), "%s (%ux%u)", label, desc.Width, desc.Height);
+				if (ImGui::TreeNode(buf)) {
+					ImGui::Image(srv, { desc.Width * debugRescale, desc.Height * debugRescale });
+					ImGui::TreePop();
+				}
+			}
+		};
+
+		DisplayRT("kMAIN (Color Input)", Util::AsReal(main.texture), Util::AsReal(main.SRV));
+		DisplayRT("Motion Vectors", Util::AsReal(mvec.texture), Util::AsReal(mvec.SRV));
+		DisplayRT("Depth", Util::AsReal(depth.texture), Util::AsReal(depth.depthSRV));
+
+		if (reactiveMaskTexture)
+			BUFFER_VIEWER_NODE_TITLE(reactiveMaskTexture, "Reactive Mask", debugRescale)
+		if (transparencyCompositionMaskTexture)
+			BUFFER_VIEWER_NODE_TITLE(transparencyCompositionMaskTexture, "Transparency Mask", debugRescale)
+
+		ImGui::TreePop();
+	}
 }
 
 const VRDetection::OpenCompositeUpscalingState& Upscaling::GetOpenCompositeUpscalingBlocker(bool a_forceRefresh) const

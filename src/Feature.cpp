@@ -33,6 +33,7 @@
 #include "Features/LinearLighting.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
+#include "Features/ProceduralAurora.h"
 #include "Features/RainRefraction.h"
 #include "Features/ReverseZ.h"
 #include "Features/SceneManager.h"
@@ -50,6 +51,7 @@
 #include "Features/TerrainHelper.h"
 #include "Features/TerrainShadows.h"
 #include "Features/TerrainVariation.h"
+#include "Features/TreeWind.h"
 #include "Features/UnifiedWater.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
@@ -278,6 +280,7 @@ namespace
 			&globals::features::cloudShadows,
 			&globals::features::cloudRelight,
 			&globals::features::proceduralSun,
+			&globals::features::proceduralAurora,
 			&globals::features::waterEffects,
 			&globals::features::performanceOverlay,
 			&globals::features::subsurfaceScattering,
@@ -312,6 +315,7 @@ namespace
 			&globals::features::rainRefraction,
 			&globals::features::unifiedWater,
 			&globals::features::horizonFix,
+			&globals::features::treeWind,
 			&globals::features::exponentialHeightFog,
 			&globals::features::hdrDisplay,
 			&globals::features::snowCover,
