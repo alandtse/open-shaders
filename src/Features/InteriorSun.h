@@ -52,6 +52,8 @@ public:
 		bool AutoSunlitInteriors = false;
 		bool SunFacingHolesOnly = true;
 		bool LightOnlyPastWindow = true;
+		bool CloseShadowGaps = false;
+		int ShadowGapTexels = 2;
 		bool FrameShadowsFromGlowMaps = true;
 		float GlowMapThreshold = 0.5f;
 	};
@@ -248,6 +250,7 @@ private:
 	RE::TESObjectCELL* windowGlassCell = nullptr;
 	uint32_t windowGlassCellFrames = 0;
 	uint32_t windowGlassVertexCount = 0;
+	uint32_t windowHolesDrawn = 0;
 
 	std::shared_ptr<OpeningScan> openingScan;  // in flight or finished; dropped on leaving the cell
 	std::shared_ptr<std::vector<float3>> lastCandidateTriangles;
@@ -259,6 +262,22 @@ private:
 	std::vector<RE::NiPointer<RE::NiAVObject>> hiddenFakeGlows;
 	std::vector<GlassEmissive> glassEmissives;
 	std::unordered_map<RE::TESObjectCELL*, uint16_t> autoSunlitCells;  // cells given the sun, with their own flags to restore
+
+	struct alignas(16) ShadowGapsCB
+	{
+		uint32_t Size[2];
+		uint32_t Slice;
+		int32_t Radius;
+	};
+
+	ConstantBuffer* shadowGapsCB = nullptr;
+	std::unique_ptr<Texture2D> shadowGapsGrown;
+	winrt::com_ptr<ID3D11ComputeShader> shadowGapsMinCS[2];  // plain and array shadow textures
+	winrt::com_ptr<ID3D11VertexShader> shadowGapsVS;
+	winrt::com_ptr<ID3D11PixelShader> shadowGapsPS;
+
+	/** @brief Closes slivers of light in the sun cascades of a sunlit interior that has no window holes. */
+	void CloseShadowGaps();
 
 	std::vector<float3> windowGlassVertices;
 	std::vector<float2> windowGlassUVs;

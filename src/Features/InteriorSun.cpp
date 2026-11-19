@@ -20,6 +20,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	AutoSunlitInteriors,
 	SunFacingHolesOnly,
 	LightOnlyPastWindow,
+	CloseShadowGaps,
+	ShadowGapTexels,
 	FrameShadowsFromGlowMaps,
 	GlowMapThreshold)
 
@@ -153,6 +155,14 @@ void InteriorSun::DrawSettings()
 							  "Each moment, lets the sun in only through windows and openings that face it. "
 							  "Sun could never enter through a window it is behind, and opening one lets thin slivers of light onto the beams and walls along its line."));
 	}
+	ImGui::Checkbox(T(TKEY("close_shadow_gaps"), "Close Shadow Gaps"), &settings.CloseShadowGaps);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("close_shadow_gaps_tooltip"),
+							  "In sunlit interiors without window holes, seals thin slivers of light at seams and wall edges in the sun's shadow map, "
+							  "while larger openings stay open. Costs a little GPU time per shadow cascade."));
+	}
+	if (settings.CloseShadowGaps)
+		ImGui::SliderInt(T(TKEY("shadow_gap_texels"), "Shadow Gap Width"), &settings.ShadowGapTexels, 1, 4);
 }
 
 void InteriorSun::LoadSettings(json& o_json)
@@ -256,6 +266,11 @@ void InteriorSun::EarlyPrepass()
 
 	lastInteriorWithSun = isInteriorWithSun;
 
+	// Holes drawn into the maps make gap closing needless
+	if (isInteriorWithSun && settings.CloseShadowGaps && !windowHolesDrawn)
+		CloseShadowGaps();
+
+	windowHolesDrawn = 0;
 	windowPlanesValid = settings.LightOnlyPastWindow && isInteriorWithSun && std::exchange(windowPlanesWritten, 0u) == 3u;
 	renderThread = std::this_thread::get_id();
 }
@@ -271,6 +286,7 @@ void InteriorSun::SetupResources()
 	auto device = globals::d3d::device;
 
 	windowHolesCB = new ConstantBuffer(ConstantBufferDesc<WindowHolesCB>(), "InteriorSun::WindowHolesCB");
+	shadowGapsCB = new ConstantBuffer(ConstantBufferDesc<ShadowGapsCB>(), "InteriorSun::ShadowGapsCB");
 
 	D3D11_SAMPLER_DESC samplerDesc{};
 	samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -298,6 +314,10 @@ void InteriorSun::ClearShaderCache()
 	windowHolesVS = nullptr;
 	windowHolesPS = nullptr;
 	windowPlanesPS = nullptr;
+	shadowGapsMinCS[0] = nullptr;
+	shadowGapsMinCS[1] = nullptr;
+	shadowGapsVS = nullptr;
+	shadowGapsPS = nullptr;
 }
 
 ID3D11PixelShader* InteriorSun::GetWindowHolesPS()
@@ -803,6 +823,161 @@ void InteriorSun::ReleaseWindowGlass()
 	windowGlassVertexCount = 0;
 }
 
+void InteriorSun::CloseShadowGaps()
+{
+	const auto shadowSceneNode = globals::game::smState->shadowSceneNode[0];
+	const auto sunLight = shadowSceneNode ? shadowSceneNode->GetRuntimeData().sunShadowDirLight : nullptr;
+	if (!sunLight)
+		return;
+
+	auto context = globals::d3d::context;
+	const auto& depthStencils = globals::game::renderer->GetDepthStencilData().depthStencils;
+	const auto& descriptors = sunLight->GetRuntimeData().shadowmapDescriptors;
+	const int radius = std::clamp(settings.ShadowGapTexels, 1, 4);
+
+	if (!shadowGapsVS)
+		shadowGapsVS.attach(static_cast<ID3D11VertexShader*>(Util::CompileShader(L"Data\\Shaders\\InteriorSun\\ShadowGapsMaxPS.hlsl", {}, "vs_5_0", "vsmain")));
+	if (!shadowGapsPS)
+		shadowGapsPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\InteriorSun\\ShadowGapsMaxPS.hlsl", {}, "ps_5_0")));
+	if (!shadowGapsVS || !shadowGapsPS)
+		return;
+
+	CS_GPU_PASS("InteriorSun::ShadowGaps");
+	// Everything changed here is put back: the engine caches its D3D state
+	winrt::com_ptr<ID3D11ComputeShader> oldCS;
+	winrt::com_ptr<ID3D11Buffer> oldCSCB;
+	winrt::com_ptr<ID3D11ShaderResourceView> oldCSSRV;
+	winrt::com_ptr<ID3D11UnorderedAccessView> oldCSUAV;
+	winrt::com_ptr<ID3D11VertexShader> oldVS;
+	winrt::com_ptr<ID3D11PixelShader> oldPS;
+	winrt::com_ptr<ID3D11Buffer> oldPSCB;
+	winrt::com_ptr<ID3D11ShaderResourceView> oldPSSRV;
+	winrt::com_ptr<ID3D11InputLayout> oldInputLayout;
+	D3D11_PRIMITIVE_TOPOLOGY oldTopology;
+	winrt::com_ptr<ID3D11RasterizerState> oldRasterState;
+	winrt::com_ptr<ID3D11DepthStencilState> oldDepthState;
+	UINT oldStencilRef;
+	D3D11_VIEWPORT oldViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+	UINT oldViewportCount = static_cast<UINT>(std::size(oldViewports));
+	winrt::com_ptr<ID3D11RenderTargetView> oldRTV;
+	winrt::com_ptr<ID3D11DepthStencilView> oldDSV;
+	context->CSGetShader(oldCS.put(), nullptr, nullptr);
+	context->CSGetConstantBuffers(0, 1, oldCSCB.put());
+	context->CSGetShaderResources(0, 1, oldCSSRV.put());
+	context->CSGetUnorderedAccessViews(0, 1, oldCSUAV.put());
+	context->VSGetShader(oldVS.put(), nullptr, nullptr);
+	context->PSGetShader(oldPS.put(), nullptr, nullptr);
+	context->PSGetConstantBuffers(0, 1, oldPSCB.put());
+	context->PSGetShaderResources(0, 1, oldPSSRV.put());
+	context->IAGetInputLayout(oldInputLayout.put());
+	context->IAGetPrimitiveTopology(&oldTopology);
+	context->RSGetState(oldRasterState.put());
+	context->RSGetViewports(&oldViewportCount, oldViewports);
+	context->OMGetDepthStencilState(oldDepthState.put(), &oldStencilRef);
+	context->OMGetRenderTargets(1, oldRTV.put(), oldDSV.put());
+
+	const auto count = std::min(sunLight->shadowMapCount, descriptors.size());
+	for (uint32_t i = 0; i < count; ++i) {
+		const auto target = static_cast<uint32_t>(descriptors[i].renderTarget);
+		const auto slice = descriptors[i].shadowmapIndex;
+		if (target >= RE::RENDER_TARGETS_DEPTHSTENCIL::kTOTAL || slice >= std::size(depthStencils[target].views))
+			continue;
+		const auto& depth = depthStencils[target];
+		if (!depth.texture || !depth.depthSRV || !depth.views[slice])
+			continue;
+
+		D3D11_TEXTURE2D_DESC textureDesc;
+		Util::AsReal(depth.texture)->GetDesc(&textureDesc);
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+		Util::AsReal(depth.depthSRV)->GetDesc(&srvDesc);
+		const bool isArray = srvDesc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+
+		auto& minCS = shadowGapsMinCS[isArray];
+		if (!minCS) {
+			std::vector<std::pair<const char*, const char*>> defines;
+			if (isArray)
+				defines.emplace_back("SHADOW_ARRAY", "");
+			minCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\InteriorSun\\ShadowGapsMinCS.hlsl", defines, "cs_5_0")));
+			if (!minCS)
+				continue;
+		}
+
+		if (!shadowGapsGrown || shadowGapsGrown->desc.Width != textureDesc.Width || shadowGapsGrown->desc.Height != textureDesc.Height) {
+			D3D11_TEXTURE2D_DESC grownDesc{};
+			grownDesc.Width = textureDesc.Width;
+			grownDesc.Height = textureDesc.Height;
+			grownDesc.MipLevels = 1;
+			grownDesc.ArraySize = 1;
+			grownDesc.Format = DXGI_FORMAT_R32_FLOAT;
+			grownDesc.SampleDesc.Count = 1;
+			grownDesc.Usage = D3D11_USAGE_DEFAULT;
+			grownDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+			shadowGapsGrown = std::make_unique<Texture2D>(grownDesc, "InteriorSun::ShadowGapsGrown");
+			D3D11_SHADER_RESOURCE_VIEW_DESC grownSRV{ DXGI_FORMAT_R32_FLOAT, D3D11_SRV_DIMENSION_TEXTURE2D };
+			grownSRV.Texture2D.MipLevels = 1;
+			shadowGapsGrown->CreateSRV(grownSRV);
+			D3D11_UNORDERED_ACCESS_VIEW_DESC grownUAV{ DXGI_FORMAT_R32_FLOAT, D3D11_UAV_DIMENSION_TEXTURE2D };
+			shadowGapsGrown->CreateUAV(grownUAV);
+		}
+
+		ShadowGapsCB data{ { textureDesc.Width, textureDesc.Height }, slice, radius };
+		shadowGapsCB->Update(data);
+		auto cb = shadowGapsCB->CB();
+
+		// Grow the shadows into the scratch texture; the depth must not be bound for writing meanwhile
+		context->OMSetRenderTargets(0, nullptr, nullptr);
+		ID3D11ShaderResourceView* srv = Util::AsReal(depth.depthSRV);
+		ID3D11UnorderedAccessView* uav = shadowGapsGrown->uav.get();
+		context->CSSetShader(minCS.get(), nullptr, 0);
+		context->CSSetConstantBuffers(0, 1, &cb);
+		context->CSSetShaderResources(0, 1, &srv);
+		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+		context->Dispatch((textureDesc.Width + 7) / 8, (textureDesc.Height + 7) / 8, 1);
+		srv = nullptr;
+		uav = nullptr;
+		context->CSSetShaderResources(0, 1, &srv);
+		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+		// Shrink them back while writing the cascade's depth
+		D3D11_VIEWPORT viewport{ 0.0f, 0.0f, static_cast<float>(textureDesc.Width), static_cast<float>(textureDesc.Height), 0.0f, 1.0f };
+		srv = shadowGapsGrown->srv.get();
+		context->OMSetRenderTargets(0, nullptr, Util::AsReal(depth.views[slice]));
+		context->IASetInputLayout(nullptr);
+		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		context->VSSetShader(shadowGapsVS.get(), nullptr, 0);
+		context->PSSetShader(shadowGapsPS.get(), nullptr, 0);
+		context->PSSetConstantBuffers(0, 1, &cb);
+		context->PSSetShaderResources(0, 1, &srv);
+		context->RSSetState(windowHolesRasterState.get());
+		context->RSSetViewports(1, &viewport);
+		context->OMSetDepthStencilState(windowHolesDepthState.get(), 0);
+		context->Draw(3, 0);
+		srv = nullptr;
+		context->PSSetShaderResources(0, 1, &srv);
+	}
+
+	auto restore = oldCSCB.get();
+	auto restoreSRV = oldCSSRV.get();
+	auto restoreUAV = oldCSUAV.get();
+	context->CSSetShader(oldCS.get(), nullptr, 0);
+	context->CSSetConstantBuffers(0, 1, &restore);
+	context->CSSetShaderResources(0, 1, &restoreSRV);
+	context->CSSetUnorderedAccessViews(0, 1, &restoreUAV, nullptr);
+	restore = oldPSCB.get();
+	restoreSRV = oldPSSRV.get();
+	context->VSSetShader(oldVS.get(), nullptr, 0);
+	context->PSSetShader(oldPS.get(), nullptr, 0);
+	context->PSSetConstantBuffers(0, 1, &restore);
+	context->PSSetShaderResources(0, 1, &restoreSRV);
+	context->IASetInputLayout(oldInputLayout.get());
+	context->IASetPrimitiveTopology(oldTopology);
+	context->RSSetState(oldRasterState.get());
+	context->RSSetViewports(oldViewportCount, oldViewports);
+	context->OMSetDepthStencilState(oldDepthState.get(), oldStencilRef);
+	auto restoreRTV = oldRTV.get();
+	context->OMSetRenderTargets(1, &restoreRTV, oldDSV.get());
+}
+
 void InteriorSun::DrawWindowHoles(const RE::NiCamera* camera)
 {
 	const auto shadowSceneNode = globals::game::smState->shadowSceneNode[0];
@@ -859,6 +1034,8 @@ void InteriorSun::DrawWindowHoles(const RE::NiCamera* camera)
 	const auto cascade = static_cast<uint32_t>(descriptor - descriptors.begin());
 	if (settings.LightOnlyPastWindow && cascade < 2 && !(windowPlanesWritten & (1u << cascade)))
 		DrawWindowPlanes(cascade, data, viewport, textureDesc.Width, textureDesc.Height);
+
+	++windowHolesDrawn;
 }
 
 void InteriorSun::DrawWindowPlanes(uint32_t cascade, WindowHolesCB data, const D3D11_VIEWPORT& shadowViewport, uint32_t shadowWidth, uint32_t shadowHeight)
