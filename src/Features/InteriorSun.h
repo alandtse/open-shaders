@@ -42,6 +42,7 @@ public:
 		float InteriorShadowDistance = 5000;
 		bool WindowLightOnly = true;
 		bool DetectOpenings = true;
+		bool SunFacingHolesOnly = true;
 		bool FrameShadowsFromGlowMaps = true;
 		float GlowMapThreshold = 0.5f;
 	};
@@ -187,6 +188,7 @@ private:
 		RE::NiPointer<RE::NiSourceTexture> texture;
 		HoleMode mode = kWhole;
 		float alphaThreshold = 0.5f;
+		float3 outward = float3(0, 0, 0);  // the side the sun must be on to come through; zero when unknown (always open)
 	};
 
 	// Rescans after entering a cell, in frames: its 3D can still be loading on the first ones
@@ -216,6 +218,9 @@ private:
 		std::vector<uint32_t> occluderShapes;    // first triangle of each occluder shape, plus the end
 		std::vector<float3> candidateTriangles;  // triangle list of the candidates
 		std::vector<float2> candidateUVs;
+		std::vector<float3> glassTriangles;                      // the glass, to find which way each pane faces outward
+		std::vector<std::pair<uint32_t, uint32_t>> glassShapes;  // first and count per pane
+		std::vector<float3> glassOutward;                        // result per pane; zero when the test can't tell
 		std::vector<OpeningCandidate> candidates;
 		std::vector<float3> openings;  // result: triangle list of the shapes found to be openings
 		std::vector<float2> openingUVs;
@@ -236,8 +241,16 @@ private:
 
 	std::vector<float3> windowGlassVertices;
 	std::vector<float2> windowGlassUVs;
-	std::vector<HoleDraw> windowGlassRuns;  // per glass shape, in windowGlassVertices
+	std::vector<HoleDraw> windowGlassRuns;   // per glass shape, in windowGlassVertices
+	std::vector<float3> windowGlassOutward;  // per glass shape, from the shell test
+	std::vector<uint8_t> lastOpenMask;       // which holes were open at the last upload, glass then openings
 
+	/** @brief Direction toward the sun in world space; zero when there is none. */
+	static float3 GetToSun();
+	/** @brief Whether a hole lets the sun through now: open unless the sun is behind its outward side. */
+	bool IsHoleOpen(const float3& outward, const float3& toSun) const;
+	/** @brief Which holes are open now, glass then openings, to rebuild the holes when it changes. */
+	std::vector<uint8_t> ComputeOpenMask(const float3& toSun) const;
 	std::vector<HoleDraw> windowHoleDraws;  // what the hole pass draws, grouped by glow map
 	winrt::com_ptr<ID3D11PixelShader> windowHolesPS;
 	winrt::com_ptr<ID3D11SamplerState> windowHolesSampler;
@@ -278,5 +291,6 @@ private:
 	// Settings whose change needs the cell scanned or the holes rebuilt again
 	bool lastDetectOpenings = true;
 	bool lastFrameShadows = true;
+	bool lastSunFacing = true;
 	bool forceHolesUpload = false;
 };

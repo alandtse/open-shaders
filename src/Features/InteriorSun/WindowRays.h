@@ -9,6 +9,9 @@
 
 namespace InteriorSunRays
 {
+	/** @brief How far past edge-on a hole still counts as facing the sun, as a cosine. */
+	inline constexpr float kEdgeOnMargin = 0.05f;
+
 	/** @brief Nearest hit of a ray against triangles [first, end) of a triangle list (Moller-Trumbore); FLT_MAX for none within reach. */
 	inline float CastRay(const float3& origin, const float3& direction, float reach, const std::vector<float3>& triangles, uint32_t first, uint32_t end)
 	{
@@ -56,5 +59,11 @@ namespace InteriorSunRays
 				return false;
 		}
 		return true;
+	}
+
+	/** @brief Whether sun from toSun can pass a hole whose open side faces outward; an unknown (zero) side always passes. */
+	inline bool FacesSun(const float3& outward, const float3& toSun)
+	{
+		return outward.LengthSquared() < 1e-6f || toSun.LengthSquared() < 1e-6f || outward.Dot(toSun) > -kEdgeOnMargin;
 	}
 }

@@ -1894,6 +1894,8 @@
     "feature.interior_sun.key_feature_3": "Includes an option to force double-sided rendering for unprepared interiors",
     "feature.interior_sun.key_feature_4": "Fixes geometry culling issues that cause light leakage",
     "feature.interior_sun.name": "Interior Sun",
+    "feature.interior_sun.sun_facing_holes_only": "Only Windows Facing The Sun",
+    "feature.interior_sun.sun_facing_holes_only_tooltip": "Each moment, lets the sun in only through windows and openings that face it. Sun could never enter through a window it is behind, and opening one lets thin slivers of light onto the beams and walls along its line.",
     "feature.interior_sun.window_light_only": "Sunlight Through Windows Only",
     "feature.interior_sun.window_light_only_tooltip": "Only lets the sun and moon into an interior through its window glass, which stops light leaking through walls, seams and roofs. Has no effect in interiors whose windows are not marked as glass.",
     "feature.key_features": "Key features:",

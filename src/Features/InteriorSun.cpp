@@ -14,6 +14,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	InteriorShadowDistance,
 	WindowLightOnly,
 	DetectOpenings,
+	SunFacingHolesOnly,
 	FrameShadowsFromGlowMaps,
 	GlowMapThreshold)
 
@@ -93,6 +94,12 @@ void InteriorSun::DrawSettings()
 							  "Also lets light in through see-through shapes in the outer walls, such as lattices, that have nothing behind them. "
 							  "Found automatically when entering an interior."));
 	}
+	ImGui::Checkbox(T(TKEY("sun_facing_holes_only"), "Only Windows Facing The Sun"), &settings.SunFacingHolesOnly);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("sun_facing_holes_only_tooltip"),
+							  "Each moment, lets the sun in only through windows and openings that face it. "
+							  "Sun could never enter through a window it is behind, and opening one lets thin slivers of light onto the beams and walls along its line."));
+	}
 }
 
 void InteriorSun::LoadSettings(json& o_json)
@@ -165,7 +172,15 @@ void InteriorSun::EarlyPrepass()
 	else if (windowGlassCell)
 		ReleaseWindowGlass();
 
+	if (windowGlassCell && isInteriorWithSun && ComputeOpenMask(GetToSun()) != lastOpenMask)
+		UploadWindowHoles(windowGlassCell);
+
 	// Changing these needs the cell scanned again (openings, glows) and the holes rebuilt
+	if (settings.SunFacingHolesOnly != lastSunFacing) {
+		lastSunFacing = settings.SunFacingHolesOnly;
+		forceHolesUpload = true;
+		lastOpenMask.clear();
+	}
 	if (settings.DetectOpenings != lastDetectOpenings || settings.FrameShadowsFromGlowMaps != lastFrameShadows) {
 		lastDetectOpenings = settings.DetectOpenings;
 		lastFrameShadows = settings.FrameShadowsFromGlowMaps;
@@ -320,8 +335,13 @@ void InteriorSun::CollectWindowGlass(RE::TESObjectCELL* cell)
 	// The shell test runs again only when the candidates changed since the last scan of this cell. The room's
 	// geometry, the bulk of the scan's time, is copied only then.
 	std::vector<float3> scanKey;
-	if (scan)
+	if (scan) {
+		scan->glassTriangles = vertices;
+		for (const auto& run : runs)
+			scan->glassShapes.emplace_back(run.first, run.count);
 		scanKey = scan->candidateTriangles;
+		scanKey.insert(scanKey.end(), scan->glassTriangles.begin(), scan->glassTriangles.end());
+	}
 	const bool runShellTest = scan && !scanKey.empty() && (!lastCandidateTriangles || *lastCandidateTriangles != scanKey);
 	if (runShellTest)
 		CollectOccluders(cell, *scan);
@@ -369,6 +389,36 @@ void InteriorSun::CollectOccluders(RE::TESObjectCELL* cell, OpeningScan& scan)
 	scan.occluderShapes.push_back(static_cast<uint32_t>(scan.occluders.size()));
 }
 
+float3 InteriorSun::GetToSun()
+{
+	const auto shadowSceneNode = globals::game::smState->shadowSceneNode[0];
+	const auto sunLight = shadowSceneNode ? shadowSceneNode->GetRuntimeData().sunShadowDirLight : nullptr;
+	if (!sunLight)
+		return float3(0, 0, 0);
+	const auto& v = sunLight->GetShadowDirectionalLightRuntimeData().sunVector;
+	float3 toSun = -float3(v.x, v.y, v.z);
+	if (toSun.LengthSquared() > 1e-6f)
+		toSun.Normalize();
+	return toSun;
+}
+
+bool InteriorSun::IsHoleOpen(const float3& outward, const float3& toSun) const
+{
+	// A few degrees of margin, so a window doesn't blink at edge-on and a deep frame doesn't cut it early
+	return !settings.SunFacingHolesOnly || InteriorSunRays::FacesSun(outward, toSun);
+}
+
+std::vector<uint8_t> InteriorSun::ComputeOpenMask(const float3& toSun) const
+{
+	std::vector<uint8_t> mask;
+	for (size_t i = 0; i < windowGlassRuns.size(); ++i)
+		mask.push_back(IsHoleOpen(i < windowGlassOutward.size() ? windowGlassOutward[i] : float3(0, 0, 0), toSun));
+	if (settings.DetectOpenings)
+		for (const auto& run : windowOpeningRuns)
+			mask.push_back(IsHoleOpen(run.outward, toSun));
+	return mask;
+}
+
 void InteriorSun::UploadWindowHoles(const RE::TESObjectCELL* cell)
 {
 	struct HoleVertex
@@ -380,8 +430,14 @@ void InteriorSun::UploadWindowHoles(const RE::TESObjectCELL* cell)
 	windowHoleDraws.clear();
 
 	// Glass grouped by glow map, so each map is bound once; without frame shadows every pane opens whole
+	const float3 toSun = GetToSun();
+	lastOpenMask = ComputeOpenMask(toSun);
 	std::vector<HoleDraw> runs;
-	for (auto run : windowGlassRuns) {
+	for (size_t i = 0; i < windowGlassRuns.size(); ++i) {
+		auto run = windowGlassRuns[i];
+		run.outward = i < windowGlassOutward.size() ? windowGlassOutward[i] : float3(0, 0, 0);
+		if (!IsHoleOpen(run.outward, toSun))
+			continue;
 		if (!settings.FrameShadowsFromGlowMaps)
 			run.texture = nullptr;
 		run.mode = run.texture ? kBrightGlow : kWhole;
@@ -389,7 +445,7 @@ void InteriorSun::UploadWindowHoles(const RE::TESObjectCELL* cell)
 	}
 	std::vector<HoleDraw> openingRuns;
 	if (settings.DetectOpenings)
-		openingRuns = windowOpeningRuns;
+		std::ranges::copy_if(windowOpeningRuns, std::back_inserter(openingRuns), [&](const HoleDraw& run) { return IsHoleOpen(run.outward, toSun); });
 	const auto sameDraw = [](const HoleDraw& a, const HoleDraw& b) { return a.texture == b.texture && a.mode == b.mode && a.alphaThreshold == b.alphaThreshold; };
 	const auto byTexture = [](const HoleDraw& run) { return run.texture.get(); };
 	std::ranges::stable_sort(runs, {}, byTexture);
@@ -440,6 +496,8 @@ void InteriorSun::TakeOpeningScan()
 	windowOpeningVertices = std::move(scan->openings);
 	windowOpeningUVs = std::move(scan->openingUVs);
 	windowOpeningRuns = std::move(scan->openingRuns);
+	if (scan->glassOutward.size() == windowGlassRuns.size())
+		windowGlassOutward = scan->glassOutward;
 	logger::info("[Interior Sun] Openings in cell {:08X}: {} of {} candidate shapes, {} triangles", scan->cell->GetFormID(),
 		std::ranges::count_if(scan->candidates, [](const auto& candidate) { return candidate.opening; }), scan->candidates.size(), windowOpeningVertices.size() / 3);
 
@@ -512,6 +570,52 @@ void InteriorSun::RunOpeningScan(OpeningScan& scan)
 		return m;
 	};
 
+	// Panes sit recessed in their frames, so both rays often hit something: outside trim a few units off, the room far
+	// away. The open side wins, then the side with the clearly nearer hit, then the side away from the middle of the cell's walls.
+	float3 roomMin(FLT_MAX), roomMax(-FLT_MAX);
+	for (const auto& point : scan.occluders) {
+		roomMin = float3::Min(roomMin, point);
+		roomMax = float3::Max(roomMax, point);
+	}
+	const float3 roomCentre = (roomMin + roomMax) * 0.5f;
+	for (const auto& [first, count] : scan.glassShapes) {
+		float3 openVote(0, 0, 0), fartherVote(0, 0, 0), largestNormal(0, 0, 0), largestCentre(0, 0, 0);
+		float largestArea = 0.0f;
+		for (uint32_t t = 0; t + 2 < count; t += 3) {
+			const auto& tri = scan.glassTriangles;
+			const uint32_t i = first + t;
+			float3 normal = (tri[i + 1] - tri[i]).Cross(tri[i + 2] - tri[i]);
+			const float area = normal.Length();
+			if (area < 1e-3f)
+				continue;
+			normal /= area;
+			const float3 centre = (tri[i] + tri[i + 1] + tri[i + 2]) / 3.0f;
+			if (area > largestArea) {
+				largestArea = area;
+				largestNormal = normal;
+				largestCentre = centre;
+			}
+			if (t / 3 >= SamplesPerShape)
+				continue;
+			const float front = cast(centre + normal * 2.0f, normal);
+			const float back = cast(centre - normal * 2.0f, -normal);
+			if ((front == FLT_MAX) != (back == FLT_MAX))
+				openVote += front == FLT_MAX ? normal : -normal;
+			else if (front != FLT_MAX && std::max(front, back) >= 64.0f && std::max(front, back) >= 3.0f * std::min(front, back))
+				fartherVote += front < back ? normal : -normal;  // the near hit is the outside trim; the room is the far one
+		}
+		float3 outward(0, 0, 0);
+		if (openVote.LengthSquared() > 1e-6f)
+			outward = openVote;
+		else if (fartherVote.LengthSquared() > 1e-6f)
+			outward = fartherVote;
+		else if (largestArea > 0.0f)
+			outward = largestNormal.Dot(largestCentre - roomCentre) >= 0.0f ? largestNormal : -largestNormal;
+		if (outward.LengthSquared() > 1e-6f)
+			outward.Normalize();
+		scan.glassOutward.push_back(outward);
+	}
+
 	for (auto& candidate : scan.candidates) {
 		const auto m = measure(scan.candidateTriangles, candidate.firstTriangle, candidate.triangleCount);
 		candidate.samples = m.samples;
@@ -525,7 +629,7 @@ void InteriorSun::RunOpeningScan(OpeningScan& scan)
 			const auto uvBegin = scan.candidateUVs.begin() + candidate.firstTriangle;
 			scan.openings.insert(scan.openings.end(), begin, begin + candidate.triangleCount);
 			scan.openingUVs.insert(scan.openingUVs.end(), uvBegin, uvBegin + candidate.triangleCount);
-			scan.openingRuns.push_back({ first, candidate.triangleCount, candidate.diffuse, kSeeThrough, candidate.alphaThreshold });
+			scan.openingRuns.push_back({ first, candidate.triangleCount, candidate.diffuse, kSeeThrough, candidate.alphaThreshold, candidate.outward });
 		}
 	}
 	// The room's geometry can run to tens of MB, and the result no longer needs it
@@ -536,6 +640,8 @@ void InteriorSun::RunOpeningScan(OpeningScan& scan)
 void InteriorSun::ReleaseWindowGlass()
 {
 	openingScan.reset();
+	windowGlassOutward.clear();
+	lastOpenMask.clear();
 	lastCandidateTriangles.reset();
 	windowOpeningVertices.clear();
 	windowOpeningUVs.clear();

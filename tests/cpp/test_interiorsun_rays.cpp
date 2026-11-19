@@ -1,4 +1,4 @@
-// Unit tests for the ray helpers Interior Sun's opening scan uses.
+// Unit tests for the ray helpers Interior Sun's opening scan and sun trace use.
 
 #include "Features/InteriorSun/WindowRays.h"
 
@@ -40,4 +40,14 @@ TEST_CASE("A ray hits a box only when it passes through it within reach", "[inte
 	CHECK_FALSE(RayHitsBox({ 5, 0, 0 }, { 0, 0, 1 }, 100.0f, lo, hi));
 	CHECK_FALSE(RayHitsBox({ 0, 0, 0 }, { 0, 0, 1 }, 5.0f, lo, hi));
 	CHECK_FALSE(RayHitsBox({ 0, 0, 0 }, { 0, 0, -1 }, 100.0f, lo, hi));
+}
+
+TEST_CASE("A hole lets the sun through only from its open side, with an edge-on margin", "[interiorsun]")
+{
+	const float3 outward(1, 0, 0);
+	CHECK(FacesSun(outward, { 1, 0, 0 }));
+	CHECK(FacesSun(outward, { 0, 0, 1 }));
+	CHECK(FacesSun(outward, { -0.04f, 0, 0.9992f }));
+	CHECK_FALSE(FacesSun(outward, { -1, 0, 0 }));
+	CHECK(FacesSun({ 0, 0, 0 }, { -1, 0, 0 }));
 }
