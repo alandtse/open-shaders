@@ -151,7 +151,9 @@ public:
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
 		uint EnableParticleContactShadows;
+		uint ClusteredLightCount;
 		float SoftShadowScale;
+		uint pad0[3];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	// Compile-time size lock catches CPU/GPU cbuffer layout drift. STATIC_ASSERT_ALIGNAS_16
@@ -161,7 +163,7 @@ public:
 	// SharedData::LightLimitFixSettings in package/Shaders/Common/SharedData.hlsli
 	// (embedded in the shared FeatureData cbuffer at b6), and must match this layout
 	// field-for-field. Update both sides when the layout changes, then bump this constant.
-	static_assert(sizeof(PerFrame) == 64,
+	static_assert(sizeof(PerFrame) == 80,
 		"LightLimitFix::PerFrame layout drifted -- update SharedData::LightLimitFixSettings in package/Shaders/Common/SharedData.hlsli to match, then update this assert.");
 
 	/** @brief Populates and returns the per-frame constant buffer data for light visualization settings. */
