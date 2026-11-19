@@ -21,6 +21,7 @@
 
 #include "Deferred.h"
 #include "Feature.h"
+#include "HiZPyramid.h"
 #include "State.h"
 #include "Utils/CacheInvalidation.h"
 #include "Utils/CompileDedupe.h"
@@ -37,6 +38,7 @@
 #include "Features/DynamicCubemaps.h"
 #include "Features/RenderDoc.h"
 #include "Features/ReverseZ.h"
+#include "Features/TreeWind.h"
 
 #include "Plugin.h"
 
@@ -1361,6 +1363,12 @@ namespace SIE
 				((descriptor & 0x20004000) == 0x4000 || (descriptor & 0x1E02000) == 0x2000) &&
 				!(descriptor & 0x80) && (descriptor & 0x14000) != 0x10000) {
 				defines[lastIndex++] = { "NO_PIXEL_SHADER", nullptr };
+			}
+
+			// Utility does not take the general feature defines (features that define for every shader type would
+			// change Utility permutations); Tree Wind needs its define here so depth and shadows sway with Lighting.
+			if (globals::features::treeWind.loaded && globals::features::treeWind.HasShaderDefine(RE::BSShader::Type::Utility)) {
+				defines[lastIndex++] = { globals::features::treeWind.GetShaderDefineName().data(), nullptr };
 			}
 
 			defines[lastIndex++] = { nullptr, nullptr };
@@ -3073,6 +3081,7 @@ namespace SIE
 		compilationSet.Clear(true);
 		Util::ClearShaderCompileFailures();
 		globals::deferred->ClearShaderCache();
+		globals::hiZPyramid->ClearShaderCache();
 		for (auto* feature : Feature::GetFeatureList()) {
 			if (feature->loaded) {
 				feature->ClearShaderCache();

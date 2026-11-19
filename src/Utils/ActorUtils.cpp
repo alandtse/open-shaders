@@ -197,6 +197,33 @@ namespace Util
 		});
 	}
 
+	RE::BSVisit::BSVisitControl TraverseCollision(RE::NiAVObject* a_root, const std::function<RE::BSVisit::BSVisitControl(RE::bhkNiCollisionObject*)>& a_func)
+	{
+		if (!a_root)
+			return RE::BSVisit::BSVisitControl::kContinue;
+
+		const RE::NiPointer<RE::NiAVObject> keepAlive{ a_root };
+		if (auto* collision = static_cast<RE::bhkNiCollisionObject*>(a_root->collisionObject.get())) {
+			if (a_func(collision) == RE::BSVisit::BSVisitControl::kStop)
+				return RE::BSVisit::BSVisitControl::kStop;
+		}
+
+		auto result = RE::BSVisit::BSVisitControl::kContinue;
+		if (auto* node = a_root->AsNode()) {
+			auto& children = node->GetChildren();
+			for (std::uint16_t index = 0; index < children.capacity(); ++index) {
+				// A node being destroyed on another thread leaves capacity set while its storage is already gone.
+				if (!children.begin())
+					break;
+				const RE::NiPointer<RE::NiAVObject> child = children[index];
+				result = TraverseCollision(child.get(), a_func);
+				if (result == RE::BSVisit::BSVisitControl::kStop)
+					break;
+			}
+		}
+		return result;
+	}
+
 	void ForEachActorGeometry(RE::Actor* a_actor, const std::function<void(RE::BSGeometry*)>& a_callback)
 	{
 		if (!a_actor || !a_actor->Is3DLoaded() || !a_callback)

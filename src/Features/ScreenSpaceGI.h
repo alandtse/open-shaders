@@ -56,6 +56,8 @@ public:
 	/// @brief Renders the VR stereo reprojection toggle. Shared by the SSGI panel and the
 	/// Performance hub. VR-only; caller guards on isVR.
 	void DrawReprojectToggle();
+	virtual bool HasDebugSection() const override { return true; }
+	virtual void DrawDebugSection() override;
 
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;

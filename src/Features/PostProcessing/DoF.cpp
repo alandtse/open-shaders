@@ -10,7 +10,11 @@
 #include "State.h"
 #include "Util.h"
 
+#include <cstdio>
+
 #include "I18n/I18n.h"
+#include "Menu/MenuIcons.h"
+#include "Utils/DebugView.h"
 
 namespace
 {
@@ -71,20 +75,102 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void DoF::DrawSettings()
 {
 	const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
-	if (cam)
-		ImGui::TextWrapped("%s", T("feature.post_processing.do_f.cinematic_controlled", "Lens, focus and aperture are controlled by Cinematic Camera. Saved settings apply again when it is disabled."));
-	ImGui::BeginDisabled(cam != nullptr);
+	const bool camActive = cam != nullptr;
+	bool adaptiveGather = settings.UseAdaptiveGather;
+	if (camActive)
+		adaptiveGather = true;
+
+	float autoFocusCoord[2] = { settings.FocusCoord.x, settings.FocusCoord.y };
+	float manualFocus = settings.ManualFocusPlane;
+	float focalLength = settings.FocalLength;
+	float fNumber = settings.FNumber;
+	float sensorWidth = settings.SensorWidthMM;
+	float transitionSpeed = settings.TransitionSpeed;
+	int bladeCount = settings.BokehBladeCount;
+	float bladeRoundness = settings.BokehBladeRoundness;
+	float shapeRotation = settings.HighlightShapeRotationAngle;
+	if (camActive) {
+		autoFocusCoord[0] = cam->ScreenPointUV.x;
+		autoFocusCoord[1] = cam->ScreenPointUV.y;
+		manualFocus = cam->ManualDistanceM;
+		focalLength = cam->FocalLengthMM;
+		fNumber = cam->FNumber;
+		sensorWidth = cam->EffectiveSensorWidthMM;
+		transitionSpeed = cam->TransitionSpeed;
+		bladeCount = cam->ApertureBladeCount;
+		bladeRoundness = cam->ApertureRoundness;
+		shapeRotation = std::fmod(cam->ApertureBladeRotationDeg, 360.0f) / 360.0f;
+		DrawCameraControlledNote();
+	}
+
+	ImGui::SeparatorText(T("feature.post_processing.do_f.section_focus", "Focus"));
+	ImGui::BeginDisabled(camActive);
 	ImGui::Checkbox(T("feature.post_processing.do_f.auto_focus", "Auto Focus"), &settings.AutoFocus);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T("feature.post_processing.do_f.auto_focus_desc", "Focus on whatever is under the focus point. When off, Manual Focus sets the distance."));
 
 	if (settings.AutoFocus) {
-		ImGui::SliderFloat2(T("feature.post_processing.do_f.focus_point_xy", "Focus Point X/Y"), &settings.FocusCoord.x, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		const SettingsControl::ProxyScope proxy(&settings.FocusCoord, 1.0f);
+		ImGui::SliderFloat2(T("feature.post_processing.do_f.focus_point", "Focus Point"), autoFocusCoord, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T("feature.post_processing.do_f.focus_point_desc", "Screen position auto focus measures, from the top-left (0, 0) to the bottom-right (1, 1)."));
 	}
-	ImGui::SliderFloat(T("feature.post_processing.do_f.transition_speed", "Transition Speed"), &settings.TransitionSpeed, 0.1f, 1.0f, "%.2f");
-	ImGui::SliderFloat(T("feature.post_processing.do_f.manual_focus", "Manual Focus"), &settings.ManualFocusPlane, 0.1f, 150.0f, "%.2f m");
-	ImGui::SliderFloat(T("feature.post_processing.do_f.focal_length", "Focal Length"), &settings.FocalLength, 1.0f, 300.0f, "%.1f mm");
-	ImGui::SliderFloat(T("feature.post_processing.do_f.f_number", "F-Number"), &settings.FNumber, 1.0f, 22.0f, "f/%.1f");
-	ImGui::SliderFloat(T("feature.post_processing.do_f.sensor_width", "Sensor Width"), &settings.SensorWidthMM, 1.0f, 100.0f, "%.2f mm", ImGuiSliderFlags_AlwaysClamp);
+	{
+		const SettingsControl::ProxyScope proxy(&settings.ManualFocusPlane, 1.0f);
+		ImGui::SliderFloat(T("feature.post_processing.do_f.manual_focus", "Manual Focus"), &manualFocus, 0.1f, 150.0f, "%.2f m");
+	}
+	{
+		const SettingsControl::ProxyScope proxy(&settings.TransitionSpeed, 1.0f);
+		ImGui::SliderFloat(T("feature.post_processing.do_f.transition_speed", "Transition Speed"), &transitionSpeed, 0.1f, 1.0f, "%.2f");
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T("feature.post_processing.do_f.transition_speed_desc", "How quickly focus follows a new distance. 1 snaps immediately."));
+	ImGui::Checkbox(T("feature.post_processing.do_f.target_focus", "Target Focus"), &settings.targetFocus);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T("feature.post_processing.do_f.target_focus_desc", "Focus on the dialogue speaker or True Directional Movement lock-on target, using its own focal length."));
+	if (settings.targetFocus) {
+		ImGui::SliderFloat(T("feature.post_processing.do_f.target_focus_focal_length", "Target Focus Focal Length"), &settings.targetFocusFocalLength, 1.0f, 300.0f, "%.1f mm");
+	}
 	ImGui::EndDisabled();
+	ImGui::Checkbox(T("feature.post_processing.do_f.console_selection", "Console Selection"), &settings.consoleSelection);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T("feature.post_processing.do_f.console_selection_desc", "With Target Focus, also focus on the reference selected in the console."));
+	if (settings.consoleSelection && currentRef != 0) {
+		char selected[64];
+		std::snprintf(selected, sizeof(selected), T("feature.post_processing.do_f.selected_reference", "Selected Reference: %08X"), currentRef);
+		Util::SettingHint(selected);
+	}
+
+	ImGui::SeparatorText(T("feature.post_processing.do_f.section_lens", "Lens"));
+	ImGui::BeginDisabled(camActive);
+	{
+		const SettingsControl::ProxyScope proxy(&settings.FocalLength, 1.0f);
+		ImGui::SliderFloat(T("feature.post_processing.do_f.focal_length", "Focal Length"), &focalLength, 1.0f, 300.0f, "%.1f mm");
+	}
+	{
+		const SettingsControl::ProxyScope proxy(&settings.FNumber, 1.0f);
+		ImGui::SliderFloat(T("feature.post_processing.do_f.f_number", "F-Number"), &fNumber, 1.0f, 22.0f, "f/%.1f");
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T("feature.post_processing.do_f.f_number_desc", "Lower values open the aperture for a shallower depth of field."));
+	{
+		const SettingsControl::ProxyScope proxy(&settings.SensorWidthMM, 1.0f);
+		ImGui::SliderFloat(T("feature.post_processing.do_f.sensor_width", "Sensor Width"), &sensorWidth, 1.0f, 100.0f, "%.1f mm", ImGuiSliderFlags_AlwaysClamp);
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T("feature.post_processing.do_f.sensor_width_desc", "Horizontal sensor extent the focal length and F-number are expressed for. 36 mm matches a full frame camera."));
+	ImGui::EndDisabled();
+	if (!camActive && !SettingsControl::IsReplicating()) {
+		settings.FocusCoord.x = autoFocusCoord[0];
+		settings.FocusCoord.y = autoFocusCoord[1];
+		settings.ManualFocusPlane = manualFocus;
+		settings.TransitionSpeed = transitionSpeed;
+		settings.FocalLength = focalLength;
+		settings.FNumber = fNumber;
+		settings.SensorWidthMM = sensorWidth;
+	}
+
+	ImGui::SeparatorText(T("feature.post_processing.do_f.section_blur", "Blur"));
 	ImGui::SliderFloat(T("feature.post_processing.do_f.far_plane_max_blur", "Far Plane Max Blur"), &settings.FarPlaneMaxBlur, 0.0f, 8.0f, "%.2f");
 	ImGui::SliderFloat(T("feature.post_processing.do_f.near_plane_max_blur", "Near Plane Max Blur"), &settings.NearPlaneMaxBlur, 0.0f, 4.0f, "%.2f");
 	ImGui::SliderFloat(T("feature.post_processing.do_f.max_far_coc_radius", "Max Far Blur Radius"), &settings.MaxFarCoCRadius, 0.001f, 0.1f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
@@ -93,35 +179,38 @@ void DoF::DrawSettings()
 	ImGui::SliderFloat(T("feature.post_processing.do_f.max_near_coc_radius", "Max Near Blur Radius"), &settings.MaxNearCoCRadius, 0.001f, 0.1f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T("feature.post_processing.do_f.max_near_coc_radius_desc", "Upper bound of the near field blur disc radius, as a fraction of the screen width."));
-	ImGui::Checkbox(T("feature.post_processing.do_f.adaptive_gather", "Adaptive Gather"), &settings.UseAdaptiveGather);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T("feature.post_processing.do_f.adaptive_gather_desc", "Uses a fixed low-sample kernel and a CoC-aware image pyramid."));
-	if (settings.UseAdaptiveGather) {
-		const char* gatherQuality[] = {
-			T("feature.post_processing.do_f.gather_quality_performance", "Performance (4 rings)"),
-			T("feature.post_processing.do_f.gather_quality_quality", "Quality (5 rings)")
-		};
-		Util::Combo(T("feature.post_processing.do_f.gather_quality", "Gather Quality"), &settings.GatherQuality, gatherQuality, IM_ARRAYSIZE(gatherQuality));
-	}
-	if (!settings.UseAdaptiveGather)
-		ImGui::SliderFloat(T("feature.post_processing.do_f.blur_quality", "Compatibility Blur Quality"), &settings.BlurQuality, 2.0f, 30.0f, "%.1f");
 	ImGui::SliderFloat(T("feature.post_processing.do_f.near_far_plane_distance_compensation", "Near-Far Plane Distance Compensation"), &settings.NearFarDistanceCompensation, 1.0f, 5.0f, "%.2f");
-	ImGui::SliderFloat(T("feature.post_processing.do_f.bokeh_busy_factor", "Bokeh Busy Factor"), &settings.BokehBusyFactor, 0.0f, 1.0f, "%.2f");
-	ImGui::SliderFloat(T("feature.post_processing.do_f.petzval_strength", "Petzval Strength"), &settings.PetzvalStrength, 0.0f, 2.0f, "%.2f");
-	ImGui::SliderFloat(T("feature.post_processing.do_f.highlight_boost", "Highlight Boost"), &settings.HighlightBoost, 0.0f, 1.0f, "%.2f");
 	ImGui::SliderFloat(T("feature.post_processing.do_f.post_blur_smoothing", "Post Blur Smoothing"), &settings.PostBlurSmoothing, 0.0f, 2.0f, "%.2f");
+
+	ImGui::SeparatorText(T("feature.post_processing.do_f.section_bokeh", "Bokeh"));
 	const char* bokehModes[] = {
 		T("feature.post_processing.do_f.bokeh_mode_procedural", "Procedural"),
 		T("feature.post_processing.do_f.bokeh_mode_custom_texture", "Custom Texture (Higher Cost)")
 	};
-	Util::Combo(T("feature.post_processing.do_f.bokeh_mode", "Bokeh Mode"), &settings.BokehMode, bokehModes, IM_ARRAYSIZE(bokehModes));
-	if (settings.BokehMode == 0) {
-		ImGui::BeginDisabled(cam != nullptr);
-		ImGui::SliderInt(T("feature.post_processing.do_f.bokeh_blade_count", "Aperture Blades"), &settings.BokehBladeCount, 4, 16, "%d", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderFloat(T("feature.post_processing.do_f.bokeh_blade_roundness", "Blade Roundness"), &settings.BokehBladeRoundness, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	int bokehMode = settings.BokehMode;
+	if (camActive)
+		bokehMode = 0;
+	ImGui::BeginDisabled(camActive);
+	if (Util::ComboAtStorage(T("feature.post_processing.do_f.bokeh_mode", "Bokeh Mode"), &settings.BokehMode, &bokehMode, bokehModes, IM_ARRAYSIZE(bokehModes)) && !SettingsControl::IsReplicating())
+		settings.BokehMode = bokehMode;
+	ImGui::EndDisabled();
+	if (bokehMode == 0) {
+		ImGui::BeginDisabled(camActive);
+		{
+			const SettingsControl::ProxyScope proxy(&settings.BokehBladeCount, 1.0f);
+			ImGui::SliderInt(T("feature.post_processing.do_f.bokeh_blade_count", "Aperture Blades"), &bladeCount, 4, 16, "%d", ImGuiSliderFlags_AlwaysClamp);
+		}
+		{
+			const SettingsControl::ProxyScope proxy(&settings.BokehBladeRoundness, 1.0f);
+			ImGui::SliderFloat(T("feature.post_processing.do_f.bokeh_blade_roundness", "Blade Roundness"), &bladeRoundness, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		}
 		ImGui::EndDisabled();
-		if (!settings.UseAdaptiveGather)
-			ImGui::TextDisabled("%s", T("feature.post_processing.do_f.procedural_requires_adaptive", "Procedural blades require Adaptive Gather; the compatibility path uses a circle."));
+		if (!camActive && !SettingsControl::IsReplicating()) {
+			settings.BokehBladeCount = bladeCount;
+			settings.BokehBladeRoundness = bladeRoundness;
+		}
+		if (!adaptiveGather)
+			Util::SettingHint(T("feature.post_processing.do_f.procedural_requires_adaptive", "Procedural blades require Adaptive Gather; the compatibility path uses a circle."), false);
 	} else if (owner) {
 		const int shapeCount = owner->bokehResources.GetTotalShapeCount();
 		const int shape = std::clamp(settings.HighlightShape, 1, std::max(shapeCount, 1));
@@ -140,49 +229,83 @@ void DoF::DrawSettings()
 			ImGui::EndCombo();
 		}
 		ImGui::EndDisabled();
-		ImGui::TextDisabled("%s", T("feature.post_processing.do_f.custom_shape_cost", "Custom textures preserve arbitrary silhouettes but add a texture lookup per gather tap."));
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T("feature.post_processing.do_f.custom_shape_cost", "Custom textures preserve arbitrary silhouettes but add a texture lookup per gather tap."));
 	}
-	ImGui::BeginDisabled(cam != nullptr);
-	ImGui::SliderFloat(T("feature.post_processing.do_f.highlight_shape_rotation", "Highlight Shape Rotation"), &settings.HighlightShapeRotationAngle, 0.0f, 1.0f, "%.2f");
-	ImGui::Checkbox(T("feature.post_processing.do_f.target_focus", "Target Focus"), &settings.targetFocus);
-	ImGui::SliderFloat(T("feature.post_processing.do_f.target_focus_focal_length", "Target Focus Focal Length"), &settings.targetFocusFocalLength, 1.0f, 300.0f, "%.1f mm");
+	ImGui::BeginDisabled(camActive);
+	{
+		const SettingsControl::ProxyScope proxy(&settings.HighlightShapeRotationAngle, 1.0f);
+		ImGui::SliderFloat(T("feature.post_processing.do_f.highlight_shape_rotation", "Highlight Shape Rotation"), &shapeRotation, 0.0f, 1.0f, "%.2f");
+	}
 	ImGui::EndDisabled();
-	ImGui::Checkbox(T("feature.post_processing.do_f.console_selection", "Console Selection"), &settings.consoleSelection);
-	if (settings.consoleSelection && currentRef != 0) {
-		ImGui::Text(T("feature.post_processing.do_f.selected_reference", "Selected Reference: %08X"), currentRef);
+	if (!camActive && !SettingsControl::IsReplicating())
+		settings.HighlightShapeRotationAngle = shapeRotation;
+	ImGui::SliderFloat(T("feature.post_processing.do_f.highlight_boost", "Highlight Boost"), &settings.HighlightBoost, 0.0f, 1.0f, "%.2f");
+	ImGui::SliderFloat(T("feature.post_processing.do_f.bokeh_busy_factor", "Bokeh Busy Factor"), &settings.BokehBusyFactor, 0.0f, 1.0f, "%.2f");
+	ImGui::SliderFloat(T("feature.post_processing.do_f.petzval_strength", "Petzval Strength"), &settings.PetzvalStrength, 0.0f, 2.0f, "%.2f");
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T("feature.post_processing.do_f.petzval_strength_desc", "Stretches out-of-focus highlights toward the frame edges, like the swirly bokeh of vintage lenses."));
+
+	ImGui::SeparatorText(T("feature.post_processing.do_f.section_quality", "Quality"));
+	ImGui::BeginDisabled(camActive);
+	{
+		const SettingsControl::ProxyScope proxy(&settings.UseAdaptiveGather, 1.0f);
+		if (ImGui::Checkbox(T("feature.post_processing.do_f.adaptive_gather", "Adaptive Gather"), &adaptiveGather) && !SettingsControl::IsReplicating())
+			settings.UseAdaptiveGather = adaptiveGather;
+	}
+	ImGui::EndDisabled();
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T("feature.post_processing.do_f.adaptive_gather_desc", "Uses a fixed low-sample kernel and a CoC-aware image pyramid."));
+	if (adaptiveGather) {
+		const char* gatherQuality[] = {
+			T("feature.post_processing.do_f.gather_quality_performance", "Performance (4 rings)"),
+			T("feature.post_processing.do_f.gather_quality_quality", "Quality (5 rings)")
+		};
+		Util::Combo(T("feature.post_processing.do_f.gather_quality", "Gather Quality"), &settings.GatherQuality, gatherQuality, IM_ARRAYSIZE(gatherQuality));
+	}
+	if (!adaptiveGather)
+		ImGui::SliderFloat(T("feature.post_processing.do_f.blur_quality", "Compatibility Blur Quality"), &settings.BlurQuality, 2.0f, 30.0f, "%.1f");
+}
+
+void DoF::DrawDebugSection()
+{
+	const float uiScale = Util::GetUIScale();
+	const float focusPreviewScale = 64.0f * uiScale;
+	{
+		Util::SectionCard card("##DoFFocus", ICON_TI_APERTURE, T("feature.post_processing.do_f.debug_card_focus", "Focus"));
+		Util::DrawDebugValueRows("##DoFFocusRows", {
+													   { T("feature.post_processing.do_f.debug_distance", "Distance"), Util::DebugNum(debugDistance) },
+													   { T("feature.post_processing.do_f.debug_focus_plane", "Focus Plane"), Util::DebugNum(debugFocusPlane) },
+												   });
 	}
 
-	if (Util::ShowDebugSections() && ImGui::CollapsingHeader(T("feature.post_processing.do_f.debug", "Debug"))) {
-		const float uiScale = Util::GetUIScale();
-		const float focusPreviewScale = 64.0f * uiScale;
-		static float debugRescale = .3f;
-		const float debugTextureScale = debugRescale * uiScale;
-		ImGui::Text(T("feature.post_processing.do_f.debug_distance", "Debug Distance: %f"), debugDistance);
-		ImGui::Text(T("feature.post_processing.do_f.debug_focus_plane", "Debug Focus Plane: %f"), debugFocusPlane);
-		ImGui::SliderFloat(T("feature.post_processing.do_f.view_resize", "View Resize"), &debugRescale, 0.f, 1.f);
+	Util::SectionCard card("##DoFBuffers", ICON_TI_EYE, T("feature.post_processing.do_f.debug_card_buffers", "Buffers"));
+	static float debugRescale = .3f;
+	const float debugTextureScale = debugRescale * uiScale;
+	ImGui::SliderFloat(T("feature.post_processing.do_f.view_resize", "View Resize"), &debugRescale, 0.f, 1.f);
+	Util::SettingHint(T("feature.post_processing.do_f.debug_buffers_hint", "Expand a buffer to see it. View Resize scales the previews."), false);
 
-		BUFFER_VIEWER_NODE(texFocus, focusPreviewScale)
-		BUFFER_VIEWER_NODE(texPreFocus, focusPreviewScale)
+	BUFFER_VIEWER_NODE(texFocus, focusPreviewScale)
+	BUFFER_VIEWER_NODE(texPreFocus, focusPreviewScale)
 
-		BUFFER_VIEWER_NODE(texCoC, debugTextureScale)
-		BUFFER_VIEWER_NODE(texCoCHalf, debugTextureScale)
-		BUFFER_VIEWER_NODE(texCoCTile, debugTextureScale)
-		BUFFER_VIEWER_NODE(texCoCTileTmp, debugTextureScale)
-		BUFFER_VIEWER_NODE(texCoCTileDilated, debugTextureScale)
-		BUFFER_VIEWER_NODE(texPreBlurred, debugTextureScale)
-		BUFFER_VIEWER_NODE(texGatherColor[0], debugTextureScale)
-		BUFFER_VIEWER_NODE(texGatherColor[1], debugTextureScale)
-		BUFFER_VIEWER_NODE(texGatherColor[2], debugTextureScale)
-		BUFFER_VIEWER_NODE(texGatherCoC[0], debugTextureScale)
-		BUFFER_VIEWER_NODE(texGatherCoC[1], debugTextureScale)
-		BUFFER_VIEWER_NODE(texGatherCoC[2], debugTextureScale)
-		BUFFER_VIEWER_NODE(texFarBlurred, debugTextureScale)
-		BUFFER_VIEWER_NODE(texNearBlurred, debugTextureScale)
+	BUFFER_VIEWER_NODE(texCoC, debugTextureScale)
+	BUFFER_VIEWER_NODE(texCoCHalf, debugTextureScale)
+	BUFFER_VIEWER_NODE(texCoCTile, debugTextureScale)
+	BUFFER_VIEWER_NODE(texCoCTileTmp, debugTextureScale)
+	BUFFER_VIEWER_NODE(texCoCTileDilated, debugTextureScale)
+	BUFFER_VIEWER_NODE(texPreBlurred, debugTextureScale)
+	BUFFER_VIEWER_NODE(texGatherColor[0], debugTextureScale)
+	BUFFER_VIEWER_NODE(texGatherColor[1], debugTextureScale)
+	BUFFER_VIEWER_NODE(texGatherColor[2], debugTextureScale)
+	BUFFER_VIEWER_NODE(texGatherCoC[0], debugTextureScale)
+	BUFFER_VIEWER_NODE(texGatherCoC[1], debugTextureScale)
+	BUFFER_VIEWER_NODE(texGatherCoC[2], debugTextureScale)
+	BUFFER_VIEWER_NODE(texFarBlurred, debugTextureScale)
+	BUFFER_VIEWER_NODE(texNearBlurred, debugTextureScale)
 
-		BUFFER_VIEWER_NODE(texBlurredFiltered, debugTextureScale)
-		BUFFER_VIEWER_NODE(texPostSmooth, debugTextureScale)
-		BUFFER_VIEWER_NODE(texPostSmooth2, debugTextureScale)
-	}
+	BUFFER_VIEWER_NODE(texBlurredFiltered, debugTextureScale)
+	BUFFER_VIEWER_NODE(texPostSmooth, debugTextureScale)
+	BUFFER_VIEWER_NODE(texPostSmooth2, debugTextureScale)
 }
 
 void DoF::RestoreDefaultSettings()
@@ -273,6 +396,7 @@ bool DoF::DrawBeforeUpscaling() const
 
 void DoF::SetupResources()
 {
+	focusFrame = ~0u;
 	auto device = globals::d3d::device;
 
 	logger::debug("Creating buffers...");
@@ -322,17 +446,24 @@ void DoF::SetupResources()
 		texDescHalf.Width = ReduceDoFWidth(texDescHalf.Width, false);
 		texDescHalf.Height = std::max(1u, texDescHalf.Height / 2u);
 
-		texPreBlurred = eastl::make_unique<Texture2D>(texDescHalf, "DoF::SetupColor");
-		texPreBlurred->CreateSRV(srvDesc);
-		texPreBlurred->CreateUAV(uavDesc);
+		// Both the near layer and its postfilter destination carry coverage in
+		// alpha. Scene formats such as R11G11B10_FLOAT discard it and sample 1,
+		// causing the half-resolution layer to overwrite even in-focus pixels.
+		auto nearDesc = texDescHalf;
+		auto nearSRV = srvDesc;
+		auto nearUAV = uavDesc;
+		nearDesc.Format = nearSRV.Format = nearUAV.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		texPreBlurred = eastl::make_unique<Texture2D>(nearDesc, "DoF::SetupColor");
+		texPreBlurred->CreateSRV(nearSRV);
+		texPreBlurred->CreateUAV(nearUAV);
 
 		texFarBlurred = eastl::make_unique<Texture2D>(texDescHalf, "DoF::FarLayer");
 		texFarBlurred->CreateSRV(srvDesc);
 		texFarBlurred->CreateUAV(uavDesc);
 
-		texNearBlurred = eastl::make_unique<Texture2D>(texDescHalf, "DoF::NearLayer");
-		texNearBlurred->CreateSRV(srvDesc);
-		texNearBlurred->CreateUAV(uavDesc);
+		texNearBlurred = eastl::make_unique<Texture2D>(nearDesc, "DoF::NearLayer");
+		texNearBlurred->CreateSRV(nearSRV);
+		texNearBlurred->CreateUAV(nearUAV);
 
 		texBlurredFiltered = eastl::make_unique<Texture2D>(texDescHalf, "DoF::FarFiltered");
 		texBlurredFiltered->CreateSRV(srvDesc);
@@ -477,6 +608,7 @@ void DoF::Draw(TextureInfo& inout_tex)
 	const Settings renderSettings = settings;
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
+	auto state = globals::state;
 	auto* depthSRV = Util::AsReal(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
 	if (!depthSRV) {
 		return;
@@ -557,7 +689,8 @@ void DoF::Draw(TextureInfo& inout_tex)
 	// RaceMenu always autofocuses the player, regardless of the configured mode.
 	auto* player = globals::game::player;
 	if (player && inRaceMenu) {
-		focusLen = RaceMenuFocalLengthMM;
+		if (!cam)
+			focusLen = RaceMenuFocalLengthMM;
 		autoFocus = Util::GetReferenceFocusCoord(player, focusCoord);
 		if (!autoFocus) {
 			manualFocus = Util::Units::GameUnitsToMeters(Util::GetCameraDistanceToReference(player)) * 0.001f;
@@ -582,7 +715,7 @@ void DoF::Draw(TextureInfo& inout_tex)
 	const size_t gatherQuality = (size_t)std::clamp(renderSettings.GatherQuality, 0, 1);
 	UpdateProceduralBokehSamples(bladeCount, bladeRoundness);
 
-	const int requestedBokehMode = std::clamp(renderSettings.BokehMode, 0, 1);
+	const int requestedBokehMode = cam ? 0 : std::clamp(renderSettings.BokehMode, 0, 1);
 	int customShapeIndex = 0;
 	ID3D11ShaderResourceView* customShapeSRV = nullptr;
 	ID3D11ShaderResourceView* customShapeSampleSRV = nullptr;
@@ -598,7 +731,11 @@ void DoF::Draw(TextureInfo& inout_tex)
 	const bool adaptiveGatherReady = bokehSampleSRV &&
 	                                 AllShadersReady({ &DownsampleCS, &ReduceColorCoCCS, &ReduceColorCS,
 										 &FarGatherCS[gatherQuality], &NearGatherCS[gatherQuality] });
-	const bool useAdaptiveGather = renderSettings.UseAdaptiveGather && adaptiveGatherReady;
+	if (cam && !adaptiveGatherReady) {
+		state->EndPerfEvent();
+		return;
+	}
+	const bool useAdaptiveGather = (cam || renderSettings.UseAdaptiveGather) && adaptiveGatherReady;
 
 	// Tile propagation carries the near disc reach itself, so the same low-resolution dilation used
 	// for group culling now replaces the two old half-resolution Gaussian passes.
@@ -608,7 +745,7 @@ void DoF::Draw(TextureInfo& inout_tex)
 	const float nearMaxReachPx = tileDilateRadius > 0u ? std::min(wantNearRadiusPx, (float)(tileDilateRadius - 1u) * conservativeTileStepPx) : 0.0f;
 
 	DoFCB dofData = {
-		.TransitionSpeed = transitionSpeed,
+		.TransitionSpeed = focusFrame == ~0u || state->frameCount != focusFrame + 1 || state->ShouldResetHistory() ? 1.f : transitionSpeed,
 		.FocusCoord = focusCoord,
 		.ManualFocusPlane = manualFocus,
 		.FocalLength = focusLen,
@@ -680,6 +817,7 @@ void DoF::Draw(TextureInfo& inout_tex)
 
 	resetViews();
 	context->CopyResource(texPreFocus->resource.get(), texFocus->resource.get());
+	focusFrame = state->frameCount;
 
 	// Calculate CoC
 	{
