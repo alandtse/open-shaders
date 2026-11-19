@@ -105,6 +105,30 @@ namespace ShadowCasterManager
 		return std::max(a_until, a_moveEpoch + a_partWindow);
 	}
 
+	/// An object's moving-until epoch. A move noted in an epoch is staged and read from the next one, so every part of the
+	/// object sees the same value in an epoch whatever order the parts are visited.
+	struct ObjectMotion
+	{
+		int until = kNotMoving;
+		int staged = kNotMoving;
+		int stagedEpoch = -1;
+	};
+
+	inline int MovingUntil(const ObjectMotion& a_motion, int a_epoch) noexcept
+	{
+		return a_motion.stagedEpoch < a_epoch ? std::max(a_motion.until, a_motion.staged) : a_motion.until;
+	}
+
+	inline void NoteObjectMove(ObjectMotion& a_motion, int a_epoch, int a_partWindow) noexcept
+	{
+		if (a_motion.stagedEpoch < a_epoch) {
+			a_motion.until = std::max(a_motion.until, a_motion.staged);
+			a_motion.staged = kNotMoving;
+		}
+		a_motion.staged = ObjectMovingUntil(a_motion.staged, a_epoch, a_partWindow);
+		a_motion.stagedEpoch = a_epoch;
+	}
+
 	// The tile class ladder, shared by the coverage classifier below and the
 	// atlas allocator's order mapping (the floor class == one allocator cell).
 	inline constexpr float kTileScaleFull = 1.0f;

@@ -273,7 +273,7 @@ namespace ShadowCasterManager
 	// Accumulate-thread only (see CurrentCullLight) -- a concurrent insert
 	// would rehash under another thread's probe.
 	ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;
-	ankerl::unordered_dense::map<const RE::TESObjectREFR*, int> s_ownerMovingUntil;
+	ankerl::unordered_dense::map<const RE::TESObjectREFR*, ObjectMotion> s_ownerMotion;
 	int s_casterClassEpoch{ 0 };
 
 	bool GetActorAttachedDynamic() { return s_actorAttachedDynamic.load(std::memory_order_relaxed); }
@@ -282,8 +282,8 @@ namespace ShadowCasterManager
 	/// Epoch until which some part of the caster's object is still moving, or kNotMoving.
 	static int OwnerMovingUntil(const CasterMobility& r)
 	{
-		const auto it = r.owner ? s_ownerMovingUntil.find(r.owner) : s_ownerMovingUntil.end();
-		return it != s_ownerMovingUntil.end() ? it->second : kNotMoving;
+		const auto it = r.owner ? s_ownerMotion.find(r.owner) : s_ownerMotion.end();
+		return it != s_ownerMotion.end() ? MovingUntil(it->second, s_casterClassEpoch) : kNotMoving;
 	}
 
 	/// Classifies a caster static vs dynamic from quantized worldBound
@@ -329,8 +329,7 @@ namespace ShadowCasterManager
 		// promote it into the static set and force a rebake when it moves again.
 		const bool actorHeld = r.actorAttached && s_actorAttachedDynamic.load(std::memory_order_relaxed);
 		if (moved && !inserted && r.owner && !actorHeld) {
-			auto& until = s_ownerMovingUntil.try_emplace(r.owner, kNotMoving).first->second;
-			until = ObjectMovingUntil(until, s_casterClassEpoch, promoteAt);
+			NoteObjectMove(s_ownerMotion.try_emplace(r.owner).first->second, s_casterClassEpoch, promoteAt);
 		}
 		if (actorHeld)
 			r.dynamic = true;

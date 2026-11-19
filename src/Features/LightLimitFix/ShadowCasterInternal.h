@@ -488,8 +488,8 @@ namespace ShadowCasterManager
 	};
 	// Pruned periodically by ScheduleShadowCasters (ShadowScheduler.cpp).
 	extern ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;
-	/// Epoch until which some caster of each reference is still moving; a key only, never dereferenced.
-	extern ankerl::unordered_dense::map<const RE::TESObjectREFR*, int> s_ownerMovingUntil;
+	/// Motion of each reference's casters; a key only, never dereferenced.
+	extern ankerl::unordered_dense::map<const RE::TESObjectREFR*, ObjectMotion> s_ownerMotion;
 	extern int s_casterClassEpoch;
 
 	// Camera position captured at accumulate start (EnableLight, writer); the
