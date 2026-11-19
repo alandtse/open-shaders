@@ -2858,6 +2858,8 @@ namespace SIE
 		if (const auto blob = Util::CompileShaderBlob(path.c_str(), defines, "gs_5_0")) {
 			if (FAILED(globals::d3d::device->CreateGeometryShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, geometryShader.put())))
 				geometryShader = nullptr;
+			else
+				Util::SetResourceName(geometryShader.get(), "Utility::ParaboloidClip %X", vertexDescriptor);
 		}
 		if (!geometryShader)
 			logger::warn("[SCM] Paraboloid clip shader for Utility {:X} did not compile; that draw keeps the vertex shader's projection", vertexDescriptor);
@@ -3093,6 +3095,10 @@ namespace SIE
 			std::unique_lock lockH{ hlslMapMutex };
 			hlslToShaderMap.clear();
 		}
+		{
+			std::scoped_lock lockPC(paraboloidClipMutex);
+			paraboloidClipShaders.clear();
+		}
 		ResetActiveShaderTracking();
 		compilationSet.Clear(true);
 		Util::ClearShaderCompileFailures();
@@ -3175,6 +3181,10 @@ namespace SIE
 				shader->shader->Release();
 			}
 			computeShaders[static_cast<size_t>(a_type)].clear();
+		}
+		if (a_type == RE::BSShader::Type::Utility) {
+			std::scoped_lock lockPC(paraboloidClipMutex);
+			paraboloidClipShaders.clear();
 		}
 		ClearShaderMap(a_type);
 		compilationSet.ClearType(a_type);

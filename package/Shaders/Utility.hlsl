@@ -950,8 +950,17 @@ uint ParaboloidSplits(float3 a, float3 b, float3 c)
 		signSum += side[i] * input[i].ViewPos.z;
 	}
 	const float hemisphere = signSum >= 0 ? 1.0 : -1.0;
-	const float viewLength = max(length(input[0].ViewPos), 1e-6);
-	const float invRadius = input[0].TexCoord1.x / viewLength;
+	// TexCoord1.x is the depth, invRadius times the view length: read it off the corner farthest from the light.
+	float invRadius = 0;
+	float viewLength = 0;
+	[unroll] for (uint j = 0; j < 3; j++)
+	{
+		const float cornerLength = length(input[j].ViewPos);
+		if (cornerLength > viewLength) {
+			viewLength = cornerLength;
+			invRadius = input[j].TexCoord1.x / cornerLength;
+		}
+	}
 
 	if (side[0] < 0 && side[1] < 0 && side[2] < 0)
 		return;
