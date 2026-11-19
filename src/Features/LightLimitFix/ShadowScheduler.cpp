@@ -1945,14 +1945,14 @@ namespace ShadowCasterManager
 					const bool recentlyValid = lastValidIt != s_lastValidFrame.end() &&
 					                           (nowFrame - lastValidIt->second) <
 					                               static_cast<int32_t>(kCameraExitStreak);
-					// A flickering radius grazing the view edge flips the engine's frustum test; while our own sphere test still
-					// sees an omni light that has shadowed before, it keeps its slot and shadow instead of dropping them.
+					// UpdateCamera sets both shadow cameras before its frustum test, which a flickering radius grazing the view edge
+					// flips; an omni light our own sphere test still sees stays a visible light and keeps redrawing.
 					float edgeEyeDistance = 0.0f;
-					const bool edgeHeld = lastValidIt != s_lastValidFrame.end() && !hiddenNow && !lodFadedNow && !l->GetIsFrustumLight() &&
+					const bool edgeKept = EdgeKeepsLight(lastValidIt != s_lastValidFrame.end(), hiddenNow, lodFadedNow, l->GetIsFrustumLight()) &&
 					                      OwnSphereInFrustum(nilightNow->world.translate, nilightNow->GetLightRuntimeData().radius.x, edgeEyeDistance);
-					if (edgeHeld)
+					if (edgeKept) {
 						lastValidIt->second = nowFrame;
-					if (recentlyValid || edgeHeld) {
+					} else if (recentlyValid) {
 						c.cameraHold = true;
 						s_cameraHold.insert(l);
 					} else {

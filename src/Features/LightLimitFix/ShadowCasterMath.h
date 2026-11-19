@@ -75,6 +75,13 @@ namespace ShadowCasterManager
 		return a_holdsSlot && a_score > 0.0 ? a_score * kSlotHoldMargin : a_score;
 	}
 
+	/// Whether a light the engine culled may stay a visible shadow light while its sphere is still in view: an omni light that
+	/// passed the engine's test before and is neither hidden nor faded out by its level of detail.
+	inline bool EdgeKeepsLight(bool a_seenBefore, bool a_hidden, bool a_lodFaded, bool a_frustumLight) noexcept
+	{
+		return a_seenBefore && !a_hidden && !a_lodFaded && !a_frustumLight;
+	}
+
 	// Casters reaching the equatorial plane keep the engine's hemisphere choice;
 	// the margin floor keeps a zero-radius light from collapsing the seam.
 	inline constexpr float kHemisphereSeamMarginMin = 1.0f;

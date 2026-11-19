@@ -9,6 +9,7 @@
 
 using Catch::Approx;
 using ShadowCasterManager::DemandStreakBucket;
+using ShadowCasterManager::EdgeKeepsLight;
 using ShadowCasterManager::EngineShadowSliceCount;
 using ShadowCasterManager::FacingRotation;
 using ShadowCasterManager::FrameTimePercentile;
@@ -254,6 +255,16 @@ TEST_CASE("SliceCappedLightCount keeps the highest point index inside the array"
 	for (int32_t slices = 1; slices <= 129; ++slices)
 		for (int32_t count = 0; count <= 127; ++count)
 			REQUIRE(SliceCappedLightCount(count, slices) < slices);
+}
+
+TEST_CASE("EdgeKeepsLight keeps only a seen omni light that is neither hidden nor faded", "[scm]")
+{
+	REQUIRE(EdgeKeepsLight(true, false, false, false));
+	// Never seen by the engine, hidden, faded out by its level of detail, or a spot light: dropped as before.
+	REQUIRE_FALSE(EdgeKeepsLight(false, false, false, false));
+	REQUIRE_FALSE(EdgeKeepsLight(true, true, false, false));
+	REQUIRE_FALSE(EdgeKeepsLight(true, false, true, false));
+	REQUIRE_FALSE(EdgeKeepsLight(true, false, false, true));
 }
 
 TEST_CASE("SlotHeldScore keeps a holder against a near-equal challenger", "[scm]")
