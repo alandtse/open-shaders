@@ -1,4 +1,5 @@
 ﻿#include "InteriorSun.h"
+#include "Features/InteriorSun/WindowRays.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "State.h"
@@ -12,6 +13,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ForceDoubleSidedRendering,
 	InteriorShadowDistance,
 	WindowLightOnly,
+	DetectOpenings,
 	FrameShadowsFromGlowMaps,
 	GlowMapThreshold)
 
@@ -85,6 +87,12 @@ void InteriorSun::DrawSettings()
 	}
 	if (settings.FrameShadowsFromGlowMaps)
 		ImGui::SliderFloat(T(TKEY("glow_map_threshold"), "Window Frame Threshold"), &settings.GlowMapThreshold, 0.05f, 0.95f);
+	ImGui::Checkbox(T(TKEY("detect_openings"), "Detect Openings"), &settings.DetectOpenings);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("detect_openings_tooltip"),
+							  "Also lets light in through see-through shapes in the outer walls, such as lattices, that have nothing behind them. "
+							  "Found automatically when entering an interior."));
+	}
 }
 
 void InteriorSun::LoadSettings(json& o_json)
@@ -157,9 +165,14 @@ void InteriorSun::EarlyPrepass()
 	else if (windowGlassCell)
 		ReleaseWindowGlass();
 
-	// Changing this needs the cell scanned again and the holes rebuilt
-	if (settings.FrameShadowsFromGlowMaps != lastFrameShadows) {
+	// Changing these needs the cell scanned again (openings, glows) and the holes rebuilt
+	if (settings.DetectOpenings != lastDetectOpenings || settings.FrameShadowsFromGlowMaps != lastFrameShadows) {
+		lastDetectOpenings = settings.DetectOpenings;
 		lastFrameShadows = settings.FrameShadowsFromGlowMaps;
+		lastCandidateTriangles.reset();
+		windowOpeningVertices.clear();
+		windowOpeningUVs.clear();
+		windowOpeningRuns.clear();
 		windowGlassCellFrames = 0;
 		forceHolesUpload = true;
 	}
@@ -224,6 +237,7 @@ void InteriorSun::UpdateWindowGlass(RE::TESObjectCELL* cell)
 	++windowGlassCellFrames;
 	if (std::ranges::find(WindowGlassScanFrames, windowGlassCellFrames) != std::end(WindowGlassScanFrames))
 		CollectWindowGlass(cell);
+	TakeOpeningScan();
 }
 
 void InteriorSun::CollectWindowGlass(RE::TESObjectCELL* cell)
@@ -232,6 +246,7 @@ void InteriorSun::CollectWindowGlass(RE::TESObjectCELL* cell)
 	std::vector<float2> uvs;
 	std::vector<HoleDraw> runs;
 	uint32_t windowGlassShapes = 0, windowGlassShapesWithGlow = 0, windowGlassShapesSkipped = 0;
+	auto scan = settings.DetectOpenings ? std::make_shared<OpeningScan>() : nullptr;
 
 	cell->ForEachReference([&](RE::TESObjectREFR* ref) {
 		const auto base = ref->GetBaseObject();
@@ -271,10 +286,55 @@ void InteriorSun::CollectWindowGlass(RE::TESObjectCELL* cell)
 					++windowGlassShapesSkipped;
 				return RE::BSVisit::BSVisitControl::kContinue;
 			}
+			if (!scan)
+				return RE::BSVisit::BSVisitControl::kContinue;
+
+			// See-through shapes that cast are candidates: as casters they still shadow their own solid parts once opened
+			const auto alpha = data.alphaProperty.get();
+			if (alpha && alpha->GetAlphaTesting()) {
+				if (!property->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kCastShadows))
+					return RE::BSVisit::BSVisitControl::kContinue;
+				// Only its see-through pixels can let light in, so it needs a readable diffuse texture
+				const auto lighting = netimmerse_cast<RE::BSLightingShaderProperty*>(property);
+				const auto material = lighting ? static_cast<const RE::BSLightingShaderMaterialBase*>(lighting->material) : nullptr;
+				const auto diffuse = material ? material->diffuseTexture : nullptr;
+				if (!diffuse || !diffuse->rendererTexture || !diffuse->rendererTexture->resourceView)
+					return RE::BSVisit::BSVisitControl::kContinue;
+				const float2 uvScale(material->texCoordScale[0].x, material->texCoordScale[0].y);
+				const float2 uvOffset(material->texCoordOffset[0].x, material->texCoordOffset[0].y);
+				const auto first = static_cast<uint32_t>(scan->candidateTriangles.size());
+				if (AppendWorldTriangles(geometry, scan->candidateTriangles, &scan->candidateUVs, uvScale, uvOffset)) {
+					const auto model = base->As<RE::TESModel>();
+					OpeningCandidate candidate{ model ? model->GetModel() : "", geometry->name.c_str(), ref->GetFormID(), first,
+						static_cast<uint32_t>(scan->candidateTriangles.size()) - first };
+					candidate.diffuse = diffuse;
+					candidate.alphaThreshold = alpha->alphaThreshold / 255.0f;
+					scan->candidates.push_back(std::move(candidate));
+				}
+			}
 			return RE::BSVisit::BSVisitControl::kContinue;
 		});
 		return RE::BSContainer::ForEachResult::kContinue;
 	});
+
+	// The shell test runs again only when the candidates changed since the last scan of this cell. The room's
+	// geometry, the bulk of the scan's time, is copied only then.
+	std::vector<float3> scanKey;
+	if (scan)
+		scanKey = scan->candidateTriangles;
+	const bool runShellTest = scan && !scanKey.empty() && (!lastCandidateTriangles || *lastCandidateTriangles != scanKey);
+	if (runShellTest)
+		CollectOccluders(cell, *scan);
+
+	if (runShellTest) {
+		scan->cell = cell;
+		lastCandidateTriangles = std::make_shared<std::vector<float3>>(std::move(scanKey));
+		openingScan = scan;
+		std::thread([scan] {
+			RunOpeningScan(*scan);
+			scan->done = true;
+		}).detach();
+	}
 
 	if (vertices != windowGlassVertices || std::exchange(forceHolesUpload, false)) {
 		windowGlassVertices = std::move(vertices);
@@ -283,6 +343,30 @@ void InteriorSun::CollectWindowGlass(RE::TESObjectCELL* cell)
 		logger::info("[Interior Sun] Window glass in cell {:08X}: {} shapes ({} with glow maps), {} triangles, {} unreadable shapes", cell->GetFormID(), windowGlassShapes, windowGlassShapesWithGlow, windowGlassVertices.size() / 3, windowGlassShapesSkipped);
 		UploadWindowHoles(cell);
 	}
+}
+
+void InteriorSun::CollectOccluders(RE::TESObjectCELL* cell, OpeningScan& scan)
+{
+	cell->ForEachReference([&](RE::TESObjectREFR* ref) {
+		const auto base = ref->GetBaseObject();
+		const auto root = base && base->Is(RE::FormType::Static) ? ref->Get3D() : nullptr;
+		if (!root)
+			return RE::BSContainer::ForEachResult::kContinue;
+		RE::BSVisit::TraverseScenegraphGeometries(root, [&](RE::BSGeometry* geometry) {
+			const auto& data = geometry->GetGeometryRuntimeData();
+			const auto property = data.shaderProperty.get();
+			const auto alpha = data.alphaProperty.get();
+			// Solid shapes only: glass, see-through and blended shapes don't block the test's rays
+			if (!property || property->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kAssumeShadowmask) || (alpha && (alpha->GetAlphaTesting() || alpha->GetAlphaBlending())))
+				return RE::BSVisit::BSVisitControl::kContinue;
+			const auto first = static_cast<uint32_t>(scan.occluders.size());
+			if (AppendWorldTriangles(geometry, scan.occluders))
+				scan.occluderShapes.push_back(first);
+			return RE::BSVisit::BSVisitControl::kContinue;
+		});
+		return RE::BSContainer::ForEachResult::kContinue;
+	});
+	scan.occluderShapes.push_back(static_cast<uint32_t>(scan.occluders.size()));
 }
 
 void InteriorSun::UploadWindowHoles(const RE::TESObjectCELL* cell)
@@ -303,19 +387,24 @@ void InteriorSun::UploadWindowHoles(const RE::TESObjectCELL* cell)
 		run.mode = run.texture ? kBrightGlow : kWhole;
 		runs.push_back(run);
 	}
-	const auto sameDraw = [](const HoleDraw& a, const HoleDraw& b) { return a.texture == b.texture && a.mode == b.mode; };
+	std::vector<HoleDraw> openingRuns;
+	if (settings.DetectOpenings)
+		openingRuns = windowOpeningRuns;
+	const auto sameDraw = [](const HoleDraw& a, const HoleDraw& b) { return a.texture == b.texture && a.mode == b.mode && a.alphaThreshold == b.alphaThreshold; };
 	const auto byTexture = [](const HoleDraw& run) { return run.texture.get(); };
 	std::ranges::stable_sort(runs, {}, byTexture);
+	std::ranges::stable_sort(openingRuns, {}, byTexture);
 	const auto append = [&](const std::vector<HoleDraw>& list, const std::vector<float3>& positions, const std::vector<float2>& uvs) {
 		for (const auto& run : list) {
 			if (windowHoleDraws.empty() || !sameDraw(windowHoleDraws.back(), run))
-				windowHoleDraws.push_back({ static_cast<uint32_t>(holes.size()), 0, run.texture, run.mode });
+				windowHoleDraws.push_back({ static_cast<uint32_t>(holes.size()), 0, run.texture, run.mode, run.alphaThreshold });
 			for (uint32_t i = run.first; i < run.first + run.count; ++i)
 				holes.push_back({ positions[i], uvs[i] });
 			windowHoleDraws.back().count += run.count;
 		}
 	};
 	append(runs, windowGlassVertices, windowGlassUVs);
+	append(openingRuns, windowOpeningVertices, windowOpeningUVs);
 
 	windowGlass.reset();
 	windowGlassVertexCount = 0;
@@ -340,8 +429,117 @@ void InteriorSun::UploadWindowHoles(const RE::TESObjectCELL* cell)
 	}
 }
 
+void InteriorSun::TakeOpeningScan()
+{
+	if (!openingScan || !openingScan->done)
+		return;
+	const auto scan = std::exchange(openingScan, nullptr);
+	if (scan->cell != windowGlassCell)
+		return;
+
+	windowOpeningVertices = std::move(scan->openings);
+	windowOpeningUVs = std::move(scan->openingUVs);
+	windowOpeningRuns = std::move(scan->openingRuns);
+	logger::info("[Interior Sun] Openings in cell {:08X}: {} of {} candidate shapes, {} triangles", scan->cell->GetFormID(),
+		std::ranges::count_if(scan->candidates, [](const auto& candidate) { return candidate.opening; }), scan->candidates.size(), windowOpeningVertices.size() / 3);
+
+	UploadWindowHoles(scan->cell);
+}
+
+void InteriorSun::RunOpeningScan(OpeningScan& scan)
+{
+	// Far enough to cross the largest halls; beyond it, a ray has left the cell
+	constexpr float Reach = 4096.0f;
+	constexpr uint32_t SamplesPerShape = 4;
+
+	struct Box
+	{
+		float3 min, max;
+		uint32_t first, end;
+	};
+	std::vector<Box> boxes;
+	for (size_t shape = 0; shape + 1 < scan.occluderShapes.size(); ++shape) {
+		Box box{ float3(FLT_MAX), float3(-FLT_MAX), scan.occluderShapes[shape], scan.occluderShapes[shape + 1] };
+		for (uint32_t i = box.first; i < box.end; ++i) {
+			box.min = float3::Min(box.min, scan.occluders[i]);
+			box.max = float3::Max(box.max, scan.occluders[i]);
+		}
+		if (box.first < box.end)
+			boxes.push_back(box);
+	}
+
+	const auto cast = [&](const float3& origin, const float3& direction) {
+		float nearest = FLT_MAX;
+		for (const auto& box : boxes) {
+			if (InteriorSunRays::RayHitsBox(origin, direction, std::min(nearest, Reach), box.min, box.max))
+				nearest = std::min(nearest, InteriorSunRays::CastRay(origin, direction, Reach, scan.occluders, box.first, box.end));
+		}
+		return nearest;
+	};
+
+	// Samples on a shape's largest triangles, each looking both ways along its facing: open on one side only means the shell
+	struct Measure
+	{
+		uint32_t openSamples = 0, samples = 0;
+		float3 outward = float3(0, 0, 0);
+	};
+	const auto measure = [&](const std::vector<float3>& tri, uint32_t first, uint32_t count) {
+		Measure m;
+		std::vector<std::pair<float, uint32_t>> areas;
+		for (uint32_t t = 0; t + 2 < count; t += 3) {
+			const uint32_t i = first + t;
+			areas.emplace_back((tri[i + 1] - tri[i]).Cross(tri[i + 2] - tri[i]).Length(), i);
+		}
+		std::ranges::sort(areas, std::greater{});
+		for (size_t s = 0; s < std::min<size_t>(SamplesPerShape, areas.size()); ++s) {
+			const uint32_t i = areas[s].second;
+			if (areas[s].first < 1e-3f)
+				break;
+			float3 normal = (tri[i + 1] - tri[i]).Cross(tri[i + 2] - tri[i]);
+			normal.Normalize();
+			const float3 centre = (tri[i] + tri[i + 1] + tri[i + 2]) / 3.0f;
+			// Start a little off the shape, so a frame flush with it is not hit at zero distance
+			const float front = cast(centre + normal * 2.0f, normal);
+			const float back = cast(centre - normal * 2.0f, -normal);
+			++m.samples;
+			if ((front == FLT_MAX) != (back == FLT_MAX)) {
+				++m.openSamples;
+				m.outward += front == FLT_MAX ? normal : -normal;
+			}
+		}
+		if (m.outward.LengthSquared() > 1e-6f)
+			m.outward.Normalize();
+		return m;
+	};
+
+	for (auto& candidate : scan.candidates) {
+		const auto m = measure(scan.candidateTriangles, candidate.firstTriangle, candidate.triangleCount);
+		candidate.samples = m.samples;
+		candidate.openSamples = m.openSamples;
+		candidate.outward = m.outward;
+		// Sun never comes up through a floor: rugs and floor pieces have only the void below them
+		candidate.opening = candidate.samples && candidate.openSamples * 2 > candidate.samples && candidate.outward.z > -0.7f;
+		if (candidate.opening) {
+			const auto first = static_cast<uint32_t>(scan.openings.size());
+			const auto begin = scan.candidateTriangles.begin() + candidate.firstTriangle;
+			const auto uvBegin = scan.candidateUVs.begin() + candidate.firstTriangle;
+			scan.openings.insert(scan.openings.end(), begin, begin + candidate.triangleCount);
+			scan.openingUVs.insert(scan.openingUVs.end(), uvBegin, uvBegin + candidate.triangleCount);
+			scan.openingRuns.push_back({ first, candidate.triangleCount, candidate.diffuse, kSeeThrough, candidate.alphaThreshold });
+		}
+	}
+	// The room's geometry can run to tens of MB, and the result no longer needs it
+	scan.occluders = {};
+	scan.occluderShapes = {};
+}
+
 void InteriorSun::ReleaseWindowGlass()
 {
+	openingScan.reset();
+	lastCandidateTriangles.reset();
+	windowOpeningVertices.clear();
+	windowOpeningUVs.clear();
+	windowOpeningRuns.clear();
 	windowGlass.reset();
 	windowGlassVertices.clear();
 	windowGlassUVs.clear();
@@ -455,9 +653,12 @@ void InteriorSun::DrawHolesInto(WindowHolesCB data, const D3D11_VIEWPORT& viewpo
 	context->OMSetDepthStencilState(windowHolesDepthState.get(), 0);
 	const auto ps = GetWindowHolesPS();
 	for (const auto& draw : windowHoleDraws) {
-		// With a glow map, a pixel shader keeps the frame shadowed; without one, depth only
+		// With a texture, a pixel shader keeps the solid parts shadowed (frames, lattice bars); without one, depth only
 		const bool textured = draw.mode != kWhole && draw.texture && ps;
+		if (draw.mode == kSeeThrough && !textured)
+			continue;  // an opening that can't be told see-through from solid stays closed
 		data.Mode = textured ? draw.mode : kWhole;
+		data.AlphaThreshold = draw.alphaThreshold;
 		windowHolesCB->Update(data);
 		ID3D11ShaderResourceView* texture = textured ? Util::AsReal(draw.texture->rendererTexture->resourceView) : nullptr;
 		context->PSSetShader(textured ? ps : nullptr, nullptr, 0);
@@ -544,7 +745,8 @@ void InteriorSun::BSShaderAccumulator_StartAccumulating::thunk(RE::BSShaderAccum
 {
 	auto& singleton = globals::features::interiorSun;
 	// Accumulators are also started from culling jobs, which must not touch the D3D context
-	if (singleton.isInteriorWithSun && singleton.settings.WindowLightOnly && singleton.windowGlassVertexCount && std::this_thread::get_id() == singleton.renderThread)
+	// Only real window glass switches a cell to sun through its holes: openings alone (a cave's grate) would darken a cave mouth
+	if (singleton.isInteriorWithSun && singleton.settings.WindowLightOnly && singleton.windowGlassVertexCount && !singleton.windowGlassVertices.empty() && std::this_thread::get_id() == singleton.renderThread)
 		singleton.DrawWindowHoles(a_camera);
 	func(a_accumulator, a_camera);
 }

@@ -41,6 +41,7 @@ public:
 		bool ForceDoubleSidedRendering = true;
 		float InteriorShadowDistance = 5000;
 		bool WindowLightOnly = true;
+		bool DetectOpenings = true;
 		bool FrameShadowsFromGlowMaps = true;
 		float GlowMapThreshold = 0.5f;
 	};
@@ -165,15 +166,17 @@ private:
 	{
 		float4x4 ViewProj;
 		float3 PosAdjust;
-		float GlowThreshold;  // glass opens only where its glow map is at least this bright
-		uint32_t Mode;        // HoleMode: how the bound texture decides where the hole opens
-		float pad0[3];
+		float GlowThreshold;   // glass opens only where its glow map is at least this bright
+		uint32_t Mode;         // HoleMode: how the bound texture decides where the hole opens
+		float AlphaThreshold;  // openings open only where their texture is see-through (below this alpha)
+		float pad0[2];
 	};
 
 	enum HoleMode : uint32_t
 	{
 		kWhole = 0,       // the whole shape opens
 		kBrightGlow = 1,  // glass: opens where its glow map is bright (panes), not on the frame
+		kSeeThrough = 2,  // openings: opens only where its own texture is see-through
 	};
 
 	/** @brief A run of hole triangles sharing one glow map (none: the whole shape opens). */
@@ -183,15 +186,53 @@ private:
 		uint32_t count;
 		RE::NiPointer<RE::NiSourceTexture> texture;
 		HoleMode mode = kWhole;
+		float alphaThreshold = 0.5f;
 	};
 
 	// Rescans after entering a cell, in frames: its 3D can still be loading on the first ones
 	static constexpr uint32_t WindowGlassScanFrames[] = { 1, 60, 300 };
 
+	/** @brief A see-through shape that may be an opening in the cell's shell, and what the shell test found. */
+	struct OpeningCandidate
+	{
+		std::string model;
+		std::string shape;
+		RE::FormID ref = 0;
+		uint32_t firstTriangle = 0;
+		uint32_t triangleCount = 0;
+		uint32_t openSamples = 0;
+		uint32_t samples = 0;
+		float3 outward = float3(0, 0, 0);            // mean direction of the open side
+		RE::NiPointer<RE::NiSourceTexture> diffuse;  // its see-through pixels are the opening
+		float alphaThreshold = 0.5f;
+		bool opening = false;
+	};
+
+	/** @brief Shell test of one cell's candidates, run on a worker thread on copies of the cell's triangles. */
+	struct OpeningScan
+	{
+		RE::TESObjectCELL* cell = nullptr;
+		std::vector<float3> occluders;           // triangle list of everything that blocks light; freed once tested
+		std::vector<uint32_t> occluderShapes;    // first triangle of each occluder shape, plus the end
+		std::vector<float3> candidateTriangles;  // triangle list of the candidates
+		std::vector<float2> candidateUVs;
+		std::vector<OpeningCandidate> candidates;
+		std::vector<float3> openings;  // result: triangle list of the shapes found to be openings
+		std::vector<float2> openingUVs;
+		std::vector<HoleDraw> openingRuns;  // per opening shape, in openings
+		std::atomic<bool> done = false;
+	};
+
 	std::thread::id renderThread;
 	RE::TESObjectCELL* windowGlassCell = nullptr;
 	uint32_t windowGlassCellFrames = 0;
 	uint32_t windowGlassVertexCount = 0;
+
+	std::shared_ptr<OpeningScan> openingScan;  // in flight or finished; dropped on leaving the cell
+	std::shared_ptr<std::vector<float3>> lastCandidateTriangles;
+	std::vector<float3> windowOpeningVertices;
+	std::vector<float2> windowOpeningUVs;
+	std::vector<HoleDraw> windowOpeningRuns;
 
 	std::vector<float3> windowGlassVertices;
 	std::vector<float2> windowGlassUVs;
@@ -214,8 +255,17 @@ private:
 
 	void CollectWindowGlass(RE::TESObjectCELL* cell);
 
-	/** @brief Rebuilds the GPU triangle list from the window glass. */
+	/** @brief Copies the cell's solid static geometry into the scan, for the shell test's rays. */
+	static void CollectOccluders(RE::TESObjectCELL* cell, OpeningScan& scan);
+
+	/** @brief Rebuilds the GPU triangle list from the glass and the openings found so far. */
 	void UploadWindowHoles(const RE::TESObjectCELL* cell);
+
+	/** @brief Takes the result of a finished opening scan, if any. */
+	void TakeOpeningScan();
+
+	/** @brief The shell test: marks the candidates that have the room on one side and nothing on the other. */
+	static void RunOpeningScan(OpeningScan& scan);
 
 	void ReleaseWindowGlass();
 
@@ -225,7 +275,8 @@ private:
 	/** @brief Draws the holes into the bound depth target with the given camera data; puts back every state it changes. */
 	void DrawHolesInto(WindowHolesCB data, const D3D11_VIEWPORT& viewport);
 
-	// Settings whose change needs the cell scanned again
+	// Settings whose change needs the cell scanned or the holes rebuilt again
+	bool lastDetectOpenings = true;
 	bool lastFrameShadows = true;
 	bool forceHolesUpload = false;
 };

@@ -1880,6 +1880,8 @@
     "feature.ibl.use_static_ibl": "Use Static IBL For Out-of-World Objects",
     "feature.ibl.use_static_ibl_tooltip": "Uses pre-baked static IBL cubemap textures for objects rendered outside the game world (e.g. inventory items, loading screens).",
     "feature.interior_sun.description": "Allows for the sun and moon to cast light and shadows into interior spaces.",
+    "feature.interior_sun.detect_openings": "Detect Openings",
+    "feature.interior_sun.detect_openings_tooltip": "Also lets light in through see-through shapes in the outer walls, such as lattices, that have nothing behind them. Found automatically when entering an interior.",
     "feature.interior_sun.force_double_sided": "Force Double-Sided Rendering",
     "feature.interior_sun.force_double_sided_tooltip": "Disables backface culling during sun shadowmap rendering in interiors. Will prevent most light leaking through unmasked/unprepared interiors at a small performance cost. ",
     "feature.interior_sun.frame_shadows_from_glow_maps": "Window Frames Cast Shadows",
