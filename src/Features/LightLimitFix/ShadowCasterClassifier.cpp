@@ -460,7 +460,7 @@ namespace ShadowCasterManager
 		const bool dynamic = !rec || rec->dynamic;
 		// A caster that settled since the bake is missing from it and is drawn live; one that started moving is still in
 		// it at its old pose. Either way the light is rebaked at once rather than showing a gap or a frozen copy.
-		const bool bakeStale = rec && rec->classEpoch > s_visitBakeEpoch;
+		const bool bakeStale = rec && CasterChangedSinceBake(rec->classEpoch, s_visitBakeEpoch);
 		s_visitBakeStale |= bakeStale;
 		// Every static caster folds into the hash regardless of pass, so a
 		// static-set change is seen during whichever accumulate runs this frame.
@@ -477,7 +477,7 @@ namespace ShadowCasterManager
 			s_visitStaticCount.fetch_add(1, std::memory_order_relaxed);
 			break;
 		case CasterPass::DynamicOnly:
-			if (!dynamic && !bakeStale)
+			if (CompositeSkipsCaster(dynamic, bakeStale))
 				return true;  // composite pass skips baked static geometry
 			s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
 			break;

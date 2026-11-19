@@ -8,6 +8,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 using Catch::Approx;
+using ShadowCasterManager::CasterChangedSinceBake;
+using ShadowCasterManager::CompositeSkipsCaster;
 using ShadowCasterManager::DemandStreakBucket;
 using ShadowCasterManager::EngineShadowSliceCount;
 using ShadowCasterManager::FacingRotation;
@@ -285,4 +287,16 @@ TEST_CASE("PerFrameCache works a key out once per frame and drops it on the next
 	REQUIRE(made == 2);
 	REQUIRE(cache.Get(11, 1, make) == 3);
 	REQUIRE(cache.entries.size() == 1);
+}
+
+TEST_CASE("A caster that changed class after the bake marks the bake stale", "[scm]")
+{
+	REQUIRE_FALSE(CasterChangedSinceBake(5, 5));
+	REQUIRE_FALSE(CasterChangedSinceBake(4, 5));
+	REQUIRE(CasterChangedSinceBake(6, 5));
+	REQUIRE(CasterChangedSinceBake(0, -1));
+	REQUIRE(CompositeSkipsCaster(false, false));
+	REQUIRE_FALSE(CompositeSkipsCaster(true, false));
+	REQUIRE_FALSE(CompositeSkipsCaster(false, true));
+	REQUIRE_FALSE(CompositeSkipsCaster(true, true));
 }

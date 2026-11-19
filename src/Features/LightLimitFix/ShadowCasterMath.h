@@ -18,6 +18,18 @@ namespace ShadowCasterManager
 
 	/// Buckets a stall length for ShadowScheduler's stallHistogram: 0, 1-2,
 	/// 3-7, 8-15, 16-44, 45+ (top boundary matches kSleepRedrawIntervalFrames).
+	/// True when a caster switched static / moving after the light's bake rendered: the bake lacks it or holds it at an old pose.
+	inline bool CasterChangedSinceBake(int a_classEpoch, int a_bakeEpoch) noexcept
+	{
+		return a_classEpoch > a_bakeEpoch;
+	}
+
+	/// True when the composite pass leaves a caster to the bake: it is static and the bake still holds it as it is.
+	inline bool CompositeSkipsCaster(bool a_dynamic, bool a_bakeStale) noexcept
+	{
+		return !a_dynamic && !a_bakeStale;
+	}
+
 	inline uint32_t StallBucket(uint32_t v) noexcept
 	{
 		if (v == 0)
