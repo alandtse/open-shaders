@@ -61,6 +61,7 @@ namespace
 		a_pixelDescriptor = LegacyGraphicsCompatibility::NormalizeLegacyUtilityDescriptor(a_pixelDescriptor);
 	}
 
+	bool ParaboloidClipAllowed = false;
 	bool ParaboloidClipBound = false;
 
 	/// Binds the paraboloid clip geometry shader with our Utility paraboloid shadow vertex shader, and unbinds it for every other one.
@@ -70,7 +71,7 @@ namespace
 		// The paraboloid bit is shared with AdditionalAlphaMask, so only a shadow-map draw outside OpaqueEffect is paraboloid.
 		constexpr auto paraboloidShadow = static_cast<uint32_t>(RenderShadowmap) | static_cast<uint32_t>(RenderShadowmapPb);
 		ID3D11GeometryShader* geometryShader = nullptr;
-		if (a_customVertexShader && a_shader && a_shader->shaderType.get() == RE::BSShader::Type::Utility &&
+		if (ParaboloidClipAllowed && a_customVertexShader && a_shader && a_shader->shaderType.get() == RE::BSShader::Type::Utility &&
 			(a_vertexDescriptor & paraboloidShadow) == paraboloidShadow && !(a_vertexDescriptor & static_cast<uint32_t>(OpaqueEffect)))
 			geometryShader = globals::shaderCache->GetParaboloidClipShader(*a_shader, a_vertexDescriptor);
 		if (geometryShader || ParaboloidClipBound) {
@@ -78,6 +79,18 @@ namespace
 			ParaboloidClipBound = geometryShader != nullptr;
 		}
 	}
+}
+
+Hooks::ParaboloidClipScope::ParaboloidClipScope()
+{
+	ParaboloidClipAllowed = true;
+}
+
+Hooks::ParaboloidClipScope::~ParaboloidClipScope()
+{
+	ParaboloidClipAllowed = false;
+	ParaboloidClipBound = false;
+	globals::d3d::context->GSSetShader(nullptr, nullptr, 0);
 }
 
 void RegisterShaderBytecode(void* Shader, const void* Bytecode, size_t BytecodeLength)
