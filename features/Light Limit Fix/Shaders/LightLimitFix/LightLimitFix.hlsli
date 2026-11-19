@@ -516,8 +516,11 @@ namespace LightLimitFix
 	// The four stored depths around a tap through either storage; uv is full-slice space.
 	float4 GatherShadowDepths(uint shadowIndex, float2 uv, bool useAtlas, float4 atlasRect, float tileScale, float2 clampLo, float2 clampHi)
 	{
-		[branch] if (useAtlas) return ShadowAtlasTex.GatherRed(LinearSampler, AtlasUV(uv, atlasRect, clampLo, clampHi));
-		return ShadowMaps.GatherRed(LinearSampler, float3(TileUV(uv, tileScale, clampLo.x, clampHi.x), shadowIndex));
+		float4 depths;
+		[branch] if (useAtlas)
+			depths = ShadowAtlasTex.GatherRed(LinearSampler, AtlasUV(uv, atlasRect, clampLo, clampHi));
+		else depths = ShadowMaps.GatherRed(LinearSampler, float3(TileUV(uv, tileScale, clampLo.x, clampHi.x), shadowIndex));
+		return depths;
 	}
 
 	// Bilinear-weighted compare (one Gather, fractional-texel lerp) so a lone tap
@@ -642,10 +645,14 @@ namespace LightLimitFix
 			blockerSum += dot(depths, blocks);
 			blockerCount += dot(blocks, 1.0);
 		}
-		[branch] if (blockerCount < 1.0) return PCFRadius2D;
-		const float blockerDepth = max(blockerSum / blockerCount, 1e-4);
-		const float penumbraAngle = SharedData::lightLimitFixSettings.SoftShadowScale * sourceRadius * (depth - blockerDepth) / (blockerDepth * max(depth, 1e-4));
-		return clamp(penumbraAngle * ParaboloidUVPerRadian, PCFRadius2D, SoftShadowMaxRadius);
+		float radius = PCFRadius2D;
+		[branch] if (blockerCount >= 1.0)
+		{
+			const float blockerDepth = max(blockerSum / blockerCount, 1e-4);
+			const float penumbraAngle = SharedData::lightLimitFixSettings.SoftShadowScale * sourceRadius * (depth - blockerDepth) / (blockerDepth * max(depth, 1e-4));
+			radius = clamp(penumbraAngle * ParaboloidUVPerRadian, PCFRadius2D, SoftShadowMaxRadius);
+		}
+		return radius;
 	}
 
 	float GetOmnidirectionalShadow(ShadowLightData shadowLightData, uint shadowIndex, float4 positionLS, float2x2 rotationMatrix, uint sampleCount, float sourceRadius)
