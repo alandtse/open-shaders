@@ -3543,7 +3543,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	uint lightOffset = 0;
 	// The viewmodel has no meaningful cluster cell, so it takes StrictLights
 	// exclusively -- mixing in the grid would re-add unrelated distant lights.
-	[branch] if (SharedData::lightLimitFixSettings.ClusteredLightCount > 0 && inWorld && !LightLimitFix::FirstPerson && LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex))
+	[branch] if (inWorld && !LightLimitFix::FirstPerson && LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex))
 	{
 		LightLimitFix::LightGrid clusterGrid = LightLimitFix::lightGrid[clusterIndex];
 		numClusteredLights = clusterGrid.lightCount;
