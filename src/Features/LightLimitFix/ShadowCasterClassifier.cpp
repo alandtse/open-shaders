@@ -325,13 +325,14 @@ namespace ShadowCasterManager
 			r.actorAttached = r.owner && r.owner->IsActor();
 			r.ancestryEpoch = s_casterClassEpoch;
 		}
-		if (moved && !inserted && r.owner) {
+		// Parented under an actor: it rests and moves with the actor, so each pause would
+		// promote it into the static set and force a rebake when it moves again.
+		const bool actorHeld = r.actorAttached && s_actorAttachedDynamic.load(std::memory_order_relaxed);
+		if (moved && !inserted && r.owner && !actorHeld) {
 			auto& until = s_ownerMovingUntil.try_emplace(r.owner, kNotMoving).first->second;
 			until = ObjectMovingUntil(until, s_casterClassEpoch, promoteAt);
 		}
-		// Parented under an actor: it rests and moves with the actor, so each pause would
-		// promote it into the static set and force a rebake when it moves again.
-		if (r.actorAttached && s_actorAttachedDynamic.load(std::memory_order_relaxed))
+		if (actorHeld)
 			r.dynamic = true;
 		// A swinging fixture's parts near its pivot move under a unit a frame: held live as long as its moving part is,
 		// they are never baked while the rest of it is drawn live, which splits its shadow.
