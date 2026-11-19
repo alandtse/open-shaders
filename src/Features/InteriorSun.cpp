@@ -14,6 +14,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	InteriorShadowDistance,
 	WindowLightOnly,
 	DetectOpenings,
+	HideFakeWindowGlows,
+	SkyLitGlass,
+	SkyLitGlassStrength,
 	SunFacingHolesOnly,
 	LightOnlyPastWindow,
 	FrameShadowsFromGlowMaps,
@@ -55,6 +58,15 @@ namespace
 		}
 		return true;
 	}
+
+	// Vanilla's painted window light: glow cards and dust beams, doubled by real sun (DWS's and Helios's lists)
+	bool IsFakeWindowGlow(std::string_view model)
+	{
+		static constexpr std::string_view patterns[] = { "fxglowfillround", "fxglowflatrnd", "fxambbeam", "fxlightrays" };
+		std::string lower(model);
+		std::ranges::transform(lower, lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		return std::ranges::any_of(patterns, [&](std::string_view pattern) { return lower.find(pattern) != std::string::npos; });
+	}
 }
 
 void InteriorSun::DrawSettings()
@@ -95,6 +107,21 @@ void InteriorSun::DrawSettings()
 							  "Also lets light in through see-through shapes in the outer walls, such as lattices, that have nothing behind them. "
 							  "Found automatically when entering an interior."));
 	}
+	ImGui::Checkbox(T(TKEY("hide_fake_window_glows"), "Hide Fake Window Glows"), &settings.HideFakeWindowGlows);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("hide_fake_window_glows_tooltip"),
+							  "Hides the painted window glows and dust beams in interiors lit by the sun, where real light replaces them."));
+	}
+	ImGui::Checkbox(T(TKEY("sky_lit_glass"), "Sky-Lit Glass"), &settings.SkyLitGlass);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("sky_lit_glass_tooltip"),
+							  "Makes glowing window glass follow the sky's colour and brightness in interiors lit by the sun. "
+							  "Leave off when a weather mod already drives window glow."));
+	}
+	if (heliosLoaded && settings.SkyLitGlass)
+		ImGui::TextDisabled("%s", T(TKEY("sky_lit_glass_helios"), "Off while Helios is loaded: Helios drives window glow itself."));
+	if (settings.SkyLitGlass && !heliosLoaded)
+		ImGui::SliderFloat(T(TKEY("sky_lit_glass_strength"), "Sky-Lit Glass Strength"), &settings.SkyLitGlassStrength, 0.0f, 4.0f);
 	ImGui::Checkbox(T(TKEY("light_only_past_window"), "Light Only Past The Window"), &settings.LightOnlyPastWindow);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("light_only_past_window_tooltip"),
@@ -182,15 +209,20 @@ void InteriorSun::EarlyPrepass()
 	if (windowGlassCell && isInteriorWithSun && ComputeOpenMask(GetToSun()) != lastOpenMask)
 		UploadWindowHoles(windowGlassCell);
 
+	if (!settings.HideFakeWindowGlows || !isInteriorWithSun)
+		RestoreFakeGlows();
+	UpdateSkyLitGlass();
+
 	// Changing these needs the cell scanned again (openings, glows) and the holes rebuilt
 	if (settings.SunFacingHolesOnly != lastSunFacing) {
 		lastSunFacing = settings.SunFacingHolesOnly;
 		forceHolesUpload = true;
 		lastOpenMask.clear();
 	}
-	if (settings.DetectOpenings != lastDetectOpenings || settings.FrameShadowsFromGlowMaps != lastFrameShadows) {
+	if (settings.DetectOpenings != lastDetectOpenings || settings.FrameShadowsFromGlowMaps != lastFrameShadows || settings.HideFakeWindowGlows != lastHideFakeGlows || (isInteriorWithSun && !lastInteriorWithSun)) {
 		lastDetectOpenings = settings.DetectOpenings;
 		lastFrameShadows = settings.FrameShadowsFromGlowMaps;
+		lastHideFakeGlows = settings.HideFakeWindowGlows;
 		lastCandidateTriangles.reset();
 		windowOpeningVertices.clear();
 		windowOpeningUVs.clear();
@@ -198,6 +230,8 @@ void InteriorSun::EarlyPrepass()
 		windowGlassCellFrames = 0;
 		forceHolesUpload = true;
 	}
+
+	lastInteriorWithSun = isInteriorWithSun;
 
 	windowPlanesValid = settings.LightOnlyPastWindow && isInteriorWithSun && std::exchange(windowPlanesWritten, 0u) == 3u;
 	renderThread = std::this_thread::get_id();
@@ -277,12 +311,21 @@ void InteriorSun::CollectWindowGlass(RE::TESObjectCELL* cell)
 	std::vector<HoleDraw> runs;
 	uint32_t windowGlassShapes = 0, windowGlassShapesWithGlow = 0, windowGlassShapesSkipped = 0;
 	auto scan = settings.DetectOpenings ? std::make_shared<OpeningScan>() : nullptr;
+	const bool hideGlows = settings.HideFakeWindowGlows && isInteriorWithSun;
 
 	cell->ForEachReference([&](RE::TESObjectREFR* ref) {
 		const auto base = ref->GetBaseObject();
 		const auto root = base ? ref->Get3D() : nullptr;
 		if (!root)
 			return RE::BSContainer::ForEachResult::kContinue;
+
+		if (hideGlows && !root->GetAppCulled()) {
+			const auto model = base->As<RE::TESModel>();
+			if (model && IsFakeWindowGlow(model->GetModel())) {
+				root->SetAppCulled(true);
+				hiddenFakeGlows.emplace_back(root);
+			}
+		}
 
 		// Windows and walls are statics; skipping everything else keeps the scan short
 		if (!base->Is(RE::FormType::Static))
@@ -314,6 +357,9 @@ void InteriorSun::CollectWindowGlass(RE::TESObjectCELL* cell)
 					runs.push_back({ first, static_cast<uint32_t>(vertices.size()) - first, glow });
 				} else
 					++windowGlassShapesSkipped;
+				if (lighting && lighting->emissiveColor && property->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kOwnEmit, RE::BSShaderProperty::EShaderPropertyFlag::kGlowMap) &&
+					std::ranges::none_of(glassEmissives, [&](const auto& entry) { return entry.property.get() == lighting; }))
+					glassEmissives.push_back({ RE::NiPointer<RE::BSLightingShaderProperty>(lighting), *lighting->emissiveColor, lighting->emissiveMult });
 				return RE::BSVisit::BSVisitControl::kContinue;
 			}
 			if (!scan)
@@ -653,8 +699,49 @@ void InteriorSun::RunOpeningScan(OpeningScan& scan)
 	scan.occluderShapes = {};
 }
 
+void InteriorSun::RestoreFakeGlows()
+{
+	for (const auto& glow : hiddenFakeGlows)
+		glow->SetAppCulled(false);
+	hiddenFakeGlows.clear();
+}
+
+void InteriorSun::RestoreGlassEmissives()
+{
+	for (const auto& entry : glassEmissives) {
+		*entry.property->emissiveColor = entry.color;
+		entry.property->emissiveMult = entry.mult;
+	}
+}
+
+void InteriorSun::UpdateSkyLitGlass()
+{
+	if (!settings.SkyLitGlass || !isInteriorWithSun || heliosLoaded) {
+		if (glassEmissivesLit) {
+			RestoreGlassEmissives();
+			glassEmissivesLit = false;
+		}
+		return;
+	}
+
+	const auto sky = globals::game::sky;
+	if (!sky)
+		return;
+	// The sky above: bright by day, dark at night, grey in rain
+	const auto& color = sky->skyColor[static_cast<uint32_t>(RE::TESWeather::ColorTypes::kSkyUpper)];
+	for (const auto& entry : glassEmissives) {
+		*entry.property->emissiveColor = color;
+		entry.property->emissiveMult = settings.SkyLitGlassStrength;
+	}
+	glassEmissivesLit = true;
+}
+
 void InteriorSun::ReleaseWindowGlass()
 {
+	RestoreFakeGlows();
+	RestoreGlassEmissives();
+	glassEmissivesLit = false;
+	glassEmissives.clear();
 	openingScan.reset();
 	windowGlassOutward.clear();
 	lastOpenMask.clear();

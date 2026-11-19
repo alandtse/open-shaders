@@ -36,6 +36,8 @@ public:
 	virtual void DataLoaded() override
 	{
 		MenuOpenCloseEventHandler::Register();
+		const auto dataHandler = RE::TESDataHandler::GetSingleton();
+		heliosLoaded = dataHandler && dataHandler->LookupModByName("Helios.esp");
 	}
 
 	struct Settings
@@ -44,6 +46,9 @@ public:
 		float InteriorShadowDistance = 5000;
 		bool WindowLightOnly = true;
 		bool DetectOpenings = true;
+		bool HideFakeWindowGlows = true;
+		bool SkyLitGlass = false;
+		float SkyLitGlassStrength = 1.0f;
 		bool SunFacingHolesOnly = true;
 		bool LightOnlyPastWindow = true;
 		bool FrameShadowsFromGlowMaps = true;
@@ -231,6 +236,13 @@ private:
 		std::atomic<bool> done = false;
 	};
 
+	struct GlassEmissive
+	{
+		RE::NiPointer<RE::BSLightingShaderProperty> property;
+		RE::NiColor color;
+		float mult;
+	};
+
 	std::thread::id renderThread;
 	RE::TESObjectCELL* windowGlassCell = nullptr;
 	uint32_t windowGlassCellFrames = 0;
@@ -238,9 +250,13 @@ private:
 
 	std::shared_ptr<OpeningScan> openingScan;  // in flight or finished; dropped on leaving the cell
 	std::shared_ptr<std::vector<float3>> lastCandidateTriangles;
+	bool glassEmissivesLit = false;
 	std::vector<float3> windowOpeningVertices;
 	std::vector<float2> windowOpeningUVs;
 	std::vector<HoleDraw> windowOpeningRuns;
+
+	std::vector<RE::NiPointer<RE::NiAVObject>> hiddenFakeGlows;
+	std::vector<GlassEmissive> glassEmissives;
 
 	std::vector<float3> windowGlassVertices;
 	std::vector<float2> windowGlassUVs;
@@ -295,6 +311,13 @@ private:
 	/** @brief The shell test: marks the candidates that have the room on one side and nothing on the other. */
 	static void RunOpeningScan(OpeningScan& scan);
 
+	void RestoreFakeGlows();
+
+	void RestoreGlassEmissives();
+
+	/** @brief Lights the glass from the sky's colour while the cell has the sun. */
+	void UpdateSkyLitGlass();
+
 	void ReleaseWindowGlass();
 
 	/** @brief Turns the bound sun shadow map into "all shadowed" with a hole at each window pane. */
@@ -306,6 +329,9 @@ private:
 	// Settings whose change needs the cell scanned or the holes rebuilt again
 	bool lastDetectOpenings = true;
 	bool lastFrameShadows = true;
+	bool lastHideFakeGlows = true;
 	bool lastSunFacing = true;
+	bool lastInteriorWithSun = false;
 	bool forceHolesUpload = false;
+	bool heliosLoaded = false;  // Helios drives window glow itself, so Sky-Lit Glass stands down
 };
