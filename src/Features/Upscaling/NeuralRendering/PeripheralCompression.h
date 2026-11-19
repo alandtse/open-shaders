@@ -51,16 +51,30 @@ namespace NR
 		mapping.protectedFraction = 1.0f - static_cast<float>(percent) * 0.01f;
 		mapping.boundaryScale = (1.0f + mapping.protectedFraction) * 0.5f;
 		mapping.edgeSlope = kPeripheralEdgeSlope;
-		const auto reduce = [&](std::uint32_t full) {
-			const auto pixels = static_cast<std::uint32_t>(std::ceil(full * mapping.boundaryScale));
-			return std::max(minimumExtent, ((pixels + alignment - 1u) / alignment) * alignment);
-		};
-		plan.width = reduce(ordinaryWidth);
-		plan.height = reduce(ordinaryHeight);
-		if (plan.width > ordinaryWidth || plan.height > ordinaryHeight ||
-			static_cast<std::uint64_t>(plan.width) * plan.height >= static_cast<std::uint64_t>(ordinaryWidth) * ordinaryHeight)
+		if (ordinaryWidth < minimumExtent || ordinaryHeight < minimumExtent)
 			return reject(InsufficientSavings);
-		const std::array source{ width, height }, model{ plan.width, plan.height };
+		const std::array source{ width, height };
+		double minimumScale = 0.0;
+		for (unsigned axis = 0; axis < 2; ++axis)
+			minimumScale = std::max(minimumScale, mapping.boundaryScale *
+													  (1.0 + (1.0 - mapping.edgeSlope) * source[axis] / source[1u - axis]) /
+													  (mapping.edgeSlope * kPeripheralMaximumFootprint));
+		const auto alignUp = [alignment](std::uint32_t pixels) { return ((pixels + alignment - 1u) / alignment) * alignment; };
+		// If either ordinary axis rounds below its density bound, fallback must not enlarge the other axis.
+		double fallbackScale = std::min(minimumScale, 1.0);
+		for (const auto full : source) {
+			const auto density = alignUp(static_cast<std::uint32_t>(std::ceil(full * std::min(minimumScale, 1.0))));
+			fallbackScale = std::max(fallbackScale, (density - alignment * 0.5) / full);
+		}
+		const auto reduce = [&](std::uint32_t full, std::uint32_t ordinary) {
+			const auto densityFloor = static_cast<std::uint32_t>(std::ceil(full * std::min(fallbackScale, 1.0)));
+			const auto compressed = static_cast<std::uint32_t>(std::ceil(ordinary * mapping.boundaryScale));
+			const auto pixels = std::max(compressed, densityFloor);
+			return std::min(ordinary, std::max(minimumExtent, alignUp(pixels)));
+		};
+		plan.width = reduce(width, ordinaryWidth);
+		plan.height = reduce(height, ordinaryHeight);
+		const std::array model{ plan.width, plan.height };
 		for (unsigned axis = 0; axis < 2; ++axis) {
 			const float step = mapping.boundaryScale / model[axis] +
 			                   (1.0f - mapping.edgeSlope) * mapping.boundaryScale / model[1u - axis];
@@ -68,6 +82,8 @@ namespace NR
 			if (!std::isfinite(footprint) || footprint > kPeripheralMaximumFootprint)
 				return reject(FootprintLimit);
 		}
+		if (static_cast<std::uint64_t>(plan.width) * plan.height >= static_cast<std::uint64_t>(ordinaryWidth) * ordinaryHeight)
+			return reject(InsufficientSavings);
 		plan.reason = Active;
 		return plan;
 	}

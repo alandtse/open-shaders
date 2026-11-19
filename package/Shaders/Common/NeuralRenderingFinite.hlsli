@@ -4,6 +4,7 @@
 namespace NeuralRenderingFinite
 {
 	static const uint kExponentMask = 0x7F800000u;
+	static const float kMaximumHalf = 65504.0;
 
 	/** @brief Classifies a value without floating-point optimizer assumptions. */
 	bool IsFinite(float value)
@@ -27,6 +28,14 @@ namespace NeuralRenderingFinite
 	bool4 IsFinite(float4 value)
 	{
 		return bool4(IsFinite(value.xy), IsFinite(value.zw));
+	}
+
+	/** @brief Preserves source on failure and bounds accepted RGB for half-float storage. */
+	float4 ResolveHalfOutput(float4 source, float3 candidate, bool valid)
+	{
+		return valid && all(IsFinite(source)) && all(IsFinite(candidate)) ?
+		           float4(clamp(candidate, -kMaximumHalf, kMaximumHalf), source.a) :
+		           source;
 	}
 }
 

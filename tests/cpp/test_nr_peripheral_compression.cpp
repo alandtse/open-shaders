@@ -1,3 +1,4 @@
+#include "Features/Upscaling/NeuralRendering/ModelScale.h"
 #include "Features/Upscaling/NeuralRendering/PeripheralCompression.h"
 
 #include <catch2/catch_approx.hpp>
@@ -146,5 +147,85 @@ TEST_CASE("Motion endpoints retain off-screen displacements instead of clipping 
 	for (const auto point : { NR::PeripheralMapping::Point{ -0.15f, 0.45f }, NR::PeripheralMapping::Point{ 0.72f, 1.12f } }) {
 		const auto endpoint = map.Forward(point);
 		Near(map.Inverse(endpoint), point);
+	}
+}
+
+TEST_CASE("Compression reaches its density floor without enlarging a lower-resolution model", "[nr][peripheral]")
+{
+	for (const auto dimensions : { std::array{ 4096u, 1024u }, std::array{ 1024u, 4096u }, std::array{ 2048u, 2048u }, std::array{ 6144u, 2048u } }) {
+		for (uint32_t percent : { 1u, 25u, 50u, 100u }) {
+			auto previous = dimensions;
+			for (uint32_t step = 32; step >= 8; --step) {
+				const std::array ordinary{ dimensions[0] * step / 32, dimensions[1] * step / 32 };
+				const auto plan = Plan(percent, dimensions[0], dimensions[1], ordinary[0], ordinary[1]);
+				const std::array actual{ plan.Active() ? plan.width : ordinary[0], plan.Active() ? plan.height : ordinary[1] };
+				CAPTURE(dimensions, percent, ordinary, actual, plan.reason);
+				for (unsigned axis = 0; axis < 2; ++axis) {
+					REQUIRE(actual[axis] <= previous[axis]);
+					REQUIRE(actual[axis] <= ordinary[axis]);
+					REQUIRE(actual[axis] >= 64);
+					REQUIRE(actual[axis] % 8 == 0);
+				}
+				previous = actual;
+			}
+		}
+	}
+	const auto limited = Plan(100, 4096, 1024, 1920, 480);
+	REQUIRE(limited.Active());
+	REQUIRE(limited.width == 1024);
+	REQUIRE(limited.height == 256);
+	REQUIRE(Plan(100, 4096, 1024, 1024, 256).reason == NR::PeripheralCompressionReason::InsufficientSavings);
+}
+
+TEST_CASE("Compression retains valid pixel savings when only one aligned axis shrinks", "[nr][peripheral]")
+{
+	const auto plan = Plan(100, 1024, 64, 1024, 64);
+	REQUIRE(plan.Active());
+	REQUIRE(plan.width < 1024);
+	REQUIRE(plan.height == 64);
+	REQUIRE(plan.width % 8 == 0);
+	const auto transposed = Plan(100, 64, 1024, 64, 1024);
+	REQUIRE(transposed.Active());
+	REQUIRE(transposed.width == plan.height);
+	REQUIRE(transposed.height == plan.width);
+	REQUIRE_FALSE(Plan(100, 1024, 32, 1024, 32).Active());
+}
+
+TEST_CASE("A rounded short-axis fallback cannot enlarge the other model axis", "[nr][peripheral]")
+{
+	std::array previous{ 4096u, 1024u };
+	for (const float scale : { 0.489f, 0.488f }) {
+		const auto [width, height] = NR::ModelExtent(scale, 4096, 1024);
+		REQUIRE(width == 2000);
+		const auto plan = Plan(6, 4096, 1024, width, height);
+		const std::array actual{ plan.Active() ? plan.width : width, plan.Active() ? plan.height : height };
+		CAPTURE(scale, width, height, actual, previous, plan.reason);
+		REQUIRE(actual[0] <= previous[0]);
+		REQUIRE(actual[1] <= previous[1]);
+		previous = actual;
+	}
+}
+
+TEST_CASE("Compression stays monotone across ordinary model rounding boundaries", "[nr][peripheral]")
+{
+	for (const auto dimensions : { std::array{ 4096u, 1024u }, std::array{ 1024u, 4096u },
+			 std::array{ 4095u, 1023u }, std::array{ 1023u, 4095u }, std::array{ 4097u, 1025u },
+			 std::array{ 6143u, 1535u }, std::array{ 6144u, 1024u }, std::array{ 1921u, 1081u },
+			 std::array{ 8000u, 1600u }, std::array{ 8192u, 2048u }, std::array{ 1024u, 64u },
+			 std::array{ 72u, 80u }, std::array{ 80u, 72u }, std::array{ 2048u, 2200u }, std::array{ 16383u, 4095u } }) {
+		for (uint32_t percent = 1; percent <= 100; ++percent) {
+			auto previous = dimensions;
+			for (uint32_t step = 1000; step >= 250; --step) {
+				const float scale = float(step) / 1000.0f;
+				const auto [width, height] = NR::ModelExtent(scale, dimensions[0], dimensions[1]);
+				const std::array ordinary{ width ? width : dimensions[0], height ? height : dimensions[1] };
+				const auto plan = Plan(percent, dimensions[0], dimensions[1], ordinary[0], ordinary[1]);
+				const std::array actual{ plan.Active() ? plan.width : ordinary[0], plan.Active() ? plan.height : ordinary[1] };
+				CAPTURE(dimensions, percent, scale, ordinary, actual, previous, plan.reason);
+				REQUIRE(actual[0] <= previous[0]);
+				REQUIRE(actual[1] <= previous[1]);
+				previous = actual;
+			}
+		}
 	}
 }
