@@ -221,6 +221,10 @@ struct Wind : Feature
 	void UpdateTreeWindSpring();
 	void RecreateGrassWindSpringTextures(uint32_t a_qualityIndex, uint32_t a_textureSize);
 	[[nodiscard]] ID3D11ShaderResourceView* GetGrassWindSpringDebugSRV() const;
+	/** @brief Planar direction (x, y) of the current ambient wind field, including overrides. */
+	[[nodiscard]] float2 GetWindFieldDirection() const { return float2{ windFieldCurrent.direction.x, windFieldCurrent.direction.y }; }
+	/** @brief Selected ambient wind speed, including overrides; 0 to 1 for real weather. */
+	[[nodiscard]] float GetWindFieldSpeed() const { return windFieldSelectedSpeed; }
 
 private:
 	bool IsTreeBendRenderPass(const RE::BSRenderPass* a_pass) const;

@@ -3,6 +3,7 @@
 #include <imgui.h>
 
 #include "../I18n/I18n.h"
+#include "Features/Wind/Wind.h"
 #include "Globals.h"
 #include "State.h"
 
@@ -299,6 +300,11 @@ void TreeWind::Reset()
 	if (auto sky = globals::game::sky) {
 		windSpeed = sky->windSpeed;
 		windAngle = sky->windAngle;
+		if (const auto& wind = globals::features::wind; wind.loaded) {
+			const float2 direction = wind.GetWindFieldDirection();
+			windSpeed = std::clamp(wind.GetWindFieldSpeed(), 0.0f, 1.0f);
+			windAngle = std::atan2(direction.x, direction.y);
+		}
 		const float weatherPct = std::clamp(sky->currentWeatherPct, 0.0f, 1.0f);
 		storminess = sky->lastWeather ?
 		                 GetStorminess(sky->currentWeather) * weatherPct + GetStorminess(sky->lastWeather) * (1.0f - weatherPct) :
