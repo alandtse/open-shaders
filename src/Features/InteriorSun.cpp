@@ -3,6 +3,7 @@
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "State.h"
+#include "Utils/Climate.h"
 
 #define I18N_KEY_PREFIX "feature.interior_sun."
 
@@ -23,7 +24,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CloseShadowGaps,
 	ShadowGapTexels,
 	FrameShadowsFromGlowMaps,
-	GlowMapThreshold)
+	GlowMapThreshold,
+	SunColorFromWeather)
 
 namespace
 {
@@ -155,6 +157,12 @@ void InteriorSun::DrawSettings()
 							  "Each moment, lets the sun in only through windows and openings that face it. "
 							  "Sun could never enter through a window it is behind, and opening one lets thin slivers of light onto the beams and walls along its line."));
 	}
+	ImGui::Checkbox(T(TKEY("sun_color_from_weather"), "Sun Colour From Weather"), &settings.SunColorFromWeather);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("sun_color_from_weather_tooltip"),
+							  "Sunlit interiors take the sun's colour and brightness from the weather, as outside, "
+							  "instead of from the cell's own lighting, which is often dim or grey in dungeons."));
+	}
 	ImGui::Checkbox(T(TKEY("close_shadow_gaps"), "Close Shadow Gaps"), &settings.CloseShadowGaps);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("close_shadow_gaps_tooltip"),
@@ -245,6 +253,7 @@ void InteriorSun::EarlyPrepass()
 	if (!settings.HideFakeWindowGlows || !isInteriorWithSun)
 		RestoreFakeGlows();
 	UpdateSkyLitGlass();
+	UpdateSunColor();
 
 	// Changing these needs the cell scanned again (openings, glows) and the holes rebuilt
 	if (settings.SunFacingHolesOnly != lastSunFacing) {
@@ -798,6 +807,54 @@ void InteriorSun::UpdateSkyLitGlass()
 		entry.property->emissiveMult = settings.SkyLitGlassStrength;
 	}
 	glassEmissivesLit = true;
+}
+
+void InteriorSun::UpdateSunColor()
+{
+	const auto shadowSceneNode = globals::game::smState->shadowSceneNode[0];
+	const auto sunLight = shadowSceneNode ? shadowSceneNode->GetRuntimeData().sunLight : nullptr;
+	if (!sunLight || !sunLight->light)
+		return;
+	auto& diffuse = sunLight->light->GetLightRuntimeData().diffuse;
+	// Anything other than our last write is the engine's own colour (it sets it from the cell's lighting)
+	if (!sunColorWritten || diffuse != writtenSunColor)
+		engineSunColor = diffuse;
+
+	const auto sky = globals::game::sky;
+	if (!settings.SunColorFromWeather || !isInteriorWithSun || !sky) {
+		if (sunColorWritten && diffuse == writtenSunColor)
+			diffuse = engineSunColor;
+		sunColorWritten = false;
+		return;
+	}
+	// Indoors the sky's own sunlight colour is filled from the cell's lighting too, so read the weathers themselves
+	using ColorTime = RE::TESWeather::ColorTime;
+	Util::Climate::ColorTimeWeights weights{};
+	if (sky->currentClimate)
+		weights = Util::Climate::GetColorTimeWeights(*sky->currentClimate, sky->currentGameHour);
+	else
+		weights[ColorTime::kDay] = 1.0f;
+	const auto sunlight = [&](const RE::TESWeather* weather) {
+		RE::NiColor color{};
+		for (uint32_t time = 0; time < ColorTime::kTotal; ++time) {
+			const auto& stored = weather->colorData[RE::TESWeather::ColorTypes::kSunlight][time];
+			color.red += weights[time] * stored.red / 255.0f;
+			color.green += weights[time] * stored.green / 255.0f;
+			color.blue += weights[time] * stored.blue / 255.0f;
+		}
+		return color;
+	};
+	if (!sky->currentWeather)
+		return;
+	RE::NiColor color = sunlight(sky->currentWeather);
+	if (sky->lastWeather && sky->currentWeatherPct < 1.0f) {
+		const auto previous = sunlight(sky->lastWeather);
+		const float t = std::clamp(sky->currentWeatherPct, 0.0f, 1.0f);
+		color = { previous.red + (color.red - previous.red) * t, previous.green + (color.green - previous.green) * t, previous.blue + (color.blue - previous.blue) * t };
+	}
+	diffuse = color;
+	writtenSunColor = diffuse;
+	sunColorWritten = true;
 }
 
 void InteriorSun::ReleaseWindowGlass()

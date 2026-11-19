@@ -1907,6 +1907,8 @@
     "feature.interior_sun.sky_lit_glass_helios": "Off while Helios is loaded: Helios drives window glow itself.",
     "feature.interior_sun.sky_lit_glass_strength": "Sky-Lit Glass Strength",
     "feature.interior_sun.sky_lit_glass_tooltip": "Makes glowing window glass follow the sky's colour and brightness in interiors lit by the sun. Leave off when a weather mod already drives window glow.",
+    "feature.interior_sun.sun_color_from_weather": "Sun Colour From Weather",
+    "feature.interior_sun.sun_color_from_weather_tooltip": "Sunlit interiors take the sun's colour and brightness from the weather, as outside, instead of from the cell's own lighting, which is often dim or grey in dungeons.",
     "feature.interior_sun.sun_facing_holes_only": "Only Windows Facing The Sun",
     "feature.interior_sun.sun_facing_holes_only_tooltip": "Each moment, lets the sun in only through windows and openings that face it. Sun could never enter through a window it is behind, and opening one lets thin slivers of light onto the beams and walls along its line.",
     "feature.interior_sun.window_light_only": "Sunlight Through Windows Only",

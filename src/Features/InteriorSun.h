@@ -56,6 +56,7 @@ public:
 		int ShadowGapTexels = 2;
 		bool FrameShadowsFromGlowMaps = true;
 		float GlowMapThreshold = 0.5f;
+		bool SunColorFromWeather = true;
 	};
 
 	Settings settings;
@@ -344,6 +345,11 @@ private:
 
 	/** @brief Lights the glass from the sky's colour while the cell has the sun. */
 	void UpdateSkyLitGlass();
+	/**
+	 * @brief In sunlit interiors, overwrites the sun light's diffuse every frame with the weather's sunlight colour,
+	 * since indoors the engine takes it from the cell's lighting record (dim in dungeons); other writers are overwritten.
+	 */
+	void UpdateSunColor();
 
 	void ReleaseWindowGlass();
 
@@ -359,6 +365,8 @@ private:
 	bool lastHideFakeGlows = true;
 	bool lastSunFacing = true;
 	bool lastInteriorWithSun = false;
+	RE::NiColor engineSunColor{}, writtenSunColor{};  // the cell's own sun colour, and what we last wrote over it
+	bool sunColorWritten = false;
 	bool forceHolesUpload = false;
 	bool heliosLoaded = false;  // Helios drives window glow itself, so Sky-Lit Glass stands down
 };
