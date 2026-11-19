@@ -871,13 +871,9 @@ PS_OUTPUT main(PS_INPUT input)
 #endif
 
 #if defined(GEOMETRYSHADER) && defined(RENDER_SHADOWMAP_PB)
-#	if defined(VR)
-#		define PARABOLOID_MAX_SPLITS 2
-#	else
-#		define PARABOLOID_MAX_SPLITS 3
-#	endif
-static const uint ParaboloidMaxSplits = PARABOLOID_MAX_SPLITS;
-static const float ParaboloidSplitAngle = 0.35;
+// One count for every triangle, so two triangles sharing an edge split it at the same points.
+#	define PARABOLOID_SPLITS 2
+static const uint ParaboloidSplits = PARABOLOID_SPLITS;
 
 /// A point of a triangle at barycentric weights w, projected onto this half the way the vertex shader projects a vertex.
 VS_OUTPUT ParaboloidPoint(VS_OUTPUT a, VS_OUTPUT b, VS_OUTPUT c, float3 w, float hemisphere, float invRadius)
@@ -935,16 +931,8 @@ void EmitParaboloidTriangle(VS_OUTPUT a, VS_OUTPUT b, VS_OUTPUT c, uint n, float
 	}
 }
 
-/// Splits count for a triangle whose corners' directions from the light span the given widest angle.
-uint ParaboloidSplits(float3 a, float3 b, float3 c)
-{
-	const float3 na = normalize(a), nb = normalize(b), nc = normalize(c);
-	const float widest = acos(saturate(min(min(dot(na, nb), dot(nb, nc)), dot(na, nc))));
-	return clamp((uint)ceil(widest / ParaboloidSplitAngle), 1u, ParaboloidMaxSplits);
-}
-
 // A triangle crossing the hemisphere plane is cut at it, so both halves end on the rim at the same point and the two halves of a shadow meet.
-[maxvertexcount(2 * 3 * PARABOLOID_MAX_SPLITS * PARABOLOID_MAX_SPLITS)] void main(triangle VS_OUTPUT input[3], inout TriangleStream<VS_OUTPUT> stream) {
+[maxvertexcount(2 * 3 * PARABOLOID_SPLITS * PARABOLOID_SPLITS)] void main(triangle VS_OUTPUT input[3], inout TriangleStream<VS_OUTPUT> stream) {
 	// TexCoord1.z holds hemisphere * z * 0.5 + 0.5, so (TexCoord1.z - 0.5) * z has the hemisphere's sign.
 	float side[3];
 	float signSum = 0;
@@ -970,7 +958,7 @@ uint ParaboloidSplits(float3 a, float3 b, float3 c)
 		return;
 
 	if (side[0] >= 0 && side[1] >= 0 && side[2] >= 0) {
-		EmitParaboloidTriangle(input[0], input[1], input[2], ParaboloidSplits(input[0].ViewPos, input[1].ViewPos, input[2].ViewPos), hemisphere, invRadius, stream);
+		EmitParaboloidTriangle(input[0], input[1], input[2], ParaboloidSplits, hemisphere, invRadius, stream);
 		return;
 	}
 
@@ -1002,12 +990,12 @@ uint ParaboloidSplits(float3 a, float3 b, float3 c)
 	const VS_OUTPUT onAC = ParaboloidPoint(a, b, c, float3(1 - tc, 0, tc), hemisphere, invRadius);
 	if (sa >= 0) {
 		const VS_OUTPUT front = ParaboloidPoint(a, b, c, float3(1, 0, 0), hemisphere, invRadius);
-		EmitParaboloidTriangle(front, onAB, onAC, ParaboloidSplits(front.ViewPos, onAB.ViewPos, onAC.ViewPos), hemisphere, invRadius, stream);
+		EmitParaboloidTriangle(front, onAB, onAC, ParaboloidSplits, hemisphere, invRadius, stream);
 	} else {
 		const VS_OUTPUT frontB = ParaboloidPoint(a, b, c, float3(0, 1, 0), hemisphere, invRadius);
 		const VS_OUTPUT frontC = ParaboloidPoint(a, b, c, float3(0, 0, 1), hemisphere, invRadius);
-		EmitParaboloidTriangle(onAB, frontB, frontC, ParaboloidSplits(onAB.ViewPos, frontB.ViewPos, frontC.ViewPos), hemisphere, invRadius, stream);
-		EmitParaboloidTriangle(onAB, frontC, onAC, ParaboloidSplits(onAB.ViewPos, frontC.ViewPos, onAC.ViewPos), hemisphere, invRadius, stream);
+		EmitParaboloidTriangle(onAB, frontB, frontC, ParaboloidSplits, hemisphere, invRadius, stream);
+		EmitParaboloidTriangle(onAB, frontC, onAC, ParaboloidSplits, hemisphere, invRadius, stream);
 	}
 }
 #endif
