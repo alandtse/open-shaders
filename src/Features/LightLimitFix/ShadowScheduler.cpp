@@ -1950,6 +1950,8 @@ namespace ShadowCasterManager
 					float edgeEyeDistance = 0.0f;
 					const bool edgeHeld = lastValidIt != s_lastValidFrame.end() && !hiddenNow && !lodFadedNow && !l->GetIsFrustumLight() &&
 					                      OwnSphereInFrustum(nilightNow->world.translate, nilightNow->GetLightRuntimeData().radius.x, edgeEyeDistance);
+					if (edgeHeld)
+						lastValidIt->second = nowFrame;
 					if (recentlyValid || edgeHeld) {
 						c.cameraHold = true;
 						s_cameraHold.insert(l);
