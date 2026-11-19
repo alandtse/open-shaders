@@ -702,10 +702,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
 	float3 dirLightColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * llDirLightMult;
 #				if defined(EXP_HEIGHT_FOG)
-	if (SharedData::exponentialHeightFogSettings.enabled)
+	[branch] if (SharedData::exponentialHeightFogSettings.enabled)
 		dirLightColor *= ExponentialHeightFog::GetSunlightFogAttenuation(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 #				endif
-	if (!SharedData::InInterior)
+	[branch] if (!SharedData::InInterior)
 		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true);
 #				if defined(WATER_EFFECTS)
 	dirLightColor *= WaterEffects::ComputeCaustics(SharedData::GetWaterData(input.WorldPosition.xyz, eyeIndex), input.WorldPosition.xyz, eyeIndex);
@@ -714,7 +714,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float4 shadowColor = TexShadowMaskSampler.Load(int3(input.HPosition.xy, 0));
 	float dirDetailedShadow = 1.0;
 	float nativeContactWeight = 1.0;
-	if (ShadowSampling::HasDirectionalShadows()) {
+	[branch] if (ShadowSampling::HasDirectionalShadows())
+	{
 		float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		float directionalCoverage;
 		dirDetailedShadow = DirectionalShadow::GetSceneDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, eyeIndex, screenNoise, shadowColor.x, directionalCoverage, nativeContactWeight);
@@ -737,7 +738,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif
 
 #				if defined(SNOW_COVER)
-	if (SnowCover::IsActive()) {
+	[branch] if (SnowCover::IsActive())
+	{
 #					if defined(SKYLIGHTING)
 		float snowSkyVisibility = SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1));
 #					else
@@ -749,9 +751,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #				if defined(SCREEN_SPACE_SHADOWS)
 #					ifdef GRASS_OPTIMIZATIONS
-	if (ShadowSampling::HasDirectionalShadows() && input.IsFar <= 0.5)
+	[branch] if (ShadowSampling::HasDirectionalShadows() && input.IsFar <= 0.5)
 #					else
-	if (ShadowSampling::HasDirectionalShadows())
+	[branch] if (ShadowSampling::HasDirectionalShadows())
 #					endif
 	{
 		[branch] if (SharedData::grassLightingSettings.EnableNewLightingModel)
@@ -840,7 +842,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 directColor = totalLighting.diffuse + totalLighting.transmission;
 	float3 directionalAmbientColor = Color::Ambient(max(0, SharedData::GetAmbient(normal)));
 #				if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL)
+	[branch] if (SharedData::iblSettings.EnableIBL)
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(directionalAmbientColor, -normal);
 #				endif
 	directColor += indirectLobes.diffuse * directionalAmbientColor;
@@ -890,7 +892,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float3 emitVertexColor = Color::CompensateConvertedColor(Color::SrgbToLinear(input.Color.xyz));
 		float emitVertexAO = max(max(emitVertexColor.r, emitVertexColor.g), emitVertexColor.b);
 		emitVertexColor = emitVertexAO == 0.0f ? 1.0f : emitVertexColor * lerp(1 / max(emitVertexAO, 1e-4), 1, SharedData::truePBRSettings.VertexAOStrength);
-		emitVertexColor = ENABLE_LL ? Color::GamutTransform(emitVertexColor) : Color::LinearToPBRMaterial(emitVertexColor);
+		[branch] if (ENABLE_LL)
+		{
+			emitVertexColor = Color::GamutTransform(emitVertexColor);
+		}
+		else
+		{
+			emitVertexColor = Color::LinearToPBRMaterial(emitVertexColor);
+		}
 		glowColor = Color::AdjustUtilityColor(glowColor, SharedData::csUtilitySettings.emitColor) * SharedData::csUtilitySettings.emitColorMult * PBRParams1.z;
 		directColor += glowColor * emitVertexColor;
 	}
@@ -1061,7 +1070,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 dirLightColorMultiplier = 1;
 
 #				if defined(EXP_HEIGHT_FOG)
-	if (SharedData::exponentialHeightFogSettings.enabled) {
+	[branch] if (SharedData::exponentialHeightFogSettings.enabled)
+	{
 		dirLightColor *= ExponentialHeightFog::GetSunlightFogAttenuation(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 	}
 #				endif
@@ -1071,7 +1081,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float4 shadowColor = TexShadowMaskSampler.Load(int3(input.HPosition.xy, 0));
 
 	// Apply world shadow (terrain shadows, cloud shadows) directly to light color
-	if (!SharedData::InInterior)
+	[branch] if (!SharedData::InInterior)
 		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true);
 #				if defined(WATER_EFFECTS)
 	dirLightColor *= WaterEffects::ComputeCaustics(SharedData::GetWaterData(input.WorldPosition.xyz, eyeIndex), input.WorldPosition.xyz, eyeIndex);
@@ -1083,7 +1093,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	// HasDirectionalShadows() admits Interior Sun cells; mirrors the
 	// same swap in Lighting.hlsl / Particle.hlsl.
-	if (ShadowSampling::HasDirectionalShadows()) {
+	[branch] if (ShadowSampling::HasDirectionalShadows())
+	{
 		float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		float directionalCoverage;
 		dirDetailedShadow *= DirectionalShadow::GetSceneDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, eyeIndex, screenNoise, shadowColor.x, directionalCoverage, nativeContactWeight);
@@ -1097,9 +1108,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #				if defined(SCREEN_SPACE_SHADOWS)
 #					ifdef GRASS_OPTIMIZATIONS
-	if (ShadowSampling::HasDirectionalShadows() && input.IsFar <= 0.5)
+	[branch] if (ShadowSampling::HasDirectionalShadows() && input.IsFar <= 0.5)
 #					else
-	if (ShadowSampling::HasDirectionalShadows())
+	[branch] if (ShadowSampling::HasDirectionalShadows())
 #					endif
 	{
 		[branch] if (SharedData::grassLightingSettings.EnableNewLightingModel)
@@ -1175,7 +1186,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float3 albedo = baseColor.xyz * vertexColor;
 #				if defined(SNOW_COVER)
-	if (SnowCover::IsActive()) {
+	[branch] if (SnowCover::IsActive())
+	{
 #					if defined(SKYLIGHTING)
 		float snowSkyVisibility = skylightingDiffuse;
 #					else
@@ -1277,7 +1289,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 directionalAmbientColor = Color::Ambient(max(0, SharedData::GetAmbient(normal)));
 
 #				if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
+	[branch] if (SharedData::iblSettings.EnableIBL)
+	{
 #					if defined(SKYLIGHTING) && !defined(INTERIOR)
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBLOccluded(directionalAmbientColor, -normal, skylightingDiffuse);
 #					else
@@ -1408,7 +1421,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 dirLightColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * llDirLightMult;
 
 	// Apply world shadow (terrain shadows, cloud shadows) directly to light color
-	if (!SharedData::InInterior)
+	[branch] if (!SharedData::InInterior)
 		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true);
 #			if defined(WATER_EFFECTS)
 	dirLightColor *= WaterEffects::ComputeCaustics(SharedData::GetWaterData(input.WorldPosition.xyz, eyeIndex), input.WorldPosition.xyz, eyeIndex);
@@ -1419,7 +1432,8 @@ PS_OUTPUT main(PS_INPUT input)
 
 	// HasDirectionalShadows() admits Interior Sun cells; mirrors the
 	// same swap in Lighting.hlsl / Particle.hlsl.
-	if (ShadowSampling::HasDirectionalShadows()) {
+	[branch] if (ShadowSampling::HasDirectionalShadows())
+	{
 		float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		float directionalCoverage;
 		dirDetailedShadow = DirectionalShadow::GetSceneDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, eyeIndex, screenNoise, shadowColor.x, directionalCoverage, nativeContactWeight);
@@ -1427,9 +1441,9 @@ PS_OUTPUT main(PS_INPUT input)
 
 #			if defined(SCREEN_SPACE_SHADOWS)
 #				ifdef GRASS_OPTIMIZATIONS
-	if (ShadowSampling::HasDirectionalShadows() && input.IsFar <= 0.5)
+	[branch] if (ShadowSampling::HasDirectionalShadows() && input.IsFar <= 0.5)
 #				else
-	if (ShadowSampling::HasDirectionalShadows())
+	[branch] if (ShadowSampling::HasDirectionalShadows())
 #				endif
 		dirDetailedShadow *= lerp(1.0, ScreenSpaceShadows::GetScreenSpaceShadow(input.HPosition.xyz, screenUV, screenNoise, eyeIndex), nativeContactWeight);
 #			endif  // SCREEN_SPACE_SHADOWS
@@ -1516,7 +1530,8 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 directionalAmbientColor = Color::Ambient(max(0, SharedData::GetAmbient(normal)));
 
 #			if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
+	[branch] if (SharedData::iblSettings.EnableIBL)
+	{
 #				if defined(SKYLIGHTING) && !defined(INTERIOR)
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBLOccluded(directionalAmbientColor, -normal, skylightingDiffuse);
 #				else
