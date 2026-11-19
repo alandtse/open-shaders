@@ -149,12 +149,12 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 	float3 linAlbedo = Color::IrradianceToLinear(albedo / Color::PBRLightingScale);
 	float3 multiBounceSSGIAo = MultiBounceAO(linAlbedo, ssgiAo);
 
-	float3 vanillaDALC = Color::Ambient(max(0, SharedData::GetAmbient(normalWS)));
-	float3 directionalAmbientColor = vanillaDALC;
+	float3 directionalAmbientColor = 0;
 
 #	if defined(IBL)
-	[branch] if (SharedData::iblSettings.EnableIBL)
-	{
+	if (SharedData::iblSettings.EnableIBL) {
+		float3 vanillaDALC = Color::Ambient(max(0, SharedData::GetAmbient(normalWS)));
+
 #		if defined(SKYLIGHTING)
 #			if defined(VR)
 		float3 positionMS = positionWS.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
@@ -163,18 +163,26 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 #			endif
 		sh2 skylightingSH = Skylighting::Sample(positionMS.xyz, normalWS);
 		float skylightingDiffuse = Skylighting::EvaluateDiffuse(skylightingSH, normalWS, Skylighting::GetFadeOutFactor(positionMS));
-		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBLOccluded(vanillaDALC, -normalWS, skylightingDiffuse);
+		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBLOccluded(vanillaDALC, -normalWS, skylightingDiffuse) * albedo;
 #		else
-		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(vanillaDALC, -normalWS);
+		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(vanillaDALC, -normalWS) * albedo;
 #		endif
-	}
-#	endif
 
-	directionalAmbientColor *= albedo;
-	directionalAmbientColor = Color::RGBToYCoCg(directionalAmbientColor);
-	directionalAmbientColor.x = MasksTexture[dispatchID.xy].z;
-	directionalAmbientColor = Color::YCoCgToRGB(directionalAmbientColor);
-	directionalAmbientColor = max(0, directionalAmbientColor);
+		directionalAmbientColor = Color::RGBToYCoCg(directionalAmbientColor);
+		directionalAmbientColor.x = MasksTexture[dispatchID.xy].z;
+		directionalAmbientColor = Color::YCoCgToRGB(directionalAmbientColor);
+		directionalAmbientColor = max(0, directionalAmbientColor);
+	} else
+#	endif
+	{
+		directionalAmbientColor = Color::Ambient(max(0, SharedData::GetAmbient(normalWS)));
+		directionalAmbientColor *= albedo;
+
+		directionalAmbientColor = Color::RGBToYCoCg(directionalAmbientColor);
+		directionalAmbientColor.x = MasksTexture[dispatchID.xy].z;
+		directionalAmbientColor = Color::YCoCgToRGB(directionalAmbientColor);
+		directionalAmbientColor = max(0, directionalAmbientColor);
+	}
 
 	{
 		float maxScale = 1.0;
@@ -234,8 +242,7 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 #	endif
 
 #	if defined(IBL)
-		[branch] if (SharedData::iblSettings.EnableIBL)
-		{
+		if (SharedData::iblSettings.EnableIBL) {
 			float3 envSpecular;
 			float3 skySpecular;
 			ImageBasedLighting::ComputeSpecularIBL(
@@ -251,8 +258,7 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 				skySpecular);
 
 			finalIrradiance = envSpecular + skySpecular;
-		}
-		else
+		} else
 #	endif
 		{
 			// Fallback without IBL: normalize-by-luminance with DALC
