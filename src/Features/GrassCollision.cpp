@@ -165,7 +165,7 @@ void GrassCollision::QueueCollisions()
 			float distance = std::sqrt(actorCandidate.sqDistance);
 			eastl::vector<GrassCollisionShapeCandidate> collisionShapes{};
 
-			RE::BSVisit::TraverseScenegraphCollision(root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
+			Util::TraverseCollision(root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
 				Util::ShapeCollisionCapsule capsule;
 				if (Util::GetShapeCollisionCapsule(a_object, capsule)) {
 					capsule.radius *= collisionRadiusScale;
