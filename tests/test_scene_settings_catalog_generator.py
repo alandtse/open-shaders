@@ -1418,6 +1418,104 @@ void Synthetic::DrawGeneral() {
         self.assertEqual(binding.category.text, "Density")
         self.assertEqual((binding.minimum, binding.maximum), (0.0, 1.0))
 
+    def test_brace_scoped_categories_match_sss(self):
+        base = self.entries_by_id[("SubsurfaceScattering", "BaseProfile", "BlurRadius")]
+        human = self.entries_by_id[("SubsurfaceScattering", "HumanProfile", "BlurRadius")]
+        samples = self.entries_by_id[("SubsurfaceScattering", "", "BurleySamples")]
+        self.assertEqual(base["displayPath"], "Base Profile")
+        self.assertEqual(human["displayPath"], "Human Profile")
+        self.assertEqual(samples["displayPath"], "")
+
+    def test_persistent_categories_restore_the_enclosing_scope(self):
+        for heading in ("", 'ImGui::SeparatorText(T(TKEY("outer"), "Outer"));'):
+            source = """
+            #define I18N_KEY_PREFIX "feature.example."
+            void Example::DrawSettings()
+            {
+                OUTER_HEADING
+                if (settings.Enabled) {
+                    ImGui::SeparatorText(T(TKEY("inner"), "Inner"));
+                    ImGui::SliderFloat("Inside", &settings.Inside, 0.f, 1.f);
+                    if (settings.Nested) {
+                        ImGui::SliderFloat("Nested", &settings.NestedValue, 0.f, 1.f);
+                    }
+                    ImGui::SliderFloat("Same Scope", &settings.SameScope, 0.f, 1.f);
+                } else {
+                    ImGui::SliderFloat("Sibling", &settings.Sibling, 0.f, 1.f);
+                }
+                ImGui::SliderFloat("After", &settings.After, 0.f, 1.f);
+            }
+            """.replace("OUTER_HEADING", heading)
+            with self.subTest(heading=heading), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "Example.cpp"
+                path.write_text(source, encoding="utf-8")
+                index = GENERATOR.collect_control_index([path])
+                for key in ("Inside", "NestedValue", "SameScope"):
+                    self.assertEqual(index.bindings[("Example", (key,))].category,
+                                     GENERATOR.LocalizedText("Inner", "feature.example.inner"))
+                outer = (GENERATOR.LocalizedText("Outer", "feature.example.outer")
+                         if heading else GENERATOR.LocalizedText())
+                for key in ("Sibling", "After"):
+                    self.assertEqual(index.bindings[("Example", (key,))].category, outer)
+
+    def test_brace_scoped_categories_match_exponential_height_fog(self):
+        root = self.entries_by_id[("ExponentialHeightFog", "", "fogDensity")]
+        volumetric = self.entries_by_id[
+            ("ExponentialHeightFog", "", "volumetricFogDistance")]
+        debug = self.entries_by_id[
+            ("ExponentialHeightFog", "", "volumetricGridSizeZ")]
+        self.assertEqual(root["displayPath"], "Density and Height")
+        self.assertEqual(volumetric["displayPath"], "")
+        self.assertEqual(debug["displayPath"], "Debug")
+        self.assertIn("SceneControllable", debug["flags"])
+
+    def test_safe_editor_metadata(self):
+        ripple_lifetime = self.entries_by_id[
+            ("WetnessEffects", "", "RippleLifetime")]
+        resolution_mode = self.entries_by_id[
+            ("ScreenSpaceGI", "", "ResolutionMode")]
+        fog_density = self.entries_by_id[
+            ("ExponentialHeightFog", "", "fogDensity")]
+        self.assertEqual(ripple_lifetime["editorSemantic"], "Numeric")
+        self.assertFalse(ripple_lifetime["hasNumericBounds"])
+        self.assertIn("SceneControllable", ripple_lifetime["flags"])
+        self.assertEqual(resolution_mode["editorSemantic"], "Choice")
+        self.assertEqual([choice[0] for choice in resolution_mode["choices"]], [0, 1, 2])
+        self.assertEqual((fog_density["minimum"], fog_density["maximum"]), (0.0, 1.0))
+
+    def test_custom_ui_setting_is_scene_controllable_text(self):
+        lut_path = self.entries_by_id[("PostProcessing", "LUT/settings", "LutPath")]
+        self.assertEqual(lut_path["type"], "String")
+        self.assertEqual(lut_path["editorSemantic"], "Text")
+        self.assertIn("SceneControllable", lut_path["flags"])
+        self.assertNotIn("Hidden", lut_path["flags"])
+        self.assertNotIn("Transitionable", lut_path["flags"])
+
+    def test_post_processing_sub_feature_enabled_is_scene_toggle(self):
+        enabled = self.entries_by_id[("PostProcessing", "COD Bloom", "enabled")]
+        self.assertEqual(enabled["type"], "Boolean")
+        self.assertIn("SceneControllable", enabled["flags"])
+
+    def test_cinematic_camera_controls_have_owned_storage_and_serialized_paths(self):
+        entries = [entry for entry in self.entries
+                   if entry["feature"] == "PostProcessing" and
+                   entry["path"].split("/")[0] == "cinematic_camera"]
+        self.assertEqual(len(entries), 22)
+        for entry in entries:
+            with self.subTest(path=entry["path"], key=entry["key"]):
+                self.assertTrue(entry["addressable"])
+                self.assertTrue(entry["access"].startswith("cinematicCamera.settings."))
+                self.assertIn("SceneControllable", entry["flags"])
+                self.assertNotIn("Hidden", entry["flags"])
+        enabled = self.entries_by_id[("PostProcessing", "cinematic_camera", "Enabled")]
+        self.assertEqual(enabled["editorSemantic"], "Toggle")
+        for axis in ("x", "y"):
+            focus = self.entries_by_id[("PostProcessing", "cinematic_camera/Focus/ScreenPointUV", axis)]
+            self.assertEqual(focus["serializedPath"], "cinematic_camera/Focus")
+            self.assertEqual(focus["serializedKey"], "ScreenPointUV")
+            self.assertEqual(focus["displayScale"], 100.0)
+            self.assertEqual((focus["minimum"], focus["maximum"]), (0.0, 1.0))
+
     def test_explicit_proxy_binds_a_derived_temporary(self):
         source = r'''
 void Synthetic::DrawSettings() {
@@ -1554,6 +1652,20 @@ void SyntheticFeature::DrawSettings() {
                     self.assertNotIn(f"&typedFeature->{member}", adapters)
                 self.assertEqual("&typedFeature->defaultMember" in adapters,
                                  declaration == "struct")
+    def test_post_processing_lens_proxies_are_scene_controls(self):
+        for path, keys in (("Depth of Field/settings", ("FocalLength", "FNumber", "SensorWidthMM",
+                                                       "ManualFocusPlane", "TransitionSpeed",
+                                                       "BokehBladeCount", "BokehBladeRoundness",
+                                                       "HighlightShapeRotationAngle")),
+                           ("Camera/settings", ("LensFOV",)),
+                           ("Lens Flare/settings", ("ApertureBlades", "FStop", "ApertureRotation")),
+                           ("Physical Glare/settings", ("ApertureBlades", "FStop", "ApertureRotation")),
+                           ("Vignette/settings", ("FocalLength",))):
+            for key in keys:
+                with self.subTest(path=path, key=key):
+                    entry = self.entries_by_id[("PostProcessing", path, key)]
+                    self.assertIn("SceneControllable", entry["flags"])
+                    self.assertTrue(entry["sourceWidget"])
 
     def test_numeric_metadata_uses_raw_bounds_and_display_scale(self):
         source = r'''

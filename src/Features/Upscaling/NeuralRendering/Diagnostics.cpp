@@ -438,7 +438,7 @@ namespace NR
 				"Production\0Raw replacement\0Masked lerp\0"
 				"50% masked lerp\0Preserve luminance\0Preserve ratio\0Residual\0Ratio\0"))
 			compositeMode = std::min(composition, lastComposite);
-		ImGui::SeparatorText("Debug views");
+		ImGui::SeparatorText("Diagnostic views");
 		if (ImGui::Combo("Debug view", reinterpret_cast<int*>(&view), "None\0NR input\0NR output\0Difference\0Ratio\0Original\0Post-composite\0Luminance difference\0Chroma difference\0Guide mask\0Exposure\0Split original / NR output\0Split original / composite\0Split NR input / output\0Split pre / post\0Log luminance ratio\0Tone delta\0Tone low\0Tone high\0Tone low gain\0Final luminance ratio\0Material category\0"))
 			visualMode = std::min(view, lastVisual);
 		if (ImGui::SliderFloat("Difference strength", &differenceValue, 1.0f, 16.0f, "%.0fx", ImGuiSliderFlags_AlwaysClamp))
