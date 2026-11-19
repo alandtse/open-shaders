@@ -7,7 +7,7 @@
 
 namespace PostProcessingRaster
 {
-	RasterPass::RasterPass(ID3D11DeviceContext* a_context) :
+	RasterPass::RasterPass(ID3D11DeviceContext* a_context, UINT) :
 		context(a_context),
 		savedState(a_context)
 	{

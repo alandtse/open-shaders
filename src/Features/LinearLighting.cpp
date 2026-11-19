@@ -120,6 +120,7 @@ void LinearLighting::SetupResources()
 
 void LinearLighting::ClearShaderCache()
 {
+	globals::state->RequestHistoryReset();
 	CompileSceneGammaDecodeShader();
 }
 
