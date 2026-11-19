@@ -23,14 +23,17 @@ namespace NeuralRenderingMaterial
 		uint edgeSoftness, float4 strengthsA, float4 strengthsB)
 	{
 		const int radius = (int)edgeSoftness;
-		if (radius == 0)
-			return ProtectionAt(categories, SourcePixel(pixel, size, eyeOffsetX), strengthsA, strengthsB);
 		float sum = 0.0;
-		for (int y = -radius; y <= radius; ++y) {
-			for (int x = -radius; x <= radius; ++x)
-				sum += ProtectionAt(categories, SourcePixel(pixel + int2(x, y), size, eyeOffsetX), strengthsA, strengthsB);
+		if (radius == 0) {
+			sum = ProtectionAt(categories, SourcePixel(pixel, size, eyeOffsetX), strengthsA, strengthsB);
+		} else {
+			for (int y = -radius; y <= radius; ++y) {
+				for (int x = -radius; x <= radius; ++x)
+					sum += ProtectionAt(categories, SourcePixel(pixel + int2(x, y), size, eyeOffsetX), strengthsA, strengthsB);
+			}
+			sum /= float((2 * radius + 1) * (2 * radius + 1));
 		}
-		return sum / float((2 * radius + 1) * (2 * radius + 1));
+		return sum;
 	}
 
 	/** @brief Converts protection to a compositor weight at the provider mask's R8_UNORM precision. */
