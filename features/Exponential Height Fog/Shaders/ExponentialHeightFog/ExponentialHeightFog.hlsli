@@ -46,7 +46,11 @@ namespace ExponentialHeightFog
 	float GetLinearVanillaFogFade(float vanillaFogFade)
 	{
 		float fogFade = GetVanillaFogFade(vanillaFogFade);
-		return ENABLE_LL ? Color::AuthoredGammaToLinear(fogFade.xxx).x : fogFade;
+		[branch] if (ENABLE_LL)
+		{
+			fogFade = Color::AuthoredGammaToLinear(fogFade.xxx).x;
+		}
+		return fogFade;
 	}
 
 	bool ShouldDisableVanillaFog()
@@ -238,23 +242,31 @@ namespace ExponentialHeightFog
 		float expFogFactor = (fogDensity > 0.0f || fogDensity2 > 0.0f) ? saturate(exp2(-exponentialHeightLineIntegral)) : 1.0f;
 
 		float3 fogInscatteringColor = 0.0f.xxx;
-		if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0) {
+		[branch] if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0)
+		{
 			fogInscatteringColor = GetFogAmbientColor(viewToPosLength);
-		} else if (SharedData::exponentialHeightFogSettings.originalFogColorAmount > 0.0f) {
-			if (!SharedData::InInterior) {
-				fogColor = Color::Fog(SharedData::exponentialHeightFogSettings.vanillaFogNearColor.rgb);
+		}
+		else
+		{
+			[branch] if (SharedData::exponentialHeightFogSettings.originalFogColorAmount > 0.0f)
+			{
+				[branch] if (!SharedData::InInterior)
+				{
+					fogColor = Color::Fog(SharedData::exponentialHeightFogSettings.vanillaFogNearColor.rgb);
 #if defined(IBL)
-				if (SharedData::iblSettings.EnableIBL)
-					fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
+					[branch] if (SharedData::iblSettings.EnableIBL)
+						fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
 #endif
+				}
+				float3 originalFogColor = lerp(fogColor, Color::GamutTransform(SharedData::exponentialHeightFogSettings.originalFogColorOverride.rgb), SharedData::exponentialHeightFogSettings.originalFogColorOverride.a);
+				fogInscatteringColor = originalFogColor * SharedData::exponentialHeightFogSettings.originalFogColorAmount;
 			}
-			float3 originalFogColor = lerp(fogColor, Color::GamutTransform(SharedData::exponentialHeightFogSettings.originalFogColorOverride.rgb), SharedData::exponentialHeightFogSettings.originalFogColorOverride.a);
-			fogInscatteringColor = originalFogColor * SharedData::exponentialHeightFogSettings.originalFogColorAmount;
 		}
 		fogInscatteringColor += Color::GamutTransform(SharedData::exponentialHeightFogSettings.fogInscatteringColor.rgb) * SharedData::exponentialHeightFogSettings.fogInscatteringColor.a;
 
 #if defined(IBL) || defined(DYNAMIC_CUBEMAPS)
-		if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings == 0) {
+		[branch] if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings == 0)
+		{
 			float cubemapMipLevel = SharedData::exponentialHeightFogSettings.cubemapMipLevel;
 			float3 cubemapDirection = normalize(lerp(positionWS, float3(0, 0, 1), saturate((cubemapMipLevel + 1) / 9)));
 			float3 inscattering = 0.0;
@@ -283,7 +295,8 @@ namespace ExponentialHeightFog
 		float3 viewDirection = viewToPos * viewToPosLengthInv;
 
 		// Calculate directional light inscattering using Henyey-Greenstein phase function
-		if (SharedData::exponentialHeightFogSettings.directionalInscatteringMultiplier > 0) {
+		[branch] if (SharedData::exponentialHeightFogSettings.directionalInscatteringMultiplier > 0)
+		{
 			float3 lightDirection = normalize(SharedData::DirLightDirection.xyz);
 			float cosTheta = dot(lightDirection, viewDirection);
 			float phase = HenyeyGreenstein(cosTheta, SharedData::exponentialHeightFogSettings.directionalInscatteringAnisotropy);

@@ -60,20 +60,20 @@ namespace ShadowSampling
 
 	float GetTerrainCloudShadow(float3 positionWS, float3 offset, uint eyeIndex)
 	{
-		if (SharedData::InInterior || SharedData::HideSky || SharedData::InMapMenu)
-			return 1.0;
-
 		float worldShadow = 1.0;
+		[branch] if (!(SharedData::InInterior || SharedData::HideSky || SharedData::InMapMenu))
+		{
 #if defined(TERRAIN_SHADOWS)
 #	if defined(LOD_SHADOWS)
-		[branch] if (!LODShadows::ReplacesTerrainShadows())
+			[branch] if (!LODShadows::ReplacesTerrainShadows())
 #	endif
-			worldShadow = TerrainShadows::GetTerrainShadow(positionWS + offset, LinearSampler);
+				worldShadow = TerrainShadows::GetTerrainShadow(positionWS + offset, LinearSampler);
 #endif
 
 #if defined(CLOUD_SHADOWS)
-		worldShadow *= CloudShadows::GetCloudShadowMult(positionWS, LinearSampler);
+			worldShadow *= CloudShadows::GetCloudShadowMult(positionWS, LinearSampler);
 #endif
+		}
 
 		return worldShadow;
 	}
@@ -145,7 +145,8 @@ namespace ShadowSampling
 		worldShadow *= rcpSampleCount;
 
 #if defined(VOLUMETRIC_SHADOWS)
-		if (HasDirectionalShadows()) {
+		[branch] if (HasDirectionalShadows())
+		{
 			float vsmSurfaceShadow;
 			float shadow = VolumetricShadows::GetVSMShadow3D(startPosition, endPosition, noise, sampleCount, eyeIndex, vsmSurfaceShadow);
 			surfaceShadow *= vsmSurfaceShadow;
@@ -157,18 +158,15 @@ namespace ShadowSampling
 
 	float GetLightingShadow(float3 worldPosition, uint eyeIndex, out float detailedShadow)
 	{
-		if (!HasDirectionalShadows()) {
-			detailedShadow = 1.0;
-			return 1.0;
-		}
-
-#if defined(VOLUMETRIC_SHADOWS)
-		float shadow = VolumetricShadows::GetVSMShadow2D(worldPosition, worldPosition + FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, detailedShadow);
-		return shadow;
-#else
 		detailedShadow = 1.0;
-		return 1.0;
+		float shadow = 1.0;
+#if defined(VOLUMETRIC_SHADOWS)
+		[branch] if (HasDirectionalShadows())
+		{
+			shadow = VolumetricShadows::GetVSMShadow2D(worldPosition, worldPosition + FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, detailedShadow);
+		}
 #endif
+		return shadow;
 	}
 
 	float3 GetRawAmbientLighting()
@@ -181,7 +179,8 @@ namespace ShadowSampling
 		float3 ambientColor = Color::Ambient(GetRawAmbientLighting());
 
 #if defined(IBL)
-		if (SharedData::iblSettings.EnableIBL) {
+		[branch] if (SharedData::iblSettings.EnableIBL)
+		{
 			ambientColor = ImageBasedLighting::GetDiffuseIBL(ambientColor, ImageBasedLightingNormal);
 		}
 #endif
@@ -195,7 +194,8 @@ namespace ShadowSampling
 		float3 ambientColor = Color::Ambient(GetRawAmbientLighting());
 
 #	if defined(IBL)
-		if (SharedData::iblSettings.EnableIBL) {
+		[branch] if (SharedData::iblSettings.EnableIBL)
+		{
 			ambientColor = ImageBasedLighting::GetDiffuseIBLOccluded(ambientColor, ImageBasedLightingNormal, skylightingDiffuse);
 		}
 #	endif
