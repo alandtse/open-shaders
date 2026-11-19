@@ -1,8 +1,8 @@
 #ifndef NEURAL_RENDERING_PERIPHERAL_PREPARATION_HLSLI
 #define NEURAL_RENDERING_PERIPHERAL_PREPARATION_HLSLI
 
-#include "NeuralRenderingPeripheral.hlsli"
-#include "ReverseZ.hlsli"
+#include "Common/NeuralRenderingPeripheral.hlsli"
+#include "Common/ReverseZ.hlsli"
 
 namespace NeuralRenderingPeripheral
 {

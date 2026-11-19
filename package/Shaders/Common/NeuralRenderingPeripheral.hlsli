@@ -1,7 +1,7 @@
 #ifndef NR_PERIPHERAL_COMPRESSION_HLSLI
 #define NR_PERIPHERAL_COMPRESSION_HLSLI
 
-#include "NeuralRenderingFinite.hlsli"
+#include "Common/NeuralRenderingFinite.hlsli"
 
 // Analytic curve adapted from Yuri Grib (BeliyG3), optimizer-fps-dlss5, MIT.
 // See SKSE/Plugins/CommunityShaders/Licenses/NeuralRendering/PeripheralCompression.txt.
