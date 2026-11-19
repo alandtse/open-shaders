@@ -3143,9 +3143,15 @@ namespace SIE
 
 		// Step 2: Process the copied entries without holding hlslMapMutex. A Pending
 		// entry gets parked (TryDeferEviction) instead of evicted immediately.
+		bool utilityChanged = false;
 		for (auto& entry : entries) {
+			utilityChanged |= entry.type == RE::BSShader::Type::Utility;
 			if (!TryDeferEviction(entry))
 				EvictShader(entry.key, entry.type, entry.descriptor, entry.shaderClass, entry.diskPath);
+		}
+		if (utilityChanged) {
+			std::scoped_lock lockPC(paraboloidClipMutex);
+			paraboloidClipShaders.clear();
 		}
 
 		if (!entries.empty()) {
