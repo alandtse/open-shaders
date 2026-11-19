@@ -504,7 +504,7 @@
             "kind": "standalone",
             "profile": "cs_5_0",
             "runtime": "SE",
-            "source": "GrassOptimizations/GrassHiZCS.hlsl"
+            "source": "Common/HiZ/GrassHiZCS.hlsl"
         },
         {
             "defines": [
@@ -518,7 +518,7 @@
             "kind": "standalone",
             "profile": "cs_5_0",
             "runtime": "SE",
-            "source": "GrassOptimizations/SPD/SPD.hlsl"
+            "source": "Common/HiZ/SPD.hlsl"
         },
         {
             "defines": [

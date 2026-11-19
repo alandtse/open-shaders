@@ -15,8 +15,11 @@ namespace PostProcessingRaster
 	/** Restores the D3D11 state changed by fullscreen post-processing raster passes. */
 	struct RasterPass
 	{
-		/** Saves the touched state and binds fullscreen-triangle state with shared pixel constants. */
-		explicit RasterPass(ID3D11DeviceContext* a_context);
+		/**
+		 * Saves the touched state and binds fullscreen-triangle state with shared pixel constants.
+		 * @param a_psSRVCount  Accepted for call-site compatibility; every pixel shader resource slot is saved and cleared.
+		 */
+		explicit RasterPass(ID3D11DeviceContext* a_context, UINT a_psSRVCount = 8);
 
 		/** Restores saved pipeline state and releases its references. */
 		~RasterPass() = default;

@@ -250,6 +250,8 @@ public:
 	/** @copydoc Feature::OnBeforeInputPoll */
 	void OnBeforeInputPoll() override;
 	virtual void DrawSettings() override;
+	virtual bool HasDebugSection() const override;
+	virtual void DrawDebugSection() override;
 	virtual void DrawPerformanceSettings() override;
 	void DrawPerformancePresets() override;
 	std::string GetPerformanceSectionLabel() override;

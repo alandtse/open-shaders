@@ -1,4 +1,5 @@
 #include "SnowDeformation.h"
+#include "Utils/DebugSection.h"
 
 #include "Features/Skylighting.h"
 #include "Features/SnowCover.h"
@@ -1341,7 +1342,7 @@ const std::vector<SnowDeformation::CachedShape>& SnowDeformation::ActorCollision
 		entry.root.reset(a_root);
 		entry.ragdoll = ragdoll;
 		entry.audit = gatherFrame + kShapeAuditFrames + (a_actor->GetFormID() % 17);
-		RE::BSVisit::TraverseScenegraphCollision(a_root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
+		Util::TraverseCollision(a_root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
 			if (a_object->sceneObject && a_object->AsBhkBlendCollisionObject())
 				entry.shapes.push_back({ RE::NiPointer<RE::bhkNiCollisionObject>(a_object), RE::NiPointer<RE::NiAVObject>(a_object->sceneObject) });
 			return RE::BSVisit::BSVisitControl::kContinue;
@@ -1580,7 +1581,7 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 		const float weight = ref->GetWeight();
 		contactScratch.clear();
 		RE::bhkNiCollisionObject* anyCollision = nullptr;
-		RE::BSVisit::TraverseScenegraphCollision(root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
+		Util::TraverseCollision(root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
 			if (!anyCollision && a_object->body)
 				anyCollision = a_object;
 			RE::NiPoint3 centre;
@@ -3667,23 +3668,27 @@ void SnowDeformation::DrawSettings()
 	ImGui::SliderFloat(T(TKEY("triangle_size"), "Triangle Size"), &settings.TrianglePixels, 2.0f, 32.0f, "%.0f px", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("triangle_size_tooltip"), "On-screen size of the triangles generated over prints, in pixels. Lower is sharper and costs more."));
+}
 
-	if (ImGui::TreeNodeEx(T(TKEY("debug"), "Debug"))) {
-		ImGui::Text("%s: %u", T(TKEY("debug_stamps"), "Stamps last frame"), debugShown.stamps);
-		ImGui::Text("%s: %u / %u", T(TKEY("debug_tiles"), "Active / updated tiles"), debugShown.activeTiles, debugShown.dispatchedTiles);
-		ImGui::Text("%s: %u / %u / %u / %u", T(TKEY("debug_draws"), "Displaced draws (depth / lighting / shadow / decal)"), debugShown.depthDraws, debugShown.lightingDraws, debugShown.shadowDraws, debugShown.decalDraws);
-		ImGui::Text("%s: %u / %u", T(TKEY("debug_rejects"), "Draws skipped (layout / camera)"), debugShown.layoutRejects, debugShown.skippedDraws);
-		ImGui::Text("%s: %s", T(TKEY("debug_snow_cover"), "Snow Cover gating"), debugShown.snowCover ? T("common.yes", "Yes") : T("common.no", "No"));
-		ImGui::Text("%s: %s", T(TKEY("debug_layout"), "Landscape shader layout"),
-			lightingLayoutSeen ? T(TKEY("debug_layout_valid"), "Valid") : T(TKEY("debug_layout_unknown"), "Not seen yet"));
-		ImGui::Text("%s: %zu", T(TKEY("debug_blocked"), "Landscape pieces recently blocked after a mismatch"), lightingRejected.size());
-		ImGui::Text("%s: %u (%.1f)", T(TKEY("debug_sunk"), "Actors sunk into prints (deepest)"), sunkActors, deepestSink);
-		ImGui::Text("%s: %s (%u / %d)", T(TKEY("debug_blanket"), "Snow blanket (land texels ready)"), blanketActive ? T("common.yes", "Yes") : T("common.no", "No"), blanketReady,
-			kBlanketTexels * kBlanketTexels);
-		if (ImGui::Button(T(TKEY("clear_prints"), "Clear Prints")))
-			ClearField();
-		ImGui::TreePop();
-	}
+void SnowDeformation::DrawDebugSection()
+{
+	Util::DebugSection section;
+	if (!section)
+		return;
+
+	ImGui::Text("%s: %u", T(TKEY("debug_stamps"), "Stamps last frame"), debugShown.stamps);
+	ImGui::Text("%s: %u / %u", T(TKEY("debug_tiles"), "Active / updated tiles"), debugShown.activeTiles, debugShown.dispatchedTiles);
+	ImGui::Text("%s: %u / %u / %u / %u", T(TKEY("debug_draws"), "Displaced draws (depth / lighting / shadow / decal)"), debugShown.depthDraws, debugShown.lightingDraws, debugShown.shadowDraws, debugShown.decalDraws);
+	ImGui::Text("%s: %u / %u", T(TKEY("debug_rejects"), "Draws skipped (layout / camera)"), debugShown.layoutRejects, debugShown.skippedDraws);
+	ImGui::Text("%s: %s", T(TKEY("debug_snow_cover"), "Snow Cover gating"), debugShown.snowCover ? T("common.yes", "Yes") : T("common.no", "No"));
+	ImGui::Text("%s: %s", T(TKEY("debug_layout"), "Landscape shader layout"),
+		lightingLayoutSeen ? T(TKEY("debug_layout_valid"), "Valid") : T(TKEY("debug_layout_unknown"), "Not seen yet"));
+	ImGui::Text("%s: %zu", T(TKEY("debug_blocked"), "Landscape pieces recently blocked after a mismatch"), lightingRejected.size());
+	ImGui::Text("%s: %u (%.1f)", T(TKEY("debug_sunk"), "Actors sunk into prints (deepest)"), sunkActors, deepestSink);
+	ImGui::Text("%s: %s (%u / %d)", T(TKEY("debug_blanket"), "Snow blanket (land texels ready)"), blanketActive ? T("common.yes", "Yes") : T("common.no", "No"), blanketReady,
+		kBlanketTexels * kBlanketTexels);
+	if (ImGui::Button(T(TKEY("clear_prints"), "Clear Prints")))
+		ClearField();
 }
 
 void SnowDeformation::RegisterUxActions()
