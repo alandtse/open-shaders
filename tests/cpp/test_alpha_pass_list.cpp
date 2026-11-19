@@ -333,6 +333,48 @@ TEST_CASE("Alpha capacity fallback finds uncached pending passes", "[vr][alpha-l
 	CHECK(queue.Walk().size() == limit + 3);
 }
 
+TEST_CASE("Alpha allocation failures recover after dense-set growth and entry reuse", "[vr][alpha-list]")
+{
+	for (const bool reseed : { false, true }) {
+		for (std::ptrdiff_t failure = 0; failure < 10; ++failure) {
+			CAPTURE(reseed, failure);
+			const auto liveBefore = AllocationState::liveAllocations;
+			{
+				NativeQueue queue;
+				AllocationCache cache;
+				const std::uintptr_t pending = reseed ? 16 : 3;
+				for (std::uintptr_t pass = 1; pass <= pending; ++pass) {
+					if (reseed)
+						queue.Append(pass);
+					else
+						queue.Guard(&cache, pass);
+				}
+				std::size_t failures{};
+				{
+					AllocationFailure injection(failure);
+					CHECK(queue.Guard(&cache, pending + 1, false, &failures).forwarded);
+				}
+				CHECK(queue.forwards == pending + 1);
+				if (failure == 0)
+					CHECK(failures == 1);
+				for (std::uintptr_t group = 2; group <= MaximumCachedGroups + 2; ++group) {
+					NativeQueue other;
+					other.state.group = group;
+					REQUIRE(other.Guard(&cache, group).forwarded);
+					CHECK_FALSE(other.Guard(&cache, group).forwarded);
+				}
+				CHECK_FALSE(queue.Guard(&cache, pending + 1).forwarded);
+				CHECK(queue.Guard(&cache, pending + 2).forwarded);
+				const auto remaining = queue.Walk();
+				REQUIRE(remaining.size() == pending + 2);
+				for (std::size_t i = 0; i < remaining.size(); ++i)
+					CHECK(remaining[i] == i + 1);
+			}
+			CHECK(AllocationState::liveAllocations == liveBefore);
+		}
+	}
+}
+
 TEST_CASE("Alpha incomplete native walks cannot prove absence", "[vr][alpha-list]")
 {
 	std::size_t reads{};

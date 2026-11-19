@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <new>
+#include <optional>
 
 namespace AlphaPassList
 {
@@ -48,10 +49,11 @@ namespace AlphaPassList
 	class MembershipCache
 	{
 		static_assert(PassLimit > 0 && PassLimit <= MaximumWalkNodes);
+		using PassSet = ankerl::unordered_dense::set<std::uintptr_t, ankerl::unordered_dense::hash<std::uintptr_t>, std::equal_to<std::uintptr_t>, Allocator>;
 		struct Entry
 		{
 			Queue queue{};
-			ankerl::unordered_dense::set<std::uintptr_t, ankerl::unordered_dense::hash<std::uintptr_t>, std::equal_to<std::uintptr_t>, Allocator> passes;
+			std::optional<PassSet> passes;
 			std::uint64_t use{};
 			bool complete{};
 		};
@@ -76,7 +78,8 @@ namespace AlphaPassList
 					oldest = &entry;
 			}
 			oldest->queue = {};
-			oldest->passes.clear();
+			if (oldest->passes)
+				oldest->passes->clear();
 			oldest->complete = false;
 			oldest->use = ++use;
 			current = oldest;
@@ -93,6 +96,8 @@ namespace AlphaPassList
 			for (auto& entry : entries) {
 				entry.queue = {};
 				entry.complete = false;
+				// Failed bucket growth can leave a dense set without buckets, so discard it before reuse.
+				entry.passes.reset();
 			}
 		}
 		/** Reuse buckets across queues/frames without retaining native object ownership. */
@@ -100,19 +105,20 @@ namespace AlphaPassList
 		Membership Check(const Queue& queue, std::uintptr_t pass, ReadNext&& read)
 		{
 			auto& entry = Find(queue.group);
+			auto& passes = entry.passes ? *entry.passes : entry.passes.emplace();
 			if (entry.queue != queue) {
 				entry.queue = {};
-				entry.passes.clear();
+				passes.clear();
 				entry.complete = true;
 				auto node = queue.head;
 				std::size_t visited{};
 				for (; node && visited < MaximumWalkNodes; ++visited) {
-					if (entry.passes.contains(node)) {
+					if (passes.contains(node)) {
 						entry.complete = false;
 						break;
 					}
-					if (entry.passes.size() < PassLimit)
-						entry.passes.insert(node);
+					if (passes.size() < PassLimit)
+						passes.insert(node);
 					else
 						entry.complete = false;
 					if (!read(node, node)) {
@@ -123,7 +129,7 @@ namespace AlphaPassList
 				entry.complete &= node == 0;
 				entry.queue = queue;
 			}
-			if (entry.passes.contains(pass))
+			if (passes.contains(pass))
 				return Membership::present;
 			return entry.complete ? Membership::absent : Contains(queue.head, pass, read);
 		}
@@ -139,13 +145,13 @@ namespace AlphaPassList
 			else
 				expected.tail = pass;
 			auto& entry = Find(before.group);
-			if (after != expected || entry.queue != before) {
+			if (after != expected || entry.queue != before || !entry.passes) {
 				entry.queue = {};
 				entry.complete = false;
 				return;
 			}
-			if (entry.passes.size() < PassLimit)
-				entry.passes.insert(pass);
+			if (entry.passes->size() < PassLimit)
+				entry.passes->insert(pass);
 			else
 				entry.complete = false;
 			entry.queue = after;
