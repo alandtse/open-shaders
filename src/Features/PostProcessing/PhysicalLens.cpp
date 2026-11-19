@@ -7,6 +7,42 @@
 #include "State.h"
 #include "Util.h"
 
+namespace
+{
+	/// View over elements [first, first + count) of a structured buffer, one per eye.
+	template <class Buffer>
+	winrt::com_ptr<ID3D11UnorderedAccessView> EyeUAV(Buffer& buffer, unsigned first, unsigned count, const char* name)
+	{
+		winrt::com_ptr<ID3D11Resource> resource;
+		buffer.UAV()->GetResource(resource.put());
+		D3D11_UNORDERED_ACCESS_VIEW_DESC desc{};
+		desc.Format = DXGI_FORMAT_UNKNOWN;
+		desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+		desc.Buffer.FirstElement = first;
+		desc.Buffer.NumElements = count;
+		winrt::com_ptr<ID3D11UnorderedAccessView> view;
+		DX::ThrowIfFailed(globals::d3d::device->CreateUnorderedAccessView(resource.get(), &desc, view.put()));
+		Util::SetResourceName(view.get(), name);
+		return view;
+	}
+
+	template <class Buffer>
+	winrt::com_ptr<ID3D11ShaderResourceView> EyeSRV(Buffer& buffer, unsigned first, unsigned count, const char* name)
+	{
+		winrt::com_ptr<ID3D11Resource> resource;
+		buffer.SRV()->GetResource(resource.put());
+		D3D11_SHADER_RESOURCE_VIEW_DESC desc{};
+		desc.Format = DXGI_FORMAT_UNKNOWN;
+		desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		desc.Buffer.FirstElement = first;
+		desc.Buffer.NumElements = count;
+		winrt::com_ptr<ID3D11ShaderResourceView> view;
+		DX::ThrowIfFailed(globals::d3d::device->CreateShaderResourceView(resource.get(), &desc, view.put()));
+		Util::SetResourceName(view.get(), name);
+		return view;
+	}
+}
+
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(PhysicalLens::Settings,
 	LensPreset, MaxSources, Intensity, ThresholdEV, FNumber, ApertureBlades, ApertureRotation, Coating, FocusDistanceM, ZoomPosition, ImageEffects, Diffraction, StarburstSize, StarburstIntensity, DirtOpacity, DirtDensity, DirtSize, ScratchLength, ScratchSpread, SurfaceScatter, GhostDiffraction, AlignmentVariation)
 
@@ -341,12 +377,12 @@ void PhysicalLens::SetupResources()
 	waveKernel = std::make_unique<StructuredBuffer>(StructuredBufferDesc<std::array<float, 4>>(uint64_t(12), true, false), 12, "PhysicalLens::DiffractionCore");
 	waveKernel->CreateSRV();
 	waveKernel->CreateUAV();
-	waveSources = std::make_unique<StructuredBuffer>(StructuredBufferDesc<std::array<float, 4>>(uint64_t(SourceCount * 7), true, false), SourceCount * 7, "PhysicalLens::DiffractionSources");
+	const unsigned eyeCount = globals::game::isVR ? 2 : 1;
+	waveSources = std::make_unique<StructuredBuffer>(StructuredBufferDesc<std::array<float, 4>>(uint64_t(SourceCount * 7 * eyeCount), true, false), SourceCount * 7 * eyeCount, "PhysicalLens::DiffractionSources");
 	waveSources->CreateSRV();
 	waveSources->CreateUAV();
 	D3D11_TEXTURE2D_DESC sourceDescription{};
 	Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY].texture)->GetDesc(&sourceDescription);
-	const unsigned eyeCount = globals::game::isVR ? 2 : 1;
 	const unsigned eyeTiles = (((sourceDescription.Width / eyeCount + 1) / 2 + 7) / 8) * (((sourceDescription.Height + 1) / 2 + 7) / 8);
 	unsigned waveTileCount = std::max(((sourceDescription.Width + 15) / 16) * ((sourceDescription.Height + 15) / 16), eyeTiles * eyeCount);
 	waveTiles = std::make_unique<StructuredBuffer>(StructuredBufferDesc<unsigned>(uint64_t(waveTileCount), true, false), waveTileCount, "PhysicalLens::DiffractionTiles");
@@ -364,7 +400,12 @@ void PhysicalLens::SetupResources()
 			tileUAVs[eye] = nullptr;
 			DX::ThrowIfFailed(globals::d3d::device->CreateUnorderedAccessView(tileResource.get(), &tileUAV, tileUAVs[eye].put()));
 			Util::SetResourceName(tileUAVs[eye].get(), "PhysicalLens::GhostTiles UAV");
+			tileSRVs[eye] = EyeSRV(*waveTiles, eye * eyeTiles, eyeCount > 1 ? eyeTiles : waveTileCount, "PhysicalLens::DiffractionTiles Eye SRV");
 		}
+	}
+	for (unsigned eye = 0; eye < eyeCount; ++eye) {
+		waveSourceUAVs[eye] = EyeUAV(*waveSources, eye * SourceCount * 7, SourceCount * 7, "PhysicalLens::DiffractionSources Eye UAV");
+		waveSourceSRVs[eye] = EyeSRV(*waveSources, eye * SourceCount * 7, SourceCount * 7, "PhysicalLens::DiffractionSources Eye SRV");
 	}
 	waveWorkTiles = std::make_unique<StructuredBuffer>(StructuredBufferDesc<unsigned>(uint64_t(waveTileCount), true, false), waveTileCount, "PhysicalLens::ActiveDiffractionTiles");
 	waveWorkTiles->CreateSRV();
@@ -397,9 +438,13 @@ void PhysicalLens::SetupResources()
 	parameters = std::make_unique<ConstantBuffer>(ConstantBufferDesc<Parameters>(), "PhysicalLens::Parameters");
 	candidates = std::make_unique<StructuredBuffer>(StructuredBufferDesc<std::array<float, 8>>(uint64_t(CandidateCount), true, false), CandidateCount, "PhysicalLens::Candidates");
 	candidates->CreateUAV();
-	regions = std::make_unique<StructuredBuffer>(StructuredBufferDesc<std::array<float, 4>>(uint64_t(TileCount), true, false), TileCount, "PhysicalLens::Regions");
+	regions = std::make_unique<StructuredBuffer>(StructuredBufferDesc<std::array<float, 4>>(uint64_t(TileCount * eyeCount), true, false), TileCount * eyeCount, "PhysicalLens::Regions");
 	regions->CreateUAV();
 	regions->CreateSRV();
+	for (unsigned eye = 0; eye < eyeCount; ++eye) {
+		regionUAVs[eye] = EyeUAV(*regions, eye * TileCount, TileCount, "PhysicalLens::Regions Eye UAV");
+		regionSRVs[eye] = EyeSRV(*regions, eye * TileCount, TileCount, "PhysicalLens::Regions Eye SRV");
+	}
 	sources = std::make_unique<StructuredBuffer>(StructuredBufferDesc<std::array<float, 8>>(uint64_t(SourceCount), true, false), SourceCount, "PhysicalLens::Sources");
 	sources->CreateSRV();
 	sources->CreateUAV();
@@ -746,11 +791,12 @@ bool PhysicalLens::UpdateDiffraction(unsigned width, unsigned height)
 		return false;
 	// Allocate the full-resolution tail only when diffraction is actually used.
 	if (!waveRadiance) {
+		const unsigned eyeCount = globals::game::isVR ? 2 : 1;
 		D3D11_TEXTURE2D_DESC tailDesc{};
 		tailDesc.Width = width;
 		tailDesc.Height = height;
 		tailDesc.MipLevels = tailDesc.SampleDesc.Count = 1;
-		tailDesc.ArraySize = 3;
+		tailDesc.ArraySize = 3 * eyeCount;
 		tailDesc.Format = DXGI_FORMAT_R32_FLOAT;
 		tailDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 		waveRadiance = std::make_unique<Texture2D>(tailDesc, "PhysicalLens::DiffractionRadiance");
@@ -758,13 +804,19 @@ bool PhysicalLens::UpdateDiffraction(unsigned width, unsigned height)
 		tailSRV.Format = tailDesc.Format;
 		tailSRV.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
 		tailSRV.Texture2DArray.MipLevels = 1;
-		tailSRV.Texture2DArray.ArraySize = 3;
+		tailSRV.Texture2DArray.ArraySize = tailDesc.ArraySize;
 		waveRadiance->CreateSRV(tailSRV);
 		D3D11_UNORDERED_ACCESS_VIEW_DESC tailUAV{};
 		tailUAV.Format = tailDesc.Format;
 		tailUAV.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2DARRAY;
 		tailUAV.Texture2DArray.ArraySize = 3;
 		waveRadiance->CreateUAV(tailUAV);
+		for (unsigned eye = 0; eye < eyeCount; ++eye) {
+			tailUAV.Texture2DArray.FirstArraySlice = 3 * eye;
+			tailUAVs[eye] = nullptr;
+			DX::ThrowIfFailed(globals::d3d::device->CreateUnorderedAccessView(waveRadiance->resource.get(), &tailUAV, tailUAVs[eye].put()));
+			Util::SetResourceName(tailUAVs[eye].get(), "PhysicalLens::DiffractionRadiance Eye UAV");
+		}
 	}
 	const auto optics = OpticalParameters();
 	const auto table = PhysicalLensImaging::CameraTable(cachedImagingModel, projectionFocal, float(width) / height, optical.focusM > 0 ? optical.focusM * 1000.0 : PhysicalLensImaging::Infinity);
@@ -1006,7 +1058,7 @@ void PhysicalLens::Draw(TextureInfo& input)
 	UpdateCameraMapping(aspect);
 	const unsigned eyeCount = globals::game::isVR ? 2 : 1;
 	const unsigned eyeWidth = inputDesc.Width / eyeCount;
-	const bool renderWave = !globals::game::isVR && buildWaveSources && buildWaveTiles && buildWaveTail && UpdateDiffraction(inputDesc.Width, inputDesc.Height);
+	const bool renderWave = buildWaveSources && buildWaveTiles && buildWaveTail && UpdateDiffraction(eyeWidth, inputDesc.Height);
 	if (settings.Intensity == 0 && !renderWave)
 		return;
 	data.width = eyeWidth;
@@ -1066,7 +1118,7 @@ void PhysicalLens::Draw(TextureInfo& input)
 		ctx->CSSetConstantBuffers(1, 1, &exposureCB);
 		ID3D11ShaderResourceView* srvs[6]{ eyeSRV, nullptr, nullptr, nullptr };
 		srvs[5] = hasExposure ? exposure->GetAdaptationSRV() : nullptr;
-		ID3D11UnorderedAccessView* uavs[5]{ candidates->UAV(), nullptr, nullptr, nullptr, regions->UAV() };
+		ID3D11UnorderedAccessView* uavs[5]{ candidates->UAV(), nullptr, nullptr, nullptr, regionUAVs[eye].get() };
 		ctx->CSSetShaderResources(0, 6, srvs);
 		ctx->CSSetUnorderedAccessViews(0, 5, uavs, nullptr);
 		ctx->CSSetShader(extract.get(), nullptr, 0);
@@ -1095,17 +1147,17 @@ void PhysicalLens::Draw(TextureInfo& input)
 			srvs[3] = waveKernel->SRV();
 			srvs[4] = waveMax->srv.get();
 			ctx->CSSetShaderResources(0, 6, srvs);
-			uavs[0] = waveSources->UAV();
+			uavs[0] = waveSourceUAVs[eye].get();
 			ctx->CSSetUnorderedAccessViews(0, 5, uavs, nullptr);
 			ctx->CSSetShader(buildWaveSources.get(), nullptr, 0);
 			ctx->Dispatch(1, 1, 1);
 			uavs[0] = nullptr;
-			uavs[1] = waveTiles->UAV();
+			uavs[1] = tileUAVs[eye].get();
 			ctx->CSSetUnorderedAccessViews(0, 5, uavs, nullptr);
 			srvs[0] = nullptr;
 			srvs[1] = settings.ImageEffects ? cameraMap->srv.get() : nullptr;
-			srvs[2] = waveSources->SRV();
-			srvs[3] = regions->SRV();
+			srvs[2] = waveSourceSRVs[eye].get();
+			srvs[3] = regionSRVs[eye].get();
 			ctx->CSSetShaderResources(0, 6, srvs);
 			const unsigned dispatch[4]{ 0, 12, 0, 0 };
 			ctx->UpdateSubresource(waveDispatch.get(), 0, nullptr, dispatch, 0, 0);
@@ -1116,13 +1168,13 @@ void PhysicalLens::Draw(TextureInfo& input)
 			ctx->Dispatch(((data.width + 15) / 16 + 7) / 8, ((data.height + 15) / 16 + 7) / 8, 1);
 			uavs[1] = uavs[2] = uavs[3] = nullptr;
 			ctx->CSSetUnorderedAccessViews(0, 5, uavs, nullptr);
-			srvs[0] = waveSources->SRV();
-			srvs[1] = waveTiles->SRV();
+			srvs[0] = waveSourceSRVs[eye].get();
+			srvs[1] = tileSRVs[eye].get();
 			srvs[2] = waveTextures[1]->srv.get();
 			srvs[3] = waveWorkTiles->SRV();
 			srvs[4] = waveDispatchSRV.get();
 			ctx->CSSetShaderResources(0, 6, srvs);
-			uavs[0] = waveRadiance->uav.get();
+			uavs[0] = tailUAVs[eye].get();
 			ctx->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 			auto* linear = sampler.get();
 			ctx->CSSetSamplers(0, 1, &linear);
