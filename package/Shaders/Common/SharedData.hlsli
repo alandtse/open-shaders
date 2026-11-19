@@ -123,7 +123,7 @@ namespace SharedData
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
 		uint EnableParticleContactShadows;
-		uint pad1;
+		uint ClusteredLightCount;
 	};
 
 	struct WetnessEffectsSettings

@@ -151,7 +151,7 @@ public:
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
 		uint EnableParticleContactShadows;
-		uint pad1;
+		uint ClusteredLightCount;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	// Compile-time size lock catches CPU/GPU cbuffer layout drift. STATIC_ASSERT_ALIGNAS_16
