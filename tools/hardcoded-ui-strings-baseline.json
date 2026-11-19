@@ -1,0 +1,9 @@
+{
+    "src/Features/LightLimitFix/ShadowRenderer.cpp": 2,
+    "src/Features/Upscaling/NeuralRendering.cpp": 1,
+    "src/Features/Upscaling/NeuralRendering/Diagnostics.cpp": 33,
+    "src/Features/VR/DynamicNearClip.cpp": 10,
+    "src/Features/Wind/UI/WindSettingsUI.cpp": 18,
+    "src/Menu/Presets/SceneFilesPanel.cpp": 1,
+    "src/Utils/UI.h": 5
+}

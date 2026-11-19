@@ -220,6 +220,14 @@ void RenderDoc::DrawSettings()
 		ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s", T(TKEY("restart_to_disable"), "Performance will be severely impacted until the game is restarted."));
 	}
 
+	if (renderDocActive) {
+		// Session-only: not written to settings, so it is unticked on every launch
+		ImGui::Checkbox(T(TKEY("hide_overlay"), "Hide Overlay Warning"), &hideOverlay);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("hide_overlay_tooltip"), "Hides the RenderDoc warning in the overlay. This is not saved and resets every time the game starts."));
+		}
+	}
+
 	const bool captureActive = settings.enableCapture && renderDocActive;
 	const auto& captureFiles = GetCachedCaptureFiles();
 
@@ -337,7 +345,7 @@ void RenderDoc::DrawSettings()
 				Util::DrawColorCodedValue(T(TKEY("capture_size"), "Capture Size"), totalSizeGB, std::format("{:.2f} GB", totalSizeGB), totalSizeConfig);
 
 				ImGui::SameLine();
-				ImGui::TextDisabled("(%zu files)", captureFiles.size());
+				ImGui::TextDisabled(T(TKEY("capture_file_count"), "(%zu files)"), captureFiles.size());
 
 				const std::string capturesDir = Util::PathHelpers::ToUtf8(GetCapturesPath());
 				const float copyButton = Util::IconButtonSize();
@@ -640,6 +648,7 @@ void RenderDoc::LoadSettings(json& o_json)
 void RenderDoc::RestoreDefaultSettings()
 {
 	settings = {};
+	hideOverlay = false;
 }
 
 void RenderDoc::RefreshCaptureFileCache()

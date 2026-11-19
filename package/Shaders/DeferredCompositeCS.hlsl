@@ -16,7 +16,7 @@ Texture2D<unorm float3> AlbedoTexture : register(t1);
 Texture2D<unorm float3> NormalRoughnessTexture : register(t2);
 Texture2D<float3> MasksTexture : register(t3);
 Texture2D<unorm float2> Masks2Texture : register(t9);
-Texture2D<float4> GrassWindSpringDebug : register(t18);
+Texture2D<float4> GrassWindSpringDebug : register(t27);
 
 RWTexture2D<float4> MainRW : register(u0);
 RWTexture2D<float4> NormalTAAMaskSpecularMaskRW : register(u1);
@@ -40,6 +40,8 @@ SamplerState LinearSampler : register(s0);
 
 #if defined(SKYLIGHTING)
 #	define SKYLIGHTING_PROBE_REGISTER t8
+#	define SKYLIGHTING_COVERAGE_REGISTER t18
+#	define SKYLIGHTING_ZENITH_REGISTER t19
 #	include "Skylighting/Skylighting.hlsli"
 #endif
 
@@ -135,6 +137,16 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 	float3 linDiffuseColor = Color::IrradianceToLinear(diffuseColor);
 	float3 normalWS = normalize(mul(FrameBuffer::CameraViewInverse[eyeIndex], float4(normalVS, 0)).xyz);
 
+#if defined(SKYLIGHTING)
+#	if defined(VR)
+	float3 positionMS = positionWS.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
+#	else
+	float3 positionMS = positionWS.xyz;
+#	endif
+	// Normal-biased, like forward Lighting.hlsl: a reflection-vector bias slides along grazing surfaces and shows the probe grid.
+	sh2 skylightingSH = Skylighting::Sample(positionMS, normalWS);
+#endif
+
 #if defined(SSGI)
 
 	float ssgiAo;
@@ -156,12 +168,6 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 		float3 vanillaDALC = Color::Ambient(max(0, SharedData::GetAmbient(normalWS)));
 
 #		if defined(SKYLIGHTING)
-#			if defined(VR)
-		float3 positionMS = positionWS.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
-#			else
-		float3 positionMS = positionWS.xyz;
-#			endif
-		sh2 skylightingSH = Skylighting::Sample(positionMS.xyz, normalWS);
 		float skylightingDiffuse = Skylighting::EvaluateDiffuse(skylightingSH, normalWS, Skylighting::GetFadeOutFactor(positionMS));
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBLOccluded(vanillaDALC, -normalWS, skylightingDiffuse) * albedo;
 #		else
@@ -229,16 +235,10 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 #	endif
 
 #	if defined(SKYLIGHTING)
-#		if defined(VR)
-		float3 positionMS = positionWS.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
-#		else
-		float3 positionMS = positionWS.xyz;
-#		endif
-
-		sh2 skylightingSH = Skylighting::Sample(Skylighting::ClampToArrayHeight(positionMS), R);
+		sh2 skylightingSpecularSH = Skylighting::SampleSpecular(skylightingSH, positionMS);
 		float skylightingFadeOut = Skylighting::GetHorizontalFadeOutFactor(positionMS);
-		skylightingSpecular = Skylighting::EvaluateSpecular(skylightingSH, specularLobe, skylightingFadeOut);
-		skylightingVisibility = Skylighting::EvaluateVisibility(skylightingSH, skylightingFadeOut);
+		skylightingSpecular = Skylighting::EvaluateSpecular(skylightingSpecularSH, specularLobe, skylightingFadeOut);
+		skylightingVisibility = Skylighting::EvaluateVisibility(skylightingSpecularSH, skylightingFadeOut);
 #	endif
 
 #	if defined(IBL)

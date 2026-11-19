@@ -90,6 +90,13 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 
 			break;
 		}
+	case SKSE::MessagingInterface::kPreLoadGame:
+	case SKSE::MessagingInterface::kNewGame:
+		{
+			if (errors.empty())
+				Feature::ForEachLoadedFeature("GameReset", [](Feature* feature) { feature->GameReset(); });
+			break;
+		}
 	case SKSE::MessagingInterface::kPostPostLoad:
 		{
 			if (errors.empty()) {
