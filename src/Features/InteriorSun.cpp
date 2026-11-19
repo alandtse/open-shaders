@@ -171,6 +171,28 @@ void InteriorSun::DrawSettings()
 	}
 	if (settings.CloseShadowGaps)
 		ImGui::SliderInt(T(TKEY("shadow_gap_texels"), "Shadow Gap Width"), &settings.ShadowGapTexels, 1, 4);
+
+	if (Util::ShowDebugSections() && ImGui::TreeNode(T(TKEY("debug"), "Debug"))) {
+		DrawDebugTools();
+		ImGui::TreePop();
+	}
+}
+
+void InteriorSun::DrawDebugTools()
+{
+	if (Util::Button(T(TKEY("debug_trace_sun"), "Trace Sun From Crosshair")))
+		TraceSunFromCrosshair();
+	ImGui::SameLine();
+	if (Util::Button(T(TKEY("debug_trace_clear"), "Clear Trace")))
+		traceValid = false;
+	if (traceValid) {
+		ImGui::TextWrapped(T(TKEY("debug_trace_from"), "From: %s"), traceStartWhat.c_str());
+		if (traceHits.empty())
+			ImGui::TextUnformatted(T(TKEY("debug_trace_open"), "Nothing between this point and the sun."));
+		static constexpr const char* kinds[] = { "GLASS", "OPENING", "REJECTED", "SOLID" };  // i18n-ignore: debug labels
+		for (const auto& hit : traceHits)
+			ImGui::BulletText("%7.0f  %s  %s", hit.distance, kinds[hit.kind], hit.what.c_str());  // i18n-ignore: debug data
+	}
 }
 
 void InteriorSun::LoadSettings(json& o_json)
@@ -361,6 +383,7 @@ void InteriorSun::CollectWindowGlass(RE::TESObjectCELL* cell)
 	std::vector<float3> vertices;
 	std::vector<float2> uvs;
 	std::vector<HoleDraw> runs;
+	std::vector<GlassShape> glassInfo;
 	uint32_t windowGlassShapes = 0, windowGlassShapesWithGlow = 0, windowGlassShapesSkipped = 0;
 	auto scan = settings.DetectOpenings ? std::make_shared<OpeningScan>() : nullptr;
 	const bool hideGlows = settings.HideFakeWindowGlows && isInteriorWithSun;
@@ -407,6 +430,8 @@ void InteriorSun::CollectWindowGlass(RE::TESObjectCELL* cell)
 					else
 						glow = nullptr;
 					runs.push_back({ first, static_cast<uint32_t>(vertices.size()) - first, glow });
+					const auto model = base->As<RE::TESModel>();
+					glassInfo.push_back({ ref->GetFormID(), model ? model->GetModel() : "", geometry->name.c_str(), first, static_cast<uint32_t>(vertices.size()) - first });
 				} else
 					++windowGlassShapesSkipped;
 				if (lighting && lighting->emissiveColor && property->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kOwnEmit, RE::BSShaderProperty::EShaderPropertyFlag::kGlowMap) &&
@@ -473,13 +498,14 @@ void InteriorSun::CollectWindowGlass(RE::TESObjectCELL* cell)
 		windowGlassVertices = std::move(vertices);
 		windowGlassUVs = std::move(uvs);
 		windowGlassRuns = std::move(runs);
+		windowGlassShapeInfo = std::move(glassInfo);
 		logger::info("[Interior Sun] Window glass in cell {:08X}: {} shapes ({} with glow maps), {} triangles, {} unreadable shapes", cell->GetFormID(), windowGlassShapes, windowGlassShapesWithGlow, windowGlassVertices.size() / 3, windowGlassShapesSkipped);
 		UploadWindowHoles(cell);
 	}
 	UpdateAutoSunlit(cell);
 }
 
-void InteriorSun::CollectOccluders(RE::TESObjectCELL* cell, OpeningScan& scan)
+void InteriorSun::CollectOccluders(RE::TESObjectCELL* cell, OpeningScan& scan, std::vector<std::string>* names)
 {
 	cell->ForEachReference([&](RE::TESObjectREFR* ref) {
 		const auto base = ref->GetBaseObject();
@@ -494,8 +520,14 @@ void InteriorSun::CollectOccluders(RE::TESObjectCELL* cell, OpeningScan& scan)
 			if (!property || property->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kAssumeShadowmask) || (alpha && (alpha->GetAlphaTesting() || alpha->GetAlphaBlending())))
 				return RE::BSVisit::BSVisitControl::kContinue;
 			const auto first = static_cast<uint32_t>(scan.occluders.size());
-			if (AppendWorldTriangles(geometry, scan.occluders))
+			if (AppendWorldTriangles(geometry, scan.occluders)) {
 				scan.occluderShapes.push_back(first);
+				if (names) {
+					const auto model = base->As<RE::TESModel>();
+					names->push_back(std::format("ref {:08X} | {} | {}{}", ref->GetFormID(), model ? model->GetModel() : "", geometry->name.c_str(),
+						property->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kCastShadows) ? "" : " [no cast flag]"));
+				}
+			}
 			return RE::BSVisit::BSVisitControl::kContinue;
 		});
 		return RE::BSContainer::ForEachResult::kContinue;
@@ -607,6 +639,7 @@ void InteriorSun::TakeOpeningScan()
 	const auto scan = std::exchange(openingScan, nullptr);
 	if (scan->cell != windowGlassCell)
 		return;
+	lastOpeningScan = scan;
 
 	windowOpeningVertices = std::move(scan->openings);
 	windowOpeningUVs = std::move(scan->openingUVs);
@@ -864,8 +897,12 @@ void InteriorSun::ReleaseWindowGlass()
 	glassEmissivesLit = false;
 	glassEmissives.clear();
 	openingScan.reset();
+	lastOpeningScan.reset();
 	windowGlassOutward.clear();
 	lastOpenMask.clear();
+	windowGlassShapeInfo.clear();
+	traceValid = false;
+	traceHits.clear();
 	lastCandidateTriangles.reset();
 	windowOpeningVertices.clear();
 	windowOpeningUVs.clear();
@@ -1315,6 +1352,107 @@ void InteriorSun::DrawHolesInto(WindowHolesCB data, const D3D11_VIEWPORT& viewpo
 	context->RSSetState(oldRasterState.get());
 	context->RSSetViewports(oldViewportCount, oldViewports);
 	context->OMSetDepthStencilState(oldDepthState.get(), oldStencilRef);
+}
+
+void InteriorSun::TraceSunFromCrosshair()
+{
+	constexpr float TraceReach = 50000.0f;
+	traceValid = false;
+	traceHits.clear();
+	const auto camera = RE::Main::WorldRootCamera();
+	const float3 toSun = GetToSun();
+	if (!camera || !windowGlassCell || toSun.LengthSquared() < 1e-6f)
+		return;
+
+	// The room's geometry is freed after each scan, so it is copied again here (a debug click, not every frame)
+	OpeningScan solids;
+	std::vector<std::string> solidNames;
+	CollectOccluders(windowGlassCell, solids, &solidNames);
+
+	// Every scanned shape the ray crosses, nearest crossing per shape
+	const auto crossings = [&](const float3& origin, const float3& direction, float minDistance) {
+		std::vector<TraceHit> hits;
+		const auto add = [&](float t, int kind, std::string what) {
+			if (t > minDistance && t != FLT_MAX)
+				hits.push_back({ t, kind, std::move(what) });
+		};
+		for (const auto& glass : windowGlassShapeInfo)
+			add(InteriorSunRays::CastRay(origin, direction, TraceReach, windowGlassVertices, glass.first, glass.first + glass.count), 0, std::format("ref {:08X} | {} | {}", glass.ref, glass.model, glass.shape));
+		if (lastOpeningScan) {
+			for (const auto& candidate : lastOpeningScan->candidates)
+				add(InteriorSunRays::CastRay(origin, direction, TraceReach, lastOpeningScan->candidateTriangles, candidate.firstTriangle, candidate.firstTriangle + candidate.triangleCount),
+					candidate.opening ? 1 : 2, std::format("ref {:08X} | {} | {}", candidate.ref, candidate.model, candidate.shape));
+		}
+		for (size_t shape = 0; shape + 1 < solids.occluderShapes.size(); ++shape) {
+			const uint32_t first = solids.occluderShapes[shape], end = solids.occluderShapes[shape + 1];
+			float3 boxMin(FLT_MAX), boxMax(-FLT_MAX);
+			for (uint32_t i = first; i < end; ++i) {
+				boxMin = float3::Min(boxMin, solids.occluders[i]);
+				boxMax = float3::Max(boxMax, solids.occluders[i]);
+			}
+			if (InteriorSunRays::RayHitsBox(origin, direction, TraceReach, boxMin, boxMax))
+				add(InteriorSunRays::CastRay(origin, direction, TraceReach, solids.occluders, first, end), 3, shape < solidNames.size() ? solidNames[shape] : std::string());
+		}
+		std::ranges::sort(hits, {}, &TraceHit::distance);
+		return hits;
+	};
+
+	// The surface under the crosshair, started a little back toward the camera so it doesn't block its own light
+	const auto& rotate = camera->world.rotate;
+	const float3 eye(camera->world.translate.x, camera->world.translate.y, camera->world.translate.z);
+	const float3 forward(rotate.entry[0][0], rotate.entry[1][0], rotate.entry[2][0]);
+	const auto view = crossings(eye, forward, 1.0f);
+	if (view.empty())
+		return;
+	traceStartWhat = view.front().what;
+	traceStart = eye + forward * (view.front().distance - 2.0f);
+	traceDirection = toSun;
+
+	// Away from the sun too: a hole on that side opens this spot's line through the shadow map as well
+	traceHits = crossings(traceStart, traceDirection, 0.5f);
+	for (auto hit : crossings(traceStart, -traceDirection, 0.5f)) {
+		hit.distance = -hit.distance;
+		traceHits.push_back(std::move(hit));
+	}
+	std::ranges::sort(traceHits, {}, &TraceHit::distance);
+	traceValid = true;
+
+	logger::info("[Interior Sun] Sun trace from {} (sun {:.2f} {:.2f} {:.2f}): {} crossings", traceStartWhat, traceDirection.x, traceDirection.y, traceDirection.z, traceHits.size());
+	static constexpr const char* kinds[] = { "GLASS", "OPENING", "REJECTED", "SOLID" };
+	for (const auto& hit : traceHits)
+		logger::info("[Interior Sun]   {:7.0f} | {} | {}", hit.distance, kinds[hit.kind], hit.what);
+}
+
+void InteriorSun::DrawOverlay()
+{
+	const auto camera = RE::Main::WorldRootCamera();
+	if (!camera || !traceValid)
+		return;
+
+	auto drawList = ImGui::GetBackgroundDrawList();
+	const auto size = ImGui::GetIO().DisplaySize;
+	const auto& port = camera->GetRuntimeData2().port;
+	const auto project = [&](const float3& point, ImVec2& out) {
+		float x, y, z;
+		if (!RE::NiCamera::WorldPtToScreenPt3(camera->GetRuntimeData().worldToCam, port, RE::NiPoint3(point.x, point.y, point.z), x, y, z, 1e-5f) || z < 0.0f)
+			return false;
+		out = ImVec2(x * size.x, (1.0f - y) * size.y);
+		return true;
+	};
+
+	// The ray through the aimed point, a marker at each shape it crosses: green glass, yellow opening, red rejected, white solid
+	const float length = traceHits.empty() ? 3000.0f : std::max(traceHits.back().distance, 0.0f) + 500.0f;
+	const float back = traceHits.empty() ? 0.0f : std::max(-traceHits.front().distance, 0.0f) + 200.0f;
+	ImVec2 a, b;
+	if (project(traceStart - traceDirection * back, a) && project(traceStart + traceDirection * length, b))
+		drawList->AddLine(a, b, ImGui::GetColorU32(ImVec4(0.3f, 0.7f, 1.0f, 1.0f)), 3.0f);
+	if (project(traceStart, a))
+		drawList->AddCircleFilled(a, 8.0f, ImGui::GetColorU32(ImVec4(0.3f, 0.7f, 1.0f, 1.0f)));
+	static const ImVec4 colors[] = { ImVec4(0.1f, 1.0f, 0.2f, 1.0f), ImVec4(1.0f, 0.9f, 0.1f, 1.0f), ImVec4(1.0f, 0.15f, 0.1f, 1.0f), ImVec4(1.0f, 1.0f, 1.0f, 1.0f) };
+	for (const auto& hit : traceHits) {
+		if (project(traceStart + traceDirection * hit.distance, a))
+			drawList->AddCircleFilled(a, 7.0f, ImGui::GetColorU32(colors[hit.kind]));
+	}
 }
 
 bool InteriorSun::IsInteriorWithSun(const RE::TESObjectCELL* cell)

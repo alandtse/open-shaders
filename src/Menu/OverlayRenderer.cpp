@@ -22,6 +22,7 @@
 #	include "Features/Effects11/Editor/Effects11Editor.h"
 #endif
 #include "Features/HDRDisplay.h"
+#include "Features/InteriorSun.h"
 #include "Features/RenderDoc.h"
 #include "Features/SceneSelector.h"
 #include "Features/Upscaling.h"
@@ -278,6 +279,7 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 effectFailed ||
 			 globals::features::performanceOverlay.settings.ShowInOverlay ||
 			 globals::features::sceneSelector.IsOverlayVisible() ||
+			 globals::features::interiorSun.IsOverlayVisible() ||
 			 renderDoc->IsAvailable() ||
 			 globals::features::vr.HelperRequestsRender());
 }

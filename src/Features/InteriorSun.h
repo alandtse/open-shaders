@@ -1,8 +1,9 @@
 ﻿#pragma once
 #include "Buffer.h"
+#include "OverlayFeature.h"
 #include "ShaderCache.h"
 
-struct InteriorSun : Feature
+struct InteriorSun : OverlayFeature
 {
 public:
 	virtual inline std::string GetName() override { return "Interior Sun"; }
@@ -32,6 +33,28 @@ public:
 	/** @brief Creates the GPU resources used to draw window glass into the sun shadow maps. */
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
+	/** @brief Debug view: the traced sun ray and the shapes it crosses. */
+	virtual void DrawOverlay() override;
+	virtual bool IsOverlayVisible() const override { return traceValid; }
+
+	/** @brief One shape the traced sun ray crosses. Kind: 0 glass, 1 opening, 2 rejected see-through shape, 3 solid. */
+	struct TraceHit
+	{
+		float distance;
+		int kind;
+		std::string what;
+	};
+	bool traceValid = false;
+	float3 traceStart = float3(0, 0, 0);
+	float3 traceDirection = float3(0, 0, 1);
+	std::string traceStartWhat;
+	std::vector<TraceHit> traceHits;
+
+	/** @brief Debug tools, drawn at the end of the settings when debug sections are shown. */
+	void DrawDebugTools();
+	/** @brief Debug: from the point under the crosshair, lists every shape along the sun's ray, both ways (what lets a leak through). */
+	void TraceSunFromCrosshair();
+
 	/** @brief Registers the menu open/close event handler for tracking main menu state. */
 	virtual void DataLoaded() override
 	{
@@ -222,6 +245,17 @@ private:
 		bool opening = false;
 	};
 
+	/** @brief One glass shape, for the sun trace. */
+	struct GlassShape
+	{
+		RE::FormID ref;
+		std::string model;
+		std::string shape;
+		uint32_t first;
+		uint32_t count;
+	};
+	std::vector<GlassShape> windowGlassShapeInfo;
+
 	/** @brief Shell test of one cell's candidates, run on a worker thread on copies of the cell's triangles. */
 	struct OpeningScan
 	{
@@ -255,6 +289,7 @@ private:
 
 	std::shared_ptr<OpeningScan> openingScan;  // in flight or finished; dropped on leaving the cell
 	std::shared_ptr<std::vector<float3>> lastCandidateTriangles;
+	std::shared_ptr<OpeningScan> lastOpeningScan;  // the finished scan of this cell, for the debug views
 	bool glassEmissivesLit = false;
 	std::vector<float3> windowOpeningVertices;
 	std::vector<float2> windowOpeningUVs;
@@ -321,8 +356,8 @@ private:
 
 	void CollectWindowGlass(RE::TESObjectCELL* cell);
 
-	/** @brief Copies the cell's solid static geometry into the scan, for the shell test's rays. */
-	static void CollectOccluders(RE::TESObjectCELL* cell, OpeningScan& scan);
+	/** @brief Copies the cell's solid static geometry into the scan, for the shell test's rays; names each shape when asked (sun trace). */
+	static void CollectOccluders(RE::TESObjectCELL* cell, OpeningScan& scan, std::vector<std::string>* names = nullptr);
 
 	/** @brief Rebuilds the GPU triangle list from the glass and the openings found so far. */
 	void UploadWindowHoles(const RE::TESObjectCELL* cell);
