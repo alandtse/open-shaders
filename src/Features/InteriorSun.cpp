@@ -15,6 +15,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WindowLightOnly,
 	DetectOpenings,
 	SunFacingHolesOnly,
+	LightOnlyPastWindow,
 	FrameShadowsFromGlowMaps,
 	GlowMapThreshold)
 
@@ -93,6 +94,12 @@ void InteriorSun::DrawSettings()
 		ImGui::Text("%s", T(TKEY("detect_openings_tooltip"),
 							  "Also lets light in through see-through shapes in the outer walls, such as lattices, that have nothing behind them. "
 							  "Found automatically when entering an interior."));
+	}
+	ImGui::Checkbox(T(TKEY("light_only_past_window"), "Light Only Past The Window"), &settings.LightOnlyPastWindow);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("light_only_past_window_tooltip"),
+							  "Sunlight that came in through a window only lights what is on the room side of that window, "
+							  "so it can't carry on into a room behind it (such as behind a fake window)."));
 	}
 	ImGui::Checkbox(T(TKEY("sun_facing_holes_only"), "Only Windows Facing The Sun"), &settings.SunFacingHolesOnly);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -192,7 +199,14 @@ void InteriorSun::EarlyPrepass()
 		forceHolesUpload = true;
 	}
 
+	windowPlanesValid = settings.LightOnlyPastWindow && isInteriorWithSun && std::exchange(windowPlanesWritten, 0u) == 3u;
 	renderThread = std::this_thread::get_id();
+}
+
+void InteriorSun::Prepass()
+{
+	ID3D11ShaderResourceView* srv = windowPlanesValid ? windowPlanesSRV.get() : nullptr;
+	globals::d3d::context->PSSetShaderResources(66, 1, &srv);
 }
 
 void InteriorSun::SetupResources()
@@ -226,6 +240,7 @@ void InteriorSun::ClearShaderCache()
 {
 	windowHolesVS = nullptr;
 	windowHolesPS = nullptr;
+	windowPlanesPS = nullptr;
 }
 
 ID3D11PixelShader* InteriorSun::GetWindowHolesPS()
@@ -425,6 +440,7 @@ void InteriorSun::UploadWindowHoles(const RE::TESObjectCELL* cell)
 	{
 		float3 position;
 		float2 uv;
+		float4 plane;  // outward normal and offset of the window it belongs to; zero when unknown
 	};
 	std::vector<HoleVertex> holes;
 	windowHoleDraws.clear();
@@ -455,7 +471,7 @@ void InteriorSun::UploadWindowHoles(const RE::TESObjectCELL* cell)
 			if (windowHoleDraws.empty() || !sameDraw(windowHoleDraws.back(), run))
 				windowHoleDraws.push_back({ static_cast<uint32_t>(holes.size()), 0, run.texture, run.mode, run.alphaThreshold });
 			for (uint32_t i = run.first; i < run.first + run.count; ++i)
-				holes.push_back({ positions[i], uvs[i] });
+				holes.push_back({ positions[i], uvs[i], run.outward.LengthSquared() > 1e-6f ? float4(run.outward.x, run.outward.y, run.outward.z, run.outward.Dot(positions[run.first])) : float4(0, 0, 0, 0) });
 			windowHoleDraws.back().count += run.count;
 		}
 	};
@@ -707,6 +723,151 @@ void InteriorSun::DrawWindowHoles(const RE::NiCamera* camera)
 		context->ClearDepthStencilView(dsv.get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
 		DrawHolesInto(data, viewport);
 	}
+
+	// The same cascade can be drawn twice a frame (volumetric lighting's maps share its camera): planes once
+	const auto cascade = static_cast<uint32_t>(descriptor - descriptors.begin());
+	if (settings.LightOnlyPastWindow && cascade < 2 && !(windowPlanesWritten & (1u << cascade)))
+		DrawWindowPlanes(cascade, data, viewport, textureDesc.Width, textureDesc.Height);
+}
+
+void InteriorSun::DrawWindowPlanes(uint32_t cascade, WindowHolesCB data, const D3D11_VIEWPORT& shadowViewport, uint32_t shadowWidth, uint32_t shadowHeight)
+{
+	auto device = globals::d3d::device;
+	auto context = globals::d3d::context;
+	if (!windowGlass)
+		return;
+	if (!windowPlanesPS)
+		windowPlanesPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\InteriorSun\\WindowHolesVS.hlsl", {}, "ps_5_0", "planemain")));
+	const auto vs = GetWindowHolesVS();
+	if (!windowPlanesPS || !vs)
+		return;
+	if (!windowPlanes) {
+		D3D11_TEXTURE2D_DESC desc{};
+		desc.Width = desc.Height = WindowPlaneSize;
+		desc.MipLevels = 1;
+		desc.ArraySize = 2;
+		desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+		desc.SampleDesc.Count = 1;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+		if (FAILED(device->CreateTexture2D(&desc, nullptr, windowPlanes.put())))
+			return;
+		Util::SetResourceName(windowPlanes.get(), "InteriorSun::WindowPlanes");
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+		srvDesc.Format = desc.Format;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+		srvDesc.Texture2DArray.MipLevels = 1;
+		srvDesc.Texture2DArray.ArraySize = 2;
+		device->CreateShaderResourceView(windowPlanes.get(), &srvDesc, windowPlanesSRV.put());
+		Util::SetResourceName(windowPlanesSRV.get(), "InteriorSun::WindowPlanes SRV");
+		for (uint32_t i = 0; i < 2; ++i) {
+			D3D11_RENDER_TARGET_VIEW_DESC rtvDesc{};
+			rtvDesc.Format = desc.Format;
+			rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+			rtvDesc.Texture2DArray.FirstArraySlice = i;
+			rtvDesc.Texture2DArray.ArraySize = 1;
+			device->CreateRenderTargetView(windowPlanes.get(), &rtvDesc, windowPlanesRTV[i].put());
+			Util::SetResourceName(windowPlanesRTV[i].get(), "InteriorSun::WindowPlanes RTV");
+		}
+	}
+
+	CS_GPU_PASS("InteriorSun::WindowPlanes");
+	// The cascade's viewport, scaled to the plane texture
+	D3D11_VIEWPORT viewport = shadowViewport;
+	const float sx = static_cast<float>(WindowPlaneSize) / shadowWidth, sy = static_cast<float>(WindowPlaneSize) / shadowHeight;
+	viewport.TopLeftX *= sx;
+	viewport.Width *= sx;
+	viewport.TopLeftY *= sy;
+	viewport.Height *= sy;
+	viewport.MinDepth = 0.0f;
+	viewport.MaxDepth = 1.0f;
+
+	// Everything this pass changes is put back: the engine caches its D3D state
+	winrt::com_ptr<ID3D11RenderTargetView> oldRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT];
+	winrt::com_ptr<ID3D11DepthStencilView> oldDSV;
+	ID3D11RenderTargetView* oldRTVRaw[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+	context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, oldRTVRaw, oldDSV.put());
+	for (uint32_t i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)
+		oldRTVs[i].attach(oldRTVRaw[i]);
+	winrt::com_ptr<ID3D11VertexShader> oldVS;
+	winrt::com_ptr<ID3D11PixelShader> oldPS;
+	winrt::com_ptr<ID3D11Buffer> oldVSCB, oldPSCB;
+	winrt::com_ptr<ID3D11ShaderResourceView> oldVSSRV, oldPSSRV;
+	winrt::com_ptr<ID3D11SamplerState> oldSampler;
+	winrt::com_ptr<ID3D11InputLayout> oldInputLayout;
+	D3D11_PRIMITIVE_TOPOLOGY oldTopology;
+	winrt::com_ptr<ID3D11RasterizerState> oldRasterState;
+	winrt::com_ptr<ID3D11BlendState> oldBlend;
+	float oldBlendFactor[4];
+	UINT oldSampleMask;
+	D3D11_VIEWPORT oldViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+	UINT oldViewportCount = static_cast<UINT>(std::size(oldViewports));
+	context->VSGetShader(oldVS.put(), nullptr, nullptr);
+	context->PSGetShader(oldPS.put(), nullptr, nullptr);
+	context->VSGetConstantBuffers(0, 1, oldVSCB.put());
+	context->PSGetConstantBuffers(0, 1, oldPSCB.put());
+	context->VSGetShaderResources(0, 1, oldVSSRV.put());
+	context->PSGetShaderResources(0, 1, oldPSSRV.put());
+	context->PSGetSamplers(0, 1, oldSampler.put());
+	context->IAGetInputLayout(oldInputLayout.put());
+	context->IAGetPrimitiveTopology(&oldTopology);
+	context->RSGetState(oldRasterState.put());
+	context->OMGetBlendState(oldBlend.put(), oldBlendFactor, &oldSampleMask);
+	context->RSGetViewports(&oldViewportCount, oldViewports);
+
+	const float zero[4] = { 0, 0, 0, 0 };
+	auto rtv = windowPlanesRTV[cascade].get();
+	context->ClearRenderTargetView(rtv, zero);
+	context->OMSetRenderTargets(1, &rtv, nullptr);
+	context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+	auto cb = windowHolesCB->CB();
+	auto srv = windowGlass->srv.get();
+	auto sampler = windowHolesSampler.get();
+	context->IASetInputLayout(nullptr);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	context->VSSetShader(vs, nullptr, 0);
+	context->VSSetConstantBuffers(0, 1, &cb);
+	context->VSSetShaderResources(0, 1, &srv);
+	context->PSSetShader(windowPlanesPS.get(), nullptr, 0);
+	context->PSSetConstantBuffers(0, 1, &cb);
+	context->PSSetSamplers(0, 1, &sampler);
+	context->RSSetState(windowHolesRasterState.get());
+	context->RSSetViewports(1, &viewport);
+	// Planes cover each window's whole outline, bars and frame included: the shadow map already darkens those, and
+	// a lattice pattern at this coarser resolution would leave gaps where the fine hole is open but no plane is
+	data.Mode = kWhole;
+	windowHolesCB->Update(data);
+	ID3D11ShaderResourceView* noTexture = nullptr;
+	context->PSSetShaderResources(0, 1, &noTexture);
+	for (const auto& draw : windowHoleDraws) {
+		if (draw.mode == kSeeThrough && !draw.texture)
+			continue;
+		context->Draw(draw.count, draw.first);
+	}
+
+	ID3D11RenderTargetView* restoreRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT];
+	for (uint32_t i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)
+		restoreRTVs[i] = oldRTVs[i].get();
+	context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, restoreRTVs, oldDSV.get());
+	context->OMSetBlendState(oldBlend.get(), oldBlendFactor, oldSampleMask);
+	cb = oldVSCB.get();
+	srv = oldVSSRV.get();
+	context->VSSetShader(oldVS.get(), nullptr, 0);
+	context->VSSetConstantBuffers(0, 1, &cb);
+	context->VSSetShaderResources(0, 1, &srv);
+	cb = oldPSCB.get();
+	srv = oldPSSRV.get();
+	sampler = oldSampler.get();
+	context->PSSetShader(oldPS.get(), nullptr, 0);
+	context->PSSetConstantBuffers(0, 1, &cb);
+	context->PSSetShaderResources(0, 1, &srv);
+	context->PSSetSamplers(0, 1, &sampler);
+	context->IASetInputLayout(oldInputLayout.get());
+	context->IASetPrimitiveTopology(oldTopology);
+	context->RSSetState(oldRasterState.get());
+	context->RSSetViewports(oldViewportCount, oldViewports);
+
+	windowPlanesWritten |= 1u << cascade;
 }
 
 void InteriorSun::DrawHolesInto(WindowHolesCB data, const D3D11_VIEWPORT& viewport)

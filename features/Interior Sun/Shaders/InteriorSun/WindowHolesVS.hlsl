@@ -12,6 +12,7 @@ struct HoleVertex
 {
 	float3 Position;
 	float2 UV;
+	float4 Plane;  // outward normal and offset of the window it belongs to; zero when unknown
 };
 
 // World-space triangle list of the cell's window glass and openings
@@ -24,6 +25,7 @@ struct VSOutput
 {
 	float4 Position: SV_POSITION;
 	float2 UV: TEXCOORD0;
+	nointerpolation float4 Plane: TEXCOORD1;
 };
 
 VSOutput main(uint vertexId : SV_VertexID)
@@ -33,6 +35,7 @@ VSOutput main(uint vertexId : SV_VertexID)
 	// Far depth: the pane opens the sun ray whatever its distance along it
 	output.Position = float4(positionCS.xy, positionCS.w, positionCS.w);
 	output.UV = WindowGlass[vertexId].UV;
+	output.Plane = WindowGlass[vertexId].Plane;
 	return output;
 }
 
@@ -45,4 +48,11 @@ void psmain(VSOutput input)
 		clip(max(texel.r, max(texel.g, texel.b)) - GlowThreshold);
 	else if (Mode == 2)
 		clip(AlphaThreshold - texel.a);
+}
+
+// The window's plane where its light passes, for the lighting shader to keep that light on the room side
+float4 planemain(VSOutput input) : SV_Target
+{
+	psmain(input);
+	return input.Plane;
 }

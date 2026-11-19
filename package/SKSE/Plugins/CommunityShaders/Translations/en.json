@@ -1893,6 +1893,8 @@
     "feature.interior_sun.key_feature_2": "Utilizes existing sun, moon, and weather systems",
     "feature.interior_sun.key_feature_3": "Includes an option to force double-sided rendering for unprepared interiors",
     "feature.interior_sun.key_feature_4": "Fixes geometry culling issues that cause light leakage",
+    "feature.interior_sun.light_only_past_window": "Light Only Past The Window",
+    "feature.interior_sun.light_only_past_window_tooltip": "Sunlight that came in through a window only lights what is on the room side of that window, so it can't carry on into a room behind it (such as behind a fake window).",
     "feature.interior_sun.name": "Interior Sun",
     "feature.interior_sun.sun_facing_holes_only": "Only Windows Facing The Sun",
     "feature.interior_sun.sun_facing_holes_only_tooltip": "Each moment, lets the sun in only through windows and openings that face it. Sun could never enter through a window it is behind, and opening one lets thin slivers of light onto the beams and walls along its line.",

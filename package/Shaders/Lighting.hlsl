@@ -1254,6 +1254,9 @@ bool UseSkylightingShadowVisibility()
 #		include "LightLimitFix/LightLimitFix.hlsli"
 #	endif
 
+// Interior Sun: per sun cascade, the plane of the window each shadow-map texel's light came through (zero: none)
+Texture2DArray<float4> InteriorSunWindowPlanes : register(t66);
+
 #	if defined(IBL)
 #		include "IBL/IBL.hlsli"
 #	endif
@@ -3384,6 +3387,35 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		dirSoftShadow *= faceTowardSun;
 	}
 #	endif
+
+	// Interior sun: light that came in through a window lights only the room side of that window (never a room behind it)
+	if (SharedData::InInterior && SharedData::HasDirectionalShadows) {
+		uint planesWidth, planesHeight, planesSlices;
+		InteriorSunWindowPlanes.GetDimensions(planesWidth, planesHeight, planesSlices);
+		DirectionalShadowLightData windowShadowData = DirectionalShadowLights[0];
+		const float windowShadowDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(input.WorldPosition.xyz, eyeIndex));
+		if (planesWidth > 0 && windowShadowDepth < windowShadowData.EndSplitDistances.y) {
+			const float cascadeSelect = saturate((windowShadowDepth - windowShadowData.StartSplitDistances.y) / (windowShadowData.EndSplitDistances.x - windowShadowData.StartSplitDistances.y));
+			const uint windowCascade = uint(cascadeSelect);
+			const float2 windowUV = mul(windowShadowData.ShadowProj[windowCascade], float4(worldPositionWS, 1)).xy;
+			if (all(windowUV > 0.0) && all(windowUV < 1.0)) {
+				// The plane texture is coarser than the shadow map: at a window's rim, take a neighbour's plane
+				const int2 windowTexel = int2(windowUV * float2(planesWidth, planesHeight));
+				float4 windowPlane = InteriorSunWindowPlanes.Load(int4(windowTexel, windowCascade, 0));
+				static const int2 windowNeighbours[4] = { int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1) };
+				[unroll] for (uint n = 0; n < 4; ++n)
+				{
+					if (dot(windowPlane.xyz, windowPlane.xyz) < 0.5)
+						windowPlane = InteriorSunWindowPlanes.Load(int4(clamp(windowTexel + windowNeighbours[n], 0, int2(planesWidth, planesHeight) - 1), windowCascade, 0));
+				}
+				// A few units of margin keep the window's own frame and sill lit
+				if (dot(windowPlane.xyz, windowPlane.xyz) > 0.5 && dot(windowPlane.xyz, worldPositionWS) - windowPlane.w > 8.0) {
+					dirDetailedShadow = 0.0;
+					dirSoftShadow = 0.0;
+				}
+			}
+		}
+	}
 
 	// Directiontal Lighting
 	DirectContext dirLightContext;
