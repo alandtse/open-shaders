@@ -3129,6 +3129,7 @@ namespace SIE
 		// The clip shaders compile from Utility.hlsl and its includes outside hlslToShaderMap, so any such change drops them.
 		if (lowerFilePath.ends_with("utility.hlsl") || lowerFilePath.ends_with(".hlsli")) {
 			std::scoped_lock lockPC(paraboloidClipMutex);
+			Util::ClearShaderCompileFailures();
 			paraboloidClipShaders.clear();
 		}
 
