@@ -1,7 +1,7 @@
 #ifndef NEURAL_RENDERING_RECONSTRUCTION_HLSLI
 #define NEURAL_RENDERING_RECONSTRUCTION_HLSLI
 
-#include "NeuralRenderingFinite.hlsli"
+#include "Common/NeuralRenderingFinite.hlsli"
 
 namespace NeuralRenderingReconstruction
 {
