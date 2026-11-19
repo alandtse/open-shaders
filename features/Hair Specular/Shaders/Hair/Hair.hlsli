@@ -271,8 +271,7 @@ namespace Hair
 
 	float HairSelfShadow(float3 positionWS, float3 lightDirWS, float noise, uint eyeIndex)
 	{
-		[branch] if (!SharedData::hairSpecularSettings.EnableSelfShadow)
-		{
+		if (!SharedData::hairSpecularSettings.EnableSelfShadow) {
 			return 1.0;
 		}
 
