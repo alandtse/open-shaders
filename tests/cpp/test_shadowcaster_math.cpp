@@ -303,4 +303,7 @@ TEST_CASE("SteadyScoreFade averages a flicker but follows a light going out at o
 	REQUIRE(fade == Approx(0.8f).margin(0.03f));
 	REQUIRE(SteadyScoreFade(0.8f, 0.0f) == 0.0f);
 	REQUIRE(SteadyScoreFade(0.8f, 0.05f) == 0.05f);
+	// A light coming back on is ranked at its live fade at once, not ramped up from its average.
+	REQUIRE(SteadyScoreFade(0.0f, 1.0f) == 1.0f);
+	REQUIRE(SteadyScoreFade(0.05f, 0.7f) == 0.7f);
 }
