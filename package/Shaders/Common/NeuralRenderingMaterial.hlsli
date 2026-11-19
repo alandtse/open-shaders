@@ -1,7 +1,7 @@
 #ifndef __NEURAL_RENDERING_MATERIAL_HLSLI__
 #define __NEURAL_RENDERING_MATERIAL_HLSLI__
 
-#include "NeuralRenderingCategory.hlsli"
+#include "Common/NeuralRenderingCategory.hlsli"
 
 namespace NeuralRenderingMaterial
 {
