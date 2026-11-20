@@ -64,6 +64,7 @@ cbuffer Trace : register(b0)
 	float SnowColorAffection;
 	float SnowSpecularAmount;
 	float4 SnowLumps; // height, size in native-ray patches, density, gravity flatness
+	float4 SnowDetailControls; // lump layers, edge waviness, reserved, reserved
 };
 
 #include "Common/ReverseZ.hlsli"

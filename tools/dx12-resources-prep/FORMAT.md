@@ -107,10 +107,10 @@ screen pixels, so the pattern remains attached to geometry while the view
 moves. An optional setting follows the post-parallax native material UV;
 otherwise snow retains the flat hit UV. Post-parallax mapping changes snow
 only when native PBR parallax is enabled and a material supplies height.
-Six independently seeded, weighted value-noise layers supply native PBR normal
-perturbations for the snow lumps, with coarse shapes dominating the finer
-details. Lump height (0..1), size (0.5..8 native-ray noise patches), and
-density (0..1) can be adjusted without changing DX12 geometry or silhouettes;
+Between 2 and 12 independently seeded, weighted value-noise layers (default 6)
+supply native PBR normal perturbations for the snow lumps, with coarse shapes
+dominating the finer details. Lump height (0..4), size (0.5..8 native-ray noise
+patches), and density (0..1) can be adjusted without changing DX12 geometry or silhouettes;
 a zero height or density skips the extra noise. Lump density and height are
 attenuated at partial snow-coverage boundaries and on faces that turn away
 from upward, so flat interiors of covered areas receive more raised detail. The masks
@@ -120,8 +120,8 @@ into the native specular lobe only under unoccluded direct light;
 shadowed snow does not emit light. Only actual native hits evaluate the effect; no
 per-frame hit-count readback or GPU atomics are required. NativePBR owns snow
 enable, noise amount/rays-per-patch, snow parallax UV, sparkle amount/density,
-roughness, procedural lump controls, gravity flatness (0 = any face,
-1 = upward-only), color affection (0 = neutral luminance-preserving native lighting;
+roughness, procedural lump controls, gravity flatness (default 1; 0 = any face,
+1 = upward-only), edge waviness (0..1), color affection (0 = neutral luminance-preserving native lighting;
 1 = native light RGB tint), snow specular amount (0..2), and
 the temporary coverage override. Tuning reaches SM6.5 via the existing
 direct-lighting constant buffer, with no atlas, snow texture residency,
@@ -132,7 +132,11 @@ blue-white emission at full color affection (neutral white at zero; default
 stylized fluorescence approximation; there is no
 UV-spectrum light detection. Gravity coverage blends the native triangle's
 upward-facing cosine through a smooth cubic response toward full candidate
-coverage; the flatness slider lets walls retain a tunable fraction of snow
+coverage; coherent material-space noise bends the partial gravity-coverage
+transition into curved, wavy snow boundaries while preserving fully covered
+tops and uncovered walls. The wave seed is stable per instance rather than
+triangle, preventing internal triangle-edge flicker. Actual geometry silhouettes
+and separate terrain-evidence boundaries remain unchanged. The flatness slider lets walls retain a tunable fraction of snow
 without weather or raster inputs. This is surface shading, not geometry displacement or a
 persistent accumulation simulation. Interior scenes receive coverage only
 when the explicit eligible-receiver test is enabled.

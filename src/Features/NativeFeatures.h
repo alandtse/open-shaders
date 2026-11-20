@@ -93,13 +93,17 @@ struct NativePBRFeature final : Feature
 		float noiseAmount = 0.55f, noiseRaysPerPatch = 64.0f;
 		float sparkleAmount = 0.6f, sparkleDensity = 0.08f, roughness = 0.83f;
 		float ultravioletIntensity = 0.012f, colorAffection = 0.0f, specularAmount = 1.0f;
-		float lumpHeight = 0.25f, lumpSize = 3.0f, lumpDensity = 0.5f, flatness = 0.98f;
+		float lumpHeight = 0.25f, lumpSize = 3.0f, lumpDensity = 0.5f, flatness = 1.0f;
+		float edgeWaviness = 0.45f;
+		uint32_t lumpLayers = 6;
 	};
 	std::atomic<bool> snowEnabled{ true }, snowCoverEligible{ false }, snowUltravioletAffected{ false }, snowFollowParallaxUV{ false };
 	std::atomic<float> snowNoiseAmount{ 0.55f }, snowNoiseRaysPerPatch{ 64.0f };
 	std::atomic<float> snowSparkleAmount{ 0.6f }, snowSparkleDensity{ 0.08f }, snowRoughness{ 0.83f };
 	std::atomic<float> snowUltravioletIntensity{ 0.012f }, snowColorAffection{ 0.0f }, snowSpecularAmount{ 1.0f };
-	std::atomic<float> snowLumpHeight{ 0.25f }, snowLumpSize{ 3.0f }, snowLumpDensity{ 0.5f }, snowFlatness{ 0.98f };
+	std::atomic<float> snowLumpHeight{ 0.25f }, snowLumpSize{ 3.0f }, snowLumpDensity{ 0.5f }, snowFlatness{ 1.0f };
+	std::atomic<float> snowEdgeWaviness{ 0.45f };
+	std::atomic<uint32_t> snowLumpLayers{ 6 };
 	/** @brief Provides the current native-only ray-hit snow controls. */
 	SnowSettings GetSnowSettings() const
 	{
@@ -110,7 +114,8 @@ struct NativePBRFeature final : Feature
 			snowRoughness.load(std::memory_order_relaxed), snowUltravioletIntensity.load(std::memory_order_relaxed),
 			snowColorAffection.load(std::memory_order_relaxed), snowSpecularAmount.load(std::memory_order_relaxed),
 			snowLumpHeight.load(std::memory_order_relaxed), snowLumpSize.load(std::memory_order_relaxed),
-			snowLumpDensity.load(std::memory_order_relaxed), snowFlatness.load(std::memory_order_relaxed) };
+			snowLumpDensity.load(std::memory_order_relaxed), snowFlatness.load(std::memory_order_relaxed),
+			snowEdgeWaviness.load(std::memory_order_relaxed), snowLumpLayers.load(std::memory_order_relaxed) };
 	}
 	// 1 geometry, 2 evaluated NativePBR, 3 accepted Native Lighting. Early stages are deliberate diagnostics.
 	std::atomic<uint32_t> readinessStage{ 3 };
@@ -161,6 +166,7 @@ struct NativePBRFeature final : Feature
 		snowColorAffection = defaults.colorAffection; snowSpecularAmount = defaults.specularAmount;
 		snowLumpHeight = defaults.lumpHeight; snowLumpSize = defaults.lumpSize;
 		snowLumpDensity = defaults.lumpDensity; snowFlatness = defaults.flatness;
+		snowEdgeWaviness = defaults.edgeWaviness; snowLumpLayers = defaults.lumpLayers;
 	}
 	json GetDiagnostics() override;
 };

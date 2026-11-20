@@ -220,7 +220,15 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 		if (all(isfinite(face)) && lengthSq > 1e-12f) {
 			const float upward = saturate(face.z * rsqrt(lengthSq));
 			surface.snowUpwardAlignment = upward;
-			const float gravity = upward * upward * (3.0f - 2.0f * upward);
+			float gravity = upward * upward * (3.0f - 2.0f * upward);
+			if (SnowDetailControls.y > 0.0f && gravity > 0.0f && gravity < 1.0f) {
+				const float2 waveUV = clamp(flatSnowUV, -4096.0f, 4096.0f) * max(SnowTuning.y, 1.0f) * 0.25f;
+				const uint waveSeed = NativePBR::SnowHash(binding.identity ^ uint2(instance, 0u)) ^ 0x27d4eb2fu;
+				const float wave = NativePBR::SnowNoise(waveUV, waveSeed) - 0.5f;
+				const float boundary = 4.0f * gravity * (1.0f - gravity);
+				gravity = saturate(gravity + wave * saturate(SnowDetailControls.y) * boundary);
+			}
+			gravity = smoothstep(0.1f, 0.9f, gravity);
 			surface.projectedSnowIncidence = lerp(1.0f, gravity, saturate(SnowLumps.w));
 		}
 	}
@@ -229,7 +237,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 		return false;
 	NativePBR::SurfaceMaterial result = NativePBR::EvaluateOpaque(material, surface, base, normal, packed, emission,
 		coat, complexMaskDetected, binding.flags, SnowTuning, SnowRoughness, SnowUltravioletEmission,
-		SnowColorAffection, SnowSpecularAmount, SnowLumps);
+		SnowColorAffection, SnowSpecularAmount, SnowLumps, SnowDetailControls);
 	evaluated.baseColor = result.baseColor;
 	evaluated.normal = result.normal;
 	evaluated.f0 = result.f0;

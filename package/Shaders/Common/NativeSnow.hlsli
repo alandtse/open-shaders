@@ -5,7 +5,7 @@ namespace NativePBR
 {
 	static const float SnowCrystalScatter = 0.22f;
 	static const float3 SnowUltravioletTint = float3(0.78f, 0.86f, 1.0f);
-	static const uint SnowLumpLayerCount = 6u;
+	static const uint SnowMaximumLumpLayers = 12u;
 
 	uint SnowHash(uint2 cell)
 	{
@@ -63,7 +63,8 @@ namespace NativePBR
 		return clamp(noiseSlope * profileDerivative, -4.0f, 4.0f);
 	}
 
-	float2 SnowLumpSlope(float2 hitUV, uint hitSeed, float rayFrequency, float lumpSize, float lumpDensity)
+	float2 SnowLumpSlope(float2 hitUV, uint hitSeed, float rayFrequency, float lumpSize, float lumpDensity,
+		uint layerCount)
 	{
 		if (lumpDensity <= 0.0f)
 			return 0.0f;
@@ -74,7 +75,8 @@ namespace NativePBR
 		float amplitude = 1.0f;
 		float frequency = 1.0f;
 		float weight = 0.0f;
-		[unroll] for (uint layer = 0u; layer < SnowLumpLayerCount; ++layer) {
+		const uint layers = clamp(layerCount, 2u, SnowMaximumLumpLayers);
+		[loop] for (uint layer = 0u; layer < layers; ++layer) {
 			const uint seed = hitSeed ^ (0x85ebca6bu + layer * 0x9e3779b9u);
 			slope += SnowLumpLayerSlope(position * frequency, seed, density) * amplitude * frequency;
 			weight += amplitude;

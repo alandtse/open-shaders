@@ -661,7 +661,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			created->counterReadback = make(plain, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, L"NativeLighting::CounterReadback");
 			created->lights = make(CD3DX12_RESOURCE_DESC::Buffer(DX12Native::kMaximumNativePointLights * 48), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Lights");
 			created->rayBindings = make(rayTable, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::RayMaterialBindings");
-			// 336-byte Trace ABI rounds to 512 for the D3D12 CBV 256-byte alignment.
+			// 352-byte Trace ABI rounds to 512 for the D3D12 CBV 256-byte alignment.
 			created->constants = make(CD3DX12_RESOURCE_DESC::Buffer(512), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Constants");
 			void* zeros = nullptr;
 			const D3D12_RANGE noRead{ 0, 0 };
@@ -752,9 +752,9 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			float4 lightTuning;   // reach, cutoff width, exponent, common direct strength
 			float4 shadowTuning;  // shadow strength, emitter scale, stochastic enabled, emission
 			uint32_t nativePbrReady, nativePbrPadding[2], nativePbrMaterialOptions;
-			float4 snowTuning, snowSurface, snowLumps;
+			float4 snowTuning, snowSurface, snowLumps, snowDetailControls;
 		};
-		static_assert(sizeof(Constants) == 336);
+		static_assert(sizeof(Constants) == 352);
 		const auto snowSettings = globals::features::nativePBR.GetSnowSettings();
 		const float snowRayCells = NativePBR::SnowRayCellFrequency(width, height,
 			a_settings.TraceDensityMode, snowSettings.noiseRaysPerPatch);
@@ -777,7 +777,8 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			{ snowSettings.roughness,
 				snowSettings.ultravioletAffected ? snowSettings.ultravioletIntensity : 0.0f,
 				snowSettings.colorAffection, snowSettings.specularAmount },
-			{ snowSettings.lumpHeight, snowSettings.lumpSize, snowSettings.lumpDensity, snowSettings.flatness } };
+			{ snowSettings.lumpHeight, snowSettings.lumpSize, snowSettings.lumpDensity, snowSettings.flatness },
+			{ float(snowSettings.lumpLayers), snowSettings.edgeWaviness, 0.0f, 0.0f } };
 		slot->nativePointLightCount = selectedCount;
 		slot->nativeMinimumDistance = constants.minimum;
 		slot->nativeLightTuning = constants.lightTuning;

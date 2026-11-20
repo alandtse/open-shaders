@@ -93,7 +93,8 @@ namespace NativePBR
 	SurfaceMaterial EvaluateOpaque(MaterialRecord material, SurfaceInput surface, float4 baseTexel,
 		float4 normalTexel, float4 packedTexel, float4 emissionTexel, float4 coatTexel,
 		bool complexMaskDetected, uint drawFlags, float4 snowTuning, float snowRoughness,
-		float snowUltravioletEmission, float snowColorAffection, float snowSpecularAmount, float4 snowLumps)
+		float snowUltravioletEmission, float snowColorAffection, float snowSpecularAmount,
+		float4 snowLumps, float4 snowDetailControls)
 	{
 		SurfaceMaterial result;
 		result.baseColor = baseTexel.rgb;
@@ -133,11 +134,11 @@ namespace NativePBR
 			const float flatLumpMask = smoothstep(0.15f, 0.85f, surface.snowUpwardAlignment);
 			const float coverageEdgeMask = smoothstep(0.1f, 0.95f, result.snowCoverage);
 			const float lumpPresence = flatLumpMask * coverageEdgeMask;
-			const float lumpStrength = saturate(snowLumps.x) * lumpPresence;
+			const float lumpStrength = clamp(snowLumps.x, 0.0f, 4.0f) * lumpPresence;
 			const float lumpDensity = saturate(snowLumps.z) * lumpPresence;
 			if (lumpStrength > 0.0f && lumpDensity > 0.0f) {
 				const float2 lumpSlope = SnowLumpSlope(surface.snowUV, surface.snowHitSeed,
-					snowTuning.y, snowLumps.y, lumpDensity);
+					snowTuning.y, snowLumps.y, lumpDensity, uint(clamp(snowDetailControls.x, 2.0f, 12.0f)));
 				float3 tangent = surface.tangent - result.normal * dot(result.normal, surface.tangent);
 				const float tangentLengthSq = dot(tangent, tangent);
 				if (all(isfinite(tangent)) && tangentLengthSq > 1e-8f) {
