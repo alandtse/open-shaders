@@ -2869,8 +2869,10 @@ namespace SIE
 			else
 				Util::SetResourceName(geometryShader.get(), "Utility::ParaboloidClip %X", vertexDescriptor);
 		}
-		if (!geometryShader)
+		if (!geometryShader) {
 			logger::warn("[SCM] Paraboloid clip shader for Utility {:X} did not compile; that draw keeps the vertex shader's projection", vertexDescriptor);
+			return nullptr;
+		}
 		return paraboloidClipShaders.emplace(vertexDescriptor, std::move(geometryShader)).first->second;
 	}
 
