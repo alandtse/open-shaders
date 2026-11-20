@@ -417,8 +417,9 @@ namespace ShadowCasterManager
 		bool bakeSawStatic = false;
 		/// Baked, and no DynamicOnly accumulate has reused the cache yet.
 		bool bakeUnproven = false;
-		int bakeEpoch = -1;      ///< classifier epoch of the latest StaticOnly bake
-		bool bakeStale = false;  ///< a caster changed class since that bake: render full until it is rebaked
+		int bakeEpoch = -1;                      ///< classifier epoch of the latest StaticOnly bake
+		bool bakeStale = false;                  ///< a caster changed class since that bake: render full until it is rebaked
+		CasterPass accumMode = CasterPass::All;  ///< the split decision of this frame's first accumulate
 	};
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
 
@@ -1145,13 +1146,18 @@ namespace ShadowCasterManager
 			bool split = StaticAtlasReady() && !CarrierBody(light);
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
-			st->fullThisFrame = !split;
-			st->bakeThisFrame = false;
-			CasterPass mode = CasterPass::All;
+			// A second accumulate this frame is skipped below, so it keeps the first call's split decision.
+			const auto prior = s_lightAccumFrame.find(light);
+			const bool repeatThisFrame = prior != s_lightAccumFrame.end() && prior->second.frame == nowFrame;
+			if (!repeatThisFrame) {
+				st->fullThisFrame = !split;
+				st->bakeThisFrame = false;
+			}
+			CasterPass mode = repeatThisFrame ? st->accumMode : CasterPass::All;
 			uint64_t bakedHash = 0;
 			bool staticValid = false;
 			bool staticEmpty = false;
-			if (split && st->splitExcluded &&
+			if (split && !repeatThisFrame && st->splitExcluded &&
 				SplitLatchBackoff::RetryDue(nowFrame, st->latchedFrame, st->latchRetryFrames)) {
 				st->splitExcluded = false;
 				st->poseRebakes = 0;
@@ -1160,7 +1166,7 @@ namespace ShadowCasterManager
 				st->latchRetryFrames = SplitLatchBackoff::NextRetryFrames(st->latchRetryFrames);
 				s_splitLatchRetryTotal.fetch_add(1, std::memory_order_relaxed);
 			}
-			if (split) {
+			if (split && !repeatThisFrame) {
 				if (st->splitExcluded || (!TolerantSplit() && st->bakePoseValid && !SplitPoseMatches(light, *st))) {
 					// Latched jitter light: the cache can never stay fresh for
 					// it, so it renders full every redraw (no bake, no copy).
@@ -1175,7 +1181,7 @@ namespace ShadowCasterManager
 					split = false;
 				}
 			}
-			if (split) {
+			if (split && !repeatThisFrame) {
 				// The atlas slot owns what's baked, so a tile realloc (class
 				// change) that drops the cache reads back as invalid here and
 				// forces a rebake -- state keyed on the light alone would miss it.
@@ -1246,6 +1252,8 @@ namespace ShadowCasterManager
 					s_visitStaticHash = FoldLightPose(s_visitStaticHash, ni, 16.0f);
 				s_visitBakeEpoch = st->bakeEpoch;
 			}
+			if (!repeatThisFrame)
+				st->accumMode = mode;
 			s_visitBakeStale = false;
 			s_visitDynamicCount.store(0, std::memory_order_relaxed);
 			s_visitStaticCount.store(0, std::memory_order_relaxed);
@@ -1308,7 +1316,7 @@ namespace ShadowCasterManager
 
 			if (!skipAccumulate)
 				st->sawDynamicLastAccum = s_visitDynamicCount.load(std::memory_order_relaxed) != 0;
-			if (split) {
+			if (split && !repeatThisFrame) {
 				st->pendingHash = s_visitStaticHash;
 				if (mode == CasterPass::StaticOnly && !skipAccumulate)
 					st->bakeSawStatic = s_visitStaticCount.load(std::memory_order_relaxed) != 0;
