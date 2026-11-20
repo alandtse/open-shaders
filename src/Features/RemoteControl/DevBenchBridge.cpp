@@ -211,7 +211,7 @@ namespace
 		return RunOnThread([a_args] { return VRAlphaPassListFix::Control(a_args); }, Util::DevBenchUx::ExecutionThread::Render);
 	}
 
-	void AlphaPassListHandler(const char* a_argsJson, void*, void* a_sink, DevBenchAPI::WriteFn a_write)
+	void AlphaPassListHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler("openshaders.alphapasslist", &BuildAlphaPassListResult, a_argsJson, a_sink, a_write);
 	}
