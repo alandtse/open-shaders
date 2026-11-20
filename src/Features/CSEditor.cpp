@@ -63,7 +63,7 @@ void CSEditor::ReloadFormEdits()
 
 void CSEditor::EnsureWeatherListLoaded()
 {
-	if (!s_dataAvailable)
+	if (!globals::state->startupMenuInitializationComplete.load(std::memory_order_acquire))
 		return;
 
 	LoadAllWeathers();
@@ -77,7 +77,7 @@ void CSEditor::EnsureDataLoaded()
 	if (!s_resourcesInitialized) {
 		s_resourcesInitialized = EditorWindow::GetSingleton()->SetupResources();
 	}
-	LoadAllWeathers();
+	EnsureWeatherListLoaded();
 }
 
 void CSEditor::OpenEditorWindow()
