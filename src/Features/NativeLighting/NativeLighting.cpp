@@ -10,6 +10,7 @@
 #include "Utils/D3D.h"
 #include "Utils/DevBenchUx.h"
 #include "Utils/Game.h"
+#include <bit>
 #include <cmath>
 #include <directx/d3dx12.h>
 #include <fstream>
@@ -728,7 +729,8 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			const auto& light = lightSource[a_settings.UseAllPreparedLights ? i :
 																			  std::min<size_t>(a_settings.SelectedDirectLight, lightSource.size() - 1)];
 			lights[i] = { { light.position.x, light.position.y, light.position.z, light.radius },
-				{ light.radiance.x, light.radiance.y, light.radiance.z, light.sourceRadius }, { light.supported ? 1u : 0u, 0, 0, 0 } };
+				{ light.radiance.x, light.radiance.y, light.radiance.z, light.sourceRadius },
+				{ light.supported ? 1u : 0u, light.falloffMode, std::bit_cast<uint32_t>(light.fadeZone), 0 } };
 		}
 		struct Constants
 		{

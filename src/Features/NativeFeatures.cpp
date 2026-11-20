@@ -387,7 +387,8 @@ namespace
 	NativeLLFFeature::UnifiedLights ComputeNativeUnifiedLights(
 		std::span<const DX12Native::PreparedPointLight> prepared,
 		const NativeLLFFeature::LightFrame* published,
-		bool active, float units, float gain, bool contribute, bool contributeMatches);
+		bool active, float units, float gain, bool contribute, bool contributeMatches,
+		const NativeLLFFeature::LightControls& controls);
 }
 
 void NativeLLFFeature::ClearCapturedLights()
@@ -426,18 +427,21 @@ void NativeLLFFeature::PublishLights(const LightLimitFix::LightData* data, uint3
 				return value;
 			return value <= 0.04045f ? value / 12.92f : std::pow((value + 0.055f) / 1.055f, 2.4f);
 		};
-		const float scale = source.fade * source.radius * source.radius;
+		const bool inverseSquare = source.lightFlags.any(LightLimitFix::LightFlags::InverseSquare);
+		constexpr float kInverseSquareIntensity = 0.8f * 70.0f * 70.0f;
+		const float scale = source.fade * (inverseSquare ? kInverseSquareIntensity : 1.0f);
 		const auto& p = source.positionWS[0].data;
 		const Light light{
 			{ p.x + eye.x, p.y + eye.y, p.z + eye.z },
 			{ toLinear(source.color.x) * scale, toLinear(source.color.y) * scale, toLinear(source.color.z) * scale },
 			source.radius, std::sqrt(std::max(source.sizeBias, 0.0f)), source.fadeZone,
-			static_cast<uint32_t>(source.lightFlags.underlying()), source.shadowMapIndex
+			static_cast<uint32_t>(source.lightFlags.underlying()), source.shadowMapIndex,
+			inverseSquare ? 1u : 2u
 		};
 		if (!std::isfinite(light.position.x) || !std::isfinite(light.position.y) || !std::isfinite(light.position.z) ||
 			!std::isfinite(light.radiance.x) || !std::isfinite(light.radiance.y) || !std::isfinite(light.radiance.z) ||
 			!std::isfinite(light.radius) || light.radius <= 0.0f || light.radius > 60000.0f ||
-			!std::isfinite(light.sourceRadius) ||
+			!std::isfinite(light.sourceRadius) || !std::isfinite(light.fadeZone) ||
 			!std::isfinite(source.fade) || source.fade <= 0.0f)
 			continue;
 		generation->lights.push_back(light);
@@ -469,12 +473,14 @@ void NativeLLFFeature::PublishLights(const LightLimitFix::LightData* data, uint3
 		work->gain = std::clamp(contribution.load(std::memory_order_relaxed), 0.0f, 4.0f);
 		work->contribute = contributeUnmatched.load(std::memory_order_relaxed) && work->gain > 0.0f;
 		work->contributeMatches = contributeMatched.load(std::memory_order_relaxed) && work->gain > 0.0f;
+		work->controls = { inheritOriginal.load(std::memory_order_relaxed), useVanillaMatches.load(std::memory_order_relaxed),
+			customSourceSize.load(std::memory_order_relaxed), customIntensity.load(std::memory_order_relaxed), customReach.load(std::memory_order_relaxed) };
 		static BS::thread_pool<> pool{ 1 };
 		pool.detach_task([work] {
 			try {
 				work->result = ComputeNativeUnifiedLights(
 					work->prepared->nativeLights, work->source.get(), true,
-					work->matchUnits, work->gain, work->contribute, work->contributeMatches);
+					work->matchUnits, work->gain, work->contribute, work->contributeMatches, work->controls);
 				work->valid = true;
 			} catch (...) { /* Never consume incomplete output. */
 			}
@@ -501,7 +507,8 @@ namespace
 	NativeLLFFeature::UnifiedLights ComputeNativeUnifiedLights(
 		std::span<const DX12Native::PreparedPointLight> prepared,
 		const NativeLLFFeature::LightFrame* published,
-		bool active, float units, float gain, bool contribute, bool contributeMatches)
+		bool active, float units, float gain, bool contribute, bool contributeMatches,
+		const NativeLLFFeature::LightControls& controls)
 	{
 		NativeLLFFeature::UnifiedLights result{};
 		result.prepared = static_cast<uint32_t>(prepared.size());
@@ -515,9 +522,24 @@ namespace
 		const float radiusSquared = units * units;
 		std::array<float, NativeLLFFeature::kMaxUnifiedLights> identityDistances{};
 		identityDistances.fill(std::numeric_limits<float>::infinity());
+		std::array<bool, NativeLLFFeature::kMaxUnifiedLights> matchedUpdated{};
 		const auto distanceSquared = [](const float3& a, const float3& b) {
 			const float x = a.x - b.x, y = a.y - b.y, z = a.z - b.z;
 			return x * x + y * y + z * z;
+		};
+		const auto nativeLight = [&](const NativeLLFFeature::Light& live, const float3& position) {
+			const float reachScale = controls.inheritOriginal ? 1.0f : controls.reach;
+			const float sourceScale = controls.inheritOriginal ? 1.0f : controls.sourceSize;
+			const float intensityScale = gain * (controls.inheritOriginal ? 1.0f : controls.intensity);
+			const float reach = std::min(live.radius * reachScale, 60000.0f);
+			DX12Native::PreparedPointLight light{ position,
+				{ live.radiance.x * intensityScale, live.radiance.y * intensityScale, live.radiance.z * intensityScale },
+				reach, live.sourceRadius * sourceScale, true, live.falloffMode,
+				live.fadeZone * (live.radius / reach) };
+			light.supported = std::isfinite(light.radiance.x) && std::isfinite(light.radiance.y) &&
+				std::isfinite(light.radiance.z) && std::isfinite(light.radius) && light.radius > 0.0f &&
+				std::isfinite(light.sourceRadius) && std::isfinite(light.fadeZone);
+			return light;
 		};
 		for (const auto& live : published->lights) {
 			uint32_t closest = UINT32_MAX;
@@ -545,15 +567,6 @@ namespace
 			if (closest != UINT32_MAX) {
 				if (closest < result.prepared) {
 					++result.matched;
-					if (contributeMatches) {
-						auto& radiance = result.lights[closest].radiance;
-						const float3 combined{ radiance.x + live.radiance.x * gain,
-							radiance.y + live.radiance.y * gain, radiance.z + live.radiance.z * gain };
-						if (std::isfinite(combined.x) && std::isfinite(combined.y) && std::isfinite(combined.z)) {
-							radiance = combined;
-							++result.matchedContributed;
-						}
-					}
 				} else
 					++result.clusteredLive;
 				const auto& previous = result.source[closest];
@@ -562,6 +575,27 @@ namespace
 				                         (previous.flags & static_cast<uint32_t>(PointLightFlags::Flags::Shadow)) != 0;
 				if (!previous.valid || (shadow && !priorShadow) ||
 					(shadow == priorShadow && bestSquared < identityDistances[closest])) {
+					if (closest < result.prepared && controls.useVanillaMatches) {
+						const auto replacement = nativeLight(live, result.lights[closest].position);
+						if (replacement.supported) {
+							result.lights[closest] = replacement;
+							if (!matchedUpdated[closest]) {
+								matchedUpdated[closest] = true;
+								++result.matchedContributed;
+							}
+						}
+					} else if (closest < result.prepared && contributeMatches) {
+						auto& radiance = result.lights[closest].radiance;
+						const float3 combined{ radiance.x + live.radiance.x * gain,
+							radiance.y + live.radiance.y * gain, radiance.z + live.radiance.z * gain };
+						if (std::isfinite(combined.x) && std::isfinite(combined.y) && std::isfinite(combined.z)) {
+							radiance = combined;
+							if (!matchedUpdated[closest]) {
+								matchedUpdated[closest] = true;
+								++result.matchedContributed;
+							}
+						}
+						}
 					result.source[closest] = { live.position, live.radius, live.flags, live.shadowSlot, true };
 					identityDistances[closest] = bestSquared;
 				}
@@ -575,10 +609,13 @@ namespace
 				++result.overflow;
 				continue;
 			}
+			const auto appended = nativeLight(live, live.position);
+			if (!appended.supported) {
+				++result.omitted;
+				continue;
+			}
 			const uint32_t target = result.count++;
-			result.lights[target] = { live.position,
-				{ live.radiance.x * gain, live.radiance.y * gain, live.radiance.z * gain },
-				live.radius, live.sourceRadius, true };
+			result.lights[target] = appended;
 			result.source[target] = { live.position, live.radius, live.flags, live.shadowSlot, true };
 			identityDistances[target] = 0.0f;
 			++result.added;
@@ -598,13 +635,16 @@ NativeLLFFeature::UnifiedLights NativeLLFFeature::BuildUnifiedLights(
 	const float gain = std::clamp(contribution.load(std::memory_order_relaxed), 0.0f, 4.0f);
 	const bool contribute = contributeUnmatched.load(std::memory_order_relaxed) && gain > 0.0f;
 	const bool contributeMatches = contributeMatched.load(std::memory_order_relaxed) && gain > 0.0f;
+	const LightControls controls{ inheritOriginal.load(std::memory_order_relaxed), useVanillaMatches.load(std::memory_order_relaxed),
+		customSourceSize.load(std::memory_order_relaxed), customIntensity.load(std::memory_order_relaxed), customReach.load(std::memory_order_relaxed) };
 	const auto matches = [&](const std::shared_ptr<const UnifiedWork>& work) {
 		return work && work->done.load(std::memory_order_acquire) &&
 		       work->valid && work->source == published && work->prepared &&
 		       work->prepared->nativeLights.data() == prepared.data() &&
 		       work->prepared->nativeLights.size() == prepared.size() &&
 		       work->matchUnits == units && work->gain == gain &&
-		       work->contribute == contribute && work->contributeMatches == contributeMatches;
+		       work->contribute == contribute && work->contributeMatches == contributeMatches &&
+		       work->controls == controls;
 	};
 	if (active && published) {
 		if (auto work = workerUnified.load(std::memory_order_acquire); matches(work)) {
@@ -614,7 +654,7 @@ NativeLLFFeature::UnifiedLights NativeLLFFeature::BuildUnifiedLights(
 		if (auto cached = fallbackUnified.load(std::memory_order_acquire); matches(cached))
 			return cached->result;
 	}
-	auto result = ComputeNativeUnifiedLights(prepared, published.get(), active, units, gain, contribute, contributeMatches);
+	auto result = ComputeNativeUnifiedLights(prepared, published.get(), active, units, gain, contribute, contributeMatches, controls);
 	if (active && published) {
 		auto cached = std::make_shared<UnifiedWork>();
 		cached->source = std::move(published);
@@ -628,6 +668,7 @@ NativeLLFFeature::UnifiedLights NativeLLFFeature::BuildUnifiedLights(
 			cached->gain = gain;
 			cached->contribute = contribute;
 			cached->contributeMatches = contributeMatches;
+			cached->controls = controls;
 			cached->result = result;
 			cached->valid = true;
 			cached->done.store(true, std::memory_order_release);
@@ -740,15 +781,35 @@ void NativeLLFFeature::DrawSettings()
 	bool matched = contributeMatched.load(std::memory_order_relaxed);
 	if (ImGui::Checkbox("Add matched LLF radiance (testing)", &matched))
 		contributeMatched.store(matched, std::memory_order_relaxed);
+	bool vanilla = useVanillaMatches.load(std::memory_order_relaxed);
+	if (ImGui::Checkbox("Use vanilla LLF characteristics for companion matches", &vanilla))
+		useVanillaMatches.store(vanilla, std::memory_order_relaxed);
+	ImGui::TextDisabled("Vanilla matching uses runtime LLF intensity and falloff instead of the companion approximation.");
+	ImGui::TextDisabled("Inherited/custom LLF controls also apply to matched sources.");
+	ImGui::TextDisabled("When enabled, vanilla matching takes precedence over the matched-radiance test.");
+	bool inherit = inheritOriginal.load(std::memory_order_relaxed);
+	if (ImGui::Checkbox("Inherit original LLF source characteristics", &inherit))
+		inheritOriginal.store(inherit, std::memory_order_relaxed);
+	ImGui::BeginDisabled(inherit);
+	float size = customSourceSize.load(std::memory_order_relaxed);
+	if (ImGui::SliderFloat("LLF source radius multiplier", &size, 0.1f, 8.0f, "%.2fx"))
+		customSourceSize.store(size, std::memory_order_relaxed);
+	float intensity = customIntensity.load(std::memory_order_relaxed);
+	if (ImGui::SliderFloat("LLF intensity multiplier", &intensity, 0.0f, 8.0f, "%.2fx"))
+		customIntensity.store(intensity, std::memory_order_relaxed);
+	float reach = customReach.load(std::memory_order_relaxed);
+	if (ImGui::SliderFloat("LLF reach multiplier", &reach, 0.1f, 8.0f, "%.2fx"))
+		customReach.store(reach, std::memory_order_relaxed);
+	ImGui::EndDisabled();
+	ImGui::TextDisabled("LLF controls are per-source; Native Lighting global radius and strength do not override them.");
 	float gain = contribution.load(std::memory_order_relaxed);
 	if (ImGui::SliderFloat("NativeLLF contribution", &gain, 0.0f, 4.0f, "%.2fx"))
 		contribution.store(gain, std::memory_order_relaxed);
-	ImGui::TextDisabled("Scales opted-in LLF radiance; matched test adds to prepared color, not position or radius.");
+	ImGui::TextDisabled("Common LLF gain; vanilla matches keep companion position and use LLF source properties.");
 	float units = matchDistanceUnits.load(std::memory_order_relaxed);
 	if (ImGui::SliderFloat("Clustering distance (Skyrim units)", &units, 0.0f, 512.0f, "%.0f units"))
 		matchDistanceUnits.store(units, std::memory_order_relaxed);
-	ImGui::TextDisabled("Prepared lights remain first and preserve their original light properties.");
-	ImGui::TextDisabled("Matched test can double-count an emitter already represented by the companion.");
+	ImGui::TextDisabled("Prepared lights remain first; unmatched LLF sources use their own light falloff.");
 	const auto scene = globals::features::dx12NativeScene.GetPublishedScene();
 	if (scene && globals::game::graphicsState) {
 		const auto merged = BuildUnifiedLights(scene->cell->nativeLights, frame);
@@ -795,6 +856,15 @@ void NativeLLFFeature::LoadSettings(json& j)
 	enabled.store(j.value("Enabled", true), std::memory_order_relaxed);
 	contributeUnmatched.store(j.value("ContributeUnmatched", true), std::memory_order_relaxed);
 	contributeMatched.store(j.value("ContributeMatched", false), std::memory_order_relaxed);
+	inheritOriginal.store(j.value("InheritOriginal", true), std::memory_order_relaxed);
+	useVanillaMatches.store(j.value("VanillaMatchedCharacteristics", false), std::memory_order_relaxed);
+	const auto sanitized = [&j](const char* name, float low, float high, float fallback) {
+		const float value = j.value(name, fallback);
+		return std::isfinite(value) ? std::clamp(value, low, high) : fallback;
+	};
+	customSourceSize.store(sanitized("CustomSourceRadius", 0.1f, 8.0f, 1.0f), std::memory_order_relaxed);
+	customIntensity.store(sanitized("CustomIntensity", 0.0f, 8.0f, 1.0f), std::memory_order_relaxed);
+	customReach.store(sanitized("CustomReach", 0.1f, 8.0f, 1.0f), std::memory_order_relaxed);
 	const float value = j.value("MatchDistanceUnits", 64.0f);
 	matchDistanceUnits.store(std::isfinite(value) ? std::clamp(value, 0.0f, 512.0f) : 64.0f,
 		std::memory_order_relaxed);
@@ -820,11 +890,38 @@ void NativePBRFeature::RegisterUxActions()
 			feature.snowCoverEligible.store(args.at("coverEligible").get<bool>(), std::memory_order_relaxed);
 	});
 }
+void NativeLLFFeature::RegisterUxActions()
+{
+	FEATURE_COMMAND("configureSources", "Set native LLF source properties: inheritOriginal, vanillaMatches, matchedRadiance (bool); customSourceRadius, customIntensity, customReach (multipliers).", [](Feature* self, const json& args) {
+		auto& feature = *static_cast<NativeLLFFeature*>(self);
+		if (args.contains("inheritOriginal"))
+			feature.inheritOriginal.store(args.at("inheritOriginal").get<bool>(), std::memory_order_relaxed);
+		if (args.contains("vanillaMatches"))
+			feature.useVanillaMatches.store(args.at("vanillaMatches").get<bool>(), std::memory_order_relaxed);
+		if (args.contains("matchedRadiance"))
+			feature.contributeMatched.store(args.at("matchedRadiance").get<bool>(), std::memory_order_relaxed);
+		const auto tune = [&args](const char* key, std::atomic<float>& target, float low, float high) {
+			if (!args.contains(key))
+				return;
+			const float value = args.at(key).get<float>();
+			if (std::isfinite(value))
+				target.store(std::clamp(value, low, high), std::memory_order_relaxed);
+		};
+		tune("customSourceRadius", feature.customSourceSize, 0.1f, 8.0f);
+		tune("customIntensity", feature.customIntensity, 0.0f, 8.0f);
+		tune("customReach", feature.customReach, 0.1f, 8.0f);
+	});
+}
 void NativeLLFFeature::SaveSettings(json& j)
 {
 	j = { { "Enabled", enabled.load(std::memory_order_relaxed) },
 		{ "ContributeUnmatched", contributeUnmatched.load(std::memory_order_relaxed) },
 		{ "ContributeMatched", contributeMatched.load(std::memory_order_relaxed) },
+		{ "InheritOriginal", inheritOriginal.load(std::memory_order_relaxed) },
+		{ "VanillaMatchedCharacteristics", useVanillaMatches.load(std::memory_order_relaxed) },
+		{ "CustomSourceRadius", customSourceSize.load(std::memory_order_relaxed) },
+		{ "CustomIntensity", customIntensity.load(std::memory_order_relaxed) },
+		{ "CustomReach", customReach.load(std::memory_order_relaxed) },
 		{ "MatchDistanceUnits", matchDistanceUnits.load(std::memory_order_relaxed) },
 		{ "Contribution", contribution.load(std::memory_order_relaxed) } };
 }
@@ -898,6 +995,8 @@ json NativeLLFFeature::GetDiagnostics()
 	json report{ { "selected", enabled.load() }, { "native", IsActive() },
 		{ "contributeUnmatched", contributeUnmatched.load() },
 		{ "contributeMatched", contributeMatched.load() },
+		{ "inheritOriginal", inheritOriginal.load() },
+		{ "vanillaMatchedCharacteristics", useVanillaMatches.load() },
 		{ "matchDistanceUnits", matchDistanceUnits.load() },
 		{ "contribution", contribution.load() },
 		{ "observedLights", lights ? lights->lights.size() : size_t{ 0 } },

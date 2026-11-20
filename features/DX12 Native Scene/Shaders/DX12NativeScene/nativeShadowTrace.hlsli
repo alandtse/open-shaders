@@ -104,7 +104,9 @@ void TraceNativeShadow(uint2 pixel)
 			continue;
 		}
 		float4 falloff = LightSnapshot.Load(int3(base + 1u, 0, 0));
-		float radius = min(max(falloff.x * PointLightFalloff.x, MinimumDistance), MaximumDistance);
+		float4 sourceFalloff = LightSnapshot.Load(int3(base + 3u, 0, 0));
+		uint falloffMode = uint(sourceFalloff.x);
+		float radius = min(max(falloff.x * (falloffMode == 0u ? PointLightFalloff.x : 1.0f), MinimumDistance), MaximumDistance);
 		if (dist >= radius)
 			continue;
 		int admission = LightRoomAdmission(ReceiverRoom::Unknown, lightIndex);
@@ -115,9 +117,14 @@ void TraceNativeShadow(uint2 pixel)
 		if (admission == 0)
 			continue;
 		float sourceRadius = max(falloff.w, MinimumDistance);
-		float fade = saturate((radius - dist) / max(radius * PointLightFalloff.y, MinimumDistance));
-		float cutoff = pow(fade * fade * (3 - 2 * fade), PointLightFalloff.z);
-		float attenuation = cutoff / max(dist * dist + sourceRadius * sourceRadius, 1e-4);
+		float fade = falloffMode == 0u ?
+			saturate((radius - dist) / max(radius * PointLightFalloff.y, MinimumDistance)) :
+			saturate((radius - dist) * sourceFalloff.y);
+		float cutoff = falloffMode == 2u ? 1.0f - saturate((dist / radius) * (dist / radius)) :
+			falloffMode == 1u ? fade * fade * (3 - 2 * fade) :
+			pow(fade * fade * (3 - 2 * fade), PointLightFalloff.z);
+		float attenuation = falloffMode == 2u ? cutoff :
+			cutoff / max(dist * dist + sourceRadius * sourceRadius, 1e-4);
 		float3 direction = delta / dist;
 		float facing = normalMode == 0u ? 1 : max(0, dot(normal, direction));
 		float weight = NativeShadowLightWeight(dot(max(radiance.rgb, 0), float3(0.2126, 0.7152, 0.0722)), attenuation, facing);

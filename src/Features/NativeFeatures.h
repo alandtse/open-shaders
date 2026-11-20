@@ -158,6 +158,7 @@ struct NativeLLFFeature final : Feature
 		float3 position{}, radiance{};
 		float radius = 0.0f, sourceRadius = 0.0f, fadeZone = 0.0f;
 		uint32_t flags = 0, shadowSlot = 0;
+		uint32_t falloffMode = 0;
 	};
 	struct LightFrame
 	{
@@ -169,6 +170,14 @@ struct NativeLLFFeature final : Feature
 	// can be added experimentally without changing SCM's source identities.
 	std::atomic<bool> contributeUnmatched{ true };
 	std::atomic<bool> contributeMatched{ false };
+	struct LightControls
+	{
+		bool inheritOriginal = true, useVanillaMatches = false;
+		float sourceSize = 1.0f, intensity = 1.0f, reach = 1.0f;
+		bool operator==(const LightControls&) const = default;
+	};
+	std::atomic<bool> inheritOriginal{ true }, useVanillaMatches{ false };
+	std::atomic<float> customSourceSize{ 1.0f }, customIntensity{ 1.0f }, customReach{ 1.0f };
 
 	std::atomic<float> matchDistanceUnits{ 64.0f };
 	// Radiance gain for opted-in LLF contributions.
@@ -204,6 +213,7 @@ private:
 		std::shared_ptr<const DX12Native::PreparedCell> prepared;
 		float matchUnits = 0.0f, gain = 0.0f;
 		bool contribute = false, contributeMatches = false, valid = false;
+		LightControls controls;
 		UnifiedLights result;
 	};
 	mutable std::mutex lightMutex;
@@ -224,6 +234,7 @@ public:
 	void DrawSettings() override;
 	void LoadSettings(json&) override;
 	void SaveSettings(json&) override;
+	void RegisterUxActions() override;
 	void OnSceneTransitionReset(bool a_open) override;
 	void OnRuntimeDisabled() override { ClearCapturedLights(); }
 	void GameLoaded() override { ClearCapturedLights(); }
@@ -232,6 +243,11 @@ public:
 		enabled = true;
 		contributeUnmatched = true;
 		contributeMatched = false;
+		inheritOriginal = true;
+		useVanillaMatches = false;
+		customSourceSize = 1.0f;
+		customIntensity = 1.0f;
+		customReach = 1.0f;
 		matchDistanceUnits = 64.0f;
 		contribution = 1.0f;
 	}

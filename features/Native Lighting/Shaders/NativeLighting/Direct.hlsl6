@@ -291,16 +291,22 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		++eligibleLights;
 		float3 delta = light.positionRadius.xyz - position;
 		float d = length(delta);
-		float radius = min(max(light.positionRadius.w * LightTuning.x, MinimumDistance), 60000.0f);
+		const uint falloffMode = light.flags.y;
+		float radius = min(max(light.positionRadius.w * (falloffMode == 0u ? LightTuning.x : 1.0f), MinimumDistance), 60000.0f);
 		if (!isfinite(d) || d <= MinimumDistance || d >= radius) continue;
 		float3 l = delta / d;
 		float ndotl = NormalInfluence == 0u ? 1.0f : saturate(dot(n, l));
 		if (ndotl <= 0) continue;
 		Count(8);
 		float sourceRadius = max(light.radianceSourceRadius.w, MinimumDistance);
-		float fade = saturate((radius - d) / max(radius * LightTuning.y, MinimumDistance));
+		float fade = falloffMode == 0u ?
+			saturate((radius - d) / max(radius * LightTuning.y, MinimumDistance)) :
+			saturate((radius - d) * asfloat(light.flags.z));
 		float smoothCutoff = fade * fade * (3 - 2 * fade);
-		float attenuation = pow(smoothCutoff, LightTuning.z) / max(d * d + sourceRadius * sourceRadius, 1e-4f);
+		float attenuation = falloffMode == 2u ?
+			1.0f - saturate((d / radius) * (d / radius)) :
+			(falloffMode == 1u ? smoothCutoff : pow(smoothCutoff, LightTuning.z)) /
+			max(d * d + sourceRadius * sourceRadius, 1e-4f);
 		float3 visibilityTarget = light.positionRadius.xyz;
 		if (ShadowTuning.z >= 0.5f && ShadowTuning.y > 0.0f) {
 			const float emitterRadius = min(sourceRadius * ShadowTuning.y, d * 0.5f);
@@ -362,7 +368,8 @@ void main(uint2 pixel : SV_DispatchThreadID)
 			const float neutralLuminance = dot(lightColor, float3(0.2126f, 0.7152f, 0.0722f));
 			lightColor = lerp(lightColor, neutralLuminance.xxx, neutralSnowLight);
 		}
-		float3 irradiance = lightColor * attenuation * ndotl * shadowVisibility;
+		float3 irradiance = lightColor * attenuation * ndotl * shadowVisibility *
+			(falloffMode == 0u ? LightTuning.w : 1.0f);
 		float3 diffuseResponse = (1 - material.metallic) * material.baseColor *
 			(NormalInfluence == 0u ? 1.0f : (1 - fresnel)) * BRDF::Diffuse_Lambert();
 		if (NormalInfluence != 0u && nativeClearcoat.x > 0.0f) {
@@ -385,9 +392,9 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		max(material.emission, 0.0f) * ShadowTuning.w : 0.0f;
 	if (eligibleLights == 0 && !any(emission > 0.0f) && NativePBRPadding.x == 0u) { Finish(pixel, 0, 0, originalReason == 0 ? 6 : originalReason); return; }
 	if (!all(isfinite(diffuse)) || !all(isfinite(specular))) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 8 : originalReason); return; }
-	const float4 diffuseOutput = float4(diffuse * DiffuseIntensity * LightTuning.w +
+	const float4 diffuseOutput = float4(diffuse * DiffuseIntensity +
 		((EnabledLobes & 1u) != 0u ? emission : 0.0f), 1);
-	const float4 specularOutput = float4(specular * SpecularIntensity * LightTuning.w, 1);
+	const float4 specularOutput = float4(specular * SpecularIntensity, 1);
 	if (!all(isfinite(diffuseOutput)) || !all(isfinite(specularOutput))) { Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 8 : originalReason); return; }
 	if (ComparisonEnabled != 0) { ComparisonDiffuse[pixel] = diffuseOutput; ComparisonSpecular[pixel] = specularOutput; }
 	RawDirectDiffuse[pixel] = diffuseOutput;

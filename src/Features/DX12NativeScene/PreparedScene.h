@@ -14,6 +14,8 @@ namespace DX12Native
 		float radius = 0;
 		float sourceRadius = 0;
 		bool supported = false;
+		uint32_t falloffMode = 0;
+		float fadeZone = 0;
 	};
 	/** @brief Owns offline geometry and baseline lights independently of engine pointers. */
 	struct PreparedCell
