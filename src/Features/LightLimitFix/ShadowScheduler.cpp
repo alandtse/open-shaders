@@ -1595,17 +1595,29 @@ namespace ShadowCasterManager
 	__declspec(noinline) static bool SafeEnableAndValidate(LightEntry& e, RE::NiCamera* a_camera,
 		RE::ShadowSceneNode* a_ssn, std::uint32_t a_slot, bool a_pinOrigin, UsableFn&& a_isUsable)
 	{
+		RE::NiAVObject* facedNode = nullptr;
+		RE::NiMatrix3 facedRotate{};
 		__try {
 			// UpdateCamera copies the light pose into the shadow camera only while dynamic is set.
 			const bool wasDynamic = e.Light->dynamic;
 			if (a_pinOrigin)
 				e.Light->dynamic = false;
 			const auto* carrier = CarrierBody(e.Light);
+			if (carrier) {
+				facedNode = e.Light->light.get();
+				facedRotate = facedNode->world.rotate;
+			}
 			WithCarrierFacing(e.Light, carrier, [&] { return e.Light->UpdateCamera(a_camera); });
 			e.Light->dynamic = wasDynamic;
 			EnableLight(e.Light, a_camera, a_ssn, a_slot, carrier);
 			return e.Light && a_isUsable(e.Light);
 		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+			// SEH skips WithCarrierFacing's scope_exit destructor, so restore the node rotation here.
+			__try {
+				if (facedNode)
+					facedNode->world.rotate = facedRotate;
+			} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+			}
 			LogShadowSehCatch(e.Light);
 			return false;
 		}
