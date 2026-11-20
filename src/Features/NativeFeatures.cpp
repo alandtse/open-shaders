@@ -420,16 +420,25 @@ void NativeLLFFeature::PublishLights(const LightLimitFix::LightData* data, uint3
 		const auto& source = data[i];
 		if (source.lightFlags.any(LightLimitFix::LightFlags::Disabled))
 			continue;
+		const bool linearColor = source.lightFlags.any(LightLimitFix::LightFlags::Linear);
+		const auto toLinear = [linearColor](float value) {
+			if (linearColor)
+				return value;
+			return value <= 0.04045f ? value / 12.92f : std::pow((value + 0.055f) / 1.055f, 2.4f);
+		};
+		const float scale = source.fade * source.radius * source.radius;
 		const auto& p = source.positionWS[0].data;
 		const Light light{
 			{ p.x + eye.x, p.y + eye.y, p.z + eye.z },
-			{ source.color.x * source.fade, source.color.y * source.fade, source.color.z * source.fade },
+			{ toLinear(source.color.x) * scale, toLinear(source.color.y) * scale, toLinear(source.color.z) * scale },
 			source.radius, std::sqrt(std::max(source.sizeBias, 0.0f)), source.fadeZone,
 			static_cast<uint32_t>(source.lightFlags.underlying()), source.shadowMapIndex
 		};
 		if (!std::isfinite(light.position.x) || !std::isfinite(light.position.y) || !std::isfinite(light.position.z) ||
 			!std::isfinite(light.radiance.x) || !std::isfinite(light.radiance.y) || !std::isfinite(light.radiance.z) ||
-			!std::isfinite(light.radius) || light.radius <= 0.0f)
+			!std::isfinite(light.radius) || light.radius <= 0.0f || light.radius > 60000.0f ||
+			!std::isfinite(light.sourceRadius) ||
+			!std::isfinite(source.fade) || source.fade <= 0.0f)
 			continue;
 		generation->lights.push_back(light);
 	}
