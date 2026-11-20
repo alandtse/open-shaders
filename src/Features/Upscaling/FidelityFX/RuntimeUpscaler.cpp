@@ -650,29 +650,10 @@ FidelityFX::RuntimeCommandContext* FidelityFX::AcquireRuntimeCommandContext()
 		return &commandContext;
 	}
 
-	uint32_t waitIndex = commandContextCount;
-	uint64_t waitValue = std::numeric_limits<uint64_t>::max();
-	for (uint32_t i = 0; i < commandContextCount; ++i) {
-		auto& commandContext = runtimeCommandContexts[i];
-		if (!commandContext.commandAllocator || !commandContext.commandList || commandContext.fenceValue == 0)
-			continue;
-		if (commandContext.fenceValue < waitValue) {
-			waitValue = commandContext.fenceValue;
-			waitIndex = i;
-		}
-	}
-
-	if (waitIndex == commandContextCount)
-		return nullptr;
-
-	if (!WaitForRuntimeD3D12Fence(waitValue)) {
-		return nullptr;
-	}
-
-	auto& commandContext = runtimeCommandContexts[waitIndex];
-	commandContext.fenceValue = 0;
-	runtimeCommandContextCursor = (waitIndex + 1) % commandContextCount;
-	return &commandContext;
+	// An occupied command allocator cannot be reset until its GPU fence retires.
+	// Do not stall the game thread for up to SharedFence::kFenceTimeoutMs;
+	// the caller already has a guarded fallback when runtime FSR cannot dispatch.
+	return nullptr;
 }
 
 void FidelityFX::ResetRuntimeCommandContexts()

@@ -421,24 +421,25 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 
 	bool isHDR = hdr && hdr->settings.enableHDR;
 
+	// Fence-only back-pressure. Never wait on a frame allocator from the render
+	// thread: if the GPU still owns it, skip this present and try again later.
+	// Check *before* adding another DX11/DX12 interop queue dependency.
+	if (frameFenceValues[frameIndex]) {
+		if (!interopFence.fence12)
+			return DXGI_ERROR_DEVICE_REMOVED;
+		const uint64_t completed = interopFence.fence12->GetCompletedValue();
+		if (completed == UINT64_MAX)
+			return DXGI_ERROR_DEVICE_REMOVED;
+		if (completed < frameFenceValues[frameIndex])
+			return DXGI_ERROR_WAS_STILL_DRAWING;
+	}
+
 	// Wait for D3D11 to finish (includes ApplyHDR scene encoding AND UIBrightnessCS)
+	// using a GPU queue dependency, not a CPU-blocking fence.
 	const uint64_t d3d11SignalValue = interopFence.Next();
 	DX::ThrowIfFailed(d3d11Context->Signal(interopFence.fence11.get(), d3d11SignalValue));
 	DX::ThrowIfFailed(commandQueue->Wait(interopFence.fence12.get(), d3d11SignalValue));
 
-	// New frame, reset
-	if (frameFenceValues[frameIndex]) {
-		DWORD waitError = 0;
-		const auto outcome = interopFence.CpuWaitOutcome(frameFenceValues[frameIndex], kFrameFenceTimeoutMs, &waitError);
-		if (outcome == SharedFence::WaitOutcome::kTimeout) {
-			static bool timeoutLogged = false;
-			if (!std::exchange(timeoutLogged, true))
-				logger::warn("[DX12SwapChain] frame fence did not retire within {} ms; skipping presents until it does", kFrameFenceTimeoutMs);
-			return DXGI_ERROR_WAS_STILL_DRAWING;
-		}
-		if (outcome == SharedFence::WaitOutcome::kFailed)
-			return waitError ? HRESULT_FROM_WIN32(waitError) : DXGI_ERROR_DEVICE_REMOVED;
-	}
 	DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
 	DX::ThrowIfFailed(commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr));
 	ReleaseRetiredDLSSGInputCopies();
