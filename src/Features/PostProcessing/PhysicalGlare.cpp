@@ -12,6 +12,7 @@
 #include "ShaderCache.h"
 #include "Util.h"
 #include "Utils/DebugView.h"
+#include "Utils/Game.h"
 
 namespace
 {
@@ -672,7 +673,7 @@ void PhysicalGlare::GeneratePSF(const Settings& a_effective)
 		.DeltaTime = 0.f,
 		.FFTResolution = currentFFTResolution,
 		.PaddingRatio = a_effective.PaddingRatio,
-		.ScreenWidth = texOutput ? (float)texOutput->desc.Width : 1920.f,
+		.ScreenWidth = Util::EyeWidth(texOutput ? (float)texOutput->desc.Width : 1920.f),
 		.ScreenHeight = texOutput ? (float)texOutput->desc.Height : 1080.f,
 		.ChannelIndex = 0,
 		.FresnelExponent = a_effective.FresnelExponent,
@@ -918,7 +919,7 @@ void PhysicalGlare::Draw(TextureInfo& inout_tex)
 		.DeltaTime = *globals::game::deltaTime,
 		.FFTResolution = currentFFTResolution,
 		.PaddingRatio = effective.PaddingRatio,
-		.ScreenWidth = (float)texOutput->desc.Width,
+		.ScreenWidth = Util::EyeWidth((float)texOutput->desc.Width),
 		.ScreenHeight = (float)texOutput->desc.Height,
 		.ChannelIndex = 0,
 		.FresnelExponent = effective.FresnelExponent,
@@ -974,119 +975,125 @@ void PhysicalGlare::Draw(TextureInfo& inout_tex)
 		context->CSSetConstantBuffers(1, 1, &cb);
 	}
 
-	// ========== Step 2: Threshold + downsample scene into FFT textures ==========
-	{
-		CS_GPU_PASS("PostProcessing::PhysicalGlare::FFT");
+	const uint eyeCount = Util::EyeCount();
+	for (uint eye = 0; eye < eyeCount; ++eye) {
+		cbData.EyeIndex = eye;
+		glareCB->Update(cbData);
+
+		// ========== Step 2: Threshold + downsample scene into FFT textures ==========
 		{
-			// We write R, G, B channels into texFFT[0..2][0]
-			ID3D11ShaderResourceView* srv = inout_tex.srv;
-			std::array<ID3D11UnorderedAccessView*, 3> uavs = {
-				texFFT[0][0]->uav.get(),
-				texFFT[1][0]->uav.get(),
-				texFFT[2][0]->uav.get()
-			};
+			CS_GPU_PASS("PostProcessing::PhysicalGlare::FFT");
+			{
+				// We write R, G, B channels into texFFT[0..2][0]
+				ID3D11ShaderResourceView* srv = inout_tex.srv;
+				std::array<ID3D11UnorderedAccessView*, 3> uavs = {
+					texFFT[0][0]->uav.get(),
+					texFFT[1][0]->uav.get(),
+					texFFT[2][0]->uav.get()
+				};
 
-			context->CSSetShaderResources(0, 1, &srv);
-			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-			context->CSSetShader(thresholdCS.get(), nullptr, 0);
-			context->Dispatch((currentFFTResolution + 7) >> 3, (currentFFTResolution + 7) >> 3, 1);
+				context->CSSetShaderResources(0, 1, &srv);
+				context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+				context->CSSetShader(thresholdCS.get(), nullptr, 0);
+				context->Dispatch((currentFFTResolution + 7) >> 3, (currentFFTResolution + 7) >> 3, 1);
 
-			srv = nullptr;
-			uavs.fill(nullptr);
-			context->CSSetShaderResources(0, 1, &srv);
-			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+				srv = nullptr;
+				uavs.fill(nullptr);
+				context->CSSetShaderResources(0, 1, &srv);
+				context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+			}
+
+			// ========== Step 3: Forward FFT on scene (per channel) ==========
+			const uint fftVariant = GetFFTVariant(currentFFTResolution);
+			for (int ch = 0; ch < 3; ch++) {
+				// Row FFT: texFFT[ch][0] -> texFFT[ch][1]
+				DispatchFFT(fftRowCS[fftVariant].get(), texFFT[ch][0].get(), texFFT[ch][1].get(), currentFFTResolution);
+				// Col FFT: texFFT[ch][1] -> texFFT[ch][0]
+				DispatchFFT(fftColCS[fftVariant].get(), texFFT[ch][1].get(), texFFT[ch][0].get(), currentFFTResolution);
+			}
+
+			// ========== Step 4: Frequency-domain multiply (scene * PSF) ==========
+			{
+				std::array<ID3D11ShaderResourceView*, 6> srvs = {
+					texFFT[0][0]->srv.get(),
+					texPSF_FFT[0]->srv.get(),
+					texFFT[1][0]->srv.get(),
+					texPSF_FFT[1]->srv.get(),
+					texFFT[2][0]->srv.get(),
+					texPSF_FFT[2]->srv.get(),
+				};
+				std::array<ID3D11UnorderedAccessView*, 3> uavs = {
+					texFFT[0][1]->uav.get(), texFFT[1][1]->uav.get(), texFFT[2][1]->uav.get()
+				};
+
+				context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+				context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+				context->CSSetShader(multiplyCS.get(), nullptr, 0);
+				context->Dispatch((currentFFTResolution + 7) >> 3, (currentFFTResolution + 7) >> 3, 1);
+
+				srvs.fill(nullptr);
+				uavs.fill(nullptr);
+				context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+				context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+			}
+
+			// ========== Step 5: Inverse FFT (per channel) ==========
+			for (int ch = 0; ch < 3; ch++) {
+				// Row IFFT: texFFT[ch][1] -> texFFT[ch][0]
+				DispatchFFT(fftRowInvCS[fftVariant].get(), texFFT[ch][1].get(), texFFT[ch][0].get(), currentFFTResolution);
+				// Col IFFT: texFFT[ch][0] -> texFFT[ch][1]
+				DispatchFFT(fftColInvCS[fftVariant].get(), texFFT[ch][0].get(), texFFT[ch][1].get(), currentFFTResolution);
+			}
+			// Pack the three real components into one RGBA32F texture. Filtering this
+			// texture is channel-wise identical to filtering the three R32F sources.
+			{
+				std::array<ID3D11ShaderResourceView*, 3> srvs = {
+					texFFT[0][1]->srv.get(),
+					texFFT[1][1]->srv.get(),
+					texFFT[2][1]->srv.get(),
+				};
+				ID3D11UnorderedAccessView* uav = texGlarePacked->uav.get();
+
+				context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+				context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+				context->CSSetShader(packCS.get(), nullptr, 0);
+				context->Dispatch((currentFFTResolution + 7) >> 3, (currentFFTResolution + 7) >> 3, 1);
+
+				srvs.fill(nullptr);
+				uav = nullptr;
+				context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+				context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+			}
 		}
 
-		// ========== Step 3: Forward FFT on scene (per channel) ==========
-		const uint fftVariant = GetFFTVariant(currentFFTResolution);
-		for (int ch = 0; ch < 3; ch++) {
-			// Row FFT: texFFT[ch][0] -> texFFT[ch][1]
-			DispatchFFT(fftRowCS[fftVariant].get(), texFFT[ch][0].get(), texFFT[ch][1].get(), currentFFTResolution);
-			// Col FFT: texFFT[ch][1] -> texFFT[ch][0]
-			DispatchFFT(fftColCS[fftVariant].get(), texFFT[ch][1].get(), texFFT[ch][0].get(), currentFFTResolution);
-		}
-
-		// ========== Step 4: Frequency-domain multiply (scene * PSF) ==========
+		// ========== Step 6: Composite (upsample + add to scene) ==========
 		{
-			std::array<ID3D11ShaderResourceView*, 6> srvs = {
-				texFFT[0][0]->srv.get(),
-				texPSF_FFT[0]->srv.get(),
-				texFFT[1][0]->srv.get(),
-				texPSF_FFT[1]->srv.get(),
-				texFFT[2][0]->srv.get(),
-				texPSF_FFT[2]->srv.get(),
+			CS_GPU_PASS("PostProcessing::PhysicalGlare::Composite");
+			// t0 = scene, t1 = packed RGB IFFT result,
+			// u0 = output
+			std::array<ID3D11ShaderResourceView*, 2> srvs = {
+				inout_tex.srv,
+				texGlarePacked->srv.get(),
 			};
-			std::array<ID3D11UnorderedAccessView*, 3> uavs = {
-				texFFT[0][1]->uav.get(), texFFT[1][1]->uav.get(), texFFT[2][1]->uav.get()
+			std::array<ID3D11UnorderedAccessView*, 1> uavs = {
+				texOutput->uav.get(),
 			};
+			ID3D11SamplerState* sampler = linearSampler.get();
 
 			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-			context->CSSetShader(multiplyCS.get(), nullptr, 0);
-			context->Dispatch((currentFFTResolution + 7) >> 3, (currentFFTResolution + 7) >> 3, 1);
+			context->CSSetSamplers(0, 1, &sampler);
+			context->CSSetShader(compositeCS.get(), nullptr, 0);
+
+			context->Dispatch(((uint)cbData.ScreenWidth + 7) >> 3, ((uint)texOutput->desc.Height + 7) >> 3, 1);
 
 			srvs.fill(nullptr);
 			uavs.fill(nullptr);
+			sampler = nullptr;
 			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+			context->CSSetSamplers(0, 1, &sampler);
 		}
-
-		// ========== Step 5: Inverse FFT (per channel) ==========
-		for (int ch = 0; ch < 3; ch++) {
-			// Row IFFT: texFFT[ch][1] -> texFFT[ch][0]
-			DispatchFFT(fftRowInvCS[fftVariant].get(), texFFT[ch][1].get(), texFFT[ch][0].get(), currentFFTResolution);
-			// Col IFFT: texFFT[ch][0] -> texFFT[ch][1]
-			DispatchFFT(fftColInvCS[fftVariant].get(), texFFT[ch][0].get(), texFFT[ch][1].get(), currentFFTResolution);
-		}
-		// Pack the three real components into one RGBA32F texture. Filtering this
-		// texture is channel-wise identical to filtering the three R32F sources.
-		{
-			std::array<ID3D11ShaderResourceView*, 3> srvs = {
-				texFFT[0][1]->srv.get(),
-				texFFT[1][1]->srv.get(),
-				texFFT[2][1]->srv.get(),
-			};
-			ID3D11UnorderedAccessView* uav = texGlarePacked->uav.get();
-
-			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-			context->CSSetShader(packCS.get(), nullptr, 0);
-			context->Dispatch((currentFFTResolution + 7) >> 3, (currentFFTResolution + 7) >> 3, 1);
-
-			srvs.fill(nullptr);
-			uav = nullptr;
-			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-		}
-	}
-
-	// ========== Step 6: Composite (upsample + add to scene) ==========
-	{
-		CS_GPU_PASS("PostProcessing::PhysicalGlare::Composite");
-		// t0 = scene, t1 = packed RGB IFFT result,
-		// u0 = output
-		std::array<ID3D11ShaderResourceView*, 2> srvs = {
-			inout_tex.srv,
-			texGlarePacked->srv.get(),
-		};
-		std::array<ID3D11UnorderedAccessView*, 1> uavs = {
-			texOutput->uav.get(),
-		};
-		ID3D11SamplerState* sampler = linearSampler.get();
-
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetSamplers(0, 1, &sampler);
-		context->CSSetShader(compositeCS.get(), nullptr, 0);
-
-		context->Dispatch(((uint)texOutput->desc.Width + 7) >> 3, ((uint)texOutput->desc.Height + 7) >> 3, 1);
-
-		srvs.fill(nullptr);
-		uavs.fill(nullptr);
-		sampler = nullptr;
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetSamplers(0, 1, &sampler);
 	}
 
 	// Cleanup
