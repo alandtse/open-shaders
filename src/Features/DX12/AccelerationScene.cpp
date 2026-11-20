@@ -95,25 +95,29 @@ namespace DX12
 		const uint64_t value = ++fenceValue;
 		if (FAILED(queue->Signal(fence.get(), value)))
 			return false;
-		if (fence->GetCompletedValue() >= value)
-			return true;
+		// A submitted BLAS/TLAS build owns upload, scratch, allocator and destination
+		// memory until its fence retires. Cancellation may stop the *next* build,
+		// but must never release in-flight buffers on a stop request.
+		(void)stop;
 		const HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-		if (!event)
-			return false;
-		const HRESULT armed = fence->SetEventOnCompletion(value, event);
+		const bool armed = event && SUCCEEDED(fence->SetEventOnCompletion(value, event));
 		bool completed = false;
-		if (SUCCEEDED(armed)) {
-			while (!stop.stop_requested()) {
-				const DWORD wait = WaitForSingleObject(event, 20);
-				if (wait == WAIT_OBJECT_0) {
-					completed = fence->GetCompletedValue() >= value;
-					break;
-				}
-				if (wait != WAIT_TIMEOUT || fence->GetCompletedValue() == UINT64_MAX)
-					break;
+		for (;;) {
+			const uint64_t current = fence->GetCompletedValue();
+			if (current >= value && current != UINT64_MAX) {
+				completed = true;
+				break;
 			}
+			if (current == UINT64_MAX || FAILED(device->GetDeviceRemovedReason()))
+				break;
+			// Device waits happen solely on AccelerationScene's worker thread.
+			if (armed)
+				(void)WaitForSingleObject(event, 20);
+			else
+				Sleep(20);
 		}
-		CloseHandle(event);
+		if (event)
+			CloseHandle(event);
 		return completed;
 	}
 

@@ -76,7 +76,13 @@ void DX12NativeScene::PreShadowMaps()
 
 void DX12NativeScene::UpdateLights()
 {
-	const auto prepared = globals::features::dx12Resources.GetPreparedLights();
+	const auto grid = globals::features::dx12Resources.GetGrid();
+	const uint32_t scope = grid ? grid->requested.front().scope : 0;
+	if (!grid || preparedCacheRevision != grid->lightRevision || preparedCacheScope != scope) {
+		preparedCache = globals::features::dx12Resources.GetPreparedLights();
+		preparedCacheRevision = grid ? grid->lightRevision : std::numeric_limits<uint64_t>::max();
+		preparedCacheScope = scope;
+	}
 	std::vector<DX12::RuntimeLight> runtime;
 	if (ShadowCasterManager::IsActive()) {
 		const auto& active = ShadowCasterManager::GetLights();
@@ -106,7 +112,7 @@ void DX12NativeScene::UpdateLights()
 	}
 	const auto camera = globals::game::player ? globals::game::player->GetPosition() : RE::NiPoint3{};
 	const float3 cameraPosition{ camera.x, camera.y, camera.z };
-	auto resolved = DX12::MatchPreparedLights(prepared, runtime, settings.lights, cameraPosition);
+	auto resolved = DX12::MatchPreparedLights(preparedCache, runtime, settings.lights, cameraPosition);
 	lights.store(std::make_shared<const DX12::ResolvedLights>(std::move(resolved)), std::memory_order_release);
 }
 
@@ -172,6 +178,9 @@ void DX12NativeScene::OnSceneTransitionReset(bool opening)
 void DX12NativeScene::OnRuntimeDisabled()
 {
 	scene.Clear();
+	preparedCache.clear();
+	preparedCacheRevision = std::numeric_limits<uint64_t>::max();
+	preparedCacheScope = 0;
 	lights.store(nullptr, std::memory_order_release);
 	coveredLightIDs.store(nullptr, std::memory_order_release);
 	ShadowCasterManager::SetNativeStaticMaskActive(false);
