@@ -87,7 +87,7 @@ namespace DX12
 		const auto start = [&](SubcellKey key, bool speculative, size_t index) -> std::optional<SubcellKey> {
 			const auto& existing = speculative ? current->predictiveResident[index] : current->resident[index];
 			if (!key.scope || (existing && existing->state != Tile::State::Requested &&
-				(existing->state != Tile::State::RetryWaiting || std::chrono::steady_clock::now() < existing->retryAfter)))
+								  (existing->state != Tile::State::RetryWaiting || std::chrono::steady_clock::now() < existing->retryAfter)))
 				return std::nullopt;
 			auto tile = existing ? std::make_shared<Tile>(*existing) : std::make_shared<Tile>();
 			tile->key = key;
@@ -158,8 +158,8 @@ namespace DX12
 		tile->key = publication.key;
 		// Retain bounded retry state across failed publications of the same tile.
 		const auto existing = active != current->requested.end() ?
-			current->resident[std::distance(current->requested.begin(), active)] :
-			current->predictiveResident[std::distance(current->predictive.begin(), predictive)];
+		                          current->resident[std::distance(current->requested.begin(), active)] :
+		                          current->predictiveResident[std::distance(current->predictive.begin(), predictive)];
 		tile->preparationAttempts = std::min<unsigned>(existing ? unsigned(existing->preparationAttempts) + 1 : 1u, 3u);
 		// The worker has already verified all positions, triangle indices, transforms, identities and budgets.
 		// Render-thread publication only transfers ownership of immutable GPU-scene inputs.
@@ -178,7 +178,7 @@ namespace DX12
 			if (tile->preparationAttempts < 3) {
 				tile->state = Tile::State::RetryWaiting;
 				tile->retryAfter = std::chrono::steady_clock::now() +
-					std::chrono::milliseconds(tile->preparationAttempts == 1 ? 500 : 2000);
+				                   std::chrono::milliseconds(tile->preparationAttempts == 1 ? 500 : 2000);
 			} else {
 				tile->state = Tile::State::Incomplete;
 			}
