@@ -1211,12 +1211,14 @@ namespace ShadowCasterManager
 
 			if (camera)
 				s_cullCameraPos = camera->world.translate;  // viewer, for the caster cull
+			SetNativeStaticOwnershipForCull(nativeDynamicOnly);
 			SetCurrentCullLight(light);
 			struct ClearCullLight
 			{
 				~ClearCullLight()
 				{
 					SetCurrentCullLight(nullptr);
+					SetNativeStaticOwnershipForCull(false);
 					// Unconditional reset: the split-path reset below is skipped
 					// when `split` is false, which would otherwise leave a stale
 					// DynamicOnly filtering the next walk.

@@ -530,6 +530,8 @@ namespace ShadowCasterManager
 	bool* GetFocusShadowSelected();
 	uint64_t* GetSunPtr();
 	uint32_t* GetAccumLightSlot();
+	/** Per-accumulate SCM ownership, not a global prepared-geometry exclusion. */
+	void SetNativeStaticOwnershipForCull(bool a_owned);
 	uint32_t* GetMaskIndex();
 	uint32_t* GetShadowMask();
 	bool LightContainsCamera(const RE::NiLight* a_niLight, const RE::NiCamera* a_camera);

@@ -245,7 +245,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 	selected.ShadowBlend = 1.0f;
 	selected.ShadowPreview = false;
 	selected.ShadowAfterLighting = false;
-	selected.ShadowSpatialReconstruction = false;
+	// Only untraced shadow pixels are reconstructed; invalid receivers remain invalid.
+	selected.ShadowSpatialReconstruction = true;
 	selectedPolicy = { 2u, 2u, 0u };
 	revision ^= offload.revision * 0x9e3779b97f4a7c15ull;
 	std::shared_ptr<const NativeLightingFeature::Contribution> lighting;

@@ -52,6 +52,13 @@ namespace ShadowCasterManager
 	/// The shadow light currently being accumulated; only non-null across an
 	/// EnableLight Accumulate call, read synchronously by the AppendVirtual hook.
 	std::atomic<RE::BSShadowLight*> s_currentCullLight{ nullptr };
+	// A prepared caster must remain available to raster lights without native ownership.
+	thread_local bool s_nativeStaticOwnershipForCull = false;
+
+	void SetNativeStaticOwnershipForCull(bool a_owned)
+	{
+		s_nativeStaticOwnershipForCull = a_owned;
+	}
 
 	/// Thread running that accumulate, 0 when idle. DrawWorld cull jobs walk
 	/// the same hooked vtables from other threads; only this thread's walk is ours.
@@ -528,9 +535,8 @@ namespace ShadowCasterManager
 			preparedStatic = rec->nativePreparedCovered;
 		}
 		ObserveNativeCaster(geom, dynamic, preparedStatic);
-		// Exactly-covered prepared triangles already intersect native DXR shadow rays.
-		// Leave unprepared static casters and all moving casters in the DX11 path.
-		if (preparedStatic)
+		// Other SCM lights still need static casters that the current native mask covers.
+		if (preparedStatic && s_nativeStaticOwnershipForCull && CurrentCullLight())
 			return true;
 		if (!useAtlas && casterPass == CasterPass::All)
 			return false;
