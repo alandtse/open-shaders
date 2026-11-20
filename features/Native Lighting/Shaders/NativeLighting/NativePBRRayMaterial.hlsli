@@ -216,15 +216,18 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 		float3 edge1 = mul((float3x3)objectToWorld, hitSurface.position2 - hitSurface.position0);
 		float3 face = cross(edge0, edge1);
 		float lengthSq = dot(face, face);
-		if (all(isfinite(face)) && lengthSq > 1e-12f)
-			surface.projectedSnowIncidence = saturate(face.z * rsqrt(lengthSq) + 0.08f);
+		if (all(isfinite(face)) && lengthSq > 1e-12f) {
+			const float upward = saturate(face.z * rsqrt(lengthSq));
+			const float gravity = upward * upward * (3.0f - 2.0f * upward);
+			surface.projectedSnowIncidence = lerp(1.0f, gravity, saturate(SnowLumps.w));
+		}
 	}
 	if (!all(isfinite(surface.geometricNormal)) ||
 		!all(isfinite(surface.tangent)) || !all(isfinite(surface.bitangent)))
 		return false;
 	NativePBR::SurfaceMaterial result = NativePBR::EvaluateOpaque(material, surface, base, normal, packed, emission,
 		coat, complexMaskDetected, binding.flags, SnowTuning, SnowRoughness, SnowUltravioletEmission,
-		SnowColorAffection, SnowSpecularAmount);
+		SnowColorAffection, SnowSpecularAmount, SnowLumps);
 	evaluated.baseColor = result.baseColor;
 	evaluated.normal = result.normal;
 	evaluated.f0 = result.f0;

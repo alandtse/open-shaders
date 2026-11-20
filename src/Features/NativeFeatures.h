@@ -93,11 +93,13 @@ struct NativePBRFeature final : Feature
 		float noiseAmount = 0.55f, noiseRaysPerPatch = 64.0f;
 		float sparkleAmount = 0.6f, sparkleDensity = 0.08f, roughness = 0.83f;
 		float ultravioletIntensity = 0.012f, colorAffection = 0.0f, specularAmount = 1.0f;
+		float lumpHeight = 0.25f, lumpSize = 3.0f, lumpDensity = 0.5f, flatness = 0.98f;
 	};
 	std::atomic<bool> snowEnabled{ true }, snowCoverEligible{ false }, snowUltravioletAffected{ false }, snowFollowParallaxUV{ false };
 	std::atomic<float> snowNoiseAmount{ 0.55f }, snowNoiseRaysPerPatch{ 64.0f };
 	std::atomic<float> snowSparkleAmount{ 0.6f }, snowSparkleDensity{ 0.08f }, snowRoughness{ 0.83f };
 	std::atomic<float> snowUltravioletIntensity{ 0.012f }, snowColorAffection{ 0.0f }, snowSpecularAmount{ 1.0f };
+	std::atomic<float> snowLumpHeight{ 0.25f }, snowLumpSize{ 3.0f }, snowLumpDensity{ 0.5f }, snowFlatness{ 0.98f };
 	/** @brief Provides the current native-only ray-hit snow controls. */
 	SnowSettings GetSnowSettings() const
 	{
@@ -106,7 +108,9 @@ struct NativePBRFeature final : Feature
 			snowNoiseAmount.load(std::memory_order_relaxed), snowNoiseRaysPerPatch.load(std::memory_order_relaxed),
 			snowSparkleAmount.load(std::memory_order_relaxed), snowSparkleDensity.load(std::memory_order_relaxed),
 			snowRoughness.load(std::memory_order_relaxed), snowUltravioletIntensity.load(std::memory_order_relaxed),
-			snowColorAffection.load(std::memory_order_relaxed), snowSpecularAmount.load(std::memory_order_relaxed) };
+			snowColorAffection.load(std::memory_order_relaxed), snowSpecularAmount.load(std::memory_order_relaxed),
+			snowLumpHeight.load(std::memory_order_relaxed), snowLumpSize.load(std::memory_order_relaxed),
+			snowLumpDensity.load(std::memory_order_relaxed), snowFlatness.load(std::memory_order_relaxed) };
 	}
 	// 1 geometry, 2 evaluated NativePBR, 3 accepted Native Lighting. Early stages are deliberate diagnostics.
 	std::atomic<uint32_t> readinessStage{ 3 };
@@ -155,6 +159,8 @@ struct NativePBRFeature final : Feature
 		snowRoughness = defaults.roughness;
 		snowUltravioletIntensity = defaults.ultravioletIntensity;
 		snowColorAffection = defaults.colorAffection; snowSpecularAmount = defaults.specularAmount;
+		snowLumpHeight = defaults.lumpHeight; snowLumpSize = defaults.lumpSize;
+		snowLumpDensity = defaults.lumpDensity; snowFlatness = defaults.flatness;
 	}
 	json GetDiagnostics() override;
 };

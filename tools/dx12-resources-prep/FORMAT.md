@@ -107,12 +107,17 @@ screen pixels, so the pattern remains attached to geometry while the view
 moves. An optional setting follows the post-parallax native material UV;
 otherwise snow retains the flat hit UV. Post-parallax mapping changes snow
 only when native PBR parallax is enabled and a material supplies height.
+An independent, smooth value-noise profile supplies native PBR normal
+perturbations for the snow lumps. Lump height (0..1), size (0.5..8 native-ray
+noise patches), and density (0..1) can be adjusted without changing DX12
+geometry or silhouettes; a zero height or density skips the extra noise.
 The crystal response uses the PBR minimum roughness (0.04) and is submitted
 into the native specular lobe only under unoccluded direct light;
 shadowed snow does not emit light. Only actual native hits evaluate the effect; no
 per-frame hit-count readback or GPU atomics are required. NativePBR owns snow
 enable, noise amount/rays-per-patch, snow parallax UV, sparkle amount/density,
-roughness, color affection (0 = neutral luminance-preserving native lighting;
+roughness, procedural lump controls, gravity flatness (0 = any face,
+1 = upward-only), color affection (0 = neutral luminance-preserving native lighting;
 1 = native light RGB tint), snow specular amount (0..2), and
 the temporary coverage override. Tuning reaches SM6.5 via the existing
 direct-lighting constant buffer, with no atlas, snow texture residency,
@@ -121,8 +126,10 @@ DX11 snow inputs, or per-scene generation. An optional NativePBR
 blue-white emission at full color affection (neutral white at zero; default
 0.012, capped at 0.05), independent of direct light presence. This is a
 stylized fluorescence approximation; there is no
-UV-spectrum light detection. An 0.08 upward-incidence margin tolerates minor face-angle
-discrepancies. This is surface shading, not geometry displacement or a
+UV-spectrum light detection. Gravity coverage blends the native triangle's
+upward-facing cosine through a smooth cubic response toward full candidate
+coverage; the flatness slider lets walls retain a tunable fraction of snow
+without weather or raster inputs. This is surface shading, not geometry displacement or a
 persistent accumulation simulation. Interior scenes receive coverage only
 when the explicit eligible-receiver test is enabled.
 

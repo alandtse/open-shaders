@@ -92,7 +92,7 @@ namespace NativePBR
 	SurfaceMaterial EvaluateOpaque(MaterialRecord material, SurfaceInput surface, float4 baseTexel,
 		float4 normalTexel, float4 packedTexel, float4 emissionTexel, float4 coatTexel,
 		bool complexMaskDetected, uint drawFlags, float4 snowTuning, float snowRoughness,
-		float snowUltravioletEmission, float snowColorAffection, float snowSpecularAmount)
+		float snowUltravioletEmission, float snowColorAffection, float snowSpecularAmount, float4 snowLumps)
 	{
 		SurfaceMaterial result;
 		result.baseColor = baseTexel.rgb;
@@ -129,6 +129,19 @@ namespace NativePBR
 		if (result.snowCoverage > 0.0f) {
 			float variation, crystal;
 			SnowDetail(surface.snowUV, surface.snowHitSeed, snowTuning, variation, crystal);
+			if (snowLumps.x > 0.0f && snowLumps.z > 0.0f) {
+				const float2 lumpSlope = SnowLumpSlope(surface.snowUV, surface.snowHitSeed,
+					snowTuning.y, snowLumps.y, snowLumps.z);
+				float3 tangent = surface.tangent - result.normal * dot(result.normal, surface.tangent);
+				const float tangentLengthSq = dot(tangent, tangent);
+				if (all(isfinite(tangent)) && tangentLengthSq > 1e-8f) {
+					tangent *= rsqrt(tangentLengthSq);
+					float3 bitangent = cross(result.normal, tangent);
+					bitangent *= dot(bitangent, surface.bitangent) < 0.0f ? -1.0f : 1.0f;
+					result.normal = normalize(result.normal - (tangent * lumpSlope.x + bitangent * lumpSlope.y) *
+						saturate(snowLumps.x) * result.snowCoverage);
+				}
+			}
 			float3 snowColor = lerp(1.0f.xxx, saturate(0.98f.xxx + variation * 0.06f),
 				saturate(snowColorAffection));
 			float granularRoughness = clamp(snowRoughness + variation * 0.12f,
