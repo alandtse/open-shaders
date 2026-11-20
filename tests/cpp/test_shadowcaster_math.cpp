@@ -14,6 +14,7 @@ using ShadowCasterManager::DemandStreakBucket;
 using ShadowCasterManager::EngineShadowSliceCount;
 using ShadowCasterManager::FacingRotation;
 using ShadowCasterManager::FlickerCoreRadius;
+using ShadowCasterManager::FlickerPositionToleranceSq;
 using ShadowCasterManager::FlickerRadiusBand;
 using ShadowCasterManager::FlickerRadiusTolerance;
 using ShadowCasterManager::FrameTimePercentile;
@@ -218,6 +219,18 @@ TEST_CASE("FlickerRadiusTolerance covers a bake and a live radius anywhere in th
 	}
 	REQUIRE(FlickerRadiusTolerance(0.0f, 0.1f) == 0.1f);
 	REQUIRE(FlickerRadiusTolerance(FlickerRadiusBand(0.9f), 0.1f) == kMaxFlickerRadiusTolerance);
+}
+
+TEST_CASE("FlickerPositionToleranceSq covers a bake and a live position anywhere in the flicker", "[scm]")
+{
+	constexpr float movement = 3.93f;
+	constexpr float floorSq = 16.0f;
+	const float reach = movement * kFlickerReachPerAmplitude;
+	REQUIRE(WithinFlickerReach(reach, 0.0f, 0.0f, movement));
+	REQUIRE(WithinFlickerReach(-reach, 0.0f, 0.0f, movement));
+	REQUIRE(4.0f * reach * reach <= FlickerPositionToleranceSq(movement, floorSq));
+	REQUIRE(FlickerPositionToleranceSq(0.0f, floorSq) == floorSq);
+	REQUIRE(FlickerPositionToleranceSq(0.5f, floorSq) == floorSq);
 }
 
 TEST_CASE("InFlickerCore hashes only the static casters a flickering light always reaches", "[scm]")

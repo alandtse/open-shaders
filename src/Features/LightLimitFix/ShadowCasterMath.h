@@ -196,6 +196,14 @@ namespace ShadowCasterManager
 		return std::max(a_floor, std::min(a_band / (1.0f - a_band), kMaxFlickerRadiusTolerance));
 	}
 
+	/// Squared move a cached bake's position may differ from the live one by, when both lie in a flicker of a_movementAmplitude:
+	/// any two points of that flicker are within twice its reach.
+	inline float FlickerPositionToleranceSq(float a_movementAmplitude, float a_floorSq) noexcept
+	{
+		const float spread = 2.0f * a_movementAmplitude * kFlickerReachPerAmplitude;
+		return std::max(a_floorSq, spread * spread);
+	}
+
 	/// True when a static caster folds into a light's static hash: its bounding sphere, a_dx/a_dy/a_dz from the
 	/// flicker core's centre with radius a_casterRadius, touches the core, whose radius is infinite for a light that does not flicker.
 	inline bool InFlickerCore(float a_dx, float a_dy, float a_dz, float a_casterRadius, float a_coreRadius) noexcept

@@ -876,7 +876,8 @@ namespace ShadowCasterManager
 		const float radius = ni->GetLightRuntimeData().radius.x;
 		const float tolerance = FlickerRadiusTolerance(FlickerRadiusBand(FlickerIntensityAmplitude(ni)), kSplitRadiusTolerance);
 		return std::abs(radius - st.bakeRadius) <= tolerance * st.bakeRadius &&
-		       ShadowOrigin(ni).GetSquaredDistance(st.bakePos) <= kSplitPositionToleranceSq;
+		       ShadowOrigin(ni).GetSquaredDistance(st.bakePos) <=
+		           FlickerPositionToleranceSq(FlickerMovementAmplitude(ni) * ni->world.scale, kSplitPositionToleranceSq);
 	}
 
 	/// Factor taking baked depth (normalised by the bake radius) to the live radius.
