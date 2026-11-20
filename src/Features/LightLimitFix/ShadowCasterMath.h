@@ -75,6 +75,18 @@ namespace ShadowCasterManager
 		return a_holdsSlot && a_score > 0.0 ? a_score * kSlotHoldMargin : a_score;
 	}
 
+	/// Share of the live fade a light's score fade takes each frame: a flicker averages out over about twenty frames.
+	inline constexpr float kScoreFadeSmoothing = 0.05f;
+
+	/// Fade at or below which a light counts as out, so its score follows the live fade at once going out and coming back on.
+	inline constexpr float kScoreFadeOutFloor = 0.05f;
+
+	/// The fade a light is ranked with, from its running average a_average and its live fade a_live.
+	inline float SteadyScoreFade(float a_average, float a_live) noexcept
+	{
+		return a_live <= kScoreFadeOutFloor || a_average <= kScoreFadeOutFloor ? a_live : a_average + kScoreFadeSmoothing * (a_live - a_average);
+	}
+
 	/// Whether a light kept by the camera hold is seated only after every light still in view.
 	inline bool HeldLightYields(bool a_ownInView, bool a_playerProtected, bool a_hidden) noexcept
 	{
