@@ -11,7 +11,10 @@ option(
     ON
 )
 if(NOT BUILD_DX12_RESOURCES_COMPANION)
-    message(WARNING "DX12 Resources companion disabled; AIO will not contain its executable")
+    message(
+        WARNING
+        "DX12 Resources companion disabled; AIO will not contain its executable"
+    )
     return()
 endif()
 
@@ -22,15 +25,11 @@ set(_dx12_companion_project
 set(_dx12_companion_output
     "${CMAKE_CURRENT_BINARY_DIR}/dx12-resources-prep/publish"
 )
-set(_dx12_companion_exe
-    "${_dx12_companion_output}/DX12ResourcesPrep.exe"
-)
+set(_dx12_companion_exe "${_dx12_companion_output}/DX12ResourcesPrep.exe")
 set(_dx12_companion_aio_dir
     "${AIO_DIR}/SKSE/Plugins/CommunityShaders/DX12Resources/bin"
 )
-set(DX12_RESOURCES_AIO_EXE
-    "${_dx12_companion_aio_dir}/DX12ResourcesPrep.exe"
-)
+set(DX12_RESOURCES_AIO_EXE "${_dx12_companion_aio_dir}/DX12ResourcesPrep.exe")
 
 file(
     GLOB _dx12_companion_sources
@@ -44,8 +43,8 @@ if(DX12_RESOURCES_DOTNET)
         COMMAND
             "${DX12_RESOURCES_DOTNET}" publish "${_dx12_companion_project}"
             --configuration Release --runtime win-x64 --self-contained true
-            -p:PublishSingleFile=true -p:PublishReadyToRun=false
-            --output "${_dx12_companion_output}"
+            -p:PublishSingleFile=true -p:PublishReadyToRun=false --output
+            "${_dx12_companion_output}"
         DEPENDS "${_dx12_companion_project}" ${_dx12_companion_sources}
         COMMENT "Publishing self-contained DX12 Resources companion (.NET 10)"
         VERBATIM
@@ -53,7 +52,10 @@ if(DX12_RESOURCES_DOTNET)
 else()
     # Preserve DLL-only builds without dotnet. An AIO build MUST fail rather
     # than silently shipping without the executable required by runtime.
-    message(WARNING "dotnet was not found; DX12 AIO packaging requires the .NET 10 SDK")
+    message(
+        WARNING
+        "dotnet was not found; DX12 AIO packaging requires the .NET 10 SDK"
+    )
     add_custom_command(
         OUTPUT "${_dx12_companion_exe}"
         COMMAND
@@ -75,11 +77,10 @@ add_custom_target(
 # material, atlas or geometry cache and does not need publish diagnostics/PDBs.
 add_custom_command(
     OUTPUT "${DX12_RESOURCES_AIO_EXE}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_dx12_companion_aio_dir}"
     COMMAND
-        ${CMAKE_COMMAND} -E make_directory "${_dx12_companion_aio_dir}"
-    COMMAND
-        ${CMAKE_COMMAND} -E copy_if_different
-        "${_dx12_companion_exe}" "${DX12_RESOURCES_AIO_EXE}"
+        ${CMAKE_COMMAND} -E copy_if_different "${_dx12_companion_exe}"
+        "${DX12_RESOURCES_AIO_EXE}"
     DEPENDS BUILD_DX12_RESOURCES_COMPANION "${_dx12_companion_exe}"
     COMMENT "Staging DX12 Resources companion into AIO SKSE payload"
     VERBATIM
@@ -104,9 +105,11 @@ if(AUTO_PLUGIN_DEPLOYMENT)
             "${_dx12_deploy_root}/SKSE/Plugins/CommunityShaders/DX12Resources/bin"
         )
         add_custom_command(
-            TARGET DEPLOY_DX12_RESOURCES_COMPANION POST_BUILD
+            TARGET DEPLOY_DX12_RESOURCES_COMPANION
+            POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory "${_dx12_deploy_dir}"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            COMMAND
+                ${CMAKE_COMMAND} -E copy_if_different
                 "${DX12_RESOURCES_AIO_EXE}"
                 "${_dx12_deploy_dir}/DX12ResourcesPrep.exe"
             VERBATIM

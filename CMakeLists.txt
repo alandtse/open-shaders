@@ -1575,7 +1575,10 @@ if(AIO_ZIP_TO_DIST)
     endif()
     add_custom_command(
         OUTPUT ${AIO_ZIP_STAMP} ${_aio_zip_cmds}
-        DEPENDS PREPARE_AIO ${CMAKE_CURRENT_BINARY_DIR}/copy_shaders.stamp ${_dx12_aio_zip_deps}
+        DEPENDS
+            PREPARE_AIO
+            ${CMAKE_CURRENT_BINARY_DIR}/copy_shaders.stamp
+            ${_dx12_aio_zip_deps}
         COMMENT "Creating AIO archive ${AIO_ARCHIVE}"
     )
 
@@ -1789,7 +1792,11 @@ endif()
 
 add_custom_command(
     OUTPUT ${AIO_PACKAGE}
-    DEPENDS ${CORE_SOURCES} ${FFX_RUNTIME_FILES} ${DX12_RESOURCES_AIO_EXE} ${_aio_manual_cmds}
+    DEPENDS
+        ${CORE_SOURCES}
+        ${FFX_RUNTIME_FILES}
+        ${DX12_RESOURCES_AIO_EXE}
+        ${_aio_manual_cmds}
     COMMENT "Creating AIO zip package (manual)"
 )
 add_custom_target("Package-AIO-Manual" DEPENDS ${AIO_PACKAGE})
