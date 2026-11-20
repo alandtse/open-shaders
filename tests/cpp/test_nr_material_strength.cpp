@@ -1,5 +1,6 @@
 // Unit tests for the NR material-strength helper, the material-map filter and the Tuning values they build.
 
+#include "Features/Upscaling/NeuralRendering/ContextProfile.h"
 #include "Features/Upscaling/NeuralRendering/MaterialMap.h"
 #include "Features/Upscaling/NeuralRendering/MaterialStrength.h"
 #include "Features/Upscaling/NeuralRendering/Tuning.h"
@@ -79,6 +80,28 @@ TEST_CASE("Tuning Sanitize writes the bounded material strengths back", "[nr]")
 TEST_CASE("Material strength is off by default", "[nr]")
 {
 	REQUIRE_FALSE(NR::Tuning{}.materialStrength);
+}
+
+TEST_CASE("Skipping identity category work preserves the latched dialogue protection lane", "[nr]")
+{
+	NR::Context::Profiles profiles;
+	profiles.dialogue.scope = NR::Context::ScopeOverride::kSkinHairEyes;
+	const auto normal = NR::Context::EffectiveTuning({}, profiles, NR::Context::Kind::kNormal);
+	const auto dialogue = NR::Context::EffectiveTuning({}, profiles, NR::Context::Kind::kDialogue);
+	REQUIRE(normal.materialStrength);
+	REQUIRE(dialogue.materialStrength);
+	REQUIRE_FALSE(NR::MaterialStrength::HasEdits(normal.MaterialStrengths()));
+	REQUIRE(NR::MaterialStrength::HasEdits(dialogue.MaterialStrengths()));
+	REQUIRE(NR::MaterialStrength::PlanAlphaUpdate(normal.MaterialStrengths(), false) == NR::MaterialStrength::AlphaUpdate::kClear);
+	REQUIRE(NR::MaterialStrength::PlanAlphaUpdate(normal.MaterialStrengths(), true) == NR::MaterialStrength::AlphaUpdate::kReuse);
+}
+
+TEST_CASE("Invalid material strengths sanitize to an identity selection", "[nr]")
+{
+	using namespace NR::MaterialStrength;
+	auto invalid = Values{};
+	invalid.strength.fill(std::numeric_limits<float>::quiet_NaN());
+	REQUIRE_FALSE(HasEdits(Sanitize(invalid)));
 }
 
 TEST_CASE("MaterialMap filter bits follow the NeuralRenderingCategory ids", "[nr]")

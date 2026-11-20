@@ -118,6 +118,7 @@ add_executable(
     test_nr_cadence.cpp
     test_nr_combat_pause.cpp
     test_nr_material_strength.cpp
+    test_nr_material_selection.cpp
     test_nr_model_scale.cpp
     test_nr_model_reconstruction.cpp
     test_nr_peripheral_compression.cpp
