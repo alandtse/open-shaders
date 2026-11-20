@@ -100,8 +100,11 @@ directly in its PBR evaluation. Noise samples each hit's native material UV,
 seeded by draw identity and triangle, rather than world coordinates. Its patch
 frequency depends on the scheduled native ray budget (resolution and trace
 density), divided by the configurable rays per patch. A smooth four-corner
-hash varies albedo and roughness; sparse hashed crystal facets sharpen the
-native specular response. Only actual native hits evaluate the effect; no
+hash varies neutral-white snow albedo and roughness. Crystal inclusion uses
+the native ray pixel and hit identity, so highlights can occur across all
+covered faces even with degenerate or repeated UVs. The crystal response is
+submitted into the native specular lobe only under unoccluded direct light;
+shadowed snow does not emit light. Only actual native hits evaluate the effect; no
 per-frame hit-count readback or GPU atomics are required. NativePBR owns snow
 enable, noise amount/rays-per-patch, sparkle amount/density, roughness, and
 the temporary coverage override. Tuning reaches SM6.5 via the existing

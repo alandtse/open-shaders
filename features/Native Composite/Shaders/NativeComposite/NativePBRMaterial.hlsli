@@ -46,6 +46,7 @@ namespace NativePBR
 		float facing;
 		float projectedSnowIncidence;
 		uint snowHitSeed;
+		uint2 snowRayPixel;
 	};
 
 	struct SurfaceMaterial
@@ -63,6 +64,7 @@ namespace NativePBR
 		float coatF0;
 		float projectedSnowCoverageCandidate;
 		float snowCoverage;
+		float snowSparkle;
 	};
 
 	float3 SrgbToLinear(float3 value)
@@ -122,13 +124,15 @@ namespace NativePBR
 		result.projectedSnowCoverageCandidate = (drawFlags & DrawProjectedSnowCandidateFlag) != 0u ?
 			saturate(surface.projectedSnowIncidence) : 0.0f;
 		result.snowCoverage = result.projectedSnowCoverageCandidate * float((drawFlags >> SnowCoverageShift) & 255u) / 255.0f;
+		result.snowSparkle = 0.0f;
 		if (result.snowCoverage > 0.0f) {
 			float variation, crystal;
-			SnowDetail(surface.snowUV, surface.snowHitSeed, snowTuning, variation, crystal);
-			float3 snowColor = saturate(float3(0.86f, 0.89f, 0.92f) + variation * 0.16f);
+			SnowDetail(surface.snowUV, surface.snowHitSeed, surface.snowRayPixel, snowTuning, variation, crystal);
+			float3 snowColor = saturate(0.98f.xxx + variation * 0.06f);
 			float granularRoughness = clamp(snowRoughness + variation * 0.12f,
 				PBR::Constants::MinRoughness, PBR::Constants::MaxRoughness);
 			granularRoughness = lerp(granularRoughness, 0.14f, crystal);
+			result.snowSparkle = crystal * result.snowCoverage;
 			result.baseColor = lerp(result.baseColor, snowColor, result.snowCoverage);
 			result.roughness = lerp(result.roughness, granularRoughness, result.snowCoverage);
 			result.metallic *= 1.0f - result.snowCoverage;

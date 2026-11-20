@@ -779,7 +779,7 @@ void NativePBRFeature::DrawSettings()
 	slider("Snow sparkle amount", snowSparkleAmount, 0.0f, 1.0f, "%.2f");
 	slider("Snow sparkle density", snowSparkleDensity, 0.0f, 0.25f, "%.3f");
 	slider("Snow roughness", snowRoughness, 0.5f, 1.0f, "%.2f");
-	ImGui::TextDisabled("Snow detail follows native ray-hit UVs and adapts to trace density; no world-unit sampling.");
+	ImGui::TextDisabled("Snow noise follows hit UVs; crystals sample every eligible ray pixel and respond only to native light.");
 	const auto snowDiagnostics = globals::features::nativeLighting.GetDiagnostics();
 	ImGui::TextDisabled("Snow receivers: %u marked | %u PBR shadable | %u terrain | %u covered",
 		snowDiagnostics.value("nativeSnowCandidateInstances", 0u),

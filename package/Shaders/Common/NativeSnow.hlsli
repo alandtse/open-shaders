@@ -3,6 +3,8 @@
 
 namespace NativePBR
 {
+	static const float SnowCrystalScatter = 0.22f;
+
 	uint SnowHash(uint2 cell)
 	{
 		uint value = cell.x * 1664525u + cell.y * 1013904223u;
@@ -29,16 +31,14 @@ namespace NativePBR
 		return lerp(bottom, top, blend.y);
 	}
 
-	void SnowDetail(float2 hitUV, uint hitSeed, float4 tuning,
+	void SnowDetail(float2 hitUV, uint hitSeed, uint2 rayPixel, float4 tuning,
 		out float variation, out float crystal)
 	{
 		const float2 rayCell = clamp(hitUV, -4096.0f, 4096.0f) * max(tuning.y, 1.0f);
 		variation = (SnowNoise(rayCell, hitSeed) - 0.5f) * saturate(tuning.x);
-		const float2 crystalCell = rayCell * 8.0f;
-		const int2 cell = int2(floor(crystalCell));
-		const float2 center = frac(crystalCell) - 0.5f;
-		const float inclusion = SnowRandom(cell, hitSeed ^ 0x9e3779b9u) < saturate(tuning.w) ? 1.0f : 0.0f;
-		crystal = inclusion * (1.0f - smoothstep(0.006f, 0.05f, dot(center, center))) * saturate(tuning.z);
+		const uint crystalHash = SnowHash(rayPixel ^ uint2(hitSeed, hitSeed * 747796405u));
+		const float inclusion = float(crystalHash & 0x00ffffffu) * (1.0f / 16777216.0f);
+		crystal = inclusion < saturate(tuning.w) ? saturate(tuning.z) : 0.0f;
 	}
 }
 

@@ -119,7 +119,7 @@ bool NativePBRParallaxUV(NativePBR::MaterialRecord material, TriangleSurface hit
 	return all(isfinite(uv));
 }
 
-bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
+bool LoadNativePBRMaterial(uint2 rayPixel, uint instance, uint primitive, float2 barycentric,
 	float3x4 objectToWorld, float3x4 worldToObject, float footprint, float3 viewDirectionWS, out EvaluatedSourceMaterial evaluated,
 	out bool usedFallback, out float3 clearcoat)
 {
@@ -210,6 +210,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	surface.vertexColor = hitSurface.color.rgb;
 	surface.facing = 1.0f;
 	surface.snowHitSeed = NativePBR::SnowHash(binding.identity ^ uint2(instance, primitive));
+	surface.snowRayPixel = rayPixel;
 	surface.projectedSnowIncidence = 0.0f;
 	if ((binding.flags & NativePBR::DrawProjectedSnowCandidateFlag) != 0u) {
 		float3 edge0 = mul((float3x3)objectToWorld, hitSurface.position1 - hitSurface.position0);
@@ -234,11 +235,13 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	evaluated.opacity = result.opacity;
 	evaluated.projectedSnowCoverageCandidate = result.projectedSnowCoverageCandidate;
 	evaluated.snowCoverage = result.snowCoverage;
+	evaluated.snowSparkle = result.snowSparkle;
 	clearcoat = float3(result.coatStrength, result.coatRoughness, result.coatF0);
 	return all(isfinite(evaluated.baseColor)) && all(isfinite(evaluated.normal)) &&
 		all(isfinite(evaluated.f0)) && all(isfinite(evaluated.emission)) &&
 		isfinite(evaluated.roughness) && isfinite(evaluated.metallic) &&
-		isfinite(evaluated.ao) && isfinite(evaluated.opacity) && all(isfinite(clearcoat));
+		isfinite(evaluated.ao) && isfinite(evaluated.opacity) &&
+		isfinite(evaluated.snowSparkle) && all(isfinite(clearcoat));
 }
 
 #endif
