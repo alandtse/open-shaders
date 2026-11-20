@@ -90,7 +90,13 @@ namespace ShadowCasterManager
 		PruneIfOversized(s_flickerAmplitudes, 1024);
 		const auto formId = LLFCommon::RuntimeLightDataExt::Get(ni)->lighFormId;
 		auto [it, isNew] = s_flickerAmplitudes.try_emplace(ni, formId, FlickerAmplitudes{});
-		if (isNew || it->second.first != formId || !formId) {
+		bool refresh = isNew || it->second.first != formId;
+		if (!refresh && !formId) {
+			// A light without a Light record may gain an owner later, so re-read it once per frame, not per call.
+			static PerFrameCache<const RE::NiLight*, bool> s_ownerReadThisFrame;
+			s_ownerReadThisFrame.Get(static_cast<uint32_t>(*globals::game::frameCounter), ni, [&refresh] { return refresh = true; });
+		}
+		if (refresh) {
 			const RE::TESObjectLIGH* ligh = formId ? RE::TESForm::LookupByID<RE::TESObjectLIGH>(formId) : nullptr;
 			if (!ligh)
 				ligh = OwnerLight(ni);
