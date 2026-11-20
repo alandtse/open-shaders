@@ -73,31 +73,34 @@ internal static class PgReferenceIndex
                     throw new InvalidDataException("PG reference count exceeds the supported limit.");
             }
 
-            var meshes = new List<PgMeshReference>(paths.Count);
-            var cacheHits = 0;
-            foreach (var (path, expectedCrc) in paths)
+            var entries = paths.ToArray();
+            var meshes = new PgMeshReference[entries.Length];
+            var reused = new bool[entries.Length];
+            var parallelism = Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
+            Parallel.For(0, entries.Length, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, index =>
             {
+                var (path, expectedCrc) = entries[index];
                 var fullPath = Path.GetFullPath(Path.Combine(data, path));
                 if (!fullPath.StartsWith(data + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("PG mesh path escaped Data.");
                 var info = new FileInfo(fullPath);
                 if (!info.Exists)
                 {
-                    meshes.Add(new(path, expectedCrc, 0, 0, "missing", null, []));
-                    continue;
+                    meshes[index] = new(path, expectedCrc, 0, 0, "missing", null, []);
+                    return;
                 }
                 var ticks = info.LastWriteTimeUtc.Ticks;
                 if (info.Length > MaxMeshBytes)
                 {
-                    meshes.Add(new(path, expectedCrc, info.Length, ticks, "oversized-nif", null, []));
-                    continue;
+                    meshes[index] = new(path, expectedCrc, info.Length, ticks, "oversized-nif", null, []);
+                    return;
                 }
                 if (previousMeshes.TryGetValue(path, out var old) && old.ExpectedCrc32 == expectedCrc &&
                     old.Size == info.Length && old.LastWriteUtcTicks == ticks)
                 {
-                    meshes.Add(old);
-                    ++cacheHits;
-                    continue;
+                    meshes[index] = old;
+                    reused[index] = true;
+                    return;
                 }
                 try
                 {
@@ -106,15 +109,15 @@ internal static class PgReferenceIndex
                     crc.Update(bytes);
                     if ((uint)crc.Value != expectedCrc)
                     {
-                        meshes.Add(new(path, expectedCrc, info.Length, ticks, "crc-mismatch", null, []));
-                        continue;
+                        meshes[index] = new(path, expectedCrc, info.Length, ticks, "crc-mismatch", null, []);
+                        return;
                     }
                     var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
                     var nif = new NifFile();
                     if (nif.Load(fullPath) != 0 || !nif.Valid || !nif.Header.Version.IsSSE() || nif.HasUnknownBlocks)
                     {
-                        meshes.Add(new(path, expectedCrc, info.Length, ticks, "unsupported-nif", hash, []));
-                        continue;
+                        meshes[index] = new(path, expectedCrc, info.Length, ticks, "unsupported-nif", hash, []);
+                        return;
                     }
                     var shapes = new List<PgShapeReference>();
                     foreach (var shape in nif.GetShapes())
@@ -129,17 +132,18 @@ internal static class PgReferenceIndex
                             (uint)shader.ShaderFlags_SSPF1, (uint)shader.ShaderFlags_SSPF2,
                             shader.Alpha, textures));
                     }
-                    meshes.Add(new(path, expectedCrc, info.Length, ticks, "verified", hash, shapes.ToArray()));
+                    meshes[index] = new(path, expectedCrc, info.Length, ticks, "verified", hash, shapes.ToArray());
                 }
                 catch (Exception error) when (error is not OutOfMemoryException)
                 {
-                    meshes.Add(new(path, expectedCrc, info.Length, ticks, "unreadable:" + error.GetType().Name, null, []));
+                    meshes[index] = new(path, expectedCrc, info.Length, ticks, "unreadable:" + error.GetType().Name, null, []);
                 }
-            }
+            });
 
+            var cacheHits = reused.Count(hit => hit);
             var document = new PgReferenceDocument("dx12-pg-references", 1, diffHash,
-                meshes.Count, meshes.Sum(mesh => mesh.Shapes.Length), cacheHits,
-                meshes.Count(mesh => mesh.Status != "verified"), meshes.ToArray());
+                meshes.Length, meshes.Sum(mesh => mesh.Shapes.Length), cacheHits,
+                meshes.Count(mesh => mesh.Status != "verified"), meshes);
             var payload = JsonSerializer.SerializeToUtf8Bytes(document, JsonOptions);
             if (payload.Length > MaxOutputBytes)
                 throw new InvalidDataException("PG reference index exceeds the 256 MiB budget.");

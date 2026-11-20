@@ -13,7 +13,8 @@ shader flags and ordered texture paths. Stable shape lookup is the mesh path
 plus NIF block index; a changed NIF hash represents a new revision.
 
 The companion reuses entries whose PG CRC32, file length, and write timestamp
-are unchanged. Skyrim publishes the validated result atomically at
+are unchanged. NIF verification uses at most four concurrent workers while
+preserving sorted output order. Skyrim publishes the validated result atomically at
 `DX12-cache/pg-references/index-v1.json`; the immutable in-memory snapshot is
 available through `DX12Resources::GetPgReferenceSnapshot()`. Missing or
 unverified outputs remain explicitly unresolved. The index is currently limited
