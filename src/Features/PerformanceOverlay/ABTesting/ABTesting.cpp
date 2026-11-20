@@ -854,10 +854,10 @@ void ABTestingManager::DrawBenchmarkTab()
 	if (runOptions.together && !canCombine)
 		runOptions.together = false;
 
-	if (ImGui::RadioButton(T(TKEY("queue_mode_one"), "One at a time"), !runOptions.together))
+	if (ImGui::RadioButton(T(TKEY("queue_mode_single"), "One at a time"), !runOptions.together))
 		runOptions.together = false;
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text("%s", T(TKEY("queue_mode_one_tooltip"), "Measures each change on its own, so you can see which one costs what."));
+		ImGui::Text("%s", T(TKEY("queue_mode_single_tooltip"), "Measures each change on its own, so you can see which one costs what."));
 	ImGui::SameLine();
 	ImGui::BeginDisabled(!canCombine);
 	if (ImGui::RadioButton(T(TKEY("queue_mode_together"), "All together"), runOptions.together))

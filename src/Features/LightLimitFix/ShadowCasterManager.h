@@ -330,7 +330,8 @@ namespace ShadowCasterManager
 		/// them for the player only inside that frustum.
 		bool SpotLitRegion = true;
 
-		/// Ranks lights that reach the player first and lets them past the redraw budget, so shadows on the player do not flicker.
+		/// Ranks the strongest lights that reach the player first, up to half the shadow light count, and lets them past the redraw
+		/// budget, so shadows on the player do not flicker.
 		bool ProtectPlayerShadows = true;
 
 		/// Leaves out of a light's shadow the small parts of its own fixture that enclose its flame, such as a lantern's candle.

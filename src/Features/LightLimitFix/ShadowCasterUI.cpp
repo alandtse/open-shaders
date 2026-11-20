@@ -1806,9 +1806,10 @@ namespace ShadowCasterManager
 			ImGui::Checkbox(T(TKEY("protect_player_shadows"), "Protect Shadows on the Player"), &settings.ProtectPlayerShadows);
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("protect_player_shadows_tooltip"),
-											"Ranks every light that reaches the player first and lets it redraw past the\n"
-											"redraw budget, so shadows on the player do not flicker. Costs GPU time\n"
-											"when many lights surround the player."));
+											"Ranks the strongest lights that reach the player first, up to half the\n"
+											"shadow light count, and lets them redraw past the redraw budget, so\n"
+											"shadows on the player do not flicker. Costs GPU time when many lights\n"
+											"surround the player."));
 
 			ImGui::Checkbox(T(TKEY("skip_flame_enclosure"), "Skip a Light's Own Flame Holder"), &settings.SkipFlameEnclosure);
 			if (ImGui::IsItemHovered())
