@@ -263,8 +263,7 @@ namespace Util
 		const auto* graphicsState = globals::game::graphicsState;
 		if (!graphicsState || graphicsState->screenWidth <= 0 || graphicsState->screenHeight <= 0)
 			return kFallbackCameraAspect;
-		const float eyeScale = globals::game::isVR ? 0.5f : 1.0f;
-		return eyeScale * static_cast<float>(graphicsState->screenWidth) / static_cast<float>(graphicsState->screenHeight);
+		return EyeWidth(static_cast<float>(graphicsState->screenWidth)) / static_cast<float>(graphicsState->screenHeight);
 	}
 
 	float* GetWorldFOV()

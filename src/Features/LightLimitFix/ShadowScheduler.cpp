@@ -22,6 +22,7 @@
 #include "LitRegion.h"
 #include "ShadowCasterInternal.h"
 #include "SplitLatchBackoff.h"
+#include "Utils/Game.h"
 
 #include <Windows.h>  // SEH (__try) for the shadow-light usability backstop
 
@@ -1797,7 +1798,7 @@ namespace ShadowCasterManager
 	/// independent of the engine's own frustum flag. `centre` is world space.
 	static bool OwnSphereInFrustum(const RE::NiPoint3& centre, float radius, float& nearestEyeDistance)
 	{
-		const int eyes = globals::game::isVR ? 2 : 1;
+		const int eyes = Util::EyeCount();
 		bool inside = false;
 		nearestEyeDistance = FLT_MAX;
 		for (int eye = 0; eye < eyes; ++eye) {
@@ -1852,7 +1853,7 @@ namespace ShadowCasterManager
 		}
 		// The nearest lit receiver lies at the sphere's near point, the worst-case displacement.
 		const float d = std::max(nearestEyeDistance - radius, kWarpNearClampUnits);
-		const int eyes = globals::game::isVR ? 2 : 1;
+		const int eyes = Util::EyeCount();
 		const float eyeWidthPx = globals::state->screenSize.x / static_cast<float>(eyes);
 		float edgeErrPx = 0.0f;
 		for (int eye = 0; eye < eyes; ++eye) {
