@@ -409,18 +409,6 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 {
 	auto& upscaling = globals::features::upscaling;
 
-	// Scale UI brightness BEFORE fence sync so the D3D11 UIBrightnessCS dispatch
-	// is covered by the D3D11→D3D12 fence. Without this, FidelityFX may read
-	// uiBufferWrapped on D3D12 before the PQ encoding completes on D3D11.
-	// Only runs when HDR Display feature is loaded (UIBrightnessCS may not exist otherwise)
-	auto* hdr = globals::features::hdrDisplay.loaded ? &globals::features::hdrDisplay : nullptr;
-	if (hdr)
-		hdr->ScaleUIBrightnessForFG();
-
-	globals::features::screenshotFeature.ProcessCaptureRequest();
-
-	bool isHDR = hdr && hdr->settings.enableHDR;
-
 	// Fence-only back-pressure. Never wait on a frame allocator from the render
 	// thread: if the GPU still owns it, skip this present and try again later.
 	// Check *before* adding another DX11/DX12 interop queue dependency.
@@ -433,6 +421,18 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 		if (completed < frameFenceValues[frameIndex])
 			return DXGI_ERROR_WAS_STILL_DRAWING;
 	}
+
+	// Scale UI brightness BEFORE fence sync so the D3D11 UIBrightnessCS dispatch
+	// is covered by the D3D11→D3D12 fence. Without this, FidelityFX may read
+	// uiBufferWrapped on D3D12 before the PQ encoding completes on D3D11.
+	// Only runs when HDR Display feature is loaded (UIBrightnessCS may not exist otherwise)
+	auto* hdr = globals::features::hdrDisplay.loaded ? &globals::features::hdrDisplay : nullptr;
+	if (hdr)
+		hdr->ScaleUIBrightnessForFG();
+
+	globals::features::screenshotFeature.ProcessCaptureRequest();
+
+	bool isHDR = hdr && hdr->settings.enableHDR;
 
 	// Wait for D3D11 to finish (includes ApplyHDR scene encoding AND UIBrightnessCS)
 	// using a GPU queue dependency, not a CPU-blocking fence.

@@ -647,12 +647,14 @@ FidelityFX::RuntimeCommandContext* FidelityFX::AcquireRuntimeCommandContext()
 
 		commandContext.fenceValue = 0;
 		runtimeCommandContextCursor = (index + 1) % commandContextCount;
+		runtimeCommandContextBusy = false;
 		return &commandContext;
 	}
 
 	// An occupied command allocator cannot be reset until its GPU fence retires.
-	// Do not stall the game thread for up to SharedFence::kFenceTimeoutMs;
-	// the caller already has a guarded fallback when runtime FSR cannot dispatch.
+	// This is transient backpressure, not a runtime-provider failure.
+	// The caller falls back to host FSR for this frame without latching.
+	runtimeCommandContextBusy = true;
 	return nullptr;
 }
 
@@ -664,6 +666,7 @@ void FidelityFX::ResetRuntimeCommandContexts()
 		commandContext.fenceValue = 0;
 	}
 	runtimeCommandContextCursor = 0;
+	runtimeCommandContextBusy = false;
 }
 
 bool FidelityFX::WaitForRuntimeD3D12Fence(uint64_t a_value)
@@ -1372,6 +1375,7 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 	const bool runtimeSelected = runtimeRequested && CanUseRuntimeUpscalerPath();
 
 	if (runtimeSelected) {
+		runtimeCommandContextBusy = false;
 		auto state = globals::state;
 		if (!state)
 			return false;
@@ -1416,6 +1420,15 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 		if (tryRuntimeUpscaler(requestedRuntimeVersion, fullRenderWidth, fullRenderHeight))
 			return true;
 
+		if (runtimeCommandContextBusy) {
+			// All DX12 command allocators are still owned by the GPU. Host FSR
+			// can process this frame without a CPU stall; do not permanently
+			// disable the runtime provider because of transient backpressure.
+			runtimeFallbackResetDispatchesRemaining =
+				std::max(runtimeFallbackResetDispatchesRemaining, runtimeContextCount);
+			if (runtimeAlreadyUsedThisFrame)
+				return false;  // Never mix runtime and host across stereo eyes.
+		} else {
 		// Try the runtime FSR3 provider in the upscaler DLL before falling back to the host SDK.
 		// CanUseRuntimeUpscalerPath() re-check: the upgrade attempt above may have just quarantined
 		// the provider, which must stop this fallback from dispatching into it too.
@@ -1438,6 +1451,7 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 		// instead -- the caller skips finalizing the frame when any eye fails.
 		if (runtimeAlreadyUsedThisFrame)
 			return false;
+		}
 	}
 
 	// Defense in depth: CanUseRuntimeUpscalerPath() latching mid-frame (e.g. this eye's own
