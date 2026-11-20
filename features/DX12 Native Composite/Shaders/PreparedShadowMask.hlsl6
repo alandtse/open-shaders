@@ -5,6 +5,7 @@ struct PreparedLight
 {
 	float4 positionRadius;
 	float4 colorFade;
+	float4 emitterFalloff;
 };
 StructuredBuffer<PreparedLight> Lights : register(t2);
 RWTexture2D<float> ShadowMask : register(u0);
@@ -39,19 +40,30 @@ void main(uint3 dispatchThread : SV_DispatchThreadID)
 	[loop]
 	for (uint index = 0; index < LightCount; ++index) {
 		const PreparedLight light = Lights[index];
-		const float3 offset = light.positionRadius.xyz - receiver;
-		const float distance = length(offset);
+		const float3 centerOffset = light.positionRadius.xyz - receiver;
+		const float distance = length(centerOffset);
 		const float radius = light.positionRadius.w;
 		if (distance <= 4.0 || distance >= radius)
 			continue;
 		const float range = saturate(1.0 - distance / radius);
 		const float energy = max(dot(light.colorFade.rgb, float3(0.2126, 0.7152, 0.0722)) * light.colorFade.a, 0.0);
-		const float weight = range * range * energy;
+		const float weight = pow(range, clamp(light.emitterFalloff.y, 0.01, 8.0)) * energy;
 		if (weight < 0.001)
 			continue;
 		totalWeight += weight;
+		float3 direction = centerOffset / distance;
+		const float emitterRadius = min(max(light.emitterFalloff.x, 0.0), distance * 0.25);
+		if (emitterRadius > 0.01) {
+			uint seed = pixel.x * 747796405u + pixel.y * 2891336453u + index * 277803737u;
+			seed = (seed ^ (seed >> 16)) * 2246822519u;
+			const float a = float(seed & 65535u) * (6.28318530718 / 65536.0);
+			const float r = emitterRadius * sqrt(float(seed >> 16) / 65535.0);
+			const float3 tangent = normalize(cross(abs(direction.z) < 0.9 ? float3(0, 0, 1) : float3(0, 1, 0), direction));
+			const float3 bitangent = cross(direction, tangent);
+			direction = normalize(centerOffset + r * (cos(a) * tangent + sin(a) * bitangent));
+		}
 		RayDesc ray;
-		ray.Direction = offset / distance;
+		ray.Direction = direction;
 		ray.Origin = receiver + ray.Direction * 2.0;
 		ray.TMin = 0.0;
 		ray.TMax = distance - 4.0;
