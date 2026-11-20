@@ -1,4 +1,5 @@
 #include "Features/Upscaling/NeuralRendering/ModelReconstruction.h"
+#include "Features/Upscaling/NeuralRendering/PeripheralCompression.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -45,4 +46,19 @@ TEST_CASE("NR reconstruction rejects invalid scales and model extents", "[nr]")
 	REQUIRE(Select(true, 0.5f, 1024, 0, 512, 512) == Mode::Native);
 	REQUIRE(Select(true, 0.5f, 1024, 1024, 1032, 512) == Mode::Native);
 	REQUIRE(Select(true, 0.5f, 1024, 1024, 512, 1032) == Mode::Native);
+}
+
+TEST_CASE("NR compression-only grids retain guided reconstruction", "[nr][peripheral]")
+{
+	for (const auto extent : { std::array{ 2048u, 2048u }, std::array{ 64u, 128u } }) {
+		const auto plan = NR::BuildPeripheralCompressionPlan(extent[0], extent[1], extent[0], extent[1], 50, true, 8, 64);
+		REQUIRE(plan.Active());
+		REQUIRE(Select(false, 1.0f, extent[0], extent[1], plan.width, plan.height) == Mode::Bilinear);
+		REQUIRE(Select(true, 1.0f, extent[0], extent[1], plan.width, plan.height) == Mode::RgbGuided);
+	}
+	const auto reduced = NR::BuildPeripheralCompressionPlan(2048, 2048, 1024, 1024, 50, true, 8, 64);
+	REQUIRE(reduced.Active());
+	REQUIRE(Select(true, 0.5f, 2048, 2048, reduced.width, reduced.height) == Mode::RgbGuided);
+	REQUIRE(Select(true, 1.0f, 2048, 2048, 2048, 2048) == Mode::Native);
+	REQUIRE(Select(true, 1.0f, 2048, 2048, 2049, 1024) == Mode::Native);
 }
