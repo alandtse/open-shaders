@@ -3,9 +3,11 @@
 #include "DX12NativeScene.h"
 
 #include <d3d12.h>
+#include <atomic>
 #include <deque>
 #include <memory>
 #include <optional>
+#include <thread>
 #include <winrt/base.h>
 
 /** @brief RayQuery shadow mask and raster-color composite feeding the existing runtime upscaler. */
@@ -59,9 +61,22 @@ struct DX12NativeComposite final : Feature
 	void OnSubmitted(ID3D12Fence* fence, uint64_t value, Submission submission, bool applied);
 
 private:
+	struct PipelineState
+	{
+		winrt::com_ptr<ID3D12Device> device;
+		winrt::com_ptr<ID3D12RootSignature> shadowRoot, compositeRoot;
+		winrt::com_ptr<ID3D12PipelineState> shadowPipeline, compositePipeline;
+		uint32_t descriptorSize = 0;
+	};
+	struct UploadPair
+	{
+		winrt::com_ptr<ID3D12Resource> camera, lights;
+	};
+	static constexpr size_t kMaximumUploadPairs = 8;
+
 	bool EnsurePipelines(ID3D12Device* device);
 	std::shared_ptr<Surfaces> MakeSurfaces(ID3D12Resource* color, ID3D12Resource* depth, uint32_t width, uint32_t height);
-	winrt::com_ptr<ID3D12Resource> Upload(const void* source, size_t bytes);
+	bool Upload(winrt::com_ptr<ID3D12Resource>& buffer, const void* source, size_t bytes, size_t capacity);
 	D3D12_GPU_DESCRIPTOR_HANDLE Descriptor(const Surfaces& surfaces, uint32_t index) const;
 	void Collect();
 
@@ -72,7 +87,12 @@ private:
 		Submission submission;
 	};
 	std::deque<Pending> pending;
+	std::deque<UploadPair> availableUploads;
+	size_t uploadPairs = 0;
 	std::shared_ptr<Surfaces> surfaces;
+	std::atomic<std::shared_ptr<const PipelineState>> preparedPipelines;
+	std::atomic<bool> pipelineFailed = false;
+	std::jthread pipelineWorker;
 	winrt::com_ptr<ID3D12Device> device;
 	winrt::com_ptr<ID3D12RootSignature> shadowRoot, compositeRoot;
 	winrt::com_ptr<ID3D12PipelineState> shadowPipeline, compositePipeline;

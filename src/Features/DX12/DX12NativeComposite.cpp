@@ -73,6 +73,9 @@ namespace
 
 DX12NativeComposite::~DX12NativeComposite()
 {
+	pipelineWorker.request_stop();
+	if (pipelineWorker.joinable())
+		pipelineWorker.join();
 	Collect();
 	for (auto& frame : pending)
 		if (frame.fence && frame.fence->GetCompletedValue() < frame.value)
@@ -112,11 +115,15 @@ void DX12NativeComposite::RestoreDefaultSettings()
 
 void DX12NativeComposite::PreShadowMaps()
 {
+	const bool pipelinesReady = IsActive() &&
+		EnsurePipelines(globals::features::upscaling.dx12SwapChain.d3d12Device.get());
+	Collect();
 	const auto frame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : 0;
 	const auto scene = globals::features::dx12NativeScene.GetScene();
 	const auto grid = globals::features::dx12Resources.GetGrid();
 	const auto covered = globals::features::dx12NativeScene.GetCoveredLightIDs();
-	const bool active = IsActive() && settings.ShadowStrength > 0 && frame != 0 && lastSubmitFrame + 1 == frame &&
+	const bool active = pipelinesReady && (!availableUploads.empty() || uploadPairs < kMaximumUploadPairs) &&
+	                    settings.ShadowStrength > 0 && frame != 0 && lastSubmitFrame + 1 == frame &&
 	                    scene && scene->complete && scene->acceleration && covered && !covered->empty() && grid &&
 	                    scene->scope == grid->requested.front().scope &&
 	                    scene->geometryRevision == submittedGeometry && grid->geometryRevision == submittedGeometry &&
@@ -143,39 +150,70 @@ bool DX12NativeComposite::EnsurePipelines(ID3D12Device* candidate)
 		return false;
 	if (shadowPipeline && compositePipeline)
 		return true;
-	device.copy_from(candidate);
-	D3D12_DESCRIPTOR_RANGE depthRange{ D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 0, 0 };
-	D3D12_DESCRIPTOR_RANGE maskRange{ D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0 };
-	std::array<D3D12_ROOT_PARAMETER, 5> shadow{};
-	shadow[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
-	shadow[0].Descriptor.ShaderRegister = 0;
-	shadow[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-	shadow[1].DescriptorTable = { 1, &depthRange };
-	shadow[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
-	shadow[2].Descriptor.ShaderRegister = 2;
-	shadow[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-	shadow[3].DescriptorTable = { 1, &maskRange };
-	shadow[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-	shadow[4].Descriptor.ShaderRegister = 0;
-	D3D12_DESCRIPTOR_RANGE colorRange{ D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, 0 };
-	D3D12_DESCRIPTOR_RANGE compositeMaskRange{ D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 0, 0 };
-	D3D12_DESCRIPTOR_RANGE outputRange{ D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0 };
-	std::array<D3D12_ROOT_PARAMETER, 4> composite{};
-	for (uint32_t i = 0; i < 3; ++i)
-		composite[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-	composite[0].DescriptorTable = { 1, &colorRange };
-	composite[1].DescriptorTable = { 1, &compositeMaskRange };
-	composite[2].DescriptorTable = { 1, &outputRange };
-	composite[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-	composite[3].Constants = { 0, 0, 4 };
-	if (!CreateSignature(device.get(), shadow, shadowRoot) || !CreateSignature(device.get(), composite, compositeRoot) ||
-		!CreatePipeline(device.get(), shadowRoot.get(), "Data/Shaders/DX12NativeComposite/PreparedShadowMask.dxil", shadowPipeline) ||
-		!CreatePipeline(device.get(), compositeRoot.get(), "Data/Shaders/DX12NativeComposite/RasterShadowComposite.dxil", compositePipeline)) {
+	if (const auto built = preparedPipelines.load(std::memory_order_acquire)) {
+		if (built->device.get() != candidate)
+			return false;
+		device = built->device;
+		shadowRoot = built->shadowRoot;
+		compositeRoot = built->compositeRoot;
+		shadowPipeline = built->shadowPipeline;
+		compositePipeline = built->compositePipeline;
+		descriptorSize = built->descriptorSize;
+		return true;
+	}
+	if (pipelineFailed.load(std::memory_order_acquire)) {
 		unavailable = true;
 		return false;
 	}
-	descriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-	return descriptorSize != 0;
+	if (pipelineWorker.joinable())
+		return false;
+	winrt::com_ptr<ID3D12Device> deviceForWorker;
+	deviceForWorker.copy_from(candidate);
+	pipelineWorker = std::jthread([this, owned = std::move(deviceForWorker)](std::stop_token stop) mutable {
+		auto built = std::make_shared<PipelineState>();
+		built->device = std::move(owned);
+		D3D12_DESCRIPTOR_RANGE depthRange{ D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 0, 0 };
+		D3D12_DESCRIPTOR_RANGE maskRange{ D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0 };
+		std::array<D3D12_ROOT_PARAMETER, 5> shadow{};
+		shadow[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+		shadow[0].Descriptor.ShaderRegister = 0;
+		shadow[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		shadow[1].DescriptorTable = { 1, &depthRange };
+		shadow[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+		shadow[2].Descriptor.ShaderRegister = 2;
+		shadow[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		shadow[3].DescriptorTable = { 1, &maskRange };
+		shadow[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+		shadow[4].Descriptor.ShaderRegister = 0;
+		D3D12_DESCRIPTOR_RANGE colorRange{ D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, 0 };
+		D3D12_DESCRIPTOR_RANGE compositeMaskRange{ D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 0, 0 };
+		D3D12_DESCRIPTOR_RANGE outputRange{ D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0 };
+		std::array<D3D12_ROOT_PARAMETER, 4> composite{};
+		for (uint32_t i = 0; i < 3; ++i)
+			composite[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		composite[0].DescriptorTable = { 1, &colorRange };
+		composite[1].DescriptorTable = { 1, &compositeMaskRange };
+		composite[2].DescriptorTable = { 1, &outputRange };
+		composite[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+		composite[3].Constants = { 0, 0, 4 };
+		if (!CreateSignature(built->device.get(), shadow, built->shadowRoot) ||
+			!CreateSignature(built->device.get(), composite, built->compositeRoot) ||
+			!CreatePipeline(built->device.get(), built->shadowRoot.get(),
+				"Data/Shaders/DX12NativeComposite/PreparedShadowMask.dxil", built->shadowPipeline) ||
+			!CreatePipeline(built->device.get(), built->compositeRoot.get(),
+				"Data/Shaders/DX12NativeComposite/RasterShadowComposite.dxil", built->compositePipeline)) {
+			pipelineFailed.store(true, std::memory_order_release);
+			return;
+		}
+		built->descriptorSize = built->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+		if (!built->descriptorSize) {
+			pipelineFailed.store(true, std::memory_order_release);
+			return;
+		}
+		if (!stop.stop_requested())
+			preparedPipelines.store(std::move(built), std::memory_order_release);
+	});
+	return false;
 }
 
 std::shared_ptr<DX12NativeComposite::Surfaces> DX12NativeComposite::MakeSurfaces(
@@ -240,22 +278,24 @@ std::shared_ptr<DX12NativeComposite::Surfaces> DX12NativeComposite::MakeSurfaces
 	return next;
 }
 
-winrt::com_ptr<ID3D12Resource> DX12NativeComposite::Upload(const void* source, size_t bytes)
+bool DX12NativeComposite::Upload(winrt::com_ptr<ID3D12Resource>& buffer, const void* source,
+	size_t bytes, size_t capacity)
 {
-	winrt::com_ptr<ID3D12Resource> buffer;
-	if (!source || !bytes || bytes > 64 * 1024)
-		return buffer;
-	const auto desc = CD3DX12_RESOURCE_DESC::Buffer((bytes + 255) & ~size_t(255));
-	const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-	if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-			D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(buffer.put()))))
-		return {};
+	if (!source || !bytes || bytes > capacity || capacity > 64 * 1024)
+		return false;
+	if (!buffer) {
+		const auto desc = CD3DX12_RESOURCE_DESC::Buffer((capacity + 255) & ~size_t(255));
+		const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+		if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+				D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(buffer.put()))))
+			return false;
+	}
 	void* mapped = nullptr;
 	if (FAILED(buffer->Map(0, nullptr, &mapped)) || !mapped)
-		return {};
+		return false;
 	std::memcpy(mapped, source, bytes);
 	buffer->Unmap(0, nullptr);
-	return buffer;
+	return true;
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE DX12NativeComposite::Descriptor(const Surfaces& target, uint32_t index) const
@@ -266,8 +306,11 @@ D3D12_GPU_DESCRIPTOR_HANDLE DX12NativeComposite::Descriptor(const Surfaces& targ
 void DX12NativeComposite::Collect()
 {
 	while (!pending.empty() && pending.front().fence &&
-		   pending.front().fence->GetCompletedValue() >= pending.front().value)
+		   pending.front().fence->GetCompletedValue() >= pending.front().value) {
+		auto& completed = pending.front().submission;
+		availableUploads.push_back({ std::move(completed.camera), std::move(completed.lights) });
 		pending.pop_front();
+	}
 }
 
 std::optional<DX12NativeComposite::Submission> DX12NativeComposite::Dispatch(
@@ -307,15 +350,27 @@ std::optional<DX12NativeComposite::Submission> DX12NativeComposite::Dispatch(
 	MaskCamera camera{ globals::game::frameBufferCached.GetCameraProjInverse(),
 		globals::game::frameBufferCached.GetCameraViewInverse(),
 		globals::game::frameBufferCached.GetCameraPosAdjust(), width, height, count };
+	if (availableUploads.empty() && uploadPairs == kMaximumUploadPairs)
+		return std::nullopt;
+	UploadPair buffers;
+	if (!availableUploads.empty()) {
+		buffers = std::move(availableUploads.front());
+		availableUploads.pop_front();
+	} else {
+		++uploadPairs;
+	}
+	if (!Upload(buffers.camera, &camera, sizeof(camera), sizeof(camera)) ||
+		!Upload(buffers.lights, lightUpload.data(), count * sizeof(GpuLight), sizeof(lightUpload))) {
+		availableUploads.push_back(std::move(buffers));
+		return std::nullopt;
+	}
 	Submission submission;
 	submission.scene = scene;
 	submission.surfaces = target;
 	submission.geometryRevision = scene->geometryRevision;
 	submission.lightRevision = grid->lightRevision;
-	submission.camera = Upload(&camera, sizeof(camera));
-	submission.lights = Upload(lightUpload.data(), count * sizeof(GpuLight));
-	if (!submission.camera || !submission.lights)
-		return std::nullopt;
+	submission.camera = std::move(buffers.camera);
+	submission.lights = std::move(buffers.lights);
 	ID3D12DescriptorHeap* heaps[]{ target->descriptors.get() };
 	commands->SetDescriptorHeaps(1, heaps);
 	std::array<D3D12_RESOURCE_BARRIER, 2> begin{

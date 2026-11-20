@@ -71,10 +71,15 @@ namespace DX12
 				valid(light.radius) && light.radius > 0 && valid(light.fade) &&
 				valid(light.emitterRadius) && valid(light.falloffExponent))
 				candidates.push_back(&light);
-		std::ranges::sort(candidates, [&](const auto* a, const auto* b) {
+		const auto nearer = [&](const auto* a, const auto* b) {
 			const auto da = squaredDistance(a->position, camera), db = squaredDistance(b->position, camera);
 			return da == db ? a->referenceID < b->referenceID : da < db;
-		});
+		};
+		if (candidates.size() > kMaximumShadowLights) {
+			std::nth_element(candidates.begin(), candidates.begin() + kMaximumShadowLights, candidates.end(), nearer);
+			candidates.resize(kMaximumShadowLights);
+		}
+		std::ranges::sort(candidates, nearer);
 		std::vector<bool> claimed(runtime.size(), false);
 		for (const auto* candidate : candidates) {
 			if (output.count == kMaximumShadowLights)
