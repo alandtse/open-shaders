@@ -11,6 +11,7 @@
 #include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ProceduralSun.h"
+#include "Features/DX12/DX12NativeScene.h"
 #if defined(ENABLE_EFFECTS11)
 #	include "Features/Effects11.h"
 #endif
@@ -303,6 +304,7 @@ namespace
 			&globals::features::upscaling,
 			&globals::features::dx12Control,
 			&globals::features::dx12Resources,
+			&globals::features::dx12NativeScene,
 			&globals::features::developerTools,
 			&globals::features::csEditor,
 			&globals::features::sceneSelector,

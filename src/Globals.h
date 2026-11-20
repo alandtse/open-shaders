@@ -65,6 +65,7 @@ struct ReverseZ;
 struct ProceduralAurora;
 struct DX12Control;
 struct DX12Resources;
+struct DX12NativeScene;
 
 class State;
 class Deferred;
@@ -181,6 +182,7 @@ namespace globals
 		extern ProceduralAurora proceduralAurora;
 		extern DX12Control dx12Control;
 		extern DX12Resources dx12Resources;
+		extern DX12NativeScene dx12NativeScene;
 
 		namespace llf
 		{
