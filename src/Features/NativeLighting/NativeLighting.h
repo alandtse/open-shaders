@@ -26,7 +26,6 @@ struct NativeLightingFeature final : Feature
 		bool CharacterCasterOcclusion = false;
 		bool CharacterReceiverProbe = false;  // Raster-aligned hits, no shading.
 		bool ForcePositiveValidity = false;  // Session-only diagnostic bypass.
-		bool CoverEligibleSnow = false;  // Session-only native snow receiver inspection.
 		uint32_t BudgetMB = 0;                // Compatibility only; always dynamic DXGI.
 		bool PersistLab = false;
 	};

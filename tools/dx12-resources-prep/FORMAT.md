@@ -57,7 +57,7 @@ No evaluated roughness, BRDF or DX11 TruePBR material output is baked into the
 companion. NativePBR resolves material interpretation and residency at runtime.
 Geometry opacity exclusions remain conservative for safe RT traversal.
 
-## Projected-snow receiver geometry (option A)
+## Projected-snow receiver geometry
 
 The companion computes `instances[].projectedSnow` from **original RSGM
 triangles and the placed shape-to-cell transform**, without consulting DX11
@@ -82,23 +82,27 @@ Native Scene validates the descriptor and transfers one flag into the existing
 per-instance NativePBR draw binding (bit 3, no extra GPU buffer). NativePBR
 calculates each native ray hit's upward-face incidence and exposes it as
 `SurfaceMaterial.projectedSnowCoverageCandidate`, forwarded through
-`EvaluatedSourceMaterial`. It does not affect the BRDF, final color, weather,
-or lighting submission yet: actual snow presence/strength must remain a
-separate, authoritative native input before applying snow in PBR. No DX11
-data is admitted into this coverage path.
+`EvaluatedSourceMaterial`. Actual coverage is a separate native terrain input;
+the marker alone does not change surface shading. No DX11 data is admitted
+into this coverage path.
 
 At runtime, Native Lighting obtains native snow evidence from Skyrim's
 landscape snow-material IDs (`Snow`, `SnowStairs`), with no DX11 resource access
 and no dependence on weather or precipitation. Terrain probes are cached per TLAS; a
 neighboring 256-unit probe may supply half-strength coverage to tolerate
 small placement/landscape boundary mismatches. A temporary session-only
-`CoverEligibleSnow` control forces full coverage on companion-marked receivers,
-including interiors; the normal terrain-based mode remains available for A/B.
+`Cover all eligible snow receivers` control in **NativePBR** forces full coverage
+on companion-marked receivers, including interiors; the normal terrain-based
+mode remains available for A/B.
 The current value is packed into unused bits 16–23 of the existing 24-byte
-NativePBR draw binding; the coverage signal is independent of snow atlas
-material texturing. NativePBR blends snow
-albedo, roughness, metalness, Fresnel F0, and coat strength into the native
-ray-hit material. An 0.08 upward-incidence margin tolerates minor face-angle
+NativePBR draw binding. NativePBR applies **textureless, world-space procedural
+snow** directly in its ray-hit PBR evaluation: low-frequency noise varies
+albedo and roughness; sparse deterministic crystal facets sharpen specular
+response and fade with pixel footprint to reduce distance aliasing. NativePBR
+owns the snow enable, noise amount/scale, sparkle amount/density, roughness,
+and temporary coverage override settings. Tuning reaches the native SM6.5
+shader via the existing direct-lighting constant buffer, with no extra atlas,
+texture residency, DX11 snow inputs, or per-scene generation. An 0.08 upward-incidence margin tolerates minor face-angle
 discrepancies. This is surface shading, not geometry displacement or a
 persistent accumulation simulation. Interior scenes receive coverage only
 when the explicit eligible-receiver test is enabled.

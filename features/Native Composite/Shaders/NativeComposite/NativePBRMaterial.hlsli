@@ -2,6 +2,7 @@
 #define NATIVE_PBR_MATERIAL_HLSLI
 
 #include "Common/PBRMath.hlsli"
+#include "Common/NativeSnow.hlsli"
 
 namespace NativePBR
 {
@@ -43,6 +44,8 @@ namespace NativePBR
 		float3 vertexColor;
 		float facing;
 		float projectedSnowIncidence;
+		float3 worldPosition;
+		float worldFootprint;
 	};
 
 	struct SurfaceMaterial
@@ -86,7 +89,7 @@ namespace NativePBR
 
 	SurfaceMaterial EvaluateOpaque(MaterialRecord material, SurfaceInput surface, float4 baseTexel,
 		float4 normalTexel, float4 packedTexel, float4 emissionTexel, float4 coatTexel,
-		bool complexMaskDetected, uint drawFlags)
+		bool complexMaskDetected, uint drawFlags, float4 snowTuning, float snowRoughness)
 	{
 		SurfaceMaterial result;
 		result.baseColor = baseTexel.rgb;
@@ -119,11 +122,19 @@ namespace NativePBR
 		result.projectedSnowCoverageCandidate = (drawFlags & DrawProjectedSnowCandidateFlag) != 0u ?
 			saturate(surface.projectedSnowIncidence) : 0.0f;
 		result.snowCoverage = result.projectedSnowCoverageCandidate * float((drawFlags >> SnowCoverageShift) & 255u) / 255.0f;
-		result.baseColor = lerp(result.baseColor, float3(0.78f, 0.84f, 0.89f), result.snowCoverage);
-		result.roughness = lerp(result.roughness, 0.82f, result.snowCoverage);
-		result.metallic *= 1.0f - result.snowCoverage;
-		result.f0 = lerp(result.f0, float3(0.04f, 0.04f, 0.04f), result.snowCoverage);
-		result.coatStrength *= 1.0f - result.snowCoverage;
+		if (result.snowCoverage > 0.0f) {
+			float variation, crystal;
+			SnowDetail(surface.worldPosition, surface.worldFootprint, snowTuning, variation, crystal);
+			float3 snowColor = saturate(float3(0.86f, 0.89f, 0.92f) + variation * 0.16f);
+			float granularRoughness = clamp(snowRoughness + variation * 0.12f,
+				PBR::Constants::MinRoughness, PBR::Constants::MaxRoughness);
+			granularRoughness = lerp(granularRoughness, 0.14f, crystal);
+			result.baseColor = lerp(result.baseColor, snowColor, result.snowCoverage);
+			result.roughness = lerp(result.roughness, granularRoughness, result.snowCoverage);
+			result.metallic *= 1.0f - result.snowCoverage;
+			result.f0 = lerp(result.f0, lerp(0.04f.xxx, 0.08f.xxx, crystal), result.snowCoverage);
+			result.coatStrength *= 1.0f - result.snowCoverage;
+		}
 		return result;
 	}
 }

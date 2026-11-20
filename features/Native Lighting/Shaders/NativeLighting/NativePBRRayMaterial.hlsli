@@ -207,6 +207,10 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	surface.bitangent = mul((float3x3)objectToWorld, hitSurface.bitangent);
 	surface.vertexColor = hitSurface.color.rgb;
 	surface.facing = 1.0f;
+	surface.worldPosition = mul(objectToWorld, float4(
+		hitSurface.position0 * (1.0f - barycentric.x - barycentric.y) +
+		hitSurface.position1 * barycentric.x + hitSurface.position2 * barycentric.y, 1.0f));
+	surface.worldFootprint = footprint;
 	surface.projectedSnowIncidence = 0.0f;
 	if ((binding.flags & NativePBR::DrawProjectedSnowCandidateFlag) != 0u) {
 		float3 edge0 = mul((float3x3)objectToWorld, hitSurface.position1 - hitSurface.position0);
@@ -216,11 +220,12 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 		if (all(isfinite(face)) && lengthSq > 1e-12f)
 			surface.projectedSnowIncidence = saturate(face.z * rsqrt(lengthSq) + 0.08f);
 	}
-	if (!all(isfinite(surface.geometricNormal)) ||
+	if (!all(isfinite(surface.worldPosition)) || !isfinite(surface.worldFootprint) ||
+		!all(isfinite(surface.geometricNormal)) ||
 		!all(isfinite(surface.tangent)) || !all(isfinite(surface.bitangent)))
 		return false;
 	NativePBR::SurfaceMaterial result = NativePBR::EvaluateOpaque(material, surface, base, normal, packed, emission,
-		coat, complexMaskDetected, binding.flags);
+		coat, complexMaskDetected, binding.flags, SnowTuning, SnowRoughness);
 	evaluated.baseColor = result.baseColor;
 	evaluated.normal = result.normal;
 	evaluated.f0 = result.f0;

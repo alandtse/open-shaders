@@ -58,6 +58,9 @@ cbuffer Trace : register(b0)
 	uint NativePBRReady;
 	uint2 NativePBRPadding;
 	uint NativePBRMaterialOptions;
+	float4 SnowTuning; // noise amount, world scale, sparkle amount, crystal density
+	float SnowRoughness;
+	float3 SnowPadding;
 };
 
 #include "Common/ReverseZ.hlsli"

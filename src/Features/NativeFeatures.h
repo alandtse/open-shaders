@@ -87,6 +87,23 @@ struct NativePBRFeature final : Feature
 	std::atomic<bool> nativeParallax{ false };
 	std::atomic<bool> nativeComplexMaterials{ false };
 	std::atomic<bool> forceRayAdmission{ false };
+	struct SnowSettings
+	{
+		bool enabled = true, coverEligible = false;
+		float noiseAmount = 0.55f, noiseScale = 64.0f;
+		float sparkleAmount = 0.6f, sparkleDensity = 0.08f, roughness = 0.83f;
+	};
+	std::atomic<bool> snowEnabled{ true }, snowCoverEligible{ false };
+	std::atomic<float> snowNoiseAmount{ 0.55f }, snowNoiseScale{ 64.0f };
+	std::atomic<float> snowSparkleAmount{ 0.6f }, snowSparkleDensity{ 0.08f }, snowRoughness{ 0.83f };
+	/** @brief Provides the current native-only ray-hit snow controls. */
+	SnowSettings GetSnowSettings() const
+	{
+		return { snowEnabled.load(std::memory_order_relaxed), snowCoverEligible.load(std::memory_order_relaxed),
+			snowNoiseAmount.load(std::memory_order_relaxed), snowNoiseScale.load(std::memory_order_relaxed),
+			snowSparkleAmount.load(std::memory_order_relaxed), snowSparkleDensity.load(std::memory_order_relaxed),
+			snowRoughness.load(std::memory_order_relaxed) };
+	}
 	// 1 geometry, 2 evaluated NativePBR, 3 accepted Native Lighting. Early stages are deliberate diagnostics.
 	std::atomic<uint32_t> readinessStage{ 3 };
 	uint32_t NativeFirstReadinessStage() const { return IsActive() ? std::clamp(readinessStage.load(std::memory_order_relaxed), 1u, 3u) : 0u; }
@@ -121,7 +138,17 @@ struct NativePBRFeature final : Feature
 	void DrawSettings() override;
 	void LoadSettings(json&) override;
 	void SaveSettings(json&) override;
-	void RestoreDefaultSettings() override { backendSettings = {}; enabled = true; nativeParallax = false; nativeComplexMaterials = false; forceRayAdmission = false; readinessStage = 3; }
+	void RegisterUxActions() override;
+	void RestoreDefaultSettings() override
+	{
+		backendSettings = {}; enabled = true; nativeParallax = false; nativeComplexMaterials = false;
+		forceRayAdmission = false; readinessStage = 3;
+		const SnowSettings defaults{};
+		snowEnabled = defaults.enabled; snowCoverEligible = defaults.coverEligible;
+		snowNoiseAmount = defaults.noiseAmount; snowNoiseScale = defaults.noiseScale;
+		snowSparkleAmount = defaults.sparkleAmount; snowSparkleDensity = defaults.sparkleDensity;
+		snowRoughness = defaults.roughness;
+	}
 	json GetDiagnostics() override;
 };
 

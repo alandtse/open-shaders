@@ -28,6 +28,7 @@ if(DX12_NATIVE_SCENE_DXC)
                 "${CMAKE_CURRENT_SOURCE_DIR}/features/Native Composite/Shaders/NativeComposite/NativePBRMaterial.hlsli"
                 "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders/DX12NativeScene/NativeTraceDensity.hlsli"
                 "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders/Common/PBRMath.hlsli"
+                "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders/Common/NativeSnow.hlsli"
                 "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders/Common/LightingCommon.hlsli"
                 "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders/Common/BRDF.hlsli"
                 "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders/Common/Math.hlsli"

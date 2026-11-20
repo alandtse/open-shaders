@@ -78,8 +78,6 @@ void NativeLightingFeature::DrawSettings()
 		++validityRevision;
 	if (settings.ForcePositiveValidity)
 		ImGui::TextDisabled("Unsafe test: admits geometry hits through depth, alpha and material policy checks; invalid resources still skip.");
-	ImGui::Checkbox("Cover all eligible snow receivers (session test)", &settings.CoverEligibleSnow);
-	ImGui::TextDisabled("Snow ignores weather; this test covers marked geometry, including interiors.");
 	ImGui::Checkbox("Diffuse", &settings.Diffuse);
 	ImGui::Checkbox("Specular", &settings.Specular);
 	int traceDensity = int(settings.TraceDensityMode);
@@ -165,12 +163,6 @@ void NativeLightingFeature::DrawSettings()
 			static_cast<unsigned long long>(diagnostics.value("nativePbrEvaluated", uint64_t{ 0 })));
 		ImGui::TextDisabled("NativePBR forced missing-texture fallbacks: %llu",
 			static_cast<unsigned long long>(diagnostics.value("nativePbrForcedTextures", uint64_t{ 0 })));
-		ImGui::TextDisabled("Native snow: %u candidates | %u shadable | %u terrain | %u active | cover eligible %s",
-			diagnostics.value("nativeSnowCandidateInstances", 0u),
-			diagnostics.value("nativeSnowShadableInstances", 0u),
-			diagnostics.value("nativeSnowTerrainInstances", 0u),
-			diagnostics.value("nativeSnowActiveInstances", 0u),
-			diagnostics.value("nativeSnowCoverEligible", false) ? "on" : "off");
 	}
 	if (ImGui::Checkbox("Early shadow-mask culling", &settings.EarlyShadowCull))
 		++validityRevision;
@@ -192,7 +184,6 @@ void NativeLightingFeature::LoadSettings(json& a_json)
 	selected.NormalInfluence = std::min(selected.NormalInfluence, 2u);
 	selected.TraceDensityMode = std::min(selected.TraceDensityMode, 7u);
 	selected.ForcePositiveValidity = false;
-	selected.CoverEligibleSnow = false;
 	selected.BudgetMB = 0;  // Legacy manual cap is ignored.
 	std::scoped_lock lock(settingsMutex);
 	settings = selected;
@@ -356,7 +347,7 @@ json NativeLightingFeature::GetDiagnostics()
 
 void NativeLightingFeature::RegisterUxActions()
 {
-	FEATURE_COMMAND("configure", "Set native direct lighting; optional enabled/diffuse/specular, directStrength, diffuseIntensity, specularIntensity, emissionStrength, normalInfluence (0 flat, 1 geometry, 2 material), allLights, selectedLight, radiusMultiplier, falloffFraction, falloffExponent, shadowStrength, stochasticShadows, emitterRadiusMultiplier, earlyShadowCull, debug, compareCulling, traceDensityMode (0 Full, 1 Two-thirds, 2 Half, 3 One-third, 4 Quarter, 5 One-sixth, 6 One-ninth, 7 Four-ninths), forcePositiveValidity, coverEligibleSnow (session-only snow test), budgetMB.", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("configure", "Set native direct lighting; optional enabled/diffuse/specular, directStrength, diffuseIntensity, specularIntensity, emissionStrength, normalInfluence (0 flat, 1 geometry, 2 material), allLights, selectedLight, radiusMultiplier, falloffFraction, falloffExponent, shadowStrength, stochasticShadows, emitterRadiusMultiplier, earlyShadowCull, debug, compareCulling, traceDensityMode (0 Full, 1 Two-thirds, 2 Half, 3 One-third, 4 Quarter, 5 One-sixth, 6 One-ninths, 7 Four-ninths), forcePositiveValidity, budgetMB.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeLightingFeature*>(self);
 		std::scoped_lock lock(feature.settingsMutex);
 		if (args.contains("enabled"))
@@ -365,8 +356,6 @@ void NativeLightingFeature::RegisterUxActions()
 			feature.settings.ForcePositiveValidity = args.at("forcePositiveValidity").get<bool>();
 			++feature.validityRevision;
 		}
-		if (args.contains("coverEligibleSnow"))
-			feature.settings.CoverEligibleSnow = args.at("coverEligibleSnow").get<bool>();
 		if (args.contains("diffuse"))
 			feature.settings.Diffuse = args.at("diffuse").get<bool>();
 		if (args.contains("specular"))
@@ -671,7 +660,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			created->counterReadback = make(plain, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, L"NativeLighting::CounterReadback");
 			created->lights = make(CD3DX12_RESOURCE_DESC::Buffer(DX12Native::kMaximumNativePointLights * 48), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Lights");
 			created->rayBindings = make(rayTable, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::RayMaterialBindings");
-			// 288-byte Trace ABI rounds to 512 for the D3D12 CBV 256-byte alignment.
+			// 320-byte Trace ABI rounds to 512 for the D3D12 CBV 256-byte alignment.
 			created->constants = make(CD3DX12_RESOURCE_DESC::Buffer(512), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Constants");
 			void* zeros = nullptr;
 			const D3D12_RANGE noRead{ 0, 0 };
@@ -762,8 +751,10 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			float4 lightTuning;   // reach, cutoff width, exponent, common direct strength
 			float4 shadowTuning;  // shadow strength, emitter scale, stochastic enabled, emission
 			uint32_t nativePbrReady, nativePbrPadding[2], nativePbrMaterialOptions;
+			float4 snowTuning, snowSurface;
 		};
-		static_assert(sizeof(Constants) == 288);
+		static_assert(sizeof(Constants) == 320);
+		const auto snowSettings = globals::features::nativePBR.GetSnowSettings();
 		const Constants constants{ width, height, uint32_t(scene.acceleration->instances.size()), selectedCount,
 			{ camera.CameraPosAdjust.x + camera.CameraViewInverse._14, camera.CameraPosAdjust.y + camera.CameraViewInverse._24, camera.CameraPosAdjust.z + camera.CameraViewInverse._34 },
 			0.5f, a_settings.DiffuseIntensity, a_settings.SpecularIntensity, (a_settings.Diffuse ? 1u : 0u) | (a_settings.Specular ? 2u : 0u),
@@ -777,7 +768,9 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			slot->rayMaterials ? 1u : 0u, { a_settings.ForcePositiveValidity ? 1u : 0u,
 				slot->rayMaterials && slot->rayMaterials->forcedAdmission ? 1u : 0u },
 			(globals::features::nativePBR.nativeParallax.load(std::memory_order_relaxed) ? NativePBR::kRayMaterialOptionParallax : 0u) |
-			(globals::features::nativePBR.nativeComplexMaterials.load(std::memory_order_relaxed) ? NativePBR::kRayMaterialOptionComplex : 0u) };
+			(globals::features::nativePBR.nativeComplexMaterials.load(std::memory_order_relaxed) ? NativePBR::kRayMaterialOptionComplex : 0u),
+			{ snowSettings.noiseAmount, snowSettings.noiseScale, snowSettings.sparkleAmount, snowSettings.sparkleDensity },
+			{ snowSettings.roughness, 0.0f, 0.0f, 0.0f } };
 		slot->nativePointLightCount = selectedCount;
 		slot->nativeMinimumDistance = constants.minimum;
 		slot->nativeLightTuning = constants.lightTuning;
@@ -790,12 +783,12 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		DX::ThrowIfFailed(slot->constants->Map(0, &noRead, &mapped));
 		std::memcpy(mapped, &constants, sizeof(constants));
 		slot->constants->Unmap(0, nullptr);
-		if (slot->rayMaterials &&
+		if (slot->rayMaterials && snowSettings.enabled &&
 			(snowTerrainScene.lock() != scene.acceleration || snowTerrainCoverage.size() != scene.acceleration->instances.size())) {
 			snowTerrainCoverage = ReadNativeSnowTerrain(*scene.acceleration);
 			snowTerrainScene = scene.acceleration;
 		}
-		snowCoverEligible = a_settings.CoverEligibleSnow;
+		snowCoverEligible = snowSettings.coverEligible && snowSettings.enabled;
 		snowEligibleInstances = snowShadableInstances = snowTerrainInstances = snowActiveInstances = 0;
 		DX::ThrowIfFailed(slot->rayBindings->Map(0, &noRead, &mapped));
 		if (slot->rayMaterials) {
@@ -808,10 +801,12 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 				++snowEligibleInstances;
 				if (bindings[i].materialIndex != UINT32_MAX)
 					++snowShadableInstances;
-				const float terrain = i < snowTerrainCoverage.size() ? float(snowTerrainCoverage[i]) / 255.0f : 0.0f;
+				const float terrain = snowSettings.enabled && i < snowTerrainCoverage.size() ?
+					float(snowTerrainCoverage[i]) / 255.0f : 0.0f;
 				if (terrain > 0.0f)
 					++snowTerrainInstances;
-				const float coverage = NativePBR::NativeSnowCoverage(terrain, snowCoverEligible);
+				const float coverage = snowSettings.enabled ?
+					NativePBR::NativeSnowCoverage(terrain, snowCoverEligible) : 0.0f;
 				if (coverage > 0.0f)
 					++snowActiveInstances;
 				bindings[i].flags = NativePBR::WithNativeSnowCoverage(bindings[i].flags, coverage);
