@@ -14,6 +14,7 @@ using ShadowCasterManager::FacingRotation;
 using ShadowCasterManager::FrameTimePercentile;
 using ShadowCasterManager::HashCombine;
 using ShadowCasterManager::HashCombineFloat;
+using ShadowCasterManager::HeldLightYields;
 using ShadowCasterManager::HemisphereSeamMargin;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
 using ShadowCasterManager::kShadowSizeToTexels;
@@ -255,6 +256,15 @@ TEST_CASE("SliceCappedLightCount keeps the highest point index inside the array"
 	for (int32_t slices = 1; slices <= 129; ++slices)
 		for (int32_t count = 0; count <= 127; ++count)
 			REQUIRE(SliceCappedLightCount(count, slices) < slices);
+}
+
+TEST_CASE("HeldLightYields seats only lights out of view after the lights in view", "[scm]")
+{
+	REQUIRE(HeldLightYields(false, false, false));
+	// Still in view (an engine cull flap at the edge), reaching the player, or hidden: keeps its place.
+	REQUIRE_FALSE(HeldLightYields(true, false, false));
+	REQUIRE_FALSE(HeldLightYields(false, true, false));
+	REQUIRE_FALSE(HeldLightYields(false, false, true));
 }
 
 TEST_CASE("SlotHeldScore keeps a holder against a near-equal challenger", "[scm]")

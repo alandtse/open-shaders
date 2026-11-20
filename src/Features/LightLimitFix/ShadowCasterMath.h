@@ -75,6 +75,12 @@ namespace ShadowCasterManager
 		return a_holdsSlot && a_score > 0.0 ? a_score * kSlotHoldMargin : a_score;
 	}
 
+	/// Whether a light kept by the camera hold is seated only after every light still in view.
+	inline bool HeldLightYields(bool a_ownInView, bool a_playerProtected, bool a_hidden) noexcept
+	{
+		return !a_ownInView && !a_playerProtected && !a_hidden;
+	}
+
 	/// How many lights reaching the player keep their protection: half the shadow light count, at least one.
 	inline int PlayerProtectionCap(int a_shadowLightCount) noexcept
 	{

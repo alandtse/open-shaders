@@ -1914,6 +1914,9 @@ namespace ShadowCasterManager
 				c.excess = true;
 			}
 		};
+		// Lights the camera has left are seated after every light still in view, so turning back never waits out their hold.
+		static std::vector<CandidateLight*> heldOffView;
+		heldOffView.clear();
 		// Only the strongest valid lights reaching the player, up to the cap, keep their place ahead; the rest are seated by score
 		// among the other lights, so the lights in view still get slots.
 		const int protectionCap = PlayerProtectionCap(s_settings.ShadowLightCount);
@@ -1986,6 +1989,13 @@ namespace ShadowCasterManager
 					if (recentlyValid) {
 						c.cameraHold = true;
 						s_cameraHold.insert(l);
+						float eyeDistance = 0.0f;
+						const bool ownInView = !hiddenNow &&
+						                       OwnSphereInFrustum(nilightNow->world.translate, nilightNow->GetLightRuntimeData().radius.x, eyeDistance);
+						if (HeldLightYields(ownInView, c.playerProtected, hiddenNow)) {
+							heldOffView.push_back(&c);
+							continue;
+						}
 					} else {
 						c.invalidCamera = true;
 						c.invalid = true;
@@ -2031,6 +2041,12 @@ namespace ShadowCasterManager
 			}
 			while (nextPastCap < pastCap.size())
 				seat(*pastCap[nextPastCap++]);
+			for (auto* held : heldOffView) {
+				seat(*held);
+				// One that found no slot has no shadow left to keep, so its tile may go to the lights in view.
+				if (!held->chosen)
+					s_cameraHold.erase(held->light);
+			}
 			// s_cameraHold just finished repopulating -- publish freshness now, not at
 			// the earlier clear, so a reader can never observe a generation match
 			// against a partially-populated set.
