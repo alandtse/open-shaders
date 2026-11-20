@@ -301,6 +301,7 @@ namespace
 			&globals::features::ibl,
 			&globals::features::extendedTranslucency,
 			&globals::features::upscaling,
+			&globals::features::dx12Control,
 			&globals::features::developerTools,
 			&globals::features::csEditor,
 			&globals::features::sceneSelector,

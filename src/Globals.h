@@ -63,6 +63,7 @@ struct Skin;
 struct SceneManager;
 struct ReverseZ;
 struct ProceduralAurora;
+struct DX12Control;
 
 class State;
 class Deferred;
@@ -177,6 +178,7 @@ namespace globals
 		extern PostProcessing postProcessing;
 		extern SceneManager sceneManager;
 		extern ProceduralAurora proceduralAurora;
+		extern DX12Control dx12Control;
 
 		namespace llf
 		{

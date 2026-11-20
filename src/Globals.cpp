@@ -10,6 +10,7 @@
 #include "Features/CloudShadows.h"
 #include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
+#include "Features/DX12/DX12Control.h"
 #include "Features/Effects11.h"
 #include "Features/ExponentialHeightFog.h"
 #include "Features/ExtendedMaterials.h"
@@ -140,6 +141,7 @@ namespace globals
 		PostProcessing postProcessing{};
 		SceneManager sceneManager{};
 		ProceduralAurora proceduralAurora{};
+		DX12Control dx12Control{};
 
 		namespace llf
 		{
