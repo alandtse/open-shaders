@@ -10,7 +10,7 @@
 #pragma warning(push)
 #pragma warning(disable: 4324)
 
-struct SnowCover : Feature
+struct SnowCover : Feature, RE::BSTEventSink<RE::TESCellFullyLoadedEvent>
 {
 private:
 	static constexpr float DEFAULT_FOLIAGE_EFFECT_OFFSET = -2048.0f;
@@ -141,6 +141,23 @@ public:
 	};
 	static_assert(sizeof(FireMeltData) == 16 + 16 * MAX_FIRE_MELT_SOURCES);
 
+	enum class LandscapeMaterialMode : uint32_t
+	{
+		Unavailable,
+		Legacy,
+		PBR,
+		Mixed
+	};
+
+	struct LandscapeGrid
+	{
+		int32_t originX = 0;
+		int32_t originY = 0;
+		uint32_t width = 0;
+		LandscapeMaterialMode mode = LandscapeMaterialMode::Unavailable;
+	};
+	static_assert(sizeof(LandscapeGrid) == 16);
+
 	struct alignas(16) PerFrame
 	{
 		float Month;
@@ -151,9 +168,10 @@ public:
 		UserSettings settings;
 		WorldSettings wsettings;
 		FireMeltData fireMelt;
+		LandscapeGrid landscapeGrid;
 	};
 	static_assert(sizeof(PerFrame) % 16 == 0);
-	static_assert(sizeof(PerFrame) == 192 + sizeof(FireMeltData));
+	static_assert(sizeof(PerFrame) == 192 + sizeof(FireMeltData) + sizeof(LandscapeGrid));
 
 	struct FireMeltSettings
 	{
@@ -270,6 +288,11 @@ private:
 	bool texturesLoaded = false;
 	void ResetRuntimeState();
 	void UpdateFrame();
+	void UpdateLandscapeGrid();
+	RE::BSEventNotifyControl ProcessEvent(const RE::TESCellFullyLoadedEvent*, RE::BSTEventSource<RE::TESCellFullyLoadedEvent>*) override;
+	std::atomic<bool> landscapeGridDirty{ true };
+	std::unique_ptr<StructuredBuffer> landscapeMaterials;
+	uint32_t landscapeMaterialCount = 0;
 	void LoadGeometryLists();
 	void LoadWorldConfig(const json& config);
 	bool LoadTextures();
