@@ -122,13 +122,13 @@ internal static class PgReferenceIndex
                     var shapes = new List<PgShapeReference>();
                     foreach (var shape in nif.GetShapes())
                     {
-                        nif.GetBlockIndex(shape, out var index);
+                        nif.GetBlockIndex(shape, out var blockIndex);
                         if (nif.GetShader(shape) is not BSLightingShaderProperty shader) continue;
                         var textures = nif.GetBlock(shader.TextureSetRef)?.Textures?
                             .Select(texture => texture.Content ?? "").ToArray() ?? [];
-                        if (index < 0 || !float.IsFinite(shader.Alpha) ||
+                        if (blockIndex < 0 || !float.IsFinite(shader.Alpha) ||
                             textures.Length > 16 || textures.Any(texture => texture.Length > 1024)) continue;
-                        shapes.Add(new(index, shape.Name?.String ?? "", shape.GetType().Name,
+                        shapes.Add(new(blockIndex, shape.Name?.String ?? "", shape.GetType().Name,
                             (uint)shader.ShaderFlags_SSPF1, (uint)shader.ShaderFlags_SSPF2,
                             shader.Alpha, textures));
                     }
