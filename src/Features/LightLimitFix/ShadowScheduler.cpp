@@ -171,14 +171,14 @@ namespace ShadowCasterManager
 	}
 
 	/// Shared by the redraw hash and static-cache hash so both agree on what
-	/// "moved" means.
-	static std::uint64_t FoldLightPose(std::uint64_t h, RE::NiLight* ni, float posStep)
+	/// "moved" means; a_atRest folds a flickering light's rest position, which its flicker never moves.
+	static std::uint64_t FoldLightPose(std::uint64_t h, RE::NiLight* ni, float posStep, bool a_atRest = false)
 	{
 		const float kPosStep = std::max(posStep, 1.0f);
 		constexpr float kRotStep = 0.01f;
 		constexpr float kRadiusStep = 1.0f;
 
-		const auto t = ShadowOrigin(ni);
+		const auto t = a_atRest ? RestOrigin(ni) : ShadowOrigin(ni);
 		h = HashCombineFloat(h, QuantizeFloat(t.x, kPosStep));
 		h = HashCombineFloat(h, QuantizeFloat(t.y, kPosStep));
 		h = HashCombineFloat(h, QuantizeFloat(t.z, kPosStep));
@@ -1384,7 +1384,7 @@ namespace ShadowCasterManager
 				// re-hash on every flicker jitter, queueing a rebake per flicker.
 				s_visitStaticHash = 0x9e3779b97f4a7c15ull;
 				if (auto* ni = light->light.get())
-					s_visitStaticHash = FoldLightPose(s_visitStaticHash, ni, 16.0f);
+					s_visitStaticHash = FoldLightPose(s_visitStaticHash, ni, 16.0f, true);
 			}
 			s_visitDynamicCount.store(0, std::memory_order_relaxed);
 			s_visitStaticCount.store(0, std::memory_order_relaxed);
