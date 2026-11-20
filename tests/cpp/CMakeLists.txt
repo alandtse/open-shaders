@@ -118,7 +118,10 @@ add_executable(
     test_nr_cadence.cpp
     test_nr_combat_pause.cpp
     test_nr_material_strength.cpp
+    test_nr_material_selection.cpp
     test_nr_model_scale.cpp
+    test_nr_model_reconstruction.cpp
+    test_nr_peripheral_compression.cpp
     test_nr_eye_mode.cpp
     test_nr_context_profile.cpp
     test_nr_roi.cpp
@@ -165,6 +168,11 @@ target_include_directories(
     cpp_tests
     SYSTEM
     PRIVATE "${CMAKE_SOURCE_DIR}/extern/AntiLag2-SDK"
+)
+
+target_compile_definitions(
+    cpp_tests
+    PRIVATE CPP_TEST_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
 )
 
 # Exercise capture policy in both production and DevBench configurations.
