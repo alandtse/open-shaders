@@ -1200,10 +1200,10 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 			const auto& light = preparedLights[index];
 			if (!light.supported || !std::isfinite(light.radius) || light.radius <= 0.0f)
 				continue;
-			const float dx = light.position.x - origin.x;
-			const float dy = light.position.y - origin.y;
-			const float dz = light.position.z - origin.z;
-			const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+			const float lightDx = light.position.x - origin.x;
+			const float lightDy = light.position.y - origin.y;
+			const float lightDz = light.position.z - origin.z;
+			const float distance = std::sqrt(lightDx * lightDx + lightDy * lightDy + lightDz * lightDz);
 			if (std::isfinite(distance))
 				candidates.emplace_back(std::max(0.0f, distance - light.radius), index);
 		}
