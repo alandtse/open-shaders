@@ -4,6 +4,7 @@
 #include "SpatialGrid.h"
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -37,6 +38,7 @@ namespace DX12
 			Requested,
 			Preparing,
 			Ready,
+			RetryWaiting,
 			Incomplete,
 			Deferred  // Predictive geometry exceeded its CPU residency allowance; retry if promoted active.
 		};
@@ -44,6 +46,8 @@ namespace DX12
 		std::vector<std::shared_ptr<const Shape>> shapes;
 		std::vector<PreparedLight> lights;
 		uint64_t bytes = 0;
+		uint8_t preparationAttempts = 0;
+		std::chrono::steady_clock::time_point retryAfter{};
 		State state = State::Requested;
 	};
 

@@ -86,7 +86,8 @@ namespace DX12
 
 		const auto start = [&](SubcellKey key, bool speculative, size_t index) -> std::optional<SubcellKey> {
 			const auto& existing = speculative ? current->predictiveResident[index] : current->resident[index];
-			if (!key.scope || (existing && existing->state != Tile::State::Requested))
+			if (!key.scope || (existing && existing->state != Tile::State::Requested &&
+				(existing->state != Tile::State::RetryWaiting || std::chrono::steady_clock::now() < existing->retryAfter)))
 				return std::nullopt;
 			auto tile = existing ? std::make_shared<Tile>(*existing) : std::make_shared<Tile>();
 			tile->key = key;
@@ -155,15 +156,33 @@ namespace DX12
 			return false;
 		auto tile = std::make_shared<Tile>();
 		tile->key = publication.key;
+		// Retain bounded retry state across failed publications of the same tile.
+		const auto existing = active != current->requested.end() ?
+			current->resident[std::distance(current->requested.begin(), active)] :
+			current->predictiveResident[std::distance(current->predictive.begin(), predictive)];
+		tile->preparationAttempts = std::min<unsigned>(existing ? unsigned(existing->preparationAttempts) + 1 : 1u, 3u);
 		// The worker has already verified all positions, triangle indices, transforms, identities and budgets.
 		// Render-thread publication only transfers ownership of immutable GPU-scene inputs.
 		tile->shapes = std::move(publication.shapes);
 		tile->bytes = publication.geometryBytes;
 		tile->lights = std::move(publication.lights);
-		tile->state = publication.validated && publication.enumerationComplete &&
-		                      publication.failedShapes == 0 && publication.eligibleShapes == tile->shapes.size() ?
-		                  Tile::State::Ready :
-		                  Tile::State::Incomplete;
+		const bool complete = publication.validated && publication.enumerationComplete &&
+		                      publication.failedShapes == 0 && publication.eligibleShapes == tile->shapes.size();
+		if (complete) {
+			tile->state = Tile::State::Ready;
+		} else {
+			// Incomplete geometry must not remain resident or enter BLAS/TLAS construction.
+			tile->shapes.clear();
+			tile->lights.clear();
+			tile->bytes = 0;
+			if (tile->preparationAttempts < 3) {
+				tile->state = Tile::State::RetryWaiting;
+				tile->retryAfter = std::chrono::steady_clock::now() +
+					std::chrono::milliseconds(tile->preparationAttempts == 1 ? 500 : 2000);
+			} else {
+				tile->state = Tile::State::Incomplete;
+			}
+		}
 		auto next = std::make_shared<Grid>(*current);
 		++next->revision;
 		if (active != current->requested.end()) {
@@ -297,6 +316,8 @@ void DX12Resources::PreShadowMaps()
 			if (companion)
 				companion->Cancel();
 			inFlight.reset();
+			adopting.reset();
+			lightAdoptionOffset = 0;
 			grid.Clear();
 		}
 		return;
@@ -355,7 +376,8 @@ void DX12Resources::PreShadowMaps()
 				const auto* reference = handler ? handler->LookupForm(record.referenceLocal, record.referencePlugin) : nullptr;
 				const auto* base = handler ? handler->LookupForm(record.baseLocal, record.basePlugin) : nullptr;
 				if (!reference || !base) {
-					++adopting->publication.failedShapes;
+					// This light cannot be matched; it must not invalidate unrelated
+					// geometry or shadow coverage for other successfully resolved lights.
 					continue;
 				}
 				record.value.referenceID = reference->GetFormID();
