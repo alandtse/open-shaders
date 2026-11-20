@@ -3664,9 +3664,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		float emitVertexAO = max(max(emitVertexColor.r, emitVertexColor.g), emitVertexColor.b);
 		emitVertexColor = emitVertexAO == 0.0f ? 1.0f : emitVertexColor * lerp(1 / max(emitVertexAO, 1e-4), 1, SharedData::truePBRSettings.VertexAOStrength);
 
-		if (!ENABLE_LL)
-			emitVertexColor = Color::LinearToSrgb(emitVertexColor);
-		emitColor *= emitVertexColor;
+		if (ENABLE_LL)
+			emitColor = Color::ApplyLinearSrgbTint(emitColor, emitVertexColor);
+		else
+			emitColor *= Color::LinearToSrgb(emitVertexColor);
 #		endif  // TRUE_PBR
 		if (!ENABLE_LL)
 			emitColor = abs(emitColor);
