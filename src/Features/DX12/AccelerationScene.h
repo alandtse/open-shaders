@@ -51,6 +51,8 @@ namespace DX12
 		void Run(std::stop_token stop);
 
 		winrt::com_ptr<ID3D12Device5> device;
+		ID3D12Device* requestedDevice = nullptr;  // Compared only on the frame thread.
+		std::atomic<bool> initializationFailed = false;
 		winrt::com_ptr<ID3D12CommandQueue> queue;
 		winrt::com_ptr<ID3D12Fence> fence;
 		uint64_t fenceValue = 0;

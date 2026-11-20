@@ -25,28 +25,42 @@ namespace DX12
 
 	bool AccelerationScene::Start(ID3D12Device* candidate)
 	{
-		if (!candidate)
+		if (!candidate || initializationFailed.load(std::memory_order_acquire))
 			return false;
-		if (device)
-			return candidate == static_cast<ID3D12Device*>(device.get());
-		winrt::com_ptr<ID3D12Device5> next;
-		if (FAILED(candidate->QueryInterface(IID_PPV_ARGS(next.put()))))
-			return false;
-		D3D12_FEATURE_DATA_D3D12_OPTIONS5 options{};
-		if (FAILED(next->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options, sizeof(options))) ||
-			options.RaytracingTier < D3D12_RAYTRACING_TIER_1_1)
-			return false;
-		D3D12_COMMAND_QUEUE_DESC queueDesc{};
-		queueDesc.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
-		winrt::com_ptr<ID3D12CommandQueue> nextQueue;
-		winrt::com_ptr<ID3D12Fence> nextFence;
-		if (FAILED(next->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(nextQueue.put()))) ||
-			FAILED(next->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(nextFence.put()))))
-			return false;
-		device = std::move(next);
-		queue = std::move(nextQueue);
-		fence = std::move(nextFence);
-		worker = std::jthread([this](std::stop_token stop) { Run(stop); });
+		if (worker.joinable())
+			return candidate == requestedDevice;
+		requestedDevice = candidate;
+		winrt::com_ptr<ID3D12Device> retained;
+		retained.copy_from(candidate);
+		// Driver feature checks and DX12 queue/fence allocation can be expensive.
+		// Prewarm them on the acceleration-scene worker, never in PreShadowMaps.
+		worker = std::jthread([this, held = std::move(retained)](std::stop_token stop) mutable {
+			winrt::com_ptr<ID3D12Device5> next;
+			if (FAILED(held->QueryInterface(IID_PPV_ARGS(next.put())))) {
+				initializationFailed.store(true, std::memory_order_release);
+				return;
+			}
+			D3D12_FEATURE_DATA_D3D12_OPTIONS5 options{};
+			if (FAILED(next->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options, sizeof(options))) ||
+				options.RaytracingTier < D3D12_RAYTRACING_TIER_1_1) {
+				initializationFailed.store(true, std::memory_order_release);
+				return;
+			}
+			D3D12_COMMAND_QUEUE_DESC queueDesc{};
+			queueDesc.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
+			winrt::com_ptr<ID3D12CommandQueue> nextQueue;
+			winrt::com_ptr<ID3D12Fence> nextFence;
+			if (FAILED(next->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(nextQueue.put()))) ||
+				FAILED(next->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(nextFence.put())))) {
+				initializationFailed.store(true, std::memory_order_release);
+				return;
+			}
+			device = std::move(next);
+			queue = std::move(nextQueue);
+			fence = std::move(nextFence);
+			if (!stop.stop_requested())
+				Run(stop);
+		});
 		return true;
 	}
 
