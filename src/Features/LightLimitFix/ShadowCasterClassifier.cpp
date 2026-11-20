@@ -35,6 +35,7 @@ namespace ShadowCasterManager
 	std::atomic<uint32_t> s_hemisphereDropCount{ 0 };
 	std::atomic<uint64_t> s_hemisphereDropTotal{ 0 };
 	std::atomic<uint64_t> s_passlessCasterSkipTotal{ 0 };
+	std::atomic<uint64_t> s_flameHolderSkipTotal{ 0 };
 
 	/// Appends by destination list, so the front pass's caster count is readable
 	/// without RenderDoc: front-list appends vs back-only appends.
@@ -479,6 +480,48 @@ namespace ShadowCasterManager
 		return false;
 	}
 
+	/// The light's own reference, looked up once per light per frame: every near caster of one cull walk asks for the same one.
+	static const RE::TESObjectREFR* LightOwner(const RE::NiLight* a_light) noexcept
+	{
+		thread_local const RE::NiLight* cachedLight = nullptr;
+		thread_local std::uint32_t cachedFrame = 0;
+		thread_local const RE::TESObjectREFR* cachedOwner = nullptr;
+		const auto frame = static_cast<std::uint32_t>(*globals::game::frameCounter);
+		if (a_light != cachedLight || frame != cachedFrame) {
+			cachedLight = a_light;
+			cachedFrame = frame;
+			cachedOwner = OwnerAs<RE::TESObjectREFR>(a_light);
+		}
+		return cachedOwner;
+	}
+
+	/// The flame's rest spot: flicker writes its wobble into the light's local translate, so a part at the holder's edge
+	/// would flip in and out of the shadow (and churn the static cache) if measured from the live flame.
+	static RE::NiPoint3 FlameRestOrigin(const RE::NiAVObject* a_light) noexcept
+	{
+		__try {
+			if (a_light->parent && a_light->local.translate.SqrLength() <= kFlickerWobbleMaxOffset * kFlickerWobbleMaxOffset)
+				return a_light->parent->world.translate;
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		}
+		return a_light->world.translate;
+	}
+
+	/// True for a small part of the light's own placed reference whose bound holds the flame: a flame moving with its flicker
+	/// slices such a part at any near cut, so it is left out of that light's shadow while the rest of the fixture still casts.
+	static bool EnclosesOwnFlame(const RE::BSShadowLight& a_light, const RE::BSGeometry& a_geometry)
+	{
+		const auto* ni = a_light.light.get();
+		if (!ni)
+			return false;
+		const auto& bound = a_geometry.worldBound;
+		const auto d = bound.center - FlameRestOrigin(ni);
+		if (!HoldsFlame(d.x, d.y, d.z, bound.radius, a_geometry.world.scale))
+			return false;
+		const auto* owner = LightOwner(ni);
+		return owner && !owner->Is(RE::FormType::ActorCharacter) && owner == OwnerAs<RE::TESObjectREFR>(&a_geometry);
+	}
+
 	// BSParabolicCullingProcess::GetHemisphereMask values: bit 0 appends the
 	// caster to the front list, bit 1 accumulates it into the back hemisphere.
 	constexpr std::uint32_t kHemisphereFrontBit = 1u;
@@ -486,7 +529,8 @@ namespace ShadowCasterManager
 
 	/// Hook of BSCullingProcess::AppendVirtual on the parabolic culling vtable.
 	/// Drops a caster (skips the append) when below the contribution-cull
-	/// threshold, or when it does not belong to the active split-cache pass.
+	/// threshold, when it is the small part holding the light's own flame,
+	/// or when it does not belong to the active split-cache pass.
 	struct Hook_ParabolicCullAppend
 	{
 		static void thunk(RE::BSCullingProcess* a_this, RE::BSGeometry& a_visible, std::int32_t a_alphaGroupIndex)
@@ -514,6 +558,10 @@ namespace ShadowCasterManager
 					s_casterCullCount.fetch_add(1, std::memory_order_relaxed);
 					return;  // skip append -- caster dropped from this shadow
 				}
+			}
+			if (light && s_settings.SkipFlameEnclosure && EnclosesOwnFlame(*light, a_visible)) {
+				s_flameHolderSkipTotal.fetch_add(1, std::memory_order_relaxed);
+				return;
 			}
 			if (s_recLeft.load(std::memory_order_relaxed) > 0) {
 				const int32_t recSlot = s_recTargetSlot.load(std::memory_order_relaxed);

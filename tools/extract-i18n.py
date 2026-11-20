@@ -106,6 +106,11 @@ def split_top_level_args(arg_text: str) -> list[str]:
     return args
 
 
+# Weblate treats these suffixes as plural forms and adds the missing sibling to each
+# locale as an empty key that is absent from en.json.
+PLURAL_SUFFIXES = ("_zero", "_one", "_two", "_few", "_many", "_other")
+
+
 def find_project_root():
     """Find the project root by looking for CMakeLists.txt."""
     d = Path(__file__).resolve().parent.parent
@@ -383,6 +388,15 @@ def main():
         else:
             print("\nNo orphaned keys found.")
         sys.exit(1 if orphans else 0)
+
+    plural_keys = sorted(k for k in strings if k.endswith(PLURAL_SUFFIXES))
+    if plural_keys:
+        print("Keys must not end in a plural suffix "
+              f"({', '.join(PLURAL_SUFFIXES)}); Weblate adds empty siblings for them:",
+              file=sys.stderr)
+        for k in plural_keys:
+            print(f"  - {k}", file=sys.stderr)
+        sys.exit(1)
 
     output = build_output(strings)
     output_text = json.dumps(output, indent=4, ensure_ascii=False) + "\n"
