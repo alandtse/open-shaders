@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 
@@ -62,6 +63,19 @@ namespace NR
 		if (inputs.swapRequested)
 			return FrameAction::RebuildThenRun;
 		return FrameAction::Run;
+	}
+
+	/** @brief Consumes a retry only when this call can initialize, rebuild or evaluate NR. */
+	inline bool ConsumeRetry(FrameAction action, std::atomic_bool& requested)
+	{
+		switch (action) {
+		case FrameAction::RebuildThenRun:
+		case FrameAction::InitializeThenRun:
+		case FrameAction::Run:
+			return requested.exchange(false);
+		default:
+			return false;
+		}
 	}
 
 	/** @brief Whether a failure drops the runtime before latching, so a retry rebuilds it. */

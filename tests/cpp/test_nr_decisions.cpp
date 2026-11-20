@@ -11,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <format>
@@ -93,6 +94,49 @@ TEST_CASE("DecideFrame rebuilds only a latched runtime and never caps retries", 
 		REQUIRE(NR::DecideFrame(failed) == NR::FrameAction::SkipLatched);
 		failed.retryRequested = true;
 		REQUIRE(NR::DecideFrame(failed) == NR::FrameAction::RebuildThenRun);
+	}
+}
+
+TEST_CASE("A retry arriving after a latched decision survives until a runnable frame", "[nr][retry]")
+{
+	std::atomic_bool requested = false;
+	auto failed = RunningFrame(10);
+	failed.failed = true;
+	failed.retryRequested = requested.load();
+	const auto skipped = NR::DecideFrame(failed);
+	REQUIRE(skipped == NR::FrameAction::SkipLatched);
+	requested.store(true);
+	REQUIRE_FALSE(NR::ConsumeRetry(skipped, requested));
+	REQUIRE(requested.load());
+	++failed.frameCount;
+	failed.retryRequested = requested.load();
+	const auto retry = NR::DecideFrame(failed);
+	REQUIRE(retry == NR::FrameAction::RebuildThenRun);
+	REQUIRE(NR::ConsumeRetry(retry, requested));
+	REQUIRE_FALSE(requested.load());
+}
+
+TEST_CASE("Skipped NR actions preserve a pending retry", "[nr][retry]")
+{
+	for (const auto action : { NR::FrameAction::ReleasePassResources, NR::FrameAction::Suspend,
+			 NR::FrameAction::SkipNoWorld, NR::FrameAction::SkipLatched, NR::FrameAction::SkipDuplicate }) {
+		CAPTURE(action);
+		std::atomic_bool requested = true;
+		REQUIRE_FALSE(NR::ConsumeRetry(action, requested));
+		REQUIRE(requested.load());
+	}
+}
+
+TEST_CASE("Runnable NR actions consume each retry once and preserve later requests", "[nr][retry]")
+{
+	for (const auto action : { NR::FrameAction::InitializeThenRun, NR::FrameAction::RebuildThenRun, NR::FrameAction::Run }) {
+		CAPTURE(action);
+		std::atomic_bool requested = true;
+		REQUIRE(NR::ConsumeRetry(action, requested));
+		REQUIRE_FALSE(requested.load());
+		REQUIRE_FALSE(NR::ConsumeRetry(action, requested));
+		requested.store(true);
+		REQUIRE(requested.load());
 	}
 }
 

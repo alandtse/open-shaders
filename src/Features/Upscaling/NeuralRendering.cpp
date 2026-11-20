@@ -2691,7 +2691,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		materialEdgeSoftness.store(materialStrengths.edgeSoftness, std::memory_order_relaxed);
 	};
 	try {
-		const bool retry = retryRequested.exchange(false);
+		const bool retry = NR::ConsumeRetry(action, retryRequested);
 		if (action == NR::FrameAction::RebuildThenRun) {
 			// Retire both APIs before releasing a failed runtime and its shared resources.
 			impl->interop.Drain();
