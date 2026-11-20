@@ -52,9 +52,9 @@ void NativeCompositeFeature::DrawSettings()
 			ImGui::TextWrapped("Shadow producer: %s", producerStatus.c_str());
 		const auto mask = sceneDiagnostics.value("shadow", json::object());
 		if (mask.is_object()) {
-			ImGui::TextDisabled("Raw shadow dispatches: %llu | opaque recoveries: %llu",
+			ImGui::TextDisabled("Prepared shadow dispatches: %llu | early mask submissions: %llu",
 				static_cast<unsigned long long>(mask.value("submissions", uint64_t{ 0 })),
-				static_cast<unsigned long long>(sceneDiagnostics.value("shadowOpaqueRetryRecovered", uint64_t{ 0 })));
+				static_cast<unsigned long long>(sceneDiagnostics.value("shadowEarlySubmissions", uint64_t{ 0 })));
 		}
 	}
 	ImGui::TextDisabled("Lighting submissions: %llu | shadow-layer submissions: %llu",
@@ -215,8 +215,8 @@ json NativeCompositeFeature::GetDiagnostics()
 		{ "shadowProducerStatus", sceneDiagnostics.value("shadowStatus", std::string{}) },
 		{ "shadowProducerStage", sceneDiagnostics.value("shadowStage", std::string{}) },
 		{ "shadowProducer", sceneDiagnostics.value("shadow", json::object()) },
-		{ "shadowOpaqueRetryAttempts", sceneDiagnostics.value("shadowOpaqueRetryAttempts", uint64_t{ 0 }) },
-		{ "shadowOpaqueRetryRecovered", sceneDiagnostics.value("shadowOpaqueRetryRecovered", uint64_t{ 0 }) },
+		{ "shadowEarlyAttempts", sceneDiagnostics.value("shadowEarlyAttempts", uint64_t{ 0 }) },
+		{ "shadowEarlySubmissions", sceneDiagnostics.value("shadowEarlySubmissions", uint64_t{ 0 }) },
 		{ "shadowLayerEnabled", offload.staticShadows && offload.shadowIntensity > 0.0f },
 		{ "shadowContribution", offload.shadowIntensity }, { "llfLightOffloading", offload.llfLights },
 		{ "sharedSamplingDensity", offload.traceDensity },
@@ -263,7 +263,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 		selected.ShadowLayerEnabled && selected.ShadowPreview, selected.ShadowAfterLighting, selected.ShadowSpatialReconstruction, revision
 	};
 	const bool wantShadow = shadowSettings.preview || shadowSettings.contribution * shadowSettings.blend > 0.0f;
-	const auto shadow = wantShadow && !unsupportedGamut ? globals::features::dx12NativeScene.GetShadowMask(a_frame) : nullptr;
+	// Never layer a late mask over raster shadows that were not offloaded.
+	const auto shadow = wantShadow && !unsupportedGamut ? globals::features::dx12NativeScene.GetRasterOffloadShadowMask(a_frame) : nullptr;
 	const auto raster = shadow ? globals::features::dx12NativeScene.GetRasterFrame(a_frame) : nullptr;
 	auto frame = pass.Capture(a_device11, a_context11, a_device12, a_queue, a_source, a_frame, a_width, a_height,
 		a_transfer, lighting, shadow, raster, shadowSettings, selected.LightingStrength, selected.DirectSpatialReconstruction,

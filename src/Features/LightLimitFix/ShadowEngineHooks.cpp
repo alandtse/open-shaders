@@ -10,6 +10,7 @@
 #include "../../Utils/Game.h"
 #include "../../Utils/UI.h"
 #include "../Upscaling.h"
+#include "../DX12NativeScene/DX12NativeScene.h"
 #include "../VR.h"
 #include "I18n/I18n.h"
 #include "ShadowCasterInternal.h"
@@ -626,6 +627,10 @@ namespace ShadowCasterManager
 	{
 		static void thunk()
 		{
+			// Last pre-scheduler opportunity to produce the companion-light
+			// mask. Only a successful same-frame result may retire static
+			// raster casters; dynamic/character casters remain scheduled.
+			globals::features::dx12NativeScene.PrepareShadowMaskForRaster();
 			ScheduleShadowCasters();
 		}
 		static inline REL::Relocation<decltype(thunk)> func;

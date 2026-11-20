@@ -105,9 +105,7 @@ struct DX12NativeScene final : Feature
 	void SaveSettings(json& a_json) override;
 	void RestoreDefaultSettings() override;
 	void EarlyPrepass() override;
-	void OnBeforeShadowMapRendering() override { DispatchShadow("before-raster-shadowmaps"); }
-	void OnWorldRenderBegin() override { DispatchShadow("world-render-begin"); }
-	void Prepass() override { DispatchShadow("before-opaque"); }
+	void OnBeforeShadowMapRendering() override { PrepareShadowMaskForRaster(); }
 	void OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs) override;
 	void ObserveRuntimeGeometry(RE::BSGeometry* a_geometry, const std::string& a_reference, const std::string& a_shape);
 	void ObserveSCMRigidCaster(RE::BSGeometry& geometry);  // Data only; DX12 evaluates rays.
@@ -153,6 +151,11 @@ struct DX12NativeScene final : Feature
 	GetCharacterCasterForVisibility(uint32_t a_frame) const;
 	/** @brief Returns a matching prepared-scene shadow mask and its completion fence. */
 	std::shared_ptr<const DX12Native::ShadowFrame> GetShadowMask(uint32_t a_frame) const;
+	/** @brief Attempts the prepared-light mask before SCM schedules raster casters.
+	 *  A failed attempt never transfers static-shadow ownership away from raster. */
+	bool PrepareShadowMaskForRaster();
+	/** @brief Only an early, same-frame mask may replace raster static shadows. */
+	std::shared_ptr<const DX12Native::ShadowFrame> GetRasterOffloadShadowMask(uint32_t a_frame) const;
 	/** @brief Retains a borrowed shadow mask until the consumer GPU fence completes. */
 	bool RetainShadowMask(const std::shared_ptr<const DX12Native::ShadowFrame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value) { return shadow.RetainThrough(a_frame, a_fence, a_value); }
 	/** @brief Retains the borrowed raster frame until the consumer GPU fence completes. */
@@ -233,7 +236,8 @@ private:
 	double previousPlayerX = 0.0, previousPlayerY = 0.0;
 	bool hasPreviousPlayer = false;
 	uint64_t shadowControlsRevision = 1;
-	uint64_t shadowOpaqueRetryAttempts = 0, shadowOpaqueRetryRecovered = 0;
+	uint32_t shadowRasterOffloadFrame = UINT32_MAX;
+	uint64_t shadowEarlyAttempts = 0, shadowEarlySubmissions = 0;
 	mutable std::mutex settingsMutex, diagnosticsMutex;
 	json diagnostics = json::object();
 	bool submitted = false;

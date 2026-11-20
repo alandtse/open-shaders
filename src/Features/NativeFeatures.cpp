@@ -325,59 +325,51 @@ bool NativeSCMFeature::IsActive() const { return loaded && enabled.load(std::mem
 
 bool NativeSCMFeature::OwnsStaticForLight(const RE::BSShadowLight* source, int32_t slot) const
 {
-	if (!source || slot < 0 || !IsActive() || !globals::features::nativeLLF.IsActive() ||
-		!globals::game::graphicsState)
+	if (!source || slot < 0 || !IsActive() || !globals::game::graphicsState)
 		return false;
 	const auto offload = globals::features::nativeLighting.GetOffloadSettings();
 	if (!offload.staticShadows || offload.shadowIntensity <= 0.0f || offload.preserveMatchedRasterShadows)
 		return false;
 
-	// SCM shadow rendering is scheduled before LLF publishes the *current*
-	// frame's raster light buffer. Use the last complete LLF generation, and
-	// match BOTH slot and world-space light identity: a reassigned slot must
-	// never inherit another light's native shadow ownership.
+	// SCM runs before any runtime LLF light publication. Shadow ownership is
+	// decided solely by a current-frame, pre-raster mask of companion lights.
+	// If early dispatch failed, raster keeps all its static casters.
 	const auto frame = globals::game::graphicsState->GetFrameCount();
-	const auto published = globals::features::nativeLLF.GetRecentLightFrame(frame);
 	const auto* niLight = source->light.get();
-	if (!published || !niLight)
+	if (!niLight)
 		return false;
 
 	const auto& nativeScene = globals::features::dx12NativeScene;
 	const auto prepared = nativeScene.GetPublishedScene();
-	const auto nativeMask = nativeScene.GetShadowMask(frame);
+	const auto nativeMask = nativeScene.GetRasterOffloadShadowMask(frame);
 	if (!prepared || !nativeMask || !nativeMask->readyFence || !nativeMask->readyValue ||
 		nativeMask->readyValue == UINT64_MAX)
 		return false;
-	// NativeSCM selection must reference the prepared-first unified indices,
-	// not the old, unrelated raw LLF array indices.
-	const auto unified = globals::features::nativeLLF.BuildUnifiedLights(
-		prepared->cell->nativeLights, frame, true);
-	for (uint32_t index = 0; index < unified.count; ++index) {
-		const auto& identity = unified.source[index];
-		if (!identity.valid ||
-			(identity.flags & static_cast<uint32_t>(PointLightFlags::Flags::Shadow)) == 0 ||
-			identity.shadowSlot != static_cast<uint32_t>(slot))
+	// The mask stores the actual subset dispatched (up to 64 selected lights),
+	// so never assume its indices match manifest indices or raster slot IDs.
+	// Match the live raster light's position and inherited radius to that
+	// subset. Unmatched/overridden lights retain the raster static shadow.
+	const float runtimeRadius = niLight->GetLightRuntimeData().radius.x;
+	if (!std::isfinite(runtimeRadius) || runtimeRadius <= 0.0f)
+		return false;
+	for (const auto& traced : nativeMask->lightSnapshot) {
+		if (!traced.supported || !std::isfinite(traced.radius))
 			continue;
-
-		const bool maskSelected = nativeScene.settings.ShadowMask &&
-		                          (nativeScene.settings.ShadowAllLights || nativeScene.settings.ShadowLightIndex == index);
-		if (!maskSelected)
+		const float radiusTolerance = std::max(16.0f, traced.radius * 0.1f);
+		if (std::abs(runtimeRadius - traced.radius) > radiusTolerance)
 			continue;
-		const auto maskIndex = nativeScene.settings.ShadowAllLights ? index : 0u;
-		if (maskIndex >= nativeMask->lightSnapshot.size())
+		const bool belongsToPreparedScene = std::ranges::any_of(prepared->cell->nativeLights, [&](const auto& candidate) {
+			const float dx = candidate.position.x - traced.position.x;
+			const float dy = candidate.position.y - traced.position.y;
+			const float dz = candidate.position.z - traced.position.z;
+			return candidate.supported && dx * dx + dy * dy + dz * dz <= 1.0f &&
+			       std::abs(candidate.radius - traced.radius) <= 1.0f;
+		});
+		if (!belongsToPreparedScene)
 			continue;
-		const auto& traced = nativeMask->lightSnapshot[maskIndex];
-		const auto& preparedLight = unified.lights[index];
-		const float mx = traced.position.x - preparedLight.position.x;
-		const float my = traced.position.y - preparedLight.position.y;
-		const float mz = traced.position.z - preparedLight.position.z;
-		if (!std::isfinite(mx) || !std::isfinite(my) || !std::isfinite(mz) ||
-			mx * mx + my * my + mz * mz > 1.0f)
-			continue;
-
 		const auto& p = niLight->world.translate;
-		const float dx = p.x - identity.position.x, dy = p.y - identity.position.y, dz = p.z - identity.position.z;
-		const float tolerance = std::clamp(identity.radius * 0.01f, 4.0f, 32.0f);
+		const float dx = p.x - traced.position.x, dy = p.y - traced.position.y, dz = p.z - traced.position.z;
+		const float tolerance = std::clamp(traced.radius * 0.01f, 4.0f, 32.0f);
 		if (std::isfinite(dx) && std::isfinite(dy) && std::isfinite(dz) &&
 			dx * dx + dy * dy + dz * dz <= tolerance * tolerance)
 			return true;
