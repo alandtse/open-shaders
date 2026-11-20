@@ -8,7 +8,8 @@ using Mutagen.Bethesda.Plugins.Order;
 using Mutagen.Bethesda.Plugins.Cache;
 using Mutagen.Bethesda.Skyrim;
 
-return args.Length == 5 && args[0] == "--list-cells" ? PluginCellIndex.Run(args[1..]) :
+return args.Length == 4 && args[0] == "--pg-references" ? PgReferenceIndex.Run(args[1..]) :
+    args.Length == 5 && args[0] == "--list-cells" ? PluginCellIndex.Run(args[1..]) :
     args.Length == 9 && args[0] == "--worldspace-subcell" ? ScenePreparation.Run(args[1..5],
         int.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture),
         int.Parse(args[6], System.Globalization.CultureInfo.InvariantCulture),

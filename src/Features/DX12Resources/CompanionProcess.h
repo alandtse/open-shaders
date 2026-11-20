@@ -66,7 +66,8 @@ namespace DX12ResourceService
 
 	inline CompanionResult RunCompanion(const std::vector<std::wstring>& arguments,
 		const std::filesystem::path& logPath,
-		DWORD priorityClass = NORMAL_PRIORITY_CLASS)
+		DWORD priorityClass = NORMAL_PRIORITY_CLASS, DWORD timeoutMs = INFINITE,
+		bool bindToParentLifetime = false)
 	{
 		CompanionResult result;
 		const auto executable = CompanionExecutable();
@@ -102,6 +103,19 @@ namespace DX12ResourceService
 		startup.hStdOutput = logHandle;
 		startup.hStdError = logHandle;
 		PROCESS_INFORMATION process{};
+		HANDLE job = nullptr;
+		if (bindToParentLifetime) {
+			job = CreateJobObjectW(nullptr, nullptr);
+			JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+			limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+			if (!job || !SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+					&limits, sizeof(limits))) {
+				if (job) CloseHandle(job);
+				CloseHandle(logHandle);
+				result.error = "Could not bind DX12 companion lifetime to Skyrim";
+				return result;
+			}
+		}
 		const auto working = std::filesystem::absolute(".").wstring();
 		// A tile prewarm process runs at IDLE priority; mandatory active
 		// geometry uses BELOW_NORMAL. The Skyrim process stays responsive.
@@ -110,19 +124,35 @@ namespace DX12ResourceService
 		                          priorityClass :
 		                          NORMAL_PRIORITY_CLASS;
 		const BOOL launched = CreateProcessW(executable.c_str(), command.data(), nullptr,
-			nullptr, TRUE, CREATE_NO_WINDOW | allowed, nullptr, working.c_str(), &startup, &process);
+			nullptr, TRUE, CREATE_NO_WINDOW | allowed | (bindToParentLifetime ? CREATE_SUSPENDED : 0),
+			nullptr, working.c_str(), &startup, &process);
 		const DWORD launchError = launched ? ERROR_SUCCESS : GetLastError();
 		CloseHandle(logHandle);
 		if (!launched) {
+			if (job) CloseHandle(job);
 			result.error = "DX12 Resources companion launch failed (Win32 " +
 			               std::to_string(launchError) + ")";
 			return result;
 		}
+		if (job && (!AssignProcessToJobObject(job, process.hProcess) ||
+			ResumeThread(process.hThread) == DWORD(-1))) {
+			TerminateProcess(process.hProcess, 1);
+			CloseHandle(process.hThread);
+			CloseHandle(process.hProcess);
+			CloseHandle(job);
+			result.error = "Could not start lifetime-bound DX12 companion";
+			return result;
+		}
 		CloseHandle(process.hThread);
-		const DWORD wait = WaitForSingleObject(process.hProcess, INFINITE);
-		if (wait != WAIT_OBJECT_0 || !GetExitCodeProcess(process.hProcess, &result.exitCode))
+		const DWORD wait = WaitForSingleObject(process.hProcess, timeoutMs);
+		if (wait == WAIT_TIMEOUT) {
+			if (job) TerminateJobObject(job, 1);
+			else TerminateProcess(process.hProcess, 1);
+			result.error = "DX12 companion exceeded its execution deadline";
+		} else if (wait != WAIT_OBJECT_0 || !GetExitCodeProcess(process.hProcess, &result.exitCode))
 			result.error = "Could not collect DX12 Resources companion exit status";
 		CloseHandle(process.hProcess);
+		if (job) CloseHandle(job);
 		std::ifstream stream(logPath, std::ios::binary | std::ios::ate);
 		if (stream) {
 			const auto size = stream.tellg();

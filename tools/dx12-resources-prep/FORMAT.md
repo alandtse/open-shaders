@@ -1,5 +1,26 @@
 # DX12 Resources cell preparation contract
 
+## Main-menu PGPatcher reference index
+
+`DX12ResourcesPrep --pg-references <Data> <previous-index.json> <work-index.json>`
+reads the deployed `ParallaxGen_Diff.json` and only the NIF paths explicitly
+listed there. The index is independent of CELL/worldspace preparation and never
+compiles geometry, loads DDS content, or creates GPU resources. Its output has
+`kind: "dx12-pg-references"`, `schemaVersion: 1`, `sourceDiffSha256`, counts,
+and `meshes`. Each mesh stores its normalized path, expected PG CRC32,
+file identity, verification status, SHA-256, and NIF shape references with raw
+shader flags and ordered texture paths. Stable shape lookup is the mesh path
+plus NIF block index; a changed NIF hash represents a new revision.
+
+The companion reuses entries whose PG CRC32, file length, and write timestamp
+are unchanged. Skyrim publishes the validated result atomically at
+`DX12-cache/pg-references/index-v1.json`; the immutable in-memory snapshot is
+available through `DX12Resources::GetPgReferenceSnapshot()`. Missing or
+unverified outputs remain explicitly unresolved. The index is currently limited
+to CRC-tracked patched NIFs: PG-generated duplicate meshes not present in the
+diff, plugin-only TXST overrides, and PGLite-only runtime patches are **not**
+claimed as covered by this producer version.
+
 `cell-preparation.json` identifies this producer contract with
 `formatContract: "dx12-resources-cell"` and `formatVersion: 1`. Its `cell`
 field is the original plugin-local CELL identity. The companion writes a
