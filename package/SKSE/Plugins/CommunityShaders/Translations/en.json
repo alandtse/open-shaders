@@ -4960,6 +4960,8 @@
     "feature.upscaling.neural_rendering.pause_in_combat": "Pause NR During Combat",
     "feature.upscaling.neural_rendering.pause_in_combat_tooltip": "Pauses Neural Rendering for both eyes during player combat. Ordinary upscaling continues. Resumes with fresh history after three continuous seconds of peaceful, unpaused gameplay; the runtime stays initialized.",
     "feature.upscaling.neural_rendering.performance": "Performance",
+    "feature.upscaling.neural_rendering.peripheral_compression": "Peripheral Compression",
+    "feature.upscaling.neural_rendering.peripheral_compression_tooltip": "Higher values can improve performance but reduce Neural Rendering quality toward the edges of the view. More detail is kept in the centre. Does not apply with Alternate eyes or when limited to a tracked actor.",
     "feature.upscaling.neural_rendering.region_follow_foveation": "Follow Foveation",
     "feature.upscaling.neural_rendering.region_follow_foveation_tooltip": "With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view.",
     "feature.upscaling.neural_rendering.region_of_interest": "Limit to Tracked Actor",
