@@ -701,7 +701,7 @@ namespace ShadowCasterManager
 			float lodDimmer = 1.0f;              ///< engine LOD fade multiplier
 			float distance = 0.0f;               ///< light centre to the nearest eye
 			float radius = 0.0f;                 ///< light radius
-			bool ownInFrustum = false;           ///< sphere touches any eye's left/right/top/bottom planes
+			bool ownInFrustum = false;           ///< sphere touches any eye's side planes and is not wholly behind its eye plane
 			bool cameraHold = false;             ///< kept by the exit-streak hysteresis after leaving view
 			bool hidden = false;                 ///< engine rejected it because the NiLight is hidden
 			bool shadowDistanceCulled = false;   ///< engine rejected it past the shadow distance
