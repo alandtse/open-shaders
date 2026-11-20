@@ -436,7 +436,7 @@ void NativeLLFFeature::PublishLights(const LightLimitFix::LightData* data, uint3
 			{ toLinear(source.color.x) * scale, toLinear(source.color.y) * scale, toLinear(source.color.z) * scale },
 			source.radius, std::sqrt(std::max(source.sizeBias, 0.0f)), source.fadeZone,
 			static_cast<uint32_t>(source.lightFlags.underlying()), source.shadowMapIndex,
-			inverseSquare ? 1u : 2u
+			inverseSquare ? 1u : 2u, i
 		};
 		if (!std::isfinite(light.position.x) || !std::isfinite(light.position.y) || !std::isfinite(light.position.z) ||
 			!std::isfinite(light.radiance.x) || !std::isfinite(light.radiance.y) || !std::isfinite(light.radiance.z) ||
@@ -489,6 +489,27 @@ void NativeLLFFeature::PublishLights(const LightLimitFix::LightData* data, uint3
 		workerUnified.store(std::move(work), std::memory_order_release);
 		workerQueued.fetch_add(1, std::memory_order_relaxed);
 	} catch (...) { /* Preserve the exact legacy-compatible native fallback. */
+	}
+}
+
+void NativeLLFFeature::ApplyRasterOffloadPolicy(LightLimitFix::LightData* data, uint32_t count, uint32_t frame) const
+{
+	if (!data || !count || !IsActive() || globals::game::isVR)
+		return;
+	const auto offload = globals::features::nativeLighting.GetOffloadSettings();
+	if (!offload.llfLights || offload.preserveMatchedRasterLights || !GetLightFrame(frame))
+		return;
+	const auto scene = globals::features::dx12NativeScene.GetPublishedScene();
+	if (!scene || !scene->cell)
+		return;
+
+	// Match by original LLF slot: disabling spatially nearby lights would erase
+	// raster-only illumination that was never selected for native offloading.
+	const auto unified = BuildUnifiedLights(scene->cell->nativeLights, frame);
+	for (uint32_t index = 0; index < std::min(unified.prepared, unified.count); ++index) {
+		const auto& identity = unified.source[index];
+		if (identity.valid && identity.rasterIndex < count)
+			data[identity.rasterIndex].lightFlags.set(LightLimitFix::LightFlags::Disabled);
 	}
 }
 std::shared_ptr<const NativeLLFFeature::LightFrame> NativeLLFFeature::GetLightFrame(uint32_t frame) const
@@ -596,7 +617,7 @@ namespace
 							}
 						}
 						}
-					result.source[closest] = { live.position, live.radius, live.flags, live.shadowSlot, true };
+					result.source[closest] = { live.position, live.radius, live.flags, live.shadowSlot, live.rasterIndex, true };
 					identityDistances[closest] = bestSquared;
 				}
 				continue;
@@ -616,7 +637,7 @@ namespace
 			}
 			const uint32_t target = result.count++;
 			result.lights[target] = appended;
-			result.source[target] = { live.position, live.radius, live.flags, live.shadowSlot, true };
+			result.source[target] = { live.position, live.radius, live.flags, live.shadowSlot, live.rasterIndex, true };
 			identityDistances[target] = 0.0f;
 			++result.added;
 		}

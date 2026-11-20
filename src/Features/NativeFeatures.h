@@ -159,6 +159,7 @@ struct NativeLLFFeature final : Feature
 		float radius = 0.0f, sourceRadius = 0.0f, fadeZone = 0.0f;
 		uint32_t flags = 0, shadowSlot = 0;
 		uint32_t falloffMode = 0;
+		uint32_t rasterIndex = UINT32_MAX;  // Original LLF upload slot, before native filtering.
 	};
 	struct LightFrame
 	{
@@ -189,6 +190,7 @@ struct NativeLLFFeature final : Feature
 		float radius = 0.0f;
 		uint32_t flags = 0;
 		uint32_t shadowSlot = UINT32_MAX;
+		uint32_t rasterIndex = UINT32_MAX;
 		bool valid = false;
 	};
 	struct UnifiedLights
@@ -201,6 +203,8 @@ struct NativeLLFFeature final : Feature
 	UnifiedLights BuildUnifiedLights(std::span<const DX12Native::PreparedPointLight> prepared,
 		uint32_t frame, bool allowRecent = false) const;
 	void PublishLights(const LightLimitFix::LightData* data, uint32_t count, const float3& eye, uint32_t frame);
+	/** Optional exact-source raster suppression after PublishLights owns its immutable copy. */
+	void ApplyRasterOffloadPolicy(LightLimitFix::LightData* data, uint32_t count, uint32_t frame) const;
 	/** Clear the native light snapshot when a cell changes or a loading screen opens/closes. */
 	void ClearCapturedLights();
 	std::shared_ptr<const LightFrame> GetLightFrame(uint32_t frame) const;

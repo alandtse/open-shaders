@@ -14,6 +14,7 @@ struct NativeLightingFeature final : Feature
 	struct Settings
 	{
 		bool OffloadStaticShadows = true, OffloadLLFLights = false;
+		bool PreserveMatchedRasterLights = true;
 		float OffloadedShadowIntensity = 1.0f;
 		bool Enabled = false, Diffuse = true, Specular = true, EarlyShadowCull = true, Debug = false, CompareCulling = false;
 		float DiffuseIntensity = 1.0f, SpecularIntensity = 1.0f;
@@ -33,7 +34,7 @@ struct NativeLightingFeature final : Feature
 	};
 	struct OffloadSettings
 	{
-		bool staticShadows = true, llfLights = false;
+		bool staticShadows = true, llfLights = false, preserveMatchedRasterLights = true;
 		float shadowIntensity = 1.0f;
 		uint32_t traceDensity = 0;
 		uint64_t revision = 1;
