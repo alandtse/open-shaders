@@ -2753,7 +2753,7 @@
     "feature.terrain_blending.name": "",
     "feature.terrain_helper.description": "",
     "feature.terrain_helper.key_feature_1": "",
-    "feature.terrain_helper.key_feature_2": "",
+    "feature.terrain_helper.key_feature_2": "Integracja mapowania Parallax z teksturami terenu",
     "feature.terrain_helper.key_feature_3": "",
     "feature.terrain_helper.key_feature_4": "",
     "feature.terrain_helper.key_feature_5": "",
