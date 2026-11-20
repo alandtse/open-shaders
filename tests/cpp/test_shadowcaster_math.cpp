@@ -262,10 +262,10 @@ TEST_CASE("SliceCappedLightCount keeps the highest point index inside the array"
 			REQUIRE(SliceCappedLightCount(count, slices) < slices);
 }
 
-TEST_CASE("EdgeKeepsLight keeps only a seen omni light that is neither hidden nor faded", "[scm]")
+TEST_CASE("EdgeKeepsLight keeps only a recently valid omni light that is neither hidden nor faded", "[scm]")
 {
 	REQUIRE(EdgeKeepsLight(true, false, false, false));
-	// Never seen by the engine, hidden, faded out by its level of detail, or a spot light: dropped as before.
+	// Not recently valid, hidden, faded out by its level of detail, or a spot light: dropped as before.
 	REQUIRE_FALSE(EdgeKeepsLight(false, false, false, false));
 	REQUIRE_FALSE(EdgeKeepsLight(true, true, false, false));
 	REQUIRE_FALSE(EdgeKeepsLight(true, false, true, false));

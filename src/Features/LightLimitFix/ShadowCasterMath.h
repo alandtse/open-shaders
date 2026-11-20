@@ -99,10 +99,10 @@ namespace ShadowCasterManager
 	}
 
 	/// Whether a light the engine culled may stay a visible shadow light while its sphere is still in view: an omni light that
-	/// passed the engine's test before and is neither hidden nor faded out by its level of detail.
-	inline bool EdgeKeepsLight(bool a_seenBefore, bool a_hidden, bool a_lodFaded, bool a_frustumLight) noexcept
+	/// passed the engine's test within the exit streak and is neither hidden nor faded out by its level of detail.
+	inline bool EdgeKeepsLight(bool a_recentlyValid, bool a_hidden, bool a_lodFaded, bool a_frustumLight) noexcept
 	{
-		return a_seenBefore && !a_hidden && !a_lodFaded && !a_frustumLight;
+		return a_recentlyValid && !a_hidden && !a_lodFaded && !a_frustumLight;
 	}
 
 	/// Whether a light acquiring a slot keeps its last-valid frame: one stamped this frame is its own engine pass or edge

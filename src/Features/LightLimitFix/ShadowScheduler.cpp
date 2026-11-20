@@ -1984,7 +1984,7 @@ namespace ShadowCasterManager
 					// UpdateCamera sets both shadow cameras before its frustum test, which a flickering radius grazing the view edge
 					// flips; an omni light our own sphere test still sees stays a visible light and keeps redrawing.
 					float edgeEyeDistance = 0.0f;
-					const bool edgeKept = EdgeKeepsLight(lastValidIt != s_lastValidFrame.end(), hiddenNow, lodFadedNow, l->GetIsFrustumLight()) &&
+					const bool edgeKept = EdgeKeepsLight(recentlyValid, hiddenNow, lodFadedNow, l->GetIsFrustumLight()) &&
 					                      OwnSphereInFrustum(nilightNow->world.translate, nilightNow->GetLightRuntimeData().radius.x * nilightNow->world.scale, edgeEyeDistance);
 					if (edgeKept) {
 						lastValidIt->second = nowFrame;
@@ -3821,6 +3821,7 @@ namespace ShadowCasterManager
 		// scoring it now touches freed memory. Load-bearing: don't remove this return.
 		if (s_pendingSessionReset.exchange(false, std::memory_order_acquire)) {
 			s_everHadShadow.clear();
+			s_lastValidFrame.clear();
 			ResetSession();
 			return;
 		}
@@ -3832,7 +3833,8 @@ namespace ShadowCasterManager
 			s_cellResetTotal.fetch_add(1, std::memory_order_relaxed);
 			s_casterMobility.clear();
 			s_everHadShadow.clear();  // a cell swap recycles NiLight addresses
-			s_splitState.clear();     // bakeQueued defaults true: every light re-bakes
+			s_lastValidFrame.clear();
+			s_splitState.clear();  // bakeQueued defaults true: every light re-bakes
 			ShadowCasterManager::InvalidateAllStaticBakes();
 		}
 
