@@ -31,7 +31,7 @@ void StoreWarpedDepth(float3 direction, bool upper, bool omni, float depth)
 {
 	const float2 q = upper ? direction.xy / (1.0 + direction.z) : direction.xy / (direction.z - 1.0);
 	const float2 faceUV = q * 0.5 + 0.5;
-	if (any(faceUV < 0.0) || any(faceUV >= 1.0))
+	if (!all(isfinite(faceUV)) || any(faceUV < 0.0) || any(faceUV >= 1.0))
 		return;
 
 	const float2 uv = float2(faceUV.x, omni ? (upper ? 0.5 * faceUV.y : 1.0 - 0.5 * faceUV.y) : faceUV.y);
