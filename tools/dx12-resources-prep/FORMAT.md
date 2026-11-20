@@ -107,10 +107,14 @@ screen pixels, so the pattern remains attached to geometry while the view
 moves. An optional setting follows the post-parallax native material UV;
 otherwise snow retains the flat hit UV. Post-parallax mapping changes snow
 only when native PBR parallax is enabled and a material supplies height.
-An independent, smooth value-noise profile supplies native PBR normal
-perturbations for the snow lumps. Lump height (0..1), size (0.5..8 native-ray
-noise patches), and density (0..1) can be adjusted without changing DX12
-geometry or silhouettes; a zero height or density skips the extra noise.
+Six independently seeded, weighted value-noise layers supply native PBR normal
+perturbations for the snow lumps, with coarse shapes dominating the finer
+details. Lump height (0..1), size (0.5..8 native-ray noise patches), and
+density (0..1) can be adjusted without changing DX12 geometry or silhouettes;
+a zero height or density skips the extra noise. Lump density and height are
+attenuated at partial snow-coverage boundaries and on faces that turn away
+from upward, so flat interiors of covered areas receive more raised detail. The masks
+do not use triangle barycentric edges, avoiding artificial triangulation seams.
 The crystal response uses the PBR minimum roughness (0.04) and is submitted
 into the native specular lobe only under unoccluded direct light;
 shadowed snow does not emit light. Only actual native hits evaluate the effect; no

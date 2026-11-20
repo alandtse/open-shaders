@@ -211,6 +211,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	surface.facing = 1.0f;
 	surface.snowHitSeed = NativePBR::SnowHash(binding.identity ^ uint2(instance, primitive));
 	surface.projectedSnowIncidence = 0.0f;
+	surface.snowUpwardAlignment = 0.0f;
 	if ((binding.flags & NativePBR::DrawProjectedSnowCandidateFlag) != 0u) {
 		float3 edge0 = mul((float3x3)objectToWorld, hitSurface.position1 - hitSurface.position0);
 		float3 edge1 = mul((float3x3)objectToWorld, hitSurface.position2 - hitSurface.position0);
@@ -218,6 +219,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 		float lengthSq = dot(face, face);
 		if (all(isfinite(face)) && lengthSq > 1e-12f) {
 			const float upward = saturate(face.z * rsqrt(lengthSq));
+			surface.snowUpwardAlignment = upward;
 			const float gravity = upward * upward * (3.0f - 2.0f * upward);
 			surface.projectedSnowIncidence = lerp(1.0f, gravity, saturate(SnowLumps.w));
 		}

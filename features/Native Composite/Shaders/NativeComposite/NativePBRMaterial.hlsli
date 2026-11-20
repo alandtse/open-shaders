@@ -46,6 +46,7 @@ namespace NativePBR
 		float3 vertexColor;
 		float facing;
 		float projectedSnowIncidence;
+		float snowUpwardAlignment;
 		uint snowHitSeed;
 	};
 
@@ -129,9 +130,14 @@ namespace NativePBR
 		if (result.snowCoverage > 0.0f) {
 			float variation, crystal;
 			SnowDetail(surface.snowUV, surface.snowHitSeed, snowTuning, variation, crystal);
-			if (snowLumps.x > 0.0f && snowLumps.z > 0.0f) {
+			const float flatLumpMask = smoothstep(0.15f, 0.85f, surface.snowUpwardAlignment);
+			const float coverageEdgeMask = smoothstep(0.1f, 0.95f, result.snowCoverage);
+			const float lumpPresence = flatLumpMask * coverageEdgeMask;
+			const float lumpStrength = saturate(snowLumps.x) * lumpPresence;
+			const float lumpDensity = saturate(snowLumps.z) * lumpPresence;
+			if (lumpStrength > 0.0f && lumpDensity > 0.0f) {
 				const float2 lumpSlope = SnowLumpSlope(surface.snowUV, surface.snowHitSeed,
-					snowTuning.y, snowLumps.y, snowLumps.z);
+					snowTuning.y, snowLumps.y, lumpDensity);
 				float3 tangent = surface.tangent - result.normal * dot(result.normal, surface.tangent);
 				const float tangentLengthSq = dot(tangent, tangent);
 				if (all(isfinite(tangent)) && tangentLengthSq > 1e-8f) {
@@ -139,7 +145,7 @@ namespace NativePBR
 					float3 bitangent = cross(result.normal, tangent);
 					bitangent *= dot(bitangent, surface.bitangent) < 0.0f ? -1.0f : 1.0f;
 					result.normal = normalize(result.normal - (tangent * lumpSlope.x + bitangent * lumpSlope.y) *
-						saturate(snowLumps.x) * result.snowCoverage);
+						lumpStrength);
 				}
 			}
 			float3 snowColor = lerp(1.0f.xxx, saturate(0.98f.xxx + variation * 0.06f),
