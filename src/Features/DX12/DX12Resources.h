@@ -11,7 +11,15 @@
 
 namespace DX12
 {
-	/** @brief The companion publishes only triangle geometry, never textures or material references. */
+	/** @brief Immutable light record discovered alongside companion geometry. */
+	struct PreparedLight
+	{
+		uint32_t referenceID = 0, baseID = 0, flags = 0;
+		float3 position{}, color{};
+		float radius = 0.0f, fade = 1.0f, emitterRadius = 0.0f, falloffExponent = 1.0f;
+	};
+
+	/** @brief The companion publishes triangle geometry without textures or materials. */
 	struct Shape
 	{
 		uint64_t identity = 0;
@@ -24,6 +32,7 @@ namespace DX12
 	{
 		SubcellKey key;
 		std::vector<std::shared_ptr<const Shape>> shapes;
+		std::vector<PreparedLight> lights;
 		uint64_t bytes = 0;
 		bool prepared = false;
 	};
@@ -32,6 +41,7 @@ namespace DX12
 	struct Grid
 	{
 		uint64_t revision = 0;
+		uint64_t geometryRevision = 0, lightRevision = 0;
 		uint32_t size = kSubcellSizes.front();
 		std::array<SubcellKey, kGridCapacity> requested{};
 		std::array<std::shared_ptr<const Tile>, kGridCapacity> resident{};
@@ -48,6 +58,8 @@ namespace DX12
 		bool Publish(const SubcellKey& key, std::vector<Shape> shapes);
 		/** @brief Adds a newly discovered rigid shape without invalidating older consumers. */
 		bool Append(const SubcellKey& key, Shape shape);
+		/** @brief Replaces the live grid's light metadata without rebuilding its geometry. */
+		void PublishLights(std::span<const PreparedLight> lights);
 		/** @brief Releases every in-memory tile at scene transition. */
 		void Clear();
 		/** @brief Retains an immutable render-consumer snapshot. */
@@ -61,7 +73,7 @@ namespace DX12
 	};
 }
 
-/** @brief Shapes-only runtime companion service with a bounded, diskless 3x3 grid. */
+/** @brief Geometry and minimal prepared-light companion with a diskless 3x3 grid. */
 struct DX12Resources final : Feature
 {
 	struct Settings
@@ -91,9 +103,14 @@ struct DX12Resources final : Feature
 	/** @brief Accepts a companion-produced, shape-only subcell. */
 	bool Publish(const DX12::SubcellKey& key, std::vector<DX12::Shape> shapes) { return grid.Publish(key, std::move(shapes)); }
 	bool IsActive() const;
+	/** @brief Returns the most recent prepared-light publication. */
+	std::vector<DX12::PreparedLight> GetPreparedLights() const;
 
 private:
+	void RefreshPreparedLights(uint32_t frame);
 	DX12::ResourceGrid grid;
 	Settings settings;
 	uint32_t copyFrame = 0, copiedFrameBytes = 0;
+	uint32_t lightScanFrame = 0;
+	std::array<DX12::SubcellKey, DX12::kGridCapacity> lastLightGrid{};
 };

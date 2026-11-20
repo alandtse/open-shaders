@@ -4,6 +4,8 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "RE/B/BSTriShape.h"
+#include "RE/T/TESObjectLIGH.h"
+#include "RE/T/TESObjectREFR.h"
 #include "RE/T/TESWorldSpace.h"
 
 #include <algorithm>
@@ -26,6 +28,8 @@ namespace DX12
 			return;
 		auto next = std::make_shared<Grid>();
 		next->revision = current->revision + 1;
+		next->geometryRevision = current->geometryRevision + 1;
+		next->lightRevision = current->lightRevision;
 		next->size = size;
 		next->requested = *desired;
 		if (current->size == size)
@@ -98,6 +102,7 @@ namespace DX12
 		}
 		auto next = std::make_shared<Grid>(*current);
 		++next->revision;
+		++next->geometryRevision;
 		next->resident[slot] = std::move(tile);
 		snapshot.store(std::move(next), std::memory_order_release);
 		return true;
@@ -131,10 +136,36 @@ namespace DX12
 		tile->bytes += bytes;
 		auto next = std::make_shared<Grid>(*current);
 		++next->revision;
+		++next->geometryRevision;
 		next->resident[slot] = std::move(tile);
 		observed.emplace(next->resident[slot]->shapes.back()->identity, key);
 		snapshot.store(std::move(next), std::memory_order_release);
 		return true;
+	}
+
+	void ResourceGrid::PublishLights(std::span<const PreparedLight> lights)
+	{
+		std::scoped_lock lock(mutex);
+		const auto current = snapshot.load(std::memory_order_acquire);
+		if (!current->requested.front().scope)
+			return;
+		auto next = std::make_shared<Grid>(*current);
+		++next->revision;
+		++next->lightRevision;
+		for (size_t i = 0; i < kGridCapacity; ++i) {
+			const auto& key = current->requested[i];
+			auto tile = current->resident[i] ? std::make_shared<Tile>(*current->resident[i]) : std::make_shared<Tile>();
+			tile->key = key;
+			tile->lights.clear();
+			for (const auto& light : lights) {
+				const auto x = Coordinate(light.position.x, current->size);
+				const auto y = Coordinate(light.position.y, current->size);
+				if (x && y && *x == key.x && *y == key.y)
+					tile->lights.push_back(light);
+			}
+			next->resident[i] = std::move(tile);
+		}
+		snapshot.store(std::move(next), std::memory_order_release);
 	}
 
 	void ResourceGrid::Clear()
@@ -144,6 +175,8 @@ namespace DX12
 		observed.clear();
 		auto next = std::make_shared<Grid>();
 		next->revision = snapshot.load(std::memory_order_acquire)->revision + 1;
+		next->geometryRevision = next->revision;
+		next->lightRevision = next->revision;
 		snapshot.store(std::move(next), std::memory_order_release);
 	}
 }
@@ -155,7 +188,10 @@ bool DX12Resources::IsActive() const
 
 void DX12Resources::DrawSettings()
 {
-	ImGui::Checkbox("Enable shape preparation", &settings.Enabled);
+	if (ImGui::Checkbox("Enable geometry and light preparation", &settings.Enabled) && !settings.Enabled) {
+		grid.Clear();
+		lastLightGrid = {};
+	}
 	int index = int(std::ranges::find(DX12::kSubcellSizes, settings.SubcellSize) - DX12::kSubcellSizes.begin());
 	if (index >= int(DX12::kSubcellSizes.size()))
 		index = 0;
@@ -163,8 +199,9 @@ void DX12Resources::DrawSettings()
 	if (ImGui::Combo("Subcell size (game units)", &index, labels, int(std::size(labels)))) {
 		settings.SubcellSize = DX12::kSubcellSizes[index];
 		grid.Clear();
+		lastLightGrid = {};
 	}
-	ImGui::TextDisabled("Only the current 3x3 grid is kept in memory. No geometry is written to disk.");
+	ImGui::TextDisabled("The live 3x3 grid holds only geometry and minimal light records. No disk cache.");
 }
 
 void DX12Resources::LoadSettings(json& input)
@@ -173,6 +210,7 @@ void DX12Resources::LoadSettings(json& input)
 	const uint32_t size = input.value("SubcellSize", DX12::kSubcellSizes.front());
 	settings.SubcellSize = std::ranges::contains(DX12::kSubcellSizes, size) ? size : DX12::kSubcellSizes.front();
 	grid.Clear();
+	lastLightGrid = {};
 }
 
 void DX12Resources::SaveSettings(json& output)
@@ -184,14 +222,17 @@ void DX12Resources::RestoreDefaultSettings()
 {
 	settings = {};
 	grid.Clear();
+	lastLightGrid = {};
 }
 
 void DX12Resources::EarlyPrepass()
 {
 	CS_GPU_PASS("DX12Resources::Grid");
 	if (!IsActive()) {
-		if (grid.Snapshot()->requested.front().scope)
+		if (grid.Snapshot()->requested.front().scope) {
 			grid.Clear();
+			lastLightGrid = {};
+		}
 		return;
 	}
 	const auto* player = globals::game::player;
@@ -202,17 +243,83 @@ void DX12Resources::EarlyPrepass()
 	const uint32_t scope = world ? world->GetFormID() : cell->GetFormID();
 	const auto position = player->GetPosition();
 	grid.Advance(scope, settings.SubcellSize, position.x, position.y);
+	RefreshPreparedLights(globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : 0);
 }
 
 void DX12Resources::OnSceneTransitionReset(bool opening)
 {
-	if (opening)
+	if (opening) {
 		grid.Clear();
+		lastLightGrid = {};
+	}
 }
 
 void DX12Resources::OnRuntimeDisabled()
 {
 	grid.Clear();
+	lastLightGrid = {};
+}
+
+void DX12Resources::RefreshPreparedLights(uint32_t frame)
+{
+	const auto current = grid.Snapshot();
+	if (!current->requested.front().scope ||
+		(current->requested == lastLightGrid && uint32_t(frame - lightScanFrame) < 300))
+		return;
+	lastLightGrid = current->requested;
+	lightScanFrame = frame;
+	std::vector<DX12::PreparedLight> lights;
+	lights.reserve(64);
+	const auto* player = globals::game::player;
+	if (auto* tes = globals::game::tes; tes && player) {
+		tes->ForEachReferenceInRange(player, float(current->size) * 3.0f, [&](RE::TESObjectREFR* reference) {
+			if (!reference || reference->IsDisabled() || reference->IsDeleted() || reference->IsDynamicForm())
+				return RE::BSContainer::ForEachResult::kContinue;
+			const auto* cell = reference->GetParentCell();
+			if (!cell || (!cell->IsExteriorCell() && cell->GetFormID() != current->requested.front().scope))
+				return RE::BSContainer::ForEachResult::kContinue;
+			const auto* base = reference->GetBaseObject();
+			const auto* light = base ? base->As<RE::TESObjectLIGH>() : nullptr;
+			if (!light || !light->data.flags.any(RE::TES_LIGHT_FLAGS::kHemiShadow,
+					RE::TES_LIGHT_FLAGS::kOmniShadow, RE::TES_LIGHT_FLAGS::kSpotShadow))
+				return RE::BSContainer::ForEachResult::kContinue;
+			const auto pos = reference->GetPosition();
+			const auto x = DX12::Coordinate(pos.x, current->size);
+			const auto y = DX12::Coordinate(pos.y, current->size);
+			if (!x || !y || std::ranges::find(current->requested,
+				DX12::SubcellKey{ current->requested.front().scope, *x, *y }) == current->requested.end())
+				return RE::BSContainer::ForEachResult::kContinue;
+			if (lights.size() >= 256)
+				return RE::BSContainer::ForEachResult::kStop;
+			DX12::PreparedLight entry{};
+			entry.referenceID = reference->GetFormID();
+			entry.baseID = light->GetFormID();
+			entry.flags = light->data.flags.underlying();
+			entry.position = { pos.x, pos.y, pos.z };
+			entry.color = { light->data.color.red / 255.0f, light->data.color.green / 255.0f, light->data.color.blue / 255.0f };
+			entry.radius = std::max(0.0f, float(light->data.radius));
+			entry.fade = std::max(0.0f, light->fade);
+			entry.emitterRadius = light->data.fov;
+			entry.falloffExponent = light->data.fallofExponent;
+			if (std::isfinite(entry.radius) && entry.radius > 0 && std::isfinite(entry.fade) &&
+				std::isfinite(entry.emitterRadius) &&
+				std::isfinite(entry.falloffExponent))
+				lights.push_back(entry);
+			return RE::BSContainer::ForEachResult::kContinue;
+		});
+	}
+	std::ranges::sort(lights, {}, &DX12::PreparedLight::referenceID);
+	grid.PublishLights(lights);
+}
+
+std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const
+{
+	std::vector<DX12::PreparedLight> lights;
+	const auto current = grid.Snapshot();
+	for (const auto& tile : current->resident)
+		if (tile)
+			lights.insert(lights.end(), tile->lights.begin(), tile->lights.end());
+	return lights;
 }
 
 void DX12Resources::ObserveStaticGeometry(RE::BSGeometry& geometry)
