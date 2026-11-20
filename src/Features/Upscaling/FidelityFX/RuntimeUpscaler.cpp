@@ -1289,7 +1289,7 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			commandListSubmitted = true;
 			DX::ThrowIfFailed(swapChain.commandQueue->Signal(runtimeFence.fence12.get(), d3d12SubmitFence));
 			if (nativeComposite)
-				globals::features::dx12NativeComposite.OnSubmitted(runtimeFence.fence12.get(), d3d12SubmitFence, std::move(*nativeComposite), false);
+				globals::features::dx12NativeComposite.OnSubmitted(runtimeFence.fence12.get(), d3d12SubmitFence, std::move(*nativeComposite));
 			commandContext->fenceValue = d3d12SubmitFence;
 			commandFenceTracked = true;
 			DX::ThrowIfFailed(swapChain.d3d11Context->Wait(runtimeFence.fence11.get(), d3d12SubmitFence));

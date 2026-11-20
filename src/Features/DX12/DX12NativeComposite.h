@@ -56,7 +56,7 @@ struct DX12NativeComposite final : Feature
 	bool IsActive() const;
 	std::optional<Submission> Dispatch(ID3D12GraphicsCommandList4* commands, ID3D12Resource* rasterColor,
 		ID3D12Resource* depth, uint32_t width, uint32_t height);
-	void OnSubmitted(ID3D12Fence* fence, uint64_t value, Submission submission, bool applied);
+	void OnSubmitted(ID3D12Fence* fence, uint64_t value, Submission submission);
 
 private:
 	struct PipelineState
@@ -95,8 +95,6 @@ private:
 	winrt::com_ptr<ID3D12RootSignature> shadowRoot;
 	winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
 	uint32_t descriptorSize = 0;
-	uint32_t lastSubmitFrame = 0;
-	uint64_t submittedGeometry = 0, submittedLights = 0;
 	bool unavailable = false;
 	Settings settings;
 };

@@ -90,9 +90,9 @@ bool DX12NativeComposite::IsActive() const
 
 void DX12NativeComposite::DrawSettings()
 {
-	if (ImGui::Checkbox("Enable native shadow composite", &settings.Enabled) && !settings.Enabled)
+	if (ImGui::Checkbox("Enable DXR shadowmask generation", &settings.Enabled) && !settings.Enabled)
 		OnRuntimeDisabled();
-	ImGui::SliderFloat("Shadow-mask strength", &settings.ShadowStrength, 0.0f, 1.0f, "%.2f");
+	ImGui::SliderFloat("Shadow-mask sampling gate (reserved)", &settings.ShadowStrength, 0.0f, 1.0f, "%.2f");
 	ImGui::TextDisabled("Shadowmask-only: per-light raster composition is not yet available.");
 	ImGui::TextDisabled("Raster static shadows remain enabled; final raster color is unchanged.");
 }
@@ -135,7 +135,6 @@ void DX12NativeComposite::PreShadowMaps()
 void DX12NativeComposite::OnRuntimeDisabled()
 {
 	ShadowCasterManager::SetNativeStaticMaskActive(false);
-	lastSubmitFrame = 0;
 }
 
 void DX12NativeComposite::OnSceneTransitionReset(bool opening)
@@ -365,15 +364,10 @@ std::optional<DX12NativeComposite::Submission> DX12NativeComposite::Dispatch(
 	return submission;
 }
 
-void DX12NativeComposite::OnSubmitted(ID3D12Fence* fence, uint64_t value, Submission submission, bool applied)
+void DX12NativeComposite::OnSubmitted(ID3D12Fence* fence, uint64_t value, Submission submission)
 {
 	if (!fence || !value)
 		return;
-	if (applied) {
-		lastSubmitFrame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : 0;
-		submittedGeometry = submission.geometryRevision;
-		submittedLights = submission.lightRevision;
-	}
 	Pending frame;
 	frame.fence.copy_from(fence);
 	frame.value = value;
