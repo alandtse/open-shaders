@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/Game.h"
 #include "Utils/LazyShader.h"
 #include "Utils/UI.h"
 
@@ -261,7 +262,7 @@ namespace
 
 	uint32_t PublishedEyeCount()
 	{
-		return globals::game::isVR ? kStereoEyeCount : 1u;
+		return Util::EyeCount();
 	}
 
 	uint32_t PublishedDepthStencilTarget()

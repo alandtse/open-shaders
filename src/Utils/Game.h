@@ -7,6 +7,8 @@
 #include <string_view>
 #include <vector>
 
+#include "Globals.h"
+
 /**
  @def GET_INSTANCE_MEMBER
  @brief Set variable in current namespace based on instance member from GetRuntimeData or GetVRRuntimeData.
@@ -135,6 +137,16 @@ namespace Util::SceneTravel
 namespace Util
 {
 	inline constexpr float kFallbackCameraAspect = 16.0f / 9.0f;
+
+	/// Eyes packed side by side in per-frame render targets: 2 in VR, 1 flat.
+	inline uint32_t EyeCount() { return globals::game::isVR ? 2u : 1u; }
+
+	/// Width of one eye in a packed target that is `fullWidth` wide.
+	template <class T>
+	inline T EyeWidth(T fullWidth)
+	{
+		return fullWidth / static_cast<T>(EyeCount());
+	}
 
 	/**
 	 * @brief Address of the per-frame call inside the engine's main update that main-thread hooks wrap.

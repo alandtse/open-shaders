@@ -6,6 +6,7 @@
 #include "RasterPass.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/Game.h"
 
 namespace
 {
@@ -377,7 +378,7 @@ void PhysicalLens::SetupResources()
 	waveKernel = std::make_unique<StructuredBuffer>(StructuredBufferDesc<std::array<float, 4>>(uint64_t(12), true, false), 12, "PhysicalLens::DiffractionCore");
 	waveKernel->CreateSRV();
 	waveKernel->CreateUAV();
-	const unsigned eyeCount = globals::game::isVR ? 2 : 1;
+	const unsigned eyeCount = Util::EyeCount();
 	waveSources = std::make_unique<StructuredBuffer>(StructuredBufferDesc<std::array<float, 4>>(uint64_t(SourceCount * 7 * eyeCount), true, false), SourceCount * 7 * eyeCount, "PhysicalLens::DiffractionSources");
 	waveSources->CreateSRV();
 	waveSources->CreateUAV();
@@ -791,7 +792,7 @@ bool PhysicalLens::UpdateDiffraction(unsigned width, unsigned height)
 		return false;
 	// Allocate the full-resolution tail only when diffraction is actually used.
 	if (!waveRadiance) {
-		const unsigned eyeCount = globals::game::isVR ? 2 : 1;
+		const unsigned eyeCount = Util::EyeCount();
 		D3D11_TEXTURE2D_DESC tailDesc{};
 		tailDesc.Width = width;
 		tailDesc.Height = height;
@@ -998,7 +999,7 @@ void PhysicalLens::Draw(TextureInfo& input)
 	SanitizeSettings();
 	D3D11_TEXTURE2D_DESC inputDesc;
 	input.tex->GetDesc(&inputDesc);
-	const float aspect = float(inputDesc.Width) / (globals::game::isVR ? 2.f : 1.f) / inputDesc.Height;
+	const float aspect = Util::EyeWidth(float(inputDesc.Width)) / inputDesc.Height;
 	const auto* camera = owner ? owner->GetActivePhysicalCameraState() : nullptr;
 	optical = { settings.FNumber, settings.FocusDistanceM, settings.ApertureRotation, 0, 0, 0, ApertureBladeCount(), false };
 	if (camera) {
@@ -1066,7 +1067,7 @@ void PhysicalLens::Draw(TextureInfo& input)
 	const auto& lens = cachedLens;
 	Parameters data{};
 	UpdateCameraMapping(aspect);
-	const unsigned eyeCount = globals::game::isVR ? 2 : 1;
+	const unsigned eyeCount = Util::EyeCount();
 	const unsigned eyeWidth = inputDesc.Width / eyeCount;
 	const bool renderWave = buildWaveSources && buildWaveTiles && buildWaveTail && UpdateDiffraction(eyeWidth, inputDesc.Height);
 	if (settings.Intensity == 0 && !renderWave)
