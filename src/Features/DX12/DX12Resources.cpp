@@ -154,7 +154,7 @@ namespace DX12
 		tile->bytes = publication.geometryBytes;
 		tile->lights = std::move(publication.lights);
 		tile->state = publication.validated && publication.enumerationComplete &&
-		              publication.failedShapes == 0 && publication.eligibleShapes == tile->shapes.size() ?
+		                      publication.failedShapes == 0 && publication.eligibleShapes == tile->shapes.size() ?
 		                  Tile::State::Ready :
 		                  Tile::State::Incomplete;
 		auto next = std::make_shared<Grid>(*current);

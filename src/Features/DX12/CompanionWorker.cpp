@@ -3,9 +3,9 @@
 #include <Windows.h>
 
 #include <charconv>
+#include <cmath>
 #include <format>
 #include <fstream>
-#include <cmath>
 #include <ranges>
 #include <unordered_set>
 #include <utility>
@@ -292,8 +292,7 @@ namespace DX12
 					!std::ranges::all_of(shape->positions, [](const float3& p) {
 						return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
 					}) ||
-					!std::ranges::all_of(shape->transform, [](float value) { return std::isfinite(value); }) ||
-					!std::ranges::all_of(shape->indices, [&](uint32_t index) { return index < shape->positions.size(); }))
+					!std::ranges::all_of(shape->transform, [](float value) { return std::isfinite(value); }) || !std::ranges::all_of(shape->indices, [&](uint32_t index) { return index < shape->positions.size(); }))
 					throw std::invalid_argument("Companion geometry failed validation");
 				publication.geometryBytes += length;
 				publication.shapes.push_back(std::move(shape));
