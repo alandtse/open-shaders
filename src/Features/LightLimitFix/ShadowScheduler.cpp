@@ -417,6 +417,7 @@ namespace ShadowCasterManager
 		bool bakeSawStatic = false;
 		/// Baked, and no DynamicOnly accumulate has reused the cache yet.
 		bool bakeUnproven = false;
+		RE::NiMatrix3 lastRot{};  ///< light rotation at the previous accumulate
 	};
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
 
@@ -1182,6 +1183,17 @@ namespace ShadowCasterManager
 				mode = (slotInRange && SplitDynamicOnlyEligible(light, *st, staticValid)) ?
 				           CasterPass::DynamicOnly :
 				           CasterPass::StaticOnly;
+				// A turning light (a swinging lantern) leaves its bake's rotation by the next frame, and a bake frame
+				// keeps the previous frame's shadow, so it renders full until it holds still for a frame.
+				if (auto* ni = light->light.get()) {
+					const bool turning = st->bakePoseValid && ni->world.rotate != st->lastRot;
+					st->lastRot = ni->world.rotate;
+					if (mode == CasterPass::StaticOnly && turning) {
+						st->bakeQueued = true;
+						mode = CasterPass::All;
+						st->fullThisFrame = true;
+					}
+				}
 				// Bake budget: a hash-upset wave (scene entry, cell attach)
 				// otherwise bakes every light in the same few frames and
 				// starves the redraw budget. Deferred bakes stay queued; with
