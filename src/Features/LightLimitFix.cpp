@@ -1520,8 +1520,6 @@ void LightLimitFix::UpdateLights()
 	const auto frame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : globals::state->frameCount;
 	globals::features::nativeLLF.PublishLights(lightsData.data(), lightCount,
 		float3{ eyePositionCached[0].x, eyePositionCached[0].y, eyePositionCached[0].z }, frame);
-	// NativeLLF retains the original lights before optional raster suppression.
-	globals::features::nativeLLF.ApplyRasterOffloadPolicy(lightsData.data(), lightCount, frame);
 
 	{
 		CS_PROFILE_CPU_SCOPE(globals::profiler, "LightLimitFix::UploadLightsCPU");

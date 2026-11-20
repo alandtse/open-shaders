@@ -38,8 +38,10 @@ void NativeCompositeFeature::DrawSettings()
 {
 	std::scoped_lock lock(settingsMutex);
 	const auto offload = globals::features::nativeLighting.GetOffloadSettings();
-	ImGui::TextDisabled("DX12 lighting/shadow offloading is configured in Native Lighting.");
+	ImGui::TextDisabled("DX12 shadow offloading is configured in Native Lighting.");
 	enabled = settings.Enabled;
+	if (ImGui::Checkbox("Shadow spatial reconstruction", &settings.ShadowSpatialReconstruction))
+		++validityRevision;
 	ImGui::TextDisabled("%s", pass.Status().c_str());
 	ImGui::TextDisabled("%s", LightingStatus(lightingStatus.load()));
 	if (offload.staticShadows && offload.shadowIntensity > 0.0f) {
@@ -218,7 +220,7 @@ json NativeCompositeFeature::GetDiagnostics()
 		{ "shadowLayerEnabled", offload.staticShadows && offload.shadowIntensity > 0.0f },
 		{ "shadowContribution", offload.shadowIntensity }, { "llfLightOffloading", offload.llfLights },
 		{ "sharedSamplingDensity", offload.traceDensity },
-		{ "shadowAfterLighting", false }, { "shadowSpatialReconstruction", false } };
+		{ "shadowAfterLighting", false }, { "shadowSpatialReconstruction", settings.ShadowSpatialReconstruction } };
 }
 
 std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID3D11Device5* a_device11, ID3D11DeviceContext4* a_context11,
@@ -237,7 +239,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 		revision = validityRevision;
 	}
 	const auto offload = globals::features::nativeLighting.GetOffloadSettings();
-	selected.AddLighting = offload.llfLights;
+	selected.AddLighting = false;
 	selected.LightingStrength = 1.0f;
 	selected.DirectSpatialReconstruction = false;
 	selected.ShadowLayerEnabled = offload.staticShadows;
@@ -245,8 +247,6 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 	selected.ShadowBlend = 1.0f;
 	selected.ShadowPreview = false;
 	selected.ShadowAfterLighting = false;
-	// Only untraced shadow pixels are reconstructed; invalid receivers remain invalid.
-	selected.ShadowSpatialReconstruction = true;
 	selectedPolicy = { 2u, 2u, 0u };
 	revision ^= offload.revision * 0x9e3779b97f4a7c15ull;
 	std::shared_ptr<const NativeLightingFeature::Contribution> lighting;

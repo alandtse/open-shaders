@@ -71,7 +71,7 @@ void NativeLightingFeature::DrawSettings()
 {
 	std::scoped_lock lock(settingsMutex);
 	int mode = 0;
-	ImGui::Combo("Mode selection", &mode, "DX12 lighting/shadow offloading\0");
+	ImGui::Combo("Mode selection", &mode, "DX12 shadow offloading\0");
 	int traceDensity = int(settings.TraceDensityMode);
 	if (ImGui::Combo("Sampling density", &traceDensity, "Full\0Two-thirds\0Half\0One-third\0Quarter\0One-sixth\0One-ninth\0Four-ninths\0")) {
 		settings.TraceDensityMode = uint32_t(traceDensity);
@@ -87,19 +87,12 @@ void NativeLightingFeature::DrawSettings()
 	if (ImGui::Checkbox("Fade shadows near light reach", &settings.FadeShadowsNearReach))
 		++validityRevision;
 	ImGui::EndDisabled();
-	if (ImGui::Checkbox("Offload LLF lights", &settings.OffloadLLFLights))
-		++validityRevision;
-	ImGui::BeginDisabled(!settings.OffloadLLFLights);
-	if (ImGui::Checkbox("Preserve matched raster lighting", &settings.PreserveMatchedRasterLights))
-		++validityRevision;
-	ImGui::EndDisabled();
-	ImGui::TextDisabled("Disabling also removes these LLF lights from raster-only receivers (including characters).");
 }
 
 NativeLightingFeature::OffloadSettings NativeLightingFeature::GetOffloadSettings() const
 {
 	std::scoped_lock lock(settingsMutex);
-	return { settings.OffloadStaticShadows, settings.OffloadLLFLights, settings.PreserveMatchedRasterLights,
+	return { settings.OffloadStaticShadows, false, true,
 		settings.PreserveMatchedRasterShadows, settings.FadeShadowsNearReach,
 		settings.OffloadedShadowIntensity, settings.TraceDensityMode, validityRevision };
 }
@@ -121,6 +114,8 @@ void NativeLightingFeature::LoadSettings(json& a_json)
 	selected.TraceDensityMode = std::min(selected.TraceDensityMode, 7u);
 	selected.OffloadedShadowIntensity = sanitize(selected.OffloadedShadowIntensity, 1.0f, 0.0f, 4.0f);
 	selected.ForcePositiveValidity = false;
+	selected.OffloadLLFLights = false;
+	selected.PreserveMatchedRasterLights = true;
 	selected.BudgetMB = 0;  // Legacy manual cap is ignored.
 	std::scoped_lock lock(settingsMutex);
 	settings = selected;
@@ -282,17 +277,13 @@ json NativeLightingFeature::GetDiagnostics()
 
 void NativeLightingFeature::RegisterUxActions()
 {
-	FEATURE_COMMAND("configure", "DX12 lighting/shadow offloading: staticShadows, llfLights, preserveMatchedRasterShadows, preserveMatchedRasterLights, fadeShadowsNearReach (bool), shadowIntensity (0..4), samplingDensity (0 Full, 1 Two-thirds, 2 Half, 3 One-third, 4 Quarter, 5 One-sixth, 6 One-ninth, 7 Four-ninths).", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("configure", "DX12 shadow offloading: staticShadows, preserveMatchedRasterShadows, fadeShadowsNearReach (bool), shadowIntensity (0..4), samplingDensity (0 Full, 1 Two-thirds, 2 Half, 3 One-third, 4 Quarter, 5 One-sixth, 6 One-ninth, 7 Four-ninths).", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeLightingFeature*>(self);
 		std::scoped_lock lock(feature.settingsMutex);
 		if (args.contains("staticShadows"))
 			feature.settings.OffloadStaticShadows = args.at("staticShadows").get<bool>();
-		if (args.contains("llfLights"))
-			feature.settings.OffloadLLFLights = args.at("llfLights").get<bool>();
 		if (args.contains("preserveMatchedRasterShadows"))
 			feature.settings.PreserveMatchedRasterShadows = args.at("preserveMatchedRasterShadows").get<bool>();
-		if (args.contains("preserveMatchedRasterLights"))
-			feature.settings.PreserveMatchedRasterLights = args.at("preserveMatchedRasterLights").get<bool>();
 		if (args.contains("fadeShadowsNearReach"))
 			feature.settings.FadeShadowsNearReach = args.at("fadeShadowsNearReach").get<bool>();
 		if (args.contains("shadowIntensity")) {
@@ -424,7 +415,7 @@ void NativeLightingFeature::OnOpaqueRasterReady(const OpaqueRasterInputs&)
 		selectedLab = lab;
 		revision = validityRevision;
 	}
-	selected.Enabled = selected.OffloadLLFLights;
+	selected.Enabled = false;  // Shadow-only mode never dispatches native direct lighting.
 	selected.Diffuse = true;
 	selected.Specular = false;
 	selected.DiffuseIntensity = 1.0f;

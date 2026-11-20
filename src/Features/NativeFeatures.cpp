@@ -328,7 +328,8 @@ bool NativeSCMFeature::OwnsStaticForLight(const RE::BSShadowLight* source, int32
 	if (!source || slot < 0 || !IsActive() || !globals::features::nativeLLF.IsActive() ||
 		!globals::game::graphicsState)
 		return false;
-	if (globals::features::nativeLighting.GetOffloadSettings().preserveMatchedRasterShadows)
+	const auto offload = globals::features::nativeLighting.GetOffloadSettings();
+	if (!offload.staticShadows || offload.shadowIntensity <= 0.0f || offload.preserveMatchedRasterShadows)
 		return false;
 
 	// SCM shadow rendering is scheduled before LLF publishes the *current*
