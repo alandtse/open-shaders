@@ -23,6 +23,7 @@ using ShadowCasterManager::kSlotHoldMargin;
 using ShadowCasterManager::kTileScaleFloor;
 using ShadowCasterManager::kVanillaShadowSliceCount;
 using ShadowCasterManager::PlayerProtectionCap;
+using ShadowCasterManager::ProjectedLightExtent;
 using ShadowCasterManager::QuantizeFloat;
 using ShadowCasterManager::SliceCappedLightCount;
 using ShadowCasterManager::SlotHeldScore;
@@ -258,6 +259,15 @@ TEST_CASE("SliceCappedLightCount keeps the highest point index inside the array"
 	for (int32_t slices = 1; slices <= 129; ++slices)
 		for (int32_t count = 0; count <= 127; ++count)
 			REQUIRE(SliceCappedLightCount(count, slices) < slices);
+}
+
+TEST_CASE("Shadow ranking clips lights crossing the camera plane", "[scm]")
+{
+	REQUIRE(ProjectedLightExtent(0.0f, 1.0f, -3.0f, -1.0f) == 0.0f);
+	REQUIRE(ProjectedLightExtent(1.7f, 0.3f, -0.2f, 0.7f) == 0.0f);
+	REQUIRE(ProjectedLightExtent(0.9f, 0.3f, -0.1f, 1.0f) == Approx(0.2f));
+	REQUIRE(ProjectedLightExtent(-0.9f, 0.3f, -0.1f, 1.0f) == Approx(0.2f));
+	REQUIRE(ProjectedLightExtent(0.0f, 0.5f, -0.1f, 1.0f) == 1.0f);
 }
 
 TEST_CASE("HeldLightYields seats only lights out of view after the lights in view", "[scm]")

@@ -1,11 +1,12 @@
 #include "Features/GrassLighting.h"
 #include "Features/GrassOptimizations.h"
+#include "Utils/Game.h"
 
 #include <bit>
 
 void GrassOptimizations::SetupResources()
 {
-	eyeIndexCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc((globals::game::isVR ? 2u : 1u) * kEyeSlotBytes), "GrassOptimizations::EyeIndexCB");
+	eyeIndexCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc((Util::EyeCount()) * kEyeSlotBytes), "GrassOptimizations::EyeIndexCB");
 	cullParamsCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<CullParamsCB>(), "GrassOptimizations::CullParamsCB");
 	{
 		// Select the engine instance stream in the optimized shader.
@@ -119,7 +120,7 @@ bool GrassOptimizations::UploadCullBucketConstants(ID3D11DeviceContext* ctx)
 			.groupBase = bucket->groupBase,
 			.tierStride = bucketStore.cullOutput.capacity,
 			.outputOffset = bucket->outputOffset,
-			.argsOffset = slot * (globals::game::isVR ? 2u : 1u) * kTierCount * kArgsStride,
+			.argsOffset = slot * (Util::EyeCount()) * kTierCount * kArgsStride,
 			.occlusionRadius = occlusionRadius,
 			.boundExtent = bucket->boundExtent,
 			.modelRadius = draw.modelRadius,
@@ -396,13 +397,13 @@ std::unique_ptr<Buffer> GrassBucketStore::CreateGroupPoolBuffer(uint32_t capacit
 bool GrassBucketStore::CreateCullOutput(GrassCullBuffers& buffers, uint32_t capacity)
 {
 	try {
-		buffers.records = CreateRawBuffer((uint64_t)capacity * (globals::game::isVR ? 2u : 1u) * kTierCount * kCullRecordStride, D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE, 0, "GrassOptimizations::CompactedBuf");
+		buffers.records = CreateRawBuffer((uint64_t)capacity * (Util::EyeCount()) * kTierCount * kCullRecordStride, D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE, 0, "GrassOptimizations::CompactedBuf");
 		for (uint32_t tier = 0; tier < kTierCount; ++tier) {
 			D3D11_SHADER_RESOURCE_VIEW_DESC srv{};
 			srv.Format = DXGI_FORMAT_R32_TYPELESS;
 			srv.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
-			srv.BufferEx.FirstElement = tier * capacity * (globals::game::isVR ? 2u : 1u) * kCullRecordStride / 4;
-			srv.BufferEx.NumElements = capacity * (globals::game::isVR ? 2u : 1u) * kCullRecordStride / 4;
+			srv.BufferEx.FirstElement = tier * capacity * (Util::EyeCount()) * kCullRecordStride / 4;
+			srv.BufferEx.NumElements = capacity * (Util::EyeCount()) * kCullRecordStride / 4;
 			srv.BufferEx.Flags = D3D11_BUFFEREX_SRV_FLAG_RAW;
 
 			buffers.records->CreateSRV(srv);
@@ -427,7 +428,7 @@ bool GrassBucketStore::EnsureArgsCapacity(uint32_t count)
 	const uint64_t capacity = std::max<uint64_t>(count, 2ull * argsCapacity);
 
 	try {
-		auto buffer = CreateRawBuffer(capacity * (globals::game::isVR ? 2u : 1u) * kTierCount * kArgsStride, D3D11_BIND_UNORDERED_ACCESS, D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS, "GrassOptimizations::ArgsBuf");
+		auto buffer = CreateRawBuffer(capacity * (Util::EyeCount()) * kTierCount * kArgsStride, D3D11_BIND_UNORDERED_ACCESS, D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS, "GrassOptimizations::ArgsBuf");
 		arguments = std::move(buffer);
 		argsCapacity = (uint32_t)capacity;
 
@@ -451,7 +452,7 @@ bool GrassBucketStore::PrepareCullOutputs(std::span<GrassBucket*> visible)
 		used += std::min((uint64_t)bucket->residentInstances, (uint64_t)bucket->groupCount * kCullGroupSize);
 	}
 
-	const uint32_t maxCapacity = UINT32_MAX / (kTierCount * (globals::game::isVR ? 2u : 1u) * kCullRecordStride);
+	const uint32_t maxCapacity = UINT32_MAX / (kTierCount * (Util::EyeCount()) * kCullRecordStride);
 	if (used > maxCapacity)
 		return false;
 

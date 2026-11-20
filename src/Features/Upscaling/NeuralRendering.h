@@ -1,6 +1,8 @@
 #pragma once
 
 #include "NeuralRendering/ActorRegion.h"
+#include "NeuralRendering/CombatPausePolicy.h"
+#include "NeuralRendering/CombatState.h"
 #include "NeuralRendering/ContextProfile.h"
 #include "NeuralRendering/CropCalibration.h"
 #include "NeuralRendering/Diagnostics.h"
@@ -27,7 +29,7 @@ struct NeuralRendering
 			kOff,        ///< Switched off.
 			kStarting,   ///< Enabled; the runtime initializes on the first world frame.
 			kActive,     ///< Running; text names the runtime version.
-			kSuspended,  ///< Enabled but dialogue-only gating holds it; resources and runtime stay alive.
+			kSuspended,  ///< Enabled but dialogue or combat gating holds it; resources and runtime stay alive.
 			kFailed      ///< Latched; text is the failure reason.
 		};
 		State state = State::kOff;
@@ -51,6 +53,8 @@ struct NeuralRendering
 		NR::RuntimeCapability capability;
 		/** @brief True while a failure is latched; the next successful frame clears it. */
 		bool failed = false;
+		/** @brief Last frame's shared combat admission decision; other blockers still apply. */
+		NR::CombatPauseSnapshot combatPause;
 		/** @brief True when the material lane is present and the graded protection has not been rejected or degraded. */
 		bool materialStrengthAvailable = true;
 		/** @brief True when the last evaluate bound the graded material protection. */
@@ -86,14 +90,16 @@ struct NeuralRendering
 
 	NeuralRendering();
 	~NeuralRendering();
-	/** @brief Installs the main-thread hook that tracks the actor NR scopes its evaluation to. */
+	/** @brief Installs the main-thread hook that samples combat state and tracks the scoped actor. */
 	void InstallHooks();
+	/** @brief Publishes player combat and pause state from the main thread, independently of actor cropping. */
+	void UpdateCombatState();
 	/** @brief Schedules recreation on the rendering thread. */
 	void SetupResources();
 	/** @brief Invalidates both temporal histories on loading or setting changes. */
 	void ResetHistory();
 	/** @brief Discards history when NR or the world is inactive, and mirrors the crop controls for the main thread. */
-	void Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified, const std::string& runtimeVariant);
+	void Reset(bool enabled, bool pauseInCombat, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified, const std::string& runtimeVariant);
 	/**
 	 * @brief Republishes the tracked actor's per-eye crop; runs on the main thread.
 	 *        Crop pixels are NR's render pixels, not the screen's, and the hook measures nothing
@@ -157,6 +163,12 @@ private:
 	std::unique_ptr<Impl> impl;
 	NR::Diagnostics diagnostics;
 	std::atomic_bool resetHistory = true, recreate = false, clearShaders = false, retryRequested = false;
+	NR::CombatPausePolicy combatPause;
+	NR::CombatState combatState;
+	mutable std::mutex combatPauseMutex;
+	NR::CombatPausePhase publishedCombatPhase = NR::CombatPausePhase::Disabled;
+	/** @brief Latches the published combat state once per render frame and resets history on admission changes. */
+	NR::CombatPauseSnapshot ResolveCombatPause(bool enabled);
 	/** @brief The previous hook call's situation; NR::Context::Resolve updates it and flags the transitions that reset history. */
 	NR::Context::ContextState contextState;
 	Status status;
