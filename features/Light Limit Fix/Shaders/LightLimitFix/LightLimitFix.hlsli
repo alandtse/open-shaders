@@ -513,6 +513,30 @@ namespace LightLimitFix
 		return shadow;
 	}
 
+	// Full-slice V the dual-paraboloid seam is inset by, the tile guard in this tile's texels: a Gather at the
+	// clamped tap then reads only its own half.
+	float GetSeamGuard(bool useAtlas, float4 atlasRect, float tileScale)
+	{
+		float width, height, slices;
+		[branch] if (useAtlas)
+		{
+			ShadowAtlasTex.GetDimensions(width, height);
+			height *= atlasRect.y;
+		}
+		else
+		{
+			ShadowMaps.GetDimensions(width, height, slices);
+			height *= tileScale;
+		}
+		return TileGuardTexels / max(height, 1.0);
+	}
+
+	float2 ClampToParaboloidHalf(float2 uv, float sampleV, float seamGuard)
+	{
+		uv.y = (sampleV >= 0.5) ? max(uv.y, 0.5 + seamGuard) : min(uv.y, 0.5 - seamGuard);
+		return uv;
+	}
+
 	// The four stored depths around a tap through either storage; uv is full-slice space.
 	float4 GatherShadowDepths(uint shadowIndex, float2 uv, bool useAtlas, float4 atlasRect, float tileScale, float2 clampLo, float2 clampHi)
 	{
@@ -599,6 +623,7 @@ namespace LightLimitFix
 		GetShadowTapClamp(useAtlas, atlasRect, tileScale, clampLo, clampHi);
 		[branch] if (sampleCount <= 1) return SampleShadowTapBilinear(shadowIndex, sampleUV, depth, useAtlas, atlasRect, tileScale, clampLo, clampHi);
 		float shadow = 0.0;
+		const float seamGuard = isDualParaboloid ? GetSeamGuard(useAtlas, atlasRect, tileScale) : 0.0;
 
 		// See GetSpotlightShadow: dynamic loop instead of unrolling the
 		// branchy tap body 8x.
@@ -610,7 +635,7 @@ namespace LightLimitFix
 			if (isDualParaboloid) {
 				// Clamp PCF samples to the originating paraboloid half
 				// (full-slice space; the tile/atlas mapping below preserves it).
-				uv.y = (sampleUV.y >= 0.5) ? max(uv.y, 0.5) : min(uv.y, 0.5);
+				uv = ClampToParaboloidHalf(uv, sampleUV.y, seamGuard);
 			}
 
 			shadow += SampleShadowTap(shadowIndex, uv, depth, useAtlas, atlasRect, tileScale, clampLo, clampHi);
@@ -631,7 +656,8 @@ namespace LightLimitFix
 		const bool useAtlas = atlasRect.x > 0.0;
 		float2 clampLo, clampHi;
 		GetShadowTapClamp(useAtlas, atlasRect, tileScale, clampLo, clampHi);
-		float4 depths = GatherShadowDepths(shadowIndex, sampleUV, useAtlas, atlasRect, tileScale, clampLo, clampHi);
+		const float seamGuard = isDualParaboloid ? GetSeamGuard(useAtlas, atlasRect, tileScale) : 0.0;
+		float4 depths = GatherShadowDepths(shadowIndex, isDualParaboloid ? ClampToParaboloidHalf(sampleUV, sampleUV.y, seamGuard) : sampleUV, useAtlas, atlasRect, tileScale, clampLo, clampHi);
 		float4 blocks = float4(depths < depth);
 		float blockerSum = dot(depths, blocks);
 		float blockerCount = dot(blocks, 1.0);
@@ -639,7 +665,7 @@ namespace LightLimitFix
 		{
 			float2 uv = sampleUV + mul(Random::SpiralSampleOffsets8[i], rotationMatrix) * SoftShadowSearchRadius;
 			if (isDualParaboloid)
-				uv.y = (sampleUV.y >= 0.5) ? max(uv.y, 0.5) : min(uv.y, 0.5);
+				uv = ClampToParaboloidHalf(uv, sampleUV.y, seamGuard);
 			depths = GatherShadowDepths(shadowIndex, uv, useAtlas, atlasRect, tileScale, clampLo, clampHi);
 			blocks = float4(depths < depth);
 			blockerSum += dot(depths, blocks);
