@@ -16,6 +16,7 @@ using ShadowCasterManager::HashCombine;
 using ShadowCasterManager::HashCombineFloat;
 using ShadowCasterManager::HeldLightYields;
 using ShadowCasterManager::HemisphereSeamMargin;
+using ShadowCasterManager::HoldsFlame;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
 using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kSlotHoldMargin;
@@ -297,6 +298,39 @@ TEST_CASE("PerFrameCache works a key out once per frame and drops it on the next
 	REQUIRE(made == 2);
 	REQUIRE(cache.Get(11, 1, make) == 3);
 	REQUIRE(cache.entries.size() == 1);
+}
+
+TEST_CASE("HoldsFlame takes only a small part round or under the flame", "[scm]")
+{
+	SECTION("a part round the flame within its bound and margin")
+	{
+		REQUIRE(HoldsFlame(0.0f, 0.0f, 2.0f, 3.0f, 1.0f));
+		REQUIRE(HoldsFlame(0.0f, 0.0f, 7.0f, 3.0f, 1.0f));
+		REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 7.5f, 3.0f, 1.0f));
+		REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 20.0f, 1.0f));
+		REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 20.5f, 1.0f));
+		REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 0.0f, 1.0f));
+	}
+	SECTION("a Grand soul gem's crystal, not a whole hanging lantern")
+	{
+		REQUIRE(HoldsFlame(0.0f, 0.0f, 12.0f, 17.0f, 1.0f));
+		REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 24.0f, 1.0f));
+	}
+	SECTION("a fixture placed at twice its size")
+	{
+		REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 40.0f, 2.0f));
+		REQUIRE(HoldsFlame(0.0f, 0.0f, 14.0f, 6.0f, 2.0f));
+		REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 40.5f, 2.0f));
+		REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 20.0f, 0.0f));
+	}
+	SECTION("a candle under a light hung over its wick, not one too far under, beside or over it")
+	{
+		REQUIRE(HoldsFlame(0.0f, 0.0f, -31.0f, 11.8f, 1.0f));
+		REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, -40.0f, 11.8f, 1.0f));
+		REQUIRE_FALSE(HoldsFlame(20.0f, 0.0f, -31.0f, 11.8f, 1.0f));
+		REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 31.0f, 11.8f, 1.0f));
+		REQUIRE(HoldsFlame(0.0f, 0.0f, -62.0f, 23.6f, 2.0f));
+	}
 }
 
 TEST_CASE("SteadyScoreFade averages a flicker but follows a light going out at once", "[scm]")
