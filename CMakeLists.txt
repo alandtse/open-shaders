@@ -1566,13 +1566,23 @@ if(AIO_ZIP_TO_DIST)
         ${AIO_ZIP_STAMP}
     )
 
+    # The companion is a mandatory payload of Windows AIO builds.
+    # Depend on the staged EXE (not only the target) so a changed .NET
+    # publication invalidates the archive's incremental stamp.
+    set(_dx12_aio_zip_deps)
+    if(TARGET STAGE_DX12_RESOURCES_COMPANION)
+        list(APPEND _dx12_aio_zip_deps "${DX12_RESOURCES_AIO_EXE}")
+    endif()
     add_custom_command(
         OUTPUT ${AIO_ZIP_STAMP} ${_aio_zip_cmds}
-        DEPENDS PREPARE_AIO ${CMAKE_CURRENT_BINARY_DIR}/copy_shaders.stamp
+        DEPENDS PREPARE_AIO ${CMAKE_CURRENT_BINARY_DIR}/copy_shaders.stamp ${_dx12_aio_zip_deps}
         COMMENT "Creating AIO archive ${AIO_ARCHIVE}"
     )
 
     add_custom_target(AIO_ZIP_PACKAGE ALL DEPENDS ${AIO_ZIP_STAMP})
+    if(TARGET STAGE_DX12_RESOURCES_COMPANION)
+        add_dependencies(AIO_ZIP_PACKAGE STAGE_DX12_RESOURCES_COMPANION)
+    endif()
 endif()
 
 if(NOT DEFINED ENV{CommunityShadersOutputDir})
@@ -1682,6 +1692,9 @@ else()
     )
     add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
 endif()
+if(TARGET STAGE_DX12_RESOURCES_COMPANION)
+    add_dependencies(AIO STAGE_DX12_RESOURCES_COMPANION)
+endif()
 
 # Manual AIO package target. Strips non-autoupload features at archive
 # time (mirroring AIO_ZIP_PACKAGE) so the manual path produces the same
@@ -1776,10 +1789,13 @@ endif()
 
 add_custom_command(
     OUTPUT ${AIO_PACKAGE}
-    DEPENDS ${CORE_SOURCES} ${FFX_RUNTIME_FILES} ${_aio_manual_cmds}
+    DEPENDS ${CORE_SOURCES} ${FFX_RUNTIME_FILES} ${DX12_RESOURCES_AIO_EXE} ${_aio_manual_cmds}
     COMMENT "Creating AIO zip package (manual)"
 )
 add_custom_target("Package-AIO-Manual" DEPENDS ${AIO_PACKAGE})
+if(TARGET STAGE_DX12_RESOURCES_COMPANION)
+    add_dependencies("Package-AIO-Manual" STAGE_DX12_RESOURCES_COMPANION)
+endif()
 
 # #######################################################################################################################
 # # Shader Unit Tests
