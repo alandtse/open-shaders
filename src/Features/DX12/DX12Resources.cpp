@@ -8,9 +8,9 @@
 
 #include <algorithm>
 #include <bit>
-#include <ranges>
-#include <cstring>
 #include <cmath>
+#include <cstring>
+#include <ranges>
 #include <unordered_set>
 
 namespace DX12

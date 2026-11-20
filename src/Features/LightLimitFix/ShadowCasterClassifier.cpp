@@ -5,8 +5,8 @@
 #include <filesystem>
 #include <fstream>
 
-#include "../../Globals.h"
 #include "../../Feature.h"
+#include "../../Globals.h"
 #include "../../State.h"
 #include "../../Utils/ActorUtils.h"
 #include "../../Utils/FileSystem.h"
