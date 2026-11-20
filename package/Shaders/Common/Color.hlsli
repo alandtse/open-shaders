@@ -599,7 +599,7 @@ namespace Color
 		if (ENABLE_LL) {
 			const float emissiveSign = emissiveMult < 0.0f ? -1.0f : 1.0f;
 			const float emissiveDivisor = emissiveSign * max(abs(emissiveMult), MinEmissiveDivisor);
-			color = AdjustUtilityColor(AuthoredColor(color / emissiveDivisor), SharedData::csUtilitySettings.emitColor) * emissiveMult;
+			color = AdjustUtilityColor(GamutTransform(color / emissiveDivisor), SharedData::csUtilitySettings.emitColor) * emissiveMult;
 		} else
 			color = AdjustUtilityColor(color, SharedData::csUtilitySettings.emitColor);
 		return color * SharedData::csUtilitySettings.emitColorMult;
@@ -611,7 +611,8 @@ namespace Color
 #	if defined(TRUE_PBR)
 		color = ENABLE_LL ? GamutTransform(color) : LinearToSrgb(color);
 #	else
-		color = TextureToWorking(color);
+		if (ENABLE_LL)
+			color = GamutTransform(color);
 #	endif
 		return AdjustUtilityColor(color, SharedData::csUtilitySettings.glowmapColor) * SharedData::csUtilitySettings.glowmapMult;
 	}

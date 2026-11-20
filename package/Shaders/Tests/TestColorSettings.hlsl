@@ -280,6 +280,18 @@ static float emissiveMult = 1.0;
 			ASSERT(IsTrue, all(abs(Color::EmitColor(input * gains[i]) - reference * gains[i]) < 0.00001));
 		}
 	}
+
+	SharedData::csUtilitySettings.emitColor = float2(1.0, 0.0);
+	SharedData::csUtilitySettings.glowmapColor = float2(1.0, 0.0);
+	SharedData::csUtilitySettings.glowmapMult = 1.0;
+	emissiveMult = 1.0;
+	const float3 sampleColor = float3(0.8, 0.1, 0.0);
+	const float3 tint = float3(1.0, 0.3, 0.0);
+	for (uint gamut = 0; gamut < 2; gamut++) {
+		SharedData::linearLightingSettings.enableACEScg = gamut;
+		ASSERT(IsTrue, all(abs(Color::Glowmap(sampleColor) - Color::GamutTransform(sampleColor)) < 0.00001));
+		ASSERT(IsTrue, all(abs(Color::EmitColor(tint) - Color::GamutTransform(tint)) < 0.00001));
+	}
 }
 
 	/// @tags color, utility, effects

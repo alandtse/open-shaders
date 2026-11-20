@@ -102,7 +102,8 @@ struct LensFlare : public PostProcessFeature
 
 		uint ActiveGhostMask;  // bitmask of enabled ghosts for current pass
 		float ApertureSize;    // 1.0 / FStop
-		float pad0[2]{};
+		uint EyeIndex = 0;
+		float pad0 = 0.f;
 
 		// Ghost colors as float4[8] = 128 bytes, matches HLSL float4 array
 		float GhostColors[NUM_GHOSTS * 4];

@@ -24,7 +24,7 @@ namespace NR
 	{
 		/** @brief The user has NR switched on. */
 		bool enabled = false;
-		/** @brief Dialogue-only gating holds this frame: the pass is suspended but stays initialized. */
+		/** @brief Dialogue or combat gating holds this frame: the pass is suspended but stays initialized. */
 		bool suspended = false;
 		/** @brief The engine drew a world this frame. */
 		bool worldRendered = false;
