@@ -56,8 +56,15 @@ namespace DX12
 						return old;
 				return {};
 			};
-			for (size_t i = 0; i < kGridCapacity; ++i)
+			for (size_t i = 0; i < kGridCapacity; ++i) {
 				next->resident[i] = lookup(next->requested[i]);
+				if (next->resident[i] && next->resident[i]->state == Tile::State::Deferred) {
+					// A CPU-budgeted speculative tile is re-requested at full quality on active promotion.
+					auto promoted = std::make_shared<Tile>(*next->resident[i]);
+					promoted->state = Tile::State::Requested;
+					next->resident[i] = std::move(promoted);
+				}
+			}
 			for (size_t i = 0; i < kPredictiveCapacity; ++i)
 				next->predictiveResident[i] = lookup(next->predictive[i]);
 		}
@@ -164,7 +171,15 @@ namespace DX12
 			++next->lightRevision;
 			next->resident[std::distance(current->requested.begin(), active)] = std::move(tile);
 		} else {
-			// Predictive preparation must never force BLAS/TLAS work or change active light revisions.
+			// Sixteen predictive tiles have a strict combined 192 MiB CPU geometry allowance
+			// (12 MiB per tile), independent of active GPU scene residency.
+			constexpr uint64_t kPredictiveTileBudgetBytes = 12ull * 1024 * 1024;
+			if (tile->bytes > kPredictiveTileBudgetBytes) {
+				tile->shapes.clear();
+				tile->bytes = 0;
+				tile->state = Tile::State::Deferred;
+			}
+			// Speculative preparation must never force BLAS/TLAS work or change active light revisions.
 			next->predictiveResident[std::distance(current->predictive.begin(), predictive)] = std::move(tile);
 		}
 		snapshot.store(std::move(next), std::memory_order_release);
@@ -366,7 +381,7 @@ std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const
 	std::vector<DX12::PreparedLight> lights;
 	const auto current = grid.Snapshot();
 	for (const auto& tile : current->resident)
-		if (tile)
+		if (tile && tile->state == DX12::Tile::State::Ready)
 			lights.insert(lights.end(), tile->lights.begin(), tile->lights.end());
 	return lights;
 }

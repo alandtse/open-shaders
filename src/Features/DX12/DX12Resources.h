@@ -36,7 +36,8 @@ namespace DX12
 			Requested,
 			Preparing,
 			Ready,
-			Incomplete
+			Incomplete,
+			Deferred  // Predictive geometry exceeded its CPU residency allowance; retry if promoted active.
 		};
 		SubcellKey key;
 		std::vector<std::shared_ptr<const Shape>> shapes;
