@@ -32,6 +32,7 @@ struct DX12NativeScene final : Feature
 
 private:
 	void UpdateLights();
+	void PublishCoverage(const DX12::Grid& grid);
 	DX12::AccelerationScene scene;
 	std::atomic<std::shared_ptr<const DX12::ResolvedLights>> lights;
 	Settings settings;

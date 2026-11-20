@@ -19,8 +19,12 @@
 #include "ShadowCasterInternal.h"
 
 #include <Windows.h>  // SEH (__try) for the shadow-light usability backstop
+#include <algorithm>
+#include <memory>
 #include <mutex>
+#include <ranges>
 #include <shared_mutex>
+#include <vector>
 
 #define I18N_KEY_PREFIX "feature.light_limit_fix."
 
@@ -430,6 +434,43 @@ namespace ShadowCasterManager
 	const LightContainer& GetLights()
 	{
 		return s_lights;
+	}
+
+	namespace
+	{
+		std::atomic<std::shared_ptr<const std::vector<uintptr_t>>> s_nativeStaticCoverage;
+		std::atomic<bool> s_nativeStaticMaskActive{ false };
+	}
+
+	void PublishNativeStaticCoverage(std::span<RE::BSShadowLight* const> covered)
+	{
+		auto next = std::make_shared<std::vector<uintptr_t>>();
+		next->reserve(covered.size());
+		for (auto* light : covered)
+			if (light)
+				next->push_back(reinterpret_cast<uintptr_t>(light));
+		std::ranges::sort(*next);
+		next->erase(std::unique(next->begin(), next->end()), next->end());
+		const auto previous = s_nativeStaticCoverage.load(std::memory_order_acquire);
+		if (previous && *previous == *next)
+			return;
+		s_nativeStaticCoverage.store(std::move(next), std::memory_order_release);
+	}
+
+	bool NativeStaticCovered(const RE::BSShadowLight* light)
+	{
+		const auto coverage = s_nativeStaticCoverage.load(std::memory_order_acquire);
+		return light && coverage && std::ranges::binary_search(*coverage, reinterpret_cast<uintptr_t>(light));
+	}
+
+	void SetNativeStaticMaskActive(bool active)
+	{
+		s_nativeStaticMaskActive.store(active, std::memory_order_release);
+	}
+
+	bool NativeStaticOffloaded(const RE::BSShadowLight* light)
+	{
+		return s_nativeStaticMaskActive.load(std::memory_order_acquire) && NativeStaticCovered(light);
 	}
 
 	bool IsActive()

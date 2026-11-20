@@ -779,6 +779,8 @@ namespace ShadowCasterManager
 	/// re-read every frame so an atlas reclaim or realloc wakes the light.
 	static bool SleepSkipEligible(const LightEntry& e, int32_t slot, int32_t now)
 	{
+		if (NativeStaticOffloaded(e.Light))
+			return false;
 		if (e.LastDrawnFrame < 0 || SlotStaticCompositePending(slot))
 			return false;
 		// A staged promotion must rerender before the light may sleep.
@@ -822,6 +824,8 @@ namespace ShadowCasterManager
 	/// Skips an unsampled tile only after pending allocation and static-composite work completes.
 	static bool DemandSkipEligible(const LightEntry& e, int32_t slot, int32_t now)
 	{
+		if (NativeStaticOffloaded(e.Light))
+			return false;
 		if (!s_settings.SkipZeroDemandRedraw || SlotStaticCompositePending(slot))
 			return false;
 		// Unmeasured, stale or cluster-saturated all read as fully visible.
@@ -1134,7 +1138,12 @@ namespace ShadowCasterManager
 		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
 			// A carried light's camera faces its holder, which the bake's pose does not record: it renders full.
-			bool split = StaticAtlasReady() && !carrier;
+			const bool nativeStaticOffloaded = NativeStaticOffloaded(light);
+			bool split = StaticAtlasReady() && !carrier && !nativeStaticOffloaded;
+			if (nativeStaticOffloaded) {
+				InvalidateSlotStaticBake(slotIndex);
+				InvalidateSlotTileContent(slotIndex);
+			}
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
 			st->fullThisFrame = !split;

@@ -1,11 +1,11 @@
 #include "DX12NativeScene.h"
 
 #include "DX12Control.h"
+#include "Globals.h"
+#include "GpuPass.h"
 #include "Features/LightLimitFix/Common.h"
 #include "Features/LightLimitFix/ShadowCasterManager.h"
 #include "Features/Upscaling.h"
-#include "Globals.h"
-#include "GpuPass.h"
 #include "RE/N/NiLight.h"
 #include "RE/T/TESObjectREFR.h"
 
@@ -15,7 +15,7 @@
 bool DX12NativeScene::IsActive() const
 {
 	return loaded && settings.Enabled && globals::features::dx12Resources.IsActive() &&
-	       globals::features::dx12Control.IsActive() && !globals::game::isVR;
+		globals::features::dx12Control.IsActive() && !globals::game::isVR;
 }
 
 void DX12NativeScene::DrawSettings()
@@ -70,6 +70,8 @@ void DX12NativeScene::EarlyPrepass()
 	if (grid && scene.Start(swapChain.d3d12Device.get()))
 		scene.Request(grid);
 	UpdateLights();
+	if (grid)
+		PublishCoverage(*grid);
 }
 
 void DX12NativeScene::UpdateLights()
@@ -108,6 +110,36 @@ void DX12NativeScene::UpdateLights()
 	lights.store(std::make_shared<const DX12::ResolvedLights>(std::move(resolved)), std::memory_order_release);
 }
 
+void DX12NativeScene::PublishCoverage(const DX12::Grid& grid)
+{
+	std::vector<RE::BSShadowLight*> covered;
+	const auto currentScene = scene.Ready();
+	const auto currentLights = lights.load(std::memory_order_acquire);
+	if (currentScene && currentLights && currentScene->complete && currentScene->geometryRevision == grid.geometryRevision &&
+		currentScene->scope == grid.requested.front().scope && ShadowCasterManager::IsActive()) {
+		const auto& active = ShadowCasterManager::GetLights();
+		const auto center = grid.requested.front();
+		const double minX = double(center.x - 1) * grid.size;
+		const double minY = double(center.y - 1) * grid.size;
+		const double maxX = double(center.x + 2) * grid.size;
+		const double maxY = double(center.y + 2) * grid.size;
+		for (uint32_t i = 0; i < currentLights->count; ++i) {
+			const auto& resolved = currentLights->values[i];
+			if (!resolved.matched || resolved.runtimeShadowSlot >= uint32_t(std::max(active.Size, 0)) ||
+				!active.Lights || !currentScene->shapeIDs.size())
+				continue;
+			const auto& light = resolved.light;
+			const double radius = light.radius;
+			if (double(light.position.x) - radius < minX || double(light.position.x) + radius > maxX ||
+				double(light.position.y) - radius < minY || double(light.position.y) + radius > maxY)
+				continue;
+			if (auto* shadow = active.Lights[resolved.runtimeShadowSlot].Light)
+				covered.push_back(shadow);
+		}
+	}
+	ShadowCasterManager::PublishNativeStaticCoverage(covered);
+}
+
 void DX12NativeScene::OnSceneTransitionReset(bool opening)
 {
 	if (opening)
@@ -118,4 +150,6 @@ void DX12NativeScene::OnRuntimeDisabled()
 {
 	scene.Clear();
 	lights.store(nullptr, std::memory_order_release);
+	ShadowCasterManager::SetNativeStaticMaskActive(false);
+	ShadowCasterManager::PublishNativeStaticCoverage({});
 }
