@@ -119,6 +119,7 @@ add_executable(
     test_nr_combat_pause.cpp
     test_nr_material_strength.cpp
     test_nr_model_scale.cpp
+    test_nr_model_reconstruction.cpp
     test_nr_eye_mode.cpp
     test_nr_context_profile.cpp
     test_nr_roi.cpp
