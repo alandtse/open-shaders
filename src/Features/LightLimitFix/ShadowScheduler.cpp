@@ -1604,19 +1604,23 @@ namespace ShadowCasterManager
 				e.Light->dynamic = false;
 			const auto* carrier = CarrierBody(e.Light);
 			if (carrier) {
-				facedNode = e.Light->light.get();
-				facedRotate = facedNode->world.rotate;
+				auto* node = e.Light->light.get();
+				facedRotate = node->world.rotate;
+				node->IncRefCount();
+				facedNode = node;
 			}
 			WithCarrierFacing(e.Light, carrier, [&] { return e.Light->UpdateCamera(a_camera); });
 			e.Light->dynamic = wasDynamic;
 			EnableLight(e.Light, a_camera, a_ssn, a_slot, carrier);
-			return e.Light && a_isUsable(e.Light);
+			const bool usable = e.Light && a_isUsable(e.Light);
+			if (facedNode)
+				facedNode->DecRefCount();
+			return usable;
 		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-			// SEH skips WithCarrierFacing's scope_exit destructor, so restore the node rotation here.
-			__try {
-				if (facedNode)
-					facedNode->world.rotate = facedRotate;
-			} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+			// SEH skips WithCarrierFacing's scope_exit destructor; the extra ref keeps the node alive for this restore.
+			if (facedNode) {
+				facedNode->world.rotate = facedRotate;
+				facedNode->DecRefCount();
 			}
 			LogShadowSehCatch(e.Light);
 			return false;
