@@ -84,6 +84,8 @@ namespace DX12
 		requested.reset();
 		requestedRevision = 0;
 		ready.store(nullptr, std::memory_order_release);
+		purgeCacheRequested = true;
+		wake.notify_one();
 	}
 
 	winrt::com_ptr<ID3D12Resource> AccelerationScene::MakeBuffer(uint64_t bytes, D3D12_HEAP_TYPE heap,
@@ -270,9 +272,15 @@ namespace DX12
 			uint64_t buildGeneration = 0;
 			{
 				std::unique_lock lock(mutex);
-				wake.wait(lock, stop, [&] { return requested != nullptr; });
+				wake.wait(lock, stop, [&] { return requested != nullptr || purgeCacheRequested; });
 				if (stop.stop_requested())
 					break;
+				if (purgeCacheRequested) {
+					cache.clear(); // Previous in-flight frame submissions retain their own shared refs.
+					purgeCacheRequested = false;
+				}
+				if (!requested)
+					continue;
 				grid = std::exchange(requested, nullptr);
 				buildGeneration = generation;
 			}
@@ -298,6 +306,11 @@ namespace DX12
 					sourceBytes += bytes;
 				}
 			}
+			// Evict obsolete BLAS before attempting a replacement TLAS. The
+			// published scene retains any BLAS still referenced by pending GPU work.
+			std::erase_if(cache, [&](const auto& entry) {
+				return !std::ranges::contains(shapes, entry.second->shape);
+			});
 			std::vector<std::shared_ptr<const Bottom>> bottoms;
 			bottoms.reserve(shapes.size());
 			for (const auto& shape : shapes) {
@@ -326,7 +339,6 @@ namespace DX12
 			if (generation != buildGeneration)
 				continue;
 			ready.store(std::move(top), std::memory_order_release);
-			std::erase_if(cache, [&](const auto& entry) { return !std::ranges::contains(shapes, entry.second->shape); });
 		}
 	}
 }

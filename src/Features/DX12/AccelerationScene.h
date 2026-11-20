@@ -61,6 +61,7 @@ namespace DX12
 		std::shared_ptr<const Grid> requested;
 		uint64_t requestedRevision = 0;
 		uint64_t generation = 0;
+		bool purgeCacheRequested = false;
 		std::atomic<std::shared_ptr<const AccelerationSceneReady>> ready;
 		std::jthread worker;
 	};
