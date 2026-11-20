@@ -280,22 +280,44 @@ namespace SnowCover
 		float4 rmaos;
 		if (alt) {
 			float3 albedo = IceAlbedo.Sample(SampColorSampler, uv).rgb;
+#		if defined(LODLANDSCAPE) || defined(LODLANDNOISE)
+			// Match the near TRUE_PBR snow albedo conversion before lighting.
+			// PBR lighting scales its contribution later; legacy LOD needs it here.
+			float3 lodPbrAlbedo = Color::LinearToPBRMaterial(
+				Color::EnbColorPow(Color::DiffuseToWorking(albedo, true)))
+				* SharedData::snowCoverSettings.AltTint.rgb * Color::PBRLightingScale;
+#			endif
 			albedo = Color::Diffuse(Color::LinearToSrgb(albedo)) * SharedData::snowCoverSettings.AltTint.rgb * Color::PBRLightingScale;
 			rmaos = IceRmaos.Sample(SampColorSampler, uv);
 			material.Roughness = lerp(material.Roughness, rmaos.x, mult);
 			material.Shininess = lerp(material.Shininess, LegacySpecularScale * SharedData::snowCoverSettings.altSpec * rmaos.w, mult);
 			worldNormal = TransformNormal(IceNormal.Sample(SampNormalSampler, uv).rgb);
+#		if defined(LODLANDSCAPE) || defined(LODLANDNOISE)
+			material.BaseColor = lerp(material.BaseColor, rmaos.z * lodPbrAlbedo, mult * SharedData::snowCoverSettings.AltTint.w);
+#			else
 			material.BaseColor = lerp(material.BaseColor, rmaos.z * albedo, mult * SharedData::snowCoverSettings.AltTint.w);
+#			endif
 			material.SpecularColor = lerp(material.SpecularColor, rmaos.y * albedo + float3(1, 1, 1) * (1 - rmaos.y), mult);
 			material.F0 = lerp(material.F0, rmaos.w * SharedData::snowCoverSettings.altSpec, mult);
 		} else {
 			float3 albedo = SnowAlbedo.Sample(SampColorSampler, uv).rgb;
+#		if defined(LODLANDSCAPE) || defined(LODLANDNOISE)
+			// Match the near TRUE_PBR snow albedo conversion before lighting.
+			// PBR lighting scales its contribution later; legacy LOD needs it here.
+			float3 lodPbrAlbedo = Color::LinearToPBRMaterial(
+				Color::EnbColorPow(Color::DiffuseToWorking(albedo, true)))
+				* SharedData::snowCoverSettings.MainTint.rgb * Color::PBRLightingScale;
+#			endif
 			albedo = Color::Diffuse(Color::LinearToSrgb(albedo)) * SharedData::snowCoverSettings.MainTint.rgb * Color::PBRLightingScale;
 			rmaos = SnowRmaos.Sample(SampColorSampler, uv);
 			material.Roughness = lerp(material.Roughness, rmaos.x, mult);
 			material.Shininess = lerp(material.Shininess, LegacySpecularScale * SharedData::snowCoverSettings.mainSpec * rmaos.w, mult);
 			worldNormal = TransformNormal(SnowNormal.Sample(SampNormalSampler, uv).rgb);
+#		if defined(LODLANDSCAPE) || defined(LODLANDNOISE)
+			material.BaseColor = lerp(material.BaseColor, rmaos.z * lodPbrAlbedo, mult * SharedData::snowCoverSettings.MainTint.w);
+#			else
 			material.BaseColor = lerp(material.BaseColor, rmaos.z * albedo, mult * SharedData::snowCoverSettings.MainTint.w);
+#			endif
 			material.SpecularColor = lerp(material.SpecularColor, rmaos.y * albedo + float3(1, 1, 1) * (1 - rmaos.y), mult);
 			material.F0 = lerp(material.F0, rmaos.w * SharedData::snowCoverSettings.mainSpec, mult);
 		}
