@@ -87,6 +87,18 @@ namespace ShadowCasterManager
 		return a_live <= kScoreFadeOutFloor || a_average <= kScoreFadeOutFloor ? a_live : a_average + kScoreFadeSmoothing * (a_live - a_average);
 	}
 
+	/// Whether a light kept by the camera hold is seated only after every light still in view.
+	inline bool HeldLightYields(bool a_ownInView, bool a_playerProtected, bool a_hidden) noexcept
+	{
+		return !a_ownInView && !a_playerProtected && !a_hidden;
+	}
+
+	/// How many lights reaching the player keep their protection: half the shadow light count, at least one.
+	inline int PlayerProtectionCap(int a_shadowLightCount) noexcept
+	{
+		return std::max(1, a_shadowLightCount / 2);
+	}
+
 	// Casters reaching the equatorial plane keep the engine's hemisphere choice;
 	// the margin floor keeps a zero-radius light from collapsing the seam.
 	inline constexpr float kHemisphereSeamMarginMin = 1.0f;

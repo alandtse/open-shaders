@@ -14,12 +14,14 @@ using ShadowCasterManager::FacingRotation;
 using ShadowCasterManager::FrameTimePercentile;
 using ShadowCasterManager::HashCombine;
 using ShadowCasterManager::HashCombineFloat;
+using ShadowCasterManager::HeldLightYields;
 using ShadowCasterManager::HemisphereSeamMargin;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
 using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kSlotHoldMargin;
 using ShadowCasterManager::kTileScaleFloor;
 using ShadowCasterManager::kVanillaShadowSliceCount;
+using ShadowCasterManager::PlayerProtectionCap;
 using ShadowCasterManager::QuantizeFloat;
 using ShadowCasterManager::SliceCappedLightCount;
 using ShadowCasterManager::SlotHeldScore;
@@ -257,6 +259,15 @@ TEST_CASE("SliceCappedLightCount keeps the highest point index inside the array"
 			REQUIRE(SliceCappedLightCount(count, slices) < slices);
 }
 
+TEST_CASE("HeldLightYields seats only lights out of view after the lights in view", "[scm]")
+{
+	REQUIRE(HeldLightYields(false, false, false));
+	// Still in view (an engine cull flap at the edge), reaching the player, or hidden: keeps its place.
+	REQUIRE_FALSE(HeldLightYields(true, false, false));
+	REQUIRE_FALSE(HeldLightYields(false, true, false));
+	REQUIRE_FALSE(HeldLightYields(false, false, true));
+}
+
 TEST_CASE("SlotHeldScore keeps a holder against a near-equal challenger", "[scm]")
 {
 	REQUIRE(SlotHeldScore(0.5, false) == 0.5);
@@ -306,4 +317,12 @@ TEST_CASE("SteadyScoreFade averages a flicker but follows a light going out at o
 	// A light coming back on is ranked at its live fade at once, not ramped up from its average.
 	REQUIRE(SteadyScoreFade(0.0f, 1.0f) == 1.0f);
 	REQUIRE(SteadyScoreFade(0.05f, 0.7f) == 0.7f);
+}
+
+TEST_CASE("PlayerProtectionCap leaves half the slots to the lights in view", "[scm]")
+{
+	REQUIRE(PlayerProtectionCap(16) == 8);
+	REQUIRE(PlayerProtectionCap(127) == 63);
+	REQUIRE(PlayerProtectionCap(1) == 1);
+	REQUIRE(PlayerProtectionCap(0) == 1);
 }
