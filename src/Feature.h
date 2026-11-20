@@ -17,6 +17,7 @@
 
 struct ID3D11ShaderResourceView;
 struct ID3D11Texture2D;
+namespace RE { class BSGeometry; }
 struct ImVec4;
 class PresetProvider;
 
@@ -360,6 +361,13 @@ public:
 
 	/** @brief Per-frame work executed before Prepass, earliest per-frame hook. */
 	virtual void EarlyPrepass() {}
+
+	/** @brief Requests shape-only observation of rigid casters during baseline shadow classification. */
+	virtual bool WantsStaticGeometryHook() const { return false; }
+	/** @brief Receives one classified static geometry object without changing raster ownership. */
+	virtual void ObserveStaticGeometry(RE::BSGeometry&) {}
+	/** @brief Dispatches one static geometry observation to interested loaded features. */
+	static void DispatchStaticGeometry(RE::BSGeometry& geometry);
 
 	/** @brief Runs immediately before the engine polls physical input devices. */
 	virtual void OnBeforeInputPoll() {}

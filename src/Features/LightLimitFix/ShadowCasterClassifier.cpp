@@ -6,6 +6,7 @@
 #include <fstream>
 
 #include "../../Globals.h"
+#include "../../Feature.h"
 #include "../../State.h"
 #include "../../Utils/ActorUtils.h"
 #include "../../Utils/FileSystem.h"
@@ -353,7 +354,10 @@ namespace ShadowCasterManager
 		// static, or its silhouette ghosts once it walks off a bake-starved cell.
 		if (geom.GetGeometryRuntimeData().skinInstance)
 			return true;
-		return ClassifyCaster(geom).dynamic;
+		const bool dynamic = ClassifyCaster(geom).dynamic;
+		if (!dynamic)
+			Feature::DispatchStaticGeometry(geom);
+		return dynamic;
 	}
 
 	// Running static-caster hash for the light currently accumulating; seeded

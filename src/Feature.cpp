@@ -388,6 +388,14 @@ const std::vector<Feature*>& Feature::GetRenderPassHookFeatures()
 	return hookFeatures;
 }
 
+void Feature::DispatchStaticGeometry(RE::BSGeometry& geometry)
+{
+	static const auto observers = FilterFeatureList([](Feature* feature) { return feature->WantsStaticGeometryHook(); });
+	for (auto* feature : observers)
+		if (feature->loaded)
+			feature->ObserveStaticGeometry(geometry);
+}
+
 void Feature::ApplyDrawHooks()
 {
 	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsDrawHook(); });

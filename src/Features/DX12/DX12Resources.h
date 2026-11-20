@@ -14,6 +14,7 @@ namespace DX12
 	/** @brief The companion publishes only triangle geometry, never textures or material references. */
 	struct Shape
 	{
+		uint64_t identity = 0;
 		std::vector<float3> positions;
 		std::vector<uint32_t> indices;
 		std::array<float, 12> transform{};
@@ -22,8 +23,9 @@ namespace DX12
 	struct Tile
 	{
 		SubcellKey key;
-		std::vector<Shape> shapes;
+		std::vector<std::shared_ptr<const Shape>> shapes;
 		uint64_t bytes = 0;
+		bool prepared = false;
 	};
 
 	/** @brief Immutable view of the nine resident runtime cells. */
@@ -44,6 +46,8 @@ namespace DX12
 		std::optional<SubcellKey> NextRequest();
 		/** @brief Publishes a completed shape batch only if still inside the requested grid. */
 		bool Publish(const SubcellKey& key, std::vector<Shape> shapes);
+		/** @brief Adds a newly discovered rigid shape without invalidating older consumers. */
+		bool Append(const SubcellKey& key, Shape shape);
 		/** @brief Releases every in-memory tile at scene transition. */
 		void Clear();
 		/** @brief Retains an immutable render-consumer snapshot. */
@@ -53,6 +57,7 @@ namespace DX12
 		std::mutex mutex;
 		std::atomic<std::shared_ptr<const Grid>> snapshot{ std::make_shared<const Grid>() };
 		std::optional<SubcellKey> pending;
+		std::unordered_map<uint64_t, SubcellKey> observed;
 	};
 }
 
@@ -75,6 +80,8 @@ struct DX12Resources final : Feature
 	void SaveSettings(json& output) override;
 	void RestoreDefaultSettings() override;
 	void EarlyPrepass() override;
+	bool WantsStaticGeometryHook() const override { return true; }
+	void ObserveStaticGeometry(RE::BSGeometry& geometry) override;
 	void OnSceneTransitionReset(bool opening) override;
 	void OnRuntimeDisabled() override;
 	/** @brief Returns current geometry residency without traversing engine objects. */
@@ -88,4 +95,5 @@ struct DX12Resources final : Feature
 private:
 	DX12::ResourceGrid grid;
 	Settings settings;
+	uint32_t copyFrame = 0, copiedFrameBytes = 0;
 };
