@@ -302,6 +302,7 @@ namespace
 			&globals::features::extendedTranslucency,
 			&globals::features::upscaling,
 			&globals::features::dx12Control,
+			&globals::features::dx12Resources,
 			&globals::features::developerTools,
 			&globals::features::csEditor,
 			&globals::features::sceneSelector,

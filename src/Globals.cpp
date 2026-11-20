@@ -11,6 +11,7 @@
 #include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/DX12/DX12Control.h"
+#include "Features/DX12/DX12Resources.h"
 #include "Features/Effects11.h"
 #include "Features/ExponentialHeightFog.h"
 #include "Features/ExtendedMaterials.h"
@@ -142,6 +143,7 @@ namespace globals
 		SceneManager sceneManager{};
 		ProceduralAurora proceduralAurora{};
 		DX12Control dx12Control{};
+		DX12Resources dx12Resources{};
 
 		namespace llf
 		{
