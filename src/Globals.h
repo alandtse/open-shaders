@@ -66,6 +66,7 @@ struct ProceduralAurora;
 struct DX12Control;
 struct DX12Resources;
 struct DX12NativeScene;
+struct DX12NativeComposite;
 
 class State;
 class Deferred;
@@ -183,6 +184,7 @@ namespace globals
 		extern DX12Control dx12Control;
 		extern DX12Resources dx12Resources;
 		extern DX12NativeScene dx12NativeScene;
+		extern DX12NativeComposite dx12NativeComposite;
 
 		namespace llf
 		{

@@ -465,7 +465,17 @@ namespace ShadowCasterManager
 
 	void SetNativeStaticMaskActive(bool active)
 	{
-		s_nativeStaticMaskActive.store(active, std::memory_order_release);
+		const bool previous = s_nativeStaticMaskActive.exchange(active, std::memory_order_acq_rel);
+		if (!active || previous || !s_lights.Lights)
+			return;
+		for (int32_t i = 0; i < s_lights.Size; ++i) {
+			auto& entry = s_lights.Lights[i];
+			if (NativeStaticCovered(entry.Light)) {
+				InvalidateSlotStaticBake(i);
+				InvalidateSlotTileContent(i);
+				entry.LastDrawnFrame = -1;
+			}
+		}
 	}
 
 	bool NativeStaticOffloaded(const RE::BSShadowLight* light)

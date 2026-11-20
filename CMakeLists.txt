@@ -852,6 +852,7 @@ install(
     PATTERN "Tests" EXCLUDE
 )
 include(FeaturePackaging)
+include("${CMAKE_CURRENT_SOURCE_DIR}/src/Features/DX12/Shaders.cmake")
 include(FidelityFX-Runtime)
 include(Streamline-Runtime)
 # A package install fails on a payload file a skipped download left absent, so the only

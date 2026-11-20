@@ -18,6 +18,7 @@
 #include "../../../GpuPass.h"
 #include "../../../State.h"
 #include "../../ReverseZ.h"
+#include "../../DX12/DX12NativeComposite.h"
 #include "../../Upscaling.h"
 #include "../DX12SwapChain.h"
 #include "Utils/SehGuard.h"
@@ -1228,10 +1229,13 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 				CD3DX12_RESOURCE_BARRIER::Transition(runtimeOutputShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
 			};
 			commandList->ResourceBarrier(static_cast<UINT>(beginBarriers.size()), beginBarriers.data());
+			auto nativeComposite = globals::features::dx12NativeComposite.Dispatch(commandList,
+				runtimeColorShared[a_contextIndex]->resource.get(),
+				runtimeDepthShared[a_contextIndex]->resource.get(), a_renderWidth, a_renderHeight);
 
 			ffx::DispatchDescUpscale dispatchParameters{};
 			dispatchParameters.commandList = commandList;
-			dispatchParameters.color = ffxApiGetResourceDX12(runtimeColorShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+			dispatchParameters.color = ffxApiGetResourceDX12(nativeComposite ? nativeComposite->Color() : runtimeColorShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.depth = ffxApiGetResourceDX12(runtimeDepthShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.motionVectors = ffxApiGetResourceDX12(runtimeMotionShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.exposure = FfxApiResource({});
@@ -1291,6 +1295,11 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 				CD3DX12_RESOURCE_BARRIER::Transition(runtimeOutputShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
 			};
 			commandList->ResourceBarrier(static_cast<UINT>(endBarriers.size()), endBarriers.data());
+			if (nativeComposite) {
+				const auto compositeEnd = CD3DX12_RESOURCE_BARRIER::Transition(nativeComposite->Color(),
+					D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON);
+				commandList->ResourceBarrier(1, &compositeEnd);
+			}
 
 			DX::ThrowIfFailed(commandList->Close());
 
@@ -1299,6 +1308,8 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			swapChain.commandQueue->ExecuteCommandLists(1, commandListsToExecute);
 			commandListSubmitted = true;
 			DX::ThrowIfFailed(swapChain.commandQueue->Signal(runtimeFence.fence12.get(), d3d12SubmitFence));
+			if (nativeComposite)
+				globals::features::dx12NativeComposite.OnSubmitted(runtimeFence.fence12.get(), d3d12SubmitFence, std::move(*nativeComposite), dispatchOk);
 			commandContext->fenceValue = d3d12SubmitFence;
 			commandFenceTracked = true;
 			DX::ThrowIfFailed(swapChain.d3d11Context->Wait(runtimeFence.fence11.get(), d3d12SubmitFence));

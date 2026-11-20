@@ -1,11 +1,11 @@
 #include "DX12NativeScene.h"
 
 #include "DX12Control.h"
+#include "Globals.h"
+#include "GpuPass.h"
 #include "Features/LightLimitFix/Common.h"
 #include "Features/LightLimitFix/ShadowCasterManager.h"
 #include "Features/Upscaling.h"
-#include "Globals.h"
-#include "GpuPass.h"
 #include "RE/N/NiLight.h"
 #include "RE/T/TESObjectREFR.h"
 
@@ -15,7 +15,7 @@
 bool DX12NativeScene::IsActive() const
 {
 	return loaded && settings.Enabled && globals::features::dx12Resources.IsActive() &&
-	       globals::features::dx12Control.IsActive() && !globals::game::isVR;
+		globals::features::dx12Control.IsActive() && !globals::game::isVR;
 }
 
 void DX12NativeScene::DrawSettings()
@@ -125,7 +125,9 @@ void DX12NativeScene::PublishCoverage(const DX12::Grid& grid)
 		const double maxY = double(center.y + 2) * grid.size;
 		for (uint32_t i = 0; i < currentLights->count; ++i) {
 			const auto& resolved = currentLights->values[i];
-			if (!resolved.matched || resolved.runtimeShadowSlot >= uint32_t(std::max(active.Size, 0)) ||
+			if (!resolved.matched || resolved.light.fade <= 0 ||
+				(resolved.light.color.x <= 0 && resolved.light.color.y <= 0 && resolved.light.color.z <= 0) ||
+				resolved.runtimeShadowSlot >= uint32_t(std::max(active.Size, 0)) ||
 				!active.Lights || !currentScene->shapeIDs.size())
 				continue;
 			const auto& light = resolved.light;
