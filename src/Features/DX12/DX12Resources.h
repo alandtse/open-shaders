@@ -11,6 +11,7 @@
 
 namespace DX12
 {
+	class CompanionWorker;
 	/** @brief Immutable light record discovered alongside companion geometry. */
 	struct PreparedLight
 	{
@@ -30,13 +31,7 @@ namespace DX12
 
 	struct Tile
 	{
-		enum class State : uint8_t
-		{
-			Requested,
-			Preparing,
-			Ready,
-			Incomplete
-		};
+		enum class State : uint8_t { Requested, Preparing, Ready, Incomplete };
 		SubcellKey key;
 		std::vector<std::shared_ptr<const Shape>> shapes;
 		std::vector<PreparedLight> lights;
@@ -86,9 +81,10 @@ namespace DX12
 	};
 }
 
-/** @brief Geometry and minimal prepared-light companion with a diskless 3x3 grid. */
+/** @brief Memory-resident geometry and lights with an ephemeral companion scratch directory. */
 struct DX12Resources final : Feature
 {
+	~DX12Resources();
 	struct Settings
 	{
 		bool Enabled = true;
@@ -119,5 +115,7 @@ struct DX12Resources final : Feature
 
 private:
 	DX12::ResourceGrid grid;
+	std::unique_ptr<DX12::CompanionWorker> companion;
+	std::optional<DX12::SubcellKey> inFlight;
 	Settings settings;
 };

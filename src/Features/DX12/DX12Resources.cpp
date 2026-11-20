@@ -1,8 +1,10 @@
 #include "DX12Resources.h"
 
 #include "DX12Control.h"
+#include "CompanionWorker.h"
 #include "Globals.h"
 #include "GpuPass.h"
+#include "RE/T/TESDataHandler.h"
 #include "RE/T/TESWorldSpace.h"
 
 #include <algorithm>
@@ -80,14 +82,15 @@ namespace DX12
 		bool valid = true;
 		for (auto& shape : publication.shapes) {
 			const uint64_t length = uint64_t(shape.positions.size()) * sizeof(float3) +
-			                        uint64_t(shape.indices.size()) * sizeof(uint32_t);
+				uint64_t(shape.indices.size()) * sizeof(uint32_t);
 			if (!shape.identity || !identities.insert(shape.identity).second ||
 				shape.positions.empty() || shape.indices.empty() || shape.indices.size() % 3 ||
 				length > kMaximumTileBytes - bytes ||
 				!std::ranges::all_of(shape.positions, [](const float3& vertex) {
 					return std::isfinite(vertex.x) && std::isfinite(vertex.y) && std::isfinite(vertex.z);
 				}) ||
-				!std::ranges::all_of(shape.transform, [](float component) { return std::isfinite(component); }) || !std::ranges::all_of(shape.indices, [&](uint32_t index) { return index < shape.positions.size(); })) {
+				!std::ranges::all_of(shape.transform, [](float component) { return std::isfinite(component); }) ||
+				!std::ranges::all_of(shape.indices, [&](uint32_t index) { return index < shape.positions.size(); })) {
 				valid = false;
 				continue;
 			}
@@ -97,9 +100,7 @@ namespace DX12
 		tile->bytes = bytes;
 		tile->lights = std::move(publication.lights);
 		tile->state = publication.enumerationComplete && publication.failedShapes == 0 && valid &&
-		                      publication.eligibleShapes == tile->shapes.size() ?
-		                  Tile::State::Ready :
-		                  Tile::State::Incomplete;
+			publication.eligibleShapes == tile->shapes.size() ? Tile::State::Ready : Tile::State::Incomplete;
 		auto next = std::make_shared<Grid>(*current);
 		++next->revision;
 		++next->geometryRevision;
@@ -127,19 +128,26 @@ bool DX12Resources::IsActive() const
 	return loaded && settings.Enabled && globals::features::dx12Control.IsActive() && !globals::game::isVR;
 }
 
+DX12Resources::~DX12Resources() = default;
+
 void DX12Resources::DrawSettings()
 {
-	if (ImGui::Checkbox("Enable companion geometry and lights", &settings.Enabled) && !settings.Enabled)
+	if (ImGui::Checkbox("Enable companion geometry and lights", &settings.Enabled) && !settings.Enabled) {
+		if (companion) companion->Cancel();
+		inFlight.reset();
 		grid.Clear();
+	}
 	int index = int(std::ranges::find(DX12::kSubcellSizes, settings.SubcellSize) - DX12::kSubcellSizes.begin());
 	if (index >= int(DX12::kSubcellSizes.size()))
 		index = 0;
 	constexpr const char* labels[] = { "4096", "6144", "8192", "10240", "12288", "14336", "16384" };
 	if (ImGui::Combo("Subcell size (game units)", &index, labels, int(std::size(labels)))) {
 		settings.SubcellSize = DX12::kSubcellSizes[index];
+		if (companion) companion->Cancel();
+		inFlight.reset();
 		grid.Clear();
 	}
-	ImGui::TextDisabled("Nine memory-only subcells; incomplete companion preparations never authorize shadow offload.");
+	ImGui::TextDisabled("Nine memory-only subcells; temporary extraction files are removed after each request.");
 }
 
 void DX12Resources::LoadSettings(json& input)
@@ -147,6 +155,8 @@ void DX12Resources::LoadSettings(json& input)
 	settings.Enabled = input.value("Enabled", true);
 	const uint32_t size = input.value("SubcellSize", DX12::kSubcellSizes.front());
 	settings.SubcellSize = std::ranges::contains(DX12::kSubcellSizes, size) ? size : DX12::kSubcellSizes.front();
+	if (companion) companion->Cancel();
+	inFlight.reset();
 	grid.Clear();
 }
 
@@ -158,6 +168,8 @@ void DX12Resources::SaveSettings(json& output)
 void DX12Resources::RestoreDefaultSettings()
 {
 	settings = {};
+	if (companion) companion->Cancel();
+	inFlight.reset();
 	grid.Clear();
 }
 
@@ -165,8 +177,11 @@ void DX12Resources::EarlyPrepass()
 {
 	CS_GPU_PASS("DX12Resources::Grid");
 	if (!IsActive()) {
-		if (grid.Snapshot()->requested.front().scope)
+		if (grid.Snapshot()->requested.front().scope) {
+			if (companion) companion->Cancel();
+			inFlight.reset();
 			grid.Clear();
+		}
 		return;
 	}
 	const auto* player = globals::game::player;
@@ -177,16 +192,65 @@ void DX12Resources::EarlyPrepass()
 	const uint32_t scope = world ? world->GetFormID() : cell->GetFormID();
 	const auto position = player->GetPosition();
 	grid.Advance(scope, settings.SubcellSize, position.x, position.y);
+	if (!companion)
+		companion = std::make_unique<DX12::CompanionWorker>();
+	if (inFlight && !std::ranges::contains(grid.Snapshot()->requested, *inFlight)) {
+		companion->Cancel();
+		inFlight.reset();
+	}
+	if (auto result = companion->Take()) {
+		inFlight.reset();
+		auto* handler = RE::TESDataHandler::GetSingleton();
+		for (auto& record : result->lights) {
+			const auto* reference = handler ? handler->LookupForm(record.referenceLocal, record.referencePlugin) : nullptr;
+			const auto* base = handler ? handler->LookupForm(record.baseLocal, record.basePlugin) : nullptr;
+			if (!reference || !base) {
+				++result->publication.failedShapes;
+				continue;
+			}
+			record.value.referenceID = reference->GetFormID();
+			record.value.baseID = base->GetFormID();
+			result->publication.lights.push_back(record.value);
+		}
+		grid.Publish(std::move(result->publication));
+	}
+	if (companion->Idle()) {
+		if (const auto request = grid.NextRequest()) {
+			const auto* source = world ? static_cast<const RE::TESForm*>(world) : static_cast<const RE::TESForm*>(cell);
+			const auto* file = source ? source->GetFile(0) : nullptr;
+			if (file && file->GetFilename()) {
+				DX12::CompanionRequest task;
+				task.key = *request;
+				task.size = settings.SubcellSize;
+				task.localScopeID = source->GetLocalFormID();
+				task.scopePlugin = file->GetFilename();
+				task.worldspace = world != nullptr;
+				if (companion->Enqueue(std::move(task))) {
+					inFlight = *request;
+					return;
+				}
+			}
+			DX12::CompanionPublication incomplete;
+			incomplete.key = *request;
+			grid.Publish(std::move(incomplete));
+		}
+	}
 }
 
 void DX12Resources::OnSceneTransitionReset(bool opening)
 {
 	if (opening)
+	{
+		if (companion) companion->Cancel();
+		inFlight.reset();
 		grid.Clear();
+	}
 }
 
 void DX12Resources::OnRuntimeDisabled()
 {
+	if (companion) companion->Cancel();
+	inFlight.reset();
 	grid.Clear();
 }
 

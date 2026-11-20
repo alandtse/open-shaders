@@ -1351,6 +1351,8 @@ if(AUTO_PLUGIN_DEPLOYMENT)
     )
 endif()
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DX12ResourcesCompanion.cmake")
+
 if(NOT DEFINED ENV{CommunityShadersOutputDir})
     message(
         "When using AUTO_PLUGIN_DEPLOYMENT option, you need to set environment variable 'CommunityShadersOutputDir'"
