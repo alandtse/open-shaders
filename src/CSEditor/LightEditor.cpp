@@ -767,7 +767,7 @@ void LightEditor::DrawInspector(const ImVec2& size)
 	BrowserUI::EllipsizedText(selected.name.empty() ? T(TKEY("unnamed_light"), "(unnamed)") : selected.name.c_str(), 0.0f,
 		ImGui::GetStyleColorVec4(ImGuiCol_Text));
 	const char* kindLabel = selected.isRef ? T(TKEY("badge_ref"), "Ref") :
-	                                         (selected.isAttached ? T(TKEY("badge_attached"), "Attached") : T(TKEY("badge_other"), "Other"));
+	                                         (selected.isAttached ? T(TKEY("badge_attached"), "Attached") : T(TKEY("badge_misc"), "Other"));
 	Util::Badge(kindLabel, Util::Colors::GetSecondary());
 	if (lpInfo.isLPLight) {
 		ImGui::SameLine();

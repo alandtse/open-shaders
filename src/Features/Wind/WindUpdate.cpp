@@ -292,6 +292,26 @@ void Wind::PublishWindState() noexcept
 	publishedWindState.valid = windFieldHasPreviousSample;
 }
 
+bool Wind::GetPublishedAmbientWind(float2& o_direction, float& o_speed) const noexcept
+{
+	PublishedWindState state;
+	{
+		std::shared_lock lock(publishedWindMutex);
+		if (!publishedWindState.valid)
+			return false;
+		state = publishedWindState;
+	}
+	const float3 transitionVelocity = state.transition.direction * state.transition.speed;
+	const float3 currentVelocity = state.current.direction * state.current.speed;
+	const float3 baseVelocity = transitionVelocity +
+	                            (currentVelocity - transitionVelocity) * state.transitionBlend;
+	const float speed = std::hypot(baseVelocity.x, baseVelocity.y);
+	o_speed = speed;
+	o_direction = speed > 1e-6f ? float2{ baseVelocity.x / speed, baseVelocity.y / speed } :
+	                              float2{ state.current.direction.x, state.current.direction.y };
+	return true;
+}
+
 bool Wind::SamplePublishedWind(std::span<const float3> a_worldPositions,
 	std::span<PublishedWindSample> a_samples) const noexcept
 {

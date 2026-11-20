@@ -81,6 +81,12 @@ namespace ShadowCasterManager
 		return !a_ownInView && !a_playerProtected && !a_hidden;
 	}
 
+	/// How many lights reaching the player keep their protection: half the shadow light count, at least one.
+	inline int PlayerProtectionCap(int a_shadowLightCount) noexcept
+	{
+		return std::max(1, a_shadowLightCount / 2);
+	}
+
 	// Casters reaching the equatorial plane keep the engine's hemisphere choice;
 	// the margin floor keeps a zero-radius light from collapsing the seam.
 	inline constexpr float kHemisphereSeamMarginMin = 1.0f;

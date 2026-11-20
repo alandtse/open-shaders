@@ -21,6 +21,7 @@ using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kSlotHoldMargin;
 using ShadowCasterManager::kTileScaleFloor;
 using ShadowCasterManager::kVanillaShadowSliceCount;
+using ShadowCasterManager::PlayerProtectionCap;
 using ShadowCasterManager::QuantizeFloat;
 using ShadowCasterManager::SliceCappedLightCount;
 using ShadowCasterManager::SlotHeldScore;
@@ -295,4 +296,12 @@ TEST_CASE("PerFrameCache works a key out once per frame and drops it on the next
 	REQUIRE(made == 2);
 	REQUIRE(cache.Get(11, 1, make) == 3);
 	REQUIRE(cache.entries.size() == 1);
+}
+
+TEST_CASE("PlayerProtectionCap leaves half the slots to the lights in view", "[scm]")
+{
+	REQUIRE(PlayerProtectionCap(16) == 8);
+	REQUIRE(PlayerProtectionCap(127) == 63);
+	REQUIRE(PlayerProtectionCap(1) == 1);
+	REQUIRE(PlayerProtectionCap(0) == 1);
 }
