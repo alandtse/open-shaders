@@ -93,8 +93,12 @@ namespace DX12
 					continue;
 				const float distance = squaredDistance(candidate->position, runtime[i].position);
 				const bool identityMatch = runtime[i].referenceID && runtime[i].referenceID == candidate->referenceID;
-				const bool baseMatch = runtime[i].baseID && runtime[i].baseID == candidate->baseID;
-				if (!identityMatch && (!baseMatch || distance > best))
+				// A base form can have hundreds of placed instances. A fallback
+				// is permissible only when the runtime light genuinely lacks a
+				// placed-reference identity; never override a different known REF.
+				const bool missingRuntimeReference = runtime[i].referenceID == 0;
+				const bool baseMatch = candidate->baseID && runtime[i].baseID == candidate->baseID;
+				if (!identityMatch && !(missingRuntimeReference && baseMatch && distance <= best))
 					continue;
 				if (identityMatch || distance < best) {
 					match = i;
