@@ -243,6 +243,9 @@ namespace ShadowCasterManager
 	/// restart on. Cleared on the scene/cell resets that recycle NiLights.
 	std::unordered_set<const RE::NiLight*> s_everHadShadow;
 
+	/// Lights whose shadow had faded out before they lost their slot, so a reclaimed tile fades back in rather than popping in.
+	std::unordered_set<const RE::NiLight*> s_fadedOutLights;
+
 	// UpdateCamera's inputs are flicker-jittered every frame, so a light near
 	// the sphere-vs-frustum boundary flaps at flicker frequency without this.
 	constexpr uint32_t kCameraExitStreak = 60;
@@ -2264,8 +2267,15 @@ namespace ShadowCasterManager
 						}
 					}
 				}
-				if (!stillChosen)
+				if (!stillChosen) {
+					if (s_lights.Lights[i].ReleaseStartSeconds >= 0.0 && Util::GetNowSecs() - s_lights.Lights[i].ReleaseStartSeconds >= kShadowFadeOutSeconds) {
+						if (const auto* ni = s_lights.Lights[i].Light->light.get()) {
+							PruneIfOversized(s_fadedOutLights, 1024);
+							s_fadedOutLights.insert(ni);
+						}
+					}
 					s_lights.Lights[i].Clear();
+				}
 			}
 
 			// Two passes: reclaim-by-owner for every chosen light first, then hand
@@ -2291,7 +2301,7 @@ namespace ShadowCasterManager
 					// A tile can be parked at any light-free index; reclaim it only inside the point range.
 					if (ownerIdx >= pointFirst && ownerIdx < pointEnd && !s_lights.Lights[ownerIdx].Light) {
 						s_lights.Lights[ownerIdx].Light = c.light;
-						if (s_settings.FadeShadowSwaps)
+						if (s_fadedOutLights.erase(ni) && s_settings.FadeShadowSwaps)
 							s_lights.Lights[ownerIdx].FadeStartSeconds = Util::GetNowSecs();
 						reclaimed = true;
 					}
@@ -2322,6 +2332,7 @@ namespace ShadowCasterManager
 					s_splitState.erase(splitIt);
 				}
 				if (auto* ni = cp->light->light.get()) {
+					s_fadedOutLights.erase(ni);
 					ResetScoreAnchor(ni);
 					s_hashRadiusAnchor.erase(ni);
 				}
@@ -3855,6 +3866,7 @@ namespace ShadowCasterManager
 		// scoring it now touches freed memory. Load-bearing: don't remove this return.
 		if (s_pendingSessionReset.exchange(false, std::memory_order_acquire)) {
 			s_everHadShadow.clear();
+			s_fadedOutLights.clear();
 			ResetSession();
 			return;
 		}
@@ -3866,7 +3878,8 @@ namespace ShadowCasterManager
 			s_cellResetTotal.fetch_add(1, std::memory_order_relaxed);
 			s_casterMobility.clear();
 			s_everHadShadow.clear();  // a cell swap recycles NiLight addresses
-			s_splitState.clear();     // bakeQueued defaults true: every light re-bakes
+			s_fadedOutLights.clear();
+			s_splitState.clear();  // bakeQueued defaults true: every light re-bakes
 			ShadowCasterManager::InvalidateAllStaticBakes();
 		}
 
