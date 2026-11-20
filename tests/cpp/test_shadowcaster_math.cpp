@@ -14,12 +14,15 @@ using ShadowCasterManager::FacingRotation;
 using ShadowCasterManager::FrameTimePercentile;
 using ShadowCasterManager::HashCombine;
 using ShadowCasterManager::HashCombineFloat;
+using ShadowCasterManager::HeldLightYields;
 using ShadowCasterManager::HemisphereSeamMargin;
+using ShadowCasterManager::HoldsFlame;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
 using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kSlotHoldMargin;
 using ShadowCasterManager::kTileScaleFloor;
 using ShadowCasterManager::kVanillaShadowSliceCount;
+using ShadowCasterManager::PlayerProtectionCap;
 using ShadowCasterManager::QuantizeFloat;
 using ShadowCasterManager::ResumedFadeStart;
 using ShadowCasterManager::ShadowFadeAlpha;
@@ -27,6 +30,7 @@ using ShadowCasterManager::SliceCappedLightCount;
 using ShadowCasterManager::SlotHeldScore;
 using ShadowCasterManager::SphereWhollyBehindPlane;
 using ShadowCasterManager::StallBucket;
+using ShadowCasterManager::SteadyScoreFade;
 using ShadowCasterManager::TileScaleForCoverage;
 using ShadowCasterManager::TileScaleTarget;
 
@@ -258,6 +262,15 @@ TEST_CASE("SliceCappedLightCount keeps the highest point index inside the array"
 			REQUIRE(SliceCappedLightCount(count, slices) < slices);
 }
 
+TEST_CASE("HeldLightYields seats only lights out of view after the lights in view", "[scm]")
+{
+	REQUIRE(HeldLightYields(false, false, false));
+	// Still in view (an engine cull flap at the edge), reaching the player, or hidden: keeps its place.
+	REQUIRE_FALSE(HeldLightYields(true, false, false));
+	REQUIRE_FALSE(HeldLightYields(false, true, false));
+	REQUIRE_FALSE(HeldLightYields(false, false, true));
+}
+
 TEST_CASE("SlotHeldScore keeps a holder against a near-equal challenger", "[scm]")
 {
 	REQUIRE(SlotHeldScore(0.5, false) == 0.5);
@@ -314,4 +327,65 @@ TEST_CASE("ResumedFadeStart continues from the strength shown", "[scm]")
 	}
 	REQUIRE(ResumedFadeStart(20.0, 2.0f, duration) == Approx(20.0 - duration));
 	REQUIRE(ResumedFadeStart(20.0, -1.0f, duration) == Approx(20.0));
+}
+
+TEST_CASE("HoldsFlame takes only a small part round or under the flame", "[scm]")
+{
+	SECTION("a part round the flame within its bound and margin")
+	{
+		REQUIRE(HoldsFlame(0.0f, 0.0f, 2.0f, 3.0f, 1.0f));
+		REQUIRE(HoldsFlame(0.0f, 0.0f, 7.0f, 3.0f, 1.0f));
+		REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 7.5f, 3.0f, 1.0f));
+		REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 20.0f, 1.0f));
+		REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 20.5f, 1.0f));
+		REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 0.0f, 1.0f));
+	}
+	SECTION("a Grand soul gem's crystal, not a whole hanging lantern")
+	{
+		REQUIRE(HoldsFlame(0.0f, 0.0f, 12.0f, 17.0f, 1.0f));
+		REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 24.0f, 1.0f));
+	}
+	SECTION("a fixture placed at twice its size")
+	{
+		REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 40.0f, 2.0f));
+		REQUIRE(HoldsFlame(0.0f, 0.0f, 14.0f, 6.0f, 2.0f));
+		REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 0.0f, 40.5f, 2.0f));
+		REQUIRE(HoldsFlame(0.0f, 0.0f, 0.0f, 20.0f, 0.0f));
+	}
+	SECTION("a candle under a light hung over its wick, not one too far under, beside or over it")
+	{
+		REQUIRE(HoldsFlame(0.0f, 0.0f, -31.0f, 11.8f, 1.0f));
+		REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, -40.0f, 11.8f, 1.0f));
+		REQUIRE_FALSE(HoldsFlame(20.0f, 0.0f, -31.0f, 11.8f, 1.0f));
+		REQUIRE_FALSE(HoldsFlame(0.0f, 0.0f, 31.0f, 11.8f, 1.0f));
+		REQUIRE(HoldsFlame(0.0f, 0.0f, -62.0f, 23.6f, 2.0f));
+	}
+}
+
+TEST_CASE("SteadyScoreFade averages a flicker but follows a light going out at once", "[scm]")
+{
+	float fade = 1.0f;
+	float lowest = 2.0f, highest = 0.0f;
+	for (int frame = 0; frame < 200; ++frame) {
+		fade = SteadyScoreFade(fade, frame % 2 == 0 ? 0.6f : 1.0f);
+		if (frame > 100) {
+			lowest = std::min(lowest, fade);
+			highest = std::max(highest, fade);
+		}
+	}
+	REQUIRE(highest - lowest < 0.05f);
+	REQUIRE(fade == Approx(0.8f).margin(0.03f));
+	REQUIRE(SteadyScoreFade(0.8f, 0.0f) == 0.0f);
+	REQUIRE(SteadyScoreFade(0.8f, 0.05f) == 0.05f);
+	// A light coming back on is ranked at its live fade at once, not ramped up from its average.
+	REQUIRE(SteadyScoreFade(0.0f, 1.0f) == 1.0f);
+	REQUIRE(SteadyScoreFade(0.05f, 0.7f) == 0.7f);
+}
+
+TEST_CASE("PlayerProtectionCap leaves half the slots to the lights in view", "[scm]")
+{
+	REQUIRE(PlayerProtectionCap(16) == 8);
+	REQUIRE(PlayerProtectionCap(127) == 63);
+	REQUIRE(PlayerProtectionCap(1) == 1);
+	REQUIRE(PlayerProtectionCap(0) == 1);
 }

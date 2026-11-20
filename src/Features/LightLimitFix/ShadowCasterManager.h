@@ -330,11 +330,15 @@ namespace ShadowCasterManager
 		/// them for the player only inside that frustum.
 		bool SpotLitRegion = true;
 
-		/// Ranks lights that reach the player first and lets them past the redraw budget, so shadows on the player do not flicker.
+		/// Ranks the strongest lights that reach the player first, up to half the shadow light count, and lets them past the redraw
+		/// budget, so shadows on the player do not flicker.
 		bool ProtectPlayerShadows = true;
 
 		/// A light that falls outside the shadow count fades its shadow out before giving up its slot, and one given a slot again fades in.
 		bool FadeShadowSwaps = true;
+
+		/// Leaves out of a light's shadow the small parts of its own fixture that enclose its flame, such as a lantern's candle.
+		bool SkipFlameEnclosure = true;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
@@ -382,7 +386,8 @@ namespace ShadowCasterManager
 		WarpZeroDemandSkip,
 		SpotLitRegion,
 		ProtectPlayerShadows,
-		FadeShadowSwaps)
+		FadeShadowSwaps,
+		SkipFlameEnclosure)
 
 	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
@@ -868,6 +873,7 @@ namespace ShadowCasterManager
 		/// Wholly-behind casters dropped because the light has no back hemisphere.
 		uint64_t hemisphereDropTotal = 0;
 		uint64_t passlessCasterSkipTotal = 0;      ///< casters skipped because the engine emits no shadow-map pass for them
+		uint64_t flameHolderSkipTotal = 0;         ///< casters skipped as the small part holding their own light's flame
 		uint64_t passlessCasterSkipByReason[5]{};  ///< no-shadow shader, refraction, alpha blend, faded
 
 		/// Redraws elided by the empty-dynamic sleep skip (chosen light whose
