@@ -1,12 +1,71 @@
 #include "Features/Upscaling/NeuralRendering/CombatPausePolicy.h"
+#include "Features/Upscaling/NeuralRendering/CombatState.h"
 #include "Features/Upscaling/NeuralRendering/Lifecycle.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <latch>
 #include <limits>
+#include <thread>
 
 using NR::CombatPausePhase;
 using NR::CombatPausePolicy;
+
+TEST_CASE("Combat samples publish unavailable state instead of retaining a peaceful player", "[nr][combat]")
+{
+	NR::CombatState state;
+	REQUIRE_FALSE(state.GetSnapshot().inCombat.has_value());
+	REQUIRE(state.GetSnapshot().gamePaused);
+	state.Publish(false, false);
+	const auto peaceful = state.GetSnapshot();
+	state.Publish(std::nullopt, true);
+	REQUIRE_FALSE(state.GetSnapshot().inCombat.has_value());
+	REQUIRE(state.GetSnapshot().gamePaused);
+	REQUIRE(peaceful.inCombat == false);
+	REQUIRE_FALSE(peaceful.gamePaused);
+}
+
+TEST_CASE("A published combat change reaches both eyes on the next render frame", "[nr][combat]")
+{
+	NR::CombatState state;
+	CombatPausePolicy policy;
+	const auto evaluate = [&](std::uint32_t frame, std::uint64_t nowMs) {
+		const auto sample = state.GetSnapshot();
+		return policy.Update(frame, true, nowMs, sample.inCombat, sample.gamePaused);
+	};
+	state.Publish(false, false);
+	REQUIRE(evaluate(1, 0).phase == CombatPausePhase::Ready);
+	state.Publish(true, false);
+	REQUIRE(evaluate(1, 1).phase == CombatPausePhase::Ready);
+	REQUIRE(evaluate(2, 10).phase == CombatPausePhase::Combat);
+	state.Publish(false, false);
+	REQUIRE(evaluate(2, 20).phase == CombatPausePhase::Combat);
+	REQUIRE(evaluate(3, 30).remainingMs == NR::kCombatResumeDelayMs);
+	state.Publish(false, true);
+	REQUIRE(evaluate(4, 40).phase == CombatPausePhase::Unavailable);
+	state.Publish(false, false);
+	REQUIRE(evaluate(5, 50).remainingMs == NR::kCombatResumeDelayMs);
+	REQUIRE(evaluate(6, 3050).phase == CombatPausePhase::Ready);
+}
+
+TEST_CASE("Concurrent combat publication keeps player and pause state coherent", "[nr][combat]")
+{
+	NR::CombatState state;
+	state.Publish(false, false);
+	std::latch start{ 2 };
+	std::jthread publisher([&] {
+		start.arrive_and_wait();
+		for (int i = 0; i < 10000; ++i)
+			state.Publish(i % 2 != 0, i % 2 != 0);
+	});
+	start.arrive_and_wait();
+	bool coherent = true;
+	for (int i = 0; i < 10000; ++i) {
+		const auto sample = state.GetSnapshot();
+		coherent &= sample.inCombat.has_value() && *sample.inCombat == sample.gamePaused;
+	}
+	REQUIRE(coherent);
+}
 
 TEST_CASE("Combat pausing is opt-in and peaceful play needs no startup delay", "[nr][combat]")
 {

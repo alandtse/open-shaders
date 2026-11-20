@@ -2,6 +2,7 @@
 
 #include "NeuralRendering/ActorRegion.h"
 #include "NeuralRendering/CombatPausePolicy.h"
+#include "NeuralRendering/CombatState.h"
 #include "NeuralRendering/ContextProfile.h"
 #include "NeuralRendering/CropCalibration.h"
 #include "NeuralRendering/Diagnostics.h"
@@ -89,8 +90,10 @@ struct NeuralRendering
 
 	NeuralRendering();
 	~NeuralRendering();
-	/** @brief Installs the main-thread hook that tracks the actor NR scopes its evaluation to. */
+	/** @brief Installs the main-thread hook that samples combat state and tracks the scoped actor. */
 	void InstallHooks();
+	/** @brief Publishes player combat and pause state from the main thread, independently of actor cropping. */
+	void UpdateCombatState();
 	/** @brief Schedules recreation on the rendering thread. */
 	void SetupResources();
 	/** @brief Invalidates both temporal histories on loading or setting changes. */
@@ -161,9 +164,10 @@ private:
 	NR::Diagnostics diagnostics;
 	std::atomic_bool resetHistory = true, recreate = false, clearShaders = false, retryRequested = false;
 	NR::CombatPausePolicy combatPause;
+	NR::CombatState combatState;
 	mutable std::mutex combatPauseMutex;
 	NR::CombatPausePhase publishedCombatPhase = NR::CombatPausePhase::Disabled;
-	/** @brief Samples runtime-aware player state once per frame and resets history on admission changes. */
+	/** @brief Latches the published combat state once per render frame and resets history on admission changes. */
 	NR::CombatPauseSnapshot ResolveCombatPause(bool enabled);
 	/** @brief The previous hook call's situation; NR::Context::Resolve updates it and flags the transitions that reset history. */
 	NR::Context::ContextState contextState;

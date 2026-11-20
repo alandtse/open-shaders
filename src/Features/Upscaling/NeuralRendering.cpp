@@ -1566,6 +1566,7 @@ namespace
 	void MainUpdate_UpdateRegionOfInterest::thunk()
 	{
 		func();
+		globals::features::upscaling.neuralRendering.UpdateCombatState();
 		globals::features::upscaling.neuralRendering.UpdateRegionOfInterest();
 	}
 }
@@ -1577,7 +1578,17 @@ NeuralRendering::~NeuralRendering() = default;
 void NeuralRendering::InstallHooks()
 {
 	stl::write_thunk_call<MainUpdate_UpdateRegionOfInterest>(Util::MainUpdateCallSite());
-	logger::debug("[NeuralRendering] Installed actor-tracking hook");
+	logger::debug("[NeuralRendering] Installed combat-state and actor-tracking hook");
+}
+
+void NeuralRendering::UpdateCombatState()
+{
+	std::optional<bool> inCombat;
+	const auto* state = globals::state;
+	auto* const ui = globals::game::ui;
+	if (state && ui && !state->IsMainOrLoadingMenuOpen(ui) && globals::game::player)
+		inCombat = globals::game::player->IsInCombat();
+	combatState.Publish(inCombat, !state || state->IsPausedOrMenuOpen(ui));
 }
 
 void NeuralRendering::UpdateCalibration()
@@ -1755,12 +1766,9 @@ NR::CombatPauseSnapshot NeuralRendering::ResolveCombatPause(bool enabled)
 	const auto frame = state ? state->frameCount : UINT32_MAX;
 	if (combatPause.HasFrame(frame))
 		return combatPause.GetSnapshot();
-	std::optional<bool> inCombat;
-	auto* const ui = globals::game::ui;
-	if (enabled && state && ui && !state->IsMainOrLoadingMenuOpen(ui) && globals::game::player)
-		inCombat = globals::game::player->IsInCombat();
+	const auto sample = combatState.GetSnapshot();
 	const bool wasPaused = combatPause.GetSnapshot().IsPaused();
-	const auto decision = combatPause.Update(frame, enabled, GetTickCount64(), inCombat, state && state->IsPausedOrMenuOpen(ui));
+	const auto decision = combatPause.Update(frame, enabled, GetTickCount64(), sample.inCombat, sample.gamePaused);
 	if (wasPaused != decision.IsPaused())
 		resetHistory = true;
 	return decision;
