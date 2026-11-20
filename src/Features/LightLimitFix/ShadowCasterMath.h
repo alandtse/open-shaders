@@ -16,6 +16,29 @@ namespace ShadowCasterManager
 	using Util::HashCombineFloat;
 	using Util::QuantizeFloat;
 
+	/// Largest unscaled bound radius of a part that can hold a light's flame, and how far past its bound the flame may sit.
+	inline constexpr float kFlameEnclosureMaxRadius = 20.0f;
+	inline constexpr float kFlameEnclosureReachMargin = 4.0f;
+	/// How far over the top of a small part standing under it a light may hang and still count that part as its holder.
+	inline constexpr float kFlameAboveHolderMax = 24.0f;
+	/// Largest local offset of a light from its parent still read as flicker wobble rather than a placed offset.
+	inline constexpr float kFlickerWobbleMaxOffset = 16.0f;
+
+	/// True when a part whose world bound has radius a_radius, at a_dx/a_dy/a_dz from the flame, is small enough at its world scale
+	/// a_scale to be the part holding that flame: it holds the flame within its bound plus the margin, or stands under it with the
+	/// flame at most kFlameAboveHolderMax over its top.
+	inline bool HoldsFlame(float a_dx, float a_dy, float a_dz, float a_radius, float a_scale) noexcept
+	{
+		const float scale = a_scale > 0.0f ? a_scale : 1.0f;
+		if (a_radius <= 0.0f || a_radius > kFlameEnclosureMaxRadius * scale)
+			return false;
+		const float reach = a_radius + kFlameEnclosureReachMargin * scale;
+		const float horizontal = a_dx * a_dx + a_dy * a_dy;
+		if (horizontal + a_dz * a_dz <= reach * reach)
+			return true;
+		return a_dz < 0.0f && horizontal <= reach * reach && -a_dz - a_radius <= kFlameAboveHolderMax * scale;
+	}
+
 	/// Buckets a stall length for ShadowScheduler's stallHistogram: 0, 1-2,
 	/// 3-7, 8-15, 16-44, 45+ (top boundary matches kSleepRedrawIntervalFrames).
 	inline uint32_t StallBucket(uint32_t v) noexcept
@@ -73,6 +96,30 @@ namespace ShadowCasterManager
 	inline double SlotHeldScore(double a_score, bool a_holdsSlot) noexcept
 	{
 		return a_holdsSlot && a_score > 0.0 ? a_score * kSlotHoldMargin : a_score;
+	}
+
+	/// Share of the live fade a light's score fade takes each frame: a flicker averages out over about twenty frames.
+	inline constexpr float kScoreFadeSmoothing = 0.05f;
+
+	/// Fade at or below which a light counts as out, so its score follows the live fade at once going out and coming back on.
+	inline constexpr float kScoreFadeOutFloor = 0.05f;
+
+	/// The fade a light is ranked with, from its running average a_average and its live fade a_live.
+	inline float SteadyScoreFade(float a_average, float a_live) noexcept
+	{
+		return a_live <= kScoreFadeOutFloor || a_average <= kScoreFadeOutFloor ? a_live : a_average + kScoreFadeSmoothing * (a_live - a_average);
+	}
+
+	/// Whether a light kept by the camera hold is seated only after every light still in view.
+	inline bool HeldLightYields(bool a_ownInView, bool a_playerProtected, bool a_hidden) noexcept
+	{
+		return !a_ownInView && !a_playerProtected && !a_hidden;
+	}
+
+	/// How many lights reaching the player keep their protection: half the shadow light count, at least one.
+	inline int PlayerProtectionCap(int a_shadowLightCount) noexcept
+	{
+		return std::max(1, a_shadowLightCount / 2);
 	}
 
 	// Casters reaching the equatorial plane keep the engine's hemisphere choice;

@@ -1927,7 +1927,7 @@ namespace
 		const std::array<const char*, NR::MaterialMap::kBits> labels{
 			T(TKEY("category_skin"), "Skin"), T(TKEY("category_hair"), "Hair"), T(TKEY("category_eyes"), "Eyes"),
 			T(TKEY("category_foliage"), "Foliage"), T(TKEY("category_landscape"), "Landscape"), T(TKEY("category_cloth"), "Cloth Gear"),
-			T(TKEY("category_metal"), "Metal Gear"), T(TKEY("material_other"), "Everything Else")
+			T(TKEY("category_metal"), "Metal Gear"), T(TKEY("material_else"), "Everything Else")
 		};
 		bool changed = false;
 		for (uint32_t i = 0; i < selected.size(); ++i) {
@@ -2102,7 +2102,7 @@ namespace
 			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_landscape"), "Landscape"), &tuning.strengthLandscape, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_cloth"), "Cloth Gear"), &tuning.strengthCloth, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_metal"), "Metal Gear"), &tuning.strengthMetal, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			strengthChanged |= ImGui::SliderFloat(T(TKEY("material_other"), "Everything Else"), &tuning.strengthOther, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			strengthChanged |= ImGui::SliderFloat(T(TKEY("material_else"), "Everything Else"), &tuning.strengthOther, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (strengthChanged) {
 				tuning.SyncMaterialSwitch();
 				changed = true;

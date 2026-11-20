@@ -903,6 +903,7 @@ namespace
 							{ "backOnlyAppendTotal", snap.backOnlyAppendTotal },
 							{ "hemisphereDropTotal", snap.hemisphereDropTotal },
 							{ "passlessCasterSkipTotal", snap.passlessCasterSkipTotal },
+							{ "flameHolderSkipTotal", snap.flameHolderSkipTotal },
 							{ "passlessSkipNoShadowShader", snap.passlessCasterSkipByReason[1] },
 							{ "passlessSkipRefraction", snap.passlessCasterSkipByReason[2] },
 							{ "passlessSkipAlphaBlend", snap.passlessCasterSkipByReason[3] },
