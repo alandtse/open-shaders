@@ -156,6 +156,12 @@ namespace DX12
 			}
 		};
 
+		CompanionProcess& CurrentCompanionProcess()
+		{
+			static thread_local CompanionProcess service;
+			return service;
+		}
+
 		bool InvokeCompanion(const CompanionRequest& task, const std::filesystem::path& destination,
 			uint64_t expectedGeneration, const std::atomic<uint64_t>& generation, std::stop_token stop)
 		{
@@ -168,7 +174,7 @@ namespace DX12
 				!std::filesystem::is_regular_file(plugins, ec))
 				return false;
 			// Host-owned per-session mailbox; no persistent geometry output or diagnostics.
-			static thread_local CompanionProcess service;
+			auto& service = CurrentCompanionProcess();
 			if (service.epoch && service.epoch != expectedGeneration)
 				service.Close();
 			const auto work = destination.parent_path().parent_path();
@@ -267,18 +273,30 @@ namespace DX12
 		std::scoped_lock lock(mutex);
 		queued.reset();
 		completed.reset();
+		wake.notify_all();
 	}
 
 	void CompanionWorker::Run(std::stop_token stop)
 	{
+		uint64_t observedGeneration = generation.load(std::memory_order_acquire);
 		while (!stop.stop_requested()) {
 			CompanionRequest task;
 			uint64_t epoch = 0;
 			{
 				std::unique_lock lock(mutex);
-				wake.wait(lock, stop, [&] { return queued.has_value(); });
+				wake.wait(lock, stop, [&] {
+					return queued.has_value() || generation.load(std::memory_order_acquire) != observedGeneration;
+				});
 				if (stop.stop_requested())
 					break;
+				if (generation.load(std::memory_order_acquire) != observedGeneration) {
+					observedGeneration = generation.load(std::memory_order_acquire);
+					lock.unlock();
+					// Runtime disable, scene unload, or subcell-size change invalidates
+					// the session even if no tile is currently being processed.
+					CurrentCompanionProcess().Close();
+					continue;
+				}
 				task = std::move(*queued);
 				queued.reset();
 				running = true;
