@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Text.Json;
 using Mutagen.Bethesda;
+using Mutagen.Bethesda.Archives;
 using Mutagen.Bethesda.Environments;
 using Mutagen.Bethesda.Plugins;
 using Mutagen.Bethesda.Plugins.Cache;
@@ -32,7 +33,7 @@ try
     // may be written; the host validates and owns the directory's lifetime.
     if (!File.Exists(Path.Combine(data, scope.ModKey.ToString())) ||
         !Directory.Exists(Path.GetDirectoryName(output))) return 2;
-    var result = SceneTile.Prepare(data, plugins, scope, x, y, size, worldspace);
+    var result = SceneTile.Prepare(data, plugins, scope, x, y, size, worldspace, Path.GetDirectoryName(output)!);
     await using var stream = new FileStream(output, FileMode.CreateNew, FileAccess.Write, FileShare.None);
     await JsonSerializer.SerializeAsync(stream, result, new JsonSerializerOptions
     {
@@ -57,8 +58,10 @@ internal static class SceneTile
 {
     private const int MaxShapes = 384;
     private const long MaxGeometryBytes = 48L * 1024 * 1024;
+    private const uint MaxArchiveMeshBytes = 16u * 1024 * 1024;
 
-    internal static TileResult Prepare(string data, string pluginsPath, FormKey scope, long tileX, long tileY, int size, bool isWorldspace)
+    internal static TileResult Prepare(string data, string pluginsPath, FormKey scope, long tileX, long tileY, int size,
+        bool isWorldspace, string scratch)
     {
         var official = new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" };
         var ccc = Path.Combine(Path.GetDirectoryName(data)!, "Skyrim.ccc");
@@ -69,6 +72,8 @@ internal static class SceneTile
             .Where(entry => entry.Enabled).Select(entry => entry.ModKey)).Distinct().ToArray();
         using var environment = GameEnvironment.Typical.Builder<ISkyrimMod, ISkyrimModGetter>(GameRelease.SkyrimSE)
             .WithTargetDataFolder(data).WithLoadOrder(order).Build();
+        var archives = new Lazy<IArchiveReader[]>(() => Archive.GetApplicableArchivePaths(GameRelease.SkyrimSE, data)
+            .Select(path => Archive.CreateReader(GameRelease.SkyrimSE, path)).Reverse().ToArray());
 
         // Last override wins. No mesh processing occurs outside the requested
         // scope; for exterior tiles even candidates are bounded by a halo.
@@ -142,7 +147,7 @@ internal static class SceneTile
                 }
                 var model = (baseRecord as IModeledGetter)?.Model?.File.ToString();
                 if (string.IsNullOrWhiteSpace(model)) { ++failed; continue; }
-                var mesh = LoadModel(data, model, models);
+                var mesh = LoadModel(data, model, models, archives, scratch);
                 var rotation = new[] { placement.Rotation.X, placement.Rotation.Y, placement.Rotation.Z };
                 var toWorld = PlacementTransform.FromRecord(position, rotation, obj.Scale);
                 foreach (var shape in mesh)
@@ -192,7 +197,8 @@ internal static class SceneTile
             low.Y < (ty + 1) * (double)size && high.Y >= ty * (double)size;
     }
 
-    private static ModelShape[] LoadModel(string data, string path, Dictionary<string, ModelShape[]> cache)
+    private static ModelShape[] LoadModel(string data, string path, Dictionary<string, ModelShape[]> cache,
+        Lazy<IArchiveReader[]> archives, string scratch)
     {
         path = path.Replace('/', '\\');
         if (!path.StartsWith("meshes\\", StringComparison.OrdinalIgnoreCase)) path = "meshes\\" + path;
@@ -203,7 +209,34 @@ internal static class SceneTile
         if (!filename.StartsWith(data + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Mesh escaped Data");
         var nif = new NifFile();
-        if (nif.Load(filename) != 0 || !nif.Valid || !nif.Header.Version.IsSSE() || nif.HasUnknownBlocks)
+        var temporary = string.Empty;
+        try
+        {
+            if (!File.Exists(filename))
+            {
+                foreach (var archive in archives.Value)
+                {
+                    if (!archive.TryGetFolder(Path.GetDirectoryName(path)!, out var folder)) continue;
+                    var entry = folder.Files.FirstOrDefault(file =>
+                        string.Equals(file.Path.Replace('/', '\\'), path, StringComparison.OrdinalIgnoreCase));
+                    if (entry == null) continue;
+                    if (entry.Size == 0 || entry.Size > MaxArchiveMeshBytes)
+                        throw new InvalidDataException("Archive mesh exceeds extraction budget");
+                    temporary = Path.Combine(scratch, "archive-mesh.nif");
+                    File.WriteAllBytes(temporary, entry.GetBytes());
+                    filename = temporary;
+                    break;
+                }
+            }
+            if (nif.Load(filename) != 0)
+                throw new InvalidDataException("NIF unavailable or unsupported");
+        }
+        finally
+        {
+            if (temporary.Length != 0)
+                File.Delete(temporary);
+        }
+        if (!nif.Valid || !nif.Header.Version.IsSSE() || nif.HasUnknownBlocks)
             throw new InvalidDataException("NIF unavailable or unsupported");
         var hierarchy = new NifTransforms(nif);
         var output = new List<ModelShape>();
