@@ -6,6 +6,7 @@
 #include "Globals.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/Game.h"
 
 #include <algorithm>
 #include <array>
@@ -133,7 +134,7 @@ ID3D11ShaderResourceView* ENBDepthOfField::GetApertureSRV() const
 
 void ENBDepthOfField::CreateEffectTextures()
 {
-	for (int eye = 0; eye < (globals::game::isVR ? 2 : 1); ++eye) {
+	for (uint32_t eye = 0; eye < Util::EyeCount(); ++eye) {
 		const std::string suffix = eye == 1 ? "Right" : "";
 		effectTextureCache["TextureAperture" + suffix] = CreateTexture(1, 1, DXGI_FORMAT_R32_FLOAT, "ENBDepthOfField::TextureAperture" + suffix);
 		effectTextureCache["TextureApertureSwap" + suffix] = CreateTexture(1, 1, DXGI_FORMAT_R32_FLOAT, "ENBDepthOfField::TextureApertureSwap" + suffix);

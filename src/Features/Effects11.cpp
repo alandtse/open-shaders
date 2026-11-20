@@ -1711,7 +1711,7 @@ void Effects11::DrawSunRays()
 	static constexpr float maxLightNdcOffset = 2.5f;
 	float2 lightUV[2]{};
 	bool lightInView = false;
-	for (int eye = 0; eye < (globals::game::isVR ? 2 : 1); ++eye) {
+	for (uint32_t eye = 0; eye < Util::EyeCount(); ++eye) {
 		const auto viewProj = globals::game::frameBufferCached.GetCameraViewProj(eye).Transpose();
 		const auto clip = DirectX::SimpleMath::Vector4::Transform(DirectX::SimpleMath::Vector4(light.direction.x, light.direction.y, light.direction.z, 0.0f), viewProj);
 		if (clip.w <= 1e-6f)
@@ -1756,7 +1756,7 @@ void Effects11::DrawSunRays()
 	data.raysColor = GetSunRaysColor(light, lightPeak, perFrame.VolumetricRaysSkyColor);
 	data.maskBrightness = lightPeak;
 	data.maskExponent = light.maskExponent;
-	data.invScreenWidth = (globals::game::isVR ? 2.0f : 1.0f) / std::max(resolution.x, 1.0f);
+	data.invScreenWidth = static_cast<float>(Util::EyeCount()) / std::max(resolution.x, 1.0f);
 
 	Effects11Util::D3D11ScopedPostFxBackup stateBackup;
 	stateBackup.Save(context);

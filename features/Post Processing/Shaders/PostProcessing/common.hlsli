@@ -1,4 +1,5 @@
 #include "Common/Color.hlsli"
+#include "Common/VR.hlsli"
 
 float4 KarisAverage(float4 a, float4 b, float4 c, float4 d)
 {
@@ -14,18 +15,21 @@ float4 KarisAverage(float4 a, float4 b, float4 c, float4 d)
 float4 DownsampleCOD(Texture2D tex, SamplerState samp, float2 uv, float2 out_px_size)
 {
 	int x, y;
+	const uint eye = Stereo::GetEyeIndexFromTexCoord(uv);
+	uint2 texSize;
+	tex.GetDimensions(texSize.x, texSize.y);
 
 	float4 retval = 0;
 
 	[unroll] for (x = 0; x < 2; ++x)
 		[unroll] for (y = 0; y < 2; ++y)
-			retval += 0.125 * tex.SampleLevel(samp, uv + (int2(x, y) - .5) * out_px_size, 0);
+			retval += 0.125 * tex.SampleLevel(samp, Stereo::ClampToEyeUV(uv + (int2(x, y) - .5) * out_px_size, eye, texSize), 0);
 
 	// const static float weights[9] = { 0.03125, 0.625, 0.03125, 0.625, 0.125, 0.625, 0.03125, 0.625, 0.03125 };
 	// corresponds to (1 << (!x + !y)) * 0.03125 when $x,y \in [-1, 1] \cap \mathbb N$
 	[unroll] for (x = -1; x <= 1; ++x)
 		[unroll] for (y = -1; y <= 1; ++y)
-			retval += (1u << (!x + !y)) * 0.03125 * tex.SampleLevel(samp, uv + int2(x, y) * out_px_size, 0);
+			retval += (1u << (!x + !y)) * 0.03125 * tex.SampleLevel(samp, Stereo::ClampToEyeUV(uv + int2(x, y) * out_px_size, eye, texSize), 0);
 
 	return retval;
 }
@@ -33,6 +37,9 @@ float4 DownsampleCOD(Texture2D tex, SamplerState samp, float2 uv, float2 out_px_
 float4 DownsampleCODFirstMip(Texture2D tex, SamplerState samp, float2 uv, float2 out_px_size)
 {
 	int x, y;
+	const uint eye = Stereo::GetEyeIndexFromTexCoord(uv);
+	uint2 texSize;
+	tex.GetDimensions(texSize.x, texSize.y);
 
 	float4 retval = 0;
 	float4 fetches2x2[4];
@@ -40,10 +47,10 @@ float4 DownsampleCODFirstMip(Texture2D tex, SamplerState samp, float2 uv, float2
 
 	[unroll] for (x = 0; x < 2; ++x)
 		[unroll] for (y = 0; y < 2; ++y)
-			fetches2x2[x * 2 + y] = tex.SampleLevel(samp, uv + (int2(x, y) * 2 - 1) * out_px_size, 0);
+			fetches2x2[x * 2 + y] = tex.SampleLevel(samp, Stereo::ClampToEyeUV(uv + (int2(x, y) * 2 - 1) * out_px_size, eye, texSize), 0);
 	[unroll] for (x = 0; x < 3; ++x)
 		[unroll] for (y = 0; y < 3; ++y)
-			fetches3x3[x * 3 + y] = tex.SampleLevel(samp, uv + (int2(x, y) - 1) * 2 * out_px_size, 0);
+			fetches3x3[x * 3 + y] = tex.SampleLevel(samp, Stereo::ClampToEyeUV(uv + (int2(x, y) - 1) * 2 * out_px_size, eye, texSize), 0);
 
 	retval += 0.5 * KarisAverage(fetches2x2[0], fetches2x2[1], fetches2x2[2], fetches2x2[3]);
 

@@ -9,6 +9,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/Game.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Camera::Settings,
@@ -198,7 +199,7 @@ void Camera::Draw(TextureInfo& inout_tex)
 	auto context = globals::d3d::context;
 	float2 res = { (float)texOutput->desc.Width, (float)texOutput->desc.Height };
 	res = Util::ConvertToDynamic(res);
-	const float eyeWidth = globals::game::isVR ? res.x * 0.5f : res.x;
+	const float eyeWidth = Util::EyeWidth(res.x);
 	const float aspect = eyeWidth / res.y;
 	const float cornerRadius = sqrt(aspect * aspect * 0.25f + 0.25f);
 	const auto* cam = owner && !globals::game::isVR ? owner->GetActivePhysicalCameraState() : nullptr;
