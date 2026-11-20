@@ -61,6 +61,25 @@ bool ValidDirectNeighbor(uint2 pixel, float targetDistance, out float4 guide)
     float distance = ReceiverDistance(pixel);
     return distance > 0.0f && abs(distance - targetDistance) <= max(5.0f, targetDistance * 1e-5f);
 }
+bool NearbyNativeReceiver(uint2 pixel)
+{
+    float targetDistance = ReceiverDistance(pixel);
+    if (targetDistance <= 0.0f) return false;
+    [loop] for (int dy = -2; dy <= 2; ++dy) {
+        [loop] for (int dx = -2; dx <= 2; ++dx) {
+            int2 neighbor = int2(pixel) + int2(dx, dy);
+            if (any(neighbor < 0) || any(neighbor >= int2(Size))) continue;
+            uint2 p = uint2(neighbor);
+            if ((RejectionReason[p] & 0x0c000000u) != 0x0c000000u) continue;
+            float4 guide = ReceiverGuide[p];
+            if (!all(isfinite(guide)) || guide.w <= 0.0f) continue;
+            float distance = ReceiverDistance(p);
+            if (distance > 0.0f && abs(distance - targetDistance) <= max(5.0f, targetDistance * 1e-5f))
+                return true;
+        }
+    }
+    return false;
+}
 bool ReconstructDirect(uint2 pixel, out float3 diffuse, out float3 specular,
     out bool diffuseAccepted, out bool specularAccepted)
 {
@@ -157,6 +176,15 @@ void main(uint3 id : SV_DispatchThreadID)
 			acceptSpecular = reconstructedSpecular;
 			Count(5);
 		}
+	}
+	// Native receivers keep ownership when skipped; raster-only foreground (e.g. actors) remains untouched.
+	if ((reason & 0x10000000u) != 0u && NearbyNativeReceiver(id.xy)) {
+		float4 originalColor = Scene[id.xy];
+		float3 sparseLighting = (acceptDiffuse ? diffuse : 0) + (acceptSpecular ? specular : 0);
+		float3 nativeColor = all(isfinite(sparseLighting)) ? sparseLighting * Strength : 0.0f;
+		Scene[id.xy] = float4(LegacyTransfer != 0u ? SignedPower(nativeColor, 1.0f / 1.6f) : nativeColor,
+			originalColor.a);
+		return;
 	}
 	if (acceptDiffuse || acceptSpecular) Count(0);
 	if ((acceptDiffuse || acceptSpecular) && original != 1 && effective == 1) Count(3);
