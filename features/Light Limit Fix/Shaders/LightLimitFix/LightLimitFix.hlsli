@@ -89,6 +89,25 @@ namespace LightLimitFix
 
 	static const float CONTACT_SHADOW_DEPTH_BIAS = 2.0 / 65536.0;
 
+	static const float CONTACT_SHADOW_DISTANCE_FADE = 4.0;
+
+	static const float CONTACT_SHADOW_INTENSITY_FADE = 10.0;
+
+	/// Contact shadow strength at a view depth: full until the last quarter of Max Distance, then
+	/// fading to none at it, so the shadow never switches off at one depth.
+	float GetContactShadowDistanceFade(float viewDepth)
+	{
+		return saturate((1.0 - viewDepth / SharedData::lightLimitFixSettings.ContactShadowMaxDistance) * CONTACT_SHADOW_DISTANCE_FADE);
+	}
+
+	/// Contact shadow strength of a clustered light by its normalized falloff, easing in above Min
+	/// Light Intensity, so a flickering radius never switches the shadow on and off.
+	float GetContactShadowIntensityFade(float lightDistance, float invRadius)
+	{
+		const float falloff = saturate(lightDistance * invRadius);
+		return saturate((1.0 - falloff * falloff - SharedData::lightLimitFixSettings.ContactShadowMinIntensity) * CONTACT_SHADOW_INTENSITY_FADE);
+	}
+
 	// Depth buffer raymarching for contact shadows, after Tomasz Stachowiak's (h3r2tic) gist
 	// https://gist.github.com/h3r2tic/9c8356bdaefbe80b1a22ae0aaee192db (Apache-2.0 / MIT).
 	struct ContactShadowRay
@@ -513,30 +532,6 @@ namespace LightLimitFix
 		return shadow;
 	}
 
-	// Full-slice V the dual-paraboloid seam is inset by, the tile guard in this tile's texels: a Gather at the
-	// clamped tap then reads only its own half.
-	float GetSeamGuard(bool useAtlas, float4 atlasRect, float tileScale)
-	{
-		float width, height, slices;
-		[branch] if (useAtlas)
-		{
-			ShadowAtlasTex.GetDimensions(width, height);
-			height *= atlasRect.y;
-		}
-		else
-		{
-			ShadowMaps.GetDimensions(width, height, slices);
-			height *= tileScale;
-		}
-		return TileGuardTexels / max(height, 1.0);
-	}
-
-	float2 ClampToParaboloidHalf(float2 uv, float sampleV, float seamGuard)
-	{
-		uv.y = (sampleV >= 0.5) ? max(uv.y, 0.5 + seamGuard) : min(uv.y, 0.5 - seamGuard);
-		return uv;
-	}
-
 	// The four stored depths around a tap through either storage; uv is full-slice space.
 	float4 GatherShadowDepths(uint shadowIndex, float2 uv, bool useAtlas, float4 atlasRect, float tileScale, float2 clampLo, float2 clampHi)
 	{
@@ -608,35 +603,64 @@ namespace LightLimitFix
 		return shadow / 8.0;
 	}
 
+	/// Radius, in paraboloid units, of the rim a PCF tap is held inside: the tile guard, in texels of the
+	/// tile's coarser axis, short of the edge the paraboloid pass rasterizes to.
+	float GetParaboloidRimRadius(bool useAtlas, float4 atlasRect, float tileScale, bool isDualParaboloid)
+	{
+		float width, height, slices;
+		[branch] if (useAtlas)
+		{
+			ShadowAtlasTex.GetDimensions(width, height);
+			height *= atlasRect.y;
+		}
+		else
+		{
+			ShadowMaps.GetDimensions(width, height, slices);
+			height *= tileScale;
+		}
+		return 1.0 - (isDualParaboloid ? 4.0 : 2.0) * TileGuardTexels / max(height, 1.0);
+	}
+
+	/// Pulls a tap back inside its own paraboloid: past the rim the map holds no depth and reads
+	/// as lit, which lightens every shadow along the seam between the two halves.
+	float2 ClampToParaboloid(float2 uv, bool lowerHalf, bool isDualParaboloid, float rimRadius)
+	{
+		float2 q;
+		q.x = 2.0 * uv.x - 1.0;
+		q.y = isDualParaboloid ? (lowerHalf ? 3.0 - 4.0 * uv.y : 4.0 * uv.y - 1.0) : 2.0 * uv.y - 1.0;
+		const float q2 = dot(q, q);
+		float2 clamped = uv;
+		[branch] if (q2 > rimRadius * rimRadius)
+		{
+			q *= rimRadius * rsqrt(q2);
+			clamped = float2(q.x * 0.5 + 0.5, isDualParaboloid ? (lowerHalf ? 3.0 - q.y : q.y + 1.0) * 0.25 : q.y * 0.5 + 0.5);
+		}
+		return clamped;
+	}
+
 	// PCF sample around a paraboloid UV.
 	//   isDualParaboloid = true  : the slice contains two stacked paraboloids
 	//                              (omni: upper in y∈[0,0.5], lower in y∈[0.5,1]).
-	//                              Clamp PCF samples to the originating half so we
-	//                              don't bleed across the seam.
 	//   isDualParaboloid = false : the slice contains a single paraboloid filling
-	//                              the whole y∈[0,1] (hemi). No clamping needed;
-	//                              the entire slice is valid shadow data.
+	//                              the whole y∈[0,1] (hemi).
+	//   Every tap is held inside its own paraboloid's rim, so it never reads the
+	//   other half or the empty corners of the slice.
 	float SampleParaboloidShadow(uint shadowIndex, float2 sampleUV, float depth, float2x2 rotationMatrix, bool isDualParaboloid, float tileScale, float4 atlasRect, uint sampleCount, float pcfRadius)
 	{
 		const bool useAtlas = atlasRect.x > 0.0;
 		float2 clampLo, clampHi;
 		GetShadowTapClamp(useAtlas, atlasRect, tileScale, clampLo, clampHi);
-		[branch] if (sampleCount <= 1) return SampleShadowTapBilinear(shadowIndex, sampleUV, depth, useAtlas, atlasRect, tileScale, clampLo, clampHi);
+		const bool lowerHalf = isDualParaboloid && sampleUV.y >= 0.5;
+		const float rimRadius = GetParaboloidRimRadius(useAtlas, atlasRect, tileScale, isDualParaboloid);
+		[branch] if (sampleCount <= 1) return SampleShadowTapBilinear(shadowIndex, ClampToParaboloid(sampleUV, lowerHalf, isDualParaboloid, rimRadius), depth, useAtlas, atlasRect, tileScale, clampLo, clampHi);
 		float shadow = 0.0;
-		const float seamGuard = isDualParaboloid ? GetSeamGuard(useAtlas, atlasRect, tileScale) : 0.0;
 
 		// See GetSpotlightShadow: dynamic loop instead of unrolling the
 		// branchy tap body 8x.
 		[loop] for (int i = 0; i < 8; i++)
 		{
 			float2 offset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix) * pcfRadius;
-			float2 uv = sampleUV + offset;
-
-			if (isDualParaboloid) {
-				// Clamp PCF samples to the originating paraboloid half
-				// (full-slice space; the tile/atlas mapping below preserves it).
-				uv = ClampToParaboloidHalf(uv, sampleUV.y, seamGuard);
-			}
+			float2 uv = ClampToParaboloid(sampleUV + offset, lowerHalf, isDualParaboloid, rimRadius);
 
 			shadow += SampleShadowTap(shadowIndex, uv, depth, useAtlas, atlasRect, tileScale, clampLo, clampHi);
 		}
@@ -656,16 +680,15 @@ namespace LightLimitFix
 		const bool useAtlas = atlasRect.x > 0.0;
 		float2 clampLo, clampHi;
 		GetShadowTapClamp(useAtlas, atlasRect, tileScale, clampLo, clampHi);
-		const float seamGuard = isDualParaboloid ? GetSeamGuard(useAtlas, atlasRect, tileScale) : 0.0;
-		float4 depths = GatherShadowDepths(shadowIndex, isDualParaboloid ? ClampToParaboloidHalf(sampleUV, sampleUV.y, seamGuard) : sampleUV, useAtlas, atlasRect, tileScale, clampLo, clampHi);
+		const bool lowerHalf = isDualParaboloid && sampleUV.y >= 0.5;
+		const float rimRadius = GetParaboloidRimRadius(useAtlas, atlasRect, tileScale, isDualParaboloid);
+		float4 depths = GatherShadowDepths(shadowIndex, ClampToParaboloid(sampleUV, lowerHalf, isDualParaboloid, rimRadius), useAtlas, atlasRect, tileScale, clampLo, clampHi);
 		float4 blocks = float4(depths < depth);
 		float blockerSum = dot(depths, blocks);
 		float blockerCount = dot(blocks, 1.0);
 		[loop] for (int i = 0; i < 8; i++)
 		{
-			float2 uv = sampleUV + mul(Random::SpiralSampleOffsets8[i], rotationMatrix) * SoftShadowSearchRadius;
-			if (isDualParaboloid)
-				uv = ClampToParaboloidHalf(uv, sampleUV.y, seamGuard);
+			float2 uv = ClampToParaboloid(sampleUV + mul(Random::SpiralSampleOffsets8[i], rotationMatrix) * SoftShadowSearchRadius, lowerHalf, isDualParaboloid, rimRadius);
 			depths = GatherShadowDepths(shadowIndex, uv, useAtlas, atlasRect, tileScale, clampLo, clampHi);
 			blocks = float4(depths < depth);
 			blockerSum += dot(depths, blocks);
@@ -725,6 +748,13 @@ namespace LightLimitFix
 		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni, tileScale, shadowLightData.AtlasRect, sampleCount, pcfRadius);
 	}
 
+	/// A spotlight's falloff toward the edge of its cone at a position in its shadow projection: 1 on its axis, 0 at the edge and outside.
+	float GetSpotlightFalloff(float4 positionLS)
+	{
+		positionLS.xy /= positionLS.w;
+		return saturate(1.0 - dot(positionLS.xy, positionLS.xy));
+	}
+
 	// Single-assignment of hasCoverage at function entry keeps FXC's flow
 	// analyser quiet: prior versions used an early-return overflow guard
 	// that wrote hasCoverage on two paths, which tripped X4000 "potentially
@@ -756,9 +786,7 @@ namespace LightLimitFix
 			[branch] if (shadowLightData.ShadowLightParam.x == 0)
 			{
 				float shadowBaseVisibility = GetSpotlightShadow(shadowLightData, shadowIndex, positionLS, rotationMatrix, sampleCount);
-				positionLS.xyz /= positionLS.w;
-
-				float spotFalloff = saturate(1.0 - dot(positionLS.xy, positionLS.xy));
+				float spotFalloff = GetSpotlightFalloff(positionLS);
 
 				// Spotlight shadows define the light's footprint and must not fade toward fully lit.
 				result = shadowBaseVisibility * spotFalloff;
@@ -783,5 +811,17 @@ namespace LightLimitFix
 	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, out bool hasCoverage)
 	{
 		return GetShadowLightShadow(shadowIndex, worldPositionWS, rotationMatrix, 8u, 0.0, hasCoverage);
+	}
+
+	/// Where a shadow light reaches when its shadow map is not sampled: 0 for a suppressed light and outside a spotlight's cone, else 1.
+	float GetShadowLightFootprint(uint shadowIndex, float3 worldPositionWS)
+	{
+		ShadowLightData shadowLightData = Shadows[shadowIndex];
+		if (shadowLightData.ShadowLightParam.y < 0)
+			return 0.0;
+		if (shadowLightData.ShadowLightParam.x != 0 || shadowLightData.ShadowLightParam.y == 0)
+			return 1.0;
+		float4 positionLS = mul(shadowLightData.ShadowProj, float4(worldPositionWS, 1));
+		return positionLS.w > 0 ? GetSpotlightFalloff(positionLS) : 0.0;
 	}
 }

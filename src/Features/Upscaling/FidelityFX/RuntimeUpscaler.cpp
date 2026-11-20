@@ -2,6 +2,7 @@
 // into its own file per the LightLimitFix/*.cpp convention -- these are FidelityFX methods.
 
 #include "../FidelityFX.h"
+#include "Utils/Game.h"
 
 #include <algorithm>
 #include <array>
@@ -1459,7 +1460,7 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 
 	// std::size(fsrContext) is always 2; only fsrContext[0] is initialized in flat mode
 	// (CreateFSRResources' numContexts), so check against the actually-created count.
-	const uint32_t hostContextCount = globals::game::isVR ? 2u : 1u;
+	const uint32_t hostContextCount = Util::EyeCount();
 	if (!fsrScratchBuffer || a_contextIndex >= hostContextCount)
 		return false;
 

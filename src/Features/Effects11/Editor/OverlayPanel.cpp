@@ -120,7 +120,7 @@ void OverlayPanel::DrawEditTarget()
 		Util::Text::WrappedWarning("%s", text.c_str());
 	}
 	if (manager.AllRowsLocked())
-		Util::Text::WrappedWarning("%s", T(TKEY("amount_zero"), "This overlay's Amount is 0, so edits cannot be recorded. Raise its Amount to edit."));
+		Util::Text::WrappedWarning("%s", T(TKEY("amount_none"), "This overlay's Amount is 0, so edits cannot be recorded. Raise its Amount to edit."));
 }
 
 void OverlayPanel::RefreshOrder()

@@ -118,8 +118,8 @@ void MenuHeaderRenderer::RenderNavigation(Menu& menu, std::string_view selectedP
 	ImGui::SameLine();
 	const auto issueCount = IssuesPageRenderer::GetFeatureIssueCount();
 	const auto homeTooltip = issueCount == 0 ? std::string(T("menu.features.home", "Home")) :
-	                         issueCount == 1 ? std::string(T("menu.home.feature_issue_one", "1 feature issue")) :
-	                                           I18n::GetSingleton()->Format("menu.home.feature_issue_many", { { "count", std::to_string(issueCount) } }, "{count} feature issues");
+	                         issueCount == 1 ? std::string(T("menu.home.feature_issue_single", "1 feature issue")) :
+	                                           I18n::GetSingleton()->Format("menu.home.feature_issue_count", { { "count", std::to_string(issueCount) } }, "{count} feature issues");
 	const auto errorColor = Util::Colors::GetError();
 	ImGui::PushStyleColor(ImGuiCol_Header, issueCount > 0 ? ImVec4(errorColor.x, errorColor.y, errorColor.z, ThemeManager::Constants::SEGMENT_SELECTED_FILL_ALPHA) : ImGui::GetStyleColorVec4(ImGuiCol_Header));
 	const SKSE::stl::scope_exit restoreIssueAccent([]() noexcept { ImGui::PopStyleColor(); });

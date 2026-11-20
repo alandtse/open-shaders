@@ -16,41 +16,46 @@ float3 SelectedDiffractionRadiance(float3 color, float4 region)
 	return color * ((region.z > 0 ? base : 0) + (region.w > 0 ? excess : 0));
 }
 
-float SelectedWaveBand(float3 color, float4 region, StructuredBuffer<float4> sourceValidity, uint band, bool validateProjection)
+float SelectedWaveBand(float3 color, float4 region, StructuredBuffer<float4> sourceValidity, uint band, bool validateProjection, uint sourceBase = 0)
 {
 	if (validateProjection) {
-		float base = region.z > 0 ? sourceValidity[(uint(region.z) - 1) * 7 + band * 2].w : 0;
-		float excess = region.w > 0 ? sourceValidity[(uint(region.w) - 1) * 7 + band * 2].w : 0;
+		float base = region.z > 0 ? sourceValidity[sourceBase + (uint(region.z) - 1) * 7 + band * 2].w : 0;
+		float excess = region.w > 0 ? sourceValidity[sourceBase + (uint(region.w) - 1) * 7 + band * 2].w : 0;
 		return SelectedDiffractionRadiance(color, float4(region.xy, region.z, 0))[band] * base +
 		       SelectedDiffractionRadiance(color, float4(region.xy, 0, region.w))[band] * excess;
 	}
 	return SelectedDiffractionRadiance(color, region)[band];
 }
 
-bool ActiveWaveRegion(float4 region, StructuredBuffer<float4> validity, uint band, bool validateProjection)
+bool ActiveWaveRegion(float4 region, StructuredBuffer<float4> validity, uint band, bool validateProjection, uint sourceBase = 0)
 {
 	if (!validateProjection)
 		return any(region.zw > 0);
-	float a = region.z > 0 ? validity[(uint(region.z) - 1) * 7 + band * 2].w : 0;
-	float b = region.w > 0 ? validity[(uint(region.w) - 1) * 7 + band * 2].w : 0;
+	float a = region.z > 0 ? validity[sourceBase + (uint(region.z) - 1) * 7 + band * 2].w : 0;
+	float b = region.w > 0 ? validity[sourceBase + (uint(region.w) - 1) * 7 + band * 2].w : 0;
 	return a + b > 0;
+}
+
+float2 WaveSceneUV(float2 uv, uint eye, uint eyeCount)
+{
+	return eyeCount > 1 ? float2((saturate(uv.x) + eye) / 2, uv.y) : uv;
 }
 
 float SampleDiffractionCore(Texture2D<float4> scene, StructuredBuffer<float4> weights,
 	StructuredBuffer<float4> regions, StructuredBuffer<float4> sourceValidity, SamplerState linearSampler, float2 sourceUV,
-	float2 pixelX, float2 pixelY, uint band, bool validateProjection)
+	float2 pixelX, float2 pixelY, uint band, bool validateProjection, uint eye = 0, uint eyeCount = 1, uint regionBase = 0, uint sourceBase = 0)
 {
-	float3 center = scene.SampleLevel(linearSampler, sourceUV, 0).rgb;
+	float3 center = scene.SampleLevel(linearSampler, WaveSceneUV(sourceUV, eye, eyeCount), 0).rgb;
 	uint width, height;
 	scene.GetDimensions(width, height);
-	uint2 size = uint2(width, height);
+	uint2 size = uint2(width / eyeCount, height);
 	float2 extent = abs(pixelX) + abs(pixelY);
 	uint2 lo = WaveRegionTile(sourceUV - extent, size);
 	uint2 hi = WaveRegionTile(sourceUV + extent, size);
-	float4 region = regions[lo.y * 64 + lo.x];
-	bool active = ActiveWaveRegion(region, sourceValidity, band, validateProjection);
+	float4 region = regions[regionBase + lo.y * 64 + lo.x];
+	bool active = ActiveWaveRegion(region, sourceValidity, band, validateProjection, sourceBase);
 	if (any(lo != hi)) {
-		active = active || ActiveWaveRegion(regions[hi.y * 64 + lo.x], sourceValidity, band, validateProjection) || ActiveWaveRegion(regions[lo.y * 64 + hi.x], sourceValidity, band, validateProjection) || ActiveWaveRegion(regions[hi.y * 64 + hi.x], sourceValidity, band, validateProjection);
+		active = active || ActiveWaveRegion(regions[regionBase + hi.y * 64 + lo.x], sourceValidity, band, validateProjection, sourceBase) || ActiveWaveRegion(regions[regionBase + lo.y * 64 + hi.x], sourceValidity, band, validateProjection, sourceBase) || ActiveWaveRegion(regions[regionBase + hi.y * 64 + hi.x], sourceValidity, band, validateProjection, sourceBase);
 	}
 	// Evaluate the core only at selected highlights. Unselected pixels retain
 	// their direct lens sample without a nine-tap convolution.
@@ -58,7 +63,7 @@ float SampleDiffractionCore(Texture2D<float4> scene, StructuredBuffer<float4> we
 	[branch] if (active)
 	{
 		uint2 centerTile = WaveRegionTile(sourceUV, size);
-		float selectedCenter = SelectedWaveBand(center, regions[centerTile.y * 64 + centerTile.x], sourceValidity, band, validateProjection);
+		float selectedCenter = SelectedWaveBand(center, regions[regionBase + centerTile.y * 64 + centerTile.x], sourceValidity, band, validateProjection, sourceBase);
 		float sum = 0;
 		[unroll] for (uint y = 0; y < 3; ++y)
 		{
@@ -66,9 +71,9 @@ float SampleDiffractionCore(Texture2D<float4> scene, StructuredBuffer<float4> we
 			[unroll] for (uint x = 0; x < 3; ++x)
 			{
 				float2 uv = sourceUV + (float(x) - 1) * pixelX + (float(y) - 1) * pixelY;
-				float3 color = scene.SampleLevel(linearSampler, uv, 0).rgb;
+				float3 color = scene.SampleLevel(linearSampler, WaveSceneUV(uv, eye, eyeCount), 0).rgb;
 				uint2 tile = WaveRegionTile(uv, size);
-				sum += SelectedWaveBand(color, regions[tile.y * 64 + tile.x], sourceValidity, band, validateProjection) * row[x];
+				sum += SelectedWaveBand(color, regions[regionBase + tile.y * 64 + tile.x], sourceValidity, band, validateProjection, sourceBase) * row[x];
 			}
 		}
 		if (WaveStarburst.w > 0) {

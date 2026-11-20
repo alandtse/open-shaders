@@ -3456,10 +3456,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	// clustered light in this pixel so we hoist them out of the per-light loop.
 	uint contactShadowSteps = 0;
 	float contactShadowNoise = 0.0;
+	float contactShadowFade = 0.0;
 	[branch] if (totalLightCount > 0 && SharedData::lightLimitFixSettings.EnableContactShadows)
 	{
-		contactShadowSteps = round(SharedData::lightLimitFixSettings.ContactShadowMaxSteps *
-								   (1.0 - saturate(viewPosition.z / SharedData::lightLimitFixSettings.ContactShadowMaxDistance)));
+		contactShadowFade = LightLimitFix::GetContactShadowDistanceFade(viewPosition.z);
+		contactShadowSteps = contactShadowFade > 0.0 ? SharedData::lightLimitFixSettings.ContactShadowMaxSteps : 0;
 		// The helper stays stereo-stable in VR — see
 		// LightLimitFix::GetContactShadowNoiseCoord for the eye-buffer math.
 		contactShadowNoise = Random::InterleavedGradientNoise(
@@ -3523,16 +3524,12 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		[branch] if (contactShadowSteps > 0)
 		{
 			// Strict lights always raymarch -- skip the falloff math for them entirely.
-			// Clustered lights need a normalized falloff to compare against MinIntensity;
-			// recompute it, since GetAttenuation isn't [0,1]-normalized for inverse-square
-			// lights and the threshold would mean different things otherwise.
+			// Clustered lights fade by a normalized falloff, since GetAttenuation isn't
+			// [0,1]-normalized for inverse-square lights.
 			const bool isClusteredLight = lightIndex >= LightLimitFix::NumStrictLights;
-			bool passesIntensityGate = !isClusteredLight;
-			if (isClusteredLight) {
-				float falloffFactor = saturate(lightDist * light.invRadius);
-				passesIntensityGate = (1.0 - falloffFactor * falloffFactor) >
-				                      SharedData::lightLimitFixSettings.ContactShadowMinIntensity;
-			}
+			const float contactShadowWeight = isClusteredLight ?
+			                                      contactShadowFade * LightLimitFix::GetContactShadowIntensityFade(lightDist, light.invRadius) :
+			                                      contactShadowFade;
 
 			// Particle lights carry both Simple and Particle bits. Simple-only lights are
 			// clustered fallbacks (no real emitter) and never trace; particle lights trace
@@ -3545,14 +3542,14 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 				canShadow &&
 				shadowComponent != 0.0 &&
 				lightAngle > 0.0 &&
-				passesIntensityGate)
+				contactShadowWeight > 0.0)
 			{
 				// Derive view-space position via CameraView; the Light struct only carries positionWS
 				// (camera-relative) so the matrix multiply here is the cheapest path until positionVS
 				// is added to the struct + populated CPU-side.
 				float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
 				float3 normalizedLightDirectionVS = normalize(lightPositionVS - viewPosition.xyz);
-				contactShadow = LightLimitFix::ContactShadows(viewPosition, contactShadowNoise, normalizedLightDirectionVS, lightDist, contactShadowSteps, eyeIndex);
+				contactShadow = lerp(1.0, LightLimitFix::ContactShadows(viewPosition, contactShadowNoise, normalizedLightDirectionVS, lightDist, contactShadowSteps, eyeIndex), contactShadowWeight);
 			}
 		}
 #			endif
@@ -3649,37 +3646,28 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	// sRGB by default, linear if LL on
 	float3 emitColor = Color::EmitColor(EmitColor);
 #	if !defined(LANDSCAPE) && !defined(LODLANDSCAPE)
-	bool hasEmissive = (0x3F & (Permutation::PixelShaderDescriptor >> 24)) == Permutation::LightingTechnique::Glowmap;
+	bool hasGlowmap = (0x3F & (Permutation::PixelShaderDescriptor >> 24)) == Permutation::LightingTechnique::Glowmap;
 #		if defined(TRUE_PBR)
-	hasEmissive = hasEmissive || ((PBRFlags & PBR::Flags::HasEmissive) != 0);
+	hasGlowmap = hasGlowmap || ((PBRFlags & PBR::Flags::HasEmissive) != 0);
 #		endif
-	[branch] if (hasEmissive)
+	[branch] if (hasGlowmap)
 	{
-		// Input TexGlowSampler = linear by default, but Color::Glowmap returns in sRGB if LL disabled
+		// PBR glowmaps are decoded by the sRGB texture view.
 		float3 glowColor = Color::Glowmap(TexGlowSampler.Sample(SampGlowSampler, uv).xyz);
+		emitColor *= glowColor;
 
 #		if defined(TRUE_PBR)
 		float3 emitVertexColor = Color::CompensateConvertedColor(Color::SrgbToLinear(input.Color.xyz));
 		float emitVertexAO = max(max(emitVertexColor.r, emitVertexColor.g), emitVertexColor.b);
 		emitVertexColor = emitVertexAO == 0.0f ? 1.0f : emitVertexColor * lerp(1 / max(emitVertexAO, 1e-4), 1, SharedData::truePBRSettings.VertexAOStrength);
 
-		if (!SharedData::linearLightingSettings.enableLinearLighting) {
-			emitColor = Color::SrgbToLinear(emitColor);
-			glowColor = Color::SrgbToLinear(glowColor);
-			emitColor *= glowColor;
-			emitColor *= emitVertexColor;
-			emitColor = Color::LinearToSrgb(emitColor);
-		} else {
-			emitColor *= glowColor;
-			emitColor *= emitVertexColor;
-		}
-#		else
-		if (!SharedData::linearLightingSettings.enableLinearLighting) {
-			emitColor = Color::LinearToSrgb(Color::SrgbToLinear(emitColor) * Color::SrgbToLinear(glowColor));
-		} else {
-			emitColor *= glowColor;
-		}
+		if (ENABLE_LL)
+			emitColor = Color::ApplyLinearSrgbTint(emitColor, emitVertexColor);
+		else
+			emitColor *= Color::LinearToSrgb(emitVertexColor);
 #		endif  // TRUE_PBR
+		if (!ENABLE_LL)
+			emitColor = abs(emitColor);
 	}
 #	endif
 

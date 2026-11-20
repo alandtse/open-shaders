@@ -3,6 +3,7 @@
 // Only translation unit including exprtk.hpp (heavy header; keep it out of the other SCM modules).
 
 #include "../../Globals.h"
+#include "../../Utils/Game.h"
 #include "LitRegion.h"
 #include "ShadowCasterInternal.h"
 
@@ -22,11 +23,20 @@ namespace ShadowCasterManager
 
 	// EMA position anchor ComputeLightGeometry scores from; see ResetScoreAnchor.
 	static std::unordered_map<const RE::NiLight*, RE::NiPoint3> s_scoreAnchor;
+	/// Flicker-averaged fade per light and the frame it last stepped; a light is scored more than once a frame.
+	struct ScoreFade
+	{
+		float fade = 0.0f;
+		int32_t frame = 0;
+	};
+	static std::unordered_map<const RE::NiLight*, ScoreFade> s_scoreFade;
 
 	void ResetScoreAnchor(const RE::NiLight* ni)
 	{
-		if (ni)
+		if (ni) {
 			s_scoreAnchor.erase(ni);
+			s_scoreFade.erase(ni);
+		}
 	}
 
 	static void InitFormulaSystem()
@@ -117,6 +127,35 @@ namespace ShadowCasterManager
 		return const_cast<RE::BSShadowLight*>(light)->GetIsFrustumLight() ? static_cast<const RE::BSShadowFrustumLight*>(light) : nullptr;
 	}
 
+	static float ProjectedSphereArea(const float (&worldToClip)[4][4], const RE::NiPoint3& center, float radius)
+	{
+		const RE::NiPoint3 depthAxis{ worldToClip[3][0], worldToClip[3][1], worldToClip[3][2] };
+		const float centerW = center.Dot(depthAxis) + worldToClip[3][3];
+		const float extentW = radius * depthAxis.Length();
+		if (centerW == 0.0f && extentW == 0.0f)
+			return 1.0f;
+		float area = 1.0f;
+		for (int axis = 0; axis < 2; ++axis) {
+			const RE::NiPoint3 screenAxis{ worldToClip[axis][0], worldToClip[axis][1], worldToClip[axis][2] };
+			area *= ProjectedLightExtent(center.Dot(screenAxis) + worldToClip[axis][3], radius * screenAxis.Length(), centerW - extentW, centerW + extentW);
+		}
+		return area;
+	}
+
+	static float ProjectedLightArea(const RE::NiCamera& camera, const RE::NiPoint3& center, float radius)
+	{
+		if (!globals::game::isVR)
+			return ProjectedSphereArea(camera.GetRuntimeData().worldToCam, center, radius);
+
+		float largestArea = 0.0f;
+		for (int eye = 0; eye < 2; ++eye) {
+			const auto worldToClip = Util::GetCameraData(eye).viewProjMat.Transpose();
+			const auto relative = center - Util::GetEyePosition(eye);
+			largestArea = std::max(largestArea, ProjectedSphereArea(worldToClip.m, relative, radius));
+		}
+		return largestArea;
+	}
+
 	LightGeometry ComputeLightGeometry(const RE::BSShadowLight* light, const RE::NiCamera* camera, float lightRadius)
 	{
 		LightGeometry g{};
@@ -129,10 +168,7 @@ namespace ShadowCasterManager
 		// Score on an EMA'd position anchor, not the live pose: flame flicker
 		// translates the light several units every frame, jittering every
 		// distance and area term below -- churning rank, redraw priority, and
-		// the membership gates. Fade is NOT smoothed: a light fading out must
-		// drop its score promptly, or it holds a shadow slot after it should
-		// have left and its stale shadow flickers in. Rendering keeps the live
-		// pose (shadows still dance).
+		// the membership gates. Rendering keeps the live pose (shadows still dance).
 		PruneIfOversized(s_scoreAnchor, 1024);
 		const auto live = ni->world.translate;
 		auto [anchorIt, anchorNew] = s_scoreAnchor.try_emplace(ni, live);
@@ -143,9 +179,14 @@ namespace ShadowCasterManager
 		}
 		const auto lp = anchorIt->second;
 
-		// Perceptual luminance (Rec.709) x live fade. Valid even at zero
-		// radius, where every geometric term below collapses to 0.
-		g.lum = (0.2126f * rtd.diffuse.red + 0.7152f * rtd.diffuse.green + 0.0722f * rtd.diffuse.blue) * rtd.fade;
+		// Perceptual luminance (Rec.709) x the flicker-averaged fade, so equal flickering lights stop trading slots.
+		// Valid even at zero radius, where every geometric term below collapses to 0.
+		PruneIfOversized(s_scoreFade, 1024);
+		const int32_t frame = *globals::game::frameCounter;
+		auto [fadeIt, fadeNew] = s_scoreFade.try_emplace(ni, ScoreFade{ rtd.fade, frame });
+		if (!fadeNew && fadeIt->second.frame != frame)
+			fadeIt->second = { SteadyScoreFade(fadeIt->second.fade, rtd.fade), frame };
+		g.lum = (0.2126f * rtd.diffuse.red + 0.7152f * rtd.diffuse.green + 0.0722f * rtd.diffuse.blue) * fadeIt->second.fade;
 		if (lightRadius <= 0.0f)
 			return g;
 
@@ -202,6 +243,9 @@ namespace ShadowCasterManager
 				const float y0 = std::clamp(std::min(r1.y, r2.y), -1.0f, 1.0f);
 				const float y1 = std::clamp(std::max(r1.y, r2.y), -1.0f, 1.0f);
 				g.screenArea = std::clamp((x1 - x0) * (y1 - y0) * 0.25f, 0.0f, 1.0f);
+				// The engine returns a full scissor when a projection point falls behind the camera.
+				if (g.screenArea == 1.0f)
+					g.screenArea = ProjectedLightArea(*camera, lp, lightRadius);
 			}
 		}
 

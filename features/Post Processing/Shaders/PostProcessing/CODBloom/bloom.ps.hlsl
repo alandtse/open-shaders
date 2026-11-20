@@ -53,9 +53,12 @@ float3 ThresholdColor(float3 col, float threshold)
 float4 UpsampleCOD(Texture2D tex, float2 uv, float2 radius)
 {
 	float4 retval = 0;
+	const uint eye = Stereo::GetEyeIndexFromTexCoord(uv);
+	uint2 texSize;
+	tex.GetDimensions(texSize.x, texSize.y);
 	for (int x = -1; x <= 1; ++x)
 		for (int y = -1; y <= 1; ++y)
-			retval += (1 << (!x + !y)) * 0.0625 * tex.SampleLevel(SampColor, uv + float2(x, y) * radius, 0);
+			retval += (1 << (!x + !y)) * 0.0625 * tex.SampleLevel(SampColor, Stereo::ClampToEyeUV(uv + float2(x, y) * radius, eye, texSize), 0);
 	return retval;
 }
 
