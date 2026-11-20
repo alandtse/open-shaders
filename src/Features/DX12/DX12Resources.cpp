@@ -240,6 +240,8 @@ void DX12Resources::DrawSettings()
 		if (companion)
 			companion->Cancel();
 		inFlight.reset();
+		adopting.reset();
+		lightAdoptionOffset = 0;
 		grid.Clear();
 	}
 	int index = int(std::ranges::find(DX12::kSubcellSizes, settings.SubcellSize) - DX12::kSubcellSizes.begin());
@@ -251,6 +253,8 @@ void DX12Resources::DrawSettings()
 		if (companion)
 			companion->Cancel();
 		inFlight.reset();
+		adopting.reset();
+		lightAdoptionOffset = 0;
 		grid.Clear();
 	}
 	ImGui::TextDisabled("5x5 companion: active 3x3, then 12 predictive sides and 4 corners; no persistent cache.");
@@ -264,7 +268,9 @@ void DX12Resources::LoadSettings(json& input)
 	if (companion)
 		companion->Cancel();
 	inFlight.reset();
-	grid.Clear();
+	adopting.reset();
+		lightAdoptionOffset = 0;
+		grid.Clear();
 }
 
 void DX12Resources::SaveSettings(json& output)
@@ -278,7 +284,9 @@ void DX12Resources::RestoreDefaultSettings()
 	if (companion)
 		companion->Cancel();
 	inFlight.reset();
-	grid.Clear();
+	adopting.reset();
+		lightAdoptionOffset = 0;
+		grid.Clear();
 }
 
 void DX12Resources::PreShadowMaps()
@@ -320,21 +328,48 @@ void DX12Resources::PreShadowMaps()
 	}
 	if (auto result = companion->Take()) {
 		inFlight.reset();
-		auto* handler = RE::TESDataHandler::GetSingleton();
-		for (auto& record : result->lights) {
-			const auto* reference = handler ? handler->LookupForm(record.referenceLocal, record.referencePlugin) : nullptr;
-			const auto* base = handler ? handler->LookupForm(record.baseLocal, record.basePlugin) : nullptr;
-			if (!reference || !base) {
-				++result->publication.failedShapes;
-				continue;
-			}
-			record.value.referenceID = reference->GetFormID();
-			record.value.baseID = base->GetFormID();
-			result->publication.lights.push_back(record.value);
-		}
-		grid.Publish(std::move(result->publication));
+		adopting = std::make_unique<DX12::CompanionResult>(std::move(*result));
+		adopting->publication.lights.reserve(adopting->lights.size());
+		lightAdoptionOffset = 0;
 	}
-	if (companion->Idle()) {
+	if (adopting) {
+		const auto key = adopting->publication.key;
+		const bool active = std::ranges::contains(neighborhood->requested, key);
+		const bool predictive = std::ranges::contains(neighborhood->predictive, key);
+		const bool activeMissing = std::ranges::any_of(neighborhood->resident, [](const auto& tile) {
+			return !tile || tile->state == DX12::Tile::State::Requested;
+		});
+		if ((!active && !predictive) || (predictive && activeMissing)) {
+			// A superseded speculative publication must not block an active tile.
+			adopting.reset();
+			lightAdoptionOffset = 0;
+			grid.CancelPending();
+		} else {
+			// Only engine FormID lookup must run on the game thread. Keep it bounded
+			// while immutable geometry remains off-thread prepared.
+			constexpr size_t kFormResolutionsPerFrame = 64;
+			const size_t end = std::min(adopting->lights.size(), lightAdoptionOffset + kFormResolutionsPerFrame);
+			auto* handler = RE::TESDataHandler::GetSingleton();
+			for (; lightAdoptionOffset < end; ++lightAdoptionOffset) {
+				auto& record = adopting->lights[lightAdoptionOffset];
+				const auto* reference = handler ? handler->LookupForm(record.referenceLocal, record.referencePlugin) : nullptr;
+				const auto* base = handler ? handler->LookupForm(record.baseLocal, record.basePlugin) : nullptr;
+				if (!reference || !base) {
+					++adopting->publication.failedShapes;
+					continue;
+				}
+				record.value.referenceID = reference->GetFormID();
+				record.value.baseID = base->GetFormID();
+				adopting->publication.lights.push_back(record.value);
+			}
+			if (lightAdoptionOffset == adopting->lights.size()) {
+				grid.Publish(std::move(adopting->publication));
+				adopting.reset();
+				lightAdoptionOffset = 0;
+			}
+		}
+	}
+	if (!adopting && companion->Idle()) {
 		if (const auto request = grid.NextRequest()) {
 			const auto* source = world ? static_cast<const RE::TESForm*>(world) : static_cast<const RE::TESForm*>(cell);
 			const auto* file = source ? source->GetFile(0) : nullptr;
@@ -364,6 +399,8 @@ void DX12Resources::OnSceneTransitionReset(bool opening)
 		if (companion)
 			companion->Cancel();
 		inFlight.reset();
+		adopting.reset();
+		lightAdoptionOffset = 0;
 		grid.Clear();
 	}
 }
@@ -373,7 +410,9 @@ void DX12Resources::OnRuntimeDisabled()
 	if (companion)
 		companion->Cancel();
 	inFlight.reset();
-	grid.Clear();
+	adopting.reset();
+		lightAdoptionOffset = 0;
+		grid.Clear();
 }
 
 std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const

@@ -12,6 +12,7 @@
 namespace DX12
 {
 	class CompanionWorker;
+	struct CompanionResult;
 	/** @brief Immutable light record discovered alongside companion geometry. */
 	struct PreparedLight
 	{
@@ -132,6 +133,8 @@ struct DX12Resources final : Feature
 private:
 	DX12::ResourceGrid grid;
 	std::unique_ptr<DX12::CompanionWorker> companion;
+	std::unique_ptr<DX12::CompanionResult> adopting;
+	size_t lightAdoptionOffset = 0;
 	std::optional<DX12::SubcellKey> inFlight;
 	Settings settings;
 };

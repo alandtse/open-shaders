@@ -347,7 +347,7 @@ namespace DX12
 			const auto root = json::parse(stream);
 			if (root.at("version").get<uint32_t>() != 1 ||
 				!root.at("shapes").is_array() || root.at("shapes").size() > 384 ||
-				!root.at("lights").is_array() || root.at("lights").size() > 65536)
+				!root.at("lights").is_array() || root.at("lights").size() > 2048)
 				return result;
 			auto& publication = result.publication;
 			constexpr uint64_t kMaximumTileBytes = 64ull * 1024 * 1024;
