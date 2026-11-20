@@ -1255,6 +1255,8 @@ namespace ShadowCasterManager
 		auto* paramsBuffer = s_atlas.warpParams.get();
 		auto* staticSrv = s_atlas.staticSrv.get();
 		auto* scratchUav = scratch.uav.get();
+		Util::FullscreenPassScope savedState(context);
+		context->OMSetRenderTargets(0, nullptr, s_atlas.dsv.get());
 		context->CSSetShader(cs, nullptr, 0);
 		context->CSSetConstantBuffers(0, 1, &paramsBuffer);
 		context->CSSetShaderResources(0, 1, &staticSrv);
@@ -1271,8 +1273,6 @@ namespace ShadowCasterManager
 
 		const uint32_t resolve[4] = { t.x, t.y, t.size, 0 };
 		context->UpdateSubresource(s_atlas.warpResolveParams.get(), 0, nullptr, resolve, 0, 0);
-		Util::FullscreenPassScope savedState(context);
-		context->OMSetRenderTargets(0, nullptr, s_atlas.dsv.get());
 		context->OMSetDepthStencilState(s_atlas.copyDepthState.get(), 0);
 		context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
 		context->RSSetState(s_atlas.copyRasterizerState.get());
