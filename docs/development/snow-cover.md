@@ -49,7 +49,7 @@ weather snow and fire counts.
 
 - Lighting applies snow after skylighting/water-height evaluation and
   before wetness. Grass and distant trees apply snow before lighting.
-  Existing PBR and legacy color paths remain separate.
+  Terrain, objects, and foliage use the same snow albedo at every LOD.
 - Snow uses PS resources `t38` through `t44`. Its 336-byte feature data is
   appended to `b6`, preserving existing fields' offsets. Permutations built
   without the feature omit the new declarations.
