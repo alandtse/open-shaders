@@ -1793,7 +1793,7 @@ namespace ShadowCasterManager
 	/// Latest per-candidate visibility audit, refilled only while diagnostics are wanted.
 	static std::vector<SchedSnapshot::LightVisibility> s_visAudit;
 
-	/// Tests a sphere against the four side planes of every eye's view-projection,
+	/// Tests a sphere against the four side planes and the eye plane of every eye's view-projection,
 	/// independent of the engine's own frustum flag. `centre` is world space.
 	static bool OwnSphereInFrustum(const RE::NiPoint3& centre, float radius, float& nearestEyeDistance)
 	{
@@ -1806,13 +1806,14 @@ namespace ShadowCasterManager
 			nearestEyeDistance = std::min(nearestEyeDistance, std::sqrt(rel.x * rel.x + rel.y * rel.y + rel.z * rel.z));
 			const auto& m = view.viewProjMat;
 			bool eyeInside = true;
-			for (int side = 0; side < 4 && eyeInside; ++side) {
+			for (int side = 0; side < 5 && eyeInside; ++side) {
 				const int axis = side >> 1;
 				const float sign = (side & 1) ? -1.0f : 1.0f;
-				const float px = m.m[0][3] + sign * m.m[0][axis];
-				const float py = m.m[1][3] + sign * m.m[1][axis];
-				const float pz = m.m[2][3] + sign * m.m[2][axis];
-				const float pw = m.m[3][3] + sign * m.m[3][axis];
+				const float axisScale = side < 4 ? sign : 0.0f;
+				const float px = m.m[0][3] + axisScale * m.m[0][axis];
+				const float py = m.m[1][3] + axisScale * m.m[1][axis];
+				const float pz = m.m[2][3] + axisScale * m.m[2][axis];
+				const float pw = m.m[3][3] + axisScale * m.m[3][axis];
 				const float len = std::sqrt(px * px + py * py + pz * pz);
 				if (len <= 0.0f)
 					continue;
@@ -1949,7 +1950,7 @@ namespace ShadowCasterManager
 					// flips; an omni light our own sphere test still sees stays a visible light and keeps redrawing.
 					float edgeEyeDistance = 0.0f;
 					const bool edgeKept = EdgeKeepsLight(lastValidIt != s_lastValidFrame.end(), hiddenNow, lodFadedNow, l->GetIsFrustumLight()) &&
-					                      OwnSphereInFrustum(nilightNow->world.translate, nilightNow->GetLightRuntimeData().radius.x, edgeEyeDistance);
+					                      OwnSphereInFrustum(nilightNow->world.translate, nilightNow->GetLightRuntimeData().radius.x * nilightNow->world.scale, edgeEyeDistance);
 					if (edgeKept) {
 						lastValidIt->second = nowFrame;
 					} else if (recentlyValid) {
