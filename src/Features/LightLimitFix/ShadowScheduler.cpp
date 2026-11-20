@@ -1888,6 +1888,32 @@ namespace ShadowCasterManager
 		RE::BSCullingProcess* globalCull = globalCullingProcesses.empty() ? nullptr : globalCullingProcesses.front();
 
 		int wantCount = 0;
+		const auto seat = [&wantCount](CandidateLight& c) {
+			// Impact floor: a below-floor light converts to a non-shadow light
+			// (keeps diffuse via clusters, drops redraw), same path as over-budget.
+			if (c.belowFloor) {
+				c.excess = true;
+			}
+			// Effective point-light capacity excludes engine-claimed focus shadow slots.
+			else if (wantCount < s_settings.ShadowLightCount - s_focusShadowSlots) {
+				c.chosen = true;
+				wantCount++;
+			} else {
+				c.excess = true;
+			}
+		};
+		// Only the strongest valid lights reaching the player, up to the cap, keep their place ahead; the rest are seated by score
+		// among the other lights, so the lights in view still get slots.
+		const int protectionCap = PlayerProtectionCap(s_settings.ShadowLightCount);
+		int protectedKept = 0;
+		static std::vector<CandidateLight*> pastCap;
+		pastCap.clear();
+		size_t nextPastCap = 0;
+		const auto ranksAbove = [](const CandidateLight* a, const CandidateLight& b) {
+			if (a->score != b.score)
+				return a->score > b.score;
+			return reinterpret_cast<uintptr_t>(a->light) < reinterpret_cast<uintptr_t>(b.light);
+		};
 
 		// Per-candidate UpdateCamera vfunc + portal-graph visibility walk
 		// + chosen/excess tagging. Captured separately so memoization or
@@ -1978,19 +2004,21 @@ namespace ShadowCasterManager
 					}
 				}
 
-				// Impact floor: a below-floor light converts to a non-shadow light
-				// (keeps diffuse via clusters, drops redraw), same path as over-budget.
-				if (c.belowFloor) {
-					c.excess = true;
-				}
-				// Effective point-light capacity excludes engine-claimed focus shadow slots.
-				else if (wantCount < s_settings.ShadowLightCount - s_focusShadowSlots) {
-					c.chosen = true;
-					wantCount++;
+				if (c.playerProtected) {
+					if (protectedKept >= protectionCap) {
+						c.playerProtected = false;
+						pastCap.push_back(&c);
+						continue;
+					}
+					++protectedKept;
 				} else {
-					c.excess = true;
+					while (nextPastCap < pastCap.size() && ranksAbove(pastCap[nextPastCap], c))
+						seat(*pastCap[nextPastCap++]);
 				}
+				seat(c);
 			}
+			while (nextPastCap < pastCap.size())
+				seat(*pastCap[nextPastCap++]);
 			// s_cameraHold just finished repopulating -- publish freshness now, not at
 			// the earlier clear, so a reader can never observe a generation match
 			// against a partially-populated set.
