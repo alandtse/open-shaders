@@ -1429,28 +1429,28 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 			if (runtimeAlreadyUsedThisFrame)
 				return false;  // Never mix runtime and host across stereo eyes.
 		} else {
-		// Try the runtime FSR3 provider in the upscaler DLL before falling back to the host SDK.
-		// CanUseRuntimeUpscalerPath() re-check: the upgrade attempt above may have just quarantined
-		// the provider, which must stop this fallback from dispatching into it too.
-		if (runtimeUpgradeRequested && ShouldUseRuntimeUpscalerForFSR() && CanUseRuntimeUpscalerPath()) {
-			LatchRuntimeUpgradeFailure();
-			runtimeFallbackResetDispatchesRemaining = std::max(runtimeFallbackResetDispatchesRemaining, runtimeContextCount);
-			const uint32_t fallbackRenderWidth = splitPerEyeContexts ? fullRenderWidth : a_renderWidth;
-			const uint32_t fallbackRenderHeight = splitPerEyeContexts ? fullRenderHeight : a_renderHeight;
-			if (tryRuntimeUpscaler(Fsr3Version, fallbackRenderWidth, fallbackRenderHeight))
-				return true;
-		}
+			// Try the runtime FSR3 provider in the upscaler DLL before falling back to the host SDK.
+			// CanUseRuntimeUpscalerPath() re-check: the upgrade attempt above may have just quarantined
+			// the provider, which must stop this fallback from dispatching into it too.
+			if (runtimeUpgradeRequested && ShouldUseRuntimeUpscalerForFSR() && CanUseRuntimeUpscalerPath()) {
+				LatchRuntimeUpgradeFailure();
+				runtimeFallbackResetDispatchesRemaining = std::max(runtimeFallbackResetDispatchesRemaining, runtimeContextCount);
+				const uint32_t fallbackRenderWidth = splitPerEyeContexts ? fullRenderWidth : a_renderWidth;
+				const uint32_t fallbackRenderHeight = splitPerEyeContexts ? fullRenderHeight : a_renderHeight;
+				if (tryRuntimeUpscaler(Fsr3Version, fallbackRenderWidth, fallbackRenderHeight))
+					return true;
+			}
 
-		if (!runtimeUpscalerFailureLatched) {
-			runtimeFallbackResetDispatchesRemaining = std::max(runtimeFallbackResetDispatchesRemaining, runtimeContextCount);
-		}
-		LatchRuntimeUpscalerFailure();
+			if (!runtimeUpscalerFailureLatched) {
+				runtimeFallbackResetDispatchesRemaining = std::max(runtimeFallbackResetDispatchesRemaining, runtimeContextCount);
+			}
+			LatchRuntimeUpscalerFailure();
 
-		// A sibling eye already published a runtime-provider frame; falling through to host
-		// FSR3 here would present an unretractable mixed-provider stereo pair. Drop this eye
-		// instead -- the caller skips finalizing the frame when any eye fails.
-		if (runtimeAlreadyUsedThisFrame)
-			return false;
+			// A sibling eye already published a runtime-provider frame; falling through to host
+			// FSR3 here would present an unretractable mixed-provider stereo pair. Drop this eye
+			// instead -- the caller skips finalizing the frame when any eye fails.
+			if (runtimeAlreadyUsedThisFrame)
+				return false;
 		}
 	}
 

@@ -16,8 +16,8 @@ if(DX12_NATIVE_DXC)
         OUTPUT "${_dx12_mask}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_dx12_native_dir}"
         COMMAND
-            "${DX12_NATIVE_DXC}" -T cs_6_5 -E main -HV 2021 -O3 -Ges -Gis
-            -Fo "${_dx12_mask}"
+            "${DX12_NATIVE_DXC}" -T cs_6_5 -E main -HV 2021 -O3 -Ges -Gis -Fo
+            "${_dx12_mask}"
             "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Composite/Shaders/PreparedShadowMask.hlsl6"
         DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Composite/Shaders/PreparedShadowMask.hlsl6"
