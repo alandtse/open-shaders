@@ -42,8 +42,6 @@ struct PhysicalLens : PostProcessFeature
 	std::string GetDisplayName() const override { return T("feature.post_processing.physical_lens.name", "Physical Lens"); }
 	std::string GetDesc() const override { return T("feature.post_processing.physical_lens.description", "Lens ghosts, starbursts, distortion, vignetting and chromatic aberration from highlights visible on screen."); }
 	bool IsExperimental() const override { return true; }
-	bool IsVisible() const override;
-	bool IsActive() const override;
 	bool WritesToMainTexture() const override { return false; }
 	bool DisableInMainLoadingMenu() const override { return true; }
 	void SetupResources() override;
@@ -130,7 +128,13 @@ private:
 	bool ghostWaveValid = false;
 	unsigned lastGhostFrame = ~0u;
 	bool UpdateGhostWave();
-	std::array<winrt::com_ptr<ID3D11RenderTargetView>, 2> channelTargets;
+	std::array<std::array<winrt::com_ptr<ID3D11RenderTargetView>, 2>, 2> channelTargets;
+	std::array<winrt::com_ptr<ID3D11UnorderedAccessView>, 2> outputUAVs, tileUAVs;
+	std::array<winrt::com_ptr<ID3D11UnorderedAccessView>, 2> regionUAVs, waveSourceUAVs, tailUAVs;
+	std::array<winrt::com_ptr<ID3D11ShaderResourceView>, 2> regionSRVs, waveSourceSRVs, tileSRVs;
+	std::unique_ptr<StructuredBuffer> rightSources;
+	std::unique_ptr<Texture2D> eyeInput;
+	ID3D11ShaderResourceView* EyeInputSRV(TextureInfo& input, const D3D11_TEXTURE2D_DESC& inputDesc, unsigned eye);
 	std::array<std::unique_ptr<ConstantBuffer>, 3> channelParameters;
 	winrt::com_ptr<ID3D11ComputeShader> extractCS, prepareCS, splitCS, selectCS, jobsCS, expandCS, traceCS, shadeCS, reduceCS, resolveCS;
 	winrt::com_ptr<ID3D11VertexShader> ghostVS;
@@ -146,6 +150,7 @@ private:
 	PhysicalLensImaging::CameraTableParameters cachedCameraTable{};
 	void UpdateCameraMapping(float aspect);
 	bool waveReady = false, waveValid = false;
+	unsigned setupWidth = 0, setupHeight = 0;
 	std::array<std::unique_ptr<Texture2D>, 3> waveTextures;
 	std::unique_ptr<Texture2D> waveMax, waveRadiance;
 	std::unique_ptr<StructuredBuffer> waveWorkTiles;

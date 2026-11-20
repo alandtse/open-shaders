@@ -286,15 +286,9 @@ namespace ShadowCasterManager
 		return s_settings.ProtectPlayerShadows && PlayerWithinLightRadius(light, kPlayerCasterReachUnits);
 	}
 
-	// SEH in its own function: GetUserData walks NiAVObject::parent, which is not refcounted and can dangle during scene teardown.
 	static RE::Actor* CarrierOf(const RE::NiLight* ni) noexcept
 	{
-		__try {
-			auto* ref = ni->GetUserData();
-			return ref ? ref->As<RE::Actor>() : nullptr;
-		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-		}
-		return nullptr;
+		return OwnerAs<RE::Actor>(ni);
 	}
 
 	/// The body a dynamic omni light is carried by, or null: the first-person model while the player carrying it is seen in first person.
@@ -550,6 +544,7 @@ namespace ShadowCasterManager
 		bool bakeSawStatic = false;
 		/// Baked, and no DynamicOnly accumulate has reused the cache yet.
 		bool bakeUnproven = false;
+		RE::NiMatrix3 lastRot{};  ///< light rotation at the previous accumulate
 	};
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
 
@@ -1320,6 +1315,17 @@ namespace ShadowCasterManager
 				// A flickering light's bake holds only its core casters, so a tile with nothing rendered yet is drawn full first.
 				AtlasTileTexels liveTile{};
 				const bool coreOnlySeed = std::isfinite(s_foldCoreRadius) && !(GetSlotTileTexels(slotIndex, liveTile) && liveTile.contentValid);
+				// A turning light (a swinging lantern) leaves its bake's rotation by the next frame, and a bake frame
+				// keeps the previous frame's shadow, so it renders full until it holds still for a frame.
+				if (auto* ni = light->light.get()) {
+					const bool turning = st->bakePoseValid && ni->world.rotate != st->lastRot;
+					st->lastRot = ni->world.rotate;
+					if (mode == CasterPass::StaticOnly && turning) {
+						st->bakeQueued = true;
+						mode = CasterPass::All;
+						st->fullThisFrame = true;
+					}
+				}
 				// Bake budget: a hash-upset wave (scene entry, cell attach)
 				// otherwise bakes every light in the same few frames and
 				// starves the redraw budget. Deferred bakes stay queued; with
@@ -2028,6 +2034,35 @@ namespace ShadowCasterManager
 		RE::BSCullingProcess* globalCull = globalCullingProcesses.empty() ? nullptr : globalCullingProcesses.front();
 
 		int wantCount = 0;
+		const auto seat = [&wantCount](CandidateLight& c) {
+			// Impact floor: a below-floor light converts to a non-shadow light
+			// (keeps diffuse via clusters, drops redraw), same path as over-budget.
+			if (c.belowFloor) {
+				c.excess = true;
+			}
+			// Effective point-light capacity excludes engine-claimed focus shadow slots.
+			else if (wantCount < s_settings.ShadowLightCount - s_focusShadowSlots) {
+				c.chosen = true;
+				wantCount++;
+			} else {
+				c.excess = true;
+			}
+		};
+		// Lights the camera has left are seated after every light still in view, so turning back never waits out their hold.
+		static std::vector<CandidateLight*> heldOffView;
+		heldOffView.clear();
+		// Only the strongest valid lights reaching the player, up to the cap, keep their place ahead; the rest are seated by score
+		// among the other lights, so the lights in view still get slots.
+		const int protectionCap = PlayerProtectionCap(s_settings.ShadowLightCount);
+		int protectedKept = 0;
+		static std::vector<CandidateLight*> pastCap;
+		pastCap.clear();
+		size_t nextPastCap = 0;
+		const auto ranksAbove = [](const CandidateLight* a, const CandidateLight& b) {
+			if (a->score != b.score)
+				return a->score > b.score;
+			return reinterpret_cast<uintptr_t>(a->light) < reinterpret_cast<uintptr_t>(b.light);
+		};
 
 		// Per-candidate UpdateCamera vfunc + portal-graph visibility walk
 		// + chosen/excess tagging. Captured separately so memoization or
@@ -2088,6 +2123,13 @@ namespace ShadowCasterManager
 					if (recentlyValid) {
 						c.cameraHold = true;
 						s_cameraHold.insert(l);
+						float eyeDistance = 0.0f;
+						const bool ownInView = !hiddenNow &&
+						                       OwnSphereInFrustum(nilightNow->world.translate, nilightNow->GetLightRuntimeData().radius.x, eyeDistance);
+						if (HeldLightYields(ownInView, c.playerProtected, hiddenNow)) {
+							heldOffView.push_back(&c);
+							continue;
+						}
 					} else {
 						c.invalidCamera = true;
 						c.invalid = true;
@@ -2118,18 +2160,26 @@ namespace ShadowCasterManager
 					}
 				}
 
-				// Impact floor: a below-floor light converts to a non-shadow light
-				// (keeps diffuse via clusters, drops redraw), same path as over-budget.
-				if (c.belowFloor) {
-					c.excess = true;
-				}
-				// Effective point-light capacity excludes engine-claimed focus shadow slots.
-				else if (wantCount < s_settings.ShadowLightCount - s_focusShadowSlots) {
-					c.chosen = true;
-					wantCount++;
+				if (c.playerProtected) {
+					if (protectedKept >= protectionCap) {
+						c.playerProtected = false;
+						pastCap.push_back(&c);
+						continue;
+					}
+					++protectedKept;
 				} else {
-					c.excess = true;
+					while (nextPastCap < pastCap.size() && ranksAbove(pastCap[nextPastCap], c))
+						seat(*pastCap[nextPastCap++]);
 				}
+				seat(c);
+			}
+			while (nextPastCap < pastCap.size())
+				seat(*pastCap[nextPastCap++]);
+			for (auto* held : heldOffView) {
+				seat(*held);
+				// One that found no slot has no shadow left to keep, so its tile may go to the lights in view.
+				if (!held->chosen)
+					s_cameraHold.erase(held->light);
 			}
 			// s_cameraHold just finished repopulating -- publish freshness now, not at
 			// the earlier clear, so a reader can never observe a generation match
@@ -3692,6 +3742,7 @@ namespace ShadowCasterManager
 				snap.backOnlyAppendTotal = s_backOnlyAppendTotal.load(std::memory_order_relaxed);
 				snap.hemisphereDropTotal = s_hemisphereDropTotal.load(std::memory_order_relaxed);
 				snap.passlessCasterSkipTotal = s_passlessCasterSkipTotal.load(std::memory_order_relaxed);
+				snap.flameHolderSkipTotal = s_flameHolderSkipTotal.load(std::memory_order_relaxed);
 				for (int reason = 1; reason < 5; ++reason)
 					snap.passlessCasterSkipByReason[reason] = s_passlessCasterSkipByReason[reason].load(std::memory_order_relaxed);
 				if (const uint32_t n = s_cpuAccumN.exchange(0, std::memory_order_relaxed))
@@ -4111,10 +4162,15 @@ namespace ShadowCasterManager
 				bool keepPriorContent = false;
 				bool emptyRender = false;
 				if (AtlasActive()) {
+					auto* split = StaticAtlasReady() ? &s_splitState[e.Light] : nullptr;
+					const bool useSplit = split && !split->splitExcluded && !split->fullThisFrame;
+					AtlasTileTexels live{};
+					const bool resizeAfterComposite = useSplit && !split->bakeThisFrame &&
+					                                  !SlotTileFits(i, e.pendingScale) && GetSlotTileTexels(i, live) && live.contentValid;
 					// Tile before raster: (re)size for the pending class and rect-clear
 					// once per redraw -- the paraboloid halves share the tile, so
 					// clearing inside the cascade would wipe the first half.
-					if (!EnsureSlotTile(i, e.pendingScale)) {
+					if (!resizeAfterComposite && !EnsureSlotTile(i, e.pendingScale)) {
 						// Atlas exhausted even at the quarter class: raster must still run --
 						// EnableLight already registered this light's passes, and an unconsumed
 						// group is freed-but-not-unlinked at frame end. The viewport hook
@@ -4131,9 +4187,8 @@ namespace ShadowCasterManager
 					}
 					// On a bake frame, render the static subset into the cache atlas;
 					// otherwise copy the cache into the tile and composite movers over it.
-					if (StaticAtlasReady() &&
-						!s_splitState[e.Light].splitExcluded && !s_splitState[e.Light].fullThisFrame) {
-						SplitState& st = s_splitState[e.Light];
+					if (useSplit) {
+						SplitState& st = *split;
 						if (st.bakeThisFrame) {
 							ZoneNamedN(zBake, "SCM::Render::StaticBake", true);
 							s_staticPassActive.store(true, std::memory_order_relaxed);
@@ -4207,8 +4262,14 @@ namespace ShadowCasterManager
 							// A movers-only frame (invalid seed) must not swap a staged promotion
 							// in: keep sampling the old complete tile until a seeded composite lands.
 							if (rendered && !compositeKeepPrior && composedContent) {
-								e.renderedScale = e.pendingScale;
+								if (!resizeAfterComposite)
+									e.renderedScale = e.pendingScale;
 								MarkSlotTileRendered(i, compositeValid);
+							}
+							if (resizeAfterComposite) {
+								// Staging a larger tile invalidates the static seed this draw was queued to use.
+								EnsureSlotTile(i, e.pendingScale);
+								e.awaitingTileResult = false;
 							}
 							continue;
 						}
