@@ -61,7 +61,7 @@ Geometry opacity exclusions remain conservative for safe RT traversal.
 
 The companion computes `instances[].projectedSnow` from **original RSGM
 triangles and the placed shape-to-cell transform**, without consulting DX11
-textures, weather, material evaluation, or the removed snow-atlas approach.
+textures, weather, or material evaluation.
 `basis: "world-up-face-projection-v1"` identifies this geometric descriptor:
 
 - `candidate`: whether any opaque, upward-facing triangle contributes area;
@@ -88,18 +88,20 @@ separate, authoritative native input before applying snow in PBR. No DX11
 data is admitted into this coverage path.
 
 At runtime, Native Lighting obtains native snow evidence from Skyrim's
-landscape snow-material IDs (`Snow`, `SnowStairs`) and the active weather snow
-flag, with no DX11 resource access. Terrain probes are cached per TLAS; a
+landscape snow-material IDs (`Snow`, `SnowStairs`), with no DX11 resource access
+and no dependence on weather or precipitation. Terrain probes are cached per TLAS; a
 neighboring 256-unit probe may supply half-strength coverage to tolerate
-small placement/landscape boundary mismatches. Snowfall supplies 55% coverage
-in the absence of snowy ground and updates per frame. The current value is
-packed into unused bits 16–23 of the existing 24-byte NativePBR draw binding;
-no additional GPU allocation or atlas is required. NativePBR blends snow
+small placement/landscape boundary mismatches. A temporary session-only
+`CoverEligibleSnow` control forces full coverage on companion-marked receivers,
+including interiors; the normal terrain-based mode remains available for A/B.
+The current value is packed into unused bits 16–23 of the existing 24-byte
+NativePBR draw binding; the coverage signal is independent of snow atlas
+material texturing. NativePBR blends snow
 albedo, roughness, metalness, Fresnel F0, and coat strength into the native
 ray-hit material. An 0.08 upward-incidence margin tolerates minor face-angle
 discrepancies. This is surface shading, not geometry displacement or a
-persistent accumulation simulation. Interior scenes receive no weather or
-terrain-derived snow.
+persistent accumulation simulation. Interior scenes receive coverage only
+when the explicit eligible-receiver test is enabled.
 
 ## Plugin-scoped interior catalog (Stage B)
 

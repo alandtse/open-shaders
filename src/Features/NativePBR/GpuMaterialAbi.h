@@ -41,11 +41,11 @@ namespace NativePBR
 		const auto coverage = std::isfinite(a_coverage) ? std::clamp(a_coverage, 0.0f, 1.0f) : 0.0f;
 		return (a_flags & ~kGpuSnowCoverageMask) | (uint32_t(coverage * 255.0f + 0.5f) << kGpuSnowCoverageShift);
 	}
-	/** @brief Strong native terrain evidence wins; nearby terrain is accepted with reduced strength. */
-	inline float NativeSnowCoverage(float a_local, bool a_weatherSnowing)
+	/** @brief Cover-eligible mode bypasses terrain locality for marked native receivers. */
+	inline float NativeSnowCoverage(float a_local, bool a_coverEligible)
 	{
-		return std::max(std::isfinite(a_local) ? std::clamp(a_local, 0.0f, 1.0f) : 0.0f,
-			a_weatherSnowing ? 0.55f : 0.0f);
+		return a_coverEligible ? 1.0f :
+			(std::isfinite(a_local) ? std::clamp(a_local, 0.0f, 1.0f) : 0.0f);
 	}
 	/** @brief Controls.y bit 8 switches the packed map from PBR RMAOS to legacy environment/complex channels. */
 	inline constexpr uint32_t kGpuLegacyComplexMask = 1u << 8;

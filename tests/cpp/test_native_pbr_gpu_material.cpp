@@ -72,8 +72,9 @@ TEST_CASE("NativePBR packs dynamic snow coverage without changing draw identity"
 	CHECK(NativeSnowCoverage(1.0f, false) == 1.0f);
 	CHECK(NativeSnowCoverage(0.5f, false) == 0.5f);
 	CHECK(NativeSnowCoverage(0.0f, false) == 0.0f);
-	CHECK(NativeSnowCoverage(0.0f, true) == 0.55f);
+	CHECK(NativeSnowCoverage(0.0f, true) == 1.0f);
 	CHECK(NativeSnowCoverage(1.0f, true) == 1.0f);
+	CHECK(NativeSnowCoverage(std::numeric_limits<float>::quiet_NaN(), true) == 1.0f);
 }
 
 TEST_CASE("NativePBR GPU descriptor ABI keeps linear and sRGB views within 512 slots", "[NativePBR][gpu-material]")
