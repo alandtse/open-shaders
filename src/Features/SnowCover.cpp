@@ -2,6 +2,7 @@
 
 #include "Profiler.h"
 #include "SnowCoverMath.h"
+#include "TruePBR.h"
 #include "TruePBR/BSLightingShaderMaterialPBR.h"
 #include "Utils/D3D.h"
 #include "Utils/DevBenchUx.h"
@@ -26,6 +27,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 namespace
 {
+	constexpr uint32_t LandscapeMaterialSlot = 46;
+	constexpr float LandscapeCellSize = 4096.0f;
 	constexpr float MaxFrameSeconds = 0.1f;
 	constexpr float MinAngleRange = 0.001f;
 	constexpr float MaxHeightOffset = 20000.0f;
@@ -88,6 +91,84 @@ void SnowCover::UpdateFrame()
 	perFrame.wsettings.EnableSnowCover = wsettings.EnableSnowCover && texturesLoaded;
 	UpdateFireMelt();
 	UpdateSurvival();
+}
+
+RE::BSEventNotifyControl SnowCover::ProcessEvent(const RE::TESCellFullyLoadedEvent*, RE::BSTEventSource<RE::TESCellFullyLoadedEvent>*)
+{
+	landscapeGridDirty.store(true, std::memory_order_relaxed);
+	return RE::BSEventNotifyControl::kContinue;
+}
+
+void SnowCover::UpdateLandscapeGrid()
+{
+	auto& grid = perFrame.landscapeGrid;
+	const auto* tes = globals::game::tes;
+	const auto* cells = tes ? tes->gridCells : nullptr;
+	if (!cells || !cells->length || tes->interiorCell || !tes->GetRuntimeData2().worldSpace || !globals::features::truePBR.loaded) {
+		grid = {};
+		return;
+	}
+
+	const uint32_t width = cells->length;
+	const int32_t originX = tes->currentGridX - static_cast<int32_t>(width / 2);
+	const int32_t originY = tes->currentGridY - static_cast<int32_t>(width / 2);
+	if (!landscapeGridDirty.exchange(false, std::memory_order_relaxed) && grid.originX == originX && grid.originY == originY && grid.width == width)
+		return;
+
+	grid = { originX, originY, width, LandscapeMaterialMode::Unavailable };
+	struct LandSample
+	{
+		int32_t x, y;
+		uint32_t pbr;
+	};
+	std::vector<LandSample> samples;
+	std::vector<uint32_t> materials(size_t(width) * width);
+	for (uint32_t y = 0; y < width; ++y) {
+		for (uint32_t x = 0; x < width; ++x) {
+			const RE::NiPoint3 center{ (originX + static_cast<int32_t>(x) + 0.5f) * LandscapeCellSize, (originY + static_cast<int32_t>(y) + 0.5f) * LandscapeCellSize, 0.0f };
+			const auto* cell = tes->GetCell(center);
+			const auto* land = cell && cell->IsAttached() ? cell->GetRuntimeData().cellLand : nullptr;
+			if (land && land->loadedData) {
+				const uint32_t pbr = globals::features::truePBR.IsPBRLand(land);
+				samples.push_back({ static_cast<int32_t>(x), static_cast<int32_t>(y), pbr });
+				materials[y * width + x] = pbr;
+			} else {
+				materials[y * width + x] = UINT32_MAX;
+			}
+		}
+	}
+
+	if (samples.empty())
+		return;
+	if (std::ranges::all_of(samples, [&](const LandSample& sample) { return sample.pbr == samples.front().pbr; })) {
+		grid.mode = samples.front().pbr ? LandscapeMaterialMode::PBR : LandscapeMaterialMode::Legacy;
+		return;
+	}
+
+	for (uint32_t index = 0; index < materials.size(); ++index) {
+		if (materials[index] == UINT32_MAX) {
+			const auto distanceSquared = [&](const LandSample& sample) {
+				const int32_t dx = static_cast<int32_t>(index % width) - sample.x;
+				const int32_t dy = static_cast<int32_t>(index / width) - sample.y;
+				return dx * dx + dy * dy;
+			};
+			materials[index] = std::ranges::min_element(samples, {}, distanceSquared)->pbr;
+		}
+	}
+
+	try {
+		const auto count = static_cast<uint32_t>(materials.size());
+		if (!landscapeMaterials || landscapeMaterialCount != count) {
+			auto buffer = std::make_unique<StructuredBuffer>(StructuredBufferDesc<uint32_t>(count), count, "SnowCover::LandscapeMaterials");
+			buffer->CreateSRV();
+			landscapeMaterials = std::move(buffer);
+			landscapeMaterialCount = count;
+		}
+		landscapeMaterials->Update(materials.data(), materials.size() * sizeof(uint32_t));
+		grid.mode = LandscapeMaterialMode::Mixed;
+	} catch (const std::exception& e) {
+		logger::warn("Snow Cover: failed to upload landscape materials: {}", e.what());
+	}
 }
 
 void SnowCover::SetupResources()
@@ -341,9 +422,16 @@ bool SnowCover::LoadTextures()
 void SnowCover::ReleaseTextures()
 {
 	texturesLoaded = false;
+	landscapeGridDirty.store(true, std::memory_order_relaxed);
+	perFrame.landscapeGrid = {};
 	ID3D11ShaderResourceView* empty[std::tuple_size_v<decltype(views)>]{};
-	if (globals::d3d::context)
+	if (globals::d3d::context) {
 		globals::d3d::context->PSSetShaderResources(FIRST_SRV_SLOT, static_cast<uint32_t>(views.size()), empty);
+		if (landscapeMaterials)
+			globals::d3d::context->PSSetShaderResources(LandscapeMaterialSlot, 1, empty);
+	}
+	landscapeMaterials.reset();
+	landscapeMaterialCount = 0;
 	for (auto& view : views)
 		view = nullptr;
 	snowMap = {};
@@ -446,10 +534,15 @@ void SnowCover::ValidateSettings()
 void SnowCover::Prepass()
 {
 	if (loaded && active.load(std::memory_order_relaxed) && wsettings.EnableSnowCover && texturesLoaded) {
+		UpdateLandscapeGrid();
 		ID3D11ShaderResourceView* srvs[std::tuple_size_v<decltype(views)>]{};
 		for (size_t i = 0; i < views.size(); ++i)
 			srvs[i] = views[i].get();
 		globals::d3d::context->PSSetShaderResources(FIRST_SRV_SLOT, (uint)views.size(), srvs);
+		if (perFrame.landscapeGrid.mode == LandscapeMaterialMode::Mixed) {
+			auto* materials = landscapeMaterials->SRV();
+			globals::d3d::context->PSSetShaderResources(LandscapeMaterialSlot, 1, &materials);
+		}
 	}
 }
 
@@ -704,6 +797,8 @@ bool SnowCover::IsSnowFree(const RE::BSRenderPass* pass, uint32_t flags) const
 
 void SnowCover::DataLoaded()
 {
+	if (auto* events = RE::ScriptEventSourceHolder::GetSingleton())
+		events->AddEventSink<RE::TESCellFullyLoadedEvent>(this);
 	if (survivalGlobal)
 		return;
 	auto* handler = RE::TESDataHandler::GetSingleton();
@@ -789,6 +884,7 @@ json SnowCover::GetDiagnostics()
 		{ "MasterEnabled", settings.Enable != 0 },
 		{ "Enabled", perFrame.wsettings.EnableSnowCover != 0 },
 		{ "CpuSnowBoundsAvailable", snowMap.IsLoaded() },
+		{ "LODLandscapeMaterial", magic_enum::enum_name(perFrame.landscapeGrid.mode) },
 		{ "Month", perFrame.Month },
 		{ "SeasonalAltitude", perFrame.SeasonalAltitude },
 		{ "TimeSnowing", perFrame.TimeSnowing },
