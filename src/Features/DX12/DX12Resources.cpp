@@ -1,7 +1,7 @@
 #include "DX12Resources.h"
 
-#include "DX12Control.h"
 #include "CompanionWorker.h"
+#include "DX12Control.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "RE/T/TESDataHandler.h"
@@ -82,15 +82,14 @@ namespace DX12
 		bool valid = true;
 		for (auto& shape : publication.shapes) {
 			const uint64_t length = uint64_t(shape.positions.size()) * sizeof(float3) +
-				uint64_t(shape.indices.size()) * sizeof(uint32_t);
+			                        uint64_t(shape.indices.size()) * sizeof(uint32_t);
 			if (!shape.identity || !identities.insert(shape.identity).second ||
 				shape.positions.empty() || shape.indices.empty() || shape.indices.size() % 3 ||
 				length > kMaximumTileBytes - bytes ||
 				!std::ranges::all_of(shape.positions, [](const float3& vertex) {
 					return std::isfinite(vertex.x) && std::isfinite(vertex.y) && std::isfinite(vertex.z);
 				}) ||
-				!std::ranges::all_of(shape.transform, [](float component) { return std::isfinite(component); }) ||
-				!std::ranges::all_of(shape.indices, [&](uint32_t index) { return index < shape.positions.size(); })) {
+				!std::ranges::all_of(shape.transform, [](float component) { return std::isfinite(component); }) || !std::ranges::all_of(shape.indices, [&](uint32_t index) { return index < shape.positions.size(); })) {
 				valid = false;
 				continue;
 			}
@@ -100,7 +99,9 @@ namespace DX12
 		tile->bytes = bytes;
 		tile->lights = std::move(publication.lights);
 		tile->state = publication.enumerationComplete && publication.failedShapes == 0 && valid &&
-			publication.eligibleShapes == tile->shapes.size() ? Tile::State::Ready : Tile::State::Incomplete;
+		                      publication.eligibleShapes == tile->shapes.size() ?
+		                  Tile::State::Ready :
+		                  Tile::State::Incomplete;
 		auto next = std::make_shared<Grid>(*current);
 		++next->revision;
 		++next->geometryRevision;
@@ -133,7 +134,8 @@ DX12Resources::~DX12Resources() = default;
 void DX12Resources::DrawSettings()
 {
 	if (ImGui::Checkbox("Enable companion geometry and lights", &settings.Enabled) && !settings.Enabled) {
-		if (companion) companion->Cancel();
+		if (companion)
+			companion->Cancel();
 		inFlight.reset();
 		grid.Clear();
 	}
@@ -143,7 +145,8 @@ void DX12Resources::DrawSettings()
 	constexpr const char* labels[] = { "4096", "6144", "8192", "10240", "12288", "14336", "16384" };
 	if (ImGui::Combo("Subcell size (game units)", &index, labels, int(std::size(labels)))) {
 		settings.SubcellSize = DX12::kSubcellSizes[index];
-		if (companion) companion->Cancel();
+		if (companion)
+			companion->Cancel();
 		inFlight.reset();
 		grid.Clear();
 	}
@@ -155,7 +158,8 @@ void DX12Resources::LoadSettings(json& input)
 	settings.Enabled = input.value("Enabled", true);
 	const uint32_t size = input.value("SubcellSize", DX12::kSubcellSizes.front());
 	settings.SubcellSize = std::ranges::contains(DX12::kSubcellSizes, size) ? size : DX12::kSubcellSizes.front();
-	if (companion) companion->Cancel();
+	if (companion)
+		companion->Cancel();
 	inFlight.reset();
 	grid.Clear();
 }
@@ -168,7 +172,8 @@ void DX12Resources::SaveSettings(json& output)
 void DX12Resources::RestoreDefaultSettings()
 {
 	settings = {};
-	if (companion) companion->Cancel();
+	if (companion)
+		companion->Cancel();
 	inFlight.reset();
 	grid.Clear();
 }
@@ -178,7 +183,8 @@ void DX12Resources::EarlyPrepass()
 	CS_GPU_PASS("DX12Resources::Grid");
 	if (!IsActive()) {
 		if (grid.Snapshot()->requested.front().scope) {
-			if (companion) companion->Cancel();
+			if (companion)
+				companion->Cancel();
 			inFlight.reset();
 			grid.Clear();
 		}
@@ -239,9 +245,9 @@ void DX12Resources::EarlyPrepass()
 
 void DX12Resources::OnSceneTransitionReset(bool opening)
 {
-	if (opening)
-	{
-		if (companion) companion->Cancel();
+	if (opening) {
+		if (companion)
+			companion->Cancel();
 		inFlight.reset();
 		grid.Clear();
 	}
@@ -249,7 +255,8 @@ void DX12Resources::OnSceneTransitionReset(bool opening)
 
 void DX12Resources::OnRuntimeDisabled()
 {
-	if (companion) companion->Cancel();
+	if (companion)
+		companion->Cancel();
 	inFlight.reset();
 	grid.Clear();
 }

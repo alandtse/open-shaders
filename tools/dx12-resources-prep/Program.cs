@@ -40,7 +40,7 @@ try
     });
     return 0;
 }
-catch (Exception) 
+catch (Exception)
 {
     // No persistent diagnostics, logs, or partial publication.
     return 1;
