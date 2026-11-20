@@ -8,11 +8,11 @@
 #include "Features/CSUtility.h"
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
-#include "Features/DX12/DX12NativeComposite.h"
-#include "Features/DX12/DX12NativeScene.h"
 #include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ProceduralSun.h"
+#include "Features/DX12/DX12NativeScene.h"
+#include "Features/DX12/DX12NativeComposite.h"
 #if defined(ENABLE_EFFECTS11)
 #	include "Features/Effects11.h"
 #endif
@@ -390,14 +390,6 @@ const std::vector<Feature*>& Feature::GetRenderPassHookFeatures()
 	// GetFeatureList() above) won't retroactively add/remove hook features until restart.
 	static const std::vector<Feature*> hookFeatures = FilterFeatureList([](Feature* f) { return f->WantsRenderPassHook(); });
 	return hookFeatures;
-}
-
-void Feature::DispatchStaticGeometry(RE::BSGeometry& geometry)
-{
-	static const auto observers = FilterFeatureList([](Feature* feature) { return feature->WantsStaticGeometryHook(); });
-	for (auto* feature : observers)
-		if (feature->loaded)
-			feature->ObserveStaticGeometry(geometry);
 }
 
 void Feature::ApplyDrawHooks()

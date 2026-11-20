@@ -81,7 +81,7 @@ namespace DX12
 		const auto properties = CD3DX12_HEAP_PROPERTIES(heap);
 		const auto description = CD3DX12_RESOURCE_DESC::Buffer(bytes, flags);
 		if (FAILED(device->CreateCommittedResource(&properties, D3D12_HEAP_FLAG_NONE, &description,
-				state, nullptr, IID_PPV_ARGS(resource.put()))))
+			state, nullptr, IID_PPV_ARGS(resource.put()))))
 			return {};
 		return resource;
 	}
@@ -262,7 +262,7 @@ namespace DX12
 			std::unordered_set<uint64_t> seen;
 			uint64_t sourceBytes = 0;
 			bool complete = std::ranges::all_of(grid->resident, [](const auto& tile) {
-				return tile && tile->prepared;
+				return tile && tile->state == Tile::State::Ready;
 			});
 			for (const auto& tile : grid->resident) {
 				if (!tile)
@@ -271,7 +271,7 @@ namespace DX12
 					if (!shape || !seen.insert(shape->identity).second)
 						continue;
 					const uint64_t bytes = uint64_t(shape->positions.size()) * sizeof(float3) +
-					                       uint64_t(shape->indices.size()) * sizeof(uint32_t);
+						uint64_t(shape->indices.size()) * sizeof(uint32_t);
 					if (shapes.size() >= kMaximumShapes || bytes > kMaximumSourceBytes - sourceBytes) {
 						complete = false;
 						continue;

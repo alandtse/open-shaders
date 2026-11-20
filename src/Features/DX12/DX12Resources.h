@@ -30,11 +30,23 @@ namespace DX12
 
 	struct Tile
 	{
+		enum class State : uint8_t { Requested, Preparing, Ready, Incomplete };
 		SubcellKey key;
 		std::vector<std::shared_ptr<const Shape>> shapes;
 		std::vector<PreparedLight> lights;
 		uint64_t bytes = 0;
-		bool prepared = false;
+		State state = State::Requested;
+	};
+
+	/** @brief A companion attests that every eligible shape in this subcell was enumerated. */
+	struct CompanionPublication
+	{
+		SubcellKey key;
+		std::vector<Shape> shapes;
+		std::vector<PreparedLight> lights;
+		uint32_t eligibleShapes = 0;
+		uint32_t failedShapes = 0;
+		bool enumerationComplete = false;
 	};
 
 	/** @brief Immutable view of the nine resident runtime cells. */
@@ -54,12 +66,8 @@ namespace DX12
 		void Advance(uint32_t scope, uint32_t size, double x, double y);
 		/** @brief Returns an unprepared tile request to a single companion producer. */
 		std::optional<SubcellKey> NextRequest();
-		/** @brief Publishes a completed shape batch only if still inside the requested grid. */
-		bool Publish(const SubcellKey& key, std::vector<Shape> shapes);
-		/** @brief Adds a newly discovered rigid shape without invalidating older consumers. */
-		bool Append(const SubcellKey& key, Shape shape);
-		/** @brief Replaces the live grid's light metadata without rebuilding its geometry. */
-		void PublishLights(std::span<const PreparedLight> lights);
+		/** @brief Publishes one fully enumerated companion subcell, otherwise marks it incomplete. */
+		bool Publish(CompanionPublication publication);
 		/** @brief Releases every in-memory tile at scene transition. */
 		void Clear();
 		/** @brief Retains an immutable render-consumer snapshot. */
@@ -69,7 +77,6 @@ namespace DX12
 		std::mutex mutex;
 		std::atomic<std::shared_ptr<const Grid>> snapshot{ std::make_shared<const Grid>() };
 		std::optional<SubcellKey> pending;
-		std::unordered_map<uint64_t, SubcellKey> observed;
 	};
 }
 
@@ -92,25 +99,19 @@ struct DX12Resources final : Feature
 	void SaveSettings(json& output) override;
 	void RestoreDefaultSettings() override;
 	void EarlyPrepass() override;
-	bool WantsStaticGeometryHook() const override { return true; }
-	void ObserveStaticGeometry(RE::BSGeometry& geometry) override;
 	void OnSceneTransitionReset(bool opening) override;
 	void OnRuntimeDisabled() override;
 	/** @brief Returns current geometry residency without traversing engine objects. */
 	std::shared_ptr<const DX12::Grid> GetGrid() const { return grid.Snapshot(); }
 	/** @brief Claims the next geometry request, if one is needed. */
 	std::optional<DX12::SubcellKey> NextRequest() { return grid.NextRequest(); }
-	/** @brief Accepts a companion-produced, shape-only subcell. */
-	bool Publish(const DX12::SubcellKey& key, std::vector<DX12::Shape> shapes) { return grid.Publish(key, std::move(shapes)); }
+	/** @brief Accepts an authoritative in-memory geometry and light publication from the companion. */
+	bool Publish(DX12::CompanionPublication publication) { return grid.Publish(std::move(publication)); }
 	bool IsActive() const;
 	/** @brief Returns the most recent prepared-light publication. */
 	std::vector<DX12::PreparedLight> GetPreparedLights() const;
 
 private:
-	void RefreshPreparedLights(uint32_t frame);
 	DX12::ResourceGrid grid;
 	Settings settings;
-	uint32_t copyFrame = 0, copiedFrameBytes = 0;
-	uint32_t lightScanFrame = 0;
-	std::array<DX12::SubcellKey, DX12::kGridCapacity> lastLightGrid{};
 };

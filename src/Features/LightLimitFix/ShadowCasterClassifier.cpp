@@ -355,8 +355,6 @@ namespace ShadowCasterManager
 		if (geom.GetGeometryRuntimeData().skinInstance)
 			return true;
 		const bool dynamic = ClassifyCaster(geom).dynamic;
-		if (!dynamic)
-			Feature::DispatchStaticGeometry(geom);
 		return dynamic;
 	}
 

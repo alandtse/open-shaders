@@ -29,11 +29,14 @@ struct DX12NativeScene final : Feature
 	bool IsActive() const;
 	std::shared_ptr<const DX12::AccelerationSceneReady> GetScene() const { return scene.Ready(); }
 	std::shared_ptr<const DX12::ResolvedLights> GetLights() const { return lights.load(std::memory_order_acquire); }
+	/** @brief Prepared-reference identities with verified per-light static coverage in the published TLAS. */
+	std::shared_ptr<const std::vector<uint32_t>> GetCoveredLightIDs() const { return coveredLightIDs.load(std::memory_order_acquire); }
 
 private:
 	void UpdateLights();
 	void PublishCoverage(const DX12::Grid& grid);
 	DX12::AccelerationScene scene;
 	std::atomic<std::shared_ptr<const DX12::ResolvedLights>> lights;
+	std::atomic<std::shared_ptr<const std::vector<uint32_t>>> coveredLightIDs;
 	Settings settings;
 };
