@@ -771,10 +771,12 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			slot->rayMaterials ? 1u : 0u, { a_settings.ForcePositiveValidity ? 1u : 0u,
 				slot->rayMaterials && slot->rayMaterials->forcedAdmission ? 1u : 0u },
 			(globals::features::nativePBR.nativeParallax.load(std::memory_order_relaxed) ? NativePBR::kRayMaterialOptionParallax : 0u) |
-			(globals::features::nativePBR.nativeComplexMaterials.load(std::memory_order_relaxed) ? NativePBR::kRayMaterialOptionComplex : 0u),
+			(globals::features::nativePBR.nativeComplexMaterials.load(std::memory_order_relaxed) ? NativePBR::kRayMaterialOptionComplex : 0u) |
+			(snowSettings.followParallaxUV ? NativePBR::kRayMaterialOptionSnowParallaxUV : 0u),
 			{ snowSettings.noiseAmount, snowRayCells, snowSettings.sparkleAmount, snowSettings.sparkleDensity },
 			{ snowSettings.roughness,
-				snowSettings.ultravioletAffected ? snowSettings.ultravioletIntensity : 0.0f, 0.0f, 0.0f } };
+				snowSettings.ultravioletAffected ? snowSettings.ultravioletIntensity : 0.0f,
+				snowSettings.coarseness, snowSettings.smoothnessCoarseness } };
 		slot->nativePointLightCount = selectedCount;
 		slot->nativeMinimumDistance = constants.minimum;
 		slot->nativeLightTuning = constants.lightTuning;

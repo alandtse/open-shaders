@@ -99,14 +99,21 @@ NativePBR draw binding. NativePBR applies **textureless, ray-hit procedural snow
 directly in its PBR evaluation. Noise samples each hit's native material UV,
 seeded by draw identity and triangle, rather than world coordinates. Its patch
 frequency depends on the scheduled native ray budget (resolution and trace
-density), divided by the configurable rays per patch. A smooth four-corner
-hash varies neutral-white snow albedo and roughness. Crystal inclusion uses
-the native ray pixel and hit identity, so highlights can occur across all
-covered faces even with degenerate or repeated UVs. The crystal response is
+density), divided by the configurable rays per patch. Snow coarseness scales
+the grain frequency, while a second slider blends that setting toward the
+underlying material roughness (smooth surfaces yield finer snow). A smooth
+four-corner hash varies neutral-white snow albedo and roughness. Crystal
+inclusion is hashed from material-space UV cells and hit identity instead of
+screen pixels, so the pattern remains attached to geometry while the view
+moves. An optional setting follows the post-parallax native material UV;
+otherwise snow retains the flat hit UV. Post-parallax mapping changes snow
+only when native PBR parallax is enabled and a material supplies height.
+The crystal response is
 submitted into the native specular lobe only under unoccluded direct light;
 shadowed snow does not emit light. Only actual native hits evaluate the effect; no
 per-frame hit-count readback or GPU atomics are required. NativePBR owns snow
-enable, noise amount/rays-per-patch, sparkle amount/density, roughness, and
+enable, noise amount/rays-per-patch, both coarseness controls, snow parallax UV,
+sparkle amount/density, roughness, and
 the temporary coverage override. Tuning reaches SM6.5 via the existing
 direct-lighting constant buffer, with no atlas, snow texture residency,
 DX11 snow inputs, or per-scene generation. An optional NativePBR

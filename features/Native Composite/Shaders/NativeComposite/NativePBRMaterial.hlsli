@@ -13,6 +13,7 @@ namespace NativePBR
 	static const uint LegacyComplexMaskFlag = 1u << 8u;
 	static const uint MaterialOptionParallax = 1u << 0u;
 	static const uint MaterialOptionComplex = 1u << 1u;
+	static const uint MaterialOptionSnowParallaxUV = 1u << 2u;
 
 	struct MaterialRecord
 	{
@@ -36,7 +37,7 @@ namespace NativePBR
 	struct SurfaceInput
 	{
 		float2 uv;
-		float2 snowUV; // Retains pre-parallax hit coordinates so snow does not swim with the view.
+		float2 snowUV;
 		float2 uvDx;
 		float2 uvDy;
 		float3 tangent;
@@ -46,7 +47,6 @@ namespace NativePBR
 		float facing;
 		float projectedSnowIncidence;
 		uint snowHitSeed;
-		uint2 snowRayPixel;
 	};
 
 	struct SurfaceMaterial
@@ -92,7 +92,7 @@ namespace NativePBR
 	SurfaceMaterial EvaluateOpaque(MaterialRecord material, SurfaceInput surface, float4 baseTexel,
 		float4 normalTexel, float4 packedTexel, float4 emissionTexel, float4 coatTexel,
 		bool complexMaskDetected, uint drawFlags, float4 snowTuning, float snowRoughness,
-		float snowUltravioletEmission)
+		float snowUltravioletEmission, float snowCoarseness, float snowSmoothnessCoarseness)
 	{
 		SurfaceMaterial result;
 		result.baseColor = baseTexel.rgb;
@@ -128,9 +128,12 @@ namespace NativePBR
 		result.snowSparkle = 0.0f;
 		if (result.snowCoverage > 0.0f) {
 			float variation, crystal;
-			SnowDetail(surface.snowUV, surface.snowHitSeed, surface.snowRayPixel, snowTuning, variation, crystal);
+			const float coarseness = lerp(saturate(snowCoarseness), saturate(result.roughness),
+				saturate(snowSmoothnessCoarseness));
+			SnowDetail(surface.snowUV, surface.snowHitSeed, snowTuning, coarseness, variation, crystal);
 			float3 snowColor = saturate(0.98f.xxx + variation * 0.06f);
-			float granularRoughness = clamp(snowRoughness + variation * 0.12f,
+			float granularRoughness = clamp(snowRoughness + (coarseness - 0.5f) * 0.12f +
+				variation * lerp(0.06f, 0.18f, coarseness),
 				PBR::Constants::MinRoughness, PBR::Constants::MaxRoughness);
 			granularRoughness = lerp(granularRoughness, 0.14f, crystal);
 			result.snowSparkle = crystal * result.snowCoverage;

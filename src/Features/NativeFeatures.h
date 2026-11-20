@@ -89,21 +89,22 @@ struct NativePBRFeature final : Feature
 	std::atomic<bool> forceRayAdmission{ false };
 	struct SnowSettings
 	{
-		bool enabled = true, coverEligible = false, ultravioletAffected = false;
-		float noiseAmount = 0.55f, noiseRaysPerPatch = 64.0f;
+		bool enabled = true, coverEligible = false, ultravioletAffected = false, followParallaxUV = false;
+		float noiseAmount = 0.55f, coarseness = 0.5f, smoothnessCoarseness = 0.5f, noiseRaysPerPatch = 64.0f;
 		float sparkleAmount = 0.6f, sparkleDensity = 0.08f, roughness = 0.83f;
 		float ultravioletIntensity = 0.012f;
 	};
-	std::atomic<bool> snowEnabled{ true }, snowCoverEligible{ false }, snowUltravioletAffected{ false };
-	std::atomic<float> snowNoiseAmount{ 0.55f }, snowNoiseRaysPerPatch{ 64.0f };
+	std::atomic<bool> snowEnabled{ true }, snowCoverEligible{ false }, snowUltravioletAffected{ false }, snowFollowParallaxUV{ false };
+	std::atomic<float> snowNoiseAmount{ 0.55f }, snowCoarseness{ 0.5f }, snowSmoothnessCoarseness{ 0.5f }, snowNoiseRaysPerPatch{ 64.0f };
 	std::atomic<float> snowSparkleAmount{ 0.6f }, snowSparkleDensity{ 0.08f }, snowRoughness{ 0.83f };
 	std::atomic<float> snowUltravioletIntensity{ 0.012f };
 	/** @brief Provides the current native-only ray-hit snow controls. */
 	SnowSettings GetSnowSettings() const
 	{
 		return { snowEnabled.load(std::memory_order_relaxed), snowCoverEligible.load(std::memory_order_relaxed),
-			snowUltravioletAffected.load(std::memory_order_relaxed),
-			snowNoiseAmount.load(std::memory_order_relaxed), snowNoiseRaysPerPatch.load(std::memory_order_relaxed),
+			snowUltravioletAffected.load(std::memory_order_relaxed), snowFollowParallaxUV.load(std::memory_order_relaxed),
+			snowNoiseAmount.load(std::memory_order_relaxed), snowCoarseness.load(std::memory_order_relaxed),
+			snowSmoothnessCoarseness.load(std::memory_order_relaxed), snowNoiseRaysPerPatch.load(std::memory_order_relaxed),
 			snowSparkleAmount.load(std::memory_order_relaxed), snowSparkleDensity.load(std::memory_order_relaxed),
 			snowRoughness.load(std::memory_order_relaxed), snowUltravioletIntensity.load(std::memory_order_relaxed) };
 	}
@@ -148,8 +149,9 @@ struct NativePBRFeature final : Feature
 		forceRayAdmission = false; readinessStage = 3;
 		const SnowSettings defaults{};
 		snowEnabled = defaults.enabled; snowCoverEligible = defaults.coverEligible;
-		snowUltravioletAffected = defaults.ultravioletAffected;
-		snowNoiseAmount = defaults.noiseAmount; snowNoiseRaysPerPatch = defaults.noiseRaysPerPatch;
+		snowUltravioletAffected = defaults.ultravioletAffected; snowFollowParallaxUV = defaults.followParallaxUV;
+		snowNoiseAmount = defaults.noiseAmount; snowCoarseness = defaults.coarseness;
+		snowSmoothnessCoarseness = defaults.smoothnessCoarseness; snowNoiseRaysPerPatch = defaults.noiseRaysPerPatch;
 		snowSparkleAmount = defaults.sparkleAmount; snowSparkleDensity = defaults.sparkleDensity;
 		snowRoughness = defaults.roughness;
 		snowUltravioletIntensity = defaults.ultravioletIntensity;

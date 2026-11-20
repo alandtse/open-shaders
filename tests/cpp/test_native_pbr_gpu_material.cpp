@@ -92,6 +92,14 @@ TEST_CASE("Native snow detail frequency follows scheduled native rays", "[Native
 		std::numeric_limits<float>::quiet_NaN()) == full);
 }
 
+TEST_CASE("Native snow parallax UV uses an independent ray material option", "[NativePBR][snow]")
+{
+	using namespace NativePBR;
+	CHECK((kRayMaterialOptionSnowParallaxUV & kRayMaterialOptionParallax) == 0u);
+	CHECK((kRayMaterialOptionSnowParallaxUV & kRayMaterialOptionComplex) == 0u);
+	CHECK((kRayMaterialOptionSnowParallaxUV | kRayMaterialOptionParallax | kRayMaterialOptionComplex) == 7u);
+}
+
 TEST_CASE("NativePBR GPU descriptor ABI keeps linear and sRGB views within 512 slots", "[NativePBR][gpu-material]")
 {
 	using namespace NativePBR;

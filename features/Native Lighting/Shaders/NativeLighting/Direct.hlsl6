@@ -61,7 +61,8 @@ cbuffer Trace : register(b0)
 	float4 SnowTuning; // noise amount, native ray-cell frequency, sparkle amount, crystal density
 	float SnowRoughness;
 	float SnowUltravioletEmission;
-	float2 SnowPadding;
+	float SnowCoarseness;
+	float SnowSmoothnessCoarseness;
 };
 
 #include "Common/ReverseZ.hlsli"
@@ -239,7 +240,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	float3 nativeClearcoat = 0.0f;
 	if (NativePBRReady != 0u && NativePBRInstances[instance].materialIndex != 0xffffffffu)
 		Count(29);
-	const bool nativeMaterialValid = LoadNativePBRMaterial(pixel, instance, primitive, query.CommittedTriangleBarycentrics(),
+	const bool nativeMaterialValid = LoadNativePBRMaterial(instance, primitive, query.CommittedTriangleBarycentrics(),
 		query.CommittedObjectToWorld3x4(), query.CommittedWorldToObject3x4(), footprint, -direction, material, nativePbrUsedFallback, nativeClearcoat);
 	if (nativeMaterialValid)
 		Count(28);

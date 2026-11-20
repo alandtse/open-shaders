@@ -51,6 +51,7 @@ namespace NativePBR
 	inline constexpr uint32_t kGpuLegacyComplexMask = 1u << 8;
 	inline constexpr uint32_t kRayMaterialOptionParallax = 1u << 0;
 	inline constexpr uint32_t kRayMaterialOptionComplex = 1u << 1;
+	inline constexpr uint32_t kRayMaterialOptionSnowParallaxUV = 1u << 2;
 	inline constexpr uint32_t RayRequiredTextureRoles(uint32_t a_requested, bool a_parallaxEnabled)
 	{
 		return a_parallaxEnabled ? a_requested : a_requested & ~(1u << static_cast<uint32_t>(TextureRole::Displacement));

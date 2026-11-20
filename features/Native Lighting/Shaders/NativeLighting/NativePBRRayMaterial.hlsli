@@ -119,7 +119,7 @@ bool NativePBRParallaxUV(NativePBR::MaterialRecord material, TriangleSurface hit
 	return all(isfinite(uv));
 }
 
-bool LoadNativePBRMaterial(uint2 rayPixel, uint instance, uint primitive, float2 barycentric,
+bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	float3x4 objectToWorld, float3x4 worldToObject, float footprint, float3 viewDirectionWS, out EvaluatedSourceMaterial evaluated,
 	out bool usedFallback, out float3 clearcoat)
 {
@@ -138,7 +138,7 @@ bool LoadNativePBRMaterial(uint2 rayPixel, uint instance, uint primitive, float2
 	if (!LoadTriangle(instance, primitive, barycentric, hitSurface))
 		return false;
 	float2 uv = hitSurface.uv * material.uv[0].zw + material.uv[0].xy;
-	const float2 snowUV = uv;
+	const float2 flatSnowUV = uv;
 	float lod = NativePBRLod(material, hitSurface, objectToWorld, footprint);
 	if (!all(isfinite(uv)) || !isfinite(lod))
 		return false;
@@ -201,7 +201,7 @@ bool LoadNativePBRMaterial(uint2 rayPixel, uint instance, uint primitive, float2
 	}
 	NativePBR::SurfaceInput surface;
 	surface.uv = uv;
-	surface.snowUV = snowUV;
+	surface.snowUV = (NativePBRMaterialOptions & NativePBR::MaterialOptionSnowParallaxUV) != 0u ? uv : flatSnowUV;
 	surface.uvDx = 0.0f;
 	surface.uvDy = 0.0f;
 	surface.geometricNormal = normalize(mul(hitSurface.normal, (float3x3)worldToObject));
@@ -210,7 +210,6 @@ bool LoadNativePBRMaterial(uint2 rayPixel, uint instance, uint primitive, float2
 	surface.vertexColor = hitSurface.color.rgb;
 	surface.facing = 1.0f;
 	surface.snowHitSeed = NativePBR::SnowHash(binding.identity ^ uint2(instance, primitive));
-	surface.snowRayPixel = rayPixel;
 	surface.projectedSnowIncidence = 0.0f;
 	if ((binding.flags & NativePBR::DrawProjectedSnowCandidateFlag) != 0u) {
 		float3 edge0 = mul((float3x3)objectToWorld, hitSurface.position1 - hitSurface.position0);
@@ -224,7 +223,8 @@ bool LoadNativePBRMaterial(uint2 rayPixel, uint instance, uint primitive, float2
 		!all(isfinite(surface.tangent)) || !all(isfinite(surface.bitangent)))
 		return false;
 	NativePBR::SurfaceMaterial result = NativePBR::EvaluateOpaque(material, surface, base, normal, packed, emission,
-		coat, complexMaskDetected, binding.flags, SnowTuning, SnowRoughness, SnowUltravioletEmission);
+		coat, complexMaskDetected, binding.flags, SnowTuning, SnowRoughness, SnowUltravioletEmission,
+		SnowCoarseness, SnowSmoothnessCoarseness);
 	evaluated.baseColor = result.baseColor;
 	evaluated.normal = result.normal;
 	evaluated.f0 = result.f0;
