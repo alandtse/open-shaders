@@ -2732,8 +2732,9 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 	const auto context = NR::Context::Resolve(contexts, DialogueOpen(), contextState);
 	const auto combat = ResolveCombatPause(enabled && tuning.pauseInCombat);
 	auto& diagnostic = diagnostics.BeginHook(globals::state->frameCount, target);
+	const bool retryPending = retryRequested.load();
 	const auto action = NR::DecideFrame({ enabled, context.suspended || combat.IsPaused(), globals::state->worldRenderedThisFrame, impl->failed,
-		retryRequested.load(), impl->ready, impl->lastFrame, globals::state->frameCount, swapRuntime.load(std::memory_order_relaxed) });
+		retryPending, impl->ready, impl->lastFrame, globals::state->frameCount, swapRuntime.load(std::memory_order_relaxed) });
 	if (context.resetHistory)
 		resetHistory = true;
 	if (action == NR::FrameAction::ReleasePassResources) {
@@ -2811,7 +2812,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		materialEdgeSoftness.store(materialStrengths.edgeSoftness, std::memory_order_relaxed);
 	};
 	try {
-		const bool retry = retryRequested.exchange(false);
+		// A retry raised after the decision stays pending for the next frame instead of being consumed by a skip.
+		const bool retry = retryPending && retryRequested.exchange(false);
 		if (action == NR::FrameAction::RebuildThenRun) {
 			// Retire both APIs before releasing a failed runtime and its shared resources.
 			impl->interop.Drain();
