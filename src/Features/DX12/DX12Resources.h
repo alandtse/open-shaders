@@ -62,8 +62,10 @@ namespace DX12
 		uint64_t revision = 0;
 		uint64_t geometryRevision = 0, lightRevision = 0;
 		uint32_t size = kSubcellSizes.front();
-		std::array<SubcellKey, kGridCapacity> requested{};
+		std::array<SubcellKey, kGridCapacity> requested{};  // Active 3x3, consumed by DX12 Native Scene.
 		std::array<std::shared_ptr<const Tile>, kGridCapacity> resident{};
+		std::array<SubcellKey, kPredictiveCapacity> predictive{};  // Companion-only outer 5x5 ring.
+		std::array<std::shared_ptr<const Tile>, kPredictiveCapacity> predictiveResident{};
 	};
 
 	class ResourceGrid
@@ -77,6 +79,8 @@ namespace DX12
 		bool Publish(CompanionPublication publication);
 		/** @brief Releases every in-memory tile at scene transition. */
 		void Clear();
+		/** @brief Cancel a superseded predictive request and allow active work to preempt it. */
+		void CancelPending();
 		/** @brief Retains an immutable render-consumer snapshot. */
 		std::shared_ptr<const Grid> Snapshot() const { return snapshot.load(std::memory_order_acquire); }
 
@@ -84,6 +88,8 @@ namespace DX12
 		std::mutex mutex;
 		std::atomic<std::shared_ptr<const Grid>> snapshot{ std::make_shared<const Grid>() };
 		std::optional<SubcellKey> pending;
+		double previousX = 0, previousY = 0, movementX = 0, movementY = 0;
+		uint32_t previousScope = 0, previousSize = 0;
 	};
 }
 

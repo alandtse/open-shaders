@@ -12,6 +12,7 @@ namespace DX12
 	inline constexpr std::array<uint32_t, 7> kSubcellSizes{ 4096, 6144, 8192, 10240, 12288, 14336, 16384 };
 	inline constexpr int kGridRadius = 1;
 	inline constexpr size_t kGridCapacity = (2 * kGridRadius + 1) * (2 * kGridRadius + 1);
+	inline constexpr size_t kPredictiveCapacity = 16;  // 5x5 outer ring: twelve sides, four corners.
 
 	/** @brief Identifies one runtime subcell, independent of any on-disk cache. */
 	struct SubcellKey
@@ -37,10 +38,10 @@ namespace DX12
 	inline std::optional<std::array<SubcellKey, kGridCapacity>> Neighborhood(uint32_t scope, uint32_t size, double x, double y)
 	{
 		const auto centerX = Coordinate(x, size), centerY = Coordinate(y, size);
-		if (!scope || !centerX || !centerY || *centerX <= std::numeric_limits<int64_t>::min() + kGridRadius ||
-			*centerX >= std::numeric_limits<int64_t>::max() - kGridRadius ||
-			*centerY <= std::numeric_limits<int64_t>::min() + kGridRadius ||
-			*centerY >= std::numeric_limits<int64_t>::max() - kGridRadius)
+		if (!scope || !centerX || !centerY || *centerX <= std::numeric_limits<int64_t>::min() + 2 ||
+			*centerX >= std::numeric_limits<int64_t>::max() - 2 ||
+			*centerY <= std::numeric_limits<int64_t>::min() + 2 ||
+			*centerY >= std::numeric_limits<int64_t>::max() - 2)
 			return std::nullopt;
 		std::array<SubcellKey, kGridCapacity> tiles{};
 		size_t index = 0;
@@ -49,6 +50,26 @@ namespace DX12
 				for (int dx = -radius; dx <= radius; ++dx)
 					if (std::max(std::abs(dx), std::abs(dy)) == radius)
 						tiles[index++] = { scope, *centerX + dx, *centerY + dy };
+		return tiles;
+	}
+
+	/** @brief Companion-only 5x5 outer ring. First twelve are sides, final four are corners. */
+	inline std::optional<std::array<SubcellKey, kPredictiveCapacity>> PredictiveNeighborhood(
+		uint32_t scope, uint32_t size, double x, double y)
+	{
+		const auto center = Neighborhood(scope, size, x, y);
+		if (!center)
+			return std::nullopt;
+		const auto origin = center->front();
+		std::array<SubcellKey, kPredictiveCapacity> tiles{};
+		size_t side = 0, corner = 12;
+		for (int64_t dy = -2; dy <= 2; ++dy)
+			for (int64_t dx = -2; dx <= 2; ++dx) {
+				if (std::max(std::abs(dx), std::abs(dy)) != 2)
+					continue;
+				const bool outerCorner = std::abs(dx) == 2 && std::abs(dy) == 2;
+				tiles[outerCorner ? corner++ : side++] = { scope, origin.x + dx, origin.y + dy };
+			}
 		return tiles;
 	}
 }

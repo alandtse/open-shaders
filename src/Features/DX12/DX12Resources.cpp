@@ -14,12 +14,29 @@
 
 namespace DX12
 {
+
 	void ResourceGrid::Advance(uint32_t scope, uint32_t size, double x, double y)
 	{
 		const auto desired = Neighborhood(scope, size, x, y);
-		if (!desired)
+		const auto predictive = PredictiveNeighborhood(scope, size, x, y);
+		if (!desired || !predictive)
 			return;
 		std::scoped_lock lock(mutex);
+		if (previousScope == scope && previousSize == size) {
+			const double vx = x - previousX, vy = y - previousY;
+			const double displacement = vx * vx + vy * vy;
+			// Preserve the last non-jitter direction while stationary; disregard teleports.
+			if (std::isfinite(displacement) && displacement > 1.0 && displacement < double(size) * size) {
+				movementX = vx;
+				movementY = vy;
+			}
+		} else {
+			movementX = movementY = 0;
+		}
+		previousX = x;
+		previousY = y;
+		previousScope = scope;
+		previousSize = size;
 		const auto current = snapshot.load(std::memory_order_acquire);
 		if (current->requested == *desired && current->size == size)
 			return;
@@ -29,14 +46,24 @@ namespace DX12
 		next->lightRevision = current->lightRevision + 1;
 		next->size = size;
 		next->requested = *desired;
-		if (current->size == size)
-			for (size_t i = 0; i < kGridCapacity; ++i)
+		next->predictive = *predictive;
+		if (current->size == size) {
+			const auto lookup = [&](SubcellKey key) -> std::shared_ptr<const Tile> {
 				for (const auto& old : current->resident)
-					if (old && old->key == next->requested[i]) {
-						next->resident[i] = old;
-						break;
-					}
-		if (pending && std::ranges::find(next->requested, *pending) == next->requested.end())
+					if (old && old->key == key)
+						return old;
+				for (const auto& old : current->predictiveResident)
+					if (old && old->key == key)
+						return old;
+				return {};
+			};
+			for (size_t i = 0; i < kGridCapacity; ++i)
+				next->resident[i] = lookup(next->requested[i]);
+			for (size_t i = 0; i < kPredictiveCapacity; ++i)
+				next->predictiveResident[i] = lookup(next->predictive[i]);
+		}
+		if (pending && std::ranges::find(next->requested, *pending) == next->requested.end() &&
+			std::ranges::find(next->predictive, *pending) == next->predictive.end())
 			pending.reset();
 		snapshot.store(std::move(next), std::memory_order_release);
 	}
@@ -47,19 +74,64 @@ namespace DX12
 		if (pending)
 			return std::nullopt;
 		const auto current = snapshot.load(std::memory_order_acquire);
-		for (size_t i = 0; i < kGridCapacity; ++i) {
-			const auto& key = current->requested[i];
-			if (!key.scope || (current->resident[i] && current->resident[i]->state != Tile::State::Requested))
-				continue;
-			auto tile = current->resident[i] ? std::make_shared<Tile>(*current->resident[i]) : std::make_shared<Tile>();
+		const auto center = current->requested.front();
+		if (!center.scope)
+			return std::nullopt;
+
+		const auto start = [&](SubcellKey key, bool speculative, size_t index) -> std::optional<SubcellKey> {
+			const auto& existing = speculative ? current->predictiveResident[index] : current->resident[index];
+			if (!key.scope || (existing && existing->state != Tile::State::Requested))
+				return std::nullopt;
+			auto tile = existing ? std::make_shared<Tile>(*existing) : std::make_shared<Tile>();
 			tile->key = key;
 			tile->state = Tile::State::Preparing;
 			auto next = std::make_shared<Grid>(*current);
 			++next->revision;
-			next->resident[i] = std::move(tile);
+			if (speculative)
+				next->predictiveResident[index] = std::move(tile);
+			else
+				next->resident[index] = std::move(tile);
 			snapshot.store(std::move(next), std::memory_order_release);
 			pending = key;
 			return pending;
+		};
+		const auto sorted = [&](auto keys, size_t begin, size_t end) {
+			std::stable_sort(keys.begin() + begin, keys.begin() + end, [&](size_t a, size_t b) {
+				const auto& left = current->requested[a];
+				const auto& right = current->requested[b];
+				return (left.x - center.x) * movementX + (left.y - center.y) * movementY >
+				       (right.x - center.x) * movementX + (right.y - center.y) * movementY;
+			});
+			return keys;
+		};
+		std::array<size_t, kGridCapacity> activeOrder{};
+		for (size_t i = 0; i < activeOrder.size(); ++i)
+			activeOrder[i] = i;
+		activeOrder = sorted(activeOrder, 1, activeOrder.size());
+		for (size_t i : activeOrder) {
+			const auto& key = current->requested[i];
+			if (const auto request = start(key, false, i))
+				return request;
+		}
+		std::array<size_t, kPredictiveCapacity> order{};
+		for (size_t i = 0; i < order.size(); ++i)
+			order[i] = i;
+		std::stable_sort(order.begin(), order.begin() + 12, [&](size_t a, size_t b) {
+			const auto& left = current->predictive[a];
+			const auto& right = current->predictive[b];
+			return (left.x - center.x) * movementX + (left.y - center.y) * movementY >
+			       (right.x - center.x) * movementX + (right.y - center.y) * movementY;
+		});
+		std::stable_sort(order.begin() + 12, order.end(), [&](size_t a, size_t b) {
+			const auto& left = current->predictive[a];
+			const auto& right = current->predictive[b];
+			return (left.x - center.x) * movementX + (left.y - center.y) * movementY >
+			       (right.x - center.x) * movementX + (right.y - center.y) * movementY;
+		});
+		for (size_t i : order) {
+			const auto& key = current->predictive[i];
+			if (const auto request = start(key, true, i))
+				return request;
 		}
 		return std::nullopt;
 	}
@@ -71,8 +143,9 @@ namespace DX12
 			return false;
 		pending.reset();
 		const auto current = snapshot.load(std::memory_order_acquire);
-		const auto found = std::ranges::find(current->requested, publication.key);
-		if (found == current->requested.end())
+		const auto active = std::ranges::find(current->requested, publication.key);
+		const auto predictive = std::ranges::find(current->predictive, publication.key);
+		if (active == current->requested.end() && predictive == current->predictive.end())
 			return false;
 		constexpr uint64_t kMaximumTileBytes = 64ull * 1024 * 1024;
 		uint64_t bytes = 0;
@@ -89,7 +162,8 @@ namespace DX12
 				!std::ranges::all_of(shape.positions, [](const float3& vertex) {
 					return std::isfinite(vertex.x) && std::isfinite(vertex.y) && std::isfinite(vertex.z);
 				}) ||
-				!std::ranges::all_of(shape.transform, [](float component) { return std::isfinite(component); }) || !std::ranges::all_of(shape.indices, [&](uint32_t index) { return index < shape.positions.size(); })) {
+				!std::ranges::all_of(shape.transform, [](float component) { return std::isfinite(component); }) ||
+				!std::ranges::all_of(shape.indices, [&](uint32_t index) { return index < shape.positions.size(); })) {
 				valid = false;
 				continue;
 			}
@@ -104,17 +178,25 @@ namespace DX12
 		                  Tile::State::Incomplete;
 		auto next = std::make_shared<Grid>(*current);
 		++next->revision;
-		++next->geometryRevision;
-		++next->lightRevision;
-		next->resident[std::distance(current->requested.begin(), found)] = std::move(tile);
+		if (active != current->requested.end()) {
+			++next->geometryRevision;
+			++next->lightRevision;
+			next->resident[std::distance(current->requested.begin(), active)] = std::move(tile);
+		} else {
+			// Predictive preparation must never force BLAS/TLAS work or change active light revisions.
+			next->predictiveResident[std::distance(current->predictive.begin(), predictive)] = std::move(tile);
+		}
 		snapshot.store(std::move(next), std::memory_order_release);
 		return true;
 	}
+
 
 	void ResourceGrid::Clear()
 	{
 		std::scoped_lock lock(mutex);
 		pending.reset();
+		previousScope = previousSize = 0;
+		movementX = movementY = 0;
 		const auto current = snapshot.load(std::memory_order_acquire);
 		auto next = std::make_shared<Grid>();
 		next->revision = current->revision + 1;
@@ -122,6 +204,32 @@ namespace DX12
 		next->lightRevision = current->lightRevision + 1;
 		snapshot.store(std::move(next), std::memory_order_release);
 	}
+
+	void ResourceGrid::CancelPending()
+	{
+		std::scoped_lock lock(mutex);
+		if (!pending)
+			return;
+		const auto current = snapshot.load(std::memory_order_acquire);
+		auto next = std::make_shared<Grid>(*current);
+		const auto reset = [&](auto& keys, auto& resident) {
+			const auto found = std::ranges::find(keys, *pending);
+			if (found == keys.end())
+				return;
+			const auto i = size_t(std::distance(keys.begin(), found));
+			if (resident[i] && resident[i]->state == Tile::State::Preparing) {
+				auto tile = std::make_shared<Tile>(*resident[i]);
+				tile->state = Tile::State::Requested;
+				resident[i] = std::move(tile);
+			}
+		};
+		reset(next->requested, next->resident);
+		reset(next->predictive, next->predictiveResident);
+		++next->revision;
+		pending.reset();
+		snapshot.store(std::move(next), std::memory_order_release);
+	}
+
 }
 
 bool DX12Resources::IsActive() const
@@ -150,7 +258,7 @@ void DX12Resources::DrawSettings()
 		inFlight.reset();
 		grid.Clear();
 	}
-	ImGui::TextDisabled("Nine memory-only subcells; temporary extraction files are removed after each request.");
+	ImGui::TextDisabled("5x5 companion: active 3x3, then 12 predictive sides and 4 corners; no persistent cache.");
 }
 
 void DX12Resources::LoadSettings(json& input)
@@ -200,9 +308,20 @@ void DX12Resources::EarlyPrepass()
 	grid.Advance(scope, settings.SubcellSize, position.x, position.y);
 	if (!companion)
 		companion = std::make_unique<DX12::CompanionWorker>();
-	if (inFlight && !std::ranges::contains(grid.Snapshot()->requested, *inFlight)) {
-		companion->Cancel();
-		inFlight.reset();
+	const auto neighborhood = grid.Snapshot();
+	if (inFlight) {
+		const bool stillWanted = std::ranges::contains(neighborhood->requested, *inFlight) ||
+		                         std::ranges::contains(neighborhood->predictive, *inFlight);
+		// An in-flight predictive request must yield when an active tile becomes newly necessary.
+		const bool speculative = !std::ranges::contains(neighborhood->requested, *inFlight);
+		const bool activeMissing = std::ranges::any_of(neighborhood->resident, [](const auto& tile) {
+			return !tile || tile->state == DX12::Tile::State::Requested;
+		});
+		if (!stillWanted || (speculative && activeMissing)) {
+			companion->Cancel();
+			grid.CancelPending();
+			inFlight.reset();
+		}
 	}
 	if (auto result = companion->Take()) {
 		inFlight.reset();
@@ -227,6 +346,7 @@ void DX12Resources::EarlyPrepass()
 			if (file && file->GetFilename()) {
 				DX12::CompanionRequest task;
 				task.key = *request;
+				task.predictive = !std::ranges::contains(grid.Snapshot()->requested, *request);
 				task.size = settings.SubcellSize;
 				task.localScopeID = source->GetLocalFormID();
 				task.scopePlugin = file->GetFilename();

@@ -115,7 +115,7 @@ namespace DX12
 			startup.cb = sizeof(startup);
 			PROCESS_INFORMATION process{};
 			const BOOL launched = CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
-				CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS | CREATE_SUSPENDED,
+				CREATE_NO_WINDOW | (task.predictive ? IDLE_PRIORITY_CLASS : BELOW_NORMAL_PRIORITY_CLASS) | CREATE_SUSPENDED,
 				nullptr, nullptr, &startup, &process);
 			if (!launched) {
 				CloseHandle(job);

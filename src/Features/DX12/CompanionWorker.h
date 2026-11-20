@@ -18,6 +18,7 @@ namespace DX12
 		uint32_t localScopeID = 0;
 		std::string scopePlugin;
 		bool worldspace = false;
+		bool predictive = false;
 	};
 
 	struct CompanionLight
