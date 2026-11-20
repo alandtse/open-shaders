@@ -116,7 +116,7 @@ void DX12NativeComposite::RestoreDefaultSettings()
 void DX12NativeComposite::PreShadowMaps()
 {
 	const bool pipelinesReady = IsActive() &&
-		EnsurePipelines(globals::features::upscaling.dx12SwapChain.d3d12Device.get());
+	                            EnsurePipelines(globals::features::upscaling.dx12SwapChain.d3d12Device.get());
 	Collect();
 	const auto frame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : 0;
 	const auto scene = globals::features::dx12NativeScene.GetScene();

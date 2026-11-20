@@ -2,8 +2,8 @@
 
 #include "DX12NativeScene.h"
 
-#include <d3d12.h>
 #include <atomic>
+#include <d3d12.h>
 #include <deque>
 #include <memory>
 #include <optional>
