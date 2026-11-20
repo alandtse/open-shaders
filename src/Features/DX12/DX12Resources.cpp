@@ -269,8 +269,8 @@ void DX12Resources::LoadSettings(json& input)
 		companion->Cancel();
 	inFlight.reset();
 	adopting.reset();
-		lightAdoptionOffset = 0;
-		grid.Clear();
+	lightAdoptionOffset = 0;
+	grid.Clear();
 }
 
 void DX12Resources::SaveSettings(json& output)
@@ -285,8 +285,8 @@ void DX12Resources::RestoreDefaultSettings()
 		companion->Cancel();
 	inFlight.reset();
 	adopting.reset();
-		lightAdoptionOffset = 0;
-		grid.Clear();
+	lightAdoptionOffset = 0;
+	grid.Clear();
 }
 
 void DX12Resources::PreShadowMaps()
@@ -411,8 +411,8 @@ void DX12Resources::OnRuntimeDisabled()
 		companion->Cancel();
 	inFlight.reset();
 	adopting.reset();
-		lightAdoptionOffset = 0;
-		grid.Clear();
+	lightAdoptionOffset = 0;
+	grid.Clear();
 }
 
 std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const
