@@ -1378,7 +1378,7 @@
     "feature.light_editor.attached_bulb": "Fäst lampa",
     "feature.light_editor.attaching_light": "Fäster ljus, vänta…",
     "feature.light_editor.badge_attached": "Fäst",
-    "feature.light_editor.badge_other": "Övrigt",
+    "feature.light_editor.badge_misc": "Övrigt",
     "feature.light_editor.badge_ref": "Ref",
     "feature.light_editor.base_object": "Basobjekt: 0x%08X | %s",
     "feature.light_editor.bulb_type": "Lamptyp",
