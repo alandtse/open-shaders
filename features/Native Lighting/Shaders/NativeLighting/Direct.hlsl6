@@ -61,8 +61,8 @@ cbuffer Trace : register(b0)
 	float4 SnowTuning; // noise amount, native ray-cell frequency, sparkle amount, crystal density
 	float SnowRoughness;
 	float SnowUltravioletEmission;
-	float SnowCoarseness;
-	float SnowSmoothnessCoarseness;
+	float SnowColorAffection;
+	float SnowSpecularAmount;
 };
 
 #include "Common/ReverseZ.hlsli"
@@ -280,6 +280,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		n = normalize(geometric);
 	}
 	float3 diffuse = 0, specular = 0;
+	const float neutralSnowLight = saturate(material.snowCoverage) * (1.0f - saturate(SnowColorAffection));
 	uint eligibleLights = 0;
 	bool strictVisibilityRejected = false;
 	for (uint i = 0; i < LightCount; ++i) {
@@ -354,7 +355,12 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		float3 fresnel;
 		float3 microfacet = PBR::SpecularMicrofacet(material.roughness, material.f0, max(ndotl, 1e-5f),
 			saturate(abs(dot(n, v)) + 1e-5f), saturate(dot(n, h)), saturate(dot(v, h)), fresnel);
-		float3 irradiance = light.radianceSourceRadius.rgb * attenuation * ndotl * shadowVisibility;
+		float3 lightColor = light.radianceSourceRadius.rgb;
+		if (neutralSnowLight > 0.0f) {
+			const float neutralLuminance = dot(lightColor, float3(0.2126f, 0.7152f, 0.0722f));
+			lightColor = lerp(lightColor, neutralLuminance.xxx, neutralSnowLight);
+		}
+		float3 irradiance = lightColor * attenuation * ndotl * shadowVisibility;
 		float3 diffuseResponse = (1 - material.metallic) * material.baseColor *
 			(NormalInfluence == 0u ? 1.0f : (1 - fresnel)) * BRDF::Diffuse_Lambert();
 		if (NormalInfluence != 0u && nativeClearcoat.x > 0.0f) {

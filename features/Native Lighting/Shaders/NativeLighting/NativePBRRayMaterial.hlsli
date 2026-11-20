@@ -224,7 +224,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 		return false;
 	NativePBR::SurfaceMaterial result = NativePBR::EvaluateOpaque(material, surface, base, normal, packed, emission,
 		coat, complexMaskDetected, binding.flags, SnowTuning, SnowRoughness, SnowUltravioletEmission,
-		SnowCoarseness, SnowSmoothnessCoarseness);
+		SnowColorAffection, SnowSpecularAmount);
 	evaluated.baseColor = result.baseColor;
 	evaluated.normal = result.normal;
 	evaluated.f0 = result.f0;

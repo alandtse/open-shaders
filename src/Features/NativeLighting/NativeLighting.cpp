@@ -776,7 +776,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			{ snowSettings.noiseAmount, snowRayCells, snowSettings.sparkleAmount, snowSettings.sparkleDensity },
 			{ snowSettings.roughness,
 				snowSettings.ultravioletAffected ? snowSettings.ultravioletIntensity : 0.0f,
-				snowSettings.coarseness, snowSettings.smoothnessCoarseness } };
+				snowSettings.colorAffection, snowSettings.specularAmount } };
 		slot->nativePointLightCount = selectedCount;
 		slot->nativeMinimumDistance = constants.minimum;
 		slot->nativeLightTuning = constants.lightTuning;

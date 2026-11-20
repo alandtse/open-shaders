@@ -99,27 +99,28 @@ NativePBR draw binding. NativePBR applies **textureless, ray-hit procedural snow
 directly in its PBR evaluation. Noise samples each hit's native material UV,
 seeded by draw identity and triangle, rather than world coordinates. Its patch
 frequency depends on the scheduled native ray budget (resolution and trace
-density), divided by the configurable rays per patch. Snow coarseness scales
-the grain frequency, while a second slider blends that setting toward the
-underlying material roughness (smooth surfaces yield finer snow). A smooth
-four-corner hash varies neutral-white snow albedo and roughness. Crystal
+density), divided by the configurable rays per patch. A smooth four-corner
+hash varies snow roughness; snow albedo remains pure white at color affection
+zero, with optional noise color variation at higher settings. Crystal
 inclusion is hashed from material-space UV cells and hit identity instead of
 screen pixels, so the pattern remains attached to geometry while the view
 moves. An optional setting follows the post-parallax native material UV;
 otherwise snow retains the flat hit UV. Post-parallax mapping changes snow
 only when native PBR parallax is enabled and a material supplies height.
-The crystal response is
-submitted into the native specular lobe only under unoccluded direct light;
+The crystal response uses the PBR minimum roughness (0.04) and is submitted
+into the native specular lobe only under unoccluded direct light;
 shadowed snow does not emit light. Only actual native hits evaluate the effect; no
 per-frame hit-count readback or GPU atomics are required. NativePBR owns snow
-enable, noise amount/rays-per-patch, both coarseness controls, snow parallax UV,
-sparkle amount/density, roughness, and
+enable, noise amount/rays-per-patch, snow parallax UV, sparkle amount/density,
+roughness, color affection (0 = neutral luminance-preserving native lighting;
+1 = native light RGB tint), snow specular amount (0..2), and
 the temporary coverage override. Tuning reaches SM6.5 via the existing
 direct-lighting constant buffer, with no atlas, snow texture residency,
 DX11 snow inputs, or per-scene generation. An optional NativePBR
 `Ultraviolet affected snow` setting adds a coverage-weighted, very dim
-blue-white emission (default 0.012, capped at 0.05), independent of direct
-light presence. This is a stylized fluorescence approximation; there is no
+blue-white emission at full color affection (neutral white at zero; default
+0.012, capped at 0.05), independent of direct light presence. This is a
+stylized fluorescence approximation; there is no
 UV-spectrum light detection. An 0.08 upward-incidence margin tolerates minor face-angle
 discrepancies. This is surface shading, not geometry displacement or a
 persistent accumulation simulation. Interior scenes receive coverage only
