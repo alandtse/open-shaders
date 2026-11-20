@@ -1,11 +1,11 @@
 #include "DX12NativeScene.h"
 
 #include "DX12Control.h"
-#include "Globals.h"
-#include "GpuPass.h"
 #include "Features/LightLimitFix/Common.h"
 #include "Features/LightLimitFix/ShadowCasterManager.h"
 #include "Features/Upscaling.h"
+#include "Globals.h"
+#include "GpuPass.h"
 #include "RE/N/NiLight.h"
 #include "RE/T/TESObjectREFR.h"
 
@@ -15,7 +15,7 @@
 bool DX12NativeScene::IsActive() const
 {
 	return loaded && settings.Enabled && globals::features::dx12Resources.IsActive() &&
-		globals::features::dx12Control.IsActive() && !globals::game::isVR;
+	       globals::features::dx12Control.IsActive() && !globals::game::isVR;
 }
 
 void DX12NativeScene::DrawSettings()

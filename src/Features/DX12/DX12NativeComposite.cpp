@@ -1,16 +1,16 @@
 #include "DX12NativeComposite.h"
 
 #include "DX12Control.h"
-#include "Globals.h"
-#include "GpuPass.h"
 #include "Features/LightLimitFix/ShadowCasterManager.h"
 #include "Features/Upscaling.h"
+#include "Globals.h"
+#include "GpuPass.h"
 
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <cstring>
 #include <cmath>
+#include <cstring>
 #include <d3dcompiler.h>
 #include <directx/d3dx12.h>
 #include <fstream>
@@ -55,7 +55,7 @@ namespace
 		desc.pParameters = parameters.data();
 		winrt::com_ptr<ID3DBlob> serialized, errors;
 		return SUCCEEDED(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put())) &&
-			SUCCEEDED(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(output.put())));
+		       SUCCEEDED(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(output.put())));
 	}
 
 	bool CreatePipeline(ID3D12Device* device, ID3D12RootSignature* root, const char* filename,
@@ -82,7 +82,7 @@ DX12NativeComposite::~DX12NativeComposite()
 bool DX12NativeComposite::IsActive() const
 {
 	return loaded && settings.Enabled && !globals::game::isVR &&
-		globals::features::dx12Control.IsActive() && globals::features::dx12NativeScene.IsActive();
+	       globals::features::dx12Control.IsActive() && globals::features::dx12NativeScene.IsActive();
 }
 
 void DX12NativeComposite::DrawSettings()
@@ -116,10 +116,10 @@ void DX12NativeComposite::EarlyPrepass()
 	const auto scene = globals::features::dx12NativeScene.GetScene();
 	const auto grid = globals::features::dx12Resources.GetGrid();
 	const bool active = IsActive() && settings.ShadowStrength > 0 && frame != 0 && lastSubmitFrame + 1 == frame && scene && grid &&
-		scene->scope == grid->requested.front().scope &&
-		scene->geometryRevision == submittedGeometry && grid->geometryRevision == submittedGeometry &&
-		grid->lightRevision == submittedLights &&
-		globals::features::upscaling.fidelityFX.ShouldUseRuntimeUpscalerForFSR();
+	                    scene->scope == grid->requested.front().scope &&
+	                    scene->geometryRevision == submittedGeometry && grid->geometryRevision == submittedGeometry &&
+	                    grid->lightRevision == submittedLights &&
+	                    globals::features::upscaling.fidelityFX.ShouldUseRuntimeUpscalerForFSR();
 	ShadowCasterManager::SetNativeStaticMaskActive(active);
 }
 
@@ -198,7 +198,7 @@ std::shared_ptr<DX12NativeComposite::Surfaces> DX12NativeComposite::MakeSurfaces
 		D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 	std::shared_ptr<Surfaces> next = std::make_shared<Surfaces>();
 	if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &maskDesc,
-		D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(next->shadowMask.put()))) ||
+			D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(next->shadowMask.put()))) ||
 		FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &colorDesc,
 			D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(next->color.put()))))
 		return nullptr;
@@ -246,7 +246,7 @@ winrt::com_ptr<ID3D12Resource> DX12NativeComposite::Upload(const void* source, s
 	const auto desc = CD3DX12_RESOURCE_DESC::Buffer((bytes + 255) & ~size_t(255));
 	const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
 	if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(buffer.put()))))
+			D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(buffer.put()))))
 		return {};
 	void* mapped = nullptr;
 	if (FAILED(buffer->Map(0, nullptr, &mapped)) || !mapped)
@@ -264,7 +264,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE DX12NativeComposite::Descriptor(const Surfaces& targ
 void DX12NativeComposite::Collect()
 {
 	while (!pending.empty() && pending.front().fence &&
-		pending.front().fence->GetCompletedValue() >= pending.front().value)
+		   pending.front().fence->GetCompletedValue() >= pending.front().value)
 		pending.pop_front();
 }
 

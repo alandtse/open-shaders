@@ -80,15 +80,14 @@ namespace DX12
 		bool valid = true;
 		for (auto& shape : publication.shapes) {
 			const uint64_t length = uint64_t(shape.positions.size()) * sizeof(float3) +
-				uint64_t(shape.indices.size()) * sizeof(uint32_t);
+			                        uint64_t(shape.indices.size()) * sizeof(uint32_t);
 			if (!shape.identity || !identities.insert(shape.identity).second ||
 				shape.positions.empty() || shape.indices.empty() || shape.indices.size() % 3 ||
 				length > kMaximumTileBytes - bytes ||
 				!std::ranges::all_of(shape.positions, [](const float3& vertex) {
 					return std::isfinite(vertex.x) && std::isfinite(vertex.y) && std::isfinite(vertex.z);
 				}) ||
-				!std::ranges::all_of(shape.transform, [](float component) { return std::isfinite(component); }) ||
-				!std::ranges::all_of(shape.indices, [&](uint32_t index) { return index < shape.positions.size(); })) {
+				!std::ranges::all_of(shape.transform, [](float component) { return std::isfinite(component); }) || !std::ranges::all_of(shape.indices, [&](uint32_t index) { return index < shape.positions.size(); })) {
 				valid = false;
 				continue;
 			}
@@ -98,7 +97,9 @@ namespace DX12
 		tile->bytes = bytes;
 		tile->lights = std::move(publication.lights);
 		tile->state = publication.enumerationComplete && publication.failedShapes == 0 && valid &&
-			publication.eligibleShapes == tile->shapes.size() ? Tile::State::Ready : Tile::State::Incomplete;
+		                      publication.eligibleShapes == tile->shapes.size() ?
+		                  Tile::State::Ready :
+		                  Tile::State::Incomplete;
 		auto next = std::make_shared<Grid>(*current);
 		++next->revision;
 		++next->geometryRevision;

@@ -30,7 +30,13 @@ namespace DX12
 
 	struct Tile
 	{
-		enum class State : uint8_t { Requested, Preparing, Ready, Incomplete };
+		enum class State : uint8_t
+		{
+			Requested,
+			Preparing,
+			Ready,
+			Incomplete
+		};
 		SubcellKey key;
 		std::vector<std::shared_ptr<const Shape>> shapes;
 		std::vector<PreparedLight> lights;

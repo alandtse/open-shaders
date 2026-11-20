@@ -8,11 +8,11 @@
 #include "Features/CSUtility.h"
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
+#include "Features/DX12/DX12NativeComposite.h"
+#include "Features/DX12/DX12NativeScene.h"
 #include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ProceduralSun.h"
-#include "Features/DX12/DX12NativeScene.h"
-#include "Features/DX12/DX12NativeComposite.h"
 #if defined(ENABLE_EFFECTS11)
 #	include "Features/Effects11.h"
 #endif
