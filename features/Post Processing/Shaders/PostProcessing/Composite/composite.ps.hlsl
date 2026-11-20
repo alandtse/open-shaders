@@ -244,16 +244,19 @@ float3 SampleBicubicCatmullRom(Texture2D<float4> tex, SamplerState samp, float2 
 
 #ifdef HAS_PHYSICAL_LENS
 #	include "PostProcessing/PhysicalLensFlare/reconstruction.hlsli"
-float3 SamplePhysicalFlare(float2 uv, float2 texSize)
+float3 SamplePhysicalFlare(float2 stereoUV, float2 texSize)
 {
+	const uint eye = Stereo::GetEyeIndexFromTexCoord(stereoUV);
+	const float2 uv = Stereo::ConvertFromStereoUV(stereoUV, eye);
 	// Include the filter halo, including partial tiles at odd render sizes.
 	int2 first = clamp(int2(floor((uv * texSize - 2) / 8)), 0, int2(ceil(texSize / 8)) - 1);
 	int2 last = clamp(int2(floor((uv * texSize + 2) / 8)), 0, int2(ceil(texSize / 8)) - 1);
 	uint width = (uint(texSize.x) + 7) / 8;
-	uint occupied = TexWaveTiles[first.y * width + first.x] | TexWaveTiles[first.y * width + last.x] |
-	                TexWaveTiles[last.y * width + first.x] | TexWaveTiles[last.y * width + last.x];
+	uint tileBase = eye * width * ((uint(texSize.y) + 7) / 8);
+	uint occupied = TexWaveTiles[tileBase + first.y * width + first.x] | TexWaveTiles[tileBase + first.y * width + last.x] |
+	                TexWaveTiles[tileBase + last.y * width + first.x] | TexWaveTiles[tileBase + last.y * width + last.x];
 	float3 result = 0;
-	[branch] if ((occupied & (1u << 17)) != 0) result = max(SamplePhysicalMip(TexPhysicalFlare, LinearSampler, uv, texSize, 0), 0);
+	[branch] if ((occupied & (1u << 17)) != 0) result = max(SamplePhysicalMip(TexPhysicalFlare, LinearSampler, uv, texSize, 0, 3 * eye), 0);
 	return result;
 }
 #endif
