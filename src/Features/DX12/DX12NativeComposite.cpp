@@ -93,6 +93,8 @@ void DX12NativeComposite::DrawSettings()
 	if (ImGui::Checkbox("Enable native shadow composite", &settings.Enabled) && !settings.Enabled)
 		OnRuntimeDisabled();
 	ImGui::SliderFloat("Shadow-mask strength", &settings.ShadowStrength, 0.0f, 1.0f, "%.2f");
+	ImGui::TextDisabled("Shadowmask-only: per-light raster composition is not yet available.");
+	ImGui::TextDisabled("Raster static shadows remain enabled; final raster color is unchanged.");
 }
 
 void DX12NativeComposite::LoadSettings(json& input)
@@ -115,21 +117,19 @@ void DX12NativeComposite::RestoreDefaultSettings()
 
 void DX12NativeComposite::PreShadowMaps()
 {
-	const bool pipelinesReady = IsActive() &&
-	                            EnsurePipelines(globals::features::upscaling.dx12SwapChain.d3d12Device.get());
+	// The current capture contains only final raster color, not independently
+	// addressable per-light direct illumination. Multiplying final color by the
+	// aggregate visibility would shadow ambient and unrelated light sources.
+	// Furthermore a previous-frame success cannot guarantee the current runtime
+	// upscaler will dispatch after SCM has suppressed its static casters.
+	//
+	// Keep the independent DXR shadow-mask diagnostic alive, but never suppress
+	// raster casters until a correct same-frame, per-light composition/fallback
+	// contract exists. This deliberately fails closed in every failure scenario.
+	ShadowCasterManager::SetNativeStaticMaskActive(false);
+	if (IsActive())
+		(void)EnsurePipelines(globals::features::upscaling.dx12SwapChain.d3d12Device.get());
 	Collect();
-	const auto frame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : 0;
-	const auto scene = globals::features::dx12NativeScene.GetScene();
-	const auto grid = globals::features::dx12Resources.GetGrid();
-	const auto covered = globals::features::dx12NativeScene.GetCoveredLightIDs();
-	const bool active = pipelinesReady && (!availableUploads.empty() || uploadPairs < kMaximumUploadPairs) &&
-	                    settings.ShadowStrength > 0 && frame != 0 && lastSubmitFrame + 1 == frame &&
-	                    scene && scene->complete && scene->acceleration && covered && !covered->empty() && grid &&
-	                    scene->scope == grid->requested.front().scope &&
-	                    scene->geometryRevision == submittedGeometry && grid->geometryRevision == submittedGeometry &&
-	                    grid->lightRevision == submittedLights &&
-	                    globals::features::upscaling.fidelityFX.ShouldUseRuntimeUpscalerForFSR();
-	ShadowCasterManager::SetNativeStaticMaskActive(active);
 }
 
 void DX12NativeComposite::OnRuntimeDisabled()

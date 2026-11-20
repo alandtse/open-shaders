@@ -1235,7 +1235,11 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 
 			ffx::DispatchDescUpscale dispatchParameters{};
 			dispatchParameters.commandList = commandList;
-			dispatchParameters.color = ffxApiGetResourceDX12(nativeComposite ? nativeComposite->Color() : runtimeColorShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+			// Do not feed final-color shadow multiplication into FSR until a true
+			// per-light direct-light input and same-frame failure fallback exist.
+			// Native Composite may still calculate a shadowmask for validation.
+			dispatchParameters.color = ffxApiGetResourceDX12(
+				runtimeColorShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.depth = ffxApiGetResourceDX12(runtimeDepthShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.motionVectors = ffxApiGetResourceDX12(runtimeMotionShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.exposure = FfxApiResource({});
@@ -1309,7 +1313,7 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			commandListSubmitted = true;
 			DX::ThrowIfFailed(swapChain.commandQueue->Signal(runtimeFence.fence12.get(), d3d12SubmitFence));
 			if (nativeComposite)
-				globals::features::dx12NativeComposite.OnSubmitted(runtimeFence.fence12.get(), d3d12SubmitFence, std::move(*nativeComposite), dispatchOk);
+				globals::features::dx12NativeComposite.OnSubmitted(runtimeFence.fence12.get(), d3d12SubmitFence, std::move(*nativeComposite), false);
 			commandContext->fenceValue = d3d12SubmitFence;
 			commandFenceTracked = true;
 			DX::ThrowIfFailed(swapChain.d3d11Context->Wait(runtimeFence.fence11.get(), d3d12SubmitFence));
