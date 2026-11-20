@@ -10,6 +10,7 @@
 #include "../../EngineFixes/CullPoolExhaustionFix.h"
 #include "../../Globals.h"
 #include "../../GpuPass.h"
+#include "../../Hooks.h"
 #include "../../State.h"
 #include "../../Utils/Game.h"
 #include "../../Utils/PerfUtils.h"
@@ -4000,6 +4001,7 @@ namespace ShadowCasterManager
 
 		ZoneScopedN("SCM::RenderScheduledShadowLights");
 		CS_GPU_PASS("SCM::RenderScheduledShadowLights");
+		const Hooks::ParaboloidClipScope paraboloidClip;
 
 		s_budget.Begin(1);
 		s_budget.BeginRenderBatch();
