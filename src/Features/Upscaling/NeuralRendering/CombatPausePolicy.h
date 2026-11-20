@@ -52,7 +52,7 @@ namespace NR
 		{
 			if (HasFrame(frame))
 				return snapshot;
-			if (snapshot.sampled && (frame != snapshot.frame + 1u || nowMs < lastSampleMs))
+			if (snapshot.sampled && snapshot.IsPaused() && (frame != snapshot.frame + 1u || nowMs < lastSampleMs))
 				snapshot.phase = CombatPausePhase::Unavailable;
 			snapshot.sampled = true;
 			snapshot.frame = frame;

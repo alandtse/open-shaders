@@ -88,15 +88,26 @@ TEST_CASE("Unavailable player or world state requires a fresh peaceful interval"
 	REQUIRE_FALSE(policy.Update(5, true, 8000, false).IsPaused());
 }
 
-TEST_CASE("Frame discontinuities and clock reversal restart recovery", "[nr][combat]")
+TEST_CASE("A frame gap or clock reversal while ready does not pause", "[nr][combat]")
 {
 	CombatPausePolicy policy;
 	policy.Update(1, true, 10000, false);
-	REQUIRE(policy.Update(3, true, 10010, false).remainingMs == 3000);
-	REQUIRE(policy.Update(4, true, 11010, false).remainingMs == 2000);
-	REQUIRE(policy.Update(5, true, 1000, false).remainingMs == 3000);
-	REQUIRE(policy.Update(6, true, 3999, false).IsPaused());
-	REQUIRE_FALSE(policy.Update(7, true, 4000, false).IsPaused());
+	REQUIRE(policy.Update(3, true, 10010, false).phase == CombatPausePhase::Ready);
+	REQUIRE(policy.Update(4, true, 1000, false).phase == CombatPausePhase::Ready);
+}
+
+TEST_CASE("A frame gap or clock reversal while paused restarts the cooldown", "[nr][combat]")
+{
+	CombatPausePolicy policy;
+	policy.Update(1, true, 10000, false);
+	REQUIRE(policy.Update(2, true, 10010, true).phase == CombatPausePhase::Combat);
+	REQUIRE(policy.Update(4, true, 10020, false).remainingMs == NR::kCombatResumeDelayMs);
+	REQUIRE(policy.Update(5, true, 13019, false).phase == CombatPausePhase::Cooldown);
+	REQUIRE(policy.Update(6, true, 13020, false).phase == CombatPausePhase::Ready);
+
+	REQUIRE(policy.Update(7, true, 13030, true).phase == CombatPausePhase::Combat);
+	REQUIRE(policy.Update(8, true, 13040, false).phase == CombatPausePhase::Cooldown);
+	REQUIRE(policy.Update(9, true, 1000, false).remainingMs == NR::kCombatResumeDelayMs);
 }
 
 TEST_CASE("The frame counter wraps without fabricating a combat pause", "[nr][combat]")
