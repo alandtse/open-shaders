@@ -104,6 +104,9 @@ namespace DX12
 /** @brief Memory-resident geometry and lights with an ephemeral companion scratch directory. */
 struct DX12Resources final : Feature
 {
+	// Keep construction and destruction out of this header: the two unique_ptr
+	// pointees are forward-declared until CompanionWorker.h is included in the TU.
+	DX12Resources();
 	~DX12Resources();
 	struct Settings
 	{

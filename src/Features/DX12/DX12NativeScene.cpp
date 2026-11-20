@@ -87,7 +87,7 @@ void DX12NativeScene::UpdateLights()
 	if (ShadowCasterManager::IsActive()) {
 		const auto& active = ShadowCasterManager::GetLights();
 		for (int32_t i = 0; active.Lights && i < active.Size; ++i) {
-			const auto* shadow = active.Lights[i].Light;
+			auto* shadow = active.Lights[i].Light;
 			const auto* source = shadow ? shadow->light.get() : nullptr;
 			if (!source || shadow->GetIsDirectionalLight())
 				continue;
@@ -95,7 +95,7 @@ void DX12NativeScene::UpdateLights()
 			const auto* owner = source->GetUserData();
 			const auto* reference = owner ? owner->As<RE::TESObjectREFR>() : nullptr;
 			const auto& origin = source->world.translate;
-			const int32_t slot = ShadowCasterManager::GetShadowSlot(const_cast<RE::BSShadowLight*>(shadow));
+			const int32_t slot = ShadowCasterManager::GetShadowSlot(shadow);
 			DX12::RuntimeLight light{};
 			light.referenceID = reference ? reference->GetFormID() : 0;
 			light.baseID = properties ? properties->lighFormId : 0;

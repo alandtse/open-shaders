@@ -160,7 +160,7 @@ namespace DX12
 		const auto existing = active != current->requested.end() ?
 		                          current->resident[std::distance(current->requested.begin(), active)] :
 		                          current->predictiveResident[std::distance(current->predictive.begin(), predictive)];
-		tile->preparationAttempts = std::min<unsigned>(existing ? unsigned(existing->preparationAttempts) + 1 : 1u, 3u);
+		tile->preparationAttempts = static_cast<uint8_t>(std::min<unsigned>(existing ? unsigned(existing->preparationAttempts) + 1 : 1u, 3u));
 		// The worker has already verified all positions, triangle indices, transforms, identities and budgets.
 		// Render-thread publication only transfers ownership of immutable GPU-scene inputs.
 		tile->shapes = std::move(publication.shapes);
@@ -251,6 +251,7 @@ bool DX12Resources::IsActive() const
 	return loaded && settings.Enabled && globals::features::dx12Control.IsActive() && !globals::game::isVR;
 }
 
+DX12Resources::DX12Resources() = default;
 DX12Resources::~DX12Resources() = default;
 
 void DX12Resources::DrawSettings()
@@ -395,7 +396,7 @@ void DX12Resources::PreShadowMaps()
 		if (const auto request = grid.NextRequest()) {
 			const auto* source = world ? static_cast<const RE::TESForm*>(world) : static_cast<const RE::TESForm*>(cell);
 			const auto* file = source ? source->GetFile(0) : nullptr;
-			if (file && file->GetFilename()) {
+			if (file && !file->GetFilename().empty()) {
 				DX12::CompanionRequest task;
 				task.key = *request;
 				task.predictive = !std::ranges::contains(grid.Snapshot()->requested, *request);
