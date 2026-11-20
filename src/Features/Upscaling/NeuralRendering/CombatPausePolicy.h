@@ -33,25 +33,6 @@ namespace NR
 		}
 	};
 
-	/** @brief Stable phase identifier for devbench and diagnostics. */
-	[[nodiscard]] constexpr const char* CombatPausePhaseName(CombatPausePhase phase) noexcept
-	{
-		switch (phase) {
-		case CombatPausePhase::Disabled:
-			return "disabled";
-		case CombatPausePhase::Ready:
-			return "ready";
-		case CombatPausePhase::Combat:
-			return "combat";
-		case CombatPausePhase::Cooldown:
-			return "cooldown";
-		case CombatPausePhase::Unavailable:
-			return "unavailable";
-		default:
-			return "unknown";
-		}
-	}
-
 	/** @brief Frame-latched combat admission; the caller serializes access. */
 	class CombatPausePolicy
 	{
@@ -71,7 +52,7 @@ namespace NR
 		{
 			if (HasFrame(frame))
 				return snapshot;
-			if (snapshot.sampled && (frame != snapshot.frame + 1u || nowMs < lastSampleMs))
+			if (snapshot.sampled && snapshot.IsPaused() && (frame != snapshot.frame + 1u || nowMs < lastSampleMs))
 				snapshot.phase = CombatPausePhase::Unavailable;
 			snapshot.sampled = true;
 			snapshot.frame = frame;
