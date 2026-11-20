@@ -414,7 +414,7 @@ void GrassOptimizations::DrawBucket(GrassBucket& b)
 	D3D11_MAPPED_SUBRESOURCE mapped{};
 	if (FAILED(ctx->Map(eyeIndexCB->CB(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
 		return;
-	const uint32_t eyeCount = globals::game::isVR ? 2u : 1u;
+	const uint32_t eyeCount = Util::EyeCount();
 	for (uint32_t eye = 0; eye < eyeCount; ++eye) {
 		auto* eyeData = reinterpret_cast<EyeIndexCB*>(static_cast<uint8_t*>(mapped.pData) + eye * kEyeSlotBytes);
 		*eyeData = { eye, eye * bucketStore.cullOutput.capacity, {} };

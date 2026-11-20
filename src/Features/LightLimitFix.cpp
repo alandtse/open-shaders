@@ -12,6 +12,7 @@
 #include "LinearLighting.h"
 #include "Menu/PerformanceRenderer.h"
 #include "Profiler.h"
+#include "Utils/Game.h"
 #include "Utils/MathUtils.h"
 #include "Utils/UI.h"
 #include <bit>
@@ -639,7 +640,7 @@ void LightLimitFix::SetupResources()
 		uavDesc.Buffer.NumElements = numElements;
 		lightGrid->CreateUAV(uavDesc);
 
-		numElements = clusterSize[0] * clusterSize[1] * (globals::game::isVR ? 2u : 1u);
+		numElements = clusterSize[0] * clusterSize[1] * (Util::EyeCount());
 		sbDesc.StructureByteStride = sizeof(float) * 2;
 		sbDesc.ByteWidth = sbDesc.StructureByteStride * numElements;
 		tileDepthRange = eastl::make_unique<Buffer>(sbDesc, nullptr, "LLF::TileDepthRange");
@@ -1676,7 +1677,7 @@ void LightLimitFix::UpdateShadowDemand()
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		context->CSSetShader(shadowDepthPyramidCS.get(), nullptr, 0);
-		context->Dispatch(clusterSize[0], clusterSize[1], globals::game::isVR ? 2 : 1);
+		context->Dispatch(clusterSize[0], clusterSize[1], Util::EyeCount());
 
 		context->CSSetShader(nullptr, nullptr, 0);
 		ID3D11Buffer* null_cb = nullptr;
@@ -1790,7 +1791,7 @@ void LightLimitFix::UpdateShadowDemand()
 
 		// VR eyes and taps sum into one raw slot; divide by both here using THIS
 		// ring slot's dispatched TapCount so a mid-flight override can't desync it.
-		const float demandSumDivisor = (globals::game::isVR ? 2.0f : 1.0f) *
+		const float demandSumDivisor = static_cast<float>(Util::EyeCount()) *
 		                               static_cast<float>(std::max<uint32_t>(shadowDemandRingTapCount[i], 1u)) * 1024.0f;
 		const uint32_t* raw = static_cast<const uint32_t*>(mapped.pData);
 		for (uint32_t slot = 0; slot < MAX_SHADOW_DEMAND_SLOTS; slot++) {

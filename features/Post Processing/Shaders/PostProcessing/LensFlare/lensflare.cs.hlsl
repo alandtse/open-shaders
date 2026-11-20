@@ -1,3 +1,4 @@
+#include "Common/StereoEye.hlsli"
 #include "PostProcessing/common.hlsli"
 
 static const float PI = 3.14159265359;
@@ -45,7 +46,8 @@ cbuffer LensFlareConstants : register(b1)
 
 	uint ActiveGhostMask;
 	float ApertureSize;
-	float2 _pad0;
+	uint EyeIndex;
+	float _pad0;
 
 	// Ghost data
 	float4 GhostColors[NUM_GHOSTS];
@@ -62,6 +64,17 @@ float GetGhostScale(int i)
 	// i is always non-negative; uint div/mod avoids fxc's slower signed instructions.
 	uint ui = (uint)i;
 	return GhostScalesPacked[ui / 4][ui % 4];
+}
+
+float4 SampleEyeCA(Texture2D<float4> tex, SamplerState samp, float2 localUV, float strength, uint eye)
+{
+	float2 uvR, uvB;
+	GetChromaticAberrationUVs(localUV, strength, uvR, uvB);
+	float4 color;
+	color.r = SampleEye(tex, samp, uvR, eye).r;
+	color.ga = SampleEye(tex, samp, localUV, eye).ga;
+	color.b = SampleEye(tex, samp, uvB, eye).b;
+	return color;
 }
 
 // Fisheye UV distortion (based on Shadertoy by Crucifer)
@@ -91,17 +104,17 @@ float DiscMask(float2 screenPos)
 		return;
 
 	// UV maps output pixel to normalized [0,1] — bilinear sampling downscales from full-res input
-	float2 uv = (DTid.xy + 0.5f) / float2(OutputWidth, OutputHeight);
-	// Pixel size in input (full-res) space for sampling offsets
-	float2 pixelSize = 1.0f / float2(InputWidth, InputHeight);
+	uint eye;
+	float2 uv = EyeLocalUV(DTid.xy, float2(OutputWidth, OutputHeight), eye);
+	float2 pixelSize = 1.0f / float2(InputWidth / kEyeCount, InputHeight);
 
 	float3 color = 0;
 
 	// 4 center samples (weight 0.5)
-	color += InputTexture.SampleLevel(ColorSampler, uv + pixelSize * float2(-1.0f, 1.0f), 0).rgb;
-	color += InputTexture.SampleLevel(ColorSampler, uv + pixelSize * float2(1.0f, 1.0f), 0).rgb;
-	color += InputTexture.SampleLevel(ColorSampler, uv + pixelSize * float2(-1.0f, -1.0f), 0).rgb;
-	color += InputTexture.SampleLevel(ColorSampler, uv + pixelSize * float2(1.0f, -1.0f), 0).rgb;
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + pixelSize * float2(-1.0f, 1.0f), eye).rgb;
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + pixelSize * float2(1.0f, 1.0f), eye).rgb;
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + pixelSize * float2(-1.0f, -1.0f), eye).rgb;
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + pixelSize * float2(1.0f, -1.0f), eye).rgb;
 	float3 result = (color / 4.0f) * 0.5f;
 
 	// 9 outer samples (weight 0.5)
@@ -110,7 +123,7 @@ float DiscMask(float2 screenPos)
 	{
 		[unroll] for (int y = -1; y <= 1; y++)
 		{
-			color += InputTexture.SampleLevel(ColorSampler, uv + pixelSize * float2(x, y) * 2.0f, 0).rgb;
+			color += SampleEyeClamped(InputTexture, ColorSampler, uv + pixelSize * float2(x, y) * 2.0f, eye).rgb;
 		}
 	}
 	result += (color / 9.0f) * 0.5f;
@@ -132,7 +145,8 @@ float DiscMask(float2 screenPos)
 	if (DTid.x >= (uint)OutputWidth || DTid.y >= (uint)OutputHeight)
 		return;
 
-	float2 uv = (DTid.xy + 0.5f) / float2(OutputWidth, OutputHeight);
+	uint eye;
+	float2 uv = EyeLocalUV(DTid.xy, float2(OutputWidth, OutputHeight), eye);
 	float3 color = 0;
 	float2 radiantVector = uv - 0.5f;
 
@@ -161,7 +175,7 @@ float DiscMask(float2 screenPos)
 				weight = distanceMask;
 			}
 
-			float4 s = SampleCA(InputTexture, BorderSampler, ghostVector + 0.5f, 8.0f * GhostChromaShift, 0);
+			float4 s = SampleEyeCA(InputTexture, BorderSampler, ghostVector + 0.5f, 8.0f * GhostChromaShift, eye);
 			color += s.rgb * ghostColor.rgb * ghostColor.a * weight;
 		}
 
@@ -192,9 +206,9 @@ float DiscMask(float2 screenPos)
 		float2 uvB = (fishUV - 0.5f) * (1.0f - HaloChromaShift) + 0.5f + haloVector;
 
 		float3 haloColor;
-		haloColor.r = InputTexture.SampleLevel(BorderSampler, uvR, 0).r;
-		haloColor.g = InputTexture.SampleLevel(BorderSampler, uvG, 0).g;
-		haloColor.b = InputTexture.SampleLevel(BorderSampler, uvB, 0).b;
+		haloColor.r = SampleEye(InputTexture, BorderSampler, uvR, eye).r;
+		haloColor.g = SampleEye(InputTexture, BorderSampler, uvG, eye).g;
+		haloColor.b = SampleEye(InputTexture, BorderSampler, uvB, eye).b;
 
 		color += haloColor * screenBorderMask * haloMask * HaloStrength;
 	}
@@ -210,15 +224,16 @@ float DiscMask(float2 screenPos)
 	if (DTid.x >= (uint)OutputWidth || DTid.y >= (uint)OutputHeight)
 		return;
 
-	float2 uv = (DTid.xy + 0.5f) / float2(OutputWidth, OutputHeight);
-	float2 halfPixel = 0.5f / float2(InputWidth, InputHeight);
+	uint eye;
+	float2 uv = EyeLocalUV(DTid.xy, float2(OutputWidth, OutputHeight), eye);
+	float2 halfPixel = 0.5f / float2(InputWidth / kEyeCount, InputHeight);
 
 	// 5-tap Kawase downsample: center (weight 4) + 4 diagonals
-	float4 color = InputTexture.SampleLevel(ColorSampler, uv, 0) * 4.0f;
-	color += InputTexture.SampleLevel(ColorSampler, uv + float2(-halfPixel.x, halfPixel.y), 0);
-	color += InputTexture.SampleLevel(ColorSampler, uv + float2(halfPixel.x, halfPixel.y), 0);
-	color += InputTexture.SampleLevel(ColorSampler, uv + float2(halfPixel.x, -halfPixel.y), 0);
-	color += InputTexture.SampleLevel(ColorSampler, uv + float2(-halfPixel.x, -halfPixel.y), 0);
+	float4 color = SampleEyeClamped(InputTexture, ColorSampler, uv, eye) * 4.0f;
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + float2(-halfPixel.x, halfPixel.y), eye);
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + float2(halfPixel.x, halfPixel.y), eye);
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + float2(halfPixel.x, -halfPixel.y), eye);
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + float2(-halfPixel.x, -halfPixel.y), eye);
 
 	OutputTexture[DTid.xy] = color * 0.125f;
 }
@@ -231,20 +246,21 @@ float DiscMask(float2 screenPos)
 	if (DTid.x >= (uint)OutputWidth || DTid.y >= (uint)OutputHeight)
 		return;
 
-	float2 uv = (DTid.xy + 0.5f) / float2(OutputWidth, OutputHeight);
-	float2 halfPixel = 0.5f / float2(InputWidth, InputHeight);
+	uint eye;
+	float2 uv = EyeLocalUV(DTid.xy, float2(OutputWidth, OutputHeight), eye);
+	float2 halfPixel = 0.5f / float2(InputWidth / kEyeCount, InputHeight);
 
 	// 12-tap Kawase upsample: 4 diagonals (weight 1) + 4 axis (weight 2)
 	float4 color = 0;
-	color += InputTexture.SampleLevel(ColorSampler, uv + float2(-halfPixel.x, halfPixel.y), 0);
-	color += InputTexture.SampleLevel(ColorSampler, uv + float2(halfPixel.x, halfPixel.y), 0);
-	color += InputTexture.SampleLevel(ColorSampler, uv + float2(halfPixel.x, -halfPixel.y), 0);
-	color += InputTexture.SampleLevel(ColorSampler, uv + float2(-halfPixel.x, -halfPixel.y), 0);
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + float2(-halfPixel.x, halfPixel.y), eye);
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + float2(halfPixel.x, halfPixel.y), eye);
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + float2(halfPixel.x, -halfPixel.y), eye);
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + float2(-halfPixel.x, -halfPixel.y), eye);
 
-	color += InputTexture.SampleLevel(ColorSampler, uv + float2(-halfPixel.x, 0), 0) * 2.0f;
-	color += InputTexture.SampleLevel(ColorSampler, uv + float2(halfPixel.x, 0), 0) * 2.0f;
-	color += InputTexture.SampleLevel(ColorSampler, uv + float2(0, halfPixel.y), 0) * 2.0f;
-	color += InputTexture.SampleLevel(ColorSampler, uv + float2(0, -halfPixel.y), 0) * 2.0f;
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + float2(-halfPixel.x, 0), eye) * 2.0f;
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + float2(halfPixel.x, 0), eye) * 2.0f;
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + float2(0, halfPixel.y), eye) * 2.0f;
+	color += SampleEyeClamped(InputTexture, ColorSampler, uv + float2(0, -halfPixel.y), eye) * 2.0f;
 
 	OutputTexture[DTid.xy] = color / 12.0f;
 }

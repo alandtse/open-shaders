@@ -84,7 +84,7 @@ cbuffer GlareCB : register(b1)
 	float SphericalAberration;
 	uint UseAP1;
 	float KernelScale;
-	float _pad11;
+	uint EyeIndex;
 };
 
 groupshared float3 GlareTile[256];
@@ -129,7 +129,8 @@ float3 LoadGlare(int2 position)
 	if (tid.x >= (uint)ScreenWidth || tid.y >= (uint)ScreenHeight)
 		return;
 
-	float3 scene = TexScene[tid].rgb;
+	uint2 outPixel = uint2(tid.x + EyeIndex * (uint)ScreenWidth, tid.y);
+	float3 scene = TexScene[outPixel].rgb;
 
 	// Map screen UV [0,1] → IFFT UV [P, 1-P], reading only the centre
 	// region that contained the original scene within the zero-padded
@@ -181,5 +182,5 @@ float3 LoadGlare(int2 position)
 	// Clamp to prevent negative values at Intensity > 1.0
 	output = max(output, 0);
 
-	RWTexOutput[tid] = float4(output, 1.0);
+	RWTexOutput[outPixel] = float4(output, 1.0);
 }

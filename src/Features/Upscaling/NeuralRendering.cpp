@@ -2653,7 +2653,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		const char* missingInput = nullptr;
 		if (!globals::features::upscaling.GetEncodeInputs(inputs, missingInput))
 			throw std::runtime_error(std::format("Missing NR guide input ({})", missingInput));
-		const auto count = globals::game::isVR ? 2u : 1u;
+		const auto count = Util::EyeCount();
 		const auto gw = NR::EyeRenderWidth(static_cast<uint32_t>(renderSize.x), count);
 		const auto gh = static_cast<uint32_t>(renderSize.y);
 		D3D11_TEXTURE2D_DESC desc{};
