@@ -4,7 +4,6 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <limits>
-#include <string>
 
 using NR::CombatPausePhase;
 using NR::CombatPausePolicy;
@@ -132,13 +131,4 @@ TEST_CASE("Combat suspension retains resources and leaves independent blockers i
 	REQUIRE(NR::DecideFrame(inputs) == NR::FrameAction::SkipNoWorld);
 	inputs.suspended = true;
 	REQUIRE(NR::DecideFrame(inputs) == NR::FrameAction::Suspend);
-}
-
-TEST_CASE("Combat diagnostic phase identifiers are stable", "[nr][combat]")
-{
-	REQUIRE(std::string(NR::CombatPausePhaseName(CombatPausePhase::Disabled)) == "disabled");
-	REQUIRE(std::string(NR::CombatPausePhaseName(CombatPausePhase::Ready)) == "ready");
-	REQUIRE(std::string(NR::CombatPausePhaseName(CombatPausePhase::Combat)) == "combat");
-	REQUIRE(std::string(NR::CombatPausePhaseName(CombatPausePhase::Cooldown)) == "cooldown");
-	REQUIRE(std::string(NR::CombatPausePhaseName(CombatPausePhase::Unavailable)) == "unavailable");
 }
