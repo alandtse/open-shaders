@@ -3785,6 +3785,28 @@ namespace ShadowCasterManager
 		}
 	}
 
+	/// Farthest a light may stand from where its slot last drew it and still count as the same light across a cell-grid shift.
+	constexpr float kCellShiftSameLightSq = 64.0f * 64.0f;
+
+	/// True for a light that keeps its slot through a cell-grid shift: it owns a slot, is still an active shadow light and stands
+	/// where that slot last drew it, so an address the shift recycled for another light does not inherit its camera history.
+	static bool KeepsSlotThroughCellShift(RE::ShadowSceneNode* a_ssn, const RE::BSShadowLight* a_light)
+	{
+		if (!a_ssn)
+			return false;
+		const auto& alive = a_ssn->GetRuntimeData().activeShadowLights;
+		if (std::ranges::none_of(alive, [a_light](const auto& sp) { return sp.get() == a_light; }))
+			return false;
+		for (int i = 0; i < s_lights.Size; i++) {
+			const auto& e = s_lights.Lights[i];
+			if (e.Light != a_light)
+				continue;
+			const auto* ni = a_light->light.get();
+			return ni && ni->world.translate.GetSquaredDistance(e.lastRenderedPos) <= kCellShiftSameLightSq;
+		}
+		return false;
+	}
+
 	void ScheduleShadowCasters()
 	{
 		ZoneScopedN("SCM::ScheduleShadowCasters");
@@ -3849,7 +3871,7 @@ namespace ShadowCasterManager
 			s_cellResetTotal.fetch_add(1, std::memory_order_relaxed);
 			s_casterMobility.clear();
 			s_everHadShadow.clear();  // a cell swap recycles NiLight addresses
-			s_lastValidFrame.clear();
+			std::erase_if(s_lastValidFrame, [ssn](const auto& kv) { return !KeepsSlotThroughCellShift(ssn, kv.first); });
 			s_splitState.clear();  // bakeQueued defaults true: every light re-bakes
 			ShadowCasterManager::InvalidateAllStaticBakes();
 		}
