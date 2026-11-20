@@ -276,7 +276,7 @@ namespace DX12
 				if (stop.stop_requested())
 					break;
 				if (purgeCacheRequested) {
-					cache.clear(); // Previous in-flight frame submissions retain their own shared refs.
+					cache.clear();  // Previous in-flight frame submissions retain their own shared refs.
 					purgeCacheRequested = false;
 				}
 				if (!requested)
