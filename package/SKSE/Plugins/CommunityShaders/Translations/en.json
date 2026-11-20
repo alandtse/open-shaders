@@ -3135,7 +3135,7 @@
     "feature.post_processing.lens_flare.tooltip_f_stop": "Aperture f-number (e.g. F2.8). Smaller = larger aperture.\nControls the bokeh shape characteristics.",
     "feature.post_processing.lens_flare.tooltip_fft_resolution": "Resolution of the FFT convolution. Higher = sharper bokeh ghost shapes but more expensive.",
     "feature.post_processing.lens_flare.tooltip_ghost_kernel_scale": "Multiplier on global Kernel Scale.\n1x = same as global, <1 = sharper, >1 = softer.\nEach distinct value requires a separate FFT pass.",
-    "feature.post_processing.lens_flare.tooltip_ghost_mode": "Fast: procedural radial ghosts (low cost).\nQuality: FFT convolution with bokeh shape.\nUltra: per-ghost kernel sizes via multi-pass FFT (expensive).",
+    "feature.post_processing.lens_flare.tooltip_ghost_mode": "Fast: procedural radial ghosts (low cost).\nQuality: FFT convolution with bokeh shape.\nUltra: per-ghost kernel sizes via multi-pass FFT (expensive).\nIn VR the FFT runs once per eye, doubling its cost.",
     "feature.post_processing.lens_flare.tooltip_halo_compression": "Fisheye distortion strength for the halo effect",
     "feature.post_processing.lens_flare.tooltip_intensity": "Master intensity for the entire lens flare effect",
     "feature.post_processing.lens_flare.tooltip_kernel_scale": "Base size of the bokeh kernel relative to FFT resolution.\nPer-ghost scales multiply this value in Ultra mode.",
