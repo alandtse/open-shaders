@@ -23,11 +23,20 @@ namespace ShadowCasterManager
 
 	// EMA position anchor ComputeLightGeometry scores from; see ResetScoreAnchor.
 	static std::unordered_map<const RE::NiLight*, RE::NiPoint3> s_scoreAnchor;
+	/// Flicker-averaged fade per light and the frame it last stepped; a light is scored more than once a frame.
+	struct ScoreFade
+	{
+		float fade = 0.0f;
+		int32_t frame = 0;
+	};
+	static std::unordered_map<const RE::NiLight*, ScoreFade> s_scoreFade;
 
 	void ResetScoreAnchor(const RE::NiLight* ni)
 	{
-		if (ni)
+		if (ni) {
 			s_scoreAnchor.erase(ni);
+			s_scoreFade.erase(ni);
+		}
 	}
 
 	static void InitFormulaSystem()
@@ -159,10 +168,7 @@ namespace ShadowCasterManager
 		// Score on an EMA'd position anchor, not the live pose: flame flicker
 		// translates the light several units every frame, jittering every
 		// distance and area term below -- churning rank, redraw priority, and
-		// the membership gates. Fade is NOT smoothed: a light fading out must
-		// drop its score promptly, or it holds a shadow slot after it should
-		// have left and its stale shadow flickers in. Rendering keeps the live
-		// pose (shadows still dance).
+		// the membership gates. Rendering keeps the live pose (shadows still dance).
 		PruneIfOversized(s_scoreAnchor, 1024);
 		const auto live = ni->world.translate;
 		auto [anchorIt, anchorNew] = s_scoreAnchor.try_emplace(ni, live);
@@ -173,9 +179,14 @@ namespace ShadowCasterManager
 		}
 		const auto lp = anchorIt->second;
 
-		// Perceptual luminance (Rec.709) x live fade. Valid even at zero
-		// radius, where every geometric term below collapses to 0.
-		g.lum = (0.2126f * rtd.diffuse.red + 0.7152f * rtd.diffuse.green + 0.0722f * rtd.diffuse.blue) * rtd.fade;
+		// Perceptual luminance (Rec.709) x the flicker-averaged fade, so equal flickering lights stop trading slots.
+		// Valid even at zero radius, where every geometric term below collapses to 0.
+		PruneIfOversized(s_scoreFade, 1024);
+		const int32_t frame = *globals::game::frameCounter;
+		auto [fadeIt, fadeNew] = s_scoreFade.try_emplace(ni, ScoreFade{ rtd.fade, frame });
+		if (!fadeNew && fadeIt->second.frame != frame)
+			fadeIt->second = { SteadyScoreFade(fadeIt->second.fade, rtd.fade), frame };
+		g.lum = (0.2126f * rtd.diffuse.red + 0.7152f * rtd.diffuse.green + 0.0722f * rtd.diffuse.blue) * fadeIt->second.fade;
 		if (lightRadius <= 0.0f)
 			return g;
 

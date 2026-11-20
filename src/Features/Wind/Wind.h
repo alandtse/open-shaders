@@ -200,6 +200,11 @@ struct Wind : Feature
 	/** @brief Samples a position batch from one published render-thread state. */
 	[[nodiscard]] bool SamplePublishedWind(std::span<const float3> a_worldPositions,
 		std::span<PublishedWindSample> a_samples) const noexcept;
+	/**
+	 * @brief Reads the published ambient wind: planar unit direction and speed, before gusts and impulses.
+	 * @return false until the first wind state has been published.
+	 */
+	[[nodiscard]] bool GetPublishedAmbientWind(float2& o_direction, float& o_speed) const noexcept;
 	void QueueTransientWindImpulse(const WindField::TransientWindSource& a_impulse);
 	void QueueTransientWindSource(const WindField::TransientWindSource& a_source,
 		TransientWindSourceOwner a_owner, TransientWindSourcePriority a_priority,

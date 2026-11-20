@@ -2426,7 +2426,7 @@ void Upscaling::SetupResources()
 	}
 
 	const auto displaySize = perfMode.IsHookActive() ? perfMode.GetDisplayScreenSize() : globals::state->screenSize;
-	fidelityFX.ProbeRuntimeUpscalerUpgrade(static_cast<uint32_t>(globals::game::isVR ? displaySize.x / 2 : displaySize.x), static_cast<uint32_t>(displaySize.y));
+	fidelityFX.ProbeRuntimeUpscalerUpgrade(static_cast<uint32_t>(Util::EyeWidth(displaySize.x)), static_cast<uint32_t>(displaySize.y));
 
 	QueryPerformanceFrequency(&qpf);
 
@@ -3024,7 +3024,7 @@ void Upscaling::FillMenuCameraMotionVectors()
 	CS_GPU_PASS("Upscaling::MenuCameraMotionVectors");
 
 	CameraMotionVectorsCB cbData{};
-	const uint32_t numEyes = globals::game::isVR ? 2 : 1;
+	const uint32_t numEyes = Util::EyeCount();
 	for (uint32_t eyeIndex = 0; eyeIndex < numEyes; ++eyeIndex) {
 		// Inversion is convention-safe on the raw cb12 bytes; composition with the previous
 		// view-proj stays in the shader so the mul() convention matches FrameBuffer usage.
@@ -3107,7 +3107,7 @@ void Upscaling::Upscale()
 			EnsureVRIntermediateTextures();
 
 		auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
-		uint32_t numEyes = globals::game::isVR ? 2 : 1;
+		uint32_t numEyes = Util::EyeCount();
 		uint32_t eyeRenderWidth = NR::EyeRenderWidth((uint32_t)renderSize.x, numEyes);
 		uint32_t eyeRenderHeight = (uint32_t)renderSize.y;
 

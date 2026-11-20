@@ -1121,19 +1121,12 @@ PS_OUTPUT ShadeEffect(PS_INPUT input, bool sampleDistantShadow)
 				continue;
 		}
 
-		// Effect meshes are alpha-blended and lack reliable occluder depth
-		// at their visible surface, so sampling LLF's shadow atlas with the
-		// effect's world position produces incorrect dark imprints from
-		// nearby shadow-casting bulbs. Shadow-flagged lights still contribute
-		// lighting through the other passes; only the effect-mesh shadow
-		// attenuation is skipped here.
-		if (light.lightFlags & LightLimitFix::LightFlags::Shadow)
-			continue;
-
 		float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WorldPosition.xyz;
 		float lightDist = length(lightDirection);
 
 		float intensityMultiplier = LightLimitFix::GetAttenuation(lightDist, light);
+		[branch] if ((light.lightFlags & LightLimitFix::LightFlags::Shadow) && light.shadowMapIndex < SharedData::lightLimitFixSettings.ShadowMapSlots)
+			intensityMultiplier *= LightLimitFix::GetShadowLightFootprint(light.shadowMapIndex, input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 		if (intensityMultiplier < 1e-5)
 			continue;
 

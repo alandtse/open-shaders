@@ -26,6 +26,7 @@
 #include "I18n/I18n.h"
 #include "IconsTabler.h"
 #include "Menu.h"
+#include "Menu/FlipImpactDisplay.h"
 #include "Menu/HomePageRenderer.h"
 #include "Menu/IconLoader.h"
 #include "Menu/Icons/helpers/IconFonts.h"
@@ -161,7 +162,7 @@ namespace
 		}
 	}
 
-	void DrawFeatureActionHint(const char* label, const char* details = nullptr, bool show = false)
+	void DrawFeatureActionHint(const char* label, const char* details = nullptr, bool show = false, std::optional<ImVec4> detailsColor = std::nullopt)
 	{
 		if (!show && !ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 			return;
@@ -233,7 +234,9 @@ namespace
 		if (details)
 			drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
 				ImVec2(origin.x + padding.x, origin.y + padding.y + labelSize.y + textGap),
-				ImGui::GetColorU32(ImGuiCol_TextDisabled, easedProgress), details, nullptr, wrapWidth);
+				detailsColor ? ImGui::GetColorU32(ImVec4(detailsColor->x, detailsColor->y, detailsColor->z, detailsColor->w * easedProgress)) :
+							   ImGui::GetColorU32(ImGuiCol_TextDisabled, easedProgress),
+				details, nullptr, wrapWidth);
 	}
 
 	bool IsUtilityFeature(Feature* feature)
@@ -1423,16 +1426,22 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(Feature* feat, b
 		const float actionsHeight = std::max(1.0f, ImGui::GetContentRegionAvail().y - size - style.ItemSpacing.y);
 		if (ImGui::BeginChild("##FeatureActionButtons", ImVec2(0.0f, actionsHeight), ImGuiChildFlags_None,
 				ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar)) {
-			const auto action = [&](const char* id, Icons::GlyphRef icon, const char* label, bool enabled, bool selected, auto&& run) {
+			const auto action = [&](const char* id, Icons::GlyphRef icon, const char* label, bool enabled, bool selected, auto&& run,
+									const std::optional<Util::FeatureFlipImpact::Impact>& impact = std::nullopt) {
 				ImGui::BeginDisabled(!enabled);
-				if (BrowserUI::IconButton(id, icon, nullptr, selected))
+				if (BrowserUI::IconButton(id, icon, nullptr, selected,
+						impact ? ImGui::GetColorU32(FlipImpactDisplay::Color(impact->tier)) : 0))
 					run();
 				ImGui::EndDisabled();
-				DrawFeatureActionHint(label);
+				if (impact) {
+					const auto details = FlipImpactDisplay::Tooltip(*impact);
+					DrawFeatureActionHint(label, details.c_str(), false, FlipImpactDisplay::Color(impact->tier));
+				} else {
+					DrawFeatureActionHint(label);
+				}
 			};
 			if (!feat->IsAlwaysEnabled())
-				action("##Boot", Icons::TI(ICON_TI_BULB), T("menu.features.enable_at_boot", "Enable at Boot"), true, !disabled,
-					[&] { feat->ToggleAtBootSetting(); });
+				action("##Boot", Icons::TI(ICON_TI_BULB), T("menu.features.enable_at_boot", "Enable at Boot"), true, !disabled, [&] { feat->ToggleAtBootSetting(); }, FlipImpactDisplay::Of(*feat));
 			RenderFavoriteButton(feat);
 			auto* manager = globals::sceneSettingsManager;
 			if (SceneSettingsUI::CanEditFeaturePage(feat))
@@ -1566,7 +1575,16 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, 
 		const char* label = T("menu.features.enable_at_boot", "Enable at Boot");
 		const float width = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
 		ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - width) * 0.5f));
-		if (Util::Button(label))
+		const auto impact = FlipImpactDisplay::Of(*feat);
+		if (impact)
+			ImGui::PushStyleColor(ImGuiCol_Text, FlipImpactDisplay::Color(impact->tier));
+		const bool bootToggled = Util::Button(label);
+		if (impact) {
+			ImGui::PopStyleColor();
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(FlipImpactDisplay::Tooltip(*impact).c_str());
+		}
+		if (bootToggled)
 			feat->ToggleAtBootSetting();
 	} else if (const auto unavailableMessage = feat->GetUnavailableMessage()) {
 		ImGui::PushTextWrapPos(0.0f);
