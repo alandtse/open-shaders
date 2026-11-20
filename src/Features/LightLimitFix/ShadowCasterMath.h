@@ -82,6 +82,13 @@ namespace ShadowCasterManager
 		return a_seenBefore && !a_hidden && !a_lodFaded && !a_frustumLight;
 	}
 
+	/// Whether a light acquiring a slot keeps its last-valid frame: one stamped this frame is its own engine pass or edge
+	/// keep, an older one may belong to a recycled pointer.
+	inline bool KeepsLastValidOnAcquire(int32_t a_lastValidFrame, int32_t a_nowFrame) noexcept
+	{
+		return a_lastValidFrame == a_nowFrame;
+	}
+
 	// Casters reaching the equatorial plane keep the engine's hemisphere choice;
 	// the margin floor keeps a zero-radius light from collapsing the seam.
 	inline constexpr float kHemisphereSeamMarginMin = 1.0f;

@@ -17,6 +17,7 @@ using ShadowCasterManager::HashCombine;
 using ShadowCasterManager::HashCombineFloat;
 using ShadowCasterManager::HemisphereSeamMargin;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
+using ShadowCasterManager::KeepsLastValidOnAcquire;
 using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kSlotHoldMargin;
 using ShadowCasterManager::kTileScaleFloor;
@@ -265,6 +266,13 @@ TEST_CASE("EdgeKeepsLight keeps only a seen omni light that is neither hidden no
 	REQUIRE_FALSE(EdgeKeepsLight(true, true, false, false));
 	REQUIRE_FALSE(EdgeKeepsLight(true, false, true, false));
 	REQUIRE_FALSE(EdgeKeepsLight(true, false, false, true));
+}
+
+TEST_CASE("KeepsLastValidOnAcquire keeps only this frame's stamp", "[scm]")
+{
+	REQUIRE(KeepsLastValidOnAcquire(120, 120));
+	REQUIRE_FALSE(KeepsLastValidOnAcquire(119, 120));
+	REQUIRE_FALSE(KeepsLastValidOnAcquire(-1, 120));
 }
 
 TEST_CASE("SlotHeldScore keeps a holder against a near-equal challenger", "[scm]")
