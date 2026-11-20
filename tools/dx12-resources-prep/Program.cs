@@ -135,7 +135,7 @@ internal static class SceneTile
         var ccc = Path.Combine(Path.GetDirectoryName(data)!, "Skyrim.ccc");
         var club = File.Exists(ccc) ? File.ReadLines(ccc).Select(line => line.Trim()).Where(line => line.Length != 0) : [];
         var implicitPlugins = official.Concat(club).Where(name => File.Exists(Path.Combine(data, name)))
-            .Select(ModKey.FromFileName);
+            .Select(name => ModKey.FromFileName(name));
         var order = implicitPlugins.Concat(PluginListings.LoadOrderListingsFromPath(pluginsPath, GameRelease.SkyrimSE, data)
             .Where(entry => entry.Enabled).Select(entry => entry.ModKey)).Distinct().ToArray();
         var environment = GameEnvironment.Typical.Builder<ISkyrimMod, ISkyrimModGetter>(GameRelease.SkyrimSE)
@@ -286,7 +286,7 @@ internal static class SceneTile
                 if (string.IsNullOrWhiteSpace(model)) { ++failed; continue; }
                 var mesh = LoadModel(data, model, models, archives, scratch);
                 var rotation = new[] { placement.Rotation.X, placement.Rotation.Y, placement.Rotation.Z };
-                var toWorld = PlacementTransform.FromRecord(position, rotation, obj.Scale);
+                var toWorld = PlacementTransform.FromRecord(position, rotation, obj.Scale ?? 1.0f);
                 foreach (var shape in mesh)
                 {
                     var transform = shape.ToModel * toWorld;
