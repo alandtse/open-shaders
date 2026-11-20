@@ -240,6 +240,13 @@ internal static class SceneTile
                 var obj = placed as IPlacedObjectGetter;
                 if (obj == null) { ++failed; continue; }
                 var baseRecord = obj.Base.TryResolve(environment.LinkCache);
+                if (baseRecord == null)
+                {
+                    // An unresolved base may describe a shadow-casting static.
+                    // Never advertise the tile as complete when its role is unknown.
+                    ++failed;
+                    continue;
+                }
                 if (placed.Placement is not { } placement) {
                     if (baseRecord is IStaticGetter or IFurnitureGetter or IMoveableStaticGetter) ++failed;
                     continue;
@@ -254,7 +261,19 @@ internal static class SceneTile
                             light.Radius, light.FadeValue, 0, light.FalloffExponent, (uint)light.Flags));
                     continue;
                 }
-                if (baseRecord is not (IStaticGetter or IFurnitureGetter or IMoveableStaticGetter)) continue;
+                if (baseRecord is not (IStaticGetter or IFurnitureGetter or IMoveableStaticGetter))
+                {
+                    // Doors, activators, containers, trees, and other modeled
+                    // records can become static raster shadow casters. This
+                    // geometry-only companion cannot guarantee their coverage.
+                    // Do not silently certify a tile with missing static casters.
+                    if (baseRecord is IModeledGetter modeled &&
+                        modeled.Model?.File is { } file &&
+                        !string.IsNullOrWhiteSpace(file.ToString()) &&
+                        (!isWorldspace || Inside(position[0], position[1], tileX, tileY, size)))
+                        ++failed;
+                    continue;
+                }
 
                 // Runtime-dependent placement cannot be certified from plugin data.
                 if ((placed.MajorRecordFlagsRaw & 0x800) != 0 || obj.EnableParent != null ||
