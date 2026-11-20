@@ -74,6 +74,8 @@ namespace NR
 		};
 		plan.width = reduce(width, ordinaryWidth);
 		plan.height = reduce(height, ordinaryHeight);
+		if (plan.width % alignment || plan.height % alignment)
+			return reject(InvalidGeometry);
 		const std::array model{ plan.width, plan.height };
 		for (unsigned axis = 0; axis < 2; ++axis) {
 			const float step = mapping.boundaryScale / model[axis] +

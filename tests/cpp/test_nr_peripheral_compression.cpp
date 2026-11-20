@@ -28,6 +28,7 @@ TEST_CASE("Peripheral sampling is opt-in and rejects unsupported or invalid geom
 	REQUIRE(NR::BuildPeripheralCompressionPlan(2048, 2048, 2048, 2048, 20, false, 8, 64).reason == UnsupportedScope);
 	REQUIRE(NR::BuildPeripheralCompressionPlan(2048, 2048, 2048, 2048, 20, true, 0, 64).reason == InvalidGeometry);
 	REQUIRE(Plan(20, 64, 64, 64, 64).reason == InsufficientSavings);
+	REQUIRE(Plan(1, 1921, 1079, 1921, 1079).reason == InvalidGeometry);
 	REQUIRE(Plan(100, 16384, 64, 4096, 64).reason == FootprintLimit);
 	REQUIRE_FALSE(Plan(20, 64, 64, 64, 64).Active());
 }
