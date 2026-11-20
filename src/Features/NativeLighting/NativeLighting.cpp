@@ -8,10 +8,59 @@
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/DevBenchUx.h"
+#include "Utils/Game.h"
 #include <cmath>
 #include <directx/d3dx12.h>
 #include <fstream>
 #include <span>
+#include <unordered_map>
+
+namespace
+{
+	constexpr float kSnowProbeGrid = 256.0f;
+	constexpr float kSnowNearbyCoverage = 0.5f;
+
+	std::vector<uint8_t> ReadNativeSnowTerrain(const DX12Native::TopLevel& a_scene)
+	{
+		std::vector<uint8_t> coverage(a_scene.instances.size(), 0);
+		auto* tes = globals::game::tes;
+		if (!tes || Util::IsInterior())
+			return coverage;
+		std::unordered_map<uint64_t, bool> samples;
+		const auto isSnow = [&](int32_t x, int32_t y, float z) {
+			const uint64_t key = (uint64_t(uint32_t(x)) << 32u) | uint32_t(y);
+			if (auto it = samples.find(key); it != samples.end())
+				return it->second;
+			RE::NiPoint3 point((float(x) + 0.5f) * kSnowProbeGrid,
+				(float(y) + 0.5f) * kSnowProbeGrid, z);
+			float landZ = 0.0f;
+			bool snowy = false;
+			if (tes->GetLandHeight(point, landZ) && std::isfinite(landZ)) {
+				point.z = landZ;
+				const auto material = tes->GetLandMaterialType(point);
+				snowy = material == RE::MATERIAL_ID::kSnow || material == RE::MATERIAL_ID::kSnowStairs;
+			}
+			samples.emplace(key, snowy);
+			return snowy;
+		};
+		for (size_t i = 0; i < a_scene.instances.size(); ++i) {
+			const auto& instance = a_scene.instances[i];
+			if (!instance.material.projectedSnowCandidate ||
+				!std::isfinite(instance.bound.x) || !std::isfinite(instance.bound.y) ||
+				!std::isfinite(instance.bound.z) || std::abs(instance.bound.x) > 1e7f ||
+				std::abs(instance.bound.y) > 1e7f)
+				continue;
+			const auto x = int32_t(std::floor(instance.bound.x / kSnowProbeGrid));
+			const auto y = int32_t(std::floor(instance.bound.y / kSnowProbeGrid));
+			if (isSnow(x, y, instance.bound.z))
+				coverage[i] = 255;
+			else if (isSnow(x - 1, y, instance.bound.z) || isSnow(x + 1, y, instance.bound.z) ||
+				isSnow(x, y - 1, instance.bound.z) || isSnow(x, y + 1, instance.bound.z))
+				coverage[i] = uint8_t(kSnowNearbyCoverage * 255.0f + 0.5f);
+		}
+		return coverage;
+	}
+}
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::Settings, Enabled, Diffuse, Specular, EarlyShadowCull, Debug, CompareCulling, DiffuseIntensity, SpecularIntensity, BudgetMB, PersistLab, DirectStrength, EmissionStrength, PointLightRadiusMultiplier, PointLightFalloffFraction, PointLightFalloffExponent, ShadowStrength, EmitterRadiusMultiplier, NormalInfluence, SelectedDirectLight, StochasticShadows, UseAllPreparedLights, TraceDensityMode, CharacterCasterOcclusion, CharacterReceiverProbe)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::ValidityLab, DepthAgreement, DiagnosticDepth, AbsoluteTolerance, RelativeTolerance, MaterialPolicy, RequireMaskAuthority, AssumeMaskAuthoritative, ObserveMask, RunWithoutLighting, ReferenceVisibility, ReferencePrimaryTraversal, MaskThreshold, MaskDistanceTolerance)
@@ -114,6 +163,11 @@ void NativeLightingFeature::DrawSettings()
 			static_cast<unsigned long long>(diagnostics.value("nativePbrEvaluated", uint64_t{ 0 })));
 		ImGui::TextDisabled("NativePBR forced missing-texture fallbacks: %llu",
 			static_cast<unsigned long long>(diagnostics.value("nativePbrForcedTextures", uint64_t{ 0 })));
+		ImGui::TextDisabled("Native snow: %u candidates | %u terrain | %u active | weather %s",
+			diagnostics.value("nativeSnowCandidateInstances", 0u),
+			diagnostics.value("nativeSnowTerrainInstances", 0u),
+			diagnostics.value("nativeSnowActiveInstances", 0u),
+			diagnostics.value("nativeSnowWeather", false) ? "snow" : "clear");
 	}
 	if (ImGui::Checkbox("Early shadow-mask culling", &settings.EarlyShadowCull))
 		++validityRevision;
@@ -185,6 +239,10 @@ NativeLightingFeature::~NativeLightingFeature()
 void NativeLightingFeature::Reset()
 {
 	current.reset();
+	snowTerrainScene.reset();
+	snowTerrainCoverage.clear();
+	snowEligibleInstances = snowTerrainInstances = snowActiveInstances = 0;
+	snowWeatherActive = false;
 	active = false;
 	status.clear();
 	failed = false;
@@ -258,6 +316,10 @@ void NativeLightingFeature::PublishDiagnostics()
 		{ "materials", totals[6] }, { "shadowQueries", totals[7] }, { "lights", totals[8] },
 		{ "nativePbrEvaluated", totals[28] }, { "nativePbrCandidates", totals[29] },
 		{ "nativePbrForcedTextures", totals[30] },
+		{ "nativeSnowCandidateInstances", snowEligibleInstances },
+		{ "nativeSnowTerrainInstances", snowTerrainInstances },
+		{ "nativeSnowActiveInstances", snowActiveInstances },
+		{ "nativeSnowWeather", snowWeatherActive },
 		{ "forcePositiveValidity", current && current->forcePositiveValidity },
 		{ "validDiffuse", totals[9] }, { "unsupported", totals[10] }, { "validSpecular", totals[11] },
 		{ "currentMaskAuthoritative", false }, { "comparisonFrames", comparisonFrames }, { "visualConsumptionVerified", false } };
@@ -721,10 +783,34 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		DX::ThrowIfFailed(slot->constants->Map(0, &noRead, &mapped));
 		std::memcpy(mapped, &constants, sizeof(constants));
 		slot->constants->Unmap(0, nullptr);
+		if (slot->rayMaterials &&
+			(snowTerrainScene.lock() != scene.acceleration || snowTerrainCoverage.size() != scene.acceleration->instances.size())) {
+			snowTerrainCoverage = ReadNativeSnowTerrain(*scene.acceleration);
+			snowTerrainScene = scene.acceleration;
+		}
+		snowWeatherActive = false;
+		if (!Util::IsInterior())
+			if (auto* sky = globals::game::sky; sky && sky->currentWeather)
+				snowWeatherActive = sky->currentWeather->data.flags.any(RE::TESWeather::WeatherDataFlag::kSnow);
+		snowEligibleInstances = snowTerrainInstances = snowActiveInstances = 0;
 		DX::ThrowIfFailed(slot->rayBindings->Map(0, &noRead, &mapped));
-		if (slot->rayMaterials)
+		if (slot->rayMaterials) {
 			std::memcpy(mapped, slot->rayMaterials->instances.data(),
 				slot->rayMaterials->instances.size() * sizeof(NativePBR::GpuDrawBinding));
+			auto* bindings = static_cast<NativePBR::GpuDrawBinding*>(mapped);
+			for (size_t i = 0; i < slot->rayMaterials->instances.size(); ++i) {
+				if ((bindings[i].flags & NativePBR::kGpuDrawProjectedSnowCandidate) == 0u)
+					continue;
+				++snowEligibleInstances;
+				const float terrain = i < snowTerrainCoverage.size() ? float(snowTerrainCoverage[i]) / 255.0f : 0.0f;
+				if (terrain > 0.0f)
+					++snowTerrainInstances;
+				const float coverage = NativePBR::NativeSnowCoverage(terrain, snowWeatherActive);
+				if (coverage > 0.0f)
+					++snowActiveInstances;
+				bindings[i].flags = NativePBR::WithNativeSnowCoverage(bindings[i].flags, coverage);
+			}
+		}
 		slot->rayBindings->Unmap(0, nullptr);
 		const auto step = backend.d3d12Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 		constexpr uint32_t kGeometry = 13;

@@ -87,6 +87,20 @@ or lighting submission yet: actual snow presence/strength must remain a
 separate, authoritative native input before applying snow in PBR. No DX11
 data is admitted into this coverage path.
 
+At runtime, Native Lighting obtains native snow evidence from Skyrim's
+landscape snow-material IDs (`Snow`, `SnowStairs`) and the active weather snow
+flag, with no DX11 resource access. Terrain probes are cached per TLAS; a
+neighboring 256-unit probe may supply half-strength coverage to tolerate
+small placement/landscape boundary mismatches. Snowfall supplies 55% coverage
+in the absence of snowy ground and updates per frame. The current value is
+packed into unused bits 16–23 of the existing 24-byte NativePBR draw binding;
+no additional GPU allocation or atlas is required. NativePBR blends snow
+albedo, roughness, metalness, Fresnel F0, and coat strength into the native
+ray-hit material. An 0.08 upward-incidence margin tolerates minor face-angle
+discrepancies. This is surface shading, not geometry displacement or a
+persistent accumulation simulation. Interior scenes receive no weather or
+terrain-derived snow.
+
 ## Plugin-scoped interior catalog (Stage B)
 
 Command: DX12ResourcesPrep --list-cells <Data directory> <SelectedPlugin.esm> <Plugins.txt> <output.json>

@@ -8,6 +8,7 @@ namespace NativePBR
 	static const uint MissingTexture = 0xffffffffu;
 	static const uint DrawVertexColorFlag = 1u;
 	static const uint DrawProjectedSnowCandidateFlag = 1u << 3u;
+	static const uint SnowCoverageShift = 16u;
 	static const uint LegacyComplexMaskFlag = 1u << 8u;
 	static const uint MaterialOptionParallax = 1u << 0u;
 	static const uint MaterialOptionComplex = 1u << 1u;
@@ -58,6 +59,7 @@ namespace NativePBR
 		float coatRoughness;
 		float coatF0;
 		float projectedSnowCoverageCandidate;
+		float snowCoverage;
 	};
 
 	float3 SrgbToLinear(float3 value)
@@ -116,6 +118,12 @@ namespace NativePBR
 		result.coatF0 = saturate(material.coat.z);
 		result.projectedSnowCoverageCandidate = (drawFlags & DrawProjectedSnowCandidateFlag) != 0u ?
 			saturate(surface.projectedSnowIncidence) : 0.0f;
+		result.snowCoverage = result.projectedSnowCoverageCandidate * float((drawFlags >> SnowCoverageShift) & 255u) / 255.0f;
+		result.baseColor = lerp(result.baseColor, float3(0.78f, 0.84f, 0.89f), result.snowCoverage);
+		result.roughness = lerp(result.roughness, 0.82f, result.snowCoverage);
+		result.metallic *= 1.0f - result.snowCoverage;
+		result.f0 = lerp(result.f0, float3(0.04f, 0.04f, 0.04f), result.snowCoverage);
+		result.coatStrength *= 1.0f - result.snowCoverage;
 		return result;
 	}
 }

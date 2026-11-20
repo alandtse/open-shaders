@@ -214,7 +214,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 		float3 face = cross(edge0, edge1);
 		float lengthSq = dot(face, face);
 		if (all(isfinite(face)) && lengthSq > 1e-12f)
-			surface.projectedSnowIncidence = saturate(face.z * rsqrt(lengthSq));
+			surface.projectedSnowIncidence = saturate(face.z * rsqrt(lengthSq) + 0.08f);
 	}
 	if (!all(isfinite(surface.geometricNormal)) ||
 		!all(isfinite(surface.tangent)) || !all(isfinite(surface.bitangent)))
@@ -230,6 +230,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	evaluated.ao = result.ao;
 	evaluated.opacity = result.opacity;
 	evaluated.projectedSnowCoverageCandidate = result.projectedSnowCoverageCandidate;
+	evaluated.snowCoverage = result.snowCoverage;
 	clearcoat = float3(result.coatStrength, result.coatRoughness, result.coatF0);
 	return all(isfinite(evaluated.baseColor)) && all(isfinite(evaluated.normal)) &&
 		all(isfinite(evaluated.f0)) && all(isfinite(evaluated.emission)) &&

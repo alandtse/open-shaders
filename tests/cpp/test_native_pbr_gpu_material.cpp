@@ -3,6 +3,7 @@
 #include "Features/NativePBR/GpuMaterialResources.h"
 #include "Features/NativePBR/RayMaterialBindings.h"
 #include <catch2/catch_test_macros.hpp>
+#include <limits>
 
 TEST_CASE("NativePBR GPU material ABI preserves all seven texture roles", "[NativePBR][gpu-material]")
 {
@@ -56,6 +57,23 @@ TEST_CASE("NativePBR GPU draw bindings preserve full material identity and revis
 	CHECK((binding.revision == std::array<uint32_t, 2>{ 0xddeeff00u, 0x99aabbccu }));
 	CHECK(binding.materialIndex == 17u);
 	CHECK(binding.flags == 3u);
+}
+
+TEST_CASE("NativePBR packs dynamic snow coverage without changing draw identity", "[NativePBR][snow]")
+{
+	using namespace NativePBR;
+	constexpr uint32_t snowCandidate = kGpuDrawPreparedOpaque | kGpuDrawProjectedSnowCandidate;
+	const auto half = WithNativeSnowCoverage(snowCandidate | kGpuDrawUsesVertexColor, 0.5f);
+	CHECK((half & 0xffu) == (snowCandidate | kGpuDrawUsesVertexColor));
+	CHECK(((half & kGpuSnowCoverageMask) >> kGpuSnowCoverageShift) == 128u);
+	CHECK(((WithNativeSnowCoverage(half, 1.0f) & kGpuSnowCoverageMask) >> kGpuSnowCoverageShift) == 255u);
+	CHECK(((WithNativeSnowCoverage(half, -1.0f) & kGpuSnowCoverageMask) >> kGpuSnowCoverageShift) == 0u);
+	CHECK(((WithNativeSnowCoverage(half, std::numeric_limits<float>::quiet_NaN()) & kGpuSnowCoverageMask) >> kGpuSnowCoverageShift) == 0u);
+	CHECK(NativeSnowCoverage(1.0f, false) == 1.0f);
+	CHECK(NativeSnowCoverage(0.5f, false) == 0.5f);
+	CHECK(NativeSnowCoverage(0.0f, false) == 0.0f);
+	CHECK(NativeSnowCoverage(0.0f, true) == 0.55f);
+	CHECK(NativeSnowCoverage(1.0f, true) == 1.0f);
 }
 
 TEST_CASE("NativePBR GPU descriptor ABI keeps linear and sRGB views within 512 slots", "[NativePBR][gpu-material]")

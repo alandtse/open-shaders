@@ -3,6 +3,8 @@
 #include "NativePBRCompiler.h"
 
 #include <array>
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -31,6 +33,20 @@ namespace NativePBR
 	/** @brief A companion-prepared opaque instance may only use an authoritative NativePBR material. */
 	inline constexpr uint32_t kGpuDrawPreparedOpaque = 4u;
 	inline constexpr uint32_t kGpuDrawProjectedSnowCandidate = 1u << 3;
+	inline constexpr uint32_t kGpuSnowCoverageShift = 16u;
+	inline constexpr uint32_t kGpuSnowCoverageMask = 0xffu << kGpuSnowCoverageShift;
+	/** @brief Adds frame-local native snow coverage without changing the 24-byte draw ABI. */
+	inline uint32_t WithNativeSnowCoverage(uint32_t a_flags, float a_coverage)
+	{
+		const auto coverage = std::isfinite(a_coverage) ? std::clamp(a_coverage, 0.0f, 1.0f) : 0.0f;
+		return (a_flags & ~kGpuSnowCoverageMask) | (uint32_t(coverage * 255.0f + 0.5f) << kGpuSnowCoverageShift);
+	}
+	/** @brief Strong native terrain evidence wins; nearby terrain is accepted with reduced strength. */
+	inline float NativeSnowCoverage(float a_local, bool a_weatherSnowing)
+	{
+		return std::max(std::isfinite(a_local) ? std::clamp(a_local, 0.0f, 1.0f) : 0.0f,
+			a_weatherSnowing ? 0.55f : 0.0f);
+	}
 	/** @brief Controls.y bit 8 switches the packed map from PBR RMAOS to legacy environment/complex channels. */
 	inline constexpr uint32_t kGpuLegacyComplexMask = 1u << 8;
 	inline constexpr uint32_t kRayMaterialOptionParallax = 1u << 0;
