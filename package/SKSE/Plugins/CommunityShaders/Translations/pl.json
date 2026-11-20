@@ -74,7 +74,7 @@
     "cs_editor.color_ambient": "",
     "cs_editor.color_cloud_lod_ambient": "",
     "cs_editor.color_cloud_lod_diffuse": "",
-    "cs_editor.color_effect_lighting": "Oświetlenie ofektów",
+    "cs_editor.color_effect_lighting": "Oświetlenie efektów",
     "cs_editor.color_fog_far": "Mgła w oddali",
     "cs_editor.color_fog_near": "Mgła blisko",
     "cs_editor.color_horizon": "Horyzont",
