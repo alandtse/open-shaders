@@ -16,8 +16,6 @@ namespace ShadowCasterManager
 	using Util::HashCombineFloat;
 	using Util::QuantizeFloat;
 
-	/// Buckets a stall length for ShadowScheduler's stallHistogram: 0, 1-2,
-	/// 3-7, 8-15, 16-44, 45+ (top boundary matches kSleepRedrawIntervalFrames).
 	/// True when a caster switched static / moving after the light's bake rendered: the bake lacks it or holds it at an old pose.
 	inline bool CasterChangedSinceBake(int a_classEpoch, int a_bakeEpoch) noexcept
 	{
@@ -30,6 +28,8 @@ namespace ShadowCasterManager
 		return !a_dynamic && !a_bakeStale;
 	}
 
+	/// Buckets a stall length for ShadowScheduler's stallHistogram: 0, 1-2,
+	/// 3-7, 8-15, 16-44, 45+ (top boundary matches kSleepRedrawIntervalFrames).
 	inline uint32_t StallBucket(uint32_t v) noexcept
 	{
 		if (v == 0)
