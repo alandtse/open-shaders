@@ -194,7 +194,7 @@ internal static class SceneTile
 
     private static ModelShape[] LoadModel(string data, string path, Dictionary<string, ModelShape[]> cache)
     {
-        path = path.Replace('/', '\');
+        path = path.Replace('/', '\\');
         if (!path.StartsWith("meshes\\", StringComparison.OrdinalIgnoreCase)) path = "meshes\\" + path;
         if (Path.IsPathRooted(path) || path.Split('\\').Any(part => part is ".." or "." or ""))
             throw new InvalidDataException("Invalid mesh path");
