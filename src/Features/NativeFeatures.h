@@ -89,33 +89,21 @@ struct NativePBRFeature final : Feature
 	std::atomic<bool> forceRayAdmission{ false };
 	struct SnowSettings
 	{
-		bool enabled = true, coverEligible = false, ultravioletAffected = false, followParallaxUV = false;
-		float noiseAmount = 0.55f, noiseRaysPerPatch = 64.0f;
-		float sparkleAmount = 0.6f, sparkleDensity = 0.08f, roughness = 0.83f;
-		float ultravioletIntensity = 0.012f, colorAffection = 0.0f, specularAmount = 1.0f;
-		float lumpHeight = 0.25f, lumpSize = 3.0f, lumpDensity = 0.5f, flatness = 1.0f;
-		float edgeWaviness = 0.45f;
-		uint32_t lumpLayers = 6;
+		bool coverEligible = false, ultravioletAffected = true, followParallaxUV = false;
+		float noiseAmount = 1.0f, noiseRaysPerPatch = 4.0f;
+		float sparkleAmount = 1.0f, sparkleDensity = 0.25f, roughness = 1.0f;
+		float ultravioletIntensity = 0.006f, colorAffection = 0.65f, specularAmount = 0.5f;
+		float lumpHeight = 1.5f, lumpSize = 8.0f, lumpDensity = 1.0f, flatness = 1.0f;
+		float edgeWaviness = 0.2f;
+		uint32_t lumpLayers = 4;
 	};
-	std::atomic<bool> snowEnabled{ true }, snowCoverEligible{ false }, snowUltravioletAffected{ false }, snowFollowParallaxUV{ false };
-	std::atomic<float> snowNoiseAmount{ 0.55f }, snowNoiseRaysPerPatch{ 64.0f };
-	std::atomic<float> snowSparkleAmount{ 0.6f }, snowSparkleDensity{ 0.08f }, snowRoughness{ 0.83f };
-	std::atomic<float> snowUltravioletIntensity{ 0.012f }, snowColorAffection{ 0.0f }, snowSpecularAmount{ 1.0f };
-	std::atomic<float> snowLumpHeight{ 0.25f }, snowLumpSize{ 3.0f }, snowLumpDensity{ 0.5f }, snowFlatness{ 1.0f };
-	std::atomic<float> snowEdgeWaviness{ 0.45f };
-	std::atomic<uint32_t> snowLumpLayers{ 6 };
-	/** @brief Provides the current native-only ray-hit snow controls. */
+	std::atomic<bool> snowCoverEligible{ false };
+	/** @brief Provides the locked native snow preset and session-only interior test state. */
 	SnowSettings GetSnowSettings() const
 	{
-		return { snowEnabled.load(std::memory_order_relaxed), snowCoverEligible.load(std::memory_order_relaxed),
-			snowUltravioletAffected.load(std::memory_order_relaxed), snowFollowParallaxUV.load(std::memory_order_relaxed),
-			snowNoiseAmount.load(std::memory_order_relaxed), snowNoiseRaysPerPatch.load(std::memory_order_relaxed),
-			snowSparkleAmount.load(std::memory_order_relaxed), snowSparkleDensity.load(std::memory_order_relaxed),
-			snowRoughness.load(std::memory_order_relaxed), snowUltravioletIntensity.load(std::memory_order_relaxed),
-			snowColorAffection.load(std::memory_order_relaxed), snowSpecularAmount.load(std::memory_order_relaxed),
-			snowLumpHeight.load(std::memory_order_relaxed), snowLumpSize.load(std::memory_order_relaxed),
-			snowLumpDensity.load(std::memory_order_relaxed), snowFlatness.load(std::memory_order_relaxed),
-			snowEdgeWaviness.load(std::memory_order_relaxed), snowLumpLayers.load(std::memory_order_relaxed) };
+		SnowSettings settings{};
+		settings.coverEligible = snowCoverEligible.load(std::memory_order_relaxed);
+		return settings;
 	}
 	// 1 geometry, 2 evaluated NativePBR, 3 accepted Native Lighting. Early stages are deliberate diagnostics.
 	std::atomic<uint32_t> readinessStage{ 3 };
@@ -156,17 +144,7 @@ struct NativePBRFeature final : Feature
 	{
 		backendSettings = {}; enabled = true; nativeParallax = false; nativeComplexMaterials = false;
 		forceRayAdmission = false; readinessStage = 3;
-		const SnowSettings defaults{};
-		snowEnabled = defaults.enabled; snowCoverEligible = defaults.coverEligible;
-		snowUltravioletAffected = defaults.ultravioletAffected; snowFollowParallaxUV = defaults.followParallaxUV;
-		snowNoiseAmount = defaults.noiseAmount; snowNoiseRaysPerPatch = defaults.noiseRaysPerPatch;
-		snowSparkleAmount = defaults.sparkleAmount; snowSparkleDensity = defaults.sparkleDensity;
-		snowRoughness = defaults.roughness;
-		snowUltravioletIntensity = defaults.ultravioletIntensity;
-		snowColorAffection = defaults.colorAffection; snowSpecularAmount = defaults.specularAmount;
-		snowLumpHeight = defaults.lumpHeight; snowLumpSize = defaults.lumpSize;
-		snowLumpDensity = defaults.lumpDensity; snowFlatness = defaults.flatness;
-		snowEdgeWaviness = defaults.edgeWaviness; snowLumpLayers = defaults.lumpLayers;
+		snowCoverEligible = false;
 	}
 	json GetDiagnostics() override;
 };

@@ -237,8 +237,6 @@ void NativeLightingFeature::Reset()
 	current.reset();
 	snowTerrainScene.reset();
 	snowTerrainCoverage.clear();
-	snowEligibleInstances = snowShadableInstances = snowTerrainInstances = snowActiveInstances = 0;
-	snowCoverEligible = false;
 	active = false;
 	status.clear();
 	failed = false;
@@ -312,11 +310,6 @@ void NativeLightingFeature::PublishDiagnostics()
 		{ "materials", totals[6] }, { "shadowQueries", totals[7] }, { "lights", totals[8] },
 		{ "nativePbrEvaluated", totals[28] }, { "nativePbrCandidates", totals[29] },
 		{ "nativePbrForcedTextures", totals[30] },
-		{ "nativeSnowCandidateInstances", snowEligibleInstances },
-		{ "nativeSnowShadableInstances", snowShadableInstances },
-		{ "nativeSnowTerrainInstances", snowTerrainInstances },
-		{ "nativeSnowActiveInstances", snowActiveInstances },
-		{ "nativeSnowCoverEligible", snowCoverEligible },
 		{ "forcePositiveValidity", current && current->forcePositiveValidity },
 		{ "validDiffuse", totals[9] }, { "unsupported", totals[10] }, { "validSpecular", totals[11] },
 		{ "currentMaskAuthoritative", false }, { "comparisonFrames", comparisonFrames }, { "visualConsumptionVerified", false } };
@@ -791,13 +784,11 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		DX::ThrowIfFailed(slot->constants->Map(0, &noRead, &mapped));
 		std::memcpy(mapped, &constants, sizeof(constants));
 		slot->constants->Unmap(0, nullptr);
-		if (slot->rayMaterials && snowSettings.enabled &&
+		if (slot->rayMaterials && !snowSettings.coverEligible &&
 			(snowTerrainScene.lock() != scene.acceleration || snowTerrainCoverage.size() != scene.acceleration->instances.size())) {
 			snowTerrainCoverage = ReadNativeSnowTerrain(*scene.acceleration);
 			snowTerrainScene = scene.acceleration;
 		}
-		snowCoverEligible = snowSettings.coverEligible && snowSettings.enabled;
-		snowEligibleInstances = snowShadableInstances = snowTerrainInstances = snowActiveInstances = 0;
 		DX::ThrowIfFailed(slot->rayBindings->Map(0, &noRead, &mapped));
 		if (slot->rayMaterials) {
 			std::memcpy(mapped, slot->rayMaterials->instances.data(),
@@ -806,17 +797,9 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			for (size_t i = 0; i < slot->rayMaterials->instances.size(); ++i) {
 				if ((bindings[i].flags & NativePBR::kGpuDrawProjectedSnowCandidate) == 0u)
 					continue;
-				++snowEligibleInstances;
-				if (bindings[i].materialIndex != UINT32_MAX)
-					++snowShadableInstances;
-				const float terrain = snowSettings.enabled && i < snowTerrainCoverage.size() ?
+				const float terrain = i < snowTerrainCoverage.size() ?
 					float(snowTerrainCoverage[i]) / 255.0f : 0.0f;
-				if (terrain > 0.0f)
-					++snowTerrainInstances;
-				const float coverage = snowSettings.enabled ?
-					NativePBR::NativeSnowCoverage(terrain, snowCoverEligible) : 0.0f;
-				if (coverage > 0.0f)
-					++snowActiveInstances;
+				const float coverage = NativePBR::NativeSnowCoverage(terrain, snowSettings.coverEligible);
 				bindings[i].flags = NativePBR::WithNativeSnowCoverage(bindings[i].flags, coverage);
 			}
 		}

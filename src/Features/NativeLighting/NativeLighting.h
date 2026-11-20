@@ -136,8 +136,6 @@ private:
 	std::shared_ptr<Contribution> current;
 	std::weak_ptr<const DX12Native::TopLevel> snowTerrainScene;
 	std::vector<uint8_t> snowTerrainCoverage;
-	uint32_t snowEligibleInstances = 0, snowShadableInstances = 0, snowTerrainInstances = 0, snowActiveInstances = 0;
-	bool snowCoverEligible = false;
 	std::array<uint64_t, 31> totals{};
 	// Derived after the existing GPU candidate counter readback; no extra per-pixel atomic.
 	uint64_t skippedPixels = 0;

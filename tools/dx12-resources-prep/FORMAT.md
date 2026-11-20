@@ -90,45 +90,40 @@ At runtime, Native Lighting obtains native snow evidence from Skyrim's
 landscape snow-material IDs (`Snow`, `SnowStairs`), with no DX11 resource access
 and no dependence on weather or precipitation. Terrain probes are cached per TLAS; a
 neighboring 256-unit probe may supply half-strength coverage to tolerate
-small placement/landscape boundary mismatches. A temporary session-only
-`Cover all eligible snow receivers` control in **NativePBR** forces full coverage
-on companion-marked receivers, including interiors; the normal terrain-based
-mode remains available for A/B.
+small placement/landscape boundary mismatches. The session-only
+`Cover eligible snow receivers (interior test)` checkbox in **NativePBR**
+forces full coverage on companion-marked receivers, including interiors.
+It defaults off at every launch; this is the only exposed snow control.
 The current value is packed into unused bits 16–23 of the existing 24-byte
 NativePBR draw binding. NativePBR applies **textureless, ray-hit procedural snow**
 directly in its PBR evaluation. Noise samples each hit's native material UV,
 seeded by draw identity and triangle, rather than world coordinates. Its patch
 frequency depends on the scheduled native ray budget (resolution and trace
-density), divided by the configurable rays per patch. A smooth four-corner
-hash varies snow roughness; snow albedo remains pure white at color affection
-zero, with optional noise color variation at higher settings. Crystal
+density), divided by four rays per patch. A smooth four-corner hash varies
+snow roughness; snow albedo uses fixed native-light color affection 0.65. Crystal
 inclusion is hashed from material-space UV cells and hit identity instead of
 screen pixels, so the pattern remains attached to geometry while the view
-moves. An optional setting follows the post-parallax native material UV;
-otherwise snow retains the flat hit UV. Post-parallax mapping changes snow
-only when native PBR parallax is enabled and a material supplies height.
-Between 2 and 12 independently seeded, weighted value-noise layers (default 6)
-supply native PBR normal perturbations for the snow lumps, with coarse shapes
-dominating the finer details. Lump height (0..4), size (0.5..8 native-ray noise
-patches), and density (0..1) can be adjusted without changing DX12 geometry or silhouettes;
-a zero height or density skips the extra noise. Lump density and height are
+moves. Snow retains the flat hit UV rather than following post-parallax UV.
+Four independently seeded, weighted value-noise layers supply native PBR
+normal perturbations for snow lumps, with coarse shapes dominating the finer
+details. Lump height 1.50, size 8.00 native-ray noise patches, and density
+1.00 affect shading without changing DX12 geometry or silhouettes. Lumps are
 attenuated at partial snow-coverage boundaries and on faces that turn away
 from upward, so flat interiors of covered areas receive more raised detail. The masks
 do not use triangle barycentric edges, avoiding artificial triangulation seams.
 The crystal response uses the PBR minimum roughness (0.04) and is submitted
 into the native specular lobe only under unoccluded direct light;
-shadowed snow does not emit light. Only actual native hits evaluate the effect; no
-per-frame hit-count readback or GPU atomics are required. NativePBR owns snow
-enable, noise amount/rays-per-patch, snow parallax UV, sparkle amount/density,
-roughness, procedural lump controls, gravity flatness (default 1; 0 = any face,
-1 = upward-only), edge waviness (0..1), color affection (0 = neutral luminance-preserving native lighting;
-1 = native light RGB tint), snow specular amount (0..2), and
-the temporary coverage override. Tuning reaches SM6.5 via the existing
-direct-lighting constant buffer, with no atlas, snow texture residency,
-DX11 snow inputs, or per-scene generation. An optional NativePBR
-`Ultraviolet affected snow` setting adds a coverage-weighted, very dim
-blue-white emission at full color affection (neutral white at zero; default
-0.012, capped at 0.05), independent of direct light presence. This is a
+shadowed snow does not emit light through its crystal response. Only actual
+native hits evaluate the effect; no per-frame hit-count readback or GPU atomics
+are required. NativePBR uses a frozen snow preset: noise 1.00; four rays per
+patch; lump height 1.50, size 8.00, density 1.00, layers 4; upward gravity
+flatness 1.00; edge waviness 0.20; color affection 0.65; specular 0.50;
+sparkle amount 1.00 and density 0.25; roughness 1.00; parallax UV off; and
+ultraviolet effect on at 0.006 emission strength. The preset reaches SM6.5
+via the existing direct-lighting constant buffer, with no atlas, snow texture
+residency, DX11 snow inputs, or per-scene generation. The ultraviolet effect
+adds coverage-weighted, very dim blue-white emission, independent of direct
+light presence. This is a
 stylized fluorescence approximation; there is no
 UV-spectrum light detection. Gravity coverage blends the native triangle's
 upward-facing cosine through a smooth cubic response toward full candidate
@@ -136,10 +131,13 @@ coverage; coherent material-space noise bends the partial gravity-coverage
 transition into curved, wavy snow boundaries while preserving fully covered
 tops and uncovered walls. The wave seed is stable per instance rather than
 triangle, preventing internal triangle-edge flicker. Actual geometry silhouettes
-and separate terrain-evidence boundaries remain unchanged. The flatness slider lets walls retain a tunable fraction of snow
-without weather or raster inputs. This is surface shading, not geometry displacement or a
+and separate terrain-evidence boundaries remain unchanged. Locked upward
+gravity suppresses snow on walls without weather or raster inputs. This is
+surface shading, not geometry displacement or a
 persistent accumulation simulation. Interior scenes receive coverage only
-when the explicit eligible-receiver test is enabled.
+when the explicit eligible-receiver test is enabled. Older saved snow tuning
+keys are ignored and no longer saved; snow UI and diagnostic snapshots have
+no tuning values or per-scene snow counters.
 
 ## Plugin-scoped interior catalog (Stage B)
 
