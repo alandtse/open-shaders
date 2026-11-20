@@ -180,6 +180,7 @@ private:
 	};
 	std::array<RuntimeCommandContext, kRuntimeCommandContextCount> runtimeCommandContexts;
 	uint32_t runtimeCommandContextCursor = 0;
+	bool runtimeCommandContextBusy = false;  // Transient GPU backpressure, not a provider failure.
 
 	WrappedResource* runtimeColorShared[2]{};
 	WrappedResource* runtimeDepthShared[2]{};

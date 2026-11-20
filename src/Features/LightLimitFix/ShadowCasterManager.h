@@ -6,6 +6,7 @@
 #include <array>
 #include <d3d11.h>
 #include <functional>
+#include <span>
 
 #include "RE/B/BSShadowLight.h"
 #include "RE/S/ShadowSceneNode.h"
@@ -1038,6 +1039,15 @@ namespace ShadowCasterManager
 
 	/// Returns read-only view of active light pool.
 	const LightContainer& GetLights();
+
+	/** @brief Receives completed native static-light coverage without transferring light ownership. */
+	void PublishNativeStaticCoverage(std::span<RE::BSShadowLight* const> covered);
+	/** @brief True if a light has complete native geometry coverage. */
+	bool NativeStaticCovered(const RE::BSShadowLight* light);
+	/** @brief The composite confirms an independent shadow mask can replace the static atlas. */
+	void SetNativeStaticMaskActive(bool active);
+	/** @brief True only while native masking and this light's static coverage are both valid. */
+	bool NativeStaticOffloaded(const RE::BSShadowLight* light);
 
 	/// True when SCM owns shadow scheduling (enabled at boot, no external conflict).
 	bool IsActive();

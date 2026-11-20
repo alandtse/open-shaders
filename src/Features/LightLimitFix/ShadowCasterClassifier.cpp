@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 
+#include "../../Feature.h"
 #include "../../Globals.h"
 #include "../../State.h"
 #include "../../Utils/ActorUtils.h"
@@ -353,7 +354,8 @@ namespace ShadowCasterManager
 		// static, or its silhouette ghosts once it walks off a bake-starved cell.
 		if (geom.GetGeometryRuntimeData().skinInstance)
 			return true;
-		return ClassifyCaster(geom).dynamic;
+		const bool dynamic = ClassifyCaster(geom).dynamic;
+		return dynamic;
 	}
 
 	// Running static-caster hash for the light currently accumulating; seeded
@@ -441,7 +443,8 @@ namespace ShadowCasterManager
 	/// Shared by both cull-append hooks for identical StaticOnly/DynamicOnly semantics.
 	static bool CasterFilteredByPass(RE::BSGeometry& geom)
 	{
-		if (!AtlasActive())
+		const bool nativeStaticOffloaded = NativeStaticOffloaded(CurrentCullLight());
+		if (!AtlasActive() && !nativeStaticOffloaded)
 			return false;
 		if (const auto passless = ShadowMapPassless(geom); passless != PasslessReason::kNone) {
 			s_passlessCasterSkipTotal.fetch_add(1, std::memory_order_relaxed);
@@ -454,6 +457,8 @@ namespace ShadowCasterManager
 		                          nullptr :
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
+		if (!dynamic && nativeStaticOffloaded)
+			return true;
 		// Every static caster folds into the hash regardless of pass, so a
 		// static-set change is seen during whichever accumulate runs this frame.
 		if (!dynamic)

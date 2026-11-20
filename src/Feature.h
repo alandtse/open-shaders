@@ -17,6 +17,10 @@
 
 struct ID3D11ShaderResourceView;
 struct ID3D11Texture2D;
+namespace RE
+{
+	class BSGeometry;
+}
 struct ImVec4;
 class PresetProvider;
 

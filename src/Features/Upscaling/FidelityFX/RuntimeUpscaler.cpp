@@ -17,6 +17,7 @@
 
 #include "../../../GpuPass.h"
 #include "../../../State.h"
+#include "../../DX12/DX12NativeComposite.h"
 #include "../../ReverseZ.h"
 #include "../../Upscaling.h"
 #include "../DX12SwapChain.h"
@@ -646,32 +647,15 @@ FidelityFX::RuntimeCommandContext* FidelityFX::AcquireRuntimeCommandContext()
 
 		commandContext.fenceValue = 0;
 		runtimeCommandContextCursor = (index + 1) % commandContextCount;
+		runtimeCommandContextBusy = false;
 		return &commandContext;
 	}
 
-	uint32_t waitIndex = commandContextCount;
-	uint64_t waitValue = std::numeric_limits<uint64_t>::max();
-	for (uint32_t i = 0; i < commandContextCount; ++i) {
-		auto& commandContext = runtimeCommandContexts[i];
-		if (!commandContext.commandAllocator || !commandContext.commandList || commandContext.fenceValue == 0)
-			continue;
-		if (commandContext.fenceValue < waitValue) {
-			waitValue = commandContext.fenceValue;
-			waitIndex = i;
-		}
-	}
-
-	if (waitIndex == commandContextCount)
-		return nullptr;
-
-	if (!WaitForRuntimeD3D12Fence(waitValue)) {
-		return nullptr;
-	}
-
-	auto& commandContext = runtimeCommandContexts[waitIndex];
-	commandContext.fenceValue = 0;
-	runtimeCommandContextCursor = (waitIndex + 1) % commandContextCount;
-	return &commandContext;
+	// An occupied command allocator cannot be reset until its GPU fence retires.
+	// This is transient backpressure, not a runtime-provider failure.
+	// The caller falls back to host FSR for this frame without latching.
+	runtimeCommandContextBusy = true;
+	return nullptr;
 }
 
 void FidelityFX::ResetRuntimeCommandContexts()
@@ -682,6 +666,7 @@ void FidelityFX::ResetRuntimeCommandContexts()
 		commandContext.fenceValue = 0;
 	}
 	runtimeCommandContextCursor = 0;
+	runtimeCommandContextBusy = false;
 }
 
 bool FidelityFX::WaitForRuntimeD3D12Fence(uint64_t a_value)
@@ -1228,10 +1213,17 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 				CD3DX12_RESOURCE_BARRIER::Transition(runtimeOutputShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
 			};
 			commandList->ResourceBarrier(static_cast<UINT>(beginBarriers.size()), beginBarriers.data());
+			auto nativeComposite = globals::features::dx12NativeComposite.Dispatch(commandList,
+				runtimeColorShared[a_contextIndex]->resource.get(),
+				runtimeDepthShared[a_contextIndex]->resource.get(), a_renderWidth, a_renderHeight);
 
 			ffx::DispatchDescUpscale dispatchParameters{};
 			dispatchParameters.commandList = commandList;
-			dispatchParameters.color = ffxApiGetResourceDX12(runtimeColorShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+			// Do not feed final-color shadow multiplication into FSR until a true
+			// per-light direct-light input and same-frame failure fallback exist.
+			// Native Composite may still calculate a shadowmask for validation.
+			dispatchParameters.color = ffxApiGetResourceDX12(
+				runtimeColorShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.depth = ffxApiGetResourceDX12(runtimeDepthShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.motionVectors = ffxApiGetResourceDX12(runtimeMotionShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.exposure = FfxApiResource({});
@@ -1299,6 +1291,8 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			swapChain.commandQueue->ExecuteCommandLists(1, commandListsToExecute);
 			commandListSubmitted = true;
 			DX::ThrowIfFailed(swapChain.commandQueue->Signal(runtimeFence.fence12.get(), d3d12SubmitFence));
+			if (nativeComposite)
+				globals::features::dx12NativeComposite.OnSubmitted(runtimeFence.fence12.get(), d3d12SubmitFence, std::move(*nativeComposite));
 			commandContext->fenceValue = d3d12SubmitFence;
 			commandFenceTracked = true;
 			DX::ThrowIfFailed(swapChain.d3d11Context->Wait(runtimeFence.fence11.get(), d3d12SubmitFence));
@@ -1381,6 +1375,7 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 	const bool runtimeSelected = runtimeRequested && CanUseRuntimeUpscalerPath();
 
 	if (runtimeSelected) {
+		runtimeCommandContextBusy = false;
 		auto state = globals::state;
 		if (!state)
 			return false;
@@ -1425,28 +1420,38 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 		if (tryRuntimeUpscaler(requestedRuntimeVersion, fullRenderWidth, fullRenderHeight))
 			return true;
 
-		// Try the runtime FSR3 provider in the upscaler DLL before falling back to the host SDK.
-		// CanUseRuntimeUpscalerPath() re-check: the upgrade attempt above may have just quarantined
-		// the provider, which must stop this fallback from dispatching into it too.
-		if (runtimeUpgradeRequested && ShouldUseRuntimeUpscalerForFSR() && CanUseRuntimeUpscalerPath()) {
-			LatchRuntimeUpgradeFailure();
-			runtimeFallbackResetDispatchesRemaining = std::max(runtimeFallbackResetDispatchesRemaining, runtimeContextCount);
-			const uint32_t fallbackRenderWidth = splitPerEyeContexts ? fullRenderWidth : a_renderWidth;
-			const uint32_t fallbackRenderHeight = splitPerEyeContexts ? fullRenderHeight : a_renderHeight;
-			if (tryRuntimeUpscaler(Fsr3Version, fallbackRenderWidth, fallbackRenderHeight))
-				return true;
-		}
+		if (runtimeCommandContextBusy) {
+			// All DX12 command allocators are still owned by the GPU. Host FSR
+			// can process this frame without a CPU stall; do not permanently
+			// disable the runtime provider because of transient backpressure.
+			runtimeFallbackResetDispatchesRemaining =
+				std::max(runtimeFallbackResetDispatchesRemaining, runtimeContextCount);
+			if (runtimeAlreadyUsedThisFrame)
+				return false;  // Never mix runtime and host across stereo eyes.
+		} else {
+			// Try the runtime FSR3 provider in the upscaler DLL before falling back to the host SDK.
+			// CanUseRuntimeUpscalerPath() re-check: the upgrade attempt above may have just quarantined
+			// the provider, which must stop this fallback from dispatching into it too.
+			if (runtimeUpgradeRequested && ShouldUseRuntimeUpscalerForFSR() && CanUseRuntimeUpscalerPath()) {
+				LatchRuntimeUpgradeFailure();
+				runtimeFallbackResetDispatchesRemaining = std::max(runtimeFallbackResetDispatchesRemaining, runtimeContextCount);
+				const uint32_t fallbackRenderWidth = splitPerEyeContexts ? fullRenderWidth : a_renderWidth;
+				const uint32_t fallbackRenderHeight = splitPerEyeContexts ? fullRenderHeight : a_renderHeight;
+				if (tryRuntimeUpscaler(Fsr3Version, fallbackRenderWidth, fallbackRenderHeight))
+					return true;
+			}
 
-		if (!runtimeUpscalerFailureLatched) {
-			runtimeFallbackResetDispatchesRemaining = std::max(runtimeFallbackResetDispatchesRemaining, runtimeContextCount);
-		}
-		LatchRuntimeUpscalerFailure();
+			if (!runtimeUpscalerFailureLatched) {
+				runtimeFallbackResetDispatchesRemaining = std::max(runtimeFallbackResetDispatchesRemaining, runtimeContextCount);
+			}
+			LatchRuntimeUpscalerFailure();
 
-		// A sibling eye already published a runtime-provider frame; falling through to host
-		// FSR3 here would present an unretractable mixed-provider stereo pair. Drop this eye
-		// instead -- the caller skips finalizing the frame when any eye fails.
-		if (runtimeAlreadyUsedThisFrame)
-			return false;
+			// A sibling eye already published a runtime-provider frame; falling through to host
+			// FSR3 here would present an unretractable mixed-provider stereo pair. Drop this eye
+			// instead -- the caller skips finalizing the frame when any eye fails.
+			if (runtimeAlreadyUsedThisFrame)
+				return false;
+		}
 	}
 
 	// Defense in depth: CanUseRuntimeUpscalerPath() latching mid-frame (e.g. this eye's own
