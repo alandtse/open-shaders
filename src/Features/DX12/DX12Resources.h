@@ -48,6 +48,7 @@ namespace DX12
 		void Clear();
 		/** @brief Retains an immutable render-consumer snapshot. */
 		std::shared_ptr<const Grid> Snapshot() const { return snapshot.load(std::memory_order_acquire); }
+
 	private:
 		std::mutex mutex;
 		std::atomic<std::shared_ptr<const Grid>> snapshot{ std::make_shared<const Grid>() };
