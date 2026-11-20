@@ -165,12 +165,13 @@ struct NativeLLFFeature final : Feature
 		std::vector<Light> lights;
 	};
 	std::atomic<bool> enabled{ true };
-	// Only supplementary LLF emitters are toggled; prepared scene lighting
-	// stays authoritative, while live observations remain available to SCM.
+	// Prepared light positions and identities stay authoritative; LLF radiance
+	// can be added experimentally without changing SCM's source identities.
 	std::atomic<bool> contributeUnmatched{ true };
+	std::atomic<bool> contributeMatched{ false };
 
 	std::atomic<float> matchDistanceUnits{ 64.0f };
-	// Radiance gain for supplementary LLF-only emitters, never prepared scene lights.
+	// Radiance gain for opted-in LLF contributions.
 	std::atomic<float> contribution{ 1.0f };
 	static constexpr uint32_t kMaxUnifiedLights = DX12Native::kMaximumNativePointLights;
 	struct SourceIdentity
@@ -185,7 +186,7 @@ struct NativeLLFFeature final : Feature
 	{
 		std::array<DX12Native::PreparedPointLight, kMaxUnifiedLights> lights{};
 		std::array<SourceIdentity, kMaxUnifiedLights> source{};
-		uint32_t count = 0, prepared = 0, observed = 0, matched = 0, added = 0;
+		uint32_t count = 0, prepared = 0, observed = 0, matched = 0, matchedContributed = 0, added = 0;
 		uint32_t clusteredLive = 0, omitted = 0, overflow = 0;
 	};
 	UnifiedLights BuildUnifiedLights(std::span<const DX12Native::PreparedPointLight> prepared,
@@ -202,7 +203,7 @@ private:
 		std::shared_ptr<const LightFrame> source;
 		std::shared_ptr<const DX12Native::PreparedCell> prepared;
 		float matchUnits = 0.0f, gain = 0.0f;
-		bool contribute = false, valid = false;
+		bool contribute = false, contributeMatches = false, valid = false;
 		UnifiedLights result;
 	};
 	mutable std::mutex lightMutex;
@@ -230,6 +231,7 @@ public:
 	{
 		enabled = true;
 		contributeUnmatched = true;
+		contributeMatched = false;
 		matchDistanceUnits = 64.0f;
 		contribution = 1.0f;
 	}

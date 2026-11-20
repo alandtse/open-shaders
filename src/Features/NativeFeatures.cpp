@@ -387,7 +387,7 @@ namespace
 	NativeLLFFeature::UnifiedLights ComputeNativeUnifiedLights(
 		std::span<const DX12Native::PreparedPointLight> prepared,
 		const NativeLLFFeature::LightFrame* published,
-		bool active, float units, float gain, bool contribute);
+		bool active, float units, float gain, bool contribute, bool contributeMatches);
 }
 
 void NativeLLFFeature::ClearCapturedLights()
@@ -459,12 +459,13 @@ void NativeLLFFeature::PublishLights(const LightLimitFix::LightData* data, uint3
 		work->matchUnits = std::clamp(matchDistanceUnits.load(std::memory_order_relaxed), 0.0f, 512.0f);
 		work->gain = std::clamp(contribution.load(std::memory_order_relaxed), 0.0f, 4.0f);
 		work->contribute = contributeUnmatched.load(std::memory_order_relaxed) && work->gain > 0.0f;
+		work->contributeMatches = contributeMatched.load(std::memory_order_relaxed) && work->gain > 0.0f;
 		static BS::thread_pool<> pool{ 1 };
 		pool.detach_task([work] {
 			try {
 				work->result = ComputeNativeUnifiedLights(
 					work->prepared->nativeLights, work->source.get(), true,
-					work->matchUnits, work->gain, work->contribute);
+					work->matchUnits, work->gain, work->contribute, work->contributeMatches);
 				work->valid = true;
 			} catch (...) { /* Never consume incomplete output. */
 			}
@@ -491,7 +492,7 @@ namespace
 	NativeLLFFeature::UnifiedLights ComputeNativeUnifiedLights(
 		std::span<const DX12Native::PreparedPointLight> prepared,
 		const NativeLLFFeature::LightFrame* published,
-		bool active, float units, float gain, bool contribute)
+		bool active, float units, float gain, bool contribute, bool contributeMatches)
 	{
 		NativeLLFFeature::UnifiedLights result{};
 		result.prepared = static_cast<uint32_t>(prepared.size());
@@ -533,9 +534,18 @@ namespace
 				}
 			}
 			if (closest != UINT32_MAX) {
-				if (closest < result.prepared)
+				if (closest < result.prepared) {
 					++result.matched;
-				else
+					if (contributeMatches) {
+						auto& radiance = result.lights[closest].radiance;
+						const float3 combined{ radiance.x + live.radiance.x * gain,
+							radiance.y + live.radiance.y * gain, radiance.z + live.radiance.z * gain };
+						if (std::isfinite(combined.x) && std::isfinite(combined.y) && std::isfinite(combined.z)) {
+							radiance = combined;
+							++result.matchedContributed;
+						}
+					}
+				} else
 					++result.clusteredLive;
 				const auto& previous = result.source[closest];
 				const bool shadow = (live.flags & static_cast<uint32_t>(PointLightFlags::Flags::Shadow)) != 0;
@@ -578,13 +588,14 @@ NativeLLFFeature::UnifiedLights NativeLLFFeature::BuildUnifiedLights(
 	const float units = std::clamp(matchDistanceUnits.load(std::memory_order_relaxed), 0.0f, 512.0f);
 	const float gain = std::clamp(contribution.load(std::memory_order_relaxed), 0.0f, 4.0f);
 	const bool contribute = contributeUnmatched.load(std::memory_order_relaxed) && gain > 0.0f;
+	const bool contributeMatches = contributeMatched.load(std::memory_order_relaxed) && gain > 0.0f;
 	const auto matches = [&](const std::shared_ptr<const UnifiedWork>& work) {
 		return work && work->done.load(std::memory_order_acquire) &&
 		       work->valid && work->source == published && work->prepared &&
 		       work->prepared->nativeLights.data() == prepared.data() &&
 		       work->prepared->nativeLights.size() == prepared.size() &&
 		       work->matchUnits == units && work->gain == gain &&
-		       work->contribute == contribute;
+		       work->contribute == contribute && work->contributeMatches == contributeMatches;
 	};
 	if (active && published) {
 		if (auto work = workerUnified.load(std::memory_order_acquire); matches(work)) {
@@ -594,7 +605,7 @@ NativeLLFFeature::UnifiedLights NativeLLFFeature::BuildUnifiedLights(
 		if (auto cached = fallbackUnified.load(std::memory_order_acquire); matches(cached))
 			return cached->result;
 	}
-	auto result = ComputeNativeUnifiedLights(prepared, published.get(), active, units, gain, contribute);
+	auto result = ComputeNativeUnifiedLights(prepared, published.get(), active, units, gain, contribute, contributeMatches);
 	if (active && published) {
 		auto cached = std::make_shared<UnifiedWork>();
 		cached->source = std::move(published);
@@ -607,6 +618,7 @@ NativeLLFFeature::UnifiedLights NativeLLFFeature::BuildUnifiedLights(
 			cached->matchUnits = units;
 			cached->gain = gain;
 			cached->contribute = contribute;
+			cached->contributeMatches = contributeMatches;
 			cached->result = result;
 			cached->valid = true;
 			cached->done.store(true, std::memory_order_release);
@@ -716,20 +728,23 @@ void NativeLLFFeature::DrawSettings()
 	bool add = contributeUnmatched.load(std::memory_order_relaxed);
 	if (ImGui::Checkbox("Contribute unmatched LLF lights", &add))
 		contributeUnmatched.store(add, std::memory_order_relaxed);
+	bool matched = contributeMatched.load(std::memory_order_relaxed);
+	if (ImGui::Checkbox("Add matched LLF radiance (testing)", &matched))
+		contributeMatched.store(matched, std::memory_order_relaxed);
 	float gain = contribution.load(std::memory_order_relaxed);
 	if (ImGui::SliderFloat("NativeLLF contribution", &gain, 0.0f, 4.0f, "%.2fx"))
 		contribution.store(gain, std::memory_order_relaxed);
-	ImGui::TextDisabled("Scales unmatched LLF emitter radiance only; prepared lighting remains unchanged.");
+	ImGui::TextDisabled("Scales opted-in LLF radiance; matched test adds to prepared color, not position or radius.");
 	float units = matchDistanceUnits.load(std::memory_order_relaxed);
 	if (ImGui::SliderFloat("Clustering distance (Skyrim units)", &units, 0.0f, 512.0f, "%.0f units"))
 		matchDistanceUnits.store(units, std::memory_order_relaxed);
 	ImGui::TextDisabled("Prepared lights remain first and preserve their original light properties.");
-	ImGui::TextDisabled("Nearby LLF lights are folded into their prepared matches, never added twice.");
+	ImGui::TextDisabled("Matched test can double-count an emitter already represented by the companion.");
 	const auto scene = globals::features::dx12NativeScene.GetPublishedScene();
 	if (scene && globals::game::graphicsState) {
 		const auto merged = BuildUnifiedLights(scene->cell->nativeLights, frame);
-		ImGui::Text("Prepared %u | matched LLF %u | added LLF %u | unified %u/%u",
-			merged.prepared, merged.matched, merged.added, merged.count, kMaxUnifiedLights);
+		ImGui::Text("Prepared %u | matched LLF %u (%u contributing) | added LLF %u | unified %u/%u",
+			merged.prepared, merged.matched, merged.matchedContributed, merged.added, merged.count, kMaxUnifiedLights);
 		ImGui::Text("LLF clustered %u | omitted %u | overflow %u",
 			merged.clusteredLive, merged.omitted, merged.overflow);
 	}
@@ -770,6 +785,7 @@ void NativeLLFFeature::LoadSettings(json& j)
 {
 	enabled.store(j.value("Enabled", true), std::memory_order_relaxed);
 	contributeUnmatched.store(j.value("ContributeUnmatched", true), std::memory_order_relaxed);
+	contributeMatched.store(j.value("ContributeMatched", false), std::memory_order_relaxed);
 	const float value = j.value("MatchDistanceUnits", 64.0f);
 	matchDistanceUnits.store(std::isfinite(value) ? std::clamp(value, 0.0f, 512.0f) : 64.0f,
 		std::memory_order_relaxed);
@@ -799,6 +815,7 @@ void NativeLLFFeature::SaveSettings(json& j)
 {
 	j = { { "Enabled", enabled.load(std::memory_order_relaxed) },
 		{ "ContributeUnmatched", contributeUnmatched.load(std::memory_order_relaxed) },
+		{ "ContributeMatched", contributeMatched.load(std::memory_order_relaxed) },
 		{ "MatchDistanceUnits", matchDistanceUnits.load(std::memory_order_relaxed) },
 		{ "Contribution", contribution.load(std::memory_order_relaxed) } };
 }
@@ -871,6 +888,7 @@ json NativeLLFFeature::GetDiagnostics()
 	const auto lights = globals::features::nativeLLF.GetLightFrame(frame);
 	json report{ { "selected", enabled.load() }, { "native", IsActive() },
 		{ "contributeUnmatched", contributeUnmatched.load() },
+		{ "contributeMatched", contributeMatched.load() },
 		{ "matchDistanceUnits", matchDistanceUnits.load() },
 		{ "contribution", contribution.load() },
 		{ "observedLights", lights ? lights->lights.size() : size_t{ 0 } },
@@ -883,6 +901,7 @@ json NativeLLFFeature::GetDiagnostics()
 		report["preparedLights"] = merged.prepared;
 		report["unifiedLights"] = merged.count;
 		report["matchedLLFLights"] = merged.matched;
+		report["matchedLLFContributions"] = merged.matchedContributed;
 		report["addedLLFLights"] = merged.added;
 		report["rtShadowEligibleLLFLights"] = merged.added;
 		report["clusteredLLFLights"] = merged.clusteredLive;
