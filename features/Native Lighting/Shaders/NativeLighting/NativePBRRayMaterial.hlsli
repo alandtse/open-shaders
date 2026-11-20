@@ -207,6 +207,15 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	surface.bitangent = mul((float3x3)objectToWorld, hitSurface.bitangent);
 	surface.vertexColor = hitSurface.color.rgb;
 	surface.facing = 1.0f;
+	surface.projectedSnowIncidence = 0.0f;
+	if ((binding.flags & NativePBR::DrawProjectedSnowCandidateFlag) != 0u) {
+		float3 edge0 = mul((float3x3)objectToWorld, hitSurface.position1 - hitSurface.position0);
+		float3 edge1 = mul((float3x3)objectToWorld, hitSurface.position2 - hitSurface.position0);
+		float3 face = cross(edge0, edge1);
+		float lengthSq = dot(face, face);
+		if (all(isfinite(face)) && lengthSq > 1e-12f)
+			surface.projectedSnowIncidence = saturate(face.z * rsqrt(lengthSq));
+	}
 	if (!all(isfinite(surface.geometricNormal)) ||
 		!all(isfinite(surface.tangent)) || !all(isfinite(surface.bitangent)))
 		return false;
@@ -220,6 +229,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	evaluated.metallic = result.metallic;
 	evaluated.ao = result.ao;
 	evaluated.opacity = result.opacity;
+	evaluated.projectedSnowCoverageCandidate = result.projectedSnowCoverageCandidate;
 	clearcoat = float3(result.coatStrength, result.coatRoughness, result.coatF0);
 	return all(isfinite(evaluated.baseColor)) && all(isfinite(evaluated.normal)) &&
 		all(isfinite(evaluated.f0)) && all(isfinite(evaluated.emission)) &&

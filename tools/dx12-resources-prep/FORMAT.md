@@ -57,6 +57,36 @@ No evaluated roughness, BRDF or DX11 TruePBR material output is baked into the
 companion. NativePBR resolves material interpretation and residency at runtime.
 Geometry opacity exclusions remain conservative for safe RT traversal.
 
+## Projected-snow receiver geometry (option A)
+
+The companion computes `instances[].projectedSnow` from **original RSGM
+triangles and the placed shape-to-cell transform**, without consulting DX11
+textures, weather, material evaluation, or the removed snow-atlas approach.
+`basis: "world-up-face-projection-v1"` identifies this geometric descriptor:
+
+- `candidate`: whether any opaque, upward-facing triangle contributes area;
+- `projectedArea`: sum of upward triangle areas projected onto the cell XY plane;
+- `surfaceArea`: total transformed triangle surface area;
+- `upwardTriangles` / `totalTriangles`: source triangle counts under the same basis.
+
+If geometry cannot be inspected safely, the descriptor instead has a
+`basis` beginning with `unavailable:` and zero values. Absence of the member
+in an older package means **not marked**, never assumed snowy. Layout and
+preparation reports include `projectedSnowCandidateInstances`; the descriptor
+also participates in `layoutDigest` so old preparations are not silently reused.
+
+These are **potential receiving areas, not actual snow coverage**. A positive
+candidate does not mean precipitation, accumulation, or whitening is present;
+vertical and downward-facing triangles produce zero per-hit suitability.
+Native Scene validates the descriptor and transfers one flag into the existing
+per-instance NativePBR draw binding (bit 3, no extra GPU buffer). NativePBR
+calculates each native ray hit's upward-face incidence and exposes it as
+`SurfaceMaterial.projectedSnowCoverageCandidate`, forwarded through
+`EvaluatedSourceMaterial`. It does not affect the BRDF, final color, weather,
+or lighting submission yet: actual snow presence/strength must remain a
+separate, authoritative native input before applying snow in PBR. No DX11
+data is admitted into this coverage path.
+
 ## Plugin-scoped interior catalog (Stage B)
 
 Command: DX12ResourcesPrep --list-cells <Data directory> <SelectedPlugin.esm> <Plugins.txt> <output.json>

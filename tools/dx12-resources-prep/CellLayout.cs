@@ -4,9 +4,11 @@ using System.Text.Json;
 internal sealed record PlacedShape(string ReferenceKey, string? BaseKey, string Model, string SourceSha256,
     int BlockIndex, string ShapeName, string GeometryFile, string GeometrySha256, int IndexCount,
     float[] ModelToCell, float[] ShapeToCell, float[] CellBounds, string? BaseEditorId, string RecordClassification, string? RoomReferenceKey,
-    bool OpaqueOccluderCandidate, string GeometryStatus, bool TwoSided, string ShadingStatus, string? ShadingFile, string? ShadingSha256, CompiledMaterial? Material, string TangentStatus);
+    bool OpaqueOccluderCandidate, string GeometryStatus, bool TwoSided, string ShadingStatus, string? ShadingFile, string? ShadingSha256, CompiledMaterial? Material, string TangentStatus,
+    ProjectedSnowArea ProjectedSnow);
 internal sealed record LayoutOmission(string ReferenceKey, string? Model, string Reason, int? BlockIndex);
-internal sealed record LayoutResult(int PlacedReferences, int Instances, long Triangles, int OmittedReferences, string Digest);
+internal sealed record LayoutResult(int PlacedReferences, int Instances, long Triangles, int OmittedReferences,
+    int ProjectedSnowCandidateInstances, string Digest);
 
 internal static class CellLayout
 {
@@ -18,6 +20,7 @@ internal static class CellLayout
         var models = assets.ToDictionary(asset => asset.SourcePath, StringComparer.OrdinalIgnoreCase);
         var instances = new List<PlacedShape>();
         var omissions = new List<LayoutOmission>();
+        var projectedSnow = new ProjectedSnowAreas(output);
         foreach (var row in records)
         {
             var key = row.GetProperty("key").GetString()!;
@@ -55,11 +58,15 @@ internal static class CellLayout
                     var transform = PlacementTransform.FromRows(shape.ShapeToModel!) * placement;
                     var matrix = PlacementTransform.ToRows(transform);
                     if (!matrix.All(float.IsFinite)) throw new InvalidDataException("Non-finite composed placement.");
+                    ProjectedSnowArea snowArea;
+                    try { snowArea = projectedSnow.Analyze(shape.GeometryFile!, transform, shape.OpaqueOccluderCandidate); }
+                    catch (IOException) { snowArea = new("unavailable:geometry-io", false, 0, 0, 0, 0); }
+                    catch (InvalidDataException) { snowArea = new("unavailable:geometry-invalid", false, 0, 0, 0, 0); }
                     placed.Add(new(key, row.GetProperty("baseKey").GetString(), asset.SourcePath, asset.SourceSha256,
                         shape.BlockIndex, shape.Name, shape.GeometryFile!, shape.GeometrySha256!, shape.IndexCount,
                         PlacementTransform.ToRows(placement), matrix, PlacementTransform.Bounds(shape.LocalBounds!, transform),
                         row.GetProperty("baseEditorId").GetString(), classification, row.GetProperty("roomReferenceKey").GetString(), shape.OpaqueOccluderCandidate, shape.Status, shape.Material?.TwoSided ?? false,
-                        shape.ShadingStatus, shape.ShadingFile, shape.ShadingSha256, shape.Material, shape.TangentStatus));
+                        shape.ShadingStatus, shape.ShadingFile, shape.ShadingSha256, shape.Material, shape.TangentStatus, snowArea));
                     if (!shape.OpaqueOccluderCandidate) omissions.Add(new(key, model, shape.Status, shape.BlockIndex));
                 }
                 instances.AddRange(placed);
@@ -129,7 +136,8 @@ internal static class CellLayout
             matrixConvention = "row-major 3x4, column-vector application; ShapeToCell = ModelToCell * ShapeToModel",
             placementMatricesComposed = true, runtimeCoverageValid = false, accelerationBuilt = false,
             placedReferences, opaqueOccluderCandidateInstances = instances.Count(instance => instance.OpaqueOccluderCandidate),
-            previewOnlyInstances = instances.Count(instance => !instance.OpaqueOccluderCandidate), instances, omissions, lights
+            previewOnlyInstances = instances.Count(instance => !instance.OpaqueOccluderCandidate),
+            projectedSnowCandidateInstances = instances.Count(instance => instance.ProjectedSnow.Candidate), instances, omissions, lights
         };
         File.WriteAllText(Path.Combine(output, "cell-layout.json"), JsonSerializer.Serialize(layout, options));
         // Non-disruptive spatial catalog: this does not change or repartition
@@ -138,6 +146,6 @@ internal static class CellLayout
         SubcellIndex.Write(output, cell, digest, subcellSize, instances,
             JsonSerializer.SerializeToElement(lights, options).EnumerateArray().ToArray(), options);
         return new(placedReferences, instances.Count, instances.Sum(instance => (long)instance.IndexCount / 3),
-            records.Length - placedReferences, digest);
+            records.Length - placedReferences, instances.Count(instance => instance.ProjectedSnow.Candidate), digest);
     }
 }

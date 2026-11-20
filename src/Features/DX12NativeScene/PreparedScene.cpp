@@ -1,4 +1,5 @@
 #include "PreparedScene.h"
+#include "PreparedSnowProjection.h"
 #include "CellPackedFile.h"
 #include "VideoMemoryBudget.h"
 
@@ -319,6 +320,8 @@ namespace DX12Native
 				instance.bound = { (bounds[0] + bounds[3]) * 0.5f, (bounds[1] + bounds[4]) * 0.5f, (bounds[2] + bounds[5]) * 0.5f,
 					std::max({ bounds[3] - bounds[0], bounds[4] - bounds[1], bounds[5] - bounds[2] }) * 0.5f };
 				instance.material.opaqueCandidate = row.at("opaqueOccluderCandidate").get<bool>();
+				instance.material.projectedSnowCandidate = ReadPreparedSnowProjection(
+					row, instance.indexCount, instance.material.opaqueCandidate);
 				if (rooms && row.contains("roomReferenceKey")) {
 					if (row.at("roomReferenceKey").is_null())
 						instance.material.roomIndex = 0;
@@ -331,6 +334,7 @@ namespace DX12Native
 				const auto status = row.at("geometryStatus").get<std::string>();
 				if (status != "compiled") {
 					instance.material.opaqueCandidate = false;
+					instance.material.projectedSnowCandidate = false;
 					if (status == "preview-only:alpha-test-or-blend")
 						instance.material.offlineMaterialFlags = OfflineMaterialFlags::AlphaCoverage;
 					else if (status == "preview-only:vertex-or-palette-alpha")

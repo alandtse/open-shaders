@@ -7,6 +7,7 @@ namespace NativePBR
 {
 	static const uint MissingTexture = 0xffffffffu;
 	static const uint DrawVertexColorFlag = 1u;
+	static const uint DrawProjectedSnowCandidateFlag = 1u << 3u;
 	static const uint LegacyComplexMaskFlag = 1u << 8u;
 	static const uint MaterialOptionParallax = 1u << 0u;
 	static const uint MaterialOptionComplex = 1u << 1u;
@@ -40,6 +41,7 @@ namespace NativePBR
 		float3 geometricNormal;
 		float3 vertexColor;
 		float facing;
+		float projectedSnowIncidence;
 	};
 
 	struct SurfaceMaterial
@@ -55,6 +57,7 @@ namespace NativePBR
 		float coatStrength;
 		float coatRoughness;
 		float coatF0;
+		float projectedSnowCoverageCandidate;
 	};
 
 	float3 SrgbToLinear(float3 value)
@@ -111,6 +114,8 @@ namespace NativePBR
 		result.coatStrength = simpleCoat ? saturate(material.coat.x * coatTexel.a) : 0.0f;
 		result.coatRoughness = clamp(material.coat.y, PBR::Constants::MinRoughness, PBR::Constants::MaxRoughness);
 		result.coatF0 = saturate(material.coat.z);
+		result.projectedSnowCoverageCandidate = (drawFlags & DrawProjectedSnowCandidateFlag) != 0u ?
+			saturate(surface.projectedSnowIncidence) : 0.0f;
 		return result;
 	}
 }

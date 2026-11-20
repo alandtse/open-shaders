@@ -84,6 +84,8 @@ namespace NativePBR
 			if (instance.material.opaqueCandidate && !identity.sourceDigest.empty() &&
 				!identity.referenceKey.empty() && !identity.shapeName.empty())
 				result->instances[index].flags |= kGpuDrawPreparedOpaque;
+			if (instance.material.projectedSnowCandidate)
+				result->instances[index].flags |= kGpuDrawProjectedSnowCandidate;
 		}
 		for (const auto& binding : result->prepared->instances) {
 			if (binding.instanceIndex >= result->instances.size() ||

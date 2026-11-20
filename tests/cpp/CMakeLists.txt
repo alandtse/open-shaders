@@ -69,6 +69,7 @@ add_executable(
     test_native_trace_density.cpp
     test_native_subcell_residency.cpp
     test_dx12_pg_references.cpp
+    test_prepared_snow_projection.cpp
     test_dxgi_native_reserve.cpp
     test_subcell_composition.cpp
     test_native_lighting_cull.cpp
