@@ -443,7 +443,8 @@ namespace ShadowCasterManager
 	/// Shared by both cull-append hooks for identical StaticOnly/DynamicOnly semantics.
 	static bool CasterFilteredByPass(RE::BSGeometry& geom)
 	{
-		if (!AtlasActive())
+		const bool nativeStaticOffloaded = NativeStaticOffloaded(CurrentCullLight());
+		if (!AtlasActive() && !nativeStaticOffloaded)
 			return false;
 		if (const auto passless = ShadowMapPassless(geom); passless != PasslessReason::kNone) {
 			s_passlessCasterSkipTotal.fetch_add(1, std::memory_order_relaxed);
@@ -456,7 +457,7 @@ namespace ShadowCasterManager
 		                          nullptr :
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
-		if (!dynamic && NativeStaticOffloaded(CurrentCullLight()))
+		if (!dynamic && nativeStaticOffloaded)
 			return true;
 		// Every static caster folds into the hash regardless of pass, so a
 		// static-set change is seen during whichever accumulate runs this frame.

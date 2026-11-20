@@ -110,12 +110,14 @@ void DX12NativeComposite::RestoreDefaultSettings()
 	OnRuntimeDisabled();
 }
 
-void DX12NativeComposite::EarlyPrepass()
+void DX12NativeComposite::PreShadowMaps()
 {
 	const auto frame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : 0;
 	const auto scene = globals::features::dx12NativeScene.GetScene();
 	const auto grid = globals::features::dx12Resources.GetGrid();
-	const bool active = IsActive() && settings.ShadowStrength > 0 && frame != 0 && lastSubmitFrame + 1 == frame && scene && grid &&
+	const auto covered = globals::features::dx12NativeScene.GetCoveredLightIDs();
+	const bool active = IsActive() && settings.ShadowStrength > 0 && frame != 0 && lastSubmitFrame + 1 == frame &&
+	                    scene && scene->complete && scene->acceleration && covered && !covered->empty() && grid &&
 	                    scene->scope == grid->requested.front().scope &&
 	                    scene->geometryRevision == submittedGeometry && grid->geometryRevision == submittedGeometry &&
 	                    grid->lightRevision == submittedLights &&

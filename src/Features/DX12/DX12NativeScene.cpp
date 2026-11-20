@@ -57,7 +57,7 @@ void DX12NativeScene::RestoreDefaultSettings()
 	OnRuntimeDisabled();
 }
 
-void DX12NativeScene::EarlyPrepass()
+void DX12NativeScene::PreShadowMaps()
 {
 	CS_GPU_PASS("DX12NativeScene::Update");
 	if (!IsActive()) {

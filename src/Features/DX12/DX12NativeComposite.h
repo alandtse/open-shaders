@@ -49,7 +49,8 @@ struct DX12NativeComposite final : Feature
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
 	void RestoreDefaultSettings() override;
-	void EarlyPrepass() override;
+	bool WantsPreShadowMapsHook() const override { return true; }
+	void PreShadowMaps() override;
 	void OnRuntimeDisabled() override;
 	void OnSceneTransitionReset(bool opening) override;
 	bool IsActive() const;

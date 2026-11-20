@@ -115,7 +115,8 @@ struct DX12Resources final : Feature
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
 	void RestoreDefaultSettings() override;
-	void EarlyPrepass() override;
+	bool WantsPreShadowMapsHook() const override { return true; }
+	void PreShadowMaps() override;
 	void OnSceneTransitionReset(bool opening) override;
 	void OnRuntimeDisabled() override;
 	/** @brief Returns current geometry residency without traversing engine objects. */

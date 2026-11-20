@@ -281,7 +281,7 @@ void DX12Resources::RestoreDefaultSettings()
 	grid.Clear();
 }
 
-void DX12Resources::EarlyPrepass()
+void DX12Resources::PreShadowMaps()
 {
 	CS_GPU_PASS("DX12Resources::Grid");
 	if (!IsActive()) {
