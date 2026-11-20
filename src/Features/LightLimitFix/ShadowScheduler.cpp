@@ -147,6 +147,13 @@ namespace ShadowCasterManager
 		return TolerantSplit() && GetFlickerMode() == static_cast<int>(FlickerShadowModeEnum::Pinned);
 	}
 
+	/// True for a light whose flicker moves it while its shadow is drawn from the live flame (Live and Warped): the flame leaves any
+	/// bake's pose every frame, so a cached bake would show the shadow from where the flame was.
+	static bool FlickersFromLiveOrigin(RE::NiLight* ni)
+	{
+		return ni && !ShadowsFromRest() && FlickerMovementAmplitude(ni) > 0.0f;
+	}
+
 	/// Where a light's shadow is drawn from: the rest position in the pinned flicker mode, so a fixture's shadow holds still while
 	/// the light flickers; the live position otherwise, so the warped and live modes keep the shadow dancing with the flame.
 	static RE::NiPoint3 ShadowOrigin(RE::NiLight* ni)
@@ -171,14 +178,14 @@ namespace ShadowCasterManager
 	}
 
 	/// Shared by the redraw hash and static-cache hash so both agree on what
-	/// "moved" means; a_atRest folds a flickering light's rest position, which its flicker never moves.
-	static std::uint64_t FoldLightPose(std::uint64_t h, RE::NiLight* ni, float posStep, bool a_atRest = false)
+	/// "moved" means.
+	static std::uint64_t FoldLightPose(std::uint64_t h, RE::NiLight* ni, float posStep)
 	{
 		const float kPosStep = std::max(posStep, 1.0f);
 		constexpr float kRotStep = 0.01f;
 		constexpr float kRadiusStep = 1.0f;
 
-		const auto t = a_atRest ? RestOrigin(ni) : ShadowOrigin(ni);
+		const auto t = ShadowOrigin(ni);
 		h = HashCombineFloat(h, QuantizeFloat(t.x, kPosStep));
 		h = HashCombineFloat(h, QuantizeFloat(t.y, kPosStep));
 		h = HashCombineFloat(h, QuantizeFloat(t.z, kPosStep));
@@ -876,8 +883,7 @@ namespace ShadowCasterManager
 		const float radius = ni->GetLightRuntimeData().radius.x;
 		const float tolerance = FlickerRadiusTolerance(FlickerRadiusBand(FlickerIntensityAmplitude(ni)), kSplitRadiusTolerance);
 		return std::abs(radius - st.bakeRadius) <= tolerance * st.bakeRadius &&
-		       ShadowOrigin(ni).GetSquaredDistance(st.bakePos) <=
-		           FlickerPositionToleranceSq(FlickerMovementAmplitude(ni) * ni->world.scale, kSplitPositionToleranceSq);
+		       ShadowOrigin(ni).GetSquaredDistance(st.bakePos) <= kSplitPositionToleranceSq;
 	}
 
 	/// Factor taking baked depth (normalised by the bake radius) to the live radius.
@@ -1269,8 +1275,8 @@ namespace ShadowCasterManager
 		// casters (RAII-cleared after); pick this accumulate's filter mode
 		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
-			// A carried light's camera faces its holder, which the bake's pose does not record: it renders full.
-			bool split = StaticAtlasReady() && !carrier;
+			// A carried light's camera faces its holder and a live flickering flame leaves any bake's pose: both render full.
+			bool split = StaticAtlasReady() && !carrier && !FlickersFromLiveOrigin(light->light.get());
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
 			st->fullThisFrame = !split;
@@ -1384,7 +1390,7 @@ namespace ShadowCasterManager
 				// re-hash on every flicker jitter, queueing a rebake per flicker.
 				s_visitStaticHash = 0x9e3779b97f4a7c15ull;
 				if (auto* ni = light->light.get())
-					s_visitStaticHash = FoldLightPose(s_visitStaticHash, ni, 16.0f, true);
+					s_visitStaticHash = FoldLightPose(s_visitStaticHash, ni, 16.0f);
 			}
 			s_visitDynamicCount.store(0, std::memory_order_relaxed);
 			s_visitStaticCount.store(0, std::memory_order_relaxed);
