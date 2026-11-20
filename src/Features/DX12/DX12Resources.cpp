@@ -281,13 +281,12 @@ void DX12Resources::RefreshPreparedLights(uint32_t frame)
 			const auto* base = reference->GetBaseObject();
 			const auto* light = base ? base->As<RE::TESObjectLIGH>() : nullptr;
 			if (!light || !light->data.flags.any(RE::TES_LIGHT_FLAGS::kHemiShadow,
-					RE::TES_LIGHT_FLAGS::kOmniShadow, RE::TES_LIGHT_FLAGS::kSpotShadow))
+							  RE::TES_LIGHT_FLAGS::kOmniShadow, RE::TES_LIGHT_FLAGS::kSpotShadow))
 				return RE::BSContainer::ForEachResult::kContinue;
 			const auto pos = reference->GetPosition();
 			const auto x = DX12::Coordinate(pos.x, current->size);
 			const auto y = DX12::Coordinate(pos.y, current->size);
-			if (!x || !y || std::ranges::find(current->requested,
-				DX12::SubcellKey{ current->requested.front().scope, *x, *y }) == current->requested.end())
+			if (!x || !y || std::ranges::find(current->requested, DX12::SubcellKey{ current->requested.front().scope, *x, *y }) == current->requested.end())
 				return RE::BSContainer::ForEachResult::kContinue;
 			if (lights.size() >= 256)
 				return RE::BSContainer::ForEachResult::kStop;
