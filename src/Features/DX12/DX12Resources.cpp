@@ -162,8 +162,7 @@ namespace DX12
 				!std::ranges::all_of(shape.positions, [](const float3& vertex) {
 					return std::isfinite(vertex.x) && std::isfinite(vertex.y) && std::isfinite(vertex.z);
 				}) ||
-				!std::ranges::all_of(shape.transform, [](float component) { return std::isfinite(component); }) ||
-				!std::ranges::all_of(shape.indices, [&](uint32_t index) { return index < shape.positions.size(); })) {
+				!std::ranges::all_of(shape.transform, [](float component) { return std::isfinite(component); }) || !std::ranges::all_of(shape.indices, [&](uint32_t index) { return index < shape.positions.size(); })) {
 				valid = false;
 				continue;
 			}
@@ -189,7 +188,6 @@ namespace DX12
 		snapshot.store(std::move(next), std::memory_order_release);
 		return true;
 	}
-
 
 	void ResourceGrid::Clear()
 	{
