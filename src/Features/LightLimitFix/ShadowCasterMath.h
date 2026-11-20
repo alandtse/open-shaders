@@ -179,13 +179,6 @@ namespace ShadowCasterManager
 		return a_live >= a_held * keep - 1.0f && a_live * keep <= a_held + 1.0f ? a_held : a_live;
 	}
 
-	/// Radius around its shadow origin that a light held at a_held still reaches at every point of its flicker: the smallest live
-	/// radius HeldFlickerRadius keeps, less the farthest its movement puts it from that origin.
-	inline float FlickerCoreRadius(float a_held, float a_band, float a_movementAmplitude) noexcept
-	{
-		return std::max(0.0f, a_held * (1.0f - a_band) - 1.0f - a_movementAmplitude * kFlickerReachPerAmplitude);
-	}
-
 	/// Largest radius difference a flicker lets a cached bake serve; past it a bake made at a dim moment would miss the casters
 	/// a bright moment lights.
 	inline constexpr float kMaxFlickerRadiusTolerance = 0.25f;
@@ -194,16 +187,6 @@ namespace ShadowCasterManager
 	inline float FlickerRadiusTolerance(float a_band, float a_floor) noexcept
 	{
 		return std::max(a_floor, std::min(a_band / (1.0f - a_band), kMaxFlickerRadiusTolerance));
-	}
-
-	/// True when a static caster folds into a light's static hash: its bounding sphere, a_dx/a_dy/a_dz from the
-	/// flicker core's centre with radius a_casterRadius, touches the core, whose radius is infinite for a light that does not flicker.
-	inline bool InFlickerCore(float a_dx, float a_dy, float a_dz, float a_casterRadius, float a_coreRadius) noexcept
-	{
-		if (!std::isfinite(a_coreRadius))
-			return true;
-		const float reach = a_coreRadius + a_casterRadius;
-		return a_dx * a_dx + a_dy * a_dy + a_dz * a_dz < reach * reach;
 	}
 
 	// The tile class ladder, shared by the coverage classifier below and the

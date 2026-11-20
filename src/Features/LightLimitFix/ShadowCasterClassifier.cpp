@@ -454,10 +454,9 @@ namespace ShadowCasterManager
 		                          nullptr :
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
-		// Every static caster inside the light's flicker core folds into the hash regardless of pass, so a
+		// Every static caster folds into the hash regardless of pass, so a
 		// static-set change is seen during whichever accumulate runs this frame.
-		if (!dynamic && InFlickerCore(rec->cx - s_foldCoreCenter.x, rec->cy - s_foldCoreCenter.y,
-									rec->cz - s_foldCoreCenter.z, rec->cr, s_foldCoreRadius))
+		if (!dynamic)
 			FoldStaticCasterHash(geom, *rec);
 		switch (static_cast<CasterPass>(s_cullPassMode.load(std::memory_order_relaxed))) {
 		case CasterPass::StaticOnly:

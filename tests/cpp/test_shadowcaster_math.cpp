@@ -13,7 +13,6 @@ using Catch::Approx;
 using ShadowCasterManager::DemandStreakBucket;
 using ShadowCasterManager::EngineShadowSliceCount;
 using ShadowCasterManager::FacingRotation;
-using ShadowCasterManager::FlickerCoreRadius;
 using ShadowCasterManager::FlickerRadiusBand;
 using ShadowCasterManager::FlickerRadiusTolerance;
 using ShadowCasterManager::FrameTimePercentile;
@@ -23,9 +22,7 @@ using ShadowCasterManager::HeldFlickerRadius;
 using ShadowCasterManager::HeldLightYields;
 using ShadowCasterManager::HemisphereSeamMargin;
 using ShadowCasterManager::HoldsFlame;
-using ShadowCasterManager::InFlickerCore;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
-using ShadowCasterManager::kFlickerReachPerAmplitude;
 using ShadowCasterManager::kMaxFlickerRadiusTolerance;
 using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kSlotHoldMargin;
@@ -185,25 +182,6 @@ TEST_CASE("HeldFlickerRadius holds through every flickered radius and follows a 
 	REQUIRE(HeldFlickerRadius(brightest, brightest + 2.0f, 0.0f) == brightest + 2.0f);
 }
 
-TEST_CASE("FlickerCoreRadius stays inside every radius and offset the flicker reaches", "[scm]")
-{
-	constexpr float brightest = 520.0f;
-	constexpr float amplitude = 0.3f;
-	constexpr float movement = 6.0f;
-	const float band = FlickerRadiusBand(amplitude);
-	for (int start = 0; start <= 10; ++start) {
-		const float held = brightest * std::sqrt(1.0f - amplitude * static_cast<float>(start) / 10.0f);
-		const float core = FlickerCoreRadius(held, band, movement);
-		for (int i = 0; i <= 100; ++i) {
-			const float live = brightest * std::sqrt(1.0f - amplitude * static_cast<float>(i) / 100.0f);
-			REQUIRE(HeldFlickerRadius(held, live, band) == held);
-			REQUIRE(core + movement * kFlickerReachPerAmplitude <= live);
-		}
-	}
-	REQUIRE(FlickerCoreRadius(brightest, 0.0f, 0.0f) == brightest - 1.0f);
-	REQUIRE(FlickerCoreRadius(5.0f, 0.9f, movement) == 0.0f);
-}
-
 TEST_CASE("FlickerRadiusTolerance covers a bake and a live radius anywhere in the band", "[scm]")
 {
 	constexpr float brightest = 520.0f;
@@ -218,20 +196,6 @@ TEST_CASE("FlickerRadiusTolerance covers a bake and a live radius anywhere in th
 	}
 	REQUIRE(FlickerRadiusTolerance(0.0f, 0.1f) == 0.1f);
 	REQUIRE(FlickerRadiusTolerance(FlickerRadiusBand(0.9f), 0.1f) == kMaxFlickerRadiusTolerance);
-}
-
-TEST_CASE("InFlickerCore hashes only the static casters a flickering light always reaches", "[scm]")
-{
-	// Radius 520 at intensity amplitude 0.3 with no movement: a core of about 434 units.
-	const float core = FlickerCoreRadius(520.0f, FlickerRadiusBand(0.3f), 0.0f);
-	REQUIRE(core == Approx(434.06f).margin(0.05f));
-	REQUIRE_FALSE(InFlickerCore(480.0f, 0.0f, 0.0f, 40.0f, core));
-	REQUIRE(InFlickerCore(480.0f, 0.0f, 0.0f, 50.0f, core));
-	REQUIRE(InFlickerCore(0.0f, 300.0f, 0.0f, 1.0f, core));
-	REQUIRE(InFlickerCore(10.0f, 0.0f, 0.0f, 1.0f, 9.5f));
-	REQUIRE_FALSE(InFlickerCore(10.0f, 0.0f, 0.0f, 0.4f, 9.5f));
-	REQUIRE(InFlickerCore(0.0f, 0.0f, 0.0f, 0.0f, 1.0f));
-	REQUIRE(InFlickerCore(1.0e6f, 0.0f, 0.0f, 1.0f, std::numeric_limits<float>::infinity()));
 }
 
 TEST_CASE("FrameTimePercentile returns the 60fps fallback with no samples", "[scm]")

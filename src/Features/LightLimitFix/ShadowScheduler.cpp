@@ -161,22 +161,6 @@ namespace ShadowCasterManager
 		return ShadowsFromRest() ? RestOrigin(ni) : ni->world.translate;
 	}
 
-	/// Publishes the sphere a light reaches at every point of its flicker for the static hash, infinite when it does not flicker; the
-	/// engine tests the radius against world distances unscaled, so only the flicker offset, a local translate, takes the node's scale.
-	static void SetFoldCore(RE::NiLight* ni)
-	{
-		s_foldCoreRadius = std::numeric_limits<float>::infinity();
-		const auto flicker = ni ? FlickerOf(ni) : FlickerAmplitudes{};
-		const float intensity = ni ? FlickerIntensityAmplitude(ni, flicker) : 0.0f;
-		const float movement = flicker.movement;
-		if (intensity <= 0.0f && movement <= 0.0f)
-			return;
-		const auto it = s_hashRadiusAnchor.find(ni);
-		const float held = it != s_hashRadiusAnchor.end() ? it->second : ni->GetLightRuntimeData().radius.x;
-		s_foldCoreCenter = RestOrigin(ni);
-		s_foldCoreRadius = FlickerCoreRadius(held, FlickerRadiusBand(intensity), movement * ni->world.scale);
-	}
-
 	/// Shared by the redraw hash and static-cache hash so both agree on what
 	/// "moved" means.
 	static std::uint64_t FoldLightPose(std::uint64_t h, RE::NiLight* ni, float posStep)
@@ -481,8 +465,6 @@ namespace ShadowCasterManager
 	/// Camera position when the current light's accumulate begins. The contribution
 	/// cull measures caster size from here (viewer footprint), not the light.
 	RE::NiPoint3 s_cullCameraPos{};
-	RE::NiPoint3 s_foldCoreCenter{};
-	float s_foldCoreRadius = std::numeric_limits<float>::infinity();
 
 	/// StaticOnly re-bakes issued this frame. A bake re-rasterizes a light's
 	/// whole static caster set into its cache tile, so this is the cost the
@@ -1318,7 +1300,6 @@ namespace ShadowCasterManager
 				mode = (slotInRange && SplitDynamicOnlyEligible(light, *st, staticValid)) ?
 				           CasterPass::DynamicOnly :
 				           CasterPass::StaticOnly;
-				SetFoldCore(light->light.get());
 				// A turning light (a swinging lantern) leaves its bake's rotation by the next frame, and a bake frame
 				// keeps the previous frame's shadow, so it renders full until it holds still for a frame.
 				if (auto* ni = light->light.get()) {
@@ -1408,7 +1389,6 @@ namespace ShadowCasterManager
 					// when `split` is false, which would otherwise leave a stale
 					// DynamicOnly filtering the next walk.
 					s_cullPassMode.store(static_cast<int>(CasterPass::All), std::memory_order_relaxed);
-					s_foldCoreRadius = std::numeric_limits<float>::infinity();
 				}
 			} clearGuard;
 
