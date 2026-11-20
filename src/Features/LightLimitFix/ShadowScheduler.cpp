@@ -1209,7 +1209,9 @@ namespace ShadowCasterManager
 						st->fullThisFrame = true;
 					}
 				}
+				bool staleOnlyBake = false;
 				if (mode == CasterPass::StaticOnly) {
+					staleOnlyBake = st->bakeStale && staticValid && st->mismatchStreak < 3 && st->bakePoseValid && SplitPoseMatches(light, *st);
 					if (st->bakePoseValid && !SplitPoseMatches(light, *st))
 						s_splitLatchMismatchTotal.fetch_add(1, std::memory_order_relaxed);
 					if (auto* ni = light->light.get()) {
@@ -1234,7 +1236,7 @@ namespace ShadowCasterManager
 						st->poseWindowStart = nowFrame;
 						st->poseRebakes = 0;
 					}
-					if (++st->poseRebakes >= (TolerantSplit() ? kPoseRebakeLatch : uint8_t{ 4 })) {
+					if (!staleOnlyBake && ++st->poseRebakes >= (TolerantSplit() ? kPoseRebakeLatch : uint8_t{ 4 })) {
 						if (!st->splitExcluded) {
 							s_splitLatchWindowTotal.fetch_add(1, std::memory_order_relaxed);
 							RetireSplitBake(*st);
