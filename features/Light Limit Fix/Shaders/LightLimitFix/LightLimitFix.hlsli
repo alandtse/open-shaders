@@ -574,8 +574,8 @@ namespace LightLimitFix
 		return shadow / 8.0;
 	}
 
-	/// Radius, in paraboloid units, of the rim a PCF tap is held inside: one texel of the tile's
-	/// coarser axis short of the edge the paraboloid pass rasterizes to.
+	/// Radius, in paraboloid units, of the rim a PCF tap is held inside: the tile guard, in texels of the
+	/// tile's coarser axis, short of the edge the paraboloid pass rasterizes to.
 	float GetParaboloidRimRadius(bool useAtlas, float4 atlasRect, float tileScale, bool isDualParaboloid)
 	{
 		float width, height, slices;
@@ -589,7 +589,7 @@ namespace LightLimitFix
 			ShadowMaps.GetDimensions(width, height, slices);
 			height *= tileScale;
 		}
-		return 1.0 - (isDualParaboloid ? 4.0 : 2.0) / max(height, 1.0);
+		return 1.0 - (isDualParaboloid ? 4.0 : 2.0) * TileGuardTexels / max(height, 1.0);
 	}
 
 	/// Pulls a tap back inside its own paraboloid: past the rim the map holds no depth and reads
@@ -612,20 +612,19 @@ namespace LightLimitFix
 	// PCF sample around a paraboloid UV.
 	//   isDualParaboloid = true  : the slice contains two stacked paraboloids
 	//                              (omni: upper in y∈[0,0.5], lower in y∈[0.5,1]).
-	//                              Clamp PCF samples to the originating half so we
-	//                              don't bleed across the seam.
 	//   isDualParaboloid = false : the slice contains a single paraboloid filling
-	//                              the whole y∈[0,1] (hemi). No clamping needed;
-	//                              the entire slice is valid shadow data.
+	//                              the whole y∈[0,1] (hemi).
+	//   Every tap is held inside its own paraboloid's rim, so it never reads the
+	//   other half or the empty corners of the slice.
 	float SampleParaboloidShadow(uint shadowIndex, float2 sampleUV, float depth, float2x2 rotationMatrix, bool isDualParaboloid, float tileScale, float4 atlasRect, uint sampleCount)
 	{
 		const bool useAtlas = atlasRect.x > 0.0;
 		float2 clampLo, clampHi;
 		GetShadowTapClamp(useAtlas, atlasRect, tileScale, clampLo, clampHi);
-		[branch] if (sampleCount <= 1) return SampleShadowTapBilinear(shadowIndex, sampleUV, depth, useAtlas, atlasRect, tileScale, clampLo, clampHi);
-		float shadow = 0.0;
 		const bool lowerHalf = isDualParaboloid && sampleUV.y >= 0.5;
 		const float rimRadius = GetParaboloidRimRadius(useAtlas, atlasRect, tileScale, isDualParaboloid);
+		[branch] if (sampleCount <= 1) return SampleShadowTapBilinear(shadowIndex, ClampToParaboloid(sampleUV, lowerHalf, isDualParaboloid, rimRadius), depth, useAtlas, atlasRect, tileScale, clampLo, clampHi);
+		float shadow = 0.0;
 
 		// See GetSpotlightShadow: dynamic loop instead of unrolling the
 		// branchy tap body 8x.

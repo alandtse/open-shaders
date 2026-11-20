@@ -116,6 +116,8 @@ float main(float4 position : SV_Position) : SV_Depth
 
 	// Fill one-texel cracks left by stretching: take the nearest neighbour when most
 	// of the neighbourhood was written, otherwise leave the texel at far depth.
+	if (!SameParaboloid(p, p))
+		return 1.0;
 	float nearest = 1e9;
 	uint neighbours = 0;
 	uint eligible = 0;
