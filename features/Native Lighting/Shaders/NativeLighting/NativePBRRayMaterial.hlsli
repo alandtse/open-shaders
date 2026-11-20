@@ -138,6 +138,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	if (!LoadTriangle(instance, primitive, barycentric, hitSurface))
 		return false;
 	float2 uv = hitSurface.uv * material.uv[0].zw + material.uv[0].xy;
+	const float2 snowUV = uv;
 	float lod = NativePBRLod(material, hitSurface, objectToWorld, footprint);
 	if (!all(isfinite(uv)) || !isfinite(lod))
 		return false;
@@ -200,6 +201,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	}
 	NativePBR::SurfaceInput surface;
 	surface.uv = uv;
+	surface.snowUV = snowUV;
 	surface.uvDx = 0.0f;
 	surface.uvDy = 0.0f;
 	surface.geometricNormal = normalize(mul(hitSurface.normal, (float3x3)worldToObject));
@@ -207,10 +209,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	surface.bitangent = mul((float3x3)objectToWorld, hitSurface.bitangent);
 	surface.vertexColor = hitSurface.color.rgb;
 	surface.facing = 1.0f;
-	surface.worldPosition = mul(objectToWorld, float4(
-		hitSurface.position0 * (1.0f - barycentric.x - barycentric.y) +
-		hitSurface.position1 * barycentric.x + hitSurface.position2 * barycentric.y, 1.0f));
-	surface.worldFootprint = footprint;
+	surface.snowHitSeed = NativePBR::SnowHash(binding.identity ^ uint2(instance, primitive));
 	surface.projectedSnowIncidence = 0.0f;
 	if ((binding.flags & NativePBR::DrawProjectedSnowCandidateFlag) != 0u) {
 		float3 edge0 = mul((float3x3)objectToWorld, hitSurface.position1 - hitSurface.position0);
@@ -220,8 +219,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 		if (all(isfinite(face)) && lengthSq > 1e-12f)
 			surface.projectedSnowIncidence = saturate(face.z * rsqrt(lengthSq) + 0.08f);
 	}
-	if (!all(isfinite(surface.worldPosition)) || !isfinite(surface.worldFootprint) ||
-		!all(isfinite(surface.geometricNormal)) ||
+	if (!all(isfinite(surface.geometricNormal)) ||
 		!all(isfinite(surface.tangent)) || !all(isfinite(surface.bitangent)))
 		return false;
 	NativePBR::SurfaceMaterial result = NativePBR::EvaluateOpaque(material, surface, base, normal, packed, emission,

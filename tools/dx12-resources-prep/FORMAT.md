@@ -95,14 +95,18 @@ small placement/landscape boundary mismatches. A temporary session-only
 on companion-marked receivers, including interiors; the normal terrain-based
 mode remains available for A/B.
 The current value is packed into unused bits 16–23 of the existing 24-byte
-NativePBR draw binding. NativePBR applies **textureless, world-space procedural
-snow** directly in its ray-hit PBR evaluation: low-frequency noise varies
-albedo and roughness; sparse deterministic crystal facets sharpen specular
-response and fade with pixel footprint to reduce distance aliasing. NativePBR
-owns the snow enable, noise amount/scale, sparkle amount/density, roughness,
-and temporary coverage override settings. Tuning reaches the native SM6.5
-shader via the existing direct-lighting constant buffer, with no extra atlas,
-texture residency, DX11 snow inputs, or per-scene generation. An 0.08 upward-incidence margin tolerates minor face-angle
+NativePBR draw binding. NativePBR applies **textureless, ray-hit procedural snow**
+directly in its PBR evaluation. Noise samples each hit's native material UV,
+seeded by draw identity and triangle, rather than world coordinates. Its patch
+frequency depends on the scheduled native ray budget (resolution and trace
+density), divided by the configurable rays per patch. A smooth four-corner
+hash varies albedo and roughness; sparse hashed crystal facets sharpen the
+native specular response. Only actual native hits evaluate the effect; no
+per-frame hit-count readback or GPU atomics are required. NativePBR owns snow
+enable, noise amount/rays-per-patch, sparkle amount/density, roughness, and
+the temporary coverage override. Tuning reaches SM6.5 via the existing
+direct-lighting constant buffer, with no atlas, snow texture residency,
+DX11 snow inputs, or per-scene generation. An 0.08 upward-incidence margin tolerates minor face-angle
 discrepancies. This is surface shading, not geometry displacement or a
 persistent accumulation simulation. Interior scenes receive coverage only
 when the explicit eligible-receiver test is enabled.

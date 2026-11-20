@@ -1,6 +1,7 @@
 #include "Features/NativePBR/GpuMaterialAbi.h"
 #include "Features/NativePBR/GpuMaterialResidency.h"
 #include "Features/NativePBR/GpuMaterialResources.h"
+#include "Features/NativePBR/NativeSnowSampling.h"
 #include "Features/NativePBR/RayMaterialBindings.h"
 #include <catch2/catch_test_macros.hpp>
 #include <limits>
@@ -75,6 +76,20 @@ TEST_CASE("NativePBR packs dynamic snow coverage without changing draw identity"
 	CHECK(NativeSnowCoverage(0.0f, true) == 1.0f);
 	CHECK(NativeSnowCoverage(1.0f, true) == 1.0f);
 	CHECK(NativeSnowCoverage(std::numeric_limits<float>::quiet_NaN(), true) == 1.0f);
+}
+
+TEST_CASE("Native snow detail frequency follows scheduled native rays", "[NativePBR][snow]")
+{
+	using NativePBR::SnowRayCellFrequency;
+	const float full = SnowRayCellFrequency(1920u, 1080u, 0u, 64.0f);
+	CHECK(full > 22.0f);
+	CHECK(full < 23.0f);
+	CHECK(SnowRayCellFrequency(1920u, 1080u, 2u, 64.0f) < full);
+	CHECK(SnowRayCellFrequency(1920u, 1080u, 2u, 64.0f) > 0.70f * full);
+	CHECK(SnowRayCellFrequency(1920u, 1080u, 0u, 128.0f) < full);
+	CHECK(SnowRayCellFrequency(0u, 1080u, 0u, 64.0f) == 1.0f);
+	CHECK(SnowRayCellFrequency(1920u, 1080u, 0u,
+		std::numeric_limits<float>::quiet_NaN()) == full);
 }
 
 TEST_CASE("NativePBR GPU descriptor ABI keeps linear and sRGB views within 512 slots", "[NativePBR][gpu-material]")

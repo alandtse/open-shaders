@@ -1,6 +1,7 @@
 #include "NativeLighting.h"
 #include "Features/NativeComposite/NativeComposite.h"
 #include "Features/NativeFeatures.h"
+#include "Features/NativePBR/NativeSnowSampling.h"
 #include "Features/ReverseZ.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -755,6 +756,8 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		};
 		static_assert(sizeof(Constants) == 320);
 		const auto snowSettings = globals::features::nativePBR.GetSnowSettings();
+		const float snowRayCells = NativePBR::SnowRayCellFrequency(width, height,
+			a_settings.TraceDensityMode, snowSettings.noiseRaysPerPatch);
 		const Constants constants{ width, height, uint32_t(scene.acceleration->instances.size()), selectedCount,
 			{ camera.CameraPosAdjust.x + camera.CameraViewInverse._14, camera.CameraPosAdjust.y + camera.CameraViewInverse._24, camera.CameraPosAdjust.z + camera.CameraViewInverse._34 },
 			0.5f, a_settings.DiffuseIntensity, a_settings.SpecularIntensity, (a_settings.Diffuse ? 1u : 0u) | (a_settings.Specular ? 2u : 0u),
@@ -769,7 +772,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 				slot->rayMaterials && slot->rayMaterials->forcedAdmission ? 1u : 0u },
 			(globals::features::nativePBR.nativeParallax.load(std::memory_order_relaxed) ? NativePBR::kRayMaterialOptionParallax : 0u) |
 			(globals::features::nativePBR.nativeComplexMaterials.load(std::memory_order_relaxed) ? NativePBR::kRayMaterialOptionComplex : 0u),
-			{ snowSettings.noiseAmount, snowSettings.noiseScale, snowSettings.sparkleAmount, snowSettings.sparkleDensity },
+			{ snowSettings.noiseAmount, snowRayCells, snowSettings.sparkleAmount, snowSettings.sparkleDensity },
 			{ snowSettings.roughness, 0.0f, 0.0f, 0.0f } };
 		slot->nativePointLightCount = selectedCount;
 		slot->nativeMinimumDistance = constants.minimum;

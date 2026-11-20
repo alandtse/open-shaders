@@ -90,17 +90,17 @@ struct NativePBRFeature final : Feature
 	struct SnowSettings
 	{
 		bool enabled = true, coverEligible = false;
-		float noiseAmount = 0.55f, noiseScale = 64.0f;
+		float noiseAmount = 0.55f, noiseRaysPerPatch = 64.0f;
 		float sparkleAmount = 0.6f, sparkleDensity = 0.08f, roughness = 0.83f;
 	};
 	std::atomic<bool> snowEnabled{ true }, snowCoverEligible{ false };
-	std::atomic<float> snowNoiseAmount{ 0.55f }, snowNoiseScale{ 64.0f };
+	std::atomic<float> snowNoiseAmount{ 0.55f }, snowNoiseRaysPerPatch{ 64.0f };
 	std::atomic<float> snowSparkleAmount{ 0.6f }, snowSparkleDensity{ 0.08f }, snowRoughness{ 0.83f };
 	/** @brief Provides the current native-only ray-hit snow controls. */
 	SnowSettings GetSnowSettings() const
 	{
 		return { snowEnabled.load(std::memory_order_relaxed), snowCoverEligible.load(std::memory_order_relaxed),
-			snowNoiseAmount.load(std::memory_order_relaxed), snowNoiseScale.load(std::memory_order_relaxed),
+			snowNoiseAmount.load(std::memory_order_relaxed), snowNoiseRaysPerPatch.load(std::memory_order_relaxed),
 			snowSparkleAmount.load(std::memory_order_relaxed), snowSparkleDensity.load(std::memory_order_relaxed),
 			snowRoughness.load(std::memory_order_relaxed) };
 	}
@@ -145,7 +145,7 @@ struct NativePBRFeature final : Feature
 		forceRayAdmission = false; readinessStage = 3;
 		const SnowSettings defaults{};
 		snowEnabled = defaults.enabled; snowCoverEligible = defaults.coverEligible;
-		snowNoiseAmount = defaults.noiseAmount; snowNoiseScale = defaults.noiseScale;
+		snowNoiseAmount = defaults.noiseAmount; snowNoiseRaysPerPatch = defaults.noiseRaysPerPatch;
 		snowSparkleAmount = defaults.sparkleAmount; snowSparkleDensity = defaults.sparkleDensity;
 		snowRoughness = defaults.roughness;
 	}

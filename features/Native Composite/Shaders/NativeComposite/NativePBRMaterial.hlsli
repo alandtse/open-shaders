@@ -36,6 +36,7 @@ namespace NativePBR
 	struct SurfaceInput
 	{
 		float2 uv;
+		float2 snowUV; // Retains pre-parallax hit coordinates so snow does not swim with the view.
 		float2 uvDx;
 		float2 uvDy;
 		float3 tangent;
@@ -44,8 +45,7 @@ namespace NativePBR
 		float3 vertexColor;
 		float facing;
 		float projectedSnowIncidence;
-		float3 worldPosition;
-		float worldFootprint;
+		uint snowHitSeed;
 	};
 
 	struct SurfaceMaterial
@@ -124,7 +124,7 @@ namespace NativePBR
 		result.snowCoverage = result.projectedSnowCoverageCandidate * float((drawFlags >> SnowCoverageShift) & 255u) / 255.0f;
 		if (result.snowCoverage > 0.0f) {
 			float variation, crystal;
-			SnowDetail(surface.worldPosition, surface.worldFootprint, snowTuning, variation, crystal);
+			SnowDetail(surface.snowUV, surface.snowHitSeed, snowTuning, variation, crystal);
 			float3 snowColor = saturate(float3(0.86f, 0.89f, 0.92f) + variation * 0.16f);
 			float granularRoughness = clamp(snowRoughness + variation * 0.12f,
 				PBR::Constants::MinRoughness, PBR::Constants::MaxRoughness);

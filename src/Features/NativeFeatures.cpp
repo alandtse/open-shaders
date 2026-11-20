@@ -775,11 +775,11 @@ void NativePBRFeature::DrawSettings()
 			setting.store(value, std::memory_order_relaxed);
 	};
 	slider("Snow noise amount", snowNoiseAmount, 0.0f, 1.0f, "%.2f");
-	slider("Snow noise scale (world units)", snowNoiseScale, 8.0f, 256.0f, "%.0f");
+	slider("Snow rays per noise patch", snowNoiseRaysPerPatch, 1.0f, 256.0f, "%.0f rays");
 	slider("Snow sparkle amount", snowSparkleAmount, 0.0f, 1.0f, "%.2f");
 	slider("Snow sparkle density", snowSparkleDensity, 0.0f, 0.25f, "%.3f");
 	slider("Snow roughness", snowRoughness, 0.5f, 1.0f, "%.2f");
-	ImGui::TextDisabled("World-anchored noise and distance-filtered crystals; no snow texture or DX11 inputs.");
+	ImGui::TextDisabled("Snow detail follows native ray-hit UVs and adapts to trace density; no world-unit sampling.");
 	const auto snowDiagnostics = globals::features::nativeLighting.GetDiagnostics();
 	ImGui::TextDisabled("Snow receivers: %u marked | %u PBR shadable | %u terrain | %u covered",
 		snowDiagnostics.value("nativeSnowCandidateInstances", 0u),
@@ -903,7 +903,7 @@ void NativePBRFeature::LoadSettings(json& j)
 		return std::isfinite(value) ? std::clamp(value, low, high) : fallback;
 	};
 	snowNoiseAmount.store(readSnow("SnowNoiseAmount", defaults.noiseAmount, 0.0f, 1.0f), std::memory_order_relaxed);
-	snowNoiseScale.store(readSnow("SnowNoiseScale", defaults.noiseScale, 8.0f, 256.0f), std::memory_order_relaxed);
+	snowNoiseRaysPerPatch.store(readSnow("SnowNoiseRaysPerPatch", defaults.noiseRaysPerPatch, 1.0f, 256.0f), std::memory_order_relaxed);
 	snowSparkleAmount.store(readSnow("SnowSparkleAmount", defaults.sparkleAmount, 0.0f, 1.0f), std::memory_order_relaxed);
 	snowSparkleDensity.store(readSnow("SnowSparkleDensity", defaults.sparkleDensity, 0.0f, 0.25f), std::memory_order_relaxed);
 	snowRoughness.store(readSnow("SnowRoughness", defaults.roughness, 0.5f, 1.0f), std::memory_order_relaxed);
@@ -932,7 +932,7 @@ void NativePBRFeature::SaveSettings(json& j)
 		{ "NativeComplexMaterials", nativeComplexMaterials.load(std::memory_order_relaxed) },
 		{ "SnowEnabled", snowEnabled.load(std::memory_order_relaxed) },
 		{ "SnowNoiseAmount", snowNoiseAmount.load(std::memory_order_relaxed) },
-		{ "SnowNoiseScale", snowNoiseScale.load(std::memory_order_relaxed) },
+		{ "SnowNoiseRaysPerPatch", snowNoiseRaysPerPatch.load(std::memory_order_relaxed) },
 		{ "SnowSparkleAmount", snowSparkleAmount.load(std::memory_order_relaxed) },
 		{ "SnowSparkleDensity", snowSparkleDensity.load(std::memory_order_relaxed) },
 		{ "SnowRoughness", snowRoughness.load(std::memory_order_relaxed) },
@@ -940,7 +940,7 @@ void NativePBRFeature::SaveSettings(json& j)
 }
 void NativePBRFeature::RegisterUxActions()
 {
-	FEATURE_COMMAND("configureSnow", "Configure native procedural snow: optional enabled, coverEligible (session-only), noiseAmount (0..1), noiseScale (8..256 world units), sparkleAmount (0..1), sparkleDensity (0..0.25), roughness (0.5..1).", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("configureSnow", "Configure native procedural snow: optional enabled, coverEligible (session-only), noiseAmount (0..1), noiseRaysPerPatch (1..256 native rays), sparkleAmount (0..1), sparkleDensity (0..0.25), roughness (0.5..1).", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativePBRFeature*>(self);
 		if (args.contains("enabled"))
 			feature.snowEnabled.store(args.at("enabled").get<bool>(), std::memory_order_relaxed);
@@ -953,7 +953,7 @@ void NativePBRFeature::RegisterUxActions()
 			setting.store(std::clamp(value, low, high), std::memory_order_relaxed);
 		};
 		set("noiseAmount", feature.snowNoiseAmount, 0.0f, 1.0f);
-		set("noiseScale", feature.snowNoiseScale, 8.0f, 256.0f);
+		set("noiseRaysPerPatch", feature.snowNoiseRaysPerPatch, 1.0f, 256.0f);
 		set("sparkleAmount", feature.snowSparkleAmount, 0.0f, 1.0f);
 		set("sparkleDensity", feature.snowSparkleDensity, 0.0f, 0.25f);
 		set("roughness", feature.snowRoughness, 0.5f, 1.0f);
@@ -995,7 +995,7 @@ json NativePBRFeature::GetDiagnostics()
 		{ "snowEnabled", snowEnabled.load(std::memory_order_relaxed) },
 		{ "snowCoverEligible", snowCoverEligible.load(std::memory_order_relaxed) },
 		{ "snowNoiseAmount", snowNoiseAmount.load(std::memory_order_relaxed) },
-		{ "snowNoiseScale", snowNoiseScale.load(std::memory_order_relaxed) },
+		{ "snowNoiseRaysPerPatch", snowNoiseRaysPerPatch.load(std::memory_order_relaxed) },
 		{ "snowSparkleAmount", snowSparkleAmount.load(std::memory_order_relaxed) },
 		{ "snowSparkleDensity", snowSparkleDensity.load(std::memory_order_relaxed) },
 		{ "snowRoughness", snowRoughness.load(std::memory_order_relaxed) },
