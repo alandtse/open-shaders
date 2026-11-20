@@ -220,7 +220,7 @@ TEST_CASE("FlickerRadiusTolerance covers a bake and a live radius anywhere in th
 	REQUIRE(FlickerRadiusTolerance(FlickerRadiusBand(0.9f), 0.1f) == kMaxFlickerRadiusTolerance);
 }
 
-TEST_CASE("InFlickerCore bakes only the static casters a flickering light always reaches", "[scm]")
+TEST_CASE("InFlickerCore hashes only the static casters a flickering light always reaches", "[scm]")
 {
 	// Radius 520 at intensity amplitude 0.3 with no movement: a core of about 434 units.
 	const float core = FlickerCoreRadius(520.0f, FlickerRadiusBand(0.3f), 0.0f);

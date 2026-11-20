@@ -1312,9 +1312,6 @@ namespace ShadowCasterManager
 				           CasterPass::DynamicOnly :
 				           CasterPass::StaticOnly;
 				SetFoldCore(light->light.get());
-				// A flickering light's bake holds only its core casters, so a tile with nothing rendered yet is drawn full first.
-				AtlasTileTexels liveTile{};
-				const bool coreOnlySeed = std::isfinite(s_foldCoreRadius) && !(GetSlotTileTexels(slotIndex, liveTile) && liveTile.contentValid);
 				// A turning light (a swinging lantern) leaves its bake's rotation by the next frame, and a bake frame
 				// keeps the previous frame's shadow, so it renders full until it holds still for a frame.
 				if (auto* ni = light->light.get()) {
@@ -1331,9 +1328,9 @@ namespace ShadowCasterManager
 				// starves the redraw budget. Deferred bakes stay queued; with
 				// no valid seed the light renders full instead.
 				if (mode == CasterPass::StaticOnly &&
-					(coreOnlySeed || s_staticBakeCount.load(std::memory_order_relaxed) >= 2u)) {
+					s_staticBakeCount.load(std::memory_order_relaxed) >= 2u) {
 					st->bakeQueued = true;
-					if (staticValid && !coreOnlySeed) {
+					if (staticValid) {
 						mode = CasterPass::DynamicOnly;
 					} else {
 						mode = CasterPass::All;
