@@ -10,6 +10,7 @@
 using Catch::Approx;
 using ShadowCasterManager::CasterChangedSinceBake;
 using ShadowCasterManager::CompositeSkipsCaster;
+using ShadowCasterManager::CountsTowardPoseLatch;
 using ShadowCasterManager::DemandStreakBucket;
 using ShadowCasterManager::EngineShadowSliceCount;
 using ShadowCasterManager::FacingRotation;
@@ -322,6 +323,16 @@ TEST_CASE("A caster that changed class after the bake marks the bake stale", "[s
 	REQUIRE_FALSE(CompositeSkipsCaster(true, false));
 	REQUIRE_FALSE(CompositeSkipsCaster(false, true));
 	REQUIRE_FALSE(CompositeSkipsCaster(true, true));
+}
+
+TEST_CASE("CountsTowardPoseLatch leaves out a rebake queued only by a class change", "[scm]")
+{
+	REQUIRE_FALSE(CountsTowardPoseLatch(true, true, 0, true));
+	REQUIRE_FALSE(CountsTowardPoseLatch(true, true, 2, true));
+	REQUIRE(CountsTowardPoseLatch(true, true, 3, true));
+	REQUIRE(CountsTowardPoseLatch(true, true, 0, false));
+	REQUIRE(CountsTowardPoseLatch(true, false, 0, true));
+	REQUIRE(CountsTowardPoseLatch(false, true, 0, true));
 }
 
 TEST_CASE("HoldsFlame takes only a small part round or under the flame", "[scm]")

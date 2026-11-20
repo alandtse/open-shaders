@@ -28,6 +28,13 @@ namespace ShadowCasterManager
 		return !a_dynamic && !a_bakeStale;
 	}
 
+	/// True for a rebake that counts toward the pose-rebake latch: one queued only because a caster changed class, while the light's
+	/// valid bake still matches its pose and the static hash has not diverged for three accumulates, does not.
+	inline bool CountsTowardPoseLatch(bool a_bakeStale, bool a_staticValid, uint8_t a_mismatchStreak, bool a_poseMatches) noexcept
+	{
+		return !(a_bakeStale && a_staticValid && a_mismatchStreak < 3 && a_poseMatches);
+	}
+
 	/// Largest unscaled bound radius of a part that can hold a light's flame, and how far past its bound the flame may sit.
 	inline constexpr float kFlameEnclosureMaxRadius = 20.0f;
 	inline constexpr float kFlameEnclosureReachMargin = 4.0f;

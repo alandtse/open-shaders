@@ -1211,7 +1211,7 @@ namespace ShadowCasterManager
 				}
 				bool staleOnlyBake = false;
 				if (mode == CasterPass::StaticOnly) {
-					staleOnlyBake = st->bakeStale && staticValid && st->mismatchStreak < 3 && st->bakePoseValid && SplitPoseMatches(light, *st);
+					staleOnlyBake = !CountsTowardPoseLatch(st->bakeStale, staticValid, st->mismatchStreak, st->bakePoseValid && SplitPoseMatches(light, *st));
 					if (st->bakePoseValid && !SplitPoseMatches(light, *st))
 						s_splitLatchMismatchTotal.fetch_add(1, std::memory_order_relaxed);
 					if (auto* ni = light->light.get()) {
