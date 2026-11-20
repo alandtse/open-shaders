@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <cmath>
 #include <ranges>
-#include <unordered_set>
 
 namespace DX12
 {
@@ -147,32 +146,15 @@ namespace DX12
 		const auto predictive = std::ranges::find(current->predictive, publication.key);
 		if (active == current->requested.end() && predictive == current->predictive.end())
 			return false;
-		constexpr uint64_t kMaximumTileBytes = 64ull * 1024 * 1024;
-		uint64_t bytes = 0;
-		std::unordered_set<uint64_t> identities;
 		auto tile = std::make_shared<Tile>();
 		tile->key = publication.key;
-		bool valid = true;
-		for (auto& shape : publication.shapes) {
-			const uint64_t length = uint64_t(shape.positions.size()) * sizeof(float3) +
-			                        uint64_t(shape.indices.size()) * sizeof(uint32_t);
-			if (!shape.identity || !identities.insert(shape.identity).second ||
-				shape.positions.empty() || shape.indices.empty() || shape.indices.size() % 3 ||
-				length > kMaximumTileBytes - bytes ||
-				!std::ranges::all_of(shape.positions, [](const float3& vertex) {
-					return std::isfinite(vertex.x) && std::isfinite(vertex.y) && std::isfinite(vertex.z);
-				}) ||
-				!std::ranges::all_of(shape.transform, [](float component) { return std::isfinite(component); }) || !std::ranges::all_of(shape.indices, [&](uint32_t index) { return index < shape.positions.size(); })) {
-				valid = false;
-				continue;
-			}
-			bytes += length;
-			tile->shapes.push_back(std::make_shared<const Shape>(std::move(shape)));
-		}
-		tile->bytes = bytes;
+		// The worker has already verified all positions, triangle indices, transforms, identities and budgets.
+		// Render-thread publication only transfers ownership of immutable GPU-scene inputs.
+		tile->shapes = std::move(publication.shapes);
+		tile->bytes = publication.geometryBytes;
 		tile->lights = std::move(publication.lights);
-		tile->state = publication.enumerationComplete && publication.failedShapes == 0 && valid &&
-		                      publication.eligibleShapes == tile->shapes.size() ?
+		tile->state = publication.validated && publication.enumerationComplete &&
+		              publication.failedShapes == 0 && publication.eligibleShapes == tile->shapes.size() ?
 		                  Tile::State::Ready :
 		                  Tile::State::Incomplete;
 		auto next = std::make_shared<Grid>(*current);

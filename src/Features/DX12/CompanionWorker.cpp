@@ -5,6 +5,9 @@
 #include <charconv>
 #include <format>
 #include <fstream>
+#include <cmath>
+#include <ranges>
+#include <unordered_set>
 #include <utility>
 
 namespace DX12
@@ -259,26 +262,40 @@ namespace DX12
 				!root.at("lights").is_array() || root.at("lights").size() > 65536)
 				return result;
 			auto& publication = result.publication;
+			constexpr uint64_t kMaximumTileBytes = 64ull * 1024 * 1024;
+			std::unordered_set<uint64_t> identities;
 			publication.eligibleShapes = root.at("eligibleShapes").get<uint32_t>();
 			publication.failedShapes = root.at("failedShapes").get<uint32_t>();
 			publication.enumerationComplete = root.at("enumerationComplete").get<bool>();
 			for (const auto& item : root.at("shapes")) {
-				Shape shape;
-				shape.identity = item.at("identity").get<uint64_t>();
+				auto shape = std::make_shared<Shape>();
+				shape->identity = item.at("identity").get<uint64_t>();
 				const auto& positions = item.at("positions");
-				if (!positions.is_array() || positions.size() > 4'000'000)
+				if (!positions.is_array() || positions.empty() || positions.size() > 4'000'000)
 					throw std::invalid_argument("Invalid vertex count");
-				shape.positions.reserve(positions.size());
+				shape->positions.reserve(positions.size());
 				for (const auto& entry : positions) {
 					const auto p = Triple(entry);
-					shape.positions.push_back({ p[0], p[1], p[2] });
+					shape->positions.push_back({ p[0], p[1], p[2] });
 				}
-				shape.indices = item.at("indices").get<std::vector<uint32_t>>();
+				shape->indices = item.at("indices").get<std::vector<uint32_t>>();
 				const auto& transform = item.at("transform");
-				if (!transform.is_array() || transform.size() != shape.transform.size())
+				if (!transform.is_array() || transform.size() != shape->transform.size())
 					throw std::invalid_argument("Invalid transform");
-				for (size_t i = 0; i < shape.transform.size(); ++i)
-					shape.transform[i] = transform[i].get<float>();
+				for (size_t i = 0; i < shape->transform.size(); ++i)
+					shape->transform[i] = transform[i].get<float>();
+				const uint64_t length = uint64_t(shape->positions.size()) * sizeof(float3) +
+				                        uint64_t(shape->indices.size()) * sizeof(uint32_t);
+				if (!shape->identity || !identities.insert(shape->identity).second ||
+					shape->indices.empty() || shape->indices.size() % 3 ||
+					length > kMaximumTileBytes - publication.geometryBytes ||
+					!std::ranges::all_of(shape->positions, [](const float3& p) {
+						return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
+					}) ||
+					!std::ranges::all_of(shape->transform, [](float value) { return std::isfinite(value); }) ||
+					!std::ranges::all_of(shape->indices, [&](uint32_t index) { return index < shape->positions.size(); }))
+					throw std::invalid_argument("Companion geometry failed validation");
+				publication.geometryBytes += length;
 				publication.shapes.push_back(std::move(shape));
 			}
 			for (const auto& item : root.at("lights")) {
@@ -296,10 +313,19 @@ namespace DX12
 				record.value.emitterRadius = item.at("emitterRadius").get<float>();
 				record.value.falloffExponent = item.at("falloffExponent").get<float>();
 				record.value.flags = item.at("flags").get<uint32_t>();
+				const auto& light = record.value;
+				if (!std::isfinite(light.position.x) || !std::isfinite(light.position.y) || !std::isfinite(light.position.z) ||
+					!std::isfinite(light.color.x) || !std::isfinite(light.color.y) || !std::isfinite(light.color.z) ||
+					!std::isfinite(light.radius) || !std::isfinite(light.fade) ||
+					!std::isfinite(light.emitterRadius) || !std::isfinite(light.falloffExponent))
+					throw std::invalid_argument("Companion light failed validation");
 				result.lights.push_back(std::move(record));
 			}
+			publication.validated = true;
 		} catch (const std::exception&) {
 			result.publication.shapes.clear();
+			result.publication.validated = false;
+			result.publication.geometryBytes = 0;
 			result.publication.enumerationComplete = false;
 			result.lights.clear();
 		}

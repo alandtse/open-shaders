@@ -49,8 +49,10 @@ namespace DX12
 	struct CompanionPublication
 	{
 		SubcellKey key;
-		std::vector<Shape> shapes;
+		std::vector<std::shared_ptr<const Shape>> shapes;  // Fully validated and frozen on the companion worker.
 		std::vector<PreparedLight> lights;
+		uint64_t geometryBytes = 0;
+		bool validated = false;
 		uint32_t eligibleShapes = 0;
 		uint32_t failedShapes = 0;
 		bool enumerationComplete = false;
