@@ -86,6 +86,7 @@ runs:
                     - 'features/Skylighting/Shaders/Skylighting/UpdateProbesCS.hlsl'
                     - 'tools/feature-flip-impact.py'
                     - 'tools/release_plan.py'
+                    - 'tools/verify-fork-lines.py'
                     - 'package/Shaders/Tests/WindFieldParitySamples.hlsli'
                     - 'package/Shaders/Common/WindField.hlsli'
                     - 'extern/AntiLag2-SDK'

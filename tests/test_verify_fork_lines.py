@@ -99,6 +99,43 @@ class VerifyForkLinesTest(unittest.TestCase):
         self.git("checkout", "-q", "-b", "sync", "dev")
         self.assertEqual(self.losses("sync"), [])
 
+    def test_rename_with_deleted_line_does_not_keep_tracking(self):
+        self.make_fork()
+        self.git("mv", "src/a.cpp", "src/moved.cpp")
+        self.write("src/moved.cpp", BASE)
+        self.commit("refactor: rename and drop hook")
+        self.git("checkout", "-q", "-b", "sync", "dev")
+        self.assertEqual(self.losses("sync"), [])
+
+    def test_partial_deletion_of_duplicate_line_keeps_tracking(self):
+        self.write("src/a.cpp", BASE)
+        self.commit("base")
+        self.write("src/a.cpp", BASE + FORK_HOOK + FORK_HOOK)
+        self.commit("feat: two hooks")
+        self.write("src/a.cpp", BASE + FORK_HOOK)
+        self.commit("refactor: one hook")
+        self.git("checkout", "-q", "-b", "sync", "dev")
+        self.write("src/a.cpp", BASE)
+        self.commit("sync drops hook")
+        self.assertEqual([i["line"] for i in self.losses("sync")], [FORK_HOOK.strip()])
+
+    def test_unknown_head_raises_tool_error(self):
+        self.make_fork()
+        with self.assertRaises(verify.ToolError):
+            self.losses("no-such-ref")
+
+    def test_loss_after_relocation_is_attributed_to_this_merge(self):
+        self.make_fork()
+        self.write("src/a.cpp", BASE)
+        self.write("src/c.cpp", FORK_HOOK)
+        self.commit("refactor: fork moves hook")
+        self.git("checkout", "-q", "-b", "sync", "dev")
+        self.write("src/c.cpp", "")
+        self.commit("sync drops hook")
+        lost = self.losses("sync")
+        self.assertEqual(len(lost), 1)
+        self.assertTrue(lost[0]["at_fork"])
+
     def test_trivial_lines_are_ignored(self):
         self.write("src/a.cpp", BASE)
         self.commit("base")

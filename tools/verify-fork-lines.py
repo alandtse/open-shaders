@@ -46,11 +46,13 @@ def replay_history(repo, fork_ref, since, exclude):
     for i in range(1, len(parts) - 2, 3):
         sha, subject, body = parts[i], parts[i + 1], parts[i + 2]
         apply_commit(live, sha, subject, body, exclude)
-    return {(f, l): meta for f, lines in live.items() for l, meta in lines.items()}
+    return {(f, l): meta[:2] for f, lines in live.items() for l, meta in lines.items()}
 
 
 def apply_commit(live, sha, subject, body, exclude):
-    removed, added, renames = collections.defaultdict(set), collections.defaultdict(dict), {}
+    removed = collections.defaultdict(collections.Counter)
+    added = collections.defaultdict(dict)
+    renames = {}
     old = new = None
     in_hunk = False
     for raw in body.split("\n"):
@@ -70,33 +72,47 @@ def apply_commit(live, sha, subject, body, exclude):
         elif raw.startswith("@@"):
             in_hunk = True
         elif in_hunk and raw.startswith("-") and (old or new):
-            removed[old or new].add(raw[1:].strip())
+            removed[old or new][raw[1:].strip()] += 1
         elif in_hunk and raw.startswith("+") and new and not exclude.search(new):
             text = raw[1:].strip()
             if significant(text):
-                added[new][text] = (sha, subject)
+                count = added[new].get(text, (sha, subject, 0))[2]
+                added[new][text] = (sha, subject, count + 1)
+    for file, lines in removed.items():
+        for text, count in lines.items():
+            entry = live.get(file, {}).get(text)
+            if entry and entry[2] > count:
+                live[file][text] = (entry[0], entry[1], entry[2] - count)
+            elif entry:
+                del live[file][text]
     for src, dst in renames.items():
         if src in live:
             live[dst] = live.pop(src)
-    for file, lines in removed.items():
-        for text in lines:
-            live.get(file, {}).pop(text, None)
     for file, lines in added.items():
-        live[file].update(lines)
+        for text, (sha_, subject_, count) in lines.items():
+            entry = live[file].get(text)
+            live[file][text] = (sha_, subject_, count + (entry[2] if entry else 0))
 
 
 def tree_lines(repo, ref, exclude):
     """Every stripped line of the text files at ref, for the 'relocated elsewhere' test."""
-    proc = subprocess.Popen(["git", "-C", repo, "archive", "--format=tar", ref], stdout=subprocess.PIPE)
+    proc = subprocess.Popen(["git", "-C", repo, "archive", "--format=tar", ref], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     seen = set()
-    with tarfile.open(fileobj=proc.stdout, mode="r|") as archive:
-        for member in archive:
-            if member.isfile() and member.name.lower().endswith(TEXT_SUFFIXES) and not exclude.search(member.name):
-                data = archive.extractfile(member).read().decode("utf-8", "replace")
-                seen.update(line.strip() for line in data.splitlines())
-    proc.stdout.close()
-    if proc.wait() != 0:
-        raise ToolError(f"git archive {ref} failed")
+    try:
+        with tarfile.open(fileobj=proc.stdout, mode="r|") as archive:
+            for member in archive:
+                if member.isfile() and member.name.lower().endswith(TEXT_SUFFIXES) and not exclude.search(member.name):
+                    data = archive.extractfile(member).read().decode("utf-8", "replace")
+                    seen.update(line.strip() for line in data.splitlines())
+    except tarfile.ReadError:
+        pass
+    finally:
+        proc.stdout.close()
+        stderr = proc.stderr.read().decode("utf-8", "replace").strip()
+        proc.stderr.close()
+        code = proc.wait()
+    if code != 0:
+        raise ToolError(f"git archive {ref} failed: {stderr}")
     return seen
 
 
@@ -113,6 +129,7 @@ def file_lines(repo, ref, path, cache):
 def find_losses(repo, fork_ref, head, since, exclude):
     live = replay_history(repo, fork_ref, since, exclude)
     head_all = tree_lines(repo, head, exclude)
+    fork_all = tree_lines(repo, fork_ref, exclude)
     cache, lost = {}, []
     for (path, text), (sha, subject) in live.items():
         in_head_file = file_lines(repo, head, path, cache)
@@ -120,9 +137,8 @@ def find_losses(repo, fork_ref, head, since, exclude):
             continue
         if text in head_all:
             continue
-        at_fork = file_lines(repo, fork_ref, path, cache)
         lost.append({"sha": sha, "subject": subject, "file": path, "line": text,
-                     "at_fork": at_fork is not None and text in at_fork})
+                     "at_fork": text in fork_all})
     return lost
 
 
