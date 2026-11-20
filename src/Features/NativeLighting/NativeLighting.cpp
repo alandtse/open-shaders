@@ -64,7 +64,7 @@ namespace
 	}
 }
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::Settings, OffloadStaticShadows, OffloadLLFLights, PreserveMatchedRasterLights, OffloadedShadowIntensity, Enabled, Diffuse, Specular, EarlyShadowCull, Debug, CompareCulling, DiffuseIntensity, SpecularIntensity, BudgetMB, PersistLab, DirectStrength, EmissionStrength, PointLightRadiusMultiplier, PointLightFalloffFraction, PointLightFalloffExponent, ShadowStrength, EmitterRadiusMultiplier, NormalInfluence, SelectedDirectLight, StochasticShadows, UseAllPreparedLights, TraceDensityMode, CharacterCasterOcclusion, CharacterReceiverProbe)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::Settings, OffloadStaticShadows, OffloadLLFLights, PreserveMatchedRasterShadows, PreserveMatchedRasterLights, FadeShadowsNearReach, OffloadedShadowIntensity, Enabled, Diffuse, Specular, EarlyShadowCull, Debug, CompareCulling, DiffuseIntensity, SpecularIntensity, BudgetMB, PersistLab, DirectStrength, EmissionStrength, PointLightRadiusMultiplier, PointLightFalloffFraction, PointLightFalloffExponent, ShadowStrength, EmitterRadiusMultiplier, NormalInfluence, SelectedDirectLight, StochasticShadows, UseAllPreparedLights, TraceDensityMode, CharacterCasterOcclusion, CharacterReceiverProbe)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::ValidityLab, DepthAgreement, DiagnosticDepth, AbsoluteTolerance, RelativeTolerance, MaterialPolicy, RequireMaskAuthority, AssumeMaskAuthoritative, ObserveMask, RunWithoutLighting, ReferenceVisibility, ReferencePrimaryTraversal, MaskThreshold, MaskDistanceTolerance)
 
 void NativeLightingFeature::DrawSettings()
@@ -81,6 +81,12 @@ void NativeLightingFeature::DrawSettings()
 		++validityRevision;
 	if (ImGui::SliderFloat("Offloaded shadow intensity", &settings.OffloadedShadowIntensity, 0.0f, 4.0f, "%.2fx"))
 		++validityRevision;
+	ImGui::BeginDisabled(!settings.OffloadStaticShadows);
+	if (ImGui::Checkbox("Preserve matched raster shadows", &settings.PreserveMatchedRasterShadows))
+		++validityRevision;
+	if (ImGui::Checkbox("Fade shadows near light reach", &settings.FadeShadowsNearReach))
+		++validityRevision;
+	ImGui::EndDisabled();
 	if (ImGui::Checkbox("Offload LLF lights", &settings.OffloadLLFLights))
 		++validityRevision;
 	ImGui::BeginDisabled(!settings.OffloadLLFLights);
@@ -94,6 +100,7 @@ NativeLightingFeature::OffloadSettings NativeLightingFeature::GetOffloadSettings
 {
 	std::scoped_lock lock(settingsMutex);
 	return { settings.OffloadStaticShadows, settings.OffloadLLFLights, settings.PreserveMatchedRasterLights,
+		settings.PreserveMatchedRasterShadows, settings.FadeShadowsNearReach,
 		settings.OffloadedShadowIntensity, settings.TraceDensityMode, validityRevision };
 }
 
@@ -244,6 +251,7 @@ void NativeLightingFeature::PublishDiagnostics()
 		{ "validDiffuse", totals[9] }, { "unsupported", totals[10] }, { "validSpecular", totals[11] },
 		{ "currentMaskAuthoritative", false }, { "comparisonFrames", comparisonFrames }, { "visualConsumptionVerified", false } };
 	snapshot["offloading"] = { { "staticShadows", offload.staticShadows }, { "llfLights", offload.llfLights },
+		{ "preserveMatchedRasterShadows", offload.preserveMatchedRasterShadows }, { "fadeShadowsNearReach", offload.fadeShadowsNearReach },
 		{ "preserveMatchedRasterLights", offload.preserveMatchedRasterLights },
 		{ "shadowIntensity", offload.shadowIntensity }, { "samplingDensity", offload.traceDensity } };
 	constexpr std::array reasonNames{ "invalidCamera", "noPrimaryHit", "depthMismatch", "unsupportedMaterial", "materialEvaluationFailure", "noEligibleLights", "invalidVisibility", "nonfiniteLighting", "authoritativeMaskCull", "successfulEvaluation" };
@@ -274,15 +282,19 @@ json NativeLightingFeature::GetDiagnostics()
 
 void NativeLightingFeature::RegisterUxActions()
 {
-	FEATURE_COMMAND("configure", "DX12 lighting/shadow offloading: staticShadows, llfLights, preserveMatchedRasterLights (bool), shadowIntensity (0..4), samplingDensity (0 Full, 1 Two-thirds, 2 Half, 3 One-third, 4 Quarter, 5 One-sixth, 6 One-ninth, 7 Four-ninths).", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("configure", "DX12 lighting/shadow offloading: staticShadows, llfLights, preserveMatchedRasterShadows, preserveMatchedRasterLights, fadeShadowsNearReach (bool), shadowIntensity (0..4), samplingDensity (0 Full, 1 Two-thirds, 2 Half, 3 One-third, 4 Quarter, 5 One-sixth, 6 One-ninth, 7 Four-ninths).", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeLightingFeature*>(self);
 		std::scoped_lock lock(feature.settingsMutex);
 		if (args.contains("staticShadows"))
 			feature.settings.OffloadStaticShadows = args.at("staticShadows").get<bool>();
 		if (args.contains("llfLights"))
 			feature.settings.OffloadLLFLights = args.at("llfLights").get<bool>();
+		if (args.contains("preserveMatchedRasterShadows"))
+			feature.settings.PreserveMatchedRasterShadows = args.at("preserveMatchedRasterShadows").get<bool>();
 		if (args.contains("preserveMatchedRasterLights"))
 			feature.settings.PreserveMatchedRasterLights = args.at("preserveMatchedRasterLights").get<bool>();
+		if (args.contains("fadeShadowsNearReach"))
+			feature.settings.FadeShadowsNearReach = args.at("fadeShadowsNearReach").get<bool>();
 		if (args.contains("shadowIntensity")) {
 			const float value = args.at("shadowIntensity").get<float>();
 			if (std::isfinite(value))

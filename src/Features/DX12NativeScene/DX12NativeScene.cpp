@@ -796,8 +796,11 @@ void DX12NativeScene::EarlyPrepass()
 			shadowResetRequested = true;
 		if (settings.ShadowTraceDensityMode != offload.traceDensity)
 			++shadowControlsRevision;
+		if (settings.ShadowDistanceFade != offload.fadeShadowsNearReach)
+			++shadowControlsRevision;
 		settings.ShadowMask = shadowOffload;
 		settings.ShadowTraceDensityMode = offload.traceDensity;
+		settings.ShadowDistanceFade = offload.fadeShadowsNearReach;
 		settings.ShadowAllLights = true;
 		requestedBudget.store(UINT32_MAX, std::memory_order_relaxed);
 		requestedFrameBudget.store(UINT32_MAX, std::memory_order_relaxed);

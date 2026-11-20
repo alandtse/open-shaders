@@ -328,6 +328,8 @@ bool NativeSCMFeature::OwnsStaticForLight(const RE::BSShadowLight* source, int32
 	if (!source || slot < 0 || !IsActive() || !globals::features::nativeLLF.IsActive() ||
 		!globals::game::graphicsState)
 		return false;
+	if (globals::features::nativeLighting.GetOffloadSettings().preserveMatchedRasterShadows)
+		return false;
 
 	// SCM shadow rendering is scheduled before LLF publishes the *current*
 	// frame's raster light buffer. Use the last complete LLF generation, and
