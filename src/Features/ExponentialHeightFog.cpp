@@ -1040,7 +1040,7 @@ void ExponentialHeightFog::Prepass()
 	cb.farGridZParams = computeGridZParams(nearEndDepth, totalFarPlane, currentFarGridSize.z, settings.volumetricDepthDistributionScale);
 	cb.farRange = float4{ static_cast<float>(nearEndDepth), static_cast<float>(totalFarPlane), 0.0f, 0.0f };
 
-	const uint32_t eyeCount = globals::game::isVR ? 2u : 1u;
+	const uint32_t eyeCount = Util::EyeCount();
 	for (uint32_t eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++) {
 		cb.clipToWorld[eyeIndex] = globals::game::frameBufferCached.GetCameraViewProjUnjittered(eyeIndex).Invert();
 	}

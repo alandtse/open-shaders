@@ -61,6 +61,37 @@ namespace
 		a_vertexDescriptor = LegacyGraphicsCompatibility::NormalizeLegacyUtilityDescriptor(a_vertexDescriptor);
 		a_pixelDescriptor = LegacyGraphicsCompatibility::NormalizeLegacyUtilityDescriptor(a_pixelDescriptor);
 	}
+
+	bool ParaboloidClipAllowed = false;
+	bool ParaboloidClipBound = false;
+
+	/// Binds the paraboloid clip geometry shader with our Utility paraboloid shadow vertex shader, and unbinds it for every other one.
+	void SetParaboloidClipShader(const RE::BSShader* a_shader, uint32_t a_vertexDescriptor, bool a_customVertexShader)
+	{
+		using enum SIE::ShaderCache::UtilityShaderFlags;
+		// The paraboloid bit is shared with AdditionalAlphaMask, so only a shadow-map draw outside OpaqueEffect is paraboloid.
+		constexpr auto paraboloidShadow = static_cast<uint32_t>(RenderShadowmap) | static_cast<uint32_t>(RenderShadowmapPb);
+		winrt::com_ptr<ID3D11GeometryShader> geometryShader;
+		if (ParaboloidClipAllowed && a_customVertexShader && a_shader && a_shader->shaderType.get() == RE::BSShader::Type::Utility &&
+			(a_vertexDescriptor & paraboloidShadow) == paraboloidShadow && !(a_vertexDescriptor & static_cast<uint32_t>(OpaqueEffect)))
+			geometryShader = globals::shaderCache->GetParaboloidClipShader(*a_shader, a_vertexDescriptor);
+		if (geometryShader || ParaboloidClipBound) {
+			globals::d3d::context->GSSetShader(geometryShader.get(), nullptr, 0);
+			ParaboloidClipBound = geometryShader != nullptr;
+		}
+	}
+}
+
+Hooks::ParaboloidClipScope::ParaboloidClipScope()
+{
+	ParaboloidClipAllowed = true;
+}
+
+Hooks::ParaboloidClipScope::~ParaboloidClipScope()
+{
+	ParaboloidClipAllowed = false;
+	ParaboloidClipBound = false;
+	globals::d3d::context->GSSetShader(nullptr, nullptr, 0);
 }
 
 void RegisterShaderBytecode(void* Shader, const void* Bytecode, size_t BytecodeLength)
@@ -226,6 +257,7 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 		} else {
 			state->settingCustomShader = true;
 			globals::d3d::context->VSSetShader(Util::AsReal(vertexShader->shader), NULL, NULL);
+			SetParaboloidClipShader(shader, state->modifiedVertexDescriptor, true);
 			state->customVertexShader = vertexShader;
 			*globals::game::currentVertexShader = vertexShader;
 			globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
@@ -1063,6 +1095,7 @@ namespace Hooks
 						RE::BSGraphics::VertexShader* vertexShader = shaderCache->GetVertexShader(*currentShader, state->modifiedVertexDescriptor);
 						if (vertexShader) {
 							globals::d3d::context->VSSetShader(Util::AsReal(vertexShader->shader), NULL, NULL);
+							SetParaboloidClipShader(currentShader, state->modifiedVertexDescriptor, true);
 							state->customVertexShader = vertexShader;
 							*globals::game::currentVertexShader = a_vertexShader;
 							globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
@@ -1077,6 +1110,7 @@ namespace Hooks
 			state->customVertexShader = nullptr;
 			*globals::game::currentVertexShader = a_vertexShader;
 			globals::d3d::context->VSSetShader(Util::AsReal(a_vertexShader->shader), NULL, NULL);
+			SetParaboloidClipShader(nullptr, 0, false);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};

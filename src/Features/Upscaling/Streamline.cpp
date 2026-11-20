@@ -1,5 +1,6 @@
 #include "Streamline.h"
 #include "Features/ReverseZ.h"
+#include "Utils/Game.h"
 
 #include <algorithm>
 #include <bit>
@@ -542,7 +543,7 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	sl::Constants slConstants = {};
 
 	// Calculate aspect ratio for the SINGLE EYE
-	float eyeWidth = state->screenSize.x * (globals::game::isVR ? 0.5f : 1.0f);
+	float eyeWidth = Util::EyeWidth(state->screenSize.x);
 	slConstants.cameraAspectRatio = eyeWidth / state->screenSize.y;
 
 	slConstants.cameraFOV = Util::GetVerticalFOVRad();

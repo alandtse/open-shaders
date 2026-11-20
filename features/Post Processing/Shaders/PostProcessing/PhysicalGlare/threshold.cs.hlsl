@@ -42,6 +42,35 @@ cbuffer GlareCB : register(b1)
 	float PSFNoiseFloor;
 	uint EnableEyelashes;
 	float EyelashCurvature;
+
+	uint EyelashCount;
+	float EyelashLength;
+	uint ParticleCount;
+	float ParticleSize;
+	uint GratingCount;
+	float GratingStrength;
+	float TearFilmStrength;
+	float TearFilmSpeed;
+	uint TearFilmComplexity;
+	float TearFilmTime;
+	uint SutureBranches;
+	float SutureStrength;
+	float SutureWidth;
+	uint StarburstCount;
+	float StarburstStrength;
+	float StarburstIrregularity;
+	uint DustCount;
+	float DustSize;
+	uint BladeRoughnessFreq;
+	float BladeRoughnessAmp;
+	uint ScratchCount;
+	float ScratchOpacity;
+	float ScratchLength;
+	float ScratchWidth;
+	float SphericalAberration;
+	uint UseAP1;
+	float KernelScale;
+	uint EyeIndex;
 };
 
 [numthreads(8, 8, 1)] void CS_Threshold(uint2 tid : SV_DispatchThreadID) {
@@ -64,6 +93,7 @@ cbuffer GlareCB : register(b1)
 		// Sample scene at corresponding screen position
 		uint2 screenPos = uint2(uv * float2(ScreenWidth, ScreenHeight));
 		screenPos = min(screenPos, uint2(uint(ScreenWidth) - 1, uint(ScreenHeight) - 1));
+		screenPos.x += EyeIndex * uint(ScreenWidth);
 
 		float3 color = TexColor[screenPos].rgb;
 

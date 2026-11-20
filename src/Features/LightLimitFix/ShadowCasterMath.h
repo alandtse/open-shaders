@@ -103,6 +103,18 @@ namespace ShadowCasterManager
 	/// How far a challenger must out-score a light already holding a shadow slot.
 	inline constexpr double kSlotHoldMargin = 1.25;
 
+	/// Fraction of one screen axis covered by a light's clip-space bounds.
+	inline float ProjectedLightExtent(float center, float extent, float nearestW, float farthestW) noexcept
+	{
+		if (farthestW <= 0.0f)
+			return 0.0f;
+		const float low = center - extent;
+		const float high = center + extent;
+		const float left = low >= 0.0f ? low / farthestW : (nearestW > 0.0f ? low / nearestW : -1.0f);
+		const float right = high <= 0.0f ? high / farthestW : (nearestW > 0.0f ? high / nearestW : 1.0f);
+		return (std::clamp(right, -1.0f, 1.0f) - std::clamp(left, -1.0f, 1.0f)) * 0.5f;
+	}
+
 	/// A light's rank score once its slot is counted. A non-positive score stays
 	/// as it is: scaling it would rank the holder lower.
 	inline double SlotHeldScore(double a_score, bool a_holdsSlot) noexcept

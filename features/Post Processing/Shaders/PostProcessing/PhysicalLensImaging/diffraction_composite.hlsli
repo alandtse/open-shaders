@@ -1,4 +1,5 @@
 #define WAVE_PARAMETER_REGISTER b4
+#include "Common/StereoEye.hlsli"
 #include "PostProcessing/PhysicalLensImaging/diffraction_parameters.hlsli"
 #include "PostProcessing/PhysicalLensImaging/diffraction_sampling.hlsli"
 
@@ -12,11 +13,7 @@ float3 SamplePhysicalLensWave(Texture2D<float4> scene, Texture2DArray<float4> ma
 	SamplerState linearSampler, float2 stereoUV, out float2 greenUV)
 {
 	uint eye = Stereo::GetEyeIndexFromTexCoord(stereoUV);
-#ifdef VR
-	const uint eyeCount = 2;
-#else
-	const uint eyeCount = 1;
-#endif
+	const uint eyeCount = kEyeCount;
 	float2 uv = Stereo::ConvertFromStereoUV(stereoUV, eye);
 	uint2 tile = min(uint2(uv * WaveImageSize) / 16, (WaveImageSize - 1) / 16);
 	uint tilesPerEye = ((WaveImageSize.x + 15) / 16) * ((WaveImageSize.y + 15) / 16);
