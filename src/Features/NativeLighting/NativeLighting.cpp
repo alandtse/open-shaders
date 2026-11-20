@@ -64,110 +64,32 @@ namespace
 	}
 }
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::Settings, Enabled, Diffuse, Specular, EarlyShadowCull, Debug, CompareCulling, DiffuseIntensity, SpecularIntensity, BudgetMB, PersistLab, DirectStrength, EmissionStrength, PointLightRadiusMultiplier, PointLightFalloffFraction, PointLightFalloffExponent, ShadowStrength, EmitterRadiusMultiplier, NormalInfluence, SelectedDirectLight, StochasticShadows, UseAllPreparedLights, TraceDensityMode, CharacterCasterOcclusion, CharacterReceiverProbe)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::Settings, OffloadStaticShadows, OffloadLLFLights, OffloadedShadowIntensity, Enabled, Diffuse, Specular, EarlyShadowCull, Debug, CompareCulling, DiffuseIntensity, SpecularIntensity, BudgetMB, PersistLab, DirectStrength, EmissionStrength, PointLightRadiusMultiplier, PointLightFalloffFraction, PointLightFalloffExponent, ShadowStrength, EmitterRadiusMultiplier, NormalInfluence, SelectedDirectLight, StochasticShadows, UseAllPreparedLights, TraceDensityMode, CharacterCasterOcclusion, CharacterReceiverProbe)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::ValidityLab, DepthAgreement, DiagnosticDepth, AbsoluteTolerance, RelativeTolerance, MaterialPolicy, RequireMaskAuthority, AssumeMaskAuthoritative, ObserveMask, RunWithoutLighting, ReferenceVisibility, ReferencePrimaryTraversal, MaskThreshold, MaskDistanceTolerance)
 
 void NativeLightingFeature::DrawSettings()
 {
-	ImGui::SeparatorText("Independent Shadows");
-	globals::features::nativeComposite.DrawShadowSettings();
-	globals::features::dx12NativeScene.DrawShadowSettings();
-	ImGui::SeparatorText("Direct Lighting");
-	globals::features::nativeComposite.DrawDirectSettings();
 	std::scoped_lock lock(settingsMutex);
-	ImGui::Checkbox("Enable native lighting", &settings.Enabled);
-	if (ImGui::Checkbox("Force positive native validity (testing)", &settings.ForcePositiveValidity))
-		++validityRevision;
-	if (settings.ForcePositiveValidity)
-		ImGui::TextDisabled("Unsafe test: admits geometry hits through depth, alpha and material policy checks; invalid resources still skip.");
-	ImGui::Checkbox("Diffuse", &settings.Diffuse);
-	ImGui::Checkbox("Specular", &settings.Specular);
+	int mode = 0;
+	ImGui::Combo("Mode selection", &mode, "DX12 lighting/shadow offloading\0");
 	int traceDensity = int(settings.TraceDensityMode);
-	if (ImGui::Combo("Native lighting trace density", &traceDensity, "Full\0Two-thirds\0Half\0One-third\0Quarter\0One-sixth\0One-ninth\0Four-ninths\0")) {
+	if (ImGui::Combo("Sampling density", &traceDensity, "Full\0Two-thirds\0Half\0One-third\0Quarter\0One-sixth\0One-ninth\0Four-ninths\0")) {
 		settings.TraceDensityMode = uint32_t(traceDensity);
 		++validityRevision;
 	}
-	ImGui::TextDisabled("Full-size raw signals. Spatial reconstruction is independent in Native Composite.");
-	bool tuned = false;
-	tuned |= ImGui::SliderFloat("Direct strength", &settings.DirectStrength, 0.0f, 8.0f, "%.2fx");
-	tuned |= ImGui::SliderFloat("Diffuse intensity", &settings.DiffuseIntensity, 0.0f, 8.0f, "%.2fx");
-	tuned |= ImGui::SliderFloat("Specular intensity", &settings.SpecularIntensity, 0.0f, 8.0f, "%.2fx");
-	tuned |= ImGui::SliderFloat("Prepared emission strength", &settings.EmissionStrength, 0.0f, 8.0f, "%.2fx");
-	ImGui::TextDisabled("Prepared emission may double-count emissive lighting in the raster scene.");
-	int normalMode = int(settings.NormalInfluence);
-	if (ImGui::Combo("Normal influence", &normalMode, "Legacy flat (no specular)\0Geometry normals\0Full material normals (True PBR)\0")) {
-		settings.NormalInfluence = uint32_t(normalMode);
-		tuned = true;
-	}
-	ImGui::SeparatorText("Point-light reach / inverse-square falloff");
-	tuned |= ImGui::SliderFloat("Radius multiplier", &settings.PointLightRadiusMultiplier, 0.1f, 64.0f, "%.2fx", ImGuiSliderFlags_Logarithmic);
-	tuned |= ImGui::SliderFloat("Falloff transition width", &settings.PointLightFalloffFraction, 0.02f, 1.0f, "%.2f of radius");
-	tuned |= ImGui::SliderFloat("Falloff curve exponent", &settings.PointLightFalloffExponent, 0.25f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
-	ImGui::TextDisabled("Radius affects cutoff only; inverse-square energy is unchanged.");
-	if (ImGui::Button("Reset light reach / falloff")) {
-		const Settings defaults{};
-		settings.PointLightRadiusMultiplier = defaults.PointLightRadiusMultiplier;
-		settings.PointLightFalloffFraction = defaults.PointLightFalloffFraction;
-		settings.PointLightFalloffExponent = defaults.PointLightFalloffExponent;
-		tuned = true;
-	}
-	ImGui::SeparatorText("Occlusion within native direct lighting");
-	tuned |= ImGui::SliderFloat("Direct ray-occlusion weight", &settings.ShadowStrength, 0.0f, 1.0f, "%.2f");
-	tuned |= ImGui::Checkbox("Third-person character occlusion (experimental)",
-		&settings.CharacterCasterOcclusion);
-	tuned |= ImGui::Checkbox("Probe raster-aligned character receivers (diagnostic)",
-		&settings.CharacterReceiverProbe);
-	ImGui::TextDisabled("Secondary native direct rays only; separate from character shadows.");
-	ImGui::TextDisabled("Receiver probe counts raster-depth matches; final material shading stays raster.");
-	ImGui::TextDisabled("Affects the native direct BRDF only; the independent shadow layer is in Native Composite.");
-	tuned |= ImGui::Checkbox("Stochastic emitter sampling", &settings.StochasticShadows);
-	ImGui::BeginDisabled(!settings.StochasticShadows);
-	tuned |= ImGui::SliderFloat("Emitter radius scale", &settings.EmitterRadiusMultiplier, 0.0f, 8.0f, "%.2fx");
-	ImGui::EndDisabled();
-	ImGui::TextDisabled("One disk-distributed visibility ray per light; not temporal grid undersampling.");
-	tuned |= ImGui::Checkbox("All unified native lights (prepared first)", &settings.UseAllPreparedLights);
-	if (!settings.UseAllPreparedLights) {
-		const auto published = globals::features::dx12NativeScene.GetPublishedScene();
-		const auto live = globals::game::graphicsState ?
-		                      globals::features::dx12NativeScene.GetNativeLLFLights(globals::game::graphicsState->GetFrameCount()) :
-		                      std::nullopt;
-		const auto count = live ? live->count : (published ? published->cell->nativeLights.size() : 0u);
-		int lightIndex = int(settings.SelectedDirectLight);
-		if (ImGui::SliderInt("Native light index", &lightIndex, 0, int(count ? count - 1 : 0))) {
-			settings.SelectedDirectLight = uint32_t(lightIndex);
-			tuned = true;
-		}
-	}
-	if (ImGui::Button("Reset direct strengths")) {
-		const Settings defaults{};
-		settings.DirectStrength = defaults.DirectStrength;
-		settings.DiffuseIntensity = defaults.DiffuseIntensity;
-		settings.SpecularIntensity = defaults.SpecularIntensity;
-		settings.EmissionStrength = defaults.EmissionStrength;
-		tuned = true;
-	}
-	if (tuned)
+	if (ImGui::Checkbox("Offload static shadows", &settings.OffloadStaticShadows))
 		++validityRevision;
-	ImGui::TextDisabled("Native Lighting VRAM: dynamic DXGI only (shared reserve applies).");
-	ImGui::TextDisabled("DXGI frame-budget telemetry is available in diagnostics; %zu lighting slots.", frames.size());
-	{
-		std::scoped_lock diagnosticsLock(diagnosticsMutex);
-		ImGui::TextDisabled("Native Lighting: %llu submissions | %llu primary queries | %llu primary hits",
-			static_cast<unsigned long long>(diagnostics.value("submissions", uint64_t{ 0 })),
-			static_cast<unsigned long long>(diagnostics.value("primaryQueries", uint64_t{ 0 })),
-			static_cast<unsigned long long>(diagnostics.value("primaryHits", uint64_t{ 0 })));
-		if (const auto lightingStatus = diagnostics.value("status", std::string{}); !lightingStatus.empty())
-			ImGui::TextDisabled("Native Lighting status: %s", lightingStatus.c_str());
-		ImGui::TextDisabled("Skipped native lighting pixels (GPU completed, cumulative): %llu",
-			static_cast<unsigned long long>(diagnostics.value("skippedPixels", uint64_t{ 0 })));
-		ImGui::TextDisabled("NativePBR ray hits (GPU completed, cumulative): %llu candidates | %llu evaluated",
-			static_cast<unsigned long long>(diagnostics.value("nativePbrCandidates", uint64_t{ 0 })),
-			static_cast<unsigned long long>(diagnostics.value("nativePbrEvaluated", uint64_t{ 0 })));
-		ImGui::TextDisabled("NativePBR forced missing-texture fallbacks: %llu",
-			static_cast<unsigned long long>(diagnostics.value("nativePbrForcedTextures", uint64_t{ 0 })));
-	}
-	if (ImGui::Checkbox("Early shadow-mask culling", &settings.EarlyShadowCull))
+	if (ImGui::SliderFloat("Offloaded shadow intensity", &settings.OffloadedShadowIntensity, 0.0f, 4.0f, "%.2fx"))
 		++validityRevision;
+	if (ImGui::Checkbox("Offload LLF lights", &settings.OffloadLLFLights))
+		++validityRevision;
+}
+
+NativeLightingFeature::OffloadSettings NativeLightingFeature::GetOffloadSettings() const
+{
+	std::scoped_lock lock(settingsMutex);
+	return { settings.OffloadStaticShadows, settings.OffloadLLFLights,
+		settings.OffloadedShadowIntensity, settings.TraceDensityMode, validityRevision };
 }
 
 void NativeLightingFeature::LoadSettings(json& a_json)
@@ -185,6 +107,7 @@ void NativeLightingFeature::LoadSettings(json& a_json)
 	selected.EmitterRadiusMultiplier = sanitize(selected.EmitterRadiusMultiplier, 1.0f, 0.0f, 8.0f);
 	selected.NormalInfluence = std::min(selected.NormalInfluence, 2u);
 	selected.TraceDensityMode = std::min(selected.TraceDensityMode, 7u);
+	selected.OffloadedShadowIntensity = sanitize(selected.OffloadedShadowIntensity, 1.0f, 0.0f, 4.0f);
 	selected.ForcePositiveValidity = false;
 	selected.BudgetMB = 0;  // Legacy manual cap is ignored.
 	std::scoped_lock lock(settingsMutex);
@@ -299,6 +222,7 @@ bool NativeLightingFeature::RetainContribution(const std::shared_ptr<const Contr
 
 void NativeLightingFeature::PublishDiagnostics()
 {
+	const auto offload = GetOffloadSettings();
 	json snapshot{ { "status", status }, { "submissions", submissions }, { "gpuCompletions", completions },
 		{ "frameSlots", frames.size() }, { "busyDeferrals", busyDeferrals },
 		{ "dxgiAvailable", videoBudget.last.dxgiAvailable }, { "effectiveFrameBudgetBytes", videoBudget.last.effectiveBytes },
@@ -314,6 +238,8 @@ void NativeLightingFeature::PublishDiagnostics()
 		{ "forcePositiveValidity", current && current->forcePositiveValidity },
 		{ "validDiffuse", totals[9] }, { "unsupported", totals[10] }, { "validSpecular", totals[11] },
 		{ "currentMaskAuthoritative", false }, { "comparisonFrames", comparisonFrames }, { "visualConsumptionVerified", false } };
+	snapshot["offloading"] = { { "staticShadows", offload.staticShadows }, { "llfLights", offload.llfLights },
+		{ "shadowIntensity", offload.shadowIntensity }, { "samplingDensity", offload.traceDensity } };
 	constexpr std::array reasonNames{ "invalidCamera", "noPrimaryHit", "depthMismatch", "unsupportedMaterial", "materialEvaluationFailure", "noEligibleLights", "invalidVisibility", "nonfiniteLighting", "authoritativeMaskCull", "successfulEvaluation" };
 	for (size_t i = 0; i < reasonNames.size(); ++i) snapshot["originalRejections"][reasonNames[i]] = totals[12 + i];
 	snapshot["recoveredPixels"] = totals[22];
@@ -342,64 +268,21 @@ json NativeLightingFeature::GetDiagnostics()
 
 void NativeLightingFeature::RegisterUxActions()
 {
-	FEATURE_COMMAND("configure", "Set native direct lighting; optional enabled/diffuse/specular, directStrength, diffuseIntensity, specularIntensity, emissionStrength, normalInfluence (0 flat, 1 geometry, 2 material), allLights, selectedLight, radiusMultiplier, falloffFraction, falloffExponent, shadowStrength, stochasticShadows, emitterRadiusMultiplier, earlyShadowCull, debug, compareCulling, traceDensityMode (0 Full, 1 Two-thirds, 2 Half, 3 One-third, 4 Quarter, 5 One-sixth, 6 One-ninths, 7 Four-ninths), forcePositiveValidity, budgetMB.", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("configure", "DX12 lighting/shadow offloading: staticShadows, llfLights (bool), shadowIntensity (0..4), samplingDensity (0 Full, 1 Two-thirds, 2 Half, 3 One-third, 4 Quarter, 5 One-sixth, 6 One-ninth, 7 Four-ninths).", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeLightingFeature*>(self);
 		std::scoped_lock lock(feature.settingsMutex);
-		if (args.contains("enabled"))
-			feature.settings.Enabled = args.at("enabled").get<bool>();
-		if (args.contains("forcePositiveValidity")) {
-			feature.settings.ForcePositiveValidity = args.at("forcePositiveValidity").get<bool>();
-			++feature.validityRevision;
+		if (args.contains("staticShadows"))
+			feature.settings.OffloadStaticShadows = args.at("staticShadows").get<bool>();
+		if (args.contains("llfLights"))
+			feature.settings.OffloadLLFLights = args.at("llfLights").get<bool>();
+		if (args.contains("shadowIntensity")) {
+			const float value = args.at("shadowIntensity").get<float>();
+			if (std::isfinite(value))
+				feature.settings.OffloadedShadowIntensity = std::clamp(value, 0.0f, 4.0f);
 		}
-		if (args.contains("diffuse"))
-			feature.settings.Diffuse = args.at("diffuse").get<bool>();
-		if (args.contains("specular"))
-			feature.settings.Specular = args.at("specular").get<bool>();
-		if (args.contains("earlyShadowCull")) {
-			feature.settings.EarlyShadowCull = args.at("earlyShadowCull").get<bool>();
-			++feature.validityRevision;
-		}
-		if (args.contains("debug"))
-			feature.settings.Debug = args.at("debug").get<bool>();
-		if (args.contains("compareCulling"))
-			feature.settings.CompareCulling = args.at("compareCulling").get<bool>();
-		const auto tune = [&](const char* key, float& value, float fallback, float low, float high) {
-			if (!args.contains(key))
-				return;
-			const auto v = args.at(key).get<float>();
-			value = std::isfinite(v) ? std::clamp(v, low, high) : fallback;
-			++feature.validityRevision;
-		};
-		tune("diffuseIntensity", feature.settings.DiffuseIntensity, 1.0f, 0.0f, 8.0f);
-		tune("specularIntensity", feature.settings.SpecularIntensity, 1.0f, 0.0f, 8.0f);
-		tune("directStrength", feature.settings.DirectStrength, NativeLightingFeature::Settings{}.DirectStrength, 0.0f, 8.0f);
-		tune("emissionStrength", feature.settings.EmissionStrength, NativeLightingFeature::Settings{}.EmissionStrength, 0.0f, 8.0f);
-		tune("radiusMultiplier", feature.settings.PointLightRadiusMultiplier, NativeLightingFeature::Settings{}.PointLightRadiusMultiplier, 0.1f, 64.0f);
-		tune("falloffFraction", feature.settings.PointLightFalloffFraction, 0.1f, 0.02f, 1.0f);
-		tune("falloffExponent", feature.settings.PointLightFalloffExponent, 1.0f, 0.25f, 4.0f);
-		tune("shadowStrength", feature.settings.ShadowStrength, 1.0f, 0.0f, 1.0f);
-		tune("emitterRadiusMultiplier", feature.settings.EmitterRadiusMultiplier, 1.0f, 0.0f, 8.0f);
-		if (args.contains("stochasticShadows")) {
-			feature.settings.StochasticShadows = args.at("stochasticShadows").get<bool>();
-			++feature.validityRevision;
-		}
-		if (args.contains("allLights")) {
-			feature.settings.UseAllPreparedLights = args.at("allLights").get<bool>();
-			++feature.validityRevision;
-		}
-		if (args.contains("selectedLight")) {
-			feature.settings.SelectedDirectLight = args.at("selectedLight").get<uint32_t>();
-			++feature.validityRevision;
-		}
-		if (args.contains("normalInfluence")) {
-			feature.settings.NormalInfluence = std::min(args.at("normalInfluence").get<uint32_t>(), 2u);
-			++feature.validityRevision;
-		}
-		if (args.contains("traceDensityMode")) {
-			feature.settings.TraceDensityMode = std::min(args.at("traceDensityMode").get<uint32_t>(), 7u);
-			++feature.validityRevision;
-		}
-		feature.settings.BudgetMB = 0;  // Retired budget command.
+		if (args.contains("samplingDensity"))
+			feature.settings.TraceDensityMode = std::min(args.at("samplingDensity").get<uint32_t>(), 7u);
+		++feature.validityRevision;
 	});
 	FEATURE_COMMAND("validityLab", "Set runtime validity controls: depthAgreement, diagnosticDepth, absoluteTolerance, relativeTolerance, materialPolicy (0 strict, 1 neutral, 2 geometry), requireMaskAuthority, assumeMaskAuthoritative, observeMask, runWithoutLighting, referenceVisibility, referencePrimaryTraversal, maskThreshold, maskDistanceTolerance, persistLab.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeLightingFeature*>(self);
@@ -521,6 +404,25 @@ void NativeLightingFeature::OnOpaqueRasterReady(const OpaqueRasterInputs&)
 		selectedLab = lab;
 		revision = validityRevision;
 	}
+	selected.Enabled = selected.OffloadLLFLights;
+	selected.Diffuse = true;
+	selected.Specular = false;
+	selected.DiffuseIntensity = 1.0f;
+	selected.SpecularIntensity = 0.0f;
+	selected.EmissionStrength = 0.0f;
+	selected.DirectStrength = 1.0f;
+	selected.PointLightRadiusMultiplier = 1.0f;
+	selected.PointLightFalloffFraction = 0.1f;
+	selected.PointLightFalloffExponent = 1.0f;
+	selected.NormalInfluence = 2u;
+	selected.StochasticShadows = false;
+	selected.EarlyShadowCull = false;
+	selected.UseAllPreparedLights = true;
+	selected.ForcePositiveValidity = false;
+	selected.CharacterCasterOcclusion = false;
+	selected.CharacterReceiverProbe = false;
+	selected.Debug = false;
+	selected.CompareCulling = false;
 	if (!selected.Enabled || (!selected.Diffuse && !selected.Specular && selectedLab.MaterialPolicy != 2 && !selectedLab.RunWithoutLighting && !selected.ForcePositiveValidity) || transitionOpen || globals::game::isVR) {
 		current.reset();
 		active = false;
@@ -690,7 +592,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 				nullptr;
 		slot->characterProbeEnabled = a_settings.CharacterReceiverProbe &&
 		                              bool(slot->characterCasters);
-		if (!a_lab.ObserveMask && !a_lab.AssumeMaskAuthoritative)
+		if (!a_settings.EarlyShadowCull || (!a_lab.ObserveMask && !a_lab.AssumeMaskAuthoritative))
 			slot->scene.shadow.reset();
 		if (slot->scene.shadow && (!slot->scene.shadow->mask || !slot->scene.shadow->mask->resource ||
 									  !slot->scene.shadow->readyFence || !slot->scene.shadow->readyValue || slot->scene.shadow->readyValue == UINT64_MAX ||

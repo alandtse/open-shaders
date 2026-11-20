@@ -4,6 +4,7 @@
 #include "Features/LightLimitFix.h"
 #include "Features/NativeComposite/NativeComposite.h"
 #include "Features/NativeFeatures.h"
+#include "Features/NativeLighting/NativeLighting.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "RE/B/BSTriShape.h"
@@ -260,7 +261,11 @@ bool DX12NativeScene::OwnsNativeFeatures() const
 
 bool DX12NativeScene::IsPreparedStaticCaster(RE::BSGeometry& geometry) const
 {
-	if (!globals::features::nativeSCM.IsActive() || geometry.GetGeometryRuntimeData().skinInstance)
+	if (!settings.ShadowMask || !globals::features::nativeSCM.IsActive() ||
+		geometry.GetGeometryRuntimeData().skinInstance || !globals::game::graphicsState)
+		return false;
+	const auto mask = GetShadowMask(globals::game::graphicsState->GetFrameCount());
+	if (!mask || !mask->readyFence || !mask->readyValue || mask->readyValue == UINT64_MAX)
 		return false;
 	// Coverage describes actual acceleration instances, never the offline
 	// manifest alone. Unmatched static geometry remains in SCM's raster path.
@@ -785,6 +790,15 @@ void DX12NativeScene::EarlyPrepass()
 		settings.Enabled = nativeSelected;
 		if (const auto shadowEnabled = requestedShadow.exchange(-1); shadowEnabled >= 0)
 			settings.ShadowMask = shadowEnabled != 0;
+		const auto offload = globals::features::nativeLighting.GetOffloadSettings();
+		const bool shadowOffload = offload.staticShadows && offload.shadowIntensity > 0.0f;
+		if (settings.ShadowMask != shadowOffload)
+			shadowResetRequested = true;
+		if (settings.ShadowTraceDensityMode != offload.traceDensity)
+			++shadowControlsRevision;
+		settings.ShadowMask = shadowOffload;
+		settings.ShadowTraceDensityMode = offload.traceDensity;
+		settings.ShadowAllLights = true;
 		requestedBudget.store(UINT32_MAX, std::memory_order_relaxed);
 		requestedFrameBudget.store(UINT32_MAX, std::memory_order_relaxed);
 		settings.BudgetMB = 0;
@@ -1125,6 +1139,9 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 		std::scoped_lock lock(settingsMutex);
 		shadowSettings = settings;
 	}
+	shadowSettings.ShadowReachMultiplier = 1.0f;
+	shadowSettings.ShadowStochastic = false;
+	shadowSettings.CharacterShadowCasterVisibility = false;
 	if (!shadowSettings.Enabled || !shadowSettings.ShadowMask || transitionOpen || globals::game::isVR || !backend || !globals::game::graphicsState ||
 		!globals::shaderCache || !globals::shaderCache->IsEnabled() ||
 		!globals::state || globals::state->isMapMenuOpen ||

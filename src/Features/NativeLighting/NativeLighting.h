@@ -13,6 +13,8 @@ struct NativeLightingFeature final : Feature
 {
 	struct Settings
 	{
+		bool OffloadStaticShadows = true, OffloadLLFLights = false;
+		float OffloadedShadowIntensity = 1.0f;
 		bool Enabled = false, Diffuse = true, Specular = true, EarlyShadowCull = true, Debug = false, CompareCulling = false;
 		float DiffuseIntensity = 1.0f, SpecularIntensity = 1.0f;
 		// Ported from reference PR #9; native direct owns these independently.
@@ -28,6 +30,13 @@ struct NativeLightingFeature final : Feature
 		bool ForcePositiveValidity = false;  // Session-only diagnostic bypass.
 		uint32_t BudgetMB = 0;                // Compatibility only; always dynamic DXGI.
 		bool PersistLab = false;
+	};
+	struct OffloadSettings
+	{
+		bool staticShadows = true, llfLights = false;
+		float shadowIntensity = 1.0f;
+		uint32_t traceDensity = 0;
+		uint64_t revision = 1;
 	};
 	struct ValidityLab
 	{
@@ -102,6 +111,8 @@ struct NativeLightingFeature final : Feature
 	void ClearShaderCache() override { reloadRequested = true; }
 	json GetDiagnostics() override;
 	void RegisterUxActions() override;
+	/** @brief Unified shadow and direct offloading controls for DX12 consumers. */
+	OffloadSettings GetOffloadSettings() const;
 	/** @brief Borrows current-frame DX12 outputs until consumer completion. */
 	std::shared_ptr<const Contribution> GetContribution(uint32_t a_frame) const;
 	/** @brief Retains a contribution through a downstream GPU completion fence. */

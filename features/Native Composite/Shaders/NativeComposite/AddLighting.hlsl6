@@ -178,7 +178,7 @@ void main(uint3 id : SV_DispatchThreadID)
 		}
 	}
 	// Native receivers keep ownership when skipped; raster-only foreground (e.g. actors) remains untouched.
-	if ((reason & 0x10000000u) != 0u && NearbyNativeReceiver(id.xy)) {
+	if (NativeReadinessStage != 0u && (reason & 0x10000000u) != 0u && NearbyNativeReceiver(id.xy)) {
 		float4 originalColor = Scene[id.xy];
 		float3 sparseLighting = (acceptDiffuse ? diffuse : 0) + (acceptSpecular ? specular : 0);
 		float3 nativeColor = all(isfinite(sparseLighting)) ? sparseLighting * Strength : 0.0f;
@@ -194,7 +194,7 @@ void main(uint3 id : SV_DispatchThreadID)
 	// previews intentionally display incomplete pixels, including black output.
 	// No native pixel may cover a closer DX11 fallback receiver: the producer
 	// only sets readiness bits after comparing the traced hit to raster depth.
-	if (NativeFirstReady(NativeReadinessStage, effective, reason, acceptDiffuse || acceptSpecular)) {
+	if (NativeReadinessStage != 0u && NativeFirstReady(NativeReadinessStage, effective, reason, acceptDiffuse || acceptSpecular)) {
 		float4 originalColor = Scene[id.xy];
 		float3 nativeColor = all(isfinite(lighting)) ? lighting * Strength : 0.0f;
 		Scene[id.xy] = float4(LegacyTransfer != 0 ? SignedPower(nativeColor, 1.0f / 1.6f) : nativeColor,
