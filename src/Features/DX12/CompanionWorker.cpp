@@ -84,6 +84,78 @@ namespace DX12
 			}
 		}
 
+		// This service belongs exclusively to the companion worker thread. It survives
+		// consecutive tiles and retains Mutagen's initialized load order and archive handles.
+		struct CompanionProcess
+		{
+			HANDLE job = nullptr;
+			HANDLE process = nullptr;
+			std::filesystem::path root;
+			uint64_t epoch = 0;
+
+			~CompanionProcess() { Close(); }
+
+			void Close()
+			{
+				if (job)
+					TerminateJobObject(job, 1);
+				if (process) {
+					WaitForSingleObject(process, 100);
+					CloseHandle(process);
+					process = nullptr;
+				}
+				if (job) {
+					CloseHandle(job);
+					job = nullptr;
+				}
+				std::error_code ignored;
+				if (!root.empty())
+					std::filesystem::remove_all(root, ignored);
+				root.clear();
+				epoch = 0;
+			}
+
+			bool Start(const std::filesystem::path& executable, const std::filesystem::path& data,
+				const std::filesystem::path& plugins, const std::filesystem::path& work)
+			{
+				if (process && WaitForSingleObject(process, 0) == WAIT_TIMEOUT)
+					return true;
+				Close();
+				root = work / std::format(L"session-{}-{}-service", GetCurrentProcessId(), GetTickCount64());
+				std::error_code ec;
+				if (!std::filesystem::create_directory(root, ec) || ec)
+					return false;
+				job = CreateJobObjectW(nullptr, nullptr);
+				JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+				limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+				if (!job || !SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+					Close();
+					return false;
+				}
+				std::wstring command = Quote(executable.wstring()) + L" --serve " +
+					Quote(data.wstring()) + L" " + Quote(plugins.wstring()) + L" " + Quote(root.wstring());
+				STARTUPINFOW startup{};
+				startup.cb = sizeof(startup);
+				PROCESS_INFORMATION started{};
+				const BOOL launched = CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
+					CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS | CREATE_SUSPENDED,
+					nullptr, nullptr, &startup, &started);
+				if (!launched) {
+					Close();
+					return false;
+				}
+				process = started.hProcess;
+				const bool assigned = AssignProcessToJobObject(job, process) &&
+					ResumeThread(started.hThread) != DWORD(-1);
+				CloseHandle(started.hThread);
+				if (!assigned) {
+					Close();
+					return false;
+				}
+				return true;
+			}
+		};
+
 		bool InvokeCompanion(const CompanionRequest& task, const std::filesystem::path& destination,
 			uint64_t expectedGeneration, const std::atomic<uint64_t>& generation, std::stop_token stop)
 		{
@@ -95,62 +167,60 @@ namespace DX12
 			if (!std::filesystem::is_regular_file(executable, ec) ||
 				!std::filesystem::is_regular_file(plugins, ec))
 				return false;
-
-			std::wstring command = Quote(executable.wstring());
-			for (const auto& argument : std::vector<std::wstring>{
-					 L"--tile", data.wstring(), plugins.wstring(),
-					 std::wstring(task.scopePlugin.begin(), task.scopePlugin.end()),
-					 std::format(L"{:X}", task.localScopeID),
-					 std::to_wstring(task.key.x), std::to_wstring(task.key.y),
-					 std::to_wstring(task.size), task.worldspace ? L"world" : L"cell", destination.wstring() }) {
-				command += L' ';
-				command += Quote(argument);
-			}
-			HANDLE job = CreateJobObjectW(nullptr, nullptr);
-			JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-			limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-			if (!job || !SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
-				if (job)
-					CloseHandle(job);
+			// Host-owned per-session mailbox; no persistent geometry output or diagnostics.
+			static thread_local CompanionProcess service;
+			if (service.epoch && service.epoch != expectedGeneration)
+				service.Close();
+			const auto work = destination.parent_path().parent_path();
+			if (!service.Start(executable, data, plugins, work))
 				return false;
+			service.epoch = expectedGeneration;
+			SetPriorityClass(service.process, task.predictive ? IDLE_PRIORITY_CLASS : BELOW_NORMAL_PRIORITY_CLASS);
+			const auto requestTmp = service.root / L"request.tmp";
+			const auto request = service.root / L"request.json";
+			const auto reply = service.root / L"reply.json";
+			const json message = {
+				{ "scopePlugin", task.scopePlugin },
+				{ "localScopeID", task.localScopeID },
+				{ "x", task.key.x },
+				{ "y", task.key.y },
+				{ "size", task.size },
+				{ "worldspace", task.worldspace }
+			};
+			{
+				std::ofstream stream(requestTmp, std::ios::binary | std::ios::trunc);
+				if (!stream) {
+					service.Close();
+					return false;
+				}
+				stream << message.dump();
+				stream.flush();
+				if (!stream) {
+					service.Close();
+					return false;
+				}
 			}
-			STARTUPINFOW startup{};
-			startup.cb = sizeof(startup);
-			PROCESS_INFORMATION process{};
-			const BOOL launched = CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
-				CREATE_NO_WINDOW | (task.predictive ? IDLE_PRIORITY_CLASS : BELOW_NORMAL_PRIORITY_CLASS) | CREATE_SUSPENDED,
-				nullptr, nullptr, &startup, &process);
-			if (!launched) {
-				CloseHandle(job);
-				return false;
-			}
-			const bool assigned = AssignProcessToJobObject(job, process.hProcess) &&
-			                      ResumeThread(process.hThread) != DWORD(-1);
-			CloseHandle(process.hThread);
-			if (!assigned) {
-				TerminateJobObject(job, 1);
-				CloseHandle(process.hProcess);
-				CloseHandle(job);
+			std::filesystem::rename(requestTmp, request, ec);
+			if (ec) {
+				service.Close();
 				return false;
 			}
 			const uint64_t started = GetTickCount64();
-			bool success = false;
 			while (!stop.stop_requested() && generation.load(std::memory_order_acquire) == expectedGeneration &&
-				   GetTickCount64() - started < kPreparationDeadlineMs) {
-				const DWORD wait = WaitForSingleObject(process.hProcess, 50);
-				if (wait == WAIT_OBJECT_0) {
-					DWORD code = 1;
-					success = GetExitCodeProcess(process.hProcess, &code) && code == 0;
+				GetTickCount64() - started < kPreparationDeadlineMs) {
+				if (std::filesystem::is_regular_file(reply, ec)) {
+					std::filesystem::rename(reply, destination, ec);
+					if (!ec)
+						return true;
 					break;
 				}
-				if (wait != WAIT_TIMEOUT)
+				if (WaitForSingleObject(service.process, 25) != WAIT_TIMEOUT)
 					break;
 			}
-			if (!success)
-				TerminateJobObject(job, 1);
-			CloseHandle(process.hProcess);
-			CloseHandle(job);
-			return success;
+			// A superseded or timed-out request kills only the companion job, not Skyrim.
+			// The worker starts a clean session for the next currently prioritized tile.
+			service.Close();
+			return false;
 		}
 
 		std::array<float, 3> Triple(const json& values)

@@ -14,6 +14,7 @@ using NiflySharp.Enums;
 
 // One bounded, renderer-independent preparation request. The native host owns
 // the temporary output file and removes it even when this process fails.
+if (args.Length == 4 && args[0] == "--serve") return await ServeAsync(args);
 if (args.Length != 10 || args[0] != "--tile") return 2;
 try
 {
@@ -47,6 +48,66 @@ catch (Exception)
     return 1;
 }
 
+static async Task<int> ServeAsync(string[] arguments)
+{
+    // One isolated companion process owns the runtime's load-order context.
+    // Only a small mailbox is written to its private temporary session directory.
+    try
+    {
+        var data = Path.GetFullPath(arguments[1]);
+        var plugins = Path.GetFullPath(arguments[2]);
+        var sessionRoot = Path.GetFullPath(arguments[3]);
+        if (!File.Exists(plugins) || !Directory.Exists(sessionRoot) ||
+            !File.Exists(Path.Combine(data, "Skyrim.esm"))) return 2;
+        var requestFile = Path.Combine(sessionRoot, "request.json");
+        var replyFile = Path.Combine(sessionRoot, "reply.json");
+        var replyTemp = Path.Combine(sessionRoot, "reply.tmp");
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        var (prepare, owner) = SceneTile.OpenSession(data, plugins);
+        using (owner)
+        {
+            while (true)
+            {
+                if (!File.Exists(requestFile))
+                {
+                    await Task.Delay(25);
+                    continue;
+                }
+                TileResult? result = null;
+                try
+                {
+                    using var message = JsonDocument.Parse(await File.ReadAllTextAsync(requestFile));
+                    File.Delete(requestFile);
+                    var root = message.RootElement;
+                    var scope = new FormKey(ModKey.FromFileName(root.GetProperty("scopePlugin").GetString()!),
+                        root.GetProperty("localScopeID").GetUInt32());
+                    var x = root.GetProperty("x").GetInt64();
+                    var y = root.GetProperty("y").GetInt64();
+                    var size = root.GetProperty("size").GetInt32();
+                    var worldspace = root.GetProperty("worldspace").GetBoolean();
+                    if (size is not (4096 or 6144 or 8192 or 10240 or 12288 or 14336 or 16384) ||
+                        Math.Abs(x) > 1_000_000 || Math.Abs(y) > 1_000_000 ||
+                        !File.Exists(Path.Combine(data, scope.ModKey.ToString())))
+                        throw new InvalidDataException("Invalid companion scope");
+                    result = prepare(scope, x, y, size, worldspace, sessionRoot);
+                }
+                catch (Exception error) when (error is not OutOfMemoryException)
+                {
+                    // Incomplete response: the native host must fail closed, never certify shadows.
+                }
+                // Publish only after serialization completes; the host adopts reply.json atomically.
+                await using (var stream = new FileStream(replyTemp, FileMode.Create, FileAccess.Write, FileShare.None))
+                    await JsonSerializer.SerializeAsync(stream, result ?? new TileResult(1, 0, 1, false, [], []), options);
+                File.Move(replyTemp, replyFile, true);
+            }
+        }
+    }
+    catch (Exception error) when (error is not OutOfMemoryException)
+    {
+        return 1;
+    }
+}
+
 internal sealed record TileShape(ulong Identity, float[][] Positions, uint[] Indices, float[] Transform);
 internal sealed record TileLight(string ReferencePlugin, uint ReferenceLocal, string BasePlugin, uint BaseLocal,
     float[] Position, float[] Color, float Radius, float Fade, float EmitterRadius, float FalloffExponent, uint Flags);
@@ -63,6 +124,13 @@ internal static class SceneTile
     internal static TileResult Prepare(string data, string pluginsPath, FormKey scope, long tileX, long tileY, int size,
         bool isWorldspace, string scratch)
     {
+        var (run, owner) = OpenSession(data, pluginsPath);
+        using (owner) return run(scope, tileX, tileY, size, isWorldspace, scratch);
+    }
+
+    internal static (Func<FormKey, long, long, int, bool, string, TileResult> Run, IDisposable Owner)
+        OpenSession(string data, string pluginsPath)
+    {
         var official = new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" };
         var ccc = Path.Combine(Path.GetDirectoryName(data)!, "Skyrim.ccc");
         var club = File.Exists(ccc) ? File.ReadLines(ccc).Select(line => line.Trim()).Where(line => line.Length != 0) : [];
@@ -70,11 +138,15 @@ internal static class SceneTile
             .Select(ModKey.FromFileName);
         var order = implicitPlugins.Concat(PluginListings.LoadOrderListingsFromPath(pluginsPath, GameRelease.SkyrimSE, data)
             .Where(entry => entry.Enabled).Select(entry => entry.ModKey)).Distinct().ToArray();
-        using var environment = GameEnvironment.Typical.Builder<ISkyrimMod, ISkyrimModGetter>(GameRelease.SkyrimSE)
+        var environment = GameEnvironment.Typical.Builder<ISkyrimMod, ISkyrimModGetter>(GameRelease.SkyrimSE)
             .WithTargetDataFolder(data).WithLoadOrder(order).Build();
         var archives = new Lazy<IArchiveReader[]>(() => Archive.GetApplicableArchivePaths(GameRelease.SkyrimSE, data)
             .Select(path => Archive.CreateReader(GameRelease.SkyrimSE, path)).Reverse().ToArray());
 
+        // Keep the expensive Mutagen environment and archive index alive across the 5x5
+        // request stream. Model payloads remain per-tile, never a persistent geometry cache.
+        TileResult Run(FormKey scope, long tileX, long tileY, int size, bool isWorldspace, string scratch)
+        {
         // Last override wins. No mesh processing occurs outside the requested
         // scope; for exterior tiles even candidates are bounded by a halo.
         var candidates = new Dictionary<FormKey, IPlacedGetter>();
@@ -176,6 +248,8 @@ internal static class SceneTile
         // model does not overlap this tile. Exteriors remain incomplete until
         // an authoritative bounds index is available; never offload on a guess.
         return new TileResult(1, eligible, failed, !isWorldspace && foundScope, shapes, lights);
+        }
+        return (Run, environment);
     }
 
     private static bool Inside(float x, float y, long tx, long ty, int size) =>
