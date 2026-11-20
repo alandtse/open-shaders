@@ -143,36 +143,71 @@ internal static class SceneTile
         var archives = new Lazy<IArchiveReader[]>(() => Archive.GetApplicableArchivePaths(GameRelease.SkyrimSE, data)
             .Select(path => Archive.CreateReader(GameRelease.SkyrimSE, path)).Reverse().ToArray());
 
-        // Keep the expensive Mutagen environment and archive index alive across the 5x5
-        // request stream. Model payloads remain per-tile, never a persistent geometry cache.
+        // These are placements only, not mesh geometry. The cache is replaced whenever
+        // scope, size or the bounded region changes. It never indexes the whole game.
+        Dictionary<FormKey, IPlacedGetter>? placementWindow = null;
+        FormKey placementScope = default;
+        bool placementWorldspace = false, placementFoundScope = false;
+        int placementSize = 0;
+        long placementMinX = 0, placementMinY = 0, placementMaxX = 0, placementMaxY = 0;
+
+        // Keep Mutagen and archive readers alive across the 5x5 request stream.
+        // Model triangles remain per-tile and are not stored between preparations.
         TileResult Run(FormKey scope, long tileX, long tileY, int size, bool isWorldspace, string scratch)
         {
         // Last override wins. No mesh processing occurs outside the requested
         // scope; for exterior tiles even candidates are bounded by a halo.
-        var candidates = new Dictionary<FormKey, IPlacedGetter>();
-        var foundScope = false;
-        foreach (var listing in environment.LoadOrder.ListedOrder)
+        // A 9x9 placement window contains the complete candidate origin halo
+        // for the current 5x5 preparation order (tile position +/- 2, origin +/- 2).
+        // Reload only when movement escapes the previous bounded window.
+        var reuseWindow = placementWindow != null && placementScope == scope &&
+            placementSize == size && placementWorldspace == isWorldspace &&
+            (!isWorldspace || (tileX - 2 >= placementMinX && tileY - 2 >= placementMinY &&
+                tileX + 3 <= placementMaxX && tileY + 3 <= placementMaxY));
+        if (!reuseWindow)
         {
-            if (listing.Mod is not { } mod) continue;
-            foreach (var cell in mod.EnumerateMajorRecords<ICellGetter>())
+            placementWindow = new Dictionary<FormKey, IPlacedGetter>();
+            placementScope = scope;
+            placementSize = size;
+            placementWorldspace = isWorldspace;
+            placementMinX = tileX - 4;
+            placementMinY = tileY - 4;
+            placementMaxX = tileX + 5;
+            placementMaxY = tileY + 5;
+            placementFoundScope = false;
+            foreach (var listing in environment.LoadOrder.ListedOrder)
             {
-                if (!isWorldspace && cell.FormKey != scope) continue;
-                if (cell.FormKey == scope) foundScope = true;
-                foreach (var reference in cell.Persistent.Concat(cell.Temporary))
+                if (listing.Mod is not { } mod) continue;
+                foreach (var cell in mod.EnumerateMajorRecords<ICellGetter>())
                 {
-                    if (isWorldspace)
+                    if (!isWorldspace && cell.FormKey != scope) continue;
+                    if (cell.FormKey == scope) placementFoundScope = true;
+                    foreach (var reference in cell.Persistent.Concat(cell.Temporary))
                     {
-                        if (reference.Placement is not { } p) continue;
-                        var px = p.Position.X;
-                        var py = p.Position.Y;
-                        if (!float.IsFinite(px) || !float.IsFinite(py) ||
-                            px < (tileX - 2) * size || px >= (tileX + 3) * size ||
-                            py < (tileY - 2) * size || py >= (tileY + 3) * size) continue;
+                        if (isWorldspace)
+                        {
+                            if (reference.Placement is not { } p) continue;
+                            var px = p.Position.X;
+                            var py = p.Position.Y;
+                            if (!float.IsFinite(px) || !float.IsFinite(py) ||
+                                px < placementMinX * (double)size || px >= placementMaxX * (double)size ||
+                                py < placementMinY * (double)size || py >= placementMaxY * (double)size)
+                                continue;
+                        }
+                        placementWindow[reference.FormKey] = reference;
+                        // Bound reference metadata independently of NIF/triangle budgets.
+                        // A heavy scope cannot silently become authoritative coverage.
+                        if (placementWindow.Count > 150_000)
+                        {
+                            placementWindow = null;
+                            return new TileResult(1, 0, 1, false, [], []);
+                        }
                     }
-                    candidates[reference.FormKey] = reference;
                 }
             }
         }
+        var candidates = placementWindow!;
+        var foundScope = placementFoundScope;
         var shapes = new List<TileShape>();
         var lights = new List<TileLight>();
         var models = new Dictionary<string, ModelShape[]>(StringComparer.OrdinalIgnoreCase);
@@ -180,6 +215,17 @@ internal static class SceneTile
         long bytes = 0;
         foreach (var candidate in candidates.Values)
         {
+            // The cached placement window is wider than one subcell's origin
+            // halo; discard irrelevant candidates before resolving any records.
+            if (isWorldspace)
+            {
+                if (candidate.Placement is not { } placement) continue;
+                var px = placement.Position.X;
+                var py = placement.Position.Y;
+                if (px < (tileX - 2) * (double)size || px >= (tileX + 3) * (double)size ||
+                    py < (tileY - 2) * (double)size || py >= (tileY + 3) * (double)size)
+                    continue;
+            }
             try
             {
                 var context = environment.LinkCache.ResolveContext<IPlaced, IPlacedGetter>(candidate.FormKey);
