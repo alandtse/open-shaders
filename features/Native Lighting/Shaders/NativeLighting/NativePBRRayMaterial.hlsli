@@ -224,7 +224,7 @@ bool LoadNativePBRMaterial(uint2 rayPixel, uint instance, uint primitive, float2
 		!all(isfinite(surface.tangent)) || !all(isfinite(surface.bitangent)))
 		return false;
 	NativePBR::SurfaceMaterial result = NativePBR::EvaluateOpaque(material, surface, base, normal, packed, emission,
-		coat, complexMaskDetected, binding.flags, SnowTuning, SnowRoughness);
+		coat, complexMaskDetected, binding.flags, SnowTuning, SnowRoughness, SnowUltravioletEmission);
 	evaluated.baseColor = result.baseColor;
 	evaluated.normal = result.normal;
 	evaluated.f0 = result.f0;

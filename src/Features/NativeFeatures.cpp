@@ -779,6 +779,13 @@ void NativePBRFeature::DrawSettings()
 	slider("Snow sparkle amount", snowSparkleAmount, 0.0f, 1.0f, "%.2f");
 	slider("Snow sparkle density", snowSparkleDensity, 0.0f, 0.25f, "%.3f");
 	slider("Snow roughness", snowRoughness, 0.5f, 1.0f, "%.2f");
+	bool ultraviolet = snowUltravioletAffected.load(std::memory_order_relaxed);
+	if (ImGui::Checkbox("Ultraviolet affected snow", &ultraviolet))
+		snowUltravioletAffected.store(ultraviolet, std::memory_order_relaxed);
+	ImGui::BeginDisabled(!ultraviolet);
+	slider("Snow ultraviolet emission strength", snowUltravioletIntensity, 0.0f, 0.05f, "%.3f");
+	ImGui::EndDisabled();
+	ImGui::TextDisabled("Faint blue-white fluorescence approximation; no UV-spectrum light detection.");
 	ImGui::TextDisabled("Snow noise follows hit UVs; crystals sample every eligible ray pixel and respond only to native light.");
 	const auto snowDiagnostics = globals::features::nativeLighting.GetDiagnostics();
 	ImGui::TextDisabled("Snow receivers: %u marked | %u PBR shadable | %u terrain | %u covered",
@@ -907,6 +914,8 @@ void NativePBRFeature::LoadSettings(json& j)
 	snowSparkleAmount.store(readSnow("SnowSparkleAmount", defaults.sparkleAmount, 0.0f, 1.0f), std::memory_order_relaxed);
 	snowSparkleDensity.store(readSnow("SnowSparkleDensity", defaults.sparkleDensity, 0.0f, 0.25f), std::memory_order_relaxed);
 	snowRoughness.store(readSnow("SnowRoughness", defaults.roughness, 0.5f, 1.0f), std::memory_order_relaxed);
+	snowUltravioletAffected.store(j.value("SnowUltravioletAffected", defaults.ultravioletAffected), std::memory_order_relaxed);
+	snowUltravioletIntensity.store(readSnow("SnowUltravioletIntensity", defaults.ultravioletIntensity, 0.0f, 0.05f), std::memory_order_relaxed);
 	forceRayAdmission.store(false, std::memory_order_relaxed);
 	readinessStage.store(std::clamp(j.value("NativeReadinessStage", 3u), 1u, 3u), std::memory_order_relaxed);
 }
@@ -936,16 +945,20 @@ void NativePBRFeature::SaveSettings(json& j)
 		{ "SnowSparkleAmount", snowSparkleAmount.load(std::memory_order_relaxed) },
 		{ "SnowSparkleDensity", snowSparkleDensity.load(std::memory_order_relaxed) },
 		{ "SnowRoughness", snowRoughness.load(std::memory_order_relaxed) },
+		{ "SnowUltravioletAffected", snowUltravioletAffected.load(std::memory_order_relaxed) },
+		{ "SnowUltravioletIntensity", snowUltravioletIntensity.load(std::memory_order_relaxed) },
 		{ "NativeReadinessStage", readinessStage.load(std::memory_order_relaxed) } };
 }
 void NativePBRFeature::RegisterUxActions()
 {
-	FEATURE_COMMAND("configureSnow", "Configure native procedural snow: optional enabled, coverEligible (session-only), noiseAmount (0..1), noiseRaysPerPatch (1..256 native rays), sparkleAmount (0..1), sparkleDensity (0..0.25), roughness (0.5..1).", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("configureSnow", "Configure native procedural snow: optional enabled, coverEligible (session-only), noiseAmount (0..1), noiseRaysPerPatch (1..256 native rays), sparkleAmount (0..1), sparkleDensity (0..0.25), roughness (0.5..1), ultravioletAffected (bool), ultravioletIntensity (0..0.05).", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativePBRFeature*>(self);
 		if (args.contains("enabled"))
 			feature.snowEnabled.store(args.at("enabled").get<bool>(), std::memory_order_relaxed);
 		if (args.contains("coverEligible"))
 			feature.snowCoverEligible.store(args.at("coverEligible").get<bool>(), std::memory_order_relaxed);
+		if (args.contains("ultravioletAffected"))
+			feature.snowUltravioletAffected.store(args.at("ultravioletAffected").get<bool>(), std::memory_order_relaxed);
 		const auto set = [&](const char* key, std::atomic<float>& setting, float low, float high) {
 			if (!args.contains(key)) return;
 			const float value = args.at(key).get<float>();
@@ -957,6 +970,7 @@ void NativePBRFeature::RegisterUxActions()
 		set("sparkleAmount", feature.snowSparkleAmount, 0.0f, 1.0f);
 		set("sparkleDensity", feature.snowSparkleDensity, 0.0f, 0.25f);
 		set("roughness", feature.snowRoughness, 0.5f, 1.0f);
+		set("ultravioletIntensity", feature.snowUltravioletIntensity, 0.0f, 0.05f);
 	});
 }
 void NativeLLFFeature::SaveSettings(json& j)
@@ -999,6 +1013,8 @@ json NativePBRFeature::GetDiagnostics()
 		{ "snowSparkleAmount", snowSparkleAmount.load(std::memory_order_relaxed) },
 		{ "snowSparkleDensity", snowSparkleDensity.load(std::memory_order_relaxed) },
 		{ "snowRoughness", snowRoughness.load(std::memory_order_relaxed) },
+		{ "snowUltravioletAffected", snowUltravioletAffected.load(std::memory_order_relaxed) },
+		{ "snowUltravioletIntensity", snowUltravioletIntensity.load(std::memory_order_relaxed) },
 		{ "nativeFirstReadinessStage", NativeFirstReadinessStage() },
 		{ "legacyCompatibilityMaterials", SelectedBackend() == NativePBR::Backend::NativeDX12 &&
 			bootSnapshot.Boot(&BackendSettings::LegacyCompatibilityMaterials) },

@@ -109,7 +109,11 @@ per-frame hit-count readback or GPU atomics are required. NativePBR owns snow
 enable, noise amount/rays-per-patch, sparkle amount/density, roughness, and
 the temporary coverage override. Tuning reaches SM6.5 via the existing
 direct-lighting constant buffer, with no atlas, snow texture residency,
-DX11 snow inputs, or per-scene generation. An 0.08 upward-incidence margin tolerates minor face-angle
+DX11 snow inputs, or per-scene generation. An optional NativePBR
+`Ultraviolet affected snow` setting adds a coverage-weighted, very dim
+blue-white emission (default 0.012, capped at 0.05), independent of direct
+light presence. This is a stylized fluorescence approximation; there is no
+UV-spectrum light detection. An 0.08 upward-incidence margin tolerates minor face-angle
 discrepancies. This is surface shading, not geometry displacement or a
 persistent accumulation simulation. Interior scenes receive coverage only
 when the explicit eligible-receiver test is enabled.

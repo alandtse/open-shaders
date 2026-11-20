@@ -60,7 +60,8 @@ cbuffer Trace : register(b0)
 	uint NativePBRMaterialOptions;
 	float4 SnowTuning; // noise amount, native ray-cell frequency, sparkle amount, crystal density
 	float SnowRoughness;
-	float3 SnowPadding;
+	float SnowUltravioletEmission;
+	float2 SnowPadding;
 };
 
 #include "Common/ReverseZ.hlsli"
@@ -369,12 +370,12 @@ void main(uint2 pixel : SV_DispatchThreadID)
 			specular += (microfacet + material.snowSparkle * NativePBR::SnowCrystalScatter) * irradiance;
 	}
 	if (strictVisibilityRejected && originalReason == 0) originalReason = 7;
-	if (eligibleLights == 0 && NativePBRPadding.x == 0u) { Finish(pixel, 0, 0, originalReason == 0 ? 6 : originalReason); return; }
-	if (!all(isfinite(diffuse)) || !all(isfinite(specular))) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 8 : originalReason); return; }
 	// Emission is independent of direct intensity, as in the reference.
 	// The owner-selected 1x default may double-count existing raster emission.
 	const float3 emission = ShadowTuning.w > 0.0f && all(isfinite(material.emission)) ?
 		max(material.emission, 0.0f) * ShadowTuning.w : 0.0f;
+	if (eligibleLights == 0 && !any(emission > 0.0f) && NativePBRPadding.x == 0u) { Finish(pixel, 0, 0, originalReason == 0 ? 6 : originalReason); return; }
+	if (!all(isfinite(diffuse)) || !all(isfinite(specular))) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 8 : originalReason); return; }
 	const float4 diffuseOutput = float4(diffuse * DiffuseIntensity * LightTuning.w +
 		((EnabledLobes & 1u) != 0u ? emission : 0.0f), 1);
 	const float4 specularOutput = float4(specular * SpecularIntensity * LightTuning.w, 1);

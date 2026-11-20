@@ -773,7 +773,8 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			(globals::features::nativePBR.nativeParallax.load(std::memory_order_relaxed) ? NativePBR::kRayMaterialOptionParallax : 0u) |
 			(globals::features::nativePBR.nativeComplexMaterials.load(std::memory_order_relaxed) ? NativePBR::kRayMaterialOptionComplex : 0u),
 			{ snowSettings.noiseAmount, snowRayCells, snowSettings.sparkleAmount, snowSettings.sparkleDensity },
-			{ snowSettings.roughness, 0.0f, 0.0f, 0.0f } };
+			{ snowSettings.roughness,
+				snowSettings.ultravioletAffected ? snowSettings.ultravioletIntensity : 0.0f, 0.0f, 0.0f } };
 		slot->nativePointLightCount = selectedCount;
 		slot->nativeMinimumDistance = constants.minimum;
 		slot->nativeLightTuning = constants.lightTuning;

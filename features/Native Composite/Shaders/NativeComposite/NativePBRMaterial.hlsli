@@ -91,7 +91,8 @@ namespace NativePBR
 
 	SurfaceMaterial EvaluateOpaque(MaterialRecord material, SurfaceInput surface, float4 baseTexel,
 		float4 normalTexel, float4 packedTexel, float4 emissionTexel, float4 coatTexel,
-		bool complexMaskDetected, uint drawFlags, float4 snowTuning, float snowRoughness)
+		bool complexMaskDetected, uint drawFlags, float4 snowTuning, float snowRoughness,
+		float snowUltravioletEmission)
 	{
 		SurfaceMaterial result;
 		result.baseColor = baseTexel.rgb;
@@ -138,6 +139,7 @@ namespace NativePBR
 			result.metallic *= 1.0f - result.snowCoverage;
 			result.f0 = lerp(result.f0, lerp(0.04f.xxx, 0.08f.xxx, crystal), result.snowCoverage);
 			result.coatStrength *= 1.0f - result.snowCoverage;
+			result.emission += SnowUltravioletTint * clamp(snowUltravioletEmission, 0.0f, 0.05f) * result.snowCoverage;
 		}
 		return result;
 	}

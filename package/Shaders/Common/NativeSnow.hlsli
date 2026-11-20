@@ -4,6 +4,7 @@
 namespace NativePBR
 {
 	static const float SnowCrystalScatter = 0.22f;
+	static const float3 SnowUltravioletTint = float3(0.78f, 0.86f, 1.0f);
 
 	uint SnowHash(uint2 cell)
 	{
