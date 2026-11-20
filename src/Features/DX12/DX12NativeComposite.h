@@ -10,7 +10,7 @@
 #include <thread>
 #include <winrt/base.h>
 
-/** @brief RayQuery shadow mask and raster-color composite feeding the existing runtime upscaler. */
+/** @brief Independent RayQuery shadowmask producer; final raster color remains untouched until per-light integration. */
 struct DX12NativeComposite final : Feature
 {
 	~DX12NativeComposite();
@@ -24,7 +24,6 @@ struct DX12NativeComposite final : Feature
 	struct Surfaces
 	{
 		winrt::com_ptr<ID3D12Resource> shadowMask;
-		winrt::com_ptr<ID3D12Resource> color;
 		winrt::com_ptr<ID3D12Resource> rasterSource, depthSource;
 		winrt::com_ptr<ID3D12DescriptorHeap> descriptors;
 		uint32_t width = 0, height = 0;
@@ -39,7 +38,6 @@ struct DX12NativeComposite final : Feature
 		winrt::com_ptr<ID3D12Resource> camera;
 		winrt::com_ptr<ID3D12Resource> lights;
 		uint64_t geometryRevision = 0, lightRevision = 0;
-		ID3D12Resource* Color() const { return surfaces->color.get(); }
 	};
 
 	std::string GetName() override { return "DX12 Native Composite"; }
@@ -64,8 +62,8 @@ private:
 	struct PipelineState
 	{
 		winrt::com_ptr<ID3D12Device> device;
-		winrt::com_ptr<ID3D12RootSignature> shadowRoot, compositeRoot;
-		winrt::com_ptr<ID3D12PipelineState> shadowPipeline, compositePipeline;
+		winrt::com_ptr<ID3D12RootSignature> shadowRoot;
+		winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
 		uint32_t descriptorSize = 0;
 	};
 	struct UploadPair
@@ -94,8 +92,8 @@ private:
 	std::atomic<bool> pipelineFailed = false;
 	std::jthread pipelineWorker;
 	winrt::com_ptr<ID3D12Device> device;
-	winrt::com_ptr<ID3D12RootSignature> shadowRoot, compositeRoot;
-	winrt::com_ptr<ID3D12PipelineState> shadowPipeline, compositePipeline;
+	winrt::com_ptr<ID3D12RootSignature> shadowRoot;
+	winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
 	uint32_t descriptorSize = 0;
 	uint32_t lastSubmitFrame = 0;
 	uint64_t submittedGeometry = 0, submittedLights = 0;

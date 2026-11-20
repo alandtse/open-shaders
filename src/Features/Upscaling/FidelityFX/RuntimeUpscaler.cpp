@@ -1299,11 +1299,6 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 				CD3DX12_RESOURCE_BARRIER::Transition(runtimeOutputShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
 			};
 			commandList->ResourceBarrier(static_cast<UINT>(endBarriers.size()), endBarriers.data());
-			if (nativeComposite) {
-				const auto compositeEnd = CD3DX12_RESOURCE_BARRIER::Transition(nativeComposite->Color(),
-					D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON);
-				commandList->ResourceBarrier(1, &compositeEnd);
-			}
 
 			DX::ThrowIfFailed(commandList->Close());
 

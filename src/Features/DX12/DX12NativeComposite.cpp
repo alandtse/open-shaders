@@ -148,16 +148,14 @@ bool DX12NativeComposite::EnsurePipelines(ID3D12Device* candidate)
 {
 	if (!candidate || unavailable || (device && device.get() != candidate))
 		return false;
-	if (shadowPipeline && compositePipeline)
+	if (shadowPipeline)
 		return true;
 	if (const auto built = preparedPipelines.load(std::memory_order_acquire)) {
 		if (built->device.get() != candidate)
 			return false;
 		device = built->device;
 		shadowRoot = built->shadowRoot;
-		compositeRoot = built->compositeRoot;
 		shadowPipeline = built->shadowPipeline;
-		compositePipeline = built->compositePipeline;
 		descriptorSize = built->descriptorSize;
 		return true;
 	}
@@ -185,23 +183,9 @@ bool DX12NativeComposite::EnsurePipelines(ID3D12Device* candidate)
 		shadow[3].DescriptorTable = { 1, &maskRange };
 		shadow[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 		shadow[4].Descriptor.ShaderRegister = 0;
-		D3D12_DESCRIPTOR_RANGE colorRange{ D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, 0 };
-		D3D12_DESCRIPTOR_RANGE compositeMaskRange{ D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 0, 0 };
-		D3D12_DESCRIPTOR_RANGE outputRange{ D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0 };
-		std::array<D3D12_ROOT_PARAMETER, 4> composite{};
-		for (uint32_t i = 0; i < 3; ++i)
-			composite[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-		composite[0].DescriptorTable = { 1, &colorRange };
-		composite[1].DescriptorTable = { 1, &compositeMaskRange };
-		composite[2].DescriptorTable = { 1, &outputRange };
-		composite[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-		composite[3].Constants = { 0, 0, 4 };
 		if (!CreateSignature(built->device.get(), shadow, built->shadowRoot) ||
-			!CreateSignature(built->device.get(), composite, built->compositeRoot) ||
 			!CreatePipeline(built->device.get(), built->shadowRoot.get(),
-				"Data/Shaders/DX12NativeComposite/PreparedShadowMask.dxil", built->shadowPipeline) ||
-			!CreatePipeline(built->device.get(), built->compositeRoot.get(),
-				"Data/Shaders/DX12NativeComposite/RasterShadowComposite.dxil", built->compositePipeline)) {
+				"Data/Shaders/DX12NativeComposite/PreparedShadowMask.dxil", built->shadowPipeline)) {
 			pipelineFailed.store(true, std::memory_order_release);
 			return;
 		}
@@ -234,21 +218,16 @@ std::shared_ptr<DX12NativeComposite::Surfaces> DX12NativeComposite::MakeSurfaces
 	const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
 	const auto maskDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16_FLOAT, width, height, 1, 1, 1, 0,
 		D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-	const auto colorDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT, width, height, 1, 1, 1, 0,
-		D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 	std::shared_ptr<Surfaces> next = std::make_shared<Surfaces>();
 	if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &maskDesc,
-			D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(next->shadowMask.put()))) ||
-		FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &colorDesc,
-			D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(next->color.put()))))
+			D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(next->shadowMask.put()))))
 		return nullptr;
 	next->rasterSource.copy_from(rasterColor);
 	next->depthSource.copy_from(depth);
 	next->shadowMask->SetName(L"DX12NativeComposite::ShadowMask");
-	next->color->SetName(L"DX12NativeComposite::RasterComposite");
 	D3D12_DESCRIPTOR_HEAP_DESC descriptorDesc{};
 	descriptorDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-	descriptorDesc.NumDescriptors = 5;
+	descriptorDesc.NumDescriptors = 2;
 	descriptorDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	if (FAILED(device->CreateDescriptorHeap(&descriptorDesc, IID_PPV_ARGS(next->descriptors.put()))))
 		return {};
@@ -264,12 +243,6 @@ std::shared_ptr<DX12NativeComposite::Surfaces> DX12NativeComposite::MakeSurfaces
 	uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
 	uav.Format = DXGI_FORMAT_R16_FLOAT;
 	device->CreateUnorderedAccessView(next->shadowMask.get(), nullptr, &uav, cpu(1));
-	srv.Format = raster.Format;
-	device->CreateShaderResourceView(rasterColor, &srv, cpu(2));
-	srv.Format = DXGI_FORMAT_R16_FLOAT;
-	device->CreateShaderResourceView(next->shadowMask.get(), &srv, cpu(3));
-	uav.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-	device->CreateUnorderedAccessView(next->color.get(), nullptr, &uav, cpu(4));
 	next->width = width;
 	next->height = height;
 	next->rasterFormat = raster.Format;
@@ -373,11 +346,9 @@ std::optional<DX12NativeComposite::Submission> DX12NativeComposite::Dispatch(
 	submission.lights = std::move(buffers.lights);
 	ID3D12DescriptorHeap* heaps[]{ target->descriptors.get() };
 	commands->SetDescriptorHeaps(1, heaps);
-	std::array<D3D12_RESOURCE_BARRIER, 2> begin{
-		CD3DX12_RESOURCE_BARRIER::Transition(target->shadowMask.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-		CD3DX12_RESOURCE_BARRIER::Transition(target->color.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
-	};
-	commands->ResourceBarrier(UINT(begin.size()), begin.data());
+	const auto begin = CD3DX12_RESOURCE_BARRIER::Transition(target->shadowMask.get(),
+		D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+	commands->ResourceBarrier(1, &begin);
 	commands->SetComputeRootSignature(shadowRoot.get());
 	commands->SetPipelineState(shadowPipeline.get());
 	commands->SetComputeRootShaderResourceView(0, scene->acceleration->GetGPUVirtualAddress());
@@ -386,22 +357,11 @@ std::optional<DX12NativeComposite::Submission> DX12NativeComposite::Dispatch(
 	commands->SetComputeRootDescriptorTable(3, Descriptor(*target, 1));
 	commands->SetComputeRootConstantBufferView(4, submission.camera->GetGPUVirtualAddress());
 	commands->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+	// Mask-only: the FSR color source remains the original raster input.
+	// No final-color composition pass is submitted and no RGBA color UAV is allocated.
 	const auto shadowDone = CD3DX12_RESOURCE_BARRIER::Transition(target->shadowMask.get(),
-		D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+		D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
 	commands->ResourceBarrier(1, &shadowDone);
-	commands->SetComputeRootSignature(compositeRoot.get());
-	commands->SetPipelineState(compositePipeline.get());
-	commands->SetComputeRootDescriptorTable(0, Descriptor(*target, 2));
-	commands->SetComputeRootDescriptorTable(1, Descriptor(*target, 3));
-	commands->SetComputeRootDescriptorTable(2, Descriptor(*target, 4));
-	const std::array<uint32_t, 4> compositeConstants{ width, height, std::bit_cast<uint32_t>(settings.ShadowStrength), 0 };
-	commands->SetComputeRoot32BitConstants(3, UINT(compositeConstants.size()), compositeConstants.data(), 0);
-	commands->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-	std::array<D3D12_RESOURCE_BARRIER, 2> compositeDone{
-		CD3DX12_RESOURCE_BARRIER::Transition(target->shadowMask.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
-		CD3DX12_RESOURCE_BARRIER::Transition(target->color.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
-	};
-	commands->ResourceBarrier(UINT(compositeDone.size()), compositeDone.data());
 	return submission;
 }
 
