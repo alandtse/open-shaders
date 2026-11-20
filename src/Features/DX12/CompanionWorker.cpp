@@ -133,7 +133,7 @@ namespace DX12
 					return false;
 				}
 				std::wstring command = Quote(executable.wstring()) + L" --serve " +
-					Quote(data.wstring()) + L" " + Quote(plugins.wstring()) + L" " + Quote(root.wstring());
+				                       Quote(data.wstring()) + L" " + Quote(plugins.wstring()) + L" " + Quote(root.wstring());
 				STARTUPINFOW startup{};
 				startup.cb = sizeof(startup);
 				PROCESS_INFORMATION started{};
@@ -146,7 +146,7 @@ namespace DX12
 				}
 				process = started.hProcess;
 				const bool assigned = AssignProcessToJobObject(job, process) &&
-					ResumeThread(started.hThread) != DWORD(-1);
+				                      ResumeThread(started.hThread) != DWORD(-1);
 				CloseHandle(started.hThread);
 				if (!assigned) {
 					Close();
@@ -207,7 +207,7 @@ namespace DX12
 			}
 			const uint64_t started = GetTickCount64();
 			while (!stop.stop_requested() && generation.load(std::memory_order_acquire) == expectedGeneration &&
-				GetTickCount64() - started < kPreparationDeadlineMs) {
+				   GetTickCount64() - started < kPreparationDeadlineMs) {
 				if (std::filesystem::is_regular_file(reply, ec)) {
 					std::filesystem::rename(reply, destination, ec);
 					if (!ec)
