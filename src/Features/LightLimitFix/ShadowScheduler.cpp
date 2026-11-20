@@ -2235,7 +2235,10 @@ namespace ShadowCasterManager
 				// A fresh occupant may be a recycled pointer; the pointer-keyed
 				// EMA/streak/split-state caches aren't cleared by Clear() above, so
 				// erase them explicitly or it inherits the previous occupant's state.
-				s_lastValidFrame.erase(cp->light);
+				// A light that passed UpdateCamera this frame owns the entry just written; erasing it
+				// leaves the next frame's edge-keep test with no history.
+				if (cp->updateCameraFailed)
+					s_lastValidFrame.erase(cp->light);
 				s_belowFloorStreak.erase(cp->light);
 				if (const auto splitIt = s_splitState.find(cp->light); splitIt != s_splitState.end()) {
 					RetireSplitBake(splitIt->second);
