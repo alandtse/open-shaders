@@ -1730,15 +1730,16 @@ namespace ShadowCasterManager
 	{
 		RE::NiAVObject* facedNode = nullptr;
 		RE::NiMatrix3 facedRotate{};
+		RE::NiPoint3 facedTranslate{};
 		__try {
 			// UpdateCamera copies the light pose into the shadow camera only while dynamic is set.
 			const bool wasDynamic = e.Light->dynamic;
 			if (a_pinOrigin)
 				e.Light->dynamic = false;
 			const auto* carrier = CarrierBody(e.Light);
-			if (carrier) {
-				auto* node = e.Light->light.get();
+			if (auto* node = e.Light->light.get(); node && (carrier || ShadowOrigin(node) != node->world.translate)) {
 				facedRotate = node->world.rotate;
+				facedTranslate = node->world.translate;
 				node->IncRefCount();
 				facedNode = node;
 			}
@@ -1753,6 +1754,7 @@ namespace ShadowCasterManager
 			// SEH skips WithCarrierFacing's scope_exit destructor; the extra ref keeps the node alive for this restore.
 			if (facedNode) {
 				facedNode->world.rotate = facedRotate;
+				facedNode->world.translate = facedTranslate;
 				facedNode->DecRefCount();
 			}
 			LogShadowSehCatch(e.Light);
