@@ -460,7 +460,7 @@ namespace ShadowCasterManager
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
 		// A caster that settled since the bake is missing from it and is drawn live; one that started moving is still in
-		// it at its old pose. Either way the light is rebaked at once rather than showing a gap or a frozen copy.
+		// it at its old pose and is left to it. Either way the light is rebaked at once.
 		const bool bakeStale = rec && CasterChangedSinceBake(rec->classEpoch, s_visitBakeEpoch);
 		s_visitBakeStale |= bakeStale;
 		// Every static caster folds into the hash regardless of pass, so a
@@ -478,9 +478,10 @@ namespace ShadowCasterManager
 			s_visitStaticCount.fetch_add(1, std::memory_order_relaxed);
 			break;
 		case CasterPass::DynamicOnly:
+			if (dynamic)
+				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
 			if (CompositeSkipsCaster(dynamic, bakeStale))
-				return true;  // composite pass skips baked static geometry
-			s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+				return true;  // composite pass leaves baked geometry to the bake
 			break;
 		case CasterPass::All:
 			(dynamic ? s_dynamicCasterDraws : s_staticCasterDraws).fetch_add(1, std::memory_order_relaxed);

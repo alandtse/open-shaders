@@ -22,10 +22,11 @@ namespace ShadowCasterManager
 		return a_classEpoch > a_bakeEpoch;
 	}
 
-	/// True when the composite pass leaves a caster to the bake: it is static and the bake still holds it as it is.
+	/// True when the composite pass leaves a caster to the bake: one static since the bake, or one that started moving after it,
+	/// which the bake still holds at its old pose until the rebake, so it is never drawn beside its baked copy.
 	inline bool CompositeSkipsCaster(bool a_dynamic, bool a_bakeStale) noexcept
 	{
-		return !a_dynamic && !a_bakeStale;
+		return a_dynamic == a_bakeStale;
 	}
 
 	/// True for a rebake that counts toward the pose-rebake latch: one queued only because a caster changed class, while the light's

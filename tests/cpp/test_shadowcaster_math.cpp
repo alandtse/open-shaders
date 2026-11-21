@@ -322,7 +322,7 @@ TEST_CASE("A caster that changed class after the bake marks the bake stale", "[s
 	REQUIRE(CompositeSkipsCaster(false, false));
 	REQUIRE_FALSE(CompositeSkipsCaster(true, false));
 	REQUIRE_FALSE(CompositeSkipsCaster(false, true));
-	REQUIRE_FALSE(CompositeSkipsCaster(true, true));
+	REQUIRE(CompositeSkipsCaster(true, true));
 }
 
 TEST_CASE("CountsTowardPoseLatch leaves out a rebake queued only by a class change", "[scm]")
