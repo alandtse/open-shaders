@@ -1370,6 +1370,7 @@ void SnowDeformation::GatherStamps()
 		actorShapes.clear();
 		RestoreActorSinks();
 		ClearMoverSlow();
+		floatedObjects.clear();
 	}
 	if (!gatherEnabled.load(std::memory_order_relaxed)) {
 		shapeMotion.clear();
@@ -2505,7 +2506,6 @@ void SnowDeformation::UpdateField()
 		measuredSinks.clear();
 		measuredDepth.clear();
 		measuredBlanket.clear();
-		floatedObjects.clear();
 	}
 	if (!gatherOnUpdate)
 		GatherStamps();
