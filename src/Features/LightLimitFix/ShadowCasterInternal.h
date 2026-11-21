@@ -111,6 +111,9 @@ namespace ShadowCasterManager
 	// light) -- softens the pop instead of an instant shadow on an already-visible light.
 	inline constexpr float kShadowFadeInSeconds = 0.25f;
 
+	// Wall-clock seconds a light that fell outside the shadow count keeps its slot while its shadow fades out.
+	inline constexpr float kShadowFadeOutSeconds = 0.25f;
+
 	// Occluded redraw ceiling = RedrawIntervalMaxFrames * this multiplier.
 	inline constexpr float kOccludedRedrawMultiplier = 6.0f;
 

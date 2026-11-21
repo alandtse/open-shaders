@@ -1818,6 +1818,13 @@ namespace ShadowCasterManager
 											"flame, such as a lantern's candle or a gem's glass, so it does not throw one big\n"
 											"hard shadow over the floor and walls. The rest of the fixture still casts."));
 
+			ImGui::Checkbox(T(TKEY("fade_shadow_swaps"), "Fade Shadows Between Lights"), &settings.FadeShadowSwaps);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("fade_shadow_swaps_tooltip"),
+											"A light that loses its shadow slot fades its shadow out before handing the\n"
+											"slot on, and a light given a slot again fades in, so shadows do not pop in\n"
+											"and out as you walk among many lights."));
+
 			// Atlas is boot-latched (the engine texture allocation depends on
 			// it), so show restart state against the captured boot value.
 			ImGui::BeginDisabled(s_installedShadowLightCount <= 4);

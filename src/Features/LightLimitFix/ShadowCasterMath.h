@@ -17,6 +17,24 @@ namespace ShadowCasterManager
 	using Util::HashCombineFloat;
 	using Util::QuantizeFloat;
 
+	/// Shadow strength of a slot: the fade-in ramp from a_fadeStart (a_fadeIn seconds) capped by the fade-out ramp from
+	/// a_releaseStart (a_fadeOut seconds); a negative start means no ramp.
+	inline float ShadowFadeAlpha(double a_now, double a_fadeStart, double a_releaseStart, float a_fadeIn, float a_fadeOut) noexcept
+	{
+		float alpha = 1.0f;
+		if (a_fadeStart >= 0.0)
+			alpha = std::clamp(static_cast<float>(a_now - a_fadeStart) / a_fadeIn, 0.0f, 1.0f);
+		if (a_releaseStart >= 0.0)
+			alpha = std::min(alpha, 1.0f - std::clamp(static_cast<float>(a_now - a_releaseStart) / a_fadeOut, 0.0f, 1.0f));
+		return alpha;
+	}
+
+	/// The fade-in start that shows a_shown at a_now, so a leaving light chosen again fades back in from where it stood.
+	inline double ResumedFadeStart(double a_now, float a_shown, float a_duration) noexcept
+	{
+		return a_now - static_cast<double>(std::clamp(a_shown, 0.0f, 1.0f)) * a_duration;
+	}
+
 	/// True when a caster switched static / moving after the light's bake rendered: the bake lacks it or holds it at an old pose.
 	inline bool CasterChangedSinceBake(int a_classEpoch, int a_bakeEpoch) noexcept
 	{

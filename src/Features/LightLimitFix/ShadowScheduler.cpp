@@ -267,6 +267,9 @@ namespace ShadowCasterManager
 	/// restart on. Cleared on the scene/cell resets that recycle NiLights.
 	std::unordered_set<const RE::NiLight*> s_everHadShadow;
 
+	/// Lights whose shadow had faded out before they lost their slot, so a reclaimed tile fades back in rather than popping in.
+	std::unordered_set<const RE::NiLight*> s_fadedOutLights;
+
 	// UpdateCamera's inputs are flicker-jittered every frame, so a light near
 	// the sphere-vs-frustum boundary flaps at flicker frequency without this.
 	constexpr uint32_t kCameraExitStreak = 60;
@@ -1422,6 +1425,9 @@ namespace ShadowCasterManager
 		// held a slot last frame: keep slot/tile, skip redraw, stay `chosen`.
 		bool cameraHold{ false };
 
+		/// Past ShadowLightCount but keeping its slot while its shadow fades out: `chosen`, never redrawn, not counted as chosen.
+		bool fadingOut{ false };
+
 		/// Raw UpdateCamera failure, true for held lights too (invalidCamera is not).
 		bool updateCameraFailed{ false };
 
@@ -1945,6 +1951,34 @@ namespace ShadowCasterManager
 		return true;
 	}
 
+	/// Starts or continues the fade-out of a light that fell outside the shadow count; true while it keeps its slot to fade.
+	/// Spot lights take no fade in the shader, so they give their slot up at once.
+	static bool HoldForFadeOut(RE::BSShadowLight* a_light)
+	{
+		const int32_t slot = GetShadowSlot(a_light);
+		if (slot < 0 || slot >= s_lights.Size || s_lights.Lights[slot].Light != a_light || a_light->GetIsFrustumLight())
+			return false;
+		auto& entry = s_lights.Lights[slot];
+		const double now = Util::GetNowSecs();
+		if (entry.ReleaseStartSeconds < 0.0)
+			entry.ReleaseStartSeconds = now;
+		return now - entry.ReleaseStartSeconds < kShadowFadeOutSeconds;
+	}
+
+	/// A leaving light chosen again fades back in from where its fade-out had reached.
+	static void ResumeAfterRelease(RE::BSShadowLight* a_light)
+	{
+		const int32_t slot = GetShadowSlot(a_light);
+		if (slot < 0 || slot >= s_lights.Size || s_lights.Lights[slot].Light != a_light)
+			return;
+		auto& entry = s_lights.Lights[slot];
+		if (entry.ReleaseStartSeconds < 0.0)
+			return;
+		const float shown = GetShadowFadeAlpha(slot);
+		entry.ReleaseStartSeconds = -1.0;
+		entry.FadeStartSeconds = ResumedFadeStart(Util::GetNowSecs(), shown, kShadowFadeInSeconds);
+	}
+
 	static void ValidateCandidates(RE::NiCamera* camera, bool wantDiag, std::vector<CandidateLight>& candidates)
 	{
 		// ---- Validation pass (no game mutations) ----
@@ -1965,6 +1999,11 @@ namespace ShadowCasterManager
 			else if (wantCount < s_settings.ShadowLightCount - s_focusShadowSlots) {
 				c.chosen = true;
 				wantCount++;
+				ResumeAfterRelease(c.light);
+			} else if (s_settings.FadeShadowSwaps && HoldForFadeOut(c.light)) {
+				// Kept past the count while it fades out; the newcomer finds no free slot until then.
+				c.chosen = true;
+				c.fadingOut = true;
 			} else {
 				c.excess = true;
 			}
@@ -2145,7 +2184,7 @@ namespace ShadowCasterManager
 					s_visAudit.push_back(std::move(v));
 				}
 				s_schedDiag.candidates_total++;
-				if (c.chosen)
+				if (c.chosen && !c.fadingOut)
 					s_schedDiag.candidates_chosen++;
 				if (c.excess)
 					s_schedDiag.candidates_excess++;
@@ -2296,8 +2335,15 @@ namespace ShadowCasterManager
 						}
 					}
 				}
-				if (!stillChosen)
+				if (!stillChosen) {
+					if (s_lights.Lights[i].ReleaseStartSeconds >= 0.0 && Util::GetNowSecs() - s_lights.Lights[i].ReleaseStartSeconds >= kShadowFadeOutSeconds) {
+						if (const auto* ni = s_lights.Lights[i].Light->light.get()) {
+							PruneIfOversized(s_fadedOutLights, 1024);
+							s_fadedOutLights.insert(ni);
+						}
+					}
 					s_lights.Lights[i].Clear();
+				}
 			}
 
 			// Two passes: reclaim-by-owner for every chosen light first, then hand
@@ -2323,6 +2369,8 @@ namespace ShadowCasterManager
 					// A tile can be parked at any light-free index; reclaim it only inside the point range.
 					if (ownerIdx >= pointFirst && ownerIdx < pointEnd && !s_lights.Lights[ownerIdx].Light) {
 						s_lights.Lights[ownerIdx].Light = c.light;
+						if (s_fadedOutLights.erase(ni) && s_settings.FadeShadowSwaps)
+							s_lights.Lights[ownerIdx].FadeStartSeconds = Util::GetNowSecs();
 						reclaimed = true;
 					}
 				}
@@ -2354,10 +2402,12 @@ namespace ShadowCasterManager
 					s_splitState.erase(splitIt);
 				}
 				if (auto* ni = cp->light->light.get()) {
+					s_fadedOutLights.erase(ni);
 					ResetScoreAnchor(ni);
 					s_hashRadiusAnchor.erase(ni);
 				}
 				s_lights.Lights[idx].Light = cp->light;
+				s_lights.Lights[idx].fadeOnAdmit = s_settings.FadeShadowSwaps;
 			}
 
 			// Update sun slot (slot 0).
@@ -2515,6 +2565,10 @@ namespace ShadowCasterManager
 			if (s_cameraHold.count(e.Light)) {
 				e.skippedThisFrame = true;
 				cameraHoldSkips.push_back(&e);
+				continue;
+			}
+			if (e.ReleaseStartSeconds >= 0.0) {
+				e.skippedThisFrame = true;
 				continue;
 			}
 			// Honour AllowDrawNewLight: when disabled, brand-new entries wait for the
@@ -2915,9 +2969,10 @@ namespace ShadowCasterManager
 		if (e->LastDrawnFrame < 0) {
 			const auto* ni = e->Light ? e->Light->light.get() : nullptr;
 			PruneIfOversized(s_everHadShadow, 1024);
-			if (!ni || s_everHadShadow.insert(ni).second)
+			if (!ni || s_everHadShadow.insert(ni).second || e->fadeOnAdmit)
 				e->FadeStartSeconds = Util::GetNowSecs();
 		}
+		e->fadeOnAdmit = false;
 		e->LastDrawnFrame = now;
 		// Consumed by the next scoring pass to tell a genuine tile-invalid
 		// failure apart from a light that simply hasn't been tried yet.
@@ -3905,6 +3960,7 @@ namespace ShadowCasterManager
 		// scoring it now touches freed memory. Load-bearing: don't remove this return.
 		if (s_pendingSessionReset.exchange(false, std::memory_order_acquire)) {
 			s_everHadShadow.clear();
+			s_fadedOutLights.clear();
 			s_lastValidFrame.clear();
 			ResetSession();
 			return;
@@ -3918,6 +3974,7 @@ namespace ShadowCasterManager
 			s_casterMobility.clear();
 			s_ownerMotion.clear();
 			s_everHadShadow.clear();  // a cell swap recycles NiLight addresses
+			s_fadedOutLights.clear();
 			std::erase_if(s_lastValidFrame, [ssn](const auto& kv) { return !KeepsSlotThroughCellShift(ssn, kv.first); });
 			s_splitState.clear();  // bakeQueued defaults true: every light re-bakes
 			ShadowCasterManager::InvalidateAllStaticBakes();
