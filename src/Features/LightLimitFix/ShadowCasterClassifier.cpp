@@ -460,7 +460,7 @@ namespace ShadowCasterManager
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
 		// A caster that settled since the bake is missing from it and is drawn live; one that started moving is still in
-		// it at its old pose and is left to it. Either way the light is rebaked at once.
+		// it at its old pose and is left to it. Either way the light is queued for a rebake.
 		const bool bakeStale = rec && CasterChangedSinceBake(rec->classEpoch, s_visitBakeEpoch);
 		s_visitBakeStale |= bakeStale;
 		// Every static caster folds into the hash regardless of pass, so a
