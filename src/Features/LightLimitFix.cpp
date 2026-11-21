@@ -66,6 +66,8 @@ namespace
 			Util::ClampFiniteOrDefault(a_settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, 1.0f);
 		a_settings.BillboardRadius =
 			Util::ClampFiniteOrDefault(a_settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, 1.0f);
+		a_settings.SoftShadowScale =
+			Util::ClampFiniteOrDefault(a_settings.SoftShadowScale, 0.0f, kSoftShadowScaleMax, 0.0f);
 		a_settings.ParticleClusterThreshold =
 			Util::ClampFiniteOrDefault(a_settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, 32.0f);
 		a_settings.MaxParticlesPerEmitter = std::clamp(a_settings.MaxParticlesPerEmitter, kMaxParticlesPerEmitterMin, kMaxParticlesPerEmitterMax);
