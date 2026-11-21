@@ -214,7 +214,7 @@ namespace ShadowCasterManager
 	enum class FlickerShadowModeEnum : int32_t
 	{
 		Live,    ///< Rebake when the light drifts past the tolerance
-		Pinned,  ///< Hold the shadow camera at the bake origin
+		Pinned,  ///< Draw the shadow from the light's rest position
 		Warped   ///< Reproject the cached depth to the live origin on the GPU
 	};
 

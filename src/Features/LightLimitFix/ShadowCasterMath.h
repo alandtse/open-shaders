@@ -240,6 +240,41 @@ namespace ShadowCasterManager
 		a_motion.stagedEpoch = a_epoch;
 	}
 
+	/// Farthest a flicker or pulse movement puts a light from its parent node, per unit of the Light record's movement amplitude.
+	inline constexpr float kFlickerReachPerAmplitude = 1.125f;
+
+	/// True when a light's local translate is within reach of its flicker movement, so its parent node holds its rest position.
+	inline bool WithinFlickerReach(float a_x, float a_y, float a_z, float a_amplitude) noexcept
+	{
+		const float reach = a_amplitude * kFlickerReachPerAmplitude;
+		return a_amplitude > 0.0f && a_x * a_x + a_y * a_y + a_z * a_z <= reach * reach;
+	}
+
+	/// Share of its brightest radius a flicker or pulse can take from an inverse-square light, whose radius follows the square
+	/// root of a fade the flicker scales down by up to the Light record's intensity amplitude.
+	inline float FlickerRadiusBand(float a_intensityAmplitude) noexcept
+	{
+		return 1.0f - std::sqrt(1.0f - std::clamp(a_intensityAmplitude, 0.0f, 0.99f));
+	}
+
+	/// The radius to hash for a light flickering within a_band of its brightest: a_held while every radius that flicker reaches
+	/// stays within that band of it, else the live radius.
+	inline float HeldFlickerRadius(float a_held, float a_live, float a_band) noexcept
+	{
+		const float keep = 1.0f - a_band;
+		return a_live >= a_held * keep - 1.0f && a_live * keep <= a_held + 1.0f ? a_held : a_live;
+	}
+
+	/// Largest radius difference a flicker lets a cached bake serve; past it a bake made at a dim moment would miss the casters
+	/// a bright moment lights.
+	inline constexpr float kMaxFlickerRadiusTolerance = 0.25f;
+
+	/// Share a cached bake's radius may differ from the live radius by, when both stay within a_band of the brightest radius.
+	inline float FlickerRadiusTolerance(float a_band, float a_floor) noexcept
+	{
+		return std::max(a_floor, std::min(a_band / (1.0f - a_band), kMaxFlickerRadiusTolerance));
+	}
+
 	// The tile class ladder, shared by the coverage classifier below and the
 	// atlas allocator's order mapping (the floor class == one allocator cell).
 	inline constexpr float kTileScaleFull = 1.0f;
