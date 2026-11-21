@@ -110,8 +110,8 @@ namespace NR
 		/** @brief Buffer for GetModuleFileNameW: an extended-length image path can run past MAX_PATH. */
 		constexpr DWORD kModuleImageChars = MAX_PATH * 4;
 
-		/** @brief True when a module's image is under the Windows DriverStore, i.e. NVIDIA's own NGX core. */
-		bool IsDriverStoreModule(HMODULE module)
+		/** @brief Applies a (image, systemDirectory) path predicate to a loaded module's image path. */
+		bool ModuleImageMatches(HMODULE module, bool (*predicate)(std::wstring_view, std::wstring_view))
 		{
 			wchar_t image[kModuleImageChars]{};
 			if (!GetModuleFileNameW(module, image, kModuleImageChars))
@@ -119,7 +119,22 @@ namespace NR
 			wchar_t systemDirectory[MAX_PATH]{};
 			if (!GetSystemDirectoryW(systemDirectory, MAX_PATH))
 				return false;
-			return IsUnderDriverStore(image, systemDirectory);
+			return predicate(image, systemDirectory);
+		}
+
+		/** @brief True under Wine/Proton, which has no DriverStore and ships its NGX core in the prefix System32. */
+		bool IsRunningUnderWine()
+		{
+			const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+			return ntdll && GetProcAddress(ntdll, "wine_get_version");
+		}
+
+		/** @brief True when a module is NVIDIA's NGX core: in the DriverStore, or in System32 under Wine. */
+		bool IsTrustedCoreModule(HMODULE module)
+		{
+			if (ModuleImageMatches(module, IsUnderDriverStore))
+				return true;
+			return IsRunningUnderWine() && ModuleImageMatches(module, IsDirectlyInSystemDirectory);
 		}
 
 		struct CoreApi
@@ -138,7 +153,7 @@ namespace NR
 		{
 			for (const auto* name : { L"_nvngx.dll", L"nvngx.dll" }) {
 				HMODULE module = GetModuleHandleW(name);
-				if (!module || !IsDriverStoreModule(module))
+				if (!module || !IsTrustedCoreModule(module))
 					continue;
 				auto allocate = GetProcAddress(module, "NVSDK_NGX_D3D12_AllocateParameters");
 				auto destroy = GetProcAddress(module, "NVSDK_NGX_D3D12_DestroyParameters");
