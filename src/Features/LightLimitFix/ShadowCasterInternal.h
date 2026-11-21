@@ -484,6 +484,10 @@ namespace ShadowCasterManager
 	extern std::uint64_t s_visitStaticHash;
 	extern std::atomic<uint32_t> s_visitDynamicCount;
 	extern std::atomic<uint32_t> s_visitStaticCount;
+	/// Classifier epoch the current light's cached bake was taken at.
+	extern int s_visitBakeEpoch;
+	/// The current walk met a caster whose class changed after that bake, so the bake no longer matches the scene.
+	extern bool s_visitBakeStale;
 
 	/// Per-caster movement-history record; classification memoized once per
 	/// frame by ClassifyCaster (ShadowCasterClassifier.cpp).
@@ -501,6 +505,7 @@ namespace ShadowCasterManager
 		bool dynamic = true;
 		bool actorAttached = false;  ///< parented under an actor's skeleton
 		int ancestryEpoch = -1;      ///< epoch of the last parent-chain walk
+		int classEpoch = -1;         ///< epoch its static / dynamic class last changed after its first sighting
 	};
 	// Pruned periodically by ScheduleShadowCasters (ShadowScheduler.cpp).
 	extern ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;

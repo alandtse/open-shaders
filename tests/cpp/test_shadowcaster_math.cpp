@@ -8,6 +8,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 using Catch::Approx;
+using ShadowCasterManager::CasterChangedSinceBake;
+using ShadowCasterManager::CompositeSkipsCaster;
+using ShadowCasterManager::CountsTowardPoseLatch;
 using ShadowCasterManager::DemandStreakBucket;
 using ShadowCasterManager::EdgeKeepsLight;
 using ShadowCasterManager::EngineShadowSliceCount;
@@ -327,6 +330,28 @@ TEST_CASE("PerFrameCache works a key out once per frame and drops it on the next
 	REQUIRE(made == 2);
 	REQUIRE(cache.Get(11, 1, make) == 3);
 	REQUIRE(cache.entries.size() == 1);
+}
+
+TEST_CASE("A caster that changed class after the bake marks the bake stale", "[scm]")
+{
+	REQUIRE_FALSE(CasterChangedSinceBake(5, 5));
+	REQUIRE_FALSE(CasterChangedSinceBake(4, 5));
+	REQUIRE(CasterChangedSinceBake(6, 5));
+	REQUIRE(CasterChangedSinceBake(0, -1));
+	REQUIRE(CompositeSkipsCaster(false, false));
+	REQUIRE_FALSE(CompositeSkipsCaster(true, false));
+	REQUIRE_FALSE(CompositeSkipsCaster(false, true));
+	REQUIRE(CompositeSkipsCaster(true, true));
+}
+
+TEST_CASE("CountsTowardPoseLatch leaves out a rebake queued only by a class change", "[scm]")
+{
+	REQUIRE_FALSE(CountsTowardPoseLatch(true, true, 0, true));
+	REQUIRE_FALSE(CountsTowardPoseLatch(true, true, 2, true));
+	REQUIRE(CountsTowardPoseLatch(true, true, 3, true));
+	REQUIRE(CountsTowardPoseLatch(true, true, 0, false));
+	REQUIRE(CountsTowardPoseLatch(true, false, 0, true));
+	REQUIRE(CountsTowardPoseLatch(false, true, 0, true));
 }
 
 TEST_CASE("HoldsFlame takes only a small part round or under the flame", "[scm]")
