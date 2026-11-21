@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 namespace SnowDeformationMath
@@ -122,6 +123,14 @@ namespace SnowDeformationMath
 		const float blanket = std::max(a_blanket, 0.0f);
 		const float surface = blanket - std::clamp(a_depression, 0.0f, blanket);
 		return std::max(surface - blanket * std::clamp(a_weightScale, 0.0f, 1.0f), 0.0f);
+	}
+
+	/** @brief Blanket height under an object from a probe read a_sampleFrame, 0 when there is no read or it is older than a_maxAge frames, never above a_cap. */
+	inline float MeasuredBlanket(bool a_hasSample, uint64_t a_sampleFrame, uint64_t a_frame, uint64_t a_maxAge, float a_raise, float a_cap)
+	{
+		if (!a_hasSample || a_frame > a_sampleFrame + a_maxAge || !(a_raise > 0.0f))
+			return 0.0f;
+		return std::min(a_raise, std::max(a_cap, 0.0f));
 	}
 
 	/** @brief Upward speed that lifts an object whose bottom is a_depth under its floor, growing by a_spring per second and capped at a_maxRise. */

@@ -893,7 +893,7 @@ void SnowDeformation::SetupResources()
 
 	{
 		D3D11_BUFFER_DESC desc{};
-		desc.ByteWidth = sizeof(float) * kMaxStamps;
+		desc.ByteWidth = sizeof(float) * 2 * kMaxStamps;
 		desc.Usage = D3D11_USAGE_DEFAULT;
 		desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
 		probeBuffer = eastl::make_unique<Buffer>(desc, nullptr, "SnowDeformation::ProbeDepths");
@@ -901,7 +901,7 @@ void SnowDeformation::SetupResources()
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
 		uavDesc.Format = DXGI_FORMAT_R32_FLOAT;
 		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-		uavDesc.Buffer.NumElements = kMaxStamps;
+		uavDesc.Buffer.NumElements = 2 * kMaxStamps;
 		probeBuffer->CreateUAV(uavDesc);
 
 		desc.Usage = D3D11_USAGE_STAGING;
@@ -1380,6 +1380,7 @@ void SnowDeformation::GatherStamps()
 		pendingStamps.clear();
 		measuredSinks.clear();
 		measuredDepth.clear();
+		measuredBlanket.clear();
 		return;
 	}
 
@@ -1615,24 +1616,27 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 		const float pressFactor = SnowDeformationMath::ObjectPressFactor(drop, pressReach) * impactScale;
 
 		const RE::FormID refID = ref->GetFormID();
-		const bool physicsActive = gatherOnUpdate && carve > 0.0f;
+		const bool floatCandidate = settings.DensityFloor && FloatRestHeight(contactScratch.front(), carve, 0.0f) > kFloorMinHeight;
+		const bool measureSnow = gatherOnUpdate && carve > 0.0f && (settings.SnowDrag || floatCandidate);
+		float blanket = 0.0f;
 		float depression = 0.0f;
-		bool floating = false;
-		if (physicsActive && settings.DensityFloor) {
-			{
-				std::scoped_lock lock(stampLock);
-				if (const auto found = measuredDepth.find(refID); found != measuredDepth.end())
-					depression = std::clamp(found->second, 0.0f, carve);
-			}
-			floating = FloatRestHeight(contactScratch.front(), carve, depression) > kFloorMinHeight;
+		if (measureSnow) {
+			std::scoped_lock lock(stampLock);
+			const auto sample = measuredBlanket.find(refID);
+			const bool sampled = sample != measuredBlanket.end();
+			blanket = SnowDeformationMath::MeasuredBlanket(sampled, sampled ? sample->second.frame : 0, gatherFrame, kBlanketSampleFrames, sampled ? sample->second.raise : 0.0f, carve);
+			if (const auto found = measuredDepth.find(refID); floatCandidate && found != measuredDepth.end())
+				depression = std::clamp(found->second, 0.0f, blanket);
 		}
+		const bool physicsActive = blanket > 0.0f;
+		const bool floating = physicsActive && floatCandidate && FloatRestHeight(contactScratch.front(), blanket, depression) > kFloorMinHeight;
 		uint8_t physicsState = 0;
 		if (physicsActive && (settings.SnowDrag || settings.DensityFloor))
-			physicsState = ApplySnowPhysics(contactScratch.front(), bottom, landZ, carve, depression, refID);
+			physicsState = ApplySnowPhysics(contactScratch.front(), bottom, landZ, blanket, depression, refID);
 
 		const float normalZ = LandNormalZ(tes, probe, landZ);
 		const float vanillaSnow = IsVanillaSnow(tes->GetLandMaterialType(probe)) ? 1.0f : 0.0f;
-		if (floating && a_stamps.size() < kMaxStamps) {
+		if (measureSnow && a_stamps.size() < kMaxStamps) {
 			const auto& front = contactScratch.front();
 			Stamp stamp{};
 			stamp.x = front.centre.x;
@@ -2487,6 +2491,7 @@ void SnowDeformation::UpdateField()
 		pendingStamps.clear();
 		measuredSinks.clear();
 		measuredDepth.clear();
+		measuredBlanket.clear();
 	}
 	if (!gatherOnUpdate)
 		GatherStamps();
@@ -2746,11 +2751,15 @@ void SnowDeformation::DispatchProbes(uint32_t a_stampCount)
 	ID3D11UnorderedAccessView* uav = probeBuffer->uav.get();
 	ID3D11ShaderResourceView* field = levels[0].texture->srv.get();
 	ID3D11SamplerState* sampler = fieldSampler.get();
+	ID3D11ShaderResourceView* blanket = blanketActive && blanketTexture ? blanketTexture->srv.get() : nullptr;
 	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
 	context->CSSetShaderResources(0, 1, &field);
+	context->CSSetShaderResources(4, 1, &blanket);
 	context->CSSetSamplers(0, 1, &sampler);
 	context->CSSetShader(probeCS.get(), nullptr, 0);
 	context->Dispatch((a_stampCount + 63) / 64, 1, 1);
+	ID3D11ShaderResourceView* nullBlanket = nullptr;
+	context->CSSetShaderResources(4, 1, &nullBlanket);
 	context->CopyResource(staging.get(), probeBuffer->resource.get());
 
 	auto& frame = probeFrames[probeWrite];
@@ -2764,6 +2773,8 @@ void SnowDeformation::ReadProbes()
 	auto context = globals::d3d::context;
 	std::vector<std::pair<RE::FormID, float>> measurements;
 	std::vector<std::pair<RE::FormID, float>> frameMeasurements;
+	std::vector<std::pair<RE::FormID, float>> blankets;
+	std::vector<std::pair<RE::FormID, float>> frameBlankets;
 	for (uint32_t n = 0; n < kProbeLatency; ++n) {
 		const uint32_t index = (probeWrite + n) % kProbeLatency;
 		auto& frame = probeFrames[index];
@@ -2779,6 +2790,7 @@ void SnowDeformation::ReadProbes()
 			continue;
 
 		frameMeasurements.clear();
+		frameBlankets.clear();
 		const auto* depths = static_cast<const float*>(mapped.pData);
 		for (size_t i = 0; i < frame.owners.size(); ++i) {
 			const float depth = std::isfinite(depths[i]) ? std::clamp(depths[i], 0.0f, kMaxSink) : 0.0f;
@@ -2787,6 +2799,13 @@ void SnowDeformation::ReadProbes()
 				frameMeasurements.emplace_back(frame.owners[i], depth);
 			else
 				found->second = std::max(found->second, depth);
+
+			const float raise = std::isfinite(depths[kMaxStamps + i]) ? std::clamp(depths[kMaxStamps + i], 0.0f, kMaxBlanketHeight) : 0.0f;
+			auto foundRaise = std::find_if(frameBlankets.begin(), frameBlankets.end(), [&](const auto& a_entry) { return a_entry.first == frame.owners[i]; });
+			if (foundRaise == frameBlankets.end())
+				frameBlankets.emplace_back(frame.owners[i], raise);
+			else
+				foundRaise->second = std::max(foundRaise->second, raise);
 		}
 		context->Unmap(probeStaging[index].get(), 0);
 
@@ -2797,8 +2816,26 @@ void SnowDeformation::ReadProbes()
 			else
 				found->second = entry.second;
 		}
+		for (const auto& entry : frameBlankets) {
+			auto found = std::find_if(blankets.begin(), blankets.end(), [&](const auto& a_entry) { return a_entry.first == entry.first; });
+			if (found == blankets.end())
+				blankets.push_back(entry);
+			else
+				found->second = entry.second;
+		}
 	}
 	PublishMeasurements(measurements);
+	PublishBlankets(blankets);
+}
+
+void SnowDeformation::PublishBlankets(const std::vector<std::pair<RE::FormID, float>>& a_blankets)
+{
+	if (a_blankets.empty())
+		return;
+	std::scoped_lock lock(stampLock);
+	for (const auto& [owner, raise] : a_blankets)
+		measuredBlanket[owner] = { raise, gatherFrame };
+	std::erase_if(measuredBlanket, [this](const auto& a_entry) { return gatherFrame > a_entry.second.frame + kBlanketSampleForgetFrames; });
 }
 
 void SnowDeformation::PublishMeasurements(const std::vector<std::pair<RE::FormID, float>>& a_measurements)

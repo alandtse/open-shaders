@@ -147,6 +147,24 @@ TEST_CASE("An object presses fully on the ground and not at all above reach", "[
 	REQUIRE(Math::ObjectPressFactor(1.0f, 0.0f) == Approx(0.0f));
 }
 
+TEST_CASE("A probe read gives the blanket under an object only while fresh", "[snow-deformation]")
+{
+	REQUIRE(Math::MeasuredBlanket(false, 0, 10, 12, 8.0f, 20.0f) == Approx(0.0f));
+	REQUIRE(Math::MeasuredBlanket(true, 10, 10, 12, 8.0f, 20.0f) == Approx(8.0f));
+	REQUIRE(Math::MeasuredBlanket(true, 10, 22, 12, 8.0f, 20.0f) == Approx(8.0f));
+	REQUIRE(Math::MeasuredBlanket(true, 10, 23, 12, 8.0f, 20.0f) == Approx(0.0f));
+	REQUIRE(Math::MeasuredBlanket(true, 10, 10, 12, 50.0f, 20.0f) == Approx(20.0f));
+	REQUIRE(Math::MeasuredBlanket(true, 10, 10, 12, -3.0f, 20.0f) == Approx(0.0f));
+	REQUIRE(Math::MeasuredBlanket(true, 10, 10, 12, 8.0f, -1.0f) == Approx(0.0f));
+}
+
+TEST_CASE("Bare ground has no rest height to float at", "[snow-deformation]")
+{
+	REQUIRE(Math::RestHeight(Math::MeasuredBlanket(true, 10, 10, 12, 0.0f, 20.0f), 0.0f, 0.0f) == Approx(0.0f));
+	REQUIRE(Math::RestHeight(Math::MeasuredBlanket(true, 10, 10, 12, 20.0f, 20.0f), 0.0f, 0.0f) == Approx(20.0f));
+	REQUIRE(Math::RestHeight(Math::MeasuredBlanket(true, 10, 10, 12, 10.0f, 20.0f), 0.0f, 0.0f) == Approx(10.0f));
+}
+
 TEST_CASE("A harder landing carves a deeper print up to a cap", "[snow-deformation]")
 {
 	REQUIRE(Math::ImpactDepthScale(0.0f, 400.0f, 2.0f) == Approx(1.0f));

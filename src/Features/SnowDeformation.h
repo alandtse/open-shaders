@@ -372,6 +372,14 @@ private:
 	};
 
 	static constexpr uint32_t kProbeLatency = 3;
+	static constexpr uint64_t kBlanketSampleFrames = 4 * kProbeLatency;
+	static constexpr uint64_t kBlanketSampleForgetFrames = 8 * kBlanketSampleFrames;
+
+	struct BlanketSample
+	{
+		float raise = 0.0f;
+		uint64_t frame = 0;
+	};
 
 	struct Slot
 	{
@@ -470,6 +478,7 @@ private:
 	void DispatchProbes(uint32_t a_stampCount);
 	void ReadProbes();
 	void PublishMeasurements(const std::vector<std::pair<RE::FormID, float>>& a_measurements);
+	void PublishBlankets(const std::vector<std::pair<RE::FormID, float>>& a_blankets);
 	void UpdateLevel(uint32_t a_index, const RE::NiPoint3& a_position, float a_decay, float a_deltaTime, bool a_sinking, bool a_gateSnowCover, bool a_skylightingReady);
 	void RebuildActivity(Level& a_level);
 	bool OverlapsLevel(const Level& a_level, const RE::NiBound& a_bound) const;
@@ -562,6 +571,7 @@ private:
 	std::unordered_map<RE::FormID, bool> coldBases;
 	std::unordered_map<RE::FormID, float> measuredSinks;
 	std::unordered_map<RE::FormID, float> measuredDepth;
+	std::unordered_map<RE::FormID, BlanketSample> measuredBlanket;
 	std::unordered_set<RE::FormID> floatedObjects;
 	bool probeStampsPresent = false;
 	std::unordered_map<RE::FormID, float> gatherMeasured;
