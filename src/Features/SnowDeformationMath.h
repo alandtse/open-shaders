@@ -139,6 +139,12 @@ namespace SnowDeformationMath
 		return std::min(a_raise, std::max(a_cap, 0.0f));
 	}
 
+	/** @brief Whether an object contact carves the snow: not while it floats, nor while a float candidate still awaits its first probe read, nor when too light. */
+	inline bool PressesSnow(bool a_floating, bool a_unmeasured, float a_weightScale, float a_minWeightScale)
+	{
+		return !a_floating && !a_unmeasured && a_weightScale >= a_minWeightScale;
+	}
+
 	/** @brief Upward speed that lifts an object whose bottom is a_depth under its floor, growing by a_spring per second and capped at a_maxRise. */
 	inline float FloorRiseSpeed(float a_depth, float a_spring, float a_maxRise)
 	{

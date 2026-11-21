@@ -1659,7 +1659,7 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 			const float weightScale = settings.WeightResponse ? SnowDeformationMath::WeightScale(pressure, kLightPressure, kHeavyPressure) : 1.0f;
 			if (gatherObjectSamples.size() < kMaxObjectSamples)
 				gatherObjectSamples.push_back({ ref->GetDisplayFullName(), contact.weight, contact.radius, area, pressure, weightScale, drop, physicsState, depression, impactScale });
-			if (floating || unmeasured || weightScale < kMinWeightScale)
+			if (!SnowDeformationMath::PressesSnow(floating, unmeasured, weightScale, kMinWeightScale))
 				continue;
 			Stamp stamp{};
 			stamp.x = contact.centre.x;
