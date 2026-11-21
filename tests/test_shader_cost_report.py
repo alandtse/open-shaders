@@ -142,6 +142,71 @@ class ShaderCostReportTest(unittest.TestCase):
         self.assertNotIn("Net (est.)", text)
         self.assertIn("counts only", text)
 
+    def test_timing_diff_flags_large_slowdowns_only(self):
+        import json
+        import os
+        import tempfile
+
+        def write(rows):
+            handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+            json.dump(
+                [
+                    {
+                        "file": "Lit.hlsl",
+                        "entry": e,
+                        "type": "PSHADER",
+                        "duration_seconds": d,
+                    }
+                    for e, d in rows
+                ],
+                handle,
+            )
+            handle.close()
+            self.addCleanup(os.unlink, handle.name)
+            return handle.name
+
+        base = write([("a", 100.0), ("b", 100.0), ("c", 100.0), ("d", 5.0)])
+        head = write(
+            [("a", 160.0), ("b", 105.0), ("c", 50.0), ("d", 9.0), ("new", 30.0)]
+        )
+        diff = REPORT.timing_diff(base, head)
+        self.assertEqual((diff["compared"], diff["slower"], diff["faster"]), (4, 1, 1))
+        self.assertEqual(diff["worst"][0][0], "a")
+        self.assertIsNone(REPORT.timing_diff(base, ""))
+
+    def test_measured_slowdown_sets_headline_when_structure_is_flat(self):
+        flat = {
+            "base_total": 5,
+            "total": 5,
+            "changed": 0,
+            "added": 0,
+            "removed": 0,
+            "recompile_s": 0.0,
+            "total_s": 5.0,
+            "added_pct": 0.0,
+            "removed_pct": 0.0,
+            "growth_pct": 0.0,
+            "net_s": 0.0,
+            "net_pct": 0.0,
+            "top_files": [],
+        }
+        diff = {
+            "compared": 30,
+            "base_s": 100.0,
+            "pr_s": 120.0,
+            "delta_pct": 20.0,
+            "slower": 4,
+            "faster": 0,
+            "worst": [("Lit:Pixel:1", 50.0, 70.0)],
+        }
+        text = REPORT.render({"VR": flat}, False, True, {"VR": diff})
+        self.assertIn("compile slower (measured)", text)
+        self.assertIn("`Lit:Pixel:1` 50 → 70 s", text)
+        few = dict(diff, compared=3)
+        self.assertIn(
+            "unchanged", REPORT.render({"VR": flat}, False, True, {"VR": few})
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

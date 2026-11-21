@@ -37,6 +37,9 @@ SHADER_EXTS = (".hlsl", ".hlsli", ".fx", ".h")
 INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.M)
 THRESHOLD_PCT = 5.0
 NEUTRAL_PCT = 1.0
+TIMING_MIN_SECONDS = 10.0
+TIMING_MIN_PCT = 25.0
+TIMING_MIN_ENTRIES = 20
 MARKER = "<!-- shader-cost-report -->"
 
 
@@ -227,6 +230,55 @@ def compare(base, head, weight):
     }
 
 
+def timing_diff(baseline, measured):
+    """Compare per-entry compile seconds of a PR build against the dev baseline, over entries present in both."""
+
+    def load(path):
+        if not path or not os.path.isfile(path):
+            return {}
+        return {
+            (r["file"], r["entry"]): r["duration_seconds"]
+            for r in json.load(open(path, encoding="utf-8"))
+        }
+
+    before, after = load(baseline), load(measured)
+    common = [k for k in after if k in before]
+    if not common:
+        return None
+    base_total, pr_total = sum(before[k] for k in common), sum(after[k] for k in common)
+
+    def moved(sign):
+        return sorted(
+            (
+                k
+                for k in common
+                if sign * (after[k] - before[k]) >= TIMING_MIN_SECONDS
+                and sign * (after[k] - before[k]) >= before[k] * TIMING_MIN_PCT / 100
+            ),
+            key=lambda k: -sign * (after[k] - before[k]),
+        )
+
+    slower, faster = moved(1), moved(-1)
+    worst = [(k[1], before[k], after[k]) for k in slower[:3]]
+    return {
+        "compared": len(common),
+        "base_s": base_total,
+        "pr_s": pr_total,
+        "delta_pct": 100 * (pr_total - base_total) / base_total if base_total else 0.0,
+        "slower": len(slower),
+        "faster": len(faster),
+        "worst": worst,
+    }
+
+
+def timing_verdict(diff):
+    if not diff or diff["compared"] < TIMING_MIN_ENTRIES:
+        return None
+    if diff["delta_pct"] >= THRESHOLD_PCT:
+        return "up"
+    return "down" if diff["delta_pct"] <= -THRESHOLD_PCT else None
+
+
 def verdict(result, flags_changed):
     if result["net_pct"] >= THRESHOLD_PCT:
         return "up"
@@ -249,13 +301,19 @@ def _minutes(seconds):
     )
 
 
-def render(results, flags_changed, timed):
+def render(results, flags_changed, timed, timing=None):
     """Markdown comment; `results` maps runtime name to a compare() dict (or None when unavailable)."""
+    timing = timing or {}
     kinds = {name: verdict(r, flags_changed) for name, r in results.items() if r}
+    measured = {timing_verdict(d) for d in timing.values()} - {None}
     if "up" in kinds.values():
         head = "🔺 **Shader compile cost goes up**"
     elif "down" in kinds.values():
         head = "🟢 **Shader compile cost goes down**"
+    elif "up" in measured:
+        head = "🔺 **Shaders compile slower (measured)**"
+    elif "down" in measured:
+        head = "🟢 **Shaders compile faster (measured)**"
     elif flags_changed:
         head = "⚠️ **Compile flags changed**"
     elif kinds and all(k == "flat" for k in kinds.values()):
@@ -305,6 +363,17 @@ def render(results, flags_changed, timed):
             "Most affected: "
             + ", ".join(f"`{f}` ({n})" for f, n in first["top_files"]),
         ]
+    for name, diff in timing.items():
+        if not diff:
+            continue
+        line = f"**{name} measured:** {diff['compared']} recompiled shaders, {diff['delta_pct']:+.1f}% total compile time against dev ({diff['base_s']:.0f} s → {diff['pr_s']:.0f} s); {diff['slower']} slower, {diff['faster']} faster."
+        if diff["worst"]:
+            line += (
+                " Slowest regressions: "
+                + ", ".join(f"`{e}` {b:.0f} → {a:.0f} s" for e, b, a in diff["worst"])
+                + "."
+            )
+        lines += ["", line]
     if flags_changed:
         lines += [
             "",
@@ -314,7 +383,7 @@ def render(results, flags_changed, timed):
         "",
         "<sub>Estimated from the validation configs and recent `dev` compile timings"
         + ("" if timed else " (no timing report available, so counts only)")
-        + f". Informational; alerts at ±{THRESHOLD_PCT:.0f}%. Source growth is a size proxy.</sub>",
+        + f". Informational; alerts at ±{THRESHOLD_PCT:.0f}%. Source growth is a size proxy; measured times vary 10–20% run to run.</sub>",
     ]
     return "\n".join(lines) + "\n"
 
@@ -397,6 +466,12 @@ def main():
     )
     ap.add_argument("--timing-vr", default="")
     ap.add_argument("--timing-se", default="")
+    ap.add_argument(
+        "--pr-timing-vr",
+        default="",
+        help="timing report of this PR's own build (incremental)",
+    )
+    ap.add_argument("--pr-timing-se", default="")
     ap.add_argument("--out", default="shader-cost-report.md")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
@@ -433,7 +508,13 @@ def main():
             else None
         )
     flags_changed = flag_signature(repo, base) != flag_signature(repo, args.head)
-    report = render(results, flags_changed, all(w.timed for w in weights.values()))
+    timing = {
+        "VR": timing_diff(args.timing_vr, args.pr_timing_vr),
+        "SE": timing_diff(args.timing_se, args.pr_timing_se),
+    }
+    report = render(
+        results, flags_changed, all(w.timed for w in weights.values()), timing
+    )
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(report)
     print(report)
