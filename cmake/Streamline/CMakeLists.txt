@@ -11,13 +11,13 @@ if(MSVC)
     target_compile_options(Streamline INTERFACE /wd5103)
 endif()
 
-if(CMAKE_HOST_UNIX)
+if(CMAKE_HOST_UNIX OR WIN32)
     # sl_pcl.h's __cplusplus==202302L check for std::to_underlying is unreliable under this
     # toolchain; patched here (NVIDIA's repo, not our fork) to always use the portable fallback.
     set(_sl_pcl_h "${CMAKE_SOURCE_DIR}/extern/Streamline-DX12/include/sl_pcl.h")
     file(READ "${_sl_pcl_h}" _sl_pcl_h_content)
     # Normalize to LF first so the REPLACE below matches regardless of the file's checked-out line endings.
-    string(REPLACE "\r\n" "\n" _sl_pcl_h_content "${_sl_pcl_h_content}")
+    string(REPLACE "\r" "" _sl_pcl_h_content "${_sl_pcl_h_content}")
     string(
         REPLACE
             "// c++23 has to_underlying implementation\n#if __cplusplus == 202302L\nusing to_underlying = std::to_underlying;\n#else\n// Return \`enum class\` member as value of underlying type (i.e. an int).  Basically same as:\n// static_cast<std::underlying_type_t<decltype(value)>>(value);\n// See c++23s std::to_underlying()\ntemplate<class T>\nconstexpr auto to_underlying(T value)\n{\n    return std::underlying_type_t<T>(value);\n}\n#endif"
@@ -33,6 +33,5 @@ if(CMAKE_HOST_UNIX)
             "${_sl_pcl_h}: expected to_underlying patch text not found; Streamline-DX12 may have changed upstream."
         )
     endif()
-    string(REPLACE "\n" "\r\n" _sl_pcl_h_content "${_sl_pcl_h_content}")
     file(WRITE "${_sl_pcl_h}" "${_sl_pcl_h_content}")
 endif()
