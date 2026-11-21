@@ -405,6 +405,26 @@ jobs:
                   retention-days: 30
                   if-no-files-found: ignore
 
+            # Trusted (dev) runs only: per-file variant counts and weighted
+            # cost for this commit, so compile-cost trends accumulate without
+            # re-deriving them from history.
+            - name: Record shader compile cost snapshot
+              if: always() && matrix.pass == 'release-parity' && inputs.cache-artifacts && steps.check-hlsl.outputs.skip != 'true'
+              shell: bash
+              env:
+                  RUNTIME: ${{ matrix.config.runtime }}
+              run: |
+                  python tools/shader_cost_report.py --head HEAD --runtime "$RUNTIME"                     --timing-vr build/shader-compile-timing-VR.json --timing-se build/shader-compile-timing-SE.json                     --snapshot "build/shader-cost-snapshot-$RUNTIME.json"
+
+            - name: Upload shader compile cost snapshot
+              if: always() && matrix.pass == 'release-parity' && inputs.cache-artifacts && steps.check-hlsl.outputs.skip != 'true'
+              uses: actions/upload-artifact@v7
+              with:
+                  name: shader-cost-snapshot-${{ matrix.config.runtime }}
+                  path: build/shader-cost-snapshot-${{ matrix.config.runtime }}.json
+                  retention-days: 90
+                  if-no-files-found: ignore
+
     feature-flip-impact:
         name: Generate feature flip impact
         needs: shader-validation
