@@ -1,3 +1,4 @@
+#include "SnowDeformation/BlanketRaise.hlsli"
 #include "SnowDeformation/Coverage.hlsli"
 #include "SnowDeformation/UpdateParams.hlsli"
 
@@ -7,7 +8,6 @@
 #define FLAG_SEED 4
 
 StructuredBuffer<int4> TileList : register(t3);
-Texture2D<float> BlanketRaise : register(t4);
 Texture2D<float> FieldBefore : register(t5);
 Texture2D<float> CoarseField : register(t6);
 SamplerState FieldSampler : register(s1);
@@ -17,16 +17,6 @@ RWTexture2D<float> Field : register(u0);
 float BeforeAt(int2 texel)
 {
 	return FieldBefore.Load(int3(texel & (FIELD_TEXELS - 1), 0));
-}
-
-float RaiseAt(float2 worldPosition)
-{
-	const float2 cell = worldPosition * (1.0 / BLANKET_CELL);
-	const int2 inside = (int2)floor(cell) - BlanketCell.xy;
-	float raise = 0.0;
-	[branch] if (all(inside >= 0) && all(inside < BLANKET_TEXELS - 1))
-		raise = BlanketRaise.SampleLevel(FieldSampler, (cell + 0.5) * (1.0 / BLANKET_TEXELS), 0);
-	return raise;
 }
 
 groupshared uint gsHits[STAMP_WORDS];
@@ -197,7 +187,7 @@ float StampDistance(float2 delta, float4 stamp, float4 shape)
 		[branch] if (surface.w > 0.5)
 		{
 			if (raise < 0.0)
-				raise = RaiseAt(worldPosition);
+				raise = RaiseAt(worldPosition, FieldSampler);
 			carve = max(raise - (surface.w - 1.0), 0.0);
 		}
 		const float profile = (rim * max(1.0 + Shape.y * rimNoise, 0.0) - stamp.w * press * max(1.0 + Shape.z * churn, 0.0)) * snow - carve * press;
