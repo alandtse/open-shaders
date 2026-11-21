@@ -2,6 +2,7 @@
 
 #include "MaterialMap.h"
 #include "MaterialStrength.h"
+#include "PeripheralCompression.h"
 #include "Utils/MathUtils.h"
 #include "Utils/StringUtils.h"
 
@@ -99,6 +100,8 @@ namespace NR
 		 *        queue by itself if the second queue cannot be created or an evaluate fails on it.
 		 */
 		bool parallelEyes = true;
+		/** @brief Suspend NR during player combat and resume after three peaceful, unpaused seconds. */
+		bool pauseInCombat = false;
 		/** @brief Loads a 310.8.x or 310.9.x runtime outside the pinned digests, without developer mode; its output is unverified. */
 		bool allowUnverifiedRuntime = false;
 		/**
@@ -151,15 +154,17 @@ namespace NR
 		float flatReuseMaxMoveUnits = kDefaultFlatReuseMoveUnits;
 		/**
 		 * @brief Runs the model at this fraction of the eye size and upsamples its tone gain onto the
-		 *        full-resolution frame. Developer-only; 1 is the full-resolution pass.
+		 *        full-resolution frame. 1 is the full-resolution pass.
 		 */
 		float modelScale = kMaxModelScale;
+		/** @brief Peripheral sampling, 0 off to 100 maximum compression; independent of modelScale. */
+		uint32_t peripheralCompressionPercent = 0;
 		/**
 		 * @brief Which network a 310.9 or newer runtime creates: 0 the original 310.8 network, 1 the
 		 *        newest it ships (the faster one). A 310.8 runtime has one network and ignores it.
 		 */
 		uint32_t modelPreset = 0;
-		/** @brief Weights the model-size gain by how close each sample's brightness is to the full-resolution pixel, instead of a plain bilinear blend. */
+		/** @brief Uses RGB-guided reconstruction for reduced grids; the developer-only control applies at every log level. */
 		bool modelGuidedUpsample = true;
 		/**
 		 * @brief Evaluates both eyes as one side-by-side image on a single Feature 18 instance, which saves
@@ -256,6 +261,7 @@ namespace NR
 			if (!IsValidRuntimeVariant(runtimeVariant))
 				runtimeVariant.clear();
 			modelScale = Util::ClampFinite(modelScale, kMinModelScale, kMaxModelScale, kMaxModelScale);
+			peripheralCompressionPercent = std::min(peripheralCompressionPercent, kMaximumPeripheralCompressionPercent);
 			// The crop controls act only through a tracked crop, so none of them can stay set without
 			// it: a retained value reads as active while the pass ignores it, whether it came from a
 			// config file or from switching the crop off in the panel.

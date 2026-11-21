@@ -41,7 +41,7 @@ void GrassOptimizations::CullGrass(const RE::NiCamera* camera)
 	auto* ctx = globals::d3d::context;
 
 	constexpr float frustumEdgePadding = 128.0f;
-	const uint32_t eyeCount = globals::game::isVR ? 2u : 1u;
+	const uint32_t eyeCount = Util::EyeCount();
 	RE::NiFrustumPlanes frustums[2]{};
 	FrustumSoA frustumSoAs[2];
 	for (uint32_t eye = 0; eye < eyeCount; ++eye) {
@@ -737,7 +737,7 @@ void GrassOptimizations::UploadCullState(ID3D11DeviceContext* ctx, CullParamsCB&
 	ctx->CSSetShader(cullCS.get(), nullptr, 0);
 
 	// Reset all bucket arguments with one upload before dispatching.
-	const uint32_t eyeCount = globals::game::isVR ? 2u : 1u;
+	const uint32_t eyeCount = Util::EyeCount();
 	const uint32_t argumentCount = (uint32_t)visibleBuckets.size() * eyeCount * kTierCount * kArgsStride / sizeof(uint32_t);
 	cullArguments.assign(argumentCount, 0);
 

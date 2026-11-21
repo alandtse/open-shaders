@@ -1358,9 +1358,12 @@ PS_OUTPUT main(PS_INPUT input)
 		// Recovers occlusion for lights with no shadow-map slot; reflection passes render
 		// from another camera, so main-view depth can't be raymarched there.
 		uint contactShadowSteps = 0;
+		float contactShadowFade = 0.0;
 		[branch] if (SharedData::lightLimitFixSettings.EnableContactShadows && inWorld && !inReflection)
-			contactShadowSteps = round(SharedData::lightLimitFixSettings.ContactShadowMaxSteps *
-									   (1.0 - saturate(viewPosition.z / SharedData::lightLimitFixSettings.ContactShadowMaxDistance)));
+		{
+			contactShadowFade = LightLimitFix::GetContactShadowDistanceFade(viewPosition.z);
+			contactShadowSteps = contactShadowFade > 0.0 ? SharedData::lightLimitFixSettings.ContactShadowMaxSteps : 0;
+		}
 
 		[loop] for (uint i = 0; i < lightCount; i++)
 		{
@@ -1375,7 +1378,7 @@ PS_OUTPUT main(PS_INPUT input)
 			float lightShadow = 1.0;
 			if (inWorld && !inReflection && light.lightFlags & LightLimitFix::LightFlags::Shadow) {
 				bool shadowCoverage = false;
-				lightShadow = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, rotationMatrix, shadowCoverage);
+				lightShadow = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, rotationMatrix, 8u, sqrt(light.sizeBias), shadowCoverage);
 			}
 
 			float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WPosition.xyz;
@@ -1396,11 +1399,10 @@ PS_OUTPUT main(PS_INPUT input)
 				const bool canContactShadow = isParticleLight ?
 				                                  SharedData::lightLimitFixSettings.EnableParticleContactShadows :
 				                                  !(light.lightFlags & LightLimitFix::LightFlags::Simple);
-				float contactShadowFalloff = saturate(lightDist * light.invRadius);
-				bool passesContactIntensityGate = (1.0 - contactShadowFalloff * contactShadowFalloff) > SharedData::lightLimitFixSettings.ContactShadowMinIntensity;
-				if (canContactShadow && passesContactIntensityGate) {
+				const float contactShadowWeight = contactShadowFade * LightLimitFix::GetContactShadowIntensityFade(lightDist, light.invRadius);
+				if (canContactShadow && contactShadowWeight > 0.0) {
 					float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
-					lightShadow *= LightLimitFix::ContactShadows(viewPosition, screenNoise, normalize(lightPositionVS - viewPosition), lightDist, contactShadowSteps, eyeIndex);
+					lightShadow *= lerp(1.0, LightLimitFix::ContactShadows(viewPosition, screenNoise, normalize(lightPositionVS - viewPosition), lightDist, contactShadowSteps, eyeIndex), contactShadowWeight);
 				}
 			}
 

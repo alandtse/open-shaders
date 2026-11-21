@@ -295,6 +295,7 @@ namespace ShadowCasterManager
 		auto& r = it->second;
 		if (r.lastEpoch == s_casterClassEpoch)
 			return r;  // already classified this frame
+		const bool wasDynamic = r.dynamic;
 
 		const auto& wb = geom.worldBound;
 		const float cx = std::round(wb.center.x), cy = std::round(wb.center.y),
@@ -342,6 +343,8 @@ namespace ShadowCasterManager
 		// oscillating, so restore the base window for its next move.
 		if (!r.dynamic && r.framesSinceMove >= promoteAt * kSettledAtFactor)
 			r.promoteBackoff = 1;
+		if (!inserted && r.dynamic != wasDynamic)
+			r.classEpoch = s_casterClassEpoch;
 		return r;
 	}
 
@@ -367,6 +370,8 @@ namespace ShadowCasterManager
 	// Static casters the current StaticOnly bake appended, so an empty bake
 	// is never advertised as real cached content.
 	std::atomic<uint32_t> s_visitStaticCount{ 0 };
+	int s_visitBakeEpoch{ -1 };
+	bool s_visitBakeStale{ false };
 
 	// Folds one static caster into the running per-light static hash during the
 	// same accumulate that appends the movers -- no second caster walk needed.
@@ -452,6 +457,10 @@ namespace ShadowCasterManager
 		                          nullptr :
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
+		// A caster that settled since the bake is missing from it and is drawn live; one that started moving is still in
+		// it at its old pose and is left to it. Either way the light is queued for a rebake.
+		const bool bakeStale = rec && CasterChangedSinceBake(rec->classEpoch, s_visitBakeEpoch);
+		s_visitBakeStale |= bakeStale;
 		// Every static caster folds into the hash regardless of pass, so a
 		// static-set change is seen during whichever accumulate runs this frame.
 		if (!dynamic)
@@ -467,9 +476,10 @@ namespace ShadowCasterManager
 			s_visitStaticCount.fetch_add(1, std::memory_order_relaxed);
 			break;
 		case CasterPass::DynamicOnly:
-			if (!dynamic)
-				return true;  // composite pass skips baked static geometry
-			s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+			if (dynamic)
+				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+			if (CompositeSkipsCaster(dynamic, bakeStale))
+				return true;  // composite pass leaves baked geometry to the bake
 			break;
 		case CasterPass::All:
 			(dynamic ? s_dynamicCasterDraws : s_staticCasterDraws).fetch_add(1, std::memory_order_relaxed);
@@ -478,6 +488,19 @@ namespace ShadowCasterManager
 			break;
 		}
 		return false;
+	}
+
+	/// True for the rigid part of the actor carrying this light whose bounds hold it (the weapon, torch or cage it hangs on);
+	/// the skinned body and the rest of the actor's gear still cast, so a torch-bearer keeps their shadow.
+	static bool HeldByCarrier(RE::BSShadowLight& a_light, const RE::BSGeometry& a_geometry)
+	{
+		if (a_geometry.GetGeometryRuntimeData().skinInstance || !a_light.dynamic || !a_light.GetIsOmniLight())
+			return false;
+		const auto* ni = a_light.light.get();
+		if (!ni || a_geometry.worldBound.center.GetDistance(ni->world.translate) > a_geometry.worldBound.radius)
+			return false;
+		const auto* carrier = CarrierOf(ni);
+		return carrier && carrier == CarrierOf(&a_geometry);
 	}
 
 	/// The light's own reference, looked up once per light per frame: every near caster of one cull walk asks for the same one.
@@ -559,6 +582,8 @@ namespace ShadowCasterManager
 					return;  // skip append -- caster dropped from this shadow
 				}
 			}
+			if (light && HeldByCarrier(*light, a_visible))
+				return;
 			if (light && s_settings.SkipFlameEnclosure && EnclosesOwnFlame(*light, a_visible)) {
 				s_flameHolderSkipTotal.fetch_add(1, std::memory_order_relaxed);
 				return;

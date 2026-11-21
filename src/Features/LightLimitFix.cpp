@@ -12,6 +12,7 @@
 #include "LinearLighting.h"
 #include "Menu/PerformanceRenderer.h"
 #include "Profiler.h"
+#include "Utils/Game.h"
 #include "Utils/MathUtils.h"
 #include "Utils/UI.h"
 #include <bit>
@@ -51,6 +52,7 @@ namespace
 	constexpr float kJsonPlacedLightIntensityMax = 8.0f;
 	constexpr int kLightAttachRefreshFramesMin = 1;
 	constexpr int kLightAttachRefreshFramesMax = 600;
+	constexpr float kSoftShadowScaleMax = 2.0f;
 
 	void SanitizeSettings(LightLimitFix::Settings& a_settings)
 	{
@@ -64,6 +66,8 @@ namespace
 			Util::ClampFiniteOrDefault(a_settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, 1.0f);
 		a_settings.BillboardRadius =
 			Util::ClampFiniteOrDefault(a_settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, 1.0f);
+		a_settings.SoftShadowScale =
+			Util::ClampFiniteOrDefault(a_settings.SoftShadowScale, 0.0f, kSoftShadowScaleMax, 0.0f);
 		a_settings.ParticleClusterThreshold =
 			Util::ClampFiniteOrDefault(a_settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, 32.0f);
 		a_settings.MaxParticlesPerEmitter = std::clamp(a_settings.MaxParticlesPerEmitter, kMaxParticlesPerEmitterMin, kMaxParticlesPerEmitterMax);
@@ -131,6 +135,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ShadowSettings,
 	EnableParticleContactShadows,
 	SunLitHair,
+	SoftShadowScale,
 	EnableParticleLights,
 	EnableParticleLightsCulling,
 	EnableParticleLightsDetection,
@@ -247,6 +252,10 @@ void LightLimitFix::DrawSettings()
 	if (Util::BeginPillTabItem(T("feature.light_limit_fix.shadow_limit_fix_header", "Shadow Limit Fix"), nullptr,
 			selectShadows ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None)) {
 		ShadowCasterManager::DrawSettings(settings.ShadowSettings);
+		ImGui::SliderFloat(T("feature.light_limit_fix.soft_shadow_scale", "Soft Shadows by Light Size"), &settings.SoftShadowScale, 0.0f, kSoftShadowScaleMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("feature.light_limit_fix.soft_shadow_scale_tooltip", "Softens an inverse-square point light's shadow the farther it falls from what casts it, by the light's own size; linear lights have no size and stay hard. 0 keeps every shadow edge hard."));
+		}
 		Util::EndPillTabItem();
 	}
 
@@ -331,7 +340,7 @@ void LightLimitFix::DrawContactShadowSettings()
 		ImGui::SliderScalar(T("feature.light_limit_fix.contact_shadow_max_steps", "Max Steps"), ImGuiDataType_U32, &settings.ContactShadowMaxSteps,
 			&kMinSteps, &kMaxSteps, "%u", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T("feature.light_limit_fix.contact_shadow_max_steps_tooltip", "Raymarch steps at zero depth, packed toward the shaded point. A ray spends only as many steps as its length on screen allows, and above four steps rays that never approach an occluder are rejected early."));
+			ImGui::Text("%s", T("feature.light_limit_fix.contact_shadow_max_steps_tooltip", "Raymarch steps, packed toward the shaded point. A ray spends only as many steps as its length on screen allows, and above four steps rays that never approach an occluder are rejected early."));
 		}
 
 		// AlwaysClamp on every float slider too: without it, Ctrl+Click text entry can
@@ -339,7 +348,7 @@ void LightLimitFix::DrawContactShadowSettings()
 		// boundary clamp catches them at the GPU side.
 		ImGui::SliderFloat(T("feature.light_limit_fix.contact_shadow_max_distance", "Max Distance"), &settings.ContactShadowMaxDistance, 64.0f, 4096.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T("feature.light_limit_fix.contact_shadow_max_distance_tooltip", "View-space depth at which contact shadows fade to zero steps. Avoids paying for shadows on distant surfaces where they don't read."));
+			ImGui::Text("%s", T("feature.light_limit_fix.contact_shadow_max_distance_tooltip", "View-space depth by which contact shadows have faded out, over the last quarter of it. Avoids paying for shadows on distant surfaces where they don't read."));
 		}
 
 		ImGui::SliderFloat(T("feature.light_limit_fix.contact_shadow_length", "Length"), &settings.ContactShadowLength, 1.0f, 256.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
@@ -356,8 +365,8 @@ void LightLimitFix::DrawContactShadowSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s",
 				T("feature.light_limit_fix.contact_shadow_min_intensity_tooltip",
-					"Skip contact shadows for CLUSTERED lights whose normalized distance falloff "
-					"`1 - (lightDist/radius)^2` at the pixel is below this threshold. "
+					"Contact shadows of CLUSTERED lights fade out as the normalized distance falloff "
+					"`1 - (lightDist/radius)^2` at the pixel drops to this threshold, and are skipped below it. "
 					"Strict lights are always raymarched regardless of this threshold. "
 					"Higher = larger perf win, may drop subtle shadows from weak lights at their reach edge."));
 		}
@@ -566,6 +575,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	perFrame.ContactShadowMinIntensity = sanitizeFloat(settings.ContactShadowMinIntensity, 0.0f, 1.0f);
 	perFrame.ShadowMapSlots = ShadowCasterManager::GetInstalledSlotCount();
 	perFrame.SunLitHair = settings.SunLitHair ? 1u : 0u;
+	perFrame.SoftShadowScale = sanitizeFloat(settings.SoftShadowScale, 0.0f, kSoftShadowScaleMax);
 	perFrame.EnableParticleContactShadows = settings.EnableContactShadows && settings.EnableParticleContactShadows;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
 	perFrame.EnableLightsVisualisation = EnableLightsVisualisation;
@@ -639,7 +649,7 @@ void LightLimitFix::SetupResources()
 		uavDesc.Buffer.NumElements = numElements;
 		lightGrid->CreateUAV(uavDesc);
 
-		numElements = clusterSize[0] * clusterSize[1] * (globals::game::isVR ? 2u : 1u);
+		numElements = clusterSize[0] * clusterSize[1] * (Util::EyeCount());
 		sbDesc.StructureByteStride = sizeof(float) * 2;
 		sbDesc.ByteWidth = sbDesc.StructureByteStride * numElements;
 		tileDepthRange = eastl::make_unique<Buffer>(sbDesc, nullptr, "LLF::TileDepthRange");
@@ -1676,7 +1686,7 @@ void LightLimitFix::UpdateShadowDemand()
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		context->CSSetShader(shadowDepthPyramidCS.get(), nullptr, 0);
-		context->Dispatch(clusterSize[0], clusterSize[1], globals::game::isVR ? 2 : 1);
+		context->Dispatch(clusterSize[0], clusterSize[1], Util::EyeCount());
 
 		context->CSSetShader(nullptr, nullptr, 0);
 		ID3D11Buffer* null_cb = nullptr;
@@ -1790,7 +1800,7 @@ void LightLimitFix::UpdateShadowDemand()
 
 		// VR eyes and taps sum into one raw slot; divide by both here using THIS
 		// ring slot's dispatched TapCount so a mid-flight override can't desync it.
-		const float demandSumDivisor = (globals::game::isVR ? 2.0f : 1.0f) *
+		const float demandSumDivisor = static_cast<float>(Util::EyeCount()) *
 		                               static_cast<float>(std::max<uint32_t>(shadowDemandRingTapCount[i], 1u)) * 1024.0f;
 		const uint32_t* raw = static_cast<const uint32_t*>(mapped.pData);
 		for (uint32_t slot = 0; slot < MAX_SHADOW_DEMAND_SLOTS; slot++) {

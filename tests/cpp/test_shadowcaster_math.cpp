@@ -8,7 +8,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 using Catch::Approx;
+using ShadowCasterManager::CasterChangedSinceBake;
+using ShadowCasterManager::CompositeSkipsCaster;
+using ShadowCasterManager::CountsTowardPoseLatch;
 using ShadowCasterManager::DemandStreakBucket;
+using ShadowCasterManager::EdgeKeepsLight;
 using ShadowCasterManager::EngineShadowSliceCount;
 using ShadowCasterManager::FacingRotation;
 using ShadowCasterManager::FrameTimePercentile;
@@ -18,6 +22,7 @@ using ShadowCasterManager::HeldLightYields;
 using ShadowCasterManager::HemisphereSeamMargin;
 using ShadowCasterManager::HoldsFlame;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
+using ShadowCasterManager::KeepsLastValidOnAcquire;
 using ShadowCasterManager::kNotMoving;
 using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kSlotHoldMargin;
@@ -28,6 +33,7 @@ using ShadowCasterManager::NoteObjectMove;
 using ShadowCasterManager::ObjectMotion;
 using ShadowCasterManager::ObjectMovingUntil;
 using ShadowCasterManager::PlayerProtectionCap;
+using ShadowCasterManager::ProjectedLightExtent;
 using ShadowCasterManager::QuantizeFloat;
 using ShadowCasterManager::SliceCappedLightCount;
 using ShadowCasterManager::SlotHeldScore;
@@ -293,6 +299,32 @@ TEST_CASE("SliceCappedLightCount keeps the highest point index inside the array"
 			REQUIRE(SliceCappedLightCount(count, slices) < slices);
 }
 
+TEST_CASE("EdgeKeepsLight keeps only a recently valid omni light that is neither hidden nor faded", "[scm]")
+{
+	REQUIRE(EdgeKeepsLight(true, false, false, false));
+	// Not recently valid, hidden, faded out by its level of detail, or a spot light: dropped as before.
+	REQUIRE_FALSE(EdgeKeepsLight(false, false, false, false));
+	REQUIRE_FALSE(EdgeKeepsLight(true, true, false, false));
+	REQUIRE_FALSE(EdgeKeepsLight(true, false, true, false));
+	REQUIRE_FALSE(EdgeKeepsLight(true, false, false, true));
+}
+
+TEST_CASE("KeepsLastValidOnAcquire keeps only this frame's stamp", "[scm]")
+{
+	REQUIRE(KeepsLastValidOnAcquire(120, 120));
+	REQUIRE_FALSE(KeepsLastValidOnAcquire(119, 120));
+	REQUIRE_FALSE(KeepsLastValidOnAcquire(-1, 120));
+}
+
+TEST_CASE("Shadow ranking clips lights crossing the camera plane", "[scm]")
+{
+	REQUIRE(ProjectedLightExtent(0.0f, 1.0f, -3.0f, -1.0f) == 0.0f);
+	REQUIRE(ProjectedLightExtent(1.7f, 0.3f, -0.2f, 0.7f) == 0.0f);
+	REQUIRE(ProjectedLightExtent(0.9f, 0.3f, -0.1f, 1.0f) == Approx(0.2f));
+	REQUIRE(ProjectedLightExtent(-0.9f, 0.3f, -0.1f, 1.0f) == Approx(0.2f));
+	REQUIRE(ProjectedLightExtent(0.0f, 0.5f, -0.1f, 1.0f) == 1.0f);
+}
+
 TEST_CASE("HeldLightYields seats only lights out of view after the lights in view", "[scm]")
 {
 	REQUIRE(HeldLightYields(false, false, false));
@@ -331,6 +363,28 @@ TEST_CASE("PerFrameCache works a key out once per frame and drops it on the next
 	REQUIRE(made == 2);
 	REQUIRE(cache.Get(11, 1, make) == 3);
 	REQUIRE(cache.entries.size() == 1);
+}
+
+TEST_CASE("A caster that changed class after the bake marks the bake stale", "[scm]")
+{
+	REQUIRE_FALSE(CasterChangedSinceBake(5, 5));
+	REQUIRE_FALSE(CasterChangedSinceBake(4, 5));
+	REQUIRE(CasterChangedSinceBake(6, 5));
+	REQUIRE(CasterChangedSinceBake(0, -1));
+	REQUIRE(CompositeSkipsCaster(false, false));
+	REQUIRE_FALSE(CompositeSkipsCaster(true, false));
+	REQUIRE_FALSE(CompositeSkipsCaster(false, true));
+	REQUIRE(CompositeSkipsCaster(true, true));
+}
+
+TEST_CASE("CountsTowardPoseLatch leaves out a rebake queued only by a class change", "[scm]")
+{
+	REQUIRE_FALSE(CountsTowardPoseLatch(true, true, 0, true));
+	REQUIRE_FALSE(CountsTowardPoseLatch(true, true, 2, true));
+	REQUIRE(CountsTowardPoseLatch(true, true, 3, true));
+	REQUIRE(CountsTowardPoseLatch(true, true, 0, false));
+	REQUIRE(CountsTowardPoseLatch(true, false, 0, true));
+	REQUIRE(CountsTowardPoseLatch(false, true, 0, true));
 }
 
 TEST_CASE("HoldsFlame takes only a small part round or under the flame", "[scm]")

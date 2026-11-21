@@ -17,6 +17,26 @@ namespace ShadowCasterManager
 	using Util::HashCombineFloat;
 	using Util::QuantizeFloat;
 
+	/// True when a caster switched static / moving after the light's bake rendered: the bake lacks it or holds it at an old pose.
+	inline bool CasterChangedSinceBake(int a_classEpoch, int a_bakeEpoch) noexcept
+	{
+		return a_classEpoch > a_bakeEpoch;
+	}
+
+	/// True when the composite pass leaves a caster to the bake: one static since the bake, or one that started moving after it,
+	/// which the bake still holds at its old pose until the rebake, so it is never drawn beside its baked copy.
+	inline bool CompositeSkipsCaster(bool a_dynamic, bool a_bakeStale) noexcept
+	{
+		return a_dynamic == a_bakeStale;
+	}
+
+	/// True for a rebake that counts toward the pose-rebake latch: one queued only because a caster changed class, while the light's
+	/// valid bake still matches its pose and the static hash has not diverged for three accumulates, does not.
+	inline bool CountsTowardPoseLatch(bool a_bakeStale, bool a_staticValid, uint8_t a_mismatchStreak, bool a_poseMatches) noexcept
+	{
+		return !(a_bakeStale && a_staticValid && a_mismatchStreak < 3 && a_poseMatches);
+	}
+
 	/// Largest unscaled bound radius of a part that can hold a light's flame, and how far past its bound the flame may sit.
 	inline constexpr float kFlameEnclosureMaxRadius = 20.0f;
 	inline constexpr float kFlameEnclosureReachMargin = 4.0f;
@@ -92,11 +112,37 @@ namespace ShadowCasterManager
 	/// How far a challenger must out-score a light already holding a shadow slot.
 	inline constexpr double kSlotHoldMargin = 1.25;
 
+	/// Fraction of one screen axis covered by a light's clip-space bounds.
+	inline float ProjectedLightExtent(float center, float extent, float nearestW, float farthestW) noexcept
+	{
+		if (farthestW <= 0.0f)
+			return 0.0f;
+		const float low = center - extent;
+		const float high = center + extent;
+		const float left = low >= 0.0f ? low / farthestW : (nearestW > 0.0f ? low / nearestW : -1.0f);
+		const float right = high <= 0.0f ? high / farthestW : (nearestW > 0.0f ? high / nearestW : 1.0f);
+		return (std::clamp(right, -1.0f, 1.0f) - std::clamp(left, -1.0f, 1.0f)) * 0.5f;
+	}
+
 	/// A light's rank score once its slot is counted. A non-positive score stays
 	/// as it is: scaling it would rank the holder lower.
 	inline double SlotHeldScore(double a_score, bool a_holdsSlot) noexcept
 	{
 		return a_holdsSlot && a_score > 0.0 ? a_score * kSlotHoldMargin : a_score;
+	}
+
+	/// Whether a light the engine culled may stay a visible shadow light while its sphere is still in view: an omni light that
+	/// passed the engine's test within the exit streak and is neither hidden nor faded out by its level of detail.
+	inline bool EdgeKeepsLight(bool a_recentlyValid, bool a_hidden, bool a_lodFaded, bool a_frustumLight) noexcept
+	{
+		return a_recentlyValid && !a_hidden && !a_lodFaded && !a_frustumLight;
+	}
+
+	/// Whether a light acquiring a slot keeps its last-valid frame: one stamped this frame is its own engine pass or edge
+	/// keep, an older one may belong to a recycled pointer.
+	inline bool KeepsLastValidOnAcquire(int32_t a_lastValidFrame, int32_t a_nowFrame) noexcept
+	{
+		return a_lastValidFrame == a_nowFrame;
 	}
 
 	/// Share of the live fade a light's score fade takes each frame: a flicker averages out over about twenty frames.

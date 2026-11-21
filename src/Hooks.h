@@ -50,4 +50,13 @@ namespace Hooks
 
 	/** @brief Installs the optional pre-input feature callback, returning false if attachment fails. */
 	bool InstallBeforeInputPoll();
+
+	/** @brief Marks a paraboloid shadow map pass: inside it Utility paraboloid shadow draws get the seam clip geometry shader, which is unbound when the scope ends. */
+	struct ParaboloidClipScope
+	{
+		ParaboloidClipScope();
+		~ParaboloidClipScope();
+		ParaboloidClipScope(const ParaboloidClipScope&) = delete;
+		ParaboloidClipScope& operator=(const ParaboloidClipScope&) = delete;
+	};
 }
