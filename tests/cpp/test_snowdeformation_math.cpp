@@ -167,27 +167,28 @@ TEST_CASE("An item with no fresh probe read is unmeasured, not bare ground", "[s
 	REQUIRE(Math::MeasuredBlanket(true, 10, 10, 12, 0.0f, 20.0f) == Approx(0.0f));
 }
 
-TEST_CASE("A float candidate is probed without pressing, then floats on a positive read", "[snow-deformation]")
+TEST_CASE("A float candidate holds its press until a positive read, then floats", "[snow-deformation]")
 {
 	constexpr float carve = 20.0f;
 	constexpr float weightScale = 1.0f;
 	constexpr float minWeightScale = 0.1f;
 	constexpr uint64_t maxAge = 12;
+	const auto noSnow = [&](bool a_hasSample, uint64_t a_sampleFrame, uint64_t a_frame, float a_raise) {
+		return Math::MeasuredBlanket(a_hasSample, a_sampleFrame, a_frame, maxAge, a_raise, carve) <= 0.0f;
+	};
 
 	REQUIRE(Math::ProbesSnow(true, carve, false, true));
-	const bool unmeasured = !Math::HasFreshBlanket(false, 0, 1, maxAge);
-	REQUIRE(unmeasured);
-	REQUIRE_FALSE(Math::PressesSnow(false, unmeasured, weightScale, minWeightScale));
-	REQUIRE(Math::PressesSnow(false, false, weightScale, minWeightScale));
+	REQUIRE(noSnow(false, 0, 1, 0.0f));
+	REQUIRE_FALSE(Math::PressesSnow(false, noSnow(false, 0, 1, 0.0f), weightScale, minWeightScale));
+	REQUIRE_FALSE(Math::PressesSnow(false, noSnow(true, 1, 4, 0.0f), weightScale, minWeightScale));
+	REQUIRE_FALSE(Math::PressesSnow(false, noSnow(true, 1, 40, 8.0f), weightScale, minWeightScale));
 
 	const float blanket = Math::MeasuredBlanket(true, 1, 4, maxAge, 8.0f, carve);
 	const bool floating = blanket > 0.0f && Math::RestHeight(blanket, 0.0f, 0.0f) > 1.0f;
-	REQUIRE(Math::HasFreshBlanket(true, 1, 4, maxAge));
+	REQUIRE_FALSE(noSnow(true, 1, 4, 8.0f));
 	REQUIRE(floating);
 	REQUIRE_FALSE(Math::PressesSnow(floating, false, weightScale, minWeightScale));
-
-	const float bare = Math::MeasuredBlanket(true, 1, 4, maxAge, 0.0f, carve);
-	REQUIRE(Math::PressesSnow(bare > 0.0f, false, weightScale, minWeightScale));
+	REQUIRE(Math::PressesSnow(false, false, weightScale, minWeightScale));
 }
 
 TEST_CASE("Objects are probed only while gathering over carvable snow that needs a reading", "[snow-deformation]")

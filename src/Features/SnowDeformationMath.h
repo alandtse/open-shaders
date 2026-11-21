@@ -145,10 +145,10 @@ namespace SnowDeformationMath
 		return a_gathering && a_carve > 0.0f && (a_snowDrag || a_floatCandidate);
 	}
 
-	/** @brief Whether an object contact carves the snow: not while it floats, nor while a float candidate still awaits its first probe read, nor when too light. */
-	inline bool PressesSnow(bool a_floating, bool a_unmeasured, float a_weightScale, float a_minWeightScale)
+	/** @brief Whether an object contact carves the snow: not while it floats, nor while a float candidate has no snow under it (no fresh probe read, or a read of zero), nor when too light. */
+	inline bool PressesSnow(bool a_floating, bool a_noSnow, float a_weightScale, float a_minWeightScale)
 	{
-		return !a_floating && !a_unmeasured && a_weightScale >= a_minWeightScale;
+		return !a_floating && !a_noSnow && a_weightScale >= a_minWeightScale;
 	}
 
 	/** @brief Whether snow physics still runs for an object: over snow, or while it floats and must be released. */

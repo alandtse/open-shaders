@@ -1632,15 +1632,15 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 		const bool measureSnow = SnowDeformationMath::ProbesSnow(gatherOnUpdate, carve, settings.SnowDrag, floatCandidate);
 		float blanket = 0.0f;
 		float depression = 0.0f;
-		bool unmeasured = false;
+		bool noSnow = false;
 		if (measureSnow) {
 			std::scoped_lock lock(stampLock);
 			const auto sample = measuredBlanket.find(refID);
 			const bool sampled = sample != measuredBlanket.end();
-			unmeasured = floatCandidate && !SnowDeformationMath::HasFreshBlanket(sampled, sampled ? sample->second.frame : 0, gatherFrame, kBlanketSampleFrames);
 			blanket = SnowDeformationMath::MeasuredBlanket(sampled, sampled ? sample->second.frame : 0, gatherFrame, kBlanketSampleFrames, sampled ? sample->second.raise : 0.0f, carve);
 			if (const auto found = measuredDepth.find(refID); floatCandidate && found != measuredDepth.end())
 				depression = std::clamp(found->second, 0.0f, blanket);
+			noSnow = floatCandidate && blanket <= 0.0f;
 		}
 		const bool physicsActive = blanket > 0.0f;
 		const bool floating = physicsActive && floatCandidate && FloatRestHeight(contactScratch.front(), blanket, depression) > kFloorMinHeight;
@@ -1671,7 +1671,7 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 			const float weightScale = settings.WeightResponse ? SnowDeformationMath::WeightScale(pressure, kLightPressure, kHeavyPressure) : 1.0f;
 			if (gatherObjectSamples.size() < kMaxObjectSamples)
 				gatherObjectSamples.push_back({ ref->GetDisplayFullName(), contact.weight, contact.radius, area, pressure, weightScale, drop, physicsState, depression, impactScale });
-			if (!SnowDeformationMath::PressesSnow(floating, unmeasured, weightScale, kMinWeightScale))
+			if (!SnowDeformationMath::PressesSnow(floating, noSnow, weightScale, kMinWeightScale))
 				continue;
 			Stamp stamp{};
 			stamp.x = contact.centre.x;
