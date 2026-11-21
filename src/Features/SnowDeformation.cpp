@@ -2838,29 +2838,22 @@ void SnowDeformation::ReadProbes()
 				found->second = entry.second;
 		}
 	}
-	PublishMeasurements(measurements);
-	PublishBlankets(blankets);
+	PublishMeasurements(measurements, blankets);
 }
 
-void SnowDeformation::PublishBlankets(const std::vector<std::pair<RE::FormID, float>>& a_blankets)
+void SnowDeformation::PublishMeasurements(const std::vector<std::pair<RE::FormID, float>>& a_measurements, const std::vector<std::pair<RE::FormID, float>>& a_blankets)
 {
-	if (a_blankets.empty())
-		return;
-	std::scoped_lock lock(stampLock);
-	for (const auto& [owner, raise] : a_blankets)
-		measuredBlanket[owner] = { raise, gatherFrame };
-	std::erase_if(measuredBlanket, [this](const auto& a_entry) { return gatherFrame > a_entry.second.frame + kBlanketSampleForgetFrames; });
-}
-
-void SnowDeformation::PublishMeasurements(const std::vector<std::pair<RE::FormID, float>>& a_measurements)
-{
-	if (a_measurements.empty())
+	if (a_measurements.empty() && a_blankets.empty())
 		return;
 	std::scoped_lock lock(stampLock);
 	for (const auto& [owner, depth] : a_measurements) {
 		measuredSinks[owner] = depth;
 		measuredDepth[owner] = depth;
 	}
+	for (const auto& [owner, raise] : a_blankets)
+		measuredBlanket[owner] = { raise, gatherFrame };
+	if (!a_blankets.empty())
+		std::erase_if(measuredBlanket, [this](const auto& a_entry) { return gatherFrame > a_entry.second.frame + kBlanketSampleForgetFrames; });
 }
 
 float SnowDeformation::SnowCoverUpperBound(const Stamp& a_stamp, float a_reach) const
