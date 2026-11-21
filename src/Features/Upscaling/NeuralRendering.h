@@ -1,10 +1,13 @@
 #pragma once
 
 #include "NeuralRendering/ActorRegion.h"
+#include "NeuralRendering/CombatPausePolicy.h"
+#include "NeuralRendering/CombatState.h"
 #include "NeuralRendering/ContextProfile.h"
 #include "NeuralRendering/CropCalibration.h"
 #include "NeuralRendering/Diagnostics.h"
 #include "NeuralRendering/MaterialStrength.h"
+#include "NeuralRendering/ModelReconstruction.h"
 #include "NeuralRendering/Runtime.h"
 #include "NeuralRendering/Tuning.h"
 
@@ -27,7 +30,7 @@ struct NeuralRendering
 			kOff,        ///< Switched off.
 			kStarting,   ///< Enabled; the runtime initializes on the first world frame.
 			kActive,     ///< Running; text names the runtime version.
-			kSuspended,  ///< Enabled but dialogue-only gating holds it; resources and runtime stay alive.
+			kSuspended,  ///< Enabled but dialogue or combat gating holds it; resources and runtime stay alive.
 			kFailed      ///< Latched; text is the failure reason.
 		};
 		State state = State::kOff;
@@ -41,6 +44,10 @@ struct NeuralRendering
 		uint32_t height = 0;
 		/** @brief Eye count: 1 on flat, 2 on VR. */
 		uint32_t eyes = 0;
+		/** @brief Last admitted model size, including uniform scale and peripheral compression. */
+		uint32_t modelWidth = 0, modelHeight = 0;
+		/** @brief Last frame's PeripheralCompressionReason admission result. */
+		uint32_t peripheralCompressionReason = 0;
 		/** @brief Engine frame of the last frame NR applied; UINT32_MAX before the first. */
 		uint32_t lastAppliedFrame = UINT32_MAX;
 		/** @brief Frames NR has applied since startup. */
@@ -51,13 +58,15 @@ struct NeuralRendering
 		NR::RuntimeCapability capability;
 		/** @brief True while a failure is latched; the next successful frame clears it. */
 		bool failed = false;
-		/** @brief True when the material lane is present and the graded protection has not been rejected or degraded. */
+		/** @brief Last frame's shared combat admission decision; other blockers still apply. */
+		NR::CombatPauseSnapshot combatPause;
+		/** @brief True when the selected provider or compositor route has not rejected or lost material protection. */
 		bool materialStrengthAvailable = true;
-		/** @brief True when the last evaluate bound the graded material protection. */
+		/** @brief True when the last processed frame enabled material protection through the provider or source compositor. */
 		bool materialStrengthActive = false;
-		/** @brief Strengths bound by the last evaluate, indexed by NeuralRenderingCategory id: None, Skin, Hair, Eyes, Foliage, Landscape, Cloth, Metal. */
+		/** @brief Last processed frame's provider or compositor strengths, indexed by NeuralRenderingCategory id: None, Skin, Hair, Eyes, Foliage, Landscape, Cloth, Metal. */
 		std::array<float, NR::MaterialStrength::kCount> materialStrength{};
-		/** @brief Edge-softness radius bound by the last evaluate, in pixels. */
+		/** @brief Last processed frame's provider or compositor edge-softness radius, in pixels. */
 		uint32_t materialEdgeSoftness = 0;
 		/** @brief True while the eye-stagger is running: both eyes render and frame generation is idle. */
 		bool skipFrameReuseActive = false;
@@ -65,6 +74,10 @@ struct NeuralRendering
 		std::array<bool, 2> eyeReuse{};
 		/** @brief Frames the model ran for an eye, and eye-frames it was reused instead, since startup. */
 		uint32_t modelFrames = 0, reuseFrames = 0;
+		/** @brief Reconstruction used by both eyes of the last applied frame. */
+		NR::Reconstruction::Mode modelReconstruction = NR::Reconstruction::Mode::Native;
+		/** @brief An unavailable optional shader made the last applied frame use a basic reconstruction. */
+		bool modelReconstructionFallback = false;
 	};
 
 	/** @brief Which sources chose the crop NR last evaluated, as the settings panel and devbench report it. */
@@ -86,14 +99,16 @@ struct NeuralRendering
 
 	NeuralRendering();
 	~NeuralRendering();
-	/** @brief Installs the main-thread hook that tracks the actor NR scopes its evaluation to. */
+	/** @brief Installs the main-thread hook that samples combat state and tracks the scoped actor. */
 	void InstallHooks();
+	/** @brief Publishes player combat and pause state from the main thread, independently of actor cropping. */
+	void UpdateCombatState();
 	/** @brief Schedules recreation on the rendering thread. */
 	void SetupResources();
 	/** @brief Invalidates both temporal histories on loading or setting changes. */
 	void ResetHistory();
 	/** @brief Discards history when NR or the world is inactive, and mirrors the crop controls for the main thread. */
-	void Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified, const std::string& runtimeVariant);
+	void Reset(bool enabled, bool pauseInCombat, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified, const std::string& runtimeVariant);
 	/**
 	 * @brief Republishes the tracked actor's per-eye crop; runs on the main thread.
 	 *        Crop pixels are NR's render pixels, not the screen's, and the hook measures nothing
@@ -157,6 +172,12 @@ private:
 	std::unique_ptr<Impl> impl;
 	NR::Diagnostics diagnostics;
 	std::atomic_bool resetHistory = true, recreate = false, clearShaders = false, retryRequested = false;
+	NR::CombatPausePolicy combatPause;
+	NR::CombatState combatState;
+	mutable std::mutex combatPauseMutex;
+	NR::CombatPausePhase publishedCombatPhase = NR::CombatPausePhase::Disabled;
+	/** @brief Latches the published combat state once per render frame and resets history on admission changes. */
+	NR::CombatPauseSnapshot ResolveCombatPause(bool enabled);
 	/** @brief The previous hook call's situation; NR::Context::Resolve updates it and flags the transitions that reset history. */
 	NR::Context::ContextState contextState;
 	Status status;
@@ -193,6 +214,10 @@ private:
 	/** @brief Eye-stagger mirrors for the status snapshot, written on the render thread. */
 	std::atomic_bool skipFrameReuseActive = false;
 	std::atomic<uint32_t> eyeReuseMask = 0, modelFrames = 0, reuseFrames = 0;
+	/** @brief Reconstruction mirrors for the last applied frame's status snapshot. */
+	std::atomic<NR::Reconstruction::Mode> modelReconstruction = NR::Reconstruction::Mode::Native;
+	std::atomic_bool modelReconstructionFallback = false;
+	std::atomic<uint32_t> peripheralCompressionReason = 0;
 	/** @brief Material-strength mirrors for the status snapshot, written on the render thread. */
 	std::atomic_bool materialStrengthActive = false, materialStrengthAvailable = true;
 	std::array<std::atomic<float>, NR::MaterialStrength::kCount> materialStrengthValues{};

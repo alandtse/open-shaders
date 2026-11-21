@@ -38,6 +38,19 @@ namespace ShadowCasterManager
 	/// True while a flickering light keeps its baked static shadow across small pose drift.
 	inline bool TolerantSplit() { return s_settings.TolerantSplitCache; }
 
+	/// The placed reference a scene object belongs to, as T, or null. SEH-guarded: GetUserData walks NiAVObject::parent, which is
+	/// not refcounted and can dangle during scene teardown.
+	template <class T>
+	T* OwnerAs(const RE::NiAVObject* a_object) noexcept
+	{
+		__try {
+			auto* ref = a_object->GetUserData();
+			return ref ? ref->As<T>() : nullptr;
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		}
+		return nullptr;
+	}
+
 	// External conflict detection
 	extern bool s_externalConflict;
 	extern std::string s_conflictMessage;
@@ -295,6 +308,9 @@ namespace ShadowCasterManager
 	/// (either person): held torches and Candlelight-style spell lights.
 	bool IsPlayerAttachedLight(const RE::NiLight* ni);
 
+	/// The actor whose 3D holds this object, or null; safe while the scene tears down.
+	RE::Actor* CarrierOf(const RE::NiAVObject* ni) noexcept;
+
 	/// Geometric + photometric per-light signals computed once per candidate.
 	struct LightGeometry
 	{
@@ -369,6 +385,7 @@ namespace ShadowCasterManager
 	extern std::atomic<uint32_t> s_hemisphereDropCount;
 	extern std::atomic<uint64_t> s_hemisphereDropTotal;
 	extern std::atomic<uint64_t> s_passlessCasterSkipTotal;
+	extern std::atomic<uint64_t> s_flameHolderSkipTotal;
 	/// Indexed by the classifier's PasslessReason (0 unused).
 	extern std::atomic<uint64_t> s_passlessCasterSkipByReason[5];
 	extern std::atomic<uint32_t> s_frontAppendCount;

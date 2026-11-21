@@ -337,7 +337,7 @@ void LODShadows::Invalidate()
 
 void LODShadows::CreateMaskResources()
 {
-	const uint32_t eyes = globals::game::isVR ? 2 : 1;
+	const uint32_t eyes = Util::EyeCount();
 	const uint32_t width = (uint32_t(globals::state->screenSize.x) / eyes + kMaskDownsample - 1) / kMaskDownsample * eyes;
 	const uint32_t height = (uint32_t(globals::state->screenSize.y) + kMaskDownsample - 1) / kMaskDownsample;
 	if (maskTextures[0] && maskTextures[0]->desc.Width == width && maskTextures[0]->desc.Height == height)
@@ -372,7 +372,7 @@ void LODShadows::DrawMask()
 		return;
 	CreateMaskResources();
 	const auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
-	const uint32_t eyes = globals::game::isVR ? 2 : 1;
+	const uint32_t eyes = Util::EyeCount();
 	maskDimensions = { (uint32_t(renderSize.x) / eyes + kMaskDownsample - 1) / kMaskDownsample * eyes,
 		(uint32_t(renderSize.y) + kMaskDownsample - 1) / kMaskDownsample };
 	if (!maskDimensions[0] || !maskDimensions[1])

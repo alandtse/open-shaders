@@ -10,6 +10,7 @@
 #include "../../EngineFixes/CullPoolExhaustionFix.h"
 #include "../../Globals.h"
 #include "../../GpuPass.h"
+#include "../../Hooks.h"
 #include "../../State.h"
 #include "../../Utils/Game.h"
 #include "../../Utils/PerfUtils.h"
@@ -22,6 +23,7 @@
 #include "LitRegion.h"
 #include "ShadowCasterInternal.h"
 #include "SplitLatchBackoff.h"
+#include "Utils/Game.h"
 
 #include <Windows.h>  // SEH (__try) for the shadow-light usability backstop
 
@@ -162,15 +164,9 @@ namespace ShadowCasterManager
 		return s_settings.ProtectPlayerShadows && PlayerWithinLightRadius(light, kPlayerCasterReachUnits);
 	}
 
-	// SEH in its own function: GetUserData walks NiAVObject::parent, which is not refcounted and can dangle during scene teardown.
-	static RE::Actor* CarrierOf(const RE::NiLight* ni) noexcept
+	RE::Actor* CarrierOf(const RE::NiAVObject* ni) noexcept
 	{
-		__try {
-			auto* ref = ni->GetUserData();
-			return ref ? ref->As<RE::Actor>() : nullptr;
-		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-		}
-		return nullptr;
+		return OwnerAs<RE::Actor>(ni);
 	}
 
 	/// The body a dynamic omni light is carried by, or null: the first-person model while the player carrying it is seen in first person.
@@ -189,20 +185,42 @@ namespace ShadowCasterManager
 		    .get();
 	}
 
-	/// UpdateCamera with a carried omni light's front paraboloid turned at its carrier, so the seam never crosses the body it is
-	/// closest to; the node's rotation is put back right after the copy.
-	static bool UpdateCameraFacingCarrier(RE::BSShadowLight* light, RE::NiCamera* camera)
+	/// Flags the draws of a carried light's shadow so the paraboloid pass drops the casters hugging it, its holder's hand among them.
+	class CarriedShadowScope
 	{
-		const auto* body = CarrierBody(light);
+	public:
+		explicit CarriedShadowScope(bool a_carried) :
+			state(a_carried ? globals::state : nullptr),
+			wasSet(state && (state->permutationData.ExtraShaderDescriptor & kCarried) != 0)
+		{
+			if (state)
+				state->permutationData.ExtraShaderDescriptor |= kCarried;
+		}
+		~CarriedShadowScope()
+		{
+			if (state && !wasSet)
+				state->permutationData.ExtraShaderDescriptor &= ~kCarried;
+		}
+		CarriedShadowScope(const CarriedShadowScope&) = delete;
+		CarriedShadowScope& operator=(const CarriedShadowScope&) = delete;
+
+	private:
+		static constexpr uint32_t kCarried = static_cast<uint32_t>(State::ExtraShaderDescriptors::CarriedShadowLight);
+		State* state;
+		bool wasSet;
+	};
+
+	/// Keep the seam off the carrier when UpdateCamera sets both cameras and EnableLight refreshes the front one.
+	template <class F>
+	static decltype(auto) WithCarrierFacing(RE::BSShadowLight* light, const RE::NiAVObject* body, F&& apply)
+	{
 		if (!body)
-			return light->UpdateCamera(camera);
+			return apply();
 		auto* ni = light->light.get();
-		const auto rotate = ni->world.rotate;
+		const SKSE::stl::scope_exit restoreRotation([ni, rotate = ni->world.rotate] { ni->world.rotate = rotate; });
 		const auto toBody = body->worldBound.center - ni->world.translate;
 		FacingRotation(toBody.x, toBody.y, toBody.z, ni->world.rotate.entry);
-		const bool valid = light->UpdateCamera(camera);
-		ni->world.rotate = rotate;
-		return valid;
+		return apply();
 	}
 
 	/// Player-only dynamic-caster proxy, applied every frame on top of the
@@ -417,6 +435,7 @@ namespace ShadowCasterManager
 		bool bakeSawStatic = false;
 		/// Baked, and no DynamicOnly accumulate has reused the cache yet.
 		bool bakeUnproven = false;
+		RE::NiMatrix3 lastRot{};  ///< light rotation at the previous accumulate
 	};
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
 
@@ -1058,7 +1077,7 @@ namespace ShadowCasterManager
 	}
 
 	static void EnableLight(RE::BSShadowLight* light, RE::NiCamera* camera,
-		RE::ShadowSceneNode* ssn, int slotIndex)
+		RE::ShadowSceneNode* ssn, int slotIndex, const RE::NiAVObject* carrier)
 	{
 		EraseFromConvertList(light);
 
@@ -1082,7 +1101,7 @@ namespace ShadowCasterManager
 			}
 		}
 
-		GameEnableLight(ssn, light);
+		WithCarrierFacing(light, carrier, [&] { GameEnableLight(ssn, light); });
 		GameSetShadowCasterSlot(ssn, light, *GetAccumLightSlot(), 1);
 
 		{
@@ -1140,7 +1159,7 @@ namespace ShadowCasterManager
 		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
 			// A carried light's camera faces its holder, which the bake's pose does not record: it renders full.
-			bool split = StaticAtlasReady() && !CarrierBody(light);
+			bool split = StaticAtlasReady() && !carrier;
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
 			st->fullThisFrame = !split;
@@ -1182,6 +1201,17 @@ namespace ShadowCasterManager
 				mode = (slotInRange && SplitDynamicOnlyEligible(light, *st, staticValid)) ?
 				           CasterPass::DynamicOnly :
 				           CasterPass::StaticOnly;
+				// A turning light (a swinging lantern) leaves its bake's rotation by the next frame, and a bake frame
+				// keeps the previous frame's shadow, so it renders full until it holds still for a frame.
+				if (auto* ni = light->light.get()) {
+					const bool turning = st->bakePoseValid && ni->world.rotate != st->lastRot;
+					st->lastRot = ni->world.rotate;
+					if (mode == CasterPass::StaticOnly && turning) {
+						st->bakeQueued = true;
+						mode = CasterPass::All;
+						st->fullThisFrame = true;
+					}
+				}
 				// Bake budget: a hash-upset wave (scene entry, cell attach)
 				// otherwise bakes every light in the same few frames and
 				// starves the redraw budget. Deferred bakes stay queued; with
@@ -1598,16 +1628,33 @@ namespace ShadowCasterManager
 	__declspec(noinline) static bool SafeEnableAndValidate(LightEntry& e, RE::NiCamera* a_camera,
 		RE::ShadowSceneNode* a_ssn, std::uint32_t a_slot, bool a_pinOrigin, UsableFn&& a_isUsable)
 	{
+		RE::NiAVObject* facedNode = nullptr;
+		RE::NiMatrix3 facedRotate{};
 		__try {
 			// UpdateCamera copies the light pose into the shadow camera only while dynamic is set.
 			const bool wasDynamic = e.Light->dynamic;
 			if (a_pinOrigin)
 				e.Light->dynamic = false;
-			UpdateCameraFacingCarrier(e.Light, a_camera);
+			const auto* carrier = CarrierBody(e.Light);
+			if (carrier) {
+				auto* node = e.Light->light.get();
+				facedRotate = node->world.rotate;
+				node->IncRefCount();
+				facedNode = node;
+			}
+			WithCarrierFacing(e.Light, carrier, [&] { return e.Light->UpdateCamera(a_camera); });
 			e.Light->dynamic = wasDynamic;
-			EnableLight(e.Light, a_camera, a_ssn, a_slot);
-			return e.Light && a_isUsable(e.Light);
+			EnableLight(e.Light, a_camera, a_ssn, a_slot, carrier);
+			const bool usable = e.Light && a_isUsable(e.Light);
+			if (facedNode)
+				facedNode->DecRefCount();
+			return usable;
 		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+			// SEH skips WithCarrierFacing's scope_exit destructor; the extra ref keeps the node alive for this restore.
+			if (facedNode) {
+				facedNode->world.rotate = facedRotate;
+				facedNode->DecRefCount();
+			}
 			LogShadowSehCatch(e.Light);
 			return false;
 		}
@@ -1793,11 +1840,11 @@ namespace ShadowCasterManager
 	/// Latest per-candidate visibility audit, refilled only while diagnostics are wanted.
 	static std::vector<SchedSnapshot::LightVisibility> s_visAudit;
 
-	/// Tests a sphere against the four side planes of every eye's view-projection,
+	/// Tests a sphere against the four side planes and the eye plane of every eye's view-projection,
 	/// independent of the engine's own frustum flag. `centre` is world space.
 	static bool OwnSphereInFrustum(const RE::NiPoint3& centre, float radius, float& nearestEyeDistance)
 	{
-		const int eyes = globals::game::isVR ? 2 : 1;
+		const int eyes = Util::EyeCount();
 		bool inside = false;
 		nearestEyeDistance = FLT_MAX;
 		for (int eye = 0; eye < eyes; ++eye) {
@@ -1806,13 +1853,14 @@ namespace ShadowCasterManager
 			nearestEyeDistance = std::min(nearestEyeDistance, std::sqrt(rel.x * rel.x + rel.y * rel.y + rel.z * rel.z));
 			const auto& m = view.viewProjMat;
 			bool eyeInside = true;
-			for (int side = 0; side < 4 && eyeInside; ++side) {
+			for (int side = 0; side < 5 && eyeInside; ++side) {
 				const int axis = side >> 1;
 				const float sign = (side & 1) ? -1.0f : 1.0f;
-				const float px = m.m[0][3] + sign * m.m[0][axis];
-				const float py = m.m[1][3] + sign * m.m[1][axis];
-				const float pz = m.m[2][3] + sign * m.m[2][axis];
-				const float pw = m.m[3][3] + sign * m.m[3][axis];
+				const float axisScale = side < 4 ? sign : 0.0f;
+				const float px = m.m[0][3] + axisScale * m.m[0][axis];
+				const float py = m.m[1][3] + axisScale * m.m[1][axis];
+				const float pz = m.m[2][3] + axisScale * m.m[2][axis];
+				const float pw = m.m[3][3] + axisScale * m.m[3][axis];
 				const float len = std::sqrt(px * px + py * py + pz * pz);
 				if (len <= 0.0f)
 					continue;
@@ -1852,7 +1900,7 @@ namespace ShadowCasterManager
 		}
 		// The nearest lit receiver lies at the sphere's near point, the worst-case displacement.
 		const float d = std::max(nearestEyeDistance - radius, kWarpNearClampUnits);
-		const int eyes = globals::game::isVR ? 2 : 1;
+		const int eyes = Util::EyeCount();
 		const float eyeWidthPx = globals::state->screenSize.x / static_cast<float>(eyes);
 		float edgeErrPx = 0.0f;
 		for (int eye = 0; eye < eyes; ++eye) {
@@ -1888,6 +1936,35 @@ namespace ShadowCasterManager
 		RE::BSCullingProcess* globalCull = globalCullingProcesses.empty() ? nullptr : globalCullingProcesses.front();
 
 		int wantCount = 0;
+		const auto seat = [&wantCount](CandidateLight& c) {
+			// Impact floor: a below-floor light converts to a non-shadow light
+			// (keeps diffuse via clusters, drops redraw), same path as over-budget.
+			if (c.belowFloor) {
+				c.excess = true;
+			}
+			// Effective point-light capacity excludes engine-claimed focus shadow slots.
+			else if (wantCount < s_settings.ShadowLightCount - s_focusShadowSlots) {
+				c.chosen = true;
+				wantCount++;
+			} else {
+				c.excess = true;
+			}
+		};
+		// Lights the camera has left are seated after every light still in view, so turning back never waits out their hold.
+		static std::vector<CandidateLight*> heldOffView;
+		heldOffView.clear();
+		// Only the strongest valid lights reaching the player, up to the cap, keep their place ahead; the rest are seated by score
+		// among the other lights, so the lights in view still get slots.
+		const int protectionCap = PlayerProtectionCap(s_settings.ShadowLightCount);
+		int protectedKept = 0;
+		static std::vector<CandidateLight*> pastCap;
+		pastCap.clear();
+		size_t nextPastCap = 0;
+		const auto ranksAbove = [](const CandidateLight* a, const CandidateLight& b) {
+			if (a->score != b.score)
+				return a->score > b.score;
+			return reinterpret_cast<uintptr_t>(a->light) < reinterpret_cast<uintptr_t>(b.light);
+		};
 
 		// Per-candidate UpdateCamera vfunc + portal-graph visibility walk
 		// + chosen/excess tagging. Captured separately so memoization or
@@ -1915,7 +1992,7 @@ namespace ShadowCasterManager
 					const bool wasDynamic = l->dynamic;
 					if (pinNow)
 						l->dynamic = false;
-					cameraValid = UpdateCameraFacingCarrier(l, camera);
+					cameraValid = WithCarrierFacing(l, CarrierBody(l), [&] { return l->UpdateCamera(camera); });
 					l->dynamic = wasDynamic;
 				}
 				c.updateCameraFailed = !cameraValid;
@@ -1945,9 +2022,23 @@ namespace ShadowCasterManager
 					const bool recentlyValid = lastValidIt != s_lastValidFrame.end() &&
 					                           (nowFrame - lastValidIt->second) <
 					                               static_cast<int32_t>(kCameraExitStreak);
-					if (recentlyValid) {
+					// UpdateCamera sets both shadow cameras before its frustum test, which a flickering radius grazing the view edge
+					// flips; an omni light our own sphere test still sees stays a visible light and keeps redrawing.
+					float edgeEyeDistance = 0.0f;
+					const bool edgeKept = EdgeKeepsLight(recentlyValid, hiddenNow, lodFadedNow, l->GetIsFrustumLight()) &&
+					                      OwnSphereInFrustum(nilightNow->world.translate, nilightNow->GetLightRuntimeData().radius.x * nilightNow->world.scale, edgeEyeDistance);
+					if (edgeKept) {
+						lastValidIt->second = nowFrame;
+					} else if (recentlyValid) {
 						c.cameraHold = true;
 						s_cameraHold.insert(l);
+						float eyeDistance = 0.0f;
+						const bool ownInView = !hiddenNow &&
+						                       OwnSphereInFrustum(nilightNow->world.translate, nilightNow->GetLightRuntimeData().radius.x, eyeDistance);
+						if (HeldLightYields(ownInView, c.playerProtected, hiddenNow)) {
+							heldOffView.push_back(&c);
+							continue;
+						}
 					} else {
 						c.invalidCamera = true;
 						c.invalid = true;
@@ -1978,18 +2069,26 @@ namespace ShadowCasterManager
 					}
 				}
 
-				// Impact floor: a below-floor light converts to a non-shadow light
-				// (keeps diffuse via clusters, drops redraw), same path as over-budget.
-				if (c.belowFloor) {
-					c.excess = true;
-				}
-				// Effective point-light capacity excludes engine-claimed focus shadow slots.
-				else if (wantCount < s_settings.ShadowLightCount - s_focusShadowSlots) {
-					c.chosen = true;
-					wantCount++;
+				if (c.playerProtected) {
+					if (protectedKept >= protectionCap) {
+						c.playerProtected = false;
+						pastCap.push_back(&c);
+						continue;
+					}
+					++protectedKept;
 				} else {
-					c.excess = true;
+					while (nextPastCap < pastCap.size() && ranksAbove(pastCap[nextPastCap], c))
+						seat(*pastCap[nextPastCap++]);
 				}
+				seat(c);
+			}
+			while (nextPastCap < pastCap.size())
+				seat(*pastCap[nextPastCap++]);
+			for (auto* held : heldOffView) {
+				seat(*held);
+				// One that found no slot has no shadow left to keep, so its tile may go to the lights in view.
+				if (!held->chosen)
+					s_cameraHold.erase(held->light);
 			}
 			// s_cameraHold just finished repopulating -- publish freshness now, not at
 			// the earlier clear, so a reader can never observe a generation match
@@ -2227,7 +2326,9 @@ namespace ShadowCasterManager
 				// A fresh occupant may be a recycled pointer; the pointer-keyed
 				// EMA/streak/split-state caches aren't cleared by Clear() above, so
 				// erase them explicitly or it inherits the previous occupant's state.
-				s_lastValidFrame.erase(cp->light);
+				if (const auto lastValidIt = s_lastValidFrame.find(cp->light);
+					lastValidIt != s_lastValidFrame.end() && !KeepsLastValidOnAcquire(lastValidIt->second, *globals::game::frameCounter))
+					s_lastValidFrame.erase(lastValidIt);
 				s_belowFloorStreak.erase(cp->light);
 				if (const auto splitIt = s_splitState.find(cp->light); splitIt != s_splitState.end()) {
 					RetireSplitBake(splitIt->second);
@@ -3570,6 +3671,7 @@ namespace ShadowCasterManager
 				snap.backOnlyAppendTotal = s_backOnlyAppendTotal.load(std::memory_order_relaxed);
 				snap.hemisphereDropTotal = s_hemisphereDropTotal.load(std::memory_order_relaxed);
 				snap.passlessCasterSkipTotal = s_passlessCasterSkipTotal.load(std::memory_order_relaxed);
+				snap.flameHolderSkipTotal = s_flameHolderSkipTotal.load(std::memory_order_relaxed);
 				for (int reason = 1; reason < 5; ++reason)
 					snap.passlessCasterSkipByReason[reason] = s_passlessCasterSkipByReason[reason].load(std::memory_order_relaxed);
 				if (const uint32_t n = s_cpuAccumN.exchange(0, std::memory_order_relaxed))
@@ -3715,6 +3817,28 @@ namespace ShadowCasterManager
 		}
 	}
 
+	/// Farthest a light may stand from where its slot last drew it and still count as the same light across a cell-grid shift.
+	constexpr float kCellShiftSameLightSq = 64.0f * 64.0f;
+
+	/// True for a light that keeps its slot through a cell-grid shift: it owns a slot, is still an active shadow light and stands
+	/// where that slot last drew it, so an address the shift recycled for another light does not inherit its camera history.
+	static bool KeepsSlotThroughCellShift(RE::ShadowSceneNode* a_ssn, const RE::BSShadowLight* a_light)
+	{
+		if (!a_ssn)
+			return false;
+		const auto& alive = a_ssn->GetRuntimeData().activeShadowLights;
+		if (std::ranges::none_of(alive, [a_light](const auto& sp) { return sp.get() == a_light; }))
+			return false;
+		for (int i = 0; i < s_lights.Size; i++) {
+			const auto& e = s_lights.Lights[i];
+			if (e.Light != a_light)
+				continue;
+			const auto* ni = a_light->light.get();
+			return ni && ni->world.translate.GetSquaredDistance(e.lastRenderedPos) <= kCellShiftSameLightSq;
+		}
+		return false;
+	}
+
 	void ScheduleShadowCasters()
 	{
 		ZoneScopedN("SCM::ScheduleShadowCasters");
@@ -3767,6 +3891,7 @@ namespace ShadowCasterManager
 		// scoring it now touches freed memory. Load-bearing: don't remove this return.
 		if (s_pendingSessionReset.exchange(false, std::memory_order_acquire)) {
 			s_everHadShadow.clear();
+			s_lastValidFrame.clear();
 			ResetSession();
 			return;
 		}
@@ -3778,7 +3903,8 @@ namespace ShadowCasterManager
 			s_cellResetTotal.fetch_add(1, std::memory_order_relaxed);
 			s_casterMobility.clear();
 			s_everHadShadow.clear();  // a cell swap recycles NiLight addresses
-			s_splitState.clear();     // bakeQueued defaults true: every light re-bakes
+			std::erase_if(s_lastValidFrame, [ssn](const auto& kv) { return !KeepsSlotThroughCellShift(ssn, kv.first); });
+			s_splitState.clear();  // bakeQueued defaults true: every light re-bakes
 			ShadowCasterManager::InvalidateAllStaticBakes();
 		}
 
@@ -3955,6 +4081,7 @@ namespace ShadowCasterManager
 
 		ZoneScopedN("SCM::RenderScheduledShadowLights");
 		CS_GPU_PASS("SCM::RenderScheduledShadowLights");
+		const Hooks::ParaboloidClipScope paraboloidClip;
 
 		s_budget.Begin(1);
 		s_budget.BeginRenderBatch();
@@ -3986,13 +4113,19 @@ namespace ShadowCasterManager
 				auto& e = s_lights.Lights[i];
 				if (!e.Light || !e.RedrawFrame)
 					continue;
+				const CarriedShadowScope carriedShadow(CarrierBody(e.Light) != nullptr);
 				bool keepPriorContent = false;
 				bool emptyRender = false;
 				if (AtlasActive()) {
+					auto* split = StaticAtlasReady() ? &s_splitState[e.Light] : nullptr;
+					const bool useSplit = split && !split->splitExcluded && !split->fullThisFrame;
+					AtlasTileTexels live{};
+					const bool resizeAfterComposite = useSplit && !split->bakeThisFrame &&
+					                                  !SlotTileFits(i, e.pendingScale) && GetSlotTileTexels(i, live) && live.contentValid;
 					// Tile before raster: (re)size for the pending class and rect-clear
 					// once per redraw -- the paraboloid halves share the tile, so
 					// clearing inside the cascade would wipe the first half.
-					if (!EnsureSlotTile(i, e.pendingScale)) {
+					if (!resizeAfterComposite && !EnsureSlotTile(i, e.pendingScale)) {
 						// Atlas exhausted even at the quarter class: raster must still run --
 						// EnableLight already registered this light's passes, and an unconsumed
 						// group is freed-but-not-unlinked at frame end. The viewport hook
@@ -4009,9 +4142,8 @@ namespace ShadowCasterManager
 					}
 					// On a bake frame, render the static subset into the cache atlas;
 					// otherwise copy the cache into the tile and composite movers over it.
-					if (StaticAtlasReady() &&
-						!s_splitState[e.Light].splitExcluded && !s_splitState[e.Light].fullThisFrame) {
-						SplitState& st = s_splitState[e.Light];
+					if (useSplit) {
+						SplitState& st = *split;
 						if (st.bakeThisFrame) {
 							ZoneNamedN(zBake, "SCM::Render::StaticBake", true);
 							s_staticPassActive.store(true, std::memory_order_relaxed);
@@ -4085,8 +4217,14 @@ namespace ShadowCasterManager
 							// A movers-only frame (invalid seed) must not swap a staged promotion
 							// in: keep sampling the old complete tile until a seeded composite lands.
 							if (rendered && !compositeKeepPrior && composedContent) {
-								e.renderedScale = e.pendingScale;
+								if (!resizeAfterComposite)
+									e.renderedScale = e.pendingScale;
 								MarkSlotTileRendered(i, compositeValid);
+							}
+							if (resizeAfterComposite) {
+								// Staging a larger tile invalidates the static seed this draw was queued to use.
+								EnsureSlotTile(i, e.pendingScale);
+								e.awaitingTileResult = false;
 							}
 							continue;
 						}

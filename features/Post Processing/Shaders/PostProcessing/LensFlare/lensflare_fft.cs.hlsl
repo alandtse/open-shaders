@@ -11,6 +11,7 @@
 //   CSFFTThreshold   — Convert half-res threshold to N×N RG32F for FFT input
 //   CSFFTGhostCompose — IFFT result → multi-scale ghost sampling + halo + tint
 
+#include "Common/StereoEye.hlsli"
 #include "PostProcessing/common.hlsli"
 
 static const float PI = 3.14159265358979323846;
@@ -69,7 +70,8 @@ cbuffer LensFlareConstants : register(b1)
 
 	uint ActiveGhostMask;
 	float ApertureSize;
-	float2 _pad0;
+	uint EyeIndex;
+	float _pad0;
 
 	float4 GhostColors[NUM_GHOSTS];
 	float4 GhostScalesPacked[2];
@@ -323,7 +325,7 @@ float2 Twiddle(uint k, uint N)
 		return;
 	}
 
-	float3 color = InputTexture.SampleLevel(BokehSampler, sceneUV, 0).rgb;
+	float3 color = InputTexture.SampleLevel(BokehSampler, Stereo::ConvertToStereoUV(sceneUV, EyeIndex), 0).rgb;
 	float luminance = dot(color, float3(0.333, 0.333, 0.333));
 
 	RWTexComplex[tid] = float2(luminance, 0);
@@ -356,12 +358,13 @@ float DiscMask(float2 screenPos)
 }
 
 [numthreads(8, 8, 1)] void CSFFTGhostCompose(uint2 tid : SV_DispatchThreadID) {
-	uint outW = (uint)OutputWidth;
+	uint outW = (uint)OutputWidth / kEyeCount;
 	uint outH = (uint)OutputHeight;
 	if (tid.x >= outW || tid.y >= outH)
 		return;
 
-	float2 uv = (float2(tid.xy) + 0.5) / float2(OutputWidth, OutputHeight);
+	uint2 outPixel = uint2(tid.x + EyeIndex * outW, tid.y);
+	float2 uv = (float2(tid.xy) + 0.5) / float2(outW, outH);
 	float3 color = float3(0, 0, 0);
 
 	// --- Ghost generation using FFT-convolved bokeh result ---
@@ -400,7 +403,7 @@ float DiscMask(float2 screenPos)
 			// Chromatic aberration in screen space
 			float chromaOffset = GhostChromaShift * 8.0;
 			float2 dir = normalize(ghostVector + 0.0001);
-			float2 pixelOffset = dir * chromaOffset / float2(OutputWidth, OutputHeight);
+			float2 pixelOffset = dir * chromaOffset / float2(outW, outH);
 			float2 uvR = ghostUV + pixelOffset;
 			float2 uvG = ghostUV;
 			float2 uvB = ghostUV - pixelOffset;
@@ -454,8 +457,8 @@ float DiscMask(float2 screenPos)
 
 	// Additive write (supports multi-pass for Ultra mode)
 #if defined(FIRST_GROUP)
-	RWTexColor[tid] = float4(color, 0.0);
+	RWTexColor[outPixel] = float4(color, 0.0);
 #else
-	RWTexColor[tid] = RWTexColor[tid] + float4(color, 0.0);
+	RWTexColor[outPixel] = RWTexColor[outPixel] + float4(color, 0.0);
 #endif
 }

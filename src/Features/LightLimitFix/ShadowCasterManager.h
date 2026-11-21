@@ -330,8 +330,12 @@ namespace ShadowCasterManager
 		/// them for the player only inside that frustum.
 		bool SpotLitRegion = true;
 
-		/// Ranks lights that reach the player first and lets them past the redraw budget, so shadows on the player do not flicker.
+		/// Ranks the strongest lights that reach the player first, up to half the shadow light count, and lets them past the redraw
+		/// budget, so shadows on the player do not flicker.
 		bool ProtectPlayerShadows = true;
+
+		/// Leaves out of a light's shadow the small parts of its own fixture that enclose its flame, such as a lantern's candle.
+		bool SkipFlameEnclosure = true;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
@@ -378,7 +382,8 @@ namespace ShadowCasterManager
 		WarpVisibilityGate,
 		WarpZeroDemandSkip,
 		SpotLitRegion,
-		ProtectPlayerShadows)
+		ProtectPlayerShadows,
+		SkipFlameEnclosure)
 
 	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
@@ -701,7 +706,7 @@ namespace ShadowCasterManager
 			float lodDimmer = 1.0f;              ///< engine LOD fade multiplier
 			float distance = 0.0f;               ///< light centre to the nearest eye
 			float radius = 0.0f;                 ///< light radius
-			bool ownInFrustum = false;           ///< sphere touches any eye's left/right/top/bottom planes
+			bool ownInFrustum = false;           ///< sphere touches any eye's side planes and is not wholly behind its eye plane
 			bool cameraHold = false;             ///< kept by the exit-streak hysteresis after leaving view
 			bool hidden = false;                 ///< engine rejected it because the NiLight is hidden
 			bool shadowDistanceCulled = false;   ///< engine rejected it past the shadow distance
@@ -856,6 +861,7 @@ namespace ShadowCasterManager
 		/// Wholly-behind casters dropped because the light has no back hemisphere.
 		uint64_t hemisphereDropTotal = 0;
 		uint64_t passlessCasterSkipTotal = 0;      ///< casters skipped because the engine emits no shadow-map pass for them
+		uint64_t flameHolderSkipTotal = 0;         ///< casters skipped as the small part holding their own light's flame
 		uint64_t passlessCasterSkipByReason[5]{};  ///< no-shadow shader, refraction, alpha blend, faded
 
 		/// Redraws elided by the empty-dynamic sleep skip (chosen light whose

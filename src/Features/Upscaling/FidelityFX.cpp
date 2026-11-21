@@ -1,5 +1,6 @@
 #include "FidelityFX.h"
 #include "Features/ReverseZ.h"
+#include "Utils/Game.h"
 
 #include <directx/d3dx12.h>
 
@@ -375,7 +376,7 @@ void FidelityFX::CreateFSRResources()
 
 	auto fsrDevice = ffxGetDeviceDX11_Fsr31(globals::d3d::device);
 
-	uint32_t numContexts = globals::game::isVR ? 2 : 1;
+	uint32_t numContexts = Util::EyeCount();
 	size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(numContexts);
 	fsrScratchBuffer = calloc(scratchBufferSize, 1);
 	if (!fsrScratchBuffer) {
@@ -404,9 +405,9 @@ void FidelityFX::CreateFSRResources()
 	const bool dlssperfActive = perfMode.IsHookActive();
 	const auto displaySize = dlssperfActive ? perfMode.GetDisplayScreenSize() : screenSize;
 
-	uint32_t displayWidth = (uint32_t)(globals::game::isVR ? displaySize.x / 2 : displaySize.x);
+	uint32_t displayWidth = (uint32_t)(Util::EyeWidth(displaySize.x));
 	uint32_t displayHeight = (uint32_t)displaySize.y;
-	uint32_t renderWidth = (uint32_t)(globals::game::isVR ? renderSize.x / 2 : renderSize.x);
+	uint32_t renderWidth = (uint32_t)(Util::EyeWidth(renderSize.x));
 	uint32_t renderHeight = (uint32_t)renderSize.y;
 
 	for (uint32_t i = 0; i < numContexts; ++i) {
@@ -445,7 +446,7 @@ void FidelityFX::DestroyFSRResources()
 	WaitForHostFsrIdle();
 	ResetFSRIdleFence();
 
-	uint32_t numContexts = globals::game::isVR ? 2 : 1;
+	uint32_t numContexts = Util::EyeCount();
 	for (uint32_t i = 0; fsrScratchBuffer && i < numContexts; ++i) {
 		if (ffxFsr3ContextDestroy(&fsrContext[i]) != FFX_OK)
 			logger::critical("[FidelityFX] Failed to destroy FSR3 context for eye {}!", i);
@@ -517,7 +518,7 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_d
 			}
 		}
 
-		const uint32_t displayWidth = (uint32_t)(globals::game::isVR ? displaySize.x / 2 : displaySize.x);
+		const uint32_t displayWidth = (uint32_t)(Util::EyeWidth(displaySize.x));
 		const uint32_t displayHeight = (uint32_t)displaySize.y;
 
 		const bool dispatched = UpscaleRegion(contextIndex, r_color, r_depth, r_mvec, r_reactive, r_trans, r_output,

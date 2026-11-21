@@ -56,7 +56,8 @@ struct VS_OUTPUT
 #	endif
 
 #	if defined(RENDER_SHADOWMAP_PB)
-	float3 TexCoord1: TEXCOORD2;
+	float4 TexCoord1: TEXCOORD2;
+	float3 ViewPos: TEXCOORD6;
 #	elif defined(ALPHA_TEST) && (defined(RENDER_DEPTH) || defined(RENDER_SHADOWMAP))
 	float4 TexCoord1: TEXCOORD2;
 #	elif defined(ADDITIONAL_ALPHA_MASK)
@@ -99,6 +100,8 @@ cbuffer PerTechnique : register(b0)
 	float2 ParabolaParam : packoffset(c2);       // inverse radius in x, y is 1 for forward hemisphere or -1 for backward hemisphere
 #	endif  // VR
 };
+
+static const float CarriedCasterNearDistance = 12.0;
 
 cbuffer PerMaterial : register(b1)
 {
@@ -260,6 +263,7 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.PositionCS.xy = shadowDirection.xy / shadowDirection.z;
 	vsout.PositionCS.z = ParabolaParam.x * length(positionCSPerspective);
 	vsout.PositionCS.w = positionCS.w;
+	vsout.ViewPos = positionCSPerspective;
 #		else
 	vsout.PositionCS = positionCS;
 #		endif
@@ -320,6 +324,9 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.TexCoord1.y = positionCS.w;
 	precise float parabolaParam = ParabolaParam.y * positionCS.z;
 	vsout.TexCoord1.z = parabolaParam * 0.5 + 0.5;
+	vsout.TexCoord1.w = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::CarriedShadowLight) != 0 ?
+	                        min(ParabolaParam.x * CarriedCasterNearDistance, CarriedCasterNearDistance / 256.0) :
+	                        0.0;
 #		elif defined(ALPHA_TEST) && (defined(RENDER_DEPTH) || defined(RENDER_SHADOWMAP))
 	float4 texCoord1 = float4(0, 0, 0, 0);
 	texCoord1.xy = positionCS.zw;
@@ -550,7 +557,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 baseColor = TexBaseSampler.SampleBias(SampBaseSampler, baseTexCoord, SharedData::MipBias);
 
 #	if defined(RENDER_SHADOWMAP_PB)
-	if (input.TexCoord1.z < 0) {
+	if (input.TexCoord1.z < 0 || input.TexCoord1.x < input.TexCoord1.w) {
 		discard;
 	}
 #	endif
@@ -883,4 +890,134 @@ PS_OUTPUT main(PS_INPUT input)
 	return psout;
 }
 
+#endif
+
+#if defined(GEOMETRYSHADER) && defined(RENDER_SHADOWMAP_PB)
+// One count for every triangle, so two triangles sharing an edge split it at the same points.
+#	define PARABOLOID_SPLITS 2
+static const uint ParaboloidSplits = PARABOLOID_SPLITS;
+
+/// A point of a triangle at barycentric weights w, projected onto this half the way the vertex shader projects a vertex.
+VS_OUTPUT ParaboloidPoint(VS_OUTPUT a, VS_OUTPUT b, VS_OUTPUT c, float3 w, float hemisphere, float invRadius)
+{
+	VS_OUTPUT o = a;
+#	if (defined(ALPHA_TEST) && ((!defined(RENDER_DEPTH) && !defined(RENDER_SHADOWMAP)) || defined(RENDER_SHADOWMAP_PB))) || defined(RENDER_NORMAL) || defined(DEBUG_SHADOWSPLIT) || defined(RENDER_BASE_TEXTURE)
+	o.TexCoord0 = a.TexCoord0 * w.x + b.TexCoord0 * w.y + c.TexCoord0 * w.z;
+#	endif
+#	if defined(RENDER_NORMAL)
+	o.Normal = a.Normal * w.x + b.Normal * w.y + c.Normal * w.z;
+#	endif
+#	if defined(LOCALMAP_FOGOFWAR)
+	o.Alpha = a.Alpha * w.x + b.Alpha * w.y + c.Alpha * w.z;
+#	elif (defined(ALPHA_TEST) && defined(VC) && !defined(TREE_ANIM))
+	o.Alpha = a.Alpha * w.x + b.Alpha * w.y + c.Alpha * w.z;
+#	endif
+#	if defined(VR)
+	o.ClipDistance = a.ClipDistance * w.x + b.ClipDistance * w.y + c.ClipDistance * w.z;
+	o.CullDistance = a.CullDistance * w.x + b.CullDistance * w.y + c.CullDistance * w.z;
+#	endif
+	o.ViewPos = a.ViewPos * w.x + b.ViewPos * w.y + c.ViewPos * w.z;
+	o.TexCoord1 = a.TexCoord1 * w.x + b.TexCoord1 * w.y + c.TexCoord1 * w.z;
+	const float3 direction = normalize(normalize(o.ViewPos) + float3(0, 0, hemisphere));
+	o.PositionCS.xy = direction.xy / direction.z;
+	o.PositionCS.z = invRadius * length(o.ViewPos);
+	o.PositionCS.w = a.PositionCS.w * w.x + b.PositionCS.w * w.y + c.PositionCS.w * w.z;
+	o.TexCoord1.x = o.PositionCS.z;
+	o.TexCoord1.y = o.PositionCS.w;
+	return o;
+}
+
+/// Emits triangle (a, b, c) split into n x n pieces, each corner projected exactly: a long piece near the light is a curve on the paraboloid.
+void EmitParaboloidTriangle(VS_OUTPUT a, VS_OUTPUT b, VS_OUTPUT c, uint n, float hemisphere, float invRadius, inout TriangleStream<VS_OUTPUT> stream)
+{
+	const float step = 1.0 / n;
+	[loop] for (uint row = 0; row < n; row++)
+	{
+		[loop] for (uint col = 0; col + row < n; col++)
+		{
+			const float3 p0 = float3(1 - (row + col) * step, col * step, row * step);
+			const float3 p1 = p0 + float3(-step, step, 0);
+			const float3 p2 = p0 + float3(-step, 0, step);
+			stream.Append(ParaboloidPoint(a, b, c, p0, hemisphere, invRadius));
+			stream.Append(ParaboloidPoint(a, b, c, p1, hemisphere, invRadius));
+			stream.Append(ParaboloidPoint(a, b, c, p2, hemisphere, invRadius));
+			stream.RestartStrip();
+			if (col + row + 1 < n) {
+				const float3 p3 = p0 + float3(-2 * step, step, step);
+				stream.Append(ParaboloidPoint(a, b, c, p1, hemisphere, invRadius));
+				stream.Append(ParaboloidPoint(a, b, c, p3, hemisphere, invRadius));
+				stream.Append(ParaboloidPoint(a, b, c, p2, hemisphere, invRadius));
+				stream.RestartStrip();
+			}
+		}
+	}
+}
+
+// A triangle crossing the hemisphere plane is cut at it, so both halves end on the rim at the same point and the two halves of a shadow meet.
+[maxvertexcount(2 * 3 * PARABOLOID_SPLITS * PARABOLOID_SPLITS)] void main(triangle VS_OUTPUT input[3], inout TriangleStream<VS_OUTPUT> stream) {
+	// TexCoord1.z holds hemisphere * z * 0.5 + 0.5, so (TexCoord1.z - 0.5) * z has the hemisphere's sign.
+	float side[3];
+	float signSum = 0;
+	[unroll] for (uint i = 0; i < 3; i++)
+	{
+		side[i] = (input[i].TexCoord1.z - 0.5) * 2;
+		signSum += side[i] * input[i].ViewPos.z;
+	}
+	const float hemisphere = signSum >= 0 ? 1.0 : -1.0;
+	// TexCoord1.x is the depth, invRadius times the view length: read it off the corner farthest from the light.
+	float invRadius = 0;
+	float viewLength = 0;
+	[unroll] for (uint j = 0; j < 3; j++)
+	{
+		const float cornerLength = length(input[j].ViewPos);
+		if (cornerLength > viewLength) {
+			viewLength = cornerLength;
+			invRadius = input[j].TexCoord1.x / cornerLength;
+		}
+	}
+
+	if (side[0] < 0 && side[1] < 0 && side[2] < 0)
+		return;
+
+	if (side[0] >= 0 && side[1] >= 0 && side[2] >= 0) {
+		EmitParaboloidTriangle(input[0], input[1], input[2], ParaboloidSplits, hemisphere, invRadius, stream);
+		return;
+	}
+
+	// One or two corners lie behind the plane: the corners are turned so the lone one (in front or behind) comes first; the part in
+	// front is then a triangle or a quad whose new corners sit on the plane, where both halves meet on the rim.
+	const bool inFront0 = side[0] >= 0, inFront1 = side[1] >= 0, inFront2 = side[2] >= 0;
+	const bool lone0 = inFront0 != inFront1 && inFront0 != inFront2;
+	const bool lone1 = !lone0 && inFront1 != inFront0 && inFront1 != inFront2;
+	VS_OUTPUT a = input[2], b = input[0], c = input[1];
+	float sa = side[2], sb = side[0], sc = side[1];
+	if (lone0) {
+		a = input[0];
+		b = input[1];
+		c = input[2];
+		sa = side[0];
+		sb = side[1];
+		sc = side[2];
+	} else if (lone1) {
+		a = input[1];
+		b = input[2];
+		c = input[0];
+		sa = side[1];
+		sb = side[2];
+		sc = side[0];
+	}
+	const float tb = sa / (sa - sb);
+	const float tc = sa / (sa - sc);
+	const VS_OUTPUT onAB = ParaboloidPoint(a, b, c, float3(1 - tb, tb, 0), hemisphere, invRadius);
+	const VS_OUTPUT onAC = ParaboloidPoint(a, b, c, float3(1 - tc, 0, tc), hemisphere, invRadius);
+	if (sa >= 0) {
+		const VS_OUTPUT front = ParaboloidPoint(a, b, c, float3(1, 0, 0), hemisphere, invRadius);
+		EmitParaboloidTriangle(front, onAB, onAC, ParaboloidSplits, hemisphere, invRadius, stream);
+	} else {
+		const VS_OUTPUT frontB = ParaboloidPoint(a, b, c, float3(0, 1, 0), hemisphere, invRadius);
+		const VS_OUTPUT frontC = ParaboloidPoint(a, b, c, float3(0, 0, 1), hemisphere, invRadius);
+		EmitParaboloidTriangle(onAB, frontB, frontC, ParaboloidSplits, hemisphere, invRadius, stream);
+		EmitParaboloidTriangle(onAB, frontC, onAC, ParaboloidSplits, hemisphere, invRadius, stream);
+	}
+}
 #endif

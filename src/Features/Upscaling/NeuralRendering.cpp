@@ -13,6 +13,7 @@
 #include "NeuralRendering/FoveaClip.h"
 #include "NeuralRendering/Lifecycle.h"
 #include "NeuralRendering/ModelScale.h"
+#include "NeuralRendering/PeripheralCompression.h"
 #include "NeuralRendering/Runtime.h"
 #include "Profiler.h"
 #include "State.h"
@@ -217,6 +218,7 @@ struct NeuralRendering::Impl
 		std::unique_ptr<WrappedResource> lowColor, lowDepth, lowMotion, lowOutput;
 		/** @brief DLSSNR.UIAlpha built from the Masks2 category lane; created only while the material strength is on. */
 		std::unique_ptr<WrappedResource> materialAlpha;
+		bool materialAlphaIdentity = false;
 		NR::FrameParameters frame;
 		std::unique_ptr<Texture2D> resolved, toneData;
 		/** @brief Eye-stagger history: the model frame's log input luma and tone delta, its depth guide, and the proxy a reuse frame feeds the composite. Allocated only while the stagger can run. */
@@ -300,6 +302,9 @@ struct NeuralRendering::Impl
 	}
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
 	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain, downsampleLow, expandLow, offsetMotion;
+	std::array<Util::LazyShader<ID3D11ComputeShader>, 2> expandRgb;
+	NR::Reconstruction::Mode reconstructionMode = NR::Reconstruction::Mode::Native;
+	bool reconstructionFallback = false;
 	/** @brief Cbuffer CategoryAlphaCS.hlsl reads: the eye extent, the stereo offset, the softness radius and the eight strengths. */
 	struct alignas(16) CategoryAlphaData
 	{
@@ -325,13 +330,16 @@ struct NeuralRendering::Impl
 		uint32_t regionOverlayEnabled = 0;
 		float regionOutlineThickness = kRegionOutlineThicknessPixels;
 		uint32_t regionActorBaseX = 0, regionActorBaseY = 0, regionActorWidth = 0, regionActorHeight = 0;
-		float colorStrength = 0.0f, pad = 0.0f;
+		float colorStrength = 0.0f;
+		uint32_t materialSelectionEnabled = 0;
 		// Per-category tone multipliers, Skin..Landscape in .x; the 16-byte rows mirror
 		// ColorTransferCS.hlsl's float4 CategoryStrength[5].
 		float4 categoryStrength[5]{};
 		uint32_t materialMapEnabled = 0, materialMapMode = 0, materialMapFilter = 0, materialMapStrengthBound = 0;
 		float4 materialStrengthsA{};
 		float4 materialStrengthsB{};
+		uint32_t materialEdgeSoftness = 0;
+		uint32_t pad[3]{};
 	};
 	static_assert(offsetof(ColorTransferData, dynamicRangeProtect) == 64);
 	static_assert(offsetof(ColorTransferData, toneLowStrength) == 80);
@@ -344,12 +352,14 @@ struct NeuralRendering::Impl
 	static_assert(offsetof(ColorTransferData, regionActorBaseX) == 120);
 	static_assert(offsetof(ColorTransferData, regionActorHeight) == 132);
 	static_assert(offsetof(ColorTransferData, colorStrength) == 136);
+	static_assert(offsetof(ColorTransferData, materialSelectionEnabled) == 140);
 	static_assert(offsetof(ColorTransferData, categoryStrength) == 144);
 	static_assert(offsetof(ColorTransferData, materialMapEnabled) == 224);
 	static_assert(offsetof(ColorTransferData, materialMapStrengthBound) == 236);
 	static_assert(offsetof(ColorTransferData, materialStrengthsA) == 240);
 	static_assert(offsetof(ColorTransferData, materialStrengthsB) == 256);
-	static_assert(sizeof(ColorTransferData) == 272);
+	static_assert(offsetof(ColorTransferData, materialEdgeSoftness) == 272);
+	static_assert(sizeof(ColorTransferData) == 288);
 	// ModeValues.hlsli carries these numbers for ColorTransferCS.hlsl's tint.
 	static_assert(static_cast<uint32_t>(NR::MaterialMap::Mode::kCategory) == 0);
 	static_assert(static_cast<uint32_t>(NR::MaterialMap::Mode::kStrength) == 1);
@@ -389,6 +399,18 @@ struct NeuralRendering::Impl
 	std::unique_ptr<ConstantBuffer> motionOffsetBuffer;
 	/** @brief Crop each eye's model last evaluated with; empty until it has, and while no crop applies. */
 	std::array<Util::Subrect::PixelRegion, 2> modelCrop{};
+	struct alignas(16) PeripheralData
+	{
+		NR::PeripheralMapping mapping;
+		uint32_t modelX, modelY, modelWidth, modelHeight;
+	};
+	static_assert(sizeof(PeripheralData) == 32);
+	std::unique_ptr<ConstantBuffer> peripheralBuffer;
+	bool peripheralResourcesFailed = false;
+	NR::PeripheralCompressionPlan peripheralPlan;
+	std::array<Util::LazyShader<ID3D11ComputeShader>, 2> downsamplePeripheral;
+	Util::LazyShader<ID3D11ComputeShader> expandPeripheral;
+	bool peripheralDepthReversed = false;
 	/** @brief Per-eye eye-stagger schedule and the gains it may reuse; cleared by any history reset. */
 	NR::Cadence::State cadence;
 	/** @brief Whether the last frame's composite reads each eye's synthesized proxy instead of the model output. */
@@ -401,8 +423,12 @@ struct NeuralRendering::Impl
 	bool materialStrengthOn = false;
 	/** @brief The graded protection is bound for the evaluate now in flight, so a fault belongs to it. */
 	bool materialStrengthInFlight = false;
-	/** @brief Last evaluate bound the graded protection; reported by the status readout. */
+	/** @brief The frame applies graded protection through the provider or compositor. */
 	bool materialStrengthBound = false;
+	/** @brief Reduced models apply source-aligned material strengths in the existing composite. */
+	bool materialStrengthComposite = false;
+	/** @brief The source-resolution compositor could not read the material lane this session. */
+	bool materialCompositeDegraded = false;
 	/** @brief Latched setup failure: the material lane or the alpha texture is unusable for this session. */
 	bool materialStrengthDegraded = false;
 	std::unique_ptr<Texture2D> original;
@@ -461,6 +487,7 @@ struct NeuralRendering::Impl
 	uint32_t materialMapMode = 0, materialMapFilter = NR::MaterialMap::kAllCategories;
 	/** @brief Per-category by-material strengths of the last frame, in NeuralRenderingCategory id order. */
 	std::array<float, NR::MaterialStrength::kCount> materialMapStrength{};
+	uint32_t materialEdgeSoftness = 0;
 	NR::Diagnostics* captureDiagnostics = nullptr;
 	uint32_t captureFrame = UINT32_MAX;
 
@@ -521,7 +548,7 @@ struct NeuralRendering::Impl
 		eyes = {};
 		original.reset();
 		encodeMasks = {};
-		materialStrengthInFlight = materialStrengthBound = false;
+		materialStrengthInFlight = materialStrengthBound = materialStrengthComposite = false;
 		width = height = guideWidth = guideHeight = eyeCount = lowWidth = lowHeight = 0;
 		sbsWidth = sbsHeight = 0;
 		sbsAlpha.reset();
@@ -537,6 +564,24 @@ struct NeuralRendering::Impl
 
 	/** @brief True while pass resources for a render size exist and can be released. */
 	bool HasPassResources() const { return eyeCount != 0; }
+
+	/** @brief Translates the existing source crop without changing the source-space composite mask. */
+	Util::Subrect::PixelRegion ModelRegion(uint32_t eye) const
+	{
+		const uint32_t modelWidth = lowWidth ? lowWidth : width, modelHeight = lowWidth ? lowHeight : height;
+		const Util::Subrect::PixelRegion full{ 0, 0, modelWidth, modelHeight };
+		if (!region.active || (lowWidth && !peripheralPlan.Active()))
+			return full;
+		const auto crop = Util::Region::ClampToFrame(region.eye[eye], width, height);
+		if (!crop.w || !crop.h)
+			return Util::Region::kEmptyRegion;
+		if (!peripheralPlan.Active())
+			return crop;
+		const auto [lower, upper] = peripheralPlan.mapping.TargetBounds(
+			{ float(crop.x) / width, float(crop.y) / height }, { float(crop.x + crop.w) / width, float(crop.y + crop.h) / height });
+		return Util::Region::PixelRegionFromBounds({ lower[0], lower[1], upper[0], upper[1] }, modelWidth, modelHeight,
+			{ 0.0f, 1.0f, 1.0f, 1.0f }, NR::kModelExtentAlignment);
+	}
 
 	/** @brief Publishes this frame's crop for one eye; every kernel that reads a neural sample needs it. */
 	void SetRegion(ColorTransferData& a_data, uint32_t a_eye) const
@@ -896,16 +941,51 @@ struct NeuralRendering::Impl
 		eye.cropMotionActive = true;
 	}
 
-	/** @brief Averages one eye's proxy down to the model's size and takes its depth and motion at the footprint centres. */
+	/** @brief Preflights optional sampling resources before selecting the compressed model size. */
+	NR::PeripheralCompressionReason PreparePeripheralResources()
+	{
+		if (peripheralResourcesFailed)
+			return NR::PeripheralCompressionReason::ResourceUnavailable;
+		peripheralDepthReversed = globals::features::reverseZ.IsActive();
+		auto* prepare = downsamplePeripheral[peripheralDepthReversed].Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
+			{ { "NR_PERIPHERAL_COMPRESSION", "1" } }, "cs_5_0", "Downsample", "NeuralRendering::PeripheralDownsample CS");
+		auto* expand = expandPeripheral.Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
+			{ { "NR_PERIPHERAL_COMPRESSION", "1" } }, "cs_5_0", "ExpandGain", "NeuralRendering::PeripheralExpand CS");
+		if (!prepare || !expand)
+			return NR::PeripheralCompressionReason::ShaderUnavailable;
+		try {
+			if (!peripheralBuffer)
+				peripheralBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<PeripheralData>(), "NeuralRendering::Peripheral CB");
+		} catch (...) {
+			if (interop.DeviceRemoved())
+				throw;
+			peripheralResourcesFailed = true;
+			return NR::PeripheralCompressionReason::ResourceUnavailable;
+		}
+		return NR::PeripheralCompressionReason::Active;
+	}
+
+	/** @brief Binds the admitted full-eye map for both preparation and gain reconstruction. */
+	void BindPeripheralMapping(uint32_t eye)
+	{
+		if (!peripheralPlan.Active())
+			return;
+		const auto crop = ModelRegion(eye);
+		peripheralBuffer->Update(PeripheralData{ peripheralPlan.mapping, crop.x, crop.y, crop.w, crop.h });
+		auto* buffer = peripheralBuffer->CB();
+		context->CSSetConstantBuffers(2, 1, &buffer);
+	}
+
+	/** @brief Prepares one eye's model inputs using uniform or full-view peripheral sampling. */
 	void DownsampleModelInputs(uint32_t i)
 	{
-		CS_GPU_PASS("Upscaling::NRDownsample");
-		auto* shader = downsampleLow.Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
-			{}, "cs_5_0", "Downsample", "NeuralRendering::Downsample CS");
+		CS_GPU_PASS_SELECT(peripheralPlan.Active(), "Upscaling::NRPeripheralPrepare", "Upscaling::NRDownsample");
+		auto* shader = peripheralPlan.Active() ? downsamplePeripheral[peripheralDepthReversed].get() : downsampleLow.Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl", {}, "cs_5_0", "Downsample", "NeuralRendering::Downsample CS");
 		if (!shader)
 			throw std::runtime_error("NR downsample shader unavailable");
 		auto& eye = eyes[i];
 		ClearPipeline();
+		BindPeripheralMapping(i);
 		lowResBuffer->Update(LowResData{ lowWidth, lowHeight, guideWidth, guideHeight, 0.0f, 0 });
 		auto buffer = lowResBuffer->CB();
 		context->CSSetConstantBuffers(1, 1, &buffer);
@@ -928,7 +1008,7 @@ struct NeuralRendering::Impl
 	{
 		const bool reduced = lowWidth != 0;
 		for (uint32_t i = 0; i < eyeCount; ++i) {
-			const auto crop = !reduced && region.active ? Util::Region::ClampToFrame(region.eye[i], width, height) : Util::Region::kEmptyRegion;
+			const auto crop = ModelRegion(i);
 			sbsCrop[i] = (crop.w && crop.h) ? crop : Util::Subrect::PixelRegion{ 0, 0, reduced ? lowWidth : width, reduced ? lowHeight : height };
 		}
 		const uint32_t planWidth = sbsCrop[0].w + kSbsGutterPixels + sbsCrop[1].w;
@@ -1054,19 +1134,39 @@ struct NeuralRendering::Impl
 		return ok;
 	}
 
-	/** @brief Writes the proxy the composite reads for a model-size evaluation: the eye's own colour scaled by the model's gain, upsampled to the eye size. */
-	void ExpandModelGain(uint32_t i, bool guided)
+	/** @brief Chooses one reconstruction for the stereo transaction, falling back if an optional shader is unavailable. */
+	ID3D11ComputeShader* SelectReconstructionShader(NR::Reconstruction::Mode& mode)
 	{
-		CS_GPU_PASS("Upscaling::NRExpandGain");
-		auto* shader = expandLow.Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
-			{}, "cs_5_0", "ExpandGain", "NeuralRendering::ExpandGain CS");
+		using enum NR::Reconstruction::Mode;
+		const bool compressed = peripheralPlan.Active();
+		if (mode == RgbGuided) {
+			auto* shader = compressed ?
+			                   expandRgb[1].Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
+								   { { "NR_RGB_GUIDED_RECONSTRUCTION", "1" }, { "NR_PERIPHERAL_COMPRESSION", "1" } }, "cs_5_0", "ExpandGain", "NeuralRendering::ExpandRgbGain CS") :
+			                   expandRgb[0].Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
+								   { { "NR_RGB_GUIDED_RECONSTRUCTION", "1" } }, "cs_5_0", "ExpandGain", "NeuralRendering::ExpandRgbGain CS");
+			if (shader)
+				return shader;
+			mode = Bilinear;
+		}
+		auto* shader = compressed ? expandPeripheral.get() : expandLow.Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl", {}, "cs_5_0", "ExpandGain", "NeuralRendering::ExpandGain CS");
 		if (!shader)
 			throw std::runtime_error("NR gain-expand shader unavailable");
+		return shader;
+	}
+
+	/** @brief Writes the eye's source proxy scaled by its reconstructed model gain. */
+	void ExpandModelGain(uint32_t i, ID3D11ComputeShader* shader)
+	{
+		CS_GPU_PASS_SELECT(peripheralPlan.Active(), "Upscaling::NRPeripheralExpand", "Upscaling::NRExpandGain");
 		auto& eye = eyes[i];
 		ClearPipeline();
+		BindPeripheralMapping(i);
 		ColorTransferData data{ width, height, i * width };
+		if (peripheralPlan.Active())
+			SetRegion(data, i);
 		colorBuffer->Update(data);
-		lowResBuffer->Update(LowResData{ lowWidth, lowHeight, guideWidth, guideHeight, kModelGuideSigmaStops, guided ? 1u : 0u });
+		lowResBuffer->Update(LowResData{ lowWidth, lowHeight, guideWidth, guideHeight, kModelGuideSigmaStops, 0u });
 		ID3D11Buffer* buffers[]{ colorBuffer->CB(), lowResBuffer->CB() };
 		context->CSSetConstantBuffers(0, ARRAYSIZE(buffers), buffers);
 		ID3D11ShaderResourceView* inputs[]{ eye.color->srv, eye.lowColor->srv, eye.lowOutput->srv };
@@ -1110,6 +1210,8 @@ struct NeuralRendering::Impl
 		data.materialMapMode = materialMapMode;
 		data.materialMapFilter = materialMapFilter;
 		data.materialMapStrengthBound = materialStrengthBound ? 1u : 0u;
+		data.materialSelectionEnabled = !prepare && materialStrengthComposite ? 1u : 0u;
+		data.materialEdgeSoftness = materialEdgeSoftness;
 		data.materialStrengthsA = float4{ materialMapStrength[NR::MaterialStrength::kNone], materialMapStrength[NR::MaterialStrength::kSkin],
 			materialMapStrength[NR::MaterialStrength::kHair], materialMapStrength[NR::MaterialStrength::kEyes] };
 		data.materialStrengthsB = float4{ materialMapStrength[NR::MaterialStrength::kFoliage], materialMapStrength[NR::MaterialStrength::kLandscape],
@@ -1160,8 +1262,15 @@ struct NeuralRendering::Impl
 		if (!target.SRV)
 			return nullptr;
 		auto* srv = Util::AsReal(target.SRV);
+		D3D11_SHADER_RESOURCE_VIEW_DESC view{};
+		srv->GetDesc(&view);
+		if (view.Format != DXGI_FORMAT_R16G16_UNORM || view.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D || view.Texture2D.MostDetailedMip != 0)
+			return nullptr;
 		D3D11_TEXTURE2D_DESC desc{};
-		return Util::GetTexture2DDesc(srv, desc) && desc.Format == DXGI_FORMAT_R16G16_UNORM ? srv : nullptr;
+		return Util::GetTexture2DDesc(srv, desc) && desc.Format == DXGI_FORMAT_R16G16_UNORM &&
+		               desc.Width >= width * eyeCount && desc.Height >= height && desc.ArraySize == 1 && desc.SampleDesc.Count == 1 ?
+		           srv :
+		           nullptr;
 	}
 
 	/**
@@ -1173,9 +1282,11 @@ struct NeuralRendering::Impl
 	bool BuildMaterialAlpha(ID3D11ShaderResourceView* masks2, const NR::MaterialStrength::Values& strengths)
 	{
 		CS_GPU_PASS("Upscaling::NRMaterialAlpha");
-		auto* shader = materialAlphaShader.Get(L"Data/Shaders/Upscaling/NeuralRendering/CategoryAlphaCS.hlsl",
-			{}, "cs_5_0", "main", "NeuralRendering::CategoryAlpha CS");
-		if (!shader)
+		const bool edits = NR::MaterialStrength::HasEdits(strengths);
+		auto* shader = edits ? materialAlphaShader.Get(L"Data/Shaders/Upscaling/NeuralRendering/CategoryAlphaCS.hlsl",
+								   {}, "cs_5_0", "main", "NeuralRendering::CategoryAlpha CS") :
+		                       nullptr;
+		if (edits && !shader)
 			return false;
 		try {
 			for (uint32_t i = 0; i < eyeCount; ++i) {
@@ -1183,7 +1294,18 @@ struct NeuralRendering::Impl
 				if (!eye.materialAlpha) {
 					const auto name = eyeCount > 1 ? std::format("NeuralRendering::MaterialAlpha{}", i) : std::string("NeuralRendering::MaterialAlpha");
 					eye.materialAlpha = interop.CreateTexture(width, height, DXGI_FORMAT_R8_UNORM, name);
+					eye.materialAlphaIdentity = false;
 				}
+				const auto update = NR::MaterialStrength::PlanAlphaUpdate(strengths, eye.materialAlphaIdentity);
+				if (update != NR::MaterialStrength::AlphaUpdate::kDraw) {
+					if (update == NR::MaterialStrength::AlphaUpdate::kClear) {
+						constexpr float zero[4]{};
+						context->ClearUnorderedAccessViewFloat(eye.materialAlpha->uav, zero);
+						eye.materialAlphaIdentity = true;
+					}
+					continue;
+				}
+				eye.materialAlphaIdentity = false;
 				ClearPipeline();
 				categoryAlphaBuffer->Update(CategoryAlphaData{ width, height, i * width, strengths.edgeSoftness,
 					{ strengths.strength[NR::MaterialStrength::kNone], strengths.strength[NR::MaterialStrength::kSkin],
@@ -1257,8 +1379,16 @@ struct NeuralRendering::Impl
 			frameGenerationBlocked = frameGeneration;
 		}
 		const bool lowRes = lowWidth != 0;
+		const auto requestedReconstruction = NR::Reconstruction::Select(
+			tuning.modelGuidedUpsample, tuning.modelScale, width, height, lowWidth, lowHeight);
+		auto selectedReconstruction = requestedReconstruction;
+		auto* reconstructionShader = lowRes ? SelectReconstructionShader(selectedReconstruction) : nullptr;
+		if (selectedReconstruction != reconstructionMode)
+			reset |= NR::Diagnostics::Requested;
+		reconstructionMode = selectedReconstruction;
+		reconstructionFallback = requestedReconstruction != selectedReconstruction;
 		const bool sbs = sbsEnabled;
-		if (lowRes) {
+		if (lowRes && !peripheralPlan.Active()) {
 			region = {};
 			actorBox = {};
 		}
@@ -1293,16 +1423,20 @@ struct NeuralRendering::Impl
 			diagnostics.FinishCapture(diagnostic.number);
 			return true;
 		}
-		materialStrengthInFlight = materialStrengthBound = false;
-		if (materialStrengthWanted && !materialStrengthDegraded && !lowRes) {
+		materialStrengthInFlight = materialStrengthBound = materialStrengthComposite = false;
+		if (materialStrengthWanted) {
+			auto& degraded = lowRes ? materialCompositeDegraded : materialStrengthDegraded;
 			auto* lane = MaterialLane();
 			if (!lane) {
-				materialStrengthDegraded = true;
+				degraded = true;
 				logger::warn("[NeuralRendering] material strength unavailable: the deferred material lane is not present, so the whole frame is processed");
+			} else if (lowRes) {
+				materialStrengthBound = true;
+				materialStrengthComposite = NR::MaterialStrength::HasEdits(materialStrengths);
 			} else if (BuildMaterialAlpha(lane, materialStrengths)) {
 				materialStrengthInFlight = materialStrengthBound = true;
 			} else {
-				materialStrengthDegraded = true;
+				degraded = true;
 				logger::warn("[NeuralRendering] material strength unavailable: its shader or texture could not be created, so the whole frame is processed");
 			}
 		}
@@ -1432,7 +1566,7 @@ struct NeuralRendering::Impl
 					eyeCommands->ResourceBarrier(2, copyBarriers);
 				} else {
 					// The encoder extracts render-resolution guides into zero-origin per-eye textures.
-					const auto crop = region.active ? Util::Region::ClampToFrame(region.eye[i], width, height) : Util::Region::kEmptyRegion;
+					const auto crop = ModelRegion(i);
 					const uint32_t modelWidth = lowRes ? lowWidth : width, modelHeight = lowRes ? lowHeight : height;
 					const auto eyeRegion = (crop.w && crop.h) ? NR::ToGuideRegion(crop) : NR::GuideRegion{ 0, 0, modelWidth, modelHeight };
 					NR::GuideParameters guides;
@@ -1502,7 +1636,7 @@ struct NeuralRendering::Impl
 		if (lowRes) {
 			for (uint32_t i = 0; i < eyeCount; ++i) {
 				EnsureGainResources(i);
-				ExpandModelGain(i, tuning.modelGuidedUpsample);
+				ExpandModelGain(i, reconstructionShader);
 				reuseFrame[i] = true;
 			}
 		}
@@ -1566,6 +1700,7 @@ namespace
 	void MainUpdate_UpdateRegionOfInterest::thunk()
 	{
 		func();
+		globals::features::upscaling.neuralRendering.UpdateCombatState();
 		globals::features::upscaling.neuralRendering.UpdateRegionOfInterest();
 	}
 }
@@ -1577,7 +1712,17 @@ NeuralRendering::~NeuralRendering() = default;
 void NeuralRendering::InstallHooks()
 {
 	stl::write_thunk_call<MainUpdate_UpdateRegionOfInterest>(Util::MainUpdateCallSite());
-	logger::debug("[NeuralRendering] Installed actor-tracking hook");
+	logger::debug("[NeuralRendering] Installed combat-state and actor-tracking hook");
+}
+
+void NeuralRendering::UpdateCombatState()
+{
+	std::optional<bool> inCombat;
+	const auto* state = globals::state;
+	auto* const ui = globals::game::ui;
+	if (state && ui && !state->IsMainOrLoadingMenuOpen(ui) && globals::game::player)
+		inCombat = globals::game::player->IsInCombat();
+	combatState.Publish(inCombat, !state || state->IsPausedOrMenuOpen(ui));
 }
 
 void NeuralRendering::UpdateCalibration()
@@ -1748,8 +1893,24 @@ void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistor
 void NeuralRendering::ResetHistory() { resetHistory = true; }
 void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = resetHistory = true; }
 
-void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified, const std::string& variant)
+NR::CombatPauseSnapshot NeuralRendering::ResolveCombatPause(bool enabled)
 {
+	std::scoped_lock lock(combatPauseMutex);
+	const auto* state = globals::state;
+	const auto frame = state ? state->frameCount : UINT32_MAX;
+	if (combatPause.HasFrame(frame))
+		return combatPause.GetSnapshot();
+	const auto sample = combatState.GetSnapshot();
+	const bool wasPaused = combatPause.GetSnapshot().IsPaused();
+	const auto decision = combatPause.Update(frame, enabled, GetTickCount64(), sample.inCombat, sample.gamePaused);
+	if (wasPaused != decision.IsPaused())
+		resetHistory = true;
+	return decision;
+}
+
+void NeuralRendering::Reset(bool enabled, bool pauseInCombat, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified, const std::string& variant)
+{
+	ResolveCombatPause(enabled && pauseInCombat);
 	allowUnverifiedRuntime.store(allowUnverified, std::memory_order_relaxed);
 	{
 		std::scoped_lock lock(variantMutex);
@@ -1781,6 +1942,8 @@ void NeuralRendering::PublishStatus(Status::State state, std::string text)
 	next.width = impl->width;
 	next.height = impl->height;
 	next.eyes = impl->eyeCount;
+	next.modelWidth = impl->lowWidth ? impl->lowWidth : impl->width;
+	next.modelHeight = impl->lowWidth ? impl->lowHeight : impl->height;
 	std::scoped_lock lock(statusMutex);
 	status = std::move(next);
 	publishedState.store(state, std::memory_order_relaxed);
@@ -1797,12 +1960,18 @@ void NeuralRendering::PublishResources()
 	status.width = impl->width;
 	status.height = impl->height;
 	status.eyes = impl->eyeCount;
+	status.modelWidth = impl->lowWidth ? impl->lowWidth : impl->width;
+	status.modelHeight = impl->lowWidth ? impl->lowHeight : impl->height;
 }
 
 NeuralRendering::Status NeuralRendering::GetStatus() const
 {
 	std::scoped_lock lock(statusMutex);
 	auto snapshot = status;
+	{
+		std::scoped_lock combatLock(combatPauseMutex);
+		snapshot.combatPause = combatPause.GetSnapshot();
+	}
 	if (snapshot.text.empty())
 		snapshot.text = T(TKEY("status_off"), "Off");
 	snapshot.lastAppliedFrame = appliedFrame.load(std::memory_order_relaxed);
@@ -1813,11 +1982,14 @@ NeuralRendering::Status NeuralRendering::GetStatus() const
 	snapshot.skipFrameReuseActive = skipFrameReuseActive.load(std::memory_order_relaxed);
 	snapshot.modelFrames = modelFrames.load(std::memory_order_relaxed);
 	snapshot.reuseFrames = reuseFrames.load(std::memory_order_relaxed);
+	snapshot.modelReconstruction = modelReconstruction.load(std::memory_order_relaxed);
+	snapshot.modelReconstructionFallback = modelReconstructionFallback.load(std::memory_order_relaxed);
 	const auto reuseMask = eyeReuseMask.load(std::memory_order_relaxed);
 	snapshot.eyeReuse = { (reuseMask & 1u) != 0, (reuseMask & 2u) != 0 };
 	for (size_t i = 0; i < snapshot.materialStrength.size(); ++i)
 		snapshot.materialStrength[i] = materialStrengthValues[i].load(std::memory_order_relaxed);
 	snapshot.materialEdgeSoftness = materialEdgeSoftness.load(std::memory_order_relaxed);
+	snapshot.peripheralCompressionReason = peripheralCompressionReason.load(std::memory_order_relaxed);
 	return snapshot;
 }
 
@@ -1927,7 +2099,7 @@ namespace
 		const std::array<const char*, NR::MaterialMap::kBits> labels{
 			T(TKEY("category_skin"), "Skin"), T(TKEY("category_hair"), "Hair"), T(TKEY("category_eyes"), "Eyes"),
 			T(TKEY("category_foliage"), "Foliage"), T(TKEY("category_landscape"), "Landscape"), T(TKEY("category_cloth"), "Cloth Gear"),
-			T(TKEY("category_metal"), "Metal Gear"), T(TKEY("material_other"), "Everything Else")
+			T(TKEY("category_metal"), "Metal Gear"), T(TKEY("material_else"), "Everything Else")
 		};
 		bool changed = false;
 		for (uint32_t i = 0; i < selected.size(); ++i) {
@@ -2037,7 +2209,7 @@ namespace
 	{
 		bool changed = false;
 		const bool unusedByMode = globals::game::isVR && NR::GetEyeMode(tuning) == NR::EyeMode::kAlternate;
-		ImGui::BeginDisabled(!developerMode || unusedByMode);
+		ImGui::BeginDisabled(unusedByMode);
 		const char* label = T(TKEY("model_scale"), "Model Scale");
 		const ImGuiID id = ImGui::GetID(label);
 		ImGuiStorage* storage = ImGui::GetStateStorage();
@@ -2056,13 +2228,28 @@ namespace
 		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("model_scale_tooltip"),
-				"Runs the model at a fraction of the eye size and carries only its brightness change back to the full image. 0.75 saves about 8% of the model's GPU time and 0.5 about 16%, with a loss of fine detail. It needs Developer Mode and does not apply with Alternate eyes."));
-		ImGui::BeginDisabled(tuning.modelScale >= NR::Tuning::kMaxModelScale);
-		changed |= ImGui::Checkbox(T(TKEY("model_guided_upsample"), "Guided Upsample"), &tuning.modelGuidedUpsample);
+				"Lower values can improve performance but reduce Neural Rendering quality and detail. Does not apply with Alternate eyes."));
+		const ImGuiID compressionId = ImGui::GetID("peripheralCompression");
+		const ImGuiID compressionDraggingId = ImGui::GetID("peripheralCompressionDragging");
+		int compression = storage->GetBool(compressionDraggingId, false) ? storage->GetInt(compressionId, 0) : static_cast<int>(tuning.peripheralCompressionPercent);
+		ImGui::SliderInt(T(TKEY("peripheral_compression"), "Peripheral Compression"), &compression, 0, NR::kMaximumPeripheralCompressionPercent, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+		storage->SetInt(compressionId, compression);
+		storage->SetBool(compressionDraggingId, ImGui::IsItemActive());
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			tuning.peripheralCompressionPercent = static_cast<uint32_t>(compression);
+			changed = true;
+		}
 		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("model_guided_upsample_tooltip"),
-				"Weights the upsampled brightness change by how similar the pixels' brightness is, so it follows edges instead of blurring across them."));
-		ImGui::EndDisabled();
+			ImGui::TextUnformatted(T(TKEY("peripheral_compression_tooltip"),
+				"Higher values can improve performance but reduce Neural Rendering quality toward the edges of the view. More detail is kept in the centre. Does not apply with Alternate eyes or when limited to a tracked actor."));
+		if (developerMode) {
+			ImGui::BeginDisabled(tuning.modelScale >= NR::Tuning::kMaxModelScale && tuning.peripheralCompressionPercent == 0);
+			changed |= ImGui::Checkbox(T(TKEY("model_guided_upsample"), "Improve low-resolution NR"), &tuning.modelGuidedUpsample);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("model_guided_upsample_tooltip"),
+					"Helps preserve edges when NR resolution is reduced or compression is used. On by default. Off can look softer."));
+			ImGui::EndDisabled();
+		}
 		ImGui::EndDisabled();
 		return changed;
 	}
@@ -2073,7 +2260,7 @@ namespace
 		ImGui::TextUnformatted(T(TKEY("material_apply_to"), "Apply Neural Rendering To"));
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("material_apply_to_tooltip"),
-				"Choose the materials Neural Rendering is applied to, using the labels the deferred pass writes. All selected is the normal behaviour. It changes where the effect shows, not how much GPU time it costs, and needs the deferred pass. Fine-Tune Strengths sets partial amounts."));
+				"Choose the materials Neural Rendering is applied to, using the labels the deferred pass writes. All selected is the normal behaviour. With a reduced Model Scale, strengths apply in the full-resolution composite. It changes where the effect shows, not how much model GPU time it costs, and needs the deferred pass. Fine-Tune Strengths sets partial amounts."));
 		ImGui::PushID("materialSelection");
 		MaterialSelection selected{};
 		for (uint32_t i = 0; i < selected.size(); ++i)
@@ -2102,7 +2289,7 @@ namespace
 			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_landscape"), "Landscape"), &tuning.strengthLandscape, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_cloth"), "Cloth Gear"), &tuning.strengthCloth, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_metal"), "Metal Gear"), &tuning.strengthMetal, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			strengthChanged |= ImGui::SliderFloat(T(TKEY("material_other"), "Everything Else"), &tuning.strengthOther, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			strengthChanged |= ImGui::SliderFloat(T(TKEY("material_else"), "Everything Else"), &tuning.strengthOther, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (strengthChanged) {
 				tuning.SyncMaterialSwitch();
 				changed = true;
@@ -2267,6 +2454,13 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 			changed = true;
 			resetHistory = true;
 		}
+		if (ImGui::Checkbox(T(TKEY("pause_in_combat"), "Pause NR During Combat"), &tuning.pauseInCombat)) {
+			changed = true;
+			resetHistory = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("pause_in_combat_tooltip"),
+				"Pauses Neural Rendering for both eyes during player combat. Ordinary upscaling continues. Resumes with fresh history after three continuous seconds of peaceful, unpaused gameplay; the runtime stays initialized."));
 		if (globals::game::isVR) {
 			if (ImGui::Checkbox(T(TKEY("region_follow_foveation"), "Follow Foveation"), &tuning.regionFollowFoveation)) {
 				changed = true;
@@ -2436,6 +2630,11 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		recreate = resetHistory = true;
 	const auto current = GetStatus();
 	ImGui::TextWrapped("%s", current.text.c_str());
+	if (enabled && tuning.pauseInCombat && current.combatPause.phase == NR::CombatPausePhase::Cooldown) {
+		ImGui::TextUnformatted(T(TKEY("combat_resume_delay"), "Peaceful gameplay remaining:"));
+		ImGui::SameLine();
+		ImGui::Text("%.1f s", static_cast<double>(current.combatPause.remainingMs) / 1000.0);
+	}
 	if (current.capability.needsUpdatedDriver) {
 		if (current.capability.minDriverMajor && current.capability.minDriverMinor) {
 			const auto major = *current.capability.minDriverMajor;
@@ -2531,9 +2730,11 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 {
 	using Outcome = NR::Diagnostics::Outcome;
 	const auto context = NR::Context::Resolve(contexts, DialogueOpen(), contextState);
+	const auto combat = ResolveCombatPause(enabled && tuning.pauseInCombat);
 	auto& diagnostic = diagnostics.BeginHook(globals::state->frameCount, target);
-	const auto action = NR::DecideFrame({ enabled, context.suspended, globals::state->worldRenderedThisFrame, impl->failed,
-		retryRequested.load(), impl->ready, impl->lastFrame, globals::state->frameCount, swapRuntime.load(std::memory_order_relaxed) });
+	const bool retryPending = retryRequested.load();
+	const auto action = NR::DecideFrame({ enabled, context.suspended || combat.IsPaused(), globals::state->worldRenderedThisFrame, impl->failed,
+		retryPending, impl->ready, impl->lastFrame, globals::state->frameCount, swapRuntime.load(std::memory_order_relaxed) });
 	if (context.resetHistory)
 		resetHistory = true;
 	if (action == NR::FrameAction::ReleasePassResources) {
@@ -2566,9 +2767,18 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 	}
 	if (action == NR::FrameAction::Suspend) {
 		diagnostic.outcome = Outcome::Suspended;
-		if (!impl->failed && publishedState.load(std::memory_order_relaxed) != Status::State::kSuspended) {
-			logger::debug("[NeuralRendering] Suspended: waiting for dialogue");
-			PublishStatus(Status::State::kSuspended, T(TKEY("status_waiting_dialogue"), "Waiting for dialogue"));
+		const auto phase = context.suspended ? NR::CombatPausePhase::Disabled : combat.phase;
+		if (!impl->failed && (publishedState.load(std::memory_order_relaxed) != Status::State::kSuspended || publishedCombatPhase != phase)) {
+			const char* text = T(TKEY("status_waiting_dialogue"), "Waiting for dialogue");
+			if (phase == NR::CombatPausePhase::Combat)
+				text = T(TKEY("status_combat"), "Neural Rendering paused during combat");
+			else if (phase == NR::CombatPausePhase::Cooldown)
+				text = T(TKEY("status_combat_cooldown"), "Waiting for peaceful gameplay before resuming Neural Rendering");
+			else if (phase == NR::CombatPausePhase::Unavailable)
+				text = T(TKEY("status_combat_unavailable"), "Neural Rendering waiting for active gameplay and combat state");
+			logger::debug("[NeuralRendering] Suspended: {}", text);
+			PublishStatus(Status::State::kSuspended, text);
+			publishedCombatPhase = phase;
 		}
 		return;
 	}
@@ -2583,23 +2793,27 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 	const auto effective = [&] {
 		auto resolved = NR::Context::EffectiveTuning(tuning, contexts, context.kind);
 		if (!globals::state->IsDeveloperMode()) {
-			resolved.modelScale = NR::Tuning::kMaxModelScale;
 			resolved.sbsEvaluate = resolved.modelVerify = resolved.mirrorEyes = false;
 		}
-		if (globals::game::isVR && NR::GetEyeMode(resolved) == NR::EyeMode::kAlternate)
+		if (globals::game::isVR && NR::GetEyeMode(resolved) == NR::EyeMode::kAlternate) {
 			resolved.modelScale = NR::Tuning::kMaxModelScale;
+			resolved.peripheralCompressionPercent = 0;
+		}
 		return resolved;
 	}();
 	const auto materialStrengths = effective.MaterialStrengths();
 	const auto publishMaterialStrength = [this, &materialStrengths] {
 		materialStrengthActive.store(impl->materialStrengthBound, std::memory_order_relaxed);
-		materialStrengthAvailable.store(!impl->materialStrengthDegraded && !materialStrengthRejected.load(std::memory_order_relaxed), std::memory_order_relaxed);
+		materialStrengthAvailable.store(NR::MaterialStrength::IsAvailable(impl->lowWidth != 0,
+											materialStrengthRejected.load(std::memory_order_relaxed), impl->materialStrengthDegraded, impl->materialCompositeDegraded),
+			std::memory_order_relaxed);
 		for (size_t i = 0; i < materialStrengths.strength.size(); ++i)
 			materialStrengthValues[i].store(materialStrengths.strength[i], std::memory_order_relaxed);
 		materialEdgeSoftness.store(materialStrengths.edgeSoftness, std::memory_order_relaxed);
 	};
 	try {
-		retryRequested = false;
+		// A retry raised after the decision stays pending for the next frame instead of being consumed by a skip.
+		const bool retry = retryPending && retryRequested.exchange(false);
 		if (action == NR::FrameAction::RebuildThenRun) {
 			// Retire both APIs before releasing a failed runtime and its shared resources.
 			impl->interop.Drain();
@@ -2607,6 +2821,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			resetHistory = true;
 		}
 		auto& work = *impl;
+		if (retry)
+			work.peripheralResourcesFailed = false;
 		const auto selected = diagnostics.Selected();
 		diagnostic.options = selected.options;
 		if (diagnostic.options != work.lastDiagnosticOptions) {
@@ -2646,6 +2862,14 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			work.prepareToneData.Reset();
 			work.compositeColor.Reset();
 			work.materialAlphaShader.Reset();
+			work.downsampleLow.Reset();
+			work.expandLow.Reset();
+			for (auto& shader : work.expandRgb)
+				shader.Reset();
+			for (auto& shader : work.downsamplePeripheral)
+				shader.Reset();
+			work.expandPeripheral.Reset();
+			work.peripheralResourcesFailed = false;
 		}
 		auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
 		auto* color = Util::AsReal(targets[RE::RENDER_TARGETS::kMAIN].texture);
@@ -2653,7 +2877,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		const char* missingInput = nullptr;
 		if (!globals::features::upscaling.GetEncodeInputs(inputs, missingInput))
 			throw std::runtime_error(std::format("Missing NR guide input ({})", missingInput));
-		const auto count = globals::game::isVR ? 2u : 1u;
+		const auto count = Util::EyeCount();
 		const auto gw = NR::EyeRenderWidth(static_cast<uint32_t>(renderSize.x), count);
 		const auto gh = static_cast<uint32_t>(renderSize.y);
 		D3D11_TEXTURE2D_DESC desc{};
@@ -2676,14 +2900,37 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 				guide.ArraySize != 1 || guide.SampleDesc.Count != 1)
 				throw std::runtime_error("Missing or incompatible NR guide texture");
 		}
-		const bool materialStrengthWanted = effective.materialStrength && !materialStrengthRejected.load(std::memory_order_relaxed) && NR::ModelExtent(effective.modelScale, w, h).first == 0;
-		if (materialStrengthWanted != work.materialStrengthOn) {
+		const bool calibrationRunning = GetCalibration().state == NR::CropCalibration::State::kRunning;
+		auto lowExtent = NR::ModelExtent(effective.modelScale, w, h);
+		NR::PeripheralCompressionPlan compression;
+		if (effective.peripheralCompressionPercent) {
+			const bool supported = !effective.regionOfInterest && !calibrationRunning &&
+			                       !effective.mirrorEyes && work.useResolutionMotionScale && !state->IsMainOrLoadingMenuOpen() && diagnostic.options == 0 && selected.conversion == NR::Diagnostics::ColorConversion::Production &&
+			                       selected.exposure == NR::Diagnostics::ExposureMode::Production && selected.composite == NR::Diagnostics::CompositeMode::Production;
+			compression = NR::BuildPeripheralCompressionPlan(w, h, lowExtent.first ? lowExtent.first : w, lowExtent.second ? lowExtent.second : h,
+				effective.peripheralCompressionPercent, supported, NR::kModelExtentAlignment, NR::kMinModelExtent);
+			if (compression.Active()) {
+				const auto reason = work.PreparePeripheralResources();
+				if (reason != NR::PeripheralCompressionReason::Active)
+					compression = { .reason = reason };
+			}
+			if (compression.Active())
+				lowExtent = { compression.width, compression.height };
+		}
+		if (compression.Active() != work.peripheralPlan.Active() || (compression.Active() && compression.mapping != work.peripheralPlan.mapping))
+			resetHistory = true;
+		work.peripheralPlan = compression;
+		peripheralCompressionReason.store(static_cast<uint32_t>(compression.reason), std::memory_order_relaxed);
+		const bool providerRejected = materialStrengthRejected.load(std::memory_order_relaxed);
+		const bool materialStrengthWanted = effective.materialStrength && NR::MaterialStrength::IsAvailable(lowExtent.first != 0,
+																			  providerRejected, work.materialStrengthDegraded, work.materialCompositeDegraded);
+		const bool providerStrengthWanted = effective.materialStrength && !providerRejected && lowExtent.first == 0;
+		if (providerStrengthWanted != work.materialStrengthOn) {
 			recreate = resetHistory = true;
-			work.materialStrengthOn = materialStrengthWanted;
+			work.materialStrengthOn = providerStrengthWanted;
 		}
 		const bool forceRecreate = recreate.exchange(false);
 		diagnostic.recreated = forceRecreate || work.width != w || work.height != h || work.guideWidth != gw || work.guideHeight != gh || work.eyeCount != count || work.format != desc.Format;
-		const auto lowExtent = NR::ModelExtent(effective.modelScale, w, h);
 		diagnostic.recreated |= work.lowWidth != lowExtent.first || work.lowHeight != lowExtent.second;
 		work.sbsEnabled = effective.sbsEvaluate && count == 2;
 		work.EnsureResources(w, h, gw, gh, count, desc.Format, forceRecreate, lowExtent.first, lowExtent.second);
@@ -2712,7 +2959,6 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		uint32_t reset = NR::Diagnostics::FrameResetReasons(resetHistory.exchange(false), work.lastFrame, state->frameCount);
 		auto boundedTuning = effective;
 		boundedTuning.Sanitize();
-		const bool calibrationRunning = GetCalibration().state == NR::CropCalibration::State::kRunning;
 		const bool cropActive = boundedTuning.regionOfInterest || calibrationRunning;
 		work.region = cropActive ? GetRegionOfInterest() : Util::Region::StereoRegion{};
 		work.actorBox = cropActive ? GetActorBox() : Util::Region::StereoRegion{};
@@ -2737,7 +2983,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		else if (foveaClip)
 			source = RegionSource::kFovea;
 		regionSource.store(static_cast<uint32_t>(source), std::memory_order_relaxed);
-		const auto regionPolicy = work.sbsEnabled ? NR::ActorRegion::kResetPolicy : NR::ActorRegion::kCompensatedResetPolicy;
+		const auto regionPolicy = work.sbsEnabled || work.peripheralPlan.Active() ? NR::ActorRegion::kResetPolicy : NR::ActorRegion::kCompensatedResetPolicy;
 		if (Util::Region::ShouldResetForRegion(regionPolicy, work.region, work.lastRegion, NR::ActorRegion::kHistoryTolerancePixels))
 			reset |= NR::Diagnostics::RegionChanged;
 		work.lastRegion = work.region;
@@ -2757,6 +3003,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		work.materialMapMode = boundedTuning.materialMapMode;
 		work.materialMapFilter = boundedTuning.materialMapFilter;
 		work.materialMapStrength = materialStrengths.strength;
+		work.materialEdgeSoftness = materialStrengths.edgeSoftness;
 		diagnostic.conversion = static_cast<uint32_t>(work.conversionMode);
 		diagnostic.exposureMode = static_cast<uint32_t>(work.exposureMode);
 		diagnostic.compositeMode = static_cast<uint32_t>(work.compositeMode);
@@ -2778,6 +3025,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			throw std::runtime_error(std::format("the NVIDIA runtime failed to process a frame. Update the GPU driver, then press Retry (NGX L/R 0x{:08X}/0x{:08X})",
 				diagnostic.result[0], diagnostic.result[1]));
 		appliedFrame.store(state->frameCount, std::memory_order_relaxed);
+		modelReconstruction.store(work.reconstructionMode, std::memory_order_relaxed);
+		modelReconstructionFallback.store(work.reconstructionFallback, std::memory_order_relaxed);
 		appliedFrames.fetch_add(1, std::memory_order_relaxed);
 		const uint32_t frameResets = diagnostic.reset[0] | diagnostic.reset[1];
 		diagnostics.RecordFrame(frameResets, diagnostic.resetDrainMs);
