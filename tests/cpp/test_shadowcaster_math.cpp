@@ -23,10 +23,15 @@ using ShadowCasterManager::HemisphereSeamMargin;
 using ShadowCasterManager::HoldsFlame;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
 using ShadowCasterManager::KeepsLastValidOnAcquire;
+using ShadowCasterManager::kNotMoving;
 using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kSlotHoldMargin;
 using ShadowCasterManager::kTileScaleFloor;
 using ShadowCasterManager::kVanillaShadowSliceCount;
+using ShadowCasterManager::MovingUntil;
+using ShadowCasterManager::NoteObjectMove;
+using ShadowCasterManager::ObjectMotion;
+using ShadowCasterManager::ObjectMovingUntil;
 using ShadowCasterManager::PlayerProtectionCap;
 using ShadowCasterManager::ProjectedLightExtent;
 using ShadowCasterManager::QuantizeFloat;
@@ -138,6 +143,34 @@ TEST_CASE("SphereWhollyBehindPlane splits straddling from wholly behind", "[scm]
 	// Behind by more than the margin: nothing of it reaches the front map.
 	REQUIRE(SphereWhollyBehindPlane(-10.0f - margin - 0.01f, 10.0f, margin));
 	REQUIRE(SphereWhollyBehindPlane(-500.0f, 10.0f, margin));
+}
+
+TEST_CASE("ObjectMovingUntil holds every part as long as its longest-moving part", "[scm]")
+{
+	int until = ObjectMovingUntil(kNotMoving, 100, 8);
+	REQUIRE(until == 108);
+	until = ObjectMovingUntil(until, 101, 64);
+	REQUIRE(until == 165);
+	REQUIRE(ObjectMovingUntil(until, 102, 8) == 165);
+}
+
+TEST_CASE("An object's motion reads the same to every part in an epoch", "[scm]")
+{
+	ObjectMotion motion;
+	NoteObjectMove(motion, 100, 8);
+	REQUIRE(MovingUntil(motion, 100) == kNotMoving);
+	REQUIRE(MovingUntil(motion, 101) == 108);
+
+	// A part visited before a sibling's move and one visited after read the same value in that epoch.
+	NoteObjectMove(motion, 108, 8);
+	const int before = MovingUntil(motion, 108);
+	NoteObjectMove(motion, 108, 64);
+	REQUIRE(MovingUntil(motion, 108) == before);
+	REQUIRE(MovingUntil(motion, 109) == 172);
+
+	// With no further move the hold ends at the last window.
+	REQUIRE_FALSE(172 < MovingUntil(motion, 109));
+	REQUIRE(171 < MovingUntil(motion, 109));
 }
 
 TEST_CASE("FrameTimePercentile returns the 60fps fallback with no samples", "[scm]")

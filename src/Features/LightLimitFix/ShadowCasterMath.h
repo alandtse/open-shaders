@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -186,6 +187,39 @@ namespace ShadowCasterManager
 	inline bool SphereWhollyBehindPlane(float a_planeDistance, float a_radius, float a_margin) noexcept
 	{
 		return a_planeDistance + a_radius <= -a_margin;
+	}
+
+	/// The moving-until epoch of an object none of whose parts has moved since it was seen.
+	inline constexpr int kNotMoving = std::numeric_limits<int>::min();
+
+	/// Extends an object's moving-until epoch to cover a part that moved at a_moveEpoch and stays live for a_partWindow epochs.
+	inline int ObjectMovingUntil(int a_until, int a_moveEpoch, int a_partWindow) noexcept
+	{
+		return std::max(a_until, a_moveEpoch + a_partWindow);
+	}
+
+	/// An object's moving-until epoch. A move noted in an epoch is staged and read from the next one, so every part of the
+	/// object sees the same value in an epoch whatever order the parts are visited.
+	struct ObjectMotion
+	{
+		int until = kNotMoving;
+		int staged = kNotMoving;
+		int stagedEpoch = -1;
+	};
+
+	inline int MovingUntil(const ObjectMotion& a_motion, int a_epoch) noexcept
+	{
+		return a_motion.stagedEpoch < a_epoch ? std::max(a_motion.until, a_motion.staged) : a_motion.until;
+	}
+
+	inline void NoteObjectMove(ObjectMotion& a_motion, int a_epoch, int a_partWindow) noexcept
+	{
+		if (a_motion.stagedEpoch < a_epoch) {
+			a_motion.until = std::max(a_motion.until, a_motion.staged);
+			a_motion.staged = kNotMoving;
+		}
+		a_motion.staged = ObjectMovingUntil(a_motion.staged, a_epoch, a_partWindow);
+		a_motion.stagedEpoch = a_epoch;
 	}
 
 	// The tile class ladder, shared by the coverage classifier below and the

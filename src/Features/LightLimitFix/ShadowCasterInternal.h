@@ -503,12 +503,15 @@ namespace ShadowCasterManager
 		uint64_t foldHash = 0;
 		bool foldHashValid = false;
 		bool dynamic = true;
-		bool actorAttached = false;  ///< parented under an actor's skeleton
-		int ancestryEpoch = -1;      ///< epoch of the last parent-chain walk
-		int classEpoch = -1;         ///< epoch its static / dynamic class last changed after its first sighting
+		bool actorAttached = false;                ///< parented under an actor's skeleton
+		int ancestryEpoch = -1;                    ///< epoch of the last parent-chain walk
+		int classEpoch = -1;                       ///< epoch its static / dynamic class last changed after its first sighting
+		const RE::TESObjectREFR* owner = nullptr;  ///< reference the geometry belongs to; its parts move as one
 	};
 	// Pruned periodically by ScheduleShadowCasters (ShadowScheduler.cpp).
 	extern ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;
+	/// Motion of each reference's casters; a key only, never dereferenced.
+	extern ankerl::unordered_dense::map<const RE::TESObjectREFR*, ObjectMotion> s_ownerMotion;
 	extern int s_casterClassEpoch;
 
 	// Camera position captured at accumulate start (EnableLight, writer); the

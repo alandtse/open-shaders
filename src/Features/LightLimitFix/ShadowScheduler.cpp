@@ -3876,6 +3876,8 @@ namespace ShadowCasterManager
 		if (++s_casterClassEpoch % 300 == 0) {
 			std::erase_if(s_casterMobility,
 				[](const auto& kv) { return s_casterClassEpoch - kv.second.lastEpoch > 300; });
+			std::erase_if(s_ownerMotion,
+				[](const auto& kv) { return MovingUntil(kv.second, s_casterClassEpoch) <= s_casterClassEpoch; });
 			// Split state keys dead lights until this cap; rebuilds harmlessly.
 			PruneIfOversized(s_splitState, 512);
 		}
@@ -3914,6 +3916,7 @@ namespace ShadowCasterManager
 		if (s_pendingCellReset.exchange(false, std::memory_order_acquire)) {
 			s_cellResetTotal.fetch_add(1, std::memory_order_relaxed);
 			s_casterMobility.clear();
+			s_ownerMotion.clear();
 			s_everHadShadow.clear();  // a cell swap recycles NiLight addresses
 			std::erase_if(s_lastValidFrame, [ssn](const auto& kv) { return !KeepsSlotThroughCellShift(ssn, kv.first); });
 			s_splitState.clear();  // bakeQueued defaults true: every light re-bakes
