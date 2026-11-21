@@ -275,7 +275,8 @@ jobs:
               run: |
                   mkdir -p timing
                   for runtime in VR SE; do
-                    id=$(gh api "repos/$REPO/actions/artifacts?name=shader-compile-timing-$runtime&per_page=50"                       --jq '[.artifacts[] | select(.expired == false)] | (map(select(.workflow_run.head_branch == "dev")) + .)[0].id // empty') || true
+                    id=$(gh api "repos/$REPO/actions/artifacts?name=shader-compile-timing-$runtime&per_page=50" \
+                      --jq '[.artifacts[] | select(.expired == false)] | (map(select(.workflow_run.head_branch == "dev")) + .)[0].id // empty') || true
                     if [ -n "$id" ] && gh api "repos/$REPO/actions/artifacts/$id/zip" > "timing/$runtime.zip"; then
                       unzip -oq "timing/$runtime.zip" -d timing || true
                     fi
@@ -287,7 +288,9 @@ jobs:
               env:
                   BASE_SHA: ${{ github.event.pull_request.base.sha }}
               run: |
-                  python tools/shader_cost_report.py --base "$BASE_SHA" --head refs/pr_head                     --timing-vr timing/shader-compile-timing-VR.json --timing-se timing/shader-compile-timing-SE.json                     --out shader-cost-report.md
+                  python tools/shader_cost_report.py --base "$BASE_SHA" --head refs/pr_head \
+                    --timing-vr timing/shader-compile-timing-VR.json --timing-se timing/shader-compile-timing-SE.json \
+                    --out shader-cost-report.md
                   if [ -f shader-cost-report.md ]; then echo "has-report=true" >> "$GITHUB_OUTPUT"; fi
 
             - name: Upload shader cost report
