@@ -125,10 +125,16 @@ namespace SnowDeformationMath
 		return std::max(surface - blanket * std::clamp(a_weightScale, 0.0f, 1.0f), 0.0f);
 	}
 
-	/** @brief Blanket height under an object from a probe read a_sampleFrame, 0 when there is no read or it is older than a_maxAge frames, never above a_cap. */
+	/** @brief Whether a probe read a_sampleFrame exists and is at most a_maxAge frames older than a_frame. */
+	inline bool HasFreshBlanket(bool a_hasSample, uint64_t a_sampleFrame, uint64_t a_frame, uint64_t a_maxAge)
+	{
+		return a_hasSample && a_frame <= a_sampleFrame + a_maxAge;
+	}
+
+	/** @brief Blanket height under an object from a probe read a_sampleFrame, 0 when there is no fresh read, never above a_cap. */
 	inline float MeasuredBlanket(bool a_hasSample, uint64_t a_sampleFrame, uint64_t a_frame, uint64_t a_maxAge, float a_raise, float a_cap)
 	{
-		if (!a_hasSample || a_frame > a_sampleFrame + a_maxAge || !(a_raise > 0.0f))
+		if (!HasFreshBlanket(a_hasSample, a_sampleFrame, a_frame, a_maxAge) || !(a_raise > 0.0f))
 			return 0.0f;
 		return std::min(a_raise, std::max(a_cap, 0.0f));
 	}

@@ -594,7 +594,7 @@ private:
 	uint64_t sinkFrame = 0;
 	uint32_t sunkActors = 0;
 	float deepestSink = 0.0f;
-	uint64_t gatherFrame = 0;
+	std::atomic<uint64_t> gatherFrame = 0;
 	std::atomic<bool> gatherEnabled = false;
 	std::atomic<uint32_t> handStamps = 0;
 	std::atomic<uint32_t> handCapsules = 0;

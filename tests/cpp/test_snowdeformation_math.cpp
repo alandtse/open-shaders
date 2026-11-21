@@ -158,6 +158,15 @@ TEST_CASE("A probe read gives the blanket under an object only while fresh", "[s
 	REQUIRE(Math::MeasuredBlanket(true, 10, 10, 12, 8.0f, -1.0f) == Approx(0.0f));
 }
 
+TEST_CASE("An item with no fresh probe read is unmeasured, not bare ground", "[snow-deformation]")
+{
+	REQUIRE_FALSE(Math::HasFreshBlanket(false, 0, 10, 12));
+	REQUIRE(Math::HasFreshBlanket(true, 10, 22, 12));
+	REQUIRE_FALSE(Math::HasFreshBlanket(true, 10, 23, 12));
+	REQUIRE(Math::HasFreshBlanket(true, 10, 10, 12));
+	REQUIRE(Math::MeasuredBlanket(true, 10, 10, 12, 0.0f, 20.0f) == Approx(0.0f));
+}
+
 TEST_CASE("Bare ground has no rest height to float at", "[snow-deformation]")
 {
 	REQUIRE(Math::RestHeight(Math::MeasuredBlanket(true, 10, 10, 12, 0.0f, 20.0f), 0.0f, 0.0f) == Approx(0.0f));
