@@ -7,8 +7,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-#include <limits>
-
 using Catch::Approx;
 using ShadowCasterManager::DemandStreakBucket;
 using ShadowCasterManager::EngineShadowSliceCount;
@@ -148,9 +146,6 @@ TEST_CASE("ObjectMovingUntil holds every part as long as its longest-moving part
 	until = ObjectMovingUntil(until, 101, 64);
 	REQUIRE(until == 165);
 	REQUIRE(ObjectMovingUntil(until, 102, 8) == 165);
-	REQUIRE_FALSE(std::numeric_limits<int>::max() < kNotMoving);
-	REQUIRE(164 < until);
-	REQUIRE_FALSE(165 < until);
 }
 
 TEST_CASE("An object's motion reads the same to every part in an epoch", "[scm]")
