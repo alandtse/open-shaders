@@ -9,6 +9,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/Game.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Vignette::Settings,
@@ -139,7 +140,7 @@ void Vignette::Draw(TextureInfo& inout_tex)
 	float2 res = { (float)texOutput->desc.Width, (float)texOutput->desc.Height };
 	res = Util::ConvertToDynamic(res);
 	// In VR, res.x spans both packed eyes; the ellipse shape must use one eye's width.
-	float eyeWidth = globals::game::isVR ? res.x * 0.5f : res.x;
+	float eyeWidth = Util::EyeWidth(res.x);
 	VignetteCB data = {
 		.settings = effective,
 		.AspectRatio = res.y / eyeWidth / effective.Anamorphism,

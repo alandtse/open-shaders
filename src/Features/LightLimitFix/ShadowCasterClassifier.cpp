@@ -7,7 +7,6 @@
 
 #include "../../Globals.h"
 #include "../../State.h"
-#include "../../Utils/ActorUtils.h"
 #include "../../Utils/FileSystem.h"
 #include "../../Utils/Game.h"
 #include "ShadowCasterInternal.h"
@@ -267,22 +266,26 @@ namespace ShadowCasterManager
 	constexpr int kStaticPromoteBackoffMax = 8;  // 8 * 8 = 64 frames, ~1s at 60fps
 	// Bounds framesSinceMove; must clear the longest decay threshold below.
 	constexpr int kStaticFramesCap = kStaticStabilityFrames * kStaticPromoteBackoffMax * 4;
-	// Settled casters re-verify worldBound only every N epochs; kept well
-	// inside kSleepRedrawIntervalFrames (45) so a missed move is still caught.
-	constexpr int kSettledRecheckFrames = 16;
 	constexpr int kSettledAtFactor = 4;  // matches the promoteAt * 4 backoff-reset below
 	constexpr int kAncestryRecheckEpochs = 16;
-	constexpr int kAncestryStale = -kAncestryRecheckEpochs;
 	std::atomic<bool> s_actorAttachedDynamic{ true };
 	// Open-addressing map: probed once per appended caster by the cull-walk
 	// hook, so lookup cost lands directly on EnableLight's accumulate time.
 	// Accumulate-thread only (see CurrentCullLight) -- a concurrent insert
 	// would rehash under another thread's probe.
 	ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;
+	ankerl::unordered_dense::map<const RE::TESObjectREFR*, ObjectMotion> s_ownerMotion;
 	int s_casterClassEpoch{ 0 };
 
 	bool GetActorAttachedDynamic() { return s_actorAttachedDynamic.load(std::memory_order_relaxed); }
 	void SetActorAttachedDynamic(bool a_value) { s_actorAttachedDynamic.store(a_value, std::memory_order_relaxed); }
+
+	/// Epoch until which some part of the caster's object is still moving, or kNotMoving.
+	static int OwnerMovingUntil(const CasterMobility& r)
+	{
+		const auto it = r.owner ? s_ownerMotion.find(r.owner) : s_ownerMotion.end();
+		return it != s_ownerMotion.end() ? MovingUntil(it->second, s_casterClassEpoch) : kNotMoving;
+	}
 
 	/// Classifies a caster static vs dynamic from quantized worldBound
 	/// movement (1-unit, matching the redraw hash), memoized once per frame.
@@ -292,22 +295,14 @@ namespace ShadowCasterManager
 		auto& r = it->second;
 		if (r.lastEpoch == s_casterClassEpoch)
 			return r;  // already classified this frame
-
-		// Settled fast path: trust the cached classification instead of
-		// re-quantizing worldBound. A move mid-window is still caught at the next checkpoint.
-		const int settledAt = kStaticStabilityFrames * r.promoteBackoff * kSettledAtFactor;
-		if (!inserted && !r.dynamic && r.framesSinceMove >= settledAt &&
-			s_casterClassEpoch - r.lastVerifyEpoch < kSettledRecheckFrames) {
-			r.lastEpoch = s_casterClassEpoch;  // keep same-frame memo + prune liveness
-			return r;
-		}
+		const bool wasDynamic = r.dynamic;
 
 		const auto& wb = geom.worldBound;
 		const float cx = std::round(wb.center.x), cy = std::round(wb.center.y),
 					cz = std::round(wb.center.z), cr = std::round(wb.radius);
 		const bool moved = inserted || cx != r.cx || cy != r.cy || cz != r.cz || cr != r.cr;
-		// Settled casters verify sparsely, so framesSinceMove must advance by
-		// the elapsed epoch count to keep real-time semantics.
+		// A caster is classified only on frames a light visits it, so framesSinceMove
+		// must advance by the elapsed epoch count to keep real-time semantics.
 		const int elapsed = r.lastVerifyEpoch < 0 ? 1 : std::max(1, s_casterClassEpoch - r.lastVerifyEpoch);
 		if (moved) {
 			// Leaving the static set is an oscillation (not a first sighting): make
@@ -327,23 +322,29 @@ namespace ShadowCasterManager
 		r.lastVerifyEpoch = s_casterClassEpoch;
 		const int promoteAt = kStaticStabilityFrames * r.promoteBackoff;
 		r.dynamic = r.framesSinceMove < promoteAt;
-		if (s_actorAttachedDynamic.load(std::memory_order_relaxed)) {
-			if (inserted || s_casterClassEpoch - r.ancestryEpoch >= kAncestryRecheckEpochs) {
-				r.actorAttached = Util::IsOwnedByActor(geom);
-				r.ancestryEpoch = s_casterClassEpoch;
-			}
-			// Parented under an actor: it rests and moves with the actor, so each pause would
-			// promote it into the static set and force a rebake when it moves again.
-			if (r.actorAttached)
-				r.dynamic = true;
-		} else {
-			r.actorAttached = false;
-			r.ancestryEpoch = kAncestryStale;
+		if (inserted || s_casterClassEpoch - r.ancestryEpoch >= kAncestryRecheckEpochs) {
+			r.owner = geom.GetUserData();
+			r.actorAttached = r.owner && r.owner->IsActor();
+			r.ancestryEpoch = s_casterClassEpoch;
 		}
+		// Parented under an actor: it rests and moves with the actor, so each pause would
+		// promote it into the static set and force a rebake when it moves again.
+		const bool actorHeld = r.actorAttached && s_actorAttachedDynamic.load(std::memory_order_relaxed);
+		if (moved && !inserted && r.owner && !actorHeld) {
+			NoteObjectMove(s_ownerMotion.try_emplace(r.owner).first->second, s_casterClassEpoch, promoteAt);
+		}
+		if (actorHeld)
+			r.dynamic = true;
+		// A swinging fixture's parts near its pivot move under a unit a frame: held live as long as its moving part is,
+		// they are never baked while the rest of it is drawn live, which splits its shadow.
+		if (s_casterClassEpoch < OwnerMovingUntil(r))
+			r.dynamic = true;
 		// Held still far past its (backed-off) window: it has settled rather than
 		// oscillating, so restore the base window for its next move.
 		if (!r.dynamic && r.framesSinceMove >= promoteAt * kSettledAtFactor)
 			r.promoteBackoff = 1;
+		if (!inserted && r.dynamic != wasDynamic)
+			r.classEpoch = s_casterClassEpoch;
 		return r;
 	}
 
@@ -369,6 +370,8 @@ namespace ShadowCasterManager
 	// Static casters the current StaticOnly bake appended, so an empty bake
 	// is never advertised as real cached content.
 	std::atomic<uint32_t> s_visitStaticCount{ 0 };
+	int s_visitBakeEpoch{ -1 };
+	bool s_visitBakeStale{ false };
 
 	// Folds one static caster into the running per-light static hash during the
 	// same accumulate that appends the movers -- no second caster walk needed.
@@ -454,6 +457,10 @@ namespace ShadowCasterManager
 		                          nullptr :
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
+		// A caster that settled since the bake is missing from it and is drawn live; one that started moving is still in
+		// it at its old pose and is left to it. Either way the light is queued for a rebake.
+		const bool bakeStale = rec && CasterChangedSinceBake(rec->classEpoch, s_visitBakeEpoch);
+		s_visitBakeStale |= bakeStale;
 		// Every static caster folds into the hash regardless of pass, so a
 		// static-set change is seen during whichever accumulate runs this frame.
 		if (!dynamic)
@@ -469,9 +476,10 @@ namespace ShadowCasterManager
 			s_visitStaticCount.fetch_add(1, std::memory_order_relaxed);
 			break;
 		case CasterPass::DynamicOnly:
-			if (!dynamic)
-				return true;  // composite pass skips baked static geometry
-			s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+			if (dynamic)
+				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+			if (CompositeSkipsCaster(dynamic, bakeStale))
+				return true;  // composite pass leaves baked geometry to the bake
 			break;
 		case CasterPass::All:
 			(dynamic ? s_dynamicCasterDraws : s_staticCasterDraws).fetch_add(1, std::memory_order_relaxed);
@@ -480,6 +488,19 @@ namespace ShadowCasterManager
 			break;
 		}
 		return false;
+	}
+
+	/// True for the rigid part of the actor carrying this light whose bounds hold it (the weapon, torch or cage it hangs on);
+	/// the skinned body and the rest of the actor's gear still cast, so a torch-bearer keeps their shadow.
+	static bool HeldByCarrier(RE::BSShadowLight& a_light, const RE::BSGeometry& a_geometry)
+	{
+		if (a_geometry.GetGeometryRuntimeData().skinInstance || !a_light.dynamic || !a_light.GetIsOmniLight())
+			return false;
+		const auto* ni = a_light.light.get();
+		if (!ni || a_geometry.worldBound.center.GetDistance(ni->world.translate) > a_geometry.worldBound.radius)
+			return false;
+		const auto* carrier = CarrierOf(ni);
+		return carrier && carrier == CarrierOf(&a_geometry);
 	}
 
 	/// The light's own reference, looked up once per light per frame: every near caster of one cull walk asks for the same one.
@@ -561,6 +582,8 @@ namespace ShadowCasterManager
 					return;  // skip append -- caster dropped from this shadow
 				}
 			}
+			if (light && HeldByCarrier(*light, a_visible))
+				return;
 			if (light && s_settings.SkipFlameEnclosure && EnclosesOwnFlame(*light, a_visible)) {
 				s_flameHolderSkipTotal.fetch_add(1, std::memory_order_relaxed);
 				return;

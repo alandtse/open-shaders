@@ -266,7 +266,7 @@ float3 SampleFlare(uint2 tid)
 {
 	float2 uv = (float2(tid) + 0.5) / OutputSize;
 	float3 flares = SampleBicubicCatmullRom(TexFlare, LinearSampler, uv, FlareSize);
-	float gradientT = saturate(distance(uv, 0.5) * 2.0);
+	float gradientT = saturate(distance(Stereo::ConvertFromStereoUV(uv, Stereo::GetEyeIndexFromTexCoord(uv)), 0.5) * 2.0);
 	float3 gradient = lerp(1.0, FlareTint, gradientT);
 	// Preserve the former RGBA16F mix output.
 	return f16tof32(f32tof16(flares * gradient * FlareIntensity));

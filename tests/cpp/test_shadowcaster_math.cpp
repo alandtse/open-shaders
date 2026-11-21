@@ -8,7 +8,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 using Catch::Approx;
+using ShadowCasterManager::CasterChangedSinceBake;
+using ShadowCasterManager::CompositeSkipsCaster;
+using ShadowCasterManager::CountsTowardPoseLatch;
 using ShadowCasterManager::DemandStreakBucket;
+using ShadowCasterManager::EdgeKeepsLight;
 using ShadowCasterManager::EngineShadowSliceCount;
 using ShadowCasterManager::FacingRotation;
 using ShadowCasterManager::FrameTimePercentile;
@@ -18,11 +22,18 @@ using ShadowCasterManager::HeldLightYields;
 using ShadowCasterManager::HemisphereSeamMargin;
 using ShadowCasterManager::HoldsFlame;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
+using ShadowCasterManager::KeepsLastValidOnAcquire;
+using ShadowCasterManager::kNotMoving;
 using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kSlotHoldMargin;
 using ShadowCasterManager::kTileScaleFloor;
 using ShadowCasterManager::kVanillaShadowSliceCount;
+using ShadowCasterManager::MovingUntil;
+using ShadowCasterManager::NoteObjectMove;
+using ShadowCasterManager::ObjectMotion;
+using ShadowCasterManager::ObjectMovingUntil;
 using ShadowCasterManager::PlayerProtectionCap;
+using ShadowCasterManager::ProjectedLightExtent;
 using ShadowCasterManager::QuantizeFloat;
 using ShadowCasterManager::ResumedFadeStart;
 using ShadowCasterManager::ShadowFadeAlpha;
@@ -134,6 +145,34 @@ TEST_CASE("SphereWhollyBehindPlane splits straddling from wholly behind", "[scm]
 	// Behind by more than the margin: nothing of it reaches the front map.
 	REQUIRE(SphereWhollyBehindPlane(-10.0f - margin - 0.01f, 10.0f, margin));
 	REQUIRE(SphereWhollyBehindPlane(-500.0f, 10.0f, margin));
+}
+
+TEST_CASE("ObjectMovingUntil holds every part as long as its longest-moving part", "[scm]")
+{
+	int until = ObjectMovingUntil(kNotMoving, 100, 8);
+	REQUIRE(until == 108);
+	until = ObjectMovingUntil(until, 101, 64);
+	REQUIRE(until == 165);
+	REQUIRE(ObjectMovingUntil(until, 102, 8) == 165);
+}
+
+TEST_CASE("An object's motion reads the same to every part in an epoch", "[scm]")
+{
+	ObjectMotion motion;
+	NoteObjectMove(motion, 100, 8);
+	REQUIRE(MovingUntil(motion, 100) == kNotMoving);
+	REQUIRE(MovingUntil(motion, 101) == 108);
+
+	// A part visited before a sibling's move and one visited after read the same value in that epoch.
+	NoteObjectMove(motion, 108, 8);
+	const int before = MovingUntil(motion, 108);
+	NoteObjectMove(motion, 108, 64);
+	REQUIRE(MovingUntil(motion, 108) == before);
+	REQUIRE(MovingUntil(motion, 109) == 172);
+
+	// With no further move the hold ends at the last window.
+	REQUIRE_FALSE(172 < MovingUntil(motion, 109));
+	REQUIRE(171 < MovingUntil(motion, 109));
 }
 
 TEST_CASE("FrameTimePercentile returns the 60fps fallback with no samples", "[scm]")
@@ -262,6 +301,32 @@ TEST_CASE("SliceCappedLightCount keeps the highest point index inside the array"
 			REQUIRE(SliceCappedLightCount(count, slices) < slices);
 }
 
+TEST_CASE("EdgeKeepsLight keeps only a recently valid omni light that is neither hidden nor faded", "[scm]")
+{
+	REQUIRE(EdgeKeepsLight(true, false, false, false));
+	// Not recently valid, hidden, faded out by its level of detail, or a spot light: dropped as before.
+	REQUIRE_FALSE(EdgeKeepsLight(false, false, false, false));
+	REQUIRE_FALSE(EdgeKeepsLight(true, true, false, false));
+	REQUIRE_FALSE(EdgeKeepsLight(true, false, true, false));
+	REQUIRE_FALSE(EdgeKeepsLight(true, false, false, true));
+}
+
+TEST_CASE("KeepsLastValidOnAcquire keeps only this frame's stamp", "[scm]")
+{
+	REQUIRE(KeepsLastValidOnAcquire(120, 120));
+	REQUIRE_FALSE(KeepsLastValidOnAcquire(119, 120));
+	REQUIRE_FALSE(KeepsLastValidOnAcquire(-1, 120));
+}
+
+TEST_CASE("Shadow ranking clips lights crossing the camera plane", "[scm]")
+{
+	REQUIRE(ProjectedLightExtent(0.0f, 1.0f, -3.0f, -1.0f) == 0.0f);
+	REQUIRE(ProjectedLightExtent(1.7f, 0.3f, -0.2f, 0.7f) == 0.0f);
+	REQUIRE(ProjectedLightExtent(0.9f, 0.3f, -0.1f, 1.0f) == Approx(0.2f));
+	REQUIRE(ProjectedLightExtent(-0.9f, 0.3f, -0.1f, 1.0f) == Approx(0.2f));
+	REQUIRE(ProjectedLightExtent(0.0f, 0.5f, -0.1f, 1.0f) == 1.0f);
+}
+
 TEST_CASE("HeldLightYields seats only lights out of view after the lights in view", "[scm]")
 {
 	REQUIRE(HeldLightYields(false, false, false));
@@ -327,6 +392,28 @@ TEST_CASE("ResumedFadeStart continues from the strength shown", "[scm]")
 	}
 	REQUIRE(ResumedFadeStart(20.0, 2.0f, duration) == Approx(20.0 - duration));
 	REQUIRE(ResumedFadeStart(20.0, -1.0f, duration) == Approx(20.0));
+}
+
+TEST_CASE("A caster that changed class after the bake marks the bake stale", "[scm]")
+{
+	REQUIRE_FALSE(CasterChangedSinceBake(5, 5));
+	REQUIRE_FALSE(CasterChangedSinceBake(4, 5));
+	REQUIRE(CasterChangedSinceBake(6, 5));
+	REQUIRE(CasterChangedSinceBake(0, -1));
+	REQUIRE(CompositeSkipsCaster(false, false));
+	REQUIRE_FALSE(CompositeSkipsCaster(true, false));
+	REQUIRE_FALSE(CompositeSkipsCaster(false, true));
+	REQUIRE(CompositeSkipsCaster(true, true));
+}
+
+TEST_CASE("CountsTowardPoseLatch leaves out a rebake queued only by a class change", "[scm]")
+{
+	REQUIRE_FALSE(CountsTowardPoseLatch(true, true, 0, true));
+	REQUIRE_FALSE(CountsTowardPoseLatch(true, true, 2, true));
+	REQUIRE(CountsTowardPoseLatch(true, true, 3, true));
+	REQUIRE(CountsTowardPoseLatch(true, true, 0, false));
+	REQUIRE(CountsTowardPoseLatch(true, false, 0, true));
+	REQUIRE(CountsTowardPoseLatch(false, true, 0, true));
 }
 
 TEST_CASE("HoldsFlame takes only a small part round or under the flame", "[scm]")

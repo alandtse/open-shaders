@@ -237,7 +237,7 @@ void VolumetricLighting::EarlyPrepass()
 	vlData.screenY = std::max(1, static_cast<int32_t>(renderSize.y));
 	vlData.screenXMin1 = vlData.screenX - 1;
 	vlData.screenYMin1 = vlData.screenY - 1;
-	vlData.eyeWidth = globals::game::isVR ? vlData.screenX / 2 : vlData.screenX;
+	vlData.eyeWidth = Util::EyeWidth(vlData.screenX);
 	const int32_t maximumEyeWidth = globals::game::isVR ? vlData.screenX - vlData.eyeWidth : vlData.screenX;
 	vlData.horizontalGroupsPerEye =
 		(maximumEyeWidth + BlurThreadGroupSizeX - BlurWindow * 2u - 1u) / (BlurThreadGroupSizeX - BlurWindow * 2u);
@@ -336,7 +336,7 @@ void VolumetricLighting::SetDimensionsCB() const
 
 void VolumetricLighting::SetGroupCountsHCS(uint32_t& threadGroupCountX, uint32_t& threadGroupCountY) const
 {
-	threadGroupCountX = globals::game::isVR ? 2u * vlData.horizontalGroupsPerEye :
+	threadGroupCountX = globals::game::isVR ? Util::EyeCount() * vlData.horizontalGroupsPerEye :
 	                                          (vlData.screenX + BlurThreadGroupSizeX - BlurWindow * 2u - 1u) / (BlurThreadGroupSizeX - BlurWindow * 2u);
 	// One group per row, so the game's full-height count would blur rows outside the dynamic resolution area.
 	threadGroupCountY = static_cast<uint32_t>(vlData.screenY);

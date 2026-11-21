@@ -429,7 +429,7 @@ float GetPointLightIntensity(LightLimitFix::Light light, float3 positionWS, uint
 	{
 		bool shadowCoverage;
 		float3 worldPositionWS = positionWS + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-		intensity *= LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, float2x2(1, 0, 0, 1), shadowCoverage);
+		intensity *= LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, float2x2(1, 0, 0, 1), 8u, sqrt(light.sizeBias), shadowCoverage);
 	}
 
 	return intensity;

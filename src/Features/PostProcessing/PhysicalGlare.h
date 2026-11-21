@@ -172,7 +172,7 @@ struct PhysicalGlare : public PostProcessFeature
 		float SphericalAberration;
 		uint UseAP1;
 		float KernelScale;
-		float _pad11;
+		uint EyeIndex;
 	};
 	eastl::unique_ptr<ConstantBuffer> glareCB = nullptr;
 

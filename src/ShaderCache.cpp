@@ -2848,6 +2848,36 @@ namespace SIE
 		}
 	}
 
+	winrt::com_ptr<ID3D11GeometryShader> ShaderCache::GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor)
+	{
+		std::scoped_lock lock(paraboloidClipMutex);
+		if (const auto it = paraboloidClipShaders.find(vertexDescriptor); it != paraboloidClipShaders.end())
+			return it->second;
+		std::array<D3D_SHADER_MACRO, 64> macros{};
+		SShaderCache::GetShaderDefines(shader, vertexDescriptor, std::span{ macros });
+		std::vector<std::pair<const char*, const char*>> defines;
+		for (const auto& macro : macros) {
+			if (!macro.Name)
+				break;
+			defines.emplace_back(macro.Name, macro.Definition);
+		}
+		winrt::com_ptr<ID3D11GeometryShader> geometryShader;
+		const std::wstring path = SShaderCache::GetShaderPath(shader.fxpFilename);
+		if (const auto blob = Util::CompileShaderBlob(path.c_str(), defines, "gs_5_0")) {
+			if (FAILED(globals::d3d::device->CreateGeometryShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, geometryShader.put())))
+				geometryShader = nullptr;
+			else
+				Util::SetResourceName(geometryShader.get(), "Utility::ParaboloidClip %X", vertexDescriptor);
+		}
+		if (!geometryShader) {
+			static std::unordered_set<uint32_t> warnedDescriptors;
+			if (warnedDescriptors.insert(vertexDescriptor).second)
+				logger::warn("[SCM] Paraboloid clip shader for Utility {:X} did not compile; that draw keeps the vertex shader's projection", vertexDescriptor);
+			return nullptr;
+		}
+		return paraboloidClipShaders.emplace(vertexDescriptor, std::move(geometryShader)).first->second;
+	}
+
 	RE::BSGraphics::VertexShader* ShaderCache::GetVertexShader(const RE::BSShader& shader,
 		uint32_t descriptor, bool a_precompile)
 	{
@@ -3077,6 +3107,10 @@ namespace SIE
 			std::unique_lock lockH{ hlslMapMutex };
 			hlslToShaderMap.clear();
 		}
+		{
+			std::scoped_lock lockPC(paraboloidClipMutex);
+			paraboloidClipShaders.clear();
+		}
 		ResetActiveShaderTracking();
 		compilationSet.Clear(true);
 		Util::ClearShaderCompileFailures();
@@ -3105,6 +3139,12 @@ namespace SIE
 	{
 		ResetActiveShaderTracking();
 		std::string lowerFilePath = Util::FixFilePath(a_path);
+		// The clip shaders compile from Utility.hlsl and its includes outside hlslToShaderMap, so any such change drops them.
+		if (lowerFilePath.ends_with("utility.hlsl") || lowerFilePath.ends_with(".hlsli")) {
+			std::scoped_lock lockPC(paraboloidClipMutex);
+			Util::ClearShaderCompileFailures();
+			paraboloidClipShaders.clear();
+		}
 
 		// Step 1: Lock hlslMapMutex to find and copy the relevant entries
 		std::set<hlslRecord> entries;
@@ -3160,6 +3200,10 @@ namespace SIE
 				shader->shader->Release();
 			}
 			computeShaders[static_cast<size_t>(a_type)].clear();
+		}
+		if (a_type == RE::BSShader::Type::Utility) {
+			std::scoped_lock lockPC(paraboloidClipMutex);
+			paraboloidClipShaders.clear();
 		}
 		ClearShaderMap(a_type);
 		compilationSet.ClearType(a_type);
@@ -3473,6 +3517,9 @@ namespace SIE
 			} else if (!_stricmp(profile, "vs_5_0") || !_stricmp(profile, "vs_4_0")) {
 				stageDefine = "VSHADER";
 				cacheExt = L".vso";
+			} else if (!_stricmp(profile, "gs_5_0")) {
+				stageDefine = "GEOMETRYSHADER";
+				cacheExt = L".gso";
 			} else if (!_stricmp(profile, "hs_5_0")) {
 				stageDefine = "HULLSHADER";
 			} else if (!_stricmp(profile, "ds_5_0")) {

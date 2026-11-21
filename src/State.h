@@ -492,7 +492,8 @@ public:
 		SnowRooftop = 1u << 23,
 		SnowLODTree = 1u << 22,
 		SnowInactive = 1u << 21,
-		MenuItem = 1u << 20
+		MenuItem = 1u << 20,
+		CarriedShadowLight = 1u << 19
 	};
 
 	/** @brief Bitflags describing extra feature-specific properties related to terrain displacement and material models. */

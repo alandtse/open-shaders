@@ -542,7 +542,7 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 		return output && CopyTexture(GetEyeCroppedSRV(*output), Util::AsReal(a_output.RTV), true, currentEyeIndex);
 	};
 
-	const int eyeCount = globals::game::isVR ? 2 : 1;
+	const int eyeCount = Util::EyeCount();
 	bool allEyesSucceeded = true;
 	for (int eye = 0; eye < eyeCount && allEyesSucceeded; ++eye) {
 		currentEyeIndex = globals::game::isVR ? eye : -1;
