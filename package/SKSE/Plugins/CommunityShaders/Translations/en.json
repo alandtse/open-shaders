@@ -2178,7 +2178,7 @@
     "feature.light_limit_fix.flicker_live": "Live",
     "feature.light_limit_fix.flicker_pinned": "Pinned",
     "feature.light_limit_fix.flicker_shadows": "Flicker Shadows##FlickerShadows",
-    "feature.light_limit_fix.flicker_tooltip": "How a cached shadow follows a flickering light:\nLive: the shadow origin follows the light and the cached depth is\ncopied unmoved, which leaves a small mismatch near occluders.\nPinned: the shadow origin stays at the bake pose, so the shadow\ndoes not move with the flame.\nWarped: the cached depth is reprojected to the live origin on the\nGPU, so the shadow moves with the flame.\nP / W in the shadow light table marks lights using Pinned / Warped.",
+    "feature.light_limit_fix.flicker_tooltip": "How a cached shadow follows a flickering light:\nLive: the shadow origin follows the light and the cached depth is\ncopied unmoved, which leaves a small mismatch near occluders.\nPinned: the shadow is drawn from where the light rests, so it holds\nstill while the flame flickers.\nWarped: the cached depth is reprojected to the live origin on the\nGPU, so the shadow moves with the flame.\nP / W in the shadow light table marks lights using Pinned / Warped.",
     "feature.light_limit_fix.flicker_warped": "Warped",
     "feature.light_limit_fix.force_portal_strict_all": "Force Enable Portal Strict (All)",
     "feature.light_limit_fix.force_portal_strict_all_tooltip": "Master toggle for the three per-type rows below.\nChecked when all three are enforced, unchecked when none are,\nand rendered translucent when mixed.\nRequires a game restart to change.",
