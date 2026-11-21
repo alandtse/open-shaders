@@ -164,7 +164,7 @@ namespace ShadowCasterManager
 		return s_settings.ProtectPlayerShadows && PlayerWithinLightRadius(light, kPlayerCasterReachUnits);
 	}
 
-	static RE::Actor* CarrierOf(const RE::NiLight* ni) noexcept
+	RE::Actor* CarrierOf(const RE::NiAVObject* ni) noexcept
 	{
 		return OwnerAs<RE::Actor>(ni);
 	}
@@ -184,6 +184,31 @@ namespace ShadowCasterManager
 					 })
 		    .get();
 	}
+
+	/// Flags the draws of a carried light's shadow so the paraboloid pass drops the casters hugging it, its holder's hand among them.
+	class CarriedShadowScope
+	{
+	public:
+		explicit CarriedShadowScope(bool a_carried) :
+			state(a_carried ? globals::state : nullptr),
+			wasSet(state && (state->permutationData.ExtraShaderDescriptor & kCarried) != 0)
+		{
+			if (state)
+				state->permutationData.ExtraShaderDescriptor |= kCarried;
+		}
+		~CarriedShadowScope()
+		{
+			if (state && !wasSet)
+				state->permutationData.ExtraShaderDescriptor &= ~kCarried;
+		}
+		CarriedShadowScope(const CarriedShadowScope&) = delete;
+		CarriedShadowScope& operator=(const CarriedShadowScope&) = delete;
+
+	private:
+		static constexpr uint32_t kCarried = static_cast<uint32_t>(State::ExtraShaderDescriptors::CarriedShadowLight);
+		State* state;
+		bool wasSet;
+	};
 
 	/// Keep the seam off the carrier when UpdateCamera sets both cameras and EnableLight refreshes the front one.
 	template <class F>
@@ -4047,6 +4072,7 @@ namespace ShadowCasterManager
 				auto& e = s_lights.Lights[i];
 				if (!e.Light || !e.RedrawFrame)
 					continue;
+				const CarriedShadowScope carriedShadow(CarrierBody(e.Light) != nullptr);
 				bool keepPriorContent = false;
 				bool emptyRender = false;
 				if (AtlasActive()) {

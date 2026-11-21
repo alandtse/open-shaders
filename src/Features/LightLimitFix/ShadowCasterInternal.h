@@ -308,6 +308,9 @@ namespace ShadowCasterManager
 	/// (either person): held torches and Candlelight-style spell lights.
 	bool IsPlayerAttachedLight(const RE::NiLight* ni);
 
+	/// The actor whose 3D holds this object, or null; safe while the scene tears down.
+	RE::Actor* CarrierOf(const RE::NiAVObject* ni) noexcept;
+
 	/// Geometric + photometric per-light signals computed once per candidate.
 	struct LightGeometry
 	{

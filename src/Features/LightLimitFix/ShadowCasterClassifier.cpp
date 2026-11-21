@@ -482,6 +482,19 @@ namespace ShadowCasterManager
 		return false;
 	}
 
+	/// True for the rigid part of the actor carrying this light whose bounds hold it (the weapon, torch or cage it hangs on);
+	/// the skinned body and the rest of the actor's gear still cast, so a torch-bearer keeps their shadow.
+	static bool HeldByCarrier(RE::BSShadowLight& a_light, const RE::BSGeometry& a_geometry)
+	{
+		if (a_geometry.GetGeometryRuntimeData().skinInstance || !a_light.dynamic || !a_light.GetIsOmniLight())
+			return false;
+		const auto* ni = a_light.light.get();
+		if (!ni || a_geometry.worldBound.center.GetDistance(ni->world.translate) > a_geometry.worldBound.radius)
+			return false;
+		const auto* carrier = CarrierOf(ni);
+		return carrier && carrier == CarrierOf(&a_geometry);
+	}
+
 	/// The light's own reference, looked up once per light per frame: every near caster of one cull walk asks for the same one.
 	static const RE::TESObjectREFR* LightOwner(const RE::NiLight* a_light) noexcept
 	{
@@ -561,6 +574,8 @@ namespace ShadowCasterManager
 					return;  // skip append -- caster dropped from this shadow
 				}
 			}
+			if (light && HeldByCarrier(*light, a_visible))
+				return;
 			if (light && s_settings.SkipFlameEnclosure && EnclosesOwnFlame(*light, a_visible)) {
 				s_flameHolderSkipTotal.fetch_add(1, std::memory_order_relaxed);
 				return;
