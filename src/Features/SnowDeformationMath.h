@@ -139,6 +139,12 @@ namespace SnowDeformationMath
 		return std::min(a_raise, std::max(a_cap, 0.0f));
 	}
 
+	/** @brief Whether an object is probed for the snow under it: only while gathering, over snow that can be carved, and when drag or floating needs the reading. */
+	inline bool ProbesSnow(bool a_gathering, float a_carve, bool a_snowDrag, bool a_floatCandidate)
+	{
+		return a_gathering && a_carve > 0.0f && (a_snowDrag || a_floatCandidate);
+	}
+
 	/** @brief Whether an object contact carves the snow: not while it floats, nor while a float candidate still awaits its first probe read, nor when too light. */
 	inline bool PressesSnow(bool a_floating, bool a_unmeasured, float a_weightScale, float a_minWeightScale)
 	{

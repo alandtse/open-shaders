@@ -1617,7 +1617,7 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 
 		const RE::FormID refID = ref->GetFormID();
 		const bool floatCandidate = settings.DensityFloor && FloatRestHeight(contactScratch.front(), carve, 0.0f) > kFloorMinHeight;
-		const bool measureSnow = gatherOnUpdate && carve > 0.0f && (settings.SnowDrag || floatCandidate);
+		const bool measureSnow = SnowDeformationMath::ProbesSnow(gatherOnUpdate, carve, settings.SnowDrag, floatCandidate);
 		float blanket = 0.0f;
 		float depression = 0.0f;
 		bool unmeasured = false;

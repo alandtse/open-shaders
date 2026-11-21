@@ -170,20 +170,33 @@ TEST_CASE("An item with no fresh probe read is unmeasured, not bare ground", "[s
 TEST_CASE("A float candidate is probed without pressing, then floats on a positive read", "[snow-deformation]")
 {
 	constexpr float carve = 20.0f;
+	constexpr float weightScale = 1.0f;
+	constexpr float minWeightScale = 0.1f;
 	constexpr uint64_t maxAge = 12;
+
+	REQUIRE(Math::ProbesSnow(true, carve, false, true));
 	const bool unmeasured = !Math::HasFreshBlanket(false, 0, 1, maxAge);
 	REQUIRE(unmeasured);
-	REQUIRE_FALSE(Math::PressesSnow(false, unmeasured, 0.0f, 0.1f));
+	REQUIRE_FALSE(Math::PressesSnow(false, unmeasured, weightScale, minWeightScale));
+	REQUIRE(Math::PressesSnow(false, false, weightScale, minWeightScale));
 
 	const float blanket = Math::MeasuredBlanket(true, 1, 4, maxAge, 8.0f, carve);
-	const bool measured = Math::HasFreshBlanket(true, 1, 4, maxAge);
 	const bool floating = blanket > 0.0f && Math::RestHeight(blanket, 0.0f, 0.0f) > 1.0f;
-	REQUIRE(measured);
+	REQUIRE(Math::HasFreshBlanket(true, 1, 4, maxAge));
 	REQUIRE(floating);
-	REQUIRE_FALSE(Math::PressesSnow(floating, !measured, 0.0f, 0.1f));
+	REQUIRE_FALSE(Math::PressesSnow(floating, false, weightScale, minWeightScale));
 
 	const float bare = Math::MeasuredBlanket(true, 1, 4, maxAge, 0.0f, carve);
-	REQUIRE(Math::PressesSnow(bare > 0.0f, false, 1.0f, 0.1f));
+	REQUIRE(Math::PressesSnow(bare > 0.0f, false, weightScale, minWeightScale));
+}
+
+TEST_CASE("Objects are probed only while gathering over carvable snow that needs a reading", "[snow-deformation]")
+{
+	REQUIRE(Math::ProbesSnow(true, 20.0f, true, false));
+	REQUIRE(Math::ProbesSnow(true, 20.0f, false, true));
+	REQUIRE_FALSE(Math::ProbesSnow(false, 20.0f, true, true));
+	REQUIRE_FALSE(Math::ProbesSnow(true, 0.0f, true, true));
+	REQUIRE_FALSE(Math::ProbesSnow(true, 20.0f, false, false));
 }
 
 TEST_CASE("Bare ground has no rest height to float at", "[snow-deformation]")
