@@ -532,6 +532,16 @@ namespace LightLimitFix
 		return shadow;
 	}
 
+	// The four stored depths around a tap through either storage; uv is full-slice space.
+	float4 GatherShadowDepths(uint shadowIndex, float2 uv, bool useAtlas, float4 atlasRect, float tileScale, float2 clampLo, float2 clampHi)
+	{
+		float4 depths;
+		[branch] if (useAtlas)
+			depths = ShadowAtlasTex.GatherRed(LinearSampler, AtlasUV(uv, atlasRect, clampLo, clampHi));
+		else depths = ShadowMaps.GatherRed(LinearSampler, float3(TileUV(uv, tileScale, clampLo.x, clampHi.x), shadowIndex));
+		return depths;
+	}
+
 	// Bilinear-weighted compare (one Gather, fractional-texel lerp) so a lone tap
 	// has smooth edges instead of the four-step box of SampleShadowGather.
 	float BilinearCompare(float4 samples, float receiverDepth, float2 weight)
@@ -635,7 +645,7 @@ namespace LightLimitFix
 	//                              the whole y∈[0,1] (hemi).
 	//   Every tap is held inside its own paraboloid's rim, so it never reads the
 	//   other half or the empty corners of the slice.
-	float SampleParaboloidShadow(uint shadowIndex, float2 sampleUV, float depth, float2x2 rotationMatrix, bool isDualParaboloid, float tileScale, float4 atlasRect, uint sampleCount)
+	float SampleParaboloidShadow(uint shadowIndex, float2 sampleUV, float depth, float2x2 rotationMatrix, bool isDualParaboloid, float tileScale, float4 atlasRect, uint sampleCount, float pcfRadius)
 	{
 		const bool useAtlas = atlasRect.x > 0.0;
 		float2 clampLo, clampHi;
@@ -649,7 +659,7 @@ namespace LightLimitFix
 		// branchy tap body 8x.
 		[loop] for (int i = 0; i < 8; i++)
 		{
-			float2 offset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix) * PCFRadius2D;
+			float2 offset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix) * pcfRadius;
 			float2 uv = ClampToParaboloid(sampleUV + offset, lowerHalf, isDualParaboloid, rimRadius);
 
 			shadow += SampleShadowTap(shadowIndex, uv, depth, useAtlas, atlasRect, tileScale, clampLo, clampHi);
@@ -658,7 +668,43 @@ namespace LightLimitFix
 		return shadow / 8.0;
 	}
 
-	float GetOmnidirectionalShadow(ShadowLightData shadowLightData, uint shadowIndex, float4 positionLS, float2x2 rotationMatrix, uint sampleCount)
+	// In full-slice paraboloid UV like PCFRadius2D: TileUV / AtlasUV scale it into the tile, so it spans the same angle on every tile class.
+	static const float SoftShadowSearchRadius = 0.012;
+	static const float SoftShadowMaxRadius = 0.03;
+	static const float ParaboloidUVPerRadian = 0.25;
+
+	// PCF radius for a contact-hardened edge: wider the farther the receiver lies behind the blockers in front of it,
+	// for a light whose source radius is sourceRadius of its range; the stock radius when the search finds no blocker.
+	float GetParaboloidSoftRadius(uint shadowIndex, float2 sampleUV, float depth, float sourceRadius, float2x2 rotationMatrix, bool isDualParaboloid, float tileScale, float4 atlasRect)
+	{
+		const bool useAtlas = atlasRect.x > 0.0;
+		float2 clampLo, clampHi;
+		GetShadowTapClamp(useAtlas, atlasRect, tileScale, clampLo, clampHi);
+		const bool lowerHalf = isDualParaboloid && sampleUV.y >= 0.5;
+		const float rimRadius = GetParaboloidRimRadius(useAtlas, atlasRect, tileScale, isDualParaboloid);
+		float4 depths = GatherShadowDepths(shadowIndex, ClampToParaboloid(sampleUV, lowerHalf, isDualParaboloid, rimRadius), useAtlas, atlasRect, tileScale, clampLo, clampHi);
+		float4 blocks = float4(depths < depth);
+		float blockerSum = dot(depths, blocks);
+		float blockerCount = dot(blocks, 1.0);
+		[loop] for (int i = 0; i < 8; i++)
+		{
+			float2 uv = ClampToParaboloid(sampleUV + mul(Random::SpiralSampleOffsets8[i], rotationMatrix) * SoftShadowSearchRadius, lowerHalf, isDualParaboloid, rimRadius);
+			depths = GatherShadowDepths(shadowIndex, uv, useAtlas, atlasRect, tileScale, clampLo, clampHi);
+			blocks = float4(depths < depth);
+			blockerSum += dot(depths, blocks);
+			blockerCount += dot(blocks, 1.0);
+		}
+		float radius = PCFRadius2D;
+		[branch] if (blockerCount >= 1.0)
+		{
+			const float blockerDepth = max(blockerSum / blockerCount, 1e-4);
+			const float penumbraAngle = SharedData::lightLimitFixSettings.SoftShadowScale * sourceRadius * (depth - blockerDepth) / (blockerDepth * max(depth, 1e-4));
+			radius = clamp(penumbraAngle * ParaboloidUVPerRadian, PCFRadius2D, SoftShadowMaxRadius);
+		}
+		return radius;
+	}
+
+	float GetOmnidirectionalShadow(ShadowLightData shadowLightData, uint shadowIndex, float4 positionLS, float2x2 rotationMatrix, uint sampleCount, float sourceRadius)
 	{
 		// ShadowLightParam.x:
 		//   0 = spot/frustum (handled in GetShadowLightShadow before reaching here)
@@ -696,7 +742,10 @@ namespace LightLimitFix
 		// Bias scales with the tile's texel size, matching the spot path.
 		depth -= shadowLightData.ShadowLightParam.z / tileScale;
 
-		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni, tileScale, shadowLightData.AtlasRect, sampleCount);
+		float pcfRadius = PCFRadius2D;
+		[branch] if (sourceRadius > 0.0 && SharedData::lightLimitFixSettings.SoftShadowScale > 0.0 && sampleCount > 1)
+			pcfRadius = GetParaboloidSoftRadius(shadowIndex, sampleUV, depth, sourceRadius / shadowLightData.ShadowLightParam.y, rotationMatrix, isOmni, tileScale, shadowLightData.AtlasRect);
+		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni, tileScale, shadowLightData.AtlasRect, sampleCount, pcfRadius);
 	}
 
 	/// A spotlight's falloff toward the edge of its cone at a position in its shadow projection: 1 on its axis, 0 at the edge and outside.
@@ -719,7 +768,7 @@ namespace LightLimitFix
 	// read is safe -- it falls into the `ShadowLightParam.y == 0` branch below
 	// and returns 1.0. The `hasCoverage` flag tells the caller whether the
 	// sample was real, so suppression still works correctly upstream.
-	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, uint sampleCount, out bool hasCoverage)
+	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, uint sampleCount, float sourceRadius, out bool hasCoverage)
 	{
 		hasCoverage = shadowIndex < SharedData::lightLimitFixSettings.ShadowMapSlots;
 
@@ -744,7 +793,7 @@ namespace LightLimitFix
 			}
 			else
 			{
-				float rawShadow = GetOmnidirectionalShadow(shadowLightData, shadowIndex, positionLS, rotationMatrix, sampleCount);
+				float rawShadow = GetOmnidirectionalShadow(shadowLightData, shadowIndex, positionLS, rotationMatrix, sampleCount, sourceRadius);
 				// Blend toward fully lit while the shadow fades in after this caster
 				// first gained a shadow slot, so the shadow eases in instead of
 				// popping on top of a light that was already visible.
@@ -754,9 +803,14 @@ namespace LightLimitFix
 		return result;
 	}
 
+	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, uint sampleCount, out bool hasCoverage)
+	{
+		return GetShadowLightShadow(shadowIndex, worldPositionWS, rotationMatrix, sampleCount, 0.0, hasCoverage);
+	}
+
 	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, out bool hasCoverage)
 	{
-		return GetShadowLightShadow(shadowIndex, worldPositionWS, rotationMatrix, 8u, hasCoverage);
+		return GetShadowLightShadow(shadowIndex, worldPositionWS, rotationMatrix, 8u, 0.0, hasCoverage);
 	}
 
 	/// Where a shadow light reaches when its shadow map is not sampled: 0 for a suppressed light and outside a spotlight's cone, else 1.

@@ -3498,7 +3498,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		if (inWorld && !inReflection) {
 			[branch] if (light.lightFlags & LightLimitFix::LightFlags::Shadow)
 			{
-				shadowComponent = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS + (localShadowPosition - input.WorldPosition.xyz), rotationMatrix, shadowCoverage);
+				shadowComponent = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS + (localShadowPosition - input.WorldPosition.xyz), rotationMatrix, 8u, sqrt(light.sizeBias), shadowCoverage);
 				lightShadow *= shadowComponent;
 			}
 		}
