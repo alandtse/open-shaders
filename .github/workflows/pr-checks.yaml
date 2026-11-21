@@ -34,6 +34,7 @@ on:
             - ".github/configs/shader-cache-inputs.json"
             - ".github/configs/generate-shader-configs.ps1"
             - "tools/build-shader-cache.py"
+            - "tools/shader_cost_report.py"
             - "tools/feature-flip-impact.py"
             - "tools/release_plan.py"
             - "tests/*.py"
@@ -234,6 +235,104 @@ jobs:
                   message: |
                       ✅ A pre-release build is available for this PR:
                       [Download](https://github.com/${{ github.repository }}/releases/tag/v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }})
+
+    shader-cost-pr:
+        name: Shader Compile Cost (PR)
+        # Waits for the build so the PR's own (incremental) compile timings
+        # exist; runs even when the build is skipped or fails.
+        needs: [build]
+        if: always() && !cancelled() && !github.event.pull_request.draft
+        runs-on: ubuntu-latest
+        outputs:
+            has-report: ${{ steps.report.outputs.has-report }}
+        permissions:
+            contents: read
+            actions: read
+        steps:
+            # Under pull_request_target this is the BASE branch, so the tool
+            # that parses PR content is trusted; it only reads PR git objects.
+            - name: Checkout code
+              uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+
+            - name: Setup Python
+              uses: actions/setup-python@v6
+              with:
+                  python-version: "3.11"
+
+            - name: Install PyYAML
+              run: pip install pyyaml
+
+            - name: Fetch PR head
+              env:
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
+              run: git fetch origin "refs/pull/$PR_NUMBER/head:refs/pr_head"
+
+            # Weights come from the latest unexpired dev timing artifacts (full
+            # runs); without one the report degrades to variant counts.
+            - name: Download baseline compile timings
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  REPO: ${{ github.repository }}
+              shell: bash
+              run: |
+                  mkdir -p timing
+                  for runtime in VR SE; do
+                    id=$(gh api "repos/$REPO/actions/artifacts?name=shader-compile-timing-$runtime&per_page=50" \
+                      --jq '[.artifacts[] | select(.expired == false)] | map(select(.workflow_run.head_branch == "dev"))[0].id // empty') || true
+                    if [ -n "$id" ] && gh api "repos/$REPO/actions/artifacts/$id/zip" > "timing/$runtime.zip"; then
+                      unzip -oq "timing/$runtime.zip" -d timing || true
+                    fi
+                  done
+                  ls timing
+
+            - name: Download this PR's compile timings
+              continue-on-error: true
+              uses: actions/download-artifact@v7
+              with:
+                  pattern: shader-compile-timing-*
+                  merge-multiple: true
+                  path: pr-timing
+
+            - name: Estimate shader compile cost change
+              id: report
+              env:
+                  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+              run: |
+                  python tools/shader_cost_report.py --base "$BASE_SHA" --head refs/pr_head \
+                    --timing-vr timing/shader-compile-timing-VR.json --timing-se timing/shader-compile-timing-SE.json \
+                    --pr-timing-vr pr-timing/shader-compile-timing-VR.json --pr-timing-se pr-timing/shader-compile-timing-SE.json \
+                    --out shader-cost-report.md
+                  if [ -f shader-cost-report.md ]; then echo "has-report=true" >> "$GITHUB_OUTPUT"; fi
+
+            - name: Upload shader cost report
+              if: steps.report.outputs.has-report == 'true'
+              uses: actions/upload-artifact@v7
+              with:
+                  name: pr-shader-cost
+                  path: shader-cost-report.md
+
+    shader-cost-pr-comment:
+        name: Comment on PR with shader compile cost
+        needs: shader-cost-pr
+        if: needs.shader-cost-pr.outputs.has-report == 'true'
+        runs-on: ubuntu-latest
+        permissions:
+            pull-requests: write
+        steps:
+            - name: Download shader cost report
+              uses: actions/download-artifact@v7
+              with:
+                  name: pr-shader-cost
+                  path: .
+
+            - name: Comment on PR with shader compile cost
+              uses: thollander/actions-comment-pull-request@24bffb9b452ba05a4f3f77933840a6a841d1b32b # v3
+              with:
+                  file-path: shader-cost-report.md
+                  mode: upsert
+                  comment-tag: shader-compile-cost
 
     feature-audit-pr:
         name: Feature Version Audit (PR)

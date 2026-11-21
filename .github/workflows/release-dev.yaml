@@ -111,6 +111,50 @@ jobs:
             upload-compiled-shaders: true
             compiled-shaders-retention-days: 7
 
+    shader-cost-snapshot:
+        name: Record shader compile cost snapshot
+        needs: build
+        if: needs.build.result == 'success'
+        # Trusted-only, and kept out of _shared-build.yaml so no repo script
+        # runs in a job that writes build caches.
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v6
+
+            - name: Setup Python
+              uses: actions/setup-python@v6
+              with:
+                  python-version: "3.11"
+
+            - name: Install PyYAML
+              run: pip install pyyaml
+
+            - name: Download compile timing reports
+              continue-on-error: true
+              uses: actions/download-artifact@v7
+              with:
+                  pattern: shader-compile-timing-*
+                  merge-multiple: true
+                  path: timing
+
+            - name: Snapshot shader compile cost
+              if: hashFiles('timing/*.json') != ''
+              run: |
+                  python tools/shader_cost_report.py --head HEAD \
+                    --timing-vr timing/shader-compile-timing-VR.json --timing-se timing/shader-compile-timing-SE.json \
+                    --snapshot shader-cost-snapshot.json
+
+            - name: Upload shader compile cost snapshot
+              if: hashFiles('shader-cost-snapshot.json') != ''
+              uses: actions/upload-artifact@v7
+              with:
+                  name: shader-cost-snapshot
+                  path: shader-cost-snapshot.json
+                  retention-days: 90
+
     prune-stale-cache:
         name: Prune superseded CMake build-dir cache generations
         needs: build
