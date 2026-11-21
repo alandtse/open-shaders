@@ -151,6 +151,18 @@ namespace SnowDeformationMath
 		return !a_floating && !a_unmeasured && a_weightScale >= a_minWeightScale;
 	}
 
+	/** @brief Whether snow physics still runs for an object: over snow, or while it floats and must be released. */
+	inline bool RunsSnowPhysics(float a_blanket, bool a_floated)
+	{
+		return a_blanket > 0.0f || a_floated;
+	}
+
+	/** @brief Whether a floated object hangs more than a_margin above its rest height and must come down. */
+	inline bool ReleasesFloat(bool a_floated, float a_bottom, float a_rest, float a_margin)
+	{
+		return a_floated && a_bottom - a_rest > a_margin;
+	}
+
 	/** @brief Upward speed that lifts an object whose bottom is a_depth under its floor, growing by a_spring per second and capped at a_maxRise. */
 	inline float FloorRiseSpeed(float a_depth, float a_spring, float a_maxRise)
 	{

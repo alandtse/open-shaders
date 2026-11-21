@@ -199,6 +199,18 @@ TEST_CASE("Objects are probed only while gathering over carvable snow that needs
 	REQUIRE_FALSE(Math::ProbesSnow(true, 20.0f, false, false));
 }
 
+TEST_CASE("A floated item is released once the snow under it is gone", "[snow-deformation]")
+{
+	REQUIRE(Math::RunsSnowPhysics(8.0f, false));
+	REQUIRE(Math::RunsSnowPhysics(0.0f, true));
+	REQUIRE_FALSE(Math::RunsSnowPhysics(0.0f, false));
+
+	const float rest = Math::RestHeight(0.0f, 0.0f, 0.0f);
+	REQUIRE(Math::ReleasesFloat(true, 15.0f, rest, 2.0f));
+	REQUIRE_FALSE(Math::ReleasesFloat(true, 1.0f, rest, 2.0f));
+	REQUIRE_FALSE(Math::ReleasesFloat(false, 15.0f, rest, 2.0f));
+}
+
 TEST_CASE("Bare ground has no rest height to float at", "[snow-deformation]")
 {
 	REQUIRE(Math::RestHeight(Math::MeasuredBlanket(true, 10, 10, 12, 0.0f, 20.0f), 0.0f, 0.0f) == Approx(0.0f));

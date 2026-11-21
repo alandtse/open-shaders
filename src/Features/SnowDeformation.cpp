@@ -1381,6 +1381,7 @@ void SnowDeformation::GatherStamps()
 		measuredSinks.clear();
 		measuredDepth.clear();
 		measuredBlanket.clear();
+		floatedObjects.clear();
 		return;
 	}
 
@@ -1495,10 +1496,14 @@ uint8_t SnowDeformation::ApplySnowPhysics(const Contact& a_contact, float a_bott
 {
 	auto rigid = a_contact.object && a_contact.object->body ? a_contact.object->body->AsBhkRigidBody() : nullptr;
 	auto body = rigid ? skyrim_cast<RE::hkpRigidBody*>(rigid->referencedObject.get()) : nullptr;
-	if (!body)
+	if (!body) {
+		floatedObjects.erase(a_ref);
 		return 0;
-	if (!IsDynamicMotion(body->motion.type.get()))
+	}
+	if (!IsDynamicMotion(body->motion.type.get())) {
+		floatedObjects.erase(a_ref);
 		return 1;
+	}
 
 	float linear[4];
 	float angular[4];
@@ -1522,18 +1527,19 @@ uint8_t SnowDeformation::ApplySnowPhysics(const Contact& a_contact, float a_bott
 			changed = true;
 		}
 	}
-	if (settings.DensityFloor) {
-		const float floorHeight = FloatRestHeight(a_contact, a_blanket, a_depression);
-		const float rest = a_landZ + floorHeight;
+	const float floorHeight = settings.DensityFloor && a_blanket > 0.0f ? FloatRestHeight(a_contact, a_blanket, a_depression) : 0.0f;
+	const float rest = a_landZ + floorHeight;
+	if (settings.DensityFloor && floorHeight > kFloorMinHeight && rest - a_bottom > kFloorTolerance) {
 		const float scale = RE::bhkWorld::GetWorldScaleInverse();
 		const float rise = SnowDeformationMath::FloorRiseSpeed(rest - a_bottom, kFloorSpring, kFloorMaxRise);
-		if (floorHeight > kFloorMinHeight && rest - a_bottom > kFloorTolerance && linear[2] * scale < rise) {
+		if (linear[2] * scale < rise) {
 			linear[2] = rise / scale;
 			floatedObjects.insert(a_ref);
 			changed = true;
-		} else if (a_bottom - rest > kFloorDropMargin && floatedObjects.erase(a_ref) > 0) {
-			changed = true;
 		}
+	} else if (SnowDeformationMath::ReleasesFloat(floatedObjects.contains(a_ref), a_bottom, rest, kFloorDropMargin)) {
+		floatedObjects.erase(a_ref);
+		changed = true;
 	}
 	if (!changed)
 		return 2;
@@ -1555,14 +1561,18 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 		objectScanFrame = gatherFrame;
 		const RE::NiPoint3 anchor = player->GetPosition();
 		std::vector<std::pair<float, RE::ObjectRefHandle>> found;
+		std::unordered_set<RE::FormID> inRange;
 		tes->ForEachReferenceInRange(player, kObjectReach, [&](RE::TESObjectREFR* a_ref) {
 			if (found.size() >= kMaxObjectRefs)
 				return RE::BSContainer::ForEachResult::kStop;
-			if (a_ref && !a_ref->As<RE::Actor>() && a_ref->Is3DLoaded() && !a_ref->IsDisabled() && !a_ref->IsMarkedForDeletion() && LeavesAMark(a_ref))
+			if (a_ref && !a_ref->As<RE::Actor>() && a_ref->Is3DLoaded() && !a_ref->IsDisabled() && !a_ref->IsMarkedForDeletion() && LeavesAMark(a_ref)) {
 				found.emplace_back(anchor.GetSquaredDistance(a_ref->GetPosition()), a_ref->CreateRefHandle());
+				inRange.insert(a_ref->GetFormID());
+			}
 			return RE::BSContainer::ForEachResult::kContinue;
 		});
 		std::sort(found.begin(), found.end(), [](const auto& a_lhs, const auto& a_rhs) { return a_lhs.first < a_rhs.first; });
+		std::erase_if(floatedObjects, [&](RE::FormID a_id) { return !inRange.contains(a_id); });
 		objectRefs.clear();
 		for (const auto& entry : found)
 			objectRefs.push_back(entry.second);
@@ -1610,12 +1620,13 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 			continue;
 		const float drop = bottom - landZ;
 		const float pressReach = std::max(kGroundClearance, carve);
-		if (drop > pressReach || drop < -(carve + kBelowGroundLimit))
+		const RE::FormID refID = ref->GetFormID();
+		const bool floated = floatedObjects.contains(refID);
+		if ((!floated && drop > pressReach) || drop < -(carve + kBelowGroundLimit))
 			continue;
 		const float impactScale = SnowDeformationMath::ImpactDepthScale(DownwardSpeed(contactScratch.front().object), kImpactReferenceSpeed, kMaxImpactScale);
 		const float pressFactor = SnowDeformationMath::ObjectPressFactor(drop, pressReach) * impactScale;
 
-		const RE::FormID refID = ref->GetFormID();
 		const bool floatCandidate = settings.DensityFloor && FloatRestHeight(contactScratch.front(), carve, 0.0f) > kFloorMinHeight;
 		const bool measureSnow = SnowDeformationMath::ProbesSnow(gatherOnUpdate, carve, settings.SnowDrag, floatCandidate);
 		float blanket = 0.0f;
@@ -1633,7 +1644,7 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 		const bool physicsActive = blanket > 0.0f;
 		const bool floating = physicsActive && floatCandidate && FloatRestHeight(contactScratch.front(), blanket, depression) > kFloorMinHeight;
 		uint8_t physicsState = 0;
-		if (physicsActive && (settings.SnowDrag || settings.DensityFloor))
+		if (SnowDeformationMath::RunsSnowPhysics(blanket, floated) && (settings.SnowDrag || settings.DensityFloor || floated))
 			physicsState = ApplySnowPhysics(contactScratch.front(), bottom, landZ, blanket, depression, refID);
 
 		const float normalZ = LandNormalZ(tes, probe, landZ);
@@ -2494,6 +2505,7 @@ void SnowDeformation::UpdateField()
 		measuredSinks.clear();
 		measuredDepth.clear();
 		measuredBlanket.clear();
+		floatedObjects.clear();
 	}
 	if (!gatherOnUpdate)
 		GatherStamps();
