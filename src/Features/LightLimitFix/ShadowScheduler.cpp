@@ -1840,7 +1840,7 @@ namespace ShadowCasterManager
 	/// Latest per-candidate visibility audit, refilled only while diagnostics are wanted.
 	static std::vector<SchedSnapshot::LightVisibility> s_visAudit;
 
-	/// Tests a sphere against the four side planes of every eye's view-projection,
+	/// Tests a sphere against the four side planes and the eye plane of every eye's view-projection,
 	/// independent of the engine's own frustum flag. `centre` is world space.
 	static bool OwnSphereInFrustum(const RE::NiPoint3& centre, float radius, float& nearestEyeDistance)
 	{
@@ -1853,13 +1853,14 @@ namespace ShadowCasterManager
 			nearestEyeDistance = std::min(nearestEyeDistance, std::sqrt(rel.x * rel.x + rel.y * rel.y + rel.z * rel.z));
 			const auto& m = view.viewProjMat;
 			bool eyeInside = true;
-			for (int side = 0; side < 4 && eyeInside; ++side) {
+			for (int side = 0; side < 5 && eyeInside; ++side) {
 				const int axis = side >> 1;
 				const float sign = (side & 1) ? -1.0f : 1.0f;
-				const float px = m.m[0][3] + sign * m.m[0][axis];
-				const float py = m.m[1][3] + sign * m.m[1][axis];
-				const float pz = m.m[2][3] + sign * m.m[2][axis];
-				const float pw = m.m[3][3] + sign * m.m[3][axis];
+				const float axisScale = side < 4 ? sign : 0.0f;
+				const float px = m.m[0][3] + axisScale * m.m[0][axis];
+				const float py = m.m[1][3] + axisScale * m.m[1][axis];
+				const float pz = m.m[2][3] + axisScale * m.m[2][axis];
+				const float pw = m.m[3][3] + axisScale * m.m[3][axis];
 				const float len = std::sqrt(px * px + py * py + pz * pz);
 				if (len <= 0.0f)
 					continue;
@@ -2021,7 +2022,14 @@ namespace ShadowCasterManager
 					const bool recentlyValid = lastValidIt != s_lastValidFrame.end() &&
 					                           (nowFrame - lastValidIt->second) <
 					                               static_cast<int32_t>(kCameraExitStreak);
-					if (recentlyValid) {
+					// UpdateCamera sets both shadow cameras before its frustum test, which a flickering radius grazing the view edge
+					// flips; an omni light our own sphere test still sees stays a visible light and keeps redrawing.
+					float edgeEyeDistance = 0.0f;
+					const bool edgeKept = EdgeKeepsLight(recentlyValid, hiddenNow, lodFadedNow, l->GetIsFrustumLight()) &&
+					                      OwnSphereInFrustum(nilightNow->world.translate, nilightNow->GetLightRuntimeData().radius.x * nilightNow->world.scale, edgeEyeDistance);
+					if (edgeKept) {
+						lastValidIt->second = nowFrame;
+					} else if (recentlyValid) {
 						c.cameraHold = true;
 						s_cameraHold.insert(l);
 						float eyeDistance = 0.0f;
@@ -2318,7 +2326,9 @@ namespace ShadowCasterManager
 				// A fresh occupant may be a recycled pointer; the pointer-keyed
 				// EMA/streak/split-state caches aren't cleared by Clear() above, so
 				// erase them explicitly or it inherits the previous occupant's state.
-				s_lastValidFrame.erase(cp->light);
+				if (const auto lastValidIt = s_lastValidFrame.find(cp->light);
+					lastValidIt != s_lastValidFrame.end() && !KeepsLastValidOnAcquire(lastValidIt->second, *globals::game::frameCounter))
+					s_lastValidFrame.erase(lastValidIt);
 				s_belowFloorStreak.erase(cp->light);
 				if (const auto splitIt = s_splitState.find(cp->light); splitIt != s_splitState.end()) {
 					RetireSplitBake(splitIt->second);
@@ -3800,6 +3810,28 @@ namespace ShadowCasterManager
 		}
 	}
 
+	/// Farthest a light may stand from where its slot last drew it and still count as the same light across a cell-grid shift.
+	constexpr float kCellShiftSameLightSq = 64.0f * 64.0f;
+
+	/// True for a light that keeps its slot through a cell-grid shift: it owns a slot, is still an active shadow light and stands
+	/// where that slot last drew it, so an address the shift recycled for another light does not inherit its camera history.
+	static bool KeepsSlotThroughCellShift(RE::ShadowSceneNode* a_ssn, const RE::BSShadowLight* a_light)
+	{
+		if (!a_ssn)
+			return false;
+		const auto& alive = a_ssn->GetRuntimeData().activeShadowLights;
+		if (std::ranges::none_of(alive, [a_light](const auto& sp) { return sp.get() == a_light; }))
+			return false;
+		for (int i = 0; i < s_lights.Size; i++) {
+			const auto& e = s_lights.Lights[i];
+			if (e.Light != a_light)
+				continue;
+			const auto* ni = a_light->light.get();
+			return ni && ni->world.translate.GetSquaredDistance(e.lastRenderedPos) <= kCellShiftSameLightSq;
+		}
+		return false;
+	}
+
 	void ScheduleShadowCasters()
 	{
 		ZoneScopedN("SCM::ScheduleShadowCasters");
@@ -3852,6 +3884,7 @@ namespace ShadowCasterManager
 		// scoring it now touches freed memory. Load-bearing: don't remove this return.
 		if (s_pendingSessionReset.exchange(false, std::memory_order_acquire)) {
 			s_everHadShadow.clear();
+			s_lastValidFrame.clear();
 			ResetSession();
 			return;
 		}
@@ -3863,7 +3896,8 @@ namespace ShadowCasterManager
 			s_cellResetTotal.fetch_add(1, std::memory_order_relaxed);
 			s_casterMobility.clear();
 			s_everHadShadow.clear();  // a cell swap recycles NiLight addresses
-			s_splitState.clear();     // bakeQueued defaults true: every light re-bakes
+			std::erase_if(s_lastValidFrame, [ssn](const auto& kv) { return !KeepsSlotThroughCellShift(ssn, kv.first); });
+			s_splitState.clear();  // bakeQueued defaults true: every light re-bakes
 			ShadowCasterManager::InvalidateAllStaticBakes();
 		}
 

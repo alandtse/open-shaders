@@ -9,6 +9,7 @@
 
 using Catch::Approx;
 using ShadowCasterManager::DemandStreakBucket;
+using ShadowCasterManager::EdgeKeepsLight;
 using ShadowCasterManager::EngineShadowSliceCount;
 using ShadowCasterManager::FacingRotation;
 using ShadowCasterManager::FrameTimePercentile;
@@ -18,6 +19,7 @@ using ShadowCasterManager::HeldLightYields;
 using ShadowCasterManager::HemisphereSeamMargin;
 using ShadowCasterManager::HoldsFlame;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
+using ShadowCasterManager::KeepsLastValidOnAcquire;
 using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kSlotHoldMargin;
 using ShadowCasterManager::kTileScaleFloor;
@@ -259,6 +261,23 @@ TEST_CASE("SliceCappedLightCount keeps the highest point index inside the array"
 	for (int32_t slices = 1; slices <= 129; ++slices)
 		for (int32_t count = 0; count <= 127; ++count)
 			REQUIRE(SliceCappedLightCount(count, slices) < slices);
+}
+
+TEST_CASE("EdgeKeepsLight keeps only a recently valid omni light that is neither hidden nor faded", "[scm]")
+{
+	REQUIRE(EdgeKeepsLight(true, false, false, false));
+	// Not recently valid, hidden, faded out by its level of detail, or a spot light: dropped as before.
+	REQUIRE_FALSE(EdgeKeepsLight(false, false, false, false));
+	REQUIRE_FALSE(EdgeKeepsLight(true, true, false, false));
+	REQUIRE_FALSE(EdgeKeepsLight(true, false, true, false));
+	REQUIRE_FALSE(EdgeKeepsLight(true, false, false, true));
+}
+
+TEST_CASE("KeepsLastValidOnAcquire keeps only this frame's stamp", "[scm]")
+{
+	REQUIRE(KeepsLastValidOnAcquire(120, 120));
+	REQUIRE_FALSE(KeepsLastValidOnAcquire(119, 120));
+	REQUIRE_FALSE(KeepsLastValidOnAcquire(-1, 120));
 }
 
 TEST_CASE("Shadow ranking clips lights crossing the camera plane", "[scm]")

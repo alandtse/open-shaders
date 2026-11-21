@@ -17,7 +17,7 @@ namespace DevBenchBridge::ToolSpecs
 		R"(passRegRingsPromotedTotal}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. playerProtected counts lights reaching the player that keep that rank (the strongest valid ones, up to half the shadow light count), playerForcedPastBudget the redraws forced past the configured budget or per-frame cap, and playerProtectedExcess the protected lights that still lost a slot to the shadow light count (each with a Total since load). visibility audits every candidate light: engineCulled is the UpdateCamera verdict (frustrumCull reads 0xff for every rejection) split into exclusive causes hidden,)"
 		R"( )"
 		R"(shadowDistanceCulled and frustumCulled; )"
-		R"(ownInFrustum is an independent sphere-versus-side-planes test from the published view-projection (any eye in VR) that ignores the far plane; distance is the light centre to the nearest eye; )"
+		R"(ownInFrustum is an independent sphere test against the side planes and the eye plane of the published view-projection (any eye in VR) that ignores the far plane; distance is the light centre to the nearest eye; )"
 		R"(visEngineOutOursIn counts lights the engine culled although their sphere touches the view frustum, visEngineInOursOut the reverse. slots covers occupied point-light pool slots (tile.size 0 = no atlas tile); )"
 		R"(demandMax and untouchedSamples are the GPU screen-demand reading and its zero streak; litSum is that demand weighted by the light's own shadow test, summed over the taps (lit area x brightness); )"
 		R"(litReason ORs 1 no shadow projection, 2 spot, 4 no tile yet, 8 fading in, 16 behind a hemisphere, 32 lit, 64 blocked; )"

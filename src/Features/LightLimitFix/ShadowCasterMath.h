@@ -110,6 +110,20 @@ namespace ShadowCasterManager
 		return a_holdsSlot && a_score > 0.0 ? a_score * kSlotHoldMargin : a_score;
 	}
 
+	/// Whether a light the engine culled may stay a visible shadow light while its sphere is still in view: an omni light that
+	/// passed the engine's test within the exit streak and is neither hidden nor faded out by its level of detail.
+	inline bool EdgeKeepsLight(bool a_recentlyValid, bool a_hidden, bool a_lodFaded, bool a_frustumLight) noexcept
+	{
+		return a_recentlyValid && !a_hidden && !a_lodFaded && !a_frustumLight;
+	}
+
+	/// Whether a light acquiring a slot keeps its last-valid frame: one stamped this frame is its own engine pass or edge
+	/// keep, an older one may belong to a recycled pointer.
+	inline bool KeepsLastValidOnAcquire(int32_t a_lastValidFrame, int32_t a_nowFrame) noexcept
+	{
+		return a_lastValidFrame == a_nowFrame;
+	}
+
 	/// Share of the live fade a light's score fade takes each frame: a flicker averages out over about twenty frames.
 	inline constexpr float kScoreFadeSmoothing = 0.05f;
 
