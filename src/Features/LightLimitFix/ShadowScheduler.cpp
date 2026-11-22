@@ -16,6 +16,7 @@
 #include "../../Utils/PerfUtils.h"
 #include "../../Utils/UI.h"
 #include "../LightLimitFix.h"
+#include "../DX12/DX12NativeScene.h"
 #include "../Upscaling.h"
 #include "../VR.h"
 #include "Common.h"
@@ -563,6 +564,7 @@ namespace ShadowCasterManager
 		bool bakeUnproven = false;
 		int bakeEpoch = -1;                      ///< classifier epoch of the latest StaticOnly bake
 		bool bakeStale = false;                  ///< a caster changed class since that bake: render full until it is rebaked
+		bool nativeDynamicOnly = false;  ///< Static shadows are delegated to DX12.
 		CasterPass accumMode = CasterPass::All;  ///< the split decision of this frame's first accumulate
 		RE::NiMatrix3 lastRot{};                 ///< light rotation at the previous accumulate
 	};
@@ -574,6 +576,23 @@ namespace ShadowCasterManager
 			s_splitWastedBakeTotal.fetch_add(1, std::memory_order_relaxed);
 			st.bakeUnproven = false;
 		}
+	}
+
+	static void TransitionNativeShadowOwnership(SplitState& st, int32_t slot, bool native)
+	{
+		if (st.nativeDynamicOnly == native)
+			return;
+		st.nativeDynamicOnly = native;
+		st.bakeQueued = true;
+		st.bakeThisFrame = false;
+		st.fullThisFrame = native;
+		st.bakeStale = false;
+		st.bakePoseValid = false;
+		st.mismatchStreak = 0;
+		RetireSplitBake(st);
+		// Old static and live atlas content must not survive ownership changes.
+		InvalidateSlotStaticBake(slot);
+		InvalidateSlotTileContent(slot);
 	}
 
 	// --- Empty-dynamic sleep: schedule-time skip of moverless redraws --------
@@ -1288,10 +1307,14 @@ namespace ShadowCasterManager
 		// casters (RAII-cleared after); pick this accumulate's filter mode
 		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
-			// A carried light's camera faces its holder and a live flickering flame leaves any bake's pose: both render full.
-			bool split = StaticAtlasReady() && !carrier && !FlickersFromLiveOrigin(light->light.get());
+			// Native-owned static shadows never require a legacy atlas bake.
+			const bool flickers = FlickersFromLiveOrigin(light->light.get());
+			const bool native = globals::features::dx12NativeScene.OwnsStaticForLight(light, slotIndex) &&
+				(!flickers || globals::features::dx12NativeScene.OffloadFlickeringStatic());
+			bool split = !native && StaticAtlasReady() && !carrier && !flickers;
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
+			TransitionNativeShadowOwnership(*st, slotIndex, native);
 			// A second accumulate this frame is skipped below, so it keeps the first call's split decision.
 			const auto prior = s_lightAccumFrame.find(light);
 			const bool repeatThisFrame = prior != s_lightAccumFrame.end() && prior->second.frame == nowFrame;
@@ -1299,7 +1322,8 @@ namespace ShadowCasterManager
 				st->fullThisFrame = !split;
 				st->bakeThisFrame = false;
 			}
-			CasterPass mode = repeatThisFrame ? st->accumMode : CasterPass::All;
+			CasterPass mode = native ? CasterPass::DynamicOnly :
+				(repeatThisFrame ? st->accumMode : CasterPass::All);
 			uint64_t bakedHash = 0;
 			bool staticValid = false;
 			bool staticEmpty = false;
@@ -1419,6 +1443,7 @@ namespace ShadowCasterManager
 			s_visitDynamicCount.store(0, std::memory_order_relaxed);
 			s_visitStaticCount.store(0, std::memory_order_relaxed);
 			s_cullPassMode.store(static_cast<int>(mode), std::memory_order_relaxed);
+			s_nativeStaticCullActive.store(native, std::memory_order_relaxed);
 
 			if (camera)
 				s_cullCameraPos = camera->world.translate;  // viewer, for the caster cull
@@ -1428,6 +1453,7 @@ namespace ShadowCasterManager
 				~ClearCullLight()
 				{
 					SetCurrentCullLight(nullptr);
+					s_nativeStaticCullActive.store(false, std::memory_order_relaxed);
 					// Unconditional reset: the split-path reset below is skipped
 					// when `split` is false, which would otherwise leave a stale
 					// DynamicOnly filtering the next walk.
@@ -4299,14 +4325,25 @@ namespace ShadowCasterManager
 				if (s_pendingSessionReset.load(std::memory_order_acquire))
 					break;
 				auto& e = s_lights.Lights[i];
-				if (!e.Light || !e.RedrawFrame)
+				if (!e.Light)
+					continue;
+				// Retire stale raster static depth on ownership changes even
+				// when the scheduler did not admit a redraw this frame.
+				if (auto it = s_splitState.find(e.Light); it != s_splitState.end()) {
+					const bool native = globals::features::dx12NativeScene.OwnsStaticForLight(e.Light, i) &&
+						(!FlickersFromLiveOrigin(e.Light->light.get()) ||
+							globals::features::dx12NativeScene.OffloadFlickeringStatic());
+					TransitionNativeShadowOwnership(it->second, i, native);
+				}
+				if (!e.RedrawFrame)
 					continue;
 				const CarriedShadowScope carriedShadow(CarrierBody(e.Light) != nullptr);
 				bool keepPriorContent = false;
 				bool emptyRender = false;
 				if (AtlasActive()) {
 					auto* split = StaticAtlasReady() ? &s_splitState[e.Light] : nullptr;
-					const bool useSplit = split && !split->splitExcluded && !split->fullThisFrame;
+					const bool useSplit = split && !split->nativeDynamicOnly &&
+						!split->splitExcluded && !split->fullThisFrame;
 					AtlasTileTexels live{};
 					const bool resizeAfterComposite = useSplit && !split->bakeThisFrame &&
 					                                  !SlotTileFits(i, e.pendingScale) && GetSlotTileTexels(i, live) && live.contentValid;

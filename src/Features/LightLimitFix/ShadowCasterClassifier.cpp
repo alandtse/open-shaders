@@ -253,6 +253,7 @@ namespace ShadowCasterManager
 	// casters per s_cullPassMode (StaticOnly on a rare atlas rebake, DynamicOnly
 	// the rest of the time). Frame-flow doc: SplitState in ShadowScheduler.cpp.
 	std::atomic<int> s_cullPassMode{ static_cast<int>(CasterPass::All) };
+	std::atomic<bool> s_nativeStaticCullActive{ false };
 
 	/// Static/dynamic caster draws classified last frame (Tracy plots for A/B).
 	std::atomic<uint32_t> s_staticCasterDraws{ 0 };
@@ -453,7 +454,8 @@ namespace ShadowCasterManager
 			!geom.GetGeometryRuntimeData().skinInstance &&
 			!IsCasterDynamic(geom))
 			globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
-		if (!AtlasActive())
+		const bool nativeDynamicOnly = s_nativeStaticCullActive.load(std::memory_order_relaxed);
+		if (!AtlasActive() && !nativeDynamicOnly)
 			return false;
 		if (const auto passless = ShadowMapPassless(geom); passless != PasslessReason::kNone) {
 			s_passlessCasterSkipTotal.fetch_add(1, std::memory_order_relaxed);
@@ -466,6 +468,13 @@ namespace ShadowCasterManager
 		                          nullptr :
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
+		if (nativeDynamicOnly) {
+			// Historical open-RT behavior: all stationary casters for the
+			// owned light are removed, even if TLAS coverage is incomplete.
+			if (dynamic)
+				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+			return !dynamic;
+		}
 		// A caster that settled since the bake is missing from it and is drawn live; one that started moving is still in
 		// it at its old pose and is left to it. Either way the light is queued for a rebake.
 		const bool bakeStale = rec && CasterChangedSinceBake(rec->classEpoch, s_visitBakeEpoch);

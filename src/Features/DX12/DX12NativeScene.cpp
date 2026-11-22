@@ -7,11 +7,15 @@
 #include "State.h"
 #include "Utils/D3D.h"
 
+#include <algorithm>
+#include <cmath>
 #include <format>
 
 void DX12NativeScene::DrawSettings()
 {
 	ImGui::Checkbox("Independent shadowmask", &shadowMaskEnabled);
+	ImGui::Checkbox("Replace SCM static casters with native shadows", &offloadStaticShadows);
+	ImGui::Checkbox("Include flickering lights in static offload", &offloadFlickeringStatic);
 	static constexpr const char* fractions[] = {
 		"Full", "Two-thirds", "Half", "One-third", "Quarter",
 		"One-sixth", "One-ninth", "Four-ninths"
@@ -34,27 +38,72 @@ void DX12NativeScene::DrawSettings()
 void DX12NativeScene::LoadSettings(json& input)
 {
 	shadowMaskEnabled = input.value("ShadowMask", true);
+	offloadStaticShadows = input.value("OffloadSCMStatic", true);
+	offloadFlickeringStatic = input.value("OffloadFlickeringStatic", true);
 	densityMode = std::min(input.value("ShadowTraceDensityMode", 0u), 7u);
 }
 
 void DX12NativeScene::SaveSettings(json& output)
 {
-	output = { { "ShadowMask", shadowMaskEnabled }, { "ShadowTraceDensityMode", densityMode } };
+	output = { { "ShadowMask", shadowMaskEnabled }, { "ShadowTraceDensityMode", densityMode },
+		{ "OffloadSCMStatic", offloadStaticShadows },
+		{ "OffloadFlickeringStatic", offloadFlickeringStatic } };
 }
 
 void DX12NativeScene::RestoreDefaultSettings()
 {
 	shadowMaskEnabled = true;
+	offloadStaticShadows = true;
+	offloadFlickeringStatic = true;
 	densityMode = 0;
+}
+
+bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const
+{
+	// Selection is per source light. It is independent of camera facing,
+	// full-tile geometry coverage, Native Lighting and FSR.
+	if (!light || slot < 0 || !loaded || globals::game::isVR ||
+		!globals::features::dx12Control.IsActive() ||
+		!shadowMaskEnabled || !offloadStaticShadows ||
+		light->GetIsFrustumOrDirectionalLight())
+		return false;
+	const auto scene = acceleration.GetScene();
+	const auto lights = shadowLights.load(std::memory_order_acquire);
+	const auto* ni = light->light.get();
+	if (!scene || !scene->acceleration || !lights || !ni)
+		return false;
+
+	const auto& position = ni->world.translate;
+	// The shadow shader traces the first 64 prepared lights in exactly this
+	// order. Do not suppress the raster caster of a light it does not trace.
+	for (size_t i = 0; i < std::min(lights->size(), size_t{ 64 }); ++i) {
+		const auto& candidate = (*lights)[i];
+		const float dx = position.x - candidate.position.x;
+		const float dy = position.y - candidate.position.y;
+		const float dz = position.z - candidate.position.z;
+		const float tolerance = std::clamp(candidate.radius * 0.01f, 4.0f, 32.0f);
+		if (std::isfinite(dx) && std::isfinite(dy) && std::isfinite(dz) &&
+			dx * dx + dy * dy + dz * dz <= tolerance * tolerance)
+			return true;
+	}
+	return false;
 }
 
 void DX12NativeScene::PreShadowMaps()
 {
-	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive())
+	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive()) {
+		shadowLights.store(nullptr, std::memory_order_release);
 		return;
+	}
 	auto grid = globals::features::dx12Resources.GetGrid();
-	if (!grid || !grid->requested.front().scope)
+	if (!grid || !grid->requested.front().scope) {
+		shadowLights.store(nullptr, std::memory_order_release);
 		return;
+	}
+	// SCM reads a single per-frame publication without re-enumerating tiles
+	// for every shadow light; the same ordered sources feed RayQuery.
+	shadowLights.store(std::make_shared<const std::vector<DX12::PreparedLight>>(
+		globals::features::dx12Resources.GetPreparedLights()), std::memory_order_release);
 	// Only a revision-coalesced mailbox handoff on this thread. All BLAS/TLAS
 	// allocations, command recording and GPU builds run on their own worker.
 	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
@@ -91,11 +140,10 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 	if (shadowMaskEnabled) {
 		const auto captured = raster.Get(frame);
 		const auto built = acceleration.GetScene();
-		if (captured && built) {
-			auto lights = globals::features::dx12Resources.GetPreparedLights();
+		const auto lights = shadowLights.load(std::memory_order_acquire);
+		if (captured && built && lights)
 			shadows.Dispatch(*backend, std::move(captured), std::move(built),
-				lights, frame, densityMode);
-		}
+				*lights, frame, densityMode);
 	}
 }
 
@@ -152,6 +200,7 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry)
 void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 {
 	if (a_opening) {
+		shadowLights.store(nullptr, std::memory_order_release);
 		raster.Reset();
 		shadows.Reset();
 		acceleration.Reset();
@@ -161,6 +210,7 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 
 void DX12NativeScene::OnRuntimeDisabled()
 {
+	shadowLights.store(nullptr, std::memory_order_release);
 	raster.Reset();
 	shadows.Reset();
 	acceleration.Reset();

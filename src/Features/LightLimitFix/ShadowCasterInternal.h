@@ -424,6 +424,8 @@ namespace ShadowCasterManager
 		DynamicOnly = 2  ///< keep only moving casters (composite over cache)
 	};
 	extern std::atomic<int> s_cullPassMode;
+	/// Native static caster offload applies even when the legacy atlas is off.
+	extern std::atomic<bool> s_nativeStaticCullActive;
 
 	extern std::atomic<uint32_t> s_staticCasterDraws;
 	extern std::atomic<uint32_t> s_dynamicCasterDraws;
