@@ -41,4 +41,7 @@ foreach(_path IN LISTS _required)
     endif()
 endforeach()
 list(LENGTH _required _count)
-message(STATUS "Verified ${_count} required AIO payload files (including native DXIL)")
+message(
+    STATUS
+    "Verified ${_count} required AIO payload files (including native DXIL)"
+)
