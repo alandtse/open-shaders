@@ -143,8 +143,10 @@ internal sealed record TileShape(ulong Identity, float[][] Positions, uint[] Ind
 internal sealed record TileLight(string ReferencePlugin, uint ReferenceLocal, string BasePlugin, uint BaseLocal,
     float[] Position, float[] Color, float Radius, float Fade, float EmitterRadius, float FalloffExponent, uint Flags);
 internal sealed record TileResult(uint Version, uint EligibleShapes, uint FailedShapes, bool EnumerationComplete,
-    List<TileShape> Shapes, List<TileLight> Lights, string Failure = "");
+    List<TileShape> Shapes, List<TileLight> Lights, string Failure = "",
+    Dictionary<string, uint>? RejectionReasons = null);
 internal sealed record ModelShape(int Index, Vector3[] Positions, uint[] Indices, Matrix4x4 ToModel);
+internal sealed record ModelExtraction(ModelShape[] Shapes, Dictionary<string, uint> Rejections);
 
 internal static class SceneTile
 {
@@ -241,8 +243,15 @@ internal static class SceneTile
         var foundScope = placementFoundScope;
         var shapes = new List<TileShape>();
         var lights = new List<TileLight>();
-        var models = new Dictionary<string, ModelShape[]>(StringComparer.OrdinalIgnoreCase);
+        var models = new Dictionary<string, ModelExtraction>(StringComparer.OrdinalIgnoreCase);
         uint eligible = 0, failed = 0;
+        var rejections = new Dictionary<string, uint>(StringComparer.Ordinal);
+        void Reject(string reason, uint count = 1)
+        {
+            failed += count;
+            if (!rejections.ContainsKey(reason) && rejections.Count >= 12) reason = "other";
+            rejections[reason] = rejections.GetValueOrDefault(reason) + count;
+        }
         long bytes = 0;
         foreach (var candidate in candidates.Values)
         {
@@ -269,17 +278,17 @@ internal static class SceneTile
                 var placed = context.Record;
                 if (placed.IsDeleted) continue;
                 var obj = placed as IPlacedObjectGetter;
-                if (obj == null) { ++failed; continue; }
+                if (obj == null) { Reject("unsupported placement record"); continue; }
                 var baseRecord = obj.Base.TryResolve(environment.LinkCache);
                 if (baseRecord == null)
                 {
                     // An unresolved base may describe a shadow-casting static.
                     // Never advertise the tile as complete when its role is unknown.
-                    ++failed;
+                    Reject("unresolved base record");
                     continue;
                 }
                 if (placed.Placement is not { } placement) {
-                    if (baseRecord is IStaticGetter or IFurnitureGetter or IMoveableStaticGetter) ++failed;
+                    if (baseRecord is IStaticGetter or IFurnitureGetter or IMoveableStaticGetter) Reject("missing placement");
                     continue;
                 }
                 var position = new[] { placement.Position.X, placement.Position.Y, placement.Position.Z };
@@ -302,7 +311,7 @@ internal static class SceneTile
                         modeled.Model?.File is { } file &&
                         !string.IsNullOrWhiteSpace(file.ToString()) &&
                         (!isWorldspace || Inside(position[0], position[1], tileX, tileY, size)))
-                        ++failed;
+                        Reject("unsupported modeled record");
                     continue;
                 }
 
@@ -310,12 +319,15 @@ internal static class SceneTile
                 if ((placed.MajorRecordFlagsRaw & 0x800) != 0 || obj.EnableParent != null ||
                     obj.VirtualMachineAdapter != null || baseRecord is IMoveableStaticGetter)
                 {
-                    ++failed;
+                    Reject("runtime-dependent placement");
                     continue;
                 }
                 var model = (baseRecord as IModeledGetter)?.Model?.File.ToString();
-                if (string.IsNullOrWhiteSpace(model)) { ++failed; continue; }
-                var mesh = LoadModel(data, model, models, archives, scratch);
+                if (string.IsNullOrWhiteSpace(model)) { Reject("missing mesh path"); continue; }
+                var extraction = LoadModel(data, model, models, archives, scratch);
+                foreach (var (reason, count) in extraction.Rejections)
+                    Reject(reason, count);
+                var mesh = extraction.Shapes;
                 var rotation = new[] { placement.Rotation.X, placement.Rotation.Y, placement.Rotation.Z };
                 var toWorld = PlacementTransform.FromRecord(position, rotation, obj.Scale ?? 1.0f);
                 foreach (var shape in mesh)
@@ -326,7 +338,7 @@ internal static class SceneTile
                     var shapeBytes = checked((long)shape.Positions.Length * 12 + (long)shape.Indices.Length * 4);
                     if (shapes.Count >= MaxShapes || shapeBytes > MaxGeometryBytes - bytes)
                     {
-                        ++failed;
+                        Reject("tile shape or byte budget exceeded");
                         continue;
                     }
                     bytes += shapeBytes;
@@ -337,13 +349,14 @@ internal static class SceneTile
             }
             catch (Exception error) when (error is not OutOfMemoryException)
             {
-                ++failed;
+                var message = error is InvalidDataException ? error.Message : error.GetType().Name;
+                Reject(message.Length <= 80 ? message : message[..80]);
             }
         }
         // A bounded exterior anchor halo cannot prove that a huge off-tile
         // model does not overlap this tile. Exteriors remain incomplete until
         // an authoritative bounds index is available; never offload on a guess.
-        return new TileResult(1, eligible, failed, !isWorldspace && foundScope, shapes, lights);
+        return new TileResult(1, eligible, failed, !isWorldspace && foundScope, shapes, lights, "", rejections);
         }
         return (Run, environment);
     }
@@ -367,7 +380,7 @@ internal static class SceneTile
             low.Y < (ty + 1) * (double)size && high.Y >= ty * (double)size;
     }
 
-    private static ModelShape[] LoadModel(string data, string path, Dictionary<string, ModelShape[]> cache,
+    private static ModelExtraction LoadModel(string data, string path, Dictionary<string, ModelExtraction> cache,
         Lazy<IArchiveReader[]> archives, string scratch)
     {
         path = path.Replace('/', '\\');
@@ -410,34 +423,51 @@ internal static class SceneTile
             throw new InvalidDataException("NIF unavailable or unsupported");
         var hierarchy = new NifTransforms(nif);
         var output = new List<ModelShape>();
+        var rejected = new Dictionary<string, uint>(StringComparer.Ordinal);
+        void Skip(string reason) => rejected[reason] = rejected.GetValueOrDefault(reason) + 1;
         foreach (var entry in nif.GetShapes())
         {
+            // Retain safe opaque rigid triangles even if a NIF contains unsupported shapes.
             if (entry is not BSTriShape shape || shape.HasSkinInstance || shape.IsSkinned ||
                 entry.GetType().Name is not ("BSTriShape" or "BSSubIndexTriShape"))
-                throw new InvalidDataException("Unsupported animated or nontriangle shape");
-            // Alpha-dependent occluders cannot be handled without textures.
-            if (nif.GetBlock(entry.AlphaPropertyRef) != null)
-                throw new InvalidDataException("Alpha geometry needs texture coverage");
-            nif.GetBlockIndex(entry, out var index);
-            var vertices = shape.VertexPositions.ToArray();
-            var triangles = entry.Triangles;
-            if (vertices.Length == 0 || triangles.Count == 0 ||
-                vertices.Any(v => !float.IsFinite(v.X) || !float.IsFinite(v.Y) || !float.IsFinite(v.Z)))
-                throw new InvalidDataException("Invalid shape vertices");
-            var indices = new uint[triangles.Count * 3];
-            for (var i = 0; i < triangles.Count; ++i)
             {
-                var t = triangles[i];
-                if (t.V1 >= vertices.Length || t.V2 >= vertices.Length || t.V3 >= vertices.Length)
-                    throw new InvalidDataException("Invalid triangle index");
-                indices[i * 3] = t.V1;
-                indices[i * 3 + 1] = t.V2;
-                indices[i * 3 + 2] = t.V3;
+                Skip("unsupported animated or nontriangle shape");
+                continue;
             }
-            output.Add(new ModelShape(index, vertices, indices, hierarchy.ForShape(index)));
+            try
+            {
+                // Alpha holes require textures: never admit these as opaque RT occluders.
+                if (nif.GetBlock(entry.AlphaPropertyRef) != null)
+                {
+                    Skip("alpha-dependent shape (textures required)");
+                    continue;
+                }
+                nif.GetBlockIndex(entry, out var index);
+                var vertices = shape.VertexPositions.ToArray();
+                var triangles = entry.Triangles;
+                if (vertices.Length == 0 || triangles.Count == 0 ||
+                    vertices.Any(v => !float.IsFinite(v.X) || !float.IsFinite(v.Y) || !float.IsFinite(v.Z)))
+                    throw new InvalidDataException("Invalid shape vertices");
+                var indices = new uint[triangles.Count * 3];
+                for (var i = 0; i < triangles.Count; ++i)
+                {
+                    var t = triangles[i];
+                    if (t.V1 >= vertices.Length || t.V2 >= vertices.Length || t.V3 >= vertices.Length)
+                        throw new InvalidDataException("Invalid triangle index");
+                    indices[i * 3] = t.V1;
+                    indices[i * 3 + 1] = t.V2;
+                    indices[i * 3 + 2] = t.V3;
+                }
+                output.Add(new ModelShape(index, vertices, indices, hierarchy.ForShape(index)));
+            }
+            catch (Exception error) when (error is not OutOfMemoryException)
+            {
+                Skip("invalid or unsupported shape data");
+            }
         }
-        if (output.Count == 0) throw new InvalidDataException("No supported triangles");
-        cache[path] = output.ToArray();
+        if (output.Count == 0)
+            throw new InvalidDataException("No supported opaque rigid triangles");
+        cache[path] = new ModelExtraction(output.ToArray(), rejected);
         return cache[path];
     }
 
