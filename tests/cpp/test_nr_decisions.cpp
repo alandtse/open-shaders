@@ -330,6 +330,21 @@ TEST_CASE("IsUnderDriverStore is case-insensitive and anchored to the prefix", "
 	REQUIRE_FALSE(NR::IsUnderDriverStore(L"", systemDirectory));
 }
 
+TEST_CASE("IsDirectlyInSystemDirectory accepts only a file placed in the directory itself", "[nr]")
+{
+	const std::wstring_view systemDirectory = L"C:\\Windows\\System32";
+
+	REQUIRE(NR::IsDirectlyInSystemDirectory(L"C:\\Windows\\System32\\nvngx.dll", systemDirectory));
+	REQUIRE(NR::IsDirectlyInSystemDirectory(L"c:\\windows\\system32\\_nvngx.dll", systemDirectory));
+
+	// A subfolder, a lookalike sibling, the directory itself and an empty path all fail.
+	REQUIRE_FALSE(NR::IsDirectlyInSystemDirectory(L"C:\\Windows\\System32\\sub\\nvngx.dll", systemDirectory));
+	REQUIRE_FALSE(NR::IsDirectlyInSystemDirectory(L"C:\\Windows\\System32X\\nvngx.dll", systemDirectory));
+	REQUIRE_FALSE(NR::IsDirectlyInSystemDirectory(L"C:\\Windows\\System32\\", systemDirectory));
+	REQUIRE_FALSE(NR::IsDirectlyInSystemDirectory(L"C:\\Windows\\System32", systemDirectory));
+	REQUIRE_FALSE(NR::IsDirectlyInSystemDirectory(L"", systemDirectory));
+}
+
 TEST_CASE("EyeRenderWidth splits the stereo size as Upscale does", "[nr]")
 {
 	REQUIRE(NR::EyeRenderWidth(3840, 2) == 1920);

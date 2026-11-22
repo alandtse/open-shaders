@@ -173,6 +173,18 @@ namespace NR
 				   prefix.c_str(), static_cast<int>(prefix.size()), TRUE) == CSTR_EQUAL;
 	}
 
+	/** @brief True when an image sits directly in <systemDirectory>, with no subfolder: Wine's own NGX core. */
+	inline bool IsDirectlyInSystemDirectory(std::wstring_view image, std::wstring_view systemDirectory)
+	{
+		const std::wstring prefix = std::wstring(systemDirectory) + L"\\";
+		if (image.size() <= prefix.size())
+			return false;
+		if (CompareStringOrdinal(image.data(), static_cast<int>(prefix.size()),
+				prefix.c_str(), static_cast<int>(prefix.size()), TRUE) != CSTR_EQUAL)
+			return false;
+		return image.find(L'\\', prefix.size()) == std::wstring_view::npos;
+	}
+
 	/** @brief Per-eye render width; the NR pass and Upscale() must derive it identically. */
 	inline uint32_t EyeRenderWidth(uint32_t renderWidth, uint32_t eyes)
 	{
