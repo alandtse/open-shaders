@@ -23,6 +23,25 @@ void DX12NativeScene::DrawSettings()
 	int mode = static_cast<int>(densityMode);
 	if (ImGui::Combo("Trace density", &mode, fractions, 8))
 		densityMode = static_cast<uint32_t>(mode);
+	ImGui::Checkbox("Stochastic shadow emitter sampling", &stochasticEmitterSampling);
+	ImGui::BeginDisabled(!stochasticEmitterSampling);
+	int rays = int(emitterRayCount);
+	if (ImGui::SliderInt("Rays per sampled pixel and light", &rays, 1, 16))
+		emitterRayCount = uint32_t(rays);
+	ImGui::EndDisabled();
+	ImGui::Checkbox("Exclude shadows near light geometry", &nearLightShadowExclusion);
+	ImGui::BeginDisabled(!nearLightShadowExclusion);
+	int nearUnits = int(nearLightExclusionUnits);
+	if (ImGui::SliderInt("Light-centered exclusion radius (units)", &nearUnits, 0, 512))
+		nearLightExclusionUnits = uint32_t(std::clamp(((nearUnits + 2) / 4) * 4, 0, 512));
+	ImGui::EndDisabled();
+	ImGui::SliderFloat("Shadow reach multiplier (1x = vanilla)", &shadowReachMultiplier,
+		0.1f, 64.0f, "%.2fx", ImGuiSliderFlags_Logarithmic);
+	float fade = shadowFadeRange;
+	if (ImGui::SliderFloat("Shadow fade range fraction", &fade, 0.0f, 1.0f, "%.2f"))
+		shadowFadeRange = std::round(fade * 50.0f) / 50.0f;
+	ImGui::SliderFloat("Shadow falloff curve", &shadowFalloffCurve, 0.0f, 2.5f, "%.2f");
+	ImGui::TextDisabled("Full density = every pixel. Emitter rays are independent of trace density.");
 	ImGui::TextDisabled("Raw shadowmask always uses the full render resolution.");
 	ImGui::TextDisabled("Capture is independent of native acceleration, Native Composite, and FSR.");
 }
@@ -35,6 +54,9 @@ void DX12NativeScene::DrawDiagnostics() const
 											   "enabled" :
 											   "paused");
 	ImGui::Text("Trace density mode: %u (0=full, 1=2/3, 2=1/2, 3=1/3, 4=1/4, 5=1/6, 6=1/9, 7=4/9)", densityMode);
+	ImGui::Text("Emitter sampling: %s; rays/light: %u", stochasticEmitterSampling ? "stochastic" : "deterministic center", stochasticEmitterSampling ? emitterRayCount : 1u);
+	ImGui::Text("Near-light exclusion: %s; radius %u units", nearLightShadowExclusion ? "enabled" : "disabled", nearLightExclusionUnits);
+	ImGui::Text("Shadow reach %.2fx vanilla; fade fraction %.2f; curve %.2f", shadowReachMultiplier, shadowFadeRange, shadowFalloffCurve);
 	const auto lights = shadowLights.load(std::memory_order_acquire);
 	ImGui::Text("Prepared lights: %zu (first %zu traceable this frame)",
 		lights ? lights->size() : 0u, lights ? std::min(lights->size(), size_t{ 64 }) : 0u);
@@ -77,13 +99,27 @@ void DX12NativeScene::LoadSettings(json& input)
 	offloadStaticShadows = input.value("OffloadSCMStatic", true);
 	offloadFlickeringStatic = input.value("OffloadFlickeringStatic", true);
 	densityMode = std::min(input.value("ShadowTraceDensityMode", 0u), 7u);
+	stochasticEmitterSampling = input.value("ShadowStochastic", false);
+	emitterRayCount = std::clamp(input.value("ShadowEmitterRays", 4u), 1u, 16u);
+	nearLightShadowExclusion = input.value("ShadowNearLightExclusion", false);
+	nearLightExclusionUnits = std::clamp(input.value("ShadowNearLightRadius", 0u), 0u, 512u) / 4u * 4u;
+	shadowReachMultiplier = std::clamp(input.value("ShadowReachMultiplier", 1.0f), 0.1f, 64.0f);
+	shadowFadeRange = std::round(std::clamp(input.value("ShadowFadeRange", 0.50f), 0.0f, 1.0f) * 50.0f) / 50.0f;
+	shadowFalloffCurve = std::clamp(input.value("ShadowFalloffCurve", 1.0f), 0.0f, 2.5f);
 }
 
 void DX12NativeScene::SaveSettings(json& output)
 {
 	output = { { "ShadowMask", shadowMaskEnabled }, { "ShadowTraceDensityMode", densityMode },
 		{ "OffloadSCMStatic", offloadStaticShadows },
-		{ "OffloadFlickeringStatic", offloadFlickeringStatic } };
+		{ "OffloadFlickeringStatic", offloadFlickeringStatic },
+		{ "ShadowStochastic", stochasticEmitterSampling },
+		{ "ShadowEmitterRays", emitterRayCount },
+		{ "ShadowNearLightExclusion", nearLightShadowExclusion },
+		{ "ShadowNearLightRadius", nearLightExclusionUnits },
+		{ "ShadowReachMultiplier", shadowReachMultiplier },
+		{ "ShadowFadeRange", shadowFadeRange },
+		{ "ShadowFalloffCurve", shadowFalloffCurve } };
 }
 
 void DX12NativeScene::RestoreDefaultSettings()
@@ -92,6 +128,13 @@ void DX12NativeScene::RestoreDefaultSettings()
 	offloadStaticShadows = true;
 	offloadFlickeringStatic = true;
 	densityMode = 0;
+	stochasticEmitterSampling = false;
+	emitterRayCount = 4;
+	nearLightShadowExclusion = false;
+	nearLightExclusionUnits = 0;
+	shadowReachMultiplier = 1.0f;
+	shadowFadeRange = 0.50f;
+	shadowFalloffCurve = 1.0f;
 }
 
 bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const
@@ -181,10 +224,20 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 		const auto lights = shadowLights.load(std::memory_order_acquire);
 		// Report missing prerequisites even when no raw frame can be submitted.
 		// The only RayQuery dispatch remains inside the DX12 shadow trace.
+		const DX12Native::ShadowTraceControls controls{
+			.densityMode = densityMode,
+			.emitterSamples = emitterRayCount,
+			.stochastic = stochasticEmitterSampling,
+			.nearLightExclusion = nearLightShadowExclusion,
+			.nearLightRadius = float(nearLightExclusionUnits),
+			.reachMultiplier = shadowReachMultiplier,
+			.fadeRange = shadowFadeRange,
+			.falloffCurve = shadowFalloffCurve
+		};
 		if (lights)
-			shadows.Dispatch(*backend, captured, built, *lights, frame, densityMode);
+			shadows.Dispatch(*backend, captured, built, *lights, frame, controls);
 		else
-			shadows.Dispatch(*backend, captured, built, {}, frame, densityMode);
+			shadows.Dispatch(*backend, captured, built, {}, frame, controls);
 	}
 }
 

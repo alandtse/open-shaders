@@ -11,6 +11,19 @@
 
 namespace DX12Native
 {
+	/** @brief Shadow-only behavior. Prepared lights keep their vanilla-supplied values. */
+	struct ShadowTraceControls
+	{
+		uint32_t densityMode = 0;
+		uint32_t emitterSamples = 4;
+		bool stochastic = false;
+		bool nearLightExclusion = false;
+		float nearLightRadius = 0.0f;  // 0..512 game units; exclusion sphere centered at light.
+		float reachMultiplier = 1.0f;  // 1.0 means the vanilla-provided light radius.
+		float fadeRange = 0.50f;  // Fraction of native shadow reach.
+		float falloffCurve = 1.0f;
+	};
+
 	/** @brief Full render-size raw visibility; the composite owns reconstruction. */
 	struct ShadowMaskFrame
 	{
@@ -35,7 +48,7 @@ namespace DX12Native
 		~ShadowMaskTrace();
 		void Dispatch(const GraphicsBackend& backend, std::shared_ptr<const RasterFrame> raster,
 			std::shared_ptr<const TopLevel> scene, std::span<const DX12::PreparedLight> lights,
-			uint32_t frame, uint32_t densityMode);
+			uint32_t frame, const ShadowTraceControls& controls);
 		std::shared_ptr<const ShadowMaskFrame> Get(uint32_t frame) const
 		{
 			return current && current->frame == frame ? current : nullptr;

@@ -28,6 +28,10 @@ namespace DX12Native
 			uint32_t lightCount;
 			float minimum = 0.5f, maximum = 60000.0f;
 			uint32_t reserved = 0;
+			uint32_t emitterSamples = 1;
+			float shadowReachMultiplier = 1.0f, shadowFadeRange = 0.5f, shadowFalloffCurve = 1.0f;
+			float nearLightRadius = 0.0f;
+			uint32_t nearLightExclusion = 0, stochastic = 0, padding = 0;
 		};
 		winrt::com_ptr<ID3D12Resource> UploadBuffer(ID3D12Device* device, UINT64 bytes)
 		{
@@ -108,7 +112,7 @@ namespace DX12Native
 
 	void ShadowMaskTrace::Dispatch(const GraphicsBackend& requested,
 		std::shared_ptr<const RasterFrame> raster, std::shared_ptr<const TopLevel> scene,
-		std::span<const DX12::PreparedLight> lights, uint32_t frame, uint32_t densityMode)
+		std::span<const DX12::PreparedLight> lights, uint32_t frame, const ShadowTraceControls& controls)
 	{
 		if (current && current->frame == frame)
 			return;
@@ -184,14 +188,21 @@ namespace DX12Native
 			slot->frame = frame;
 			slot->width = width;
 			slot->height = height;
-			slot->densityMode = std::min(densityMode, 7u);
+			slot->densityMode = std::min(controls.densityMode, 7u);
 			const Constants camera{
 				slot->raster->camera.CameraProjInverse,
 				slot->raster->camera.CameraViewInverse,
 				slot->raster->camera.CameraPosAdjust,
 				width, height, frame, slot->densityMode,
 				uint32_t(std::min(lights.size(), size_t(kMaxLights))),
-				0.5f, 60000.0f, 0u
+				0.5f, 60000.0f, 0u,
+				controls.stochastic ? std::clamp(controls.emitterSamples, 1u, 16u) : 1u,
+				std::clamp(controls.reachMultiplier, 0.1f, 64.0f),
+				std::clamp(controls.fadeRange, 0.0f, 1.0f),
+				std::clamp(controls.falloffCurve, 0.0f, 2.5f),
+				std::clamp(controls.nearLightRadius, 0.0f, 512.0f),
+				controls.nearLightExclusion ? 1u : 0u,
+				controls.stochastic ? 1u : 0u, 0u
 			};
 			static_assert(sizeof(Constants) <= 256);
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
