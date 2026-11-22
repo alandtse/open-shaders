@@ -11,12 +11,54 @@
 
 void DX12NativeScene::DrawSettings()
 {
-	ImGui::TextUnformatted("Early opaque raster submission to native DX12.");
+	ImGui::Checkbox("Independent shadowmask", &shadowMaskEnabled);
+	static constexpr const char* fractions[] = {
+		"Full", "Two-thirds", "Half", "One-third", "Quarter",
+		"One-sixth", "One-ninth", "Four-ninths"
+	};
+	int mode = static_cast<int>(densityMode);
+	if (ImGui::Combo("Trace density", &mode, fractions, 8))
+		densityMode = static_cast<uint32_t>(mode);
+	ImGui::TextDisabled("Raw shadowmask always uses the full render resolution.");
 	ImGui::TextDisabled("Capture is independent of native acceleration, Native Composite, and FSR.");
 	if (!startupFailure.empty())
 		ImGui::TextWrapped("Native raster transfer: %s", startupFailure.c_str());
 	else if (!raster.Status().empty())
 		ImGui::TextWrapped("Native raster capture: %s", raster.Status().c_str());
+	if (!shadows.Status().empty())
+		ImGui::TextWrapped("RayQuery: %s", shadows.Status().c_str());
+	if (!acceleration.Failure().empty())
+		ImGui::TextWrapped("Native acceleration: %s", acceleration.Failure().c_str());
+}
+
+void DX12NativeScene::LoadSettings(json& input)
+{
+	shadowMaskEnabled = input.value("ShadowMask", true);
+	densityMode = std::min(input.value("ShadowTraceDensityMode", 0u), 7u);
+}
+
+void DX12NativeScene::SaveSettings(json& output)
+{
+	output = { { "ShadowMask", shadowMaskEnabled }, { "ShadowTraceDensityMode", densityMode } };
+}
+
+void DX12NativeScene::RestoreDefaultSettings()
+{
+	shadowMaskEnabled = true;
+	densityMode = 0;
+}
+
+void DX12NativeScene::PreShadowMaps()
+{
+	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive())
+		return;
+	auto grid = globals::features::dx12Resources.GetGrid();
+	if (!grid || !grid->requested.front().scope)
+		return;
+	// Only a revision-coalesced mailbox handoff on this thread. All BLAS/TLAS
+	// allocations, command recording and GPU builds run on their own worker.
+	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
+		acceleration.Request(std::move(grid));
 }
 
 void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
@@ -46,6 +88,15 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
 	raster.Capture(*backend, sources, Util::GetCurrentSceneDepthSRV(false),
 		&globals::game::frameBufferCached.nonVR, frame);
+	if (shadowMaskEnabled) {
+		const auto captured = raster.Get(frame);
+		const auto built = acceleration.GetScene();
+		if (captured && built) {
+			auto lights = globals::features::dx12Resources.GetPreparedLights();
+			shadows.Dispatch(*backend, std::move(captured), std::move(built),
+				lights, frame, densityMode);
+		}
+	}
 }
 
 void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry)
@@ -102,6 +153,8 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 {
 	if (a_opening) {
 		raster.Reset();
+		shadows.Reset();
+		acceleration.Reset();
 		geometryCapture.Reset();
 	}
 }
@@ -109,5 +162,7 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 void DX12NativeScene::OnRuntimeDisabled()
 {
 	raster.Reset();
+	shadows.Reset();
+	acceleration.Reset();
 	geometryCapture.Reset();
 }

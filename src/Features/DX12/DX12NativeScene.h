@@ -2,6 +2,8 @@
 
 #include "DX12NativeRasterCapture.h"
 #include "DX12NativeRuntimeCapture.h"
+#include "DX12NativeAcceleration.h"
+#include "DX12NativeShadowTrace.h"
 #include "Feature.h"
 
 #include <optional>
@@ -20,14 +22,21 @@ struct DX12NativeScene final : Feature
 	bool SupportsVR() override { return false; }
 
 	void DrawSettings() override;
-	void LoadSettings(json& /*a_input*/) override {}
-	void SaveSettings(json& a_output) override { a_output = json::object(); }
-	void RestoreDefaultSettings() override {}
+	bool WantsPreShadowMapsHook() const override { return true; }
+	void PreShadowMaps() override;
+	void LoadSettings(json& a_input) override;
+	void SaveSettings(json& a_output) override;
+	void RestoreDefaultSettings() override;
 	void OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs) override;
 	/** @brief Observe a stationary rigid caster during the existing SCM walk. */
 	void ObserveSCMRigidCaster(RE::BSGeometry& geometry);
 	void OnSceneTransitionReset(bool a_opening) override;
 	void OnRuntimeDisabled() override;
+
+	/** @brief Raw full-resolution shadow output, independently fenced for Native Composite. */
+	std::shared_ptr<const DX12Native::ShadowMaskFrame> GetShadowMask(uint32_t frame) const { return shadows.Get(frame); }
+	bool RetainShadowMask(const std::shared_ptr<const DX12Native::ShadowMaskFrame>& frame,
+		ID3D12Fence* fence, uint64_t value) { return shadows.RetainThrough(frame, fence, value); }
 
 	/** @brief Gets the early raster frame without waiting for GPU completion. */
 	std::shared_ptr<const DX12Native::RasterFrame> GetRasterFrame(uint32_t a_frame) const { return raster.Get(a_frame); }
@@ -41,5 +50,9 @@ private:
 	std::optional<GraphicsBackend> backend;
 	DX12Native::RasterCapture raster;
 	DX12Native::RuntimeGeometryCapture geometryCapture;
+	DX12Native::AccelerationWorker acceleration;
+	DX12Native::ShadowMaskTrace shadows;
+	bool shadowMaskEnabled = true;
+	uint32_t densityMode = 0;
 	std::string startupFailure;
 };
