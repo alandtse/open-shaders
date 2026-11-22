@@ -48,6 +48,10 @@ namespace DX12
 		next->size = size;
 		next->requested = *desired;
 		next->predictive = *predictive;
+		// A failed neighbor may be attempted at most three times while the player
+		// remains in the same center subcell. A center transition starts a new
+		// bounded retry window for those same neighboring keys.
+		const bool playerChangedSubcell = current->requested.front() != next->requested.front();
 		if (current->size == size) {
 			const auto lookup = [&](SubcellKey key) -> std::shared_ptr<const Tile> {
 				for (const auto& old : current->resident)
@@ -61,8 +65,19 @@ namespace DX12
 						return old;
 				return {};
 			};
+			const auto resetFailedAfterMove = [&](std::shared_ptr<const Tile>& tile) {
+				if (!playerChangedSubcell || !tile ||
+					(tile->state != Tile::State::Incomplete && tile->state != Tile::State::RetryWaiting))
+					return;
+				auto retry = std::make_shared<Tile>(*tile);
+				retry->state = Tile::State::Requested;
+				retry->preparationAttempts = 0;
+				retry->retryAfter = {};
+				tile = std::move(retry);
+			};
 			for (size_t i = 0; i < kGridCapacity; ++i) {
 				next->resident[i] = lookup(next->requested[i]);
+				resetFailedAfterMove(next->resident[i]);
 				if (next->resident[i] && next->resident[i]->state == Tile::State::Deferred) {
 					// A CPU-budgeted speculative tile is re-requested at full quality on active promotion.
 					auto promoted = std::make_shared<Tile>(*next->resident[i]);
@@ -70,8 +85,10 @@ namespace DX12
 					next->resident[i] = std::move(promoted);
 				}
 			}
-			for (size_t i = 0; i < kPredictiveCapacity; ++i)
+			for (size_t i = 0; i < kPredictiveCapacity; ++i) {
 				next->predictiveResident[i] = lookup(next->predictive[i]);
+				resetFailedAfterMove(next->predictiveResident[i]);
+			}
 			// Runtime-only geometry follows the active neighborhood. Prune tiles
 			// that leave 3x3 without a disk flush or stale GPU ownership.
 			for (const auto& observed : current->runtimeShapes)
