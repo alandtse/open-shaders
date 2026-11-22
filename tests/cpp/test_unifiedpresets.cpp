@@ -237,6 +237,29 @@ TEST_CASE("Automatic scene presets resolve current conflicts in stable order", "
 	REQUIRE(Conflicts({ { "exclusive/e11", true } }, { { "exclusive/e11", true } }));
 }
 
+TEST_CASE("Confirmed preset conflicts survive restart and fall back to installed alternatives", "[presets]")
+{
+	using namespace PresetActivation;
+	const Candidate a{ "A", { { "weather/day", 1 } } };
+	const Candidate b{ "B", { { "weather/day", 2 } } };
+	const Candidate c{ "C", { { "weather/night", 3 } } };
+	const std::vector<std::string> both{ "B", "C" };
+	const std::vector<std::string> fallback{ "A", "C" };
+	auto state = nlohmann::json::object();
+	RecordConflictChoice(state, b.id);
+	state = PresetState::RestorePrivateState({}, nlohmann::json::parse(state.dump()));
+	const auto preferred = PresetState::ReadIds(state, PresetState::kPreferredScenePacksKey);
+	REQUIRE(Select({ a, b, c }, {}, {}, true, preferred).enabled == both);
+	REQUIRE(Select({ a, c }, both, {}, true, preferred).enabled == fallback);
+	REQUIRE(Select({ a, b, c }, fallback, {}, true, preferred).enabled == both);
+	REQUIRE(Select({ a, b, c }, {}, preferred, true, preferred).enabled == fallback);
+	REQUIRE(Select({ a, b, c }, fallback, {}, false, preferred).enabled == fallback);
+	REQUIRE(Select({ a, { "B", a.settings }, c }, {}, {}, true, preferred).enabled.size() == 3);
+	RecordConflictChoice(state, a.id);
+	const auto reversed = PresetState::ReadIds(state, PresetState::kPreferredScenePacksKey);
+	REQUIRE(Select({ a, b, c }, both, {}, true, reversed).enabled == fallback);
+}
+
 TEST_CASE("Returning presets follow the installed pipeline unless explicitly disabled", "[presets]")
 {
 	using namespace PresetActivation;

@@ -440,6 +440,7 @@ void UnifiedPresetCatalog::LoadActiveState(const json& settings)
 	}
 	activePackId = preservedState.at("activePackId").get<std::string>();
 	enabledScenePackIds = PresetState::ReadIds(preservedState, "enabledScenePackIds");
+	preservedState[PresetState::kPreferredScenePacksKey] = PresetState::ReadIds(preservedState, PresetState::kPreferredScenePacksKey);
 	const auto previousActive = preservedState.value("lastSharedActivePackId", json(activePackId));
 	if (!preservedState.contains("enabledScenePackIds") || previousActive != activePackId) {
 		enabledScenePackIds = activePackId.empty() ? std::vector<std::string>{} : std::vector{ activePackId };
@@ -744,7 +745,8 @@ void UnifiedPresetCatalog::DiscoverSceneActivation(bool automatic)
 	}
 	const auto previous = SerializeActiveState();
 	const auto disabled = PresetState::ReadIds(preservedState, "disabledScenePackIds");
-	const auto selection = PresetActivation::Select(candidates, enabledScenePackIds, disabled, automatic);
+	const auto preferred = PresetState::ReadIds(preservedState, PresetState::kPreferredScenePacksKey);
+	const auto selection = PresetActivation::Select(std::move(candidates), enabledScenePackIds, disabled, automatic, preferred);
 	for (const auto& id : enabledScenePackIds)
 		if (std::ranges::find(selection.enabled, id) == selection.enabled.end())
 			std::erase(baselinePackIds, id);
@@ -1077,6 +1079,8 @@ bool UnifiedPresetCatalog::ApplyPack(const std::string& id, bool saveEffects11Cu
 		for (const auto& conflict : conflicts)
 			if (!DeactivatePack(conflict))
 				return false;
+		if (!conflicts.empty())
+			PresetActivation::RecordConflictChoice(preservedState, id);
 		bool payloadApplied = false;
 		if (pack->hasEffects11) {
 			if (!pack->provider || !pack->provider->Apply(pack->provider->GetPresetId(pack->id), saveEffects11Current))
@@ -1208,6 +1212,7 @@ try {
 			changedSceneFiles.try_emplace({ edit.packId, edit.relative }, &document->second);
 	}
 	std::vector<std::string> conflicts;
+	std::set<std::string> editedWinners;
 	for (const auto& [source, document] : changedSceneFiles) {
 		if (document->original == document->replacement)
 			continue;
@@ -1219,6 +1224,7 @@ try {
 				continue;
 			if (packFiles.contains(other))
 				return Result::Conflict;
+			editedWinners.insert(id);
 			if (std::ranges::find(conflicts, other) == conflicts.end())
 				conflicts.push_back(other);
 		}
@@ -1237,6 +1243,8 @@ try {
 		for (const auto& id : conflicts)
 			if (!DeactivatePack(id))
 				return false;
+		for (const auto& id : editedWinners)
+			PresetActivation::RecordConflictChoice(preservedState, id);
 		for (auto& [path, document] : documents) {
 			document.written = true;
 			if (!Util::FileHelpers::WriteJsonAtomically(path, document.replacement, kUserSettingsIndent, "preset value"))

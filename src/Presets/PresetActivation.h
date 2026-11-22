@@ -30,9 +30,18 @@ namespace PresetActivation
 		return false;
 	}
 
-	/** @brief Resolves eligible presets in stable order, or retains manual selections when automatic activation is off. */
+	/** @brief Gives the most recently confirmed conflict winner first choice on subsequent startups. */
+	inline void RecordConflictChoice(nlohmann::json& state, const std::string& id)
+	{
+		auto preferred = PresetState::ReadIds(state, PresetState::kPreferredScenePacksKey);
+		std::erase(preferred, id);
+		preferred.insert(preferred.begin(), id);
+		state[PresetState::kPreferredScenePacksKey] = std::move(preferred);
+	}
+
+	/** @brief Resolves installed presets using confirmed conflict choices and stable automatic defaults. */
 	inline Selection Select(std::vector<Candidate> candidates, std::span<const std::string> enabled,
-		std::span<const std::string> disabled, bool automatic)
+		std::span<const std::string> disabled, bool automatic, std::span<const std::string> preferred = {})
 	{
 		Selection result;
 		std::vector<const Candidate*> accepted;
@@ -50,14 +59,15 @@ namespace PresetActivation
 				result.blocked.emplace(candidate.id, std::move(conflicts));
 			}
 		};
-		if (automatic) {
+		if (automatic)
 			std::ranges::sort(candidates, {}, &Candidate::id);
+		for (const auto& id : automatic ? preferred : enabled)
+			if (const auto it = std::ranges::find(candidates, id, &Candidate::id); it != candidates.end())
+				consider(*it);
+		if (automatic) {
 			for (const auto& candidate : candidates)
-				consider(candidate);
-		} else {
-			for (const auto& id : enabled)
-				if (const auto it = std::ranges::find(candidates, id, &Candidate::id); it != candidates.end())
-					consider(*it);
+				if (std::ranges::find(preferred, candidate.id) == preferred.end())
+					consider(candidate);
 		}
 		return result;
 	}

@@ -23,10 +23,11 @@ namespace PresetState
 	inline constexpr const char* kBootPreferencesVersionKey = "bootPreferencesVersion";
 	inline constexpr int kBootPreferencesVersion = 1;
 	inline constexpr const char* kBaseSettingsCustomizationsKey = "baseSettingsCustomizations";
+	inline constexpr const char* kPreferredScenePacksKey = "preferredScenePackIds";
 	inline constexpr std::array kPrivateKeys{
 		"featureSettingsVersion", "normalizedFeatureNames", "baseSettingsCustomizations",
 		"removedLegacyPackIds", "disabledBaselinePackIds", "enabledScenePackIds",
-		"disabledScenePackIds", "automaticPresets", "lastSharedActivePackId", "lastSharedBaselinePackIds", "baseSettingsOrderCustomized", "baselinePackOrder"
+		"disabledScenePackIds", kPreferredScenePacksKey, "automaticPresets", "lastSharedActivePackId", "lastSharedBaselinePackIds", "baseSettingsOrderCustomized", "baselinePackOrder"
 	};
 
 	/** @brief Reads explicit boot preferences and drops copied defaults from legacy settings. */
