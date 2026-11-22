@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Feature.h"
 #include "DX12NativeRasterCapture.h"
+#include "Feature.h"
 
 #include <optional>
 #include <string>
