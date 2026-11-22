@@ -30,7 +30,8 @@ float SampleVisibility(int2 samplePixel, float4 center)
 {
     int2 clamped = clamp(samplePixel, int2(0,0), int2(Size) - 1);
     float4 neighborMask = ShadowMask[uint2(clamped)];
-    if (!ValidMask(neighborMask) || neighborMask.w != center.w ||
+    // Neighboring pixels have different total light weights. Weight is not a surface ID.
+    if (!ValidMask(neighborMask) ||
         abs(neighborMask.z - center.z) > max(ReceiverTolerance, center.z * 1e-5f))
         return -1.0f;
     return saturate(neighborMask.x);
@@ -41,7 +42,17 @@ void main(uint3 id : SV_DispatchThreadID)
     if (any(id.xy >= Size)) return;
     const float4 center = ShadowMask[id.xy];
     const bool traced = ValidMask(center);
-    if (!traced && !(SpatialReconstruction != 0u && center.y == -1.0f)) return;
+    // Preview 1 visualizes the raw RayQuery sampling pattern.
+    if (Preview == 1u) {
+        Scene[id.xy] = traced ? float4(saturate(center.x).xxx, 1.0f) :
+            center.y == -1.0f ? float4(1.0f, 0.0f, 1.0f, 1.0f) :
+            float4(0.2f, 0.0f, 0.0f, 1.0f);
+        return;
+    }
+    if (!traced && !(SpatialReconstruction != 0u && center.y == -1.0f)) {
+        if (Preview == 2u) Scene[id.xy] = float4(1.0f, 0.0f, 1.0f, 1.0f);
+        return;
+    }
     const float depth = RasterDepth[id.xy];
     if (!isfinite(depth)) return;
     float2 clip = (float2(id.xy) + 0.5f) * (2.0f / float2(Size)) - 1.0f;
@@ -70,14 +81,17 @@ void main(uint3 id : SV_DispatchThreadID)
                 if (score < nearest) { nearest = score; reference = sample; }
             }
         }
-        if (!ValidMask(reference)) return;
+        if (!ValidMask(reference)) {
+            if (Preview == 2u) Scene[id.xy] = float4(1.0f, 0.0f, 1.0f, 1.0f);
+            return;
+        }
         float weighted = 0.0f, total = 0.0f;
         [loop] for (int dy = -3; dy <= 3; ++dy) {
             [loop] for (int dx = -3; dx <= 3; ++dx) {
                 int2 neighbor = pixel + int2(dx, dy);
                 if (any(neighbor < 0) || any(neighbor >= int2(Size))) continue;
                 float4 sample = ShadowMask[uint2(neighbor)];
-                if (!ValidMask(sample) || sample.w != reference.w ||
+                if (!ValidMask(sample) ||
                     abs(sample.z - receiverDistance) > tolerance) continue;
                 float weight = rcp(1.0f + float(dx * dx + dy * dy));
                 weighted += saturate(sample.x) * weight;
@@ -87,7 +101,7 @@ void main(uint3 id : SV_DispatchThreadID)
         if (total <= 0.0f) return;
         visibility = weighted / total;
     }
-    if (RadiusPixels > 0.5f) {
+    if (SpatialReconstruction != 0u && RadiusPixels > 0.5f) {
         int radius = clamp(int(round(RadiusPixels)), 1, 32);
         const int2 pixel = int2(id.xy);
         const int2 directions[4] = { int2(radius,0), int2(-radius,0), int2(0,radius), int2(0,-radius) };
@@ -100,7 +114,7 @@ void main(uint3 id : SV_DispatchThreadID)
         visibility = sum / weight;
     }
     float4 color = Scene[id.xy];
-    if (Preview != 0u) {
+    if (Preview == 2u) {
         Scene[id.xy] = float4(visibility.xxx, color.a);
         return;
     }
