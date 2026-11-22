@@ -3,12 +3,12 @@
 #include "Utils/DebugSection.h"
 
 #include "../I18n/I18n.h"
-#include "Deferred.h"
 #include "DX12/DX12Control.h"
 #include "DX12/DX12NativeScene.h"
-#include "LinearLighting.h"
+#include "Deferred.h"
 #include "HDRDisplay.h"
 #include "Hooks.h"
+#include "LinearLighting.h"
 #include "Menu.h"
 #include "RenderDoc.h"
 #include "ScreenshotFeature.h"
@@ -3673,9 +3673,9 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		auto* renderer = globals::game::renderer;
 		auto* scene = renderer ? Util::AsReal(renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture) : nullptr;
 		const auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
-		const auto transfer = globals::state->IsMainOrLoadingMenuOpen() ? DX12Native::NativeComposite::Transfer::Unknown :
-			globals::features::linearLighting.IsLinearLightingActive() ? DX12Native::NativeComposite::Transfer::Linear :
-				DX12Native::NativeComposite::Transfer::LegacyScene;
+		const auto transfer = globals::state->IsMainOrLoadingMenuOpen()                  ? DX12Native::NativeComposite::Transfer::Unknown :
+		                      globals::features::linearLighting.IsLinearLightingActive() ? DX12Native::NativeComposite::Transfer::Linear :
+		                                                                                   DX12Native::NativeComposite::Transfer::LegacyScene;
 		const auto shadow = globals::features::dx12NativeScene.GetShadowMask(globals::game::graphicsState->GetFrameCount());
 		upscaling.nativeCompositeFrame = upscaling.nativeComposite.Capture(
 			upscaling.dx12SwapChain.d3d11Device.get(),
