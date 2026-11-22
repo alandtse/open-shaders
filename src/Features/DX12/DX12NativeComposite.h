@@ -28,7 +28,7 @@ namespace DX12Native
 			uint64_t producerValue = 0;
 			uint32_t frame = 0, width = 0, height = 0;
 			DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
-			bool valid = false, shadowSubmitted = false;
+			bool valid = false;
 			bool IsComplete() const
 			{
 				if (!valid || !producerFence || !producerValue)

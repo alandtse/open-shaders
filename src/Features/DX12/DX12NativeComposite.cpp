@@ -289,7 +289,6 @@ namespace DX12Native
 			output.height = height;
 			output.format = desc.Format;
 			output.valid = true;
-			output.shadowSubmitted = applyShadow;
 			return slot->frame;
 		} catch (...) {
 			if (submitted || producerSignalled)
