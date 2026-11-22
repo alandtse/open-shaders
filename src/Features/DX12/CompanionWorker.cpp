@@ -331,7 +331,8 @@ namespace DX12
 			auto result = Prepare(task, epoch, stop);
 			result.predictive = task.predictive;
 			result.preparationMs = std::chrono::duration<double, std::milli>(
-				std::chrono::steady_clock::now() - started).count();
+				std::chrono::steady_clock::now() - started)
+			                           .count();
 			{
 				std::scoped_lock lock(mutex);
 				running = false;

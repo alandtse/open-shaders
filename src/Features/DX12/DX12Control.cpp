@@ -22,7 +22,9 @@ void DX12Control::DrawSettings()
 			continue;
 		selectedTab = index;
 		switch (index) {
-		case 0: globals::features::dx12Resources.DrawSettings(); break;
+		case 0:
+			globals::features::dx12Resources.DrawSettings();
+			break;
 		case 1:
 			ImGui::Checkbox("Enable native DX12 features (restart required)", &settings.Enabled);
 			if (settings.Enabled != bootActive.load(std::memory_order_acquire))
