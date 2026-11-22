@@ -70,11 +70,11 @@ private:
 	bool offloadStaticShadows = true;
 	bool offloadFlickeringStatic = true;
 	bool freezeNativeFlickering = false;
-	uint32_t densityMode = 0;
-	bool nearLightShadowExclusion = false;
-	uint32_t nearLightExclusionUnits = 0;
+	uint32_t densityMode = 7;  // Four-ninths density by default.
+	bool nearLightShadowExclusion = true;
+	uint32_t nearLightExclusionUnits = 16;
 	float shadowReachMultiplier = 1.0f;  // Native only. Vanilla lights stay unchanged.
-	float shadowFadeRange = 0.50f;
+	float shadowFadeRange = 0.66f;
 	float shadowFalloffCurve = 1.0f;
 	struct RuntimeLightSample
 	{

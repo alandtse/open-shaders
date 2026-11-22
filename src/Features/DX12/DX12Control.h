@@ -9,11 +9,11 @@ struct DX12Control final : Feature
 {
 	struct Settings
 	{
-		bool Enabled = false;
+		bool Enabled = true;
 		int Mode = 0;  // 0: shadow offload, 1: raster comparison
 		bool SpatialReconstruction = true;
-		uint32_t ReconstructionGridSize = 7;  // Odd, 3x3 through 9x9.
-		float ShadowStrength = 2.0f;
+		uint32_t ReconstructionGridSize = 5;  // Odd, 3x3 through 9x9.
+		float ShadowStrength = 1.0f;
 		float ShadowBlend = 0.70f;
 	};
 
@@ -46,8 +46,8 @@ private:
 	int selectedTab = 0;
 	std::atomic<int> selectedMode{ 0 };
 	std::atomic<bool> spatialReconstruction{ true };
-	std::atomic<uint32_t> reconstructionGrid{ 7 };
-	std::atomic<float> shadowStrength{ 2.0f };
+	std::atomic<uint32_t> reconstructionGrid{ 5 };
+	std::atomic<float> shadowStrength{ 1.0f };
 	std::atomic<float> shadowBlend{ 0.70f };
 	std::atomic<uint32_t> shadowPreview{ 0 };
 	Settings settings;
