@@ -174,6 +174,61 @@ class ShaderCostReportTest(unittest.TestCase):
         self.assertEqual(diff["worst"][0][0], "a")
         self.assertIsNone(REPORT.timing_diff(base, ""))
 
+    def _timing_files(self, base_rows, head_rows):
+        import json
+        import os
+        import tempfile
+
+        def write(rows):
+            handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+            json.dump(
+                [
+                    {"file": "Lit.hlsl", "entry": e, "type": "PSHADER", "duration_seconds": d}
+                    for e, d in rows
+                ],
+                handle,
+            )
+            handle.close()
+            self.addCleanup(os.unlink, handle.name)
+            return handle.name
+
+        return write(base_rows), write(head_rows)
+
+    def test_uniform_runner_slowdown_is_normalised_away(self):
+        names = [f"e{i}" for i in range(150)]
+        base, head = self._timing_files(
+            [(n, 10.0 + i % 7) for i, n in enumerate(names)],
+            [(n, 2.2 * (10.0 + i % 7)) for i, n in enumerate(names)],
+        )
+        diff = REPORT.timing_diff(base, head)
+        self.assertAlmostEqual(diff["runner"], 2.2)
+        self.assertAlmostEqual(diff["delta_pct"], 0.0, places=6)
+        self.assertGreater(diff["raw_delta_pct"], 100.0)
+        self.assertIsNone(REPORT.timing_verdict(diff))
+
+    def test_real_regression_survives_runner_normalisation(self):
+        names = [f"e{i}" for i in range(150)]
+        base, head = self._timing_files(
+            [(n, 20.0) for n in names],
+            [(n, 20.0 * 0.6 * (3.0 if i < 30 else 1.0)) for i, n in enumerate(names)],
+        )
+        diff = REPORT.timing_diff(base, head)
+        self.assertAlmostEqual(diff["runner"], 0.6)
+        self.assertEqual(diff["slower"], 30)
+        self.assertEqual(REPORT.timing_verdict(diff), "up")
+
+    def test_normalisation_is_skipped_when_unsafe(self):
+        names = [f"e{i}" for i in range(150)]
+        rows = [(n, 20.0) for n in names]
+        slow = [(n, 40.0) for n in names]
+        base, head = self._timing_files(rows, slow)
+        self.assertIsNone(REPORT.timing_diff(base, head, structural_pct=8.0)["runner"])
+        self.assertAlmostEqual(REPORT.timing_diff(base, head, 0.0)["runner"], 2.0)
+        few_base, few_head = self._timing_files(rows[:50], slow[:50])
+        self.assertIsNone(REPORT.timing_diff(few_base, few_head)["runner"])
+        wild_base, wild_head = self._timing_files(rows, [(n, 100.0) for n in names])
+        self.assertIsNone(REPORT.timing_diff(wild_base, wild_head)["runner"])
+
     def test_measured_slowdown_sets_headline_when_structure_is_flat(self):
         flat = {
             "base_total": 5,
