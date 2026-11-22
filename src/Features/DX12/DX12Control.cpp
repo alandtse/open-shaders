@@ -81,9 +81,6 @@ void DX12Control::DrawSettings()
 				ImGui::SeparatorText("Native Composite / DXGI budget");
 				ImGui::Text("Spatial reconstruction: %s (%ux%u)", UseSpatialReconstruction() ? "enabled" : "disabled", GetReconstructionGridSize(), GetReconstructionGridSize());
 				ImGui::Text("Shadow strength %.2f, blend %.2f", GetShadowStrength(), GetShadowBlend());
-				const auto& compositeStatus = globals::features::upscaling.nativeComposite.ShadowStatus();
-				if (!compositeStatus.empty())
-					ImGui::TextWrapped("Shadow composite: %s", compositeStatus.c_str());
 				const auto memory = globals::features::upscaling.nativeComposite.GetMemoryBudgetSnapshot();
 				ImGui::Text("DXGI local budget: %s", memory.dxgiAvailable ? "available (last allocation query)" : "not queried / unavailable");
 				if (memory.dxgiAvailable) {
