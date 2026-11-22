@@ -10,6 +10,8 @@
 #include "../../Utils/FileSystem.h"
 #include "../../Utils/Game.h"
 #include "ShadowCasterInternal.h"
+#include "../DX12/DX12Control.h"
+#include "../DX12/DX12NativeScene.h"
 
 namespace ShadowCasterManager
 {
@@ -444,6 +446,13 @@ namespace ShadowCasterManager
 	/// Shared by both cull-append hooks for identical StaticOnly/DynamicOnly semantics.
 	static bool CasterFilteredByPass(RE::BSGeometry& geom)
 	{
+		// Passive collection during the existing SCM caster walk. This does not
+		// change raster filter decisions or add another geometry traversal.
+		if (globals::features::dx12Control.IsActive() &&
+			!globals::game::isVR &&
+			!geom.GetGeometryRuntimeData().skinInstance &&
+			!IsCasterDynamic(geom))
+			globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
 		if (!AtlasActive())
 			return false;
 		if (const auto passless = ShadowMapPassless(geom); passless != PasslessReason::kNone) {
