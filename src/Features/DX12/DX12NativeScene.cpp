@@ -4,11 +4,13 @@
 #include "DX12Resources.h"
 #include "Globals.h"
 #include "GpuPass.h"
+#include "../Upscaling.h"
 #include "State.h"
 #include "Utils/D3D.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <format>
 #include <limits>
 #include <ranges>
@@ -234,7 +236,7 @@ void DX12NativeScene::PreShadowMaps()
 		acceleration.Request(std::move(grid));
 }
 
-void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
+void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& /*a_inputs*/)
 {
 	CS_GPU_PASS("DX12NativeScene::OpaqueRasterReady");
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive())
@@ -243,8 +245,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 		(globals::state->permutationData.ExtraShaderDescriptor &
 			static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections)))
 		return;
-	// No preview consumer remains. Do not copy eight raster targets/depth
-	// unless the actual independent shadow layer is enabled in offload mode.
+	// Only capture the depth and camera used by the independent shadow layer.
 	if (!shadowMaskEnabled || !globals::features::dx12Control.IsShadowOffloadMode())
 		return;
 
@@ -256,12 +257,8 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 		}
 	}
 
-	const std::array sources{
-		a_inputs.litColor, a_inputs.litSpecular, a_inputs.albedo, a_inputs.normalRoughness,
-		a_inputs.masks, a_inputs.masks2, a_inputs.reflectance, a_inputs.motion
-	};
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
-	raster.Capture(*backend, sources, Util::GetCurrentSceneDepthSRV(false),
+	raster.Capture(*backend, Util::GetCurrentSceneDepthSRV(false),
 		&globals::game::frameBufferCached.nonVR, frame);
 	// The active view may occupy only a subrect of the full-size raster allocation.
 	const auto viewport = Util::ConvertToDynamic(globals::state->screenSize);
@@ -300,25 +297,53 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 	}
 }
 
-void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry)
+std::function<void()> DX12NativeScene::OnRenderPassBegin(const RE::BSRenderPass* pass)
 {
-	// SCM already visits this caster. Only CPU-backed immutable rigid triangles
-	// are copied; no extra cull traversal, raster draw, D3D readback or GPU wait.
+	// Observe visible static geometry already drawn by the existing opaque
+	// render path. This does not change render-pass state or DX11 draw behavior.
+	if (!pass || !pass->geometry || !loaded || globals::game::isVR ||
+		!shadowMaskEnabled || !globals::features::dx12Control.IsActive() ||
+		!globals::features::dx12Control.IsShadowOffloadMode() ||
+		!globals::features::upscaling.loaded ||
+		globals::features::upscaling.GetUpscaleMethod() != Upscaling::UpscaleMethod::kFSR ||
+		!globals::state || globals::state->isMapMenuOpen ||
+		(globals::state->permutationData.ExtraShaderDescriptor &
+			static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections)))
+		return nullptr;
+	ObserveSCMRigidCaster(*pass->geometry, true);
+	return nullptr;
+}
+
+void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requireStability)
+{
+	// SCM and already-submitted opaque render passes share this bounded
+	// CPU-only capture path. No scene traversal, readback or GPU wait.
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive())
 		return;
 	auto* tri = geometry.AsTriShape();
-	if (!tri || geometry.AsDynamicTriShape() || geometry.name.empty())
+	if (!tri || geometry.AsDynamicTriShape())
 		return;
 	const auto& runtime = geometry.GetGeometryRuntimeData();
 	if (runtime.skinInstance || runtime.alphaProperty || !runtime.rendererData ||
 		!runtime.rendererData->rawVertexData || !runtime.rendererData->rawIndexData)
 		return;
-	auto* reference = geometry.GetUserData();
-	if (!reference || reference->IsDynamicForm())
+	// Ignore effects, sky, water and other non-lighting draws; geometry only.
+	const auto* property = runtime.shaderProperty.get();
+	if (!property || property->GetRTTI() != globals::rtti::BSLightingShaderPropertyRTTI.get())
 		return;
-	const auto* file = reference->GetFile(0);
-	if (!file || file->GetFilename().empty())
+	// A drawn BSTriShape often has no user data of its own; Skyrim keeps the
+	// placed reference on an ancestor NiNode. Walk only the existing parent chain.
+	const RE::TESForm* reference = nullptr;
+	RE::NiAVObject* node = &geometry;
+	for (uint32_t depth = 0; node && depth < 16; ++depth, node = node->parent) {
+		if (const auto* owner = node->GetUserData()) {
+			reference = owner;
+			break;
+		}
+	}
+	if (reference && (reference->IsDynamicForm() || reference->IsActor()))
 		return;
+	const auto* file = reference ? reference->GetFile(0) : nullptr;
 	auto desc = runtime.vertexDesc;
 	if (!desc.HasFlag(RE::BSGraphics::Vertex::VF_VERTEX))
 		return;
@@ -329,8 +354,11 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry)
 		return;
 
 	DX12Native::RuntimeGeometryCandidate candidate;
-	candidate.referenceKey = std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename());
-	candidate.shapeName = geometry.name.c_str();
+	candidate.referenceKey = reference && file && !file->GetFilename().empty() ?
+		std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename()) :
+		std::format("render:{:016X}", reinterpret_cast<std::uintptr_t>(&geometry));
+	candidate.shapeName = geometry.name.empty() ? "<unnamed>" : geometry.name.c_str();
+	candidate.requiresStability = requireStability;
 	candidate.stride = stride;
 	candidate.vertexCount = counts.vertexCount;
 	candidate.triangleCount = counts.triangleCount;

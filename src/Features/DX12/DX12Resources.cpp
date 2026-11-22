@@ -43,7 +43,6 @@ namespace DX12
 		auto next = std::make_shared<Grid>();
 		next->revision = current->revision + 1;
 		next->geometryRevision = current->geometryRevision + 1;
-		next->lightRevision = current->lightRevision + 1;
 		next->size = size;
 		next->requested = *desired;
 		next->predictive = *predictive;
@@ -239,7 +238,6 @@ namespace DX12
 		++next->revision;
 		if (active != current->requested.end()) {
 			++next->geometryRevision;
-			++next->lightRevision;
 			next->resident[std::distance(current->requested.begin(), active)] = std::move(tile);
 		} else {
 			// Sixteen predictive tiles have a strict combined 192 MiB CPU geometry allowance
@@ -252,7 +250,6 @@ namespace DX12
 			}
 			// A ready predictive emitter can cast toward visible receivers even when
 			// the emitter is off-screen. Update lights, never BLAS/TLAS for this tile.
-			++next->lightRevision;
 			next->predictiveResident[std::distance(current->predictive.begin(), predictive)] = std::move(tile);
 		}
 		snapshot.store(std::move(next), std::memory_order_release);
@@ -261,9 +258,11 @@ namespace DX12
 
 	bool ResourceGrid::PublishRuntimeShape(std::shared_ptr<const Shape> shape, float centerX, float centerY)
 	{
-		constexpr size_t kMaximumRuntimeShapes = 128;
-		constexpr uint64_t kMaximumRuntimeBytes = 24ull * 1024 * 1024;
-		constexpr uint64_t kMaximumSingleShapeBytes = 256ull * 1024;
+		// Larger interior furniture and room pieces often exceed 256 KiB.
+		// Keep the whole runtime supplement transient and strictly budgeted.
+		constexpr size_t kMaximumRuntimeShapes = 384;
+		constexpr uint64_t kMaximumRuntimeBytes = 64ull * 1024 * 1024;
+		constexpr uint64_t kMaximumSingleShapeBytes = 1024ull * 1024;
 		if (!shape || !shape->identity || shape->positions.empty() || shape->indices.empty() ||
 			shape->indices.size() % 3)
 			return false;
@@ -313,7 +312,6 @@ namespace DX12
 		auto next = std::make_shared<Grid>();
 		next->revision = current->revision + 1;
 		next->geometryRevision = current->geometryRevision + 1;
-		next->lightRevision = current->lightRevision + 1;
 		snapshot.store(std::move(next), std::memory_order_release);
 	}
 

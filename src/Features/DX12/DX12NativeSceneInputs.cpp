@@ -14,7 +14,6 @@ namespace DX12Native
 
 		const auto& grid = *inputs->residency;
 		inputs->geometryRevision = grid.geometryRevision;
-		inputs->lightRevision = grid.lightRevision;
 
 		// A placed shape may be discovered by both companion and runtime observation.
 		// Keep the companion version; do not require a tile to certify full coverage.
@@ -35,22 +34,6 @@ namespace DX12Native
 		for (const auto& observed : grid.runtimeShapes)
 			appendShape(observed.tile, observed.shape, true);
 
-		// Light enumeration is independent of camera visibility and geometry
-		// residency. The predictive ring contributes lights, not acceleration geometry.
-		std::unordered_set<uint32_t> seenLights;
-		const auto appendLights = [&](const auto& tiles) {
-			for (const auto& tile : tiles) {
-				if (!tile)
-					continue;
-				for (const auto& light : tile->lights) {
-					if (light.referenceID && !seenLights.insert(light.referenceID).second)
-						continue;
-					inputs->lights.push_back(light);
-				}
-			}
-		};
-		appendLights(grid.resident);
-		appendLights(grid.predictiveResident);
 		return inputs;
 	}
 }

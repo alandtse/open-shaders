@@ -5,28 +5,13 @@
 #include "GraphicsInterop.h"
 #include <array>
 #include <memory>
-#include <span>
 #include <vector>
 
 namespace DX12Native
 {
-	/** @brief Retains copied opaque raster resources until every GPU consumer completes. */
+	/** @brief Retains captured DX11 depth and camera until the GPU consumers finish. */
 	struct RasterFrame
 	{
-		enum class Input : size_t
-		{
-			LitColor,
-			LitSpecular,
-			Albedo,
-			NormalRoughness,
-			Masks,
-			Masks2,
-			Reflectance,
-			Motion,
-			Count
-		};
-		std::array<std::unique_ptr<WrappedResource>, static_cast<size_t>(Input::Count)> inputs;
-		std::array<DXGI_FORMAT, static_cast<size_t>(Input::Count)> formats{};
 		std::unique_ptr<WrappedResource> depth;
 		globals::FrameBuffer camera{};
 		bool cameraValid = false;
@@ -36,13 +21,13 @@ namespace DX12Native
 		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 	};
 
-	/** @brief Copies opaque inputs from DX11 into bounded, independently fenced DX12 slots. */
+	/** @brief Captures only raster depth and camera into fenced DX12 frame slots. */
 	class RasterCapture
 	{
 	public:
 		~RasterCapture();
 		/** @brief Captures one coherent frame; callers retain returned frames until GPU consumption completes. */
-		void Capture(const GraphicsBackend& a_backend, const std::array<ID3D11Texture2D*, static_cast<size_t>(RasterFrame::Input::Count)>& a_inputs, ID3D11ShaderResourceView* a_depth, const globals::FrameBuffer* a_camera, uint32_t a_frame);
+		void Capture(const GraphicsBackend& a_backend, ID3D11ShaderResourceView* a_depth, const globals::FrameBuffer* a_camera, uint32_t a_frame);
 		/** @brief Borrows a matching snapshot, whose ready fence must be waited on by the consumer queue. */
 		std::shared_ptr<const RasterFrame> Get(uint32_t a_frame) const;
 		/** @brief Retains a borrowed snapshot until a submitted consumer fence completes. */

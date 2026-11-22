@@ -27,14 +27,16 @@ struct DX12NativeScene final : Feature
 	bool SupportsVR() override { return false; }
 
 	void DrawSettings() override;
+	bool WantsRenderPassHook() const override { return true; }
+	std::function<void()> OnRenderPassBegin(const RE::BSRenderPass* pass) override;
 	bool WantsPreShadowMapsHook() const override { return true; }
 	void PreShadowMaps() override;
 	void LoadSettings(json& a_input) override;
 	void SaveSettings(json& a_output) override;
 	void RestoreDefaultSettings() override;
 	void OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs) override;
-	/** @brief Observe a stationary rigid caster during the existing SCM walk. */
-	void ObserveSCMRigidCaster(RE::BSGeometry& geometry);
+	/** @brief Observe CPU-backed opaque rigid geometry from SCM or normal render passes. */
+	void ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requireStability = false);
 	/** @brief SCM hands native-owned lights' static casters to RayQuery and retains movers. */
 	bool OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const;
 	// Snapshot LLF/SCM point-light parameters without altering the DX11 light.

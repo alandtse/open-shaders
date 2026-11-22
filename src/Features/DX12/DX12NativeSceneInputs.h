@@ -20,11 +20,9 @@ namespace DX12Native
 	{
 		std::shared_ptr<const DX12::Grid> residency;
 		std::vector<GeometryInput> geometry;
-		std::vector<DX12::PreparedLight> lights;
 		uint64_t geometryRevision = 0;
-		uint64_t lightRevision = 0;
 	};
 
-	/** @brief Collects the active 3x3's rigid shapes, missing runtime shapes and all prepared lights. */
+	/** @brief Collects geometry from the active 3x3 and runtime rigid supplements. */
 	std::shared_ptr<const SceneInputs> CollectSceneInputs(std::shared_ptr<const DX12::Grid> a_grid);
 }

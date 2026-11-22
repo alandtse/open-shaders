@@ -104,7 +104,7 @@ namespace DX12
 	struct Grid
 	{
 		uint64_t revision = 0;
-		uint64_t geometryRevision = 0, lightRevision = 0;
+		uint64_t geometryRevision = 0;
 		uint32_t size = kSubcellSizes.front();
 		std::array<SubcellKey, kGridCapacity> requested{};  // Active 3x3, available to future native consumers.
 		std::array<std::shared_ptr<const Tile>, kGridCapacity> resident{};
