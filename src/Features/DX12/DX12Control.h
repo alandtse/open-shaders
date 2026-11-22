@@ -30,6 +30,8 @@ struct DX12Control final : Feature
 	bool UseSpatialReconstruction() const { return spatialReconstruction.load(std::memory_order_relaxed); }
 	float GetShadowStrength() const { return shadowStrength.load(std::memory_order_relaxed); }
 	float GetShadowBlend() const { return shadowBlend.load(std::memory_order_relaxed); }
+	/** @brief Debug overlay mode, automatically disabled outside main-menu Developer Mode. */
+	uint32_t GetShadowPreview() const;
 	void DrawSettings() override;
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
@@ -44,5 +46,6 @@ private:
 	std::atomic<bool> spatialReconstruction{ true };
 	std::atomic<float> shadowStrength{ 2.0f };
 	std::atomic<float> shadowBlend{ 0.70f };
+	std::atomic<uint32_t> shadowPreview{ 0 };
 	Settings settings;
 };

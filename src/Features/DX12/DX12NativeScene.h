@@ -25,6 +25,8 @@ struct DX12NativeScene final : Feature
 	bool SupportsVR() override { return false; }
 
 	void DrawSettings() override;
+	/** @brief Existing DX12 capture and tracing status, shown only from the Dev tab. */
+	void DrawDiagnostics() const;
 	bool WantsPreShadowMapsHook() const override { return true; }
 	void PreShadowMaps() override;
 	void LoadSettings(json& a_input) override;

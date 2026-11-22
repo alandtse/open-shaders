@@ -542,6 +542,58 @@ void DX12Resources::DrawSettings()
 	}
 }
 
+void DX12Resources::DrawDiagnostics() const
+{
+	ImGui::SeparatorText("DX12 Resources / companion");
+	if (const auto status = GetPreparationStatus())
+		ImGui::TextWrapped("Companion: %s", status->c_str());
+	const auto snapshot = GetGrid();
+	if (snapshot) {
+		ImGui::Text("Grid revision %llu, geometry revision %llu, light revision %llu",
+			static_cast<unsigned long long>(snapshot->revision),
+			static_cast<unsigned long long>(snapshot->geometryRevision),
+			static_cast<unsigned long long>(snapshot->lightRevision));
+		ImGui::Text("Scope: %08X; subcell size: %u; runtime shapes: %zu (%.1f MiB)",
+			snapshot->requested.front().scope, snapshot->size, snapshot->runtimeShapes.size(),
+			double(snapshot->runtimeBytes) / (1024.0 * 1024.0));
+		std::array<size_t, 7> states{};
+		size_t geometry = 0, lights = 0;
+		const auto accumulate = [&](const auto& tiles) {
+			for (const auto& tile : tiles) {
+				if (!tile) continue;
+				++states[static_cast<size_t>(tile->state)];
+				geometry += tile->shapes.size();
+				lights += tile->lights.size();
+			}
+		};
+		accumulate(snapshot->resident);
+		accumulate(snapshot->predictiveResident);
+		ImGui::Text("Tiles: requested %zu, preparing %zu, ready %zu, partial %zu, retry %zu, failed %zu, skipped %zu",
+			states[0], states[1], states[2], states[3], states[4], states[5], states[6]);
+		ImGui::Text("Published shapes: %zu; placed lights: %zu (may include duplicates across tile boundaries)", geometry, lights);
+		const auto showRetries = [&](const auto& tiles, const char* region) {
+			for (const auto& tile : tiles) {
+				if (tile && (tile->state == DX12::Tile::State::Incomplete || tile->state == DX12::Tile::State::RetryWaiting))
+					ImGui::Text("%s subcell (%lld, %lld): attempt %u / 3%s", region,
+						static_cast<long long>(tile->key.x), static_cast<long long>(tile->key.y),
+						unsigned(tile->preparationAttempts), tile->state == DX12::Tile::State::Incomplete ? " (retry exhausted)" : "");
+			}
+		};
+		showRetries(snapshot->resident, "Active");
+		showRetries(snapshot->predictiveResident, "Predictive");
+	}
+	if (const auto stats = GetPreparationStats()) {
+		const auto showTiming = [&](const char* label, const DX12::PreparationTiming& timing) {
+			ImGui::Text("%s jobs: %llu completed, %llu failed, %llu partial; last %.1f ms, avg %.1f ms",
+				label, static_cast<unsigned long long>(timing.completed),
+				static_cast<unsigned long long>(timing.failed),
+				static_cast<unsigned long long>(timing.partial), timing.lastMs, timing.AverageMs());
+		};
+		showTiming("Active", stats->active);
+		showTiming("Predictive", stats->predictive);
+	}
+}
+
 void DX12Resources::LoadSettings(json& input)
 {
 	const uint32_t requested = input.value("SubcellSize", DX12::kSubcellSizes.front());

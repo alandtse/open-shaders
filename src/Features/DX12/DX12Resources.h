@@ -160,6 +160,8 @@ struct DX12Resources final : Feature
 	bool IsInFeatureList() const override { return false; }
 	bool SupportsVR() override { return false; }
 	void DrawSettings() override;
+	/** @brief In-memory preparation and subcell diagnostic counters for the Dev tab. */
+	void DrawDiagnostics() const;
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
 	void RestoreDefaultSettings() override;

@@ -44,6 +44,8 @@ namespace DX12Native
 			uint32_t frame, uint32_t width, uint32_t height, Transfer transfer,
 			const std::shared_ptr<const ShadowMaskFrame>& shadow);
 		bool Retain(const std::shared_ptr<const Frame>& frame, ID3D12Fence* fence, uint64_t value);
+		/** @brief Last DXGI budget query used for a Composite allocation (not a fresh query). */
+		VideoMemoryBudget::Snapshot GetMemoryBudgetSnapshot() const { return videoBudget.last; }
 		~NativeComposite();
 
 	private:

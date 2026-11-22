@@ -253,7 +253,8 @@ namespace DX12Native
 				const auto& camera = raster->camera;
 				// Exactly the open-RT default independent shadow settings.
 				const Constants constants{ width, height, 16.0f, 2.0f,
-					transfer == Transfer::LegacyScene ? 1u : 0u, 0u,
+					transfer == Transfer::LegacyScene ? 1u : 0u,
+					globals::features::dx12Control.GetShadowPreview(),
 					globals::features::dx12Control.GetShadowStrength(),
 					globals::features::dx12Control.GetShadowBlend(),
 					camera.CameraProjInverse, camera.CameraViewInverse,
