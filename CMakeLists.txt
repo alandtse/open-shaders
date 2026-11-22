@@ -1352,6 +1352,7 @@ endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DX12ResourcesCompanion.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DX12NativeShadow.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DX12NativeComposite.cmake")
 
 if(NOT DEFINED ENV{CommunityShadersOutputDir})
     message(

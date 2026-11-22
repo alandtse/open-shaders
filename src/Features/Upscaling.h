@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DX12/DX12NativeComposite.h"
 #include "OverlayFeature.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
@@ -439,6 +440,8 @@ public:
 	static inline Streamline streamlineDX12;  ///< DX12 instance: DLSS-G frame generation
 	static inline FidelityFX fidelityFX;      ///< AMD FSR frame generation
 	static inline DX12SwapChain dx12SwapChain;
+	DX12Native::NativeComposite nativeComposite;
+	std::shared_ptr<const DX12Native::NativeComposite::Frame> nativeCompositeFrame;
 	static inline RCAS rcas;                      ///< Standalone RCAS sharpening for DLSS
 	static inline PerfMode perfMode;              ///< VR-only: render engine at upscaled-render res
 	static inline FoveatedRender foveatedRender;  ///< VR-only: foveated subrect DLSS

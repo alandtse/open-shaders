@@ -4,6 +4,9 @@
 
 #include "../I18n/I18n.h"
 #include "Deferred.h"
+#include "DX12/DX12Control.h"
+#include "DX12/DX12NativeScene.h"
+#include "LinearLighting.h"
 #include "HDRDisplay.h"
 #include "Hooks.h"
 #include "Menu.h"
@@ -3658,6 +3661,29 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		if (postProcessing.loaded)
 			postProcessing.ClearBorderMotionVectorsForFrameGen();
 		upscaling.frameGenerationPrepared = upscaling.CopySharedD3D12Resources();
+	}
+
+	// open-RT's late-frame DX11 color capture: Native Composite is the
+	// final color authority, while FSR's other input preparation stays as-is.
+	upscaling.nativeCompositeFrame.reset();
+	if (upscaling.loaded && !globals::game::isVR &&
+		globals::features::dx12Control.IsActive() &&
+		globals::game::graphicsState &&
+		upscaling.fidelityFX.EnsureRuntimeUpscalerInterop()) {
+		auto* renderer = globals::game::renderer;
+		auto* scene = renderer ? Util::AsReal(renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture) : nullptr;
+		const auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
+		const auto transfer = globals::state->IsMainOrLoadingMenuOpen() ? DX12Native::NativeComposite::Transfer::Unknown :
+			globals::features::linearLighting.IsLinearLightingActive() ? DX12Native::NativeComposite::Transfer::Linear :
+				DX12Native::NativeComposite::Transfer::LegacyScene;
+		const auto shadow = globals::features::dx12NativeScene.GetShadowMask(globals::game::graphicsState->GetFrameCount());
+		upscaling.nativeCompositeFrame = upscaling.nativeComposite.Capture(
+			upscaling.dx12SwapChain.d3d11Device.get(),
+			upscaling.dx12SwapChain.d3d11Context.get(),
+			upscaling.dx12SwapChain.d3d12Device.get(),
+			upscaling.dx12SwapChain.commandQueue.get(), scene, globals::state->frameCount,
+			static_cast<uint32_t>(renderSize.x), static_cast<uint32_t>(renderSize.y),
+			transfer, shadow);
 	}
 
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {

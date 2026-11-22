@@ -42,6 +42,11 @@ void main(uint3 id : SV_DispatchThreadID)
     if (!all(isfinite(w)) || abs(w.w) < 1e-8f)
         return;
     float3 world = w.xyz / w.w + PositionAdjust.xyz;
+    // Match open-RT's Native Composite contract: z is receiver distance,
+    // not the hardware raster-depth sample used for position reconstruction.
+    float receiverDistance = length(mul((float3x3)InverseView, v.xyz / v.w));
+    if (!isfinite(receiverDistance) || receiverDistance <= 0)
+        return;
     float total = 0, visible = 0;
     [loop] for (uint i = 0; i < min(LightCount, 64u); ++i) {
         float4 light = Lights[i * 3 + 0];    // xyz + radius
@@ -75,5 +80,5 @@ void main(uint3 id : SV_DispatchThreadID)
         visible += query.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0 : weight;
     }
     if (total > 1e-8f)
-        RawMask[p] = float4(saturate(visible / total), 1, z, total);
+        RawMask[p] = float4(saturate(visible / total), 1, receiverDistance, total);
 }
