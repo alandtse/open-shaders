@@ -140,17 +140,25 @@ static string DescribeFailure(string stage, Exception error)
 }
 
 internal sealed record TileShape(ulong Identity, float[][] Positions, uint[] Indices, float[] Transform);
+internal sealed record TileNifSource(string ReferencePlugin, uint ReferenceLocal, string NifPath);
+internal sealed record TileMissingNifShape(string ReferencePlugin, uint ReferenceLocal, string NifPath,
+    int BlockIndex, string Reason);
 internal sealed record TileLight(string ReferencePlugin, uint ReferenceLocal, string BasePlugin, uint BaseLocal,
     float[] Position, float[] Color, float Radius, float Fade, float EmitterRadius, float FalloffExponent, uint Flags);
 internal sealed record TileResult(uint Version, uint EligibleShapes, uint FailedShapes, bool EnumerationComplete,
     List<TileShape> Shapes, List<TileLight> Lights, string Failure = "",
-    Dictionary<string, uint>? RejectionReasons = null);
+    Dictionary<string, uint>? RejectionReasons = null,
+    List<TileNifSource>? NifSources = null, List<TileMissingNifShape>? MissingShapes = null);
 internal sealed record ModelShape(int Index, Vector3[] Positions, uint[] Indices, Matrix4x4 ToModel);
-internal sealed record ModelExtraction(ModelShape[] Shapes, Dictionary<string, uint> Rejections);
+internal sealed record MissingModelShape(int Index, string Reason);
+internal sealed record ModelExtraction(ModelShape[] Shapes, MissingModelShape[] Missing,
+    Dictionary<string, uint> Rejections);
 
 internal static class SceneTile
 {
     private const int MaxShapes = 384;
+    private const int MaxNifSources = 1024;
+    private const int MaxMissingShapes = 1024;
     private const long MaxGeometryBytes = 48L * 1024 * 1024;
     private const uint MaxArchiveMeshBytes = 16u * 1024 * 1024;
 
@@ -243,6 +251,10 @@ internal static class SceneTile
         var foundScope = placementFoundScope;
         var shapes = new List<TileShape>();
         var lights = new List<TileLight>();
+        // Retain NIF provenance even when a rigid shape cannot be decoded yet.
+        // Runtime supplementation can refer back to the installed loose/BSA mesh.
+        var nifSources = new List<TileNifSource>();
+        var missingShapes = new List<TileMissingNifShape>();
         var models = new Dictionary<string, ModelExtraction>(StringComparer.OrdinalIgnoreCase);
         uint eligible = 0, failed = 0;
         var rejections = new Dictionary<string, uint>(StringComparer.Ordinal);
@@ -251,6 +263,15 @@ internal static class SceneTile
             failed += count;
             if (!rejections.ContainsKey(reason) && rejections.Count >= 12) reason = "other";
             rejections[reason] = rejections.GetValueOrDefault(reason) + count;
+        }
+        void AddMissing(FormKey reference, string nifPath, int blockIndex, string reason)
+        {
+            if (missingShapes.Count >= MaxMissingShapes) {
+                Reject("missing shape manifest capacity");
+                return;
+            }
+            missingShapes.Add(new TileMissingNifShape(reference.ModKey.ToString(), reference.ID,
+                nifPath, blockIndex, reason.Length > 80 ? reason[..80] : reason));
         }
         long bytes = 0;
         foreach (var candidate in candidates.Values)
@@ -266,6 +287,7 @@ internal static class SceneTile
                     py < (tileY - 2) * (double)size || py >= (tileY + 3) * (double)size)
                     continue;
             }
+            string? unresolvedNif = null;
             try
             {
                 var context = environment.LinkCache.ResolveContext<IPlaced, IPlacedGetter>(candidate.FormKey);
@@ -324,9 +346,19 @@ internal static class SceneTile
                 }
                 var model = (baseRecord as IModeledGetter)?.Model?.File.ToString();
                 if (string.IsNullOrWhiteSpace(model)) { Reject("missing mesh path"); continue; }
-                var extraction = LoadModel(data, model, models, archives, scratch);
+                unresolvedNif = NormalizeNifPath(model);
+                if (unresolvedNif.Length > 260)
+                    throw new InvalidDataException("NIF path exceeds manifest limit");
+                if (nifSources.Count < MaxNifSources)
+                    nifSources.Add(new TileNifSource(placed.FormKey.ModKey.ToString(),
+                        placed.FormKey.ID, unresolvedNif));
+                else
+                    Reject("NIF source manifest capacity");
+                var extraction = LoadModel(data, unresolvedNif, models, archives, scratch);
                 foreach (var (reason, count) in extraction.Rejections)
                     Reject(reason, count);
+                foreach (var missing in extraction.Missing)
+                    AddMissing(placed.FormKey, unresolvedNif, missing.Index, missing.Reason);
                 var mesh = extraction.Shapes;
                 var rotation = new[] { placement.Rotation.X, placement.Rotation.Y, placement.Rotation.Z };
                 var toWorld = PlacementTransform.FromRecord(position, rotation, obj.Scale ?? 1.0f);
@@ -351,12 +383,15 @@ internal static class SceneTile
             {
                 var message = error is InvalidDataException ? error.Message : error.GetType().Name;
                 Reject(message.Length <= 80 ? message : message[..80]);
+                if (unresolvedNif != null)
+                    AddMissing(candidate.FormKey, unresolvedNif, -1, message);
             }
         }
         // A bounded exterior anchor halo cannot prove that a huge off-tile
         // model does not overlap this tile. Exteriors remain incomplete until
         // an authoritative bounds index is available; never offload on a guess.
-        return new TileResult(1, eligible, failed, !isWorldspace && foundScope, shapes, lights, "", rejections);
+        return new TileResult(1, eligible, failed, !isWorldspace && foundScope,
+            shapes, lights, "", rejections, nifSources, missingShapes);
         }
         return (Run, environment);
     }
@@ -380,11 +415,16 @@ internal static class SceneTile
             low.Y < (ty + 1) * (double)size && high.Y >= ty * (double)size;
     }
 
+    private static string NormalizeNifPath(string path)
+    {
+        path = path.Replace('/', '\\');
+        return path.StartsWith("meshes\\", StringComparison.OrdinalIgnoreCase) ? path : "meshes\\" + path;
+    }
+
     private static ModelExtraction LoadModel(string data, string path, Dictionary<string, ModelExtraction> cache,
         Lazy<IArchiveReader[]> archives, string scratch)
     {
-        path = path.Replace('/', '\\');
-        if (!path.StartsWith("meshes\\", StringComparison.OrdinalIgnoreCase)) path = "meshes\\" + path;
+        path = NormalizeNifPath(path);
         if (Path.IsPathRooted(path) || path.Split('\\').Any(part => part is ".." or "." or ""))
             throw new InvalidDataException("Invalid mesh path");
         if (cache.TryGetValue(path, out var cached)) return cached;
@@ -424,14 +464,20 @@ internal static class SceneTile
         var hierarchy = new NifTransforms(nif);
         var output = new List<ModelShape>();
         var rejected = new Dictionary<string, uint>(StringComparer.Ordinal);
-        void Skip(string reason) => rejected[reason] = rejected.GetValueOrDefault(reason) + 1;
+        var missing = new List<MissingModelShape>();
+        void Skip(string reason, int index)
+        {
+            rejected[reason] = rejected.GetValueOrDefault(reason) + 1;
+            missing.Add(new MissingModelShape(index, reason));
+        }
         foreach (var entry in nif.GetShapes())
         {
+            nif.GetBlockIndex(entry, out var index);
             // Retain safe opaque rigid triangles even if a NIF contains unsupported shapes.
             if (entry is not BSTriShape shape || shape.HasSkinInstance || shape.IsSkinned ||
                 entry.GetType().Name is not ("BSTriShape" or "BSSubIndexTriShape"))
             {
-                Skip("unsupported animated or nontriangle shape");
+                Skip("unsupported animated or nontriangle shape", index);
                 continue;
             }
             try
@@ -439,10 +485,9 @@ internal static class SceneTile
                 // Alpha holes require textures: never admit these as opaque RT occluders.
                 if (nif.GetBlock(entry.AlphaPropertyRef) != null)
                 {
-                    Skip("alpha-dependent shape (textures required)");
+                    Skip("alpha-dependent shape (textures required)", index);
                     continue;
                 }
-                nif.GetBlockIndex(entry, out var index);
                 var vertices = shape.VertexPositions.ToArray();
                 var triangles = entry.Triangles;
                 if (vertices.Length == 0 || triangles.Count == 0 ||
@@ -462,12 +507,12 @@ internal static class SceneTile
             }
             catch (Exception error) when (error is not OutOfMemoryException)
             {
-                Skip("invalid or unsupported shape data");
+                Skip("invalid or unsupported shape data", index);
             }
         }
-        if (output.Count == 0)
-            throw new InvalidDataException("No supported opaque rigid triangles");
-        cache[path] = new ModelExtraction(output.ToArray(), rejected);
+        if (output.Count == 0 && missing.Count == 0)
+            Skip("no supported opaque rigid triangles", -1);
+        cache[path] = new ModelExtraction(output.ToArray(), missing.ToArray(), rejected);
         return cache[path];
     }
 
