@@ -11,6 +11,11 @@
 #include <span>
 #include <unordered_map>
 
+namespace DX12Native
+{
+	struct SceneInputs;
+}
+
 namespace DX12
 {
 	class CompanionWorker;
@@ -164,6 +169,8 @@ struct DX12Resources final : Feature
 	void OnRuntimeDisabled() override;
 	/** @brief Returns current geometry residency without traversing engine objects. */
 	std::shared_ptr<const DX12::Grid> GetGrid() const { return grid.Snapshot(); }
+	/** @brief Collects geometry and lights for the native scene, independent of tile-completeness states. */
+	std::shared_ptr<const DX12Native::SceneInputs> GetNativeSceneInputs() const;
 	/** @brief Claims the next geometry request, if one is needed. */
 	std::optional<DX12::SubcellKey> NextRequest() { return grid.NextRequest(); }
 	/** @brief Accepts an authoritative in-memory geometry and light publication from the companion. */

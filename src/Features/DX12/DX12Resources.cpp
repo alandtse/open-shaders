@@ -1,4 +1,5 @@
 #include "DX12Resources.h"
+#include "DX12NativeSceneInputs.h"
 
 #include "CompanionWorker.h"
 #include "DX12Control.h"
@@ -531,6 +532,11 @@ void DX12Resources::OnSceneTransitionReset(bool /*opening*/)
 void DX12Resources::OnRuntimeDisabled()
 {
 	ResetPreparation();
+}
+
+std::shared_ptr<const DX12Native::SceneInputs> DX12Resources::GetNativeSceneInputs() const
+{
+	return DX12Native::CollectSceneInputs(grid.Snapshot());
 }
 
 std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const
