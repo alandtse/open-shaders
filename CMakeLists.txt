@@ -1354,6 +1354,14 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DX12ResourcesCompanion.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DX12NativeShadow.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DX12NativeComposite.cmake")
 
+# A shipping DX12 archive must not silently omit native shader bytecode.
+if(AIO_ZIP_TO_DIST AND NOT NATIVE_SHADOW_DXC)
+    message(FATAL_ERROR "Native DX12 AIO packaging requires dxc.exe (SM6.5 .dxil shader output)")
+endif()
+if(AIO_ZIP_TO_DIST AND NOT BUILD_DX12_RESOURCES_COMPANION)
+    message(FATAL_ERROR "Native DX12 AIO packaging requires the DX12 Resources companion")
+endif()
+
 if(NOT DEFINED ENV{CommunityShadersOutputDir})
     message(
         "When using AUTO_PLUGIN_DEPLOYMENT option, you need to set environment variable 'CommunityShadersOutputDir'"
@@ -1520,6 +1528,10 @@ if(AIO_ZIP_TO_DIST)
         endforeach()
         set(_aio_archive_source_dir "${AIO_STAGE_DIR}")
     endif()
+    list(APPEND _aio_zip_cmds
+        COMMAND ${CMAKE_COMMAND} -DAIO_STAGE_DIR="${_aio_archive_source_dir}"
+            -P "${CMAKE_SOURCE_DIR}/cmake/VerifyAioPayload.cmake"
+    )
     if(SEVENZ_EXECUTABLE)
         list(
             APPEND _aio_zip_cmds
@@ -1578,6 +1590,9 @@ if(AIO_ZIP_TO_DIST)
             PREPARE_AIO
             ${CMAKE_CURRENT_BINARY_DIR}/copy_shaders.stamp
             ${_dx12_aio_zip_deps}
+            ${_shadow_aio_dxil}
+            ${_native_composite_aio_dxil}
+            ${CMAKE_SOURCE_DIR}/cmake/VerifyAioPayload.cmake
         COMMENT "Creating AIO archive ${AIO_ARCHIVE}"
     )
 
@@ -1585,6 +1600,7 @@ if(AIO_ZIP_TO_DIST)
     if(TARGET STAGE_DX12_RESOURCES_COMPANION)
         add_dependencies(AIO_ZIP_PACKAGE STAGE_DX12_RESOURCES_COMPANION)
     endif()
+    add_dependencies(AIO_ZIP_PACKAGE DX12NativeShadowAIO DX12NativeCompositeAIO)
 endif()
 
 if(NOT DEFINED ENV{CommunityShadersOutputDir})
@@ -1683,6 +1699,9 @@ if(TARGET PREPARE_AIO)
         "AIO"
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp copy_shaders.stamp
     )
+    if(TARGET DX12NativeShadowAIO AND TARGET DX12NativeCompositeAIO)
+        add_dependencies(AIO DX12NativeShadowAIO DX12NativeCompositeAIO)
+    endif()
 else()
     add_custom_command(
         OUTPUT ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll
@@ -1751,6 +1770,10 @@ if(AIO_EXCLUDED_FEATURE_NAMES)
     endforeach()
     set(_aio_manual_source_dir "${AIO_MANUAL_STAGE_DIR}")
 endif()
+list(APPEND _aio_manual_cmds
+    COMMAND ${CMAKE_COMMAND} -DAIO_STAGE_DIR="${_aio_manual_source_dir}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/VerifyAioPayload.cmake"
+)
 if(SEVENZ_EXECUTABLE)
     list(
         APPEND _aio_manual_cmds
@@ -1795,6 +1818,9 @@ add_custom_command(
         ${CORE_SOURCES}
         ${FFX_RUNTIME_FILES}
         ${DX12_RESOURCES_AIO_EXE}
+        ${_shadow_dxil}
+        ${_native_composite_dxil}
+        ${CMAKE_SOURCE_DIR}/cmake/VerifyAioPayload.cmake
         ${_aio_manual_cmds}
     COMMENT "Creating AIO zip package (manual)"
 )
