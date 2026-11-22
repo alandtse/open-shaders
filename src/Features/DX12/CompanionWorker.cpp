@@ -410,6 +410,41 @@ namespace DX12
 						publication.rejectionReasons.emplace_back(entry.key().substr(0, 80), count);
 				}
 			}
+			// Optional NIF provenance for later runtime geometry supplementation. These
+			// are identifiers, not authorization to load arbitrary paths or trust triangles.
+			if (const auto nifSources = root.find("nifSources");
+				nifSources != root.end() && nifSources->is_array()) {
+				if (nifSources->size() > 1024)
+					throw std::invalid_argument("Companion NIF source manifest exceeds limit");
+				for (const auto& item : *nifSources) {
+					NifSourceDescriptor source;
+					source.referencePlugin = item.at("referencePlugin").get<std::string>();
+					source.referenceLocal = item.at("referenceLocal").get<uint32_t>();
+					source.nifPath = item.at("nifPath").get<std::string>();
+					if (source.referencePlugin.size() > 128 || source.nifPath.size() > 260 ||
+						!source.nifPath.starts_with("meshes\\"))
+						continue;
+					publication.nifSources.push_back(std::move(source));
+				}
+			}
+			if (const auto missing = root.find("missingShapes");
+				missing != root.end() && missing->is_array()) {
+				if (missing->size() > 1024)
+					throw std::invalid_argument("Companion missing NIF manifest exceeds limit");
+				for (const auto& item : *missing) {
+					MissingNifShapeDescriptor source;
+					source.referencePlugin = item.at("referencePlugin").get<std::string>();
+					source.referenceLocal = item.at("referenceLocal").get<uint32_t>();
+					source.nifPath = item.at("nifPath").get<std::string>();
+					source.blockIndex = item.at("blockIndex").get<int32_t>();
+					source.reason = item.at("reason").get<std::string>();
+					if (source.referencePlugin.size() > 128 || source.nifPath.size() > 260 ||
+						source.reason.size() > 80 || source.blockIndex < -1 ||
+						!source.nifPath.starts_with("meshes\\"))
+						continue;
+					publication.missingShapes.push_back(std::move(source));
+				}
+			}
 			for (const auto& item : root.at("shapes")) {
 				auto shape = std::make_shared<Shape>();
 				shape->identity = item.at("identity").get<uint64_t>();

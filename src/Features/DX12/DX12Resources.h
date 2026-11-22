@@ -30,6 +30,21 @@ namespace DX12
 		float radius = 0.0f, fade = 1.0f, emitterRadius = 0.0f, falloffExponent = 1.0f;
 	};
 
+	/** @brief Original installed NIF reference, not an embedded NIF binary. */
+	struct NifSourceDescriptor
+	{
+		std::string referencePlugin, nifPath;
+		uint32_t referenceLocal = 0;
+	};
+
+	/** @brief A shape or model unresolved by the companion; runtime rigid geometry may supplement it. */
+	struct MissingNifShapeDescriptor
+	{
+		std::string referencePlugin, nifPath, reason;
+		uint32_t referenceLocal = 0;
+		int32_t blockIndex = -1;  // -1: entire NIF/model unresolved.
+	};
+
 	/** @brief The companion publishes triangle geometry without textures or materials. */
 	struct Shape
 	{
@@ -37,6 +52,7 @@ namespace DX12
 		std::vector<float3> positions;
 		std::vector<uint32_t> indices;
 		std::array<float, 12> transform{};
+		std::string sourceNif;  // Populated for runtime-supplemented shapes when NIF provenance is known.
 	};
 
 	struct Tile
@@ -60,6 +76,8 @@ namespace DX12
 		State state = State::Requested;
 		std::string failureReason;                                       // Last bounded companion failure, retained for Dev and tile hover.
 		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;  // Bounded structured geometry diagnoses.
+		std::vector<NifSourceDescriptor> nifSources;
+		std::vector<MissingNifShapeDescriptor> missingShapes;
 	};
 
 	/** @brief A companion attests that every eligible shape in this subcell was enumerated. */
@@ -75,6 +93,8 @@ namespace DX12
 		bool enumerationComplete = false;
 		std::string failureReason;
 		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;
+		std::vector<NifSourceDescriptor> nifSources;
+		std::vector<MissingNifShapeDescriptor> missingShapes;
 	};
 
 	/** @brief Renderer-observed static geometry, never proof of full shadow coverage. */
