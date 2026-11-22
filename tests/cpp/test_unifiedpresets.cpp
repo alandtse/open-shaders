@@ -248,16 +248,27 @@ TEST_CASE("Confirmed preset conflicts survive restart and fall back to installed
 	auto state = nlohmann::json::object();
 	RecordConflictChoice(state, b.id);
 	state = PresetState::RestorePrivateState({}, nlohmann::json::parse(state.dump()));
-	const auto preferred = PresetState::ReadIds(state, PresetState::kPreferredScenePacksKey);
+	const auto preferred = RetainInstalledChoices(state, [](const auto&) { return false; });
 	REQUIRE(Select({ a, b, c }, {}, {}, true, preferred).enabled == both);
-	REQUIRE(Select({ a, c }, both, {}, true, preferred).enabled == fallback);
-	REQUIRE(Select({ a, b, c }, fallback, {}, true, preferred).enabled == both);
 	REQUIRE(Select({ a, b, c }, {}, preferred, true, preferred).enabled == fallback);
 	REQUIRE(Select({ a, b, c }, fallback, {}, false, preferred).enabled == fallback);
 	REQUIRE(Select({ a, { "B", a.settings }, c }, {}, {}, true, preferred).enabled.size() == 3);
-	RecordConflictChoice(state, a.id);
-	const auto reversed = PresetState::ReadIds(state, PresetState::kPreferredScenePacksKey);
+	auto reversedState = state;
+	RecordConflictChoice(reversedState, a.id);
+	const auto reversed = PresetState::ReadIds(reversedState, PresetState::kPreferredScenePacksKey);
 	REQUIRE(Select({ a, b, c }, both, {}, true, reversed).enabled == fallback);
+
+	const auto missingB = [&](const auto& id) { return id == b.id; };
+	REQUIRE(RetainInstalledChoices(reversedState, missingB) == std::vector<std::string>{ a.id });
+	PresetState::SetDisabled(state, "disabledScenePackIds", "Off", true);
+	const auto remaining = RetainInstalledChoices(state, missingB);
+	REQUIRE(remaining.empty());
+	REQUIRE(Select({ a, c }, both, {}, true, remaining).enabled == fallback);
+	const auto restored = PresetState::RestorePrivateState({}, nlohmann::json::parse(state.dump()));
+	REQUIRE(PresetState::ReadIds(restored, "disabledScenePackIds") == std::vector<std::string>{ "Off" });
+	const auto reinstalled = PresetState::ReadIds(restored, PresetState::kPreferredScenePacksKey);
+	REQUIRE(reinstalled == remaining);
+	REQUIRE(Select({ a, b, c }, fallback, {}, true, reinstalled).enabled == fallback);
 }
 
 TEST_CASE("Returning presets follow the installed pipeline unless explicitly disabled", "[presets]")

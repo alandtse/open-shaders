@@ -745,7 +745,10 @@ void UnifiedPresetCatalog::DiscoverSceneActivation(bool automatic)
 	}
 	const auto previous = SerializeActiveState();
 	const auto disabled = PresetState::ReadIds(preservedState, "disabledScenePackIds");
-	const auto preferred = PresetState::ReadIds(preservedState, PresetState::kPreferredScenePacksKey);
+	const auto preferred = PresetActivation::RetainInstalledChoices(preservedState, [&](const std::string& id) {
+		const auto* pack = FindPack(id);
+		return !pack || (!pack->valid && pack->rootPath.empty());
+	});
 	const auto selection = PresetActivation::Select(std::move(candidates), enabledScenePackIds, disabled, automatic, preferred);
 	for (const auto& id : enabledScenePackIds)
 		if (std::ranges::find(selection.enabled, id) == selection.enabled.end())

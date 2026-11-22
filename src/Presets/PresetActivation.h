@@ -39,6 +39,15 @@ namespace PresetActivation
 		state[PresetState::kPreferredScenePacksKey] = std::move(preferred);
 	}
 
+	/** @brief Drops manual choices for uninstalled packs and returns the remaining priority order. */
+	inline std::vector<std::string> RetainInstalledChoices(nlohmann::json& state, auto isMissing)
+	{
+		auto preferred = PresetState::ReadIds(state, PresetState::kPreferredScenePacksKey);
+		std::erase_if(preferred, isMissing);
+		state[PresetState::kPreferredScenePacksKey] = preferred;
+		return preferred;
+	}
+
 	/** @brief Resolves installed presets using confirmed conflict choices and stable automatic defaults. */
 	inline Selection Select(std::vector<Candidate> candidates, std::span<const std::string> enabled,
 		std::span<const std::string> disabled, bool automatic, std::span<const std::string> preferred = {})
