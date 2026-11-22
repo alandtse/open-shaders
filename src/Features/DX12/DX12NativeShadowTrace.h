@@ -11,14 +11,12 @@
 
 namespace DX12Native
 {
-	/** @brief Shadow-only behavior. Prepared lights keep their vanilla-supplied values. */
+	/** @brief Shadow-only behavior. Live matched values override companion fallbacks. */
 	struct ShadowTraceControls
 	{
 		uint32_t viewportWidth = 0, viewportHeight = 0;
 		uint32_t densityMode = 0;
 		uint32_t debugGeometryMode = 0;  // 0 normal, 1 all TLAS, 2 companion, 3 runtime.
-		uint32_t emitterSamples = 4;
-		bool stochastic = false;
 		bool nearLightExclusion = false;
 		float nearLightRadius = 0.0f;  // 0..512 game units; exclusion sphere centered at light.
 		float reachMultiplier = 1.0f;  // 1.0 means the vanilla-provided light radius.

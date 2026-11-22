@@ -8,6 +8,8 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -38,6 +40,9 @@ struct DX12NativeScene final : Feature
 	/** @brief SCM hands native-owned lights' static casters to RayQuery and retains movers. */
 	bool OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const;
 	bool OffloadFlickeringStatic() const { return offloadFlickeringStatic; }
+	// Snapshot LLF/SCM point-light parameters without altering the DX11 light.
+	void ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID, bool flickers,
+		const RE::NiPoint3& restOrigin);
 	void OnSceneTransitionReset(bool a_opening) override;
 	void OnRuntimeDisabled() override;
 
@@ -65,13 +70,21 @@ private:
 	bool shadowMaskEnabled = true;
 	bool offloadStaticShadows = true;
 	bool offloadFlickeringStatic = true;
+	bool freezeNativeFlickering = false;
 	uint32_t densityMode = 0;
-	bool stochasticEmitterSampling = false;
-	uint32_t emitterRayCount = 4;
 	bool nearLightShadowExclusion = false;
 	uint32_t nearLightExclusionUnits = 0;
 	float shadowReachMultiplier = 1.0f;  // Native only. Vanilla lights stay unchanged.
 	float shadowFadeRange = 0.50f;
 	float shadowFalloffCurve = 1.0f;
+	struct RuntimeLightSample
+	{
+		uint32_t referenceID = 0;
+		DX12::PreparedLight value;
+	};
+	mutable std::mutex runtimeLightMutex;
+	uint32_t runtimeLightFrame = UINT32_MAX;
+	std::vector<RuntimeLightSample> runtimeLightSamples;
+	std::unordered_map<uint32_t, DX12::PreparedLight> frozenNativeLights;
 	std::string startupFailure;
 };
