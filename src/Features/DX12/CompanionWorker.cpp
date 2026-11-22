@@ -398,6 +398,18 @@ namespace DX12
 			publication.eligibleShapes = root.at("eligibleShapes").get<uint32_t>();
 			publication.failedShapes = root.at("failedShapes").get<uint32_t>();
 			publication.enumerationComplete = root.at("enumerationComplete").get<bool>();
+			// The companion reports only bounded reason counts; never write per-mesh logs.
+			if (const auto reasons = root.find("rejectionReasons");
+				reasons != root.end() && reasons->is_object()) {
+				for (auto entry = reasons->begin();
+					entry != reasons->end() && publication.rejectionReasons.size() < 12; ++entry) {
+					if (!entry.value().is_number_unsigned())
+						continue;
+					const auto count = entry.value().get<uint32_t>();
+					if (count)
+						publication.rejectionReasons.emplace_back(entry.key().substr(0, 80), count);
+				}
+			}
 			for (const auto& item : root.at("shapes")) {
 				auto shape = std::make_shared<Shape>();
 				shape->identity = item.at("identity").get<uint64_t>();

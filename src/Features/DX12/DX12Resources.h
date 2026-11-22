@@ -11,6 +11,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace DX12Native
 {
@@ -58,6 +59,7 @@ namespace DX12
 		std::chrono::steady_clock::time_point retryAfter{};
 		State state = State::Requested;
 		std::string failureReason;  // Last bounded companion failure, retained for Dev and tile hover.
+		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;  // Bounded structured geometry diagnoses.
 	};
 
 	/** @brief A companion attests that every eligible shape in this subcell was enumerated. */
@@ -72,6 +74,7 @@ namespace DX12
 		uint32_t failedShapes = 0;
 		bool enumerationComplete = false;
 		std::string failureReason;
+		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;
 	};
 
 	/** @brief Renderer-observed static geometry, never proof of full shadow coverage. */
