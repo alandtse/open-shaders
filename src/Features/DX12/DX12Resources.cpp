@@ -73,6 +73,7 @@ namespace DX12
 				retry->state = Tile::State::Requested;
 				retry->preparationAttempts = 0;
 				retry->retryAfter = {};
+				retry->failureReason.clear();
 				tile = std::move(retry);
 			};
 			for (size_t i = 0; i < kGridCapacity; ++i) {
@@ -205,6 +206,7 @@ namespace DX12
 		                          current->resident[std::distance(current->requested.begin(), active)] :
 		                          current->predictiveResident[std::distance(current->predictive.begin(), predictive)];
 		tile->preparationAttempts = static_cast<uint8_t>(std::min<unsigned>(existing ? unsigned(existing->preparationAttempts) + 1 : 1u, 3u));
+		tile->failureReason = std::move(publication.failureReason);
 		// The worker has already verified all positions, triangle indices, transforms, identities and budgets.
 		// Render-thread publication only transfers ownership of immutable GPU-scene inputs.
 		tile->shapes = std::move(publication.shapes);
@@ -356,7 +358,7 @@ namespace
 		case DX12::Tile::State::RetryWaiting:
 			return "Failed (retry pending)";
 		case DX12::Tile::State::Incomplete:
-			return "Failed";
+			return "Skipped (retry exhausted)";
 		case DX12::Tile::State::Deferred:
 			return "Skipped (predictive budget)";
 		case DX12::Tile::State::Requested:
@@ -377,8 +379,9 @@ namespace
 		case DX12::Tile::State::Preparing:
 			return IM_COL32(182, 140, 91, 255);
 		case DX12::Tile::State::RetryWaiting:
-		case DX12::Tile::State::Incomplete:
 			return IM_COL32(211, 76, 76, 255);
+		case DX12::Tile::State::Incomplete:
+			return IM_COL32(123, 129, 139, 255);
 		case DX12::Tile::State::Deferred:
 			return IM_COL32(123, 129, 139, 255);
 		case DX12::Tile::State::Requested:
@@ -445,8 +448,14 @@ namespace
 				const bool active = std::max(std::abs(dx), std::abs(dy)) <= 1;
 				const DX12::SubcellKey key{ center.scope, center.x + dx, center.y + dy };
 				const auto tile = FindTile(grid, key, active);
-				ImGui::SetTooltip("%s subcell (%lld, %lld): %s", active ? "Active" : "Predictive",
+				ImGui::BeginTooltip();
+				ImGui::Text("%s subcell (%lld, %lld): %s", active ? "Active" : "Predictive",
 					static_cast<long long>(key.x), static_cast<long long>(key.y), TileStatus(tile));
+				if (tile && tile->preparationAttempts)
+					ImGui::Text("Attempts: %u / 3", unsigned(tile->preparationAttempts));
+				if (tile && !tile->failureReason.empty())
+					ImGui::TextWrapped("Last reason: %s", tile->failureReason.c_str());
+				ImGui::EndTooltip();
 			}
 		}
 	}
@@ -503,9 +512,9 @@ void DX12Resources::DrawSettings()
 					return;
 				if (tile->state == DX12::Tile::State::Ready || tile->state == DX12::Tile::State::ReadyPartial)
 					(active ? activeLoaded : predictiveLoaded)++;
-				else if (tile->state == DX12::Tile::State::RetryWaiting || tile->state == DX12::Tile::State::Incomplete)
+				else if (tile->state == DX12::Tile::State::RetryWaiting)
 					++failed;
-				else if (tile->state == DX12::Tile::State::Deferred)
+				else if (tile->state == DX12::Tile::State::Incomplete || tile->state == DX12::Tile::State::Deferred)
 					++skipped;
 			};
 			for (const auto& tile : snapshot->resident)
@@ -517,7 +526,7 @@ void DX12Resources::DrawSettings()
 		}
 		ImGui::TextColored(ImVec4(0.95f, 0.79f, 0.29f, 1.0f), "Yellow: loaded 3x3");
 		ImGui::TextColored(ImVec4(0.46f, 0.77f, 0.94f, 1.0f), "Light blue: loaded predictive ring");
-		ImGui::TextColored(ImVec4(0.83f, 0.30f, 0.30f, 1.0f), "Red: failed (including retry pending)");
+		ImGui::TextColored(ImVec4(0.83f, 0.30f, 0.30f, 1.0f), "Red: failed (retry pending)");
 		ImGui::TextDisabled("Gray: skipped  |  Dark: not processed  |  Brown: processing");
 		ImGui::TextDisabled("Diagonal: partially loaded  |  Center dot: player subcell");
 		if (const auto status = GetPreparationStatus())
@@ -569,15 +578,18 @@ void DX12Resources::DrawDiagnostics() const
 		};
 		accumulate(snapshot->resident);
 		accumulate(snapshot->predictiveResident);
-		ImGui::Text("Tiles: requested %zu, preparing %zu, ready %zu, partial %zu, retry %zu, failed %zu, skipped %zu",
-			states[0], states[1], states[2], states[3], states[4], states[5], states[6]);
+		ImGui::Text("Tiles: requested %zu, preparing %zu, ready %zu, partial %zu, retry %zu, skipped %zu (exhausted %zu, predictive %zu)",
+			states[0], states[1], states[2], states[3], states[4], states[5] + states[6], states[5], states[6]);
 		ImGui::Text("Published shapes: %zu; placed lights: %zu (may include duplicates across tile boundaries)", geometry, lights);
 		const auto showRetries = [&](const auto& tiles, const char* region) {
 			for (const auto& tile : tiles) {
-				if (tile && (tile->state == DX12::Tile::State::Incomplete || tile->state == DX12::Tile::State::RetryWaiting))
+				if (tile && (tile->state == DX12::Tile::State::Incomplete || tile->state == DX12::Tile::State::RetryWaiting)) {
 					ImGui::Text("%s subcell (%lld, %lld): attempt %u / 3%s", region,
 						static_cast<long long>(tile->key.x), static_cast<long long>(tile->key.y),
-						unsigned(tile->preparationAttempts), tile->state == DX12::Tile::State::Incomplete ? " (retry exhausted)" : "");
+						unsigned(tile->preparationAttempts), tile->state == DX12::Tile::State::Incomplete ? " (skipped: retry exhausted)" : "");
+					if (!tile->failureReason.empty())
+						ImGui::TextWrapped("Last reason: %s", tile->failureReason.c_str());
+				}
 			}
 		};
 		showRetries(snapshot->resident, "Active");
@@ -673,6 +685,7 @@ void DX12Resources::PreShadowMaps()
 									result->failure.empty() ? "Companion returned valid geometry and light data" : result->failure),
 			std::memory_order_release);
 		adopting = std::make_unique<DX12::CompanionResult>(std::move(*result));
+		adopting->publication.failureReason = adopting->failure.substr(0, 320);
 		adopting->publication.lights.reserve(adopting->lights.size());
 		lightAdoptionOffset = 0;
 	}

@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <string>
 #include <unordered_map>
 
 namespace DX12Native
@@ -56,6 +57,7 @@ namespace DX12
 		uint8_t preparationAttempts = 0;
 		std::chrono::steady_clock::time_point retryAfter{};
 		State state = State::Requested;
+		std::string failureReason;  // Last bounded companion failure, retained for Dev and tile hover.
 	};
 
 	/** @brief A companion attests that every eligible shape in this subcell was enumerated. */
@@ -69,6 +71,7 @@ namespace DX12
 		uint32_t eligibleShapes = 0;
 		uint32_t failedShapes = 0;
 		bool enumerationComplete = false;
+		std::string failureReason;
 	};
 
 	/** @brief Renderer-observed static geometry, never proof of full shadow coverage. */
