@@ -1,8 +1,8 @@
 #pragma once
 
+#include "DX12NativeAcceleration.h"
 #include "DX12NativeRasterCapture.h"
 #include "DX12NativeRuntimeCapture.h"
-#include "DX12NativeAcceleration.h"
 #include "DX12NativeShadowTrace.h"
 #include "Feature.h"
 

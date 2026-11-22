@@ -54,9 +54,9 @@ namespace DX12Native
 		const uint64_t completed = completion ? completion->GetCompletedValue() : 0;
 		for (auto& slot : slots)
 			if (slot && (slot->readyValue > completed ||
-				std::ranges::any_of(slot->consumers, [](const auto& c) {
-					return c.first->GetCompletedValue() < c.second;
-				})))
+							std::ranges::any_of(slot->consumers, [](const auto& c) {
+								return c.first->GetCompletedValue() < c.second;
+							})))
 				(void)new std::shared_ptr<ShadowMaskFrame>(std::move(slot));
 	}
 
@@ -82,15 +82,15 @@ namespace DX12Native
 		ranges[1] = { D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0 };
 		D3D12_ROOT_PARAMETER params[5]{};
 		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
-		params[0].Descriptor.ShaderRegister = 0; // t0 TLAS
+		params[0].Descriptor.ShaderRegister = 0;  // t0 TLAS
 		params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-		params[1].DescriptorTable = { 1, &ranges[0] }; // t1 raster depth
+		params[1].DescriptorTable = { 1, &ranges[0] };  // t1 raster depth
 		params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-		params[2].DescriptorTable = { 1, &ranges[1] }; // u0 raw mask
+		params[2].DescriptorTable = { 1, &ranges[1] };  // u0 raw mask
 		params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
-		params[3].Descriptor.ShaderRegister = 2; // t2 light records
+		params[3].Descriptor.ShaderRegister = 2;  // t2 light records
 		params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-		params[4].Descriptor.ShaderRegister = 0; // b0 camera and sample settings
+		params[4].Descriptor.ShaderRegister = 0;  // b0 camera and sample settings
 		const D3D12_ROOT_SIGNATURE_DESC signature{
 			UINT(std::size(params)), params, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE
 		};
@@ -124,9 +124,9 @@ namespace DX12Native
 				if (!slot)
 					return true;
 				return slot.use_count() == 1 && slot->readyValue <= finished &&
-					std::ranges::all_of(slot->consumers, [](const auto& c) {
-						return c.first->GetCompletedValue() >= c.second;
-					});
+				       std::ranges::all_of(slot->consumers, [](const auto& c) {
+						   return c.first->GetCompletedValue() >= c.second;
+					   });
 			});
 			if (it == slots.end())
 				return;
