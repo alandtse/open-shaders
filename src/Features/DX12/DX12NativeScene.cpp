@@ -93,7 +93,8 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry)
 	candidate.centerX = geometry.worldBound.center.x;
 	candidate.centerY = geometry.worldBound.center.y;
 	const uint32_t frame = globals::game::graphicsState ?
-		globals::game::graphicsState->GetFrameCount() : 0;
+	                           globals::game::graphicsState->GetFrameCount() :
+	                           0;
 	geometryCapture.Observe(candidate, frame, globals::features::dx12Resources.GetGrid());
 }
 
