@@ -2,7 +2,9 @@
 """Estimate how much a change shifts shader compile cost, and render a PR comment.
 
 Every shader variant in the validation configs gets a digest over its source's
-`#include` closure. Diffing the merge base against the head gives the variants
+`#include` closure, taken after dropping the `#if` regions its defines rule out
+(and comments), so an edit behind a macro the variant lacks does not count.
+Diffing the merge base against the head gives the variants
 that must recompile, the ones added or removed, and how much the touched
 sources grew. Cost is weighted by a recent per-entry timing report
 (`hlslkit-compile --timing-report`), so the numbers follow what the change
@@ -113,15 +115,214 @@ def parse_variants(config_text):
     return rows
 
 
-def closure_index(tree, read):
-    """Returns (digest(path), size(path)) over the include closure of a shader source."""
-    lower = {p.lower(): p for p in tree}
-    includes, closures = {}, {}
+DIRECTIVE = re.compile(r"^[ \t]*#[ \t]*(\w+)(.*)$")
+COMMENTS = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
+COND_TOKEN = re.compile(
+    r"defined\s*\(\s*(\w+)\s*\)|defined\s+(\w+)|0[xX][0-9a-fA-F]+|\w+|&&|\|\||[!=<>]=|[()!<>+\-*/%&|]"
+)
+# Names a variant may receive from the build rather than its config: never assume them undefined.
+IMPLICIT_NAMES = frozenset({"VR", "WINPC", "DX11"})
 
-    def direct(path):
-        if path not in includes:
+
+def macro_names(tree, read):
+    """(names some shader source #defines, names it #undefs): a condition on a #defined name cannot be resolved from the config."""
+    defined, undefined = set(), set()
+    for path in tree:
+        for line in COMMENTS.sub(
+            " ", read(tree[path]).decode("utf-8", "replace")
+        ).splitlines():
+            m = DIRECTIVE.match(line)
+            if m and m.group(1) in ("define", "undef"):
+                if first := re.match(r"\s*(\w+)", m.group(2)):
+                    (defined if m.group(1) == "define" else undefined).add(
+                        first.group(1)
+                    )
+    return defined, undefined
+
+
+class Condition:
+    """Three-valued evaluation of a preprocessor condition: 1, 0 or None when the config cannot decide it."""
+
+    def __init__(self, defines, assigned):
+        self.defines, (self.assigned, self.undefined) = defines, assigned
+
+    def known_absent(self, name):
+        return not (
+            name in self.defines
+            or name in self.assigned
+            or name in IMPLICIT_NAMES
+            or name.startswith(("_", "D3D"))
+        )
+
+    def evaluate(self, text):
+        self.tokens = [m for m in COND_TOKEN.finditer(text)]
+        self.pos = 0
+        try:
+            value = self.or_()
+        except (IndexError, ValueError, ZeroDivisionError):
+            return None
+        return value if self.pos == len(self.tokens) else None
+
+    def peek(self):
+        return self.tokens[self.pos].group(0) if self.pos < len(self.tokens) else None
+
+    def take(self):
+        self.pos += 1
+        return self.tokens[self.pos - 1]
+
+    def or_(self):
+        value = self.and_()
+        while self.peek() == "||":
+            self.take()
+            other = self.and_()
+            if value or other:
+                value = 1 if (value or other) else 0
+            else:
+                value = 0 if (value == 0 and other == 0) else None
+        return value
+
+    def and_(self):
+        value = self.compare()
+        while self.peek() == "&&":
+            self.take()
+            other = self.compare()
+            if value == 0 or other == 0:
+                value = 0
+            else:
+                value = 1 if (value and other) else None
+        return value
+
+    def compare(self):
+        left = self.unary()
+        while self.peek() in (
+            "==",
+            "!=",
+            "<",
+            ">",
+            "<=",
+            ">=",
+            "+",
+            "-",
+            "*",
+            "/",
+            "%",
+            "&",
+            "|",
+        ):
+            op = self.take().group(0)
+            right = self.unary()
+            if left is None or right is None:
+                left = None
+            else:
+                left = int(eval(f"{left}{op}{right}", {"__builtins__": {}}))
+        return left
+
+    def unary(self):
+        if self.peek() == "!":
+            self.take()
+            value = self.unary()
+            return None if value is None else int(not value)
+        if self.peek() == "(":
+            self.take()
+            value = self.or_()
+            if self.peek() != ")":
+                raise ValueError
+            self.take()
+            return value
+        token = self.take()
+        if name := token.group(1) or token.group(2):
+            if name in self.defines:
+                return None if name in self.undefined else 1
+            return 0 if self.known_absent(name) else None
+        text = token.group(0)
+        if re.fullmatch(r"0[xX][0-9a-fA-F]+|\d+", text):
+            return int(text, 0)
+        if self.known_absent(text):
+            return 0
+        return None
+
+
+def scan_source(text, defines, assigned):
+    """(normalised active source lines, includes) of one file for a variant's defines.
+
+    Regions a condition rules out are dropped; a condition the config cannot decide keeps every branch,
+    so the result only over-approximates what the preprocessor would emit.
+    """
+    cond = Condition(defines, assigned)
+    out, includes = [], []
+    frames = []  # [parent_active, taken, active, unknown]
+    joined = COMMENTS.sub(" ", text).replace("\\\r\n", " ").replace("\\\n", " ")
+    for raw in joined.splitlines():
+        line = raw.strip()
+        m = DIRECTIVE.match(line)
+        word = m.group(1) if m else ""
+        rest = m.group(2).strip() if m else ""
+        active = all(f[2] for f in frames)
+        if word in ("if", "ifdef", "ifndef"):
+            expr = (
+                rest
+                if word == "if"
+                else (f"defined({rest.split()[0]})" if rest else "")
+            )
+            if word == "ifndef":
+                expr = f"!{expr}"
+            value = cond.evaluate(expr)
+            frames.append([active, value == 1, active and value != 0, value is None])
+            if value is None and active:
+                out.append(line)
+        elif word == "elif" and frames:
+            frame = frames[-1]
+            value = cond.evaluate(rest)
+            frame[3] = frame[3] or value is None
+            frame[2] = frame[0] and not frame[1] and value != 0
+            frame[1] = frame[1] or value == 1
+            if frame[3] and frame[0]:
+                out.append(line)
+        elif word == "else" and frames:
+            frame = frames[-1]
+            frame[2] = frame[0] and not frame[1]
+            if frame[3] and frame[0]:
+                out.append(line)
+        elif word == "endif" and frames:
+            frame = frames.pop()
+            if frame[3] and frame[0]:
+                out.append(line)
+        elif active and line:
+            out.append(" ".join(line.split()))
+            if word == "include":
+                if inc := INCLUDE.match(line):
+                    includes.append(inc.group(1))
+    return out, includes
+
+
+def closure_index(tree, read):
+    """Returns (digest(path, defines), size(path, defines), lower) over the include closure a variant's defines select."""
+    lower = {p.lower(): p for p in tree}
+    assigned = macro_names(tree, read)
+    sources, scans, closures, cond_names = {}, {}, {}, {}
+
+    def source(path):
+        if path not in sources:
+            sources[path] = read(tree[path]).decode("utf-8", "replace")
+        return sources[path]
+
+    def conditional_names(path):
+        if path not in cond_names:
+            names = set()
+            for line in COMMENTS.sub(" ", source(path)).splitlines():
+                m = DIRECTIVE.match(line)
+                if m and m.group(1) in ("if", "ifdef", "ifndef", "elif"):
+                    names.update(re.findall(r"\w+", m.group(2)))
+            cond_names[path] = frozenset(names)
+        return cond_names[path]
+
+    def scan(path, defines):
+        defines = defines & conditional_names(path)
+        key = (path, defines)
+        if key not in scans:
+            lines, raw_includes = scan_source(source(path), defines, assigned)
             found = []
-            for raw in INCLUDE.findall(read(tree[path]).decode("utf-8", "replace")):
+            for raw in raw_includes:
                 raw = raw.replace("\\", "/")
                 for candidate in (
                     os.path.normpath(os.path.join(os.path.dirname(path), raw)),
@@ -131,29 +332,31 @@ def closure_index(tree, read):
                     if hit:
                         found.append(hit)
                         break
-            includes[path] = found
-        return includes[path]
+            text = "\n".join(lines)
+            scans[key] = (hashlib.sha1(text.encode()).hexdigest(), len(text), found)
+        return scans[key]
 
-    def closure(path):
-        if path not in closures:
+    def closure(path, defines):
+        key = (path, defines)
+        if key not in closures:
             seen, stack = set(), [path]
             while stack:
                 item = stack.pop()
                 if item not in seen:
                     seen.add(item)
-                    stack.extend(direct(item))
-            closures[path] = sorted(seen)
-        return closures[path]
+                    stack.extend(scan(item, defines)[2])
+            closures[key] = sorted(seen)
+        return closures[key]
 
-    def digest(path):
+    def digest(path, defines=frozenset()):
         h = hashlib.sha1()
-        for item in closure(path):
+        for item in closure(path, defines):
             h.update(item.encode())
-            h.update(tree[item].encode())
+            h.update(scan(item, defines)[0].encode())
         return h.hexdigest()
 
-    def size(path):
-        return sum(len(read(tree[item])) for item in closure(path))
+    def size(path, defines=frozenset()):
+        return sum(scan(item, defines)[1] for item in closure(path, defines))
 
     return digest, size, lower
 
@@ -173,9 +376,13 @@ def variant_map(rows, tree, read):
         if source is None:
             fingerprint, nbytes = "missing", 0
         else:
-            if source not in per_source:
-                per_source[source] = (digest(source), size(source))
-            fingerprint, nbytes = per_source[source]
+            names = frozenset(str(d).split("=")[0] for d in json.loads(defines))
+            if (source, names) not in per_source:
+                per_source[(source, names)] = (
+                    digest(source, names),
+                    size(source, names),
+                )
+            fingerprint, nbytes = per_source[(source, names)]
         out[(name.rsplit("/", 1)[-1], entry, shader_type)] = (
             hashlib.sha1(f"{fingerprint}|{defines}".encode()).hexdigest(),
             nbytes,

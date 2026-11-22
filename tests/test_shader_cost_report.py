@@ -174,6 +174,65 @@ class ShaderCostReportTest(unittest.TestCase):
         self.assertEqual(diff["worst"][0][0], "a")
         self.assertIsNone(REPORT.timing_diff(base, ""))
 
+    def _digest(self, files, defines=()):
+        tree, read = build(files)
+        digest, _, _ = REPORT.closure_index(tree, read)
+        return digest("Lit.hlsl", frozenset(defines))
+
+    def test_edit_in_inactive_block_keeps_digest(self):
+        def files(body):
+            return {
+                "Lit.hlsl": '#include "Data.hlsli"\n',
+                "Data.hlsli": f"float a;\n#if defined(SNOW) && (defined(PSHADER) || defined(CSHADER))\n{body}\n#endif\n",
+            }
+
+        old, new = files("float snow;"), files("float snow; float more;")
+        self.assertEqual(self._digest(old, ["PSHADER"]), self._digest(new, ["PSHADER"]))
+        self.assertNotEqual(
+            self._digest(old, ["SNOW", "PSHADER"]),
+            self._digest(new, ["SNOW", "PSHADER"]),
+        )
+
+    def test_includes_in_inactive_blocks_are_dropped(self):
+        def files(extra):
+            return {
+                "Lit.hlsl": '#ifdef SNOW\n#include "Snow.hlsli"\n#endif\n#ifndef SNOW\nfloat plain;\n#else\nfloat snowy;\n#endif\n',
+                "Snow.hlsli": extra,
+            }
+
+        self.assertEqual(self._digest(files("a")), self._digest(files("b")))
+        self.assertNotEqual(
+            self._digest(files("a"), ["SNOW"]), self._digest(files("b"), ["SNOW"])
+        )
+
+    def test_undecidable_conditions_keep_every_branch(self):
+        def files(body):
+            return {
+                "Lit.hlsl": f"#define FEATURE 1\n#if FEATURE > 0 || defined(OTHER)\n{body}\n#endif\n"
+            }
+
+        self.assertNotEqual(self._digest(files("x")), self._digest(files("y")))
+
+        def implicit(body):
+            return {"Lit.hlsl": f"#ifdef VR\n{body}\n#endif\n"}
+
+        self.assertNotEqual(self._digest(implicit("x")), self._digest(implicit("y")))
+
+    def test_comment_and_whitespace_only_edits_keep_digest(self):
+        plain = {"Lit.hlsl": "float a;\nfloat   b;\n"}
+        noisy = {"Lit.hlsl": "float a; // note\n/* block */\n  float b;\n\n"}
+        self.assertEqual(self._digest(plain), self._digest(noisy))
+
+    def test_variants_use_their_own_defines(self):
+        def files(body):
+            return {"Lit.hlsl": f"#if defined(A) && !defined(B)\n{body}\n#endif\n"}
+
+        text = CONFIG.replace("[A]", "[A]").replace("Lit:Pixel:2", "Lit:Pixel:2")
+        old = REPORT.variant_map(REPORT.parse_variants(text), *build(files("x")))
+        new = REPORT.variant_map(REPORT.parse_variants(text), *build(files("y")))
+        changed = [k for k in old if old[k][0] != new[k][0]]
+        self.assertEqual([k[1] for k in changed], ["Lit:Pixel:1"])
+
     def _timing_files(self, base_rows, head_rows):
         import json
         import os
@@ -183,7 +242,12 @@ class ShaderCostReportTest(unittest.TestCase):
             handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
             json.dump(
                 [
-                    {"file": "Lit.hlsl", "entry": e, "type": "PSHADER", "duration_seconds": d}
+                    {
+                        "file": "Lit.hlsl",
+                        "entry": e,
+                        "type": "PSHADER",
+                        "duration_seconds": d,
+                    }
                     for e, d in rows
                 ],
                 handle,
