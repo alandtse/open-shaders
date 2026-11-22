@@ -19,6 +19,7 @@
 #include "Menu/MenuIcons.h"
 #include "Menu/MenuLinks.h"
 #include "Menu/PerformanceRenderer.h"
+#include "Menu/PresetsPageRenderer.h"
 #include "Menu/ProfilingRenderer.h"
 #include "Menu/SettingsPageRenderer.h"
 #include "Menu/SettingsSections.h"
@@ -83,6 +84,7 @@ namespace
 		ImGui::Spacing();
 		if (Util::LabeledButton("##BrowsePresets", Icons::TI(MenuIcons::kPresets), T("menu.home.browse_presets", "Browse presets")))
 			globals::menu->SelectFeatureMenu(std::string(MenuPageIds::kPresets));
+		PresetsPageRenderer::DrawAutoApplyCheckbox();
 	}
 
 	void RenderPerformanceSummary(float cardHeight)

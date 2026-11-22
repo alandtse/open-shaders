@@ -1028,20 +1028,9 @@ void PresetsPageRenderer::DrawPopups()
 		PresetExportPanel::Draw();
 }
 
-void PresetsPageRenderer::Render()
+void PresetsPageRenderer::DrawAutoApplyCheckbox()
 {
 	auto& catalog = UnifiedPresetCatalog::GetSingleton();
-	if (!discovered) {
-		catalog.Discover();
-		discovered = true;
-		if (selectedPackId.empty() && !catalog.GetActivePackId().empty())
-			selectedPackId = catalog.GetActivePackId();
-		else if (selectedPackId.empty() && !catalog.GetPacks().empty())
-			selectedPackId = catalog.GetPacks().front().id;
-	}
-
-	ImGui::BeginChild("PresetsPage", ImVec2(0, 0), false);
-
 	bool automatic = catalog.GetAutomaticPresets();
 	ImGui::BeginGroup();
 	bool changed = ImGui::Checkbox("##AutomaticPresets", &automatic);
@@ -1055,6 +1044,22 @@ void PresetsPageRenderer::Render()
 	ImGui::EndGroup();
 	if (changed && !catalog.SetAutomaticPresets(automatic))
 		ReportPresetChangeFailure();
+}
+
+void PresetsPageRenderer::Render()
+{
+	auto& catalog = UnifiedPresetCatalog::GetSingleton();
+	if (!discovered) {
+		catalog.Discover();
+		discovered = true;
+		if (selectedPackId.empty() && !catalog.GetActivePackId().empty())
+			selectedPackId = catalog.GetActivePackId();
+		else if (selectedPackId.empty() && !catalog.GetPacks().empty())
+			selectedPackId = catalog.GetPacks().front().id;
+	}
+
+	ImGui::BeginChild("PresetsPage", ImVec2(0, 0), false);
+	DrawAutoApplyCheckbox();
 
 	{
 		const float scale = Util::GetUIScale();
