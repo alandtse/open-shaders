@@ -121,16 +121,16 @@ void DX12NativeScene::LoadSettings(json& input)
 	shadowMaskEnabled = input.value("ShadowMask", true);
 	offloadStaticShadows = input.value("OffloadSCMStatic", true);
 	offloadFlickeringStatic = input.value("OffloadFlickeringStatic", true);
-	densityMode = std::min(input.value("ShadowTraceDensityMode", 0u), 7u);
+	densityMode = std::min(input.value("ShadowTraceDensityMode", 7u), 7u);
 	freezeNativeFlickering = input.value("FreezeNativeFlickering", false);
 	{
 		std::scoped_lock lock(runtimeLightMutex);
 		frozenNativeLights.clear();
 	}
-	nearLightShadowExclusion = input.value("ShadowNearLightExclusion", false);
-	nearLightExclusionUnits = std::clamp(input.value("ShadowNearLightRadius", 0u), 0u, 512u) / 4u * 4u;
+	nearLightShadowExclusion = input.value("ShadowNearLightExclusion", true);
+	nearLightExclusionUnits = std::clamp(input.value("ShadowNearLightRadius", 16u), 0u, 512u) / 4u * 4u;
 	shadowReachMultiplier = std::clamp(input.value("ShadowReachMultiplier", 1.0f), 0.1f, 64.0f);
-	shadowFadeRange = std::round(std::clamp(input.value("ShadowFadeRange", 0.50f), 0.0f, 1.0f) * 50.0f) / 50.0f;
+	shadowFadeRange = std::round(std::clamp(input.value("ShadowFadeRange", 0.66f), 0.0f, 1.0f) * 50.0f) / 50.0f;
 	shadowFalloffCurve = std::clamp(input.value("ShadowFalloffCurve", 1.0f), 0.0f, 2.5f);
 }
 
@@ -152,16 +152,16 @@ void DX12NativeScene::RestoreDefaultSettings()
 	shadowMaskEnabled = true;
 	offloadStaticShadows = true;
 	offloadFlickeringStatic = true;
-	densityMode = 0;
+	densityMode = 7;
 	freezeNativeFlickering = false;
 	{
 		std::scoped_lock lock(runtimeLightMutex);
 		frozenNativeLights.clear();
 	}
-	nearLightShadowExclusion = false;
-	nearLightExclusionUnits = 0;
+	nearLightShadowExclusion = true;
+	nearLightExclusionUnits = 16;
 	shadowReachMultiplier = 1.0f;
-	shadowFadeRange = 0.50f;
+	shadowFadeRange = 0.66f;
 	shadowFalloffCurve = 1.0f;
 }
 
