@@ -70,6 +70,10 @@ void DX12NativeScene::DrawDiagnostics() const
 		const auto runtime = std::ranges::count_if(geometry, [](const auto& input) { return input.supplementary; });
 		ImGui::Text("Published TLAS shapes: companion %zu, runtime %zu", geometry.size() - size_t(runtime), size_t(runtime));
 	}
+	const auto& mainWorld = globals::game::mainWorldCameraSnapshot;
+	ImGui::Text("Main-world camera: %s (snapshot frame %u, current frame %u)",
+		mainWorld.valid && mainWorld.frame == frame ? "verified" : "not current / unavailable",
+		mainWorld.frame, frame);
 	const auto raw = shadows.Get(frame);
 	ImGui::Text("Raw mask for engine frame %u: %s", frame, raw ? "submitted" : "not published");
 	if (raw) {
@@ -222,10 +226,19 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 		a_inputs.masks, a_inputs.masks2, a_inputs.reflectance, a_inputs.motion
 	};
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
-	raster.Capture(*backend, sources, Util::GetCurrentSceneDepthSRV(false),
-		&globals::game::frameBufferCached.nonVR, frame);
 	const uint32_t previewMode = globals::features::dx12Control.GetShadowPreview();
 	const bool geometryPreview = previewMode >= 3u && previewMode <= 5u;
+	// Never fabricate the geometry preview from an old or unrelated shadow camera.
+	const auto& mainWorld = globals::game::mainWorldCameraSnapshot;
+	const bool mainWorldReady = mainWorld.valid && mainWorld.frame == frame;
+	const globals::FrameBuffer* camera = geometryPreview ?
+		(mainWorldReady ? &mainWorld.camera : nullptr) :
+		&globals::game::frameBufferCached.nonVR;
+	raster.Capture(*backend, sources, Util::GetCurrentSceneDepthSRV(false), camera, frame);
+	// The active view may occupy only a subrect of the full-size raster allocation.
+	const auto viewport = Util::ConvertToDynamic(globals::state->screenSize);
+	const uint32_t viewportWidth = std::isfinite(viewport.x) && viewport.x > 0.0f ? uint32_t(viewport.x) : 0u;
+	const uint32_t viewportHeight = std::isfinite(viewport.y) && viewport.y > 0.0f ? uint32_t(viewport.y) : 0u;
 	if ((shadowMaskEnabled && globals::features::dx12Control.IsShadowOffloadMode()) || geometryPreview) {
 		const auto captured = raster.Get(frame);
 		const auto built = acceleration.GetScene();
@@ -233,6 +246,8 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 		// Report missing prerequisites even when no raw frame can be submitted.
 		// The only RayQuery dispatch remains inside the DX12 shadow trace.
 		const DX12Native::ShadowTraceControls controls{
+			.viewportWidth = viewportWidth,
+			.viewportHeight = viewportHeight,
 			.densityMode = densityMode,
 			.debugGeometryMode = geometryPreview ? previewMode - 2u : 0u,
 			.emitterSamples = emitterRayCount,

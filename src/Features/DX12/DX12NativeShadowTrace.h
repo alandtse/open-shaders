@@ -14,6 +14,7 @@ namespace DX12Native
 	/** @brief Shadow-only behavior. Prepared lights keep their vanilla-supplied values. */
 	struct ShadowTraceControls
 	{
+		uint32_t viewportWidth = 0, viewportHeight = 0;
 		uint32_t densityMode = 0;
 		uint32_t debugGeometryMode = 0;  // 0 normal, 1 all TLAS, 2 companion, 3 runtime.
 		uint32_t emitterSamples = 4;

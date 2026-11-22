@@ -341,6 +341,16 @@ namespace globals
 		extern D3D11_MAPPED_SUBRESOURCE* mappedFrameBuffer;
 		extern FrameBufferCache frameBufferCached;
 
+		// The latest verified main-world perspective upload for this engine frame.
+		// Other per-frame constant-buffer uploads must not replace this selection.
+		struct MainWorldCameraSnapshot
+		{
+			FrameBuffer camera{};
+			uint32_t frame = 0;
+			bool valid = false;
+		};
+		extern MainWorldCameraSnapshot mainWorldCameraSnapshot;
+
 		extern int32_t* frameCounter;
 		extern int* viewWidth;
 		extern int* viewHeight;
