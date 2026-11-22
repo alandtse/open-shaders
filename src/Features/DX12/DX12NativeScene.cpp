@@ -232,8 +232,8 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 	const auto& mainWorld = globals::game::mainWorldCameraSnapshot;
 	const bool mainWorldReady = mainWorld.valid && mainWorld.frame == frame;
 	const globals::FrameBuffer* camera = geometryPreview ?
-		(mainWorldReady ? &mainWorld.camera : nullptr) :
-		&globals::game::frameBufferCached.nonVR;
+	                                         (mainWorldReady ? &mainWorld.camera : nullptr) :
+	                                         &globals::game::frameBufferCached.nonVR;
 	raster.Capture(*backend, sources, Util::GetCurrentSceneDepthSRV(false), camera, frame);
 	// The active view may occupy only a subrect of the full-size raster allocation.
 	const auto viewport = Util::ConvertToDynamic(globals::state->screenSize);
