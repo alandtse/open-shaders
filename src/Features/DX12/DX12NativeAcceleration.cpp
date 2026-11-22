@@ -1,14 +1,14 @@
 #include "DX12NativeAcceleration.h"
 
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <directx/d3dx12.h>
 #include <limits>
-#include <chrono>
-#include <condition_variable>
-#include <thread>
 #include <ranges>
 #include <stdexcept>
+#include <thread>
 #include <unordered_set>
 
 namespace DX12Native
