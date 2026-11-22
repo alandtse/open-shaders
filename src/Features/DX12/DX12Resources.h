@@ -38,8 +38,8 @@ namespace DX12
 		{
 			Requested,
 			Preparing,
-			Ready,        // Geometry prepared and authoritative coverage verified.
-			ReadyPartial, // Valid geometry/lights, but shadow-offload coverage not certified.
+			Ready,         // Geometry prepared and authoritative coverage verified.
+			ReadyPartial,  // Valid geometry/lights, but shadow-offload coverage not certified.
 			RetryWaiting,
 			Incomplete,
 			Deferred  // Predictive geometry exceeded its CPU residency allowance; retry if promoted active.
@@ -198,6 +198,7 @@ private:
 	std::optional<DX12::SubcellKey> inFlight;
 	std::atomic<std::shared_ptr<const std::string>> preparationStatus{ std::make_shared<const std::string>("Awaiting preparation") };
 	std::atomic<std::shared_ptr<const DX12::PreparationStats>> generationStats{
-		std::make_shared<const DX12::PreparationStats>() };
+		std::make_shared<const DX12::PreparationStats>()
+	};
 	Settings settings;
 };

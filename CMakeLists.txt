@@ -1789,7 +1789,11 @@ endif()
 
 add_custom_command(
     OUTPUT ${AIO_PACKAGE}
-    DEPENDS ${CORE_SOURCES} ${FFX_RUNTIME_FILES} ${DX12_RESOURCES_AIO_EXE} ${_aio_manual_cmds}
+    DEPENDS
+        ${CORE_SOURCES}
+        ${FFX_RUNTIME_FILES}
+        ${DX12_RESOURCES_AIO_EXE}
+        ${_aio_manual_cmds}
     COMMENT "Creating AIO zip package (manual)"
 )
 add_custom_target("Package-AIO-Manual" DEPENDS ${AIO_PACKAGE})

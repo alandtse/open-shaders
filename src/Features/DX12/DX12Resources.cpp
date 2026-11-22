@@ -246,7 +246,7 @@ namespace DX12
 			shape->indices.size() % 3)
 			return false;
 		const uint64_t shapeBytes = uint64_t(shape->positions.size()) * sizeof(float3) +
-			uint64_t(shape->indices.size()) * sizeof(uint32_t);
+		                            uint64_t(shape->indices.size()) * sizeof(uint32_t);
 		if (!shapeBytes || shapeBytes > kMaximumSingleShapeBytes)
 			return false;
 		std::scoped_lock lock(mutex);
@@ -262,8 +262,8 @@ namespace DX12
 		if (!std::ranges::contains(current->requested, key))
 			return false;
 		if (std::ranges::any_of(current->runtimeShapes, [&](const RuntimeShape& item) {
-			return item.shape && item.shape->identity == shape->identity;
-		}))
+				return item.shape && item.shape->identity == shape->identity;
+			}))
 			return false;
 		auto next = std::make_shared<Grid>(*current);
 		next->runtimeShapes.push_back({ key, std::move(shape), shapeBytes });
@@ -365,7 +365,8 @@ void DX12Resources::LoadSettings(json& input)
 {
 	const uint32_t requested = input.value("SubcellSize", DX12::kSubcellSizes.front());
 	const uint32_t selected = std::ranges::contains(DX12::kSubcellSizes, requested) ?
-		requested : DX12::kSubcellSizes.front();
+	                              requested :
+	                              DX12::kSubcellSizes.front();
 	if (settings.SubcellSize != selected) {
 		settings.SubcellSize = selected;
 		ResetPreparation();
@@ -402,7 +403,7 @@ void DX12Resources::PreShadowMaps()
 	const uint32_t cellID = cell->GetFormID();
 	if (lastVisitedCell && cellID && cellID != lastVisitedCell) {
 		if (cellID == previousVisitedCell)
-			distinctTransitions = 0; // Returning to a visited cell.
+			distinctTransitions = 0;  // Returning to a visited cell.
 		else if (++distinctTransitions >= 2) {
 			grid.FlushRetiredCache();
 			flushGeneration.fetch_add(1, std::memory_order_release);
@@ -435,7 +436,7 @@ void DX12Resources::PreShadowMaps()
 	if (auto result = companion->Take()) {
 		inFlight.reset();
 		preparationStatus.store(std::make_shared<const std::string>(
-			result->failure.empty() ? "Companion returned valid geometry and light data" : result->failure),
+									result->failure.empty() ? "Companion returned valid geometry and light data" : result->failure),
 			std::memory_order_release);
 		adopting = std::make_unique<DX12::CompanionResult>(std::move(*result));
 		adopting->publication.lights.reserve(adopting->lights.size());
@@ -476,7 +477,7 @@ void DX12Resources::PreShadowMaps()
 				const auto& publication = adopting->publication;
 				const bool valid = publication.validated;
 				const bool prepared = valid && publication.enumerationComplete &&
-					publication.failedShapes == 0 && publication.eligibleShapes == publication.shapes.size();
+				                      publication.failedShapes == 0 && publication.eligibleShapes == publication.shapes.size();
 				const bool wasPredictiveRequest = adopting->predictive;
 				const double elapsedMs = adopting->preparationMs;
 				if (grid.Publish(std::move(adopting->publication))) {
@@ -540,7 +541,7 @@ std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const
 	const auto append = [&](const auto& tiles) {
 		for (const auto& tile : tiles) {
 			if (!tile || (tile->state != DX12::Tile::State::Ready &&
-			                 tile->state != DX12::Tile::State::ReadyPartial))
+							 tile->state != DX12::Tile::State::ReadyPartial))
 				continue;
 			for (const auto& light : tile->lights) {
 				if (light.referenceID && !seen.insert(light.referenceID).second)
