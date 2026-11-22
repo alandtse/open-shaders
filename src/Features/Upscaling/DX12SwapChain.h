@@ -111,6 +111,8 @@ public:
 	bool IsAntiLag2Active() const { return antiLag2Context && antiLag2Enabled; }
 
 	void CreateD3D12Device(IDXGIAdapter* a_adapter);
+	/** @brief Shares the game's D3D11 device and context and creates the D3D12 device and queue on its adapter; true once all four exist. */
+	bool EnsureSharedDevice();
 	void CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
 	void CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
 

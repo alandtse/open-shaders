@@ -10,6 +10,7 @@
 #include <dxgi1_3.h>
 #include <exception>
 #include <optional>
+#include <utility>
 
 #include "../../Buffer.h"
 #include "../../Deferred.h"
@@ -18,6 +19,7 @@
 #include "../../State.h"
 #include "../../Util.h"
 #include "../../Utils/NvApiDrs.h"
+#include "../DX12/DX12Control.h"
 #include "../Upscaling.h"
 #include "CameraReprojection.h"
 #include "DLSSGDynamic.h"
@@ -169,15 +171,16 @@ void Streamline::LoadInterposer()
 	sl::Preferences pref;
 
 	// DX11 instance: DLSS upscaling + low-latency (Reflex/PCL).
-	// DX12 instance: DLSS-G frame generation + Reflex/PCL (DLSS-G requires Reflex).
+	// DX12 instance: DLSS-G frame generation + Reflex/PCL (DLSS-G requires Reflex), and DLSS on Native Composite's color.
 	sl::Feature featuresDX11[] = { sl::kFeatureDLSS, sl::kFeatureReflex, sl::kFeaturePCL };
-	sl::Feature featuresDX12[] = { sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeaturePCL };
+	sl::Feature featuresDX12[] = { sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeaturePCL, sl::kFeatureDLSS };
+	dlssRequested = renderAPI == sl::RenderAPI::eD3D11 || globals::features::dx12Control.IsActive();
 	if (renderAPI == sl::RenderAPI::eD3D11) {
 		pref.featuresToLoad = featuresDX11;
 		pref.numFeaturesToLoad = _countof(featuresDX11);
 	} else {
 		pref.featuresToLoad = featuresDX12;
-		pref.numFeaturesToLoad = _countof(featuresDX12);
+		pref.numFeaturesToLoad = _countof(featuresDX12) - (dlssRequested ? 0 : 1);
 	}
 
 	// Set log level from settings
@@ -243,6 +246,7 @@ void Streamline::LoadInterposer()
 		logger::critical("[Streamline {}] Failed to initialize Streamline: slInit returned {} ({})", instanceTag, magic_enum::enum_name(res), std::to_underlying(res));
 	} else {
 		initialized = true;
+		d3d12DeviceBound = false;
 		featureDLSS = false;
 		featureDLSSG = false;
 		featureReflex = false;
@@ -290,10 +294,11 @@ void Streamline::CheckFeatures(IDXGIAdapter* a_adapter)
 		outAvailable = slIsFeatureSupported(feature, adapterInfo) == sl::Result::eOk;
 	};
 
-	if (renderAPI == sl::RenderAPI::eD3D11) {
+	if (dlssRequested) {
 		checkFeatureAvailability(sl::kFeatureDLSS, "DLSS", featureDLSS);
-		logger::info("[Streamline DX11] DLSS {} available", featureDLSS ? "is" : "is not");
-	} else {
+		logger::info("[Streamline {}] DLSS {} available", instanceTag, featureDLSS ? "is" : "is not");
+	}
+	if (renderAPI == sl::RenderAPI::eD3D12) {
 		checkFeatureAvailability(sl::kFeatureDLSS_G, "DLSS-G", featureDLSSG);
 		logger::info("[Streamline DX12] DLSS-G {} available", featureDLSSG ? "is" : "is not");
 	}
@@ -371,8 +376,19 @@ void Streamline::PostDevice()
 		slReflexSleep = nullptr;
 		slReflexSetOptions = nullptr;
 		slPCLSetMarker = nullptr;
+		slDLSSGetOptimalSettings = nullptr;
+		slDLSSGetState = nullptr;
+		slDLSSSetOptions = nullptr;
 
 		if (slGetFeatureFunction) {
+			if (featureDLSS) {
+				bool dlssFnsBound = true;
+				dlssFnsBound &= BindFeatureFunction(sl::kFeatureDLSS, "slDLSSGetOptimalSettings", (void*&)slDLSSGetOptimalSettings);
+				dlssFnsBound &= BindFeatureFunction(sl::kFeatureDLSS, "slDLSSGetState", (void*&)slDLSSGetState);
+				dlssFnsBound &= BindFeatureFunction(sl::kFeatureDLSS, "slDLSSSetOptions", (void*&)slDLSSSetOptions);
+				featureDLSS = dlssFnsBound;
+			}
+
 			bool dlssgFnsBound = true;
 			dlssgFnsBound &= BindFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGGetState", (void*&)slDLSSGGetState);
 			dlssgFnsBound &= BindFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGSetOptions", (void*&)slDLSSGSetOptions);
@@ -430,10 +446,12 @@ void Streamline::SetD3DDevice12(ID3D12Device* a_device)
 {
 	if (!initialized || !slSetD3DDevice || !a_device)
 		return;
-	if (SL_FAILED(result, slSetD3DDevice(static_cast<void*>(a_device))))
+	if (SL_FAILED(result, slSetD3DDevice(static_cast<void*>(a_device)))) {
 		logger::error("[Streamline DX12] slSetD3DDevice(device) failed: {}", magic_enum::enum_name(result));
-	else
+	} else {
+		d3d12DeviceBound = true;
 		logger::info("[Streamline DX12] D3D12 device bound");
+	}
 }
 
 void Streamline::EnsureDriverProfileAllowsDLSSG()
@@ -583,7 +601,8 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	// Reset only when that fill couldn't run — accumulating against zero MVs ghosts.
 	const bool menuReset = state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid;
 	const bool gazeReset = upscaling.foveatedRender.ConsumeGazeEyeReset(eyeIndex);
-	slConstants.reset = (menuReset || gazeReset) ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+	const bool historyReset = std::exchange(pendingHistoryReset, false);
+	slConstants.reset = (menuReset || gazeReset || historyReset) ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 
 	// Apply foveated mvec scale only when the subrect execute path is actually
 	// running this frame (flag set by ExecuteFoveatedRoute). The standard full-frame
@@ -724,7 +743,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, u
 	dlssOptions.sharpness = 0.0f;
 
 	if (SL_FAILED(result, slDLSSSetOptions(p_viewport, dlssOptions))) {
-		logger::critical("[Streamline DX11] Could not enable DLSS");
+		logger::critical("[Streamline {}] Could not enable DLSS", instanceTag);
 	}
 }
 
@@ -806,17 +825,54 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	if (state->frameAnnotations)
 		state->EndPerfEvent();
 
-	const auto frame = state->frameCount;
-	const uint32_t logEye = globals::game::isVR ? eyeIndex : 0u;
-	if (evalResult == sl::Result::eWarnOutOfVRAM) {
+	return ReportDLSSEvaluateResult(evalResult, eyeIndex);
+}
+
+bool Streamline::EvaluateDLSSDX12(ID3D12GraphicsCommandList* a_commandList,
+	ID3D12Resource* a_colorIn, ID3D12Resource* a_colorOut, ID3D12Resource* a_depth,
+	ID3D12Resource* a_motionVectors, ID3D12Resource* a_reactiveMask, ID3D12Resource* a_transparencyMask,
+	const sl::Extent& a_extentIn, const sl::Extent& a_extentOut)
+{
+	if (!a_commandList || !CheckFrameConstants(viewport))
+		return false;
+
+	SetDLSSOptions(viewport, a_extentOut.width);
+
+	constexpr uint32_t kInputState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+	sl::Resource colorInRes = { sl::ResourceType::eTex2d, a_colorIn, kInputState };
+	sl::Resource colorOutRes = { sl::ResourceType::eTex2d, a_colorOut, D3D12_RESOURCE_STATE_UNORDERED_ACCESS };
+	sl::Resource depthRes = { sl::ResourceType::eTex2d, a_depth, kInputState };
+	sl::Resource mvecRes = { sl::ResourceType::eTex2d, a_motionVectors, kInputState };
+	sl::Resource reactiveMaskRes = { sl::ResourceType::eTex2d, a_reactiveMask, kInputState };
+	sl::Resource transparencyMaskRes = { sl::ResourceType::eTex2d, a_transparencyMask, kInputState };
+
+	sl::ResourceTag tags[] = {
+		{ &colorInRes, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &a_extentIn },
+		{ &colorOutRes, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &a_extentOut },
+		{ &depthRes, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilEvaluate, &a_extentIn },
+		{ &mvecRes, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilEvaluate, &a_extentIn },
+		{ &reactiveMaskRes, sl::kBufferTypeBiasCurrentColorHint, sl::ResourceLifecycle::eValidUntilEvaluate, &a_extentIn },
+		{ &transparencyMaskRes, sl::kBufferTypeTransparencyHint, sl::ResourceLifecycle::eValidUntilEvaluate, &a_extentIn }
+	};
+
+	sl::ViewportHandle view(viewport);
+	const sl::BaseStructure* inputs[] = { &view, &tags[0], &tags[1], &tags[2], &tags[3], &tags[4], &tags[5] };
+	return ReportDLSSEvaluateResult(slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, _countof(inputs), a_commandList), 0);
+}
+
+bool Streamline::ReportDLSSEvaluateResult(sl::Result a_result, uint32_t a_eyeIndex)
+{
+	const auto frame = globals::state->frameCount;
+	const uint32_t logEye = globals::game::isVR ? a_eyeIndex : 0u;
+	if (a_result == sl::Result::eWarnOutOfVRAM) {
 		if (ShouldLogDLSSProblem(DLSSLogKind::kVramWarning, logEye, frame))
-			logger::warn("[Streamline {}] DLSS output valid but VRAM budget exceeded{} frame={}", instanceTag, globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", frame);
+			logger::warn("[Streamline {}] DLSS output valid but VRAM budget exceeded{} frame={}", instanceTag, globals::game::isVR ? std::format(" for eye {}", a_eyeIndex) : "", frame);
 		return true;
 	}
 
-	if (evalResult != sl::Result::eOk) {
+	if (a_result != sl::Result::eOk) {
 		if (ShouldLogDLSSProblem(DLSSLogKind::kEvaluateError, logEye, frame))
-			logger::error("[Streamline {}] slEvaluateFeature failed{} frame={} result={} ({})", instanceTag, globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", frame, static_cast<int>(evalResult), magic_enum::enum_name(evalResult));
+			logger::error("[Streamline {}] slEvaluateFeature failed{} frame={} result={} ({})", instanceTag, globals::game::isVR ? std::format(" for eye {}", a_eyeIndex) : "", frame, static_cast<int>(a_result), magic_enum::enum_name(a_result));
 		return false;
 	}
 
@@ -964,10 +1020,17 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		sl::Extent extentIn{ 0, 0, (uint)renderSize.x, (uint)renderSize.y };
 		sl::Extent extentOut{ 0, 0, (uint)displaySize.x, (uint)displaySize.y };
 
-		EvaluateDLSS(viewport, 0,
-			a_upscalingTexture, colorOut,
-			Util::AsReal(depthTexture.texture), a_motionVectors, a_reactiveMask, a_transparencyCompositionMask,
-			extentIn, extentOut, (uint)displaySize.x);
+		const bool nativeWasActive = upscaling.nativeDLSS.IsActive();
+		if (upscaling.nativeDLSS.Upscale(colorOut, a_motionVectors, a_reactiveMask, a_transparencyCompositionMask, extentIn, extentOut)) {
+			// A later DX11 fallback then builds a fresh feature instead of reusing history from before the native frames.
+			if (!nativeWasActive)
+				DestroyDLSSResources();
+		} else {
+			EvaluateDLSS(viewport, 0,
+				a_upscalingTexture, colorOut,
+				Util::AsReal(depthTexture.texture), a_motionVectors, a_reactiveMask, a_transparencyCompositionMask,
+				extentIn, extentOut, (uint)displaySize.x);
+		}
 	}
 }
 
