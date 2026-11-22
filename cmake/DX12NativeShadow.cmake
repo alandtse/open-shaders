@@ -28,17 +28,24 @@ if(NATIVE_SHADOW_DXC)
     add_custom_target(DX12NativeShadowDXIL DEPENDS "${_shadow_dxil}")
     add_dependencies(${PROJECT_NAME} DX12NativeShadowDXIL)
     if(DEFINED AIO_DIR)
+        set(_shadow_aio_dxil "${AIO_DIR}/Shaders/DX12NativeScene/ShadowMask.dxil")
         add_custom_command(
-            TARGET ${PROJECT_NAME}
-            POST_BUILD
-            COMMAND
-                ${CMAKE_COMMAND} -E make_directory
-                "${AIO_DIR}/Shaders/DX12NativeScene"
-            COMMAND
-                ${CMAKE_COMMAND} -E copy_if_different "${_shadow_dxil}"
-                "${AIO_DIR}/Shaders/DX12NativeScene/ShadowMask.dxil"
+            OUTPUT "${_shadow_aio_dxil}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${AIO_DIR}/Shaders/DX12NativeScene"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_shadow_dxil}" "${_shadow_aio_dxil}"
+            DEPENDS "${_shadow_dxil}"
+            COMMENT "Staging DXIL ShadowMask.dxil into the AIO shader tree"
             VERBATIM
         )
+        add_custom_target(DX12NativeShadowAIO DEPENDS "${_shadow_aio_dxil}")
+        add_dependencies(DX12NativeShadowAIO DX12NativeShadowDXIL)
+        if(TARGET prepare_shaders)
+            add_dependencies(DX12NativeShadowAIO prepare_shaders)
+        endif()
+        if(TARGET PREPARE_AIO)
+            add_dependencies(DX12NativeShadowAIO PREPARE_AIO)
+        endif()
     endif()
     install(
         FILES "${_shadow_dxil}"
