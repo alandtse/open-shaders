@@ -82,6 +82,8 @@ void DX12Control::DrawSettings()
 				ImGui::TextDisabled("Preview traces published TLAS triangles, not missing-NIF placeholders.");
 				ImGui::TextDisabled("Visualizations use Native Composite -> FSR; non-FSR paths are unchanged.");
 				globals::features::dx12NativeScene.DrawDiagnostics();
+				if (const auto status = globals::features::dx12Resources.GetPreparationStatus())
+					ImGui::TextWrapped("Companion: %s", status->c_str());
 				if (ImGui::CollapsingHeader("Companion / Geometry (details)"))
 					globals::features::dx12Resources.DrawDiagnostics();
 				ImGui::SeparatorText("Native Composite / DXGI budget");

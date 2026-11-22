@@ -26,8 +26,6 @@ void DX12NativeScene::DrawSettings()
 		std::scoped_lock lock(runtimeLightMutex);
 		frozenNativeLights.clear();
 	}
-	ImGui::TextDisabled("Static casters are omitted only for lights confirmed in Native Scene.");
-	ImGui::TextDisabled("Dynamic raster casters always remain enabled.");
 	static constexpr const char* fractions[] = {
 		"Full", "Two-thirds", "Half", "One-third", "Quarter",
 		"One-sixth", "One-ninth", "Four-ninths"
@@ -47,9 +45,6 @@ void DX12NativeScene::DrawSettings()
 	if (ImGui::SliderFloat("Shadow fade range fraction", &fade, 0.0f, 1.0f, "%.2f"))
 		shadowFadeRange = std::round(fade * 50.0f) / 50.0f;
 	ImGui::SliderFloat("Shadow falloff curve", &shadowFalloffCurve, 0.0f, 2.5f, "%.2f");
-	ImGui::TextDisabled("Full density = every pixel. Shadow visibility traces one ray per light.");
-	ImGui::TextDisabled("Raw shadowmask always uses the full render resolution.");
-	ImGui::TextDisabled("Capture is independent of native acceleration, Native Composite, and FSR.");
 }
 
 void DX12NativeScene::DrawDiagnostics() const
