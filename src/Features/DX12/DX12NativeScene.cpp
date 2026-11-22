@@ -25,22 +25,24 @@ void DX12NativeScene::DrawSettings()
 		densityMode = static_cast<uint32_t>(mode);
 	ImGui::TextDisabled("Raw shadowmask always uses the full render resolution.");
 	ImGui::TextDisabled("Capture is independent of native acceleration, Native Composite, and FSR.");
-
 }
 
 void DX12NativeScene::DrawDiagnostics() const
 {
 	ImGui::SeparatorText("Native Scene / DXR");
 	ImGui::Text("Shadowmask dispatch: %s", shadowMaskEnabled &&
-		globals::features::dx12Control.IsShadowOffloadMode() ? "enabled" : "paused");
+												   globals::features::dx12Control.IsShadowOffloadMode() ?
+											   "enabled" :
+											   "paused");
 	ImGui::Text("Trace density mode: %u (0=full, 1=2/3, 2=1/2, 3=1/3, 4=1/4, 5=1/6, 6=1/9, 7=4/9)", densityMode);
 	const auto lights = shadowLights.load(std::memory_order_acquire);
 	ImGui::Text("Prepared lights: %zu (first %zu traceable this frame)",
-		lights ? lights->size() : 0u, lights ? std::min(lights->size(), size_t{64}) : 0u);
+		lights ? lights->size() : 0u, lights ? std::min(lights->size(), size_t{ 64 }) : 0u);
 	const auto scene = acceleration.GetScene();
 	ImGui::Text("TLAS: %s", scene && scene->acceleration ? "published" : "not available");
 	const uint32_t frame = globals::game::graphicsState ?
-		globals::game::graphicsState->GetFrameCount() : 0u;
+	                           globals::game::graphicsState->GetFrameCount() :
+	                           0u;
 	const auto raw = shadows.Get(frame);
 	ImGui::Text("Raw mask for engine frame %u: %s", frame, raw ? "submitted" : "not published");
 	if (raw)
