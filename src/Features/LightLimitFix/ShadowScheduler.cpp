@@ -15,8 +15,8 @@
 #include "../../Utils/Game.h"
 #include "../../Utils/PerfUtils.h"
 #include "../../Utils/UI.h"
-#include "../LightLimitFix.h"
 #include "../DX12/DX12NativeScene.h"
+#include "../LightLimitFix.h"
 #include "../Upscaling.h"
 #include "../VR.h"
 #include "Common.h"
@@ -564,7 +564,7 @@ namespace ShadowCasterManager
 		bool bakeUnproven = false;
 		int bakeEpoch = -1;                      ///< classifier epoch of the latest StaticOnly bake
 		bool bakeStale = false;                  ///< a caster changed class since that bake: render full until it is rebaked
-		bool nativeDynamicOnly = false;  ///< Static shadows are delegated to DX12.
+		bool nativeDynamicOnly = false;          ///< Static shadows are delegated to DX12.
 		CasterPass accumMode = CasterPass::All;  ///< the split decision of this frame's first accumulate
 		RE::NiMatrix3 lastRot{};                 ///< light rotation at the previous accumulate
 	};
@@ -1310,7 +1310,7 @@ namespace ShadowCasterManager
 			// Native-owned static shadows never require a legacy atlas bake.
 			const bool flickers = FlickersFromLiveOrigin(light->light.get());
 			const bool native = globals::features::dx12NativeScene.OwnsStaticForLight(light, slotIndex) &&
-				(!flickers || globals::features::dx12NativeScene.OffloadFlickeringStatic());
+			                    (!flickers || globals::features::dx12NativeScene.OffloadFlickeringStatic());
 			bool split = !native && StaticAtlasReady() && !carrier && !flickers;
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
@@ -1323,7 +1323,7 @@ namespace ShadowCasterManager
 				st->bakeThisFrame = false;
 			}
 			CasterPass mode = native ? CasterPass::DynamicOnly :
-				(repeatThisFrame ? st->accumMode : CasterPass::All);
+			                           (repeatThisFrame ? st->accumMode : CasterPass::All);
 			uint64_t bakedHash = 0;
 			bool staticValid = false;
 			bool staticEmpty = false;
@@ -4331,8 +4331,8 @@ namespace ShadowCasterManager
 				// when the scheduler did not admit a redraw this frame.
 				if (auto it = s_splitState.find(e.Light); it != s_splitState.end()) {
 					const bool native = globals::features::dx12NativeScene.OwnsStaticForLight(e.Light, i) &&
-						(!FlickersFromLiveOrigin(e.Light->light.get()) ||
-							globals::features::dx12NativeScene.OffloadFlickeringStatic());
+					                    (!FlickersFromLiveOrigin(e.Light->light.get()) ||
+											globals::features::dx12NativeScene.OffloadFlickeringStatic());
 					TransitionNativeShadowOwnership(it->second, i, native);
 				}
 				if (!e.RedrawFrame)
@@ -4343,7 +4343,7 @@ namespace ShadowCasterManager
 				if (AtlasActive()) {
 					auto* split = StaticAtlasReady() ? &s_splitState[e.Light] : nullptr;
 					const bool useSplit = split && !split->nativeDynamicOnly &&
-						!split->splitExcluded && !split->fullThisFrame;
+					                      !split->splitExcluded && !split->fullThisFrame;
 					AtlasTileTexels live{};
 					const bool resizeAfterComposite = useSplit && !split->bakeThisFrame &&
 					                                  !SlotTileFits(i, e.pendingScale) && GetSlotTileTexels(i, live) && live.contentValid;
