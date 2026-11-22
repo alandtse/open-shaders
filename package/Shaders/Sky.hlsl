@@ -136,6 +136,10 @@ float GetSunGlareVisibility(uint eyeIndex)
 }
 #	endif
 
+// Matches the engine's rasterizer depth bias for these passes, which a float reverse-Z buffer cannot apply.
+static const float MoonMaskBiasUnits = 3.0;
+static const float MoonBiasUnits = 9.0;
+
 VS_OUTPUT main(VS_INPUT input)
 {
 	VS_OUTPUT vsout;
@@ -217,7 +221,16 @@ VS_OUTPUT main(VS_INPUT input)
 
 #	ifdef REVERSE_Z
 	float4 skyPosition = mul(WorldViewProj[eyeIndex], inputPosition);
-	vsout.Position = float4(skyPosition.xy, FrameBuffer::FarPlaneClipZ(skyPosition.w), skyPosition.w);
+#		if defined(MOONMASK)
+	float skyBiasUnits = MoonMaskBiasUnits;
+#		elif defined(CLOUDS)
+	float skyBiasUnits = MoonBiasUnits;
+#		elif defined(TEX)
+	float skyBiasUnits = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsMoon) ? MoonBiasUnits : 0.0;
+#		else
+	float skyBiasUnits = 0.0;
+#		endif
+	vsout.Position = float4(skyPosition.xy, FrameBuffer::FarPlaneClipZNearer(skyPosition.w, skyBiasUnits), skyPosition.w);
 #	else
 	vsout.Position = mul(WorldViewProj[eyeIndex], inputPosition).xyww;
 #	endif
