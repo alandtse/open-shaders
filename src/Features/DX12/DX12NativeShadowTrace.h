@@ -15,6 +15,7 @@ namespace DX12Native
 	struct ShadowTraceControls
 	{
 		uint32_t densityMode = 0;
+		uint32_t debugGeometryMode = 0;  // 0 normal, 1 all TLAS, 2 companion, 3 runtime.
 		uint32_t emitterSamples = 4;
 		bool stochastic = false;
 		bool nearLightExclusion = false;

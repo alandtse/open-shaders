@@ -65,12 +65,18 @@ void DX12NativeScene::DrawDiagnostics() const
 	const uint32_t frame = globals::game::graphicsState ?
 	                           globals::game::graphicsState->GetFrameCount() :
 	                           0u;
+	if (scene && scene->inputs) {
+		const auto& geometry = scene->inputs->geometry;
+		const auto runtime = std::ranges::count_if(geometry, [](const auto& input) { return input.supplementary; });
+		ImGui::Text("Published TLAS shapes: companion %zu, runtime %zu", geometry.size() - size_t(runtime), size_t(runtime));
+	}
 	const auto raw = shadows.Get(frame);
 	ImGui::Text("Raw mask for engine frame %u: %s", frame, raw ? "submitted" : "not published");
-	if (raw)
+	if (raw) {
 		ImGui::Text("Mask: %u x %u; GPU density %u; fence %llu",
 			raw->width, raw->height, raw->densityMode, static_cast<unsigned long long>(raw->readyValue));
-	if (raw->readyFence) {
+	}
+	if (raw && raw->readyFence) {
 		const auto done = raw->readyFence->GetCompletedValue();
 		ImGui::Text("Shadow GPU fence: %s", done != UINT64_MAX && done >= raw->readyValue ?
 												"completed" :
@@ -218,7 +224,9 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
 	raster.Capture(*backend, sources, Util::GetCurrentSceneDepthSRV(false),
 		&globals::game::frameBufferCached.nonVR, frame);
-	if (shadowMaskEnabled && globals::features::dx12Control.IsShadowOffloadMode()) {
+	const uint32_t previewMode = globals::features::dx12Control.GetShadowPreview();
+	const bool geometryPreview = previewMode >= 3u && previewMode <= 5u;
+	if ((shadowMaskEnabled && globals::features::dx12Control.IsShadowOffloadMode()) || geometryPreview) {
 		const auto captured = raster.Get(frame);
 		const auto built = acceleration.GetScene();
 		const auto lights = shadowLights.load(std::memory_order_acquire);
@@ -226,6 +234,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 		// The only RayQuery dispatch remains inside the DX12 shadow trace.
 		const DX12Native::ShadowTraceControls controls{
 			.densityMode = densityMode,
+			.debugGeometryMode = geometryPreview ? previewMode - 2u : 0u,
 			.emitterSamples = emitterRayCount,
 			.stochastic = stochasticEmitterSampling,
 			.nearLightExclusion = nearLightShadowExclusion,

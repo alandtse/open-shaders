@@ -71,12 +71,16 @@ void DX12Control::DrawSettings()
 			break;
 		case 4:
 			{
-				static constexpr const char* previewNames[] = { "Off", "Raw shadowmask", "Reconstructed shadowmask" };
+				static constexpr const char* previewNames[] = { "Off", "Raw shadowmask", "Reconstructed shadowmask",
+					"DX12 geometry (all)", "DX12 geometry (companion)", "DX12 geometry (runtime)" };
 				int preview = int(shadowPreview.load(std::memory_order_relaxed));
 				if (ImGui::Combo("Shadowmask preview", &preview, previewNames, int(std::size(previewNames))))
 					shadowPreview.store(uint32_t(preview), std::memory_order_relaxed);
 				ImGui::TextDisabled("Raw: magenta = density omitted; red = invalid receiver; blue = no applicable light.");
 				ImGui::TextDisabled("Reconstructed: orange = no valid neighborhood. Full raw density cannot omit pixels.");
+				ImGui::TextDisabled("DX12 geometry: cyan = companion, amber = runtime; dim = no TLAS hit.");
+				ImGui::TextDisabled("Preview traces published TLAS triangles, not missing-NIF placeholders.");
+				ImGui::TextDisabled("Visualizations use Native Composite -> FSR; non-FSR paths are unchanged.");
 				globals::features::dx12NativeScene.DrawDiagnostics();
 				if (ImGui::CollapsingHeader("Companion / Geometry (details)"))
 					globals::features::dx12Resources.DrawDiagnostics();
