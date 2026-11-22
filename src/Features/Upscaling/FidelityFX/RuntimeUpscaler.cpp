@@ -17,8 +17,8 @@
 
 #include "../../../GpuPass.h"
 #include "../../../State.h"
-#include "../../ReverseZ.h"
 #include "../../DX12/DX12Control.h"
+#include "../../ReverseZ.h"
 #include "../../Upscaling.h"
 #include "../DX12SwapChain.h"
 #include "Utils/SehGuard.h"
@@ -1263,7 +1263,7 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			// Developer geometry previews are diagnostic colors, not temporally
 			// stable scene radiance; prevent FSR history from dragging the overlay.
 			dispatchParameters.reset = (state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid) ||
-				(geometryPreview >= 3u && geometryPreview <= 5u);
+			                           (geometryPreview >= 3u && geometryPreview <= 5u);
 			dispatchParameters.cameraNear = *globals::game::cameraNear;
 			dispatchParameters.cameraFar = *globals::game::cameraFar;
 			dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
