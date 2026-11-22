@@ -1,5 +1,7 @@
 #pragma once
 
+#include "DX12SwapChain.h"
+#include "Features/DX12/VideoMemoryBudget.h"
 #include "GraphicsInterop.h"
 #include "Streamline.h"
 
@@ -68,9 +70,12 @@ private:
 		bool operator==(const FeatureKey&) const = default;
 	};
 
-	std::array<CommandContext, 3> commandContexts;
+	// One more than the back buffers DLSS-G can queue, so the oldest list has always finished.
+	std::array<CommandContext, DX12SwapChain::kMaxBackBuffers + 1> commandContexts;
 	std::array<std::unique_ptr<WrappedResource>, kSharedCount> shared;
 	std::array<D3D11_TEXTURE2D_DESC, kSharedCount> sharedDescs{};
+	uint64_t sharedBytes = 0;
+	DX12Native::VideoMemoryBudget videoBudget;
 	SharedFence fence;
 	uint64_t lastSubmitted = 0;
 	std::optional<FeatureKey> featureKey;

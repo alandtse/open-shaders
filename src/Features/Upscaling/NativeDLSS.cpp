@@ -161,6 +161,7 @@ void NativeDLSS::Reset()
 		ParkInFlight();
 	}
 	sharedDescs = {};
+	sharedBytes = 0;
 	featureKey.reset();
 }
 
@@ -252,18 +253,41 @@ bool NativeDLSS::EnsureSharedResources(const std::array<ID3D11Resource*, kShared
 	if (!WaitForSubmitted())
 		return false;
 	auto& swapChain = globals::features::upscaling.dx12SwapChain;
+	auto* device12 = swapChain.d3d12Device.get();
+	uint64_t bytes = 0;
+	for (const auto& desc : descs) {
+		const auto allocation = CD3DX12_RESOURCE_DESC::Tex2D(desc.Format, desc.Width, desc.Height, 1, 1, 1, 0,
+			desc.BindFlags & D3D11_BIND_UNORDERED_ACCESS ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE);
+		const uint64_t size = device12->GetResourceAllocationInfo(0, 1, &allocation).SizeInBytes;
+		if (size == UINT64_MAX || bytes > UINT64_MAX - size) {
+			Latch("a DX12 DLSS shared texture has no supported allocation size");
+			return false;
+		}
+		bytes += size;
+	}
+	const auto before = videoBudget.Query(device12, sharedBytes);
+	if (bytes > before.effectiveBytes) {
+		Latch(std::format("its shared textures need {} MiB, over the DXGI budget's {} MiB", bytes / DX12Native::VideoMemoryBudget::kMiB,
+			before.effectiveBytes / DX12Native::VideoMemoryBudget::kMiB));
+		return false;
+	}
 	static constexpr std::array<const char*, kSharedCount> kNames{ "NativeDLSS::Depth", "NativeDLSS::MotionVectors",
 		"NativeDLSS::ReactiveMask", "NativeDLSS::TransparencyMask", "NativeDLSS::Output" };
 	for (uint32_t i = 0; i < kSharedCount; ++i)
-		shared[i] = std::make_unique<WrappedResource>(descs[i], swapChain.d3d11Device.get(), swapChain.d3d12Device.get(), kNames[i]);
+		shared[i] = std::make_unique<WrappedResource>(descs[i], swapChain.d3d11Device.get(), device12, kNames[i]);
 	sharedDescs = descs;
+	sharedBytes = bytes;
+	logger::info("[Upscaling] DX12 DLSS shared textures {} MiB; DXGI local usage {} MiB before, {} MiB after, of {} MiB",
+		bytes / DX12Native::VideoMemoryBudget::kMiB, before.localUsage / DX12Native::VideoMemoryBudget::kMiB,
+		videoBudget.Query(device12, bytes).localUsage / DX12Native::VideoMemoryBudget::kMiB, before.localBudget / DX12Native::VideoMemoryBudget::kMiB);
 	return true;
 }
 
 NativeDLSS::CommandContext* NativeDLSS::AcquireCommandContext()
 {
 	auto& oldest = *std::ranges::min_element(commandContexts, {}, &CommandContext::fenceValue);
-	if (!fence.CpuWait(oldest.fenceValue, SharedFence::kFenceTimeoutMs))
+	const uint64_t completed = fence.fence12->GetCompletedValue();
+	if (completed == UINT64_MAX || completed < oldest.fenceValue)
 		return nullptr;
 	oldest.fenceValue = 0;
 	return &oldest;
