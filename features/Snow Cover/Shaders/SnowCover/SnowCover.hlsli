@@ -239,32 +239,34 @@ namespace SnowCover
 	bool UsesPBRLandscape(float2 worldPosition, bool nativePBR)
 	{
 		uint mode = SharedData::snowCoverSettings.LandscapeMaterialMode;
+		bool usesPBR = mode == PBRLandscape || (mode == NoLandscape && nativePBR);
 		[branch] if (mode == MixedLandscape)
 		{
 			int width = SharedData::snowCoverSettings.LandscapeGridWidth;
 			int2 cell = clamp(int2(floor(worldPosition / LandscapeCellSize)) - SharedData::snowCoverSettings.LandscapeGridOrigin, 0, width - 1);
-			return LandscapeMaterials[cell.y * width + cell.x] != 0;
+			usesPBR = LandscapeMaterials[cell.y * width + cell.x] != 0;
 		}
-		return mode == PBRLandscape || (mode == NoLandscape && nativePBR);
+		return usesPBR;
 	}
 #		endif
 
 	float3 SurfaceSnowAlbedo(float3 sampleColor, float3 materialAlbedo, float2 worldPosition)
 	{
+		float3 albedo = materialAlbedo;
 #		if !defined(LANDSCAPE) && !defined(TREE_ANIM) && !defined(SKINNED)
 #			if defined(TRUE_PBR)
 		[branch] if (!UsesPBRLandscape(worldPosition, true))
 		{
-			return Color::EnbColorPow(Color::DiffuseToWorking(Color::LinearToSrgb(sampleColor)));
+			albedo = Color::EnbColorPow(Color::DiffuseToWorking(Color::LinearToSrgb(sampleColor)));
 		}
 #			else
 		[branch] if (UsesPBRLandscape(worldPosition, false))
 		{
-			return Color::LinearToPBRMaterial(Color::EnbColorPow(Color::DiffuseToWorking(sampleColor, true)));
+			albedo = Color::LinearToPBRMaterial(Color::EnbColorPow(Color::DiffuseToWorking(sampleColor, true)));
 		}
 #			endif
 #		endif
-		return materialAlbedo;
+		return albedo;
 	}
 
 #		if defined(TRUE_PBR)
