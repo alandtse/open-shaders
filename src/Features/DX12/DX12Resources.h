@@ -58,7 +58,7 @@ namespace DX12
 		uint8_t preparationAttempts = 0;
 		std::chrono::steady_clock::time_point retryAfter{};
 		State state = State::Requested;
-		std::string failureReason;  // Last bounded companion failure, retained for Dev and tile hover.
+		std::string failureReason;                                       // Last bounded companion failure, retained for Dev and tile hover.
 		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;  // Bounded structured geometry diagnoses.
 	};
 
