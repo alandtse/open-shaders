@@ -1327,8 +1327,7 @@ namespace ShadowCasterManager
 			if (nativeLight)
 				globals::features::dx12NativeScene.ObserveRuntimeLight(light, LightPlacedReferenceID(nativeLight),
 					runtimeFlickers, RestOrigin(nativeLight));
-			const bool native = globals::features::dx12NativeScene.OwnsStaticForLight(light, slotIndex) &&
-			                    (!runtimeFlickers || globals::features::dx12NativeScene.OffloadFlickeringStatic());
+			const bool native = globals::features::dx12NativeScene.OwnsStaticForLight(light, slotIndex);
 			bool split = !native && StaticAtlasReady() && !carrier && !flickers;
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
@@ -4354,8 +4353,7 @@ namespace ShadowCasterManager
 					if (nativeLight)
 						globals::features::dx12NativeScene.ObserveRuntimeLight(e.Light, LightPlacedReferenceID(nativeLight),
 							runtimeFlickers, RestOrigin(nativeLight));
-					const bool native = globals::features::dx12NativeScene.OwnsStaticForLight(e.Light, i) &&
-					                    (!runtimeFlickers || globals::features::dx12NativeScene.OffloadFlickeringStatic());
+					const bool native = globals::features::dx12NativeScene.OwnsStaticForLight(e.Light, i);
 					TransitionNativeShadowOwnership(it->second, i, native);
 				}
 				if (!e.RedrawFrame)

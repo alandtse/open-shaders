@@ -39,7 +39,6 @@ struct DX12NativeScene final : Feature
 	void ObserveSCMRigidCaster(RE::BSGeometry& geometry);
 	/** @brief SCM hands native-owned lights' static casters to RayQuery and retains movers. */
 	bool OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const;
-	bool OffloadFlickeringStatic() const { return offloadFlickeringStatic; }
 	// Snapshot LLF/SCM point-light parameters without altering the DX11 light.
 	void ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID, bool flickers,
 		const RE::NiPoint3& restOrigin);
@@ -79,8 +78,10 @@ private:
 	float shadowFalloffCurve = 1.0f;
 	struct RuntimeLightSample
 	{
-		uint32_t referenceID = 0;
+		const RE::NiLight* source = nullptr;  // Identity of the SCM light actually observed.
+		uint32_t referenceID = 0;           // Corresponding prepared native-scene emitter.
 		DX12::PreparedLight value;
+		bool flickers = false;
 	};
 	mutable std::mutex runtimeLightMutex;
 	uint32_t runtimeLightFrame = UINT32_MAX;

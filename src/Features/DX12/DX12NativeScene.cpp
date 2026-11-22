@@ -16,7 +16,9 @@
 void DX12NativeScene::DrawSettings()
 {
 	ImGui::Checkbox("Independent shadowmask", &shadowMaskEnabled);
-	ImGui::Checkbox("Replace SCM static casters with native shadows", &offloadStaticShadows);
+	bool keepRasterStatic = !offloadStaticShadows;
+	if (ImGui::Checkbox("Keep raster static shadows for native-accounted lights", &keepRasterStatic))
+		offloadStaticShadows = !keepRasterStatic;
 	bool retainFlickeringRaster = !offloadFlickeringStatic;
 	if (ImGui::Checkbox("Keep raster static shadows for flickering lights", &retainFlickeringRaster))
 		offloadFlickeringStatic = !retainFlickeringRaster;
@@ -24,7 +26,8 @@ void DX12NativeScene::DrawSettings()
 		std::scoped_lock lock(runtimeLightMutex);
 		frozenNativeLights.clear();
 	}
-	ImGui::TextDisabled("Raster setting keeps/removes static casters; dynamic raster shadows remain untouched.");
+	ImGui::TextDisabled("Static casters are omitted only for lights confirmed in Native Scene.");
+	ImGui::TextDisabled("Dynamic raster casters always remain enabled.");
 	static constexpr const char* fractions[] = {
 		"Full", "Two-thirds", "Half", "One-third", "Quarter",
 		"One-sixth", "One-ninth", "Four-ninths"
@@ -164,13 +167,14 @@ void DX12NativeScene::RestoreDefaultSettings()
 
 bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const
 {
-	// Selection is per source light. It is independent of camera facing,
-	// full-tile geometry coverage, Native Lighting and FSR.
+	// SCM keeps raster dynamic casters unconditionally. Static casters may be
+	// omitted only when this exact runtime light was matched to a native emitter
+	// in the current frame; a nearby prepared light is not sufficient proof.
 	if (!light || slot < 0 || !loaded || globals::game::isVR ||
 		!globals::features::dx12Control.IsActive() ||
 		!globals::features::dx12Control.IsShadowOffloadMode() ||
 		!shadowMaskEnabled || !offloadStaticShadows ||
-		light->GetIsFrustumOrDirectionalLight())
+		light->GetIsFrustumOrDirectionalLight() || !globals::game::graphicsState)
 		return false;
 	const auto scene = acceleration.GetScene();
 	const auto lights = shadowLights.load(std::memory_order_acquire);
@@ -178,17 +182,24 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	if (!scene || !scene->acceleration || !lights || !ni)
 		return false;
 
-	const auto& position = ni->world.translate;
-	// The shadow shader traces the first 64 prepared lights in exactly this
-	// order. Do not suppress the raster caster of a light it does not trace.
-	for (size_t i = 0; i < std::min(lights->size(), size_t{ 64 }); ++i) {
+	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
+	std::scoped_lock lock(runtimeLightMutex);
+	if (runtimeLightFrame != frame)
+		return false;
+
+	const auto found = std::ranges::find_if(runtimeLightSamples, [ni](const RuntimeLightSample& sample) {
+		return sample.source == ni;
+	});
+	if (found == runtimeLightSamples.end() ||
+		(found->flickers && !offloadFlickeringStatic))
+		return false;
+
+	// The shader admits only the first 64 prepared lights. Never suppress a
+	// raster static caster for a light not actually selected for DX12 tracing.
+	const size_t limit = std::min(lights->size(), size_t{ 64 });
+	for (size_t i = 0; i < limit; ++i) {
 		const auto& candidate = (*lights)[i];
-		const float dx = position.x - candidate.position.x;
-		const float dy = position.y - candidate.position.y;
-		const float dz = position.z - candidate.position.z;
-		const float tolerance = std::clamp(candidate.radius * 0.01f, 4.0f, 32.0f);
-		if (std::isfinite(dx) && std::isfinite(dy) && std::isfinite(dz) &&
-			dx * dx + dy * dy + dz * dz <= tolerance * tolerance)
+		if (candidate.referenceID != 0 && candidate.referenceID == found->referenceID)
 			return true;
 	}
 	return false;
@@ -253,13 +264,21 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 		live.position = { restOrigin.x, restOrigin.y, restOrigin.z };
 		live = frozenNativeLights.try_emplace(matched->referenceID, live).first->second;
 	}
-	const auto it = std::ranges::find_if(runtimeLightSamples, [&](const auto& sample) {
-		return sample.referenceID == matched->referenceID;
+	// A prepared emitter must not accidentally account for two different SCM
+	// lights that happen to occupy the same position.
+	const auto it = std::ranges::find_if(runtimeLightSamples, [ni](const auto& sample) {
+		return sample.source == ni;
 	});
-	if (it != runtimeLightSamples.end())
+	if (it != runtimeLightSamples.end()) {
+		it->referenceID = matched->referenceID;
 		it->value = live;
-	else if (runtimeLightSamples.size() < 64)
-		runtimeLightSamples.push_back({ matched->referenceID, live });
+		it->flickers = flickers;
+	} else if (runtimeLightSamples.size() < 64 &&
+		!std::ranges::any_of(runtimeLightSamples, [&](const auto& sample) {
+			return sample.referenceID == matched->referenceID;
+		})) {
+		runtimeLightSamples.push_back({ ni, matched->referenceID, live, flickers });
+	}
 }
 
 void DX12NativeScene::PreShadowMaps()
