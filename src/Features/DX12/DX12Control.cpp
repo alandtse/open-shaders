@@ -42,7 +42,7 @@ void DX12Control::DrawSettings()
 		case 1:
 			globals::features::dx12NativeScene.DrawSettings();
 			break;
-		case 2:
+		case 2: {
 			ImGui::Checkbox("Spatial shadow reconstruction", &settings.SpatialReconstruction);
 			spatialReconstruction.store(settings.SpatialReconstruction, std::memory_order_relaxed);
 			int gridIndex = int((settings.ReconstructionGridSize - 3u) / 2u);
@@ -62,6 +62,7 @@ void DX12Control::DrawSettings()
 				shadowBlend.store(settings.ShadowBlend, std::memory_order_relaxed);
 			ImGui::TextDisabled("Reconstruction and shadow application run before native upscaling.");
 			break;
+		}
 		case 3:
 			ImGui::Checkbox("Enable native DX12 features (restart required)", &settings.Enabled);
 			if (settings.Enabled != bootActive.load(std::memory_order_acquire))
