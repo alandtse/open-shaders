@@ -563,7 +563,7 @@ void DX12Resources::DrawSettings()
 		drawGenerationStats();
 		ImGui::EndTable();
 	} else if (available >= 680.0f &&
-		ImGui::BeginTable("##SubcellStatusLayout", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX)) {
+			   ImGui::BeginTable("##SubcellStatusLayout", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX)) {
 		ImGui::TableSetupColumn("##SubcellMap", ImGuiTableColumnFlags_WidthFixed, 290.0f);
 		ImGui::TableSetupColumn("##SubcellDetails", ImGuiTableColumnFlags_WidthStretch);
 		ImGui::TableNextRow();
@@ -782,7 +782,8 @@ void DX12Resources::PreShadowMaps()
 					auto next = std::make_shared<DX12::PreparationStats>(
 						*generationStats.load(std::memory_order_acquire));
 					auto& timing = !wasPredictiveRequest ? next->active :
-						wasCornerRequest ? next->corners : next->predictive;
+					               wasCornerRequest      ? next->corners :
+					                                       next->predictive;
 					++timing.completed;
 					timing.failed += valid ? 0u : 1u;
 					timing.partial += valid && !prepared ? 1u : 0u;
@@ -808,8 +809,8 @@ void DX12Resources::PreShadowMaps()
 				// Predictive indices 0..11 are sides; 12..15 are corners.
 				// Store the request-time class before a possible player subcell transition.
 				task.corner = task.predictive &&
-					std::ranges::find(requestedGrid->predictive.begin() + 12,
-						requestedGrid->predictive.end(), *request) != requestedGrid->predictive.end();
+				              std::ranges::find(requestedGrid->predictive.begin() + 12,
+								  requestedGrid->predictive.end(), *request) != requestedGrid->predictive.end();
 				task.size = settings.SubcellSize;
 				task.localScopeID = source->GetLocalFormID();
 				task.scopePlugin = file->GetFilename();
