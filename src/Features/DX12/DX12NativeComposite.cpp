@@ -79,20 +79,20 @@ namespace DX12Native
 			!(support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE))
 			return {};
 		const bool supportsShadow = (support.Support1 & D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW) &&
-			(support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD) &&
-			(support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
+		                            (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD) &&
+		                            (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
 		const auto raster = shadow ? shadow->raster : nullptr;
 		// The native scene's frame counter is used when fetching the mask; the
 		// compositor frame number is the upscaler's existing frame counter.
 		const bool applyShadow = supportsShadow && transfer != Transfer::Unknown &&
-			shadow && shadow->mask && shadow->readyFence && shadow->readyValue &&
-			shadow->readyValue != UINT64_MAX &&
-			shadow->width >= width && shadow->height >= height &&
-			raster && raster->depth && raster->depth->resource &&
-			raster->cameraValid && raster->readyFence && raster->readyValue &&
-			raster->readyValue != UINT64_MAX &&
-			raster->width >= width && raster->height >= height &&
-			InitializeShadow(device12);
+		                         shadow && shadow->mask && shadow->readyFence && shadow->readyValue &&
+		                         shadow->readyValue != UINT64_MAX &&
+		                         shadow->width >= width && shadow->height >= height &&
+		                         raster && raster->depth && raster->depth->resource &&
+		                         raster->cameraValid && raster->readyFence && raster->readyValue &&
+		                         raster->readyValue != UINT64_MAX &&
+		                         raster->width >= width && raster->height >= height &&
+		                         InitializeShadow(device12);
 
 		Slot* slot = nullptr;
 		for (auto& candidate : slots) {
@@ -122,9 +122,9 @@ namespace DX12Native
 		bool submitted = false;
 		try {
 			const bool recreate = !slot->frame || slot->device != device12 ||
-				slot->device11 != device11 || slot->sourceDesc.Width != desc.Width ||
-				slot->sourceDesc.Height != desc.Height || slot->sourceDesc.Format != desc.Format ||
-				slot->supportsShadow != supportsShadow;
+			                      slot->device11 != device11 || slot->sourceDesc.Width != desc.Width ||
+			                      slot->sourceDesc.Height != desc.Height || slot->sourceDesc.Format != desc.Format ||
+			                      slot->supportsShadow != supportsShadow;
 			if (recreate) {
 				// Reuse open-RT's two-image, four-slot DXGI budget and lifetime policy.
 				const auto allocationDesc = CD3DX12_RESOURCE_DESC::Tex2D(desc.Format,

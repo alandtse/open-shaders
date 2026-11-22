@@ -1158,10 +1158,10 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 
 	const auto composite = upscaling.nativeCompositeFrame;
 	const bool nativeColor = !globals::game::isVR && composite && composite->valid &&
-		composite->shadowSubmitted && composite->color && composite->producerFence &&
-		composite->producerValue && composite->frame == state->frameCount &&
-		composite->width == a_renderWidth && composite->height == a_renderHeight &&
-		composite->format == colorDesc.Format;
+	                         composite->shadowSubmitted && composite->color && composite->producerFence &&
+	                         composite->producerValue && composite->frame == state->frameCount &&
+	                         composite->width == a_renderWidth && composite->height == a_renderHeight &&
+	                         composite->format == colorDesc.Format;
 
 	auto isValidShared = [](WrappedResource* a_resource) {
 		return a_resource && a_resource->resource11 && a_resource->resource.get();
