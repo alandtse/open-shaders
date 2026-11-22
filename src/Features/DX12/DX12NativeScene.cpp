@@ -167,7 +167,7 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry)
 	const auto* file = reference->GetFile(0);
 	if (!file || file->GetFilename().empty())
 		return;
-	const auto desc = runtime.vertexDesc;
+	auto desc = runtime.vertexDesc;
 	if (!desc.HasFlag(RE::BSGraphics::Vertex::VF_VERTEX))
 		return;
 	const auto counts = tri->GetTrishapeRuntimeData();
