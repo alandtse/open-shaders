@@ -4,6 +4,9 @@
 #include <cstring>
 #include <directx/d3dx12.h>
 #include <limits>
+#include <chrono>
+#include <condition_variable>
+#include <thread>
 #include <ranges>
 #include <stdexcept>
 #include <unordered_set>
