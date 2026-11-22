@@ -475,33 +475,54 @@ void DX12Resources::DrawSettings()
 
 	ImGui::SeparatorText("Subcell status (5x5)");
 	const auto snapshot = GetGrid();
-	if (snapshot) {
-		DrawSubcellMap(*snapshot);
-		size_t activeLoaded = 0, predictiveLoaded = 0, failed = 0, skipped = 0;
-		const auto classify = [&](const auto& tile, bool active) {
-			if (!tile)
-				return;
-			if (tile->state == DX12::Tile::State::Ready || tile->state == DX12::Tile::State::ReadyPartial)
-				(active ? activeLoaded : predictiveLoaded)++;
-			else if (tile->state == DX12::Tile::State::RetryWaiting || tile->state == DX12::Tile::State::Incomplete)
-				++failed;
-			else if (tile->state == DX12::Tile::State::Deferred)
-				++skipped;
-		};
-		for (const auto& tile : snapshot->resident)
-			classify(tile, true);
-		for (const auto& tile : snapshot->predictiveResident)
-			classify(tile, false);
-		ImGui::Text("Loaded: active %zu / 9, predictive %zu / 16", activeLoaded, predictiveLoaded);
-		ImGui::TextDisabled("Failed: %zu  |  Skipped: %zu", failed, skipped);
+
+	// Keep the state counters and legend together beside the map on wide panels.
+	// Narrow panels retain the original vertical layout without clipping text.
+	const auto drawSubcellDetails = [&]() {
+		if (snapshot) {
+			size_t activeLoaded = 0, predictiveLoaded = 0, failed = 0, skipped = 0;
+			const auto classify = [&](const auto& tile, bool active) {
+				if (!tile)
+					return;
+				if (tile->state == DX12::Tile::State::Ready || tile->state == DX12::Tile::State::ReadyPartial)
+					(active ? activeLoaded : predictiveLoaded)++;
+				else if (tile->state == DX12::Tile::State::RetryWaiting || tile->state == DX12::Tile::State::Incomplete)
+					++failed;
+				else if (tile->state == DX12::Tile::State::Deferred)
+					++skipped;
+			};
+			for (const auto& tile : snapshot->resident)
+				classify(tile, true);
+			for (const auto& tile : snapshot->predictiveResident)
+				classify(tile, false);
+			ImGui::Text("Loaded: active %zu / 9, predictive %zu / 16", activeLoaded, predictiveLoaded);
+			ImGui::TextDisabled("Failed: %zu  |  Skipped: %zu", failed, skipped);
+		}
+		ImGui::TextColored(ImVec4(0.95f, 0.79f, 0.29f, 1.0f), "Yellow: loaded 3x3");
+		ImGui::TextColored(ImVec4(0.46f, 0.77f, 0.94f, 1.0f), "Light blue: loaded predictive ring");
+		ImGui::TextColored(ImVec4(0.83f, 0.30f, 0.30f, 1.0f), "Red: failed (including retry pending)");
+		ImGui::TextDisabled("Gray: skipped  |  Dark: not processed  |  Brown: processing");
+		ImGui::TextDisabled("Diagonal: partially loaded  |  Center dot: player subcell");
+		if (const auto status = GetPreparationStatus())
+			ImGui::TextWrapped("Companion: %s", status->c_str());
+	};
+
+	if (ImGui::GetContentRegionAvail().x >= 680.0f &&
+		ImGui::BeginTable("##SubcellStatusLayout", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX)) {
+		ImGui::TableSetupColumn("##SubcellMap", ImGuiTableColumnFlags_WidthFixed, 290.0f);
+		ImGui::TableSetupColumn("##SubcellDetails", ImGuiTableColumnFlags_WidthStretch);
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		if (snapshot)
+			DrawSubcellMap(*snapshot);
+		ImGui::TableSetColumnIndex(1);
+		drawSubcellDetails();
+		ImGui::EndTable();
+	} else {
+		if (snapshot)
+			DrawSubcellMap(*snapshot);
+		drawSubcellDetails();
 	}
-	ImGui::TextColored(ImVec4(0.95f, 0.79f, 0.29f, 1.0f), "Yellow: loaded 3x3");
-	ImGui::TextColored(ImVec4(0.46f, 0.77f, 0.94f, 1.0f), "Light blue: loaded predictive ring");
-	ImGui::TextColored(ImVec4(0.83f, 0.30f, 0.30f, 1.0f), "Red: failed (including retry pending)");
-	ImGui::TextDisabled("Gray: skipped  |  Dark: not processed  |  Brown: processing");
-	ImGui::TextDisabled("Diagonal: partially loaded  |  Center dot: player subcell");
-	if (const auto status = GetPreparationStatus())
-		ImGui::TextWrapped("Companion: %s", status->c_str());
 }
 
 void DX12Resources::LoadSettings(json& input)
