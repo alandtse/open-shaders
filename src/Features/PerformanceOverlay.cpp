@@ -500,10 +500,8 @@ void PerformanceOverlay::DrawOverlay()
 	}
 
 	if (this->settings.ShowDrawCalls) {
-		if (needsSeparator)
-			ImGui::Separator();
 		DrawDrawCallsTable(mainRows, summaryRows);
-		needsSeparator = true;
+		needsSeparator = false;
 	}
 
 	if (this->settings.ShowCSPasses) {
@@ -1711,7 +1709,7 @@ void PerformanceOverlay::DrawDrawCallsTable(const std::vector<DrawCallRow>& main
 		summaryRowsCopy,
 		ImVec2(0.0f, 0.0f),
 		false,
-		ImGuiTableFlags_BordersInner | ImGuiTableFlags_BordersOuterV);
+		ImGuiTableFlags_Borders);
 
 	// Handle clear test data request
 	if (clearTestDataRequested) {

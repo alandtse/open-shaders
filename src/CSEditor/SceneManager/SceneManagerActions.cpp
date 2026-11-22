@@ -426,7 +426,7 @@ void SceneManager::RegisterUxActions()
 			return { { "activePack", catalog.GetActivePackId() }, { "baselinePacks", catalog.GetBaselinePackIds() }, { "baselineOrder", catalog.GetBaselinePackOrder() }, { "packs", packs }, { "automatic", catalog.GetAutomaticPresets() } };
 		}));
 	FEATURE_RENDER_COMMAND("managePreset",
-		"Use the Presets page production paths. Args: action=refresh|apply|disable|delete|removeBaseline|raiseBaseline|lowerBaseline|automatic, id for pack actions; disable with id disables all of that pack's layers, without id disables the active scene pack. delete disables a library pack and moves its folder into the hidden deleted-presets library; the legacy game/Data install cannot be deleted. saveCurrent=boolean for apply (true default), replaceConflicts=true explicitly disables conflicting scene presets. raiseBaseline/lowerBaseline also retain priority for disabled packs. automatic requires enabled=boolean and controls startup discovery for both scene and Base Settings presets; scenes reject conflicts, Base Settings layer together. Requires a loaded player cell except for automatic. Selection changes refuse an unsaved retained scene draft. Verify with presets and live feature queries.",
+		"Use the Presets page production paths. Args: action=refresh|apply|disable|delete|removeBaseline|raiseBaseline|lowerBaseline|automatic, id for pack actions; disable with id disables all of that pack's layers, without id disables the active scene pack. Manual enable and disable choices expire when discovery sees the pack uninstalled. delete disables a library pack and moves its folder into the hidden deleted-presets library; the legacy game/Data install cannot be deleted. saveCurrent=boolean for apply (true default), replaceConflicts=true prioritizes the chosen scene preset across restarts until discovery sees it uninstalled. raiseBaseline/lowerBaseline also retain priority for disabled packs. automatic requires enabled=boolean and controls startup discovery for both scene and Base Settings presets; scenes reject conflicts, Base Settings layer together. Requires a loaded player cell except for automatic. Selection changes refuse an unsaved retained scene draft. Verify with presets and live feature queries.",
 		[](Feature*, const json& args) {
 			auto& catalog = UnifiedPresetCatalog::GetSingleton();
 			const auto action = args.at("action").get<std::string>();
@@ -442,10 +442,8 @@ void SceneManager::RegisterUxActions()
 			} else if (action == "disable") {
 				if (args.contains("id"))
 					applied = catalog.DisablePack(args.at("id").get<std::string>());
-				else {
-					catalog.DisableActivePack();
-					applied = catalog.GetActivePackId().empty();
-				}
+				else
+					applied = catalog.DisableActivePack();
 			} else if (action == "apply")
 				applied = catalog.ApplyPack(args.at("id").get<std::string>(), args.value("saveCurrent", true), args.value("replaceConflicts", false));
 			else if (action == "delete")

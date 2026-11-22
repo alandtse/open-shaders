@@ -586,7 +586,7 @@ void LightEditor::DrawLightTable(const ImVec2& size)
 	const float rowHeight = BrowserUI::RowHeight();
 	const bool otherLights = filterOption == FilterOption::OtherLights;
 	constexpr ImGuiTableFlags kFlags = ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
-	                                   ImGuiTableFlags_BordersOuterH | ImGuiTableFlags_Sortable | ImGuiTableFlags_SortTristate |
+	                                   ImGuiTableFlags_BordersOuterH | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_Sortable | ImGuiTableFlags_SortTristate |
 	                                   ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit;
 
 	auto idText = [](const LightInfo& light) {

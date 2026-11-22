@@ -314,7 +314,6 @@ static void RenderPresets(Feature* host)
 				State::SettingsLayerGuard settingsLayerGuard;
 				feature->ApplyPerformanceProfile(p);
 			});
-		ImGui::SameLine();
 		DrawQueuePresetsButton(feature->GetShortName(), true);
 		// Feature overrides stay visible beneath the global chooser.
 		// Only raw sliders/knobs collapse into Advanced below.

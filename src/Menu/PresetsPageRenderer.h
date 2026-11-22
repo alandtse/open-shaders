@@ -13,6 +13,8 @@ class PresetsPageRenderer
 public:
 	/** @brief Draws the page, discovering packs and picking an initial selection on first use. */
 	static void Render();
+	/** @brief Draws the shared startup preset preference. */
+	static void DrawAutoApplyCheckbox();
 	/** @brief Draws preset creation and management popups above either menu host. */
 	static void DrawPopups();
 	/** @brief Whether a preset popup owns input. */

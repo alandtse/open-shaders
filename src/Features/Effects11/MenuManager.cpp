@@ -93,6 +93,7 @@ bool MenuManager::RenderPresetSelector()
 	const auto* active = presetManager.GetActiveLocation();
 
 	if (locations.empty()) {
+		ImGui::AlignTextToFramePadding();
 		ImGui::PushStyleColor(ImGuiCol_Text, globals::menu->GetSettings().Theme.StatusPalette.Warning);
 		ImGui::TextWrapped("%s", T("feature.effects11.no_preset_found",
 									 "No ENB preset found (checked game root, Data, and Data subfolders)."));
@@ -118,8 +119,9 @@ bool MenuManager::RenderPresetSelector()
 			ImGui::EndCombo();
 		}
 	}
-	ImGui::SameLine();
-	if (Util::Button(T("feature.effects11.rescan_presets", "Rescan"))) {
+	const char* rescan = T("feature.effects11.rescan_presets", "Rescan");
+	Util::SameLineIfFits(ImGui::CalcTextSize(rescan).x + ImGui::GetStyle().FramePadding.x * 2.0f);
+	if (Util::Button(rescan)) {
 		presetManager.Rescan();
 		changed = true;
 	}

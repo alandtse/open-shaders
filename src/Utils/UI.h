@@ -341,12 +341,13 @@ namespace Util
 	/** @brief Layout and state of a SegmentedControl. */
 	struct SegmentedOptions
 	{
-		float width = 0.0f;          ///< Fills this width with equal segments; 0 sizes each segment to its content
-		float height = 0.0f;         ///< Track height; 0 is a frame height plus the track padding
-		int marked = -1;             ///< Segment flagged with a dot while it is not the selection
-		bool muted = false;          ///< Dims the selection, for a control showing an off or flat mode
-		bool centered = false;       ///< Centres a content-sized track on the available width
-		float reservedWidth = 0.0f;  ///< Leaves room after the strip for a trailing action
+		float width = 0.0f;             ///< Fills this width with equal segments; 0 sizes each segment to its content
+		float height = 0.0f;            ///< Track height; 0 is a frame height plus the track padding
+		int marked = -1;                ///< Segment flagged with a dot while it is not the selection
+		bool muted = false;             ///< Dims the selection, for a control showing an off or flat mode
+		bool centered = false;          ///< Centres a content-sized track on the available width
+		const char* heading = nullptr;  ///< Optional heading inside the track above the segments
+		float reservedWidth = 0.0f;     ///< Leaves room after the strip for a trailing action
 	};
 
 	/**
@@ -364,7 +365,7 @@ namespace Util
 	 * @return True on the frame a segment is clicked
 	 */
 	bool SegmentedControl(const char* a_id, const char* const* a_labels, int a_count, int& a_selected,
-		int a_marked = -1, bool a_muted = false);
+		int a_marked = -1, bool a_muted = false, const char* heading = nullptr);
 
 	/**
 	 * @brief Pill tab bar: drop-in replacement for ImGui::BeginTabBar / BeginTabItem, drawn as a
@@ -1625,6 +1626,7 @@ namespace Util
 		const char* label = nullptr;
 		bool enabled = true;
 		bool pressed = false;
+		ImVec2 anchor{};
 		ImU32 previewColor = 0;
 	};
 

@@ -120,6 +120,15 @@ PresetManager& PresetManager::GetSingleton()
 
 void PresetManager::Rescan()
 {
+	ScanLocations();
+	// A rescan can drop the active preset (deleted from disk); GetENBSeriesPath() must
+	// stop pointing at it once it's no longer in discoveredLocations.
+	if (!activeRoot.empty() && !GetActiveLocation())
+		activeRoot.clear();
+}
+
+void PresetManager::ScanLocations()
+{
 	discoveredLocations.clear();
 
 	// GetDataPath() resolves against the game exe's own path (falling back to CWD only
@@ -153,11 +162,6 @@ void PresetManager::Rescan()
 	// never per-frame.
 	for (auto& location : discoveredLocations)
 		PopulateSummary(location);
-
-	// A rescan can drop the active preset (deleted from disk); GetENBSeriesPath() must
-	// stop pointing at it once it's no longer in discoveredLocations.
-	if (!activeRoot.empty() && !GetActiveLocation())
-		activeRoot.clear();
 }
 
 const std::vector<PresetLocation>& PresetManager::GetDiscoveredLocations() const
@@ -364,12 +368,13 @@ void PresetManager::ScanLibraryDirectory(const std::filesystem::path& relativePa
 	}
 }
 
-void PresetManager::DiscoverPresets()
+void PresetManager::DiscoverPresets(bool selectDefault)
 {
 	presets = ScanPresets(true);
-	Rescan();
+	ScanLocations();
 	discovered = true;
-	EnsureDefaultSelection();
+	if (selectDefault)
+		EnsureDefaultSelection();
 
 	logger::info("[Effects11] Discovered {} preset(s); active='{}'",
 		presets.size(), FormatPresetIdForLog(activePresetId));
