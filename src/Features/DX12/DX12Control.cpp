@@ -1,9 +1,9 @@
 #include "DX12Control.h"
+#include "../Upscaling.h"
 #include "DX12NativeScene.h"
 #include "DX12Resources.h"
 #include "Globals.h"
 #include "State.h"
-#include "../Upscaling.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
