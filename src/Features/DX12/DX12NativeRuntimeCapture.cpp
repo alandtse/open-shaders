@@ -29,6 +29,10 @@ namespace DX12Native
 			add(0);
 			for (unsigned char c : source.shapeName) add(c);
 			add(0);
+			// Sibling meshes may share a name, transform and triangle count.
+			// Pointer identity distinguishes those meshes for this runtime cell.
+			for (unsigned n = 0; n < 8; ++n)
+				add(static_cast<unsigned char>(source.objectIdentity >> (n * 8)));
 			for (float value : source.transform) {
 				const uint32_t bits = std::bit_cast<uint32_t>(value);
 				for (unsigned n = 0; n < 4; ++n)
@@ -130,10 +134,21 @@ namespace DX12Native
 			if (candidate.requiresStability && !captured.contains(id)) {
 				// Avoid freezing moving clutter and actor attachments into TLAS.
 				// One observation per engine frame, irrespective of pass multiplicity.
-				if (stableObservations.size() >= 8192 && !stableObservations.contains(id))
-					return;
+				if (stableObservations.size() >= 8192 && !stableObservations.contains(id)) {
+					// Drop observations that have not been visible recently instead
+					// of permanently locking out later furniture in a large cell.
+					std::erase_if(stableObservations, [frame](const auto& entry) {
+						return frame - entry.second.first > 120u;
+					});
+					if (stableObservations.size() >= 8192)
+						return;
+				}
 				auto& seen = stableObservations[id];
 				if (seen.first != frame) {
+					// Require consecutive visible frames, not three observations
+					// scattered across unrelated camera positions.
+					if (frame - seen.first > 4u)
+						seen.second = 0;
 					seen.first = frame;
 					seen.second = std::min(seen.second + 1u, 3u);
 				}
@@ -206,14 +221,23 @@ namespace DX12Native
 				continue;
 			shape->indices.assign(packet.indices.begin(), packet.indices.end());
 
+			const auto releaseIfCurrent = [&]() {
+				std::scoped_lock lock(mutex);
+				if (packet.generation == generation)
+					captured.erase(packet.identity);
+			};
 			const auto grid = globals::features::dx12Resources.GetGrid();
 			if (!grid || !grid->requested.front().scope ||
-				grid->requested.front().scope != packet.sourceCenter.scope)
+				grid->requested.front().scope != packet.sourceCenter.scope) {
+				releaseIfCurrent();
 				continue;
+			}
 			const auto x = DX12::Coordinate(packet.centerX, grid->size);
 			const auto y = DX12::Coordinate(packet.centerY, grid->size);
-			if (!x || !y || !std::ranges::contains(grid->requested, DX12::SubcellKey{ grid->requested.front().scope, *x, *y }))
+			if (!x || !y || !std::ranges::contains(grid->requested, DX12::SubcellKey{ grid->requested.front().scope, *x, *y })) {
+				releaseIfCurrent();
 				continue;
+			}
 			bool companionOwns = false;
 			for (const auto& tile : grid->resident) {
 				if (!tile)

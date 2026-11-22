@@ -359,6 +359,7 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requi
 	                             std::format("render:{:016X}", reinterpret_cast<std::uintptr_t>(&geometry));
 	candidate.shapeName = geometry.name.empty() ? "<unnamed>" : geometry.name.c_str();
 	candidate.requiresStability = requireStability;
+	candidate.objectIdentity = reinterpret_cast<std::uintptr_t>(&geometry);
 	candidate.stride = stride;
 	candidate.vertexCount = counts.vertexCount;
 	candidate.triangleCount = counts.triangleCount;
