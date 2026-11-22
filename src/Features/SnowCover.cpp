@@ -28,7 +28,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 namespace
 {
 	constexpr uint32_t LandscapeMaterialSlot = 46;
-	constexpr float LandscapeCellSize = 4096.0f;
 	constexpr uint32_t MaxLandscapeUploadAttempts = 3;
 	constexpr float MaxFrameSeconds = 0.1f;
 	constexpr float MinAngleRange = 0.001f;
@@ -105,16 +104,15 @@ RE::BSEventNotifyControl SnowCover::ProcessEvent(const RE::TESCellFullyLoadedEve
 void SnowCover::UpdateLandscapeGrid()
 {
 	auto& grid = perFrame.landscapeGrid;
-	const auto* tes = globals::game::tes;
-	const auto* cells = tes ? tes->gridCells : nullptr;
-	if (!cells || !cells->length || tes->interiorCell || !tes->GetRuntimeData2().worldSpace || !globals::features::truePBR.loaded) {
+	const auto exterior = globals::features::truePBR.loaded ? Util::GetExteriorGrid() : std::nullopt;
+	if (!exterior) {
 		grid = {};
 		return;
 	}
 
-	const uint32_t width = cells->length;
-	const int32_t originX = tes->currentGridX - static_cast<int32_t>(width / 2);
-	const int32_t originY = tes->currentGridY - static_cast<int32_t>(width / 2);
+	const uint32_t width = exterior->width;
+	const int32_t originX = exterior->originX;
+	const int32_t originY = exterior->originY;
 	if (!landscapeGridDirty.exchange(false, std::memory_order_relaxed) && grid.originX == originX && grid.originY == originY && grid.width == width)
 		return;
 
@@ -128,10 +126,7 @@ void SnowCover::UpdateLandscapeGrid()
 	std::vector<uint32_t> materials(size_t(width) * width);
 	for (uint32_t y = 0; y < width; ++y) {
 		for (uint32_t x = 0; x < width; ++x) {
-			const RE::NiPoint3 center{ (originX + static_cast<int32_t>(x) + 0.5f) * LandscapeCellSize, (originY + static_cast<int32_t>(y) + 0.5f) * LandscapeCellSize, 0.0f };
-			const auto* cell = tes->GetCell(center);
-			const auto* land = cell && cell->IsAttached() ? cell->GetRuntimeData().cellLand : nullptr;
-			if (land && land->loadedData) {
+			if (const auto* land = Util::GetLoadedLand(*exterior, x, y)) {
 				const uint32_t pbr = globals::features::truePBR.IsPBRLand(land);
 				samples.push_back({ static_cast<int32_t>(x), static_cast<int32_t>(y), pbr });
 				materials[y * width + x] = pbr;

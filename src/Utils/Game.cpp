@@ -755,14 +755,33 @@ namespace Util
 
 	void WorldToCell(const RE::NiPoint2& worldPos, int32_t& x, int32_t& y)
 	{
-		x = static_cast<int32_t>(floor(worldPos.x / 4096.0f));
-		y = static_cast<int32_t>(floor(worldPos.y / 4096.0f));
+		x = static_cast<int32_t>(floor(worldPos.x / ExteriorCellSize));
+		y = static_cast<int32_t>(floor(worldPos.y / ExteriorCellSize));
 	}
 
 	void WorldToCell(const RE::NiPoint3& worldPos, int32_t& x, int32_t& y)
 	{
 		WorldToCell(RE::NiPoint2(worldPos.x, worldPos.y), x, y);
 	}
+
+	std::optional<ExteriorGrid> GetExteriorGrid()
+	{
+		const auto* tes = globals::game::tes;
+		const auto* cells = tes ? tes->gridCells : nullptr;
+		if (!cells || !cells->length || tes->interiorCell || !tes->GetRuntimeData2().worldSpace)
+			return std::nullopt;
+		const auto half = static_cast<int32_t>(cells->length / 2);
+		return ExteriorGrid{ tes->currentGridX - half, tes->currentGridY - half, cells->length };
+	}
+
+	const RE::TESObjectLAND* GetLoadedLand(const ExteriorGrid& a_grid, uint32_t x, uint32_t y)
+	{
+		const RE::NiPoint3 center{ (a_grid.originX + static_cast<int32_t>(x) + 0.5f) * ExteriorCellSize, (a_grid.originY + static_cast<int32_t>(y) + 0.5f) * ExteriorCellSize, 0.0f };
+		const auto* cell = globals::game::tes->GetCell(center);
+		const auto* land = cell && cell->IsAttached() ? cell->GetRuntimeData().cellLand : nullptr;
+		return land && land->loadedData ? land : nullptr;
+	}
+
 	std::uintptr_t MainUpdateCallSite()
 	{
 		const std::uintptr_t aeOffset = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0xC38 : 0xC26;
