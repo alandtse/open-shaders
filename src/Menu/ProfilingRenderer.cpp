@@ -33,6 +33,7 @@ static constexpr uint32_t kDisplayedRollingFrameCount = 60;
 static constexpr float kMaxDisplayTimingSampleMs = 1000.0f;
 static constexpr float kGraphHeadroomScale = 1.2f;
 static constexpr float kMainGraphHeight = 180.0f;
+static constexpr auto kFeatureTimersPopup = "##FeatureProfilingPopover";
 static constexpr float kFeatureGraphHeight = 100.0f;
 static constexpr float kMainGraphMinFrameTimeSec = 0.0001f;
 static constexpr float kFeatureGraphMinFrameTimeSec = 0.00001f;
@@ -788,11 +789,12 @@ std::string ProfilingRenderer::FeatureCostChipLabel(const FeatureTimingData& dat
 
 float ProfilingRenderer::MeasureFeatureCostChip(const std::string& featurePrefix)
 {
-	if (!globals::profiler || !globals::profiler->IsUserEnabled() || !IsFeatureProfilingAvailable(featurePrefix))
+	const bool popupOpen = ImGui::IsPopupOpen(kFeatureTimersPopup);
+	if (!globals::profiler || !globals::profiler->IsUserEnabled() || (!popupOpen && !IsFeatureProfilingAvailable(featurePrefix)))
 		return 0.0f;
 
 	const auto& data = GetFeatureTimings(featurePrefix);
-	if (data.entries.empty())
+	if (data.entries.empty() && !popupOpen)
 		return 0.0f;
 
 	MenuFonts::FontRoleGuard subtext(Menu::FontRole::Subtext);
@@ -801,12 +803,13 @@ float ProfilingRenderer::MeasureFeatureCostChip(const std::string& featurePrefix
 
 bool ProfilingRenderer::RenderFeatureCostChip(const std::string& featurePrefix, float rightLimit)
 {
-	if (!globals::profiler || !globals::profiler->IsUserEnabled() || !IsFeatureProfilingAvailable(featurePrefix))
+	const bool popupOpen = ImGui::IsPopupOpen(kFeatureTimersPopup);
+	if (!globals::profiler || !globals::profiler->IsUserEnabled() || (!popupOpen && !IsFeatureProfilingAvailable(featurePrefix)))
 		return false;
 
 	auto& state = featureGraphs[featurePrefix];
 	const auto& data = GetFeatureTimings(featurePrefix);
-	if (data.entries.empty())
+	if (data.entries.empty() && !popupOpen)
 		return false;
 	// Recorded whether or not the popover is open, so it opens on a filled history.
 	const bool cpuMode = (timingMode == TimingMode::CPU);
@@ -817,7 +820,6 @@ bool ProfilingRenderer::RenderFeatureCostChip(const std::string& featurePrefix, 
 	const ImVec4 costColor = Util::GetThresholdColor(data.totalAvg, ThemeManager::Constants::FEATURE_COST_GOOD_MS,
 		ThemeManager::Constants::FEATURE_COST_WARNING_MS, theme.StatusPalette.SuccessColor, theme.StatusPalette.Warning, theme.StatusPalette.Error);
 
-	const char* popupId = "##FeatureProfilingPopover";
 	{
 		MenuFonts::FontRoleGuard subtext(Menu::FontRole::Subtext);
 		if (ImGui::GetCursorScreenPos().x + BrowserUI::MeasureChip(label.c_str(), true) > rightLimit)
@@ -825,11 +827,11 @@ bool ProfilingRenderer::RenderFeatureCostChip(const std::string& featurePrefix, 
 		const ImVec4 secondary = Util::Colors::GetSecondary();
 		ImGui::PushStyleColor(ImGuiCol_Text, secondary);
 		if (BrowserUI::Chip("##FeatureCost", label.c_str(), Icons::TI(MenuIcons::kProfiling), &costColor))
-			ImGui::OpenPopup(popupId);
+			ImGui::OpenPopup(kFeatureTimersPopup);
 		ImGui::PopStyleColor();
 	}
 	// The popover already shows everything the tooltip would.
-	if (!ImGui::IsPopupOpen(popupId)) {
+	if (!ImGui::IsPopupOpen(kFeatureTimersPopup)) {
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted(T("menu.profiling.cost_chip_tooltip", "Average time this feature's passes take each frame. Click for the breakdown."));
 			if (ImGui::BeginTable("##FeatureCostTooltip", 2, ImGuiTableFlags_SizingFixedFit)) {
@@ -847,7 +849,7 @@ bool ProfilingRenderer::RenderFeatureCostChip(const std::string& featurePrefix, 
 
 	const float popoverWidth = ThemeManager::Constants::FEATURE_PROFILING_POPOVER_WIDTH * Util::GetUIScale();
 	ImGui::SetNextWindowSizeConstraints(ImVec2(popoverWidth, 0.0f), ImVec2(popoverWidth, FLT_MAX));
-	if (ImGui::BeginPopup(popupId)) {
+	if (ImGui::BeginPopup(kFeatureTimersPopup)) {
 		{
 			MenuFonts::FontRoleGuard body(Menu::FontRole::Body);
 			RenderFeatureTimersPopover(featurePrefix, state, data);

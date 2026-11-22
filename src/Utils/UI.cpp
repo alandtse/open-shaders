@@ -736,6 +736,22 @@ namespace Util
 		ImGui::PushID(id);
 		ImGui::BeginGroup();
 		const float avail = std::max(1.0f, ImGui::GetContentRegionAvail().x - options.reservedWidth);
+		if (options.heading) {
+			MenuFonts::FontRoleGuard caption(Menu::FontRole::Subtext);
+			const ImVec2 textSize = ImGui::CalcTextSize(options.heading);
+			const float headingHeight = pad + textSize.y;
+			const auto top = ImGui::GetCursorScreenPos();
+			const float width = std::min(avail, std::max(trackWidth, textSize.x + (pad + style.FramePadding.x) * 2.0f));
+			const ImVec2 bottom(top.x + width, top.y + headingHeight + trackHeight);
+			auto* drawList = ImGui::GetWindowDrawList();
+			drawList->AddRectFilled(top, bottom, ImGui::GetColorU32(ImGuiCol_FrameBg), trackRounding);
+			const ImVec4 clip(top.x, top.y, bottom.x, top.y + headingHeight);
+			const ImVec2 textPos(top.x + style.FramePadding.x, top.y + pad);
+			drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), textPos,
+				ImGui::GetColorU32(ImGuiCol_Text), options.heading, nullptr, 0.0f, &clip);
+			ImGui::Dummy(ImVec2(width, headingHeight));
+			ImGui::SetCursorScreenPos(ImVec2(top.x, top.y + headingHeight));
+		}
 		const bool scroll = options.width <= 0.0f && trackWidth > avail + 0.5f;
 		const float navigationGap = style.ItemInnerSpacing.x;
 		const float navigationSize = std::min(trackHeight, std::max(1.0f, avail));
@@ -765,7 +781,8 @@ namespace Util
 
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
 		const ImVec2 trackMin = ImGui::GetCursorScreenPos();
-		drawList->AddRectFilled(trackMin, ImVec2(trackMin.x + trackWidth, trackMin.y + trackHeight), ImGui::GetColorU32(ImGuiCol_FrameBg), trackRounding);
+		if (!options.heading)
+			drawList->AddRectFilled(trackMin, ImVec2(trackMin.x + trackWidth, trackMin.y + trackHeight), ImGui::GetColorU32(ImGuiCol_FrameBg), trackRounding);
 
 		std::vector<float> xs(segments.size());
 		for (int i = 0; i < count; ++i)
@@ -886,7 +903,7 @@ namespace Util
 	}
 
 	bool SegmentedControl(const char* a_id, const char* const* a_labels, int a_count, int& a_selected, int a_marked,
-		bool a_muted)
+		bool a_muted, const char* heading)
 	{
 		if (!a_labels || a_count <= 0)
 			return false;
@@ -894,7 +911,7 @@ namespace Util
 		for (int i = 0; i < a_count; ++i)
 			segments[i].label = a_labels[i] ? a_labels[i] : "";
 		return SettingsControl::InterceptInt(a_id, a_selected, [&](int& a_bound) {
-			const int clicked = SegmentedControl(a_id, segments, a_bound, { .marked = a_marked, .muted = a_muted });
+			const int clicked = SegmentedControl(a_id, segments, a_bound, { .marked = a_marked, .muted = a_muted, .heading = heading });
 			if (clicked >= 0)
 				a_bound = clicked;
 			return clicked >= 0;
@@ -3461,6 +3478,8 @@ namespace Util
 			ImGui::BeginDisabled(!action.enabled);
 			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x, 0.0f));
 			action.pressed = ImGui::Button(action.label);
+			if (action.pressed)
+				action.anchor = ImVec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y);
 			ImGui::PopStyleVar();
 			ImGui::EndDisabled();
 			ImGui::PopID();

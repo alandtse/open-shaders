@@ -17,6 +17,7 @@
 #include "CSEditor/WeatherPickerWindow.h"
 #include "CSEditor/WeatherUtils.h"
 #include "Features/PerformanceOverlay.h"
+#include "Features/SceneSelector.h"
 #include "Menu/CursorLoader.h"
 #include "Menu/FeatureListRenderer.h"
 #include "Menu/ThemeManager.h"
@@ -313,7 +314,6 @@ void CSEditor::DisplayWeatherBasicInfo(RE::TESWeather* weather, float weatherPct
 	}
 	std::string weatherText = Util::FormatWeather(weather);
 	ImGui::Bullet();
-	ImGui::SameLine();
 	bool showTooltip = CSEditor::RenderMultiColorWeatherName(weather, weatherText);
 	if (showTooltip) {
 		ImGui::BeginTooltip();
@@ -533,9 +533,6 @@ void CSEditor::DrawWeatherTransitionBar(RE::Sky* sky, float width, bool verboseO
 	if (!sky)
 		return;
 
-	if (sky->lastWeather)
-		s_cachedLastWeather = sky->lastWeather;
-
 	auto* lastWeather = sky->lastWeather;
 	const float lerpFactor = sky->currentWeatherPct;
 	const bool isTransitioning = lastWeather && lerpFactor < 1.0f;
@@ -682,13 +679,8 @@ void CSEditor::RenderWeatherInformationDisplay(RE::Sky* sky, bool showInteractiv
 		Util::DrawSectionHeader(T(TKEY("weather_information"), "Weather Information"), false, true);
 	}
 
-	// Update cache: store current lastWeather if it exists, otherwise keep the cached one
-	if (sky->lastWeather) {
-		s_cachedLastWeather = sky->lastWeather;
-	}
-
 	// Use cached last weather for display if sky->lastWeather is null
-	RE::TESWeather* displayLastWeather = sky->lastWeather ? sky->lastWeather : s_cachedLastWeather;
+	RE::TESWeather* displayLastWeather = SceneSelector::GetLastWeather(sky);
 
 	ImGui::TextUnformatted(T(TKEY("current_weather_column"), "Current Weather"));
 	DisplayWeatherInfo(sky->currentWeather, sky->currentWeatherPct, showInteractiveElements);

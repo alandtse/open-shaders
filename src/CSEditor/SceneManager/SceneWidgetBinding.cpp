@@ -1606,7 +1606,7 @@ bool SceneWidgetBinding::Guard::Finish(bool a_changed)
 		disabledOpened = false;
 	}
 	if (disabledByCaller) {
-		ReportSettingHint(T(TKEY("setting_disabled_by_requirement"), "This setting is disabled by another option or requirement."));
+		ReportSettingHint(T(TKEY("setting_disabled_by_requirement"), "This setting is disabled by another setting or requirement."));
 		return false;
 	}
 

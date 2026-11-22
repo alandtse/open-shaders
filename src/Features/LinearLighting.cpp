@@ -65,11 +65,13 @@ namespace
 
 void LinearLighting::DrawSettings()
 {
+	PostProcessingMode::DrawSelector();
+	ImGui::Spacing();
 	const auto mode = PostProcessingMode::Get();
 	const bool overridden = mode != PostProcessingMode::Mode::PostProcessing;
 	const Util::LockedSection modeLock(overridden, mode == PostProcessingMode::Mode::Effects11 ?
 													   T(TKEY("overridden_by_effects11"), "Effects 11 overrides Linear Lighting.") :
-													   T(TKEY("off_in_vanilla"), "Vanilla post processing turns Linear Lighting off."));
+													   T(TKEY("off_in_vanilla"), "Vanilla rendering is not compatible with Linear Lighting."));
 
 	bool enabledDisplay = settings.enableLinearLighting && !overridden;
 	if (ImGui::Checkbox(T(TKEY("enable"), "Enable Linear Lighting"), &enabledDisplay)) {

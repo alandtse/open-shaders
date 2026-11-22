@@ -34,6 +34,7 @@
 #include "Utils/Game.h"
 #include "Utils/SettingsCatalog.h"
 #include "Utils/UI.h"
+#include "Utils/UISurface.h"
 
 #include <imgui_internal.h>
 #include <imgui_stdlib.h>
@@ -57,6 +58,7 @@ namespace
 	Util::ConfirmationPopup featureDeleteConfirmation;
 	Util::DeferredModal manageSettingsModal;
 	bool targetManagementRequested = false;
+	ImVec2 targetManagementAnchor;
 	std::pair<SceneSettingsManager::SceneContextId, std::string> managedTarget;
 	Util::ConfirmationPopup deleteSceneChangesConfirmation;
 	SceneSettingsManager::EntryLayerScope pendingDeleteScope;
@@ -751,20 +753,19 @@ namespace
 		return open;
 	}
 
-	void RequestTargetManagement(const SceneSettingsManager::SceneContextId& target, const std::string& label)
+	void RequestTargetManagement(const SceneSettingsManager::SceneContextId& target, const std::string& label, ImVec2 anchor)
 	{
 		SceneEntryTable::EndPresetEditing();
 		managedTarget = { target, label };
+		targetManagementAnchor = anchor;
 		targetManagementRequested = true;
 	}
 
 	void DrawTargetManagement()
 	{
 		const auto title = std::format("{}###ManageSceneTarget", managedTarget.second);
-		if (std::exchange(targetManagementRequested, false)) {
+		if (std::exchange(targetManagementRequested, false))
 			ImGui::OpenPopup(title.c_str());
-			ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing);
-		}
 		if (!ImGui::IsPopupOpen(title.c_str()))
 			return;
 		const float titleWidth = ImGui::CalcTextSize(managedTarget.second.c_str()).x + 2.0f * ImGui::GetFrameHeightWithSpacing();
@@ -772,6 +773,8 @@ namespace
 		const auto* viewport = ImGui::GetMainViewport();
 		const float width = std::min(std::max(ThemeManager::Constants::Em(kTargetManageWidthEm), titleWidth),
 			viewport->WorkSize.x - style.WindowPadding.x * 2.0f);
+		const float x = std::clamp(targetManagementAnchor.x, viewport->WorkPos.x, viewport->WorkPos.x + viewport->WorkSize.x - width);
+		ImGui::SetNextWindowPos(ImVec2(x, targetManagementAnchor.y), ImGuiCond_Appearing);
 		ImGui::SetNextWindowSize(ImVec2(width, 0.0f), ImGuiCond_Appearing);
 		ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, viewport->WorkSize.y - style.WindowPadding.y * 2.0f));
 		if (auto popup = Util::Popup(title.c_str(), title.c_str())) {
@@ -807,9 +810,10 @@ namespace
 			color = ImGui::GetColorU32(GetScenePickerTextColor(current, marker));
 		}
 		const auto& label = presentation.label;
-		const ImVec4 clip(start.x, start.y, canManage ? buttonX - ImGui::GetStyle().ItemSpacing.x : right,
+		const float textX = ImGui::GetItemRectMin().x + Util::Surface::ListHighlightTextInset() + ImGui::GetStyle().ItemInnerSpacing.x;
+		const ImVec4 clip(textX, start.y, canManage ? buttonX - ImGui::GetStyle().ItemSpacing.x : right,
 			start.y + ImGui::GetTextLineHeight());
-		ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), start,
+		ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(textX, start.y),
 			color, label.c_str(), nullptr, 0.0f, &clip);
 		if (ImGui::CalcTextSize(label.c_str()).x > clip.z - clip.x)
 			Util::AddTooltip(label.c_str());
@@ -817,7 +821,7 @@ namespace
 			ImGui::SameLine();
 			ImGui::SetCursorScreenPos(ImVec2(buttonX, start.y));
 			if (ImGui::SmallButton(manageLabel)) {
-				RequestTargetManagement(context, presentation.label);
+				RequestTargetManagement(context, presentation.label, ImVec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y));
 				return false;
 			}
 		}
@@ -897,7 +901,7 @@ namespace
 		Util::ComboPreviewAction action{ .label = canManage ? GetSceneTargetManageLabel(Type::Weather) : nullptr };
 		const SKSE::stl::scope_exit drawPreviewManagement([&] {
 			if (action.pressed)
-				RequestTargetManagement(previewContext, preview);
+				RequestTargetManagement(previewContext, preview, action.anchor);
 		});
 
 		const auto isCurrent = [](const RE::TESWeather* weather) {
@@ -1010,7 +1014,7 @@ namespace
 		Util::ComboPreviewAction action{ .label = canManage ? GetSceneTargetManageLabel(ContextType::Location) : nullptr };
 		const SKSE::stl::scope_exit drawPreviewManagement([&] {
 			if (action.pressed)
-				RequestTargetManagement(previewContext, preview);
+				RequestTargetManagement(previewContext, preview, action.anchor);
 		});
 
 		const auto marker = !selectedLocation || feature.empty() ? SceneSettingMarker::None :

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <filesystem>
 #include <format>
+#include <imgui_internal.h>
 
 #include "CSEditor/Browser/BrowserWidgets.h"
 #include "CSEditor/EditorWindow.h"
@@ -21,6 +22,7 @@
 #include "Features/RainRefraction.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
+#include "IconsTabler.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
 #include "Menu/PresetsPageRenderer.h"
@@ -468,13 +470,49 @@ void Effects11Editor::HandleShortcuts(bool& a_focusSearch)
 
 // Settings window
 
+static bool DrawExitEditorButton(bool contentsVisible)
+{
+	auto* window = ImGui::GetCurrentWindow();
+	const char* label = T(TKEY("exit_editor"), "Exit Editor");
+	const auto& style = ImGui::GetStyle();
+	const ImVec2 labelSize = ImGui::CalcTextSize(label);
+	const float width = labelSize.x + style.FramePadding.x * 2.0f;
+	if (window->DockIsActive) {
+		if (!contentsVisible)
+			return false;
+		ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - width));
+		return ImGui::SmallButton(label);
+	}
+	if (window->Hidden)
+		return false;
+
+	const ImRect title = window->TitleBarRect();
+	const float right = title.Max.x - style.FramePadding.x -
+	                    (style.WindowMenuButtonPosition == ImGuiDir_Right ? ImGui::GetFontSize() + style.ItemInnerSpacing.x : 0.0f);
+	const float top = title.Min.y + (title.GetHeight() - labelSize.y) * 0.5f;
+	const ImRect button(ImVec2(right - width, top), ImVec2(right, top + labelSize.y));
+	ImGui::PushClipRect(title.Min, title.Max, false);
+	const SKSE::stl::scope_exit popClip([] { ImGui::PopClipRect(); });
+	const ImGuiID id = window->GetID("##ExitEditor");
+	if (!ImGui::ItemAdd(button, id))
+		return false;
+	bool hovered, held;
+	const bool pressed = ImGui::ButtonBehavior(button, id, &hovered, &held);
+	const auto color = held && hovered ? ImGuiCol_ButtonActive : (hovered ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
+	ImGui::RenderFrame(button.Min, button.Max, ImGui::GetColorU32(color), true, style.FrameRounding);
+	ImGui::RenderNavCursor(button, id);
+	ImGui::RenderTextClipped(button.Min, button.Max, label, nullptr, nullptr, ImVec2(0.5f, 0.5f), &button);
+	return pressed;
+}
+
 void Effects11Editor::DrawSettingsWindow()
 {
 	SetNextPanelPlacement(false, resetLayout);
 
-	bool keepOpen = true;
 	const std::string title = std::format("{}###Effects11Editor", T(TKEY("window_title"), "Effects 11"));
-	if (Util::BeginWithRoundedClose(title.c_str(), &keepOpen, ImGuiWindowFlags_NoScrollbar)) {
+	const bool contentsVisible = Util::BeginWithRoundedClose(title.c_str(), nullptr, ImGuiWindowFlags_NoScrollbar);
+	const bool exitEditor = DrawExitEditorButton(contentsVisible);
+	if (contentsVisible) {
 		HandleShortcuts(focusSettingsSearch);
 		if (!EffectManager::GetSingleton().IsPresetLoaded()) {
 			DrawNoPreset();
@@ -494,7 +532,7 @@ void Effects11Editor::DrawSettingsWindow()
 	}
 	ImGui::End();
 
-	if (!keepOpen)
+	if (exitEditor)
 		Close();
 }
 
@@ -1649,14 +1687,21 @@ void Effects11Editor::DrawPendingActionPopup()
 
 void Effects11Editor::DrawLauncher()
 {
+	const auto& menuSettings = globals::menu->GetSettings();
+
+	// The shared selector drives UseEffect, which is saved to enbseries.ini with the rest of the preset
+	PostProcessingMode::DrawSelector();
+	const float editorButtonHeight = ImGui::GetItemRectSize().y;
+	auto& effectManager = EffectManager::GetSingleton();
+	if (effectManager.IsPresetLoaded() && PostProcessingMode::Get() != PostProcessingMode::Mode::Effects11) {
+		// Without a preset Effects 11 cannot be selected, so the editor stays open to explain how to get one.
+		Util::StatusBanner(ICON_TI_LOCK, T(TKEY("not_active_mode"), "Effects 11 is not the active mode, so the editor shows no changes. Select Effects 11 above to use it."), Util::Colors::GetWarning());
+	}
+
+	ImGui::BeginGroup();
 	if (MenuManager::GetSingleton().RenderPresetSelector())
 		RefreshPresetPaths();
-	auto& effectManager = EffectManager::GetSingleton();
-	auto& settingManager = SettingManager::GetSingleton();
-	const auto& menuSettings = globals::menu->GetSettings();
-	const bool presetLoaded = effectManager.IsPresetLoaded();
-
-	if (presetLoaded)
+	if (effectManager.IsPresetLoaded())
 		Util::Text::Success("%s", T(TKEY("preset_loaded"), "Preset loaded"));
 	else
 		Util::Text::Warning("%s", T(TKEY("no_preset_title"), "No preset loaded"));
@@ -1665,25 +1710,32 @@ void Effects11Editor::DrawLauncher()
 		RefreshPresetPaths();
 	Util::TextUnformattedDisabled(presetPaths.iniDisplay.c_str());
 	Util::AddTooltip(presetPaths.iniFull.c_str());
-	// The editor's hotkey sits at the right end of this line, above the editor button on the selector's row
-	if (!menuSettings.Effects11EditorKey.empty()) {
-		const std::string hotkey = I18n::GetSingleton()->Format(TKEY("editor_hotkey"),
-			{ { "key", Util::Input::KeyIdToString(menuSettings.Effects11EditorKey) } }, "Hotkey: {key}");
+	ImGui::EndGroup();
+
+	const char* label = T(TKEY("open_editor"), "Open Effects 11 Editor");
+	const std::string hotkey = menuSettings.Effects11EditorKey.empty() ? std::string{} :
+	                                                                     I18n::GetSingleton()->Format(TKEY("editor_hotkey"), { { "key", Util::Input::KeyIdToString(menuSettings.Effects11EditorKey) } }, "Hotkey: {key}");
+	const ImVec2 labelSize = ImGui::CalcTextSize(label);
+	ImVec2 hotkeySize{};
+	if (!hotkey.empty()) {
 		MenuFonts::FontRoleGuard subtext(Menu::FontRole::Subtext);
-		BrowserUI::RightAlign(ImGui::CalcTextSize(hotkey.c_str()).x);
-		Util::TextUnformattedDisabled(hotkey.c_str());
+		hotkeySize = ImGui::CalcTextSize(hotkey.c_str());
 	}
-
-	ImGui::Spacing();
-
-	// The shared selector drives UseEffect, which is saved to enbseries.ini with the rest of the preset
-	// The editor button sits on the selector's row
-	PostProcessingMode::SelectorAction openEditor;
-	openEditor.label = T(TKEY("open_editor"), "Open Effects 11 Editor");
-	openEditor.onClick = [this] { Open(true); };
-	PostProcessingMode::DrawSelector(std::span(&openEditor, 1));
+	const float height = std::max(editorButtonHeight, labelSize.y + hotkeySize.y + ImGui::GetStyle().FramePadding.y * 2.0f);
+	const float width = std::max(labelSize.x, hotkeySize.x) + ImGui::GetStyle().FramePadding.x * 2.0f;
+	Util::SameLineIfFits(width);
+	ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - width));
+	if (Util::Button("##OpenEditor", ImVec2(width, height)))
+		Open(true);
+	const auto min = ImGui::GetItemRectMin();
+	const float y = min.y + (height - labelSize.y - hotkeySize.y) * 0.5f;
+	auto* drawList = ImGui::GetWindowDrawList();
+	drawList->AddText(ImVec2(min.x + (width - labelSize.x) * 0.5f, y), ImGui::GetColorU32(ImGuiCol_Text), label);
+	if (!hotkey.empty()) {
+		MenuFonts::FontRoleGuard subtext(Menu::FontRole::Subtext);
+		drawList->AddText(ImVec2(min.x + (width - hotkeySize.x) * 0.5f, y + labelSize.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), hotkey.c_str());
+	}
 	if (HasUnsavedChanges()) {
-		SameLineIfFits(ImGui::CalcTextSize(T(TKEY("save"), "Save")).x);
 		auto color = globals::menu->GetTheme().StatusPalette.Error;
 		color.w = 0.75f;
 		ImGui::PushStyleColor(ImGuiCol_Text, color);
@@ -1700,26 +1752,13 @@ void Effects11Editor::DrawLauncher()
 
 	DrawParticleOwnershipToggle();
 
-	ImGui::Spacing();
-	ImGui::Separator();
-
-	{
-		// Without a preset Effects 11 cannot be selected, so the editor stays open to explain how to get one.
-		const Util::LockedSection modeLock(presetLoaded && PostProcessingMode::Get() != PostProcessingMode::Mode::Effects11,
-			T(TKEY("not_active_mode"), "Effects 11 is not the active mode, so the editor shows no changes. Select Effects 11 above to use it."));
-		ImGui::PushTextWrapPos(0.0f);
-		Util::TextUnformattedDisabled(T(TKEY("launcher_body"),
-			"The editor opens over the game, like the ENB editor, so every change shows live. "
-			"Close it or press Esc to come back here."));
-		ImGui::PopTextWrapPos();
-	}
-
 	if (!effectManager.enbEffect.IsFilePresent())
 		return;
 
 	ImGui::SeparatorText(T(TKEY("shader_files"), "Shader files"));
-	if (!ImGui::BeginTable("##files", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg))
+	if (!ImGui::BeginTable("##files", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_PadOuterX))
 		return;
+	auto& settingManager = SettingManager::GetSingleton();
 	for (const auto& file : GetEffectFiles()) {
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);

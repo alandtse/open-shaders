@@ -11,15 +11,10 @@
 #include "Presets/PresetProvider.h"
 #include "imgui_stdlib.h"
 
-#include "CSEditor/EditorWindow.h"
 #include "CSEditor/SceneManager/SceneSettingsManager.h"
-#include "Features/CSEditor.h"
 #include "Globals.h"
 #include "Menu.h"
-#include "Menu/FeatureListRenderer.h"
 #include "Menu/Fonts.h"
-#include "Menu/MenuIcons.h"
-#include "Menu/PresetsPageRenderer.h"
 #include "Profiler.h"
 #include "State.h"
 #include "Util.h"
@@ -31,22 +26,11 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdio>
-#include <format>
 
 namespace
 {
 	constexpr std::array kPointerButtons{ ImGuiMouseButton_Left, ImGuiMouseButton_Right, ImGuiMouseButton_Middle };
 	constexpr std::array kActivateKeys{ ImGuiKey_Enter, ImGuiKey_KeypadEnter, ImGuiKey_Space, ImGuiKey_GamepadFaceDown };
-
-	/** @brief Continues the current line and moves the cursor so an item of @p width ends at the content's right edge. */
-	void RightAlignOnLine(float width)
-	{
-		ImGui::SameLine();
-		const float target = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - width;
-		if (target > ImGui::GetCursorPosX())
-			ImGui::SetCursorPosX(target);
-	}
 
 	/** @brief Whether this frame's input could activate a control, so idle frames skip the settings diff. */
 	bool InputMayEditSettings()
@@ -129,23 +113,7 @@ void PostProcessing::DrawSettings()
 	if (watchEdits)
 		SaveSettings(before);
 
-	// A scene replica of this page edits a scene layer, and inside the CS Editor (its Base Settings window draws this
-	// page too) the editor is already open, so its shortcuts are left out there.
-	std::array<PostProcessingMode::SelectorAction, 2> pageActions;
-	if (const auto* editor = EditorWindow::GetSingleton(); !SettingsControl::IsReplicating() && (!editor || !editor->open)) {
-		auto& presets = pageActions[0];
-		presets.label = T("menu.presets.open_presets", "Presets");
-		presets.tooltip = T("feature.post_processing.open_presets_tooltip", "Load and switch Post Processing presets on the Presets page.");
-		presets.icon = MenuIcons::kPresets;
-		presets.onClick = [] { globals::menu->SelectFeatureMenu(std::string(MenuPageIds::kPresets)); };
-
-		auto& openEditor = pageActions[1];
-		openEditor.label = T("menu.presets.open_cs_editor", "CS Editor");
-		openEditor.tooltip = T("menu.presets.open_cs_editor_tooltip", "Open the CS Editor for weather, lighting, and scene editing.");
-		openEditor.icon = MenuIcons::kCSEditor;
-		openEditor.onClick = [] { CSEditor::OpenEditorWindow(); };
-	}
-	PostProcessingMode::DrawSelector(pageActions);
+	PostProcessingMode::DrawSelector();
 
 	ImGui::Spacing();
 
@@ -156,16 +124,12 @@ void PostProcessing::DrawSettings()
 			T("common.settings_managed_by_enb", "This setting is managed by Effects 11.") :
 			T("feature.post_processing.off_in_vanilla", "Vanilla mode is active. Select Post Processing above to use these settings."));
 
-	const char* settingsTooltip = T("feature.post_processing.edit_settings_for_this_feature", "Edit settings for this feature.");
-
 	// Draws a read-only checkbox for a forced-on sub-feature and returns true. Otherwise callers bind
 	// `&feat->enabled` themselves: the scene catalog generator only recognises that form as a scene toggle.
-	auto isForcedOn = [this](PostProcessFeature& feature) {
-		return feature.IsAutoEnabled() ||
-		       (&feature == GetPipelineFeature<HistogramAutoExposure>(FeaturePipelineIndex::AutoExposure) && GetActivePhysicalCameraState());
-	};
-	auto drawForcedEnabled = [&isForcedOn](const char* label, PostProcessFeature& feature) {
-		if (!isForcedOn(feature))
+	auto drawForcedEnabled = [this](const char* label, PostProcessFeature& feature) {
+		const bool automatic = feature.IsAutoEnabled() ||
+		                       (&feature == GetPipelineFeature<HistogramAutoExposure>(FeaturePipelineIndex::AutoExposure) && GetActivePhysicalCameraState());
+		if (!automatic)
 			return false;
 		bool active = feature.IsActive();
 		ImGui::BeginDisabled();
@@ -193,98 +157,45 @@ void PostProcessing::DrawSettings()
 	};
 
 	if (activeSettingsPage == SettingsPage::Pipeline) {
-		Util::SeparatorTextWithFont(T("feature.post_processing.section_camera", "Camera"), Menu::FontRole::Subheading);
-		{
-			auto& cam = cinematicCamera;
-			ImGui::Checkbox(T("feature.post_processing.cinematic_camera.name", "Cinematic Camera"), &cinematicCamera.settings.Enabled);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("%s", T("feature.post_processing.cinematic_camera.description",
-									  "Controls lens, focus, exposure and FOV. Exposure processing runs automatically while the camera is active; other effects must be enabled separately."));
-			RightAlignOnLine(Util::IconButtonSize());
-			if (Util::IconButton("##CinematicCameraSettings", Icons::TI(MenuIcons::kSettings), settingsTooltip))
-				activeSettingsPage = SettingsPage::CinematicCamera;
+		ImGui::PushID("CinematicCamera");
+		ImGui::Checkbox("##Enabled", &cinematicCamera.settings.Enabled);
+		ImGui::SameLine();
+		if (Util::LabeledButton("##Bars", Icons::TI(ICON_TI_MENU_2)))
+			activeSettingsPage = SettingsPage::CinematicCamera;
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T("feature.post_processing.edit_settings_for_this_feature", "Edit settings for this feature."));
+		ImGui::SameLine();
+		ImGui::TextUnformatted(T("feature.post_processing.cinematic_camera.name", "Cinematic Camera"));
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T("feature.post_processing.cinematic_camera.description",
+				"Controls lens, focus, exposure and FOV. Exposure processing runs automatically while the camera is active; other effects must be enabled separately."));
+		ImGui::PopID();
 
-			if (const auto* state = cam.GetState()) {
-				const auto isoText = state->Exposure == CinematicCamera::ExposureMode::AutoISO ?
-				                         std::format("{} {:.0f}-{:.0f}", T("feature.post_processing.cinematic_camera.exposure_auto_iso", "Auto ISO"), state->MinISO, state->MaxISO) :
-				                         std::format("ISO {:.0f}", state->ISO);
-				char summary[256];
-				std::snprintf(summary, sizeof(summary),
-					T("feature.post_processing.cinematic_camera.summary_exposure", "%s - %.1f mm - f/%.1f - %.0f deg - %s - FOV %.1f deg - %s"),
-					cam.GetFilmbackPresetName(),
-					state->FocalLengthMM,
-					state->FNumber,
-					cam.settings.Exposure.ShutterAngleDeg,
-					isoText.c_str(),
-					state->HorizontalFOVDeg,
-					cam.GetFovStateText());
-				Util::SettingHint(summary);
-			} else if (cam.settings.Enabled) {
-				const auto summary = std::format("{} - {}", cam.GetFilmbackPresetName(), cam.GetFovStateText());
-				Util::SettingHint(summary.c_str());
-			}
-		}
-
-		Util::SeparatorTextWithFont(T("feature.post_processing.section_effects", "Effects"), Menu::FontRole::Subheading);
-		Util::SettingHint(T("feature.post_processing.pipeline_order_hint", "Effects run top to bottom. Click an effect's name to edit its settings."), false);
-		ImGui::Spacing();
-
-		const float spacing = ImGui::GetStyle().ItemSpacing.x;
 		for (int i = 0; i < pipeline.size(); ++i) {
 			auto& feat = pipeline[i];
-			if (!feat || !feat->IsVisible())
-				continue;
-			auto displayName = feat->GetDisplayName();
-			auto description = feat->GetDesc();
-			ImGui::PushID(feat->GetType().c_str());
-
-			const bool automatic = isForcedOn(*feat);
-			const bool experimental = feat->IsExperimental();
-			if (!drawForcedEnabled("##Enabled", *feat))
-				ImGui::Checkbox("##Enabled", &feat->enabled);
-
-			// The name opens the settings too, so the whole row reads as one entry
-			ImGui::SameLine();
-			const char* autoLabel = T("feature.post_processing.auto_badge", "Auto");
-			const char* experimentalLabel = T("feature.post_processing.experimental_badge", "Experimental");
-			const float nameWidth = std::max(ImGui::GetContentRegionAvail().x - Util::IconButtonSize() - spacing, ImGui::GetFontSize());
-			{
-				const bool dim = !feat->IsActive();
-				if (dim)
-					ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetSecondary());
-				if (Util::Selectable(displayName.c_str(), false, ImGuiSelectableFlags_None, ImVec2(nameWidth, 0.0f))) {
+			if (feat && feat->IsVisible()) {
+				auto displayName = feat->GetDisplayName();
+				auto description = feat->GetDesc();
+				ImGui::PushID(feat->GetType().c_str());
+				if (!drawForcedEnabled("##Enabled", *feat))
+					ImGui::Checkbox("##Enabled", &feat->enabled);
+				ImGui::SameLine();
+				if (Util::LabeledButton("##Bars", Icons::TI(ICON_TI_MENU_2))) {
 					activePipelineFeature = i;
 					activeSettingsPage = SettingsPage::SubFeature;
 				}
-				if (dim)
-					ImGui::PopStyleColor();
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::Text("%s", T("feature.post_processing.edit_settings_for_this_feature", "Edit settings for this feature."));
+				ImGui::SameLine();
+				ImGui::Text("%s", displayName.c_str());
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::Text("%s", description.c_str());
+				if (feat->IsExperimental()) {
+					ImGui::SameLine();
+					Util::Badge(T("feature.post_processing.experimental_badge", "Experimental"), Util::Colors::GetWarning(), { .rowHeight = ImGui::GetFrameHeight() });
+				}
+				ImGui::PopID();
 			}
-			if (!description.empty())
-				Util::AddTooltip(description.c_str());
-			if (automatic || experimental) {
-				const ImVec2 rowMin = ImGui::GetItemRectMin();
-				const ImVec2 rowMax = ImGui::GetItemRectMax();
-				float rightX = rowMax.x;
-				auto drawRowBadge = [&](const char* label, const ImVec4& tint) {
-					const float width = Util::MeasureBadgeWidth(label);
-					Util::BadgeOptions badge;
-					badge.at = ImVec2(rightX - width, rowMin.y);
-					badge.rowHeight = rowMax.y - rowMin.y;
-					Util::Badge(label, tint, badge);
-					rightX -= width + spacing;
-				};
-				if (automatic)
-					drawRowBadge(autoLabel, Util::Colors::GetAccent());
-				if (experimental)
-					drawRowBadge(experimentalLabel, Util::Colors::GetWarning());
-			}
-
-			ImGui::SameLine();
-			if (Util::IconButton("##Settings", Icons::TI(MenuIcons::kSettings), settingsTooltip)) {
-				activePipelineFeature = i;
-				activeSettingsPage = SettingsPage::SubFeature;
-			}
-			ImGui::PopID();
 		}
 	} else if (activeSettingsPage == SettingsPage::SubFeature) {
 		if (activePipelineFeature >= 0 && activePipelineFeature < pipeline.size() && pipeline[activePipelineFeature]) {
