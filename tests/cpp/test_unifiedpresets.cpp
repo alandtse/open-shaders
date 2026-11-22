@@ -248,7 +248,8 @@ TEST_CASE("Confirmed preset conflicts survive restart and fall back to installed
 	auto state = nlohmann::json::object();
 	RecordConflictChoice(state, b.id);
 	state = PresetState::RestorePrivateState({}, nlohmann::json::parse(state.dump()));
-	const auto preferred = RetainInstalledChoices(state, [](const auto&) { return false; });
+	RetainInstalledChoices(state, [](const auto&) { return false; });
+	const auto preferred = PresetState::ReadIds(state, PresetState::kPreferredScenePacksKey);
 	REQUIRE(Select({ a, b, c }, {}, {}, true, preferred).enabled == both);
 	REQUIRE(Select({ a, b, c }, {}, preferred, true, preferred).enabled == fallback);
 	REQUIRE(Select({ a, b, c }, fallback, {}, false, preferred).enabled == fallback);
@@ -259,9 +260,11 @@ TEST_CASE("Confirmed preset conflicts survive restart and fall back to installed
 	REQUIRE(Select({ a, b, c }, both, {}, true, reversed).enabled == fallback);
 
 	const auto missingB = [&](const auto& id) { return id == b.id; };
-	REQUIRE(RetainInstalledChoices(reversedState, missingB) == std::vector<std::string>{ a.id });
+	RetainInstalledChoices(reversedState, missingB);
+	REQUIRE(PresetState::ReadIds(reversedState, PresetState::kPreferredScenePacksKey) == std::vector<std::string>{ a.id });
 	PresetState::SetDisabled(state, "disabledScenePackIds", "Off", true);
-	const auto remaining = RetainInstalledChoices(state, missingB);
+	RetainInstalledChoices(state, missingB);
+	const auto remaining = PresetState::ReadIds(state, PresetState::kPreferredScenePacksKey);
 	REQUIRE(remaining.empty());
 	REQUIRE(Select({ a, c }, both, {}, true, remaining).enabled == fallback);
 	const auto restored = PresetState::RestorePrivateState({}, nlohmann::json::parse(state.dump()));
@@ -269,6 +272,38 @@ TEST_CASE("Confirmed preset conflicts survive restart and fall back to installed
 	const auto reinstalled = PresetState::ReadIds(restored, PresetState::kPreferredScenePacksKey);
 	REQUIRE(reinstalled == remaining);
 	REQUIRE(Select({ a, b, c }, fallback, {}, true, reinstalled).enabled == fallback);
+}
+
+TEST_CASE("Reinstalling a disabled pack restores ordinary scene and baseline selection", "[presets]")
+{
+	using namespace PresetActivation;
+	const Candidate a{ "A", { { "day", 1 } } };
+	const Candidate b{ "B", { { "day", 2 }, { "night", 2 } } };
+	const Candidate c{ "C", { { "night", 1 } } };
+	const std::vector<std::string> baselines{ "B", "Other" };
+	const std::vector<std::string> alternatives{ "A", "C" };
+	const std::vector<std::string> winner{ "B" };
+	auto state = nlohmann::json::object();
+	RecordConflictChoice(state, b.id);
+	REQUIRE(Select({ a, b, c }, {}, {}, true, winner).blocked.size() == 2);
+	for (const auto key : { "disabledScenePackIds", "disabledBaselinePackIds" })
+		for (const auto& id : baselines)
+			PresetState::SetDisabled(state, key, id, true);
+	RetainInstalledChoices(state, [](const auto&) { return false; });
+	REQUIRE(Select({ a, b, c }, {}, PresetState::ReadIds(state, "disabledScenePackIds"), true, winner).enabled == alternatives);
+	REQUIRE(PresetState::DiscoverBaselines(state, baselines).at("baselinePackIds").empty());
+
+	RetainInstalledChoices(state, [&](const auto& id) { return id == b.id; });
+	state = PresetState::RestorePrivateState({}, nlohmann::json::parse(state.dump()));
+	REQUIRE(PresetState::ReadIds(state, PresetState::kPreferredScenePacksKey).empty());
+	const auto disabled = PresetState::ReadIds(state, "disabledScenePackIds");
+	REQUIRE(disabled == std::vector<std::string>{ "Other" });
+	REQUIRE(PresetState::ReadIds(state, "disabledBaselinePackIds") == disabled);
+	REQUIRE(Select({ b }, {}, disabled, false).enabled.empty());
+	REQUIRE(PresetState::DiscoverBaselines(state, baselines, false).at("baselinePackIds").empty());
+	REQUIRE(Select({ b }, {}, disabled, true).enabled == winner);
+	REQUIRE(Select({ a, b, c }, {}, disabled, true).enabled == alternatives);
+	REQUIRE(PresetState::DiscoverBaselines(state, baselines).at("baselinePackIds") == winner);
 }
 
 TEST_CASE("Returning presets follow the installed pipeline unless explicitly disabled", "[presets]")

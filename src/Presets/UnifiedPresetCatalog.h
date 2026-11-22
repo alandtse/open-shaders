@@ -193,7 +193,7 @@ public:
 
 	/** @brief Turns the active pack off: an Effects 11 pack switches the pipeline to Vanilla,
 	 *  and the scene layer and form edits fall back to the user's own. */
-	void DisableActivePack();
+	bool DisableActivePack();
 	/** @brief Disables a selected pack's scene, form, pipeline and Base Settings layers together. */
 	bool DisablePack(const std::string& id);
 	/** @brief Atomically edits one preset value and reapplies enabled layers, rolling back on failure. */
@@ -284,6 +284,8 @@ private:
 	void DiscoverLegacyBaselines();
 	/** @brief Exposes loose legacy scenes without copying or rewriting their files. */
 	void DiscoverLegacyScenes();
+	/** @brief Rebuilds the catalog and its selection in memory. */
+	void ScanInstalledPacks(bool automatic);
 	/** @brief Discovers setting conflicts and selects new scene presets. */
 	void DiscoverSceneActivation(bool automatic);
 	/** @brief Adds provider-owned library and legacy payloads not covered by unified packs. */

@@ -1850,7 +1850,7 @@ namespace
 		bool Apply(const std::string& id, bool saveCurrent) override
 		{
 			auto& manager = PresetManager::GetSingleton();
-			manager.DiscoverPresets();
+			manager.DiscoverPresets(false);
 			if (id.starts_with(kLocationPrefix)) {
 				const auto* location = manager.FindByRelativeKey(id.substr(kLocationPrefix.size()));
 				if (!location || !location->valid)

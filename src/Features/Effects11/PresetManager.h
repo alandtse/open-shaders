@@ -93,8 +93,8 @@ public:
 		bool isUnifiedPack = false;
 	};
 
-	/** @brief Rescans Legacy, library and unified pack folders and repairs an invalid active selection. */
-	void DiscoverPresets();
+	/** @brief Rescans all preset folders, optionally choosing a fallback for an invalid selection. */
+	void DiscoverPresets(bool selectDefault = true);
 	/**
 	 * @brief Lists Legacy first (invalid when not installed), then library presets and, when includeUnifiedPacks,
 	 *        unified packs' effects11 folders, sorted by name. Leaves the discovered list and the selection alone.
@@ -164,6 +164,8 @@ private:
 
 	/** @brief The discovered preset with this id, or null. */
 	const PresetInfo* FindPreset(const std::string& id) const;
+	/** @brief Rebuilds the location list while preserving the source of the live settings. */
+	void ScanLocations();
 	/** @brief Keeps a valid selection, else applies SelectDefaultPreset. */
 	void EnsureDefaultSelection();
 	/** @brief Adds each preset folder under a CommunityShaders subfolder, across the VFS and real mod roots. */

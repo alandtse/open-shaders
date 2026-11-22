@@ -1050,7 +1050,7 @@ void PresetsPageRenderer::Render()
 {
 	auto& catalog = UnifiedPresetCatalog::GetSingleton();
 	if (!discovered) {
-		catalog.Discover();
+		catalog.Discover(false);
 		discovered = true;
 		if (selectedPackId.empty() && !catalog.GetActivePackId().empty())
 			selectedPackId = catalog.GetActivePackId();
