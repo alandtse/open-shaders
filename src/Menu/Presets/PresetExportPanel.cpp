@@ -1042,7 +1042,7 @@ void PresetExportPanel::DrawPage()
 	if (!initialized || requestedExport) {
 		const auto request = std::exchange(requestedExport, std::nullopt).value_or(ExportRequest{ RequestKind::NewPreset, {} });
 		ResetFormFields();
-		UnifiedPresetCatalog::GetSingleton().Discover();
+		UnifiedPresetCatalog::GetSingleton().Discover(false);
 		try {
 			for (auto* feature : Feature::GetFeatureList()) {
 				if (!IsBaselineCandidate(feature))

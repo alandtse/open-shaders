@@ -220,7 +220,7 @@ namespace
 		});
 		if (!valueModal.IsActive()) {
 			if (valueEdit.result == Result::Stale || valueEdit.result == Result::Missing) {
-				UnifiedPresetCatalog::GetSingleton().Discover();
+				UnifiedPresetCatalog::GetSingleton().Discover(false);
 				revision = 0;
 			}
 			valueEdit = {};

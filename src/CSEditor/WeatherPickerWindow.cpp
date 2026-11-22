@@ -143,15 +143,17 @@ void WeatherPickerWindow::DrawContents(bool expanded)
 		return;
 	}
 	const float comboWidth = ThemeManager::Constants::CSE_PICKER_COMBO_WIDTH * scale;
-	const float listHeight = ImGui::GetTextLineHeightWithSpacing() * ThemeManager::Constants::CSE_PICKER_LIST_ROWS;
+	const auto& style = ImGui::GetStyle();
+	const float inset = ThemeManager::Constants::LEFT_PANE_EDGE_INSET * scale;
+	const float rowsHeight = ImGui::GetTextLineHeightWithSpacing() * ThemeManager::Constants::WEATHER_PICKER_VISIBLE_ROWS - style.ItemSpacing.y;
+	const float selectionHeight = rowsHeight + inset * 4.0f + ImGui::GetFrameHeightWithSpacing();
 	if (expanded) {
-		DrawSelection(ImGui::GetContentRegionAvail().x, listHeight, true);
+		DrawSelection(ImGui::GetContentRegionAvail().x, selectionHeight, true);
 	} else {
 		const auto preview = sky->currentWeather ? Util::GetFormEditorID(sky->currentWeather) : std::string{};
 		const float popupWidth = comboWidth + CSEditor::GetWeatherFilterWidth() + spacing +
-		                         (ImGui::GetStyle().WindowPadding.x + ThemeManager::Constants::LEFT_PANE_EDGE_INSET * scale) * 2.0f;
-		const auto& style = ImGui::GetStyle();
-		const float popupHeight = std::min(listHeight + style.WindowPadding.y * 2.0f,
+		                         (style.WindowPadding.x + inset) * 2.0f;
+		const float popupHeight = std::min(selectionHeight + style.ItemSpacing.y + style.WindowPadding.y * 2.0f,
 			ImGui::GetWindowViewport()->WorkSize.y - style.DisplaySafeAreaPadding.y * 2.0f);
 		ImGui::SetNextWindowSizeConstraints(ImVec2(popupWidth, popupHeight), ImVec2(popupWidth, popupHeight));
 		ImGui::SetNextItemWidth(comboWidth);

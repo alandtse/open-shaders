@@ -44,6 +44,7 @@ public:
 	virtual void PostPostLoad() override;
 	virtual void DataLoaded() override;
 	virtual void Prepass() override;
+	void GameReset() override;
 
 	static void OpenEditorWindow();
 	static void ToggleEditorWindow();
@@ -165,7 +166,6 @@ private:
 	static inline uint32_t s_lastWeatherFlagFilter = UNCLASSIFIED_FLAG;
 	static inline bool s_accelerateWeatherChange = true;
 	static inline float s_accelerationRate = 5.0f;
-	static inline RE::TESWeather* s_cachedLastWeather = nullptr;
 	static inline bool s_isAcceleratingWeatherChange = false;
 	static inline float s_accelerationTime = 0.0f;
 

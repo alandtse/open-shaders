@@ -200,8 +200,13 @@ namespace
 			}
 
 			ImGui::PushID(section.id.data(), section.id.data() + section.id.size());
-			if (Util::Selectable(GetSectionTitle(section.id), state.section == section.id))
+			const char* title = GetSectionTitle(section.id);
+			if (Util::Selectable("##Section", state.section == section.id))
 				state.section = std::string(section.id);
+			const ImVec2 rowMin = ImGui::GetItemRectMin();
+			const float textX = rowMin.x + Util::Surface::ListHighlightTextInset() + ImGui::GetStyle().ItemInnerSpacing.x;
+			const ImVec2 textPos(textX, Util::CenterTextTopY(rowMin.y, ImGui::GetItemRectSize().y));
+			ImGui::GetWindowDrawList()->AddText(textPos, ImGui::GetColorU32(ImGuiCol_Text), title);
 			if (section.id == Ids::kTheme && SettingsTabRenderer::IsThemeDirty()) {
 				const ImVec2 min = ImGui::GetItemRectMin();
 				const ImVec2 max = ImGui::GetItemRectMax();

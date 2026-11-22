@@ -15,6 +15,7 @@
 #include "CSEditor/Browser/BrowserWidgets.h"
 #include "CSEditor/EditorWindow.h"
 #include "CSEditor/WeatherPickerWindow.h"
+#include "CSEditor/WeatherUtils.h"
 #include "Features/PerformanceOverlay.h"
 #include <algorithm>
 #include <array>
@@ -29,15 +30,16 @@ namespace
 	{
 		RE::TESWeather::WeatherDataFlag flag;
 		std::string_view canonicalName;
+		const char* (*label)();
 	};
 
 	constexpr std::array<WeatherFlagInfo, 6> kClassifiedWeatherFlags = { {
-		{ RE::TESWeather::WeatherDataFlag::kPleasant, "Pleasant" },
-		{ RE::TESWeather::WeatherDataFlag::kCloudy, "Cloudy" },
-		{ RE::TESWeather::WeatherDataFlag::kRainy, "Rainy" },
-		{ RE::TESWeather::WeatherDataFlag::kSnow, "Snow" },
-		{ RE::TESWeather::WeatherDataFlag::kPermAurora, "Aurora" },
-		{ RE::TESWeather::WeatherDataFlag::kAuroraFollowsSun, "Aurora Sun" },
+		{ RE::TESWeather::WeatherDataFlag::kPleasant, "Pleasant", [] { return T(TKEY("sunny"), "Sunny"); } },
+		{ RE::TESWeather::WeatherDataFlag::kCloudy, "Cloudy", [] { return T("feature.cs_editor.cloudy", "Cloudy"); } },
+		{ RE::TESWeather::WeatherDataFlag::kRainy, "Rainy", [] { return T("feature.cs_editor.rainy", "Rainy"); } },
+		{ RE::TESWeather::WeatherDataFlag::kSnow, "Snow", [] { return T("feature.cs_editor.snow", "Snow"); } },
+		{ RE::TESWeather::WeatherDataFlag::kPermAurora, "Aurora", [] { return T("feature.cs_editor.aurora", "Aurora"); } },
+		{ RE::TESWeather::WeatherDataFlag::kAuroraFollowsSun, "Aurora Sun", [] { return T("feature.cs_editor.aurora_sun", "Aurora Sun"); } },
 	} };
 
 	const WeatherFlagInfo* FindWeatherFlagInfo(RE::TESWeather::WeatherDataFlag flag)
@@ -103,10 +105,17 @@ void SceneSelector::DataLoaded()
 	std::ranges::sort(s_destinations, {}, &TravelDestination::label);
 }
 
+void SceneSelector::GameReset()
+{
+	WeatherUtils::ResetWeatherHistory();
+}
+
 void SceneSelector::Prepass()
 {
-	if (!globals::features::csEditor.loaded)
+	if (!globals::features::csEditor.loaded) {
+		WeatherUtils::ObserveWeather(globals::game::sky);
 		EditorWindow::MaintainWeatherLock();
+	}
 }
 
 void SceneSelector::DrawSettings()
@@ -265,9 +274,8 @@ void SceneSelector::DisplayWeatherBasicInfo(RE::TESWeather* weather, float weath
 		ImGui::BulletText("%s", T(TKEY("no_weather_found"), "No Weather Found"));
 		return;
 	}
-	std::string weatherText = Util::FormatWeather(weather);
+	std::string weatherText = Util::FormatTESForm(weather);
 	ImGui::Bullet();
-	ImGui::SameLine();
 	bool showTooltip = SceneSelector::RenderMultiColorWeatherName(weather, weatherText);
 	if (showTooltip) {
 		ImGui::BeginTooltip();
@@ -462,12 +470,17 @@ void SceneSelector::DisplayWeatherInfo(RE::TESWeather* weather, float weatherPct
 
 void SceneSelector::RenderWeatherControls(RE::Sky* sky)
 {
-	ImGui::SeparatorText(T(TKEY("weather_selection"), "Weather Selection"));
-	const auto* weather = sky ? sky->currentWeather : nullptr;
-	auto currentWeather = Util::GetFormEditorID(weather);
-	if (currentWeather.empty())
-		currentWeather = weather ? std::format("{:08X}", weather->GetFormID()) : T(TKEY("no_weather_found"), "No Weather Found");
-	ImGui::TextWrapped("%s: %s", T(TKEY("current_weather_column"), "Current Weather"), currentWeather.c_str());
+	auto* weather = sky ? sky->currentWeather : nullptr;
+	ImGui::Text("%s:", T(TKEY("current_weather_column"), "Current Weather"));
+	ImGui::SameLine();
+	if (weather) {
+		auto name = Util::GetFormEditorID(weather);
+		if (name.empty())
+			name = std::format("{:08X}", weather->GetFormID());
+		RenderMultiColorWeatherName(weather, name);
+	} else {
+		ImGui::TextUnformatted(T(TKEY("no_weather_found"), "No Weather Found"));
+	}
 	const Util::DisableGuard disabled(!sky || sky->mode.get() != RE::Sky::Mode::kFull);
 	WeatherPickerWindow::GetSingleton()->DrawContents(true);
 }
@@ -546,16 +559,11 @@ void SceneSelector::DrawTeleportControls()
 
 void SceneSelector::RenderWeatherInformationDisplay(RE::Sky* sky, bool showInteractiveElements)
 {
-	// Update cache: store current lastWeather if it exists, otherwise keep the cached one
-	if (sky->lastWeather) {
-		s_cachedLastWeather = sky->lastWeather;
-	}
-
 	if (!DrawAnalysisSectionHeader(T(TKEY("current_last_weather_analysis"), "Current & Last Weather Analysis")))
 		return;
 
 	// Use cached last weather for display if sky->lastWeather is null
-	RE::TESWeather* displayLastWeather = sky->lastWeather ? sky->lastWeather : s_cachedLastWeather;
+	RE::TESWeather* displayLastWeather = WeatherUtils::GetLastWeather(sky);
 
 	// Create resizable 2-column table for current and last weather
 	if (ImGui::BeginTable("WeatherComparison", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
@@ -698,53 +706,24 @@ bool SceneSelector::RenderMultiColorWeatherName(RE::TESWeather* weather, const s
 	// Get all flags present in this weather
 	std::vector<std::string> flagNames = GetWeatherFlagNames(weather);
 
-	// If no flags or only one flag, use simple single-color display
-	if (flagNames.size() <= 1) {
-		ImVec4 weatherColor = GetWeatherTypeColor(weather);
-		ImGui::PushStyleColor(ImGuiCol_Text, weatherColor);
-		ImGui::Text("%s", weatherName.c_str());
-		ImGui::PopStyleColor();
-		return ImGui::IsItemHovered();
-	}
-	// For multiple flags, create a color-coded display
-	// We'll show the weather name in segments, each with its own color
-
-	// Create a visual representation with colored segments
-	// Format: "WeatherName [Flag1][Flag2][Flag3]"
-
 	// Display the main weather name in the primary color (highest priority flag)
 	ImVec4 primaryColor = GetWeatherTypeColor(weather);
 	ImGui::PushStyleColor(ImGuiCol_Text, primaryColor);
 
-	// Extract base weather name (without the flag suffix)
-	std::string baseName = weatherName;
-	size_t bracketPos = baseName.find(" [");
-	if (bracketPos != std::string::npos) {
-		baseName = baseName.substr(0, bracketPos);
-	}
-
-	ImGui::Text("%s", baseName.c_str());
+	ImGui::TextUnformatted(weatherName.c_str());
 	ImGui::PopStyleColor();
 
 	// Check if the main weather name (the most important part) was hovered
 	bool baseNameHovered = ImGui::IsItemHovered();
 
 	// Display flags as colored chips on the same line
-	ImGui::SameLine();
-	ImGui::TextUnformatted(" ");
-
-	for (size_t i = 0; i < flagNames.size(); ++i) {
-		if (flagNames[i] == "None" || flagNames[i].find("Unknown") == 0) {
-			continue;  // Skip "None" and "Unknown" flags for cleaner display
-		}
-
-		ImGui::SameLine();
-		ImVec4 flagColor = GetWeatherFlagColorByName(flagNames[i]);
-		ImGui::PushStyleColor(ImGuiCol_Text, flagColor);
-		// Translate canonical flag name for display
-		const std::string flagKey = Util::ToLowerAscii(std::string(TKEY("flag_")) + flagNames[i]);
-		const char* displayFlag = T(flagKey.c_str(), flagNames[i].c_str());
-		ImGui::Text("[%s]", displayFlag);
+	for (const auto& flag : flagNames) {
+		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+		ImGui::PushStyleColor(ImGuiCol_Text, GetWeatherFlagColorByName(flag));
+		const auto* info = FindWeatherFlagInfo(flag);
+		const char* label = info ? info->label() : flag == "None" ? T(TKEY("none_value"), "None") :
+		                                                            flag.c_str();
+		ImGui::Text("[%s]", label);
 		ImGui::PopStyleColor();
 	}
 

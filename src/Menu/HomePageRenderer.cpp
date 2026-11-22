@@ -19,6 +19,7 @@
 #include "Menu/MenuIcons.h"
 #include "Menu/MenuLinks.h"
 #include "Menu/PerformanceRenderer.h"
+#include "Menu/PresetsPageRenderer.h"
 #include "Menu/ProfilingRenderer.h"
 #include "Menu/SettingsPageRenderer.h"
 #include "Menu/SettingsSections.h"
@@ -83,19 +84,7 @@ namespace
 		ImGui::Spacing();
 		if (Util::LabeledButton("##BrowsePresets", Icons::TI(MenuIcons::kPresets), T("menu.home.browse_presets", "Browse presets")))
 			globals::menu->SelectFeatureMenu(std::string(MenuPageIds::kPresets));
-		bool automatic = catalog.GetAutomaticPresets();
-		ImGui::BeginGroup();
-		bool changed = ImGui::Checkbox("##AutomaticPresets", &automatic);
-		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextWrapped("%s", T("menu.presets.auto_apply", "Automatically Apply Presets at Startup"));
-		if (ImGui::IsItemClicked()) {
-			automatic = !automatic;
-			changed = true;
-		}
-		ImGui::EndGroup();
-		if (changed)
-			catalog.SetAutomaticPresets(automatic);
+		PresetsPageRenderer::DrawAutoApplyCheckbox();
 	}
 
 	void RenderPerformanceSummary(float cardHeight)
@@ -160,10 +149,16 @@ namespace
 									 .c_str());
 		const auto usage = globals::state->enableContentStore.load(std::memory_order_relaxed) ? cache->GetCachedContentStoreUsage() : std::nullopt;
 		if (usage) {
-			ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.home.content_store_usage",
-															 { { "count", std::to_string(usage->blobs) }, { "size", Util::FormatFileSize(usage->bytes) }, { "cap", Util::FormatFileSize(usage->maxBytes) } },
-															 "Persistent store: {count} shaders, {size} (limit {cap})")
-										 .c_str());
+			const auto store = I18n::GetSingleton()->Format("menu.home.content_store_usage",
+				{ { "count", std::to_string(usage->blobs) }, { "size", Util::FormatFileSize(usage->bytes) }, { "cap", Util::FormatFileSize(usage->maxBytes) } },
+				"Persistent store: {count} shaders, {size} (limit {cap})");
+			const float width = ImGui::CalcTextSize(store.c_str()).x;
+			const float available = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+			if (width > available)
+				ImGui::PushFont(nullptr, GImGui->FontSizeBase * available / width);
+			ImGui::TextUnformatted(store.c_str());
+			if (width > available)
+				ImGui::PopFont();
 			ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("menu.advanced.content_store_hits", { { "count", std::to_string(cache->GetContentStoreHitTasks()) } }, "Restored this session: {count}").c_str());
 		}
 		ImGui::Spacing();
@@ -384,7 +379,7 @@ void HomePageRenderer::RenderHomePage()
 		const auto viewport = ImGui::GetWindowViewport();
 		const ImVec2 popupSize(std::min(ImGui::GetFontSize() * ThemeManager::Constants::HOME_DETAIL_WIDTH_EM, viewport->WorkSize.x),
 			viewport->WorkSize.y * ThemeManager::Constants::HOME_DETAIL_HEIGHT_RATIO);
-		ImGui::SetNextWindowSize(popupSize, ImGuiCond_Appearing);
+		ImGui::SetNextWindowSizeConstraints(ImVec2(popupSize.x, 0.0f), popupSize);
 		if (ImGui::BeginPopup("##NeedsAttention")) {
 			DashboardTitle(T("menu.home.needs_attention", "Needs attention"));
 			if (featureIssues > 0) {

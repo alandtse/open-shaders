@@ -32,8 +32,6 @@ public:
 	virtual std::filesystem::path ResolvePayloadRoot(const std::filesystem::path&, const nlohmann::json&) const { return {}; }
 	/** @brief Discovers standalone or legacy payloads outside the portable pack library. */
 	virtual std::vector<LibraryEntry> ScanLibrary() const { return {}; }
-	/** @brief Returns an already-running legacy payload's catalog identifier when no selection was saved. */
-	virtual std::string GetDefaultActivePackId() const { return {}; }
 	/** @brief Maps a catalog pack identifier to the feature's existing payload identifier. */
 	virtual std::string GetPresetId(const std::string& packId) const { return packId; }
 	/** @brief Returns the selected payload identifier, preserving an empty legacy selection. */

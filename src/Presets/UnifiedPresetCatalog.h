@@ -164,7 +164,7 @@ public:
 	std::vector<std::filesystem::path> GetPackRoots(const std::string& id) const;
 	/** @brief Whether this file is selected and primary within its supplying pack. */
 	bool IsSceneFileEnabled(const std::filesystem::path& path) const;
-	/** @brief Whether new presets apply automatically, layering Base Settings and checking scene conflicts. */
+	/** @brief Whether installed presets apply automatically, layering Base Settings and checking scene conflicts. */
 	bool GetAutomaticPresets() const;
 	/** @brief Persists the automatic-preset preference. */
 	bool SetAutomaticPresets(bool enabled);
@@ -193,7 +193,7 @@ public:
 
 	/** @brief Turns the active pack off: an Effects 11 pack switches the pipeline to Vanilla,
 	 *  and the scene layer and form edits fall back to the user's own. */
-	void DisableActivePack();
+	bool DisableActivePack();
 	/** @brief Disables a selected pack's scene, form, pipeline and Base Settings layers together. */
 	bool DisablePack(const std::string& id);
 	/** @brief Atomically edits one preset value and reapplies enabled layers, rolling back on failure. */
@@ -284,6 +284,8 @@ private:
 	void DiscoverLegacyBaselines();
 	/** @brief Exposes loose legacy scenes without copying or rewriting their files. */
 	void DiscoverLegacyScenes();
+	/** @brief Rebuilds the catalog and its selection in memory. */
+	void ScanInstalledPacks(bool automatic);
 	/** @brief Discovers setting conflicts and selects new scene presets. */
 	void DiscoverSceneActivation(bool automatic);
 	/** @brief Adds provider-owned library and legacy payloads not covered by unified packs. */
