@@ -9,8 +9,8 @@
 #include <atomic>
 #include <memory>
 #include <optional>
-#include <vector>
 #include <string>
+#include <vector>
 
 /** @brief Independent early opaque raster capture for native DX12. */
 struct DX12NativeScene final : Feature

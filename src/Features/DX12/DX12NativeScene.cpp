@@ -103,7 +103,8 @@ void DX12NativeScene::PreShadowMaps()
 	// SCM reads a single per-frame publication without re-enumerating tiles
 	// for every shadow light; the same ordered sources feed RayQuery.
 	shadowLights.store(std::make_shared<const std::vector<DX12::PreparedLight>>(
-		globals::features::dx12Resources.GetPreparedLights()), std::memory_order_release);
+						   globals::features::dx12Resources.GetPreparedLights()),
+		std::memory_order_release);
 	// Only a revision-coalesced mailbox handoff on this thread. All BLAS/TLAS
 	// allocations, command recording and GPU builds run on their own worker.
 	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
