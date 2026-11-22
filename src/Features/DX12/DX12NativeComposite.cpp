@@ -57,7 +57,8 @@ namespace DX12Native
 		ID3D11Device5* device11, ID3D11DeviceContext4* context11,
 		ID3D12Device* device12, ID3D12CommandQueue* queue, ID3D11Texture2D* source,
 		uint32_t frame, uint32_t width, uint32_t height, Transfer transfer,
-		const std::shared_ptr<const ShadowMaskFrame>& shadow)
+		const std::shared_ptr<const ShadowMaskFrame>& shadow,
+		bool returnColorToDX11)
 	{
 		if (!device11 || !context11 || !device12 || !queue || !source || !width || !height)
 			return {};
@@ -94,6 +95,12 @@ namespace DX12Native
 		                         raster->readyValue != UINT64_MAX &&
 		                         raster->width >= width && raster->height >= height &&
 		                         InitializeShadow(device12);
+		shadowStatus = applyShadow ? "DX12 shadow composition ready for GPU submission" :
+			!shadow ? "raw shadowmask unavailable" :
+			!supportsShadow ? "main color format lacks typed DX12 UAV access" :
+			transfer == Transfer::Unknown ? "unknown scene color transfer" :
+			!raster || !raster->cameraValid ? "raster depth/camera unavailable" :
+			"shadow resources, fences or composite DXIL unavailable";
 
 		Slot* slot = nullptr;
 		for (auto& candidate : slots) {
@@ -125,16 +132,18 @@ namespace DX12Native
 			const bool recreate = !slot->frame || slot->device != device12 ||
 			                      slot->device11 != device11 || slot->sourceDesc.Width != desc.Width ||
 			                      slot->sourceDesc.Height != desc.Height || slot->sourceDesc.Format != desc.Format ||
-			                      slot->supportsShadow != supportsShadow;
+			                      slot->supportsShadow != supportsShadow ||
+			                      slot->hasReturn != returnColorToDX11;
 			if (recreate) {
 				// Reuse open-RT's two-image, four-slot DXGI budget and lifetime policy.
 				const auto allocationDesc = CD3DX12_RESOURCE_DESC::Tex2D(desc.Format,
 					desc.Width, desc.Height, 1, 1, 1, 0,
 					supportsShadow ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE);
 				const auto allocation = device12->GetResourceAllocationInfo(0, 1, &allocationDesc).SizeInBytes;
-				if (allocation == UINT64_MAX || allocation > (UINT64_MAX - 2ull * 1024 * 1024) / 2)
+				const uint64_t imageCount = returnColorToDX11 ? 3ull : 2ull;
+				if (allocation == UINT64_MAX || allocation > (UINT64_MAX - 2ull * 1024 * 1024) / imageCount)
 					throw std::runtime_error("Composite allocation size unsupported");
-				const uint64_t required = allocation * 2 + 2ull * 1024 * 1024;
+				const uint64_t required = allocation * imageCount + 2ull * 1024 * 1024;
 				uint64_t retained = 0;
 				for (const auto& candidate : slots)
 					if (candidate && candidate.get() != slot) {
@@ -155,12 +164,15 @@ namespace DX12Native
 				replacement->device11 = device11;
 				replacement->sourceDesc = desc;
 				replacement->supportsShadow = supportsShadow;
+				replacement->hasReturn = returnColorToDX11;
 				auto sharedDesc = desc;
 				sharedDesc.Usage = D3D11_USAGE_DEFAULT;
 				sharedDesc.BindFlags = 0;
 				sharedDesc.CPUAccessFlags = 0;
 				sharedDesc.MiscFlags = 0;
 				replacement->shared = std::make_unique<WrappedResource>(sharedDesc, device11, device12, "NativeComposite::RasterInput");
+				if (returnColorToDX11)
+					replacement->returned = std::make_unique<WrappedResource>(sharedDesc, device11, device12, "NativeComposite::RasterReturn");
 				replacement->fence.Create(device12, device11, "NativeComposite::Fence");
 				DX::ThrowIfFailed(device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(replacement->allocator.put())));
 				DX::ThrowIfFailed(device12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
@@ -270,6 +282,24 @@ namespace DX12Native
 				slot->commands->ResourceBarrier(static_cast<UINT>(end.size()), end.data());
 			}
 
+			if (applyShadow && returnColorToDX11 && slot->returned) {
+				// All shadowing happens on DX12. This extra GPU copy publishes
+				// its output back to raster without a CPU wait or FSR dependency.
+				const std::array beginReturn{
+					CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE),
+					CD3DX12_RESOURCE_BARRIER::Transition(slot->returned->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST)
+				};
+				slot->commands->ResourceBarrier(UINT(beginReturn.size()), beginReturn.data());
+				const auto destination = CD3DX12_TEXTURE_COPY_LOCATION(slot->returned->resource.get(), 0);
+				const auto origin = CD3DX12_TEXTURE_COPY_LOCATION(slot->frame->color.get(), 0);
+				const D3D12_BOX region{ 0, 0, 0, width, height, 1 };
+				slot->commands->CopyTextureRegion(&destination, 0, 0, 0, &origin, &region);
+				const std::array finishReturn{
+					CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON),
+					CD3DX12_RESOURCE_BARRIER::Transition(slot->returned->resource.get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON)
+				};
+				slot->commands->ResourceBarrier(UINT(finishReturn.size()), finishReturn.data());
+			}
 			DX::ThrowIfFailed(slot->commands->Close());
 			if (applyShadow) {
 				DX::ThrowIfFailed(queue->Wait(shadow->readyFence.get(), shadow->readyValue));
@@ -289,13 +319,32 @@ namespace DX12Native
 			auto& output = *slot->frame;
 			output.producerFence = slot->fence.fence12;
 			output.producerValue = done;
+			if (applyShadow && returnColorToDX11 && slot->returned) {
+				// D3D11 queues a GPU wait and copy; the final fence also protects
+				// the shared return texture from reuse until the copy is complete.
+				DX::ThrowIfFailed(context11->Wait(slot->fence.fence11.get(), done));
+				const D3D11_BOX sourceRegion{ 0, 0, 0, width, height, 1 };
+				context11->CopySubresourceRegion(source, 0, 0, 0, 0,
+					slot->returned->resource11, 0, &sourceRegion);
+				const uint64_t copied = slot->fence.Next();
+				DX::ThrowIfFailed(context11->Signal(slot->fence.fence11.get(), copied));
+				output.producerValue = copied;
+				shadowStatus = "DX12 shadow composite queued for GPU-fenced DX11 scene return";
+			} else if (applyShadow)
+				shadowStatus = "DX12 shadow composite queued for native upscaler consumption";
 			output.frame = frame;
 			output.width = width;
 			output.height = height;
 			output.format = desc.Format;
 			output.valid = true;
 			return slot->frame;
+		} catch (const std::exception& error) {
+			shadowStatus = std::string("composite capture failed: ") + error.what();
+			if (submitted || producerSignalled)
+				slot->untracked = true;
+			return {};
 		} catch (...) {
+			shadowStatus = "composite capture failed with an unknown error";
 			if (submitted || producerSignalled)
 				slot->untracked = true;
 			return {};

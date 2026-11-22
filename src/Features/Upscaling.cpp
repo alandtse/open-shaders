@@ -3683,7 +3683,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 			upscaling.dx12SwapChain.d3d12Device.get(),
 			upscaling.dx12SwapChain.commandQueue.get(), scene, globals::state->frameCount,
 			static_cast<uint32_t>(renderSize.x), static_cast<uint32_t>(renderSize.y),
-			transfer, shadow);
+			transfer, shadow, upscaleMethod != UpscaleMethod::kFSR);
 	}
 
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
