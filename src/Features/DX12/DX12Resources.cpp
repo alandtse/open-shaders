@@ -207,6 +207,7 @@ namespace DX12
 		                          current->predictiveResident[std::distance(current->predictive.begin(), predictive)];
 		tile->preparationAttempts = static_cast<uint8_t>(std::min<unsigned>(existing ? unsigned(existing->preparationAttempts) + 1 : 1u, 3u));
 		tile->failureReason = std::move(publication.failureReason);
+		tile->rejectionReasons = std::move(publication.rejectionReasons);
 		// The worker has already verified all positions, triangle indices, transforms, identities and budgets.
 		// Render-thread publication only transfers ownership of immutable GPU-scene inputs.
 		tile->shapes = std::move(publication.shapes);
@@ -455,6 +456,9 @@ namespace
 					ImGui::Text("Attempts: %u / 3", unsigned(tile->preparationAttempts));
 				if (tile && !tile->failureReason.empty())
 					ImGui::TextWrapped("Last reason: %s", tile->failureReason.c_str());
+				if (tile)
+					for (const auto& [reason, count] : tile->rejectionReasons)
+						ImGui::Text("%s: %u", reason.c_str(), count);
 				ImGui::EndTooltip();
 			}
 		}
@@ -594,6 +598,18 @@ void DX12Resources::DrawDiagnostics() const
 		};
 		showRetries(snapshot->resident, "Active");
 		showRetries(snapshot->predictiveResident, "Predictive");
+		const auto showRejections = [&](const auto& tiles, const char* region) {
+			for (const auto& tile : tiles) {
+				if (!tile || tile->rejectionReasons.empty())
+					continue;
+				ImGui::TextDisabled("%s subcell (%lld, %lld) geometry rejections:", region,
+					static_cast<long long>(tile->key.x), static_cast<long long>(tile->key.y));
+				for (const auto& [reason, count] : tile->rejectionReasons)
+					ImGui::Text("%s: %u", reason.c_str(), count);
+			}
+		};
+		showRejections(snapshot->resident, "Active");
+		showRejections(snapshot->predictiveResident, "Predictive");
 	}
 	if (const auto stats = GetPreparationStats()) {
 		const auto showTiming = [&](const char* label, const DX12::PreparationTiming& timing) {
