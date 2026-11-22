@@ -1,10 +1,10 @@
 #include "DX12NativeScene.h"
 
+#include "../Upscaling.h"
 #include "DX12Control.h"
 #include "DX12Resources.h"
 #include "Globals.h"
 #include "GpuPass.h"
-#include "../Upscaling.h"
 #include "State.h"
 #include "Utils/D3D.h"
 
@@ -355,8 +355,8 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requi
 
 	DX12Native::RuntimeGeometryCandidate candidate;
 	candidate.referenceKey = reference && file && !file->GetFilename().empty() ?
-		std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename()) :
-		std::format("render:{:016X}", reinterpret_cast<std::uintptr_t>(&geometry));
+	                             std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename()) :
+	                             std::format("render:{:016X}", reinterpret_cast<std::uintptr_t>(&geometry));
 	candidate.shapeName = geometry.name.empty() ? "<unnamed>" : geometry.name.c_str();
 	candidate.requiresStability = requireStability;
 	candidate.stride = stride;
