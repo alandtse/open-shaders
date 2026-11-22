@@ -6,7 +6,6 @@ internal sealed class NifTransforms
 {
     private readonly NifFile file;
     private readonly Dictionary<int, List<int>> parents = [];
-    private readonly int root;
 
     public NifTransforms(NifFile nif)
     {
@@ -23,10 +22,8 @@ internal sealed class NifTransforms
                 entries.Add(index);
             }
         }
-        var roots = Enumerable.Range(0, file.Blocks.Count)
-            .Where(index => file.Blocks[index] is NiNode && !parents.ContainsKey(index)).ToArray();
-        if (roots.Length != 1) throw new InvalidDataException("Unsupported NIF root hierarchy");
-        root = roots[0];
+        // Multi-root meshes are permitted. Each rigid shape must still
+        // resolve through one unambiguous, static NiNode ancestry.
     }
 
     public Matrix4x4 ForShape(int shapeIndex)
@@ -40,7 +37,7 @@ internal sealed class NifTransforms
                 (node.Controller != null && !node.Controller.IsEmpty()) || (node.Flags_ui & 1) != 0)
                 throw new InvalidDataException("Animated or hidden geometry");
             if (current != shapeIndex && node.GetType().Name is not
-                ("NiNode" or "BSFadeNode" or "BSMultiBoundNode" or "BSOrderedNode"))
+                ("NiNode" or "BSFadeNode" or "BSMultiBoundNode" or "BSOrderedNode" or "BSFurnitureMarkerNode"))
                 throw new InvalidDataException("Unsupported parent transform");
             var r = node.Rotation;
             var s = node.Scale;
@@ -54,8 +51,13 @@ internal sealed class NifTransforms
                 !Matrix4x4.Invert(local, out _))
                 throw new InvalidDataException("Invalid NIF transform");
             accumulated *= local;
-            if (current == root) break;
-            if (!parents.TryGetValue(current, out var entries) || entries.Count != 1)
+            if (!parents.TryGetValue(current, out var entries))
+            {
+                if (file.Blocks[current] is not NiNode)
+                    throw new InvalidDataException("Unsupported NIF root hierarchy");
+                break;
+            }
+            if (entries.Count != 1)
                 throw new InvalidDataException("Ambiguous NIF hierarchy");
             current = entries[0];
         }

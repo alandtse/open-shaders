@@ -27,6 +27,7 @@ namespace DX12Native
 		uint32_t stride = 0, vertexCount = 0, triangleCount = 0;
 		float centerX = 0, centerY = 0;
 		bool requiresStability = false;  // Render-pass-only shapes must be stationary for several frames.
+		uint64_t objectIdentity = 0;  // Per-session BSGeometry identity independent of NIF shape names.
 	};
 
 	/** @brief Bounded CPU-only SCM capture, with a separate conversion/publication worker. */

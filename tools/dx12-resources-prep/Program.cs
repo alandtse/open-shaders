@@ -479,7 +479,7 @@ internal static class SceneTile
             if (temporary.Length != 0)
                 File.Delete(temporary);
         }
-        if (!nif.Valid || !nif.Header.Version.IsSSE() || nif.HasUnknownBlocks)
+        if (!nif.Valid || !nif.Header.Version.IsSSE())
             throw new InvalidDataException("NIF unavailable or unsupported");
         var hierarchy = new NifTransforms(nif);
         var output = new List<ModelShape>();
@@ -490,12 +490,17 @@ internal static class SceneTile
             rejected[reason] = rejected.GetValueOrDefault(reason) + 1;
             missing.Add(new MissingModelShape(index, reason));
         }
+        // Unknown blocks may coexist with valid rigid geometry. Keep the
+        // supported shapes, but never certify complete shadow coverage.
+        if (nif.HasUnknownBlocks)
+            Skip("unknown NIF blocks (incomplete coverage)", -1);
         foreach (var entry in nif.GetShapes())
         {
             nif.GetBlockIndex(entry, out var index);
             // Retain safe opaque rigid triangles even if a NIF contains unsupported shapes.
             if (entry is not BSTriShape shape || shape.HasSkinInstance || shape.IsSkinned ||
-                entry.GetType().Name is not ("BSTriShape" or "BSSubIndexTriShape"))
+                entry.GetType().Name is not ("BSTriShape" or "BSSubIndexTriShape" or
+                    "BSMeshLODTriShape" or "BSSegmentedTriShape"))
             {
                 Skip("unsupported animated or nontriangle shape", index);
                 continue;
