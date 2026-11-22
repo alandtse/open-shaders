@@ -6,7 +6,10 @@
 #include "DX12NativeShadowTrace.h"
 #include "Feature.h"
 
+#include <atomic>
+#include <memory>
 #include <optional>
+#include <vector>
 #include <string>
 
 /** @brief Independent early opaque raster capture for native DX12. */
@@ -30,6 +33,9 @@ struct DX12NativeScene final : Feature
 	void OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs) override;
 	/** @brief Observe a stationary rigid caster during the existing SCM walk. */
 	void ObserveSCMRigidCaster(RE::BSGeometry& geometry);
+	/** @brief SCM hands native-owned lights' static casters to RayQuery and retains movers. */
+	bool OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const;
+	bool OffloadFlickeringStatic() const { return offloadFlickeringStatic; }
 	void OnSceneTransitionReset(bool a_opening) override;
 	void OnRuntimeDisabled() override;
 
@@ -52,7 +58,11 @@ private:
 	DX12Native::RuntimeGeometryCapture geometryCapture;
 	DX12Native::AccelerationWorker acceleration;
 	DX12Native::ShadowMaskTrace shadows;
+	// One immutable, ordered light selection shared by SCM and the RayQuery dispatch.
+	std::atomic<std::shared_ptr<const std::vector<DX12::PreparedLight>>> shadowLights;
 	bool shadowMaskEnabled = true;
+	bool offloadStaticShadows = true;
+	bool offloadFlickeringStatic = true;
 	uint32_t densityMode = 0;
 	std::string startupFailure;
 };
