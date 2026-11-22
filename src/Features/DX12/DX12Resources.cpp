@@ -330,13 +330,20 @@ namespace
 		if (!tile)
 			return "Not processed";
 		switch (tile->state) {
-		case DX12::Tile::State::Ready: return "Loaded";
-		case DX12::Tile::State::ReadyPartial: return "Partially loaded";
-		case DX12::Tile::State::Preparing: return "Processing";
-		case DX12::Tile::State::RetryWaiting: return "Failed (retry pending)";
-		case DX12::Tile::State::Incomplete: return "Failed";
-		case DX12::Tile::State::Deferred: return "Skipped (predictive budget)";
-		case DX12::Tile::State::Requested: return "Not processed";
+		case DX12::Tile::State::Ready:
+			return "Loaded";
+		case DX12::Tile::State::ReadyPartial:
+			return "Partially loaded";
+		case DX12::Tile::State::Preparing:
+			return "Processing";
+		case DX12::Tile::State::RetryWaiting:
+			return "Failed (retry pending)";
+		case DX12::Tile::State::Incomplete:
+			return "Failed";
+		case DX12::Tile::State::Deferred:
+			return "Skipped (predictive budget)";
+		case DX12::Tile::State::Requested:
+			return "Not processed";
 		}
 		return "Unknown";
 	}
@@ -344,7 +351,7 @@ namespace
 	ImU32 TileColor(const std::shared_ptr<const DX12::Tile>& tile, bool active)
 	{
 		if (!tile)
-			return IM_COL32(46, 54, 65, 255); // Awaiting generation: dark slate.
+			return IM_COL32(46, 54, 65, 255);  // Awaiting generation: dark slate.
 		switch (tile->state) {
 		case DX12::Tile::State::Ready:
 			return active ? IM_COL32(243, 201, 74, 255) : IM_COL32(117, 197, 239, 255);
@@ -397,8 +404,7 @@ namespace
 				const ImVec2 p0{ left + col * pitch, origin.y + row * pitch };
 				const ImVec2 p1{ p0.x + side, p0.y + side };
 				draw->AddRectFilled(p0, p1, TileColor(tile, active), 3.0f);
-				draw->AddRect(p0, p1, active ? IM_COL32(255, 225, 150, 200) :
-					IM_COL32(138, 174, 207, 180), 3.0f, 0, active ? 1.8f : 1.0f);
+				draw->AddRect(p0, p1, active ? IM_COL32(255, 225, 150, 200) : IM_COL32(138, 174, 207, 180), 3.0f, 0, active ? 1.8f : 1.0f);
 				if (tile && tile->state == DX12::Tile::State::ReadyPartial) {
 					// A diagonal distinguishes partially processed cells without hiding the zone color.
 					draw->AddLine(ImVec2(p0.x + 4.0f, p1.y - 4.0f),
