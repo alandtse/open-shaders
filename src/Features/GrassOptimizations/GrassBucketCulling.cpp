@@ -821,8 +821,8 @@ void GrassBucketStore::MergeSlicesIntoRuns(GrassBucket& bucket)
 {
 	// Shape origins can span several cells, so cluster slices by their bounds.
 	const auto cellOf = [](const SliceBounds& bounds) {
-		int32_t cellX, cellY;
-		Util::WorldToCell(RE::NiPoint2((bounds.lo[0] + bounds.hi[0]) * 0.5f, (bounds.lo[1] + bounds.hi[1]) * 0.5f), cellX, cellY);
+		const auto cellX = (int32_t)std::floor((bounds.lo[0] + bounds.hi[0]) * 0.5f / Util::ExteriorCellSize);
+		const auto cellY = (int32_t)std::floor((bounds.lo[1] + bounds.hi[1]) * 0.5f / Util::ExteriorCellSize);
 		return ((uint64_t)(uint32_t)cellX << 32) | (uint32_t)cellY;
 	};
 
