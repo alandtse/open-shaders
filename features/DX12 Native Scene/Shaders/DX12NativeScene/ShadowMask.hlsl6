@@ -1,0 +1,79 @@
+RaytracingAccelerationStructure Scene : register(t0);
+Texture2D<float> RasterDepth : register(t1);
+StructuredBuffer<float4> Lights : register(t2);
+RWTexture2D<float4> RawMask : register(u0);
+
+cbuffer ShadowInputs : register(b0)
+{
+    row_major float4x4 InverseProjection;
+    row_major float4x4 InverseView;
+    float4 PositionAdjust;
+    uint2 Size;
+    uint FrameIndex;
+    uint DensityMode;
+    uint LightCount;
+    float MinDistance;
+    float MaxDistance;
+    uint Unused;
+};
+#include "NativeTraceDensity.hlsli"
+
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    uint2 p = id.xy;
+    if (any(p >= Size))
+        return;
+    if (!NativeTraceDensityPixel(p.x, p.y, DensityMode, FrameIndex, 0x62c01daeu)) {
+        RawMask[p] = float4(0, -1, 0, 0);
+        return;
+    }
+    // 1: fully visible or no applicable light, 0: unsolved.
+    RawMask[p] = float4(1, 0, 0, 0);
+    float z = RasterDepth.Load(int3(p, 0));
+    if (!isfinite(z) || z <= 0 || z >= 1)
+        return;
+    float2 clip = 2.0f * (float2(p) + 0.5f) / float2(Size) - 1.0f;
+    clip.y = -clip.y;
+    float4 v = mul(InverseProjection, float4(clip, z, 1));
+    if (!all(isfinite(v)) || abs(v.w) < 1e-8f)
+        return;
+    float4 w = mul(InverseView, float4(v.xyz / v.w, 1));
+    if (!all(isfinite(w)) || abs(w.w) < 1e-8f)
+        return;
+    float3 world = w.xyz / w.w + PositionAdjust.xyz;
+    float total = 0, visible = 0;
+    [loop] for (uint i = 0; i < min(LightCount, 64u); ++i) {
+        float4 light = Lights[i * 3 + 0];    // xyz + radius
+        float4 radiance = Lights[i * 3 + 1]; // linear RGB + fade
+        float4 params = Lights[i * 3 + 2];   // source radius + falloff exponent + flags
+        float3 delta = light.xyz - world;
+        float d2 = dot(delta, delta);
+        if (d2 <= MinDistance * MinDistance || !isfinite(d2))
+            continue;
+        float d = sqrt(d2);
+        if (d >= light.w)
+            continue;
+        float strength = dot(max(radiance.rgb, 0), float3(.2126, .7152, .0722));
+        float weight = strength * max(0, radiance.a) *
+            pow(saturate(1 - d / max(light.w, MinDistance)), max(.25f, params.y)) /
+            max(d2 + params.x * params.x, 1);
+        if (weight <= 0 || !isfinite(weight))
+            continue;
+        float3 direction = delta / d;
+        RayDesc ray;
+        ray.Origin = world + direction * MinDistance;
+        ray.Direction = direction;
+        ray.TMin = MinDistance;
+        ray.TMax = min(d - MinDistance, MaxDistance);
+        if (ray.TMax <= ray.TMin)
+            continue;
+        RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+        query.TraceRayInline(Scene, RAY_FLAG_NONE, 1, ray);
+        while (query.Proceed()) {}
+        total += weight;
+        visible += query.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0 : weight;
+    }
+    if (total > 1e-8f)
+        RawMask[p] = float4(saturate(visible / total), 1, z, total);
+}
