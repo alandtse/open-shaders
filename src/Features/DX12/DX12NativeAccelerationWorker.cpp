@@ -54,7 +54,7 @@ namespace DX12Native
 		context.copy_from(a_context);
 		auto retained = state;
 		worker = std::jthread([retained, device = std::move(device),
-				context = std::move(context)](std::stop_token stop) mutable {
+								  context = std::move(context)](std::stop_token stop) mutable {
 			Run(std::move(retained), stop, std::move(device), std::move(context));
 		});
 		return true;
