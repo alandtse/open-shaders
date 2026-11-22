@@ -15,8 +15,8 @@ namespace DX12Native
 {
 	namespace
 	{
-		constexpr uint64_t kSingleCopyBytes = 256ull * 1024;
-		constexpr uint32_t kFrameCopyBytes = 512u * 1024u;
+		constexpr uint64_t kSingleCopyBytes = 1024ull * 1024;
+		constexpr uint32_t kFrameCopyBytes = 2u * 1024u * 1024u;
 		constexpr size_t kPacketLimit = 128;
 		constexpr uint64_t kFnvPrime = 1099511628211ull;
 		constexpr uint64_t kFnvOffset = 14695981039346656037ull;
@@ -89,6 +89,7 @@ namespace DX12Native
 		++generation;
 		pending.clear();
 		captured.clear();
+		stableObservations.clear();
 		activeCenter = {};
 		activeSize = 0;
 		lastFrame = UINT32_MAX;
@@ -117,6 +118,7 @@ namespace DX12Native
 				activeCenter = center;
 				activeSize = grid->size;
 				captured.clear();
+				stableObservations.clear();
 				pending.clear();
 				lastFrame = UINT32_MAX;
 				frameBytes = 0;
@@ -124,6 +126,19 @@ namespace DX12Native
 			if (lastFrame != frame) {
 				lastFrame = frame;
 				frameBytes = 0;
+			}
+			if (candidate.requiresStability && !captured.contains(id)) {
+				// Avoid freezing moving clutter and actor attachments into TLAS.
+				// One observation per engine frame, irrespective of pass multiplicity.
+				if (stableObservations.size() >= 8192 && !stableObservations.contains(id))
+					return;
+				auto& seen = stableObservations[id];
+				if (seen.first != frame) {
+					seen.first = frame;
+					seen.second = std::min(seen.second + 1u, 3u);
+				}
+				if (seen.second < 3)
+					return;
 			}
 			if (bytes > kFrameCopyBytes - frameBytes || pending.size() >= kPacketLimit ||
 				!captured.insert(id).second)
@@ -146,8 +161,10 @@ namespace DX12Native
 			packet.indices.assign(candidate.indices, candidate.indices + indexCount);
 			{
 				std::scoped_lock lock(mutex);
-				if (activeCenter != center || activeSize != grid->size)
+				if (activeCenter != center || activeSize != grid->size) {
+					captured.erase(id);
 					return;
+				}
 				packet.generation = generation;
 				pending.push_back(std::move(packet));
 			}

@@ -11,6 +11,7 @@
 #include <stop_token>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -25,6 +26,7 @@ namespace DX12Native
 		const uint16_t* indices = nullptr;
 		uint32_t stride = 0, vertexCount = 0, triangleCount = 0;
 		float centerX = 0, centerY = 0;
+		bool requiresStability = false;  // Render-pass-only shapes must be stationary for several frames.
 	};
 
 	/** @brief Bounded CPU-only SCM capture, with a separate conversion/publication worker. */
@@ -36,7 +38,7 @@ namespace DX12Native
 		RuntimeGeometryCapture(const RuntimeGeometryCapture&) = delete;
 		RuntimeGeometryCapture& operator=(const RuntimeGeometryCapture&) = delete;
 
-		/** @brief No D3D calls, GPU readbacks or waits. At most 512 KiB copied per frame. */
+		/** @brief No D3D calls, GPU readbacks or waits. At most 2 MiB copied per frame. */
 		void Observe(const RuntimeGeometryCandidate& candidate, uint32_t frame,
 			const std::shared_ptr<const DX12::Grid>& grid);
 		void Reset();
@@ -59,6 +61,7 @@ namespace DX12Native
 		std::condition_variable_any wake;
 		std::deque<Packet> pending;
 		std::unordered_set<uint64_t> captured;
+		std::unordered_map<uint64_t, std::pair<uint32_t, uint32_t>> stableObservations;
 		DX12::SubcellKey activeCenter{};
 		uint32_t activeSize = 0, lastFrame = UINT32_MAX, frameBytes = 0;
 		uint64_t generation = 0;
