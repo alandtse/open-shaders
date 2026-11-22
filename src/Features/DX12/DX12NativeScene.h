@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DX12NativeRasterCapture.h"
+#include "DX12NativeRuntimeCapture.h"
 #include "Feature.h"
 
 #include <optional>
@@ -23,6 +24,8 @@ struct DX12NativeScene final : Feature
 	void SaveSettings(json& a_output) override { a_output = json::object(); }
 	void RestoreDefaultSettings() override {}
 	void OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs) override;
+	/** @brief Observe a stationary rigid caster during the existing SCM walk. */
+	void ObserveSCMRigidCaster(RE::BSGeometry& geometry);
 	void OnSceneTransitionReset(bool a_opening) override;
 	void OnRuntimeDisabled() override;
 
@@ -37,5 +40,6 @@ struct DX12NativeScene final : Feature
 private:
 	std::optional<GraphicsBackend> backend;
 	DX12Native::RasterCapture raster;
+	DX12Native::RuntimeGeometryCapture geometryCapture;
 	std::string startupFailure;
 };
