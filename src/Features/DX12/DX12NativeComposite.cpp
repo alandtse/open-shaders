@@ -1,4 +1,5 @@
 #include "DX12NativeComposite.h"
+#include "DX12Control.h"
 
 #include "Features/DX12/DX12NativeScene.h"
 #include "Globals.h"
@@ -253,8 +254,10 @@ namespace DX12Native
 				// Exactly the open-RT default independent shadow settings.
 				const Constants constants{ width, height, 16.0f, 2.0f,
 					transfer == Transfer::LegacyScene ? 1u : 0u, 0u,
-					2.0f, 0.70f,
-					camera.CameraProjInverse, camera.CameraViewInverse, 1u };
+					globals::features::dx12Control.GetShadowStrength(),
+					globals::features::dx12Control.GetShadowBlend(),
+					camera.CameraProjInverse, camera.CameraViewInverse,
+					globals::features::dx12Control.UseSpatialReconstruction() ? 1u : 0u };
 				slot->commands->SetComputeRoot32BitConstants(2, 41, &constants, 0);
 				slot->commands->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
 				const std::array end{
