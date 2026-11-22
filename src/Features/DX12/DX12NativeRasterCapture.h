@@ -59,7 +59,10 @@ namespace DX12Native
 		}
 		/** @brief Returns the latest capture failure or availability status. */
 		const std::string& Status() const { return status; }
-		struct Counters { uint64_t submissions, busyDeferrals; };
+		struct Counters
+		{
+			uint64_t submissions, busyDeferrals;
+		};
 		Counters GetCounters() const { return { submissions, busyDeferrals }; }
 
 	private:

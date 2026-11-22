@@ -560,7 +560,8 @@ void DX12Resources::DrawDiagnostics() const
 		size_t geometry = 0, lights = 0;
 		const auto accumulate = [&](const auto& tiles) {
 			for (const auto& tile : tiles) {
-				if (!tile) continue;
+				if (!tile)
+					continue;
 				++states[static_cast<size_t>(tile->state)];
 				geometry += tile->shapes.size();
 				lights += tile->lights.size();
