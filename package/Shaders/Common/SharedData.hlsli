@@ -789,6 +789,9 @@ namespace SharedData
 		float FireMeltRadiusScale;
 		uint pad3;
 		float4 FireMeltSpheres[8];
+		int2 LandscapeGridOrigin;
+		uint LandscapeGridWidth;
+		uint LandscapeMaterialMode;
 	};
 #endif
 

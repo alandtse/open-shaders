@@ -40,6 +40,10 @@ geometry names, with optional `#` comments. Character shaders are excluded;
 the object blacklist overrides movable-object and whitelist allowances.
 Animated trees retain Bottle's tree snow path.
 
+Object snow fade defaults to zero so snow coverage on rocks stays consistent
+with the surrounding terrain as the camera moves away. A worldspace's saved
+fade amount applies to both full-detail objects and their distant meshes.
+
 The existing devbench feature interface exposes user settings and the
 `Reload`, `SaveConfig` and `WorldDefaults` commands. Diagnostics report the
 world, active state, fractional month, seasonal altitude, accumulated
@@ -49,10 +53,12 @@ weather snow and fire counts.
 
 - Lighting applies snow after skylighting/water-height evaluation and
   before wetness. Grass and distant trees apply snow before lighting.
-  Existing PBR and legacy color paths remain separate.
-- Snow uses PS resources `t38` through `t44`. Its 336-byte feature data is
-  appended to `b6`, preserving existing fields' offsets. Permutations built
-  without the feature omit the new declarations.
+  Full-detail terrain retains its legacy or PBR snow color. Static objects
+  and distant terrain use the loaded terrain's color path. On mixed terrain,
+  positions beyond the loaded cells use the nearest edge cell.
+- Snow textures use PS slots `t38` through `t44`. Mixed terrain also uses
+  `t46` for the per-cell material lookup. Snow Cover uses 352 bytes of `b6`.
+  Permutations built without the feature omit these declarations.
 - No additional draw, dispatch, render target or full-screen pass is added.
   Snow runs at the affected geometry's render resolution: one altitude-map
   sample per environmental evaluation, then three material samples for
