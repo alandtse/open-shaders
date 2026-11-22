@@ -40,6 +40,10 @@ geometry names, with optional `#` comments. Character shaders are excluded;
 the object blacklist overrides movable-object and whitelist allowances.
 Animated trees retain Bottle's tree snow path.
 
+Object snow fade defaults to zero so snow coverage on rocks stays consistent
+with the surrounding terrain as the camera moves away. A worldspace's saved
+fade amount applies to both full-detail objects and their distant meshes.
+
 The existing devbench feature interface exposes user settings and the
 `Reload`, `SaveConfig` and `WorldDefaults` commands. Diagnostics report the
 world, active state, fractional month, seasonal altitude, accumulated

@@ -2834,9 +2834,6 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 			snowNormal = treeSnowNormal;
 			if (SharedData::snowCoverSettings.AffectTreeTint)
 				SnowCover::ApplyFoliageColor(material.BaseColor, SnowCover::GetEnvironmentalMultiplier(adjustedWorldPos));
-#			if defined(LOD)
-			snowOcclusion *= SnowCover::GetObjectFade(length(viewPosition.xyz));
-#			endif
 		}
 #		endif
 #		if defined(DO_ALPHA_TEST) && defined(LOD_BLENDING) && !defined(TREE_ANIM)

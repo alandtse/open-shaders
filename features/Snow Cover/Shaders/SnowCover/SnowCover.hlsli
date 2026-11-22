@@ -210,7 +210,7 @@ namespace SnowCover
 		float weatherMult = GetWeatherRange(p, viewDist) * (SharedData::snowCoverSettings.TimeSnowing * SharedData::snowCoverSettings.TimeSnowing * SharedData::snowCoverSettings.TimeSnowing) * max(WeatherDensityScale, SharedData::snowCoverSettings.SnowingDensity) / WeatherDensityScale;
 		weatherMult = clamp((weatherMult)*max(SharedData::snowCoverSettings.minAngle, worldNormal.z), -1, 1);
 		float env_mult = saturate(max((GetEnvironmentalMultiplier(p) + lift / SharedData::snowCoverSettings.BlendSmoothness + disp * DisplacementInfluence), weatherMult)) - waterDist;
-#		if !defined(LANDSCAPE) && !defined(LOD) && !defined(LODLANDSCAPE) && !defined(LODLANDNOISE)
+#		if !defined(LANDSCAPE) && !defined(LODLANDSCAPE) && !defined(LODLANDNOISE) && !defined(WORLD_MAP)
 		float distMult = GetObjectFade(viewDist);
 #		else
 		float distMult = 1;

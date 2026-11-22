@@ -31,7 +31,7 @@ private:
 	static constexpr float DEFAULT_WEATHER_FADE_END = 150000.0f;
 	static constexpr float DEFAULT_OBJECT_FADE_START = 6144.0f;
 	static constexpr float DEFAULT_OBJECT_FADE_END = 9192.0f;
-	static constexpr float DEFAULT_OBJECT_FADE_AMOUNT = 0.5f;
+	static constexpr float DEFAULT_OBJECT_FADE_AMOUNT = 0.0f;
 	static constexpr float2 DEFAULT_MAP_MIN = float2(-233472.0, 208896.0);
 	static constexpr float2 DEFAULT_MAP_MAX = float2(253952.0, -176128.0);
 	static constexpr float DEFAULT_SUMMER_HEIGHT_OFFSET = 20000.0f;
