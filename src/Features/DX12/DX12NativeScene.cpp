@@ -194,7 +194,6 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	return false;
 }
 
-
 void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID,
 	bool flickers, const RE::NiPoint3& restOrigin)
 {
