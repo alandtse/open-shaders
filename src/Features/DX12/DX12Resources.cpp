@@ -546,8 +546,7 @@ std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const
 	std::unordered_set<uint32_t> seen;
 	const auto append = [&](const auto& tiles) {
 		for (const auto& tile : tiles) {
-			if (!tile || (tile->state != DX12::Tile::State::Ready &&
-							 tile->state != DX12::Tile::State::ReadyPartial))
+			if (!tile)
 				continue;
 			for (const auto& light : tile->lights) {
 				if (light.referenceID && !seen.insert(light.referenceID).second)
