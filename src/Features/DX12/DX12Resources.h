@@ -124,13 +124,13 @@ namespace DX12
 	struct PreparationTiming
 	{
 		uint64_t completed = 0, failed = 0, partial = 0;  // Completed, invalid and incomplete-coverage publications.
-		double lastMs = 0.0, totalMs = 0.0;
+		double lastMs = 0.0, totalMs = 0.0, worstMs = 0.0;
 		double AverageMs() const { return completed ? totalMs / double(completed) : 0.0; }
 	};
 
 	struct PreparationStats
 	{
-		PreparationTiming active, predictive;
+		PreparationTiming active, predictive, corners;
 	};
 
 	class ResourceGrid
@@ -212,7 +212,7 @@ struct DX12Resources final : Feature
 	uint64_t GetFlushGeneration() const { return flushGeneration.load(std::memory_order_acquire); }
 	/** @brief Returns the most recent prepared-light publication. */
 	std::vector<DX12::PreparedLight> GetPreparedLights() const;
-	/** @brief Bounded in-memory generation timings for the active 3x3 and outer 5x5 ring. */
+	/** @brief In-memory generation timings for active 3x3, predictive sides and corners. */
 	std::shared_ptr<const DX12::PreparationStats> GetPreparationStats() const
 	{
 		return generationStats.load(std::memory_order_acquire);

@@ -19,6 +19,7 @@ namespace DX12
 		std::string scopePlugin;
 		bool worldspace = false;
 		bool predictive = false;
+		bool corner = false;  // Predictive ring corners have separate generation timing.
 	};
 
 	struct CompanionLight
@@ -34,6 +35,7 @@ namespace DX12
 		std::vector<CompanionLight> lights;
 		std::string failure;
 		bool predictive = false;
+		bool corner = false;  // Predictive ring corners have separate generation timing.
 		double preparationMs = 0.0;  // Complete worker-side preparation, including companion IPC and parsing.
 	};
 

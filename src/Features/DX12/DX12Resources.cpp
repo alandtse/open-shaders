@@ -510,37 +510,59 @@ void DX12Resources::DrawSettings()
 
 	ImGui::SeparatorText("Subcell status (5x5)");
 	const auto snapshot = GetGrid();
+	const auto timing = GetPreparationStats();
 
-	// Keep the state counters and legend together beside the map on wide panels.
-	// Narrow panels retain the original vertical layout without clipping text.
 	const auto drawSubcellDetails = [&]() {
 		if (snapshot) {
-			size_t activeLoaded = 0, predictiveLoaded = 0, failed = 0, skipped = 0;
+			size_t activeLoaded = 0, predictiveLoaded = 0;
 			const auto classify = [&](const auto& tile, bool active) {
-				if (!tile)
-					return;
-				if (tile->state == DX12::Tile::State::Ready || tile->state == DX12::Tile::State::ReadyPartial)
+				if (tile && (tile->state == DX12::Tile::State::Ready || tile->state == DX12::Tile::State::ReadyPartial))
 					(active ? activeLoaded : predictiveLoaded)++;
-				else if (tile->state == DX12::Tile::State::RetryWaiting)
-					++failed;
-				else if (tile->state == DX12::Tile::State::Incomplete || tile->state == DX12::Tile::State::Deferred)
-					++skipped;
 			};
 			for (const auto& tile : snapshot->resident)
 				classify(tile, true);
 			for (const auto& tile : snapshot->predictiveResident)
 				classify(tile, false);
 			ImGui::Text("Loaded: active %zu / 9, predictive %zu / 16", activeLoaded, predictiveLoaded);
-			ImGui::TextDisabled("Failed: %zu  |  Skipped: %zu", failed, skipped);
 		}
 		ImGui::TextColored(ImVec4(0.95f, 0.79f, 0.29f, 1.0f), "Yellow: loaded 3x3");
 		ImGui::TextColored(ImVec4(0.46f, 0.77f, 0.94f, 1.0f), "Light blue: loaded predictive ring");
 		ImGui::TextColored(ImVec4(0.83f, 0.30f, 0.30f, 1.0f), "Red: failed (retry pending)");
-		ImGui::TextDisabled("Gray: skipped  |  Dark: not processed  |  Brown: processing");
 		ImGui::TextDisabled("Diagonal: partially loaded  |  Center dot: player subcell");
 	};
 
-	if (ImGui::GetContentRegionAvail().x >= 680.0f &&
+	const auto drawGenerationStats = [&]() {
+		ImGui::TextColored(ImVec4(0.40f, 0.77f, 0.49f, 1.0f), "Subcell generation stats");
+		ImGui::TextDisabled("Last / Avg / Worst (milliseconds)");
+		const auto show = [](const char* label, const DX12::PreparationTiming& value) {
+			if (value.completed)
+				ImGui::Text("%s: %.1f / %.1f / %.1f ms", label, value.lastMs, value.AverageMs(), value.worstMs);
+			else
+				ImGui::TextDisabled("%s: -- / -- / --", label);
+		};
+		if (timing) {
+			show("Main", timing->active);
+			show("Predictive", timing->predictive);
+			show("Corners", timing->corners);
+		}
+	};
+
+	const float available = ImGui::GetContentRegionAvail().x;
+	if (available >= 1050.0f &&
+		ImGui::BeginTable("##SubcellStatusLayout", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX)) {
+		ImGui::TableSetupColumn("##SubcellMap", ImGuiTableColumnFlags_WidthFixed, 290.0f);
+		ImGui::TableSetupColumn("##SubcellDetails", ImGuiTableColumnFlags_WidthFixed, 375.0f);
+		ImGui::TableSetupColumn("##SubcellGenerationStats", ImGuiTableColumnFlags_WidthStretch);
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		if (snapshot)
+			DrawSubcellMap(*snapshot);
+		ImGui::TableSetColumnIndex(1);
+		drawSubcellDetails();
+		ImGui::TableSetColumnIndex(2);
+		drawGenerationStats();
+		ImGui::EndTable();
+	} else if (available >= 680.0f &&
 		ImGui::BeginTable("##SubcellStatusLayout", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX)) {
 		ImGui::TableSetupColumn("##SubcellMap", ImGuiTableColumnFlags_WidthFixed, 290.0f);
 		ImGui::TableSetupColumn("##SubcellDetails", ImGuiTableColumnFlags_WidthStretch);
@@ -551,10 +573,12 @@ void DX12Resources::DrawSettings()
 		ImGui::TableSetColumnIndex(1);
 		drawSubcellDetails();
 		ImGui::EndTable();
+		drawGenerationStats();
 	} else {
 		if (snapshot)
 			DrawSubcellMap(*snapshot);
 		drawSubcellDetails();
+		drawGenerationStats();
 	}
 }
 
@@ -627,6 +651,7 @@ void DX12Resources::DrawDiagnostics() const
 		};
 		showTiming("Active", stats->active);
 		showTiming("Predictive", stats->predictive);
+		showTiming("Corners", stats->corners);
 	}
 }
 
@@ -749,18 +774,21 @@ void DX12Resources::PreShadowMaps()
 				const bool prepared = valid && publication.enumerationComplete &&
 				                      publication.failedShapes == 0 && publication.eligibleShapes == publication.shapes.size();
 				const bool wasPredictiveRequest = adopting->predictive;
+				const bool wasCornerRequest = adopting->corner;
 				const double elapsedMs = adopting->preparationMs;
 				if (grid.Publish(std::move(adopting->publication))) {
 					// This snapshot only counts accepted, finished worker requests; canceled
 					// and superseded work is not misreported as generated geometry.
 					auto next = std::make_shared<DX12::PreparationStats>(
 						*generationStats.load(std::memory_order_acquire));
-					auto& timing = wasPredictiveRequest ? next->predictive : next->active;
+					auto& timing = !wasPredictiveRequest ? next->active :
+						wasCornerRequest ? next->corners : next->predictive;
 					++timing.completed;
 					timing.failed += valid ? 0u : 1u;
 					timing.partial += valid && !prepared ? 1u : 0u;
 					timing.lastMs = elapsedMs;
 					timing.totalMs += elapsedMs;
+					timing.worstMs = std::max(timing.worstMs, elapsedMs);
 					generationStats.store(std::move(next), std::memory_order_release);
 				}
 				adopting.reset();
@@ -775,7 +803,13 @@ void DX12Resources::PreShadowMaps()
 			if (file && !file->GetFilename().empty()) {
 				DX12::CompanionRequest task;
 				task.key = *request;
-				task.predictive = !std::ranges::contains(grid.Snapshot()->requested, *request);
+				const auto requestedGrid = grid.Snapshot();
+				task.predictive = !std::ranges::contains(requestedGrid->requested, *request);
+				// Predictive indices 0..11 are sides; 12..15 are corners.
+				// Store the request-time class before a possible player subcell transition.
+				task.corner = task.predictive &&
+					std::ranges::find(requestedGrid->predictive.begin() + 12,
+						requestedGrid->predictive.end(), *request) != requestedGrid->predictive.end();
 				task.size = settings.SubcellSize;
 				task.localScopeID = source->GetLocalFormID();
 				task.scopePlugin = file->GetFilename();
