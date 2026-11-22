@@ -116,6 +116,11 @@ elseif(MODE STREQUAL "SHADERS")
     set(_stale_shader_files)
     foreach(_existing IN LISTS _aio_shaders)
         file(RELATIVE_PATH _rel "${AIO_DIR}/Shaders" "${_existing}")
+        # DXC bytecode is generated into AIO, not part of any source shader glob.
+        if(_rel STREQUAL "DX12NativeScene/ShadowMask.dxil" OR
+           _rel STREQUAL "NativeComposite/ShadowLayer.dxil")
+            continue()
+        endif()
         is_preserved_runtime_path(_preserved_runtime_path "${_rel}" "${_preserve_runtime_prefixes}")
         if(_preserved_runtime_path)
             continue()
