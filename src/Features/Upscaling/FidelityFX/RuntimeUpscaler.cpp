@@ -1257,13 +1257,11 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			dispatchParameters.sharpness = a_sharpness;
 			dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
 			dispatchParameters.preExposure = 1.0f;
-			// Our repo has no ShouldResetHistoryThisFrame(); mirror Upscale()'s existing
-			// menu-reset predicate (menus produce no fresh motion vectors/depth).
-			const uint32_t geometryPreview = globals::features::dx12Control.GetShadowPreview();
-			// Developer geometry previews are diagnostic colors, not temporally
-			// stable scene radiance; prevent FSR history from dragging the overlay.
+			// Reset only when the selected native composite actually contains
+			// geometry preview output. Missing TLAS yields a normal scene copy.
+			// Menu-camera and runtime-provider fallback resets are preserved.
 			dispatchParameters.reset = (state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid) ||
-			                           (geometryPreview >= 3u && geometryPreview <= 5u);
+			                           (nativeColor && composite->geometryPreviewApplied);
 			dispatchParameters.cameraNear = *globals::game::cameraNear;
 			dispatchParameters.cameraFar = *globals::game::cameraFar;
 			dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();

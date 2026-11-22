@@ -28,16 +28,54 @@ namespace DX12Native
 	{
 		if (!completion)
 			return;
-		const uint64_t done = completion->GetCompletedValue();
+		const uint64_t completed = completion->GetCompletedValue();
+		if (completed == UINT64_MAX)
+			return;  // Device removed; submitted GPU work cannot continue.
+
+		std::array<Build, 2> retiring{};
+		uint64_t lastSignalled = 0;
+		bool needsDrain = false;
 		bool inFlight = false;
-		for (auto& build : builds) {
-			if (!build.fence || build.fence <= done)
+		for (size_t i = 0; i < builds.size(); ++i) {
+			const uint64_t fenceValue = builds[i].fence;
+			if (!fenceValue || (fenceValue != UINT64_MAX && fenceValue <= completed))
 				continue;
-			(void)new Build(std::move(build));
+			if (fenceValue == UINT64_MAX)
+				needsDrain = true;  // ExecuteCommandLists succeeded, Signal failed.
+			else
+				lastSignalled = std::max(lastSignalled, fenceValue);
+			retiring[i] = std::move(builds[i]);
 			inFlight = true;
 		}
-		if (inFlight)
-			(void)completion.detach();
+		if (!inFlight)
+			return;
+
+		// Retain the resources in an owning retirement task, not leaked allocations.
+		// A tail marker drains queue submissions for which Signal() originally failed.
+		std::thread([pending = std::move(retiring), producer = completion,
+			queue = backend.commandQueue, retainedDevice = device,
+			lastSignalled, needsDrain]() mutable {
+			(void)pending;  // The capture deliberately owns the queued GPU resources.
+			winrt::com_ptr<ID3D12Fence> drainFence;
+			bool drainScheduled = !needsDrain;
+			while (true) {
+				const uint64_t done = producer->GetCompletedValue();
+				if (done == UINT64_MAX)
+					break;  // Device removal permits releasing the resources.
+				if (!drainScheduled && retainedDevice && queue) {
+					if (!drainFence)
+						(void)retainedDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(drainFence.put()));
+					if (drainFence && SUCCEEDED(queue->Signal(drainFence.get(), 1)))
+						drainScheduled = true;
+				}
+				if (done >= lastSignalled && drainScheduled &&
+					(!needsDrain || drainFence->GetCompletedValue() >= 1))
+					break;
+				if (!retainedDevice || FAILED(retainedDevice->GetDeviceRemovedReason()))
+					break;
+				std::this_thread::sleep_for(std::chrono::milliseconds(8));
+			}
+		}).detach();
 	}
 
 	bool AccelerationScene::Initialize(const GraphicsBackend& a_backend)
@@ -89,8 +127,16 @@ namespace DX12Native
 		Check(a_build.commands->Close());
 		ID3D12CommandList* commands[] = { a_build.commands.get() };
 		backend.commandQueue->ExecuteCommandLists(1, commands);
-		a_build.fence = ++nextFence;
-		Check(backend.commandQueue->Signal(completion.get(), a_build.fence));
+		const uint64_t signalValue = nextFence + 1;
+		const HRESULT signalResult = backend.commandQueue->Signal(completion.get(), signalValue);
+		if (FAILED(signalResult)) {
+			// A queued submission has no valid completion marker. Retain Build
+			// and drain the direct queue during owned asynchronous retirement.
+			a_build.fence = UINT64_MAX;
+			Check(signalResult);
+		}
+		a_build.fence = signalValue;
+		nextFence = signalValue;
 	}
 
 	bool AccelerationScene::BuildBottom(Build& a_build, const std::shared_ptr<const DX12::Shape>& a_shape)
@@ -228,6 +274,10 @@ namespace DX12Native
 	void AccelerationScene::Retire()
 	{
 		const uint64_t done = completion->GetCompletedValue();
+		if (done == UINT64_MAX) {
+			failure = "DX12 native acceleration device removed before completion";
+			return;
+		}
 		for (auto& build : builds) {
 			if (!build.fence || build.fence > done)
 				continue;

@@ -9,7 +9,7 @@ struct DX12Control final : Feature
 {
 	struct Settings
 	{
-		bool Enabled = true;
+		bool Enabled = false;
 		int Mode = 0;  // 0: shadow offload, 1: raster comparison
 		bool SpatialReconstruction = true;
 		uint32_t ReconstructionGridSize = 5;  // Odd, 3x3 through 9x9.
