@@ -4,6 +4,9 @@
 
 #include <algorithm>
 #include <bit>
+#include <cctype>
+#include <format>
+#include <string_view>
 #include <cmath>
 #include <cstring>
 #include <ranges>
@@ -35,6 +38,16 @@ namespace DX12Native
 				for (unsigned n = 0; n < 4; ++n)
 					add(static_cast<unsigned char>(value >> (n * 8)));
 			return hash ? hash : 1;
+		}
+
+		bool FromMissingNif(std::string_view referenceKey, const DX12::MissingNifShapeDescriptor& source)
+		{
+			const std::string recorded = std::format("{:06X}:{}", source.referenceLocal, source.referencePlugin);
+			return std::equal(referenceKey.begin(), referenceKey.end(),
+				recorded.begin(), recorded.end(), [](char a, char b) {
+					return std::tolower(static_cast<unsigned char>(a)) ==
+						std::tolower(static_cast<unsigned char>(b));
+				});
 		}
 
 		// Compare actual rigid geometry, not subcell readiness or camera coverage.
@@ -122,6 +135,7 @@ namespace DX12Native
 			Packet packet;
 			packet.identity = id;
 			packet.sourceCenter = center;
+			packet.referenceKey = candidate.referenceKey;
 			packet.transform = candidate.transform;
 			packet.stride = candidate.stride;
 			packet.vertexCount = candidate.vertexCount;
@@ -197,6 +211,19 @@ namespace DX12Native
 			}
 			if (companionOwns)
 				continue;
+			// The companion may have retained the original NIF even when a block
+			// was unsupported. Preserve that provenance on the runtime supplement.
+			// Block indices are NOT inferred from runtime shape names.
+			for (const auto& tile : grid->resident) {
+				if (!tile || !shape->sourceNif.empty())
+					continue;
+				for (const auto& missing : tile->missingShapes) {
+					if (FromMissingNif(packet.referenceKey, missing)) {
+						shape->sourceNif = missing.nifPath;
+						break;
+					}
+				}
+			}
 			{
 				std::scoped_lock lock(mutex);
 				if (packet.generation != generation)
