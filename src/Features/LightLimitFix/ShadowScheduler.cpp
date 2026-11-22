@@ -67,6 +67,18 @@ namespace ShadowCasterManager
 		return nullptr;
 	}
 
+	// UserData is not ref-counted; read its form identity only while SCM owns
+	// the live light, using the same AV guard as OwnerLight.
+	static uint32_t LightPlacedReferenceID(const RE::NiLight* ni) noexcept
+	{
+		__try {
+			const auto* ref = ni ? ni->GetUserData() : nullptr;
+			return ref ? ref->GetFormID() : 0u;
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		}
+		return 0u;
+	}
+
 	static bool ParentTranslate(const RE::NiAVObject* ni, RE::NiPoint3& out) noexcept
 	{
 		__try {
@@ -1308,9 +1320,15 @@ namespace ShadowCasterManager
 		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
 			// Native-owned static shadows never require a legacy atlas bake.
-			const bool flickers = FlickersFromLiveOrigin(light->light.get());
+			auto* nativeLight = light->light.get();
+			const bool flickers = FlickersFromLiveOrigin(nativeLight);
+			const auto flicker = nativeLight ? FlickerOf(nativeLight) : FlickerAmplitudes{};
+			const bool runtimeFlickers = flicker.movement > 0.0f || flicker.intensity > 0.0f;
+			if (nativeLight)
+				globals::features::dx12NativeScene.ObserveRuntimeLight(light, LightPlacedReferenceID(nativeLight),
+					runtimeFlickers, RestOrigin(nativeLight));
 			const bool native = globals::features::dx12NativeScene.OwnsStaticForLight(light, slotIndex) &&
-			                    (!flickers || globals::features::dx12NativeScene.OffloadFlickeringStatic());
+			                    (!runtimeFlickers || globals::features::dx12NativeScene.OffloadFlickeringStatic());
 			bool split = !native && StaticAtlasReady() && !carrier && !flickers;
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
@@ -4330,9 +4348,14 @@ namespace ShadowCasterManager
 				// Retire stale raster static depth on ownership changes even
 				// when the scheduler did not admit a redraw this frame.
 				if (auto it = s_splitState.find(e.Light); it != s_splitState.end()) {
+					auto* nativeLight = e.Light->light.get();
+					const auto flicker = nativeLight ? FlickerOf(nativeLight) : FlickerAmplitudes{};
+					const bool runtimeFlickers = flicker.movement > 0.0f || flicker.intensity > 0.0f;
+					if (nativeLight)
+						globals::features::dx12NativeScene.ObserveRuntimeLight(e.Light, LightPlacedReferenceID(nativeLight),
+							runtimeFlickers, RestOrigin(nativeLight));
 					const bool native = globals::features::dx12NativeScene.OwnsStaticForLight(e.Light, i) &&
-					                    (!FlickersFromLiveOrigin(e.Light->light.get()) ||
-											globals::features::dx12NativeScene.OffloadFlickeringStatic());
+					                    (!runtimeFlickers || globals::features::dx12NativeScene.OffloadFlickeringStatic());
 					TransitionNativeShadowOwnership(it->second, i, native);
 				}
 				if (!e.RedrawFrame)

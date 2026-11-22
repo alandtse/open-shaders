@@ -28,11 +28,10 @@ namespace DX12Native
 			uint32_t lightCount;
 			float minimum = 0.5f, maximum = 60000.0f;
 			uint32_t reserved = 0;
-			uint32_t emitterSamples = 1;
 			float shadowReachMultiplier = 1.0f, shadowFadeRange = 0.5f, shadowFalloffCurve = 1.0f;
 			float nearLightRadius = 0.0f;
-			uint32_t nearLightExclusion = 0, stochastic = 0, padding = 0;
-			uint32_t debugGeometryMode = 0;
+			uint32_t nearLightExclusion = 0, debugGeometryMode = 0;
+			uint32_t padding0 = 0, padding1 = 0;
 		};
 		winrt::com_ptr<ID3D12Resource> UploadBuffer(ID3D12Device* device, UINT64 bytes)
 		{
@@ -197,14 +196,12 @@ namespace DX12Native
 				width, height, frame, slot->densityMode,
 				uint32_t(std::min(lights.size(), size_t(kMaxLights))),
 				0.5f, 60000.0f, 0u,
-				controls.stochastic ? std::clamp(controls.emitterSamples, 1u, 16u) : 1u,
 				std::clamp(controls.reachMultiplier, 0.1f, 64.0f),
 				std::clamp(controls.fadeRange, 0.0f, 1.0f),
 				std::clamp(controls.falloffCurve, 0.0f, 2.5f),
 				std::clamp(controls.nearLightRadius, 0.0f, 512.0f),
 				controls.nearLightExclusion ? 1u : 0u,
-				controls.stochastic ? 1u : 0u, 0u,
-				std::min(controls.debugGeometryMode, 3u)
+				std::min(controls.debugGeometryMode, 3u), 0u, 0u
 			};
 			static_assert(sizeof(Constants) <= 256);
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));

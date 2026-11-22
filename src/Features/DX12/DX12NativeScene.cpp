@@ -10,12 +10,21 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <limits>
+#include <ranges>
 
 void DX12NativeScene::DrawSettings()
 {
 	ImGui::Checkbox("Independent shadowmask", &shadowMaskEnabled);
 	ImGui::Checkbox("Replace SCM static casters with native shadows", &offloadStaticShadows);
-	ImGui::Checkbox("Include flickering lights in static offload", &offloadFlickeringStatic);
+	bool retainFlickeringRaster = !offloadFlickeringStatic;
+	if (ImGui::Checkbox("Keep raster static shadows for flickering lights", &retainFlickeringRaster))
+		offloadFlickeringStatic = !retainFlickeringRaster;
+	if (ImGui::Checkbox("Freeze flickering native shadows (DX12 only)", &freezeNativeFlickering)) {
+		std::scoped_lock lock(runtimeLightMutex);
+		frozenNativeLights.clear();
+	}
+	ImGui::TextDisabled("Raster setting keeps/removes static casters; dynamic raster shadows remain untouched.");
 	static constexpr const char* fractions[] = {
 		"Full", "Two-thirds", "Half", "One-third", "Quarter",
 		"One-sixth", "One-ninth", "Four-ninths"
@@ -23,12 +32,6 @@ void DX12NativeScene::DrawSettings()
 	int mode = static_cast<int>(densityMode);
 	if (ImGui::Combo("Trace density", &mode, fractions, 8))
 		densityMode = static_cast<uint32_t>(mode);
-	ImGui::Checkbox("Stochastic shadow emitter sampling", &stochasticEmitterSampling);
-	ImGui::BeginDisabled(!stochasticEmitterSampling);
-	int rays = int(emitterRayCount);
-	if (ImGui::SliderInt("Rays per sampled pixel and light", &rays, 1, 16))
-		emitterRayCount = uint32_t(rays);
-	ImGui::EndDisabled();
 	ImGui::Checkbox("Exclude shadows near light geometry", &nearLightShadowExclusion);
 	ImGui::BeginDisabled(!nearLightShadowExclusion);
 	int nearUnits = int(nearLightExclusionUnits);
@@ -41,7 +44,7 @@ void DX12NativeScene::DrawSettings()
 	if (ImGui::SliderFloat("Shadow fade range fraction", &fade, 0.0f, 1.0f, "%.2f"))
 		shadowFadeRange = std::round(fade * 50.0f) / 50.0f;
 	ImGui::SliderFloat("Shadow falloff curve", &shadowFalloffCurve, 0.0f, 2.5f, "%.2f");
-	ImGui::TextDisabled("Full density = every pixel. Emitter rays are independent of trace density.");
+	ImGui::TextDisabled("Full density = every pixel. Shadow visibility traces one ray per light.");
 	ImGui::TextDisabled("Raw shadowmask always uses the full render resolution.");
 	ImGui::TextDisabled("Capture is independent of native acceleration, Native Composite, and FSR.");
 }
@@ -54,7 +57,14 @@ void DX12NativeScene::DrawDiagnostics() const
 											   "enabled" :
 											   "paused");
 	ImGui::Text("Trace density mode: %u (0=full, 1=2/3, 2=1/2, 3=1/3, 4=1/4, 5=1/6, 6=1/9, 7=4/9)", densityMode);
-	ImGui::Text("Emitter sampling: %s; rays/light: %u", stochasticEmitterSampling ? "stochastic" : "deterministic center", stochasticEmitterSampling ? emitterRayCount : 1u);
+	ImGui::Text("Light visibility: deterministic center ray; stochastic sampling removed.");
+	ImGui::Text("Flickering static raster: %s; freeze native flicker: %s",
+		offloadFlickeringStatic ? "offload allowed" : "kept", freezeNativeFlickering ? "on" : "off");
+	{
+		std::scoped_lock lock(runtimeLightMutex);
+		ImGui::Text("Matched live SCM lights: %zu (engine frame %u); frozen: %zu",
+			runtimeLightSamples.size(), runtimeLightFrame, frozenNativeLights.size());
+	}
 	ImGui::Text("Near-light exclusion: %s; radius %u units", nearLightShadowExclusion ? "enabled" : "disabled", nearLightExclusionUnits);
 	ImGui::Text("Shadow reach %.2fx vanilla; fade fraction %.2f; curve %.2f", shadowReachMultiplier, shadowFadeRange, shadowFalloffCurve);
 	const auto lights = shadowLights.load(std::memory_order_acquire);
@@ -109,8 +119,11 @@ void DX12NativeScene::LoadSettings(json& input)
 	offloadStaticShadows = input.value("OffloadSCMStatic", true);
 	offloadFlickeringStatic = input.value("OffloadFlickeringStatic", true);
 	densityMode = std::min(input.value("ShadowTraceDensityMode", 0u), 7u);
-	stochasticEmitterSampling = input.value("ShadowStochastic", false);
-	emitterRayCount = std::clamp(input.value("ShadowEmitterRays", 4u), 1u, 16u);
+	freezeNativeFlickering = input.value("FreezeNativeFlickering", false);
+	{
+		std::scoped_lock lock(runtimeLightMutex);
+		frozenNativeLights.clear();
+	}
 	nearLightShadowExclusion = input.value("ShadowNearLightExclusion", false);
 	nearLightExclusionUnits = std::clamp(input.value("ShadowNearLightRadius", 0u), 0u, 512u) / 4u * 4u;
 	shadowReachMultiplier = std::clamp(input.value("ShadowReachMultiplier", 1.0f), 0.1f, 64.0f);
@@ -123,8 +136,7 @@ void DX12NativeScene::SaveSettings(json& output)
 	output = { { "ShadowMask", shadowMaskEnabled }, { "ShadowTraceDensityMode", densityMode },
 		{ "OffloadSCMStatic", offloadStaticShadows },
 		{ "OffloadFlickeringStatic", offloadFlickeringStatic },
-		{ "ShadowStochastic", stochasticEmitterSampling },
-		{ "ShadowEmitterRays", emitterRayCount },
+		{ "FreezeNativeFlickering", freezeNativeFlickering },
 		{ "ShadowNearLightExclusion", nearLightShadowExclusion },
 		{ "ShadowNearLightRadius", nearLightExclusionUnits },
 		{ "ShadowReachMultiplier", shadowReachMultiplier },
@@ -138,8 +150,11 @@ void DX12NativeScene::RestoreDefaultSettings()
 	offloadStaticShadows = true;
 	offloadFlickeringStatic = true;
 	densityMode = 0;
-	stochasticEmitterSampling = false;
-	emitterRayCount = 4;
+	freezeNativeFlickering = false;
+	{
+		std::scoped_lock lock(runtimeLightMutex);
+		frozenNativeLights.clear();
+	}
 	nearLightShadowExclusion = false;
 	nearLightExclusionUnits = 0;
 	shadowReachMultiplier = 1.0f;
@@ -177,6 +192,75 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 			return true;
 	}
 	return false;
+}
+
+
+void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID,
+	bool flickers, const RE::NiPoint3& restOrigin)
+{
+	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive() ||
+		!light || light->GetIsFrustumOrDirectionalLight() || !globals::game::graphicsState)
+		return;
+	auto* ni = light->light.get();
+	const auto lights = shadowLights.load(std::memory_order_acquire);
+	if (!ni || !lights)
+		return;
+	const auto& rt = ni->GetLightRuntimeData();
+	const auto& position = ni->world.translate;
+	if (!std::isfinite(rt.radius.x) || rt.radius.x <= 0.0f ||
+		!std::isfinite(rt.fade) || !std::isfinite(rt.diffuse.red) ||
+		!std::isfinite(rt.diffuse.green) || !std::isfinite(rt.diffuse.blue) ||
+		!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))
+		return;
+
+	const DX12::PreparedLight* matched = nullptr;
+	if (referenceID != 0) {
+		const auto it = std::ranges::find_if(*lights, [referenceID](const auto& candidate) {
+			return candidate.referenceID == referenceID;
+		});
+		if (it == lights->end())
+			return;  // Never let a different nearby light inherit this source's animation.
+		matched = &*it;
+	} else {
+		float bestDistanceSquared = std::numeric_limits<float>::infinity();
+		for (const auto& candidate : *lights) {
+			const float dx = candidate.position.x - restOrigin.x;
+			const float dy = candidate.position.y - restOrigin.y;
+			const float dz = candidate.position.z - restOrigin.z;
+			const float errorSquared = dx * dx + dy * dy + dz * dz;
+			const float tolerance = std::clamp(candidate.radius * 0.01f, 4.0f, 32.0f);
+			if (std::isfinite(errorSquared) && errorSquared < bestDistanceSquared &&
+				errorSquared <= tolerance * tolerance) {
+				bestDistanceSquared = errorSquared;
+				matched = &candidate;
+			}
+		}
+	}
+	if (!matched)
+		return;
+	DX12::PreparedLight live = *matched;
+	live.position = { position.x, position.y, position.z };
+	live.radius = rt.radius.x;
+	live.color = { rt.diffuse.red, rt.diffuse.green, rt.diffuse.blue };
+	live.fade = rt.fade;
+	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
+	std::scoped_lock lock(runtimeLightMutex);
+	if (runtimeLightFrame != frame) {
+		runtimeLightFrame = frame;
+		runtimeLightSamples.clear();
+	}
+	if (freezeNativeFlickering && flickers && matched->referenceID != 0) {
+		// Keep DX11's flicker intact. Only the native shadow has a stable light.
+		live.position = { restOrigin.x, restOrigin.y, restOrigin.z };
+		live = frozenNativeLights.try_emplace(matched->referenceID, live).first->second;
+	}
+	const auto it = std::ranges::find_if(runtimeLightSamples, [&](const auto& sample) {
+		return sample.referenceID == matched->referenceID;
+	});
+	if (it != runtimeLightSamples.end())
+		it->value = live;
+	else if (runtimeLightSamples.size() < 64)
+		runtimeLightSamples.push_back({ matched->referenceID, live });
 }
 
 void DX12NativeScene::PreShadowMaps()
@@ -250,18 +334,26 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 			.viewportHeight = viewportHeight,
 			.densityMode = densityMode,
 			.debugGeometryMode = geometryPreview ? previewMode - 2u : 0u,
-			.emitterSamples = emitterRayCount,
-			.stochastic = stochasticEmitterSampling,
 			.nearLightExclusion = nearLightShadowExclusion,
 			.nearLightRadius = float(nearLightExclusionUnits),
 			.reachMultiplier = shadowReachMultiplier,
 			.fadeRange = shadowFadeRange,
 			.falloffCurve = shadowFalloffCurve
 		};
-		if (lights)
-			shadows.Dispatch(*backend, captured, built, *lights, frame, controls);
-		else
-			shadows.Dispatch(*backend, captured, built, {}, frame, controls);
+		std::vector<DX12::PreparedLight> liveLights = lights ? *lights : std::vector<DX12::PreparedLight>{};
+		if (!geometryPreview && !liveLights.empty()) {
+			std::scoped_lock lock(runtimeLightMutex);
+			if (runtimeLightFrame == frame) {
+				for (const auto& runtime : runtimeLightSamples) {
+					auto it = std::ranges::find_if(liveLights, [&](const auto& candidate) {
+						return candidate.referenceID == runtime.referenceID;
+					});
+					if (it != liveLights.end())
+						*it = runtime.value;
+				}
+			}
+		}
+		shadows.Dispatch(*backend, captured, built, liveLights, frame, controls);
 	}
 }
 
@@ -319,6 +411,12 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 {
 	if (a_opening) {
 		shadowLights.store(nullptr, std::memory_order_release);
+		{
+			std::scoped_lock lock(runtimeLightMutex);
+			runtimeLightFrame = UINT32_MAX;
+			runtimeLightSamples.clear();
+			frozenNativeLights.clear();
+		}
 		raster.Reset();
 		shadows.Reset();
 		acceleration.Reset();
@@ -329,6 +427,12 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 void DX12NativeScene::OnRuntimeDisabled()
 {
 	shadowLights.store(nullptr, std::memory_order_release);
+	{
+		std::scoped_lock lock(runtimeLightMutex);
+		runtimeLightFrame = UINT32_MAX;
+		runtimeLightSamples.clear();
+		frozenNativeLights.clear();
+	}
 	raster.Reset();
 	shadows.Reset();
 	acceleration.Reset();
