@@ -1,6 +1,6 @@
 #include "DX12Control.h"
-#include "DX12Resources.h"
 #include "DX12NativeScene.h"
+#include "DX12Resources.h"
 #include "Globals.h"
 #include "Utils/UI.h"
 

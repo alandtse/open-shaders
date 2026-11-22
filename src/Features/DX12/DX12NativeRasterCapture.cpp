@@ -1,12 +1,12 @@
 #include "DX12NativeRasterCapture.h"
 
+#include "GpuPass.h"
+#include "Utils/D3D.h"
 #include <algorithm>
 #include <format>
 #include <limits>
 #include <ranges>
 #include <stdexcept>
-#include "GpuPass.h"
-#include "Utils/D3D.h"
 
 namespace DX12Native
 {
@@ -204,7 +204,6 @@ namespace DX12Native
 	{
 		return current && current->frame == a_frame ? current : nullptr;
 	}
-
 
 	bool RasterCapture::RetainThrough(const std::shared_ptr<const RasterFrame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value)
 	{
