@@ -2,6 +2,8 @@
 #include "DX12NativeScene.h"
 #include "DX12Resources.h"
 #include "Globals.h"
+#include "State.h"
+#include "Upscaling.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -27,8 +29,9 @@ void DX12Control::DrawSettings()
 	}
 	if (!Util::BeginPillTabBar("##DX12Tabs"))
 		return;
-	const char* labels[] = { "Resources", "Native Scene", "Native Composite", "Master Switch" };
-	for (int index = 0; index < 4; ++index) {
+	const bool devMode = globals::state && globals::state->IsDeveloperMode();
+	const char* labels[] = { "Resources", "Native Scene", "Native Composite", "Master Switch", "Dev" };
+	for (int index = 0; index < (devMode ? 5 : 4); ++index) {
 		if (!Util::BeginPillTabItem(labels[index]))
 			continue;
 		selectedTab = index;
@@ -53,10 +56,40 @@ void DX12Control::DrawSettings()
 			if (settings.Enabled != bootActive.load(std::memory_order_acquire))
 				ImGui::TextDisabled("A game restart is required; DX12 Resources retains its boot state until then.");
 			break;
+		case 4: {
+			static constexpr const char* previewNames[] = { "Off", "Raw shadowmask", "Reconstructed shadowmask" };
+			int preview = int(shadowPreview.load(std::memory_order_relaxed));
+			if (ImGui::Combo("Shadowmask preview", &preview, previewNames, int(std::size(previewNames))))
+				shadowPreview.store(uint32_t(preview), std::memory_order_relaxed);
+			ImGui::TextDisabled("Preview replaces the pre-upscale color for debugging; magenta means an unsampled pixel.");
+			globals::features::dx12Resources.DrawDiagnostics();
+			globals::features::dx12NativeScene.DrawDiagnostics();
+			ImGui::SeparatorText("Native Composite / DXGI budget");
+			ImGui::Text("Spatial reconstruction: %s", UseSpatialReconstruction() ? "enabled" : "disabled");
+			ImGui::Text("Shadow strength %.2f, blend %.2f", GetShadowStrength(), GetShadowBlend());
+			const auto memory = globals::features::upscaling.nativeComposite.GetMemoryBudgetSnapshot();
+			ImGui::Text("DXGI local budget: %s", memory.dxgiAvailable ? "available (last allocation query)" : "not queried / unavailable");
+			if (memory.dxgiAvailable) {
+				constexpr double mib = 1024.0 * 1024.0;
+				ImGui::Text("Budget %.1f MiB, usage %.1f MiB, headroom %.1f MiB",
+					double(memory.localBudget) / mib, double(memory.localUsage) / mib, double(memory.headroom) / mib);
+				ImGui::Text("Reserve %.1f MiB, effective allocation allowance %.1f MiB",
+					double(memory.reserve) / mib, double(memory.effectiveBytes) / mib);
+			}
+			break;
+		}
 		}
 		Util::EndPillTabItem();
 	}
 	Util::EndPillTabBar();
+}
+
+uint32_t DX12Control::GetShadowPreview() const
+{
+	// Leaving the main-menu Developer Mode immediately disables all debug
+	// visualization, even if a preview was previously selected in this tab.
+	return globals::state && globals::state->IsDeveloperMode() ?
+	           shadowPreview.load(std::memory_order_relaxed) : 0u;
 }
 
 void DX12Control::LoadSettings(json& input)

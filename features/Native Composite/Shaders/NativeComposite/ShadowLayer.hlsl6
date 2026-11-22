@@ -44,7 +44,7 @@ void main(uint3 id : SV_DispatchThreadID)
     const bool traced = ValidMask(center);
     // Preview 1 visualizes the raw RayQuery sampling pattern.
     if (Preview == 1u) {
-        Scene[id.xy] = traced ? float4(saturate(center.x).xxx, 1.0f) :
+        Scene[id.xy] = traced ? float4(saturate(center.x), saturate(center.x), saturate(center.x), 1.0f) :
             center.y == -1.0f ? float4(1.0f, 0.0f, 1.0f, 1.0f) :
             float4(0.2f, 0.0f, 0.0f, 1.0f);
         return;

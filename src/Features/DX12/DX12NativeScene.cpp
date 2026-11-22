@@ -25,14 +25,42 @@ void DX12NativeScene::DrawSettings()
 		densityMode = static_cast<uint32_t>(mode);
 	ImGui::TextDisabled("Raw shadowmask always uses the full render resolution.");
 	ImGui::TextDisabled("Capture is independent of native acceleration, Native Composite, and FSR.");
+
+}
+
+void DX12NativeScene::DrawDiagnostics() const
+{
+	ImGui::SeparatorText("Native Scene / DXR");
+	ImGui::Text("Shadowmask dispatch: %s", shadowMaskEnabled &&
+		globals::features::dx12Control.IsShadowOffloadMode() ? "enabled" : "paused");
+	ImGui::Text("Trace density mode: %u (0=full, 1=2/3, 2=1/2, 3=1/3, 4=1/4, 5=1/6, 6=1/9, 7=4/9)", densityMode);
+	const auto lights = shadowLights.load(std::memory_order_acquire);
+	ImGui::Text("Prepared lights: %zu (first %zu traceable this frame)",
+		lights ? lights->size() : 0u, lights ? std::min(lights->size(), size_t{64}) : 0u);
+	const auto scene = acceleration.GetScene();
+	ImGui::Text("TLAS: %s", scene && scene->acceleration ? "published" : "not available");
+	const uint32_t frame = globals::game::graphicsState ?
+		globals::game::graphicsState->GetFrameCount() : 0u;
+	const auto raw = shadows.Get(frame);
+	ImGui::Text("Raw mask for engine frame %u: %s", frame, raw ? "submitted" : "not published");
+	if (raw)
+		ImGui::Text("Mask: %u x %u; density mode %u; fence %llu",
+			raw->width, raw->height, raw->densityMode, static_cast<unsigned long long>(raw->readyValue));
+	const auto rasterFrame = raster.Get(frame);
+	ImGui::Text("DX11 opaque raster capture: %s", rasterFrame ? "published" : "not published");
+	const auto counters = raster.GetCounters();
+	ImGui::Text("Raster capture submissions: %llu; busy slot deferrals: %llu",
+		static_cast<unsigned long long>(counters.submissions),
+		static_cast<unsigned long long>(counters.busyDeferrals));
 	if (!startupFailure.empty())
 		ImGui::TextWrapped("Native raster transfer: %s", startupFailure.c_str());
-	else if (!raster.Status().empty())
+	if (!raster.Status().empty())
 		ImGui::TextWrapped("Native raster capture: %s", raster.Status().c_str());
 	if (!shadows.Status().empty())
 		ImGui::TextWrapped("RayQuery: %s", shadows.Status().c_str());
-	if (!acceleration.Failure().empty())
-		ImGui::TextWrapped("Native acceleration: %s", acceleration.Failure().c_str());
+	const auto accelerationFailure = acceleration.Failure();
+	if (!accelerationFailure.empty())
+		ImGui::TextWrapped("Native acceleration: %s", accelerationFailure.c_str());
 }
 
 void DX12NativeScene::LoadSettings(json& input)
