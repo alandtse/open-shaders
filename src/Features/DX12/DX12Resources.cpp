@@ -1,5 +1,4 @@
 #include "DX12Resources.h"
-#include "DX12NativeSceneInputs.h"
 
 #include "CompanionWorker.h"
 #include "DX12Control.h"
@@ -490,7 +489,6 @@ void DX12Resources::ResetPreparation()
 	grid.Clear();
 	lastVisitedCell = previousVisitedCell = distinctTransitions = 0;
 	flushGeneration.fetch_add(1, std::memory_order_release);
-	preparationStatus.store(std::make_shared<const std::string>("Awaiting preparation"), std::memory_order_release);
 	generationStats.store(std::make_shared<const DX12::PreparationStats>(), std::memory_order_release);
 }
 
@@ -582,79 +580,6 @@ void DX12Resources::DrawSettings()
 	}
 }
 
-void DX12Resources::DrawDiagnostics() const
-{
-	ImGui::SeparatorText("DX12 Resources / companion");
-	const auto snapshot = GetGrid();
-	if (snapshot) {
-		ImGui::Text("Grid revision %llu, geometry revision %llu, light revision %llu",
-			static_cast<unsigned long long>(snapshot->revision),
-			static_cast<unsigned long long>(snapshot->geometryRevision),
-			static_cast<unsigned long long>(snapshot->lightRevision));
-		ImGui::Text("Scope: %08X; subcell size: %u; runtime shapes: %zu (%.1f MiB)",
-			snapshot->requested.front().scope, snapshot->size, snapshot->runtimeShapes.size(),
-			double(snapshot->runtimeBytes) / (1024.0 * 1024.0));
-		std::array<size_t, 7> states{};
-		size_t geometry = 0, lights = 0, nifSources = 0, missingShapes = 0;
-		const auto accumulate = [&](const auto& tiles) {
-			for (const auto& tile : tiles) {
-				if (!tile)
-					continue;
-				++states[static_cast<size_t>(tile->state)];
-				geometry += tile->shapes.size();
-				lights += tile->lights.size();
-				nifSources += tile->nifSources.size();
-				missingShapes += tile->missingShapes.size();
-			}
-		};
-		accumulate(snapshot->resident);
-		accumulate(snapshot->predictiveResident);
-		ImGui::Text("Tiles: requested %zu, preparing %zu, ready %zu, partial %zu, retry %zu, skipped %zu (exhausted %zu, predictive %zu)",
-			states[0], states[1], states[2], states[3], states[4], states[5] + states[6], states[5], states[6]);
-		ImGui::Text("Published shapes: %zu; placed lights: %zu (may include duplicates across tile boundaries)", geometry, lights);
-		ImGui::Text("NIF source records: %zu; unresolved NIF shape records: %zu", nifSources, missingShapes);
-		const auto supplemented = std::ranges::count_if(snapshot->runtimeShapes,
-			[](const DX12::RuntimeShape& observed) { return observed.shape && !observed.shape->sourceNif.empty(); });
-		ImGui::Text("NIF-matched runtime geometry additions: %zu", size_t(supplemented));
-		const auto showRetries = [&](const auto& tiles, const char* region) {
-			for (const auto& tile : tiles) {
-				if (tile && (tile->state == DX12::Tile::State::Incomplete || tile->state == DX12::Tile::State::RetryWaiting)) {
-					ImGui::Text("%s subcell (%lld, %lld): attempt %u / 3%s", region,
-						static_cast<long long>(tile->key.x), static_cast<long long>(tile->key.y),
-						unsigned(tile->preparationAttempts), tile->state == DX12::Tile::State::Incomplete ? " (skipped: retry exhausted)" : "");
-					if (!tile->failureReason.empty())
-						ImGui::TextWrapped("Last reason: %s", tile->failureReason.c_str());
-				}
-			}
-		};
-		showRetries(snapshot->resident, "Active");
-		showRetries(snapshot->predictiveResident, "Predictive");
-		const auto showRejections = [&](const auto& tiles, const char* region) {
-			for (const auto& tile : tiles) {
-				if (!tile || tile->rejectionReasons.empty())
-					continue;
-				ImGui::TextDisabled("%s subcell (%lld, %lld) geometry rejections:", region,
-					static_cast<long long>(tile->key.x), static_cast<long long>(tile->key.y));
-				for (const auto& [reason, count] : tile->rejectionReasons)
-					ImGui::Text("%s: %u", reason.c_str(), count);
-			}
-		};
-		showRejections(snapshot->resident, "Active");
-		showRejections(snapshot->predictiveResident, "Predictive");
-	}
-	if (const auto stats = GetPreparationStats()) {
-		const auto showTiming = [&](const char* label, const DX12::PreparationTiming& timing) {
-			ImGui::Text("%s jobs: %llu completed, %llu failed, %llu partial; last %.1f ms, avg %.1f ms",
-				label, static_cast<unsigned long long>(timing.completed),
-				static_cast<unsigned long long>(timing.failed),
-				static_cast<unsigned long long>(timing.partial), timing.lastMs, timing.AverageMs());
-		};
-		showTiming("Active", stats->active);
-		showTiming("Predictive", stats->predictive);
-		showTiming("Corners", stats->corners);
-	}
-}
-
 void DX12Resources::LoadSettings(json& input)
 {
 	const uint32_t requested = input.value("SubcellSize", DX12::kSubcellSizes.front());
@@ -729,9 +654,6 @@ void DX12Resources::PreShadowMaps()
 	}
 	if (auto result = companion->Take()) {
 		inFlight.reset();
-		preparationStatus.store(std::make_shared<const std::string>(
-									result->failure.empty() ? "Companion returned valid geometry and light data" : result->failure),
-			std::memory_order_release);
 		adopting = std::make_unique<DX12::CompanionResult>(std::move(*result));
 		adopting->publication.failureReason = adopting->failure.substr(0, 320);
 		adopting->publication.lights.reserve(adopting->lights.size());
@@ -769,10 +691,6 @@ void DX12Resources::PreShadowMaps()
 				adopting->publication.lights.push_back(record.value);
 			}
 			if (lightAdoptionOffset == adopting->lights.size()) {
-				const auto& publication = adopting->publication;
-				const bool valid = publication.validated;
-				const bool prepared = valid && publication.enumerationComplete &&
-				                      publication.failedShapes == 0 && publication.eligibleShapes == publication.shapes.size();
 				const bool wasPredictiveRequest = adopting->predictive;
 				const bool wasCornerRequest = adopting->corner;
 				const double elapsedMs = adopting->preparationMs;
@@ -785,8 +703,6 @@ void DX12Resources::PreShadowMaps()
 					               wasCornerRequest      ? next->corners :
 					                                       next->predictive;
 					++timing.completed;
-					timing.failed += valid ? 0u : 1u;
-					timing.partial += valid && !prepared ? 1u : 0u;
 					timing.lastMs = elapsedMs;
 					timing.totalMs += elapsedMs;
 					timing.worstMs = std::max(timing.worstMs, elapsedMs);
@@ -836,11 +752,6 @@ void DX12Resources::OnSceneTransitionReset(bool /*opening*/)
 void DX12Resources::OnRuntimeDisabled()
 {
 	ResetPreparation();
-}
-
-std::shared_ptr<const DX12Native::SceneInputs> DX12Resources::GetNativeSceneInputs() const
-{
-	return DX12Native::CollectSceneInputs(grid.Snapshot());
 }
 
 std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const

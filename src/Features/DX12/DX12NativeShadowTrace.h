@@ -16,7 +16,6 @@ namespace DX12Native
 	{
 		uint32_t viewportWidth = 0, viewportHeight = 0;
 		uint32_t densityMode = 0;
-		uint32_t debugGeometryMode = 0;  // 0 normal, 1 all TLAS, 2 companion, 3 runtime.
 		bool nearLightExclusion = false;
 		float nearLightRadius = 0.0f;  // 0..512 game units; exclusion sphere centered at light.
 		float reachMultiplier = 1.0f;  // 1.0 means the vanilla-provided light radius.
@@ -36,9 +35,9 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12Fence> readyFence;
 		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 		uint64_t readyValue = 0;
-		uint32_t frame = 0, width = 0, height = 0, densityMode = 0;
-		// RGBA32F: x weighted visibility, y 1 sampled / -1 missing / 0 invalid,
-		// z raster depth, w accumulated weight.
+		uint32_t frame = 0, width = 0, height = 0;
+		// RGBA32F: x weighted visibility, y 1 sampled / -1 omitted / 0 invalid,
+		// z receiver distance, w accumulated light weight.
 	};
 
 	/** @brief Native Scene DXR1.1 RayQuery dispatch, independent of Native Lighting and FSR. */
@@ -55,7 +54,6 @@ namespace DX12Native
 		}
 		bool RetainThrough(const std::shared_ptr<const ShadowMaskFrame>& frame, ID3D12Fence* fence, uint64_t value);
 		void Reset() { current.reset(); }
-		const std::string& Status() const { return status; }
 
 	private:
 		void Initialize(const GraphicsBackend& backend);
@@ -66,6 +64,5 @@ namespace DX12Native
 		std::array<std::shared_ptr<ShadowMaskFrame>, 4> slots;
 		std::shared_ptr<ShadowMaskFrame> current;
 		uint64_t nextFence = 0;
-		std::string status;
 	};
 }

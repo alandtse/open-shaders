@@ -73,7 +73,6 @@
 #include "TruePBR.h"
 #include "Utils/Game.h"
 
-#include <cmath>
 
 namespace globals
 {
@@ -197,7 +196,6 @@ namespace globals
 
 		D3D11_MAPPED_SUBRESOURCE* mappedFrameBuffer = nullptr;
 		FrameBufferCache frameBufferCached{};
-		MainWorldCameraSnapshot mainWorldCameraSnapshot{};
 
 		int32_t* frameCounter = nullptr;
 		int* viewWidth = nullptr;
@@ -342,36 +340,6 @@ namespace globals
 		}
 	}
 
-	// The engine reuses the same per-frame constant buffer for multiple cameras.
-	// Retain a verified main-world snapshot even if shadow/reflection uploads follow.
-	namespace
-	{
-		void CaptureMainWorldCamera(const FrameBuffer& candidate)
-		{
-			using namespace game;
-			if (isVR || !graphicsState || !globals::state || globals::state->isMapMenuOpen ||
-				(globals::state->permutationData.ExtraShaderDescriptor &
-					static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections)))
-				return;
-			if (!std::isfinite(candidate.CameraProj._44) ||
-				std::abs(candidate.CameraProj._44) > 1e-5f)
-				return;  // Orthographic/shadow view, not the scene camera.
-			const auto* worldCamera = RE::Main::WorldRootCamera();
-			if (!worldCamera)
-				return;
-			const auto& origin = worldCamera->world.translate;
-			const float dx = candidate.CameraPosAdjust.x + candidate.CameraViewInverse._14 - origin.x;
-			const float dy = candidate.CameraPosAdjust.y + candidate.CameraViewInverse._24 - origin.y;
-			const float dz = candidate.CameraPosAdjust.z + candidate.CameraViewInverse._34 - origin.z;
-			const float errorSquared = dx * dx + dy * dy + dz * dz;
-			if (!std::isfinite(errorSquared) || errorSquared > 0.25f)
-				return;
-			mainWorldCameraSnapshot.camera = candidate;
-			mainWorldCameraSnapshot.frame = graphicsState->GetFrameCount();
-			mainWorldCameraSnapshot.valid = true;
-		}
-	}
-
 	/**
  * @brief Caches the current frame buffer data and clears the mapped pointer.
  *
@@ -393,7 +361,6 @@ namespace globals
 			for (auto* feature : fixupFeatures)
 				feature->FixupMappedFrameBuffer(frameBuffer);
 			CopyMappedFrameBuffer(frameBufferCached.nonVR, frameBuffer);
-			CaptureMainWorldCamera(frameBuffer);
 		}
 		mappedFrameBuffer = nullptr;
 	}

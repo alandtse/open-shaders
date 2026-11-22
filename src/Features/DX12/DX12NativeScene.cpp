@@ -47,70 +47,6 @@ void DX12NativeScene::DrawSettings()
 	ImGui::SliderFloat("Shadow falloff curve", &shadowFalloffCurve, 0.0f, 2.5f, "%.2f");
 }
 
-void DX12NativeScene::DrawDiagnostics() const
-{
-	ImGui::SeparatorText("Native Scene / DXR");
-	ImGui::Text("Shadowmask dispatch: %s", shadowMaskEnabled &&
-												   globals::features::dx12Control.IsShadowOffloadMode() ?
-											   "enabled" :
-											   "paused");
-	ImGui::Text("Trace density mode: %u (0=full, 1=2/3, 2=1/2, 3=1/3, 4=1/4, 5=1/6, 6=1/9, 7=4/9)", densityMode);
-	ImGui::Text("Light visibility: deterministic center ray; stochastic sampling removed.");
-	ImGui::Text("Flickering static raster: %s; freeze native flicker: %s",
-		offloadFlickeringStatic ? "offload allowed" : "kept", freezeNativeFlickering ? "on" : "off");
-	{
-		std::scoped_lock lock(runtimeLightMutex);
-		ImGui::Text("Matched live SCM lights: %zu (engine frame %u); frozen: %zu",
-			runtimeLightSamples.size(), runtimeLightFrame, frozenNativeLights.size());
-	}
-	ImGui::Text("Near-light exclusion: %s; radius %u units", nearLightShadowExclusion ? "enabled" : "disabled", nearLightExclusionUnits);
-	ImGui::Text("Shadow reach %.2fx vanilla; fade fraction %.2f; curve %.2f", shadowReachMultiplier, shadowFadeRange, shadowFalloffCurve);
-	const auto lights = shadowLights.load(std::memory_order_acquire);
-	ImGui::Text("Prepared lights: %zu (first %zu traceable this frame)",
-		lights ? lights->size() : 0u, lights ? std::min(lights->size(), size_t{ 64 }) : 0u);
-	const auto scene = acceleration.GetScene();
-	ImGui::Text("TLAS: %s", scene && scene->acceleration ? "published" : "not available");
-	const uint32_t frame = globals::game::graphicsState ?
-	                           globals::game::graphicsState->GetFrameCount() :
-	                           0u;
-	if (scene && scene->inputs) {
-		const auto& geometry = scene->inputs->geometry;
-		const auto runtime = std::ranges::count_if(geometry, [](const auto& input) { return input.supplementary; });
-		ImGui::Text("Published TLAS shapes: companion %zu, runtime %zu", geometry.size() - size_t(runtime), size_t(runtime));
-	}
-	const auto& mainWorld = globals::game::mainWorldCameraSnapshot;
-	ImGui::Text("Main-world camera: %s (snapshot frame %u, current frame %u)",
-		mainWorld.valid && mainWorld.frame == frame ? "verified" : "not current / unavailable",
-		mainWorld.frame, frame);
-	const auto raw = shadows.Get(frame);
-	ImGui::Text("Raw mask for engine frame %u: %s", frame, raw ? "submitted" : "not published");
-	if (raw) {
-		ImGui::Text("Mask: %u x %u; GPU density %u; fence %llu",
-			raw->width, raw->height, raw->densityMode, static_cast<unsigned long long>(raw->readyValue));
-	}
-	if (raw && raw->readyFence) {
-		const auto done = raw->readyFence->GetCompletedValue();
-		ImGui::Text("Shadow GPU fence: %s", done != UINT64_MAX && done >= raw->readyValue ?
-												"completed" :
-												"pending / unavailable");
-	}
-	const auto rasterFrame = raster.Get(frame);
-	ImGui::Text("DX11 opaque raster capture: %s", rasterFrame ? "published" : "not published");
-	const auto counters = raster.GetCounters();
-	ImGui::Text("Raster capture submissions: %llu; busy slot deferrals: %llu",
-		static_cast<unsigned long long>(counters.submissions),
-		static_cast<unsigned long long>(counters.busyDeferrals));
-	if (!startupFailure.empty())
-		ImGui::TextWrapped("Native raster transfer: %s", startupFailure.c_str());
-	if (!raster.Status().empty())
-		ImGui::TextWrapped("Native raster capture: %s", raster.Status().c_str());
-	if (!shadows.Status().empty())
-		ImGui::TextWrapped("RayQuery: %s", shadows.Status().c_str());
-	const auto accelerationFailure = acceleration.Failure();
-	if (!accelerationFailure.empty())
-		ImGui::TextWrapped("Native acceleration: %s", accelerationFailure.c_str());
-}
-
 void DX12NativeScene::LoadSettings(json& input)
 {
 	shadowMaskEnabled = input.value("ShadowMask", true);
@@ -307,15 +243,17 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 		(globals::state->permutationData.ExtraShaderDescriptor &
 			static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections)))
 		return;
+	// No preview consumer remains. Do not copy eight raster targets/depth
+	// unless the actual independent shadow layer is enabled in offload mode.
+	if (!shadowMaskEnabled || !globals::features::dx12Control.IsShadowOffloadMode())
+		return;
 
 	if (!backend) {
 		std::string reason;
 		backend = GraphicsBackend::Create(globals::d3d::device, globals::d3d::context, reason);
 		if (!backend) {
-			startupFailure = std::move(reason);
 			return;
 		}
-		startupFailure.clear();
 	}
 
 	const std::array sources{
@@ -323,30 +261,22 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 		a_inputs.masks, a_inputs.masks2, a_inputs.reflectance, a_inputs.motion
 	};
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
-	const uint32_t previewMode = globals::features::dx12Control.GetShadowPreview();
-	const bool geometryPreview = previewMode >= 3u && previewMode <= 5u;
-	// Never fabricate the geometry preview from an old or unrelated shadow camera.
-	const auto& mainWorld = globals::game::mainWorldCameraSnapshot;
-	const bool mainWorldReady = mainWorld.valid && mainWorld.frame == frame;
-	const globals::FrameBuffer* camera = geometryPreview ?
-	                                         (mainWorldReady ? &mainWorld.camera : nullptr) :
-	                                         &globals::game::frameBufferCached.nonVR;
-	raster.Capture(*backend, sources, Util::GetCurrentSceneDepthSRV(false), camera, frame);
+	raster.Capture(*backend, sources, Util::GetCurrentSceneDepthSRV(false),
+		&globals::game::frameBufferCached.nonVR, frame);
 	// The active view may occupy only a subrect of the full-size raster allocation.
 	const auto viewport = Util::ConvertToDynamic(globals::state->screenSize);
 	const uint32_t viewportWidth = std::isfinite(viewport.x) && viewport.x > 0.0f ? uint32_t(viewport.x) : 0u;
 	const uint32_t viewportHeight = std::isfinite(viewport.y) && viewport.y > 0.0f ? uint32_t(viewport.y) : 0u;
-	if ((shadowMaskEnabled && globals::features::dx12Control.IsShadowOffloadMode()) || geometryPreview) {
+	{
 		const auto captured = raster.Get(frame);
 		const auto built = acceleration.GetScene();
 		const auto lights = shadowLights.load(std::memory_order_acquire);
-		// Report missing prerequisites even when no raw frame can be submitted.
-		// The only RayQuery dispatch remains inside the DX12 shadow trace.
+		// The native trace handles unavailable inputs without affecting raster
+		// rendering. RayQuery dispatch remains in DX12NativeShadowTrace.
 		const DX12Native::ShadowTraceControls controls{
 			.viewportWidth = viewportWidth,
 			.viewportHeight = viewportHeight,
 			.densityMode = densityMode,
-			.debugGeometryMode = geometryPreview ? previewMode - 2u : 0u,
 			.nearLightExclusion = nearLightShadowExclusion,
 			.nearLightRadius = float(nearLightExclusionUnits),
 			.reachMultiplier = shadowReachMultiplier,
@@ -354,7 +284,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 			.falloffCurve = shadowFalloffCurve
 		};
 		std::vector<DX12::PreparedLight> liveLights = lights ? *lights : std::vector<DX12::PreparedLight>{};
-		if (!geometryPreview && !liveLights.empty()) {
+		if (!liveLights.empty()) {
 			std::scoped_lock lock(runtimeLightMutex);
 			if (runtimeLightFrame == frame) {
 				for (const auto& runtime : runtimeLightSamples) {

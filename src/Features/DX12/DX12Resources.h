@@ -13,11 +13,6 @@
 #include <unordered_map>
 #include <utility>
 
-namespace DX12Native
-{
-	struct SceneInputs;
-}
-
 namespace DX12
 {
 	class CompanionWorker;
@@ -123,7 +118,7 @@ namespace DX12
 
 	struct PreparationTiming
 	{
-		uint64_t completed = 0, failed = 0, partial = 0;  // Completed, invalid and incomplete-coverage publications.
+		uint64_t completed = 0;  // Accepted, completed companion publications.
 		double lastMs = 0.0, totalMs = 0.0, worstMs = 0.0;
 		double AverageMs() const { return completed ? totalMs / double(completed) : 0.0; }
 	};
@@ -186,8 +181,6 @@ struct DX12Resources final : Feature
 	bool IsInFeatureList() const override { return false; }
 	bool SupportsVR() override { return false; }
 	void DrawSettings() override;
-	/** @brief In-memory preparation and subcell diagnostic counters for the Dev tab. */
-	void DrawDiagnostics() const;
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
 	void RestoreDefaultSettings() override;
@@ -197,8 +190,6 @@ struct DX12Resources final : Feature
 	void OnRuntimeDisabled() override;
 	/** @brief Returns current geometry residency without traversing engine objects. */
 	std::shared_ptr<const DX12::Grid> GetGrid() const { return grid.Snapshot(); }
-	/** @brief Collects geometry and lights for the native scene, independent of tile-completeness states. */
-	std::shared_ptr<const DX12Native::SceneInputs> GetNativeSceneInputs() const;
 	/** @brief Claims the next geometry request, if one is needed. */
 	std::optional<DX12::SubcellKey> NextRequest() { return grid.NextRequest(); }
 	/** @brief Accepts an authoritative in-memory geometry and light publication from the companion. */
@@ -217,11 +208,6 @@ struct DX12Resources final : Feature
 	{
 		return generationStats.load(std::memory_order_acquire);
 	}
-	std::shared_ptr<const std::string> GetPreparationStatus() const
-	{
-		return preparationStatus.load(std::memory_order_acquire);
-	}
-
 private:
 	void ResetPreparation();
 	DX12::ResourceGrid grid;
@@ -231,7 +217,6 @@ private:
 	uint32_t lastVisitedCell = 0, previousVisitedCell = 0, distinctTransitions = 0;
 	std::atomic<uint64_t> flushGeneration{ 0 };
 	std::optional<DX12::SubcellKey> inFlight;
-	std::atomic<std::shared_ptr<const std::string>> preparationStatus{ std::make_shared<const std::string>("Awaiting preparation") };
 	std::atomic<std::shared_ptr<const DX12::PreparationStats>> generationStats{
 		std::make_shared<const DX12::PreparationStats>()
 	};

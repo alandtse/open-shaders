@@ -30,8 +30,8 @@ namespace DX12Native
 			uint32_t reserved = 0;
 			float shadowReachMultiplier = 1.0f, shadowFadeRange = 0.5f, shadowFalloffCurve = 1.0f;
 			float nearLightRadius = 0.0f;
-			uint32_t nearLightExclusion = 0, debugGeometryMode = 0;
-			uint32_t padding0 = 0, padding1 = 0;
+			uint32_t nearLightExclusion = 0, padding0 = 0;
+			uint32_t padding1 = 0, padding2 = 0;
 		};
 		winrt::com_ptr<ID3D12Resource> UploadBuffer(ID3D12Device* device, UINT64 bytes)
 		{
@@ -119,15 +119,12 @@ namespace DX12Native
 		current.reset();
 		if (!raster || !raster->depth || !raster->depth->resource || !raster->readyFence ||
 			!raster->cameraValid) {
-			status = "not submitted: raster depth, camera or capture fence unavailable";
 			return;
 		}
 		if (!scene || !scene->acceleration || !scene->producerFence) {
-			status = "not submitted: native TLAS unavailable";
 			return;
 		}
-		if (lights.empty() && controls.debugGeometryMode == 0u) {
-			status = "not submitted: no prepared lights";
+		if (lights.empty()) {
 			return;
 		}
 		try {
@@ -142,13 +139,11 @@ namespace DX12Native
 					   });
 			});
 			if (it == slots.end()) {
-				status = "not submitted: all raw shadowmask slots in flight";
 				return;
 			}
 			auto& slot = *it;
 			const UINT width = controls.viewportWidth, height = controls.viewportHeight;
 			if (!width || !height || width > raster->width || height > raster->height) {
-				status = "not submitted: active viewport missing or outside captured raster dimensions";
 				return;
 			}
 			const bool fresh = !slot || slot->width != width || slot->height != height;
@@ -188,12 +183,11 @@ namespace DX12Native
 			slot->frame = frame;
 			slot->width = width;
 			slot->height = height;
-			slot->densityMode = std::min(controls.densityMode, 7u);
 			const Constants camera{
 				slot->raster->camera.CameraProjInverse,
 				slot->raster->camera.CameraViewInverse,
 				slot->raster->camera.CameraPosAdjust,
-				width, height, frame, slot->densityMode,
+				width, height, frame, std::min(controls.densityMode, 7u),
 				uint32_t(std::min(lights.size(), size_t(kMaxLights))),
 				0.5f, 60000.0f, 0u,
 				std::clamp(controls.reachMultiplier, 0.1f, 64.0f),
@@ -201,7 +195,7 @@ namespace DX12Native
 				std::clamp(controls.falloffCurve, 0.0f, 2.5f),
 				std::clamp(controls.nearLightRadius, 0.0f, 512.0f),
 				controls.nearLightExclusion ? 1u : 0u,
-				std::min(controls.debugGeometryMode, 3u), 0u, 0u
+				0u, 0u, 0u
 			};
 			static_assert(sizeof(Constants) <= 256);
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
@@ -277,9 +271,8 @@ namespace DX12Native
 			slot->readyFence = completion;
 			slot->readyValue = value;
 			current = slot;
-			status = "GPU dispatch submitted (fence completion shown separately)";
-		} catch (const std::exception& e) {
-			status = e.what();
+		} catch (const std::exception&) {
+			// This frame is unavailable; baseline raster shadows are unaffected.
 		}
 	}
 

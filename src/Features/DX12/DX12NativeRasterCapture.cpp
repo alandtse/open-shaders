@@ -37,12 +37,6 @@ namespace DX12Native
 			const auto done = producer.fence12->GetCompletedValue();
 			if (done == UINT64_MAX)
 				throw std::runtime_error("Raster device removed");
-			for (const auto& frame : slots) {
-				if (frame && !frame->completionCounted && frame->readyValue && frame->readyValue != UINT64_MAX && frame->readyValue <= done) {
-					frame->completionCounted = true;
-					++completions;
-				}
-			}
 			auto available = std::find_if(slots.begin(), slots.end(), [&](const auto& slot) {
 				const auto completed = producer.fence12->GetCompletedValue();
 				if (!slot)
@@ -55,7 +49,6 @@ namespace DX12Native
 				});
 			});
 			if (available == slots.end()) {
-				++busyDeferrals;
 				throw std::runtime_error("Raster snapshots are still in use");
 			}
 			uint64_t trackedBytes = 0;
@@ -161,7 +154,6 @@ namespace DX12Native
 			}
 			slot->consumers.clear();
 			slot->readyValue = UINT64_MAX;
-			slot->completionCounted = false;
 			for (size_t i = 0; i < a_inputs.size(); ++i)
 				backend.d3d11Context->CopyResource(slot->inputs[i]->resource11, a_inputs[i]);
 			auto* context = backend.d3d11Context.get();
@@ -185,7 +177,6 @@ namespace DX12Native
 			DX::ThrowIfFailed(backend.d3d11Context->Signal(producer.fence11.get(), ready));
 			backend.d3d11Context->Flush();
 			DX::ThrowIfFailed(backend.commandQueue->Wait(producer.fence12.get(), ready));
-			slot->sourceDepthFormat = depthView.Format;
 			slot->cameraValid = a_camera != nullptr;
 			if (a_camera)
 				slot->camera = *a_camera;
@@ -193,10 +184,8 @@ namespace DX12Native
 			slot->readyValue = ready;
 			slot->frame = a_frame;
 			current = slot;
-			++submissions;
-			status.clear();
-		} catch (const std::exception& error) {
-			status = error.what();
+		} catch (const std::exception&) {
+			// Missing capture leaves no published frame; do not disrupt raster.
 		}
 	}
 
