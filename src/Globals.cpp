@@ -10,6 +10,7 @@
 #include "Features/CloudShadows.h"
 #include "Features/DX12/DX12Control.h"
 #include "Features/DX12/DX12Resources.h"
+#include "Features/DX12/DX12NativeScene.h"
 #include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/Effects11.h"
@@ -144,6 +145,7 @@ namespace globals
 		ProceduralAurora proceduralAurora{};
 		DX12Control dx12Control{};
 		DX12Resources dx12Resources{};
+		DX12NativeScene dx12NativeScene{};
 
 		namespace llf
 		{

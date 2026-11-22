@@ -1,5 +1,6 @@
 #include "DX12Control.h"
 #include "DX12Resources.h"
+#include "DX12NativeScene.h"
 #include "Globals.h"
 #include "Utils/UI.h"
 
@@ -16,8 +17,8 @@ void DX12Control::DrawSettings()
 		return;
 	// Persistent choice between openings of the settings page; the active selection is
 	// tracked by the pill-tab widget itself while this control stays loaded.
-	const char* labels[] = { "Resources", "Master Switch" };
-	for (int index = 0; index < 2; ++index) {
+	const char* labels[] = { "Resources", "Native Scene", "Master Switch" };
+	for (int index = 0; index < 3; ++index) {
 		if (!Util::BeginPillTabItem(labels[index]))
 			continue;
 		selectedTab = index;
@@ -26,6 +27,9 @@ void DX12Control::DrawSettings()
 			globals::features::dx12Resources.DrawSettings();
 			break;
 		case 1:
+			globals::features::dx12NativeScene.DrawSettings();
+			break;
+		case 2:
 			ImGui::Checkbox("Enable native DX12 features (restart required)", &settings.Enabled);
 			if (settings.Enabled != bootActive.load(std::memory_order_acquire))
 				ImGui::TextDisabled("A game restart is required; DX12 Resources retains its boot state until then.");

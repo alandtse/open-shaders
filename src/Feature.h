@@ -370,6 +370,22 @@ public:
 	/** @brief Called after the world scene is complete, including first-person rendering on SE/AE. */
 	virtual void OnWorldRenderEnd(RE::RENDER_TARGET /*a_renderTarget*/) {}
 
+	/** @brief Source textures from the opaque raster stage. */
+	struct OpaqueRasterInputs
+	{
+		ID3D11Texture2D* litColor = nullptr;
+		ID3D11Texture2D* litSpecular = nullptr;
+		ID3D11Texture2D* albedo = nullptr;
+		ID3D11Texture2D* normalRoughness = nullptr;
+		ID3D11Texture2D* masks = nullptr;
+		ID3D11Texture2D* masks2 = nullptr;
+		ID3D11Texture2D* reflectance = nullptr;
+		ID3D11Texture2D* motion = nullptr;
+	};
+
+	/** @brief Offers completed opaque inputs before deferred composition. */
+	virtual void OnOpaqueRasterReady(const OpaqueRasterInputs& /*a_inputs*/) {}
+
 	/** @brief Called before a post-processing implementation consumes the scene target. */
 	virtual void OnBeforePostProcessing(RE::RENDER_TARGET /*a_renderTarget*/) {}
 
