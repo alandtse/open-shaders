@@ -46,8 +46,13 @@ void DX12NativeScene::DrawDiagnostics() const
 	const auto raw = shadows.Get(frame);
 	ImGui::Text("Raw mask for engine frame %u: %s", frame, raw ? "submitted" : "not published");
 	if (raw)
-		ImGui::Text("Mask: %u x %u; density mode %u; fence %llu",
+		ImGui::Text("Mask: %u x %u; GPU density %u; fence %llu",
 			raw->width, raw->height, raw->densityMode, static_cast<unsigned long long>(raw->readyValue));
+		if (raw->readyFence) {
+			const auto done = raw->readyFence->GetCompletedValue();
+			ImGui::Text("Shadow GPU fence: %s", done != UINT64_MAX && done >= raw->readyValue ?
+				"completed" : "pending / unavailable");
+		}
 	const auto rasterFrame = raster.Get(frame);
 	ImGui::Text("DX11 opaque raster capture: %s", rasterFrame ? "published" : "not published");
 	const auto counters = raster.GetCounters();
@@ -173,9 +178,12 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 		const auto captured = raster.Get(frame);
 		const auto built = acceleration.GetScene();
 		const auto lights = shadowLights.load(std::memory_order_acquire);
-		if (captured && built && lights)
-			shadows.Dispatch(*backend, std::move(captured), std::move(built),
-				*lights, frame, densityMode);
+		// Report missing prerequisites even when no raw frame can be submitted.
+		// The only RayQuery dispatch remains inside the DX12 shadow trace.
+		if (lights)
+			shadows.Dispatch(*backend, captured, built, *lights, frame, densityMode);
+		else
+			shadows.Dispatch(*backend, captured, built, {}, frame, densityMode);
 	}
 }
 

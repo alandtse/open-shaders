@@ -46,11 +46,15 @@ void main(uint3 id : SV_DispatchThreadID)
     if (Preview == 1u) {
         Scene[id.xy] = traced ? float4(saturate(center.x), saturate(center.x), saturate(center.x), 1.0f) :
             center.y == -1.0f ? float4(1.0f, 0.0f, 1.0f, 1.0f) :
+            center.z > 0.0f ? float4(0.0f, 0.15f, 0.5f, 1.0f) :
             float4(0.2f, 0.0f, 0.0f, 1.0f);
         return;
     }
     if (!traced && !(SpatialReconstruction != 0u && center.y == -1.0f)) {
-        if (Preview == 2u) Scene[id.xy] = float4(1.0f, 0.0f, 1.0f, 1.0f);
+        if (Preview == 2u)
+            Scene[id.xy] = center.y == -1.0f ? float4(1.0f, 0.5f, 0.0f, 1.0f) :
+                center.z > 0.0f ? float4(0.0f, 0.15f, 0.5f, 1.0f) :
+                float4(0.2f, 0.0f, 0.0f, 1.0f);
         return;
     }
     const float depth = RasterDepth[id.xy];
@@ -82,7 +86,7 @@ void main(uint3 id : SV_DispatchThreadID)
             }
         }
         if (!ValidMask(reference)) {
-            if (Preview == 2u) Scene[id.xy] = float4(1.0f, 0.0f, 1.0f, 1.0f);
+            if (Preview == 2u) Scene[id.xy] = float4(1.0f, 0.5f, 0.0f, 1.0f);
             return;
         }
         float weighted = 0.0f, total = 0.0f;

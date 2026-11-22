@@ -113,10 +113,19 @@ namespace DX12Native
 		if (current && current->frame == frame)
 			return;
 		current.reset();
-		if (!raster || !raster->depth || !raster->depth->resource || !raster->cameraValid ||
-			!raster->readyFence || !scene || !scene->acceleration || !scene->producerFence ||
-			lights.empty())
+		if (!raster || !raster->depth || !raster->depth->resource || !raster->readyFence ||
+			!raster->cameraValid) {
+			status = "not submitted: raster depth, camera or capture fence unavailable";
 			return;
+		}
+		if (!scene || !scene->acceleration || !scene->producerFence) {
+			status = "not submitted: native TLAS unavailable";
+			return;
+		}
+		if (lights.empty()) {
+			status = "not submitted: no prepared lights";
+			return;
+		}
 		try {
 			Initialize(requested);
 			const uint64_t finished = completion->GetCompletedValue();
@@ -128,12 +137,16 @@ namespace DX12Native
 						   return c.first->GetCompletedValue() >= c.second;
 					   });
 			});
-			if (it == slots.end())
+			if (it == slots.end()) {
+				status = "not submitted: all raw shadowmask slots in flight";
 				return;
+			}
 			auto& slot = *it;
 			const UINT width = raster->width, height = raster->height;
-			if (!width || !height)
+			if (!width || !height) {
+				status = "not submitted: empty raster dimensions";
 				return;
+			}
 			const bool fresh = !slot || slot->width != width || slot->height != height;
 			if (fresh) {
 				auto replacement = std::make_shared<ShadowMaskFrame>();
@@ -254,7 +267,7 @@ namespace DX12Native
 			slot->readyFence = completion;
 			slot->readyValue = value;
 			current = slot;
-			status.clear();
+			status = "GPU dispatch submitted (fence completion shown separately)";
 		} catch (const std::exception& e) {
 			status = e.what();
 		}
