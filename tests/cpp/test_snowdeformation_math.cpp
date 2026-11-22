@@ -147,6 +147,78 @@ TEST_CASE("An object presses fully on the ground and not at all above reach", "[
 	REQUIRE(Math::ObjectPressFactor(1.0f, 0.0f) == Approx(0.0f));
 }
 
+TEST_CASE("A probe read gives the blanket under an object only while fresh", "[snow-deformation]")
+{
+	REQUIRE(Math::MeasuredBlanket(false, 0, 10, 12, 8.0f, 20.0f) == Approx(0.0f));
+	REQUIRE(Math::MeasuredBlanket(true, 10, 10, 12, 8.0f, 20.0f) == Approx(8.0f));
+	REQUIRE(Math::MeasuredBlanket(true, 10, 22, 12, 8.0f, 20.0f) == Approx(8.0f));
+	REQUIRE(Math::MeasuredBlanket(true, 10, 23, 12, 8.0f, 20.0f) == Approx(0.0f));
+	REQUIRE(Math::MeasuredBlanket(true, 10, 10, 12, 50.0f, 20.0f) == Approx(20.0f));
+	REQUIRE(Math::MeasuredBlanket(true, 10, 10, 12, -3.0f, 20.0f) == Approx(0.0f));
+	REQUIRE(Math::MeasuredBlanket(true, 10, 10, 12, 8.0f, -1.0f) == Approx(0.0f));
+}
+
+TEST_CASE("An item with no fresh probe read is unmeasured, not bare ground", "[snow-deformation]")
+{
+	REQUIRE_FALSE(Math::HasFreshBlanket(false, 0, 10, 12));
+	REQUIRE(Math::HasFreshBlanket(true, 10, 22, 12));
+	REQUIRE_FALSE(Math::HasFreshBlanket(true, 10, 23, 12));
+	REQUIRE(Math::HasFreshBlanket(true, 10, 10, 12));
+	REQUIRE(Math::MeasuredBlanket(true, 10, 10, 12, 0.0f, 20.0f) == Approx(0.0f));
+}
+
+TEST_CASE("A float candidate holds its press until a positive read, then floats", "[snow-deformation]")
+{
+	constexpr float carve = 20.0f;
+	constexpr float weightScale = 1.0f;
+	constexpr float minWeightScale = 0.1f;
+	constexpr uint64_t maxAge = 12;
+	const auto noSnow = [&](bool a_hasSample, uint64_t a_sampleFrame, uint64_t a_frame, float a_raise) {
+		return Math::MeasuredBlanket(a_hasSample, a_sampleFrame, a_frame, maxAge, a_raise, carve) <= 0.0f;
+	};
+
+	REQUIRE(Math::ProbesSnow(true, carve, false, true));
+	REQUIRE(noSnow(false, 0, 1, 0.0f));
+	REQUIRE_FALSE(Math::PressesSnow(false, noSnow(false, 0, 1, 0.0f), weightScale, minWeightScale));
+	REQUIRE_FALSE(Math::PressesSnow(false, noSnow(true, 1, 4, 0.0f), weightScale, minWeightScale));
+	REQUIRE_FALSE(Math::PressesSnow(false, noSnow(true, 1, 40, 8.0f), weightScale, minWeightScale));
+
+	const float blanket = Math::MeasuredBlanket(true, 1, 4, maxAge, 8.0f, carve);
+	const bool floating = blanket > 0.0f && Math::RestHeight(blanket, 0.0f, 0.0f) > 1.0f;
+	REQUIRE_FALSE(noSnow(true, 1, 4, 8.0f));
+	REQUIRE(floating);
+	REQUIRE_FALSE(Math::PressesSnow(floating, false, weightScale, minWeightScale));
+	REQUIRE(Math::PressesSnow(false, false, weightScale, minWeightScale));
+}
+
+TEST_CASE("Objects are probed only while gathering over carvable snow that needs a reading", "[snow-deformation]")
+{
+	REQUIRE(Math::ProbesSnow(true, 20.0f, true, false));
+	REQUIRE(Math::ProbesSnow(true, 20.0f, false, true));
+	REQUIRE_FALSE(Math::ProbesSnow(false, 20.0f, true, true));
+	REQUIRE_FALSE(Math::ProbesSnow(true, 0.0f, true, true));
+	REQUIRE_FALSE(Math::ProbesSnow(true, 20.0f, false, false));
+}
+
+TEST_CASE("A floated item is released once the snow under it is gone", "[snow-deformation]")
+{
+	REQUIRE(Math::RunsSnowPhysics(8.0f, false));
+	REQUIRE(Math::RunsSnowPhysics(0.0f, true));
+	REQUIRE_FALSE(Math::RunsSnowPhysics(0.0f, false));
+
+	const float rest = Math::RestHeight(0.0f, 0.0f, 0.0f);
+	REQUIRE(Math::ReleasesFloat(true, 15.0f, rest, 2.0f));
+	REQUIRE_FALSE(Math::ReleasesFloat(true, 1.0f, rest, 2.0f));
+	REQUIRE_FALSE(Math::ReleasesFloat(false, 15.0f, rest, 2.0f));
+}
+
+TEST_CASE("Bare ground has no rest height to float at", "[snow-deformation]")
+{
+	REQUIRE(Math::RestHeight(Math::MeasuredBlanket(true, 10, 10, 12, 0.0f, 20.0f), 0.0f, 0.0f) == Approx(0.0f));
+	REQUIRE(Math::RestHeight(Math::MeasuredBlanket(true, 10, 10, 12, 20.0f, 20.0f), 0.0f, 0.0f) == Approx(20.0f));
+	REQUIRE(Math::RestHeight(Math::MeasuredBlanket(true, 10, 10, 12, 10.0f, 20.0f), 0.0f, 0.0f) == Approx(10.0f));
+}
+
 TEST_CASE("A harder landing carves a deeper print up to a cap", "[snow-deformation]")
 {
 	REQUIRE(Math::ImpactDepthScale(0.0f, 400.0f, 2.0f) == Approx(1.0f));

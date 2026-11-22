@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 namespace SnowDeformationMath
@@ -122,6 +123,44 @@ namespace SnowDeformationMath
 		const float blanket = std::max(a_blanket, 0.0f);
 		const float surface = blanket - std::clamp(a_depression, 0.0f, blanket);
 		return std::max(surface - blanket * std::clamp(a_weightScale, 0.0f, 1.0f), 0.0f);
+	}
+
+	/** @brief Whether a probe read a_sampleFrame exists and is at most a_maxAge frames older than a_frame. */
+	inline bool HasFreshBlanket(bool a_hasSample, uint64_t a_sampleFrame, uint64_t a_frame, uint64_t a_maxAge)
+	{
+		return a_hasSample && a_frame <= a_sampleFrame + a_maxAge;
+	}
+
+	/** @brief Blanket height under an object from a probe read a_sampleFrame, 0 when there is no fresh read, never above a_cap. */
+	inline float MeasuredBlanket(bool a_hasSample, uint64_t a_sampleFrame, uint64_t a_frame, uint64_t a_maxAge, float a_raise, float a_cap)
+	{
+		if (!HasFreshBlanket(a_hasSample, a_sampleFrame, a_frame, a_maxAge) || !(a_raise > 0.0f))
+			return 0.0f;
+		return std::min(a_raise, std::max(a_cap, 0.0f));
+	}
+
+	/** @brief Whether an object is probed for the snow under it: only while gathering, over snow that can be carved, and when drag or floating needs the reading. */
+	inline bool ProbesSnow(bool a_gathering, float a_carve, bool a_snowDrag, bool a_floatCandidate)
+	{
+		return a_gathering && a_carve > 0.0f && (a_snowDrag || a_floatCandidate);
+	}
+
+	/** @brief Whether an object contact carves the snow: not while it floats, nor while a float candidate has no snow under it (no fresh probe read, or a read of zero), nor when too light. */
+	inline bool PressesSnow(bool a_floating, bool a_noSnow, float a_weightScale, float a_minWeightScale)
+	{
+		return !a_floating && !a_noSnow && a_weightScale >= a_minWeightScale;
+	}
+
+	/** @brief Whether snow physics still runs for an object: over snow, or while it floats and must be released. */
+	inline bool RunsSnowPhysics(float a_blanket, bool a_floated)
+	{
+		return a_blanket > 0.0f || a_floated;
+	}
+
+	/** @brief Whether a floated object hangs more than a_margin above its rest height and must come down. */
+	inline bool ReleasesFloat(bool a_floated, float a_bottom, float a_rest, float a_margin)
+	{
+		return a_floated && a_bottom - a_rest > a_margin;
 	}
 
 	/** @brief Upward speed that lifts an object whose bottom is a_depth under its floor, growing by a_spring per second and capped at a_maxRise. */

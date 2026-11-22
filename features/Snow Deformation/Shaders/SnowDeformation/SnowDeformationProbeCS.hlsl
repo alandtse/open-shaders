@@ -1,3 +1,4 @@
+#include "SnowDeformation/BlanketRaise.hlsli"
 #include "SnowDeformation/UpdateParams.hlsli"
 
 Texture2D<float> Field : register(t0);
@@ -34,4 +35,5 @@ float FieldAt(float2 windowPosition)
 		}
 	}
 	Depths[i] = max(-height / 16.0, 0.0);
+	Depths[MAX_STAMPS + i] = RaiseAt(stamp.xy + float2(OriginCell.xy) * Control.z, FieldSampler);
 }
