@@ -10,7 +10,7 @@ cbuffer ShadowConstants : register(b0)
     float ReceiverTolerance;
     float RadiusPixels;
     uint LegacyTransfer;
-    uint Preview;
+    uint AlignmentPadding;
     float Strength;
     float Blend;
     row_major float4x4 InverseProjection;
@@ -42,39 +42,9 @@ void main(uint3 id : SV_DispatchThreadID)
 {
     if (any(id.xy >= Size)) return;
     const float4 center = ShadowMask[id.xy];
-    // A Dev-only TLAS visualization, composited solely in the existing FSR path.
-    // The mask y=2 identifies a geometry-preview result rather than shadow data.
-    if (Preview >= 3u && Preview <= 5u) {
-        float4 color = Scene[id.xy];
-        if (center.y != 2.0f) {
-            Scene[id.xy] = float4(0.65f, 0.0f, 0.65f, color.a);
-        } else if (center.x > 0.5f) {
-            const uint instanceId = uint(center.w + 0.5f);
-            const bool runtime = (instanceId & 0x800000u) != 0u;
-            const float tint = 0.75f + 0.25f * frac(float(instanceId & 0x7fffffu) * 0.61803398875f);
-            const float3 sourceColor = runtime ? float3(1.0f, 0.61f, 0.16f) : float3(0.10f, 0.85f, 1.0f);
-            Scene[id.xy] = float4(lerp(color.rgb, sourceColor * tint, 0.82f), color.a);
-        } else {
-            Scene[id.xy] = float4(color.rgb * 0.18f, color.a);
-        }
-        return;
-    }
     const bool traced = ValidMask(center);
-    // Preview 1 visualizes the raw RayQuery sampling pattern.
-    if (Preview == 1u) {
-        Scene[id.xy] = traced ? float4(saturate(center.x), saturate(center.x), saturate(center.x), 1.0f) :
-            center.y == -1.0f ? float4(1.0f, 0.0f, 1.0f, 1.0f) :
-            center.z > 0.0f ? float4(0.0f, 0.15f, 0.5f, 1.0f) :
-            float4(0.2f, 0.0f, 0.0f, 1.0f);
+    if (!traced && !(SpatialReconstruction != 0u && center.y == -1.0f))
         return;
-    }
-    if (!traced && !(SpatialReconstruction != 0u && center.y == -1.0f)) {
-        if (Preview == 2u)
-            Scene[id.xy] = center.y == -1.0f ? float4(1.0f, 0.5f, 0.0f, 1.0f) :
-                center.z > 0.0f ? float4(0.0f, 0.15f, 0.5f, 1.0f) :
-                float4(0.2f, 0.0f, 0.0f, 1.0f);
-        return;
-    }
     const float depth = RasterDepth[id.xy];
     if (!isfinite(depth)) return;
     float2 clip = (float2(id.xy) + 0.5f) * (2.0f / float2(Size)) - 1.0f;
@@ -104,10 +74,8 @@ void main(uint3 id : SV_DispatchThreadID)
                 if (score < nearest) { nearest = score; reference = sample; }
             }
         }
-        if (!ValidMask(reference)) {
-            if (Preview == 2u) Scene[id.xy] = float4(1.0f, 0.5f, 0.0f, 1.0f);
+        if (!ValidMask(reference))
             return;
-        }
         float weighted = 0.0f, total = 0.0f;
         [loop] for (int dy = -gridRadius; dy <= gridRadius; ++dy) {
             [loop] for (int dx = -gridRadius; dx <= gridRadius; ++dx) {
@@ -137,10 +105,6 @@ void main(uint3 id : SV_DispatchThreadID)
         visibility = sum / weight;
     }
     float4 color = Scene[id.xy];
-    if (Preview == 2u) {
-        Scene[id.xy] = float4(visibility.xxx, color.a);
-        return;
-    }
     // Shadow contribution is independent of direct-light intensity. A gain above 1
     // amplifies partial occlusion, while never producing negative radiance.
     const float amplifiedOcclusion = saturate((1.0f - visibility) * clamp(Strength, 0.0f, 4.0f));

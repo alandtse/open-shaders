@@ -1257,11 +1257,9 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			dispatchParameters.sharpness = a_sharpness;
 			dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
 			dispatchParameters.preExposure = 1.0f;
-			// Reset only when the selected native composite actually contains
-			// geometry preview output. Missing TLAS yields a normal scene copy.
-			// Menu-camera and runtime-provider fallback resets are preserved.
-			dispatchParameters.reset = (state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid) ||
-			                           (nativeColor && composite->geometryPreviewApplied);
+			// Preserve the baseline menu-camera reset and independent provider
+			// fallback reset below; no diagnostic preview history exists.
+			dispatchParameters.reset = state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid;
 			dispatchParameters.cameraNear = *globals::game::cameraNear;
 			dispatchParameters.cameraFar = *globals::game::cameraFar;
 			dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();

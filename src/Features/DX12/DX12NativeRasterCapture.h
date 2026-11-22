@@ -28,13 +28,11 @@ namespace DX12Native
 		std::array<std::unique_ptr<WrappedResource>, static_cast<size_t>(Input::Count)> inputs;
 		std::array<DXGI_FORMAT, static_cast<size_t>(Input::Count)> formats{};
 		std::unique_ptr<WrappedResource> depth;
-		DXGI_FORMAT sourceDepthFormat = DXGI_FORMAT_UNKNOWN;
 		globals::FrameBuffer camera{};
 		bool cameraValid = false;
 		winrt::com_ptr<ID3D12Fence> readyFence;
 		uint64_t readyValue = 0, allocationBytes = 0;
 		uint32_t frame = 0, width = 0, height = 0;
-		bool completionCounted = false;
 		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 	};
 
@@ -57,21 +55,11 @@ namespace DX12Native
 			Reset();
 			depthShader = nullptr;
 		}
-		/** @brief Returns the latest capture failure or availability status. */
-		const std::string& Status() const { return status; }
-		struct Counters
-		{
-			uint64_t submissions, busyDeferrals;
-		};
-		Counters GetCounters() const { return { submissions, busyDeferrals }; }
-
 	private:
 		std::array<std::shared_ptr<RasterFrame>, 4> slots;
 		std::shared_ptr<RasterFrame> current;
 		SharedFence producer;
 		winrt::com_ptr<ID3D11ComputeShader> depthShader;
 		GraphicsBackend backend;
-		std::string status;
-		uint64_t submissions = 0, completions = 0, busyDeferrals = 0;
 	};
 }

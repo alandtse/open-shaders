@@ -1,5 +1,4 @@
 #include "DX12Control.h"
-#include "../Upscaling.h"
 #include "DX12NativeScene.h"
 #include "DX12Resources.h"
 #include "Globals.h"
@@ -29,12 +28,10 @@ void DX12Control::DrawSettings()
 	}
 	if (!Util::BeginPillTabBar("##DX12Tabs"))
 		return;
-	const bool devMode = globals::state && globals::state->IsDeveloperMode();
-	const char* labels[] = { "Resources", "Native Scene", "Native Composite", "Master Switch", "Dev" };
-	for (int index = 0; index < (devMode ? 5 : 4); ++index) {
+	const char* labels[] = { "Resources", "Native Scene", "Native Composite", "Master Switch" };
+	for (int index = 0; index < 4; ++index) {
 		if (!Util::BeginPillTabItem(labels[index]))
 			continue;
-		selectedTab = index;
 		switch (index) {
 		case 0:
 			globals::features::dx12Resources.DrawSettings();
@@ -69,28 +66,11 @@ void DX12Control::DrawSettings()
 			if (settings.Enabled != bootActive.load(std::memory_order_acquire))
 				ImGui::TextDisabled("A game restart is required; DX12 Resources retains its boot state until then.");
 			break;
-		case 4:
-			{
-				static constexpr const char* previewNames[] = { "Off", "Raw shadowmask", "Reconstructed shadowmask",
-					"DX12 geometry (all)", "DX12 geometry (companion)", "DX12 geometry (runtime)" };
-				int preview = int(shadowPreview.load(std::memory_order_relaxed));
-				if (ImGui::Combo("Shadowmask preview", &preview, previewNames, int(std::size(previewNames))))
-					shadowPreview.store(uint32_t(preview), std::memory_order_relaxed);
-				break;
-			}
+
 		}
 		Util::EndPillTabItem();
 	}
 	Util::EndPillTabBar();
-}
-
-uint32_t DX12Control::GetShadowPreview() const
-{
-	// Leaving the main-menu Developer Mode immediately disables all debug
-	// visualization, even if a preview was previously selected in this tab.
-	return globals::state && globals::state->IsDeveloperMode() ?
-	           shadowPreview.load(std::memory_order_relaxed) :
-	           0u;
 }
 
 void DX12Control::LoadSettings(json& input)

@@ -27,8 +27,6 @@ struct DX12NativeScene final : Feature
 	bool SupportsVR() override { return false; }
 
 	void DrawSettings() override;
-	/** @brief Existing DX12 capture and tracing status, shown only from the Dev tab. */
-	void DrawDiagnostics() const;
 	bool WantsPreShadowMapsHook() const override { return true; }
 	void PreShadowMaps() override;
 	void LoadSettings(json& a_input) override;
@@ -87,5 +85,4 @@ private:
 	uint32_t runtimeLightFrame = UINT32_MAX;
 	std::vector<RuntimeLightSample> runtimeLightSamples;
 	std::unordered_map<uint32_t, DX12::PreparedLight> frozenNativeLights;
-	std::string startupFailure;
 };
