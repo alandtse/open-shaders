@@ -5,11 +5,11 @@
 #include <algorithm>
 #include <bit>
 #include <cctype>
-#include <format>
-#include <string_view>
 #include <cmath>
 #include <cstring>
+#include <format>
 #include <ranges>
+#include <string_view>
 
 namespace DX12Native
 {
@@ -46,7 +46,7 @@ namespace DX12Native
 			return std::equal(referenceKey.begin(), referenceKey.end(),
 				recorded.begin(), recorded.end(), [](char a, char b) {
 					return std::tolower(static_cast<unsigned char>(a)) ==
-						std::tolower(static_cast<unsigned char>(b));
+					       std::tolower(static_cast<unsigned char>(b));
 				});
 		}
 
