@@ -208,6 +208,8 @@ namespace DX12
 		tile->preparationAttempts = static_cast<uint8_t>(std::min<unsigned>(existing ? unsigned(existing->preparationAttempts) + 1 : 1u, 3u));
 		tile->failureReason = std::move(publication.failureReason);
 		tile->rejectionReasons = std::move(publication.rejectionReasons);
+		tile->nifSources = std::move(publication.nifSources);
+		tile->missingShapes = std::move(publication.missingShapes);
 		// The worker has already verified all positions, triangle indices, transforms, identities and budgets.
 		// Render-thread publication only transfers ownership of immutable GPU-scene inputs.
 		tile->shapes = std::move(publication.shapes);
@@ -454,6 +456,9 @@ namespace
 					static_cast<long long>(key.x), static_cast<long long>(key.y), TileStatus(tile));
 				if (tile && tile->preparationAttempts)
 					ImGui::Text("Attempts: %u / 3", unsigned(tile->preparationAttempts));
+				if (tile && (!tile->nifSources.empty() || !tile->missingShapes.empty()))
+					ImGui::Text("NIF sources: %zu | Missing shape references: %zu",
+						tile->nifSources.size(), tile->missingShapes.size());
 				if (tile && !tile->failureReason.empty())
 					ImGui::TextWrapped("Last reason: %s", tile->failureReason.c_str());
 				if (tile)
@@ -570,7 +575,7 @@ void DX12Resources::DrawDiagnostics() const
 			snapshot->requested.front().scope, snapshot->size, snapshot->runtimeShapes.size(),
 			double(snapshot->runtimeBytes) / (1024.0 * 1024.0));
 		std::array<size_t, 7> states{};
-		size_t geometry = 0, lights = 0;
+		size_t geometry = 0, lights = 0, nifSources = 0, missingShapes = 0;
 		const auto accumulate = [&](const auto& tiles) {
 			for (const auto& tile : tiles) {
 				if (!tile)
@@ -578,6 +583,8 @@ void DX12Resources::DrawDiagnostics() const
 				++states[static_cast<size_t>(tile->state)];
 				geometry += tile->shapes.size();
 				lights += tile->lights.size();
+				nifSources += tile->nifSources.size();
+				missingShapes += tile->missingShapes.size();
 			}
 		};
 		accumulate(snapshot->resident);
@@ -585,6 +592,10 @@ void DX12Resources::DrawDiagnostics() const
 		ImGui::Text("Tiles: requested %zu, preparing %zu, ready %zu, partial %zu, retry %zu, skipped %zu (exhausted %zu, predictive %zu)",
 			states[0], states[1], states[2], states[3], states[4], states[5] + states[6], states[5], states[6]);
 		ImGui::Text("Published shapes: %zu; placed lights: %zu (may include duplicates across tile boundaries)", geometry, lights);
+		ImGui::Text("NIF source records: %zu; unresolved NIF shape records: %zu", nifSources, missingShapes);
+		const auto supplemented = std::ranges::count_if(snapshot->runtimeShapes,
+			[](const DX12::RuntimeShape& observed) { return observed.shape && !observed.shape->sourceNif.empty(); });
+		ImGui::Text("NIF-matched runtime geometry additions: %zu", size_t(supplemented));
 		const auto showRetries = [&](const auto& tiles, const char* region) {
 			for (const auto& tile : tiles) {
 				if (tile && (tile->state == DX12::Tile::State::Incomplete || tile->state == DX12::Tile::State::RetryWaiting)) {
