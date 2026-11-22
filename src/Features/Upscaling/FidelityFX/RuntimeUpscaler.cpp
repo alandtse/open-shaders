@@ -557,24 +557,10 @@ bool FidelityFX::EnsureRuntimeUpscalerInterop()
 {
 	auto& swapChain = globals::features::upscaling.dx12SwapChain;
 
-	if (!globals::d3d::device || !globals::d3d::context)
+	if (!swapChain.EnsureSharedDevice())
 		return false;
 
 	try {
-		if (!swapChain.d3d11Device)
-			swapChain.SetD3D11Device(globals::d3d::device);
-		if (!swapChain.d3d11Context)
-			swapChain.SetD3D11DeviceContext(globals::d3d::context);
-
-		if (!swapChain.d3d12Device) {
-			winrt::com_ptr<IDXGIDevice> dxgiDevice;
-			DX::ThrowIfFailed(globals::d3d::device->QueryInterface(IID_PPV_ARGS(dxgiDevice.put())));
-
-			winrt::com_ptr<IDXGIAdapter> adapter;
-			DX::ThrowIfFailed(dxgiDevice->GetAdapter(adapter.put()));
-			swapChain.CreateD3D12Device(adapter.get());
-		}
-
 		if (!runtimeFence.fence12 || !runtimeFence.fence11) {
 			runtimeFence.Create(swapChain.d3d12Device.get(), swapChain.d3d11Device.get(), "FidelityFX::RuntimeFence");
 			for (auto& commandContext : runtimeCommandContexts)
