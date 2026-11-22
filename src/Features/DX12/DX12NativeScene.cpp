@@ -274,9 +274,9 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 		it->value = live;
 		it->flickers = flickers;
 	} else if (runtimeLightSamples.size() < 64 &&
-		!std::ranges::any_of(runtimeLightSamples, [&](const auto& sample) {
-			return sample.referenceID == matched->referenceID;
-		})) {
+			   !std::ranges::any_of(runtimeLightSamples, [&](const auto& sample) {
+				   return sample.referenceID == matched->referenceID;
+			   })) {
 		runtimeLightSamples.push_back({ ni, matched->referenceID, live, flickers });
 	}
 }

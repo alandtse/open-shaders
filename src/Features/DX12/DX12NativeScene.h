@@ -79,7 +79,7 @@ private:
 	struct RuntimeLightSample
 	{
 		const RE::NiLight* source = nullptr;  // Identity of the SCM light actually observed.
-		uint32_t referenceID = 0;           // Corresponding prepared native-scene emitter.
+		uint32_t referenceID = 0;             // Corresponding prepared native-scene emitter.
 		DX12::PreparedLight value;
 		bool flickers = false;
 	};
