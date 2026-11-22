@@ -47,7 +47,11 @@ void DX12Control::DrawSettings()
 			spatialReconstruction.store(settings.SpatialReconstruction, std::memory_order_relaxed);
 			int gridIndex = int((settings.ReconstructionGridSize - 3u) / 2u);
 			ImGui::BeginDisabled(!settings.SpatialReconstruction);
-			if (ImGui::Combo("Reconstruction grid", &gridIndex, "3x3\0""5x5\0""7x7\0""9x9\0")) {
+			if (ImGui::Combo("Reconstruction grid", &gridIndex,
+					"3x3\0"
+					"5x5\0"
+					"7x7\0"
+					"9x9\0")) {
 				settings.ReconstructionGridSize = uint32_t(3 + gridIndex * 2);
 				reconstructionGrid.store(settings.ReconstructionGridSize, std::memory_order_relaxed);
 			}
