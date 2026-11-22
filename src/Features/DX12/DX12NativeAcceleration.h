@@ -4,6 +4,11 @@
 #include "GraphicsBackend.h"
 
 #include <array>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <stop_token>
+#include <thread>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -31,12 +36,12 @@ namespace DX12Native
 	/** @brief Asynchronously advances rigid BLAS/TLAS builds on the native DX12 queue. */
 	class AccelerationScene
 	{
+		friend class AccelerationWorker;
+
 	public:
 		~AccelerationScene();
 		/** @brief Retains the shared device and the native scene's direct queue. */
 		bool Initialize(const GraphicsBackend& a_backend);
-		/** @brief Schedules one missing BLAS or a complete TLAS without waiting on the GPU. */
-		void Advance(std::shared_ptr<const SceneInputs> a_inputs);
 		/** @brief Invalidates the visible scene while letting submitted GPU work retire. */
 		void Reset();
 		/** @brief Returns only a GPU-completed TLAS, with all rigid casters retained. */
@@ -47,6 +52,8 @@ namespace DX12Native
 		const std::string& Failure() const { return failure; }
 
 	private:
+		/** @brief Only the dedicated worker is permitted to allocate or submit native AS work. */
+		void Advance(std::shared_ptr<const SceneInputs> a_inputs);
 		struct Build
 		{
 			winrt::com_ptr<ID3D12CommandAllocator> allocator;
@@ -84,5 +91,35 @@ namespace DX12Native
 		uint64_t targetRevision = 0;
 		uint32_t targetScope = 0;
 		std::string failure;
+	};
+
+	/** @brief Dedicated CPU worker. Snapshot delivery and completed-TLAS consumption never build on the caller. */
+	class AccelerationWorker
+	{
+	public:
+		AccelerationWorker();
+		~AccelerationWorker();
+		AccelerationWorker(const AccelerationWorker&) = delete;
+		AccelerationWorker& operator=(const AccelerationWorker&) = delete;
+
+		/** @brief Starts a dedicated native builder; device and queue initialization run on that thread. */
+		bool Start(ID3D11Device* a_device, ID3D11DeviceContext* a_context);
+		/** @brief Replaces the pending grid snapshot; only the latest unpublished request is built. */
+		void Request(std::shared_ptr<const DX12::Grid> a_grid);
+		/** @brief Cancels eligibility without interrupting previously submitted GPU work. */
+		void Reset();
+		/** @brief Acquires the most recent completed immutable scene, never waiting for a build. */
+		std::shared_ptr<const TopLevel> GetScene() const;
+		/** @brief Retains a borrowed scene until the consumer's GPU fence completes. */
+		bool RetainThrough(std::shared_ptr<const TopLevel> a_scene, ID3D12Fence* a_fence, uint64_t a_value);
+		/** @brief Reports initialization or build failures without consulting engine objects. */
+		std::string Failure() const;
+
+	private:
+		struct State;
+		static void Run(std::shared_ptr<State> a_state, std::stop_token a_stop,
+			winrt::com_ptr<ID3D11Device> a_device, winrt::com_ptr<ID3D11DeviceContext> a_context);
+		std::shared_ptr<State> state;
+		std::jthread worker;
 	};
 }
