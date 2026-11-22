@@ -83,19 +83,6 @@ namespace
 		ImGui::Spacing();
 		if (Util::LabeledButton("##BrowsePresets", Icons::TI(MenuIcons::kPresets), T("menu.home.browse_presets", "Browse presets")))
 			globals::menu->SelectFeatureMenu(std::string(MenuPageIds::kPresets));
-		bool automatic = catalog.GetAutomaticPresets();
-		ImGui::BeginGroup();
-		bool changed = ImGui::Checkbox("##AutomaticPresets", &automatic);
-		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextWrapped("%s", T("menu.presets.auto_apply", "Automatically Apply Presets at Startup"));
-		if (ImGui::IsItemClicked()) {
-			automatic = !automatic;
-			changed = true;
-		}
-		ImGui::EndGroup();
-		if (changed)
-			catalog.SetAutomaticPresets(automatic);
 	}
 
 	void RenderPerformanceSummary(float cardHeight)

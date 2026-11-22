@@ -15,6 +15,7 @@
 #include "CSEditor/Browser/BrowserWidgets.h"
 #include "CSEditor/EditorWindow.h"
 #include "CSEditor/WeatherPickerWindow.h"
+#include "CSEditor/WeatherUtils.h"
 #include "Features/PerformanceOverlay.h"
 #include <algorithm>
 #include <array>
@@ -106,26 +107,15 @@ void SceneSelector::DataLoaded()
 
 void SceneSelector::GameReset()
 {
-	s_observedWeather = nullptr;
-	s_cachedLastWeather = nullptr;
-}
-
-RE::TESWeather* SceneSelector::GetLastWeather(RE::Sky* sky)
-{
-	return sky->lastWeather ? sky->lastWeather : s_cachedLastWeather;
+	WeatherUtils::ResetWeatherHistory();
 }
 
 void SceneSelector::Prepass()
 {
-	if (auto* sky = globals::game::sky; sky && sky->mode.get() == RE::Sky::Mode::kFull && sky->currentWeather) {
-		if (sky->lastWeather && sky->lastWeather != sky->currentWeather)
-			s_cachedLastWeather = sky->lastWeather;
-		else if (s_observedWeather && sky->currentWeather != s_observedWeather)
-			s_cachedLastWeather = s_observedWeather;
-		s_observedWeather = sky->currentWeather;
-	}
-	if (!globals::features::csEditor.loaded)
+	if (!globals::features::csEditor.loaded) {
+		WeatherUtils::ObserveWeather(globals::game::sky);
 		EditorWindow::MaintainWeatherLock();
+	}
 }
 
 void SceneSelector::DrawSettings()
@@ -573,7 +563,7 @@ void SceneSelector::RenderWeatherInformationDisplay(RE::Sky* sky, bool showInter
 		return;
 
 	// Use cached last weather for display if sky->lastWeather is null
-	RE::TESWeather* displayLastWeather = GetLastWeather(sky);
+	RE::TESWeather* displayLastWeather = WeatherUtils::GetLastWeather(sky);
 
 	// Create resizable 2-column table for current and last weather
 	if (ImGui::BeginTable("WeatherComparison", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {

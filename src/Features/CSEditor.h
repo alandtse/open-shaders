@@ -44,6 +44,7 @@ public:
 	virtual void PostPostLoad() override;
 	virtual void DataLoaded() override;
 	virtual void Prepass() override;
+	void GameReset() override;
 
 	static void OpenEditorWindow();
 	static void ToggleEditorWindow();

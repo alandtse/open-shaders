@@ -30,8 +30,6 @@ public:
 	virtual void Prepass() override;
 	void GameReset() override;
 
-	/** @brief Returns the outgoing or most recently observed previous weather. */
-	static RE::TESWeather* GetLastWeather(RE::Sky* sky);
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual bool IsOverlayVisible() const override;
@@ -89,8 +87,6 @@ private:
 	void DrawTeleportControls();
 
 	static constexpr float WIND_DIRECTION_OFFSET = 30.5f;
-	static inline RE::TESWeather* s_observedWeather = nullptr;
-	static inline RE::TESWeather* s_cachedLastWeather = nullptr;
 
 	struct TravelDestination
 	{

@@ -70,6 +70,34 @@ namespace WeatherUtils::TexturePath
 
 namespace WeatherUtils
 {
+	namespace
+	{
+		RE::TESWeather* observedWeather = nullptr;
+		RE::TESWeather* previousWeather = nullptr;
+	}
+
+	void ObserveWeather(const RE::Sky* sky)
+	{
+		if (!sky || sky->mode.get() != RE::Sky::Mode::kFull || !sky->currentWeather)
+			return;
+		if (sky->lastWeather && sky->lastWeather != sky->currentWeather)
+			previousWeather = sky->lastWeather;
+		else if (observedWeather && observedWeather != sky->currentWeather)
+			previousWeather = observedWeather;
+		observedWeather = sky->currentWeather;
+	}
+
+	RE::TESWeather* GetLastWeather(const RE::Sky* sky)
+	{
+		return sky->lastWeather ? sky->lastWeather : previousWeather;
+	}
+
+	void ResetWeatherHistory()
+	{
+		observedWeather = nullptr;
+		previousWeather = nullptr;
+	}
+
 	ImVec4 GetWeatherFlagColor(RE::TESWeather::WeatherDataFlag flag)
 	{
 		const auto& theme = Menu::GetSingleton()->GetTheme();

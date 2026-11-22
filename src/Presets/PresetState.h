@@ -25,8 +25,8 @@ namespace PresetState
 	inline constexpr const char* kBaseSettingsCustomizationsKey = "baseSettingsCustomizations";
 	inline constexpr std::array kPrivateKeys{
 		"featureSettingsVersion", "normalizedFeatureNames", "baseSettingsCustomizations",
-		"removedLegacyPackIds", "knownBaselinePackIds", "disabledBaselinePackIds", "enabledScenePackIds",
-		"disabledScenePackIds", "knownScenePackIds", "automaticPresets", "lastSharedActivePackId", "lastSharedBaselinePackIds", "baseSettingsOrderCustomized", "baselinePackOrder"
+		"removedLegacyPackIds", "disabledBaselinePackIds", "enabledScenePackIds",
+		"disabledScenePackIds", "automaticPresets", "lastSharedActivePackId", "lastSharedBaselinePackIds", "baseSettingsOrderCustomized", "baselinePackOrder"
 	};
 
 	/** @brief Reads explicit boot preferences and drops copied defaults from legacy settings. */
@@ -130,6 +130,8 @@ namespace PresetState
 	inline nlohmann::json Normalize(const nlohmann::json& state, bool (*validActiveId)(std::string_view) = IsCatalogId)
 	{
 		auto result = state.is_object() ? state : nlohmann::json::object();
+		result.erase("knownScenePackIds");
+		result.erase("knownBaselinePackIds");
 		const auto active = result.find("activePackId");
 		if (active == result.end() || !active->is_string() || !validActiveId(active->get_ref<const std::string&>()))
 			result["activePackId"] = "";
@@ -170,33 +172,19 @@ namespace PresetState
 	inline nlohmann::json DiscoverBaselines(const nlohmann::json& state, std::span<const std::string> discovered, bool automatic = true)
 	{
 		auto result = Normalize(state);
-		auto disabled = ReadIds(result, "disabledBaselinePackIds");
+		const auto disabled = ReadIds(result, "disabledBaselinePackIds");
 		const auto previous = ReadIds(result, "baselinePackIds");
-		if (!result.contains("disabledBaselinePackIds"))
-			for (const auto& id : ReadIds(result, "knownBaselinePackIds"))
-				if (std::ranges::find(previous, id) == previous.end())
-					disabled.push_back(id);
-		result["disabledBaselinePackIds"] = disabled;
 		std::vector<std::string> enabled;
 		const bool customized = result.value("baseSettingsOrderCustomized", nlohmann::json(false)) == true;
 		if (customized)
 			for (const auto& id : previous)
-				if (std::ranges::find(disabled, id) == disabled.end())
+				if (std::ranges::find(discovered, id) != discovered.end() && std::ranges::find(disabled, id) == disabled.end())
 					enabled.push_back(id);
 		for (const auto& id : discovered)
 			if ((automatic || std::ranges::find(previous, id) != previous.end()) && IsPackId(id) &&
 				std::ranges::find(disabled, id) == disabled.end() && std::ranges::find(enabled, id) == enabled.end())
 				enabled.push_back(id);
-		if (!customized)
-			for (const auto& id : previous)
-				if (std::ranges::find(discovered, id) == discovered.end() && std::ranges::find(disabled, id) == disabled.end())
-					enabled.push_back(id);
 		result["baselinePackIds"] = std::move(enabled);
-		auto known = ReadIds(result, "knownBaselinePackIds");
-		for (const auto& id : discovered)
-			if (IsPackId(id) && std::ranges::find(known, id) == known.end())
-				known.push_back(id);
-		result["knownBaselinePackIds"] = std::move(known);
 		return result;
 	}
 

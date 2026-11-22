@@ -164,7 +164,7 @@ public:
 	std::vector<std::filesystem::path> GetPackRoots(const std::string& id) const;
 	/** @brief Whether this file is selected and primary within its supplying pack. */
 	bool IsSceneFileEnabled(const std::filesystem::path& path) const;
-	/** @brief Whether new presets apply automatically, layering Base Settings and checking scene conflicts. */
+	/** @brief Whether installed presets apply automatically, layering Base Settings and checking scene conflicts. */
 	bool GetAutomaticPresets() const;
 	/** @brief Persists the automatic-preset preference. */
 	bool SetAutomaticPresets(bool enabled);

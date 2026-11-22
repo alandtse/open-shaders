@@ -17,7 +17,6 @@
 #include "CSEditor/WeatherPickerWindow.h"
 #include "CSEditor/WeatherUtils.h"
 #include "Features/PerformanceOverlay.h"
-#include "Features/SceneSelector.h"
 #include "Menu/CursorLoader.h"
 #include "Menu/FeatureListRenderer.h"
 #include "Menu/ThemeManager.h"
@@ -177,12 +176,18 @@ void CSEditor::DrawLauncherButton()
 	}
 }
 
+void CSEditor::GameReset()
+{
+	WeatherUtils::ResetWeatherHistory();
+}
+
 void CSEditor::Prepass()
 {
 	if (ShouldPreloadEditorResources()) {
 		EnsureDataLoaded();
 	}
 
+	WeatherUtils::ObserveWeather(globals::game::sky);
 	EditorWindow::MaintainWeatherLock();
 }
 
@@ -680,7 +685,7 @@ void CSEditor::RenderWeatherInformationDisplay(RE::Sky* sky, bool showInteractiv
 	}
 
 	// Use cached last weather for display if sky->lastWeather is null
-	RE::TESWeather* displayLastWeather = SceneSelector::GetLastWeather(sky);
+	RE::TESWeather* displayLastWeather = WeatherUtils::GetLastWeather(sky);
 
 	ImGui::TextUnformatted(T(TKEY("current_weather_column"), "Current Weather"));
 	DisplayWeatherInfo(sky->currentWeather, sky->currentWeatherPct, showInteractiveElements);

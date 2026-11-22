@@ -476,6 +476,13 @@ namespace TOD
 
 namespace WeatherUtils
 {
+	/** @brief Tracks the outgoing exterior weather across immediate and gradual transitions. */
+	void ObserveWeather(const RE::Sky* sky);
+	/** @brief Returns the outgoing or most recently observed previous weather. */
+	RE::TESWeather* GetLastWeather(const RE::Sky* sky);
+	/** @brief Clears weather history on a game reset. */
+	void ResetWeatherHistory();
+
 	/** @brief Shared classification color for a weather record, in weather-flag priority order. */
 	ImVec4 GetWeatherTypeColor(const RE::TESWeather* weather);
 	/** @brief Shared display color for one weather classification flag. */

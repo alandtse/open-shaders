@@ -1828,10 +1828,6 @@ namespace
 					preset.displayName, preset.rootPath, preset.valid, preset.invalidReason, preset.isLegacy });
 			return entries;
 		}
-		std::string GetDefaultActivePackId() const override
-		{
-			return PresetManager::GetSingleton().IsLegacyActive() && globals::features::effects11.IsActive() ? "legacy:effects11" : "";
-		}
 		std::string GetPresetId(const std::string& id) const override
 		{
 			if (id == "legacy:effects11")

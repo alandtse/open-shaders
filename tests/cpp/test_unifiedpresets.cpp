@@ -172,7 +172,8 @@ TEST_CASE("Base Settings default to all enabled and retain explicit disabled cho
 	const auto migrated = PresetState::DiscoverBaselines({ { "knownBaselinePackIds", { "Alpha", "Z Pack" } },
 															 { "baselinePackIds", { "Z Pack" } } },
 		order);
-	REQUIRE(migrated.at("disabledBaselinePackIds") == nlohmann::json({ "Alpha" }));
+	REQUIRE(migrated.at("baselinePackIds") == order);
+	REQUIRE_FALSE(migrated.contains("knownBaselinePackIds"));
 	const auto manual = PresetState::DiscoverBaselines({ { "baselinePackIds", { "Z Pack" } } }, order, false);
 	REQUIRE(manual.at("baselinePackIds") == nlohmann::json({ "Z Pack" }));
 	REQUIRE(PresetState::DiscoverBaselines(manual, order, true).at("baselinePackIds") == order);
@@ -215,7 +216,7 @@ TEST_CASE("Disabled Base Settings retain priority across startup and reactivatio
 	REQUIRE(PresetState::OrderEnabledBaselines(order, missing) == missing);
 }
 
-TEST_CASE("Automatic scene presets keep conflicting new presets entirely disabled", "[presets]")
+TEST_CASE("Automatic scene presets resolve current conflicts in stable order", "[presets]")
 {
 	using namespace PresetActivation;
 	const std::vector<Candidate> candidates{
@@ -223,18 +224,33 @@ TEST_CASE("Automatic scene presets keep conflicting new presets entirely disable
 		{ "Second", { { "weather/day/Feature/Value", 2 }, { "location/Feature/Other", 3 } } },
 		{ "Third", { { "weather/night/Feature/Value", 4 } } }
 	};
-	auto selected = Select(candidates, {}, {}, {}, true);
+	auto selected = Select(candidates, {}, {}, true);
 	REQUIRE(selected.enabled == std::vector<std::string>{ "First", "Third" });
 	REQUIRE(selected.blocked.at("Second") == std::vector<std::string>{ "First" });
 	const std::array<std::string, 1> existing{ "Second" };
-	selected = Select(candidates, existing, {}, {}, true);
-	REQUIRE(selected.enabled == std::vector<std::string>{ "Second", "Third" });
-	REQUIRE(selected.blocked.at("First") == std::vector<std::string>{ "Second" });
-	REQUIRE(Select(candidates, {}, {}, {}, false).enabled.empty());
-	REQUIRE(Select(candidates, {}, existing, {}, true).enabled == std::vector<std::string>{ "First", "Third" });
-	REQUIRE(Select(candidates, {}, {}, existing, true).enabled == std::vector<std::string>{ "First", "Third" });
+	selected = Select(candidates, existing, {}, true);
+	REQUIRE(selected.enabled == std::vector<std::string>{ "First", "Third" });
+	REQUIRE(selected.blocked.at("Second") == std::vector<std::string>{ "First" });
+	REQUIRE(Select(candidates, {}, {}, false).enabled.empty());
+	REQUIRE(Select(candidates, {}, existing, true).enabled == std::vector<std::string>{ "First", "Third" });
 	REQUIRE_FALSE(Conflicts({ { "same", 1 } }, { { "same", 1.0 } }));
 	REQUIRE(Conflicts({ { "exclusive/e11", true } }, { { "exclusive/e11", true } }));
+}
+
+TEST_CASE("Returning presets follow the installed pipeline unless explicitly disabled", "[presets]")
+{
+	using namespace PresetActivation;
+	const Candidate scene{ "Legacy Scene - DOSP", { { "pipeline", "CS" } } };
+	const Candidate effects{ "legacy:effects11", { { "pipeline", "E11" } } };
+	const std::vector<std::string> sceneId{ scene.id };
+	const std::vector<std::string> effectsId{ effects.id };
+	auto result = Select({ scene }, effectsId, {}, true);
+	REQUIRE(result.enabled == sceneId);
+	result = Select({ effects }, result.enabled, {}, true);
+	REQUIRE(result.enabled == effectsId);
+	REQUIRE(Select({ scene }, result.enabled, {}, true).enabled == sceneId);
+	REQUIRE(Select({ scene }, result.enabled, sceneId, true).enabled.empty());
+	REQUIRE(Select({ scene }, result.enabled, {}, false).enabled.empty());
 }
 
 TEST_CASE("Preset file filters separate payload types without admitting other files", "[presets]")
@@ -434,7 +450,7 @@ TEST_CASE("Updated enabled scene presets cannot retain conflicting selections", 
 {
 	const std::vector<PresetActivation::Candidate> candidates{ { "First", { { "field", 1 } } }, { "Second", { { "field", 2 } } } };
 	const std::array<std::string, 2> enabled{ "Second", "First" };
-	const auto result = PresetActivation::Select(candidates, enabled, {}, enabled, false);
+	const auto result = PresetActivation::Select(candidates, enabled, {}, false);
 	REQUIRE(result.enabled == std::vector<std::string>{ "Second" });
 	REQUIRE(result.blocked.at("First") == std::vector<std::string>{ "Second" });
 }
@@ -452,7 +468,7 @@ TEST_CASE("Deleting shared scene settings keeps other preset choices unchanged",
 		return Select({ { "First", PresetContent::Describe(file, first) },
 						  { "Second", PresetContent::Describe(file, second) },
 						  { "Third", PresetContent::Describe(file, third) } },
-			enabled, {}, {}, false);
+			enabled, {}, false);
 	};
 	REQUIRE(rescan().enabled == enabled);
 	first["Value"] = 5;

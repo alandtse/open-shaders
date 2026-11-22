@@ -30,38 +30,34 @@ namespace PresetActivation
 		return false;
 	}
 
-	/** @brief Preserves enabled presets and admits new non-conflicting presets in stable identifier order. */
+	/** @brief Resolves eligible presets in stable order, or retains manual selections when automatic activation is off. */
 	inline Selection Select(std::vector<Candidate> candidates, std::span<const std::string> enabled,
-		std::span<const std::string> disabled, std::span<const std::string> known, bool automatic)
+		std::span<const std::string> disabled, bool automatic)
 	{
-		std::ranges::sort(candidates, {}, &Candidate::id);
 		Selection result;
-		const auto find = [&](const std::string& id) { return std::ranges::find(candidates, id, &Candidate::id); };
-		for (const auto& id : enabled)
-			if (find(id) != candidates.end() && std::ranges::find(disabled, id) == disabled.end()) {
-				bool conflict = false;
-				for (const auto& other : result.enabled)
-					if (Conflicts(find(id)->settings, find(other)->settings)) {
-						result.blocked[id].push_back(other);
-						conflict = true;
-					}
-				if (!conflict)
-					result.enabled.push_back(id);
-			}
-		if (!automatic)
-			return result;
-		for (const auto& candidate : candidates) {
-			if (std::ranges::find(result.enabled, candidate.id) != result.enabled.end() ||
-				std::ranges::find(disabled, candidate.id) != disabled.end())
-				continue;
+		std::vector<const Candidate*> accepted;
+		const auto consider = [&](const Candidate& candidate) {
+			if (std::ranges::find(disabled, candidate.id) != disabled.end())
+				return;
 			std::vector<std::string> conflicts;
-			for (const auto& id : result.enabled)
-				if (Conflicts(candidate.settings, find(id)->settings))
-					conflicts.push_back(id);
-			if (!conflicts.empty())
-				result.blocked[candidate.id] = std::move(conflicts);
-			else if (std::ranges::find(known, candidate.id) == known.end())
+			for (const auto* other : accepted)
+				if (Conflicts(candidate.settings, other->settings))
+					conflicts.push_back(other->id);
+			if (conflicts.empty()) {
+				accepted.push_back(&candidate);
 				result.enabled.push_back(candidate.id);
+			} else {
+				result.blocked.emplace(candidate.id, std::move(conflicts));
+			}
+		};
+		if (automatic) {
+			std::ranges::sort(candidates, {}, &Candidate::id);
+			for (const auto& candidate : candidates)
+				consider(candidate);
+		} else {
+			for (const auto& id : enabled)
+				if (const auto it = std::ranges::find(candidates, id, &Candidate::id); it != candidates.end())
+					consider(*it);
 		}
 		return result;
 	}

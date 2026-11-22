@@ -744,19 +744,13 @@ void UnifiedPresetCatalog::DiscoverSceneActivation(bool automatic)
 	}
 	const auto previous = SerializeActiveState();
 	const auto disabled = PresetState::ReadIds(preservedState, "disabledScenePackIds");
-	auto known = PresetState::ReadIds(preservedState, "knownScenePackIds");
-	const auto selection = PresetActivation::Select(candidates, enabledScenePackIds, disabled, known, automatic);
+	const auto selection = PresetActivation::Select(candidates, enabledScenePackIds, disabled, automatic);
 	for (const auto& id : enabledScenePackIds)
 		if (std::ranges::find(selection.enabled, id) == selection.enabled.end())
 			std::erase(baselinePackIds, id);
 	enabledScenePackIds = selection.enabled;
-	if (!IsScenePackEnabled(activePackId))
+	if (automatic || !IsScenePackEnabled(activePackId))
 		activePackId = enabledScenePackIds.empty() ? std::string{} : enabledScenePackIds.front();
-	if (automatic)
-		for (const auto& candidate : candidates)
-			if (std::ranges::find(known, candidate.id) == known.end())
-				known.push_back(candidate.id);
-	preservedState["knownScenePackIds"] = known;
 	const auto disabledBases = PresetState::ReadIds(preservedState, "disabledBaselinePackIds");
 	for (const auto& id : enabledScenePackIds)
 		if (const auto* pack = FindPack(id); pack && pack->hasBaseline && !IsBaselineEnabled(id) && std::ranges::find(disabledBases, id) == disabledBases.end())
@@ -771,7 +765,6 @@ void UnifiedPresetCatalog::DiscoverSceneActivation(bool automatic)
 
 void UnifiedPresetCatalog::Discover(bool allowAutomaticActivation)
 {
-	const auto previousActiveId = activePackId;
 	ReleaseAllArtwork();
 	packs.clear();
 	Util::FileHelpers::EnsureDirectoryExists(Util::PathHelpers::GetUnifiedPresetsRealPath());
@@ -802,12 +795,12 @@ void UnifiedPresetCatalog::Discover(bool allowAutomaticActivation)
 	});
 	std::vector<std::string> automaticBaselines;
 	for (const auto& id : discoveredBaselines)
-		if (const auto* pack = FindPack(id); pack && pack->valid && pack->IsBaseline() && !pack->IsCS() && !pack->IsE11())
+		if (const auto* pack = FindPack(id); pack && pack->valid && (IsBaselineEnabled(id) || (pack->IsBaseline() && !pack->IsCS() && !pack->IsE11())))
 			automaticBaselines.push_back(id);
 	const auto automaticState = PresetState::DiscoverBaselines(SerializeActiveState(), automaticBaselines, automatic);
 	if (automaticState != SerializeActiveState()) {
 		const auto previousState = SerializeActiveState();
-		LoadActiveState(json{ { kUserSettingsKey, automaticState } });
+		baselinePackIds = PresetState::ReadIds(automaticState, kBaselinePackIdsKey);
 		if (!SaveActiveState())
 			LoadActiveState(json{ { kUserSettingsKey, previousState } });
 	}
@@ -818,18 +811,6 @@ void UnifiedPresetCatalog::Discover(bool allowAutomaticActivation)
 		preservedState.value("baseSettingsOrderCustomized", json(false)) == true);
 	if (baselinePackOrder != previousOrder && !SaveActiveState())
 		baselinePackOrder = previousOrder;
-
-	// With nothing saved, the Legacy install still runs by default; show it as the active pack without persisting.
-	if ((automatic || (!allowAutomaticActivation && !previousActiveId.empty())) && activePackId.empty() && !activePipeline) {
-		for (auto* provider : GetProviders()) {
-			const auto id = provider->GetDefaultActivePackId();
-			if (!id.empty() && FindPack(id) && (automatic || (!allowAutomaticActivation && id == previousActiveId))) {
-				activePackId = id;
-				enabledScenePackIds.push_back(id);
-				break;
-			}
-		}
-	}
 
 	std::sort(packs.begin(), packs.end(), [](const PackInfo& a, const PackInfo& b) {
 		return ToLower(a.name) < ToLower(b.name);
@@ -1146,13 +1127,16 @@ bool UnifiedPresetCatalog::DisablePack(const std::string& id)
 {
 	if (!IsScenePackEnabled(id) && !IsBaselineEnabled(id))
 		return true;
-	return ApplyChange([&] { return DeactivatePack(id); });
+	return ApplyChange([&] {
+		PresetState::SetDisabled(preservedState, "disabledScenePackIds", id, true);
+		PresetState::SetDisabled(preservedState, "disabledBaselinePackIds", id, true);
+		return DeactivatePack(id);
+	});
 }
 
 bool UnifiedPresetCatalog::DeactivatePack(const std::string& id)
 {
 	std::erase(enabledScenePackIds, id);
-	PresetState::SetDisabled(preservedState, "disabledScenePackIds", id, true);
 	if (activePackId == id) {
 		if (const auto* pack = FindPack(id); pack && pack->provider)
 			if (!UsePackPipeline(*pack->provider, false))
@@ -1160,7 +1144,6 @@ bool UnifiedPresetCatalog::DeactivatePack(const std::string& id)
 		activePackId = enabledScenePackIds.empty() ? std::string{} : enabledScenePackIds.front();
 	}
 	std::erase(baselinePackIds, id);
-	PresetState::SetDisabled(preservedState, "disabledBaselinePackIds", id, true);
 	return true;
 }
 
