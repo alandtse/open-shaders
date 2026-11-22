@@ -330,6 +330,7 @@ namespace DX12
 			const auto started = std::chrono::steady_clock::now();
 			auto result = Prepare(task, epoch, stop);
 			result.predictive = task.predictive;
+			result.corner = task.corner;
 			result.preparationMs = std::chrono::duration<double, std::milli>(
 				std::chrono::steady_clock::now() - started)
 			                           .count();

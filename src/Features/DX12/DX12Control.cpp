@@ -76,28 +76,6 @@ void DX12Control::DrawSettings()
 				int preview = int(shadowPreview.load(std::memory_order_relaxed));
 				if (ImGui::Combo("Shadowmask preview", &preview, previewNames, int(std::size(previewNames))))
 					shadowPreview.store(uint32_t(preview), std::memory_order_relaxed);
-				ImGui::TextDisabled("Raw: magenta = density omitted; red = invalid receiver; blue = no applicable light.");
-				ImGui::TextDisabled("Reconstructed: orange = no valid neighborhood. Full raw density cannot omit pixels.");
-				ImGui::TextDisabled("DX12 geometry: cyan = companion, amber = runtime; dim = no TLAS hit.");
-				ImGui::TextDisabled("Preview traces published TLAS triangles, not missing-NIF placeholders.");
-				ImGui::TextDisabled("Visualizations use Native Composite -> FSR; non-FSR paths are unchanged.");
-				globals::features::dx12NativeScene.DrawDiagnostics();
-				if (const auto status = globals::features::dx12Resources.GetPreparationStatus())
-					ImGui::TextWrapped("Companion: %s", status->c_str());
-				if (ImGui::CollapsingHeader("Companion / Geometry (details)"))
-					globals::features::dx12Resources.DrawDiagnostics();
-				ImGui::SeparatorText("Native Composite / DXGI budget");
-				ImGui::Text("Spatial reconstruction: %s (%ux%u)", UseSpatialReconstruction() ? "enabled" : "disabled", GetReconstructionGridSize(), GetReconstructionGridSize());
-				ImGui::Text("Shadow strength %.2f, blend %.2f", GetShadowStrength(), GetShadowBlend());
-				const auto memory = globals::features::upscaling.nativeComposite.GetMemoryBudgetSnapshot();
-				ImGui::Text("DXGI local budget: %s", memory.dxgiAvailable ? "available (last allocation query)" : "not queried / unavailable");
-				if (memory.dxgiAvailable) {
-					constexpr double mib = 1024.0 * 1024.0;
-					ImGui::Text("Budget %.1f MiB, usage %.1f MiB, headroom %.1f MiB",
-						double(memory.localBudget) / mib, double(memory.localUsage) / mib, double(memory.headroom) / mib);
-					ImGui::Text("Reserve %.1f MiB, effective allocation allowance %.1f MiB",
-						double(memory.reserve) / mib, double(memory.effectiveBytes) / mib);
-				}
 				break;
 			}
 		}
