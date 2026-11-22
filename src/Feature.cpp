@@ -9,6 +9,8 @@
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
 #include "Features/DetailMaps.h"
+#include "Features/DX12/DX12Control.h"
+#include "Features/DX12/DX12Resources.h"
 #include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ProceduralSun.h"
@@ -303,6 +305,8 @@ namespace
 			&globals::features::ibl,
 			&globals::features::extendedTranslucency,
 			&globals::features::upscaling,
+			&globals::features::dx12Control,
+			&globals::features::dx12Resources,
 			&globals::features::developerTools,
 			&globals::features::csEditor,
 			&globals::features::sceneSelector,
