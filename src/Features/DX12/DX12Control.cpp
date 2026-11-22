@@ -16,8 +16,8 @@ void DX12Control::DrawSettings()
 		selectedMode.store(mode, std::memory_order_relaxed);
 	}
 	ImGui::TextDisabled(settings.Mode == 0 ?
-		"Native shadows replace matched raster static shadows." :
-		"Raster shadows remain unchanged; native shadow dispatch is paused for comparison.");
+							"Native shadows replace matched raster static shadows." :
+							"Raster shadows remain unchanged; native shadow dispatch is paused for comparison.");
 
 	if (!IsActive()) {
 		ImGui::Checkbox("Enable native DX12 features (restart required)", &settings.Enabled);

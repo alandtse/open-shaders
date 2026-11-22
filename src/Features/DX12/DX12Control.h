@@ -10,7 +10,7 @@ struct DX12Control final : Feature
 	struct Settings
 	{
 		bool Enabled = false;
-		int Mode = 0; // 0: shadow offload, 1: raster comparison
+		int Mode = 0;  // 0: shadow offload, 1: raster comparison
 		bool SpatialReconstruction = true;
 		float ShadowStrength = 2.0f;
 		float ShadowBlend = 0.70f;

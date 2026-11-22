@@ -1356,10 +1356,16 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DX12NativeComposite.cmake")
 
 # A shipping DX12 archive must not silently omit native shader bytecode.
 if(AIO_ZIP_TO_DIST AND NOT NATIVE_SHADOW_DXC)
-    message(FATAL_ERROR "Native DX12 AIO packaging requires dxc.exe (SM6.5 .dxil shader output)")
+    message(
+        FATAL_ERROR
+        "Native DX12 AIO packaging requires dxc.exe (SM6.5 .dxil shader output)"
+    )
 endif()
 if(AIO_ZIP_TO_DIST AND NOT BUILD_DX12_RESOURCES_COMPANION)
-    message(FATAL_ERROR "Native DX12 AIO packaging requires the DX12 Resources companion")
+    message(
+        FATAL_ERROR
+        "Native DX12 AIO packaging requires the DX12 Resources companion"
+    )
 endif()
 
 if(NOT DEFINED ENV{CommunityShadersOutputDir})
@@ -1528,9 +1534,13 @@ if(AIO_ZIP_TO_DIST)
         endforeach()
         set(_aio_archive_source_dir "${AIO_STAGE_DIR}")
     endif()
-    list(APPEND _aio_zip_cmds
-        COMMAND ${CMAKE_COMMAND} -DAIO_STAGE_DIR="${_aio_archive_source_dir}"
-            -P "${CMAKE_SOURCE_DIR}/cmake/VerifyAioPayload.cmake"
+    list(
+        APPEND _aio_zip_cmds
+        COMMAND
+        ${CMAKE_COMMAND}
+        -DAIO_STAGE_DIR="${_aio_archive_source_dir}"
+        -P
+        "${CMAKE_SOURCE_DIR}/cmake/VerifyAioPayload.cmake"
     )
     if(SEVENZ_EXECUTABLE)
         list(
@@ -1770,9 +1780,13 @@ if(AIO_EXCLUDED_FEATURE_NAMES)
     endforeach()
     set(_aio_manual_source_dir "${AIO_MANUAL_STAGE_DIR}")
 endif()
-list(APPEND _aio_manual_cmds
-    COMMAND ${CMAKE_COMMAND} -DAIO_STAGE_DIR="${_aio_manual_source_dir}"
-        -P "${CMAKE_SOURCE_DIR}/cmake/VerifyAioPayload.cmake"
+list(
+    APPEND _aio_manual_cmds
+    COMMAND
+    ${CMAKE_COMMAND}
+    -DAIO_STAGE_DIR="${_aio_manual_source_dir}"
+    -P
+    "${CMAKE_SOURCE_DIR}/cmake/VerifyAioPayload.cmake"
 )
 if(SEVENZ_EXECUTABLE)
     list(
