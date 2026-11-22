@@ -16,6 +16,7 @@ cbuffer ShadowConstants : register(b0)
     row_major float4x4 InverseProjection;
     row_major float4x4 InverseView;
     uint SpatialReconstruction;
+    uint ReconstructionGridSize;
 };
 
 float3 SignedPower(float3 value, float exponent)
@@ -71,11 +72,12 @@ void main(uint3 id : SV_DispatchThreadID)
 
     float4 reference = center;
     float visibility = saturate(center.x);
+    const int gridRadius = clamp(int(ReconstructionGridSize), 3, 9) / 2;
     if (!traced) {
         float nearest = 1e30f;
         const int2 pixel = int2(id.xy);
-        [loop] for (int dy = -3; dy <= 3; ++dy) {
-            [loop] for (int dx = -3; dx <= 3; ++dx) {
+        [loop] for (int dy = -gridRadius; dy <= gridRadius; ++dy) {
+            [loop] for (int dx = -gridRadius; dx <= gridRadius; ++dx) {
                 int2 neighbor = pixel + int2(dx, dy);
                 if (any(neighbor < 0) || any(neighbor >= int2(Size))) continue;
                 float4 sample = ShadowMask[uint2(neighbor)];
@@ -90,8 +92,8 @@ void main(uint3 id : SV_DispatchThreadID)
             return;
         }
         float weighted = 0.0f, total = 0.0f;
-        [loop] for (int dy = -3; dy <= 3; ++dy) {
-            [loop] for (int dx = -3; dx <= 3; ++dx) {
+        [loop] for (int dy = -gridRadius; dy <= gridRadius; ++dy) {
+            [loop] for (int dx = -gridRadius; dx <= gridRadius; ++dx) {
                 int2 neighbor = pixel + int2(dx, dy);
                 if (any(neighbor < 0) || any(neighbor >= int2(Size))) continue;
                 float4 sample = ShadowMask[uint2(neighbor)];
