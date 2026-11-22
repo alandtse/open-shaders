@@ -73,6 +73,13 @@ add_custom_target(
     DEPENDS "${_dx12_companion_exe}"
 )
 
+# The manual AIO runs cmake --install after wiping AIO; reinstall the binary.
+install(
+    FILES "${_dx12_companion_exe}"
+    DESTINATION "SKSE/Plugins/CommunityShaders/DX12Resources/bin"
+    COMPONENT Shaders
+)
+
 # Stage *only* the single-file executable. It owns no persistent texture,
 # material, atlas or geometry cache and does not need publish diagnostics/PDBs.
 add_custom_command(
