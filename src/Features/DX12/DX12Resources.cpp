@@ -323,6 +323,112 @@ namespace DX12
 
 }
 
+namespace
+{
+	const char* TileStatus(const std::shared_ptr<const DX12::Tile>& tile)
+	{
+		if (!tile)
+			return "Not processed";
+		switch (tile->state) {
+		case DX12::Tile::State::Ready: return "Loaded";
+		case DX12::Tile::State::ReadyPartial: return "Partially loaded";
+		case DX12::Tile::State::Preparing: return "Processing";
+		case DX12::Tile::State::RetryWaiting: return "Failed (retry pending)";
+		case DX12::Tile::State::Incomplete: return "Failed";
+		case DX12::Tile::State::Deferred: return "Skipped (predictive budget)";
+		case DX12::Tile::State::Requested: return "Not processed";
+		}
+		return "Unknown";
+	}
+
+	ImU32 TileColor(const std::shared_ptr<const DX12::Tile>& tile, bool active)
+	{
+		if (!tile)
+			return IM_COL32(46, 54, 65, 255); // Awaiting generation: dark slate.
+		switch (tile->state) {
+		case DX12::Tile::State::Ready:
+			return active ? IM_COL32(243, 201, 74, 255) : IM_COL32(117, 197, 239, 255);
+		case DX12::Tile::State::ReadyPartial:
+			return active ? IM_COL32(200, 164, 71, 255) : IM_COL32(91, 156, 194, 255);
+		case DX12::Tile::State::Preparing:
+			return IM_COL32(182, 140, 91, 255);
+		case DX12::Tile::State::RetryWaiting:
+		case DX12::Tile::State::Incomplete:
+			return IM_COL32(211, 76, 76, 255);
+		case DX12::Tile::State::Deferred:
+			return IM_COL32(123, 129, 139, 255);
+		case DX12::Tile::State::Requested:
+			return IM_COL32(46, 54, 65, 255);
+		}
+		return IM_COL32(46, 54, 65, 255);
+	}
+
+	std::shared_ptr<const DX12::Tile> FindTile(
+		const DX12::Grid& grid, DX12::SubcellKey key, bool active)
+	{
+		if (active) {
+			for (size_t i = 0; i < DX12::kGridCapacity; ++i)
+				if (grid.requested[i] == key)
+					return grid.resident[i];
+		} else {
+			for (size_t i = 0; i < DX12::kPredictiveCapacity; ++i)
+				if (grid.predictive[i] == key)
+					return grid.predictiveResident[i];
+		}
+		return {};
+	}
+
+	void DrawSubcellMap(const DX12::Grid& grid)
+	{
+		const auto center = grid.requested.front();
+		const float available = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+		const float pitch = std::min(54.0f, std::max(28.0f, (available - 4.0f) / 5.0f));
+		const float side = pitch - 4.0f;
+		const float total = pitch * 5.0f;
+		const ImVec2 origin = ImGui::GetCursorScreenPos();
+		const float left = origin.x + std::max(0.0f, (available - total) * 0.5f);
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		for (int row = 0; row < 5; ++row) {
+			for (int col = 0; col < 5; ++col) {
+				const int dx = col - 2, dy = 2 - row;
+				const bool active = std::max(std::abs(dx), std::abs(dy)) <= 1;
+				const DX12::SubcellKey key{ center.scope, center.x + dx, center.y + dy };
+				const auto tile = center.scope ? FindTile(grid, key, active) : nullptr;
+				const ImVec2 p0{ left + col * pitch, origin.y + row * pitch };
+				const ImVec2 p1{ p0.x + side, p0.y + side };
+				draw->AddRectFilled(p0, p1, TileColor(tile, active), 3.0f);
+				draw->AddRect(p0, p1, active ? IM_COL32(255, 225, 150, 200) :
+					IM_COL32(138, 174, 207, 180), 3.0f, 0, active ? 1.8f : 1.0f);
+				if (tile && tile->state == DX12::Tile::State::ReadyPartial) {
+					// A diagonal distinguishes partially processed cells without hiding the zone color.
+					draw->AddLine(ImVec2(p0.x + 4.0f, p1.y - 4.0f),
+						ImVec2(p1.x - 4.0f, p0.y + 4.0f), IM_COL32(32, 44, 56, 170), 2.0f);
+				}
+				if (col == 2 && row == 2) {
+					const ImVec2 marker{ (p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f };
+					draw->AddCircleFilled(marker, 5.0f, IM_COL32(30, 37, 48, 255));
+					draw->AddCircle(marker, 5.0f, IM_COL32(255, 255, 255, 240), 0, 1.5f);
+				}
+			}
+		}
+		ImGui::Dummy(ImVec2(available, total));
+		// Hover uses the immutable grid snapshot, so no worker or scene locks are taken.
+		if (center.scope && ImGui::IsItemHovered()) {
+			const ImVec2 mouse = ImGui::GetIO().MousePos;
+			const int col = int((mouse.x - left) / pitch);
+			const int row = int((mouse.y - origin.y) / pitch);
+			if (mouse.x >= left && mouse.y >= origin.y && col >= 0 && col < 5 && row >= 0 && row < 5) {
+				const int dx = col - 2, dy = 2 - row;
+				const bool active = std::max(std::abs(dx), std::abs(dy)) <= 1;
+				const DX12::SubcellKey key{ center.scope, center.x + dx, center.y + dy };
+				const auto tile = FindTile(grid, key, active);
+				ImGui::SetTooltip("%s subcell (%lld, %lld): %s", active ? "Active" : "Predictive",
+					static_cast<long long>(key.x), static_cast<long long>(key.y), TileStatus(tile));
+			}
+		}
+	}
+}
+
 bool DX12Resources::IsActive() const
 {
 	return loaded && globals::features::dx12Control.IsActive() && !globals::game::isVR;
@@ -360,6 +466,36 @@ void DX12Resources::DrawSettings()
 			ResetPreparation();
 		}
 	}
+
+	ImGui::SeparatorText("Subcell status (5x5)");
+	const auto snapshot = GetGrid();
+	if (snapshot) {
+		DrawSubcellMap(*snapshot);
+		size_t activeLoaded = 0, predictiveLoaded = 0, failed = 0, skipped = 0;
+		const auto classify = [&](const auto& tile, bool active) {
+			if (!tile)
+				return;
+			if (tile->state == DX12::Tile::State::Ready || tile->state == DX12::Tile::State::ReadyPartial)
+				(active ? activeLoaded : predictiveLoaded)++;
+			else if (tile->state == DX12::Tile::State::RetryWaiting || tile->state == DX12::Tile::State::Incomplete)
+				++failed;
+			else if (tile->state == DX12::Tile::State::Deferred)
+				++skipped;
+		};
+		for (const auto& tile : snapshot->resident)
+			classify(tile, true);
+		for (const auto& tile : snapshot->predictiveResident)
+			classify(tile, false);
+		ImGui::Text("Loaded: active %zu / 9, predictive %zu / 16", activeLoaded, predictiveLoaded);
+		ImGui::TextDisabled("Failed: %zu  |  Skipped: %zu", failed, skipped);
+	}
+	ImGui::TextColored(ImVec4(0.95f, 0.79f, 0.29f, 1.0f), "Yellow: loaded 3x3");
+	ImGui::TextColored(ImVec4(0.46f, 0.77f, 0.94f, 1.0f), "Light blue: loaded predictive ring");
+	ImGui::TextColored(ImVec4(0.83f, 0.30f, 0.30f, 1.0f), "Red: failed (including retry pending)");
+	ImGui::TextDisabled("Gray: skipped  |  Dark: not processed  |  Brown: processing");
+	ImGui::TextDisabled("Diagonal: partially loaded  |  Center dot: player subcell");
+	if (const auto status = GetPreparationStatus())
+		ImGui::TextWrapped("Companion: %s", status->c_str());
 }
 
 void DX12Resources::LoadSettings(json& input)
