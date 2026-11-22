@@ -121,6 +121,7 @@ namespace DX12Native
 
 		bool producerSignalled = false;
 		bool submitted = false;
+		bool geometryPreviewApplied = false;
 		try {
 			const bool recreate = !slot->frame || slot->device != device12 ||
 			                      slot->device11 != device11 || slot->sourceDesc.Width != desc.Width ||
@@ -208,6 +209,8 @@ namespace DX12Native
 			slot->commands->ResourceBarrier(static_cast<UINT>(endCopy.size()), endCopy.data());
 
 			if (applyShadow) {
+				const uint32_t previewMode = globals::features::dx12Control.GetShadowPreview();
+				geometryPreviewApplied = previewMode >= 3u && previewMode <= 5u;
 				slot->shadowRoot = shadowRoot;
 				slot->shadowPipeline = shadowPipeline;
 				const auto step = device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -254,7 +257,7 @@ namespace DX12Native
 				// Exactly the open-RT default independent shadow settings.
 				const Constants constants{ width, height, 16.0f, 2.0f,
 					transfer == Transfer::LegacyScene ? 1u : 0u,
-					globals::features::dx12Control.GetShadowPreview(),
+					previewMode,
 					globals::features::dx12Control.GetShadowStrength(),
 					globals::features::dx12Control.GetShadowBlend(),
 					camera.CameraProjInverse, camera.CameraViewInverse,
@@ -294,6 +297,7 @@ namespace DX12Native
 			output.height = height;
 			output.format = desc.Format;
 			output.valid = true;
+			output.geometryPreviewApplied = geometryPreviewApplied;
 			return slot->frame;
 		} catch (...) {
 			if (submitted || producerSignalled)

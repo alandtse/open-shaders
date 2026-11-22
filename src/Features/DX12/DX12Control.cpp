@@ -117,7 +117,7 @@ uint32_t DX12Control::GetShadowPreview() const
 
 void DX12Control::LoadSettings(json& input)
 {
-	settings.Enabled = input.value("Enabled", true);
+	settings.Enabled = input.value("Enabled", false);
 	settings.Mode = std::clamp(input.value("Mode", 0), 0, 1);
 	settings.SpatialReconstruction = input.value("SpatialReconstruction", true);
 	const uint32_t requestedGrid = std::clamp(input.value("ReconstructionGridSize", 5u), 3u, 9u);

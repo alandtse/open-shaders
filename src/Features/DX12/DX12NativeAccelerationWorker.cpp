@@ -26,6 +26,7 @@ namespace DX12Native
 		std::vector<RetainedScene> consumers;
 		std::atomic<std::shared_ptr<const TopLevel>> published{};
 		uint64_t epoch = 0;
+		uint64_t resetSerial = 0;  // A reset survives a newer grid request.
 		uint64_t lastRevision = std::numeric_limits<uint64_t>::max();
 		uint32_t lastScope = 0;
 		std::string failure;
@@ -87,6 +88,7 @@ namespace DX12Native
 			state->lastRevision = std::numeric_limits<uint64_t>::max();
 			state->pending.reset();
 			state->published.store(nullptr, std::memory_order_release);
+			++state->resetSerial;
 			++state->epoch;
 		}
 		state->wake.notify_one();
@@ -136,12 +138,18 @@ namespace DX12Native
 
 		std::shared_ptr<const SceneInputs> inputs;
 		uint64_t processedEpoch = 0;
+		uint64_t processedResetSerial = 0;
 		std::vector<RetainedScene> consumers;
 		while (!a_stop.stop_requested()) {
 			std::shared_ptr<const DX12::Grid> next;
 			bool changed = false;
+			bool resetPending = false;
 			{
 				std::scoped_lock lock(a_state->mutex);
+				if (processedResetSerial != a_state->resetSerial) {
+					processedResetSerial = a_state->resetSerial;
+					resetPending = true;
+				}
 				if (processedEpoch != a_state->epoch) {
 					processedEpoch = a_state->epoch;
 					next = std::exchange(a_state->pending, nullptr);
@@ -152,14 +160,14 @@ namespace DX12Native
 				a_state->consumers.clear();
 			}
 
-			if (changed) {
-				if (next)
-					inputs = CollectSceneInputs(std::move(next));
-				else {
-					inputs.reset();
-					acceleration.Reset();
-				}
+			// A reset must invalidate old GPU scene ownership even if Request()
+			// has replaced its empty mailbox with a fresh grid.
+			if (resetPending) {
+				inputs.reset();
+				acceleration.Reset();
 			}
+			if (changed)
+				inputs = next ? CollectSceneInputs(std::move(next)) : nullptr;
 			acceleration.Advance(inputs);
 			const auto completed = acceleration.GetScene();
 			if (completed) {
