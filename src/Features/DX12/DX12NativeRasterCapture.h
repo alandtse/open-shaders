@@ -55,6 +55,7 @@ namespace DX12Native
 			Reset();
 			depthShader = nullptr;
 		}
+
 	private:
 		std::array<std::shared_ptr<RasterFrame>, 4> slots;
 		std::shared_ptr<RasterFrame> current;
