@@ -147,9 +147,9 @@ namespace DX12Native
 				return;
 			}
 			auto& slot = *it;
-			const UINT width = raster->width, height = raster->height;
-			if (!width || !height) {
-				status = "not submitted: empty raster dimensions";
+			const UINT width = controls.viewportWidth, height = controls.viewportHeight;
+			if (!width || !height || width > raster->width || height > raster->height) {
+				status = "not submitted: active viewport missing or outside captured raster dimensions";
 				return;
 			}
 			const bool fresh = !slot || slot->width != width || slot->height != height;

@@ -18,6 +18,7 @@
 #include "../../../GpuPass.h"
 #include "../../../State.h"
 #include "../../ReverseZ.h"
+#include "../../DX12/DX12Control.h"
 #include "../../Upscaling.h"
 #include "../DX12SwapChain.h"
 #include "Utils/SehGuard.h"
@@ -1258,7 +1259,11 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			dispatchParameters.preExposure = 1.0f;
 			// Our repo has no ShouldResetHistoryThisFrame(); mirror Upscale()'s existing
 			// menu-reset predicate (menus produce no fresh motion vectors/depth).
-			dispatchParameters.reset = state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid;
+			const uint32_t geometryPreview = globals::features::dx12Control.GetShadowPreview();
+			// Developer geometry previews are diagnostic colors, not temporally
+			// stable scene radiance; prevent FSR history from dragging the overlay.
+			dispatchParameters.reset = (state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid) ||
+				(geometryPreview >= 3u && geometryPreview <= 5u);
 			dispatchParameters.cameraNear = *globals::game::cameraNear;
 			dispatchParameters.cameraFar = *globals::game::cameraFar;
 			dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
