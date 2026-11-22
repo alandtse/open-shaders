@@ -48,11 +48,12 @@ void DX12NativeScene::DrawDiagnostics() const
 	if (raw)
 		ImGui::Text("Mask: %u x %u; GPU density %u; fence %llu",
 			raw->width, raw->height, raw->densityMode, static_cast<unsigned long long>(raw->readyValue));
-		if (raw->readyFence) {
-			const auto done = raw->readyFence->GetCompletedValue();
-			ImGui::Text("Shadow GPU fence: %s", done != UINT64_MAX && done >= raw->readyValue ?
-				"completed" : "pending / unavailable");
-		}
+	if (raw->readyFence) {
+		const auto done = raw->readyFence->GetCompletedValue();
+		ImGui::Text("Shadow GPU fence: %s", done != UINT64_MAX && done >= raw->readyValue ?
+												"completed" :
+												"pending / unavailable");
+	}
 	const auto rasterFrame = raster.Get(frame);
 	ImGui::Text("DX11 opaque raster capture: %s", rasterFrame ? "published" : "not published");
 	const auto counters = raster.GetCounters();
