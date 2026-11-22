@@ -538,8 +538,6 @@ void DX12Resources::DrawSettings()
 		ImGui::TextColored(ImVec4(0.83f, 0.30f, 0.30f, 1.0f), "Red: failed (retry pending)");
 		ImGui::TextDisabled("Gray: skipped  |  Dark: not processed  |  Brown: processing");
 		ImGui::TextDisabled("Diagonal: partially loaded  |  Center dot: player subcell");
-		if (const auto status = GetPreparationStatus())
-			ImGui::TextWrapped("Companion: %s", status->c_str());
 	};
 
 	if (ImGui::GetContentRegionAvail().x >= 680.0f &&
@@ -563,8 +561,6 @@ void DX12Resources::DrawSettings()
 void DX12Resources::DrawDiagnostics() const
 {
 	ImGui::SeparatorText("DX12 Resources / companion");
-	if (const auto status = GetPreparationStatus())
-		ImGui::TextWrapped("Companion: %s", status->c_str());
 	const auto snapshot = GetGrid();
 	if (snapshot) {
 		ImGui::Text("Grid revision %llu, geometry revision %llu, light revision %llu",
