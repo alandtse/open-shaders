@@ -62,9 +62,11 @@ void DX12Control::DrawSettings()
 				int preview = int(shadowPreview.load(std::memory_order_relaxed));
 				if (ImGui::Combo("Shadowmask preview", &preview, previewNames, int(std::size(previewNames))))
 					shadowPreview.store(uint32_t(preview), std::memory_order_relaxed);
-				ImGui::TextDisabled("Preview replaces the pre-upscale color for debugging; magenta means an unsampled pixel.");
-				globals::features::dx12Resources.DrawDiagnostics();
+				ImGui::TextDisabled("Raw: magenta = density omitted; red = invalid receiver; blue = no applicable light.");
+				ImGui::TextDisabled("Reconstructed: orange = no valid neighborhood. Full raw density cannot omit pixels.");
 				globals::features::dx12NativeScene.DrawDiagnostics();
+				if (ImGui::CollapsingHeader("Companion / Geometry (details)"))
+					globals::features::dx12Resources.DrawDiagnostics();
 				ImGui::SeparatorText("Native Composite / DXGI budget");
 				ImGui::Text("Spatial reconstruction: %s", UseSpatialReconstruction() ? "enabled" : "disabled");
 				ImGui::Text("Shadow strength %.2f, blend %.2f", GetShadowStrength(), GetShadowBlend());

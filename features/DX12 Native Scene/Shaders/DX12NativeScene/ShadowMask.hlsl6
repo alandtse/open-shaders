@@ -47,6 +47,8 @@ void main(uint3 id : SV_DispatchThreadID)
     float receiverDistance = length(mul((float3x3)InverseView, v.xyz / v.w));
     if (!isfinite(receiverDistance) || receiverDistance <= 0)
         return;
+    // Valid receiver with no applicable light: neutral, not an unsampled pixel.
+    RawMask[p] = float4(1, 0, receiverDistance, 0);
     float total = 0, visible = 0;
     [loop] for (uint i = 0; i < min(LightCount, 64u); ++i) {
         float4 light = Lights[i * 3 + 0];    // xyz + radius
