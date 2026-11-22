@@ -32,6 +32,7 @@ namespace DX12Native
 			float shadowReachMultiplier = 1.0f, shadowFadeRange = 0.5f, shadowFalloffCurve = 1.0f;
 			float nearLightRadius = 0.0f;
 			uint32_t nearLightExclusion = 0, stochastic = 0, padding = 0;
+			uint32_t debugGeometryMode = 0;
 		};
 		winrt::com_ptr<ID3D12Resource> UploadBuffer(ID3D12Device* device, UINT64 bytes)
 		{
@@ -126,7 +127,7 @@ namespace DX12Native
 			status = "not submitted: native TLAS unavailable";
 			return;
 		}
-		if (lights.empty()) {
+		if (lights.empty() && controls.debugGeometryMode == 0u) {
 			status = "not submitted: no prepared lights";
 			return;
 		}
@@ -202,7 +203,8 @@ namespace DX12Native
 				std::clamp(controls.falloffCurve, 0.0f, 2.5f),
 				std::clamp(controls.nearLightRadius, 0.0f, 512.0f),
 				controls.nearLightExclusion ? 1u : 0u,
-				controls.stochastic ? 1u : 0u, 0u
+				controls.stochastic ? 1u : 0u, 0u,
+				std::min(controls.debugGeometryMode, 3u)
 			};
 			static_assert(sizeof(Constants) <= 256);
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));

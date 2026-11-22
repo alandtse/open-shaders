@@ -23,6 +23,7 @@ cbuffer ShadowInputs : register(b0)
     uint NearLightExclusion;
     uint StochasticEmitterSampling;
     uint Padding;
+    uint DebugGeometryMode;
 };
 #include "NativeTraceDensity.hlsli"
 
@@ -32,6 +33,45 @@ void main(uint3 id : SV_DispatchThreadID)
     uint2 p = id.xy;
     if (any(p >= Size))
         return;
+    if (DebugGeometryMode != 0u) {
+        // Developer-only camera rays show triangles actually published to the TLAS.
+        // This does not require any active lights, raster shadowing, or geometry texture.
+        float2 clip = float2(2.0f * (float(p.x) + 0.5f) / float(Size.x) - 1.0f,
+            1.0f - 2.0f * (float(p.y) + 0.5f) / float(Size.y));
+        float4 viewSample = mul(InverseProjection, float4(clip, 0.5f, 1.0f));
+        float4 camera = mul(InverseView, float4(0, 0, 0, 1));
+        if (!all(isfinite(viewSample)) || abs(viewSample.w) < 1e-8f ||
+            !all(isfinite(camera)) || abs(camera.w) < 1e-8f) {
+            RawMask[p] = float4(0, 2, 0, 0);
+            return;
+        }
+        float4 sceneSample = mul(InverseView, float4(viewSample.xyz / viewSample.w, 1));
+        if (!all(isfinite(sceneSample)) || abs(sceneSample.w) < 1e-8f) {
+            RawMask[p] = float4(0, 2, 0, 0);
+            return;
+        }
+        float3 origin = camera.xyz / camera.w + PositionAdjust.xyz;
+        float3 target = sceneSample.xyz / sceneSample.w + PositionAdjust.xyz;
+        float3 direction = target - origin;
+        float lengthSquared = dot(direction, direction);
+        if (!isfinite(lengthSquared) || lengthSquared <= 1e-12f) {
+            RawMask[p] = float4(0, 2, 0, 0);
+            return;
+        }
+        RayDesc ray;
+        ray.Origin = origin;
+        ray.Direction = direction * rsqrt(lengthSquared);
+        ray.TMin = 0.5f;
+        ray.TMax = MaxDistance;
+        const uint sourceMask = DebugGeometryMode == 2u ? 1u : DebugGeometryMode == 3u ? 2u : 3u;
+        RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> geometryQuery;
+        geometryQuery.TraceRayInline(Scene, RAY_FLAG_NONE, sourceMask, ray);
+        while (geometryQuery.Proceed()) {}
+        RawMask[p] = geometryQuery.CommittedStatus() == COMMITTED_TRIANGLE_HIT ?
+            float4(1, 2, geometryQuery.CommittedRayT(), float(geometryQuery.CommittedInstanceID())) :
+            float4(0, 2, 0, 0);
+        return;
+    }
     if (!NativeTraceDensityPixel(p.x, p.y, DensityMode, FrameIndex, 0x62c01daeu)) {
         RawMask[p] = float4(0, -1, 0, 0);
         return;
@@ -132,7 +172,7 @@ void main(uint3 id : SV_DispatchThreadID)
             ray.TMin = MinDistance;
             ray.TMax = tMax;
             RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
-            query.TraceRayInline(Scene, RAY_FLAG_NONE, 1, ray);
+            query.TraceRayInline(Scene, RAY_FLAG_NONE, 3, ray);
             while (query.Proceed()) {}
             visibleSamples += query.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0.0f : 1.0f;
         }

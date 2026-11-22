@@ -42,6 +42,23 @@ void main(uint3 id : SV_DispatchThreadID)
 {
     if (any(id.xy >= Size)) return;
     const float4 center = ShadowMask[id.xy];
+    // A Dev-only TLAS visualization, composited solely in the existing FSR path.
+    // The mask y=2 identifies a geometry-preview result rather than shadow data.
+    if (Preview >= 3u && Preview <= 5u) {
+        float4 color = Scene[id.xy];
+        if (center.y != 2.0f) {
+            Scene[id.xy] = float4(0.65f, 0.0f, 0.65f, color.a);
+        } else if (center.x > 0.5f) {
+            const uint instanceId = uint(center.w + 0.5f);
+            const bool runtime = (instanceId & 0x800000u) != 0u;
+            const float tint = 0.75f + 0.25f * frac(float(instanceId & 0x7fffffu) * 0.61803398875f);
+            const float3 sourceColor = runtime ? float3(1.0f, 0.61f, 0.16f) : float3(0.10f, 0.85f, 1.0f);
+            Scene[id.xy] = float4(lerp(color.rgb, sourceColor * tint, 0.82f), color.a);
+        } else {
+            Scene[id.xy] = float4(color.rgb * 0.18f, color.a);
+        }
+        return;
+    }
     const bool traced = ValidMask(center);
     // Preview 1 visualizes the raw RayQuery sampling pattern.
     if (Preview == 1u) {
