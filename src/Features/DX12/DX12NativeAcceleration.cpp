@@ -301,8 +301,8 @@ namespace DX12Native
 				return;
 			}
 			if (!std::ranges::any_of(builds, [&](const auto& build) {
-				return build.generation == generation && build.top != nullptr;
-			})) {
+					return build.generation == generation && build.top != nullptr;
+				})) {
 				if (!BuildTop(*available))
 					*available = {};
 			}
