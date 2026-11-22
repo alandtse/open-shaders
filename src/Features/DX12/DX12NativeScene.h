@@ -66,5 +66,12 @@ private:
 	bool offloadStaticShadows = true;
 	bool offloadFlickeringStatic = true;
 	uint32_t densityMode = 0;
+	bool stochasticEmitterSampling = false;
+	uint32_t emitterRayCount = 4;
+	bool nearLightShadowExclusion = false;
+	uint32_t nearLightExclusionUnits = 0;
+	float shadowReachMultiplier = 1.0f;  // Native only. Vanilla lights stay unchanged.
+	float shadowFadeRange = 0.50f;
+	float shadowFalloffCurve = 1.0f;
 	std::string startupFailure;
 };

@@ -15,6 +15,14 @@ cbuffer ShadowInputs : register(b0)
     float MinDistance;
     float MaxDistance;
     uint Unused;
+    uint EmitterSamples;
+    float ShadowReachMultiplier;
+    float ShadowFadeRange;
+    float ShadowFalloffCurve;
+    float NearLightRadius;
+    uint NearLightExclusion;
+    uint StochasticEmitterSampling;
+    uint Padding;
 };
 #include "NativeTraceDensity.hlsli"
 
@@ -51,35 +59,85 @@ void main(uint3 id : SV_DispatchThreadID)
     RawMask[p] = float4(1, 0, receiverDistance, 0);
     float total = 0, visible = 0;
     [loop] for (uint i = 0; i < min(LightCount, 64u); ++i) {
-        float4 light = Lights[i * 3 + 0];    // xyz + radius
-        float4 radiance = Lights[i * 3 + 1]; // linear RGB + fade
-        float4 params = Lights[i * 3 + 2];   // source radius + falloff exponent + flags
+        float4 light = Lights[i * 3 + 0];    // xyz vanilla position + vanilla radius
+        float4 radiance = Lights[i * 3 + 1]; // linear RGB + vanilla fade
+        float4 params = Lights[i * 3 + 2];   // emitter radius + vanilla falloff + flags
         float3 delta = light.xyz - world;
         float d2 = dot(delta, delta);
         if (d2 <= MinDistance * MinDistance || !isfinite(d2))
             continue;
         float d = sqrt(d2);
-        if (d >= light.w)
+        // Native reach is shadow-only; multiplier 1.0 preserves the light's vanilla radius.
+        float radius = max(light.w * ShadowReachMultiplier, MinDistance);
+        if (d >= radius)
             continue;
+        float fraction = saturate(ShadowFadeRange);
+        float fade = fraction <= 0.0f ? 1.0f :
+            saturate((radius - d) / max(radius * fraction, 1e-4f));
+        fade = fade * fade * (3.0f - 2.0f * fade);
+        float gradualFalloff = fade <= 0.0f ? 0.0f : pow(fade, max(0.0f, ShadowFalloffCurve));
         float strength = dot(max(radiance.rgb, 0), float3(.2126, .7152, .0722));
-        float weight = strength * max(0, radiance.a) *
-            pow(saturate(1 - d / max(light.w, MinDistance)), max(.25f, params.y)) /
+        float weight = strength * max(0, radiance.a) * gradualFalloff /
             max(d2 + params.x * params.x, 1);
         if (weight <= 0 || !isfinite(weight))
             continue;
-        float3 direction = delta / d;
-        RayDesc ray;
-        ray.Origin = world + direction * MinDistance;
-        ray.Direction = direction;
-        ray.TMin = MinDistance;
-        ray.TMax = min(d - MinDistance, MaxDistance);
-        if (ray.TMax <= ray.TMin)
-            continue;
-        RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
-        query.TraceRayInline(Scene, RAY_FLAG_NONE, 1, ray);
-        while (query.Proceed()) {}
+
+        float3 centerDirection = delta / d;
+        float3 tangent = normalize(abs(centerDirection.z) < 0.99f ?
+            cross(centerDirection, float3(0, 0, 1)) :
+            cross(centerDirection, float3(0, 1, 0)));
+        float3 bitangent = cross(centerDirection, tangent);
+        uint sampleCount = StochasticEmitterSampling != 0u ? clamp(EmitterSamples, 1u, 16u) : 1u;
+        float visibleSamples = 0.0f;
+        uint seed = NativeDensityHash(p.x * 0x9e3779b9u ^ p.y * 0x85ebca6bu ^
+                                      i * 0xc2b2ae35u);
+        [loop] for (uint sample = 0u; sample < sampleCount; ++sample) {
+            float3 target = light.xyz;
+            if (StochasticEmitterSampling != 0u && params.x > 0.0f) {
+                // Deterministic stratified emitter disk. Frame-independent so the
+                // raw signal does not flicker without temporal accumulation.
+                float u = frac((float(sample) + 0.5f) / float(sampleCount) +
+                    float(seed & 65535u) / 65536.0f);
+                float v = frac(float(sample) * 0.61803398875f +
+                    float(seed >> 16u) / 65536.0f);
+                float theta = v * 6.28318530718f;
+                float diskRadius = sqrt(u) * max(params.x, 0.0f);
+                target += (tangent * cos(theta) + bitangent * sin(theta)) * diskRadius;
+            }
+
+            float3 towardTarget = target - world;
+            float targetDistance = length(towardTarget);
+            if (!isfinite(targetDistance) || targetDistance <= MinDistance) {
+                visibleSamples += 1.0f;
+                continue;
+            }
+            float3 rayDirection = towardTarget / targetDistance;
+            float tMax = min(targetDistance - MinDistance, MaxDistance);
+            if (NearLightExclusion != 0u && NearLightRadius > 0.0f) {
+                // Exclude occluders inside the sphere centered on the real light,
+                // not around the camera or receiver. Solve ray/sphere entry.
+                float projection = dot(delta, rayDirection);
+                float discriminant = projection * projection -
+                    (d2 - NearLightRadius * NearLightRadius);
+                if (discriminant >= 0.0f)
+                    tMax = min(tMax, projection - sqrt(discriminant) - MinDistance);
+            }
+            if (tMax <= MinDistance) {
+                visibleSamples += 1.0f;
+                continue;
+            }
+            RayDesc ray;
+            ray.Origin = world + rayDirection * MinDistance;
+            ray.Direction = rayDirection;
+            ray.TMin = MinDistance;
+            ray.TMax = tMax;
+            RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+            query.TraceRayInline(Scene, RAY_FLAG_NONE, 1, ray);
+            while (query.Proceed()) {}
+            visibleSamples += query.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0.0f : 1.0f;
+        }
         total += weight;
-        visible += query.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0 : weight;
+        visible += weight * (visibleSamples / float(sampleCount));
     }
     if (total > 1e-8f)
         RawMask[p] = float4(saturate(visible / total), 1, receiverDistance, total);
