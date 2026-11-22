@@ -1123,9 +1123,12 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DX12NativeShadow.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DX12NativeComposite.cmake")
 set(_native_shader_deploy_deps)
 if(TARGET DX12NativeShadowAIO AND TARGET DX12NativeCompositeAIO)
-    list(APPEND _native_shader_deploy_deps
-        DX12NativeShadowAIO DX12NativeCompositeAIO
-        "${_shadow_aio_dxil}" "${_native_composite_aio_dxil}"
+    list(
+        APPEND _native_shader_deploy_deps
+        DX12NativeShadowAIO
+        DX12NativeCompositeAIO
+        "${_shadow_aio_dxil}"
+        "${_native_composite_aio_dxil}"
     )
 endif()
 

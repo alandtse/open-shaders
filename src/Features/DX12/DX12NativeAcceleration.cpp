@@ -53,8 +53,8 @@ namespace DX12Native
 		// Retain the resources in an owning retirement task, not leaked allocations.
 		// A tail marker drains queue submissions for which Signal() originally failed.
 		std::thread([pending = std::move(retiring), producer = completion,
-			queue = backend.commandQueue, retainedDevice = device,
-			lastSignalled, needsDrain]() mutable {
+						queue = backend.commandQueue, retainedDevice = device,
+						lastSignalled, needsDrain]() mutable {
 			(void)pending;  // The capture deliberately owns the queued GPU resources.
 			winrt::com_ptr<ID3D12Fence> drainFence;
 			bool drainScheduled = !needsDrain;
