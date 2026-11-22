@@ -119,6 +119,7 @@ public:
 	void ResetFSRIdleFence();
 	/** @brief Tears down runtime upscaler resources, optionally invalidating the cached provider. */
 	void ResetRuntimeUpscalerResources(bool a_invalidateProviderCache = false);
+	bool EnsureRuntimeUpscalerInterop();
 
 	/**
 	 * @brief Upscales one context (eye) via the runtime provider or the host FSR3 SDK. Per-context/eye
@@ -232,7 +233,6 @@ private:
 	void QuarantineRuntimeUpscalerForSession(const char* a_reason);
 	RuntimeUpscalerFramePath GetRuntimeUpscalerProviderFramePath(uint32_t a_requestedVersion) const;
 	void RecordRuntimeUpscalerFramePath(RuntimeUpscalerFramePath a_path);
-	bool EnsureRuntimeUpscalerInterop();
 	bool EnsureRuntimeCommandContexts();
 	RuntimeCommandContext* AcquireRuntimeCommandContext();
 	void ResetRuntimeCommandContexts();
