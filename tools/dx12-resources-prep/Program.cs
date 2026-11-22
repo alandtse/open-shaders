@@ -273,6 +273,20 @@ internal static class SceneTile
             missingShapes.Add(new TileMissingNifShape(reference.ModKey.ToString(), reference.ID,
                 nifPath, blockIndex, reason.Length > 80 ? reason[..80] : reason));
         }
+        void RememberMissingModel(FormKey reference, string? meshPath, string reason)
+        {
+            if (string.IsNullOrWhiteSpace(meshPath)) return;
+            var nifPath = NormalizeNifPath(meshPath);
+            if (nifPath.Length > 260) {
+                Reject("NIF path exceeds manifest limit");
+                return;
+            }
+            if (nifSources.Count < MaxNifSources)
+                nifSources.Add(new TileNifSource(reference.ModKey.ToString(), reference.ID, nifPath));
+            else
+                Reject("NIF source manifest capacity");
+            AddMissing(reference, nifPath, -1, reason);
+        }
         long bytes = 0;
         foreach (var candidate in candidates.Values)
         {
@@ -333,7 +347,10 @@ internal static class SceneTile
                         modeled.Model?.File is { } file &&
                         !string.IsNullOrWhiteSpace(file.ToString()) &&
                         (!isWorldspace || Inside(position[0], position[1], tileX, tileY, size)))
+                    {
                         Reject("unsupported modeled record");
+                        RememberMissingModel(placed.FormKey, file.ToString(), "unsupported modeled record");
+                    }
                     continue;
                 }
 
@@ -342,6 +359,8 @@ internal static class SceneTile
                     obj.VirtualMachineAdapter != null || baseRecord is IMoveableStaticGetter)
                 {
                     Reject("runtime-dependent placement");
+                    RememberMissingModel(placed.FormKey, (baseRecord as IModeledGetter)?.Model?.File.ToString(),
+                        "runtime-dependent placement");
                     continue;
                 }
                 var model = (baseRecord as IModeledGetter)?.Model?.File.ToString();
@@ -418,7 +437,8 @@ internal static class SceneTile
     private static string NormalizeNifPath(string path)
     {
         path = path.Replace('/', '\\');
-        return path.StartsWith("meshes\\", StringComparison.OrdinalIgnoreCase) ? path : "meshes\\" + path;
+        return path.StartsWith("meshes\\", StringComparison.OrdinalIgnoreCase)
+            ? "meshes\\" + path[7..] : "meshes\\" + path;
     }
 
     private static ModelExtraction LoadModel(string data, string path, Dictionary<string, ModelExtraction> cache,
