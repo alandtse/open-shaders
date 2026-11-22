@@ -20,7 +20,7 @@ namespace DX12Native
 		bool nearLightExclusion = false;
 		float nearLightRadius = 0.0f;  // 0..512 game units; exclusion sphere centered at light.
 		float reachMultiplier = 1.0f;  // 1.0 means the vanilla-provided light radius.
-		float fadeRange = 0.50f;  // Fraction of native shadow reach.
+		float fadeRange = 0.50f;       // Fraction of native shadow reach.
 		float falloffCurve = 1.0f;
 	};
 
