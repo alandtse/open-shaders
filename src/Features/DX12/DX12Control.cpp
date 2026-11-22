@@ -66,7 +66,6 @@ void DX12Control::DrawSettings()
 			if (settings.Enabled != bootActive.load(std::memory_order_acquire))
 				ImGui::TextDisabled("A game restart is required; DX12 Resources retains its boot state until then.");
 			break;
-
 		}
 		Util::EndPillTabItem();
 	}

@@ -72,7 +72,6 @@
 #include "TruePBR.h"
 #include "Utils/Game.h"
 
-
 namespace globals
 {
 	namespace d3d

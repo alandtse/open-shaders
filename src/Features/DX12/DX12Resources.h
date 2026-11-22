@@ -208,6 +208,7 @@ struct DX12Resources final : Feature
 	{
 		return generationStats.load(std::memory_order_acquire);
 	}
+
 private:
 	void ResetPreparation();
 	DX12::ResourceGrid grid;
