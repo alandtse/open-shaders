@@ -293,6 +293,7 @@ private:
 	std::atomic<bool> landscapeGridDirty{ true };
 	std::unique_ptr<StructuredBuffer> landscapeMaterials;
 	uint32_t landscapeMaterialCount = 0;
+	uint32_t landscapeUploadFailures = 0;
 	void LoadGeometryLists();
 	void LoadWorldConfig(const json& config);
 	bool LoadTextures();

@@ -29,6 +29,7 @@ namespace
 {
 	constexpr uint32_t LandscapeMaterialSlot = 46;
 	constexpr float LandscapeCellSize = 4096.0f;
+	constexpr uint32_t MaxLandscapeUploadAttempts = 3;
 	constexpr float MaxFrameSeconds = 0.1f;
 	constexpr float MinAngleRange = 0.001f;
 	constexpr float MaxHeightOffset = 20000.0f;
@@ -91,6 +92,8 @@ void SnowCover::UpdateFrame()
 	perFrame.wsettings.EnableSnowCover = wsettings.EnableSnowCover && texturesLoaded;
 	UpdateFireMelt();
 	UpdateSurvival();
+	if (wsettings.EnableSnowCover && texturesLoaded)
+		UpdateLandscapeGrid();
 }
 
 RE::BSEventNotifyControl SnowCover::ProcessEvent(const RE::TESCellFullyLoadedEvent*, RE::BSTEventSource<RE::TESCellFullyLoadedEvent>*)
@@ -166,8 +169,11 @@ void SnowCover::UpdateLandscapeGrid()
 		}
 		landscapeMaterials->Update(materials.data(), materials.size() * sizeof(uint32_t));
 		grid.mode = LandscapeMaterialMode::Mixed;
+		landscapeUploadFailures = 0;
 	} catch (const std::exception& e) {
 		logger::warn("Snow Cover: failed to upload landscape materials: {}", e.what());
+		if (++landscapeUploadFailures < MaxLandscapeUploadAttempts)
+			landscapeGridDirty.store(true, std::memory_order_relaxed);
 	}
 }
 
@@ -534,7 +540,6 @@ void SnowCover::ValidateSettings()
 void SnowCover::Prepass()
 {
 	if (loaded && active.load(std::memory_order_relaxed) && wsettings.EnableSnowCover && texturesLoaded) {
-		UpdateLandscapeGrid();
 		ID3D11ShaderResourceView* srvs[std::tuple_size_v<decltype(views)>]{};
 		for (size_t i = 0; i < views.size(); ++i)
 			srvs[i] = views[i].get();
