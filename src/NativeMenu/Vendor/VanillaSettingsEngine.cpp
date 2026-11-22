@@ -990,6 +990,34 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 		};
 		SettingsPressHandler g_settingsPressHandler;
 
+		void EnsureCustomTabEntry(RE::GFxMovieView* a_view, RE::GFxValue& a_entries)
+		{
+			constexpr auto marker = "__cs_customTab";
+			for (std::uint32_t i = 0, count = a_entries.GetArraySize(); i < count; ++i) {
+				RE::GFxValue entry;
+				if (a_entries.GetElement(i, &entry) && entry.IsObject() && entry.HasMember(marker))
+					return;
+			}
+
+			RE::GFxValue entry;
+			a_view->CreateObject(&entry);
+			entry.SetMember(marker, RE::GFxValue(true));
+			entry.SetMember("text", Text::MakeGFxString(g_customTab));
+			a_entries.Invoke("push", nullptr, &entry, 1);
+		}
+
+		void BindItemPress(RE::GFxMovieView* a_view, RE::GFxValue& a_list, RE::GFxValue& a_page,
+			const char* a_method, RE::GFxFunctionHandler* a_handler)
+		{
+			RE::GFxValue fn;
+			a_view->CreateFunction(&fn, a_handler);
+			a_list.SetMember(a_method, fn);
+			a_list.SetMember("__cs_page", a_page);
+
+			const RE::GFxValue listener[3] = { RE::GFxValue("itemPress"), a_list, RE::GFxValue(a_method) };
+			a_list.Invoke("addEventListener", nullptr, listener, 3);
+		}
+
 		// Appends the custom tab to the Settings category list once vanilla's own
 		// entries are populated.
 		// than a tab's rows.
@@ -1015,10 +1043,7 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 				return;
 			}
 
-			RE::GFxValue entry;
-			a_view->CreateObject(&entry);
-			entry.SetMember("text", Text::MakeGFxString(g_customTab));
-			entryList.Invoke("push", nullptr, &entry, 1);
+			EnsureCustomTabEntry(a_view, entryList);
 
 			ListRows::Ensure(list, entryList.GetArraySize(), "SettingsList");
 
@@ -1053,19 +1078,12 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 
 			EnsureScrollbar(list);
 
-			RE::GFxValue scope, fn;
-			a_view->CreateObject(&scope);
-			a_view->CreateFunction(&fn, &g_settingsPressHandler);
-			scope.SetMember("onCSSettingsPress", fn);
-			scope.SetMember("__cs_page", a_page);
-
 			const RE::GFxValue rm[3] = { RE::GFxValue("itemPress"), a_page, RE::GFxValue("onSettingsCategoryPress") };
 			list.Invoke("removeEventListener", nullptr, rm, 3);
-			const RE::GFxValue add[3] = { RE::GFxValue("itemPress"), scope, RE::GFxValue("onCSSettingsPress") };
-			list.Invoke("addEventListener", nullptr, add, 3);
+			BindItemPress(a_view, list, a_page, "onCSSettingsPress", &g_settingsPressHandler);
 
 			g_settingsListInjected = true;
-			logger::info("VanillaSettingsEngine: added the '{}' tab to the Settings list", g_customTab);
+			logger::info("VanillaSettingsEngine: '{}' tab ready in the Settings list", g_customTab);
 		}
 
 		// Clips are recycled as the list scrolls, so the entry says which
@@ -1214,14 +1232,7 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 		if (haveList && !g_optionsPressHooked) {
 			g_optionsPressHooked = true;
 
-			RE::GFxValue scope, fn;
-			a_view->CreateObject(&scope);
-			a_view->CreateFunction(&fn, &g_optionsPressHandler);
-			scope.SetMember("onCSOptionPress", fn);
-			scope.SetMember("__cs_page", a_systemPage);
-
-			const RE::GFxValue add[3] = { RE::GFxValue("itemPress"), scope, RE::GFxValue("onCSOptionPress") };
-			list.Invoke("addEventListener", nullptr, add, 3);
+			BindItemPress(a_view, list, a_systemPage, "onCSOptionPress", &g_optionsPressHandler);
 			logger::debug("VanillaSettingsEngine: OptionsList itemPress hooked");
 		}
 
