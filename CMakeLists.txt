@@ -1282,16 +1282,26 @@ if(AUTO_PLUGIN_DEPLOYMENT)
             # this neither pulls in the plugin DLL nor races AIO tree writers.
             set(_native_shader_only_copy_commands)
             if(TARGET DX12NativeShadowDXIL AND TARGET DX12NativeCompositeDXIL)
-                list(APPEND _native_shader_only_copy_commands
-                    COMMAND ${CMAKE_COMMAND} -E make_directory
-                        "${DEPLOY_TARGET}/Shaders/DX12NativeScene"
-                        "${DEPLOY_TARGET}/Shaders/NativeComposite"
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${_shadow_dxil}"
-                        "${DEPLOY_TARGET}/Shaders/DX12NativeScene/ShadowMask.dxil"
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${_native_composite_dxil}"
-                        "${DEPLOY_TARGET}/Shaders/NativeComposite/ShadowLayer.dxil"
+                list(
+                    APPEND _native_shader_only_copy_commands
+                    COMMAND
+                    ${CMAKE_COMMAND}
+                    -E
+                    make_directory
+                    "${DEPLOY_TARGET}/Shaders/DX12NativeScene"
+                    "${DEPLOY_TARGET}/Shaders/NativeComposite"
+                    COMMAND
+                    ${CMAKE_COMMAND}
+                    -E
+                    copy_if_different
+                    "${_shadow_dxil}"
+                    "${DEPLOY_TARGET}/Shaders/DX12NativeScene/ShadowMask.dxil"
+                    COMMAND
+                    ${CMAKE_COMMAND}
+                    -E
+                    copy_if_different
+                    "${_native_composite_dxil}"
+                    "${DEPLOY_TARGET}/Shaders/NativeComposite/ShadowLayer.dxil"
                 )
             endif()
             # Content-based copies preserve the destination mtime when DXIL
@@ -1303,7 +1313,7 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                     -DDST_DIR="${DEPLOY_TARGET}/Shaders"
                     ${_preserve_runtime_args} -P
                     "${CMAKE_SOURCE_DIR}/cmake/SyncShaderDeploy.cmake"
-                ${_native_shader_only_copy_commands}
+                    ${_native_shader_only_copy_commands}
                 COMMAND
                     ${CMAKE_COMMAND} -E touch
                     ${DEPLOY_TARGET_HASH}_shaders_only.stamp
