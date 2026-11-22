@@ -64,6 +64,7 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	// full-tile geometry coverage, Native Lighting and FSR.
 	if (!light || slot < 0 || !loaded || globals::game::isVR ||
 		!globals::features::dx12Control.IsActive() ||
+		!globals::features::dx12Control.IsShadowOffloadMode() ||
 		!shadowMaskEnabled || !offloadStaticShadows ||
 		light->GetIsFrustumOrDirectionalLight())
 		return false;
@@ -138,7 +139,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
 	raster.Capture(*backend, sources, Util::GetCurrentSceneDepthSRV(false),
 		&globals::game::frameBufferCached.nonVR, frame);
-	if (shadowMaskEnabled) {
+	if (shadowMaskEnabled && globals::features::dx12Control.IsShadowOffloadMode()) {
 		const auto captured = raster.Get(frame);
 		const auto built = acceleration.GetScene();
 		const auto lights = shadowLights.load(std::memory_order_acquire);

@@ -10,6 +10,10 @@ struct DX12Control final : Feature
 	struct Settings
 	{
 		bool Enabled = false;
+		int Mode = 0; // 0: shadow offload, 1: raster comparison
+		bool SpatialReconstruction = true;
+		float ShadowStrength = 2.0f;
+		float ShadowBlend = 0.70f;
 	};
 
 	std::string GetName() override { return "DX12"; }
@@ -22,6 +26,10 @@ struct DX12Control final : Feature
 	bool SupportsVR() override { return false; }
 	/** @brief Whether native work may be submitted this frame. */
 	bool IsActive() const { return loaded && bootActive.load(std::memory_order_acquire); }
+	bool IsShadowOffloadMode() const { return selectedMode.load(std::memory_order_relaxed) == 0; }
+	bool UseSpatialReconstruction() const { return spatialReconstruction.load(std::memory_order_relaxed); }
+	float GetShadowStrength() const { return shadowStrength.load(std::memory_order_relaxed); }
+	float GetShadowBlend() const { return shadowBlend.load(std::memory_order_relaxed); }
 	void DrawSettings() override;
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
@@ -32,5 +40,9 @@ private:
 	std::atomic<bool> bootActive{ false };
 	bool bootCaptured = false;
 	int selectedTab = 0;
+	std::atomic<int> selectedMode{ 0 };
+	std::atomic<bool> spatialReconstruction{ true };
+	std::atomic<float> shadowStrength{ 2.0f };
+	std::atomic<float> shadowBlend{ 0.70f };
 	Settings settings;
 };
