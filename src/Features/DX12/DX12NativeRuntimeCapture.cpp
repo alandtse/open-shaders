@@ -171,7 +171,7 @@ namespace DX12Native
 				shape->positions.push_back({ xyz[0], xyz[1], xyz[2] });
 			}
 			if (!usable || !std::ranges::all_of(packet.indices,
-					[&](uint16_t index) { return index < packet.vertexCount; }))
+							   [&](uint16_t index) { return index < packet.vertexCount; }))
 				continue;
 			shape->indices.assign(packet.indices.begin(), packet.indices.end());
 
@@ -181,8 +181,7 @@ namespace DX12Native
 				continue;
 			const auto x = DX12::Coordinate(packet.centerX, grid->size);
 			const auto y = DX12::Coordinate(packet.centerY, grid->size);
-			if (!x || !y || !std::ranges::contains(grid->requested,
-				DX12::SubcellKey{ grid->requested.front().scope, *x, *y }))
+			if (!x || !y || !std::ranges::contains(grid->requested, DX12::SubcellKey{ grid->requested.front().scope, *x, *y }))
 				continue;
 			bool companionOwns = false;
 			for (const auto& tile : grid->resident) {

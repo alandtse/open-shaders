@@ -9,9 +9,9 @@
 #include "../../State.h"
 #include "../../Utils/FileSystem.h"
 #include "../../Utils/Game.h"
-#include "ShadowCasterInternal.h"
 #include "../DX12/DX12Control.h"
 #include "../DX12/DX12NativeScene.h"
+#include "ShadowCasterInternal.h"
 
 namespace ShadowCasterManager
 {
