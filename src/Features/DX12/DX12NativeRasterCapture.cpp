@@ -3,6 +3,7 @@
 #include "GpuPass.h"
 #include "Utils/D3D.h"
 #include <algorithm>
+#include <directx/d3dx12.h>
 #include <ranges>
 #include <stdexcept>
 
