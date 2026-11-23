@@ -193,9 +193,9 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 	if (!matched)
 		return;
 	DX12::PreparedLight live = *matched;
-	live.position = { position.x, position.y, position.z };
+	live.position = float3{ position.x, position.y, position.z };
 	live.radius = rt.radius.x;
-	live.color = { rt.diffuse.red, rt.diffuse.green, rt.diffuse.blue };
+	live.color = float3{ rt.diffuse.red, rt.diffuse.green, rt.diffuse.blue };
 	live.fade = rt.fade;
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
 	std::scoped_lock lock(runtimeLightMutex);
@@ -205,7 +205,7 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 	}
 	if (freezeNativeFlickering && flickers && matched->referenceID != 0) {
 		// Keep DX11's flicker intact. Only the native shadow has a stable light.
-		live.position = { restOrigin.x, restOrigin.y, restOrigin.z };
+		live.position = float3{ restOrigin.x, restOrigin.y, restOrigin.z };
 		live = frozenNativeLights.try_emplace(matched->referenceID, live).first->second;
 	}
 	// A prepared emitter must not accidentally account for two different SCM
