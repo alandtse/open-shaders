@@ -389,7 +389,7 @@ namespace DX12
 			}
 			if (root.at("version").get<uint32_t>() != 1 ||
 				!root.at("shapes").is_array() || root.at("shapes").size() > 384 ||
-				!root.at("lights").is_array() || root.at("lights").size() > 2048) {
+				!root.at("lights").is_array() || root.at("lights").size() > kMaxPreparedLights) {
 				result.failure = "Companion reply schema/shape/light-count invalid";
 				return result;
 			}

@@ -15,6 +15,9 @@
 
 namespace DX12
 {
+	// Shared upper bound for companion light records and the native shadow consumer.
+	inline constexpr uint32_t kMaxPreparedLights = 2048;
+
 	class CompanionWorker;
 	struct CompanionResult;
 	/** @brief Immutable light record discovered alongside companion geometry. */

@@ -755,6 +755,7 @@ void DX12Resources::OnRuntimeDisabled()
 std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const
 {
 	std::vector<DX12::PreparedLight> lights;
+	lights.reserve(DX12::kMaxPreparedLights);
 	const auto current = grid.Snapshot();
 	std::unordered_set<uint32_t> seen;
 	const auto append = [&](const auto& tiles) {
@@ -762,6 +763,9 @@ std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const
 			if (!tile)
 				continue;
 			for (const auto& light : tile->lights) {
+				// Active tiles come first; never publish more than the shadow consumer can trace.
+				if (lights.size() >= DX12::kMaxPreparedLights)
+					return;
 				if (light.referenceID && !seen.insert(light.referenceID).second)
 					continue;
 				lights.push_back(light);
