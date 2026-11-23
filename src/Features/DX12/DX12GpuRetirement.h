@@ -33,7 +33,7 @@ namespace DX12Native
 	void RetireWhenGpuDone(Owner held, winrt::com_ptr<ID3D12Device> device, CanRetire canRetire)
 	{
 		std::thread([held = std::move(held), device = std::move(device),
-							canRetire = std::move(canRetire)]() mutable {
+						canRetire = std::move(canRetire)]() mutable {
 			while (!GpuDeviceRemoved(device.get()) && !canRetire(*held))
 				std::this_thread::sleep_for(std::chrono::milliseconds(8));
 		}).detach();
