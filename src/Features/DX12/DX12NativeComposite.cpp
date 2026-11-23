@@ -1,6 +1,6 @@
 #include "DX12NativeComposite.h"
-#include "DX12GpuRetirement.h"
 #include "DX12Control.h"
+#include "DX12GpuRetirement.h"
 
 #include "Features/DX12/DX12NativeScene.h"
 #include "Globals.h"
