@@ -57,6 +57,7 @@ jobs:
         outputs:
             should-build: ${{ steps.check.outputs.should-build }}
             hlsl-should-build: ${{ steps.check.outputs.hlsl-should-build }}
+            hlsl-source-changed: ${{ steps.check.outputs.hlsl-source-changed }}
             shader-tests-should-build: ${{ steps.check.outputs.shader-tests-should-build }}
             cpp-tests-should-build: ${{ steps.check.outputs.cpp-tests-should-build }}
             python-tests-should-build: ${{ steps.check.outputs.python-tests-should-build }}
@@ -242,8 +243,8 @@ jobs:
         name: Shader Compile Cost (PR)
         # Waits for the build so the PR's own (incremental) compile timings
         # exist; runs even when the build is skipped or fails.
-        needs: [build]
-        if: always() && !cancelled() && !github.event.pull_request.draft
+        needs: [check-changes, build]
+        if: always() && !cancelled() && !github.event.pull_request.draft && needs.check-changes.outputs.hlsl-source-changed != 'false'
         runs-on: ubuntu-latest
         outputs:
             has-report: ${{ steps.report.outputs.has-report }}
