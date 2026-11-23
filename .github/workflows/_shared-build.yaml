@@ -151,7 +151,7 @@ jobs:
                   $all = [int](Measure-Command { [RunnerBench]::SpinAll($cores) }).TotalMilliseconds
                   $line = "Runner: $($cpu.Name.Trim()), $cores logical cores, $($cpu.MaxClockSpeed) MHz; single-thread $single ms, all-core $all ms"
                   Write-Host $line
-                  "- ${{ github.job }} ${{ matrix.config.name || matrix.compiler.name || '' }}: $line" >> $env:GITHUB_STEP_SUMMARY
+                  "- ${{ github.job }} ${{ matrix.compiler.name }}: $line" >> $env:GITHUB_STEP_SUMMARY
 
             - name: Setup Build Environment
               id: setup
@@ -283,7 +283,7 @@ jobs:
                   $all = [int](Measure-Command { [RunnerBench]::SpinAll($cores) }).TotalMilliseconds
                   $line = "Runner: $($cpu.Name.Trim()), $cores logical cores, $($cpu.MaxClockSpeed) MHz; single-thread $single ms, all-core $all ms"
                   Write-Host $line
-                  "- ${{ github.job }} ${{ matrix.config.name || matrix.compiler.name || '' }}: $line" >> $env:GITHUB_STEP_SUMMARY
+                  "- ${{ github.job }} ${{ matrix.config.name }} ${{ matrix.pass }}: $line" >> $env:GITHUB_STEP_SUMMARY
                   [pscustomobject]@{ cpu = $cpu.Name.Trim(); cores = $cores; mhz = $cpu.MaxClockSpeed; single_ms = $single; all_ms = $all } |
                       ConvertTo-Json | Set-Content -Encoding utf8 "$env:RUNNER_TEMP/shader-compile-runner-${{ matrix.config.runtime }}.json"
 

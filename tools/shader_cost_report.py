@@ -502,6 +502,8 @@ def runner_info(timing_path):
         os.path.dirname(timing_path),
         os.path.basename(timing_path).replace("compile-timing", "compile-runner"),
     )
+    if path == timing_path:
+        return None
     try:
         return json.load(open(path, encoding="utf-8-sig"))
     except (OSError, ValueError):

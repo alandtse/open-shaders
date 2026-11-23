@@ -410,6 +410,7 @@ class ShaderCostReportTest(unittest.TestCase):
         )
         os.remove(head.replace("compile-timing", "compile-runner"))
         self.assertIsNone(REPORT.timing_diff(base, head)["pr_runner"])
+        self.assertIsNone(REPORT.runner_info(head_src))
 
 
 if __name__ == "__main__":
