@@ -1,4 +1,5 @@
 #include "DX12NativeComposite.h"
+#include "DX12GpuRetirement.h"
 #include "DX12Control.h"
 
 #include "Features/DX12/DX12NativeScene.h"
@@ -145,7 +146,7 @@ namespace DX12Native
 				const uint64_t current = slot->frameBytes;
 				const uint64_t tracked = retained > UINT64_MAX - current ? UINT64_MAX : retained + current;
 				const uint64_t allowance = videoBudget.Query(device12, tracked).effectiveBytes;
-				if (required > allowance || retained > allowance - required)
+				if (required > allowance || tracked > allowance - required)
 					throw std::runtime_error("Composite frame allocation deferred by DXGI memory budget");
 
 				auto replacement = std::make_unique<Slot>();
@@ -185,6 +186,14 @@ namespace DX12Native
 				*slot = std::move(*replacement);
 			}
 
+			// Own the upstream inputs until this composite's GPU work retires.
+			// Strong references prevent the producer pools from recycling them
+			// without registering a fence that could be abandoned on failure.
+			slot->shadowInput = applyShadow ? shadow : nullptr;
+			slot->rasterInput = applyShadow ? raster : nullptr;
+			slot->frame->valid = false;
+			slot->frame->producerFence = nullptr;
+			slot->frame->producerValue = 0;
 			producerSignalled = true;
 			context11->CopyResource(slot->shared->resource11, source);
 			const uint64_t inputValue = slot->fence.Next();
@@ -276,12 +285,6 @@ namespace DX12Native
 				DX::ThrowIfFailed(queue->Wait(raster->readyFence.get(), raster->readyValue));
 			}
 			const uint64_t done = slot->fence.Next();
-			if (applyShadow &&
-				(!globals::features::dx12NativeScene.RetainShadowMask(shadow, slot->fence.fence12.get(), done) ||
-					!globals::features::dx12NativeScene.RetainRasterFrame(raster, slot->fence.fence12.get(), done))) {
-				slot->untracked = true;
-				return {};
-			}
 			ID3D12CommandList* lists[]{ slot->commands.get() };
 			queue->ExecuteCommandLists(1, lists);
 			submitted = true;
@@ -296,8 +299,26 @@ namespace DX12Native
 			output.valid = true;
 			return slot->frame;
 		} catch (...) {
-			if (submitted || producerSignalled)
-				slot->untracked = true;
+			if (submitted && slot->fence.fence12) {
+				// The command list was queued. A tail Signal on that queue tracks
+				// its completion even when the original Signal failed.
+				const uint64_t tail = slot->fence.Next();
+				if (SUCCEEDED(queue->Signal(slot->fence.fence12.get(), tail))) {
+					slot->frame->producerFence = slot->fence.fence12;
+					slot->frame->producerValue = tail;
+				} else
+					slot->untracked = true;
+			} else if (producerSignalled && slot->fence.fence11) {
+				// No DX12 work was submitted, but the DX11 copy may still be
+				// pending. Fence it before allowing this slot to be recycled.
+				const uint64_t tail = slot->fence.Next();
+				if (SUCCEEDED(context11->Signal(slot->fence.fence11.get(), tail))) {
+					context11->Flush();
+					slot->frame->producerFence = slot->fence.fence12;
+					slot->frame->producerValue = tail;
+				} else
+					slot->untracked = true;
+			}
 			return {};
 		}
 	}
@@ -319,15 +340,22 @@ namespace DX12Native
 
 	NativeComposite::~NativeComposite()
 	{
-		static auto* pending = new std::vector<std::unique_ptr<Slot>>;
+		const auto ready = [](const Slot& slot) {
+			if (slot.untracked || (slot.frame && slot.frame.use_count() > 1))
+				return false;
+			if (slot.frame && !GpuFenceRetired(slot.fence.fence12.get(), slot.frame->producerValue))
+				return false;
+			return std::ranges::all_of(slot.consumers, [](const auto& consumer) {
+				return GpuFenceRetired(consumer.first.get(), consumer.second);
+			});
+		};
 		for (auto& slot : slots) {
-			if (!slot)
+			if (!slot || ready(*slot))
 				continue;
-			if (slot->untracked || (slot->frame && slot->frame.use_count() > 1) ||
-				!slot->consumers.empty() ||
-				(slot->frame && slot->frame->producerValue && slot->fence.fence12 &&
-					slot->fence.fence12->GetCompletedValue() < slot->frame->producerValue))
-				pending->push_back(std::move(slot));
+			winrt::com_ptr<ID3D12Device> device;
+			if (slot->device)
+				device.copy_from(slot->device);
+			RetireWhenGpuDone(std::move(slot), std::move(device), ready);
 		}
 	}
 }
