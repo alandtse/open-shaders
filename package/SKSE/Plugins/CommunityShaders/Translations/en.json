@@ -6002,6 +6002,7 @@
     "menu.dx12.scene.independent_shadowmask": "Independent shadowmask",
     "menu.dx12.scene.keep_raster_flickering": "Keep raster static shadows for flickering lights",
     "menu.dx12.scene.keep_raster_static": "Keep raster static shadows for native-accounted lights",
+    "menu.dx12.scene.outdoor_shadow_offloading": "Enable outdoor shadow offloading (DX12 only)",
     "menu.dx12.scene.shadow_fade_fraction": "Shadow fade range fraction",
     "menu.dx12.scene.shadow_falloff_curve": "Shadow falloff curve",
     "menu.dx12.scene.shadow_reach_multiplier": "Shadow reach multiplier (1x = vanilla)",

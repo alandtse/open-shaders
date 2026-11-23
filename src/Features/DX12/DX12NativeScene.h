@@ -59,6 +59,8 @@ struct DX12NativeScene final : Feature
 	}
 
 private:
+	/** @brief Gates only native shadow replacement; never disables DX11 baseline shadows. */
+	bool CanOffloadShadowsInCurrentCell() const;
 	std::optional<GraphicsBackend> backend;
 	DX12Native::RasterCapture raster;
 	DX12Native::RuntimeGeometryCapture geometryCapture;
@@ -67,6 +69,7 @@ private:
 	// One immutable, ordered light selection shared by SCM and the RayQuery dispatch.
 	std::atomic<std::shared_ptr<const std::vector<DX12::PreparedLight>>> shadowLights;
 	bool shadowMaskEnabled = true;
+	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
 	bool offloadStaticShadows = true;
 	bool offloadFlickeringStatic = true;
 	bool freezeNativeFlickering = false;

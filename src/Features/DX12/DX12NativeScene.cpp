@@ -5,6 +5,7 @@
 #include "DX12Resources.h"
 #include "Globals.h"
 #include "GpuPass.h"
+#include "RE/T/TESObjectCELL.h"
 #include "State.h"
 #include "Utils/D3D.h"
 
@@ -18,6 +19,7 @@
 void DX12NativeScene::DrawSettings()
 {
 	ImGui::Checkbox(T("menu.dx12.scene.independent_shadowmask", "Independent shadowmask"), &shadowMaskEnabled);
+	ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoorShadowOffloading);
 	bool keepRasterStatic = !offloadStaticShadows;
 	if (ImGui::Checkbox(T("menu.dx12.scene.keep_raster_static", "Keep raster static shadows for native-accounted lights"), &keepRasterStatic))
 		offloadStaticShadows = !keepRasterStatic;
@@ -52,6 +54,7 @@ void DX12NativeScene::DrawSettings()
 void DX12NativeScene::LoadSettings(json& input)
 {
 	shadowMaskEnabled = input.value("ShadowMask", true);
+	outdoorShadowOffloading = input.value("OutdoorShadowOffloading", false);
 	offloadStaticShadows = input.value("OffloadSCMStatic", true);
 	offloadFlickeringStatic = input.value("OffloadFlickeringStatic", true);
 	densityMode = std::min(input.value("ShadowTraceDensityMode", 7u), 7u);
@@ -69,7 +72,7 @@ void DX12NativeScene::LoadSettings(json& input)
 
 void DX12NativeScene::SaveSettings(json& output)
 {
-	output = { { "ShadowMask", shadowMaskEnabled }, { "ShadowTraceDensityMode", densityMode },
+	output = { { "ShadowMask", shadowMaskEnabled }, { "OutdoorShadowOffloading", outdoorShadowOffloading }, { "ShadowTraceDensityMode", densityMode },
 		{ "OffloadSCMStatic", offloadStaticShadows },
 		{ "OffloadFlickeringStatic", offloadFlickeringStatic },
 		{ "FreezeNativeFlickering", freezeNativeFlickering },
@@ -83,6 +86,7 @@ void DX12NativeScene::SaveSettings(json& output)
 void DX12NativeScene::RestoreDefaultSettings()
 {
 	shadowMaskEnabled = true;
+	outdoorShadowOffloading = false;
 	offloadStaticShadows = true;
 	offloadFlickeringStatic = true;
 	densityMode = 7;
@@ -98,6 +102,13 @@ void DX12NativeScene::RestoreDefaultSettings()
 	shadowFalloffCurve = 1.0f;
 }
 
+bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
+{
+	const auto* player = globals::game::player;
+	const auto* cell = player ? player->GetParentCell() : nullptr;
+	return cell && (!cell->IsExteriorCell() || outdoorShadowOffloading);
+}
+
 bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const
 {
 	// SCM keeps raster dynamic casters unconditionally. Static casters may be
@@ -106,7 +117,7 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	if (!light || slot < 0 || !loaded || globals::game::isVR ||
 		!globals::features::dx12Control.IsActive() ||
 		!globals::features::dx12Control.IsShadowOffloadMode() ||
-		!shadowMaskEnabled || !offloadStaticShadows ||
+		!shadowMaskEnabled || !offloadStaticShadows || !CanOffloadShadowsInCurrentCell() ||
 		light->GetIsFrustumOrDirectionalLight() || !globals::game::graphicsState)
 		return false;
 	const auto scene = acceleration.GetScene();
@@ -246,7 +257,8 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& /*a_inputs*/
 			static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections)))
 		return;
 	// Only capture the depth and camera used by the independent shadow layer.
-	if (!shadowMaskEnabled || !globals::features::dx12Control.IsShadowOffloadMode())
+	if (!shadowMaskEnabled || !globals::features::dx12Control.IsShadowOffloadMode() ||
+		!CanOffloadShadowsInCurrentCell())
 		return;
 
 	if (!backend) {
