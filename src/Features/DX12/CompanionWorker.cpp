@@ -485,8 +485,8 @@ namespace DX12
 					record.baseLocal = item.at("baseLocal").get<uint32_t>();
 					const auto position = Triple(item.at("position"));
 					const auto color = Triple(item.at("color"));
-					record.value.position = { position[0], position[1], position[2] };
-					record.value.color = { color[0], color[1], color[2] };
+					record.value.position = float3{ position[0], position[1], position[2] };
+					record.value.color = float3{ color[0], color[1], color[2] };
 					record.value.radius = item.at("radius").get<float>();
 					record.value.fade = item.at("fade").get<float>();
 					record.value.emitterRadius = item.at("emitterRadius").get<float>();
