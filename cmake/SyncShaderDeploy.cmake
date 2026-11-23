@@ -16,12 +16,26 @@ endif()
 include("${CMAKE_CURRENT_LIST_DIR}/PreservedRuntimePaths.cmake")
 read_preserved_runtime_prefixes(_preserve_runtime_prefixes)
 
+# Shader-only deploys copy these DXIL files directly from their build outputs.
+# Exclude AIO copies so they cannot overwrite or remove the deployed bytecode.
+set(_excluded_shader_relpaths)
+if(EXCLUDE_NATIVE_DXIL)
+    list(APPEND _excluded_shader_relpaths
+        "DX12NativeScene/ShadowMask.dxil"
+        "NativeComposite/ShadowLayer.dxil"
+    )
+endif()
+
 file(MAKE_DIRECTORY "${DST_DIR}")
 
 file(GLOB_RECURSE _src_files LIST_DIRECTORIES FALSE "${SRC_DIR}/*")
 set(_src_rels)
 foreach(_src IN LISTS _src_files)
     file(RELATIVE_PATH _rel "${SRC_DIR}" "${_src}")
+    list(FIND _excluded_shader_relpaths "${_rel}" _excluded_idx)
+    if(NOT _excluded_idx EQUAL -1)
+        continue()
+    endif()
     list(APPEND _src_rels "${_rel}")
     set(_dst "${DST_DIR}/${_rel}")
     get_filename_component(_dst_dir "${_dst}" DIRECTORY)
@@ -53,6 +67,10 @@ endforeach()
 file(GLOB_RECURSE _dst_files LIST_DIRECTORIES FALSE "${DST_DIR}/*")
 foreach(_existing IN LISTS _dst_files)
     file(RELATIVE_PATH _rel "${DST_DIR}" "${_existing}")
+    list(FIND _excluded_shader_relpaths "${_rel}" _excluded_idx)
+    if(NOT _excluded_idx EQUAL -1)
+        continue()
+    endif()
     is_preserved_runtime_path(_preserved_runtime_path "${_rel}" "${_preserve_runtime_prefixes}")
     if(_preserved_runtime_path)
         continue()
