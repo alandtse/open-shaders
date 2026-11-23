@@ -15,12 +15,16 @@ HRESULT GraphicsBackend::GetSharedDevice(IDXGIAdapter* a_adapter, ID3D12Device**
 	if (FAILED(result))
 		return result;
 	if (shared) {
+		const auto removed = shared->GetDeviceRemovedReason();
+		if (FAILED(removed)) {
+			// Drop our process-wide owner so a later Create can retry with a new device.
+			// Other consumers release their own references independently.
+			shared = nullptr;
+			return removed;
+		}
 		const auto luid = shared->GetAdapterLuid();
 		if (luid.HighPart != adapterDesc.AdapterLuid.HighPart || luid.LowPart != adapterDesc.AdapterLuid.LowPart)
 			return DXGI_ERROR_UNSUPPORTED;
-		const auto removed = shared->GetDeviceRemovedReason();
-		if (FAILED(removed))
-			return removed;
 	} else {
 		const auto created = D3D12CreateDevice(a_adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(shared.put()));
 		if (FAILED(created))

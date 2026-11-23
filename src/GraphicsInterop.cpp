@@ -116,13 +116,20 @@ WrappedResource::~WrappedResource()
 
 void SharedFence::Create(ID3D12Device* a_device12, ID3D11Device5* a_device11, const char* a_name)
 {
-	DX::ThrowIfFailed(a_device12->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&fence12)));
-	winrt::handle sharedHandle;
-	DX::ThrowIfFailed(a_device12->CreateSharedHandle(fence12.get(), nullptr, GENERIC_ALL, nullptr, sharedHandle.put()));
-	DX::ThrowIfFailed(a_device11->OpenSharedFence(sharedHandle.get(), IID_PPV_ARGS(&fence11)));
+	Reset();
+	try {
+		DX::ThrowIfFailed(a_device12->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&fence12)));
+		winrt::handle sharedHandle;
+		DX::ThrowIfFailed(a_device12->CreateSharedHandle(fence12.get(), nullptr, GENERIC_ALL, nullptr, sharedHandle.put()));
+		DX::ThrowIfFailed(a_device11->OpenSharedFence(sharedHandle.get(), IID_PPV_ARGS(&fence11)));
 
-	fence12->SetName(winrt::to_hstring(a_name).c_str());
-	Util::SetResourceName(fence11.get(), "%s", a_name);
+		fence12->SetName(winrt::to_hstring(a_name).c_str());
+		Util::SetResourceName(fence11.get(), "%s", a_name);
+	} catch (...) {
+		// A partially created shared fence must not appear initialized to callers.
+		Reset();
+		throw;
+	}
 }
 
 SharedFence::WaitOutcome SharedFence::CpuWaitOutcome(uint64_t a_value, DWORD a_timeoutMs, DWORD* a_error) const
