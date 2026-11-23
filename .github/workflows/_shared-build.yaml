@@ -129,8 +129,29 @@ jobs:
                   persist-credentials: false
                   allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' }}
 
+            # Inline so no code from the checked-out ref runs before the cache steps.
             - name: Log runner speed
-              uses: ./.github/actions/log-runner-speed
+              shell: pwsh
+              run: |
+                  Add-Type -TypeDefinition @'
+                  using System.Threading.Tasks;
+                  public static class RunnerBench {
+                      public static long Spin() {
+                          long x = 1;
+                          for (long i = 0; i < 300000000L; i++) x = x * 6364136223846793005L + 1442695040888963407L;
+                          return x;
+                      }
+                      public static void SpinAll(int n) { Parallel.For(0, n, i => Spin()); }
+                  }
+                  '@
+                  $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+                  $cores = [Environment]::ProcessorCount
+                  [void][RunnerBench]::Spin()
+                  $single = [int](Measure-Command { [void][RunnerBench]::Spin() }).TotalMilliseconds
+                  $all = [int](Measure-Command { [RunnerBench]::SpinAll($cores) }).TotalMilliseconds
+                  $line = "Runner: $($cpu.Name.Trim()), $cores logical cores, $($cpu.MaxClockSpeed) MHz; single-thread $single ms, all-core $all ms"
+                  Write-Host $line
+                  "- ${{ github.job }} ${{ matrix.config.name || matrix.compiler.name || '' }}: $line" >> $env:GITHUB_STEP_SUMMARY
 
             - name: Setup Build Environment
               id: setup
@@ -240,8 +261,29 @@ jobs:
                   persist-credentials: false
                   allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' }}
 
+            # Inline so no code from the checked-out ref runs before the cache steps.
             - name: Log runner speed
-              uses: ./.github/actions/log-runner-speed
+              shell: pwsh
+              run: |
+                  Add-Type -TypeDefinition @'
+                  using System.Threading.Tasks;
+                  public static class RunnerBench {
+                      public static long Spin() {
+                          long x = 1;
+                          for (long i = 0; i < 300000000L; i++) x = x * 6364136223846793005L + 1442695040888963407L;
+                          return x;
+                      }
+                      public static void SpinAll(int n) { Parallel.For(0, n, i => Spin()); }
+                  }
+                  '@
+                  $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+                  $cores = [Environment]::ProcessorCount
+                  [void][RunnerBench]::Spin()
+                  $single = [int](Measure-Command { [void][RunnerBench]::Spin() }).TotalMilliseconds
+                  $all = [int](Measure-Command { [RunnerBench]::SpinAll($cores) }).TotalMilliseconds
+                  $line = "Runner: $($cpu.Name.Trim()), $cores logical cores, $($cpu.MaxClockSpeed) MHz; single-thread $single ms, all-core $all ms"
+                  Write-Host $line
+                  "- ${{ github.job }} ${{ matrix.config.name || matrix.compiler.name || '' }}: $line" >> $env:GITHUB_STEP_SUMMARY
 
             - name: Check for HLSL Changes
               id: check-hlsl
