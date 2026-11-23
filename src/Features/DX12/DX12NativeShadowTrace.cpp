@@ -12,7 +12,6 @@ namespace DX12Native
 {
 	namespace
 	{
-		constexpr uint32_t kMaxLights = 64;
 		constexpr uint32_t kRecords = 3;
 
 		void Check(HRESULT result)
@@ -165,7 +164,7 @@ namespace DX12Native
 					&descriptors, IID_PPV_ARGS(replacement->descriptors.put())));
 				replacement->cameraUpload = UploadBuffer(requested.d3d12Device.get(), 256);
 				replacement->lightUpload = UploadBuffer(requested.d3d12Device.get(),
-					sizeof(std::array<float, 4>) * kMaxLights * kRecords);
+					sizeof(std::array<float, 4>) * kMaxShadowLights * kRecords);
 				Check(requested.d3d12Device->CreateCommandAllocator(
 					D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(replacement->allocator.put())));
 				Check(requested.d3d12Device->CreateCommandList(0,
@@ -188,7 +187,7 @@ namespace DX12Native
 				slot->raster->camera.CameraViewInverse,
 				slot->raster->camera.CameraPosAdjust,
 				width, height, frame, std::min(controls.densityMode, 7u),
-				uint32_t(std::min(lights.size(), size_t(kMaxLights))),
+				uint32_t(std::min(lights.size(), size_t(kMaxShadowLights))),
 				0.5f, 60000.0f, 0u,
 				std::clamp(controls.reachMultiplier, 0.1f, 64.0f),
 				std::clamp(controls.fadeRange, 0.0f, 1.0f),
@@ -200,7 +199,7 @@ namespace DX12Native
 			static_assert(sizeof(Constants) <= 256);
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
 
-			std::array<std::array<float, 4>, kMaxLights * kRecords> records{};
+			std::array<std::array<float, 4>, kMaxShadowLights * kRecords> records{};
 			for (size_t i = 0; i < camera.lightCount; ++i) {
 				const auto& light = lights[i];
 				records[i * 3 + 0] = { light.position.x, light.position.y, light.position.z, light.radius };
