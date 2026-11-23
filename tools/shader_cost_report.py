@@ -17,6 +17,7 @@ import argparse
 import collections
 import hashlib
 import json
+import math
 import os
 import re
 import statistics
@@ -43,6 +44,11 @@ TIMING_MIN_ENTRIES = 20
 RUNNER_MIN_ENTRIES = 100
 RUNNER_MIN_BASE_SECONDS = 0.05
 RUNNER_MAX_FACTOR = 2.5
+# Run-to-run noise of the adjusted total shrinks with sample size: about floor + scale / sqrt(entries compared).
+NOISE_FLOOR_PCT = 6.0
+NOISE_SCALE_PCT = 80.0
+DRIFT_PCT = 10.0
+DOC_URL = "https://github.com/alandtse/open-shaders/blob/dev/docs/development/shader-compile-cost.md"
 MARKER = "<!-- shader-cost-report -->"
 
 
@@ -301,6 +307,7 @@ def timing_diff(baseline, measured, structural_pct=None):
     slower, faster = moved(1), moved(-1)
     worst = [(k[1], before[k], adjusted[k]) for k in slower[:3]]
     return {
+        "threshold": timing_threshold(len(common)),
         "compared": len(common),
         "base_s": base_total,
         "pr_s": adj_total,
@@ -314,12 +321,19 @@ def timing_diff(baseline, measured, structural_pct=None):
     }
 
 
+def timing_threshold(compared):
+    """Smallest measured change (percent) worth flagging for a comparison over `compared` entries."""
+    noise = NOISE_FLOOR_PCT + NOISE_SCALE_PCT / math.sqrt(max(compared, 1))
+    return max(THRESHOLD_PCT, noise)
+
+
 def timing_verdict(diff):
     if not diff or diff["compared"] < TIMING_MIN_ENTRIES:
         return None
-    if diff["delta_pct"] >= THRESHOLD_PCT:
+    limit = timing_threshold(diff["compared"])
+    if diff["delta_pct"] >= limit:
         return "up"
-    return "down" if diff["delta_pct"] <= -THRESHOLD_PCT else None
+    return "down" if diff["delta_pct"] <= -limit else None
 
 
 def verdict(result, flags_changed):
@@ -344,9 +358,9 @@ def _minutes(seconds):
     )
 
 
-def render(results, flags_changed, timed, timing=None):
+def render(results, flags_changed, timed, timing=None, drift=None):
     """Markdown comment; `results` maps runtime name to a compare() dict (or None when unavailable)."""
-    timing = timing or {}
+    timing, drift = timing or {}, drift or {}
     kinds = {name: verdict(r, flags_changed) for name, r in results.items() if r}
     measured = {timing_verdict(d) for d in timing.values()} - {None}
     if "up" in kinds.values():
@@ -418,7 +432,32 @@ def render(results, flags_changed, timed, timing=None):
                 + ", ".join(f"`{e}` {b:.0f} → {a:.0f} s" for e, b, a in diff["worst"])
                 + "."
             )
+        line += f" Flagged beyond ±{diff['threshold']:.0f}% (run-to-run noise at this sample size)."
         lines += ["", line]
+    for name, diff in drift.items():
+        if diff and diff["compared"] >= TIMING_MIN_ENTRIES:
+            lines += [
+                "",
+                f"**{name} dev trend:** `dev` compiles {diff['delta_pct']:+.1f}% vs the {diff['ref_days']}-day-old dev run ({diff['compared']} shared shaders)"
+                + (
+                    "; many small increases are adding up, see the guide below."
+                    if diff["delta_pct"] >= DRIFT_PCT
+                    else "; within noise."
+                ),
+            ]
+    if (
+        "up" in kinds.values()
+        or "up" in measured
+        or any(
+            d and d["compared"] >= TIMING_MIN_ENTRIES and d["delta_pct"] >= DRIFT_PCT
+            for d in drift.values()
+        )
+    ):
+        lines += [
+            "",
+            f"**If this is a problem:** find the slowest entries listed above, check them against the shaders you changed, "
+            f"and either cut the added permutations or move the cost behind a define. [How to reproduce and bisect]({DOC_URL}).",
+        ]
     if flags_changed:
         lines += [
             "",
@@ -428,7 +467,7 @@ def render(results, flags_changed, timed, timing=None):
         "",
         "<sub>Estimated from the validation configs and recent `dev` compile timings"
         + ("" if timed else " (no timing report available, so counts only)")
-        + f". Informational; alerts at ±{THRESHOLD_PCT:.0f}%. Source growth is a size proxy; measured times are scaled by the median runner-speed ratio against the dev baseline.</sub>",
+        + f". Informational; estimates alert at ±{THRESHOLD_PCT:.0f}%, measured times at the larger of that and the sample's noise band. Source growth is a size proxy; measured times are scaled by the median runner-speed ratio against the dev baseline.</sub>",
     ]
     return "\n".join(lines) + "\n"
 
@@ -517,6 +556,15 @@ def main():
         help="timing report of this PR's own build (incremental)",
     )
     ap.add_argument("--pr-timing-se", default="")
+    ap.add_argument(
+        "--ref-timing-vr",
+        default="",
+        help="older full dev timing report, to measure dev's own drift",
+    )
+    ap.add_argument("--ref-timing-se", default="")
+    ap.add_argument(
+        "--ref-days", type=int, default=14, help="age of the --ref-timing reports"
+    )
     ap.add_argument("--out", default="shader-cost-report.md")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
@@ -558,8 +606,15 @@ def main():
         "VR": timing_diff(args.timing_vr, args.pr_timing_vr, growth.get("VR")),
         "SE": timing_diff(args.timing_se, args.pr_timing_se, growth.get("SE")),
     }
+    drift = {
+        "VR": timing_diff(args.ref_timing_vr, args.timing_vr),
+        "SE": timing_diff(args.ref_timing_se, args.timing_se),
+    }
+    for d in drift.values():
+        if d:
+            d["ref_days"] = args.ref_days
     report = render(
-        results, flags_changed, all(w.timed for w in weights.values()), timing
+        results, flags_changed, all(w.timed for w in weights.values()), timing, drift
     )
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(report)
