@@ -67,6 +67,10 @@ on:
                 description: "Forces cpp_tests build+run when 'true'; lets PR-checks skip it otherwise"
                 type: string
                 default: "true"
+            python-tests-should-build:
+                description: "Runs the Python unit tests when 'true'; lets PR-checks skip them otherwise"
+                type: string
+                default: "true"
             cache-key-suffix:
                 description: "Optional suffix to invalidate the build cache"
                 type: string
@@ -567,7 +571,7 @@ jobs:
               run: |
                   if [ "${{ github.event_name }}" != "pull_request_target" ]; then
                     echo "skip=false" >> $GITHUB_OUTPUT
-                  elif [ "${{ inputs.cpp-tests-should-build }}" != "true" ]; then
+                  elif [ "${{ inputs.python-tests-should-build }}" != "true" ]; then
                     echo "skip=true" >> $GITHUB_OUTPUT
                   else
                     echo "skip=false" >> $GITHUB_OUTPUT

@@ -59,6 +59,7 @@ jobs:
             hlsl-should-build: ${{ steps.check.outputs.hlsl-should-build }}
             shader-tests-should-build: ${{ steps.check.outputs.shader-tests-should-build }}
             cpp-tests-should-build: ${{ steps.check.outputs.cpp-tests-should-build }}
+            python-tests-should-build: ${{ steps.check.outputs.python-tests-should-build }}
             changed-files-json: ${{ steps.check.outputs.changed-files-json }}
         steps:
             - uses: actions/checkout@v6
@@ -95,10 +96,11 @@ jobs:
             run-cpp: ${{ needs.check-changes.outputs.should-build != 'false' }}
             run-shader-validation: ${{ needs.check-changes.outputs.hlsl-should-build != 'false' }}
             run-shader-tests: ${{ needs.check-changes.outputs.shader-tests-should-build != 'false' }}
-            run-cpp-tests: ${{ needs.check-changes.outputs.cpp-tests-should-build != 'false' }}
+            run-cpp-tests: ${{ needs.check-changes.outputs.python-tests-should-build != 'false' }}
             hlsl-should-build: ${{ needs.check-changes.outputs.hlsl-should-build || 'true' }}
             shader-tests-should-build: ${{ needs.check-changes.outputs.shader-tests-should-build || 'true' }}
             cpp-tests-should-build: ${{ needs.check-changes.outputs.cpp-tests-should-build || 'true' }}
+            python-tests-should-build: ${{ needs.check-changes.outputs.python-tests-should-build || 'true' }}
             changed-files-json: ${{ needs.check-changes.outputs.changed-files-json }}
             # Also run the release-parity pass (/O3 + profile) incrementally, so /O3-only
             # warnings (e.g. X4000) that would break the release cache are caught pre-merge.
