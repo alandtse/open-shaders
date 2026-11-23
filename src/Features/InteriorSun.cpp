@@ -9,7 +9,11 @@
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	InteriorSun::Settings,
 	ForceDoubleSidedRendering,
-	InteriorShadowDistance)
+	InteriorShadowDistance,
+	DetectOpenings,
+	MinimumOpeningWidth,
+	MinimumDepthDrop,
+	MinimumRimCoverage)
 
 void InteriorSun::DrawSettings()
 {
@@ -27,6 +31,14 @@ void InteriorSun::DrawSettings()
 							  "Sets the distance shadows are rendered at in interiors. "
 							  "Lower values provide higher quality shadows and improved performance but may cause distant interior spaces to light up incorrectly. "));
 	}
+	ImGui::Checkbox(T(TKEY("detect_openings"), "Detect Physical Openings"), &settings.DetectOpenings);
+	ImGui::BeginDisabled(!settings.DetectOpenings);
+	ImGui::SliderFloat(T(TKEY("minimum_opening_width"), "Minimum Opening Width"), &settings.MinimumOpeningWidth, 4.0f, 128.0f, "%.0f");
+	ImGui::SliderFloat(T(TKEY("minimum_depth_drop"), "Minimum Depth Drop"), &settings.MinimumDepthDrop, 8.0f, 512.0f, "%.0f");
+	ImGui::SliderInt(T(TKEY("minimum_rim_coverage"), "Minimum Rim Coverage"), &settings.MinimumRimCoverage, 1, 100, "%d%%");
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("minimum_rim_coverage_tooltip"), "Complete an enclosed opening when this percentage of its rim meets Minimum Depth Drop. Lower values admit more of a shallow, angled rim."));
+	ImGui::EndDisabled();
 }
 
 void InteriorSun::LoadSettings(json& o_json)
@@ -83,7 +95,6 @@ void InteriorSun::PostPostLoad()
 
 void InteriorSun::EarlyPrepass()
 {
-	FinishWindowShadows();
 	isInteriorWithSun = IsInteriorWithSun(RE::TES::GetSingleton()->interiorCell);
 	if (!isInteriorWithSun && !arraysCleared) {
 		ClearArrays();

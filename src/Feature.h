@@ -469,6 +469,10 @@ public:
 	/** @brief Called on the render thread once per frame before the shadow maps render, for every loaded feature that opted in via WantsPreShadowMapsHook(). */
 	virtual void PreShadowMaps() {}
 
+	/** @brief Opts into finalizing native shadow maps before any lighting pass samples or copies them. */
+	virtual bool WantsPostShadowMapsHook() const { return false; }
+	virtual void PostShadowMaps() {}
+
 	/**
 	 * @brief True while the feature reads the Masks2 material-category lane, so forward eye draws write it.
 	 * Default false keeps the extra render-target bind off the eye draws for everyone else.
@@ -704,6 +708,8 @@ public:
 
 	/** @brief Visits PreShadowMaps() on every loaded feature that opted in via WantsPreShadowMapsHook(); the list is cached once. */
 	static void ApplyPreShadowMapsHooks();
+	/** @brief Runs registered post-shadow-map work before the early prepasses. */
+	static void ApplyPostShadowMapsHooks();
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();

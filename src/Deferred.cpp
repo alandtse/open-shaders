@@ -842,6 +842,7 @@ void Deferred::Hooks::Main_RenderShadowMaps::thunk()
 {
 	Feature::ApplyPreShadowMapsHooks();
 	func();
+	Feature::ApplyPostShadowMapsHooks();
 	globals::deferred->EarlyPrepasses();
 };
 

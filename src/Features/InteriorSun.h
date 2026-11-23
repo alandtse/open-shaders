@@ -28,6 +28,8 @@ public:
 	virtual void EarlyPrepass() override;
 	bool WantsPreShadowMapsHook() const override { return true; }
 	void PreShadowMaps() override;
+	bool WantsPostShadowMapsHook() const override { return true; }
+	void PostShadowMaps() override;
 	bool WantsDrawHook() const override { return true; }
 	void OnDraw() override;
 	bool WantsRenderPassSkipHook() const override { return true; }
@@ -47,6 +49,10 @@ public:
 	{
 		bool ForceDoubleSidedRendering = true;
 		float InteriorShadowDistance = 5000;
+		bool DetectOpenings = true;
+		float MinimumOpeningWidth = 16.0f;
+		float MinimumDepthDrop = 64.0f;
+		int MinimumRimCoverage = 60;
 	};
 
 	Settings settings;
@@ -134,7 +140,6 @@ private:
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 	void LoadWindowTextures();
-	void FinishWindowShadows();
 
 	enum class CellFlagExt : uint16_t
 	{

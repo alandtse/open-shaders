@@ -404,6 +404,14 @@ void Feature::ApplyPreShadowMapsHooks()
 	}
 }
 
+void Feature::ApplyPostShadowMapsHooks()
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsPostShadowMapsHook(); });
+	for (auto* feature : features)
+		if (feature->loaded)
+			feature->PostShadowMaps();
+}
+
 void Feature::ApplyPointLightColorOverrides(float3& a_color)
 {
 	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsPointLightColorOverride(); });

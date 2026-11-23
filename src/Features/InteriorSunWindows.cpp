@@ -1,4 +1,5 @@
 #include "InteriorSun.h"
+#include "InteriorSunOpenings.h"
 
 #include "Buffer.h"
 #include "GpuPass.h"
@@ -28,6 +29,7 @@ namespace
 	{
 		RE::NiPointer<RE::NiAVObject> root;
 		std::vector<Pane> panes;
+		std::vector<RE::NiPointer<RE::BSGeometry>> shell;
 		std::string meshPath;
 		bool seen{};
 	};
@@ -59,6 +61,8 @@ namespace
 		winrt::com_ptr<ID3D11ShaderResourceView> srv;
 		UINT width{}, height{};
 		bool written{};
+		bool detectOpenings{};
+		InteriorSunOpenings::Projection openings;
 	};
 
 	struct Pipeline
@@ -87,9 +91,12 @@ namespace
 		std::unordered_set<const RE::BSGeometry*> geometries;
 		std::array<Cascade, kCascadeCount> cascades;
 		Cascade volumetricCasterEntry;
+		Cascade mergedEntry;
+		InteriorSunOpenings::Detector detector;
 		RE::TESObjectCELL* cell{};
 		std::chrono::steady_clock::time_point nextScan{};
 		Pipeline pipeline;
+		bool detectionFailed{};
 		bool failed{}, shadowPhase{}, receiverBound{}, casterBound{};
 		UINT target{}, slice{};
 		Cascade* current{};
@@ -162,6 +169,7 @@ namespace
 	void CollectPanes(RE::TESObjectCELL* cell)
 	{
 		std::vector<Pane> panes;
+		std::vector<InteriorSunOpenings::ShellShape> shell;
 		std::unordered_set<const RE::BSGeometry*> geometries;
 		if (windows.cell != cell)
 			windows.references.clear();
@@ -174,6 +182,7 @@ namespace
 			if (reference.root.get() != root) {
 				reference.root.reset(root);
 				reference.panes.clear();
+				reference.shell.clear();
 				auto base = ref->GetBaseObject();
 				auto model = base ? base->As<RE::TESModel>() : nullptr;
 				reference.meshPath = AssetPath(model ? model->GetModel() : nullptr, "meshes/");
@@ -186,9 +195,17 @@ namespace
 						if (auto mask = FindMask(property->material, reference.meshPath, path))
 							reference.panes.push_back({ RE::NiPointer<RE::BSGeometry>(geometry), mask, std::move(path) });
 					}
+					if (base && base->Is(RE::FormType::Static, RE::FormType::StaticCollection) && !data.skinInstance &&
+						geometry->AsTriShape() && property && property->material && property->material->GetType() == RE::BSShaderMaterial::Type::kLighting &&
+						property->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kCastShadows) && geometry->worldBound.radius > 0 &&
+						(!data.alphaProperty || !data.alphaProperty->GetAlphaBlending() || data.alphaProperty->GetAlphaTesting()))
+						reference.shell.emplace_back(geometry);
 					return RE::BSVisit::BSVisitControl::kContinue;
 				});
 			}
+			for (const auto& geometry : reference.shell)
+				if (geometry->GetGeometryRuntimeData().rendererData && !geometry->GetAppCulled())
+					shell.push_back({ geometry, geometry->world });
 			for (const auto& pane : reference.panes)
 				if (geometries.insert(pane.geometry.get()).second)
 					panes.push_back(pane);
@@ -199,6 +216,7 @@ namespace
 			reference.seen = false;
 		if (windows.cell != cell || geometries != windows.geometries)
 			logger::info("[Interior Sun] Cell {:08X}: {} mapped window shapes", cell->GetFormID(), panes.size());
+		windows.detector.SetShell(std::move(shell));
 		windows.cell = cell;
 		windows.panes = std::move(panes);
 		windows.geometries = std::move(geometries);
@@ -411,8 +429,8 @@ namespace
 		for (auto& pane : windows.panes)
 			drew |= DrawPane(pane, eye, adjust);
 		// The volumetric pass intersects both depth maps, so only the main map should impose the pane's alpha.
-		if (!drew || !dsv)
-			return drew;
+		if (cascade.detectOpenings || !drew || !dsv)
+			return drew || cascade.detectOpenings;
 
 		context->OMSetRenderTargets(0, nullptr, dsv);
 		context->OMSetDepthStencilState(pipeline.writeDepth.get(), 0);
@@ -440,6 +458,9 @@ namespace
 		const bool auxiliary = target == RE::RENDER_TARGETS_DEPTHSTENCIL::kVOLUMETRIC_LIGHTING_SHADOWMAPS_ESRAM;
 		auto& cascade = auxiliary ? windows.volumetricCasterEntry : windows.cascades[index];
 		SizeCascade(cascade, desc.Width, desc.Height);
+		const auto& settings = globals::features::interiorSun.settings;
+		cascade.detectOpenings = !auxiliary && settings.DetectOpenings && !windows.detectionFailed &&
+		                         windows.detector.Prepare(cascade.openings, target, slice, eye, adjust, settings.MinimumOpeningWidth, settings.MinimumDepthDrop, settings.MinimumRimCoverage, settings.ForceDoubleSidedRendering);
 		if (!Rasterize(cascade, eye, adjust, auxiliary ? nullptr : dsv.get()))
 			return false;
 		windows.current = &cascade;
@@ -548,7 +569,7 @@ void InteriorSun::PreShadowMaps()
 	}
 	if (windows.cell != cell || std::chrono::steady_clock::now() >= windows.nextScan)
 		CollectPanes(cell);
-	if (windows.panes.empty() || windows.failed)
+	if ((windows.panes.empty() && !settings.DetectOpenings) || windows.failed)
 		return;
 	try {
 		if (!windows.pipeline.constants && !windows.pipeline.Initialize()) {
@@ -579,7 +600,7 @@ void InteriorSun::StartShadowCamera::thunk(RE::BSShaderAccumulator* accumulator,
 
 void InteriorSun::OnDraw()
 {
-	if (!renderThread || !windows.shadowPhase)
+	if (!renderThread || !windows.shadowPhase || windows.panes.empty())
 		return;
 	if (windows.failed || !IsCurrentTarget()) {
 		UnbindCaster();
@@ -616,7 +637,7 @@ bool InteriorSun::ShouldSkipRenderPass(const RE::BSRenderPass* pass)
 	return renderThread && windows.shadowPhase && IsCurrentTarget() && windows.geometries.contains(pass->geometry);
 }
 
-void InteriorSun::FinishWindowShadows()
+void InteriorSun::PostShadowMaps()
 {
 	if (!windows.shadowPhase)
 		return;
@@ -624,11 +645,30 @@ void InteriorSun::FinishWindowShadows()
 	windows.current = nullptr;
 	windows.shadowPhase = false;
 	ID3D11ShaderResourceView* entries[kCascadeCount]{};
-	for (size_t i = 0; i < kCascadeCount; ++i)
-		if (windows.cascades[i].written) {
-			entries[i] = windows.cascades[i].srv.get();
+	for (size_t i = 0; i < kCascadeCount; ++i) {
+		auto& cascade = windows.cascades[i];
+		if (cascade.written) {
+			if (cascade.detectOpenings) {
+				try {
+					auto& merged = windows.mergedEntry;
+					SizeCascade(merged, cascade.width, cascade.height);
+					auto& pipeline = windows.pipeline;
+					windows.detector.Draw(cascade.openings, cascade.srv.get(), merged.rtv.get(), merged.srv.get(),
+						pipeline.fullscreenVS.get(), pipeline.raster.get(), pipeline.writeDepth.get(), pipeline.samplers);
+					std::swap(cascade.srv, merged.srv);
+					std::swap(cascade.rtv, merged.rtv);
+				} catch (const std::exception& e) {
+					logger::error("[Interior Sun] Could not combine physical openings: {}", e.what());
+					windows.detectionFailed = true;
+					cascade.detectOpenings = false;
+					if (windows.panes.empty())
+						continue;
+				}
+			}
+			entries[i] = cascade.srv.get();
 			windows.receiverBound = true;
 		}
+	}
 	globals::d3d::context->PSSetShaderResources(kReceiverSlot, UINT(kCascadeCount), entries);
 	globals::d3d::context->CSSetShaderResources(kReceiverSlot, UINT(kCascadeCount), entries);
 }
@@ -637,6 +677,7 @@ void InteriorSun::OnSceneTransitionReset(bool)
 {
 	windows.cell = nullptr;
 	windows.references.clear();
+	windows.detector.SetShell({});
 	windows.panes.clear();
 	windows.geometries.clear();
 }
@@ -645,12 +686,15 @@ void InteriorSun::ClearShaderCache()
 {
 	UnbindCaster();
 	windows.pipeline = {};
+	windows.detector = {};
+	windows.nextScan = {};
+	windows.detectionFailed = false;
 	windows.failed = false;
 }
 
 void InteriorSun::RegisterUxActions()
 {
-	FEATURE_RENDER_QUERY("windowShadows", "Report window textures and meshes matched in the cell, sun cascades drawn, and configured and active shadow distances.", [](const Feature* feature, const json&) -> json {
+	FEATURE_RENDER_QUERY("windowShadows", "Report matched window textures and meshes, sun cascades drawn, physical opening detection, and shadow distances.", [](const Feature* feature, const json&) -> json {
 		auto result = json::object();
 		const auto self = static_cast<const InteriorSun*>(feature);
 		result["configuredDistance"] = self->settings.InteriorShadowDistance;
@@ -668,6 +712,7 @@ void InteriorSun::RegisterUxActions()
 		result["mappings"] = windows.masks.size();
 		result["panes"] = windows.panes.size();
 		result["cascades"] = windows.receiverBound ? std::ranges::count(windows.cascades, true, &Cascade::written) : 0;
+		result["openingCascades"] = windows.receiverBound ? std::ranges::count_if(windows.cascades, [](const Cascade& c) { return c.written && c.detectOpenings; }) : 0;
 		result["failed"] = windows.failed;
 		return result;
 	});
