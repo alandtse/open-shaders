@@ -127,9 +127,9 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 		(found->flickers && !offloadFlickeringStatic))
 		return false;
 
-	// The shader admits only the first 64 prepared lights. Never suppress a
+	// The shader admits only the first 512 prepared lights. Never suppress a
 	// raster static caster for a light not actually selected for DX12 tracing.
-	const size_t limit = std::min(lights->size(), size_t{ 64 });
+	const size_t limit = std::min(lights->size(), size_t{ DX12Native::kMaxShadowLights });
 	for (size_t i = 0; i < limit; ++i) {
 		const auto& candidate = (*lights)[i];
 		if (candidate.referenceID != 0 && candidate.referenceID == found->referenceID)
@@ -206,7 +206,7 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 		it->referenceID = matched->referenceID;
 		it->value = live;
 		it->flickers = flickers;
-	} else if (runtimeLightSamples.size() < 64 &&
+	} else if (runtimeLightSamples.size() < DX12Native::kMaxShadowLights &&
 			   !std::ranges::any_of(runtimeLightSamples, [&](const auto& sample) {
 				   return sample.referenceID == matched->referenceID;
 			   })) {

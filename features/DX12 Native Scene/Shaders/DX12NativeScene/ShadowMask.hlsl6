@@ -58,7 +58,7 @@ void main(uint3 id : SV_DispatchThreadID)
     // Valid receiver with no applicable light: neutral, not an unsampled pixel.
     RawMask[p] = float4(1, 0, receiverDistance, 0);
     float total = 0, visible = 0;
-    [loop] for (uint i = 0; i < min(LightCount, 64u); ++i) {
+    [loop] for (uint i = 0; i < min(LightCount, 512u); ++i) {
         float4 light = Lights[i * 3 + 0];    // xyz vanilla position + vanilla radius
         float4 radiance = Lights[i * 3 + 1]; // linear RGB + vanilla fade
         float4 params = Lights[i * 3 + 2];   // emitter radius + vanilla falloff + flags
