@@ -60,7 +60,7 @@ namespace DX12Native
 			return GpuFenceRetired(producerFence, frame.readyValue) &&
 			       std::ranges::all_of(frame.consumers, [](const auto& consumer) {
 					   return GpuFenceRetired(consumer.first.get(), consumer.second);
-			       });
+				   });
 		};
 		for (auto& slot : slots)
 			if (slot && !ready(*slot))
