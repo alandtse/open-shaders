@@ -143,7 +143,7 @@ namespace
 
 	/** @brief Points each entry at a material its remaining users still have, since RemoveWater leaves the raw pointer to the removed water's freed material. */
 	template <class Entry>
-	void RepointSharedMaterials(const RE::TESWaterSystem* waterSystem, RE::BSTArray<RE::NiPointer<Entry>>& entries, RE::NiPointer<Entry> RE::TESWaterObject::*member)
+	void RepointSharedMaterials(const RE::TESWaterSystem* waterSystem, RE::BSTArray<RE::NiPointer<Entry>>& entries, RE::NiPointer<Entry> RE::TESWaterObject::* member)
 	{
 		for (const auto& entry : entries) {
 			if (!entry)
