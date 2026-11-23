@@ -50,6 +50,9 @@ namespace DX12Native
 		struct Slot
 		{
 			std::shared_ptr<Frame> frame;
+			// Retain producer textures until the composite GPU work completes.
+			std::shared_ptr<const ShadowMaskFrame> shadowInput;
+			std::shared_ptr<const RasterFrame> rasterInput;
 			std::unique_ptr<WrappedResource> shared;
 			winrt::com_ptr<ID3D12CommandAllocator> allocator;
 			winrt::com_ptr<ID3D12GraphicsCommandList> commands;
