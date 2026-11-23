@@ -242,8 +242,8 @@ jobs:
         name: Shader Compile Cost (PR)
         # Waits for the build so the PR's own (incremental) compile timings
         # exist; runs even when the build is skipped or fails.
-        needs: [build]
-        if: always() && !cancelled() && !github.event.pull_request.draft
+        needs: [check-changes, build]
+        if: always() && !cancelled() && !github.event.pull_request.draft && needs.check-changes.outputs.hlsl-should-build != 'false'
         runs-on: ubuntu-latest
         outputs:
             has-report: ${{ steps.report.outputs.has-report }}
