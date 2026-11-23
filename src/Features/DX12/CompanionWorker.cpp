@@ -477,27 +477,32 @@ namespace DX12
 				publication.shapes.push_back(std::move(shape));
 			}
 			for (const auto& item : root.at("lights")) {
-				CompanionLight record;
-				record.referencePlugin = item.at("referencePlugin").get<std::string>();
-				record.referenceLocal = item.at("referenceLocal").get<uint32_t>();
-				record.basePlugin = item.at("basePlugin").get<std::string>();
-				record.baseLocal = item.at("baseLocal").get<uint32_t>();
-				const auto position = Triple(item.at("position"));
-				const auto color = Triple(item.at("color"));
-				record.value.position = { position[0], position[1], position[2] };
-				record.value.color = { color[0], color[1], color[2] };
-				record.value.radius = item.at("radius").get<float>();
-				record.value.fade = item.at("fade").get<float>();
-				record.value.emitterRadius = item.at("emitterRadius").get<float>();
-				record.value.falloffExponent = item.at("falloffExponent").get<float>();
-				record.value.flags = item.at("flags").get<uint32_t>();
-				const auto& light = record.value;
-				if (!std::isfinite(light.position.x) || !std::isfinite(light.position.y) || !std::isfinite(light.position.z) ||
-					!std::isfinite(light.color.x) || !std::isfinite(light.color.y) || !std::isfinite(light.color.z) ||
-					!std::isfinite(light.radius) || !std::isfinite(light.fade) ||
-					!std::isfinite(light.emitterRadius) || !std::isfinite(light.falloffExponent))
-					throw std::invalid_argument("Companion light failed validation");
-				result.lights.push_back(std::move(record));
+				try {
+					CompanionLight record;
+					record.referencePlugin = item.at("referencePlugin").get<std::string>();
+					record.referenceLocal = item.at("referenceLocal").get<uint32_t>();
+					record.basePlugin = item.at("basePlugin").get<std::string>();
+					record.baseLocal = item.at("baseLocal").get<uint32_t>();
+					const auto position = Triple(item.at("position"));
+					const auto color = Triple(item.at("color"));
+					record.value.position = { position[0], position[1], position[2] };
+					record.value.color = { color[0], color[1], color[2] };
+					record.value.radius = item.at("radius").get<float>();
+					record.value.fade = item.at("fade").get<float>();
+					record.value.emitterRadius = item.at("emitterRadius").get<float>();
+					record.value.falloffExponent = item.at("falloffExponent").get<float>();
+					record.value.flags = item.at("flags").get<uint32_t>();
+					const auto& light = record.value;
+					if (!std::isfinite(light.position.x) || !std::isfinite(light.position.y) || !std::isfinite(light.position.z) ||
+						!std::isfinite(light.color.x) || !std::isfinite(light.color.y) || !std::isfinite(light.color.z) ||
+						!std::isfinite(light.radius) || !std::isfinite(light.fade) ||
+						!std::isfinite(light.emitterRadius) || !std::isfinite(light.falloffExponent))
+						throw std::invalid_argument("Companion light failed validation");
+					result.lights.push_back(std::move(record));
+				} catch (const std::exception&) {
+					// A malformed light must not discard independently validated geometry.
+					++publication.rejectedLights;
+				}
 			}
 			publication.validated = true;
 			if (!publication.enumerationComplete || publication.failedShapes ||
@@ -505,6 +510,12 @@ namespace DX12
 				result.failure = std::format("Partial coverage: {} eligible shapes, {} extracted, {} unsupported; complete enumeration: {}",
 					publication.eligibleShapes, publication.shapes.size(), publication.failedShapes,
 					publication.enumerationComplete ? "yes" : "no");
+			if (publication.rejectedLights) {
+				if (publication.rejectionReasons.size() < 12)
+					publication.rejectionReasons.emplace_back("Invalid companion light", publication.rejectedLights);
+				const auto lightFailure = std::format("{} invalid companion light(s) skipped", publication.rejectedLights);
+				result.failure = result.failure.empty() ? lightFailure : result.failure + "; " + lightFailure;
+			}
 		} catch (const std::exception& error) {
 			result.failure = std::format("Companion payload rejected: {}", std::string(error.what()).substr(0, 240));
 			result.publication.shapes.clear();
