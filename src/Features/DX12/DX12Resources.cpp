@@ -348,24 +348,24 @@ namespace
 	const char* TileStatus(const std::shared_ptr<const DX12::Tile>& tile)
 	{
 		if (!tile)
-			return "Not processed";
+			return T("menu.dx12.resources.status.not_processed", "Not processed");
 		switch (tile->state) {
 		case DX12::Tile::State::Ready:
-			return "Loaded";
+			return T("menu.dx12.resources.status.loaded", "Loaded");
 		case DX12::Tile::State::ReadyPartial:
-			return "Partially loaded";
+			return T("menu.dx12.resources.status.partially_loaded", "Partially loaded");
 		case DX12::Tile::State::Preparing:
-			return "Processing";
+			return T("menu.dx12.resources.status.processing", "Processing");
 		case DX12::Tile::State::RetryWaiting:
-			return "Failed (retry pending)";
+			return T("menu.dx12.resources.status.retry_pending", "Failed (retry pending)");
 		case DX12::Tile::State::Incomplete:
-			return "Skipped (retry exhausted)";
+			return T("menu.dx12.resources.status.retry_exhausted", "Skipped (retry exhausted)");
 		case DX12::Tile::State::Deferred:
-			return "Skipped (predictive budget)";
+			return T("menu.dx12.resources.status.predictive_budget", "Skipped (predictive budget)");
 		case DX12::Tile::State::Requested:
-			return "Not processed";
+			return T("menu.dx12.resources.status.not_processed", "Not processed");
 		}
-		return "Unknown";
+		return T("menu.dx12.resources.status.unknown", "Unknown");
 	}
 
 	ImU32 TileColor(const std::shared_ptr<const DX12::Tile>& tile, bool active)
@@ -450,15 +450,15 @@ namespace
 				const DX12::SubcellKey key{ center.scope, center.x + dx, center.y + dy };
 				const auto tile = FindTile(grid, key, active);
 				ImGui::BeginTooltip();
-				ImGui::Text("%s subcell (%lld, %lld): %s", active ? "Active" : "Predictive",
+				ImGui::Text(T("menu.dx12.resources.tooltip.subcell", "%s subcell (%lld, %lld): %s"), active ? T("menu.dx12.resources.active", "Active") : T("menu.dx12.resources.predictive", "Predictive"),
 					static_cast<long long>(key.x), static_cast<long long>(key.y), TileStatus(tile));
 				if (tile && tile->preparationAttempts)
-					ImGui::Text("Attempts: %u / 3", unsigned(tile->preparationAttempts));
+					ImGui::Text(T("menu.dx12.resources.tooltip.attempts", "Attempts: %u / 3"), unsigned(tile->preparationAttempts));
 				if (tile && (!tile->nifSources.empty() || !tile->missingShapes.empty()))
-					ImGui::Text("NIF sources: %zu | Missing shape references: %zu",
+					ImGui::Text(T("menu.dx12.resources.tooltip.nif_sources", "NIF sources: %zu | Missing shape references: %zu"),
 						tile->nifSources.size(), tile->missingShapes.size());
 				if (tile && !tile->failureReason.empty())
-					ImGui::TextWrapped("Last reason: %s", tile->failureReason.c_str());
+					ImGui::TextWrapped(T("menu.dx12.resources.tooltip.last_reason", "Last reason: %s"), tile->failureReason.c_str());
 				if (tile)
 					for (const auto& [reason, count] : tile->rejectionReasons)
 						ImGui::Text("%s: %u", reason.c_str(), count);
@@ -497,7 +497,7 @@ void DX12Resources::DrawSettings()
 	if (index >= int(DX12::kSubcellSizes.size()))
 		index = 0;
 	constexpr const char* labels[] = { "4096", "6144", "8192", "10240", "12288", "14336", "16384" };
-	if (ImGui::Combo("Subcell size (game units)", &index, labels, int(std::size(labels)))) {
+	if (ImGui::Combo(T("menu.dx12.resources.subcell_size", "Subcell size (game units)"), &index, labels, int(std::size(labels)))) {
 		const uint32_t selected = DX12::kSubcellSizes[index];
 		if (settings.SubcellSize != selected) {
 			settings.SubcellSize = selected;
@@ -505,7 +505,7 @@ void DX12Resources::DrawSettings()
 		}
 	}
 
-	ImGui::SeparatorText("Subcell status (5x5)");
+	ImGui::SeparatorText(T("menu.dx12.resources.subcell_status", "Subcell status (5x5)"));
 	const auto snapshot = GetGrid();
 	const auto timing = GetPreparationStats();
 
@@ -520,17 +520,17 @@ void DX12Resources::DrawSettings()
 				classify(tile, true);
 			for (const auto& tile : snapshot->predictiveResident)
 				classify(tile, false);
-			ImGui::Text("Loaded: active %zu / 9, predictive %zu / 16", activeLoaded, predictiveLoaded);
+			ImGui::Text(T("menu.dx12.resources.loaded_counts", "Loaded: active %zu / 9, predictive %zu / 16"), activeLoaded, predictiveLoaded);
 		}
-		ImGui::TextColored(ImVec4(0.95f, 0.79f, 0.29f, 1.0f), "Yellow: loaded 3x3");
-		ImGui::TextColored(ImVec4(0.46f, 0.77f, 0.94f, 1.0f), "Light blue: loaded predictive ring");
-		ImGui::TextColored(ImVec4(0.83f, 0.30f, 0.30f, 1.0f), "Red: failed (retry pending)");
-		ImGui::TextDisabled("Diagonal: partially loaded  |  Center dot: player subcell");
+		ImGui::TextColored(ImVec4(0.95f, 0.79f, 0.29f, 1.0f), T("menu.dx12.resources.legend.yellow", "Yellow: loaded 3x3"));
+		ImGui::TextColored(ImVec4(0.46f, 0.77f, 0.94f, 1.0f), T("menu.dx12.resources.legend.light_blue", "Light blue: loaded predictive ring"));
+		ImGui::TextColored(ImVec4(0.83f, 0.30f, 0.30f, 1.0f), T("menu.dx12.resources.legend.red", "Red: failed (retry pending)"));
+		ImGui::TextDisabled(T("menu.dx12.resources.legend.diagonal", "Diagonal: partially loaded  |  Center dot: player subcell"));
 	};
 
 	const auto drawGenerationStats = [&]() {
-		ImGui::TextColored(ImVec4(0.40f, 0.77f, 0.49f, 1.0f), "Subcell generation stats");
-		ImGui::TextDisabled("Last / Avg / Worst (milliseconds)");
+		ImGui::TextColored(ImVec4(0.40f, 0.77f, 0.49f, 1.0f), T("menu.dx12.resources.stats.title", "Subcell generation stats"));
+		ImGui::TextDisabled(T("menu.dx12.resources.stats.timing_head", "Last / Avg / Worst (milliseconds)"));
 		const auto show = [](const char* label, const DX12::PreparationTiming& value) {
 			if (value.completed)
 				ImGui::Text("%s: %.1f / %.1f / %.1f ms", label, value.lastMs, value.AverageMs(), value.worstMs);
@@ -538,9 +538,9 @@ void DX12Resources::DrawSettings()
 				ImGui::TextDisabled("%s: -- / -- / --", label);
 		};
 		if (timing) {
-			show("Main", timing->active);
-			show("Predictive", timing->predictive);
-			show("Corners", timing->corners);
+			show(T("menu.dx12.resources.stats.main", "Main"), timing->active);
+			show(T("menu.dx12.resources.predictive", "Predictive"), timing->predictive);
+			show(T("menu.dx12.resources.stats.corners", "Corners"), timing->corners);
 		}
 	};
 

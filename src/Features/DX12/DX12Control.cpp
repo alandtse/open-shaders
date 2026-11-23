@@ -10,25 +10,25 @@
 void DX12Control::DrawSettings()
 {
 	// Keep pipeline mode directly below the DX12 heading and above subfeature tabs.
-	static constexpr const char* modes[] = { "Shadow offload", "Raster comparison" };
+	const char* modes[] = { T("menu.dx12.mode.shadow_offload", "Shadow offload"), T("menu.dx12.mode.raster_comparison", "Raster comparison") };
 	int mode = settings.Mode;
-	if (ImGui::Combo("Mode", &mode, modes, int(std::size(modes)))) {
+	if (ImGui::Combo(T("menu.dx12.mode.label", "Mode"), &mode, modes, int(std::size(modes)))) {
 		settings.Mode = mode;
 		selectedMode.store(mode, std::memory_order_relaxed);
 	}
 	ImGui::TextDisabled(settings.Mode == 0 ?
-							"Native shadows replace matched raster static shadows." :
-							"Raster shadows remain unchanged; native shadow dispatch is paused for comparison.");
+							T("menu.dx12.mode.shadow_offload_description", "Native shadows replace matched raster static shadows.") :
+							T("menu.dx12.mode.raster_comparison_description", "Raster shadows remain unchanged; native shadow dispatch is paused for comparison."));
 
 	if (!IsActive()) {
-		ImGui::Checkbox("Enable native DX12 features (restart required)", &settings.Enabled);
+		ImGui::Checkbox(T("menu.dx12.master.enable", "Enable native DX12 features (restart required)"), &settings.Enabled);
 		if (settings.Enabled)
-			ImGui::TextDisabled("Restart the game to initialize DX12 Resources.");
+			ImGui::TextDisabled(T("menu.dx12.master.restart_resources", "Restart the game to initialize DX12 Resources."));
 		return;
 	}
 	if (!Util::BeginPillTabBar("##DX12Tabs"))
 		return;
-	const char* labels[] = { "Resources", "Native Scene", "Native Composite", "Master Switch" };
+	const char* labels[] = { T("menu.dx12.tab.resources", "Resources"), T("menu.dx12.tab.native_scene", "Native Scene"), T("menu.dx12.tab.native_composite", "Native Composite"), T("menu.dx12.tab.master_switch", "Master Switch") };
 	for (int index = 0; index < 4; ++index) {
 		if (!Util::BeginPillTabItem(labels[index]))
 			continue;
@@ -41,11 +41,11 @@ void DX12Control::DrawSettings()
 			break;
 		case 2:
 			{
-				ImGui::Checkbox("Spatial shadow reconstruction", &settings.SpatialReconstruction);
+				ImGui::Checkbox(T("menu.dx12.composite.spatial_reconstruction", "Spatial shadow reconstruction"), &settings.SpatialReconstruction);
 				spatialReconstruction.store(settings.SpatialReconstruction, std::memory_order_relaxed);
 				int gridIndex = int((settings.ReconstructionGridSize - 3u) / 2u);
 				ImGui::BeginDisabled(!settings.SpatialReconstruction);
-				if (ImGui::Combo("Reconstruction grid", &gridIndex,
+				if (ImGui::Combo(T("menu.dx12.composite.reconstruction_grid", "Reconstruction grid"), &gridIndex,
 						"3x3\0"
 						"5x5\0"
 						"7x7\0"
@@ -54,17 +54,17 @@ void DX12Control::DrawSettings()
 					reconstructionGrid.store(settings.ReconstructionGridSize, std::memory_order_relaxed);
 				}
 				ImGui::EndDisabled();
-				if (ImGui::SliderFloat("Shadow strength", &settings.ShadowStrength, 0.0f, 4.0f, "%.2f"))
+				if (ImGui::SliderFloat(T("menu.dx12.composite.shadow_strength", "Shadow strength"), &settings.ShadowStrength, 0.0f, 4.0f, "%.2f"))
 					shadowStrength.store(settings.ShadowStrength, std::memory_order_relaxed);
-				if (ImGui::SliderFloat("Shadow blend", &settings.ShadowBlend, 0.0f, 1.0f, "%.2f"))
+				if (ImGui::SliderFloat(T("menu.dx12.composite.shadow_blend", "Shadow blend"), &settings.ShadowBlend, 0.0f, 1.0f, "%.2f"))
 					shadowBlend.store(settings.ShadowBlend, std::memory_order_relaxed);
-				ImGui::TextDisabled("Reconstruction and shadow application run before native upscaling.");
+				ImGui::TextDisabled(T("menu.dx12.composite.before_upscaling", "Reconstruction and shadow application run before native upscaling."));
 				break;
 			}
 		case 3:
-			ImGui::Checkbox("Enable native DX12 features (restart required)", &settings.Enabled);
+			ImGui::Checkbox(T("menu.dx12.master.enable", "Enable native DX12 features (restart required)"), &settings.Enabled);
 			if (settings.Enabled != bootActive.load(std::memory_order_acquire))
-				ImGui::TextDisabled("A game restart is required; DX12 Resources retains its boot state until then.");
+				ImGui::TextDisabled(T("menu.dx12.master.restart_boot_state", "A game restart is required; DX12 Resources retains its boot state until then."));
 			break;
 		}
 		Util::EndPillTabItem();

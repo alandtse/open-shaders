@@ -17,36 +17,36 @@
 
 void DX12NativeScene::DrawSettings()
 {
-	ImGui::Checkbox("Independent shadowmask", &shadowMaskEnabled);
+	ImGui::Checkbox(T("menu.dx12.scene.independent_shadowmask", "Independent shadowmask"), &shadowMaskEnabled);
 	bool keepRasterStatic = !offloadStaticShadows;
-	if (ImGui::Checkbox("Keep raster static shadows for native-accounted lights", &keepRasterStatic))
+	if (ImGui::Checkbox(T("menu.dx12.scene.keep_raster_static", "Keep raster static shadows for native-accounted lights"), &keepRasterStatic))
 		offloadStaticShadows = !keepRasterStatic;
 	bool retainFlickeringRaster = !offloadFlickeringStatic;
-	if (ImGui::Checkbox("Keep raster static shadows for flickering lights", &retainFlickeringRaster))
+	if (ImGui::Checkbox(T("menu.dx12.scene.keep_raster_flickering", "Keep raster static shadows for flickering lights"), &retainFlickeringRaster))
 		offloadFlickeringStatic = !retainFlickeringRaster;
-	if (ImGui::Checkbox("Freeze flickering native shadows (DX12 only)", &freezeNativeFlickering)) {
+	if (ImGui::Checkbox(T("menu.dx12.scene.freeze_flickering_native", "Freeze flickering native shadows (DX12 only)"), &freezeNativeFlickering)) {
 		std::scoped_lock lock(runtimeLightMutex);
 		frozenNativeLights.clear();
 	}
-	static constexpr const char* fractions[] = {
-		"Full", "Two-thirds", "Half", "One-third", "Quarter",
-		"One-sixth", "One-ninth", "Four-ninths"
+	const char* fractions[] = {
+		T("menu.dx12.scene.density.full", "Full"), T("menu.dx12.scene.density.two_thirds", "Two-thirds"), T("menu.dx12.scene.density.half", "Half"), T("menu.dx12.scene.density.one_third", "One-third"), T("menu.dx12.scene.density.quarter", "Quarter"),
+		T("menu.dx12.scene.density.one_sixth", "One-sixth"), T("menu.dx12.scene.density.one_ninth", "One-ninth"), T("menu.dx12.scene.density.four_ninths", "Four-ninths")
 	};
 	int mode = static_cast<int>(densityMode);
-	if (ImGui::Combo("Trace density", &mode, fractions, 8))
+	if (ImGui::Combo(T("menu.dx12.scene.trace_density", "Trace density"), &mode, fractions, 8))
 		densityMode = static_cast<uint32_t>(mode);
-	ImGui::Checkbox("Exclude shadows near light geometry", &nearLightShadowExclusion);
+	ImGui::Checkbox(T("menu.dx12.scene.exclude_near_light", "Exclude shadows near light geometry"), &nearLightShadowExclusion);
 	ImGui::BeginDisabled(!nearLightShadowExclusion);
 	int nearUnits = int(nearLightExclusionUnits);
-	if (ImGui::SliderInt("Light-centered exclusion radius (units)", &nearUnits, 0, 512))
+	if (ImGui::SliderInt(T("menu.dx12.scene.exclusion_radius_units", "Light-centered exclusion radius (units)"), &nearUnits, 0, 512))
 		nearLightExclusionUnits = uint32_t(std::clamp(((nearUnits + 2) / 4) * 4, 0, 512));
 	ImGui::EndDisabled();
-	ImGui::SliderFloat("Shadow reach multiplier (1x = vanilla)", &shadowReachMultiplier,
+	ImGui::SliderFloat(T("menu.dx12.scene.shadow_reach_multiplier", "Shadow reach multiplier (1x = vanilla)"), &shadowReachMultiplier,
 		0.1f, 64.0f, "%.2fx", ImGuiSliderFlags_Logarithmic);
 	float fade = shadowFadeRange;
-	if (ImGui::SliderFloat("Shadow fade range fraction", &fade, 0.0f, 1.0f, "%.2f"))
+	if (ImGui::SliderFloat(T("menu.dx12.scene.shadow_fade_fraction", "Shadow fade range fraction"), &fade, 0.0f, 1.0f, "%.2f"))
 		shadowFadeRange = std::round(fade * 50.0f) / 50.0f;
-	ImGui::SliderFloat("Shadow falloff curve", &shadowFalloffCurve, 0.0f, 2.5f, "%.2f");
+	ImGui::SliderFloat(T("menu.dx12.scene.shadow_falloff_curve", "Shadow falloff curve"), &shadowFalloffCurve, 0.0f, 2.5f, "%.2f");
 }
 
 void DX12NativeScene::LoadSettings(json& input)
