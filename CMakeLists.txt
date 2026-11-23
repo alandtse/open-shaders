@@ -1311,7 +1311,7 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                 COMMAND
                     ${CMAKE_COMMAND} -DSRC_DIR="${AIO_DIR}/Shaders"
                     -DDST_DIR="${DEPLOY_TARGET}/Shaders"
-                    ${_preserve_runtime_args} -P
+                    ${_preserve_runtime_args} -DEXCLUDE_NATIVE_DXIL=ON -P
                     "${CMAKE_SOURCE_DIR}/cmake/SyncShaderDeploy.cmake"
                     ${_native_shader_only_copy_commands}
                 COMMAND
