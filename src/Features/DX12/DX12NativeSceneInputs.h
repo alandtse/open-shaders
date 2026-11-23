@@ -12,7 +12,6 @@ namespace DX12Native
 	{
 		DX12::SubcellKey subcell{};
 		std::shared_ptr<const DX12::Shape> shape;
-		bool supplementary = false;
 	};
 
 	/** @brief Scene inputs retained independently of later BLAS/TLAS GPU lifetimes. */

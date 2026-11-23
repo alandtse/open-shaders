@@ -197,9 +197,7 @@ namespace DX12Native
 
 	bool AccelerationScene::BuildTop(Build& a_build)
 	{
-		// 24-bit DXR InstanceID reserves the top bit for the runtime-origin marker.
-		if (!target || target->geometry.empty() ||
-			target->geometry.size() > std::min<size_t>(kMaximumInstances, (1u << 23)))
+		if (!target || target->geometry.empty() || target->geometry.size() > kMaximumInstances)
 			return false;
 		std::vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
 		auto top = std::make_shared<TopLevel>();
@@ -216,9 +214,8 @@ namespace DX12Native
 				return false;
 			D3D12_RAYTRACING_INSTANCE_DESC desc{};
 			std::memcpy(desc.Transform, input.shape->transform.data(), sizeof(desc.Transform));
-			desc.InstanceID = UINT(instances.size()) | (input.supplementary ? (1u << 23) : 0u);
-			// Debug-only selection: 1 = companion, 2 = runtime-supplemented.
-			desc.InstanceMask = input.supplementary ? 2u : 1u;
+			desc.InstanceID = UINT(instances.size());
+			desc.InstanceMask = 0xFF;
 			desc.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
 			desc.AccelerationStructure = found->second->acceleration->GetGPUVirtualAddress();
 			instances.push_back(desc);
