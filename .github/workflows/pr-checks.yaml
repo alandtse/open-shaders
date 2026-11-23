@@ -287,6 +287,26 @@ jobs:
                   done
                   ls timing
 
+            # An older dev run (two weeks back or more) lets the report show dev's
+            # own trend, which catches many small increases no single PR trips.
+            - name: Download reference compile timings
+              continue-on-error: true
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  REPO: ${{ github.repository }}
+              shell: bash
+              run: |
+                  mkdir -p timing-ref
+                  cutoff=$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%SZ)
+                  for runtime in VR SE; do
+                    id=$(gh api "repos/$REPO/actions/artifacts?name=shader-compile-timing-$runtime&per_page=100" \
+                      --jq "[.artifacts[] | select(.expired == false and .workflow_run.head_branch == \"dev\" and .created_at <= \"$cutoff\")][0].id // empty") || true
+                    if [ -n "$id" ] && gh api "repos/$REPO/actions/artifacts/$id/zip" > "timing-ref/$runtime.zip"; then
+                      unzip -oq "timing-ref/$runtime.zip" -d timing-ref || true
+                    fi
+                  done
+                  ls timing-ref
+
             - name: Download this PR's compile timings
               continue-on-error: true
               uses: actions/download-artifact@v7
@@ -303,6 +323,7 @@ jobs:
                   python tools/shader_cost_report.py --base "$BASE_SHA" --head refs/pr_head \
                     --timing-vr timing/shader-compile-timing-VR.json --timing-se timing/shader-compile-timing-SE.json \
                     --pr-timing-vr pr-timing/shader-compile-timing-VR.json --pr-timing-se pr-timing/shader-compile-timing-SE.json \
+                    --ref-timing-vr timing-ref/shader-compile-timing-VR.json --ref-timing-se timing-ref/shader-compile-timing-SE.json \
                     --out shader-cost-report.md
                   if [ -f shader-cost-report.md ]; then echo "has-report=true" >> "$GITHUB_OUTPUT"; fi
 

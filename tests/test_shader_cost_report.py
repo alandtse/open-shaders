@@ -174,6 +174,66 @@ class ShaderCostReportTest(unittest.TestCase):
         self.assertEqual(diff["worst"][0][0], "a")
         self.assertIsNone(REPORT.timing_diff(base, ""))
 
+    def _timing_files(self, base_rows, head_rows):
+        import json
+        import os
+        import tempfile
+
+        def write(rows):
+            handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+            json.dump(
+                [
+                    {
+                        "file": "Lit.hlsl",
+                        "entry": e,
+                        "type": "PSHADER",
+                        "duration_seconds": d,
+                    }
+                    for e, d in rows
+                ],
+                handle,
+            )
+            handle.close()
+            self.addCleanup(os.unlink, handle.name)
+            return handle.name
+
+        return write(base_rows), write(head_rows)
+
+    def test_uniform_runner_slowdown_is_normalised_away(self):
+        names = [f"e{i}" for i in range(150)]
+        base, head = self._timing_files(
+            [(n, 10.0 + i % 7) for i, n in enumerate(names)],
+            [(n, 2.2 * (10.0 + i % 7)) for i, n in enumerate(names)],
+        )
+        diff = REPORT.timing_diff(base, head)
+        self.assertAlmostEqual(diff["runner"], 2.2)
+        self.assertAlmostEqual(diff["delta_pct"], 0.0, places=6)
+        self.assertGreater(diff["raw_delta_pct"], 100.0)
+        self.assertIsNone(REPORT.timing_verdict(diff))
+
+    def test_real_regression_survives_runner_normalisation(self):
+        names = [f"e{i}" for i in range(150)]
+        base, head = self._timing_files(
+            [(n, 20.0) for n in names],
+            [(n, 20.0 * 0.6 * (3.0 if i < 30 else 1.0)) for i, n in enumerate(names)],
+        )
+        diff = REPORT.timing_diff(base, head)
+        self.assertAlmostEqual(diff["runner"], 0.6)
+        self.assertEqual(diff["slower"], 30)
+        self.assertEqual(REPORT.timing_verdict(diff), "up")
+
+    def test_normalisation_is_skipped_when_unsafe(self):
+        names = [f"e{i}" for i in range(150)]
+        rows = [(n, 20.0) for n in names]
+        slow = [(n, 40.0) for n in names]
+        base, head = self._timing_files(rows, slow)
+        self.assertIsNone(REPORT.timing_diff(base, head, structural_pct=8.0)["runner"])
+        self.assertAlmostEqual(REPORT.timing_diff(base, head, 0.0)["runner"], 2.0)
+        few_base, few_head = self._timing_files(rows[:50], slow[:50])
+        self.assertIsNone(REPORT.timing_diff(few_base, few_head)["runner"])
+        wild_base, wild_head = self._timing_files(rows, [(n, 100.0) for n in names])
+        self.assertIsNone(REPORT.timing_diff(wild_base, wild_head)["runner"])
+
     def test_measured_slowdown_sets_headline_when_structure_is_flat(self):
         flat = {
             "base_total": 5,
@@ -192,9 +252,10 @@ class ShaderCostReportTest(unittest.TestCase):
         }
         diff = {
             "compared": 30,
+            "threshold": 20.0,
             "base_s": 100.0,
             "pr_s": 120.0,
-            "delta_pct": 20.0,
+            "delta_pct": 25.0,
             "slower": 4,
             "faster": 0,
             "worst": [("Lit:Pixel:1", 50.0, 70.0)],
@@ -206,6 +267,32 @@ class ShaderCostReportTest(unittest.TestCase):
         self.assertIn(
             "unchanged", REPORT.render({"VR": flat}, False, True, {"VR": few})
         )
+
+    def test_threshold_grows_as_the_sample_shrinks(self):
+        self.assertGreater(REPORT.timing_threshold(50), REPORT.timing_threshold(500))
+        self.assertGreater(REPORT.timing_threshold(500), REPORT.timing_threshold(3000))
+        self.assertGreaterEqual(REPORT.timing_threshold(10**6), REPORT.THRESHOLD_PCT)
+
+    def test_small_sample_needs_a_bigger_move_than_a_full_run(self):
+        small = {"compared": 100, "delta_pct": 9.0}
+        full = {"compared": 3000, "delta_pct": 9.0}
+        self.assertIsNone(REPORT.timing_verdict(small))
+        self.assertEqual(REPORT.timing_verdict(full), "up")
+        self.assertEqual(REPORT.timing_verdict(dict(small, delta_pct=16.0)), "up")
+
+    def test_accumulated_small_increases_show_as_dev_drift(self):
+        names = [f"e{i}" for i in range(400)]
+        base, head = self._timing_files(
+            [(n, 20.0) for n in names],
+            [(n, 20.0 * (1.05**5 if i < 200 else 1.0)) for i, n in enumerate(names)],
+        )
+        drift = REPORT.timing_diff(base, head)
+        drift["ref_days"] = 14
+        self.assertGreaterEqual(drift["delta_pct"], REPORT.DRIFT_PCT)
+        self.assertIsNone(REPORT.timing_verdict(dict(drift, delta_pct=5.0)))
+        text = REPORT.render({"VR": None}, False, True, {}, {"VR": drift})
+        self.assertIn("VR dev trend", text)
+        self.assertIn("14-day-old dev run", text)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ import argparse
 import collections
 import hashlib
 import json
+import math
 import os
 import re
 import statistics
@@ -40,6 +41,14 @@ NEUTRAL_PCT = 1.0
 TIMING_MIN_SECONDS = 10.0
 TIMING_MIN_PCT = 25.0
 TIMING_MIN_ENTRIES = 20
+RUNNER_MIN_ENTRIES = 100
+RUNNER_MIN_BASE_SECONDS = 0.05
+RUNNER_MAX_FACTOR = 2.5
+# Run-to-run noise of the adjusted total shrinks with sample size: about floor + scale / sqrt(entries compared).
+NOISE_FLOOR_PCT = 6.0
+NOISE_SCALE_PCT = 80.0
+DRIFT_PCT = 10.0
+DOC_URL = "https://github.com/alandtse/open-shaders/blob/dev/docs/development/shader-compile-cost.md"
 MARKER = "<!-- shader-cost-report -->"
 
 
@@ -230,8 +239,38 @@ def compare(base, head, weight):
     }
 
 
-def timing_diff(baseline, measured):
-    """Compare per-entry compile seconds of a PR build against the dev baseline, over entries present in both."""
+def runner_factor(before, after, common, structural_pct):
+    """Runner-speed ratio (PR over baseline) as the baseline-time-weighted median per-entry ratio, or None when untrustworthy.
+
+    Weighting by baseline seconds keeps the factor consistent with the total, since light entries scale
+    differently from heavy ones. A source change that slows every recompiled shader equally would be
+    absorbed, so a structural growth estimate at or above the alert threshold disables the adjustment.
+    """
+    if abs(structural_pct or 0.0) >= THRESHOLD_PCT:
+        return None
+    ranked = sorted(
+        (after[k] / before[k], before[k])
+        for k in common
+        if before[k] >= RUNNER_MIN_BASE_SECONDS
+    )
+    if len(ranked) < RUNNER_MIN_ENTRIES:
+        return None
+    half, seen = sum(w for _, w in ranked) / 2, 0.0
+    for ratio, weight in ranked:
+        seen += weight
+        if seen >= half:
+            break
+    if not 1 / RUNNER_MAX_FACTOR <= ratio <= RUNNER_MAX_FACTOR:
+        return None
+    return ratio
+
+
+def timing_diff(baseline, measured, structural_pct=None):
+    """Compare per-entry compile seconds of a PR build against the dev baseline, over entries present in both.
+
+    Runner speed differs run to run, so when enough entries are shared the PR times are divided by the
+    median per-entry ratio before judging; the raw delta is kept for display.
+    """
 
     def load(path):
         if not path or not os.path.isfile(path):
@@ -245,38 +284,56 @@ def timing_diff(baseline, measured):
     common = [k for k in after if k in before]
     if not common:
         return None
+    runner = runner_factor(before, after, common, structural_pct)
+    scale = runner or 1.0
+    adjusted = {k: after[k] / scale for k in common}
     base_total, pr_total = sum(before[k] for k in common), sum(after[k] for k in common)
+    adj_total = pr_total / scale
+
+    def pct(total):
+        return 100 * (total - base_total) / base_total if base_total else 0.0
 
     def moved(sign):
         return sorted(
             (
                 k
                 for k in common
-                if sign * (after[k] - before[k]) >= TIMING_MIN_SECONDS
-                and sign * (after[k] - before[k]) >= before[k] * TIMING_MIN_PCT / 100
+                if sign * (adjusted[k] - before[k]) >= TIMING_MIN_SECONDS
+                and sign * (adjusted[k] - before[k]) >= before[k] * TIMING_MIN_PCT / 100
             ),
-            key=lambda k: -sign * (after[k] - before[k]),
+            key=lambda k: -sign * (adjusted[k] - before[k]),
         )
 
     slower, faster = moved(1), moved(-1)
-    worst = [(k[1], before[k], after[k]) for k in slower[:3]]
+    worst = [(k[1], before[k], adjusted[k]) for k in slower[:3]]
     return {
+        "threshold": timing_threshold(len(common)),
         "compared": len(common),
         "base_s": base_total,
-        "pr_s": pr_total,
-        "delta_pct": 100 * (pr_total - base_total) / base_total if base_total else 0.0,
+        "pr_s": adj_total,
+        "raw_pr_s": pr_total,
+        "delta_pct": pct(adj_total),
+        "raw_delta_pct": pct(pr_total),
+        "runner": runner,
         "slower": len(slower),
         "faster": len(faster),
         "worst": worst,
     }
 
 
+def timing_threshold(compared):
+    """Smallest measured change (percent) worth flagging for a comparison over `compared` entries."""
+    noise = NOISE_FLOOR_PCT + NOISE_SCALE_PCT / math.sqrt(max(compared, 1))
+    return max(THRESHOLD_PCT, noise)
+
+
 def timing_verdict(diff):
     if not diff or diff["compared"] < TIMING_MIN_ENTRIES:
         return None
-    if diff["delta_pct"] >= THRESHOLD_PCT:
+    limit = timing_threshold(diff["compared"])
+    if diff["delta_pct"] >= limit:
         return "up"
-    return "down" if diff["delta_pct"] <= -THRESHOLD_PCT else None
+    return "down" if diff["delta_pct"] <= -limit else None
 
 
 def verdict(result, flags_changed):
@@ -301,9 +358,9 @@ def _minutes(seconds):
     )
 
 
-def render(results, flags_changed, timed, timing=None):
+def render(results, flags_changed, timed, timing=None, drift=None):
     """Markdown comment; `results` maps runtime name to a compare() dict (or None when unavailable)."""
-    timing = timing or {}
+    timing, drift = timing or {}, drift or {}
     kinds = {name: verdict(r, flags_changed) for name, r in results.items() if r}
     measured = {timing_verdict(d) for d in timing.values()} - {None}
     if "up" in kinds.values():
@@ -367,13 +424,40 @@ def render(results, flags_changed, timed, timing=None):
         if not diff:
             continue
         line = f"**{name} measured:** {diff['compared']} recompiled shaders, {diff['delta_pct']:+.1f}% total compile time against dev ({diff['base_s']:.0f} s → {diff['pr_s']:.0f} s); {diff['slower']} slower, {diff['faster']} faster."
+        if diff.get("runner"):
+            line += f" Runner-adjusted: this run was {diff['runner']:.2f}× the dev baseline's speed, raw {diff['raw_delta_pct']:+.1f}% ({diff['raw_pr_s']:.0f} s)."
         if diff["worst"]:
             line += (
                 " Slowest regressions: "
                 + ", ".join(f"`{e}` {b:.0f} → {a:.0f} s" for e, b, a in diff["worst"])
                 + "."
             )
+        line += f" Flagged beyond ±{diff['threshold']:.0f}% (run-to-run noise at this sample size)."
         lines += ["", line]
+    for name, diff in drift.items():
+        if diff and diff["compared"] >= TIMING_MIN_ENTRIES:
+            lines += [
+                "",
+                f"**{name} dev trend:** `dev` compiles {diff['delta_pct']:+.1f}% vs the {diff['ref_days']}-day-old dev run ({diff['compared']} shared shaders)"
+                + (
+                    "; many small increases are adding up, see the guide below."
+                    if diff["delta_pct"] >= DRIFT_PCT
+                    else "; within noise."
+                ),
+            ]
+    if (
+        "up" in kinds.values()
+        or "up" in measured
+        or any(
+            d and d["compared"] >= TIMING_MIN_ENTRIES and d["delta_pct"] >= DRIFT_PCT
+            for d in drift.values()
+        )
+    ):
+        lines += [
+            "",
+            f"**If this is a problem:** find the slowest entries listed above, check them against the shaders you changed, "
+            f"and either cut the added permutations or move the cost behind a define. [How to reproduce and bisect]({DOC_URL}).",
+        ]
     if flags_changed:
         lines += [
             "",
@@ -383,7 +467,7 @@ def render(results, flags_changed, timed, timing=None):
         "",
         "<sub>Estimated from the validation configs and recent `dev` compile timings"
         + ("" if timed else " (no timing report available, so counts only)")
-        + f". Informational; alerts at ±{THRESHOLD_PCT:.0f}%. Source growth is a size proxy; measured times vary 10–20% run to run.</sub>",
+        + f". Informational; estimates alert at ±{THRESHOLD_PCT:.0f}%, measured times at the larger of that and the sample's noise band. Source growth is a size proxy; measured times are scaled by the median runner-speed ratio against the dev baseline.</sub>",
     ]
     return "\n".join(lines) + "\n"
 
@@ -472,6 +556,15 @@ def main():
         help="timing report of this PR's own build (incremental)",
     )
     ap.add_argument("--pr-timing-se", default="")
+    ap.add_argument(
+        "--ref-timing-vr",
+        default="",
+        help="older full dev timing report, to measure dev's own drift",
+    )
+    ap.add_argument("--ref-timing-se", default="")
+    ap.add_argument(
+        "--ref-days", type=int, default=14, help="age of the --ref-timing reports"
+    )
     ap.add_argument("--out", default="shader-cost-report.md")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
@@ -508,12 +601,20 @@ def main():
             else None
         )
     flags_changed = flag_signature(repo, base) != flag_signature(repo, args.head)
+    growth = {n: r["growth_pct"] if r else None for n, r in results.items()}
     timing = {
-        "VR": timing_diff(args.timing_vr, args.pr_timing_vr),
-        "SE": timing_diff(args.timing_se, args.pr_timing_se),
+        "VR": timing_diff(args.timing_vr, args.pr_timing_vr, growth.get("VR")),
+        "SE": timing_diff(args.timing_se, args.pr_timing_se, growth.get("SE")),
     }
+    drift = {
+        "VR": timing_diff(args.ref_timing_vr, args.timing_vr),
+        "SE": timing_diff(args.ref_timing_se, args.timing_se),
+    }
+    for d in drift.values():
+        if d:
+            d["ref_days"] = args.ref_days
     report = render(
-        results, flags_changed, all(w.timed for w in weights.values()), timing
+        results, flags_changed, all(w.timed for w in weights.values()), timing, drift
     )
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(report)
