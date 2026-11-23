@@ -1,0 +1,41 @@
+name: Log runner speed
+description: >-
+    Records the CPU model, core count and a fixed CPU benchmark in the job summary, so a
+    slow compile can be told apart from a slow VM (runners share one label but not one CPU).
+
+outputs:
+    single-thread-ms:
+        description: "Time of the fixed single-thread loop; lower is faster."
+        value: ${{ steps.bench.outputs.single }}
+    all-core-ms:
+        description: "Time of the same loop on every logical core at once."
+        value: ${{ steps.bench.outputs.all }}
+
+runs:
+    using: composite
+    steps:
+        - name: Measure runner speed
+          id: bench
+          shell: pwsh
+          run: |
+              Add-Type -TypeDefinition @'
+              using System.Threading.Tasks;
+              public static class RunnerBench {
+                  public static long Spin() {
+                      long x = 1;
+                      for (long i = 0; i < 300000000L; i++) x = x * 6364136223846793005L + 1442695040888963407L;
+                      return x;
+                  }
+                  public static void SpinAll(int n) { Parallel.For(0, n, i => Spin()); }
+              }
+              '@
+              $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+              $cores = [Environment]::ProcessorCount
+              [void][RunnerBench]::Spin()
+              $single = [int](Measure-Command { [void][RunnerBench]::Spin() }).TotalMilliseconds
+              $all = [int](Measure-Command { [RunnerBench]::SpinAll($cores) }).TotalMilliseconds
+              "single=$single" >> $env:GITHUB_OUTPUT
+              "all=$all" >> $env:GITHUB_OUTPUT
+              $line = "Runner: $($cpu.Name.Trim()), $cores logical cores, $($cpu.MaxClockSpeed) MHz; single-thread $single ms, all-core $all ms"
+              Write-Host $line
+              "- $env:GITHUB_JOB ${{ matrix.config.name || '' }} ${{ matrix.compiler.name || '' }}: $line" >> $env:GITHUB_STEP_SUMMARY

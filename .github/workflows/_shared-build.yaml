@@ -129,6 +129,9 @@ jobs:
                   persist-credentials: false
                   allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' }}
 
+            - name: Log runner speed
+              uses: ./.github/actions/log-runner-speed
+
             - name: Setup Build Environment
               id: setup
               uses: ./.github/actions/setup-build-environment
@@ -236,6 +239,9 @@ jobs:
                   submodules: recursive
                   persist-credentials: false
                   allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' }}
+
+            - name: Log runner speed
+              uses: ./.github/actions/log-runner-speed
 
             - name: Check for HLSL Changes
               id: check-hlsl
