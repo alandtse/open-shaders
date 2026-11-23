@@ -2848,19 +2848,25 @@ namespace SIE
 		}
 	}
 
-	winrt::com_ptr<ID3D11GeometryShader> ShaderCache::GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor)
+	std::vector<std::pair<const char*, const char*>> ShaderCache::GetTechniqueDefines(const RE::BSShader& shader, uint32_t descriptor)
 	{
-		std::scoped_lock lock(paraboloidClipMutex);
-		if (const auto it = paraboloidClipShaders.find(vertexDescriptor); it != paraboloidClipShaders.end())
-			return it->second;
 		std::array<D3D_SHADER_MACRO, 64> macros{};
-		SShaderCache::GetShaderDefines(shader, vertexDescriptor, std::span{ macros });
+		SShaderCache::GetShaderDefines(shader, descriptor, std::span{ macros });
 		std::vector<std::pair<const char*, const char*>> defines;
 		for (const auto& macro : macros) {
 			if (!macro.Name)
 				break;
 			defines.emplace_back(macro.Name, macro.Definition);
 		}
+		return defines;
+	}
+
+	winrt::com_ptr<ID3D11GeometryShader> ShaderCache::GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor)
+	{
+		std::scoped_lock lock(paraboloidClipMutex);
+		if (const auto it = paraboloidClipShaders.find(vertexDescriptor); it != paraboloidClipShaders.end())
+			return it->second;
+		auto defines = GetTechniqueDefines(shader, vertexDescriptor);
 		winrt::com_ptr<ID3D11GeometryShader> geometryShader;
 		const std::wstring path = SShaderCache::GetShaderPath(shader.fxpFilename);
 		if (const auto blob = Util::CompileShaderBlob(path.c_str(), defines, "gs_5_0")) {

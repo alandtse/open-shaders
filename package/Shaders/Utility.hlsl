@@ -11,6 +11,9 @@
 #	include "Common/TreeWind.hlsli"
 #endif
 #include "Common/VR.hlsli"
+#if defined(PSHADER) && (defined(INTERIOR_WINDOW_PANE) || defined(INTERIOR_WINDOW_CASTER) || defined(RENDER_SHADOWMASK))
+#	include "Common/WindowShadow.hlsli"
+#endif
 
 #if defined(RENDER_SHADOWMASK) || defined(RENDER_SHADOWMASKSPOT) || defined(RENDER_SHADOWMASKPB) || defined(RENDER_SHADOWMASKDPB)
 #	define RENDER_SHADOWMASK_ANY
@@ -87,6 +90,9 @@ struct VS_OUTPUT
 	float CullDistance: SV_CullDistance0;  // p11
 	uint EyeIndex: EYEIDX0;
 #endif  // VR
+#if (defined(RENDER_SHADOWMAP) || defined(INTERIOR_WINDOW_CASTER)) && !defined(RENDER_SHADOWMAP_PB) && !defined(INTERIOR_WINDOW_PANE)
+	float2 CasterClipZW: TEXCOORD7;
+#endif
 };
 
 #ifdef VSHADER
@@ -251,6 +257,9 @@ VS_OUTPUT main(VS_INPUT input)
 	}
 #		endif
 
+#		if defined(RENDER_SHADOWMAP) && !defined(RENDER_SHADOWMAP_PB)
+	vsout.CasterClipZW = positionCS.zw;
+#		endif
 #		if defined(RENDER_SHADOWMAP) && defined(RENDER_SHADOWMAP_CLAMPED)
 	positionCS.z = max(0, positionCS.z);
 #		endif
@@ -509,9 +518,20 @@ float SampleDualParaboloidShadowPCF(Texture2DArray<float4> tex, SamplerCompariso
 	return visibility / ShadowPCFSampleCount;
 }
 
+#	if defined(INTERIOR_WINDOW_CASTER) && !defined(RENDER_SHADOWMAP_PB)
+void ClipWindowCaster(PS_INPUT input)
+{
+	// Clamping and raster bias flatten sunward meshes onto the cascade's near plane.
+	WindowShadow::ClipSunwardCaster(input.PositionCS.xy, input.CasterClipZW.x / input.CasterClipZW.y);
+}
+#	endif
+
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
+#	if defined(INTERIOR_WINDOW_CASTER) && !defined(RENDER_SHADOWMAP_PB)
+	ClipWindowCaster(input);
+#	endif
 
 #	if !defined(VR)
 	uint eyeIndex = 0;
@@ -669,6 +689,8 @@ PS_OUTPUT main(PS_INPUT input)
 		shadowVisibility = SampleShadowPCF(TexShadowMapSamplerComp, SampShadowMapSamplerComp, positionLS.xy, cascadeIndex, shadowMapCompareValue, rotationMatrix, ShadowSampleParam.z);
 #			endif
 
+		if (SharedData::InInterior)
+			shadowVisibility *= WindowShadow::Visibility(uint(cascadeIndex), positionLS);
 		if (cascadeIndex < 1 && StartSplitDistances.y < shadowMapDepth) {
 			float cascade1ShadowVisibility = 0;
 
@@ -688,6 +710,8 @@ PS_OUTPUT main(PS_INPUT input)
 			cascade1ShadowVisibility = SampleShadowPCF(TexShadowMapSamplerComp, SampShadowMapSamplerComp, cascade1PositionLS.xy, 1, cascade1ShadowMapCompareValue, rotationMatrix, ShadowSampleParam.z);
 #			endif
 
+			if (SharedData::InInterior)
+				cascade1ShadowVisibility *= WindowShadow::Visibility(1, cascade1PositionLS);
 			float cascade1BlendFactor = smoothstep(0, 1, (shadowMapDepth - StartSplitDistances.y) / (EndSplitDistances.x - StartSplitDistances.y));
 			shadowVisibility = lerp(shadowVisibility, cascade1ShadowVisibility, cascade1BlendFactor);
 
@@ -827,12 +851,16 @@ PS_OUTPUT main(PS_INPUT input)
 #		elif defined(RENDER_NORMAL_CLEAR) && !defined(DEBUG_COLOR)
 	testAlpha = 0;
 #		endif
+#		if !defined(INTERIOR_WINDOW_PANE)
 	if (-AlphaTestRefRS + testAlpha < 0) {
 		discard;
 	}
+#		endif
 #	endif
 
-#	if defined(RENDER_SHADOWMASK_ANY)
+#	if defined(INTERIOR_WINDOW_PANE)
+	psout.Color = WindowShadow::Encode(input.TexCoord1.x / input.TexCoord1.y, testAlpha < AlphaTestRefRS).xxxx;
+#	elif defined(RENDER_SHADOWMASK_ANY)
 	psout.Color.xyzw = shadowColor;
 #	elif defined(DEBUG_SHADOWSPLIT)
 

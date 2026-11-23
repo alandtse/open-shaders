@@ -1261,6 +1261,7 @@ bool UseSkylightingShadowVisibility()
 #	define LinearSampler SampColorSampler
 
 #	include "Common/ShadowSampling.hlsli"
+#	include "Common/WindowShadow.hlsli"
 
 #	if defined(LIGHT_LIMIT_FIX)
 #		include "LightLimitFix/LightLimitFix.hlsli"
@@ -3265,6 +3266,21 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		dirSoftShadow = PBR::GetFoliageShadowVisibility(dirSoftShadow, material.Thickness);
 	}
 #	endif
+
+	if (SharedData::InInterior && SharedData::HasDirectionalShadows) {
+		uint width, height;
+		WindowShadow::NearEntry.GetDimensions(width, height);
+		if (width != 0) {
+			DirectionalShadowLightData sun = DirectionalShadowLights[0];
+			float depth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(input.WorldPosition.xyz, eyeIndex));
+			uint cascade = uint(depth > sun.EndSplitDistances.x);
+			float visibility = depth < sun.EndSplitDistances.y ?
+			                       WindowShadow::Visibility(cascade, mul(sun.ShadowProj[cascade], float4(worldPositionWS, 1)).xyz) :
+			                       0.0;
+			dirDetailedShadow *= visibility;
+			dirSoftShadow *= visibility;
+		}
+	}
 
 	float3 diffuseColor = 0.0.xxx;
 	float3 specularColor = 0.0.xxx;

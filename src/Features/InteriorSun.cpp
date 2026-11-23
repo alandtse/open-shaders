@@ -20,9 +20,7 @@ void InteriorSun::DrawSettings()
 							  "Will prevent most light leaking through unmasked/unprepared interiors at a small performance cost. "));
 	}
 	if (ImGui::SliderFloat(T(TKEY("interior_shadow_distance"), "Interior Shadow Distance"), &settings.InteriorShadowDistance, 1000.0f, 8000.0f)) {
-		*gInteriorShadowDistance = settings.InteriorShadowDistance;
-		auto tes = globals::game::tes;
-		SetShadowDistance(tes && tes->interiorCell);
+		ApplyInteriorShadowDistance();
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("interior_shadow_distance_tooltip"),
@@ -52,6 +50,7 @@ void InteriorSun::RestoreDefaultSettings()
 
 void InteriorSun::PostPostLoad()
 {
+	stl::write_vfunc<0x25, StartShadowCamera>(RE::VTABLE_BSShaderAccumulator[0]);
 	stl::write_thunk_call<BSBatchRenderer_RenderPassImmediately>(REL::RelocationID(100852, 107642).address() + REL::Relocate(0x29E, 0x28F));
 
 	// Hooks and patch to enable directional lighting for interiors
@@ -84,6 +83,7 @@ void InteriorSun::PostPostLoad()
 
 void InteriorSun::EarlyPrepass()
 {
+	FinishWindowShadows();
 	isInteriorWithSun = IsInteriorWithSun(RE::TES::GetSingleton()->interiorCell);
 	if (!isInteriorWithSun && !arraysCleared) {
 		ClearArrays();
@@ -234,8 +234,14 @@ bool InteriorSun::IsInSunDirectionAndWithinShadowDistance(const RE::NiPointer<RE
 	return projection >= -radius && (distance - radius) <= *gShadowDistance;
 }
 
-void InteriorSun::SetShadowDistance(bool inInterior)
+void InteriorSun::ApplyInteriorShadowDistance()
 {
-	RE::BSShaderManager::UpdateShadowDistanceAndInteriorFlag(inInterior);
+	if (!gInteriorShadowDistance || !gShadowDistance)
+		return;
+	const bool interior = globals::game::tes && globals::game::tes->interiorCell;
+	if (*gInteriorShadowDistance != settings.InteriorShadowDistance || (interior && *gShadowDistance != settings.InteriorShadowDistance)) {
+		*gInteriorShadowDistance = settings.InteriorShadowDistance;
+		RE::BSShaderManager::UpdateShadowDistanceAndInteriorFlag(interior);
+	}
 }
 #undef I18N_KEY_PREFIX

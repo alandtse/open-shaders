@@ -26,11 +26,21 @@ public:
 	virtual void PostPostLoad() override;
 	/** @brief Updates the interior sun state based on the current cell during the early prepass. */
 	virtual void EarlyPrepass() override;
+	bool WantsPreShadowMapsHook() const override { return true; }
+	void PreShadowMaps() override;
+	bool WantsDrawHook() const override { return true; }
+	void OnDraw() override;
+	bool WantsRenderPassSkipHook() const override { return true; }
+	bool ShouldSkipRenderPass(const RE::BSRenderPass* pass) override;
+	void ClearShaderCache() override;
+	void OnSceneTransitionReset(bool opening) override;
+	void RegisterUxActions() override;
 
 	/** @brief Registers the menu open/close event handler for tracking main menu state. */
 	virtual void DataLoaded() override
 	{
 		MenuOpenCloseEventHandler::Register();
+		LoadWindowTextures();
 	}
 
 	struct Settings
@@ -118,6 +128,14 @@ public:
 	virtual bool IsCore() const override { return true; };
 
 private:
+	struct StartShadowCamera
+	{
+		static void thunk(RE::BSShaderAccumulator* accumulator, RE::NiCamera* camera);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	void LoadWindowTextures();
+	void FinishWindowShadows();
+
 	enum class CellFlagExt : uint16_t
 	{
 		kSunlightShadows = 1 << 15,
@@ -146,5 +164,5 @@ private:
 
 	void PopulateReplacementJobArrays(RE::TESObjectCELL* cell, const RE::NiPointer<RE::BSPortalGraph>& portalGraph, const RE::BSShadowDirectionalLight* dirLight, RE::BSTArray<RE::BSTArray<RE::NiPointer<RE::NiAVObject>>>& jobArrays);
 
-	static void SetShadowDistance(bool inInterior);
+	void ApplyInteriorShadowDistance();
 };
