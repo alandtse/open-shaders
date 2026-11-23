@@ -54,6 +54,13 @@ struct UnifiedWater : OverlayFeature
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	/** @brief Hook that repoints shared water reflections and normals away from the removed water's material. */
+	struct TESWaterSystem_RemoveWater
+	{
+		static bool thunk(RE::TESWaterSystem* waterSystem, RE::NiAVObject* water);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	/** @brief Hook that controls water mesh sub-visibility for terrain LOD nodes. */
 	struct BGSTerrainNode_UpdateWaterMeshSubVisibility
 	{

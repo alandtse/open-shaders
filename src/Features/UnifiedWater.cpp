@@ -130,6 +130,50 @@ namespace
 		QueueDeferredRelease(released);
 		entries.erase(it);
 	}
+
+	/** @brief The water shader material of @p object's shape, or nullptr. */
+	RE::BSWaterShaderMaterial* GetWaterMaterial(const RE::TESWaterObject* object)
+	{
+		const auto shape = object ? object->shape.get() : nullptr;
+		const auto prop = shape ? shape->GetGeometryRuntimeData().shaderProperty.get() : nullptr;
+		if (!prop || prop->GetRTTI() != globals::rtti::BSWaterShaderPropertyRTTI.get())
+			return nullptr;
+		return static_cast<RE::BSWaterShaderMaterial*>(prop->GetBaseMaterial());
+	}
+
+	/** @brief Points each entry at a material its remaining users still have, since RemoveWater leaves the raw pointer to the removed water's freed material. */
+	template <class Entry>
+	void RepointSharedMaterials(const RE::TESWaterSystem* waterSystem, RE::BSTArray<RE::NiPointer<Entry>>& entries, RE::NiPointer<Entry> RE::TESWaterObject::*member)
+	{
+		for (const auto& entry : entries) {
+			if (!entry)
+				continue;
+			RE::BSWaterShaderMaterial* replacement = nullptr;
+			bool stillUsed = false;
+			for (const auto& object : waterSystem->waterObjects) {
+				if (!object || (object.get()->*member).get() != entry.get())
+					continue;
+				const auto material = GetWaterMaterial(object.get());
+				if (material == entry->waterMaterial) {
+					stillUsed = true;
+					break;
+				}
+				if (!replacement)
+					replacement = material;
+			}
+			if (!stillUsed && replacement)
+				entry->waterMaterial = replacement;
+		}
+	}
+}
+
+bool UnifiedWater::TESWaterSystem_RemoveWater::thunk(RE::TESWaterSystem* waterSystem, RE::NiAVObject* water)
+{
+	RE::BSSpinLockGuard guard(waterSystem->lock);
+	const bool result = func(waterSystem, water);
+	RepointSharedMaterials(waterSystem, waterSystem->waterReflections, &RE::TESWaterObject::reflections);
+	RepointSharedMaterials(waterSystem, waterSystem->waterNormals, &RE::TESWaterObject::normals);
+	return result;
 }
 
 void UnifiedWater::DrawDebugSection()
@@ -453,6 +497,8 @@ void UnifiedWater::PostPostLoad()
 	stl::detour_thunk<BGSTerrainBlock_Attach>(REL::RelocationID(30934, 31737));
 
 	stl::detour_thunk<BGSTerrainBlock_Detach>(REL::RelocationID(30936, 31739));
+
+	stl::detour_thunk<TESWaterSystem_RemoveWater>(REL::RelocationID(31391, 32182));
 
 	stl::detour_thunk<BGSTerrainNode_UpdateWaterMeshSubVisibility>(Util::VersionedRelocation::ResolveID(31059, 31846, 523588));
 
