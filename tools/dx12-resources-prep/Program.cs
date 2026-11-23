@@ -158,8 +158,8 @@ internal static class SceneTile
 {
     private const int MaxShapes = 384;
     private const int MaxLights = 2048;
-    private const int MaxNifSources = 1024;
-    private const int MaxMissingShapes = 1024;
+    private const int MaxNifSources = 4096;
+    private const int MaxMissingShapes = 4096;
     private const long MaxGeometryBytes = 48L * 1024 * 1024;
     private const uint MaxArchiveMeshBytes = 16u * 1024 * 1024;
 

@@ -415,7 +415,7 @@ namespace DX12
 			// are identifiers, not authorization to load arbitrary paths or trust triangles.
 			if (const auto nifSources = root.find("nifSources");
 				nifSources != root.end() && nifSources->is_array()) {
-				if (nifSources->size() > 1024)
+				if (nifSources->size() > 4096)
 					throw std::invalid_argument("Companion NIF source manifest exceeds limit");
 				for (const auto& item : *nifSources) {
 					NifSourceDescriptor source;
@@ -430,7 +430,7 @@ namespace DX12
 			}
 			if (const auto missing = root.find("missingShapes");
 				missing != root.end() && missing->is_array()) {
-				if (missing->size() > 1024)
+				if (missing->size() > 4096)
 					throw std::invalid_argument("Companion missing NIF manifest exceeds limit");
 				for (const auto& item : *missing) {
 					MissingNifShapeDescriptor source;
