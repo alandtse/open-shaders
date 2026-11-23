@@ -67,6 +67,10 @@ on:
                 description: "Forces cpp_tests build+run when 'true'; lets PR-checks skip it otherwise"
                 type: string
                 default: "true"
+            python-tests-should-build:
+                description: "Runs the Python unit tests when 'true'; lets PR-checks skip them otherwise"
+                type: string
+                default: "true"
             cache-key-suffix:
                 description: "Optional suffix to invalidate the build cache"
                 type: string
@@ -124,6 +128,30 @@ jobs:
                   submodules: recursive
                   persist-credentials: false
                   allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' }}
+
+            # Inline so no code from the checked-out ref runs before the cache steps.
+            - name: Log runner speed
+              shell: pwsh
+              run: |
+                  Add-Type -TypeDefinition @'
+                  using System.Threading.Tasks;
+                  public static class RunnerBench {
+                      public static long Spin() {
+                          long x = 1;
+                          for (long i = 0; i < 300000000L; i++) x = x * 6364136223846793005L + 1442695040888963407L;
+                          return x;
+                      }
+                      public static void SpinAll(int n) { Parallel.For(0, n, i => Spin()); }
+                  }
+                  '@
+                  $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+                  $cores = [Environment]::ProcessorCount
+                  [void][RunnerBench]::Spin()
+                  $single = [int](Measure-Command { [void][RunnerBench]::Spin() }).TotalMilliseconds
+                  $all = [int](Measure-Command { [RunnerBench]::SpinAll($cores) }).TotalMilliseconds
+                  $line = "Runner: $($cpu.Name.Trim()), $cores logical cores, $($cpu.MaxClockSpeed) MHz; single-thread $single ms, all-core $all ms"
+                  Write-Host $line
+                  "- ${{ github.job }} ${{ matrix.compiler.name }}: $line" >> $env:GITHUB_STEP_SUMMARY
 
             - name: Setup Build Environment
               id: setup
@@ -232,6 +260,32 @@ jobs:
                   submodules: recursive
                   persist-credentials: false
                   allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' }}
+
+            # Inline so no code from the checked-out ref runs before the cache steps.
+            - name: Log runner speed
+              shell: pwsh
+              run: |
+                  Add-Type -TypeDefinition @'
+                  using System.Threading.Tasks;
+                  public static class RunnerBench {
+                      public static long Spin() {
+                          long x = 1;
+                          for (long i = 0; i < 300000000L; i++) x = x * 6364136223846793005L + 1442695040888963407L;
+                          return x;
+                      }
+                      public static void SpinAll(int n) { Parallel.For(0, n, i => Spin()); }
+                  }
+                  '@
+                  $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+                  $cores = [Environment]::ProcessorCount
+                  [void][RunnerBench]::Spin()
+                  $single = [int](Measure-Command { [void][RunnerBench]::Spin() }).TotalMilliseconds
+                  $all = [int](Measure-Command { [RunnerBench]::SpinAll($cores) }).TotalMilliseconds
+                  $line = "Runner: $($cpu.Name.Trim()), $cores logical cores, $($cpu.MaxClockSpeed) MHz; single-thread $single ms, all-core $all ms"
+                  Write-Host $line
+                  "- ${{ github.job }} ${{ matrix.config.name }} ${{ matrix.pass }}: $line" >> $env:GITHUB_STEP_SUMMARY
+                  [pscustomobject]@{ cpu = $cpu.Name.Trim(); cores = $cores; mhz = $cpu.MaxClockSpeed; single_ms = $single; all_ms = $all } |
+                      ConvertTo-Json | Set-Content -Encoding utf8 "$env:RUNNER_TEMP/shader-compile-runner-${{ matrix.config.runtime }}.json"
 
             - name: Check for HLSL Changes
               id: check-hlsl
@@ -396,12 +450,19 @@ jobs:
             # Release-parity only: per-shader fxc /O3 compile durations, sorted
             # slowest-first (hlslkit --timing-report), for spotting compile-time
             # hot spots without a manual A/B bisection.
+            - name: Stage runner speed next to the timing report
+              if: always() && matrix.pass == 'release-parity' && steps.check-hlsl.outputs.skip != 'true'
+              shell: pwsh
+              run: Copy-Item -ErrorAction SilentlyContinue "$env:RUNNER_TEMP/shader-compile-runner-${{ matrix.config.runtime }}.json" build/
+
             - name: Upload shader compile timing report
               if: always() && matrix.pass == 'release-parity' && steps.check-hlsl.outputs.skip != 'true'
               uses: actions/upload-artifact@v7
               with:
                   name: shader-compile-timing-${{ matrix.config.runtime }}
-                  path: build/shader-compile-timing-${{ matrix.config.runtime }}.json
+                  path: |
+                      build/shader-compile-timing-${{ matrix.config.runtime }}.json
+                      build/shader-compile-runner-${{ matrix.config.runtime }}.json
                   retention-days: 30
                   if-no-files-found: ignore
 
@@ -567,7 +628,7 @@ jobs:
               run: |
                   if [ "${{ github.event_name }}" != "pull_request_target" ]; then
                     echo "skip=false" >> $GITHUB_OUTPUT
-                  elif [ "${{ inputs.cpp-tests-should-build }}" != "true" ]; then
+                  elif [ "${{ inputs.python-tests-should-build }}" != "true" ]; then
                     echo "skip=true" >> $GITHUB_OUTPUT
                   else
                     echo "skip=false" >> $GITHUB_OUTPUT

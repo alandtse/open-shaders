@@ -210,7 +210,7 @@ namespace SnowCover
 		float weatherMult = GetWeatherRange(p, viewDist) * (SharedData::snowCoverSettings.TimeSnowing * SharedData::snowCoverSettings.TimeSnowing * SharedData::snowCoverSettings.TimeSnowing) * max(WeatherDensityScale, SharedData::snowCoverSettings.SnowingDensity) / WeatherDensityScale;
 		weatherMult = clamp((weatherMult)*max(SharedData::snowCoverSettings.minAngle, worldNormal.z), -1, 1);
 		float env_mult = saturate(max((GetEnvironmentalMultiplier(p) + lift / SharedData::snowCoverSettings.BlendSmoothness + disp * DisplacementInfluence), weatherMult)) - waterDist;
-#		if !defined(LANDSCAPE) && !defined(LOD) && !defined(LODLANDSCAPE) && !defined(LODLANDNOISE)
+#		if !defined(LANDSCAPE) && !defined(LODLANDSCAPE) && !defined(LODLANDNOISE) && !defined(WORLD_MAP)
 		float distMult = GetObjectFade(viewDist);
 #		else
 		float distMult = 1;
@@ -229,6 +229,46 @@ namespace SnowCover
 		return min(1, mult);
 	}
 
+#		if !defined(LANDSCAPE) && !defined(TREE_ANIM) && !defined(SKINNED)
+	static const float LandscapeCellSize = 4096.0;
+	static const uint NoLandscape = 0;
+	static const uint PBRLandscape = 2;
+	static const uint MixedLandscape = 3;
+	StructuredBuffer<uint> LandscapeMaterials : register(t46);
+
+	bool UsesPBRLandscape(float2 worldPosition, bool nativePBR)
+	{
+		uint mode = SharedData::snowCoverSettings.LandscapeMaterialMode;
+		bool usesPBR = mode == PBRLandscape || (mode == NoLandscape && nativePBR);
+		[branch] if (mode == MixedLandscape)
+		{
+			int width = SharedData::snowCoverSettings.LandscapeGridWidth;
+			int2 cell = clamp(int2(floor(worldPosition / LandscapeCellSize)) - SharedData::snowCoverSettings.LandscapeGridOrigin, 0, width - 1);
+			usesPBR = LandscapeMaterials[cell.y * width + cell.x] != 0;
+		}
+		return usesPBR;
+	}
+#		endif
+
+	float3 SurfaceSnowAlbedo(float3 sampleColor, float3 materialAlbedo, float2 worldPosition)
+	{
+		float3 albedo = materialAlbedo;
+#		if !defined(LANDSCAPE) && !defined(TREE_ANIM) && !defined(SKINNED)
+#			if defined(TRUE_PBR)
+		[branch] if (!UsesPBRLandscape(worldPosition, true))
+		{
+			albedo = Color::EnbColorPow(Color::DiffuseToWorking(Color::LinearToSrgb(sampleColor)));
+		}
+#			else
+		[branch] if (UsesPBRLandscape(worldPosition, false))
+		{
+			albedo = Color::LinearToPBRMaterial(Color::EnbColorPow(Color::DiffuseToWorking(sampleColor, true)));
+		}
+#			endif
+#		endif
+		return albedo;
+	}
+
 #		if defined(TRUE_PBR)
 	float ApplySnowPBR(inout MaterialProperties material, inout float3 worldNormal, float disp, float3 p, float skylight, float waterDist, float viewDist, float2 uv, float lift)
 	{
@@ -240,7 +280,7 @@ namespace SnowCover
 		if (alt) {
 			rmaos = IceRmaos.Sample(SampColorSampler, uv);
 			float3 albedo = IceAlbedo.Sample(SampColorSampler, uv).rgb;
-			albedo = Color::Diffuse(albedo) * SharedData::snowCoverSettings.AltTint.rgb;
+			albedo = SurfaceSnowAlbedo(albedo, Color::Diffuse(albedo), p.xy) * SharedData::snowCoverSettings.AltTint.rgb;
 			material.BaseColor = lerp(material.BaseColor, albedo, mult * SharedData::snowCoverSettings.AltTint.w);
 			worldNormal = TransformNormal(IceNormal.Sample(SampNormalSampler, uv).rgb);
 			material.F0 = lerp(material.F0, rmaos.w * SharedData::snowCoverSettings.altSpec, mult);
@@ -248,7 +288,7 @@ namespace SnowCover
 		} else {
 			rmaos = SnowRmaos.Sample(SampColorSampler, uv);
 			float3 albedo = SnowAlbedo.Sample(SampColorSampler, uv).rgb;
-			albedo = Color::Diffuse(albedo) * SharedData::snowCoverSettings.MainTint.rgb;
+			albedo = SurfaceSnowAlbedo(albedo, Color::Diffuse(albedo), p.xy) * SharedData::snowCoverSettings.MainTint.rgb;
 			material.BaseColor = lerp(material.BaseColor, albedo, mult * SharedData::snowCoverSettings.MainTint.w);
 			worldNormal = TransformNormal(SnowNormal.Sample(SampNormalSampler, uv).rgb);
 			material.F0 = lerp(material.F0, rmaos.w * SharedData::snowCoverSettings.mainSpec, mult);
@@ -279,23 +319,27 @@ namespace SnowCover
 			return 0;
 		float4 rmaos;
 		if (alt) {
-			float3 albedo = IceAlbedo.Sample(SampColorSampler, uv).rgb;
-			albedo = Color::Diffuse(Color::LinearToSrgb(albedo)) * SharedData::snowCoverSettings.AltTint.rgb * Color::PBRLightingScale;
+			float3 sampleColor = IceAlbedo.Sample(SampColorSampler, uv).rgb;
+			float3 albedo = Color::Diffuse(Color::LinearToSrgb(sampleColor));
+			float3 baseAlbedo = SurfaceSnowAlbedo(sampleColor, albedo, p.xy) * SharedData::snowCoverSettings.AltTint.rgb * Color::PBRLightingScale;
+			albedo = albedo * SharedData::snowCoverSettings.AltTint.rgb * Color::PBRLightingScale;
 			rmaos = IceRmaos.Sample(SampColorSampler, uv);
 			material.Roughness = lerp(material.Roughness, rmaos.x, mult);
 			material.Shininess = lerp(material.Shininess, LegacySpecularScale * SharedData::snowCoverSettings.altSpec * rmaos.w, mult);
 			worldNormal = TransformNormal(IceNormal.Sample(SampNormalSampler, uv).rgb);
-			material.BaseColor = lerp(material.BaseColor, rmaos.z * albedo, mult * SharedData::snowCoverSettings.AltTint.w);
+			material.BaseColor = lerp(material.BaseColor, rmaos.z * baseAlbedo, mult * SharedData::snowCoverSettings.AltTint.w);
 			material.SpecularColor = lerp(material.SpecularColor, rmaos.y * albedo + float3(1, 1, 1) * (1 - rmaos.y), mult);
 			material.F0 = lerp(material.F0, rmaos.w * SharedData::snowCoverSettings.altSpec, mult);
 		} else {
-			float3 albedo = SnowAlbedo.Sample(SampColorSampler, uv).rgb;
-			albedo = Color::Diffuse(Color::LinearToSrgb(albedo)) * SharedData::snowCoverSettings.MainTint.rgb * Color::PBRLightingScale;
+			float3 sampleColor = SnowAlbedo.Sample(SampColorSampler, uv).rgb;
+			float3 albedo = Color::Diffuse(Color::LinearToSrgb(sampleColor));
+			float3 baseAlbedo = SurfaceSnowAlbedo(sampleColor, albedo, p.xy) * SharedData::snowCoverSettings.MainTint.rgb * Color::PBRLightingScale;
+			albedo = albedo * SharedData::snowCoverSettings.MainTint.rgb * Color::PBRLightingScale;
 			rmaos = SnowRmaos.Sample(SampColorSampler, uv);
 			material.Roughness = lerp(material.Roughness, rmaos.x, mult);
 			material.Shininess = lerp(material.Shininess, LegacySpecularScale * SharedData::snowCoverSettings.mainSpec * rmaos.w, mult);
 			worldNormal = TransformNormal(SnowNormal.Sample(SampNormalSampler, uv).rgb);
-			material.BaseColor = lerp(material.BaseColor, rmaos.z * albedo, mult * SharedData::snowCoverSettings.MainTint.w);
+			material.BaseColor = lerp(material.BaseColor, rmaos.z * baseAlbedo, mult * SharedData::snowCoverSettings.MainTint.w);
 			material.SpecularColor = lerp(material.SpecularColor, rmaos.y * albedo + float3(1, 1, 1) * (1 - rmaos.y), mult);
 			material.F0 = lerp(material.F0, rmaos.w * SharedData::snowCoverSettings.mainSpec, mult);
 		}

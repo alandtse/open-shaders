@@ -18,6 +18,7 @@
 #include "Profiler.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/RenderExtent.h"
 #include "Utils/SettingsControl.h"
 #include "Utils/SettingsPatch.h"
 
@@ -470,6 +471,10 @@ void PostProcessing::SetupResources()
 {
 	resourcesReady = false;
 	postProcessingOutput = nullptr;
+	D3D11_TEXTURE2D_DESC mainDesc;
+	globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(Util::AsW32(&mainDesc));
+	if (Util::IsMinimizedExtent(mainDesc.Width, mainDesc.Height))
+		return;
 	json activeSettings;
 	SaveActiveSettings(activeSettings);
 	alternatePipeline = {};

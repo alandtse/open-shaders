@@ -1,3 +1,4 @@
+#include "BuildInfo.h"
 #include "Compatibility.h"
 #include "Deferred.h"
 #include "Features/Upscaling.h"

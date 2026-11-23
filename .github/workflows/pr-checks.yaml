@@ -59,6 +59,7 @@ jobs:
             hlsl-should-build: ${{ steps.check.outputs.hlsl-should-build }}
             shader-tests-should-build: ${{ steps.check.outputs.shader-tests-should-build }}
             cpp-tests-should-build: ${{ steps.check.outputs.cpp-tests-should-build }}
+            python-tests-should-build: ${{ steps.check.outputs.python-tests-should-build }}
             changed-files-json: ${{ steps.check.outputs.changed-files-json }}
         steps:
             - uses: actions/checkout@v6
@@ -95,10 +96,11 @@ jobs:
             run-cpp: ${{ needs.check-changes.outputs.should-build != 'false' }}
             run-shader-validation: ${{ needs.check-changes.outputs.hlsl-should-build != 'false' }}
             run-shader-tests: ${{ needs.check-changes.outputs.shader-tests-should-build != 'false' }}
-            run-cpp-tests: ${{ needs.check-changes.outputs.cpp-tests-should-build != 'false' }}
+            run-cpp-tests: ${{ needs.check-changes.outputs.python-tests-should-build != 'false' }}
             hlsl-should-build: ${{ needs.check-changes.outputs.hlsl-should-build || 'true' }}
             shader-tests-should-build: ${{ needs.check-changes.outputs.shader-tests-should-build || 'true' }}
             cpp-tests-should-build: ${{ needs.check-changes.outputs.cpp-tests-should-build || 'true' }}
+            python-tests-should-build: ${{ needs.check-changes.outputs.python-tests-should-build || 'true' }}
             changed-files-json: ${{ needs.check-changes.outputs.changed-files-json }}
             # Also run the release-parity pass (/O3 + profile) incrementally, so /O3-only
             # warnings (e.g. X4000) that would break the release cache are caught pre-merge.
@@ -240,8 +242,8 @@ jobs:
         name: Shader Compile Cost (PR)
         # Waits for the build so the PR's own (incremental) compile timings
         # exist; runs even when the build is skipped or fails.
-        needs: [build]
-        if: always() && !cancelled() && !github.event.pull_request.draft
+        needs: [check-changes, build]
+        if: always() && !cancelled() && !github.event.pull_request.draft && needs.check-changes.outputs.hlsl-should-build != 'false'
         runs-on: ubuntu-latest
         outputs:
             has-report: ${{ steps.report.outputs.has-report }}
@@ -287,6 +289,26 @@ jobs:
                   done
                   ls timing
 
+            # An older dev run (two weeks back or more) lets the report show dev's
+            # own trend, which catches many small increases no single PR trips.
+            - name: Download reference compile timings
+              continue-on-error: true
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  REPO: ${{ github.repository }}
+              shell: bash
+              run: |
+                  mkdir -p timing-ref
+                  cutoff=$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%SZ)
+                  for runtime in VR SE; do
+                    id=$(gh api "repos/$REPO/actions/artifacts?name=shader-compile-timing-$runtime&per_page=100" \
+                      --jq "[.artifacts[] | select(.expired == false and .workflow_run.head_branch == \"dev\" and .created_at <= \"$cutoff\")][0].id // empty") || true
+                    if [ -n "$id" ] && gh api "repos/$REPO/actions/artifacts/$id/zip" > "timing-ref/$runtime.zip"; then
+                      unzip -oq "timing-ref/$runtime.zip" -d timing-ref || true
+                    fi
+                  done
+                  ls timing-ref
+
             - name: Download this PR's compile timings
               continue-on-error: true
               uses: actions/download-artifact@v7
@@ -303,6 +325,7 @@ jobs:
                   python tools/shader_cost_report.py --base "$BASE_SHA" --head refs/pr_head \
                     --timing-vr timing/shader-compile-timing-VR.json --timing-se timing/shader-compile-timing-SE.json \
                     --pr-timing-vr pr-timing/shader-compile-timing-VR.json --pr-timing-se pr-timing/shader-compile-timing-SE.json \
+                    --ref-timing-vr timing-ref/shader-compile-timing-VR.json --ref-timing-se timing-ref/shader-compile-timing-SE.json \
                     --out shader-cost-report.md
                   if [ -f shader-cost-report.md ]; then echo "has-report=true" >> "$GITHUB_OUTPUT"; fi
 

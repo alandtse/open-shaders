@@ -174,6 +174,137 @@ class ShaderCostReportTest(unittest.TestCase):
         self.assertEqual(diff["worst"][0][0], "a")
         self.assertIsNone(REPORT.timing_diff(base, ""))
 
+    def _digest(self, files, defines=()):
+        tree, read = build(files)
+        digest, _, _ = REPORT.closure_index(tree, read)
+        return digest("Lit.hlsl", frozenset(defines))
+
+    def test_edit_in_inactive_block_keeps_digest(self):
+        def files(body):
+            return {
+                "Lit.hlsl": '#include "Data.hlsli"\n',
+                "Data.hlsli": f"float a;\n#if defined(SNOW) && (defined(PSHADER) || defined(CSHADER))\n{body}\n#endif\n",
+            }
+
+        old, new = files("float snow;"), files("float snow; float more;")
+        self.assertEqual(self._digest(old, ["PSHADER"]), self._digest(new, ["PSHADER"]))
+        self.assertNotEqual(
+            self._digest(old, ["SNOW", "PSHADER"]),
+            self._digest(new, ["SNOW", "PSHADER"]),
+        )
+
+    def test_includes_in_inactive_blocks_are_dropped(self):
+        def files(extra):
+            return {
+                "Lit.hlsl": '#ifdef SNOW\n#include "Snow.hlsli"\n#endif\n#ifndef SNOW\nfloat plain;\n#else\nfloat snowy;\n#endif\n',
+                "Snow.hlsli": extra,
+            }
+
+        self.assertEqual(self._digest(files("a")), self._digest(files("b")))
+        self.assertNotEqual(
+            self._digest(files("a"), ["SNOW"]), self._digest(files("b"), ["SNOW"])
+        )
+
+    def test_undecidable_conditions_keep_every_branch(self):
+        def files(body):
+            return {
+                "Lit.hlsl": f"#define FEATURE 1\n#if FEATURE > 0 || defined(OTHER)\n{body}\n#endif\n"
+            }
+
+        self.assertNotEqual(self._digest(files("x")), self._digest(files("y")))
+
+        def implicit(body):
+            return {"Lit.hlsl": f"#ifdef VR\n{body}\n#endif\n"}
+
+        self.assertNotEqual(self._digest(implicit("x")), self._digest(implicit("y")))
+
+    def test_macros_defined_outside_the_include_closure_do_not_blur_conditions(self):
+        def files(body, unrelated):
+            return {
+                "Lit.hlsl": f"#if MODE\n{body}\n#endif\n",
+                "Unrelated.hlsl": unrelated,
+            }
+
+        self.assertEqual(
+            self._digest(files("x", "float a;")),
+            self._digest(files("x", "#define MODE 1\nfloat a;")),
+        )
+
+    def test_comment_and_whitespace_only_edits_keep_digest(self):
+        plain = {"Lit.hlsl": "float a;\nfloat   b;\n"}
+        noisy = {"Lit.hlsl": "float a; // note\n/* block */\n  float b;\n\n"}
+        self.assertEqual(self._digest(plain), self._digest(noisy))
+
+    def test_variants_use_their_own_defines(self):
+        def files(body):
+            return {"Lit.hlsl": f"#if defined(A) && !defined(B)\n{body}\n#endif\n"}
+
+        text = CONFIG.replace("[A]", "[A]").replace("Lit:Pixel:2", "Lit:Pixel:2")
+        old = REPORT.variant_map(REPORT.parse_variants(text), *build(files("x")))
+        new = REPORT.variant_map(REPORT.parse_variants(text), *build(files("y")))
+        changed = [k for k in old if old[k][0] != new[k][0]]
+        self.assertEqual([k[1] for k in changed], ["Lit:Pixel:1"])
+
+    def _timing_files(self, base_rows, head_rows):
+        import json
+        import os
+        import tempfile
+
+        def write(rows):
+            handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+            json.dump(
+                [
+                    {
+                        "file": "Lit.hlsl",
+                        "entry": e,
+                        "type": "PSHADER",
+                        "duration_seconds": d,
+                    }
+                    for e, d in rows
+                ],
+                handle,
+            )
+            handle.close()
+            self.addCleanup(os.unlink, handle.name)
+            return handle.name
+
+        return write(base_rows), write(head_rows)
+
+    def test_uniform_runner_slowdown_is_normalised_away(self):
+        names = [f"e{i}" for i in range(150)]
+        base, head = self._timing_files(
+            [(n, 10.0 + i % 7) for i, n in enumerate(names)],
+            [(n, 2.2 * (10.0 + i % 7)) for i, n in enumerate(names)],
+        )
+        diff = REPORT.timing_diff(base, head)
+        self.assertAlmostEqual(diff["runner"], 2.2)
+        self.assertAlmostEqual(diff["delta_pct"], 0.0, places=6)
+        self.assertGreater(diff["raw_delta_pct"], 100.0)
+        self.assertIsNone(REPORT.timing_verdict(diff))
+
+    def test_real_regression_survives_runner_normalisation(self):
+        names = [f"e{i}" for i in range(150)]
+        base, head = self._timing_files(
+            [(n, 20.0) for n in names],
+            [(n, 20.0 * 0.6 * (3.0 if i < 30 else 1.0)) for i, n in enumerate(names)],
+        )
+        diff = REPORT.timing_diff(base, head)
+        self.assertAlmostEqual(diff["runner"], 0.6)
+        self.assertEqual(diff["slower"], 30)
+        self.assertEqual(REPORT.timing_verdict(diff), "up")
+
+    def test_normalisation_is_skipped_when_unsafe(self):
+        names = [f"e{i}" for i in range(150)]
+        rows = [(n, 20.0) for n in names]
+        slow = [(n, 40.0) for n in names]
+        base, head = self._timing_files(rows, slow)
+        self.assertIsNone(REPORT.timing_diff(base, head, structural_pct=8.0)["runner"])
+        self.assertAlmostEqual(REPORT.timing_diff(base, head, 0.0)["runner"], 2.0)
+        few_base, few_head = self._timing_files(rows[:50], slow[:50])
+        self.assertIsNone(REPORT.timing_diff(few_base, few_head)["runner"])
+        wild_base, wild_head = self._timing_files(rows, [(n, 100.0) for n in names])
+        self.assertIsNone(REPORT.timing_diff(wild_base, wild_head)["runner"])
+
     def test_measured_slowdown_sets_headline_when_structure_is_flat(self):
         flat = {
             "base_total": 5,
@@ -192,9 +323,10 @@ class ShaderCostReportTest(unittest.TestCase):
         }
         diff = {
             "compared": 30,
+            "threshold": 20.0,
             "base_s": 100.0,
             "pr_s": 120.0,
-            "delta_pct": 20.0,
+            "delta_pct": 25.0,
             "slower": 4,
             "faster": 0,
             "worst": [("Lit:Pixel:1", 50.0, 70.0)],
@@ -206,6 +338,79 @@ class ShaderCostReportTest(unittest.TestCase):
         self.assertIn(
             "unchanged", REPORT.render({"VR": flat}, False, True, {"VR": few})
         )
+
+    def test_threshold_grows_as_the_sample_shrinks(self):
+        self.assertGreater(REPORT.timing_threshold(50), REPORT.timing_threshold(500))
+        self.assertGreater(REPORT.timing_threshold(500), REPORT.timing_threshold(3000))
+        self.assertGreaterEqual(REPORT.timing_threshold(10**6), REPORT.THRESHOLD_PCT)
+
+    def test_small_sample_needs_a_bigger_move_than_a_full_run(self):
+        small = {"compared": 100, "delta_pct": 9.0}
+        full = {"compared": 3000, "delta_pct": 9.0}
+        self.assertIsNone(REPORT.timing_verdict(small))
+        self.assertEqual(REPORT.timing_verdict(full), "up")
+        self.assertEqual(REPORT.timing_verdict(dict(small, delta_pct=16.0)), "up")
+
+    def test_accumulated_small_increases_show_as_dev_drift(self):
+        names = [f"e{i}" for i in range(400)]
+        base, head = self._timing_files(
+            [(n, 20.0) for n in names],
+            [(n, 20.0 * (1.05**5 if i < 200 else 1.0)) for i, n in enumerate(names)],
+        )
+        drift = REPORT.timing_diff(base, head)
+        drift["ref_days"] = 14
+        self.assertGreaterEqual(drift["delta_pct"], REPORT.DRIFT_PCT)
+        self.assertIsNone(REPORT.timing_verdict(dict(drift, delta_pct=5.0)))
+        text = REPORT.render({"VR": None}, False, True, {}, {"VR": drift})
+        self.assertIn("VR dev trend", text)
+        self.assertIn("14-day-old dev run", text)
+
+    def test_runner_hardware_is_read_from_the_sidecar_and_rendered(self):
+        import json
+        import os
+        import shutil
+        import tempfile
+
+        names = [f"e{i}" for i in range(150)]
+        base_src, head_src = self._timing_files(
+            [(n, 20.0) for n in names], [(n, 20.0) for n in names]
+        )
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        base, head = (os.path.join(tmp, f"{d}-compile-timing-VR.json") for d in "bh")
+        shutil.copy(base_src, base)
+        shutil.copy(head_src, head)
+        for path, cpu, ms in (
+            (base, "AMD EPYC 9V45 96-Core Processor", 282),
+            (head, "AMD EPYC 7763 64-Core Processor", 980),
+        ):
+            sidecar = path.replace("compile-timing", "compile-runner")
+            with open(sidecar, "w", encoding="utf-8") as f:
+                json.dump({"cpu": cpu, "cores": 4, "mhz": 2445, "single_ms": ms}, f)
+        diff = REPORT.timing_diff(base, head)
+        self.assertEqual(diff["pr_runner"]["single_ms"], 980)
+        flat = {
+            "base_total": 5,
+            "total": 5,
+            "changed": 0,
+            "added": 0,
+            "removed": 0,
+            "recompile_s": 0.0,
+            "total_s": 5.0,
+            "added_pct": 0.0,
+            "removed_pct": 0.0,
+            "growth_pct": 0.0,
+            "net_s": 0.0,
+            "net_pct": 0.0,
+            "top_files": [],
+        }
+        text = REPORT.render({"VR": flat}, False, True, {"VR": diff})
+        self.assertIn(
+            "this run EPYC 7763 (980 ms), dev baseline EPYC 9V45 (282 ms)", text
+        )
+        os.remove(head.replace("compile-timing", "compile-runner"))
+        self.assertIsNone(REPORT.timing_diff(base, head)["pr_runner"])
+        self.assertIsNone(REPORT.runner_info(head_src))
 
 
 if __name__ == "__main__":

@@ -554,7 +554,11 @@ PS_OUTPUT main(PS_INPUT input)
 	baseTexCoord = input.TexCoord0.xy;
 #		endif
 #	endif
+#	if defined(RENDER_SHADOWMAP) && defined(ALPHA_TEST)
+	float4 baseColor = TexBaseSampler.Sample(SampBaseSampler, baseTexCoord);
+#	else
 	float4 baseColor = TexBaseSampler.SampleBias(SampBaseSampler, baseTexCoord, SharedData::MipBias);
+#	endif
 
 #	if defined(RENDER_SHADOWMAP_PB)
 	if (input.TexCoord1.z < 0 || input.TexCoord1.x < input.TexCoord1.w) {

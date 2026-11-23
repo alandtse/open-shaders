@@ -93,6 +93,14 @@ namespace FrameBuffer
 		return FarPlaneClipZ(clipW, IsReverseProjection());
 	}
 
+	static const float DepthBiasUnit24 = 1.0 / 16777216.0;
+
+	/** @brief Far-plane clip z nudged nearer by whole 24-bit depth-bias units; the game's rasterizer bias vanishes in a float reverse-Z buffer. */
+	float FarPlaneClipZNearer(float clipW, float a_biasUnits)
+	{
+		return IsReverseProjection() ? clipW * a_biasUnits * DepthBiasUnit24 : clipW;
+	}
+
 	float ToStandardClipZ(float4 clipPosition, bool reverseProjection)
 	{
 		return reverseProjection ? clipPosition.w - clipPosition.z : clipPosition.z;

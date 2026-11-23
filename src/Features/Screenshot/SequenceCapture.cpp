@@ -8,6 +8,7 @@
 #ifdef DEVBENCH_BRIDGE_ENABLED
 #	include "Features/Screenshot/ReferenceCompletion.h"
 #endif
+#include "BuildInfo.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "State.h"
