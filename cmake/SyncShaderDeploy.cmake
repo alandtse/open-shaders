@@ -20,7 +20,8 @@ read_preserved_runtime_prefixes(_preserve_runtime_prefixes)
 # Exclude AIO copies so they cannot overwrite or remove the deployed bytecode.
 set(_excluded_shader_relpaths)
 if(EXCLUDE_NATIVE_DXIL)
-    list(APPEND _excluded_shader_relpaths
+    list(
+        APPEND _excluded_shader_relpaths
         "DX12NativeScene/ShadowMask.dxil"
         "NativeComposite/ShadowLayer.dxil"
     )
