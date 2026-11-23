@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "GraphicsBackend.h"
 #include "GraphicsInterop.h"
+#include "VideoMemoryBudget.h"
 #include <array>
 #include <memory>
 #include <vector>
@@ -47,5 +48,6 @@ namespace DX12Native
 		SharedFence producer;
 		winrt::com_ptr<ID3D11ComputeShader> depthShader;
 		GraphicsBackend backend;
+		VideoMemoryBudget videoBudget;
 	};
 }
