@@ -20,7 +20,7 @@ namespace
 	constexpr float kDirectionThreshold = 0.001f;
 	constexpr uint32_t kMaskGroupSize = 8;
 	constexpr float kMinimumDirectionLength = 1e-6f;
-	constexpr float kCellSize = 4096.0f;
+	constexpr float kCellSize = Util::ExteriorCellSize;
 	constexpr float kMinimumDepthPadding = 1.0f;
 	constexpr int kRasterDepthBias = 1;
 	constexpr float kTerrainSlopeScaledDepthBias = 1.0f;
@@ -520,18 +520,13 @@ void LODShadows::CollectTerrain()
 	terrainAvailable = !visibleGeometry.empty();
 	const auto lodTerrainCount = visibleGeometry.size();
 	landBounds = float4{};
-	const auto* tes = globals::game::tes;
-	const auto* grid = tes ? tes->gridCells : nullptr;
-	if (grid && grid->cells) {
+	if (const auto grid = Util::GetExteriorGrid()) {
+		const auto* tes = globals::game::tes;
 		landBounds = float4{ (tes->currentGridX + 0.5f) * kCellSize, (tes->currentGridY + 0.5f) * kCellSize,
-			grid->length * kCellSize * 0.5f, grid->length * kCellSize * 0.5f };
-		for (uint32_t x = 0; x < grid->length; ++x) {
-			for (uint32_t y = 0; y < grid->length; ++y) {
-				const auto* cell = grid->GetCell(x, y);
-				if (!cell || !cell->IsAttached() || !cell->IsExteriorCell())
-					continue;
-				const auto* land = cell->GetRuntimeData().cellLand;
-				if (land && land->loadedData)
+			grid->width * kCellSize * 0.5f, grid->width * kCellSize * 0.5f };
+		for (uint32_t x = 0; x < grid->width; ++x) {
+			for (uint32_t y = 0; y < grid->width; ++y) {
+				if (const auto* land = Util::GetLoadedLand(*grid, x, y))
 					for (auto* mesh : land->loadedData->mesh)
 						Collect(mesh);
 			}
