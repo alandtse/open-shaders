@@ -102,7 +102,7 @@ void main(uint3 id : SV_DispatchThreadID)
             ray.TMin = MinDistance;
             ray.TMax = tMax;
             RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
-            query.TraceRayInline(Scene, RAY_FLAG_NONE, 3, ray);
+            query.TraceRayInline(Scene, RAY_FLAG_NONE, 0xFF, ray);
             while (query.Proceed()) {}
             if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
                 visibility = 1.0f - gradualFalloff;
