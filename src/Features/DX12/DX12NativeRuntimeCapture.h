@@ -47,7 +47,7 @@ namespace DX12Native
 	private:
 		struct Packet
 		{
-			uint64_t identity = 0, generation = 0;
+			uint64_t identity = 0, runtimeObjectKey = 0, generation = 0;
 			DX12::SubcellKey sourceCenter{};
 			std::string referenceKey;  // Match a runtime addition with unresolved NIF provenance.
 			std::array<float, 12> transform{};

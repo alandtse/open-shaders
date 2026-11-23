@@ -284,8 +284,7 @@ namespace DX12
 			return false;
 		std::scoped_lock lock(mutex);
 		const auto current = snapshot.load(std::memory_order_acquire);
-		if (!current->requested.front().scope || current->runtimeShapes.size() >= kMaximumRuntimeShapes ||
-			shapeBytes > kMaximumRuntimeBytes - current->runtimeBytes)
+		if (!current->requested.front().scope)
 			return false;
 		const auto x = Coordinate(centerX, current->size);
 		const auto y = Coordinate(centerY, current->size);
@@ -299,6 +298,19 @@ namespace DX12
 			}))
 			return false;
 		auto next = std::make_shared<Grid>(*current);
+		if (shape->runtimeObjectKey) {
+			// A new transform replaces the prior observation of this physical mesh.
+			// Existing immutable GPU snapshots keep old geometry alive until retirement.
+			std::erase_if(next->runtimeShapes, [&](const RuntimeShape& observed) {
+				if (!observed.shape || observed.shape->runtimeObjectKey != shape->runtimeObjectKey)
+					return false;
+				next->runtimeBytes -= observed.bytes;
+				return true;
+			});
+		}
+		if (next->runtimeShapes.size() >= kMaximumRuntimeShapes ||
+			shapeBytes > kMaximumRuntimeBytes - next->runtimeBytes)
+			return false;
 		next->runtimeShapes.push_back({ key, std::move(shape), shapeBytes });
 		next->runtimeBytes += shapeBytes;
 		++next->revision;

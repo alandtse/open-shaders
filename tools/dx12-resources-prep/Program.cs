@@ -161,6 +161,7 @@ internal static class SceneTile
     private const int MaxNifSources = 4096;
     private const int MaxMissingShapes = 4096;
     private const long MaxGeometryBytes = 48L * 1024 * 1024;
+    private const long MaxDecodedCacheBytes = 48L * 1024 * 1024;
     private const uint MaxArchiveMeshBytes = 16u * 1024 * 1024;
 
     internal static TileResult Prepare(string data, string pluginsPath, FormKey scope, long tileX, long tileY, int size,
@@ -258,6 +259,7 @@ internal static class SceneTile
         var nifSources = new List<TileNifSource>();
         var missingShapes = new List<TileMissingNifShape>();
         var models = new Dictionary<string, ModelExtraction>(StringComparer.OrdinalIgnoreCase);
+        long cachedModelBytes = 0;
         uint eligible = 0, failed = 0;
         var rejections = new Dictionary<string, uint>(StringComparer.Ordinal);
         void Reject(string reason, uint count = 1)
@@ -380,7 +382,7 @@ internal static class SceneTile
                         placed.FormKey.ID, unresolvedNif));
                 else
                     Reject("NIF source manifest capacity");
-                var extraction = LoadModel(data, unresolvedNif, models, archives, scratch);
+                var extraction = LoadModel(data, unresolvedNif, models, ref cachedModelBytes, archives, scratch);
                 foreach (var (reason, count) in extraction.Rejections)
                     Reject(reason, count);
                 foreach (var missing in extraction.Missing)
@@ -451,7 +453,7 @@ internal static class SceneTile
     }
 
     private static ModelExtraction LoadModel(string data, string path, Dictionary<string, ModelExtraction> cache,
-        Lazy<IArchiveReader[]> archives, string scratch)
+        ref long cachedBytes, Lazy<IArchiveReader[]> archives, string scratch)
     {
         path = NormalizeNifPath(path);
         if (Path.IsPathRooted(path) || path.Split('\\').Any(part => part is ".." or "." or ""))
@@ -546,8 +548,22 @@ internal static class SceneTile
         }
         if (output.Count == 0 && missing.Count == 0)
             Skip("no supported opaque rigid triangles", -1);
-        cache[path] = new ModelExtraction(output.ToArray(), missing.ToArray(), rejected);
-        return cache[path];
+        var extracted = new ModelExtraction(output.ToArray(), missing.ToArray(), rejected);
+        // Decoded model geometry has an independent per-tile RAM cap. Bypassing
+        // the cache does not discard a valid model or alter tile coverage.
+        long decodedBytes = 256L + (long)path.Length * 2;
+        foreach (var shape in extracted.Shapes)
+            decodedBytes += 128L + (long)shape.Positions.Length * 12 + (long)shape.Indices.Length * 4;
+        foreach (var unresolved in extracted.Missing)
+            decodedBytes += 64L + (long)unresolved.Reason.Length * 2;
+        foreach (var reason in extracted.Rejections.Keys)
+            decodedBytes += 32L + (long)reason.Length * 2;
+        if (decodedBytes <= MaxDecodedCacheBytes - cachedBytes)
+        {
+            cache[path] = extracted;
+            cachedBytes += decodedBytes;
+        }
+        return extracted;
     }
 
     private static ulong Identity(string formKey, int blockIndex)

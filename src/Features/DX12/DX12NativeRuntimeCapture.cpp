@@ -21,6 +21,21 @@ namespace DX12Native
 		constexpr uint64_t kFnvPrime = 1099511628211ull;
 		constexpr uint64_t kFnvOffset = 14695981039346656037ull;
 
+		uint64_t StableObjectKey(const RuntimeGeometryCandidate& source)
+		{
+			if (!source.objectIdentity)
+				return 0;  // No reliable per-object key: never retire a similarly named sibling.
+			uint64_t hash = kFnvOffset;
+			const auto add = [&](unsigned char value) { hash = (hash ^ value) * kFnvPrime; };
+			for (unsigned char c : source.referenceKey) add(c);
+			add(0);
+			for (unsigned char c : source.shapeName) add(c);
+			add(0);
+			for (unsigned n = 0; n < 8; ++n)
+				add(static_cast<unsigned char>(source.objectIdentity >> (n * 8)));
+			return hash ? hash : 1;
+		}
+
 		uint64_t Identity(const RuntimeGeometryCandidate& source)
 		{
 			uint64_t hash = kFnvOffset;
@@ -115,6 +130,7 @@ namespace DX12Native
 			return;
 		const auto center = grid->requested.front();
 		const uint64_t id = Identity(candidate);
+		const uint64_t stableKey = StableObjectKey(candidate);
 		{
 			std::scoped_lock lock(mutex);
 			if (activeCenter != center || activeSize != grid->size) {
@@ -164,6 +180,7 @@ namespace DX12Native
 		try {
 			Packet packet;
 			packet.identity = id;
+			packet.runtimeObjectKey = stableKey;
 			packet.sourceCenter = center;
 			packet.referenceKey = candidate.referenceKey;
 			packet.transform = candidate.transform;
@@ -204,6 +221,7 @@ namespace DX12Native
 			}
 			auto shape = std::make_shared<DX12::Shape>();
 			shape->identity = packet.identity;
+			shape->runtimeObjectKey = packet.runtimeObjectKey;
 			shape->transform = packet.transform;
 			shape->positions.reserve(packet.vertexCount);
 			bool usable = true;
