@@ -127,7 +127,7 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 		(found->flickers && !offloadFlickeringStatic))
 		return false;
 
-	// The shader admits only the first 512 prepared lights. Never suppress a
+	// The shader admits only the published prepared lights. Never suppress a
 	// raster static caster for a light not actually selected for DX12 tracing.
 	const size_t limit = std::min(lights->size(), size_t{ DX12Native::kMaxShadowLights });
 	for (size_t i = 0; i < limit; ++i) {

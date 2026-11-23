@@ -157,6 +157,7 @@ internal sealed record ModelExtraction(ModelShape[] Shapes, MissingModelShape[] 
 internal static class SceneTile
 {
     private const int MaxShapes = 384;
+    private const int MaxLights = 2048;
     private const int MaxNifSources = 1024;
     private const int MaxMissingShapes = 1024;
     private const long MaxGeometryBytes = 48L * 1024 * 1024;
@@ -251,6 +252,7 @@ internal static class SceneTile
         var foundScope = placementFoundScope;
         var shapes = new List<TileShape>();
         var lights = new List<TileLight>();
+        bool lightCapacityExceeded = false;
         // Retain NIF provenance even when a rigid shape cannot be decoded yet.
         // Runtime supplementation can refer back to the installed loose/BSA mesh.
         var nifSources = new List<TileNifSource>();
@@ -331,10 +333,15 @@ internal static class SceneTile
                 if (baseRecord is ILightGetter light)
                 {
                     if (Inside(position[0], position[1], tileX, tileY, size))
-                        lights.Add(new TileLight(placed.FormKey.ModKey.ToString(), placed.FormKey.ID,
-                            obj.Base.FormKey.ModKey.ToString(), obj.Base.FormKey.ID, position,
-                            [light.Color.R / 255f, light.Color.G / 255f, light.Color.B / 255f],
-                            light.Radius, light.FadeValue, 0, light.FalloffExponent, (uint)light.Flags));
+                    {
+                        if (lights.Count < MaxLights)
+                            lights.Add(new TileLight(placed.FormKey.ModKey.ToString(), placed.FormKey.ID,
+                                obj.Base.FormKey.ModKey.ToString(), obj.Base.FormKey.ID, position,
+                                [light.Color.R / 255f, light.Color.G / 255f, light.Color.B / 255f],
+                                light.Radius, light.FadeValue, 0, light.FalloffExponent, (uint)light.Flags));
+                        else
+                            lightCapacityExceeded = true;
+                    }
                     continue;
                 }
                 if (baseRecord is not (IStaticGetter or IFurnitureGetter or IMoveableStaticGetter))
@@ -409,7 +416,9 @@ internal static class SceneTile
         // A bounded exterior anchor halo cannot prove that a huge off-tile
         // model does not overlap this tile. Exteriors remain incomplete until
         // an authoritative bounds index is available; never offload on a guess.
-        return new TileResult(1, eligible, failed, !isWorldspace && foundScope,
+        if (lightCapacityExceeded && rejections.Count < 12)
+            rejections["tile light capacity"] = 1;
+        return new TileResult(1, eligible, failed, !isWorldspace && foundScope && !lightCapacityExceeded,
             shapes, lights, "", rejections, nifSources, missingShapes);
         }
         return (Run, environment);
