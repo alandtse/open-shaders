@@ -734,7 +734,7 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth,
 	uint32_t outputHeight)
 {
-	if (Util::IsMinimizedExtent(extentOut.width, extentOut.height))
+	if (Util::IsMinimizedExtent(extentIn.width, extentIn.height) || Util::IsMinimizedExtent(extentOut.width, extentOut.height))
 		return false;
 
 	auto context = globals::d3d::context;

@@ -25,6 +25,7 @@ TEST_CASE("A mip chain never exceeds what D3D11 allows for the largest side", "[
 	CHECK(MipChainLength(15, 15, 5) == 4);
 	CHECK(MipChainLength(8, 8, 5) == 4);
 	CHECK(MipChainLength(1, 1, 5) == 1);
+	CHECK(MipChainLength(0, 0, 5) == 1);
 	CHECK(MipChainLength(8, 1024, 5) == 5);
 	CHECK(MipChainLength(1024, 1024, 3) == 3);
 }

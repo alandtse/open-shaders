@@ -13,9 +13,13 @@ namespace Util
 		return a_width < kMinimizedExtent || a_height < kMinimizedExtent;
 	}
 
-	/** @brief Mip count for a texture of the given size, capped at a_maxMips; D3D11 allows at most floor(log2(largest side)) + 1. */
+	/**
+	 * @brief Mip count for a texture of the given size, capped at a_maxMips.
+	 *        D3D11 allows at most floor(log2(largest side)) + 1; a zero-sized side yields 1,
+	 *        since a count of 0 would request a full chain.
+	 */
 	[[nodiscard]] constexpr std::uint32_t MipChainLength(std::uint32_t a_width, std::uint32_t a_height, std::uint32_t a_maxMips)
 	{
-		return std::min(a_maxMips, static_cast<std::uint32_t>(std::bit_width(std::max(a_width, a_height))));
+		return std::max(1u, std::min(a_maxMips, static_cast<std::uint32_t>(std::bit_width(std::max(a_width, a_height)))));
 	}
 }
