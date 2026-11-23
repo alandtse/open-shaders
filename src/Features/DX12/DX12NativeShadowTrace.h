@@ -2,6 +2,7 @@
 
 #include "DX12NativeAcceleration.h"
 #include "DX12NativeRasterCapture.h"
+#include "VideoMemoryBudget.h"
 
 #include <array>
 #include <memory>
@@ -37,7 +38,7 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12GraphicsCommandList> commands;
 		winrt::com_ptr<ID3D12Fence> readyFence;
 		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
-		uint64_t readyValue = 0;
+		uint64_t readyValue = 0, allocationBytes = 0;
 		uint32_t frame = 0, width = 0, height = 0;
 		// RGBA32F: x weighted visibility, y 1 sampled / -1 omitted / 0 invalid,
 		// z receiver distance, w accumulated light weight.
@@ -67,5 +68,6 @@ namespace DX12Native
 		std::array<std::shared_ptr<ShadowMaskFrame>, 4> slots;
 		std::shared_ptr<ShadowMaskFrame> current;
 		uint64_t nextFence = 0;
+		VideoMemoryBudget videoBudget;
 	};
 }

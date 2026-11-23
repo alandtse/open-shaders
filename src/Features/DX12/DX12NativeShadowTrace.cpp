@@ -1,4 +1,5 @@
 #include "DX12NativeShadowTrace.h"
+#include "DX12GpuRetirement.h"
 
 #include <algorithm>
 #include <array>
@@ -54,13 +55,16 @@ namespace DX12Native
 	ShadowMaskTrace::~ShadowMaskTrace()
 	{
 		current.reset();
-		const uint64_t completed = completion ? completion->GetCompletedValue() : 0;
+		const auto ready = [fence = completion](const ShadowMaskFrame& frame) {
+			ID3D12Fence* producerFence = frame.readyFence ? frame.readyFence.get() : fence.get();
+			return GpuFenceRetired(producerFence, frame.readyValue) &&
+			       std::ranges::all_of(frame.consumers, [](const auto& consumer) {
+					   return GpuFenceRetired(consumer.first.get(), consumer.second);
+			       });
+		};
 		for (auto& slot : slots)
-			if (slot && (slot->readyValue > completed ||
-							std::ranges::any_of(slot->consumers, [](const auto& c) {
-								return c.first->GetCompletedValue() < c.second;
-							})))
-				(void)new std::shared_ptr<ShadowMaskFrame>(std::move(slot));
+			if (slot && !ready(*slot))
+				RetireWhenGpuDone(std::move(slot), backend.d3d12Device, ready);
 	}
 
 	void ShadowMaskTrace::Initialize(const GraphicsBackend& requested)
@@ -100,13 +104,19 @@ namespace DX12Native
 		winrt::com_ptr<ID3DBlob> serialized, errors;
 		Check(D3D12SerializeRootSignature(&signature, D3D_ROOT_SIGNATURE_VERSION_1,
 			serialized.put(), errors.put()));
+		winrt::com_ptr<ID3D12RootSignature> newRoot;
 		Check(device->CreateRootSignature(0, serialized->GetBufferPointer(),
-			serialized->GetBufferSize(), IID_PPV_ARGS(root.put())));
+			serialized->GetBufferSize(), IID_PPV_ARGS(newRoot.put())));
 		D3D12_COMPUTE_PIPELINE_STATE_DESC pipelineDesc{};
-		pipelineDesc.pRootSignature = root.get();
+		pipelineDesc.pRootSignature = newRoot.get();
 		pipelineDesc.CS = { shader.data(), shader.size() };
-		Check(device->CreateComputePipelineState(&pipelineDesc, IID_PPV_ARGS(pipeline.put())));
-		Check(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(completion.put())));
+		winrt::com_ptr<ID3D12PipelineState> newPipeline;
+		Check(device->CreateComputePipelineState(&pipelineDesc, IID_PPV_ARGS(newPipeline.put())));
+		winrt::com_ptr<ID3D12Fence> newCompletion;
+		Check(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(newCompletion.put())));
+		root = std::move(newRoot);
+		pipeline = std::move(newPipeline);
+		completion = std::move(newCompletion);
 	}
 
 	void ShadowMaskTrace::Dispatch(const GraphicsBackend& requested,
@@ -126,6 +136,8 @@ namespace DX12Native
 		if (lights.empty()) {
 			return;
 		}
+		std::shared_ptr<ShadowMaskFrame> attempted;
+		bool submitted = false;
 		try {
 			Initialize(requested);
 			const uint64_t finished = completion->GetCompletedValue();
@@ -152,6 +164,21 @@ namespace DX12Native
 				const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(
 					DXGI_FORMAT_R32G32B32A32_FLOAT, width, height, 1, 1, 1, 0,
 					D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+				const uint64_t allocation = requested.d3d12Device->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
+				if (!allocation || allocation == UINT64_MAX)
+					throw std::runtime_error("Native shadowmask allocation unsupported");
+				uint64_t tracked = 0;
+				for (const auto& existing : slots) {
+					if (!existing)
+						continue;
+					if (tracked > UINT64_MAX - existing->allocationBytes)
+						throw std::runtime_error("Native shadowmask size overflow");
+					tracked += existing->allocationBytes;
+				}
+				const uint64_t allowance = videoBudget.Query(requested.d3d12Device.get(), tracked).effectiveBytes;
+				if (allocation > allowance || tracked > allowance - allocation)
+					throw std::runtime_error("Native shadowmask allocation deferred by DXGI budget");
+				replacement->allocationBytes = allocation;
 				Check(requested.d3d12Device->CreateCommittedResource(&heap,
 					D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
 					nullptr, IID_PPV_ARGS(replacement->mask.put())));
@@ -177,6 +204,8 @@ namespace DX12Native
 			}
 			slot->consumers.clear();
 			slot->readyValue = UINT64_MAX;
+			slot->readyFence = completion;
+			attempted = slot;
 			slot->raster = std::move(raster);
 			slot->scene = std::move(scene);
 			slot->frame = frame;
@@ -265,12 +294,28 @@ namespace DX12Native
 			Check(requested.commandQueue->Wait(slot->scene->producerFence.get(), slot->scene->producerValue));
 			ID3D12CommandList* lists[]{ command };
 			requested.commandQueue->ExecuteCommandLists(1, lists);
-			const uint64_t value = ++nextFence;
+			submitted = true;
+			const uint64_t value = nextFence + 1;
 			Check(requested.commandQueue->Signal(completion.get(), value));
-			slot->readyFence = completion;
+			nextFence = value;
 			slot->readyValue = value;
 			current = slot;
 		} catch (const std::exception&) {
+			if (attempted) {
+				if (submitted && completion && backend.commandQueue) {
+					// ExecuteCommandLists succeeded. A queue-tail marker retires the
+					// submission even if its original Signal failed.
+					const uint64_t rescue = nextFence + 1;
+					if (SUCCEEDED(backend.commandQueue->Signal(completion.get(), rescue))) {
+						nextFence = rescue;
+						attempted->readyValue = rescue;
+					}
+				} else if (!submitted) {
+					attempted->readyValue = 0;
+					attempted->raster.reset();
+					attempted->scene.reset();
+				}
+			}
 			// This frame is unavailable; baseline raster shadows are unaffected.
 		}
 	}
