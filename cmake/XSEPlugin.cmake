@@ -18,6 +18,12 @@ configure_file(
 )
 
 configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildInfo.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/cmake/BuildInfo.h
+    @ONLY
+)
+
+configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Version.rc.in
     ${CMAKE_CURRENT_BINARY_DIR}/cmake/version.rc
     @ONLY
@@ -27,6 +33,7 @@ target_sources(
     "${PROJECT_NAME}"
     PRIVATE
         ${CMAKE_CURRENT_BINARY_DIR}/cmake/Plugin.h
+        ${CMAKE_CURRENT_BINARY_DIR}/cmake/BuildInfo.h
         ${CMAKE_CURRENT_BINARY_DIR}/cmake/version.rc
 )
 
