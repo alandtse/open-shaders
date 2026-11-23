@@ -47,6 +47,7 @@ namespace DX12
 	struct Shape
 	{
 		uint64_t identity = 0;
+		uint64_t runtimeObjectKey = 0;  // Stable across transform changes; zero for companion shapes.
 		std::vector<float3> positions;
 		std::vector<uint32_t> indices;
 		std::array<float, 12> transform{};
