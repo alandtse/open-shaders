@@ -11,6 +11,7 @@
 #include "Util.h"
 #include "Utils/DebugSection.h"
 #include "Utils/Game.h"
+#include "Utils/RenderExtent.h"
 #include "Utils/SettingsControl.h"
 
 #define I18N_KEY_PREFIX "feature.screen_space_gi."
@@ -550,17 +551,20 @@ void ScreenSpaceGI::SetupResources()
 		auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 		mainTex.texture->GetDesc(Util::AsW32(&texDesc));
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		const uint mipCount = Util::MipChainLength(texDesc.Width, texDesc.Height, 5);
+		for (uint i = 0; i < 5; ++i)
+			uavRadiance[i] = uavWorkingDepth[i] = uavNormal[i] = nullptr;
 
 		if (allocateGIResources) {
 			srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
-			texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 5;
+			texDesc.MipLevels = srvDesc.Texture2D.MipLevels = mipCount;
 
 			texRadiance = eastl::make_unique<Texture2D>(texDesc, "SSGI::Radiance");
 			texRadiance->CreateSRV(srvDesc);
 			// No default UAV needed: prefilterRadiance binds per-mip UAVs via uavRadiance[].
 
 			// Create individual UAVs for each mip level for prefiltering
-			for (uint i = 0; i < 5; ++i) {
+			for (uint i = 0; i < mipCount; ++i) {
 				D3D11_UNORDERED_ACCESS_VIEW_DESC mipUavDesc = {
 					.Format = DXGI_FORMAT_R11G11B10_FLOAT,
 					.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
@@ -600,12 +604,12 @@ void ScreenSpaceGI::SetupResources()
 		texDesc.MiscFlags &= ~D3D11_RESOURCE_MISC_GENERATE_MIPS;
 		// gi.cs.hlsl's depth-edge offset assumes FP32 working depth whenever reverse-Z is active.
 		texDesc.Format = srvDesc.Format = uavDesc.Format = globals::features::reverseZ.IsActive() ? DXGI_FORMAT_R32_FLOAT : DXGI_FORMAT_R16_FLOAT;
-		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 5;
+		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = mipCount;
 
 		{
 			texWorkingDepth = eastl::make_unique<Texture2D>(texDesc, "SSGI::WorkingDepth");
 			texWorkingDepth->CreateSRV(srvDesc);
-			for (int i = 0; i < 5; ++i) {
+			for (uint i = 0; i < mipCount; ++i) {
 				uavDesc.Texture2D.MipSlice = i;
 				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texWorkingDepth->resource.get(), &uavDesc, uavWorkingDepth[i].put()));
 				Util::SetResourceName(uavWorkingDepth[i].get(), "SSGI::WorkingDepth UAV mip%d", i);
@@ -616,7 +620,7 @@ void ScreenSpaceGI::SetupResources()
 		{
 			texNormal = eastl::make_unique<Texture2D>(texDesc, "SSGI::Normal");
 			texNormal->CreateSRV(srvDesc);
-			for (uint i = 0; i < 5; ++i) {
+			for (uint i = 0; i < mipCount; ++i) {
 				uavDesc.Texture2D.MipSlice = i;
 				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texNormal->resource.get(), &uavDesc, uavNormal[i].put()));
 				Util::SetResourceName(uavNormal[i].get(), "SSGI::Normal UAV mip%u", i);
