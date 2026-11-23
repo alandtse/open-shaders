@@ -14,6 +14,7 @@
 
 namespace DX12
 {
+	constexpr uint64_t kPredictiveTileBudgetBytes = 12ull * 1024 * 1024;
 
 	void ResourceGrid::Advance(uint32_t scope, uint32_t size, double x, double y)
 	{
@@ -85,8 +86,19 @@ namespace DX12
 				}
 			}
 			for (size_t i = 0; i < kPredictiveCapacity; ++i) {
-				next->predictiveResident[i] = lookup(next->predictive[i]);
-				resetFailedAfterMove(next->predictiveResident[i]);
+				auto tile = lookup(next->predictive[i]);
+				resetFailedAfterMove(tile);
+				if (tile && (tile->state == Tile::State::Ready || tile->state == Tile::State::ReadyPartial) &&
+					tile->bytes > kPredictiveTileBudgetBytes) {
+					// Moving from active residency must respect the same 12 MiB per-tile cap
+					// as fresh predictive publications. Keep prepared lights available.
+					auto deferred = std::make_shared<Tile>(*tile);
+					deferred->shapes.clear();
+					deferred->bytes = 0;
+					deferred->state = Tile::State::Deferred;
+					tile = std::move(deferred);
+				}
+				next->predictiveResident[i] = std::move(tile);
 			}
 			// Runtime-only geometry follows the active neighborhood. Prune tiles
 			// that leave 3x3 without a disk flush or stale GPU ownership.
@@ -243,7 +255,6 @@ namespace DX12
 		} else {
 			// Sixteen predictive tiles have a strict combined 192 MiB CPU geometry allowance
 			// (12 MiB per tile), independent of active GPU scene residency.
-			constexpr uint64_t kPredictiveTileBudgetBytes = 12ull * 1024 * 1024;
 			if (tile->bytes > kPredictiveTileBudgetBytes) {
 				tile->shapes.clear();
 				tile->bytes = 0;

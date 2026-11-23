@@ -146,10 +146,12 @@ namespace DX12
 					return false;
 				}
 				process = started.hProcess;
-				const bool assigned = AssignProcessToJobObject(job, process) &&
-				                      ResumeThread(started.hThread) != DWORD(-1);
+				const bool assigned = AssignProcessToJobObject(job, process) != FALSE;
+				const bool resumed = assigned && ResumeThread(started.hThread) != DWORD(-1);
 				CloseHandle(started.hThread);
-				if (!assigned) {
+				if (!assigned || !resumed) {
+					// A child not assigned to the job survives Close() unless terminated directly.
+					TerminateProcess(process, 1);
 					Close();
 					return false;
 				}
