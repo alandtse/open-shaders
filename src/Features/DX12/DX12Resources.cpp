@@ -214,7 +214,8 @@ namespace DX12
 		tile->bytes = publication.geometryBytes;
 		tile->lights = std::move(publication.lights);
 		const bool complete = publication.validated && publication.enumerationComplete &&
-		                      publication.failedShapes == 0 && publication.eligibleShapes == tile->shapes.size();
+		                      publication.failedShapes == 0 && publication.rejectedLights == 0 &&
+		                      publication.eligibleShapes == tile->shapes.size();
 		if (publication.validated && (complete || !tile->shapes.empty() || !tile->lights.empty())) {
 			// Geometry validity and complete static-shadow coverage are different contracts.
 			// Keep real partial geometry and placed lights available for native scene building.
