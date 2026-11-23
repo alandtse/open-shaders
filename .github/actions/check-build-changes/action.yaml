@@ -22,6 +22,9 @@ outputs:
     cpp-tests-should-build:
         description: "True if cpp_tests-relevant files changed (or detection failed)."
         value: ${{ steps.changed-files.outputs.cpp_tests_any_changed == 'true' || steps.changed-files.outputs.cpp_any_changed == 'true' || steps.changed-files.outputs.cmake_scripts_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.cmake_root_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
+    python-tests-should-build:
+        description: "True if the Python unit tests should run: any cpp-tests-should-build trigger, or a Python test or tool changed (or detection failed)."
+        value: ${{ steps.changed-files.outputs.python_tests_any_changed == 'true' || steps.changed-files.outputs.cpp_tests_any_changed == 'true' || steps.changed-files.outputs.cpp_any_changed == 'true' || steps.changed-files.outputs.cmake_scripts_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.cmake_root_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
     changed-files-json:
         description: "JSON array of every changed path. Empty (or absent on detection failure) means callers should treat the change set as unknown and validate in full."
         value: ${{ steps.changed-files-json.outcome == 'success' && steps.changed-files-json.outputs.all_changed_files || '' }}
@@ -79,9 +82,11 @@ runs:
                     - 'features/**/Shaders/Features/*.ini'
                   shader_tests:
                     - 'tests/shaders/**'
+                  python_tests:
+                    - 'tests/*.py'
+                    - 'tools/*.py'
                   cpp_tests:
                     - 'tests/cpp/**'
-                    - 'tests/*.py'
                     - 'tests/ci-python-suites.txt'
                     - 'features/Skylighting/Shaders/Skylighting/UpdateProbesCS.hlsl'
                     - 'tools/feature-flip-impact.py'
