@@ -365,6 +365,52 @@ class ShaderCostReportTest(unittest.TestCase):
         self.assertIn("VR dev trend", text)
         self.assertIn("14-day-old dev run", text)
 
+    def test_runner_hardware_is_read_from_the_sidecar_and_rendered(self):
+        import json
+        import os
+        import shutil
+        import tempfile
+
+        names = [f"e{i}" for i in range(150)]
+        base_src, head_src = self._timing_files(
+            [(n, 20.0) for n in names], [(n, 20.0) for n in names]
+        )
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        base, head = (os.path.join(tmp, f"{d}-compile-timing-VR.json") for d in "bh")
+        shutil.copy(base_src, base)
+        shutil.copy(head_src, head)
+        for path, cpu, ms in (
+            (base, "AMD EPYC 9V45 96-Core Processor", 282),
+            (head, "AMD EPYC 7763 64-Core Processor", 980),
+        ):
+            sidecar = path.replace("compile-timing", "compile-runner")
+            with open(sidecar, "w", encoding="utf-8") as f:
+                json.dump({"cpu": cpu, "cores": 4, "mhz": 2445, "single_ms": ms}, f)
+        diff = REPORT.timing_diff(base, head)
+        self.assertEqual(diff["pr_runner"]["single_ms"], 980)
+        flat = {
+            "base_total": 5,
+            "total": 5,
+            "changed": 0,
+            "added": 0,
+            "removed": 0,
+            "recompile_s": 0.0,
+            "total_s": 5.0,
+            "added_pct": 0.0,
+            "removed_pct": 0.0,
+            "growth_pct": 0.0,
+            "net_s": 0.0,
+            "net_pct": 0.0,
+            "top_files": [],
+        }
+        text = REPORT.render({"VR": flat}, False, True, {"VR": diff})
+        self.assertIn(
+            "this run EPYC 7763 (980 ms), dev baseline EPYC 9V45 (282 ms)", text
+        )
+        os.remove(head.replace("compile-timing", "compile-runner"))
+        self.assertIsNone(REPORT.timing_diff(base, head)["pr_runner"])
+
 
 if __name__ == "__main__":
     unittest.main()

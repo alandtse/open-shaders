@@ -494,6 +494,25 @@ def runner_factor(before, after, common, structural_pct):
     return ratio
 
 
+def runner_info(timing_path):
+    """CPU description CI recorded next to a timing report, or None when absent."""
+    if not timing_path:
+        return None
+    path = os.path.join(
+        os.path.dirname(timing_path),
+        os.path.basename(timing_path).replace("compile-timing", "compile-runner"),
+    )
+    try:
+        return json.load(open(path, encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+
+
+def _runner_label(info):
+    cpu = re.sub(r"\s+(\d+-Core )?Processor$", "", info["cpu"]).replace("AMD ", "")
+    return f"{cpu} ({info['single_ms']} ms)"
+
+
 def timing_diff(baseline, measured, structural_pct=None):
     """Compare per-entry compile seconds of a PR build against the dev baseline, over entries present in both.
 
@@ -510,6 +529,7 @@ def timing_diff(baseline, measured, structural_pct=None):
         }
 
     before, after = load(baseline), load(measured)
+    base_runner, pr_runner = runner_info(baseline), runner_info(measured)
     common = [k for k in after if k in before]
     if not common:
         return None
@@ -536,6 +556,8 @@ def timing_diff(baseline, measured, structural_pct=None):
     slower, faster = moved(1), moved(-1)
     worst = [(k[1], before[k], adjusted[k]) for k in slower[:3]]
     return {
+        "base_runner": base_runner,
+        "pr_runner": pr_runner,
         "threshold": timing_threshold(len(common)),
         "compared": len(common),
         "base_s": base_total,
@@ -655,6 +677,8 @@ def render(results, flags_changed, timed, timing=None, drift=None):
         line = f"**{name} measured:** {diff['compared']} recompiled shaders, {diff['delta_pct']:+.1f}% total compile time against dev ({diff['base_s']:.0f} s → {diff['pr_s']:.0f} s); {diff['slower']} slower, {diff['faster']} faster."
         if diff.get("runner"):
             line += f" Runner-adjusted: this run was {diff['runner']:.2f}× the dev baseline's speed, raw {diff['raw_delta_pct']:+.1f}% ({diff['raw_pr_s']:.0f} s)."
+        if diff.get("base_runner") and diff.get("pr_runner"):
+            line += f" Hardware: this run {_runner_label(diff['pr_runner'])}, dev baseline {_runner_label(diff['base_runner'])} (single-thread benchmark; lower is faster)."
         if diff["worst"]:
             line += (
                 " Slowest regressions: "
