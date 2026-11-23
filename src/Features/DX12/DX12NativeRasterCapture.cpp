@@ -1,5 +1,6 @@
 #include "DX12NativeRasterCapture.h"
 
+#include "DX12GpuRetirement.h"
 #include "GpuPass.h"
 #include "Utils/D3D.h"
 #include <algorithm>
@@ -12,18 +13,24 @@ namespace DX12Native
 	RasterCapture::~RasterCapture()
 	{
 		current.reset();
-		const auto completed = producer.fence12 ? producer.fence12->GetCompletedValue() : 0;
-		for (auto& slot : slots) {
-			if (slot && (slot->readyValue == UINT64_MAX || completed == UINT64_MAX || slot->readyValue > completed ||
-							std::ranges::any_of(slot->consumers, [](const auto& consumer) { const auto done = consumer.first->GetCompletedValue(); return done == UINT64_MAX || done < consumer.second; })))
-				(void)new std::shared_ptr<RasterFrame>(std::move(slot));
-		}
+		const auto ready = [fence = producer.fence12](const RasterFrame& frame) {
+			const auto* producerFence = frame.readyFence ? frame.readyFence.get() : fence.get();
+			return GpuFenceRetired(const_cast<ID3D12Fence*>(producerFence), frame.readyValue) &&
+			       std::ranges::all_of(frame.consumers, [](const auto& consumer) {
+					   return GpuFenceRetired(consumer.first.get(), consumer.second);
+			       });
+		};
+		for (auto& slot : slots)
+			if (slot && !ready(*slot))
+				RetireWhenGpuDone(std::move(slot), backend.d3d12Device, ready);
 	}
 
 	void RasterCapture::Capture(const GraphicsBackend& a_backend, ID3D11ShaderResourceView* a_depth, const globals::FrameBuffer* a_camera, uint32_t a_frame)
 	{
 		CS_GPU_PASS("DX12NativeScene::CaptureOpaqueRaster");
 		current.reset();
+		std::shared_ptr<RasterFrame> captureSlot;
+		bool gpuCopyStarted = false;
 		try {
 			if (!a_backend.d3d11Device || !a_backend.d3d11Context || !a_backend.d3d12Device || !a_backend.commandQueue)
 				throw std::runtime_error("DX11/DX12 backend unavailable");
@@ -82,6 +89,18 @@ namespace DX12Native
 				const auto allocation = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &depthAllocation);
 				if (allocation.SizeInBytes == UINT64_MAX || !allocation.SizeInBytes)
 					throw std::runtime_error("Raster depth allocation unsupported");
+				// Include the old slot: replacement must coexist with it during allocation.
+				uint64_t tracked = 0;
+				for (const auto& retained : slots) {
+					if (!retained)
+						continue;
+					if (tracked > UINT64_MAX - retained->allocationBytes)
+						throw std::runtime_error("Raster depth tracked size overflow");
+					tracked += retained->allocationBytes;
+				}
+				const uint64_t allowance = videoBudget.Query(backend.d3d12Device.get(), tracked).effectiveBytes;
+				if (allocation.SizeInBytes > allowance || tracked > allowance - allocation.SizeInBytes)
+					throw std::runtime_error("Raster depth allocation deferred by DXGI budget");
 				auto replacement = std::make_shared<RasterFrame>();
 				replacement->width = width;
 				replacement->height = height;
@@ -92,6 +111,8 @@ namespace DX12Native
 			}
 			slot->consumers.clear();
 			slot->readyValue = UINT64_MAX;
+			slot->readyFence = producer.fence12;
+			captureSlot = slot;
 			auto* context = backend.d3d11Context.get();
 			winrt::com_ptr<ID3D11ComputeShader> priorShader;
 			winrt::com_ptr<ID3D11ShaderResourceView> priorRead;
@@ -103,6 +124,7 @@ namespace DX12Native
 			context->CSSetShaderResources(0, 1, &a_depth);
 			context->CSSetUnorderedAccessViews(0, 1, &write, nullptr);
 			context->CSSetShader(depthShader.get(), nullptr, 0);
+			gpuCopyStarted = true;
 			context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
 			write = priorWrite.get();
 			context->CSSetUnorderedAccessViews(0, 1, &write, nullptr);
@@ -111,6 +133,8 @@ namespace DX12Native
 			context->CSSetShader(priorShader.get(), nullptr, 0);
 			const auto ready = producer.Next();
 			DX::ThrowIfFailed(backend.d3d11Context->Signal(producer.fence11.get(), ready));
+			// A failed DX12 queue Wait must not strand a successfully signaled frame.
+			slot->readyValue = ready;
 			backend.d3d11Context->Flush();
 			DX::ThrowIfFailed(backend.commandQueue->Wait(producer.fence12.get(), ready));
 			slot->cameraValid = a_camera != nullptr;
@@ -121,6 +145,19 @@ namespace DX12Native
 			slot->frame = a_frame;
 			current = slot;
 		} catch (const std::exception&) {
+			// A DX11 dispatch may still be queued if a later step fails.
+			// Attach a producer fence rather than quarantining the slot forever.
+			if (captureSlot && captureSlot->readyValue == UINT64_MAX) {
+				if (gpuCopyStarted && producer.fence11) {
+					const uint64_t rescue = producer.Next();
+					if (SUCCEEDED(backend.d3d11Context->Signal(producer.fence11.get(), rescue))) {
+						backend.d3d11Context->Flush();
+						captureSlot->readyValue = rescue;
+					}
+				} else if (!gpuCopyStarted) {
+					captureSlot->readyValue = 0;
+				}
+			}
 			// Missing capture leaves no published frame; do not disrupt raster.
 		}
 	}

@@ -46,6 +46,14 @@ namespace DX12Native
 		void Reset();
 		/** @brief Returns only a GPU-completed TLAS, with all rigid casters retained. */
 		std::shared_ptr<const TopLevel> GetScene() const { return published; }
+		/** @brief Submitted builds still need GPU retirement polling even after scene reset. */
+		bool HasPendingBuilds() const
+		{
+			for (const auto& build : builds)
+				if (build.allocator)
+					return true;
+			return false;
+		}
 		/** @brief Keeps a published scene alive until a downstream GPU consumer finishes. */
 		bool RetainThrough(const std::shared_ptr<const TopLevel>& a_scene, ID3D12Fence* a_fence, uint64_t a_value);
 		/** @brief Reports an actual DX12 creation or submission error. */

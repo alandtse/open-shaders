@@ -185,7 +185,7 @@ namespace DX12Native
 			std::erase_if(consumers, [](const RetainedScene& record) {
 				return record.fence->GetCompletedValue() >= record.value;
 			});
-			const bool building = inputs && !completed;
+			const bool building = (inputs && !completed) || acceleration.HasPendingBuilds();
 			std::unique_lock lock(a_state->mutex);
 			auto workArrived = [&] {
 				return a_stop.stop_requested() || processedEpoch != a_state->epoch ||
