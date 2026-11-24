@@ -193,6 +193,17 @@ TEST_CASE("Upstream preset-state saves do not discard OS preferences", "[presets
 	REQUIRE(PresetState::RestorePrivateState({ { "automaticPresets", true } }, privateState).at("automaticPresets") == true);
 }
 
+TEST_CASE("Legacy settings saves retain the last shared Base Settings selection", "[presets]")
+{
+	const nlohmann::json enabled = { "Second", "First" };
+	const nlohmann::json preferences{ { "lastSharedBaselinePackIds", enabled }, { "disabledBaselinePackIds", { "Off" } } };
+	const auto restored = PresetState::RestorePrivateState(nlohmann::json::object(), preferences);
+	REQUIRE(restored.at("baselinePackIds") == enabled);
+	REQUIRE(restored.at("disabledBaselinePackIds") == preferences.at("disabledBaselinePackIds"));
+	const nlohmann::json cleared{ { "baselinePackIds", nlohmann::json::array() } };
+	REQUIRE(PresetState::RestorePrivateState(cleared, preferences).at("baselinePackIds").empty());
+}
+
 TEST_CASE("Disabled Base Settings retain priority across startup and reactivation", "[presets]")
 {
 	const std::vector<std::string> installed{ "Z Pack", "Alpha", "!Priority" };
