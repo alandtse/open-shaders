@@ -317,7 +317,6 @@ std::function<void()> DX12NativeScene::OnRenderPassBegin(const RE::BSRenderPass*
 		!shadowMaskEnabled || !globals::features::dx12Control.IsActive() ||
 		!globals::features::dx12Control.IsShadowOffloadMode() ||
 		!globals::features::upscaling.loaded ||
-		globals::features::upscaling.GetUpscaleMethod() != Upscaling::UpscaleMethod::kFSR ||
 		!globals::state || globals::state->isMapMenuOpen ||
 		(globals::state->permutationData.ExtraShaderDescriptor &
 			static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections)))
