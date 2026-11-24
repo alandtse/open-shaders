@@ -54,10 +54,10 @@ struct UnifiedWater : OverlayFeature
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	/** @brief Hook that repoints shared water reflections and normals away from the removed water's material. */
-	struct TESWaterSystem_RemoveWater
+	/** @brief Hook that repairs shared reflection and normals materials left dangling by water removal before the engine reuses them. */
+	struct TESWaterSystem_AddWater
 	{
-		static bool thunk(RE::TESWaterSystem* waterSystem, RE::NiAVObject* water);
+		static void thunk(RE::TESWaterSystem* waterSystem, RE::NiAVObject* water, RE::TESWaterForm* waterType, float waterHeight, const RE::BSTArray<RE::NiPointer<RE::BSMultiBoundAABB>>* multiBounds, bool noDisplacement, bool isProcedural);
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
