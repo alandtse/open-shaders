@@ -4,6 +4,7 @@
 #include "Features/LightLimitFix.h"
 #include "Features/NativeComposite/NativeComposite.h"
 #include "Features/NativeFeatures.h"
+#include "Features/NativeLighting/NativeLighting.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "RE/B/BSTriShape.h"
@@ -260,7 +261,11 @@ bool DX12NativeScene::OwnsNativeFeatures() const
 
 bool DX12NativeScene::IsPreparedStaticCaster(RE::BSGeometry& geometry) const
 {
-	if (!globals::features::nativeSCM.IsActive() || geometry.GetGeometryRuntimeData().skinInstance)
+	if (!settings.ShadowMask || !globals::features::nativeSCM.IsActive() ||
+		geometry.GetGeometryRuntimeData().skinInstance || !globals::game::graphicsState)
+		return false;
+	const auto mask = GetShadowMask(globals::game::graphicsState->GetFrameCount());
+	if (!mask || !mask->readyFence || !mask->readyValue || mask->readyValue == UINT64_MAX)
 		return false;
 	// Coverage describes actual acceleration instances, never the offline
 	// manifest alone. Unmatched static geometry remains in SCM's raster path.
@@ -293,7 +298,7 @@ std::optional<DX12NativeScene::NativeLightBatch> DX12NativeScene::GetNativeLLFLi
 	const auto scene = GetPublishedScene();
 	if (!scene)
 		return std::nullopt;
-	const auto merged = globals::features::nativeLLF.BuildUnifiedLights(scene->cell->nativeLights, a_frame);
+	const auto merged = globals::features::nativeLLF.BuildUnifiedLights(scene->cell->nativeLights, a_frame, true);
 	NativeLightBatch batch{};
 	batch.lights = merged.lights;
 	batch.count = merged.count;
@@ -302,38 +307,6 @@ std::optional<DX12NativeScene::NativeLightBatch> DX12NativeScene::GetNativeLLFLi
 	batch.matched = merged.matched;
 	batch.added = merged.added;
 	batch.overflow = merged.overflow;
-	// Native scene supplementary lighting has its own immutable generation.
-	// Live LLF lights win when present; stable baked observations fill gaps.
-	if (const auto baked = scene->bakedLights) {
-		const auto distanceSquared = [](const float3& a, const float3& b) {
-			const float x = a.x - b.x, y = a.y - b.y, z = a.z - b.z;
-			return x * x + y * y + z * z;
-		};
-		for (const auto& entry : baked->candidates) {
-			if (entry.consecutiveObservations < 4 ||
-				a_frame < entry.lastSeenFrame ||
-				a_frame - entry.lastSeenFrame > 30)
-				continue;
-			bool exists = false;
-			for (uint32_t i = 0; i < batch.count; ++i) {
-				if (!batch.lights[i].supported)
-					continue;
-				const float tolerance = std::clamp(entry.light.radius * 0.005f, 1.0f, 8.0f);
-				if (distanceSquared(entry.light.position, batch.lights[i].position) <= tolerance * tolerance) {
-					exists = true;
-					break;
-				}
-			}
-			if (exists)
-				continue;
-			if (batch.count >= batch.lights.size()) {
-				++batch.overflow;
-				break;
-			}
-			batch.lights[batch.count++] = entry.light;
-			++batch.baked;
-		}
-	}
 	batch.clustered = merged.clusteredLive;
 	batch.omitted = merged.omitted;
 	return batch;
@@ -661,6 +634,7 @@ void DX12NativeScene::ResetScene()
 	submitted = false;
 	raster.Reset();
 	shadow.Reset();
+	shadowRasterOffloadFrame = UINT32_MAX;
 	if (auto old = materialBindings.Get())
 		retiredMaterials = old;
 	materialBindings.Reset();
@@ -817,6 +791,18 @@ void DX12NativeScene::EarlyPrepass()
 		settings.Enabled = nativeSelected;
 		if (const auto shadowEnabled = requestedShadow.exchange(-1); shadowEnabled >= 0)
 			settings.ShadowMask = shadowEnabled != 0;
+		const auto offload = globals::features::nativeLighting.GetOffloadSettings();
+		const bool shadowOffload = offload.staticShadows && offload.shadowIntensity > 0.0f;
+		if (settings.ShadowMask != shadowOffload)
+			shadowResetRequested = true;
+		if (settings.ShadowTraceDensityMode != offload.traceDensity)
+			++shadowControlsRevision;
+		if (settings.ShadowDistanceFade != offload.fadeShadowsNearReach)
+			++shadowControlsRevision;
+		settings.ShadowMask = shadowOffload;
+		settings.ShadowTraceDensityMode = offload.traceDensity;
+		settings.ShadowDistanceFade = offload.fadeShadowsNearReach;
+		settings.ShadowAllLights = true;
 		requestedBudget.store(UINT32_MAX, std::memory_order_relaxed);
 		requestedFrameBudget.store(UINT32_MAX, std::memory_order_relaxed);
 		settings.BudgetMB = 0;
@@ -884,8 +870,14 @@ void DX12NativeScene::EarlyPrepass()
 					runtimePreparedCoverage.load(std::memory_order_acquire) ?
 				&runtimeGeometry :
 				nullptr);
-	if (shadowResetRequested.exchange(false))
+	// A pre-raster mask may already own static shadows in this frame. Never
+	// invalidate it between SCM's caster decision and the native composite.
+	if (shadowResetRequested.load(std::memory_order_relaxed) &&
+		(!globals::game::graphicsState ||
+		 shadowRasterOffloadFrame != globals::game::graphicsState->GetFrameCount())) {
+		shadowResetRequested = false;
 		shadow.Reset();
+	}
 	if (!settings.Enabled || transitionOpen) {
 		if (cellID)
 			ResetScene();
@@ -1147,7 +1139,6 @@ void DX12NativeScene::EarlyPrepass()
 			}
 		}
 	}
-	DispatchShadow("early-prepass");
 }
 
 void DX12NativeScene::DispatchShadow(const char* a_stage)
@@ -1157,6 +1148,9 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 		std::scoped_lock lock(settingsMutex);
 		shadowSettings = settings;
 	}
+	shadowSettings.ShadowReachMultiplier = 1.0f;
+	shadowSettings.ShadowStochastic = false;
+	shadowSettings.CharacterShadowCasterVisibility = false;
 	if (!shadowSettings.Enabled || !shadowSettings.ShadowMask || transitionOpen || globals::game::isVR || !backend || !globals::game::graphicsState ||
 		!globals::shaderCache || !globals::shaderCache->IsEnabled() ||
 		!globals::state || globals::state->isMapMenuOpen ||
@@ -1194,17 +1188,38 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 	}
 	const auto dynamicSize = Util::ConvertToDynamic(globals::state->screenSize);
 	const std::array<uint32_t, 2> size{ uint32_t(dynamicSize.x), uint32_t(dynamicSize.y) };
-	const auto nativeLights = GetNativeLLFLights(frame);
 	const auto& preparedLights = scene->cell->nativeLights;
-	const std::span<const DX12Native::PreparedPointLight> lights = nativeLights ?
-	                                                                   std::span<const DX12Native::PreparedPointLight>(nativeLights->lights.data(), nativeLights->count) :
-	                                                                   std::span<const DX12Native::PreparedPointLight>(preparedLights);
-	if (lights.empty() || (shadowSettings.ShadowAllLights && lights.size() > DX12Native::kMaximumNativePointLights) ||
-		(!shadowSettings.ShadowAllLights && shadowSettings.ShadowLightIndex >= lights.size())) {
-		shadowStatus = "Selected native shadow lights unavailable or exceed 64";
+	// The independent shadow dispatch must never depend on runtime LLF data.
+	// Companion manifests can contain more than 64 placed lights: select the
+	// nearest effective receivers instead of aborting the entire dispatch.
+	std::vector<DX12Native::PreparedPointLight> selectedLights;
+	if (shadowSettings.ShadowAllLights) {
+		std::vector<std::pair<float, size_t>> candidates;
+		candidates.reserve(preparedLights.size());
+		for (size_t index = 0; index < preparedLights.size(); ++index) {
+			const auto& light = preparedLights[index];
+			if (!light.supported || !std::isfinite(light.radius) || light.radius <= 0.0f)
+				continue;
+			const float lightDx = light.position.x - origin.x;
+			const float lightDy = light.position.y - origin.y;
+			const float lightDz = light.position.z - origin.z;
+			const float distance = std::sqrt(lightDx * lightDx + lightDy * lightDy + lightDz * lightDz);
+			if (std::isfinite(distance))
+				candidates.emplace_back(std::max(0.0f, distance - light.radius), index);
+		}
+		const auto count = std::min(candidates.size(), size_t(DX12Native::kMaximumNativePointLights));
+		std::partial_sort(candidates.begin(), candidates.begin() + count, candidates.end());
+		selectedLights.reserve(count);
+		for (size_t index = 0; index < count; ++index)
+			selectedLights.push_back(preparedLights[candidates[index].second]);
+	} else if (shadowSettings.ShadowLightIndex < preparedLights.size() &&
+		preparedLights[shadowSettings.ShadowLightIndex].supported) {
+		selectedLights.push_back(preparedLights[shadowSettings.ShadowLightIndex]);
+	}
+	if (selectedLights.empty()) {
+		shadowStatus = "No supported companion-prepared shadow lights";
 		return;
 	}
-	const auto selectedLights = shadowSettings.ShadowAllLights ? lights : lights.subspan(shadowSettings.ShadowLightIndex, 1);
 	const DX12Native::ShadowTraceControls controls{
 		shadowSettings.ShadowReachMultiplier, shadowSettings.ShadowFalloffFraction,
 		shadowSettings.ShadowFalloffExponent, shadowSettings.ShadowEmitterRadius,
@@ -1232,6 +1247,33 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 	shadow.Dispatch(*backend, scene->acceleration, scene->materials, selectedLights, camera, size, frame,
 		0ull, controls, std::move(characterCaster));
 	shadowStatus = shadow.Status();
+}
+
+bool DX12NativeScene::PrepareShadowMaskForRaster()
+{
+	if (!globals::game::graphicsState)
+		return false;
+	const auto frame = globals::game::graphicsState->GetFrameCount();
+	if (shadowRasterOffloadFrame == frame && GetRasterOffloadShadowMask(frame))
+		return true;
+	++shadowEarlyAttempts;
+	// The prior frame's settings/scene are already prepared by EarlyPrepass.
+	// Retire a pending shadow generation before any raster ownership handoff.
+	if (shadowResetRequested.exchange(false))
+		shadow.Reset();
+	DispatchShadow("before-raster-shadowmaps");
+	if (const auto mask = GetShadowMask(frame);
+		mask && mask->readyFence && mask->readyValue && mask->readyValue != UINT64_MAX) {
+		shadowRasterOffloadFrame = frame;
+		++shadowEarlySubmissions;
+		return true;
+	}
+	return false;
+}
+
+std::shared_ptr<const DX12Native::ShadowFrame> DX12NativeScene::GetRasterOffloadShadowMask(uint32_t a_frame) const
+{
+	return shadowRasterOffloadFrame == a_frame ? GetShadowMask(a_frame) : nullptr;
 }
 
 std::optional<DX12NativeScene::SceneFrame> DX12NativeScene::GetSceneFrame(uint32_t a_frame) const
@@ -1347,15 +1389,6 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 		}
 	}
 	raster.Capture(*backend, inputs, Util::GetCurrentSceneDepthSRV(false), camera, frame, 0ull);
-	// Earlier shadow hooks may precede the current-frame main camera.
-	// Retry only when the same-frame producer has not already published a mask;
-	// DispatchShadow retains the camera, cell, material, scope and fence guards.
-	if (settings.ShadowMask && !shadow.Get(frame)) {
-		++shadowOpaqueRetryAttempts;
-		DispatchShadow("opaque-raster-ready");
-		if (shadow.Get(frame))
-			++shadowOpaqueRetryRecovered;
-	}
 }
 
 std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScene() const
@@ -1373,9 +1406,7 @@ std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScen
 		stableGridPublished->cell && stableGridPublished->acceleration &&
 		stableGridPublished->materials &&
 		stableGridPublished->materials->scene == stableGridPublished->acceleration) {
-		auto published = *stableGridPublished;
-		published.bakedLights = globals::features::nativeLLF.GetSceneLightBake(published.cell);
-		return published;  // Last complete scene even while recentering.
+		return *stableGridPublished;  // Last complete scene even while recentering.
 	}
 	auto data = prepared.GetCell();
 	auto scene = currentSceneStableAcceleration ? currentSceneStableAcceleration : acceleration.GetScene();
@@ -1384,8 +1415,7 @@ std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScen
 	auto materials = currentSceneStableBindings ? currentSceneStableBindings : materialBindings.Get();
 	if (materials && materials->scene != scene)
 		materials.reset();
-	auto baked = globals::features::nativeLLF.GetSceneLightBake(data);
-	return PublishedScene{ std::move(data), std::move(scene), std::move(materials), cellID, revision, std::move(baked) };
+	return PublishedScene{ std::move(data), std::move(scene), std::move(materials), cellID, revision };
 }
 
 void DX12NativeScene::PublishDiagnostics()
@@ -1416,10 +1446,10 @@ void DX12NativeScene::PublishDiagnostics()
 																																					  return selection && selection->acceleration &&
 																																					         selection->acceleration->scope.policy == 3;
 																																				  }() },
-		{ "nativePBR", globals::features::nativePBR.IsActive() }, { "nativeLLF", globals::features::nativeLLF.IsActive() }, { "nativeSCM", globals::features::nativeSCM.IsActive() }, { "nativeCharacterObservation", nativeCharacters.GetDiagnostics() }, { "nativeLightSource", OwnsNativeFeatures() ? "prepared-priority-unified" : "prepared-cell" }, { "nativeSCMCasters", globals::game::graphicsState ? ([&] { const auto snapshot = GetNativeSCMFrame(globals::game::graphicsState->GetFrameCount());
+		{ "nativePBR", globals::features::nativePBR.IsActive() }, { "nativeLLF", globals::features::nativeLLF.IsActive() }, { "nativeSCM", globals::features::nativeSCM.IsActive() }, { "nativeCharacterObservation", nativeCharacters.GetDiagnostics() }, { "nativeLightSource", OwnsNativeFeatures() ? "companion-prepared-only" : "companion-prepared-only" }, { "nativeSCMCasters", globals::game::graphicsState ? ([&] { const auto snapshot = GetNativeSCMFrame(globals::game::graphicsState->GetFrameCount());
 				return snapshot ? snapshot->casters.size() : size_t{ 0 }; })() : size_t{ 0 } }, { "nativeSCMMovers", globals::game::graphicsState ? ([&] { const auto snapshot = GetNativeSCMFrame(globals::game::graphicsState->GetFrameCount());
 				return snapshot ? std::ranges::count_if(snapshot->casters, [](const auto& caster) { return caster.dynamic; }) : std::ptrdiff_t{ 0 }; })() : std::ptrdiff_t{ 0 } }, { "nativeSCMRetiredStatic", globals::game::graphicsState ? ([&] { const auto snapshot = GetNativeSCMFrame(globals::game::graphicsState->GetFrameCount());
-				return snapshot ? snapshot->preparedStaticRetired : 0u; })() : 0u }, { "nativeLightCount", globals::game::graphicsState ? (GetNativeLLFLights(globals::game::graphicsState->GetFrameCount()).value_or(NativeLightBatch{}).count) : 0u }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure }, { "raster", raster.GetDiagnostics() }, { "shadowStage", shadowStage }, { "shadowStatus", shadowStatus }, { "shadow", shadow.GetDiagnostics() }, { "shadowOpaqueRetryAttempts", shadowOpaqueRetryAttempts }, { "shadowOpaqueRetryRecovered", shadowOpaqueRetryRecovered }, { "shadowTraceControls", { { "revision", shadowControlsRevision }, { "allLights", settings.ShadowAllLights }, { "lightIndex", settings.ShadowLightIndex }, { "stochastic", settings.ShadowStochastic }, { "emitterRadius", settings.ShadowEmitterRadius }, { "reachMultiplier", settings.ShadowReachMultiplier }, { "falloffFraction", settings.ShadowFalloffFraction }, { "falloffExponent", settings.ShadowFalloffExponent }, { "distanceFade", settings.ShadowDistanceFade }, { "normalInfluence", settings.ShadowNormalInfluence }, { "traceDensityMode", settings.ShadowTraceDensityMode } } }, { "runtimeGeometry", { { "scmRigidCaptureEnabled", settings.CaptureSCMRigidCasters }, { "scmNativeCollectionActive", runtimeGeometryCaptureActive.load(std::memory_order_acquire) && globals::features::nativeSCM.IsActive() }, { "capturedMeshes", runtimeGeometry.Count() }, { "capturedBytes", runtimeGeometry.Bytes() }, { "alreadyPreparedInstances", runtimePreparedCoverage.load(std::memory_order_acquire) ? runtimePreparedCoverage.load(std::memory_order_acquire)->completed.size() : 0 }, { "alreadyPreparedSkipped", runtimePreparedSkipped.load(std::memory_order_relaxed) }, { "alreadyPreparedPruned", runtimePreparedPruned }, { "currentSceneMerged", currentSceneStableAcceleration && currentSceneStableAcceleration->scope.policy == 2 }, { "currentSceneSubmittedBatch", currentSceneSubmittedBatch }, { "currentSceneInputInstances", runtimeGeometryPrepare.GetCurrentSceneCell() && runtimeGeometryPrepare.GetCurrentSceneCell()->snapshot ? runtimeGeometryPrepare.GetCurrentSceneCell()->snapshot->instances.size() : 0 }, { "gpuBudget", { { "dxgiAvailable", runtimeGeometryBudgetStatus.dxgiAvailable }, { "localBudgetBytes", runtimeGeometryBudgetStatus.localBudget }, { "localUsageBytes", runtimeGeometryBudgetStatus.localUsage }, { "reserveBytes", runtimeGeometryBudgetStatus.reserve }, { "activeBaselineBytes", runtimeGeometryActiveBytes }, { "runtimeAllowanceBytes", runtimeGeometryAllowedBytes } } }, { "captureRevision", runtimeGeometry.Revision() }, { "enabled", runtimeGeometryCaptureActive.load(std::memory_order_acquire) }, { "preparing", runtimeGeometryPrepare.Busy() }, { "batches", runtimeGeometryPrepare.Batches() }, { "attempted", runtimeGeometryPrepare.Attempted() }, { "failures", runtimeGeometryPrepare.Failures() }, { "cacheHits", runtimeGeometryPrepare.CacheHits() }, { "diskCache", { { "enabled", settings.CacheRuntimeGeometry }, { "workerBusy", runtimeGeometryCache.Busy() }, { "menuComplete", runtimeGeometryCache.MenuReady() }, { "menuChecked", runtimeGeometryCache.MenuChecked() }, { "menuAccepted", runtimeGeometryCache.MenuAccepted() }, { "menuPreparedBytes", runtimeGeometryCache.MenuBytes() }, { "stored", runtimeGeometryCache.Stored() }, { "rejected", runtimeGeometryCache.Rejected() }, { "failure", runtimeGeometryCache.Failure() } } }, { "preparedInstances", runtimeGeometryPrepare.GetCell() && runtimeGeometryPrepare.GetCell()->snapshot ? runtimeGeometryPrepare.GetCell()->snapshot->instances.size() : 0 }, { "preparedBytes", runtimeGeometryPrepare.GetCell() ? runtimeGeometryPrepare.GetCell()->bytes : 0 }, { "activeSceneInstances", currentSceneStableAcceleration ? currentSceneStableAcceleration->instances.size() : 0 } } }, { "preparedSceneBudget", { { "automatic", true }, { "manualLimitBytes", uint64_t{ 0 } }, { "dxgiAvailable", preparedSceneBudgetStatus.dxgiAvailable }, { "localBudgetBytes", preparedSceneBudgetStatus.localBudget }, { "localUsageBytes", preparedSceneBudgetStatus.localUsage }, { "reserveBytes", preparedSceneBudgetStatus.reserve }, { "effectiveBytes", preparedSceneBudgetStatus.effectiveBytes } } }, { "prepared", prepared.GetDiagnostics() }, { "materialFailure", materialBindings.Failure() }, { "materialUploadPending", materialBindings.UploadPending() }, { "materialBindingsReady", bindings && bindings->scene == acceleration.GetScene() }, { "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() }, { "materialBudget", { { "dxgiAvailable", bindings ? bindings->materialBudget.dxgiAvailable : false }, { "selectedBatchLimitBytes", uint64_t(settings.MaterialBatchMB) * 1024 * 1024 }, { "loadedBatchLimitBytes", bindings ? bindings->uploadBatchBudget : 0 }, { "effectiveBytes", bindings ? bindings->materialBudget.effectiveBytes : 0 }, { "localBudgetBytes", bindings ? bindings->materialBudget.localBudget : 0 }, { "localUsageBytes", bindings ? bindings->materialBudget.localUsage : 0 }, { "textureBytes", bindings ? bindings->materials->bytes : 0 }, { "tableBytes", bindings ? bindings->materials->tableBytes : 0 }, { "retainedPageBytes", retainedPages ? json(*retainedPages) : json(nullptr) }, { "peakStagingBytes", bindings ? bindings->materials->peakStagingBytes : 0 }, { "uploadedBytes", bindings ? bindings->materials->uploadedBytes : 0 }, { "uploadedPages", bindings ? bindings->materials->uploadedPages : 0 }, { "reusedPages", bindings ? bindings->materials->reusedPages : 0 }, { "reusedTextures", bindings ? bindings->materials->reusedTextures : 0 }, { "diskCacheHits", bindings ? bindings->materials->diskCacheHits : 0 }, { "diskCacheWrites", bindings ? bindings->materials->diskCacheWrites : 0 }, { "asyncBatchPages", bindings ? bindings->materials->asyncBatchPages : 0 }, { "asyncBatchStagingBytes", bindings ? bindings->materials->asyncBatchStagingBytes : 0 }, { "readyMaterials", bindings ? bindings->materials->readyMaterials : 0 }, { "rejectedMaterials", bindings ? bindings->materials->rejectedMaterials : 0 }, { "textures", bindings ? bindings->materials->textures : 0 }, { "livePbrMatched", bindings ? bindings->materials->livePbrMatched : 0 }, { "livePbrApplied", bindings ? bindings->materials->livePbrApplied : 0 }, { "livePbrEmissiveApplied", bindings ? bindings->materials->livePbrEmissiveApplied : 0 }, { "livePbrUnsupported", bindings ? bindings->materials->livePbrUnsupported : 0 }, { "livePbrRecipeIssueCount", bindings ? bindings->materials->liveRecipeIssues.affected : 0 }, { "livePbrRecipeIssues", bindings ? json(bindings->materials->liveRecipeIssues.issues) : json(std::array<uint32_t, 13>{}) }, { "livePbrFeatureFlags", bindings ? json(bindings->materials->liveRecipeIssues.pbrFlags) : json(std::array<uint32_t, 7>{}) }, { "livePbrUnsafeOpacity", bindings ? bindings->materials->livePbrUnsafeOpacity : 0 }, { "livePbrMissingBasis", bindings ? bindings->materials->livePbrMissingBasis : 0 }, { "livePbrMissingBindings", bindings ? bindings->materials->livePbrMissingBindings : 0 }, { "livePbrOfflineFallback", bindings ? bindings->materials->livePbrOfflineFallback : 0 }, { "livePbrSourcesMissing", bindings ? bindings->materials->livePbrSourcesMissing : 0 }, { "livePbrSourcesAmbiguous", bindings ? bindings->materials->livePbrSourcesAmbiguous : 0 }, { "livePbrSourcesIncompatible", bindings ? bindings->materials->livePbrSourcesIncompatible : 0 }, { "looseDdsPlanned", bindings ? bindings->materials->looseDdsPlanned : 0 }, { "looseDdsImported", bindings ? bindings->materials->looseDdsImported : 0 }, { "looseDdsRejected", bindings ? bindings->materials->looseDdsRejected : 0 }, { "looseDdsDeferred", bindings ? bindings->materials->looseDdsDeferred : 0 }, { "looseDdsPreviouslyAttempted", bindings ? bindings->materials->looseDdsPreviouslyAttempted : 0 }, { "streamBatches", materialBindings.StreamBatches() }, { "streamAttempted", materialBindings.StreamAttempted() }, { "streamSuccessful", materialBindings.StreamSuccessful() }, { "streamFailed", materialBindings.StreamFailed() }, { "streamNextBatchPending", materialBindings.StreamWaitingForNextBatch() ? 1u : 0u }, { "looseDdsReadyRecipes", bindings ? bindings->materials->looseDdsReadyRecipes : 0 }, { "looseDdsFeatureLimitedRecipes", bindings ? bindings->materials->looseDdsFeatureLimitedRecipes : 0 }, { "looseDdsSkippedRecipes", bindings ? bindings->materials->looseDdsSkippedRecipes : 0 }, { "looseDdsPrepared", bindings ? bindings->materials->looseDdsPrepared : 0 }, { "looseDdsInvalid", bindings ? bindings->materials->looseDdsInvalid : 0 }, { "looseDdsBytes", bindings ? bindings->materials->looseDdsBytes : 0 }, { "archiveDdsPlanned", bindings ? bindings->materials->archiveDdsPlanned : 0 }, { "archiveDdsImported", bindings ? bindings->materials->archiveDdsImported : 0 }, { "archiveDdsRejected", bindings ? bindings->materials->archiveDdsRejected : 0 }, { "archiveDdsBytes", bindings ? bindings->materials->archiveDdsBytes : 0 }, { "liveGpuUnobserved", bindings ? bindings->materials->liveGpuRoutes.unobserved : 0 }, { "liveGpuUnsupported", bindings ? bindings->materials->liveGpuRoutes.unsupported : 0 }, { "liveGpuCopyCandidates", bindings ? bindings->materials->liveGpuRoutes.copyCandidates : 0 }, { "liveGpuSharedCandidates", bindings ? bindings->materials->liveGpuRoutes.sharedCandidates : 0 }, { "livePbrAmbiguous", bindings ? bindings->materials->livePbrAmbiguous : 0 }, { "livePbrIncompatible", bindings ? bindings->materials->livePbrIncompatible : 0 }, { "livePbrMissing", bindings ? bindings->materials->livePbrMissing : 0 }, { "rejectedTextureSources", bindings ? bindings->materials->rejectedTextureSources : 0 }, { "firstTextureSourceFailure", bindings ? bindings->materials->firstTextureSourceFailure : std::string{} }, { "uploadWaitMicroseconds", bindings ? bindings->materials->uploadWaitMicroseconds : 0 } } } };
+				return snapshot ? snapshot->preparedStaticRetired : 0u; })() : 0u }, { "nativeLightCount", (GetPublishedScene() ? GetPublishedScene()->cell->nativeLights.size() : size_t{ 0 }) }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure }, { "raster", raster.GetDiagnostics() }, { "shadowStage", shadowStage }, { "shadowStatus", shadowStatus }, { "shadow", shadow.GetDiagnostics() }, { "shadowEarlyAttempts", shadowEarlyAttempts }, { "shadowEarlySubmissions", shadowEarlySubmissions }, { "shadowRasterOffloadFrame", shadowRasterOffloadFrame }, { "shadowTraceControls", { { "revision", shadowControlsRevision }, { "allLights", settings.ShadowAllLights }, { "lightIndex", settings.ShadowLightIndex }, { "stochastic", settings.ShadowStochastic }, { "emitterRadius", settings.ShadowEmitterRadius }, { "reachMultiplier", settings.ShadowReachMultiplier }, { "falloffFraction", settings.ShadowFalloffFraction }, { "falloffExponent", settings.ShadowFalloffExponent }, { "distanceFade", settings.ShadowDistanceFade }, { "normalInfluence", settings.ShadowNormalInfluence }, { "traceDensityMode", settings.ShadowTraceDensityMode } } }, { "runtimeGeometry", { { "scmRigidCaptureEnabled", settings.CaptureSCMRigidCasters }, { "scmNativeCollectionActive", runtimeGeometryCaptureActive.load(std::memory_order_acquire) && globals::features::nativeSCM.IsActive() }, { "capturedMeshes", runtimeGeometry.Count() }, { "capturedBytes", runtimeGeometry.Bytes() }, { "alreadyPreparedInstances", runtimePreparedCoverage.load(std::memory_order_acquire) ? runtimePreparedCoverage.load(std::memory_order_acquire)->completed.size() : 0 }, { "alreadyPreparedSkipped", runtimePreparedSkipped.load(std::memory_order_relaxed) }, { "alreadyPreparedPruned", runtimePreparedPruned }, { "currentSceneMerged", currentSceneStableAcceleration && currentSceneStableAcceleration->scope.policy == 2 }, { "currentSceneSubmittedBatch", currentSceneSubmittedBatch }, { "currentSceneInputInstances", runtimeGeometryPrepare.GetCurrentSceneCell() && runtimeGeometryPrepare.GetCurrentSceneCell()->snapshot ? runtimeGeometryPrepare.GetCurrentSceneCell()->snapshot->instances.size() : 0 }, { "gpuBudget", { { "dxgiAvailable", runtimeGeometryBudgetStatus.dxgiAvailable }, { "localBudgetBytes", runtimeGeometryBudgetStatus.localBudget }, { "localUsageBytes", runtimeGeometryBudgetStatus.localUsage }, { "reserveBytes", runtimeGeometryBudgetStatus.reserve }, { "activeBaselineBytes", runtimeGeometryActiveBytes }, { "runtimeAllowanceBytes", runtimeGeometryAllowedBytes } } }, { "captureRevision", runtimeGeometry.Revision() }, { "enabled", runtimeGeometryCaptureActive.load(std::memory_order_acquire) }, { "preparing", runtimeGeometryPrepare.Busy() }, { "batches", runtimeGeometryPrepare.Batches() }, { "attempted", runtimeGeometryPrepare.Attempted() }, { "failures", runtimeGeometryPrepare.Failures() }, { "cacheHits", runtimeGeometryPrepare.CacheHits() }, { "diskCache", { { "enabled", settings.CacheRuntimeGeometry }, { "workerBusy", runtimeGeometryCache.Busy() }, { "menuComplete", runtimeGeometryCache.MenuReady() }, { "menuChecked", runtimeGeometryCache.MenuChecked() }, { "menuAccepted", runtimeGeometryCache.MenuAccepted() }, { "menuPreparedBytes", runtimeGeometryCache.MenuBytes() }, { "stored", runtimeGeometryCache.Stored() }, { "rejected", runtimeGeometryCache.Rejected() }, { "failure", runtimeGeometryCache.Failure() } } }, { "preparedInstances", runtimeGeometryPrepare.GetCell() && runtimeGeometryPrepare.GetCell()->snapshot ? runtimeGeometryPrepare.GetCell()->snapshot->instances.size() : 0 }, { "preparedBytes", runtimeGeometryPrepare.GetCell() ? runtimeGeometryPrepare.GetCell()->bytes : 0 }, { "activeSceneInstances", currentSceneStableAcceleration ? currentSceneStableAcceleration->instances.size() : 0 } } }, { "preparedSceneBudget", { { "automatic", true }, { "manualLimitBytes", uint64_t{ 0 } }, { "dxgiAvailable", preparedSceneBudgetStatus.dxgiAvailable }, { "localBudgetBytes", preparedSceneBudgetStatus.localBudget }, { "localUsageBytes", preparedSceneBudgetStatus.localUsage }, { "reserveBytes", preparedSceneBudgetStatus.reserve }, { "effectiveBytes", preparedSceneBudgetStatus.effectiveBytes } } }, { "prepared", prepared.GetDiagnostics() }, { "materialFailure", materialBindings.Failure() }, { "materialUploadPending", materialBindings.UploadPending() }, { "materialBindingsReady", bindings && bindings->scene == acceleration.GetScene() }, { "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() }, { "materialBudget", { { "dxgiAvailable", bindings ? bindings->materialBudget.dxgiAvailable : false }, { "selectedBatchLimitBytes", uint64_t(settings.MaterialBatchMB) * 1024 * 1024 }, { "loadedBatchLimitBytes", bindings ? bindings->uploadBatchBudget : 0 }, { "effectiveBytes", bindings ? bindings->materialBudget.effectiveBytes : 0 }, { "localBudgetBytes", bindings ? bindings->materialBudget.localBudget : 0 }, { "localUsageBytes", bindings ? bindings->materialBudget.localUsage : 0 }, { "textureBytes", bindings ? bindings->materials->bytes : 0 }, { "tableBytes", bindings ? bindings->materials->tableBytes : 0 }, { "retainedPageBytes", retainedPages ? json(*retainedPages) : json(nullptr) }, { "peakStagingBytes", bindings ? bindings->materials->peakStagingBytes : 0 }, { "uploadedBytes", bindings ? bindings->materials->uploadedBytes : 0 }, { "uploadedPages", bindings ? bindings->materials->uploadedPages : 0 }, { "reusedPages", bindings ? bindings->materials->reusedPages : 0 }, { "reusedTextures", bindings ? bindings->materials->reusedTextures : 0 }, { "diskCacheHits", bindings ? bindings->materials->diskCacheHits : 0 }, { "diskCacheWrites", bindings ? bindings->materials->diskCacheWrites : 0 }, { "asyncBatchPages", bindings ? bindings->materials->asyncBatchPages : 0 }, { "asyncBatchStagingBytes", bindings ? bindings->materials->asyncBatchStagingBytes : 0 }, { "readyMaterials", bindings ? bindings->materials->readyMaterials : 0 }, { "rejectedMaterials", bindings ? bindings->materials->rejectedMaterials : 0 }, { "textures", bindings ? bindings->materials->textures : 0 }, { "livePbrMatched", bindings ? bindings->materials->livePbrMatched : 0 }, { "livePbrApplied", bindings ? bindings->materials->livePbrApplied : 0 }, { "livePbrEmissiveApplied", bindings ? bindings->materials->livePbrEmissiveApplied : 0 }, { "livePbrUnsupported", bindings ? bindings->materials->livePbrUnsupported : 0 }, { "livePbrRecipeIssueCount", bindings ? bindings->materials->liveRecipeIssues.affected : 0 }, { "livePbrRecipeIssues", bindings ? json(bindings->materials->liveRecipeIssues.issues) : json(std::array<uint32_t, 13>{}) }, { "livePbrFeatureFlags", bindings ? json(bindings->materials->liveRecipeIssues.pbrFlags) : json(std::array<uint32_t, 7>{}) }, { "livePbrUnsafeOpacity", bindings ? bindings->materials->livePbrUnsafeOpacity : 0 }, { "livePbrMissingBasis", bindings ? bindings->materials->livePbrMissingBasis : 0 }, { "livePbrMissingBindings", bindings ? bindings->materials->livePbrMissingBindings : 0 }, { "livePbrOfflineFallback", bindings ? bindings->materials->livePbrOfflineFallback : 0 }, { "livePbrSourcesMissing", bindings ? bindings->materials->livePbrSourcesMissing : 0 }, { "livePbrSourcesAmbiguous", bindings ? bindings->materials->livePbrSourcesAmbiguous : 0 }, { "livePbrSourcesIncompatible", bindings ? bindings->materials->livePbrSourcesIncompatible : 0 }, { "looseDdsPlanned", bindings ? bindings->materials->looseDdsPlanned : 0 }, { "looseDdsImported", bindings ? bindings->materials->looseDdsImported : 0 }, { "looseDdsRejected", bindings ? bindings->materials->looseDdsRejected : 0 }, { "looseDdsDeferred", bindings ? bindings->materials->looseDdsDeferred : 0 }, { "looseDdsPreviouslyAttempted", bindings ? bindings->materials->looseDdsPreviouslyAttempted : 0 }, { "streamBatches", materialBindings.StreamBatches() }, { "streamAttempted", materialBindings.StreamAttempted() }, { "streamSuccessful", materialBindings.StreamSuccessful() }, { "streamFailed", materialBindings.StreamFailed() }, { "streamNextBatchPending", materialBindings.StreamWaitingForNextBatch() ? 1u : 0u }, { "looseDdsReadyRecipes", bindings ? bindings->materials->looseDdsReadyRecipes : 0 }, { "looseDdsFeatureLimitedRecipes", bindings ? bindings->materials->looseDdsFeatureLimitedRecipes : 0 }, { "looseDdsSkippedRecipes", bindings ? bindings->materials->looseDdsSkippedRecipes : 0 }, { "looseDdsPrepared", bindings ? bindings->materials->looseDdsPrepared : 0 }, { "looseDdsInvalid", bindings ? bindings->materials->looseDdsInvalid : 0 }, { "looseDdsBytes", bindings ? bindings->materials->looseDdsBytes : 0 }, { "archiveDdsPlanned", bindings ? bindings->materials->archiveDdsPlanned : 0 }, { "archiveDdsImported", bindings ? bindings->materials->archiveDdsImported : 0 }, { "archiveDdsRejected", bindings ? bindings->materials->archiveDdsRejected : 0 }, { "archiveDdsBytes", bindings ? bindings->materials->archiveDdsBytes : 0 }, { "liveGpuUnobserved", bindings ? bindings->materials->liveGpuRoutes.unobserved : 0 }, { "liveGpuUnsupported", bindings ? bindings->materials->liveGpuRoutes.unsupported : 0 }, { "liveGpuCopyCandidates", bindings ? bindings->materials->liveGpuRoutes.copyCandidates : 0 }, { "liveGpuSharedCandidates", bindings ? bindings->materials->liveGpuRoutes.sharedCandidates : 0 }, { "livePbrAmbiguous", bindings ? bindings->materials->livePbrAmbiguous : 0 }, { "livePbrIncompatible", bindings ? bindings->materials->livePbrIncompatible : 0 }, { "livePbrMissing", bindings ? bindings->materials->livePbrMissing : 0 }, { "rejectedTextureSources", bindings ? bindings->materials->rejectedTextureSources : 0 }, { "firstTextureSourceFailure", bindings ? bindings->materials->firstTextureSourceFailure : std::string{} }, { "uploadWaitMicroseconds", bindings ? bindings->materials->uploadWaitMicroseconds : 0 } } } };
 	{
 		std::scoped_lock lock(coverageMutex);
 		snapshot["pbrCandidates"] = { { "pending", bool(coverageTask) }, { "failed", coverageFailed },

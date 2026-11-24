@@ -1,8 +1,10 @@
 #include "Features/NativePBR/GpuMaterialAbi.h"
 #include "Features/NativePBR/GpuMaterialResidency.h"
 #include "Features/NativePBR/GpuMaterialResources.h"
+#include "Features/NativePBR/NativeSnowSampling.h"
 #include "Features/NativePBR/RayMaterialBindings.h"
 #include <catch2/catch_test_macros.hpp>
+#include <limits>
 
 TEST_CASE("NativePBR GPU material ABI preserves all seven texture roles", "[NativePBR][gpu-material]")
 {
@@ -56,6 +58,46 @@ TEST_CASE("NativePBR GPU draw bindings preserve full material identity and revis
 	CHECK((binding.revision == std::array<uint32_t, 2>{ 0xddeeff00u, 0x99aabbccu }));
 	CHECK(binding.materialIndex == 17u);
 	CHECK(binding.flags == 3u);
+}
+
+TEST_CASE("NativePBR packs dynamic snow coverage without changing draw identity", "[NativePBR][snow]")
+{
+	using namespace NativePBR;
+	constexpr uint32_t snowCandidate = kGpuDrawPreparedOpaque | kGpuDrawProjectedSnowCandidate;
+	const auto half = WithNativeSnowCoverage(snowCandidate | kGpuDrawUsesVertexColor, 0.5f);
+	CHECK((half & 0xffu) == (snowCandidate | kGpuDrawUsesVertexColor));
+	CHECK(((half & kGpuSnowCoverageMask) >> kGpuSnowCoverageShift) == 128u);
+	CHECK(((WithNativeSnowCoverage(half, 1.0f) & kGpuSnowCoverageMask) >> kGpuSnowCoverageShift) == 255u);
+	CHECK(((WithNativeSnowCoverage(half, -1.0f) & kGpuSnowCoverageMask) >> kGpuSnowCoverageShift) == 0u);
+	CHECK(((WithNativeSnowCoverage(half, std::numeric_limits<float>::quiet_NaN()) & kGpuSnowCoverageMask) >> kGpuSnowCoverageShift) == 0u);
+	CHECK(NativeSnowCoverage(1.0f, false) == 1.0f);
+	CHECK(NativeSnowCoverage(0.5f, false) == 0.5f);
+	CHECK(NativeSnowCoverage(0.0f, false) == 0.0f);
+	CHECK(NativeSnowCoverage(0.0f, true) == 1.0f);
+	CHECK(NativeSnowCoverage(1.0f, true) == 1.0f);
+	CHECK(NativeSnowCoverage(std::numeric_limits<float>::quiet_NaN(), true) == 1.0f);
+}
+
+TEST_CASE("Native snow detail frequency follows scheduled native rays", "[NativePBR][snow]")
+{
+	using NativePBR::SnowRayCellFrequency;
+	const float full = SnowRayCellFrequency(1920u, 1080u, 0u, 64.0f);
+	CHECK(full > 22.0f);
+	CHECK(full < 23.0f);
+	CHECK(SnowRayCellFrequency(1920u, 1080u, 2u, 64.0f) < full);
+	CHECK(SnowRayCellFrequency(1920u, 1080u, 2u, 64.0f) > 0.70f * full);
+	CHECK(SnowRayCellFrequency(1920u, 1080u, 0u, 128.0f) < full);
+	CHECK(SnowRayCellFrequency(0u, 1080u, 0u, 64.0f) == 1.0f);
+	CHECK(SnowRayCellFrequency(1920u, 1080u, 0u,
+		std::numeric_limits<float>::quiet_NaN()) == full);
+}
+
+TEST_CASE("Native snow parallax UV uses an independent ray material option", "[NativePBR][snow]")
+{
+	using namespace NativePBR;
+	CHECK((kRayMaterialOptionSnowParallaxUV & kRayMaterialOptionParallax) == 0u);
+	CHECK((kRayMaterialOptionSnowParallaxUV & kRayMaterialOptionComplex) == 0u);
+	CHECK((kRayMaterialOptionSnowParallaxUV | kRayMaterialOptionParallax | kRayMaterialOptionComplex) == 7u);
 }
 
 TEST_CASE("NativePBR GPU descriptor ABI keeps linear and sRGB views within 512 slots", "[NativePBR][gpu-material]")

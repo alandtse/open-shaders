@@ -87,6 +87,24 @@ struct NativePBRFeature final : Feature
 	std::atomic<bool> nativeParallax{ false };
 	std::atomic<bool> nativeComplexMaterials{ false };
 	std::atomic<bool> forceRayAdmission{ false };
+	struct SnowSettings
+	{
+		bool coverEligible = false, ultravioletAffected = true, followParallaxUV = false;
+		float noiseAmount = 1.0f, noiseRaysPerPatch = 4.0f;
+		float sparkleAmount = 1.0f, sparkleDensity = 0.25f, roughness = 1.0f;
+		float ultravioletIntensity = 0.006f, colorAffection = 0.65f, specularAmount = 0.5f;
+		float lumpHeight = 1.5f, lumpSize = 8.0f, lumpDensity = 1.0f, flatness = 1.0f;
+		float edgeWaviness = 0.2f;
+		uint32_t lumpLayers = 4;
+	};
+	std::atomic<bool> snowCoverEligible{ false };
+	/** @brief Provides the locked native snow preset and session-only interior test state. */
+	SnowSettings GetSnowSettings() const
+	{
+		SnowSettings settings{};
+		settings.coverEligible = snowCoverEligible.load(std::memory_order_relaxed);
+		return settings;
+	}
 	// 1 geometry, 2 evaluated NativePBR, 3 accepted Native Lighting. Early stages are deliberate diagnostics.
 	std::atomic<uint32_t> readinessStage{ 3 };
 	uint32_t NativeFirstReadinessStage() const { return IsActive() ? std::clamp(readinessStage.load(std::memory_order_relaxed), 1u, 3u) : 0u; }
@@ -121,7 +139,13 @@ struct NativePBRFeature final : Feature
 	void DrawSettings() override;
 	void LoadSettings(json&) override;
 	void SaveSettings(json&) override;
-	void RestoreDefaultSettings() override { backendSettings = {}; enabled = true; nativeParallax = false; nativeComplexMaterials = false; forceRayAdmission = false; readinessStage = 3; }
+	void RegisterUxActions() override;
+	void RestoreDefaultSettings() override
+	{
+		backendSettings = {}; enabled = true; nativeParallax = false; nativeComplexMaterials = false;
+		forceRayAdmission = false; readinessStage = 3;
+		snowCoverEligible = false;
+	}
 	json GetDiagnostics() override;
 };
 
@@ -134,6 +158,8 @@ struct NativeLLFFeature final : Feature
 		float3 position{}, radiance{};
 		float radius = 0.0f, sourceRadius = 0.0f, fadeZone = 0.0f;
 		uint32_t flags = 0, shadowSlot = 0;
+		uint32_t falloffMode = 0;
+		uint32_t rasterIndex = UINT32_MAX;  // Original LLF upload slot, before native filtering.
 	};
 	struct LightFrame
 	{
@@ -141,13 +167,21 @@ struct NativeLLFFeature final : Feature
 		std::vector<Light> lights;
 	};
 	std::atomic<bool> enabled{ true };
-	// Only supplementary LLF emitters are toggled; prepared scene lighting
-	// stays authoritative, while live observations remain available to SCM.
+	// Prepared light positions and identities stay authoritative; LLF radiance
+	// can be added experimentally without changing SCM's source identities.
 	std::atomic<bool> contributeUnmatched{ true };
-	std::atomic<bool> bakeUnmatchedIntoScene{ true };  // Runtime scene layer; not an offline file.
+	std::atomic<bool> contributeMatched{ false };
+	struct LightControls
+	{
+		bool inheritOriginal = true, useVanillaMatches = false;
+		float sourceSize = 1.0f, intensity = 1.0f, reach = 1.0f;
+		bool operator==(const LightControls&) const = default;
+	};
+	std::atomic<bool> inheritOriginal{ true }, useVanillaMatches{ false };
+	std::atomic<float> customSourceSize{ 1.0f }, customIntensity{ 1.0f }, customReach{ 1.0f };
 
 	std::atomic<float> matchDistanceUnits{ 64.0f };
-	// Radiance gain for supplementary LLF-only emitters, never prepared scene lights.
+	// Radiance gain for opted-in LLF contributions.
 	std::atomic<float> contribution{ 1.0f };
 	static constexpr uint32_t kMaxUnifiedLights = DX12Native::kMaximumNativePointLights;
 	struct SourceIdentity
@@ -156,36 +190,34 @@ struct NativeLLFFeature final : Feature
 		float radius = 0.0f;
 		uint32_t flags = 0;
 		uint32_t shadowSlot = UINT32_MAX;
+		uint32_t rasterIndex = UINT32_MAX;
 		bool valid = false;
 	};
 	struct UnifiedLights
 	{
 		std::array<DX12Native::PreparedPointLight, kMaxUnifiedLights> lights{};
 		std::array<SourceIdentity, kMaxUnifiedLights> source{};
-		uint32_t count = 0, prepared = 0, observed = 0, matched = 0, added = 0;
+		uint32_t count = 0, prepared = 0, observed = 0, matched = 0, matchedContributed = 0, added = 0;
 		uint32_t clusteredLive = 0, omitted = 0, overflow = 0;
 	};
 	UnifiedLights BuildUnifiedLights(std::span<const DX12Native::PreparedPointLight> prepared,
 		uint32_t frame, bool allowRecent = false) const;
 	void PublishLights(const LightLimitFix::LightData* data, uint32_t count, const float3& eye, uint32_t frame);
+	/** Optional exact-source raster suppression after PublishLights owns its immutable copy. */
+	void ApplyRasterOffloadPolicy(LightLimitFix::LightData* data, uint32_t count, uint32_t frame) const;
 	/** Clear the native light snapshot when a cell changes or a loading screen opens/closes. */
 	void ClearCapturedLights();
 	std::shared_ptr<const LightFrame> GetLightFrame(uint32_t frame) const;
 	std::shared_ptr<const LightFrame> GetRecentLightFrame(uint32_t frame) const;
-	/** Publish a completed scene light generation without waiting for workers. */
-	std::shared_ptr<const DX12Native::NativeSceneLightBake> GetSceneLightBake(
-		const std::shared_ptr<const DX12Native::PreparedCell>& baseline) const;
-
 private:
 	struct UnifiedWork
 	{
 		std::atomic<bool> done{ false };
 		std::shared_ptr<const LightFrame> source;
 		std::shared_ptr<const DX12Native::PreparedCell> prepared;
-		std::shared_ptr<const DX12Native::NativeSceneLightBake> previousBake, baked;
-		uint64_t bakeEpoch = 0;
 		float matchUnits = 0.0f, gain = 0.0f;
-		bool contribute = false, valid = false;
+		bool contribute = false, contributeMatches = false, valid = false;
+		LightControls controls;
 		UnifiedLights result;
 	};
 	mutable std::mutex lightMutex;
@@ -194,9 +226,6 @@ private:
 	// prepared-scene memory may be freed while it evaluates a generation.
 	mutable std::atomic<std::shared_ptr<const UnifiedWork>> workerUnified;
 	mutable std::atomic<std::shared_ptr<const UnifiedWork>> fallbackUnified;
-	mutable std::atomic<std::shared_ptr<const DX12Native::NativeSceneLightBake>> sceneBake;
-	std::atomic<uint64_t> bakeEpoch{ 1 };
-	mutable std::atomic<uint64_t> bakedPublications{ 0 };
 	mutable std::atomic<uint64_t> workerHits{ 0 }, workerQueued{ 0 }, fallbackHits{ 0 };
 	std::atomic<bool> transitionOpen{ false };
 
@@ -209,6 +238,7 @@ public:
 	void DrawSettings() override;
 	void LoadSettings(json&) override;
 	void SaveSettings(json&) override;
+	void RegisterUxActions() override;
 	void OnSceneTransitionReset(bool a_open) override;
 	void OnRuntimeDisabled() override { ClearCapturedLights(); }
 	void GameLoaded() override { ClearCapturedLights(); }
@@ -216,7 +246,12 @@ public:
 	{
 		enabled = true;
 		contributeUnmatched = true;
-		bakeUnmatchedIntoScene = true;
+		contributeMatched = false;
+		inheritOriginal = true;
+		useVanillaMatches = false;
+		customSourceSize = 1.0f;
+		customIntensity = 1.0f;
+		customReach = 1.0f;
 		matchDistanceUnits = 64.0f;
 		contribution = 1.0f;
 	}

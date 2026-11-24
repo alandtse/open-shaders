@@ -58,6 +58,13 @@ cbuffer Trace : register(b0)
 	uint NativePBRReady;
 	uint2 NativePBRPadding;
 	uint NativePBRMaterialOptions;
+	float4 SnowTuning; // noise amount, native ray-cell frequency, sparkle amount, crystal density
+	float SnowRoughness;
+	float SnowUltravioletEmission;
+	float SnowColorAffection;
+	float SnowSpecularAmount;
+	float4 SnowLumps; // height, size in native-ray patches, density, gravity flatness
+	float4 SnowDetailControls; // lump layers, edge waviness, reserved, reserved
 };
 
 #include "Common/ReverseZ.hlsli"
@@ -275,6 +282,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		n = normalize(geometric);
 	}
 	float3 diffuse = 0, specular = 0;
+	const float neutralSnowLight = saturate(material.snowCoverage) * (1.0f - saturate(SnowColorAffection));
 	uint eligibleLights = 0;
 	bool strictVisibilityRejected = false;
 	for (uint i = 0; i < LightCount; ++i) {
@@ -283,16 +291,22 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		++eligibleLights;
 		float3 delta = light.positionRadius.xyz - position;
 		float d = length(delta);
-		float radius = min(max(light.positionRadius.w * LightTuning.x, MinimumDistance), 60000.0f);
+		const uint falloffMode = light.flags.y;
+		float radius = min(max(light.positionRadius.w * (falloffMode == 0u ? LightTuning.x : 1.0f), MinimumDistance), 60000.0f);
 		if (!isfinite(d) || d <= MinimumDistance || d >= radius) continue;
 		float3 l = delta / d;
 		float ndotl = NormalInfluence == 0u ? 1.0f : saturate(dot(n, l));
 		if (ndotl <= 0) continue;
 		Count(8);
 		float sourceRadius = max(light.radianceSourceRadius.w, MinimumDistance);
-		float fade = saturate((radius - d) / max(radius * LightTuning.y, MinimumDistance));
+		float fade = falloffMode == 0u ?
+			saturate((radius - d) / max(radius * LightTuning.y, MinimumDistance)) :
+			saturate((radius - d) * asfloat(light.flags.z));
 		float smoothCutoff = fade * fade * (3 - 2 * fade);
-		float attenuation = pow(smoothCutoff, LightTuning.z) / max(d * d + sourceRadius * sourceRadius, 1e-4f);
+		float attenuation = falloffMode == 2u ?
+			1.0f - saturate((d / radius) * (d / radius)) :
+			(falloffMode == 1u ? smoothCutoff : pow(smoothCutoff, LightTuning.z)) /
+			max(d * d + sourceRadius * sourceRadius, 1e-4f);
 		float3 visibilityTarget = light.positionRadius.xyz;
 		if (ShadowTuning.z >= 0.5f && ShadowTuning.y > 0.0f) {
 			const float emitterRadius = min(sourceRadius * ShadowTuning.y, d * 0.5f);
@@ -349,7 +363,13 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		float3 fresnel;
 		float3 microfacet = PBR::SpecularMicrofacet(material.roughness, material.f0, max(ndotl, 1e-5f),
 			saturate(abs(dot(n, v)) + 1e-5f), saturate(dot(n, h)), saturate(dot(v, h)), fresnel);
-		float3 irradiance = light.radianceSourceRadius.rgb * attenuation * ndotl * shadowVisibility;
+		float3 lightColor = light.radianceSourceRadius.rgb;
+		if (neutralSnowLight > 0.0f) {
+			const float neutralLuminance = dot(lightColor, float3(0.2126f, 0.7152f, 0.0722f));
+			lightColor = lerp(lightColor, neutralLuminance.xxx, neutralSnowLight);
+		}
+		float3 irradiance = lightColor * attenuation * ndotl * shadowVisibility *
+			(falloffMode == 0u ? LightTuning.w : 1.0f);
 		float3 diffuseResponse = (1 - material.metallic) * material.baseColor *
 			(NormalInfluence == 0u ? 1.0f : (1 - fresnel)) * BRDF::Diffuse_Lambert();
 		if (NormalInfluence != 0u && nativeClearcoat.x > 0.0f) {
@@ -362,18 +382,19 @@ void main(uint2 pixel : SV_DispatchThreadID)
 			microfacet = microfacet * layerAttenuation + coatSpecular * nativeClearcoat.x;
 		}
 		if (EnabledLobes & 1u) diffuse += diffuseResponse * irradiance;
-		if ((EnabledLobes & 2u) && NormalInfluence != 0u) specular += microfacet * irradiance;
+		if ((EnabledLobes & 2u) && NormalInfluence != 0u)
+			specular += (microfacet + material.snowSparkle * NativePBR::SnowCrystalScatter) * irradiance;
 	}
 	if (strictVisibilityRejected && originalReason == 0) originalReason = 7;
-	if (eligibleLights == 0 && NativePBRPadding.x == 0u) { Finish(pixel, 0, 0, originalReason == 0 ? 6 : originalReason); return; }
-	if (!all(isfinite(diffuse)) || !all(isfinite(specular))) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 8 : originalReason); return; }
 	// Emission is independent of direct intensity, as in the reference.
 	// The owner-selected 1x default may double-count existing raster emission.
 	const float3 emission = ShadowTuning.w > 0.0f && all(isfinite(material.emission)) ?
 		max(material.emission, 0.0f) * ShadowTuning.w : 0.0f;
-	const float4 diffuseOutput = float4(diffuse * DiffuseIntensity * LightTuning.w +
+	if (eligibleLights == 0 && !any(emission > 0.0f) && NativePBRPadding.x == 0u) { Finish(pixel, 0, 0, originalReason == 0 ? 6 : originalReason); return; }
+	if (!all(isfinite(diffuse)) || !all(isfinite(specular))) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 8 : originalReason); return; }
+	const float4 diffuseOutput = float4(diffuse * DiffuseIntensity +
 		((EnabledLobes & 1u) != 0u ? emission : 0.0f), 1);
-	const float4 specularOutput = float4(specular * SpecularIntensity * LightTuning.w, 1);
+	const float4 specularOutput = float4(specular * SpecularIntensity, 1);
 	if (!all(isfinite(diffuseOutput)) || !all(isfinite(specularOutput))) { Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 8 : originalReason); return; }
 	if (ComparisonEnabled != 0) { ComparisonDiffuse[pixel] = diffuseOutput; ComparisonSpecular[pixel] = specularOutput; }
 	RawDirectDiffuse[pixel] = diffuseOutput;

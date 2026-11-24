@@ -88,6 +88,7 @@ namespace DX12Native
 		bool twoSided = false;
 		bool alphaTest = false;
 		bool opaqueCandidate = true;
+		bool projectedSnowCandidate = false;
 		OfflineMaterialFlags offlineMaterialFlags = OfflineMaterialFlags::None;
 		std::shared_ptr<const VertexAttributes> attributes;
 		std::shared_ptr<const json> offlineDescription;

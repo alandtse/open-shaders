@@ -138,6 +138,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	if (!LoadTriangle(instance, primitive, barycentric, hitSurface))
 		return false;
 	float2 uv = hitSurface.uv * material.uv[0].zw + material.uv[0].xy;
+	const float2 flatSnowUV = uv;
 	float lod = NativePBRLod(material, hitSurface, objectToWorld, footprint);
 	if (!all(isfinite(uv)) || !isfinite(lod))
 		return false;
@@ -200,6 +201,7 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	}
 	NativePBR::SurfaceInput surface;
 	surface.uv = uv;
+	surface.snowUV = (NativePBRMaterialOptions & NativePBR::MaterialOptionSnowParallaxUV) != 0u ? uv : flatSnowUV;
 	surface.uvDx = 0.0f;
 	surface.uvDy = 0.0f;
 	surface.geometricNormal = normalize(mul(hitSurface.normal, (float3x3)worldToObject));
@@ -207,11 +209,35 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	surface.bitangent = mul((float3x3)objectToWorld, hitSurface.bitangent);
 	surface.vertexColor = hitSurface.color.rgb;
 	surface.facing = 1.0f;
+	surface.snowHitSeed = NativePBR::SnowHash(binding.identity ^ uint2(instance, primitive));
+	surface.projectedSnowIncidence = 0.0f;
+	surface.snowUpwardAlignment = 0.0f;
+	if ((binding.flags & NativePBR::DrawProjectedSnowCandidateFlag) != 0u) {
+		float3 edge0 = mul((float3x3)objectToWorld, hitSurface.position1 - hitSurface.position0);
+		float3 edge1 = mul((float3x3)objectToWorld, hitSurface.position2 - hitSurface.position0);
+		float3 face = cross(edge0, edge1);
+		float lengthSq = dot(face, face);
+		if (all(isfinite(face)) && lengthSq > 1e-12f) {
+			const float upward = saturate(face.z * rsqrt(lengthSq));
+			surface.snowUpwardAlignment = upward;
+			float gravity = upward * upward * (3.0f - 2.0f * upward);
+			if (SnowDetailControls.y > 0.0f && gravity > 0.0f && gravity < 1.0f) {
+				const float2 waveUV = clamp(flatSnowUV, -4096.0f, 4096.0f) * max(SnowTuning.y, 1.0f) * 0.25f;
+				const uint waveSeed = NativePBR::SnowHash(binding.identity ^ uint2(instance, 0u)) ^ 0x27d4eb2fu;
+				const float wave = NativePBR::SnowNoise(waveUV, waveSeed) - 0.5f;
+				const float boundary = 4.0f * gravity * (1.0f - gravity);
+				gravity = saturate(gravity + wave * saturate(SnowDetailControls.y) * boundary);
+			}
+			gravity = smoothstep(0.1f, 0.9f, gravity);
+			surface.projectedSnowIncidence = lerp(1.0f, gravity, saturate(SnowLumps.w));
+		}
+	}
 	if (!all(isfinite(surface.geometricNormal)) ||
 		!all(isfinite(surface.tangent)) || !all(isfinite(surface.bitangent)))
 		return false;
 	NativePBR::SurfaceMaterial result = NativePBR::EvaluateOpaque(material, surface, base, normal, packed, emission,
-		coat, complexMaskDetected, binding.flags);
+		coat, complexMaskDetected, binding.flags, SnowTuning, SnowRoughness, SnowUltravioletEmission,
+		SnowColorAffection, SnowSpecularAmount, SnowLumps, SnowDetailControls);
 	evaluated.baseColor = result.baseColor;
 	evaluated.normal = result.normal;
 	evaluated.f0 = result.f0;
@@ -220,11 +246,15 @@ bool LoadNativePBRMaterial(uint instance, uint primitive, float2 barycentric,
 	evaluated.metallic = result.metallic;
 	evaluated.ao = result.ao;
 	evaluated.opacity = result.opacity;
+	evaluated.projectedSnowCoverageCandidate = result.projectedSnowCoverageCandidate;
+	evaluated.snowCoverage = result.snowCoverage;
+	evaluated.snowSparkle = result.snowSparkle;
 	clearcoat = float3(result.coatStrength, result.coatRoughness, result.coatF0);
 	return all(isfinite(evaluated.baseColor)) && all(isfinite(evaluated.normal)) &&
 		all(isfinite(evaluated.f0)) && all(isfinite(evaluated.emission)) &&
 		isfinite(evaluated.roughness) && isfinite(evaluated.metallic) &&
-		isfinite(evaluated.ao) && isfinite(evaluated.opacity) && all(isfinite(clearcoat));
+		isfinite(evaluated.ao) && isfinite(evaluated.opacity) &&
+		isfinite(evaluated.snowSparkle) && all(isfinite(clearcoat));
 }
 
 #endif

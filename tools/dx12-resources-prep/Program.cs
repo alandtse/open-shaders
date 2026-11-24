@@ -8,7 +8,8 @@ using Mutagen.Bethesda.Plugins.Order;
 using Mutagen.Bethesda.Plugins.Cache;
 using Mutagen.Bethesda.Skyrim;
 
-return args.Length == 5 && args[0] == "--list-cells" ? PluginCellIndex.Run(args[1..]) :
+return args.Length == 4 && args[0] == "--pg-references" ? PgReferenceIndex.Run(args[1..]) :
+    args.Length == 5 && args[0] == "--list-cells" ? PluginCellIndex.Run(args[1..]) :
     args.Length == 9 && args[0] == "--worldspace-subcell" ? ScenePreparation.Run(args[1..5],
         int.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture),
         int.Parse(args[6], System.Globalization.CultureInfo.InvariantCulture),
@@ -301,6 +302,7 @@ try
         compiledShapes = compiledShapes.Length, compiledTriangles = compiledShapes.Sum(shape => (long)shape.IndexCount / 3),
         previewOnlyShapes = compiledAssets.SelectMany(asset => asset.Shapes).Count(shape => shape.Status.StartsWith("preview-only:", StringComparison.Ordinal)),
         placedReferences = layout.PlacedReferences, placedShapeInstances = layout.Instances, placedTriangles = layout.Triangles,
+        projectedSnowCandidateInstances = layout.ProjectedSnowCandidateInstances,
         layoutDigest = layout.Digest, placementMatricesComposed = true,
         stage = "cell-packed-partial", geometryCompiled = compiledShapes.Length > 0, accelerationBuilt = false, runtimeCoverageValid = false,
         outstanding = new[] { "Runtime placement/state comparison", "Excluded mesh/material coverage", "Shader coordinator and DX12 integration" }

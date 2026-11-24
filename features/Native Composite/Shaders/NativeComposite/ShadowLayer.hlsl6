@@ -52,7 +52,8 @@ void main(uint3 id : SV_DispatchThreadID)
     const float receiverDistance = length(position);
     if (!isfinite(receiverDistance) || receiverDistance <= 0.0f) return;
     const float tolerance = max(ReceiverTolerance, receiverDistance * 1e-5f);
-    if (traced && abs(receiverDistance - center.z) > tolerance) return;
+    // Raster geometry behind a native receiver cannot veto its shadow; foreground raster occluders can.
+    if (traced && center.z > receiverDistance + tolerance) return;
 
     float4 reference = center;
     float visibility = saturate(center.x);
@@ -65,7 +66,7 @@ void main(uint3 id : SV_DispatchThreadID)
                 if (any(neighbor < 0) || any(neighbor >= int2(Size))) continue;
                 float4 sample = ShadowMask[uint2(neighbor)];
                 float delta = abs(sample.z - receiverDistance);
-                if (!ValidMask(sample) || delta > tolerance) continue;
+                if (!ValidMask(sample) || sample.z > receiverDistance + tolerance) continue;
                 float score = delta + (float(dx * dx + dy * dy) * tolerance * 0.002f);
                 if (score < nearest) { nearest = score; reference = sample; }
             }
@@ -78,7 +79,8 @@ void main(uint3 id : SV_DispatchThreadID)
                 if (any(neighbor < 0) || any(neighbor >= int2(Size))) continue;
                 float4 sample = ShadowMask[uint2(neighbor)];
                 if (!ValidMask(sample) || sample.w != reference.w ||
-                    abs(sample.z - receiverDistance) > tolerance) continue;
+                    abs(sample.z - reference.z) > tolerance ||
+                    sample.z > receiverDistance + tolerance) continue;
                 float weight = rcp(1.0f + float(dx * dx + dy * dy));
                 weighted += saturate(sample.x) * weight;
                 total += weight;

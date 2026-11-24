@@ -43,6 +43,9 @@ struct EvaluatedSourceMaterial
 {
 	float3 baseColor, normal, emission, f0;
 	float roughness, metallic, ao, opacity;
+	float projectedSnowCoverageCandidate;
+	float snowCoverage;
+	float snowSparkle;
 };
 
 bool LoadTriangle(uint instance, uint primitive, float2 barycentric, out TriangleSurface surface)

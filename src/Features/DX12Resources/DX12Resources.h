@@ -16,6 +16,8 @@
 #include <unordered_set>
 #include <vector>
 
+namespace DX12ResourceService { struct PgReferenceSnapshot; }
+
 /** @brief Standalone interior preparation service with automatic CELL identification. */
 struct DX12Resources final : Feature
 {
@@ -44,6 +46,8 @@ struct DX12Resources final : Feature
 	void DataLoaded() override;
 	/** Block native cache consumers while a startup flush is pending/failed. */
 	bool DiskGeometryCacheReady();
+	/** @brief Immutable PGPatcher references, published after startup indexing completes. */
+	std::shared_ptr<const DX12ResourceService::PgReferenceSnapshot> GetPgReferenceSnapshot();
 	json GetDiagnostics() override;
 	std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
@@ -58,6 +62,9 @@ private:
 	struct CatalogJob;
 	struct PreparationJob;
 	struct DiskCacheFlushJob;
+	struct PgIndexJob;
+	void StartPgIndex();
+	void PollPgIndex();
 	void BeginAutomaticDetection(bool mainMenu);
 	void PollAutomaticDetection();
 	void RefreshLoadedPlugins();
@@ -75,6 +82,11 @@ private:
 	std::shared_ptr<CatalogJob> pluginScanJob;
 	std::shared_ptr<PreparationJob> preparationJob;
 	std::shared_ptr<DiskCacheFlushJob> diskCacheFlushJob;
+	std::shared_ptr<PgIndexJob> pgIndexJob;
+	std::shared_ptr<const DX12ResourceService::PgReferenceSnapshot> pgReferences;
+	bool pgIndexTriggered = false;
+	std::string pgIndexStatus = "Waiting for Skyrim data";
+	double pgIndexElapsedMs = 0;
 	// Session-only barrier: if opted in, the first native cache read must
 	// follow a successful disk deletion, never a stale cached scene.
 	bool startupFlushTriggered = false, startupFlushComplete = false;

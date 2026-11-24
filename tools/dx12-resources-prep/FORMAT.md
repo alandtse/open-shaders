@@ -1,5 +1,27 @@
 # DX12 Resources cell preparation contract
 
+## Main-menu PGPatcher reference index
+
+`DX12ResourcesPrep --pg-references <Data> <previous-index.json> <work-index.json>`
+reads the deployed `ParallaxGen_Diff.json` and only the NIF paths explicitly
+listed there. The index is independent of CELL/worldspace preparation and never
+compiles geometry, loads DDS content, or creates GPU resources. Its output has
+`kind: "dx12-pg-references"`, `schemaVersion: 1`, `sourceDiffSha256`, counts,
+and `meshes`. Each mesh stores its normalized path, expected PG CRC32,
+file identity, verification status, SHA-256, and NIF shape references with raw
+shader flags and ordered texture paths. Stable shape lookup is the mesh path
+plus NIF block index; a changed NIF hash represents a new revision.
+
+The companion reuses entries whose PG CRC32, file length, and write timestamp
+are unchanged. NIF verification uses at most four concurrent workers while
+preserving sorted output order. Skyrim publishes the validated result atomically at
+`DX12-cache/pg-references/index-v1.json`; the immutable in-memory snapshot is
+available through `DX12Resources::GetPgReferenceSnapshot()`. Missing or
+unverified outputs remain explicitly unresolved. The index is currently limited
+to CRC-tracked patched NIFs: PG-generated duplicate meshes not present in the
+diff, plugin-only TXST overrides, and PGLite-only runtime patches are **not**
+claimed as covered by this producer version.
+
 `cell-preparation.json` identifies this producer contract with
 `formatContract: "dx12-resources-cell"` and `formatVersion: 1`. Its `cell`
 field is the original plugin-local CELL identity. The companion writes a
@@ -34,6 +56,88 @@ The `textureReferences` catalog records canonical paths, not copied DDS payloads
 No evaluated roughness, BRDF or DX11 TruePBR material output is baked into the
 companion. NativePBR resolves material interpretation and residency at runtime.
 Geometry opacity exclusions remain conservative for safe RT traversal.
+
+## Projected-snow receiver geometry
+
+The companion computes `instances[].projectedSnow` from **original RSGM
+triangles and the placed shape-to-cell transform**, without consulting DX11
+textures, weather, or material evaluation.
+`basis: "world-up-face-projection-v1"` identifies this geometric descriptor:
+
+- `candidate`: whether any opaque, upward-facing triangle contributes area;
+- `projectedArea`: sum of upward triangle areas projected onto the cell XY plane;
+- `surfaceArea`: total transformed triangle surface area;
+- `upwardTriangles` / `totalTriangles`: source triangle counts under the same basis.
+
+If geometry cannot be inspected safely, the descriptor instead has a
+`basis` beginning with `unavailable:` and zero values. Absence of the member
+in an older package means **not marked**, never assumed snowy. Layout and
+preparation reports include `projectedSnowCandidateInstances`; the descriptor
+also participates in `layoutDigest` so old preparations are not silently reused.
+
+These are **potential receiving areas, not actual snow coverage**. A positive
+candidate does not mean precipitation, accumulation, or whitening is present;
+vertical and downward-facing triangles produce zero per-hit suitability.
+Native Scene validates the descriptor and transfers one flag into the existing
+per-instance NativePBR draw binding (bit 3, no extra GPU buffer). NativePBR
+calculates each native ray hit's upward-face incidence and exposes it as
+`SurfaceMaterial.projectedSnowCoverageCandidate`, forwarded through
+`EvaluatedSourceMaterial`. Actual coverage is a separate native terrain input;
+the marker alone does not change surface shading. No DX11 data is admitted
+into this coverage path.
+
+At runtime, Native Lighting obtains native snow evidence from Skyrim's
+landscape snow-material IDs (`Snow`, `SnowStairs`), with no DX11 resource access
+and no dependence on weather or precipitation. Terrain probes are cached per TLAS; a
+neighboring 256-unit probe may supply half-strength coverage to tolerate
+small placement/landscape boundary mismatches. The session-only
+`Cover eligible snow receivers (interior test)` checkbox in **NativePBR**
+forces full coverage on companion-marked receivers, including interiors.
+It defaults off at every launch; this is the only exposed snow control.
+The current value is packed into unused bits 16–23 of the existing 24-byte
+NativePBR draw binding. NativePBR applies **textureless, ray-hit procedural snow**
+directly in its PBR evaluation. Noise samples each hit's native material UV,
+seeded by draw identity and triangle, rather than world coordinates. Its patch
+frequency depends on the scheduled native ray budget (resolution and trace
+density), divided by four rays per patch. A smooth four-corner hash varies
+snow roughness; snow albedo uses fixed native-light color affection 0.65. Crystal
+inclusion is hashed from material-space UV cells and hit identity instead of
+screen pixels, so the pattern remains attached to geometry while the view
+moves. Snow retains the flat hit UV rather than following post-parallax UV.
+Four independently seeded, weighted value-noise layers supply native PBR
+normal perturbations for snow lumps, with coarse shapes dominating the finer
+details. Lump height 1.50, size 8.00 native-ray noise patches, and density
+1.00 affect shading without changing DX12 geometry or silhouettes. Lumps are
+attenuated at partial snow-coverage boundaries and on faces that turn away
+from upward, so flat interiors of covered areas receive more raised detail. The masks
+do not use triangle barycentric edges, avoiding artificial triangulation seams.
+The crystal response uses the PBR minimum roughness (0.04) and is submitted
+into the native specular lobe only under unoccluded direct light;
+shadowed snow does not emit light through its crystal response. Only actual
+native hits evaluate the effect; no per-frame hit-count readback or GPU atomics
+are required. NativePBR uses a frozen snow preset: noise 1.00; four rays per
+patch; lump height 1.50, size 8.00, density 1.00, layers 4; upward gravity
+flatness 1.00; edge waviness 0.20; color affection 0.65; specular 0.50;
+sparkle amount 1.00 and density 0.25; roughness 1.00; parallax UV off; and
+ultraviolet effect on at 0.006 emission strength. The preset reaches SM6.5
+via the existing direct-lighting constant buffer, with no atlas, snow texture
+residency, DX11 snow inputs, or per-scene generation. The ultraviolet effect
+adds coverage-weighted, very dim blue-white emission, independent of direct
+light presence. This is a
+stylized fluorescence approximation; there is no
+UV-spectrum light detection. Gravity coverage blends the native triangle's
+upward-facing cosine through a smooth cubic response toward full candidate
+coverage; coherent material-space noise bends the partial gravity-coverage
+transition into curved, wavy snow boundaries while preserving fully covered
+tops and uncovered walls. The wave seed is stable per instance rather than
+triangle, preventing internal triangle-edge flicker. Actual geometry silhouettes
+and separate terrain-evidence boundaries remain unchanged. Locked upward
+gravity suppresses snow on walls without weather or raster inputs. This is
+surface shading, not geometry displacement or a
+persistent accumulation simulation. Interior scenes receive coverage only
+when the explicit eligible-receiver test is enabled. Older saved snow tuning
+keys are ignored and no longer saved; snow UI and diagnostic snapshots have
+no tuning values or per-scene snow counters.
 
 ## Plugin-scoped interior catalog (Stage B)
 

@@ -37,17 +37,14 @@ bool NativeCompositeFeature::IsEnabled() const
 void NativeCompositeFeature::DrawSettings()
 {
 	std::scoped_lock lock(settingsMutex);
-	int denoiser = 0;
-	ImGui::Combo("Denoiser", &denoiser, "Spatial reconstruction\0");
-	if (ImGui::Checkbox("Spatially reconstruct missing direct-light pixels", &settings.DirectSpatialReconstruction))
-		++validityRevision;
-	if (ImGui::Checkbox("Spatially reconstruct missing shadow pixels", &settings.ShadowSpatialReconstruction))
-		++validityRevision;
-	ImGui::TextDisabled("Spatial reconstruction fills missing pixels after native tracing.");
+	const auto offload = globals::features::nativeLighting.GetOffloadSettings();
+	ImGui::TextDisabled("DX12 shadow offloading is configured in Native Lighting.");
 	enabled = settings.Enabled;
+	if (ImGui::Checkbox("Shadow spatial reconstruction", &settings.ShadowSpatialReconstruction))
+		++validityRevision;
 	ImGui::TextDisabled("%s", pass.Status().c_str());
 	ImGui::TextDisabled("%s", LightingStatus(lightingStatus.load()));
-	if (settings.ShadowLayerEnabled) {
+	if (offload.staticShadows && offload.shadowIntensity > 0.0f) {
 		ImGui::TextWrapped("Independent shadow admission: %s", pass.ShadowStatus().c_str());
 		const auto sceneDiagnostics = globals::features::dx12NativeScene.GetDiagnostics();
 		const auto producerStatus = sceneDiagnostics.value("shadowStatus", std::string{});
@@ -55,9 +52,9 @@ void NativeCompositeFeature::DrawSettings()
 			ImGui::TextWrapped("Shadow producer: %s", producerStatus.c_str());
 		const auto mask = sceneDiagnostics.value("shadow", json::object());
 		if (mask.is_object()) {
-			ImGui::TextDisabled("Raw shadow dispatches: %llu | opaque recoveries: %llu",
+			ImGui::TextDisabled("Prepared shadow dispatches: %llu | early mask submissions: %llu",
 				static_cast<unsigned long long>(mask.value("submissions", uint64_t{ 0 })),
-				static_cast<unsigned long long>(sceneDiagnostics.value("shadowOpaqueRetryRecovered", uint64_t{ 0 })));
+				static_cast<unsigned long long>(sceneDiagnostics.value("shadowEarlySubmissions", uint64_t{ 0 })));
 		}
 	}
 	ImGui::TextDisabled("Lighting submissions: %llu | shadow-layer submissions: %llu",
@@ -205,6 +202,7 @@ void NativeCompositeFeature::RegisterUxActions()
 json NativeCompositeFeature::GetDiagnostics()
 {
 	std::scoped_lock lock(settingsMutex);
+	const auto offload = globals::features::nativeLighting.GetOffloadSettings();
 	const auto sceneDiagnostics = globals::features::dx12NativeScene.GetDiagnostics();
 	return { { "enabled", IsEnabled() }, { "captures", captures.load() },
 		{ "lightingSubmissions", lightingSubmissions.load() }, { "shadowSubmissions", shadowSubmissions.load() },
@@ -217,11 +215,12 @@ json NativeCompositeFeature::GetDiagnostics()
 		{ "shadowProducerStatus", sceneDiagnostics.value("shadowStatus", std::string{}) },
 		{ "shadowProducerStage", sceneDiagnostics.value("shadowStage", std::string{}) },
 		{ "shadowProducer", sceneDiagnostics.value("shadow", json::object()) },
-		{ "shadowOpaqueRetryAttempts", sceneDiagnostics.value("shadowOpaqueRetryAttempts", uint64_t{ 0 }) },
-		{ "shadowOpaqueRetryRecovered", sceneDiagnostics.value("shadowOpaqueRetryRecovered", uint64_t{ 0 }) },
-		{ "shadowLayerEnabled", settings.ShadowLayerEnabled },
-		{ "shadowContribution", settings.ShadowContribution },
-		{ "shadowAfterLighting", settings.ShadowAfterLighting }, { "shadowSpatialReconstruction", settings.ShadowSpatialReconstruction } };
+		{ "shadowEarlyAttempts", sceneDiagnostics.value("shadowEarlyAttempts", uint64_t{ 0 }) },
+		{ "shadowEarlySubmissions", sceneDiagnostics.value("shadowEarlySubmissions", uint64_t{ 0 }) },
+		{ "shadowLayerEnabled", offload.staticShadows && offload.shadowIntensity > 0.0f },
+		{ "shadowContribution", offload.shadowIntensity }, { "llfLightOffloading", offload.llfLights },
+		{ "sharedSamplingDensity", offload.traceDensity },
+		{ "shadowAfterLighting", false }, { "shadowSpatialReconstruction", settings.ShadowSpatialReconstruction } };
 }
 
 std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID3D11Device5* a_device11, ID3D11DeviceContext4* a_context11,
@@ -239,6 +238,17 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 		selectedPolicy = policy;
 		revision = validityRevision;
 	}
+	const auto offload = globals::features::nativeLighting.GetOffloadSettings();
+	selected.AddLighting = false;
+	selected.LightingStrength = 1.0f;
+	selected.DirectSpatialReconstruction = false;
+	selected.ShadowLayerEnabled = offload.staticShadows;
+	selected.ShadowContribution = offload.shadowIntensity;
+	selected.ShadowBlend = 1.0f;
+	selected.ShadowPreview = false;
+	selected.ShadowAfterLighting = false;
+	selectedPolicy = { 2u, 2u, 0u };
+	revision ^= offload.revision * 0x9e3779b97f4a7c15ull;
 	std::shared_ptr<const NativeLightingFeature::Contribution> lighting;
 	const bool unsupportedGamut = a_transfer == NativeComposite::Transfer::Unknown ||
 	                              (a_transfer == NativeComposite::Transfer::Linear && globals::features::linearLighting.settings.enableACEScg);
@@ -253,11 +263,12 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 		selected.ShadowLayerEnabled && selected.ShadowPreview, selected.ShadowAfterLighting, selected.ShadowSpatialReconstruction, revision
 	};
 	const bool wantShadow = shadowSettings.preview || shadowSettings.contribution * shadowSettings.blend > 0.0f;
-	const auto shadow = wantShadow && !unsupportedGamut ? globals::features::dx12NativeScene.GetShadowMask(a_frame) : nullptr;
+	// Never layer a late mask over raster shadows that were not offloaded.
+	const auto shadow = wantShadow && !unsupportedGamut ? globals::features::dx12NativeScene.GetRasterOffloadShadowMask(a_frame) : nullptr;
 	const auto raster = shadow ? globals::features::dx12NativeScene.GetRasterFrame(a_frame) : nullptr;
 	auto frame = pass.Capture(a_device11, a_context11, a_device12, a_queue, a_source, a_frame, a_width, a_height,
 		a_transfer, lighting, shadow, raster, shadowSettings, selected.LightingStrength, selected.DirectSpatialReconstruction,
-		selectedPolicy, revision, globals::features::nativePBR.NativeFirstReadinessStage());
+		selectedPolicy, revision, 0u);
 	if (frame)
 		++captures;
 	if (frame && frame->lightingSubmitted) {

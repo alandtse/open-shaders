@@ -13,6 +13,11 @@ struct NativeLightingFeature final : Feature
 {
 	struct Settings
 	{
+		bool OffloadStaticShadows = true, OffloadLLFLights = false;
+		bool PreserveMatchedRasterShadows = false;
+		bool PreserveMatchedRasterLights = true;
+		bool FadeShadowsNearReach = true;
+		float OffloadedShadowIntensity = 1.0f;
 		bool Enabled = false, Diffuse = true, Specular = true, EarlyShadowCull = true, Debug = false, CompareCulling = false;
 		float DiffuseIntensity = 1.0f, SpecularIntensity = 1.0f;
 		// Ported from reference PR #9; native direct owns these independently.
@@ -28,6 +33,14 @@ struct NativeLightingFeature final : Feature
 		bool ForcePositiveValidity = false;  // Session-only diagnostic bypass.
 		uint32_t BudgetMB = 0;                // Compatibility only; always dynamic DXGI.
 		bool PersistLab = false;
+	};
+	struct OffloadSettings
+	{
+		bool staticShadows = true, llfLights = false, preserveMatchedRasterLights = true;
+		bool preserveMatchedRasterShadows = false, fadeShadowsNearReach = true;
+		float shadowIntensity = 1.0f;
+		uint32_t traceDensity = 0;
+		uint64_t revision = 1;
 	};
 	struct ValidityLab
 	{
@@ -102,18 +115,12 @@ struct NativeLightingFeature final : Feature
 	void ClearShaderCache() override { reloadRequested = true; }
 	json GetDiagnostics() override;
 	void RegisterUxActions() override;
+	/** @brief Unified shadow and direct offloading controls for DX12 consumers. */
+	OffloadSettings GetOffloadSettings() const;
 	/** @brief Borrows current-frame DX12 outputs until consumer completion. */
 	std::shared_ptr<const Contribution> GetContribution(uint32_t a_frame) const;
 	/** @brief Retains a contribution through a downstream GPU completion fence. */
 	bool RetainContribution(const std::shared_ptr<const Contribution>& a_frame, ID3D12Fence* a_fence, uint64_t a_value);
-	/** @brief NativeSCM queries direct-light selection through the owning feature,
-	 *  without reading NativeLighting's private settings from external code. */
-	bool SelectsLightForNativeShadows(uint32_t index) const
-	{
-		std::scoped_lock lock(settingsMutex);
-		return loaded && settings.Enabled &&
-		       (settings.UseAllPreparedLights || settings.SelectedDirectLight == index);
-	}
 	~NativeLightingFeature();
 
 private:
@@ -134,6 +141,8 @@ private:
 	winrt::com_ptr<ID3D12PipelineState> pipeline;
 	std::array<std::shared_ptr<Contribution>, 4> frames;
 	std::shared_ptr<Contribution> current;
+	std::weak_ptr<const DX12Native::TopLevel> snowTerrainScene;
+	std::vector<uint8_t> snowTerrainCoverage;
 	std::array<uint64_t, 31> totals{};
 	// Derived after the existing GPU candidate counter readback; no extra per-pixel atomic.
 	uint64_t skippedPixels = 0;

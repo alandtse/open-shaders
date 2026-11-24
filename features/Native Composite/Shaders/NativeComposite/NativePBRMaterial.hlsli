@@ -2,14 +2,18 @@
 #define NATIVE_PBR_MATERIAL_HLSLI
 
 #include "Common/PBRMath.hlsli"
+#include "Common/NativeSnow.hlsli"
 
 namespace NativePBR
 {
 	static const uint MissingTexture = 0xffffffffu;
 	static const uint DrawVertexColorFlag = 1u;
+	static const uint DrawProjectedSnowCandidateFlag = 1u << 3u;
+	static const uint SnowCoverageShift = 16u;
 	static const uint LegacyComplexMaskFlag = 1u << 8u;
 	static const uint MaterialOptionParallax = 1u << 0u;
 	static const uint MaterialOptionComplex = 1u << 1u;
+	static const uint MaterialOptionSnowParallaxUV = 1u << 2u;
 
 	struct MaterialRecord
 	{
@@ -33,6 +37,7 @@ namespace NativePBR
 	struct SurfaceInput
 	{
 		float2 uv;
+		float2 snowUV;
 		float2 uvDx;
 		float2 uvDy;
 		float3 tangent;
@@ -40,6 +45,9 @@ namespace NativePBR
 		float3 geometricNormal;
 		float3 vertexColor;
 		float facing;
+		float projectedSnowIncidence;
+		float snowUpwardAlignment;
+		uint snowHitSeed;
 	};
 
 	struct SurfaceMaterial
@@ -55,6 +63,9 @@ namespace NativePBR
 		float coatStrength;
 		float coatRoughness;
 		float coatF0;
+		float projectedSnowCoverageCandidate;
+		float snowCoverage;
+		float snowSparkle;
 	};
 
 	float3 SrgbToLinear(float3 value)
@@ -81,7 +92,9 @@ namespace NativePBR
 
 	SurfaceMaterial EvaluateOpaque(MaterialRecord material, SurfaceInput surface, float4 baseTexel,
 		float4 normalTexel, float4 packedTexel, float4 emissionTexel, float4 coatTexel,
-		bool complexMaskDetected, uint drawFlags)
+		bool complexMaskDetected, uint drawFlags, float4 snowTuning, float snowRoughness,
+		float snowUltravioletEmission, float snowColorAffection, float snowSpecularAmount,
+		float4 snowLumps, float4 snowDetailControls)
 	{
 		SurfaceMaterial result;
 		result.baseColor = baseTexel.rgb;
@@ -111,6 +124,45 @@ namespace NativePBR
 		result.coatStrength = simpleCoat ? saturate(material.coat.x * coatTexel.a) : 0.0f;
 		result.coatRoughness = clamp(material.coat.y, PBR::Constants::MinRoughness, PBR::Constants::MaxRoughness);
 		result.coatF0 = saturate(material.coat.z);
+		result.projectedSnowCoverageCandidate = (drawFlags & DrawProjectedSnowCandidateFlag) != 0u ?
+			saturate(surface.projectedSnowIncidence) : 0.0f;
+		result.snowCoverage = result.projectedSnowCoverageCandidate * float((drawFlags >> SnowCoverageShift) & 255u) / 255.0f;
+		result.snowSparkle = 0.0f;
+		if (result.snowCoverage > 0.0f) {
+			float variation, crystal;
+			SnowDetail(surface.snowUV, surface.snowHitSeed, snowTuning, variation, crystal);
+			const float flatLumpMask = smoothstep(0.15f, 0.85f, surface.snowUpwardAlignment);
+			const float coverageEdgeMask = smoothstep(0.1f, 0.95f, result.snowCoverage);
+			const float lumpPresence = flatLumpMask * coverageEdgeMask;
+			const float lumpStrength = clamp(snowLumps.x, 0.0f, 4.0f) * lumpPresence;
+			const float lumpDensity = saturate(snowLumps.z) * lumpPresence;
+			if (lumpStrength > 0.0f && lumpDensity > 0.0f) {
+				const float2 lumpSlope = SnowLumpSlope(surface.snowUV, surface.snowHitSeed,
+					snowTuning.y, snowLumps.y, lumpDensity, uint(clamp(snowDetailControls.x, 2.0f, 12.0f)));
+				float3 tangent = surface.tangent - result.normal * dot(result.normal, surface.tangent);
+				const float tangentLengthSq = dot(tangent, tangent);
+				if (all(isfinite(tangent)) && tangentLengthSq > 1e-8f) {
+					tangent *= rsqrt(tangentLengthSq);
+					float3 bitangent = cross(result.normal, tangent);
+					bitangent *= dot(bitangent, surface.bitangent) < 0.0f ? -1.0f : 1.0f;
+					result.normal = normalize(result.normal - (tangent * lumpSlope.x + bitangent * lumpSlope.y) *
+						lumpStrength);
+				}
+			}
+			float3 snowColor = lerp(1.0f.xxx, saturate(0.98f.xxx + variation * 0.06f),
+				saturate(snowColorAffection));
+			float granularRoughness = clamp(snowRoughness + variation * 0.12f,
+				PBR::Constants::MinRoughness, PBR::Constants::MaxRoughness);
+			granularRoughness = crystal > 0.0f ? PBR::Constants::MinRoughness : granularRoughness;
+			result.snowSparkle = crystal * result.snowCoverage;
+			result.baseColor = lerp(result.baseColor, snowColor, result.snowCoverage);
+			result.roughness = lerp(result.roughness, granularRoughness, result.snowCoverage);
+			result.metallic *= 1.0f - result.snowCoverage;
+			result.f0 = lerp(result.f0, saturate(snowSpecularAmount * 0.10f).xxx, result.snowCoverage);
+			result.coatStrength *= 1.0f - result.snowCoverage;
+			result.emission += lerp(1.0f.xxx, SnowUltravioletTint, saturate(snowColorAffection)) *
+				clamp(snowUltravioletEmission, 0.0f, 0.05f) * result.snowCoverage;
+		}
 		return result;
 	}
 }

@@ -257,6 +257,7 @@ namespace DX12Native
 			auto* record = snapshot.data() + i * kLightTexels;
 			record[1] = { light.radius, light.radius > 0 ? 1.0f / light.radius : 0.0f, light.radius * 0.1f, light.sourceRadius };
 			record[2] = { light.position.x, light.position.y, light.position.z, 1 };
+			record[3] = { float(light.falloffMode), light.fadeZone, 0, 0 };
 			record[5] = { 0, light.supported ? 0.0f : 7.0f, light.supported ? 1.0f : 0.0f, 0 };
 			record[6] = { 0, 0, 0, light.supported ? 1.0f : 0.0f };
 			record[7] = { light.radiance.x, light.radiance.y, light.radiance.z, light.supported ? 1.0f : 0.0f };

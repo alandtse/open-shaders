@@ -1,5 +1,6 @@
 #include "DX12Resources.h"
 #include "CompanionProcess.h"
+#include "PgReferenceRegistry.h"
 #include "Features/DX12NativeScene/DX12NativeScene.h"
 #include "Features/DX12NativeScene/SpatialSubcells.h"
 #include "Globals.h"
@@ -58,6 +59,88 @@ struct DX12Resources::DiskCacheFlushJob
 	bool diagnosticsOnly = false;
 	std::string error;
 };
+
+struct DX12Resources::PgIndexJob
+{
+	std::atomic<bool> done{ false };
+	std::shared_ptr<const DX12ResourceService::PgReferenceSnapshot> snapshot;
+	std::string error;
+	double elapsedMs = 0;
+};
+
+void DX12Resources::StartPgIndex()
+{
+	if (pgIndexTriggered)
+		return;
+	pgIndexTriggered = true;
+	const auto data = DX12ResourceService::SkyrimDataDirectory();
+	if (!std::filesystem::is_regular_file(data / "ParallaxGen_Diff.json")) {
+		pgIndexStatus = "PG output unavailable: deployed ParallaxGen_Diff.json not found";
+		return;
+	}
+	const auto cacheRoot = data / "SKSE/Plugins/CommunityShaders/DX12-cache";
+	const auto cached = cacheRoot / "pg-references/index-v1.json";
+	const auto output = cacheRoot / "work/pg-references" /
+		std::format("index-{}-{}.json", GetCurrentProcessId(), GetTickCount64());
+	const auto logPath = cacheRoot / "logs" /
+		std::format("pg-references-{}-{}.log", GetCurrentProcessId(), GetTickCount64());
+	auto next = std::make_shared<PgIndexJob>();
+	try {
+		static BS::thread_pool<> pool{ 1 };
+		pool.detach_task([next, data, cached, output, logPath] {
+			const auto started = std::chrono::steady_clock::now();
+			try {
+				const auto process = DX12ResourceService::RunCompanion(
+					{ L"--pg-references", data.wstring(), cached.wstring(), output.wstring() },
+					logPath, BELOW_NORMAL_PRIORITY_CLASS, 300'000, true);
+				if (!process.error.empty())
+					throw std::runtime_error(process.error + ": " + process.log);
+				next->snapshot = DX12ResourceService::ReadPgReferenceSnapshot(output);
+				std::filesystem::create_directories(cached.parent_path());
+				if (!MoveFileExW(output.c_str(), cached.c_str(),
+					MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+					throw std::runtime_error("Could not atomically publish PG reference index");
+				std::error_code ignored;
+				std::filesystem::remove(logPath, ignored);
+			} catch (const std::exception& error) {
+				next->error = error.what();
+			}
+			std::error_code ignored;
+			std::filesystem::remove(output, ignored);
+			(void)DX12ResourceService::PruneGeneratedJobFiles(logPath.parent_path());
+			next->elapsedMs = std::chrono::duration<double, std::milli>(
+				std::chrono::steady_clock::now() - started).count();
+			next->done.store(true, std::memory_order_release);
+		});
+		pgIndexJob = std::move(next);
+		pgIndexStatus = "Preparing PG references on background worker...";
+	} catch (const std::exception& error) {
+		pgIndexStatus = "Could not start PG references: " + std::string(error.what());
+	}
+}
+
+void DX12Resources::PollPgIndex()
+{
+	if (!pgIndexJob || !pgIndexJob->done.load(std::memory_order_acquire))
+		return;
+	const auto finished = std::move(pgIndexJob);
+	pgIndexElapsedMs = finished->elapsedMs;
+	if (!finished->error.empty()) {
+		pgIndexStatus = "PG references unavailable: " + finished->error;
+		return;
+	}
+	pgReferences = finished->snapshot;
+	pgIndexStatus = std::format("Indexed {} PG meshes and {} material shapes ({} reused, {} unresolved)",
+		pgReferences->meshCount, pgReferences->shapeCount,
+		pgReferences->cacheHits, pgReferences->unresolved);
+}
+
+std::shared_ptr<const DX12ResourceService::PgReferenceSnapshot> DX12Resources::GetPgReferenceSnapshot()
+{
+	std::scoped_lock lock(statusMutex);
+	PollPgIndex();
+	return pgReferences;
+}
 
 void DX12Resources::PollAutomaticDetection()
 {
@@ -432,6 +515,7 @@ void DX12Resources::DataLoaded()
 	// This runs once per Skyrim process, without opening the configuration UI.
 	std::scoped_lock lock(statusMutex);
 	dataLoaded.store(true, std::memory_order_release);
+	StartPgIndex();
 	if (!settings.FlushDiskGeometryOnStartup || startupFlushTriggered)
 		return;
 	startupFlushTriggered = true;
@@ -685,6 +769,7 @@ void DX12Resources::AdvanceStreamingScene(const DX12ResourceService::CellRequest
 void DX12Resources::DrawSettings()
 {
 	std::scoped_lock lock(statusMutex);
+	PollPgIndex();
 	PollCellPreparation();
 	PollDiskCacheFlush();
 	auto* ui = RE::UI::GetSingleton();
@@ -749,6 +834,12 @@ void DX12Resources::DrawSettings()
 	if (preparationJob)
 		ImGui::TextDisabled("Finish the current CELL preparation before clearing the disk cache.");
 	ImGui::TextWrapped("%s", diskCacheFlushStatus.c_str());
+	ImGui::SeparatorText("PGPatcher reference index (startup)");
+	ImGui::TextWrapped("%s", pgIndexStatus.c_str());
+	if (pgReferences)
+		ImGui::Text("PG source digest: %.12s | elapsed: %.1f ms",
+			pgReferences->sourceDiffSha256.c_str(), pgIndexElapsedMs);
+	ImGui::TextDisabled("Read-only material references; no geometry generation or texture uploads.");
 
 	ImGui::Checkbox("Enable DX12 Resources preparation", &settings.Enabled);
 	ImGui::Checkbox("Automatically prepare missing native scenes", &settings.AutoPrepareOnCellEntry);
@@ -895,9 +986,18 @@ void DX12Resources::RestoreDefaultSettings()
 json DX12Resources::GetDiagnostics()
 {
 	std::scoped_lock lock(statusMutex);
+	PollPgIndex();
 	PollCellPreparation();
 	PollDiskCacheFlush();
 	return { { "enabled", settings.Enabled },
+		{ "pgReferences", { { "status", pgIndexStatus }, { "running", bool(pgIndexJob) },
+			{ "triggered", pgIndexTriggered }, { "published", bool(pgReferences) },
+			{ "meshCount", pgReferences ? pgReferences->meshCount : 0 },
+			{ "shapeCount", pgReferences ? pgReferences->shapeCount : 0 },
+			{ "cacheHits", pgReferences ? pgReferences->cacheHits : 0 },
+			{ "unresolved", pgReferences ? pgReferences->unresolved : 0 },
+			{ "sourceDiffSha256", pgReferences ? pgReferences->sourceDiffSha256 : std::string{} },
+			{ "elapsedMs", pgIndexElapsedMs } } },
 		{ "retainPreparationDiagnostics", settings.RetainPreparationDiagnostics },
 		{ "diskGeometryCache", { { "flushRunning", bool(diskCacheFlushJob) },
 								   { "flushOnStartup", settings.FlushDiskGeometryOnStartup },
