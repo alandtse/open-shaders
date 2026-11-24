@@ -2848,9 +2848,17 @@ namespace SIE
 		}
 	}
 
-	winrt::com_ptr<ID3D11GeometryShader> ShaderCache::GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor)
+	winrt::com_ptr<ID3D11GeometryShader> ShaderCache::GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor, std::optional<uint64_t> a_taskGeneration)
 	{
+		using enum UtilityShaderFlags;
+		// The paraboloid bit is shared with AdditionalAlphaMask, so only a shadow-map draw outside OpaqueEffect is paraboloid.
+		constexpr auto paraboloidShadow = static_cast<uint32_t>(RenderShadowmap) | static_cast<uint32_t>(RenderShadowmapPb);
+		if (shader.shaderType.get() != RE::BSShader::Type::Utility ||
+			(vertexDescriptor & paraboloidShadow) != paraboloidShadow || (vertexDescriptor & static_cast<uint32_t>(OpaqueEffect)))
+			return nullptr;
 		std::scoped_lock lock(paraboloidClipMutex);
+		if (IsTaskStale(a_taskGeneration, RE::BSShader::Type::Utility))
+			return nullptr;
 		if (const auto it = paraboloidClipShaders.find(vertexDescriptor); it != paraboloidClipShaders.end())
 			return it->second;
 		std::array<D3D_SHADER_MACRO, 64> macros{};
@@ -4689,6 +4697,7 @@ namespace SIE
 					newShader->shader->Release();
 				}
 			} else {
+				GetParaboloidClipShader(shader, descriptor, a_taskGeneration);
 				std::lock_guard lockGuard(vertexShadersMutex);
 				// Clear() takes this same mutex to wipe vertexShaders, so a mismatch here means
 				// inserting now would resurrect state Clear() already removed.
