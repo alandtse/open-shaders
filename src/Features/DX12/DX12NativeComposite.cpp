@@ -4,6 +4,7 @@
 
 #include "Features/DX12/DX12NativeScene.h"
 #include "Globals.h"
+#include "GpuPass.h"
 #include "PCH.h"
 
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <limits>
 #include <ranges>
 #include <stdexcept>
+#include <utility>
 
 namespace DX12Native
 {
@@ -58,7 +60,8 @@ namespace DX12Native
 		ID3D11Device5* device11, ID3D11DeviceContext4* context11,
 		ID3D12Device* device12, ID3D12CommandQueue* queue, ID3D11Texture2D* source,
 		uint32_t frame, uint32_t width, uint32_t height, Transfer transfer,
-		const std::shared_ptr<const ShadowMaskFrame>& shadow)
+		const std::shared_ptr<const ShadowMaskFrame>& shadow,
+		bool returnColorToDX11)
 	{
 		if (!device11 || !context11 || !device12 || !queue || !source || !width || !height)
 			return {};
@@ -95,6 +98,8 @@ namespace DX12Native
 		                         raster->readyValue != UINT64_MAX &&
 		                         raster->width >= width && raster->height >= height &&
 		                         InitializeShadow(device12);
+		if (returnColorToDX11 && !applyShadow)
+			return {};
 
 		Slot* slot = nullptr;
 		for (auto& candidate : slots) {
@@ -126,16 +131,18 @@ namespace DX12Native
 			const bool recreate = !slot->frame || slot->device != device12 ||
 			                      slot->device11 != device11 || slot->sourceDesc.Width != desc.Width ||
 			                      slot->sourceDesc.Height != desc.Height || slot->sourceDesc.Format != desc.Format ||
-			                      slot->supportsShadow != supportsShadow;
+			                      slot->supportsShadow != supportsShadow ||
+			                      slot->hasReturn != returnColorToDX11;
 			if (recreate) {
 				// Reuse open-RT's two-image, four-slot DXGI budget and lifetime policy.
 				const auto allocationDesc = CD3DX12_RESOURCE_DESC::Tex2D(desc.Format,
 					desc.Width, desc.Height, 1, 1, 1, 0,
 					supportsShadow ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE);
 				const auto allocation = device12->GetResourceAllocationInfo(0, 1, &allocationDesc).SizeInBytes;
-				if (allocation == UINT64_MAX || allocation > (UINT64_MAX - 2ull * 1024 * 1024) / 2)
+				const uint64_t imageCount = returnColorToDX11 ? 3ull : 2ull;
+				if (allocation == UINT64_MAX || allocation > (UINT64_MAX - 2ull * 1024 * 1024) / imageCount)
 					throw std::runtime_error("Composite allocation size unsupported");
-				const uint64_t required = allocation * 2 + 2ull * 1024 * 1024;
+				const uint64_t required = allocation * imageCount + 2ull * 1024 * 1024;
 				uint64_t retained = 0;
 				for (const auto& candidate : slots)
 					if (candidate && candidate.get() != slot) {
@@ -145,7 +152,8 @@ namespace DX12Native
 					}
 				const uint64_t current = slot->frameBytes;
 				const uint64_t tracked = retained > UINT64_MAX - current ? UINT64_MAX : retained + current;
-				const uint64_t allowance = videoBudget.Query(device12, tracked).effectiveBytes;
+				const auto before = videoBudget.Query(device12, tracked);
+				const uint64_t allowance = before.effectiveBytes;
 				if (required > allowance || tracked > allowance - required)
 					throw std::runtime_error("Composite frame allocation deferred by DXGI memory budget");
 
@@ -156,12 +164,15 @@ namespace DX12Native
 				replacement->device11 = device11;
 				replacement->sourceDesc = desc;
 				replacement->supportsShadow = supportsShadow;
+				replacement->hasReturn = returnColorToDX11;
 				auto sharedDesc = desc;
 				sharedDesc.Usage = D3D11_USAGE_DEFAULT;
 				sharedDesc.BindFlags = 0;
 				sharedDesc.CPUAccessFlags = 0;
 				sharedDesc.MiscFlags = 0;
 				replacement->shared = std::make_unique<WrappedResource>(sharedDesc, device11, device12, "NativeComposite::RasterInput");
+				if (returnColorToDX11)
+					replacement->returned = std::make_unique<WrappedResource>(sharedDesc, device11, device12, "NativeComposite::RasterReturn");
 				replacement->fence.Create(device12, device11, "NativeComposite::Fence");
 				DX::ThrowIfFailed(device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(replacement->allocator.put())));
 				DX::ThrowIfFailed(device12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
@@ -184,6 +195,9 @@ namespace DX12Native
 						IID_PPV_ARGS(replacement->shadowDescriptors.put())));
 				}
 				*slot = std::move(*replacement);
+				logger::info("[NativeComposite] {}x{} slot: {} images, {} MiB; DXGI local usage {} MiB before, {} MiB after, of {} MiB",
+					desc.Width, desc.Height, imageCount, required / VideoMemoryBudget::kMiB, before.localUsage / VideoMemoryBudget::kMiB,
+					videoBudget.Query(device12, tracked + required).localUsage / VideoMemoryBudget::kMiB, before.localBudget / VideoMemoryBudget::kMiB);
 			}
 
 			// Own the upstream inputs until this composite's GPU work retires.
@@ -279,6 +293,22 @@ namespace DX12Native
 				slot->commands->ResourceBarrier(static_cast<UINT>(end.size()), end.data());
 			}
 
+			if (applyShadow && returnColorToDX11 && slot->returned) {
+				const std::array beginReturn{
+					CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE),
+					CD3DX12_RESOURCE_BARRIER::Transition(slot->returned->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST)
+				};
+				slot->commands->ResourceBarrier(UINT(beginReturn.size()), beginReturn.data());
+				const auto destination = CD3DX12_TEXTURE_COPY_LOCATION(slot->returned->resource.get(), 0);
+				const auto origin = CD3DX12_TEXTURE_COPY_LOCATION(slot->frame->color.get(), 0);
+				const D3D12_BOX region{ 0, 0, 0, width, height, 1 };
+				slot->commands->CopyTextureRegion(&destination, 0, 0, 0, &origin, &region);
+				const std::array finishReturn{
+					CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON),
+					CD3DX12_RESOURCE_BARRIER::Transition(slot->returned->resource.get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON)
+				};
+				slot->commands->ResourceBarrier(UINT(finishReturn.size()), finishReturn.data());
+			}
 			DX::ThrowIfFailed(slot->commands->Close());
 			if (applyShadow) {
 				DX::ThrowIfFailed(queue->Wait(shadow->readyFence.get(), shadow->readyValue));
@@ -292,6 +322,17 @@ namespace DX12Native
 			auto& output = *slot->frame;
 			output.producerFence = slot->fence.fence12;
 			output.producerValue = done;
+			if (applyShadow && returnColorToDX11 && slot->returned) {
+				CS_GPU_PASS("NativeComposite::SceneReturn");
+				// The slot is reused only once this second signal completes, so the return texture outlives the DX11 copy.
+				DX::ThrowIfFailed(context11->Wait(slot->fence.fence11.get(), done));
+				const D3D11_BOX sourceRegion{ 0, 0, 0, width, height, 1 };
+				context11->CopySubresourceRegion(source, 0, 0, 0, 0,
+					slot->returned->resource11, 0, &sourceRegion);
+				const uint64_t copied = slot->fence.Next();
+				DX::ThrowIfFailed(context11->Signal(slot->fence.fence11.get(), copied));
+				output.producerValue = copied;
+			}
 			output.frame = frame;
 			output.width = width;
 			output.height = height;
@@ -299,6 +340,15 @@ namespace DX12Native
 			output.valid = true;
 			return slot->frame;
 		} catch (...) {
+			if (!std::exchange(captureFailureLogged, true)) {
+				try {
+					throw;
+				} catch (const std::exception& error) {
+					logger::warn("[NativeComposite] Capture failed, the frame keeps its plain color: {}", error.what());
+				} catch (...) {
+					logger::warn("[NativeComposite] Capture failed, the frame keeps its plain color");
+				}
+			}
 			if (submitted && slot->fence.fence12) {
 				// The command list was queued. A tail Signal on that queue tracks
 				// its completion even when the original Signal failed.

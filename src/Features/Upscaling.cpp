@@ -3685,13 +3685,16 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		                      globals::features::linearLighting.IsLinearLightingActive() ? DX12Native::NativeComposite::Transfer::Linear :
 		                                                                                   DX12Native::NativeComposite::Transfer::LegacyScene;
 		const auto shadow = globals::features::dx12NativeScene.GetShadowMask(globals::game::graphicsState->GetFrameCount());
+		// DX12 DLSS reads the composite itself; a returned frame needs a shadow mask and would leave it none.
+		const bool nativeDLSSReads = upscaleMethod == UpscaleMethod::kDLSS && upscaling.nativeDLSS.GetFailure().empty();
+		const bool returnColor = !nativeDLSSReads && (upscaleMethod != UpscaleMethod::kFSR || !upscaling.fidelityFX.RuntimeUpscalerReadsComposite());
 		upscaling.nativeCompositeFrame = upscaling.nativeComposite.Capture(
 			upscaling.dx12SwapChain.d3d11Device.get(),
 			upscaling.dx12SwapChain.d3d11Context.get(),
 			upscaling.dx12SwapChain.d3d12Device.get(),
 			upscaling.dx12SwapChain.commandQueue.get(), scene, globals::state->frameCount,
 			static_cast<uint32_t>(renderSize.x), static_cast<uint32_t>(renderSize.y),
-			transfer, shadow);
+			transfer, shadow, returnColor);
 	}
 
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
