@@ -40,6 +40,10 @@ float GetFurWet()
 }
 #endif
 
+#if defined(DETAIL_MAPS)
+#	include "DetailMaps/DetailMaps.hlsli"
+#endif
+
 #if defined(FACEGEN) || defined(FACEGEN_RGB_TINT)
 #	define SKIN
 #endif
@@ -65,14 +69,6 @@ float GetFurWet()
 #		define SNOW_COVER_GLINT
 #		define GLINT
 #	endif
-#endif
-
-#if defined(FUR_SHELLS)
-#	include "FurShells/FurShells.hlsli"
-#endif
-
-#if defined(DETAIL_MAPS)
-#	include "DetailMaps/DetailMaps.hlsli"
 #endif
 
 #if defined(VSHADER)
@@ -1989,8 +1985,14 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	normal.xyz = GetWorldMapNormal(input, normal.xyz, rawBaseColor.xyz);
 #	endif  // WORLD_MAP
 
-#	if defined(DETAIL_MAPS) && !defined(MODELSPACENORMALS) && !defined(LANDSCAPE)
-	DetailMaps::Detail detailSample = DetailMaps::GetDetail(uv, viewPosition.z, SampNormalSampler);
+#	if defined(DETAIL_MAPS) && !defined(MODELSPACENORMALS) && !defined(LANDSCAPE) && !defined(FUR_SHELLS)
+	float3 detailPosition = input.WorldPosition.xyz;
+#		if defined(VR)
+	// Both eyes use the head center so distance fading agrees across stereo views.
+	detailPosition += FrameBuffer::CameraPosAdjust[eyeIndex].xyz -
+	                  0.5 * (FrameBuffer::CameraPosAdjust[0].xyz + FrameBuffer::CameraPosAdjust[1].xyz);
+#		endif
+	DetailMaps::Detail detailSample = DetailMaps::GetDetail(uv, length(detailPosition), SampColorSampler);
 	baseColor.xyz *= detailSample.Albedo;
 	normal.xyz = DetailMaps::ApplyNormal(normal.xyz, detailSample);
 #		if defined(TRUE_PBR)
@@ -2698,6 +2700,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 				float complexMaterialRoughness = 1.0 - complexMaterialColor.y;
 				material.Roughness = lerp(material.Roughness, complexMaterialRoughness, complexMaterial);
 				material.F0 = lerp(material.F0, complexSpecular, complexMaterial);
+#				if defined(DETAIL_MAPS) && !defined(MODELSPACENORMALS) && !defined(LANDSCAPE) && !defined(FUR_SHELLS)
+				material.Roughness = saturate(material.Roughness + detailSample.Roughness * complexMaterial);
+#				endif
 #			endif
 
 				envMask = saturate(envMask);

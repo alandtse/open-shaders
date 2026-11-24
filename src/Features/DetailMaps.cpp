@@ -1,12 +1,16 @@
 #include "DetailMaps.h"
+
 #include <DirectXTex.h>
 
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "TruePBR.h"
 #include "Utils/D3D.h"
+#include "Utils/FileSystem.h"
 #include "Utils/Game.h"
+#include "Utils/MathUtils.h"
 #include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "feature.detail_maps."
@@ -26,19 +30,15 @@ namespace
 	constexpr uint32_t DetailFlag = static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::DetailMaps);
 	constexpr uint32_t ReflectionsFlag = static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections);
 	constexpr uint32_t TextureSlot = 23;
-	constexpr uint32_t PerDrawSlot = 8;
-	constexpr uint32_t FirstPersonRenderMode = 0x16;
 	constexpr size_t MaxEntries = 8192;
 	constexpr int32_t NoMatch = -1;
 	constexpr int32_t Excluded = -2;
 	constexpr uint32_t NoSet = std::numeric_limits<uint32_t>::max();
-	constexpr std::string_view SetsPath = "Data\\Shaders\\DetailMaps\\Sets";
-	constexpr std::string_view RulesPath = "Data\\Shaders\\DetailMaps\\Rules";
 
 	bool IsFirstPersonPass()
 	{
 		auto* accumulator = *globals::game::currentAccumulator.get();
-		return accumulator && accumulator->GetRuntimeData().renderMode == FirstPersonRenderMode;
+		return accumulator && accumulator->GetRuntimeData().renderMode == RE::BSShaderAccumulator::RENDER_MODE::kFirstPersonView;
 	}
 
 	bool IsDetailDescriptor(uint32_t a_descriptor, bool a_allowForward)
@@ -46,9 +46,11 @@ namespace
 		using Flags = SIE::ShaderCache::LightingShaderFlags;
 		using enum SIE::ShaderCache::LightingShaderTechniques;
 		constexpr uint32_t excluded = static_cast<uint32_t>(Flags::ModelSpaceNormals) | static_cast<uint32_t>(Flags::WorldMap) | static_cast<uint32_t>(Flags::LandscapeSeams) |
-		                              static_cast<uint32_t>(Flags::FurShells) | static_cast<uint32_t>(Flags::FurShellsDepth) | static_cast<uint32_t>(Flags::NoSnowCover) |
-		                              static_cast<uint32_t>(Flags::NoWetness) | static_cast<uint32_t>(Flags::Reflections) | DetailFlag;
+		                              static_cast<uint32_t>(Flags::FurShells) | static_cast<uint32_t>(Flags::FurShellsDepth) | DetailFlag;
 		if ((a_descriptor & excluded) != 0 || (!a_allowForward && (a_descriptor & static_cast<uint32_t>(Flags::Deferred)) == 0))
+			return false;
+
+		if ((a_descriptor & static_cast<uint32_t>(Flags::TruePbr)) != 0 && ((a_descriptor >> 24) & 0x3F) != 0)
 			return false;
 
 		switch (static_cast<SIE::ShaderCache::LightingShaderTechniques>((a_descriptor >> 24) & 0x3F)) {
@@ -144,14 +146,14 @@ namespace
 	{
 		const auto it = a_object.find(a_key);
 		const float value = it != a_object.end() && it->is_number() ? it->get<float>() : a_default;
-		return std::isfinite(value) ? std::clamp(value, a_min, a_max) : a_default;
+		return Util::ClampFinite(value, a_min, a_max, a_default);
 	}
 
-	std::vector<std::filesystem::path> ListFiles(std::string_view a_folder, std::string_view a_extension)
+	std::vector<std::filesystem::path> ListFiles(const std::filesystem::path& a_folder, std::string_view a_extension)
 	{
 		std::vector<std::filesystem::path> files;
 		std::error_code error;
-		std::filesystem::directory_iterator it(std::filesystem::path(a_folder), error);
+		std::filesystem::directory_iterator it(a_folder, error);
 		for (const std::filesystem::directory_iterator end; !error && it != end; it.increment(error)) {
 			std::error_code fileError;
 			if (it->is_regular_file(fileError) && ToLower(it->path().extension().string()) == a_extension)
@@ -164,12 +166,12 @@ namespace
 
 void DetailMaps::ClampSettings()
 {
-	settings.Tiling = std::clamp(std::isfinite(settings.Tiling) ? settings.Tiling : 1.0f, 0.1f, 8.0f);
-	settings.AlbedoStrength = std::clamp(std::isfinite(settings.AlbedoStrength) ? settings.AlbedoStrength : 1.0f, 0.0f, 4.0f);
-	settings.NormalStrength = std::clamp(std::isfinite(settings.NormalStrength) ? settings.NormalStrength : 1.0f, 0.0f, 4.0f);
-	settings.RoughnessStrength = std::clamp(std::isfinite(settings.RoughnessStrength) ? settings.RoughnessStrength : 1.0f, 0.0f, 4.0f);
-	settings.FadeStart = std::clamp(std::isfinite(settings.FadeStart) ? settings.FadeStart : 400.0f, 0.0f, 8000.0f);
-	settings.FadeEnd = std::clamp(std::isfinite(settings.FadeEnd) ? settings.FadeEnd : 1200.0f, settings.FadeStart + 1.0f, 8001.0f);
+	settings.Tiling = Util::ClampFinite(settings.Tiling, 0.1f, 8.0f, 1.0f);
+	settings.AlbedoStrength = Util::ClampFinite(settings.AlbedoStrength, 0.0f, 4.0f, 1.0f);
+	settings.NormalStrength = Util::ClampFinite(settings.NormalStrength, 0.0f, 4.0f, 1.0f);
+	settings.RoughnessStrength = Util::ClampFinite(settings.RoughnessStrength, 0.0f, 4.0f, 1.0f);
+	settings.FadeStart = Util::ClampFinite(settings.FadeStart, 0.0f, 8000.0f, 400.0f);
+	settings.FadeEnd = Util::ClampFinite(settings.FadeEnd, settings.FadeStart + 1.0f, 8001.0f, std::max(settings.FadeStart + 1.0f, 1200.0f));
 }
 
 void DetailMaps::RestoreDefaultSettings()
@@ -190,6 +192,14 @@ void DetailMaps::SaveSettings(json& o_json)
 
 void DetailMaps::DrawSettings()
 {
+	if (loaded && !HasContent()) {
+		Util::Text::WrappedWarning("%s", T(TKEY("pack_missing"), "No detail sets or rules found. Install Detailed Maps."));
+		if (ImGui::Button(T(TKEY("get_pack"), "Get Detailed Maps")))
+			ShellExecuteA(nullptr, "open", "https://www.nexusmods.com/skyrimspecialedition/mods/197436", nullptr, nullptr, SW_SHOWNORMAL);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextWrapped("%s", T(TKEY("get_pack_tooltip"), "Opens the Nexus page. Install the pack so its Rules and Sets land in Data\\Shaders\\DetailMaps."));
+	}
+
 	ImGui::Checkbox(T(TKEY("enabled"), "Enabled"), &settings.Enabled);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("enabled_tooltip"), "Adds detail to textures matched by the rules. The detail shaders compile at startup while this is on."));
@@ -224,7 +234,8 @@ void DetailMaps::LoadSets()
 {
 	sets.clear();
 	auto* device = globals::d3d::device;
-	for (const auto& path : ListFiles(SetsPath, ".dds")) {
+	const auto folder = Util::PathHelpers::GetShadersPath() / "DetailMaps" / "Sets";
+	for (const auto& path : ListFiles(folder, ".dds")) {
 		DirectX::ScratchImage image;
 		if (FAILED(DirectX::LoadFromDDSFile(path.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image))) {
 			ruleErrors.push_back(std::format("{}: {}", path.filename().string(), T(TKEY("set_load_failed"), "could not be loaded")));
@@ -257,7 +268,8 @@ void DetailMaps::LoadRules()
 	rules.clear();
 	excludes.clear();
 
-	const auto files = ListFiles(RulesPath, ".json");
+	const auto folder = Util::PathHelpers::GetShadersPath() / "DetailMaps" / "Rules";
+	const auto files = ListFiles(folder, ".json");
 	for (size_t fileIndex = 0; fileIndex < files.size(); ++fileIndex) {
 		const auto fileName = files[fileIndex].filename().string();
 		json data;
@@ -319,9 +331,8 @@ void DetailMaps::Reload()
 	LoadRules();
 	entries.clear();
 	lastDiffuse = nullptr;
+	lastSet = nullptr;
 	lastRule = NoMatch;
-	bindingValid = false;
-	boundView = nullptr;
 }
 
 int32_t DetailMaps::MatchRule(const char* a_path) const
@@ -347,102 +358,177 @@ int32_t DetailMaps::FindRule(RE::BSRenderPass* a_pass)
 	auto* diffuse = material ? material->diffuseTexture.get() : nullptr;
 	if (!diffuse)
 		return NoMatch;
-	if (diffuse == lastDiffuse)
+	RE::BSTextureSet* set = material->textureSet.get();
+	if (diffuse == lastDiffuse && set == lastSet)
 		return lastRule;
 
 	auto it = entries.find(diffuse);
-	if (it == entries.end() || it->second.name != diffuse->name) {
+	if (it == entries.end() || it->second.name != diffuse->name || (it->second.fallbackSet && it->second.fallbackSet != set)) {
 		int32_t rule = MatchRule(diffuse->name.c_str());
-		if (rule == NoMatch && material->textureSet)
-			rule = MatchRule(material->textureSet->GetTexturePath(RE::BSTextureSet::Texture::kDiffuse));
+		const RE::BSTextureSet* fallbackSet = nullptr;
+		if (rule == NoMatch && set) {
+			rule = MatchRule(set->GetTexturePath(RE::BSTextureSet::Texture::kDiffuse));
+			fallbackSet = set;
+		}
 		if (entries.size() >= MaxEntries)
 			entries.clear();
-		it = entries.insert_or_assign(diffuse, Entry{ diffuse->name, std::max(rule, NoMatch) }).first;
+		it = entries.insert_or_assign(diffuse, Entry{ diffuse->name, std::max(rule, NoMatch), fallbackSet }).first;
 	}
 
 	lastDiffuse = diffuse;
+	lastSet = set;
 	lastRule = it->second.rule;
 	return lastRule;
 }
 
 bool DetailMaps::ShouldPrecompile(uint32_t a_descriptor) const
 {
-	return loaded && settings.Enabled && IsDetailDescriptor(a_descriptor, false);
+	return loaded && settings.Enabled && HasContent() && IsDetailDescriptor(a_descriptor, false);
 }
 
 bool DetailMaps::IsEligible(uint32_t a_descriptor) const
 {
-	return loaded && settings.Enabled && perDrawCB && !sets.empty() && !rules.empty() && IsDetailDescriptor(a_descriptor, IsFirstPersonPass());
+	return loaded && settings.Enabled && HasContent() && IsDetailDescriptor(a_descriptor, IsFirstPersonPass());
 }
 
-bool DetailMaps::BindPass(RE::BSRenderPass* a_pass)
+void DetailMaps::GenerateShaderPermutations(RE::BSShader* a_shader)
 {
-	if (!a_pass || !a_pass->geometry || !a_pass->shaderProperty)
-		return false;
-	if ((globals::state->permutationData.ExtraShaderDescriptor & ReflectionsFlag) != 0)
-		return false;
+	if (a_shader->shaderType.get() != RE::BSShader::Type::Lighting)
+		return;
+
+	constexpr uint32_t truePbrFlag = static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::TruePbr);
+	auto* state = globals::state;
+	auto* shaderCache = globals::shaderCache;
+	for (const auto& entry : a_shader->pixelShaders) {
+		auto vertexDescriptor = entry->id;
+		auto pixelDescriptor = entry->id;
+		state->ModifyShaderLookup(*a_shader, vertexDescriptor, pixelDescriptor, true);
+		if (ShouldPrecompile(pixelDescriptor))
+			std::ignore = shaderCache->GetPixelShader(*a_shader, pixelDescriptor | DetailFlag, true);
+		if (globals::features::truePBR.loaded && ShouldPrecompile(pixelDescriptor | truePbrFlag))
+			std::ignore = shaderCache->GetPixelShader(*a_shader, pixelDescriptor | truePbrFlag | DetailFlag, true);
+	}
+}
+
+uint32_t DetailMaps::GetLightingVariantFlag() const
+{
+	return DetailFlag;
+}
+
+std::string_view DetailMaps::GetLightingVariantDefine() const
+{
+	return "DETAIL_MAPS";
+}
+
+void DetailMaps::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
+{
+	if (swapped)
+		EndPass();
+
+	auto* state = globals::state;
+	if (!a_pass || !a_pass->geometry || !a_pass->shaderProperty || !IsEligible(state->modifiedPixelDescriptor))
+		return;
+	if (!globals::shaderCache->IsEnabled() || (state->permutationData.ExtraShaderDescriptor & ReflectionsFlag) != 0)
+		return;
 
 	using enum RE::BSShaderProperty::EShaderPropertyFlag;
 	if (a_pass->shaderProperty->flags.any(kDecal, kDynamicDecal))
-		return false;
+		return;
 
 	auto* geometry = a_pass->geometry;
-	const float distance = IsFirstPersonPass() ? 0.0f : std::max(0.0f, geometry->worldBound.center.GetDistance(Util::GetEyePosition()) - geometry->worldBound.radius);
+	const float distance = IsFirstPersonPass() ? 0.0f : std::max(0.0f, geometry->worldBound.center.GetDistance(Util::GetEyePosition(0)) - geometry->worldBound.radius);
 	if (distance >= settings.FadeEnd)
-		return false;
+		return;
 
 	const int32_t ruleIndex = FindRule(a_pass);
 	if (ruleIndex < 0 || static_cast<size_t>(ruleIndex) >= rules.size())
-		return false;
+		return;
+
+	auto* pixelShader = globals::shaderCache->GetPixelShader(*a_shader, state->modifiedPixelDescriptor | DetailFlag);
+	if (!pixelShader)
+		return;
 
 	const auto& rule = rules[static_cast<size_t>(ruleIndex)];
-	const PerDraw perDraw{
-		rule.scale * settings.Tiling,
-		rule.albedo * settings.AlbedoStrength,
-		rule.normal * settings.NormalStrength,
-		rule.roughness * settings.RoughnessStrength,
-		settings.FadeEnd,
-		1.0f / std::max(settings.FadeEnd - settings.FadeStart, 1.0f),
-		rule.transpose ? 1.0f : 0.0f,
-		0.0f
-	};
+	auto& perDraw = state->permutationData.PerDrawFeatureData;
+	perDraw[0] = float4(rule.scale * settings.Tiling, rule.albedo * settings.AlbedoStrength, rule.normal * settings.NormalStrength, rule.roughness * settings.RoughnessStrength);
+	perDraw[1] = float4(settings.FadeEnd, 1.0f / std::max(settings.FadeEnd - settings.FadeStart, 1.0f), rule.transpose ? 1.0f : 0.0f, 0.0f);
 
 	auto* context = globals::d3d::context;
-	if (!bindingValid || std::memcmp(&perDraw, &lastPerDraw, sizeof(PerDraw)) != 0) {
-		perDrawCB->Update(perDraw);
-		lastPerDraw = perDraw;
-	}
+	context->PSGetShader(savedPixelShader.put(), nullptr, nullptr);
+	context->PSSetShader(Util::AsReal(pixelShader->shader), nullptr, 0);
 
-	auto* view = sets[rule.set].view.get();
-	if (!bindingValid || view != boundView) {
-		context->PSSetShaderResources(TextureSlot, 1, &view);
-		boundView = view;
-	}
+	ID3D11ShaderResourceView* view = sets[rule.set].view.get();
+	context->PSSetShaderResources(TextureSlot, 1, &view);
 
-	if (!bindingValid) {
-		ID3D11Buffer* buffer = perDrawCB->CB();
-		context->PSSetConstantBuffers(PerDrawSlot, 1, &buffer);
-	}
-
-	bindingValid = true;
+	swapped = true;
 	++passCount;
-	return true;
+}
+
+void DetailMaps::EndPass()
+{
+	if (!swapped)
+		return;
+	swapped = false;
+
+	auto* context = globals::d3d::context;
+	context->PSSetShader(savedPixelShader.get(), nullptr, 0);
+	savedPixelShader = nullptr;
+
+	ID3D11ShaderResourceView* view = nullptr;
+	context->PSSetShaderResources(TextureSlot, 1, &view);
+}
+
+void DetailMaps::Prepass()
+{
+	lastPassCount = passCount;
+	passCount = 0;
 }
 
 void DetailMaps::Reset()
 {
-	lastPassCount = passCount;
-	passCount = 0;
-	bindingValid = false;
+	EndPass();
 	lastDiffuse = nullptr;
+	lastSet = nullptr;
+	lastRule = NoMatch;
 	if (!entries.empty() && globals::state->IsMainOrLoadingMenuOpen())
 		entries.clear();
 }
 
 void DetailMaps::SetupResources()
 {
-	perDrawCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<PerDraw>(), "DetailMaps::PerDraw");
 	Reload();
+}
+
+struct DetailMaps::Hooks
+{
+	struct BSLightingShader_SetupGeometry
+	{
+		static void thunk(RE::BSShader* a_shader, RE::BSRenderPass* a_pass, uint32_t a_renderFlags)
+		{
+			func(a_shader, a_pass, a_renderFlags);
+			globals::features::detailMaps.BeginPass(a_shader, a_pass);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct BSLightingShader_RestoreGeometry
+	{
+		static void thunk(RE::BSShader* a_shader, RE::BSRenderPass* a_pass, uint32_t a_renderFlags)
+		{
+			globals::features::detailMaps.EndPass();
+			func(a_shader, a_pass, a_renderFlags);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+};
+
+void DetailMaps::PostPostLoad()
+{
+	// Keep DetailMaps ahead of FurShells in Feature::GetFeatureList(): the last-installed 0x6 hook wins the pixel
+	// shader for a pass, and fur passes are only excluded from this swap by FurShells overriding it.
+	stl::write_vfunc<0x6, Hooks::BSLightingShader_SetupGeometry>(RE::VTABLE_BSLightingShader[0]);
+	stl::write_vfunc<0x7, Hooks::BSLightingShader_RestoreGeometry>(RE::VTABLE_BSLightingShader[0]);
+	logger::info("[Detail Maps] Installed hooks");
 }
 
 #undef I18N_KEY_PREFIX

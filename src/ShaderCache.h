@@ -1070,6 +1070,7 @@ namespace SIE
 			Deferred = 1 << 4,
 			LandscapeSeams = 1 << 5,
 			// Community Shaders end
+			DetailMaps = 1 << 6,
 			Specular = 1 << 9,
 			SoftLighting = 1 << 10,
 			RimLighting = 1 << 11,
@@ -1085,9 +1086,9 @@ namespace SIE
 			Snow = 1 << 21,
 			CharacterLight = 1 << 22,
 			AdditionalAlphaMask = 1 << 23,
-			NoWetness = 1u << 29,
-			NoSnowCover = 1u << 30,
-			DetailMaps = 1u << 31
+			// Open Shaders fork-only flags: bits 30 and 31 sit above the technique bits (24-29) and away from the low bits upstream claims.
+			FurShells = 1u << 30,
+			FurShellsDepth = 1u << 31
 		};
 
 		enum class BloodSplatterShaderTechniques

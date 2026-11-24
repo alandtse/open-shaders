@@ -3,8 +3,8 @@
 How a per-material Lighting feature (first consumer: Detail Maps) gets per-draw data and a compiled
 variant without spending a cbuffer slot or adding engine wiring that names the feature.
 
-Status: proposal, revised after two independent reviews (deepseek and Gemini, with a rebuttal round).
-Nothing here is implemented.
+Status: implemented. Phase 0 (`src/LightingBudget.h`) and the Detail Maps port follow the design below,
+which was revised after two independent reviews (deepseek and Gemini, with a rebuttal round).
 
 ## Resource budget
 
@@ -16,7 +16,8 @@ Nothing here is implemented.
 | 3, 4, 5   | Shared with upstream (TruePbr, Deferred, LandscapeSeams) |
 | 24-29     | Technique, decoded as `0x3F & (descriptor >> 24)`        |
 | 30, 31    | Open Shaders (FurShells, FurShellsDepth)                 |
-| 6, 7, 8   | **Free: the only three bits left**                       |
+| 6         | Detail Maps (`kDetailMapsMask`)                          |
+| 7, 8      | **Free: the only two bits left**                         |
 
 Bit 29 is **not** usable. It is technique bit 5 and is decoded unmasked at about a dozen sites
 (`Deferred.cpp`, `State.cpp`, `ShaderCache.cpp`, `LinearLighting.cpp`, `TruePBR.cpp`, `FurShells.cpp`,
@@ -78,58 +79,55 @@ b9 stays reserved for a future consumer that needs more than 16 B of per-draw PS
 
 Skin, LinearLighting and FurShells do not migrate.
 
-### Phase 2: variant selection stays feature-local until a second consumer exists
+### Phase 2: generic variant flag and define, feature-owned selection
 
-For a material-stable variant (Detail Maps eligibility comes from the material's diffuse path):
+`Feature` exposes `GetLightingVariantFlag()` and `GetLightingVariantDefine()`. `GetLightingShaderDefines`
+masks every loaded feature's flag out of the descriptor before the engine call, then appends the define
+of each flag that was set, so no central file names a feature.
 
-1. The feature's own `BSLightingShaderProperty::GetRenderPasses` hook (vtable 0x2A) writes its descriptor
-   bit into `pass->passEnum`, as `LandscapeSeamsFix.cpp` does. `BeginTechnique` then selects the variant
-   with no mid-draw `PSSetShader`.
-2. A generic loop over features in `GetLightingShaderDefines` maps the bit to the define from
-   `GetShaderDefineName()`, and masks the bit before the engine call.
-3. `GenerateShaderPermutations` (existing) declares the variants to precompile.
+The feature picks the variant itself. It installs its own `BSLightingShader` vfunc 0x6/0x7 hooks (the
+FurShells pattern), and after the engine's `SetupGeometry` swaps in the pixel shader looked up with the
+flag set, then restores the previous shader in 0x7. This handles per-frame decisions such as distance
+fade. `GenerateShaderPermutations` declares the variants to precompile.
 
-For a decision that changes per frame (distance fade), re-look up in `SetupGeometry`, as FurShells does.
-A core 0x2A dispatch is added only when a second feature needs the same thing.
-
-The proposed `SelectLightingVariant` virtual is dropped: it cannot be implemented in `ModifyShaderLookup`.
+Variants that combine TRUE_PBR with a non-default technique do not exist in the engine; the feature's
+eligibility check rejects them so they are neither precompiled nor requested at draw time.
 
 ### Phase 3: runtime branch before permutation bit (policy)
 
 A feature takes a descriptor bit only when the compiled output genuinely differs. Enable flags, fade and
-scalar parameters go through `ExtraFeatureDescriptor` and `PermutationCB`. Bits 6, 7, 8 are the only
+scalar parameters go through `ExtraFeatureDescriptor` and `PermutationCB`. Bits 7 and 8 are the only
 remaining bits and bit 29 is reserved.
 
 ### Phase 4: wider shader key (dropped)
 
 `GetDiskPath` keys on the 32-bit descriptor and `GetShaderString(hashkey)` keys on defines, so extending
-`MakeId` alone keys neither and two variants would collide on one `.pso`. Revisit only if bits 6-8 run out.
+`MakeId` alone keys neither and two variants would collide on one `.pso`. Revisit only if bits 7-8 run out.
 
 ## Detail Maps port
 
 - Descriptor bit `1<<6`, a `DETAIL_MAPS` define, precompiled via `GenerateShaderPermutations`.
-- 32 B of per-draw data as `float4 PerDrawFeatureData[2]` in `PermutationCB`, filled from the core 0x6
-  `SetupGeometry` hook.
+- 32 B of per-draw data as `float4 PerDrawFeatureData[2]` in `PermutationCB`, filled from the feature's
+  own 0x6 `SetupGeometry` hook.
 - `TexDetail` SRV at t23 (unused in the Lighting include closure), bound after the engine's `SetupGeometry`.
 - `DetailMaps.hlsli` and the three `Lighting.hlsl` hooks under
   `#if defined(DETAIL_MAPS) && !defined(MODELSPACENORMALS) && !defined(LANDSCAPE)`.
 - Do not copy Bottle's bit 31 or b8 (collide with FurShellsDepth and LinearLighting).
-- The reviewers disagreed on whether Bottle's fade sign is inverted: one reads `saturate((FadeEnd - depth) *
-FadeInvRange)` with positive depth and finds it correct. Verify against the engine's depth sign during
-  the port rather than assuming a bug.
+- The fade `saturate((FadeEnd - depth) * FadeInvRange)` is correct: `depth` is positive world distance at
+  the `Lighting.hlsl` call site.
 - Bottle is a downstream fork: cherry-pick with `-x` where hunks apply, keep its GPL-3.0 plus Modding
   Exception notice, and keep the CC0 ambientCG texture attribution.
 
 ## Verification
 
-Runtime-affecting phases are verified in game via devbench on VR plus one flat variant.
+Runtime-affecting phases are verified in-game via devbench on VR plus one flat variant.
 `tools/verify-shader-refactor.ps1` must show identical DXBC for permutations that do not use the new bit.
 
 ## Risks
 
-| Risk                                                                | Mitigation                                                        |
-| ------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Table drifts from shaders                                           | Reflection check over the 8-compile matrix in CI                  |
-| `PermutationCB` grows and every consumer (Utility, Grass, Sky) pays | Append only 32 B; measure upload cost before adding more          |
-| Variant bit lost between `GetRenderPasses` and `BeginTechnique`     | Same pattern as `LandscapeSeamsFix`; covered by the in-game check |
-| Upstream merge reintroduces a collision                             | Static asserts and the reflection check fail the build            |
+| Risk                                                                | Mitigation                                                                                               |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Table drifts from shaders                                           | Planned, not yet enforced: reflection check over the 8-compile matrix                                    |
+| `PermutationCB` grows and every consumer (Utility, Grass, Sky) pays | Append only 32 B; measure upload cost before adding more                                                 |
+| Variant bit lost between `GetRenderPasses` and `BeginTechnique`     | Same pattern as `LandscapeSeamsFix`; covered by the in-game check                                        |
+| Upstream merge reintroduces a collision                             | Static asserts fail the build on bit-mask overlap; binding collisions await the planned reflection check |

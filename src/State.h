@@ -459,27 +459,13 @@ public:
 	 */
 	void UpdateLightingShaderPermutation(RE::BSRenderPass* a_pass);
 
-	struct LightingVariantState
-	{
-		RE::BSShader* shader = nullptr;
-		uint descriptor = 0;
-		uint vanillaDescriptor = 0;
-		uint liteDescriptor = 0;
-		ID3D11PixelShader* full = nullptr;
-		ID3D11PixelShader* lite = nullptr;
-		ID3D11PixelShader* detail = nullptr;
-		ID3D11PixelShader* bound = nullptr;
-		bool resolved = false;
-		bool detailEligible = false;
-		bool detailResolved = false;
-	};
-	LightingVariantState lightingVariant;
-	float waterGridTop = 0.0f;
-
-	void BeginLightingVariants(RE::BSShader* a_shader, bool a_skipPixelShader, bool a_shaderFound);
-	void UpdateLightingVariant(RE::BSRenderPass* a_pass);
-
-	/** @brief Bitflags describing extra shader-specific properties. */
+	/**
+	 * @brief Bitflags describing extra shader-specific properties.
+	 * Upstream sequentially claims low bits for its own flags; keep every
+	 * upstream-derived flag at upstream's own bit position so future syncs
+	 * land without a collision. Fork-only flags go in the reserved high end
+	 * (top bit down) instead, so they never compete with upstream's next one.
+	 */
 	enum class ExtraShaderDescriptors : uint32_t
 	{
 		InWorld = 1 << 0,
@@ -638,6 +624,8 @@ public:
 		float GrassCanopyHeight;
 		float3 canopyPadding;
 
+		float4 PerDrawFeatureData[2];
+
 		bool operator==(const PermutationCB& other) const
 		{
 			return VertexShaderDescriptor == other.VertexShaderDescriptor && PixelShaderDescriptor == other.PixelShaderDescriptor &&
@@ -671,7 +659,15 @@ public:
 			       TreeWindProbeTop.x == other.TreeWindProbeTop.x &&
 			       TreeWindProbeTop.y == other.TreeWindProbeTop.y &&
 			       TreeWindProbeTop.z == other.TreeWindProbeTop.z &&
-			       GrassCanopyHeight == other.GrassCanopyHeight;
+			       GrassCanopyHeight == other.GrassCanopyHeight &&
+			       PerDrawFeatureData[0].x == other.PerDrawFeatureData[0].x &&
+			       PerDrawFeatureData[0].y == other.PerDrawFeatureData[0].y &&
+			       PerDrawFeatureData[0].z == other.PerDrawFeatureData[0].z &&
+			       PerDrawFeatureData[0].w == other.PerDrawFeatureData[0].w &&
+			       PerDrawFeatureData[1].x == other.PerDrawFeatureData[1].x &&
+			       PerDrawFeatureData[1].y == other.PerDrawFeatureData[1].y &&
+			       PerDrawFeatureData[1].z == other.PerDrawFeatureData[1].z &&
+			       PerDrawFeatureData[1].w == other.PerDrawFeatureData[1].w;
 		}
 	};
 	static_assert(offsetof(PermutationCB, EnableAmbientGrassWind) == 60);
@@ -682,7 +678,9 @@ public:
 	static_assert(offsetof(PermutationCB, TreeWindProbeBase) == 112);
 	static_assert(offsetof(PermutationCB, TreeWindProbeTop) == 128);
 	static_assert(offsetof(PermutationCB, GrassCanopyHeight) == 144);
-	static_assert(sizeof(PermutationCB) == 160);
+	static_assert(offsetof(PermutationCB, PerDrawFeatureData) == 160);
+	static_assert(sizeof(PermutationCB) == 192);
+	static_assert(sizeof(PermutationCB) % 16 == 0);
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
 
 	std::unique_ptr<ConstantBuffer> permutationCB;

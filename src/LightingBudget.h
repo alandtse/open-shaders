@@ -21,26 +21,34 @@ namespace LightingBudget
 	/** Technique index (`0x3F & (descriptor >> 24)`). Bit 29 is technique bit 5 and is decoded unmasked, so it is never a feature flag. */
 	constexpr uint32_t kTechniqueMask = Bits(24, 29);
 	constexpr uint32_t kForkMask = Bits(30, 31);
+	/** Detail Maps' compiled variant; the one bit between the upstream flags and the still-free range. */
+	constexpr uint32_t kDetailMapsMask = static_cast<uint32_t>(Flags::DetailMaps);
 	/** Bits still available to a feature that needs a distinct compiled variant. */
-	constexpr uint32_t kFreeMask = Bits(6, 8);
+	constexpr uint32_t kFreeMask = Bits(7, 8);
 
 	static_assert((kEngineMask & kUpstreamMask) == 0);
 	static_assert((kEngineMask & kTechniqueMask) == 0);
 	static_assert((kEngineMask & kForkMask) == 0);
+	static_assert((kEngineMask & kDetailMapsMask) == 0);
 	static_assert((kEngineMask & kFreeMask) == 0);
 	static_assert((kUpstreamMask & kTechniqueMask) == 0);
 	static_assert((kUpstreamMask & kForkMask) == 0);
+	static_assert((kUpstreamMask & kDetailMapsMask) == 0);
 	static_assert((kUpstreamMask & kFreeMask) == 0);
 	static_assert((kTechniqueMask & kForkMask) == 0);
+	static_assert((kTechniqueMask & kDetailMapsMask) == 0);
 	static_assert((kTechniqueMask & kFreeMask) == 0);
+	static_assert((kForkMask & kDetailMapsMask) == 0);
 	static_assert((kForkMask & kFreeMask) == 0);
-	static_assert((kEngineMask | kUpstreamMask | kTechniqueMask | kForkMask | kFreeMask) == 0xFFFFFFFFu);
+	static_assert((kDetailMapsMask & kFreeMask) == 0);
+	static_assert((kEngineMask | kUpstreamMask | kTechniqueMask | kForkMask | kDetailMapsMask | kFreeMask) == 0xFFFFFFFFu);
 
 	constexpr uint32_t Mask(Flags a_flag)
 	{
 		return static_cast<uint32_t>(a_flag);
 	}
 
+	static_assert(Mask(Flags::DetailMaps) == kDetailMapsMask);
 	static_assert((Mask(Flags::TruePbr) | Mask(Flags::Deferred) | Mask(Flags::LandscapeSeams)) == kUpstreamMask);
 	static_assert((Mask(Flags::FurShells) | Mask(Flags::FurShellsDepth)) == kForkMask);
 	static_assert((Mask(Flags::VC) | Mask(Flags::Skinned) | Mask(Flags::ModelSpaceNormals)) == Bits(0, 2));

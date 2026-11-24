@@ -9,6 +9,7 @@
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
 #include "Features/DetailMaps.h"
+#include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ProceduralSun.h"
 #if defined(ENABLE_EFFECTS11)
@@ -296,6 +297,7 @@ namespace
 			&globals::features::lodBlending,
 			&globals::features::hairSpecular,
 			&globals::features::interiorSun,
+			&globals::features::detailMaps,
 			&globals::features::furShells,
 			&globals::features::terrainVariation,
 			&globals::features::ibl,
@@ -334,87 +336,34 @@ namespace
  */
 const std::vector<Feature*>& Feature::GetFeatureList()
 {
-	static std::vector<Feature*> features = {
-		&globals::features::truePBR,
-		&globals::features::volumetricShadows,
-		&globals::features::grassLighting,
-		&globals::features::grassCollision,
-		&globals::features::grassOptimizations,
-		&globals::features::screenSpaceShadows,
-		&globals::features::extendedMaterials,
-		&globals::features::wetnessEffects,
-		&globals::features::lightLimitFix,
-		&globals::features::dynamicCubemaps,
-		&globals::features::cloudShadows,
-		&globals::features::proceduralSun,
-		&globals::features::waterEffects,
-		&globals::features::performanceOverlay,
-		&globals::features::subsurfaceScattering,
-		&globals::features::terrainShadows,
-		&globals::features::screenSpaceGI,
-		&globals::features::skylighting,
-		&globals::features::skySync,
-		&globals::features::terrainBlending,
-		&globals::features::terrainHelper,
-		&globals::features::vanillaFresnel,
-		&globals::features::volumetricLighting,
-		&globals::features::lodBlending,
-		&globals::features::hairSpecular,
-		&globals::features::interiorSun,
-		&globals::features::terrainVariation,
-		&globals::features::ibl,
-		&globals::features::extendedTranslucency,
-		&globals::features::reverseZ,
-		&globals::features::upscaling,
-		&globals::features::renderDoc,
-		&globals::features::hiZOcclusion,
-		&globals::features::remoteControl,
-		&globals::features::csEditor,
-		&globals::features::sceneManager,
-		&globals::features::screenshotFeature,
-		&globals::features::linearLighting,
-		&globals::features::effects11,
-		&globals::features::rainRefraction,
-		&globals::features::unifiedWater,
-		&globals::features::horizonFix,
-		&globals::features::exponentialHeightFog,
-		&globals::features::hdrDisplay,
-		&globals::features::postProcessing,
-		&globals::features::skin,
-		&globals::features::snowCover,
-		&globals::features::footstepParticles,
-		&globals::features::hairBacklighting,
-		&globals::features::nightEye,
-		&globals::features::furShells,
-		&globals::features::detailMaps,
-		&globals::features::landscapeSeams,
-		&globals::features::snowDeformation
-	};
+	if (globals::game::isVR) {
+		// Helper function to build VR feature list
+		static auto BuildVRList = []() -> std::vector<Feature*> {
+			auto v = GetAllFeatures();
+			v.push_back(&globals::features::vr);
 
-	// In developer mode, keep all features for testing
-	// In production mode, filter to VR-compatible only
-	if (!globals::state->IsDeveloperMode()) {
-		std::erase_if(v, [](Feature* a) { return !a->SupportsVR(); });
+			// In developer mode, keep all features for testing
+			// In production mode, filter to VR-compatible only
+			if (!globals::state->IsDeveloperMode()) {
+				std::erase_if(v, [](Feature* a) { return !a->SupportsVR(); });
+			}
+			return v;
+		};
+
+		// Cache the VR feature list but invalidate when developer mode changes
+		static std::vector<Feature*> featuresVR;
+		static bool cachedDevMode = false;
+
+		bool currentDevMode = globals::state->IsDeveloperMode();
+		if (featuresVR.empty() || currentDevMode != cachedDevMode) {
+			featuresVR = BuildVRList();
+			cachedDevMode = currentDevMode;
+		}
+
+		return featuresVR;
+	} else {
+		return GetAllFeatures();
 	}
-	return v;
-};
-
-// Cache the VR feature list but invalidate when developer mode changes
-static std::vector<Feature*> featuresVR;
-static bool cachedDevMode = false;
-
-bool currentDevMode = globals::state->IsDeveloperMode();
-if (featuresVR.empty() || currentDevMode != cachedDevMode) {
-	featuresVR = BuildVRList();
-	cachedDevMode = currentDevMode;
-}
-
-return featuresVR;
-}
-else
-{
-	return GetAllFeatures();
-}
 }
 
 namespace

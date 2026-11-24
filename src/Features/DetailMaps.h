@@ -12,7 +12,8 @@ struct DetailMaps : Feature
 		return { T("feature.detail_maps.description", "Adds fine tiling surface detail such as stone grit, wood grain, leather pores and fabric weave to textures up close, chosen by texture path rules."),
 			{ T("feature.detail_maps.key_feature_1", "Works on vanilla and mod textures without editing them"),
 				T("feature.detail_maps.key_feature_2", "Rules match texture paths to detail sets"),
-				T("feature.detail_maps.key_feature_3", "Fades out with distance and costs nothing on other draws") } };
+				T("feature.detail_maps.key_feature_3", "Fades out with distance and costs nothing on other draws"),
+				T("feature.detail_maps.key_feature_4", "Needs the separate Detailed Maps pack from Nexus (mod 197436)") } };
 	}
 
 	struct Settings
@@ -26,31 +27,31 @@ struct DetailMaps : Feature
 		float FadeEnd = 1200.0f;
 	} settings;
 
+	virtual bool SupportsVR() override { return true; }
 	virtual void DrawSettings() override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
 	virtual void SetupResources() override;
+	virtual void Prepass() override;
 	virtual void Reset() override;
+	virtual void PostPostLoad() override;
+	virtual void GenerateShaderPermutations(RE::BSShader* a_shader) override;
+	virtual uint32_t GetLightingVariantFlag() const override;
+	virtual std::string_view GetLightingVariantDefine() const override;
 
-	bool ShouldPrecompile(uint32_t a_descriptor) const;
-	bool IsEligible(uint32_t a_descriptor) const;
-	bool BindPass(RE::BSRenderPass* a_pass);
-	void InvalidateBindings() { bindingValid = false; }
+	/**
+	 * @brief Swaps in the detail Lighting variant for the render pass the engine just set up, when a rule matches.
+	 * @param a_shader The lighting shader that set up the pass.
+	 * @param a_pass The render pass about to draw.
+	 */
+	void BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass);
+
+	/** @brief Restores the engine's pixel shader and releases the detail texture after a detail draw. */
+	void EndPass();
 
 private:
-	struct PerDraw
-	{
-		float Scale;
-		float Albedo;
-		float Normal;
-		float Roughness;
-		float FadeEnd;
-		float FadeInvRange;
-		float Transpose;
-		float Pad;
-	};
-	static_assert(sizeof(PerDraw) == 32);
+	struct Hooks;
 
 	struct Set
 	{
@@ -76,8 +77,12 @@ private:
 	{
 		RE::BSFixedString name;
 		int32_t rule = -1;
+		const RE::BSTextureSet* fallbackSet = nullptr;
 	};
 
+	bool HasContent() const { return !sets.empty() && !rules.empty(); }
+	bool ShouldPrecompile(uint32_t a_descriptor) const;
+	bool IsEligible(uint32_t a_descriptor) const;
 	void Reload();
 	void LoadSets();
 	void LoadRules();
@@ -91,12 +96,10 @@ private:
 	std::vector<std::string> ruleErrors;
 	ankerl::unordered_dense::map<RE::NiSourceTexture*, Entry> entries;
 	RE::NiSourceTexture* lastDiffuse = nullptr;
+	const RE::BSTextureSet* lastSet = nullptr;
 	int32_t lastRule = -1;
-
-	eastl::unique_ptr<ConstantBuffer> perDrawCB;
-	PerDraw lastPerDraw{};
-	ID3D11ShaderResourceView* boundView = nullptr;
-	bool bindingValid = false;
+	winrt::com_ptr<ID3D11PixelShader> savedPixelShader;
 	uint32_t passCount = 0;
 	uint32_t lastPassCount = 0;
+	bool swapped = false;
 };
