@@ -9,7 +9,7 @@ typedef VS_OUTPUT PS_INPUT;
 
 struct PS_OUTPUT
 {
-	float UnderwaterMask: SV_TARGET;
+	float UnderwaterMask : SV_TARGET;
 };
 
 SamplerState LinearSampler : register(s0);
@@ -48,9 +48,9 @@ PS_OUTPUT main(PS_INPUT input)
 	//
 	// Fix: reconstruct the mask analytically per-eye.  For a horizontal water plane
 	// at height waterHeight, a pixel is "underwater" (mask = 1) when:
-	//   - the camera itself is below the water surface, OR
-	//   - the ray from the per-eye camera through this pixel points downward
-	//     (rayDir.z < 0), meaning it looks below the water plane.
+	//   - a geometry pixel lies below the water surface, OR
+	//   - a sky ray from the per-eye camera points downward
+	//     (worldFarPos.z < 0), meaning it looks below the water plane.
 	// This exactly reproduces what the vanilla waterline polygon approximates,
 	// but correctly per-eye.
 
@@ -111,13 +111,10 @@ PS_OUTPUT main(PS_INPUT input)
 			psout.UnderwaterMask = (worldPos.z < threshold) ? 1.0 : 0.0;
 		} else {
 			// depth <= EPSILON_DEPTH_SKY: sky / unrendered pixels (reversed-Z depth clear value).
-			// Unproject to obtain the per-pixel ray direction and decide based on that.
+			// Homogeneous Z retains the ray's sign when far-plane W rounds to zero.
 			float4 worldFarPos = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], float4(ndc, 0.0, 1.0));
-			worldFarPos /= worldFarPos.w;
-			float3 rayDir = normalize(worldFarPos.xyz);
-			// Per-eye waterHeight > 0 means the water surface is above THIS eye's camera
-			// (eye is below water); <= 0 means the eye camera is above the water surface.
-			psout.UnderwaterMask = (waterHeight > 0.0 || rayDir.z < 0.0) ? 1.0 : 0.0;
+			// Upward sky rays exit the water even when the eye is submerged.
+			psout.UnderwaterMask = (worldFarPos.z < 0.0) ? 1.0 : 0.0;
 		}
 		return psout;
 	}
