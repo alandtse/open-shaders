@@ -1,5 +1,6 @@
 #include "ShaderCache.h"
 #include "Globals.h"
+#include "LightingBudget.h"
 #include "ShaderCompileStatus.h"
 #include "ShaderFileWatcher.h"
 #include "Util.h"
