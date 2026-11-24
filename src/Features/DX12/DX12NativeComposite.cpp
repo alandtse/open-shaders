@@ -98,8 +98,8 @@ namespace DX12Native
 		                         raster->readyValue != UINT64_MAX &&
 		                         raster->width >= width && raster->height >= height &&
 		                         InitializeShadow(device12);
-		if (returnColorToDX11 && !applyShadow)
-			return {};
+		if (!applyShadow)
+			returnColorToDX11 = false;
 
 		Slot* slot = nullptr;
 		for (auto& candidate : slots) {
