@@ -101,6 +101,8 @@ public:
 	bool ShouldRequestRuntimeUpgrade() const;
 	/** @brief True if the runtime upscaler provider must handle FSR dispatch this frame. */
 	bool ShouldUseRuntimeUpscalerForFSR() const;
+	/** @brief True if this frame's FSR dispatch takes the runtime provider path, the only one that reads the Native Composite color. */
+	bool RuntimeUpscalerReadsComposite();
 	/** @brief Human-readable label for the frame path the runtime upscaler last dispatched through. */
 	const std::string& GetRuntimeUpscalerLastFramePathLabel() const;
 	/** @brief Human-readable label for the FSR path actually shown to the user this frame. */

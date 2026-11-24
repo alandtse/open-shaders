@@ -538,6 +538,11 @@ bool FidelityFX::ShouldUseRuntimeUpscalerForFSR() const
 	return IsRuntimeUpscalerPresent();
 }
 
+bool FidelityFX::RuntimeUpscalerReadsComposite()
+{
+	return (ShouldRequestRuntimeUpgrade() || ShouldUseRuntimeUpscalerForFSR()) && CanUseRuntimeUpscalerPath();
+}
+
 bool FidelityFX::CanUseRuntimeUpscalerPath()
 {
 	if (runtimeUpscalerQuarantined || runtimeUpscalerFailureLatched)
