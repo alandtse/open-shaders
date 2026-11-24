@@ -57,6 +57,10 @@ namespace PresetState
 			for (const auto key : kPrivateKeys)
 				if (!state.contains(key) && saved.contains(key))
 					state[key] = saved.at(key);
+		if (!state.contains("baselinePackIds")) {
+			if (const auto previous = state.find("lastSharedBaselinePackIds"); previous != state.end() && previous->is_array())
+				state["baselinePackIds"] = *previous;
+		}
 		return state;
 	}
 
