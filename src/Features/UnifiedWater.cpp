@@ -783,6 +783,9 @@ void UnifiedWater::BGSTerrainBlock_Attach::thunk(RE::BGSTerrainBlock* block)
 		{
 			// Held across AddWater so no other thread can reuse this tile's reflection or normals, which keep raw pointers to its material
 			RE::BSSpinLockGuard guard(waterSystem->lock);
+			// Evicting inside AddWater would shift the entry indices recorded below
+			RepairSharedMaterials(waterSystem, waterSystem->waterReflections, &RE::TESWaterObject::reflections);
+			RepairSharedMaterials(waterSystem, waterSystem->waterNormals, &RE::TESWaterObject::normals);
 			const auto firstNewReflection = waterSystem->waterReflections.size();
 			const auto firstNewNormals = waterSystem->waterNormals.size();
 			waterSystem->AddWater(shape, instruction->form.ptr, instruction->waterHeight, nullptr, true, false);
