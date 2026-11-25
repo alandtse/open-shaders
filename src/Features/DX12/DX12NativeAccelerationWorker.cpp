@@ -155,7 +155,7 @@ namespace DX12Native
 		const bool changed = a_state->epoch != a_state->processedEpoch;
 		const bool ready = a_state->needsAdvance &&
 		                   (!a_state->waitFence || a_state->waitReady ||
-		                       (!a_state->waitRegistered && GpuFenceRetired(a_state->waitFence.get(), a_state->waitValue)));
+							   (!a_state->waitRegistered && GpuFenceRetired(a_state->waitFence.get(), a_state->waitValue)));
 		if (!changed && !ready)
 			return;
 
