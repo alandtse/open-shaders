@@ -24,9 +24,9 @@ settings object, for example:
 
 ```json
 {
-  "action": "set",
-  "shortName": "UnifiedWater",
-  "settings": { "ShallowFallbackStrength": 0.5 }
+    "action": "set",
+    "shortName": "UnifiedWater",
+    "settings": { "ShallowFallbackStrength": 0.5 }
 }
 ```
 
@@ -36,17 +36,17 @@ unified-water resources suppress the effective strength without changing the
 saved selection. `action: "reset"` restores all nine defaults. Saving uses the
 usual `openshaders.settings` operation; a live feature change does not save it.
 
-| Setting | Default | Range | Effect |
-| --- | ---: | ---: | --- |
-| `ShallowFallbackStrength` | 1 | 0–1 | Strength of the extra surface layer |
-| `DeepConnectionProbeReachUnits` | 768 | 0–768 | World-space reach of the two depth probes; zero disables their suppression |
-| `DeepContextDepthUnits` | 192 | 32–384 | Depth that establishes a connection to deep water |
-| `ShoreContactMinFadePixels` | 2 | 0–4 | Minimum adaptive shore fade width |
-| `ShoreDepthBlendRangeUnits` | 10 | 0–20 | Shore contact fade depth |
-| `ShallowSurfaceDepthRangeUnits` | 256 | 16–256 | Column depth over which restoration falls to zero |
-| `ShallowFallbackMaxDistance` | 26000 | 0–65536 | Camera-distance limit; zero disables restoration |
-| `DeepContextTransitionUnits` | 128 | 4–128 | Soft transition into deep-water suppression |
-| `UseOpenShadersDepthBehaviour` | false | false/true | Debug-only legacy blend, suppressing restoration when true |
+| Setting                         | Default |      Range | Effect                                                                     |
+| ------------------------------- | ------: | ---------: | -------------------------------------------------------------------------- |
+| `ShallowFallbackStrength`       |       1 |        0–1 | Strength of the extra surface layer                                        |
+| `DeepConnectionProbeReachUnits` |     768 |      0–768 | World-space reach of the two depth probes; zero disables their suppression |
+| `DeepContextDepthUnits`         |     192 |     32–384 | Depth that establishes a connection to deep water                          |
+| `ShoreContactMinFadePixels`     |       2 |        0–4 | Minimum adaptive shore fade width                                          |
+| `ShoreDepthBlendRangeUnits`     |      10 |       0–20 | Shore contact fade depth                                                   |
+| `ShallowSurfaceDepthRangeUnits` |     256 |     16–256 | Column depth over which restoration falls to zero                          |
+| `ShallowFallbackMaxDistance`    |   26000 |    0–65536 | Camera-distance limit; zero disables restoration                           |
+| `DeepContextTransitionUnits`    |     128 |      4–128 | Soft transition into deep-water suppression                                |
+| `UseOpenShadersDepthBehaviour`  |   false | false/true | Debug-only legacy blend, suppressing restoration when true                 |
 
 The UI and JSON paths protect the selected controls with a recursive mutex so
 menu reset callbacks can safely reenter serialization. A separate, short-held
