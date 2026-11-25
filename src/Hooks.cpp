@@ -396,6 +396,11 @@ namespace GrassExtensions
 	};
 }
 
+bool Hooks::IsGrassMeshLoadHookInstalled()
+{
+	return GrassExtensions::LoadGrassType::func.address() != 0;
+}
+
 namespace WaterBlendHistory
 {
 	struct BSImagespaceShader_Render

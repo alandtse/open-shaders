@@ -45,6 +45,9 @@ namespace Hooks
 	/** @brief Installs all hooks, detours, and memory patches for the rendering pipeline, input handling, and shader management. */
 	void Install();
 
+	/** @brief Returns whether grass mesh loading is intercepted for all callers. */
+	[[nodiscard]] bool IsGrassMeshLoadHookInstalled();
+
 	/** @brief Installs early IAT hooks for D3D11 device/swapchain creation and DXGI factory, before the game initializes Direct3D. */
 	void InstallEarlyHooks();
 
