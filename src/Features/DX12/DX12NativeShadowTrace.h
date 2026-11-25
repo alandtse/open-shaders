@@ -37,7 +37,6 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12CommandAllocator> allocator;
 		winrt::com_ptr<ID3D12GraphicsCommandList> commands;
 		winrt::com_ptr<ID3D12Fence> readyFence;
-		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 		uint64_t readyValue = 0, allocationBytes = 0;
 		uint32_t frame = 0, width = 0, height = 0;
 		// RGBA32F: x weighted visibility, y 1 sampled / -1 omitted / 0 invalid,
@@ -56,7 +55,6 @@ namespace DX12Native
 		{
 			return current && current->frame == frame ? current : nullptr;
 		}
-		bool RetainThrough(const std::shared_ptr<const ShadowMaskFrame>& frame, ID3D12Fence* fence, uint64_t value);
 		void Reset()
 		{
 			current.reset();

@@ -52,7 +52,6 @@ namespace DX12
 		if (current->requested == *desired && current->size == size)
 			return;
 		auto next = std::make_shared<Grid>();
-		next->revision = current->revision + 1;
 		next->geometryRevision = current->geometryRevision + 1;
 		next->size = size;
 		next->requested = *desired;
@@ -165,7 +164,6 @@ namespace DX12
 			tile->key = key;
 			tile->state = Tile::State::Preparing;
 			auto next = std::make_shared<Grid>(*current);
-			++next->revision;
 			if (speculative)
 				next->predictiveResident[index] = std::move(tile);
 			else
@@ -262,7 +260,6 @@ namespace DX12
 			}
 		}
 		auto next = std::make_shared<Grid>(*current);
-		++next->revision;
 		if (active != current->requested.end()) {
 			++next->geometryRevision;
 			next->resident[std::distance(current->requested.begin(), active)] = std::move(tile);
@@ -327,7 +324,6 @@ namespace DX12
 			return false;
 		next->runtimeShapes.push_back({ key, std::move(shape), shapeBytes });
 		next->runtimeBytes += shapeBytes;
-		++next->revision;
 		++next->geometryRevision;
 		snapshot.store(std::move(next), std::memory_order_release);
 		return true;
@@ -348,7 +344,6 @@ namespace DX12
 		movementX = movementY = 0;
 		const auto current = snapshot.load(std::memory_order_acquire);
 		auto next = std::make_shared<Grid>();
-		next->revision = current->revision + 1;
 		next->geometryRevision = current->geometryRevision + 1;
 		snapshot.store(std::move(next), std::memory_order_release);
 	}
@@ -373,7 +368,6 @@ namespace DX12
 		};
 		reset(next->requested, next->resident);
 		reset(next->predictive, next->predictiveResident);
-		++next->revision;
 		pending.reset();
 		snapshot.store(std::move(next), std::memory_order_release);
 	}
@@ -560,7 +554,6 @@ void DX12Resources::ResetPreparation()
 	lightAdoptionOffset = 0;
 	grid.Clear();
 	lastVisitedCell = previousVisitedCell = distinctTransitions = 0;
-	flushGeneration.fetch_add(1, std::memory_order_release);
 	generationStats.store(std::make_shared<const DX12::PreparationStats>(), std::memory_order_release);
 }
 
@@ -706,7 +699,6 @@ void DX12Resources::PreShadowMaps()
 			distinctTransitions = 0;  // Returning to a visited cell.
 		else if (++distinctTransitions >= DX12::kRetiredCacheFlushTransitions) {
 			grid.FlushRetiredCache();
-			flushGeneration.fetch_add(1, std::memory_order_release);
 			distinctTransitions = 0;
 		}
 		previousVisitedCell = lastVisitedCell;
@@ -770,7 +762,6 @@ void DX12Resources::PreShadowMaps()
 					continue;
 				}
 				record.value.referenceID = reference->GetFormID();
-				record.value.baseID = base->GetFormID();
 				adopting->publication.lights.push_back(record.value);
 			}
 			if (lightAdoptionOffset == adopting->lights.size()) {
@@ -824,12 +815,6 @@ void DX12Resources::PreShadowMaps()
 			grid.Publish(std::move(incomplete));
 		}
 	}
-}
-
-void DX12Resources::OnSceneTransitionReset(bool /*opening*/)
-{
-	// Loading-menu transitions do not flush the DRAM cache.
-	// The next observed cell ID determines whether this is a return trip.
 }
 
 void DX12Resources::OnRuntimeDisabled()

@@ -51,8 +51,6 @@ namespace DX12Native
 					return true;
 			return false;
 		}
-		/** @brief Keeps a published scene alive until a downstream GPU consumer finishes. */
-		bool RetainThrough(const std::shared_ptr<const TopLevel>& a_scene, ID3D12Fence* a_fence, uint64_t a_value);
 		/** @brief Reports an actual DX12 creation or submission error. */
 		const std::string& Failure() const { return failure; }
 
@@ -110,10 +108,6 @@ namespace DX12Native
 		void Stop();
 		/** @brief Acquires the most recent completed immutable scene, never waiting for a build. */
 		std::shared_ptr<const TopLevel> GetScene() const;
-		/** @brief Retains a borrowed scene until the consumer's GPU fence completes. */
-		bool RetainThrough(std::shared_ptr<const TopLevel> a_scene, ID3D12Fence* a_fence, uint64_t a_value);
-		/** @brief Reports initialization or build failures without consulting engine objects. */
-		std::string Failure() const;
 
 	private:
 		struct State;
