@@ -1358,10 +1358,11 @@ void Upscaling::LoadSettings(json& o_json)
 	// Missing schema fields take the current default during deserialization, so legacy settings need an explicit migration version.
 	const bool hadFsr4SchemaVersion = o_json.contains("fsr4RuntimeSelectionSchemaVersion");
 	const uint previousDLSSGPreset = settings.dlssgPreset;
+	const auto previousTuning = settings.neuralRenderingTuning;
 	settings = o_json;
 	settings.neuralRenderingTuning.Sanitize();
 	settings.neuralRenderingContexts.Sanitize();
-	neuralRendering.ResetHistory();
+	neuralRendering.OnTuningReplaced(previousTuning, settings.neuralRenderingTuning);
 	if (!hadFsr4SchemaVersion)
 		settings.fsr4RuntimeSelectionSchemaVersion = 0;
 	if (settings.fsr4RuntimeSelectionSchemaVersion < kFsr4RuntimeSelectionSchemaVersion) {
@@ -1440,9 +1441,10 @@ void Upscaling::LoadSettings(json& o_json)
 void Upscaling::RestoreDefaultSettings()
 {
 	const uint previousDLSSGPreset = settings.dlssgPreset;
+	const auto previousTuning = settings.neuralRenderingTuning;
 	settings = {};
 	SyncDLSSGPresetDriverProfile(previousDLSSGPreset);
-	neuralRendering.ResetHistory();
+	neuralRendering.OnTuningReplaced(previousTuning, settings.neuralRenderingTuning);
 	foveatedRender.RestoreDefaultSettings();
 	ApplyOpenCompositeUpscalingBlocker(true);
 }

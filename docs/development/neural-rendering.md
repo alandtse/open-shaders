@@ -372,9 +372,10 @@ is capped at 250 ms, and a non-finite jitter offset or one beyond a pixel reads 
 
 Feature resources and frame parameters are updated in place after creation.
 Appearance tuning is written before creation, and committed UI tuning changes
-recreate the persistent eye handles. A contract change must likewise retire
-queued GPU work before releasing the handles and recreate both eye instances
-when it changes creation-latched parameters.
+recreate the persistent eye handles, as does a settings load, DevBench set or
+restore of defaults that changes one of those values. A contract change must
+likewise retire queued GPU work before releasing the handles and recreate both
+eye instances when it changes creation-latched parameters.
 
 Unsigned, float and resource parameters are written through the public
 `NVSDK_NGX_Parameter::Set` overloads. The runtime sets only parameter names the
