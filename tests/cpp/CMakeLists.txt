@@ -98,6 +98,7 @@ add_executable(
     test_devbenchnotices.cpp
     test_shadercacheclear.cpp
     test_generationclaim.cpp
+    test_dx12_runtime_tasks.cpp
     test_framelatch.cpp
     test_render_extent.cpp
     test_dlssg_input_fence.cpp
