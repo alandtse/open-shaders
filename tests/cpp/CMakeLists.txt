@@ -140,6 +140,7 @@ add_executable(
     test_control_value.cpp
     test_vr_helper_combo.cpp
     test_profiler.cpp
+    test_ui_blend_coverage.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
     i18n_stub.cpp
@@ -222,6 +223,7 @@ foreach(cpp_test_target IN ITEMS cpp_tests screenshot_tests_devbench)
             magic_enum::magic_enum
             xxHash::xxhash
             spdlog::spdlog
+            d3d11
             d3dcompiler
             bcrypt
             Threads::Threads
