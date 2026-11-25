@@ -390,22 +390,23 @@ namespace DX12Native
 
 	NativeComposite::~NativeComposite()
 	{
-		const auto ready = [](const Slot& slot) {
-			if (slot.untracked || (slot.frame && slot.frame.use_count() > 1))
-				return false;
-			if (slot.frame && !GpuFenceRetired(slot.fence.fence12.get(), slot.frame->producerValue))
-				return false;
-			return std::ranges::all_of(slot.consumers, [](const auto& consumer) {
-				return GpuFenceRetired(consumer.first.get(), consumer.second);
-			});
-		};
 		for (auto& slot : slots) {
-			if (!slot || ready(*slot))
+			if (!slot)
 				continue;
+			std::vector<FenceDependency> dependencies;
+			if (slot->untracked)
+				dependencies.push_back(FencePoint(slot->fence.fence12.get(), UINT64_MAX));
+			else if (slot->frame)
+				dependencies.push_back(FencePoint(slot->fence.fence12.get(), slot->frame->producerValue));
+			for (const auto& consumer : slot->consumers)
+				dependencies.push_back({ consumer.first, consumer.second });
 			winrt::com_ptr<ID3D12Device> device;
 			if (slot->device)
 				device.copy_from(slot->device);
-			RetireWhenGpuDone(std::move(slot), std::move(device), ready);
+			// Borrowed Frame objects independently own their published color and
+			// fence. With no slot reuse after destruction, only submitted GPU
+			// dependencies require retaining the other slot resources.
+			RetireAfterFences(std::move(slot), std::move(device), std::move(dependencies));
 		}
 	}
 }

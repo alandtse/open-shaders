@@ -13,16 +13,15 @@ namespace DX12Native
 	RasterCapture::~RasterCapture()
 	{
 		current.reset();
-		const auto ready = [fence = producer.fence12](const RasterFrame& frame) {
-			const auto* producerFence = frame.readyFence ? frame.readyFence.get() : fence.get();
-			return GpuFenceRetired(const_cast<ID3D12Fence*>(producerFence), frame.readyValue) &&
-			       std::ranges::all_of(frame.consumers, [](const auto& consumer) {
-					   return GpuFenceRetired(consumer.first.get(), consumer.second);
-				   });
-		};
-		for (auto& slot : slots)
-			if (slot && !ready(*slot))
-				RetireWhenGpuDone(std::move(slot), backend.d3d12Device, ready);
+		for (auto& slot : slots) {
+			if (!slot)
+				continue;
+			std::vector<FenceDependency> dependencies;
+			dependencies.push_back(FencePoint(slot->readyFence ? slot->readyFence.get() : producer.fence12.get(), slot->readyValue));
+			for (const auto& consumer : slot->consumers)
+				dependencies.push_back({ consumer.first, consumer.second });
+			RetireAfterFences(std::move(slot), backend.d3d12Device, std::move(dependencies));
+		}
 	}
 
 	void RasterCapture::Capture(const GraphicsBackend& a_backend, ID3D11ShaderResourceView* a_depth, const globals::FrameBuffer* a_camera, uint32_t a_frame)

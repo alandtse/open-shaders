@@ -55,16 +55,15 @@ namespace DX12Native
 	ShadowMaskTrace::~ShadowMaskTrace()
 	{
 		current.reset();
-		const auto ready = [fence = completion](const ShadowMaskFrame& frame) {
-			ID3D12Fence* producerFence = frame.readyFence ? frame.readyFence.get() : fence.get();
-			return GpuFenceRetired(producerFence, frame.readyValue) &&
-			       std::ranges::all_of(frame.consumers, [](const auto& consumer) {
-					   return GpuFenceRetired(consumer.first.get(), consumer.second);
-				   });
-		};
-		for (auto& slot : slots)
-			if (slot && !ready(*slot))
-				RetireWhenGpuDone(std::move(slot), backend.d3d12Device, ready);
+		for (auto& slot : slots) {
+			if (!slot)
+				continue;
+			std::vector<FenceDependency> dependencies;
+			dependencies.push_back(FencePoint(slot->readyFence ? slot->readyFence.get() : completion.get(), slot->readyValue));
+			for (const auto& consumer : slot->consumers)
+				dependencies.push_back({ consumer.first, consumer.second });
+			RetireAfterFences(std::move(slot), backend.d3d12Device, std::move(dependencies));
+		}
 	}
 
 	void ShadowMaskTrace::Initialize(const GraphicsBackend& requested)
