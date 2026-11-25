@@ -4235,7 +4235,7 @@ namespace ShadowCasterManager
 
 			UpdatePoolMembership(ssn, sunLight, candidates);
 			if (s_nativeOwnershipPending && (!GetSCMNativePolicy().observeLights ||
-				!globals::features::dx12NativeScene.CanSuppressSCMStatic()))
+												!globals::features::dx12NativeScene.CanSuppressSCMStatic()))
 				ReleaseNativeShadowOwnership();
 
 			double budget = ComputeRedrawBudget();

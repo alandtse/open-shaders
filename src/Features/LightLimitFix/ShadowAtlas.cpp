@@ -25,15 +25,15 @@ namespace ShadowCasterManager
 	{
 		struct SlotTile
 		{
-			AtlasAllocator::Tile tile;     ///< SAMPLED rect (content lives here)
-			AtlasAllocator::Tile pending;  ///< promotion target; rasters land here, swapped in once rendered
-			uint32_t escalateFrame = 0;    ///< frame a short-changed slot may retry escalation
-			uint32_t renderFrame = 0;      ///< frame stamp of the last raster into the tile
-			bool valid = false;            ///< content rendered at least once
+			AtlasAllocator::Tile tile;         ///< SAMPLED rect (content lives here)
+			AtlasAllocator::Tile pending;      ///< promotion target; rasters land here, swapped in once rendered
+			uint32_t escalateFrame = 0;        ///< frame a short-changed slot may retry escalation
+			uint32_t renderFrame = 0;          ///< frame stamp of the last raster into the tile
+			bool valid = false;                ///< content rendered at least once
 			bool nativeStaticOmitted = false;  ///< sampled depth omits native static casters
-			uint64_t staticHash = 0;       ///< static-caster hash baked into the static tile
-			bool staticValid = false;      ///< static tile holds baked content
-			bool staticEmpty = false;      ///< baked tile captured zero casters
+			uint64_t staticHash = 0;           ///< static-caster hash baked into the static tile
+			bool staticValid = false;          ///< static tile holds baked content
+			bool staticEmpty = false;          ///< baked tile captured zero casters
 			bool staticCompositePending = false;
 			const void* owner = nullptr;  ///< light whose depths the content holds
 			uint32_t orphanSince = 0;     ///< frame the owning light left the slot (0 = occupied)
