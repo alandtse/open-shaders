@@ -310,9 +310,11 @@ namespace DX12Native
 					// ExecuteCommandLists succeeded. A queue-tail marker retires the
 					// submission even if its original Signal failed.
 					const uint64_t rescue = nextFence + 1;
-					if (SUCCEEDED(backend.commandQueue->Signal(completion.get(), rescue))) {
+					if (const HRESULT hr = backend.commandQueue->Signal(completion.get(), rescue); SUCCEEDED(hr)) {
 						nextFence = rescue;
 						attempted->readyValue = rescue;
+					} else {
+						logger::warn("[DX12NativeScene] Shadow recovery signal failed; retaining slot: {}", DX::com_exception(hr).what());
 					}
 				} else if (!submitted) {
 					attempted->readyValue = 0;
