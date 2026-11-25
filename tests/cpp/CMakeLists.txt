@@ -114,6 +114,7 @@ add_executable(
     test_presetinclude.cpp
     test_unifiedpresets.cpp
     test_windfield.cpp
+    test_water_flowmap_layout.cpp
     test_sehguard.cpp
     test_nr_decisions.cpp
     test_nr_cadence.cpp

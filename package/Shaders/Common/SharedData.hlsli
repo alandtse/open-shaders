@@ -847,6 +847,7 @@ namespace SharedData
 		HorizonFixSettings horizonFixSettings;
 		RainRefractionSettings rainRefractionSettings;
 		ProceduralAuroraSettings proceduralAuroraSettings;
+		uint4 unifiedWaterRuntime;
 #if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
 		SnowCoverSettings snowCoverSettings;
 #endif

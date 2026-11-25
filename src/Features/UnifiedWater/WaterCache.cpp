@@ -338,7 +338,8 @@ bool WaterCache::GenerateCaches()
 		buildProgress.Stop();
 
 		logger::info("[Unified Water] [Cache] Disk caches generated in {} ms  ({} / {} complete - {} failed)", buildProgress.ElapsedMs(), buildProgress.completed.load(), buildProgress.total.load(), buildProgress.failed.load());
-		LoadCaches();
+		if (!LoadCaches())
+			async.failed.store(true);
 		async.running.store(false);
 	});
 

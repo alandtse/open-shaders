@@ -10,9 +10,9 @@ public:
 	 * @return True if a valid flowmap texture was retrieved, false otherwise.
 	 */
 	bool TryGetFlowmap(RE::NiPointer<RE::NiSourceTexture>& outFlowmapTex) const;
-	/** @brief Returns the flowmap width in pixels. */
+	/** @brief Returns the flowmap width in cells. */
 	int32_t GetWidth() const { return width; }
-	/** @brief Returns the flowmap height in pixels. */
+	/** @brief Returns the flowmap height in cells. */
 	int32_t GetHeight() const { return height; }
 	/** @brief Returns the inverse of the flowmap width (1.0 / width). */
 	float GetInverseWidth() const { return invWidth; }
@@ -22,8 +22,8 @@ public:
 	int32_t GetOffsetX() const { return offsetX; }
 	/** @brief Returns the Y offset of the flowmap in cell coordinates. */
 	int32_t GetOffsetY() const { return offsetY; }
-	/** @brief Releases the flowmap texture and resets all dimensions to zero. */
-	void Reset();
+	/** @brief Returns whether texture, view and cell dimensions are usable. */
+	bool IsValid() const;
 
 	/**
 	 * @brief Loads an existing flowmap from disk, or generates and loads one if none exists.
@@ -32,7 +32,7 @@ public:
 	 */
 	bool LoadOrGenerateFlowmap(bool useMips = true);
 	/**
-	 * @brief Deletes existing flowmap files, regenerates the flowmap, and loads it.
+	 * @brief Loads a validated replacement before discarding the previous flowmap.
 	 * @param useMips Whether to generate mipmaps for the flowmap texture.
 	 * @return True if the flowmap was successfully regenerated and loaded.
 	 */
@@ -48,5 +48,7 @@ private:
 	int32_t offsetY = 0;
 
 	bool LoadFlowmap();
-	static bool GenerateFlowmap(bool useMips);
+	bool LoadFlowmap(const std::filesystem::path& file);
+	static bool FindFlowmaps(std::vector<std::filesystem::path>& paths);
+	static bool GenerateFlowmap(bool useMips, std::filesystem::path& generatedPath);
 };
