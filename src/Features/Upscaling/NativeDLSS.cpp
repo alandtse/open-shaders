@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "../../GpuPass.h"
+#include "../DX12/DX12Control.h"
 #include "../Upscaling.h"
 
 bool NativeDLSS::Upscale(ID3D11Resource* a_colorOut, ID3D11Resource* a_motionVectors, ID3D11Resource* a_reactiveMask,
@@ -16,6 +17,8 @@ bool NativeDLSS::Upscale(ID3D11Resource* a_colorOut, ID3D11Resource* a_motionVec
 {
 	const bool resumed = !active;
 	active = false;
+	if (!globals::features::dx12Control.IsActive())
+		return false;
 
 	auto& upscaling = globals::features::upscaling;
 	auto* state = globals::state;

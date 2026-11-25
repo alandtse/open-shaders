@@ -143,7 +143,7 @@ namespace DX12
 		/** @brief Publishes one fully enumerated companion subcell, otherwise marks it incomplete. */
 		bool Publish(CompanionPublication publication);
 		/** @brief Accept an observed static shape within the active 3x3 without caching it on disk. */
-		bool PublishRuntimeShape(std::shared_ptr<const Shape> shape, float centerX, float centerY);
+		bool PublishRuntimeShape(std::shared_ptr<const Shape> shape, float centerX, float centerY, uint32_t expectedScope = 0);
 		/** @brief Releases every in-memory tile at scene transition. */
 		void Clear();
 		void FlushRetiredCache();  // DRAM only; caller decides transition policy.
@@ -200,9 +200,10 @@ struct DX12Resources final : Feature
 	/** @brief Accepts an authoritative in-memory geometry and light publication from the companion. */
 	bool Publish(DX12::CompanionPublication publication) { return grid.Publish(std::move(publication)); }
 	/** @brief Accepts a bounded, static renderer observation for native geometry (never for raster suppression). */
-	bool PublishRuntimeShape(std::shared_ptr<const DX12::Shape> shape, float centerX, float centerY)
+	bool PublishRuntimeShape(std::shared_ptr<const DX12::Shape> shape, float centerX, float centerY, uint32_t expectedScope = 0)
 	{
-		return IsActive() && grid.PublishRuntimeShape(std::move(shape), centerX, centerY);
+		return runtimePublicationEnabled.load(std::memory_order_acquire) &&
+		       grid.PublishRuntimeShape(std::move(shape), centerX, centerY, expectedScope);
 	}
 	bool IsActive() const;
 	uint64_t GetFlushGeneration() const { return flushGeneration.load(std::memory_order_acquire); }
@@ -217,6 +218,7 @@ struct DX12Resources final : Feature
 private:
 	void ResetPreparation();
 	bool preparationActive = false;
+	std::atomic<bool> runtimePublicationEnabled{ false };
 	DX12::ResourceGrid grid;
 	std::unique_ptr<DX12::CompanionWorker> companion;
 	std::unique_ptr<DX12::CompanionResult> adopting;
