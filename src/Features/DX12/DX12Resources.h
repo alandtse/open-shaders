@@ -4,7 +4,7 @@
 #include "SpatialGrid.h"
 
 #include <atomic>
-#include <chrono>
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -71,7 +71,7 @@ namespace DX12
 		std::vector<PreparedLight> lights;
 		uint64_t bytes = 0;
 		uint8_t preparationAttempts = 0;
-		std::chrono::steady_clock::time_point retryAfter{};
+		int64_t retryAfterQpc = 0;
 		State state = State::Requested;
 		std::string failureReason;                                       // Last bounded companion failure, retained for Dev and tile hover.
 		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;  // Bounded structured companion rejection diagnoses.
