@@ -819,7 +819,7 @@ namespace SIE
 		RE::BSGraphics::PixelShader* GetPixelShader(const RE::BSShader& shader,
 			uint32_t descriptor, bool a_precompile = false);
 		/** @brief The Utility geometry shader that cuts a paraboloid shadow draw's triangles at its hemisphere plane, for a vertex descriptor; null if it cannot compile. */
-		winrt::com_ptr<ID3D11GeometryShader> GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor);
+		winrt::com_ptr<ID3D11GeometryShader> GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 		/** @brief Checks that every requested pixel-shader permutation is ready. */
 		bool HasPixelShaders(RE::BSShader::Type type, std::span<const uint32_t> descriptors);
 		RE::BSGraphics::ComputeShader* GetComputeShader(const RE::BSShader& shader,

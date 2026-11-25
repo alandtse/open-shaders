@@ -2,6 +2,7 @@
 
 #include "GpuPass.h"
 #include "GrassCollision.h"
+#include "Hooks.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "TruePBR.h"
@@ -191,6 +192,12 @@ bool GrassOptimizations::HasShaderDefine(RE::BSShader::Type shaderType)
 
 void GrassOptimizations::PostPostLoad()
 {
+	if (!::Hooks::IsGrassMeshLoadHookInstalled()) {
+		loaded = false;
+		failedLoadedMessage = T(TKEY("mesh_load_hook_failed"), "Grass mesh registration failed. Skyrim will render grass using its native renderer.");
+		logger::error("[Grass Optimizations] {}", failedLoadedMessage);
+		return;
+	}
 	Hooks::Install();
 	active = true;
 	if (!settings.Enabled)
