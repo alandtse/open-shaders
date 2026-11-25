@@ -121,8 +121,17 @@ namespace DX12Native
 
 					// A UINT64_MAX dependency is deliberately held until device removal:
 					// it represents submitted work for which no completion marker exists.
-					if (NotifyOnFence(dependency, [pending] { Continue(pending); }))
-						return;
+					try {
+						if (NotifyOnFence(dependency, [pending] { Continue(pending); }))
+							return;
+					} catch (...) {
+						// Preserve the owner even if allocating a wait registration fails.
+					}
+					if (GpuDeviceRemoved(pending->device.get()) ||
+						GpuFenceRetired(dependency.fence.get(), dependency.value)) {
+						++pending->next;
+						continue;
+					}
 
 					// An untrackable submission or OS registration failure cannot be
 					// treated as completion. Quarantine for process lifetime rather than

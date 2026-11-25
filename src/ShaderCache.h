@@ -14,6 +14,7 @@
 #include <winrt/base.h>
 
 #include "Utils/CacheInvalidation.h"
+#include "Utils/RuntimeTaskGate.h"
 #include "Utils/WinApi.h"
 
 struct ID3D11ComputeShader;
@@ -619,8 +620,8 @@ namespace SIE
 		void SetDump(bool value);
 		/** @brief Signals all compilation threads to stop and clears pending tasks. */
 		void StopCompilation();
-		/** @brief Admit one short non-shader job using the existing dispatch budget. Never waits for a slot. */
-		bool TrySubmitRuntimeTask(std::function<void()> a_work);
+		/** @brief Lazily acquire a lifetime-safe submitter for short runtime CPU tasks. */
+		std::shared_ptr<Util::RuntimeTaskGate> GetRuntimeTaskGate();
 		/** @brief Drops queued/in-flight compilation work without stopping the management
 		 * thread (unlike StopCompilation(), which is terminal). Returns immediately. */
 		void CancelCompilation();
@@ -1427,6 +1428,10 @@ namespace SIE
 		CompilationSet compilationSet;
 		// Guarded by compilationSet.compilationMutex; shader cache clears do not cancel runtime jobs.
 		bool runtimeTaskAdmissionClosed = false;
+		bool runtimeTaskInFlight = false;
+		std::shared_ptr<Util::RuntimeTaskGate> runtimeTaskGate;
+		bool TrySubmitRuntimeTask(std::function<void()> a_work);
+		void CloseRuntimeTaskAdmission();
 		ankerl::unordered_dense::map<std::string, ShaderCacheResult> shaderMap{};
 		std::mutex mapMutex;                                                                      // guard for shaderMap
 		std::condition_variable mapCV;                                                            // signalled when a Pending entry transitions to Completed/Failed

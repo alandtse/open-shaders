@@ -3047,9 +3047,12 @@ namespace SIE
 
 	ShaderCache::~ShaderCache()
 	{
+		CloseRuntimeTaskAdmission();
 		{
-			std::scoped_lock lock(compilationSet.compilationMutex);
-			runtimeTaskAdmissionClosed = true;
+			// Only terminal destruction drains the admitted runtime CPU job. Do
+			// not purge its closure or destroy the dispatch accounting underneath it.
+			std::unique_lock lock(compilationSet.compilationMutex);
+			compilationSet.conditionVariable.wait(lock, [this] { return !runtimeTaskInFlight; });
 		}
 		Clear();
 		StopFileWatcher();
@@ -3447,22 +3450,61 @@ namespace SIE
 		return a_taskGeneration && *a_taskGeneration != compilationSet.LiveGeneration(a_type);
 	}
 
+	std::shared_ptr<Util::RuntimeTaskGate> ShaderCache::GetRuntimeTaskGate()
+	{
+		std::scoped_lock lock(compilationSet.compilationMutex);
+		if (runtimeTaskAdmissionClosed)
+			return {};
+		if (!runtimeTaskGate)
+			runtimeTaskGate = std::make_shared<Util::RuntimeTaskGate>(
+				[this](std::function<void()> work) { return TrySubmitRuntimeTask(std::move(work)); });
+		return runtimeTaskGate;
+	}
+
+	void ShaderCache::CloseRuntimeTaskAdmission()
+	{
+		std::shared_ptr<Util::RuntimeTaskGate> gate;
+		{
+			std::scoped_lock lock(compilationSet.compilationMutex);
+			runtimeTaskAdmissionClosed = true;
+			gate = std::move(runtimeTaskGate);
+		}
+		// Never acquire the gate mutex while holding compilationMutex: submission
+		// takes the gate first and then the existing dispatch mutex.
+		if (gate)
+			gate->Close();
+	}
+
 	bool ShaderCache::TrySubmitRuntimeTask(std::function<void()> a_work)
 	{
 		if (!a_work)
 			return false;
 		std::scoped_lock lock(compilationSet.compilationMutex);
 		const auto limit = backgroundCompilation ? backgroundCompilationThreadCount : compilationThreadCount;
-		if (runtimeTaskAdmissionClosed || !compilationSet.demandedTasks.empty() ||
-			static_cast<int32_t>(compilationSet.dispatchedTasksInFlight.load(std::memory_order_relaxed)) >= limit)
+		if (!Util::CanAdmitRuntimeTask(runtimeTaskAdmissionClosed, runtimeTaskInFlight,
+			!compilationSet.demandedTasks.empty(),
+			compilationSet.dispatchedTasksInFlight.load(std::memory_order_relaxed), limit))
 			return false;
 
 		// Reserve a slot before posting, exactly as the shader dispatcher does. No shader
 		// generation or auxiliary queue ownership is attached to a runtime task.
 		compilationSet.dispatchedTasksInFlight.fetch_add(1, std::memory_order_relaxed);
+		runtimeTaskInFlight = true;
+		const auto queued = std::chrono::steady_clock::now();
 		try {
-			compilationPool.detach_task([this, work = std::move(a_work)]() mutable {
-				const SKSE::stl::scope_exit releaseSlot([this]() noexcept { compilationSet.ReleaseDispatchSlot(); });
+			compilationPool.detach_task([this, queued, work = std::move(a_work)]() mutable {
+				const SKSE::stl::scope_exit releaseSlot([this]() noexcept {
+					{
+						std::scoped_lock lock(compilationSet.compilationMutex);
+						runtimeTaskInFlight = false;
+						compilationSet.dispatchedTasksInFlight.fetch_sub(1, std::memory_order_relaxed);
+					}
+					compilationSet.conditionVariable.notify_all();
+				});
+				ZoneScopedN("CS::RuntimePoolTask");
+				TracyPlot("CS::RuntimePoolQueueWaitUs",
+					static_cast<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+						std::chrono::steady_clock::now() - queued).count()));
 				try {
 					work();
 				} catch (const std::exception& error) {
@@ -3472,8 +3514,9 @@ namespace SIE
 				}
 			});
 		} catch (...) {
+			runtimeTaskInFlight = false;
 			compilationSet.dispatchedTasksInFlight.fetch_sub(1, std::memory_order_relaxed);
-			compilationSet.conditionVariable.notify_one();
+			compilationSet.conditionVariable.notify_all();
 			return false;
 		}
 		return true;
@@ -3481,6 +3524,7 @@ namespace SIE
 
 	void ShaderCache::StopCompilation()
 	{
+		CloseRuntimeTaskAdmission();
 		if (IsCompiling()) {
 			logger::info("Stopping {} remaining shader compilation tasks", compilationSet.totalTasks - compilationSet.completedTasks - compilationSet.failedTasks);
 		}
