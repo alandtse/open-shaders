@@ -1,5 +1,7 @@
 #pragma once
 
+#include "DX12FenceRetirementPolicy.h"
+
 #include <Windows.h>
 #include <cstdint>
 #include <d3d12.h>
@@ -14,12 +16,7 @@ namespace DX12Native
 	// Completion sentinels mean device removal, never successful GPU work.
 	inline bool GpuFenceRetired(ID3D12Fence* fence, uint64_t value)
 	{
-		if (!value)
-			return true;
-		if (!fence)
-			return false;
-		const uint64_t completed = fence->GetCompletedValue();
-		return completed == UINT64_MAX || (value != UINT64_MAX && completed >= value);
+		return FenceValueRetired(fence != nullptr, value && fence ? fence->GetCompletedValue() : 0, value);
 	}
 
 	inline bool GpuDeviceRemoved(ID3D12Device* device)
