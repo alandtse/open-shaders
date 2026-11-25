@@ -299,7 +299,12 @@ public:
 	/** @brief NR reads the Masks2 material-category lane whenever it is on. */
 	bool WantsForwardMaterialCategory() const override { return settings.neuralRenderingEnabled; }
 	/** @brief Resets NR history across loading transitions. */
-	void OnSceneTransitionReset(bool) override { neuralRendering.ResetHistory(); }
+	void OnSceneTransitionReset(bool opening) override
+	{
+		neuralRendering.ResetHistory();
+		if (opening)
+			nativeComposite.ResetFailures();
+	}
 	/** @brief Exposes the display-sized scene to post-processing through the shared feature contract. */
 	PostProcessingInput GetPostProcessingInput() const override;
 

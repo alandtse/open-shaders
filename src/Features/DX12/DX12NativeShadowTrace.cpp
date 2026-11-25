@@ -20,11 +20,6 @@ namespace DX12Native
 		constexpr float kMinRayDistance = 0.5f;
 		constexpr float kMaxRayDistance = 60000.0f;
 
-		void Check(HRESULT result)
-		{
-			if (FAILED(result))
-				throw std::runtime_error("DX12 Native Scene shadowmask operation failed");
-		}
 		struct Constants
 		{
 			Matrix projectionInverse, viewInverse;
@@ -43,7 +38,7 @@ namespace DX12Native
 			const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
 			const auto desc = CD3DX12_RESOURCE_DESC::Buffer(bytes);
 			winrt::com_ptr<ID3D12Resource> result;
-			Check(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
+			DX::ThrowIfFailed(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
 				&desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(result.put())));
 			return result;
 		}
@@ -51,7 +46,7 @@ namespace DX12Native
 		{
 			const D3D12_RANGE noRead{ 0, 0 };
 			void* mapped = nullptr;
-			Check(resource->Map(0, &noRead, &mapped));
+			DX::ThrowIfFailed(resource->Map(0, &noRead, &mapped));
 			std::memcpy(mapped, bytes, count);
 			resource->Unmap(0, nullptr);
 		}
@@ -106,18 +101,18 @@ namespace DX12Native
 			UINT(std::size(params)), params, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE
 		};
 		winrt::com_ptr<ID3DBlob> serialized, errors;
-		Check(D3D12SerializeRootSignature(&signature, D3D_ROOT_SIGNATURE_VERSION_1,
+		DX::ThrowIfFailed(D3D12SerializeRootSignature(&signature, D3D_ROOT_SIGNATURE_VERSION_1,
 			serialized.put(), errors.put()));
 		winrt::com_ptr<ID3D12RootSignature> newRoot;
-		Check(device->CreateRootSignature(0, serialized->GetBufferPointer(),
+		DX::ThrowIfFailed(device->CreateRootSignature(0, serialized->GetBufferPointer(),
 			serialized->GetBufferSize(), IID_PPV_ARGS(newRoot.put())));
 		D3D12_COMPUTE_PIPELINE_STATE_DESC pipelineDesc{};
 		pipelineDesc.pRootSignature = newRoot.get();
 		pipelineDesc.CS = { shader.data(), shader.size() };
 		winrt::com_ptr<ID3D12PipelineState> newPipeline;
-		Check(device->CreateComputePipelineState(&pipelineDesc, IID_PPV_ARGS(newPipeline.put())));
+		DX::ThrowIfFailed(device->CreateComputePipelineState(&pipelineDesc, IID_PPV_ARGS(newPipeline.put())));
 		winrt::com_ptr<ID3D12Fence> newCompletion;
-		Check(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(newCompletion.put())));
+		DX::ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(newCompletion.put())));
 		root = std::move(newRoot);
 		pipeline = std::move(newPipeline);
 		completion = std::move(newCompletion);
@@ -130,6 +125,8 @@ namespace DX12Native
 		if (current && current->frame == frame)
 			return;
 		current.reset();
+		if (initializationFailed)
+			return;
 		if (!raster || !raster->depth || !raster->depth->resource || !raster->readyFence ||
 			!raster->cameraValid) {
 			return;
@@ -183,7 +180,7 @@ namespace DX12Native
 				if (allocation > allowance || tracked > allowance - allocation)
 					throw std::runtime_error("Native shadowmask allocation deferred by DXGI budget");
 				replacement->allocationBytes = allocation;
-				Check(requested.d3d12Device->CreateCommittedResource(&heap,
+				DX::ThrowIfFailed(requested.d3d12Device->CreateCommittedResource(&heap,
 					D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
 					nullptr, IID_PPV_ARGS(replacement->mask.put())));
 				replacement->mask->SetName(L"DX12NativeScene::RawShadowMask");
@@ -191,20 +188,20 @@ namespace DX12Native
 				descriptors.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 				descriptors.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 				descriptors.NumDescriptors = 2;
-				Check(requested.d3d12Device->CreateDescriptorHeap(
+				DX::ThrowIfFailed(requested.d3d12Device->CreateDescriptorHeap(
 					&descriptors, IID_PPV_ARGS(replacement->descriptors.put())));
 				replacement->cameraUpload = UploadBuffer(requested.d3d12Device.get(), D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 				replacement->lightUpload = UploadBuffer(requested.d3d12Device.get(),
 					sizeof(std::array<float, 4>) * kMaxShadowLights * kRecords);
-				Check(requested.d3d12Device->CreateCommandAllocator(
+				DX::ThrowIfFailed(requested.d3d12Device->CreateCommandAllocator(
 					D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(replacement->allocator.put())));
-				Check(requested.d3d12Device->CreateCommandList(0,
+				DX::ThrowIfFailed(requested.d3d12Device->CreateCommandList(0,
 					D3D12_COMMAND_LIST_TYPE_DIRECT, replacement->allocator.get(),
 					pipeline.get(), IID_PPV_ARGS(replacement->commands.put())));
 				slot = std::move(replacement);
 			} else {
-				Check(slot->allocator->Reset());
-				Check(slot->commands->Reset(slot->allocator.get(), pipeline.get()));
+				DX::ThrowIfFailed(slot->allocator->Reset());
+				DX::ThrowIfFailed(slot->commands->Reset(slot->allocator.get(), pipeline.get()));
 			}
 			slot->consumers.clear();
 			slot->readyValue = UINT64_MAX;
@@ -292,20 +289,22 @@ namespace DX12Native
 					D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON)
 			};
 			command->ResourceBarrier(UINT(end.size()), end.data());
-			Check(command->Close());
+			DX::ThrowIfFailed(command->Close());
 
 			// These are queue-side dependencies, never CPU waits or render-thread stalls.
-			Check(requested.commandQueue->Wait(slot->raster->readyFence.get(), slot->raster->readyValue));
-			Check(requested.commandQueue->Wait(slot->scene->producerFence.get(), slot->scene->producerValue));
+			DX::ThrowIfFailed(requested.commandQueue->Wait(slot->raster->readyFence.get(), slot->raster->readyValue));
+			DX::ThrowIfFailed(requested.commandQueue->Wait(slot->scene->producerFence.get(), slot->scene->producerValue));
 			ID3D12CommandList* lists[]{ command };
 			requested.commandQueue->ExecuteCommandLists(1, lists);
 			submitted = true;
 			const uint64_t value = nextFence + 1;
-			Check(requested.commandQueue->Signal(completion.get(), value));
+			DX::ThrowIfFailed(requested.commandQueue->Signal(completion.get(), value));
 			nextFence = value;
 			slot->readyValue = value;
 			current = slot;
-		} catch (const std::exception&) {
+			failureLogged = false;
+		} catch (...) {
+			initializationFailed = !pipeline;
 			if (attempted) {
 				if (submitted && completion && backend.commandQueue) {
 					// ExecuteCommandLists succeeded. A queue-tail marker retires the
@@ -321,7 +320,18 @@ namespace DX12Native
 					attempted->scene.reset();
 				}
 			}
-			// This frame is unavailable; baseline raster shadows are unaffected.
+			if (!failureLogged) {
+				failureLogged = true;
+				try {
+					throw;
+				} catch (const winrt::hresult_error& error) {
+					logger::warn("[DX12NativeScene] Shadow dispatch failed (HRESULT 0x{:08X}): {}", static_cast<uint32_t>(error.code()), winrt::to_string(error.message()));
+				} catch (const std::exception& error) {
+					logger::warn("[DX12NativeScene] Shadow dispatch failed: {}", error.what());
+				} catch (...) {
+					logger::warn("[DX12NativeScene] Shadow dispatch failed with an unknown exception");
+				}
+			}
 		}
 	}
 

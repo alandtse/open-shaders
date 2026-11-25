@@ -49,5 +49,6 @@ namespace DX12Native
 		winrt::com_ptr<ID3D11ComputeShader> depthShader;
 		GraphicsBackend backend;
 		VideoMemoryBudget videoBudget;
+		bool failureLogged = false;
 	};
 }
