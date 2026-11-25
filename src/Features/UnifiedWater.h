@@ -129,6 +129,15 @@ struct UnifiedWater : OverlayFeature
 	virtual void PostPostLoad() override;
 
 	using ShallowSettings = UnifiedWaterSurface::Settings;
+	using ShallowBufferData = UnifiedWaterSurface::ShallowBufferData;
+
+	/** @brief UI controls serialized under selectedSettingsMutex; rendering reads the protected snapshot. */
+	ShallowBufferData shallowSettings;
+	/** @brief Diagnostic selection kept separate from the shader buffer. */
+	struct DebugSettings
+	{
+		bool UseOpenShadersDepthBehaviour = false;
+	} debugSettings;
 
 	/** @brief Publishes surface controls only while unified-water resources are usable. */
 	UnifiedWaterSurface::CommonBufferData GetShallowSettings() const;
@@ -144,8 +153,10 @@ struct UnifiedWater : OverlayFeature
 	json GetDiagnostics() override;
 
 private:
+	// Menu reset callbacks can serialize settings while the UI holds the selection lock.
+	std::recursive_mutex selectedSettingsMutex;
 	mutable std::mutex shallowSettingsMutex;
-	ShallowSettings shallowSettings;
+	ShallowSettings publishedShallowSettings;
 	ShallowSettings GetSelectedShallowSettings() const;
 	void SetShallowSettings(ShallowSettings value);
 	bool IsShallowSurfaceReady() const;

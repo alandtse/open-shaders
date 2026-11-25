@@ -8,7 +8,7 @@
 namespace UnifiedWaterSurface
 {
 	/** @brief Bounded shallow-surface controls packed into two shader registers. */
-	struct alignas(16) CommonBufferData
+	struct alignas(16) ShallowBufferData
 	{
 		float ShallowFallbackStrength = 1.0f;
 		float DeepConnectionProbeReachUnits = 768.0f;
@@ -19,8 +19,9 @@ namespace UnifiedWaterSurface
 		float ShallowFallbackMaxDistance = 26000.0f;
 		float DeepContextTransitionUnits = 128.0f;
 
-		bool operator==(const CommonBufferData&) const = default;
+		bool operator==(const ShallowBufferData&) const = default;
 	};
+	using CommonBufferData = ShallowBufferData;
 
 	/** @brief Selected controls, including the diagnostic legacy blend override. */
 	struct Settings : CommonBufferData
@@ -29,8 +30,25 @@ namespace UnifiedWaterSurface
 		bool operator==(const Settings&) const = default;
 	};
 
-	inline constexpr CommonBufferData kMinimum{ 0.0f, 0.0f, 32.0f, 0.0f, 0.0f, 16.0f, 0.0f, 4.0f };
-	inline constexpr CommonBufferData kMaximum{ 1.0f, 768.0f, 384.0f, 4.0f, 20.0f, 256.0f, 65536.0f, 128.0f };
+	inline constexpr float kMinShallowFallbackStrength = 0.0f;
+	inline constexpr float kMaxShallowFallbackStrength = 1.0f;
+	inline constexpr float kMinDeepConnectionProbeReachUnits = 0.0f;
+	inline constexpr float kMaxDeepConnectionProbeReachUnits = 768.0f;
+	inline constexpr float kMinDeepContextDepthUnits = 32.0f;
+	inline constexpr float kMaxDeepContextDepthUnits = 384.0f;
+	inline constexpr float kMinShoreContactMinFadePixels = 0.0f;
+	inline constexpr float kMaxShoreContactMinFadePixels = 4.0f;
+	inline constexpr float kMinShoreDepthBlendRangeUnits = 0.0f;
+	inline constexpr float kMaxShoreDepthBlendRangeUnits = 20.0f;
+	inline constexpr float kMinShallowSurfaceDepthRangeUnits = 16.0f;
+	inline constexpr float kMaxShallowSurfaceDepthRangeUnits = 256.0f;
+	inline constexpr float kMinShallowFallbackMaxDistance = 0.0f;
+	inline constexpr float kMaxShallowFallbackMaxDistance = 65536.0f;
+	inline constexpr float kMinDeepContextTransitionUnits = 4.0f;
+	inline constexpr float kMaxDeepContextTransitionUnits = 128.0f;
+
+	inline constexpr CommonBufferData kMinimum{ kMinShallowFallbackStrength, kMinDeepConnectionProbeReachUnits, kMinDeepContextDepthUnits, kMinShoreContactMinFadePixels, kMinShoreDepthBlendRangeUnits, kMinShallowSurfaceDepthRangeUnits, kMinShallowFallbackMaxDistance, kMinDeepContextTransitionUnits };
+	inline constexpr CommonBufferData kMaximum{ kMaxShallowFallbackStrength, kMaxDeepConnectionProbeReachUnits, kMaxDeepContextDepthUnits, kMaxShoreContactMinFadePixels, kMaxShoreDepthBlendRangeUnits, kMaxShallowSurfaceDepthRangeUnits, kMaxShallowFallbackMaxDistance, kMaxDeepContextTransitionUnits };
 
 	static_assert(sizeof(CommonBufferData) == 32 && alignof(CommonBufferData) == 16);
 	static_assert(std::is_trivially_copyable_v<CommonBufferData>);

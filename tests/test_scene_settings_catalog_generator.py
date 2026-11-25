@@ -1716,6 +1716,45 @@ void Synthetic::DrawSettings() {
     def test_catalog_satisfies_the_build_time_minimum(self):
         GENERATOR.validate_entries(self.entries, *CMAKE_CATALOG_FLOORS)
 
+    def test_unified_water_controls_keep_flat_paths_and_live_widget_bindings(self):
+        controls = {
+            "ShoreDepthBlendRangeUnits": ("Edge Fade Depth", 0.0, 20.0, ""),
+            "ShallowFallbackMaxDistance": ("Shallow Fallback Max Distance", 0.0, 65536.0, ""),
+            "ShallowFallbackStrength": ("Shallow Fallback Strength", 0.0, 1.0, ""),
+            "DeepConnectionProbeReachUnits": ("Connection Search Reach", 0.0, 768.0, "Debug"),
+            "DeepContextDepthUnits": ("Deep Context Depth", 32.0, 384.0, "Debug"),
+            "DeepContextTransitionUnits": ("Deep Context Transition", 4.0, 128.0, "Debug"),
+            "ShallowSurfaceDepthRangeUnits": ("Shallow Surface Depth", 16.0, 256.0, "Debug"),
+            "ShoreContactMinFadePixels": ("Minimum Edge Fade Width", 0.0, 4.0, "Debug"),
+        }
+        water = {entry["key"]: entry for entry in self.entries
+                 if entry["feature"] == "UnifiedWater"}
+        self.assertEqual(set(water), {*controls, "UseOpenShadersDepthBehaviour"})
+        for key, entry in water.items():
+            with self.subTest(key=key):
+                self.assertEqual(entry["path"], "")
+                self.assertEqual(entry["serializedPath"], "")
+                self.assertEqual(entry["serializedKey"], key)
+                self.assertTrue(entry["addressable"])
+                self.assertIn(CONTROLLABLE_FLAG, entry["flags"])
+        for key, (label, minimum, maximum, category) in controls.items():
+            with self.subTest(key=key):
+                entry = water[key]
+                self.assertEqual(entry["displayName"], label)
+                self.assertEqual(entry["displayPath"], category)
+                self.assertEqual(entry["access"], f"shallowSettings.{key}")
+                self.assertEqual(entry["sourceWidget"], "SliderFloat")
+                self.assertEqual((entry["minimum"], entry["maximum"]), (minimum, maximum))
+                self.assertTrue(entry["hasNumericBounds"])
+                self.assertTrue(entry["clampNumericInput"])
+                self.assertEqual(entry["enabledByKey"], "UseOpenShadersDepthBehaviour")
+                self.assertEqual(entry["enabledByValue"], 0)
+        legacy = water["UseOpenShadersDepthBehaviour"]
+        self.assertEqual(legacy["displayName"], "Use Legacy {brand} Depth Behaviour")
+        self.assertEqual(legacy["displayPath"], "Debug")
+        self.assertEqual(legacy["sourceWidget"], "Checkbox")
+        self.assertEqual(legacy["access"], "debugSettings.UseOpenShadersDepthBehaviour")
+
     def test_catalog_validation_rejects_lost_scene_bindings(self):
         # Persisted-but-hidden entries alone must not satisfy the gate.
         persisted_only = [

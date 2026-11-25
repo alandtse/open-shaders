@@ -48,9 +48,15 @@ usual `openshaders.settings` operation; a live feature change does not save it.
 | `DeepContextTransitionUnits` | 128 | 4–128 | Soft transition into deep-water suppression |
 | `UseOpenShadersDepthBehaviour` | false | false/true | Debug-only legacy blend, suppressing restoration when true |
 
-The CPU keeps a coherent selected-settings snapshot and publishes a separate
-32-byte shader block with effective strength. Both C++ and HLSL place
-it after Procedural Aurora and before optional Snow Cover in feature buffer `b6`.
+The UI and JSON paths protect the selected controls with a recursive mutex so
+menu reset callbacks can safely reenter serialization. A separate, short-held
+mutex publishes complete sanitized snapshots for rendering. Both UI sections
+publish before returning; JSON loads and per-setting resets use the same setter.
+The six Debug controls remain excluded from scene overrides.
+
+The CPU publishes a 32-byte shader block with effective strength. Both C++ and
+HLSL place it after Procedural Aurora and before optional Snow Cover in feature
+buffer `b6`.
 The raw native refraction weight is captured before the user water-muddiness
 multiplier, so changing that multiplier does not create restoration eligibility.
 

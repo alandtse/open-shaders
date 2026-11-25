@@ -13,95 +13,8 @@
 #include "RE/L/LoadingMenu.h"
 #include "RE/M/MapMenu.h"
 #include "RE/P/PlayerCharacter.h"
-#include "Utils/DebugSection.h"
 
 #include <imgui_internal.h>
-
-namespace UnifiedWaterSurface
-{
-	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Settings, UseOpenShadersDepthBehaviour, ShallowFallbackStrength, DeepConnectionProbeReachUnits, DeepContextDepthUnits, ShoreContactMinFadePixels, ShoreDepthBlendRangeUnits, ShallowSurfaceDepthRangeUnits, ShallowFallbackMaxDistance, DeepContextTransitionUnits)
-}
-
-UnifiedWater::ShallowSettings UnifiedWater::GetSelectedShallowSettings() const
-{
-	std::scoped_lock lock(shallowSettingsMutex);
-	return shallowSettings;
-}
-
-void UnifiedWater::SetShallowSettings(ShallowSettings value)
-{
-	value = UnifiedWaterSurface::Sanitize(value);
-	std::scoped_lock lock(shallowSettingsMutex);
-	shallowSettings = value;
-}
-
-bool UnifiedWater::IsShallowSurfaceReady() const
-{
-	if (!loaded || !IsWaterDataReady() || !flowmap || !gFlowMapSourceTex || !gFlowMapSize)
-		return false;
-	if (flowmap->GetWidth() <= 0 || flowmap->GetHeight() <= 0 || *gFlowMapSize != flowmap->GetWidth() ||
-		!std::isfinite(flowmap->GetInverseWidth()) || flowmap->GetInverseWidth() <= 0.0f ||
-		!std::isfinite(flowmap->GetInverseHeight()) || flowmap->GetInverseHeight() <= 0.0f)
-		return false;
-	RE::NiPointer<RE::NiSourceTexture> texture;
-	return flowmap->TryGetFlowmap(texture) && gFlowMapSourceTex->get() == texture.get();
-}
-
-UnifiedWaterSurface::CommonBufferData UnifiedWater::GetShallowSettings() const
-{
-	const auto selected = GetSelectedShallowSettings();
-	return UnifiedWaterSurface::ForRuntime(selected, selected.ShallowFallbackStrength > 0.0f && IsShallowSurfaceReady());
-}
-
-void UnifiedWater::LoadSettings(json& value)
-{
-	SetShallowSettings(value.is_object() ? value.get<ShallowSettings>() : ShallowSettings{});
-}
-
-void UnifiedWater::SaveSettings(json& value)
-{
-	value = GetSelectedShallowSettings();
-}
-
-void UnifiedWater::RestoreDefaultSettings()
-{
-	SetShallowSettings({});
-}
-
-json UnifiedWater::GetDiagnostics()
-{
-	return {
-		{ "shallowSurfaceReady", IsShallowSurfaceReady() },
-		{ "legacyDepthBehaviour", GetSelectedShallowSettings().UseOpenShadersDepthBehaviour },
-		{ "selectedShallowStrength", GetSelectedShallowSettings().ShallowFallbackStrength },
-		{ "effectiveShallowStrength", GetShallowSettings().ShallowFallbackStrength }
-	};
-}
-
-void UnifiedWater::DrawSettings()
-{
-	auto selected = GetSelectedShallowSettings();
-	const auto& minimum = UnifiedWaterSurface::kMinimum;
-	const auto& maximum = UnifiedWaterSurface::kMaximum;
-	if (selected.UseOpenShadersDepthBehaviour)
-		ImGui::TextWrapped("%s", T(TKEY("legacy_depth_notice"), "Shallow-water tuning is inactive while Use Legacy {brand} Depth Behaviour is enabled in Debug. Your values are preserved."));
-	ImGui::BeginDisabled(selected.UseOpenShadersDepthBehaviour);
-	bool changed = ImGui::SliderFloat(T(TKEY("shallow_shoredepthblendrangeunits"), "Edge Fade Depth"), &selected.ShoreDepthBlendRangeUnits,
-		minimum.ShoreDepthBlendRangeUnits, maximum.ShoreDepthBlendRangeUnits, "%.1f units", ImGuiSliderFlags_AlwaysClamp);
-	if (auto tooltip = Util::HoverTooltipWrapper())
-		ImGui::TextWrapped("%s", T(TKEY("shallow_edge_fade_tooltip"), "Depth over which the shallow-water surface becomes visible near the shore. Higher values soften the transition; zero removes this depth-based fade."));
-	changed |= ImGui::SliderFloat(T(TKEY("shallow_shallowfallbackmaxdistance"), "Shallow Fallback Max Distance"), &selected.ShallowFallbackMaxDistance,
-		minimum.ShallowFallbackMaxDistance, maximum.ShallowFallbackMaxDistance, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
-	if (auto tooltip = Util::HoverTooltipWrapper())
-		ImGui::TextWrapped("%s", T(TKEY("shallow_distance_tooltip"), "How far away the shallow-water visibility adjustment applies. Lower values save work; zero disables it everywhere."));
-	changed |= ImGui::SliderFloat(T(TKEY("shallow_strength"), "Shallow Fallback Strength"), &selected.ShallowFallbackStrength,
-		minimum.ShallowFallbackStrength, maximum.ShallowFallbackStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	if (auto tooltip = Util::HoverTooltipWrapper())
-		ImGui::TextWrapped("%s", T(TKEY("shallow_strength_tooltip"), "Makes very shallow, clear water easier to see against the riverbed. Higher values strengthen the surface; zero removes this adjustment."));
-	ImGui::EndDisabled();
-	if (changed)
-		SetShallowSettings(selected);
-}
 
 namespace
 {
@@ -282,52 +195,6 @@ void UnifiedWater::TESWaterSystem_AddWater::thunk(RE::TESWaterSystem* waterSyste
 	RepairSharedMaterials(waterSystem, waterSystem->waterReflections, &RE::TESWaterObject::reflections);
 	RepairSharedMaterials(waterSystem, waterSystem->waterNormals, &RE::TESWaterObject::normals);
 	func(waterSystem, water, waterType, waterHeight, multiBounds, noDisplacement, isProcedural);
-}
-
-void UnifiedWater::DrawDebugSection()
-{
-	Util::DebugSection section;
-	if (!section)
-		return;
-
-	auto selected = GetSelectedShallowSettings();
-	const auto& minimum = UnifiedWaterSurface::kMinimum;
-	const auto& maximum = UnifiedWaterSurface::kMaximum;
-	bool changed = ImGui::Checkbox(T(TKEY("use_open_shaders_depth_behaviour"), "Use Legacy {brand} Depth Behaviour"), &selected.UseOpenShadersDepthBehaviour);
-	if (auto tooltip = Util::HoverTooltipWrapper())
-		ImGui::TextWrapped("%s", T(TKEY("legacy_depth_tooltip"), "Uses the existing {brand} water blending without the shallow-water visibility adjustment. Your shore and depth settings are preserved."));
-	ImGui::BeginDisabled(selected.UseOpenShadersDepthBehaviour);
-	changed |= ImGui::SliderFloat(T(TKEY("shallow_deepconnectionprobereachunits"), "Connection Search Reach"), &selected.DeepConnectionProbeReachUnits,
-		minimum.DeepConnectionProbeReachUnits, maximum.DeepConnectionProbeReachUnits, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
-	if (auto tooltip = Util::HoverTooltipWrapper())
-		ImGui::TextWrapped("%s", T(TKEY("shallow_connection_tooltip"), "Search distance toward deeper terrain at half and full reach. Increase for broad shallow banks; zero disables connected-depth protection."));
-	changed |= ImGui::SliderFloat(T(TKEY("shallow_deepcontextdepthunits"), "Deep Context Depth"), &selected.DeepContextDepthUnits,
-		minimum.DeepContextDepthUnits, maximum.DeepContextDepthUnits, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
-	if (auto tooltip = Util::HoverTooltipWrapper())
-		ImGui::TextWrapped("%s", T(TKEY("shallow_deep_depth_tooltip"), "Depth normal to the water plane where connected medium or deep channels get full protection from restoration."));
-	changed |= ImGui::SliderFloat(T(TKEY("shallow_deepcontexttransitionunits"), "Deep Context Transition"), &selected.DeepContextTransitionUnits,
-		minimum.DeepContextTransitionUnits, maximum.DeepContextTransitionUnits, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
-	if (auto tooltip = Util::HoverTooltipWrapper())
-		ImGui::TextWrapped("%s", T(TKEY("shallow_deep_transition_tooltip"), "Depth fade below Deep Context Depth for connected-water protection. Higher values soften the transition."));
-	changed |= ImGui::SliderFloat(T(TKEY("shallow_shallowsurfacedepthrangeunits"), "Shallow Surface Depth"), &selected.ShallowSurfaceDepthRangeUnits,
-		minimum.ShallowSurfaceDepthRangeUnits, maximum.ShallowSurfaceDepthRangeUnits, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
-	if (auto tooltip = Util::HoverTooltipWrapper())
-		ImGui::TextWrapped("%s", T(TKEY("shallow_surface_depth_tooltip"), "Depth normal to the water plane where the shallow cue disappears. Lower it if the cue reaches medium-depth water; raise it if shallow streams still lose their surface."));
-	changed |= ImGui::SliderFloat(T(TKEY("shallow_shorecontactminfadepixels"), "Minimum Edge Fade Width"), &selected.ShoreContactMinFadePixels,
-		minimum.ShoreContactMinFadePixels, maximum.ShoreContactMinFadePixels, "%.1f px", ImGuiSliderFlags_AlwaysClamp);
-	if (auto tooltip = Util::HoverTooltipWrapper())
-		ImGui::TextWrapped("%s", T(TKEY("shallow_edge_width_tooltip"), "Minimum screen-space width of the terrain-contact fade. Prevents subpixel seams without extra samples. Zero uses only Edge Fade Depth."));
-	ImGui::EndDisabled();
-	if (changed)
-		SetShallowSettings(selected);
-
-	if (Util::Button(T(TKEY("regenerate_flowmap"), "Regenerate Flowmap")) && flowmap) {
-		if (flowmap->RegenerateAndLoadFlowmap())
-			SetFlowmapTex();
-	}
-
-	if (Util::Button(T(TKEY("regenerate_caches"), "Regenerate Caches")) && waterCache)
-		waterCache->RegenerateCaches();
 }
 
 void UnifiedWater::DrawOverlay()
