@@ -4,6 +4,7 @@
 #include "UnifiedWater/WaterCache.h"
 
 #include <atomic>
+#include <mutex>
 
 /** @brief Replaces distant water tiles with LOD0 water to eliminate water LOD mismatch. */
 struct UnifiedWater : OverlayFeature
@@ -138,6 +139,14 @@ struct UnifiedWater : OverlayFeature
 
 private:
 	std::atomic_bool waterDataReady{ false };
+	struct CacheBuildState
+	{
+		WaterCache::BuildProgressSnapshot progress{};
+		bool running = false;
+		bool failed = false;
+	};
+	std::mutex stagedCacheBuildMutex;
+	CacheBuildState stagedCacheBuild;
 	RE::NiPointer<RE::BSTriShape> waterMesh;
 	Flowmap* flowmap = nullptr;
 	WaterCache* waterCache = nullptr;
@@ -157,5 +166,6 @@ private:
 	bool IsWaterDataReady() const;
 	bool IsExteriorWorldspaceActive() const;
 	void UpdateWaterLODCull() const;
-	static bool LoadOrderChanged();
+	static bool LoadOrderChanged(uint64_t& hash);
+	static void PersistLoadOrderHash(uint64_t hash);
 };
