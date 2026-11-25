@@ -43,7 +43,7 @@ namespace DX12Native
 		void Reset();
 		/** @brief Returns only a GPU-completed TLAS, with all rigid casters retained. */
 		std::shared_ptr<const TopLevel> GetScene() const { return published; }
-		/** @brief Submitted builds still need GPU retirement polling even after scene reset. */
+		/** @brief Submitted builds still need GPU retirement even after scene reset. */
 		bool HasPendingBuilds() const
 		{
 			for (const auto& build : builds)
@@ -69,12 +69,6 @@ namespace DX12Native
 			std::shared_ptr<TopLevel> top;
 			uint64_t fence = 0, generation = 0;
 		};
-		struct Consumer
-		{
-			std::shared_ptr<const TopLevel> scene;
-			winrt::com_ptr<ID3D12Fence> fence;
-			uint64_t value = 0;
-		};
 
 		winrt::com_ptr<ID3D12Resource> Buffer(uint64_t a_size, D3D12_HEAP_TYPE a_heap, D3D12_RESOURCE_STATES a_state, const wchar_t* a_name) const;
 		void Begin(Build& a_build);
@@ -89,7 +83,6 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12Fence> completion;
 		std::array<Build, 2> builds;
 		std::unordered_map<uint64_t, std::shared_ptr<const BottomLevel>> bottoms;
-		std::vector<Consumer> consumers;
 		std::shared_ptr<const SceneInputs> target;
 		std::shared_ptr<const TopLevel> published;
 		uint64_t generation = 0, nextFence = 0;

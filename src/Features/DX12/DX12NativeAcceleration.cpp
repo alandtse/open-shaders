@@ -283,9 +283,6 @@ namespace DX12Native
 			}
 			build = {};
 		}
-		std::erase_if(consumers, [](const Consumer& consumer) {
-			return consumer.fence->GetCompletedValue() >= consumer.value;
-		});
 	}
 
 	void AccelerationScene::Reset()
@@ -369,11 +366,9 @@ namespace DX12Native
 	{
 		if (!a_scene || !a_fence || !a_value)
 			return false;
-		Consumer consumer;
-		consumer.scene = a_scene;
-		consumer.fence.copy_from(a_fence);
-		consumer.value = a_value;
-		consumers.push_back(std::move(consumer));
+		winrt::com_ptr<ID3D12Device> retainedDevice;
+		(void)a_fence->GetDevice(IID_PPV_ARGS(retainedDevice.put()));
+		RetireAfterFences(a_scene, std::move(retainedDevice), { FencePoint(a_fence, a_value) });
 		return true;
 	}
 }

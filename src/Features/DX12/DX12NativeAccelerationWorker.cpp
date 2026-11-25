@@ -3,6 +3,7 @@
 #include "DX12GpuRetirement.h"
 #include "Globals.h"
 #include "ShaderCache.h"
+#include "Utils/TracyZones.h"
 
 #include <algorithm>
 #include <limits>
@@ -10,41 +11,11 @@
 
 namespace DX12Native
 {
-	namespace
-	{
-		struct RetainedScene
-		{
-			std::shared_ptr<const TopLevel> scene;
-			winrt::com_ptr<ID3D12Fence> fence;
-			uint64_t value = 0;
-		};
-
-		bool IsRetired(const RetainedScene& a_record)
-		{
-			return GpuFenceRetired(a_record.fence.get(), a_record.value);
-		}
-	}
-
 	struct AccelerationWorker::State
 	{
-		~State()
-		{
-			// State is kept alive by the admitted task. Existing GPU retirement
-			// ownership remains independent of the shared CPU task lifetime.
-			std::erase_if(consumers, IsRetired);
-			if (!consumers.empty()) {
-				winrt::com_ptr<ID3D12Device> device;
-				(void)consumers.front().fence->GetDevice(IID_PPV_ARGS(device.put()));
-				std::vector<FenceDependency> dependencies;
-				for (const auto& record : consumers)
-					dependencies.push_back({ record.fence, record.value });
-				RetireAfterFences(std::move(consumers), std::move(device), std::move(dependencies));
-			}
-		}
-
 		std::mutex mutex;
 		std::shared_ptr<const DX12::Grid> pending;
-		std::vector<RetainedScene> consumers;
+		std::shared_ptr<Util::RuntimeTaskGate> taskGate;
 		std::atomic<std::shared_ptr<const TopLevel>> published{};
 		winrt::com_ptr<ID3D11Device> device;
 		winrt::com_ptr<ID3D11DeviceContext> context;
@@ -57,6 +28,8 @@ namespace DX12Native
 		bool needsAdvance = false;
 		winrt::com_ptr<ID3D12Fence> waitFence;
 		uint64_t waitValue = 0;
+		bool waitRegistered = false;
+		bool waitReady = false;
 		std::string failure;
 
 		// Accessed only by the single admitted task, never the render thread.
@@ -78,7 +51,13 @@ namespace DX12Native
 		if (!a_device || !a_context)
 			return false;
 		if (!state.load(std::memory_order_acquire)) {
+			if (!globals::shaderCache)
+				return false;
+			auto gate = globals::shaderCache->GetRuntimeTaskGate();
+			if (!gate)
+				return false;
 			auto next = std::make_shared<State>();
+			next->taskGate = std::move(gate);
 			next->device.copy_from(a_device);
 			next->context.copy_from(a_context);
 			state.store(std::move(next), std::memory_order_release);
@@ -149,20 +128,10 @@ namespace DX12Native
 	{
 		if (!a_scene || !a_fence || !a_value)
 			return false;
-		auto current = state.load(std::memory_order_acquire);
-		if (!current)
-			return false;
-		RetainedScene record;
-		record.scene = std::move(a_scene);
-		record.fence.copy_from(a_fence);
-		record.value = a_value;
-		{
-			std::scoped_lock lock(current->mutex);
-			if (current->closing)
-				return false;
-			current->consumers.push_back(std::move(record));
-		}
-		TrySchedule(current);
+		winrt::com_ptr<ID3D12Device> device;
+		(void)a_fence->GetDevice(IID_PPV_ARGS(device.put()));
+		// Submitted consumers remain owned even if the producing session stops.
+		RetireAfterFences(std::move(a_scene), std::move(device), { FencePoint(a_fence, a_value) });
 		return true;
 	}
 
@@ -178,25 +147,26 @@ namespace DX12Native
 	void AccelerationWorker::TrySchedule(const std::shared_ptr<State>& a_state)
 	{
 		std::scoped_lock lock(a_state->mutex);
-		if (a_state->closing || a_state->scheduled || !a_state->failure.empty() || !globals::shaderCache)
+		if (a_state->closing || a_state->scheduled || !a_state->failure.empty() || !a_state->taskGate)
 			return;
 
-		// Active frame callbacks retry admission and check fence readiness. Never
-		// occupy a pool slot while a fence is pending; no timer or dedicated waiter.
+		// A fence callback marks readiness and attempts admission. Active frames
+		// retry denied admission and are a nonblocking fallback if registration fails.
 		const bool changed = a_state->epoch != a_state->processedEpoch;
 		const bool ready = a_state->needsAdvance &&
-		                   (!a_state->waitFence || GpuFenceRetired(a_state->waitFence.get(), a_state->waitValue));
-		const bool retire = std::ranges::any_of(a_state->consumers, IsRetired);
-		if (!changed && !ready && !retire)
+		                   (!a_state->waitFence || a_state->waitReady ||
+		                       (!a_state->waitRegistered && GpuFenceRetired(a_state->waitFence.get(), a_state->waitValue)));
+		if (!changed && !ready)
 			return;
 
 		a_state->scheduled = true;
-		if (!globals::shaderCache->TrySubmitRuntimeTask([retained = a_state] { RunStep(retained); }))
+		if (!a_state->taskGate->TrySubmit([retained = a_state] { RunStep(retained); }))
 			a_state->scheduled = false;
 	}
 
 	void AccelerationWorker::RunStep(std::shared_ptr<State> a_state)
 	{
+		ZoneScopedN("DX12::Acceleration::Task");
 		uint64_t epoch = 0;
 		uint64_t resetSerial = 0;
 		bool changed = false;
@@ -221,7 +191,6 @@ namespace DX12Native
 				reset = resetSerial != a_state->processedResetSerial;
 				if (changed)
 					next = std::exchange(a_state->pending, nullptr);
-				std::erase_if(a_state->consumers, IsRetired);
 			}
 
 			if (reset) {
@@ -231,8 +200,10 @@ namespace DX12Native
 				else if (a_state->acceleration)
 					a_state->acceleration->Reset();
 			}
-			if (changed)
+			if (changed) {
+				ZoneScopedN("DX12::Acceleration::CollectInputs");
 				a_state->inputs = next ? CollectSceneInputs(std::move(next)) : nullptr;
+			}
 
 			if (!a_state->acceleration && a_state->inputs) {
 				auto backend = GraphicsBackend::Create(a_state->device.get(), a_state->context.get(), failure);
@@ -269,8 +240,13 @@ namespace DX12Native
 		a_state->processedEpoch = epoch;
 		a_state->processedResetSerial = resetSerial;
 		a_state->needsAdvance = needsAdvance;
+		const bool newWait = a_state->waitFence.get() != waitFence.get() || a_state->waitValue != waitValue;
 		a_state->waitFence = std::move(waitFence);
 		a_state->waitValue = waitValue;
+		if (newWait) {
+			a_state->waitRegistered = false;
+			a_state->waitReady = false;
+		}
 		if (!a_state->closing && epoch == a_state->epoch) {
 			if (!failure.empty()) {
 				a_state->failure = std::move(failure);
@@ -281,5 +257,32 @@ namespace DX12Native
 			}
 		}
 		a_state->scheduled = false;
+		if (!a_state->closing && a_state->failure.empty() && a_state->waitFence &&
+			!a_state->waitRegistered && !a_state->waitReady) {
+			const auto dependency = FencePoint(a_state->waitFence.get(), a_state->waitValue);
+			if (GpuFenceRetired(dependency.fence.get(), dependency.value)) {
+				a_state->waitReady = true;
+			} else {
+				const std::weak_ptr<State> weak = a_state;
+				auto* fence = dependency.fence.get();
+				const auto value = dependency.value;
+				try {
+					a_state->waitRegistered = NotifyOnFence(dependency, [weak, fence, value] {
+						if (auto current = weak.lock()) {
+							{
+								std::scoped_lock lock(current->mutex);
+								if (current->closing || current->waitFence.get() != fence || current->waitValue != value)
+									return;
+								current->waitReady = true;
+							}
+							TrySchedule(current);
+						}
+					});
+				} catch (...) {
+					// A failed registration is retried by the active frame path.
+					a_state->waitRegistered = false;
+				}
+			}
+		}
 	}
 }
