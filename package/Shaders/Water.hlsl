@@ -89,6 +89,7 @@ PS_OUTPUT main(PS_INPUT input)
 #	include "Common/ReverseZ.hlsli"
 #	include "Common/Shading.hlsli"
 #	include "Common/Color.hlsli"
+#	include "Common/WaterRefraction.hlsli"
 
 #	define WATER
 
@@ -1032,6 +1033,17 @@ struct DiffuseOutput
 	float3 refractedViewDirection;
 };
 
+DiffuseOutput GetWaterDiffuseColorWithoutRefraction(float3 normal, float3 viewDirection, float fresnel)
+{
+	DiffuseOutput output = (DiffuseOutput)0;
+	output.refractionColor = lerp(Color::Water(ShallowColor.xyz), Color::Water(DeepColor.xyz), fresnel) * GetLdotN(normal);
+	output.refractionDiffuseColor = output.refractionColor;
+	output.depth = 1;
+	output.refractionMul = 1;
+	output.refractedViewDirection = viewDirection;
+	return output;
+}
+
 DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection, inout float4 distanceMul, float refractionsDepthFactor, float fresnel, uint eyeIndex, float3 viewPosition, float depth)
 {
 #			if defined(REFRACTIONS)
@@ -1043,15 +1055,12 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 	RefractionTex.GetDimensions(refractionDimensions.x, refractionDimensions.y);
 	float2 refractionRenderSize = float2(refractionDimensions) * FrameBuffer::DynamicResolutionParams1.xy;
 	float2 depthRenderSize = FrameBuffer::DynamicResolutionParams1.xy / VPOSOffset.xy;
-	float2 eyeMinUV = Stereo::ConvertToStereoUV(float2(0, 0), eyeIndex);
-	float2 eyeMaxUV = Stereo::ConvertToStereoUV(float2(1, 1), eyeIndex);
-	float2 refractionMinUV = max(
-		(floor(eyeMinUV * refractionRenderSize) + 0.5) / refractionRenderSize,
-		(floor(eyeMinUV * depthRenderSize) + 0.5) / depthRenderSize);
-	float2 refractionMaxUV = min(
-		(floor(eyeMaxUV * refractionRenderSize) - 0.5) / refractionRenderSize,
-		(floor(eyeMaxUV * depthRenderSize) - 0.5) / depthRenderSize);
-	refractionUvRaw = clamp(refractionUvRaw, refractionMinUV, refractionMaxUV);
+	float2 refractionMinUV = 0.0;
+	float2 refractionMaxUV = 0.0;
+	[flatten] if (!WaterRefraction::TryGetUVBounds(refractionRenderSize, depthRenderSize, eyeIndex, refractionMinUV, refractionMaxUV)) return GetWaterDiffuseColorWithoutRefraction(normal, viewDirection, fresnel);
+
+	float2 fallbackRefractionUV = FrameBuffer::DynamicResolutionParams2.xy * input.HPosition.xy * VPOSOffset.xy + VPOSOffset.zw;  // This value is already stereo converted for VR
+	refractionUvRaw = WaterRefraction::ClampUV(refractionUvRaw, fallbackRefractionUV, refractionMinUV, refractionMaxUV);
 
 #				if defined(VR)
 	float2 refractionUvRawNoStereo = Stereo::ConvertFromStereoUV(refractionUvRaw, eyeIndex, 1);
@@ -1064,7 +1073,6 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 
 #				if defined(DEPTH) && !defined(VERTEX_ALPHA_DEPTH)
 	float refractionDepth = GetScreenDepthWater(refractionScreenPosition);
-	depth = refractionDepth;
 #					if !defined(VR)
 	float refractionDepthMul = length(float3((((VPOSOffset.zw + refractionUvRaw) * 2 - 1)) * refractionDepth / ProjData.xy, refractionDepth));
 #					else
@@ -1076,28 +1084,40 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 
 	float refractionPlaneMul = (1 - ReflectPlane[eyeIndex].w / refractionViewSurfaceAngle);
 
-	if (refractionPlaneMul < 0.0) {
-		refractionUvRaw = FrameBuffer::DynamicResolutionParams2.xy * input.HPosition.xy * VPOSOffset.xy + VPOSOffset.zw;  // This value is already stereo converted for VR
-	} else {
-		float muddiness = SharedData::enbSettings.EnableWater ? SharedData::enbSettings.WaterMuddiness : 1.0;
-		distanceMul = saturate(float4(1, muddiness, 1, 1) * refractionPlaneMul * float4(length(refractionDepthAdjustedViewDirection).xx, abs(refractionViewSurfaceAngle).xx) / FogParam.z);
+	float muddiness = SharedData::enbSettings.EnableWater ? SharedData::enbSettings.WaterMuddiness : 1.0;
+	float4 candidateDistanceMul = float4(1, muddiness, 1, 1) * refractionPlaneMul *
+	                              float4(length(refractionDepthAdjustedViewDirection).xx, abs(refractionViewSurfaceAngle).xx) / FogParam.z;
+	bool validRefraction = WaterFinite::IsFinite(refractionDepth) && WaterFinite::IsFinite(refractionPlaneMul) &&
+	                       refractionPlaneMul >= 0.0 && all(WaterFinite::IsFinite(candidateDistanceMul));
 
+	if (validRefraction) {
+		float rawRefractionDepth = DepthTex.Load(float3(refractionScreenPosition, 0)).x;
 #					if defined(VR)
-		refractionWorldPosition = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], float4((refractionUvRawNoStereo * 2 - 1), DepthTex.Load(float3(refractionScreenPosition, 0)).x, 1));
+		float4 candidateWorldPosition = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], float4((refractionUvRawNoStereo * 2 - 1), rawRefractionDepth, 1));
 #					else
-		refractionWorldPosition = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], float4((refractionUvRaw * 2 - 1) * float2(1, -1), DepthTex.Load(float3(refractionScreenPosition, 0)).x, 1));
+		float4 candidateWorldPosition = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], float4((refractionUvRaw * 2 - 1) * float2(1, -1), rawRefractionDepth, 1));
 #					endif
-		refractionWorldPosition.xyz /= refractionWorldPosition.w;
-	}
-
+		validRefraction = all(WaterFinite::IsFinite(candidateWorldPosition)) && abs(candidateWorldPosition.w) > 1e-6;
+		if (validRefraction) {
+			float3 candidatePosition = candidateWorldPosition.xyz / candidateWorldPosition.w;
+			validRefraction = all(WaterFinite::IsFinite(candidatePosition));
+			if (validRefraction) {
+				depth = refractionDepth;
+				distanceMul = saturate(candidateDistanceMul);
+				refractionWorldPosition = float4(candidatePosition, 1);
 #					if defined(HORIZON_FIX)
-	if (HorizonFix::IsEmptyDepth(DepthTex.Load(float3(refractionScreenPosition, 0)).x))
-		distanceMul = 1.0.xxxx;
+				if (HorizonFix::IsEmptyDepth(rawRefractionDepth))
+					distanceMul = 1.0.xxxx;
 #					endif
+			}
+		}
+	}
+	if (!validRefraction)
+		refractionUvRaw = fallbackRefractionUV;
 #				endif
 
-	float2 refractionUV = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(
-		clamp(refractionUvRaw, refractionMinUV, refractionMaxUV));
+	float2 refractionUV = FrameBuffer::DynamicResolutionParams1.xy *
+	                      WaterRefraction::ClampUV(refractionUvRaw, fallbackRefractionUV, refractionMinUV, refractionMaxUV);
 	float3 refractionColor = RefractionTex.Sample(RefractionSampler, refractionUV).xyz;
 	if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
 		refractionColor = Color::SceneGammaToLinear(refractionColor);
@@ -1124,21 +1144,16 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 		refractionDiffuseColor = lerp(Color::Water(ShallowColor.xyz), Color::Water(DeepColor.xyz), distanceMul.y);
 	}
 
-	DiffuseOutput output;
+	DiffuseOutput output = (DiffuseOutput)0;
 	output.refractionColor = refractionColor;
 	output.refractionDiffuseColor = refractionDiffuseColor;
 	output.depth = depth;
 	output.refractionMul = saturate(refractionMul * SharedData::csUtilitySettings.waterMuddiness);
-	output.refractedViewDirection = normalize(refractionWorldPosition.xyz - input.WPosition.xyz);
+	float3 refractedDelta = refractionWorldPosition.xyz - input.WPosition.xyz;
+	output.refractedViewDirection = all(WaterFinite::IsFinite(refractedDelta)) && dot(refractedDelta, refractedDelta) > 1e-6 ? normalize(refractedDelta) : viewDirection;
 	return output;
 #			else
-	DiffuseOutput output;
-	output.refractionColor = lerp(Color::Water(ShallowColor.xyz), Color::Water(DeepColor.xyz), fresnel) * GetLdotN(normal);
-	output.refractionDiffuseColor = output.refractionColor;
-	output.depth = 1;
-	output.refractionMul = 1;
-	output.refractedViewDirection = viewDirection;
-	return output;
+	return GetWaterDiffuseColorWithoutRefraction(normal, viewDirection, fresnel);
 #			endif
 }
 
