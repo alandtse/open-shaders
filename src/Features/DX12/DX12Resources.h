@@ -189,7 +189,7 @@ struct DX12Resources final : Feature
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
 	void RestoreDefaultSettings() override;
-	bool WantsPreShadowMapsHook() const override { return true; }
+	bool WantsPreShadowMapsHook() const override;
 	void PreShadowMaps() override;
 	void OnSceneTransitionReset(bool opening) override;
 	void OnRuntimeDisabled() override;
@@ -202,7 +202,7 @@ struct DX12Resources final : Feature
 	/** @brief Accepts a bounded, static renderer observation for native geometry (never for raster suppression). */
 	bool PublishRuntimeShape(std::shared_ptr<const DX12::Shape> shape, float centerX, float centerY)
 	{
-		return grid.PublishRuntimeShape(std::move(shape), centerX, centerY);
+		return IsActive() && grid.PublishRuntimeShape(std::move(shape), centerX, centerY);
 	}
 	bool IsActive() const;
 	uint64_t GetFlushGeneration() const { return flushGeneration.load(std::memory_order_acquire); }
@@ -216,6 +216,7 @@ struct DX12Resources final : Feature
 
 private:
 	void ResetPreparation();
+	bool preparationActive = false;
 	DX12::ResourceGrid grid;
 	std::unique_ptr<DX12::CompanionWorker> companion;
 	std::unique_ptr<DX12::CompanionResult> adopting;

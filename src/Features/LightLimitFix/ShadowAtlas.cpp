@@ -30,6 +30,7 @@ namespace ShadowCasterManager
 			uint32_t escalateFrame = 0;    ///< frame a short-changed slot may retry escalation
 			uint32_t renderFrame = 0;      ///< frame stamp of the last raster into the tile
 			bool valid = false;            ///< content rendered at least once
+			bool nativeStaticOmitted = false;  ///< sampled depth omits native static casters
 			uint64_t staticHash = 0;       ///< static-caster hash baked into the static tile
 			bool staticValid = false;      ///< static tile holds baked content
 			bool staticEmpty = false;      ///< baked tile captured zero casters
@@ -885,7 +886,7 @@ namespace ShadowCasterManager
 		return true;
 	}
 
-	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete)
+	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete, bool a_nativeStaticOmitted)
 	{
 		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
 			return;
@@ -905,8 +906,10 @@ namespace ShadowCasterManager
 			// Refresh the bake snapshot only when this mark actually rewrote the
 			// sampled rect (swap or first landing); bake/composite no-op marks
 			// must not rebase the snapshot onto depth rastered at an older radius.
-			if (a_swapComplete || !slot.valid)
+			if (a_swapComplete || !slot.valid) {
 				slot.bakePending = true;
+				slot.nativeStaticOmitted = a_nativeStaticOmitted;
+			}
 			slot.valid = true;
 			slot.renderFrame =
 				globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
@@ -974,6 +977,24 @@ namespace ShadowCasterManager
 			return true;
 		}
 		return false;
+	}
+
+	void InvalidateNativeRasterTiles()
+	{
+		if (!s_atlas.ready)
+			return;
+		for (auto& slot : s_atlas.slots) {
+			if (!slot.nativeStaticOmitted)
+				continue;
+			slot.valid = false;
+			slot.staticValid = false;
+			slot.staticHash = 0;
+			slot.staticEmpty = false;
+			slot.staticCompositePending = false;
+			slot.bakeValid = false;
+			slot.bakePending = false;
+			slot.nativeStaticOmitted = false;
+		}
 	}
 
 	void FreeAllTiles()

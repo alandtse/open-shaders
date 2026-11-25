@@ -396,6 +396,8 @@ public:
 
 	/** @brief Offers completed opaque inputs before deferred composition. */
 	virtual void OnOpaqueRasterReady(const OpaqueRasterInputs& /*a_inputs*/) {}
+	/** @brief Boot-time opt-in to the opaque raster hook. */
+	virtual bool WantsOpaqueRasterReadyHook() const { return false; }
 
 	/** @brief Called before a post-processing implementation consumes the scene target. */
 	virtual void OnBeforePostProcessing(RE::RENDER_TARGET /*a_renderTarget*/) {}
@@ -731,6 +733,8 @@ public:
 
 	/** @brief Visits PreShadowMaps() on every loaded feature that opted in via WantsPreShadowMapsHook(); the list is cached once. */
 	static void ApplyPreShadowMapsHooks();
+	/** @brief Dispatches opaque inputs only to features registered for the hook. */
+	static void ApplyOpaqueRasterReadyHooks(const OpaqueRasterInputs& a_inputs);
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();

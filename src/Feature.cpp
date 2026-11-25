@@ -403,6 +403,12 @@ void Feature::ApplyDrawHooks()
 	}
 }
 
+void Feature::ApplyOpaqueRasterReadyHooks(const OpaqueRasterInputs& a_inputs)
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsOpaqueRasterReadyHook(); });
+	ForEachLoadedFeature(features, "OnOpaqueRasterReady", [&](Feature* feature) { feature->OnOpaqueRasterReady(a_inputs); }, true);
+}
+
 void Feature::ApplyPreShadowMapsHooks()
 {
 	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsPreShadowMapsHook(); });

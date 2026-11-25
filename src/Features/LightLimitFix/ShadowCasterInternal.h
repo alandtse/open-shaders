@@ -648,7 +648,7 @@ namespace ShadowCasterManager
 	uint32_t AtlasCapacityCells();
 	uint32_t CellsForScale(float scale);
 	bool EnsureSlotTile(int32_t poolSlot, float scale);
-	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete = true);
+	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete = true, bool a_nativeStaticOmitted = false);
 
 	/// Sampling parameters belonging to the rendered tile depth.
 	struct ShadowBakeSnapshot
@@ -692,6 +692,10 @@ namespace ShadowCasterManager
 	/// Marks the sampled tile's content invalid so the scheduler redraws it. No-op while a
 	/// staged promotion exists, because the sampled tile is then not the one being rendered.
 	void InvalidateSlotTileContent(int32_t poolSlot);
+	/** @brief Invalidates only raster tiles that omitted native static casters, including parked tiles. */
+	void InvalidateNativeRasterTiles();
+	/** @brief Retires native tracking after the upstream session reset frees all tiles. */
+	void ResetNativeRasterTracking();
 
 	// --- Static/dynamic split cache (parallel static depth atlas) ------------
 

@@ -129,6 +129,7 @@ namespace DX12Native
 		const auto center = grid->requested.front();
 		const uint64_t id = Identity(candidate);
 		const uint64_t stableKey = StableObjectKey(candidate);
+		uint64_t admittedGeneration = 0;
 		{
 			std::scoped_lock lock(mutex);
 			if (activeCenter != center || activeSize != grid->size) {
@@ -173,6 +174,7 @@ namespace DX12Native
 				!captured.insert(id).second)
 				return;
 			frameBytes += static_cast<uint32_t>(bytes);
+			admittedGeneration = generation;
 		}
 
 		try {
@@ -191,10 +193,8 @@ namespace DX12Native
 			packet.indices.assign(candidate.indices, candidate.indices + indexCount);
 			{
 				std::scoped_lock lock(mutex);
-				if (activeCenter != center || activeSize != grid->size) {
-					captured.erase(id);
+				if (generation != admittedGeneration || activeCenter != center || activeSize != grid->size)
 					return;
-				}
 				if (!worker.joinable()) {
 					worker = std::jthread([this](std::stop_token stop) {
 						try {
@@ -204,13 +204,14 @@ namespace DX12Native
 						}
 					});
 				}
-				packet.generation = generation;
+				packet.generation = admittedGeneration;
 				pending.push_back(std::move(packet));
 			}
 			wake.notify_one();
 		} catch (...) {
 			std::scoped_lock lock(mutex);
-			captured.erase(id);
+			if (generation == admittedGeneration)
+				captured.erase(id);
 		}
 	}
 
