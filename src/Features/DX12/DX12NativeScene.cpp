@@ -127,7 +127,8 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	const auto scene = acceleration.GetScene();
 	const auto lights = shadowLights.load(std::memory_order_acquire);
 	const auto* ni = light->light.get();
-	if (!scene || !scene->acceleration || !lights || !ni)
+	if (!scene || !scene->acceleration || !lights || !ni ||
+		scene->scope != shadowLightScope.load(std::memory_order_acquire))
 		return false;
 
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
@@ -246,9 +247,11 @@ void DX12NativeScene::PreShadowMaps()
 	nativeSessionStarted = true;
 	auto grid = globals::features::dx12Resources.GetGrid();
 	if (!grid || !grid->requested.front().scope) {
+		shadowLightScope.store(0, std::memory_order_release);
 		shadowLights.store(nullptr, std::memory_order_release);
 		return;
 	}
+	shadowLightScope.store(grid->requested.front().scope, std::memory_order_release);
 	// SCM reads a single per-frame publication without re-enumerating tiles
 	// for every shadow light; the same ordered sources feed RayQuery.
 	shadowLights.store(std::make_shared<const std::vector<DX12::PreparedLight>>(
@@ -406,6 +409,7 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requi
 void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 {
 	if (a_opening && nativeSessionStarted) {
+		shadowLightScope.store(0, std::memory_order_release);
 		shadowLights.store(nullptr, std::memory_order_release);
 		{
 			std::scoped_lock lock(runtimeLightMutex);
@@ -425,6 +429,7 @@ void DX12NativeScene::OnRuntimeDisabled()
 	if (!nativeSessionStarted)
 		return;
 	nativeSessionStarted = false;
+	shadowLightScope.store(0, std::memory_order_release);
 	shadowLights.store(nullptr, std::memory_order_release);
 	{
 		std::scoped_lock lock(runtimeLightMutex);

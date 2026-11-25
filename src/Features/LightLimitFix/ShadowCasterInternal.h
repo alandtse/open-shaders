@@ -694,6 +694,8 @@ namespace ShadowCasterManager
 	void InvalidateSlotTileContent(int32_t poolSlot);
 	/** @brief Invalidates only raster tiles that omitted native static casters, including parked tiles. */
 	void InvalidateNativeRasterTiles();
+	bool SlotNativeStaticOmitted(int32_t poolSlot);
+	void InvalidateNativeRasterTile(int32_t poolSlot);
 	/** @brief Retires native tracking after the upstream session reset frees all tiles. */
 	void ResetNativeRasterTracking();
 

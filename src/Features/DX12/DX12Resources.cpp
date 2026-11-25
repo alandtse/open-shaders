@@ -268,7 +268,7 @@ namespace DX12
 		return true;
 	}
 
-	bool ResourceGrid::PublishRuntimeShape(std::shared_ptr<const Shape> shape, float centerX, float centerY)
+	bool ResourceGrid::PublishRuntimeShape(std::shared_ptr<const Shape> shape, float centerX, float centerY, uint32_t expectedScope)
 	{
 		// Larger interior furniture and room pieces often exceed 256 KiB.
 		// Keep the whole runtime supplement transient and strictly budgeted.
@@ -284,7 +284,7 @@ namespace DX12
 			return false;
 		std::scoped_lock lock(mutex);
 		const auto current = snapshot.load(std::memory_order_acquire);
-		if (!current->requested.front().scope)
+		if (!current->requested.front().scope || (expectedScope && current->requested.front().scope != expectedScope))
 			return false;
 		const auto x = Coordinate(centerX, current->size);
 		const auto y = Coordinate(centerY, current->size);
@@ -661,6 +661,7 @@ void DX12Resources::PreShadowMaps()
 	const auto position = player->GetPosition();
 	preparationActive = true;
 	grid.Advance(scope, settings.SubcellSize, position.x, position.y);
+	runtimePublicationEnabled.store(true, std::memory_order_release);
 	if (!companion)
 		companion = std::make_unique<DX12::CompanionWorker>();
 	const auto neighborhood = grid.Snapshot();
@@ -779,6 +780,7 @@ void DX12Resources::OnRuntimeDisabled()
 {
 	if (!preparationActive)
 		return;
+	runtimePublicationEnabled.store(false, std::memory_order_release);
 	ResetPreparation();
 	preparationActive = false;
 }

@@ -72,6 +72,7 @@ private:
 	DX12Native::ShadowMaskTrace shadows;
 	// One immutable, ordered light selection shared by SCM and the RayQuery dispatch.
 	std::atomic<std::shared_ptr<const std::vector<DX12::PreparedLight>>> shadowLights;
+	std::atomic<uint32_t> shadowLightScope{ 0 };
 	bool shadowMaskEnabled = true;
 	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
 	bool offloadStaticShadows = true;

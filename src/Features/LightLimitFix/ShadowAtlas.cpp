@@ -979,22 +979,33 @@ namespace ShadowCasterManager
 		return false;
 	}
 
+	bool SlotNativeStaticOmitted(int32_t poolSlot)
+	{
+		return s_atlas.ready && poolSlot >= 0 && static_cast<size_t>(poolSlot) < s_atlas.slots.size() &&
+		       s_atlas.slots[poolSlot].nativeStaticOmitted;
+	}
+
+	void InvalidateNativeRasterTile(int32_t poolSlot)
+	{
+		if (!SlotNativeStaticOmitted(poolSlot))
+			return;
+		auto& slot = s_atlas.slots[poolSlot];
+		slot.valid = false;
+		slot.staticValid = false;
+		slot.staticHash = 0;
+		slot.staticEmpty = false;
+		slot.staticCompositePending = false;
+		slot.bakeValid = false;
+		slot.bakePending = false;
+		slot.nativeStaticOmitted = false;
+	}
+
 	void InvalidateNativeRasterTiles()
 	{
 		if (!s_atlas.ready)
 			return;
-		for (auto& slot : s_atlas.slots) {
-			if (!slot.nativeStaticOmitted)
-				continue;
-			slot.valid = false;
-			slot.staticValid = false;
-			slot.staticHash = 0;
-			slot.staticEmpty = false;
-			slot.staticCompositePending = false;
-			slot.bakeValid = false;
-			slot.bakePending = false;
-			slot.nativeStaticOmitted = false;
-		}
+		for (size_t slot = 0; slot < s_atlas.slots.size(); ++slot)
+			InvalidateNativeRasterTile(static_cast<int32_t>(slot));
 	}
 
 	void FreeAllTiles()

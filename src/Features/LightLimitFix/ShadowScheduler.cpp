@@ -608,6 +608,8 @@ namespace ShadowCasterManager
 		// Old static and live atlas content must not survive ownership changes.
 		InvalidateSlotStaticBake(slot);
 		InvalidateSlotTileContent(slot);
+		if (!native)
+			InvalidateNativeRasterTile(slot);
 	}
 
 	static DX12::SCMNativePolicy GetSCMNativePolicy()
@@ -625,6 +627,23 @@ namespace ShadowCasterManager
 		s_nativeOwnershipPending = false;
 	}
 
+	static void ObserveNativeShadowLight(RE::BSShadowLight* light)
+	{
+		if (auto* ni = light->light.get()) {
+			const auto flicker = FlickerOf(ni);
+			globals::features::dx12NativeScene.ObserveRuntimeLight(light, LightPlacedReferenceID(ni),
+				flicker.movement > 0.0f || flicker.intensity > 0.0f, RestOrigin(ni));
+		}
+	}
+
+	static void MarkNativeRasterRecovery(LightEntry& entry)
+	{
+		entry.lastGeomHash = 0;
+		entry.awaitingTileResult = false;
+		entry.tileFailStreak = 0;
+		entry.tileRetryFrame = 0;
+	}
+
 	static void ReleaseNativeShadowOwnership()
 	{
 		if (!s_nativeOwnershipPending)
@@ -632,16 +651,39 @@ namespace ShadowCasterManager
 		for (int32_t slot = 0; slot < s_lights.Size; ++slot) {
 			auto& entry = s_lights.Lights[slot];
 			const auto it = s_splitState.find(entry.Light);
-			if (it == s_splitState.end() || !it->second.rasterOmitsNativeStatic)
+			const bool omitted = it != s_splitState.end() && it->second.rasterOmitsNativeStatic;
+			if (!omitted && !SlotNativeStaticOmitted(slot))
 				continue;
-			TransitionNativeShadowOwnership(it->second, slot, false);
-			entry.lastGeomHash = 0;
-			entry.awaitingTileResult = false;
-			entry.tileFailStreak = 0;
-			entry.tileRetryFrame = 0;
+			if (omitted)
+				TransitionNativeShadowOwnership(it->second, slot, false);
+			MarkNativeRasterRecovery(entry);
 		}
 		InvalidateNativeRasterTiles();
 		ResetNativeRasterTracking();
+	}
+
+	static void RefreshNativeRasterOwnership()
+	{
+		if (!GetSCMNativePolicy().observeLights || !globals::features::dx12NativeScene.CanSuppressSCMStatic()) {
+			ReleaseNativeShadowOwnership();
+			return;
+		}
+		for (int32_t slot = s_lights.PointLightFirst(); slot < s_lights.PointLightEnd(s_settings.ShadowLightCount); ++slot) {
+			auto& entry = s_lights.Lights[slot];
+			if (!entry.Light)
+				continue;
+			const auto it = s_splitState.find(entry.Light);
+			const bool omitted = it != s_splitState.end() && it->second.rasterOmitsNativeStatic;
+			if (!omitted && !SlotNativeStaticOmitted(slot))
+				continue;
+			ObserveNativeShadowLight(entry.Light);
+			if (globals::features::dx12NativeScene.OwnsStaticForLight(entry.Light, slot))
+				continue;
+			if (omitted)
+				TransitionNativeShadowOwnership(it->second, slot, false);
+			InvalidateNativeRasterTile(slot);
+			MarkNativeRasterRecovery(entry);
+		}
 	}
 
 	// --- Empty-dynamic sleep: schedule-time skip of moverless redraws --------
@@ -1361,12 +1403,7 @@ namespace ShadowCasterManager
 			const bool flickers = FlickersFromLiveOrigin(light->light.get());
 			bool native = false;
 			if (nativePolicy.observeLights) {
-				auto* nativeLight = light->light.get();
-				const auto flicker = nativeLight ? FlickerOf(nativeLight) : FlickerAmplitudes{};
-				const bool runtimeFlickers = flicker.movement > 0.0f || flicker.intensity > 0.0f;
-				if (nativeLight)
-					globals::features::dx12NativeScene.ObserveRuntimeLight(light, LightPlacedReferenceID(nativeLight),
-						runtimeFlickers, RestOrigin(nativeLight));
+				ObserveNativeShadowLight(light);
 				native = globals::features::dx12NativeScene.OwnsStaticForLight(light, slotIndex);
 			}
 			bool split = !native && StaticAtlasReady() && !carrier && !flickers;
@@ -4234,9 +4271,8 @@ namespace ShadowCasterManager
 			ValidateCandidates(camera, wantDiag, candidates);
 
 			UpdatePoolMembership(ssn, sunLight, candidates);
-			if (s_nativeOwnershipPending && (!GetSCMNativePolicy().observeLights ||
-												!globals::features::dx12NativeScene.CanSuppressSCMStatic()))
-				ReleaseNativeShadowOwnership();
+			if (s_nativeOwnershipPending)
+				RefreshNativeRasterOwnership();
 
 			double budget = ComputeRedrawBudget();
 			s_redrawnLightsThisFrame = 0;
@@ -4394,14 +4430,8 @@ namespace ShadowCasterManager
 					continue;
 				// Cached lights still publish live parameters; only accumulation may change raster provenance.
 				if (observeNativeLights && !e.RedrawFrame) {
-					if (s_splitState.contains(e.Light)) {
-						auto* nativeLight = e.Light->light.get();
-						const auto flicker = nativeLight ? FlickerOf(nativeLight) : FlickerAmplitudes{};
-						const bool runtimeFlickers = flicker.movement > 0.0f || flicker.intensity > 0.0f;
-						if (nativeLight)
-							globals::features::dx12NativeScene.ObserveRuntimeLight(e.Light, LightPlacedReferenceID(nativeLight),
-								runtimeFlickers, RestOrigin(nativeLight));
-					}
+					if (const auto it = s_splitState.find(e.Light); it != s_splitState.end() && !it->second.rasterOmitsNativeStatic)
+						ObserveNativeShadowLight(e.Light);
 				}
 				if (!e.RedrawFrame)
 					continue;

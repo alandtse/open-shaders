@@ -298,7 +298,7 @@ namespace DX12Native
 			}
 			// Existing immutable grid owns residency and geometry revisions.
 			globals::features::dx12Resources.PublishRuntimeShape(
-				std::move(shape), packet.centerX, packet.centerY);
+				std::move(shape), packet.centerX, packet.centerY, packet.sourceCenter.scope);
 		}
 	}
 }
