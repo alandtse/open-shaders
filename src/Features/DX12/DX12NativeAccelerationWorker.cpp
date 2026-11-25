@@ -185,7 +185,7 @@ namespace DX12Native
 		// occupy a pool slot while a fence is pending; no timer or dedicated waiter.
 		const bool changed = a_state->epoch != a_state->processedEpoch;
 		const bool ready = a_state->needsAdvance &&
-			(!a_state->waitFence || GpuFenceRetired(a_state->waitFence.get(), a_state->waitValue));
+		                   (!a_state->waitFence || GpuFenceRetired(a_state->waitFence.get(), a_state->waitValue));
 		const bool retire = std::ranges::any_of(a_state->consumers, IsRetired);
 		if (!changed && !ready && !retire)
 			return;
