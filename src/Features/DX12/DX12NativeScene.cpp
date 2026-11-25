@@ -8,6 +8,7 @@
 #include "RE/T/TESObjectCELL.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/Game.h"
 
 #include <algorithm>
 #include <cmath>
@@ -104,8 +105,7 @@ void DX12NativeScene::RestoreDefaultSettings()
 
 bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
 {
-	const auto* player = globals::game::player;
-	const auto* cell = player ? player->GetParentCell() : nullptr;
+	const auto* cell = Util::GetPlayerCell();
 	return cell && (!cell->IsExteriorCell() || outdoorShadowOffloading);
 }
 
