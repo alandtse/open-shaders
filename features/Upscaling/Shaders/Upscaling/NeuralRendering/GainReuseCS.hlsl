@@ -8,11 +8,13 @@ Texture2D<float> GuideDepth : register(t2);
 Texture2D<float2> MotionGuide : register(t3);
 Texture2D<float4> GainHistory : register(t4);
 Texture2D<float> DepthHistory : register(t5);
+Texture2D<float2> ChainedMotionHistory : register(t6);
 SamplerState LinearClamp : register(s0);
 
 RWTexture2D<float4> GainHistoryOutput : register(u0);
 RWTexture2D<float> DepthHistoryOutput : register(u1);
 RWTexture2D<float4> ReuseOutput : register(u2);
+RWTexture2D<float2> ChainedMotionOutput : register(u3);
 
 Texture2D<float4> OtherGainHistory : register(t12);
 Texture2D<float> OtherDepthHistory : register(t13);
@@ -22,7 +24,8 @@ cbuffer GainReuse : register(b1)
 	float4 CameraData;
 	uint DepthReversed;
 	uint CrossEye;
-	uint2 GainReusePad;
+	uint ChainMotion;
+	uint GainReusePad;
 	row_major float4x4 StereoMap;
 };
 
@@ -78,9 +81,16 @@ bool SampleGain(Texture2D<float4> gains, Texture2D<float> depths, float2 uv, flo
 	const float currentLogLuma = log2(max(Color::RGBToLuminance(currentLinear, Luma), kLumaEpsilon));
 	const float currentDepth = GuideDepth[id.xy];
 	// The guide holds the engine's per-eye normalized UV displacement, current to previous, so adding it
-	// to the current UV lands on the pixel the gain was stored at.
+	// to the current UV lands on this surface one frame earlier.
 	const float2 uv = (float2(id.xy) + 0.5) / float2(Width, Height);
-	const float2 previousUV = uv + MotionGuide[id.xy];
+	float2 motion = MotionGuide[id.xy];
+	if (ChainMotion != 0) {
+		const float2 earlierUV = uv + motion;
+		if (all(earlierUV > 0.0) && all(earlierUV < 1.0))
+			motion += ChainedMotionHistory.Load(int3(earlierUV * float2(Width, Height), 0));
+	}
+	ChainedMotionOutput[id.xy] = motion;
+	const float2 previousUV = uv + motion;
 	float toneDelta = 0.0;
 	float2 chromaRedBlue = 0.0;
 	bool resolved = false;
