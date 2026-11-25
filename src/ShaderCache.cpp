@@ -3047,6 +3047,10 @@ namespace SIE
 
 	ShaderCache::~ShaderCache()
 	{
+		{
+			std::scoped_lock lock(compilationSet.compilationMutex);
+			runtimeTaskAdmissionClosed = true;
+		}
 		Clear();
 		StopFileWatcher();
 		// Signal management thread to stop dispatching; pool workers observe the same
@@ -3441,6 +3445,38 @@ namespace SIE
 	bool ShaderCache::IsGenerationStale(std::optional<uint64_t> a_taskGeneration, RE::BSShader::Type a_type) const
 	{
 		return a_taskGeneration && *a_taskGeneration != compilationSet.LiveGeneration(a_type);
+	}
+
+	bool ShaderCache::TrySubmitRuntimeTask(std::function<void()> a_work)
+	{
+		if (!a_work)
+			return false;
+		std::scoped_lock lock(compilationSet.compilationMutex);
+		const auto limit = backgroundCompilation ? backgroundCompilationThreadCount : compilationThreadCount;
+		if (runtimeTaskAdmissionClosed || !compilationSet.demandedTasks.empty() ||
+			static_cast<int32_t>(compilationSet.dispatchedTasksInFlight.load(std::memory_order_relaxed)) >= limit)
+			return false;
+
+		// Reserve a slot before posting, exactly as the shader dispatcher does. No shader
+		// generation or auxiliary queue ownership is attached to a runtime task.
+		compilationSet.dispatchedTasksInFlight.fetch_add(1, std::memory_order_relaxed);
+		try {
+			compilationPool.detach_task([this, work = std::move(a_work)]() mutable {
+				const SKSE::stl::scope_exit releaseSlot([this]() noexcept { compilationSet.ReleaseDispatchSlot(); });
+				try {
+					work();
+				} catch (const std::exception& error) {
+					logger::error("Runtime task failed: {}", error.what());
+				} catch (...) {
+					logger::error("Runtime task failed with an unknown exception");
+				}
+			});
+		} catch (...) {
+			compilationSet.dispatchedTasksInFlight.fetch_sub(1, std::memory_order_relaxed);
+			compilationSet.conditionVariable.notify_one();
+			return false;
+		}
+		return true;
 	}
 
 	void ShaderCache::StopCompilation()
