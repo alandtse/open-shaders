@@ -3482,8 +3482,8 @@ namespace SIE
 		std::scoped_lock lock(compilationSet.compilationMutex);
 		const auto limit = backgroundCompilation ? backgroundCompilationThreadCount : compilationThreadCount;
 		if (!Util::CanAdmitRuntimeTask(runtimeTaskAdmissionClosed, runtimeTaskInFlight,
-			!compilationSet.demandedTasks.empty(),
-			compilationSet.dispatchedTasksInFlight.load(std::memory_order_relaxed), limit))
+				!compilationSet.demandedTasks.empty(),
+				compilationSet.dispatchedTasksInFlight.load(std::memory_order_relaxed), limit))
 			return false;
 
 		// Reserve a slot before posting, exactly as the shader dispatcher does. No shader
@@ -3504,7 +3504,8 @@ namespace SIE
 				ZoneScopedN("CS::RuntimePoolTask");
 				TracyPlot("CS::RuntimePoolQueueWaitUs",
 					static_cast<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-						std::chrono::steady_clock::now() - queued).count()));
+						std::chrono::steady_clock::now() - queued)
+							.count()));
 				try {
 					work();
 				} catch (const std::exception& error) {
