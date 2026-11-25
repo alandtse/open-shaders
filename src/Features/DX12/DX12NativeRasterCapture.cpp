@@ -8,6 +8,7 @@
 #include <directx/d3dx12.h>
 #include <ranges>
 #include <stdexcept>
+#include <utility>
 
 namespace DX12Native
 {
@@ -21,7 +22,7 @@ namespace DX12Native
 			dependencies.push_back(FencePoint(slot->readyFence ? slot->readyFence.get() : producer.fence12.get(), slot->readyValue));
 			for (const auto& consumer : slot->consumers)
 				dependencies.push_back({ consumer.first, consumer.second });
-			RetireAfterFences(std::move(slot), backend.d3d12Device, std::move(dependencies));
+			RetireAfterFences(std::pair{ backend, std::move(slot) }, backend.d3d12Device, std::move(dependencies));
 		}
 	}
 

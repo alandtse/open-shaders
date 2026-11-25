@@ -1,5 +1,6 @@
 #include "Feature.h"
 
+#include <optional>
 #include <unordered_map>
 
 #include "FeatureIssues.h"
@@ -403,10 +404,28 @@ void Feature::ApplyDrawHooks()
 	}
 }
 
-void Feature::ApplyOpaqueRasterReadyHooks(const OpaqueRasterInputs& a_inputs)
+void Feature::ApplyOpaqueRasterReadyHooks(ID3D11Texture2D* a_litColor, ID3D11Texture2D* a_litSpecular,
+	ID3D11Texture2D* a_albedo, ID3D11Texture2D* a_normalRoughness, ID3D11Texture2D* a_masks,
+	ID3D11Texture2D* a_masks2, ID3D11Texture2D* a_reflectance, ID3D11Texture2D* a_motion)
 {
 	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsOpaqueRasterReadyHook(); });
-	ForEachLoadedFeature(features, "OnOpaqueRasterReady", [&](Feature* feature) { feature->OnOpaqueRasterReady(a_inputs); }, true);
+	if (features.empty())
+		return;
+	std::optional<OpaqueRasterInputs> inputs;
+	ForEachLoadedFeature(features, "OnOpaqueRasterReady", [&](Feature* feature) {
+		if (!inputs) {
+			inputs.emplace();
+			inputs->litColor.copy_from(a_litColor);
+			inputs->litSpecular.copy_from(a_litSpecular);
+			inputs->albedo.copy_from(a_albedo);
+			inputs->normalRoughness.copy_from(a_normalRoughness);
+			inputs->masks.copy_from(a_masks);
+			inputs->masks2.copy_from(a_masks2);
+			inputs->reflectance.copy_from(a_reflectance);
+			inputs->motion.copy_from(a_motion);
+		}
+		feature->OnOpaqueRasterReady(*inputs);
+	}, true);
 }
 
 void Feature::ApplyPreShadowMapsHooks()
