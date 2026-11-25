@@ -51,6 +51,7 @@ runs:
                     - 'include/**'
                     - '!**.hlsl'
                     - '!**.hlsli'
+                    - '!**.hlsl6'
                     - '!tests/shaders/**'
                   build:
                     - 'CMakeLists.txt'
@@ -75,6 +76,7 @@ runs:
                   hlsl:
                     - '**.hlsl'
                     - '**.hlsli'
+                    - '**.hlsl6'
                     - 'package/Shaders/**'
                     - 'features/**/Shaders/**'
                     - '!features/**/Shaders/Features/*.ini'

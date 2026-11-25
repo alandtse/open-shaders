@@ -1,4 +1,7 @@
 # Native Scene SM6.5 RayQuery. FXC still handles only early DX11 depth capture.
+if(NOT DEFINED NATIVE_SHADER_SOURCE_ROOT)
+    set(NATIVE_SHADER_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+endif()
 find_program(
     NATIVE_SHADOW_DXC
     NAMES dxc.exe dxc
@@ -8,10 +11,10 @@ find_program(
 )
 if(NATIVE_SHADOW_DXC)
     set(_shadow_source
-        "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders/DX12NativeScene/ShadowMask.hlsl6"
+        "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene/ShadowMask.hlsl6"
     )
     set(_shadow_density
-        "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders/DX12NativeScene/NativeTraceDensity.hlsli"
+        "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene/NativeTraceDensity.hlsli"
     )
     set(_shadow_dir "${CMAKE_CURRENT_BINARY_DIR}/DX12NativeScene")
     set(_shadow_dxil "${_shadow_dir}/ShadowMask.dxil")
@@ -19,8 +22,8 @@ if(NATIVE_SHADOW_DXC)
         OUTPUT "${_shadow_dxil}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_shadow_dir}"
         COMMAND
-            "${NATIVE_SHADOW_DXC}" -T cs_6_5 -E main -HV 2021 -O3 -I
-            "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders/DX12NativeScene"
+            "${NATIVE_SHADOW_DXC}" -T cs_6_5 -E main -HV 2021 -O3 ${NATIVE_SHADER_VALIDATION_FLAGS} -I
+            "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene"
             -Fo "${_shadow_dxil}" "${_shadow_source}"
         DEPENDS "${_shadow_source}" "${_shadow_density}"
         VERBATIM

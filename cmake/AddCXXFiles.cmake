@@ -61,6 +61,15 @@ function(add_cxx_files TARGET)
         "package/**/*.hlsli"
     )
 
+    # Native shader sources are formatted but never added to the legacy FXC list.
+    file(
+        GLOB_RECURSE NATIVE_HLSL_FILES
+        LIST_DIRECTORIES false
+        CONFIGURE_DEPENDS
+        "features/*.hlsl6"
+        "package/*.hlsl6"
+    )
+    set(NATIVE_HLSL_FILES ${NATIVE_HLSL_FILES} PARENT_SCOPE)
     set(HLSL_FILES ${HLSL_FILES} PARENT_SCOPE)
 
     list(APPEND CPP_SOURCES ${HEADER_FILES})
