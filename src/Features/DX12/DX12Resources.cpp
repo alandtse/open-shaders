@@ -501,6 +501,8 @@ DX12Resources::~DX12Resources() = default;
 
 void DX12Resources::ResetPreparation()
 {
+	if (!preparationActive)
+		return;
 	// A new subcell size or world-scene epoch invalidates the grid and all
 	// companion work. Keep this off the normal settings-load path when unchanged.
 	if (companion)
@@ -628,11 +630,12 @@ void DX12Resources::RestoreDefaultSettings()
 	}
 }
 
+bool DX12Resources::WantsPreShadowMapsHook() const { return IsActive(); }
+
 void DX12Resources::PreShadowMaps()
 {
 	if (!IsActive()) {
-		if (companion && (grid.Snapshot()->requested.front().scope || inFlight || adopting))
-			ResetPreparation();
+		OnRuntimeDisabled();
 		return;
 	}
 	CS_GPU_PASS("DX12Resources::Grid");
@@ -656,6 +659,7 @@ void DX12Resources::PreShadowMaps()
 		lastVisitedCell = cellID;
 	const uint32_t scope = world ? world->GetFormID() : cell->GetFormID();
 	const auto position = player->GetPosition();
+	preparationActive = true;
 	grid.Advance(scope, settings.SubcellSize, position.x, position.y);
 	if (!companion)
 		companion = std::make_unique<DX12::CompanionWorker>();
@@ -773,7 +777,10 @@ void DX12Resources::OnSceneTransitionReset(bool /*opening*/)
 
 void DX12Resources::OnRuntimeDisabled()
 {
+	if (!preparationActive)
+		return;
 	ResetPreparation();
+	preparationActive = false;
 }
 
 std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const

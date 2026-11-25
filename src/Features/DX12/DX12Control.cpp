@@ -112,5 +112,8 @@ void DX12Control::RestoreDefaultSettings()
 
 void DX12Control::OnRuntimeDisabled()
 {
-	bootActive.store(false, std::memory_order_release);
+	if (!bootActive.exchange(false, std::memory_order_acq_rel))
+		return;
+	globals::features::dx12NativeScene.OnRuntimeDisabled();
+	globals::features::dx12Resources.OnRuntimeDisabled();
 }

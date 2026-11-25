@@ -27,18 +27,21 @@ struct DX12NativeScene final : Feature
 	bool SupportsVR() override { return false; }
 
 	void DrawSettings() override;
-	bool WantsRenderPassHook() const override { return true; }
+	bool WantsRenderPassHook() const override;
 	std::function<void()> OnRenderPassBegin(const RE::BSRenderPass* pass) override;
-	bool WantsPreShadowMapsHook() const override { return true; }
+	bool WantsPreShadowMapsHook() const override;
 	void PreShadowMaps() override;
 	void LoadSettings(json& a_input) override;
 	void SaveSettings(json& a_output) override;
 	void RestoreDefaultSettings() override;
+	bool WantsOpaqueRasterReadyHook() const override;
 	void OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs) override;
 	/** @brief Observe CPU-backed opaque rigid geometry from SCM or normal render passes. */
 	void ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requireStability = false);
 	/** @brief SCM hands native-owned lights' static casters to RayQuery and retains movers. */
 	bool OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const;
+	/** @brief Global prerequisites for suppressing SCM static shadows. */
+	bool CanSuppressSCMStatic() const;
 	// Snapshot LLF/SCM point-light parameters without altering the DX11 light.
 	void ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID, bool flickers,
 		const RE::NiPoint3& restOrigin);
@@ -61,6 +64,7 @@ struct DX12NativeScene final : Feature
 private:
 	/** @brief Gates only native shadow replacement; never disables DX11 baseline shadows. */
 	bool CanOffloadShadowsInCurrentCell() const;
+	bool nativeSessionStarted = false;  // Render/main-thread lifecycle.
 	std::optional<GraphicsBackend> backend;
 	DX12Native::RasterCapture raster;
 	DX12Native::RuntimeGeometryCapture geometryCapture;

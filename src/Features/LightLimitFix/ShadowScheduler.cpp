@@ -577,7 +577,7 @@ namespace ShadowCasterManager
 		bool bakeUnproven = false;
 		int bakeEpoch = -1;                      ///< classifier epoch of the latest StaticOnly bake
 		bool bakeStale = false;                  ///< a caster changed class since that bake: render full until it is rebaked
-		bool nativeDynamicOnly = false;          ///< Static shadows are delegated to DX12.
+		bool rasterOmitsNativeStatic = false;    ///< Last accumulation omitted native static casters.
 		CasterPass accumMode = CasterPass::All;  ///< the split decision of this frame's first accumulate
 		RE::NiMatrix3 lastRot{};                 ///< light rotation at the previous accumulate
 	};
@@ -594,9 +594,9 @@ namespace ShadowCasterManager
 
 	static void TransitionNativeShadowOwnership(SplitState& st, int32_t slot, bool native)
 	{
-		if (st.nativeDynamicOnly == native)
+		if (st.rasterOmitsNativeStatic == native)
 			return;
-		st.nativeDynamicOnly = native;
+		st.rasterOmitsNativeStatic = native;
 		s_nativeOwnershipPending |= native;
 		st.bakeQueued = true;
 		st.bakeThisFrame = false;
@@ -616,6 +616,15 @@ namespace ShadowCasterManager
 		return DX12::SelectSCMNativePolicy(control.IsActive(), control.IsShadowOffloadMode(), globals::game::isVR);
 	}
 
+	void ResetNativeRasterTracking()
+	{
+		if (!s_nativeOwnershipPending)
+			return;
+		for (auto& [light, state] : s_splitState)
+			state.rasterOmitsNativeStatic = false;
+		s_nativeOwnershipPending = false;
+	}
+
 	static void ReleaseNativeShadowOwnership()
 	{
 		if (!s_nativeOwnershipPending)
@@ -623,15 +632,16 @@ namespace ShadowCasterManager
 		for (int32_t slot = 0; slot < s_lights.Size; ++slot) {
 			auto& entry = s_lights.Lights[slot];
 			const auto it = s_splitState.find(entry.Light);
-			if (it == s_splitState.end() || !it->second.nativeDynamicOnly)
+			if (it == s_splitState.end() || !it->second.rasterOmitsNativeStatic)
 				continue;
 			TransitionNativeShadowOwnership(it->second, slot, false);
-			entry.LastDrawnFrame = -1;
 			entry.lastGeomHash = 0;
+			entry.awaitingTileResult = false;
+			entry.tileFailStreak = 0;
+			entry.tileRetryFrame = 0;
 		}
-		for (auto& [light, state] : s_splitState)
-			state.nativeDynamicOnly = false;
-		s_nativeOwnershipPending = false;
+		InvalidateNativeRasterTiles();
+		ResetNativeRasterTracking();
 	}
 
 	// --- Empty-dynamic sleep: schedule-time skip of moverless redraws --------
@@ -1362,7 +1372,7 @@ namespace ShadowCasterManager
 			bool split = !native && StaticAtlasReady() && !carrier && !flickers;
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
-			if (nativePolicy.observeLights || st->nativeDynamicOnly)
+			if (nativePolicy.observeLights || st->rasterOmitsNativeStatic)
 				TransitionNativeShadowOwnership(*st, slotIndex, native);
 			// A second accumulate this frame is skipped below, so it keeps the first call's split decision.
 			const auto prior = s_lightAccumFrame.find(light);
@@ -4167,6 +4177,8 @@ namespace ShadowCasterManager
 			s_everHadShadow.clear();  // a cell swap recycles NiLight addresses
 			s_fadedOutLights.clear();
 			std::erase_if(s_lastValidFrame, [ssn](const auto& kv) { return !KeepsSlotThroughCellShift(ssn, kv.first); });
+			if (s_nativeOwnershipPending)
+				ReleaseNativeShadowOwnership();
 			s_splitState.clear();  // bakeQueued defaults true: every light re-bakes
 			ShadowCasterManager::InvalidateAllStaticBakes();
 		}
@@ -4222,7 +4234,8 @@ namespace ShadowCasterManager
 			ValidateCandidates(camera, wantDiag, candidates);
 
 			UpdatePoolMembership(ssn, sunLight, candidates);
-			if (s_nativeOwnershipPending && !GetSCMNativePolicy().observeLights)
+			if (s_nativeOwnershipPending && (!GetSCMNativePolicy().observeLights ||
+				!globals::features::dx12NativeScene.CanSuppressSCMStatic()))
 				ReleaseNativeShadowOwnership();
 
 			double budget = ComputeRedrawBudget();
@@ -4379,18 +4392,15 @@ namespace ShadowCasterManager
 				auto& e = s_lights.Lights[i];
 				if (!e.Light)
 					continue;
-				// Retire stale raster static depth on ownership changes even
-				// when the scheduler did not admit a redraw this frame.
-				if (observeNativeLights) {
-					if (auto it = s_splitState.find(e.Light); it != s_splitState.end()) {
+				// Cached lights still publish live parameters; only accumulation may change raster provenance.
+				if (observeNativeLights && !e.RedrawFrame) {
+					if (s_splitState.contains(e.Light)) {
 						auto* nativeLight = e.Light->light.get();
 						const auto flicker = nativeLight ? FlickerOf(nativeLight) : FlickerAmplitudes{};
 						const bool runtimeFlickers = flicker.movement > 0.0f || flicker.intensity > 0.0f;
 						if (nativeLight)
 							globals::features::dx12NativeScene.ObserveRuntimeLight(e.Light, LightPlacedReferenceID(nativeLight),
 								runtimeFlickers, RestOrigin(nativeLight));
-						const bool native = globals::features::dx12NativeScene.OwnsStaticForLight(e.Light, i);
-						TransitionNativeShadowOwnership(it->second, i, native);
 					}
 				}
 				if (!e.RedrawFrame)
@@ -4400,7 +4410,7 @@ namespace ShadowCasterManager
 				bool emptyRender = false;
 				if (AtlasActive()) {
 					auto* split = StaticAtlasReady() ? &s_splitState[e.Light] : nullptr;
-					const bool useSplit = split && !split->nativeDynamicOnly &&
+					const bool useSplit = split && !split->rasterOmitsNativeStatic &&
 					                      !split->splitExcluded && !split->fullThisFrame;
 					AtlasTileTexels live{};
 					const bool resizeAfterComposite = useSplit && !split->bakeThisFrame &&
@@ -4538,8 +4548,14 @@ namespace ShadowCasterManager
 					// Never mark an EMPTY render valid: a starved fresh tile stays
 					// contentValid=false, so the sample side reads UNSHADOWED, never a
 					// degenerate (cleared) tile, even under high pressure.
-					if (!emptyRender)
-						MarkSlotTileRendered(i);
+					if (!emptyRender) {
+						bool nativeStaticOmitted = false;
+						if (s_nativeOwnershipPending) {
+							const auto it = s_splitState.find(e.Light);
+							nativeStaticOmitted = it != s_splitState.end() && it->second.rasterOmitsNativeStatic;
+						}
+						MarkSlotTileRendered(i, true, nativeStaticOmitted);
+					}
 				}
 			}
 		}

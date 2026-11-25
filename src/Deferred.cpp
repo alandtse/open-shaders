@@ -417,7 +417,7 @@ void Deferred::DeferredPasses()
 		Util::AsReal(normalRoughness.texture), Util::AsReal(masks.texture), Util::AsReal(masks2.texture),
 		Util::AsReal(reflectance.texture), Util::AsReal(motionVectors.texture)
 	};
-	Feature::ForEachLoadedFeature("OnOpaqueRasterReady", [&](Feature* feature) { feature->OnOpaqueRasterReady(opaqueInputs); }, true);
+	Feature::ApplyOpaqueRasterReadyHooks(opaqueInputs);
 
 	bool interior = Util::IsInterior();
 

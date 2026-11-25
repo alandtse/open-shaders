@@ -109,15 +109,19 @@ bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
 	return cell && (!cell->IsExteriorCell() || outdoorShadowOffloading);
 }
 
+bool DX12NativeScene::CanSuppressSCMStatic() const
+{
+	return loaded && !globals::game::isVR && globals::features::dx12Control.IsActive() &&
+	       globals::features::dx12Control.IsShadowOffloadMode() && shadowMaskEnabled &&
+	       offloadStaticShadows && CanOffloadShadowsInCurrentCell();
+}
+
 bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const
 {
 	// SCM keeps raster dynamic casters unconditionally. Static casters may be
 	// omitted only when this exact runtime light was matched to a native emitter
 	// in the current frame; a nearby prepared light is not sufficient proof.
-	if (!light || slot < 0 || !loaded || globals::game::isVR ||
-		!globals::features::dx12Control.IsActive() ||
-		!globals::features::dx12Control.IsShadowOffloadMode() ||
-		!shadowMaskEnabled || !offloadStaticShadows || !CanOffloadShadowsInCurrentCell() ||
+	if (!light || slot < 0 || !CanSuppressSCMStatic() ||
 		light->GetIsFrustumOrDirectionalLight() || !globals::game::graphicsState)
 		return false;
 	const auto scene = acceleration.GetScene();
@@ -225,12 +229,21 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 	}
 }
 
+bool DX12NativeScene::WantsRenderPassHook() const
+{
+	return globals::features::dx12Control.IsActive() && !globals::game::isVR;
+}
+
+bool DX12NativeScene::WantsPreShadowMapsHook() const { return WantsRenderPassHook(); }
+bool DX12NativeScene::WantsOpaqueRasterReadyHook() const { return WantsRenderPassHook(); }
+
 void DX12NativeScene::PreShadowMaps()
 {
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive()) {
-		shadowLights.store(nullptr, std::memory_order_release);
+		OnRuntimeDisabled();
 		return;
 	}
+	nativeSessionStarted = true;
 	auto grid = globals::features::dx12Resources.GetGrid();
 	if (!grid || !grid->requested.front().scope) {
 		shadowLights.store(nullptr, std::memory_order_release);
@@ -251,7 +264,6 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& /*a_inputs*/
 {
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive())
 		return;
-	CS_GPU_PASS("DX12NativeScene::OpaqueRasterReady");
 	if (!globals::game::graphicsState || !globals::state || globals::state->isMapMenuOpen ||
 		(globals::state->permutationData.ExtraShaderDescriptor &
 			static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections)))
@@ -261,6 +273,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& /*a_inputs*/
 		!CanOffloadShadowsInCurrentCell())
 		return;
 
+	CS_GPU_PASS("DX12NativeScene::OpaqueRasterReady");
 	if (!backend) {
 		std::string reason;
 		backend = GraphicsBackend::Create(globals::d3d::device, globals::d3d::context, reason);
@@ -313,8 +326,8 @@ std::function<void()> DX12NativeScene::OnRenderPassBegin(const RE::BSRenderPass*
 {
 	// Observe visible static geometry already drawn by the existing opaque
 	// render path. This does not change render-pass state or DX11 draw behavior.
-	if (!pass || !pass->geometry || !loaded || globals::game::isVR ||
-		!shadowMaskEnabled || !globals::features::dx12Control.IsActive() ||
+	if (!loaded || !globals::features::dx12Control.IsActive() || globals::game::isVR ||
+		!pass || !pass->geometry || !shadowMaskEnabled ||
 		!globals::features::dx12Control.IsShadowOffloadMode() ||
 		!globals::features::upscaling.loaded ||
 		!globals::state || globals::state->isMapMenuOpen ||
@@ -392,7 +405,7 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requi
 
 void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 {
-	if (a_opening) {
+	if (a_opening && nativeSessionStarted) {
 		shadowLights.store(nullptr, std::memory_order_release);
 		{
 			std::scoped_lock lock(runtimeLightMutex);
@@ -409,6 +422,9 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 
 void DX12NativeScene::OnRuntimeDisabled()
 {
+	if (!nativeSessionStarted)
+		return;
+	nativeSessionStarted = false;
 	shadowLights.store(nullptr, std::memory_order_release);
 	{
 		std::scoped_lock lock(runtimeLightMutex);
