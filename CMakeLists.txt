@@ -641,8 +641,8 @@ if(CLANG_FORMAT_PATH)
     add_custom_target(
         FORMAT_CODE
         COMMAND
-            ${CLANG_FORMAT_PATH} -i -style=file
-            ${CPP_SOURCES} ${HLSL_FILES} ${NATIVE_HLSL_FILES}
+            ${CLANG_FORMAT_PATH} -i -style=file ${CPP_SOURCES} ${HLSL_FILES}
+            ${NATIVE_HLSL_FILES}
         VERBATIM
         COMMENT "Running clang format for cpp and hlsl files"
     )
