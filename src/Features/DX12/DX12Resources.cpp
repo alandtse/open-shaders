@@ -9,7 +9,9 @@
 #include "Utils/PerfUtils.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <magic_enum/magic_enum.hpp>
 #include <ranges>
 #include <unordered_set>
 
@@ -416,25 +418,22 @@ namespace
 
 	const char* TileStatus(const std::shared_ptr<const DX12::Tile>& tile)
 	{
-		if (!tile)
-			return T("menu.dx12.resources.status.not_processed", "Not processed");
-		switch (tile->state) {
-		case DX12::Tile::State::Ready:
-			return T("menu.dx12.resources.status.loaded", "Loaded");
-		case DX12::Tile::State::ReadyPartial:
-			return T("menu.dx12.resources.status.partially_loaded", "Partially loaded");
-		case DX12::Tile::State::Preparing:
-			return T("menu.dx12.resources.status.processing", "Processing");
-		case DX12::Tile::State::RetryWaiting:
-			return T("menu.dx12.resources.status.retry_pending", "Failed (retry pending)");
-		case DX12::Tile::State::Incomplete:
-			return T("menu.dx12.resources.status.retry_exhausted", "Skipped (retry exhausted)");
-		case DX12::Tile::State::Deferred:
-			return T("menu.dx12.resources.status.predictive_budget", "Skipped (predictive budget)");
-		case DX12::Tile::State::Requested:
-			return T("menu.dx12.resources.status.not_processed", "Not processed");
-		}
-		return T("menu.dx12.resources.status.unknown", "Unknown");
+		using State = DX12::Tile::State;
+		using Label = const char* (*)();
+		static constexpr auto labels = [] {
+			std::array<Label, magic_enum::enum_count<State>()> result{};
+			result[*magic_enum::enum_index(State::Requested)] = [] { return T("menu.dx12.resources.status.not_processed", "Not processed"); };
+			result[*magic_enum::enum_index(State::Preparing)] = [] { return T("menu.dx12.resources.status.processing", "Processing"); };
+			result[*magic_enum::enum_index(State::Ready)] = [] { return T("menu.dx12.resources.status.loaded", "Loaded"); };
+			result[*magic_enum::enum_index(State::ReadyPartial)] = [] { return T("menu.dx12.resources.status.partially_loaded", "Partially loaded"); };
+			result[*magic_enum::enum_index(State::RetryWaiting)] = [] { return T("menu.dx12.resources.status.retry_pending", "Failed (retry pending)"); };
+			result[*magic_enum::enum_index(State::Incomplete)] = [] { return T("menu.dx12.resources.status.retry_exhausted", "Skipped (retry exhausted)"); };
+			result[*magic_enum::enum_index(State::Deferred)] = [] { return T("menu.dx12.resources.status.predictive_budget", "Skipped (predictive budget)"); };
+			return result;
+		}();
+		static_assert(std::ranges::all_of(labels, [](Label label) { return label != nullptr; }));
+		const auto index = magic_enum::enum_index(tile ? tile->state : State::Requested);
+		return index ? labels[*index]() : T("menu.dx12.resources.status.unknown", "Unknown");
 	}
 
 	ImU32 TileColor(const std::shared_ptr<const DX12::Tile>& tile, bool active)
