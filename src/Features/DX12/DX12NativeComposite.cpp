@@ -366,21 +366,25 @@ namespace DX12Native
 				// The command list was queued. A tail Signal on that queue tracks
 				// its completion even when the original Signal failed.
 				const uint64_t tail = slot->fence.Next();
-				if (SUCCEEDED(queue->Signal(slot->fence.fence12.get(), tail))) {
+				if (const HRESULT hr = queue->Signal(slot->fence.fence12.get(), tail); SUCCEEDED(hr)) {
 					slot->frame->producerFence = slot->fence.fence12;
 					slot->frame->producerValue = tail;
-				} else
+				} else {
 					slot->untracked = true;
+					logger::warn("[NativeComposite] DX12 recovery signal failed; retaining slot: {}", DX::com_exception(hr).what());
+				}
 			} else if (producerSignalled && slot->fence.fence11) {
 				// No DX12 work was submitted, but the DX11 copy may still be
 				// pending. Fence it before allowing this slot to be recycled.
 				const uint64_t tail = slot->fence.Next();
-				if (SUCCEEDED(context11->Signal(slot->fence.fence11.get(), tail))) {
+				if (const HRESULT hr = context11->Signal(slot->fence.fence11.get(), tail); SUCCEEDED(hr)) {
 					context11->Flush();
 					slot->frame->producerFence = slot->fence.fence12;
 					slot->frame->producerValue = tail;
-				} else
+				} else {
 					slot->untracked = true;
+					logger::warn("[NativeComposite] DX11 recovery signal failed; retaining slot: {}", DX::com_exception(hr).what());
+				}
 			}
 			if (!std::exchange(captureFailureLogged, true)) {
 				try {

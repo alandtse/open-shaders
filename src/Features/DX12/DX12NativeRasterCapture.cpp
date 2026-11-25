@@ -152,9 +152,11 @@ namespace DX12Native
 			if (captureSlot && captureSlot->readyValue == UINT64_MAX) {
 				if (gpuCopyStarted && producer.fence11) {
 					const uint64_t rescue = producer.Next();
-					if (SUCCEEDED(backend.d3d11Context->Signal(producer.fence11.get(), rescue))) {
+					if (const HRESULT hr = backend.d3d11Context->Signal(producer.fence11.get(), rescue); SUCCEEDED(hr)) {
 						backend.d3d11Context->Flush();
 						captureSlot->readyValue = rescue;
+					} else {
+						logger::warn("[DX12NativeScene] Raster recovery signal failed; retaining slot: {}", DX::com_exception(hr).what());
 					}
 				} else if (!gpuCopyStarted) {
 					captureSlot->readyValue = 0;
