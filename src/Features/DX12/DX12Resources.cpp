@@ -6,6 +6,7 @@
 #include "GpuPass.h"
 #include "RE/T/TESDataHandler.h"
 #include "RE/T/TESWorldSpace.h"
+#include "Utils/PerfUtils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -71,7 +72,7 @@ namespace DX12
 				auto retry = std::make_shared<Tile>(*tile);
 				retry->state = Tile::State::Requested;
 				retry->preparationAttempts = 0;
-				retry->retryAfter = {};
+				retry->retryAfterQpc = 0;
 				retry->failureReason.clear();
 				tile = std::move(retry);
 			};
@@ -139,10 +140,17 @@ namespace DX12
 		if (!center.scope)
 			return std::nullopt;
 
+		// Sample QPC at most once, and only if a candidate is waiting for retry.
+		std::optional<int64_t> nowQpc;
+		const auto retryPending = [&](int64_t deadline) {
+			if (!nowQpc)
+				nowQpc = Util::GetQpcTicks();
+			return Util::QpcDeadlinePending(*nowQpc, deadline);
+		};
 		const auto start = [&](SubcellKey key, bool speculative, size_t index) -> std::optional<SubcellKey> {
 			const auto& existing = speculative ? current->predictiveResident[index] : current->resident[index];
 			if (!key.scope || (existing && existing->state != Tile::State::Requested &&
-								  (existing->state != Tile::State::RetryWaiting || std::chrono::steady_clock::now() < existing->retryAfter)))
+								  (existing->state != Tile::State::RetryWaiting || retryPending(existing->retryAfterQpc))))
 				return std::nullopt;
 			auto tile = existing ? std::make_shared<Tile>(*existing) : std::make_shared<Tile>();
 			tile->key = key;
@@ -241,8 +249,8 @@ namespace DX12
 			tile->bytes = 0;
 			if (tile->preparationAttempts < 3) {
 				tile->state = Tile::State::RetryWaiting;
-				tile->retryAfter = std::chrono::steady_clock::now() +
-				                   std::chrono::milliseconds(tile->preparationAttempts == 1 ? 500 : 2000);
+				tile->retryAfterQpc = Util::QpcDeadlineAfterMs(
+					Util::GetQpcTicks(), Util::GetQpcFrequency(), tile->preparationAttempts == 1 ? 500 : 2000);
 			} else {
 				tile->state = Tile::State::Incomplete;
 			}

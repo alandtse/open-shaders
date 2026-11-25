@@ -3,6 +3,7 @@
 #include "ShaderCompileStatus.h"
 #include "ShaderFileWatcher.h"
 #include "Util.h"
+#include "Utils/PerfUtils.h"
 
 #ifdef DEVBENCH_BRIDGE_ENABLED
 #	include <DevBenchAPI.h>
@@ -3490,9 +3491,9 @@ namespace SIE
 		// generation or auxiliary queue ownership is attached to a runtime task.
 		compilationSet.dispatchedTasksInFlight.fetch_add(1, std::memory_order_relaxed);
 		runtimeTaskInFlight = true;
-		const auto queued = std::chrono::steady_clock::now();
+		const auto queuedQpc = Util::GetQpcTicks();
 		try {
-			compilationPool.detach_task([this, queued, work = std::move(a_work)]() mutable {
+			compilationPool.detach_task([this, queuedQpc, work = std::move(a_work)]() mutable {
 				const SKSE::stl::scope_exit releaseSlot([this]() noexcept {
 					{
 						std::scoped_lock lock(compilationSet.compilationMutex);
@@ -3503,9 +3504,7 @@ namespace SIE
 				});
 				ZoneScopedN("CS::RuntimePoolTask");
 				TracyPlot("CS::RuntimePoolQueueWaitUs",
-					static_cast<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-						std::chrono::steady_clock::now() - queued)
-							.count()));
+					Util::QpcElapsedUs(queuedQpc, Util::GetQpcTicks(), compilationSet.GetQpcFrequency()));
 				try {
 					work();
 				} catch (const std::exception& error) {
