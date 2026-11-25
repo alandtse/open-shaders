@@ -34,6 +34,7 @@ namespace Compatibility
 			"superseded by Sky Reflection and Light Limit Fix" },
 		{ L"Data/SKSE/Plugins/intellightent-ng.dll" },
 		{ L"Data/SKSE/Plugins/DynamicWetness.dll" },
+		{ L"Data/SKSE/Plugins/SkyrimDiag.dll", "Tullius CTD Logger" },
 		{ L"Data/SKSE/Plugins/ShadowFixes.dll", "superseded by the built-in shadow engine fixes" },
 		{ L"Data/SKSE/Plugins/skyrim-runtime-extender/reversed_z.dll", "superseded by the built-in Reverse Z; both reverse depth and break every shader" }
 	};
