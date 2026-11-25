@@ -3,6 +3,7 @@
 #include "DX12GpuRetirement.h"
 #include "GpuPass.h"
 #include "Utils/D3D.h"
+#include "Utils/FileSystem.h"
 #include <algorithm>
 #include <directx/d3dx12.h>
 #include <ranges>
@@ -70,8 +71,10 @@ namespace DX12Native
 				!depthDesc.Width || !depthDesc.Height || depthDesc.ArraySize != 1 ||
 				depthDesc.MipLevels != 1 || depthDesc.SampleDesc.Count != 1)
 				throw std::runtime_error("Opaque depth layout unsupported");
-			if (!depthShader)
-				depthShader.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\DX12NativeScene\\CaptureDepth.cs.hlsl", {}, "cs_5_0")));
+			if (!depthShader) {
+				const auto shaderPath = Util::PathHelpers::GetShadersPath() / "DX12NativeScene" / "CaptureDepth.cs.hlsl";
+				depthShader.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(shaderPath.c_str(), {}, "cs_5_0")));
+			}
 			if (!depthShader)
 				throw std::runtime_error("Opaque depth capture shader unavailable");
 			const uint32_t width = depthDesc.Width, height = depthDesc.Height;

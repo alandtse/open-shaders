@@ -6,6 +6,7 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "PCH.h"
+#include "Utils/FileSystem.h"
 
 #include <algorithm>
 #include <array>
@@ -23,7 +24,7 @@ namespace DX12Native
 		if (shadowPipeline && shadowDevice == device)
 			return true;
 		try {
-			std::ifstream file("Data/Shaders/NativeComposite/ShadowLayer.dxil", std::ios::binary | std::ios::ate);
+			std::ifstream file(Util::PathHelpers::GetShadersPath() / "NativeComposite" / "ShadowLayer.dxil", std::ios::binary | std::ios::ate);
 			if (!file || file.tellg() <= 0 || file.tellg() > 16 * 1024 * 1024)
 				return false;
 			std::vector<char> shader(static_cast<size_t>(file.tellg()));
