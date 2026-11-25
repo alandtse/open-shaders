@@ -14,6 +14,7 @@
 
 #include <imgui.h>
 
+#include "../DX12/SCMNativePolicy.h"
 #include "ShadowCasterManager.h"
 #include "Utils/BootSnapshot.h"
 
@@ -424,8 +425,8 @@ namespace ShadowCasterManager
 		DynamicOnly = 2  ///< keep only moving casters (composite over cache)
 	};
 	extern std::atomic<int> s_cullPassMode;
-	/// Native static caster offload applies even when the legacy atlas is off.
-	extern std::atomic<bool> s_nativeStaticCullActive;
+	/// Native extension of the synchronous, thread-owned caster walk.
+	extern thread_local DX12::SCMNativeCasterMode s_nativeCasterMode;
 
 	extern std::atomic<uint32_t> s_staticCasterDraws;
 	extern std::atomic<uint32_t> s_dynamicCasterDraws;

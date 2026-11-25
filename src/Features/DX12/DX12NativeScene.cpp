@@ -249,9 +249,9 @@ void DX12NativeScene::PreShadowMaps()
 
 void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& /*a_inputs*/)
 {
-	CS_GPU_PASS("DX12NativeScene::OpaqueRasterReady");
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive())
 		return;
+	CS_GPU_PASS("DX12NativeScene::OpaqueRasterReady");
 	if (!globals::game::graphicsState || !globals::state || globals::state->isMapMenuOpen ||
 		(globals::state->permutationData.ExtraShaderDescriptor &
 			static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections)))

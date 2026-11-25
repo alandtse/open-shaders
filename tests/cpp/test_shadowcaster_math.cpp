@@ -2,6 +2,7 @@
 // (src/Features/LightLimitFix/ShadowCasterMath.h): the shadow-light pointer
 // plausibility check and the frame-time 90th-percentile.
 
+#include "Features/DX12/SCMNativePolicy.h"
 #include "Features/LightLimitFix/ShadowCasterMath.h"
 
 #include <catch2/catch_approx.hpp>
@@ -536,4 +537,29 @@ TEST_CASE("PlayerProtectionCap leaves half the slots to the lights in view", "[s
 	REQUIRE(PlayerProtectionCap(127) == 63);
 	REQUIRE(PlayerProtectionCap(1) == 1);
 	REQUIRE(PlayerProtectionCap(0) == 1);
+}
+
+TEST_CASE("Native SCM policy preserves the disabled and VR paths", "[scm][dx12]")
+{
+	using DX12::SCMNativeCasterMode;
+	using DX12::SelectSCMNativeCasterMode;
+	using DX12::SelectSCMNativePolicy;
+	for (bool offload : { false, true }) {
+		for (bool owned : { false, true }) {
+			const auto disabled = SelectSCMNativePolicy(false, offload, false);
+			CHECK_FALSE(disabled.observeGeometry);
+			CHECK_FALSE(disabled.observeLights);
+			CHECK(SelectSCMNativeCasterMode(disabled, owned) == SCMNativeCasterMode::Disabled);
+			const auto vr = SelectSCMNativePolicy(true, offload, true);
+			CHECK(SelectSCMNativeCasterMode(vr, owned) == SCMNativeCasterMode::Disabled);
+		}
+	}
+	const auto comparison = SelectSCMNativePolicy(true, false, false);
+	CHECK(comparison.observeGeometry);
+	CHECK_FALSE(comparison.observeLights);
+	CHECK(SelectSCMNativeCasterMode(comparison, true) == SCMNativeCasterMode::Observe);
+	const auto offload = SelectSCMNativePolicy(true, true, false);
+	CHECK(offload.observeLights);
+	CHECK(SelectSCMNativeCasterMode(offload, false) == SCMNativeCasterMode::Observe);
+	CHECK(SelectSCMNativeCasterMode(offload, true) == SCMNativeCasterMode::Suppress);
 }
