@@ -100,6 +100,36 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 	}
 }
 
+bool DX12SwapChain::EnsureSharedDevice()
+{
+	if (!globals::d3d::device || !globals::d3d::context)
+		return false;
+
+	try {
+		if (!d3d11Device)
+			SetD3D11Device(globals::d3d::device);
+		if (!d3d11Context)
+			SetD3D11DeviceContext(globals::d3d::context);
+
+		if (!d3d12Device) {
+			winrt::com_ptr<IDXGIDevice> dxgiDevice;
+			DX::ThrowIfFailed(globals::d3d::device->QueryInterface(IID_PPV_ARGS(dxgiDevice.put())));
+
+			winrt::com_ptr<IDXGIAdapter> adapter;
+			DX::ThrowIfFailed(dxgiDevice->GetAdapter(adapter.put()));
+			CreateD3D12Device(adapter.get());
+		}
+	} catch (const std::exception& e) {
+		logger::error("[DX12SwapChain] Shared D3D11/D3D12 device setup failed: {}", e.what());
+		return false;
+	} catch (...) {
+		logger::error("[DX12SwapChain] Shared D3D11/D3D12 device setup failed with an unknown exception");
+		return false;
+	}
+
+	return d3d11Device && d3d11Context && d3d12Device && commandQueue;
+}
+
 void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC a_swapChainDesc)
 {
 	CreateD3D12Device(adapter);

@@ -1750,7 +1750,8 @@ void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 		}
 
 		// Cross-API runtime sharing does not support the game's R24G8 depth allocation.
-		if (a_upscalemethod == UpscaleMethod::kFSR && !globals::game::isVR && fidelityFX.ShouldUseRuntimeUpscalerForFSR() && !runtimeFsrDepthTexture) {
+		const bool sharesDepthWithD3D12 = a_upscalemethod == UpscaleMethod::kFSR ? fidelityFX.ShouldUseRuntimeUpscalerForFSR() : globals::features::dx12Control.IsActive();
+		if (!globals::game::isVR && sharesDepthWithD3D12 && !typedDepthTexture) {
 			D3D11_TEXTURE2D_DESC depthDesc{};
 			depthDesc.Width = texDesc.Width;
 			depthDesc.Height = texDesc.Height;
@@ -1770,9 +1771,9 @@ void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 			depthUavDesc.Format = depthDesc.Format;
 			depthUavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
 
-			runtimeFsrDepthTexture = new Texture2D(depthDesc, "Upscaling::RuntimeFsrDepth");
-			runtimeFsrDepthTexture->CreateSRV(depthSrvDesc);
-			runtimeFsrDepthTexture->CreateUAV(depthUavDesc);
+			typedDepthTexture = new Texture2D(depthDesc, "Upscaling::TypedDepth");
+			typedDepthTexture->CreateSRV(depthSrvDesc);
+			typedDepthTexture->CreateUAV(depthUavDesc);
 		}
 	}
 
@@ -1847,13 +1848,13 @@ void Upscaling::DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 		}
 	}
 
-	if (a_upscalemethod != UpscaleMethod::kFSR && runtimeFsrDepthTexture) {
-		runtimeFsrDepthTexture->srv = nullptr;
-		runtimeFsrDepthTexture->uav = nullptr;
-		runtimeFsrDepthTexture->resource = nullptr;
+	if (a_upscalemethod != UpscaleMethod::kFSR && !(a_upscalemethod == UpscaleMethod::kDLSS && globals::features::dx12Control.IsActive()) && typedDepthTexture) {
+		typedDepthTexture->srv = nullptr;
+		typedDepthTexture->uav = nullptr;
+		typedDepthTexture->resource = nullptr;
 
-		delete runtimeFsrDepthTexture;
-		runtimeFsrDepthTexture = nullptr;
+		delete typedDepthTexture;
+		typedDepthTexture = nullptr;
 	}
 
 	// Motion vector copy texture is needed for DLSS and FSR's foveated route - mirror
@@ -1904,9 +1905,10 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 
 			// Only destroy SDK resources if the previous method was actually performing upscaling
 			if (previousUpscalingWasActive) {
-				if (previousUpscaleMode == UpscaleMethod::kDLSS)
+				if (previousUpscaleMode == UpscaleMethod::kDLSS) {
 					streamline.DestroyDLSSResources();
-				else if (previousUpscaleMode == UpscaleMethod::kFSR)
+					nativeDLSS.Reset();
+				} else if (previousUpscaleMode == UpscaleMethod::kFSR)
 					fidelityFX.DestroyFSRResources();
 
 				if (globals::game::isVR) {
@@ -1938,10 +1940,9 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 
 bool Upscaling::NeedsTypedDepth(UpscaleMethod a_method) const
 {
-	// Runtime FSR and VR require typed R32_FLOAT depth instead of the game's R24G8 resource.
+	// Runtime FSR, DX12 DLSS and VR require typed R32_FLOAT depth instead of the game's R24G8 resource.
 	// VR DLSS uses it for eye 1's depth guide: D3D11 cannot copy a region out of a depth-stencil.
-	return (a_method == UpscaleMethod::kFSR && (globals::game::isVR || runtimeFsrDepthTexture)) ||
-	       (a_method == UpscaleMethod::kDLSS && globals::game::isVR);
+	return (a_method == UpscaleMethod::kFSR || a_method == UpscaleMethod::kDLSS) && (globals::game::isVR || typedDepthTexture);
 }
 
 ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
@@ -2948,6 +2949,12 @@ json Upscaling::GetDiagnostics()
 		diagnostics["dlssgStatus"] = std::string(magic_enum::enum_name(streamlineDX12.lastDLSSGStatus));
 		diagnostics["dlssgFramesPresentedLastQuery"] = streamlineDX12.lastDLSSGFramesPresented;
 	}
+	if (GetUpscaleMethod() == UpscaleMethod::kDLSS) {
+		diagnostics["dlssBackend"] = nativeDLSS.IsActive() ? "DX12" : "DX11";
+		diagnostics["dlssDX12Available"] = streamlineDX12.featureDLSS;
+		if (!nativeDLSS.GetFailure().empty())
+			diagnostics["dlssDX12Failure"] = nativeDLSS.GetFailure();
+	}
 	const auto crop = neuralRendering.GetRegionOfInterest();
 	diagnostics["neuralRegionActive"] = crop.active;
 	json eyes = json::array();
@@ -3156,12 +3163,13 @@ void Upscaling::Upscale()
 				auto upscalingBuffer = upscalingDataCB->CB();
 				context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
 
-				// u2 is DLSS-only; u3 provides typed depth for VR FSR, flat runtime FSR and VR DLSS.
+				// u2 is DLSS-only; u3 provides typed depth for VR FSR, flat runtime FSR, DX12 DLSS and VR DLSS.
 				ID3D11UnorderedAccessView* depthOutput = nullptr;
 				if (NeedsTypedDepth(upscaleMethod)) {
-					if (upscaleMethod == UpscaleMethod::kFSR) {
-						depthOutput = globals::game::isVR ? vrIntermediateLinearDepth[i]->uav.get() :
-						                                    (runtimeFsrDepthTexture ? runtimeFsrDepthTexture->uav.get() : nullptr);
+					if (!globals::game::isVR) {
+						depthOutput = typedDepthTexture->uav.get();
+					} else if (upscaleMethod == UpscaleMethod::kFSR) {
+						depthOutput = vrIntermediateLinearDepth[i]->uav.get();
 					} else if (upscaleMethod == UpscaleMethod::kDLSS) {
 						depthOutput = (i == 1) ? vrIntermediateLinearDepth[i]->uav.get() : nullptr;
 					}
@@ -3243,7 +3251,7 @@ void Upscaling::Upscale()
 			// OpenVR submit), not back in the now-small kMAIN. Mirrors Streamline's colorOut
 			// routing for DLSS.
 			auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-			ID3D11Resource* fsrDepth = runtimeFsrDepthTexture ? runtimeFsrDepthTexture->resource.get() : Util::AsReal(depth.texture);
+			ID3D11Resource* fsrDepth = typedDepthTexture ? typedDepthTexture->resource.get() : Util::AsReal(depth.texture);
 			ID3D11Resource* fsrColorOut = perfMode.IsPresentingTestTexture() ?
 			                                  static_cast<ID3D11Resource*>(perfMode.GetTestTexture()) :
 			                                  nullptr;
@@ -3669,7 +3677,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	if (upscaling.loaded && !globals::game::isVR &&
 		globals::features::dx12Control.IsActive() &&
 		globals::game::graphicsState &&
-		upscaling.fidelityFX.EnsureRuntimeUpscalerInterop()) {
+		upscaling.dx12SwapChain.EnsureSharedDevice()) {
 		auto* renderer = globals::game::renderer;
 		auto* scene = renderer ? Util::AsReal(renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture) : nullptr;
 		const auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
@@ -3677,13 +3685,17 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		                      globals::features::linearLighting.IsLinearLightingActive() ? DX12Native::NativeComposite::Transfer::Linear :
 		                                                                                   DX12Native::NativeComposite::Transfer::LegacyScene;
 		const auto shadow = globals::features::dx12NativeScene.GetShadowMask(globals::game::graphicsState->GetFrameCount());
-		upscaling.nativeCompositeFrame = upscaling.nativeComposite.Capture(
-			upscaling.dx12SwapChain.d3d11Device.get(),
-			upscaling.dx12SwapChain.d3d11Context.get(),
-			upscaling.dx12SwapChain.d3d12Device.get(),
-			upscaling.dx12SwapChain.commandQueue.get(), scene, globals::state->frameCount,
-			static_cast<uint32_t>(renderSize.x), static_cast<uint32_t>(renderSize.y),
-			transfer, shadow);
+		const bool runtimeFSRReads = upscaleMethod == UpscaleMethod::kFSR && upscaling.fidelityFX.RuntimeUpscalerReadsComposite();
+		// The return also covers a frame DX12 DLSS hands to DX11, so its shadows do not drop for that frame.
+		const bool dx12Reads = runtimeFSRReads || (upscaleMethod == UpscaleMethod::kDLSS && upscaling.nativeDLSS.GetFailure().empty());
+		if (dx12Reads || shadow)
+			upscaling.nativeCompositeFrame = upscaling.nativeComposite.Capture(
+				upscaling.dx12SwapChain.d3d11Device.get(),
+				upscaling.dx12SwapChain.d3d11Context.get(),
+				upscaling.dx12SwapChain.d3d12Device.get(),
+				upscaling.dx12SwapChain.commandQueue.get(), scene, globals::state->frameCount,
+				static_cast<uint32_t>(renderSize.x), static_cast<uint32_t>(renderSize.y),
+				transfer, shadow, !runtimeFSRReads);
 	}
 
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
