@@ -630,12 +630,12 @@ void DX12Resources::RestoreDefaultSettings()
 
 void DX12Resources::PreShadowMaps()
 {
-	CS_GPU_PASS("DX12Resources::Grid");
 	if (!IsActive()) {
-		if (grid.Snapshot()->requested.front().scope || inFlight || adopting)
+		if (companion && (grid.Snapshot()->requested.front().scope || inFlight || adopting))
 			ResetPreparation();
 		return;
 	}
+	CS_GPU_PASS("DX12Resources::Grid");
 	const auto* player = globals::game::player;
 	const auto* cell = player ? player->GetParentCell() : nullptr;
 	if (!cell)

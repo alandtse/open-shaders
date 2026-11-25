@@ -90,9 +90,7 @@ namespace DX12Native
 		}
 	}
 
-	RuntimeGeometryCapture::RuntimeGeometryCapture() :
-		worker([this](std::stop_token stop) { Run(stop); })
-	{}
+	RuntimeGeometryCapture::RuntimeGeometryCapture() = default;
 
 	RuntimeGeometryCapture::~RuntimeGeometryCapture()
 	{
@@ -196,6 +194,15 @@ namespace DX12Native
 				if (activeCenter != center || activeSize != grid->size) {
 					captured.erase(id);
 					return;
+				}
+				if (!worker.joinable()) {
+					worker = std::jthread([this](std::stop_token stop) {
+						try {
+							Run(stop);
+						} catch (...) {
+							logger::error("[DX12] Runtime geometry capture worker failed");
+						}
+					});
 				}
 				packet.generation = generation;
 				pending.push_back(std::move(packet));

@@ -15,6 +15,7 @@
 #include "../../Utils/Game.h"
 #include "../../Utils/PerfUtils.h"
 #include "../../Utils/UI.h"
+#include "../DX12/DX12Control.h"
 #include "../DX12/DX12NativeScene.h"
 #include "../LightLimitFix.h"
 #include "../Upscaling.h"
@@ -581,6 +582,7 @@ namespace ShadowCasterManager
 		RE::NiMatrix3 lastRot{};                 ///< light rotation at the previous accumulate
 	};
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
+	static bool s_nativeOwnershipPending = false;  // SCM scheduling thread only.
 
 	static void RetireSplitBake(SplitState& st)
 	{
@@ -595,6 +597,7 @@ namespace ShadowCasterManager
 		if (st.nativeDynamicOnly == native)
 			return;
 		st.nativeDynamicOnly = native;
+		s_nativeOwnershipPending |= native;
 		st.bakeQueued = true;
 		st.bakeThisFrame = false;
 		st.fullThisFrame = native;
@@ -605,6 +608,30 @@ namespace ShadowCasterManager
 		// Old static and live atlas content must not survive ownership changes.
 		InvalidateSlotStaticBake(slot);
 		InvalidateSlotTileContent(slot);
+	}
+
+	static DX12::SCMNativePolicy GetSCMNativePolicy()
+	{
+		const auto& control = globals::features::dx12Control;
+		return DX12::SelectSCMNativePolicy(control.IsActive(), control.IsShadowOffloadMode(), globals::game::isVR);
+	}
+
+	static void ReleaseNativeShadowOwnership()
+	{
+		if (!s_nativeOwnershipPending)
+			return;
+		for (int32_t slot = 0; slot < s_lights.Size; ++slot) {
+			auto& entry = s_lights.Lights[slot];
+			const auto it = s_splitState.find(entry.Light);
+			if (it == s_splitState.end() || !it->second.nativeDynamicOnly)
+				continue;
+			TransitionNativeShadowOwnership(it->second, slot, false);
+			entry.LastDrawnFrame = -1;
+			entry.lastGeomHash = 0;
+		}
+		for (auto& [light, state] : s_splitState)
+			state.nativeDynamicOnly = false;
+		s_nativeOwnershipPending = false;
 	}
 
 	// --- Empty-dynamic sleep: schedule-time skip of moverless redraws --------
@@ -1320,18 +1347,23 @@ namespace ShadowCasterManager
 		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
 			// Native-owned static shadows never require a legacy atlas bake.
-			auto* nativeLight = light->light.get();
-			const bool flickers = FlickersFromLiveOrigin(nativeLight);
-			const auto flicker = nativeLight ? FlickerOf(nativeLight) : FlickerAmplitudes{};
-			const bool runtimeFlickers = flicker.movement > 0.0f || flicker.intensity > 0.0f;
-			if (nativeLight)
-				globals::features::dx12NativeScene.ObserveRuntimeLight(light, LightPlacedReferenceID(nativeLight),
-					runtimeFlickers, RestOrigin(nativeLight));
-			const bool native = globals::features::dx12NativeScene.OwnsStaticForLight(light, slotIndex);
+			const auto nativePolicy = GetSCMNativePolicy();
+			const bool flickers = FlickersFromLiveOrigin(light->light.get());
+			bool native = false;
+			if (nativePolicy.observeLights) {
+				auto* nativeLight = light->light.get();
+				const auto flicker = nativeLight ? FlickerOf(nativeLight) : FlickerAmplitudes{};
+				const bool runtimeFlickers = flicker.movement > 0.0f || flicker.intensity > 0.0f;
+				if (nativeLight)
+					globals::features::dx12NativeScene.ObserveRuntimeLight(light, LightPlacedReferenceID(nativeLight),
+						runtimeFlickers, RestOrigin(nativeLight));
+				native = globals::features::dx12NativeScene.OwnsStaticForLight(light, slotIndex);
+			}
 			bool split = !native && StaticAtlasReady() && !carrier && !flickers;
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
-			TransitionNativeShadowOwnership(*st, slotIndex, native);
+			if (nativePolicy.observeLights || st->nativeDynamicOnly)
+				TransitionNativeShadowOwnership(*st, slotIndex, native);
 			// A second accumulate this frame is skipped below, so it keeps the first call's split decision.
 			const auto prior = s_lightAccumFrame.find(light);
 			const bool repeatThisFrame = prior != s_lightAccumFrame.end() && prior->second.frame == nowFrame;
@@ -1460,7 +1492,7 @@ namespace ShadowCasterManager
 			s_visitDynamicCount.store(0, std::memory_order_relaxed);
 			s_visitStaticCount.store(0, std::memory_order_relaxed);
 			s_cullPassMode.store(static_cast<int>(mode), std::memory_order_relaxed);
-			s_nativeStaticCullActive.store(native, std::memory_order_relaxed);
+			s_nativeCasterMode = DX12::SelectSCMNativeCasterMode(nativePolicy, native);
 
 			if (camera)
 				s_cullCameraPos = camera->world.translate;  // viewer, for the caster cull
@@ -1470,7 +1502,7 @@ namespace ShadowCasterManager
 				~ClearCullLight()
 				{
 					SetCurrentCullLight(nullptr);
-					s_nativeStaticCullActive.store(false, std::memory_order_relaxed);
+					s_nativeCasterMode = DX12::SCMNativeCasterMode::Disabled;
 					// Unconditional reset: the split-path reset below is skipped
 					// when `split` is false, which would otherwise leave a stale
 					// DynamicOnly filtering the next walk.
@@ -4190,6 +4222,8 @@ namespace ShadowCasterManager
 			ValidateCandidates(camera, wantDiag, candidates);
 
 			UpdatePoolMembership(ssn, sunLight, candidates);
+			if (s_nativeOwnershipPending && !GetSCMNativePolicy().observeLights)
+				ReleaseNativeShadowOwnership();
 
 			double budget = ComputeRedrawBudget();
 			s_redrawnLightsThisFrame = 0;
@@ -4336,6 +4370,7 @@ namespace ShadowCasterManager
 		{
 			ZoneNamedN(zPoint, "SCM::Render::PointLights", true);
 			CS_GPU_PASS("SCM::Render::PointLights");
+			const bool observeNativeLights = GetSCMNativePolicy().observeLights;
 			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
 				// A teardown can begin mid-pass; ClearLightArrays sets the flag before
 				// freeing, so bailing here narrows the window to a single in-flight Render call.
@@ -4346,15 +4381,17 @@ namespace ShadowCasterManager
 					continue;
 				// Retire stale raster static depth on ownership changes even
 				// when the scheduler did not admit a redraw this frame.
-				if (auto it = s_splitState.find(e.Light); it != s_splitState.end()) {
-					auto* nativeLight = e.Light->light.get();
-					const auto flicker = nativeLight ? FlickerOf(nativeLight) : FlickerAmplitudes{};
-					const bool runtimeFlickers = flicker.movement > 0.0f || flicker.intensity > 0.0f;
-					if (nativeLight)
-						globals::features::dx12NativeScene.ObserveRuntimeLight(e.Light, LightPlacedReferenceID(nativeLight),
-							runtimeFlickers, RestOrigin(nativeLight));
-					const bool native = globals::features::dx12NativeScene.OwnsStaticForLight(e.Light, i);
-					TransitionNativeShadowOwnership(it->second, i, native);
+				if (observeNativeLights) {
+					if (auto it = s_splitState.find(e.Light); it != s_splitState.end()) {
+						auto* nativeLight = e.Light->light.get();
+						const auto flicker = nativeLight ? FlickerOf(nativeLight) : FlickerAmplitudes{};
+						const bool runtimeFlickers = flicker.movement > 0.0f || flicker.intensity > 0.0f;
+						if (nativeLight)
+							globals::features::dx12NativeScene.ObserveRuntimeLight(e.Light, LightPlacedReferenceID(nativeLight),
+								runtimeFlickers, RestOrigin(nativeLight));
+						const bool native = globals::features::dx12NativeScene.OwnsStaticForLight(e.Light, i);
+						TransitionNativeShadowOwnership(it->second, i, native);
+					}
 				}
 				if (!e.RedrawFrame)
 					continue;

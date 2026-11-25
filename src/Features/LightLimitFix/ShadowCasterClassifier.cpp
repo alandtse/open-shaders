@@ -9,7 +9,6 @@
 #include "../../State.h"
 #include "../../Utils/FileSystem.h"
 #include "../../Utils/Game.h"
-#include "../DX12/DX12Control.h"
 #include "../DX12/DX12NativeScene.h"
 #include "ShadowCasterInternal.h"
 
@@ -253,7 +252,7 @@ namespace ShadowCasterManager
 	// casters per s_cullPassMode (StaticOnly on a rare atlas rebake, DynamicOnly
 	// the rest of the time). Frame-flow doc: SplitState in ShadowScheduler.cpp.
 	std::atomic<int> s_cullPassMode{ static_cast<int>(CasterPass::All) };
-	std::atomic<bool> s_nativeStaticCullActive{ false };
+	thread_local DX12::SCMNativeCasterMode s_nativeCasterMode = DX12::SCMNativeCasterMode::Disabled;
 
 	/// Static/dynamic caster draws classified last frame (Tracy plots for A/B).
 	std::atomic<uint32_t> s_staticCasterDraws{ 0 };
@@ -449,12 +448,12 @@ namespace ShadowCasterManager
 	{
 		// Passive collection during the existing SCM caster walk. This does not
 		// change raster filter decisions or add another geometry traversal.
-		if (globals::features::dx12Control.IsActive() &&
-			!globals::game::isVR &&
+		const auto nativeMode = s_nativeCasterMode;
+		if (nativeMode != DX12::SCMNativeCasterMode::Disabled &&
 			!geom.GetGeometryRuntimeData().skinInstance &&
 			!IsCasterDynamic(geom))
 			globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
-		const bool nativeDynamicOnly = s_nativeStaticCullActive.load(std::memory_order_relaxed);
+		const bool nativeDynamicOnly = nativeMode == DX12::SCMNativeCasterMode::Suppress;
 		if (!AtlasActive() && !nativeDynamicOnly)
 			return false;
 		if (const auto passless = ShadowMapPassless(geom); passless != PasslessReason::kNone) {
