@@ -1,14 +1,13 @@
 #include "DX12NativeAcceleration.h"
+#include "DX12GpuRetirement.h"
+#include "Utils/TracyZones.h"
 
 #include <algorithm>
-#include <chrono>
-#include <condition_variable>
 #include <cstring>
 #include <directx/d3dx12.h>
 #include <limits>
 #include <ranges>
 #include <stdexcept>
-#include <thread>
 #include <unordered_set>
 
 namespace DX12Native
@@ -50,32 +49,26 @@ namespace DX12Native
 		if (!inFlight)
 			return;
 
-		// Retain the resources in an owning retirement task, not leaked allocations.
-		// A tail marker drains queue submissions for which Signal() originally failed.
-		std::thread([pending = std::move(retiring), producer = completion,
-						queue = backend.commandQueue, retainedDevice = device,
-						lastSignalled, needsDrain]() mutable {
-			(void)pending;  // The capture deliberately owns the queued GPU resources.
-			winrt::com_ptr<ID3D12Fence> drainFence;
-			bool drainScheduled = !needsDrain;
-			while (true) {
-				const uint64_t done = producer->GetCompletedValue();
-				if (done == UINT64_MAX)
-					break;  // Device removal permits releasing the resources.
-				if (!drainScheduled && retainedDevice && queue) {
-					if (!drainFence)
-						(void)retainedDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(drainFence.put()));
-					if (drainFence && SUCCEEDED(queue->Signal(drainFence.get(), 1)))
-						drainScheduled = true;
-				}
-				if (done >= lastSignalled && drainScheduled &&
-					(!needsDrain || drainFence->GetCompletedValue() >= 1))
-					break;
-				if (!retainedDevice || FAILED(retainedDevice->GetDeviceRemovedReason()))
-					break;
-				std::this_thread::sleep_for(std::chrono::milliseconds(8));
+		// A tail marker tracks any ExecuteCommandLists whose original Signal failed.
+		// If even the rescue marker fails, retain until device removal.
+		std::vector<FenceDependency> dependencies;
+		if (lastSignalled)
+			dependencies.push_back(FencePoint(completion.get(), lastSignalled));
+		if (needsDrain) {
+			winrt::com_ptr<ID3D12Fence> drain;
+			if (device && backend.commandQueue &&
+				SUCCEEDED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(drain.put()))) &&
+				SUCCEEDED(backend.commandQueue->Signal(drain.get(), 1))) {
+				drain->SetName(L"DX12NativeScene::AccelerationRetirementFence");
+				dependencies.push_back(FencePoint(drain.get(), 1));
+			} else {
+				dependencies.push_back(FencePoint(completion.get(), UINT64_MAX));
 			}
-		}).detach();
+		}
+		winrt::com_ptr<ID3D12Device> retainedDevice;
+		if (device)
+			retainedDevice.copy_from(device.get());
+		RetireAfterFences(std::move(retiring), std::move(retainedDevice), std::move(dependencies));
 	}
 
 	bool AccelerationScene::Initialize(const GraphicsBackend& a_backend)
@@ -124,6 +117,7 @@ namespace DX12Native
 
 	void AccelerationScene::Submit(Build& a_build)
 	{
+		ZoneScopedN("DX12::Acceleration::Submit");
 		Check(a_build.commands->Close());
 		ID3D12CommandList* commands[] = { a_build.commands.get() };
 		backend.commandQueue->ExecuteCommandLists(1, commands);
@@ -141,6 +135,7 @@ namespace DX12Native
 
 	bool AccelerationScene::BuildBottom(Build& a_build, const std::shared_ptr<const DX12::Shape>& a_shape)
 	{
+		ZoneScopedN("DX12::Acceleration::BuildBLAS");
 		if (!a_shape || !a_shape->identity || a_shape->positions.empty() ||
 			a_shape->indices.empty() || a_shape->indices.size() % 3u ||
 			a_shape->positions.size() > UINT32_MAX || a_shape->indices.size() > UINT32_MAX)
@@ -197,6 +192,7 @@ namespace DX12Native
 
 	bool AccelerationScene::BuildTop(Build& a_build)
 	{
+		ZoneScopedN("DX12::Acceleration::BuildTLAS");
 		if (!target || target->geometry.empty() || target->geometry.size() > kMaximumInstances)
 			return false;
 		std::vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
@@ -270,6 +266,7 @@ namespace DX12Native
 
 	void AccelerationScene::Retire()
 	{
+		ZoneScopedN("DX12::Acceleration::Retire");
 		const uint64_t done = completion->GetCompletedValue();
 		if (done == UINT64_MAX) {
 			failure = "DX12 native acceleration device removed before completion";
@@ -306,6 +303,8 @@ namespace DX12Native
 		if (!completion || !failure.empty())
 			return;
 		Retire();
+		if (!failure.empty())
+			return;
 		if (!a_inputs || !a_inputs->residency || !a_inputs->residency->requested.front().scope)
 			return;
 		const uint32_t scope = a_inputs->residency->requested.front().scope;

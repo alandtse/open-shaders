@@ -35,10 +35,10 @@ namespace DX12Native
 			if (!consumers.empty()) {
 				winrt::com_ptr<ID3D12Device> device;
 				(void)consumers.front().fence->GetDevice(IID_PPV_ARGS(device.put()));
-				RetireWhenGpuDone(std::make_shared<std::vector<RetainedScene>>(std::move(consumers)),
-					std::move(device), [](const auto& records) {
-						return std::ranges::all_of(records, IsRetired);
-					});
+				std::vector<FenceDependency> dependencies;
+				for (const auto& record : consumers)
+					dependencies.push_back({ record.fence, record.value });
+				RetireAfterFences(std::move(consumers), std::move(device), std::move(dependencies));
 			}
 		}
 
