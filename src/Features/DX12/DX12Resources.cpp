@@ -6,6 +6,7 @@
 #include "GpuPass.h"
 #include "RE/T/TESDataHandler.h"
 #include "RE/T/TESWorldSpace.h"
+#include "Utils/Game.h"
 #include "Utils/PerfUtils.h"
 
 #include <algorithm>
@@ -694,11 +695,11 @@ void DX12Resources::PreShadowMaps()
 		return;
 	}
 	CS_GPU_PASS("DX12Resources::Grid");
-	const auto* player = globals::game::player;
-	const auto* cell = player ? player->GetParentCell() : nullptr;
-	if (!cell)
+	const auto location = Util::GetPlayerSpatialLocation();
+	if (!location)
 		return;
-	const auto* world = cell->IsExteriorCell() ? player->GetWorldspace() : nullptr;
+	const auto* cell = location->cell;
+	const auto* world = location->worldspace;
 	const uint32_t cellID = cell->GetFormID();
 	if (lastVisitedCell && cellID && cellID != lastVisitedCell) {
 		if (cellID == previousVisitedCell)
@@ -713,7 +714,7 @@ void DX12Resources::PreShadowMaps()
 	if (cellID)
 		lastVisitedCell = cellID;
 	const uint32_t scope = world ? world->GetFormID() : cell->GetFormID();
-	const auto position = player->GetPosition();
+	const auto& position = location->position;
 	preparationActive = true;
 	grid.Advance(scope, settings.SubcellSize, position.x, position.y);
 	runtimePublicationEnabled.store(true, std::memory_order_release);

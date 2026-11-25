@@ -591,6 +591,22 @@ namespace Util
 		return property ? std::clamp(property->kBlendColor.alpha, 0.0f, 1.0f) : 0.0f;
 	}
 
+	const RE::TESObjectCELL* GetPlayerCell()
+	{
+		const auto* player = globals::game::player;
+		return player ? player->GetParentCell() : nullptr;
+	}
+
+	std::optional<PlayerSpatialLocation> GetPlayerSpatialLocation()
+	{
+		const auto* cell = GetPlayerCell();
+		if (!cell)
+			return std::nullopt;
+		const auto* player = globals::game::player;
+		const auto* worldspace = cell->IsExteriorCell() ? player->GetWorldspace() : nullptr;
+		return PlayerSpatialLocation{ cell, worldspace, player->GetPosition() };
+	}
+
 	bool IsInterior()
 	{
 		auto tes = RE::TES::GetSingleton();

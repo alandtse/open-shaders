@@ -392,6 +392,18 @@ namespace Util
 	std::string FormatTESForm(const RE::TESForm* form);
 	std::string FormatWeather(const RE::TESWeather* weather);
 
+	/** @brief Borrow the player's actual parent cell on the game thread, or nullptr. */
+	[[nodiscard]] const RE::TESObjectCELL* GetPlayerCell();
+
+	/** @brief Game-thread snapshot of the player's spatial location. Form pointers are borrowed. */
+	struct PlayerSpatialLocation
+	{
+		const RE::TESObjectCELL* cell;
+		const RE::TESWorldSpace* worldspace;  ///< Null for interiors or an unavailable exterior worldspace.
+		RE::NiPoint3 position;
+	};
+	[[nodiscard]] std::optional<PlayerSpatialLocation> GetPlayerSpatialLocation();
+
 	bool IsInterior();
 	/** @brief Returns the active interior cell or exterior worldspace's editor ID, or an empty view. */
 	std::string_view GetCurrentWorldspaceOrCellEditorID();
