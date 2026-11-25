@@ -15,6 +15,10 @@ namespace DX12Native
 	namespace
 	{
 		constexpr uint32_t kRecords = 3;
+		constexpr std::streamoff kMaxShadowBytecodeBytes = 4 * VideoMemoryBudget::kMiB;
+		constexpr uint32_t kShadowThreadGroupSize = 8;
+		constexpr float kMinRayDistance = 0.5f;
+		constexpr float kMaxRayDistance = 60000.0f;
 
 		void Check(HRESULT result)
 		{
@@ -27,7 +31,7 @@ namespace DX12Native
 			float4 positionAdjust;
 			uint32_t width, height, frame, density;
 			uint32_t lightCount;
-			float minimum = 0.5f, maximum = 60000.0f;
+			float minimum = kMinRayDistance, maximum = kMaxRayDistance;
 			uint32_t reserved = 0;
 			float shadowReachMultiplier = 1.0f, shadowFadeRange = 0.5f, shadowFalloffCurve = 1.0f;
 			float nearLightRadius = 0.0f;
@@ -77,7 +81,7 @@ namespace DX12Native
 			throw std::runtime_error("DX12 Native Scene queue unavailable");
 		std::ifstream bytecode(Util::PathHelpers::GetShadersPath() / "DX12NativeScene" / "ShadowMask.dxil",
 			std::ios::binary | std::ios::ate);
-		if (!bytecode || bytecode.tellg() <= 0 || bytecode.tellg() > 4 * 1024 * 1024)
+		if (!bytecode || bytecode.tellg() <= 0 || bytecode.tellg() > kMaxShadowBytecodeBytes)
 			throw std::runtime_error("Native Scene shadowmask DXIL unavailable");
 		std::vector<char> shader(static_cast<size_t>(bytecode.tellg()));
 		bytecode.seekg(0);
@@ -189,7 +193,7 @@ namespace DX12Native
 				descriptors.NumDescriptors = 2;
 				Check(requested.d3d12Device->CreateDescriptorHeap(
 					&descriptors, IID_PPV_ARGS(replacement->descriptors.put())));
-				replacement->cameraUpload = UploadBuffer(requested.d3d12Device.get(), 256);
+				replacement->cameraUpload = UploadBuffer(requested.d3d12Device.get(), D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 				replacement->lightUpload = UploadBuffer(requested.d3d12Device.get(),
 					sizeof(std::array<float, 4>) * kMaxShadowLights * kRecords);
 				Check(requested.d3d12Device->CreateCommandAllocator(
@@ -217,7 +221,7 @@ namespace DX12Native
 				slot->raster->camera.CameraPosAdjust,
 				width, height, frame, std::min(controls.densityMode, 7u),
 				uint32_t(std::min(lights.size(), size_t(kMaxShadowLights))),
-				0.5f, 60000.0f, 0u,
+				kMinRayDistance, kMaxRayDistance, 0u,
 				std::clamp(controls.reachMultiplier, 0.1f, 64.0f),
 				std::clamp(controls.fadeRange, 0.0f, 1.0f),
 				std::clamp(controls.falloffCurve, 0.0f, 2.5f),
@@ -225,15 +229,15 @@ namespace DX12Native
 				controls.nearLightExclusion ? 1u : 0u,
 				0u, 0u, 0u
 			};
-			static_assert(sizeof(Constants) <= 256);
+			static_assert(sizeof(Constants) <= D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
 
 			std::array<std::array<float, 4>, kMaxShadowLights * kRecords> records{};
 			for (size_t i = 0; i < camera.lightCount; ++i) {
 				const auto& light = lights[i];
-				records[i * 3 + 0] = { light.position.x, light.position.y, light.position.z, light.radius };
-				records[i * 3 + 1] = { light.color.x, light.color.y, light.color.z, light.fade };
-				records[i * 3 + 2] = { light.emitterRadius, light.falloffExponent, float(light.flags), 0 };
+				records[i * kRecords + 0] = { light.position.x, light.position.y, light.position.z, light.radius };
+				records[i * kRecords + 1] = { light.color.x, light.color.y, light.color.z, light.fade };
+				records[i * kRecords + 2] = { light.emitterRadius, light.falloffExponent, float(light.flags), 0 };
 			}
 			WriteUpload(slot->lightUpload.get(), records.data(), sizeof(records));
 
@@ -277,7 +281,8 @@ namespace DX12Native
 				command->ResourceBarrier(1, &maskStart);
 			}
 			// The output remains full-resolution regardless of sparse trace density.
-			command->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+			command->Dispatch((width + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize,
+				(height + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize, 1);
 			const auto uavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(slot->mask.get());
 			command->ResourceBarrier(1, &uavBarrier);
 			const std::array end{

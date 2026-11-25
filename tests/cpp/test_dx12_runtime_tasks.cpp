@@ -1,4 +1,5 @@
 #include "Features/DX12/DX12FenceRetirementPolicy.h"
+#include "Features/DX12/SpatialGrid.h"
 #include "Utils/RuntimeTaskGate.h"
 
 #include <atomic>
@@ -78,4 +79,30 @@ TEST_CASE("GPU retirement requires a real completion or device removal", "[dx12]
 	CHECK_FALSE(FenceValueRetired(true, kUntrackedFenceValue - 1, kUntrackedFenceValue));
 	CHECK(FenceValueRetired(true, kUntrackedFenceValue, 5));
 	CHECK(FenceValueRetired(true, kUntrackedFenceValue, kUntrackedFenceValue));
+}
+
+TEST_CASE("DX12 grid sizes and predictive ordering retain their existing contract", "[dx12][grid]")
+{
+	constexpr std::array<uint32_t, 7> expected{ 4096, 6144, 8192, 10240, 12288, 14336, 16384 };
+	CHECK(DX12::kSubcellSizes == expected);
+	CHECK(DX12::kGridCapacity == 9);
+	CHECK(DX12::kPredictiveCapacity == 16);
+	CHECK(DX12::kPredictiveSideCount == 12);
+
+	const auto active = DX12::Neighborhood(1, DX12::kMinSubcellSize, -1.0, 0.0);
+	const auto predictive = DX12::PredictiveNeighborhood(1, DX12::kMinSubcellSize, -1.0, 0.0);
+	REQUIRE(active);
+	REQUIRE(predictive);
+	const auto center = active->front();
+	CHECK(center.x == -1);
+	CHECK(center.y == 0);
+	for (size_t i = 0; i < predictive->size(); ++i) {
+		const auto& tile = (*predictive)[i];
+		const auto dx = std::abs(tile.x - center.x);
+		const auto dy = std::abs(tile.y - center.y);
+		CHECK(std::max(dx, dy) == 2);
+		CHECK((dx == 2 && dy == 2) == (i >= DX12::kPredictiveSideCount));
+		CHECK_FALSE(std::ranges::contains(*active, tile));
+		CHECK(std::ranges::count(*predictive, tile) == 1);
+	}
 }
