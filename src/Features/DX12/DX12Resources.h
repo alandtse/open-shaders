@@ -23,7 +23,7 @@ namespace DX12
 	/** @brief Immutable light record discovered alongside companion geometry. */
 	struct PreparedLight
 	{
-		uint32_t referenceID = 0, baseID = 0, flags = 0;
+		uint32_t referenceID = 0, flags = 0;
 		float3 position{}, color{};
 		float radius = 0.0f, fade = 1.0f, emitterRadius = 0.0f, falloffExponent = 1.0f;
 	};
@@ -51,7 +51,6 @@ namespace DX12
 		std::vector<float3> positions;
 		std::vector<uint32_t> indices;
 		std::array<float, 12> transform{};
-		std::string sourceNif;  // Populated for runtime-supplemented shapes when NIF provenance is known.
 	};
 
 	struct Tile
@@ -108,7 +107,6 @@ namespace DX12
 	/** @brief Immutable view of the nine resident runtime cells. */
 	struct Grid
 	{
-		uint64_t revision = 0;
 		uint64_t geometryRevision = 0;
 		uint32_t size = kSubcellSizes.front();
 		std::array<SubcellKey, kGridCapacity> requested{};  // Active 3x3, available to future native consumers.
@@ -191,14 +189,9 @@ struct DX12Resources final : Feature
 	void RestoreDefaultSettings() override;
 	bool WantsPreShadowMapsHook() const override;
 	void PreShadowMaps() override;
-	void OnSceneTransitionReset(bool opening) override;
 	void OnRuntimeDisabled() override;
 	/** @brief Returns current geometry residency without traversing engine objects. */
 	std::shared_ptr<const DX12::Grid> GetGrid() const { return grid.Snapshot(); }
-	/** @brief Claims the next geometry request, if one is needed. */
-	std::optional<DX12::SubcellKey> NextRequest() { return grid.NextRequest(); }
-	/** @brief Accepts an authoritative in-memory geometry and light publication from the companion. */
-	bool Publish(DX12::CompanionPublication publication) { return grid.Publish(std::move(publication)); }
 	/** @brief Accepts a bounded, static renderer observation for native geometry (never for raster suppression). */
 	bool PublishRuntimeShape(std::shared_ptr<const DX12::Shape> shape, float centerX, float centerY, uint32_t expectedScope = 0)
 	{
@@ -206,7 +199,6 @@ struct DX12Resources final : Feature
 		       grid.PublishRuntimeShape(std::move(shape), centerX, centerY, expectedScope);
 	}
 	bool IsActive() const;
-	uint64_t GetFlushGeneration() const { return flushGeneration.load(std::memory_order_acquire); }
 	/** @brief Returns the most recent prepared-light publication. */
 	std::vector<DX12::PreparedLight> GetPreparedLights() const;
 	/** @brief In-memory generation timings for active 3x3, predictive sides and corners. */
@@ -224,7 +216,6 @@ private:
 	std::unique_ptr<DX12::CompanionResult> adopting;
 	size_t lightAdoptionOffset = 0;
 	uint32_t lastVisitedCell = 0, previousVisitedCell = 0, distinctTransitions = 0;
-	std::atomic<uint64_t> flushGeneration{ 0 };
 	std::optional<DX12::SubcellKey> inFlight;
 	std::atomic<std::shared_ptr<const DX12::PreparationStats>> generationStats{
 		std::make_shared<const DX12::PreparationStats>()

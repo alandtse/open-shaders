@@ -29,13 +29,6 @@ namespace DX12Native
 			uint32_t frame = 0, width = 0, height = 0;
 			DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 			bool valid = false;
-			bool IsComplete() const
-			{
-				if (!valid || !producerFence || !producerValue)
-					return false;
-				const auto completed = producerFence->GetCompletedValue();
-				return completed != UINT64_MAX && completed >= producerValue;
-			}
 		};
 
 		std::shared_ptr<const Frame> Capture(ID3D11Device5* device11,

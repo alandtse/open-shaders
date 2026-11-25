@@ -123,27 +123,6 @@ namespace DX12Native
 		return current ? current->published.load(std::memory_order_acquire) : nullptr;
 	}
 
-	bool AccelerationWorker::RetainThrough(std::shared_ptr<const TopLevel> a_scene,
-		ID3D12Fence* a_fence, uint64_t a_value)
-	{
-		if (!a_scene || !a_fence || !a_value)
-			return false;
-		winrt::com_ptr<ID3D12Device> device;
-		(void)a_fence->GetDevice(IID_PPV_ARGS(device.put()));
-		// Submitted consumers remain owned even if the producing session stops.
-		RetireAfterFences(std::move(a_scene), std::move(device), { FencePoint(a_fence, a_value) });
-		return true;
-	}
-
-	std::string AccelerationWorker::Failure() const
-	{
-		auto current = state.load(std::memory_order_acquire);
-		if (!current)
-			return {};
-		std::scoped_lock lock(current->mutex);
-		return current->failure;
-	}
-
 	void AccelerationWorker::TrySchedule(const std::shared_ptr<State>& a_state)
 	{
 		std::scoped_lock lock(a_state->mutex);

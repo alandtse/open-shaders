@@ -201,11 +201,11 @@ namespace DX12Native
 		top->bottoms.reserve(target->geometry.size());
 
 		for (const auto& input : target->geometry) {
-			const auto found = bottoms.find(input.shape->identity);
-			if (found == bottoms.end() || found->second->shape.get() != input.shape.get())
+			const auto found = bottoms.find(input->identity);
+			if (found == bottoms.end() || found->second->shape.get() != input.get())
 				return false;
 			D3D12_RAYTRACING_INSTANCE_DESC desc{};
-			std::memcpy(desc.Transform, input.shape->transform.data(), sizeof(desc.Transform));
+			std::memcpy(desc.Transform, input->transform.data(), sizeof(desc.Transform));
 			desc.InstanceID = UINT(instances.size());
 			desc.InstanceMask = 0xFF;
 			desc.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
@@ -313,8 +313,8 @@ namespace DX12Native
 			targetScope = scope;
 			std::unordered_set<uint64_t> wanted;
 			for (const auto& input : target->geometry)
-				if (input.shape)
-					wanted.insert(input.shape->identity);
+				if (input)
+					wanted.insert(input->identity);
 			std::erase_if(bottoms, [&](const auto& pair) {
 				return !wanted.contains(pair.first);
 			});
@@ -334,14 +334,14 @@ namespace DX12Native
 			return;
 		try {
 			for (const auto& input : target->geometry) {
-				if (!input.shape)
+				if (!input)
 					continue;
-				const auto found = bottoms.find(input.shape->identity);
-				if (found != bottoms.end() && found->second->shape.get() == input.shape.get())
+				const auto found = bottoms.find(input->identity);
+				if (found != bottoms.end() && found->second->shape.get() == input.get())
 					continue;
-				if (HasPendingBottom(input.shape->identity, input.shape.get()))
+				if (HasPendingBottom(input->identity, input.get()))
 					return;
-				if (!BuildBottom(*available, input.shape))
+				if (!BuildBottom(*available, input))
 					*available = {};
 				return;
 			}
@@ -358,13 +358,4 @@ namespace DX12Native
 		}
 	}
 
-	bool AccelerationScene::RetainThrough(const std::shared_ptr<const TopLevel>& a_scene, ID3D12Fence* a_fence, uint64_t a_value)
-	{
-		if (!a_scene || !a_fence || !a_value)
-			return false;
-		winrt::com_ptr<ID3D12Device> retainedDevice;
-		(void)a_fence->GetDevice(IID_PPV_ARGS(retainedDevice.put()));
-		RetireAfterFences(a_scene, std::move(retainedDevice), { FencePoint(a_fence, a_value) });
-		return true;
-	}
 }

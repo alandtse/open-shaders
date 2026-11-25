@@ -263,7 +263,7 @@ void DX12NativeScene::PreShadowMaps()
 		acceleration.Request(std::move(grid));
 }
 
-void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& /*a_inputs*/)
+void DX12NativeScene::OnOpaqueRasterReady()
 {
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive())
 		return;

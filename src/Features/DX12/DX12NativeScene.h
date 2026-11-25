@@ -35,7 +35,7 @@ struct DX12NativeScene final : Feature
 	void SaveSettings(json& a_output) override;
 	void RestoreDefaultSettings() override;
 	bool WantsOpaqueRasterReadyHook() const override;
-	void OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs) override;
+	void OnOpaqueRasterReady() override;
 	/** @brief Observe CPU-backed opaque rigid geometry from SCM or normal render passes. */
 	void ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requireStability = false);
 	/** @brief SCM hands native-owned lights' static casters to RayQuery and retains movers. */
@@ -50,16 +50,6 @@ struct DX12NativeScene final : Feature
 
 	/** @brief Raw full-resolution shadow output, independently fenced for Native Composite. */
 	std::shared_ptr<const DX12Native::ShadowMaskFrame> GetShadowMask(uint32_t frame) const { return shadows.Get(frame); }
-	bool RetainShadowMask(const std::shared_ptr<const DX12Native::ShadowMaskFrame>& frame,
-		ID3D12Fence* fence, uint64_t value) { return shadows.RetainThrough(frame, fence, value); }
-
-	/** @brief Gets the early raster frame without waiting for GPU completion. */
-	std::shared_ptr<const DX12Native::RasterFrame> GetRasterFrame(uint32_t a_frame) const { return raster.Get(a_frame); }
-	/** @brief Keeps a borrowed raster frame alive until the consuming GPU work finishes. */
-	bool RetainRasterFrame(const std::shared_ptr<const DX12Native::RasterFrame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value)
-	{
-		return raster.RetainThrough(a_frame, a_fence, a_value);
-	}
 
 private:
 	/** @brief Gates only native shadow replacement; never disables DX11 baseline shadows. */

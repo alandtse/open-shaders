@@ -20,8 +20,6 @@ namespace DX12Native
 				continue;
 			std::vector<FenceDependency> dependencies;
 			dependencies.push_back(FencePoint(slot->readyFence ? slot->readyFence.get() : producer.fence12.get(), slot->readyValue));
-			for (const auto& consumer : slot->consumers)
-				dependencies.push_back({ consumer.first, consumer.second });
 			RetireAfterFences(std::pair{ backend, std::move(slot) }, backend.d3d12Device, std::move(dependencies));
 		}
 	}
@@ -48,12 +46,8 @@ namespace DX12Native
 				const auto completed = producer.fence12->GetCompletedValue();
 				if (!slot)
 					return completed != UINT64_MAX;
-				if (slot.use_count() != 1 || slot->readyValue == UINT64_MAX || completed == UINT64_MAX || completed < slot->readyValue)
-					return false;
-				return std::ranges::all_of(slot->consumers, [](const auto& consumer) {
-					const auto done = consumer.first->GetCompletedValue();
-					return done != UINT64_MAX && done >= consumer.second;
-				});
+				return slot.use_count() == 1 && slot->readyValue != UINT64_MAX &&
+				       completed != UINT64_MAX && completed >= slot->readyValue;
 			});
 			if (available == slots.end())
 				return;
@@ -111,7 +105,6 @@ namespace DX12Native
 					depthDesc, backend.d3d11Device.get(), backend.d3d12Device.get(), "DX12NativeScene::RasterDepth");
 				slot = std::move(replacement);
 			}
-			slot->consumers.clear();
 			slot->readyValue = UINT64_MAX;
 			slot->readyFence = producer.fence12;
 			captureSlot = slot;
@@ -181,21 +174,6 @@ namespace DX12Native
 	std::shared_ptr<const RasterFrame> RasterCapture::Get(uint32_t a_frame) const
 	{
 		return current && current->frame == a_frame ? current : nullptr;
-	}
-
-	bool RasterCapture::RetainThrough(const std::shared_ptr<const RasterFrame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value)
-	{
-		if (!a_frame || !a_fence || !a_value || a_value == UINT64_MAX)
-			return false;
-		for (const auto& slot : slots) {
-			if (slot.get() != a_frame.get())
-				continue;
-			winrt::com_ptr<ID3D12Fence> fence;
-			fence.copy_from(a_fence);
-			slot->consumers.emplace_back(std::move(fence), a_value);
-			return true;
-		}
-		return false;
 	}
 
 	void RasterCapture::Reset()

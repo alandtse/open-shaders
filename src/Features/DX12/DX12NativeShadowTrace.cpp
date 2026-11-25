@@ -61,8 +61,6 @@ namespace DX12Native
 				continue;
 			std::vector<FenceDependency> dependencies;
 			dependencies.push_back(FencePoint(slot->readyFence ? slot->readyFence.get() : completion.get(), slot->readyValue));
-			for (const auto& consumer : slot->consumers)
-				dependencies.push_back({ consumer.first, consumer.second });
 			RetireAfterFences(std::tuple{ backend, root, pipeline, std::move(slot) }, backend.d3d12Device, std::move(dependencies));
 		}
 	}
@@ -146,10 +144,7 @@ namespace DX12Native
 			auto it = std::ranges::find_if(slots, [&](const auto& slot) {
 				if (!slot)
 					return true;
-				return slot.use_count() == 1 && slot->readyValue <= finished &&
-				       std::ranges::all_of(slot->consumers, [](const auto& c) {
-						   return c.first->GetCompletedValue() >= c.second;
-					   });
+				return slot.use_count() == 1 && slot->readyValue <= finished;
 			});
 			if (it == slots.end()) {
 				return;
@@ -204,7 +199,6 @@ namespace DX12Native
 				DX::ThrowIfFailed(slot->allocator->Reset());
 				DX::ThrowIfFailed(slot->commands->Reset(slot->allocator.get(), pipeline.get()));
 			}
-			slot->consumers.clear();
 			slot->readyValue = UINT64_MAX;
 			slot->readyFence = completion;
 			attempted = slot;
@@ -338,19 +332,4 @@ namespace DX12Native
 		}
 	}
 
-	bool ShadowMaskTrace::RetainThrough(const std::shared_ptr<const ShadowMaskFrame>& frame,
-		ID3D12Fence* fence, uint64_t value)
-	{
-		if (!frame || !fence || !value)
-			return false;
-		for (const auto& slot : slots) {
-			if (slot.get() != frame.get())
-				continue;
-			winrt::com_ptr<ID3D12Fence> keep;
-			keep.copy_from(fence);
-			slot->consumers.emplace_back(std::move(keep), value);
-			return true;
-		}
-		return false;
-	}
 }

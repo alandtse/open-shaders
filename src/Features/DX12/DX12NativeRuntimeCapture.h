@@ -49,7 +49,6 @@ namespace DX12Native
 		{
 			uint64_t identity = 0, runtimeObjectKey = 0, generation = 0;
 			DX12::SubcellKey sourceCenter{};
-			std::string referenceKey;  // Match a runtime addition with unresolved NIF provenance.
 			std::array<float, 12> transform{};
 			uint32_t stride = 0, vertexCount = 0;
 			float centerX = 0, centerY = 0;
