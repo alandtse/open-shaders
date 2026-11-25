@@ -1,5 +1,6 @@
 #include "DX12NativeShadowTrace.h"
 #include "DX12GpuRetirement.h"
+#include "Utils/FileSystem.h"
 
 #include <algorithm>
 #include <array>
@@ -74,7 +75,7 @@ namespace DX12Native
 		auto* device = backend.d3d12Device.get();
 		if (!device || !backend.commandQueue)
 			throw std::runtime_error("DX12 Native Scene queue unavailable");
-		std::ifstream bytecode("Data/Shaders/DX12NativeScene/ShadowMask.dxil",
+		std::ifstream bytecode(Util::PathHelpers::GetShadersPath() / "DX12NativeScene" / "ShadowMask.dxil",
 			std::ios::binary | std::ios::ate);
 		if (!bytecode || bytecode.tellg() <= 0 || bytecode.tellg() > 4 * 1024 * 1024)
 			throw std::runtime_error("Native Scene shadowmask DXIL unavailable");
