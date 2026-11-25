@@ -422,8 +422,7 @@ void Feature::ApplyOpaqueRasterReadyHooks(ID3D11Texture2D* a_litColor, ID3D11Tex
 			inputs->reflectance.copy_from(a_reflectance);
 			inputs->motion.copy_from(a_motion);
 		}
-		feature->OnOpaqueRasterReady(*inputs);
-	}, true);
+		feature->OnOpaqueRasterReady(*inputs); }, true);
 }
 
 void Feature::ApplyPreShadowMapsHooks()
