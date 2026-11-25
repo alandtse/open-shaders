@@ -1,0 +1,82 @@
+name: Native Shader Validation
+
+on:
+    pull_request:
+        paths:
+            - "**.hlsl6"
+            - "**.hlsli"
+            - ".clang-format"
+            - ".pre-commit-config.yaml"
+            - "cmake/DX12Native*.cmake"
+            - "cmake/native-shaders/**"
+            - ".github/workflows/ci-native-shaders.yaml"
+    push:
+        branches: [feat/dx12, dev]
+        paths:
+            - "**.hlsl6"
+            - "**.hlsli"
+            - ".clang-format"
+            - ".pre-commit-config.yaml"
+            - "cmake/DX12Native*.cmake"
+            - "cmake/native-shaders/**"
+            - ".github/workflows/ci-native-shaders.yaml"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    native-shaders:
+        runs-on: windows-2025-vs2026
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-python@v6
+              with:
+                  python-version: "3.12"
+            - name: Compile native shaders with DXC
+              shell: pwsh
+              run: |
+                  $ErrorActionPreference = 'Stop'
+                  $dxc = Get-Command dxc.exe -ErrorAction SilentlyContinue
+                  if ($dxc) {
+                      $dxcPath = $dxc.Source
+                  } else {
+                      $sdk = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
+                      $dxcPath = Get-ChildItem -LiteralPath $sdk -Directory |
+                          Where-Object { $_.Name -match '^10\.\d+\.\d+\.\d+$' } |
+                          Sort-Object { [version]$_.Name } -Descending |
+                          ForEach-Object { Join-Path $_.FullName 'x64/dxc.exe' } |
+                          Where-Object { Test-Path -LiteralPath $_ } |
+                          Select-Object -First 1
+                  }
+                  if (-not $dxcPath) { throw 'DXC not found' }
+                  cmake -S cmake/native-shaders -B build/native-shader-validation "-DNATIVE_SHADOW_DXC=$dxcPath"
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  cmake --build build/native-shader-validation --target native_shader_validation
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            - name: Check formatting and compare DXIL
+              shell: pwsh
+              run: |
+                  $ErrorActionPreference = 'Stop'
+                  $build = 'build/native-shader-validation'
+                  $outputs = @('DX12NativeScene/ShadowMask.dxil', 'NativeComposite/ShadowLayer.dxil')
+                  $before = @{}
+                  foreach ($output in $outputs) {
+                      $before[$output] = (Get-FileHash (Join-Path $build $output)).Hash
+                  }
+                  python -m pip install pre-commit
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  $files = @(git ls-files -- '*.hlsl6' 'features/DX12 Native Scene/Shaders/*.hlsli' 'features/Native Composite/Shaders/*.hlsli')
+                  if ($LASTEXITCODE -ne 0 -or $files.Count -eq 0) { throw 'Native shader sources not found' }
+                  python -m pre_commit run clang-format --files @files
+                  $formatStatus = $LASTEXITCODE
+                  cmake --build $build --target native_shader_validation --clean-first
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  foreach ($output in $outputs) {
+                      $after = (Get-FileHash (Join-Path $build $output)).Hash
+                      if ($before[$output] -ne $after) { throw "DXIL changed after formatting: $output" }
+                      Write-Host "Identical DXIL: $output"
+                  }
+                  if ($formatStatus -ne 0) { exit $formatStatus }
