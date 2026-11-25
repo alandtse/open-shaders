@@ -13,6 +13,6 @@ namespace DX12Native
 	{
 		return target == 0 ||
 		       (hasFence && (completed == kUntrackedFenceValue ||
-		                        (target != kUntrackedFenceValue && completed >= target)));
+								(target != kUntrackedFenceValue && completed >= target)));
 	}
 }
