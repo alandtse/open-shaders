@@ -392,6 +392,11 @@ namespace GrassExtensions
 	};
 }
 
+bool Hooks::IsGrassMeshLoadHookInstalled()
+{
+	return GrassExtensions::LoadGrassType::func.address() != 0;
+}
+
 namespace WaterBlendHistory
 {
 	struct BSImagespaceShader_Render
@@ -1552,9 +1557,8 @@ namespace Hooks
 		// 0x4F5 decodes as a stray TEST, not a CALL, on 1.7.99 -- the two offsets are not interchangeable.
 		stl::write_thunk_call<GrassExtensions::BSGrassShaderProperty_ctor>(REL::RelocationID(15214, 15383).address() + REL::Relocate<std::uintptr_t>(0x45B, REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0x4FD : 0x4F5));
 		stl::write_vfunc<0x6, GrassExtensions::BSGrassShader_SetupGeometry>(RE::VTABLE_BSGrassShader[0]);
-		stl::write_thunk_call<GrassExtensions::LoadGrassType>(REL::RelocationID(15204, 15372).address() + Util::VersionedRelocation::Select(0x2F5, 0x2F5, 0x305));
-		stl::write_thunk_call<GrassExtensions::LoadGrassType>(REL::RelocationID(15205, 15373).address() + Util::VersionedRelocation::Select(0x62B, 0x597, 0x590));
-		stl::write_thunk_call<GrassExtensions::LoadGrassType>(REL::RelocationID(15206, 15374).address() + REL::Relocate(0x25C, 0x25C));
+		// NGIO can call the loader outside the engine's grass tasks.
+		stl::detour_thunk<GrassExtensions::LoadGrassType>(REL::RelocationID(15214, 15383));
 		stl::write_vfunc<0x0, GrassExtensions::BSMultiStreamInstanceTriShape_dtor>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
 		stl::write_vfunc<0x6, PostProcessingExtensions::BSParticleShader_SetupGeometry>(RE::VTABLE_BSParticleShader[0]);
 

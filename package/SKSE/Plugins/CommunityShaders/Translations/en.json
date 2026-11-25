@@ -1768,6 +1768,7 @@
     "feature.grass_optimizations.key_feature_5": "Optional mesh-swap LOD and simplified shading for distant grass",
     "feature.grass_optimizations.mesh_cost_bias": "Mesh Cost Bias",
     "feature.grass_optimizations.mesh_cost_bias_tooltip": "Culls or removes grass meshes based on their complexity (performance impact). At 0, removal is identical between all grass types regardless of complexity. At 1, heavier and more complex meshes are culled 2-6x sooner than simple ones. Only applies beyond the Cost Bias Start Distance, so nearby grass is never thinned.",
+    "feature.grass_optimizations.mesh_load_hook_failed": "Grass mesh registration failed. Skyrim will render grass using its native renderer.",
     "feature.grass_optimizations.mesh_lod": "Mesh LOD",
     "feature.grass_optimizations.mesh_lod_band": "Mesh LOD Transition Band",
     "feature.grass_optimizations.mesh_lod_band_tooltip": "The range of on-screen sizes over which a random amount of meshes are swapped out before completely transitioning to the next LOD. Applies to both transitions. A wider range results in a smoother transition.",
