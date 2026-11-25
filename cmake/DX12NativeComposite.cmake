@@ -9,7 +9,8 @@ if(NATIVE_SHADOW_DXC)
         OUTPUT "${_native_composite_dxil}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_native_composite_dir}"
         COMMAND
-            "${NATIVE_SHADOW_DXC}" -T cs_6_5 -E main -HV 2021 -O3 ${NATIVE_SHADER_VALIDATION_FLAGS} -Ges -Gis -Fo
+            "${NATIVE_SHADOW_DXC}" -T cs_6_5 -E main -HV 2021 -O3
+            ${NATIVE_SHADER_VALIDATION_FLAGS} -Ges -Gis -Fo
             "${_native_composite_dxil}" "${_native_composite_source}"
         DEPENDS "${_native_composite_source}"
         VERBATIM

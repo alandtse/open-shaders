@@ -22,7 +22,8 @@ if(NATIVE_SHADOW_DXC)
         OUTPUT "${_shadow_dxil}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_shadow_dir}"
         COMMAND
-            "${NATIVE_SHADOW_DXC}" -T cs_6_5 -E main -HV 2021 -O3 ${NATIVE_SHADER_VALIDATION_FLAGS} -I
+            "${NATIVE_SHADOW_DXC}" -T cs_6_5 -E main -HV 2021 -O3
+            ${NATIVE_SHADER_VALIDATION_FLAGS} -I
             "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene"
             -Fo "${_shadow_dxil}" "${_shadow_source}"
         DEPENDS "${_shadow_source}" "${_shadow_density}"
