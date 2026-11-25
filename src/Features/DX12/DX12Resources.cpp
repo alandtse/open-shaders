@@ -16,6 +16,12 @@
 namespace DX12
 {
 	constexpr uint64_t kPredictiveTileBudgetBytes = 12ull * 1024 * 1024;
+	constexpr size_t kRetiredTileLimit = 32;
+	constexpr unsigned kPreparationAttemptLimit = 3;
+	constexpr uint32_t kFirstRetryDelayMs = 500;
+	constexpr uint32_t kSecondRetryDelayMs = 2000;
+	constexpr uint32_t kRetiredCacheFlushTransitions = 2;
+	constexpr double kMinimumMovementSquared = 1.0;
 
 	void ResourceGrid::Advance(uint32_t scope, uint32_t size, double x, double y)
 	{
@@ -28,7 +34,7 @@ namespace DX12
 			const double vx = x - previousX, vy = y - previousY;
 			const double displacement = vx * vx + vy * vy;
 			// Preserve the last non-jitter direction while stationary; disregard teleports.
-			if (std::isfinite(displacement) && displacement > 1.0 && displacement < double(size) * size) {
+			if (std::isfinite(displacement) && displacement > kMinimumMovementSquared && displacement < double(size) * size) {
 				movementX = vx;
 				movementY = vy;
 			}
@@ -122,7 +128,7 @@ namespace DX12
 			};
 			for (const auto& tile : current->resident) retain(tile);
 			for (const auto& tile : current->predictiveResident) retain(tile);
-			while (recentTiles.size() > 32) recentTiles.pop_front();
+			while (recentTiles.size() > kRetiredTileLimit) recentTiles.pop_front();
 		}
 		if (pending && std::ranges::find(next->requested, *pending) == next->requested.end() &&
 			std::ranges::find(next->predictive, *pending) == next->predictive.end())
@@ -186,13 +192,13 @@ namespace DX12
 		std::array<size_t, kPredictiveCapacity> order{};
 		for (size_t i = 0; i < order.size(); ++i)
 			order[i] = i;
-		std::stable_sort(order.begin(), order.begin() + 12, [&](size_t a, size_t b) {
+		std::stable_sort(order.begin(), order.begin() + kPredictiveSideCount, [&](size_t a, size_t b) {
 			const auto& left = current->predictive[a];
 			const auto& right = current->predictive[b];
 			return (left.x - center.x) * movementX + (left.y - center.y) * movementY >
 			       (right.x - center.x) * movementX + (right.y - center.y) * movementY;
 		});
-		std::stable_sort(order.begin() + 12, order.end(), [&](size_t a, size_t b) {
+		std::stable_sort(order.begin() + kPredictiveSideCount, order.end(), [&](size_t a, size_t b) {
 			const auto& left = current->predictive[a];
 			const auto& right = current->predictive[b];
 			return (left.x - center.x) * movementX + (left.y - center.y) * movementY >
@@ -223,7 +229,7 @@ namespace DX12
 		const auto existing = active != current->requested.end() ?
 		                          current->resident[std::distance(current->requested.begin(), active)] :
 		                          current->predictiveResident[std::distance(current->predictive.begin(), predictive)];
-		tile->preparationAttempts = static_cast<uint8_t>(std::min<unsigned>(existing ? unsigned(existing->preparationAttempts) + 1 : 1u, 3u));
+		tile->preparationAttempts = static_cast<uint8_t>(std::min<unsigned>(existing ? unsigned(existing->preparationAttempts) + 1 : 1u, kPreparationAttemptLimit));
 		tile->failureReason = std::move(publication.failureReason);
 		tile->rejectionReasons = std::move(publication.rejectionReasons);
 		tile->nifSources = std::move(publication.nifSources);
@@ -247,10 +253,10 @@ namespace DX12
 			tile->shapes.clear();
 			tile->lights.clear();
 			tile->bytes = 0;
-			if (tile->preparationAttempts < 3) {
+			if (tile->preparationAttempts < kPreparationAttemptLimit) {
 				tile->state = Tile::State::RetryWaiting;
 				tile->retryAfterQpc = Util::QpcDeadlineAfterMs(
-					Util::GetQpcTicks(), Util::GetQpcFrequency(), tile->preparationAttempts == 1 ? 500 : 2000);
+					Util::GetQpcTicks(), Util::GetQpcFrequency(), tile->preparationAttempts == 1 ? kFirstRetryDelayMs : kSecondRetryDelayMs);
 			} else {
 				tile->state = Tile::State::Incomplete;
 			}
@@ -376,6 +382,41 @@ namespace DX12
 
 namespace
 {
+	struct SubcellMapStyle
+	{
+		static constexpr ImU32 waiting = IM_COL32(46, 54, 65, 255);
+		static constexpr ImU32 activeReady = IM_COL32(243, 201, 74, 255);
+		static constexpr ImU32 predictiveReady = IM_COL32(117, 197, 239, 255);
+		static constexpr ImU32 activePartial = IM_COL32(200, 164, 71, 255);
+		static constexpr ImU32 predictivePartial = IM_COL32(91, 156, 194, 255);
+		static constexpr ImU32 preparing = IM_COL32(182, 140, 91, 255);
+		static constexpr ImU32 retryWaiting = IM_COL32(211, 76, 76, 255);
+		static constexpr ImU32 skipped = IM_COL32(123, 129, 139, 255);
+		static constexpr ImU32 activeOutline = IM_COL32(255, 225, 150, 200);
+		static constexpr ImU32 predictiveOutline = IM_COL32(138, 174, 207, 180);
+		static constexpr ImU32 partialStripe = IM_COL32(32, 44, 56, 170);
+		static constexpr ImU32 playerFill = IM_COL32(30, 37, 48, 255);
+		static constexpr ImU32 playerOutline = IM_COL32(255, 255, 255, 240);
+		static constexpr ImVec4 activeLegend{ 0.95f, 0.79f, 0.29f, 1.0f };
+		static constexpr ImVec4 predictiveLegend{ 0.46f, 0.77f, 0.94f, 1.0f };
+		static constexpr ImVec4 retryLegend{ 0.83f, 0.30f, 0.30f, 1.0f };
+		static constexpr ImVec4 statsHeading{ 0.40f, 0.77f, 0.49f, 1.0f };
+		static constexpr float minPitch = 28.0f;
+		static constexpr float maxPitch = 54.0f;
+		static constexpr float gap = 4.0f;
+		static constexpr float rounding = 3.0f;
+		static constexpr float activeOutlineWidth = 1.8f;
+		static constexpr float predictiveOutlineWidth = 1.0f;
+		static constexpr float stripeInset = 4.0f;
+		static constexpr float stripeWidth = 2.0f;
+		static constexpr float playerRadius = 5.0f;
+		static constexpr float playerOutlineWidth = 1.5f;
+		static constexpr float threeColumnMinWidth = 1050.0f;
+		static constexpr float twoColumnMinWidth = 680.0f;
+		static constexpr float mapColumnWidth = 290.0f;
+		static constexpr float detailsColumnWidth = 375.0f;
+	};
+
 	const char* TileStatus(const std::shared_ptr<const DX12::Tile>& tile)
 	{
 		if (!tile)
@@ -402,24 +443,24 @@ namespace
 	ImU32 TileColor(const std::shared_ptr<const DX12::Tile>& tile, bool active)
 	{
 		if (!tile)
-			return IM_COL32(46, 54, 65, 255);  // Awaiting generation: dark slate.
+			return SubcellMapStyle::waiting;
 		switch (tile->state) {
 		case DX12::Tile::State::Ready:
-			return active ? IM_COL32(243, 201, 74, 255) : IM_COL32(117, 197, 239, 255);
+			return active ? SubcellMapStyle::activeReady : SubcellMapStyle::predictiveReady;
 		case DX12::Tile::State::ReadyPartial:
-			return active ? IM_COL32(200, 164, 71, 255) : IM_COL32(91, 156, 194, 255);
+			return active ? SubcellMapStyle::activePartial : SubcellMapStyle::predictivePartial;
 		case DX12::Tile::State::Preparing:
-			return IM_COL32(182, 140, 91, 255);
+			return SubcellMapStyle::preparing;
 		case DX12::Tile::State::RetryWaiting:
-			return IM_COL32(211, 76, 76, 255);
+			return SubcellMapStyle::retryWaiting;
 		case DX12::Tile::State::Incomplete:
-			return IM_COL32(123, 129, 139, 255);
+			return SubcellMapStyle::skipped;
 		case DX12::Tile::State::Deferred:
-			return IM_COL32(123, 129, 139, 255);
+			return SubcellMapStyle::skipped;
 		case DX12::Tile::State::Requested:
-			return IM_COL32(46, 54, 65, 255);
+			return SubcellMapStyle::waiting;
 		}
-		return IM_COL32(46, 54, 65, 255);
+		return SubcellMapStyle::waiting;
 	}
 
 	std::shared_ptr<const DX12::Tile> FindTile(
@@ -441,31 +482,33 @@ namespace
 	{
 		const auto center = grid.requested.front();
 		const float available = std::max(1.0f, ImGui::GetContentRegionAvail().x);
-		const float pitch = std::min(54.0f, std::max(28.0f, (available - 4.0f) / 5.0f));
-		const float side = pitch - 4.0f;
-		const float total = pitch * 5.0f;
+		const float pitch = std::clamp((available - SubcellMapStyle::gap) / DX12::kPredictiveDiameter,
+			SubcellMapStyle::minPitch, SubcellMapStyle::maxPitch);
+		const float side = pitch - SubcellMapStyle::gap;
+		const float total = pitch * DX12::kPredictiveDiameter;
 		const ImVec2 origin = ImGui::GetCursorScreenPos();
 		const float left = origin.x + std::max(0.0f, (available - total) * 0.5f);
 		ImDrawList* draw = ImGui::GetWindowDrawList();
-		for (int row = 0; row < 5; ++row) {
-			for (int col = 0; col < 5; ++col) {
-				const int dx = col - 2, dy = 2 - row;
-				const bool active = std::max(std::abs(dx), std::abs(dy)) <= 1;
+		for (int row = 0; row < DX12::kPredictiveDiameter; ++row) {
+			for (int col = 0; col < DX12::kPredictiveDiameter; ++col) {
+				const int dx = col - DX12::kPredictiveRadius, dy = DX12::kPredictiveRadius - row;
+				const bool active = std::max(std::abs(dx), std::abs(dy)) <= DX12::kGridRadius;
 				const DX12::SubcellKey key{ center.scope, center.x + dx, center.y + dy };
 				const auto tile = center.scope ? FindTile(grid, key, active) : nullptr;
 				const ImVec2 p0{ left + col * pitch, origin.y + row * pitch };
 				const ImVec2 p1{ p0.x + side, p0.y + side };
-				draw->AddRectFilled(p0, p1, TileColor(tile, active), 3.0f);
-				draw->AddRect(p0, p1, active ? IM_COL32(255, 225, 150, 200) : IM_COL32(138, 174, 207, 180), 3.0f, 0, active ? 1.8f : 1.0f);
+				draw->AddRectFilled(p0, p1, TileColor(tile, active), SubcellMapStyle::rounding);
+				draw->AddRect(p0, p1, active ? SubcellMapStyle::activeOutline : SubcellMapStyle::predictiveOutline, SubcellMapStyle::rounding, 0,
+					active ? SubcellMapStyle::activeOutlineWidth : SubcellMapStyle::predictiveOutlineWidth);
 				if (tile && tile->state == DX12::Tile::State::ReadyPartial) {
 					// A diagonal distinguishes partially processed cells without hiding the zone color.
-					draw->AddLine(ImVec2(p0.x + 4.0f, p1.y - 4.0f),
-						ImVec2(p1.x - 4.0f, p0.y + 4.0f), IM_COL32(32, 44, 56, 170), 2.0f);
+					draw->AddLine(ImVec2(p0.x + SubcellMapStyle::stripeInset, p1.y - SubcellMapStyle::stripeInset),
+						ImVec2(p1.x - SubcellMapStyle::stripeInset, p0.y + SubcellMapStyle::stripeInset), SubcellMapStyle::partialStripe, SubcellMapStyle::stripeWidth);
 				}
-				if (col == 2 && row == 2) {
+				if (col == DX12::kPredictiveRadius && row == DX12::kPredictiveRadius) {
 					const ImVec2 marker{ (p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f };
-					draw->AddCircleFilled(marker, 5.0f, IM_COL32(30, 37, 48, 255));
-					draw->AddCircle(marker, 5.0f, IM_COL32(255, 255, 255, 240), 0, 1.5f);
+					draw->AddCircleFilled(marker, SubcellMapStyle::playerRadius, SubcellMapStyle::playerFill);
+					draw->AddCircle(marker, SubcellMapStyle::playerRadius, SubcellMapStyle::playerOutline, 0, SubcellMapStyle::playerOutlineWidth);
 				}
 			}
 		}
@@ -475,9 +518,9 @@ namespace
 			const ImVec2 mouse = ImGui::GetIO().MousePos;
 			const int col = int((mouse.x - left) / pitch);
 			const int row = int((mouse.y - origin.y) / pitch);
-			if (mouse.x >= left && mouse.y >= origin.y && col >= 0 && col < 5 && row >= 0 && row < 5) {
-				const int dx = col - 2, dy = 2 - row;
-				const bool active = std::max(std::abs(dx), std::abs(dy)) <= 1;
+			if (mouse.x >= left && mouse.y >= origin.y && col >= 0 && col < DX12::kPredictiveDiameter && row >= 0 && row < DX12::kPredictiveDiameter) {
+				const int dx = col - DX12::kPredictiveRadius, dy = DX12::kPredictiveRadius - row;
+				const bool active = std::max(std::abs(dx), std::abs(dy)) <= DX12::kGridRadius;
 				const DX12::SubcellKey key{ center.scope, center.x + dx, center.y + dy };
 				const auto tile = FindTile(grid, key, active);
 				ImGui::BeginTooltip();
@@ -529,8 +572,16 @@ void DX12Resources::DrawSettings()
 	int index = int(std::ranges::find(DX12::kSubcellSizes, settings.SubcellSize) - DX12::kSubcellSizes.begin());
 	if (index >= int(DX12::kSubcellSizes.size()))
 		index = 0;
-	constexpr const char* labels[] = { "4096", "6144", "8192", "10240", "12288", "14336", "16384" };
-	if (ImGui::Combo(T("menu.dx12.resources.subcell_size", "Subcell size (game units)"), &index, labels, int(std::size(labels)))) {
+	static const auto labels = [] {
+		std::array<std::string, DX12::kSubcellSizes.size()> result{};
+		for (size_t i = 0; i < result.size(); ++i)
+			result[i] = std::to_string(DX12::kSubcellSizes[i]);
+		return result;
+	}();
+	std::array<const char*, DX12::kSubcellSizes.size()> labelPointers{};
+	for (size_t i = 0; i < labels.size(); ++i)
+		labelPointers[i] = labels[i].c_str();
+	if (ImGui::Combo(T("menu.dx12.resources.subcell_size", "Subcell size (game units)"), &index, labelPointers.data(), int(labelPointers.size()))) {
 		const uint32_t selected = DX12::kSubcellSizes[index];
 		if (settings.SubcellSize != selected) {
 			settings.SubcellSize = selected;
@@ -555,14 +606,14 @@ void DX12Resources::DrawSettings()
 				classify(tile, false);
 			ImGui::Text(T("menu.dx12.resources.loaded_counts", "Loaded: active %zu / 9, predictive %zu / 16"), activeLoaded, predictiveLoaded);
 		}
-		ImGui::TextColored(ImVec4(0.95f, 0.79f, 0.29f, 1.0f), T("menu.dx12.resources.legend.yellow", "Yellow: loaded 3x3"));
-		ImGui::TextColored(ImVec4(0.46f, 0.77f, 0.94f, 1.0f), T("menu.dx12.resources.legend.light_blue", "Light blue: loaded predictive ring"));
-		ImGui::TextColored(ImVec4(0.83f, 0.30f, 0.30f, 1.0f), T("menu.dx12.resources.legend.red", "Red: failed (retry pending)"));
+		ImGui::TextColored(SubcellMapStyle::activeLegend, T("menu.dx12.resources.legend.yellow", "Yellow: loaded 3x3"));
+		ImGui::TextColored(SubcellMapStyle::predictiveLegend, T("menu.dx12.resources.legend.light_blue", "Light blue: loaded predictive ring"));
+		ImGui::TextColored(SubcellMapStyle::retryLegend, T("menu.dx12.resources.legend.red", "Red: failed (retry pending)"));
 		ImGui::TextDisabled(T("menu.dx12.resources.legend.diagonal", "Diagonal: partially loaded  |  Center dot: player subcell"));
 	};
 
 	const auto drawGenerationStats = [&]() {
-		ImGui::TextColored(ImVec4(0.40f, 0.77f, 0.49f, 1.0f), T("menu.dx12.resources.stats.title", "Subcell generation stats"));
+		ImGui::TextColored(SubcellMapStyle::statsHeading, T("menu.dx12.resources.stats.title", "Subcell generation stats"));
 		ImGui::TextDisabled(T("menu.dx12.resources.stats.timing_head", "Last / Avg / Worst (milliseconds)"));
 		const auto show = [](const char* label, const DX12::PreparationTiming& value) {
 			if (value.completed)
@@ -578,10 +629,10 @@ void DX12Resources::DrawSettings()
 	};
 
 	const float available = ImGui::GetContentRegionAvail().x;
-	if (available >= 1050.0f &&
+	if (available >= SubcellMapStyle::threeColumnMinWidth &&
 		ImGui::BeginTable("##SubcellStatusLayout", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX)) {
-		ImGui::TableSetupColumn("##SubcellMap", ImGuiTableColumnFlags_WidthFixed, 290.0f);
-		ImGui::TableSetupColumn("##SubcellDetails", ImGuiTableColumnFlags_WidthFixed, 375.0f);
+		ImGui::TableSetupColumn("##SubcellMap", ImGuiTableColumnFlags_WidthFixed, SubcellMapStyle::mapColumnWidth);
+		ImGui::TableSetupColumn("##SubcellDetails", ImGuiTableColumnFlags_WidthFixed, SubcellMapStyle::detailsColumnWidth);
 		ImGui::TableSetupColumn("##SubcellGenerationStats", ImGuiTableColumnFlags_WidthStretch);
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
@@ -592,9 +643,9 @@ void DX12Resources::DrawSettings()
 		ImGui::TableSetColumnIndex(2);
 		drawGenerationStats();
 		ImGui::EndTable();
-	} else if (available >= 680.0f &&
+	} else if (available >= SubcellMapStyle::twoColumnMinWidth &&
 			   ImGui::BeginTable("##SubcellStatusLayout", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX)) {
-		ImGui::TableSetupColumn("##SubcellMap", ImGuiTableColumnFlags_WidthFixed, 290.0f);
+		ImGui::TableSetupColumn("##SubcellMap", ImGuiTableColumnFlags_WidthFixed, SubcellMapStyle::mapColumnWidth);
 		ImGui::TableSetupColumn("##SubcellDetails", ImGuiTableColumnFlags_WidthStretch);
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
@@ -656,7 +707,7 @@ void DX12Resources::PreShadowMaps()
 	if (lastVisitedCell && cellID && cellID != lastVisitedCell) {
 		if (cellID == previousVisitedCell)
 			distinctTransitions = 0;  // Returning to a visited cell.
-		else if (++distinctTransitions >= 2) {
+		else if (++distinctTransitions >= DX12::kRetiredCacheFlushTransitions) {
 			grid.FlushRetiredCache();
 			flushGeneration.fetch_add(1, std::memory_order_release);
 			distinctTransitions = 0;
@@ -760,7 +811,7 @@ void DX12Resources::PreShadowMaps()
 				// Predictive indices 0..11 are sides; 12..15 are corners.
 				// Store the request-time class before a possible player subcell transition.
 				task.corner = task.predictive &&
-				              std::ranges::find(requestedGrid->predictive.begin() + 12,
+				              std::ranges::find(requestedGrid->predictive.begin() + DX12::kPredictiveSideCount,
 								  requestedGrid->predictive.end(), *request) != requestedGrid->predictive.end();
 				task.size = settings.SubcellSize;
 				task.localScopeID = source->GetLocalFormID();

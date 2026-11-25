@@ -19,13 +19,23 @@
 
 namespace DX12Native
 {
+	namespace
+	{
+		constexpr std::streamoff kMaxShadowBytecodeBytes = 16 * VideoMemoryBudget::kMiB;
+		constexpr uint64_t kSlotOverheadBytes = 2 * VideoMemoryBudget::kMiB;
+		constexpr uint32_t kShadowConstantDwords = 42;
+		constexpr uint32_t kShadowThreadGroupSize = 8;
+		constexpr float kReceiverTolerance = 16.0f;
+		constexpr float kReconstructionRadiusPixels = 2.0f;
+	}
+
 	bool NativeComposite::InitializeShadow(ID3D12Device* device)
 	{
 		if (shadowPipeline && shadowDevice == device)
 			return true;
 		try {
 			std::ifstream file(Util::PathHelpers::GetShadersPath() / "NativeComposite" / "ShadowLayer.dxil", std::ios::binary | std::ios::ate);
-			if (!file || file.tellg() <= 0 || file.tellg() > 16 * 1024 * 1024)
+			if (!file || file.tellg() <= 0 || file.tellg() > kMaxShadowBytecodeBytes)
 				return false;
 			std::vector<char> shader(static_cast<size_t>(file.tellg()));
 			file.seekg(0);
@@ -37,7 +47,7 @@ namespace DX12Native
 			CD3DX12_ROOT_PARAMETER parameters[3];
 			parameters[0].InitAsDescriptorTable(1, &ranges[0]);
 			parameters[1].InitAsDescriptorTable(1, &ranges[1]);
-			parameters[2].InitAsConstants(42, 0);
+			parameters[2].InitAsConstants(kShadowConstantDwords, 0);
 			const CD3DX12_ROOT_SIGNATURE_DESC desc(3, parameters);
 			winrt::com_ptr<ID3DBlob> serialized, errors;
 			DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
@@ -141,9 +151,9 @@ namespace DX12Native
 					supportsShadow ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE);
 				const auto allocation = device12->GetResourceAllocationInfo(0, 1, &allocationDesc).SizeInBytes;
 				const uint64_t imageCount = returnColorToDX11 ? 3ull : 2ull;
-				if (allocation == UINT64_MAX || allocation > (UINT64_MAX - 2ull * 1024 * 1024) / imageCount)
+				if (allocation == UINT64_MAX || allocation > (UINT64_MAX - kSlotOverheadBytes) / imageCount)
 					throw std::runtime_error("Composite allocation size unsupported");
-				const uint64_t required = allocation * imageCount + 2ull * 1024 * 1024;
+				const uint64_t required = allocation * imageCount + kSlotOverheadBytes;
 				uint64_t retained = 0;
 				for (const auto& candidate : slots)
 					if (candidate && candidate.get() != slot) {
@@ -273,10 +283,10 @@ namespace DX12Native
 					DirectX::SimpleMath::Matrix inverseProjection, inverseView;
 					uint32_t spatialReconstruction, reconstructionGridSize;
 				};
-				static_assert(sizeof(Constants) == 42 * sizeof(uint32_t));
+				static_assert(sizeof(Constants) == kShadowConstantDwords * sizeof(uint32_t));
 				const auto& camera = raster->camera;
 				// Exactly the open-RT default independent shadow settings.
-				const Constants constants{ width, height, 16.0f, 2.0f,
+				const Constants constants{ width, height, kReceiverTolerance, kReconstructionRadiusPixels,
 					transfer == Transfer::LegacyScene ? 1u : 0u,
 					0u,  // padding: matrices retain 16-byte alignment.
 					globals::features::dx12Control.GetShadowStrength(),
@@ -284,8 +294,9 @@ namespace DX12Native
 					camera.CameraProjInverse, camera.CameraViewInverse,
 					globals::features::dx12Control.UseSpatialReconstruction() ? 1u : 0u,
 					globals::features::dx12Control.GetReconstructionGridSize() };
-				slot->commands->SetComputeRoot32BitConstants(2, 42, &constants, 0);
-				slot->commands->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+				slot->commands->SetComputeRoot32BitConstants(2, kShadowConstantDwords, &constants, 0);
+				slot->commands->Dispatch((width + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize,
+					(height + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize, 1);
 				const std::array end{
 					CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
 					CD3DX12_RESOURCE_BARRIER::Transition(shadow->mask.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
