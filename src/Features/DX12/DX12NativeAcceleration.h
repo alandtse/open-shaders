@@ -5,12 +5,9 @@
 
 #include <array>
 #include <atomic>
-#include <condition_variable>
 #include <memory>
 #include <mutex>
-#include <stop_token>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -60,7 +57,7 @@ namespace DX12Native
 		const std::string& Failure() const { return failure; }
 
 	private:
-		/** @brief Only the dedicated worker is permitted to allocate or submit native AS work. */
+		/** @brief Only the serialized acceleration task may allocate or submit native AS work. */
 		void Advance(std::shared_ptr<const SceneInputs> a_inputs);
 		struct Build
 		{
@@ -101,7 +98,7 @@ namespace DX12Native
 		std::string failure;
 	};
 
-	/** @brief Dedicated CPU worker. Snapshot delivery and completed-TLAS consumption never build on the caller. */
+	/** @brief Task coordinator using the shared CPU pool. Snapshot delivery and completed-TLAS consumption never build on the caller. */
 	class AccelerationWorker
 	{
 	public:
@@ -110,12 +107,14 @@ namespace DX12Native
 		AccelerationWorker(const AccelerationWorker&) = delete;
 		AccelerationWorker& operator=(const AccelerationWorker&) = delete;
 
-		/** @brief Starts a dedicated native builder; device and queue initialization run on that thread. */
+		/** @brief Captures device references lazily; initialization runs on the shared pool. */
 		bool Start(ID3D11Device* a_device, ID3D11DeviceContext* a_context);
 		/** @brief Replaces the pending grid snapshot; only the latest unpublished request is built. */
 		void Request(std::shared_ptr<const DX12::Grid> a_grid);
 		/** @brief Cancels eligibility without interrupting previously submitted GPU work. */
 		void Reset();
+		/** @brief Ends the session without waiting for queued CPU or GPU work. */
+		void Stop();
 		/** @brief Acquires the most recent completed immutable scene, never waiting for a build. */
 		std::shared_ptr<const TopLevel> GetScene() const;
 		/** @brief Retains a borrowed scene until the consumer's GPU fence completes. */
@@ -125,9 +124,8 @@ namespace DX12Native
 
 	private:
 		struct State;
-		static void Run(std::shared_ptr<State> a_state, std::stop_token a_stop,
-			winrt::com_ptr<ID3D11Device> a_device, winrt::com_ptr<ID3D11DeviceContext> a_context);
-		std::shared_ptr<State> state;
-		std::jthread worker;
+		static void TrySchedule(const std::shared_ptr<State>& a_state);
+		static void RunStep(std::shared_ptr<State> a_state);
+		std::atomic<std::shared_ptr<State>> state{};
 	};
 }

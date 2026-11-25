@@ -258,7 +258,7 @@ void DX12NativeScene::PreShadowMaps()
 						   globals::features::dx12Resources.GetPreparedLights()),
 		std::memory_order_release);
 	// Only a revision-coalesced mailbox handoff on this thread. All BLAS/TLAS
-	// allocations, command recording and GPU builds run on their own worker.
+	// allocations and command recording run as bounded shared-pool tasks.
 	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
 		acceleration.Request(std::move(grid));
 }
@@ -439,6 +439,6 @@ void DX12NativeScene::OnRuntimeDisabled()
 	}
 	raster.Reset();
 	shadows.Reset();
-	acceleration.Reset();
+	acceleration.Stop();
 	geometryCapture.Reset();
 }

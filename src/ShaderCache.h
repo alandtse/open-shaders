@@ -619,6 +619,8 @@ namespace SIE
 		void SetDump(bool value);
 		/** @brief Signals all compilation threads to stop and clears pending tasks. */
 		void StopCompilation();
+		/** @brief Admit one short non-shader job using the existing dispatch budget. Never waits for a slot. */
+		bool TrySubmitRuntimeTask(std::function<void()> a_work);
 		/** @brief Drops queued/in-flight compilation work without stopping the management
 		 * thread (unlike StopCompilation(), which is terminal). Returns immediately. */
 		void CancelCompilation();
@@ -1430,6 +1432,8 @@ namespace SIE
 		std::mutex paraboloidClipMutex;
 		ankerl::unordered_dense::map<uint32_t, winrt::com_ptr<ID3D11GeometryShader>> paraboloidClipShaders;
 		CompilationSet compilationSet;
+		// Guarded by compilationSet.compilationMutex; shader cache clears do not cancel runtime jobs.
+		bool runtimeTaskAdmissionClosed = false;
 		ankerl::unordered_dense::map<std::string, ShaderCacheResult> shaderMap{};
 		std::mutex mapMutex;                                                                      // guard for shaderMap
 		std::condition_variable mapCV;                                                            // signalled when a Pending entry transitions to Completed/Failed
