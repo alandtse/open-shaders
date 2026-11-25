@@ -7,9 +7,11 @@
 #include "Utils/RestartSettings.h"
 
 #include <cstring>
+#include <d3d11.h>
 #include <span>
 #include <string_view>
 #include <vector>
+#include <winrt/base.h>
 #ifdef TRACY_ENABLE
 #	include <Tracy/Tracy.hpp>
 #	include <Tracy/TracyD3D11.hpp>
@@ -370,17 +372,17 @@ public:
 	/** @brief Called after the world scene is complete, including first-person rendering on SE/AE. */
 	virtual void OnWorldRenderEnd(RE::RENDER_TARGET /*a_renderTarget*/) {}
 
-	/** @brief Source textures from the opaque raster stage. */
+	/** @brief Owning references to source textures from the opaque raster stage. */
 	struct OpaqueRasterInputs
 	{
-		ID3D11Texture2D* litColor = nullptr;
-		ID3D11Texture2D* litSpecular = nullptr;
-		ID3D11Texture2D* albedo = nullptr;
-		ID3D11Texture2D* normalRoughness = nullptr;
-		ID3D11Texture2D* masks = nullptr;
-		ID3D11Texture2D* masks2 = nullptr;
-		ID3D11Texture2D* reflectance = nullptr;
-		ID3D11Texture2D* motion = nullptr;
+		winrt::com_ptr<ID3D11Texture2D> litColor;
+		winrt::com_ptr<ID3D11Texture2D> litSpecular;
+		winrt::com_ptr<ID3D11Texture2D> albedo;
+		winrt::com_ptr<ID3D11Texture2D> normalRoughness;
+		winrt::com_ptr<ID3D11Texture2D> masks;
+		winrt::com_ptr<ID3D11Texture2D> masks2;
+		winrt::com_ptr<ID3D11Texture2D> reflectance;
+		winrt::com_ptr<ID3D11Texture2D> motion;
 	};
 
 	/** @brief Offers completed opaque inputs before deferred composition. */
@@ -722,8 +724,10 @@ public:
 
 	/** @brief Visits PreShadowMaps() on every loaded feature that opted in via WantsPreShadowMapsHook(); the list is cached once. */
 	static void ApplyPreShadowMapsHooks();
-	/** @brief Dispatches opaque inputs only to features registered for the hook. */
-	static void ApplyOpaqueRasterReadyHooks(const OpaqueRasterInputs& a_inputs);
+	/** @brief Acquires opaque texture references only when a loaded hook consumes them. */
+	static void ApplyOpaqueRasterReadyHooks(ID3D11Texture2D* a_litColor, ID3D11Texture2D* a_litSpecular,
+		ID3D11Texture2D* a_albedo, ID3D11Texture2D* a_normalRoughness, ID3D11Texture2D* a_masks,
+		ID3D11Texture2D* a_masks2, ID3D11Texture2D* a_reflectance, ID3D11Texture2D* a_motion);
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();

@@ -9,6 +9,7 @@
 #include <fstream>
 #include <ranges>
 #include <stdexcept>
+#include <tuple>
 
 namespace DX12Native
 {
@@ -62,7 +63,7 @@ namespace DX12Native
 			dependencies.push_back(FencePoint(slot->readyFence ? slot->readyFence.get() : completion.get(), slot->readyValue));
 			for (const auto& consumer : slot->consumers)
 				dependencies.push_back({ consumer.first, consumer.second });
-			RetireAfterFences(std::move(slot), backend.d3d12Device, std::move(dependencies));
+			RetireAfterFences(std::tuple{ backend, root, pipeline, std::move(slot) }, backend.d3d12Device, std::move(dependencies));
 		}
 	}
 
