@@ -1,9 +1,11 @@
 ﻿#pragma once
 #include "OverlayFeature.h"
 #include "UnifiedWater/Flowmap.h"
+#include "UnifiedWater/ShallowSettings.h"
 #include "UnifiedWater/WaterCache.h"
 
 #include <atomic>
+#include <mutex>
 
 /** @brief Replaces distant water tiles with LOD0 water to eliminate water LOD mismatch. */
 struct UnifiedWater : OverlayFeature
@@ -109,7 +111,7 @@ struct UnifiedWater : OverlayFeature
 
 	virtual bool HasDebugSection() const override { return true; }
 
-	/** @brief Draws the Debug section (flowmap and water cache regeneration). */
+	/** @brief Draws diagnostic surface controls and flowmap/cache regeneration. */
 	virtual void DrawDebugSection() override;
 
 	/** @brief Draws the debug overlay showing water cache build progress. */
@@ -126,7 +128,28 @@ struct UnifiedWater : OverlayFeature
 	/** @brief Installs engine hooks for water mesh replacement and worldspace handling. */
 	virtual void PostPostLoad() override;
 
+	using ShallowSettings = UnifiedWaterSurface::Settings;
+
+	/** @brief Publishes surface controls only while unified-water resources are usable. */
+	UnifiedWaterSurface::CommonBufferData GetShallowSettings() const;
+	/** @brief Draws the appearance and shore controls. */
+	void DrawSettings() override;
+	/** @brief Loads and normalizes shallow-surface controls. */
+	void LoadSettings(json& value) override;
+	/** @brief Saves selected controls independently of runtime readiness. */
+	void SaveSettings(json& value) override;
+	/** @brief Restores the CSX surface defaults. */
+	void RestoreDefaultSettings() override;
+	/** @brief Reports selected and effective surface strength for devbench. */
+	json GetDiagnostics() override;
+
 private:
+	mutable std::mutex shallowSettingsMutex;
+	ShallowSettings shallowSettings;
+	ShallowSettings GetSelectedShallowSettings() const;
+	void SetShallowSettings(ShallowSettings value);
+	bool IsShallowSurfaceReady() const;
+
 	RE::NiPointer<RE::BSTriShape> waterMesh;
 	Flowmap* flowmap = nullptr;
 	WaterCache* waterCache = nullptr;

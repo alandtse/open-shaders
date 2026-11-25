@@ -79,6 +79,7 @@ add_executable(
     test_gpupassnames.cpp
     test_atlas_allocator.cpp
     test_mathutils.cpp
+    test_unified_water_shallow.cpp
     test_snowcover_math.cpp
     test_snowdeformation_math.cpp
     test_rain_texture_footprint.cpp

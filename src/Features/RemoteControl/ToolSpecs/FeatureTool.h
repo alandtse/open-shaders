@@ -9,6 +9,7 @@ namespace DevBenchBridge::ToolSpecs
 		R"(read/write runtime-only debug flags. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu,favorite,enabledAtBoot}; )"
 		R"(features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the )"
 		R"(SaveSettings blob (null if the feature has no override; set/reset then no-op). Anti-Lag 2 is automatic for a supported FSR Frame Generation session, with no independent setting or FPS cap. )"
+		R"(UnifiedWater.ShallowFallbackStrength (number 0-1, default 1) controls bounded shallow-surface restoration. UseOpenShadersDepthBehaviour (boolean, default false) is the Debug-only Use Legacy {brand} Depth Behaviour option; true suppresses restoration without discarding the selected controls. Get returns selected controls even when resources are unavailable; diagnostics reports shallowSurfaceReady, legacyDepthBehaviour, selectedShallowStrength and effectiveShallowStrength. )"
 		R"(GrassLighting.EnableNewLightingModel (integer 0/1, default 0), shown as Thin-Surface Grass Lighting, opts into thin-surface scattering, canopy occlusion and clump shading; 0 retains legacy grass lighting without disabling rendering optimizations. )"
 		R"(DeveloperTools owns RenderDoc capture settings under RenderDoc, including restart-gated Enable RenderDoc Capture; legacy top-level RenderDoc settings migrate automatically. )"
 		R"(Upscaling exposes enableDLSSFrameGen (boolean, default false); )"
@@ -58,7 +59,7 @@ namespace DevBenchBridge::ToolSpecs
 		"settings": {
 			"type": "object",
 			"description": "Partial )"
-		R"(SaveSettings object from get. GrassLighting.EnableNewLightingModel is integer 0/1, default 0. DeveloperTools capture settings are nested under RenderDoc. Upscaling exposes enableDLSSFrameGen (boolean, default false, )"
+		R"(SaveSettings object from get. UnifiedWater top-level numeric controls: ShallowFallbackStrength (0-1, default 1), DeepConnectionProbeReachUnits (0-768), DeepContextDepthUnits (32-384), ShoreContactMinFadePixels (0-4), ShoreDepthBlendRangeUnits (0-20), ShallowSurfaceDepthRangeUnits (16-256), ShallowFallbackMaxDistance (0-65536), DeepContextTransitionUnits (4-128); UseOpenShadersDepthBehaviour (boolean, default false) selects the diagnostic legacy blend. The normal menu exposes strength, edge fade and max distance; other controls stay in Debug. GrassLighting.EnableNewLightingModel is integer 0/1, default 0. DeveloperTools capture settings are nested under RenderDoc. Upscaling exposes enableDLSSFrameGen (boolean, default false, )"
 		R"(restart required). Upscaling Neural Rendering material strengths live under settings.neuralRenderingTuning.materialStrength (the master switch), strengthSkin, strengthHair, strengthEyes, )"
 		R"(strengthFoliage, strengthLandscape, strengthCloth, strengthMetal and strengthOther (each 0 to 1) and strengthEdgeSoftness (0 to 4 pixels); )"
 		R"(reduced modelScale uses these strengths at source resolution in the compositor, including edge softness, without allocating a provider alpha mask. )"

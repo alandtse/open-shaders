@@ -1012,6 +1012,10 @@ float GetFresnelValue(float3 normal, float3 viewDirection)
 	return lerp(SharedData::csUtilitySettings.waterFresnelMin, SharedData::csUtilitySettings.waterFresnelMax, vanillaFresnel);
 }
 
+#			if defined(UNIFIED_WATER)
+#				include "Common/WaterShallowSurface.hlsli"
+#			endif
+
 struct DiffuseOutput
 {
 	float3 refractionColor;
@@ -1019,6 +1023,7 @@ struct DiffuseOutput
 	float depth;
 	float refractionMul;
 	float3 refractedViewDirection;
+	float nativeRefractionMul;
 };
 
 DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection, inout float4 distanceMul, float refractionsDepthFactor, float fresnel, uint eyeIndex, float3 viewPosition, float depth)
@@ -1117,6 +1122,7 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 	output.refractionColor = refractionColor;
 	output.refractionDiffuseColor = refractionDiffuseColor;
 	output.depth = depth;
+	output.nativeRefractionMul = refractionMul;
 	output.refractionMul = saturate(refractionMul * SharedData::csUtilitySettings.waterMuddiness);
 	output.refractedViewDirection = normalize(refractionWorldPosition.xyz - input.WPosition.xyz);
 	return output;
@@ -1126,6 +1132,7 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 	output.refractionDiffuseColor = output.refractionColor;
 	output.depth = 1;
 	output.refractionMul = 1;
+	output.nativeRefractionMul = 1;
 	output.refractedViewDirection = viewDirection;
 	return output;
 #			endif
@@ -1182,6 +1189,32 @@ PS_OUTPUT main(PS_INPUT input)
 	bool isSpecular = false;
 
 	float depth = 0;
+
+#			if defined(UNIFIED_WATER_SHALLOW_FALLBACK)
+	float primaryRawDepth = FrameBuffer::FarPlaneDepth();
+	float2 primaryDepthLogicalUV = FrameBuffer::DynamicResolutionParams2.xy * input.HPosition.xy * VPOSOffset.xy + VPOSOffset.zw;
+	float3 unifiedWaterSurfacePosition = input.WPosition.xyz;
+	float waterColumnDepthUnits = -1.0;
+	float shallowFallbackAvailability = SharedData::unifiedWaterSettings.ShallowFallbackStrength > 0.0 ?
+	                                        WaterShallowSurface::GetAvailability(length(input.WPosition.xyz), SharedData::unifiedWaterSettings.ShallowFallbackMaxDistance) :
+	                                        0.0;
+	[branch] if (shallowFallbackAvailability > 0.0)
+	{
+		primaryRawDepth = DepthTex.Load(int3(screenPosition, 0)).x;
+		float3 scenePosition;
+		float3 planeNormal = ReflectPlane[eyeIndex].xyz;
+		float planeLength = length(planeNormal);
+		if (WaterFinite::IsFinite(planeLength) && planeLength > 1e-6 &&
+			WaterFinite::IsFinite(input.HPosition.z) && all(WaterFinite::IsFinite(unifiedWaterSurfacePosition)) &&
+			!FrameBuffer::IsNearerDepth(primaryRawDepth, input.HPosition.z) &&
+			TryGetUnifiedWaterScenePosition(primaryDepthLogicalUV, primaryRawDepth, eyeIndex, scenePosition))
+			waterColumnDepthUnits = abs(dot(scenePosition - unifiedWaterSurfacePosition, planeNormal / planeLength));
+	}
+	float2 waterColumnGradient = float2(ddx_fine(waterColumnDepthUnits), ddy_fine(waterColumnDepthUnits));
+	float shoreContactDepthFootprint = fwidth(waterColumnDepthUnits);
+	float3 waterSurfaceDx = ddx_fine(unifiedWaterSurfacePosition);
+	float3 waterSurfaceDy = ddy_fine(unifiedWaterSurfacePosition);
+#			endif
 
 #			if defined(DEPTH)
 #				if defined(VERTEX_ALPHA_DEPTH)
@@ -1435,6 +1468,26 @@ PS_OUTPUT main(PS_INPUT input)
 	float sunMul = depthControl.w;
 	bool shoreFadedSurface = false;
 
+#					if defined(UNIFIED_WATER_SHALLOW_FALLBACK)
+	float shallowSurfaceLayerWeight = 0.0;
+	float shoreContactWeight = WaterShallowSurface::GetShoreContactWeight(waterColumnDepthUnits,
+		SharedData::unifiedWaterSettings.ShoreDepthBlendRangeUnits,
+		SharedData::unifiedWaterSettings.ShoreContactMinFadePixels, shoreContactDepthFootprint);
+	float shallowDepthWeight = WaterShallowSurface::GetDepthWeight(waterColumnDepthUnits,
+		SharedData::unifiedWaterSettings.ShallowSurfaceDepthRangeUnits);
+	float candidateWeight = WaterShallowSurface::GetCandidateWeight(shoreContactWeight, shallowDepthWeight,
+		SharedData::unifiedWaterSettings.ShallowFallbackStrength, diffuseOutput.nativeRefractionMul, shallowFallbackAvailability);
+	[branch] if (candidateWeight > 1e-4)
+	{
+		float deepContext = GetUnifiedWaterDeepContextWeight(screenPosition, eyeIndex, primaryDepthLogicalUV,
+			primaryRawDepth, unifiedWaterSurfacePosition, waterColumnDepthUnits, waterColumnGradient, waterSurfaceDx, waterSurfaceDy);
+		shallowSurfaceLayerWeight = candidateWeight * (1.0 - saturate(deepContext));
+#						if !defined(VR) || !defined(VOLUMETRIC_SHADOWS)
+		shallowSurfaceLayerWeight *= saturate(surfaceShadow);
+#						endif
+	}
+#					endif
+
 	if (SharedData::enbSettings.EnableWater) {
 		sunColor *= SharedData::enbSettings.WaterSunSpecularMultiplier;
 #					if defined(DEPTH) && !defined(VERTEX_ALPHA_DEPTH) && defined(REFRACTIONS)
@@ -1448,6 +1501,10 @@ PS_OUTPUT main(PS_INPUT input)
 #					if defined(VC)
 	float specularFraction = lerp(1, fresnel * surfaceMul, distanceBlendFactor);
 	float3 finalColorPreFog = lerp(diffuseColor, specularColor, specularFraction) + sunColor * sunMul;
+#						if defined(UNIFIED_WATER_SHALLOW_FALLBACK)
+	float3 shallowSurfaceColor = lerp(diffuseOutput.refractionDiffuseColor, specularColor, lerp(1.0, fresnel, distanceBlendFactor)) + sunColor * sunMul;
+	finalColorPreFog = lerp(finalColorPreFog, shallowSurfaceColor, shallowSurfaceLayerWeight);
+#						endif
 
 #						if !defined(UNIFIED_WATER)
 	float fogDistanceFactor = input.FogParam.w;
@@ -1555,6 +1612,9 @@ PS_OUTPUT main(PS_INPUT input)
 	refractionColor = Color::BlendFog(refractionColor, fogColor, fogFactor);
 
 	float3 finalColor = lerp(refractionColor, finalColorPreFog, waterOpacity);
+#						if defined(UNIFIED_WATER_SHALLOW_FALLBACK)
+	finalColor = lerp(finalColor, finalColorPreFog, shallowSurfaceLayerWeight);
+#						endif
 #						if defined(WETNESS_EFFECTS) && defined(DEBUG_WETNESS_EFFECTS)
 	// DEBUG MODE: Override water color with debug visualization
 	float3 debugColor = WetnessEffects::GetDebugWetnessColorStandard(waterData.rippleInfo, 2.0, 3.0);
