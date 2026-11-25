@@ -243,10 +243,7 @@ namespace DX12
 		                      publication.failedShapes == 0 && publication.rejectedLights == 0 &&
 		                      publication.eligibleShapes == tile->shapes.size();
 		if (publication.validated && (complete || !tile->shapes.empty() || !tile->lights.empty())) {
-			// Geometry validity and complete static-shadow coverage are different contracts.
-			// Keep real partial geometry and placed lights available for native scene building.
-			// Empty incomplete results must not be mislabeled as prepared subcells.
-			// Only Ready (certified complete) subcells can offload raster shadows.
+			// Partial geometry is usable but does not certify complete static-shadow coverage.
 			tile->state = complete ? Tile::State::Ready : Tile::State::ReadyPartial;
 		} else {
 			// Malformed or empty-incomplete companion payloads must not claim native scene readiness.
