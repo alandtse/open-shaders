@@ -24,7 +24,8 @@ const std::vector<SettingsOverrideManager::LegacyPack>& SettingsOverrideManager:
 {
 	if (translatedPacks)
 		return *translatedPacks;
-	std::map<std::string, LegacyPack> packs;
+	std::vector<LegacyPack> packs;
+	std::unordered_map<std::string, size_t> packIndices;
 	const auto names = GetFeatureNames();
 	for (bool global : { true, false }) {
 		for (const auto& info : overrides) {
@@ -48,7 +49,10 @@ const std::vector<SettingsOverrideManager::LegacyPack>& SettingsOverrideManager:
 			const auto id = LegacyPreset::BuildPackId(Util::FileHelpers::SanitizeFileName(info.modName), global);
 			if (!PresetState::IsPackId(id))
 				continue;
-			auto& pack = packs[id];
+			const auto [index, inserted] = packIndices.try_emplace(id, packs.size());
+			if (inserted)
+				packs.emplace_back();
+			auto& pack = packs[index->second];
 			pack.id = id;
 			pack.name = global ? std::vformat(T("menu.presets.legacy_global_name", "{} (Global)"), std::make_format_args(info.modName)) : info.modName;
 			pack.version = info.version;
@@ -65,10 +69,7 @@ const std::vector<SettingsOverrideManager::LegacyPack>& SettingsOverrideManager:
 			}
 		}
 	}
-	std::vector<LegacyPack> result;
-	for (auto& [_, pack] : packs)
-		result.push_back(std::move(pack));
-	translatedPacks = std::move(result);
+	translatedPacks = std::move(packs);
 	return *translatedPacks;
 }
 

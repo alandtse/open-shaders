@@ -206,6 +206,15 @@ namespace PresetState
 		return result;
 	}
 
+	/** @brief Reorders a subset of installed Base Settings within its existing priority slots. */
+	inline void ApplyBaselineSubsetOrder(std::span<std::string> installed, std::span<const std::string> subset)
+	{
+		auto next = subset.begin();
+		for (auto& id : installed)
+			if (std::ranges::find(subset, id) != subset.end())
+				id = *next++;
+	}
+
 	/** @brief Keeps disabled presets in their priority slots while accepting upstream changes to enabled order. */
 	inline std::vector<std::string> RetainBaselineOrder(std::span<const std::string> previous, std::span<const std::string> enabled,
 		std::span<const std::string> discovered, bool customized)
@@ -219,10 +228,7 @@ namespace PresetState
 		for (const auto& id : enabled)
 			if (std::ranges::find(result, id) != result.end())
 				active.push_back(id);
-		size_t index = 0;
-		for (auto& id : result)
-			if (std::ranges::find(active, id) != active.end())
-				id = active[index++];
+		ApplyBaselineSubsetOrder(result, active);
 		return result;
 	}
 
