@@ -16,11 +16,6 @@ namespace DX12Native
 	{
 		constexpr uint32_t kMaximumInstances = (1u << 24u) - 1u;
 
-		void Check(HRESULT result)
-		{
-			if (FAILED(result))
-				throw std::runtime_error("DX12 native acceleration resource or command failure");
-		}
 	}
 
 	AccelerationScene::~AccelerationScene()
@@ -80,12 +75,12 @@ namespace DX12Native
 			return false;
 		try {
 			backend = a_backend;
-			Check(backend.d3d12Device->QueryInterface(IID_PPV_ARGS(device.put())));
+			DX::ThrowIfFailed(backend.d3d12Device->QueryInterface(IID_PPV_ARGS(device.put())));
 			D3D12_FEATURE_DATA_D3D12_OPTIONS5 options{};
-			Check(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options, sizeof(options)));
+			DX::ThrowIfFailed(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options, sizeof(options)));
 			if (options.RaytracingTier < D3D12_RAYTRACING_TIER_1_1)
 				return false;
-			Check(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(completion.put())));
+			DX::ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(completion.put())));
 			completion->SetName(L"DX12NativeScene::AccelerationFence");
 			failure.clear();
 			return true;
@@ -103,7 +98,7 @@ namespace DX12Native
 		const auto flags = a_heap == D3D12_HEAP_TYPE_DEFAULT ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE;
 		const auto desc = CD3DX12_RESOURCE_DESC::Buffer(a_size, flags);
 		winrt::com_ptr<ID3D12Resource> resource;
-		Check(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, a_state, nullptr, IID_PPV_ARGS(resource.put())));
+		DX::ThrowIfFailed(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, a_state, nullptr, IID_PPV_ARGS(resource.put())));
 		resource->SetName(a_name);
 		return resource;
 	}
@@ -111,14 +106,14 @@ namespace DX12Native
 	void AccelerationScene::Begin(Build& a_build)
 	{
 		a_build.generation = generation;
-		Check(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(a_build.allocator.put())));
-		Check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, a_build.allocator.get(), nullptr, IID_PPV_ARGS(a_build.commands.put())));
+		DX::ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(a_build.allocator.put())));
+		DX::ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, a_build.allocator.get(), nullptr, IID_PPV_ARGS(a_build.commands.put())));
 	}
 
 	void AccelerationScene::Submit(Build& a_build)
 	{
 		ZoneScopedN("DX12::Acceleration::Submit");
-		Check(a_build.commands->Close());
+		DX::ThrowIfFailed(a_build.commands->Close());
 		ID3D12CommandList* commands[] = { a_build.commands.get() };
 		backend.commandQueue->ExecuteCommandLists(1, commands);
 		const uint64_t signalValue = nextFence + 1;
@@ -127,7 +122,7 @@ namespace DX12Native
 			// A queued submission has no valid completion marker. Retain Build
 			// and drain the direct queue during owned asynchronous retirement.
 			a_build.fence = UINT64_MAX;
-			Check(signalResult);
+			DX::ThrowIfFailed(signalResult);
 		}
 		a_build.fence = signalValue;
 		nextFence = signalValue;
@@ -146,7 +141,7 @@ namespace DX12Native
 			D3D12_RESOURCE_STATE_GENERIC_READ, L"DX12NativeScene::RigidGeometryUpload");
 		void* mapped = nullptr;
 		const D3D12_RANGE noRead{ 0, 0 };
-		Check(a_build.sourceUpload->Map(0, &noRead, &mapped));
+		DX::ThrowIfFailed(a_build.sourceUpload->Map(0, &noRead, &mapped));
 		std::memcpy(mapped, a_shape->positions.data(), size_t(vertexBytes));
 		std::memcpy(static_cast<uint8_t*>(mapped) + vertexBytes, a_shape->indices.data(), size_t(indexBytes));
 		a_build.sourceUpload->Unmap(0, nullptr);
@@ -223,7 +218,7 @@ namespace DX12Native
 			D3D12_RESOURCE_STATE_GENERIC_READ, L"DX12NativeScene::InstanceUpload");
 		void* mapped = nullptr;
 		const D3D12_RANGE noRead{ 0, 0 };
-		Check(a_build.sourceUpload->Map(0, &noRead, &mapped));
+		DX::ThrowIfFailed(a_build.sourceUpload->Map(0, &noRead, &mapped));
 		std::memcpy(mapped, instances.data(), size_t(bytes));
 		a_build.sourceUpload->Unmap(0, nullptr);
 

@@ -46,6 +46,12 @@ namespace DX12Native
 			bool returnColorToDX11);
 		bool Retain(const std::shared_ptr<const Frame>& frame, ID3D12Fence* fence, uint64_t value);
 		~NativeComposite();
+		/** @brief Allow a new initialization attempt after a scene reset. */
+		void ResetFailures()
+		{
+			failedShadowDevice = nullptr;
+			captureFailureLogged = false;
+		}
 
 	private:
 		struct Slot
@@ -74,6 +80,7 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12RootSignature> shadowRoot;
 		winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
 		ID3D12Device* shadowDevice = nullptr;
+		winrt::com_ptr<ID3D12Device> failedShadowDevice;
 		VideoMemoryBudget videoBudget;
 		bool captureFailureLogged = false;
 		bool InitializeShadow(ID3D12Device* device);

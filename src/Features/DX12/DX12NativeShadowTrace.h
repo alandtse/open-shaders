@@ -57,7 +57,12 @@ namespace DX12Native
 			return current && current->frame == frame ? current : nullptr;
 		}
 		bool RetainThrough(const std::shared_ptr<const ShadowMaskFrame>& frame, ID3D12Fence* fence, uint64_t value);
-		void Reset() { current.reset(); }
+		void Reset()
+		{
+			current.reset();
+			initializationFailed = false;
+			failureLogged = false;
+		}
 
 	private:
 		void Initialize(const GraphicsBackend& backend);
@@ -69,5 +74,7 @@ namespace DX12Native
 		std::shared_ptr<ShadowMaskFrame> current;
 		uint64_t nextFence = 0;
 		VideoMemoryBudget videoBudget;
+		bool initializationFailed = false;
+		bool failureLogged = false;
 	};
 }

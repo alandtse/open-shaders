@@ -33,14 +33,16 @@ namespace DX12Native
 	{
 		if (shadowPipeline && shadowDevice == device)
 			return true;
+		if (failedShadowDevice.get() == device)
+			return false;
 		try {
 			std::ifstream file(Util::PathHelpers::GetShadersPath() / "NativeComposite" / "ShadowLayer.dxil", std::ios::binary | std::ios::ate);
 			if (!file || file.tellg() <= 0 || file.tellg() > kMaxShadowBytecodeBytes)
-				return false;
+				throw std::runtime_error("ShadowLayer.dxil missing, empty or exceeds the bytecode limit");
 			std::vector<char> shader(static_cast<size_t>(file.tellg()));
 			file.seekg(0);
 			if (!file.read(shader.data(), std::streamsize(shader.size())))
-				return false;
+				throw std::runtime_error("ShadowLayer.dxil read failed");
 			CD3DX12_DESCRIPTOR_RANGE ranges[2];
 			ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);
 			ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
@@ -61,10 +63,17 @@ namespace DX12Native
 			shadowRoot = std::move(newRoot);
 			shadowPipeline = std::move(newPipeline);
 			shadowDevice = device;
+			failedShadowDevice = nullptr;
 			return true;
+		} catch (const winrt::hresult_error& error) {
+			logger::error("[NativeComposite] Shadow initialization failed (HRESULT 0x{:08X}): {}", static_cast<uint32_t>(error.code()), winrt::to_string(error.message()));
+		} catch (const std::exception& error) {
+			logger::error("[NativeComposite] Shadow initialization failed: {}", error.what());
 		} catch (...) {
-			return false;
+			logger::error("[NativeComposite] Shadow initialization failed with an unknown exception");
 		}
+		failedShadowDevice.copy_from(device);
+		return false;
 	}
 
 	std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(
@@ -350,17 +359,9 @@ namespace DX12Native
 			output.height = height;
 			output.format = desc.Format;
 			output.valid = true;
+			captureFailureLogged = false;
 			return slot->frame;
 		} catch (...) {
-			if (!std::exchange(captureFailureLogged, true)) {
-				try {
-					throw;
-				} catch (const std::exception& error) {
-					logger::warn("[NativeComposite] Capture failed, the frame keeps its plain color: {}", error.what());
-				} catch (...) {
-					logger::warn("[NativeComposite] Capture failed, the frame keeps its plain color");
-				}
-			}
 			if (submitted && slot->fence.fence12) {
 				// The command list was queued. A tail Signal on that queue tracks
 				// its completion even when the original Signal failed.
@@ -380,6 +381,17 @@ namespace DX12Native
 					slot->frame->producerValue = tail;
 				} else
 					slot->untracked = true;
+			}
+			if (!std::exchange(captureFailureLogged, true)) {
+				try {
+					throw;
+				} catch (const winrt::hresult_error& error) {
+					logger::warn("[NativeComposite] Capture failed (HRESULT 0x{:08X}): {}", static_cast<uint32_t>(error.code()), winrt::to_string(error.message()));
+				} catch (const std::exception& error) {
+					logger::warn("[NativeComposite] Capture failed, the frame keeps its plain color: {}", error.what());
+				} catch (...) {
+					logger::warn("[NativeComposite] Capture failed with an unknown exception");
+				}
 			}
 			return {};
 		}

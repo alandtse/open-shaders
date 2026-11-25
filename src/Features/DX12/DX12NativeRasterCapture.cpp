@@ -54,9 +54,8 @@ namespace DX12Native
 					return done != UINT64_MAX && done >= consumer.second;
 				});
 			});
-			if (available == slots.end()) {
-				throw std::runtime_error("Raster snapshots are still in use");
-			}
+			if (available == slots.end())
+				return;
 			if (!a_depth)
 				throw std::runtime_error("Opaque depth unavailable");
 			D3D11_SHADER_RESOURCE_VIEW_DESC depthView{};
@@ -146,7 +145,8 @@ namespace DX12Native
 			slot->readyValue = ready;
 			slot->frame = a_frame;
 			current = slot;
-		} catch (const std::exception&) {
+			failureLogged = false;
+		} catch (...) {
 			// A DX11 dispatch may still be queued if a later step fails.
 			// Attach a producer fence rather than quarantining the slot forever.
 			if (captureSlot && captureSlot->readyValue == UINT64_MAX) {
@@ -160,7 +160,18 @@ namespace DX12Native
 					captureSlot->readyValue = 0;
 				}
 			}
-			// Missing capture leaves no published frame; do not disrupt raster.
+			if (!failureLogged) {
+				failureLogged = true;
+				try {
+					throw;
+				} catch (const winrt::hresult_error& error) {
+					logger::warn("[DX12NativeScene] Raster capture failed (HRESULT 0x{:08X}): {}", static_cast<uint32_t>(error.code()), winrt::to_string(error.message()));
+				} catch (const std::exception& error) {
+					logger::warn("[DX12NativeScene] Raster capture failed: {}", error.what());
+				} catch (...) {
+					logger::warn("[DX12NativeScene] Raster capture failed with an unknown exception");
+				}
+			}
 		}
 	}
 
@@ -184,5 +195,9 @@ namespace DX12Native
 		return false;
 	}
 
-	void RasterCapture::Reset() { current.reset(); }
+	void RasterCapture::Reset()
+	{
+		current.reset();
+		failureLogged = false;
+	}
 }
