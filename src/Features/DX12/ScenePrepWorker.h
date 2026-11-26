@@ -6,6 +6,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stop_token>
@@ -29,6 +30,8 @@ namespace DX12
 		uint64_t identity = 0;
 		std::shared_ptr<const DecodedMesh> mesh;
 		std::array<float, 12> transform{};
+		uintptr_t sourceGeometry = 0;
+		uintptr_t sourceVertices = 0;
 	};
 
 	struct UnattachedModelPlacement
@@ -76,6 +79,9 @@ namespace DX12
 		SubcellKey a_key, uint32_t a_size, const RE::TESObjectCELL* a_cell,
 		const RE::TESWorldSpace* a_world, bool a_predictive, bool a_corner);
 
+	/** @brief True when the Papyrus VM has scripts bound to this reference. */
+	[[nodiscard]] bool HasAttachedScripts(const RE::TESObjectREFR& a_ref);
+
 	/** @brief True once an attached cell reports its reference set fully loaded. */
 	[[nodiscard]] bool IsCellFullyLoaded(const RE::TESObjectCELL* a_cell);
 
@@ -111,6 +117,8 @@ namespace DX12
 		bool running = false;
 		bool errorLogged = false;
 		std::atomic<uint64_t> generation = 1;
+		struct ModelCache;
+		std::unique_ptr<ModelCache> modelCache;  // Worker thread only.
 		std::jthread worker;
 	};
 }

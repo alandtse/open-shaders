@@ -7,6 +7,7 @@
 #include "Feature.h"
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -40,6 +41,8 @@ struct DX12NativeScene final : Feature
 	void ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requireStability = false);
 	/** @brief SCM hands native-owned lights' static casters to RayQuery and retains movers. */
 	bool OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const;
+	/** @brief True when this live static caster is in the published TLAS, so raster may drop it for an owned light. */
+	bool CasterInTlas(const RE::BSGeometry& a_geometry) const;
 	/** @brief Global prerequisites for suppressing SCM static shadows. */
 	bool CanSuppressSCMStatic() const;
 	// Snapshot LLF/SCM point-light parameters without altering the DX11 light.
@@ -47,6 +50,9 @@ struct DX12NativeScene final : Feature
 		const RE::NiPoint3& restOrigin);
 	void OnSceneTransitionReset(bool a_opening) override;
 	void OnRuntimeDisabled() override;
+	void RegisterUxActions() override;
+	/** @brief Offload readiness for devbench: tiles, TLAS residency, per-frame light ownership and cumulative ownership counts. */
+	json GetStatus() const;
 
 	/** @brief Raw full-resolution shadow output, independently fenced for Native Composite. */
 	std::shared_ptr<const DX12Native::ShadowMaskFrame> GetShadowMask(uint32_t frame) const { return shadows.Get(frame); }
@@ -89,5 +95,13 @@ private:
 	mutable std::mutex runtimeLightMutex;
 	uint32_t runtimeLightFrame = UINT32_MAX;
 	std::vector<RuntimeLightSample> runtimeLightSamples;
+	mutable std::vector<const RE::NiLight*> ownedLights;  // Lights granted static ownership in runtimeLightFrame.
+	mutable std::atomic<uint64_t> ownershipGranted{ 0 }, castersTraced{ 0 }, castersKeptRaster{ 0 };
+	struct TlasCasters
+	{
+		std::shared_ptr<const DX12Native::TopLevel> scene;
+		std::unordered_map<uintptr_t, uintptr_t> vertices;  // Source BSGeometry -> its raw vertex buffer.
+	};
+	mutable std::atomic<std::shared_ptr<const TlasCasters>> tlasCasters;
 	std::unordered_map<uint32_t, DX12::PreparedLight> frozenNativeLights;
 };

@@ -843,21 +843,6 @@ void DX12Resources::OnSceneTransitionReset(bool a_opening)
 		ResetPreparation();
 }
 
-bool DX12Resources::IsStaticCoverageCertified(const float3& a_position, float a_radius, uint64_t a_sceneRevision) const
-{
-	const auto current = grid.Snapshot();
-	if (!current || current->geometryRevision != a_sceneRevision)
-		return false;
-	const uint32_t scope = current->requested.front().scope;
-	return scope && DX12::IsLightRadiusCertified(a_position.x, a_position.y, a_radius, current->size,
-						[&](int64_t a_x, int64_t a_y) {
-							for (size_t i = 0; i < current->requested.size(); ++i)
-								if (current->requested[i] == DX12::SubcellKey{ scope, a_x, a_y })
-									return current->resident[i] && current->resident[i]->state == DX12::Tile::State::Ready;
-							return false;
-						});
-}
-
 std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const
 {
 	std::vector<DX12::PreparedLight> lights;

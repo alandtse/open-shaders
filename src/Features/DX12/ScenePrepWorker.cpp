@@ -20,6 +20,7 @@
 #include "RE/T/TESObjectREFR.h"
 #include "RE/T/TESObjectSTAT.h"
 #include "RE/T/TESWorldSpace.h"
+#include "RE/V/VirtualMachine.h"
 #include "ScenePrepCoverage.h"
 #include "ScenePrepEligibility.h"
 #include "ScenePrepEngineBridge.h"
@@ -41,7 +42,7 @@ namespace DX12
 	namespace
 	{
 		constexpr size_t kMaxCandidateRefs = 150'000;
-		constexpr size_t kMaxTileShapes = 384;
+		constexpr size_t kMaxTileShapes = 4096;  // Large interiors hold thousands of rigid shapes; bytes are the real budget.
 		constexpr size_t kMaxNifSources = 4096;
 		constexpr size_t kMaxMissingShapes = 4096;
 		constexpr size_t kMaxRejectionReasons = 12;
@@ -49,6 +50,8 @@ namespace DX12
 		constexpr uint64_t kMaxDecodedCacheBytes = 48ull * 1024 * 1024;
 		constexpr uint32_t kMaxSceneGraphDepth = 32;
 		constexpr uint32_t kTerrainOrdinalBase = 0x10000u;
+		constexpr double kExteriorCellUnits = 4096.0;
+		constexpr auto kPreparationBudget = std::chrono::seconds(20);
 
 		void RecordRejection(
 			std::vector<std::pair<std::string, uint32_t>>& a_reasons, uint32_t& a_failedCount,
@@ -129,8 +132,6 @@ namespace DX12
 			switch (a_type) {
 			case RE::BSGeometry::Type::kTriShape:
 			case RE::BSGeometry::Type::kMeshLODTriShape:
-			case RE::BSGeometry::Type::kLODMultiIndexTriShape:
-			case RE::BSGeometry::Type::kMultiIndexTriShape:
 			case RE::BSGeometry::Type::kSubIndexTriShape:
 			case RE::BSGeometry::Type::kSubIndexLandTriShape:
 				return true;
@@ -171,7 +172,11 @@ namespace DX12
 				return GeometryInspectResult::Rejected;
 			}
 			const auto* property = runtime.shaderProperty.get();
-			if (!property || property->GetRTTI() != globals::rtti::BSLightingShaderPropertyRTTI.get() ||
+			if (!property) {
+				a_outReason = "missing shader property";
+				return GeometryInspectResult::Rejected;
+			}
+			if (property->GetRTTI() != globals::rtti::BSLightingShaderPropertyRTTI.get() ||
 				property->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kRefraction,
 					RE::BSShaderProperty::EShaderPropertyFlag::kTempRefraction)) {
 				return GeometryInspectResult::SkippedNonShadow;
@@ -215,6 +220,16 @@ namespace DX12
 			a_out.indexCount = indexCount;
 			a_out.stride = stride;
 			return GeometryInspectResult::Accepted;
+		}
+
+		/** @brief Index of the only rendered child of a switch node; nullopt for other nodes, an out-of-range value when none is active. */
+		std::optional<uint16_t> ActiveSwitchChild(RE::NiNode& a_node)
+		{
+			auto* switchNode = a_node.AsSwitchNode();
+			if (!switchNode)
+				return std::nullopt;
+			const int32_t index = switchNode->index;
+			return index < 0 || index >= std::numeric_limits<uint16_t>::max() ? std::numeric_limits<uint16_t>::max() : uint16_t(index);
 		}
 
 		struct RawMeshSliceKey
@@ -264,7 +279,13 @@ namespace DX12
 				return;
 			}
 			if (auto* node = a_obj->AsNode()) {
-				for (const auto& child : node->GetChildren())
+				const auto& children = node->GetChildren();
+				if (const auto active = ActiveSwitchChild(*node)) {
+					if (*active < children.size())
+						CaptureAttachedSubtree(children[*active].get(), a_ownerFormID, a_plugin, a_localID, a_nifPath, a_shapeOrdinal, a_depth + 1, a_request, a_meshes);
+					return;
+				}
+				for (const auto& child : children)
 					CaptureAttachedSubtree(child.get(), a_ownerFormID, a_plugin, a_localID, a_nifPath, a_shapeOrdinal, a_depth + 1, a_request, a_meshes);
 				return;
 			}
@@ -318,6 +339,8 @@ namespace DX12
 			captured.identity = MakeShapeIdentity(a_ownerFormID, ordinal);
 			captured.mesh = mesh;
 			captured.transform = rows;
+			captured.sourceGeometry = reinterpret_cast<uintptr_t>(geom);
+			captured.sourceVertices = reinterpret_cast<uintptr_t>(extracted.rawVertices);
 			a_request.attachedShapes.push_back(std::move(captured));
 		}
 
@@ -356,7 +379,13 @@ namespace DX12
 			}
 			const auto currentTransform = ComposeAffine(a_parentTransform, FromNiTransform(a_obj->local));
 			if (auto* node = a_obj->AsNode()) {
-				for (const auto& child : node->GetChildren())
+				const auto& children = node->GetChildren();
+				if (const auto active = ActiveSwitchChild(*node)) {
+					if (*active < children.size())
+						WalkDemandModelSubtree(children[*active].get(), currentTransform, a_shapeOrdinal, a_depth + 1, a_out);
+					return;
+				}
+				for (const auto& child : children)
 					WalkDemandModelSubtree(child.get(), currentTransform, a_shapeOrdinal, a_depth + 1, a_out);
 				return;
 			}
@@ -397,6 +426,20 @@ namespace DX12
 			a_out.bytes += 128ull + mesh->bytes;
 			a_out.shapes.push_back({ ordinal, std::move(mesh), currentTransform });
 		}
+	}
+
+	bool HasAttachedScripts(const RE::TESObjectREFR& a_ref)
+	{
+		// TESForm::HasVMAD only proves a VM handle can exist, which holds for every reference.
+		auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		auto* policy = vm ? vm->GetObjectHandlePolicy() : nullptr;
+		if (!policy)
+			return false;
+		const auto handle = policy->GetHandleForObject(a_ref.GetFormType(), &a_ref);
+		if (handle == policy->EmptyHandle())
+			return false;
+		RE::BSSpinLockGuard lock(vm->attachedScriptsLock);
+		return vm->attachedScripts.contains(handle);
 	}
 
 	bool IsCellFullyLoaded(const RE::TESObjectCELL* a_cell)
@@ -517,7 +560,7 @@ namespace DX12
 				AddNifSource(request, plugin, localID, nifView);
 
 			if (IsRuntimeDependentPlacement(
-					base->Is(RE::FormType::MovableStatic), a_ref->HasVMAD(),
+					base->Is(RE::FormType::MovableStatic), HasAttachedScripts(*a_ref),
 					a_ref->extraList.GetByType<RE::ExtraEnableStateParent>() != nullptr,
 					a_ref->IsInitiallyDisabled())) {
 				RecordRejection(request.rejectionReasons, request.failedShapes, "runtime-dependent placement");
@@ -559,7 +602,9 @@ namespace DX12
 		} else {
 			request.enumerationComplete = false;
 			const auto coreWindow = SubcellExteriorCellWindow(a_key.x, a_key.y, a_size, 0);
-			const auto haloWindow = SubcellExteriorCellWindow(a_key.x, a_key.y, a_size, 1);
+			// Walk every attached cell the +/-2 subcell origin halo can reach, not just the adjacent ring.
+			const auto haloCells = int32_t(std::ceil(2.0 * double(a_size) / kExteriorCellUnits));
+			const auto haloWindow = SubcellExteriorCellWindow(a_key.x, a_key.y, a_size, haloCells);
 
 			const int64_t coreWidth = int64_t(coreWindow.maxCellX) - coreWindow.minCellX + 1;
 			const int64_t coreHeight = int64_t(coreWindow.maxCellY) - coreWindow.minCellY + 1;
@@ -620,7 +665,16 @@ namespace DX12
 		return request;
 	}
 
+	struct ScenePrepWorker::ModelCache
+	{
+		std::unordered_map<std::string, std::shared_ptr<const CachedModelExtraction>> entries;
+		uint64_t bytes = 0;
+		uint32_t scope = 0;
+		uint32_t size = 0;
+	};
+
 	ScenePrepWorker::ScenePrepWorker() :
+		modelCache(std::make_unique<ModelCache>()),
 		worker([this](std::stop_token a_stop) {
 			try {
 				Run(a_stop);
@@ -768,8 +822,11 @@ namespace DX12
 		pub.rejectedLights = a_request.rejectedLights;
 		pub.hasUnattachedCells = a_request.hasUnattachedCells;
 
-		const auto canceled = [&] {
-			return a_stop.stop_requested() || generation.load(std::memory_order_acquire) != a_epoch;
+		const auto deadline = std::chrono::steady_clock::now() + kPreparationBudget;
+		const auto stopReason = [&]() -> const char* {
+			if (a_stop.stop_requested() || generation.load(std::memory_order_acquire) != a_epoch)
+				return "Preparation canceled by scene change";
+			return std::chrono::steady_clock::now() > deadline ? "Preparation exceeded its time budget" : nullptr;
 		};
 
 		if (a_request.candidateOverflow) {
@@ -782,7 +839,7 @@ namespace DX12
 								   uint64_t a_identity, const std::vector<float3>& a_positions,
 								   const std::vector<uint32_t>& a_indices, const std::array<float, 12>& a_transform,
 								   std::string_view a_plugin, uint32_t a_localID, std::string_view a_nifPath,
-								   int32_t a_blockIndex) {
+								   int32_t a_blockIndex, uintptr_t a_sourceGeometry, uintptr_t a_sourceVertices) {
 			const auto overlaps = OverlapsSubcellXY(a_positions, a_transform, a_request.key.x, a_request.key.y, a_request.size);
 			if (!overlaps) {
 				RecordRejection(pub.rejectionReasons, pub.failedShapes, "invalid placed bounds");
@@ -811,28 +868,37 @@ namespace DX12
 			shape->positions = a_positions;
 			shape->indices = a_indices;
 			shape->transform = a_transform;
+			shape->sourceGeometry = a_sourceGeometry;
+			shape->sourceVertices = a_sourceVertices;
 			pub.geometryBytes += bytes;
 			pub.shapes.push_back(std::move(shape));
 		};
 
 		for (const auto& attached : a_request.attachedShapes) {
-			if (canceled()) {
-				result.failure = "Preparation canceled by scene change";
+			if (const auto reason = stopReason()) {
+				result.failure = reason;
 				return result;
 			}
-			emitShape(attached.identity, attached.mesh->positions, attached.mesh->indices, attached.transform, {}, 0, {}, -1);
+			emitShape(attached.identity, attached.mesh->positions, attached.mesh->indices, attached.transform, {}, 0, {}, -1,
+				attached.sourceGeometry, attached.sourceVertices);
 		}
 
-		std::unordered_map<std::string, std::shared_ptr<const CachedModelExtraction>> modelCache;
-		uint64_t modelCacheBytes = 0;
+		// Decoded models persist across the tiles of one scope, so each NIF is demanded once per scene.
+		auto& models = *modelCache;
+		if (models.scope != a_request.key.scope || models.size != a_request.size) {
+			models.entries.clear();
+			models.bytes = 0;
+			models.scope = a_request.key.scope;
+			models.size = a_request.size;
+		}
 
 		for (const auto& placement : a_request.unattachedPlacements) {
-			if (canceled()) {
-				result.failure = "Preparation canceled by scene change";
+			if (const auto reason = stopReason()) {
+				result.failure = reason;
 				return result;
 			}
 			std::shared_ptr<const CachedModelExtraction> extraction;
-			if (const auto it = modelCache.find(placement.nifPath); it != modelCache.end()) {
+			if (const auto it = models.entries.find(placement.nifPath); it != models.entries.end()) {
 				extraction = it->second;
 			} else {
 				auto fresh = std::make_shared<CachedModelExtraction>();
@@ -862,9 +928,9 @@ namespace DX12
 				}
 				extraction = fresh;
 				fresh->bytes += 256ull + placement.nifPath.size() + fresh->missing.size() * 96ull;
-				if (fresh->bytes <= kMaxDecodedCacheBytes - modelCacheBytes) {
-					modelCacheBytes += fresh->bytes;
-					modelCache.emplace(placement.nifPath, extraction);
+				if (fresh->bytes <= kMaxDecodedCacheBytes - std::min(models.bytes, kMaxDecodedCacheBytes)) {
+					models.bytes += fresh->bytes;
+					models.entries.emplace(placement.nifPath, extraction);
 				}
 			}
 
@@ -894,7 +960,7 @@ namespace DX12
 				emitShape(
 					MakeShapeIdentity(placement.refFormID, modelShape.ordinal),
 					modelShape.mesh->positions, modelShape.mesh->indices, rows,
-					placement.refPlugin, placement.refLocal, placement.nifPath, int32_t(modelShape.ordinal));
+					placement.refPlugin, placement.refLocal, placement.nifPath, int32_t(modelShape.ordinal), 0, 0);
 			}
 		}
 

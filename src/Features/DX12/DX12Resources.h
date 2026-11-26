@@ -48,6 +48,8 @@ namespace DX12
 	{
 		uint64_t identity = 0;
 		uint64_t runtimeObjectKey = 0;  // Stable across transform changes; zero for subcell-prepared shapes.
+		uintptr_t sourceGeometry = 0;   // Live BSGeometry this was copied from; zero for shapes loaded from disk.
+		uintptr_t sourceVertices = 0;   // That geometry's raw vertex buffer, guarding against address reuse.
 		std::vector<float3> positions;
 		std::vector<uint32_t> indices;
 		std::array<float, 12> transform{};
@@ -204,8 +206,6 @@ struct DX12Resources final : Feature
 	bool IsActive() const;
 	/** @brief Returns the most recent prepared-light publication. */
 	std::vector<DX12::PreparedLight> GetPreparedLights() const;
-	/** @brief True when every active subcell within the light radius is Ready and the TLAS was built from this grid revision. */
-	bool IsStaticCoverageCertified(const float3& a_position, float a_radius, uint64_t a_sceneRevision) const;
 	/** @brief In-memory generation timings for active 3x3, predictive sides and corners. */
 	std::shared_ptr<const DX12::PreparationStats> GetPreparationStats() const
 	{

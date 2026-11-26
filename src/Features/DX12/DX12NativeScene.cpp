@@ -9,6 +9,7 @@
 #include "ScenePrepEngineBridge.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/DevBenchUx.h"
 #include "Utils/Game.h"
 #include "Utils/SettingsControl.h"
 #include "Utils/UI.h"
@@ -19,6 +20,7 @@
 #include <cstdint>
 #include <format>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <ranges>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -104,16 +106,13 @@ bool DX12NativeScene::CanSuppressSCMStatic() const
 
 bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const
 {
-	// SCM keeps raster dynamic casters unconditionally. Static casters may be
-	// omitted only when this exact runtime light was matched to a native emitter
-	// in the current frame; a nearby prepared light is not sufficient proof.
+	// SCM keeps raster dynamic casters unconditionally; the cull drops a static caster only if the TLAS holds it.
 	if (!light || slot < 0 || !CanSuppressSCMStatic() ||
 		light->GetIsFrustumOrDirectionalLight() || !globals::game::graphicsState)
 		return false;
 	const auto scene = acceleration.GetScene();
-	const auto lights = shadowLights.load(std::memory_order_acquire);
 	const auto* ni = light->light.get();
-	if (!scene || !scene->acceleration || !lights || !ni ||
+	if (!scene || !scene->acceleration || !ni ||
 		scene->scope != shadowLightScope.load(std::memory_order_acquire))
 		return false;
 
@@ -128,17 +127,10 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	if (found == runtimeLightSamples.end() ||
 		(found->flickers && !settings.OffloadFlickeringStatic))
 		return false;
-
-	// The shader admits only the published prepared lights. Never suppress a
-	// raster static caster for a light not actually selected for DX12 tracing.
-	const size_t limit = std::min(lights->size(), size_t{ DX12Native::kMaxShadowLights });
-	for (size_t i = 0; i < limit; ++i) {
-		const auto& candidate = (*lights)[i];
-		if (candidate.referenceID != 0 && candidate.referenceID == found->referenceID)
-			return globals::features::dx12Resources.IsStaticCoverageCertified(
-				candidate.position, std::max(candidate.radius, found->value.radius), scene->geometryRevision);
-	}
-	return false;
+	ownershipGranted.fetch_add(1, std::memory_order_relaxed);
+	if (!std::ranges::contains(ownedLights, ni))
+		ownedLights.push_back(ni);
+	return true;
 }
 
 void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID,
@@ -149,7 +141,7 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 		return;
 	auto* ni = light->light.get();
 	const auto lights = shadowLights.load(std::memory_order_acquire);
-	if (!ni || !lights)
+	if (!ni)
 		return;
 	const auto& rt = ni->GetLightRuntimeData();
 	const auto& position = ni->world.translate;
@@ -159,15 +151,15 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 		!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))
 		return;
 
+	// Mesh-attached lights (Light Placer, NIF lights) have no prepared record and trace from live values alone.
 	const DX12::PreparedLight* matched = nullptr;
-	if (referenceID != 0) {
+	if (lights && referenceID != 0) {
 		const auto it = std::ranges::find_if(*lights, [referenceID](const auto& candidate) {
 			return candidate.referenceID == referenceID;
 		});
-		if (it == lights->end())
-			return;  // Never let a different nearby light inherit this source's animation.
-		matched = &*it;
-	} else {
+		if (it != lights->end())
+			matched = &*it;
+	} else if (lights) {
 		float bestDistanceSquared = std::numeric_limits<float>::infinity();
 		for (const auto& candidate : *lights) {
 			const float dx = candidate.position.x - restOrigin.x;
@@ -182,9 +174,7 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 			}
 		}
 	}
-	if (!matched)
-		return;
-	DX12::PreparedLight live = *matched;
+	DX12::PreparedLight live = matched ? *matched : DX12::PreparedLight{};
 	live.position = float3{ position.x, position.y, position.z };
 	live.radius = rt.radius.x;
 	live.color = float3{ rt.diffuse.red, rt.diffuse.green, rt.diffuse.blue };
@@ -194,8 +184,9 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 	if (runtimeLightFrame != frame) {
 		runtimeLightFrame = frame;
 		runtimeLightSamples.clear();
+		ownedLights.clear();
 	}
-	if (settings.FreezeNativeFlickering && flickers && matched->referenceID != 0) {
+	if (settings.FreezeNativeFlickering && flickers && matched && matched->referenceID != 0) {
 		// Keep DX11's flicker intact. Only the native shadow has a stable light.
 		live.position = float3{ restOrigin.x, restOrigin.y, restOrigin.z };
 		live = frozenNativeLights.try_emplace(matched->referenceID, live).first->second;
@@ -205,15 +196,16 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 	const auto it = std::ranges::find_if(runtimeLightSamples, [ni](const auto& sample) {
 		return sample.source == ni;
 	});
+	const uint32_t matchedID = matched ? matched->referenceID : 0;
 	if (it != runtimeLightSamples.end()) {
-		it->referenceID = matched->referenceID;
+		it->referenceID = matchedID;
 		it->value = live;
 		it->flickers = flickers;
 	} else if (runtimeLightSamples.size() < DX12Native::kMaxShadowLights &&
-			   !std::ranges::any_of(runtimeLightSamples, [&](const auto& sample) {
-				   return sample.referenceID == matched->referenceID;
-			   })) {
-		runtimeLightSamples.push_back({ ni, matched->referenceID, live, flickers });
+			   (!matchedID || !std::ranges::any_of(runtimeLightSamples, [&](const auto& sample) {
+				   return sample.referenceID == matchedID;
+			   }))) {
+		runtimeLightSamples.push_back({ ni, matchedID, live, flickers });
 	}
 }
 
@@ -282,7 +274,6 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	{
 		const auto captured = raster.Get(frame);
 		const auto built = acceleration.GetScene();
-		const auto lights = shadowLights.load(std::memory_order_acquire);
 		// The native trace handles unavailable inputs without affecting raster
 		// rendering. RayQuery dispatch remains in DX12NativeShadowTrace.
 		const DX12Native::ShadowTraceControls controls{
@@ -295,17 +286,14 @@ void DX12NativeScene::OnOpaqueRasterReady()
 			.fadeRange = settings.ShadowFadeRange,
 			.falloffCurve = settings.ShadowFalloffCurve
 		};
-		std::vector<DX12::PreparedLight> liveLights = lights ? *lights : std::vector<DX12::PreparedLight>{};
-		if (!liveLights.empty()) {
+		// Trace only lights whose raster static casters were dropped this frame, so no light is shadowed twice.
+		std::vector<DX12::PreparedLight> liveLights;
+		{
 			std::scoped_lock lock(runtimeLightMutex);
 			if (runtimeLightFrame == frame) {
-				for (const auto& runtime : runtimeLightSamples) {
-					auto it = std::ranges::find_if(liveLights, [&](const auto& candidate) {
-						return candidate.referenceID == runtime.referenceID;
-					});
-					if (it != liveLights.end())
-						*it = runtime.value;
-				}
+				for (const auto& runtime : runtimeLightSamples)
+					if (std::ranges::contains(ownedLights, runtime.source))
+						liveLights.push_back(runtime.value);
 			}
 		}
 		shadows.Dispatch(*backend, captured, built, liveLights, frame, controls);
@@ -397,6 +385,7 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 			std::scoped_lock lock(runtimeLightMutex);
 			runtimeLightFrame = UINT32_MAX;
 			runtimeLightSamples.clear();
+			ownedLights.clear();
 			frozenNativeLights.clear();
 		}
 		raster.Reset();
@@ -417,10 +406,113 @@ void DX12NativeScene::OnRuntimeDisabled()
 		std::scoped_lock lock(runtimeLightMutex);
 		runtimeLightFrame = UINT32_MAX;
 		runtimeLightSamples.clear();
+		ownedLights.clear();
 		frozenNativeLights.clear();
 	}
 	raster.Reset();
 	shadows.Reset();
 	acceleration.Stop();
 	geometryCapture.Reset();
+}
+
+namespace
+{
+	json TileStatus(const DX12::Tile& a_tile)
+	{
+		json rejections = json::array();
+		for (const auto& [reason, count] : a_tile.rejectionReasons)
+			rejections.push_back({ { "reason", reason }, { "count", count } });
+		return { { "x", a_tile.key.x }, { "y", a_tile.key.y }, { "state", magic_enum::enum_name(a_tile.state) },
+			{ "shapes", a_tile.shapes.size() }, { "lights", a_tile.lights.size() }, { "bytes", a_tile.bytes },
+			{ "failure", a_tile.failureReason }, { "rejections", std::move(rejections) } };
+	}
+
+	json TimingStatus(const DX12::PreparationTiming& a_timing)
+	{
+		return { { "completed", a_timing.completed }, { "averageMs", a_timing.AverageMs() }, { "worstMs", a_timing.worstMs } };
+	}
+}
+
+bool DX12NativeScene::CasterInTlas(const RE::BSGeometry& a_geometry) const
+{
+	const auto scene = acceleration.GetScene();
+	if (!scene || !scene->inputs)
+		return false;
+	auto casters = tlasCasters.load(std::memory_order_acquire);
+	if (!casters || casters->scene != scene) {
+		auto rebuilt = std::make_shared<TlasCasters>();
+		rebuilt->scene = scene;
+		for (const auto& shape : scene->inputs->geometry)
+			if (shape && shape->sourceGeometry)
+				rebuilt->vertices.emplace(shape->sourceGeometry, shape->sourceVertices);
+		tlasCasters.store(rebuilt, std::memory_order_release);
+		casters = std::move(rebuilt);
+	}
+	const auto* renderer = a_geometry.GetGeometryRuntimeData().rendererData;
+	const auto found = casters->vertices.find(reinterpret_cast<uintptr_t>(&a_geometry));
+	const bool covered = renderer && found != casters->vertices.end() &&
+	                     found->second == reinterpret_cast<uintptr_t>(renderer->rawVertexData);
+	(covered ? castersTraced : castersKeptRaster).fetch_add(1, std::memory_order_relaxed);
+	return covered;
+}
+
+json DX12NativeScene::GetStatus() const
+{
+	json status = { { "active", globals::features::dx12Control.IsActive() },
+		{ "shadowOffloadMode", globals::features::dx12Control.IsShadowOffloadMode() },
+		{ "canSuppressStatic", CanSuppressSCMStatic() } };
+
+	json activeTiles = json::array();
+	json predictive = json::object();
+	if (const auto grid = globals::features::dx12Resources.GetGrid()) {
+		for (const auto& tile : grid->resident)
+			activeTiles.push_back(tile ? TileStatus(*tile) : json(nullptr));
+		for (const auto& tile : grid->predictiveResident) {
+			const std::string state = tile ? std::string(magic_enum::enum_name(tile->state)) : "Missing";
+			predictive[state] = predictive.value(state, 0) + 1;
+		}
+		status["grid"] = { { "scope", grid->requested.front().scope }, { "size", grid->size },
+			{ "revision", grid->geometryRevision }, { "runtimeShapes", grid->runtimeShapes.size() },
+			{ "activeTiles", std::move(activeTiles) }, { "predictiveStates", std::move(predictive) } };
+	}
+
+	if (const auto scene = acceleration.GetScene(); scene && scene->acceleration) {
+		size_t readyTiles = 0;
+		if (scene->inputs && scene->inputs->residency)
+			for (const auto& tile : scene->inputs->residency->resident)
+				readyTiles += tile && tile->state == DX12::Tile::State::Ready;
+		status["tlas"] = { { "published", true }, { "scope", scene->scope }, { "revision", scene->geometryRevision },
+			{ "instances", scene->bottoms.size() }, { "readyActiveTiles", readyTiles } };
+	} else {
+		status["tlas"] = { { "published", false } };
+	}
+
+	const auto lights = shadowLights.load(std::memory_order_acquire);
+	{
+		std::scoped_lock lock(runtimeLightMutex);
+		const uint32_t frame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : 0;
+		const bool current = runtimeLightFrame == frame || runtimeLightFrame + 1 == frame;
+		status["lights"] = { { "prepared", lights ? lights->size() : 0 },
+			{ "observedShadowLights", current ? runtimeLightSamples.size() : 0 },
+			{ "ownedShadowLights", current ? ownedLights.size() : 0 } };
+	}
+	status["ownership"] = { { "granted", ownershipGranted.load(std::memory_order_relaxed) },
+		{ "castersTraced", castersTraced.load(std::memory_order_relaxed) },
+		{ "castersKeptRaster", castersKeptRaster.load(std::memory_order_relaxed) } };
+
+	if (const auto stats = globals::features::dx12Resources.GetPreparationStats())
+		status["preparation"] = { { "active", TimingStatus(stats->active) }, { "predictive", TimingStatus(stats->predictive) },
+			{ "corners", TimingStatus(stats->corners) } };
+	return status;
+}
+
+void DX12NativeScene::RegisterUxActions()
+{
+	FEATURE_RENDER_QUERY("status",
+		"DX12 shadow offload readiness. Returns active/shadowOffloadMode/canSuppressStatic; grid {scope,size,revision,runtimeShapes,"
+		"activeTiles[{x,y,state,shapes,lights,bytes,failure,rejections[{reason,count}]}],predictiveStates}; "
+		"tlas {published,scope,revision,instances,readyActiveTiles}; lights {prepared,observedShadowLights,ownedShadowLights} for the latest frame; "
+		"ownership {granted (light-frames owned), castersTraced (static casters dropped from raster because the TLAS holds them), castersKeptRaster (static casters of owned lights the TLAS lacks)} "
+		"cumulative since boot (diff two reads for a rate); preparation timings. Params: none.",
+		[](const Feature* a_self, const json&) -> json { return static_cast<const DX12NativeScene*>(a_self)->GetStatus(); });
 }
