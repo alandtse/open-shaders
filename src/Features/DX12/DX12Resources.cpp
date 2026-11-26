@@ -984,9 +984,19 @@ void DX12Resources::PreShadowMaps()
 			// Only engine FormID lookup must run on the game thread. Keep it bounded
 			// while immutable geometry remains off-thread prepared.
 			constexpr size_t kFormResolutionsPerFrame = 64;
-			const size_t end = std::min(adopting->lights.size(), lightAdoptionOffset + kFormResolutionsPerFrame);
+			constexpr size_t kBudgetCheckInterval = 8;
+			constexpr double kActiveAdoptionBudgetUs = 750.0, kPredictiveAdoptionBudgetUs = 250.0;
+			const auto start = Util::GetQpcTicks();
+			const auto frequency = Util::GetQpcFrequency();
+			const auto budget = active ? kActiveAdoptionBudgetUs : kPredictiveAdoptionBudgetUs;
+			const size_t begin = lightAdoptionOffset;
+			const size_t end = std::min(adopting->lights.size(), begin + kFormResolutionsPerFrame);
 			auto* handler = RE::TESDataHandler::GetSingleton();
 			for (; lightAdoptionOffset < end; ++lightAdoptionOffset) {
+				const auto processed = lightAdoptionOffset - begin;
+				if (processed && processed % kBudgetCheckInterval == 0 &&
+					Util::QpcElapsedUs(start, Util::GetQpcTicks(), frequency) >= budget)
+					break;
 				auto& record = adopting->lights[lightAdoptionOffset];
 				const auto* reference = handler ? handler->LookupForm(record.referenceLocal, record.referencePlugin) : nullptr;
 				const auto* base = handler ? handler->LookupForm(record.baseLocal, record.basePlugin) : nullptr;

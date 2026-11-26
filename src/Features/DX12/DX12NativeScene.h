@@ -77,7 +77,7 @@ struct DX12NativeScene final : OverlayFeature
 private:
 	/** @brief Gates only native shadow replacement; never disables DX11 baseline shadows. */
 	bool CanOffloadShadowsInCurrentCell() const;
-	std::shared_ptr<const std::vector<DX12::PreparedLight>> CollectFullShadowLights(std::span<const DX12::PreparedLight> prepared);
+	std::shared_ptr<const std::vector<DX12::PreparedLight>> CollectFullShadowLights(const std::shared_ptr<const std::vector<DX12::PreparedLight>>& publication);
 	void ResetFullLightInventory();
 	bool nativeSessionStarted = false;  // Render/main-thread lifecycle.
 	std::optional<GraphicsBackend> backend;
@@ -86,7 +86,12 @@ private:
 	DX12Native::AccelerationWorker acceleration;
 	DX12Native::ShadowMaskTrace shadows;
 	// One immutable, ordered light selection shared by SCM and the RayQuery dispatch.
-	std::atomic<std::shared_ptr<const std::vector<DX12::PreparedLight>>> shadowLights;
+	struct PreparedLightSelection
+	{
+		std::shared_ptr<const std::vector<DX12::PreparedLight>> ordered;
+		std::unordered_map<uint32_t, size_t> byReference;
+	};
+	std::atomic<std::shared_ptr<const PreparedLightSelection>> shadowLights;
 	std::atomic<uint32_t> shadowLightScope{ 0 };
 	std::atomic<std::shared_ptr<const DX12Native::TopLevel>> frameShadowScene;
 	std::atomic<uint32_t> frameShadowSceneID{ UINT32_MAX };
@@ -144,7 +149,7 @@ private:
 		bool supported = false, sampled = false, active = false;
 	};
 	std::unordered_map<const RE::NiLight*, FullRuntimeLight> fullRuntimeLights;
-	std::vector<DX12::PreparedLight> fullPreparedSnapshot;
+	std::shared_ptr<const std::vector<DX12::PreparedLight>> fullPreparedSnapshot;
 	std::shared_ptr<const std::vector<DX12::PreparedLight>> fullConsolidatedLights;
 	uint32_t fullCachedUnificationRadius = 0, fullCachedExclusionRadius = 0;
 	bool fullCachedAdditiveEmission = false;

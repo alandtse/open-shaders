@@ -232,7 +232,7 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	const auto scene = GetFrameShadowScene();
 	const auto lights = shadowLights.load(std::memory_order_acquire);
 	const auto* ni = light->light.get();
-	if (!scene || !scene->acceleration || !lights || lights->empty() || !ni ||
+	if (!scene || !scene->acceleration || !lights || lights->ordered->empty() || !ni ||
 		scene->scope != shadowLightScope.load(std::memory_order_acquire))
 		return false;
 
@@ -250,13 +250,8 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 
 	// The shader admits only the published prepared lights. Never suppress a
 	// raster static caster for a light not actually selected for DX12 tracing.
-	const size_t limit = std::min(lights->size(), size_t{ DX12Native::kMaxShadowLights });
-	for (size_t i = 0; i < limit; ++i) {
-		const auto& candidate = (*lights)[i];
-		if (candidate.referenceID != 0 && candidate.referenceID == sample.referenceID)
-			return true;
-	}
-	return false;
+	const auto prepared = lights->byReference.find(sample.referenceID);
+	return prepared != lights->byReference.end() && prepared->second < DX12Native::kMaxShadowLights;
 }
 
 std::shared_ptr<const DX12Native::TopLevel> DX12NativeScene::GetFrameShadowScene() const
@@ -287,15 +282,13 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 
 	const DX12::PreparedLight* matched = nullptr;
 	if (referenceID != 0) {
-		const auto it = std::ranges::find_if(*lights, [referenceID](const auto& candidate) {
-			return candidate.referenceID == referenceID;
-		});
-		if (it == lights->end())
+		const auto it = lights->byReference.find(referenceID);
+		if (it == lights->byReference.end())
 			return;  // Never let a different nearby light inherit this source's animation.
-		matched = &*it;
+		matched = &(*lights->ordered)[it->second];
 	} else {
 		float bestDistanceSquared = std::numeric_limits<float>::infinity();
-		for (const auto& candidate : *lights) {
+		for (const auto& candidate : *lights->ordered) {
 			const float dx = candidate.position.x - restOrigin.x;
 			const float dy = candidate.position.y - restOrigin.y;
 			const float dz = candidate.position.z - restOrigin.z;
@@ -408,7 +401,16 @@ void DX12NativeScene::PreShadowMaps()
 	// SCM reads a single per-frame publication without re-enumerating tiles
 	// for every shadow light; the same ordered sources feed RayQuery.
 	const auto lights = globals::features::dx12Resources.GetPreparedLights(grid);
-	shadowLights.store(lights, std::memory_order_release);
+	const auto previous = shadowLights.load(std::memory_order_acquire);
+	if (!previous || previous->ordered != lights) {
+		auto selection = std::make_shared<PreparedLightSelection>();
+		selection->ordered = lights;
+		selection->byReference.reserve(lights->size());
+		for (size_t i = 0; i < lights->size(); ++i)
+			if (const auto reference = (*lights)[i].referenceID; reference)
+				selection->byReference.try_emplace(reference, i);
+		shadowLights.store(std::move(selection), std::memory_order_release);
+	}
 	// Only a revision-coalesced mailbox handoff on this thread. All BLAS/TLAS
 	// allocations and command recording run as bounded shared-pool tasks.
 	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
@@ -460,14 +462,15 @@ namespace
 void DX12NativeScene::ResetFullLightInventory()
 {
 	fullRuntimeLights.clear();
-	fullPreparedSnapshot.clear();
+	fullPreparedSnapshot.reset();
 	fullConsolidatedLights.reset();
 	fullRuntimeScope = 0;
 	fullLightVisit = 0;
 }
 
-std::shared_ptr<const std::vector<DX12::PreparedLight>> DX12NativeScene::CollectFullShadowLights(std::span<const DX12::PreparedLight> prepared)
+std::shared_ptr<const std::vector<DX12::PreparedLight>> DX12NativeScene::CollectFullShadowLights(const std::shared_ptr<const std::vector<DX12::PreparedLight>>& publication)
 {
+	const auto prepared = publication ? std::span<const DX12::PreparedLight>(*publication) : std::span<const DX12::PreparedLight>{};
 	std::scoped_lock lock(runtimeLightMutex);
 	const uint32_t scope = shadowLightScope.load(std::memory_order_acquire);
 	if (fullRuntimeScope != scope) {
@@ -477,12 +480,12 @@ std::shared_ptr<const std::vector<DX12::PreparedLight>> DX12NativeScene::Collect
 	const uint32_t unify = rayTracedProfile.runtimeUnificationRadius.load(std::memory_order_relaxed);
 	const uint32_t exclude = rayTracedProfile.preparedExclusionRadius.load(std::memory_order_relaxed);
 	const bool additive = rayTracedProfile.additivePreparedEmission.load(std::memory_order_relaxed);
-	const bool preparedChanged = prepared.size() != fullPreparedSnapshot.size() ||
-		!std::equal(prepared.begin(), prepared.end(), fullPreparedSnapshot.begin(),
-			DX12Native::SamePreparedShadowLight<DX12::PreparedLight>);
+	const auto previousPrepared = fullPreparedSnapshot ? std::span<const DX12::PreparedLight>(*fullPreparedSnapshot) : std::span<const DX12::PreparedLight>{};
+	const bool preparedChanged = publication != fullPreparedSnapshot &&
+		(prepared.size() != previousPrepared.size() || !std::equal(prepared.begin(), prepared.end(), previousPrepared.begin(),
+			DX12Native::SamePreparedShadowLight<DX12::PreparedLight>));
 	bool dirty = !fullConsolidatedLights || preparedChanged || unify != fullCachedUnificationRadius || exclude != fullCachedExclusionRadius || additive != fullCachedAdditiveEmission;
-	if (preparedChanged)
-		fullPreparedSnapshot.assign(prepared.begin(), prepared.end());
+	fullPreparedSnapshot = publication;
 
 	const auto node = globals::game::smState ? globals::game::smState->shadowSceneNode[0] : nullptr;
 	const uint64_t visit = ++fullLightVisit;
@@ -594,7 +597,8 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	{
 		if (!viewportWidth || !viewportHeight)
 			return;
-		const auto lights = shadowLights.load(std::memory_order_acquire);
+		const auto selection = shadowLights.load(std::memory_order_acquire);
+		const auto lights = selection ? selection->ordered : nullptr;
 		const auto capture = [&] {
 			raster.Capture(*backend, Util::GetCurrentSceneDepthSRV(false),
 				&globals::game::frameBufferCached.nonVR, frame, viewportWidth, viewportHeight);
@@ -615,7 +619,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 			.captureDebugLights = profile.debugNativeLights.load(std::memory_order_relaxed)
 		};
 		if (TraceAllPreparedLights()) {
-			const auto inventory = CollectFullShadowLights(lights ? std::span<const DX12::PreparedLight>(*lights) : std::span<const DX12::PreparedLight>{});
+			const auto inventory = CollectFullShadowLights(lights);
 			if (!inventory->empty())
 				shadows.Dispatch(*backend, capture(), built, *inventory, frame, controls);
 			return;
