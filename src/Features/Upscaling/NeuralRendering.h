@@ -242,6 +242,8 @@ private:
 	mutable std::mutex regionMutex;
 	/** @brief Set by the settings button or DevBench; the main-thread hook starts the sweep on its next frame. */
 	std::atomic_bool calibrationRequested = false;
+	/** @brief Set by the render hook when a running sweep's crop cannot reach the model. */
+	std::atomic_bool calibrationCropRejected = false;
 	/** @brief Main-thread sweep state; its published copy is guarded by regionMutex. */
 	NR::CropCalibration calibration;
 	/** @brief Captured GPU frame the sweep last sampled, so one capture is never counted twice. */

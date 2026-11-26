@@ -57,7 +57,7 @@ namespace
 	{
 		NR::Tuning tuning;
 		tuning.style = 2;
-		tuning.intensity = 1.5f;
+		tuning.intensity = 0.75f;
 		tuning.localToneStrength = 0.5f;
 		tuning.localStructureStrength = 1.25f;
 		tuning.skinStructureStrength = 0.75f;

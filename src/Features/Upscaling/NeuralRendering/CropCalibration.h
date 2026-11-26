@@ -69,7 +69,8 @@ namespace NR
 			kNone,
 			kFrameGeneration,  ///< Frame generation paces the frame and skews GPU zones.
 			kNotActive,        ///< NR was not running.
-			kNoSamples         ///< A step never produced enough timed frames.
+			kNoSamples,        ///< A step never produced enough timed frames.
+			kReducedModel      ///< The model ran below the eye size, so it could not take the forced crop.
 		};
 
 		/** @brief The sweep's state and, once done, its measurements. */
