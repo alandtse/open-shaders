@@ -449,20 +449,10 @@ namespace ShadowCasterManager
 		// Passive collection during the existing SCM caster walk. This does not
 		// change raster filter decisions or add another geometry traversal.
 		const auto nativeMode = s_nativeCasterMode;
-		if (nativeMode == DX12::SCMNativeCasterMode::SuppressAll) {
-			if (!IsCasterDynamic(geom))
-				return true;
-			s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
-			s_dynamicCasterDraws.fetch_add(1, std::memory_order_relaxed);
-			return false;
-		}
-		if (nativeMode != DX12::SCMNativeCasterMode::Disabled && nativeMode != DX12::SCMNativeCasterMode::Suppress && !geom.GetGeometryRuntimeData().skinInstance) {
-			auto& mobility = ClassifyCaster(geom);
-			if (!mobility.dynamic && mobility.nativeObservationEpoch != s_casterClassEpoch) {
-				mobility.nativeObservationEpoch = s_casterClassEpoch;
-				globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
-			}
-		}
+		if (nativeMode != DX12::SCMNativeCasterMode::Disabled &&
+			!geom.GetGeometryRuntimeData().skinInstance &&
+			!IsCasterDynamic(geom))
+			globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
 		const bool nativeDynamicOnly = nativeMode == DX12::SCMNativeCasterMode::Suppress;
 		if (!AtlasActive() && !nativeDynamicOnly)
 			return false;
@@ -478,22 +468,11 @@ namespace ShadowCasterManager
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
 		if (nativeDynamicOnly) {
-			if (!dynamic) {
-				if (rec->nativeCoverageEpoch != s_casterClassEpoch) {
-					rec->nativePreparedCovered = globals::features::dx12NativeScene.IsPreparedStaticCaster(geom);
-					rec->nativeCoverageEpoch = s_casterClassEpoch;
-				}
-				if (rec->nativePreparedCovered)
-					return true;
-				if (rec->nativeObservationEpoch != s_casterClassEpoch) {
-					rec->nativeObservationEpoch = s_casterClassEpoch;
-					globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
-				}
-			}
-			// Uncovered static casters stay live and prevent empty-raster sleep.
-			s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
-			(dynamic ? s_dynamicCasterDraws : s_staticCasterDraws).fetch_add(1, std::memory_order_relaxed);
-			return false;
+			// Historical open-RT behavior: all stationary casters for the
+			// owned light are removed, even if TLAS coverage is incomplete.
+			if (dynamic)
+				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+			return !dynamic;
 		}
 		// A caster that settled since the bake is missing from it and is drawn live; one that started moving is still in
 		// it at its old pose and is left to it. Either way the light is queued for a rebake.

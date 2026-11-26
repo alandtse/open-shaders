@@ -30,7 +30,7 @@ void DX12Control::DrawSettings()
 		description = T("menu.dx12.mode.raster_comparison_description", "Raster shadows remain unchanged; native shadow dispatch is paused for comparison.");
 		break;
 	case Mode::FullShadow:
-		description = T("menu.dx12.mode.full_shadow_description", "Native static shadows for every supported point light, without raster fallback.");
+		description = T("menu.dx12.mode.full_shadow_description", "Independent native static shadows for supported point lights; SCM remains unchanged.");
 		break;
 	}
 	ImGui::TextDisabled("%s", description);

@@ -24,24 +24,24 @@ namespace DX12
 
 	constexpr SCMNativePolicy SelectSCMNativePolicy(SCMNativeMode mode)
 	{
-		return { mode != SCMNativeMode::Disabled, mode == SCMNativeMode::ShadowOffload || mode == SCMNativeMode::FullShadow };
+		return SelectSCMNativePolicy(mode == SCMNativeMode::ShadowOffload || mode == SCMNativeMode::RasterComparison,
+			mode == SCMNativeMode::ShadowOffload, false);
 	}
 
 	enum class SCMNativeCasterMode
 	{
 		Disabled,
 		Observe,
-		Suppress,
-		SuppressAll
+		Suppress
 	};
 
 	/** @brief Selects the native extension for the synchronous SCM caster walk. */
-	constexpr SCMNativeCasterMode SelectSCMNativeCasterMode(SCMNativePolicy policy, bool nativeOwned, bool allLights = false)
+	constexpr SCMNativeCasterMode SelectSCMNativeCasterMode(SCMNativePolicy policy, bool nativeOwned)
 	{
 		if (!policy.observeGeometry)
 			return SCMNativeCasterMode::Disabled;
 		if (!policy.observeLights || !nativeOwned)
 			return SCMNativeCasterMode::Observe;
-		return allLights ? SCMNativeCasterMode::SuppressAll : SCMNativeCasterMode::Suppress;
+		return SCMNativeCasterMode::Suppress;
 	}
 }

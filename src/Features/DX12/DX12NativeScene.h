@@ -7,7 +7,6 @@
 #include "FullShadowLightConsolidation.h"
 #include "DX12ModeProfiles.h"
 #include "SCMNativePolicy.h"
-#include "DX12CasterCoverage.h"
 #include "../OverlayFeature.h"
 
 #include <atomic>
@@ -36,8 +35,6 @@ struct DX12NativeScene final : OverlayFeature
 	void DrawDevSettings();
 	void DrawOverlay() override;
 	bool IsOverlayVisible() const override;
-	/** @brief Cached frame-wide fast-path ownership for point-light static shadows. */
-	bool AllLightStaticReady() const { return allLightStaticReady.load(std::memory_order_acquire); }
 	bool WantsRenderPassHook() const override;
 	std::function<void()> OnRenderPassBegin(const RE::BSRenderPass* pass) override;
 	bool WantsPreShadowMapsHook() const override;
@@ -62,7 +59,6 @@ struct DX12NativeScene final : OverlayFeature
 	void ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requireStability = false);
 	/** @brief SCM hands native-owned lights' static casters to RayQuery and retains movers. */
 	bool OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const;
-	bool IsPreparedStaticCaster(RE::BSGeometry& geometry) const;
 	DX12::SCMNativeMode GetFrameNativeMode() const { return frameNativeMode.load(std::memory_order_acquire); }
 	bool TraceAllPreparedLights() const { return GetFrameNativeMode() == DX12::SCMNativeMode::FullShadow; }
 	std::shared_ptr<const DX12Native::TopLevel> GetFrameShadowScene() const;
@@ -97,13 +93,7 @@ private:
 	std::atomic<uint32_t> shadowLightScope{ 0 };
 	std::atomic<std::shared_ptr<const DX12Native::TopLevel>> frameShadowScene;
 	std::atomic<uint32_t> frameShadowSceneID{ UINT32_MAX };
-	mutable std::mutex casterCoverageMutex;
-	mutable std::weak_ptr<const DX12Native::TopLevel> casterCoverageScene;
-	mutable DX12Native::CasterCoverageCache casterCoverageCache;
-	void ResetCasterCoverage();
-	std::atomic<bool> previousShadowSubmitted{ false };
 	std::atomic<DX12::SCMNativeMode> frameNativeMode{ DX12::SCMNativeMode::Disabled };
-	std::atomic<bool> allLightStaticReady{ false };
 	struct ShadowProfile
 	{
 		explicit ShadowProfile(uint32_t quality, float reach) : qualityMode(quality), shadowReachMultiplier(reach) {}

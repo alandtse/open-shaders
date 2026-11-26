@@ -1,5 +1,4 @@
 #include "Features/DX12/DX12FenceRetirementPolicy.h"
-#include "Features/DX12/DX12CasterCoverage.h"
 #include "Features/DX12/SpatialGrid.h"
 #include "Features/DX12/DX12ModeProfiles.h"
 #include "Features/DX12/SCMNativePolicy.h"
@@ -137,35 +136,6 @@ TEST_CASE("DX12 stochastic shadows sample a bounded finite emitter", "[dx12][sha
 			CHECK(sample < 1.0f);
 		}
 	}
-}
-
-TEST_CASE("DX12 caster removal requires matching geometry and pose", "[dx12][shadow]")
-{
-	struct Position { float x, y, z; };
-	struct Shape {
-		std::vector<Position> positions;
-		std::vector<uint32_t> indices;
-		std::array<float, 12> transform{};
-	};
-	Shape shape{ { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 } }, { 0, 1, 2 } };
-	std::array<Position, 3> vertices{ Position{ 0, 0, 0 }, Position{ 1, 0, 0 }, Position{ 0, 1, 0 } };
-	std::array<uint16_t, 3> indices{ 0, 1, 2 };
-	auto transform = shape.transform;
-	const auto matches = [&] {
-		return DX12Native::MatchesCasterGeometry(shape, transform,
-			reinterpret_cast<const uint8_t*>(vertices.data()), indices.data(), sizeof(Position), 3, 1);
-	};
-	CHECK(matches());
-	transform[3] = 1.0f;
-	CHECK_FALSE(matches());
-	transform = shape.transform;
-	vertices[1].x = 2.0f;
-	CHECK_FALSE(matches());
-	vertices[1].x = 1.0f;
-	indices[1] = 2;
-	CHECK_FALSE(matches());
-	CHECK(DX12Native::CasterCoverageKey(3, 3) != DX12Native::CasterCoverageKey(4, 3));
-	CHECK(DX12Native::CasterCoverageKey(0, 3) == 0);
 }
 
 TEST_CASE("DX12 empty tile classification distinguishes failure from completed enumeration", "[dx12][resources]")
@@ -368,7 +338,9 @@ TEST_CASE("DX12 frame modes select distinct SCM caster ownership", "[dx12][shado
 	CHECK(SelectSCMNativeCasterMode(SelectSCMNativePolicy(SCMNativeMode::RasterComparison), false) == SCMNativeCasterMode::Observe);
 	CHECK(SelectSCMNativeCasterMode(SelectSCMNativePolicy(SCMNativeMode::ShadowOffload), false) == SCMNativeCasterMode::Observe);
 	CHECK(SelectSCMNativeCasterMode(SelectSCMNativePolicy(SCMNativeMode::ShadowOffload), true) == SCMNativeCasterMode::Suppress);
-	CHECK(SelectSCMNativeCasterMode(SelectSCMNativePolicy(SCMNativeMode::FullShadow), true, true) == SCMNativeCasterMode::SuppressAll);
+	CHECK_FALSE(SelectSCMNativePolicy(SCMNativeMode::FullShadow).observeGeometry);
+	CHECK_FALSE(SelectSCMNativePolicy(SCMNativeMode::FullShadow).observeLights);
+	CHECK(SelectSCMNativeCasterMode(SelectSCMNativePolicy(SCMNativeMode::FullShadow), true) == SCMNativeCasterMode::Disabled);
 }
 
 TEST_CASE("DX12 has one offload and two checkerboard variants", "[dx12][shadow]")
@@ -383,36 +355,4 @@ TEST_CASE("DX12 has one offload and two checkerboard variants", "[dx12][shadow]"
 	CHECK(NativeShadowSanitizeRTQuality(0u) == kShadowQualityQuality);
 	CHECK(NativeShadowSanitizeRTQuality(2u) == kShadowQualityLow);
 	CHECK(NativeShadowSanitizeRTQuality(4u) == kShadowQualityLow);
-}
-
-TEST_CASE("DX12 caster coverage cache detects same-address mutations", "[dx12][shadow]")
-{
-	DX12Native::CasterCoverageCache cache;
-	std::array<float, 12> pose{};
-	std::array<uint8_t, 48> vertices{};
-	std::array<uint16_t, 3> indices{ 0, 1, 2 };
-	constexpr uintptr_t object = 1;
-	const auto find = [&] {
-		return cache.Find(object, pose, vertices.data(), indices.data(), 16, 3, 1);
-	};
-	const auto store = [&](bool covered) {
-		cache.Store(object, pose, vertices.data(), indices.data(), 16, 3, 1, covered);
-	};
-	CHECK_FALSE(find().has_value());
-	store(true);
-	REQUIRE(find().has_value());
-	CHECK(*find());
-	vertices[0] = 1;
-	CHECK_FALSE(find().has_value());
-	store(false);
-	REQUIRE(find().has_value());
-	CHECK_FALSE(*find());
-	indices[0] = 2;
-	CHECK_FALSE(find().has_value());
-	store(true);
-	pose[3] = 1.0f;
-	CHECK_FALSE(find().has_value());
-	store(true);
-	cache.Clear();
-	CHECK_FALSE(find().has_value());
 }

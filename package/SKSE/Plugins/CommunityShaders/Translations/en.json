@@ -5961,7 +5961,7 @@
     "menu.dx12.master.restart_boot_state": "A game restart is required; DX12 Resources retains its boot state until then.",
     "menu.dx12.master.restart_resources": "Restart the game to initialize DX12 Resources.",
     "menu.dx12.mode.full_shadow": "Ray-Traced Static Shadows",
-    "menu.dx12.mode.full_shadow_description": "Native static shadows for every supported point light, without raster fallback.",
+    "menu.dx12.mode.full_shadow_description": "Independent native static shadows for supported point lights; SCM remains unchanged.",
     "menu.dx12.mode.label": "Mode",
     "menu.dx12.mode.raster_comparison": "Raster comparison",
     "menu.dx12.mode.raster_comparison_description": "Raster shadows remain unchanged; native shadow dispatch is paused for comparison.",
