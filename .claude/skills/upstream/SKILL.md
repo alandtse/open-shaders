@@ -160,6 +160,7 @@ Outcomes: `port-clean`, `port-adapted`, `already-upstream (#NNNN)`, `in-open-PR 
 2. Apply every commit in the item. When it's clean, use `git cherry-pick <sha>` for a single commit. Cherry-pick keeps the original author; then rewrite the message per step 6 with `git commit --amend`. For a grouped item (step 2a), apply the group's exact recorded SHAs in order without committing, then make one commit for the whole group: `git cherry-pick -n <sha-1> <sha-2> ... <sha-n>` followed by `git commit --author="<original author>"`, with a step 6 message whose `Ported from` line names every source SHA (add `Co-authored-by:` for any other original authors). Never use a `<first>^..<last>` range, which can pull in filtered or side-branch commits. A merge commit is never part of a group; cherry-pick it on its own with `-m 1`. Otherwise port the whole item by hand and commit with `git commit --author="<original author>"`.
 3. **Re-derive the claim.** Write one sentence explaining why the commit's reasoning holds in _upstream's_ code. If it doesn't hold, stop and reclassify.
 4. Run the C++ checklist and fix whatever applies:
+    - **Reuse:** the donor's helpers count as new code. For each helper, constant and parser the port adds, search upstream/dev for an equivalent (AGENTS.md DRY) and use it. Moving upstream code to share it is its own `refactor:` PR first.
     - **D3D state:** restored or unbound afterwards, with no extra per-draw state changes.
     - **Resource naming:** every new resource goes through `Util::SetResourceName` or the Buffer.h wrappers.
     - **Threading:** check render-thread vs compile-worker vs game-thread access; locks are scoped with no nested locking; no lock on hot per-draw paths unless it's justified.
@@ -196,6 +197,7 @@ Outcomes: `port-clean`, `port-adapted`, `already-upstream (#NNNN)`, `in-open-PR 
     - **Summary**
     - **Source:** fork, PR/commit, original author. Include the exact `Ported from ...` line.
     - **Differences from the fork version**
+    - **Reuse:** what was searched for each added helper, and what was reused
     - **Verification done**
     - **Not verified:** e.g. "not built locally (Linux container); CI is the build check"
     - **Related PRs:** the sibling PRs from this run, plus any overlapping open PRs
