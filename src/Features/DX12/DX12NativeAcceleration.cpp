@@ -64,7 +64,7 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12Device> retainedDevice;
 		if (device)
 			retainedDevice.copy_from(device.get());
-		RetireAfterFences(std::pair{ backend, std::move(retiring) }, std::move(retainedDevice), std::move(dependencies));
+		RetireAfterFences(std::pair{ backend.commandQueue, std::move(retiring) }, std::move(retainedDevice), std::move(dependencies));
 	}
 
 	bool AccelerationScene::Initialize(const GraphicsBackend& a_backend)
