@@ -62,8 +62,7 @@ namespace DX12
 			Ready,         // Geometry prepared and authoritative coverage verified.
 			ReadyPartial,  // Valid geometry/lights, but shadow-offload coverage not certified.
 			RetryWaiting,
-			Incomplete,
-			Deferred  // Predictive geometry exceeded its CPU residency allowance; retry if promoted active.
+			Incomplete
 		};
 		SubcellKey key;
 		std::vector<std::shared_ptr<const Shape>> shapes;
@@ -188,6 +187,7 @@ struct DX12Resources final : Feature
 	void SaveSettings(json& output) override;
 	void RestoreDefaultSettings() override;
 	bool WantsPreShadowMapsHook() const override;
+	void DataLoaded() override;
 	void PreShadowMaps() override;
 	void OnRuntimeDisabled() override;
 	/** @brief Returns current geometry residency without traversing engine objects. */
@@ -208,7 +208,9 @@ struct DX12Resources final : Feature
 	}
 
 private:
+	void EnsureCompanion();
 	void ResetPreparation();
+	std::once_flag companionStart;
 	bool preparationActive = false;
 	std::atomic<bool> runtimePublicationEnabled{ false };
 	DX12::ResourceGrid grid;

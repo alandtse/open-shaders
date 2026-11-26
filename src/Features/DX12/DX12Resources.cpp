@@ -86,12 +86,6 @@ namespace DX12
 			for (size_t i = 0; i < kGridCapacity; ++i) {
 				next->resident[i] = lookup(next->requested[i]);
 				resetFailedAfterMove(next->resident[i]);
-				if (next->resident[i] && next->resident[i]->state == Tile::State::Deferred) {
-					// A CPU-budgeted speculative tile is re-requested at full quality on active promotion.
-					auto promoted = std::make_shared<Tile>(*next->resident[i]);
-					promoted->state = Tile::State::Requested;
-					next->resident[i] = std::move(promoted);
-				}
 			}
 			for (size_t i = 0; i < kPredictiveCapacity; ++i) {
 				auto tile = lookup(next->predictive[i]);
@@ -399,7 +393,6 @@ namespace
 			result[*magic_enum::enum_index(State::ReadyPartial)] = [] { return T("menu.dx12.resources.status.partially_loaded", "Partially loaded"); };
 			result[*magic_enum::enum_index(State::RetryWaiting)] = [] { return T("menu.dx12.resources.status.retry_pending", "Failed (retry pending)"); };
 			result[*magic_enum::enum_index(State::Incomplete)] = [] { return T("menu.dx12.resources.status.retry_exhausted", "Skipped (retry exhausted)"); };
-			result[*magic_enum::enum_index(State::Deferred)] = [] { return T("menu.dx12.resources.status.predictive_budget", "Skipped (predictive budget)"); };
 			return result;
 		}();
 		static_assert(std::ranges::all_of(labels, [](Label label) { return label != nullptr; }));
@@ -421,8 +414,6 @@ namespace
 		case DX12::Tile::State::RetryWaiting:
 			return SubcellMapStyle::retryWaiting;
 		case DX12::Tile::State::Incomplete:
-			return SubcellMapStyle::skipped;
-		case DX12::Tile::State::Deferred:
 			return SubcellMapStyle::skipped;
 		case DX12::Tile::State::Requested:
 			return SubcellMapStyle::waiting;
@@ -655,6 +646,22 @@ void DX12Resources::RestoreDefaultSettings()
 	}
 }
 
+void DX12Resources::EnsureCompanion()
+{
+	std::call_once(companionStart, [this] {
+		companion = std::make_unique<DX12::CompanionWorker>();
+		DX12::CompanionRequest task;
+		task.warmup = true;
+		companion->Enqueue(std::move(task));
+	});
+}
+
+void DX12Resources::DataLoaded()
+{
+	if (IsActive())
+		EnsureCompanion();
+}
+
 bool DX12Resources::WantsPreShadowMapsHook() const { return IsActive(); }
 
 void DX12Resources::PreShadowMaps()
@@ -664,6 +671,7 @@ void DX12Resources::PreShadowMaps()
 		return;
 	}
 	CS_GPU_PASS("DX12Resources::Grid");
+	EnsureCompanion();
 	const auto location = Util::GetPlayerSpatialLocation();
 	if (!location)
 		return;
@@ -686,8 +694,6 @@ void DX12Resources::PreShadowMaps()
 	preparationActive = true;
 	grid.Advance(scope, settings.SubcellSize, position.x, position.y);
 	runtimePublicationEnabled.store(true, std::memory_order_release);
-	if (!companion)
-		companion = std::make_unique<DX12::CompanionWorker>();
 	const auto neighborhood = grid.Snapshot();
 	if (inFlight) {
 		const bool stillWanted = std::ranges::contains(neighborhood->requested, *inFlight) ||
@@ -704,11 +710,16 @@ void DX12Resources::PreShadowMaps()
 		}
 	}
 	if (auto result = companion->Take()) {
-		inFlight.reset();
-		adopting = std::make_unique<DX12::CompanionResult>(std::move(*result));
-		adopting->publication.failureReason = adopting->failure.substr(0, 320);
-		adopting->publication.lights.reserve(adopting->lights.size());
-		lightAdoptionOffset = 0;
+		if (!result->publication.key.scope) {
+			if (!result->failure.empty())
+				logger::warn("[DX12Resources] Manifest warmup failed: {}", result->failure);
+		} else {
+			inFlight.reset();
+			adopting = std::make_unique<DX12::CompanionResult>(std::move(*result));
+			adopting->publication.failureReason = adopting->failure.substr(0, 320);
+			adopting->publication.lights.reserve(adopting->lights.size());
+			lightAdoptionOffset = 0;
+		}
 	}
 	if (adopting) {
 		const auto key = adopting->publication.key;

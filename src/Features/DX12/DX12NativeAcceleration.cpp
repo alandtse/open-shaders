@@ -103,8 +103,7 @@ namespace DX12Native
 		const uint64_t bytes = device->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
 		if (!bytes || bytes == UINT64_MAX)
 			throw std::runtime_error("Invalid native acceleration allocation");
-		VideoMemoryBudget budget;
-		if (bytes > budget.Query(device.get(), 0).effectiveBytes)
+		if (bytes > videoBudget.Query(device.get(), 0).effectiveBytes)
 			throw AllocationDeferred{};
 		winrt::com_ptr<ID3D12Resource> resource;
 		DX::ThrowIfFailed(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, a_state, nullptr, IID_PPV_ARGS(resource.put())));

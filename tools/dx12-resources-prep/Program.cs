@@ -63,7 +63,7 @@ static async Task<int> ServeAsync(string[] arguments)
         var replyFile = Path.Combine(sessionRoot, "reply.json");
         var replyTemp = Path.Combine(sessionRoot, "reply.tmp");
         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-        var (prepare, owner) = SceneTile.OpenSession(data, plugins);
+        var (prepare, warmup, owner) = SceneTile.OpenSession(data, plugins);
         using (owner)
         {
             while (true)
@@ -79,6 +79,13 @@ static async Task<int> ServeAsync(string[] arguments)
                     using var message = JsonDocument.Parse(await File.ReadAllTextAsync(requestFile));
                     File.Delete(requestFile);
                     var root = message.RootElement;
+                    if (root.TryGetProperty("warmup", out var warm) && warm.GetBoolean())
+                    {
+                        warmup(sessionRoot);
+                        result = new TileResult(1, 0, 0, true, [], []);
+                    }
+                    else
+                    {
                     var scope = new FormKey(ModKey.FromFileName(root.GetProperty("scopePlugin").GetString()!),
                         root.GetProperty("localScopeID").GetUInt32());
                     var x = root.GetProperty("x").GetInt64();
@@ -90,6 +97,7 @@ static async Task<int> ServeAsync(string[] arguments)
                         !File.Exists(Path.Combine(data, scope.ModKey.ToString())))
                         throw new InvalidDataException("Invalid companion scope");
                     result = prepare(scope, x, y, size, worldspace, sessionRoot);
+                    }
                 }
                 catch (Exception error) when (error is not OutOfMemoryException)
                 {
@@ -161,11 +169,11 @@ internal static class SceneTile
     internal static TileResult Prepare(string data, string pluginsPath, FormKey scope, long tileX, long tileY, int size,
         bool isWorldspace, string scratch)
     {
-        var (run, owner) = OpenSession(data, pluginsPath);
+        var (run, _, owner) = OpenSession(data, pluginsPath);
         using (owner) return run(scope, tileX, tileY, size, isWorldspace, scratch);
     }
 
-    internal static (Func<FormKey, long, long, int, bool, string, TileResult> Run, IDisposable Owner)
+    internal static (Func<FormKey, long, long, int, bool, string, TileResult> Run, Action<string> Warmup, IDisposable Owner)
         OpenSession(string data, string pluginsPath)
     {
         var official = new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" };
@@ -179,6 +187,57 @@ internal static class SceneTile
             .WithTargetDataFolder(data).WithLoadOrder(order).Build();
         var archives = new Lazy<IArchiveReader[]>(() => Archive.GetApplicableArchivePaths(GameRelease.SkyrimSE, data)
             .Select(path => Archive.CreateReader(GameRelease.SkyrimSE, path)).Reverse().ToArray());
+
+        var sourceManifest = new Dictionary<FormKey, string>();
+        var missingManifest = new Dictionary<string, MissingModelShape[]>(StringComparer.OrdinalIgnoreCase);
+        var warmed = false;
+
+        void Warmup(string scratch)
+        {
+            if (warmed) return;
+            var visited = new HashSet<FormKey>();
+            var modelCache = new Dictionary<string, ModelExtraction>(StringComparer.OrdinalIgnoreCase);
+            foreach (var listing in environment.LoadOrder.ListedOrder)
+            {
+                if (listing.Mod is not { } mod) continue;
+                foreach (var cell in mod.EnumerateMajorRecords<ICellGetter>())
+                foreach (var candidate in cell.Persistent.Concat(cell.Temporary))
+                {
+                    if (!visited.Add(candidate.FormKey)) continue;
+                    try
+                    {
+                        var context = environment.LinkCache.ResolveContext<IPlaced, IPlacedGetter>(candidate.FormKey);
+                        if (context.Record.IsDeleted || context.Record is not IPlacedObjectGetter obj) continue;
+                        var baseRecord = obj.Base.TryResolve(environment.LinkCache);
+                        if (baseRecord is not IModeledGetter modeled || modeled.Model?.File is not { } file ||
+                            string.IsNullOrWhiteSpace(file.ToString())) continue;
+                        var path = NormalizeNifPath(file.ToString());
+                        sourceManifest[candidate.FormKey] = path;
+                        if (baseRecord is not (IStaticGetter or IFurnitureGetter or IMoveableStaticGetter) ||
+                            missingManifest.ContainsKey(path)) continue;
+                        try
+                        {
+                            var model = LoadModel(data, path, modelCache, archives, scratch);
+                            missingManifest[path] = model.Missing;
+                        }
+                        catch (Exception error) when (error is not OutOfMemoryException)
+                        {
+                            var reason = error is InvalidDataException ? error.Message : error.GetType().Name;
+                            missingManifest[path] = [new MissingModelShape(-1, reason)];
+                        }
+                        finally
+                        {
+                            modelCache.Clear();
+                        }
+                    }
+                    catch (Exception error) when (error is not OutOfMemoryException)
+                    {
+                        // Unresolved placements are diagnosed by the tile request.
+                    }
+                }
+            }
+            warmed = true;
+        }
 
         // These are placements only, not mesh geometry. The cache is replaced whenever
         // scope, size or the bounded region changes. It never indexes the whole game.
@@ -232,13 +291,6 @@ internal static class SceneTile
                                 continue;
                         }
                         placementWindow[reference.FormKey] = reference;
-                        // Bound reference metadata independently of NIF/triangle budgets.
-                        // A heavy scope cannot silently become authoritative coverage.
-                        if (placementWindow.Count > 150_000)
-                        {
-                            placementWindow = null;
-                            return new TileResult(1, 0, 1, false, [], []);
-                        }
                     }
                 }
             }
@@ -269,7 +321,7 @@ internal static class SceneTile
         void RememberMissingModel(FormKey reference, string? meshPath, string reason)
         {
             if (string.IsNullOrWhiteSpace(meshPath)) return;
-            var nifPath = NormalizeNifPath(meshPath);
+            var nifPath = sourceManifest.GetValueOrDefault(reference) ?? NormalizeNifPath(meshPath);
             if (nifPath.Length > 260) {
                 Reject("NIF path exceeds manifest limit");
                 return;
@@ -359,7 +411,7 @@ internal static class SceneTile
                 }
                 var model = (baseRecord as IModeledGetter)?.Model?.File.ToString();
                 if (string.IsNullOrWhiteSpace(model)) { Reject("missing mesh path"); continue; }
-                unresolvedNif = NormalizeNifPath(model);
+                unresolvedNif = sourceManifest.GetValueOrDefault(placed.FormKey) ?? NormalizeNifPath(model);
                 if (unresolvedNif.Length > 260)
                     throw new InvalidDataException("NIF path exceeds manifest limit");
                 nifSources.Add(new TileNifSource(placed.FormKey.ModKey.ToString(),
@@ -367,7 +419,12 @@ internal static class SceneTile
                 var extraction = LoadModel(data, unresolvedNif, models, archives, scratch);
                 foreach (var (reason, count) in extraction.Rejections)
                     Reject(reason, count);
-                foreach (var missing in extraction.Missing)
+                // The main-menu manifest is scoped to the same load-order session.
+                // Refresh it if the current decode has different missing blocks.
+                if (!missingManifest.TryGetValue(unresolvedNif, out var missingEntries) ||
+                    !missingEntries.SequenceEqual(extraction.Missing))
+                    missingManifest[unresolvedNif] = missingEntries = extraction.Missing;
+                foreach (var missing in missingEntries)
                     AddMissing(placed.FormKey, unresolvedNif, missing.Index, missing.Reason);
                 var mesh = extraction.Shapes;
                 var rotation = new[] { placement.Rotation.X, placement.Rotation.Y, placement.Rotation.Z };
@@ -401,7 +458,7 @@ internal static class SceneTile
         return new TileResult(1, eligible, failed, !isWorldspace && foundScope && !lightCapacityExceeded,
             shapes, lights, "", rejections, nifSources, missingShapes);
         }
-        return (Run, environment);
+        return (Run, Warmup, environment);
     }
 
     private static bool Inside(float x, float y, long tx, long ty, int size) =>

@@ -18,6 +18,7 @@ namespace DX12
 		uint32_t localScopeID = 0;
 		std::string scopePlugin;
 		bool worldspace = false;
+		bool warmup = false;
 		bool predictive = false;
 		bool corner = false;  // Predictive ring corners have separate generation timing.
 	};
@@ -52,7 +53,7 @@ namespace DX12
 
 	private:
 		void Run(std::stop_token stop);
-		CompanionResult Prepare(const CompanionRequest& request, uint64_t requestGeneration, std::stop_token stop);
+		CompanionResult Prepare(const CompanionRequest& request, std::stop_token stop);
 
 		mutable std::mutex mutex;
 		std::condition_variable_any wake;

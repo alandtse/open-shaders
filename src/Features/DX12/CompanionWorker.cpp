@@ -92,7 +92,6 @@ namespace DX12
 			HANDLE job = nullptr;
 			HANDLE process = nullptr;
 			std::filesystem::path root;
-			uint64_t epoch = 0;
 
 			~CompanionProcess() { Close(); }
 
@@ -113,7 +112,6 @@ namespace DX12
 				if (!root.empty())
 					std::filesystem::remove_all(root, ignored);
 				root.clear();
-				epoch = 0;
 			}
 
 			bool Start(const std::filesystem::path& executable, const std::filesystem::path& data,
@@ -166,8 +164,7 @@ namespace DX12
 		}
 
 		bool InvokeCompanion(const CompanionRequest& task, const std::filesystem::path& destination,
-			uint64_t expectedGeneration, const std::atomic<uint64_t>& generation, std::stop_token stop,
-			std::string& failure)
+			std::stop_token stop, std::string& failure)
 		{
 			const auto executable = std::filesystem::absolute(
 				L"Data/SKSE/Plugins/CommunityShaders/DX12Resources/bin/DX12ResourcesPrep.exe");
@@ -184,14 +181,11 @@ namespace DX12
 			}
 			// Host-owned per-session mailbox; no persistent geometry output or diagnostics.
 			auto& service = CurrentCompanionProcess();
-			if (service.epoch && service.epoch != expectedGeneration)
-				service.Close();
 			const auto work = destination.parent_path().parent_path();
 			if (!service.Start(executable, data, plugins, work)) {
 				failure = "Could not launch persistent .NET companion process";
 				return false;
 			}
-			service.epoch = expectedGeneration;
 			SetPriorityClass(service.process, task.predictive ? IDLE_PRIORITY_CLASS : BELOW_NORMAL_PRIORITY_CLASS);
 			const auto requestTmp = service.root / L"request.tmp";
 			const auto request = service.root / L"request.json";
@@ -202,7 +196,8 @@ namespace DX12
 				{ "x", task.key.x },
 				{ "y", task.key.y },
 				{ "size", task.size },
-				{ "worldspace", task.worldspace }
+				{ "worldspace", task.worldspace },
+				{ "warmup", task.warmup }
 			};
 			{
 				std::ofstream stream(requestTmp, std::ios::binary | std::ios::trunc);
@@ -226,8 +221,8 @@ namespace DX12
 				return false;
 			}
 			const uint64_t started = GetTickCount64();
-			while (!stop.stop_requested() && generation.load(std::memory_order_acquire) == expectedGeneration &&
-				   GetTickCount64() - started < kPreparationDeadlineMs) {
+			while (!stop.stop_requested() &&
+				   (task.warmup || GetTickCount64() - started < kPreparationDeadlineMs)) {
 				if (std::filesystem::is_regular_file(reply, ec)) {
 					std::filesystem::rename(reply, destination, ec);
 					if (!ec)
@@ -245,13 +240,13 @@ namespace DX12
 				if (!ec)
 					return true;
 			}
-			if (stop.stop_requested() || generation.load(std::memory_order_acquire) != expectedGeneration)
+			if (stop.stop_requested())
 				failure = "Companion request canceled by scene change";
 			else if (GetTickCount64() - started >= kPreparationDeadlineMs)
 				failure = "Companion preparation timed out (load order or NIF traversal too slow)";
 			else
 				failure = "Companion exited before returning a tile";
-			// A superseded or timed-out request kills only the companion job, not Skyrim.
+			// A stopped or timed-out request kills only the companion job, not Skyrim.
 			service.Close();
 			return false;
 		}
@@ -318,10 +313,7 @@ namespace DX12
 					break;
 				if (generation.load(std::memory_order_acquire) != observedGeneration) {
 					observedGeneration = generation.load(std::memory_order_acquire);
-					lock.unlock();
-					// Runtime disable, scene unload, or subcell-size change invalidates
-					// the session even if no tile is currently being processed.
-					CurrentCompanionProcess().Close();
+					// A canceled tile invalidates its publication, not the load-order manifest cache.
 					continue;
 				}
 				task = std::move(*queued);
@@ -330,7 +322,7 @@ namespace DX12
 				epoch = generation.load(std::memory_order_acquire);
 			}
 			const auto started = std::chrono::steady_clock::now();
-			auto result = Prepare(task, epoch, stop);
+			auto result = Prepare(task, stop);
 			result.predictive = task.predictive;
 			result.corner = task.corner;
 			result.preparationMs = std::chrono::duration<double, std::milli>(
@@ -345,7 +337,7 @@ namespace DX12
 		}
 	}
 
-	CompanionResult CompanionWorker::Prepare(const CompanionRequest& task, uint64_t epoch, std::stop_token stop)
+	CompanionResult CompanionWorker::Prepare(const CompanionRequest& task, std::stop_token stop)
 	{
 		CompanionResult result;
 		result.publication.key = task.key;
@@ -374,7 +366,7 @@ namespace DX12
 			}
 		} cleanup{ folder, work };
 		const auto file = folder / L"tile.json";
-		if (!InvokeCompanion(task, file, epoch, generation, stop, result.failure))
+		if (!InvokeCompanion(task, file, stop, result.failure))
 			return result;
 		try {
 			std::ifstream stream(file, std::ios::binary | std::ios::ate);

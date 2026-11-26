@@ -2,6 +2,7 @@
 
 #include "DX12NativeSceneInputs.h"
 #include "GraphicsBackend.h"
+#include "VideoMemoryBudget.h"
 
 #include <array>
 #include <atomic>
@@ -77,6 +78,7 @@ namespace DX12Native
 		bool HasPendingBottom(uint64_t a_identity, const DX12::Shape* a_shape) const;
 
 		GraphicsBackend backend;
+		mutable VideoMemoryBudget videoBudget;
 		winrt::com_ptr<ID3D12Device5> device;
 		winrt::com_ptr<ID3D12Fence> completion;
 		std::array<Build, 2> builds;
