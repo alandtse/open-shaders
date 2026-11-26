@@ -264,6 +264,8 @@ public:
 	 * @param opening true when the LoadingMenu is opening (old cell teardown), false when closing.
 	 */
 	virtual void OnSceneTransitionReset(bool /*opening*/) {}
+	/** @brief Main-thread loading notification; publish immutable data only, never mutate render-owned state. */
+	virtual void OnLoadingMenuEvent(bool /*opening*/) {}
 	virtual void DrawSettings() {}
 
 	/**

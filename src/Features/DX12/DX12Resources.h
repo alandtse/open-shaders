@@ -2,6 +2,8 @@
 
 #include "Feature.h"
 #include "SpatialGrid.h"
+#include "RE/B/BSTEvent.h"
+#include "RE/P/PositionPlayerEvent.h"
 
 #include <atomic>
 #include <cstdint>
@@ -168,7 +170,7 @@ namespace DX12
 }
 
 /** @brief Memory-resident geometry and lights with an ephemeral companion scratch directory. */
-struct DX12Resources final : Feature
+struct DX12Resources final : Feature, private RE::BSTEventSink<RE::PositionPlayerEvent>
 {
 	// Keep construction and destruction out of this header: the two unique_ptr
 	// pointees are forward-declared until CompanionWorker.h is included in the TU.
@@ -197,6 +199,8 @@ struct DX12Resources final : Feature
 	bool WantsPreShadowMapsHook() const override;
 	void PreShadowMaps() override;
 	void Reset() override;
+	void DataLoaded() override;
+	void OnLoadingMenuEvent(bool opening) override;
 	void OnRuntimeDisabled() override;
 	/** @brief Returns current geometry residency without traversing engine objects. */
 	std::shared_ptr<const DX12::Grid> GetGrid() const { return grid.Snapshot(); }
@@ -219,6 +223,19 @@ struct DX12Resources final : Feature
 	}
 
 private:
+	struct LoadingDestination
+	{
+		uint32_t scope = 0, localScopeID = 0;
+		std::string scopePlugin;
+		bool worldspace = false;
+		std::array<float, 3> position{}, rotation{};
+	};
+	static std::optional<LoadingDestination> CaptureLoadingDestination();
+	RE::BSEventNotifyControl ProcessEvent(const RE::PositionPlayerEvent* event,
+		RE::BSTEventSource<RE::PositionPlayerEvent>*) override;
+	std::optional<LoadingDestination> queuedDestination;  // Main-thread positioning events only.
+	std::atomic<std::shared_ptr<const LoadingDestination>> loadingDestination;
+	std::atomic<bool> loadingActive{ false };
 	void EnsureCompanion(bool menuStartup);
 	void PollStartup(uint32_t gameplayScope = 0);
 	enum class PublicationState { Valid, Invalid, Unavailable };

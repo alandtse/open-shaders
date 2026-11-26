@@ -5,6 +5,7 @@
 #include "DX12Control.h"
 #include "DX12NativeScene.h"
 #include "RE/M/MainMenu.h"
+#include "RE/P/PlayerCharacter.h"
 #include "RE/U/UI.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -546,6 +547,75 @@ bool DX12Resources::IsActive() const
 
 DX12Resources::DX12Resources() = default;
 DX12Resources::~DX12Resources() = default;
+
+void DX12Resources::DataLoaded()
+{
+	if (!globals::game::isVR && globals::game::player)
+		globals::game::player->AsPositionPlayerEventSource()->AddEventSink(this);
+}
+
+std::optional<DX12Resources::LoadingDestination> DX12Resources::CaptureLoadingDestination()
+{
+	const auto* player = globals::game::player;
+	if (!player || globals::game::isVR)
+		return std::nullopt;
+	const auto& target = player->GetPlayerRuntimeData().queuedTargetLoc;
+	if (!target.isValid || !std::isfinite(target.location.x) || !std::isfinite(target.location.y) || !std::isfinite(target.location.z))
+		return std::nullopt;
+	const bool interior = target.interior && target.interior->IsInteriorCell();
+	const auto* source = interior ? static_cast<const RE::TESForm*>(target.interior) : static_cast<const RE::TESForm*>(target.world);
+	const auto* file = source ? source->GetFile(0) : nullptr;
+	if (!source || !source->GetFormID() || !file || file->GetFilename().empty())
+		return std::nullopt;
+	return LoadingDestination{ source->GetFormID(), source->GetLocalFormID(), std::string(file->GetFilename()), !interior,
+		{ target.location.x, target.location.y, target.location.z }, { target.angle.x, target.angle.y, target.angle.z } };
+}
+
+RE::BSEventNotifyControl DX12Resources::ProcessEvent(const RE::PositionPlayerEvent* event,
+	RE::BSTEventSource<RE::PositionPlayerEvent>*)
+{
+	if (event && IsActive()) {
+		using Event = RE::PositionPlayerEvent::EVENT_TYPE;
+		if (event->type == Event::kPre) {
+			queuedDestination = CaptureLoadingDestination();
+			if (loadingActive.load(std::memory_order_acquire) && queuedDestination)
+				loadingDestination.store(std::make_shared<const LoadingDestination>(*queuedDestination), std::memory_order_release);
+		} else if (event->type == Event::kFinish) {
+			queuedDestination.reset();
+		}
+	}
+	return RE::BSEventNotifyControl::kContinue;
+}
+
+void DX12Resources::OnLoadingMenuEvent(bool opening)
+{
+	if (opening && IsActive()) {
+		auto destination = CaptureLoadingDestination();
+		if (!destination)
+			destination = std::move(queuedDestination);
+		queuedDestination.reset();
+		loadingDestination.store(destination ? std::make_shared<const LoadingDestination>(std::move(*destination)) : nullptr,
+			std::memory_order_release);
+		loadingActive.store(true, std::memory_order_release);
+		if (const auto captured = loadingDestination.load(std::memory_order_acquire))
+			logger::debug("[DX12Resources] Loading target {:08X} ({}, {}, {})", captured->scope,
+				captured->position[0], captured->position[1], captured->position[2]);
+		else
+			logger::debug("[DX12Resources] Loading target unavailable");
+	} else {
+		loadingActive.store(false, std::memory_order_release);
+		const auto captured = loadingDestination.exchange(nullptr, std::memory_order_acq_rel);
+		queuedDestination.reset();
+		if (captured) {
+			const auto arrival = Util::GetPlayerSpatialLocation();
+			if (arrival) {
+				const uint32_t scope = arrival->worldspace ? arrival->worldspace->GetFormID() : arrival->cell->GetFormID();
+				logger::debug("[DX12Resources] Loading arrival {:08X} ({}, {}, {}), expected {:08X}", scope,
+					arrival->position.x, arrival->position.y, arrival->position.z, captured->scope);
+			}
+		}
+	}
+}
 
 void DX12Resources::ResetPreparation()
 {

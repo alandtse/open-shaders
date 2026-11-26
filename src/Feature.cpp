@@ -492,6 +492,15 @@ namespace
 					g_loadingMenuOpenPending.store(true, std::memory_order_release);
 				else
 					g_loadingMenuClosePending.store(true, std::memory_order_release);
+				Feature::ForEachLoadedFeature("OnLoadingMenuEvent", [&](Feature* feature) {
+					try {
+						feature->OnLoadingMenuEvent(a_event->opening);
+					} catch (const std::exception& error) {
+						logger::error("{} loading notification failed: {}", feature->GetShortName(), error.what());
+					} catch (...) {
+						logger::error("{} loading notification failed", feature->GetShortName());
+					}
+				});
 			}
 			return RE::BSEventNotifyControl::kContinue;
 		}
