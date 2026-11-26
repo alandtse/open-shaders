@@ -19,6 +19,7 @@ namespace DX12
 		constexpr DWORD kPreparationDeadlineMs = 90000;
 		constexpr DWORD kStartupDeadlineMs = 10 * 60 * 1000;
 		constexpr DWORD kStartupProgressIntervalMs = 10000;
+		constexpr DWORD kCancellationGraceMs = 2000;
 
 		DWORD RequestPriority(const CompanionRequest& task)
 		{
@@ -201,6 +202,7 @@ namespace DX12
 			const auto requestTmp = service.root / L"request.tmp";
 			const auto request = service.root / L"request.json";
 			const auto reply = service.root / L"reply.json";
+			const auto cancelFile = service.root / std::format(L"cancel-{}", requestID);
 			const json message = {
 				{ "requestId", requestID },
 				{ "scopePlugin", task.scopePlugin },
@@ -241,9 +243,18 @@ namespace DX12
 			const char* stage = task.preloadLastSave ? "last-save cell" : "NIF manifests";
 			if (startup)
 				logger::info("[DX12Resources] Menu {} preparation started (above-normal process priority)", stage);
-			while (!stop.stop_requested() &&
-				   (!startup || generation.load(std::memory_order_acquire) == epoch) &&
-				   Util::QpcDeadlinePending(Util::GetQpcTicks(), deadline)) {
+			std::optional<int64_t> cancellationDeadline;
+			while (!stop.stop_requested() && Util::QpcDeadlinePending(Util::GetQpcTicks(), deadline)) {
+				if (generation.load(std::memory_order_acquire) != epoch && !cancellationDeadline) {
+					std::ofstream cancel(cancelFile, std::ios::binary | std::ios::trunc);
+					if (!cancel) {
+						service.Close();
+						return false;
+					}
+					cancellationDeadline = Util::QpcDeadlineAfterMs(Util::GetQpcTicks(), frequency, kCancellationGraceMs);
+				}
+				if (cancellationDeadline && !Util::QpcDeadlinePending(Util::GetQpcTicks(), *cancellationDeadline))
+					break;
 				if (startup && !Util::QpcDeadlinePending(Util::GetQpcTicks(), nextProgress)) {
 					const auto now = Util::GetQpcTicks();
 					logger::info("[DX12Resources] Waiting for {} companion reply ({:.1f} s)", stage,
@@ -251,6 +262,17 @@ namespace DX12
 					nextProgress = Util::QpcDeadlineAfterMs(now, frequency, kStartupProgressIntervalMs);
 				}
 				if (std::filesystem::is_regular_file(reply, ec)) {
+					if (cancellationDeadline) {
+						std::filesystem::remove(reply, ec);
+						if (ec) {
+							service.Close();
+							return false;
+						}
+						std::filesystem::remove(cancelFile, ec);
+						if (ec)
+							service.Close();
+						return false;
+					}
 					std::filesystem::rename(reply, destination, ec);
 					if (!ec)
 						return true;
@@ -259,7 +281,7 @@ namespace DX12
 				if (WaitForSingleObject(service.process, 25) != WAIT_TIMEOUT)
 					break;
 			}
-			if ((task.warmup || task.preloadLastSave) && generation.load(std::memory_order_acquire) != epoch) {
+			if (generation.load(std::memory_order_acquire) != epoch) {
 				service.Close();
 				return false;
 			}
@@ -327,8 +349,8 @@ namespace DX12
 
 	void CompanionWorker::Cancel()
 	{
-		generation.fetch_add(1, std::memory_order_acq_rel);
 		std::scoped_lock lock(mutex);
+		generation.fetch_add(1, std::memory_order_acq_rel);
 		queued.reset();
 		completed.reset();
 		wake.notify_all();

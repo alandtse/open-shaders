@@ -63,7 +63,17 @@ static async Task<int> ServeAsync(string[] arguments)
         var replyFile = Path.Combine(sessionRoot, "reply.json");
         var replyTemp = Path.Combine(sessionRoot, "reply.tmp");
         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-        var (prepare, warmup, preload, owner) = SceneTile.OpenSession(data, plugins);
+        string? cancellationFile = null;
+        long nextCancellationCheck = 0;
+        void CheckCancellation()
+        {
+            if (cancellationFile == null) return;
+            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (now < nextCancellationCheck) return;
+            nextCancellationCheck = now + System.Diagnostics.Stopwatch.Frequency / 40;
+            if (File.Exists(cancellationFile)) throw new OperationCanceledException();
+        }
+        var (prepare, warmup, preload, owner) = SceneTile.OpenSession(data, plugins, CheckCancellation);
         using (owner)
         {
             while (true)
@@ -82,6 +92,9 @@ static async Task<int> ServeAsync(string[] arguments)
                     var root = message.RootElement;
                     requestId = root.GetProperty("requestId").GetUInt64();
                     if (requestId == 0) throw new InvalidDataException("Invalid request ID");
+                    cancellationFile = Path.Combine(sessionRoot, $"cancel-{requestId.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                    nextCancellationCheck = 0;
+                    CheckCancellation();
                     if (root.TryGetProperty("preloadLastSave", out var load) && load.GetBoolean())
                     {
                         var size = root.GetProperty("size").GetInt32();
@@ -109,6 +122,12 @@ static async Task<int> ServeAsync(string[] arguments)
                         result = prepare(scope, x, y, size, worldspace, sessionRoot,
                             root.TryGetProperty("consolidate", out var consolidate) && consolidate.GetBoolean());
                     }
+                    nextCancellationCheck = 0;
+                    CheckCancellation();
+                }
+                catch (OperationCanceledException)
+                {
+                    result = new TileResult(1, 0, 0, false, [], [], "Request canceled");
                 }
                 catch (Exception error) when (error is not OutOfMemoryException)
                 {
@@ -121,6 +140,7 @@ static async Task<int> ServeAsync(string[] arguments)
                     await JsonSerializer.SerializeAsync(stream, (result ?? new TileResult(1, 0, 1, false, [], [])) with
                     { RequestId = requestId }, options);
                 File.Move(replyTemp, replyFile, true);
+                cancellationFile = null;
             }
         }
     }
@@ -189,7 +209,7 @@ internal static class SceneTile
     }
 
     internal static (Func<FormKey, long, long, int, bool, string, bool, TileResult> Run, Action<string> Warmup, Func<int, string, TileResult?> Preload, IDisposable Owner)
-        OpenSession(string data, string pluginsPath)
+        OpenSession(string data, string pluginsPath, Action? checkCancellation = null)
     {
         var official = new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" };
         var ccc = Path.Combine(Path.GetDirectoryName(data)!, "Skyrim.ccc");
@@ -218,6 +238,7 @@ internal static class SceneTile
                 foreach (var cell in mod.EnumerateMajorRecords<ICellGetter>())
                 foreach (var candidate in cell.Persistent.Concat(cell.Temporary))
                 {
+                    checkCancellation?.Invoke();
                     if (!visited.Add(candidate.FormKey)) continue;
                     try
                     {
@@ -232,10 +253,10 @@ internal static class SceneTile
                             missingManifest.ContainsKey(path)) continue;
                         try
                         {
-                            var model = LoadModel(data, path, modelCache, archives, scratch);
+                            var model = LoadModel(data, path, modelCache, archives, scratch, checkCancellation);
                             missingManifest[path] = model.Missing;
                         }
-                        catch (Exception error) when (error is not OutOfMemoryException)
+                        catch (Exception error) when (error is not OutOfMemoryException and not OperationCanceledException)
                         {
                             var reason = error is InvalidDataException ? error.Message : error.GetType().Name;
                             missingManifest[path] = [new MissingModelShape(-1, reason)];
@@ -245,7 +266,7 @@ internal static class SceneTile
                             modelCache.Clear();
                         }
                     }
-                    catch (Exception error) when (error is not OutOfMemoryException)
+                    catch (Exception error) when (error is not OutOfMemoryException and not OperationCanceledException)
                     {
                         // Unresolved placements are diagnosed by the tile request.
                     }
@@ -289,13 +310,17 @@ internal static class SceneTile
             {
                 if (listing.Mod is not { } mod) continue;
                 foreach (var candidate in mod.EnumerateMajorRecords<ICellGetter>())
+                {
+                    checkCancellation?.Invoke();
                     if (string.Equals(candidate.EditorID, hint.EditorId, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(candidate.EditorID, hint.HeaderLocation, StringComparison.OrdinalIgnoreCase))
                         matchingKeys.Add(candidate.FormKey);
+                }
             }
             var matches = new List<FormKey>();
             foreach (var key in matchingKeys)
             {
+                checkCancellation?.Invoke();
                 var cell = environment.LinkCache.Resolve<ICellGetter>(key);
                 if (!cell.IsDeleted && ((uint)cell.Flags & InteriorCellFlag) != 0 &&
                     (string.Equals(cell.EditorID, hint.EditorId, StringComparison.OrdinalIgnoreCase) ||
@@ -330,7 +355,8 @@ internal static class SceneTile
                 tileX + 3 <= placementMaxX && tileY + 3 <= placementMaxY));
         if (!reuseWindow)
         {
-            placementWindow = new Dictionary<FormKey, IPlacedGetter>();
+            placementWindow = null;
+            var nextWindow = new Dictionary<FormKey, IPlacedGetter>();
             placementScope = scope;
             placementSize = size;
             placementWorldspace = isWorldspace;
@@ -344,10 +370,12 @@ internal static class SceneTile
                 if (listing.Mod is not { } mod) continue;
                 foreach (var cell in mod.EnumerateMajorRecords<ICellGetter>())
                 {
+                    checkCancellation?.Invoke();
                     if (!isWorldspace && cell.FormKey != scope) continue;
                     if (cell.FormKey == scope) placementFoundScope = true;
                     foreach (var reference in cell.Persistent.Concat(cell.Temporary))
                     {
+                        checkCancellation?.Invoke();
                         if (isWorldspace)
                         {
                             if (reference.Placement is not { } p) continue;
@@ -358,10 +386,11 @@ internal static class SceneTile
                                 py < placementMinY * (double)size || py >= placementMaxY * (double)size)
                                 continue;
                         }
-                        placementWindow[reference.FormKey] = reference;
+                        nextWindow[reference.FormKey] = reference;
                     }
                 }
             }
+            placementWindow = nextWindow;
         }
         var candidates = placementWindow!;
         var foundScope = placementFoundScope;
@@ -420,6 +449,7 @@ internal static class SceneTile
 
         foreach (var candidate in candidates.Values)
         {
+            checkCancellation?.Invoke();
             // The cached placement window is wider than one subcell's origin
             // halo; discard irrelevant candidates before resolving any records.
             if (isWorldspace)
@@ -495,7 +525,7 @@ internal static class SceneTile
                         Reject("unsupported modeled record");
                         RememberMissingModel(placed.FormKey, file.ToString(), "unsupported modeled record");
                         if (!isWorldspace)
-                            IncludeBounds(LoadModel(data, file.ToString(), models, archives, scratch), toWorld);
+                            IncludeBounds(LoadModel(data, file.ToString(), models, archives, scratch, checkCancellation), toWorld);
                     }
                     continue;
                 }
@@ -510,7 +540,7 @@ internal static class SceneTile
                     if (!isWorldspace)
                     {
                         if (string.IsNullOrWhiteSpace(runtimeModel)) boundsComplete = false;
-                        else IncludeBounds(LoadModel(data, runtimeModel, models, archives, scratch), toWorld);
+                        else IncludeBounds(LoadModel(data, runtimeModel, models, archives, scratch, checkCancellation), toWorld);
                     }
                     continue;
                 }
@@ -521,7 +551,7 @@ internal static class SceneTile
                     throw new InvalidDataException("NIF path exceeds manifest limit");
                 nifSources.Add(new TileNifSource(placed.FormKey.ModKey.ToString(),
                     placed.FormKey.ID, unresolvedNif));
-                var extraction = LoadModel(data, unresolvedNif, models, archives, scratch);
+                var extraction = LoadModel(data, unresolvedNif, models, archives, scratch, checkCancellation);
                 if (!isWorldspace) IncludeBounds(extraction, toWorld);
                 foreach (var (reason, count) in extraction.Rejections)
                     Reject(reason, count);
@@ -535,6 +565,7 @@ internal static class SceneTile
                 var mesh = extraction.Shapes;
                 foreach (var shape in mesh)
                 {
+                    checkCancellation?.Invoke();
                     var transform = shape.ToModel * toWorld;
                     if (!wholeCell && !Overlaps(shape.Positions, transform, tileX, tileY, size)) continue;
                     ++eligible;
@@ -546,7 +577,7 @@ internal static class SceneTile
                         PlacementTransform.ToRows(transform)));
                 }
             }
-            catch (Exception error) when (error is not OutOfMemoryException)
+            catch (Exception error) when (error is not OutOfMemoryException and not OperationCanceledException)
             {
                 boundsComplete = false;
                 var message = error is InvalidDataException ? error.Message : error.GetType().Name;
@@ -613,7 +644,7 @@ internal static class SceneTile
     }
 
     private static ModelExtraction LoadModel(string data, string path, Dictionary<string, ModelExtraction> cache,
-        Lazy<IArchiveReader[]> archives, string scratch)
+        Lazy<IArchiveReader[]> archives, string scratch, Action? checkCancellation)
     {
         path = NormalizeNifPath(path);
         if (Path.IsPathRooted(path) || path.Split('\\').Any(part => part is ".." or "." or ""))
@@ -630,6 +661,7 @@ internal static class SceneTile
             {
                 foreach (var archive in archives.Value)
                 {
+                    checkCancellation?.Invoke();
                     if (!archive.TryGetFolder(Path.GetDirectoryName(path)!, out var folder)) continue;
                     var entry = folder.Files.FirstOrDefault(file =>
                         string.Equals(file.Path.Replace('/', '\\'), path, StringComparison.OrdinalIgnoreCase));
@@ -671,6 +703,7 @@ internal static class SceneTile
             Skip("unknown NIF blocks (incomplete coverage)", -1);
         foreach (var entry in nif.GetShapes())
         {
+            checkCancellation?.Invoke();
             nif.GetBlockIndex(entry, out var index);
             // Retain safe opaque rigid triangles even if a NIF contains unsupported shapes.
             if (entry is not BSTriShape shape || shape.HasSkinInstance || shape.IsSkinned ||
@@ -706,7 +739,7 @@ internal static class SceneTile
                 }
                 else output.Add(extractedShape);
             }
-            catch (Exception error) when (error is not OutOfMemoryException)
+            catch (Exception error) when (error is not OutOfMemoryException and not OperationCanceledException)
             {
                 boundsComplete = false;
                 Skip("invalid or unsupported shape data", index);
