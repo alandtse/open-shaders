@@ -148,17 +148,10 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 	auto refreshRate = Upscaling::GetRefreshRate(pSwapChainDesc->OutputWindow);
 	upscaling.refreshRate = refreshRate;
 
-	if (shouldProxy) {
-		if (upscaling.settings.frameGenerationMode)
-			if (refreshRate >= 120)
-				shouldProxy = true;
-			else if (upscaling.settings.frameGenerationForceEnable)
-				shouldProxy = true;
-			else
-				shouldProxy = false;
-		else
-			shouldProxy = false;
-	}
+	const bool nativeDX12 = globals::features::dx12Control.IsActive();
+	const bool frameGenerationRequested = upscaling.settings.frameGenerationMode &&
+	                                      (refreshRate >= 120 || upscaling.settings.frameGenerationForceEnable);
+	shouldProxy = shouldProxy && (nativeDX12 || frameGenerationRequested);
 
 	// The proxy path creates extra D3D11/D3D12 devices and swap chains beyond what the
 	// game itself creates -- redundant, and likely riskier, alongside Smooth Motion.
@@ -173,7 +166,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;
 
 	if (shouldProxy) {
-		logger::info("[Frame Generation] Frame Generation enabled, using D3D12 proxy");
+		logger::info("[Upscaling] D3D12 proxy requested (native DX12={}, frame generation={})", nativeDX12, frameGenerationRequested);
 
 		// DLSS-G availability is only trustworthy once a real D3D12 device is bound to
 		// the Streamline instance, so create and bind it before probing.
@@ -256,7 +249,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 
 			return S_OK;
 		} else {
-			logger::warn("[Frame Generation] No frame generation module available, skipping proxy");
+			logger::warn("[Upscaling] No compatible frame generation module available, skipping D3D12 proxy");
 			upscaling.fidelityFXMissing = true;
 		}
 	}
@@ -2792,7 +2785,8 @@ double Upscaling::GetRefreshRate(HWND a_window)
 
 bool Upscaling::IsFrameGenerationDx12PathActive() const
 {
-	return d3d12SwapChainActive && !globals::game::isVR;
+	return d3d12SwapChainActive && !globals::game::isVR &&
+	       (!lowRefreshRate || bootSnapshot.Boot(&Settings::frameGenerationForceEnable));
 }
 
 bool Upscaling::FrameGenerationActive()
