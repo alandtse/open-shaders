@@ -103,6 +103,16 @@ namespace NR::Cadence
 	}
 
 	/**
+	 * @brief Whether the motion chained on an eye's previous reuse frame leads on from this one, so the
+	 *        stored gain is reached through every frame since the model ran.
+	 * @param chainedFrame Frame that motion was chained on, or kNoModelFrame after a model frame.
+	 */
+	inline bool ContinuesMotionChain(uint64_t frame, uint64_t chainedFrame)
+	{
+		return chainedFrame != kNoModelFrame && frame == chainedFrame + 1;
+	}
+
+	/**
 	 * @brief Whether the camera turned or moved far enough since the last frame that a carried gain would be stale.
 	 *        A limit of 0 disables that test, and a non-finite sample counts as high motion so the model runs.
 	 * @param directionDot Dot product of the camera's forward direction this frame and last frame.

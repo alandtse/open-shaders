@@ -673,6 +673,12 @@ whose luminance ratio is the same gain. Crop, material alpha, tone filtering,
 category strengths and protection all still run, unchanged, for the reused eye;
 only its colours come from its own frame.
 
+The stored gain belongs to the last model frame, so a second reused frame in a
+row has to reach back further than one frame of motion. Every reuse pass writes
+the motion from its pixels to the stored gain, and the next one adds it, sampled
+where this frame's motion lands, to its own. A model frame starts the chain
+again.
+
 The reprojected position takes four bilinear taps of the stored gain. A tap is
 dropped, giving no gain rather than a stale one, when its depth differs by more
 than `kReuseDepthTolerance` from the depth stored beside the gain, or when the
