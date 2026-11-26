@@ -263,7 +263,9 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	// The shader admits only the published prepared lights. Never suppress a
 	// raster static caster for a light not actually selected for DX12 tracing.
 	const auto prepared = lights->byReference.find(sample.referenceID);
-	return prepared != lights->byReference.end() && prepared->second < DX12Native::kMaxShadowLights;
+	const auto observed = runtimeLightByReference.find(sample.referenceID);
+	return prepared != lights->byReference.end() && prepared->second < DX12Native::kMaxShadowLights &&
+	       observed != runtimeLightByReference.end() && observed->second == found->second;
 }
 
 std::shared_ptr<const DX12Native::TopLevel> DX12NativeScene::GetFrameShadowScene() const
@@ -301,6 +303,8 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 	} else {
 		float bestDistanceSquared = std::numeric_limits<float>::infinity();
 		for (const auto& candidate : *lights->ordered) {
+			if (!candidate.referenceID)
+				continue;
 			const float dx = candidate.position.x - restOrigin.x;
 			const float dy = candidate.position.y - restOrigin.y;
 			const float dz = candidate.position.z - restOrigin.z;
@@ -639,18 +643,24 @@ void DX12NativeScene::OnOpaqueRasterReady()
 			return;
 		}
 		std::vector<DX12::PreparedLight> liveLights;
-		if (lights) {
+		if (selection) {
 			std::scoped_lock lock(runtimeLightMutex);
-			liveLights.reserve(lights->size());
-			for (const auto& prepared : *lights) {
-				const auto observed = runtimeLightFrame == frame ? runtimeLightByReference.find(prepared.referenceID) : runtimeLightByReference.end();
-				if (observed != runtimeLightByReference.end()) {
-					const auto& sample = runtimeLightSamples[observed->second];
+			if (runtimeLightFrame == frame) {
+				liveLights.reserve(runtimeLightByReference.size());
+				for (const auto& [reference, index] : runtimeLightByReference) {
+					const auto prepared = selection->byReference.find(reference);
+					if (prepared == selection->byReference.end() || prepared->second >= DX12Native::kMaxShadowLights)
+						continue;
+					const auto& sample = runtimeLightSamples[index];
 					if (sample.value.fade > 0.0f)
 						liveLights.push_back(sample.value);
 				}
 			}
 		}
+		if (selection)
+			std::ranges::sort(liveLights, [&](const auto& a, const auto& b) {
+				return selection->byReference.at(a.referenceID) < selection->byReference.at(b.referenceID);
+			});
 		if (!liveLights.empty())
 			shadows.Dispatch(*backend, capture(), built, liveLights, frame, controls);
 	}

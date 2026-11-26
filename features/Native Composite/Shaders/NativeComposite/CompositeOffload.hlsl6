@@ -81,7 +81,7 @@ bool ReceiverSample(float4 mask)
 				const int2 neighbor = origin + int2(x, y);
 				if (any(neighbor < 0) || any(neighbor >= int2(LogicalSize)))
 					continue;
-				const float4 sample = ShadowMask[uint2(neighbor)];
+				const float4 sample = all(neighbor == int2(logical)) ? center : ShadowMask[uint2(neighbor)];
 				if (!ReceiverSample(sample) || abs(sample.z - distance) > tolerance)
 					continue;
 				const float2 delta = float2(min(uint2(neighbor) * 2u + 1u, Size - 1u)) - float2(id.xy);

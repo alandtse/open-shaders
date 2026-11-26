@@ -1936,7 +1936,9 @@ bool Upscaling::NeedsTypedDepth(UpscaleMethod a_method) const
 {
 	// Runtime FSR, DX12 DLSS and VR require typed R32_FLOAT depth instead of the game's R24G8 resource.
 	// VR DLSS uses it for eye 1's depth guide: D3D11 cannot copy a region out of a depth-stencil.
-	return (a_method == UpscaleMethod::kFSR || a_method == UpscaleMethod::kDLSS) && (globals::game::isVR || typedDepthTexture);
+	return (a_method == UpscaleMethod::kFSR && (globals::game::isVR || typedDepthTexture)) ||
+	       (a_method == UpscaleMethod::kDLSS && (globals::game::isVR ||
+	           (globals::features::dx12Control.IsActive() && typedDepthTexture)));
 }
 
 ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
