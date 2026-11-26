@@ -10,15 +10,13 @@
 void DX12Control::DrawSettings()
 {
 	// Keep pipeline mode directly below the DX12 heading and above subfeature tabs.
-	const char* modes[] = { T("menu.dx12.mode.shadow_offload", "Shadow offload"), T("menu.dx12.mode.raster_comparison", "Raster comparison") };
+	const char* modes[] = { T("menu.dx12.mode.shadow_offload", "Shadow offload"), T("menu.dx12.mode.raster_comparison", "Raster comparison"), T("menu.dx12.mode.ray_traced_static_shadows", "Ray-Traced Static Shadows") };
 	int mode = settings.Mode;
 	if (ImGui::Combo(T("menu.dx12.mode.label", "Mode"), &mode, modes, int(std::size(modes)))) {
 		settings.Mode = mode;
 		selectedMode.store(mode, std::memory_order_relaxed);
 	}
-	ImGui::TextDisabled(settings.Mode == 0 ?
-							T("menu.dx12.mode.shadow_offload_description", "Native shadows replace matched raster static shadows.") :
-							T("menu.dx12.mode.raster_comparison_description", "Raster shadows remain unchanged; native shadow dispatch is paused for comparison."));
+
 
 	if (!IsActive()) {
 		ImGui::Checkbox(T("menu.dx12.master.enable", "Enable native DX12 features (restart required)"), &settings.Enabled);
@@ -53,7 +51,7 @@ void DX12Control::DrawSettings()
 void DX12Control::LoadSettings(json& input)
 {
 	settings.Enabled = input.value("Enabled", false);
-	settings.Mode = std::clamp(input.value("Mode", 0), 0, 1);
+	settings.Mode = std::clamp(input.value("Mode", 0), 0, 2);
 	selectedMode.store(settings.Mode, std::memory_order_relaxed);
 	if (!bootCaptured) {
 		bootActive.store(settings.Enabled, std::memory_order_release);

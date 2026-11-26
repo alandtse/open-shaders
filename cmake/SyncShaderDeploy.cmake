@@ -23,7 +23,11 @@ if(EXCLUDE_NATIVE_DXIL)
     list(
         APPEND _excluded_shader_relpaths
         "DX12NativeScene/ShadowOffload.dxil"
+        "DX12NativeScene/ShadowRTQuality.dxil"
+        "DX12NativeScene/ShadowRTPerformance.dxil"
         "NativeComposite/CompositeOffload.dxil"
+        "NativeComposite/CompositeRTQuality.dxil"
+        "NativeComposite/CompositeRTPerformance.dxil"
     )
 endif()
 

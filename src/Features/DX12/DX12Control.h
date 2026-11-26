@@ -10,7 +10,7 @@ struct DX12Control final : Feature
 	struct Settings
 	{
 		bool Enabled = false;
-		int Mode = 0;  // 0: shadow offload, 1: raster comparison
+		int Mode = 0;  // 0: shadow offload, 1: raster comparison, 2: ray-traced static shadows
 	};
 
 	std::string GetName() override { return "DX12"; }
@@ -24,6 +24,7 @@ struct DX12Control final : Feature
 	/** @brief Whether native work may be submitted this frame. */
 	bool IsActive() const { return loaded && bootActive.load(std::memory_order_acquire); }
 	bool IsShadowOffloadMode() const { return selectedMode.load(std::memory_order_relaxed) == 0; }
+	bool IsFullRTMode() const { return selectedMode.load(std::memory_order_relaxed) == 2; }
 	void DrawSettings() override;
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;

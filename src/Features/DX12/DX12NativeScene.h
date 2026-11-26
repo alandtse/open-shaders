@@ -59,7 +59,7 @@ struct DX12NativeScene final : Feature
 	void OnSceneTransitionReset(bool a_opening) override;
 	void OnRuntimeDisabled() override;
 
-	/** @brief Raw quarter-resolution shadow output, independently fenced for Native Composite. */
+	/** @brief Raw mode-sized shadow output, independently fenced for Native Composite. */
 	std::shared_ptr<const DX12Native::ShadowMaskFrame> GetShadowMask(uint32_t frame) const { return shadows.Get(frame); }
 
 private:
@@ -75,6 +75,9 @@ private:
 	std::atomic<std::shared_ptr<const std::vector<DX12::PreparedLight>>> shadowLights;
 	std::atomic<uint32_t> shadowLightScope{ 0 };
 	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
+	bool outdoorFullRT = false;
+	uint32_t fullRTQuality = DX12Native::kShadowQualityQuality;
+	std::vector<DX12::PreparedLight> CollectFullRTLights(const std::vector<DX12::PreparedLight>& prepared) const;
 	struct RuntimeLightSample
 	{
 		const RE::NiLight* source = nullptr;  // Identity of the SCM light actually observed.

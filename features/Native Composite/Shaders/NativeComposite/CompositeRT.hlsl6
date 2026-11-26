@@ -1,0 +1,84 @@
+#include "Common/NativeShadowRT.hlsli"
+
+Texture2D<float2> ShadowMask : register(t0);
+Texture2D<float> RasterDepth : register(t1);
+RWTexture2D<float4> Scene : register(u0);
+
+cbuffer ShadowConstants : register(b0)
+{
+	uint2 Size;
+	float ReceiverTolerance;
+	uint LegacyTransfer;
+	row_major float4x4 InverseProjection;
+	row_major float4x4 InverseView;
+	uint2 LogicalSize;
+	uint CheckerboardOrigin;
+};
+static const uint QualityMode = NATIVE_RT_QUALITY;
+
+float2 LoadLogical(int2 logical)
+{
+	if (any(logical < 0) || any(logical >= int2(LogicalSize)) ||
+		((uint(logical.x) ^ uint(logical.y) ^ CheckerboardOrigin) & 1u) != 0u)
+		return float2(1, 0);
+	return ShadowMask[uint2(uint(logical.x) / 2u, uint(logical.y))];
+}
+uint2 RenderPixel(uint2 logical)
+{
+	return uint2(ShadowRenderCoordinate(logical.x, Size.x, QualityMode),
+		ShadowRenderCoordinate(logical.y, Size.y, QualityMode));
+}
+bool ValidReceiver(float2 sample, float distance, float tolerance)
+{
+	return all(isfinite(sample)) && sample.y > 0.0f && abs(sample.y - distance) <= tolerance;
+}
+
+[numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID)
+{
+	if (any(id.xy >= Size))
+		return;
+	const float depth = RasterDepth[id.xy];
+	if (!isfinite(depth) || depth <= 0.0f || depth >= 1.0f)
+		return;
+	float2 clip = (float2(id.xy) + 0.5f) * (2.0f / float2(Size)) - 1.0f;
+	clip.y = -clip.y;
+	const float4 view = mul(InverseProjection, float4(clip, depth, 1.0f));
+	if (!all(isfinite(view)) || abs(view.w) <= 1e-8f)
+		return;
+	const float distance = length(mul((float3x3)InverseView, view.xyz / view.w));
+	if (!isfinite(distance) || distance <= 0.0f)
+		return;
+	const float tolerance = max(ReceiverTolerance, distance * 1e-5f);
+	const int2 logical = int2(id.xy / ShadowScale(QualityMode));
+	const float2 center = LoadLogical(logical);
+	float visibility = 1.0f;
+	if (all(id.xy == RenderPixel(uint2(logical))) && ValidReceiver(center, distance, tolerance)) {
+		visibility = saturate(center.x);
+	} else {
+		const int radius = QualityMode == kShadowQualityQuality ? 2 : 1;
+		float weighted = 0.0f, total = 0.0f;
+		[loop] for (int y = -radius; y <= radius; ++y) {
+			[loop] for (int x = -radius; x <= radius; ++x) {
+				const int2 neighbor = logical + int2(x, y);
+				const float2 sample = LoadLogical(neighbor);
+				if (!ValidReceiver(sample, distance, tolerance))
+					continue;
+				const float2 delta = float2(RenderPixel(uint2(neighbor))) - float2(id.xy);
+				const float weight = rcp(1.0f + dot(delta, delta));
+				weighted += saturate(sample.x) * weight;
+				total += weight;
+			}
+		}
+		if (total <= 0.0f)
+			return;
+		visibility = weighted / total;
+	}
+	const float layer = 1.0f - (1.0f - visibility) * kRayTracedBlend;
+	if (layer >= 1.0f)
+		return;
+	float4 color = Scene[id.xy];
+	if (!all(isfinite(color.rgb)))
+		return;
+	color.rgb *= LegacyTransfer != 0u ? pow(layer, 1.0f / 1.6f) : layer;
+	Scene[id.xy] = color;
+}

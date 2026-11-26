@@ -24,31 +24,34 @@ namespace DX12Native
 		constexpr std::streamoff kMaxShadowBytecodeBytes = 16 * VideoMemoryBudget::kMiB;
 		constexpr uint64_t kSlotOverheadBytes = 2 * VideoMemoryBudget::kMiB;
 		constexpr uint32_t kShadowConstantDwords = 38;
+		constexpr uint32_t kRTConstantDwords = 39;
 		constexpr uint32_t kShadowThreadGroupSize = 8;
 		constexpr float kReceiverTolerance = 16.0f;
 	}
 
-	bool NativeComposite::InitializeShadow(ID3D12Device* device)
+	bool NativeComposite::InitializeShadow(ID3D12Device* device, uint32_t variant)
 	{
-		if (shadowPipeline && shadowDevice == device)
+		auto& state = shadowVariants[variant];
+		if (state.pipeline && state.device == device)
 			return true;
-		if (failedShadowDevice.get() == device)
+		if (state.failedDevice.get() == device)
 			return false;
 		try {
-			std::ifstream file(Util::PathHelpers::GetShadersPath() / "NativeComposite" / "CompositeOffload.dxil", std::ios::binary | std::ios::ate);
+			constexpr const char* names[]{ "CompositeOffload.dxil", "CompositeRTQuality.dxil", "CompositeRTPerformance.dxil" };
+			std::ifstream file(Util::PathHelpers::GetShadersPath() / "NativeComposite" / names[variant], std::ios::binary | std::ios::ate);
 			if (!file || file.tellg() <= 0 || file.tellg() > kMaxShadowBytecodeBytes)
-				throw std::runtime_error("CompositeOffload.dxil missing, empty or exceeds the bytecode limit");
+				throw std::runtime_error("Native composite DXIL missing, empty or exceeds the bytecode limit");
 			std::vector<char> shader(static_cast<size_t>(file.tellg()));
 			file.seekg(0);
 			if (!file.read(shader.data(), std::streamsize(shader.size())))
-				throw std::runtime_error("CompositeOffload.dxil read failed");
+				throw std::runtime_error("Native composite DXIL read failed");
 			CD3DX12_DESCRIPTOR_RANGE ranges[2];
 			ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);
 			ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
 			CD3DX12_ROOT_PARAMETER parameters[3];
 			parameters[0].InitAsDescriptorTable(1, &ranges[0]);
 			parameters[1].InitAsDescriptorTable(1, &ranges[1]);
-			parameters[2].InitAsConstants(kShadowConstantDwords, 0);
+			parameters[2].InitAsConstants(variant == 0u ? kShadowConstantDwords : kRTConstantDwords, 0);
 			const CD3DX12_ROOT_SIGNATURE_DESC desc(3, parameters);
 			winrt::com_ptr<ID3DBlob> serialized, errors;
 			DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
@@ -59,10 +62,10 @@ namespace DX12Native
 			pso.CS = { shader.data(), shader.size() };
 			winrt::com_ptr<ID3D12PipelineState> newPipeline;
 			DX::ThrowIfFailed(device->CreateComputePipelineState(&pso, IID_PPV_ARGS(newPipeline.put())));
-			shadowRoot = std::move(newRoot);
-			shadowPipeline = std::move(newPipeline);
-			shadowDevice = device;
-			failedShadowDevice = nullptr;
+			state.root = std::move(newRoot);
+			state.pipeline = std::move(newPipeline);
+			state.device = device;
+			state.failedDevice = nullptr;
 			return true;
 		} catch (const winrt::hresult_error& error) {
 			logger::error("[NativeComposite] Shadow initialization failed (HRESULT 0x{:08X}): {}", static_cast<uint32_t>(error.code()), winrt::to_string(error.message()));
@@ -71,7 +74,7 @@ namespace DX12Native
 		} catch (...) {
 			logger::error("[NativeComposite] Shadow initialization failed with an unknown exception");
 		}
-		failedShadowDevice.copy_from(device);
+		state.failedDevice.copy_from(device);
 		return false;
 	}
 
@@ -119,19 +122,21 @@ namespace DX12Native
 		                            (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD) &&
 		                            (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
 		const auto raster = shadow ? shadow->raster : nullptr;
+		const uint32_t quality = shadow ? shadow->quality : kShadowQualityOffloading;
+		const auto variant = ShadowVariant(quality);
 		// The native scene's frame counter is used when fetching the mask; the
 		// compositor frame number is the upscaler's existing frame counter.
 		const bool applyShadow = supportsShadow && transfer != Transfer::Unknown &&
 		                         shadow && shadow->mask && shadow->readyFence && shadow->readyValue &&
 		                         shadow->readyValue != UINT64_MAX &&
 		                         shadow->width == width && shadow->height == height &&
-		                         shadow->maskWidth == NativeShadowOffloadExtent(width) &&
-		                         shadow->maskHeight == NativeShadowOffloadExtent(height) &&
+		                         shadow->maskWidth == ShadowPhysicalWidth(ShadowLogicalExtent(width, quality), quality) &&
+		                         shadow->maskHeight == ShadowLogicalExtent(height, quality) &&
 		                         raster && raster->depth && raster->depth->resource &&
 		                         raster->cameraValid && raster->readyFence && raster->readyValue &&
 		                         raster->readyValue != UINT64_MAX &&
 		                         raster->width >= width && raster->height >= height &&
-		                         InitializeShadow(device12);
+		                         InitializeShadow(device12, variant);
 		if (!applyShadow)
 			returnColorToDX11 = false;
 
@@ -266,8 +271,8 @@ namespace DX12Native
 			slot->commands->ResourceBarrier(static_cast<UINT>(endCopy.size()), endCopy.data());
 
 			if (applyShadow) {
-				slot->shadowRoot = shadowRoot;
-				slot->shadowPipeline = shadowPipeline;
+				slot->shadowRoot = shadowVariants[variant].root;
+				slot->shadowPipeline = shadowVariants[variant].pipeline;
 				const auto step = device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 				auto cpu = slot->shadowDescriptors->GetCPUDescriptorHandleForHeapStart();
 				D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
@@ -310,8 +315,12 @@ namespace DX12Native
 				const auto& camera = raster->camera;
 				const Constants constants{ width, height, kReceiverTolerance,
 					transfer == Transfer::LegacyScene ? 1u : 0u, camera.CameraProjInverse, camera.CameraViewInverse,
-					shadow->maskWidth, shadow->maskHeight };
+					ShadowLogicalExtent(width, quality), ShadowLogicalExtent(height, quality) };
 				slot->commands->SetComputeRoot32BitConstants(2, kShadowConstantDwords, &constants, 0);
+				if (variant != 0u) {
+					const uint32_t phase = shadow->frame & 1u;
+					slot->commands->SetComputeRoot32BitConstant(2, phase, kShadowConstantDwords);
+				}
 				slot->commands->Dispatch((width + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize,
 					(height + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize, 1);
 				const std::array end{

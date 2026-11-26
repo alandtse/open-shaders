@@ -3,7 +3,7 @@
 #include "DX12NativeAcceleration.h"
 #include "DX12NativeRasterCapture.h"
 #include "VideoMemoryBudget.h"
-#include "../../../package/Shaders/Common/NativeShadowOffload.hlsli"
+#include "../../../package/Shaders/Common/NativeShadowRT.hlsli"
 
 #include <array>
 #include <memory>
@@ -20,6 +20,7 @@ namespace DX12Native
 	struct ShadowTraceControls
 	{
 		uint32_t viewportWidth = 0, viewportHeight = 0;
+		uint32_t quality = kShadowQualityOffloading;
 	};
 
 	/** @brief Quarter-resolution raw visibility and receiver distance; the composite reconstructs the full view. */
@@ -35,6 +36,7 @@ namespace DX12Native
 		uint64_t readyValue = 0, allocationBytes = 0;
 		uint32_t frame = 0, width = 0, height = 0;
 		uint32_t maskWidth = 0, maskHeight = 0;
+		uint32_t quality = kShadowQualityOffloading;
 		std::vector<std::array<float, 4>> lightRecords;
 		bool lightRecordsUploaded = false;
 		// RG32F: weighted visibility and receiver distance (zero for invalid receivers).
@@ -57,21 +59,21 @@ namespace DX12Native
 		void Reset()
 		{
 			current.reset();
-			initializationFailed = false;
+			initializationFailed.fill(false);
 			failureLogged = false;
 		}
 
 	private:
-		void Initialize(const GraphicsBackend& backend);
+		void Initialize(const GraphicsBackend& backend, uint32_t variant);
 		GraphicsBackend backend;
 		winrt::com_ptr<ID3D12Fence> completion;
 		winrt::com_ptr<ID3D12RootSignature> root;
-		winrt::com_ptr<ID3D12PipelineState> pipeline;
+		std::array<winrt::com_ptr<ID3D12PipelineState>, kShadowVariantCount> pipelines;
 		std::array<std::shared_ptr<ShadowMaskFrame>, 4> slots;
 		std::shared_ptr<ShadowMaskFrame> current;
 		uint64_t nextFence = 0;
 		VideoMemoryBudget videoBudget;
-		bool initializationFailed = false;
+		std::array<bool, kShadowVariantCount> initializationFailed{};
 		bool failureLogged = false;
 	};
 }

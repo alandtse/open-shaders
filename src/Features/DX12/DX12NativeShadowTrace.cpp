@@ -54,19 +54,21 @@ namespace DX12Native
 				continue;
 			std::vector<FenceDependency> dependencies;
 			dependencies.push_back(FencePoint(slot->readyFence ? slot->readyFence.get() : completion.get(), slot->readyValue));
-			RetireAfterFences(std::tuple{ root, pipeline, std::move(slot) }, backend.d3d12Device, std::move(dependencies));
+			RetireAfterFences(std::tuple{ root, pipelines[ShadowVariant(slot->quality)], std::move(slot) }, backend.d3d12Device, std::move(dependencies));
 		}
 	}
 
-	void ShadowMaskTrace::Initialize(const GraphicsBackend& requested)
+	void ShadowMaskTrace::Initialize(const GraphicsBackend& requested, uint32_t variant)
 	{
-		if (pipeline)
+		if (pipelines[variant])
 			return;
-		backend = requested;
+		if (!completion)
+			backend = requested;
 		auto* device = backend.d3d12Device.get();
 		if (!device || !backend.commandQueue)
 			throw std::runtime_error("DX12 Native Scene queue unavailable");
-		std::ifstream bytecode(Util::PathHelpers::GetShadersPath() / "DX12NativeScene" / "ShadowOffload.dxil",
+		constexpr const char* names[]{ "ShadowOffload.dxil", "ShadowRTQuality.dxil", "ShadowRTPerformance.dxil" };
+		std::ifstream bytecode(Util::PathHelpers::GetShadersPath() / "DX12NativeScene" / names[variant],
 			std::ios::binary | std::ios::ate);
 		if (!bytecode || bytecode.tellg() <= 0 || bytecode.tellg() > kMaxShadowBytecodeBytes)
 			throw std::runtime_error("Native Scene shadowmask DXIL unavailable");
@@ -95,18 +97,20 @@ namespace DX12Native
 		winrt::com_ptr<ID3DBlob> serialized, errors;
 		DX::ThrowIfFailed(D3D12SerializeRootSignature(&signature, D3D_ROOT_SIGNATURE_VERSION_1,
 			serialized.put(), errors.put()));
-		winrt::com_ptr<ID3D12RootSignature> newRoot;
-		DX::ThrowIfFailed(device->CreateRootSignature(0, serialized->GetBufferPointer(),
-			serialized->GetBufferSize(), IID_PPV_ARGS(newRoot.put())));
+		auto newRoot = root;
+		if (!newRoot)
+			DX::ThrowIfFailed(device->CreateRootSignature(0, serialized->GetBufferPointer(),
+				serialized->GetBufferSize(), IID_PPV_ARGS(newRoot.put())));
 		D3D12_COMPUTE_PIPELINE_STATE_DESC pipelineDesc{};
 		pipelineDesc.pRootSignature = newRoot.get();
 		pipelineDesc.CS = { shader.data(), shader.size() };
 		winrt::com_ptr<ID3D12PipelineState> newPipeline;
 		DX::ThrowIfFailed(device->CreateComputePipelineState(&pipelineDesc, IID_PPV_ARGS(newPipeline.put())));
-		winrt::com_ptr<ID3D12Fence> newCompletion;
-		DX::ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(newCompletion.put())));
+		auto newCompletion = completion;
+		if (!newCompletion)
+			DX::ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(newCompletion.put())));
 		root = std::move(newRoot);
-		pipeline = std::move(newPipeline);
+		pipelines[variant] = std::move(newPipeline);
 		completion = std::move(newCompletion);
 	}
 
@@ -134,7 +138,10 @@ namespace DX12Native
 		if (current && current->frame == frame)
 			return;
 		current.reset();
-		if (initializationFailed)
+		const auto quality = controls.quality;
+		const auto variant = ShadowVariant(quality);
+		const auto& pipeline = pipelines[variant];
+		if (initializationFailed[variant])
 			return;
 		if (!raster || !raster->depth || !raster->depth->resource || !raster->readyFence ||
 			!raster->cameraValid) {
@@ -149,7 +156,7 @@ namespace DX12Native
 		std::shared_ptr<ShadowMaskFrame> attempted;
 		bool submitted = false;
 		try {
-			Initialize(requested);
+			Initialize(requested, variant);
 			const uint64_t finished = completion->GetCompletedValue();
 			if (finished == UINT64_MAX)
 				return;
@@ -166,8 +173,8 @@ namespace DX12Native
 			if (!width || !height || width > raster->width || height > raster->height) {
 				return;
 			}
-			const uint32_t maskWidth = NativeShadowOffloadExtent(width);
-			const uint32_t maskHeight = NativeShadowOffloadExtent(height);
+			const uint32_t maskWidth = ShadowPhysicalWidth(ShadowLogicalExtent(width, quality), quality);
+			const uint32_t maskHeight = ShadowLogicalExtent(height, quality);
 			const uint32_t lightCount = uint32_t(std::min(lights.size(), size_t(kMaxShadowLights)));
 			const uint64_t lightBytes = uint64_t(std::bit_ceil(lightCount)) * kRecords * sizeof(std::array<float, 4>);
 			const bool fresh = !slot || slot->maskWidth != maskWidth || slot->maskHeight != maskHeight;
@@ -233,6 +240,7 @@ namespace DX12Native
 			slot->height = height;
 			slot->maskWidth = maskWidth;
 			slot->maskHeight = maskHeight;
+			slot->quality = quality;
 			const Constants camera{
 				slot->raster->camera.CameraProjInverse,
 				slot->raster->camera.CameraViewInverse,
@@ -330,7 +338,7 @@ namespace DX12Native
 			current = slot;
 			failureLogged = false;
 		} catch (...) {
-			initializationFailed = !pipeline;
+			initializationFailed[variant] = !pipeline;
 			if (attempted) {
 				if (submitted && completion && backend.commandQueue) {
 					// ExecuteCommandLists succeeded. A queue-tail marker retires the

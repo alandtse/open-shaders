@@ -1,7 +1,7 @@
 #include "Features/DX12/DX12FenceRetirementPolicy.h"
 #include "Features/DX12/SpatialGrid.h"
 #include "Features/DX12/TilePreparationPolicy.h"
-#include "../../package/Shaders/Common/NativeShadowOffload.hlsli"
+#include "../../package/Shaders/Common/NativeShadowRT.hlsli"
 #include "Utils/RuntimeTaskGate.h"
 
 #include <atomic>
@@ -137,4 +137,29 @@ TEST_CASE("DX12 offloading has one quarter-resolution layout", "[dx12][shadow]")
 	CHECK(kOffloadingEmitterMultiplier == 0.30f);
 	CHECK(kOffloadingFadeRange == 0.66f);
 	CHECK(kOffloadingNearRadius == 16.0f);
+}
+
+TEST_CASE("DX12 full RT keeps the two accepted checkerboard layouts", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	CHECK(SanitizeRTQuality(0) == kShadowQualityQuality);
+	CHECK(SanitizeRTQuality(3) == kShadowQualityPerformance);
+	CHECK(ShadowPhysicalWidth(ShadowLogicalExtent(1920, kShadowQualityQuality), kShadowQualityQuality) == 960);
+	CHECK(ShadowLogicalExtent(1080, kShadowQualityQuality) == 1080);
+	CHECK(ShadowPhysicalWidth(ShadowLogicalExtent(1920, kShadowQualityPerformance), kShadowQualityPerformance) == 480);
+	CHECK(ShadowLogicalExtent(1080, kShadowQualityPerformance) == 540);
+	CHECK(ShadowPhysicalWidth(ShadowLogicalExtent(1921, kShadowQualityQuality), kShadowQualityQuality) == 961);
+	CHECK(ShadowPhysicalWidth(ShadowLogicalExtent(1921, kShadowQualityPerformance), kShadowQualityPerformance) == 481);
+	CHECK(ShadowLogicalExtent(1081, kShadowQualityPerformance) == 541);
+	CHECK(ShadowLogicalX(0, 0, 0) == 0);
+	CHECK(ShadowLogicalX(0, 0, 1) == 1);
+	CHECK(ShadowLogicalX(0, 1, 0) == 1);
+	CHECK(ShadowLogicalX(0, 1, 1) == 0);
+	CHECK(ShadowRenderCoordinate(480, 961, kShadowQualityPerformance) == 960);
+	CHECK(ShadowEmitterMultiplier(kShadowQualityQuality) == 0.65f);
+	CHECK(ShadowEmitterMultiplier(kShadowQualityPerformance) == 0.20f);
+	CHECK(ShadowEmitterMultiplier(kShadowQualityOffloading) == 0.30f);
+	CHECK(ShadowVariant(kShadowQualityOffloading) == 0);
+	CHECK(ShadowVariant(kShadowQualityQuality) == 1);
+	CHECK(ShadowVariant(kShadowQualityPerformance) == 2);
 }

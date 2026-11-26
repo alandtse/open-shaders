@@ -11,6 +11,9 @@
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
+#include "Utils/PointLightFlags.h"
+#include "RE/T/TESObjectLIGH.h"
+#include <Windows.h>
 
 #include <algorithm>
 #include <cmath>
@@ -19,26 +22,41 @@
 #include <limits>
 #include <ranges>
 #include <unordered_map>
+#include <unordered_set>
 
 void DX12NativeScene::DrawSettings()
 {
-	ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoorShadowOffloading);
-	ImGui::TextDisabled("%s", T("menu.dx12.scene.fixed_offload_profile", "Fixed quarter-resolution tracing with depth-aware reconstruction"));
+	const auto& control = globals::features::dx12Control;
+	if (control.IsFullRTMode()) {
+		const char* qualities[]{ T("menu.dx12.scene.rt_quality", "Quality"), T("menu.dx12.scene.rt_performance", "Performance") };
+		int quality = fullRTQuality == DX12Native::kShadowQualityPerformance ? 1 : 0;
+		if (ImGui::Combo(T("menu.dx12.scene.shadow_quality", "Shadow quality"), &quality, qualities, int(std::size(qualities))))
+			fullRTQuality = quality == 0 ? DX12Native::kShadowQualityQuality : DX12Native::kShadowQualityPerformance;
+		ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoorFullRT);
+	} else if (control.IsShadowOffloadMode()) {
+		ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoorShadowOffloading);
+	}
 }
 
 void DX12NativeScene::LoadSettings(json& input)
 {
 	outdoorShadowOffloading = input.value("OutdoorShadowOffloading", false);
+	const auto profile = input.value("FullRT", json::object());
+	outdoorFullRT = profile.value("OutdoorShadowOffloading", false);
+	fullRTQuality = DX12Native::SanitizeRTQuality(profile.value("ShadowQualityMode", DX12Native::kShadowQualityQuality));
 }
 
 void DX12NativeScene::SaveSettings(json& output)
 {
-	output = { { "OutdoorShadowOffloading", outdoorShadowOffloading } };
+	output = { { "OutdoorShadowOffloading", outdoorShadowOffloading },
+		{ "FullRT", { { "OutdoorShadowOffloading", outdoorFullRT }, { "ShadowQualityMode", fullRTQuality } } } };
 }
 
 void DX12NativeScene::RestoreDefaultSettings()
 {
 	outdoorShadowOffloading = false;
+	outdoorFullRT = false;
+	fullRTQuality = DX12Native::kShadowQualityQuality;
 }
 
 bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
@@ -46,7 +64,7 @@ bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
 	if (globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))
 		return false;
 	const auto* cell = Util::GetPlayerCell();
-	return cell && (!cell->IsExteriorCell() || outdoorShadowOffloading);
+	return cell && (!cell->IsExteriorCell() || (globals::features::dx12Control.IsFullRTMode() ? outdoorFullRT : outdoorShadowOffloading));
 }
 
 bool DX12NativeScene::CanSuppressSCMStatic() const
@@ -96,7 +114,7 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 	bool /*flickers*/, const RE::NiPoint3& restOrigin)
 {
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive() ||
-		!light || light->GetIsFrustumOrDirectionalLight() || !globals::game::graphicsState)
+		!globals::features::dx12Control.IsShadowOffloadMode() || !light || light->GetIsFrustumOrDirectionalLight() || !globals::game::graphicsState)
 		return;
 	auto* ni = light->light.get();
 	const auto lights = shadowLights.load(std::memory_order_acquire);
@@ -208,6 +226,70 @@ void DX12NativeScene::PreShadowMaps()
 		acceleration.Request(std::move(grid));
 }
 
+namespace
+{
+	uint32_t ReadPlacedLightID(const RE::NiLight* light) noexcept
+	{
+		__try {
+			const RE::NiAVObject* node = light;
+			for (uint32_t depth = 0; node && depth < 16; ++depth, node = node->parent) {
+				if (auto* ref = node->GetUserData()) {
+					auto* base = ref->GetObjectReference();
+					return base && base->As<RE::TESObjectLIGH>() ? ref->GetFormID() : 0;
+				}
+			}
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		}
+		return 0;
+	}
+}
+
+std::vector<DX12::PreparedLight> DX12NativeScene::CollectFullRTLights(const std::vector<DX12::PreparedLight>& prepared) const
+{
+	// This inventory is independent of SCM scheduling and ownership matching.
+	std::vector<DX12::PreparedLight> result = prepared;
+	std::unordered_set<uint32_t> preparedIDs;
+	for (const auto& light : prepared)
+		if (light.referenceID)
+			preparedIDs.insert(light.referenceID);
+	std::unordered_set<const RE::NiLight*> seen;
+	const auto collect = [&](RE::BSLight* light) {
+		if (!light || !light->pointLight || !light->light || result.size() >= DX12Native::kMaxShadowLights)
+			return;
+		auto* ni = light->light.get();
+		if (!seen.insert(ni).second || ni->GetFlags().any(RE::NiAVObject::Flag::kHidden))
+			return;
+		const auto flags = PointLightFlags::GetVanillaPointLightFlags(light, ni);
+		if (flags & PointLightFlags::ToMask(PointLightFlags::Flags::Spot))
+			return;
+		const uint32_t placed = ReadPlacedLightID(ni);
+		if (placed && preparedIDs.contains(placed))
+			return;
+		const auto& rt = ni->GetLightRuntimeData();
+		const auto& position = ni->world.translate;
+		if (!std::isfinite(rt.radius.x) || rt.radius.x <= 0.0f || !std::isfinite(rt.fade) || rt.fade <= 0.0f ||
+			!std::isfinite(rt.diffuse.red) || !std::isfinite(rt.diffuse.green) || !std::isfinite(rt.diffuse.blue) ||
+			!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))
+			return;
+		DX12::PreparedLight value{};
+		value.referenceID = placed;
+		value.position = float3{ position.x, position.y, position.z };
+		value.radius = rt.radius.x;
+		value.color = float3{ rt.diffuse.red, rt.diffuse.green, rt.diffuse.blue };
+		value.fade = rt.fade;
+		result.push_back(value);
+	};
+	const auto node = globals::game::smState ? globals::game::smState->shadowSceneNode[0] : nullptr;
+	if (node) {
+		const auto& scene = node->GetRuntimeData();
+		for (const auto& light : scene.activeLights)
+			collect(light.get());
+		for (const auto& light : scene.activeShadowLights)
+			collect(light.get());
+	}
+	return result;
+}
+
 void DX12NativeScene::OnOpaqueRasterReady()
 {
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive())
@@ -217,8 +299,9 @@ void DX12NativeScene::OnOpaqueRasterReady()
 			static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections)))
 		return;
 	// Only capture the depth and camera used by the independent shadow layer.
-	if (!globals::features::dx12Control.IsShadowOffloadMode() ||
-		!CanOffloadShadowsInCurrentCell())
+	const auto& control = globals::features::dx12Control;
+	const bool fullRT = control.IsFullRTMode();
+	if ((!control.IsShadowOffloadMode() && !fullRT) || !CanOffloadShadowsInCurrentCell())
 		return;
 
 	CS_GPU_PASS("DX12NativeScene::OpaqueRasterReady");
@@ -237,7 +320,9 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	// Admit only matched runtime emitters that the SCM policy can account for.
 	// Iterate the immutable prepared selection to preserve its deterministic order.
 	std::vector<DX12::PreparedLight> liveLights;
-	{
+	if (fullRT) {
+		liveLights = CollectFullRTLights(*lights);
+	} else {
 		std::scoped_lock lock(runtimeLightMutex);
 		if (runtimeLightFrame != frame || runtimeLightSamples.empty())
 			return;
@@ -273,7 +358,8 @@ void DX12NativeScene::OnOpaqueRasterReady()
 		&globals::game::frameBufferCached.nonVR, frame);
 	const DX12Native::ShadowTraceControls controls{
 		.viewportWidth = viewportWidth,
-		.viewportHeight = viewportHeight
+		.viewportHeight = viewportHeight,
+		.quality = fullRT ? fullRTQuality : DX12Native::kShadowQualityOffloading
 	};
 	shadows.Dispatch(*backend, raster.Get(frame), built, liveLights, frame, controls);
 }
@@ -284,7 +370,7 @@ std::function<void()> DX12NativeScene::OnRenderPassBegin(const RE::BSRenderPass*
 	// render path. This does not change render-pass state or DX11 draw behavior.
 	if (!loaded || !globals::features::dx12Control.IsActive() || globals::game::isVR ||
 		!pass || !pass->geometry ||
-		!globals::features::dx12Control.IsShadowOffloadMode() ||
+		(!globals::features::dx12Control.IsShadowOffloadMode() && !globals::features::dx12Control.IsFullRTMode()) ||
 		!globals::features::upscaling.loaded ||
 		!globals::state || globals::state->isMapMenuOpen ||
 		(globals::state->permutationData.ExtraShaderDescriptor &

@@ -1297,14 +1297,14 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                     ${CMAKE_COMMAND}
                     -E
                     copy_if_different
-                    "${_shadow_dxil}"
-                    "${DEPLOY_TARGET}/Shaders/DX12NativeScene/ShadowOffload.dxil"
+                    ${_shadow_outputs}
+                    "${DEPLOY_TARGET}/Shaders/DX12NativeScene"
                     COMMAND
                     ${CMAKE_COMMAND}
                     -E
                     copy_if_different
-                    "${_native_composite_dxil}"
-                    "${DEPLOY_TARGET}/Shaders/NativeComposite/CompositeOffload.dxil"
+                    ${_native_composite_outputs}
+                    "${DEPLOY_TARGET}/Shaders/NativeComposite"
                 )
             endif()
             # Content-based copies preserve the destination mtime when DXIL
