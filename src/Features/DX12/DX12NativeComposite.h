@@ -24,6 +24,8 @@ namespace DX12Native
 		struct Frame
 		{
 			winrt::com_ptr<ID3D12Resource> color;
+			// Optional RG32F: reconstructed visibility and receiver distance (zero if invalid).
+			winrt::com_ptr<ID3D12Resource> reconstructedShadowMask;
 			winrt::com_ptr<ID3D12Fence> producerFence;
 			uint64_t producerValue = 0;
 			uint32_t frame = 0, width = 0, height = 0;
@@ -36,7 +38,7 @@ namespace DX12Native
 			ID3D12CommandQueue* queue, ID3D11Texture2D* source,
 			uint32_t frame, uint32_t width, uint32_t height, Transfer transfer,
 			const std::shared_ptr<const ShadowMaskFrame>& shadow,
-			bool returnColorToDX11);
+			bool returnColorToDX11, bool publishReconstructedMask = false);
 		bool Retain(const std::shared_ptr<const Frame>& frame, ID3D12Fence* fence, uint64_t value);
 		~NativeComposite();
 		/** @brief Release completed input publications on the render thread. */
@@ -56,6 +58,8 @@ namespace DX12Native
 			// Retain producer textures until the composite GPU work completes.
 			std::shared_ptr<const ShadowMaskFrame> shadowInput;
 			std::shared_ptr<const RasterFrame> rasterInput;
+			winrt::com_ptr<ID3D12Resource> reconstructedMask;
+			uint32_t maskWidth = 0, maskHeight = 0;
 			std::unique_ptr<WrappedResource> shared;
 			std::unique_ptr<WrappedResource> returned;
 			winrt::com_ptr<ID3D12CommandAllocator> allocator;

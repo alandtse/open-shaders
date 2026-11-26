@@ -3,6 +3,7 @@
 Texture2D<float2> ShadowMask : register(t0);
 Texture2D<float> RasterDepth : register(t1);
 RWTexture2D<float4> Scene : register(u0);
+RWTexture2D<float2> ReconstructedMask : register(u1);
 
 cbuffer ShadowConstants : register(b0)
 {
@@ -13,6 +14,7 @@ cbuffer ShadowConstants : register(b0)
 	row_major float4x4 InverseView;
 	uint2 LogicalSize;
 	uint CheckerboardOrigin;
+	uint PublishReconstructedMask;
 };
 static const uint QualityMode = NATIVE_RT_QUALITY;
 
@@ -33,21 +35,33 @@ bool ValidReceiver(float2 sample, float distance, float tolerance)
 	return all(isfinite(sample)) && sample.y > 0.0f && abs(sample.y - distance) <= tolerance;
 }
 
+void PublishMask(uint2 pixel, float2 sample)
+{
+	if (PublishReconstructedMask != 0u)
+		ReconstructedMask[pixel] = sample;
+}
+
 [numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID)
 {
 	if (any(id.xy >= Size))
 		return;
 	const float depth = RasterDepth[id.xy];
-	if (!isfinite(depth) || depth <= 0.0f || depth >= 1.0f)
+	if (!isfinite(depth) || depth <= 0.0f || depth >= 1.0f) {
+		PublishMask(id.xy, float2(1, 0));
 		return;
+	}
 	float2 clip = (float2(id.xy) + 0.5f) * (2.0f / float2(Size)) - 1.0f;
 	clip.y = -clip.y;
 	const float4 view = mul(InverseProjection, float4(clip, depth, 1.0f));
-	if (!all(isfinite(view)) || abs(view.w) <= 1e-8f)
+	if (!all(isfinite(view)) || abs(view.w) <= 1e-8f) {
+		PublishMask(id.xy, float2(1, 0));
 		return;
+	}
 	const float distance = length(mul((float3x3)InverseView, view.xyz / view.w));
-	if (!isfinite(distance) || distance <= 0.0f)
+	if (!isfinite(distance) || distance <= 0.0f) {
+		PublishMask(id.xy, float2(1, 0));
 		return;
+	}
 	const float tolerance = max(ReceiverTolerance, distance * 1e-5f);
 	const int2 logical = int2(id.xy / ShadowScale(QualityMode));
 	const float2 center = LoadLogical(logical);
@@ -69,10 +83,13 @@ bool ValidReceiver(float2 sample, float distance, float tolerance)
 				total += weight;
 			}
 		}
-		if (total <= 0.0f)
+		if (total <= 0.0f) {
+			PublishMask(id.xy, float2(1, 0));
 			return;
+		}
 		visibility = weighted / total;
 	}
+	PublishMask(id.xy, float2(visibility, distance));
 	const float layer = 1.0f - (1.0f - visibility) * kRayTracedBlend;
 	if (layer >= 1.0f)
 		return;
