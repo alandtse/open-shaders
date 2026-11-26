@@ -27,22 +27,24 @@
 void DX12NativeScene::DrawSettings()
 {
 	ImGui::Checkbox(T("menu.dx12.scene.independent_shadowmask", "Independent shadowmask"), &shadowMaskEnabled);
-	ImGui::Checkbox(T("menu.dx12.scene.trace_all_lights", "Full-shadow (every supported point light)"), &traceAllPreparedLights);
-	if (traceAllPreparedLights) {
-		ImGui::TextWrapped("%s", T("menu.dx12.scene.trace_all_lights_warning", "Native static ownership without raster fallback. Includes runtime point lights; incomplete native coverage can cause missing shadows."));
+	const bool fullShadow = globals::features::dx12Control.IsFullShadowMode();
+	if (fullShadow) {
 		int unify = int(runtimeUnificationRadius.load(std::memory_order_relaxed));
 		int exclude = int(preparedExclusionRadius.load(std::memory_order_relaxed));
 		if (ImGui::SliderInt(T("menu.dx12.scene.runtime_unification_radius", "Runtime light unification radius (units)"), &unify, 0, int(DX12Native::kFullShadowRadiusMax), "%d", ImGuiSliderFlags_AlwaysClamp))
 			runtimeUnificationRadius.store(DX12Native::SanitizeFullShadowRadius(uint32_t(unify)), std::memory_order_relaxed);
 		if (ImGui::SliderInt(T("menu.dx12.scene.prepared_exclusion_radius", "Prepared light exclusion radius (units)"), &exclude, 0, int(DX12Native::kFullShadowRadiusMax), "%d", ImGuiSliderFlags_AlwaysClamp))
 			preparedExclusionRadius.store(DX12Native::SanitizeFullShadowRadius(uint32_t(exclude)), std::memory_order_relaxed);
+		bool additive = additivePreparedEmission.load(std::memory_order_relaxed);
+		if (ImGui::Checkbox(T("menu.dx12.scene.additive_prepared_emission", "Add excluded runtime emission to prepared lights"), &additive))
+			additivePreparedEmission.store(additive, std::memory_order_relaxed);
 		ImGui::TextDisabled("%s", T("menu.dx12.scene.stationary_full_lights", "Stationary native emitters (enforced)"));
 	}
 	ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoorShadowOffloading);
 	bool debug = debugNativeLights.load(std::memory_order_relaxed);
 	if (ImGui::Checkbox(T("menu.dx12.scene.debug_native_lights", "Debug: label submitted native lights"), &debug))
 		debugNativeLights.store(debug, std::memory_order_relaxed);
-	ImGui::BeginDisabled(traceAllPreparedLights);
+	ImGui::BeginDisabled(fullShadow);
 	bool keepRasterStatic = !offloadStaticShadows;
 	if (ImGui::Checkbox(T("menu.dx12.scene.keep_raster_static", "Keep raster static shadows for native-accounted lights"), &keepRasterStatic))
 		offloadStaticShadows = !keepRasterStatic;
@@ -123,9 +125,18 @@ void DX12NativeScene::DrawOverlay()
 void DX12NativeScene::LoadSettings(json& input)
 {
 	shadowMaskEnabled = input.value("ShadowMask", true);
-	traceAllPreparedLights = input.value("TraceAllPreparedLights", false);
-	runtimeUnificationRadius.store(DX12Native::SanitizeFullShadowRadius(input.value("RuntimeUnificationRadius", DX12Native::kDefaultRuntimeUnificationRadius)), std::memory_order_relaxed);
-	preparedExclusionRadius.store(DX12Native::SanitizeFullShadowRadius(input.value("PreparedExclusionRadius", DX12Native::kDefaultPreparedExclusionRadius)), std::memory_order_relaxed);
+	globals::features::dx12Control.MigrateLegacyFullShadowMode(input.value("TraceAllPreparedLights", false));
+	additivePreparedEmission.store(input.value("AdditivePreparedEmission", false), std::memory_order_relaxed);
+	uint32_t unify = input.value("RuntimeUnificationRadius", DX12Native::kDefaultRuntimeUnificationRadius);
+	uint32_t exclude = input.value("PreparedExclusionRadius", DX12Native::kDefaultPreparedExclusionRadius);
+	if (!input.contains("AdditivePreparedEmission")) {
+		if (unify == DX12Native::kLegacyRuntimeUnificationRadius)
+			unify = DX12Native::kDefaultRuntimeUnificationRadius;
+		if (exclude == DX12Native::kLegacyPreparedExclusionRadius)
+			exclude = DX12Native::kDefaultPreparedExclusionRadius;
+	}
+	runtimeUnificationRadius.store(DX12Native::SanitizeFullShadowRadius(unify), std::memory_order_relaxed);
+	preparedExclusionRadius.store(DX12Native::SanitizeFullShadowRadius(exclude), std::memory_order_relaxed);
 	debugNativeLights.store(input.value("DebugNativeLights", false), std::memory_order_relaxed);
 	outdoorShadowOffloading = input.value("OutdoorShadowOffloading", false);
 	offloadStaticShadows = input.value("OffloadSCMStatic", true);
@@ -152,9 +163,10 @@ void DX12NativeScene::LoadSettings(json& input)
 
 void DX12NativeScene::SaveSettings(json& output)
 {
-	output = { { "ShadowMask", shadowMaskEnabled }, { "TraceAllPreparedLights", traceAllPreparedLights }, { "DebugNativeLights", debugNativeLights.load(std::memory_order_relaxed) }, { "OutdoorShadowOffloading", outdoorShadowOffloading }, { "ShadowQualityMode", qualityMode },
+	output = { { "ShadowMask", shadowMaskEnabled }, { "DebugNativeLights", debugNativeLights.load(std::memory_order_relaxed) }, { "OutdoorShadowOffloading", outdoorShadowOffloading }, { "ShadowQualityMode", qualityMode },
 		{ "RuntimeUnificationRadius", runtimeUnificationRadius.load(std::memory_order_relaxed) },
 		{ "PreparedExclusionRadius", preparedExclusionRadius.load(std::memory_order_relaxed) },
+		{ "AdditivePreparedEmission", additivePreparedEmission.load(std::memory_order_relaxed) },
 		{ "OffloadSCMStatic", offloadStaticShadows },
 		{ "OffloadFlickeringStatic", offloadFlickeringStatic },
 		{ "FreezeNativeFlickering", freezeNativeFlickering },
@@ -170,7 +182,7 @@ void DX12NativeScene::SaveSettings(json& output)
 void DX12NativeScene::RestoreDefaultSettings()
 {
 	shadowMaskEnabled = true;
-	traceAllPreparedLights = false;
+	additivePreparedEmission.store(false, std::memory_order_relaxed);
 	runtimeUnificationRadius.store(DX12Native::kDefaultRuntimeUnificationRadius, std::memory_order_relaxed);
 	preparedExclusionRadius.store(DX12Native::kDefaultPreparedExclusionRadius, std::memory_order_relaxed);
 	debugNativeLights.store(false, std::memory_order_relaxed);
@@ -370,7 +382,8 @@ void DX12NativeScene::PreShadowMaps()
 	if (globals::game::graphicsState) {
 		const uint32_t frame = globals::game::graphicsState->GetFrameCount();
 		if (frameShadowSceneID.load(std::memory_order_acquire) != frame) {
-			if (frameTraceAllLights.exchange(traceAllPreparedLights, std::memory_order_acq_rel) && !traceAllPreparedLights) {
+			const bool fullShadow = globals::features::dx12Control.IsFullShadowMode();
+			if (frameTraceAllLights.exchange(fullShadow, std::memory_order_acq_rel) && !fullShadow) {
 				std::scoped_lock lock(runtimeLightMutex);
 				ResetFullLightInventory();
 			}
@@ -462,10 +475,11 @@ std::shared_ptr<const std::vector<DX12::PreparedLight>> DX12NativeScene::Collect
 	}
 	const uint32_t unify = runtimeUnificationRadius.load(std::memory_order_relaxed);
 	const uint32_t exclude = preparedExclusionRadius.load(std::memory_order_relaxed);
+	const bool additive = additivePreparedEmission.load(std::memory_order_relaxed);
 	const bool preparedChanged = prepared.size() != fullPreparedSnapshot.size() ||
 		!std::equal(prepared.begin(), prepared.end(), fullPreparedSnapshot.begin(),
 			DX12Native::SamePreparedShadowLight<DX12::PreparedLight>);
-	bool dirty = !fullConsolidatedLights || preparedChanged || unify != fullCachedUnificationRadius || exclude != fullCachedExclusionRadius;
+	bool dirty = !fullConsolidatedLights || preparedChanged || unify != fullCachedUnificationRadius || exclude != fullCachedExclusionRadius || additive != fullCachedAdditiveEmission;
 	if (preparedChanged)
 		fullPreparedSnapshot.assign(prepared.begin(), prepared.end());
 
@@ -537,9 +551,10 @@ std::shared_ptr<const std::vector<DX12::PreparedLight>> DX12NativeScene::Collect
 			runtime.push_back(cached.value);
 	}
 	fullConsolidatedLights = std::make_shared<const std::vector<DX12::PreparedLight>>(
-		DX12Native::ConsolidateFullShadowLights<DX12::PreparedLight>(prepared, runtime, unify, exclude));
+		DX12Native::ConsolidateFullShadowLights<DX12::PreparedLight>(prepared, runtime, unify, exclude, additive));
 	fullCachedUnificationRadius = unify;
 	fullCachedExclusionRadius = exclude;
+	fullCachedAdditiveEmission = additive;
 	return fullConsolidatedLights;
 }
 

@@ -298,3 +298,32 @@ TEST_CASE("Four equal brazier emitters yield four times the native emission", "[
 	CHECK(SamePreparedShadowLight(excluded.front(), prepared.front()));
 	CHECK(excluded.front().unifiedCount == 1);
 }
+
+TEST_CASE("Prepared emission addition is opt-in and assigned once", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	using Light = ConsolidationLight;
+	const std::vector<Light> prepared{
+		{ .referenceID = 1, .position = { 0, 0, 0 }, .color = { 1, 2, 3 }, .radius = 300, .fade = 2 },
+		{ .referenceID = 2, .position = { 100, 0, 0 }, .fade = 3 }
+	};
+	const std::vector<Light> runtime{
+		{ .referenceID = 7, .position = { 10, 0, 0 }, .color = { 3, 1, 0 }, .fade = 2, .runtimeIdentity = 1 },
+		{ .referenceID = 8, .position = { 50, 0, 0 }, .runtimeIdentity = 2 },
+		{ .referenceID = 9, .position = { 99, 0, 0 }, .runtimeIdentity = 3 }
+	};
+	const auto disabled = ConsolidateFullShadowLights<Light>(prepared, runtime, 128, 256, false);
+	REQUIRE(disabled.size() == 2);
+	CHECK(SamePreparedShadowLight(disabled[0], prepared[0]));
+	CHECK(SamePreparedShadowLight(disabled[1], prepared[1]));
+	const auto enabled = ConsolidateFullShadowLights<Light>(prepared, runtime, 128, 256, true);
+	REQUIRE(enabled.size() == 2);
+	CHECK(enabled[0].color.x * enabled[0].fade == 9);
+	CHECK(enabled[0].color.y * enabled[0].fade == 7);
+	CHECK(enabled[0].color.z * enabled[0].fade == 7);
+	CHECK(enabled[1].color.x * enabled[1].fade == 4);
+	CHECK(enabled[0].position.x == prepared[0].position.x);
+	CHECK(enabled[0].radius == prepared[0].radius);
+	CHECK(enabled[0].referenceID == prepared[0].referenceID);
+	CHECK(ConsolidateFullShadowLights<Light>(prepared, runtime, 0, 0, true).size() == 5);
+}

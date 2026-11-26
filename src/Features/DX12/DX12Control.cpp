@@ -10,15 +10,30 @@
 void DX12Control::DrawSettings()
 {
 	// Keep pipeline mode directly below the DX12 heading and above subfeature tabs.
-	const char* modes[] = { T("menu.dx12.mode.shadow_offload", "Shadow offload"), T("menu.dx12.mode.raster_comparison", "Raster comparison") };
+	const char* modes[] = {
+		T("menu.dx12.mode.shadow_offload", "Shadow offloading"),
+		T("menu.dx12.mode.raster_comparison", "Raster comparison"),
+		T("menu.dx12.mode.full_shadow", "Full-shadow")
+	};
 	int mode = settings.Mode;
 	if (ImGui::Combo(T("menu.dx12.mode.label", "Mode"), &mode, modes, int(std::size(modes)))) {
 		settings.Mode = mode;
-		selectedMode.store(mode, std::memory_order_relaxed);
+		selectedMode.store(static_cast<Mode>(mode), std::memory_order_relaxed);
+		legacyModeConfig = false;
 	}
-	ImGui::TextDisabled(settings.Mode == 0 ?
-							T("menu.dx12.mode.shadow_offload_description", "Native shadows replace matched raster static shadows.") :
-							T("menu.dx12.mode.raster_comparison_description", "Raster shadows remain unchanged; native shadow dispatch is paused for comparison."));
+	const char* description = nullptr;
+	switch (static_cast<Mode>(settings.Mode)) {
+	case Mode::ShadowOffload:
+		description = T("menu.dx12.mode.shadow_offload_description", "Native shadows replace matched raster static shadows.");
+		break;
+	case Mode::RasterComparison:
+		description = T("menu.dx12.mode.raster_comparison_description", "Raster shadows remain unchanged; native shadow dispatch is paused for comparison.");
+		break;
+	case Mode::FullShadow:
+		description = T("menu.dx12.mode.full_shadow_description", "Native static shadows for every supported point light, without raster fallback.");
+		break;
+	}
+	ImGui::TextDisabled("%s", description);
 
 	if (!IsActive()) {
 		ImGui::Checkbox(T("menu.dx12.master.enable", "Enable native DX12 features (restart required)"), &settings.Enabled);
@@ -73,13 +88,14 @@ void DX12Control::DrawSettings()
 void DX12Control::LoadSettings(json& input)
 {
 	settings.Enabled = input.value("Enabled", false);
-	settings.Mode = std::clamp(input.value("Mode", 0), 0, 1);
+	settings.Mode = std::clamp(input.value("Mode", int(Mode::ShadowOffload)), int(Mode::ShadowOffload), int(Mode::FullShadow));
+	legacyModeConfig = !input.contains("FullShadowModeSelection");
 	settings.SpatialReconstruction = input.value("SpatialReconstruction", true);
 	const uint32_t requestedGrid = std::clamp(input.value("ReconstructionGridSize", 5u), 3u, 9u);
 	settings.ReconstructionGridSize = requestedGrid - ((requestedGrid & 1u) == 0u ? 1u : 0u);
 	settings.ShadowStrength = std::clamp(input.value("ShadowStrength", 1.0f), 0.0f, 4.0f);
 	settings.ShadowBlend = std::clamp(input.value("ShadowBlend", 0.70f), 0.0f, 1.0f);
-	selectedMode.store(settings.Mode, std::memory_order_relaxed);
+	selectedMode.store(static_cast<Mode>(settings.Mode), std::memory_order_relaxed);
 	spatialReconstruction.store(settings.SpatialReconstruction, std::memory_order_relaxed);
 	reconstructionGrid.store(settings.ReconstructionGridSize, std::memory_order_relaxed);
 	shadowStrength.store(settings.ShadowStrength, std::memory_order_relaxed);
@@ -92,7 +108,7 @@ void DX12Control::LoadSettings(json& input)
 
 void DX12Control::SaveSettings(json& output)
 {
-	output = { { "Enabled", settings.Enabled }, { "Mode", settings.Mode },
+	output = { { "Enabled", settings.Enabled }, { "Mode", settings.Mode }, { "FullShadowModeSelection", true },
 		{ "SpatialReconstruction", settings.SpatialReconstruction },
 		{ "ReconstructionGridSize", settings.ReconstructionGridSize },
 		{ "ShadowStrength", settings.ShadowStrength }, { "ShadowBlend", settings.ShadowBlend } };
@@ -101,11 +117,23 @@ void DX12Control::SaveSettings(json& output)
 void DX12Control::RestoreDefaultSettings()
 {
 	settings = {};
-	selectedMode.store(settings.Mode, std::memory_order_relaxed);
+	legacyModeConfig = false;
+	selectedMode.store(static_cast<Mode>(settings.Mode), std::memory_order_relaxed);
 	spatialReconstruction.store(settings.SpatialReconstruction, std::memory_order_relaxed);
 	reconstructionGrid.store(settings.ReconstructionGridSize, std::memory_order_relaxed);
 	shadowStrength.store(settings.ShadowStrength, std::memory_order_relaxed);
 	shadowBlend.store(settings.ShadowBlend, std::memory_order_relaxed);
+}
+
+void DX12Control::MigrateLegacyFullShadowMode(bool enabled)
+{
+	if (!legacyModeConfig)
+		return;
+	legacyModeConfig = false;
+	if (enabled && settings.Mode == int(Mode::ShadowOffload)) {
+		settings.Mode = int(Mode::FullShadow);
+		selectedMode.store(Mode::FullShadow, std::memory_order_relaxed);
+	}
 }
 
 void DX12Control::OnRuntimeDisabled()

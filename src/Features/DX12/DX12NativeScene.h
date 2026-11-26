@@ -92,7 +92,7 @@ private:
 	std::atomic<bool> allLightStaticReady{ false };
 	std::atomic<bool> debugNativeLights{ false };
 	bool shadowMaskEnabled = true;
-	bool traceAllPreparedLights = false;
+	std::atomic<bool> additivePreparedEmission{ false };
 	std::atomic<uint32_t> runtimeUnificationRadius{ DX12Native::kDefaultRuntimeUnificationRadius };
 	std::atomic<uint32_t> preparedExclusionRadius{ DX12Native::kDefaultPreparedExclusionRadius };
 	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
@@ -133,6 +133,7 @@ private:
 	std::vector<DX12::PreparedLight> fullPreparedSnapshot;
 	std::shared_ptr<const std::vector<DX12::PreparedLight>> fullConsolidatedLights;
 	uint32_t fullCachedUnificationRadius = 0, fullCachedExclusionRadius = 0;
+	bool fullCachedAdditiveEmission = false;
 	uint32_t fullRuntimeScope = 0;
 	uint64_t fullLightVisit = 0;
 };

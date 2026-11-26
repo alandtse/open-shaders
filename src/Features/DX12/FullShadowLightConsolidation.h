@@ -12,8 +12,10 @@
 
 namespace DX12Native
 {
-	inline constexpr uint32_t kDefaultRuntimeUnificationRadius = 64;
-	inline constexpr uint32_t kDefaultPreparedExclusionRadius = 128;
+	inline constexpr uint32_t kLegacyRuntimeUnificationRadius = 64;
+	inline constexpr uint32_t kLegacyPreparedExclusionRadius = 128;
+	inline constexpr uint32_t kDefaultRuntimeUnificationRadius = 128;
+	inline constexpr uint32_t kDefaultPreparedExclusionRadius = 256;
 	inline constexpr uint32_t kFullShadowRadiusMax = 512;
 	inline constexpr uint32_t kFullShadowRadiusStep = 4;
 
@@ -49,10 +51,16 @@ namespace DX12Native
 		}
 
 		template <class Position>
-		bool Within(const Position& a, const Position& b, uint32_t radius)
+		double DistanceSquared(const Position& a, const Position& b)
 		{
 			const double x = double(a.x) - b.x, y = double(a.y) - b.y, z = double(a.z) - b.z;
-			return x * x + y * y + z * z <= double(radius) * radius;
+			return x * x + y * y + z * z;
+		}
+
+		template <class Position>
+		bool Within(const Position& a, const Position& b, uint32_t radius)
+		{
+			return DistanceSquared(a, b) <= double(radius) * radius;
 		}
 
 		template <class Light>
@@ -96,7 +104,7 @@ namespace DX12Native
 	/** @brief Preserve prepared authority; merge remaining same-owner runtime emitters around deterministic anchors. */
 	template <class Light>
 	std::vector<Light> ConsolidateFullShadowLights(std::span<const Light> prepared,
-		std::span<const Light> runtime, uint32_t unifyRadius, uint32_t excludeRadius)
+		std::span<const Light> runtime, uint32_t unifyRadius, uint32_t excludeRadius, bool additivePreparedEmission = false)
 	{
 		using namespace FullShadowDetail;
 		std::vector<Light> result(prepared.begin(), prepared.end());
@@ -109,19 +117,50 @@ namespace DX12Native
 
 		std::vector<Light> candidates;
 		candidates.reserve(runtime.size());
-		for (const auto& light : runtime) {
-			if (!FinitePosition(light))
-				continue;
-			bool excluded = false;
+		std::vector<const Light*> ordered;
+		ordered.reserve(runtime.size());
+		for (const auto& light : runtime)
+			if (FinitePosition(light))
+				ordered.push_back(&light);
+		std::ranges::sort(ordered, {}, [](const Light* light) { return light->runtimeIdentity; });
+		std::vector<std::array<double, 3>> contributions(additivePreparedEmission ? prepared.size() : 0);
+		for (const auto* source : ordered) {
+			const auto& light = *source;
+			size_t nearest = prepared.size();
+			double nearestDistance = double(excludeRadius) * excludeRadius;
 			if (excludeRadius)
 				preparedIndex.Visit(light, [&](size_t i) {
-					excluded = Within(light.position, prepared[i].position, excludeRadius);
-					return excluded;
+					const double distance = DistanceSquared(light.position, prepared[i].position);
+					if (distance < nearestDistance || (distance == nearestDistance && i < nearest)) {
+						nearest = i;
+						nearestDistance = distance;
+					}
+					return nearest != prepared.size() && !additivePreparedEmission;
 				});
-			if (!excluded)
+			if (nearest == prepared.size()) {
 				candidates.push_back(light);
+			} else if (additivePreparedEmission) {
+				const double fade = std::max(0.0f, light.fade);
+				contributions[nearest][0] += std::max(0.0f, light.color.x) * fade;
+				contributions[nearest][1] += std::max(0.0f, light.color.y) * fade;
+				contributions[nearest][2] += std::max(0.0f, light.color.z) * fade;
+			}
 		}
-		std::ranges::sort(candidates, {}, &Light::runtimeIdentity);
+		for (size_t i = 0; i < contributions.size(); ++i) {
+			const auto& sum = contributions[i];
+			if (sum[0] == 0 && sum[1] == 0 && sum[2] == 0)
+				continue;
+			auto& light = result[i];
+			const double fade = std::max(0.0f, light.fade);
+			const auto combine = [fade](float color, double addition) {
+				return float(std::min(double(std::max(0.0f, color)) * fade + addition,
+					double(std::numeric_limits<float>::max())));
+			};
+			light.color.x = combine(light.color.x, sum[0]);
+			light.color.y = combine(light.color.y, sum[1]);
+			light.color.z = combine(light.color.z, sum[2]);
+			light.fade = 1.0f;
+		}
 		if (!unifyRadius) {
 			result.insert(result.end(), candidates.begin(), candidates.end());
 			return result;
