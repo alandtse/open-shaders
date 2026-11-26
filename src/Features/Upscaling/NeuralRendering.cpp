@@ -1891,6 +1891,12 @@ bool NeuralRendering::DialogueOpen()
 
 void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistory = true; }
 void NeuralRendering::ResetHistory() { resetHistory = true; }
+void NeuralRendering::OnTuningReplaced(const NR::Tuning& previous, const NR::Tuning& current)
+{
+	if (current.CreationValuesDiffer(previous))
+		recreate = true;
+	resetHistory = true;
+}
 void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = resetHistory = true; }
 
 NR::CombatPauseSnapshot NeuralRendering::ResolveCombatPause(bool enabled)
