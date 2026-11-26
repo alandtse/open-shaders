@@ -39,6 +39,8 @@ namespace DX12Native
 			bool returnColorToDX11);
 		bool Retain(const std::shared_ptr<const Frame>& frame, ID3D12Fence* fence, uint64_t value);
 		~NativeComposite();
+		/** @brief Release completed input publications on the render thread. */
+		void RetireCompletedInputs();
 		/** @brief Allow a new initialization attempt after a scene reset. */
 		void ResetFailures()
 		{

@@ -3,6 +3,7 @@
 #include "DX12NativeAcceleration.h"
 #include "DX12NativeRasterCapture.h"
 #include "VideoMemoryBudget.h"
+#include "../../../package/Shaders/Common/NativeShadowOffload.hlsli"
 
 #include <array>
 #include <memory>
@@ -19,15 +20,9 @@ namespace DX12Native
 	struct ShadowTraceControls
 	{
 		uint32_t viewportWidth = 0, viewportHeight = 0;
-		uint32_t densityMode = 0;
-		bool nearLightExclusion = false;
-		float nearLightRadius = 0.0f;  // 0..512 game units; exclusion sphere centered at light.
-		float reachMultiplier = 1.0f;  // 1.0 means the vanilla-provided light radius.
-		float fadeRange = 0.50f;       // Fraction of native shadow reach.
-		float falloffCurve = 1.0f;
 	};
 
-	/** @brief Full render-size raw visibility; the composite owns reconstruction. */
+	/** @brief Quarter-resolution raw visibility and receiver distance; the composite reconstructs the full view. */
 	struct ShadowMaskFrame
 	{
 		std::shared_ptr<const TopLevel> scene;
@@ -39,8 +34,10 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12Fence> readyFence;
 		uint64_t readyValue = 0, allocationBytes = 0;
 		uint32_t frame = 0, width = 0, height = 0;
-		// RGBA32F: x weighted visibility, y 1 sampled / -1 omitted / 0 invalid,
-		// z receiver distance, w accumulated light weight.
+		uint32_t maskWidth = 0, maskHeight = 0;
+		std::vector<std::array<float, 4>> lightRecords;
+		bool lightRecordsUploaded = false;
+		// RG32F: weighted visibility and receiver distance (zero for invalid receivers).
 	};
 
 	/** @brief Native Scene DXR1.1 RayQuery dispatch, independent of Native Lighting and FSR. */
@@ -48,6 +45,8 @@ namespace DX12Native
 	{
 	public:
 		~ShadowMaskTrace();
+		/** @brief Release completed, unborrowed inputs before the next raster capture. */
+		void BeginFrame(uint32_t frame);
 		void Dispatch(const GraphicsBackend& backend, std::shared_ptr<const RasterFrame> raster,
 			std::shared_ptr<const TopLevel> scene, std::span<const DX12::PreparedLight> lights,
 			uint32_t frame, const ShadowTraceControls& controls);

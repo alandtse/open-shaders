@@ -11,7 +11,6 @@
 #include <mutex>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 /** @brief Independent early opaque raster capture for native DX12. */
@@ -60,7 +59,7 @@ struct DX12NativeScene final : Feature
 	void OnSceneTransitionReset(bool a_opening) override;
 	void OnRuntimeDisabled() override;
 
-	/** @brief Raw full-resolution shadow output, independently fenced for Native Composite. */
+	/** @brief Raw quarter-resolution shadow output, independently fenced for Native Composite. */
 	std::shared_ptr<const DX12Native::ShadowMaskFrame> GetShadowMask(uint32_t frame) const { return shadows.Get(frame); }
 
 private:
@@ -75,26 +74,14 @@ private:
 	// One immutable, ordered light selection shared by SCM and the RayQuery dispatch.
 	std::atomic<std::shared_ptr<const std::vector<DX12::PreparedLight>>> shadowLights;
 	std::atomic<uint32_t> shadowLightScope{ 0 };
-	bool shadowMaskEnabled = true;
 	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
-	bool offloadStaticShadows = true;
-	bool offloadFlickeringStatic = true;
-	bool freezeNativeFlickering = false;
-	uint32_t densityMode = 7;  // Four-ninths density by default.
-	bool nearLightShadowExclusion = true;
-	uint32_t nearLightExclusionUnits = 16;
-	float shadowReachMultiplier = 1.0f;  // Native only. Vanilla lights stay unchanged.
-	float shadowFadeRange = 0.66f;
-	float shadowFalloffCurve = 1.0f;
 	struct RuntimeLightSample
 	{
 		const RE::NiLight* source = nullptr;  // Identity of the SCM light actually observed.
 		uint32_t referenceID = 0;             // Corresponding prepared native-scene emitter.
 		DX12::PreparedLight value;
-		bool flickers = false;
 	};
 	mutable std::mutex runtimeLightMutex;
 	uint32_t runtimeLightFrame = UINT32_MAX;
 	std::vector<RuntimeLightSample> runtimeLightSamples;
-	std::unordered_map<uint32_t, DX12::PreparedLight> frozenNativeLights;
 };

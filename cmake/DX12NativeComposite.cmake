@@ -1,18 +1,19 @@
 # Native Composite uses the same DXC compiler and shader delivery as Native Scene.
 if(NATIVE_SHADOW_DXC)
     set(_native_composite_source
-        "${NATIVE_SHADER_SOURCE_ROOT}/features/Native Composite/Shaders/NativeComposite/ShadowLayer.hlsl6"
+        "${NATIVE_SHADER_SOURCE_ROOT}/features/Native Composite/Shaders/NativeComposite/CompositeOffload.hlsl6"
     )
     set(_native_composite_dir "${CMAKE_CURRENT_BINARY_DIR}/NativeComposite")
-    set(_native_composite_dxil "${_native_composite_dir}/ShadowLayer.dxil")
+    set(_native_composite_dxil "${_native_composite_dir}/CompositeOffload.dxil")
     add_custom_command(
         OUTPUT "${_native_composite_dxil}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_native_composite_dir}"
         COMMAND
             "${NATIVE_SHADOW_DXC}" -T cs_6_5 -E main -HV 2021 -O3
-            ${NATIVE_SHADER_VALIDATION_FLAGS} -Ges -Gis -Fo
+            ${NATIVE_SHADER_VALIDATION_FLAGS} -Ges -Gis
+            -I "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders" -Fo
             "${_native_composite_dxil}" "${_native_composite_source}"
-        DEPENDS "${_native_composite_source}"
+        DEPENDS "${_native_composite_source}" "${_shadow_offload_contract}"
         VERBATIM
     )
     add_custom_target(
@@ -22,7 +23,7 @@ if(NATIVE_SHADOW_DXC)
     add_dependencies(${PROJECT_NAME} DX12NativeCompositeDXIL)
     if(DEFINED AIO_DIR)
         set(_native_composite_aio_dxil
-            "${AIO_DIR}/Shaders/NativeComposite/ShadowLayer.dxil"
+            "${AIO_DIR}/Shaders/NativeComposite/CompositeOffload.dxil"
         )
         add_custom_command(
             OUTPUT "${_native_composite_aio_dxil}"
@@ -33,7 +34,7 @@ if(NATIVE_SHADOW_DXC)
                 ${CMAKE_COMMAND} -E copy_if_different
                 "${_native_composite_dxil}" "${_native_composite_aio_dxil}"
             DEPENDS "${_native_composite_dxil}"
-            COMMENT "Staging DXIL ShadowLayer.dxil into the AIO shader tree"
+            COMMENT "Staging DXIL CompositeOffload.dxil into the AIO shader tree"
             VERBATIM
         )
         add_custom_target(

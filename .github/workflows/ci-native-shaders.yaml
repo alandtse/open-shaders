@@ -61,7 +61,7 @@ jobs:
               run: |
                   $ErrorActionPreference = 'Stop'
                   $build = 'build/native-shader-validation'
-                  $outputs = @('DX12NativeScene/ShadowMask.dxil', 'NativeComposite/ShadowLayer.dxil')
+                  $outputs = @('DX12NativeScene/ShadowOffload.dxil', 'NativeComposite/CompositeOffload.dxil')
                   $before = @{}
                   foreach ($output in $outputs) {
                       $before[$output] = (Get-FileHash (Join-Path $build $output)).Hash

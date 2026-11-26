@@ -23,10 +23,9 @@ namespace DX12Native
 	{
 		constexpr std::streamoff kMaxShadowBytecodeBytes = 16 * VideoMemoryBudget::kMiB;
 		constexpr uint64_t kSlotOverheadBytes = 2 * VideoMemoryBudget::kMiB;
-		constexpr uint32_t kShadowConstantDwords = 42;
+		constexpr uint32_t kShadowConstantDwords = 38;
 		constexpr uint32_t kShadowThreadGroupSize = 8;
 		constexpr float kReceiverTolerance = 16.0f;
-		constexpr float kReconstructionRadiusPixels = 2.0f;
 	}
 
 	bool NativeComposite::InitializeShadow(ID3D12Device* device)
@@ -36,13 +35,13 @@ namespace DX12Native
 		if (failedShadowDevice.get() == device)
 			return false;
 		try {
-			std::ifstream file(Util::PathHelpers::GetShadersPath() / "NativeComposite" / "ShadowLayer.dxil", std::ios::binary | std::ios::ate);
+			std::ifstream file(Util::PathHelpers::GetShadersPath() / "NativeComposite" / "CompositeOffload.dxil", std::ios::binary | std::ios::ate);
 			if (!file || file.tellg() <= 0 || file.tellg() > kMaxShadowBytecodeBytes)
-				throw std::runtime_error("ShadowLayer.dxil missing, empty or exceeds the bytecode limit");
+				throw std::runtime_error("CompositeOffload.dxil missing, empty or exceeds the bytecode limit");
 			std::vector<char> shader(static_cast<size_t>(file.tellg()));
 			file.seekg(0);
 			if (!file.read(shader.data(), std::streamsize(shader.size())))
-				throw std::runtime_error("ShadowLayer.dxil read failed");
+				throw std::runtime_error("CompositeOffload.dxil read failed");
 			CD3DX12_DESCRIPTOR_RANGE ranges[2];
 			ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);
 			ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
@@ -74,6 +73,19 @@ namespace DX12Native
 		}
 		failedShadowDevice.copy_from(device);
 		return false;
+	}
+
+	void NativeComposite::RetireCompletedInputs()
+	{
+		for (auto& candidate : slots) {
+			if (!candidate || candidate->untracked || !candidate->frame || !candidate->frame->producerValue || !candidate->fence.fence12)
+				continue;
+			const auto completed = candidate->fence.fence12->GetCompletedValue();
+			if (completed != UINT64_MAX && completed >= candidate->frame->producerValue) {
+				candidate->shadowInput.reset();
+				candidate->rasterInput.reset();
+			}
+		}
 	}
 
 	std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(
@@ -112,7 +124,9 @@ namespace DX12Native
 		const bool applyShadow = supportsShadow && transfer != Transfer::Unknown &&
 		                         shadow && shadow->mask && shadow->readyFence && shadow->readyValue &&
 		                         shadow->readyValue != UINT64_MAX &&
-		                         shadow->width >= width && shadow->height >= height &&
+		                         shadow->width == width && shadow->height == height &&
+		                         shadow->maskWidth == NativeShadowOffloadExtent(width) &&
+		                         shadow->maskHeight == NativeShadowOffloadExtent(height) &&
 		                         raster && raster->depth && raster->depth->resource &&
 		                         raster->cameraValid && raster->readyFence && raster->readyValue &&
 		                         raster->readyValue != UINT64_MAX &&
@@ -121,6 +135,7 @@ namespace DX12Native
 		if (!applyShadow)
 			returnColorToDX11 = false;
 
+		RetireCompletedInputs();
 		Slot* slot = nullptr;
 		for (auto& candidate : slots) {
 			if (!candidate)
@@ -259,7 +274,7 @@ namespace DX12Native
 				srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 				srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 				srv.Texture2D.MipLevels = 1;
-				srv.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+				srv.Format = DXGI_FORMAT_R32G32_FLOAT;
 				device12->CreateShaderResourceView(shadow->mask.get(), &srv, cpu);
 				cpu.ptr += step;
 				srv.Format = DXGI_FORMAT_R32_FLOAT;
@@ -286,23 +301,16 @@ namespace DX12Native
 				struct Constants
 				{
 					uint32_t width, height;
-					float receiverTolerance, radiusPixels;
-					uint32_t legacyTransfer, alignmentPadding;
-					float strength, blend;
+					float receiverTolerance;
+					uint32_t legacyTransfer;
 					DirectX::SimpleMath::Matrix inverseProjection, inverseView;
-					uint32_t spatialReconstruction, reconstructionGridSize;
+					uint32_t logicalWidth, logicalHeight;
 				};
 				static_assert(sizeof(Constants) == kShadowConstantDwords * sizeof(uint32_t));
 				const auto& camera = raster->camera;
-				// Exactly the open-RT default independent shadow settings.
-				const Constants constants{ width, height, kReceiverTolerance, kReconstructionRadiusPixels,
-					transfer == Transfer::LegacyScene ? 1u : 0u,
-					0u,  // padding: matrices retain 16-byte alignment.
-					globals::features::dx12Control.GetShadowStrength(),
-					globals::features::dx12Control.GetShadowBlend(),
-					camera.CameraProjInverse, camera.CameraViewInverse,
-					globals::features::dx12Control.UseSpatialReconstruction() ? 1u : 0u,
-					globals::features::dx12Control.GetReconstructionGridSize() };
+				const Constants constants{ width, height, kReceiverTolerance,
+					transfer == Transfer::LegacyScene ? 1u : 0u, camera.CameraProjInverse, camera.CameraViewInverse,
+					shadow->maskWidth, shadow->maskHeight };
 				slot->commands->SetComputeRoot32BitConstants(2, kShadowConstantDwords, &constants, 0);
 				slot->commands->Dispatch((width + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize,
 					(height + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize, 1);

@@ -1,0 +1,174 @@
+RaytracingAccelerationStructure Scene : register(t0);
+Texture2D<float> RasterDepth : register(t1);
+StructuredBuffer<float4> Lights : register(t2);
+RWTexture2D<float2> RawMask : register(u0);
+cbuffer ShadowInputs : register(b0)
+{
+	row_major float4x4 InverseProjection;
+	row_major float4x4 InverseView;
+	float4 PositionAdjust;
+	uint2 Size;
+	uint LightCount;
+	uint Padding;
+	uint2 PhysicalSize;
+};
+static const float MinDistance = 0.5f;
+static const float MaxDistance = 60000.0f;
+static const uint LightStride = 2u;
+#include "Common/NativeShadowOffload.hlsli"
+static const uint kTileThreads = 64u;
+static const uint kTileLightWordCount = 128u;
+static const uint kTileCullThreshold = 32u;
+groupshared uint TileMinimumOrdered[3];
+groupshared uint TileMaximumOrdered[3];
+groupshared uint TileLightMask[kTileLightWordCount];
+
+bool ReadReceiver(uint2 packed, out uint2 p, out float3 world, out float receiverDistance)
+{
+	p = 0;
+	world = 0;
+	receiverDistance = 0;
+	if (any(packed >= PhysicalSize))
+		return false;
+	p = uint2(NativeShadowOffloadRenderCoordinate(packed.x, Size.x),
+		NativeShadowOffloadRenderCoordinate(packed.y, Size.y));
+	float z = RasterDepth.Load(int3(p, 0));
+	if (!isfinite(z) || z <= 0 || z >= 1)
+		return false;
+	float2 clip = 2.0f * (float2(p) + 0.5f) / float2(Size) - 1.0f;
+	clip.y = -clip.y;
+	float4 v = mul(InverseProjection, float4(clip, z, 1));
+	if (!all(isfinite(v)) || abs(v.w) < 1e-8f)
+		return false;
+	float4 w = mul(InverseView, float4(v.xyz / v.w, 1));
+	if (!all(isfinite(w)) || abs(w.w) < 1e-8f)
+		return false;
+	world = w.xyz / w.w + PositionAdjust.xyz;
+	receiverDistance = length(mul((float3x3)InverseView, v.xyz / v.w));
+	return isfinite(receiverDistance) && receiverDistance > 0.0f;
+}
+
+uint OrderedFloat(float value)
+{
+	const uint bits = asuint(value);
+	return bits ^ ((bits & 0x80000000u) != 0u ? 0xffffffffu : 0x80000000u);
+}
+
+float DecodeOrderedFloat(uint value)
+{
+	return asfloat(value ^ ((value & 0x80000000u) != 0u ? 0x80000000u : 0xffffffffu));
+}
+
+void BuildTileLightMask(uint lane, bool valid, float3 world)
+{
+	const float extreme = 3.402823466e+38f;
+	const bool finiteReceiver = valid && all(isfinite(world));
+	const uint wordCount = (LightCount + 31u) / 32u;
+	if (lane < 3u) {
+		TileMinimumOrdered[lane] = OrderedFloat(extreme);
+		TileMaximumOrdered[lane] = OrderedFloat(-extreme);
+	}
+	for (uint word = lane; word < wordCount; word += kTileThreads)
+		TileLightMask[word] = 0u;
+	GroupMemoryBarrierWithGroupSync();
+
+	const float3 waveLower = WaveActiveMin(finiteReceiver ? world : float3(extreme, extreme, extreme));
+	const float3 waveUpper = WaveActiveMax(finiteReceiver ? world : float3(-extreme, -extreme, -extreme));
+	if (WaveIsFirstLane()) {
+		[unroll] for (uint axis = 0u; axis < 3u; ++axis) {
+			InterlockedMin(TileMinimumOrdered[axis], OrderedFloat(waveLower[axis]));
+			InterlockedMax(TileMaximumOrdered[axis], OrderedFloat(waveUpper[axis]));
+		}
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	const float3 lower = float3(DecodeOrderedFloat(TileMinimumOrdered[0]), DecodeOrderedFloat(TileMinimumOrdered[1]), DecodeOrderedFloat(TileMinimumOrdered[2]));
+	const float3 upper = float3(DecodeOrderedFloat(TileMaximumOrdered[0]), DecodeOrderedFloat(TileMaximumOrdered[1]), DecodeOrderedFloat(TileMaximumOrdered[2]));
+	if (all(lower <= upper)) {
+		[loop] for (uint lightIndex = lane; lightIndex < LightCount; lightIndex += kTileThreads) {
+			const float4 light = Lights[lightIndex * LightStride];
+			const float radius = max(light.w, MinDistance) * 1.00001f;
+			const float3 delta = max(max(lower - light.xyz, light.xyz - upper), 0.0f);
+			const float distanceSquared = dot(delta, delta);
+			if (!isfinite(distanceSquared) || !isfinite(radius) || distanceSquared <= radius * radius)
+				InterlockedOr(TileLightMask[lightIndex / 32u], 1u << (lightIndex & 31u));
+		}
+	}
+	GroupMemoryBarrierWithGroupSync();
+}
+[numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID, uint lane : SV_GroupIndex) {
+	const uint2 packed = id.xy;
+	uint2 p;
+	float3 world;
+	float receiverDistance;
+	const bool valid = ReadReceiver(packed, p, world, receiverDistance);
+	// All lanes participate before rejecting invalid receivers; large inventories
+	// fall back to the complete ordered light loop rather than dropping lights.
+	const bool tiled = LightCount >= kTileCullThreshold && LightCount <= kTileLightWordCount * 32u;
+	if (tiled)
+		BuildTileLightMask(lane, valid, world);
+	if (any(packed >= PhysicalSize))
+		return;
+	if (!valid) {
+		RawMask[packed] = float2(1, 0);
+		return;
+	}
+	// Valid receiver with no applicable light: neutral, not an unsampled pixel.
+	float total = 0, visible = 0;
+	[loop] for (uint i = 0; i < LightCount; )
+	{
+		if (tiled) {
+			const uint word = i / 32u;
+			const uint remaining = TileLightMask[word] & (0xffffffffu << (i & 31u));
+			if (remaining == 0u) {
+				i = (word + 1u) * 32u;
+				continue;
+			}
+			i = word * 32u + uint(firstbitlow(remaining));
+		}
+		const uint lightIndex = i++;
+		float4 light = Lights[lightIndex * LightStride];     // xyz vanilla position + vanilla radius
+		float3 delta = light.xyz - world;
+		float d2 = dot(delta, delta);
+		if (d2 <= MinDistance * MinDistance || !isfinite(d2))
+			continue;
+		// Native reach is shadow-only; multiplier 1.0 preserves the light's vanilla radius.
+		const float radius = max(light.w, MinDistance);
+		if (d2 > radius * radius)
+			continue;
+		float d = sqrt(d2);
+		if (d >= radius)
+			continue;
+		const float2 emission = Lights[lightIndex * LightStride + 1u].xy;
+		const float fraction = kOffloadingFadeRange;
+		float fade = fraction <= 0.0f ? 1.0f :
+		                                saturate((radius - d) / max(radius * fraction, 1e-4f));
+		fade = fade * fade * (3.0f - 2.0f * fade);
+		const float gradualFalloff = fade;
+		float weight = emission.x * gradualFalloff / max(d2 + emission.y, 1.0f);
+		if (weight <= 0 || !isfinite(weight))
+			continue;
+
+		// One visibility ray per contributing light; only its endpoint changes.
+		const float3 rayDirection = delta / d;
+		float tMax = min(d - MinDistance, MaxDistance);
+		tMax = min(tMax, d - kOffloadingNearRadius - MinDistance);
+		float visibility = 1.0f;
+		if (tMax > MinDistance) {
+			RayDesc ray;
+			ray.Origin = world + rayDirection * MinDistance;
+			ray.Direction = rayDirection;
+			ray.TMin = MinDistance;
+			ray.TMax = tMax;
+			RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+			query.TraceRayInline(Scene, RAY_FLAG_NONE, 0xFF, ray);
+			while (query.Proceed()) {}
+			// Fade the occlusion itself, not just its light weight.
+			if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
+				visibility = 1.0f - gradualFalloff;
+		}
+		total += weight;
+		visible += weight * visibility;
+	}
+	RawMask[packed] = float2(total > 1e-8f ? saturate(visible / total) : 1.0f, receiverDistance);
+}

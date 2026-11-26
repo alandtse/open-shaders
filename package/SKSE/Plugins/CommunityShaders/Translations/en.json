@@ -7010,5 +7010,6 @@
     "menu.dx12.resources.publication_unavailable": "Companion publication: unavailable",
     "menu.dx12.resources.publication_pending": "Companion publication: not received",
     "menu.dx12.resources.whole_cell": "Whole-cell residency (subdivisions bypassed)",
-    "menu.dx12.resources.whole_cell_counts": "Shapes: %zu | Lights: %zu"
+    "menu.dx12.resources.whole_cell_counts": "Shapes: %zu | Lights: %zu",
+    "menu.dx12.scene.fixed_offload_profile": "Fixed quarter-resolution tracing with depth-aware reconstruction"
 }

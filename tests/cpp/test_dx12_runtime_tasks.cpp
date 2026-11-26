@@ -1,6 +1,7 @@
 #include "Features/DX12/DX12FenceRetirementPolicy.h"
 #include "Features/DX12/SpatialGrid.h"
 #include "Features/DX12/TilePreparationPolicy.h"
+#include "../../package/Shaders/Common/NativeShadowOffload.hlsli"
 #include "Utils/RuntimeTaskGate.h"
 
 #include <atomic>
@@ -118,4 +119,21 @@ TEST_CASE("DX12 empty tile classification distinguishes failure from completed e
 	CHECK(ClassifyTilePreparation(false, true, true, false) == TilePreparationOutcome::Retry);
 	CHECK(ClassifyTilePreparation(true, true, false, true) == TilePreparationOutcome::Partial);
 	CHECK(ClassifyTilePreparation(true, true, true, true) == TilePreparationOutcome::Ready);
+}
+
+TEST_CASE("DX12 offloading has one quarter-resolution layout", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	CHECK(NativeShadowOffloadExtent(1920) == 960);
+	CHECK(NativeShadowOffloadExtent(1080) == 540);
+	CHECK(NativeShadowOffloadExtent(1921) == 961);
+	CHECK(NativeShadowOffloadExtent(1081) == 541);
+	CHECK(NativeShadowOffloadExtent(1) == 1);
+	CHECK(NativeShadowOffloadRenderCoordinate(0, 1920) == 1);
+	CHECK(NativeShadowOffloadRenderCoordinate(959, 1920) == 1919);
+	CHECK(NativeShadowOffloadRenderCoordinate(960, 1921) == 1920);
+	CHECK(NativeShadowOffloadRenderCoordinate(0, 1) == 0);
+	CHECK(kOffloadingBlend == 0.40f);
+	CHECK(kOffloadingFadeRange == 0.66f);
+	CHECK(kOffloadingNearRadius == 16.0f);
 }
