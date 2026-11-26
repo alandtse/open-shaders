@@ -175,9 +175,14 @@ bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
 
 bool DX12NativeScene::CanSuppressSCMStatic() const
 {
-	return loaded && !globals::game::isVR && globals::features::dx12Control.IsActive() &&
-	       globals::features::dx12Control.IsShadowOffloadMode() && shadowMaskEnabled &&
-	       (TraceAllPreparedLights() || offloadStaticShadows) && CanOffloadShadowsInCurrentCell() &&
+	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive() ||
+		!globals::features::dx12Control.IsShadowOffloadMode() || !shadowMaskEnabled)
+		return false;
+	if (TraceAllPreparedLights()) {
+		const auto* cell = Util::GetPlayerCell();
+		return !cell || !cell->IsExteriorCell() || outdoorShadowOffloading;
+	}
+	return offloadStaticShadows && CanOffloadShadowsInCurrentCell() &&
 	       globals::features::dx12Control.GetShadowStrength() > 0.0f &&
 	       globals::features::dx12Control.GetShadowBlend() > 0.0f &&
 	       previousShadowSubmitted.load(std::memory_order_acquire);
@@ -344,7 +349,7 @@ void DX12NativeScene::PreShadowMaps()
 			frameShadowSceneID.store(frame, std::memory_order_release);
 		}
 	}
-	allLightStaticReady.store(false, std::memory_order_release);
+	allLightStaticReady.store(TraceAllPreparedLights() && CanSuppressSCMStatic(), std::memory_order_release);
 	auto grid = globals::features::dx12Resources.GetGrid();
 	if (!grid || !grid->requested.front().scope) {
 		shadowLightScope.store(0, std::memory_order_release);
@@ -360,10 +365,6 @@ void DX12NativeScene::PreShadowMaps()
 	const auto lights = std::make_shared<const std::vector<DX12::PreparedLight>>(
 		globals::features::dx12Resources.GetPreparedLights());
 	shadowLights.store(lights, std::memory_order_release);
-	if (TraceAllPreparedLights() && CanSuppressSCMStatic()) {
-		const auto scene = GetFrameShadowScene();
-		allLightStaticReady.store(scene && scene->acceleration && !lights->empty(), std::memory_order_release);
-	}
 	// Only a revision-coalesced mailbox handoff on this thread. All BLAS/TLAS
 	// allocations and command recording run as bounded shared-pool tasks.
 	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
@@ -561,8 +562,6 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 		frameShadowScene.store(nullptr, std::memory_order_release);
 		frameShadowSceneID.store(UINT32_MAX, std::memory_order_release);
 		previousShadowSubmitted.store(false, std::memory_order_release);
-		frameTraceAllLights.store(false, std::memory_order_release);
-		allLightStaticReady.store(false, std::memory_order_release);
 		{
 			std::scoped_lock lock(runtimeLightMutex);
 			runtimeLightFrame = UINT32_MAX;
