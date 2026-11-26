@@ -305,6 +305,7 @@ namespace DX12Native
 
 	void AccelerationScene::Advance(std::shared_ptr<const SceneInputs> a_inputs)
 	{
+		budgetDeferred = false;
 		if (!completion || !failure.empty())
 			return;
 		Retire();
@@ -364,6 +365,7 @@ namespace DX12Native
 					*available = {};
 			}
 		} catch (const AllocationDeferred&) {
+			budgetDeferred = true;
 			if (!available->fence)
 				*available = {};
 		} catch (const std::exception& error) {

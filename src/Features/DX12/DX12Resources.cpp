@@ -530,6 +530,7 @@ void DX12Resources::ResetPreparation()
 	// companion work. Keep this off the normal settings-load path when unchanged.
 	if (companion)
 		companion->Cancel();
+	startupPending = false;
 	inFlight.reset();
 	adopting.reset();
 	lightAdoptionOffset = 0;
@@ -806,6 +807,12 @@ void DX12Resources::PreShadowMaps()
 	if (consolidationAttemptScope && consolidationAttemptScope != scope)
 		consolidationAttemptScope = 0;
 	const auto& position = location->position;
+	if (const auto current = grid.Snapshot(); current->wholeCell && current->requested.front().scope == scope &&
+		globals::features::dx12NativeScene.RetireBudgetDeferredWholeCell(current->geometryRevision)) {
+		grid.Clear();
+		consolidationAttemptScope = scope;
+		logger::info("[DX12Resources] Whole-cell GPU budget deferred; returning to subdivisions");
+	}
 	preparationActive = true;
 	grid.Advance(scope, settings.SubcellSize, position.x, position.y);
 	runtimePublicationEnabled.store(true, std::memory_order_release);
