@@ -26,6 +26,8 @@ namespace DX12
 		uint32_t referenceID = 0, flags = 0;
 		float3 position{}, color{};
 		float radius = 0.0f, fade = 1.0f, emitterRadius = 0.0f, falloffExponent = 1.0f;
+		uint64_t runtimeIdentity = 0;  // Supplemental Full RT emitter; not part of the companion wire format.
+		uint32_t unifiedCount = 1;
 	};
 
 	/** @brief Original installed NIF reference, not an embedded NIF binary. */

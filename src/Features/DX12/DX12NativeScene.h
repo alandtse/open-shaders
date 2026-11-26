@@ -6,12 +6,14 @@
 #include "DX12NativeShadowTrace.h"
 #include "../OverlayFeature.h"
 #include "SCMNativePolicy.h"
+#include "FullShadowLightConsolidation.h"
 
 #include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 /** @brief Independent early opaque raster capture for native DX12. */
@@ -86,7 +88,11 @@ private:
 	std::atomic<bool> debugRTLights{ false };
 	bool WantsLightPreview(DX12::SCMNativeMode mode) const;
 	uint32_t fullRTQuality = DX12Native::kShadowQualityQuality;
-	std::vector<DX12::PreparedLight> CollectFullRTLights(const std::vector<DX12::PreparedLight>& prepared) const;
+	std::atomic<uint32_t> runtimeUnificationRadius{ DX12Native::kDefaultRuntimeUnificationRadius };
+	std::atomic<uint32_t> preparedExclusionRadius{ DX12Native::kDefaultPreparedExclusionRadius };
+	std::atomic<bool> additivePreparedEmission{ true };
+	std::shared_ptr<const std::vector<DX12::PreparedLight>> CollectFullRTLights(const std::shared_ptr<const std::vector<DX12::PreparedLight>>& publication);
+	void ResetFullLightInventory();
 	struct RuntimeLightSample
 	{
 		const RE::NiLight* source = nullptr;  // Identity of the SCM light actually observed.
@@ -96,4 +102,21 @@ private:
 	mutable std::mutex runtimeLightMutex;
 	uint32_t runtimeLightFrame = UINT32_MAX;
 	std::vector<RuntimeLightSample> runtimeLightSamples;
+	// Full-shadow membership is independent of SCM selection. Keep emitter identity alive
+	// only while the source belongs to the active world light lists.
+	struct FullRuntimeLight
+	{
+		RE::NiPointer<RE::NiLight> source;
+		DX12::PreparedLight value;
+		uint32_t placedReference = 0;
+		uint64_t seen = 0;
+		bool supported = false, sampled = false, active = false;
+	};
+	std::unordered_map<const RE::NiLight*, FullRuntimeLight> fullRuntimeLights;
+	std::shared_ptr<const std::vector<DX12::PreparedLight>> fullPreparedSnapshot;
+	std::shared_ptr<const std::vector<DX12::PreparedLight>> fullConsolidatedLights;
+	uint32_t fullCachedUnificationRadius = 0, fullCachedExclusionRadius = 0;
+	bool fullCachedAdditiveEmission = false;
+	uint32_t fullRuntimeScope = 0;
+	uint64_t fullLightVisit = 0;
 };

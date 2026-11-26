@@ -1,5 +1,6 @@
 #include "Features/DX12/DX12FenceRetirementPolicy.h"
 #include "Features/DX12/SpatialGrid.h"
+#include "Features/DX12/FullShadowLightConsolidation.h"
 #include "Features/DX12/TilePreparationPolicy.h"
 #include "../../package/Shaders/Common/NativeShadowRT.hlsli"
 #include "Utils/RuntimeTaskGate.h"
@@ -162,4 +163,131 @@ TEST_CASE("DX12 full RT keeps the two accepted checkerboard layouts", "[dx12][sh
 	CHECK(ShadowVariant(kShadowQualityOffloading) == 0);
 	CHECK(ShadowVariant(kShadowQualityQuality) == 1);
 	CHECK(ShadowVariant(kShadowQualityPerformance) == 2);
+}
+
+namespace
+{
+	struct ConsolidationLight
+	{
+		struct Vector { float x, y, z; };
+		uint32_t referenceID = 0, flags = 0;
+		Vector position{}, color{ 1, 1, 1 };
+		float radius = 100, fade = 1, emitterRadius = 0, falloffExponent = 1;
+		uint64_t runtimeIdentity = 0;
+		uint32_t unifiedCount = 1;
+	};
+}
+
+TEST_CASE("Full-shadow consolidation preserves prepared authority", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	using Light = ConsolidationLight;
+	const std::vector<Light> prepared{ { .referenceID = 10, .position = { 0, 0, 0 }, .fade = 2 } };
+	const std::vector<Light> runtime{
+		{ .referenceID = 20, .position = { 128, 0, 0 }, .runtimeIdentity = 1 },
+		{ .referenceID = 20, .position = { 132, 0, 0 }, .runtimeIdentity = 2 },
+		{ .referenceID = 20, .position = { 136, 0, 0 }, .runtimeIdentity = 3 }
+	};
+	auto result = ConsolidateFullShadowLights<Light>(prepared, runtime, 64, 128);
+	REQUIRE(result.size() == 2);
+	CHECK(SamePreparedShadowLight(result[0], prepared[0]));
+	CHECK(result[1].unifiedCount == 2);
+	CHECK(result[1].color.x * result[1].fade == 2);
+	CHECK(result[1].position.x == 134);
+	result = ConsolidateFullShadowLights<Light>(prepared, runtime, 0, 0);
+	CHECK(result.size() == 4);
+	CHECK(SanitizeFullShadowRadius(63) == 64);
+	CHECK(SanitizeFullShadowRadius(513) == 512);
+}
+
+TEST_CASE("Full-shadow runtime grouping is owner-aware and deterministic", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	using Light = ConsolidationLight;
+	std::vector<Light> runtime{
+		{ .referenceID = 7, .position = { -2, 0, 0 }, .color = { 1, 0, 0 }, .radius = 100, .fade = 2, .runtimeIdentity = 1 },
+		{ .referenceID = 7, .position = { 2, 0, 0 }, .color = { 0, 1, 0 }, .radius = 200, .fade = 3, .runtimeIdentity = 2 },
+		{ .referenceID = 7, .position = { 100, 0, 0 }, .runtimeIdentity = 3 },
+		{ .referenceID = 8, .position = { 0, 0, 0 }, .runtimeIdentity = 4 },
+		{ .referenceID = 0, .position = { 0, 0, 0 }, .runtimeIdentity = 5 },
+		{ .referenceID = 0, .position = { 0, 0, 0 }, .runtimeIdentity = 6 }
+	};
+	const auto result = ConsolidateFullShadowLights<Light>({}, runtime, 64, 0);
+	REQUIRE(result.size() == 5);
+	CHECK(result[0].unifiedCount == 2);
+	CHECK(result[0].color.x == 2);
+	CHECK(result[0].color.y == 3);
+	CHECK(result[0].color.z == 0);
+	CHECK(result[0].fade == 1);
+	CHECK(result[0].radius == 200);
+	CHECK(result[0].position.x > 0);
+	CHECK(result[0].position.x < 2);
+	std::ranges::reverse(runtime);
+	const auto reordered = ConsolidateFullShadowLights<Light>({}, runtime, 64, 0);
+	REQUIRE(reordered.size() == result.size());
+	for (size_t i = 0; i < result.size(); ++i) {
+		CHECK(SamePreparedShadowLight(result[i], reordered[i]));
+		CHECK(result[i].runtimeIdentity == reordered[i].runtimeIdentity);
+	}
+}
+
+TEST_CASE("Four equal brazier emitters yield four times the native emission", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	using Light = ConsolidationLight;
+	const std::vector<Light> runtime{
+		{ .referenceID = 7, .position = { -12, 0, 0 }, .runtimeIdentity = 1 },
+		{ .referenceID = 7, .position = { 12, 0, 0 }, .runtimeIdentity = 2 },
+		{ .referenceID = 7, .position = { 0, -12, 0 }, .runtimeIdentity = 3 },
+		{ .referenceID = 7, .position = { 0, 12, 0 }, .runtimeIdentity = 4 }
+	};
+	const auto result = ConsolidateFullShadowLights<Light>({}, runtime, 64, 0);
+	REQUIRE(result.size() == 1);
+	CHECK(result.front().unifiedCount == 4);
+	CHECK(result.front().color.x * result.front().fade == 4);
+	CHECK(result.front().position.x == 0);
+	CHECK(result.front().position.y == 0);
+	const std::vector<Light> prepared{ { .referenceID = 9, .position = { 0, 0, 0 } } };
+	const auto excluded = ConsolidateFullShadowLights<Light>(prepared, runtime, 64, 128);
+	REQUIRE(excluded.size() == 1);
+	CHECK(SamePreparedShadowLight(excluded.front(), prepared.front()));
+	CHECK(excluded.front().unifiedCount == 1);
+}
+
+TEST_CASE("Prepared emission addition is opt-in and assigned once", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	using Light = ConsolidationLight;
+	const std::vector<Light> prepared{
+		{ .referenceID = 1, .position = { 0, 0, 0 }, .color = { 1, 2, 3 }, .radius = 300, .fade = 2 },
+		{ .referenceID = 2, .position = { 100, 0, 0 }, .fade = 3 }
+	};
+	const std::vector<Light> runtime{
+		{ .referenceID = 7, .position = { 10, 0, 0 }, .color = { 3, 1, 0 }, .fade = 2, .runtimeIdentity = 1 },
+		{ .referenceID = 8, .position = { 50, 0, 0 }, .runtimeIdentity = 2 },
+		{ .referenceID = 9, .position = { 99, 0, 0 }, .runtimeIdentity = 3 }
+	};
+	const auto disabled = ConsolidateFullShadowLights<Light>(prepared, runtime, 128, 256, false);
+	REQUIRE(disabled.size() == 2);
+	CHECK(SamePreparedShadowLight(disabled[0], prepared[0]));
+	CHECK(SamePreparedShadowLight(disabled[1], prepared[1]));
+	const auto enabled = ConsolidateFullShadowLights<Light>(prepared, runtime, 128, 256, true);
+	REQUIRE(enabled.size() == 2);
+	CHECK(enabled[0].color.x * enabled[0].fade == 9);
+	CHECK(enabled[0].color.y * enabled[0].fade == 7);
+	CHECK(enabled[0].color.z * enabled[0].fade == 7);
+	CHECK(enabled[1].color.x * enabled[1].fade == 4);
+	CHECK(enabled[0].position.x == prepared[0].position.x);
+	CHECK(enabled[0].radius == prepared[0].radius);
+	CHECK(enabled[0].referenceID == prepared[0].referenceID);
+	CHECK(ConsolidateFullShadowLights<Light>(prepared, runtime, 0, 0, true).size() == 5);
+}
+
+TEST_CASE("Full RT restores the established game-unit defaults", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	CHECK(kDefaultRuntimeUnificationRadius == 128);
+	CHECK(kDefaultPreparedExclusionRadius == 256);
+	CHECK(kFullShadowRadiusMax == 512);
+	CHECK(kFullShadowRadiusStep == 4);
 }
