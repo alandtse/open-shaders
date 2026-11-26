@@ -5,6 +5,7 @@
 #include "VideoMemoryBudget.h"
 
 #include <array>
+#include <atomic>
 #include <memory>
 #include <span>
 #include <string>
@@ -47,10 +48,25 @@ namespace DX12Native
 	class ShadowMaskTrace
 	{
 	public:
+		/** @brief Why the latest Dispatch did or did not produce a mask, for devbench status. */
+		enum class Outcome : uint8_t
+		{
+			None,
+			InitializationFailed,
+			NoRaster,
+			NoScene,
+			NoLights,
+			NoFreeSlot,
+			ViewportMismatch,
+			Failed,
+			Dispatched
+		};
+
 		~ShadowMaskTrace();
 		void Dispatch(const GraphicsBackend& backend, std::shared_ptr<const RasterFrame> raster,
 			std::shared_ptr<const TopLevel> scene, std::span<const DX12::PreparedLight> lights,
 			uint32_t frame, const ShadowTraceControls& controls);
+		Outcome LastOutcome() const { return lastOutcome.load(std::memory_order_relaxed); }
 		std::shared_ptr<const ShadowMaskFrame> Get(uint32_t frame) const
 		{
 			return current && current->frame == frame ? current : nullptr;
@@ -74,5 +90,6 @@ namespace DX12Native
 		VideoMemoryBudget videoBudget;
 		bool initializationFailed = false;
 		bool failureLogged = false;
+		std::atomic<Outcome> lastOutcome{ Outcome::None };
 	};
 }

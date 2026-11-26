@@ -109,15 +109,20 @@ namespace DX12Native
 		const auto raster = shadow ? shadow->raster : nullptr;
 		// The native scene's frame counter is used when fetching the mask; the
 		// compositor frame number is the upscaler's existing frame counter.
-		const bool applyShadow = supportsShadow && transfer != Transfer::Unknown &&
-		                         shadow && shadow->mask && shadow->readyFence && shadow->readyValue &&
-		                         shadow->readyValue != UINT64_MAX &&
-		                         shadow->width >= width && shadow->height >= height &&
-		                         raster && raster->depth && raster->depth->resource &&
-		                         raster->cameraValid && raster->readyFence && raster->readyValue &&
-		                         raster->readyValue != UINT64_MAX &&
-		                         raster->width >= width && raster->height >= height &&
-		                         InitializeShadow(device12);
+		using Result = CompositeShadowResult;
+		const Result shadowResult =
+			!supportsShadow                                                                ? Result::FormatUnsupported :
+			transfer == Transfer::Unknown                                                  ? Result::TransferUnknown :
+			!shadow || !shadow->mask                                                       ? Result::NoMask :
+			!shadow->readyFence || !shadow->readyValue || shadow->readyValue == UINT64_MAX ? Result::MaskNotReady :
+			!raster || !raster->depth || !raster->depth->resource || !raster->cameraValid ||
+					!raster->readyFence || !raster->readyValue || raster->readyValue == UINT64_MAX ?
+																							 Result::NoRasterDepth :
+			shadow->width < width || shadow->height < height || raster->width < width || raster->height < height ? Result::SizeMismatch :
+			!InitializeShadow(device12)                                                                          ? Result::InitializationFailed :
+																												   Result::Applied;
+		lastCompositeShadowResult.store(shadowResult, std::memory_order_relaxed);
+		const bool applyShadow = shadowResult == Result::Applied;
 		if (!applyShadow)
 			returnColorToDX11 = false;
 
@@ -292,7 +297,7 @@ namespace DX12Native
 				{
 					uint32_t width, height;
 					float receiverTolerance, radiusPixels;
-					uint32_t legacyTransfer, alignmentPadding;
+					uint32_t legacyTransfer, debugView;
 					float strength, blend;
 					DirectX::SimpleMath::Matrix inverseProjection, inverseView;
 					uint32_t spatialReconstruction, reconstructionGridSize;
@@ -302,7 +307,7 @@ namespace DX12Native
 				// Exactly the open-RT default independent shadow settings.
 				const Constants constants{ width, height, kReceiverTolerance, kReconstructionRadiusPixels,
 					transfer == Transfer::LegacyScene ? 1u : 0u,
-					0u,  // padding: matrices retain 16-byte alignment.
+					compositeShadowDebugView.load(std::memory_order_relaxed) ? 1u : 0u,
 					globals::features::dx12Control.GetShadowStrength(),
 					globals::features::dx12Control.GetShadowBlend(),
 					camera.CameraProjInverse, camera.CameraViewInverse,

@@ -5,11 +5,32 @@
 #include "VideoMemoryBudget.h"
 
 #include <array>
+#include <atomic>
 #include <memory>
 #include <vector>
 
 namespace DX12Native
 {
+	/** @brief Why the latest composite capture did or did not apply the native shadow mask. */
+	enum class CompositeShadowResult : uint8_t
+	{
+		NotCaptured,
+		FormatUnsupported,
+		TransferUnknown,
+		NoMask,
+		MaskNotReady,
+		NoRasterDepth,
+		SizeMismatch,
+		InitializationFailed,
+		Applied
+	};
+
+	/** @brief Latest composite shadow decision; written on the render thread, read by devbench status. */
+	inline std::atomic<CompositeShadowResult> lastCompositeShadowResult{ CompositeShadowResult::NotCaptured };
+
+	/** @brief Devbench-only switch: the shadow layer writes the native mask instead of shading the frame. */
+	inline std::atomic<bool> compositeShadowDebugView{ false };
+
 	/** @brief Native Composite owns the final pre-upscale DX12 color, as in open-RT. */
 	class NativeComposite
 	{

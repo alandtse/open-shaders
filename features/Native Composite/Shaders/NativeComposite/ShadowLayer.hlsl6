@@ -10,7 +10,7 @@ cbuffer ShadowConstants : register(b0)
 	float ReceiverTolerance;
 	float RadiusPixels;
 	uint LegacyTransfer;
-	uint AlignmentPadding;
+	uint DebugView;  // 1: write mask visibility; magenta = no valid mask, red = depth rejected.
 	float Strength;
 	float Blend;
 	row_major float4x4 InverseProjection;
@@ -42,6 +42,11 @@ float SampleVisibility(int2 samplePixel, float4 center)
 		return;
 	const float4 center = ShadowMask[id.xy];
 	const bool traced = ValidMask(center);
+	if (DebugView != 0u) {
+		Scene[id.xy] = traced ? float4(saturate(center.x).xxx, 1.0f) : float4(1.0f, 0.0f, 1.0f, 1.0f);
+		if (!traced)
+			return;
+	}
 	if (!traced && !(SpatialReconstruction != 0u && center.y == -1.0f))
 		return;
 	const float depth = RasterDepth[id.xy];
@@ -57,7 +62,12 @@ float SampleVisibility(int2 samplePixel, float4 center)
 	if (!isfinite(receiverDistance) || receiverDistance <= 0.0f)
 		return;
 	const float tolerance = max(ReceiverTolerance, receiverDistance * 1e-5f);
-	if (traced && abs(receiverDistance - center.z) > tolerance)
+	if (traced && abs(receiverDistance - center.z) > tolerance) {
+		if (DebugView != 0u)
+			Scene[id.xy] = float4(1.0f, 0.0f, 0.0f, 1.0f);
+		return;
+	}
+	if (DebugView != 0u)
 		return;
 
 	float4 reference = center;

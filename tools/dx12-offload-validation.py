@@ -289,6 +289,7 @@ def check_layer_applied(bench, report, out):
         bench.set_dx12({"ShadowStrength": 4.0, "ShadowBlend": 1.0})
         time.sleep(SETTLE_SECONDS)
         full = capture(bench, out, "layer_strength4")
+        stages = bench.status()
     finally:
         bench.set_dx12({k: original[k] for k in ("ShadowStrength", "ShadowBlend") if k in original})
         freecam_off(bench)
@@ -296,7 +297,8 @@ def check_layer_applied(bench, report, out):
     darker = diff.get("darkerFraction", 0.0)
     report.data["layer"] = diff
     report.check("RT shadow layer reaches the frame", "PASS" if darker >= MIN_LAYER_DARKER_FRACTION else "FAIL",
-                 f"strength 4 darkens {darker:.1%} of pixels vs strength 0 (need {MIN_LAYER_DARKER_FRACTION:.0%}); mean {diff.get('meanSigned', 0):+.2f} luma")
+                 f"strength 4 darkens {darker:.1%} of pixels vs strength 0 (need {MIN_LAYER_DARKER_FRACTION:.0%}); mean {diff.get('meanSigned', 0):+.2f} luma; "
+                 f"trace {stages.get('trace', {}).get('lastOutcome')}, composite {stages.get('composite', {}).get('lastShadowResult')}")
     if darker < MIN_LAYER_DARKER_FRACTION:
         report.look(out / "layer_strength4_vs_0_diff.png", "should be mostly red where owned lights cast static shadows")
 

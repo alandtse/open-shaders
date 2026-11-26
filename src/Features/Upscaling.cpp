@@ -3676,6 +3676,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	// open-RT's late-frame DX11 color capture: Native Composite is the
 	// final color authority, while FSR's other input preparation stays as-is.
 	upscaling.nativeCompositeFrame.reset();
+	DX12Native::lastCompositeShadowResult.store(DX12Native::CompositeShadowResult::NotCaptured, std::memory_order_relaxed);
 	if (upscaling.loaded && !globals::game::isVR &&
 		globals::features::dx12Control.IsActive() &&
 		globals::game::graphicsState &&
