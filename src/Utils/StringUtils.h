@@ -196,33 +196,38 @@ namespace Util
 	 */
 	inline bool MatchesAssetGlob(std::string_view a_path, std::string_view a_pattern)
 	{
+		// reached[n]: the pattern read so far matches the first n path characters, which keeps work bounded for any pattern.
+		std::vector<char> reached(a_path.size() + 1, 0);
+		reached[0] = 1;
+		const auto extend = [&](bool a_crossFolders) {
+			for (size_t end = 1; end <= a_path.size(); ++end)
+				if (reached[end - 1] && (a_crossFolders || a_path[end - 1] != '\\'))
+					reached[end] = 1;
+		};
+		const auto consume = [&](char a_token) {
+			for (size_t end = a_path.size(); end > 0; --end)
+				reached[end] = reached[end - 1] && (a_token == '?' ? a_path[end - 1] != '\\' : a_path[end - 1] == a_token);
+			reached[0] = 0;
+		};
 		while (!a_pattern.empty()) {
-			if (a_pattern.starts_with("**")) {
+			if (a_pattern.starts_with("**\\")) {
+				const auto noFolder = reached;
+				extend(true);
+				consume('\\');
+				for (size_t end = 0; end <= a_path.size(); ++end)
+					reached[end] |= noFolder[end];
+				a_pattern.remove_prefix(3);
+			} else if (a_pattern.starts_with("**")) {
+				extend(true);
 				a_pattern.remove_prefix(2);
-				if (a_pattern.empty())
-					return true;
-				if (a_pattern.front() == '\\' && MatchesAssetGlob(a_path, a_pattern.substr(1)))
-					return true;
-				for (size_t index = 0; index <= a_path.size(); ++index)
-					if (MatchesAssetGlob(a_path.substr(index), a_pattern))
-						return true;
-				return false;
-			}
-			if (a_pattern.front() == '*') {
+			} else if (a_pattern.front() == '*') {
+				extend(false);
 				a_pattern.remove_prefix(1);
-				for (size_t index = 0; index <= a_path.size(); ++index) {
-					if (MatchesAssetGlob(a_path.substr(index), a_pattern))
-						return true;
-					if (index < a_path.size() && a_path[index] == '\\')
-						break;
-				}
-				return false;
+			} else {
+				consume(a_pattern.front());
+				a_pattern.remove_prefix(1);
 			}
-			if (a_path.empty() || (a_pattern.front() == '?' ? a_path.front() == '\\' : a_pattern.front() != a_path.front()))
-				return false;
-			a_pattern.remove_prefix(1);
-			a_path.remove_prefix(1);
 		}
-		return a_path.empty();
+		return reached.back() != 0;
 	}
 }
