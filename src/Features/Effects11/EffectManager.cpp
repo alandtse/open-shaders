@@ -402,7 +402,6 @@ void EffectManager::RegisterSettings()
 	settingManager.SetCategoryExteriorOnly("VOLUMETRICRAYS", true);
 	settingManager.SetCategoryExteriorOnly("RAYS", true);
 	settingManager.SetCategoryExteriorOnly("SKYSCATTERING", true);
-	settingManager.SetCategoryExteriorOnly("GAMEVOLUMETRICRAYS", true);
 
 	// Cache IDs for performance
 	ids.useBloom = settingManager.GetSettingID("EnableBloom", "EFFECT");
