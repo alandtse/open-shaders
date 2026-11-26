@@ -615,6 +615,7 @@ namespace ShadowCasterManager
 
 	void ResetNativeRasterTracking()
 	{
+		ResetFullRTCasterMotion();
 		if (!s_nativeOwnershipPending)
 			return;
 		for (auto& [light, state] : s_splitState)
@@ -660,7 +661,10 @@ namespace ShadowCasterManager
 	static void EstablishNativeRasterOwnership()
 	{
 		auto& nativeScene = globals::features::dx12NativeScene;
+		const bool wasFullRT = s_frameNativePolicy.fullStaticAuthority;
 		s_frameNativePolicy = DX12::SelectSCMNativePolicy(nativeScene.GetFrameNativeMode());
+		if (wasFullRT != s_frameNativePolicy.fullStaticAuthority)
+			ResetFullRTCasterMotion();
 		if (!s_frameNativePolicy.observeLights && !s_frameNativePolicy.fullStaticAuthority) {
 			ReleaseNativeShadowOwnership();
 			return;
@@ -1410,7 +1414,7 @@ namespace ShadowCasterManager
 			// Native-owned static shadows never require a legacy atlas bake.
 			const auto nativePolicy = s_frameNativePolicy;
 			SplitState* st = &s_splitState[light];
-			const bool native = st->rasterOmitsNativeStatic;
+			const bool native = nativePolicy.fullStaticAuthority ? !light->GetIsFrustumOrDirectionalLight() : st->rasterOmitsNativeStatic;
 			bool split = !native && StaticAtlasReady() && !carrier && !FlickersFromLiveOrigin(light->light.get());
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			// A second accumulate this frame is skipped below, so it keeps the first call's split decision.
@@ -1803,6 +1807,7 @@ namespace ShadowCasterManager
 	static void LogShadowSehCatch(RE::BSShadowLight* a_light = nullptr)
 	{
 		SetCurrentCullLight(nullptr);
+		s_nativeCasterMode = DX12::SCMNativeCasterMode::Disabled;
 		s_cullPassMode.store(static_cast<int>(CasterPass::All), std::memory_order_relaxed);
 		static std::atomic<int> n{ 0 };
 		if (n.fetch_add(1, std::memory_order_relaxed) < 20)
@@ -4169,6 +4174,8 @@ namespace ShadowCasterManager
 		// Advance once per frame, before accumulate and render-split, so a caster
 		// classifies identically across both (a mid-frame bump would double-count).
 		if (++s_casterClassEpoch % 300 == 0) {
+			if (s_frameNativePolicy.fullStaticAuthority)
+				PruneFullRTCasterMotion();
 			std::erase_if(s_casterMobility,
 				[](const auto& kv) { return s_casterClassEpoch - kv.second.lastEpoch > 300; });
 			std::erase_if(s_ownerMotion,
@@ -4213,6 +4220,7 @@ namespace ShadowCasterManager
 			s_cellResetTotal.fetch_add(1, std::memory_order_relaxed);
 			s_casterMobility.clear();
 			s_ownerMotion.clear();
+			ResetFullRTCasterMotion();
 			s_everHadShadow.clear();  // a cell swap recycles NiLight addresses
 			s_fadedOutLights.clear();
 			std::erase_if(s_lastValidFrame, [ssn](const auto& kv) { return !KeepsSlotThroughCellShift(ssn, kv.first); });
@@ -4441,7 +4449,7 @@ namespace ShadowCasterManager
 				bool emptyRender = false;
 				if (AtlasActive()) {
 					auto* split = StaticAtlasReady() ? &s_splitState[e.Light] : nullptr;
-					const bool useSplit = split && !split->rasterOmitsNativeStatic &&
+					const bool useSplit = !fullRTNative && split && !split->rasterOmitsNativeStatic &&
 					                      !split->splitExcluded && !split->fullThisFrame;
 					AtlasTileTexels live{};
 					const bool resizeAfterComposite = useSplit && !split->bakeThisFrame &&
@@ -4455,7 +4463,7 @@ namespace ShadowCasterManager
 						// group is freed-but-not-unlinked at frame end. The viewport hook
 						// collapses a tile-less raster to zero size, so this draws nothing.
 						s_budget.BeginLight(e.Light, 1);
-						s_cpuSubmitUs.fetch_add(TimeUs([&] { RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);
+						s_cpuSubmitUs.fetch_add(TimeUs([&] { RenderLightGuarded(e.Light, tmp, fullRTNative); }), std::memory_order_relaxed);
 						s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 						s_budget.EndLight(e.Light, 1);
 						// This frame bailed before running the bake EnableLight already
@@ -4464,6 +4472,8 @@ namespace ShadowCasterManager
 							it->second.bakeQueued = true;
 						continue;
 					}
+					if (fullRTNative)
+						InvalidateFullRTStaticContent(i);
 					// On a bake frame, render the static subset into the cache atlas;
 					// otherwise copy the cache into the tile and composite movers over it.
 					if (useSplit) {
@@ -4474,7 +4484,7 @@ namespace ShadowCasterManager
 							ClearStaticSlotTile(i);
 							s_budget.BeginLight(e.Light, 1);
 							bool rendered = true;
-							s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);
+							s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp, fullRTNative); }), std::memory_order_relaxed);
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 							s_staticPassActive.store(false, std::memory_order_relaxed);
 							// A skipped bake leaves the static tile blank: drop the slot's static cache and re-arm.
@@ -4535,7 +4545,7 @@ namespace ShadowCasterManager
 								st.bakeQueued = true;
 							}
 							bool rendered = true;
-							s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);  // composite movers on top (no clear)
+							s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp, fullRTNative); }), std::memory_order_relaxed);  // composite movers on top (no clear)
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 							s_budget.EndLight(e.Light, 1);
 							if (!rendered && !compositeValid && !compositeKeepPrior)
@@ -4566,7 +4576,7 @@ namespace ShadowCasterManager
 				}
 				s_budget.BeginLight(e.Light, 1);
 				bool rendered = true;
-				s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);
+				s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp, fullRTNative); }), std::memory_order_relaxed);
 				s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 				s_budget.EndLight(e.Light, 1);
 				if (!rendered && !keepPriorContent)
@@ -4580,8 +4590,8 @@ namespace ShadowCasterManager
 					// contentValid=false, so the sample side reads UNSHADOWED, never a
 					// degenerate (cleared) tile, even under high pressure.
 					if (!emptyRender || (fullRTNative && AtlasActive())) {
-						bool nativeStaticOmitted = false;
-						if (s_nativeOwnershipPending) {
+						bool nativeStaticOmitted = fullRTNative;
+						if (!fullRTNative && s_nativeOwnershipPending) {
 							const auto it = s_splitState.find(e.Light);
 							nativeStaticOmitted = it != s_splitState.end() && it->second.rasterOmitsNativeStatic;
 						}

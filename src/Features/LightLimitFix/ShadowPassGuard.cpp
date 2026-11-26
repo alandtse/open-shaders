@@ -212,10 +212,13 @@ namespace ShadowCasterManager
 			return LinkResult::Unrepairable;
 		}
 
+		thread_local bool fullRTDynamicDrawOnly = false;
+
 		struct ShadowRenderWindowScope
 		{
-			explicit ShadowRenderWindowScope(RE::BSShadowLight* a_light)
+			explicit ShadowRenderWindowScope(RE::BSShadowLight* a_light, bool dynamicOnly)
 			{
+				fullRTDynamicDrawOnly = dynamicOnly;
 				s_passGuardTripsThisRender.store(0, std::memory_order_relaxed);
 				s_renderingLight.store(a_light, std::memory_order_relaxed);
 				s_cursorExpected = nullptr;
@@ -224,6 +227,7 @@ namespace ShadowCasterManager
 			}
 			~ShadowRenderWindowScope()
 			{
+				fullRTDynamicDrawOnly = false;
 				s_shadowRenderThreadId.store(0, std::memory_order_relaxed);
 				s_renderingLight.store(nullptr, std::memory_order_relaxed);
 			}
@@ -329,6 +333,18 @@ namespace ShadowCasterManager
 			}
 		}
 
+		// This guard also covers passes registered before the cull scope, or
+		// through a route that did not call the AppendVirtual filter. Consume
+		// the engine's pass chain normally; skip only the actual static draw.
+		bool FullRTDrawAdmitted(RE::BSRenderPass* pass)
+		{
+			__try {
+				return pass && pass->geometry && IsFullRTDynamicCaster(*pass->geometry);
+			} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+				return false;
+			}
+		}
+
 		struct Hook_SetupAndDrawPass
 		{
 			// No `this`: the pass is the first argument. CommonLib's member binding of this id passes `this` first.
@@ -340,6 +356,8 @@ namespace ShadowCasterManager
 					s_passGuardTripsThisRender.fetch_add(1, std::memory_order_relaxed);
 					return;
 				}
+				if (fullRTDynamicDrawOnly && !FullRTDrawAdmitted(a_pass))
+					return;
 				func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
@@ -456,9 +474,9 @@ namespace ShadowCasterManager
 		return cleared;
 	}
 
-	bool RenderLightGuarded(RE::BSShadowLight* a_light, uint32_t& a_index)
+	bool RenderLightGuarded(RE::BSShadowLight* a_light, uint32_t& a_index, bool fullRTDynamicOnly)
 	{
-		ShadowRenderWindowScope scope(a_light);
+		ShadowRenderWindowScope scope(a_light, fullRTDynamicOnly);
 		a_light->Render(a_index);
 		const bool complete = s_passGuardTripsThisRender.load(std::memory_order_relaxed) == 0;
 		if (complete) {

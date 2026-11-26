@@ -307,7 +307,6 @@ namespace ShadowCasterManager
 		// must advance by the elapsed epoch count to keep real-time semantics.
 		const int elapsed = r.lastVerifyEpoch < 0 ? 1 : std::max(1, s_casterClassEpoch - r.lastVerifyEpoch);
 		if (moved) {
-			r.observedMotion |= !inserted;
 			// Leaving the static set is an oscillation (not a first sighting): make
 			// the caster earn its way back, so repeated pausing can't re-bake every time.
 			if (!r.dynamic && !inserted)
@@ -349,6 +348,86 @@ namespace ShadowCasterManager
 		if (!inserted && r.dynamic != wasDynamic)
 			r.classEpoch = s_casterClassEpoch;
 		return r;
+	}
+
+	// Full RT tracks transforms instead of world-bound changes or the movement
+	// of another shape on the same placed reference. Keep this history separate
+	// from baseline SCM's deliberately more permissive cache classification.
+	namespace
+	{
+		struct FullRTCasterMotion
+		{
+			std::array<float, 13> pose{};
+			int lastEpoch = -1, lastMovedEpoch = -1, ancestryEpoch = -1;
+			bool actorAttached = false, dynamic = false, poseValid = false;
+		};
+		ankerl::unordered_dense::map<RE::BSGeometry*, FullRTCasterMotion> fullRTCasterMotion;
+		constexpr float kFullRTTranslationThreshold = 1.0f;
+		constexpr float kFullRTRotationScaleThreshold = 0.001f;
+		constexpr int kFullRTMotionRetentionEpochs = 300;
+		constexpr uint32_t kFullRTParentLimit = 16;
+	}
+
+	void ResetFullRTCasterMotion()
+	{
+		fullRTCasterMotion.clear();
+	}
+
+	void PruneFullRTCasterMotion()
+	{
+		std::erase_if(fullRTCasterMotion, [](const auto& kv) {
+			return s_casterClassEpoch - kv.second.lastEpoch > kFullRTMotionRetentionEpochs;
+		});
+	}
+
+	bool IsFullRTDynamicCaster(RE::BSGeometry& geom)
+	{
+		if (geom.GetGeometryRuntimeData().skinInstance || geom.AsDynamicTriShape())
+			return true;
+		auto [it, inserted] = fullRTCasterMotion.try_emplace(&geom);
+		auto& record = it->second;
+		if (!inserted && record.lastEpoch == s_casterClassEpoch)
+			return record.dynamic;
+		const bool first = inserted || record.lastEpoch < 0 ||
+			s_casterClassEpoch - record.lastEpoch > kFullRTMotionRetentionEpochs;
+		if (first)
+			record = {};
+		if (first || s_casterClassEpoch - record.ancestryEpoch >= kAncestryRecheckEpochs) {
+			record.actorAttached = false;
+			auto* node = static_cast<RE::NiAVObject*>(&geom);
+			for (uint32_t depth = 0; node && depth < kFullRTParentLimit; ++depth, node = node->parent)
+				if (const auto* owner = node->GetUserData(); owner && owner->IsActor()) {
+					record.actorAttached = true;
+					break;
+				}
+			record.ancestryEpoch = s_casterClassEpoch;
+		}
+		const auto& world = geom.world;
+		std::array<float, 13> pose{ world.translate.x, world.translate.y, world.translate.z };
+		for (uint32_t row = 0; row < 3; ++row)
+			for (uint32_t col = 0; col < 3; ++col)
+				pose[3 + 3 * row + col] = world.rotate.entry[row][col];
+		pose.back() = world.scale;
+		bool moved = false, finite = true;
+		for (size_t i = 0; i < pose.size(); ++i) {
+			finite &= std::isfinite(pose[i]);
+			const float threshold = i < 3 ? kFullRTTranslationThreshold : kFullRTRotationScaleThreshold;
+			moved |= std::abs(pose[i] - record.pose[i]) >= threshold;
+		}
+		if (!finite) {
+			record.poseValid = false;
+			record.lastMovedEpoch = -1;
+		} else if (!record.poseValid || moved) {
+			if (record.poseValid)
+				record.lastMovedEpoch = s_casterClassEpoch;
+			record.pose = pose;
+			record.poseValid = true;
+		}
+		const bool moving = finite && record.lastMovedEpoch >= 0 &&
+			s_casterClassEpoch - record.lastMovedEpoch < kStaticStabilityFrames;
+		record.lastEpoch = s_casterClassEpoch;
+		record.dynamic = DX12::FullRTDynamicCaster(false, false, record.actorAttached, moving);
+		return record.dynamic;
 	}
 
 	static bool IsCasterDynamic(RE::BSGeometry& geom)
@@ -464,16 +543,18 @@ namespace ShadowCasterManager
 			s_passlessCasterSkipByReason[static_cast<int>(passless)].fetch_add(1, std::memory_order_relaxed);
 			return true;
 		}
+		if (nativeMode == DX12::SCMNativeCasterMode::SuppressAll) {
+			const bool dynamic = IsFullRTDynamicCaster(geom);
+			if (dynamic)
+				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+			return !dynamic;
+		}
 		// Skinned = always dynamic (see IsCasterDynamic); only non-skinned
 		// casters have a mobility record, classified once per frame.
 		CasterMobility* rec = geom.GetGeometryRuntimeData().skinInstance ?
 		                          nullptr :
 		                          &ClassifyCaster(geom);
-		const bool dynamic = nativeMode == DX12::SCMNativeCasterMode::SuppressAll ?
-			DX12::FullRTDynamicCaster(!rec, geom.AsDynamicTriShape() != nullptr,
-				rec && rec->actorAttached, rec && rec->dynamic, rec && rec->observedMotion,
-				rec && s_casterClassEpoch < OwnerMovingUntil(*rec)) :
-			!rec || rec->dynamic;
+		const bool dynamic = !rec || rec->dynamic;
 		if (nativeDynamicOnly) {
 			// Historical open-RT behavior: all stationary casters for the
 			// owned light are removed, even if TLAS coverage is incomplete.

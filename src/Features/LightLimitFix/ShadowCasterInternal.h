@@ -484,7 +484,11 @@ namespace ShadowCasterManager
 
 	/// Renders one shadow light with the pass-chain guard armed. False if the guard skipped any of its
 	/// passes, in which case the light is not fully drawn and must not be marked rendered.
-	bool RenderLightGuarded(RE::BSShadowLight* a_light, uint32_t& a_index);
+	bool RenderLightGuarded(RE::BSShadowLight* a_light, uint32_t& a_index, bool fullRTDynamicOnly = false);
+	/** @brief Shared Full RT caster admission for accumulation and final raster draws. */
+	bool IsFullRTDynamicCaster(RE::BSGeometry& geometry);
+	void ResetFullRTCasterMotion();
+	void PruneFullRTCasterMotion();
 
 	// Per-accumulate split-cache visitation state, reset/consumed by EnableLight.
 	extern std::uint64_t s_visitStaticHash;
@@ -509,7 +513,6 @@ namespace ShadowCasterManager
 		uint64_t foldHash = 0;
 		bool foldHashValid = false;
 		bool dynamic = true;
-		bool observedMotion = false;
 		bool actorAttached = false;                ///< parented under an actor's skeleton
 		int ancestryEpoch = -1;                    ///< epoch of the last parent-chain walk
 		int classEpoch = -1;                       ///< epoch its static / dynamic class last changed after its first sighting

@@ -590,13 +590,11 @@ TEST_CASE("Native SCM ownership is established by rendering mode", "[scm][dx12]"
 TEST_CASE("Full RT admits actual dynamic casters without first-sighting static leakage", "[dx12][shadow]")
 {
 	using DX12::FullRTDynamicCaster;
-	CHECK_FALSE(FullRTDynamicCaster(false, false, false, true, false, false));
-	CHECK_FALSE(FullRTDynamicCaster(false, false, false, false, true, false));
-	CHECK(FullRTDynamicCaster(true, false, false, false, false, false));
-	CHECK(FullRTDynamicCaster(false, true, false, false, false, false));
-	CHECK(FullRTDynamicCaster(false, false, true, false, false, false));
-	CHECK(FullRTDynamicCaster(false, false, false, true, true, false));
-	CHECK(FullRTDynamicCaster(false, false, false, true, false, true));
+	CHECK_FALSE(FullRTDynamicCaster(false, false, false, false));
+	CHECK(FullRTDynamicCaster(true, false, false, false));
+	CHECK(FullRTDynamicCaster(false, true, false, false));
+	CHECK(FullRTDynamicCaster(false, false, true, false));
+	CHECK(FullRTDynamicCaster(false, false, false, true));
 }
 
 TEST_CASE("Raster comparison requires developer mode without changing persisted IDs", "[dx12][shadow]")
