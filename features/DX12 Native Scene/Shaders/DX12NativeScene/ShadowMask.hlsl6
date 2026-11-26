@@ -98,7 +98,7 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 	{
 		uint mask = 0u;
 		const uint first = word * 32u;
-		const uint last = min(first + 32u, LightCount);
+		const uint last = any(lower > upper) ? first : min(first + 32u, LightCount);
 		[loop] for (uint lightIndex = first; lightIndex < last; ++lightIndex)
 		{
 			const float4 light = Lights[lightIndex * 3u];

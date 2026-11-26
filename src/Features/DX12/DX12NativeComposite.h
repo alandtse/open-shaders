@@ -36,7 +36,7 @@ namespace DX12Native
 			ID3D12CommandQueue* queue, ID3D11Texture2D* source,
 			uint32_t frame, uint32_t width, uint32_t height, Transfer transfer,
 			const std::shared_ptr<const ShadowMaskFrame>& shadow,
-			bool returnColorToDX11);
+			bool returnColorToDX11, bool publishReconstructedMask = false);
 		bool Retain(const std::shared_ptr<const Frame>& frame, ID3D12Fence* fence, uint64_t value);
 		~NativeComposite();
 		/** @brief Allow a new initialization attempt after a scene reset. */

@@ -106,8 +106,6 @@ float SampleVisibility(int2 logical, float4 center)
 [numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID) {
 	if (any(id.xy >= Size))
 		return;
-	if (PublishReconstructedMask != 0u)
-		ReconstructedMask[id.xy] = float4(1, 0, 0, 0);
 	if (PublishReconstructedMask == 0u) {
 		const int2 logical = int2(id.xy / NativeShadowQualityScale(QualityMode));
 		if (all(id.xy == RenderPixel(uint2(logical))) &&
@@ -116,21 +114,33 @@ float SampleVisibility(int2 logical, float4 center)
 			return;
 	}
 	const float depth = RasterDepth[id.xy];
-	if (!isfinite(depth) || depth <= 0.0f || depth >= 1.0f)
+	if (!isfinite(depth) || depth <= 0.0f || depth >= 1.0f) {
+		if (PublishReconstructedMask != 0u)
+			ReconstructedMask[id.xy] = float4(1, 0, 0, 0);
 		return;
+	}
 	float2 clip = (float2(id.xy) + 0.5f) * (2.0f / float2(Size)) - 1.0f;
 	clip.y = -clip.y;
 	float4 cameraView = mul(InverseProjection, float4(clip, depth, 1.0f));
-	if (!all(isfinite(cameraView)) || abs(cameraView.w) <= 1e-8f)
+	if (!all(isfinite(cameraView)) || abs(cameraView.w) <= 1e-8f) {
+		if (PublishReconstructedMask != 0u)
+			ReconstructedMask[id.xy] = float4(1, 0, 0, 0);
 		return;
+	}
 	const float3 position = mul((float3x3)InverseView, cameraView.xyz / cameraView.w);
 	const float receiverDistance = length(position);
-	if (!isfinite(receiverDistance) || receiverDistance <= 0.0f)
+	if (!isfinite(receiverDistance) || receiverDistance <= 0.0f) {
+		if (PublishReconstructedMask != 0u)
+			ReconstructedMask[id.xy] = float4(1, 0, 0, 0);
 		return;
+	}
 	const float tolerance = max(ReceiverTolerance, receiverDistance * 1e-5f);
 	const float4 reference = Reconstruct(id.xy, receiverDistance, tolerance);
-	if (!ReceiverSample(reference))
+	if (!ReceiverSample(reference)) {
+		if (PublishReconstructedMask != 0u)
+			ReconstructedMask[id.xy] = float4(1, 0, 0, 0);
 		return;
+	}
 	float visibility = saturate(reference.x);
 	if (ValidMask(reference) && SpatialReconstruction != 0u && RadiusPixels > 0.5f) {
 		const uint scale = NativeShadowQualityScale(QualityMode);
