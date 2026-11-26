@@ -64,8 +64,8 @@ namespace DX12Native
 			winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
 			SharedFence fence;
 			std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
-			GraphicsBackend backend;
-			winrt::com_ptr<ID3D11Texture2D> source;
+			ID3D12Device* device = nullptr;
+			ID3D11Device* device11 = nullptr;
 			D3D11_TEXTURE2D_DESC sourceDesc{};
 			bool supportsShadow = false, hasReturn = false, untracked = false;
 			uint64_t frameBytes = 0;
