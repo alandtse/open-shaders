@@ -74,11 +74,14 @@ static async Task<int> ServeAsync(string[] arguments)
                     continue;
                 }
                 TileResult? result = null;
+                ulong requestId = 0;
                 try
                 {
                     using var message = JsonDocument.Parse(await File.ReadAllTextAsync(requestFile));
                     File.Delete(requestFile);
                     var root = message.RootElement;
+                    requestId = root.GetProperty("requestId").GetUInt64();
+                    if (requestId == 0) throw new InvalidDataException("Invalid request ID");
                     if (root.TryGetProperty("preloadLastSave", out var load) && load.GetBoolean())
                     {
                         var size = root.GetProperty("size").GetInt32();
@@ -115,7 +118,8 @@ static async Task<int> ServeAsync(string[] arguments)
                 }
                 // Publish only after serialization completes; the host adopts reply.json atomically.
                 await using (var stream = new FileStream(replyTemp, FileMode.Create, FileAccess.Write, FileShare.None))
-                    await JsonSerializer.SerializeAsync(stream, result ?? new TileResult(1, 0, 1, false, [], []), options);
+                    await JsonSerializer.SerializeAsync(stream, (result ?? new TileResult(1, 0, 1, false, [], [])) with
+                    { RequestId = requestId }, options);
                 File.Move(replyTemp, replyFile, true);
             }
         }
@@ -166,7 +170,7 @@ internal sealed record TileResult(uint Version, uint EligibleShapes, uint Failed
     Dictionary<string, uint>? RejectionReasons = null,
     List<TileNifSource>? NifSources = null, List<TileMissingNifShape>? MissingShapes = null,
     bool WholeCell = false, string ScopePlugin = "", uint ScopeLocal = 0, long CenterX = 0, long CenterY = 0,
-    bool SpatialBoundsComplete = false, string ResidencyReason = "");
+    bool SpatialBoundsComplete = false, string ResidencyReason = "", ulong RequestId = 0);
 internal sealed record ModelShape(int Index, Vector3[] Positions, uint[] Indices, Matrix4x4 ToModel);
 internal sealed record MissingModelShape(int Index, string Reason);
 internal sealed record ModelExtraction(ModelShape[] Shapes, MissingModelShape[] Missing,

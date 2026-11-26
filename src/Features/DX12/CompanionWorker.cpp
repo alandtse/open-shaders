@@ -172,7 +172,7 @@ namespace DX12
 		}
 
 		bool InvokeCompanion(const CompanionRequest& task, const std::filesystem::path& destination,
-			std::stop_token stop, const std::atomic<uint64_t>& generation, uint64_t epoch, std::string& failure)
+			std::stop_token stop, const std::atomic<uint64_t>& generation, uint64_t epoch, uint64_t requestID, std::string& failure)
 		{
 			const auto executable = std::filesystem::absolute(
 				L"Data/SKSE/Plugins/CommunityShaders/DX12Resources/bin/DX12ResourcesPrep.exe");
@@ -202,6 +202,7 @@ namespace DX12
 			const auto request = service.root / L"request.json";
 			const auto reply = service.root / L"reply.json";
 			const json message = {
+				{ "requestId", requestID },
 				{ "scopePlugin", task.scopePlugin },
 				{ "localScopeID", task.localScopeID },
 				{ "x", task.key.x },
@@ -427,7 +428,9 @@ namespace DX12
 			}
 		} cleanup{ folder, work };
 		const auto file = folder / L"tile.json";
-		if (!InvokeCompanion(task, file, stop, generation, epoch, result.failure) ||
+		static thread_local uint64_t nextRequestID = 0;
+		const uint64_t requestID = ++nextRequestID;
+		if (!InvokeCompanion(task, file, stop, generation, epoch, requestID, result.failure) ||
 			generation.load(std::memory_order_acquire) != epoch || stop.stop_requested())
 			return result;
 		try {
@@ -438,6 +441,14 @@ namespace DX12
 			}
 			stream.seekg(0);
 			const auto root = json::parse(stream);
+			const uint64_t replyID = root.value("requestId", uint64_t{ 0 });
+			if (replyID != requestID) {
+				// Initialization failures precede request consumption and cannot certify a tile.
+				const auto failure = root.value("failure", std::string{});
+				result.failure = replyID == 0 && !failure.empty() ? failure.substr(0, 320) : "Companion reply request ID mismatch";
+				CurrentCompanionProcess().Close();
+				return result;
+			}
 			result.residencyReason = root.value("residencyReason", std::string{}).substr(0, 320);
 			if (const auto entry = root.find("failure"); entry != root.end() && entry->is_string()) {
 				result.failure = entry->get<std::string>().substr(0, 320);
