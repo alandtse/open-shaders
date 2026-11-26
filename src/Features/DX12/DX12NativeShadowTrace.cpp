@@ -34,7 +34,7 @@ namespace DX12Native
 			float shadowReachMultiplier = kDefaultShadowReachMultiplier, shadowFadeRange = kDefaultShadowFadeRange, shadowFalloffCurve = 1.0f;
 			float nearLightRadius = 0.0f;
 			uint32_t nearLightExclusion = 0, stochasticSampling = 1;
-			float emitterRadiusMultiplier = kDefaultShadowEmitterRadiusMultiplier;
+			float emitterRadiusMultiplier = NativeShadowEmitterMultiplier(kDefaultShadowQualityMode);
 			uint32_t checkerboardOrigin = 0;
 			uint32_t logicalWidth, logicalHeight, physicalWidth, physicalHeight;
 		};
@@ -232,10 +232,8 @@ namespace DX12Native
 				std::clamp(controls.falloffCurve, 0.0f, 2.5f),
 				std::clamp(controls.nearLightRadius, 0.0f, 512.0f),
 				controls.nearLightExclusion ? 1u : 0u,
-				controls.stochasticSampling ? 1u : 0u,
-				std::isfinite(controls.emitterRadiusMultiplier) ?
-					std::clamp(controls.emitterRadiusMultiplier, 0.0f, kMaximumShadowEmitterRadiusMultiplier) :
-					kDefaultShadowEmitterRadiusMultiplier,
+				NativeShadowEmitterMultiplier(quality) > 0.0f ? 1u : 0u,
+				NativeShadowEmitterMultiplier(quality),
 				sampling.checkerboardOrigin,
 				sampling.logicalWidth, sampling.logicalHeight, sampling.physicalWidth, sampling.physicalHeight
 			};

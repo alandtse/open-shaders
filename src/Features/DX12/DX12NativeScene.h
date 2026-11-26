@@ -92,7 +92,7 @@ private:
 	std::atomic<bool> allLightStaticReady{ false };
 	std::atomic<bool> debugNativeLights{ false };
 	bool shadowMaskEnabled = true;
-	std::atomic<bool> additivePreparedEmission{ false };
+	std::atomic<bool> additivePreparedEmission{ true };
 	std::atomic<uint32_t> runtimeUnificationRadius{ DX12Native::kDefaultRuntimeUnificationRadius };
 	std::atomic<uint32_t> preparedExclusionRadius{ DX12Native::kDefaultPreparedExclusionRadius };
 	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
@@ -106,8 +106,6 @@ private:
 	float shadowReachMultiplier = DX12Native::kDefaultShadowReachMultiplier;  // Native only. Vanilla lights stay unchanged.
 	float shadowFadeRange = DX12Native::kDefaultShadowFadeRange;
 	float shadowFalloffCurve = 1.0f;
-	bool shadowStochastic = true;
-	float shadowEmitterRadiusMultiplier = DX12Native::kDefaultShadowEmitterRadiusMultiplier;
 	struct RuntimeLightSample
 	{
 		const RE::NiLight* source = nullptr;  // Identity of the SCM light actually observed.

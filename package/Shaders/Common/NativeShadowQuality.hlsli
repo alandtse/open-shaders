@@ -20,6 +20,22 @@ namespace DX12Native
 	SHADOW_QUALITY_CONST uint kShadowQualityPotato = 4u;
 	SHADOW_QUALITY_CONST uint kShadowQualityCount = 5u;
 
+	SHADOW_QUALITY_FUNCTION float NativeShadowEmitterMultiplier(uint quality)
+	{
+		switch (quality) {
+		case kShadowQualityFull:
+			return 1.00f;
+		case kShadowQualityMedium:
+			return 0.40f;
+		case kShadowQualityLow:
+			return 0.20f;
+		case kShadowQualityPotato:
+			return 0.0f;
+		default:
+			return 0.65f;
+		}
+	}
+
 	SHADOW_QUALITY_FUNCTION uint NativeShadowCeilDivide(uint size, uint divisor)
 	{
 		return size / divisor + (size % divisor != 0u ? 1u : 0u);

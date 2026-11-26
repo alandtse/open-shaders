@@ -18,8 +18,6 @@ namespace DX12Native
 	inline constexpr uint32_t kDefaultShadowQualityMode = kShadowQualityQuality;
 	inline constexpr float kDefaultShadowReachMultiplier = 1.25f;
 	inline constexpr float kDefaultShadowFadeRange = 0.36f;
-	inline constexpr float kDefaultShadowEmitterRadiusMultiplier = 0.75f;
-	inline constexpr float kMaximumShadowEmitterRadiusMultiplier = 8.0f;
 
 	/** @brief Shadow-only behavior. Live matched values override companion fallbacks. */
 	struct ShadowTraceControls
@@ -31,8 +29,6 @@ namespace DX12Native
 		float reachMultiplier = kDefaultShadowReachMultiplier;  // 1.0 means vanilla light radius.
 		float fadeRange = kDefaultShadowFadeRange;  // Fraction of native shadow reach.
 		float falloffCurve = 1.0f;
-		bool stochasticSampling = true;
-		float emitterRadiusMultiplier = kDefaultShadowEmitterRadiusMultiplier;
 		bool captureDebugLights = false;
 	};
 

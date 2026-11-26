@@ -67,11 +67,8 @@ void DX12NativeScene::DrawSettings()
 	int mode = static_cast<int>(qualityMode);
 	if (ImGui::Combo(T("menu.dx12.scene.shadow_quality", "Shadow quality"), &mode, qualities, int(std::size(qualities))))
 		qualityMode = static_cast<uint32_t>(mode);
-	ImGui::Checkbox(T("menu.dx12.scene.shadow_stochastic", "Stochastic shadow emitter sampling"), &shadowStochastic);
-	ImGui::BeginDisabled(!shadowStochastic);
-	ImGui::SliderFloat(T("menu.dx12.scene.shadow_emitter_multiplier", "Shadow emitter radius multiplier"), &shadowEmitterRadiusMultiplier,
-		0.0f, DX12Native::kMaximumShadowEmitterRadiusMultiplier, "%.2fx");
-	ImGui::EndDisabled();
+	ImGui::TextDisabled("%s: %.2fx", T("menu.dx12.scene.shadow_stochastic", "Stochastic shadow emitter sampling"),
+		DX12Native::NativeShadowEmitterMultiplier(qualityMode));
 	ImGui::Checkbox(T("menu.dx12.scene.exclude_near_light", "Exclude shadows near light geometry"), &nearLightShadowExclusion);
 	ImGui::BeginDisabled(!nearLightShadowExclusion);
 	int nearUnits = int(nearLightExclusionUnits);
@@ -126,7 +123,7 @@ void DX12NativeScene::LoadSettings(json& input)
 {
 	shadowMaskEnabled = input.value("ShadowMask", true);
 	globals::features::dx12Control.MigrateLegacyFullShadowMode(input.value("TraceAllPreparedLights", false));
-	additivePreparedEmission.store(input.value("AdditivePreparedEmission", false), std::memory_order_relaxed);
+	additivePreparedEmission.store(input.value("AdditivePreparedEmission", true), std::memory_order_relaxed);
 	uint32_t unify = input.value("RuntimeUnificationRadius", DX12Native::kDefaultRuntimeUnificationRadius);
 	uint32_t exclude = input.value("PreparedExclusionRadius", DX12Native::kDefaultPreparedExclusionRadius);
 	if (!input.contains("AdditivePreparedEmission")) {
@@ -154,11 +151,6 @@ void DX12NativeScene::LoadSettings(json& input)
 	shadowReachMultiplier = std::clamp(input.value("ShadowReachMultiplier", DX12Native::kDefaultShadowReachMultiplier), 0.1f, 64.0f);
 	shadowFadeRange = std::round(std::clamp(input.value("ShadowFadeRange", DX12Native::kDefaultShadowFadeRange), 0.0f, 1.0f) * 50.0f) / 50.0f;
 	shadowFalloffCurve = std::clamp(input.value("ShadowFalloffCurve", 1.0f), 0.0f, 2.5f);
-	shadowStochastic = input.value("ShadowStochastic", true);
-	const float emitterMultiplier = input.value("ShadowEmitterRadiusMultiplier", DX12Native::kDefaultShadowEmitterRadiusMultiplier);
-	shadowEmitterRadiusMultiplier = std::isfinite(emitterMultiplier) ?
-	                                    std::clamp(emitterMultiplier, 0.0f, DX12Native::kMaximumShadowEmitterRadiusMultiplier) :
-	                                    DX12Native::kDefaultShadowEmitterRadiusMultiplier;
 }
 
 void DX12NativeScene::SaveSettings(json& output)
@@ -174,15 +166,13 @@ void DX12NativeScene::SaveSettings(json& output)
 		{ "ShadowNearLightRadius", nearLightExclusionUnits },
 		{ "ShadowReachMultiplier", shadowReachMultiplier },
 		{ "ShadowFadeRange", shadowFadeRange },
-		{ "ShadowFalloffCurve", shadowFalloffCurve },
-		{ "ShadowStochastic", shadowStochastic },
-		{ "ShadowEmitterRadiusMultiplier", shadowEmitterRadiusMultiplier } };
+		{ "ShadowFalloffCurve", shadowFalloffCurve } };
 }
 
 void DX12NativeScene::RestoreDefaultSettings()
 {
 	shadowMaskEnabled = true;
-	additivePreparedEmission.store(false, std::memory_order_relaxed);
+	additivePreparedEmission.store(true, std::memory_order_relaxed);
 	runtimeUnificationRadius.store(DX12Native::kDefaultRuntimeUnificationRadius, std::memory_order_relaxed);
 	preparedExclusionRadius.store(DX12Native::kDefaultPreparedExclusionRadius, std::memory_order_relaxed);
 	debugNativeLights.store(false, std::memory_order_relaxed);
@@ -200,8 +190,6 @@ void DX12NativeScene::RestoreDefaultSettings()
 	shadowReachMultiplier = DX12Native::kDefaultShadowReachMultiplier;
 	shadowFadeRange = DX12Native::kDefaultShadowFadeRange;
 	shadowFalloffCurve = 1.0f;
-	shadowStochastic = true;
-	shadowEmitterRadiusMultiplier = DX12Native::kDefaultShadowEmitterRadiusMultiplier;
 }
 
 bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
@@ -602,8 +590,6 @@ void DX12NativeScene::OnOpaqueRasterReady()
 			.reachMultiplier = shadowReachMultiplier,
 			.fadeRange = shadowFadeRange,
 			.falloffCurve = shadowFalloffCurve,
-			.stochasticSampling = shadowStochastic,
-			.emitterRadiusMultiplier = shadowEmitterRadiusMultiplier,
 			.captureDebugLights = debugNativeLights.load(std::memory_order_relaxed)
 		};
 		if (TraceAllPreparedLights()) {

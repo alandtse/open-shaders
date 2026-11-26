@@ -327,3 +327,14 @@ TEST_CASE("Prepared emission addition is opt-in and assigned once", "[dx12][shad
 	CHECK(enabled[0].referenceID == prepared[0].referenceID);
 	CHECK(ConsolidateFullShadowLights<Light>(prepared, runtime, 0, 0, true).size() == 5);
 }
+
+TEST_CASE("DX12 stochastic emitter radius follows the shadow quality", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	CHECK(NativeShadowEmitterMultiplier(kShadowQualityFull) == 1.00f);
+	CHECK(NativeShadowEmitterMultiplier(kShadowQualityQuality) == 0.65f);
+	CHECK(NativeShadowEmitterMultiplier(kShadowQualityMedium) == 0.40f);
+	CHECK(NativeShadowEmitterMultiplier(kShadowQualityLow) == 0.20f);
+	CHECK(NativeShadowEmitterMultiplier(kShadowQualityPotato) == 0.0f);
+	CHECK(NativeShadowEmitterMultiplier(kShadowQualityCount) == 0.65f);
+}
