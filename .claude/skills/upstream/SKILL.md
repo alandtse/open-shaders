@@ -197,7 +197,7 @@ Outcomes: `port-clean`, `port-adapted`, `already-upstream (#NNNN)`, `in-open-PR 
     - **Summary**
     - **Source:** fork, PR/commit, original author. Include the exact `Ported from ...` line.
     - **Differences from the fork version**
-    - **Reuse:** what was searched for each added helper, and what was reused
+    - **Reuse:** what was searched for each added helper, constant and parser, and what was reused
     - **Verification done**
     - **Not verified:** e.g. "not built locally (Linux container); CI is the build check"
     - **Related PRs:** the sibling PRs from this run, plus any overlapping open PRs
