@@ -10,6 +10,8 @@ struct SnowDeformation : Feature
 	virtual std::string GetDisplayName() override { return T("feature.snow_deformation.name", "Snow Deformation"); }
 	virtual inline std::string GetShortName() override { return "SnowDeformation"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kLandscapeAndTextures; }
+	virtual inline std::string_view GetShaderDefineName() override { return "SNOW_DEFORMATION"; }
+	virtual bool HasShaderDefine(RE::BSShader::Type shaderType) override { return shaderType == RE::BSShader::Type::Lighting; }
 
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
