@@ -62,7 +62,10 @@ namespace DX12Native
 			winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
 			SharedFence fence;
 			std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
-			GraphicsBackend backend;
+			ID3D12Device* device = nullptr;
+			ID3D11Device* device11 = nullptr;
+			ID3D11DeviceContext4* context11 = nullptr;
+			ID3D12CommandQueue* queue = nullptr;
 			D3D11_TEXTURE2D_DESC sourceDesc{};
 			bool supportsShadow = false, hasReturn = false, untracked = false;
 			uint64_t frameBytes = 0;
@@ -71,7 +74,7 @@ namespace DX12Native
 		std::array<std::unique_ptr<Slot>, 4> slots;
 		winrt::com_ptr<ID3D12RootSignature> shadowRoot;
 		winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
-		winrt::com_ptr<ID3D12Device> shadowDevice;
+		ID3D12Device* shadowDevice = nullptr;
 		winrt::com_ptr<ID3D12Device> failedShadowDevice;
 		VideoMemoryBudget videoBudget;
 		bool captureFailureLogged = false;
