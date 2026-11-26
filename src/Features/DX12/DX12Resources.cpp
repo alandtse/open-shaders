@@ -5,6 +5,7 @@
 #include "GpuPass.h"
 #include "RE/T/TES.h"
 #include "RE/T/TESWorldSpace.h"
+#include "ScenePrepCoverage.h"
 #include "ScenePrepWorker.h"
 #include "Utils/Game.h"
 #include "Utils/PerfUtils.h"
@@ -254,9 +255,9 @@ namespace DX12
 		tile->shapes = std::move(publication.shapes);
 		tile->bytes = publication.geometryBytes;
 		tile->lights = std::move(publication.lights);
-		const bool complete = publication.validated && publication.enumerationComplete &&
-		                      publication.failedShapes == 0 && publication.rejectedLights == 0 &&
-		                      publication.eligibleShapes == tile->shapes.size();
+		const bool complete = IsScenePrepCoverageComplete(
+			publication.validated, publication.enumerationComplete, publication.failedShapes,
+			publication.rejectedLights, publication.eligibleShapes, tile->shapes.size());
 		if (publication.validated && (complete || !tile->shapes.empty() || !tile->lights.empty())) {
 			// Partial geometry is usable but does not certify complete static-shadow coverage.
 			tile->state = complete ? Tile::State::Ready : Tile::State::ReadyPartial;

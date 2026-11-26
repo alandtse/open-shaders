@@ -7,6 +7,7 @@
 #include "RE/B/BSModelDB.h"
 #include "RE/B/BSShaderProperty.h"
 #include "RE/B/BSTriShape.h"
+#include "RE/E/ExtraEnableStateParent.h"
 #include "RE/G/GridCellArray.h"
 #include "RE/N/NiNode.h"
 #include "RE/N/NiTimeController.h"
@@ -19,6 +20,8 @@
 #include "RE/T/TESObjectREFR.h"
 #include "RE/T/TESObjectSTAT.h"
 #include "RE/T/TESWorldSpace.h"
+#include "ScenePrepCoverage.h"
+#include "ScenePrepEligibility.h"
 #include "ScenePrepEngineBridge.h"
 
 #include <ankerl/unordered_dense.h>
@@ -218,8 +221,13 @@ namespace DX12
 			RE::NiAVObject* a_obj, uint32_t a_ownerFormID, std::string_view a_plugin, uint32_t a_localID,
 			std::string_view a_nifPath, uint32_t& a_shapeOrdinal, uint32_t a_depth, ScenePrepRequest& a_request)
 		{
-			if (!a_obj || a_depth > kMaxSceneGraphDepth || a_obj->GetAppCulled())
+			if (!a_obj || a_obj->GetAppCulled())
 				return;
+			if (IsSceneGraphDepthExceeded(a_depth, kMaxSceneGraphDepth)) {
+				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "scene graph depth limit exceeded");
+				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, -1, "scene graph depth limit exceeded");
+				return;
+			}
 			if (a_obj->GetControllers() != nullptr) {
 				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "unsupported animated or nontriangle shape");
 				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, -1, "unsupported animated or nontriangle shape");
@@ -312,8 +320,14 @@ namespace DX12
 			RE::NiAVObject* a_obj, const AffineTransform& a_parentTransform, uint32_t& a_shapeOrdinal,
 			uint32_t a_depth, CachedModelExtraction& a_out)
 		{
-			if (!a_obj || a_depth > kMaxSceneGraphDepth || a_obj->GetAppCulled())
+			if (!a_obj || a_obj->GetAppCulled())
 				return;
+			if (IsSceneGraphDepthExceeded(a_depth, kMaxSceneGraphDepth)) {
+				uint32_t ignored = 0;
+				RecordRejection(a_out.rejections, ignored, "scene graph depth limit exceeded");
+				a_out.missing.emplace_back(-1, "scene graph depth limit exceeded");
+				return;
+			}
 			if (a_obj->GetControllers() != nullptr) {
 				uint32_t ignored = 0;
 				RecordRejection(a_out.rejections, ignored, "unsupported animated or nontriangle shape");
@@ -467,17 +481,21 @@ namespace DX12
 			if (!nifView.empty())
 				AddNifSource(request, plugin, localID, nifView);
 
+			if (IsRuntimeDependentPlacement(
+					base->Is(RE::FormType::MovableStatic), a_ref->HasVMAD(),
+					a_ref->extraList.GetByType<RE::ExtraEnableStateParent>() != nullptr,
+					a_ref->IsInitiallyDisabled())) {
+				RecordRejection(request.rejectionReasons, request.failedShapes, "runtime-dependent placement");
+				AddMissingShape(request, plugin, localID, nifView, -1, "runtime-dependent placement");
+				return RE::BSContainer::ForEachResult::kContinue;
+			}
+
 			if (auto* root = a_ref->Get3D()) {
 				uint32_t ordinal = 0;
 				CaptureAttachedSubtree(root, refID, plugin, localID, nifView, ordinal, 0, request);
 				return RE::BSContainer::ForEachResult::kContinue;
 			}
 
-			if (base->Is(RE::FormType::MovableStatic) || a_ref->HasVMAD()) {
-				RecordRejection(request.rejectionReasons, request.failedShapes, "runtime-dependent placement");
-				AddMissingShape(request, plugin, localID, nifView, -1, "runtime-dependent placement");
-				return RE::BSContainer::ForEachResult::kContinue;
-			}
 			if (!nifPath) {
 				RecordRejection(request.rejectionReasons, request.failedShapes, "missing mesh path");
 				return RE::BSContainer::ForEachResult::kContinue;
