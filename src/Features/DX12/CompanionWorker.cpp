@@ -263,6 +263,11 @@ namespace DX12
 
 	CompanionWorker::~CompanionWorker()
 	{
+		Stop();
+	}
+
+	void CompanionWorker::Stop()
+	{
 		worker.request_stop();
 		wake.notify_all();
 	}
@@ -322,7 +327,7 @@ namespace DX12
 				epoch = generation.load(std::memory_order_acquire);
 			}
 			const auto started = std::chrono::steady_clock::now();
-			auto result = Prepare(task, stop);
+			auto result = Prepare(task, epoch, stop);
 			result.predictive = task.predictive;
 			result.corner = task.corner;
 			result.preparationMs = std::chrono::duration<double, std::milli>(
@@ -337,7 +342,7 @@ namespace DX12
 		}
 	}
 
-	CompanionResult CompanionWorker::Prepare(const CompanionRequest& task, std::stop_token stop)
+	CompanionResult CompanionWorker::Prepare(const CompanionRequest& task, uint64_t epoch, std::stop_token stop)
 	{
 		CompanionResult result;
 		result.publication.key = task.key;
@@ -366,7 +371,8 @@ namespace DX12
 			}
 		} cleanup{ folder, work };
 		const auto file = folder / L"tile.json";
-		if (!InvokeCompanion(task, file, stop, result.failure))
+		if (!InvokeCompanion(task, file, stop, result.failure) ||
+			generation.load(std::memory_order_acquire) != epoch || stop.stop_requested())
 			return result;
 		try {
 			std::ifstream stream(file, std::ios::binary | std::ios::ate);

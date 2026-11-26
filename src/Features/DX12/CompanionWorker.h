@@ -50,10 +50,11 @@ namespace DX12
 		bool Enqueue(CompanionRequest request);
 		std::optional<CompanionResult> Take();
 		void Cancel();
+		void Stop();
 
 	private:
 		void Run(std::stop_token stop);
-		CompanionResult Prepare(const CompanionRequest& request, std::stop_token stop);
+		CompanionResult Prepare(const CompanionRequest& request, uint64_t requestGeneration, std::stop_token stop);
 
 		mutable std::mutex mutex;
 		std::condition_variable_any wake;

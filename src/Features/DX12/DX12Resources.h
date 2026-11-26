@@ -211,6 +211,7 @@ private:
 	void EnsureCompanion();
 	void ResetPreparation();
 	std::once_flag companionStart;
+	std::atomic<bool> companionStarted{ false };
 	bool preparationActive = false;
 	std::atomic<bool> runtimePublicationEnabled{ false };
 	DX12::ResourceGrid grid;

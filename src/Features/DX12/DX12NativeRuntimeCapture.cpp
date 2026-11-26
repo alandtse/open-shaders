@@ -108,7 +108,7 @@ namespace DX12Native
 		const uint64_t vertexBytes = uint64_t(candidate.stride) * candidate.vertexCount;
 		const uint64_t indexCount = uint64_t(candidate.triangleCount) * 3;
 		const uint64_t bytes = vertexBytes + indexCount * sizeof(uint16_t);
-		if (!bytes || !DX12::HasAvailableSystemMemory(bytes) || indexCount > UINT32_MAX)
+		if (!bytes || indexCount > UINT32_MAX)
 			return;
 		const auto center = grid->requested.front();
 		const uint64_t id = Identity(candidate);
@@ -148,9 +148,10 @@ namespace DX12Native
 				if (seen.second < 3)
 					return;
 			}
-			if (pending.size() >= kPacketLimit ||
-				!captured.insert(id).second)
+			if (pending.size() >= kPacketLimit || captured.contains(id) ||
+				!DX12::HasAvailableSystemMemory(bytes))
 				return;
+			captured.insert(id);
 			admittedGeneration = generation;
 		}
 

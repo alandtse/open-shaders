@@ -653,6 +653,9 @@ void DX12Resources::EnsureCompanion()
 		DX12::CompanionRequest task;
 		task.warmup = true;
 		companion->Enqueue(std::move(task));
+		companionStarted.store(true, std::memory_order_release);
+		if (!IsActive())
+			companion->Stop();
 	});
 }
 
@@ -806,11 +809,13 @@ void DX12Resources::PreShadowMaps()
 
 void DX12Resources::OnRuntimeDisabled()
 {
-	if (!preparationActive)
-		return;
 	runtimePublicationEnabled.store(false, std::memory_order_release);
-	ResetPreparation();
-	preparationActive = false;
+	if (companionStarted.exchange(false, std::memory_order_acq_rel))
+		companion->Stop();
+	if (preparationActive) {
+		ResetPreparation();
+		preparationActive = false;
+	}
 }
 
 std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const

@@ -86,17 +86,17 @@ static async Task<int> ServeAsync(string[] arguments)
                     }
                     else
                     {
-                    var scope = new FormKey(ModKey.FromFileName(root.GetProperty("scopePlugin").GetString()!),
-                        root.GetProperty("localScopeID").GetUInt32());
-                    var x = root.GetProperty("x").GetInt64();
-                    var y = root.GetProperty("y").GetInt64();
-                    var size = root.GetProperty("size").GetInt32();
-                    var worldspace = root.GetProperty("worldspace").GetBoolean();
-                    if (size is not (4096 or 6144 or 8192 or 10240 or 12288 or 14336 or 16384) ||
-                        Math.Abs(x) > 1_000_000 || Math.Abs(y) > 1_000_000 ||
-                        !File.Exists(Path.Combine(data, scope.ModKey.ToString())))
-                        throw new InvalidDataException("Invalid companion scope");
-                    result = prepare(scope, x, y, size, worldspace, sessionRoot);
+                        var scope = new FormKey(ModKey.FromFileName(root.GetProperty("scopePlugin").GetString()!),
+                            root.GetProperty("localScopeID").GetUInt32());
+                        var x = root.GetProperty("x").GetInt64();
+                        var y = root.GetProperty("y").GetInt64();
+                        var size = root.GetProperty("size").GetInt32();
+                        var worldspace = root.GetProperty("worldspace").GetBoolean();
+                        if (size is not (4096 or 6144 or 8192 or 10240 or 12288 or 14336 or 16384) ||
+                            Math.Abs(x) > 1_000_000 || Math.Abs(y) > 1_000_000 ||
+                            !File.Exists(Path.Combine(data, scope.ModKey.ToString())))
+                            throw new InvalidDataException("Invalid companion scope");
+                        result = prepare(scope, x, y, size, worldspace, sessionRoot);
                     }
                 }
                 catch (Exception error) when (error is not OutOfMemoryException)
@@ -511,7 +511,7 @@ internal static class SceneTile
                     if (entry == null) continue;
                     if (entry.Size == 0)
                         throw new InvalidDataException("Empty archive mesh");
-                    if (!FitsManagedMemory(entry.Size))
+                    if (!FitsManagedMemory(checked((long)entry.Size)))
                         throw new OutOfMemoryException("Insufficient memory for archive extraction");
                     temporary = Path.Combine(scratch, "archive-mesh.nif");
                     File.WriteAllBytes(temporary, entry.GetBytes());
