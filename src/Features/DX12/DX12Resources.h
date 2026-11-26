@@ -148,7 +148,9 @@ namespace DX12
 		/** @brief Returns an unprepared tile request to a single companion producer. */
 		std::optional<SubcellKey> NextRequest();
 		/** @brief Publishes one fully enumerated companion subcell, otherwise marks it incomplete. */
-		bool Publish(CompanionPublication publication);
+		bool Publish(CompanionPublication publication, bool staged = false);
+		/** @brief Merges only compatible immutable prepared tiles, never runtime observations. */
+		void MergePrepared(const Grid& source);
 		/** @brief Accept an observed static shape within the active 3x3 without caching it on disk. */
 		bool PublishRuntimeShape(std::shared_ptr<const Shape> shape, float centerX, float centerY, uint32_t expectedScope = 0);
 		/** @brief Releases every in-memory tile at scene transition. */
@@ -214,6 +216,8 @@ struct DX12Resources final : Feature, private RE::BSTEventSink<RE::PositionPlaye
 	}
 	bool IsActive() const;
 	bool HasMenuPreload() const { return menuPreloaded; }
+	/** @brief True while the main-thread loading menu notification is active. */
+	bool IsLoading() const { return loadingActive.load(std::memory_order_acquire); }
 	/** @brief Returns the most recent prepared-light publication. */
 	std::vector<DX12::PreparedLight> GetPreparedLights() const;
 	/** @brief Collect an immutable grid's ordered light selection without engine access. */
@@ -244,6 +248,10 @@ private:
 	std::atomic<uint64_t> loadingSerial{ 0 };
 	uint64_t handledLoadingSerial = 0;
 	std::vector<std::unique_ptr<DX12::CompanionResult>> stagedResults;
+	std::unique_ptr<DX12::ResourceGrid> loadingGrid;
+	uint64_t loadingGridSerial = 0;
+	std::vector<std::unique_ptr<DX12::CompanionResult>> loadingPending;
+	void AdvanceLoadingPreparation();
 	void EnsureCompanion(bool menuStartup);
 	void PollStartup(uint32_t gameplayScope = 0);
 	enum class PublicationState { Valid, Invalid, Unavailable };

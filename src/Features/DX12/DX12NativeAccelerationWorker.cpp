@@ -17,6 +17,7 @@ namespace DX12Native
 		std::shared_ptr<const DX12::Grid> pending;
 		std::shared_ptr<Util::RuntimeTaskGate> taskGate;
 		std::atomic<std::shared_ptr<const TopLevel>> published{};
+		std::atomic<bool> staged{ false };
 		std::atomic<uint64_t> budgetDeferredRevision{ UINT64_MAX };
 		winrt::com_ptr<ID3D11Device> device;
 		winrt::com_ptr<ID3D11DeviceContext> context;
@@ -68,6 +69,16 @@ namespace DX12Native
 
 	void AccelerationWorker::Request(std::shared_ptr<const DX12::Grid> a_grid)
 	{
+		RequestImpl(std::move(a_grid), false);
+	}
+
+	void AccelerationWorker::RequestStaged(std::shared_ptr<const DX12::Grid> a_grid)
+	{
+		RequestImpl(std::move(a_grid), true);
+	}
+
+	void AccelerationWorker::RequestImpl(std::shared_ptr<const DX12::Grid> a_grid, bool staged)
+	{
 		auto current = state.load(std::memory_order_acquire);
 		if (!current || !a_grid || !a_grid->requested.front().scope)
 			return;
@@ -76,8 +87,11 @@ namespace DX12Native
 			std::scoped_lock lock(current->mutex);
 			if (current->closing)
 				return;
+			const bool wasStaged = current->staged.load(std::memory_order_acquire);
+			if (staged)
+				current->staged.store(true, std::memory_order_release);
 			if (current->lastScope != scope || current->lastRevision != a_grid->geometryRevision) {
-				if (current->lastScope && current->lastScope != scope)
+				if (staged || wasStaged || (current->lastScope && current->lastScope != scope))
 					current->published.store(nullptr, std::memory_order_release);
 				current->lastScope = scope;
 				current->lastRevision = a_grid->geometryRevision;
@@ -85,6 +99,8 @@ namespace DX12Native
 				current->pending = std::move(a_grid);
 				++current->epoch;
 			}
+			if (!staged)
+				current->staged.store(false, std::memory_order_release);
 		}
 		TrySchedule(current);
 	}
@@ -101,6 +117,7 @@ namespace DX12Native
 			current->lastRevision = std::numeric_limits<uint64_t>::max();
 			current->pending.reset();
 			current->published.store(nullptr, std::memory_order_release);
+			current->staged.store(false, std::memory_order_release);
 			current->failure.clear();
 			++current->resetSerial;
 			++current->epoch;
@@ -123,7 +140,7 @@ namespace DX12Native
 	std::shared_ptr<const TopLevel> AccelerationWorker::GetScene() const
 	{
 		auto current = state.load(std::memory_order_acquire);
-		return current ? current->published.load(std::memory_order_acquire) : nullptr;
+		return current && !current->staged.load(std::memory_order_acquire) ? current->published.load(std::memory_order_acquire) : nullptr;
 	}
 
 	bool AccelerationWorker::WholeCellBudgetDeferred(uint64_t revision) const

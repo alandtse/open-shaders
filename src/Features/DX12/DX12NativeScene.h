@@ -38,6 +38,8 @@ struct DX12NativeScene final : OverlayFeature
 	void PreShadowMaps() override;
 	/** @brief Starts asynchronous acceleration preparation for a menu-preloaded cell. */
 	void PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid);
+	/** @brief Prepares a loading destination through the same acceleration worker without scene ownership. */
+	void PrepareLoadingScene(std::shared_ptr<const DX12::Grid> grid);
 	/** @brief Retires a whole-cell build when it cannot fit the current DXGI budget. */
 	bool RetireBudgetDeferredWholeCell(uint64_t revision)
 	{

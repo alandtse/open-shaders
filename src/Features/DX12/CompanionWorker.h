@@ -45,6 +45,8 @@ namespace DX12
 		bool predictive = false;
 		bool corner = false;         // Predictive ring corners have separate generation timing.
 		double preparationMs = 0.0;  // Complete worker-side preparation, including companion IPC and parsing.
+		uint64_t loadingGeneration = 0;
+		size_t resolvedLights = 0;
 	};
 
 	struct CompanionPriority;
@@ -61,7 +63,7 @@ namespace DX12
 		void Cancel();
 		void CancelStartup();
 		/** @brief Preempts ordinary work and prepares the destination grid until loading ends. */
-		bool BeginLoading(CompanionRequest request, double x, double y, std::shared_ptr<const Grid> existing);
+		uint64_t BeginLoading(CompanionRequest request, double x, double y, std::shared_ptr<const Grid> existing);
 		/** @brief Revokes loading priority and cancels unfinished destination work. */
 		void EndLoading();
 		/** @brief Transfers completed destination results without resolving engine forms. */
@@ -83,7 +85,7 @@ namespace DX12
 		std::condition_variable_any wake;
 		std::optional<CompanionRequest> queued;
 		std::optional<CompanionResult> completed;
-		bool running = false, runningStartup = false, runningLoading = false;
+		bool running = false, runningStartup = false;
 		std::optional<LoadingBatch> loadingQueued;
 		std::optional<CompanionRequest> loadingTarget;
 		std::vector<std::unique_ptr<CompanionResult>> loadingResults;

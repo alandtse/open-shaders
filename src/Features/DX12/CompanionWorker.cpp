@@ -62,7 +62,8 @@ namespace DX12
 			if (!DuplicateHandle(GetCurrentProcess(), handle, GetCurrentProcess(), &process, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
 				logger::warn("[DX12Resources] Could not duplicate companion process handle: {}", GetLastError());
 				// Never elevate a process whose priority cannot be revoked.
-				SetPriorityClass(handle, priority);
+				if (!SetPriorityClass(handle, priority))
+					TerminateProcess(handle, 1);
 				return;
 			}
 			Apply();
@@ -426,18 +427,18 @@ namespace DX12
 		wake.notify_all();
 	}
 
-	bool CompanionWorker::BeginLoading(CompanionRequest request, double x, double y, std::shared_ptr<const Grid> existing)
+	uint64_t CompanionWorker::BeginLoading(CompanionRequest request, double x, double y, std::shared_ptr<const Grid> existing)
 	{
 		const auto keys = Neighborhood(request.key.scope, request.size, x, y);
 		if (!keys || worker.get_stop_token().stop_requested())
-			return false;
+			return 0;
 		request.key = keys->front();
 		request.loading = true;
 		std::scoped_lock lock(mutex);
 		if (loadingTarget && loadingTarget->key == request.key && loadingTarget->size == request.size &&
 			loadingTarget->consolidate == request.consolidate)
-			return false;
-		generation.fetch_add(1, std::memory_order_acq_rel);
+			return 0;
+		const auto epoch = generation.fetch_add(1, std::memory_order_acq_rel) + 1;
 		queued.reset();
 		completed.reset();
 		loadingResults.clear();
@@ -445,7 +446,7 @@ namespace DX12
 		loadingQueued = LoadingBatch{ std::move(request), x, y, std::move(existing) };
 		priorityState->SetLoading(true);
 		wake.notify_all();
-		return true;
+		return epoch;
 	}
 
 	void CompanionWorker::EndLoading()
@@ -501,6 +502,7 @@ namespace DX12
 			auto result = std::make_unique<CompanionResult>(Prepare(task, epoch, stop));
 			result->predictive = task.predictive;
 			result->corner = task.corner;
+			result->loadingGeneration = epoch;
 			result->preparationMs = double(Util::GetQpcTicks() - started) * 1000.0 / double(Util::GetQpcFrequency());
 			if (!result->publication.validated)
 				continue;
@@ -537,7 +539,6 @@ namespace DX12
 				}
 				if (loadingQueued) {
 					batch = std::exchange(loadingQueued, std::nullopt);
-					runningLoading = true;
 				} else {
 					task = std::move(*queued);
 					queued.reset();
@@ -555,7 +556,7 @@ namespace DX12
 					logger::warn("[DX12Resources] Destination preparation failed");
 				}
 				std::scoped_lock lock(mutex);
-				running = runningLoading = false;
+				running = false;
 				continue;
 			}
 			const auto started = Util::GetQpcTicks();

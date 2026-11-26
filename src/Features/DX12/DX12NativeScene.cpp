@@ -182,7 +182,7 @@ bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
 DX12::SCMNativeMode DX12NativeScene::GetFrameNativeMode() const
 {
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive() ||
-		!globals::game::graphicsState ||
+		globals::features::dx12Resources.IsLoading() || !globals::game::graphicsState ||
 		frameNativeModeID.load(std::memory_order_acquire) != globals::game::graphicsState->GetFrameCount())
 		return DX12::SCMNativeMode::Disabled;
 	return frameNativeMode.load(std::memory_order_acquire);
@@ -313,13 +313,24 @@ void DX12NativeScene::PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid)
 		acceleration.Request(std::move(grid));
 }
 
+void DX12NativeScene::PrepareLoadingScene(std::shared_ptr<const DX12::Grid> grid)
+{
+	if (!grid || !globals::features::dx12Resources.IsLoading() || !globals::features::dx12Control.IsActive() ||
+		!globals::d3d::device || !globals::d3d::context ||
+		!std::ranges::any_of(grid->resident, [](const auto& tile) { return tile && !tile->shapes.empty(); }))
+		return;
+	nativeSessionStarted = true;
+	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
+		acceleration.RequestStaged(std::move(grid));
+}
+
 void DX12NativeScene::PreShadowMaps()
 {
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive()) {
 		OnRuntimeDisabled();
 		return;
 	}
-	if (!globals::state || !globals::game::graphicsState ||
+	if (globals::features::dx12Resources.IsLoading() || !globals::state || !globals::game::graphicsState ||
 		!globals::state->startupMenuInitializationComplete.load(std::memory_order_acquire) ||
 		(globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))) {
 		frameNativeModeID.store(UINT32_MAX, std::memory_order_release);

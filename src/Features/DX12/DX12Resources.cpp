@@ -30,6 +30,12 @@ namespace DX12
 	constexpr uint32_t kSecondRetryDelayMs = 2000;
 	constexpr uint32_t kRetiredCacheFlushTransitions = 2;
 	constexpr double kMinimumMovementSquared = 1.0;
+	std::atomic<uint64_t> geometrySerial{ 0 };
+
+	uint64_t NextGeometryRevision()
+	{
+		return geometrySerial.fetch_add(1, std::memory_order_relaxed) + 1;
+	}
 
 	void ResourceGrid::Advance(uint32_t scope, uint32_t size, double x, double y)
 	{
@@ -59,7 +65,7 @@ namespace DX12
 		if (current->requested == *desired && current->size == size)
 			return;
 		auto next = std::make_shared<Grid>();
-		next->geometryRevision = current->geometryRevision + 1;
+		next->geometryRevision = NextGeometryRevision();
 		next->size = size;
 		next->requested = *desired;
 		next->predictive = *predictive;
@@ -205,12 +211,17 @@ namespace DX12
 		return std::nullopt;
 	}
 
-	bool ResourceGrid::Publish(CompanionPublication publication)
+	bool ResourceGrid::Publish(CompanionPublication publication, bool staged)
 	{
 		std::scoped_lock lock(mutex);
-		if (!pending || *pending != publication.key)
-			return false;
-		pending.reset();
+		if (staged) {
+			if (pending || !publication.validated)
+				return false;
+		} else {
+			if (!pending || *pending != publication.key)
+				return false;
+			pending.reset();
+		}
 		const auto current = snapshot.load(std::memory_order_acquire);
 		const auto active = std::ranges::find(current->requested, publication.key);
 		const auto predictive = std::ranges::find(current->predictive, publication.key);
@@ -270,10 +281,10 @@ namespace DX12
 			next->predictiveResident = {};
 			next->requested.front() = tile->key;
 			next->resident.front() = std::move(tile);
-			++next->geometryRevision;
+			next->geometryRevision = NextGeometryRevision();
 		} else if (active != current->requested.end()) {
 			if (!tile->shapes.empty() || (existing && !existing->shapes.empty()))
-				++next->geometryRevision;
+				next->geometryRevision = NextGeometryRevision();
 			next->resident[std::distance(current->requested.begin(), active)] = std::move(tile);
 		} else {
 			// A ready predictive emitter can cast toward visible receivers even when
@@ -323,7 +334,7 @@ namespace DX12
 			return false;
 		next->runtimeShapes.push_back({ key, std::move(shape), shapeBytes });
 		next->runtimeBytes += shapeBytes;
-		++next->geometryRevision;
+		next->geometryRevision = NextGeometryRevision();
 		snapshot.store(std::move(next), std::memory_order_release);
 		return true;
 	}
@@ -343,20 +354,72 @@ namespace DX12
 		movementX = movementY = 0;
 		const auto current = snapshot.load(std::memory_order_acquire);
 		auto next = std::make_shared<Grid>();
-		next->geometryRevision = current->geometryRevision + 1;
+		next->geometryRevision = NextGeometryRevision();
+		snapshot.store(std::move(next), std::memory_order_release);
+	}
+
+	void ResourceGrid::MergePrepared(const Grid& source)
+	{
+		std::scoped_lock lock(mutex);
+		const auto current = snapshot.load(std::memory_order_acquire);
+		if (pending || !source.requested.front().scope || source.requested.front().scope != current->requested.front().scope || source.size != current->size)
+			return;
+		const auto ready = [](const auto& tile) {
+			return tile && tile->companionValidated && (tile->state == Tile::State::Ready || tile->state == Tile::State::ReadyPartial ||
+				tile->state == Tile::State::Empty || tile->state == Tile::State::EmptyPartial);
+		};
+		auto next = std::make_shared<Grid>(*current);
+		if (source.wholeCell && ready(source.resident.front())) {
+			auto tile = std::make_shared<Tile>(*source.resident.front());
+			tile->key = current->requested.front();
+			next->wholeCell = true;
+			next->requested = {};
+			next->predictive = {};
+			next->resident = {};
+			next->predictiveResident = {};
+			next->requested.front() = tile->key;
+			next->resident.front() = std::move(tile);
+		} else if (!source.wholeCell && !current->wholeCell) {
+			const auto find = [&](SubcellKey key) -> std::shared_ptr<const Tile> {
+				for (const auto& tile : source.resident)
+					if (ready(tile) && tile->key == key) return tile;
+				for (const auto& tile : source.predictiveResident)
+					if (ready(tile) && tile->key == key) return tile;
+				return {};
+			};
+			const auto merge = [&](const auto& keys, auto& tiles) {
+				for (size_t i = 0; i < keys.size(); ++i)
+					if (auto tile = find(keys[i])) tiles[i] = std::move(tile);
+			};
+			merge(next->requested, next->resident);
+			merge(next->predictive, next->predictiveResident);
+		} else {
+			return;
+		}
+		const bool sameTarget = next->wholeCell == source.wholeCell && (source.wholeCell || next->requested == source.requested);
+		bool sameGeometry = sameTarget && next->runtimeShapes.empty() && source.runtimeShapes.empty();
+		for (size_t i = 0; sameGeometry && i < next->resident.size(); ++i) {
+			const auto& left = next->resident[i];
+			const auto& right = source.resident[i];
+			sameGeometry = left && right ? left->shapes == right->shapes :
+				(!left || left->shapes.empty()) && (!right || right->shapes.empty());
+		}
+		next->geometryRevision = sameGeometry ? source.geometryRevision : NextGeometryRevision();
 		snapshot.store(std::move(next), std::memory_order_release);
 	}
 
 	void ResourceGrid::DiscardRuntimeShapes()
 	{
 		std::scoped_lock lock(mutex);
+		previousScope = 0;
+		movementX = movementY = 0;
 		const auto current = snapshot.load(std::memory_order_acquire);
 		if (current->runtimeShapes.empty())
 			return;
 		auto next = std::make_shared<Grid>(*current);
 		next->runtimeShapes.clear();
 		next->runtimeBytes = 0;
-		++next->geometryRevision;
+		next->geometryRevision = NextGeometryRevision();
 		snapshot.store(std::move(next), std::memory_order_release);
 	}
 
@@ -615,8 +678,8 @@ void DX12Resources::BeginLoadingPreparation(const LoadingDestination& destinatio
 	EnsureCompanion(false);
 	if (!companionStarted.load(std::memory_order_acquire))
 		return;
-	if (companion->BeginLoading(std::move(task), destination.position[0], destination.position[1], grid.Snapshot()))
-		loadingSerial.fetch_add(1, std::memory_order_release);
+	if (const auto generation = companion->BeginLoading(std::move(task), destination.position[0], destination.position[1], grid.Snapshot()))
+		loadingSerial.store(generation, std::memory_order_release);
 }
 
 void DX12Resources::OnLoadingMenuEvent(bool opening)
@@ -656,6 +719,9 @@ void DX12Resources::ResetPreparation()
 {
 	loadingSettings.store({ settings.SubcellSize, settings.ConsolidateInterior }, std::memory_order_release);
 	stagedResults.clear();
+	loadingPending.clear();
+	loadingGrid.reset();
+	loadingGridSerial = 0;
 	if (!preparationActive && !startupPending && !loadingActive.load(std::memory_order_acquire))
 		return;
 	// A new subcell size or world-scene epoch invalidates the grid and all
@@ -925,9 +991,65 @@ void DX12Resources::PollStartup(uint32_t gameplayScope)
 	}
 }
 
+namespace
+{
+	constexpr size_t kFormResolutionsPerFrame = 64;
+
+	void ResolvePreparedLightForms(DX12::CompanionResult& result, size_t& offset)
+	{
+		const size_t end = std::min(result.lights.size(), offset + kFormResolutionsPerFrame);
+		auto* handler = RE::TESDataHandler::GetSingleton();
+		for (; offset < end; ++offset) {
+			auto& record = result.lights[offset];
+			const auto* reference = handler ? handler->LookupForm(record.referenceLocal, record.referencePlugin) : nullptr;
+			const auto* base = handler ? handler->LookupForm(record.baseLocal, record.basePlugin) : nullptr;
+			if (!reference || !base) {
+				++result.publication.rejectedLights;
+				continue;
+			}
+			record.value.referenceID = reference->GetFormID();
+			result.publication.lights.push_back(record.value);
+		}
+	}
+}
+
+void DX12Resources::AdvanceLoadingPreparation()
+{
+	const auto serial = loadingSerial.load(std::memory_order_acquire);
+	const auto destination = loadingDestination.load(std::memory_order_acquire);
+	if (!serial || !destination || !companionStarted.load(std::memory_order_acquire))
+		return;
+	if (loadingGridSerial != serial) {
+		loadingGrid = std::make_unique<DX12::ResourceGrid>();
+		loadingPending.clear();
+		loadingGridSerial = serial;
+		const auto configuration = loadingSettings.load(std::memory_order_acquire);
+		loadingGrid->Advance(destination->scope, configuration.size, destination->position[0], destination->position[1]);
+		loadingGrid->MergePrepared(*grid.Snapshot());
+	}
+	for (auto& result : companion->TakeLoadingResults())
+		if (result->loadingGeneration == serial)
+			loadingPending.push_back(std::move(result));
+	if (!loadingPending.empty()) {
+		auto& result = *loadingPending.front();
+		ResolvePreparedLightForms(result, result.resolvedLights);
+		if (result.resolvedLights == result.lights.size()) {
+			result.publication.failureReason = result.failure.substr(0, 320);
+			loadingGrid->Publish(std::move(result.publication), true);
+			loadingPending.erase(loadingPending.begin());
+		}
+	}
+	if (loadingSerial.load(std::memory_order_acquire) == serial && IsLoading())
+		globals::features::dx12NativeScene.PrepareLoadingScene(loadingGrid->Snapshot());
+}
+
 void DX12Resources::Reset()
 {
-	if (!IsActive() || loadingActive.load(std::memory_order_acquire) || !globals::state || !globals::state->startupMenuBlurSourceReady ||
+	if (IsActive() && IsLoading()) {
+		AdvanceLoadingPreparation();
+		return;
+	}
+	if (!IsActive() || !globals::state || !globals::state->startupMenuBlurSourceReady ||
 		!globals::game::ui || !globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))
 		return;
 	EnsureCompanion(true);
@@ -956,7 +1078,12 @@ void DX12Resources::PreShadowMaps()
 	const auto serial = loadingSerial.load(std::memory_order_acquire);
 	if (handledLoadingSerial != serial) {
 		handledLoadingSerial = serial;
-		stagedResults = companion->TakeLoadingResults();
+		stagedResults.clear();
+		if (loadingGridSerial == serial)
+			stagedResults = std::move(loadingPending);
+		for (auto& result : companion->TakeLoadingResults())
+			if (result->loadingGeneration == serial)
+				stagedResults.push_back(std::move(result));
 		grid.CancelPending();
 		grid.DiscardRuntimeShapes();
 		inFlight.reset();
@@ -995,6 +1122,18 @@ void DX12Resources::PreShadowMaps()
 	}
 	preparationActive = true;
 	grid.Advance(scope, settings.SubcellSize, position.x, position.y);
+	if (loadingGrid) {
+		if (loadingGridSerial == serial) {
+			const auto staged = loadingGrid->Snapshot();
+			grid.MergePrepared(*staged);
+			if (grid.Snapshot()->wholeCell)
+				consolidationAttemptScope = scope;
+			logger::debug("[DX12Resources] Loading geometry handover revision {}", grid.Snapshot()->geometryRevision);
+		}
+		loadingGrid.reset();
+		loadingPending.clear();
+		loadingGridSerial = 0;
+	}
 	runtimePublicationEnabled.store(true, std::memory_order_release);
 	const auto neighborhood = grid.Snapshot();
 	std::erase_if(stagedResults, [&](const auto& result) {
@@ -1044,22 +1183,7 @@ void DX12Resources::PreShadowMaps()
 		} else {
 			// Only engine FormID lookup must run on the game thread. Keep it bounded
 			// while immutable geometry remains off-thread prepared.
-			constexpr size_t kFormResolutionsPerFrame = 64;
-			const size_t end = std::min(adopting->lights.size(), lightAdoptionOffset + kFormResolutionsPerFrame);
-			auto* handler = RE::TESDataHandler::GetSingleton();
-			for (; lightAdoptionOffset < end; ++lightAdoptionOffset) {
-				auto& record = adopting->lights[lightAdoptionOffset];
-				const auto* reference = handler ? handler->LookupForm(record.referenceLocal, record.referencePlugin) : nullptr;
-				const auto* base = handler ? handler->LookupForm(record.baseLocal, record.basePlugin) : nullptr;
-				if (!reference || !base) {
-					// This light cannot be matched; it must not invalidate unrelated
-					// geometry or shadow coverage for other successfully resolved lights.
-					++adopting->publication.rejectedLights;
-					continue;
-				}
-				record.value.referenceID = reference->GetFormID();
-				adopting->publication.lights.push_back(record.value);
-			}
+			ResolvePreparedLightForms(*adopting, lightAdoptionOffset);
 			if (lightAdoptionOffset == adopting->lights.size()) {
 				const bool wasPredictiveRequest = adopting->predictive;
 				const bool wasCornerRequest = adopting->corner;
@@ -1086,7 +1210,7 @@ void DX12Resources::PreShadowMaps()
 			}
 		}
 	}
-	if (!adopting && companion->Idle()) {
+	if (!adopting && (companion->Idle() || !stagedResults.empty())) {
 		if (const auto request = grid.NextRequest()) {
 			const auto staged = std::ranges::find_if(stagedResults, [&](const auto& result) {
 				return result->publication.key == *request || (result->publication.wholeCell &&
@@ -1098,9 +1222,13 @@ void DX12Resources::PreShadowMaps()
 				adopting->publication.key = *request;
 				adopting->publication.failureReason = adopting->failure.substr(0, 320);
 				adopting->publication.lights.reserve(adopting->lights.size());
-				lightAdoptionOffset = 0;
+				lightAdoptionOffset = adopting->resolvedLights;
 				if (adopting->publication.wholeCell)
 					consolidationAttemptScope = scope;
+				return;
+			}
+			if (!companion->Idle()) {
+				grid.CancelPending();
 				return;
 			}
 			const auto* source = world ? static_cast<const RE::TESForm*>(world) : static_cast<const RE::TESForm*>(cell);
@@ -1140,9 +1268,14 @@ void DX12Resources::OnRuntimeDisabled()
 {
 	loadingActive.store(false, std::memory_order_release);
 	stagedResults.clear();
+	loadingPending.clear();
+	loadingGrid.reset();
+	loadingGridSerial = 0;
 	runtimePublicationEnabled.store(false, std::memory_order_release);
-	if (companionStarted.exchange(false, std::memory_order_acq_rel))
+	if (companionStarted.exchange(false, std::memory_order_acq_rel)) {
+		companion->Cancel();
 		companion->Stop();
+	}
 	if (preparationActive || startupPending) {
 		ResetPreparation();
 		preparationActive = false;

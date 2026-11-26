@@ -106,6 +106,8 @@ namespace DX12Native
 		bool Start(ID3D11Device* a_device, ID3D11DeviceContext* a_context);
 		/** @brief Replaces the pending grid snapshot; only the latest unpublished request is built. */
 		void Request(std::shared_ptr<const DX12::Grid> a_grid);
+		/** @brief Builds a destination grid without exposing it to gameplay consumers. */
+		void RequestStaged(std::shared_ptr<const DX12::Grid> a_grid);
 		/** @brief Cancels eligibility without interrupting previously submitted GPU work. */
 		void Reset();
 		/** @brief Ends the session without waiting for queued CPU or GPU work. */
@@ -117,6 +119,7 @@ namespace DX12Native
 
 	private:
 		struct State;
+		void RequestImpl(std::shared_ptr<const DX12::Grid> a_grid, bool staged);
 		static void TrySchedule(const std::shared_ptr<State>& a_state);
 		static void RunStep(std::shared_ptr<State> a_state);
 		std::atomic<std::shared_ptr<State>> state{};
