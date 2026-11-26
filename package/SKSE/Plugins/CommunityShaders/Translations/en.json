@@ -7020,5 +7020,6 @@
     "menu.dx12.tab.dev": "Dev",
     "menu.dx12.scene.runtime_unification_radius": "Runtime light unification radius (units)",
     "menu.dx12.scene.prepared_exclusion_radius": "Prepared light exclusion radius (units)",
-    "menu.dx12.scene.additive_prepared_emission": "Add excluded runtime emission to prepared lights"
+    "menu.dx12.scene.additive_prepared_emission": "Add excluded runtime emission to prepared lights",
+    "menu.dx12.scene.light_observation_interval": "Light observation interval (frames)"
 }

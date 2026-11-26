@@ -1,5 +1,6 @@
 #include "DX12NativeShadowTrace.h"
 #include "DX12GpuRetirement.h"
+#include "DX12NativeLightWorker.h"
 #include "Utils/FileSystem.h"
 
 #include <algorithm>
@@ -16,7 +17,7 @@ namespace DX12Native
 {
 	namespace
 	{
-		constexpr uint32_t kRecords = 2;
+		constexpr uint32_t kRecords = kLightRecordsPerEmitter;
 		constexpr std::streamoff kMaxShadowBytecodeBytes = 4 * VideoMemoryBudget::kMiB;
 		constexpr uint32_t kShadowThreadGroupSize = 8;
 		struct Constants
@@ -127,6 +128,7 @@ namespace DX12Native
 			if (slot && slot.use_count() == 1 && slot->readyValue != UINT64_MAX && slot->readyValue <= finished) {
 				slot->raster.reset();
 				slot->scene.reset();
+				slot->nativeLights.reset();
 			}
 		}
 	}
@@ -150,6 +152,8 @@ namespace DX12Native
 		if (!scene || !scene->acceleration || !scene->producerFence) {
 			return;
 		}
+		if (controls.nativeLights && (!controls.nativeLights->buffer || controls.nativeLights->scope != scene->scope))
+			return;
 		if (lights.empty()) {
 			return;
 		}
@@ -214,8 +218,8 @@ namespace DX12Native
 				DX::ThrowIfFailed(requested.d3d12Device->CreateDescriptorHeap(
 					&descriptors, IID_PPV_ARGS(replacement->descriptors.put())));
 				replacement->cameraUpload = UploadBuffer(requested.d3d12Device.get(), D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
-				replacement->lightUpload = UploadBuffer(requested.d3d12Device.get(),
-					lightBytes);
+				if (!controls.nativeLights)
+					replacement->lightUpload = UploadBuffer(requested.d3d12Device.get(), lightBytes);
 				DX::ThrowIfFailed(requested.d3d12Device->CreateCommandAllocator(
 					D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(replacement->allocator.put())));
 				DX::ThrowIfFailed(requested.d3d12Device->CreateCommandList(0,
@@ -223,7 +227,7 @@ namespace DX12Native
 					pipeline.get(), IID_PPV_ARGS(replacement->commands.put())));
 				slot = std::move(replacement);
 			} else {
-				if (slot->lightUpload->GetDesc().Width < lightBytes) {
+				if (!controls.nativeLights && (!slot->lightUpload || slot->lightUpload->GetDesc().Width < lightBytes)) {
 					slot->lightRecordsUploaded = false;
 					slot->lightUpload = UploadBuffer(requested.d3d12Device.get(), lightBytes);
 				}
@@ -235,6 +239,7 @@ namespace DX12Native
 			attempted = slot;
 			slot->raster = std::move(raster);
 			slot->scene = std::move(scene);
+			slot->nativeLights = controls.nativeLights;
 			slot->frame = frame;
 			slot->width = width;
 			slot->height = height;
@@ -249,29 +254,24 @@ namespace DX12Native
 			};
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
 
-			auto& records = slot->lightRecords;
-			const size_t recordCount = size_t(lightCount) * kRecords;
-			bool changed = !slot->lightRecordsUploaded || records.size() != recordCount;
-			slot->lightRecordsUploaded = false;
-			records.resize(recordCount);
-			for (size_t i = 0; i < lightCount; ++i) {
-				const auto& light = lights[i];
-				const float strength = std::max(light.color.x, 0.0f) * 0.2126f +
-				                       std::max(light.color.y, 0.0f) * 0.7152f +
-				                       std::max(light.color.z, 0.0f) * 0.0722f;
-				const std::array<std::array<float, 4>, kRecords> packed{{
-					{ light.position.x, light.position.y, light.position.z, light.radius },
-					{ strength * std::max(light.fade, 0.0f), light.emitterRadius * light.emitterRadius, std::max(light.emitterRadius, 0.0f), std::bit_cast<float>(light.referenceID) }
-				}};
-				auto* destination = records.data() + i * kRecords;
-				if (std::memcmp(destination, packed.data(), sizeof(packed)) != 0) {
-					std::memcpy(destination, packed.data(), sizeof(packed));
-					changed = true;
+			if (!slot->nativeLights) {
+				auto& records = slot->lightRecords;
+				const size_t recordCount = size_t(lightCount) * kRecords;
+				bool changed = !slot->lightRecordsUploaded || records.size() != recordCount;
+				slot->lightRecordsUploaded = false;
+				records.resize(recordCount);
+				for (size_t i = 0; i < lightCount; ++i) {
+					const auto packed = PackNativeLight(lights[i]);
+					auto* destination = records.data() + i * kRecords;
+					if (std::memcmp(destination, packed.data(), sizeof(packed)) != 0) {
+						std::memcpy(destination, packed.data(), sizeof(packed));
+						changed = true;
+					}
 				}
+				if (changed)
+					WriteUpload(slot->lightUpload.get(), records.data(), records.size() * sizeof(records.front()));
+				slot->lightRecordsUploaded = true;
 			}
-			if (changed)
-				WriteUpload(slot->lightUpload.get(), records.data(), records.size() * sizeof(records.front()));
-			slot->lightRecordsUploaded = true;
 			slot->debugLights.clear();
 			slot->debugPreparedCount = 0;
 			if (controls.captureDebugLights) {
@@ -305,7 +305,7 @@ namespace DX12Native
 			command->SetComputeRootDescriptorTable(1, gpu);
 			gpu.ptr += step;
 			command->SetComputeRootDescriptorTable(2, gpu);
-			command->SetComputeRootShaderResourceView(3, slot->lightUpload->GetGPUVirtualAddress());
+			command->SetComputeRootShaderResourceView(3, (slot->nativeLights ? slot->nativeLights->buffer : slot->lightUpload)->GetGPUVirtualAddress());
 			command->SetComputeRootConstantBufferView(4, slot->cameraUpload->GetGPUVirtualAddress());
 
 			const auto depthStart = CD3DX12_RESOURCE_BARRIER::Transition(
@@ -360,6 +360,7 @@ namespace DX12Native
 					attempted->readyValue = 0;
 					attempted->raster.reset();
 					attempted->scene.reset();
+					attempted->nativeLights.reset();
 				}
 			}
 			if (!failureLogged) {

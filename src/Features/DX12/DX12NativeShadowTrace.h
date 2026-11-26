@@ -13,6 +13,7 @@
 
 namespace DX12Native
 {
+	struct NativeLightPublication;
 	// Shared CPU-side limit for prepared lights submitted to the native shadow RayQuery.
 	inline constexpr uint32_t kMaxShadowLights = DX12::kMaxPreparedLights;
 
@@ -23,6 +24,7 @@ namespace DX12Native
 		uint32_t quality = kShadowQualityOffloading;
 		bool captureDebugLights = false;
 		uint32_t debugPreparedCount = 0;
+		std::shared_ptr<const NativeLightPublication> nativeLights;
 	};
 
 	/** @brief Quarter-resolution raw visibility and receiver distance; the composite reconstructs the full view. */
@@ -30,6 +32,7 @@ namespace DX12Native
 	{
 		std::shared_ptr<const TopLevel> scene;
 		std::shared_ptr<const RasterFrame> raster;
+		std::shared_ptr<const NativeLightPublication> nativeLights;
 		winrt::com_ptr<ID3D12Resource> mask, cameraUpload, lightUpload;
 		winrt::com_ptr<ID3D12DescriptorHeap> descriptors;
 		winrt::com_ptr<ID3D12CommandAllocator> allocator;

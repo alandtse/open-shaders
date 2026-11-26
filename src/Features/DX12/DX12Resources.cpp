@@ -1009,9 +1009,13 @@ void DX12Resources::OnRuntimeDisabled()
 
 std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const
 {
+	return CollectPreparedLights(*grid.Snapshot());
+}
+
+std::vector<DX12::PreparedLight> DX12Resources::CollectPreparedLights(const DX12::Grid& current)
+{
 	std::vector<DX12::PreparedLight> lights;
 	lights.reserve(DX12::kMaxPreparedLights);
-	const auto current = grid.Snapshot();
 	std::unordered_set<uint32_t> seen;
 	const auto append = [&](const auto& tiles) {
 		for (const auto& tile : tiles) {
@@ -1027,9 +1031,9 @@ std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const
 			}
 		}
 	};
-	append(current->resident);
+	append(current.resident);
 	// Screen-space receivers can be shadowed by emitters in the predictive ring.
 	// Source visibility inside the camera frustum is not a light-admission test.
-	append(current->predictiveResident);
+	append(current.predictiveResident);
 	return lights;
 }

@@ -34,3 +34,35 @@ Run the C++ unit tests with the DX12 runtime-task and fence tags. The pure polic
 - Failed producer signal, device removal and event registration failure: verify recovery or safe retention without detached polling threads.
 
 Use Tracy zones `CS::RuntimePoolTask`, `CS::RuntimePoolQueueWaitUs`, `DX12::Acceleration::Task`, `CollectInputs`, `BuildBLAS`, `BuildTLAS`, `Submit` and `Retire` (the latter zones are prefixed with `DX12::Acceleration::`). Compare CPU active time, P99 frametime, thread count and TLAS availability against the previous implementation.
+
+## Full RT light publications
+
+Full RT snapshots engine light membership on the render thread at a configurable
+frame interval (default 8). Stationary metadata is acquired once per observed
+identity, with membership and visibility refreshed at subsequent observations.
+The render thread passes value records and immutable resource-grid snapshots
+to a short native light task through the existing runtime gate.
+
+The worker collects prepared emitters only when tile publications change,
+filters exact placed-reference duplicates, applies the existing unification
+and additive-emission policy, and packs the unchanged two-float4 shader ABI.
+Only changed inventories receive a new revision and a default-heap GPU buffer.
+Rendering reuses the previous completed same-visit publication during an
+update; an initial visit has no native shadow submission until the first
+upload completes. Each shadowmask slot retains its publication until the
+tracing fence retires. The upload owner separately retains copy resources
+through the upload fence. Cell, scene, mode and runtime resets detach stale
+worker state; no task holds engine pointers or the feature itself.
+
+The observation interval bounds normal membership-update latency, not worker
+or GPU completion time. No stability filtering or permanent light bake is
+performed. Offloading keeps the existing synchronous matched-light path.
+
+Profile the zones `DX12::Lights::Observe`, `DX12::Lights::Task`,
+`DX12::Lights::Prepared`, `DX12::Lights::Consolidate` and
+`DX12::Lights::Upload`. In a stationary cell, verify that revision and
+upload counts stop increasing once light membership settles. Exercise
+light removal, setting changes, loading screens, same-world cell changes,
+mode switches and shader-pool contention. Compare the diagnostic overlay
+and shadow masks against the prior Full RT path, and repeat the baseline
+offloading/disabled-path checks.

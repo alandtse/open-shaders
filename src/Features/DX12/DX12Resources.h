@@ -210,6 +210,8 @@ struct DX12Resources final : Feature
 	bool HasMenuPreload() const { return menuPreloaded; }
 	/** @brief Returns the most recent prepared-light publication. */
 	std::vector<DX12::PreparedLight> GetPreparedLights() const;
+	/** @brief Collect an immutable grid's ordered light selection without engine access. */
+	static std::vector<DX12::PreparedLight> CollectPreparedLights(const DX12::Grid& grid);
 	/** @brief In-memory generation timings for active 3x3, predictive sides and corners. */
 	std::shared_ptr<const DX12::PreparationStats> GetPreparationStats() const
 	{

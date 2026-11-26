@@ -1,6 +1,6 @@
 #include "Features/DX12/DX12FenceRetirementPolicy.h"
 #include "Features/DX12/SpatialGrid.h"
-#include "Features/DX12/FullShadowLightConsolidation.h"
+#include "Features/DX12/NativeLightPublication.h"
 #include "Features/DX12/TilePreparationPolicy.h"
 #include "../../package/Shaders/Common/NativeShadowRT.hlsli"
 #include "Utils/RuntimeTaskGate.h"
@@ -290,4 +290,47 @@ TEST_CASE("Full RT restores the established game-unit defaults", "[dx12][shadow]
 	CHECK(kDefaultPreparedExclusionRadius == 256);
 	CHECK(kFullShadowRadiusMax == 512);
 	CHECK(kFullShadowRadiusStep == 4);
+}
+
+TEST_CASE("Native light observation interval handles frame wrap", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	CHECK_FALSE(NativeLightObservationDue(107, 100, 8));
+	CHECK(NativeLightObservationDue(108, 100, 8));
+	CHECK(NativeLightObservationDue(3, UINT32_MAX - 4, 8));
+	CHECK_FALSE(NativeLightObservationDue(100, 100, 0));
+	CHECK(NativeLightObservationDue(220, 100, UINT32_MAX));
+}
+
+TEST_CASE("Native light revision equality includes emission and identity", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	using Light = ConsolidationLight;
+	const std::vector<Light> original{ { .referenceID = 1, .runtimeIdentity = 7 } };
+	auto changed = original;
+	CHECK(SameNativeLightInventory<Light>(original, changed));
+	changed[0].color.x += 1;
+	CHECK_FALSE(SameNativeLightInventory<Light>(original, changed));
+	changed = original;
+	changed[0].runtimeIdentity += 1;
+	CHECK_FALSE(SameNativeLightInventory<Light>(original, changed));
+	changed = original;
+	changed[0].unifiedCount += 1;
+	CHECK_FALSE(SameNativeLightInventory<Light>(original, changed));
+	CHECK_FALSE(SameNativeLightInventory<Light>(original, {}));
+}
+
+TEST_CASE("Native packed records preserve the consolidated shadow ABI", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	const ConsolidationLight light{ .referenceID = 0x12345678u, .position = { 1, 2, 3 },
+		.color = { 4, 4, 4 }, .radius = 200, .fade = 2, .emitterRadius = 5 };
+	const auto packed = PackNativeLight(light);
+	static_assert(sizeof(PackedNativeLight) == 32);
+	CHECK(packed[0][0] == 1);
+	CHECK(packed[0][3] == 200);
+	CHECK(packed[1][0] == 8);
+	CHECK(packed[1][1] == 25);
+	CHECK(packed[1][2] == 5);
+	CHECK(std::bit_cast<uint32_t>(packed[1][3]) == light.referenceID);
 }

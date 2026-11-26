@@ -6,7 +6,7 @@
 #include "DX12NativeShadowTrace.h"
 #include "../OverlayFeature.h"
 #include "SCMNativePolicy.h"
-#include "FullShadowLightConsolidation.h"
+#include "DX12NativeLightWorker.h"
 
 #include <atomic>
 #include <memory>
@@ -91,7 +91,15 @@ private:
 	std::atomic<uint32_t> runtimeUnificationRadius{ DX12Native::kDefaultRuntimeUnificationRadius };
 	std::atomic<uint32_t> preparedExclusionRadius{ DX12Native::kDefaultPreparedExclusionRadius };
 	std::atomic<bool> additivePreparedEmission{ true };
-	std::shared_ptr<const std::vector<DX12::PreparedLight>> CollectFullRTLights(const std::shared_ptr<const std::vector<DX12::PreparedLight>>& publication);
+	std::atomic<uint32_t> lightObservationFrames{ DX12Native::kDefaultLightObservationFrames };
+	std::shared_ptr<const DX12Native::NativeLightPublication> CollectFullRTLights(uint32_t frame);
+	bool ObserveFullRuntimeLights();
+	DX12Native::NativeLightWorker lightWorker;
+	std::shared_ptr<const DX12::Grid> fullRequestedGrid;
+	std::shared_ptr<const std::vector<DX12Native::NativeRuntimeEmitter>> fullRuntimeSnapshot, fullRequestedRuntime;
+	DX12Native::NativeLightSettings fullRequestedSettings;
+	uint32_t fullRuntimeCell = 0, fullLastObservation = 0, fullLastRequestFrame = 0;
+	bool fullObserved = false;
 	void ResetFullLightInventory();
 	struct RuntimeLightSample
 	{
@@ -113,10 +121,6 @@ private:
 		bool supported = false, sampled = false, active = false;
 	};
 	std::unordered_map<const RE::NiLight*, FullRuntimeLight> fullRuntimeLights;
-	std::shared_ptr<const std::vector<DX12::PreparedLight>> fullPreparedSnapshot;
-	std::shared_ptr<const std::vector<DX12::PreparedLight>> fullConsolidatedLights;
-	uint32_t fullCachedUnificationRadius = 0, fullCachedExclusionRadius = 0;
-	bool fullCachedAdditiveEmission = false;
 	uint32_t fullRuntimeScope = 0;
 	uint64_t fullLightVisit = 0;
 };
