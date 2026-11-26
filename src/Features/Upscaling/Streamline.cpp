@@ -1027,6 +1027,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 			if (!nativeWasActive)
 				DestroyDLSSResources();
 		} else {
+			upscaling.ReturnNativeCompositeColor(a_upscalingTexture);
 			EvaluateDLSS(viewport, 0,
 				a_upscalingTexture, colorOut,
 				Util::AsReal(depthTexture.texture), a_motionVectors, a_reactiveMask, a_transparencyCompositionMask,

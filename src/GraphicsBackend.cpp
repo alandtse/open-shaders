@@ -3,6 +3,18 @@
 #include <dxgi1_2.h>
 #include <mutex>
 
+bool GraphicsBackend::SameIdentity(IUnknown* a, IUnknown* b) noexcept
+{
+	if (!a || !b)
+		return false;
+	if (a == b)
+		return true;
+	winrt::com_ptr<IUnknown> first, second;
+	return SUCCEEDED(a->QueryInterface(IID_PPV_ARGS(first.put()))) &&
+	       SUCCEEDED(b->QueryInterface(IID_PPV_ARGS(second.put()))) &&
+	       first.get() == second.get();
+}
+
 HRESULT GraphicsBackend::GetSharedDevice(IDXGIAdapter* a_adapter, ID3D12Device** a_device)
 {
 	if (!a_adapter || !a_device)

@@ -106,14 +106,27 @@ bool DX12SwapChain::EnsureSharedDevice()
 		return false;
 
 	try {
-		if (!d3d11Device)
-			SetD3D11Device(globals::d3d::device);
-		if (!d3d11Context)
-			SetD3D11DeviceContext(globals::d3d::context);
+		if (!d3d11Device || !d3d11Context) {
+			// The non-proxy engine device can be a Streamline wrapper. The
+			// immediate context owns the renderer's actual resource device.
+			winrt::com_ptr<ID3D11Device> rendererDevice;
+			globals::d3d::context->GetDevice(rendererDevice.put());
+			if (!rendererDevice)
+				return false;
+			if (!d3d11Device)
+				SetD3D11Device(rendererDevice.get());
+			if (!d3d11Context) {
+				winrt::com_ptr<ID3D11DeviceContext> rendererContext;
+				rendererDevice->GetImmediateContext(rendererContext.put());
+				if (!rendererContext)
+					return false;
+				SetD3D11DeviceContext(rendererContext.get());
+			}
+		}
 
 		if (!d3d12Device) {
 			winrt::com_ptr<IDXGIDevice> dxgiDevice;
-			DX::ThrowIfFailed(globals::d3d::device->QueryInterface(IID_PPV_ARGS(dxgiDevice.put())));
+			DX::ThrowIfFailed(d3d11Device->QueryInterface(IID_PPV_ARGS(dxgiDevice.put())));
 
 			winrt::com_ptr<IDXGIAdapter> adapter;
 			DX::ThrowIfFailed(dxgiDevice->GetAdapter(adapter.put()));

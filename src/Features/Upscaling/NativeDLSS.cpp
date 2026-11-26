@@ -53,6 +53,8 @@ bool NativeDLSS::Upscale(ID3D11Resource* a_colorOut, ID3D11Resource* a_motionVec
 					commandContext->fenceValue = rescue;
 				lastSubmitted = rescue;
 			} catch (...) {
+				if (retained)
+					upscaling.nativeComposite.MarkUntracked(composite);
 			}
 		}
 		Latch(std::format("the DX12 DLSS dispatch threw: {}", a_reason));

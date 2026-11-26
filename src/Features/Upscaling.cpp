@@ -3651,6 +3651,13 @@ void Upscaling::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
 	func(a1);
 }
 
+bool Upscaling::ReturnNativeCompositeColor(ID3D11Resource* target)
+{
+	if (!nativeCompositeFrame || !globals::state || nativeCompositeFrame->frame != globals::state->frameCount)
+		return true;
+	return nativeComposite.ReturnToDX11(nativeCompositeFrame, target);
+}
+
 void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32_t a3, RE::RENDER_TARGET a_target, void* a_4, bool a_5)
 {
 	auto& postProcessing = globals::features::postProcessing;
@@ -3676,8 +3683,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	upscaling.nativeCompositeFrame.reset();
 	if (upscaling.loaded && !globals::game::isVR &&
 		globals::features::dx12Control.IsActive() &&
-		globals::game::graphicsState &&
-		upscaling.dx12SwapChain.EnsureSharedDevice()) {
+		globals::game::graphicsState) {
 		auto* renderer = globals::game::renderer;
 		auto* scene = renderer ? Util::AsReal(renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture) : nullptr;
 		const auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
@@ -3686,16 +3692,17 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		                                                                                   DX12Native::NativeComposite::Transfer::LegacyScene;
 		const auto shadow = globals::features::dx12NativeScene.GetShadowMask(globals::game::graphicsState->GetFrameCount());
 		const bool runtimeFSRReads = upscaleMethod == UpscaleMethod::kFSR && upscaling.fidelityFX.RuntimeUpscalerReadsComposite();
-		// The return also covers a frame DX12 DLSS hands to DX11, so its shadows do not drop for that frame.
 		const bool dx12Reads = runtimeFSRReads || (upscaleMethod == UpscaleMethod::kDLSS && upscaling.nativeDLSS.GetFailure().empty());
-		if (dx12Reads || shadow)
+		if (dx12Reads || shadow) {
 			upscaling.nativeCompositeFrame = upscaling.nativeComposite.Capture(
-				upscaling.dx12SwapChain.d3d11Device.get(),
-				upscaling.dx12SwapChain.d3d11Context.get(),
-				upscaling.dx12SwapChain.d3d12Device.get(),
-				upscaling.dx12SwapChain.commandQueue.get(), scene, globals::state->frameCount,
+				scene, globals::state->frameCount,
 				static_cast<uint32_t>(renderSize.x), static_cast<uint32_t>(renderSize.y),
-				transfer, shadow, !runtimeFSRReads);
+				transfer, shadow);
+			// A predicted native consumer is only an optimization. It must call
+			// ReturnNativeCompositeColor before taking any non-native route.
+			if (!dx12Reads)
+				upscaling.ReturnNativeCompositeColor(scene);
+		}
 	}
 
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {

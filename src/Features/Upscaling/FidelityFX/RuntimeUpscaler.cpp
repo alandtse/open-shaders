@@ -1154,6 +1154,8 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 	                         composite->producerValue && composite->frame == state->frameCount &&
 	                         composite->width == a_renderWidth && composite->height == a_renderHeight &&
 	                         composite->format == colorDesc.Format;
+	if (!nativeColor && !upscaling.ReturnNativeCompositeColor(a_color))
+		return false;
 
 	auto isValidShared = [](WrappedResource* a_resource) {
 		return a_resource && a_resource->resource11 && a_resource->resource.get();
@@ -1182,6 +1184,7 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 	bool dispatchOk = false;
 	bool commandListSubmitted = false;
 	bool commandFenceTracked = false;
+	bool compositeRetained = false;
 	try {
 		auto copyIntoShared = [&](ID3D11Resource* a_source, WrappedResource* a_destination, uint32_t a_width, uint32_t a_height, uint32_t a_maxWidth, uint32_t a_maxHeight) {
 			if (!a_source || !a_destination || !a_destination->resource11)
@@ -1302,6 +1305,7 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 				commandContext->fenceValue = 0;
 				return false;
 			}
+			compositeRetained = nativeColor;
 			swapChain.commandQueue->ExecuteCommandLists(1, commandListsToExecute);
 			commandListSubmitted = true;
 			DX::ThrowIfFailed(swapChain.commandQueue->Signal(runtimeFence.fence12.get(), d3d12SubmitFence));
@@ -1336,6 +1340,8 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 				commandContext->fenceValue = rescueFence;
 			} catch (...) {
 				commandContext->fenceValue = 0;
+				if (compositeRetained)
+					upscaling.nativeComposite.MarkUntracked(composite);
 			}
 		}
 		dispatchOk = false;
@@ -1350,6 +1356,8 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 				commandContext->fenceValue = rescueFence;
 			} catch (...) {
 				commandContext->fenceValue = 0;
+				if (compositeRetained)
+					upscaling.nativeComposite.MarkUntracked(composite);
 			}
 		}
 		dispatchOk = false;
@@ -1476,6 +1484,7 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 		return false;
 
 	auto& upscaling = globals::features::upscaling;
+	upscaling.ReturnNativeCompositeColor(a_color);
 	auto jitter = upscaling.jitter;
 	const auto fallbackFramePath =
 		runtimeRequested ? RuntimeUpscalerFramePath::kHostFsr31Fallback : RuntimeUpscalerFramePath::kHostFsr31;
