@@ -4,6 +4,7 @@
 #include "FeatureIssues.h"
 #include "I18n/I18n.h"
 #include "Presets/BaseSettingsCustomization.h"
+#include "Presets/BaselineCompatibility.h"
 #include "Presets/PresetState.h"
 #include "Presets/UnifiedPresetCatalog.h"
 #include "SettingsOverrideManager.h"
@@ -147,6 +148,8 @@ size_t BaselineManager::DiscoverDirectory(const std::filesystem::path& directory
 				if (baselineFile && !baselineFile->enabled) {
 					logger::info("Skipping Baseline file {}: its _metadata disables it", Util::PathHelpers::ToUtf8(entry.path()));
 				} else if (baselineFile) {
+					if (baselineFile->values.empty())
+						continue;
 					size_t index = files.size();
 					files.push_back(std::move(*baselineFile));
 
@@ -332,6 +335,7 @@ std::unique_ptr<BaselineManager::BaselineFile> BaselineManager::LoadFile(const s
 
 	baselineFile->values = SanitizeJsonData(*fileJson);
 	Util::Settings::EraseMetadataKeys(baselineFile->values);
+	BaselineCompatibility::EraseUpstreamShadowSettings(baselineFile->featureName, baselineFile->values);
 	return baselineFile;
 }
 
