@@ -156,13 +156,7 @@ internal sealed record ModelExtraction(ModelShape[] Shapes, MissingModelShape[] 
 
 internal static class SceneTile
 {
-    private const int MaxShapes = 384;
     private const int MaxLights = 2048;
-    private const int MaxNifSources = 4096;
-    private const int MaxMissingShapes = 4096;
-    private const long MaxGeometryBytes = 48L * 1024 * 1024;
-    private const long MaxDecodedCacheBytes = 48L * 1024 * 1024;
-    private const uint MaxArchiveMeshBytes = 16u * 1024 * 1024;
 
     internal static TileResult Prepare(string data, string pluginsPath, FormKey scope, long tileX, long tileY, int size,
         bool isWorldspace, string scratch)
@@ -259,7 +253,6 @@ internal static class SceneTile
         var nifSources = new List<TileNifSource>();
         var missingShapes = new List<TileMissingNifShape>();
         var models = new Dictionary<string, ModelExtraction>(StringComparer.OrdinalIgnoreCase);
-        long cachedModelBytes = 0;
         uint eligible = 0, failed = 0;
         var rejections = new Dictionary<string, uint>(StringComparer.Ordinal);
         void Reject(string reason, uint count = 1)
@@ -270,10 +263,6 @@ internal static class SceneTile
         }
         void AddMissing(FormKey reference, string nifPath, int blockIndex, string reason)
         {
-            if (missingShapes.Count >= MaxMissingShapes) {
-                Reject("missing shape manifest capacity");
-                return;
-            }
             missingShapes.Add(new TileMissingNifShape(reference.ModKey.ToString(), reference.ID,
                 nifPath, blockIndex, reason.Length > 80 ? reason[..80] : reason));
         }
@@ -285,13 +274,9 @@ internal static class SceneTile
                 Reject("NIF path exceeds manifest limit");
                 return;
             }
-            if (nifSources.Count < MaxNifSources)
-                nifSources.Add(new TileNifSource(reference.ModKey.ToString(), reference.ID, nifPath));
-            else
-                Reject("NIF source manifest capacity");
+            nifSources.Add(new TileNifSource(reference.ModKey.ToString(), reference.ID, nifPath));
             AddMissing(reference, nifPath, -1, reason);
         }
-        long bytes = 0;
         foreach (var candidate in candidates.Values)
         {
             // The cached placement window is wider than one subcell's origin
@@ -377,12 +362,9 @@ internal static class SceneTile
                 unresolvedNif = NormalizeNifPath(model);
                 if (unresolvedNif.Length > 260)
                     throw new InvalidDataException("NIF path exceeds manifest limit");
-                if (nifSources.Count < MaxNifSources)
-                    nifSources.Add(new TileNifSource(placed.FormKey.ModKey.ToString(),
-                        placed.FormKey.ID, unresolvedNif));
-                else
-                    Reject("NIF source manifest capacity");
-                var extraction = LoadModel(data, unresolvedNif, models, ref cachedModelBytes, archives, scratch);
+                nifSources.Add(new TileNifSource(placed.FormKey.ModKey.ToString(),
+                    placed.FormKey.ID, unresolvedNif));
+                var extraction = LoadModel(data, unresolvedNif, models, archives, scratch);
                 foreach (var (reason, count) in extraction.Rejections)
                     Reject(reason, count);
                 foreach (var missing in extraction.Missing)
@@ -395,13 +377,9 @@ internal static class SceneTile
                     var transform = shape.ToModel * toWorld;
                     if (!Overlaps(shape.Positions, transform, tileX, tileY, size)) continue;
                     ++eligible;
-                    var shapeBytes = checked((long)shape.Positions.Length * 12 + (long)shape.Indices.Length * 4);
-                    if (shapes.Count >= MaxShapes || shapeBytes > MaxGeometryBytes - bytes)
-                    {
-                        Reject("tile shape or byte budget exceeded");
-                        continue;
-                    }
-                    bytes += shapeBytes;
+                    var shapeBytes = checked((long)shape.Positions.Length * 48 + (long)shape.Indices.Length * 4);
+                    if (!FitsManagedMemory(shapeBytes))
+                        throw new OutOfMemoryException("Insufficient memory for tile geometry");
                     shapes.Add(new TileShape(Identity(placed.FormKey.ToString(), shape.Index),
                         shape.Positions.Select(p => new[] { p.X, p.Y, p.Z }).ToArray(), shape.Indices,
                         PlacementTransform.ToRows(transform)));
@@ -453,7 +431,7 @@ internal static class SceneTile
     }
 
     private static ModelExtraction LoadModel(string data, string path, Dictionary<string, ModelExtraction> cache,
-        ref long cachedBytes, Lazy<IArchiveReader[]> archives, string scratch)
+        Lazy<IArchiveReader[]> archives, string scratch)
     {
         path = NormalizeNifPath(path);
         if (Path.IsPathRooted(path) || path.Split('\\').Any(part => part is ".." or "." or ""))
@@ -474,8 +452,10 @@ internal static class SceneTile
                     var entry = folder.Files.FirstOrDefault(file =>
                         string.Equals(file.Path.Replace('/', '\\'), path, StringComparison.OrdinalIgnoreCase));
                     if (entry == null) continue;
-                    if (entry.Size == 0 || entry.Size > MaxArchiveMeshBytes)
-                        throw new InvalidDataException("Archive mesh exceeds extraction budget");
+                    if (entry.Size == 0)
+                        throw new InvalidDataException("Empty archive mesh");
+                    if (!FitsManagedMemory(entry.Size))
+                        throw new OutOfMemoryException("Insufficient memory for archive extraction");
                     temporary = Path.Combine(scratch, "archive-mesh.nif");
                     File.WriteAllBytes(temporary, entry.GetBytes());
                     filename = temporary;
@@ -549,21 +529,16 @@ internal static class SceneTile
         if (output.Count == 0 && missing.Count == 0)
             Skip("no supported opaque rigid triangles", -1);
         var extracted = new ModelExtraction(output.ToArray(), missing.ToArray(), rejected);
-        // Decoded model geometry has an independent per-tile RAM cap. Bypassing
-        // the cache does not discard a valid model or alter tile coverage.
-        long decodedBytes = 256L + (long)path.Length * 2;
-        foreach (var shape in extracted.Shapes)
-            decodedBytes += 128L + (long)shape.Positions.Length * 12 + (long)shape.Indices.Length * 4;
-        foreach (var unresolved in extracted.Missing)
-            decodedBytes += 64L + (long)unresolved.Reason.Length * 2;
-        foreach (var reason in extracted.Rejections.Keys)
-            decodedBytes += 32L + (long)reason.Length * 2;
-        if (decodedBytes <= MaxDecodedCacheBytes - cachedBytes)
-        {
+        if (FitsManagedMemory(0))
             cache[path] = extracted;
-            cachedBytes += decodedBytes;
-        }
         return extracted;
+    }
+
+    private static bool FitsManagedMemory(long bytes)
+    {
+        var memory = GC.GetGCMemoryInfo();
+        var available = memory.TotalAvailableMemoryBytes - GC.GetTotalMemory(false);
+        return bytes >= 0 && available > 0 && bytes <= available;
     }
 
     private static ulong Identity(string formKey, int blockIndex)

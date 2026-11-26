@@ -1,4 +1,5 @@
 #include "DX12NativeRuntimeCapture.h"
+#include "SystemMemoryBudget.h"
 
 #include "Globals.h"
 
@@ -12,8 +13,6 @@ namespace DX12Native
 {
 	namespace
 	{
-		constexpr uint64_t kSingleCopyBytes = 1024ull * 1024;
-		constexpr uint32_t kFrameCopyBytes = 2u * 1024u * 1024u;
 		constexpr size_t kPacketLimit = 128;
 		constexpr uint64_t kFnvPrime = 1099511628211ull;
 		constexpr uint64_t kFnvOffset = 14695981039346656037ull;
@@ -96,8 +95,6 @@ namespace DX12Native
 		stableObservations.clear();
 		activeCenter = {};
 		activeSize = 0;
-		lastFrame = UINT32_MAX;
-		frameBytes = 0;
 	}
 
 	void RuntimeGeometryCapture::Observe(const RuntimeGeometryCandidate& candidate, uint32_t frame,
@@ -111,7 +108,7 @@ namespace DX12Native
 		const uint64_t vertexBytes = uint64_t(candidate.stride) * candidate.vertexCount;
 		const uint64_t indexCount = uint64_t(candidate.triangleCount) * 3;
 		const uint64_t bytes = vertexBytes + indexCount * sizeof(uint16_t);
-		if (!bytes || bytes > kSingleCopyBytes || indexCount > UINT32_MAX)
+		if (!bytes || !DX12::HasAvailableSystemMemory(bytes) || indexCount > UINT32_MAX)
 			return;
 		const auto center = grid->requested.front();
 		const uint64_t id = Identity(candidate);
@@ -126,12 +123,6 @@ namespace DX12Native
 				captured.clear();
 				stableObservations.clear();
 				pending.clear();
-				lastFrame = UINT32_MAX;
-				frameBytes = 0;
-			}
-			if (lastFrame != frame) {
-				lastFrame = frame;
-				frameBytes = 0;
 			}
 			if (candidate.requiresStability && !captured.contains(id)) {
 				// Avoid freezing moving clutter and actor attachments into TLAS.
@@ -157,10 +148,9 @@ namespace DX12Native
 				if (seen.second < 3)
 					return;
 			}
-			if (bytes > kFrameCopyBytes - frameBytes || pending.size() >= kPacketLimit ||
+			if (pending.size() >= kPacketLimit ||
 				!captured.insert(id).second)
 				return;
-			frameBytes += static_cast<uint32_t>(bytes);
 			admittedGeneration = generation;
 		}
 
@@ -270,8 +260,9 @@ namespace DX12Native
 					continue;
 			}
 			// Existing immutable grid owns residency and geometry revisions.
-			globals::features::dx12Resources.PublishRuntimeShape(
-				std::move(shape), packet.centerX, packet.centerY, packet.sourceCenter.scope);
+			if (!globals::features::dx12Resources.PublishRuntimeShape(
+					std::move(shape), packet.centerX, packet.centerY, packet.sourceCenter.scope))
+				releaseIfCurrent();
 		}
 	}
 }

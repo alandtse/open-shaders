@@ -13,7 +13,7 @@ namespace DX12Native
 		// One process-wide policy shared by every native DX12 budget consumer.
 		// DXGI CurrentUsage already includes all resources on this adapter:
 		// never sum independently tracked allocations to compute the reserve.
-		static constexpr uint32_t kHeadroomPercent = 10;
+		static constexpr uint32_t kHeadroomPercent = 4;
 
 		struct Snapshot
 		{

@@ -1,4 +1,5 @@
 #include "CompanionWorker.h"
+#include "SystemMemoryBudget.h"
 
 #include <Windows.h>
 
@@ -15,7 +16,6 @@ namespace DX12
 {
 	namespace
 	{
-		constexpr uint64_t kMaximumTransferBytes = 192ull * 1024 * 1024;
 		constexpr DWORD kPreparationDeadlineMs = 90000;
 
 		std::wstring Quote(std::wstring_view value)
@@ -378,8 +378,8 @@ namespace DX12
 			return result;
 		try {
 			std::ifstream stream(file, std::ios::binary | std::ios::ate);
-			if (!stream || stream.tellg() <= 0 || uint64_t(stream.tellg()) > kMaximumTransferBytes) {
-				result.failure = "Companion reply missing, empty, or over transfer size limit";
+			if (!stream || stream.tellg() <= 0 || !HasAvailableSystemMemory(static_cast<uint64_t>(stream.tellg()))) {
+				result.failure = "Companion reply missing, empty, or insufficient system memory";
 				return result;
 			}
 			stream.seekg(0);
@@ -390,13 +390,12 @@ namespace DX12
 					return result;
 			}
 			if (root.at("version").get<uint32_t>() != 1 ||
-				!root.at("shapes").is_array() || root.at("shapes").size() > 384 ||
+				!root.at("shapes").is_array() ||
 				!root.at("lights").is_array() || root.at("lights").size() > kMaxPreparedLights) {
 				result.failure = "Companion reply schema/shape/light-count invalid";
 				return result;
 			}
 			auto& publication = result.publication;
-			constexpr uint64_t kMaximumTileBytes = 64ull * 1024 * 1024;
 			std::unordered_set<uint64_t> identities;
 			publication.eligibleShapes = root.at("eligibleShapes").get<uint32_t>();
 			publication.failedShapes = root.at("failedShapes").get<uint32_t>();
@@ -417,8 +416,6 @@ namespace DX12
 			// are identifiers, not authorization to load arbitrary paths or trust triangles.
 			if (const auto nifSources = root.find("nifSources");
 				nifSources != root.end() && nifSources->is_array()) {
-				if (nifSources->size() > 4096)
-					throw std::invalid_argument("Companion NIF source manifest exceeds limit");
 				for (const auto& item : *nifSources) {
 					NifSourceDescriptor source;
 					source.referencePlugin = item.at("referencePlugin").get<std::string>();
@@ -432,8 +429,6 @@ namespace DX12
 			}
 			if (const auto missing = root.find("missingShapes");
 				missing != root.end() && missing->is_array()) {
-				if (missing->size() > 4096)
-					throw std::invalid_argument("Companion missing NIF manifest exceeds limit");
 				for (const auto& item : *missing) {
 					MissingNifShapeDescriptor source;
 					source.referencePlugin = item.at("referencePlugin").get<std::string>();
@@ -452,7 +447,7 @@ namespace DX12
 				auto shape = std::make_shared<Shape>();
 				shape->identity = item.at("identity").get<uint64_t>();
 				const auto& positions = item.at("positions");
-				if (!positions.is_array() || positions.empty() || positions.size() > 4'000'000)
+				if (!positions.is_array() || positions.empty() || positions.size() > UINT32_MAX)
 					throw std::invalid_argument("Invalid vertex count");
 				shape->positions.reserve(positions.size());
 				for (const auto& entry : positions) {
@@ -469,7 +464,7 @@ namespace DX12
 				                        uint64_t(shape->indices.size()) * sizeof(uint32_t);
 				if (!shape->identity || !identities.insert(shape->identity).second ||
 					shape->indices.empty() || shape->indices.size() % 3 ||
-					length > kMaximumTileBytes - publication.geometryBytes ||
+					length > UINT64_MAX - publication.geometryBytes || !HasAvailableSystemMemory(length) ||
 					!std::ranges::all_of(shape->positions, [](const float3& p) {
 						return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
 					}) ||
