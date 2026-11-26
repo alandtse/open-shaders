@@ -137,7 +137,7 @@ namespace DX12Native
 		if (!scene || !scene->acceleration || !scene->producerFence) {
 			return;
 		}
-		if (lights.empty()) {
+		if (lights.empty() || lights.size() > UINT32_MAX / kRecords) {
 			return;
 		}
 		std::shared_ptr<ShadowMaskFrame> attempted;
@@ -164,6 +164,7 @@ namespace DX12Native
 			const ShadowSamplingLayout sampling{ width, height, logicalWidth, logicalHeight,
 				NativeShadowPhysicalWidth(logicalWidth, quality), logicalHeight, quality,
 				NativeShadowCheckerboardOrigin(quality, frame) };
+			const uint64_t lightBytes = uint64_t(std::max(lights.size(), size_t(kMaxShadowLights))) * kRecords * sizeof(std::array<float, 4>);
 			const bool fresh = !slot || slot->sampling.physicalWidth != sampling.physicalWidth ||
 			                   slot->sampling.physicalHeight != sampling.physicalHeight;
 			if (fresh) {
@@ -199,7 +200,7 @@ namespace DX12Native
 					&descriptors, IID_PPV_ARGS(replacement->descriptors.put())));
 				replacement->cameraUpload = UploadBuffer(requested.d3d12Device.get(), D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 				replacement->lightUpload = UploadBuffer(requested.d3d12Device.get(),
-					sizeof(std::array<float, 4>) * kMaxShadowLights * kRecords);
+					lightBytes);
 				DX::ThrowIfFailed(requested.d3d12Device->CreateCommandAllocator(
 					D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(replacement->allocator.put())));
 				DX::ThrowIfFailed(requested.d3d12Device->CreateCommandList(0,
@@ -207,6 +208,8 @@ namespace DX12Native
 					pipeline.get(), IID_PPV_ARGS(replacement->commands.put())));
 				slot = std::move(replacement);
 			} else {
+				if (slot->lightUpload->GetDesc().Width < lightBytes)
+					slot->lightUpload = UploadBuffer(requested.d3d12Device.get(), lightBytes);
 				DX::ThrowIfFailed(slot->allocator->Reset());
 				DX::ThrowIfFailed(slot->commands->Reset(slot->allocator.get(), pipeline.get()));
 			}
@@ -222,7 +225,7 @@ namespace DX12Native
 				slot->raster->camera.CameraViewInverse,
 				slot->raster->camera.CameraPosAdjust,
 				width, height, frame, quality,
-				uint32_t(std::min(lights.size(), size_t(kMaxShadowLights))),
+				uint32_t(lights.size()),
 				kMinRayDistance, kMaxRayDistance, 0u,
 				std::clamp(controls.reachMultiplier, 0.1f, 64.0f),
 				std::clamp(controls.fadeRange, 0.0f, 1.0f),
@@ -239,14 +242,14 @@ namespace DX12Native
 			static_assert(sizeof(Constants) <= D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
 
-			std::array<std::array<float, 4>, kMaxShadowLights * kRecords> records{};
+			std::vector<std::array<float, 4>> records(size_t(camera.lightCount) * kRecords);
 			for (size_t i = 0; i < camera.lightCount; ++i) {
 				const auto& light = lights[i];
 				records[i * kRecords + 0] = { light.position.x, light.position.y, light.position.z, light.radius };
 				records[i * kRecords + 1] = { light.color.x, light.color.y, light.color.z, light.fade };
-				records[i * kRecords + 2] = { light.emitterRadius, light.falloffExponent, float(light.flags), std::bit_cast<float>(light.referenceID) };
+				records[i * kRecords + 2] = { light.emitterRadius, light.falloffExponent, float(light.flags), std::bit_cast<float>(light.runtimeIdentity ? uint32_t(light.runtimeIdentity ^ (light.runtimeIdentity >> 32)) : light.referenceID) };
 			}
-			WriteUpload(slot->lightUpload.get(), records.data(), sizeof(records));
+			WriteUpload(slot->lightUpload.get(), records.data(), records.size() * sizeof(records.front()));
 			slot->debugLights.clear();
 			if (controls.captureDebugLights)
 				slot->debugLights.assign(lights.begin(), lights.begin() + camera.lightCount);

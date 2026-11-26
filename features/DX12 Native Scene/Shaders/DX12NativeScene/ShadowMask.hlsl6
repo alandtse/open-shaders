@@ -71,7 +71,7 @@ float3 SampleEmitterOffset(float3 lightDirection, float emitterRadius, uint2 pix
 	// Valid receiver with no applicable light: neutral, not an unsampled pixel.
 	RawMask[packed] = float4(1, 0, receiverDistance, 0);
 	float total = 0, visible = 0;
-	[loop] for (uint i = 0; i < min(LightCount, 2048u); ++i)
+	[loop] for (uint i = 0; i < LightCount; ++i)
 	{
 		float4 light = Lights[i * 3 + 0];     // xyz vanilla position + vanilla radius
 		float4 radiance = Lights[i * 3 + 1];  // linear RGB + vanilla fade

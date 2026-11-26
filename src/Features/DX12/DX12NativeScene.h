@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 /** @brief Independent early opaque raster capture for native DX12. */
@@ -72,6 +73,8 @@ struct DX12NativeScene final : OverlayFeature
 private:
 	/** @brief Gates only native shadow replacement; never disables DX11 baseline shadows. */
 	bool CanOffloadShadowsInCurrentCell() const;
+	std::vector<DX12::PreparedLight> CollectFullShadowLights(std::span<const DX12::PreparedLight> prepared);
+	void ResetFullLightInventory();
 	bool nativeSessionStarted = false;  // Render/main-thread lifecycle.
 	std::optional<GraphicsBackend> backend;
 	DX12Native::RasterCapture raster;
@@ -113,4 +116,19 @@ private:
 	uint32_t runtimeLightFrame = UINT32_MAX;
 	std::vector<RuntimeLightSample> runtimeLightSamples;
 	std::unordered_map<uint32_t, DX12::PreparedLight> frozenNativeLights;
+	// Full-shadow membership is independent of SCM selection. Keep emitter identity alive
+	// only while the source belongs to the active world light lists.
+	struct FullRuntimeLight
+	{
+		RE::NiPointer<RE::NiLight> source;
+		DX12::PreparedLight value;
+		uint32_t placedReference = 0;
+		uint64_t seen = 0;
+		bool supported = false, duplicate = false, sampled = false;
+	};
+	std::unordered_map<const RE::NiLight*, FullRuntimeLight> fullRuntimeLights;
+	std::vector<uint32_t> fullPreparedOrder;
+	std::unordered_set<uint32_t> fullPreparedIDs;
+	uint32_t fullRuntimeScope = 0;
+	uint64_t fullLightVisit = 0;
 };

@@ -12,6 +12,9 @@
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
+#include "Utils/PointLightFlags.h"
+#include "RE/T/TESObjectLIGH.h"
+#include <Windows.h>
 
 #include <algorithm>
 #include <cmath>
@@ -23,9 +26,9 @@
 void DX12NativeScene::DrawSettings()
 {
 	ImGui::Checkbox(T("menu.dx12.scene.independent_shadowmask", "Independent shadowmask"), &shadowMaskEnabled);
-	ImGui::Checkbox(T("menu.dx12.scene.trace_all_lights", "Trace all prepared lights (additional shadows)"), &traceAllPreparedLights);
+	ImGui::Checkbox(T("menu.dx12.scene.trace_all_lights", "Full-shadow (every supported point light)"), &traceAllPreparedLights);
 	if (traceAllPreparedLights)
-		ImGui::TextWrapped("%s", T("menu.dx12.scene.trace_all_lights_warning", "Performance mode: skips light matching and caster coverage checks. Incomplete TLAS coverage can cause missing shadows."));
+		ImGui::TextWrapped("%s", T("menu.dx12.scene.trace_all_lights_warning", "Native static ownership without raster fallback. Includes runtime point lights; incomplete native coverage can cause missing shadows."));
 	ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoorShadowOffloading);
 	bool debug = debugNativeLights.load(std::memory_order_relaxed);
 	if (ImGui::Checkbox(T("menu.dx12.scene.debug_native_lights", "Debug: label submitted native lights"), &debug))
@@ -96,7 +99,9 @@ void DX12NativeScene::DrawOverlay()
 		if (!Util::GetWorldFocusCoord(RE::NiPoint3{ light.position.x, light.position.y, light.position.z }, uv))
 			continue;
 		const ImVec2 point{ viewport->Pos.x + uv.x * viewport->Size.x, viewport->Pos.y + uv.y * viewport->Size.y };
-		const auto label = std::format("DXR {:08X}", light.referenceID);
+		const auto label = light.runtimeIdentity ?
+			std::format("DXR R {:08X}/{:X}", light.referenceID, light.runtimeIdentity) :
+			std::format("DXR P {:08X}", light.referenceID);
 		const ImVec2 text{ point.x + labelOffset, point.y - ImGui::GetTextLineHeight() * 0.5f };
 		const auto size = ImGui::CalcTextSize(label.c_str());
 		draw->AddCircleFilled(point, markerRadius, color);
@@ -349,7 +354,10 @@ void DX12NativeScene::PreShadowMaps()
 	if (globals::game::graphicsState) {
 		const uint32_t frame = globals::game::graphicsState->GetFrameCount();
 		if (frameShadowSceneID.load(std::memory_order_acquire) != frame) {
-			frameTraceAllLights.store(traceAllPreparedLights, std::memory_order_release);
+			if (frameTraceAllLights.exchange(traceAllPreparedLights, std::memory_order_acq_rel) && !traceAllPreparedLights) {
+				std::scoped_lock lock(runtimeLightMutex);
+				ResetFullLightInventory();
+			}
 			previousShadowSubmitted.store(shadows.Get(frame - 1u) != nullptr, std::memory_order_release);
 			frameShadowScene.store(acceleration.GetScene(), std::memory_order_release);
 			frameShadowSceneID.store(frame, std::memory_order_release);
@@ -375,6 +383,122 @@ void DX12NativeScene::PreShadowMaps()
 	// allocations and command recording run as bounded shared-pool tasks.
 	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
 		acceleration.Request(std::move(grid));
+}
+
+
+namespace
+{
+	// Engine user data and parent pointers are not reference counted.
+	void ReadFullLightOwner(const RE::NiLight* ni, uint32_t& owner, uint32_t& placed) noexcept
+	{
+		__try {
+			const RE::NiAVObject* node = ni;
+			for (uint32_t depth = 0; node && depth < 16; ++depth, node = node->parent) {
+				if (auto* ref = node->GetUserData()) {
+					owner = ref->GetFormID();
+					auto* base = ref->GetObjectReference();
+					if (base && base->As<RE::TESObjectLIGH>())
+						placed = owner;
+					return;
+				}
+			}
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		}
+	}
+}
+
+void DX12NativeScene::ResetFullLightInventory()
+{
+	fullRuntimeLights.clear();
+	fullPreparedOrder.clear();
+	fullPreparedIDs.clear();
+	fullRuntimeScope = 0;
+	fullLightVisit = 0;
+}
+
+std::vector<DX12::PreparedLight> DX12NativeScene::CollectFullShadowLights(std::span<const DX12::PreparedLight> prepared)
+{
+	std::vector<DX12::PreparedLight> result(prepared.begin(), prepared.end());
+	std::scoped_lock lock(runtimeLightMutex);
+	const uint32_t scope = shadowLightScope.load(std::memory_order_acquire);
+	if (fullRuntimeScope != scope) {
+		ResetFullLightInventory();
+		fullRuntimeScope = scope;
+	}
+	const auto node = globals::game::smState ? globals::game::smState->shadowSceneNode[0] : nullptr;
+	if (!node) {
+		ResetFullLightInventory();
+		return result;
+	}
+
+	// Match exact placed-reference identities only when prepared membership changes
+	// or a new runtime emitter appears. Model-attached lights retain their own identity.
+	const bool preparedChanged = prepared.size() != fullPreparedOrder.size() ||
+		!std::equal(prepared.begin(), prepared.end(), fullPreparedOrder.begin(),
+			[](const auto& light, uint32_t id) { return light.referenceID == id; });
+	if (preparedChanged) {
+		fullPreparedIDs.clear();
+		fullPreparedOrder.clear();
+		fullPreparedOrder.reserve(prepared.size());
+		for (const auto& light : prepared) {
+			fullPreparedOrder.push_back(light.referenceID);
+			if (light.referenceID)
+				fullPreparedIDs.insert(light.referenceID);
+		}
+	}
+	const uint64_t visit = ++fullLightVisit;
+	const auto& scene = node->GetRuntimeData();
+	result.reserve(prepared.size() + scene.activeLights.size() + scene.activeShadowLights.size());
+	const auto collect = [&](RE::BSLight* light) {
+		if (!light || !light->pointLight || !light->light)
+			return;
+		auto* ni = light->light.get();
+		auto [it, inserted] = fullRuntimeLights.try_emplace(ni);
+		auto& cached = it->second;
+		if (cached.seen == visit)
+			return;
+		cached.seen = visit;
+		if (inserted) {
+			cached.source = light->light;
+			const auto flags = PointLightFlags::GetVanillaPointLightFlags(light, ni);
+			cached.supported = !(flags & PointLightFlags::ToMask(PointLightFlags::Flags::Spot));
+			cached.value.runtimeIdentity = reinterpret_cast<std::uintptr_t>(ni);
+			ReadFullLightOwner(ni, cached.value.referenceID, cached.placedReference);
+		}
+		if (inserted || preparedChanged)
+			cached.duplicate = cached.placedReference && fullPreparedIDs.contains(cached.placedReference);
+		if (!cached.supported || cached.duplicate)
+			return;
+		const auto& rt = ni->GetLightRuntimeData();
+		if (ni->GetFlags().any(RE::NiAVObject::Flag::kHidden) ||
+			!std::isfinite(rt.fade) || rt.fade <= 0.0f) {
+			cached.sampled = false;
+			return;
+		}
+		const auto& position = ni->world.translate;
+		auto& value = cached.value;
+		// Engine-static emitters keep their native parameters until their position
+		// changes. Moving/animated sources are sampled live without rematching.
+		if (!cached.sampled || light->dynamic || position.x != value.position.x ||
+			position.y != value.position.y || position.z != value.position.z) {
+			cached.sampled = std::isfinite(rt.radius.x) && rt.radius.x > 0.0f &&
+				std::isfinite(rt.diffuse.red) && std::isfinite(rt.diffuse.green) && std::isfinite(rt.diffuse.blue) &&
+				std::isfinite(position.x) && std::isfinite(position.y) && std::isfinite(position.z);
+			if (!cached.sampled)
+				return;
+			value.position = float3{ position.x, position.y, position.z };
+			value.radius = rt.radius.x;
+			value.color = float3{ rt.diffuse.red, rt.diffuse.green, rt.diffuse.blue };
+			value.fade = rt.fade;
+		}
+		result.push_back(value);
+	};
+	for (const auto& light : scene.activeLights)
+		collect(light.get());
+	for (const auto& light : scene.activeShadowLights)
+		collect(light.get());
+	std::erase_if(fullRuntimeLights, [visit](const auto& entry) { return entry.second.seen != visit; });
+	return result;
 }
 
 void DX12NativeScene::OnOpaqueRasterReady()
@@ -426,8 +550,8 @@ void DX12NativeScene::OnOpaqueRasterReady()
 			.captureDebugLights = debugNativeLights.load(std::memory_order_relaxed)
 		};
 		if (TraceAllPreparedLights()) {
-			if (lights)
-				shadows.Dispatch(*backend, captured, built, *lights, frame, controls);
+			const auto inventory = CollectFullShadowLights(lights ? std::span<const DX12::PreparedLight>(*lights) : std::span<const DX12::PreparedLight>{});
+			shadows.Dispatch(*backend, captured, built, inventory, frame, controls);
 			return;
 		}
 		std::vector<DX12::PreparedLight> liveLights;
@@ -573,6 +697,7 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 			runtimeLightFrame = UINT32_MAX;
 			runtimeLightSamples.clear();
 			frozenNativeLights.clear();
+			ResetFullLightInventory();
 		}
 		raster.Reset();
 		shadows.Reset();
@@ -599,6 +724,7 @@ void DX12NativeScene::OnRuntimeDisabled()
 		runtimeLightFrame = UINT32_MAX;
 		runtimeLightSamples.clear();
 		frozenNativeLights.clear();
+		ResetFullLightInventory();
 	}
 	raster.Reset();
 	shadows.Reset();
