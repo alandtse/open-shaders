@@ -3458,7 +3458,7 @@ namespace SIE
 			return {};
 		if (!runtimeTaskGate)
 			runtimeTaskGate = std::make_shared<Util::RuntimeTaskGate>(
-				[this](std::function<void()> work) { return TrySubmitRuntimeTask(std::move(work)); });
+				[this](std::function<void()> work, bool menuPriority) { return TrySubmitRuntimeTask(std::move(work), menuPriority); });
 		return runtimeTaskGate;
 	}
 
@@ -3476,7 +3476,7 @@ namespace SIE
 			gate->Close();
 	}
 
-	bool ShaderCache::TrySubmitRuntimeTask(std::function<void()> a_work)
+	bool ShaderCache::TrySubmitRuntimeTask(std::function<void()> a_work, bool menuPriority)
 	{
 		if (!a_work)
 			return false;
@@ -3484,7 +3484,7 @@ namespace SIE
 		const auto limit = backgroundCompilation ? backgroundCompilationThreadCount : compilationThreadCount;
 		if (!Util::CanAdmitRuntimeTask(runtimeTaskAdmissionClosed, runtimeTaskInFlight,
 				!compilationSet.demandedTasks.empty(),
-				compilationSet.dispatchedTasksInFlight.load(std::memory_order_relaxed), limit))
+				compilationSet.dispatchedTasksInFlight.load(std::memory_order_relaxed), limit, menuPriority))
 			return false;
 
 		// Reserve a slot before posting, exactly as the shader dispatcher does. No shader
@@ -3493,7 +3493,11 @@ namespace SIE
 		runtimeTaskInFlight = true;
 		const auto queuedQpc = Util::GetQpcTicks();
 		try {
-			compilationPool.detach_task([this, queuedQpc, work = std::move(a_work)]() mutable {
+			compilationPool.detach_task([this, queuedQpc, menuPriority, work = std::move(a_work)]() mutable {
+				const auto thread = GetCurrentThread();
+				const int previous = menuPriority ? GetThreadPriority(thread) : THREAD_PRIORITY_ERROR_RETURN;
+				const bool boosted = previous != THREAD_PRIORITY_ERROR_RETURN && SetThreadPriority(thread, THREAD_PRIORITY_ABOVE_NORMAL);
+				const SKSE::stl::scope_exit restorePriority([=]() noexcept { if (boosted) SetThreadPriority(thread, previous); });
 				const SKSE::stl::scope_exit releaseSlot([this]() noexcept {
 					{
 						std::scoped_lock lock(compilationSet.compilationMutex);

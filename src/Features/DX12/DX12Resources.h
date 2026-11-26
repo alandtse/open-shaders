@@ -194,7 +194,7 @@ struct DX12Resources final : Feature
 	bool WantsPreShadowMapsHook() const override;
 	void DataLoaded() override;
 	void PreShadowMaps() override;
-	void EarlyPrepass() override;
+	void Reset() override;
 	void OnRuntimeDisabled() override;
 	/** @brief Returns current geometry residency without traversing engine objects. */
 	std::shared_ptr<const DX12::Grid> GetGrid() const { return grid.Snapshot(); }

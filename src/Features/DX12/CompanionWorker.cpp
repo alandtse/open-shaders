@@ -17,6 +17,14 @@ namespace DX12
 	namespace
 	{
 		constexpr DWORD kPreparationDeadlineMs = 90000;
+		constexpr DWORD kStartupDeadlineMs = 10 * 60 * 1000;
+		constexpr DWORD kStartupProgressIntervalMs = 10000;
+
+		DWORD RequestPriority(const CompanionRequest& task)
+		{
+			return task.warmup || task.preloadLastSave ? HIGH_PRIORITY_CLASS :
+			       task.predictive ? IDLE_PRIORITY_CLASS : BELOW_NORMAL_PRIORITY_CLASS;
+		}
 
 		std::wstring Quote(std::wstring_view value)
 		{
@@ -115,7 +123,7 @@ namespace DX12
 			}
 
 			bool Start(const std::filesystem::path& executable, const std::filesystem::path& data,
-				const std::filesystem::path& plugins, const std::filesystem::path& work)
+				const std::filesystem::path& plugins, const std::filesystem::path& work, DWORD priority)
 			{
 				if (process && WaitForSingleObject(process, 0) == WAIT_TIMEOUT)
 					return true;
@@ -137,7 +145,7 @@ namespace DX12
 				startup.cb = sizeof(startup);
 				PROCESS_INFORMATION started{};
 				const BOOL launched = CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
-					CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS | CREATE_SUSPENDED,
+					CREATE_NO_WINDOW | priority | CREATE_SUSPENDED,
 					nullptr, nullptr, &startup, &started);
 				if (!launched) {
 					Close();
@@ -182,11 +190,14 @@ namespace DX12
 			// Host-owned per-session mailbox; no persistent geometry output or diagnostics.
 			auto& service = CurrentCompanionProcess();
 			const auto work = destination.parent_path().parent_path();
-			if (!service.Start(executable, data, plugins, work)) {
+			const bool startup = task.warmup || task.preloadLastSave;
+			const auto priority = RequestPriority(task);
+			if (!service.Start(executable, data, plugins, work, priority)) {
 				failure = "Could not launch persistent .NET companion process";
 				return false;
 			}
-			SetPriorityClass(service.process, task.predictive ? IDLE_PRIORITY_CLASS : BELOW_NORMAL_PRIORITY_CLASS);
+			if (!SetPriorityClass(service.process, priority))
+				logger::warn("[DX12Resources] Could not set companion process priority: {}", GetLastError());
 			const auto requestTmp = service.root / L"request.tmp";
 			const auto request = service.root / L"request.json";
 			const auto reply = service.root / L"reply.json";
@@ -222,10 +233,22 @@ namespace DX12
 				service.Close();
 				return false;
 			}
-			const uint64_t started = GetTickCount64();
+			const auto started = Util::GetQpcTicks();
+			const auto frequency = Util::GetQpcFrequency();
+			const auto deadline = Util::QpcDeadlineAfterMs(started, frequency, startup ? kStartupDeadlineMs : kPreparationDeadlineMs);
+			auto nextProgress = Util::QpcDeadlineAfterMs(started, frequency, kStartupProgressIntervalMs);
+			const char* stage = task.preloadLastSave ? "last-save cell" : "NIF manifests";
+			if (startup)
+				logger::info("[DX12Resources] High-priority {} preparation started", stage);
 			while (!stop.stop_requested() &&
-				   (!(task.warmup || task.preloadLastSave) || generation.load(std::memory_order_acquire) == epoch) &&
-				   (task.warmup || GetTickCount64() - started < kPreparationDeadlineMs)) {
+				   (!startup || generation.load(std::memory_order_acquire) == epoch) &&
+				   Util::QpcDeadlinePending(Util::GetQpcTicks(), deadline)) {
+				if (startup && !Util::QpcDeadlinePending(Util::GetQpcTicks(), nextProgress)) {
+					const auto now = Util::GetQpcTicks();
+					logger::info("[DX12Resources] Waiting for {} companion reply ({:.1f} s)", stage,
+						double(now - started) / double(frequency));
+					nextProgress = Util::QpcDeadlineAfterMs(now, frequency, kStartupProgressIntervalMs);
+				}
 				if (std::filesystem::is_regular_file(reply, ec)) {
 					std::filesystem::rename(reply, destination, ec);
 					if (!ec)
@@ -249,7 +272,7 @@ namespace DX12
 			}
 			if (stop.stop_requested())
 				failure = "Companion request canceled by scene change";
-			else if (GetTickCount64() - started >= kPreparationDeadlineMs)
+			else if (!Util::QpcDeadlinePending(Util::GetQpcTicks(), deadline))
 				failure = "Companion preparation timed out (load order or NIF traversal too slow)";
 			else
 				failure = "Companion exited before returning a tile";
@@ -344,6 +367,10 @@ namespace DX12
 				runningStartup = task.warmup || task.preloadLastSave;
 				epoch = generation.load(std::memory_order_acquire);
 			}
+			const auto thread = GetCurrentThread();
+			const auto originalPriority = GetThreadPriority(thread);
+			const bool boost = (task.preloadLastSave || task.warmup) && originalPriority != THREAD_PRIORITY_ERROR_RETURN &&
+			                   SetThreadPriority(thread, THREAD_PRIORITY_ABOVE_NORMAL);
 			const auto started = Util::GetQpcTicks();
 			auto result = Prepare(task, epoch, stop);
 			result.predictive = task.predictive;
@@ -361,6 +388,8 @@ namespace DX12
 				if (!warmed.failure.empty() && epoch == generation.load(std::memory_order_acquire))
 					logger::warn("[DX12Resources] Manifest warmup failed: {}", warmed.failure);
 			}
+			if (boost)
+				SetThreadPriority(thread, originalPriority);
 			{
 				std::scoped_lock lock(mutex);
 				running = runningStartup = false;

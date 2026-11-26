@@ -749,9 +749,13 @@ void DX12Resources::PollStartup(uint32_t gameplayScope)
 		return;
 	}
 	auto& publication = result->publication;
-	if (!result->preload || !settings.PreloadLastSave || !settings.ConsolidateInterior ||
-		result->size != settings.SubcellSize || !publication.wholeCell || !publication.validated)
+	if (!result->preload)
 		return;
+	if (!settings.PreloadLastSave || !settings.ConsolidateInterior ||
+		result->size != settings.SubcellSize || !publication.wholeCell || !publication.validated) {
+		logger::info("[DX12Resources] Last-save preload unavailable or not eligible for whole-cell residency; using live preparation");
+		return;
+	}
 	auto* handler = RE::TESDataHandler::GetSingleton();
 	const auto* form = handler ? handler->LookupForm(result->scopeLocal, result->scopePlugin) : nullptr;
 	const auto* cell = form ? form->As<RE::TESObjectCELL>() : nullptr;
@@ -781,17 +785,18 @@ void DX12Resources::PollStartup(uint32_t gameplayScope)
 		menuPreloaded = !gameplayScope;
 		consolidationAttemptScope = key.scope;
 		logger::info("[DX12Resources] Last-save interior {:08X} prepared", key.scope);
-		if (menuPreloaded)
-			globals::features::dx12NativeScene.PrepareMenuScene(grid.Snapshot());
 	}
 }
 
-void DX12Resources::EarlyPrepass()
+void DX12Resources::Reset()
 {
 	if (!IsActive() || !globals::game::ui || !globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))
 		return;
 	EnsureCompanion();
 	PollStartup();
+	// Present-driven retry: menu scenes need not execute the world's prepass.
+	if (menuPreloaded)
+		globals::features::dx12NativeScene.PrepareMenuScene(grid.Snapshot());
 }
 
 bool DX12Resources::WantsPreShadowMapsHook() const { return IsActive(); }

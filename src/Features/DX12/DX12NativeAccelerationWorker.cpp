@@ -27,6 +27,7 @@ namespace DX12Native
 		bool scheduled = false;
 		bool closing = false;
 		bool needsAdvance = false;
+		bool menuPriority = false;
 		winrt::com_ptr<ID3D12Fence> waitFence;
 		uint64_t waitValue = 0;
 		bool waitRegistered = false;
@@ -66,7 +67,7 @@ namespace DX12Native
 		return true;
 	}
 
-	void AccelerationWorker::Request(std::shared_ptr<const DX12::Grid> a_grid)
+	void AccelerationWorker::Request(std::shared_ptr<const DX12::Grid> a_grid, bool menuPriority)
 	{
 		auto current = state.load(std::memory_order_acquire);
 		if (!current || !a_grid || !a_grid->requested.front().scope)
@@ -76,6 +77,7 @@ namespace DX12Native
 			std::scoped_lock lock(current->mutex);
 			if (current->closing)
 				return;
+			current->menuPriority = menuPriority;
 			if (current->lastScope != scope || current->lastRevision != a_grid->geometryRevision) {
 				if (current->lastScope && current->lastScope != scope)
 					current->published.store(nullptr, std::memory_order_release);
@@ -97,6 +99,7 @@ namespace DX12Native
 		{
 			std::scoped_lock lock(current->mutex);
 			current->lastScope = 0;
+			current->menuPriority = false;
 			current->budgetDeferredRevision.store(UINT64_MAX, std::memory_order_release);
 			current->lastRevision = std::numeric_limits<uint64_t>::max();
 			current->pending.reset();
@@ -148,7 +151,7 @@ namespace DX12Native
 			return;
 
 		a_state->scheduled = true;
-		if (!a_state->taskGate->TrySubmit([retained = a_state] { RunStep(retained); }))
+		if (!a_state->taskGate->TrySubmit([retained = a_state] { RunStep(retained); }, a_state->menuPriority))
 			a_state->scheduled = false;
 	}
 

@@ -277,7 +277,7 @@ void DX12NativeScene::PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid)
 		return;
 	nativeSessionStarted = true;
 	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
-		acceleration.Request(std::move(grid));
+		acceleration.Request(std::move(grid), true);
 }
 
 void DX12NativeScene::PreShadowMaps()
