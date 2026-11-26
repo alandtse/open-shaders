@@ -1,16 +1,17 @@
 #include "DX12Resources.h"
 #include "TilePreparationPolicy.h"
 
-#include "CompanionWorker.h"
 #include "DX12Control.h"
 #include "DX12NativeScene.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "RE/M/MainMenu.h"
 #include "RE/P/PlayerCharacter.h"
+#include "RE/T/TES.h"
 #include "RE/T/TESDataHandler.h"
 #include "RE/T/TESWorldSpace.h"
 #include "RE/U/UI.h"
+#include "ScenePrepWorker.h"
 #include "State.h"
 #include "Utils/Game.h"
 #include "Utils/PerfUtils.h"
@@ -115,7 +116,7 @@ namespace DX12
 				}
 		}
 		// Keep recently retired immutable cell publications in bounded DRAM.
-		// A -> B -> A must not repeat companion processing.
+		// A -> B -> A must not repeat scene preparation.
 		if (current->size == size && !current->wholeCell) {
 			const auto retain = [&](const auto& tile) {
 				if (!tile || (tile->state != Tile::State::Ready && tile->state != Tile::State::ReadyPartial &&
@@ -211,17 +212,12 @@ namespace DX12
 		return std::nullopt;
 	}
 
-	bool ResourceGrid::Publish(CompanionPublication publication, bool staged)
+	bool ResourceGrid::Publish(TilePublication publication)
 	{
 		std::scoped_lock lock(mutex);
-		if (staged) {
-			if (pending || !publication.validated)
-				return false;
-		} else {
-			if (!pending || *pending != publication.key)
-				return false;
-			pending.reset();
-		}
+		if (!pending || *pending != publication.key)
+			return false;
+		pending.reset();
 		const auto current = snapshot.load(std::memory_order_acquire);
 		const auto active = std::ranges::find(current->requested, publication.key);
 		const auto predictive = std::ranges::find(current->predictive, publication.key);
@@ -234,7 +230,8 @@ namespace DX12
 		                          current->resident[std::distance(current->requested.begin(), active)] :
 		                          current->predictiveResident[std::distance(current->predictive.begin(), predictive)];
 		tile->preparationAttempts = static_cast<uint8_t>(std::min<unsigned>(existing ? unsigned(existing->preparationAttempts) + 1 : 1u, kPreparationAttemptLimit));
-		tile->companionValidated = publication.validated;
+		tile->preparationValidated = publication.validated;
+		tile->hasUnattachedCells = publication.hasUnattachedCells;
 		tile->failureReason = std::move(publication.failureReason);
 		tile->rejectionReasons = std::move(publication.rejectionReasons);
 		tile->nifSources = std::move(publication.nifSources);
@@ -261,7 +258,7 @@ namespace DX12
 		else if (outcome == TilePreparationOutcome::EmptyPartial)
 			tile->state = Tile::State::EmptyPartial;
 		else {
-			// Malformed or empty-incomplete companion payloads must not claim native scene readiness.
+			// Malformed or empty-incomplete publications must not claim native scene readiness.
 			tile->shapes.clear();
 			tile->lights.clear();
 			tile->bytes = 0;
@@ -366,7 +363,7 @@ namespace DX12
 		if (pending || !source.requested.front().scope || source.requested.front().scope != current->requested.front().scope || source.size != current->size)
 			return;
 		const auto ready = [](const auto& tile) {
-			return tile && tile->companionValidated && (tile->state == Tile::State::Ready || tile->state == Tile::State::ReadyPartial || tile->state == Tile::State::Empty || tile->state == Tile::State::EmptyPartial);
+			return tile && tile->preparationValidated && (tile->state == Tile::State::Ready || tile->state == Tile::State::ReadyPartial || tile->state == Tile::State::Empty || tile->state == Tile::State::EmptyPartial);
 		};
 		auto next = std::make_shared<Grid>(*current);
 		if (source.wholeCell && ready(source.resident.front())) {
@@ -448,6 +445,33 @@ namespace DX12
 		reset(next->predictive, next->predictiveResident);
 		pending.reset();
 		snapshot.store(std::move(next), std::memory_order_release);
+	}
+
+	void ResourceGrid::RefreshUnattachedTiles()
+	{
+		std::scoped_lock lock(mutex);
+		const auto current = snapshot.load(std::memory_order_acquire);
+		auto next = std::make_shared<Grid>(*current);
+		bool changed = false;
+		const auto markRefresh = [&](auto& tiles) {
+			for (auto& tile : tiles) {
+				if (tile && tile->hasUnattachedCells &&
+					(tile->state == Tile::State::Ready || tile->state == Tile::State::ReadyPartial ||
+						tile->state == Tile::State::Empty || tile->state == Tile::State::EmptyPartial)) {
+					auto refreshed = std::make_shared<Tile>(*tile);
+					refreshed->state = Tile::State::Requested;
+					refreshed->preparationAttempts = 0;
+					refreshed->retryAfterQpc = 0;
+					refreshed->failureReason.clear();
+					tile = std::move(refreshed);
+					changed = true;
+				}
+			}
+		};
+		markRefresh(next->resident);
+		markRefresh(next->predictiveResident);
+		if (changed)
+			snapshot.store(std::move(next), std::memory_order_release);
 	}
 
 }
@@ -634,7 +658,7 @@ namespace
 				ImGui::Text(T("menu.dx12.resources.tooltip.subcell", "%s subcell (%lld, %lld): %s"), active ? T("menu.dx12.resources.active", "Active") : T("menu.dx12.resources.predictive", "Predictive"),
 					static_cast<long long>(key.x), static_cast<long long>(key.y), TileStatus(tile));
 				if (tile && tile->preparationAttempts)
-					ImGui::Text("%s", tile->companionValidated ? T("menu.dx12.resources.publication_valid", "Companion publication: valid") : T("menu.dx12.resources.publication_invalid", "Companion publication: invalid"));
+					ImGui::Text("%s", tile->preparationValidated ? T("menu.dx12.resources.publication_valid", "Scene publication: valid") : T("menu.dx12.resources.publication_invalid", "Scene publication: invalid"));
 				if (tile && tile->preparationAttempts)
 					ImGui::Text(T("menu.dx12.resources.tooltip.attempts", "Attempts: %u / 3"), unsigned(tile->preparationAttempts));
 				if (tile && (!tile->nifSources.empty() || !tile->missingShapes.empty()))
@@ -657,7 +681,13 @@ bool DX12Resources::IsActive() const
 }
 
 DX12Resources::DX12Resources() = default;
-DX12Resources::~DX12Resources() = default;
+DX12Resources::~DX12Resources()
+{
+	if (worker) {
+		worker->Cancel();
+		worker.reset();
+	}
+}
 
 void DX12Resources::DataLoaded()
 {
@@ -666,6 +696,13 @@ void DX12Resources::DataLoaded()
 	Feature::RegisterSceneTransitionEvents();
 	if (globals::game::player)
 		globals::game::player->AsPositionPlayerEventSource()->AddEventSink(this);
+}
+
+void DX12Resources::EnsureWorker()
+{
+	if (!worker)
+		worker = std::make_unique<DX12::ScenePrepWorker>();
+	worker->DrainRetiredObjects();
 }
 
 std::optional<DX12Resources::LoadingDestination> DX12Resources::CaptureLoadingDestination()
@@ -678,11 +715,45 @@ std::optional<DX12Resources::LoadingDestination> DX12Resources::CaptureLoadingDe
 		return std::nullopt;
 	const bool interior = target.interior && target.interior->IsInteriorCell();
 	const auto* source = interior ? static_cast<const RE::TESForm*>(target.interior) : static_cast<const RE::TESForm*>(target.world);
-	const auto* file = source ? source->GetFile(0) : nullptr;
-	if (!source || !source->GetFormID() || !file || file->GetFilename().empty())
+	if (!source || !source->GetFormID())
 		return std::nullopt;
-	return LoadingDestination{ source->GetFormID(), source->GetLocalFormID(), std::string(file->GetFilename()), !interior,
+	return LoadingDestination{ source->GetFormID(), !interior,
 		{ target.location.x, target.location.y, target.location.z }, { target.angle.x, target.angle.y, target.angle.z } };
+}
+
+void DX12Resources::CaptureLoadingRequests(const LoadingDestination& destination)
+{
+	const auto serial = loadingSerial.load(std::memory_order_acquire);
+	if (!serial || !globals::features::dx12NativeScene.AllowsScenePreparation(destination.worldspace))
+		return;
+	const auto location = Util::GetPlayerSpatialLocation();
+	if (!location || !location->cell->IsAttached())
+		return;
+	const auto* world = location->worldspace;
+	const uint32_t scope = world ? world->GetFormID() : location->cell->GetFormID();
+	if (scope != destination.scope)
+		return;
+	const auto configuration = loadingSettings.load(std::memory_order_acquire);
+	const auto keys = DX12::Neighborhood(scope, configuration.size, location->position.x, location->position.y);
+	if (!keys)
+		return;
+	auto capture = std::make_shared<LoadingCapture>();
+	capture->serial = serial;
+	capture->scope = scope;
+	capture->size = configuration.size;
+	capture->position = { location->position.x, location->position.y };
+	for (size_t i = 0; i < keys->size(); ++i) {
+		const bool wholeCell = i == 0 && !world && configuration.consolidate;
+		auto request = DX12::CaptureScenePrepRequest((*keys)[i], configuration.size, location->cell, world, false, false, wholeCell);
+		if (!request)
+			continue;
+		const bool consolidated = request->wholeCell;
+		request->loadingGeneration = serial;
+		capture->requests.push_back(std::move(*request));
+		if (consolidated)
+			break;
+	}
+	loadingCapture.store(std::move(capture), std::memory_order_release);
 }
 
 RE::BSEventNotifyControl DX12Resources::ProcessEvent(const RE::PositionPlayerEvent* event,
@@ -693,11 +764,12 @@ RE::BSEventNotifyControl DX12Resources::ProcessEvent(const RE::PositionPlayerEve
 			using Event = RE::PositionPlayerEvent::EVENT_TYPE;
 			if (event->type == Event::kPre) {
 				queuedDestination = CaptureLoadingDestination();
-				if (loadingActive.load(std::memory_order_acquire) && queuedDestination) {
+				if (loadingActive.load(std::memory_order_acquire) && queuedDestination)
 					loadingDestination.store(std::make_shared<const LoadingDestination>(*queuedDestination), std::memory_order_release);
-					BeginLoadingPreparation(*queuedDestination);
-				}
 			} else if (event->type == Event::kFinish) {
+				if (const auto destination = loadingDestination.load(std::memory_order_acquire);
+					destination && loadingActive.load(std::memory_order_acquire))
+					CaptureLoadingRequests(*destination);
 				queuedDestination.reset();
 			}
 		}
@@ -711,30 +783,6 @@ RE::BSEventNotifyControl DX12Resources::ProcessEvent(const RE::PositionPlayerEve
 	return RE::BSEventNotifyControl::kContinue;
 }
 
-void DX12Resources::BeginLoadingPreparation(const LoadingDestination& destination)
-{
-	if (!globals::features::dx12NativeScene.AllowsScenePreparation(destination.worldspace)) {
-		loadingSerial.store(0, std::memory_order_release);
-		runtimePublicationEnabled.store(false, std::memory_order_release);
-		if (companionStarted.load(std::memory_order_acquire))
-			companion->Cancel();
-		return;
-	}
-	const auto configuration = loadingSettings.load(std::memory_order_acquire);
-	DX12::CompanionRequest task;
-	task.key.scope = destination.scope;
-	task.localScopeID = destination.localScopeID;
-	task.scopePlugin = destination.scopePlugin;
-	task.worldspace = destination.worldspace;
-	task.size = configuration.size;
-	task.consolidate = configuration.consolidate && !task.worldspace;
-	EnsureCompanion(false);
-	if (!companionStarted.load(std::memory_order_acquire))
-		return;
-	if (const auto generation = companion->BeginLoading(std::move(task), destination.position[0], destination.position[1], grid.Snapshot()))
-		loadingSerial.store(generation, std::memory_order_release);
-}
-
 void DX12Resources::OnLoadingMenuEvent(bool opening)
 {
 	if (opening && IsActive()) {
@@ -742,18 +790,17 @@ void DX12Resources::OnLoadingMenuEvent(bool opening)
 		if (!destination)
 			destination = std::move(queuedDestination);
 		queuedDestination.reset();
+		loadingCapture.store(nullptr, std::memory_order_release);
 		loadingDestination.store(destination ? std::make_shared<const LoadingDestination>(std::move(*destination)) : nullptr,
 			std::memory_order_release);
+		loadingSerial.fetch_add(1, std::memory_order_acq_rel);
 		loadingActive.store(true, std::memory_order_release);
-		if (const auto captured = loadingDestination.load(std::memory_order_acquire)) {
-			BeginLoadingPreparation(*captured);
+		if (const auto captured = loadingDestination.load(std::memory_order_acquire))
 			logger::debug("[DX12Resources] Loading target {:08X} ({}, {}, {})", captured->scope,
 				captured->position[0], captured->position[1], captured->position[2]);
-		} else
+		else
 			logger::debug("[DX12Resources] Loading target unavailable");
 	} else {
-		if (companionStarted.load(std::memory_order_acquire))
-			companion->EndLoading();
 		loadingActive.store(false, std::memory_order_release);
 		const auto captured = loadingDestination.exchange(nullptr, std::memory_order_acq_rel);
 		queuedDestination.reset();
@@ -773,25 +820,24 @@ void DX12Resources::SuspendPreparation()
 	if (preparationSuspended)
 		return;
 	preparationSuspended = true;
-	loadingSerial.store(0, std::memory_order_release);
 	runtimePublicationEnabled.store(false, std::memory_order_release);
-	if (companionStarted.load(std::memory_order_acquire))
-		companion->Cancel();
-	// Do not stop the session worker: it must accept the next eligible
-	// interior destination without restarting the game.
+	if (worker) {
+		// The worker stays alive so the next eligible destination needs no restart.
+		worker->Cancel();
+		worker->DrainRetiredObjects();
+	}
+	loadingCapture.store(nullptr, std::memory_order_release);
 	loadingGrid.reset();
-	loadingPending.clear();
-	stagedResults.clear();
+	loadingRequests.clear();
+	loadingInFlight.reset();
 	loadingGridSerial = 0;
 	handledLoadingSerial = loadingSerial.load(std::memory_order_acquire);
 	inFlight.reset();
-	adopting.reset();
-	lightAdoptionOffset = 0;
-	startupPending = false;
 	menuPreloaded = false;
 	preparationActive = false;
 	consolidationAttemptScope = 0;
 	lastVisitedCell = previousVisitedCell = distinctTransitions = 0;
+	lastExteriorGridX = lastExteriorGridY = std::numeric_limits<int32_t>::min();
 	grid.Clear();
 	latestPublication.store(nullptr, std::memory_order_release);
 	generationStats.store(std::make_shared<const DX12::PreparationStats>(), std::memory_order_release);
@@ -801,25 +847,25 @@ void DX12Resources::SuspendPreparation()
 void DX12Resources::ResetPreparation()
 {
 	loadingSettings.store({ settings.SubcellSize, settings.ConsolidateInterior }, std::memory_order_release);
-	stagedResults.clear();
-	loadingPending.clear();
+	loadingCapture.store(nullptr, std::memory_order_release);
+	loadingRequests.clear();
+	loadingInFlight.reset();
 	loadingGrid.reset();
 	loadingGridSerial = 0;
-	if (!preparationActive && !startupPending && !loadingActive.load(std::memory_order_acquire))
+	if (!preparationActive && !loadingActive.load(std::memory_order_acquire))
 		return;
-	// A new subcell size or world-scene epoch invalidates the grid and all
-	// companion work. Keep this off the normal settings-load path when unchanged.
-	if (companion)
-		companion->Cancel();
-	startupPending = false;
+	// A new subcell size or world-scene epoch invalidates the grid and all worker output.
+	if (worker) {
+		worker->Cancel();
+		worker->DrainRetiredObjects();
+	}
 	latestPublication.store(nullptr, std::memory_order_release);
 	inFlight.reset();
-	adopting.reset();
-	lightAdoptionOffset = 0;
 	grid.Clear();
 	menuPreloaded = false;
 	consolidationAttemptScope = 0;
 	lastVisitedCell = previousVisitedCell = distinctTransitions = 0;
+	lastExteriorGridX = lastExteriorGridY = std::numeric_limits<int32_t>::min();
 	generationStats.store(std::make_shared<const DX12::PreparationStats>(), std::memory_order_release);
 }
 
@@ -845,7 +891,6 @@ void DX12Resources::DrawSettings()
 		}
 	}
 
-	ImGui::Checkbox(T("menu.dx12.resources.preload_last_save", "Prepare last-save cell at main menu"), &settings.PreloadLastSave);
 	if (ImGui::Checkbox(T("menu.dx12.resources.consolidate_interior", "Consolidate small interior cells"), &settings.ConsolidateInterior))
 		ResetPreparation();
 }
@@ -856,21 +901,17 @@ void DX12Resources::DrawResourceStatus()
 		ImGui::TextDisabled("%s", T("menu.dx12.resources.suspended", "Native scene preparation suspended."));
 		return;
 	}
-	if (startupPending)
-		ImGui::TextDisabled("%s", T("menu.dx12.resources.startup_pending", "Main-menu preparation in progress"));
-	if (menuPreloaded)
-		ImGui::TextDisabled("%s", T("menu.dx12.resources.preloaded", "Last-save cell prepared in memory"));
 	if (const auto status = latestPublication.load(std::memory_order_acquire)) {
 		const char* label = status->state == PublicationState::Valid ?
-		                        T("menu.dx12.resources.publication_valid", "Companion publication: valid") :
+		                        T("menu.dx12.resources.publication_valid", "Scene publication: valid") :
 		                    status->state == PublicationState::Invalid ?
-		                        T("menu.dx12.resources.publication_invalid", "Companion publication: invalid") :
-		                        T("menu.dx12.resources.publication_unavailable", "Companion publication: unavailable");
+		                        T("menu.dx12.resources.publication_invalid", "Scene publication: invalid") :
+		                        T("menu.dx12.resources.publication_unavailable", "Scene publication: unavailable");
 		ImGui::TextUnformatted(label);
 		if (!status->detail.empty())
 			ImGui::TextWrapped("%s", status->detail.c_str());
 	} else {
-		ImGui::TextDisabled("%s", T("menu.dx12.resources.publication_pending", "Companion publication: not received"));
+		ImGui::TextDisabled("%s", T("menu.dx12.resources.publication_pending", "Scene publication: not received"));
 	}
 	const auto snapshot = GetGrid();
 	const auto timing = GetPreparationStats();
@@ -969,7 +1010,6 @@ void DX12Resources::LoadSettings(json& input)
 	                              requested :
 	                              DX12::kSubcellSizes.front();
 	const bool consolidate = input.value("ConsolidateInterior", true);
-	settings.PreloadLastSave = input.value("PreloadLastSave", true);
 	if (settings.SubcellSize != selected || settings.ConsolidateInterior != consolidate) {
 		settings.SubcellSize = selected;
 		settings.ConsolidateInterior = consolidate;
@@ -979,13 +1019,12 @@ void DX12Resources::LoadSettings(json& input)
 
 void DX12Resources::SaveSettings(json& output)
 {
-	output = { { "SubcellSize", settings.SubcellSize }, { "PreloadLastSave", settings.PreloadLastSave }, { "ConsolidateInterior", settings.ConsolidateInterior } };
+	output = { { "SubcellSize", settings.SubcellSize }, { "ConsolidateInterior", settings.ConsolidateInterior } };
 }
 
 void DX12Resources::RestoreDefaultSettings()
 {
 	const uint32_t defaultSize = DX12::kSubcellSizes.front();
-	settings.PreloadLastSave = true;
 	if (settings.SubcellSize != defaultSize || !settings.ConsolidateInterior) {
 		settings.SubcellSize = defaultSize;
 		settings.ConsolidateInterior = true;
@@ -993,118 +1032,10 @@ void DX12Resources::RestoreDefaultSettings()
 	}
 }
 
-void DX12Resources::EnsureCompanion(bool menuStartup)
-{
-	std::call_once(companionStart, [this, menuStartup] {
-		companion = std::make_unique<DX12::CompanionWorker>();
-		if (menuStartup) {
-			DX12::CompanionRequest task;
-			task.preloadLastSave = settings.PreloadLastSave && settings.ConsolidateInterior;
-			task.warmup = !task.preloadLastSave;
-			task.size = settings.SubcellSize;
-			startupPending = companion->Enqueue(std::move(task));
-		}
-		companionStarted.store(true, std::memory_order_release);
-		if (!IsActive())
-			companion->Stop();
-	});
-}
-
 void DX12Resources::RecordPublication(PublicationState state, std::string detail)
 {
 	latestPublication.store(std::make_shared<const PublicationStatus>(PublicationStatus{ state, std::move(detail) }),
 		std::memory_order_release);
-}
-
-void DX12Resources::PollStartup(uint32_t gameplayScope)
-{
-	if (!startupPending || !companion)
-		return;
-	auto result = companion->Take();
-	if (!result) {
-		if (gameplayScope) {
-			companion->CancelStartup();
-			startupPending = false;
-		}
-		return;
-	}
-	startupPending = false;
-	if (gameplayScope)
-		companion->CancelStartup();
-	if (!result->startup)
-		return;
-	if (!result->failure.empty() && !result->publication.validated) {
-		RecordPublication(PublicationState::Invalid, result->failure);
-		logger::warn("[DX12Resources] Startup preparation failed: {}", result->failure);
-		return;
-	}
-	auto& publication = result->publication;
-	if (!result->preload)
-		return;
-	if (!settings.PreloadLastSave || !settings.ConsolidateInterior ||
-		result->size != settings.SubcellSize || !publication.wholeCell || !publication.validated) {
-		const auto reason = result->residencyReason.empty() ?
-		                        "No eligible whole-cell publication or settings changed" :
-		                        result->residencyReason;
-		RecordPublication(publication.validated ? PublicationState::Unavailable : PublicationState::Invalid, reason);
-		logger::info("[DX12Resources] Last-save preload unavailable: {}", reason);
-		return;
-	}
-	auto* handler = RE::TESDataHandler::GetSingleton();
-	const auto* form = handler ? handler->LookupForm(result->scopeLocal, result->scopePlugin) : nullptr;
-	const auto* cell = form ? form->As<RE::TESObjectCELL>() : nullptr;
-	if (!cell || !cell->IsInteriorCell() || (gameplayScope && cell->GetFormID() != gameplayScope)) {
-		RecordPublication(PublicationState::Unavailable, "Preloaded CELL does not match the current runtime scope");
-		return;
-	}
-	publication.key.scope = cell->GetFormID();
-	for (auto& record : result->lights) {
-		const auto* reference = handler->LookupForm(record.referenceLocal, record.referencePlugin);
-		const auto* base = handler->LookupForm(record.baseLocal, record.basePlugin);
-		if (!reference || !base) {
-			++publication.rejectedLights;
-			continue;
-		}
-		record.value.referenceID = reference->GetFormID();
-		publication.lights.push_back(record.value);
-	}
-	publication.failureReason = result->failure;
-	const auto key = publication.key;
-	grid.Advance(key.scope, result->size, double(key.x) * result->size, double(key.y) * result->size);
-	const auto request = grid.NextRequest();
-	if (!request || *request != key) {
-		RecordPublication(PublicationState::Unavailable, "Preloaded grid request no longer matches");
-		return;
-	}
-	if (grid.Publish(std::move(publication))) {
-		RecordPublication(PublicationState::Valid, result->residencyReason);
-		preparationActive = true;
-		menuPreloaded = !gameplayScope;
-		consolidationAttemptScope = key.scope;
-		logger::info("[DX12Resources] Last-save interior {:08X} prepared", key.scope);
-	}
-}
-
-namespace
-{
-	constexpr size_t kFormResolutionsPerFrame = 64;
-
-	void ResolvePreparedLightForms(DX12::CompanionResult& result, size_t& offset)
-	{
-		const size_t end = std::min(result.lights.size(), offset + kFormResolutionsPerFrame);
-		auto* handler = RE::TESDataHandler::GetSingleton();
-		for (; offset < end; ++offset) {
-			auto& record = result.lights[offset];
-			const auto* reference = handler ? handler->LookupForm(record.referenceLocal, record.referencePlugin) : nullptr;
-			const auto* base = handler ? handler->LookupForm(record.baseLocal, record.basePlugin) : nullptr;
-			if (!reference || !base) {
-				++result.publication.rejectedLights;
-				continue;
-			}
-			record.value.referenceID = reference->GetFormID();
-			result.publication.lights.push_back(record.value);
-		}
-	}
 }
 
 void DX12Resources::AdvanceLoadingPreparation()
@@ -1116,59 +1047,63 @@ void DX12Resources::AdvanceLoadingPreparation()
 		SuspendPreparation();
 		return;
 	}
-	if (!serial || !destination || !companionStarted.load(std::memory_order_acquire))
+	const auto capture = loadingCapture.load(std::memory_order_acquire);
+	if (!serial || !capture || capture->serial != serial)
 		return;
 	preparationSuspended = false;
+	EnsureWorker();
 	if (loadingGridSerial != serial) {
+		if (inFlight) {
+			worker->Cancel();
+			worker->DrainRetiredObjects();
+			grid.CancelPending();
+			inFlight.reset();
+		}
 		loadingGrid = std::make_unique<DX12::ResourceGrid>();
-		loadingPending.clear();
 		loadingGridSerial = serial;
-		const auto configuration = loadingSettings.load(std::memory_order_acquire);
-		loadingGrid->Advance(destination->scope, configuration.size, destination->position[0], destination->position[1]);
+		loadingRequests = std::move(loadingCapture.exchange(nullptr, std::memory_order_acq_rel)->requests);
+		loadingInFlight.reset();
+		loadingGrid->Advance(capture->scope, capture->size, capture->position[0], capture->position[1]);
 		loadingGrid->MergePrepared(*grid.Snapshot());
 	}
-	for (auto& result : companion->TakeLoadingResults())
-		if (result->loadingGeneration == serial)
-			loadingPending.push_back(std::move(result));
-	if (!loadingPending.empty()) {
-		auto& result = *loadingPending.front();
-		ResolvePreparedLightForms(result, result.resolvedLights);
-		if (result.resolvedLights == result.lights.size()) {
-			result.publication.failureReason = result.failure.substr(0, 320);
-			loadingGrid->Publish(std::move(result.publication), true);
-			loadingPending.erase(loadingPending.begin());
+	if (auto result = worker->Take()) {
+		loadingInFlight.reset();
+		if (result->loadingGeneration == serial) {
+			result->publication.failureReason = result->failure.substr(0, 320);
+			loadingGrid->Publish(std::move(result->publication));
 		}
 	}
-	if (loadingSerial.load(std::memory_order_acquire) == serial && IsLoading())
+	if (!loadingInFlight && worker->Idle() && !loadingRequests.empty()) {
+		if (const auto request = loadingGrid->NextRequest()) {
+			const auto found = std::ranges::find_if(loadingRequests, [&](const auto& task) { return task.key == *request; });
+			if (found == loadingRequests.end()) {
+				loadingGrid->CancelPending();
+				loadingRequests.clear();
+			} else {
+				auto task = std::move(*found);
+				loadingRequests.erase(found);
+				if (worker->Enqueue(std::move(task)))
+					loadingInFlight = *request;
+				else
+					loadingGrid->CancelPending();
+			}
+		}
+	}
+	if (IsLoading())
 		globals::features::dx12NativeScene.PrepareLoadingScene(loadingGrid->Snapshot());
 }
 
 void DX12Resources::Reset()
 {
-	if (IsActive() && IsLoading()) {
+	if (IsActive() && IsLoading())
 		AdvanceLoadingPreparation();
-		return;
-	}
-	if (!IsActive() || !globals::state || !globals::state->startupMenuBlurSourceReady ||
-		!globals::game::ui || !globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))
-		return;
-	if (!globals::features::dx12NativeScene.AllowsNativeSceneWork()) {
-		SuspendPreparation();
-		return;
-	}
-	preparationSuspended = false;
-	EnsureCompanion(true);
-	PollStartup();
-	// Only after a completed startup Present; rendering keeps priority.
-	if (menuPreloaded)
-		globals::features::dx12NativeScene.PrepareMenuScene(grid.Snapshot());
 }
 
 bool DX12Resources::WantsPreShadowMapsHook() const { return IsActive(); }
 
 void DX12Resources::PreShadowMaps()
 {
-	if (!IsActive()) {
+	if (!IsActive() || globals::game::quitGame) {
 		OnRuntimeDisabled();
 		return;
 	}
@@ -1188,23 +1123,19 @@ void DX12Resources::PreShadowMaps()
 	}
 	preparationSuspended = false;
 	CS_GPU_PASS("DX12Resources::Grid");
-	EnsureCompanion(false);
+	EnsureWorker();
 	const auto serial = loadingSerial.load(std::memory_order_acquire);
 	if (handledLoadingSerial != serial) {
 		handledLoadingSerial = serial;
-		stagedResults.clear();
-		if (loadingGridSerial == serial)
-			stagedResults = std::move(loadingPending);
-		for (auto& result : companion->TakeLoadingResults())
-			if (result->loadingGeneration == serial)
-				stagedResults.push_back(std::move(result));
+		if (loadingInFlight || inFlight) {
+			worker->Cancel();
+			worker->DrainRetiredObjects();
+		}
+		loadingInFlight.reset();
+		loadingRequests.clear();
 		grid.CancelPending();
 		grid.DiscardRuntimeShapes();
 		inFlight.reset();
-		adopting.reset();
-		lightAdoptionOffset = 0;
-		startupPending = false;
-		logger::debug("[DX12Resources] Loading preparation completed {} tile(s)", stagedResults.size());
 	}
 	const auto* cell = location->cell;
 	const auto* world = location->worldspace;
@@ -1221,9 +1152,6 @@ void DX12Resources::PreShadowMaps()
 	if (cellID)
 		lastVisitedCell = cellID;
 	const uint32_t scope = world ? world->GetFormID() : cell->GetFormID();
-	PollStartup(scope);
-	if (!preparationActive || menuPreloaded)
-		companion->CancelStartup();
 	menuPreloaded = false;
 	if (consolidationAttemptScope && consolidationAttemptScope != scope)
 		consolidationAttemptScope = 0;
@@ -1238,24 +1166,27 @@ void DX12Resources::PreShadowMaps()
 	grid.Advance(scope, settings.SubcellSize, position.x, position.y);
 	if (loadingGrid) {
 		if (loadingGridSerial == serial) {
-			const auto staged = loadingGrid->Snapshot();
-			grid.MergePrepared(*staged);
+			grid.MergePrepared(*loadingGrid->Snapshot());
 			if (grid.Snapshot()->wholeCell)
 				consolidationAttemptScope = scope;
 			logger::debug("[DX12Resources] Loading geometry handover revision {}", grid.Snapshot()->geometryRevision);
 		}
 		loadingGrid.reset();
-		loadingPending.clear();
 		loadingGridSerial = 0;
+	}
+	if (world && globals::game::tes) {
+		const int32_t gx = globals::game::tes->currentGridX;
+		const int32_t gy = globals::game::tes->currentGridY;
+		if (lastExteriorGridX != std::numeric_limits<int32_t>::min() &&
+			(gx != lastExteriorGridX || gy != lastExteriorGridY))
+			grid.RefreshUnattachedTiles();
+		lastExteriorGridX = gx;
+		lastExteriorGridY = gy;
+	} else {
+		lastExteriorGridX = lastExteriorGridY = std::numeric_limits<int32_t>::min();
 	}
 	runtimePublicationEnabled.store(true, std::memory_order_release);
 	const auto neighborhood = grid.Snapshot();
-	std::erase_if(stagedResults, [&](const auto& result) {
-		const auto key = result->publication.key;
-		return result->size != settings.SubcellSize || key.scope != scope || neighborhood->wholeCell ||
-		       (!result->publication.wholeCell && !std::ranges::contains(neighborhood->requested, key) &&
-				   !std::ranges::contains(neighborhood->predictive, key));
-	});
 	if (inFlight) {
 		const bool stillWanted = std::ranges::contains(neighborhood->requested, *inFlight) ||
 		                         std::ranges::contains(neighborhood->predictive, *inFlight);
@@ -1265,113 +1196,64 @@ void DX12Resources::PreShadowMaps()
 			return !tile || tile->state == DX12::Tile::State::Requested;
 		});
 		if (!stillWanted || (speculative && activeMissing)) {
-			companion->Cancel();
+			worker->Cancel();
+			worker->DrainRetiredObjects();
 			grid.CancelPending();
 			inFlight.reset();
 		}
 	}
-	if (auto result = companion->Take()) {
-		if (!result->publication.key.scope) {
-			if (!result->failure.empty())
-				logger::warn("[DX12Resources] Manifest warmup failed: {}", result->failure);
-		} else {
-			inFlight.reset();
-			adopting = std::make_unique<DX12::CompanionResult>(std::move(*result));
-			adopting->publication.failureReason = adopting->failure.substr(0, 320);
-			adopting->publication.lights.reserve(adopting->lights.size());
-			lightAdoptionOffset = 0;
-		}
-	}
-	if (adopting) {
-		const auto key = adopting->publication.key;
+	if (auto result = worker->Take()) {
+		inFlight.reset();
+		const auto key = result->publication.key;
 		const bool active = std::ranges::contains(neighborhood->requested, key);
 		const bool predictive = std::ranges::contains(neighborhood->predictive, key);
 		const bool activeMissing = std::ranges::any_of(neighborhood->resident, [](const auto& tile) {
 			return !tile || tile->state == DX12::Tile::State::Requested;
 		});
-		if ((!active && !predictive) || (predictive && activeMissing)) {
-			// A superseded speculative publication must not block an active tile.
-			adopting.reset();
-			lightAdoptionOffset = 0;
+		if (result->loadingGeneration || (!active && !predictive) || (predictive && activeMissing)) {
 			grid.CancelPending();
 		} else {
-			// Only engine FormID lookup must run on the game thread. Keep it bounded
-			// while immutable geometry remains off-thread prepared.
-			ResolvePreparedLightForms(*adopting, lightAdoptionOffset);
-			if (lightAdoptionOffset == adopting->lights.size()) {
-				const bool wasPredictiveRequest = adopting->predictive;
-				const bool wasCornerRequest = adopting->corner;
-				const double elapsedMs = adopting->preparationMs;
-				const bool valid = adopting->publication.validated;
-				const auto reason = !adopting->residencyReason.empty() ? adopting->residencyReason : adopting->failure;
-				if (grid.Publish(std::move(adopting->publication))) {
-					RecordPublication(valid ? PublicationState::Valid : PublicationState::Invalid, reason);
-					// This snapshot only counts accepted, finished worker requests; canceled
-					// and superseded work is not misreported as generated geometry.
-					auto next = std::make_shared<DX12::PreparationStats>(
-						*generationStats.load(std::memory_order_acquire));
-					auto& timing = !wasPredictiveRequest ? next->active :
-					               wasCornerRequest      ? next->corners :
-					                                       next->predictive;
-					++timing.completed;
-					timing.lastMs = elapsedMs;
-					timing.totalMs += elapsedMs;
-					timing.worstMs = std::max(timing.worstMs, elapsedMs);
-					generationStats.store(std::move(next), std::memory_order_release);
-				}
-				adopting.reset();
-				lightAdoptionOffset = 0;
+			result->publication.failureReason = result->failure.substr(0, 320);
+			const bool wasPredictiveRequest = result->predictive;
+			const bool wasCornerRequest = result->corner;
+			const double elapsedMs = result->preparationMs;
+			const bool valid = result->publication.validated;
+			auto reason = !result->residencyReason.empty() ? result->residencyReason : result->failure;
+			if (grid.Publish(std::move(result->publication))) {
+				RecordPublication(valid ? PublicationState::Valid : PublicationState::Invalid, std::move(reason));
+				// This snapshot only counts accepted, finished worker requests; canceled
+				// and superseded work is not misreported as generated geometry.
+				auto next = std::make_shared<DX12::PreparationStats>(
+					*generationStats.load(std::memory_order_acquire));
+				auto& timing = !wasPredictiveRequest ? next->active :
+				               wasCornerRequest      ? next->corners :
+				                                       next->predictive;
+				++timing.completed;
+				timing.lastMs = elapsedMs;
+				timing.totalMs += elapsedMs;
+				timing.worstMs = std::max(timing.worstMs, elapsedMs);
+				generationStats.store(std::move(next), std::memory_order_release);
 			}
 		}
 	}
-	if (!adopting && (companion->Idle() || !stagedResults.empty())) {
+	if (worker->Idle()) {
 		if (const auto request = grid.NextRequest()) {
-			const auto staged = std::ranges::find_if(stagedResults, [&](const auto& result) {
-				return result->publication.key == *request || (result->publication.wholeCell &&
-																  result->publication.key.scope == request->scope && *request == neighborhood->requested.front());
-			});
-			if (staged != stagedResults.end()) {
-				adopting = std::move(*staged);
-				stagedResults.erase(staged);
-				adopting->publication.key = *request;
-				adopting->publication.failureReason = adopting->failure.substr(0, 320);
-				adopting->publication.lights.reserve(adopting->lights.size());
-				lightAdoptionOffset = adopting->resolvedLights;
-				if (adopting->publication.wholeCell)
-					consolidationAttemptScope = scope;
+			const auto requestedGrid = grid.Snapshot();
+			const bool predictive = !std::ranges::contains(requestedGrid->requested, *request);
+			// Predictive indices 0..11 are sides; 12..15 are corners.
+			const bool corner = predictive &&
+			                    std::ranges::find(requestedGrid->predictive.begin() + DX12::kPredictiveSideCount,
+									requestedGrid->predictive.end(), *request) != requestedGrid->predictive.end();
+			const bool consolidate = settings.ConsolidateInterior && !world &&
+			                         consolidationAttemptScope != scope && *request == requestedGrid->requested.front();
+			if (consolidate)
+				consolidationAttemptScope = scope;
+			if (auto task = DX12::CaptureScenePrepRequest(*request, settings.SubcellSize, cell, world, predictive, corner, consolidate);
+				task && worker->Enqueue(std::move(*task))) {
+				inFlight = *request;
 				return;
 			}
-			if (!companion->Idle()) {
-				grid.CancelPending();
-				return;
-			}
-			const auto* source = world ? static_cast<const RE::TESForm*>(world) : static_cast<const RE::TESForm*>(cell);
-			const auto* file = source ? source->GetFile(0) : nullptr;
-			if (file && !file->GetFilename().empty()) {
-				DX12::CompanionRequest task;
-				task.key = *request;
-				const auto requestedGrid = grid.Snapshot();
-				task.predictive = !std::ranges::contains(requestedGrid->requested, *request);
-				// Predictive indices 0..11 are sides; 12..15 are corners.
-				// Store the request-time class before a possible player subcell transition.
-				task.corner = task.predictive &&
-				              std::ranges::find(requestedGrid->predictive.begin() + DX12::kPredictiveSideCount,
-								  requestedGrid->predictive.end(), *request) != requestedGrid->predictive.end();
-				task.size = settings.SubcellSize;
-				task.localScopeID = source->GetLocalFormID();
-				task.scopePlugin = file->GetFilename();
-				task.worldspace = world != nullptr;
-				task.consolidate = settings.ConsolidateInterior && !task.worldspace &&
-				                   consolidationAttemptScope != scope && *request == requestedGrid->requested.front();
-				const bool consolidationRequested = task.consolidate;
-				if (companion->Enqueue(std::move(task))) {
-					if (consolidationRequested)
-						consolidationAttemptScope = scope;
-					inFlight = *request;
-					return;
-				}
-			}
-			DX12::CompanionPublication incomplete;
+			DX12::TilePublication incomplete;
 			incomplete.key = *request;
 			grid.Publish(std::move(incomplete));
 		}
@@ -1382,16 +1264,17 @@ void DX12Resources::OnRuntimeDisabled()
 {
 	loadingActive.store(false, std::memory_order_release);
 	loadingDestination.store(nullptr, std::memory_order_release);
-	stagedResults.clear();
-	loadingPending.clear();
+	loadingCapture.store(nullptr, std::memory_order_release);
+	loadingRequests.clear();
+	loadingInFlight.reset();
 	loadingGrid.reset();
 	loadingGridSerial = 0;
 	runtimePublicationEnabled.store(false, std::memory_order_release);
-	if (companionStarted.exchange(false, std::memory_order_acq_rel)) {
-		companion->Cancel();
-		companion->Stop();
+	if (worker) {
+		worker->Cancel();
+		worker.reset();
 	}
-	if (preparationActive || startupPending) {
+	if (preparationActive) {
 		ResetPreparation();
 		preparationActive = false;
 	}

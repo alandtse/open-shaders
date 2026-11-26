@@ -10,6 +10,7 @@
 #include "RE/T/TESObjectCELL.h"
 #include "RE/T/TESObjectLIGH.h"
 #include "RE/U/UI.h"
+#include "ScenePrepEngineBridge.h"
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
@@ -18,6 +19,7 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <format>
@@ -708,7 +710,7 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requi
 	if (!desc.HasFlag(RE::BSGraphics::Vertex::VF_VERTEX))
 		return;
 	const auto counts = tri->GetTrishapeRuntimeData();
-	const uint32_t stride = desc.GetSize();
+	const uint32_t stride = DX12::VertexStrideBytes(std::bit_cast<uint64_t>(desc));
 	if (stride < 16 || stride > 256 || !counts.vertexCount || !counts.triangleCount ||
 		counts.vertexCount > 65535 || counts.triangleCount > 65535)
 		return;
@@ -725,12 +727,7 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requi
 	candidate.triangleCount = counts.triangleCount;
 	candidate.vertices = runtime.rendererData->rawVertexData;
 	candidate.indices = runtime.rendererData->rawIndexData;
-	for (uint32_t row = 0; row < 3; ++row)
-		for (uint32_t col = 0; col < 3; ++col)
-			candidate.transform[4 * row + col] = geometry.world.rotate.entry[row][col] * geometry.world.scale;
-	candidate.transform[3] = geometry.world.translate.x;
-	candidate.transform[7] = geometry.world.translate.y;
-	candidate.transform[11] = geometry.world.translate.z;
+	candidate.transform = DX12::TransformToRows3x4(DX12::FromNiTransform(geometry.world));
 	candidate.centerX = geometry.worldBound.center.x;
 	candidate.centerY = geometry.worldBound.center.y;
 	const uint32_t frame = globals::game::graphicsState ?

@@ -1411,19 +1411,11 @@ if(AUTO_PLUGIN_DEPLOYMENT)
     )
 endif()
 
-include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DX12ResourcesCompanion.cmake")
-
 # A shipping DX12 archive must not silently omit native shader bytecode.
 if(AIO_ZIP_TO_DIST AND NOT NATIVE_SHADOW_DXC)
     message(
         FATAL_ERROR
         "Native DX12 AIO packaging requires dxc.exe (SM6.5 .dxil shader output)"
-    )
-endif()
-if(AIO_ZIP_TO_DIST AND NOT BUILD_DX12_RESOURCES_COMPANION)
-    message(
-        FATAL_ERROR
-        "Native DX12 AIO packaging requires the DX12 Resources companion"
     )
 endif()
 
@@ -1648,17 +1640,11 @@ if(AIO_ZIP_TO_DIST)
         ${AIO_ZIP_STAMP}
     )
 
-    # Stage the self-contained DX12 Resources companion before packaging.
-    set(_dx12_aio_zip_deps)
-    if(TARGET STAGE_DX12_RESOURCES_COMPANION)
-        list(APPEND _dx12_aio_zip_deps "${DX12_RESOURCES_AIO_EXE}")
-    endif()
     add_custom_command(
         OUTPUT ${AIO_ZIP_STAMP} ${_aio_zip_cmds}
         DEPENDS
             PREPARE_AIO
             ${CMAKE_CURRENT_BINARY_DIR}/copy_shaders.stamp
-            ${_dx12_aio_zip_deps}
             ${_shadow_aio_dxil}
             ${_native_composite_aio_dxil}
             ${CMAKE_SOURCE_DIR}/cmake/VerifyAioPayload.cmake
@@ -1666,9 +1652,6 @@ if(AIO_ZIP_TO_DIST)
     )
 
     add_custom_target(AIO_ZIP_PACKAGE ALL DEPENDS ${AIO_ZIP_STAMP})
-    if(TARGET STAGE_DX12_RESOURCES_COMPANION)
-        add_dependencies(AIO_ZIP_PACKAGE STAGE_DX12_RESOURCES_COMPANION)
-    endif()
     add_dependencies(AIO_ZIP_PACKAGE DX12NativeShadowAIO DX12NativeCompositeAIO)
 endif()
 
@@ -1782,9 +1765,6 @@ else()
     )
     add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
 endif()
-if(TARGET STAGE_DX12_RESOURCES_COMPANION)
-    add_dependencies(AIO STAGE_DX12_RESOURCES_COMPANION)
-endif()
 
 # Manual AIO package target. Strips non-autoupload features at archive
 # time (mirroring AIO_ZIP_PACKAGE) so the manual path produces the same
@@ -1890,7 +1870,6 @@ add_custom_command(
     DEPENDS
         ${CORE_SOURCES}
         ${FFX_RUNTIME_FILES}
-        ${DX12_RESOURCES_AIO_EXE}
         ${_shadow_dxil}
         ${_native_composite_dxil}
         ${CMAKE_SOURCE_DIR}/cmake/VerifyAioPayload.cmake
@@ -1898,9 +1877,6 @@ add_custom_command(
     COMMENT "Creating AIO zip package (manual)"
 )
 add_custom_target("Package-AIO-Manual" DEPENDS ${AIO_PACKAGE})
-if(TARGET STAGE_DX12_RESOURCES_COMPANION)
-    add_dependencies("Package-AIO-Manual" STAGE_DX12_RESOURCES_COMPANION)
-endif()
 
 # #######################################################################################################################
 # # Shader Unit Tests

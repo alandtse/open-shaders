@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -17,18 +18,18 @@
 
 namespace DX12
 {
-	// Shared upper bound for companion light records and the native shadow consumer.
+	// Shared upper bound for prepared light records and the native shadow consumer.
 	inline constexpr uint32_t kMaxPreparedLights = 2048;
 
-	class CompanionWorker;
-	struct CompanionResult;
-	/** @brief Immutable light record discovered alongside companion geometry. */
+	class ScenePrepWorker;
+	struct ScenePrepRequest;
+	/** @brief Immutable light record prepared for native scene shadow tracing. */
 	struct PreparedLight
 	{
 		uint32_t referenceID = 0, flags = 0;
 		float3 position{}, color{};
 		float radius = 0.0f, fade = 1.0f, emitterRadius = 0.0f, falloffExponent = 1.0f;
-		uint64_t runtimeIdentity = 0;  // Supplemental Full RT emitter; not part of the companion wire format.
+		uint64_t runtimeIdentity = 0;  // Supplemental Full RT emitter observed at runtime.
 		uint32_t unifiedCount = 1;
 	};
 
@@ -39,7 +40,7 @@ namespace DX12
 		uint32_t referenceLocal = 0;
 	};
 
-	/** @brief A shape or model unresolved by the companion; runtime rigid geometry may supplement it. */
+	/** @brief A shape or model unresolved during subcell preparation; runtime rigid geometry may supplement it. */
 	struct MissingNifShapeDescriptor
 	{
 		std::string referencePlugin, nifPath, reason;
@@ -47,11 +48,11 @@ namespace DX12
 		int32_t blockIndex = -1;  // -1: entire NIF/model unresolved.
 	};
 
-	/** @brief The companion publishes triangle geometry without textures or materials. */
+	/** @brief Triangle geometry without textures or materials. */
 	struct Shape
 	{
 		uint64_t identity = 0;
-		uint64_t runtimeObjectKey = 0;  // Stable across transform changes; zero for companion shapes.
+		uint64_t runtimeObjectKey = 0;  // Stable across transform changes; zero for subcell-prepared shapes.
 		std::vector<float3> positions;
 		std::vector<uint32_t> indices;
 		std::array<float, 12> transform{};
@@ -77,27 +78,28 @@ namespace DX12
 		uint8_t preparationAttempts = 0;
 		int64_t retryAfterQpc = 0;
 		State state = State::Requested;
-		bool companionValidated = false;
-		std::string failureReason;                                       // Last bounded companion failure, retained for Dev and tile hover.
-		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;  // Bounded structured companion rejection diagnoses.
+		bool preparationValidated = false;
+		bool hasUnattachedCells = false;
+		std::string failureReason;                                       // Last bounded preparation failure, retained for Dev and tile hover.
+		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;  // Bounded structured rejection diagnoses.
 		std::vector<NifSourceDescriptor> nifSources;
 		std::vector<MissingNifShapeDescriptor> missingShapes;
 	};
 
-	/** @brief A companion attests that every eligible shape in this subcell was enumerated. */
-	struct CompanionPublication
+	/** @brief Subcell preparation output indicating whether every eligible shape was enumerated. */
+	struct TilePublication
 	{
 		SubcellKey key;
-		std::vector<std::shared_ptr<const Shape>> shapes;  // Fully validated and frozen on the companion worker.
+		std::vector<std::shared_ptr<const Shape>> shapes;  // Validated and frozen off the render thread.
 		std::vector<PreparedLight> lights;
 		uint64_t geometryBytes = 0;
 		bool validated = false;
 		uint32_t eligibleShapes = 0;
 		uint32_t failedShapes = 0;
-		uint32_t rejectedLights = 0;  // Invalid light records are skipped without losing valid geometry.
+		uint32_t rejectedLights = 0;
 		bool enumerationComplete = false;
 		bool wholeCell = false;
-		bool spatialBoundsComplete = false;
+		bool hasUnattachedCells = false;
 		std::string failureReason;
 		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;
 		std::vector<NifSourceDescriptor> nifSources;
@@ -120,7 +122,7 @@ namespace DX12
 		bool wholeCell = false;
 		std::array<SubcellKey, kGridCapacity> requested{};  // Active 3x3, available to future native consumers.
 		std::array<std::shared_ptr<const Tile>, kGridCapacity> resident{};
-		std::array<SubcellKey, kPredictiveCapacity> predictive{};  // Companion-only outer 5x5 ring.
+		std::array<SubcellKey, kPredictiveCapacity> predictive{};  // Predictive outer 5x5 ring.
 		std::array<std::shared_ptr<const Tile>, kPredictiveCapacity> predictiveResident{};
 		// Bounded, transient observations from existing engine render passes.
 		// No persistent cache, materials, or raster-shadow coverage authority.
@@ -130,7 +132,7 @@ namespace DX12
 
 	struct PreparationTiming
 	{
-		uint64_t completed = 0;  // Accepted, completed companion publications.
+		uint64_t completed = 0;  // Accepted, completed subcell publications.
 		double lastMs = 0.0, totalMs = 0.0, worstMs = 0.0;
 		double AverageMs() const { return completed ? totalMs / double(completed) : 0.0; }
 	};
@@ -145,12 +147,14 @@ namespace DX12
 	public:
 		/** @brief Recenters the live grid and retires unneeded tiles without saving geometry. */
 		void Advance(uint32_t scope, uint32_t size, double x, double y);
-		/** @brief Returns an unprepared tile request to a single companion producer. */
+		/** @brief Returns an unprepared tile request to the scene preparation producer. */
 		std::optional<SubcellKey> NextRequest();
-		/** @brief Publishes one fully enumerated companion subcell, otherwise marks it incomplete. */
-		bool Publish(CompanionPublication publication, bool staged = false);
+		/** @brief Publishes one prepared subcell, otherwise marks it incomplete. */
+		bool Publish(TilePublication publication);
 		/** @brief Merges only compatible immutable prepared tiles, never runtime observations. */
 		void MergePrepared(const Grid& source);
+		/** @brief Marks tiles overlapping unattached exterior cells for re-preparation after grid shifts. */
+		void RefreshUnattachedTiles();
 		/** @brief Accept an observed static shape within the active 3x3 without caching it on disk. */
 		bool PublishRuntimeShape(std::shared_ptr<const Shape> shape, float centerX, float centerY, uint32_t expectedScope = 0);
 		/** @brief Releases every in-memory tile at scene transition. */
@@ -173,17 +177,16 @@ namespace DX12
 	};
 }
 
-/** @brief Memory-resident geometry and lights with an ephemeral companion scratch directory. */
+/** @brief Memory-resident geometry and lights prepared in-process. */
 struct DX12Resources final : Feature, private RE::BSTEventSink<RE::PositionPlayerEvent>
 {
-	// Keep construction and destruction out of this header: the two unique_ptr
-	// pointees are forward-declared until CompanionWorker.h is included in the TU.
+	// Keep construction and destruction out of this header: the unique_ptr
+	// pointee is forward-declared until ScenePrepWorker.h is included in the TU.
 	DX12Resources();
 	~DX12Resources();
 	struct Settings
 	{
 		uint32_t SubcellSize = DX12::kSubcellSizes.front();
-		bool PreloadLastSave = true;
 		bool ConsolidateInterior = true;
 	};
 
@@ -197,7 +200,7 @@ struct DX12Resources final : Feature, private RE::BSTEventSink<RE::PositionPlaye
 	bool IsInFeatureList() const override { return false; }
 	bool SupportsVR() override { return false; }
 	void DrawSettings() override;
-	/** @brief Read-only companion publication and residency display. */
+	/** @brief Read-only preparation publication and residency display. */
 	void DrawResourceStatus();
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
@@ -233,17 +236,25 @@ struct DX12Resources final : Feature, private RE::BSTEventSink<RE::PositionPlaye
 private:
 	struct LoadingDestination
 	{
-		uint32_t scope = 0, localScopeID = 0;
-		std::string scopePlugin;
+		uint32_t scope = 0;
 		bool worldspace = false;
 		std::array<float, 3> position{}, rotation{};
 	};
+	/** @brief Destination requests captured on the main thread once the target cell has loaded. */
+	struct LoadingCapture
+	{
+		uint64_t serial = 0;
+		uint32_t scope = 0, size = 0;
+		std::array<float, 2> position{};
+		std::vector<DX12::ScenePrepRequest> requests;
+	};
 	static std::optional<LoadingDestination> CaptureLoadingDestination();
-	void BeginLoadingPreparation(const LoadingDestination& destination);
+	void CaptureLoadingRequests(const LoadingDestination& destination);
 	RE::BSEventNotifyControl ProcessEvent(const RE::PositionPlayerEvent* event,
 		RE::BSTEventSource<RE::PositionPlayerEvent>*) override;
 	std::optional<LoadingDestination> queuedDestination;  // Main-thread positioning events only.
 	std::atomic<std::shared_ptr<const LoadingDestination>> loadingDestination;
+	std::atomic<std::shared_ptr<LoadingCapture>> loadingCapture;
 	std::atomic<bool> loadingActive{ false };
 	struct LoadingSettings
 	{
@@ -253,13 +264,12 @@ private:
 	std::atomic<LoadingSettings> loadingSettings{ LoadingSettings{ DX12::kSubcellSizes.front(), true } };
 	std::atomic<uint64_t> loadingSerial{ 0 };
 	uint64_t handledLoadingSerial = 0;
-	std::vector<std::unique_ptr<DX12::CompanionResult>> stagedResults;
 	std::unique_ptr<DX12::ResourceGrid> loadingGrid;
 	uint64_t loadingGridSerial = 0;
-	std::vector<std::unique_ptr<DX12::CompanionResult>> loadingPending;
+	std::vector<DX12::ScenePrepRequest> loadingRequests;
+	std::optional<DX12::SubcellKey> loadingInFlight;
 	void AdvanceLoadingPreparation();
-	void EnsureCompanion(bool menuStartup);
-	void PollStartup(uint32_t gameplayScope = 0);
+	void EnsureWorker();
 	enum class PublicationState
 	{
 		Valid,
@@ -273,22 +283,19 @@ private:
 	};
 	std::atomic<std::shared_ptr<const PublicationStatus>> latestPublication;
 	void RecordPublication(PublicationState state, std::string detail);
-	bool startupPending = false;
 	bool menuPreloaded = false;
 	uint32_t consolidationAttemptScope = 0;
 	void ResetPreparation();
 	/** @brief Cancel and clear native preparation once when the selected mode or cell is ineligible. */
 	void SuspendPreparation();
 	bool preparationSuspended = false;  // Render-thread transition latch.
-	std::once_flag companionStart;
-	std::atomic<bool> companionStarted{ false };
 	bool preparationActive = false;
 	std::atomic<bool> runtimePublicationEnabled{ false };
 	DX12::ResourceGrid grid;
-	std::unique_ptr<DX12::CompanionWorker> companion;
-	std::unique_ptr<DX12::CompanionResult> adopting;
-	size_t lightAdoptionOffset = 0;
+	std::unique_ptr<DX12::ScenePrepWorker> worker;
 	uint32_t lastVisitedCell = 0, previousVisitedCell = 0, distinctTransitions = 0;
+	int32_t lastExteriorGridX = std::numeric_limits<int32_t>::min();
+	int32_t lastExteriorGridY = std::numeric_limits<int32_t>::min();
 	std::optional<DX12::SubcellKey> inFlight;
 	std::atomic<std::shared_ptr<const DX12::PreparationStats>> generationStats{
 		std::make_shared<const DX12::PreparationStats>()
