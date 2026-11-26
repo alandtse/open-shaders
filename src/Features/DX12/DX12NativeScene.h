@@ -66,8 +66,7 @@ struct DX12NativeScene final : OverlayFeature
 	/** @brief Global prerequisites for suppressing SCM static shadows. */
 	bool CanSuppressSCMStatic() const;
 	// Snapshot LLF/SCM point-light parameters without altering the DX11 light.
-	void ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID, bool flickers,
-		const RE::NiPoint3& restOrigin);
+	void ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID, const RE::NiPoint3& restOrigin);
 	void OnSceneTransitionReset(bool a_opening) override;
 	void OnRuntimeDisabled() override;
 
@@ -106,7 +105,6 @@ private:
 		std::atomic<uint32_t> runtimeUnificationRadius{ DX12Native::kDefaultRuntimeUnificationRadius };
 		std::atomic<uint32_t> preparedExclusionRadius{ DX12Native::kDefaultPreparedExclusionRadius };
 		bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
-		bool freezeNativeFlickering = true;
 		uint32_t qualityMode;
 		bool nearLightShadowExclusion = true;
 		uint32_t nearLightExclusionUnits = 16;
@@ -114,14 +112,18 @@ private:
 		float shadowFadeRange = DX12Native::kDefaultShadowFadeRange;
 		float shadowFalloffCurve = 1.0f;
 	};
-	static constexpr uint32_t kOffloadingDefaultQuality = DX12Native::kShadowQualityMedium;
+	struct OffloadingProfile
+	{
+		std::atomic<bool> debugNativeLights{ false };
+		bool outdoorShadowOffloading = false;
+		bool performance = true;
+	};
 	static constexpr uint32_t kRayTracedDefaultQuality = DX12Native::kShadowQualityMedium;
-	static constexpr float kOffloadingDefaultReach = 1.0f;
 	static constexpr float kRayTracedDefaultReach = DX12Native::kDefaultShadowReachMultiplier;
-	ShadowProfile offloadingProfile{ kOffloadingDefaultQuality, kOffloadingDefaultReach };
+	OffloadingProfile offloadingProfile;
 	ShadowProfile rayTracedProfile{ kRayTracedDefaultQuality, kRayTracedDefaultReach };
-	ShadowProfile& ActiveProfile();
-	const ShadowProfile& ActiveProfile() const;
+	void LoadOffloadingProfile(const json& input);
+	json SaveOffloadingProfile() const;
 	static void LoadProfile(ShadowProfile& profile, const json& input, uint32_t defaultQuality, float defaultReach);
 	static json SaveProfile(const ShadowProfile& profile);
 	struct RuntimeLightSample
@@ -129,7 +131,6 @@ private:
 		const RE::NiLight* source = nullptr;  // Identity of the SCM light actually observed.
 		uint32_t referenceID = 0;             // Corresponding prepared native-scene emitter.
 		DX12::PreparedLight value;
-		bool flickers = false;
 	};
 	mutable std::mutex runtimeLightMutex;
 	uint32_t runtimeLightFrame = UINT32_MAX;
@@ -137,7 +138,6 @@ private:
 	std::unordered_map<const RE::NiLight*, size_t> runtimeLightBySource;
 	std::unordered_map<uint32_t, size_t> runtimeLightByReference;
 	void ClearRuntimeLightSamples();
-	std::unordered_map<uint32_t, DX12::PreparedLight> frozenNativeLights;
 	// Full-shadow membership is independent of SCM selection. Keep emitter identity alive
 	// only while the source belongs to the active world light lists.
 	struct FullRuntimeLight

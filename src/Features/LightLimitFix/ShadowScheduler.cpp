@@ -635,9 +635,7 @@ namespace ShadowCasterManager
 		if (globals::features::dx12NativeScene.TraceAllPreparedLights())
 			return;
 		if (auto* ni = light->light.get()) {
-			const auto flicker = FlickerOf(ni);
-			globals::features::dx12NativeScene.ObserveRuntimeLight(light, LightPlacedReferenceID(ni),
-				flicker.movement > 0.0f || flicker.intensity > 0.0f, RestOrigin(ni));
+			globals::features::dx12NativeScene.ObserveRuntimeLight(light, LightPlacedReferenceID(ni), RestOrigin(ni));
 		}
 	}
 

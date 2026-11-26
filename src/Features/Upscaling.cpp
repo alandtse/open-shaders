@@ -1900,6 +1900,7 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 			if (previousUpscalingWasActive) {
 				if (previousUpscaleMode == UpscaleMethod::kDLSS) {
 					streamline.DestroyDLSSResources();
+					if (globals::features::dx12Control.IsActive())
 					nativeDLSS.Reset();
 				} else if (previousUpscaleMode == UpscaleMethod::kFSR)
 					fidelityFX.DestroyFSRResources();
@@ -2786,7 +2787,7 @@ double Upscaling::GetRefreshRate(HWND a_window)
 bool Upscaling::IsFrameGenerationDx12PathActive() const
 {
 	return d3d12SwapChainActive && !globals::game::isVR &&
-	       (!lowRefreshRate || bootSnapshot.Boot(&Settings::frameGenerationForceEnable));
+	       (!globals::features::dx12Control.IsActive() || !lowRefreshRate || bootSnapshot.Boot(&Settings::frameGenerationForceEnable));
 }
 
 bool Upscaling::FrameGenerationActive()
@@ -3667,9 +3668,10 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 
 	// open-RT's late-frame DX11 color capture: Native Composite is the
 	// final color authority, while FSR's other input preparation stays as-is.
-	upscaling.nativeCompositeFrame.reset();
-	if (upscaling.loaded && !globals::game::isVR &&
-		globals::features::dx12Control.IsActive() &&
+	const bool nativeActive = globals::features::dx12Control.IsActive();
+	if (nativeActive)
+		upscaling.nativeCompositeFrame.reset();
+	if (upscaling.loaded && !globals::game::isVR && nativeActive &&
 		globals::game::graphicsState &&
 		upscaling.dx12SwapChain.EnsureSharedDevice()) {
 		auto* renderer = globals::game::renderer;

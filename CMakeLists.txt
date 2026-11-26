@@ -1131,8 +1131,8 @@ if(TARGET DX12NativeShadowAIO AND TARGET DX12NativeCompositeAIO)
         APPEND _native_shader_deploy_deps
         DX12NativeShadowAIO
         DX12NativeCompositeAIO
-        "${_shadow_aio_dxil}"
-        "${_native_composite_aio_dxil}"
+        ${_shadow_aio_dxil}
+        ${_native_composite_aio_dxil}
     )
 endif()
 
@@ -1144,8 +1144,8 @@ if(TARGET DX12NativeShadowDXIL AND TARGET DX12NativeCompositeDXIL)
         APPEND _native_shader_only_deps
         DX12NativeShadowDXIL
         DX12NativeCompositeDXIL
-        "${_shadow_dxil}"
-        "${_native_composite_dxil}"
+        ${_shadow_dxil}
+        ${_native_composite_dxil}
     )
 endif()
 
@@ -1297,14 +1297,14 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                     ${CMAKE_COMMAND}
                     -E
                     copy_if_different
-                    "${_shadow_dxil}"
-                    "${DEPLOY_TARGET}/Shaders/DX12NativeScene/ShadowMask.dxil"
+                    ${_shadow_dxil}
+                    "${DEPLOY_TARGET}/Shaders/DX12NativeScene"
                     COMMAND
                     ${CMAKE_COMMAND}
                     -E
                     copy_if_different
-                    "${_native_composite_dxil}"
-                    "${DEPLOY_TARGET}/Shaders/NativeComposite/ShadowLayer.dxil"
+                    ${_native_composite_dxil}
+                    "${DEPLOY_TARGET}/Shaders/NativeComposite"
                 )
             endif()
             # Content-based copies preserve the destination mtime when DXIL

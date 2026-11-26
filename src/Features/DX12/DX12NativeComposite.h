@@ -42,7 +42,7 @@ namespace DX12Native
 		/** @brief Allow a new initialization attempt after a scene reset. */
 		void ResetFailures()
 		{
-			failedShadowDevice = nullptr;
+			failedShadowVariants = {};
 			captureFailureLogged = false;
 		}
 
@@ -73,13 +73,13 @@ namespace DX12Native
 
 		std::array<std::unique_ptr<Slot>, 4> slots;
 		winrt::com_ptr<ID3D12RootSignature> shadowRoot;
-		winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
+		std::array<winrt::com_ptr<ID3D12PipelineState>, kShadowShaderCount> shadowPipelines;
 		winrt::com_ptr<ID3D12Device> shadowDevice;
-		winrt::com_ptr<ID3D12Device> failedShadowDevice;
+		std::array<bool, kShadowShaderCount> failedShadowVariants{};
 		winrt::com_ptr<ID3D12Device> formatDevice;
 		D3D12_FEATURE_DATA_FORMAT_SUPPORT cachedFormatSupport{ DXGI_FORMAT_UNKNOWN };
 		VideoMemoryBudget videoBudget;
 		bool captureFailureLogged = false;
-		bool InitializeShadow(ID3D12Device* device);
+		bool InitializeShadow(ID3D12Device* device, uint32_t variant);
 	};
 }

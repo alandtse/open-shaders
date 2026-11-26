@@ -16,6 +16,12 @@ namespace DX12Native
 	// Shared CPU-side limit for prepared lights submitted to the native shadow RayQuery.
 	inline constexpr uint32_t kMaxShadowLights = DX12::kMaxPreparedLights;
 	inline constexpr uint32_t kDefaultShadowQualityMode = kShadowQualityQuality;
+	inline constexpr uint32_t kShadowShaderCount = kShadowQualityCount + 2;
+	inline constexpr uint32_t ShadowShaderIndex(bool offloading, uint32_t quality)
+	{
+		return offloading ? kShadowQualityCount + (quality == kShadowQualityFull ? 0u : 1u) :
+		                    (quality < kShadowQualityCount ? quality : kDefaultShadowQualityMode);
+	}
 	inline constexpr float kDefaultShadowReachMultiplier = 1.25f;
 	inline constexpr float kDefaultShadowFadeRange = 0.36f;
 
@@ -30,6 +36,7 @@ namespace DX12Native
 		float fadeRange = kDefaultShadowFadeRange;  // Fraction of native shadow reach.
 		float falloffCurve = 1.0f;
 		bool captureDebugLights = false;
+		bool offloading = false;
 	};
 
 	/** @brief Physical raw texture and logical sampling grid for this frame. */
@@ -39,6 +46,7 @@ namespace DX12Native
 		uint32_t logicalWidth = 0, logicalHeight = 0;
 		uint32_t physicalWidth = 0, physicalHeight = 0;
 		uint32_t qualityMode = kDefaultShadowQualityMode, checkerboardOrigin = 0;
+		bool offloading = false;
 	};
 
 	/** @brief Packed raw visibility; the composite owns reconstruction. */
@@ -76,21 +84,21 @@ namespace DX12Native
 		void Reset()
 		{
 			current.reset();
-			initializationFailed = false;
+			initializationFailed = {};
 			failureLogged = false;
 		}
 
 	private:
-		void Initialize(const GraphicsBackend& backend);
+		void Initialize(const GraphicsBackend& backend, uint32_t variant);
 		GraphicsBackend backend;
 		winrt::com_ptr<ID3D12Fence> completion;
 		winrt::com_ptr<ID3D12RootSignature> root;
-		winrt::com_ptr<ID3D12PipelineState> pipeline;
+		std::array<winrt::com_ptr<ID3D12PipelineState>, kShadowShaderCount> pipelines;
 		std::array<std::shared_ptr<ShadowMaskFrame>, 4> slots;
 		std::shared_ptr<ShadowMaskFrame> current;
 		uint64_t nextFence = 0;
 		VideoMemoryBudget videoBudget;
-		bool initializationFailed = false;
+		std::array<bool, kShadowShaderCount> initializationFailed{};
 		bool failureLogged = false;
 	};
 }

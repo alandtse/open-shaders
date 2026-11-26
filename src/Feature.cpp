@@ -404,6 +404,8 @@ void Feature::ApplyDrawHooks()
 void Feature::ApplyOpaqueRasterReadyHooks()
 {
 	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsOpaqueRasterReadyHook(); });
+	if (features.empty())
+		return;
 	ForEachLoadedFeature(features, "OnOpaqueRasterReady", [](Feature* feature) { feature->OnOpaqueRasterReady(); }, true);
 }
 

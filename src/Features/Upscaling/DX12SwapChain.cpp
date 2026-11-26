@@ -5,6 +5,7 @@
 #include <dxgi1_6.h>
 #include <utility>
 
+#include "../DX12/DX12Control.h"
 #include "../HDRDisplay.h"
 #include "../ScreenshotFeature.h"
 #include "../Upscaling.h"
@@ -83,7 +84,10 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 	if (d3d12Device)
 		return;
 
-	DX::ThrowIfFailed(GraphicsBackend::GetSharedDevice(a_adapter, d3d12Device.put()));
+	if (globals::features::dx12Control.IsActive())
+		DX::ThrowIfFailed(GraphicsBackend::GetSharedDevice(a_adapter, d3d12Device.put()));
+	else
+		DX::ThrowIfFailed(D3D12CreateDevice(a_adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(d3d12Device.put())));
 
 	D3D12_COMMAND_QUEUE_DESC queueDesc = {};
 	queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;

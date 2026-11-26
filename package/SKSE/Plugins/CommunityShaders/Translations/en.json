@@ -6022,6 +6022,7 @@
     "menu.dx12.scene.quality.medium": "Medium",
     "menu.dx12.scene.quality.potato": "Potato",
     "menu.dx12.scene.quality.quality": "Quality",
+    "menu.dx12.scene.offload_performance": "Performance",
     "menu.dx12.scene.runtime_unification_radius": "Runtime light unification radius (units)",
     "menu.dx12.scene.shadow_fade_fraction": "Shadow fade range fraction",
     "menu.dx12.scene.shadow_falloff_curve": "Shadow falloff curve",

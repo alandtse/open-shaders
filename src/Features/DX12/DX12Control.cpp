@@ -79,7 +79,9 @@ void DX12Control::DrawSettings()
 
 void DX12Control::DrawCompositeDev()
 {
-	auto& profile = ActiveComposite();
+	if (!IsFullShadowMode())
+		return;
+	auto& profile = rayTracedComposite;
 	bool filtering = profile.spatialReconstruction.load(std::memory_order_relaxed);
 	if (ImGui::Checkbox(T("menu.dx12.composite.spatial_reconstruction", "Additional spatial filtering"), &filtering))
 		profile.spatialReconstruction.store(filtering, std::memory_order_relaxed);
@@ -115,7 +117,6 @@ void DX12Control::LoadSettings(json& input)
 	settings.Mode = std::clamp(input.value("Mode", int(Mode::ShadowOffload)), int(Mode::ShadowOffload), int(Mode::FullShadow));
 	legacyModeConfig = !input.contains("FullShadowModeSelection");
 	const bool rayTraced = settings.Mode == int(Mode::FullShadow);
-	LoadComposite(offloadingComposite, DX12::ReadModeProfile(input, false, rayTraced), kOffloadingDefaultBlend);
 	LoadComposite(rayTracedComposite, DX12::ReadModeProfile(input, true, rayTraced), kRayTracedDefaultBlend);
 	selectedMode.store(static_cast<Mode>(settings.Mode), std::memory_order_release);
 	if (!bootCaptured) {
@@ -127,7 +128,6 @@ void DX12Control::LoadSettings(json& input)
 void DX12Control::SaveSettings(json& output)
 {
 	output = { { "Enabled", settings.Enabled }, { "Mode", settings.Mode }, { "FullShadowModeSelection", true },
-		{ DX12::kOffloadingProfile, SaveComposite(offloadingComposite) },
 		{ DX12::kRayTracedProfile, SaveComposite(rayTracedComposite) } };
 }
 
@@ -135,7 +135,6 @@ void DX12Control::RestoreDefaultSettings()
 {
 	settings = {};
 	legacyModeConfig = false;
-	LoadComposite(offloadingComposite, json::object(), kOffloadingDefaultBlend);
 	LoadComposite(rayTracedComposite, json::object(), kRayTracedDefaultBlend);
 	selectedMode.store(static_cast<Mode>(settings.Mode), std::memory_order_release);
 }

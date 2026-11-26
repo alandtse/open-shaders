@@ -65,19 +65,26 @@ namespace DX12Native
 				continue;
 			std::vector<FenceDependency> dependencies;
 			dependencies.push_back(FencePoint(slot->readyFence ? slot->readyFence.get() : completion.get(), slot->readyValue));
-			RetireAfterFences(std::tuple{ backend, root, pipeline, std::move(slot) }, backend.d3d12Device, std::move(dependencies));
+			RetireAfterFences(std::tuple{ backend, root, pipelines, std::move(slot) }, backend.d3d12Device, std::move(dependencies));
 		}
 	}
 
-	void ShadowMaskTrace::Initialize(const GraphicsBackend& requested)
+	void ShadowMaskTrace::Initialize(const GraphicsBackend& requested, uint32_t variant)
 	{
+		auto& pipeline = pipelines[variant];
 		if (pipeline)
 			return;
-		backend = requested;
+		if (!root)
+			backend = requested;
 		auto* device = backend.d3d12Device.get();
 		if (!device || !backend.commandQueue)
 			throw std::runtime_error("DX12 Native Scene queue unavailable");
-		std::ifstream bytecode(Util::PathHelpers::GetShadersPath() / "DX12NativeScene" / "ShadowMask.dxil",
+		constexpr std::array names{
+			"ShadowMask.dxil", "ShadowMaskQuality.dxil", "ShadowMaskMedium.dxil", "ShadowMaskLow.dxil", "ShadowMaskPotato.dxil",
+			"ShadowOffloadQuality.dxil", "ShadowOffloadPerformance.dxil"
+		};
+		static_assert(names.size() == kShadowShaderCount);
+		std::ifstream bytecode(Util::PathHelpers::GetShadersPath() / "DX12NativeScene" / names[variant],
 			std::ios::binary | std::ios::ate);
 		if (!bytecode || bytecode.tellg() <= 0 || bytecode.tellg() > kMaxShadowBytecodeBytes)
 			throw std::runtime_error("Native Scene shadowmask DXIL unavailable");
@@ -103,22 +110,25 @@ namespace DX12Native
 		const D3D12_ROOT_SIGNATURE_DESC signature{
 			UINT(std::size(params)), params, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE
 		};
-		winrt::com_ptr<ID3DBlob> serialized, errors;
-		DX::ThrowIfFailed(D3D12SerializeRootSignature(&signature, D3D_ROOT_SIGNATURE_VERSION_1,
-			serialized.put(), errors.put()));
-		winrt::com_ptr<ID3D12RootSignature> newRoot;
-		DX::ThrowIfFailed(device->CreateRootSignature(0, serialized->GetBufferPointer(),
-			serialized->GetBufferSize(), IID_PPV_ARGS(newRoot.put())));
+		if (!root) {
+			winrt::com_ptr<ID3DBlob> serialized, errors;
+			DX::ThrowIfFailed(D3D12SerializeRootSignature(&signature, D3D_ROOT_SIGNATURE_VERSION_1,
+				serialized.put(), errors.put()));
+			DX::ThrowIfFailed(device->CreateRootSignature(0, serialized->GetBufferPointer(),
+				serialized->GetBufferSize(), IID_PPV_ARGS(root.put())));
+			root->SetName(L"NativeShadow::Root");
+		}
 		D3D12_COMPUTE_PIPELINE_STATE_DESC pipelineDesc{};
-		pipelineDesc.pRootSignature = newRoot.get();
+		pipelineDesc.pRootSignature = root.get();
 		pipelineDesc.CS = { shader.data(), shader.size() };
 		winrt::com_ptr<ID3D12PipelineState> newPipeline;
 		DX::ThrowIfFailed(device->CreateComputePipelineState(&pipelineDesc, IID_PPV_ARGS(newPipeline.put())));
-		winrt::com_ptr<ID3D12Fence> newCompletion;
-		DX::ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(newCompletion.put())));
-		root = std::move(newRoot);
+		newPipeline->SetName(L"NativeShadow::Variant");
+		if (!completion) {
+			DX::ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(completion.put())));
+			completion->SetName(L"NativeShadow::Completion");
+		}
 		pipeline = std::move(newPipeline);
-		completion = std::move(newCompletion);
 	}
 
 	void ShadowMaskTrace::Dispatch(const GraphicsBackend& requested,
@@ -128,7 +138,12 @@ namespace DX12Native
 		if (current && current->frame == frame)
 			return;
 		current.reset();
-		if (initializationFailed)
+		const uint32_t quality = controls.offloading ?
+			(controls.qualityMode == kShadowQualityFull ? kShadowQualityFull : kShadowQualityMedium) :
+			(controls.qualityMode < kShadowQualityCount ? controls.qualityMode : kDefaultShadowQualityMode);
+		const auto variant = ShadowShaderIndex(controls.offloading, quality);
+		const auto& pipeline = pipelines[variant];
+		if (initializationFailed[variant])
 			return;
 		if (!raster || !raster->depth || !raster->depth->resource || !raster->readyFence ||
 			!raster->cameraValid) {
@@ -143,7 +158,7 @@ namespace DX12Native
 		std::shared_ptr<ShadowMaskFrame> attempted;
 		bool submitted = false;
 		try {
-			Initialize(requested);
+			Initialize(requested, variant);
 			const uint64_t finished = completion->GetCompletedValue();
 			auto it = std::ranges::find_if(slots, [&](const auto& slot) {
 				if (!slot)
@@ -158,12 +173,11 @@ namespace DX12Native
 			if (!width || !height || width > raster->width || height > raster->height) {
 				return;
 			}
-			const uint32_t quality = controls.qualityMode < kShadowQualityCount ? controls.qualityMode : kDefaultShadowQualityMode;
 			const uint32_t logicalWidth = NativeShadowLogicalExtent(width, quality);
 			const uint32_t logicalHeight = NativeShadowLogicalExtent(height, quality);
 			const ShadowSamplingLayout sampling{ width, height, logicalWidth, logicalHeight,
 				NativeShadowPhysicalWidth(logicalWidth, quality), logicalHeight, quality,
-				NativeShadowCheckerboardOrigin(quality, frame) };
+				NativeShadowCheckerboardOrigin(quality, frame), controls.offloading };
 			const uint64_t lightBytes = uint64_t(std::max(lights.size(), size_t(kMaxShadowLights))) * kRecords * sizeof(std::array<float, 4>);
 			const bool fresh = !slot || slot->sampling.physicalWidth != sampling.physicalWidth ||
 			                   slot->sampling.physicalHeight != sampling.physicalHeight;
@@ -234,7 +248,7 @@ namespace DX12Native
 				std::clamp(controls.falloffCurve, 0.0f, 2.5f),
 				std::clamp(controls.nearLightRadius, 0.0f, 512.0f),
 				controls.nearLightExclusion ? 1u : 0u,
-				NativeShadowEmitterMultiplier(quality) > 0.0f ? 1u : 0u,
+				!controls.offloading && NativeShadowEmitterMultiplier(quality) > 0.0f ? 1u : 0u,
 				NativeShadowEmitterMultiplier(quality),
 				sampling.checkerboardOrigin,
 				sampling.logicalWidth, sampling.logicalHeight, sampling.physicalWidth, sampling.physicalHeight
@@ -332,7 +346,7 @@ namespace DX12Native
 			current = slot;
 			failureLogged = false;
 		} catch (...) {
-			initializationFailed = !pipeline;
+			initializationFailed[variant] = !pipeline;
 			if (attempted) {
 				if (submitted && completion && backend.commandQueue) {
 					// ExecuteCommandLists succeeded. A queue-tail marker retires the

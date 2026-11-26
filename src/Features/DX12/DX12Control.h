@@ -35,10 +35,10 @@ struct DX12Control final : Feature
 	bool IsFullShadowMode() const { return selectedMode.load(std::memory_order_relaxed) == Mode::FullShadow; }
 	/** @brief Adopt the old Native Scene toggle when loading a pre-mode-selection configuration. */
 	void MigrateLegacyFullShadowMode(bool enabled);
-	bool UseSpatialReconstruction() const { return ActiveComposite().spatialReconstruction.load(std::memory_order_relaxed); }
-	uint32_t GetReconstructionGridSize() const { return ActiveComposite().reconstructionGrid.load(std::memory_order_relaxed); }
-	float GetShadowStrength() const { return ActiveComposite().shadowStrength.load(std::memory_order_relaxed); }
-	float GetShadowBlend() const { return ActiveComposite().shadowBlend.load(std::memory_order_relaxed); }
+	bool UseSpatialReconstruction() const { return IsFullShadowMode() && rayTracedComposite.spatialReconstruction.load(std::memory_order_relaxed); }
+	uint32_t GetReconstructionGridSize() const { return IsFullShadowMode() ? rayTracedComposite.reconstructionGrid.load(std::memory_order_relaxed) : 3u; }
+	float GetShadowStrength() const { return IsFullShadowMode() ? rayTracedComposite.shadowStrength.load(std::memory_order_relaxed) : 1.0f; }
+	float GetShadowBlend() const { return IsFullShadowMode() ? rayTracedComposite.shadowBlend.load(std::memory_order_relaxed) : kOffloadingDefaultBlend; }
 	void DrawSettings() override;
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
@@ -60,9 +60,7 @@ private:
 	};
 	static constexpr float kOffloadingDefaultBlend = 0.40f;
 	static constexpr float kRayTracedDefaultBlend = 0.55f;
-	CompositeProfile offloadingComposite{ kOffloadingDefaultBlend }, rayTracedComposite{ kRayTracedDefaultBlend };
-	CompositeProfile& ActiveComposite() { return IsFullShadowMode() ? rayTracedComposite : offloadingComposite; }
-	const CompositeProfile& ActiveComposite() const { return IsFullShadowMode() ? rayTracedComposite : offloadingComposite; }
+	CompositeProfile rayTracedComposite{ kRayTracedDefaultBlend };
 	static void LoadComposite(CompositeProfile& profile, const json& input, float defaultBlend);
 	static json SaveComposite(const CompositeProfile& profile);
 	void DrawCompositeDev();

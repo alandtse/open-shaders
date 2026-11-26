@@ -29,14 +29,26 @@ namespace DX12Native
 		constexpr float kReconstructionRadiusPixels = 2.0f;
 	}
 
-	bool NativeComposite::InitializeShadow(ID3D12Device* device)
+	bool NativeComposite::InitializeShadow(ID3D12Device* device, uint32_t variant)
 	{
-		if (shadowPipeline && shadowDevice.get() == device)
+		if (shadowDevice.get() != device) {
+			shadowPipelines = {};
+			shadowRoot = nullptr;
+			failedShadowVariants = {};
+			shadowDevice.copy_from(device);
+		}
+		auto& shadowPipeline = shadowPipelines[variant];
+		if (shadowPipeline)
 			return true;
-		if (failedShadowDevice.get() == device)
+		if (failedShadowVariants[variant])
 			return false;
 		try {
-			std::ifstream file(Util::PathHelpers::GetShadersPath() / "NativeComposite" / "ShadowLayer.dxil", std::ios::binary | std::ios::ate);
+			constexpr std::array names{
+				"ShadowLayer.dxil", "ShadowLayerQuality.dxil", "ShadowLayerMedium.dxil", "ShadowLayerLow.dxil", "ShadowLayerPotato.dxil",
+				"CompositeOffloadQuality.dxil", "CompositeOffloadPerformance.dxil"
+			};
+			static_assert(names.size() == kShadowShaderCount);
+			std::ifstream file(Util::PathHelpers::GetShadersPath() / "NativeComposite" / names[variant], std::ios::binary | std::ios::ate);
 			if (!file || file.tellg() <= 0 || file.tellg() > kMaxShadowBytecodeBytes)
 				throw std::runtime_error("ShadowLayer.dxil missing, empty or exceeds the bytecode limit");
 			std::vector<char> shader(static_cast<size_t>(file.tellg()));
@@ -51,19 +63,20 @@ namespace DX12Native
 			parameters[1].InitAsDescriptorTable(1, &ranges[1]);
 			parameters[2].InitAsConstants(kShadowConstantDwords, 0);
 			const CD3DX12_ROOT_SIGNATURE_DESC desc(3, parameters);
-			winrt::com_ptr<ID3DBlob> serialized, errors;
-			DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
-			winrt::com_ptr<ID3D12RootSignature> newRoot;
-			DX::ThrowIfFailed(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(newRoot.put())));
+			if (!shadowRoot) {
+				winrt::com_ptr<ID3DBlob> serialized, errors;
+				DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
+				DX::ThrowIfFailed(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(shadowRoot.put())));
+				shadowRoot->SetName(L"NativeComposite::ShadowRoot");
+			}
 			D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
-			pso.pRootSignature = newRoot.get();
+			pso.pRootSignature = shadowRoot.get();
 			pso.CS = { shader.data(), shader.size() };
 			winrt::com_ptr<ID3D12PipelineState> newPipeline;
 			DX::ThrowIfFailed(device->CreateComputePipelineState(&pso, IID_PPV_ARGS(newPipeline.put())));
-			shadowRoot = std::move(newRoot);
+			newPipeline->SetName(L"NativeComposite::ShadowVariant");
 			shadowPipeline = std::move(newPipeline);
-			shadowDevice.copy_from(device);
-			failedShadowDevice = nullptr;
+			failedShadowVariants[variant] = false;
 			return true;
 		} catch (const winrt::hresult_error& error) {
 			logger::error("[NativeComposite] Shadow initialization failed (HRESULT 0x{:08X}): {}", static_cast<uint32_t>(error.code()), winrt::to_string(error.message()));
@@ -72,7 +85,7 @@ namespace DX12Native
 		} catch (...) {
 			logger::error("[NativeComposite] Shadow initialization failed with an unknown exception");
 		}
-		failedShadowDevice.copy_from(device);
+		failedShadowVariants[variant] = true;
 		return false;
 	}
 
@@ -113,6 +126,9 @@ namespace DX12Native
 		                            (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD) &&
 		                            (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
 		const auto raster = shadow ? shadow->raster : nullptr;
+		const bool offloading = shadow && shadow->sampling.offloading;
+		const auto variant = shadow ? ShadowShaderIndex(offloading, shadow->sampling.qualityMode) : 0u;
+		publishReconstructedMask = publishReconstructedMask && !offloading;
 		// The native scene's frame counter is used when fetching the mask; the
 		// compositor frame number is the upscaler's existing frame counter.
 		const bool applyShadow = supportsShadow && transfer != Transfer::Unknown &&
@@ -124,7 +140,7 @@ namespace DX12Native
 		                         raster->cameraValid && raster->readyFence && raster->readyValue &&
 		                         raster->readyValue != UINT64_MAX &&
 		                         raster->width >= width && raster->height >= height &&
-		                         InitializeShadow(device12);
+		                         InitializeShadow(device12, variant);
 		if (!applyShadow) {
 			returnColorToDX11 = false;
 			publishReconstructedMask = false;
@@ -294,7 +310,7 @@ namespace DX12Native
 
 			if (applyShadow) {
 				slot->shadowRoot = shadowRoot;
-				slot->shadowPipeline = shadowPipeline;
+				slot->shadowPipeline = shadowPipelines[variant];
 				const auto step = device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 				auto cpu = slot->shadowDescriptors->GetCPUDescriptorHandleForHeapStart();
 				D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
