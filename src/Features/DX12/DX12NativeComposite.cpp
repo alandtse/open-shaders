@@ -28,7 +28,8 @@ namespace DX12Native
 		constexpr uint32_t kShadowConstantDwords = 38;
 		constexpr uint32_t kRTConstantDwords = 39;
 		constexpr uint32_t kRTHistoryConstants = 2;
-		constexpr DXGI_FORMAT kVisibilityHistoryFormat = DXGI_FORMAT_R16G16_FLOAT;
+		constexpr DXGI_FORMAT kQualityHistoryFormat = DXGI_FORMAT_R16G16_FLOAT;
+		constexpr DXGI_FORMAT kPerformanceHistoryFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 		constexpr uint32_t kOffloadDescriptors = 4, kRTDescriptors = 6;
 		constexpr DXGI_FORMAT kReconstructedMaskFormat = DXGI_FORMAT_R32G32_FLOAT;
 		constexpr uint32_t kShadowThreadGroupSize = 8;
@@ -157,6 +158,7 @@ namespace DX12Native
 		}
 
 		const bool rtPath = applyShadow && variant != 0u;
+		const auto historyFormat = quality == kShadowQualityPerformance ? kPerformanceHistoryFormat : kQualityHistoryFormat;
 		ShadowHistoryStamp historyStamp{};
 		uint32_t historyCount = 0;
 		if (rtPath) {
@@ -301,13 +303,14 @@ namespace DX12Native
 				slot->rtDescriptors = true;
 			}
 			if (slot->historyOutput && (slot->historyOutput->device != device12 ||
-				slot->historyOutput->stamp.width != width || slot->historyOutput->stamp.height != height || !rtPath))
+				slot->historyOutput->stamp.width != width || slot->historyOutput->stamp.height != height ||
+				slot->historyOutput->stamp.quality != quality || !rtPath))
 				slot->historyOutput.reset();
 			if (rtPath && !slot->historyOutput) {
 				try {
-					const auto historyDesc = CD3DX12_RESOURCE_DESC::Tex2D(kVisibilityHistoryFormat,
+					const auto historyDesc = CD3DX12_RESOURCE_DESC::Tex2D(historyFormat,
 						width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-					D3D12_FEATURE_DATA_FORMAT_SUPPORT historySupport{ kVisibilityHistoryFormat };
+					D3D12_FEATURE_DATA_FORMAT_SUPPORT historySupport{ historyFormat };
 					DX::ThrowIfFailed(device12->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &historySupport, sizeof(historySupport)));
 					if (!(historySupport.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_LOAD) ||
 						!(historySupport.Support1 & D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW) ||
@@ -385,7 +388,7 @@ namespace DX12Native
 				device12->CreateShaderResourceView(raster->depth->resource.get(), &srv, cpu);
 				cpu.ptr += step;
 				if (rtPath) {
-					srv.Format = kVisibilityHistoryFormat;
+					srv.Format = historyFormat;
 					device12->CreateShaderResourceView(slot->historyInput ? slot->historyInput->texture.get() : nullptr, &srv, cpu);
 					cpu.ptr += step;
 				}
@@ -398,7 +401,7 @@ namespace DX12Native
 				device12->CreateUnorderedAccessView(publishReconstructedMask ? slot->reconstructedMask.get() : nullptr, nullptr, &uav, cpu);
 				if (rtPath) {
 					cpu.ptr += step;
-					uav.Format = kVisibilityHistoryFormat;
+					uav.Format = historyFormat;
 					device12->CreateUnorderedAccessView(writeHistory ? slot->historyOutput->texture.get() : nullptr, nullptr, &uav, cpu);
 				}
 				const std::array start{

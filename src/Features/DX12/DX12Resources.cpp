@@ -546,6 +546,38 @@ namespace
 		return {};
 	}
 
+	/** @brief A consolidated interior occupies one active tile, not a predictive grid. */
+	void DrawWholeCellMap(const std::shared_ptr<const DX12::Tile>& tile)
+	{
+		const float available = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+		const float side = std::min(available, SubcellMapStyle::maxPitch * DX12::kPredictiveDiameter - SubcellMapStyle::gap);
+		const auto origin = ImGui::GetCursorScreenPos();
+		const ImVec2 p0{ origin.x + (available - side) * 0.5f, origin.y };
+		const ImVec2 p1{ p0.x + side, p0.y + side };
+		auto* draw = ImGui::GetWindowDrawList();
+		draw->AddRectFilled(p0, p1, TileColor(tile, true), SubcellMapStyle::rounding);
+		draw->AddRect(p0, p1, SubcellMapStyle::activeOutline, SubcellMapStyle::rounding, 0, SubcellMapStyle::activeOutlineWidth);
+		if (tile && (tile->state == DX12::Tile::State::ReadyPartial || tile->state == DX12::Tile::State::EmptyPartial))
+			draw->AddLine(ImVec2(p0.x + SubcellMapStyle::stripeInset, p1.y - SubcellMapStyle::stripeInset),
+				ImVec2(p1.x - SubcellMapStyle::stripeInset, p0.y + SubcellMapStyle::stripeInset),
+				SubcellMapStyle::partialStripe, SubcellMapStyle::stripeWidth);
+		if (tile && tile->state == DX12::Tile::State::Empty) {
+			const ImVec2 center{ (p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f };
+			draw->AddCircle(center, SubcellMapStyle::playerRadius, SubcellMapStyle::playerOutline);
+		}
+		ImGui::Dummy(ImVec2(available, side));
+		if (ImGui::IsItemHovered()) {
+			const auto mouse = ImGui::GetIO().MousePos;
+			if (mouse.x >= p0.x && mouse.x <= p1.x) {
+				ImGui::BeginTooltip();
+				ImGui::TextUnformatted(TileStatus(tile));
+				if (tile && !tile->failureReason.empty())
+					ImGui::TextWrapped("%s", tile->failureReason.c_str());
+				ImGui::EndTooltip();
+			}
+		}
+	}
+
 	void DrawSubcellMap(const DX12::Grid& grid)
 	{
 		const auto center = grid.requested.front();
@@ -796,11 +828,11 @@ void DX12Resources::DrawResourceStatus()
 	} else {
 		ImGui::TextDisabled("%s", T("menu.dx12.resources.publication_pending", "Companion publication: not received"));
 	}
-	ImGui::SeparatorText(T("menu.dx12.resources.subcell_status", "Subcell status (5x5)"));
 	const auto snapshot = GetGrid();
 	const auto timing = GetPreparationStats();
 	if (snapshot && snapshot->wholeCell) {
-		ImGui::Text("%s", T("menu.dx12.resources.whole_cell", "Whole-cell residency (subdivisions bypassed)"));
+		ImGui::SeparatorText(T("menu.dx12.resources.whole_cell", "Whole-cell residency (subdivisions bypassed)"));
+		DrawWholeCellMap(snapshot->resident.front());
 		if (const auto& tile = snapshot->resident.front()) {
 			ImGui::Text(T("menu.dx12.resources.whole_cell_counts", "Shapes: %zu | Lights: %zu"), tile->shapes.size(), tile->lights.size());
 			ImGui::Text("%s", TileStatus(tile));
@@ -810,6 +842,7 @@ void DX12Resources::DrawResourceStatus()
 		return;
 	}
 
+	ImGui::SeparatorText(T("menu.dx12.resources.subcell_status", "Subcell status (5x5)"));
 	const auto drawSubcellDetails = [&]() {
 		if (snapshot) {
 			size_t activeLoaded = 0, predictiveLoaded = 0, empty = 0, emptyPartial = 0;

@@ -52,11 +52,11 @@ namespace DX12Native
 	}
 	RT_FUNC uint ShadowTemporalFrames(uint quality)
 	{
-		return quality == kShadowQualityPerformance ? 3u : (quality == kShadowQualityQuality ? 2u : 1u);
+		return quality == kShadowQualityPerformance ? 4u : (quality == kShadowQualityQuality ? 2u : 1u);
 	}
-	RT_FUNC uint ShadowReconstructionRadius()
+	RT_FUNC uint ShadowReconstructionRadius(uint quality)
 	{
-		return 1u;
+		return quality == kShadowQualityPerformance ? 2u : 1u;
 	}
 	RT_FUNC bool ShadowFilterDirectSamples(uint quality)
 	{

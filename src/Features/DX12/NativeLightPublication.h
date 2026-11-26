@@ -6,7 +6,7 @@
 
 namespace DX12Native
 {
-	inline constexpr uint32_t kDefaultLightObservationFrames = 8;
+	inline constexpr uint32_t kDefaultLightObservationFrames = 30;
 	inline constexpr uint32_t kMaxLightObservationFrames = 120;
 	inline constexpr uint32_t kLightRecordsPerEmitter = 2;
 	using PackedNativeLight = std::array<std::array<float, 4>, kLightRecordsPerEmitter>;

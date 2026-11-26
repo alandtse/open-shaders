@@ -296,6 +296,9 @@ TEST_CASE("Full RT restores the established game-unit defaults", "[dx12][shadow]
 TEST_CASE("Native light observation interval handles frame wrap", "[dx12][shadow]")
 {
 	using namespace DX12Native;
+	CHECK(kDefaultLightObservationFrames == 30);
+	CHECK_FALSE(NativeLightObservationDue(129, 100, kDefaultLightObservationFrames));
+	CHECK(NativeLightObservationDue(130, 100, kDefaultLightObservationFrames));
 	CHECK_FALSE(NativeLightObservationDue(107, 100, 8));
 	CHECK(NativeLightObservationDue(108, 100, 8));
 	CHECK(NativeLightObservationDue(3, UINT32_MAX - 4, 8));
@@ -359,9 +362,10 @@ TEST_CASE("Loading destination uses the established spatial priority groups", "[
 TEST_CASE("Native RT composite profiles retain finite temporal windows", "[dx12][shadow]")
 {
 	using namespace DX12Native;
-	CHECK(ShadowReconstructionRadius() == 1);
+	CHECK(ShadowReconstructionRadius(kShadowQualityQuality) == 1);
+	CHECK(ShadowReconstructionRadius(kShadowQualityPerformance) == 2);
 	CHECK(ShadowTemporalFrames(kShadowQualityQuality) == 2);
-	CHECK(ShadowTemporalFrames(kShadowQualityPerformance) == 3);
+	CHECK(ShadowTemporalFrames(kShadowQualityPerformance) == 4);
 	CHECK(ShadowTemporalFrames(kShadowQualityOffloading) == 1);
 	CHECK_FALSE(ShadowFilterDirectSamples(kShadowQualityQuality));
 	CHECK(ShadowFilterDirectSamples(kShadowQualityPerformance));
@@ -375,7 +379,14 @@ TEST_CASE("Native RT history accepts only compatible consecutive frames", "[dx12
 	const ShadowHistoryStamp previous{ 10, 1920, 1080, kShadowQualityPerformance, 1, 2, 3, 3 };
 	auto next = previous;
 	++next.frame;
-	CHECK(ShadowHistoryCount(previous, next) == 2);
+	CHECK(ShadowHistoryCount(previous, next) == 3);
+	auto warming = previous;
+	warming.samples = 1;
+	CHECK(ShadowHistoryCount(warming, next) == 1);
+	warming.samples = 2;
+	CHECK(ShadowHistoryCount(warming, next) == 2);
+	warming.samples = 4;
+	CHECK(ShadowHistoryCount(warming, next) == 3);
 	auto quality = previous;
 	quality.quality = kShadowQualityQuality;
 	auto nextQuality = quality;
