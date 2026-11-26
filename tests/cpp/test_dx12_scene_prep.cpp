@@ -1,3 +1,5 @@
+#include "Features/DX12/ScenePrepCoverage.h"
+#include "Features/DX12/ScenePrepEligibility.h"
 #include "Features/DX12/ScenePrepMath.h"
 
 #include <catch2/catch_approx.hpp>
@@ -214,4 +216,31 @@ TEST_CASE("Subcell overlap, cell windows, and shape identities handle negative t
 	CHECK(id0 != 0u);
 	CHECK(id0 != id1);
 	CHECK(id0 != id2);
+}
+
+TEST_CASE("Runtime-dependent references are excluded from static scene prep", "[dx12][scene-prep]")
+{
+	using DX12::IsRuntimeDependentPlacement;
+
+	CHECK_FALSE(IsRuntimeDependentPlacement(false, false, false, false));
+	CHECK(IsRuntimeDependentPlacement(true, false, false, false));
+	CHECK(IsRuntimeDependentPlacement(false, true, false, false));
+	CHECK(IsRuntimeDependentPlacement(false, false, true, false));
+	CHECK(IsRuntimeDependentPlacement(false, false, false, true));
+}
+
+TEST_CASE("Depth-limited scene traversal cannot certify complete coverage", "[dx12][scene-prep]")
+{
+	using DX12::IsSceneGraphDepthExceeded;
+	using DX12::IsScenePrepCoverageComplete;
+
+	constexpr uint32_t kMaxDepth = 32;
+	CHECK_FALSE(IsSceneGraphDepthExceeded(kMaxDepth, kMaxDepth));
+	CHECK(IsSceneGraphDepthExceeded(kMaxDepth + 1, kMaxDepth));
+
+	CHECK(IsScenePrepCoverageComplete(true, true, 0, 0, 12u, 12u));
+	CHECK_FALSE(IsScenePrepCoverageComplete(true, true, 1, 0, 12u, 12u));
+	CHECK_FALSE(IsScenePrepCoverageComplete(true, true, 0, 1, 12u, 12u));
+	CHECK_FALSE(IsScenePrepCoverageComplete(true, false, 0, 0, 12u, 12u));
+	CHECK_FALSE(IsScenePrepCoverageComplete(true, true, 0, 0, 13u, 12u));
 }

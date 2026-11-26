@@ -11,6 +11,7 @@
 #include "RE/T/TESDataHandler.h"
 #include "RE/T/TESWorldSpace.h"
 #include "RE/U/UI.h"
+#include "ScenePrepCoverage.h"
 #include "ScenePrepWorker.h"
 #include "State.h"
 #include "Utils/Game.h"
@@ -255,9 +256,9 @@ namespace DX12
 		tile->shapes = std::move(publication.shapes);
 		tile->bytes = publication.geometryBytes;
 		tile->lights = std::move(publication.lights);
-		const bool complete = publication.validated && publication.enumerationComplete &&
-		                      publication.failedShapes == 0 && publication.rejectedLights == 0 &&
-		                      publication.eligibleShapes == tile->shapes.size();
+		const bool complete = IsScenePrepCoverageComplete(
+			publication.validated, publication.enumerationComplete, publication.failedShapes,
+			publication.rejectedLights, publication.eligibleShapes, tile->shapes.size());
 		const bool hasContent = !tile->shapes.empty() || !tile->lights.empty();
 		const bool consolidate = publication.wholeCell && publication.validated;
 		const auto outcome = ClassifyTilePreparation(publication.validated &&
