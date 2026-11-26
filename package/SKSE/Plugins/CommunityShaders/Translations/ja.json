@@ -10,6 +10,7 @@
     "common.inactive": "無効化",
     "common.restart_required": "",
     "common.settings_managed_by_enb": "この設定はEffects 11が管理しています。",
+    "compatibility.tullius_ctd_logger": "Tullius CTD Logger がプレイ中に診断用ダンプを書き込む際、Skyrim が1秒以上フリーズすることがあります",
     "cs_editor.actions": "",
     "cs_editor.active": "",
     "cs_editor.active_chip_tooltip": "クリックするとリスト内で探します。ダブルクリックでエディターを開きます。",

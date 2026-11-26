@@ -10,6 +10,7 @@
     "common.inactive": "Inaktiv",
     "common.restart_required": "",
     "common.settings_managed_by_enb": "Diese Einstellung wird von Effects 11 verwaltet.",
+    "compatibility.tullius_ctd_logger": "Tullius CTD Logger kann Skyrim für mehr als eine Sekunde anhalten, wenn er während des Spiels ein Diagnoseabbild schreibt",
     "cs_editor.actions": "Aktionen",
     "cs_editor.active": "Aktiv:",
     "cs_editor.active_chip_tooltip": "Klicken, um den Eintrag in seiner Liste zu finden. Doppelklicken, um seinen Editor zu öffnen.",

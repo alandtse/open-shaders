@@ -10,6 +10,7 @@
     "common.inactive": "Inactief",
     "common.restart_required": "",
     "common.settings_managed_by_enb": "Deze instelling wordt beheerd door Effects 11.",
+    "compatibility.tullius_ctd_logger": "Tullius CTD Logger kan Skyrim langer dan een seconde laten vastlopen wanneer het tijdens het spelen een diagnostische dump schrijft",
     "cs_editor.actions": "Acties",
     "cs_editor.active": "Actief:",
     "cs_editor.active_chip_tooltip": "Klik om het item in de lijst te vinden. Dubbelklik om de editor te openen.",
