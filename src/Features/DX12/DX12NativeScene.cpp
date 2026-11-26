@@ -22,6 +22,8 @@ void DX12NativeScene::DrawSettings()
 {
 	ImGui::Checkbox(T("menu.dx12.scene.independent_shadowmask", "Independent shadowmask"), &shadowMaskEnabled);
 	ImGui::Checkbox(T("menu.dx12.scene.trace_all_lights", "Trace all prepared lights (additional shadows)"), &traceAllPreparedLights);
+	if (traceAllPreparedLights)
+		ImGui::TextWrapped("%s", T("menu.dx12.scene.trace_all_lights_warning", "Performance mode: skips light matching and caster coverage checks. Incomplete TLAS coverage can cause missing shadows."));
 	ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoorShadowOffloading);
 	bool keepRasterStatic = !offloadStaticShadows;
 	if (ImGui::Checkbox(T("menu.dx12.scene.keep_raster_static", "Keep raster static shadows for native-accounted lights"), &keepRasterStatic))
@@ -139,18 +141,19 @@ bool DX12NativeScene::CanSuppressSCMStatic() const
 
 bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const
 {
-	// SCM keeps raster dynamic casters unconditionally. Static casters may be
-	// omitted only when this exact runtime light was matched to a native emitter
-	// in the current frame; a nearby prepared light is not sufficient proof.
+	// The default mode requires an exact runtime light match; all-light mode
+	// deliberately trades raster coverage guarantees for lower CPU overhead.
 	if (!light || slot < 0 || !CanSuppressSCMStatic() ||
 		light->GetIsFrustumOrDirectionalLight() || !globals::game::graphicsState)
 		return false;
 	const auto scene = GetFrameShadowScene();
 	const auto lights = shadowLights.load(std::memory_order_acquire);
 	const auto* ni = light->light.get();
-	if (!scene || !scene->acceleration || !lights || !ni ||
+	if (!scene || !scene->acceleration || !lights || lights->empty() || !ni ||
 		scene->scope != shadowLightScope.load(std::memory_order_acquire))
 		return false;
+	if (TraceAllPreparedLights())
+		return true;
 
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
 	std::scoped_lock lock(runtimeLightMutex);
@@ -186,7 +189,7 @@ std::shared_ptr<const DX12Native::TopLevel> DX12NativeScene::GetFrameShadowScene
 void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID,
 	bool flickers, const RE::NiPoint3& restOrigin)
 {
-	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive() ||
+	if (TraceAllPreparedLights() || !loaded || globals::game::isVR || !globals::features::dx12Control.IsActive() ||
 		!light || light->GetIsFrustumOrDirectionalLight() || !globals::game::graphicsState)
 		return;
 	auto* ni = light->light.get();
@@ -277,6 +280,7 @@ void DX12NativeScene::PreShadowMaps()
 	if (globals::game::graphicsState) {
 		const uint32_t frame = globals::game::graphicsState->GetFrameCount();
 		if (frameShadowSceneID.load(std::memory_order_acquire) != frame) {
+			frameTraceAllLights.store(traceAllPreparedLights, std::memory_order_release);
 			previousShadowSubmitted.store(shadows.Get(frame - 1u) != nullptr, std::memory_order_release);
 			frameShadowScene.store(acceleration.GetScene(), std::memory_order_release);
 			frameShadowSceneID.store(frame, std::memory_order_release);
@@ -350,6 +354,11 @@ void DX12NativeScene::OnOpaqueRasterReady()
 			.stochasticSampling = shadowStochastic,
 			.emitterRadiusMultiplier = shadowEmitterRadiusMultiplier
 		};
+		if (TraceAllPreparedLights()) {
+			if (lights)
+				shadows.Dispatch(*backend, captured, built, *lights, frame, controls);
+			return;
+		}
 		std::vector<DX12::PreparedLight> liveLights;
 		if (lights) {
 			std::scoped_lock lock(runtimeLightMutex);
@@ -361,10 +370,8 @@ void DX12NativeScene::OnOpaqueRasterReady()
 					}) : runtimeLightSamples.end();
 				if (observed != runtimeLightSamples.end()) {
 					if (observed->value.fade > 0.0f &&
-						(offloadFlickeringStatic || !observed->flickers || traceAllPreparedLights))
+						(offloadFlickeringStatic || !observed->flickers))
 						liveLights.push_back(observed->value);
-				} else if (traceAllPreparedLights) {
-					liveLights.push_back(prepared);
 				}
 			}
 		}
@@ -490,6 +497,7 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 		frameShadowScene.store(nullptr, std::memory_order_release);
 		frameShadowSceneID.store(UINT32_MAX, std::memory_order_release);
 		previousShadowSubmitted.store(false, std::memory_order_release);
+		frameTraceAllLights.store(false, std::memory_order_release);
 		{
 			std::scoped_lock lock(runtimeLightMutex);
 			runtimeLightFrame = UINT32_MAX;
@@ -513,6 +521,7 @@ void DX12NativeScene::OnRuntimeDisabled()
 	frameShadowScene.store(nullptr, std::memory_order_release);
 	frameShadowSceneID.store(UINT32_MAX, std::memory_order_release);
 	previousShadowSubmitted.store(false, std::memory_order_release);
+	frameTraceAllLights.store(false, std::memory_order_release);
 	{
 		std::scoped_lock lock(runtimeLightMutex);
 		runtimeLightFrame = UINT32_MAX;

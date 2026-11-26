@@ -6010,6 +6010,7 @@
     "menu.dx12.scene.shadow_reach_multiplier": "Shadow reach multiplier (1x = vanilla)",
     "menu.dx12.scene.shadow_stochastic": "Stochastic shadow emitter sampling",
     "menu.dx12.scene.trace_all_lights": "Trace all prepared lights (additional shadows)",
+    "menu.dx12.scene.trace_all_lights_warning": "Performance mode: skips light matching and caster coverage checks. Incomplete TLAS coverage can cause missing shadows.",
     "menu.dx12.scene.trace_density": "Trace density",
     "menu.dx12.tab.master_switch": "Master Switch",
     "menu.dx12.tab.native_composite": "Native Composite",

@@ -469,6 +469,8 @@ namespace ShadowCasterManager
 		const bool dynamic = !rec || rec->dynamic;
 		if (nativeDynamicOnly) {
 			if (!dynamic) {
+				if (globals::features::dx12NativeScene.TraceAllPreparedLights())
+					return true;
 				if (rec->nativeCoverageEpoch != s_casterClassEpoch) {
 					rec->nativePreparedCovered = globals::features::dx12NativeScene.IsPreparedStaticCaster(geom);
 					rec->nativeCoverageEpoch = s_casterClassEpoch;

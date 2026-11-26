@@ -584,6 +584,7 @@ namespace ShadowCasterManager
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
 	static bool s_nativeOwnershipPending = false;  // SCM scheduling thread only.
 	static std::weak_ptr<const DX12Native::TopLevel> s_nativeRasterScene;
+	static bool s_nativeRasterAllLights = false;
 
 	static void RetireSplitBake(SplitState& st)
 	{
@@ -630,6 +631,8 @@ namespace ShadowCasterManager
 
 	static void ObserveNativeShadowLight(RE::BSShadowLight* light)
 	{
+		if (globals::features::dx12NativeScene.TraceAllPreparedLights())
+			return;
 		if (auto* ni = light->light.get()) {
 			const auto flicker = FlickerOf(ni);
 			globals::features::dx12NativeScene.ObserveRuntimeLight(light, LightPlacedReferenceID(ni),
@@ -671,10 +674,12 @@ namespace ShadowCasterManager
 			return;
 		}
 		const auto scene = globals::features::dx12NativeScene.GetFrameShadowScene();
-		if (s_nativeRasterScene.lock() != scene) {
-			// Changed TLAS membership invalidates cached raster omissions.
+		const bool allLights = globals::features::dx12NativeScene.TraceAllPreparedLights();
+		if (s_nativeRasterScene.lock() != scene || s_nativeRasterAllLights != allLights) {
+			// A changed TLAS or ownership policy invalidates cached raster omissions.
 			ReleaseNativeShadowOwnership();
 			s_nativeRasterScene = scene;
+			s_nativeRasterAllLights = allLights;
 		}
 		if (!s_nativeOwnershipPending)
 			return;
