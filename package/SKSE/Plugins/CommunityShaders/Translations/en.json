@@ -12,6 +12,7 @@
     "common.restart_required": "Restart required",
     "common.settings_managed_by_enb": "This setting is managed by Effects 11.",
     "common.yes": "Yes",
+    "compatibility.tullius_ctd_logger": "Tullius CTD Logger can freeze Skyrim for over a second while writing a diagnostic dump during gameplay",
     "cs_editor.actions": "Actions",
     "cs_editor.active": "Active:",
     "cs_editor.active_chip_tooltip": "Click to find it in its list. Double-click to open its editor.",

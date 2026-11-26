@@ -12,6 +12,7 @@
     "common.restart_required": "需要重启",
     "common.settings_managed_by_enb": "此设置由 Effects 11 管理。",
     "common.yes": "是",
+    "compatibility.tullius_ctd_logger": "Tullius CTD Logger 在游戏过程中写入诊断转储文件时，可能会导致 Skyrim 卡顿超过一秒",
     "cs_editor.actions": "操作",
     "cs_editor.active": "活跃：",
     "cs_editor.active_chip_tooltip": "单击可在其列表中定位。双击可打开其编辑器。",

@@ -10,6 +10,7 @@
     "common.inactive": "Nieaktywny",
     "common.restart_required": "Wymagane ponowne uruchomienie",
     "common.settings_managed_by_enb": "Tym ustawieniem zarządza Effects 11.",
+    "compatibility.tullius_ctd_logger": "Tullius CTD Logger może zatrzymać grę na ponad sekundę podczas zapisywania zrzutu diagnostycznego w trakcie rozgrywki",
     "cs_editor.actions": "Akcje",
     "cs_editor.active": "Aktywny:",
     "cs_editor.active_chip_tooltip": "Kliknij, aby znaleźć element na jego liście. Kliknij dwukrotnie, aby otworzyć jego edytor.",

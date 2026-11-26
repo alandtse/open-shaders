@@ -1,5 +1,9 @@
 #pragma once
 
+#include "I18n/I18n.h"
+
+#include <array>
+
 /**
  * @file Compatibility.h
  * @brief Plugins that cannot run alongside Open Shaders.
@@ -17,27 +21,29 @@ namespace Compatibility
 		std::string_view reason{};  ///< Shown to the user; empty when the rationale is not recorded.
 	};
 
-	/** @brief Probed with LoadLibrary at startup; any hit disables all hooks and features. */
-	inline constexpr IncompatiblePlugin incompatiblePlugins[] = {
-		{ L"Data/SKSE/Plugins/ShaderTools.dll" },
-		{ L"Data/SKSE/Plugins/SSEShaderTools.dll" },
-		{ L"Data/SKSE/Plugins/SkyrimUpscaler.dll" },
-		{ L"Data/SKSE/Plugins/EVLaS.dll", "superseded by Sky Sync" },
-		{ L"Data/SKSE/Plugins/AELAS.dll", "superseded by Sky Sync" },
-		{ L"Data/SKSE/Plugins/SSEReShadeHelper.dll" },
-		{ L"Data/SKSE/Plugins/TAASharpen.dll" },
-		{ L"Data/SKSE/Plugins/NVIDIA_Reflex.dll" },
-		{ L"Data/SKSE/Plugins/MARA.dll" },
-		{ L"Data/SKSE/Plugins/NativeMeshLightFlickerFix.dll",
-			"superseded by Light Limit Fix; both replace the same lighting hooks" },
-		{ L"Data/SKSE/Plugins/NativeWaterLightStabilizer.dll",
-			"superseded by Sky Reflection and Light Limit Fix" },
-		{ L"Data/SKSE/Plugins/intellightent-ng.dll" },
-		{ L"Data/SKSE/Plugins/DynamicWetness.dll" },
-		{ L"Data/SKSE/Plugins/SkyrimDiag.dll", "Tullius CTD Logger" },
-		{ L"Data/SKSE/Plugins/ShadowFixes.dll", "superseded by the built-in shadow engine fixes" },
-		{ L"Data/SKSE/Plugins/skyrim-runtime-extender/reversed_z.dll", "superseded by the built-in Reverse Z; both reverse depth and break every shader" }
-	};
+	/** @brief Returns the startup blocklist with reasons in the active language. */
+	inline auto GetIncompatiblePlugins()
+	{
+		return std::to_array<IncompatiblePlugin>({ { L"Data/SKSE/Plugins/ShaderTools.dll" },
+			{ L"Data/SKSE/Plugins/SSEShaderTools.dll" },
+			{ L"Data/SKSE/Plugins/SkyrimUpscaler.dll" },
+			{ L"Data/SKSE/Plugins/EVLaS.dll", "superseded by Sky Sync" },
+			{ L"Data/SKSE/Plugins/AELAS.dll", "superseded by Sky Sync" },
+			{ L"Data/SKSE/Plugins/SSEReShadeHelper.dll" },
+			{ L"Data/SKSE/Plugins/TAASharpen.dll" },
+			{ L"Data/SKSE/Plugins/NVIDIA_Reflex.dll" },
+			{ L"Data/SKSE/Plugins/MARA.dll" },
+			{ L"Data/SKSE/Plugins/NativeMeshLightFlickerFix.dll",
+				"superseded by Light Limit Fix; both replace the same lighting hooks" },
+			{ L"Data/SKSE/Plugins/NativeWaterLightStabilizer.dll",
+				"superseded by Sky Reflection and Light Limit Fix" },
+			{ L"Data/SKSE/Plugins/intellightent-ng.dll" },
+			{ L"Data/SKSE/Plugins/DynamicWetness.dll" },
+			{ L"Data/SKSE/Plugins/SkyrimDiag.dll",
+				T("compatibility.tullius_ctd_logger", "Tullius CTD Logger can freeze Skyrim for over a second while writing a diagnostic dump during gameplay") },
+			{ L"Data/SKSE/Plugins/ShadowFixes.dll", "superseded by the built-in shadow engine fixes" },
+			{ L"Data/SKSE/Plugins/skyrim-runtime-extender/reversed_z.dll", "superseded by the built-in Reverse Z; both reverse depth and break every shader" } });
+	}
 
 	/** @brief A plugin that is only blocked below a minimum file version. */
 	struct OutdatedPlugin
