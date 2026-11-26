@@ -1059,6 +1059,12 @@ namespace SIE
 			MTLandLODBlend = 19,
 		};
 
+		/** @brief The technique a Lighting descriptor selects. */
+		static constexpr LightingShaderTechniques GetLightingTechnique(uint32_t a_descriptor)
+		{
+			return static_cast<LightingShaderTechniques>((a_descriptor >> 24) & 0x3F);
+		}
+
 		enum class LightingShaderFlags : uint32_t
 		{
 			VC = 1 << 0,
