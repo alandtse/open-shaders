@@ -133,11 +133,10 @@ struct GrassPool
 	GrassRangeAllocator ranges;
 };
 
-/** @brief The cull output shared by every bucket, with one view per LOD tier. */
+/** @brief The cull output shared by every bucket, with one buffer per LOD tier. */
 struct GrassCullBuffers
 {
-	std::unique_ptr<Buffer> records;
-	std::array<winrt::com_ptr<ID3D11ShaderResourceView>, kTierCount> compactedSRVs;
+	std::array<std::unique_ptr<StructuredBuffer>, kTierCount> tiers;
 
 	uint32_t capacity = 0;  // Records per tier.
 	uint32_t underutilizedFrames = 0;

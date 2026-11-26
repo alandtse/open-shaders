@@ -155,6 +155,18 @@ TEST_CASE("Imported legacy globals retain their lower priority", "[presets][lega
 	REQUIRE(LegacyPreset::BuildPackId("Same Pack", true) != LegacyPreset::BuildPackId("Same Pack", false));
 }
 
+TEST_CASE("Fresh Base Settings preserve legacy overwrite order within the legacy slots", "[presets][legacy-presets]")
+{
+	const auto global = LegacyPreset::BuildPackId("DOSP", true);
+	const auto first = LegacyPreset::BuildPackId("!DOSP", false);
+	const auto second = LegacyPreset::BuildPackId("DOSP", false);
+	const std::array legacy{ global, first, second };
+	std::vector<std::string> installed{ global, "Dynamic Window Shadows", second, "Alpha", first };
+	PresetState::ApplyBaselineSubsetOrder(installed, legacy);
+	const auto fresh = PresetState::DiscoverBaselines(nlohmann::json::object(), installed);
+	REQUIRE(fresh.at("baselinePackIds") == nlohmann::json({ global, "Dynamic Window Shadows", first, "Alpha", second }));
+}
+
 TEST_CASE("Base Settings default to all enabled and retain explicit disabled choices", "[presets][legacy-presets]")
 {
 	const std::array<std::string, 3> order{ "Z Pack", "Alpha", "!Priority" };

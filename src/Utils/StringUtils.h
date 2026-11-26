@@ -158,4 +158,76 @@ namespace Util
 			return {};
 		return a_text.substr(first, a_text.find_last_not_of(whitespace) - first + 1);
 	}
+
+	/** @brief Lowercases ASCII letters and turns `/` into `\\`, the form game asset paths are compared in. */
+	inline std::string ToGameAssetPath(std::string_view a_path)
+	{
+		std::string path = ToLowerAscii(a_path);
+		std::ranges::replace(path, '/', '\\');
+		return path;
+	}
+
+	/** @brief ToGameAssetPath rooted at `textures\\`, with any leading `data\\` removed. */
+	inline std::string NormalizeTexturePath(std::string_view a_path)
+	{
+		constexpr std::string_view dataPrefix = "data\\";
+		constexpr std::string_view texturePrefix = "textures\\";
+		std::string path = ToGameAssetPath(a_path);
+		if (path.starts_with(dataPrefix))
+			path.erase(0, dataPrefix.size());
+		if (!path.starts_with(texturePrefix))
+			path.insert(0, texturePrefix);
+		return path;
+	}
+
+	/** @brief Maps a normalized `textures\pbr\...` path to the same path without the `pbr\` folder. */
+	inline std::string StripPbrTextureFolder(std::string a_path)
+	{
+		constexpr std::string_view texturePrefix = "textures\\";
+		constexpr std::string_view pbrFolder = "pbr\\";
+		if (a_path.starts_with(texturePrefix) && std::string_view(a_path).substr(texturePrefix.size()).starts_with(pbrFolder))
+			a_path.erase(texturePrefix.size(), pbrFolder.size());
+		return a_path;
+	}
+
+	/**
+	 * @brief Glob match of a whole asset path: `?` is one character and `*` any run within a folder, while `**` also crosses `\\`.
+	 * @note Both arguments must already be in ToGameAssetPath form.
+	 */
+	inline bool MatchesAssetGlob(std::string_view a_path, std::string_view a_pattern)
+	{
+		// reached[n]: the pattern read so far matches the first n path characters, which keeps work bounded for any pattern.
+		std::vector<char> reached(a_path.size() + 1, 0);
+		reached[0] = 1;
+		const auto extend = [&](bool a_crossFolders) {
+			for (size_t end = 1; end <= a_path.size(); ++end)
+				if (reached[end - 1] && (a_crossFolders || a_path[end - 1] != '\\'))
+					reached[end] = 1;
+		};
+		const auto consume = [&](char a_token) {
+			for (size_t end = a_path.size(); end > 0; --end)
+				reached[end] = reached[end - 1] && (a_token == '?' ? a_path[end - 1] != '\\' : a_path[end - 1] == a_token);
+			reached[0] = 0;
+		};
+		while (!a_pattern.empty()) {
+			if (a_pattern.starts_with("**\\")) {
+				const auto noFolder = reached;
+				extend(true);
+				consume('\\');
+				for (size_t end = 0; end <= a_path.size(); ++end)
+					reached[end] |= noFolder[end];
+				a_pattern.remove_prefix(3);
+			} else if (a_pattern.starts_with("**")) {
+				extend(true);
+				a_pattern.remove_prefix(2);
+			} else if (a_pattern.front() == '*') {
+				extend(false);
+				a_pattern.remove_prefix(1);
+			} else {
+				consume(a_pattern.front());
+				a_pattern.remove_prefix(1);
+			}
+		}
+		return reached.back() != 0;
+	}
 }

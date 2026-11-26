@@ -397,21 +397,19 @@ std::unique_ptr<Buffer> GrassBucketStore::CreateGroupPoolBuffer(uint32_t capacit
 bool GrassBucketStore::CreateCullOutput(GrassCullBuffers& buffers, uint32_t capacity)
 {
 	try {
-		buffers.records = CreateRawBuffer((uint64_t)capacity * (Util::EyeCount()) * kTierCount * kCullRecordStride, D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE, 0, "GrassOptimizations::CompactedBuf");
+		const uint32_t count = capacity * Util::EyeCount();
+		const auto desc = StructuredBufferDesc<std::array<std::byte, kCullRecordStride>>(count, true, false);
+		GrassCullBuffers output;
 		for (uint32_t tier = 0; tier < kTierCount; ++tier) {
-			D3D11_SHADER_RESOURCE_VIEW_DESC srv{};
-			srv.Format = DXGI_FORMAT_R32_TYPELESS;
-			srv.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
-			srv.BufferEx.FirstElement = tier * capacity * (Util::EyeCount()) * kCullRecordStride / 4;
-			srv.BufferEx.NumElements = capacity * (Util::EyeCount()) * kCullRecordStride / 4;
-			srv.BufferEx.Flags = D3D11_BUFFEREX_SRV_FLAG_RAW;
-
-			buffers.records->CreateSRV(srv);
-			buffers.compactedSRVs[tier] = std::move(buffers.records->srv);
-			Util::SetResourceName(buffers.compactedSRVs[tier].get(), "GrassOptimizations::CompactedBuf Tier%u SRV", tier);
+			const auto name = std::format("GrassOptimizations::CompactedBuf Tier{}", tier);
+			auto& buffer = output.tiers[tier];
+			buffer = std::make_unique<StructuredBuffer>(desc, count, name.c_str());
+			buffer->CreateSRV();
+			buffer->CreateUAV();
 		}
 
-		buffers.capacity = capacity;
+		output.capacity = capacity;
+		buffers = std::move(output);
 
 		return true;
 	} catch (...) {
@@ -452,7 +450,7 @@ bool GrassBucketStore::PrepareCullOutputs(std::span<GrassBucket*> visible)
 		used += std::min((uint64_t)bucket->residentInstances, (uint64_t)bucket->groupCount * kCullGroupSize);
 	}
 
-	const uint32_t maxCapacity = UINT32_MAX / (kTierCount * (Util::EyeCount()) * kCullRecordStride);
+	const uint32_t maxCapacity = UINT32_MAX / (Util::EyeCount() * kCullRecordStride);
 	if (used > maxCapacity)
 		return false;
 

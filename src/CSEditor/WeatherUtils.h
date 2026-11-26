@@ -496,13 +496,6 @@ namespace WeatherUtils
 		inline constexpr std::string_view kDdsExtension = ".dds";
 
 		/**
-		 * @brief Normalize a texture path: lowercase and convert forward slashes to backslashes.
-		 * @param path The texture path to normalize.
-		 * @return The normalized path string.
-		 */
-		std::string Normalize(std::string_view path);
-
-		/**
 		 * @brief Check if a normalized path ends with ".dds".
 		 * @param path The texture path to check.
 		 * @return True if the path has a .dds extension.
