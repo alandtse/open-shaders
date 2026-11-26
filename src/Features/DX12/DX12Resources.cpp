@@ -132,7 +132,7 @@ namespace DX12
 				}
 		}
 		// Keep recently retired immutable cell publications in bounded DRAM.
-		// A -> B -> A must not repeat companion processing.
+		// A -> B -> A must not repeat subcell preparation.
 		if (current->size == size) {
 			const auto retain = [&](const auto& tile) {
 				if (!tile || (tile->state != Tile::State::Ready && tile->state != Tile::State::ReadyPartial))
@@ -262,7 +262,7 @@ namespace DX12
 			// Partial geometry is usable but does not certify complete static-shadow coverage.
 			tile->state = complete ? Tile::State::Ready : Tile::State::ReadyPartial;
 		} else {
-			// Malformed or empty-incomplete companion payloads must not claim native scene readiness.
+			// Malformed or empty-incomplete publications must not claim native scene readiness.
 			tile->shapes.clear();
 			tile->lights.clear();
 			tile->bytes = 0;
@@ -395,8 +395,8 @@ namespace DX12
 		bool changed = false;
 		const auto markRefresh = [&](auto& tiles) {
 			for (auto& tile : tiles) {
-				if (tile && tile->hasUnattachedCells &&
-					(tile->state == Tile::State::Ready || tile->state == Tile::State::ReadyPartial)) {
+				if (tile && tile->hasUnattachedCells && tile->state != Tile::State::Requested &&
+					tile->state != Tile::State::Preparing && tile->state != Tile::State::Deferred) {
 					auto refreshed = std::make_shared<Tile>(*tile);
 					refreshed->state = Tile::State::Requested;
 					refreshed->preparationAttempts = 0;
@@ -600,6 +600,7 @@ void DX12Resources::ResetPreparation()
 	grid.Clear();
 	lastVisitedCell = previousVisitedCell = distinctTransitions = 0;
 	lastExteriorGridX = lastExteriorGridY = std::numeric_limits<int32_t>::min();
+	interiorRefsLoaded = false;
 	generationStats.store(std::make_shared<const DX12::PreparationStats>(), std::memory_order_release);
 }
 
@@ -749,8 +750,13 @@ void DX12Resources::PreShadowMaps()
 			grid.RefreshUnattachedTiles();
 		lastExteriorGridX = gx;
 		lastExteriorGridY = gy;
+		interiorRefsLoaded = false;
 	} else {
 		lastExteriorGridX = lastExteriorGridY = std::numeric_limits<int32_t>::min();
+		const bool refsLoaded = DX12::IsCellFullyLoaded(cell);
+		if (refsLoaded && !interiorRefsLoaded)
+			grid.RefreshUnattachedTiles();
+		interiorRefsLoaded = refsLoaded;
 	}
 	runtimePublicationEnabled.store(true, std::memory_order_release);
 	if (!worker)
@@ -826,7 +832,30 @@ void DX12Resources::OnRuntimeDisabled()
 		return;
 	runtimePublicationEnabled.store(false, std::memory_order_release);
 	ResetPreparation();
+	// Joins the worker here so model roots it retained are released on this thread, not at exit.
+	worker.reset();
 	preparationActive = false;
+}
+
+void DX12Resources::OnSceneTransitionReset(bool a_opening)
+{
+	if (a_opening)
+		ResetPreparation();
+}
+
+bool DX12Resources::IsStaticCoverageCertified(const float3& a_position, float a_radius, uint64_t a_sceneRevision) const
+{
+	const auto current = grid.Snapshot();
+	if (!current || current->geometryRevision != a_sceneRevision)
+		return false;
+	const uint32_t scope = current->requested.front().scope;
+	return scope && DX12::IsLightRadiusCertified(a_position.x, a_position.y, a_radius, current->size,
+						[&](int64_t a_x, int64_t a_y) {
+							for (size_t i = 0; i < current->requested.size(); ++i)
+								if (current->requested[i] == DX12::SubcellKey{ scope, a_x, a_y })
+									return current->resident[i] && current->resident[i]->state == DX12::Tile::State::Ready;
+							return false;
+						});
 }
 
 std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const

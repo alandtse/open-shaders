@@ -135,7 +135,8 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	for (size_t i = 0; i < limit; ++i) {
 		const auto& candidate = (*lights)[i];
 		if (candidate.referenceID != 0 && candidate.referenceID == found->referenceID)
-			return true;
+			return globals::features::dx12Resources.IsStaticCoverageCertified(
+				candidate.position, std::max(candidate.radius, found->value.radius), scene->geometryRevision);
 	}
 	return false;
 }

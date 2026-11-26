@@ -16,7 +16,7 @@
 
 namespace DX12
 {
-	// Shared upper bound for companion light records and the native shadow consumer.
+	// Shared upper bound for prepared light records and the native shadow consumer.
 	inline constexpr uint32_t kMaxPreparedLights = 2048;
 
 	class ScenePrepWorker;
@@ -113,7 +113,7 @@ namespace DX12
 		uint32_t size = kSubcellSizes.front();
 		std::array<SubcellKey, kGridCapacity> requested{};  // Active 3x3, available to future native consumers.
 		std::array<std::shared_ptr<const Tile>, kGridCapacity> resident{};
-		std::array<SubcellKey, kPredictiveCapacity> predictive{};  // Companion-only outer 5x5 ring.
+		std::array<SubcellKey, kPredictiveCapacity> predictive{};  // Predictive outer 5x5 ring.
 		std::array<std::shared_ptr<const Tile>, kPredictiveCapacity> predictiveResident{};
 		// Bounded, transient observations from existing engine render passes.
 		// No persistent cache, materials, or raster-shadow coverage authority.
@@ -123,7 +123,7 @@ namespace DX12
 
 	struct PreparationTiming
 	{
-		uint64_t completed = 0;  // Accepted, completed companion publications.
+		uint64_t completed = 0;  // Accepted, completed subcell publications.
 		double lastMs = 0.0, totalMs = 0.0, worstMs = 0.0;
 		double AverageMs() const { return completed ? totalMs / double(completed) : 0.0; }
 	};
@@ -142,7 +142,7 @@ namespace DX12
 		std::optional<SubcellKey> NextRequest();
 		/** @brief Publishes one prepared subcell, otherwise marks it incomplete. */
 		bool Publish(TilePublication publication);
-		/** @brief Marks tiles overlapping unattached exterior cells for re-preparation after grid shifts. */
+		/** @brief Marks tiles prepared before their cells finished loading for re-preparation. */
 		void RefreshUnattachedTiles();
 		/** @brief Accept an observed static shape within the active 3x3 without caching it on disk. */
 		bool PublishRuntimeShape(std::shared_ptr<const Shape> shape, float centerX, float centerY, uint32_t expectedScope = 0);
@@ -192,6 +192,7 @@ struct DX12Resources final : Feature
 	bool WantsPreShadowMapsHook() const override;
 	void PreShadowMaps() override;
 	void OnRuntimeDisabled() override;
+	void OnSceneTransitionReset(bool a_opening) override;
 	/** @brief Returns current geometry residency without traversing engine objects. */
 	std::shared_ptr<const DX12::Grid> GetGrid() const { return grid.Snapshot(); }
 	/** @brief Accepts a bounded, static renderer observation for native geometry (never for raster suppression). */
@@ -203,6 +204,8 @@ struct DX12Resources final : Feature
 	bool IsActive() const;
 	/** @brief Returns the most recent prepared-light publication. */
 	std::vector<DX12::PreparedLight> GetPreparedLights() const;
+	/** @brief True when every active subcell within the light radius is Ready and the TLAS was built from this grid revision. */
+	bool IsStaticCoverageCertified(const float3& a_position, float a_radius, uint64_t a_sceneRevision) const;
 	/** @brief In-memory generation timings for active 3x3, predictive sides and corners. */
 	std::shared_ptr<const DX12::PreparationStats> GetPreparationStats() const
 	{
@@ -220,6 +223,7 @@ private:
 	uint32_t lastVisitedCell = 0, previousVisitedCell = 0, distinctTransitions = 0;
 	int32_t lastExteriorGridX = std::numeric_limits<int32_t>::min();
 	int32_t lastExteriorGridY = std::numeric_limits<int32_t>::min();
+	bool interiorRefsLoaded = false;
 	std::optional<DX12::SubcellKey> inFlight;
 	std::atomic<std::shared_ptr<const DX12::PreparationStats>> generationStats{
 		std::make_shared<const DX12::PreparationStats>()

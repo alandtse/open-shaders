@@ -57,7 +57,7 @@ namespace DX12Native
 		}
 
 		// Compare actual rigid geometry, not subcell readiness or camera coverage.
-		// Companion-produced shapes take precedence over equivalent runtime shapes.
+		// Subcell-prepared shapes take precedence over equivalent runtime shapes.
 		bool SameShape(const DX12::Shape& a, const DX12::Shape& b)
 		{
 			if (a.positions.size() != b.positions.size() || a.indices != b.indices)
@@ -250,19 +250,19 @@ namespace DX12Native
 				releaseIfCurrent();
 				continue;
 			}
-			bool companionOwns = false;
+			bool preparedOwns = false;
 			for (const auto& tile : grid->resident) {
 				if (!tile)
 					continue;
 				for (const auto& prepared : tile->shapes)
 					if (prepared && SameShape(*prepared, *shape)) {
-						companionOwns = true;
+						preparedOwns = true;
 						break;
 					}
-				if (companionOwns)
+				if (preparedOwns)
 					break;
 			}
-			if (companionOwns)
+			if (preparedOwns)
 				continue;
 			{
 				std::scoped_lock lock(mutex);

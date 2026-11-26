@@ -16,16 +16,18 @@
 
 namespace DX12
 {
+	/** @brief Model-space triangles decoded from engine buffers; shared by instances of one mesh. */
+	struct DecodedMesh
+	{
+		std::vector<float3> positions;
+		std::vector<uint32_t> indices;
+		uint64_t bytes = 0;
+	};
+
 	struct CapturedAttachedShape
 	{
 		uint64_t identity = 0;
-		const RE::BSGraphics::TriShape* rendererData = nullptr;
-		const uint8_t* rawVertices = nullptr;
-		const uint16_t* rawIndices = nullptr;
-		uint32_t vertexCount = 0;
-		uint32_t firstIndex = 0;
-		uint32_t indexCount = 0;
-		uint32_t stride = 0;
+		std::shared_ptr<const DecodedMesh> mesh;
 		std::array<float, 12> transform{};
 	};
 
@@ -56,7 +58,8 @@ namespace DX12
 		std::vector<MissingNifShapeDescriptor> missingShapes;
 		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;
 		uint32_t failedShapes = 0;
-		std::vector<RE::NiPointer<RE::NiObject>> keepAlive;
+		uint32_t rejectedLights = 0;
+		uint64_t capturedBytes = 0;
 	};
 
 	struct ScenePrepResult
@@ -72,6 +75,9 @@ namespace DX12
 	[[nodiscard]] std::optional<ScenePrepRequest> CaptureScenePrepRequest(
 		SubcellKey a_key, uint32_t a_size, const RE::TESObjectCELL* a_cell,
 		const RE::TESWorldSpace* a_world, bool a_predictive, bool a_corner);
+
+	/** @brief True once an attached cell reports its reference set fully loaded. */
+	[[nodiscard]] bool IsCellFullyLoaded(const RE::TESObjectCELL* a_cell);
 
 	/** @brief Single bounded producer preparing immutable subcell geometry and lights off the render thread. */
 	class ScenePrepWorker

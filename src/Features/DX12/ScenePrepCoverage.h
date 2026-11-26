@@ -1,5 +1,8 @@
 #pragma once
 
+#include "SpatialGrid.h"
+
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -18,5 +21,26 @@ namespace DX12
 	{
 		return a_validated && a_enumerationComplete && a_failedShapes == 0 && a_rejectedLights == 0 &&
 		       a_eligibleShapes == a_capturedShapes;
+	}
+
+	/**
+	 * @brief Reports whether every subcell touched by a light's XY radius is certified.
+	 * @param a_certified Callable (int64_t tileX, int64_t tileY) -> bool for one subcell.
+	 */
+	template <class Certified>
+	[[nodiscard]] bool IsLightRadiusCertified(
+		double a_x, double a_y, double a_radius, uint32_t a_size, Certified&& a_certified)
+	{
+		if (!std::isfinite(a_radius) || a_radius < 0.0)
+			return false;
+		const auto minX = Coordinate(a_x - a_radius, a_size), maxX = Coordinate(a_x + a_radius, a_size);
+		const auto minY = Coordinate(a_y - a_radius, a_size), maxY = Coordinate(a_y + a_radius, a_size);
+		if (!minX || !maxX || !minY || !maxY || *maxX - *minX >= kGridDiameter || *maxY - *minY >= kGridDiameter)
+			return false;
+		for (int64_t y = *minY; y <= *maxY; ++y)
+			for (int64_t x = *minX; x <= *maxX; ++x)
+				if (!a_certified(x, y))
+					return false;
+		return true;
 	}
 }

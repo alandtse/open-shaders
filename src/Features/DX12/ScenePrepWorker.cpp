@@ -74,7 +74,7 @@ namespace DX12
 					return;
 				}
 			}
-			a_reasons.back().second += a_count;
+			a_reasons.back() = { "other", a_reasons.back().second + a_count };
 		}
 
 		void AddMissingShapeEntry(
@@ -217,70 +217,6 @@ namespace DX12
 			return GeometryInspectResult::Accepted;
 		}
 
-		void CaptureAttachedSubtree(
-			RE::NiAVObject* a_obj, uint32_t a_ownerFormID, std::string_view a_plugin, uint32_t a_localID,
-			std::string_view a_nifPath, uint32_t& a_shapeOrdinal, uint32_t a_depth, ScenePrepRequest& a_request)
-		{
-			if (!a_obj || a_obj->GetAppCulled())
-				return;
-			if (IsSceneGraphDepthExceeded(a_depth, kMaxSceneGraphDepth)) {
-				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "scene graph depth limit exceeded");
-				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, -1, "scene graph depth limit exceeded");
-				return;
-			}
-			if (a_obj->GetControllers() != nullptr) {
-				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "unsupported animated or nontriangle shape");
-				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, -1, "unsupported animated or nontriangle shape");
-				return;
-			}
-			if (auto* node = a_obj->AsNode()) {
-				for (const auto& child : node->GetChildren())
-					CaptureAttachedSubtree(child.get(), a_ownerFormID, a_plugin, a_localID, a_nifPath, a_shapeOrdinal, a_depth + 1, a_request);
-				return;
-			}
-			auto* geom = a_obj->AsGeometry();
-			if (!geom)
-				return;
-
-			const uint32_t ordinal = a_shapeOrdinal++;
-			ExtractedShapeDesc extracted{};
-			std::string_view rejectReason;
-			const auto status = InspectGeometry(*geom, extracted, rejectReason);
-			if (status == GeometryInspectResult::SkippedNonShadow)
-				return;
-			if (status == GeometryInspectResult::Rejected) {
-				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, rejectReason);
-				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, int32_t(ordinal), rejectReason);
-				return;
-			}
-			const auto rows = TransformToRows3x4(FromNiTransform(geom->world));
-			if (!IsInvertibleTransform3x4(rows)) {
-				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "invalid NIF transform");
-				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, int32_t(ordinal), "invalid NIF transform");
-				return;
-			}
-			CapturedAttachedShape captured;
-			captured.identity = MakeShapeIdentity(a_ownerFormID, ordinal);
-			captured.rendererData = extracted.rendererData;
-			captured.rawVertices = extracted.rawVertices;
-			captured.rawIndices = extracted.rawIndices;
-			captured.vertexCount = extracted.vertexCount;
-			captured.firstIndex = extracted.firstIndex;
-			captured.indexCount = extracted.indexCount;
-			captured.stride = extracted.stride;
-			captured.transform = rows;
-			a_request.attachedShapes.push_back(captured);
-			// Retain the BSGeometry on the worker read path; drained back on the game thread.
-			a_request.keepAlive.emplace_back(geom);
-		}
-
-		struct CachedDecodedMesh
-		{
-			std::vector<float3> positions;
-			std::vector<uint32_t> indices;
-			uint64_t bytes = 0;
-		};
-
 		struct RawMeshSliceKey
 		{
 			const RE::BSGraphics::TriShape* rendererData = nullptr;
@@ -301,10 +237,94 @@ namespace DX12
 			}
 		};
 
+		using CapturedMeshCache = std::unordered_map<RawMeshSliceKey, std::shared_ptr<const DecodedMesh>, RawMeshSliceKeyHash>;
+
+		bool BoundMayOverlap(const RE::NiAVObject& a_obj, const ScenePrepRequest& a_request)
+		{
+			const auto& bound = a_obj.worldBound;
+			return SphereMayOverlapSubcellXY(bound.center.x, bound.center.y, bound.radius,
+				a_request.key.x, a_request.key.y, a_request.size);
+		}
+
+		void CaptureAttachedSubtree(
+			RE::NiAVObject* a_obj, uint32_t a_ownerFormID, std::string_view a_plugin, uint32_t a_localID,
+			std::string_view a_nifPath, uint32_t& a_shapeOrdinal, uint32_t a_depth, ScenePrepRequest& a_request,
+			CapturedMeshCache& a_meshes)
+		{
+			if (!a_obj || a_obj->GetAppCulled())
+				return;
+			if (IsSceneGraphDepthExceeded(a_depth, kMaxSceneGraphDepth)) {
+				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "scene graph depth limit exceeded");
+				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, -1, "scene graph depth limit exceeded");
+				return;
+			}
+			if (a_obj->GetControllers() != nullptr) {
+				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "unsupported animated or nontriangle shape");
+				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, -1, "unsupported animated or nontriangle shape");
+				return;
+			}
+			if (auto* node = a_obj->AsNode()) {
+				for (const auto& child : node->GetChildren())
+					CaptureAttachedSubtree(child.get(), a_ownerFormID, a_plugin, a_localID, a_nifPath, a_shapeOrdinal, a_depth + 1, a_request, a_meshes);
+				return;
+			}
+			auto* geom = a_obj->AsGeometry();
+			if (!geom)
+				return;
+
+			const uint32_t ordinal = a_shapeOrdinal++;
+			if (!BoundMayOverlap(*geom, a_request))
+				return;
+			ExtractedShapeDesc extracted{};
+			std::string_view rejectReason;
+			const auto status = InspectGeometry(*geom, extracted, rejectReason);
+			if (status == GeometryInspectResult::SkippedNonShadow)
+				return;
+			if (status == GeometryInspectResult::Rejected) {
+				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, rejectReason);
+				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, int32_t(ordinal), rejectReason);
+				return;
+			}
+			const auto rows = TransformToRows3x4(FromNiTransform(geom->world));
+			if (!IsInvertibleTransform3x4(rows)) {
+				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "invalid NIF transform");
+				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, int32_t(ordinal), "invalid NIF transform");
+				return;
+			}
+			// Engine vertex buffers are copied here because cell detach can free them before the worker runs.
+			const RawMeshSliceKey sliceKey{ extracted.rendererData, extracted.firstIndex, extracted.indexCount };
+			auto& mesh = a_meshes[sliceKey];
+			if (!mesh) {
+				auto decoded = std::make_shared<DecodedMesh>();
+				if (!DecodeRawMeshBuffers(extracted.rawVertices, extracted.vertexCount, extracted.stride,
+						extracted.rawIndices, extracted.firstIndex, extracted.indexCount,
+						decoded->positions, decoded->indices)) {
+					a_meshes.erase(sliceKey);
+					RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "invalid or unsupported shape data");
+					AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, int32_t(ordinal), "invalid or unsupported shape data");
+					return;
+				}
+				decoded->bytes = uint64_t(decoded->positions.size()) * sizeof(float3) +
+				                 uint64_t(decoded->indices.size()) * sizeof(uint32_t);
+				if (decoded->bytes > kMaxTileGeometryBytes - std::min(a_request.capturedBytes, kMaxTileGeometryBytes)) {
+					a_meshes.erase(sliceKey);
+					RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "tile shape or byte budget exceeded");
+					return;
+				}
+				a_request.capturedBytes += decoded->bytes;
+				mesh = std::move(decoded);
+			}
+			CapturedAttachedShape captured;
+			captured.identity = MakeShapeIdentity(a_ownerFormID, ordinal);
+			captured.mesh = mesh;
+			captured.transform = rows;
+			a_request.attachedShapes.push_back(std::move(captured));
+		}
+
 		struct ExtractedModelShape
 		{
 			uint32_t ordinal = 0;
-			std::shared_ptr<const CachedDecodedMesh> mesh;
+			std::shared_ptr<const DecodedMesh> mesh;
 			AffineTransform toModel{};
 		};
 
@@ -363,7 +383,7 @@ namespace DX12
 				a_out.missing.emplace_back(int32_t(ordinal), "invalid NIF transform");
 				return;
 			}
-			auto mesh = std::make_shared<CachedDecodedMesh>();
+			auto mesh = std::make_shared<DecodedMesh>();
 			if (!DecodeRawMeshBuffers(extracted.rawVertices, extracted.vertexCount, extracted.stride,
 					extracted.rawIndices, extracted.firstIndex, extracted.indexCount,
 					mesh->positions, mesh->indices)) {
@@ -377,6 +397,14 @@ namespace DX12
 			a_out.bytes += 128ull + mesh->bytes;
 			a_out.shapes.push_back({ ordinal, std::move(mesh), currentTransform });
 		}
+	}
+
+	bool IsCellFullyLoaded(const RE::TESObjectCELL* a_cell)
+	{
+		if (!a_cell || !a_cell->IsAttached())
+			return false;
+		const auto* loaded = a_cell->GetRuntimeData().loadedData;
+		return loaded && loaded->refsFullyLoaded;
 	}
 
 	std::optional<ScenePrepRequest> CaptureScenePrepRequest(
@@ -398,6 +426,7 @@ namespace DX12
 		request.corner = a_corner;
 
 		ankerl::unordered_dense::set<uint32_t> visitedRefs;
+		CapturedMeshCache meshes;
 		size_t candidateCount = 0;
 
 		const auto visitRef = [&](RE::TESObjectREFR* a_ref) -> RE::BSContainer::ForEachResult {
@@ -446,12 +475,18 @@ namespace DX12
 						if (std::isfinite(prepared.radius) && std::isfinite(prepared.fade) &&
 							std::isfinite(prepared.falloffExponent))
 							request.lights.push_back(prepared);
+						else
+							++request.rejectedLights;
 					} else {
 						request.lightCapacityExceeded = true;
 					}
 				}
 				return RE::BSContainer::ForEachResult::kContinue;
 			}
+
+			auto* root = a_ref->Get3D();
+			if (root && !BoundMayOverlap(*root, request))
+				return RE::BSContainer::ForEachResult::kContinue;
 
 			const auto* refFile = a_ref->GetFile(0);
 			const std::string_view plugin = refFile ? refFile->GetFilename() : std::string_view{};
@@ -490,9 +525,9 @@ namespace DX12
 				return RE::BSContainer::ForEachResult::kContinue;
 			}
 
-			if (auto* root = a_ref->Get3D()) {
+			if (root) {
 				uint32_t ordinal = 0;
-				CaptureAttachedSubtree(root, refID, plugin, localID, nifView, ordinal, 0, request);
+				CaptureAttachedSubtree(root, refID, plugin, localID, nifView, ordinal, 0, request, meshes);
 				return RE::BSContainer::ForEachResult::kContinue;
 			}
 
@@ -518,7 +553,8 @@ namespace DX12
 		};
 
 		if (!request.worldspace) {
-			request.enumerationComplete = a_cell->IsAttached();
+			request.enumerationComplete = IsCellFullyLoaded(a_cell);
+			request.hasUnattachedCells = !request.enumerationComplete;
 			a_cell->ForEachReference(visitRef);
 		} else {
 			request.enumerationComplete = false;
@@ -563,9 +599,9 @@ namespace DX12
 								uint32_t landOrdinal = kTerrainOrdinalBase;
 								for (uint32_t q = 0; q < 4; ++q) {
 									if (auto* meshNode = land->loadedData->mesh[q])
-										CaptureAttachedSubtree(meshNode, landOwner, {}, 0, {}, landOrdinal, 0, request);
+										CaptureAttachedSubtree(meshNode, landOwner, {}, 0, {}, landOrdinal, 0, request, meshes);
 									else if (auto* geom = land->loadedData->geom[q].get())
-										CaptureAttachedSubtree(geom, landOwner, {}, 0, {}, landOrdinal, 0, request);
+										CaptureAttachedSubtree(geom, landOwner, {}, 0, {}, landOrdinal, 0, request, meshes);
 								}
 							}
 						}
@@ -641,8 +677,6 @@ namespace DX12
 	{
 		generation.fetch_add(1, std::memory_order_acq_rel);
 		std::scoped_lock lock(mutex);
-		if (queued)
-			RetireObjectsLocked(queued->keepAlive);
 		queued.reset();
 		completed.reset();
 		errorLogged = false;
@@ -700,15 +734,9 @@ namespace DX12
 			} catch (const std::exception& error) {
 				result.publication.key = task ? task->key : SubcellKey{};
 				result.failure = std::format("Scene preparation error: {}", std::string_view(error.what()).substr(0, 240));
-				if (task)
-					for (auto& obj : task->keepAlive)
-						localRetired.push_back(std::move(obj));
 			} catch (...) {
 				result.publication.key = task ? task->key : SubcellKey{};
 				result.failure = "Unknown scene preparation failure";
-				if (task)
-					for (auto& obj : task->keepAlive)
-						localRetired.push_back(std::move(obj));
 			}
 			result.preparationMs = std::chrono::duration<double, std::milli>(
 				std::chrono::steady_clock::now() - started)
@@ -727,8 +755,6 @@ namespace DX12
 		ScenePrepRequest a_request, uint64_t a_epoch, std::stop_token a_stop,
 		std::vector<RE::NiPointer<RE::NiObject>>& a_outRetired)
 	{
-		a_outRetired = std::move(a_request.keepAlive);
-
 		ScenePrepResult result;
 		result.predictive = a_request.predictive;
 		result.corner = a_request.corner;
@@ -739,6 +765,7 @@ namespace DX12
 		pub.missingShapes = std::move(a_request.missingShapes);
 		pub.rejectionReasons = std::move(a_request.rejectionReasons);
 		pub.failedShapes = a_request.failedShapes;
+		pub.rejectedLights = a_request.rejectedLights;
 		pub.hasUnattachedCells = a_request.hasUnattachedCells;
 
 		const auto canceled = [&] {
@@ -788,38 +815,13 @@ namespace DX12
 			pub.shapes.push_back(std::move(shape));
 		};
 
-		std::unordered_map<RawMeshSliceKey, std::shared_ptr<const CachedDecodedMesh>, RawMeshSliceKeyHash> rawCache;
-		uint64_t rawCacheBytes = 0;
-
 		for (const auto& attached : a_request.attachedShapes) {
 			if (canceled()) {
 				result.failure = "Preparation canceled by scene change";
 				return result;
 			}
-			const RawMeshSliceKey sliceKey{ attached.rendererData, attached.firstIndex, attached.indexCount };
-			std::shared_ptr<const CachedDecodedMesh> decoded;
-			if (const auto it = rawCache.find(sliceKey); it != rawCache.end()) {
-				decoded = it->second;
-			} else {
-				auto fresh = std::make_shared<CachedDecodedMesh>();
-				if (!DecodeRawMeshBuffers(
-						attached.rawVertices, attached.vertexCount, attached.stride,
-						attached.rawIndices, attached.firstIndex, attached.indexCount,
-						fresh->positions, fresh->indices)) {
-					RecordRejection(pub.rejectionReasons, pub.failedShapes, "invalid or unsupported shape data");
-					continue;
-				}
-				fresh->bytes = uint64_t(fresh->positions.size()) * sizeof(float3) +
-				               uint64_t(fresh->indices.size()) * sizeof(uint32_t);
-				decoded = fresh;
-				if (fresh->bytes <= kMaxDecodedCacheBytes - rawCacheBytes) {
-					rawCacheBytes += fresh->bytes;
-					rawCache.emplace(sliceKey, decoded);
-				}
-			}
-			emitShape(attached.identity, decoded->positions, decoded->indices, attached.transform, {}, 0, {}, -1);
+			emitShape(attached.identity, attached.mesh->positions, attached.mesh->indices, attached.transform, {}, 0, {}, -1);
 		}
-		rawCache.clear();
 
 		std::unordered_map<std::string, std::shared_ptr<const CachedModelExtraction>> modelCache;
 		uint64_t modelCacheBytes = 0;

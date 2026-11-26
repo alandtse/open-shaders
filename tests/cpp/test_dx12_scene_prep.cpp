@@ -12,6 +12,7 @@
 #include <limits>
 #include <numbers>
 #include <string>
+#include <utility>
 #include <vector>
 
 using Catch::Approx;
@@ -224,4 +225,39 @@ TEST_CASE("Depth-limited scene traversal cannot certify complete coverage", "[dx
 	CHECK_FALSE(IsScenePrepCoverageComplete(true, true, 0, 1, 12u, 12u));
 	CHECK_FALSE(IsScenePrepCoverageComplete(true, false, 0, 0, 12u, 12u));
 	CHECK_FALSE(IsScenePrepCoverageComplete(true, true, 0, 0, 13u, 12u));
+}
+
+TEST_CASE("Bounding-sphere subcell test keeps touching bounds and unknown radii", "[dx12][scene-prep]")
+{
+	constexpr uint32_t size = 4096;
+	CHECK(DX12::SphereMayOverlapSubcellXY(100.0, 100.0, 10.0, 0, 0, size));
+	CHECK(DX12::SphereMayOverlapSubcellXY(-50.0, 100.0, 60.0, 0, 0, size));
+	CHECK_FALSE(DX12::SphereMayOverlapSubcellXY(-50.0, 100.0, 40.0, 0, 0, size));
+	CHECK_FALSE(DX12::SphereMayOverlapSubcellXY(-100.0, -100.0, 100.0, 0, 0, size));
+	CHECK(DX12::SphereMayOverlapSubcellXY(-100.0, -100.0, 142.0, 0, 0, size));
+	CHECK(DX12::SphereMayOverlapSubcellXY(-9000.0, 0.0, 0.0, 0, 0, size));
+	CHECK(DX12::SphereMayOverlapSubcellXY(0.0, 0.0, std::numeric_limits<double>::quiet_NaN(), 5, 5, size));
+	CHECK(DX12::SphereMayOverlapSubcellXY(-4000.0, -4000.0, 10.0, -1, -1, size));
+}
+
+TEST_CASE("Light radius coverage requires every touched subcell", "[dx12][scene-prep]")
+{
+	constexpr uint32_t size = 4096;
+	std::vector<std::pair<int64_t, int64_t>> visited;
+	const auto all = [&](int64_t x, int64_t y) {
+		visited.emplace_back(x, y);
+		return true;
+	};
+	CHECK(DX12::IsLightRadiusCertified(2048.0, 2048.0, 512.0, size, all));
+	CHECK(visited == std::vector<std::pair<int64_t, int64_t>>{ { 0, 0 } });
+
+	visited.clear();
+	CHECK(DX12::IsLightRadiusCertified(100.0, 2048.0, 512.0, size, all));
+	CHECK(visited == std::vector<std::pair<int64_t, int64_t>>{ { -1, 0 }, { 0, 0 } });
+
+	const auto onlyOrigin = [](int64_t x, int64_t y) { return x == 0 && y == 0; };
+	CHECK_FALSE(DX12::IsLightRadiusCertified(100.0, 2048.0, 512.0, size, onlyOrigin));
+	CHECK_FALSE(DX12::IsLightRadiusCertified(2048.0, 2048.0, 3.0 * size, size, all));
+	CHECK_FALSE(DX12::IsLightRadiusCertified(2048.0, 2048.0, -1.0, size, all));
+	CHECK_FALSE(DX12::IsLightRadiusCertified(2048.0, 2048.0, 10.0, 1000, all));
 }

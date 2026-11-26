@@ -66,7 +66,7 @@ namespace DX12
 		return tiles;
 	}
 
-	/** @brief Companion-only 5x5 outer ring. First twelve are sides, final four are corners. */
+	/** @brief Predictive 5x5 outer ring. First twelve are sides, final four are corners. */
 	inline std::optional<std::array<SubcellKey, kPredictiveCapacity>> PredictiveNeighborhood(
 		uint32_t scope, uint32_t size, double x, double y)
 	{

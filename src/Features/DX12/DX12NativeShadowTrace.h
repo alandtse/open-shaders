@@ -15,7 +15,7 @@ namespace DX12Native
 	// Shared CPU-side limit for prepared lights submitted to the native shadow RayQuery.
 	inline constexpr uint32_t kMaxShadowLights = DX12::kMaxPreparedLights;
 
-	/** @brief Shadow-only behavior. Live matched values override companion fallbacks. */
+	/** @brief Shadow-only behavior. Live matched values override prepared fallbacks. */
 	struct ShadowTraceControls
 	{
 		uint32_t viewportWidth = 0, viewportHeight = 0;
