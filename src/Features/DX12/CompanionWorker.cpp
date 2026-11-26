@@ -14,6 +14,61 @@
 
 namespace DX12
 {
+	struct CompanionPriority
+	{
+		std::mutex mutex;
+		HANDLE process = nullptr;
+		DWORD base = IDLE_PRIORITY_CLASS;
+		DWORD applied = 0;
+		bool loading = false, destination = false;
+
+		~CompanionPriority()
+		{
+			if (process)
+				CloseHandle(process);
+		}
+
+		void Apply()
+		{
+			const DWORD desired = loading && destination ? HIGH_PRIORITY_CLASS : base;
+			if (!process || desired == applied)
+				return;
+			if (SetPriorityClass(process, desired)) {
+				applied = desired;
+				logger::debug("[DX12Resources] Companion process priority {}", desired);
+			} else {
+				logger::warn("[DX12Resources] Could not set companion process priority: {}", GetLastError());
+				if (applied == HIGH_PRIORITY_CLASS && desired != HIGH_PRIORITY_CLASS)
+					TerminateProcess(process, 1);
+			}
+		}
+
+		void SetLoading(bool active)
+		{
+			std::scoped_lock lock(mutex);
+			loading = active;
+			Apply();
+		}
+
+		void Attach(HANDLE handle, DWORD priority, bool isDestination)
+		{
+			std::scoped_lock lock(mutex);
+			if (process)
+				CloseHandle(process);
+			process = nullptr;
+			applied = 0;
+			base = priority;
+			destination = isDestination;
+			if (!DuplicateHandle(GetCurrentProcess(), handle, GetCurrentProcess(), &process, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+				logger::warn("[DX12Resources] Could not duplicate companion process handle: {}", GetLastError());
+				// Never elevate a process whose priority cannot be revoked.
+				SetPriorityClass(handle, priority);
+				return;
+			}
+			Apply();
+		}
+	};
+
 	namespace
 	{
 		constexpr DWORD kPreparationDeadlineMs = 90000;
@@ -173,7 +228,8 @@ namespace DX12
 		}
 
 		bool InvokeCompanion(const CompanionRequest& task, const std::filesystem::path& destination,
-			std::stop_token stop, const std::atomic<uint64_t>& generation, uint64_t epoch, uint64_t requestID, std::string& failure)
+			std::stop_token stop, const std::atomic<uint64_t>& generation, uint64_t epoch, uint64_t requestID,
+			CompanionPriority& priorityState, std::string& failure)
 		{
 			const auto executable = std::filesystem::absolute(
 				L"Data/SKSE/Plugins/CommunityShaders/DX12Resources/bin/DX12ResourcesPrep.exe");
@@ -197,8 +253,7 @@ namespace DX12
 				failure = "Could not launch persistent .NET companion process";
 				return false;
 			}
-			if (!SetPriorityClass(service.process, priority))
-				logger::warn("[DX12Resources] Could not set companion process priority: {}", GetLastError());
+			priorityState.Attach(service.process, priority, task.loading);
 			const auto requestTmp = service.root / L"request.tmp";
 			const auto request = service.root / L"request.json";
 			const auto reply = service.root / L"reply.json";
@@ -312,7 +367,7 @@ namespace DX12
 		}
 	}
 
-	CompanionWorker::CompanionWorker() : worker([this](std::stop_token stop) { Run(stop); }) {}
+	CompanionWorker::CompanionWorker() : priorityState(std::make_unique<CompanionPriority>()), worker([this](std::stop_token stop) { Run(stop); }) {}
 
 	CompanionWorker::~CompanionWorker()
 	{
@@ -321,6 +376,7 @@ namespace DX12
 
 	void CompanionWorker::Stop()
 	{
+		priorityState->SetLoading(false);
 		worker.request_stop();
 		wake.notify_all();
 	}
@@ -328,13 +384,13 @@ namespace DX12
 	bool CompanionWorker::Idle() const
 	{
 		std::scoped_lock lock(mutex);
-		return !running && !queued && !completed;
+		return !running && !queued && !completed && !loadingQueued && !loadingTarget;
 	}
 
 	bool CompanionWorker::Enqueue(CompanionRequest request)
 	{
 		std::scoped_lock lock(mutex);
-		if (running || queued || completed)
+		if (running || queued || completed || loadingQueued || loadingTarget || worker.get_stop_token().stop_requested())
 			return false;
 		queued = std::move(request);
 		wake.notify_one();
@@ -353,6 +409,10 @@ namespace DX12
 		generation.fetch_add(1, std::memory_order_acq_rel);
 		queued.reset();
 		completed.reset();
+		loadingQueued.reset();
+		loadingTarget.reset();
+		loadingResults.clear();
+		priorityState->SetLoading(false);
 		wake.notify_all();
 	}
 
@@ -366,16 +426,107 @@ namespace DX12
 		wake.notify_all();
 	}
 
+	bool CompanionWorker::BeginLoading(CompanionRequest request, double x, double y, std::shared_ptr<const Grid> existing)
+	{
+		const auto keys = Neighborhood(request.key.scope, request.size, x, y);
+		if (!keys || worker.get_stop_token().stop_requested())
+			return false;
+		request.key = keys->front();
+		request.loading = true;
+		std::scoped_lock lock(mutex);
+		if (loadingTarget && loadingTarget->key == request.key && loadingTarget->size == request.size &&
+			loadingTarget->consolidate == request.consolidate)
+			return false;
+		generation.fetch_add(1, std::memory_order_acq_rel);
+		queued.reset();
+		completed.reset();
+		loadingResults.clear();
+		loadingTarget = request;
+		loadingQueued = LoadingBatch{ std::move(request), x, y, std::move(existing) };
+		priorityState->SetLoading(true);
+		wake.notify_all();
+		return true;
+	}
+
+	void CompanionWorker::EndLoading()
+	{
+		std::scoped_lock lock(mutex);
+		priorityState->SetLoading(false);
+		if (!loadingTarget)
+			return;
+		loadingTarget.reset();
+		loadingQueued.reset();
+		generation.fetch_add(1, std::memory_order_acq_rel);
+		wake.notify_all();
+	}
+
+	std::vector<std::unique_ptr<CompanionResult>> CompanionWorker::TakeLoadingResults()
+	{
+		std::scoped_lock lock(mutex);
+		return std::exchange(loadingResults, {});
+	}
+
+	void CompanionWorker::RunLoading(const LoadingBatch& batch, uint64_t epoch, std::stop_token stop)
+	{
+		const auto active = Neighborhood(batch.request.key.scope, batch.request.size, batch.x, batch.y);
+		const auto predictive = PredictiveNeighborhood(batch.request.key.scope, batch.request.size, batch.x, batch.y);
+		if (!active || !predictive)
+			return;
+		const auto& existing = batch.existing;
+		const bool reuse = existing && existing->size == batch.request.size;
+		if (reuse && existing->wholeCell && existing->requested.front().scope == batch.request.key.scope)
+			return;
+		const auto ready = [&](SubcellKey key) {
+			if (!reuse || existing->wholeCell)
+				return false;
+			const auto contains = [&](const auto& tiles) {
+				return std::ranges::any_of(tiles, [&](const auto& tile) {
+					return tile && tile->key == key && (tile->state == Tile::State::Ready || tile->state == Tile::State::ReadyPartial ||
+						tile->state == Tile::State::Empty || tile->state == Tile::State::EmptyPartial);
+				});
+			};
+			return contains(existing->resident) || contains(existing->predictiveResident);
+		};
+		for (size_t i = 0; i < active->size() + predictive->size(); ++i) {
+			if (stop.stop_requested() || generation.load(std::memory_order_acquire) != epoch)
+				break;
+			auto task = batch.request;
+			task.predictive = i >= active->size();
+			task.corner = i >= active->size() + kPredictiveSideCount;
+			task.key = task.predictive ? (*predictive)[i - active->size()] : (*active)[i];
+			task.consolidate = task.consolidate && i == 0;
+			if (ready(task.key))
+				continue;
+			const auto started = Util::GetQpcTicks();
+			auto result = std::make_unique<CompanionResult>(Prepare(task, epoch, stop));
+			result->predictive = task.predictive;
+			result->corner = task.corner;
+			result->preparationMs = double(Util::GetQpcTicks() - started) * 1000.0 / double(Util::GetQpcFrequency());
+			if (!result->publication.validated)
+				continue;
+			const bool wholeCell = result->publication.wholeCell;
+			{
+				std::scoped_lock lock(mutex);
+				if (stop.stop_requested() || generation.load(std::memory_order_acquire) != epoch)
+					break;
+				loadingResults.push_back(std::move(result));
+			}
+			if (wholeCell)
+				break;
+		}
+	}
+
 	void CompanionWorker::Run(std::stop_token stop)
 	{
 		uint64_t observedGeneration = generation.load(std::memory_order_acquire);
 		while (!stop.stop_requested()) {
 			CompanionRequest task;
+			std::optional<LoadingBatch> batch;
 			uint64_t epoch = 0;
 			{
 				std::unique_lock lock(mutex);
 				wake.wait(lock, stop, [&] {
-					return queued.has_value() || generation.load(std::memory_order_acquire) != observedGeneration;
+					return queued.has_value() || loadingQueued.has_value() || generation.load(std::memory_order_acquire) != observedGeneration;
 				});
 				if (stop.stop_requested())
 					break;
@@ -384,11 +535,28 @@ namespace DX12
 					// A canceled tile invalidates its publication, not the load-order manifest cache.
 					continue;
 				}
-				task = std::move(*queued);
-				queued.reset();
+				if (loadingQueued) {
+					batch = std::exchange(loadingQueued, std::nullopt);
+					runningLoading = true;
+				} else {
+					task = std::move(*queued);
+					queued.reset();
+				}
 				running = true;
-				runningStartup = task.warmup || task.preloadLastSave;
+				runningStartup = !batch && (task.warmup || task.preloadLastSave);
 				epoch = generation.load(std::memory_order_acquire);
+			}
+			if (batch) {
+				try {
+					RunLoading(*batch, epoch, stop);
+				} catch (const std::exception& error) {
+					logger::warn("[DX12Resources] Destination preparation failed: {}", error.what());
+				} catch (...) {
+					logger::warn("[DX12Resources] Destination preparation failed");
+				}
+				std::scoped_lock lock(mutex);
+				running = runningLoading = false;
+				continue;
 			}
 			const auto started = Util::GetQpcTicks();
 			auto result = Prepare(task, epoch, stop);
@@ -452,7 +620,7 @@ namespace DX12
 		const auto file = folder / L"tile.json";
 		static thread_local uint64_t nextRequestID = 0;
 		const uint64_t requestID = ++nextRequestID;
-		if (!InvokeCompanion(task, file, stop, generation, epoch, requestID, result.failure) ||
+		if (!InvokeCompanion(task, file, stop, generation, epoch, requestID, *priorityState, result.failure) ||
 			generation.load(std::memory_order_acquire) != epoch || stop.stop_requested())
 			return result;
 		try {

@@ -156,6 +156,8 @@ namespace DX12
 		void FlushRetiredCache();  // DRAM only; caller decides transition policy.
 		/** @brief Cancel a superseded predictive request and allow active work to preempt it. */
 		void CancelPending();
+		/** @brief Retires runtime observations at loading boundaries while retaining prepared geometry. */
+		void DiscardRuntimeShapes();
 		/** @brief Retains an immutable render-consumer snapshot. */
 		std::shared_ptr<const Grid> Snapshot() const { return snapshot.load(std::memory_order_acquire); }
 
@@ -231,11 +233,17 @@ private:
 		std::array<float, 3> position{}, rotation{};
 	};
 	static std::optional<LoadingDestination> CaptureLoadingDestination();
+	void BeginLoadingPreparation(const LoadingDestination& destination);
 	RE::BSEventNotifyControl ProcessEvent(const RE::PositionPlayerEvent* event,
 		RE::BSTEventSource<RE::PositionPlayerEvent>*) override;
 	std::optional<LoadingDestination> queuedDestination;  // Main-thread positioning events only.
 	std::atomic<std::shared_ptr<const LoadingDestination>> loadingDestination;
 	std::atomic<bool> loadingActive{ false };
+	struct LoadingSettings { uint32_t size; bool consolidate; };
+	std::atomic<LoadingSettings> loadingSettings{ LoadingSettings{ DX12::kSubcellSizes.front(), true } };
+	std::atomic<uint64_t> loadingSerial{ 0 };
+	uint64_t handledLoadingSerial = 0;
+	std::vector<std::unique_ptr<DX12::CompanionResult>> stagedResults;
 	void EnsureCompanion(bool menuStartup);
 	void PollStartup(uint32_t gameplayScope = 0);
 	enum class PublicationState { Valid, Invalid, Unavailable };
