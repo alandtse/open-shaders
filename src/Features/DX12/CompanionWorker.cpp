@@ -1,10 +1,10 @@
 #include "CompanionWorker.h"
 #include "SystemMemoryBudget.h"
+#include "Utils/PerfUtils.h"
 
 #include <Windows.h>
 
 #include <charconv>
-#include <chrono>
 #include <cmath>
 #include <format>
 #include <fstream>
@@ -164,7 +164,7 @@ namespace DX12
 		}
 
 		bool InvokeCompanion(const CompanionRequest& task, const std::filesystem::path& destination,
-			std::stop_token stop, std::string& failure)
+			std::stop_token stop, const std::atomic<uint64_t>& generation, uint64_t epoch, std::string& failure)
 		{
 			const auto executable = std::filesystem::absolute(
 				L"Data/SKSE/Plugins/CommunityShaders/DX12Resources/bin/DX12ResourcesPrep.exe");
@@ -197,7 +197,9 @@ namespace DX12
 				{ "y", task.key.y },
 				{ "size", task.size },
 				{ "worldspace", task.worldspace },
-				{ "warmup", task.warmup }
+				{ "warmup", task.warmup },
+				{ "preloadLastSave", task.preloadLastSave },
+				{ "consolidate", task.consolidate }
 			};
 			{
 				std::ofstream stream(requestTmp, std::ios::binary | std::ios::trunc);
@@ -222,6 +224,7 @@ namespace DX12
 			}
 			const uint64_t started = GetTickCount64();
 			while (!stop.stop_requested() &&
+				   (!(task.warmup || task.preloadLastSave) || generation.load(std::memory_order_acquire) == epoch) &&
 				   (task.warmup || GetTickCount64() - started < kPreparationDeadlineMs)) {
 				if (std::filesystem::is_regular_file(reply, ec)) {
 					std::filesystem::rename(reply, destination, ec);
@@ -231,6 +234,10 @@ namespace DX12
 				}
 				if (WaitForSingleObject(service.process, 25) != WAIT_TIMEOUT)
 					break;
+			}
+			if ((task.warmup || task.preloadLastSave) && generation.load(std::memory_order_acquire) != epoch) {
+				service.Close();
+				return false;
 			}
 			// Catch a startup-error reply even when the .NET service exits just
 			// after finishing its atomic reply and before the host polls again.
@@ -303,6 +310,16 @@ namespace DX12
 		wake.notify_all();
 	}
 
+	void CompanionWorker::CancelStartup()
+	{
+		std::scoped_lock lock(mutex);
+		if (!runningStartup && !(queued && (queued->warmup || queued->preloadLastSave)))
+			return;
+		generation.fetch_add(1, std::memory_order_acq_rel);
+		queued.reset();
+		wake.notify_all();
+	}
+
 	void CompanionWorker::Run(std::stop_token stop)
 	{
 		uint64_t observedGeneration = generation.load(std::memory_order_acquire);
@@ -324,20 +341,29 @@ namespace DX12
 				task = std::move(*queued);
 				queued.reset();
 				running = true;
+				runningStartup = task.warmup || task.preloadLastSave;
 				epoch = generation.load(std::memory_order_acquire);
 			}
-			const auto started = std::chrono::steady_clock::now();
+			const auto started = Util::GetQpcTicks();
 			auto result = Prepare(task, epoch, stop);
 			result.predictive = task.predictive;
 			result.corner = task.corner;
-			result.preparationMs = std::chrono::duration<double, std::milli>(
-				std::chrono::steady_clock::now() - started)
-			                           .count();
+			result.preparationMs = double(Util::GetQpcTicks() - started) * 1000.0 / double(Util::GetQpcFrequency());
 			{
 				std::scoped_lock lock(mutex);
-				running = false;
 				if (!stop.stop_requested() && epoch == generation.load(std::memory_order_acquire))
 					completed = std::move(result);
+			}
+			if (task.preloadLastSave && !stop.stop_requested() && epoch == generation.load(std::memory_order_acquire)) {
+				CompanionRequest warmup;
+				warmup.warmup = true;
+				const auto warmed = Prepare(warmup, epoch, stop);
+				if (!warmed.failure.empty() && epoch == generation.load(std::memory_order_acquire))
+					logger::warn("[DX12Resources] Manifest warmup failed: {}", warmed.failure);
+			}
+			{
+				std::scoped_lock lock(mutex);
+				running = runningStartup = false;
 			}
 		}
 	}
@@ -345,6 +371,9 @@ namespace DX12
 	CompanionResult CompanionWorker::Prepare(const CompanionRequest& task, uint64_t epoch, std::stop_token stop)
 	{
 		CompanionResult result;
+		result.startup = task.warmup || task.preloadLastSave;
+		result.preload = task.preloadLastSave;
+		result.size = task.size;
 		result.publication.key = task.key;
 		const auto work = std::filesystem::absolute(L"Data/SKSE/Plugins/CommunityShaders/DX12Resources/work");
 		std::error_code ec;
@@ -371,7 +400,7 @@ namespace DX12
 			}
 		} cleanup{ folder, work };
 		const auto file = folder / L"tile.json";
-		if (!InvokeCompanion(task, file, stop, result.failure) ||
+		if (!InvokeCompanion(task, file, stop, generation, epoch, result.failure) ||
 			generation.load(std::memory_order_acquire) != epoch || stop.stop_requested())
 			return result;
 		try {
@@ -398,6 +427,21 @@ namespace DX12
 			publication.eligibleShapes = root.at("eligibleShapes").get<uint32_t>();
 			publication.failedShapes = root.at("failedShapes").get<uint32_t>();
 			publication.enumerationComplete = root.at("enumerationComplete").get<bool>();
+			publication.wholeCell = root.value("wholeCell", false);
+			if (publication.wholeCell) {
+				result.scopePlugin = root.at("scopePlugin").get<std::string>();
+				result.scopeLocal = root.at("scopeLocal").get<uint32_t>();
+				const auto x = root.at("centerX").get<int64_t>();
+				const auto y = root.at("centerY").get<int64_t>();
+				if (result.scopePlugin.empty() || result.scopePlugin.size() > 128 || !result.scopeLocal ||
+					x < -1000000 || x > 1000000 || y < -1000000 || y > 1000000 ||
+					(!task.preloadLastSave && (!task.consolidate || task.worldspace ||
+					 result.scopePlugin != task.scopePlugin || result.scopeLocal != task.localScopeID ||
+					 x != task.key.x || y != task.key.y)))
+					throw std::invalid_argument("Invalid whole-cell scope");
+				publication.key.x = x;
+				publication.key.y = y;
+			}
 			// The companion reports only bounded reason counts; never write per-mesh logs.
 			if (const auto reasons = root.find("rejectionReasons");
 				reasons != root.end() && reasons->is_object()) {

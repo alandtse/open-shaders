@@ -270,6 +270,16 @@ bool DX12NativeScene::WantsRenderPassHook() const
 bool DX12NativeScene::WantsPreShadowMapsHook() const { return WantsRenderPassHook(); }
 bool DX12NativeScene::WantsOpaqueRasterReadyHook() const { return WantsRenderPassHook(); }
 
+void DX12NativeScene::PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid)
+{
+	if (!grid || !grid->wholeCell || !globals::features::dx12Control.IsActive() ||
+		!globals::d3d::device || !globals::d3d::context)
+		return;
+	nativeSessionStarted = true;
+	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
+		acceleration.Request(std::move(grid));
+}
+
 void DX12NativeScene::PreShadowMaps()
 {
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive()) {
@@ -506,7 +516,8 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 		}
 		raster.Reset();
 		shadows.Reset();
-		acceleration.Reset();
+		if (!globals::features::dx12Resources.HasMenuPreload())
+			acceleration.Reset();
 		geometryCapture.Reset();
 	}
 }

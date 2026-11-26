@@ -63,7 +63,7 @@ static async Task<int> ServeAsync(string[] arguments)
         var replyFile = Path.Combine(sessionRoot, "reply.json");
         var replyTemp = Path.Combine(sessionRoot, "reply.tmp");
         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-        var (prepare, warmup, owner) = SceneTile.OpenSession(data, plugins);
+        var (prepare, warmup, preload, owner) = SceneTile.OpenSession(data, plugins);
         using (owner)
         {
             while (true)
@@ -79,7 +79,14 @@ static async Task<int> ServeAsync(string[] arguments)
                     using var message = JsonDocument.Parse(await File.ReadAllTextAsync(requestFile));
                     File.Delete(requestFile);
                     var root = message.RootElement;
-                    if (root.TryGetProperty("warmup", out var warm) && warm.GetBoolean())
+                    if (root.TryGetProperty("preloadLastSave", out var load) && load.GetBoolean())
+                    {
+                        var size = root.GetProperty("size").GetInt32();
+                        if (size is not (4096 or 6144 or 8192 or 10240 or 12288 or 14336 or 16384))
+                            throw new InvalidDataException("Invalid preload size");
+                        result = preload(size, sessionRoot) ?? new TileResult(1, 0, 0, true, [], []);
+                    }
+                    else if (root.TryGetProperty("warmup", out var warm) && warm.GetBoolean())
                     {
                         warmup(sessionRoot);
                         result = new TileResult(1, 0, 0, true, [], []);
@@ -96,7 +103,8 @@ static async Task<int> ServeAsync(string[] arguments)
                             Math.Abs(x) > 1_000_000 || Math.Abs(y) > 1_000_000 ||
                             !File.Exists(Path.Combine(data, scope.ModKey.ToString())))
                             throw new InvalidDataException("Invalid companion scope");
-                        result = prepare(scope, x, y, size, worldspace, sessionRoot);
+                        result = prepare(scope, x, y, size, worldspace, sessionRoot,
+                            root.TryGetProperty("consolidate", out var consolidate) && consolidate.GetBoolean());
                     }
                 }
                 catch (Exception error) when (error is not OutOfMemoryException)
@@ -156,7 +164,8 @@ internal sealed record TileLight(string ReferencePlugin, uint ReferenceLocal, st
 internal sealed record TileResult(uint Version, uint EligibleShapes, uint FailedShapes, bool EnumerationComplete,
     List<TileShape> Shapes, List<TileLight> Lights, string Failure = "",
     Dictionary<string, uint>? RejectionReasons = null,
-    List<TileNifSource>? NifSources = null, List<TileMissingNifShape>? MissingShapes = null);
+    List<TileNifSource>? NifSources = null, List<TileMissingNifShape>? MissingShapes = null,
+    bool WholeCell = false, string ScopePlugin = "", uint ScopeLocal = 0, long CenterX = 0, long CenterY = 0);
 internal sealed record ModelShape(int Index, Vector3[] Positions, uint[] Indices, Matrix4x4 ToModel);
 internal sealed record MissingModelShape(int Index, string Reason);
 internal sealed record ModelExtraction(ModelShape[] Shapes, MissingModelShape[] Missing,
@@ -165,15 +174,16 @@ internal sealed record ModelExtraction(ModelShape[] Shapes, MissingModelShape[] 
 internal static class SceneTile
 {
     private const int MaxLights = 2048;
+    private const uint InteriorCellFlag = 1;
 
     internal static TileResult Prepare(string data, string pluginsPath, FormKey scope, long tileX, long tileY, int size,
         bool isWorldspace, string scratch)
     {
-        var (run, _, owner) = OpenSession(data, pluginsPath);
-        using (owner) return run(scope, tileX, tileY, size, isWorldspace, scratch);
+        var (run, _, _, owner) = OpenSession(data, pluginsPath);
+        using (owner) return run(scope, tileX, tileY, size, isWorldspace, scratch, false);
     }
 
-    internal static (Func<FormKey, long, long, int, bool, string, TileResult> Run, Action<string> Warmup, IDisposable Owner)
+    internal static (Func<FormKey, long, long, int, bool, string, bool, TileResult> Run, Action<string> Warmup, Func<int, string, TileResult?> Preload, IDisposable Owner)
         OpenSession(string data, string pluginsPath)
     {
         var official = new[] { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" };
@@ -249,7 +259,51 @@ internal static class SceneTile
 
         // Keep Mutagen and archive readers alive across the 5x5 request stream.
         // Model triangles remain per-tile and are not stored between preparations.
-        TileResult Run(FormKey scope, long tileX, long tileY, int size, bool isWorldspace, string scratch)
+        TileResult Run(FormKey scope, long tileX, long tileY, int size, bool isWorldspace, string scratch, bool consolidate)
+        {
+            if (consolidate && !isWorldspace)
+            {
+                try
+                {
+                    var whole = Extract(scope, tileX, tileY, size, false, scratch, true, false);
+                    if (whole.WholeCell) return whole;
+                }
+                catch (OutOfMemoryException) { }
+            }
+            return Extract(scope, tileX, tileY, size, isWorldspace, scratch, false, false);
+        }
+
+        TileResult? Preload(int size, string scratch)
+        {
+            var hint = SaveLocation.LatestInteriorHint();
+            if (hint == null) return null;
+            var matchingKeys = new HashSet<FormKey>();
+            foreach (var listing in environment.LoadOrder.ListedOrder)
+            {
+                if (listing.Mod is not { } mod) continue;
+                foreach (var candidate in mod.EnumerateMajorRecords<ICellGetter>())
+                    if (string.Equals(candidate.EditorID, hint, StringComparison.OrdinalIgnoreCase))
+                        matchingKeys.Add(candidate.FormKey);
+            }
+            var matches = new List<FormKey>();
+            foreach (var key in matchingKeys)
+            {
+                var cell = environment.LinkCache.Resolve<ICellGetter>(key);
+                if (!cell.IsDeleted && ((uint)cell.Flags & InteriorCellFlag) != 0 &&
+                    string.Equals(cell.EditorID, hint, StringComparison.OrdinalIgnoreCase))
+                    matches.Add(key);
+            }
+            if (matches.Count != 1) return null;
+            try
+            {
+                var whole = Extract(matches.Single(), 0, 0, size, false, scratch, true, true);
+                return whole.WholeCell ? whole : null;
+            }
+            catch (OutOfMemoryException) { return null; }
+        }
+
+        TileResult Extract(FormKey scope, long tileX, long tileY, int size, bool isWorldspace, string scratch,
+            bool wholeCell, bool inferCenter)
         {
         // Last override wins. No mesh processing occurs outside the requested
         // scope; for exterior tiles even candidates are bounded by a halo.
@@ -300,6 +354,7 @@ internal static class SceneTile
         var shapes = new List<TileShape>();
         var lights = new List<TileLight>();
         bool lightCapacityExceeded = false;
+        var bounds = new CellBounds();
         // Retain NIF provenance even when a rigid shape cannot be decoded yet.
         // Runtime supplementation can refer back to the installed loose/BSA mesh.
         var nifSources = new List<TileNifSource>();
@@ -371,8 +426,9 @@ internal static class SceneTile
                 var position = new[] { placement.Position.X, placement.Position.Y, placement.Position.Z };
                 if (baseRecord is ILightGetter light)
                 {
-                    if (Inside(position[0], position[1], tileX, tileY, size))
+                    if (wholeCell || Inside(position[0], position[1], tileX, tileY, size))
                     {
+                        if (wholeCell) bounds.Include(position[0], position[1]);
                         if (lights.Count < MaxLights)
                             lights.Add(new TileLight(placed.FormKey.ModKey.ToString(), placed.FormKey.ID,
                                 obj.Base.FormKey.ModKey.ToString(), obj.Base.FormKey.ID, position,
@@ -432,7 +488,15 @@ internal static class SceneTile
                 foreach (var shape in mesh)
                 {
                     var transform = shape.ToModel * toWorld;
-                    if (!Overlaps(shape.Positions, transform, tileX, tileY, size)) continue;
+                    if (wholeCell)
+                    {
+                        foreach (var vertex in shape.Positions)
+                        {
+                            var point = Vector3.Transform(vertex, transform);
+                            bounds.Include(point.X, point.Y);
+                        }
+                    }
+                    else if (!Overlaps(shape.Positions, transform, tileX, tileY, size)) continue;
                     ++eligible;
                     var shapeBytes = checked((long)shape.Positions.Length * 48 + (long)shape.Indices.Length * 4);
                     if (!FitsManagedMemory(shapeBytes))
@@ -455,10 +519,16 @@ internal static class SceneTile
         // an authoritative bounds index is available; never offload on a guess.
         if (lightCapacityExceeded && rejections.Count < 12)
             rejections["tile light capacity"] = 1;
-        return new TileResult(1, eligible, failed, !isWorldspace && foundScope && !lightCapacityExceeded,
-            shapes, lights, "", rejections, nifSources, missingShapes);
+        var complete = !isWorldspace && foundScope && !lightCapacityExceeded;
+        if (wholeCell && inferCenter && bounds.Valid)
+            (tileX, tileY) = bounds.Center(size);
+        var consolidated = wholeCell && complete && failed == 0 && eligible == shapes.Count &&
+            bounds.Fits(tileX, tileY, size);
+        return new TileResult(1, eligible, failed, complete,
+            shapes, lights, "", rejections, nifSources, missingShapes, consolidated,
+            consolidated ? scope.ModKey.ToString() : "", consolidated ? scope.ID : 0, tileX, tileY);
         }
-        return (Run, Warmup, environment);
+        return (Run, Warmup, Preload, environment);
     }
 
     private static bool Inside(float x, float y, long tx, long ty, int size) =>

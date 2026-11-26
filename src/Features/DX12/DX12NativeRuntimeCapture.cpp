@@ -237,7 +237,7 @@ namespace DX12Native
 			}
 			const auto x = DX12::Coordinate(packet.centerX, grid->size);
 			const auto y = DX12::Coordinate(packet.centerY, grid->size);
-			if (!x || !y || !std::ranges::contains(grid->requested, DX12::SubcellKey{ grid->requested.front().scope, *x, *y })) {
+			if (!x || !y || (!grid->wholeCell && !std::ranges::contains(grid->requested, DX12::SubcellKey{ grid->requested.front().scope, *x, *y }))) {
 				releaseIfCurrent();
 				continue;
 			}

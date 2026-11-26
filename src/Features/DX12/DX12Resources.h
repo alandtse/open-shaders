@@ -89,6 +89,7 @@ namespace DX12
 		uint32_t failedShapes = 0;
 		uint32_t rejectedLights = 0;  // Invalid light records are skipped without losing valid geometry.
 		bool enumerationComplete = false;
+		bool wholeCell = false;
 		std::string failureReason;
 		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;
 		std::vector<NifSourceDescriptor> nifSources;
@@ -108,6 +109,7 @@ namespace DX12
 	{
 		uint64_t geometryRevision = 0;
 		uint32_t size = kSubcellSizes.front();
+		bool wholeCell = false;
 		std::array<SubcellKey, kGridCapacity> requested{};  // Active 3x3, available to future native consumers.
 		std::array<std::shared_ptr<const Tile>, kGridCapacity> resident{};
 		std::array<SubcellKey, kPredictiveCapacity> predictive{};  // Companion-only outer 5x5 ring.
@@ -168,9 +170,9 @@ struct DX12Resources final : Feature
 	~DX12Resources();
 	struct Settings
 	{
-		// The only Resources setting. Companion generation is automatic when
-		// DX12 is active; no separate toggles for workers or GPU residency.
 		uint32_t SubcellSize = DX12::kSubcellSizes.front();
+		bool PreloadLastSave = true;
+		bool ConsolidateInterior = true;
 	};
 
 	std::string GetName() override { return "DX12 Resources"; }
@@ -189,6 +191,7 @@ struct DX12Resources final : Feature
 	bool WantsPreShadowMapsHook() const override;
 	void DataLoaded() override;
 	void PreShadowMaps() override;
+	void EarlyPrepass() override;
 	void OnRuntimeDisabled() override;
 	/** @brief Returns current geometry residency without traversing engine objects. */
 	std::shared_ptr<const DX12::Grid> GetGrid() const { return grid.Snapshot(); }
@@ -199,6 +202,7 @@ struct DX12Resources final : Feature
 		       grid.PublishRuntimeShape(std::move(shape), centerX, centerY, expectedScope);
 	}
 	bool IsActive() const;
+	bool HasMenuPreload() const { return menuPreloaded; }
 	/** @brief Returns the most recent prepared-light publication. */
 	std::vector<DX12::PreparedLight> GetPreparedLights() const;
 	/** @brief In-memory generation timings for active 3x3, predictive sides and corners. */
@@ -209,6 +213,10 @@ struct DX12Resources final : Feature
 
 private:
 	void EnsureCompanion();
+	void PollStartup(uint32_t gameplayScope = 0);
+	bool startupPending = false;
+	bool menuPreloaded = false;
+	uint32_t consolidationAttemptScope = 0;
 	void ResetPreparation();
 	std::once_flag companionStart;
 	std::atomic<bool> companionStarted{ false };

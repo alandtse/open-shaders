@@ -31,6 +31,8 @@ struct DX12NativeScene final : Feature
 	std::function<void()> OnRenderPassBegin(const RE::BSRenderPass* pass) override;
 	bool WantsPreShadowMapsHook() const override;
 	void PreShadowMaps() override;
+	/** @brief Starts asynchronous acceleration preparation for a menu-preloaded cell. */
+	void PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid);
 	void LoadSettings(json& a_input) override;
 	void SaveSettings(json& a_output) override;
 	void RestoreDefaultSettings() override;

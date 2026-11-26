@@ -19,6 +19,8 @@ namespace DX12
 		std::string scopePlugin;
 		bool worldspace = false;
 		bool warmup = false;
+		bool preloadLastSave = false;
+		bool consolidate = false;
 		bool predictive = false;
 		bool corner = false;  // Predictive ring corners have separate generation timing.
 	};
@@ -35,6 +37,9 @@ namespace DX12
 		CompanionPublication publication;
 		std::vector<CompanionLight> lights;
 		std::string failure;
+		bool startup = false, preload = false;
+		std::string scopePlugin;
+		uint32_t scopeLocal = 0, size = 0;
 		bool predictive = false;
 		bool corner = false;         // Predictive ring corners have separate generation timing.
 		double preparationMs = 0.0;  // Complete worker-side preparation, including companion IPC and parsing.
@@ -50,6 +55,7 @@ namespace DX12
 		bool Enqueue(CompanionRequest request);
 		std::optional<CompanionResult> Take();
 		void Cancel();
+		void CancelStartup();
 		void Stop();
 
 	private:
@@ -60,7 +66,7 @@ namespace DX12
 		std::condition_variable_any wake;
 		std::optional<CompanionRequest> queued;
 		std::optional<CompanionResult> completed;
-		bool running = false;
+		bool running = false, runningStartup = false;
 		std::atomic<uint64_t> generation = 1;
 		std::jthread worker;
 	};
