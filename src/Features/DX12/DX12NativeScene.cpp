@@ -8,6 +8,7 @@
 #include "RE/T/TESObjectCELL.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/Game.h"
 
 #include <algorithm>
 #include <cmath>
@@ -104,8 +105,7 @@ void DX12NativeScene::RestoreDefaultSettings()
 
 bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
 {
-	const auto* player = globals::game::player;
-	const auto* cell = player ? player->GetParentCell() : nullptr;
+	const auto* cell = Util::GetPlayerCell();
 	return cell && (!cell->IsExteriorCell() || outdoorShadowOffloading);
 }
 
@@ -258,12 +258,12 @@ void DX12NativeScene::PreShadowMaps()
 						   globals::features::dx12Resources.GetPreparedLights()),
 		std::memory_order_release);
 	// Only a revision-coalesced mailbox handoff on this thread. All BLAS/TLAS
-	// allocations, command recording and GPU builds run on their own worker.
+	// allocations and command recording run as bounded shared-pool tasks.
 	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
 		acceleration.Request(std::move(grid));
 }
 
-void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& /*a_inputs*/)
+void DX12NativeScene::OnOpaqueRasterReady()
 {
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive())
 		return;
@@ -439,6 +439,6 @@ void DX12NativeScene::OnRuntimeDisabled()
 	}
 	raster.Reset();
 	shadows.Reset();
-	acceleration.Reset();
+	acceleration.Stop();
 	geometryCapture.Reset();
 }

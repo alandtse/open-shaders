@@ -370,21 +370,8 @@ public:
 	/** @brief Called after the world scene is complete, including first-person rendering on SE/AE. */
 	virtual void OnWorldRenderEnd(RE::RENDER_TARGET /*a_renderTarget*/) {}
 
-	/** @brief Source textures from the opaque raster stage. */
-	struct OpaqueRasterInputs
-	{
-		ID3D11Texture2D* litColor = nullptr;
-		ID3D11Texture2D* litSpecular = nullptr;
-		ID3D11Texture2D* albedo = nullptr;
-		ID3D11Texture2D* normalRoughness = nullptr;
-		ID3D11Texture2D* masks = nullptr;
-		ID3D11Texture2D* masks2 = nullptr;
-		ID3D11Texture2D* reflectance = nullptr;
-		ID3D11Texture2D* motion = nullptr;
-	};
-
-	/** @brief Offers completed opaque inputs before deferred composition. */
-	virtual void OnOpaqueRasterReady(const OpaqueRasterInputs& /*a_inputs*/) {}
+	/** @brief Notifies features that opaque raster rendering is complete. */
+	virtual void OnOpaqueRasterReady() {}
 	/** @brief Boot-time opt-in to the opaque raster hook. */
 	virtual bool WantsOpaqueRasterReadyHook() const { return false; }
 
@@ -722,8 +709,8 @@ public:
 
 	/** @brief Visits PreShadowMaps() on every loaded feature that opted in via WantsPreShadowMapsHook(); the list is cached once. */
 	static void ApplyPreShadowMapsHooks();
-	/** @brief Dispatches opaque inputs only to features registered for the hook. */
-	static void ApplyOpaqueRasterReadyHooks(const OpaqueRasterInputs& a_inputs);
+	/** @brief Dispatches the opaque raster completion event to registered features. */
+	static void ApplyOpaqueRasterReadyHooks();
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();

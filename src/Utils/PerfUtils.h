@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <numeric>
 #include <vector>
 
@@ -68,32 +69,61 @@ namespace Util
 		}
 	}
 
+	/** @brief Cached QPC frequency in ticks per second; zero on failure. */
+	inline int64_t GetQpcFrequency()
+	{
+		static const int64_t frequency = [] {
+			LARGE_INTEGER value{};
+			return QueryPerformanceFrequency(&value) && value.QuadPart > 0 ? value.QuadPart : int64_t{ 0 };
+		}();
+		return frequency;
+	}
+
+	/** @brief Monotonic QPC timestamp in ticks; zero on failure. */
+	inline int64_t GetQpcTicks()
+	{
+		LARGE_INTEGER now{};
+		return QueryPerformanceCounter(&now) ? now.QuadPart : 0;
+	}
+
+	/** @brief Convert a valid QPC interval to microseconds, without integer multiplication overflow. */
+	constexpr double QpcElapsedUs(int64_t start, int64_t end, int64_t frequency)
+	{
+		return start > 0 && end >= start && frequency > 0 ?
+		           static_cast<double>(end - start) * 1'000'000.0 / static_cast<double>(frequency) :
+		           0.0;
+	}
+
+	/** @brief QPC deadline rounded up to the next tick; zero if timing is unavailable. */
+	constexpr int64_t QpcDeadlineAfterMs(int64_t now, int64_t frequency, uint32_t delayMs)
+	{
+		if (now <= 0 || frequency <= 0)
+			return 0;
+		if (!delayMs)
+			return now;
+		const auto max = std::numeric_limits<int64_t>::max();
+		const auto whole = frequency / 1000;
+		const auto fraction = ((frequency % 1000) * delayMs + 999) / 1000;
+		if (fraction > max - now || whole > (max - now - fraction) / delayMs)
+			return max;
+		return now + whole * delayMs + fraction;
+	}
+
+	/** @brief A missing counter or deadline must not permanently block retries. */
+	constexpr bool QpcDeadlinePending(int64_t now, int64_t deadline)
+	{
+		return now > 0 && deadline > now;
+	}
+
 	/**
 	 * @brief High-resolution timer using QueryPerformanceCounter
 	 * @return Current time in seconds as a double, or 0.0 if high-resolution timer is unavailable
 	 */
 	inline double GetNowSecs()
 	{
-		static LARGE_INTEGER freq = [] {
-			LARGE_INTEGER f;
-			if (!QueryPerformanceFrequency(&f) || f.QuadPart == 0) {
-				// Fallback: if high-resolution timer is unavailable, return frequency of 0
-				// This will cause the function to return 0.0 consistently
-				f.QuadPart = 0;
-			}
-			return f;
-		}();
-
-		// If frequency is 0, high-resolution timer is not available
-		if (freq.QuadPart == 0) {
+		const auto frequency = GetQpcFrequency();
+		if (!frequency)
 			return 0.0;
-		}
-
-		LARGE_INTEGER now;
-		if (!QueryPerformanceCounter(&now)) {
-			return 0.0;  // Return 0.0 if counter query fails
-		}
-
-		return static_cast<double>(now.QuadPart) / static_cast<double>(freq.QuadPart);
+		return static_cast<double>(GetQpcTicks()) / static_cast<double>(frequency);
 	}
 }

@@ -6,6 +6,7 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "PCH.h"
+#include "Utils/FileSystem.h"
 
 #include <algorithm>
 #include <array>
@@ -18,25 +19,37 @@
 
 namespace DX12Native
 {
+	namespace
+	{
+		constexpr std::streamoff kMaxShadowBytecodeBytes = 16 * VideoMemoryBudget::kMiB;
+		constexpr uint64_t kSlotOverheadBytes = 2 * VideoMemoryBudget::kMiB;
+		constexpr uint32_t kShadowConstantDwords = 42;
+		constexpr uint32_t kShadowThreadGroupSize = 8;
+		constexpr float kReceiverTolerance = 16.0f;
+		constexpr float kReconstructionRadiusPixels = 2.0f;
+	}
+
 	bool NativeComposite::InitializeShadow(ID3D12Device* device)
 	{
-		if (shadowPipeline && shadowDevice == device)
+		if (shadowPipeline && shadowDevice.get() == device)
 			return true;
+		if (failedShadowDevice.get() == device)
+			return false;
 		try {
-			std::ifstream file("Data/Shaders/NativeComposite/ShadowLayer.dxil", std::ios::binary | std::ios::ate);
-			if (!file || file.tellg() <= 0 || file.tellg() > 16 * 1024 * 1024)
-				return false;
+			std::ifstream file(Util::PathHelpers::GetShadersPath() / "NativeComposite" / "ShadowLayer.dxil", std::ios::binary | std::ios::ate);
+			if (!file || file.tellg() <= 0 || file.tellg() > kMaxShadowBytecodeBytes)
+				throw std::runtime_error("ShadowLayer.dxil missing, empty or exceeds the bytecode limit");
 			std::vector<char> shader(static_cast<size_t>(file.tellg()));
 			file.seekg(0);
 			if (!file.read(shader.data(), std::streamsize(shader.size())))
-				return false;
+				throw std::runtime_error("ShadowLayer.dxil read failed");
 			CD3DX12_DESCRIPTOR_RANGE ranges[2];
 			ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);
 			ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
 			CD3DX12_ROOT_PARAMETER parameters[3];
 			parameters[0].InitAsDescriptorTable(1, &ranges[0]);
 			parameters[1].InitAsDescriptorTable(1, &ranges[1]);
-			parameters[2].InitAsConstants(42, 0);
+			parameters[2].InitAsConstants(kShadowConstantDwords, 0);
 			const CD3DX12_ROOT_SIGNATURE_DESC desc(3, parameters);
 			winrt::com_ptr<ID3DBlob> serialized, errors;
 			DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
@@ -49,11 +62,18 @@ namespace DX12Native
 			DX::ThrowIfFailed(device->CreateComputePipelineState(&pso, IID_PPV_ARGS(newPipeline.put())));
 			shadowRoot = std::move(newRoot);
 			shadowPipeline = std::move(newPipeline);
-			shadowDevice = device;
+			shadowDevice.copy_from(device);
+			failedShadowDevice = nullptr;
 			return true;
+		} catch (const winrt::hresult_error& error) {
+			logger::error("[NativeComposite] Shadow initialization failed (HRESULT 0x{:08X}): {}", static_cast<uint32_t>(error.code()), winrt::to_string(error.message()));
+		} catch (const std::exception& error) {
+			logger::error("[NativeComposite] Shadow initialization failed: {}", error.what());
 		} catch (...) {
-			return false;
+			logger::error("[NativeComposite] Shadow initialization failed with an unknown exception");
 		}
+		failedShadowDevice.copy_from(device);
+		return false;
 	}
 
 	std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(
@@ -128,8 +148,10 @@ namespace DX12Native
 		bool producerSignalled = false;
 		bool submitted = false;
 		try {
-			const bool recreate = !slot->frame || slot->device != device12 ||
-			                      slot->device11 != device11 || slot->sourceDesc.Width != desc.Width ||
+			const bool recreate = !slot->frame || slot->backend.d3d12Device.get() != device12 ||
+			                      slot->backend.d3d11Device.get() != device11 ||
+			                      slot->backend.d3d11Context.get() != context11 ||
+			                      slot->backend.commandQueue.get() != queue || slot->sourceDesc.Width != desc.Width ||
 			                      slot->sourceDesc.Height != desc.Height || slot->sourceDesc.Format != desc.Format ||
 			                      slot->supportsShadow != supportsShadow ||
 			                      slot->hasReturn != returnColorToDX11;
@@ -140,9 +162,9 @@ namespace DX12Native
 					supportsShadow ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE);
 				const auto allocation = device12->GetResourceAllocationInfo(0, 1, &allocationDesc).SizeInBytes;
 				const uint64_t imageCount = returnColorToDX11 ? 3ull : 2ull;
-				if (allocation == UINT64_MAX || allocation > (UINT64_MAX - 2ull * 1024 * 1024) / imageCount)
+				if (allocation == UINT64_MAX || allocation > (UINT64_MAX - kSlotOverheadBytes) / imageCount)
 					throw std::runtime_error("Composite allocation size unsupported");
-				const uint64_t required = allocation * imageCount + 2ull * 1024 * 1024;
+				const uint64_t required = allocation * imageCount + kSlotOverheadBytes;
 				uint64_t retained = 0;
 				for (const auto& candidate : slots)
 					if (candidate && candidate.get() != slot) {
@@ -160,8 +182,10 @@ namespace DX12Native
 				auto replacement = std::make_unique<Slot>();
 				replacement->frameBytes = required;
 				replacement->frame = std::make_shared<Frame>();
-				replacement->device = device12;
-				replacement->device11 = device11;
+				replacement->backend.d3d12Device.copy_from(device12);
+				replacement->backend.d3d11Device.copy_from(device11);
+				replacement->backend.d3d11Context.copy_from(context11);
+				replacement->backend.commandQueue.copy_from(queue);
 				replacement->sourceDesc = desc;
 				replacement->supportsShadow = supportsShadow;
 				replacement->hasReturn = returnColorToDX11;
@@ -205,6 +229,7 @@ namespace DX12Native
 			// without registering a fence that could be abandoned on failure.
 			slot->shadowInput = applyShadow ? shadow : nullptr;
 			slot->rasterInput = applyShadow ? raster : nullptr;
+			slot->source.copy_from(source);
 			slot->frame->valid = false;
 			slot->frame->producerFence = nullptr;
 			slot->frame->producerValue = 0;
@@ -272,10 +297,10 @@ namespace DX12Native
 					DirectX::SimpleMath::Matrix inverseProjection, inverseView;
 					uint32_t spatialReconstruction, reconstructionGridSize;
 				};
-				static_assert(sizeof(Constants) == 42 * sizeof(uint32_t));
+				static_assert(sizeof(Constants) == kShadowConstantDwords * sizeof(uint32_t));
 				const auto& camera = raster->camera;
 				// Exactly the open-RT default independent shadow settings.
-				const Constants constants{ width, height, 16.0f, 2.0f,
+				const Constants constants{ width, height, kReceiverTolerance, kReconstructionRadiusPixels,
 					transfer == Transfer::LegacyScene ? 1u : 0u,
 					0u,  // padding: matrices retain 16-byte alignment.
 					globals::features::dx12Control.GetShadowStrength(),
@@ -283,8 +308,9 @@ namespace DX12Native
 					camera.CameraProjInverse, camera.CameraViewInverse,
 					globals::features::dx12Control.UseSpatialReconstruction() ? 1u : 0u,
 					globals::features::dx12Control.GetReconstructionGridSize() };
-				slot->commands->SetComputeRoot32BitConstants(2, 42, &constants, 0);
-				slot->commands->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+				slot->commands->SetComputeRoot32BitConstants(2, kShadowConstantDwords, &constants, 0);
+				slot->commands->Dispatch((width + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize,
+					(height + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize, 1);
 				const std::array end{
 					CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
 					CD3DX12_RESOURCE_BARRIER::Transition(shadow->mask.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
@@ -338,36 +364,43 @@ namespace DX12Native
 			output.height = height;
 			output.format = desc.Format;
 			output.valid = true;
+			captureFailureLogged = false;
 			return slot->frame;
 		} catch (...) {
-			if (!std::exchange(captureFailureLogged, true)) {
-				try {
-					throw;
-				} catch (const std::exception& error) {
-					logger::warn("[NativeComposite] Capture failed, the frame keeps its plain color: {}", error.what());
-				} catch (...) {
-					logger::warn("[NativeComposite] Capture failed, the frame keeps its plain color");
-				}
-			}
 			if (submitted && slot->fence.fence12) {
 				// The command list was queued. A tail Signal on that queue tracks
 				// its completion even when the original Signal failed.
 				const uint64_t tail = slot->fence.Next();
-				if (SUCCEEDED(queue->Signal(slot->fence.fence12.get(), tail))) {
+				if (const HRESULT hr = queue->Signal(slot->fence.fence12.get(), tail); SUCCEEDED(hr)) {
 					slot->frame->producerFence = slot->fence.fence12;
 					slot->frame->producerValue = tail;
-				} else
+				} else {
 					slot->untracked = true;
+					logger::warn("[NativeComposite] DX12 recovery signal failed; retaining slot: {}", DX::com_exception(hr).what());
+				}
 			} else if (producerSignalled && slot->fence.fence11) {
 				// No DX12 work was submitted, but the DX11 copy may still be
 				// pending. Fence it before allowing this slot to be recycled.
 				const uint64_t tail = slot->fence.Next();
-				if (SUCCEEDED(context11->Signal(slot->fence.fence11.get(), tail))) {
+				if (const HRESULT hr = context11->Signal(slot->fence.fence11.get(), tail); SUCCEEDED(hr)) {
 					context11->Flush();
 					slot->frame->producerFence = slot->fence.fence12;
 					slot->frame->producerValue = tail;
-				} else
+				} else {
 					slot->untracked = true;
+					logger::warn("[NativeComposite] DX11 recovery signal failed; retaining slot: {}", DX::com_exception(hr).what());
+				}
+			}
+			if (!std::exchange(captureFailureLogged, true)) {
+				try {
+					throw;
+				} catch (const winrt::hresult_error& error) {
+					logger::warn("[NativeComposite] Capture failed (HRESULT 0x{:08X}): {}", static_cast<uint32_t>(error.code()), winrt::to_string(error.message()));
+				} catch (const std::exception& error) {
+					logger::warn("[NativeComposite] Capture failed, the frame keeps its plain color: {}", error.what());
+				} catch (...) {
+					logger::warn("[NativeComposite] Capture failed with an unknown exception");
+				}
 			}
 			return {};
 		}
@@ -390,22 +423,21 @@ namespace DX12Native
 
 	NativeComposite::~NativeComposite()
 	{
-		const auto ready = [](const Slot& slot) {
-			if (slot.untracked || (slot.frame && slot.frame.use_count() > 1))
-				return false;
-			if (slot.frame && !GpuFenceRetired(slot.fence.fence12.get(), slot.frame->producerValue))
-				return false;
-			return std::ranges::all_of(slot.consumers, [](const auto& consumer) {
-				return GpuFenceRetired(consumer.first.get(), consumer.second);
-			});
-		};
 		for (auto& slot : slots) {
-			if (!slot || ready(*slot))
+			if (!slot)
 				continue;
-			winrt::com_ptr<ID3D12Device> device;
-			if (slot->device)
-				device.copy_from(slot->device);
-			RetireWhenGpuDone(std::move(slot), std::move(device), ready);
+			std::vector<FenceDependency> dependencies;
+			if (slot->untracked)
+				dependencies.push_back(FencePoint(slot->fence.fence12.get(), UINT64_MAX));
+			else if (slot->frame)
+				dependencies.push_back(FencePoint(slot->fence.fence12.get(), slot->frame->producerValue));
+			for (const auto& consumer : slot->consumers)
+				dependencies.push_back({ consumer.first, consumer.second });
+			auto device = slot->backend.d3d12Device;
+			// Borrowed Frame objects independently own their published color and
+			// fence. With no slot reuse after destruction, only submitted GPU
+			// dependencies require retaining the other slot resources.
+			RetireAfterFences(std::move(slot), std::move(device), std::move(dependencies));
 		}
 	}
 }

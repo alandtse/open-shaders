@@ -5,12 +5,9 @@
 
 #include <array>
 #include <atomic>
-#include <condition_variable>
 #include <memory>
 #include <mutex>
-#include <stop_token>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -46,7 +43,7 @@ namespace DX12Native
 		void Reset();
 		/** @brief Returns only a GPU-completed TLAS, with all rigid casters retained. */
 		std::shared_ptr<const TopLevel> GetScene() const { return published; }
-		/** @brief Submitted builds still need GPU retirement polling even after scene reset. */
+		/** @brief Submitted builds still need GPU retirement even after scene reset. */
 		bool HasPendingBuilds() const
 		{
 			for (const auto& build : builds)
@@ -54,13 +51,11 @@ namespace DX12Native
 					return true;
 			return false;
 		}
-		/** @brief Keeps a published scene alive until a downstream GPU consumer finishes. */
-		bool RetainThrough(const std::shared_ptr<const TopLevel>& a_scene, ID3D12Fence* a_fence, uint64_t a_value);
 		/** @brief Reports an actual DX12 creation or submission error. */
 		const std::string& Failure() const { return failure; }
 
 	private:
-		/** @brief Only the dedicated worker is permitted to allocate or submit native AS work. */
+		/** @brief Only the serialized acceleration task may allocate or submit native AS work. */
 		void Advance(std::shared_ptr<const SceneInputs> a_inputs);
 		struct Build
 		{
@@ -71,12 +66,6 @@ namespace DX12Native
 			std::shared_ptr<BottomLevel> bottom;
 			std::shared_ptr<TopLevel> top;
 			uint64_t fence = 0, generation = 0;
-		};
-		struct Consumer
-		{
-			std::shared_ptr<const TopLevel> scene;
-			winrt::com_ptr<ID3D12Fence> fence;
-			uint64_t value = 0;
 		};
 
 		winrt::com_ptr<ID3D12Resource> Buffer(uint64_t a_size, D3D12_HEAP_TYPE a_heap, D3D12_RESOURCE_STATES a_state, const wchar_t* a_name) const;
@@ -92,7 +81,6 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12Fence> completion;
 		std::array<Build, 2> builds;
 		std::unordered_map<uint64_t, std::shared_ptr<const BottomLevel>> bottoms;
-		std::vector<Consumer> consumers;
 		std::shared_ptr<const SceneInputs> target;
 		std::shared_ptr<const TopLevel> published;
 		uint64_t generation = 0, nextFence = 0;
@@ -101,7 +89,7 @@ namespace DX12Native
 		std::string failure;
 	};
 
-	/** @brief Dedicated CPU worker. Snapshot delivery and completed-TLAS consumption never build on the caller. */
+	/** @brief Task coordinator using the shared CPU pool. Snapshot delivery and completed-TLAS consumption never build on the caller. */
 	class AccelerationWorker
 	{
 	public:
@@ -110,24 +98,21 @@ namespace DX12Native
 		AccelerationWorker(const AccelerationWorker&) = delete;
 		AccelerationWorker& operator=(const AccelerationWorker&) = delete;
 
-		/** @brief Starts a dedicated native builder; device and queue initialization run on that thread. */
+		/** @brief Captures device references lazily; initialization runs on the shared pool. */
 		bool Start(ID3D11Device* a_device, ID3D11DeviceContext* a_context);
 		/** @brief Replaces the pending grid snapshot; only the latest unpublished request is built. */
 		void Request(std::shared_ptr<const DX12::Grid> a_grid);
 		/** @brief Cancels eligibility without interrupting previously submitted GPU work. */
 		void Reset();
+		/** @brief Ends the session without waiting for queued CPU or GPU work. */
+		void Stop();
 		/** @brief Acquires the most recent completed immutable scene, never waiting for a build. */
 		std::shared_ptr<const TopLevel> GetScene() const;
-		/** @brief Retains a borrowed scene until the consumer's GPU fence completes. */
-		bool RetainThrough(std::shared_ptr<const TopLevel> a_scene, ID3D12Fence* a_fence, uint64_t a_value);
-		/** @brief Reports initialization or build failures without consulting engine objects. */
-		std::string Failure() const;
 
 	private:
 		struct State;
-		static void Run(std::shared_ptr<State> a_state, std::stop_token a_stop,
-			winrt::com_ptr<ID3D11Device> a_device, winrt::com_ptr<ID3D11DeviceContext> a_context);
-		std::shared_ptr<State> state;
-		std::jthread worker;
+		static void TrySchedule(const std::shared_ptr<State>& a_state);
+		static void RunStep(std::shared_ptr<State> a_state);
+		std::atomic<std::shared_ptr<State>> state{};
 	};
 }

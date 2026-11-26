@@ -53,3 +53,37 @@ TEST_CASE("GetNowSecs is non-negative and non-decreasing", "[perfutils]")
 	REQUIRE(t0 >= 0.0);
 	REQUIRE(t1 >= t0);
 }
+
+TEST_CASE("QPC elapsed conversion preserves microsecond units", "[perfutils][qpc]")
+{
+	CHECK(Util::QpcElapsedUs(10'000, 15'000, 10'000'000) == Approx(500.0));
+	CHECK(Util::QpcElapsedUs(10'000, 10'001, 10'000'000) == Approx(0.1));
+	CHECK(Util::QpcElapsedUs(10'000, 10'000, 10'000'000) == 0.0);
+	CHECK(Util::QpcElapsedUs(0, 15'000, 10'000'000) == 0.0);
+	CHECK(Util::QpcElapsedUs(15'000, 10'000, 10'000'000) == 0.0);
+	CHECK(Util::QpcElapsedUs(10'000, 15'000, 0) == 0.0);
+}
+
+TEST_CASE("QPC retry deadlines preserve 500 and 2000 ms and admit at the boundary", "[perfutils][qpc]")
+{
+	constexpr int64_t now = 100'000;
+	constexpr int64_t frequency = 10'000'000;
+	const auto first = Util::QpcDeadlineAfterMs(now, frequency, 500);
+	const auto second = Util::QpcDeadlineAfterMs(now, frequency, 2000);
+	CHECK(first == 5'100'000);
+	CHECK(second == 20'100'000);
+	CHECK(Util::QpcDeadlinePending(first - 1, first));
+	CHECK_FALSE(Util::QpcDeadlinePending(first, first));
+	CHECK_FALSE(Util::QpcDeadlinePending(first + 1, first));
+	CHECK(Util::QpcDeadlinePending(second - 1, second));
+	CHECK_FALSE(Util::QpcDeadlinePending(second, second));
+	// Round up on a non-integral ticks-per-millisecond frequency.
+	CHECK(Util::QpcDeadlineAfterMs(10, 1001, 500) == 511);
+	CHECK(Util::QpcDeadlineAfterMs(now, frequency, 0) == now);
+	CHECK(Util::QpcDeadlineAfterMs(now, 0, 500) == 0);
+	CHECK(Util::QpcDeadlineAfterMs(0, frequency, 500) == 0);
+	CHECK_FALSE(Util::QpcDeadlinePending(0, first));
+	CHECK_FALSE(Util::QpcDeadlinePending(now, 0));
+	const auto max = std::numeric_limits<int64_t>::max();
+	CHECK(Util::QpcDeadlineAfterMs(max - 1, frequency, 500) == max);
+}
