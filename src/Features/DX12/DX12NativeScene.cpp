@@ -63,16 +63,16 @@ void DX12NativeScene::LoadSettings(json& input)
 	outdoorShadowOffloading = input.value("OutdoorShadowOffloading", false);
 	offloadStaticShadows = input.value("OffloadSCMStatic", true);
 	offloadFlickeringStatic = input.value("OffloadFlickeringStatic", true);
-	densityMode = std::min(input.value("ShadowTraceDensityMode", 7u), 7u);
-	freezeNativeFlickering = input.value("FreezeNativeFlickering", false);
+	densityMode = std::min(input.value("ShadowTraceDensityMode", DX12Native::kDefaultShadowDensityMode), 7u);
+	freezeNativeFlickering = input.value("FreezeNativeFlickering", kDefaultFreezeNativeFlickering);
 	{
 		std::scoped_lock lock(runtimeLightMutex);
 		frozenNativeLights.clear();
 	}
 	nearLightShadowExclusion = input.value("ShadowNearLightExclusion", true);
 	nearLightExclusionUnits = std::clamp(input.value("ShadowNearLightRadius", 16u), 0u, 512u) / 4u * 4u;
-	shadowReachMultiplier = std::clamp(input.value("ShadowReachMultiplier", 1.0f), 0.1f, 64.0f);
-	shadowFadeRange = std::round(std::clamp(input.value("ShadowFadeRange", 0.66f), 0.0f, 1.0f) * 50.0f) / 50.0f;
+	shadowReachMultiplier = std::clamp(input.value("ShadowReachMultiplier", DX12Native::kDefaultShadowReachMultiplier), 0.1f, 64.0f);
+	shadowFadeRange = std::round(std::clamp(input.value("ShadowFadeRange", DX12Native::kDefaultShadowFadeRange), 0.0f, 1.0f) * 50.0f) / 50.0f;
 	shadowFalloffCurve = std::clamp(input.value("ShadowFalloffCurve", 1.0f), 0.0f, 2.5f);
 	shadowStochastic = input.value("ShadowStochastic", true);
 	const float emitterMultiplier = input.value("ShadowEmitterRadiusMultiplier", DX12Native::kDefaultShadowEmitterRadiusMultiplier);
@@ -102,16 +102,16 @@ void DX12NativeScene::RestoreDefaultSettings()
 	outdoorShadowOffloading = false;
 	offloadStaticShadows = true;
 	offloadFlickeringStatic = true;
-	densityMode = 7;
-	freezeNativeFlickering = false;
+	densityMode = DX12Native::kDefaultShadowDensityMode;
+	freezeNativeFlickering = kDefaultFreezeNativeFlickering;
 	{
 		std::scoped_lock lock(runtimeLightMutex);
 		frozenNativeLights.clear();
 	}
 	nearLightShadowExclusion = true;
 	nearLightExclusionUnits = 16;
-	shadowReachMultiplier = 1.0f;
-	shadowFadeRange = 0.66f;
+	shadowReachMultiplier = DX12Native::kDefaultShadowReachMultiplier;
+	shadowFadeRange = DX12Native::kDefaultShadowFadeRange;
 	shadowFalloffCurve = 1.0f;
 	shadowStochastic = true;
 	shadowEmitterRadiusMultiplier = DX12Native::kDefaultShadowEmitterRadiusMultiplier;

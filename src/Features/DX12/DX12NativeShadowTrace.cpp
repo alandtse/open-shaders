@@ -31,7 +31,7 @@ namespace DX12Native
 			uint32_t lightCount;
 			float minimum = kMinRayDistance, maximum = kMaxRayDistance;
 			uint32_t reserved = 0;
-			float shadowReachMultiplier = 1.0f, shadowFadeRange = 0.5f, shadowFalloffCurve = 1.0f;
+			float shadowReachMultiplier = kDefaultShadowReachMultiplier, shadowFadeRange = kDefaultShadowFadeRange, shadowFalloffCurve = 1.0f;
 			float nearLightRadius = 0.0f;
 			uint32_t nearLightExclusion = 0, stochasticSampling = 1;
 			float emitterRadiusMultiplier = kDefaultShadowEmitterRadiusMultiplier;

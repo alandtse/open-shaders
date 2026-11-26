@@ -67,12 +67,13 @@ private:
 	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
 	bool offloadStaticShadows = true;
 	bool offloadFlickeringStatic = true;
-	bool freezeNativeFlickering = false;
-	uint32_t densityMode = 7;  // Four-ninths density by default.
+	static constexpr bool kDefaultFreezeNativeFlickering = true;
+	bool freezeNativeFlickering = kDefaultFreezeNativeFlickering;
+	uint32_t densityMode = DX12Native::kDefaultShadowDensityMode;
 	bool nearLightShadowExclusion = true;
 	uint32_t nearLightExclusionUnits = 16;
-	float shadowReachMultiplier = 1.0f;  // Native only. Vanilla lights stay unchanged.
-	float shadowFadeRange = 0.66f;
+	float shadowReachMultiplier = DX12Native::kDefaultShadowReachMultiplier;  // Native only. Vanilla lights stay unchanged.
+	float shadowFadeRange = DX12Native::kDefaultShadowFadeRange;
 	float shadowFalloffCurve = 1.0f;
 	bool shadowStochastic = true;
 	float shadowEmitterRadiusMultiplier = DX12Native::kDefaultShadowEmitterRadiusMultiplier;

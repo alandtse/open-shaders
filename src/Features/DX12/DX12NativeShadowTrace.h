@@ -14,18 +14,21 @@ namespace DX12Native
 {
 	// Shared CPU-side limit for prepared lights submitted to the native shadow RayQuery.
 	inline constexpr uint32_t kMaxShadowLights = DX12::kMaxPreparedLights;
-	inline constexpr float kDefaultShadowEmitterRadiusMultiplier = 0.2f;
+	inline constexpr uint32_t kDefaultShadowDensityMode = 5;  // One-sixth density.
+	inline constexpr float kDefaultShadowReachMultiplier = 1.25f;
+	inline constexpr float kDefaultShadowFadeRange = 0.36f;
+	inline constexpr float kDefaultShadowEmitterRadiusMultiplier = 0.75f;
 	inline constexpr float kMaximumShadowEmitterRadiusMultiplier = 8.0f;
 
 	/** @brief Shadow-only behavior. Live matched values override companion fallbacks. */
 	struct ShadowTraceControls
 	{
 		uint32_t viewportWidth = 0, viewportHeight = 0;
-		uint32_t densityMode = 0;
+		uint32_t densityMode = kDefaultShadowDensityMode;
 		bool nearLightExclusion = false;
 		float nearLightRadius = 0.0f;  // 0..512 game units; exclusion sphere centered at light.
-		float reachMultiplier = 1.0f;  // 1.0 means the vanilla-provided light radius.
-		float fadeRange = 0.50f;       // Fraction of native shadow reach.
+		float reachMultiplier = kDefaultShadowReachMultiplier;  // 1.0 means vanilla light radius.
+		float fadeRange = kDefaultShadowFadeRange;  // Fraction of native shadow reach.
 		float falloffCurve = 1.0f;
 		bool stochasticSampling = true;
 		float emitterRadiusMultiplier = kDefaultShadowEmitterRadiusMultiplier;
