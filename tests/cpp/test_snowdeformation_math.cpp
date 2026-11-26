@@ -228,3 +228,13 @@ TEST_CASE("A harder landing carves a deeper print up to a cap", "[snow-deformati
 	REQUIRE(Math::ImpactDepthScale(4000.0f, 400.0f, 2.0f) == Approx(2.0f));
 	REQUIRE(Math::ImpactDepthScale(300.0f, 400.0f, 0.5f) == Approx(1.0f));
 }
+
+TEST_CASE("Print walls slump by elapsed time, not by frame count", "[snow-deformation]")
+{
+	REQUIRE(Math::ReposeStep(0.1f, 1.0f / 60.0f) == Approx(0.1f));
+	REQUIRE(Math::ReposeStep(0.1f, 1.0f / 120.0f) == Approx(0.05f));
+	REQUIRE(Math::ReposeStep(0.1f, 1.0f / 30.0f) == Approx(0.2f));
+	REQUIRE(Math::ReposeStep(0.1f, 0.0f) == 0.0f);
+	REQUIRE(Math::ReposeStep(0.1f, -1.0f) == 0.0f);
+	REQUIRE(Math::ReposeStep(0.1f, 0.25f) == 1.0f);
+}
