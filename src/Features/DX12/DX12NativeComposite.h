@@ -64,8 +64,6 @@ namespace DX12Native
 			std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 			ID3D12Device* device = nullptr;
 			ID3D11Device* device11 = nullptr;
-			ID3D11DeviceContext4* context11 = nullptr;
-			ID3D12CommandQueue* queue = nullptr;
 			D3D11_TEXTURE2D_DESC sourceDesc{};
 			bool supportsShadow = false, hasReturn = false, untracked = false;
 			uint64_t frameBytes = 0;

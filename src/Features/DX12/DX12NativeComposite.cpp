@@ -149,9 +149,7 @@ namespace DX12Native
 		bool submitted = false;
 		try {
 			const bool recreate = !slot->frame || slot->device != device12 ||
-			                      slot->device11 != device11 ||
-			                      slot->context11 != context11 ||
-			                      slot->queue != queue || slot->sourceDesc.Width != desc.Width ||
+			                      slot->device11 != device11 || slot->sourceDesc.Width != desc.Width ||
 			                      slot->sourceDesc.Height != desc.Height || slot->sourceDesc.Format != desc.Format ||
 			                      slot->supportsShadow != supportsShadow ||
 			                      slot->hasReturn != returnColorToDX11;
@@ -184,8 +182,6 @@ namespace DX12Native
 				replacement->frame = std::make_shared<Frame>();
 				replacement->device = device12;
 				replacement->device11 = device11;
-				replacement->context11 = context11;
-				replacement->queue = queue;
 				replacement->sourceDesc = desc;
 				replacement->supportsShadow = supportsShadow;
 				replacement->hasReturn = returnColorToDX11;
