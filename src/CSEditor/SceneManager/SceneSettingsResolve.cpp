@@ -89,10 +89,9 @@ void SceneSettingsManager::ResolveAndApply(bool force, bool allowLocationTransit
 	const auto& weather = blendSnapshot.weather;
 
 	const auto transitionTime = GetPauseAwareTime();
+	const bool usesGameHour = !interior || !cachedLocationPeriodValues.empty();
 	const bool blendAdvanced = std::abs(weather.lerp - lastResolvedWeatherLerp) >= kBlendEpsilon ||
-	                           // Indoors resolves nothing from the hour, so time alone cannot change it.
-	                           (!interior && (lastResolvedHour < 0.0f ||
-												 std::abs(hour - lastResolvedHour) >= kHourUpdateThreshold));
+	                           (usesGameHour && (lastResolvedHour < 0.0f || std::abs(hour - lastResolvedHour) >= kHourUpdateThreshold));
 	// Continuous blends reload every blended feature per resolve, so they share the transition tick rate.
 	// The wall clock paces it: the editor moves the hour while the game, and the game timer, is paused.
 	const auto now = std::chrono::steady_clock::now();
