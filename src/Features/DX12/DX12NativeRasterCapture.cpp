@@ -128,10 +128,8 @@ namespace DX12Native
 			context->CSSetShader(priorShader.get(), nullptr, 0);
 			const auto ready = producer.Next();
 			DX::ThrowIfFailed(backend.d3d11Context->Signal(producer.fence11.get(), ready));
-			// A failed DX12 queue Wait must not strand a successfully signaled frame.
 			slot->readyValue = ready;
 			backend.d3d11Context->Flush();
-			DX::ThrowIfFailed(backend.commandQueue->Wait(producer.fence12.get(), ready));
 			slot->cameraValid = a_camera != nullptr;
 			if (a_camera)
 				slot->camera = *a_camera;

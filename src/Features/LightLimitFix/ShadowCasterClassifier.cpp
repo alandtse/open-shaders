@@ -456,10 +456,13 @@ namespace ShadowCasterManager
 			s_dynamicCasterDraws.fetch_add(1, std::memory_order_relaxed);
 			return false;
 		}
-		if (nativeMode != DX12::SCMNativeCasterMode::Disabled &&
-			!geom.GetGeometryRuntimeData().skinInstance &&
-			!IsCasterDynamic(geom))
-			globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
+		if (nativeMode != DX12::SCMNativeCasterMode::Disabled && !geom.GetGeometryRuntimeData().skinInstance) {
+			auto& mobility = ClassifyCaster(geom);
+			if (!mobility.dynamic && mobility.nativeObservationEpoch != s_casterClassEpoch) {
+				mobility.nativeObservationEpoch = s_casterClassEpoch;
+				globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
+			}
+		}
 		const bool nativeDynamicOnly = nativeMode == DX12::SCMNativeCasterMode::Suppress;
 		if (!AtlasActive() && !nativeDynamicOnly)
 			return false;

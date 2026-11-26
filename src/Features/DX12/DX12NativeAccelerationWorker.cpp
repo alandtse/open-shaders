@@ -85,8 +85,8 @@ namespace DX12Native
 				current->pending = std::move(a_grid);
 				++current->epoch;
 			}
+			TryScheduleLocked(current);
 		}
-		TrySchedule(current);
 	}
 
 	void AccelerationWorker::Reset()
@@ -104,8 +104,8 @@ namespace DX12Native
 			current->failure.clear();
 			++current->resetSerial;
 			++current->epoch;
+			TryScheduleLocked(current);
 		}
-		TrySchedule(current);
 	}
 
 	void AccelerationWorker::Stop()
@@ -135,6 +135,11 @@ namespace DX12Native
 	void AccelerationWorker::TrySchedule(const std::shared_ptr<State>& a_state)
 	{
 		std::scoped_lock lock(a_state->mutex);
+		TryScheduleLocked(a_state);
+	}
+
+	void AccelerationWorker::TryScheduleLocked(const std::shared_ptr<State>& a_state)
+	{
 		if (a_state->closing || a_state->scheduled || !a_state->failure.empty() || !a_state->taskGate)
 			return;
 

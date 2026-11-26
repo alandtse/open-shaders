@@ -119,6 +119,7 @@ namespace DX12Native
 	private:
 		struct State;
 		static void TrySchedule(const std::shared_ptr<State>& a_state);
+		static void TryScheduleLocked(const std::shared_ptr<State>& a_state);
 		static void RunStep(std::shared_ptr<State> a_state);
 		std::atomic<std::shared_ptr<State>> state{};
 	};
