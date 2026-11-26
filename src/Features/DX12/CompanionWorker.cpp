@@ -1,9 +1,10 @@
 #include "CompanionWorker.h"
+#include "SystemMemoryBudget.h"
+#include "Utils/PerfUtils.h"
 
 #include <Windows.h>
 
 #include <charconv>
-#include <chrono>
 #include <cmath>
 #include <format>
 #include <fstream>
@@ -15,8 +16,15 @@ namespace DX12
 {
 	namespace
 	{
-		constexpr uint64_t kMaximumTransferBytes = 192ull * 1024 * 1024;
 		constexpr DWORD kPreparationDeadlineMs = 90000;
+		constexpr DWORD kStartupDeadlineMs = 10 * 60 * 1000;
+		constexpr DWORD kStartupProgressIntervalMs = 10000;
+
+		DWORD RequestPriority(const CompanionRequest& task)
+		{
+			return task.warmup || task.preloadLastSave ? NORMAL_PRIORITY_CLASS :
+			       task.predictive ? IDLE_PRIORITY_CLASS : BELOW_NORMAL_PRIORITY_CLASS;
+		}
 
 		std::wstring Quote(std::wstring_view value)
 		{
@@ -92,7 +100,6 @@ namespace DX12
 			HANDLE job = nullptr;
 			HANDLE process = nullptr;
 			std::filesystem::path root;
-			uint64_t epoch = 0;
 
 			~CompanionProcess() { Close(); }
 
@@ -113,11 +120,10 @@ namespace DX12
 				if (!root.empty())
 					std::filesystem::remove_all(root, ignored);
 				root.clear();
-				epoch = 0;
 			}
 
 			bool Start(const std::filesystem::path& executable, const std::filesystem::path& data,
-				const std::filesystem::path& plugins, const std::filesystem::path& work)
+				const std::filesystem::path& plugins, const std::filesystem::path& work, DWORD priority)
 			{
 				if (process && WaitForSingleObject(process, 0) == WAIT_TIMEOUT)
 					return true;
@@ -139,7 +145,7 @@ namespace DX12
 				startup.cb = sizeof(startup);
 				PROCESS_INFORMATION started{};
 				const BOOL launched = CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
-					CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS | CREATE_SUSPENDED,
+					CREATE_NO_WINDOW | priority | CREATE_SUSPENDED,
 					nullptr, nullptr, &startup, &started);
 				if (!launched) {
 					Close();
@@ -166,8 +172,7 @@ namespace DX12
 		}
 
 		bool InvokeCompanion(const CompanionRequest& task, const std::filesystem::path& destination,
-			uint64_t expectedGeneration, const std::atomic<uint64_t>& generation, std::stop_token stop,
-			std::string& failure)
+			std::stop_token stop, const std::atomic<uint64_t>& generation, uint64_t epoch, std::string& failure)
 		{
 			const auto executable = std::filesystem::absolute(
 				L"Data/SKSE/Plugins/CommunityShaders/DX12Resources/bin/DX12ResourcesPrep.exe");
@@ -184,15 +189,15 @@ namespace DX12
 			}
 			// Host-owned per-session mailbox; no persistent geometry output or diagnostics.
 			auto& service = CurrentCompanionProcess();
-			if (service.epoch && service.epoch != expectedGeneration)
-				service.Close();
 			const auto work = destination.parent_path().parent_path();
-			if (!service.Start(executable, data, plugins, work)) {
+			const bool startup = task.warmup || task.preloadLastSave;
+			const auto priority = RequestPriority(task);
+			if (!service.Start(executable, data, plugins, work, priority)) {
 				failure = "Could not launch persistent .NET companion process";
 				return false;
 			}
-			service.epoch = expectedGeneration;
-			SetPriorityClass(service.process, task.predictive ? IDLE_PRIORITY_CLASS : BELOW_NORMAL_PRIORITY_CLASS);
+			if (!SetPriorityClass(service.process, priority))
+				logger::warn("[DX12Resources] Could not set companion process priority: {}", GetLastError());
 			const auto requestTmp = service.root / L"request.tmp";
 			const auto request = service.root / L"request.json";
 			const auto reply = service.root / L"reply.json";
@@ -202,7 +207,10 @@ namespace DX12
 				{ "x", task.key.x },
 				{ "y", task.key.y },
 				{ "size", task.size },
-				{ "worldspace", task.worldspace }
+				{ "worldspace", task.worldspace },
+				{ "warmup", task.warmup },
+				{ "preloadLastSave", task.preloadLastSave },
+				{ "consolidate", task.consolidate }
 			};
 			{
 				std::ofstream stream(requestTmp, std::ios::binary | std::ios::trunc);
@@ -225,9 +233,22 @@ namespace DX12
 				service.Close();
 				return false;
 			}
-			const uint64_t started = GetTickCount64();
-			while (!stop.stop_requested() && generation.load(std::memory_order_acquire) == expectedGeneration &&
-				   GetTickCount64() - started < kPreparationDeadlineMs) {
+			const auto started = Util::GetQpcTicks();
+			const auto frequency = Util::GetQpcFrequency();
+			const auto deadline = Util::QpcDeadlineAfterMs(started, frequency, startup ? kStartupDeadlineMs : kPreparationDeadlineMs);
+			auto nextProgress = Util::QpcDeadlineAfterMs(started, frequency, kStartupProgressIntervalMs);
+			const char* stage = task.preloadLastSave ? "last-save cell" : "NIF manifests";
+			if (startup)
+				logger::info("[DX12Resources] Menu {} preparation started (normal process priority)", stage);
+			while (!stop.stop_requested() &&
+				   (!startup || generation.load(std::memory_order_acquire) == epoch) &&
+				   Util::QpcDeadlinePending(Util::GetQpcTicks(), deadline)) {
+				if (startup && !Util::QpcDeadlinePending(Util::GetQpcTicks(), nextProgress)) {
+					const auto now = Util::GetQpcTicks();
+					logger::info("[DX12Resources] Waiting for {} companion reply ({:.1f} s)", stage,
+						double(now - started) / double(frequency));
+					nextProgress = Util::QpcDeadlineAfterMs(now, frequency, kStartupProgressIntervalMs);
+				}
 				if (std::filesystem::is_regular_file(reply, ec)) {
 					std::filesystem::rename(reply, destination, ec);
 					if (!ec)
@@ -237,6 +258,10 @@ namespace DX12
 				if (WaitForSingleObject(service.process, 25) != WAIT_TIMEOUT)
 					break;
 			}
+			if ((task.warmup || task.preloadLastSave) && generation.load(std::memory_order_acquire) != epoch) {
+				service.Close();
+				return false;
+			}
 			// Catch a startup-error reply even when the .NET service exits just
 			// after finishing its atomic reply and before the host polls again.
 			if (std::filesystem::is_regular_file(reply, ec)) {
@@ -245,13 +270,13 @@ namespace DX12
 				if (!ec)
 					return true;
 			}
-			if (stop.stop_requested() || generation.load(std::memory_order_acquire) != expectedGeneration)
+			if (stop.stop_requested())
 				failure = "Companion request canceled by scene change";
-			else if (GetTickCount64() - started >= kPreparationDeadlineMs)
+			else if (!Util::QpcDeadlinePending(Util::GetQpcTicks(), deadline))
 				failure = "Companion preparation timed out (load order or NIF traversal too slow)";
 			else
 				failure = "Companion exited before returning a tile";
-			// A superseded or timed-out request kills only the companion job, not Skyrim.
+			// A stopped or timed-out request kills only the companion job, not Skyrim.
 			service.Close();
 			return false;
 		}
@@ -267,6 +292,11 @@ namespace DX12
 	CompanionWorker::CompanionWorker() : worker([this](std::stop_token stop) { Run(stop); }) {}
 
 	CompanionWorker::~CompanionWorker()
+	{
+		Stop();
+	}
+
+	void CompanionWorker::Stop()
 	{
 		worker.request_stop();
 		wake.notify_all();
@@ -303,6 +333,16 @@ namespace DX12
 		wake.notify_all();
 	}
 
+	void CompanionWorker::CancelStartup()
+	{
+		std::scoped_lock lock(mutex);
+		if (!runningStartup && !(queued && (queued->warmup || queued->preloadLastSave)))
+			return;
+		generation.fetch_add(1, std::memory_order_acq_rel);
+		queued.reset();
+		wake.notify_all();
+	}
+
 	void CompanionWorker::Run(std::stop_token stop)
 	{
 		uint64_t observedGeneration = generation.load(std::memory_order_acquire);
@@ -318,29 +358,39 @@ namespace DX12
 					break;
 				if (generation.load(std::memory_order_acquire) != observedGeneration) {
 					observedGeneration = generation.load(std::memory_order_acquire);
-					lock.unlock();
-					// Runtime disable, scene unload, or subcell-size change invalidates
-					// the session even if no tile is currently being processed.
-					CurrentCompanionProcess().Close();
+					// A canceled tile invalidates its publication, not the load-order manifest cache.
 					continue;
 				}
 				task = std::move(*queued);
 				queued.reset();
 				running = true;
+				runningStartup = task.warmup || task.preloadLastSave;
 				epoch = generation.load(std::memory_order_acquire);
 			}
-			const auto started = std::chrono::steady_clock::now();
+			const auto started = Util::GetQpcTicks();
 			auto result = Prepare(task, epoch, stop);
 			result.predictive = task.predictive;
 			result.corner = task.corner;
-			result.preparationMs = std::chrono::duration<double, std::milli>(
-				std::chrono::steady_clock::now() - started)
-			                           .count();
+			result.preparationMs = double(Util::GetQpcTicks() - started) * 1000.0 / double(Util::GetQpcFrequency());
 			{
 				std::scoped_lock lock(mutex);
-				running = false;
 				if (!stop.stop_requested() && epoch == generation.load(std::memory_order_acquire))
 					completed = std::move(result);
+			}
+			if (task.preloadLastSave && !stop.stop_requested() && epoch == generation.load(std::memory_order_acquire)) {
+				CompanionRequest warmup;
+				warmup.warmup = true;
+				const auto warmed = Prepare(warmup, epoch, stop);
+				if (epoch == generation.load(std::memory_order_acquire)) {
+					if (!warmed.failure.empty())
+						logger::warn("[DX12Resources] Manifest warmup failed: {}", warmed.failure);
+					else
+						logger::info("[DX12Resources] NIF manifest warmup completed");
+				}
+			}
+			{
+				std::scoped_lock lock(mutex);
+				running = runningStartup = false;
 			}
 		}
 	}
@@ -348,6 +398,9 @@ namespace DX12
 	CompanionResult CompanionWorker::Prepare(const CompanionRequest& task, uint64_t epoch, std::stop_token stop)
 	{
 		CompanionResult result;
+		result.startup = task.warmup || task.preloadLastSave;
+		result.preload = task.preloadLastSave;
+		result.size = task.size;
 		result.publication.key = task.key;
 		const auto work = std::filesystem::absolute(L"Data/SKSE/Plugins/CommunityShaders/DX12Resources/work");
 		std::error_code ec;
@@ -374,33 +427,50 @@ namespace DX12
 			}
 		} cleanup{ folder, work };
 		const auto file = folder / L"tile.json";
-		if (!InvokeCompanion(task, file, epoch, generation, stop, result.failure))
+		if (!InvokeCompanion(task, file, stop, generation, epoch, result.failure) ||
+			generation.load(std::memory_order_acquire) != epoch || stop.stop_requested())
 			return result;
 		try {
 			std::ifstream stream(file, std::ios::binary | std::ios::ate);
-			if (!stream || stream.tellg() <= 0 || uint64_t(stream.tellg()) > kMaximumTransferBytes) {
-				result.failure = "Companion reply missing, empty, or over transfer size limit";
+			if (!stream || stream.tellg() <= 0 || !HasAvailableSystemMemory(static_cast<uint64_t>(stream.tellg()))) {
+				result.failure = "Companion reply missing, empty, or insufficient system memory";
 				return result;
 			}
 			stream.seekg(0);
 			const auto root = json::parse(stream);
+			result.residencyReason = root.value("residencyReason", std::string{}).substr(0, 320);
 			if (const auto entry = root.find("failure"); entry != root.end() && entry->is_string()) {
 				result.failure = entry->get<std::string>().substr(0, 320);
 				if (!result.failure.empty())
 					return result;
 			}
 			if (root.at("version").get<uint32_t>() != 1 ||
-				!root.at("shapes").is_array() || root.at("shapes").size() > 384 ||
+				!root.at("shapes").is_array() ||
 				!root.at("lights").is_array() || root.at("lights").size() > kMaxPreparedLights) {
 				result.failure = "Companion reply schema/shape/light-count invalid";
 				return result;
 			}
 			auto& publication = result.publication;
-			constexpr uint64_t kMaximumTileBytes = 64ull * 1024 * 1024;
 			std::unordered_set<uint64_t> identities;
 			publication.eligibleShapes = root.at("eligibleShapes").get<uint32_t>();
 			publication.failedShapes = root.at("failedShapes").get<uint32_t>();
 			publication.enumerationComplete = root.at("enumerationComplete").get<bool>();
+			publication.wholeCell = root.value("wholeCell", false);
+			publication.spatialBoundsComplete = root.value("spatialBoundsComplete", false);
+			if (publication.wholeCell) {
+				result.scopePlugin = root.at("scopePlugin").get<std::string>();
+				result.scopeLocal = root.at("scopeLocal").get<uint32_t>();
+				const auto x = root.at("centerX").get<int64_t>();
+				const auto y = root.at("centerY").get<int64_t>();
+				if (result.scopePlugin.empty() || result.scopePlugin.size() > 128 || !result.scopeLocal ||
+					x < -1000000 || x > 1000000 || y < -1000000 || y > 1000000 ||
+					(!task.preloadLastSave && (!task.consolidate || task.worldspace ||
+					 result.scopePlugin != task.scopePlugin || result.scopeLocal != task.localScopeID ||
+					 x != task.key.x || y != task.key.y)))
+					throw std::invalid_argument("Invalid whole-cell scope");
+				publication.key.x = x;
+				publication.key.y = y;
+			}
 			// The companion reports only bounded reason counts; never write per-mesh logs.
 			if (const auto reasons = root.find("rejectionReasons");
 				reasons != root.end() && reasons->is_object()) {
@@ -417,8 +487,6 @@ namespace DX12
 			// are identifiers, not authorization to load arbitrary paths or trust triangles.
 			if (const auto nifSources = root.find("nifSources");
 				nifSources != root.end() && nifSources->is_array()) {
-				if (nifSources->size() > 4096)
-					throw std::invalid_argument("Companion NIF source manifest exceeds limit");
 				for (const auto& item : *nifSources) {
 					NifSourceDescriptor source;
 					source.referencePlugin = item.at("referencePlugin").get<std::string>();
@@ -432,8 +500,6 @@ namespace DX12
 			}
 			if (const auto missing = root.find("missingShapes");
 				missing != root.end() && missing->is_array()) {
-				if (missing->size() > 4096)
-					throw std::invalid_argument("Companion missing NIF manifest exceeds limit");
 				for (const auto& item : *missing) {
 					MissingNifShapeDescriptor source;
 					source.referencePlugin = item.at("referencePlugin").get<std::string>();
@@ -452,7 +518,7 @@ namespace DX12
 				auto shape = std::make_shared<Shape>();
 				shape->identity = item.at("identity").get<uint64_t>();
 				const auto& positions = item.at("positions");
-				if (!positions.is_array() || positions.empty() || positions.size() > 4'000'000)
+				if (!positions.is_array() || positions.empty() || positions.size() > UINT32_MAX)
 					throw std::invalid_argument("Invalid vertex count");
 				shape->positions.reserve(positions.size());
 				for (const auto& entry : positions) {
@@ -469,7 +535,7 @@ namespace DX12
 				                        uint64_t(shape->indices.size()) * sizeof(uint32_t);
 				if (!shape->identity || !identities.insert(shape->identity).second ||
 					shape->indices.empty() || shape->indices.size() % 3 ||
-					length > kMaximumTileBytes - publication.geometryBytes ||
+					length > UINT64_MAX - publication.geometryBytes || !HasAvailableSystemMemory(length) ||
 					!std::ranges::all_of(shape->positions, [](const float3& p) {
 						return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
 					}) ||

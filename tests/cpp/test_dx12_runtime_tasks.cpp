@@ -1,5 +1,6 @@
 #include "Features/DX12/DX12FenceRetirementPolicy.h"
 #include "Features/DX12/SpatialGrid.h"
+#include "Features/DX12/TilePreparationPolicy.h"
 #include "Utils/RuntimeTaskGate.h"
 
 #include <atomic>
@@ -105,4 +106,16 @@ TEST_CASE("DX12 grid sizes and predictive ordering retain their existing contrac
 		CHECK_FALSE(std::ranges::contains(*active, tile));
 		CHECK(std::ranges::count(*predictive, tile) == 1);
 	}
+}
+
+TEST_CASE("DX12 empty tile classification distinguishes failure from completed enumeration", "[dx12][resources]")
+{
+	using DX12::ClassifyTilePreparation;
+	using DX12::TilePreparationOutcome;
+	CHECK(ClassifyTilePreparation(true, true, true, false) == TilePreparationOutcome::Empty);
+	CHECK(ClassifyTilePreparation(true, true, false, false) == TilePreparationOutcome::EmptyPartial);
+	CHECK(ClassifyTilePreparation(true, false, false, false) == TilePreparationOutcome::Retry);
+	CHECK(ClassifyTilePreparation(false, true, true, false) == TilePreparationOutcome::Retry);
+	CHECK(ClassifyTilePreparation(true, true, false, true) == TilePreparationOutcome::Partial);
+	CHECK(ClassifyTilePreparation(true, true, true, true) == TilePreparationOutcome::Ready);
 }

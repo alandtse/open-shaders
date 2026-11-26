@@ -6997,5 +6997,18 @@
     "ui.vr.color_coding_primary": "Yellow = Primary controller",
     "ui.vr.color_coding_secondary": "Blue = Secondary controller",
     "ui.vr.primary_controller": "(Primary Controller)",
-    "ui.vr.secondary_controller": "(Secondary Controller)"
+    "ui.vr.secondary_controller": "(Secondary Controller)",
+    "menu.dx12.resources.status.empty": "Confirmed empty",
+    "menu.dx12.resources.status.empty_partial": "No prepared content (incomplete coverage)",
+    "menu.dx12.resources.empty_counts": "Confirmed empty: %zu | Incomplete empty: %zu",
+    "menu.dx12.resources.consolidate_interior": "Consolidate small interior cells",
+    "menu.dx12.resources.preload_last_save": "Prepare last-save cell at main menu",
+    "menu.dx12.resources.startup_pending": "Main-menu preparation in progress",
+    "menu.dx12.resources.preloaded": "Last-save cell prepared in memory",
+    "menu.dx12.resources.publication_valid": "Companion publication: valid",
+    "menu.dx12.resources.publication_invalid": "Companion publication: invalid",
+    "menu.dx12.resources.publication_unavailable": "Companion publication: unavailable",
+    "menu.dx12.resources.publication_pending": "Companion publication: not received",
+    "menu.dx12.resources.whole_cell": "Whole-cell residency (subdivisions bypassed)",
+    "menu.dx12.resources.whole_cell_counts": "Shapes: %zu | Lights: %zu"
 }

@@ -17,6 +17,7 @@ namespace DX12Native
 		std::shared_ptr<const DX12::Grid> pending;
 		std::shared_ptr<Util::RuntimeTaskGate> taskGate;
 		std::atomic<std::shared_ptr<const TopLevel>> published{};
+		std::atomic<uint64_t> budgetDeferredRevision{ UINT64_MAX };
 		winrt::com_ptr<ID3D11Device> device;
 		winrt::com_ptr<ID3D11DeviceContext> context;
 		uint64_t epoch = 0;
@@ -80,6 +81,7 @@ namespace DX12Native
 					current->published.store(nullptr, std::memory_order_release);
 				current->lastScope = scope;
 				current->lastRevision = a_grid->geometryRevision;
+				current->budgetDeferredRevision.store(UINT64_MAX, std::memory_order_release);
 				current->pending = std::move(a_grid);
 				++current->epoch;
 			}
@@ -95,6 +97,7 @@ namespace DX12Native
 		{
 			std::scoped_lock lock(current->mutex);
 			current->lastScope = 0;
+			current->budgetDeferredRevision.store(UINT64_MAX, std::memory_order_release);
 			current->lastRevision = std::numeric_limits<uint64_t>::max();
 			current->pending.reset();
 			current->published.store(nullptr, std::memory_order_release);
@@ -121,6 +124,12 @@ namespace DX12Native
 	{
 		auto current = state.load(std::memory_order_acquire);
 		return current ? current->published.load(std::memory_order_acquire) : nullptr;
+	}
+
+	bool AccelerationWorker::WholeCellBudgetDeferred(uint64_t revision) const
+	{
+		const auto current = state.load(std::memory_order_acquire);
+		return current && current->budgetDeferredRevision.load(std::memory_order_acquire) == revision;
 	}
 
 	void AccelerationWorker::TrySchedule(const std::shared_ptr<State>& a_state)
@@ -155,6 +164,7 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12Fence> waitFence;
 		uint64_t waitValue = 0;
 		bool needsAdvance = false;
+		uint64_t deferredRevision = UINT64_MAX;
 		std::string failure;
 
 		try {
@@ -199,6 +209,8 @@ namespace DX12Native
 			if (a_state->acceleration && failure.empty()) {
 				auto& acceleration = *a_state->acceleration;
 				acceleration.Advance(a_state->inputs);
+				if (acceleration.BudgetDeferred() && a_state->inputs && a_state->inputs->residency && a_state->inputs->residency->wholeCell)
+					deferredRevision = a_state->inputs->geometryRevision;
 				completed = acceleration.GetScene();
 				failure = acceleration.Failure();
 				needsAdvance = (a_state->inputs && !completed) || acceleration.HasPendingBuilds();
@@ -227,6 +239,8 @@ namespace DX12Native
 			a_state->waitReady = false;
 		}
 		if (!a_state->closing && epoch == a_state->epoch) {
+			if (deferredRevision != UINT64_MAX)
+				a_state->budgetDeferredRevision.store(deferredRevision, std::memory_order_release);
 			if (!failure.empty()) {
 				a_state->failure = std::move(failure);
 				a_state->published.store(nullptr, std::memory_order_release);

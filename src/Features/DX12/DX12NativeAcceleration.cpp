@@ -1,5 +1,7 @@
 #include "DX12NativeAcceleration.h"
+#include "DX12CasterCoverage.h"
 #include "DX12GpuRetirement.h"
+#include "VideoMemoryBudget.h"
 #include "Utils/TracyZones.h"
 
 #include <algorithm>
@@ -16,6 +18,7 @@ namespace DX12Native
 	namespace
 	{
 		constexpr uint32_t kMaximumInstances = (1u << 24u) - 1u;
+		struct AllocationDeferred {};
 
 	}
 
@@ -98,6 +101,11 @@ namespace DX12Native
 		const auto heap = CD3DX12_HEAP_PROPERTIES(a_heap);
 		const auto flags = a_heap == D3D12_HEAP_TYPE_DEFAULT ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE;
 		const auto desc = CD3DX12_RESOURCE_DESC::Buffer(a_size, flags);
+		const uint64_t bytes = device->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
+		if (!bytes || bytes == UINT64_MAX)
+			throw std::runtime_error("Invalid native acceleration allocation");
+		if (bytes > videoBudget.Query(device.get(), 0).effectiveBytes)
+			throw AllocationDeferred{};
 		winrt::com_ptr<ID3D12Resource> resource;
 		DX::ThrowIfFailed(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, a_state, nullptr, IID_PPV_ARGS(resource.put())));
 		resource->SetName(a_name);
@@ -199,6 +207,7 @@ namespace DX12Native
 		top->producerFence = completion;
 		instances.reserve(target->geometry.size());
 		top->bottoms.reserve(target->geometry.size());
+		top->casterCoverage.reserve(target->geometry.size());
 
 		for (const auto& input : target->geometry) {
 			const auto found = bottoms.find(input->identity);
@@ -212,6 +221,9 @@ namespace DX12Native
 			desc.AccelerationStructure = found->second->acceleration->GetGPUVirtualAddress();
 			instances.push_back(desc);
 			top->bottoms.push_back(found->second);
+			const auto key = CasterCoverageKey(input->positions.size(), input->indices.size());
+			if (key)
+				top->casterCoverage.emplace(key, input.get());
 		}
 
 		const uint64_t bytes = uint64_t(instances.size()) * sizeof(instances.front());
@@ -293,6 +305,7 @@ namespace DX12Native
 
 	void AccelerationScene::Advance(std::shared_ptr<const SceneInputs> a_inputs)
 	{
+		budgetDeferred = false;
 		if (!completion || !failure.empty())
 			return;
 		Retire();
@@ -351,6 +364,10 @@ namespace DX12Native
 				if (!BuildTop(*available))
 					*available = {};
 			}
+		} catch (const AllocationDeferred&) {
+			budgetDeferred = true;
+			if (!available->fence)
+				*available = {};
 		} catch (const std::exception& error) {
 			failure = error.what();
 			if (!available->fence)

@@ -6,6 +6,8 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "RE/T/TESObjectCELL.h"
+#include "RE/M/MainMenu.h"
+#include "RE/U/UI.h"
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
@@ -105,6 +107,8 @@ void DX12NativeScene::RestoreDefaultSettings()
 
 bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
 {
+	if (globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))
+		return false;
 	const auto* cell = Util::GetPlayerCell();
 	return cell && (!cell->IsExteriorCell() || outdoorShadowOffloading);
 }
@@ -238,12 +242,25 @@ bool DX12NativeScene::WantsRenderPassHook() const
 bool DX12NativeScene::WantsPreShadowMapsHook() const { return WantsRenderPassHook(); }
 bool DX12NativeScene::WantsOpaqueRasterReadyHook() const { return WantsRenderPassHook(); }
 
+void DX12NativeScene::PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid)
+{
+	if (!grid || !grid->wholeCell || !globals::features::dx12Control.IsActive() ||
+		!globals::d3d::device || !globals::d3d::context)
+		return;
+	nativeSessionStarted = true;
+	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
+		acceleration.Request(std::move(grid));
+}
+
 void DX12NativeScene::PreShadowMaps()
 {
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive()) {
 		OnRuntimeDisabled();
 		return;
 	}
+	if (!globals::state || !globals::state->startupMenuInitializationComplete.load(std::memory_order_acquire) ||
+		(globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME)))
+		return;
 	nativeSessionStarted = true;
 	auto grid = globals::features::dx12Resources.GetGrid();
 	if (!grid || !grid->requested.front().scope) {
@@ -419,7 +436,8 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 		}
 		raster.Reset();
 		shadows.Reset();
-		acceleration.Reset();
+		if (!globals::features::dx12Resources.HasMenuPreload())
+			acceleration.Reset();
 		geometryCapture.Reset();
 	}
 }

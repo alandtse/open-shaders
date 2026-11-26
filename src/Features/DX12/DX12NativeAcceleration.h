@@ -2,6 +2,7 @@
 
 #include "DX12NativeSceneInputs.h"
 #include "GraphicsBackend.h"
+#include "VideoMemoryBudget.h"
 
 #include <array>
 #include <atomic>
@@ -23,6 +24,7 @@ namespace DX12Native
 	{
 		std::shared_ptr<const SceneInputs> inputs;
 		std::vector<std::shared_ptr<const BottomLevel>> bottoms;
+		std::unordered_multimap<uint64_t, const DX12::Shape*> casterCoverage;
 		winrt::com_ptr<ID3D12Resource> acceleration;
 		winrt::com_ptr<ID3D12Fence> producerFence;
 		uint64_t producerValue = 0;
@@ -53,6 +55,7 @@ namespace DX12Native
 		}
 		/** @brief Reports an actual DX12 creation or submission error. */
 		const std::string& Failure() const { return failure; }
+		bool BudgetDeferred() const { return budgetDeferred; }
 
 	private:
 		/** @brief Only the serialized acceleration task may allocate or submit native AS work. */
@@ -77,6 +80,7 @@ namespace DX12Native
 		bool HasPendingBottom(uint64_t a_identity, const DX12::Shape* a_shape) const;
 
 		GraphicsBackend backend;
+		mutable VideoMemoryBudget videoBudget;
 		winrt::com_ptr<ID3D12Device5> device;
 		winrt::com_ptr<ID3D12Fence> completion;
 		std::array<Build, 2> builds;
@@ -87,6 +91,7 @@ namespace DX12Native
 		uint64_t targetRevision = 0;
 		uint32_t targetScope = 0;
 		std::string failure;
+		bool budgetDeferred = false;
 	};
 
 	/** @brief Task coordinator using the shared CPU pool. Snapshot delivery and completed-TLAS consumption never build on the caller. */
@@ -108,6 +113,8 @@ namespace DX12Native
 		void Stop();
 		/** @brief Acquires the most recent completed immutable scene, never waiting for a build. */
 		std::shared_ptr<const TopLevel> GetScene() const;
+		/** @brief True when the matching whole-cell build exceeded available DXGI budget. */
+		bool WholeCellBudgetDeferred(uint64_t revision) const;
 
 	private:
 		struct State;

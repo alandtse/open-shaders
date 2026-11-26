@@ -1,9 +1,14 @@
 #include "DX12Resources.h"
+#include "TilePreparationPolicy.h"
 
 #include "CompanionWorker.h"
 #include "DX12Control.h"
+#include "DX12NativeScene.h"
+#include "RE/M/MainMenu.h"
+#include "RE/U/UI.h"
 #include "Globals.h"
 #include "GpuPass.h"
+#include "State.h"
 #include "RE/T/TESDataHandler.h"
 #include "RE/T/TESWorldSpace.h"
 #include "Utils/Game.h"
@@ -18,7 +23,6 @@
 
 namespace DX12
 {
-	constexpr uint64_t kPredictiveTileBudgetBytes = 12ull * 1024 * 1024;
 	constexpr size_t kRetiredTileLimit = 32;
 	constexpr unsigned kPreparationAttemptLimit = 3;
 	constexpr uint32_t kFirstRetryDelayMs = 500;
@@ -49,6 +53,8 @@ namespace DX12
 		previousScope = scope;
 		previousSize = size;
 		const auto current = snapshot.load(std::memory_order_acquire);
+		if (current->wholeCell && current->requested.front().scope == scope && current->size == size)
+			return;
 		if (current->requested == *desired && current->size == size)
 			return;
 		auto next = std::make_shared<Grid>();
@@ -60,7 +66,7 @@ namespace DX12
 		// remains in the same center subcell. A center transition starts a new
 		// bounded retry window for those same neighboring keys.
 		const bool playerChangedSubcell = current->requested.front() != next->requested.front();
-		if (current->size == size) {
+		if (current->size == size && !current->wholeCell) {
 			const auto lookup = [&](SubcellKey key) -> std::shared_ptr<const Tile> {
 				for (const auto& old : current->resident)
 					if (old && old->key == key)
@@ -87,26 +93,10 @@ namespace DX12
 			for (size_t i = 0; i < kGridCapacity; ++i) {
 				next->resident[i] = lookup(next->requested[i]);
 				resetFailedAfterMove(next->resident[i]);
-				if (next->resident[i] && next->resident[i]->state == Tile::State::Deferred) {
-					// A CPU-budgeted speculative tile is re-requested at full quality on active promotion.
-					auto promoted = std::make_shared<Tile>(*next->resident[i]);
-					promoted->state = Tile::State::Requested;
-					next->resident[i] = std::move(promoted);
-				}
 			}
 			for (size_t i = 0; i < kPredictiveCapacity; ++i) {
 				auto tile = lookup(next->predictive[i]);
 				resetFailedAfterMove(tile);
-				if (tile && (tile->state == Tile::State::Ready || tile->state == Tile::State::ReadyPartial) &&
-					tile->bytes > kPredictiveTileBudgetBytes) {
-					// Moving from active residency must respect the same 12 MiB per-tile cap
-					// as fresh predictive publications. Keep prepared lights available.
-					auto deferred = std::make_shared<Tile>(*tile);
-					deferred->shapes.clear();
-					deferred->bytes = 0;
-					deferred->state = Tile::State::Deferred;
-					tile = std::move(deferred);
-				}
 				next->predictiveResident[i] = std::move(tile);
 			}
 			// Runtime-only geometry follows the active neighborhood. Prune tiles
@@ -119,9 +109,10 @@ namespace DX12
 		}
 		// Keep recently retired immutable cell publications in bounded DRAM.
 		// A -> B -> A must not repeat companion processing.
-		if (current->size == size) {
+		if (current->size == size && !current->wholeCell) {
 			const auto retain = [&](const auto& tile) {
-				if (!tile || (tile->state != Tile::State::Ready && tile->state != Tile::State::ReadyPartial))
+				if (!tile || (tile->state != Tile::State::Ready && tile->state != Tile::State::ReadyPartial &&
+					tile->state != Tile::State::Empty && tile->state != Tile::State::EmptyPartial))
 					return;
 				if (std::ranges::contains(next->requested, tile->key) || std::ranges::contains(next->predictive, tile->key))
 					return;
@@ -145,7 +136,7 @@ namespace DX12
 			return std::nullopt;
 		const auto current = snapshot.load(std::memory_order_acquire);
 		const auto center = current->requested.front();
-		if (!center.scope)
+		if (!center.scope || current->wholeCell)
 			return std::nullopt;
 
 		// Sample QPC at most once, and only if a candidate is waiting for retry.
@@ -231,6 +222,7 @@ namespace DX12
 		                          current->resident[std::distance(current->requested.begin(), active)] :
 		                          current->predictiveResident[std::distance(current->predictive.begin(), predictive)];
 		tile->preparationAttempts = static_cast<uint8_t>(std::min<unsigned>(existing ? unsigned(existing->preparationAttempts) + 1 : 1u, kPreparationAttemptLimit));
+		tile->companionValidated = publication.validated;
 		tile->failureReason = std::move(publication.failureReason);
 		tile->rejectionReasons = std::move(publication.rejectionReasons);
 		tile->nifSources = std::move(publication.nifSources);
@@ -243,10 +235,19 @@ namespace DX12
 		const bool complete = publication.validated && publication.enumerationComplete &&
 		                      publication.failedShapes == 0 && publication.rejectedLights == 0 &&
 		                      publication.eligibleShapes == tile->shapes.size();
-		if (publication.validated && (complete || !tile->shapes.empty() || !tile->lights.empty())) {
-			// Partial geometry is usable but does not certify complete static-shadow coverage.
-			tile->state = complete ? Tile::State::Ready : Tile::State::ReadyPartial;
-		} else {
+		const bool hasContent = !tile->shapes.empty() || !tile->lights.empty();
+		const bool consolidate = publication.wholeCell && publication.validated;
+		const auto outcome = ClassifyTilePreparation(publication.validated &&
+			(!publication.wholeCell || consolidate), publication.enumerationComplete || consolidate, complete, hasContent);
+		if (outcome == TilePreparationOutcome::Ready)
+			tile->state = Tile::State::Ready;
+		else if (outcome == TilePreparationOutcome::Partial)
+			tile->state = Tile::State::ReadyPartial;
+		else if (outcome == TilePreparationOutcome::Empty)
+			tile->state = Tile::State::Empty;
+		else if (outcome == TilePreparationOutcome::EmptyPartial)
+			tile->state = Tile::State::EmptyPartial;
+		else {
 			// Malformed or empty-incomplete companion payloads must not claim native scene readiness.
 			tile->shapes.clear();
 			tile->lights.clear();
@@ -260,17 +261,20 @@ namespace DX12
 			}
 		}
 		auto next = std::make_shared<Grid>(*current);
-		if (active != current->requested.end()) {
+		if (consolidate && active != current->requested.end()) {
+			next->wholeCell = true;
+			next->requested = {};
+			next->predictive = {};
+			next->resident = {};
+			next->predictiveResident = {};
+			next->requested.front() = tile->key;
+			next->resident.front() = std::move(tile);
 			++next->geometryRevision;
+		} else if (active != current->requested.end()) {
+			if (!tile->shapes.empty() || (existing && !existing->shapes.empty()))
+				++next->geometryRevision;
 			next->resident[std::distance(current->requested.begin(), active)] = std::move(tile);
 		} else {
-			// Sixteen predictive tiles have a strict combined 192 MiB CPU geometry allowance
-			// (12 MiB per tile), independent of active GPU scene residency.
-			if (tile->bytes > kPredictiveTileBudgetBytes) {
-				tile->shapes.clear();
-				tile->bytes = 0;
-				tile->state = Tile::State::Deferred;
-			}
 			// A ready predictive emitter can cast toward visible receivers even when
 			// the emitter is off-screen. Update lights, never BLAS/TLAS for this tile.
 			next->predictiveResident[std::distance(current->predictive.begin(), predictive)] = std::move(tile);
@@ -281,17 +285,12 @@ namespace DX12
 
 	bool ResourceGrid::PublishRuntimeShape(std::shared_ptr<const Shape> shape, float centerX, float centerY, uint32_t expectedScope)
 	{
-		// Larger interior furniture and room pieces often exceed 256 KiB.
-		// Keep the whole runtime supplement transient and strictly budgeted.
-		constexpr size_t kMaximumRuntimeShapes = 384;
-		constexpr uint64_t kMaximumRuntimeBytes = 64ull * 1024 * 1024;
-		constexpr uint64_t kMaximumSingleShapeBytes = 1024ull * 1024;
 		if (!shape || !shape->identity || shape->positions.empty() || shape->indices.empty() ||
 			shape->indices.size() % 3)
 			return false;
 		const uint64_t shapeBytes = uint64_t(shape->positions.size()) * sizeof(float3) +
 		                            uint64_t(shape->indices.size()) * sizeof(uint32_t);
-		if (!shapeBytes || shapeBytes > kMaximumSingleShapeBytes)
+		if (!shapeBytes)
 			return false;
 		std::scoped_lock lock(mutex);
 		const auto current = snapshot.load(std::memory_order_acquire);
@@ -302,7 +301,7 @@ namespace DX12
 		if (!x || !y)
 			return false;
 		const SubcellKey key{ current->requested.front().scope, *x, *y };
-		if (!std::ranges::contains(current->requested, key))
+		if (!current->wholeCell && !std::ranges::contains(current->requested, key))
 			return false;
 		if (std::ranges::any_of(current->runtimeShapes, [&](const RuntimeShape& item) {
 				return item.shape && item.shape->identity == shape->identity;
@@ -319,8 +318,7 @@ namespace DX12
 				return true;
 			});
 		}
-		if (next->runtimeShapes.size() >= kMaximumRuntimeShapes ||
-			shapeBytes > kMaximumRuntimeBytes - next->runtimeBytes)
+		if (shapeBytes > UINT64_MAX - next->runtimeBytes)
 			return false;
 		next->runtimeShapes.push_back({ key, std::move(shape), shapeBytes });
 		next->runtimeBytes += shapeBytes;
@@ -420,10 +418,11 @@ namespace
 			result[*magic_enum::enum_index(State::Requested)] = [] { return T("menu.dx12.resources.status.not_processed", "Not processed"); };
 			result[*magic_enum::enum_index(State::Preparing)] = [] { return T("menu.dx12.resources.status.processing", "Processing"); };
 			result[*magic_enum::enum_index(State::Ready)] = [] { return T("menu.dx12.resources.status.loaded", "Loaded"); };
+			result[*magic_enum::enum_index(State::Empty)] = [] { return T("menu.dx12.resources.status.empty", "Confirmed empty"); };
+			result[*magic_enum::enum_index(State::EmptyPartial)] = [] { return T("menu.dx12.resources.status.empty_partial", "No prepared content (incomplete coverage)"); };
 			result[*magic_enum::enum_index(State::ReadyPartial)] = [] { return T("menu.dx12.resources.status.partially_loaded", "Partially loaded"); };
 			result[*magic_enum::enum_index(State::RetryWaiting)] = [] { return T("menu.dx12.resources.status.retry_pending", "Failed (retry pending)"); };
 			result[*magic_enum::enum_index(State::Incomplete)] = [] { return T("menu.dx12.resources.status.retry_exhausted", "Skipped (retry exhausted)"); };
-			result[*magic_enum::enum_index(State::Deferred)] = [] { return T("menu.dx12.resources.status.predictive_budget", "Skipped (predictive budget)"); };
 			return result;
 		}();
 		static_assert(std::ranges::all_of(labels, [](Label label) { return label != nullptr; }));
@@ -440,13 +439,14 @@ namespace
 			return active ? SubcellMapStyle::activeReady : SubcellMapStyle::predictiveReady;
 		case DX12::Tile::State::ReadyPartial:
 			return active ? SubcellMapStyle::activePartial : SubcellMapStyle::predictivePartial;
+		case DX12::Tile::State::Empty:
+		case DX12::Tile::State::EmptyPartial:
+			return SubcellMapStyle::waiting;
 		case DX12::Tile::State::Preparing:
 			return SubcellMapStyle::preparing;
 		case DX12::Tile::State::RetryWaiting:
 			return SubcellMapStyle::retryWaiting;
 		case DX12::Tile::State::Incomplete:
-			return SubcellMapStyle::skipped;
-		case DX12::Tile::State::Deferred:
 			return SubcellMapStyle::skipped;
 		case DX12::Tile::State::Requested:
 			return SubcellMapStyle::waiting;
@@ -491,10 +491,14 @@ namespace
 				draw->AddRectFilled(p0, p1, TileColor(tile, active), SubcellMapStyle::rounding);
 				draw->AddRect(p0, p1, active ? SubcellMapStyle::activeOutline : SubcellMapStyle::predictiveOutline, SubcellMapStyle::rounding, 0,
 					active ? SubcellMapStyle::activeOutlineWidth : SubcellMapStyle::predictiveOutlineWidth);
-				if (tile && tile->state == DX12::Tile::State::ReadyPartial) {
+				if (tile && (tile->state == DX12::Tile::State::ReadyPartial || tile->state == DX12::Tile::State::EmptyPartial)) {
 					// A diagonal distinguishes partially processed cells without hiding the zone color.
 					draw->AddLine(ImVec2(p0.x + SubcellMapStyle::stripeInset, p1.y - SubcellMapStyle::stripeInset),
 						ImVec2(p1.x - SubcellMapStyle::stripeInset, p0.y + SubcellMapStyle::stripeInset), SubcellMapStyle::partialStripe, SubcellMapStyle::stripeWidth);
+				}
+				if (tile && tile->state == DX12::Tile::State::Empty) {
+					const ImVec2 marker{ (p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f };
+					draw->AddCircle(marker, SubcellMapStyle::playerRadius, SubcellMapStyle::playerOutline);
 				}
 				if (col == DX12::kPredictiveRadius && row == DX12::kPredictiveRadius) {
 					const ImVec2 marker{ (p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f };
@@ -517,6 +521,8 @@ namespace
 				ImGui::BeginTooltip();
 				ImGui::Text(T("menu.dx12.resources.tooltip.subcell", "%s subcell (%lld, %lld): %s"), active ? T("menu.dx12.resources.active", "Active") : T("menu.dx12.resources.predictive", "Predictive"),
 					static_cast<long long>(key.x), static_cast<long long>(key.y), TileStatus(tile));
+				if (tile && tile->preparationAttempts)
+					ImGui::Text("%s", tile->companionValidated ? T("menu.dx12.resources.publication_valid", "Companion publication: valid") : T("menu.dx12.resources.publication_invalid", "Companion publication: invalid"));
 				if (tile && tile->preparationAttempts)
 					ImGui::Text(T("menu.dx12.resources.tooltip.attempts", "Attempts: %u / 3"), unsigned(tile->preparationAttempts));
 				if (tile && (!tile->nifSources.empty() || !tile->missingShapes.empty()))
@@ -543,16 +549,20 @@ DX12Resources::~DX12Resources() = default;
 
 void DX12Resources::ResetPreparation()
 {
-	if (!preparationActive)
+	if (!preparationActive && !startupPending)
 		return;
 	// A new subcell size or world-scene epoch invalidates the grid and all
 	// companion work. Keep this off the normal settings-load path when unchanged.
 	if (companion)
 		companion->Cancel();
+	startupPending = false;
+	latestPublication.store(nullptr, std::memory_order_release);
 	inFlight.reset();
 	adopting.reset();
 	lightAdoptionOffset = 0;
 	grid.Clear();
+	menuPreloaded = false;
+	consolidationAttemptScope = 0;
 	lastVisitedCell = previousVisitedCell = distinctTransitions = 0;
 	generationStats.store(std::make_shared<const DX12::PreparationStats>(), std::memory_order_release);
 }
@@ -579,22 +589,54 @@ void DX12Resources::DrawSettings()
 		}
 	}
 
+	ImGui::Checkbox(T("menu.dx12.resources.preload_last_save", "Prepare last-save cell at main menu"), &settings.PreloadLastSave);
+	if (ImGui::Checkbox(T("menu.dx12.resources.consolidate_interior", "Consolidate small interior cells"), &settings.ConsolidateInterior))
+		ResetPreparation();
+	if (startupPending)
+		ImGui::TextDisabled("%s", T("menu.dx12.resources.startup_pending", "Main-menu preparation in progress"));
+	if (menuPreloaded)
+		ImGui::TextDisabled("%s", T("menu.dx12.resources.preloaded", "Last-save cell prepared in memory"));
+	if (const auto status = latestPublication.load(std::memory_order_acquire)) {
+		const char* label = status->state == PublicationState::Valid ?
+			T("menu.dx12.resources.publication_valid", "Companion publication: valid") :
+			status->state == PublicationState::Invalid ?
+			T("menu.dx12.resources.publication_invalid", "Companion publication: invalid") :
+			T("menu.dx12.resources.publication_unavailable", "Companion publication: unavailable");
+		ImGui::TextUnformatted(label);
+		if (!status->detail.empty())
+			ImGui::TextWrapped("%s", status->detail.c_str());
+	} else {
+		ImGui::TextDisabled("%s", T("menu.dx12.resources.publication_pending", "Companion publication: not received"));
+	}
 	ImGui::SeparatorText(T("menu.dx12.resources.subcell_status", "Subcell status (5x5)"));
 	const auto snapshot = GetGrid();
 	const auto timing = GetPreparationStats();
+	if (snapshot && snapshot->wholeCell) {
+		ImGui::Text("%s", T("menu.dx12.resources.whole_cell", "Whole-cell residency (subdivisions bypassed)"));
+		if (const auto& tile = snapshot->resident.front()) {
+			ImGui::Text(T("menu.dx12.resources.whole_cell_counts", "Shapes: %zu | Lights: %zu"), tile->shapes.size(), tile->lights.size());
+			ImGui::Text("%s", TileStatus(tile));
+			if (!tile->failureReason.empty())
+				ImGui::TextWrapped("%s", tile->failureReason.c_str());
+		}
+		return;
+	}
 
 	const auto drawSubcellDetails = [&]() {
 		if (snapshot) {
-			size_t activeLoaded = 0, predictiveLoaded = 0;
+			size_t activeLoaded = 0, predictiveLoaded = 0, empty = 0, emptyPartial = 0;
 			const auto classify = [&](const auto& tile, bool active) {
 				if (tile && (tile->state == DX12::Tile::State::Ready || tile->state == DX12::Tile::State::ReadyPartial))
 					(active ? activeLoaded : predictiveLoaded)++;
+				if (tile && tile->state == DX12::Tile::State::Empty) ++empty;
+				if (tile && tile->state == DX12::Tile::State::EmptyPartial) ++emptyPartial;
 			};
 			for (const auto& tile : snapshot->resident)
 				classify(tile, true);
 			for (const auto& tile : snapshot->predictiveResident)
 				classify(tile, false);
 			ImGui::Text(T("menu.dx12.resources.loaded_counts", "Loaded: active %zu / 9, predictive %zu / 16"), activeLoaded, predictiveLoaded);
+			ImGui::Text(T("menu.dx12.resources.empty_counts", "Confirmed empty: %zu | Incomplete empty: %zu"), empty, emptyPartial);
 		}
 		ImGui::TextColored(SubcellMapStyle::activeLegend, T("menu.dx12.resources.legend.yellow", "Yellow: loaded 3x3"));
 		ImGui::TextColored(SubcellMapStyle::predictiveLegend, T("menu.dx12.resources.legend.light_blue", "Light blue: loaded predictive ring"));
@@ -659,24 +701,133 @@ void DX12Resources::LoadSettings(json& input)
 	const uint32_t selected = std::ranges::contains(DX12::kSubcellSizes, requested) ?
 	                              requested :
 	                              DX12::kSubcellSizes.front();
-	if (settings.SubcellSize != selected) {
+	const bool consolidate = input.value("ConsolidateInterior", true);
+	settings.PreloadLastSave = input.value("PreloadLastSave", true);
+	if (settings.SubcellSize != selected || settings.ConsolidateInterior != consolidate) {
 		settings.SubcellSize = selected;
+		settings.ConsolidateInterior = consolidate;
 		ResetPreparation();
 	}
 }
 
 void DX12Resources::SaveSettings(json& output)
 {
-	output = { { "SubcellSize", settings.SubcellSize } };
+	output = { { "SubcellSize", settings.SubcellSize }, { "PreloadLastSave", settings.PreloadLastSave }, { "ConsolidateInterior", settings.ConsolidateInterior } };
 }
 
 void DX12Resources::RestoreDefaultSettings()
 {
 	const uint32_t defaultSize = DX12::kSubcellSizes.front();
-	if (settings.SubcellSize != defaultSize) {
+	settings.PreloadLastSave = true;
+	if (settings.SubcellSize != defaultSize || !settings.ConsolidateInterior) {
 		settings.SubcellSize = defaultSize;
+		settings.ConsolidateInterior = true;
 		ResetPreparation();
 	}
+}
+
+void DX12Resources::EnsureCompanion(bool menuStartup)
+{
+	std::call_once(companionStart, [this, menuStartup] {
+		companion = std::make_unique<DX12::CompanionWorker>();
+		if (menuStartup) {
+			DX12::CompanionRequest task;
+			task.preloadLastSave = settings.PreloadLastSave && settings.ConsolidateInterior;
+			task.warmup = !task.preloadLastSave;
+			task.size = settings.SubcellSize;
+			startupPending = companion->Enqueue(std::move(task));
+		}
+		companionStarted.store(true, std::memory_order_release);
+		if (!IsActive())
+			companion->Stop();
+	});
+}
+
+
+void DX12Resources::RecordPublication(PublicationState state, std::string detail)
+{
+	latestPublication.store(std::make_shared<const PublicationStatus>(PublicationStatus{ state, std::move(detail) }),
+		std::memory_order_release);
+}
+
+void DX12Resources::PollStartup(uint32_t gameplayScope)
+{
+	if (!startupPending || !companion)
+		return;
+	auto result = companion->Take();
+	if (!result) {
+		if (gameplayScope) {
+			companion->CancelStartup();
+			startupPending = false;
+		}
+		return;
+	}
+	startupPending = false;
+	if (gameplayScope)
+		companion->CancelStartup();
+	if (!result->startup)
+		return;
+	if (!result->failure.empty() && !result->publication.validated) {
+		RecordPublication(PublicationState::Invalid, result->failure);
+		logger::warn("[DX12Resources] Startup preparation failed: {}", result->failure);
+		return;
+	}
+	auto& publication = result->publication;
+	if (!result->preload)
+		return;
+	if (!settings.PreloadLastSave || !settings.ConsolidateInterior ||
+		result->size != settings.SubcellSize || !publication.wholeCell || !publication.validated) {
+		const auto reason = result->residencyReason.empty() ?
+			"No eligible whole-cell publication or settings changed" : result->residencyReason;
+		RecordPublication(publication.validated ? PublicationState::Unavailable : PublicationState::Invalid, reason);
+		logger::info("[DX12Resources] Last-save preload unavailable: {}", reason);
+		return;
+	}
+	auto* handler = RE::TESDataHandler::GetSingleton();
+	const auto* form = handler ? handler->LookupForm(result->scopeLocal, result->scopePlugin) : nullptr;
+	const auto* cell = form ? form->As<RE::TESObjectCELL>() : nullptr;
+	if (!cell || !cell->IsInteriorCell() || (gameplayScope && cell->GetFormID() != gameplayScope)) {
+		RecordPublication(PublicationState::Unavailable, "Preloaded CELL does not match the current runtime scope");
+		return;
+	}
+	publication.key.scope = cell->GetFormID();
+	for (auto& record : result->lights) {
+		const auto* reference = handler->LookupForm(record.referenceLocal, record.referencePlugin);
+		const auto* base = handler->LookupForm(record.baseLocal, record.basePlugin);
+		if (!reference || !base) {
+			++publication.rejectedLights;
+			continue;
+		}
+		record.value.referenceID = reference->GetFormID();
+		publication.lights.push_back(record.value);
+	}
+	publication.failureReason = result->failure;
+	const auto key = publication.key;
+	grid.Advance(key.scope, result->size, double(key.x) * result->size, double(key.y) * result->size);
+	const auto request = grid.NextRequest();
+	if (!request || *request != key) {
+		RecordPublication(PublicationState::Unavailable, "Preloaded grid request no longer matches");
+		return;
+	}
+	if (grid.Publish(std::move(publication))) {
+		RecordPublication(PublicationState::Valid, result->residencyReason);
+		preparationActive = true;
+		menuPreloaded = !gameplayScope;
+		consolidationAttemptScope = key.scope;
+		logger::info("[DX12Resources] Last-save interior {:08X} prepared", key.scope);
+	}
+}
+
+void DX12Resources::Reset()
+{
+	if (!IsActive() || !globals::state || !globals::state->startupMenuBlurSourceReady ||
+		!globals::game::ui || !globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))
+		return;
+	EnsureCompanion(true);
+	PollStartup();
+	// Only after a completed startup Present; rendering keeps priority.
+	if (menuPreloaded)
+		globals::features::dx12NativeScene.PrepareMenuScene(grid.Snapshot());
 }
 
 bool DX12Resources::WantsPreShadowMapsHook() const { return IsActive(); }
@@ -687,10 +838,14 @@ void DX12Resources::PreShadowMaps()
 		OnRuntimeDisabled();
 		return;
 	}
-	CS_GPU_PASS("DX12Resources::Grid");
+	if (!globals::state || !globals::state->startupMenuInitializationComplete.load(std::memory_order_acquire) ||
+		(globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME)))
+		return;
 	const auto location = Util::GetPlayerSpatialLocation();
 	if (!location)
 		return;
+	CS_GPU_PASS("DX12Resources::Grid");
+	EnsureCompanion(false);
 	const auto* cell = location->cell;
 	const auto* world = location->worldspace;
 	const uint32_t cellID = cell->GetFormID();
@@ -706,12 +861,22 @@ void DX12Resources::PreShadowMaps()
 	if (cellID)
 		lastVisitedCell = cellID;
 	const uint32_t scope = world ? world->GetFormID() : cell->GetFormID();
+	PollStartup(scope);
+	if (!preparationActive || menuPreloaded)
+		companion->CancelStartup();
+	menuPreloaded = false;
+	if (consolidationAttemptScope && consolidationAttemptScope != scope)
+		consolidationAttemptScope = 0;
 	const auto& position = location->position;
+	if (const auto current = grid.Snapshot(); current->wholeCell && current->requested.front().scope == scope &&
+		globals::features::dx12NativeScene.RetireBudgetDeferredWholeCell(current->geometryRevision)) {
+		grid.Clear();
+		consolidationAttemptScope = scope;
+		logger::info("[DX12Resources] Whole-cell GPU budget deferred; returning to subdivisions");
+	}
 	preparationActive = true;
 	grid.Advance(scope, settings.SubcellSize, position.x, position.y);
 	runtimePublicationEnabled.store(true, std::memory_order_release);
-	if (!companion)
-		companion = std::make_unique<DX12::CompanionWorker>();
 	const auto neighborhood = grid.Snapshot();
 	if (inFlight) {
 		const bool stillWanted = std::ranges::contains(neighborhood->requested, *inFlight) ||
@@ -728,11 +893,16 @@ void DX12Resources::PreShadowMaps()
 		}
 	}
 	if (auto result = companion->Take()) {
-		inFlight.reset();
-		adopting = std::make_unique<DX12::CompanionResult>(std::move(*result));
-		adopting->publication.failureReason = adopting->failure.substr(0, 320);
-		adopting->publication.lights.reserve(adopting->lights.size());
-		lightAdoptionOffset = 0;
+		if (!result->publication.key.scope) {
+			if (!result->failure.empty())
+				logger::warn("[DX12Resources] Manifest warmup failed: {}", result->failure);
+		} else {
+			inFlight.reset();
+			adopting = std::make_unique<DX12::CompanionResult>(std::move(*result));
+			adopting->publication.failureReason = adopting->failure.substr(0, 320);
+			adopting->publication.lights.reserve(adopting->lights.size());
+			lightAdoptionOffset = 0;
+		}
 	}
 	if (adopting) {
 		const auto key = adopting->publication.key;
@@ -759,6 +929,7 @@ void DX12Resources::PreShadowMaps()
 				if (!reference || !base) {
 					// This light cannot be matched; it must not invalidate unrelated
 					// geometry or shadow coverage for other successfully resolved lights.
+					++adopting->publication.rejectedLights;
 					continue;
 				}
 				record.value.referenceID = reference->GetFormID();
@@ -768,7 +939,10 @@ void DX12Resources::PreShadowMaps()
 				const bool wasPredictiveRequest = adopting->predictive;
 				const bool wasCornerRequest = adopting->corner;
 				const double elapsedMs = adopting->preparationMs;
+				const bool valid = adopting->publication.validated;
+				const auto reason = !adopting->residencyReason.empty() ? adopting->residencyReason : adopting->failure;
 				if (grid.Publish(std::move(adopting->publication))) {
+					RecordPublication(valid ? PublicationState::Valid : PublicationState::Invalid, reason);
 					// This snapshot only counts accepted, finished worker requests; canceled
 					// and superseded work is not misreported as generated geometry.
 					auto next = std::make_shared<DX12::PreparationStats>(
@@ -805,7 +979,12 @@ void DX12Resources::PreShadowMaps()
 				task.localScopeID = source->GetLocalFormID();
 				task.scopePlugin = file->GetFilename();
 				task.worldspace = world != nullptr;
+				task.consolidate = settings.ConsolidateInterior && !task.worldspace &&
+				                   consolidationAttemptScope != scope && *request == requestedGrid->requested.front();
+				const bool consolidationRequested = task.consolidate;
 				if (companion->Enqueue(std::move(task))) {
+					if (consolidationRequested)
+						consolidationAttemptScope = scope;
 					inFlight = *request;
 					return;
 				}
@@ -819,11 +998,13 @@ void DX12Resources::PreShadowMaps()
 
 void DX12Resources::OnRuntimeDisabled()
 {
-	if (!preparationActive)
-		return;
 	runtimePublicationEnabled.store(false, std::memory_order_release);
-	ResetPreparation();
-	preparationActive = false;
+	if (companionStarted.exchange(false, std::memory_order_acq_rel))
+		companion->Stop();
+	if (preparationActive || startupPending) {
+		ResetPreparation();
+		preparationActive = false;
+	}
 }
 
 std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const
