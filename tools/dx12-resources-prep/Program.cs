@@ -166,7 +166,7 @@ internal sealed record TileResult(uint Version, uint EligibleShapes, uint Failed
     Dictionary<string, uint>? RejectionReasons = null,
     List<TileNifSource>? NifSources = null, List<TileMissingNifShape>? MissingShapes = null,
     bool WholeCell = false, string ScopePlugin = "", uint ScopeLocal = 0, long CenterX = 0, long CenterY = 0,
-    bool SpatialBoundsComplete = false);
+    bool SpatialBoundsComplete = false, string ResidencyReason = "");
 internal sealed record ModelShape(int Index, Vector3[] Positions, uint[] Indices, Matrix4x4 ToModel);
 internal sealed record MissingModelShape(int Index, string Reason);
 internal sealed record ModelExtraction(ModelShape[] Shapes, MissingModelShape[] Missing,
@@ -268,6 +268,7 @@ internal static class SceneTile
                 {
                     var whole = Extract(scope, tileX, tileY, size, false, scratch, true, false);
                     if (whole.WholeCell) return whole;
+                    return Extract(scope, tileX, tileY, size, isWorldspace, scratch, false, false) with { ResidencyReason = whole.ResidencyReason };
                 }
                 catch (OutOfMemoryException) { }
             }
@@ -277,13 +278,15 @@ internal static class SceneTile
         TileResult? Preload(int size, string scratch)
         {
             var hint = SaveLocation.LatestInteriorHint();
-            if (hint == null) return null;
+            TileResult Unavailable(string reason) => new(1, 0, 0, false, [], [], ResidencyReason: reason);
+            if (hint == null) return Unavailable("No readable last-save location");
             var matchingKeys = new HashSet<FormKey>();
             foreach (var listing in environment.LoadOrder.ListedOrder)
             {
                 if (listing.Mod is not { } mod) continue;
                 foreach (var candidate in mod.EnumerateMajorRecords<ICellGetter>())
-                    if (string.Equals(candidate.EditorID, hint, StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(candidate.EditorID, hint.EditorId, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(candidate.EditorID, hint.HeaderLocation, StringComparison.OrdinalIgnoreCase))
                         matchingKeys.Add(candidate.FormKey);
             }
             var matches = new List<FormKey>();
@@ -291,16 +294,22 @@ internal static class SceneTile
             {
                 var cell = environment.LinkCache.Resolve<ICellGetter>(key);
                 if (!cell.IsDeleted && ((uint)cell.Flags & InteriorCellFlag) != 0 &&
-                    string.Equals(cell.EditorID, hint, StringComparison.OrdinalIgnoreCase))
+                    (string.Equals(cell.EditorID, hint.EditorId, StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(cell.EditorID, hint.HeaderLocation, StringComparison.OrdinalIgnoreCase)))
                     matches.Add(key);
             }
-            if (matches.Count != 1) return null;
+            if (matches.Count == 0) return Unavailable("No matching interior CELL for last-save location");
+            // Prefer the filename EditorID; any speculative choice must match the actual loaded FormID.
+            var selected = matches.OrderByDescending(key => string.Equals(
+                    environment.LinkCache.Resolve<ICellGetter>(key).EditorID, hint.EditorId, StringComparison.OrdinalIgnoreCase))
+                .ThenBy(key => key.ToString(), StringComparer.OrdinalIgnoreCase).First();
             try
             {
-                var whole = Extract(matches.Single(), 0, 0, size, false, scratch, true, true);
-                return whole.WholeCell ? whole : null;
+                var whole = Extract(selected, 0, 0, size, false, scratch, true, true);
+                if (!whole.WholeCell) return Unavailable(whole.ResidencyReason);
+                return matches.Count > 1 ? whole with { ResidencyReason = $"Speculative interior selected from {matches.Count} matches; gameplay scope must match" } : whole;
             }
-            catch (OutOfMemoryException) { return null; }
+            catch (OutOfMemoryException) { return Unavailable("Insufficient managed memory for whole-cell preparation"); }
         }
 
         TileResult Extract(FormKey scope, long tileX, long tileY, int size, bool isWorldspace, string scratch,
@@ -548,10 +557,16 @@ internal static class SceneTile
         if (lightCapacityExceeded && rejections.Count < 12)
             rejections["tile light capacity"] = 1;
         var complete = !isWorldspace && foundScope && !lightCapacityExceeded;
-        if (wholeCell && inferCenter && bounds.Valid)
-            (tileX, tileY) = bounds.Center(size);
         var spatialComplete = complete && boundsComplete;
-        var consolidated = wholeCell && spatialComplete && bounds.Fits(tileX, tileY, size);
+        // Residency depends on the measured footprint, not the completeness of shadow coverage.
+        var center = bounds.Valid ? bounds.Center(size) : (tileX, tileY);
+        var fits = bounds.Fits(center.Item1, center.Item2, size);
+        var consolidated = wholeCell && !isWorldspace && foundScope && fits;
+        if (consolidated && inferCenter)
+            (tileX, tileY) = center;
+        var residencyReason = !wholeCell ? "" : !foundScope ? "Interior scope not found" :
+            !bounds.Valid ? "No measurable prepared bounds" : !fits ? "Calculated bounds exceed a 5x5 footprint" :
+            "Calculated bounds fit within a 5x5 footprint";
         // A fully bounded tile with no intersecting content is empty even if other tiles have unsupported casters.
         if (!wholeCell && spatialComplete && !tileBoundsOccupied && shapes.Count == 0 && lights.Count == 0)
         {
@@ -562,7 +577,7 @@ internal static class SceneTile
         }
         return new TileResult(1, eligible, failed, complete,
             shapes, lights, "", rejections, nifSources, missingShapes, consolidated,
-            consolidated ? scope.ModKey.ToString() : "", consolidated ? scope.ID : 0, tileX, tileY, spatialComplete);
+            consolidated ? scope.ModKey.ToString() : "", consolidated ? scope.ID : 0, tileX, tileY, spatialComplete, residencyReason);
         }
         return (Run, Warmup, Preload, environment);
     }

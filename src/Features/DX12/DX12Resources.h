@@ -73,6 +73,7 @@ namespace DX12
 		uint8_t preparationAttempts = 0;
 		int64_t retryAfterQpc = 0;
 		State state = State::Requested;
+		bool companionValidated = false;
 		std::string failureReason;                                       // Last bounded companion failure, retained for Dev and tile hover.
 		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;  // Bounded structured companion rejection diagnoses.
 		std::vector<NifSourceDescriptor> nifSources;
@@ -216,6 +217,14 @@ struct DX12Resources final : Feature
 private:
 	void EnsureCompanion(bool menuStartup);
 	void PollStartup(uint32_t gameplayScope = 0);
+	enum class PublicationState { Valid, Invalid, Unavailable };
+	struct PublicationStatus
+	{
+		PublicationState state;
+		std::string detail;
+	};
+	std::atomic<std::shared_ptr<const PublicationStatus>> latestPublication;
+	void RecordPublication(PublicationState state, std::string detail);
 	bool startupPending = false;
 	bool menuPreloaded = false;
 	uint32_t consolidationAttemptScope = 0;

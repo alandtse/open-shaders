@@ -222,6 +222,7 @@ namespace DX12
 		                          current->resident[std::distance(current->requested.begin(), active)] :
 		                          current->predictiveResident[std::distance(current->predictive.begin(), predictive)];
 		tile->preparationAttempts = static_cast<uint8_t>(std::min<unsigned>(existing ? unsigned(existing->preparationAttempts) + 1 : 1u, kPreparationAttemptLimit));
+		tile->companionValidated = publication.validated;
 		tile->failureReason = std::move(publication.failureReason);
 		tile->rejectionReasons = std::move(publication.rejectionReasons);
 		tile->nifSources = std::move(publication.nifSources);
@@ -235,10 +236,9 @@ namespace DX12
 		                      publication.failedShapes == 0 && publication.rejectedLights == 0 &&
 		                      publication.eligibleShapes == tile->shapes.size();
 		const bool hasContent = !tile->shapes.empty() || !tile->lights.empty();
-		const bool consolidate = publication.wholeCell && publication.validated &&
-		                         publication.enumerationComplete && publication.spatialBoundsComplete;
+		const bool consolidate = publication.wholeCell && publication.validated;
 		const auto outcome = ClassifyTilePreparation(publication.validated &&
-			(!publication.wholeCell || consolidate), publication.enumerationComplete, complete, hasContent);
+			(!publication.wholeCell || consolidate), publication.enumerationComplete || consolidate, complete, hasContent);
 		if (outcome == TilePreparationOutcome::Ready)
 			tile->state = Tile::State::Ready;
 		else if (outcome == TilePreparationOutcome::Partial)
@@ -522,6 +522,8 @@ namespace
 				ImGui::Text(T("menu.dx12.resources.tooltip.subcell", "%s subcell (%lld, %lld): %s"), active ? T("menu.dx12.resources.active", "Active") : T("menu.dx12.resources.predictive", "Predictive"),
 					static_cast<long long>(key.x), static_cast<long long>(key.y), TileStatus(tile));
 				if (tile && tile->preparationAttempts)
+					ImGui::Text("%s", tile->companionValidated ? T("menu.dx12.resources.publication_valid", "Companion publication: valid") : T("menu.dx12.resources.publication_invalid", "Companion publication: invalid"));
+				if (tile && tile->preparationAttempts)
 					ImGui::Text(T("menu.dx12.resources.tooltip.attempts", "Attempts: %u / 3"), unsigned(tile->preparationAttempts));
 				if (tile && (!tile->nifSources.empty() || !tile->missingShapes.empty()))
 					ImGui::Text(T("menu.dx12.resources.tooltip.nif_sources", "NIF sources: %zu | Missing shape references: %zu"),
@@ -554,6 +556,7 @@ void DX12Resources::ResetPreparation()
 	if (companion)
 		companion->Cancel();
 	startupPending = false;
+	latestPublication.store(nullptr, std::memory_order_release);
 	inFlight.reset();
 	adopting.reset();
 	lightAdoptionOffset = 0;
@@ -593,13 +596,29 @@ void DX12Resources::DrawSettings()
 		ImGui::TextDisabled("%s", T("menu.dx12.resources.startup_pending", "Main-menu preparation in progress"));
 	if (menuPreloaded)
 		ImGui::TextDisabled("%s", T("menu.dx12.resources.preloaded", "Last-save cell prepared in memory"));
+	if (const auto status = latestPublication.load(std::memory_order_acquire)) {
+		const char* label = status->state == PublicationState::Valid ?
+			T("menu.dx12.resources.publication_valid", "Companion publication: valid") :
+			status->state == PublicationState::Invalid ?
+			T("menu.dx12.resources.publication_invalid", "Companion publication: invalid") :
+			T("menu.dx12.resources.publication_unavailable", "Companion publication: unavailable");
+		ImGui::TextUnformatted(label);
+		if (!status->detail.empty())
+			ImGui::TextWrapped("%s", status->detail.c_str());
+	} else {
+		ImGui::TextDisabled("%s", T("menu.dx12.resources.publication_pending", "Companion publication: not received"));
+	}
 	ImGui::SeparatorText(T("menu.dx12.resources.subcell_status", "Subcell status (5x5)"));
 	const auto snapshot = GetGrid();
 	const auto timing = GetPreparationStats();
 	if (snapshot && snapshot->wholeCell) {
 		ImGui::Text("%s", T("menu.dx12.resources.whole_cell", "Whole-cell residency (subdivisions bypassed)"));
-		if (snapshot->resident.front())
-			ImGui::Text(T("menu.dx12.resources.whole_cell_counts", "Shapes: %zu | Lights: %zu"), snapshot->resident.front()->shapes.size(), snapshot->resident.front()->lights.size());
+		if (const auto& tile = snapshot->resident.front()) {
+			ImGui::Text(T("menu.dx12.resources.whole_cell_counts", "Shapes: %zu | Lights: %zu"), tile->shapes.size(), tile->lights.size());
+			ImGui::Text("%s", TileStatus(tile));
+			if (!tile->failureReason.empty())
+				ImGui::TextWrapped("%s", tile->failureReason.c_str());
+		}
 		return;
 	}
 
@@ -725,6 +744,12 @@ void DX12Resources::EnsureCompanion(bool menuStartup)
 }
 
 
+void DX12Resources::RecordPublication(PublicationState state, std::string detail)
+{
+	latestPublication.store(std::make_shared<const PublicationStatus>(PublicationStatus{ state, std::move(detail) }),
+		std::memory_order_release);
+}
+
 void DX12Resources::PollStartup(uint32_t gameplayScope)
 {
 	if (!startupPending || !companion)
@@ -743,6 +768,7 @@ void DX12Resources::PollStartup(uint32_t gameplayScope)
 	if (!result->startup)
 		return;
 	if (!result->failure.empty() && !result->publication.validated) {
+		RecordPublication(PublicationState::Invalid, result->failure);
 		logger::warn("[DX12Resources] Startup preparation failed: {}", result->failure);
 		return;
 	}
@@ -751,14 +777,19 @@ void DX12Resources::PollStartup(uint32_t gameplayScope)
 		return;
 	if (!settings.PreloadLastSave || !settings.ConsolidateInterior ||
 		result->size != settings.SubcellSize || !publication.wholeCell || !publication.validated) {
-		logger::info("[DX12Resources] Last-save preload unavailable or not eligible for whole-cell residency; using live preparation");
+		const auto reason = result->residencyReason.empty() ?
+			"No eligible whole-cell publication or settings changed" : result->residencyReason;
+		RecordPublication(publication.validated ? PublicationState::Unavailable : PublicationState::Invalid, reason);
+		logger::info("[DX12Resources] Last-save preload unavailable: {}", reason);
 		return;
 	}
 	auto* handler = RE::TESDataHandler::GetSingleton();
 	const auto* form = handler ? handler->LookupForm(result->scopeLocal, result->scopePlugin) : nullptr;
 	const auto* cell = form ? form->As<RE::TESObjectCELL>() : nullptr;
-	if (!cell || !cell->IsInteriorCell() || (gameplayScope && cell->GetFormID() != gameplayScope))
+	if (!cell || !cell->IsInteriorCell() || (gameplayScope && cell->GetFormID() != gameplayScope)) {
+		RecordPublication(PublicationState::Unavailable, "Preloaded CELL does not match the current runtime scope");
 		return;
+	}
 	publication.key.scope = cell->GetFormID();
 	for (auto& record : result->lights) {
 		const auto* reference = handler->LookupForm(record.referenceLocal, record.referencePlugin);
@@ -770,15 +801,16 @@ void DX12Resources::PollStartup(uint32_t gameplayScope)
 		record.value.referenceID = reference->GetFormID();
 		publication.lights.push_back(record.value);
 	}
-	if (!publication.enumerationComplete || !publication.spatialBoundsComplete)
-		return;
 	publication.failureReason = result->failure;
 	const auto key = publication.key;
 	grid.Advance(key.scope, result->size, double(key.x) * result->size, double(key.y) * result->size);
 	const auto request = grid.NextRequest();
-	if (!request || *request != key)
+	if (!request || *request != key) {
+		RecordPublication(PublicationState::Unavailable, "Preloaded grid request no longer matches");
 		return;
+	}
 	if (grid.Publish(std::move(publication))) {
+		RecordPublication(PublicationState::Valid, result->residencyReason);
 		preparationActive = true;
 		menuPreloaded = !gameplayScope;
 		consolidationAttemptScope = key.scope;
@@ -907,7 +939,10 @@ void DX12Resources::PreShadowMaps()
 				const bool wasPredictiveRequest = adopting->predictive;
 				const bool wasCornerRequest = adopting->corner;
 				const double elapsedMs = adopting->preparationMs;
+				const bool valid = adopting->publication.validated;
+				const auto reason = !adopting->residencyReason.empty() ? adopting->residencyReason : adopting->failure;
 				if (grid.Publish(std::move(adopting->publication))) {
+					RecordPublication(valid ? PublicationState::Valid : PublicationState::Invalid, reason);
 					// This snapshot only counts accepted, finished worker requests; canceled
 					// and superseded work is not misreported as generated geometry.
 					auto next = std::make_shared<DX12::PreparationStats>(

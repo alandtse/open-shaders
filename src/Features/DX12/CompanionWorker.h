@@ -37,6 +37,7 @@ namespace DX12
 		CompanionPublication publication;
 		std::vector<CompanionLight> lights;
 		std::string failure;
+		std::string residencyReason;
 		bool startup = false, preload = false;
 		std::string scopePlugin;
 		uint32_t scopeLocal = 0, size = 0;

@@ -438,6 +438,7 @@ namespace DX12
 			}
 			stream.seekg(0);
 			const auto root = json::parse(stream);
+			result.residencyReason = root.value("residencyReason", std::string{}).substr(0, 320);
 			if (const auto entry = root.find("failure"); entry != root.end() && entry->is_string()) {
 				result.failure = entry->get<std::string>().substr(0, 320);
 				if (!result.failure.empty())
@@ -456,8 +457,6 @@ namespace DX12
 			publication.enumerationComplete = root.at("enumerationComplete").get<bool>();
 			publication.wholeCell = root.value("wholeCell", false);
 			publication.spatialBoundsComplete = root.value("spatialBoundsComplete", false);
-			if (publication.wholeCell && (!publication.spatialBoundsComplete || !publication.enumerationComplete))
-				throw std::invalid_argument("Uncertified whole-cell bounds");
 			if (publication.wholeCell) {
 				result.scopePlugin = root.at("scopePlugin").get<std::string>();
 				result.scopeLocal = root.at("scopeLocal").get<uint32_t>();
