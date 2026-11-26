@@ -469,9 +469,8 @@ namespace DX12
 
 	void CompanionWorker::RunLoading(const LoadingBatch& batch, uint64_t epoch, std::stop_token stop)
 	{
-		const auto active = Neighborhood(batch.request.key.scope, batch.request.size, batch.x, batch.y);
-		const auto predictive = PredictiveNeighborhood(batch.request.key.scope, batch.request.size, batch.x, batch.y);
-		if (!active || !predictive)
+		const auto order = LoadingPreparationOrder(batch.request.key.scope, batch.request.size, batch.x, batch.y);
+		if (!order)
 			return;
 		const auto& existing = batch.existing;
 		const bool reuse = existing && existing->size == batch.request.size;
@@ -488,13 +487,13 @@ namespace DX12
 			};
 			return contains(existing->resident) || contains(existing->predictiveResident);
 		};
-		for (size_t i = 0; i < active->size() + predictive->size(); ++i) {
+		for (size_t i = 0; i < order->size(); ++i) {
 			if (stop.stop_requested() || generation.load(std::memory_order_acquire) != epoch)
 				break;
 			auto task = batch.request;
-			task.predictive = i >= active->size();
-			task.corner = i >= active->size() + kPredictiveSideCount;
-			task.key = task.predictive ? (*predictive)[i - active->size()] : (*active)[i];
+			task.predictive = (*order)[i].predictive;
+			task.corner = (*order)[i].corner;
+			task.key = (*order)[i].key;
 			task.consolidate = task.consolidate && i == 0;
 			if (ready(task.key))
 				continue;

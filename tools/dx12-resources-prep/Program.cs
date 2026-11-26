@@ -65,12 +65,13 @@ static async Task<int> ServeAsync(string[] arguments)
         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
         string? cancellationFile = null;
         long nextCancellationCheck = 0;
+        const int cancellationCheckIntervalMs = 25;
         void CheckCancellation()
         {
             if (cancellationFile == null) return;
             var now = System.Diagnostics.Stopwatch.GetTimestamp();
             if (now < nextCancellationCheck) return;
-            nextCancellationCheck = now + System.Diagnostics.Stopwatch.Frequency / 40;
+            nextCancellationCheck = now + System.Diagnostics.Stopwatch.Frequency * cancellationCheckIntervalMs / 1000;
             if (File.Exists(cancellationFile)) throw new OperationCanceledException();
         }
         var (prepare, warmup, preload, owner) = SceneTile.OpenSession(data, plugins, CheckCancellation);

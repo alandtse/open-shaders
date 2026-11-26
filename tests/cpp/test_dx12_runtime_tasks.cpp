@@ -334,3 +334,23 @@ TEST_CASE("Native packed records preserve the consolidated shadow ABI", "[dx12][
 	CHECK(packed[1][2] == 5);
 	CHECK(std::bit_cast<uint32_t>(packed[1][3]) == light.referenceID);
 }
+
+TEST_CASE("Loading destination uses the established spatial priority groups", "[dx12][runtime-task]")
+{
+	using namespace DX12;
+	const auto order = LoadingPreparationOrder(42, 4096, -1, 8192);
+	REQUIRE(order);
+	CHECK(order->size() == 25);
+	CHECK((order->front().key == SubcellKey{ 42, -1, 2 }));
+	for (size_t i = 0; i < order->size(); ++i) {
+		const auto& item = (*order)[i];
+		CHECK(item.key.scope == 42);
+		CHECK(item.predictive == (i >= kGridCapacity));
+		CHECK(item.corner == (i >= kGridCapacity + kPredictiveSideCount));
+		for (size_t j = 0; j < i; ++j)
+			CHECK(item.key != (*order)[j].key);
+	}
+	CHECK_FALSE(LoadingPreparationOrder(0, 4096, 0, 0));
+	CHECK_FALSE(LoadingPreparationOrder(42, 1024, 0, 0));
+	CHECK_FALSE(LoadingPreparationOrder(42, 4096, std::numeric_limits<double>::infinity(), 0));
+}

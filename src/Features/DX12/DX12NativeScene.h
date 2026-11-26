@@ -64,6 +64,7 @@ struct DX12NativeScene final : OverlayFeature
 	// Snapshot LLF/SCM point-light parameters without altering the DX11 light.
 	void ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID, bool flickers,
 		const RE::NiPoint3& restOrigin);
+	void OnLoadingMenuEvent(bool opening) override;
 	void OnSceneTransitionReset(bool a_opening) override;
 	void OnRuntimeDisabled() override;
 
@@ -74,6 +75,8 @@ private:
 	/** @brief Gates only native shadow replacement; never disables DX11 baseline shadows. */
 	bool CanOffloadShadowsInCurrentCell() const;
 	bool nativeSessionStarted = false;  // Render/main-thread lifecycle.
+	std::atomic<bool> loadingResetPending{ false };
+	void ApplyPendingLoadingReset();
 	std::optional<GraphicsBackend> backend;
 	DX12Native::RasterCapture raster;
 	DX12Native::RuntimeGeometryCapture geometryCapture;

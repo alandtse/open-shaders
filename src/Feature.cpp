@@ -512,19 +512,25 @@ namespace
 	};
 }
 
-void Feature::DrainSceneTransitions()
+void Feature::RegisterSceneTransitionEvents()
 {
 	static std::atomic<bool> registered{ false };
-	if (!registered.load(std::memory_order_acquire)) {
-		if (auto* ui = globals::game::ui) {
-			// GetEventSource can be null before the UI is fully up; leave registered=false and retry
-			// next frame rather than dereferencing it.
-			if (auto* source = ui->GetEventSource<RE::MenuOpenCloseEvent>()) {
+	static std::once_flag registration;
+	if (registered.load(std::memory_order_acquire))
+		return;
+	if (auto* ui = globals::game::ui) {
+		if (auto* source = ui->GetEventSource<RE::MenuOpenCloseEvent>()) {
+			std::call_once(registration, [source] {
 				source->AddEventSink(SceneTransitionSink::GetSingleton());
 				registered.store(true, std::memory_order_release);
-			}
+			});
 		}
 	}
+}
+
+void Feature::DrainSceneTransitions()
+{
+	RegisterSceneTransitionEvents();
 
 	if (g_loadingMenuOpenPending.exchange(false, std::memory_order_acq_rel))
 		ForEachLoadedFeature("OnSceneTransitionReset(open)", [](Feature* f) { f->OnSceneTransitionReset(true); });

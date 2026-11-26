@@ -315,6 +315,7 @@ void DX12NativeScene::PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid)
 
 void DX12NativeScene::PrepareLoadingScene(std::shared_ptr<const DX12::Grid> grid)
 {
+	ApplyPendingLoadingReset();
 	if (!grid || !globals::features::dx12Resources.IsLoading() || !globals::features::dx12Control.IsActive() ||
 		!globals::d3d::device || !globals::d3d::context ||
 		!std::ranges::any_of(grid->resident, [](const auto& tile) { return tile && !tile->shapes.empty(); }))
@@ -330,6 +331,7 @@ void DX12NativeScene::PreShadowMaps()
 		OnRuntimeDisabled();
 		return;
 	}
+	ApplyPendingLoadingReset();
 	if (globals::features::dx12Resources.IsLoading() || !globals::state || !globals::game::graphicsState ||
 		!globals::state->startupMenuInitializationComplete.load(std::memory_order_acquire) ||
 		(globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))) {
@@ -714,13 +716,25 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requi
 	geometryCapture.Observe(candidate, frame, globals::features::dx12Resources.GetGrid());
 }
 
+void DX12NativeScene::OnLoadingMenuEvent(bool opening)
+{
+	if (opening)
+		loadingResetPending.store(true, std::memory_order_release);
+}
+
 void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 {
-	if (a_opening) {
-		frameNativeModeID.store(UINT32_MAX, std::memory_order_release);
-		frameNativeMode.store(DX12::SCMNativeMode::Disabled, std::memory_order_release);
-	}
-	if (a_opening && nativeSessionStarted) {
+	if (a_opening)
+		ApplyPendingLoadingReset();
+}
+
+void DX12NativeScene::ApplyPendingLoadingReset()
+{
+	if (!loadingResetPending.exchange(false, std::memory_order_acq_rel))
+		return;
+	frameNativeModeID.store(UINT32_MAX, std::memory_order_release);
+	frameNativeMode.store(DX12::SCMNativeMode::Disabled, std::memory_order_release);
+	if (nativeSessionStarted) {
 		shadowLightScope.store(0, std::memory_order_release);
 		shadowLights.store(nullptr, std::memory_order_release);
 		{
@@ -739,6 +753,7 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 
 void DX12NativeScene::OnRuntimeDisabled()
 {
+	loadingResetPending.store(false, std::memory_order_release);
 	frameNativeModeID.store(UINT32_MAX, std::memory_order_release);
 	frameNativeMode.store(DX12::SCMNativeMode::Disabled, std::memory_order_release);
 	if (!nativeSessionStarted)

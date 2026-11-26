@@ -759,6 +759,8 @@ public:
 	 * the render path so feature resets serialize with render-thread menu/Prepass iteration.
 	 */
 	static void DrainSceneTransitions();
+	/** @brief Registers the shared loading event sink before the first gameplay frame. */
+	static void RegisterSceneTransitionEvents();
 
 	/**
 	 * @brief Finds a loaded feature by its short name.

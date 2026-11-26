@@ -650,17 +650,25 @@ std::optional<DX12Resources::LoadingDestination> DX12Resources::CaptureLoadingDe
 RE::BSEventNotifyControl DX12Resources::ProcessEvent(const RE::PositionPlayerEvent* event,
 	RE::BSTEventSource<RE::PositionPlayerEvent>*)
 {
-	if (event && IsActive()) {
-		using Event = RE::PositionPlayerEvent::EVENT_TYPE;
-		if (event->type == Event::kPre) {
-			queuedDestination = CaptureLoadingDestination();
-			if (loadingActive.load(std::memory_order_acquire) && queuedDestination) {
-				loadingDestination.store(std::make_shared<const LoadingDestination>(*queuedDestination), std::memory_order_release);
-				BeginLoadingPreparation(*queuedDestination);
+	try {
+		if (event && IsActive()) {
+			using Event = RE::PositionPlayerEvent::EVENT_TYPE;
+			if (event->type == Event::kPre) {
+				queuedDestination = CaptureLoadingDestination();
+				if (loadingActive.load(std::memory_order_acquire) && queuedDestination) {
+					loadingDestination.store(std::make_shared<const LoadingDestination>(*queuedDestination), std::memory_order_release);
+					BeginLoadingPreparation(*queuedDestination);
+				}
+			} else if (event->type == Event::kFinish) {
+				queuedDestination.reset();
 			}
-		} else if (event->type == Event::kFinish) {
-			queuedDestination.reset();
 		}
+	} catch (const std::exception& error) {
+		queuedDestination.reset();
+		logger::warn("[DX12Resources] Position event failed: {}", error.what());
+	} catch (...) {
+		queuedDestination.reset();
+		logger::warn("[DX12Resources] Position event failed");
 	}
 	return RE::BSEventNotifyControl::kContinue;
 }
@@ -1267,6 +1275,7 @@ void DX12Resources::PreShadowMaps()
 void DX12Resources::OnRuntimeDisabled()
 {
 	loadingActive.store(false, std::memory_order_release);
+	loadingDestination.store(nullptr, std::memory_order_release);
 	stagedResults.clear();
 	loadingPending.clear();
 	loadingGrid.reset();

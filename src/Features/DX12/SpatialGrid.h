@@ -85,4 +85,28 @@ namespace DX12
 			}
 		return tiles;
 	}
+
+	struct LoadingTileRequest
+	{
+		SubcellKey key;
+		bool predictive = false;
+		bool corner = false;
+	};
+
+	/** @brief Uses neutral movement and the existing active/sides/corners hierarchy for a queued destination. */
+	inline std::optional<std::array<LoadingTileRequest, kGridCapacity + kPredictiveCapacity>> LoadingPreparationOrder(
+		uint32_t scope, uint32_t size, double x, double y)
+	{
+		const auto active = Neighborhood(scope, size, x, y);
+		const auto predictive = PredictiveNeighborhood(scope, size, x, y);
+		if (!active || !predictive)
+			return std::nullopt;
+		std::array<LoadingTileRequest, kGridCapacity + kPredictiveCapacity> order{};
+		for (size_t i = 0; i < active->size(); ++i)
+			order[i] = { (*active)[i], false, false };
+		for (size_t i = 0; i < predictive->size(); ++i)
+			order[active->size() + i] = { (*predictive)[i], true, i >= kPredictiveSideCount };
+		return order;
+	}
+
 }
