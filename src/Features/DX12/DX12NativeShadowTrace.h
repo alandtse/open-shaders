@@ -23,6 +23,7 @@ namespace DX12Native
 		uint32_t quality = kShadowQualityOffloading;
 		bool captureDebugLights = false;
 		uint32_t debugPreparedCount = 0;
+		std::shared_ptr<const std::vector<DX12::PreparedLight>> bakedInventory;
 	};
 
 	/** @brief Quarter-resolution raw visibility and receiver distance; the composite reconstructs the full view. */
@@ -43,6 +44,7 @@ namespace DX12Native
 		uint32_t debugPreparedCount = 0;
 		std::vector<std::array<float, 4>> lightRecords;
 		bool lightRecordsUploaded = false;
+		std::weak_ptr<const std::vector<DX12::PreparedLight>> uploadedBake;
 		// RG32F: weighted visibility and receiver distance (zero for invalid receivers).
 	};
 
