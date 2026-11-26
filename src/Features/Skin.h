@@ -199,6 +199,8 @@ private:
 	winrt::com_ptr<ID3D11SamplerState> savedSampler;
 	bool samplerBound = false;
 	eastl::unique_ptr<ConstantBuffer> PerGeometryCB;
+	PerGeometryData uploadedPerGeometryData{};
+	bool perGeometryUploaded = false;
 	Editor editor;
 	uint64_t revision = 1;
 	uint64_t characterRevision = 0;
