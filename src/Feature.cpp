@@ -1,6 +1,7 @@
 #include "Feature.h"
 
 #include <unordered_map>
+#include <mutex>
 
 #include "FeatureIssues.h"
 #include "FeatureVersions.h"

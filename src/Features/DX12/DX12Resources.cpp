@@ -626,7 +626,10 @@ DX12Resources::~DX12Resources() = default;
 
 void DX12Resources::DataLoaded()
 {
-	if (!globals::game::isVR && globals::game::player)
+	if (!IsActive())
+		return;
+	Feature::RegisterSceneTransitionEvents();
+	if (globals::game::player)
 		globals::game::player->AsPositionPlayerEventSource()->AddEventSink(this);
 }
 

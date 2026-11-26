@@ -155,7 +155,6 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				}
 
 				Feature::ForEachLoadedFeature("DataLoaded", [](Feature* feature) { feature->DataLoaded(); });
-				Feature::RegisterSceneTransitionEvents();
 				globals::state->startupMenuInitializationComplete.store(true, std::memory_order_release);
 
 				NativeMenu::Register();
