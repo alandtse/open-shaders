@@ -3675,7 +3675,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	// final color authority, while FSR's other input preparation stays as-is.
 	upscaling.nativeCompositeFrame.reset();
 	if (upscaling.loaded && !globals::game::isVR &&
-		globals::features::dx12Control.IsActive() &&
+		globals::features::dx12NativeScene.GetFrameNativeMode() != DX12::SCMNativeMode::Disabled &&
 		globals::game::graphicsState &&
 		upscaling.dx12SwapChain.EnsureSharedDevice()) {
 		auto* renderer = globals::game::renderer;

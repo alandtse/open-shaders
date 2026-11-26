@@ -34,9 +34,13 @@ void DX12NativeScene::DrawSettings()
 		int quality = fullRTQuality == DX12Native::kShadowQualityPerformance ? 1 : 0;
 		if (ImGui::Combo(T("menu.dx12.scene.shadow_quality", "Shadow quality"), &quality, qualities, int(std::size(qualities))))
 			fullRTQuality = quality == 0 ? DX12Native::kShadowQualityQuality : DX12Native::kShadowQualityPerformance;
-		ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoorFullRT);
+		bool outdoor = outdoorFullRT.load(std::memory_order_relaxed);
+		if (ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoor))
+			outdoorFullRT.store(outdoor, std::memory_order_relaxed);
 	} else if (control.IsShadowOffloadMode()) {
-		ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoorShadowOffloading);
+		bool outdoor = outdoorShadowOffloading.load(std::memory_order_relaxed);
+		if (ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoor))
+			outdoorShadowOffloading.store(outdoor, std::memory_order_relaxed);
 	}
 }
 
@@ -146,9 +150,9 @@ void DX12NativeScene::LoadSettings(json& input)
 
 void DX12NativeScene::SaveSettings(json& output)
 {
-	output = { { "OutdoorShadowOffloading", outdoorShadowOffloading },
+	output = { { "OutdoorShadowOffloading", outdoorShadowOffloading.load(std::memory_order_relaxed) },
 		{ "DebugNativeLights", debugOffloadLights.load(std::memory_order_relaxed) },
-		{ "FullRT", { { "OutdoorShadowOffloading", outdoorFullRT }, { "ShadowQualityMode", fullRTQuality },
+		{ "FullRT", { { "OutdoorShadowOffloading", outdoorFullRT.load(std::memory_order_relaxed) }, { "ShadowQualityMode", fullRTQuality },
 			{ "DebugNativeLights", debugRTLights.load(std::memory_order_relaxed) },
 			{ "RuntimeUnificationRadius", runtimeUnificationRadius.load(std::memory_order_relaxed) },
 			{ "PreparedExclusionRadius", preparedExclusionRadius.load(std::memory_order_relaxed) },
@@ -171,12 +175,24 @@ void DX12NativeScene::RestoreDefaultSettings()
 	ResetFullLightInventory();
 }
 
+bool DX12NativeScene::AllowsNativeSceneWork() const
+{
+	const auto& control = globals::features::dx12Control;
+	return control.IsShadowOffloadMode() || control.IsFullRTMode();
+}
+
+bool DX12NativeScene::AllowsOutdoorContribution() const
+{
+	return globals::features::dx12Control.IsFullRTMode() ?
+		outdoorFullRT.load(std::memory_order_relaxed) : outdoorShadowOffloading.load(std::memory_order_relaxed);
+}
+
 bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
 {
 	if (globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))
 		return false;
 	const auto* cell = Util::GetPlayerCell();
-	return cell && (!cell->IsExteriorCell() || (globals::features::dx12Control.IsFullRTMode() ? outdoorFullRT : outdoorShadowOffloading));
+	return cell && AllowsScenePreparation(cell->IsExteriorCell());
 }
 
 DX12::SCMNativeMode DX12NativeScene::GetFrameNativeMode() const
@@ -305,7 +321,7 @@ bool DX12NativeScene::WantsOpaqueRasterReadyHook() const { return WantsRenderPas
 
 void DX12NativeScene::PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid)
 {
-	if (!grid || !grid->wholeCell || !globals::features::dx12Control.IsActive() ||
+	if (!grid || !grid->wholeCell || !globals::features::dx12Control.IsActive() || !AllowsNativeSceneWork() ||
 		!globals::d3d::device || !globals::d3d::context)
 		return;
 	nativeSessionStarted = true;
@@ -316,7 +332,7 @@ void DX12NativeScene::PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid)
 void DX12NativeScene::PrepareLoadingScene(std::shared_ptr<const DX12::Grid> grid)
 {
 	ApplyPendingLoadingReset();
-	if (!grid || !globals::features::dx12Resources.IsLoading() || !globals::features::dx12Control.IsActive() ||
+	if (!grid || !globals::features::dx12Resources.IsLoading() || !globals::features::dx12Control.IsActive() || !AllowsNativeSceneWork() ||
 		!globals::d3d::device || !globals::d3d::context ||
 		!std::ranges::any_of(grid->resident, [](const auto& tile) { return tile && !tile->shapes.empty(); }))
 		return;
@@ -336,6 +352,11 @@ void DX12NativeScene::PreShadowMaps()
 		!globals::state->startupMenuInitializationComplete.load(std::memory_order_acquire) ||
 		(globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))) {
 		frameNativeModeID.store(UINT32_MAX, std::memory_order_release);
+		return;
+	}
+	if (!CanOffloadShadowsInCurrentCell()) {
+		if (nativeSessionStarted)
+			OnRuntimeDisabled();
 		return;
 	}
 	nativeSessionStarted = true;
@@ -641,7 +662,7 @@ std::function<void()> DX12NativeScene::OnRenderPassBegin(const RE::BSRenderPass*
 	// render path. This does not change render-pass state or DX11 draw behavior.
 	if (!loaded || !globals::features::dx12Control.IsActive() || globals::game::isVR ||
 		!pass || !pass->geometry ||
-		(!globals::features::dx12Control.IsShadowOffloadMode() && !globals::features::dx12Control.IsFullRTMode()) ||
+		GetFrameNativeMode() == DX12::SCMNativeMode::Disabled ||
 		!globals::features::upscaling.loaded ||
 		!globals::state || globals::state->isMapMenuOpen ||
 		(globals::state->permutationData.ExtraShaderDescriptor &
@@ -655,7 +676,8 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requi
 {
 	// SCM and already-submitted opaque render passes share this bounded
 	// CPU-only capture path. No scene traversal, readback or GPU wait.
-	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive())
+	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive() ||
+		GetFrameNativeMode() == DX12::SCMNativeMode::Disabled)
 		return;
 	auto* tri = geometry.AsTriShape();
 	if (!tri || geometry.AsDynamicTriShape())

@@ -710,6 +710,13 @@ RE::BSEventNotifyControl DX12Resources::ProcessEvent(const RE::PositionPlayerEve
 
 void DX12Resources::BeginLoadingPreparation(const LoadingDestination& destination)
 {
+	if (!globals::features::dx12NativeScene.AllowsScenePreparation(destination.worldspace)) {
+		loadingSerial.store(0, std::memory_order_release);
+		runtimePublicationEnabled.store(false, std::memory_order_release);
+		if (companionStarted.load(std::memory_order_acquire))
+			companion->Cancel();
+		return;
+	}
 	const auto configuration = loadingSettings.load(std::memory_order_acquire);
 	DX12::CompanionRequest task;
 	task.key.scope = destination.scope;
@@ -756,6 +763,36 @@ void DX12Resources::OnLoadingMenuEvent(bool opening)
 			}
 		}
 	}
+}
+
+void DX12Resources::SuspendPreparation()
+{
+	if (preparationSuspended)
+		return;
+	preparationSuspended = true;
+	loadingSerial.store(0, std::memory_order_release);
+	runtimePublicationEnabled.store(false, std::memory_order_release);
+	if (companionStarted.load(std::memory_order_acquire))
+		companion->Cancel();
+	// Do not stop the session worker: it must accept the next eligible
+	// interior destination without restarting the game.
+	loadingGrid.reset();
+	loadingPending.clear();
+	stagedResults.clear();
+	loadingGridSerial = 0;
+	handledLoadingSerial = loadingSerial.load(std::memory_order_acquire);
+	inFlight.reset();
+	adopting.reset();
+	lightAdoptionOffset = 0;
+	startupPending = false;
+	menuPreloaded = false;
+	preparationActive = false;
+	consolidationAttemptScope = 0;
+	lastVisitedCell = previousVisitedCell = distinctTransitions = 0;
+	grid.Clear();
+	latestPublication.store(nullptr, std::memory_order_release);
+	generationStats.store(std::make_shared<const DX12::PreparationStats>(), std::memory_order_release);
+	globals::features::dx12NativeScene.OnRuntimeDisabled();
 }
 
 void DX12Resources::ResetPreparation()
@@ -812,6 +849,10 @@ void DX12Resources::DrawSettings()
 
 void DX12Resources::DrawResourceStatus()
 {
+	if (preparationSuspended) {
+		ImGui::TextDisabled("%s", T("menu.dx12.resources.suspended", "Native scene preparation suspended."));
+		return;
+	}
 	if (startupPending)
 		ImGui::TextDisabled("%s", T("menu.dx12.resources.startup_pending", "Main-menu preparation in progress"));
 	if (menuPreloaded)
@@ -1065,8 +1106,14 @@ void DX12Resources::AdvanceLoadingPreparation()
 {
 	const auto serial = loadingSerial.load(std::memory_order_acquire);
 	const auto destination = loadingDestination.load(std::memory_order_acquire);
+	if (!globals::features::dx12NativeScene.AllowsNativeSceneWork() ||
+		(destination && !globals::features::dx12NativeScene.AllowsScenePreparation(destination->worldspace))) {
+		SuspendPreparation();
+		return;
+	}
 	if (!serial || !destination || !companionStarted.load(std::memory_order_acquire))
 		return;
+	preparationSuspended = false;
 	if (loadingGridSerial != serial) {
 		loadingGrid = std::make_unique<DX12::ResourceGrid>();
 		loadingPending.clear();
@@ -1100,6 +1147,11 @@ void DX12Resources::Reset()
 	if (!IsActive() || !globals::state || !globals::state->startupMenuBlurSourceReady ||
 		!globals::game::ui || !globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))
 		return;
+	if (!globals::features::dx12NativeScene.AllowsNativeSceneWork()) {
+		SuspendPreparation();
+		return;
+	}
+	preparationSuspended = false;
 	EnsureCompanion(true);
 	PollStartup();
 	// Only after a completed startup Present; rendering keeps priority.
@@ -1118,9 +1170,18 @@ void DX12Resources::PreShadowMaps()
 	if (loadingActive.load(std::memory_order_acquire) || !globals::state || !globals::state->startupMenuInitializationComplete.load(std::memory_order_acquire) ||
 		(globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME)))
 		return;
+	if (!globals::features::dx12NativeScene.AllowsNativeSceneWork()) {
+		SuspendPreparation();
+		return;
+	}
 	const auto location = Util::GetPlayerSpatialLocation();
 	if (!location)
 		return;
+	if (!globals::features::dx12NativeScene.AllowsScenePreparation(location->cell->IsExteriorCell())) {
+		SuspendPreparation();
+		return;
+	}
+	preparationSuspended = false;
 	CS_GPU_PASS("DX12Resources::Grid");
 	EnsureCompanion(false);
 	const auto serial = loadingSerial.load(std::memory_order_acquire);

@@ -268,6 +268,9 @@ private:
 	bool menuPreloaded = false;
 	uint32_t consolidationAttemptScope = 0;
 	void ResetPreparation();
+	/** @brief Cancel and clear native preparation once when the selected mode or cell is ineligible. */
+	void SuspendPreparation();
+	bool preparationSuspended = false;  // Render-thread transition latch.
 	std::once_flag companionStart;
 	std::atomic<bool> companionStarted{ false };
 	bool preparationActive = false;

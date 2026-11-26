@@ -17,12 +17,10 @@ namespace DX12
 		bool fullStaticAuthority = false;
 	};
 
-	/** @brief Raster comparison permits geometry preparation but never native shadow ownership. */
+	/** @brief Raster comparison and disabled cells preserve the baseline SCM policy. */
 	constexpr SCMNativePolicy SelectSCMNativePolicy(SCMNativeMode mode)
 	{
 		switch (mode) {
-		case SCMNativeMode::RasterComparison:
-			return { true, false, false };
 		case SCMNativeMode::ShadowOffload:
 			return { true, true, false };
 		case SCMNativeMode::FullRT:
@@ -35,12 +33,9 @@ namespace DX12
 	/** @brief Resolve session and cell eligibility once before shadow scheduling. */
 	constexpr SCMNativeMode SelectSCMNativeMode(bool active, bool vr, bool offloading, bool fullRT, bool eligibleCell)
 	{
-		if (!active || vr)
+		if (!active || vr || !eligibleCell || (!offloading && !fullRT))
 			return SCMNativeMode::Disabled;
-		if (!eligibleCell)
-			return SCMNativeMode::RasterComparison;
-		return fullRT ? SCMNativeMode::FullRT :
-		       offloading ? SCMNativeMode::ShadowOffload : SCMNativeMode::RasterComparison;
+		return fullRT ? SCMNativeMode::FullRT : SCMNativeMode::ShadowOffload;
 	}
 
 	/** @brief Full RT owns every supported point light, independent of native scene coverage. */

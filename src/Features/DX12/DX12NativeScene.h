@@ -30,6 +30,11 @@ struct DX12NativeScene final : OverlayFeature
 
 	void DrawSettings() override;
 	void DrawDevSettings();
+	/** @brief The selected mode's exterior preparation and shadow contribution setting. */
+	bool AllowsOutdoorContribution() const;
+	/** @brief Comparison never admits native scene work, even for interiors. */
+	bool AllowsNativeSceneWork() const;
+	bool AllowsScenePreparation(bool exterior) const { return AllowsNativeSceneWork() && (!exterior || AllowsOutdoorContribution()); }
 	void DrawOverlay() override;
 	bool IsOverlayVisible() const override;
 	bool WantsRenderPassHook() const override;
@@ -72,7 +77,7 @@ struct DX12NativeScene final : OverlayFeature
 	std::shared_ptr<const DX12Native::ShadowMaskFrame> GetShadowMask(uint32_t frame) const { return shadows.Get(frame); }
 
 private:
-	/** @brief Gates only native shadow replacement; never disables DX11 baseline shadows. */
+	/** @brief Gates native scene work; never disables DX11 baseline shadows. */
 	bool CanOffloadShadowsInCurrentCell() const;
 	bool nativeSessionStarted = false;  // Render/main-thread lifecycle.
 	std::atomic<bool> loadingResetPending{ false };
@@ -87,8 +92,8 @@ private:
 	std::atomic<uint32_t> shadowLightScope{ 0 };
 	std::atomic<DX12::SCMNativeMode> frameNativeMode{ DX12::SCMNativeMode::Disabled };
 	std::atomic<uint32_t> frameNativeModeID{ UINT32_MAX };
-	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
-	bool outdoorFullRT = false;
+	std::atomic<bool> outdoorShadowOffloading{ false };  // Off by default; vanilla raster shadows are unaffected.
+	std::atomic<bool> outdoorFullRT{ false };
 	std::atomic<bool> debugOffloadLights{ false };
 	std::atomic<bool> debugRTLights{ false };
 	bool WantsLightPreview(DX12::SCMNativeMode mode) const;

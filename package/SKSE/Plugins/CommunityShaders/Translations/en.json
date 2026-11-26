@@ -6014,6 +6014,7 @@
     "menu.dx12.tab.resources": "Resources",
     "menu.dx12.tab.settings": "Settings",
     "menu.dx12.resources.inactive": "DX12 Resources is inactive.",
+    "menu.dx12.resources.suspended": "Native scene preparation suspended.",
     "menu.faq.a1": "{brand} is a fork of Community Shaders that ships features the upstream project has not yet released. Both projects are comprehensive graphics enhancement frameworks for Skyrim that provide advanced lighting, materials, and visual effects. They're designed to be modular, letting you enable only the features you want while maintaining good performance. This fork preserves the upstream runtime layout so user settings and themes are compatible.",
     "menu.faq.a2": "Each feature can be found in the left sidebar menu. Click on any feature to access its settings. Most features include presets and detailed tooltips to help you understand what each setting does.",
     "menu.faq.a4": "Failed shaders are usually caused by mixed file versions. Ensure all features are up to date and avoid mixing files from test builds or outdated versions. Please review 'Needs attention' on Home and/or Wiki for more information. Update your features and remove any obsolete features.",

@@ -547,7 +547,7 @@ TEST_CASE("Native SCM ownership is established by rendering mode", "[scm][dx12]"
 		for (bool offload : { false, true }) {
 			CHECK(SelectSCMNativeMode(false, false, offload, fullRT, true) == SCMNativeMode::Disabled);
 			CHECK(SelectSCMNativeMode(true, true, offload, fullRT, true) == SCMNativeMode::Disabled);
-			CHECK(SelectSCMNativeMode(true, false, offload, fullRT, false) == SCMNativeMode::RasterComparison);
+			CHECK(SelectSCMNativeMode(true, false, offload, fullRT, false) == SCMNativeMode::Disabled);
 		}
 	}
 	const auto disabled = SelectSCMNativePolicy(SCMNativeMode::Disabled);
@@ -558,10 +558,12 @@ TEST_CASE("Native SCM ownership is established by rendering mode", "[scm][dx12]"
 	CHECK_FALSE(NativeStaticAuthority(disabled, true, true));
 
 	const auto comparison = SelectSCMNativePolicy(SCMNativeMode::RasterComparison);
-	CHECK(comparison.observeGeometry);
+	CHECK_FALSE(comparison.observeGeometry);
 	CHECK_FALSE(comparison.observeLights);
 	CHECK_FALSE(NativeStaticAuthority(comparison, true, true));
-	CHECK(SelectSCMNativeCasterMode(comparison, true) == SCMNativeCasterMode::Observe);
+	CHECK(SelectSCMNativeCasterMode(comparison, true) == SCMNativeCasterMode::Disabled);
+	CHECK_FALSE(comparison.fullStaticAuthority);
+	CHECK(SelectSCMNativeMode(true, false, false, false, true) == SCMNativeMode::Disabled);
 
 	const auto offload = SelectSCMNativePolicy(SCMNativeMode::ShadowOffload);
 	CHECK(offload.observeGeometry);
