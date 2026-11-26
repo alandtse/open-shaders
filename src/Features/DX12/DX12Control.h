@@ -2,6 +2,7 @@
 
 #include "Feature.h"
 #include "DX12ModeProfiles.h"
+#include "../../../package/Shaders/Common/NativeShadowQuality.hlsli"
 
 #include <atomic>
 
@@ -39,7 +40,7 @@ struct DX12Control final : Feature
 	bool UseSpatialReconstruction() const { return IsFullShadowMode() && GetRayTracedSpatialReconstruction(); }
 	uint32_t GetReconstructionGridSize() const { return IsFullShadowMode() ? GetRayTracedGridSize() : 3u; }
 	float GetShadowStrength() const { return IsFullShadowMode() ? GetRayTracedStrength() : 1.0f; }
-	float GetShadowBlend() const { return IsFullShadowMode() ? GetRayTracedBlend() : kOffloadingDefaultBlend; }
+	float GetShadowBlend() const { return IsFullShadowMode() ? GetRayTracedBlend() : DX12Native::kOffloadingBlend; }
 	bool GetRayTracedSpatialReconstruction() const { return rayTracedComposite.spatialReconstruction.load(std::memory_order_relaxed); }
 	uint32_t GetRayTracedGridSize() const { return rayTracedComposite.reconstructionGrid.load(std::memory_order_relaxed); }
 	float GetRayTracedStrength() const { return rayTracedComposite.shadowStrength.load(std::memory_order_relaxed); }
@@ -63,7 +64,6 @@ private:
 		std::atomic<float> shadowStrength{ 1.0f };
 		std::atomic<float> shadowBlend;
 	};
-	static constexpr float kOffloadingDefaultBlend = 0.40f;
 	static constexpr float kRayTracedDefaultBlend = 0.55f;
 	CompositeProfile rayTracedComposite{ kRayTracedDefaultBlend };
 	static void LoadComposite(CompositeProfile& profile, const json& input, float defaultBlend);

@@ -19,6 +19,21 @@ namespace DX12Native
 	SHADOW_QUALITY_CONST uint kShadowQualityLow = 3u;
 	SHADOW_QUALITY_CONST uint kShadowQualityPotato = 4u;
 	SHADOW_QUALITY_CONST uint kShadowQualityCount = 5u;
+	SHADOW_QUALITY_CONST uint kShadowShaderCount = kShadowQualityCount + 2u;
+	SHADOW_QUALITY_CONST float kOffloadingFadeRange = 0.66f;
+	SHADOW_QUALITY_CONST float kOffloadingNearRadius = 16.0f;
+	SHADOW_QUALITY_CONST float kOffloadingBlend = 0.40f;
+
+	SHADOW_QUALITY_FUNCTION uint NativeShadowOffloadingQuality(bool performance)
+	{
+		return performance ? kShadowQualityMedium : kShadowQualityFull;
+	}
+
+	SHADOW_QUALITY_FUNCTION uint NativeShadowShaderIndex(bool offloading, uint quality)
+	{
+		return offloading ? kShadowQualityCount + (quality == kShadowQualityFull ? 0u : 1u) :
+		                    (quality < kShadowQualityCount ? quality : kShadowQualityQuality);
+	}
 
 	SHADOW_QUALITY_FUNCTION float NativeShadowEmitterMultiplier(uint quality)
 	{

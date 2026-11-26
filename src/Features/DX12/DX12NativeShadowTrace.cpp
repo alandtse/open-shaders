@@ -141,7 +141,7 @@ namespace DX12Native
 		const uint32_t quality = controls.offloading ?
 			(controls.qualityMode == kShadowQualityFull ? kShadowQualityFull : kShadowQualityMedium) :
 			(controls.qualityMode < kShadowQualityCount ? controls.qualityMode : kDefaultShadowQualityMode);
-		const auto variant = ShadowShaderIndex(controls.offloading, quality);
+		const auto variant = NativeShadowShaderIndex(controls.offloading, quality);
 		const auto& pipeline = pipelines[variant];
 		if (initializationFailed[variant])
 			return;

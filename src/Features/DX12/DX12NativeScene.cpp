@@ -623,11 +623,11 @@ void DX12NativeScene::OnOpaqueRasterReady()
 		const DX12Native::ShadowTraceControls controls{
 			.viewportWidth = viewportWidth,
 			.viewportHeight = viewportHeight,
-			.qualityMode = fullShadow ? profile.qualityMode : (offloadingProfile.performance ? DX12Native::kShadowQualityMedium : DX12Native::kShadowQualityFull),
+			.qualityMode = fullShadow ? profile.qualityMode : DX12Native::NativeShadowOffloadingQuality(offloadingProfile.performance),
 			.nearLightExclusion = !fullShadow || profile.nearLightShadowExclusion,
-			.nearLightRadius = fullShadow ? float(profile.nearLightExclusionUnits) : 16.0f,
+			.nearLightRadius = fullShadow ? float(profile.nearLightExclusionUnits) : DX12Native::kOffloadingNearRadius,
 			.reachMultiplier = fullShadow ? profile.shadowReachMultiplier : 1.0f,
-			.fadeRange = fullShadow ? profile.shadowFadeRange : 0.66f,
+			.fadeRange = fullShadow ? profile.shadowFadeRange : DX12Native::kOffloadingFadeRange,
 			.falloffCurve = fullShadow ? profile.shadowFalloffCurve : 1.0f,
 			.captureDebugLights = (fullShadow ? profile.debugNativeLights : offloadingProfile.debugNativeLights).load(std::memory_order_relaxed),
 			.offloading = !fullShadow

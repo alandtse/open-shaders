@@ -16,12 +16,6 @@ namespace DX12Native
 	// Shared CPU-side limit for prepared lights submitted to the native shadow RayQuery.
 	inline constexpr uint32_t kMaxShadowLights = DX12::kMaxPreparedLights;
 	inline constexpr uint32_t kDefaultShadowQualityMode = kShadowQualityQuality;
-	inline constexpr uint32_t kShadowShaderCount = kShadowQualityCount + 2;
-	inline constexpr uint32_t ShadowShaderIndex(bool offloading, uint32_t quality)
-	{
-		return offloading ? kShadowQualityCount + (quality == kShadowQualityFull ? 0u : 1u) :
-		                    (quality < kShadowQualityCount ? quality : kDefaultShadowQualityMode);
-	}
 	inline constexpr float kDefaultShadowReachMultiplier = 1.25f;
 	inline constexpr float kDefaultShadowFadeRange = 0.36f;
 

@@ -22,7 +22,7 @@ cbuffer ShadowConstants : register(b0)
 #define NATIVE_SHADOW_QUALITY 0
 #endif
 
-static const float kOffloadingBlend = 0.40f;
+#include "Common/NativeShadowQuality.hlsli"
 bool ValidMask(float4 mask)
 {
 	return all(isfinite(mask)) && mask.y == 1.0f && mask.z > 0.0f && mask.w > 0.0f;

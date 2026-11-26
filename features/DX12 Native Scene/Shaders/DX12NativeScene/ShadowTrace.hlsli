@@ -180,8 +180,7 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 		float4 radiance = Lights[lightIndex * 3 + 1];
 		float4 params = Lights[lightIndex * 3 + 2];
 #ifdef NATIVE_SHADOW_OFFLOAD
-		static const float kOffloadFadeRange = 0.66f;
-		const float fraction = kOffloadFadeRange;
+		const float fraction = kOffloadingFadeRange;
 #else
 		const float fraction = saturate(ShadowFadeRange);
 #endif
@@ -221,8 +220,7 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 #endif
 		float tMax = min(rayDistance - MinDistance, MaxDistance);
 #ifdef NATIVE_SHADOW_OFFLOAD
-		static const float kOffloadNearRadius = 16.0f;
-		tMax = min(tMax, d - kOffloadNearRadius - MinDistance);
+		tMax = min(tMax, d - kOffloadingNearRadius - MinDistance);
 #else
 		if (NearLightExclusion != 0u && NearLightRadius > 0.0f) {
 			const float discriminant = NearLightRadius * NearLightRadius - perpendicularSquared;

@@ -372,3 +372,23 @@ TEST_CASE("DX12 frame modes select distinct SCM caster ownership", "[dx12][shado
 	CHECK(SelectSCMNativeCasterMode(SelectSCMNativePolicy(SCMNativeMode::ShadowOffload), true) == SCMNativeCasterMode::Suppress);
 	CHECK(SelectSCMNativeCasterMode(SelectSCMNativePolicy(SCMNativeMode::FullShadow), true, true) == SCMNativeCasterMode::SuppressAll);
 }
+
+TEST_CASE("DX12 offload quality is full or quarter pixel count", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	const auto quality = NativeShadowOffloadingQuality(false);
+	const auto performance = NativeShadowOffloadingQuality(true);
+	CHECK(quality == kShadowQualityFull);
+	CHECK(performance == kShadowQualityMedium);
+	CHECK_FALSE(NativeShadowCheckerboard(quality));
+	CHECK_FALSE(NativeShadowCheckerboard(performance));
+	CHECK(NativeShadowLogicalExtent(1920, quality) == 1920);
+	CHECK(NativeShadowLogicalExtent(1080, quality) == 1080);
+	CHECK(NativeShadowLogicalExtent(1921, performance) == 961);
+	CHECK(NativeShadowLogicalExtent(1081, performance) == 541);
+	CHECK(NativeShadowPhysicalWidth(961, performance) == 961);
+	CHECK(NativeShadowShaderIndex(true, quality) == kShadowQualityCount);
+	CHECK(NativeShadowShaderIndex(true, performance) == kShadowQualityCount + 1u);
+	for (uint32_t mode = 0; mode < kShadowQualityCount; ++mode)
+		CHECK(NativeShadowShaderIndex(false, mode) == mode);
+}

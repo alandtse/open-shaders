@@ -127,7 +127,7 @@ namespace DX12Native
 		                            (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
 		const auto raster = shadow ? shadow->raster : nullptr;
 		const bool offloading = shadow && shadow->sampling.offloading;
-		const auto variant = shadow ? ShadowShaderIndex(offloading, shadow->sampling.qualityMode) : 0u;
+		const auto variant = shadow ? NativeShadowShaderIndex(offloading, shadow->sampling.qualityMode) : 0u;
 		publishReconstructedMask = publishReconstructedMask && !offloading;
 		// The native scene's frame counter is used when fetching the mask; the
 		// compositor frame number is the upscaler's existing frame counter.
@@ -366,7 +366,7 @@ namespace DX12Native
 					transfer == Transfer::LegacyScene ? 1u : 0u,
 					publishReconstructedMask ? 1u : 0u,
 					offloading ? 1.0f : globals::features::dx12Control.GetRayTracedStrength(),
-					offloading ? 0.40f : globals::features::dx12Control.GetRayTracedBlend(),
+					offloading ? kOffloadingBlend : globals::features::dx12Control.GetRayTracedBlend(),
 					camera.CameraProjInverse, camera.CameraViewInverse,
 					!offloading && globals::features::dx12Control.GetRayTracedSpatialReconstruction() ? 1u : 0u,
 					offloading ? 3u : globals::features::dx12Control.GetRayTracedGridSize(),
