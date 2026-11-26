@@ -1,7 +1,8 @@
 #pragma once
 
-#include "Feature.h"
 #include "DX12ControlMode.h"
+#include "Feature.h"
+#include "Utils/BootSnapshot.h"
 
 #include <atomic>
 
@@ -13,6 +14,21 @@ struct DX12Control final : Feature
 		bool Enabled = false;
 		int Mode = static_cast<int>(DX12::ControlMode::ShadowOffload);
 	};
+
+	Settings settings;
+
+	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
+		UTIL_RESTART_FIELD(Settings, Enabled, "Enable native DX12 features"),
+	} };
+	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
+
+	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
+	{
+		return { kRestartFields.data(), kRestartFields.size() };
+	}
+	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
+	const void* GetSettingsBlob() const override { return &settings; }
+	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
 
 	std::string GetName() override { return "DX12"; }
 	std::string GetShortName() override { return "DX12"; }
@@ -33,10 +49,10 @@ struct DX12Control final : Feature
 	void OnRuntimeDisabled() override;
 
 private:
+	void SyncRuntimeSettings() noexcept;
 	std::atomic<bool> bootActive{ false };
 	bool bootCaptured = false;
 	DX12::ControlMode GetMode() const;
 	void DrawSimpleSettings(bool developerMode);
 	mutable std::atomic<int> selectedMode{ static_cast<int>(DX12::ControlMode::ShadowOffload) };
-	Settings settings;
 };

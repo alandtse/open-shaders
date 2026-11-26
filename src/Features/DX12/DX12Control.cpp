@@ -3,9 +3,22 @@
 #include "DX12Resources.h"
 #include "Globals.h"
 #include "State.h"
+#include "Utils/SettingsControl.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
+#include <array>
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	DX12Control::Settings,
+	Enabled,
+	Mode)
+
+void DX12Control::SyncRuntimeSettings() noexcept
+{
+	settings.Mode = static_cast<int>(DX12::SanitizeControlMode(settings.Mode, globals::state && globals::state->IsDeveloperMode()));
+	selectedMode.store(settings.Mode, std::memory_order_relaxed);
+}
 
 DX12::ControlMode DX12Control::GetMode() const
 {
@@ -24,19 +37,21 @@ DX12::ControlMode DX12Control::GetMode() const
 void DX12Control::DrawSimpleSettings(bool developerMode)
 {
 	using DX12::ControlMode;
+	// Items follow the persisted ControlMode values, so item i is mode i.
 	const char* modes[] = {
 		T("menu.dx12.mode.shadow_offload", "Shadow offload"),
-		T("menu.dx12.mode.ray_traced_static_shadows", "Ray-Traced Static Shadows"),
-		T("menu.dx12.mode.raster_comparison", "Raster comparison")
+		T("menu.dx12.mode.raster_comparison", "Raster comparison"),
+		T("menu.dx12.mode.ray_traced_static_shadows", "Ray-Traced Static Shadows")
 	};
-	constexpr ControlMode modeIDs[]{ ControlMode::ShadowOffload, ControlMode::FullRT, ControlMode::RasterComparison };
-	const auto selected = DX12::SanitizeControlMode(static_cast<int>(GetMode()), developerMode);
-	int index = static_cast<int>(std::find(std::begin(modeIDs), std::end(modeIDs), selected) - std::begin(modeIDs));
-	settings.Mode = static_cast<int>(selected);
-	if (ImGui::Combo(T("menu.dx12.mode.label", "Mode"), &index, modes, developerMode ? int(std::size(modes)) : int(std::size(modes)) - 1)) {
-		settings.Mode = static_cast<int>(modeIDs[index]);
-		selectedMode.store(settings.Mode, std::memory_order_relaxed);
-	}
+	const char* playerModes[] = { modes[0], modes[2] };
+	constexpr std::array kPlayerModeValues{ 0, 2 };
+	static_assert(kPlayerModeValues[1] == static_cast<int>(ControlMode::FullRT));
+	settings.Mode = static_cast<int>(DX12::SanitizeControlMode(static_cast<int>(GetMode()), developerMode));
+	const char* label = T("menu.dx12.mode.label", "Mode");
+	const bool picked = developerMode ? Util::Combo(label, &settings.Mode, modes) :
+	                                    Util::Combo(label, &settings.Mode, playerModes, kPlayerModeValues);
+	if (picked && !SettingsControl::IsReplicating())
+		SyncRuntimeSettings();
 	ImGui::Checkbox(T("menu.dx12.master.enable", "Enable native DX12 features (restart required)"), &settings.Enabled);
 	if (settings.Enabled != bootActive.load(std::memory_order_acquire))
 		ImGui::TextDisabled(T("menu.dx12.master.restart_boot_state", "A game restart is required; DX12 Resources retains its boot state until then."));
@@ -74,10 +89,9 @@ void DX12Control::DrawSettings()
 
 void DX12Control::LoadSettings(json& input)
 {
-	settings.Enabled = input.value("Enabled", false);
-	settings.Mode = static_cast<int>(DX12::SanitizeControlMode(input.value("Mode", static_cast<int>(DX12::ControlMode::ShadowOffload)),
-		globals::state && globals::state->IsDeveloperMode()));
-	selectedMode.store(settings.Mode, std::memory_order_relaxed);
+	settings = input;
+	SyncRuntimeSettings();
+	bootSnapshot.LatchIfNeeded(settings);
 	if (!bootCaptured) {
 		bootActive.store(settings.Enabled, std::memory_order_release);
 		bootCaptured = true;
@@ -86,13 +100,14 @@ void DX12Control::LoadSettings(json& input)
 
 void DX12Control::SaveSettings(json& output)
 {
-	output = { { "Enabled", settings.Enabled }, { "Mode", static_cast<int>(GetMode()) } };
+	settings.Mode = static_cast<int>(GetMode());
+	output = settings;
 }
 
 void DX12Control::RestoreDefaultSettings()
 {
 	settings = {};
-	selectedMode.store(settings.Mode, std::memory_order_relaxed);
+	SyncRuntimeSettings();
 }
 
 void DX12Control::OnRuntimeDisabled()

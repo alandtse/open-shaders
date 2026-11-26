@@ -1,12 +1,12 @@
 #pragma once
 
+#include "../OverlayFeature.h"
 #include "DX12NativeAcceleration.h"
+#include "DX12NativeLightWorker.h"
 #include "DX12NativeRasterCapture.h"
 #include "DX12NativeRuntimeCapture.h"
 #include "DX12NativeShadowTrace.h"
-#include "../OverlayFeature.h"
 #include "SCMNativePolicy.h"
-#include "DX12NativeLightWorker.h"
 
 #include <atomic>
 #include <memory>
@@ -27,6 +27,24 @@ struct DX12NativeScene final : OverlayFeature
 	bool IsInMenu() const override { return false; }
 	bool IsInFeatureList() const override { return false; }
 	bool SupportsVR() override { return false; }
+
+	struct Settings
+	{
+		struct FullRTProfile
+		{
+			bool OutdoorShadowOffloading = false;
+			uint32_t ShadowQualityMode = DX12Native::kShadowQualityQuality;
+			bool DebugNativeLights = false;
+			uint32_t RuntimeUnificationRadius = DX12Native::kDefaultRuntimeUnificationRadius;
+			uint32_t PreparedExclusionRadius = DX12Native::kDefaultPreparedExclusionRadius;
+			bool AdditivePreparedEmission = true;
+			uint32_t LightObservationFrames = DX12Native::kDefaultLightObservationFrames;
+		};
+		bool OutdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
+		bool DebugNativeLights = false;
+		FullRTProfile FullRT;
+	};
+	Settings settings;
 
 	void DrawSettings() override;
 	void DrawDevSettings();
@@ -97,7 +115,8 @@ private:
 	std::atomic<bool> debugOffloadLights{ false };
 	std::atomic<bool> debugRTLights{ false };
 	bool WantsLightPreview(DX12::SCMNativeMode mode) const;
-	uint32_t fullRTQuality = DX12Native::kShadowQualityQuality;
+	std::atomic<uint32_t> fullRTQuality{ DX12Native::kShadowQualityQuality };
+	void SyncRuntimeSettings() noexcept;
 	std::atomic<uint32_t> runtimeUnificationRadius{ DX12Native::kDefaultRuntimeUnificationRadius };
 	std::atomic<uint32_t> preparedExclusionRadius{ DX12Native::kDefaultPreparedExclusionRadius };
 	std::atomic<bool> additivePreparedEmission{ true };

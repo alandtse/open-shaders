@@ -233,6 +233,8 @@ struct DX12Resources final : Feature, private RE::BSTEventSink<RE::PositionPlaye
 		return generationStats.load(std::memory_order_acquire);
 	}
 
+	Settings settings;
+
 private:
 	struct LoadingDestination
 	{
@@ -300,5 +302,4 @@ private:
 	std::atomic<std::shared_ptr<const DX12::PreparationStats>> generationStats{
 		std::make_shared<const DX12::PreparationStats>()
 	};
-	Settings settings;
 };

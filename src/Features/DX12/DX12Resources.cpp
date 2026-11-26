@@ -15,6 +15,8 @@
 #include "State.h"
 #include "Utils/Game.h"
 #include "Utils/PerfUtils.h"
+#include "Utils/SettingsControl.h"
+#include "Utils/UI.h"
 
 #include <algorithm>
 #include <array>
@@ -22,6 +24,18 @@
 #include <magic_enum/magic_enum.hpp>
 #include <ranges>
 #include <unordered_set>
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	DX12Resources::Settings,
+	SubcellSize,
+	ConsolidateInterior)
+
+namespace
+{
+	constexpr std::array<const char*, 7> kSubcellSizeLabels = { "4096", "6144", "8192", "10240", "12288", "14336", "16384" };
+	constexpr std::array<uint32_t, 7> kSubcellSizeValues = { 4096, 6144, 8192, 10240, 12288, 14336, 16384 };
+	static_assert(kSubcellSizeValues == DX12::kSubcellSizes);
+}
 
 namespace DX12
 {
@@ -871,27 +885,14 @@ void DX12Resources::ResetPreparation()
 
 void DX12Resources::DrawSettings()
 {
-	int index = int(std::ranges::find(DX12::kSubcellSizes, settings.SubcellSize) - DX12::kSubcellSizes.begin());
-	if (index >= int(DX12::kSubcellSizes.size()))
-		index = 0;
-	static const auto labels = [] {
-		std::array<std::string, DX12::kSubcellSizes.size()> result{};
-		for (size_t i = 0; i < result.size(); ++i)
-			result[i] = std::to_string(DX12::kSubcellSizes[i]);
-		return result;
-	}();
-	std::array<const char*, DX12::kSubcellSizes.size()> labelPointers{};
-	for (size_t i = 0; i < labels.size(); ++i)
-		labelPointers[i] = labels[i].c_str();
-	if (ImGui::Combo(T("menu.dx12.resources.subcell_size", "Subcell size (game units)"), &index, labelPointers.data(), int(labelPointers.size()))) {
-		const uint32_t selected = DX12::kSubcellSizes[index];
-		if (settings.SubcellSize != selected) {
-			settings.SubcellSize = selected;
-			ResetPreparation();
-		}
-	}
+	const uint32_t previousSize = settings.SubcellSize;
+	if (Util::Combo(T("menu.dx12.resources.subcell_size", "Subcell size (game units)"), &settings.SubcellSize,
+			kSubcellSizeLabels.data(), kSubcellSizeValues, 0) &&
+		!SettingsControl::IsReplicating() && settings.SubcellSize != previousSize)
+		ResetPreparation();
 
-	if (ImGui::Checkbox(T("menu.dx12.resources.consolidate_interior", "Consolidate small interior cells"), &settings.ConsolidateInterior))
+	if (ImGui::Checkbox(T("menu.dx12.resources.consolidate_interior", "Consolidate small interior cells"), &settings.ConsolidateInterior) &&
+		!SettingsControl::IsReplicating())
 		ResetPreparation();
 }
 
@@ -1005,21 +1006,17 @@ void DX12Resources::DrawResourceStatus()
 
 void DX12Resources::LoadSettings(json& input)
 {
-	const uint32_t requested = input.value("SubcellSize", DX12::kSubcellSizes.front());
-	const uint32_t selected = std::ranges::contains(DX12::kSubcellSizes, requested) ?
-	                              requested :
-	                              DX12::kSubcellSizes.front();
-	const bool consolidate = input.value("ConsolidateInterior", true);
-	if (settings.SubcellSize != selected || settings.ConsolidateInterior != consolidate) {
-		settings.SubcellSize = selected;
-		settings.ConsolidateInterior = consolidate;
+	const Settings previous = settings;
+	settings = input;
+	if (!std::ranges::contains(DX12::kSubcellSizes, settings.SubcellSize))
+		settings.SubcellSize = DX12::kSubcellSizes.front();
+	if (settings.SubcellSize != previous.SubcellSize || settings.ConsolidateInterior != previous.ConsolidateInterior)
 		ResetPreparation();
-	}
 }
 
 void DX12Resources::SaveSettings(json& output)
 {
-	output = { { "SubcellSize", settings.SubcellSize }, { "ConsolidateInterior", settings.ConsolidateInterior } };
+	output = settings;
 }
 
 void DX12Resources::RestoreDefaultSettings()
