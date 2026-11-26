@@ -5,6 +5,12 @@
 
 namespace UIComposition
 {
+	/** @brief Coverage for compositors that cannot add: premultiplied colour above alpha counts as coverage. */
+	float EffectiveCoverage(float4 ui)
+	{
+		return saturate(max(ui.a, max(ui.r, max(ui.g, ui.b))));
+	}
+
 	float3 CompositeSDR(float3 scene, float4 ui, bool sceneIsLinear, bool sceneIsBT2020, float brightness)
 	{
 		[branch] if (ui.a != 0.0 || any(ui.rgb != 0.0))

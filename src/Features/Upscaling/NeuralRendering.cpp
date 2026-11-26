@@ -223,6 +223,10 @@ struct NeuralRendering::Impl
 		std::unique_ptr<Texture2D> resolved, toneData;
 		/** @brief Eye-stagger history: the model frame's log input luma and tone delta, its depth guide, and the proxy a reuse frame feeds the composite. Allocated only while the stagger can run. */
 		std::unique_ptr<Texture2D> gainHistory, depthHistory, reuseOutput;
+		/** @brief Motion from a reused pixel back to the stored gain, written on every reuse frame and read on the next. */
+		std::array<std::unique_ptr<Texture2D>, 2> chainedMotion;
+		uint32_t chainedMotionLatest = 0;
+		uint64_t chainedMotionFrame = NR::Cadence::kNoModelFrame;
 		DirectX::SimpleMath::Vector3 position{}, forward{};
 	};
 	std::array<Eye, 2> eyes;
@@ -369,11 +373,13 @@ struct NeuralRendering::Impl
 		float4 cameraData{};         ///< The projection terms SharedData carries; the guide's own depth is a raw value.
 		uint32_t depthReversed = 0;  ///< True when the guide holds reverse-Z depth, which Feature 18 is told separately.
 		uint32_t crossEye = 0;       ///< True when the other eye's stored gain is bound for a rejected sample to fall back on.
-		uint32_t pad[2]{};
+		uint32_t chainMotion = 0;    ///< True when the previous frame also reused, so its chained motion is walked too.
+		uint32_t pad = 0;
 		DirectX::SimpleMath::Matrix stereoMap;  ///< Column-vector map from this eye's clip space to the other eye's, the engine's own eye-to-eye conversion folded into one matrix.
 	};
 	static_assert(offsetof(GainReuseData, depthReversed) == 16);
 	static_assert(offsetof(GainReuseData, crossEye) == 20);
+	static_assert(offsetof(GainReuseData, chainMotion) == 24);
 	static_assert(offsetof(GainReuseData, stereoMap) == 32);
 	static_assert(sizeof(GainReuseData) == 96);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
@@ -822,6 +828,14 @@ struct NeuralRendering::Impl
 		eye.reuseOutput = std::make_unique<Texture2D>(desc, std::format("NeuralRendering::Eye{} ReuseOutput", i).c_str());
 		eye.reuseOutput->CreateSRV(srv);
 		eye.reuseOutput->CreateUAV(uav);
+		desc.Format = srv.Format = uav.Format = DXGI_FORMAT_R16G16_FLOAT;
+		for (uint32_t index = 0; index < eye.chainedMotion.size(); ++index) {
+			auto& chained = eye.chainedMotion[index];
+			chained = std::make_unique<Texture2D>(desc, std::format("NeuralRendering::Eye{} ChainedMotion{}", i, index).c_str());
+			chained->CreateSRV(srv);
+			chained->CreateUAV(uav);
+		}
+		eye.chainedMotionFrame = NR::Cadence::kNoModelFrame;
 	}
 
 	/** @brief Frees the stagger textures while the stagger is off, so a VR session does not hold two extra render-resolution surfaces. */
@@ -831,17 +845,18 @@ struct NeuralRendering::Impl
 			eye.gainHistory.reset();
 			eye.depthHistory.reset();
 			eye.reuseOutput.reset();
+			eye.chainedMotion = {};
 		}
 	}
 
 	/** @brief Binds the color-transfer block plus the GainReuseCS block, which carries the guide's depth convention. */
-	void BindGainBuffers(uint32_t i, bool crossEye = false)
+	void BindGainBuffers(uint32_t i, bool crossEye = false, bool chainMotion = false)
 	{
 		ColorTransferData data{ width, height, i * width };
 		SetRegion(data, i);
 		data.colorStrength = colorStrength;
 		colorBuffer->Update(data);
-		GainReuseData reuse{ Util::GetCameraData(), globals::features::reverseZ.IsActive() ? 1u : 0u, crossEye ? 1u : 0u };
+		GainReuseData reuse{ Util::GetCameraData(), globals::features::reverseZ.IsActive() ? 1u : 0u, crossEye ? 1u : 0u, chainMotion ? 1u : 0u };
 		if (crossEye) {
 			const auto& frameBuffer = globals::game::frameBufferCached;
 			const auto offset = frameBuffer.GetCameraPosAdjust(i) - frameBuffer.GetCameraPosAdjust(1 - i);
@@ -872,10 +887,11 @@ struct NeuralRendering::Impl
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
 		ClearPipeline();
+		eye.chainedMotionFrame = NR::Cadence::kNoModelFrame;
 	}
 
 	/** @brief Rebuilds one eye's proxy from its stored gain reprojected by motion, so the composite applies the same tone edit for a frame the model did not run. */
-	void ReuseGain(uint32_t i, bool crossEye = false)
+	void ReuseGain(uint32_t i, uint64_t frameNumber, bool crossEye = false)
 	{
 		CS_GPU_PASS("Upscaling::NRReuseGain");
 		auto* shader = reuseGain.Get(L"Data/Shaders/Upscaling/NeuralRendering/GainReuseCS.hlsl",
@@ -883,9 +899,11 @@ struct NeuralRendering::Impl
 		if (!shader)
 			throw std::runtime_error("NR gain-reuse shader unavailable");
 		auto& eye = eyes[i];
-		BindGainBuffers(i, crossEye);
+		const bool chainMotion = NR::Cadence::ContinuesMotionChain(frameNumber, eye.chainedMotionFrame);
+		const uint32_t next = eye.chainedMotionLatest ^ 1u;
+		BindGainBuffers(i, crossEye, chainMotion);
 		ID3D11ShaderResourceView* inputs[]{ eye.color->srv, nullptr, eye.depth->srv, eye.motion->srv,
-			eye.gainHistory->srv.get(), eye.depthHistory->srv.get() };
+			eye.gainHistory->srv.get(), eye.depthHistory->srv.get(), eye.chainedMotion[eye.chainedMotionLatest]->srv.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
 		if (crossEye) {
 			ID3D11ShaderResourceView* otherInputs[]{ eyes[1 - i].gainHistory->srv.get(), eyes[1 - i].depthHistory->srv.get() };
@@ -893,11 +911,13 @@ struct NeuralRendering::Impl
 		}
 		auto* sampler = linearSampler.get();
 		context->CSSetSamplers(0, 1, &sampler);
-		auto* output = eye.reuseOutput->uav.get();
-		context->CSSetUnorderedAccessViews(2, 1, &output, nullptr);
+		ID3D11UnorderedAccessView* outputs[]{ eye.reuseOutput->uav.get(), eye.chainedMotion[next]->uav.get() };
+		context->CSSetUnorderedAccessViews(2, ARRAYSIZE(outputs), outputs, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
 		ClearPipeline();
+		eye.chainedMotionLatest = next;
+		eye.chainedMotionFrame = frameNumber;
 	}
 
 	/**
@@ -1651,7 +1671,7 @@ struct NeuralRendering::Impl
 			for (uint32_t i = 0; i < eyeCount; ++i) {
 				if (!reuseFrame[i])
 					continue;
-				ReuseGain(i, tuning.crossEyeGain && globals::game::isVR && eyeCount == 2 && !reuseFrame[1 - i]);
+				ReuseGain(i, static_cast<uint64_t>(diagnostic.number), tuning.crossEyeGain && globals::game::isVR && eyeCount == 2 && !reuseFrame[1 - i]);
 			}
 		}
 		for (uint32_t i = 0; i < eyeCount; ++i) {
@@ -1891,6 +1911,12 @@ bool NeuralRendering::DialogueOpen()
 
 void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistory = true; }
 void NeuralRendering::ResetHistory() { resetHistory = true; }
+void NeuralRendering::OnTuningReplaced(const NR::Tuning& previous, const NR::Tuning& current)
+{
+	if (current.CreationValuesDiffer(previous))
+		recreate = true;
+	resetHistory = true;
+}
 void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = resetHistory = true; }
 
 NR::CombatPauseSnapshot NeuralRendering::ResolveCombatPause(bool enabled)

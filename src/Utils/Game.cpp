@@ -356,6 +356,19 @@ namespace Util
 		return (shadowState->GetVRRuntimeData().posAdjust.getEye(0) + shadowState->GetVRRuntimeData().posAdjust.getEye(1)) * 0.5f;
 	}
 
+	bool IsFirstPersonPass()
+	{
+		auto* accumulator = *globals::game::currentAccumulator.get();
+		return accumulator && accumulator->GetRuntimeData().renderMode == RE::BSShaderAccumulator::RENDER_MODE::kFirstPersonView;
+	}
+
+	float GetPassDistance(const RE::BSGeometry& a_geometry)
+	{
+		if (IsFirstPersonPass())
+			return 0.0f;
+		return std::max(0.0f, a_geometry.worldBound.center.GetDistance(GetEyePosition(0)) - a_geometry.worldBound.radius);
+	}
+
 	RE::NiPoint3 GetEyePosition(int eyeIndex)
 	{
 		auto shadowState = globals::game::shadowState;
@@ -687,8 +700,7 @@ namespace Util
 	{
 		if (!model || !model->GetModel())
 			return false;
-		auto path = ToLowerAscii(model->GetModel());
-		std::replace(path.begin(), path.end(), '/', '\\');
+		const auto path = ToGameAssetPath(model->GetModel());
 		return path.find("architecture\\") != std::string::npos || path.find("dungeons\\") != std::string::npos;
 	}
 

@@ -462,3 +462,22 @@ TEST_CASE("SanitizeJitter keeps a sub-pixel offset and zeroes an invalid one", "
 	REQUIRE(NR::SanitizeJitter(std::numeric_limits<float>::quiet_NaN()) == 0.0f);
 	REQUIRE(NR::SanitizeJitter(std::numeric_limits<float>::infinity()) == 0.0f);
 }
+
+TEST_CASE("Only the values the model is created with ask for a rebuild", "[nr]")
+{
+	const NR::Tuning base;
+	REQUIRE_FALSE(base.CreationValuesDiffer(base));
+	const auto differs = [&](auto&& change) {
+		auto changed = base;
+		change(changed);
+		return changed.CreationValuesDiffer(base);
+	};
+	REQUIRE(differs([](NR::Tuning& tuning) { tuning.style = 1; }));
+	REQUIRE(differs([](NR::Tuning& tuning) { tuning.intensity = 0.5f; }));
+	REQUIRE(differs([](NR::Tuning& tuning) { tuning.localToneStrength = 0.5f; }));
+	REQUIRE(differs([](NR::Tuning& tuning) { tuning.localStructureStrength = 0.5f; }));
+	REQUIRE(differs([](NR::Tuning& tuning) { tuning.skinStructureStrength = 0.5f; }));
+	REQUIRE(differs([](NR::Tuning& tuning) { tuning.useAutoMask = false; }));
+	REQUIRE_FALSE(differs([](NR::Tuning& tuning) { tuning.colorStrength = 0.5f; }));
+	REQUIRE_FALSE(differs([](NR::Tuning& tuning) { tuning.skipFrameInterval = 3; }));
+}

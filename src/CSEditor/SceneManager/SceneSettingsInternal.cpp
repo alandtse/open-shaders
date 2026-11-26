@@ -75,42 +75,6 @@ namespace SceneSettingsInternal
 		return std::nullopt;
 	}
 
-	std::vector<std::filesystem::path> GetSortedDirectoryPaths(
-		const std::filesystem::path& directory, bool directories, std::string_view context)
-	{
-		std::vector<std::filesystem::path> paths;
-		std::error_code ec;
-		std::filesystem::directory_iterator iterator(
-			directory, std::filesystem::directory_options::skip_permission_denied, ec);
-		if (ec) {
-			logger::error("[SceneSettings] Failed to enumerate {} '{}': {}", context, directory.string(), ec.message());
-			return paths;
-		}
-
-		const std::filesystem::directory_iterator end;
-		while (iterator != end) {
-			const auto& entry = *iterator;
-			std::error_code statusError;
-			const bool matches = directories ? entry.is_directory(statusError) : entry.is_regular_file(statusError);
-			if (statusError) {
-				logger::warn("[SceneSettings] Could not inspect '{}': {}", entry.path().string(), statusError.message());
-			} else if (matches) {
-				paths.push_back(entry.path());
-			}
-
-			iterator.increment(ec);
-			if (ec) {
-				logger::error("[SceneSettings] Failed while enumerating {} '{}': {}", context, directory.string(), ec.message());
-				break;
-			}
-		}
-
-		std::sort(paths.begin(), paths.end(), [](const auto& lhs, const auto& rhs) {
-			return lhs.generic_string() < rhs.generic_string();
-		});
-		return paths;
-	}
-
 	std::vector<std::filesystem::path> GetSortedJsonFiles(
 		const std::filesystem::path& directory, std::string_view context)
 	{

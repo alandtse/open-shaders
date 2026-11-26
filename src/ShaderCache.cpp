@@ -754,11 +754,6 @@ namespace SIE
 			return nullptr;
 		}
 
-		uint32_t GetTechnique(uint32_t descriptor)
-		{
-			return 0x3F & (descriptor >> 24);
-		}
-
 		static void GetLightingShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
 			uint32_t variantMask = 0;
@@ -5682,7 +5677,7 @@ namespace SIE
 
 		// Known heavy Lighting techniques and flags from straggler analysis
 		if (type == RE::BSShader::Type::Lighting) {
-			const auto technique = static_cast<ShaderCache::LightingShaderTechniques>(0x3F & (descriptor >> 24));
+			const auto technique = ShaderCache::GetLightingTechnique(descriptor);
 
 			// LANDSCAPE techniques (MTLand, MTLandLODBlend) are among the heaviest
 			// due to multi-texture blending codegen â€” regularly 60-130s compile times

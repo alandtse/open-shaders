@@ -222,6 +222,14 @@ namespace NR
 			materialStrength = std::any_of(values.begin(), values.end(), [](float value) { return value < MaterialStrength::kMaxStrength; });
 		}
 
+		/** @brief Whether a value the runtime reads when it creates the model differs, so existing features must be rebuilt. */
+		[[nodiscard]] bool CreationValuesDiffer(const Tuning& other) const
+		{
+			return style != other.style || intensity != other.intensity || localToneStrength != other.localToneStrength ||
+			       localStructureStrength != other.localStructureStrength || skinStructureStrength != other.skinStructureStrength ||
+			       useAutoMask != other.useAutoMask;
+		}
+
 		/** @brief Writes the eight strengths, in NeuralRenderingCategory id order, leaving the by-material switch alone. */
 		void ApplyStrengths(const std::array<float, MaterialStrength::kCount>& strengths)
 		{

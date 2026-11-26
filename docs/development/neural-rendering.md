@@ -372,9 +372,10 @@ is capped at 250 ms, and a non-finite jitter offset or one beyond a pixel reads 
 
 Feature resources and frame parameters are updated in place after creation.
 Appearance tuning is written before creation, and committed UI tuning changes
-recreate the persistent eye handles. A contract change must likewise retire
-queued GPU work before releasing the handles and recreate both eye instances
-when it changes creation-latched parameters.
+recreate the persistent eye handles, as does a settings load, DevBench set or
+restore of defaults that changes one of those values. A contract change must
+likewise retire queued GPU work before releasing the handles and recreate both
+eye instances when it changes creation-latched parameters.
 
 Unsigned, float and resource parameters are written through the public
 `NVSDK_NGX_Parameter::Set` overloads. The runtime sets only parameter names the
@@ -671,6 +672,12 @@ pass reprojects that gain through the eye's motion vectors and rebuilds a proxy
 whose luminance ratio is the same gain. Crop, material alpha, tone filtering,
 category strengths and protection all still run, unchanged, for the reused eye;
 only its colours come from its own frame.
+
+The stored gain belongs to the last model frame, so a second reused frame in a
+row has to reach back further than one frame of motion. Every reuse pass writes
+the motion from its pixels to the stored gain, and the next one adds it, sampled
+where this frame's motion lands, to its own. A model frame starts the chain
+again.
 
 The reprojected position takes four bilinear taps of the stored gain. A tap is
 dropped, giving no gain rather than a stale one, when its depth differs by more

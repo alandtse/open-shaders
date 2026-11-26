@@ -13,10 +13,11 @@ Each rule is stated once, in the section named in brackets.
 - **PR title & commits:** Conventional Commits `type(scope): description`, title <= 50 chars, body wrapped to 72, target `dev` (never `main`). Fix a stale title with `gh pr edit <num> --title "..."` (the title becomes the release commit message). [Git & Release]
 - **Comments:** 0 lines by default, and at most 2 when the WHY is non-obvious. [Comments]
 - **Minimal churn:** touch only the lines the change requires. [Code Quality]
-- **DRY:** reuse shared utilities and cached `globals::game::*` pointers. [Code Quality]
+- **DRY:** new, synced and ported code reuses our utilities; search our whole tree first. [Code Quality]
 - **Feature boundaries:** no feature may depend on a non-core feature. [Code Quality]
-- **D3D naming:** name every D3D11 resource with `Util::SetResourceName`. [DirectX Naming]
+- **D3D naming:** name every D3D11 resource with `Util::SetResourceName` and every D3D12 object with `SetName`. [DirectX Naming]
 - **Perf instrumentation:** `CS_GPU_PASS` at every render-pass entry point, including ported code. [Performance]
+- **Threads & lifetime:** no thread, process or D3D work at static init, atomic cross-thread settings, stop-token workers, nothing escapes a thread body. [Concurrency & Lifetime]
 - **VR maintenance:** keep VR divergence minimal; resolve merge conflicts in favor of keeping VR. [VR]
 - **Verify in game:** runtime-affecting changes are verified via devbench on VR plus one flat variant. [Testing]
 - **Humans on GitHub:** agents never respond to human reviewers or commenters. [Git & Release]
@@ -52,11 +53,12 @@ Each rule is stated once, in the section named in brackets.
 ## Code Quality & Architecture
 
 - **No placeholders:** no TODO/FIXME or incomplete implementations unless explicitly requested for planning.
-- **Minimal churn:** do not reformat unrelated code, rename adjacent variables, add or remove stray blank lines, or reorder or relocate existing code (prefer a forward declaration over moving a definition). An unreviewable diff is a violation even when functionally identical. Extracting a helper to satisfy the function-size rule is fine when scoped to the function you are already touching.
+- **Minimal churn:** do not reformat unrelated code, rename adjacent variables, add or remove stray blank lines, or reorder or relocate existing code (prefer a forward declaration over moving a definition). An unreviewable diff is a violation even when functionally identical. Extracting a helper to satisfy the function-size rule is fine when scoped to the function you are already touching. Moving code to share it (DRY) is not churn.
 - **Descriptive naming** that states rendering purpose (`screenSpaceAmbientOcclusion`, `UpdateShadowCascades()`).
 - **Single responsibility:** each feature class handles exactly one graphics technique. Split newly authored functions over ~200 lines into helpers; do not refactor an untouched function just to meet the limit.
 - **Centralize constants:** magic numbers and UI theme values go in named constants (e.g. `ThemeManager::Constants`).
-- **DRY codebase-wide:** check new code against `src/Utils/` (`Serialize.h`, `Format.h`, `FileSystem.h`, `UI.h`) and `bshoshany-thread-pool` before writing your own. Always reuse `Util::SetResourceName`, `Util::GetGameSettingValue`, and the cached `globals::game::*` pointers (`Globals.h`) instead of `RE::*::GetSingleton()` (e.g. `globals::game::player`, `globals::game::isVR`).
+- **DRY codebase-wide:** before adding a helper, constant, parser, path or math routine, search our `src/Utils/` first, then the rest of `src/`, `tests/cpp` and the shared shaders, by behavior (the APIs, literals and operation), not only by name. Code arriving through an upstream sync or a fork port is not exempt: switch its duplicates to ours. Common homes: `StringUtils.h`, `MathUtils.h`, `FileSystem.h`, `Format.h`, `Serialize.h`, `Game.h`, `D3D.h`, `UI.h` and `bshoshany-thread-pool`. When existing code has to move to be shared, do it in its own `refactor:` PR that merges first and switch every copy. List what was searched and reused in the PR body.
+- **Shared accessors:** always use `Util::SetResourceName`, `Util::GetGameSettingValue` and the cached `globals::game::*` pointers (`Globals.h`) instead of `RE::*::GetSingleton()` (e.g. `globals::game::player`); `Globals.cpp` itself calls it to fill that cache. Cached flags such as `globals::game::isVR` live there too.
 - **Feature boundaries:** no feature, core or not, may depend on a _non-core_ feature (calling it, reading its settings, `#include`ing its HLSL, or branching on its `IsEnabled()`/`loaded`), guarded or not: a non-core feature can be absent from a build. Depending on an `IsCore()` feature is fine. Central engine files (`Hooks.cpp`, `State.cpp`/`.h`, `Globals.h`) stay feature-agnostic beyond registration (`globals::features`) and generic hook points (`GetActiveConstraints()`, `DrawSettings`, `SetupResources`, `Draw`, `Prepass`); do not add a branch, field or hook wired to one feature's private need. A new interception point is exposed as a virtual any feature can use (see `docs/new-feature-template/`).
 - **Scene depth in shaders** goes through the `Common/ReverseZ.hlsli` helpers (convert, compare, reduce, far/near values) so reverse-Z builds stay correct: [Reverse-Z consumers](docs/development/reverse-z-consumers.md).
 - **New shared HLSL concerns get their own `.hlsli`** in `package/Shaders/Common/` rather than growing an existing shared header: a broad header makes every consumer's shader validation re-run and risks upstream merge conflicts. This does not mandate splitting existing headers.
@@ -70,6 +72,7 @@ Each rule is stated once, in the section named in brackets.
 
 - Name every D3D11 resource for RenderDoc with `Util::SetResourceName(ptr, "Feature::ResourceDescription")` after raw `device->Create*` calls. Wrappers (`Texture2D`, `Buffer`, `ConstantBuffer` in `Buffer.h`) take the name in the constructor and name their views.
 - Use `"Feature::Name"` for the resource and `"Feature::Name SRV"` / `"Feature::Name UAV"` for views. The implementation is in `Utils/D3D.cpp`; never duplicate the GUID or re-implement it inline.
+- Name every D3D12 object (committed resources, heaps, queues, fences, pipeline states, descriptor heaps) with `SetName(L"Feature::Name")`, using the same `"Feature::Name"` scheme. D3D12 has no `Util::SetResourceName` overload yet, so call `SetName` directly.
 
 ---
 
@@ -86,7 +89,20 @@ Each rule is stated once, in the section named in brackets.
 
 - **Pass instrumentation:** wrap every render pass entry point, new or ported, with `CS_GPU_PASS("Feature::Pass")` (RAII `ScopedGpuPass`, `src/GpuPass.h`): it wires the internal profiler, Tracy CPU/GPU zones and RenderDoc/PIX annotation. Never hand-roll `State::BeginPerfEvent`/`EndPerfEvent` or raw `TracyD3D11Zone` at a pass entry. Raw zones are only for sub-dispatches where profiler granularity isn't needed.
 - **Ported code:** swap another fork's raw annotations for `CS_GPU_PASS` during the port, not in a follow-up. Give the runtime and fallback dispatch paths of a feature distinct pass names (`Feature::RuntimeDispatch` vs `Feature::HostDispatch`) so they can be A/B'd in Tracy.
+- **Hot-path hooks:** per-draw and per-light callbacks (render-pass hooks, the SCM cull) do their cheap rejects first and take no lock, heap allocation or string formatting until a candidate passes them.
 - **Justifying speedups:** a `perf:` PR states a measured number at the PR level, normalized to the frame budget (VR 90fps ≈ 11.1ms, flatrim 60fps ≈ 16.7ms), never a raw wall-clock delta. Measure GPU per-pass cost with Tracy (`-DTRACY_SUPPORT=ON`, server on port 8086). A/B by toggling the feature (menu or devbench `openshaders.feature`) on the same scene, resolution and upscaler. Micro-optimizations that can't be isolated are `refactor:`, not `perf:`.
+
+---
+
+## Concurrency & Lifetime
+
+- **Cross-thread settings:** a setting that a hook, worker or scheduler thread reads while ImGui writes it is a `std::atomic` or a published snapshot, never a plain member.
+- **No work at static init:** namespace-scope globals are constructed under the loader lock, so a constructor starts no thread or process and does no file, D3D or engine call. Start workers lazily on first enable (`SetupResources` or the hook that needs them); a disabled feature costs no thread.
+- **Workers:** a long-lived worker is an owned `std::jthread` that waits with its `stop_token` (`cv.wait(lock, stop, pred)`), so shutdown cannot miss a wakeup. Short tasks use `bshoshany-thread-pool`. No detached threads, no sleep-polling loops.
+- **Thread bodies catch everything:** an exception escaping a thread calls `std::terminate` and kills the game. Catch at the top, log once, and leave the feature in a failed state that reports itself and can be reset.
+- **Failure is visible and recoverable:** a swallowed exception or failed initialisation logs once with its reason, and a latched failure has a reset path (device removed, setting toggled). Stale output stays unpublished after a failure.
+- **Mailboxes between processes or threads:** requests and replies carry an id that the receiver checks, the request is consumed before it is processed, and every field is validated and bounded.
+- **GPU lifetimes:** release anything the GPU may still read only after its fence retires, and treat a `UINT64_MAX` completed value as device removal.
 
 ---
 
@@ -94,6 +110,9 @@ Each rule is stated once, in the section named in brackets.
 
 - Features disable cleanly on shader-compile or DirectX failures and fall back to a working render path rather than crashing or corrupting state.
 - Validate shader parameters and buffer sizes to avoid GPU driver crashes.
+- Validate and bound all external input (settings JSON, child-process replies, archives, NIF data); sanitize paths against traversal.
+- A feature that launches an executable or adds a build or runtime dependency (such as a .NET SDK) is off by default, builds without it where possible, and states the new requirement in the PR and the docs.
+- **GitHub Actions:** pass user-controlled values (`inputs.*`, branch names, PR titles and bodies) into `run:` steps through `env:`, never by `${{ }}` interpolation into the script.
 
 ---
 
@@ -110,8 +129,10 @@ Each rule is stated once, in the section named in brackets.
 ## Git & Release Invariants
 
 - **PRs target `dev`, never `main`;** never push to a shared branch without explicit OK. `main` must remain an ancestor of `dev`; after a hotfix promotion the workflow auto-rebase-reconciles `dev` (its force-push is the one allowed exception).
+- **Hooks:** never bypass commit hooks (`--no-verify`); fix the cause.
 - **Commit-type traps:** a build/CI/test change labeled `fix:` burns a patch release (use `build:`/`ci:`/`test:`); a refactor labeled `feat:` forces a minor; an internal perf win is `refactor:`; prefer a specific type over `chore:`.
-- **Humans on GitHub:** an agent does not respond to human reviewers or commenters on PRs or issues: no replies, no resolving their threads, no re-requesting their review, no `@`-mentions. Surface the comment and a drafted reply to the user, who posts it. Replying to and resolving a bot's findings is allowed.
+- **Commit and PR text:** a fix to code introduced earlier on the same unreleased branch is folded into that commit, not a new `fix:`. `#N` is always a real issue or PR reference. Describe the change for a reviewer, not the session (no rebase, conflict or force-push narration). A formatter-only change is its own commit.
+- **Humans on GitHub:** an agent does not respond to human reviewers or commenters on PRs or issues: no replies, no resolving their threads, no re-requesting their review, no `@`-mentions. Surface the comment and a drafted reply to the user, who posts it. Replying to and resolving a bot's findings is allowed. Read review bodies as well as threads: "outside diff range" findings have no thread.
 - **Never, without explicit user direction:** force-push or rebase `main`, `dev` or `hotfix/*`; create `v*` tags (semantic-release owns them); bump `CMakeLists.txt`'s `VERSION`; PR a feature branch into `main`; run `Release: Semantic Version` on `hotfix/X.Y.x` for the current line (use `ff_target` into `main`).
 - **Upstream sync:** merge from `community-shaders/skyrim-community-shaders`, never cherry-pick; land sync PRs as merge commits, never squash; verify ancestry with `git merge-base --is-ancestor <upstream-sha> HEAD`; resolve conflicts in favor of keeping VR. The per-commit intent review and the "upstream never tests VR" checks are in the [Upstream Sync Guide](docs/development/upstream-sync.md#conflict-resolution-guidelines).
 - Release stages, staging/RC workflows and packaging targets: [Release Process](docs/development/release-process.md).

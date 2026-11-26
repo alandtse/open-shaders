@@ -111,6 +111,15 @@ namespace
 		RE::QueueNiRefObjectForDeferredRelease(object);
 	}
 
+	/** @brief Erases the entry at @p it, queueing it for deferred release as the engine's own array erase does. */
+	template <class Entry>
+	void EraseEntry(RE::BSTArray<RE::NiPointer<Entry>>& entries, typename RE::BSTArray<RE::NiPointer<Entry>>::iterator it)
+	{
+		RE::NiPointer<RE::NiRefObject> released{ it->get() };
+		QueueDeferredRelease(released);
+		entries.erase(it);
+	}
+
 	/**
 	 * @brief Removes @p entry from @p entries when the array holds its last reference, as TESWaterSystem::RemoveWater does.
 	 * @param firstNew Size of @p entries before the tile's AddWater; entries from this index on were created by it and are always removed.
@@ -126,10 +135,67 @@ namespace
 		// A tile-created entry points at the tile's material, so a transient reference from another thread must not keep it listed past the tile
 		if (static_cast<std::uint32_t>(it - entries.begin()) < firstNew && entry->GetRefCount() != 1)
 			return;
-		RE::NiPointer<RE::NiRefObject> released{ it->get() };
-		QueueDeferredRelease(released);
-		entries.erase(it);
+		EraseEntry(entries, it);
 	}
+
+	/** @brief The BSWaterShaderProperty on @p geometry, or nullptr when it has another shader property. */
+	RE::BSWaterShaderProperty* GetWaterShaderProperty(const RE::BSGeometry* geometry)
+	{
+		const auto prop = geometry ? geometry->GetGeometryRuntimeData().shaderProperty.get() : nullptr;
+		return prop && prop->GetRTTI() == globals::rtti::BSWaterShaderPropertyRTTI.get() ? static_cast<RE::BSWaterShaderProperty*>(prop) : nullptr;
+	}
+
+	/** @brief The water material of @p object's shape, or nullptr. */
+	RE::BSWaterShaderMaterial* GetWaterMaterial(const RE::TESWaterObject* object)
+	{
+		const auto prop = object ? GetWaterShaderProperty(object->shape.get()) : nullptr;
+		return prop ? static_cast<RE::BSWaterShaderMaterial*>(prop->GetBaseMaterial()) : nullptr;
+	}
+
+	/**
+	 * @brief Makes every entry's waterMaterial a material a water in waterObjects still owns, or evicts the entry when none does.
+	 * Entries keep a raw pointer to the creating water's material, and RemoveWater and the per-frame prune release that water without updating it.
+	 * The caller must hold TESWaterSystem::lock; the stored pointer is only compared, never dereferenced.
+	 */
+	template <class Entry>
+	void RepairSharedMaterials(const RE::TESWaterSystem* waterSystem, RE::BSTArray<RE::NiPointer<Entry>>& entries, RE::NiPointer<Entry> RE::TESWaterObject::* member)
+	{
+		for (auto index = entries.size(); index-- > 0;) {
+			const auto entry = entries[index].get();
+			if (!entry)
+				continue;
+			RE::BSWaterShaderMaterial* replacement = nullptr;
+			bool current = false;
+			for (const auto& object : waterSystem->waterObjects) {
+				if (!object || (object.get()->*member).get() != entry)
+					continue;
+				const auto material = GetWaterMaterial(object.get());
+				if (!material)
+					continue;
+				if (material == entry->waterMaterial) {
+					current = true;
+					break;
+				}
+				if (!replacement)
+					replacement = material;
+			}
+			if (current)
+				continue;
+			// A null waterMaterial faults in AddWater, so an entry with no live material is dropped
+			if (replacement)
+				entry->waterMaterial = replacement;
+			else
+				EraseEntry(entries, entries.begin() + index);
+		}
+	}
+}
+
+void UnifiedWater::TESWaterSystem_AddWater::thunk(RE::TESWaterSystem* waterSystem, RE::NiAVObject* water, RE::TESWaterForm* waterType, float waterHeight, const RE::BSTArray<RE::NiPointer<RE::BSMultiBoundAABB>>* multiBounds, bool noDisplacement, bool isProcedural)
+{
+	RE::BSSpinLockGuard guard(waterSystem->lock);
+	RepairSharedMaterials(waterSystem, waterSystem->waterReflections, &RE::TESWaterObject::reflections);
+	RepairSharedMaterials(waterSystem, waterSystem->waterNormals, &RE::TESWaterObject::normals);
+	func(waterSystem, water, waterType, waterHeight, multiBounds, noDisplacement, isProcedural);
 }
 
 void UnifiedWater::DrawDebugSection()
@@ -454,6 +520,8 @@ void UnifiedWater::PostPostLoad()
 
 	stl::detour_thunk<BGSTerrainBlock_Detach>(REL::RelocationID(30936, 31739));
 
+	stl::detour_thunk<TESWaterSystem_AddWater>(REL::RelocationID(31388, 32179));
+
 	stl::detour_thunk<BGSTerrainNode_UpdateWaterMeshSubVisibility>(Util::VersionedRelocation::ResolveID(31059, 31846, 523588));
 
 	stl::detour_thunk<TESWaterSystem_UpdateDisplacementMeshPosition>(REL::RelocationID(31384, 32175));
@@ -715,6 +783,9 @@ void UnifiedWater::BGSTerrainBlock_Attach::thunk(RE::BGSTerrainBlock* block)
 		{
 			// Held across AddWater so no other thread can reuse this tile's reflection or normals, which keep raw pointers to its material
 			RE::BSSpinLockGuard guard(waterSystem->lock);
+			// Evicting inside AddWater would shift the entry indices recorded below
+			RepairSharedMaterials(waterSystem, waterSystem->waterReflections, &RE::TESWaterObject::reflections);
+			RepairSharedMaterials(waterSystem, waterSystem->waterNormals, &RE::TESWaterObject::normals);
 			const auto firstNewReflection = waterSystem->waterReflections.size();
 			const auto firstNewNormals = waterSystem->waterNormals.size();
 			waterSystem->AddWater(shape, instruction->form.ptr, instruction->waterHeight, nullptr, true, false);
@@ -729,8 +800,7 @@ void UnifiedWater::BGSTerrainBlock_Attach::thunk(RE::BGSTerrainBlock* block)
 			}
 		}
 
-		if (const auto prop = shape->GetGeometryRuntimeData().shaderProperty.get(); prop && prop->GetRTTI() == globals::rtti::BSWaterShaderPropertyRTTI.get()) {
-			const auto waterShaderProp = static_cast<RE::BSWaterShaderProperty*>(prop);
+		if (const auto waterShaderProp = GetWaterShaderProperty(shape)) {
 			REX::EnumSet waterFlags = RE::BSWaterShaderProperty::WaterFlag::kDepth;
 			waterFlags |= RE::BSWaterShaderProperty::WaterFlag::kRefractions;
 			waterFlags |= RE::BSWaterShaderProperty::WaterFlag::kUseCubemapReflections;
@@ -806,8 +876,7 @@ void UnifiedWater::BSWaterShader_SetupGeometry::thunk(RE::BSShader* waterShader,
 		singleton.gDisplacementMeshFlowCellOffset->x = static_cast<float>(singleton.flowmap->GetHeight());  // ObjectUV.y
 		singleton.gDisplacementMeshFlowCellOffset->y = 1.0f - pass->geometry->local.scale;                  // ObjectUV.z (counters 1 - x in SetupGeometry)
 
-		if (const auto prop = pass->geometry->GetGeometryRuntimeData().shaderProperty.get(); prop && prop->GetRTTI() == globals::rtti::BSWaterShaderPropertyRTTI.get()) {
-			const auto waterShaderProp = static_cast<RE::BSWaterShaderProperty*>(prop);
+		if (const auto waterShaderProp = GetWaterShaderProperty(pass->geometry)) {
 			int32_t x, y;
 			Util::WorldToCell(pass->geometry->world.translate, x, y);
 			// CellTexCoordOffset.xyzw below - applies to non-displacement water only

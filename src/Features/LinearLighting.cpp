@@ -442,7 +442,7 @@ void LinearLighting::BSLightingShader_SetupGeometry(RE::BSRenderPass* a_pass)
 	using LightingFlags = SIE::ShaderCache::LightingShaderFlags;
 	using enum SIE::ShaderCache::LightingShaderTechniques;
 	if ((descriptor & static_cast<uint32_t>(LightingFlags::ProjectedUV)) != 0 && (descriptor & static_cast<uint32_t>(LightingFlags::TruePbr)) == 0) {
-		const auto technique = static_cast<SIE::ShaderCache::LightingShaderTechniques>((descriptor >> 24) & 0x3F);
+		const auto technique = SIE::ShaderCache::GetLightingTechnique(descriptor);
 		if (technique == LODObjects || technique == LODObjectHD)
 			perGeometryData.projectedMaterialColorScale = lodProjectedMaterialColorScales[technique == LODObjectHD ? 1 : 0];
 	}

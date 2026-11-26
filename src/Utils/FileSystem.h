@@ -412,6 +412,13 @@ namespace Util
 		template <class Json = nlohmann::json>
 		std::optional<Json> ReadJsonFile(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes = 0, std::string* error = nullptr);
 
+		/**
+		 * @brief The direct subdirectories or regular files of @p directory, sorted by path.
+		 * @param context Human-readable description used in the log message
+		 * @return What could be listed; enumeration errors, including a missing directory, are logged
+		 */
+		std::vector<std::filesystem::path> GetSortedDirectoryPaths(const std::filesystem::path& directory, bool directories, std::string_view context);
+
 		/** @brief ReadJsonFile that also rejects documents whose root is not an object. */
 		std::optional<nlohmann::json> ReadJsonObject(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes = 0, std::string* error = nullptr);
 	}

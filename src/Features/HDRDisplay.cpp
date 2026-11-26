@@ -18,6 +18,7 @@
 #include "State.h"
 #include "Upscaling.h"
 #include "Util.h"
+#include "Utils/UIBlendCoverage.h"
 #include <algorithm>
 #include <dxgi1_4.h>
 #include <dxgi1_6.h>
@@ -1016,7 +1017,7 @@ namespace
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// Vtable slot 35 — patches alpha blend to [One, InvSrcAlpha, Add] when UI is composited from a
+	// Vtable slot 35 — patches alpha blend to accumulate coverage when UI is composited from a
 	// separate buffer. Mods using [InvSrcAlpha, Zero] (e.g. IED) write alpha*(1-alpha) instead
 	// of alpha, causing ~94% scene bleed through opaque windows in the HDROutputCS composite.
 	struct ID3D11DeviceContext_OMSetBlendState
@@ -1054,35 +1055,8 @@ ID3D11BlendState* HDRDisplay::GetPatchedAlphaBlendState(ID3D11BlendState* origin
 	D3D11_BLEND_DESC desc{};
 	original->GetDesc(&desc);
 
-	const int slotCount = desc.IndependentBlendEnable ? 8 : 1;
-	bool needsPatch = false;
-	for (int i = 0; i < slotCount; i++) {
-		const auto& rt = desc.RenderTarget[i];
-		// Destination-only blends erase coverage; alpha correction would make the cleared UI opaque.
-		if (rt.BlendEnable && rt.SrcBlend != D3D11_BLEND_ZERO &&
-			(rt.SrcBlendAlpha != D3D11_BLEND_ONE ||
-				rt.DestBlendAlpha != D3D11_BLEND_INV_SRC_ALPHA ||
-				rt.BlendOpAlpha != D3D11_BLEND_OP_ADD)) {
-			needsPatch = true;
-			break;
-		}
-	}
-
-	if (!needsPatch) {
+	if (!Util::UIBlend::PatchCoverageAlpha(desc)) {
 		return original;
-	}
-
-	for (int i = 0; i < slotCount; i++) {
-		auto& rt = desc.RenderTarget[i];
-		if (rt.BlendEnable && rt.SrcBlend != D3D11_BLEND_ZERO) {
-			rt.SrcBlendAlpha = D3D11_BLEND_ONE;
-			rt.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-			rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
-		}
-	}
-	if (!desc.IndependentBlendEnable) {
-		for (int i = 1; i < 8; i++)
-			desc.RenderTarget[i] = desc.RenderTarget[0];
 	}
 
 	winrt::com_ptr<ID3D11BlendState> patched;
