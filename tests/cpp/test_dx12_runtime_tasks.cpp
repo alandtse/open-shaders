@@ -1,6 +1,7 @@
 #include "Features/DX12/DX12FenceRetirementPolicy.h"
 #include "Features/DX12/SpatialGrid.h"
 #include "Utils/RuntimeTaskGate.h"
+#include "../../features/DX12 Native Scene/Shaders/DX12NativeScene/NativeShadowSampling.hlsli"
 
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
@@ -104,5 +105,29 @@ TEST_CASE("DX12 grid sizes and predictive ordering retain their existing contrac
 		CHECK((dx == 2 && dy == 2) == (i >= DX12::kPredictiveSideCount));
 		CHECK_FALSE(std::ranges::contains(*active, tile));
 		CHECK(std::ranges::count(*predictive, tile) == 1);
+	}
+}
+
+TEST_CASE("DX12 stochastic shadows sample a bounded finite emitter", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	CHECK(NativeShadowEmitterRadius(400.0f, 0.0f, 0.0f, 100.0f) == 0.0f);
+	CHECK(NativeShadowEmitterRadius(400.0f, 0.0f, 0.2f, 100.0f) == 2.0f);
+	CHECK(NativeShadowEmitterRadius(1.0f, 0.0f, 1.0f, 100.0f) == 0.5f);
+	CHECK(NativeShadowEmitterRadius(400.0f, 4.0f, 1.0f, 100.0f) == 4.0f);
+	CHECK(NativeShadowEmitterRadius(400.0f, 0.0f, 8.0f, 4.0f) == 2.0f);
+
+	const auto seed = NativeShadowEmitterSeed(12, 34, 56, 0x123456u);
+	CHECK(seed == NativeShadowEmitterSeed(12, 34, 56, 0x123456u));
+	CHECK(seed != NativeShadowEmitterSeed(13, 34, 56, 0x123456u));
+	CHECK(seed != NativeShadowEmitterSeed(12, 34, 57, 0x123456u));
+	CHECK(seed != NativeShadowEmitterSeed(12, 34, 56, 0x123457u));
+	for (uint32_t frame = 0; frame < 1024; ++frame) {
+		const auto sampleSeed = NativeShadowEmitterSeed(12, 34, frame, 0x123456u);
+		for (auto salt : { ShadowEmitterRadialSalt, ShadowEmitterAngularSalt }) {
+			const float sample = NativeShadowEmitterRandom(sampleSeed, salt);
+			CHECK(sample > 0.0f);
+			CHECK(sample < 1.0f);
+		}
 	}
 }

@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cmath>
 #include <cstring>
 #include <directx/d3dx12.h>
 #include <fstream>
@@ -31,8 +33,9 @@ namespace DX12Native
 			uint32_t reserved = 0;
 			float shadowReachMultiplier = 1.0f, shadowFadeRange = 0.5f, shadowFalloffCurve = 1.0f;
 			float nearLightRadius = 0.0f;
-			uint32_t nearLightExclusion = 0, padding0 = 0;
-			uint32_t padding1 = 0, padding2 = 0;
+			uint32_t nearLightExclusion = 0, stochasticSampling = 1;
+			float emitterRadiusMultiplier = kDefaultShadowEmitterRadiusMultiplier;
+			uint32_t padding2 = 0;
 		};
 		winrt::com_ptr<ID3D12Resource> UploadBuffer(ID3D12Device* device, UINT64 bytes)
 		{
@@ -219,7 +222,11 @@ namespace DX12Native
 				std::clamp(controls.falloffCurve, 0.0f, 2.5f),
 				std::clamp(controls.nearLightRadius, 0.0f, 512.0f),
 				controls.nearLightExclusion ? 1u : 0u,
-				0u, 0u, 0u
+				controls.stochasticSampling ? 1u : 0u,
+				std::isfinite(controls.emitterRadiusMultiplier) ?
+					std::clamp(controls.emitterRadiusMultiplier, 0.0f, kMaximumShadowEmitterRadiusMultiplier) :
+					kDefaultShadowEmitterRadiusMultiplier,
+				0u
 			};
 			static_assert(sizeof(Constants) <= D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
@@ -229,7 +236,7 @@ namespace DX12Native
 				const auto& light = lights[i];
 				records[i * kRecords + 0] = { light.position.x, light.position.y, light.position.z, light.radius };
 				records[i * kRecords + 1] = { light.color.x, light.color.y, light.color.z, light.fade };
-				records[i * kRecords + 2] = { light.emitterRadius, light.falloffExponent, float(light.flags), 0 };
+				records[i * kRecords + 2] = { light.emitterRadius, light.falloffExponent, float(light.flags), std::bit_cast<float>(light.referenceID) };
 			}
 			WriteUpload(slot->lightUpload.get(), records.data(), sizeof(records));
 

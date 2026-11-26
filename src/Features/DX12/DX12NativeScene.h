@@ -74,6 +74,8 @@ private:
 	float shadowReachMultiplier = 1.0f;  // Native only. Vanilla lights stay unchanged.
 	float shadowFadeRange = 0.66f;
 	float shadowFalloffCurve = 1.0f;
+	bool shadowStochastic = true;
+	float shadowEmitterRadiusMultiplier = DX12Native::kDefaultShadowEmitterRadiusMultiplier;
 	struct RuntimeLightSample
 	{
 		const RE::NiLight* source = nullptr;  // Identity of the SCM light actually observed.

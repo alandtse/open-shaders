@@ -20,11 +20,23 @@ cbuffer ShadowInputs : register(b0)
 	float ShadowFalloffCurve;
 	float NearLightRadius;
 	uint NearLightExclusion;
-	uint Padding0;
-	uint Padding1;
+	uint StochasticSampling;
+	float EmitterRadiusMultiplier;
 	uint Padding2;
 };
-#include "NativeTraceDensity.hlsli"
+#include "NativeShadowSampling.hlsli"
+
+float3 SampleEmitterOffset(float3 lightDirection, float emitterRadius, uint2 pixel, uint lightID)
+{
+	const uint seed = NativeShadowEmitterSeed(pixel.x, pixel.y, FrameIndex, lightID);
+	const float radius = emitterRadius * sqrt(NativeShadowEmitterRandom(seed, ShadowEmitterRadialSalt));
+	const float angle = NativeShadowEmitterRandom(seed, ShadowEmitterAngularSalt) * 6.28318530718f;
+	const float3 tangent = normalize(cross(abs(lightDirection.z) < 0.9f ? float3(0, 0, 1) : float3(0, 1, 0), lightDirection));
+	const float3 bitangent = cross(lightDirection, tangent);
+	float sine, cosine;
+	sincos(angle, sine, cosine);
+	return radius * (cosine * tangent + sine * bitangent);
+}
 
 [numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID) {
 	uint2 p = id.xy;
@@ -60,7 +72,7 @@ cbuffer ShadowInputs : register(b0)
 	{
 		float4 light = Lights[i * 3 + 0];     // xyz vanilla position + vanilla radius
 		float4 radiance = Lights[i * 3 + 1];  // linear RGB + vanilla fade
-		float4 params = Lights[i * 3 + 2];    // emitter radius + vanilla falloff + flags
+		float4 params = Lights[i * 3 + 2];    // emitter radius + vanilla falloff + flags + reference ID bits
 		float3 delta = light.xyz - world;
 		float d2 = dot(delta, delta);
 		if (d2 <= MinDistance * MinDistance || !isfinite(d2))
@@ -81,20 +93,31 @@ cbuffer ShadowInputs : register(b0)
 		if (weight <= 0 || !isfinite(weight))
 			continue;
 
-		// One deterministic center ray, without stochastic emitter offsets.
-		// Fade occlusion itself (as the historical distance-fade path did):
-		// fading only the weight cancels out for a single contributing light.
-		float tMax = min(d - MinDistance, MaxDistance);
+		// One visibility ray per contributing light; only its endpoint changes.
+		float3 rayDirection = delta / d;
+		float rayDistance = d;
+		float projection = d;
+		float perpendicularSquared = 0.0f;
+		if (StochasticSampling != 0u && EmitterRadiusMultiplier > 0.0f) {
+			const float emitterRadius = NativeShadowEmitterRadius(light.w, params.x, EmitterRadiusMultiplier, d);
+			if (emitterRadius > 0.0f) {
+				const float3 sampledDelta = delta + SampleEmitterOffset(rayDirection, emitterRadius, p, asuint(params.w));
+				rayDistance = length(sampledDelta);
+				rayDirection = sampledDelta / rayDistance;
+				projection = dot(delta, rayDirection);
+				const float3 perpendicular = cross(delta, rayDirection);
+				perpendicularSquared = dot(perpendicular, perpendicular);
+			}
+		}
+
+		float tMax = min(rayDistance - MinDistance, MaxDistance);
 		if (NearLightExclusion != 0u && NearLightRadius > 0.0f) {
-			float projection = d;
-			float discriminant = projection * projection -
-			                     (d2 - NearLightRadius * NearLightRadius);
+			const float discriminant = NearLightRadius * NearLightRadius - perpendicularSquared;
 			if (discriminant >= 0.0f)
 				tMax = min(tMax, projection - sqrt(discriminant) - MinDistance);
 		}
 		float visibility = 1.0f;
 		if (tMax > MinDistance) {
-			float3 rayDirection = delta / d;
 			RayDesc ray;
 			ray.Origin = world + rayDirection * MinDistance;
 			ray.Direction = rayDirection;
@@ -103,6 +126,7 @@ cbuffer ShadowInputs : register(b0)
 			RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
 			query.TraceRayInline(Scene, RAY_FLAG_NONE, 0xFF, ray);
 			while (query.Proceed()) {}
+			// Fade the occlusion itself, not just its light weight.
 			if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
 				visibility = 1.0f - gradualFalloff;
 		}
