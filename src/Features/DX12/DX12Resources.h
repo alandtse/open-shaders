@@ -197,6 +197,8 @@ struct DX12Resources final : Feature, private RE::BSTEventSink<RE::PositionPlaye
 	bool IsInFeatureList() const override { return false; }
 	bool SupportsVR() override { return false; }
 	void DrawSettings() override;
+	/** @brief Read-only companion publication and residency display. */
+	void DrawResourceStatus();
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
 	void RestoreDefaultSettings() override;

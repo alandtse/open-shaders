@@ -776,6 +776,10 @@ void DX12Resources::DrawSettings()
 	ImGui::Checkbox(T("menu.dx12.resources.preload_last_save", "Prepare last-save cell at main menu"), &settings.PreloadLastSave);
 	if (ImGui::Checkbox(T("menu.dx12.resources.consolidate_interior", "Consolidate small interior cells"), &settings.ConsolidateInterior))
 		ResetPreparation();
+}
+
+void DX12Resources::DrawResourceStatus()
+{
 	if (startupPending)
 		ImGui::TextDisabled("%s", T("menu.dx12.resources.startup_pending", "Main-menu preparation in progress"));
 	if (menuPreloaded)

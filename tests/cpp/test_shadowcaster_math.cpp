@@ -3,6 +3,7 @@
 // plausibility check and the frame-time 90th-percentile.
 
 #include "Features/DX12/SCMNativePolicy.h"
+#include "Features/DX12/DX12ControlMode.h"
 #include "Features/LightLimitFix/ShadowCasterMath.h"
 
 #include <catch2/catch_approx.hpp>
@@ -594,4 +595,17 @@ TEST_CASE("Full RT admits actual dynamic casters without first-sighting static l
 	CHECK(FullRTDynamicCaster(false, false, true, false, false, false));
 	CHECK(FullRTDynamicCaster(false, false, false, true, true, false));
 	CHECK(FullRTDynamicCaster(false, false, false, true, false, true));
+}
+
+TEST_CASE("Raster comparison requires developer mode without changing persisted IDs", "[dx12][shadow]")
+{
+	using DX12::ControlMode;
+	using DX12::SanitizeControlMode;
+	CHECK(SanitizeControlMode(0, false) == ControlMode::ShadowOffload);
+	CHECK(SanitizeControlMode(1, false) == ControlMode::ShadowOffload);
+	CHECK(SanitizeControlMode(1, true) == ControlMode::RasterComparison);
+	CHECK(SanitizeControlMode(2, false) == ControlMode::FullRT);
+	CHECK(SanitizeControlMode(2, true) == ControlMode::FullRT);
+	CHECK(SanitizeControlMode(-1, true) == ControlMode::ShadowOffload);
+	CHECK(SanitizeControlMode(99, false) == ControlMode::FullRT);
 }

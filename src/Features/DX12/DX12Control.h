@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Feature.h"
+#include "DX12ControlMode.h"
 
 #include <atomic>
 
@@ -10,7 +11,7 @@ struct DX12Control final : Feature
 	struct Settings
 	{
 		bool Enabled = false;
-		int Mode = 0;  // 0: shadow offload, 1: raster comparison, 2: ray-traced static shadows
+		int Mode = static_cast<int>(DX12::ControlMode::ShadowOffload);
 	};
 
 	std::string GetName() override { return "DX12"; }
@@ -23,8 +24,8 @@ struct DX12Control final : Feature
 	bool SupportsVR() override { return false; }
 	/** @brief Whether native work may be submitted this frame. */
 	bool IsActive() const { return loaded && bootActive.load(std::memory_order_acquire); }
-	bool IsShadowOffloadMode() const { return selectedMode.load(std::memory_order_relaxed) == 0; }
-	bool IsFullRTMode() const { return selectedMode.load(std::memory_order_relaxed) == 2; }
+	bool IsShadowOffloadMode() const { return GetMode() == DX12::ControlMode::ShadowOffload; }
+	bool IsFullRTMode() const { return GetMode() == DX12::ControlMode::FullRT; }
 	void DrawSettings() override;
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
@@ -34,6 +35,8 @@ struct DX12Control final : Feature
 private:
 	std::atomic<bool> bootActive{ false };
 	bool bootCaptured = false;
-	std::atomic<int> selectedMode{ 0 };
+	DX12::ControlMode GetMode() const;
+	void DrawSimpleSettings(bool developerMode);
+	mutable std::atomic<int> selectedMode{ static_cast<int>(DX12::ControlMode::ShadowOffload) };
 	Settings settings;
 };

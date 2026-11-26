@@ -7,46 +7,66 @@
 
 #include <algorithm>
 
+DX12::ControlMode DX12Control::GetMode() const
+{
+	using DX12::ControlMode;
+	int mode = selectedMode.load(std::memory_order_relaxed);
+	// Check the existing developer gate only for the diagnostic mode.
+	if (mode == static_cast<int>(ControlMode::RasterComparison) &&
+		(!globals::state || !globals::state->IsDeveloperMode())) {
+		const int fallback = static_cast<int>(ControlMode::ShadowOffload);
+		if (selectedMode.compare_exchange_strong(mode, fallback, std::memory_order_relaxed))
+			mode = fallback;
+	}
+	return static_cast<ControlMode>(mode);
+}
+
+void DX12Control::DrawSimpleSettings(bool developerMode)
+{
+	using DX12::ControlMode;
+	const char* modes[] = {
+		T("menu.dx12.mode.shadow_offload", "Shadow offload"),
+		T("menu.dx12.mode.ray_traced_static_shadows", "Ray-Traced Static Shadows"),
+		T("menu.dx12.mode.raster_comparison", "Raster comparison")
+	};
+	constexpr ControlMode modeIDs[]{ ControlMode::ShadowOffload, ControlMode::FullRT, ControlMode::RasterComparison };
+	const auto selected = DX12::SanitizeControlMode(static_cast<int>(GetMode()), developerMode);
+	int index = static_cast<int>(std::find(std::begin(modeIDs), std::end(modeIDs), selected) - std::begin(modeIDs));
+	settings.Mode = static_cast<int>(selected);
+	if (ImGui::Combo(T("menu.dx12.mode.label", "Mode"), &index, modes, developerMode ? int(std::size(modes)) : int(std::size(modes)) - 1)) {
+		settings.Mode = static_cast<int>(modeIDs[index]);
+		selectedMode.store(settings.Mode, std::memory_order_relaxed);
+	}
+	ImGui::Checkbox(T("menu.dx12.master.enable", "Enable native DX12 features (restart required)"), &settings.Enabled);
+	if (settings.Enabled != bootActive.load(std::memory_order_acquire))
+		ImGui::TextDisabled(T("menu.dx12.master.restart_boot_state", "A game restart is required; DX12 Resources retains its boot state until then."));
+	if (!IsActive())
+		return;
+
+	ImGui::SeparatorText(T("menu.dx12.tab.native_scene", "Native Scene"));
+	globals::features::dx12NativeScene.DrawSettings();
+	ImGui::SeparatorText(T("menu.dx12.tab.resources", "Resources"));
+	globals::features::dx12Resources.DrawSettings();
+}
+
 void DX12Control::DrawSettings()
 {
-	// Keep pipeline mode directly below the DX12 heading and above subfeature tabs.
-	const char* modes[] = { T("menu.dx12.mode.shadow_offload", "Shadow offload"), T("menu.dx12.mode.raster_comparison", "Raster comparison"), T("menu.dx12.mode.ray_traced_static_shadows", "Ray-Traced Static Shadows") };
-	int mode = settings.Mode;
-	if (ImGui::Combo(T("menu.dx12.mode.label", "Mode"), &mode, modes, int(std::size(modes)))) {
-		settings.Mode = mode;
-		selectedMode.store(mode, std::memory_order_relaxed);
-	}
-
-
-	if (!IsActive()) {
-		ImGui::Checkbox(T("menu.dx12.master.enable", "Enable native DX12 features (restart required)"), &settings.Enabled);
-		if (settings.Enabled)
-			ImGui::TextDisabled(T("menu.dx12.master.restart_resources", "Restart the game to initialize DX12 Resources."));
-		return;
-	}
+	const bool developerMode = globals::state && globals::state->IsDeveloperMode();
 	if (!Util::BeginPillTabBar("##DX12Tabs"))
 		return;
-	const char* labels[] = { T("menu.dx12.tab.resources", "Resources"), T("menu.dx12.tab.native_scene", "Native Scene"), T("menu.dx12.tab.master_switch", "Master Switch"), T("menu.dx12.tab.dev", "Dev") };
-	const int tabCount = globals::state && globals::state->IsDeveloperMode() ? int(std::size(labels)) : int(std::size(labels)) - 1;
-	for (int index = 0; index < tabCount; ++index) {
-		if (!Util::BeginPillTabItem(labels[index]))
-			continue;
-		switch (index) {
-		case 0:
-			globals::features::dx12Resources.DrawSettings();
-			break;
-		case 1:
-			globals::features::dx12NativeScene.DrawSettings();
-			break;
-		case 2:
-			ImGui::Checkbox(T("menu.dx12.master.enable", "Enable native DX12 features (restart required)"), &settings.Enabled);
-			if (settings.Enabled != bootActive.load(std::memory_order_acquire))
-				ImGui::TextDisabled(T("menu.dx12.master.restart_boot_state", "A game restart is required; DX12 Resources retains its boot state until then."));
-			break;
-		case 3:
-			globals::features::dx12NativeScene.DrawDevSettings();
-			break;
-		}
+	if (Util::BeginPillTabItem(T("menu.dx12.tab.resources", "Resources"))) {
+		if (IsActive())
+			globals::features::dx12Resources.DrawResourceStatus();
+		else
+			ImGui::TextDisabled("%s", T("menu.dx12.resources.inactive", "DX12 Resources is inactive."));
+		Util::EndPillTabItem();
+	}
+	if (Util::BeginPillTabItem(T("menu.dx12.tab.settings", "Settings"))) {
+		DrawSimpleSettings(developerMode);
+		Util::EndPillTabItem();
+	}
+	if (IsActive() && developerMode && Util::BeginPillTabItem(T("menu.dx12.tab.dev", "Dev"))) {
+		globals::features::dx12NativeScene.DrawDevSettings();
 		Util::EndPillTabItem();
 	}
 	Util::EndPillTabBar();
@@ -55,7 +75,8 @@ void DX12Control::DrawSettings()
 void DX12Control::LoadSettings(json& input)
 {
 	settings.Enabled = input.value("Enabled", false);
-	settings.Mode = std::clamp(input.value("Mode", 0), 0, 2);
+	settings.Mode = static_cast<int>(DX12::SanitizeControlMode(input.value("Mode", static_cast<int>(DX12::ControlMode::ShadowOffload)),
+		globals::state && globals::state->IsDeveloperMode()));
 	selectedMode.store(settings.Mode, std::memory_order_relaxed);
 	if (!bootCaptured) {
 		bootActive.store(settings.Enabled, std::memory_order_release);
@@ -65,7 +86,7 @@ void DX12Control::LoadSettings(json& input)
 
 void DX12Control::SaveSettings(json& output)
 {
-	output = { { "Enabled", settings.Enabled }, { "Mode", settings.Mode } };
+	output = { { "Enabled", settings.Enabled }, { "Mode", static_cast<int>(GetMode()) } };
 }
 
 void DX12Control::RestoreDefaultSettings()
