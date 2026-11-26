@@ -2,8 +2,10 @@
 
 Texture2D<float2> ShadowMask : register(t0);
 Texture2D<float> RasterDepth : register(t1);
+Texture2D<float2> PreviousVisibility : register(t2);
 RWTexture2D<float4> Scene : register(u0);
 RWTexture2D<float2> ReconstructedMask : register(u1);
+RWTexture2D<float2> VisibilityHistory : register(u2);
 
 cbuffer ShadowConstants : register(b0)
 {
@@ -15,6 +17,8 @@ cbuffer ShadowConstants : register(b0)
 	uint2 LogicalSize;
 	uint CheckerboardOrigin;
 	uint PublishReconstructedMask;
+	uint HistoryCount;
+	uint WriteHistory;
 };
 static const uint QualityMode = NATIVE_RT_QUALITY;
 
@@ -35,6 +39,15 @@ bool ValidReceiver(float2 sample, float distance, float tolerance)
 	return all(isfinite(sample)) && sample.y > 0.0f && abs(sample.y - distance) <= tolerance;
 }
 
+// A negative visibility marks a pixel without a valid current sample.
+void PublishInvalid(uint2 pixel)
+{
+	if (WriteHistory != 0u)
+		VisibilityHistory[pixel] = float2(-1.0f, -1.0f);
+	if (PublishReconstructedMask != 0u)
+		ReconstructedMask[pixel] = float2(1, 0);
+}
+
 void PublishMask(uint2 pixel, float2 sample)
 {
 	if (PublishReconstructedMask != 0u)
@@ -47,29 +60,30 @@ void PublishMask(uint2 pixel, float2 sample)
 		return;
 	const float depth = RasterDepth[id.xy];
 	if (!isfinite(depth) || depth <= 0.0f || depth >= 1.0f) {
-		PublishMask(id.xy, float2(1, 0));
+		PublishInvalid(id.xy);
 		return;
 	}
 	float2 clip = (float2(id.xy) + 0.5f) * (2.0f / float2(Size)) - 1.0f;
 	clip.y = -clip.y;
 	const float4 view = mul(InverseProjection, float4(clip, depth, 1.0f));
 	if (!all(isfinite(view)) || abs(view.w) <= 1e-8f) {
-		PublishMask(id.xy, float2(1, 0));
+		PublishInvalid(id.xy);
 		return;
 	}
 	const float distance = length(mul((float3x3)InverseView, view.xyz / view.w));
 	if (!isfinite(distance) || distance <= 0.0f) {
-		PublishMask(id.xy, float2(1, 0));
+		PublishInvalid(id.xy);
 		return;
 	}
 	const float tolerance = max(ReceiverTolerance, distance * 1e-5f);
 	const int2 logical = int2(id.xy / ShadowScale(QualityMode));
 	const float2 center = LoadLogical(logical);
 	float visibility = 1.0f;
-	if (all(id.xy == RenderPixel(uint2(logical))) && ValidReceiver(center, distance, tolerance)) {
+	float neighborhoodMin = 1.0f, neighborhoodMax = 0.0f;
+	if (!ShadowFilterDirectSamples(QualityMode) && all(id.xy == RenderPixel(uint2(logical))) && ValidReceiver(center, distance, tolerance)) {
 		visibility = saturate(center.x);
 	} else {
-		const int radius = QualityMode == kShadowQualityQuality ? 2 : 1;
+		const int radius = int(ShadowReconstructionRadius());
 		float weighted = 0.0f, total = 0.0f;
 		[loop] for (int y = -radius; y <= radius; ++y) {
 			[loop] for (int x = -radius; x <= radius; ++x) {
@@ -79,16 +93,36 @@ void PublishMask(uint2 pixel, float2 sample)
 					continue;
 				const float2 delta = float2(RenderPixel(uint2(neighbor))) - float2(id.xy);
 				const float weight = rcp(1.0f + dot(delta, delta));
-				weighted += saturate(sample.x) * weight;
+				const float value = saturate(sample.x);
+				weighted += value * weight;
+				neighborhoodMin = min(neighborhoodMin, value);
+				neighborhoodMax = max(neighborhoodMax, value);
 				total += weight;
 			}
 		}
 		if (total <= 0.0f) {
-			PublishMask(id.xy, float2(1, 0));
+			PublishInvalid(id.xy);
 			return;
 		}
 		visibility = weighted / total;
 	}
+	const float currentVisibility = visibility;
+	float2 previous = float2(-1.0f, -1.0f);
+	if (HistoryCount != 0u)
+		previous = PreviousVisibility[id.xy];
+	float sum = currentVisibility;
+	uint count = 1u;
+	if (HistoryCount >= 1u && previous.x >= 0.0f) {
+		sum += ShadowClampHistory(QualityMode) ? clamp(previous.x, neighborhoodMin, neighborhoodMax) : previous.x;
+		++count;
+		if (HistoryCount >= 2u && previous.y >= 0.0f) {
+			sum += ShadowClampHistory(QualityMode) ? clamp(previous.y, neighborhoodMin, neighborhoodMax) : previous.y;
+			++count;
+		}
+	}
+	if (WriteHistory != 0u)
+		VisibilityHistory[id.xy] = float2(currentVisibility, previous.x);
+	visibility = sum / float(count);
 	PublishMask(id.xy, float2(visibility, distance));
 	const float layer = 1.0f - (1.0f - visibility) * kRayTracedBlend;
 	if (layer >= 1.0f)

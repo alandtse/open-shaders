@@ -1,3 +1,4 @@
+#include "Features/DX12/NativeShadowHistory.h"
 #include "Features/DX12/DX12FenceRetirementPolicy.h"
 #include "Features/DX12/SpatialGrid.h"
 #include "Features/DX12/NativeLightPublication.h"
@@ -158,7 +159,7 @@ TEST_CASE("DX12 full RT keeps the two accepted checkerboard layouts", "[dx12][sh
 	CHECK(ShadowLogicalX(0, 1, 1) == 0);
 	CHECK(ShadowRenderCoordinate(480, 961, kShadowQualityPerformance) == 960);
 	CHECK(ShadowEmitterMultiplier(kShadowQualityQuality) == 0.65f);
-	CHECK(ShadowEmitterMultiplier(kShadowQualityPerformance) == 0.20f);
+	CHECK(ShadowEmitterMultiplier(kShadowQualityPerformance) == 0.15f);
 	CHECK(ShadowEmitterMultiplier(kShadowQualityOffloading) == 0.30f);
 	CHECK(ShadowVariant(kShadowQualityOffloading) == 0);
 	CHECK(ShadowVariant(kShadowQualityQuality) == 1);
@@ -353,4 +354,45 @@ TEST_CASE("Loading destination uses the established spatial priority groups", "[
 	CHECK_FALSE(LoadingPreparationOrder(0, 4096, 0, 0));
 	CHECK_FALSE(LoadingPreparationOrder(42, 1024, 0, 0));
 	CHECK_FALSE(LoadingPreparationOrder(42, 4096, std::numeric_limits<double>::infinity(), 0));
+}
+
+TEST_CASE("Native RT composite profiles retain finite temporal windows", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	CHECK(ShadowReconstructionRadius() == 1);
+	CHECK(ShadowTemporalFrames(kShadowQualityQuality) == 2);
+	CHECK(ShadowTemporalFrames(kShadowQualityPerformance) == 3);
+	CHECK(ShadowTemporalFrames(kShadowQualityOffloading) == 1);
+	CHECK_FALSE(ShadowFilterDirectSamples(kShadowQualityQuality));
+	CHECK(ShadowFilterDirectSamples(kShadowQualityPerformance));
+	CHECK_FALSE(ShadowClampHistory(kShadowQualityQuality));
+	CHECK(ShadowClampHistory(kShadowQualityPerformance));
+}
+
+TEST_CASE("Native RT history accepts only compatible consecutive frames", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	const ShadowHistoryStamp previous{ 10, 1920, 1080, kShadowQualityPerformance, 1, 2, 3, 3 };
+	auto next = previous;
+	++next.frame;
+	CHECK(ShadowHistoryCount(previous, next) == 2);
+	auto quality = previous;
+	quality.quality = kShadowQualityQuality;
+	auto nextQuality = quality;
+	++nextQuality.frame;
+	CHECK(ShadowHistoryCount(quality, nextQuality) == 1);
+	CHECK(ShadowHistoryCount(previous, nextQuality) == 0);
+	++next.width;
+	CHECK(ShadowHistoryCount(previous, next) == 0);
+	next = previous;
+	next.frame += 2;
+	CHECK(ShadowHistoryCount(previous, next) == 0);
+	next = previous;
+	++next.frame;
+	++next.cell;
+	CHECK(ShadowHistoryCount(previous, next) == 0);
+	next = previous;
+	++next.frame;
+	++next.epoch;
+	CHECK(ShadowHistoryCount(previous, next) == 0);
 }

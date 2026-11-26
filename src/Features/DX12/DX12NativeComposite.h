@@ -1,10 +1,12 @@
 #pragma once
 
 #include "DX12NativeShadowTrace.h"
+#include "NativeShadowHistory.h"
 #include "GraphicsInterop.h"
 #include "VideoMemoryBudget.h"
 
 #include <array>
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -43,6 +45,8 @@ namespace DX12Native
 		~NativeComposite();
 		/** @brief Release completed input publications on the render thread. */
 		void RetireCompletedInputs();
+		/** @brief Invalidate temporal visibility on a scene/session transition. */
+		void ResetShadowHistory() { historyEpoch.fetch_add(1, std::memory_order_relaxed); }
 		/** @brief Allow a new initialization attempt after a scene reset. */
 		void ResetFailures()
 		{
@@ -52,12 +56,27 @@ namespace DX12Native
 		}
 
 	private:
+		struct History
+		{
+			winrt::com_ptr<ID3D12Resource> texture;
+			ShadowHistoryStamp stamp;
+			ID3D12Device* device = nullptr;
+			ID3D12CommandQueue* queue = nullptr;
+			uint64_t bytes = 0;
+		};
+		std::atomic<uint64_t> historyEpoch{ 0 };
+		std::shared_ptr<const History> latestHistory;
+		bool historyFailureLogged = false;
+
 		struct Slot
 		{
 			std::shared_ptr<Frame> frame;
 			// Retain producer textures until the composite GPU work completes.
 			std::shared_ptr<const ShadowMaskFrame> shadowInput;
 			std::shared_ptr<const RasterFrame> rasterInput;
+			std::shared_ptr<const History> historyInput;
+			std::shared_ptr<History> historyOutput;
+			bool rtDescriptors = false;
 			winrt::com_ptr<ID3D12Resource> reconstructedMask;
 			uint32_t maskWidth = 0, maskHeight = 0;
 			std::unique_ptr<WrappedResource> shared;

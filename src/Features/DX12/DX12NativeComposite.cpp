@@ -1,6 +1,8 @@
 #include "DX12NativeComposite.h"
 #include "DX12Control.h"
 #include "DX12GpuRetirement.h"
+#include "DX12NativeLightWorker.h"
+#include "Utils/TracyZones.h"
 
 #include "Features/DX12/DX12NativeScene.h"
 #include "Globals.h"
@@ -25,6 +27,9 @@ namespace DX12Native
 		constexpr uint64_t kSlotOverheadBytes = 2 * VideoMemoryBudget::kMiB;
 		constexpr uint32_t kShadowConstantDwords = 38;
 		constexpr uint32_t kRTConstantDwords = 39;
+		constexpr uint32_t kRTHistoryConstants = 2;
+		constexpr DXGI_FORMAT kVisibilityHistoryFormat = DXGI_FORMAT_R16G16_FLOAT;
+		constexpr uint32_t kOffloadDescriptors = 4, kRTDescriptors = 6;
 		constexpr DXGI_FORMAT kReconstructedMaskFormat = DXGI_FORMAT_R32G32_FLOAT;
 		constexpr uint32_t kShadowThreadGroupSize = 8;
 		constexpr float kReceiverTolerance = 16.0f;
@@ -47,12 +52,13 @@ namespace DX12Native
 			if (!file.read(shader.data(), std::streamsize(shader.size())))
 				throw std::runtime_error("Native composite DXIL read failed");
 			CD3DX12_DESCRIPTOR_RANGE ranges[2];
-			ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);
-			ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0);
+			const uint32_t descriptorCount = variant == 0u ? 2u : 3u;
+			ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, descriptorCount, 0);
+			ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, descriptorCount, 0);
 			CD3DX12_ROOT_PARAMETER parameters[3];
 			parameters[0].InitAsDescriptorTable(1, &ranges[0]);
 			parameters[1].InitAsDescriptorTable(1, &ranges[1]);
-			parameters[2].InitAsConstants((variant == 0u ? kShadowConstantDwords : kRTConstantDwords) + 1u, 0);
+			parameters[2].InitAsConstants(variant == 0u ? kShadowConstantDwords + 1u : kRTConstantDwords + 1u + kRTHistoryConstants, 0);
 			const CD3DX12_ROOT_SIGNATURE_DESC desc(3, parameters);
 			winrt::com_ptr<ID3DBlob> serialized, errors;
 			DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
@@ -88,6 +94,7 @@ namespace DX12Native
 			if (completed != UINT64_MAX && completed >= candidate->frame->producerValue) {
 				candidate->shadowInput.reset();
 				candidate->rasterInput.reset();
+				candidate->historyInput.reset();
 			}
 		}
 	}
@@ -149,13 +156,27 @@ namespace DX12Native
 				(maskSupport.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
 		}
 
+		const bool rtPath = applyShadow && variant != 0u;
+		ShadowHistoryStamp historyStamp{};
+		uint32_t historyCount = 0;
+		if (rtPath) {
+			historyStamp = { shadow->frame, width, height, quality,
+				shadow->scene ? shadow->scene->scope : 0u,
+				shadow->nativeLights ? shadow->nativeLights->cell : 0u,
+				historyEpoch.load(std::memory_order_relaxed), 1u };
+			if (latestHistory && latestHistory->device == device12 && latestHistory->queue == queue)
+				historyCount = ShadowHistoryCount(latestHistory->stamp, historyStamp);
+		}
+		if (!historyCount)
+			latestHistory.reset();
 		RetireCompletedInputs();
 		Slot* slot = nullptr;
 		for (auto& candidate : slots) {
 			if (!candidate)
 				candidate = std::make_unique<Slot>();
 			auto& value = *candidate;
-			if (value.untracked || (value.frame && value.frame.use_count() != 1))
+			if (value.untracked || (value.frame && value.frame.use_count() != 1) ||
+				(rtPath && value.historyOutput && value.historyOutput.use_count() != 1))
 				continue;
 			if (value.frame && value.frame->producerValue) {
 				const uint64_t completed = value.fence.fence12 ? value.fence.fence12->GetCompletedValue() : UINT64_MAX;
@@ -205,8 +226,12 @@ namespace DX12Native
 						if (retained > UINT64_MAX - candidate->frameBytes)
 							throw std::runtime_error("Composite retained size overflow");
 						retained += candidate->frameBytes;
+						const uint64_t historyBytes = candidate->historyOutput ? candidate->historyOutput->bytes : 0;
+						if (retained > UINT64_MAX - historyBytes)
+							throw std::runtime_error("Composite history size overflow");
+						retained += historyBytes;
 					}
-				const uint64_t current = slot->frameBytes;
+				const uint64_t current = slot->frameBytes + (slot->historyOutput ? slot->historyOutput->bytes : 0);
 				const uint64_t tracked = retained > UINT64_MAX - current ? UINT64_MAX : retained + current;
 				const auto before = videoBudget.Query(device12, tracked);
 				const uint64_t allowance = before.effectiveBytes;
@@ -252,7 +277,8 @@ namespace DX12Native
 				if (supportsShadow) {
 					D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
 					heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-					heapDesc.NumDescriptors = 4;
+					heapDesc.NumDescriptors = rtPath ? kRTDescriptors : kOffloadDescriptors;
+					replacement->rtDescriptors = rtPath;
 					heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 					DX::ThrowIfFailed(device12->CreateDescriptorHeap(&heapDesc,
 						IID_PPV_ARGS(replacement->shadowDescriptors.put())));
@@ -262,6 +288,55 @@ namespace DX12Native
 					desc.Width, desc.Height, imageCount, required / VideoMemoryBudget::kMiB, before.localUsage / VideoMemoryBudget::kMiB,
 					videoBudget.Query(device12, tracked + required).localUsage / VideoMemoryBudget::kMiB, before.localBudget / VideoMemoryBudget::kMiB);
 			}
+
+			if (rtPath && !slot->rtDescriptors) {
+				D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
+				heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+				heapDesc.NumDescriptors = kRTDescriptors;
+				heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+				winrt::com_ptr<ID3D12DescriptorHeap> descriptors;
+				DX::ThrowIfFailed(device12->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(descriptors.put())));
+				descriptors->SetName(L"NativeComposite::RTDescriptors");
+				slot->shadowDescriptors = std::move(descriptors);
+				slot->rtDescriptors = true;
+			}
+			if (slot->historyOutput && (slot->historyOutput->device != device12 ||
+				slot->historyOutput->stamp.width != width || slot->historyOutput->stamp.height != height || !rtPath))
+				slot->historyOutput.reset();
+			if (rtPath && !slot->historyOutput) {
+				try {
+					const auto historyDesc = CD3DX12_RESOURCE_DESC::Tex2D(kVisibilityHistoryFormat,
+						width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+					D3D12_FEATURE_DATA_FORMAT_SUPPORT historySupport{ kVisibilityHistoryFormat };
+					DX::ThrowIfFailed(device12->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &historySupport, sizeof(historySupport)));
+					if (!(historySupport.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_LOAD) ||
+						!(historySupport.Support1 & D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW) ||
+						!(historySupport.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE))
+						throw std::runtime_error("RT history format unavailable");
+					const uint64_t bytes = device12->GetResourceAllocationInfo(0, 1, &historyDesc).SizeInBytes;
+					if (!bytes || bytes == UINT64_MAX || bytes > videoBudget.Query(device12, 0).effectiveBytes)
+						throw std::runtime_error("RT history allocation deferred by DXGI budget");
+					auto history = std::make_shared<History>();
+					history->bytes = bytes;
+					history->device = device12;
+					history->stamp = historyStamp;
+					const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+					DX::ThrowIfFailed(device12->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
+						&historyDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(history->texture.put())));
+					history->texture->SetName(L"NativeComposite::RTVisibilityHistory");
+					slot->historyOutput = std::move(history);
+					historyFailureLogged = false;
+				} catch (...) {
+					if (!std::exchange(historyFailureLogged, true))
+						logger::warn("[NativeComposite] RT history unavailable; using spatial reconstruction");
+				}
+			}
+			const bool writeHistory = rtPath && bool(slot->historyOutput);
+			if (!writeHistory) {
+				historyCount = 0;
+				latestHistory.reset();
+			}
+			slot->historyInput = historyCount ? latestHistory : nullptr;
 
 			// Own the upstream inputs until this composite's GPU work retires.
 			// Strong references prevent the producer pools from recycling them
@@ -309,6 +384,11 @@ namespace DX12Native
 				srv.Format = DXGI_FORMAT_R32_FLOAT;
 				device12->CreateShaderResourceView(raster->depth->resource.get(), &srv, cpu);
 				cpu.ptr += step;
+				if (rtPath) {
+					srv.Format = kVisibilityHistoryFormat;
+					device12->CreateShaderResourceView(slot->historyInput ? slot->historyInput->texture.get() : nullptr, &srv, cpu);
+					cpu.ptr += step;
+				}
 				D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
 				uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
 				uav.Format = desc.Format;
@@ -316,6 +396,11 @@ namespace DX12Native
 				cpu.ptr += step;
 				uav.Format = kReconstructedMaskFormat;
 				device12->CreateUnorderedAccessView(publishReconstructedMask ? slot->reconstructedMask.get() : nullptr, nullptr, &uav, cpu);
+				if (rtPath) {
+					cpu.ptr += step;
+					uav.Format = kVisibilityHistoryFormat;
+					device12->CreateUnorderedAccessView(writeHistory ? slot->historyOutput->texture.get() : nullptr, nullptr, &uav, cpu);
+				}
 				const std::array start{
 					CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
 					CD3DX12_RESOURCE_BARRIER::Transition(shadow->mask.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
@@ -326,13 +411,21 @@ namespace DX12Native
 					const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(slot->reconstructedMask.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 					slot->commands->ResourceBarrier(1, &barrier);
 				}
+				if (slot->historyInput) {
+					const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(slot->historyInput->texture.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+					slot->commands->ResourceBarrier(1, &barrier);
+				}
+				if (writeHistory) {
+					const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(slot->historyOutput->texture.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+					slot->commands->ResourceBarrier(1, &barrier);
+				}
 				ID3D12DescriptorHeap* heaps[]{ slot->shadowDescriptors.get() };
 				slot->commands->SetDescriptorHeaps(1, heaps);
 				slot->commands->SetPipelineState(slot->shadowPipeline.get());
 				slot->commands->SetComputeRootSignature(slot->shadowRoot.get());
 				auto gpu = slot->shadowDescriptors->GetGPUDescriptorHandleForHeapStart();
 				slot->commands->SetComputeRootDescriptorTable(0, gpu);
-				gpu.ptr += 2ull * step;
+				gpu.ptr += (rtPath ? 3ull : 2ull) * step;
 				slot->commands->SetComputeRootDescriptorTable(1, gpu);
 				struct Constants
 				{
@@ -354,6 +447,11 @@ namespace DX12Native
 				}
 				slot->commands->SetComputeRoot32BitConstant(2, publishReconstructedMask ? 1u : 0u,
 					variant == 0u ? kShadowConstantDwords : kRTConstantDwords);
+				if (rtPath) {
+					const uint32_t temporal[]{ historyCount, writeHistory ? 1u : 0u };
+					slot->commands->SetComputeRoot32BitConstants(2, kRTHistoryConstants, temporal, kRTConstantDwords + 1u);
+				}
+				ZoneScopedN("DX12::Composite::ShadowDispatch");
 				slot->commands->Dispatch((width + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize,
 					(height + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize, 1);
 				const std::array end{
@@ -364,6 +462,14 @@ namespace DX12Native
 				slot->commands->ResourceBarrier(static_cast<UINT>(end.size()), end.data());
 				if (publishReconstructedMask) {
 					const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(slot->reconstructedMask.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+					slot->commands->ResourceBarrier(1, &barrier);
+				}
+				if (slot->historyInput) {
+					const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(slot->historyInput->texture.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON);
+					slot->commands->ResourceBarrier(1, &barrier);
+				}
+				if (writeHistory) {
+					const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(slot->historyOutput->texture.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
 					slot->commands->ResourceBarrier(1, &barrier);
 				}
 			}
@@ -387,7 +493,8 @@ namespace DX12Native
 			DX::ThrowIfFailed(slot->commands->Close());
 			if (applyShadow) {
 				DX::ThrowIfFailed(queue->Wait(shadow->readyFence.get(), shadow->readyValue));
-				DX::ThrowIfFailed(queue->Wait(raster->readyFence.get(), raster->readyValue));
+				if (!rtPath)
+					DX::ThrowIfFailed(queue->Wait(raster->readyFence.get(), raster->readyValue));
 			}
 			const uint64_t done = slot->fence.Next();
 			ID3D12CommandList* lists[]{ slot->commands.get() };
@@ -415,9 +522,16 @@ namespace DX12Native
 			if (publishReconstructedMask)
 				output.reconstructedShadowMask = slot->reconstructedMask;
 			output.valid = true;
+			if (writeHistory) {
+				historyStamp.samples = historyCount + 1u;
+				slot->historyOutput->stamp = historyStamp;
+				slot->historyOutput->queue = queue;
+				latestHistory = slot->historyOutput;
+			}
 			captureFailureLogged = false;
 			return slot->frame;
 		} catch (...) {
+			latestHistory.reset();
 			if (submitted && slot->fence.fence12) {
 				// The command list was queued. A tail Signal on that queue tracks
 				// its completion even when the original Signal failed.

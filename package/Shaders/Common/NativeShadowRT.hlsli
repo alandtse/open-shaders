@@ -50,10 +50,26 @@ namespace DX12Native
 		const uint pixel = logical * scale + scale / 2u;
 		return pixel < extent ? pixel : extent - 1u;
 	}
+	RT_FUNC uint ShadowTemporalFrames(uint quality)
+	{
+		return quality == kShadowQualityPerformance ? 3u : (quality == kShadowQualityQuality ? 2u : 1u);
+	}
+	RT_FUNC uint ShadowReconstructionRadius()
+	{
+		return 1u;
+	}
+	RT_FUNC bool ShadowFilterDirectSamples(uint quality)
+	{
+		return quality == kShadowQualityPerformance;
+	}
+	RT_FUNC bool ShadowClampHistory(uint quality)
+	{
+		return quality == kShadowQualityPerformance;
+	}
 	RT_FUNC float ShadowEmitterMultiplier(uint quality)
 	{
 		return quality == kShadowQualityOffloading ? kOffloadingEmitterMultiplier :
-			(quality == kShadowQualityPerformance ? 0.20f : 0.65f);
+			(quality == kShadowQualityPerformance ? 0.15f : 0.65f);
 	}
 #ifdef __cplusplus
 }

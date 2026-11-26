@@ -743,6 +743,7 @@ void DX12NativeScene::ApplyPendingLoadingReset()
 			runtimeLightSamples.clear();
 			ResetFullLightInventory();
 		}
+		globals::features::upscaling.nativeComposite.ResetShadowHistory();
 		raster.Reset();
 		shadows.Reset();
 		if (!globals::features::dx12Resources.HasMenuPreload())
@@ -767,6 +768,7 @@ void DX12NativeScene::OnRuntimeDisabled()
 		runtimeLightSamples.clear();
 		ResetFullLightInventory();
 	}
+	globals::features::upscaling.nativeComposite.ResetShadowHistory();
 	raster.Reset();
 	shadows.Reset();
 	acceleration.Stop();
