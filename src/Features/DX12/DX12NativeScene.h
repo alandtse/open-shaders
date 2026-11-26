@@ -6,6 +6,7 @@
 #include "DX12NativeShadowTrace.h"
 #include "FullShadowLightConsolidation.h"
 #include "DX12ModeProfiles.h"
+#include "SCMNativePolicy.h"
 #include "../OverlayFeature.h"
 
 #include <atomic>
@@ -61,7 +62,8 @@ struct DX12NativeScene final : OverlayFeature
 	/** @brief SCM hands native-owned lights' static casters to RayQuery and retains movers. */
 	bool OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const;
 	bool IsPreparedStaticCaster(RE::BSGeometry& geometry) const;
-	bool TraceAllPreparedLights() const { return frameTraceAllLights.load(std::memory_order_acquire); }
+	DX12::SCMNativeMode GetFrameNativeMode() const { return frameNativeMode.load(std::memory_order_acquire); }
+	bool TraceAllPreparedLights() const { return GetFrameNativeMode() == DX12::SCMNativeMode::FullShadow; }
 	std::shared_ptr<const DX12Native::TopLevel> GetFrameShadowScene() const;
 	/** @brief Global prerequisites for suppressing SCM static shadows. */
 	bool CanSuppressSCMStatic() const;
@@ -95,7 +97,7 @@ private:
 	std::atomic<std::shared_ptr<const DX12Native::TopLevel>> frameShadowScene;
 	std::atomic<uint32_t> frameShadowSceneID{ UINT32_MAX };
 	std::atomic<bool> previousShadowSubmitted{ false };
-	std::atomic<bool> frameTraceAllLights{ false };
+	std::atomic<DX12::SCMNativeMode> frameNativeMode{ DX12::SCMNativeMode::Disabled };
 	std::atomic<bool> allLightStaticReady{ false };
 	struct ShadowProfile
 	{

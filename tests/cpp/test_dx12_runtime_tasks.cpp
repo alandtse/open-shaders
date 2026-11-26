@@ -2,6 +2,7 @@
 #include "Features/DX12/DX12CasterCoverage.h"
 #include "Features/DX12/SpatialGrid.h"
 #include "Features/DX12/DX12ModeProfiles.h"
+#include "Features/DX12/SCMNativePolicy.h"
 #include <nlohmann/json.hpp>
 #include "Features/DX12/FullShadowLightConsolidation.h"
 #include "Features/DX12/TilePreparationPolicy.h"
@@ -360,4 +361,14 @@ TEST_CASE("DX12 shadow profiles isolate stored values and legacy settings", "[dx
 	CHECK(ReadModeProfile(legacy, false, true).empty());
 	const json partial = { { kRayTracedProfile, { { "ShadowQualityMode", 2 } } } };
 	CHECK(ReadModeProfile(partial, false, false).empty());
+}
+
+TEST_CASE("DX12 frame modes select distinct SCM caster ownership", "[dx12][shadow]")
+{
+	using namespace DX12;
+	CHECK(SelectSCMNativeCasterMode(SelectSCMNativePolicy(SCMNativeMode::Disabled), false) == SCMNativeCasterMode::Disabled);
+	CHECK(SelectSCMNativeCasterMode(SelectSCMNativePolicy(SCMNativeMode::RasterComparison), false) == SCMNativeCasterMode::Observe);
+	CHECK(SelectSCMNativeCasterMode(SelectSCMNativePolicy(SCMNativeMode::ShadowOffload), false) == SCMNativeCasterMode::Observe);
+	CHECK(SelectSCMNativeCasterMode(SelectSCMNativePolicy(SCMNativeMode::ShadowOffload), true) == SCMNativeCasterMode::Suppress);
+	CHECK(SelectSCMNativeCasterMode(SelectSCMNativePolicy(SCMNativeMode::FullShadow), true, true) == SCMNativeCasterMode::SuppressAll);
 }

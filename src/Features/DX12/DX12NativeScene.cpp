@@ -207,22 +207,20 @@ bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
 	if (globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))
 		return false;
 	const auto* cell = Util::GetPlayerCell();
-	return cell && (!cell->IsExteriorCell() || (globals::features::dx12Control.IsFullShadowMode() ? rayTracedProfile.outdoorShadowOffloading : offloadingProfile.outdoorShadowOffloading));
+	return cell && (!cell->IsExteriorCell() || (TraceAllPreparedLights() ? rayTracedProfile.outdoorShadowOffloading : offloadingProfile.outdoorShadowOffloading));
 }
 
 bool DX12NativeScene::CanSuppressSCMStatic() const
 {
+	const auto mode = GetFrameNativeMode();
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive() ||
-		!globals::features::dx12Control.IsShadowOffloadMode())
+		!DX12::SelectSCMNativePolicy(mode).observeLights)
 		return false;
 	if (TraceAllPreparedLights()) {
 		const auto* cell = Util::GetPlayerCell();
 		return !cell || !cell->IsExteriorCell() || rayTracedProfile.outdoorShadowOffloading;
 	}
-	return CanOffloadShadowsInCurrentCell() &&
-	       globals::features::dx12Control.GetShadowStrength() > 0.0f &&
-	       globals::features::dx12Control.GetShadowBlend() > 0.0f &&
-	       previousShadowSubmitted.load(std::memory_order_acquire);
+	return CanOffloadShadowsInCurrentCell() && previousShadowSubmitted.load(std::memory_order_acquire);
 }
 
 
@@ -279,7 +277,7 @@ std::shared_ptr<const DX12Native::TopLevel> DX12NativeScene::GetFrameShadowScene
 void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID,
 	const RE::NiPoint3& restOrigin)
 {
-	if (TraceAllPreparedLights() || !loaded || globals::game::isVR || !globals::features::dx12Control.IsActive() ||
+	if (GetFrameNativeMode() != DX12::SCMNativeMode::ShadowOffload || !loaded || globals::game::isVR || !globals::features::dx12Control.IsActive() ||
 		!light || light->GetIsFrustumOrDirectionalLight() || !globals::game::graphicsState)
 		return;
 	auto* ni = light->light.get();
@@ -381,9 +379,12 @@ void DX12NativeScene::PreShadowMaps()
 	if (globals::game::graphicsState) {
 		const uint32_t frame = globals::game::graphicsState->GetFrameCount();
 		if (frameShadowSceneID.load(std::memory_order_acquire) != frame) {
-			const bool fullShadow = globals::features::dx12Control.IsFullShadowMode();
-			const bool modeChanged = frameTraceAllLights.exchange(fullShadow, std::memory_order_acq_rel) != fullShadow;
+			const auto selected = globals::features::dx12Control.GetSelectedMode();
+			const auto mode = selected == DX12Control::Mode::FullShadow ? DX12::SCMNativeMode::FullShadow :
+			                  selected == DX12Control::Mode::ShadowOffload ? DX12::SCMNativeMode::ShadowOffload : DX12::SCMNativeMode::RasterComparison;
+			const bool modeChanged = frameNativeMode.exchange(mode, std::memory_order_acq_rel) != mode;
 			if (modeChanged) {
+				shadowLights.store(nullptr, std::memory_order_release);
 				std::scoped_lock lock(runtimeLightMutex);
 				ResetFullLightInventory();
 				ClearRuntimeLightSamples();
@@ -407,16 +408,20 @@ void DX12NativeScene::PreShadowMaps()
 		frameShadowScene.store(nullptr, std::memory_order_release);
 	// SCM reads a single per-frame publication without re-enumerating tiles
 	// for every shadow light; the same ordered sources feed RayQuery.
-	const auto lights = globals::features::dx12Resources.GetPreparedLights(grid);
-	const auto previous = shadowLights.load(std::memory_order_acquire);
-	if (!previous || previous->ordered != lights) {
-		auto selection = std::make_shared<PreparedLightSelection>();
-		selection->ordered = lights;
-		selection->byReference.reserve(lights->size());
-		for (size_t i = 0; i < lights->size(); ++i)
-			if (const auto reference = (*lights)[i].referenceID; reference)
-				selection->byReference.try_emplace(reference, i);
-		shadowLights.store(std::move(selection), std::memory_order_release);
+	if (DX12::SelectSCMNativePolicy(GetFrameNativeMode()).observeLights) {
+		const auto lights = globals::features::dx12Resources.GetPreparedLights(grid);
+		const auto previous = shadowLights.load(std::memory_order_acquire);
+		if (!previous || previous->ordered != lights) {
+			auto selection = std::make_shared<PreparedLightSelection>();
+			selection->ordered = lights;
+			if (!TraceAllPreparedLights()) {
+				selection->byReference.reserve(lights->size());
+				for (size_t i = 0; i < lights->size(); ++i)
+					if (const auto reference = (*lights)[i].referenceID; reference)
+						selection->byReference.try_emplace(reference, i);
+			}
+			shadowLights.store(std::move(selection), std::memory_order_release);
+		}
 	}
 	// Only a revision-coalesced mailbox handoff on this thread. All BLAS/TLAS
 	// allocations and command recording run as bounded shared-pool tasks.
@@ -578,7 +583,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 			static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections)))
 		return;
 	// Only capture the depth and camera used by the independent shadow layer.
-	if (!globals::features::dx12Control.IsShadowOffloadMode() ||
+	if (!DX12::SelectSCMNativePolicy(GetFrameNativeMode()).observeLights ||
 		!CanOffloadShadowsInCurrentCell())
 		return;
 
@@ -657,7 +662,7 @@ std::function<void()> DX12NativeScene::OnRenderPassBegin(const RE::BSRenderPass*
 	// render path. This does not change render-pass state or DX11 draw behavior.
 	if (!loaded || !globals::features::dx12Control.IsActive() || globals::game::isVR ||
 		!pass || !pass->geometry ||
-		!globals::features::dx12Control.IsShadowOffloadMode() ||
+		!DX12::SelectSCMNativePolicy(GetFrameNativeMode()).observeLights ||
 		!globals::features::upscaling.loaded ||
 		!globals::state || globals::state->isMapMenuOpen ||
 		(globals::state->permutationData.ExtraShaderDescriptor &
@@ -769,6 +774,8 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 		frameShadowScene.store(nullptr, std::memory_order_release);
 		frameShadowSceneID.store(UINT32_MAX, std::memory_order_release);
 		previousShadowSubmitted.store(false, std::memory_order_release);
+		frameNativeMode.store(DX12::SCMNativeMode::Disabled, std::memory_order_release);
+		allLightStaticReady.store(false, std::memory_order_release);
 		{
 			std::scoped_lock lock(runtimeLightMutex);
 			runtimeLightFrame = UINT32_MAX;
@@ -793,7 +800,7 @@ void DX12NativeScene::OnRuntimeDisabled()
 	frameShadowScene.store(nullptr, std::memory_order_release);
 	frameShadowSceneID.store(UINT32_MAX, std::memory_order_release);
 	previousShadowSubmitted.store(false, std::memory_order_release);
-	frameTraceAllLights.store(false, std::memory_order_release);
+	frameNativeMode.store(DX12::SCMNativeMode::Disabled, std::memory_order_release);
 	allLightStaticReady.store(false, std::memory_order_release);
 	{
 		std::scoped_lock lock(runtimeLightMutex);

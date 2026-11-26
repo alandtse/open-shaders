@@ -31,14 +31,19 @@ struct DX12Control final : Feature
 	bool SupportsVR() override { return false; }
 	/** @brief Whether native work may be submitted this frame. */
 	bool IsActive() const { return loaded && bootActive.load(std::memory_order_acquire); }
-	bool IsShadowOffloadMode() const { return selectedMode.load(std::memory_order_relaxed) != Mode::RasterComparison; }
-	bool IsFullShadowMode() const { return selectedMode.load(std::memory_order_relaxed) == Mode::FullShadow; }
+	Mode GetSelectedMode() const { return selectedMode.load(std::memory_order_relaxed); }
+	bool IsShadowOffloadMode() const { return GetSelectedMode() != Mode::RasterComparison; }
+	bool IsFullShadowMode() const { return GetSelectedMode() == Mode::FullShadow; }
 	/** @brief Adopt the old Native Scene toggle when loading a pre-mode-selection configuration. */
 	void MigrateLegacyFullShadowMode(bool enabled);
-	bool UseSpatialReconstruction() const { return IsFullShadowMode() && rayTracedComposite.spatialReconstruction.load(std::memory_order_relaxed); }
-	uint32_t GetReconstructionGridSize() const { return IsFullShadowMode() ? rayTracedComposite.reconstructionGrid.load(std::memory_order_relaxed) : 3u; }
-	float GetShadowStrength() const { return IsFullShadowMode() ? rayTracedComposite.shadowStrength.load(std::memory_order_relaxed) : 1.0f; }
-	float GetShadowBlend() const { return IsFullShadowMode() ? rayTracedComposite.shadowBlend.load(std::memory_order_relaxed) : kOffloadingDefaultBlend; }
+	bool UseSpatialReconstruction() const { return IsFullShadowMode() && GetRayTracedSpatialReconstruction(); }
+	uint32_t GetReconstructionGridSize() const { return IsFullShadowMode() ? GetRayTracedGridSize() : 3u; }
+	float GetShadowStrength() const { return IsFullShadowMode() ? GetRayTracedStrength() : 1.0f; }
+	float GetShadowBlend() const { return IsFullShadowMode() ? GetRayTracedBlend() : kOffloadingDefaultBlend; }
+	bool GetRayTracedSpatialReconstruction() const { return rayTracedComposite.spatialReconstruction.load(std::memory_order_relaxed); }
+	uint32_t GetRayTracedGridSize() const { return rayTracedComposite.reconstructionGrid.load(std::memory_order_relaxed); }
+	float GetRayTracedStrength() const { return rayTracedComposite.shadowStrength.load(std::memory_order_relaxed); }
+	float GetRayTracedBlend() const { return rayTracedComposite.shadowBlend.load(std::memory_order_relaxed); }
 	void DrawSettings() override;
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;

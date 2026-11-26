@@ -616,8 +616,7 @@ namespace ShadowCasterManager
 
 	static DX12::SCMNativePolicy GetSCMNativePolicy()
 	{
-		const auto& control = globals::features::dx12Control;
-		return DX12::SelectSCMNativePolicy(control.IsActive(), control.IsShadowOffloadMode(), globals::game::isVR);
+		return DX12::SelectSCMNativePolicy(globals::features::dx12NativeScene.GetFrameNativeMode());
 	}
 
 	void ResetNativeRasterTracking()
