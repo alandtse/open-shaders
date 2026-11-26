@@ -2,7 +2,6 @@
 
 #include "../Upscaling.h"
 #include "DX12Control.h"
-#include "DX12CasterCoverage.h"
 #include "DX12Resources.h"
 #include "Globals.h"
 #include "GpuPass.h"
