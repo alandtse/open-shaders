@@ -42,13 +42,17 @@ void DX12NativeScene::DrawSettings()
 		frozenNativeLights.clear();
 	}
 	ImGui::EndDisabled();
-	const char* fractions[] = {
-		T("menu.dx12.scene.density.full", "Full"), T("menu.dx12.scene.density.two_thirds", "Two-thirds"), T("menu.dx12.scene.density.half", "Half"), T("menu.dx12.scene.density.one_third", "One-third"), T("menu.dx12.scene.density.quarter", "Quarter"),
-		T("menu.dx12.scene.density.one_sixth", "One-sixth"), T("menu.dx12.scene.density.one_ninth", "One-ninth"), T("menu.dx12.scene.density.four_ninths", "Four-ninths")
+	const char* qualities[] = {
+		T("menu.dx12.scene.quality.full", "Full"),
+		T("menu.dx12.scene.quality.quality", "Quality"),
+		T("menu.dx12.scene.quality.medium", "Medium"),
+		T("menu.dx12.scene.quality.low", "Low"),
+		T("menu.dx12.scene.quality.potato", "Potato")
 	};
-	int mode = static_cast<int>(densityMode);
-	if (ImGui::Combo(T("menu.dx12.scene.trace_density", "Trace density"), &mode, fractions, 8))
-		densityMode = static_cast<uint32_t>(mode);
+	static_assert(std::size(qualities) == DX12Native::kShadowQualityCount);
+	int mode = static_cast<int>(qualityMode);
+	if (ImGui::Combo(T("menu.dx12.scene.shadow_quality", "Shadow quality"), &mode, qualities, int(std::size(qualities))))
+		qualityMode = static_cast<uint32_t>(mode);
 	ImGui::Checkbox(T("menu.dx12.scene.shadow_stochastic", "Stochastic shadow emitter sampling"), &shadowStochastic);
 	ImGui::BeginDisabled(!shadowStochastic);
 	ImGui::SliderFloat(T("menu.dx12.scene.shadow_emitter_multiplier", "Shadow emitter radius multiplier"), &shadowEmitterRadiusMultiplier,
@@ -109,7 +113,9 @@ void DX12NativeScene::LoadSettings(json& input)
 	outdoorShadowOffloading = input.value("OutdoorShadowOffloading", false);
 	offloadStaticShadows = input.value("OffloadSCMStatic", true);
 	offloadFlickeringStatic = input.value("OffloadFlickeringStatic", true);
-	densityMode = std::min(input.value("ShadowTraceDensityMode", DX12Native::kDefaultShadowDensityMode), 7u);
+	qualityMode = input.value("ShadowQualityMode", DX12Native::kDefaultShadowQualityMode);
+	if (qualityMode >= DX12Native::kShadowQualityCount)
+		qualityMode = DX12Native::kDefaultShadowQualityMode;
 	freezeNativeFlickering = input.value("FreezeNativeFlickering", kDefaultFreezeNativeFlickering);
 	{
 		std::scoped_lock lock(runtimeLightMutex);
@@ -129,7 +135,7 @@ void DX12NativeScene::LoadSettings(json& input)
 
 void DX12NativeScene::SaveSettings(json& output)
 {
-	output = { { "ShadowMask", shadowMaskEnabled }, { "TraceAllPreparedLights", traceAllPreparedLights }, { "DebugNativeLights", debugNativeLights.load(std::memory_order_relaxed) }, { "OutdoorShadowOffloading", outdoorShadowOffloading }, { "ShadowTraceDensityMode", densityMode },
+	output = { { "ShadowMask", shadowMaskEnabled }, { "TraceAllPreparedLights", traceAllPreparedLights }, { "DebugNativeLights", debugNativeLights.load(std::memory_order_relaxed) }, { "OutdoorShadowOffloading", outdoorShadowOffloading }, { "ShadowQualityMode", qualityMode },
 		{ "OffloadSCMStatic", offloadStaticShadows },
 		{ "OffloadFlickeringStatic", offloadFlickeringStatic },
 		{ "FreezeNativeFlickering", freezeNativeFlickering },
@@ -150,7 +156,7 @@ void DX12NativeScene::RestoreDefaultSettings()
 	outdoorShadowOffloading = false;
 	offloadStaticShadows = true;
 	offloadFlickeringStatic = true;
-	densityMode = DX12Native::kDefaultShadowDensityMode;
+	qualityMode = DX12Native::kDefaultShadowQualityMode;
 	freezeNativeFlickering = kDefaultFreezeNativeFlickering;
 	{
 		std::scoped_lock lock(runtimeLightMutex);
@@ -409,7 +415,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 		const DX12Native::ShadowTraceControls controls{
 			.viewportWidth = viewportWidth,
 			.viewportHeight = viewportHeight,
-			.densityMode = densityMode,
+			.qualityMode = qualityMode,
 			.nearLightExclusion = nearLightShadowExclusion,
 			.nearLightRadius = float(nearLightExclusionUnits),
 			.reachMultiplier = shadowReachMultiplier,

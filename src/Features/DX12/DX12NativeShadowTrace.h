@@ -3,6 +3,7 @@
 #include "DX12NativeAcceleration.h"
 #include "DX12NativeRasterCapture.h"
 #include "VideoMemoryBudget.h"
+#include "../../../package/Shaders/Common/NativeShadowQuality.hlsli"
 
 #include <array>
 #include <memory>
@@ -14,7 +15,7 @@ namespace DX12Native
 {
 	// Shared CPU-side limit for prepared lights submitted to the native shadow RayQuery.
 	inline constexpr uint32_t kMaxShadowLights = DX12::kMaxPreparedLights;
-	inline constexpr uint32_t kDefaultShadowDensityMode = 5;  // One-sixth density.
+	inline constexpr uint32_t kDefaultShadowQualityMode = kShadowQualityQuality;
 	inline constexpr float kDefaultShadowReachMultiplier = 1.25f;
 	inline constexpr float kDefaultShadowFadeRange = 0.36f;
 	inline constexpr float kDefaultShadowEmitterRadiusMultiplier = 0.75f;
@@ -24,7 +25,7 @@ namespace DX12Native
 	struct ShadowTraceControls
 	{
 		uint32_t viewportWidth = 0, viewportHeight = 0;
-		uint32_t densityMode = kDefaultShadowDensityMode;
+		uint32_t qualityMode = kDefaultShadowQualityMode;
 		bool nearLightExclusion = false;
 		float nearLightRadius = 0.0f;  // 0..512 game units; exclusion sphere centered at light.
 		float reachMultiplier = kDefaultShadowReachMultiplier;  // 1.0 means vanilla light radius.
@@ -35,7 +36,16 @@ namespace DX12Native
 		bool captureDebugLights = false;
 	};
 
-	/** @brief Full render-size raw visibility; the composite owns reconstruction. */
+	/** @brief Physical raw texture and logical sampling grid for this frame. */
+	struct ShadowSamplingLayout
+	{
+		uint32_t internalWidth = 0, internalHeight = 0;
+		uint32_t logicalWidth = 0, logicalHeight = 0;
+		uint32_t physicalWidth = 0, physicalHeight = 0;
+		uint32_t qualityMode = kDefaultShadowQualityMode, checkerboardOrigin = 0;
+	};
+
+	/** @brief Packed raw visibility; the composite owns reconstruction. */
 	struct ShadowMaskFrame
 	{
 		std::shared_ptr<const TopLevel> scene;
@@ -46,9 +56,10 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12GraphicsCommandList> commands;
 		winrt::com_ptr<ID3D12Fence> readyFence;
 		uint64_t readyValue = 0, allocationBytes = 0;
-		uint32_t frame = 0, width = 0, height = 0;
+		uint32_t frame = 0;
+		ShadowSamplingLayout sampling;
 		std::vector<DX12::PreparedLight> debugLights;
-		// RGBA32F: x weighted visibility, y 1 sampled / -1 omitted / 0 invalid,
+		// RGBA32F: x weighted visibility, y 1 lit receiver / 0 neutral or invalid,
 		// z receiver distance, w accumulated light weight.
 	};
 

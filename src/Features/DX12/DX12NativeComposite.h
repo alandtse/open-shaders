@@ -23,7 +23,7 @@ namespace DX12Native
 
 		struct Frame
 		{
-			winrt::com_ptr<ID3D12Resource> color;
+			winrt::com_ptr<ID3D12Resource> color, reconstructedShadowMask;
 			winrt::com_ptr<ID3D12Fence> producerFence;
 			uint64_t producerValue = 0;
 			uint32_t frame = 0, width = 0, height = 0;
@@ -58,6 +58,8 @@ namespace DX12Native
 			winrt::com_ptr<ID3D12CommandAllocator> allocator;
 			winrt::com_ptr<ID3D12GraphicsCommandList> commands;
 			winrt::com_ptr<ID3D12DescriptorHeap> shadowDescriptors;
+			winrt::com_ptr<ID3D12Resource> reconstructedMask;
+			uint32_t maskWidth = 0, maskHeight = 0;
 			winrt::com_ptr<ID3D12RootSignature> shadowRoot;
 			winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
 			SharedFence fence;

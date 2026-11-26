@@ -66,7 +66,7 @@ struct DX12NativeScene final : OverlayFeature
 	void OnSceneTransitionReset(bool a_opening) override;
 	void OnRuntimeDisabled() override;
 
-	/** @brief Raw full-resolution shadow output, independently fenced for Native Composite. */
+	/** @brief Raw quality-sized shadow output, independently fenced for Native Composite. */
 	std::shared_ptr<const DX12Native::ShadowMaskFrame> GetShadowMask(uint32_t frame) const { return shadows.Get(frame); }
 
 private:
@@ -94,7 +94,7 @@ private:
 	bool offloadFlickeringStatic = true;
 	static constexpr bool kDefaultFreezeNativeFlickering = true;
 	bool freezeNativeFlickering = kDefaultFreezeNativeFlickering;
-	uint32_t densityMode = DX12Native::kDefaultShadowDensityMode;
+	uint32_t qualityMode = DX12Native::kDefaultShadowQualityMode;
 	bool nearLightShadowExclusion = true;
 	uint32_t nearLightExclusionUnits = 16;
 	float shadowReachMultiplier = DX12Native::kDefaultShadowReachMultiplier;  // Native only. Vanilla lights stay unchanged.

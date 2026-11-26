@@ -4,6 +4,7 @@
 #include "Features/DX12/TilePreparationPolicy.h"
 #include "Utils/RuntimeTaskGate.h"
 #include "../../features/DX12 Native Scene/Shaders/DX12NativeScene/NativeShadowSampling.hlsli"
+#include "../../package/Shaders/Common/NativeShadowQuality.hlsli"
 
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
@@ -173,4 +174,37 @@ TEST_CASE("DX12 empty tile classification distinguishes failure from completed e
 	CHECK(ClassifyTilePreparation(false, true, true, false) == TilePreparationOutcome::Retry);
 	CHECK(ClassifyTilePreparation(true, true, false, true) == TilePreparationOutcome::Partial);
 	CHECK(ClassifyTilePreparation(true, true, true, true) == TilePreparationOutcome::Ready);
+}
+
+TEST_CASE("DX12 shadow quality allocates packed physical extents", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	constexpr std::array<uint32_t, kShadowQualityCount> expectedWidths{ 3840, 1920, 1920, 960, 1280 };
+	constexpr std::array<uint32_t, kShadowQualityCount> expectedHeights{ 2160, 2160, 1080, 1080, 720 };
+	for (uint32_t mode = 0; mode < kShadowQualityCount; ++mode) {
+		const auto logicalWidth = NativeShadowLogicalExtent(3840, mode);
+		const auto logicalHeight = NativeShadowLogicalExtent(2160, mode);
+		CHECK(NativeShadowPhysicalWidth(logicalWidth, mode) == expectedWidths[mode]);
+		CHECK(logicalHeight == expectedHeights[mode]);
+		for (uint32_t frame = 0; frame < 2; ++frame) {
+			const auto origin = NativeShadowCheckerboardOrigin(mode, frame);
+			CHECK(origin == (NativeShadowCheckerboard(mode) ? frame : 0u));
+			for (uint32_t y = 0; y < 3; ++y) {
+				const auto oddWidth = NativeShadowLogicalExtent(13, mode);
+				const auto packedWidth = NativeShadowPhysicalWidth(oddWidth, mode);
+				for (uint32_t x = 0; x < packedWidth; ++x) {
+					const auto logical = NativeShadowLogicalX(x, y, mode, origin);
+					if (logical >= oddWidth)
+						continue;
+					CHECK(NativeShadowHasSample(logical, y, mode, origin));
+					CHECK(NativeShadowPackedX(logical, mode) == x);
+					CHECK(NativeShadowRenderCoordinate(logical, 13, mode) < 13);
+				}
+			}
+		}
+	}
+	CHECK(NativeShadowLogicalX(0, 0, kShadowQualityQuality, 0) == 0);
+	CHECK(NativeShadowLogicalX(0, 0, kShadowQualityQuality, 1) == 1);
+	CHECK(NativeShadowLogicalX(0, 1, kShadowQualityQuality, 0) == 1);
+	CHECK(NativeShadowLogicalX(0, 1, kShadowQualityQuality, 1) == 0);
 }

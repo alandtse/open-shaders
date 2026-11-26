@@ -27,7 +27,7 @@ namespace DX12Native
 		{
 			Matrix projectionInverse, viewInverse;
 			float4 positionAdjust;
-			uint32_t width, height, frame, density;
+			uint32_t width, height, frame, quality;
 			uint32_t lightCount;
 			float minimum = kMinRayDistance, maximum = kMaxRayDistance;
 			uint32_t reserved = 0;
@@ -35,7 +35,8 @@ namespace DX12Native
 			float nearLightRadius = 0.0f;
 			uint32_t nearLightExclusion = 0, stochasticSampling = 1;
 			float emitterRadiusMultiplier = kDefaultShadowEmitterRadiusMultiplier;
-			uint32_t padding2 = 0;
+			uint32_t checkerboardOrigin = 0;
+			uint32_t logicalWidth, logicalHeight, physicalWidth, physicalHeight;
 		};
 		winrt::com_ptr<ID3D12Resource> UploadBuffer(ID3D12Device* device, UINT64 bytes)
 		{
@@ -157,12 +158,19 @@ namespace DX12Native
 			if (!width || !height || width > raster->width || height > raster->height) {
 				return;
 			}
-			const bool fresh = !slot || slot->width != width || slot->height != height;
+			const uint32_t quality = controls.qualityMode < kShadowQualityCount ? controls.qualityMode : kDefaultShadowQualityMode;
+			const uint32_t logicalWidth = NativeShadowLogicalExtent(width, quality);
+			const uint32_t logicalHeight = NativeShadowLogicalExtent(height, quality);
+			const ShadowSamplingLayout sampling{ width, height, logicalWidth, logicalHeight,
+				NativeShadowPhysicalWidth(logicalWidth, quality), logicalHeight, quality,
+				NativeShadowCheckerboardOrigin(quality, frame) };
+			const bool fresh = !slot || slot->sampling.physicalWidth != sampling.physicalWidth ||
+			                   slot->sampling.physicalHeight != sampling.physicalHeight;
 			if (fresh) {
 				auto replacement = std::make_shared<ShadowMaskFrame>();
 				const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
 				const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(
-					DXGI_FORMAT_R32G32B32A32_FLOAT, width, height, 1, 1, 1, 0,
+					DXGI_FORMAT_R32G32B32A32_FLOAT, sampling.physicalWidth, sampling.physicalHeight, 1, 1, 1, 0,
 					D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 				const uint64_t allocation = requested.d3d12Device->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
 				if (!allocation || allocation == UINT64_MAX)
@@ -208,13 +216,12 @@ namespace DX12Native
 			slot->raster = std::move(raster);
 			slot->scene = std::move(scene);
 			slot->frame = frame;
-			slot->width = width;
-			slot->height = height;
+			slot->sampling = sampling;
 			const Constants camera{
 				slot->raster->camera.CameraProjInverse,
 				slot->raster->camera.CameraViewInverse,
 				slot->raster->camera.CameraPosAdjust,
-				width, height, frame, std::min(controls.densityMode, 7u),
+				width, height, frame, quality,
 				uint32_t(std::min(lights.size(), size_t(kMaxShadowLights))),
 				kMinRayDistance, kMaxRayDistance, 0u,
 				std::clamp(controls.reachMultiplier, 0.1f, 64.0f),
@@ -226,7 +233,8 @@ namespace DX12Native
 				std::isfinite(controls.emitterRadiusMultiplier) ?
 					std::clamp(controls.emitterRadiusMultiplier, 0.0f, kMaximumShadowEmitterRadiusMultiplier) :
 					kDefaultShadowEmitterRadiusMultiplier,
-				0u
+				sampling.checkerboardOrigin,
+				sampling.logicalWidth, sampling.logicalHeight, sampling.physicalWidth, sampling.physicalHeight
 			};
 			static_assert(sizeof(Constants) <= D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
@@ -282,9 +290,8 @@ namespace DX12Native
 					D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 				command->ResourceBarrier(1, &maskStart);
 			}
-			// The output remains full-resolution regardless of sparse trace density.
-			command->Dispatch((width + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize,
-				(height + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize, 1);
+			command->Dispatch(NativeShadowCeilDivide(sampling.physicalWidth, kShadowThreadGroupSize),
+				NativeShadowCeilDivide(sampling.physicalHeight, kShadowThreadGroupSize), 1);
 			const auto uavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(slot->mask.get());
 			command->ResourceBarrier(1, &uavBarrier);
 			const std::array end{

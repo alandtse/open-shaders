@@ -16,6 +16,8 @@ if(NATIVE_SHADOW_DXC)
     set(_shadow_density
         "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene/NativeTraceDensity.hlsli"
     )
+    set(_shadow_quality "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders/Common/NativeShadowQuality.hlsli")
+    set(_shadow_sampling "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene/NativeShadowSampling.hlsli")
     set(_shadow_dir "${CMAKE_CURRENT_BINARY_DIR}/DX12NativeScene")
     set(_shadow_dxil "${_shadow_dir}/ShadowMask.dxil")
     add_custom_command(
@@ -25,8 +27,9 @@ if(NATIVE_SHADOW_DXC)
             "${NATIVE_SHADOW_DXC}" -T cs_6_5 -E main -HV 2021 -O3
             ${NATIVE_SHADER_VALIDATION_FLAGS} -I
             "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene"
+            -I "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders"
             -Fo "${_shadow_dxil}" "${_shadow_source}"
-        DEPENDS "${_shadow_source}" "${_shadow_density}"
+        DEPENDS "${_shadow_source}" "${_shadow_density}" "${_shadow_sampling}" "${_shadow_quality}"
         VERBATIM
     )
     add_custom_target(DX12NativeShadowDXIL DEPENDS "${_shadow_dxil}")

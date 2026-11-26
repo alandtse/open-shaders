@@ -3,6 +3,7 @@ if(NATIVE_SHADOW_DXC)
     set(_native_composite_source
         "${NATIVE_SHADER_SOURCE_ROOT}/features/Native Composite/Shaders/NativeComposite/ShadowLayer.hlsl6"
     )
+    set(_native_composite_quality "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders/Common/NativeShadowQuality.hlsli")
     set(_native_composite_dir "${CMAKE_CURRENT_BINARY_DIR}/NativeComposite")
     set(_native_composite_dxil "${_native_composite_dir}/ShadowLayer.dxil")
     add_custom_command(
@@ -10,9 +11,10 @@ if(NATIVE_SHADOW_DXC)
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_native_composite_dir}"
         COMMAND
             "${NATIVE_SHADOW_DXC}" -T cs_6_5 -E main -HV 2021 -O3
-            ${NATIVE_SHADER_VALIDATION_FLAGS} -Ges -Gis -Fo
+            ${NATIVE_SHADER_VALIDATION_FLAGS} -Ges -Gis
+            -I "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders" -Fo
             "${_native_composite_dxil}" "${_native_composite_source}"
-        DEPENDS "${_native_composite_source}"
+        DEPENDS "${_native_composite_source}" "${_native_composite_quality}"
         VERBATIM
     )
     add_custom_target(

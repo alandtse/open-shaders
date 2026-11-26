@@ -41,10 +41,9 @@ void DX12Control::DrawSettings()
 			break;
 		case 2:
 			{
-				ImGui::Checkbox(T("menu.dx12.composite.spatial_reconstruction", "Spatial shadow reconstruction"), &settings.SpatialReconstruction);
+				ImGui::Checkbox(T("menu.dx12.composite.spatial_reconstruction", "Additional spatial filtering"), &settings.SpatialReconstruction);
 				spatialReconstruction.store(settings.SpatialReconstruction, std::memory_order_relaxed);
 				int gridIndex = int((settings.ReconstructionGridSize - 3u) / 2u);
-				ImGui::BeginDisabled(!settings.SpatialReconstruction);
 				if (ImGui::Combo(T("menu.dx12.composite.reconstruction_grid", "Reconstruction grid"), &gridIndex,
 						"3x3\0"
 						"5x5\0"
@@ -53,7 +52,6 @@ void DX12Control::DrawSettings()
 					settings.ReconstructionGridSize = uint32_t(3 + gridIndex * 2);
 					reconstructionGrid.store(settings.ReconstructionGridSize, std::memory_order_relaxed);
 				}
-				ImGui::EndDisabled();
 				if (ImGui::SliderFloat(T("menu.dx12.composite.shadow_strength", "Shadow strength"), &settings.ShadowStrength, 0.0f, 4.0f, "%.2f"))
 					shadowStrength.store(settings.ShadowStrength, std::memory_order_relaxed);
 				if (ImGui::SliderFloat(T("menu.dx12.composite.shadow_blend", "Shadow blend"), &settings.ShadowBlend, 0.0f, 1.0f, "%.2f"))
