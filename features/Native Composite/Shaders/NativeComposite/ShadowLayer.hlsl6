@@ -12,7 +12,7 @@ cbuffer ShadowConstants : register(b0)
 	float ReceiverTolerance;
 	float RadiusPixels;
 	uint LegacyTransfer;
-	uint AlignmentPadding;
+	uint PublishReconstructedMask;
 	float Strength;
 	float Blend;
 	row_major float4x4 InverseProjection;
@@ -106,7 +106,15 @@ float SampleVisibility(int2 logical, float4 center)
 [numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID) {
 	if (any(id.xy >= Size))
 		return;
-	ReconstructedMask[id.xy] = float4(1, 0, 0, 0);
+	if (PublishReconstructedMask != 0u)
+		ReconstructedMask[id.xy] = float4(1, 0, 0, 0);
+	if (PublishReconstructedMask == 0u) {
+		const int2 logical = int2(id.xy / NativeShadowQualityScale(QualityMode));
+		if (all(id.xy == RenderPixel(uint2(logical))) &&
+			NativeShadowHasSample(uint(logical.x), uint(logical.y), QualityMode, CheckerboardOrigin) &&
+			!ValidMask(LoadLogical(logical)))
+			return;
+	}
 	const float depth = RasterDepth[id.xy];
 	if (!isfinite(depth) || depth <= 0.0f || depth >= 1.0f)
 		return;
@@ -140,7 +148,8 @@ float SampleVisibility(int2 logical, float4 center)
 		}
 		visibility = sum / weight;
 	}
-	ReconstructedMask[id.xy] = float4(visibility, reference.y, receiverDistance, reference.w);
+	if (PublishReconstructedMask != 0u)
+		ReconstructedMask[id.xy] = float4(visibility, reference.y, receiverDistance, reference.w);
 	if (!ValidMask(reference))
 		return;
 	float4 color = Scene[id.xy];

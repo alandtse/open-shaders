@@ -76,6 +76,8 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
 		winrt::com_ptr<ID3D12Device> shadowDevice;
 		winrt::com_ptr<ID3D12Device> failedShadowDevice;
+		winrt::com_ptr<ID3D12Device> formatDevice;
+		D3D12_FEATURE_DATA_FORMAT_SUPPORT cachedFormatSupport{ DXGI_FORMAT_UNKNOWN };
 		VideoMemoryBudget videoBudget;
 		bool captureFailureLogged = false;
 		bool InitializeShadow(ID3D12Device* device);
