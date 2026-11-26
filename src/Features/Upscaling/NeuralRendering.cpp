@@ -1408,10 +1408,6 @@ struct NeuralRendering::Impl
 		reconstructionMode = selectedReconstruction;
 		reconstructionFallback = requestedReconstruction != selectedReconstruction;
 		const bool sbs = sbsEnabled;
-		if (lowRes && !peripheralPlan.Active()) {
-			region = {};
-			actorBox = {};
-		}
 		if (sbs)
 			PlanSbs();
 		else
@@ -2556,7 +2552,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	const bool styleChanged = Util::Combo(T(TKEY("style"), "Style"), &tuning.style, styleLabels);
 	changed |= styleChanged;
 	bool recreateTuning = styleChanged;
-	changed |= ImGui::SliderFloat(T(TKEY("intensity"), "Intensity"), &tuning.intensity, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	changed |= ImGui::SliderFloat(T(TKEY("intensity"), "Intensity"), &tuning.intensity, NR::Tuning::kMinStrength, NR::Tuning::kMaxIntensity, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
 	changed |= ImGui::SliderFloat(T(TKEY("local_tone"), "Local Tone Strength"), &tuning.localToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
@@ -2840,6 +2836,10 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 	try {
 		// A retry raised after the decision stays pending for the next frame instead of being consumed by a skip.
 		const bool retry = retryPending && retryRequested.exchange(false);
+		const bool starting = action == NR::FrameAction::InitializeThenRun || action == NR::FrameAction::RebuildThenRun;
+		// Consumed before the drain, so a drain that throws latches instead of rebuilding every frame.
+		if (starting)
+			swapRuntime.store(false, std::memory_order_relaxed);
 		if (action == NR::FrameAction::RebuildThenRun) {
 			// Retire both APIs before releasing a failed runtime and its shared resources.
 			impl->interop.Drain();
@@ -2875,9 +2875,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			return;
 		}
 		// A rebuilt runtime starts uninitialized, so both actions end in Initialize().
-		if (action == NR::FrameAction::InitializeThenRun || action == NR::FrameAction::RebuildThenRun) {
+		if (starting) {
 			work.allowUnverifiedRuntime = allowUnverifiedRuntime.load(std::memory_order_relaxed);
-			swapRuntime.store(false, std::memory_order_relaxed);
 			work.runtimeVariant = GetRuntimeVariant();
 			work.Initialize();
 			const auto luid = work.interop.AdapterLuid();
@@ -2985,13 +2984,14 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		uint32_t reset = NR::Diagnostics::FrameResetReasons(resetHistory.exchange(false), work.lastFrame, state->frameCount);
 		auto boundedTuning = effective;
 		boundedTuning.Sanitize();
-		const bool cropActive = boundedTuning.regionOfInterest || calibrationRunning;
+		const bool cropUsable = NR::ModelTakesCrop(lowExtent.first, compression.Active());
+		const bool cropActive = cropUsable && (boundedTuning.regionOfInterest || calibrationRunning);
 		work.region = cropActive ? GetRegionOfInterest() : Util::Region::StereoRegion{};
 		work.actorBox = cropActive ? GetActorBox() : Util::Region::StereoRegion{};
 		const bool actorCrop = work.region.active && !calibrationRunning;
 		const bool foveatedRouteSuspended = state->IsMainOrLoadingMenuOpen();
 		bool foveaClip = false;
-		if (boundedTuning.regionFollowFoveation && !calibrationRunning && !foveatedRouteSuspended) {
+		if (cropUsable && boundedTuning.regionFollowFoveation && !calibrationRunning && !foveatedRouteSuspended) {
 			const auto& foveated = globals::features::upscaling.foveatedRender;
 			Util::Subrect::UVRegion leftUV, rightUV;
 			if (foveated.GetClipUV(0, leftUV) && foveated.GetClipUV(1, rightUV)) {

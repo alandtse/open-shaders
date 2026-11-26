@@ -21,8 +21,9 @@ The package does not redistribute NVIDIA runtime binaries. Supply
 Initialization or evaluation errors pause NR and appear in the Upscaling panel and
 the existing CommunityShaders log. After correcting the error, use **Retry NR**,
 toggle NR off/on, or clear the shader cache to retry on the next rendered world
-frame. Resource setup also permits a retry. Failed GPU work is retired before
-releasing the failed runtime. There is no per-frame automatic retry.
+frame. Resource setup and a different **Runtime Build** also permit a retry.
+Failed GPU work is retired before releasing the failed runtime. There is no
+per-frame automatic retry.
 
 The Enable switch is disabled while the runtime on disk is one the pass would
 refuse, and its tooltip names the reason and the fix, so a missing file or a
@@ -47,12 +48,14 @@ The controls persist under `Upscaling.neuralRenderingTuning`:
 | UI control               | Config key               | Range                       | OS default | Evaluation parameter            |
 | ------------------------ | ------------------------ | --------------------------- | ---------- | ------------------------------- |
 | Style                    | `style`                  | Style 0 / Style 1 / Style 2 | 0          | `DLSSNR.Style`                  |
-| Intensity                | `intensity`              | 0–2                         | 1.0        | `DLSSNR.Intensity`              |
+| Intensity                | `intensity`              | 0–1                         | 1.0        | `DLSSNR.Intensity`              |
 | Local Tone Strength      | `localToneStrength`      | 0–2                         | 1.0        | `DLSSNR.LocalToneStrength`      |
 | Local Structure Strength | `localStructureStrength` | 0–2                         | 1.0        | `DLSSNR.LocalStructureStrength` |
 | Skin Structure Strength  | `skinStructureStrength`  | -1–2 (-1 displays Auto)     | -1         | `DLSSNR.SkinStructureStrength`  |
 | Colour Strength          | `colorStrength`          | 0–1                         | 0          | none (composite only)           |
 | Use Auto Mask            | `useAutoMask`            | Off / On                    | On         | `DLSSNR.UseAutoMask`            |
+
+Feature 18 clamps Intensity at 1, so settings above 1 load as 1.
 
 Colour Strength is not an evaluation parameter: the composite applies
 `ColorStrength` times the model's per-channel colour shift (its change in each
@@ -269,6 +272,9 @@ rising `neuralFrames` means the crop keeps moving, and a large
 `neuralResetDrainMs` per frame means those resets are costing real CPU time.
 
 ### Fovea crop
+
+Both crop sources are ignored while **Model Scale** is below 1 without peripheral
+compression, because the model then runs on the whole reduced frame.
 
 **Follow Foveation** (`Upscaling.neuralRenderingTuning.regionFollowFoveation`,
 default on) is the second region source. On VR, while FoveatedRender is active

@@ -90,3 +90,14 @@ float RawDepthForDistance(float distance, float4 cameraData)
 	ASSERT(IsTrue, all(abs(unchanged - sampleColor) < 1e-6f));
 	ASSERT(IsTrue, all(abs(brighter * sampleColor.y - sampleColor * brighter.y) < 1e-6f));
 }
+
+	/// @tags neural-rendering
+	/// A stored gain keeps the full model sample inside the crop and nothing outside it
+	[numthreads(1, 1, 1)] void TestReuseStoresTheUnfeatheredSample()
+{
+	const float3 inputSample = float3(0.2f, 0.3f, 0.4f);
+	const float3 neuralSample = float3(0.6f, 0.5f, 0.1f);
+	ASSERT(IsTrue, all(NeuralRenderingReuse::StoredSample(1.0f, inputSample, neuralSample) == neuralSample));
+	ASSERT(IsTrue, all(NeuralRenderingReuse::StoredSample(0.01f, inputSample, neuralSample) == neuralSample));
+	ASSERT(IsTrue, all(NeuralRenderingReuse::StoredSample(0.0f, inputSample, neuralSample) == inputSample));
+}
