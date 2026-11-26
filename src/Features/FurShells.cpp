@@ -1,6 +1,7 @@
 #include "FurShells.h"
 
 #include "Features/FurShells/AssetScan.h"
+#include "Features/FurShells/ShellLimits.h"
 #include "Features/Wind/Wind.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -289,19 +290,6 @@ namespace
 		return a_shellPath.substr(0, a_shellPath.size() - 4) + ".json";
 	}
 
-	void ClampOverride(FurShells::ShellOverride& a_values)
-	{
-		a_values.ShellCount = std::clamp(a_values.ShellCount, 1u, MaxShells);
-		a_values.Length = std::clamp(a_values.Length, 0.05f, 6.0f);
-		a_values.Droop = std::clamp(a_values.Droop, 0.0f, 2.0f);
-		a_values.RootThreshold = std::clamp(a_values.RootThreshold, 0.0f, 1.0f);
-		a_values.TipThreshold = std::clamp(a_values.TipThreshold, 0.0f, 1.0f);
-		a_values.RootDarkening = std::clamp(a_values.RootDarkening, 0.0f, 1.0f);
-		a_values.ShellColor = std::clamp(a_values.ShellColor, 0.0f, 1.0f);
-		a_values.FadeStart = std::clamp(a_values.FadeStart, 0.0f, 8000.0f);
-		a_values.FadeEnd = std::clamp(a_values.FadeEnd, 0.0f, 8000.0f);
-	}
-
 	RE::NiSourceTexturePtr LoadShell(const std::string& a_path, bool& a_exists, std::string& a_shellPath)
 	{
 		a_exists = false;
@@ -339,6 +327,7 @@ void FurShells::RestoreDefaultSettings()
 void FurShells::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	FurShellLimits::ClampSettings(settings, MaxShells);
 
 	const auto tuning = FurInertia::Sanitize({ settings.InertiaFrequency, settings.InertiaGain, settings.InertiaLengthExponent, settings.InertiaDroopExponent, settings.InertiaMaxBend });
 	settings.InertiaFrequency = tuning.frequencyHz;
@@ -366,36 +355,36 @@ void FurShells::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("shell_count_tooltip"), "Layers drawn up close. Each one is another lighting pass over the fur."));
 
-	ImGui::SliderFloat(T(TKEY("length"), "Length"), &settings.Length, 0.1f, 6.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("length"), "Length"), &settings.Length, FurShellLimits::kMinGlobalSliderLength, FurShellLimits::LengthRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("length_tooltip"), "Fur length in game units."));
 
-	ImGui::SliderFloat(T(TKEY("body_length"), "Body Length"), &settings.BodyLength, 0.05f, 3.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("body_length"), "Body Length"), &settings.BodyLength, FurShellLimits::BodyLengthRange.minimum, FurShellLimits::BodyLengthRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("body_length_tooltip"), "Fur length on skin, such as khajiit bodies and heads, in game units."));
 
-	ImGui::SliderFloat(T(TKEY("droop"), "Droop"), &settings.Droop, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("droop"), "Droop"), &settings.Droop, FurShellLimits::DroopRange.minimum, FurShellLimits::DroopRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("droop_tooltip"), "How far the tips sag, in game units."));
 
-	ImGui::SliderFloat(T(TKEY("root_threshold"), "Root Cutoff"), &settings.RootThreshold, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("root_threshold"), "Root Cutoff"), &settings.RootThreshold, FurShellLimits::RootThresholdRange.minimum, FurShellLimits::RootThresholdRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("root_threshold_tooltip"), "Shell texture alpha needed at the root. Lower is denser."));
 
-	ImGui::SliderFloat(T(TKEY("tip_threshold"), "Tip Cutoff"), &settings.TipThreshold, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("tip_threshold"), "Tip Cutoff"), &settings.TipThreshold, FurShellLimits::TipThresholdRange.minimum, FurShellLimits::TipThresholdRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("tip_threshold_tooltip"), "Shell texture alpha needed at the tip. Higher thins the strands toward the end."));
 
-	ImGui::SliderFloat(T(TKEY("root_darkening"), "Root Brightness"), &settings.RootDarkening, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("root_darkening"), "Root Brightness"), &settings.RootDarkening, FurShellLimits::RootDarkeningRange.minimum, FurShellLimits::RootDarkeningRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("root_darkening_tooltip"), "Brightness at the root. Tips stay at full brightness."));
 
-	ImGui::SliderFloat(T(TKEY("shell_color"), "Shell Texture Color"), &settings.ShellColor, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("shell_color"), "Shell Texture Color"), &settings.ShellColor, FurShellLimits::ShellColorRange.minimum, FurShellLimits::ShellColorRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("shell_color_tooltip"), "0 colors the fur from the armor's own texture, 1 from the shell texture."));
 
-	ImGui::SliderFloat(T(TKEY("fade_start"), "Fade Start"), &settings.FadeStart, 0.0f, 8000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-	ImGui::SliderFloat(T(TKEY("fade_end"), "Fade End"), &settings.FadeEnd, 0.0f, 8000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("fade_start"), "Fade Start"), &settings.FadeStart, FurShellLimits::FadeStartRange.minimum, FurShellLimits::FadeStartRange.maximum, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("fade_end"), "Fade End"), &settings.FadeEnd, FurShellLimits::FadeEndRange.minimum, FurShellLimits::FadeEndRange.maximum, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("fade_tooltip"), "Shells thin out between these distances and stop past the end."));
 
@@ -403,21 +392,21 @@ void FurShells::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("hide_covered_fur_tooltip"), "Skips fur whose roots are covered by clothing, armor or anything else in front of them, so it stops poking through. Works in the world view, not in first person or menus."));
 
-	ImGui::SliderFloat(T(TKEY("min_fur_pixels"), "Minimum Fur Size"), &settings.MinFurPixels, 0.0f, 16.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("min_fur_pixels"), "Minimum Fur Size"), &settings.MinFurPixels, FurShellLimits::MinFurPixelsRange.minimum, FurShellLimits::MinFurPixelsRange.maximum, "%.1f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("min_fur_pixels_tooltip"), "Fur thins out as its on-screen height falls below this many pixels and is skipped at zero. 0 disables the cutoff."));
 
-	ImGui::SliderFloat(T(TKEY("wind_strength"), "Wind Strength"), &settings.WindStrength, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("wind_strength"), "Wind Strength"), &settings.WindStrength, FurShellLimits::WindStrengthRange.minimum, FurShellLimits::WindStrengthRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("wind_strength_tooltip"), "How strongly the world wind bends the fur. Fur is only blown outdoors. 0 disables wind."));
 
-	ImGui::SliderFloat(T(TKEY("wet_strength"), "Wet Fur Strength"), &settings.WetStrength, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("wet_strength"), "Wet Fur Strength"), &settings.WetStrength, FurShellLimits::WetStrengthRange.minimum, FurShellLimits::WetStrengthRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("wet_strength_tooltip"), "How much rain mats the fur: wet fur thins into clumps, darkens and hangs heavier. Water beads and drips on the outer layer come from Wetness Effects. 0 disables wet fur."));
 
 	DrawInertiaSettings();
 
-	ImGui::SliderFloat(T(TKEY("touch_strength"), "Touch Strength"), &settings.TouchStrength, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("touch_strength"), "Touch Strength"), &settings.TouchStrength, FurShellLimits::TouchStrengthRange.minimum, FurShellLimits::TouchStrengthRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("touch_strength_tooltip"), "How strongly hands, fingers and bodies press and drag the fur they touch, including fur on your own gear in VR. 0 disables touch."));
 
@@ -471,32 +460,32 @@ void FurShells::DrawOverrideSettings()
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextWrapped("%s", T(TKEY("shell_count_tooltip"), "Layers drawn up close. Each one is another lighting pass over the fur."));
 
-		edited |= ImGui::SliderFloat(T(TKEY("length"), "Length"), &values.Length, 0.05f, 6.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		edited |= ImGui::SliderFloat(T(TKEY("length"), "Length"), &values.Length, FurShellLimits::LengthRange.minimum, FurShellLimits::LengthRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextWrapped("%s", T(TKEY("length_tooltip"), "Fur length in game units."));
 
-		edited |= ImGui::SliderFloat(T(TKEY("droop"), "Droop"), &values.Droop, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		edited |= ImGui::SliderFloat(T(TKEY("droop"), "Droop"), &values.Droop, FurShellLimits::DroopRange.minimum, FurShellLimits::DroopRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextWrapped("%s", T(TKEY("droop_tooltip"), "How far the tips sag, in game units."));
 
-		edited |= ImGui::SliderFloat(T(TKEY("root_threshold"), "Root Cutoff"), &values.RootThreshold, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		edited |= ImGui::SliderFloat(T(TKEY("root_threshold"), "Root Cutoff"), &values.RootThreshold, FurShellLimits::RootThresholdRange.minimum, FurShellLimits::RootThresholdRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextWrapped("%s", T(TKEY("root_threshold_tooltip"), "Shell texture alpha needed at the root. Lower is denser."));
 
-		edited |= ImGui::SliderFloat(T(TKEY("tip_threshold"), "Tip Cutoff"), &values.TipThreshold, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		edited |= ImGui::SliderFloat(T(TKEY("tip_threshold"), "Tip Cutoff"), &values.TipThreshold, FurShellLimits::TipThresholdRange.minimum, FurShellLimits::TipThresholdRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextWrapped("%s", T(TKEY("tip_threshold_tooltip"), "Shell texture alpha needed at the tip. Higher thins the strands toward the end."));
 
-		edited |= ImGui::SliderFloat(T(TKEY("root_darkening"), "Root Brightness"), &values.RootDarkening, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		edited |= ImGui::SliderFloat(T(TKEY("root_darkening"), "Root Brightness"), &values.RootDarkening, FurShellLimits::RootDarkeningRange.minimum, FurShellLimits::RootDarkeningRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextWrapped("%s", T(TKEY("root_darkening_tooltip"), "Brightness at the root. Tips stay at full brightness."));
 
-		edited |= ImGui::SliderFloat(T(TKEY("shell_color"), "Shell Texture Color"), &values.ShellColor, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		edited |= ImGui::SliderFloat(T(TKEY("shell_color"), "Shell Texture Color"), &values.ShellColor, FurShellLimits::ShellColorRange.minimum, FurShellLimits::ShellColorRange.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextWrapped("%s", T(TKEY("shell_color_tooltip"), "0 colors the fur from the armor's own texture, 1 from the shell texture."));
 
-		edited |= ImGui::SliderFloat(T(TKEY("fade_start"), "Fade Start"), &values.FadeStart, 0.0f, 8000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-		edited |= ImGui::SliderFloat(T(TKEY("fade_end"), "Fade End"), &values.FadeEnd, 0.0f, 8000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+		edited |= ImGui::SliderFloat(T(TKEY("fade_start"), "Fade Start"), &values.FadeStart, FurShellLimits::FadeStartRange.minimum, FurShellLimits::FadeStartRange.maximum, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+		edited |= ImGui::SliderFloat(T(TKEY("fade_end"), "Fade End"), &values.FadeEnd, FurShellLimits::FadeEndRange.minimum, FurShellLimits::FadeEndRange.maximum, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextWrapped("%s", T(TKEY("fade_tooltip"), "Shells thin out between these distances and stop past the end."));
 
@@ -560,7 +549,7 @@ void FurShells::LoadOverride(const std::string& a_shellPath, ShellData& a_data)
 		if (size != 0 && size <= MaxOverrideSize && stream.read(text.data(), size)) {
 			try {
 				a_data.values = json::parse(text, nullptr, true, true).get<ShellOverride>();
-				ClampOverride(a_data.values);
+				FurShellLimits::ClampShellValues(a_data.values, MaxShells);
 				a_data.overridden = true;
 				logger::info("[Fur Shells] {} uses override {}", a_shellPath, path);
 			} catch (const json::exception& e) {
