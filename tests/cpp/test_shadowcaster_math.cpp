@@ -562,9 +562,4 @@ TEST_CASE("Native SCM policy preserves the disabled and VR paths", "[scm][dx12]"
 	CHECK(offload.observeLights);
 	CHECK(SelectSCMNativeCasterMode(offload, false) == SCMNativeCasterMode::Observe);
 	CHECK(SelectSCMNativeCasterMode(offload, true) == SCMNativeCasterMode::Suppress);
-	const auto fullRT = SelectSCMNativePolicy(DX12::SCMNativeMode::FullShadow);
-	CHECK_FALSE(fullRT.observeGeometry);
-	CHECK_FALSE(fullRT.observeLights);
-	CHECK(SelectSCMNativeCasterMode(fullRT, true) == SCMNativeCasterMode::Disabled);
-	CHECK(SelectSCMNativeCasterMode(fullRT, false) == SCMNativeCasterMode::Disabled);
 }

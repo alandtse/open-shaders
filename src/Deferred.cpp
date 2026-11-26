@@ -412,7 +412,12 @@ void Deferred::DeferredPasses()
 
 	auto motionVectors = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
-	Feature::ApplyOpaqueRasterReadyHooks();
+	const Feature::OpaqueRasterInputs opaqueInputs{
+		Util::AsReal(main.texture), Util::AsReal(specular.texture), Util::AsReal(albedo.texture),
+		Util::AsReal(normalRoughness.texture), Util::AsReal(masks.texture), Util::AsReal(masks2.texture),
+		Util::AsReal(reflectance.texture), Util::AsReal(motionVectors.texture)
+	};
+	Feature::ApplyOpaqueRasterReadyHooks(opaqueInputs);
 
 	bool interior = Util::IsInterior();
 

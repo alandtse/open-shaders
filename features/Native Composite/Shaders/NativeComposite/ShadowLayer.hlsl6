@@ -3,8 +3,6 @@
 Texture2D<float4> ShadowMask : register(t0);
 Texture2D<float> RasterDepth : register(t1);
 RWTexture2D<float4> Scene : register(u0);
-RWTexture2D<float4> ReconstructedMask : register(u1);
-#include "Common/NativeShadowQuality.hlsli"
 
 cbuffer ShadowConstants : register(b0)
 {
@@ -12,23 +10,14 @@ cbuffer ShadowConstants : register(b0)
 	float ReceiverTolerance;
 	float RadiusPixels;
 	uint LegacyTransfer;
-	uint PublishReconstructedMask;
+	uint AlignmentPadding;
 	float Strength;
 	float Blend;
 	row_major float4x4 InverseProjection;
 	row_major float4x4 InverseView;
 	uint SpatialReconstruction;
 	uint ReconstructionGridSize;
-	uint2 LogicalSize;
-	uint2 PhysicalSize;
-	uint QualityModeUnused;
-	uint CheckerboardOrigin;
 };
-
-#ifndef NATIVE_SHADOW_QUALITY
-#define NATIVE_SHADOW_QUALITY 1
-#endif
-static const uint QualityMode = NATIVE_SHADOW_QUALITY;
 
 float3 SignedPower(float3 value, float exponent)
 {
@@ -38,124 +27,95 @@ bool ValidMask(float4 mask)
 {
 	return all(isfinite(mask)) && mask.y == 1.0f && mask.z > 0.0f && mask.w > 0.0f;
 }
-bool ReceiverSample(float4 mask)
+float SampleVisibility(int2 samplePixel, float4 center)
 {
-	return all(isfinite(mask)) && mask.z > 0.0f &&
-	       (ValidMask(mask) || (mask.y == 0.0f && mask.w == 0.0f));
-}
-
-float4 LoadLogical(int2 logical)
-{
-	if (any(logical < 0) || any(logical >= int2(LogicalSize)) ||
-		!NativeShadowHasSample(uint(logical.x), uint(logical.y), QualityMode, CheckerboardOrigin))
-		return float4(1, 0, 0, 0);
-	const uint2 packed = uint2(NativeShadowPackedX(uint(logical.x), QualityMode), uint(logical.y));
-	if (any(packed >= PhysicalSize))
-		return float4(1, 0, 0, 0);
-	return ShadowMask[packed];
-}
-
-uint2 RenderPixel(uint2 logical)
-{
-	return uint2(NativeShadowRenderCoordinate(logical.x, Size.x, QualityMode),
-		NativeShadowRenderCoordinate(logical.y, Size.y, QualityMode));
-}
-
-float4 Reconstruct(uint2 pixel, float receiverDistance, float tolerance)
-{
-	const uint scale = NativeShadowQualityScale(QualityMode);
-	const int2 logical = int2(pixel / scale);
-	const float4 center = LoadLogical(logical);
-	if (all(pixel == RenderPixel(uint2(logical))) &&
-		NativeShadowHasSample(uint(logical.x), uint(logical.y), QualityMode, CheckerboardOrigin)) {
-		if (ReceiverSample(center) && abs(center.z - receiverDistance) <= tolerance)
-			return center;
-		return float4(1, 0, 0, 0);
-	}
-	const int gridRadius = clamp(int(ReconstructionGridSize), 3, 9) / 2;
-	const int radius = max(1, int(NativeShadowCeilDivide(uint(gridRadius), scale)));
-	float weighted = 0.0f, total = 0.0f, lightWeight = 0.0f;
-	[loop] for (int dy = -radius; dy <= radius; ++dy)
-	{
-		[loop] for (int dx = -radius; dx <= radius; ++dx)
-		{
-			const int2 neighbor = logical + int2(dx, dy);
-			const float4 sample = LoadLogical(neighbor);
-			if (!ReceiverSample(sample) || abs(sample.z - receiverDistance) > tolerance)
-				continue;
-			const float2 delta = float2(RenderPixel(uint2(neighbor))) - float2(pixel);
-			const float weight = rcp(1.0f + dot(delta, delta));
-			weighted += saturate(sample.x) * weight;
-			lightWeight += sample.w * weight;
-			total += weight;
-		}
-	}
-	if (total <= 0.0f)
-		return float4(1, 0, 0, 0);
-	return float4(weighted / total, lightWeight > 0.0f ? 1.0f : 0.0f, receiverDistance, lightWeight / total);
-}
-
-float SampleVisibility(int2 logical, float4 center)
-{
-	int2 clamped = clamp(logical, int2(0, 0), int2(LogicalSize) - 1);
-	if (!NativeShadowHasSample(uint(clamped.x), uint(clamped.y), QualityMode, CheckerboardOrigin)) {
-		const int2 adjacent = clamped + int2(1, 0);
-		clamped.x = adjacent.x < int(LogicalSize.x) ? adjacent.x : clamped.x - 1;
-	}
-	const float4 sample = LoadLogical(clamped);
-	if (!ValidMask(sample) || abs(sample.z - center.z) > max(ReceiverTolerance, center.z * 1e-5f))
+	int2 clamped = clamp(samplePixel, int2(0, 0), int2(Size) - 1);
+	float4 neighborMask = ShadowMask[uint2(clamped)];
+	// Neighboring pixels have different total light weights. Weight is not a surface ID.
+	if (!ValidMask(neighborMask) ||
+		abs(neighborMask.z - center.z) > max(ReceiverTolerance, center.z * 1e-5f))
 		return -1.0f;
-	return saturate(sample.x);
+	return saturate(neighborMask.x);
 }
-
 [numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID) {
 	if (any(id.xy >= Size))
 		return;
-	if (PublishReconstructedMask == 0u) {
-		const int2 logical = int2(id.xy / NativeShadowQualityScale(QualityMode));
-		if (all(id.xy == RenderPixel(uint2(logical))) &&
-			NativeShadowHasSample(uint(logical.x), uint(logical.y), QualityMode, CheckerboardOrigin) &&
-			!ValidMask(LoadLogical(logical)))
-			return;
-	}
-	const float depth = RasterDepth[id.xy];
-	if (!isfinite(depth) || depth <= 0.0f || depth >= 1.0f) {
-		if (PublishReconstructedMask != 0u)
-			ReconstructedMask[id.xy] = float4(1, 0, 0, 0);
+	const float4 center = ShadowMask[id.xy];
+	const bool traced = ValidMask(center);
+	if (!traced && !(SpatialReconstruction != 0u && center.y == -1.0f))
 		return;
-	}
+	const float depth = RasterDepth[id.xy];
+	if (!isfinite(depth))
+		return;
 	float2 clip = (float2(id.xy) + 0.5f) * (2.0f / float2(Size)) - 1.0f;
 	clip.y = -clip.y;
 	float4 cameraView = mul(InverseProjection, float4(clip, depth, 1.0f));
-	if (!all(isfinite(cameraView)) || abs(cameraView.w) <= 1e-8f) {
-		if (PublishReconstructedMask != 0u)
-			ReconstructedMask[id.xy] = float4(1, 0, 0, 0);
+	if (!all(isfinite(cameraView)) || abs(cameraView.w) <= 1e-8f)
 		return;
-	}
 	const float3 position = mul((float3x3)InverseView, cameraView.xyz / cameraView.w);
 	const float receiverDistance = length(position);
-	if (!isfinite(receiverDistance) || receiverDistance <= 0.0f) {
-		if (PublishReconstructedMask != 0u)
-			ReconstructedMask[id.xy] = float4(1, 0, 0, 0);
+	if (!isfinite(receiverDistance) || receiverDistance <= 0.0f)
 		return;
-	}
 	const float tolerance = max(ReceiverTolerance, receiverDistance * 1e-5f);
-	const float4 reference = Reconstruct(id.xy, receiverDistance, tolerance);
-	if (!ReceiverSample(reference)) {
-		if (PublishReconstructedMask != 0u)
-			ReconstructedMask[id.xy] = float4(1, 0, 0, 0);
+	if (traced && abs(receiverDistance - center.z) > tolerance)
 		return;
+
+	float4 reference = center;
+	float visibility = saturate(center.x);
+	const int gridRadius = clamp(int(ReconstructionGridSize), 3, 9) / 2;
+	if (!traced) {
+		float nearest = 1e30f;
+		const int2 pixel = int2(id.xy);
+		[loop] for (int dy = -gridRadius; dy <= gridRadius; ++dy)
+		{
+			[loop] for (int dx = -gridRadius; dx <= gridRadius; ++dx)
+			{
+				int2 neighbor = pixel + int2(dx, dy);
+				if (any(neighbor < 0) || any(neighbor >= int2(Size)))
+					continue;
+				float4 sample = ShadowMask[uint2(neighbor)];
+				float delta = abs(sample.z - receiverDistance);
+				if (!ValidMask(sample) || delta > tolerance)
+					continue;
+				float score = delta + (float(dx * dx + dy * dy) * tolerance * 0.002f);
+				if (score < nearest) {
+					nearest = score;
+					reference = sample;
+				}
+			}
+		}
+		if (!ValidMask(reference))
+			return;
+		float weighted = 0.0f, total = 0.0f;
+		[loop] for (int dy = -gridRadius; dy <= gridRadius; ++dy)
+		{
+			[loop] for (int dx = -gridRadius; dx <= gridRadius; ++dx)
+			{
+				int2 neighbor = pixel + int2(dx, dy);
+				if (any(neighbor < 0) || any(neighbor >= int2(Size)))
+					continue;
+				float4 sample = ShadowMask[uint2(neighbor)];
+				if (!ValidMask(sample) ||
+					abs(sample.z - receiverDistance) > tolerance)
+					continue;
+				float weight = rcp(1.0f + float(dx * dx + dy * dy));
+				weighted += saturate(sample.x) * weight;
+				total += weight;
+			}
+		}
+		if (total <= 0.0f)
+			return;
+		visibility = weighted / total;
 	}
-	float visibility = saturate(reference.x);
-	if (ValidMask(reference) && SpatialReconstruction != 0u && RadiusPixels > 0.5f) {
-		const uint scale = NativeShadowQualityScale(QualityMode);
-		const int radius = max(1, int(NativeShadowCeilDivide(uint(round(RadiusPixels)), scale)));
-		const int2 logical = int2(id.xy / scale);
+	if (SpatialReconstruction != 0u && RadiusPixels > 0.5f) {
+		int radius = clamp(int(round(RadiusPixels)), 1, 32);
+		const int2 pixel = int2(id.xy);
 		const int2 directions[4] = { int2(radius, 0), int2(-radius, 0), int2(0, radius), int2(0, -radius) };
-		float sum = visibility, weight = 1.0f;
+		float sum = visibility;
+		float weight = 1.0f;
 		[unroll] for (uint i = 0; i < 4; ++i)
 		{
-			const float neighborVisibility = SampleVisibility(logical + directions[i], reference);
+			const float neighborVisibility = SampleVisibility(pixel + directions[i], reference);
 			if (neighborVisibility >= 0.0f) {
 				sum += neighborVisibility;
 				weight += 1.0f;
@@ -163,10 +123,6 @@ float SampleVisibility(int2 logical, float4 center)
 		}
 		visibility = sum / weight;
 	}
-	if (PublishReconstructedMask != 0u)
-		ReconstructedMask[id.xy] = float4(visibility, reference.y, receiverDistance, reference.w);
-	if (!ValidMask(reference))
-		return;
 	float4 color = Scene[id.xy];
 	// Shadow contribution is independent of direct-light intensity. A gain above 1
 	// amplifies partial occlusion, while never producing negative radiance.

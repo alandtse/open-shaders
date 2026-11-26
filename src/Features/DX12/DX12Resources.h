@@ -2,10 +2,9 @@
 
 #include "Feature.h"
 #include "SpatialGrid.h"
-#include "DX12ModeProfiles.h"
 
 #include <atomic>
-#include <cstdint>
+#include <chrono>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -24,11 +23,9 @@ namespace DX12
 	/** @brief Immutable light record discovered alongside companion geometry. */
 	struct PreparedLight
 	{
-		uint32_t referenceID = 0, flags = 0;
+		uint32_t referenceID = 0, baseID = 0, flags = 0;
 		float3 position{}, color{};
 		float radius = 0.0f, fade = 1.0f, emitterRadius = 0.0f, falloffExponent = 1.0f;
-		uint64_t runtimeIdentity = 0;  // Nonzero only for a supplemental live emitter.
-		uint32_t unifiedCount = 1;
 	};
 
 	/** @brief Original installed NIF reference, not an embedded NIF binary. */
@@ -54,6 +51,7 @@ namespace DX12
 		std::vector<float3> positions;
 		std::vector<uint32_t> indices;
 		std::array<float, 12> transform{};
+		std::string sourceNif;  // Populated for runtime-supplemented shapes when NIF provenance is known.
 	};
 
 	struct Tile
@@ -64,19 +62,17 @@ namespace DX12
 			Preparing,
 			Ready,         // Geometry prepared and authoritative coverage verified.
 			ReadyPartial,  // Valid geometry/lights, but shadow-offload coverage not certified.
-			Empty,
-			EmptyPartial,  // Enumeration finished, but some caster bounds or geometry are unresolved.
 			RetryWaiting,
-			Incomplete
+			Incomplete,
+			Deferred  // Predictive geometry exceeded its CPU residency allowance; retry if promoted active.
 		};
 		SubcellKey key;
 		std::vector<std::shared_ptr<const Shape>> shapes;
 		std::vector<PreparedLight> lights;
 		uint64_t bytes = 0;
 		uint8_t preparationAttempts = 0;
-		int64_t retryAfterQpc = 0;
+		std::chrono::steady_clock::time_point retryAfter{};
 		State state = State::Requested;
-		bool companionValidated = false;
 		std::string failureReason;                                       // Last bounded companion failure, retained for Dev and tile hover.
 		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;  // Bounded structured companion rejection diagnoses.
 		std::vector<NifSourceDescriptor> nifSources;
@@ -95,8 +91,6 @@ namespace DX12
 		uint32_t failedShapes = 0;
 		uint32_t rejectedLights = 0;  // Invalid light records are skipped without losing valid geometry.
 		bool enumerationComplete = false;
-		bool wholeCell = false;
-		bool spatialBoundsComplete = false;
 		std::string failureReason;
 		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;
 		std::vector<NifSourceDescriptor> nifSources;
@@ -114,9 +108,9 @@ namespace DX12
 	/** @brief Immutable view of the nine resident runtime cells. */
 	struct Grid
 	{
+		uint64_t revision = 0;
 		uint64_t geometryRevision = 0;
 		uint32_t size = kSubcellSizes.front();
-		bool wholeCell = false;
 		std::array<SubcellKey, kGridCapacity> requested{};  // Active 3x3, available to future native consumers.
 		std::array<std::shared_ptr<const Tile>, kGridCapacity> resident{};
 		std::array<SubcellKey, kPredictiveCapacity> predictive{};  // Companion-only outer 5x5 ring.
@@ -177,9 +171,9 @@ struct DX12Resources final : Feature
 	~DX12Resources();
 	struct Settings
 	{
+		// The only Resources setting. Companion generation is automatic when
+		// DX12 is active; no separate toggles for workers or GPU residency.
 		uint32_t SubcellSize = DX12::kSubcellSizes.front();
-		bool PreloadLastSave = true;
-		bool ConsolidateInterior = true;
 	};
 
 	std::string GetName() override { return "DX12 Resources"; }
@@ -192,17 +186,19 @@ struct DX12Resources final : Feature
 	bool IsInFeatureList() const override { return false; }
 	bool SupportsVR() override { return false; }
 	void DrawSettings() override;
-	/** @brief Developer-only preparation and residency diagnostics. */
-	void DrawDevSettings();
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
 	void RestoreDefaultSettings() override;
 	bool WantsPreShadowMapsHook() const override;
 	void PreShadowMaps() override;
-	void Reset() override;
+	void OnSceneTransitionReset(bool opening) override;
 	void OnRuntimeDisabled() override;
 	/** @brief Returns current geometry residency without traversing engine objects. */
 	std::shared_ptr<const DX12::Grid> GetGrid() const { return grid.Snapshot(); }
+	/** @brief Claims the next geometry request, if one is needed. */
+	std::optional<DX12::SubcellKey> NextRequest() { return grid.NextRequest(); }
+	/** @brief Accepts an authoritative in-memory geometry and light publication from the companion. */
+	bool Publish(DX12::CompanionPublication publication) { return grid.Publish(std::move(publication)); }
 	/** @brief Accepts a bounded, static renderer observation for native geometry (never for raster suppression). */
 	bool PublishRuntimeShape(std::shared_ptr<const DX12::Shape> shape, float centerX, float centerY, uint32_t expectedScope = 0)
 	{
@@ -210,9 +206,9 @@ struct DX12Resources final : Feature
 		       grid.PublishRuntimeShape(std::move(shape), centerX, centerY, expectedScope);
 	}
 	bool IsActive() const;
-	bool HasMenuPreload() const { return menuPreloaded; }
+	uint64_t GetFlushGeneration() const { return flushGeneration.load(std::memory_order_acquire); }
 	/** @brief Returns the most recent prepared-light publication. */
-	std::shared_ptr<const std::vector<DX12::PreparedLight>> GetPreparedLights(const std::shared_ptr<const DX12::Grid>& current) const;
+	std::vector<DX12::PreparedLight> GetPreparedLights() const;
 	/** @brief In-memory generation timings for active 3x3, predictive sides and corners. */
 	std::shared_ptr<const DX12::PreparationStats> GetPreparationStats() const
 	{
@@ -220,42 +216,18 @@ struct DX12Resources final : Feature
 	}
 
 private:
-	void EnsureCompanion(bool menuStartup);
-	void PollStartup(uint32_t gameplayScope = 0);
-	enum class PublicationState { Valid, Invalid, Unavailable };
-	struct PublicationStatus
-	{
-		PublicationState state;
-		std::string detail;
-	};
-	std::atomic<std::shared_ptr<const PublicationStatus>> latestPublication;
-	void RecordPublication(PublicationState state, std::string detail);
-	bool startupPending = false;
-	bool menuPreloaded = false;
-	uint32_t consolidationAttemptScope = 0;
 	void ResetPreparation();
-	std::once_flag companionStart;
-	std::atomic<bool> companionStarted{ false };
 	bool preparationActive = false;
 	std::atomic<bool> runtimePublicationEnabled{ false };
 	DX12::ResourceGrid grid;
-	mutable std::mutex preparedLightMutex;
-	mutable std::array<std::shared_ptr<const DX12::Tile>, DX12::kGridCapacity> preparedResident;
-	mutable std::array<std::shared_ptr<const DX12::Tile>, DX12::kPredictiveCapacity> preparedPredictive;
-	mutable std::shared_ptr<const std::vector<DX12::PreparedLight>> preparedLightPublication;
 	std::unique_ptr<DX12::CompanionWorker> companion;
 	std::unique_ptr<DX12::CompanionResult> adopting;
 	size_t lightAdoptionOffset = 0;
 	uint32_t lastVisitedCell = 0, previousVisitedCell = 0, distinctTransitions = 0;
+	std::atomic<uint64_t> flushGeneration{ 0 };
 	std::optional<DX12::SubcellKey> inFlight;
 	std::atomic<std::shared_ptr<const DX12::PreparationStats>> generationStats{
 		std::make_shared<const DX12::PreparationStats>()
 	};
-	Settings offloadingSettings, rayTracedSettings;
-	Settings& ActiveSettings();
-	const Settings& ActiveSettings() const;
-	static Settings ReadProfile(const json& input);
-	static json SaveProfile(const Settings& settings);
-	void RefreshPreparationSettings();
-	Settings appliedSettings;
+	Settings settings;
 };

@@ -3,7 +3,6 @@
 #include "DX12NativeAcceleration.h"
 #include "DX12NativeRasterCapture.h"
 #include "VideoMemoryBudget.h"
-#include "../../../package/Shaders/Common/NativeShadowQuality.hlsli"
 
 #include <array>
 #include <memory>
@@ -15,35 +14,20 @@ namespace DX12Native
 {
 	// Shared CPU-side limit for prepared lights submitted to the native shadow RayQuery.
 	inline constexpr uint32_t kMaxShadowLights = DX12::kMaxPreparedLights;
-	inline constexpr uint32_t kDefaultShadowQualityMode = kShadowQualityQuality;
-	inline constexpr float kDefaultShadowReachMultiplier = 1.25f;
-	inline constexpr float kDefaultShadowFadeRange = 0.36f;
 
 	/** @brief Shadow-only behavior. Live matched values override companion fallbacks. */
 	struct ShadowTraceControls
 	{
 		uint32_t viewportWidth = 0, viewportHeight = 0;
-		uint32_t qualityMode = kDefaultShadowQualityMode;
+		uint32_t densityMode = 0;
 		bool nearLightExclusion = false;
 		float nearLightRadius = 0.0f;  // 0..512 game units; exclusion sphere centered at light.
-		float reachMultiplier = kDefaultShadowReachMultiplier;  // 1.0 means vanilla light radius.
-		float fadeRange = kDefaultShadowFadeRange;  // Fraction of native shadow reach.
+		float reachMultiplier = 1.0f;  // 1.0 means the vanilla-provided light radius.
+		float fadeRange = 0.50f;       // Fraction of native shadow reach.
 		float falloffCurve = 1.0f;
-		bool captureDebugLights = false;
-		bool offloading = false;
 	};
 
-	/** @brief Physical raw texture and logical sampling grid for this frame. */
-	struct ShadowSamplingLayout
-	{
-		uint32_t internalWidth = 0, internalHeight = 0;
-		uint32_t logicalWidth = 0, logicalHeight = 0;
-		uint32_t physicalWidth = 0, physicalHeight = 0;
-		uint32_t qualityMode = kDefaultShadowQualityMode, checkerboardOrigin = 0;
-		bool offloading = false;
-	};
-
-	/** @brief Packed raw visibility; the composite owns reconstruction. */
+	/** @brief Full render-size raw visibility; the composite owns reconstruction. */
 	struct ShadowMaskFrame
 	{
 		std::shared_ptr<const TopLevel> scene;
@@ -53,15 +37,10 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12CommandAllocator> allocator;
 		winrt::com_ptr<ID3D12GraphicsCommandList> commands;
 		winrt::com_ptr<ID3D12Fence> readyFence;
+		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 		uint64_t readyValue = 0, allocationBytes = 0;
-		uint32_t frame = 0;
-		ShadowSamplingLayout sampling;
-		std::vector<DX12::PreparedLight> debugLights;
-		std::vector<std::array<float, 4>> lightRecords;
-		bool lightRecordsUploaded = false;
-		DXGI_FORMAT maskFormat = DXGI_FORMAT_UNKNOWN;
-		// Offload RG32F: visibility and receiver distance (zero when invalid).
-		// Full RT RGBA32F: x weighted visibility, y 1 lit receiver / 0 neutral or invalid,
+		uint32_t frame = 0, width = 0, height = 0;
+		// RGBA32F: x weighted visibility, y 1 sampled / -1 omitted / 0 invalid,
 		// z receiver distance, w accumulated light weight.
 	};
 
@@ -77,24 +56,18 @@ namespace DX12Native
 		{
 			return current && current->frame == frame ? current : nullptr;
 		}
-		void Reset()
-		{
-			current.reset();
-			initializationFailed = {};
-			failureLogged = false;
-		}
+		bool RetainThrough(const std::shared_ptr<const ShadowMaskFrame>& frame, ID3D12Fence* fence, uint64_t value);
+		void Reset() { current.reset(); }
 
 	private:
-		void Initialize(const GraphicsBackend& backend, uint32_t variant);
+		void Initialize(const GraphicsBackend& backend);
 		GraphicsBackend backend;
 		winrt::com_ptr<ID3D12Fence> completion;
 		winrt::com_ptr<ID3D12RootSignature> root;
-		std::array<winrt::com_ptr<ID3D12PipelineState>, kShadowShaderCount> pipelines;
+		winrt::com_ptr<ID3D12PipelineState> pipeline;
 		std::array<std::shared_ptr<ShadowMaskFrame>, 4> slots;
 		std::shared_ptr<ShadowMaskFrame> current;
 		uint64_t nextFence = 0;
 		VideoMemoryBudget videoBudget;
-		std::array<bool, kShadowShaderCount> initializationFailed{};
-		bool failureLogged = false;
 	};
 }

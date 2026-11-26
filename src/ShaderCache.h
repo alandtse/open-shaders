@@ -14,7 +14,6 @@
 #include <winrt/base.h>
 
 #include "Utils/CacheInvalidation.h"
-#include "Utils/RuntimeTaskGate.h"
 #include "Utils/WinApi.h"
 
 struct ID3D11ComputeShader;
@@ -620,8 +619,6 @@ namespace SIE
 		void SetDump(bool value);
 		/** @brief Signals all compilation threads to stop and clears pending tasks. */
 		void StopCompilation();
-		/** @brief Lazily acquire a lifetime-safe submitter for short runtime CPU tasks. */
-		std::shared_ptr<Util::RuntimeTaskGate> GetRuntimeTaskGate();
 		/** @brief Drops queued/in-flight compilation work without stopping the management
 		 * thread (unlike StopCompilation(), which is terminal). Returns immediately. */
 		void CancelCompilation();
@@ -1426,12 +1423,6 @@ namespace SIE
 		std::mutex paraboloidClipMutex;
 		ankerl::unordered_dense::map<uint32_t, winrt::com_ptr<ID3D11GeometryShader>> paraboloidClipShaders;
 		CompilationSet compilationSet;
-		// Guarded by compilationSet.compilationMutex; shader cache clears do not cancel runtime jobs.
-		bool runtimeTaskAdmissionClosed = false;
-		bool runtimeTaskInFlight = false;
-		std::shared_ptr<Util::RuntimeTaskGate> runtimeTaskGate;
-		bool TrySubmitRuntimeTask(std::function<void()> a_work);
-		void CloseRuntimeTaskAdmission();
 		ankerl::unordered_dense::map<std::string, ShaderCacheResult> shaderMap{};
 		std::mutex mapMutex;                                                                      // guard for shaderMap
 		std::condition_variable mapCV;                                                            // signalled when a Pending entry transitions to Completed/Failed

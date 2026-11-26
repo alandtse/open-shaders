@@ -6,7 +6,6 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "PCH.h"
-#include "Utils/FileSystem.h"
 
 #include <algorithm>
 #include <array>
@@ -19,77 +18,42 @@
 
 namespace DX12Native
 {
-	namespace
+	bool NativeComposite::InitializeShadow(ID3D12Device* device)
 	{
-		constexpr std::streamoff kMaxShadowBytecodeBytes = 16 * VideoMemoryBudget::kMiB;
-		constexpr uint64_t kSlotOverheadBytes = 2 * VideoMemoryBudget::kMiB;
-		constexpr uint32_t kShadowConstantDwords = 48;
-		constexpr uint32_t kOffloadConstantDwords = 38;
-		constexpr uint32_t kShadowThreadGroupSize = 8;
-		constexpr float kReceiverTolerance = 16.0f;
-		constexpr float kReconstructionRadiusPixels = 2.0f;
-	}
-
-	bool NativeComposite::InitializeShadow(ID3D12Device* device, uint32_t variant)
-	{
-		if (shadowDevice.get() != device) {
-			shadowPipelines = {};
-			shadowRoot = nullptr;
-			offloadRoot = nullptr;
-			failedShadowVariants = {};
-			shadowDevice.copy_from(device);
-		}
-		const bool offloading = variant == kOffloadingShaderIndex;
-		auto& variantRoot = offloading ? offloadRoot : shadowRoot;
-		auto& shadowPipeline = shadowPipelines[variant];
-		if (shadowPipeline)
+		if (shadowPipeline && shadowDevice == device)
 			return true;
-		if (failedShadowVariants[variant])
-			return false;
 		try {
-			constexpr std::array names{
-				"ShadowLayerQuality.dxil", "ShadowLayerLow.dxil", "CompositeOffload.dxil"
-			};
-			static_assert(names.size() == kShadowShaderCount);
-			std::ifstream file(Util::PathHelpers::GetShadersPath() / "NativeComposite" / names[variant], std::ios::binary | std::ios::ate);
-			if (!file || file.tellg() <= 0 || file.tellg() > kMaxShadowBytecodeBytes)
-				throw std::runtime_error("ShadowLayer.dxil missing, empty or exceeds the bytecode limit");
+			std::ifstream file("Data/Shaders/NativeComposite/ShadowLayer.dxil", std::ios::binary | std::ios::ate);
+			if (!file || file.tellg() <= 0 || file.tellg() > 16 * 1024 * 1024)
+				return false;
 			std::vector<char> shader(static_cast<size_t>(file.tellg()));
 			file.seekg(0);
 			if (!file.read(shader.data(), std::streamsize(shader.size())))
-				throw std::runtime_error("ShadowLayer.dxil read failed");
+				return false;
 			CD3DX12_DESCRIPTOR_RANGE ranges[2];
 			ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);
-			ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, offloading ? 1 : 2, 0);
+			ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
 			CD3DX12_ROOT_PARAMETER parameters[3];
 			parameters[0].InitAsDescriptorTable(1, &ranges[0]);
 			parameters[1].InitAsDescriptorTable(1, &ranges[1]);
-			parameters[2].InitAsConstants(offloading ? kOffloadConstantDwords : kShadowConstantDwords, 0);
+			parameters[2].InitAsConstants(42, 0);
 			const CD3DX12_ROOT_SIGNATURE_DESC desc(3, parameters);
-			if (!variantRoot) {
-				winrt::com_ptr<ID3DBlob> serialized, errors;
-				DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
-				DX::ThrowIfFailed(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(variantRoot.put())));
-				variantRoot->SetName(offloading ? L"NativeComposite::OffloadRoot" : L"NativeComposite::ShadowRoot");
-			}
+			winrt::com_ptr<ID3DBlob> serialized, errors;
+			DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
+			winrt::com_ptr<ID3D12RootSignature> newRoot;
+			DX::ThrowIfFailed(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(newRoot.put())));
 			D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
-			pso.pRootSignature = variantRoot.get();
+			pso.pRootSignature = newRoot.get();
 			pso.CS = { shader.data(), shader.size() };
 			winrt::com_ptr<ID3D12PipelineState> newPipeline;
 			DX::ThrowIfFailed(device->CreateComputePipelineState(&pso, IID_PPV_ARGS(newPipeline.put())));
-			newPipeline->SetName(L"NativeComposite::ShadowVariant");
+			shadowRoot = std::move(newRoot);
 			shadowPipeline = std::move(newPipeline);
-			failedShadowVariants[variant] = false;
+			shadowDevice = device;
 			return true;
-		} catch (const winrt::hresult_error& error) {
-			logger::error("[NativeComposite] Shadow initialization failed (HRESULT 0x{:08X}): {}", static_cast<uint32_t>(error.code()), winrt::to_string(error.message()));
-		} catch (const std::exception& error) {
-			logger::error("[NativeComposite] Shadow initialization failed: {}", error.what());
 		} catch (...) {
-			logger::error("[NativeComposite] Shadow initialization failed with an unknown exception");
+			return false;
 		}
-		failedShadowVariants[variant] = true;
-		return false;
 	}
 
 	std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(
@@ -97,7 +61,7 @@ namespace DX12Native
 		ID3D12Device* device12, ID3D12CommandQueue* queue, ID3D11Texture2D* source,
 		uint32_t frame, uint32_t width, uint32_t height, Transfer transfer,
 		const std::shared_ptr<const ShadowMaskFrame>& shadow,
-		bool returnColorToDX11, bool publishReconstructedMask)
+		bool returnColorToDX11)
 	{
 		if (!device11 || !context11 || !device12 || !queue || !source || !width || !height)
 			return {};
@@ -115,51 +79,28 @@ namespace DX12Native
 		if (desc.ArraySize != 1 || desc.MipLevels != 1 || desc.SampleDesc.Count != 1 ||
 			desc.Width < width || desc.Height < height || desc.Format == DXGI_FORMAT_UNKNOWN)
 			return {};
-		if (formatDevice.get() != device12 || cachedFormatSupport.Format != desc.Format) {
-			D3D12_FEATURE_DATA_FORMAT_SUPPORT support{ desc.Format };
-			if (FAILED(device12->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support))))
-				return {};
-			formatDevice.copy_from(device12);
-			cachedFormatSupport = support;
-		}
-		const auto& support = cachedFormatSupport;
-		if (!(support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE))
+		D3D12_FEATURE_DATA_FORMAT_SUPPORT support{ desc.Format };
+		if (FAILED(device12->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support))) ||
+			!(support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE))
 			return {};
 		const bool supportsShadow = (support.Support1 & D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW) &&
 		                            (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD) &&
 		                            (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
 		const auto raster = shadow ? shadow->raster : nullptr;
-		const bool offloading = shadow && shadow->sampling.offloading;
-		const auto variant = shadow ? NativeShadowShaderIndex(offloading, shadow->sampling.qualityMode) : 0u;
-		publishReconstructedMask = publishReconstructedMask && !offloading;
 		// The native scene's frame counter is used when fetching the mask; the
 		// compositor frame number is the upscaler's existing frame counter.
 		const bool applyShadow = supportsShadow && transfer != Transfer::Unknown &&
 		                         shadow && shadow->mask && shadow->readyFence && shadow->readyValue &&
 		                         shadow->readyValue != UINT64_MAX &&
-		                         shadow->sampling.internalWidth == width && shadow->sampling.internalHeight == height &&
-		                         shadow->sampling.physicalWidth && shadow->sampling.physicalHeight &&
+		                         shadow->width >= width && shadow->height >= height &&
 		                         raster && raster->depth && raster->depth->resource &&
 		                         raster->cameraValid && raster->readyFence && raster->readyValue &&
 		                         raster->readyValue != UINT64_MAX &&
 		                         raster->width >= width && raster->height >= height &&
-		                         InitializeShadow(device12, variant);
-		if (!applyShadow) {
+		                         InitializeShadow(device12);
+		if (!applyShadow)
 			returnColorToDX11 = false;
-			publishReconstructedMask = false;
-		}
 
-		// Completed producer work no longer needs its input publications.
-		for (auto& candidate : slots) {
-			if (!candidate || candidate->untracked || !candidate->frame || !candidate->frame->producerValue || !candidate->fence.fence12)
-				continue;
-			const auto completed = candidate->fence.fence12->GetCompletedValue();
-			if (completed != UINT64_MAX && completed >= candidate->frame->producerValue) {
-				candidate->shadowInput.reset();
-				candidate->rasterInput.reset();
-				candidate->source = nullptr;
-			}
-		}
 		Slot* slot = nullptr;
 		for (auto& candidate : slots) {
 			if (!candidate)
@@ -187,14 +128,11 @@ namespace DX12Native
 		bool producerSignalled = false;
 		bool submitted = false;
 		try {
-			const bool recreate = !slot->frame || slot->backend.d3d12Device.get() != device12 ||
-			                      slot->backend.d3d11Device.get() != device11 ||
-			                      slot->backend.d3d11Context.get() != context11 ||
-			                      slot->backend.commandQueue.get() != queue || slot->sourceDesc.Width != desc.Width ||
+			const bool recreate = !slot->frame || slot->device != device12 ||
+			                      slot->device11 != device11 || slot->sourceDesc.Width != desc.Width ||
 			                      slot->sourceDesc.Height != desc.Height || slot->sourceDesc.Format != desc.Format ||
 			                      slot->supportsShadow != supportsShadow ||
-			                      (returnColorToDX11 && !slot->hasReturn) ||
-			                      (publishReconstructedMask && (!slot->reconstructedMask || slot->maskWidth != width || slot->maskHeight != height));
+			                      slot->hasReturn != returnColorToDX11;
 			if (recreate) {
 				// Reuse open-RT's two-image, four-slot DXGI budget and lifetime policy.
 				const auto allocationDesc = CD3DX12_RESOURCE_DESC::Tex2D(desc.Format,
@@ -202,15 +140,9 @@ namespace DX12Native
 					supportsShadow ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE);
 				const auto allocation = device12->GetResourceAllocationInfo(0, 1, &allocationDesc).SizeInBytes;
 				const uint64_t imageCount = returnColorToDX11 ? 3ull : 2ull;
-				if (allocation == UINT64_MAX || allocation > (UINT64_MAX - kSlotOverheadBytes) / imageCount)
+				if (allocation == UINT64_MAX || allocation > (UINT64_MAX - 2ull * 1024 * 1024) / imageCount)
 					throw std::runtime_error("Composite allocation size unsupported");
-				const auto maskDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT,
-					width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-				const uint64_t maskAllocation = publishReconstructedMask ? device12->GetResourceAllocationInfo(0, 1, &maskDesc).SizeInBytes : 0;
-				const uint64_t colorAllocation = allocation * imageCount + kSlotOverheadBytes;
-				if (maskAllocation == UINT64_MAX || maskAllocation > UINT64_MAX - colorAllocation)
-					throw std::runtime_error("Composite shadow reconstruction allocation unsupported");
-				const uint64_t required = colorAllocation + maskAllocation;
+				const uint64_t required = allocation * imageCount + 2ull * 1024 * 1024;
 				uint64_t retained = 0;
 				for (const auto& candidate : slots)
 					if (candidate && candidate.get() != slot) {
@@ -228,10 +160,8 @@ namespace DX12Native
 				auto replacement = std::make_unique<Slot>();
 				replacement->frameBytes = required;
 				replacement->frame = std::make_shared<Frame>();
-				replacement->backend.d3d12Device.copy_from(device12);
-				replacement->backend.d3d11Device.copy_from(device11);
-				replacement->backend.d3d11Context.copy_from(context11);
-				replacement->backend.commandQueue.copy_from(queue);
+				replacement->device = device12;
+				replacement->device11 = device11;
 				replacement->sourceDesc = desc;
 				replacement->supportsShadow = supportsShadow;
 				replacement->hasReturn = returnColorToDX11;
@@ -256,18 +186,10 @@ namespace DX12Native
 					&texture, D3D12_RESOURCE_STATE_COMMON, nullptr,
 					IID_PPV_ARGS(replacement->frame->color.put())));
 				replacement->frame->color->SetName(L"NativeComposite::FinalSceneDX12");
-				if (publishReconstructedMask) {
-					DX::ThrowIfFailed(device12->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
-						&maskDesc, D3D12_RESOURCE_STATE_COMMON, nullptr,
-						IID_PPV_ARGS(replacement->reconstructedMask.put())));
-					replacement->reconstructedMask->SetName(L"NativeComposite::ReconstructedShadowMask");
-					replacement->maskWidth = width;
-					replacement->maskHeight = height;
-				}
 				if (supportsShadow) {
 					D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
 					heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-					heapDesc.NumDescriptors = 4;
+					heapDesc.NumDescriptors = 3;
 					heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 					DX::ThrowIfFailed(device12->CreateDescriptorHeap(&heapDesc,
 						IID_PPV_ARGS(replacement->shadowDescriptors.put())));
@@ -283,14 +205,11 @@ namespace DX12Native
 			// without registering a fence that could be abandoned on failure.
 			slot->shadowInput = applyShadow ? shadow : nullptr;
 			slot->rasterInput = applyShadow ? raster : nullptr;
-			slot->source.copy_from(source);
 			slot->frame->valid = false;
-			slot->frame->reconstructedShadowMask = nullptr;
 			slot->frame->producerFence = nullptr;
 			slot->frame->producerValue = 0;
 			producerSignalled = true;
-			const D3D11_BOX inputRegion{ 0, 0, 0, width, height, 1 };
-			context11->CopySubresourceRegion(slot->shared->resource11, 0, 0, 0, 0, source, 0, &inputRegion);
+			context11->CopyResource(slot->shared->resource11, source);
 			const uint64_t inputValue = slot->fence.Next();
 			DX::ThrowIfFailed(context11->Signal(slot->fence.fence11.get(), inputValue));
 			DX::ThrowIfFailed(queue->Wait(slot->fence.fence12.get(), inputValue));
@@ -312,15 +231,15 @@ namespace DX12Native
 			slot->commands->ResourceBarrier(static_cast<UINT>(endCopy.size()), endCopy.data());
 
 			if (applyShadow) {
-				slot->shadowRoot = offloading ? offloadRoot : shadowRoot;
-				slot->shadowPipeline = shadowPipelines[variant];
+				slot->shadowRoot = shadowRoot;
+				slot->shadowPipeline = shadowPipeline;
 				const auto step = device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 				auto cpu = slot->shadowDescriptors->GetCPUDescriptorHandleForHeapStart();
 				D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
 				srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 				srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 				srv.Texture2D.MipLevels = 1;
-				srv.Format = shadow->maskFormat;
+				srv.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
 				device12->CreateShaderResourceView(shadow->mask.get(), &srv, cpu);
 				cpu.ptr += step;
 				srv.Format = DXGI_FORMAT_R32_FLOAT;
@@ -330,21 +249,12 @@ namespace DX12Native
 				uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
 				uav.Format = desc.Format;
 				device12->CreateUnorderedAccessView(slot->frame->color.get(), nullptr, &uav, cpu);
-				if (!offloading) {
-					cpu.ptr += step;
-					uav.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-					device12->CreateUnorderedAccessView(publishReconstructedMask ? slot->reconstructedMask.get() : nullptr, nullptr, &uav, cpu);
-				}
 				const std::array start{
 					CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
 					CD3DX12_RESOURCE_BARRIER::Transition(shadow->mask.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
 					CD3DX12_RESOURCE_BARRIER::Transition(raster->depth->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
 				};
 				slot->commands->ResourceBarrier(static_cast<UINT>(start.size()), start.data());
-				if (publishReconstructedMask) {
-					const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(slot->reconstructedMask.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-					slot->commands->ResourceBarrier(1, &barrier);
-				}
 				ID3D12DescriptorHeap* heaps[]{ slot->shadowDescriptors.get() };
 				slot->commands->SetDescriptorHeaps(1, heaps);
 				slot->commands->SetPipelineState(slot->shadowPipeline.get());
@@ -357,54 +267,30 @@ namespace DX12Native
 				{
 					uint32_t width, height;
 					float receiverTolerance, radiusPixels;
-					uint32_t legacyTransfer, publishReconstructedMask;
+					uint32_t legacyTransfer, alignmentPadding;
 					float strength, blend;
 					DirectX::SimpleMath::Matrix inverseProjection, inverseView;
 					uint32_t spatialReconstruction, reconstructionGridSize;
-					uint32_t logicalWidth, logicalHeight, physicalWidth, physicalHeight;
-					uint32_t qualityMode, checkerboardOrigin;
 				};
-				static_assert(sizeof(Constants) == kShadowConstantDwords * sizeof(uint32_t));
+				static_assert(sizeof(Constants) == 42 * sizeof(uint32_t));
 				const auto& camera = raster->camera;
-				if (offloading) {
-					struct OffloadConstants {
-						uint32_t width, height;
-						float receiverTolerance;
-						uint32_t legacyTransfer;
-						DirectX::SimpleMath::Matrix inverseProjection, inverseView;
-						uint32_t logicalWidth, logicalHeight;
-					};
-					static_assert(sizeof(OffloadConstants) == kOffloadConstantDwords * sizeof(uint32_t));
-					const OffloadConstants constants{ width, height, kReceiverTolerance,
-						transfer == Transfer::LegacyScene ? 1u : 0u, camera.CameraProjInverse, camera.CameraViewInverse,
-						shadow->sampling.logicalWidth, shadow->sampling.logicalHeight };
-					slot->commands->SetComputeRoot32BitConstants(2, kOffloadConstantDwords, &constants, 0);
-				} else {
-				const Constants constants{ width, height, kReceiverTolerance, kReconstructionRadiusPixels,
+				// Exactly the open-RT default independent shadow settings.
+				const Constants constants{ width, height, 16.0f, 2.0f,
 					transfer == Transfer::LegacyScene ? 1u : 0u,
-					publishReconstructedMask ? 1u : 0u,
-					offloading ? 1.0f : globals::features::dx12Control.GetRayTracedStrength(),
-					offloading ? kOffloadingBlend : globals::features::dx12Control.GetRayTracedBlend(),
+					0u,  // padding: matrices retain 16-byte alignment.
+					globals::features::dx12Control.GetShadowStrength(),
+					globals::features::dx12Control.GetShadowBlend(),
 					camera.CameraProjInverse, camera.CameraViewInverse,
-					!offloading && globals::features::dx12Control.GetRayTracedSpatialReconstruction() ? 1u : 0u,
-					offloading ? 3u : globals::features::dx12Control.GetRayTracedGridSize(),
-					shadow->sampling.logicalWidth, shadow->sampling.logicalHeight,
-					shadow->sampling.physicalWidth, shadow->sampling.physicalHeight,
-					shadow->sampling.qualityMode, shadow->sampling.checkerboardOrigin };
-				slot->commands->SetComputeRoot32BitConstants(2, kShadowConstantDwords, &constants, 0);
-				}
-				slot->commands->Dispatch((width + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize,
-					(height + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize, 1);
+					globals::features::dx12Control.UseSpatialReconstruction() ? 1u : 0u,
+					globals::features::dx12Control.GetReconstructionGridSize() };
+				slot->commands->SetComputeRoot32BitConstants(2, 42, &constants, 0);
+				slot->commands->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
 				const std::array end{
 					CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
 					CD3DX12_RESOURCE_BARRIER::Transition(shadow->mask.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
 					CD3DX12_RESOURCE_BARRIER::Transition(raster->depth->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON)
 				};
 				slot->commands->ResourceBarrier(static_cast<UINT>(end.size()), end.data());
-				if (publishReconstructedMask) {
-					const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(slot->reconstructedMask.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
-					slot->commands->ResourceBarrier(1, &barrier);
-				}
 			}
 
 			if (applyShadow && returnColorToDX11 && slot->returned) {
@@ -451,46 +337,37 @@ namespace DX12Native
 			output.width = width;
 			output.height = height;
 			output.format = desc.Format;
-			if (publishReconstructedMask)
-				output.reconstructedShadowMask = slot->reconstructedMask;
 			output.valid = true;
-			captureFailureLogged = false;
 			return slot->frame;
 		} catch (...) {
+			if (!std::exchange(captureFailureLogged, true)) {
+				try {
+					throw;
+				} catch (const std::exception& error) {
+					logger::warn("[NativeComposite] Capture failed, the frame keeps its plain color: {}", error.what());
+				} catch (...) {
+					logger::warn("[NativeComposite] Capture failed, the frame keeps its plain color");
+				}
+			}
 			if (submitted && slot->fence.fence12) {
 				// The command list was queued. A tail Signal on that queue tracks
 				// its completion even when the original Signal failed.
 				const uint64_t tail = slot->fence.Next();
-				if (const HRESULT hr = queue->Signal(slot->fence.fence12.get(), tail); SUCCEEDED(hr)) {
+				if (SUCCEEDED(queue->Signal(slot->fence.fence12.get(), tail))) {
 					slot->frame->producerFence = slot->fence.fence12;
 					slot->frame->producerValue = tail;
-				} else {
+				} else
 					slot->untracked = true;
-					logger::warn("[NativeComposite] DX12 recovery signal failed; retaining slot: {}", DX::com_exception(hr).what());
-				}
 			} else if (producerSignalled && slot->fence.fence11) {
 				// No DX12 work was submitted, but the DX11 copy may still be
 				// pending. Fence it before allowing this slot to be recycled.
 				const uint64_t tail = slot->fence.Next();
-				if (const HRESULT hr = context11->Signal(slot->fence.fence11.get(), tail); SUCCEEDED(hr)) {
+				if (SUCCEEDED(context11->Signal(slot->fence.fence11.get(), tail))) {
 					context11->Flush();
 					slot->frame->producerFence = slot->fence.fence12;
 					slot->frame->producerValue = tail;
-				} else {
+				} else
 					slot->untracked = true;
-					logger::warn("[NativeComposite] DX11 recovery signal failed; retaining slot: {}", DX::com_exception(hr).what());
-				}
-			}
-			if (!std::exchange(captureFailureLogged, true)) {
-				try {
-					throw;
-				} catch (const winrt::hresult_error& error) {
-					logger::warn("[NativeComposite] Capture failed (HRESULT 0x{:08X}): {}", static_cast<uint32_t>(error.code()), winrt::to_string(error.message()));
-				} catch (const std::exception& error) {
-					logger::warn("[NativeComposite] Capture failed, the frame keeps its plain color: {}", error.what());
-				} catch (...) {
-					logger::warn("[NativeComposite] Capture failed with an unknown exception");
-				}
 			}
 			return {};
 		}
@@ -513,21 +390,22 @@ namespace DX12Native
 
 	NativeComposite::~NativeComposite()
 	{
+		const auto ready = [](const Slot& slot) {
+			if (slot.untracked || (slot.frame && slot.frame.use_count() > 1))
+				return false;
+			if (slot.frame && !GpuFenceRetired(slot.fence.fence12.get(), slot.frame->producerValue))
+				return false;
+			return std::ranges::all_of(slot.consumers, [](const auto& consumer) {
+				return GpuFenceRetired(consumer.first.get(), consumer.second);
+			});
+		};
 		for (auto& slot : slots) {
-			if (!slot)
+			if (!slot || ready(*slot))
 				continue;
-			std::vector<FenceDependency> dependencies;
-			if (slot->untracked)
-				dependencies.push_back(FencePoint(slot->fence.fence12.get(), UINT64_MAX));
-			else if (slot->frame)
-				dependencies.push_back(FencePoint(slot->fence.fence12.get(), slot->frame->producerValue));
-			for (const auto& consumer : slot->consumers)
-				dependencies.push_back({ consumer.first, consumer.second });
-			auto device = slot->backend.d3d12Device;
-			// Borrowed Frame objects independently own their published color and
-			// fence. With no slot reuse after destruction, only submitted GPU
-			// dependencies require retaining the other slot resources.
-			RetireAfterFences(std::move(slot), std::move(device), std::move(dependencies));
+			winrt::com_ptr<ID3D12Device> device;
+			if (slot->device)
+				device.copy_from(slot->device);
+			RetireWhenGpuDone(std::move(slot), std::move(device), ready);
 		}
 	}
 }

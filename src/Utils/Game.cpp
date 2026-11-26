@@ -330,11 +330,6 @@ namespace Util
 
 	bool GetReferenceFocusCoord(RE::TESObjectREFR* a_ref, float2& a_focusCoord)
 	{
-		return GetWorldFocusCoord(GetReferenceFocusPosition(a_ref), a_focusCoord);
-	}
-
-	bool GetWorldFocusCoord(const RE::NiPoint3& position, float2& a_focusCoord)
-	{
 		auto* camera = RE::Main::WorldRootCamera();
 		if (!camera || globals::game::isVR)
 			return false;
@@ -342,7 +337,7 @@ namespace Util
 		float screenX = 0.0f;
 		float screenY = 0.0f;
 		float screenZ = 0.0f;
-		if (!camera->WorldPtToScreenPt3(position, screenX, screenY, screenZ, kScreenProjectionEpsilon) ||
+		if (!camera->WorldPtToScreenPt3(GetReferenceFocusPosition(a_ref), screenX, screenY, screenZ, kScreenProjectionEpsilon) ||
 			!std::isfinite(screenX) || !std::isfinite(screenY) || screenZ <= 0.0f ||
 			screenX < 0.0f || screenX > 1.0f || screenY < 0.0f || screenY > 1.0f) {
 			return false;
@@ -594,22 +589,6 @@ namespace Util
 
 		const auto property = skyrim_cast<RE::BSSkyShaderProperty*>(a_sun->sunBase->GetGeometryRuntimeData().shaderProperty.get());
 		return property ? std::clamp(property->kBlendColor.alpha, 0.0f, 1.0f) : 0.0f;
-	}
-
-	const RE::TESObjectCELL* GetPlayerCell()
-	{
-		const auto* player = globals::game::player;
-		return player ? player->GetParentCell() : nullptr;
-	}
-
-	std::optional<PlayerSpatialLocation> GetPlayerSpatialLocation()
-	{
-		const auto* cell = GetPlayerCell();
-		if (!cell)
-			return std::nullopt;
-		const auto* player = globals::game::player;
-		const auto* worldspace = cell->IsExteriorCell() ? player->GetWorldspace() : nullptr;
-		return PlayerSpatialLocation{ cell, worldspace, player->GetPosition() };
 	}
 
 	bool IsInterior()

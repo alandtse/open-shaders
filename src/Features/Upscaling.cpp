@@ -148,10 +148,17 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 	auto refreshRate = Upscaling::GetRefreshRate(pSwapChainDesc->OutputWindow);
 	upscaling.refreshRate = refreshRate;
 
-	const bool nativeDX12 = globals::features::dx12Control.IsActive();
-	const bool frameGenerationRequested = upscaling.settings.frameGenerationMode &&
-	                                      (refreshRate >= 120 || upscaling.settings.frameGenerationForceEnable);
-	shouldProxy = shouldProxy && (nativeDX12 || frameGenerationRequested);
+	if (shouldProxy) {
+		if (upscaling.settings.frameGenerationMode)
+			if (refreshRate >= 120)
+				shouldProxy = true;
+			else if (upscaling.settings.frameGenerationForceEnable)
+				shouldProxy = true;
+			else
+				shouldProxy = false;
+		else
+			shouldProxy = false;
+	}
 
 	// The proxy path creates extra D3D11/D3D12 devices and swap chains beyond what the
 	// game itself creates -- redundant, and likely riskier, alongside Smooth Motion.
@@ -166,7 +173,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;
 
 	if (shouldProxy) {
-		logger::info("[Upscaling] D3D12 proxy requested (native DX12={}, frame generation={})", nativeDX12, frameGenerationRequested);
+		logger::info("[Frame Generation] Frame Generation enabled, using D3D12 proxy");
 
 		// DLSS-G availability is only trustworthy once a real D3D12 device is bound to
 		// the Streamline instance, so create and bind it before probing.
@@ -249,7 +256,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 
 			return S_OK;
 		} else {
-			logger::warn("[Upscaling] No compatible frame generation module available, skipping D3D12 proxy");
+			logger::warn("[Frame Generation] No frame generation module available, skipping proxy");
 			upscaling.fidelityFXMissing = true;
 		}
 	}
@@ -1900,7 +1907,6 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 			if (previousUpscalingWasActive) {
 				if (previousUpscaleMode == UpscaleMethod::kDLSS) {
 					streamline.DestroyDLSSResources();
-					if (globals::features::dx12Control.IsActive())
 					nativeDLSS.Reset();
 				} else if (previousUpscaleMode == UpscaleMethod::kFSR)
 					fidelityFX.DestroyFSRResources();
@@ -1936,9 +1942,7 @@ bool Upscaling::NeedsTypedDepth(UpscaleMethod a_method) const
 {
 	// Runtime FSR, DX12 DLSS and VR require typed R32_FLOAT depth instead of the game's R24G8 resource.
 	// VR DLSS uses it for eye 1's depth guide: D3D11 cannot copy a region out of a depth-stencil.
-	return (a_method == UpscaleMethod::kFSR && (globals::game::isVR || typedDepthTexture)) ||
-	       (a_method == UpscaleMethod::kDLSS && (globals::game::isVR ||
-	           (globals::features::dx12Control.IsActive() && typedDepthTexture)));
+	return (a_method == UpscaleMethod::kFSR || a_method == UpscaleMethod::kDLSS) && (globals::game::isVR || typedDepthTexture);
 }
 
 ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
@@ -2788,8 +2792,7 @@ double Upscaling::GetRefreshRate(HWND a_window)
 
 bool Upscaling::IsFrameGenerationDx12PathActive() const
 {
-	return d3d12SwapChainActive && !globals::game::isVR &&
-	       (!globals::features::dx12Control.IsActive() || !lowRefreshRate || bootSnapshot.Boot(&Settings::frameGenerationForceEnable));
+	return d3d12SwapChainActive && !globals::game::isVR;
 }
 
 bool Upscaling::FrameGenerationActive()
@@ -3670,10 +3673,9 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 
 	// open-RT's late-frame DX11 color capture: Native Composite is the
 	// final color authority, while FSR's other input preparation stays as-is.
-	const bool nativeActive = globals::features::dx12Control.IsActive();
-	if (nativeActive)
-		upscaling.nativeCompositeFrame.reset();
-	if (upscaling.loaded && !globals::game::isVR && nativeActive &&
+	upscaling.nativeCompositeFrame.reset();
+	if (upscaling.loaded && !globals::game::isVR &&
+		globals::features::dx12Control.IsActive() &&
 		globals::game::graphicsState &&
 		upscaling.dx12SwapChain.EnsureSharedDevice()) {
 		auto* renderer = globals::game::renderer;

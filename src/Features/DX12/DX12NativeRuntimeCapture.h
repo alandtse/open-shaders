@@ -39,7 +39,7 @@ namespace DX12Native
 		RuntimeGeometryCapture(const RuntimeGeometryCapture&) = delete;
 		RuntimeGeometryCapture& operator=(const RuntimeGeometryCapture&) = delete;
 
-		/** @brief No D3D calls, GPU readbacks or waits. */
+		/** @brief No D3D calls, GPU readbacks or waits. At most 2 MiB copied per frame. */
 		void Observe(const RuntimeGeometryCandidate& candidate, uint32_t frame,
 			const std::shared_ptr<const DX12::Grid>& grid);
 		void Reset();
@@ -49,6 +49,7 @@ namespace DX12Native
 		{
 			uint64_t identity = 0, runtimeObjectKey = 0, generation = 0;
 			DX12::SubcellKey sourceCenter{};
+			std::string referenceKey;  // Match a runtime addition with unresolved NIF provenance.
 			std::array<float, 12> transform{};
 			uint32_t stride = 0, vertexCount = 0;
 			float centerX = 0, centerY = 0;
@@ -63,7 +64,7 @@ namespace DX12Native
 		std::unordered_set<uint64_t> captured;
 		std::unordered_map<uint64_t, std::pair<uint32_t, uint32_t>> stableObservations;
 		DX12::SubcellKey activeCenter{};
-		uint32_t activeSize = 0;
+		uint32_t activeSize = 0, lastFrame = UINT32_MAX, frameBytes = 0;
 		uint64_t generation = 0;
 		std::jthread worker;
 	};

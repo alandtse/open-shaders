@@ -1,1 +1,114 @@
-#include "ShadowTrace.hlsli"
+RaytracingAccelerationStructure Scene : register(t0);
+Texture2D<float> RasterDepth : register(t1);
+StructuredBuffer<float4> Lights : register(t2);
+RWTexture2D<float4> RawMask : register(u0);
+
+cbuffer ShadowInputs : register(b0)
+{
+	row_major float4x4 InverseProjection;
+	row_major float4x4 InverseView;
+	float4 PositionAdjust;
+	uint2 Size;
+	uint FrameIndex;
+	uint DensityMode;
+	uint LightCount;
+	float MinDistance;
+	float MaxDistance;
+	uint Unused;
+	float ShadowReachMultiplier;
+	float ShadowFadeRange;
+	float ShadowFalloffCurve;
+	float NearLightRadius;
+	uint NearLightExclusion;
+	uint Padding0;
+	uint Padding1;
+	uint Padding2;
+};
+#include "NativeTraceDensity.hlsli"
+
+[numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID) {
+	uint2 p = id.xy;
+	if (any(p >= Size))
+		return;
+	if (!NativeTraceDensityPixel(p.x, p.y, DensityMode, FrameIndex, 0x62c01daeu)) {
+		RawMask[p] = float4(0, -1, 0, 0);
+		return;
+	}
+	// 1: fully visible or no applicable light, 0: unsolved.
+	RawMask[p] = float4(1, 0, 0, 0);
+	float z = RasterDepth.Load(int3(p, 0));
+	if (!isfinite(z) || z <= 0 || z >= 1)
+		return;
+	float2 clip = 2.0f * (float2(p) + 0.5f) / float2(Size) - 1.0f;
+	clip.y = -clip.y;
+	float4 v = mul(InverseProjection, float4(clip, z, 1));
+	if (!all(isfinite(v)) || abs(v.w) < 1e-8f)
+		return;
+	float4 w = mul(InverseView, float4(v.xyz / v.w, 1));
+	if (!all(isfinite(w)) || abs(w.w) < 1e-8f)
+		return;
+	float3 world = w.xyz / w.w + PositionAdjust.xyz;
+	// Match open-RT's Native Composite contract: z is receiver distance,
+	// not the hardware raster-depth sample used for position reconstruction.
+	float receiverDistance = length(mul((float3x3)InverseView, v.xyz / v.w));
+	if (!isfinite(receiverDistance) || receiverDistance <= 0)
+		return;
+	// Valid receiver with no applicable light: neutral, not an unsampled pixel.
+	RawMask[p] = float4(1, 0, receiverDistance, 0);
+	float total = 0, visible = 0;
+	[loop] for (uint i = 0; i < min(LightCount, 2048u); ++i)
+	{
+		float4 light = Lights[i * 3 + 0];     // xyz vanilla position + vanilla radius
+		float4 radiance = Lights[i * 3 + 1];  // linear RGB + vanilla fade
+		float4 params = Lights[i * 3 + 2];    // emitter radius + vanilla falloff + flags
+		float3 delta = light.xyz - world;
+		float d2 = dot(delta, delta);
+		if (d2 <= MinDistance * MinDistance || !isfinite(d2))
+			continue;
+		float d = sqrt(d2);
+		// Native reach is shadow-only; multiplier 1.0 preserves the light's vanilla radius.
+		float radius = max(light.w * ShadowReachMultiplier, MinDistance);
+		if (d >= radius)
+			continue;
+		float fraction = saturate(ShadowFadeRange);
+		float fade = fraction <= 0.0f ? 1.0f :
+		                                saturate((radius - d) / max(radius * fraction, 1e-4f));
+		fade = fade * fade * (3.0f - 2.0f * fade);
+		float gradualFalloff = fade <= 0.0f ? 0.0f : pow(fade, max(0.0f, ShadowFalloffCurve));
+		float strength = dot(max(radiance.rgb, 0), float3(.2126, .7152, .0722));
+		float weight = strength * max(0, radiance.a) * gradualFalloff /
+		               max(d2 + params.x * params.x, 1);
+		if (weight <= 0 || !isfinite(weight))
+			continue;
+
+		// One deterministic center ray, without stochastic emitter offsets.
+		// Fade occlusion itself (as the historical distance-fade path did):
+		// fading only the weight cancels out for a single contributing light.
+		float tMax = min(d - MinDistance, MaxDistance);
+		if (NearLightExclusion != 0u && NearLightRadius > 0.0f) {
+			float projection = d;
+			float discriminant = projection * projection -
+			                     (d2 - NearLightRadius * NearLightRadius);
+			if (discriminant >= 0.0f)
+				tMax = min(tMax, projection - sqrt(discriminant) - MinDistance);
+		}
+		float visibility = 1.0f;
+		if (tMax > MinDistance) {
+			float3 rayDirection = delta / d;
+			RayDesc ray;
+			ray.Origin = world + rayDirection * MinDistance;
+			ray.Direction = rayDirection;
+			ray.TMin = MinDistance;
+			ray.TMax = tMax;
+			RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+			query.TraceRayInline(Scene, RAY_FLAG_NONE, 0xFF, ray);
+			while (query.Proceed()) {}
+			if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
+				visibility = 1.0f - gradualFalloff;
+		}
+		total += weight;
+		visible += weight * visibility;
+	}
+	if (total > 1e-8f)
+		RawMask[p] = float4(saturate(visible / total), 1, receiverDistance, total);
+}

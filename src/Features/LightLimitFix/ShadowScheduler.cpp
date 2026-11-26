@@ -614,7 +614,8 @@ namespace ShadowCasterManager
 
 	static DX12::SCMNativePolicy GetSCMNativePolicy()
 	{
-		return DX12::SelectSCMNativePolicy(globals::features::dx12NativeScene.GetFrameNativeMode());
+		const auto& control = globals::features::dx12Control;
+		return DX12::SelectSCMNativePolicy(control.IsActive(), control.IsShadowOffloadMode(), globals::game::isVR);
 	}
 
 	void ResetNativeRasterTracking()
@@ -629,7 +630,9 @@ namespace ShadowCasterManager
 	static void ObserveNativeShadowLight(RE::BSShadowLight* light)
 	{
 		if (auto* ni = light->light.get()) {
-			globals::features::dx12NativeScene.ObserveRuntimeLight(light, LightPlacedReferenceID(ni), RestOrigin(ni));
+			const auto flicker = FlickerOf(ni);
+			globals::features::dx12NativeScene.ObserveRuntimeLight(light, LightPlacedReferenceID(ni),
+				flicker.movement > 0.0f || flicker.intensity > 0.0f, RestOrigin(ni));
 		}
 	}
 

@@ -2,14 +2,6 @@
 
 namespace DX12
 {
-	enum class SCMNativeMode
-	{
-		Disabled,
-		RasterComparison,
-		ShadowOffload,
-		FullShadow
-	};
-
 	struct SCMNativePolicy
 	{
 		bool observeGeometry = false;
@@ -20,12 +12,6 @@ namespace DX12
 	constexpr SCMNativePolicy SelectSCMNativePolicy(bool active, bool shadowOffload, bool vr)
 	{
 		return active && !vr ? SCMNativePolicy{ true, shadowOffload } : SCMNativePolicy{};
-	}
-
-	constexpr SCMNativePolicy SelectSCMNativePolicy(SCMNativeMode mode)
-	{
-		return SelectSCMNativePolicy(mode == SCMNativeMode::ShadowOffload || mode == SCMNativeMode::RasterComparison,
-			mode == SCMNativeMode::ShadowOffload, false);
 	}
 
 	enum class SCMNativeCasterMode
@@ -40,8 +26,6 @@ namespace DX12
 	{
 		if (!policy.observeGeometry)
 			return SCMNativeCasterMode::Disabled;
-		if (!policy.observeLights || !nativeOwned)
-			return SCMNativeCasterMode::Observe;
-		return SCMNativeCasterMode::Suppress;
+		return policy.observeLights && nativeOwned ? SCMNativeCasterMode::Suppress : SCMNativeCasterMode::Observe;
 	}
 }

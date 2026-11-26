@@ -23,12 +23,19 @@ namespace DX12Native
 
 		struct Frame
 		{
-			winrt::com_ptr<ID3D12Resource> color, reconstructedShadowMask;
+			winrt::com_ptr<ID3D12Resource> color;
 			winrt::com_ptr<ID3D12Fence> producerFence;
 			uint64_t producerValue = 0;
 			uint32_t frame = 0, width = 0, height = 0;
 			DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 			bool valid = false;
+			bool IsComplete() const
+			{
+				if (!valid || !producerFence || !producerValue)
+					return false;
+				const auto completed = producerFence->GetCompletedValue();
+				return completed != UINT64_MAX && completed >= producerValue;
+			}
 		};
 
 		std::shared_ptr<const Frame> Capture(ID3D11Device5* device11,
@@ -36,15 +43,9 @@ namespace DX12Native
 			ID3D12CommandQueue* queue, ID3D11Texture2D* source,
 			uint32_t frame, uint32_t width, uint32_t height, Transfer transfer,
 			const std::shared_ptr<const ShadowMaskFrame>& shadow,
-			bool returnColorToDX11, bool publishReconstructedMask = false);
+			bool returnColorToDX11);
 		bool Retain(const std::shared_ptr<const Frame>& frame, ID3D12Fence* fence, uint64_t value);
 		~NativeComposite();
-		/** @brief Allow a new initialization attempt after a scene reset. */
-		void ResetFailures()
-		{
-			failedShadowVariants = {};
-			captureFailureLogged = false;
-		}
 
 	private:
 		struct Slot
@@ -58,28 +59,23 @@ namespace DX12Native
 			winrt::com_ptr<ID3D12CommandAllocator> allocator;
 			winrt::com_ptr<ID3D12GraphicsCommandList> commands;
 			winrt::com_ptr<ID3D12DescriptorHeap> shadowDescriptors;
-			winrt::com_ptr<ID3D12Resource> reconstructedMask;
-			uint32_t maskWidth = 0, maskHeight = 0;
 			winrt::com_ptr<ID3D12RootSignature> shadowRoot;
 			winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
 			SharedFence fence;
 			std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
-			GraphicsBackend backend;
-			winrt::com_ptr<ID3D11Texture2D> source;
+			ID3D12Device* device = nullptr;
+			ID3D11Device* device11 = nullptr;
 			D3D11_TEXTURE2D_DESC sourceDesc{};
 			bool supportsShadow = false, hasReturn = false, untracked = false;
 			uint64_t frameBytes = 0;
 		};
 
 		std::array<std::unique_ptr<Slot>, 4> slots;
-		winrt::com_ptr<ID3D12RootSignature> shadowRoot, offloadRoot;
-		std::array<winrt::com_ptr<ID3D12PipelineState>, kShadowShaderCount> shadowPipelines;
-		winrt::com_ptr<ID3D12Device> shadowDevice;
-		std::array<bool, kShadowShaderCount> failedShadowVariants{};
-		winrt::com_ptr<ID3D12Device> formatDevice;
-		D3D12_FEATURE_DATA_FORMAT_SUPPORT cachedFormatSupport{ DXGI_FORMAT_UNKNOWN };
+		winrt::com_ptr<ID3D12RootSignature> shadowRoot;
+		winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
+		ID3D12Device* shadowDevice = nullptr;
 		VideoMemoryBudget videoBudget;
 		bool captureFailureLogged = false;
-		bool InitializeShadow(ID3D12Device* device, uint32_t variant);
+		bool InitializeShadow(ID3D12Device* device);
 	};
 }

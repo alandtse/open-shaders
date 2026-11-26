@@ -9,20 +9,45 @@ find_program(
         "$ENV{WindowsSdkVerBinPath}/x64"
         "C:/Program Files (x86)/Windows Kits/10/bin/${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}/x64"
 )
-include("${CMAKE_CURRENT_LIST_DIR}/DX12ShadowVariants.cmake")
 if(NATIVE_SHADOW_DXC)
-    set(DX12_VARIANT_DEPENDENCIES
-        "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene/ShadowTrace.hlsli"
-        "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene/NativeShadowSampling.hlsli"
-        "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders/Common/NativeShadowQuality.hlsli"
+    set(_shadow_source
+        "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene/ShadowMask.hlsl6"
     )
-    add_dx12_shadow_variants(DX12NativeScene "DX12 Native Scene" ShadowMask.hlsl6 ShadowOffload.hlsl6 ShadowMask ShadowOffload)
-    set(_shadow_dxil ${DX12_VARIANT_OUTPUTS})
-    set(_shadow_aio_dxil ${DX12_VARIANT_STAGED})
-    add_custom_target(DX12NativeShadowDXIL DEPENDS ${_shadow_dxil})
+    set(_shadow_density
+        "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene/NativeTraceDensity.hlsli"
+    )
+    set(_shadow_dir "${CMAKE_CURRENT_BINARY_DIR}/DX12NativeScene")
+    set(_shadow_dxil "${_shadow_dir}/ShadowMask.dxil")
+    add_custom_command(
+        OUTPUT "${_shadow_dxil}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_shadow_dir}"
+        COMMAND
+            "${NATIVE_SHADOW_DXC}" -T cs_6_5 -E main -HV 2021 -O3
+            ${NATIVE_SHADER_VALIDATION_FLAGS} -I
+            "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene"
+            -Fo "${_shadow_dxil}" "${_shadow_source}"
+        DEPENDS "${_shadow_source}" "${_shadow_density}"
+        VERBATIM
+    )
+    add_custom_target(DX12NativeShadowDXIL DEPENDS "${_shadow_dxil}")
     add_dependencies(${PROJECT_NAME} DX12NativeShadowDXIL)
     if(DEFINED AIO_DIR)
-        add_custom_target(DX12NativeShadowAIO DEPENDS ${_shadow_aio_dxil})
+        set(_shadow_aio_dxil
+            "${AIO_DIR}/Shaders/DX12NativeScene/ShadowMask.dxil"
+        )
+        add_custom_command(
+            OUTPUT "${_shadow_aio_dxil}"
+            COMMAND
+                ${CMAKE_COMMAND} -E make_directory
+                "${AIO_DIR}/Shaders/DX12NativeScene"
+            COMMAND
+                ${CMAKE_COMMAND} -E copy_if_different "${_shadow_dxil}"
+                "${_shadow_aio_dxil}"
+            DEPENDS "${_shadow_dxil}"
+            COMMENT "Staging DXIL ShadowMask.dxil into the AIO shader tree"
+            VERBATIM
+        )
+        add_custom_target(DX12NativeShadowAIO DEPENDS "${_shadow_aio_dxil}")
         add_dependencies(DX12NativeShadowAIO DX12NativeShadowDXIL)
         if(TARGET prepare_shaders)
             add_dependencies(DX12NativeShadowAIO prepare_shaders)
@@ -31,6 +56,14 @@ if(NATIVE_SHADOW_DXC)
             add_dependencies(DX12NativeShadowAIO PREPARE_AIO)
         endif()
     endif()
+    install(
+        FILES "${_shadow_dxil}"
+        DESTINATION "Shaders/DX12NativeScene"
+        COMPONENT Shaders
+    )
 else()
-    message(WARNING "DXC not found; Native Scene raw shadowmask bytecode unavailable")
+    message(
+        WARNING
+        "DXC not found; Native Scene raw shadowmask bytecode unavailable"
+    )
 endif()

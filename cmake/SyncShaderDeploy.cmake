@@ -22,12 +22,8 @@ set(_excluded_shader_relpaths)
 if(EXCLUDE_NATIVE_DXIL)
     list(
         APPEND _excluded_shader_relpaths
-        "DX12NativeScene/ShadowMaskQuality.dxil"
-        "DX12NativeScene/ShadowMaskLow.dxil"
-        "DX12NativeScene/ShadowOffload.dxil"
-        "NativeComposite/ShadowLayerQuality.dxil"
-        "NativeComposite/ShadowLayerLow.dxil"
-        "NativeComposite/CompositeOffload.dxil"
+        "DX12NativeScene/ShadowMask.dxil"
+        "NativeComposite/ShadowLayer.dxil"
     )
 endif()
 

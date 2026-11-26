@@ -13,8 +13,6 @@ public:
 	// " UAV"/" RTV" suffixes. Pass empty to leave resources unnamed.
 	WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* a_d3d11Device, ID3D12Device* a_d3d12Device, const std::string& a_name = {});
 	~WrappedResource();
-	WrappedResource(const WrappedResource&) = delete;
-	WrappedResource& operator=(const WrappedResource&) = delete;
 
 	ID3D11Texture2D* resource11 = nullptr;
 	ID3D11ShaderResourceView* srv = nullptr;

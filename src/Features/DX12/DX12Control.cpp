@@ -10,30 +10,15 @@
 void DX12Control::DrawSettings()
 {
 	// Keep pipeline mode directly below the DX12 heading and above subfeature tabs.
-	const char* modes[] = {
-		T("menu.dx12.mode.shadow_offload", "Shadow offloading"),
-		T("menu.dx12.mode.raster_comparison", "Raster comparison"),
-		T("menu.dx12.mode.full_shadow", "Ray-Traced Static Shadows")
-	};
+	const char* modes[] = { T("menu.dx12.mode.shadow_offload", "Shadow offload"), T("menu.dx12.mode.raster_comparison", "Raster comparison") };
 	int mode = settings.Mode;
 	if (ImGui::Combo(T("menu.dx12.mode.label", "Mode"), &mode, modes, int(std::size(modes)))) {
 		settings.Mode = mode;
-		selectedMode.store(static_cast<Mode>(mode), std::memory_order_relaxed);
-		legacyModeConfig = false;
+		selectedMode.store(mode, std::memory_order_relaxed);
 	}
-	const char* description = nullptr;
-	switch (static_cast<Mode>(settings.Mode)) {
-	case Mode::ShadowOffload:
-		description = T("menu.dx12.mode.shadow_offload_description", "Native shadows replace matched raster static shadows.");
-		break;
-	case Mode::RasterComparison:
-		description = T("menu.dx12.mode.raster_comparison_description", "Raster shadows remain unchanged; native shadow dispatch is paused for comparison.");
-		break;
-	case Mode::FullShadow:
-		description = T("menu.dx12.mode.full_shadow_description", "Independent native static shadows for supported point lights; SCM remains unchanged.");
-		break;
-	}
-	ImGui::TextDisabled("%s", description);
+	ImGui::TextDisabled(settings.Mode == 0 ?
+							T("menu.dx12.mode.shadow_offload_description", "Native shadows replace matched raster static shadows.") :
+							T("menu.dx12.mode.raster_comparison_description", "Raster shadows remain unchanged; native shadow dispatch is paused for comparison."));
 
 	if (!IsActive()) {
 		ImGui::Checkbox(T("menu.dx12.master.enable", "Enable native DX12 features (restart required)"), &settings.Enabled);
@@ -43,9 +28,8 @@ void DX12Control::DrawSettings()
 	}
 	if (!Util::BeginPillTabBar("##DX12Tabs"))
 		return;
-	const char* labels[] = { T("menu.dx12.tab.resources", "Resources"), T("menu.dx12.tab.native_scene", "Native Scene"), T("menu.dx12.tab.native_composite", "Native Composite"), T("menu.dx12.tab.master_switch", "Master Switch"), T("menu.dx12.tab.dev", "Dev") };
-	const int tabCount = globals::state && globals::state->IsDeveloperMode() ? int(std::size(labels)) : int(std::size(labels)) - 1;
-	for (int index = 0; index < tabCount; ++index) {
+	const char* labels[] = { T("menu.dx12.tab.resources", "Resources"), T("menu.dx12.tab.native_scene", "Native Scene"), T("menu.dx12.tab.native_composite", "Native Composite"), T("menu.dx12.tab.master_switch", "Master Switch") };
+	for (int index = 0; index < 4; ++index) {
 		if (!Util::BeginPillTabItem(labels[index]))
 			continue;
 		switch (index) {
@@ -56,20 +40,31 @@ void DX12Control::DrawSettings()
 			globals::features::dx12NativeScene.DrawSettings();
 			break;
 		case 2:
-			ImGui::TextDisabled("%s", T("menu.dx12.composite.mode_controlled", "Shadow reconstruction follows the selected quality mode."));
-			break;
+			{
+				ImGui::Checkbox(T("menu.dx12.composite.spatial_reconstruction", "Spatial shadow reconstruction"), &settings.SpatialReconstruction);
+				spatialReconstruction.store(settings.SpatialReconstruction, std::memory_order_relaxed);
+				int gridIndex = int((settings.ReconstructionGridSize - 3u) / 2u);
+				ImGui::BeginDisabled(!settings.SpatialReconstruction);
+				if (ImGui::Combo(T("menu.dx12.composite.reconstruction_grid", "Reconstruction grid"), &gridIndex,
+						"3x3\0"
+						"5x5\0"
+						"7x7\0"
+						"9x9\0")) {
+					settings.ReconstructionGridSize = uint32_t(3 + gridIndex * 2);
+					reconstructionGrid.store(settings.ReconstructionGridSize, std::memory_order_relaxed);
+				}
+				ImGui::EndDisabled();
+				if (ImGui::SliderFloat(T("menu.dx12.composite.shadow_strength", "Shadow strength"), &settings.ShadowStrength, 0.0f, 4.0f, "%.2f"))
+					shadowStrength.store(settings.ShadowStrength, std::memory_order_relaxed);
+				if (ImGui::SliderFloat(T("menu.dx12.composite.shadow_blend", "Shadow blend"), &settings.ShadowBlend, 0.0f, 1.0f, "%.2f"))
+					shadowBlend.store(settings.ShadowBlend, std::memory_order_relaxed);
+				ImGui::TextDisabled(T("menu.dx12.composite.before_upscaling", "Reconstruction and shadow application run before native upscaling."));
+				break;
+			}
 		case 3:
 			ImGui::Checkbox(T("menu.dx12.master.enable", "Enable native DX12 features (restart required)"), &settings.Enabled);
 			if (settings.Enabled != bootActive.load(std::memory_order_acquire))
 				ImGui::TextDisabled(T("menu.dx12.master.restart_boot_state", "A game restart is required; DX12 Resources retains its boot state until then."));
-			break;
-		case 4:
-			ImGui::SeparatorText(T("menu.dx12.tab.resources", "Resources"));
-			globals::features::dx12Resources.DrawDevSettings();
-			ImGui::SeparatorText(T("menu.dx12.tab.native_scene", "Native Scene"));
-			globals::features::dx12NativeScene.DrawDevSettings();
-			ImGui::SeparatorText(T("menu.dx12.tab.native_composite", "Native Composite"));
-			DrawCompositeDev();
 			break;
 		}
 		Util::EndPillTabItem();
@@ -77,48 +72,20 @@ void DX12Control::DrawSettings()
 	Util::EndPillTabBar();
 }
 
-void DX12Control::DrawCompositeDev()
-{
-	if (!IsFullShadowMode())
-		return;
-	auto& profile = rayTracedComposite;
-	bool filtering = profile.spatialReconstruction.load(std::memory_order_relaxed);
-	if (ImGui::Checkbox(T("menu.dx12.composite.spatial_reconstruction", "Additional spatial filtering"), &filtering))
-		profile.spatialReconstruction.store(filtering, std::memory_order_relaxed);
-	int gridIndex = int((profile.reconstructionGrid.load(std::memory_order_relaxed) - 3u) / 2u);
-	if (ImGui::Combo(T("menu.dx12.composite.reconstruction_grid", "Reconstruction grid"), &gridIndex,
-			"3x3\0"
-			"5x5\0"
-			"7x7\0"
-			"9x9\0"))
-		profile.reconstructionGrid.store(uint32_t(3 + gridIndex * 2), std::memory_order_relaxed);
-}
-
-void DX12Control::LoadComposite(CompositeProfile& profile, const json& input, float defaultBlend)
-{
-	profile.spatialReconstruction.store(input.value("SpatialReconstruction", true), std::memory_order_relaxed);
-	const uint32_t requestedGrid = std::clamp(input.value("ReconstructionGridSize", 5u), 3u, 9u);
-	profile.reconstructionGrid.store(requestedGrid - ((requestedGrid & 1u) == 0u ? 1u : 0u), std::memory_order_relaxed);
-	profile.shadowStrength.store(std::clamp(input.value("ShadowStrength", 1.0f), 0.0f, 4.0f), std::memory_order_relaxed);
-	profile.shadowBlend.store(std::clamp(input.value("ShadowBlend", defaultBlend), 0.0f, 1.0f), std::memory_order_relaxed);
-}
-
-json DX12Control::SaveComposite(const CompositeProfile& profile)
-{
-	return { { "SpatialReconstruction", profile.spatialReconstruction.load(std::memory_order_relaxed) },
-		{ "ReconstructionGridSize", profile.reconstructionGrid.load(std::memory_order_relaxed) },
-		{ "ShadowStrength", profile.shadowStrength.load(std::memory_order_relaxed) },
-		{ "ShadowBlend", profile.shadowBlend.load(std::memory_order_relaxed) } };
-}
-
 void DX12Control::LoadSettings(json& input)
 {
 	settings.Enabled = input.value("Enabled", false);
-	settings.Mode = std::clamp(input.value("Mode", int(Mode::ShadowOffload)), int(Mode::ShadowOffload), int(Mode::FullShadow));
-	legacyModeConfig = !input.contains("FullShadowModeSelection");
-	const bool rayTraced = settings.Mode == int(Mode::FullShadow);
-	LoadComposite(rayTracedComposite, DX12::ReadModeProfile(input, true, rayTraced), kRayTracedDefaultBlend);
-	selectedMode.store(static_cast<Mode>(settings.Mode), std::memory_order_release);
+	settings.Mode = std::clamp(input.value("Mode", 0), 0, 1);
+	settings.SpatialReconstruction = input.value("SpatialReconstruction", true);
+	const uint32_t requestedGrid = std::clamp(input.value("ReconstructionGridSize", 5u), 3u, 9u);
+	settings.ReconstructionGridSize = requestedGrid - ((requestedGrid & 1u) == 0u ? 1u : 0u);
+	settings.ShadowStrength = std::clamp(input.value("ShadowStrength", 1.0f), 0.0f, 4.0f);
+	settings.ShadowBlend = std::clamp(input.value("ShadowBlend", 0.70f), 0.0f, 1.0f);
+	selectedMode.store(settings.Mode, std::memory_order_relaxed);
+	spatialReconstruction.store(settings.SpatialReconstruction, std::memory_order_relaxed);
+	reconstructionGrid.store(settings.ReconstructionGridSize, std::memory_order_relaxed);
+	shadowStrength.store(settings.ShadowStrength, std::memory_order_relaxed);
+	shadowBlend.store(settings.ShadowBlend, std::memory_order_relaxed);
 	if (!bootCaptured) {
 		bootActive.store(settings.Enabled, std::memory_order_release);
 		bootCaptured = true;
@@ -127,27 +94,20 @@ void DX12Control::LoadSettings(json& input)
 
 void DX12Control::SaveSettings(json& output)
 {
-	output = { { "Enabled", settings.Enabled }, { "Mode", settings.Mode }, { "FullShadowModeSelection", true },
-		{ DX12::kRayTracedProfile, SaveComposite(rayTracedComposite) } };
+	output = { { "Enabled", settings.Enabled }, { "Mode", settings.Mode },
+		{ "SpatialReconstruction", settings.SpatialReconstruction },
+		{ "ReconstructionGridSize", settings.ReconstructionGridSize },
+		{ "ShadowStrength", settings.ShadowStrength }, { "ShadowBlend", settings.ShadowBlend } };
 }
 
 void DX12Control::RestoreDefaultSettings()
 {
 	settings = {};
-	legacyModeConfig = false;
-	LoadComposite(rayTracedComposite, json::object(), kRayTracedDefaultBlend);
-	selectedMode.store(static_cast<Mode>(settings.Mode), std::memory_order_release);
-}
-
-void DX12Control::MigrateLegacyFullShadowMode(bool enabled)
-{
-	if (!legacyModeConfig)
-		return;
-	legacyModeConfig = false;
-	if (enabled && settings.Mode == int(Mode::ShadowOffload)) {
-		settings.Mode = int(Mode::FullShadow);
-		selectedMode.store(Mode::FullShadow, std::memory_order_relaxed);
-	}
+	selectedMode.store(settings.Mode, std::memory_order_relaxed);
+	spatialReconstruction.store(settings.SpatialReconstruction, std::memory_order_relaxed);
+	reconstructionGrid.store(settings.ReconstructionGridSize, std::memory_order_relaxed);
+	shadowStrength.store(settings.ShadowStrength, std::memory_order_relaxed);
+	shadowBlend.store(settings.ShadowBlend, std::memory_order_relaxed);
 }
 
 void DX12Control::OnRuntimeDisabled()

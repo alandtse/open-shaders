@@ -1,2 +1,0 @@
-#define NATIVE_SHADOW_OFFLOAD 1
-#include "ShadowTrace.hlsli"
