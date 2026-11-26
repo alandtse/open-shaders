@@ -74,17 +74,19 @@ float3 SampleEmitterOffset(float3 lightDirection, float emitterRadius, uint2 pix
 	[loop] for (uint i = 0; i < LightCount; ++i)
 	{
 		float4 light = Lights[i * 3 + 0];     // xyz vanilla position + vanilla radius
-		float4 radiance = Lights[i * 3 + 1];  // linear RGB + vanilla fade
-		float4 params = Lights[i * 3 + 2];    // emitter radius + vanilla falloff + flags + reference ID bits
 		float3 delta = light.xyz - world;
 		float d2 = dot(delta, delta);
 		if (d2 <= MinDistance * MinDistance || !isfinite(d2))
 			continue;
-		float d = sqrt(d2);
 		// Native reach is shadow-only; multiplier 1.0 preserves the light's vanilla radius.
 		float radius = max(light.w * ShadowReachMultiplier, MinDistance);
+		if (d2 > radius * radius)
+			continue;
+		float d = sqrt(d2);
 		if (d >= radius)
 			continue;
+		float4 radiance = Lights[i * 3 + 1];
+		float4 params = Lights[i * 3 + 2];
 		float fraction = saturate(ShadowFadeRange);
 		float fade = fraction <= 0.0f ? 1.0f :
 		                                saturate((radius - d) / max(radius * fraction, 1e-4f));

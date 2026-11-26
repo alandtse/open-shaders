@@ -240,7 +240,8 @@ namespace DX12Native
 			static_assert(sizeof(Constants) <= D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
 
-			std::vector<std::array<float, 4>> records(size_t(camera.lightCount) * kRecords);
+			auto& records = slot->lightRecords;
+			records.resize(size_t(camera.lightCount) * kRecords);
 			for (size_t i = 0; i < camera.lightCount; ++i) {
 				const auto& light = lights[i];
 				records[i * kRecords + 0] = { light.position.x, light.position.y, light.position.z, light.radius };

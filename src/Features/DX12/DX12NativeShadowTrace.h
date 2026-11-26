@@ -55,6 +55,7 @@ namespace DX12Native
 		uint32_t frame = 0;
 		ShadowSamplingLayout sampling;
 		std::vector<DX12::PreparedLight> debugLights;
+		std::vector<std::array<float, 4>> lightRecords;
 		// RGBA32F: x weighted visibility, y 1 lit receiver / 0 neutral or invalid,
 		// z receiver distance, w accumulated light weight.
 	};
