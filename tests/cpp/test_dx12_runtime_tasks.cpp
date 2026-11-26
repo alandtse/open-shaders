@@ -1,6 +1,8 @@
 #include "Features/DX12/DX12FenceRetirementPolicy.h"
 #include "Features/DX12/DX12CasterCoverage.h"
 #include "Features/DX12/SpatialGrid.h"
+#include "Features/DX12/DX12ModeProfiles.h"
+#include <nlohmann/json.hpp>
 #include "Features/DX12/FullShadowLightConsolidation.h"
 #include "Features/DX12/TilePreparationPolicy.h"
 #include "Utils/RuntimeTaskGate.h"
@@ -337,4 +339,25 @@ TEST_CASE("DX12 stochastic emitter radius follows the shadow quality", "[dx12][s
 	CHECK(NativeShadowEmitterMultiplier(kShadowQualityLow) == 0.20f);
 	CHECK(NativeShadowEmitterMultiplier(kShadowQualityPotato) == 0.0f);
 	CHECK(NativeShadowEmitterMultiplier(kShadowQualityCount) == 0.65f);
+}
+
+TEST_CASE("DX12 shadow profiles isolate stored values and legacy settings", "[dx12][shadow]")
+{
+	using namespace DX12;
+	using nlohmann::json;
+	const json saved = {
+		{ kOffloadingProfile, { { "ShadowQualityMode", 1 }, { "ShadowBlend", 0.70 } } },
+		{ kRayTracedProfile, { { "ShadowQualityMode", 2 }, { "ShadowBlend", 0.55 } } }
+	};
+	CHECK(ReadModeProfile(saved, false, false).at("ShadowQualityMode") == 1);
+	CHECK(ReadModeProfile(saved, true, false).at("ShadowQualityMode") == 2);
+	CHECK(ReadModeProfile(saved, false, true).at("ShadowBlend") == 0.70);
+	CHECK(ReadModeProfile(saved, true, true).at("ShadowBlend") == 0.55);
+	const json legacy = { { "ShadowQualityMode", 3 } };
+	CHECK(ReadModeProfile(legacy, false, false) == legacy);
+	CHECK(ReadModeProfile(legacy, true, false).empty());
+	CHECK(ReadModeProfile(legacy, true, true) == legacy);
+	CHECK(ReadModeProfile(legacy, false, true).empty());
+	const json partial = { { kRayTracedProfile, { { "ShadowQualityMode", 2 } } } };
+	CHECK(ReadModeProfile(partial, false, false).empty());
 }

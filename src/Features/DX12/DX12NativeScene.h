@@ -5,6 +5,7 @@
 #include "DX12NativeRuntimeCapture.h"
 #include "DX12NativeShadowTrace.h"
 #include "FullShadowLightConsolidation.h"
+#include "DX12ModeProfiles.h"
 #include "../OverlayFeature.h"
 
 #include <atomic>
@@ -29,6 +30,8 @@ struct DX12NativeScene final : OverlayFeature
 	bool SupportsVR() override { return false; }
 
 	void DrawSettings() override;
+	/** @brief Developer-only native shadow tuning. */
+	void DrawDevSettings();
 	void DrawOverlay() override;
 	bool IsOverlayVisible() const override;
 	/** @brief Cached frame-wide fast-path ownership for point-light static shadows. */
@@ -90,22 +93,28 @@ private:
 	std::atomic<bool> previousShadowSubmitted{ false };
 	std::atomic<bool> frameTraceAllLights{ false };
 	std::atomic<bool> allLightStaticReady{ false };
-	std::atomic<bool> debugNativeLights{ false };
-	bool shadowMaskEnabled = true;
-	std::atomic<bool> additivePreparedEmission{ true };
-	std::atomic<uint32_t> runtimeUnificationRadius{ DX12Native::kDefaultRuntimeUnificationRadius };
-	std::atomic<uint32_t> preparedExclusionRadius{ DX12Native::kDefaultPreparedExclusionRadius };
-	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
-	bool offloadStaticShadows = true;
-	bool offloadFlickeringStatic = true;
-	static constexpr bool kDefaultFreezeNativeFlickering = true;
-	bool freezeNativeFlickering = kDefaultFreezeNativeFlickering;
-	uint32_t qualityMode = DX12Native::kDefaultShadowQualityMode;
-	bool nearLightShadowExclusion = true;
-	uint32_t nearLightExclusionUnits = 16;
-	float shadowReachMultiplier = DX12Native::kDefaultShadowReachMultiplier;  // Native only. Vanilla lights stay unchanged.
-	float shadowFadeRange = DX12Native::kDefaultShadowFadeRange;
-	float shadowFalloffCurve = 1.0f;
+	struct ShadowProfile
+	{
+		explicit ShadowProfile(uint32_t quality) : qualityMode(quality) {}
+		std::atomic<bool> debugNativeLights{ false };
+		std::atomic<bool> additivePreparedEmission{ true };
+		std::atomic<uint32_t> runtimeUnificationRadius{ DX12Native::kDefaultRuntimeUnificationRadius };
+		std::atomic<uint32_t> preparedExclusionRadius{ DX12Native::kDefaultPreparedExclusionRadius };
+		bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
+		bool freezeNativeFlickering = true;
+		uint32_t qualityMode;
+		bool nearLightShadowExclusion = true;
+		uint32_t nearLightExclusionUnits = 16;
+		float shadowReachMultiplier = DX12Native::kDefaultShadowReachMultiplier;  // Native only. Vanilla lights stay unchanged.
+		float shadowFadeRange = DX12Native::kDefaultShadowFadeRange;
+		float shadowFalloffCurve = 1.0f;
+	};
+	ShadowProfile offloadingProfile{ DX12Native::kDefaultShadowQualityMode };
+	ShadowProfile rayTracedProfile{ DX12Native::kShadowQualityMedium };
+	ShadowProfile& ActiveProfile();
+	const ShadowProfile& ActiveProfile() const;
+	static void LoadProfile(ShadowProfile& profile, const json& input, uint32_t defaultQuality);
+	static json SaveProfile(const ShadowProfile& profile);
 	struct RuntimeLightSample
 	{
 		const RE::NiLight* source = nullptr;  // Identity of the SCM light actually observed.

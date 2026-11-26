@@ -2,6 +2,7 @@
 
 #include "Feature.h"
 #include "SpatialGrid.h"
+#include "DX12ModeProfiles.h"
 
 #include <atomic>
 #include <cstdint>
@@ -191,6 +192,8 @@ struct DX12Resources final : Feature
 	bool IsInFeatureList() const override { return false; }
 	bool SupportsVR() override { return false; }
 	void DrawSettings() override;
+	/** @brief Developer-only preparation and residency diagnostics. */
+	void DrawDevSettings();
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
 	void RestoreDefaultSettings() override;
@@ -244,5 +247,11 @@ private:
 	std::atomic<std::shared_ptr<const DX12::PreparationStats>> generationStats{
 		std::make_shared<const DX12::PreparationStats>()
 	};
-	Settings settings;
+	Settings offloadingSettings, rayTracedSettings;
+	Settings& ActiveSettings();
+	const Settings& ActiveSettings() const;
+	static Settings ReadProfile(const json& input);
+	static json SaveProfile(const Settings& settings);
+	void RefreshPreparationSettings();
+	Settings appliedSettings;
 };

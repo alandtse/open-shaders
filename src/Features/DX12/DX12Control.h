@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Feature.h"
+#include "DX12ModeProfiles.h"
 
 #include <atomic>
 
@@ -18,10 +19,6 @@ struct DX12Control final : Feature
 	{
 		bool Enabled = false;
 		int Mode = int(DX12Control::Mode::ShadowOffload);
-		bool SpatialReconstruction = true;
-		uint32_t ReconstructionGridSize = 5;  // Odd, 3x3 through 9x9.
-		float ShadowStrength = 1.0f;
-		float ShadowBlend = 0.70f;
 	};
 
 	std::string GetName() override { return "DX12"; }
@@ -38,10 +35,10 @@ struct DX12Control final : Feature
 	bool IsFullShadowMode() const { return selectedMode.load(std::memory_order_relaxed) == Mode::FullShadow; }
 	/** @brief Adopt the old Native Scene toggle when loading a pre-mode-selection configuration. */
 	void MigrateLegacyFullShadowMode(bool enabled);
-	bool UseSpatialReconstruction() const { return spatialReconstruction.load(std::memory_order_relaxed); }
-	uint32_t GetReconstructionGridSize() const { return reconstructionGrid.load(std::memory_order_relaxed); }
-	float GetShadowStrength() const { return shadowStrength.load(std::memory_order_relaxed); }
-	float GetShadowBlend() const { return shadowBlend.load(std::memory_order_relaxed); }
+	bool UseSpatialReconstruction() const { return ActiveComposite().spatialReconstruction.load(std::memory_order_relaxed); }
+	uint32_t GetReconstructionGridSize() const { return ActiveComposite().reconstructionGrid.load(std::memory_order_relaxed); }
+	float GetShadowStrength() const { return ActiveComposite().shadowStrength.load(std::memory_order_relaxed); }
+	float GetShadowBlend() const { return ActiveComposite().shadowBlend.load(std::memory_order_relaxed); }
 	void DrawSettings() override;
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
@@ -53,9 +50,19 @@ private:
 	bool bootCaptured = false;
 	std::atomic<Mode> selectedMode{ Mode::ShadowOffload };
 	bool legacyModeConfig = false;
-	std::atomic<bool> spatialReconstruction{ true };
-	std::atomic<uint32_t> reconstructionGrid{ 5 };
-	std::atomic<float> shadowStrength{ 1.0f };
-	std::atomic<float> shadowBlend{ 0.70f };
+	struct CompositeProfile
+	{
+		explicit CompositeProfile(float blend) : shadowBlend(blend) {}
+		std::atomic<bool> spatialReconstruction{ true };
+		std::atomic<uint32_t> reconstructionGrid{ 5 };
+		std::atomic<float> shadowStrength{ 1.0f };
+		std::atomic<float> shadowBlend;
+	};
+	CompositeProfile offloadingComposite{ 0.70f }, rayTracedComposite{ 0.55f };
+	CompositeProfile& ActiveComposite() { return IsFullShadowMode() ? rayTracedComposite : offloadingComposite; }
+	const CompositeProfile& ActiveComposite() const { return IsFullShadowMode() ? rayTracedComposite : offloadingComposite; }
+	static void LoadComposite(CompositeProfile& profile, const json& input, float defaultBlend);
+	static json SaveComposite(const CompositeProfile& profile);
+	void DrawCompositeDev();
 	Settings settings;
 };

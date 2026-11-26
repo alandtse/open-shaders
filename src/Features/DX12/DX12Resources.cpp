@@ -598,9 +598,19 @@ void DX12Resources::ResetPreparation()
 	generationStats.store(std::make_shared<const DX12::PreparationStats>(), std::memory_order_release);
 }
 
+DX12Resources::Settings& DX12Resources::ActiveSettings()
+{
+	return globals::features::dx12Control.IsFullShadowMode() ? rayTracedSettings : offloadingSettings;
+}
+
+const DX12Resources::Settings& DX12Resources::ActiveSettings() const
+{
+	return globals::features::dx12Control.IsFullShadowMode() ? rayTracedSettings : offloadingSettings;
+}
+
 void DX12Resources::DrawSettings()
 {
-	int index = int(std::ranges::find(DX12::kSubcellSizes, settings.SubcellSize) - DX12::kSubcellSizes.begin());
+	int index = int(std::ranges::find(DX12::kSubcellSizes, ActiveSettings().SubcellSize) - DX12::kSubcellSizes.begin());
 	if (index >= int(DX12::kSubcellSizes.size()))
 		index = 0;
 	static const auto labels = [] {
@@ -614,15 +624,15 @@ void DX12Resources::DrawSettings()
 		labelPointers[i] = labels[i].c_str();
 	if (ImGui::Combo(T("menu.dx12.resources.subcell_size", "Subcell size (game units)"), &index, labelPointers.data(), int(labelPointers.size()))) {
 		const uint32_t selected = DX12::kSubcellSizes[index];
-		if (settings.SubcellSize != selected) {
-			settings.SubcellSize = selected;
-			ResetPreparation();
+		if (ActiveSettings().SubcellSize != selected) {
+			ActiveSettings().SubcellSize = selected;
+			RefreshPreparationSettings();
 		}
 	}
+}
 
-	ImGui::Checkbox(T("menu.dx12.resources.preload_last_save", "Prepare last-save cell at main menu"), &settings.PreloadLastSave);
-	if (ImGui::Checkbox(T("menu.dx12.resources.consolidate_interior", "Consolidate small interior cells"), &settings.ConsolidateInterior))
-		ResetPreparation();
+void DX12Resources::DrawDevSettings()
+{
 	if (startupPending)
 		ImGui::TextDisabled("%s", T("menu.dx12.resources.startup_pending", "Main-menu preparation in progress"));
 	if (menuPreloaded)
@@ -727,35 +737,49 @@ void DX12Resources::DrawSettings()
 	}
 }
 
-void DX12Resources::LoadSettings(json& input)
+DX12Resources::Settings DX12Resources::ReadProfile(const json& input)
 {
+	Settings result;
 	const uint32_t requested = input.value("SubcellSize", DX12::kSubcellSizes.front());
-	const uint32_t selected = std::ranges::contains(DX12::kSubcellSizes, requested) ?
-	                              requested :
-	                              DX12::kSubcellSizes.front();
-	const bool consolidate = input.value("ConsolidateInterior", true);
-	settings.PreloadLastSave = input.value("PreloadLastSave", true);
-	if (settings.SubcellSize != selected || settings.ConsolidateInterior != consolidate) {
-		settings.SubcellSize = selected;
-		settings.ConsolidateInterior = consolidate;
+	result.SubcellSize = std::ranges::contains(DX12::kSubcellSizes, requested) ? requested : DX12::kSubcellSizes.front();
+	result.PreloadLastSave = input.value("PreloadLastSave", true);
+	result.ConsolidateInterior = input.value("ConsolidateInterior", true);
+	return result;
+}
+
+json DX12Resources::SaveProfile(const Settings& settings)
+{
+	return { { "SubcellSize", settings.SubcellSize }, { "PreloadLastSave", settings.PreloadLastSave }, { "ConsolidateInterior", settings.ConsolidateInterior } };
+}
+
+void DX12Resources::RefreshPreparationSettings()
+{
+	const auto& selected = ActiveSettings();
+	if (selected.SubcellSize != appliedSettings.SubcellSize || selected.ConsolidateInterior != appliedSettings.ConsolidateInterior) {
 		ResetPreparation();
 	}
+	appliedSettings = selected;
+}
+
+void DX12Resources::LoadSettings(json& input)
+{
+	const bool rayTraced = globals::features::dx12Control.IsFullShadowMode();
+	offloadingSettings = ReadProfile(DX12::ReadModeProfile(input, false, rayTraced));
+	rayTracedSettings = ReadProfile(DX12::ReadModeProfile(input, true, rayTraced));
+	RefreshPreparationSettings();
 }
 
 void DX12Resources::SaveSettings(json& output)
 {
-	output = { { "SubcellSize", settings.SubcellSize }, { "PreloadLastSave", settings.PreloadLastSave }, { "ConsolidateInterior", settings.ConsolidateInterior } };
+	output = { { DX12::kOffloadingProfile, SaveProfile(offloadingSettings) },
+		{ DX12::kRayTracedProfile, SaveProfile(rayTracedSettings) } };
 }
 
 void DX12Resources::RestoreDefaultSettings()
 {
-	const uint32_t defaultSize = DX12::kSubcellSizes.front();
-	settings.PreloadLastSave = true;
-	if (settings.SubcellSize != defaultSize || !settings.ConsolidateInterior) {
-		settings.SubcellSize = defaultSize;
-		settings.ConsolidateInterior = true;
-		ResetPreparation();
-	}
+	offloadingSettings = {};
+	rayTracedSettings = {};
+	RefreshPreparationSettings();
 }
 
 void DX12Resources::EnsureCompanion(bool menuStartup)
@@ -764,9 +788,9 @@ void DX12Resources::EnsureCompanion(bool menuStartup)
 		companion = std::make_unique<DX12::CompanionWorker>();
 		if (menuStartup) {
 			DX12::CompanionRequest task;
-			task.preloadLastSave = settings.PreloadLastSave;
+			task.preloadLastSave = appliedSettings.PreloadLastSave;
 			task.warmup = !task.preloadLastSave;
-			task.size = settings.SubcellSize;
+			task.size = appliedSettings.SubcellSize;
 			startupPending = companion->Enqueue(std::move(task));
 		}
 		companionStarted.store(true, std::memory_order_release);
@@ -807,8 +831,8 @@ void DX12Resources::PollStartup(uint32_t gameplayScope)
 	auto& publication = result->publication;
 	if (!result->preload)
 		return;
-	if (!settings.PreloadLastSave || !settings.ConsolidateInterior ||
-		result->size != settings.SubcellSize || !publication.wholeCell || !publication.validated) {
+	if (!appliedSettings.PreloadLastSave || !appliedSettings.ConsolidateInterior ||
+		result->size != appliedSettings.SubcellSize || !publication.wholeCell || !publication.validated) {
 		const auto reason = result->residencyReason.empty() ?
 			"No eligible whole-cell publication or settings changed" : result->residencyReason;
 		RecordPublication(publication.validated ? PublicationState::Unavailable : PublicationState::Invalid, reason);
@@ -855,6 +879,7 @@ void DX12Resources::Reset()
 	if (!IsActive() || !globals::state || !globals::state->startupMenuBlurSourceReady ||
 		!globals::game::ui || !globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))
 		return;
+	RefreshPreparationSettings();
 	EnsureCompanion(true);
 	PollStartup();
 	// Only after a completed startup Present; rendering keeps priority.
@@ -877,6 +902,7 @@ void DX12Resources::PreShadowMaps()
 	if (!location)
 		return;
 	CS_GPU_PASS("DX12Resources::Grid");
+	RefreshPreparationSettings();
 	EnsureCompanion(false);
 	const auto* cell = location->cell;
 	const auto* world = location->worldspace;
@@ -907,7 +933,7 @@ void DX12Resources::PreShadowMaps()
 		logger::info("[DX12Resources] Whole-cell GPU budget deferred; returning to subdivisions");
 	}
 	preparationActive = true;
-	grid.Advance(scope, settings.SubcellSize, position.x, position.y);
+	grid.Advance(scope, appliedSettings.SubcellSize, position.x, position.y);
 	runtimePublicationEnabled.store(true, std::memory_order_release);
 	const auto neighborhood = grid.Snapshot();
 	if (inFlight) {
@@ -1007,11 +1033,11 @@ void DX12Resources::PreShadowMaps()
 				task.corner = task.predictive &&
 				              std::ranges::find(requestedGrid->predictive.begin() + DX12::kPredictiveSideCount,
 								  requestedGrid->predictive.end(), *request) != requestedGrid->predictive.end();
-				task.size = settings.SubcellSize;
+				task.size = appliedSettings.SubcellSize;
 				task.localScopeID = source->GetLocalFormID();
 				task.scopePlugin = file->GetFilename();
 				task.worldspace = world != nullptr;
-				task.consolidate = settings.ConsolidateInterior && !task.worldspace &&
+				task.consolidate = appliedSettings.ConsolidateInterior && !task.worldspace &&
 				                   consolidationAttemptScope != scope && *request == requestedGrid->requested.front();
 				const bool consolidationRequested = task.consolidate;
 				if (companion->Enqueue(std::move(task))) {
