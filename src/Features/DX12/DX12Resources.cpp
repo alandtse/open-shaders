@@ -592,6 +592,12 @@ void DX12Resources::ResetPreparation()
 	adopting.reset();
 	lightAdoptionOffset = 0;
 	grid.Clear();
+	{
+		std::scoped_lock lock(preparedLightMutex);
+		preparedResident = {};
+		preparedPredictive = {};
+		preparedLightPublication.reset();
+	}
 	menuPreloaded = false;
 	consolidationAttemptScope = 0;
 	lastVisitedCell = previousVisitedCell = distinctTransitions = 0;
@@ -1065,11 +1071,13 @@ void DX12Resources::OnRuntimeDisabled()
 	}
 }
 
-std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const
+std::shared_ptr<const std::vector<DX12::PreparedLight>> DX12Resources::GetPreparedLights(const std::shared_ptr<const DX12::Grid>& current) const
 {
+	std::scoped_lock lock(preparedLightMutex);
+	if (preparedLightPublication && preparedResident == current->resident && preparedPredictive == current->predictiveResident)
+		return preparedLightPublication;
 	std::vector<DX12::PreparedLight> lights;
 	lights.reserve(DX12::kMaxPreparedLights);
-	const auto current = grid.Snapshot();
 	std::unordered_set<uint32_t> seen;
 	const auto append = [&](const auto& tiles) {
 		for (const auto& tile : tiles) {
@@ -1089,5 +1097,8 @@ std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const
 	// Screen-space receivers can be shadowed by emitters in the predictive ring.
 	// Source visibility inside the camera frustum is not a light-admission test.
 	append(current->predictiveResident);
-	return lights;
+	preparedLightPublication = std::make_shared<const std::vector<DX12::PreparedLight>>(std::move(lights));
+	preparedResident = current->resident;
+	preparedPredictive = current->predictiveResident;
+	return preparedLightPublication;
 }

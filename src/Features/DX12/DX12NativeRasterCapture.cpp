@@ -24,7 +24,7 @@ namespace DX12Native
 		}
 	}
 
-	void RasterCapture::Capture(const GraphicsBackend& a_backend, ID3D11ShaderResourceView* a_depth, const globals::FrameBuffer* a_camera, uint32_t a_frame)
+	void RasterCapture::Capture(const GraphicsBackend& a_backend, ID3D11ShaderResourceView* a_depth, const globals::FrameBuffer* a_camera, uint32_t a_frame, uint32_t activeWidth, uint32_t activeHeight)
 	{
 		CS_GPU_PASS("DX12NativeScene::CaptureOpaqueRaster");
 		current.reset();
@@ -43,11 +43,9 @@ namespace DX12Native
 			if (done == UINT64_MAX)
 				throw std::runtime_error("Raster device removed");
 			auto available = std::find_if(slots.begin(), slots.end(), [&](const auto& slot) {
-				const auto completed = producer.fence12->GetCompletedValue();
 				if (!slot)
-					return completed != UINT64_MAX;
-				return slot.use_count() == 1 && slot->readyValue != UINT64_MAX &&
-				       completed != UINT64_MAX && completed >= slot->readyValue;
+					return true;
+				return slot.use_count() == 1 && slot->readyValue != UINT64_MAX && done >= slot->readyValue;
 			});
 			if (available == slots.end())
 				return;
@@ -72,6 +70,8 @@ namespace DX12Native
 			if (!depthShader)
 				throw std::runtime_error("Opaque depth capture shader unavailable");
 			const uint32_t width = depthDesc.Width, height = depthDesc.Height;
+			if (!activeWidth || !activeHeight || activeWidth > width || activeHeight > height)
+				return;
 			depthDesc.Format = DXGI_FORMAT_R32_FLOAT;
 			depthDesc.Usage = D3D11_USAGE_DEFAULT;
 			depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
@@ -120,7 +120,7 @@ namespace DX12Native
 			context->CSSetUnorderedAccessViews(0, 1, &write, nullptr);
 			context->CSSetShader(depthShader.get(), nullptr, 0);
 			gpuCopyStarted = true;
-			context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+			context->Dispatch((activeWidth + 7) / 8, (activeHeight + 7) / 8, 1);
 			write = priorWrite.get();
 			context->CSSetUnorderedAccessViews(0, 1, &write, nullptr);
 			auto* read = priorRead.get();

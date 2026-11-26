@@ -27,7 +27,7 @@ namespace DX12Native
 	public:
 		~RasterCapture();
 		/** @brief Captures one coherent frame; callers retain returned frames until GPU consumption completes. */
-		void Capture(const GraphicsBackend& a_backend, ID3D11ShaderResourceView* a_depth, const globals::FrameBuffer* a_camera, uint32_t a_frame);
+		void Capture(const GraphicsBackend& a_backend, ID3D11ShaderResourceView* a_depth, const globals::FrameBuffer* a_camera, uint32_t a_frame, uint32_t activeWidth, uint32_t activeHeight);
 		/** @brief Borrows a matching snapshot, whose ready fence must be waited on by the consumer queue. */
 		std::shared_ptr<const RasterFrame> Get(uint32_t a_frame) const;
 		/** @brief Invalidates publication while retaining slots for GPU retirement. */

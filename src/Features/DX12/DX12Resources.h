@@ -212,7 +212,7 @@ struct DX12Resources final : Feature
 	bool IsActive() const;
 	bool HasMenuPreload() const { return menuPreloaded; }
 	/** @brief Returns the most recent prepared-light publication. */
-	std::vector<DX12::PreparedLight> GetPreparedLights() const;
+	std::shared_ptr<const std::vector<DX12::PreparedLight>> GetPreparedLights(const std::shared_ptr<const DX12::Grid>& current) const;
 	/** @brief In-memory generation timings for active 3x3, predictive sides and corners. */
 	std::shared_ptr<const DX12::PreparationStats> GetPreparationStats() const
 	{
@@ -239,6 +239,10 @@ private:
 	bool preparationActive = false;
 	std::atomic<bool> runtimePublicationEnabled{ false };
 	DX12::ResourceGrid grid;
+	mutable std::mutex preparedLightMutex;
+	mutable std::array<std::shared_ptr<const DX12::Tile>, DX12::kGridCapacity> preparedResident;
+	mutable std::array<std::shared_ptr<const DX12::Tile>, DX12::kPredictiveCapacity> preparedPredictive;
+	mutable std::shared_ptr<const std::vector<DX12::PreparedLight>> preparedLightPublication;
 	std::unique_ptr<DX12::CompanionWorker> companion;
 	std::unique_ptr<DX12::CompanionResult> adopting;
 	size_t lightAdoptionOffset = 0;

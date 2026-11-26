@@ -392,8 +392,7 @@ void DX12NativeScene::PreShadowMaps()
 		frameShadowScene.store(nullptr, std::memory_order_release);
 	// SCM reads a single per-frame publication without re-enumerating tiles
 	// for every shadow light; the same ordered sources feed RayQuery.
-	const auto lights = std::make_shared<const std::vector<DX12::PreparedLight>>(
-		globals::features::dx12Resources.GetPreparedLights());
+	const auto lights = globals::features::dx12Resources.GetPreparedLights(grid);
 	shadowLights.store(lights, std::memory_order_release);
 	// Only a revision-coalesced mailbox handoff on this thread. All BLAS/TLAS
 	// allocations and command recording run as bounded shared-pool tasks.
@@ -568,16 +567,24 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	}
 
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
-	raster.Capture(*backend, Util::GetCurrentSceneDepthSRV(false),
-		&globals::game::frameBufferCached.nonVR, frame);
+	if (shadows.Get(frame))
+		return;
+	const auto built = GetFrameShadowScene();
+	if (!built || !built->acceleration || !built->producerFence)
+		return;
 	// The active view may occupy only a subrect of the full-size raster allocation.
 	const auto viewport = Util::ConvertToDynamic(globals::state->screenSize);
 	const uint32_t viewportWidth = std::isfinite(viewport.x) && viewport.x > 0.0f ? uint32_t(viewport.x) : 0u;
 	const uint32_t viewportHeight = std::isfinite(viewport.y) && viewport.y > 0.0f ? uint32_t(viewport.y) : 0u;
 	{
-		const auto captured = raster.Get(frame);
-		const auto built = GetFrameShadowScene();
+		if (!viewportWidth || !viewportHeight)
+			return;
 		const auto lights = shadowLights.load(std::memory_order_acquire);
+		const auto capture = [&] {
+			raster.Capture(*backend, Util::GetCurrentSceneDepthSRV(false),
+				&globals::game::frameBufferCached.nonVR, frame, viewportWidth, viewportHeight);
+			return raster.Get(frame);
+		};
 		// The native trace handles unavailable inputs without affecting raster
 		// rendering. RayQuery dispatch remains in DX12NativeShadowTrace.
 		const auto& profile = TraceAllPreparedLights() ? rayTracedProfile : offloadingProfile;
@@ -594,7 +601,8 @@ void DX12NativeScene::OnOpaqueRasterReady()
 		};
 		if (TraceAllPreparedLights()) {
 			const auto inventory = CollectFullShadowLights(lights ? std::span<const DX12::PreparedLight>(*lights) : std::span<const DX12::PreparedLight>{});
-			shadows.Dispatch(*backend, captured, built, *inventory, frame, controls);
+			if (!inventory->empty())
+				shadows.Dispatch(*backend, capture(), built, *inventory, frame, controls);
 			return;
 		}
 		std::vector<DX12::PreparedLight> liveLights;
@@ -612,7 +620,8 @@ void DX12NativeScene::OnOpaqueRasterReady()
 				}
 			}
 		}
-		shadows.Dispatch(*backend, captured, built, liveLights, frame, controls);
+		if (!liveLights.empty())
+			shadows.Dispatch(*backend, capture(), built, liveLights, frame, controls);
 	}
 }
 
