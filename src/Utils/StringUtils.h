@@ -189,4 +189,40 @@ namespace Util
 			a_path.erase(texturePrefix.size(), pbrFolder.size());
 		return a_path;
 	}
+
+	/**
+	 * @brief Glob match of a whole asset path: `?` is one character and `*` any run within a folder, while `**` also crosses `\\`.
+	 * @note Both arguments must already be in ToGameAssetPath form.
+	 */
+	inline bool MatchesAssetGlob(std::string_view a_path, std::string_view a_pattern)
+	{
+		while (!a_pattern.empty()) {
+			if (a_pattern.starts_with("**")) {
+				a_pattern.remove_prefix(2);
+				if (a_pattern.empty())
+					return true;
+				if (a_pattern.front() == '\\' && MatchesAssetGlob(a_path, a_pattern.substr(1)))
+					return true;
+				for (size_t index = 0; index <= a_path.size(); ++index)
+					if (MatchesAssetGlob(a_path.substr(index), a_pattern))
+						return true;
+				return false;
+			}
+			if (a_pattern.front() == '*') {
+				a_pattern.remove_prefix(1);
+				for (size_t index = 0; index <= a_path.size(); ++index) {
+					if (MatchesAssetGlob(a_path.substr(index), a_pattern))
+						return true;
+					if (index < a_path.size() && a_path[index] == '\\')
+						break;
+				}
+				return false;
+			}
+			if (a_path.empty() || (a_pattern.front() == '?' ? a_path.front() == '\\' : a_pattern.front() != a_path.front()))
+				return false;
+			a_pattern.remove_prefix(1);
+			a_path.remove_prefix(1);
+		}
+		return a_path.empty();
+	}
 }

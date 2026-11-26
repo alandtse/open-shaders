@@ -1,7 +1,5 @@
 #include "DetailMaps.h"
 
-#include <DirectXTex.h>
-
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "ShaderCache.h"
@@ -34,12 +32,12 @@ namespace
 	constexpr int32_t NoMatch = -1;
 	constexpr int32_t Excluded = -2;
 	constexpr uint32_t NoSet = std::numeric_limits<uint32_t>::max();
-
-	bool IsFirstPersonPass()
-	{
-		auto* accumulator = *globals::game::currentAccumulator.get();
-		return accumulator && accumulator->GetRuntimeData().renderMode == RE::BSShaderAccumulator::RENDER_MODE::kFirstPersonView;
-	}
+	constexpr float MaxStrength = 4.0f;
+	constexpr float MaxSliderStrength = 2.0f;
+	constexpr float MaxFadeDistance = 8000.0f;
+	constexpr float MaxSliderFadeDistance = 4000.0f;
+	constexpr std::uintmax_t MaxRuleFileBytes = 1024 * 1024;
+	constexpr const char* PackUrl = "https://www.nexusmods.com/skyrimspecialedition/mods/197436";
 
 	bool IsDetailDescriptor(uint32_t a_descriptor, bool a_allowForward)
 	{
@@ -50,10 +48,11 @@ namespace
 		if ((a_descriptor & excluded) != 0 || (!a_allowForward && (a_descriptor & static_cast<uint32_t>(Flags::Deferred)) == 0))
 			return false;
 
-		if ((a_descriptor & static_cast<uint32_t>(Flags::TruePbr)) != 0 && ((a_descriptor >> 24) & 0x3F) != 0)
+		const auto technique = SIE::ShaderCache::GetLightingTechnique(a_descriptor);
+		if ((a_descriptor & static_cast<uint32_t>(Flags::TruePbr)) != 0 && technique != None)
 			return false;
 
-		switch (static_cast<SIE::ShaderCache::LightingShaderTechniques>((a_descriptor >> 24) & 0x3F)) {
+		switch (technique) {
 		case None:
 		case Envmap:
 		case Glowmap:
@@ -68,62 +67,19 @@ namespace
 		}
 	}
 
-	std::string ToLower(std::string_view a_text)
-	{
-		std::string text(a_text);
-		std::ranges::transform(text, text.begin(), [](char a_char) {
-			return a_char == '/' ? '\\' : static_cast<char>(std::tolower(static_cast<unsigned char>(a_char)));
-		});
-		return text;
-	}
-
-	std::string NormalizePath(const char* a_path)
-	{
-		std::string path = ToLower(a_path);
-		if (path.starts_with("data\\"))
-			path.erase(0, 5);
-		if (!path.starts_with("textures\\"))
-			path.insert(0, "textures\\");
-		if (path.starts_with("textures\\pbr\\"))
-			path.erase(9, 4);
-		return path;
-	}
-
-	bool WildcardMatch(std::string_view a_text, std::string_view a_pattern)
-	{
-		while (!a_pattern.empty()) {
-			if (a_pattern.starts_with("**")) {
-				a_pattern.remove_prefix(2);
-				if (a_pattern.empty())
-					return true;
-				if (a_pattern.front() == '\\' && WildcardMatch(a_text, a_pattern.substr(1)))
-					return true;
-				for (size_t index = 0; index <= a_text.size(); ++index)
-					if (WildcardMatch(a_text.substr(index), a_pattern))
-						return true;
-				return false;
-			}
-			if (a_pattern.front() == '*') {
-				a_pattern.remove_prefix(1);
-				for (size_t index = 0; index <= a_text.size(); ++index) {
-					if (WildcardMatch(a_text.substr(index), a_pattern))
-						return true;
-					if (index < a_text.size() && a_text[index] == '\\')
-						break;
-				}
-				return false;
-			}
-			if (a_text.empty() || (a_pattern.front() == '?' ? a_text.front() == '\\' : a_pattern.front() != a_text.front()))
-				return false;
-			a_pattern.remove_prefix(1);
-			a_text.remove_prefix(1);
-		}
-		return a_text.empty();
-	}
-
 	bool MatchesAny(std::string_view a_path, const std::vector<std::string>& a_patterns)
 	{
-		return std::ranges::any_of(a_patterns, [&](const std::string& a_pattern) { return WildcardMatch(a_path, a_pattern); });
+		return std::ranges::any_of(a_patterns, [&](const std::string& a_pattern) { return Util::MatchesAssetGlob(a_path, a_pattern); });
+	}
+
+	std::vector<std::filesystem::path> ListFiles(const std::filesystem::path& a_folder, std::string_view a_extension)
+	{
+		std::error_code error;
+		if (!std::filesystem::is_directory(a_folder, error))
+			return {};
+		auto files = Util::FileHelpers::GetSortedDirectoryPaths(a_folder, false, "Detail Maps content");
+		std::erase_if(files, [&](const auto& a_path) { return !Util::IEquals(Util::PathToUtf8(a_path.extension()), a_extension); });
+		return files;
 	}
 
 	std::vector<std::string> ReadPatterns(const json& a_object, const char* a_key)
@@ -133,11 +89,11 @@ namespace
 		if (it == a_object.end())
 			return patterns;
 		if (it->is_string()) {
-			patterns.push_back(ToLower(it->get<std::string>()));
+			patterns.push_back(Util::ToGameAssetPath(it->get<std::string>()));
 		} else if (it->is_array()) {
 			for (const auto& value : *it)
 				if (value.is_string() && !value.get<std::string>().empty())
-					patterns.push_back(ToLower(value.get<std::string>()));
+					patterns.push_back(Util::ToGameAssetPath(value.get<std::string>()));
 		}
 		return patterns;
 	}
@@ -148,30 +104,17 @@ namespace
 		const float value = it != a_object.end() && it->is_number() ? it->get<float>() : a_default;
 		return Util::ClampFinite(value, a_min, a_max, a_default);
 	}
-
-	std::vector<std::filesystem::path> ListFiles(const std::filesystem::path& a_folder, std::string_view a_extension)
-	{
-		std::vector<std::filesystem::path> files;
-		std::error_code error;
-		std::filesystem::directory_iterator it(a_folder, error);
-		for (const std::filesystem::directory_iterator end; !error && it != end; it.increment(error)) {
-			std::error_code fileError;
-			if (it->is_regular_file(fileError) && ToLower(it->path().extension().string()) == a_extension)
-				files.push_back(it->path());
-		}
-		std::ranges::sort(files);
-		return files;
-	}
 }
 
 void DetailMaps::ClampSettings()
 {
-	settings.Tiling = Util::ClampFinite(settings.Tiling, 0.1f, 8.0f, 1.0f);
-	settings.AlbedoStrength = Util::ClampFinite(settings.AlbedoStrength, 0.0f, 4.0f, 1.0f);
-	settings.NormalStrength = Util::ClampFinite(settings.NormalStrength, 0.0f, 4.0f, 1.0f);
-	settings.RoughnessStrength = Util::ClampFinite(settings.RoughnessStrength, 0.0f, 4.0f, 1.0f);
-	settings.FadeStart = Util::ClampFinite(settings.FadeStart, 0.0f, 8000.0f, 400.0f);
-	settings.FadeEnd = Util::ClampFinite(settings.FadeEnd, settings.FadeStart + 1.0f, 8001.0f, std::max(settings.FadeStart + 1.0f, 1200.0f));
+	const Settings defaults{};
+	settings.Tiling = Util::ClampFinite(settings.Tiling, 0.1f, 8.0f, defaults.Tiling);
+	settings.AlbedoStrength = Util::ClampFinite(settings.AlbedoStrength, 0.0f, MaxStrength, defaults.AlbedoStrength);
+	settings.NormalStrength = Util::ClampFinite(settings.NormalStrength, 0.0f, MaxStrength, defaults.NormalStrength);
+	settings.RoughnessStrength = Util::ClampFinite(settings.RoughnessStrength, 0.0f, MaxStrength, defaults.RoughnessStrength);
+	settings.FadeStart = Util::ClampFinite(settings.FadeStart, 0.0f, MaxFadeDistance, defaults.FadeStart);
+	settings.FadeEnd = Util::ClampFinite(settings.FadeEnd, settings.FadeStart + 1.0f, MaxFadeDistance + 1.0f, std::max(settings.FadeStart + 1.0f, defaults.FadeEnd));
 }
 
 void DetailMaps::RestoreDefaultSettings()
@@ -195,7 +138,7 @@ void DetailMaps::DrawSettings()
 	if (loaded && !HasContent()) {
 		Util::Text::WrappedWarning("%s", T(TKEY("pack_missing"), "No detail sets or rules found. Install Detailed Maps."));
 		if (ImGui::Button(T(TKEY("get_pack"), "Get Detailed Maps")))
-			ShellExecuteA(nullptr, "open", "https://www.nexusmods.com/skyrimspecialedition/mods/197436", nullptr, nullptr, SW_SHOWNORMAL);
+			Util::FileHelpers::OpenWithShell(PackUrl);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextWrapped("%s", T(TKEY("get_pack_tooltip"), "Opens the Nexus page. Install the pack so its Rules and Sets land in Data\\Shaders\\DetailMaps."));
 	}
@@ -208,12 +151,12 @@ void DetailMaps::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("tiling_tooltip"), "How often the detail repeats across a texture. Higher is finer."));
 
-	ImGui::SliderFloat(T(TKEY("albedo_strength"), "Color Strength"), &settings.AlbedoStrength, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	ImGui::SliderFloat(T(TKEY("normal_strength"), "Bump Strength"), &settings.NormalStrength, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	ImGui::SliderFloat(T(TKEY("roughness_strength"), "Roughness Strength"), &settings.RoughnessStrength, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("albedo_strength"), "Color Strength"), &settings.AlbedoStrength, 0.0f, MaxSliderStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("normal_strength"), "Bump Strength"), &settings.NormalStrength, 0.0f, MaxSliderStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("roughness_strength"), "Roughness Strength"), &settings.RoughnessStrength, 0.0f, MaxSliderStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 
-	ImGui::SliderFloat(T(TKEY("fade_start"), "Fade Start"), &settings.FadeStart, 0.0f, 4000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-	ImGui::SliderFloat(T(TKEY("fade_end"), "Fade End"), &settings.FadeEnd, 0.0f, 4000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("fade_start"), "Fade Start"), &settings.FadeStart, 0.0f, MaxSliderFadeDistance, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("fade_end"), "Fade End"), &settings.FadeEnd, 0.0f, MaxSliderFadeDistance, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("fade_tooltip"), "Detail fades out between these distances in game units and is skipped past the end."));
 	ClampSettings();
@@ -236,28 +179,13 @@ void DetailMaps::LoadSets()
 	auto* device = globals::d3d::device;
 	const auto folder = Util::PathHelpers::GetShadersPath() / "DetailMaps" / "Sets";
 	for (const auto& path : ListFiles(folder, ".dds")) {
-		DirectX::ScratchImage image;
-		if (FAILED(DirectX::LoadFromDDSFile(path.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image))) {
+		Set set{ Util::ToLowerAscii(path.stem().string()), nullptr };
+		const auto resourcePath = path.lexically_relative(Util::PathHelpers::GetDataPath()).make_preferred().string();
+		ImVec2 size;
+		if (!Util::LoadDDSTextureFromFile(device, resourcePath.c_str(), set.view.put(), size, std::format("DetailMaps::{}", set.name).c_str())) {
 			ruleErrors.push_back(std::format("{}: {}", path.filename().string(), T(TKEY("set_load_failed"), "could not be loaded")));
 			continue;
 		}
-
-		const auto& metadata = image.GetMetadata();
-		if (metadata.dimension != DirectX::TEX_DIMENSION_TEXTURE2D || metadata.arraySize != 1 || metadata.IsCubemap()) {
-			ruleErrors.push_back(std::format("{}: {}", path.filename().string(), T(TKEY("set_not_2d"), "is not a plain 2D texture")));
-			continue;
-		}
-
-		Set set{ ToLower(path.stem().string()), nullptr };
-		if (FAILED(DirectX::CreateShaderResourceView(device, image.GetImages(), image.GetImageCount(), metadata, set.view.put()))) {
-			ruleErrors.push_back(std::format("{}: {}", path.filename().string(), T(TKEY("set_create_failed"), "could not be created on the GPU")));
-			continue;
-		}
-
-		winrt::com_ptr<ID3D11Resource> resource;
-		set.view->GetResource(resource.put());
-		Util::SetResourceName(resource.get(), "DetailMaps::%s", set.name.c_str());
-		Util::SetResourceName(set.view.get(), "DetailMaps::%s SRV", set.name.c_str());
 		sets.push_back(std::move(set));
 	}
 	logger::info("[Detail Maps] Loaded {} detail sets", sets.size());
@@ -272,18 +200,13 @@ void DetailMaps::LoadRules()
 	const auto files = ListFiles(folder, ".json");
 	for (size_t fileIndex = 0; fileIndex < files.size(); ++fileIndex) {
 		const auto fileName = files[fileIndex].filename().string();
-		json data;
-		try {
-			std::ifstream stream(files[fileIndex]);
-			data = json::parse(stream, nullptr, true, true);
-		} catch (const std::exception& e) {
-			ruleErrors.push_back(std::format("{}: {}", fileName, e.what()));
+		std::string error;
+		const auto document = Util::FileHelpers::ReadJsonObject(files[fileIndex], "Detail Maps rules", MaxRuleFileBytes, &error, true);
+		if (!document) {
+			ruleErrors.push_back(std::format("{}: {}", fileName, error.empty() ? T(TKEY("set_load_failed"), "could not be loaded") : error));
 			continue;
 		}
-		if (!data.is_object()) {
-			ruleErrors.push_back(std::format("{}: {}", fileName, T(TKEY("rules_not_object"), "expected a JSON object")));
-			continue;
-		}
+		const json& data = *document;
 
 		for (auto& pattern : ReadPatterns(data, "exclude"))
 			excludes.push_back(std::move(pattern));
@@ -300,7 +223,7 @@ void DetailMaps::LoadRules()
 			rule.file = fileIndex;
 			rule.match = ReadPatterns(item, "match");
 			rule.exclude = ReadPatterns(item, "exclude");
-			const auto setName = item.contains("set") && item["set"].is_string() ? ToLower(item["set"].get<std::string>()) : std::string();
+			const auto setName = item.contains("set") && item["set"].is_string() ? Util::ToLowerAscii(item["set"].get<std::string>()) : std::string();
 			const auto set = std::ranges::find(sets, setName, &Set::name);
 			if (rule.match.empty() || (set == sets.end() && setName != "none")) {
 				ruleErrors.push_back(std::format("{}: {} \"{}\"", fileName, T(TKEY("rule_skipped"), "skipped a rule without patterns or with an unknown set"), setName));
@@ -308,10 +231,10 @@ void DetailMaps::LoadRules()
 			}
 
 			rule.set = set == sets.end() ? NoSet : static_cast<uint32_t>(std::distance(sets.begin(), set));
-			rule.scale = ReadNumber(item, "scale", 4.0f, 0.01f, 256.0f);
-			rule.albedo = ReadNumber(item, "albedo", 1.0f, 0.0f, 4.0f);
-			rule.normal = ReadNumber(item, "normal", 1.0f, 0.0f, 4.0f);
-			rule.roughness = ReadNumber(item, "roughness", 1.0f, 0.0f, 4.0f);
+			rule.scale = ReadNumber(item, "scale", rule.scale, 0.01f, 256.0f);
+			rule.albedo = ReadNumber(item, "albedo", rule.albedo, 0.0f, MaxStrength);
+			rule.normal = ReadNumber(item, "normal", rule.normal, 0.0f, MaxStrength);
+			rule.roughness = ReadNumber(item, "roughness", rule.roughness, 0.0f, MaxStrength);
 			rule.transpose = item.contains("transpose") && item["transpose"].is_boolean() && item["transpose"].get<bool>();
 			rule.priority = static_cast<int>(ReadNumber(item, "priority", 0.0f, -1000.0f, 1000.0f));
 			rules.push_back(std::move(rule));
@@ -330,6 +253,11 @@ void DetailMaps::Reload()
 	LoadSets();
 	LoadRules();
 	entries.clear();
+	ForgetLastRule();
+}
+
+void DetailMaps::ForgetLastRule()
+{
 	lastDiffuse = nullptr;
 	lastSet = nullptr;
 	lastRule = NoMatch;
@@ -340,7 +268,7 @@ int32_t DetailMaps::MatchRule(const char* a_path) const
 	if (!a_path || !*a_path)
 		return NoMatch;
 
-	const auto path = NormalizePath(a_path);
+	const auto path = Util::StripPbrTextureFolder(Util::NormalizeTexturePath(a_path));
 	if (MatchesAny(path, excludes))
 		return Excluded;
 
@@ -388,7 +316,7 @@ bool DetailMaps::ShouldPrecompile(uint32_t a_descriptor) const
 
 bool DetailMaps::IsEligible(uint32_t a_descriptor) const
 {
-	return loaded && settings.Enabled && HasContent() && IsDetailDescriptor(a_descriptor, IsFirstPersonPass());
+	return loaded && settings.Enabled && HasContent() && IsDetailDescriptor(a_descriptor, Util::IsFirstPersonPass());
 }
 
 void DetailMaps::GenerateShaderPermutations(RE::BSShader* a_shader)
@@ -436,8 +364,7 @@ void DetailMaps::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
 		return;
 
 	auto* geometry = a_pass->geometry;
-	const float distance = IsFirstPersonPass() ? 0.0f : std::max(0.0f, geometry->worldBound.center.GetDistance(Util::GetEyePosition(0)) - geometry->worldBound.radius);
-	if (distance >= settings.FadeEnd)
+	if (Util::GetPassDistance(*geometry) >= settings.FadeEnd)
 		return;
 
 	const int32_t ruleIndex = FindRule(a_pass);
@@ -487,9 +414,7 @@ void DetailMaps::Prepass()
 void DetailMaps::Reset()
 {
 	EndPass();
-	lastDiffuse = nullptr;
-	lastSet = nullptr;
-	lastRule = NoMatch;
+	ForgetLastRule();
 	if (!entries.empty() && globals::state->IsMainOrLoadingMenuOpen())
 		entries.clear();
 }

@@ -84,6 +84,7 @@ private:
 	bool ShouldPrecompile(uint32_t a_descriptor) const;
 	bool IsEligible(uint32_t a_descriptor) const;
 	void Reload();
+	void ForgetLastRule();
 	void LoadSets();
 	void LoadRules();
 	int32_t FindRule(RE::BSRenderPass* a_pass);
