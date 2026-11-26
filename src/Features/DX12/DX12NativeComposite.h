@@ -63,7 +63,6 @@ namespace DX12Native
 			SharedFence fence;
 			std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 			GraphicsBackend backend;
-			winrt::com_ptr<ID3D11Texture2D> source;
 			D3D11_TEXTURE2D_DESC sourceDesc{};
 			bool supportsShadow = false, hasReturn = false, untracked = false;
 			uint64_t frameBytes = 0;

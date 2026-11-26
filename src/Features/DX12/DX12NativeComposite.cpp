@@ -229,7 +229,6 @@ namespace DX12Native
 			// without registering a fence that could be abandoned on failure.
 			slot->shadowInput = applyShadow ? shadow : nullptr;
 			slot->rasterInput = applyShadow ? raster : nullptr;
-			slot->source.copy_from(source);
 			slot->frame->valid = false;
 			slot->frame->producerFence = nullptr;
 			slot->frame->producerValue = 0;
