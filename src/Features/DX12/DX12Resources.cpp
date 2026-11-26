@@ -580,7 +580,7 @@ DX12Resources::~DX12Resources() = default;
 
 void DX12Resources::ResetPreparation()
 {
-	if (!preparationActive)
+	if (!preparationActive && !startupPending)
 		return;
 	// A new subcell size or world-scene epoch invalidates the grid and all
 	// companion work. Keep this off the normal settings-load path when unchanged.
@@ -635,6 +635,8 @@ void DX12Resources::DrawSettings()
 			RefreshPreparationSettings();
 		}
 	}
+	if (ImGui::Checkbox(T("menu.dx12.resources.consolidate_interior", "Consolidate small interior cells"), &ActiveSettings().ConsolidateInterior))
+		RefreshPreparationSettings();
 }
 
 void DX12Resources::DrawDevSettings()
@@ -763,6 +765,7 @@ void DX12Resources::RefreshPreparationSettings()
 	const auto& selected = ActiveSettings();
 	if (selected.SubcellSize != appliedSettings.SubcellSize || selected.ConsolidateInterior != appliedSettings.ConsolidateInterior) {
 		ResetPreparation();
+		globals::features::dx12NativeScene.OnSceneTransitionReset(true);
 	}
 	appliedSettings = selected;
 }
@@ -794,7 +797,7 @@ void DX12Resources::EnsureCompanion(bool menuStartup)
 		companion = std::make_unique<DX12::CompanionWorker>();
 		if (menuStartup) {
 			DX12::CompanionRequest task;
-			task.preloadLastSave = appliedSettings.PreloadLastSave;
+			task.preloadLastSave = appliedSettings.PreloadLastSave && appliedSettings.ConsolidateInterior;
 			task.warmup = !task.preloadLastSave;
 			task.size = appliedSettings.SubcellSize;
 			startupPending = companion->Enqueue(std::move(task));
