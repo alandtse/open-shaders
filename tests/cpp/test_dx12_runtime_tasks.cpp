@@ -1,6 +1,6 @@
 #include "Features/DX12/DX12FenceRetirementPolicy.h"
 #include "Features/DX12/SpatialGrid.h"
-#include "Features/DX12/FullShadowLightBake.h"
+#include "Features/DX12/FullShadowLightConsolidation.h"
 #include "Features/DX12/TilePreparationPolicy.h"
 #include "../../package/Shaders/Common/NativeShadowRT.hlsli"
 #include "Utils/RuntimeTaskGate.h"
@@ -290,66 +290,4 @@ TEST_CASE("Full RT restores the established game-unit defaults", "[dx12][shadow]
 	CHECK(kDefaultPreparedExclusionRadius == 256);
 	CHECK(kFullShadowRadiusMax == 512);
 	CHECK(kFullShadowRadiusStep == 4);
-}
-
-TEST_CASE("Full RT bake freezes only after two completed runs", "[dx12][shadow]")
-{
-	using namespace DX12Native;
-	using Light = ConsolidationLight;
-	FullShadowLightBake<Light> bake;
-	const std::vector<Light> prepared{ { .referenceID = 1, .position = { 0, 0, 0 } } };
-	std::vector<Light> runtime{
-		{ .referenceID = 7, .position = { 30, 0, 0 }, .runtimeIdentity = 1 },
-		{ .referenceID = 8, .position = { 500, 0, 0 }, .runtimeIdentity = 2 },
-		{ .referenceID = 8, .position = { 510, 0, 0 }, .runtimeIdentity = 3 },
-		{ .referenceID = 9, .position = { 900, 0, 0 }, .runtimeIdentity = 4 }
-	};
-	for (uint32_t i = 0; i < kLightBakeSamples; ++i) {
-		runtime.back().position.x += 1;
-		bake.Observe(prepared, runtime, 128, 256, true, true);
-		CHECK(bake.CompletedRuns() == (i + 1) / kLightBakeSamplesPerRun);
-		CHECK(bake.Complete() == (i + 1 == kLightBakeSamples));
-	}
-	const auto result = bake.Observe(prepared, {}, 0, 0, false, false);
-	REQUIRE(result->size() == 2);
-	CHECK((*result)[0].color.x == 2);
-	CHECK((*result)[1].unifiedCount == 2);
-	CHECK((*result)[1].color.x == 2);
-	CHECK((*result)[1].position.x == 505);
-	CHECK(bake.Observe({}, {}, 0, 0, false, false) == result);
-}
-
-TEST_CASE("Full RT bake does not count incomplete or changed preparation", "[dx12][shadow]")
-{
-	using namespace DX12Native;
-	using Light = ConsolidationLight;
-	FullShadowLightBake<Light> bake;
-	std::vector<Light> prepared{ { .referenceID = 1 } };
-	for (uint32_t i = 0; i < kLightBakeSamples; ++i)
-		bake.Observe(prepared, {}, 128, 256, true, false);
-	CHECK_FALSE(bake.Complete());
-	CHECK(bake.CompletedRuns() == 0);
-	for (uint32_t i = 0; i < kLightBakeSamplesPerRun; ++i)
-		bake.Observe(prepared, {}, 128, 256, true, true);
-	CHECK(bake.CompletedRuns() == 1);
-	prepared[0].radius += 1;
-	bake.Observe(prepared, {}, 128, 256, true, true);
-	CHECK(bake.CompletedRuns() == 0);
-	CHECK_FALSE(bake.Complete());
-}
-
-TEST_CASE("Unstable prepared compounding falls back to prepared metadata", "[dx12][shadow]")
-{
-	using namespace DX12Native;
-	using Light = ConsolidationLight;
-	FullShadowLightBake<Light> bake;
-	const std::vector<Light> prepared{ { .referenceID = 1 } };
-	std::vector<Light> runtime{ { .referenceID = 2, .position = { 10, 0, 0 }, .runtimeIdentity = 7 } };
-	for (uint32_t i = 0; i < kLightBakeSamples; ++i) {
-		runtime[0].fade += 1;
-		bake.Observe(prepared, runtime, 128, 256, true, true);
-	}
-	const auto result = bake.Observe({}, {}, 0, 0, false, false);
-	REQUIRE(result->size() == 1);
-	CHECK(SamePreparedShadowLight(result->front(), prepared.front()));
 }

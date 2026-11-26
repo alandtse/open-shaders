@@ -249,35 +249,29 @@ namespace DX12Native
 			};
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
 
-			// Immutable baked records need one upload per reusable GPU slot, not
-			// another per-light packing/comparison loop on every rendered frame.
-			if (!controls.bakedInventory || !slot->lightRecordsUploaded ||
-				slot->uploadedBake.lock() != controls.bakedInventory) {
-				auto& records = slot->lightRecords;
-				const size_t recordCount = size_t(lightCount) * kRecords;
-				bool changed = !slot->lightRecordsUploaded || records.size() != recordCount;
-				slot->lightRecordsUploaded = false;
-				records.resize(recordCount);
-				for (size_t i = 0; i < lightCount; ++i) {
-					const auto& light = lights[i];
-					const float strength = std::max(light.color.x, 0.0f) * 0.2126f +
-					                       std::max(light.color.y, 0.0f) * 0.7152f +
-					                       std::max(light.color.z, 0.0f) * 0.0722f;
-					const std::array<std::array<float, 4>, kRecords> packed{{
-						{ light.position.x, light.position.y, light.position.z, light.radius },
-						{ strength * std::max(light.fade, 0.0f), light.emitterRadius * light.emitterRadius, std::max(light.emitterRadius, 0.0f), std::bit_cast<float>(light.referenceID) }
-					}};
-					auto* destination = records.data() + i * kRecords;
-					if (std::memcmp(destination, packed.data(), sizeof(packed)) != 0) {
-						std::memcpy(destination, packed.data(), sizeof(packed));
-						changed = true;
-					}
+			auto& records = slot->lightRecords;
+			const size_t recordCount = size_t(lightCount) * kRecords;
+			bool changed = !slot->lightRecordsUploaded || records.size() != recordCount;
+			slot->lightRecordsUploaded = false;
+			records.resize(recordCount);
+			for (size_t i = 0; i < lightCount; ++i) {
+				const auto& light = lights[i];
+				const float strength = std::max(light.color.x, 0.0f) * 0.2126f +
+				                       std::max(light.color.y, 0.0f) * 0.7152f +
+				                       std::max(light.color.z, 0.0f) * 0.0722f;
+				const std::array<std::array<float, 4>, kRecords> packed{{
+					{ light.position.x, light.position.y, light.position.z, light.radius },
+					{ strength * std::max(light.fade, 0.0f), light.emitterRadius * light.emitterRadius, std::max(light.emitterRadius, 0.0f), std::bit_cast<float>(light.referenceID) }
+				}};
+				auto* destination = records.data() + i * kRecords;
+				if (std::memcmp(destination, packed.data(), sizeof(packed)) != 0) {
+					std::memcpy(destination, packed.data(), sizeof(packed));
+					changed = true;
 				}
-				if (changed)
-					WriteUpload(slot->lightUpload.get(), records.data(), records.size() * sizeof(records.front()));
-				slot->lightRecordsUploaded = true;
-				slot->uploadedBake = controls.bakedInventory;
 			}
+			if (changed)
+				WriteUpload(slot->lightUpload.get(), records.data(), records.size() * sizeof(records.front()));
+			slot->lightRecordsUploaded = true;
 			slot->debugLights.clear();
 			slot->debugPreparedCount = 0;
 			if (controls.captureDebugLights) {

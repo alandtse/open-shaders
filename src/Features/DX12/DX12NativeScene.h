@@ -6,7 +6,7 @@
 #include "DX12NativeShadowTrace.h"
 #include "../OverlayFeature.h"
 #include "SCMNativePolicy.h"
-#include "FullShadowLightBake.h"
+#include "FullShadowLightConsolidation.h"
 
 #include <atomic>
 #include <memory>
@@ -91,7 +91,7 @@ private:
 	std::atomic<uint32_t> runtimeUnificationRadius{ DX12Native::kDefaultRuntimeUnificationRadius };
 	std::atomic<uint32_t> preparedExclusionRadius{ DX12Native::kDefaultPreparedExclusionRadius };
 	std::atomic<bool> additivePreparedEmission{ true };
-	std::shared_ptr<const std::vector<DX12::PreparedLight>> CollectFullRTLights(const std::shared_ptr<const std::vector<DX12::PreparedLight>>& publication, uint32_t frame, bool& baked, uint32_t& preparedCount);
+	std::shared_ptr<const std::vector<DX12::PreparedLight>> CollectFullRTLights(const std::shared_ptr<const std::vector<DX12::PreparedLight>>& publication);
 	void ResetFullLightInventory();
 	struct RuntimeLightSample
 	{
@@ -102,18 +102,21 @@ private:
 	mutable std::mutex runtimeLightMutex;
 	uint32_t runtimeLightFrame = UINT32_MAX;
 	std::vector<RuntimeLightSample> runtimeLightSamples;
-	// Each cell visit owns a distinct worker state. In-flight jobs never retain
-	// this feature or engine light pointers and cannot publish into a new visit.
-	struct FullLightBakeState
+	// Full-shadow membership is independent of SCM selection. Keep emitter identity alive
+	// only while the source belongs to the active world light lists.
+	struct FullRuntimeLight
 	{
-		DX12Native::FullShadowLightBake<DX12::PreparedLight> analysis;
-		std::shared_ptr<const std::vector<DX12::PreparedLight>> published;
-		uint32_t preparedCount = 0;
-		std::atomic<bool> busy{ false };
+		RE::NiPointer<RE::NiLight> source;
+		DX12::PreparedLight value;
+		uint32_t placedReference = 0;
+		uint64_t seen = 0;
+		bool supported = false, sampled = false, active = false;
 	};
-	std::shared_ptr<FullLightBakeState> fullLightBake;
-	std::shared_ptr<const std::vector<DX12::PreparedLight>> fullLastPublication;
-	uint32_t fullBakeCell = 0, fullRuntimeScope = 0;
-	uint32_t fullLastSampleFrame = 0, fullLastPreparedCount = 0;
-	bool fullSampleScheduled = false;
+	std::unordered_map<const RE::NiLight*, FullRuntimeLight> fullRuntimeLights;
+	std::shared_ptr<const std::vector<DX12::PreparedLight>> fullPreparedSnapshot;
+	std::shared_ptr<const std::vector<DX12::PreparedLight>> fullConsolidatedLights;
+	uint32_t fullCachedUnificationRadius = 0, fullCachedExclusionRadius = 0;
+	bool fullCachedAdditiveEmission = false;
+	uint32_t fullRuntimeScope = 0;
+	uint64_t fullLightVisit = 0;
 };

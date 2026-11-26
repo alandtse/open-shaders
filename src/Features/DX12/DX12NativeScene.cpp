@@ -9,8 +9,6 @@
 #include "RE/M/MainMenu.h"
 #include "RE/U/UI.h"
 #include "State.h"
-#include "ShaderCache.h"
-#include "Utils/TracyZones.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
 #include "Utils/PointLightFlags.h"
@@ -133,6 +131,8 @@ void DX12NativeScene::LoadSettings(json& input)
 	runtimeUnificationRadius.store(DX12Native::SanitizeFullShadowRadius(unify), std::memory_order_relaxed);
 	preparedExclusionRadius.store(DX12Native::SanitizeFullShadowRadius(exclude), std::memory_order_relaxed);
 	additivePreparedEmission.store(profile.value("AdditivePreparedEmission", true), std::memory_order_relaxed);
+	std::scoped_lock lock(runtimeLightMutex);
+	ResetFullLightInventory();
 }
 
 void DX12NativeScene::SaveSettings(json& output)
@@ -156,6 +156,8 @@ void DX12NativeScene::RestoreDefaultSettings()
 	runtimeUnificationRadius.store(DX12Native::kDefaultRuntimeUnificationRadius, std::memory_order_relaxed);
 	preparedExclusionRadius.store(DX12Native::kDefaultPreparedExclusionRadius, std::memory_order_relaxed);
 	additivePreparedEmission.store(true, std::memory_order_relaxed);
+	std::scoped_lock lock(runtimeLightMutex);
+	ResetFullLightInventory();
 }
 
 bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
@@ -321,6 +323,7 @@ void DX12NativeScene::PreShadowMaps()
 		const auto previous = frameNativeMode.exchange(mode, std::memory_order_acq_rel);
 		if (previous != mode) {
 			std::scoped_lock lock(runtimeLightMutex);
+			ResetFullLightInventory();
 			runtimeLightFrame = UINT32_MAX;
 			runtimeLightSamples.clear();
 		}
@@ -337,24 +340,9 @@ void DX12NativeScene::PreShadowMaps()
 	shadowLightScope.store(grid->requested.front().scope, std::memory_order_release);
 	// SCM reads a single per-frame publication without re-enumerating tiles
 	// for every shadow light; the same ordered sources feed RayQuery.
-	bool frozen = false;
-	{
-		const auto* cell = Util::GetPlayerCell();
-		const uint32_t cellID = cell ? cell->GetFormID() : 0;
-		std::scoped_lock lock(runtimeLightMutex);
-		if (fullBakeCell != cellID || fullRuntimeScope != grid->requested.front().scope) {
-			ResetFullLightInventory();
-			fullBakeCell = cellID;
-			fullRuntimeScope = grid->requested.front().scope;
-		}
-		frozen = GetFrameNativeMode() == DX12::SCMNativeMode::FullRT &&
-		         fullLightBake && !fullLightBake->busy.load(std::memory_order_acquire) &&
-		         fullLightBake->analysis.Complete();
-	}
-	if (!frozen)
-		shadowLights.store(std::make_shared<const std::vector<DX12::PreparedLight>>(
-							   globals::features::dx12Resources.GetPreparedLights()),
-			std::memory_order_release);
+	shadowLights.store(std::make_shared<const std::vector<DX12::PreparedLight>>(
+						   globals::features::dx12Resources.GetPreparedLights()),
+		std::memory_order_release);
 	// Only a revision-coalesced mailbox handoff on this thread. All BLAS/TLAS
 	// allocations and command recording run as bounded shared-pool tasks.
 	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
@@ -404,151 +392,105 @@ namespace
 
 void DX12NativeScene::ResetFullLightInventory()
 {
-	// Abandon the previous visit. A running task only owns its detached state.
-	fullLightBake.reset();
-	fullLastPublication.reset();
-	fullBakeCell = 0;
+	fullRuntimeLights.clear();
+	fullPreparedSnapshot.reset();
+	fullConsolidatedLights.reset();
 	fullRuntimeScope = 0;
-	fullLastSampleFrame = 0;
-	fullLastPreparedCount = 0;
-	fullSampleScheduled = false;
+	fullLightVisit = 0;
 }
 
-std::shared_ptr<const std::vector<DX12::PreparedLight>> DX12NativeScene::CollectFullRTLights(
-	const std::shared_ptr<const std::vector<DX12::PreparedLight>>& publication, uint32_t frame, bool& baked, uint32_t& preparedCount)
+std::shared_ptr<const std::vector<DX12::PreparedLight>> DX12NativeScene::CollectFullRTLights(const std::shared_ptr<const std::vector<DX12::PreparedLight>>& publication)
 {
-	ZoneScopedN("DX12::FullRT::LightBake");
+	const auto prepared = publication ? std::span<const DX12::PreparedLight>(*publication) : std::span<const DX12::PreparedLight>{};
 	std::scoped_lock lock(runtimeLightMutex);
-	baked = false;
-	preparedCount = uint32_t(std::min(publication->size(), size_t{ DX12Native::kMaxShadowLights }));
-	if (!fullBakeCell || !fullRuntimeScope)
-		return publication;
-	if (!fullLightBake)
-		fullLightBake = std::make_shared<FullLightBakeState>();
-	const auto state = fullLightBake;
-	// Acquire the previous immutable result only after its worker has completed.
-	if (state->busy.load(std::memory_order_acquire)) {
-		if (fullLastPublication)
-			preparedCount = fullLastPreparedCount;
-		return fullLastPublication ? fullLastPublication : publication;
+	const uint32_t scope = shadowLightScope.load(std::memory_order_acquire);
+	if (fullRuntimeScope != scope) {
+		ResetFullLightInventory();
+		fullRuntimeScope = scope;
 	}
-	if (state->published) {
-		fullLastPublication = state->published;
-		fullLastPreparedCount = state->preparedCount;
-		preparedCount = fullLastPreparedCount;
-	}
-	if (state->analysis.Complete()) {
-		baked = true;
-		return state->published;
-	}
-	const auto previous = state->published ? state->published : publication;
-	if (fullSampleScheduled && uint32_t(frame - fullLastSampleFrame) < DX12Native::kLightBakeSampleIntervalFrames)
-		return previous;
-	const auto gate = globals::shaderCache ? globals::shaderCache->GetRuntimeTaskGate() : nullptr;
-	const auto node = globals::game::smState ? globals::game::smState->shadowSceneNode[0] : nullptr;
-	if (!gate || !node)
-		return previous;
-	const auto grid = globals::features::dx12Resources.GetGrid();
-	if (!grid || grid->requested.front().scope != fullRuntimeScope)
-		return previous;
-	// A full run counts only after the active and predictive companion
-	// inventories have finished (including terminal partial/failed tiles).
-	const auto terminal = [](const auto& keys, const auto& tiles) {
-		for (size_t i = 0; i < keys.size(); ++i) {
-			if (!keys[i].scope)
-				continue;
-			if (!tiles[i] || tiles[i]->key != keys[i])
-				return false;
-			switch (tiles[i]->state) {
-			case DX12::Tile::State::Ready:
-			case DX12::Tile::State::ReadyPartial:
-			case DX12::Tile::State::Empty:
-			case DX12::Tile::State::EmptyPartial:
-			case DX12::Tile::State::Incomplete:
-				break;
-			default:
-				return false;
-			}
-		}
-		return true;
-	};
-	const bool settled = terminal(grid->requested, grid->resident) &&
-	                     terminal(grid->predictive, grid->predictiveResident);
+	const uint32_t unify = runtimeUnificationRadius.load(std::memory_order_relaxed);
+	const uint32_t exclude = preparedExclusionRadius.load(std::memory_order_relaxed);
+	const bool additive = additivePreparedEmission.load(std::memory_order_relaxed);
+	const auto previousPrepared = fullPreparedSnapshot ? std::span<const DX12::PreparedLight>(*fullPreparedSnapshot) : std::span<const DX12::PreparedLight>{};
+	const bool preparedChanged = publication != fullPreparedSnapshot &&
+		(prepared.size() != previousPrepared.size() || !std::equal(prepared.begin(), prepared.end(), previousPrepared.begin(),
+			DX12Native::SamePreparedShadowLight<DX12::PreparedLight>));
+	bool dirty = !fullConsolidatedLights || preparedChanged || unify != fullCachedUnificationRadius || exclude != fullCachedExclusionRadius || additive != fullCachedAdditiveEmission;
+	fullPreparedSnapshot = publication;
 
-	// Engine lists are render-thread owned. Capture only value records here;
-	// all spatial analysis and emission compounding happen in the DX12 task.
-	std::unordered_set<uint32_t> preparedIDs;
-	for (const auto& light : *publication)
-		if (light.referenceID)
-			preparedIDs.insert(light.referenceID);
-	std::unordered_set<const RE::NiLight*> seen;
-	std::vector<DX12::PreparedLight> runtime;
+	const auto node = globals::game::smState ? globals::game::smState->shadowSceneNode[0] : nullptr;
+	const uint64_t visit = ++fullLightVisit;
 	const auto collect = [&](RE::BSLight* light) {
 		if (!light || !light->pointLight || !light->light)
 			return;
 		auto* ni = light->light.get();
-		if (!seen.insert(ni).second || ni->GetFlags().any(RE::NiAVObject::Flag::kHidden))
+		auto [it, inserted] = fullRuntimeLights.try_emplace(ni);
+		auto& cached = it->second;
+		if (cached.seen == visit)
 			return;
-		const auto flags = PointLightFlags::GetVanillaPointLightFlags(light, ni);
-		if (flags & PointLightFlags::ToMask(PointLightFlags::Flags::Spot))
-			return;
-		uint32_t owner = 0, placed = 0;
-		ReadFullLightOwner(ni, owner, placed);
-		if (placed && preparedIDs.contains(placed))
-			return;
-		const auto& rt = ni->GetLightRuntimeData();
-		const auto& position = ni->world.translate;
-		if (!std::isfinite(rt.radius.x) || rt.radius.x <= 0.0f ||
-			!std::isfinite(rt.fade) || rt.fade <= 0.0f ||
-			!std::isfinite(rt.diffuse.red) || !std::isfinite(rt.diffuse.green) || !std::isfinite(rt.diffuse.blue) ||
-			!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))
-			return;
-		DX12::PreparedLight value{};
-		value.referenceID = owner;
-		value.runtimeIdentity = reinterpret_cast<std::uintptr_t>(ni);
-		value.position = float3{ position.x, position.y, position.z };
-		value.radius = rt.radius.x;
-		value.color = float3{ rt.diffuse.red, rt.diffuse.green, rt.diffuse.blue };
-		value.fade = rt.fade;
-		ReadFullLightRestPosition(ni, placed, value.position);
-		runtime.push_back(value);
-	};
-	const auto& scene = node->GetRuntimeData();
-	for (const auto& light : scene.activeLights)
-		collect(light.get());
-	for (const auto& light : scene.activeShadowLights)
-		collect(light.get());
-
-	const uint32_t unify = runtimeUnificationRadius.load(std::memory_order_relaxed);
-	const uint32_t exclude = preparedExclusionRadius.load(std::memory_order_relaxed);
-	const bool additive = additivePreparedEmission.load(std::memory_order_relaxed);
-	state->busy.store(true, std::memory_order_release);
-	const bool accepted = gate->TrySubmit([state, publication, runtime = std::move(runtime), unify, exclude, additive, settled] {
-		ZoneScopedN("DX12::FullRT::BakeTask");
-		try {
-			const auto previousRuns = state->analysis.CompletedRuns();
-			state->published = state->analysis.Observe(*publication, runtime, unify, exclude, additive, settled);
-			state->preparedCount = uint32_t(std::min(publication->size(), size_t{ DX12Native::kMaxShadowLights }));
-			const auto completedRuns = state->analysis.CompletedRuns();
-			if (completedRuns > previousRuns)
-				logger::info("[DX12NativeScene] Full RT light bake observation run {}/{} complete", completedRuns, DX12Native::kLightBakeRuns);
-			if (state->analysis.Complete())
-				logger::info("[DX12NativeScene] Full RT light bake complete: {} immutable emitters", state->published->size());
-		} catch (const std::exception& error) {
-			state->analysis = {};
-			logger::warn("[DX12NativeScene] Full RT light bake failed: {}", error.what());
-		} catch (...) {
-			state->analysis = {};
-			logger::warn("[DX12NativeScene] Full RT light bake failed");
+		cached.seen = visit;
+		if (inserted) {
+			cached.source = light->light;
+			const auto flags = PointLightFlags::GetVanillaPointLightFlags(light, ni);
+			cached.supported = !(flags & PointLightFlags::ToMask(PointLightFlags::Flags::Spot));
+			cached.value.runtimeIdentity = reinterpret_cast<std::uintptr_t>(ni);
+			ReadFullLightOwner(ni, cached.value.referenceID, cached.placedReference);
 		}
-		state->busy.store(false, std::memory_order_release);
+		if (!cached.supported)
+			return;
+		const bool visible = !ni->GetFlags().any(RE::NiAVObject::Flag::kHidden);
+		if (visible && !cached.sampled) {
+			const auto& rt = ni->GetLightRuntimeData();
+			const auto& position = ni->world.translate;
+			cached.sampled = std::isfinite(rt.radius.x) && rt.radius.x > 0.0f &&
+				std::isfinite(rt.fade) && rt.fade > 0.0f &&
+				std::isfinite(rt.diffuse.red) && std::isfinite(rt.diffuse.green) && std::isfinite(rt.diffuse.blue) &&
+				std::isfinite(position.x) && std::isfinite(position.y) && std::isfinite(position.z);
+			if (cached.sampled) {
+				auto& value = cached.value;
+				value.position = float3{ position.x, position.y, position.z };
+				value.radius = rt.radius.x;
+				value.color = float3{ rt.diffuse.red, rt.diffuse.green, rt.diffuse.blue };
+				value.fade = rt.fade;
+				ReadFullLightRestPosition(ni, cached.placedReference, value.position);
+			}
+		}
+		const bool active = visible && cached.sampled;
+		dirty |= cached.active != active;
+		cached.active = active;
+	};
+	if (node) {
+		const auto& scene = node->GetRuntimeData();
+		for (const auto& light : scene.activeLights)
+			collect(light.get());
+		for (const auto& light : scene.activeShadowLights)
+			collect(light.get());
+	}
+	std::erase_if(fullRuntimeLights, [&](const auto& entry) {
+		if (entry.second.seen == visit)
+			return false;
+		dirty |= entry.second.active;
+		return true;
 	});
-	if (!accepted)
-		state->busy.store(false, std::memory_order_release);
-	// Throttle admission retries too. A denied task never counts as a run.
-	fullLastSampleFrame = frame;
-	fullSampleScheduled = true;
-	return previous;
+	if (!dirty)
+		return fullConsolidatedLights;
+
+	std::unordered_set<uint32_t> preparedIDs;
+	for (const auto& light : prepared)
+		if (light.referenceID)
+			preparedIDs.insert(light.referenceID);
+	std::vector<DX12::PreparedLight> runtime;
+	runtime.reserve(fullRuntimeLights.size());
+	for (const auto& [identity, cached] : fullRuntimeLights) {
+		if (cached.active && (!cached.placedReference || !preparedIDs.contains(cached.placedReference)))
+			runtime.push_back(cached.value);
+	}
+	fullConsolidatedLights = std::make_shared<const std::vector<DX12::PreparedLight>>(
+		DX12Native::ConsolidateFullShadowLights<DX12::PreparedLight>(prepared, runtime, unify, exclude, additive));
+	fullCachedUnificationRadius = unify;
+	fullCachedExclusionRadius = exclude;
+	fullCachedAdditiveEmission = additive;
+	return fullConsolidatedLights;
 }
 
 void DX12NativeScene::OnOpaqueRasterReady()
@@ -582,10 +524,8 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	// Iterate the immutable prepared selection to preserve its deterministic order.
 	std::vector<DX12::PreparedLight> liveLights;
 	std::shared_ptr<const std::vector<DX12::PreparedLight>> fullInventory;
-	bool bakedInventory = false;
-	uint32_t preparedCount = 0;
 	if (fullRT) {
-		fullInventory = CollectFullRTLights(lights, frame, bakedInventory, preparedCount);
+		fullInventory = CollectFullRTLights(lights);
 	} else {
 		std::scoped_lock lock(runtimeLightMutex);
 		if (runtimeLightFrame != frame || runtimeLightSamples.empty())
@@ -627,8 +567,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 		.viewportHeight = viewportHeight,
 		.quality = fullRT ? fullRTQuality : DX12Native::kShadowQualityOffloading,
 		.captureDebugLights = WantsLightPreview(mode),
-		.debugPreparedCount = preparedCount,
-		.bakedInventory = bakedInventory ? fullInventory : nullptr
+		.debugPreparedCount = fullRT ? uint32_t(std::min(lights->size(), size_t{ DX12Native::kMaxShadowLights })) : 0u
 	};
 	shadows.Dispatch(*backend, raster.Get(frame), built, submittedLights, frame, controls);
 }
