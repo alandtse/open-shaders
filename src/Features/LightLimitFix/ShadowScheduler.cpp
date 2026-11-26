@@ -147,15 +147,8 @@ namespace ShadowCasterManager
 		return TolerantSplit() && GetFlickerMode() == static_cast<int>(FlickerShadowModeEnum::Pinned);
 	}
 
-	/// True for a light whose flicker moves it while its shadow is drawn from the live flame (Live and Warped): the flame leaves any
-	/// bake's pose every frame, so a cached bake would show the shadow from where the flame was.
-	static bool FlickersFromLiveOrigin(RE::NiLight* ni)
-	{
-		return ni && !ShadowsFromRest() && FlickerMovementAmplitude(ni) > 0.0f;
-	}
-
 	/// Where a light's shadow is drawn from: the rest position in the pinned flicker mode, so a fixture's shadow holds still while
-	/// the light flickers; the live position otherwise, so the warped and live modes keep the shadow dancing with the flame.
+	/// the light flickers; the live position otherwise, which the warped mode reprojects the cached shadow to.
 	static RE::NiPoint3 ShadowOrigin(RE::NiLight* ni)
 	{
 		return ShadowsFromRest() ? RestOrigin(ni) : ni->world.translate;
@@ -1288,8 +1281,8 @@ namespace ShadowCasterManager
 		// casters (RAII-cleared after); pick this accumulate's filter mode
 		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
-			// A carried light's camera faces its holder and a live flickering flame leaves any bake's pose: both render full.
-			bool split = StaticAtlasReady() && !carrier && !FlickersFromLiveOrigin(light->light.get());
+			// A carried light's camera faces its holder, which the bake's pose does not record: it renders full.
+			bool split = StaticAtlasReady() && !carrier;
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
 			// A second accumulate this frame is skipped below, so it keeps the first call's split decision.
