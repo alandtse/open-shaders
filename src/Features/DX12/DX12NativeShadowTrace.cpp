@@ -208,8 +208,10 @@ namespace DX12Native
 					pipeline.get(), IID_PPV_ARGS(replacement->commands.put())));
 				slot = std::move(replacement);
 			} else {
-				if (slot->lightUpload->GetDesc().Width < lightBytes)
+				if (slot->lightUpload->GetDesc().Width < lightBytes) {
+					slot->lightRecordsUploaded = false;
 					slot->lightUpload = UploadBuffer(requested.d3d12Device.get(), lightBytes);
+				}
 				DX::ThrowIfFailed(slot->allocator->Reset());
 				DX::ThrowIfFailed(slot->commands->Reset(slot->allocator.get(), pipeline.get()));
 			}
@@ -241,14 +243,26 @@ namespace DX12Native
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
 
 			auto& records = slot->lightRecords;
-			records.resize(size_t(camera.lightCount) * kRecords);
+			const auto recordCount = size_t(camera.lightCount) * kRecords;
+			bool changed = !slot->lightRecordsUploaded || records.size() != recordCount;
+			slot->lightRecordsUploaded = false;
+			records.resize(recordCount);
 			for (size_t i = 0; i < camera.lightCount; ++i) {
 				const auto& light = lights[i];
-				records[i * kRecords + 0] = { light.position.x, light.position.y, light.position.z, light.radius };
-				records[i * kRecords + 1] = { light.color.x, light.color.y, light.color.z, light.fade };
-				records[i * kRecords + 2] = { light.emitterRadius, light.falloffExponent, float(light.flags), std::bit_cast<float>(light.runtimeIdentity ? uint32_t(light.runtimeIdentity ^ (light.runtimeIdentity >> 32)) : light.referenceID) };
+				const std::array<std::array<float, 4>, kRecords> packed{{
+					{ light.position.x, light.position.y, light.position.z, light.radius },
+					{ light.color.x, light.color.y, light.color.z, light.fade },
+					{ light.emitterRadius, light.falloffExponent, float(light.flags), std::bit_cast<float>(light.runtimeIdentity ? uint32_t(light.runtimeIdentity ^ (light.runtimeIdentity >> 32)) : light.referenceID) }
+				}};
+				auto* destination = records.data() + i * kRecords;
+				if (std::memcmp(destination, packed.data(), sizeof(packed)) != 0) {
+					std::memcpy(destination, packed.data(), sizeof(packed));
+					changed = true;
+				}
 			}
-			WriteUpload(slot->lightUpload.get(), records.data(), records.size() * sizeof(records.front()));
+			if (changed)
+				WriteUpload(slot->lightUpload.get(), records.data(), records.size() * sizeof(records.front()));
+			slot->lightRecordsUploaded = true;
 			slot->debugLights.clear();
 			if (controls.captureDebugLights)
 				slot->debugLights.assign(lights.begin(), lights.begin() + camera.lightCount);

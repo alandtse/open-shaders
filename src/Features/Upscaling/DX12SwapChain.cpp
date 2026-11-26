@@ -13,6 +13,7 @@
 #include "Hooks.h"
 #include "Streamline.h"
 #include "Utils/D3D.h"
+#include "Utils/TracyZones.h"
 
 /** @brief Drains queued presents before releasing Anti-Lag state, retaining it if draining fails. */
 DX12SwapChain::~DX12SwapChain()
@@ -438,6 +439,7 @@ HRESULT DX12SwapChain::ResizeBuffers(UINT bufferCount, UINT width, UINT height, 
 template <bool WithAntiLag2>
 HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 {
+	ZoneScopedN("DX12SwapChain::PresentImpl");
 	auto& upscaling = globals::features::upscaling;
 
 	// Scale UI brightness BEFORE fence sync so the D3D11 UIBrightnessCS dispatch
@@ -459,6 +461,7 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 
 	// New frame, reset
 	if (frameFenceValues[frameIndex]) {
+		ZoneScopedN("DX12SwapChain::FrameFenceWait");
 		DWORD waitError = 0;
 		const auto outcome = interopFence.CpuWaitOutcome(frameFenceValues[frameIndex], kFrameFenceTimeoutMs, &waitError);
 		if (outcome == SharedFence::WaitOutcome::kTimeout) {
@@ -545,7 +548,10 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 	}
 
 	// Present the frame
-	DX::ThrowIfFailed(swapChain->Present(SyncInterval, Flags));
+	{
+		ZoneScopedN("DX12SwapChain::PresentDriver");
+		DX::ThrowIfFailed(swapChain->Present(SyncInterval, Flags));
+	}
 
 	if (useDLSSG) {
 		upscaling.streamlineDX12.EmitPCLMarker(sl::PCLMarker::ePresentEnd);
