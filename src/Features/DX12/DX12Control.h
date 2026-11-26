@@ -58,7 +58,9 @@ private:
 		std::atomic<float> shadowStrength{ 1.0f };
 		std::atomic<float> shadowBlend;
 	};
-	CompositeProfile offloadingComposite{ 0.70f }, rayTracedComposite{ 0.55f };
+	static constexpr float kOffloadingDefaultBlend = 0.40f;
+	static constexpr float kRayTracedDefaultBlend = 0.55f;
+	CompositeProfile offloadingComposite{ kOffloadingDefaultBlend }, rayTracedComposite{ kRayTracedDefaultBlend };
 	CompositeProfile& ActiveComposite() { return IsFullShadowMode() ? rayTracedComposite : offloadingComposite; }
 	const CompositeProfile& ActiveComposite() const { return IsFullShadowMode() ? rayTracedComposite : offloadingComposite; }
 	static void LoadComposite(CompositeProfile& profile, const json& input, float defaultBlend);

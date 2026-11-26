@@ -95,7 +95,7 @@ private:
 	std::atomic<bool> allLightStaticReady{ false };
 	struct ShadowProfile
 	{
-		explicit ShadowProfile(uint32_t quality) : qualityMode(quality) {}
+		explicit ShadowProfile(uint32_t quality, float reach) : qualityMode(quality), shadowReachMultiplier(reach) {}
 		std::atomic<bool> debugNativeLights{ false };
 		std::atomic<bool> additivePreparedEmission{ true };
 		std::atomic<uint32_t> runtimeUnificationRadius{ DX12Native::kDefaultRuntimeUnificationRadius };
@@ -105,15 +105,19 @@ private:
 		uint32_t qualityMode;
 		bool nearLightShadowExclusion = true;
 		uint32_t nearLightExclusionUnits = 16;
-		float shadowReachMultiplier = DX12Native::kDefaultShadowReachMultiplier;  // Native only. Vanilla lights stay unchanged.
+		float shadowReachMultiplier;  // Native only. Vanilla lights stay unchanged.
 		float shadowFadeRange = DX12Native::kDefaultShadowFadeRange;
 		float shadowFalloffCurve = 1.0f;
 	};
-	ShadowProfile offloadingProfile{ DX12Native::kDefaultShadowQualityMode };
-	ShadowProfile rayTracedProfile{ DX12Native::kShadowQualityMedium };
+	static constexpr uint32_t kOffloadingDefaultQuality = DX12Native::kShadowQualityMedium;
+	static constexpr uint32_t kRayTracedDefaultQuality = DX12Native::kShadowQualityMedium;
+	static constexpr float kOffloadingDefaultReach = 1.0f;
+	static constexpr float kRayTracedDefaultReach = DX12Native::kDefaultShadowReachMultiplier;
+	ShadowProfile offloadingProfile{ kOffloadingDefaultQuality, kOffloadingDefaultReach };
+	ShadowProfile rayTracedProfile{ kRayTracedDefaultQuality, kRayTracedDefaultReach };
 	ShadowProfile& ActiveProfile();
 	const ShadowProfile& ActiveProfile() const;
-	static void LoadProfile(ShadowProfile& profile, const json& input, uint32_t defaultQuality);
+	static void LoadProfile(ShadowProfile& profile, const json& input, uint32_t defaultQuality, float defaultReach);
 	static json SaveProfile(const ShadowProfile& profile);
 	struct RuntimeLightSample
 	{

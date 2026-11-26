@@ -115,8 +115,8 @@ void DX12Control::LoadSettings(json& input)
 	settings.Mode = std::clamp(input.value("Mode", int(Mode::ShadowOffload)), int(Mode::ShadowOffload), int(Mode::FullShadow));
 	legacyModeConfig = !input.contains("FullShadowModeSelection");
 	const bool rayTraced = settings.Mode == int(Mode::FullShadow);
-	LoadComposite(offloadingComposite, DX12::ReadModeProfile(input, false, rayTraced), 0.70f);
-	LoadComposite(rayTracedComposite, DX12::ReadModeProfile(input, true, rayTraced), 0.55f);
+	LoadComposite(offloadingComposite, DX12::ReadModeProfile(input, false, rayTraced), kOffloadingDefaultBlend);
+	LoadComposite(rayTracedComposite, DX12::ReadModeProfile(input, true, rayTraced), kRayTracedDefaultBlend);
 	selectedMode.store(static_cast<Mode>(settings.Mode), std::memory_order_release);
 	if (!bootCaptured) {
 		bootActive.store(settings.Enabled, std::memory_order_release);
@@ -135,8 +135,8 @@ void DX12Control::RestoreDefaultSettings()
 {
 	settings = {};
 	legacyModeConfig = false;
-	LoadComposite(offloadingComposite, json::object(), 0.70f);
-	LoadComposite(rayTracedComposite, json::object(), 0.55f);
+	LoadComposite(offloadingComposite, json::object(), kOffloadingDefaultBlend);
+	LoadComposite(rayTracedComposite, json::object(), kRayTracedDefaultBlend);
 	selectedMode.store(static_cast<Mode>(settings.Mode), std::memory_order_release);
 }
 

@@ -120,7 +120,7 @@ void DX12NativeScene::DrawOverlay()
 	}
 }
 
-void DX12NativeScene::LoadProfile(ShadowProfile& profile, const json& input, uint32_t defaultQuality)
+void DX12NativeScene::LoadProfile(ShadowProfile& profile, const json& input, uint32_t defaultQuality, float defaultReach)
 {
 	profile.additivePreparedEmission.store(input.value("AdditivePreparedEmission", true), std::memory_order_relaxed);
 	uint32_t unify = input.value("RuntimeUnificationRadius", DX12Native::kDefaultRuntimeUnificationRadius);
@@ -141,7 +141,7 @@ void DX12NativeScene::LoadProfile(ShadowProfile& profile, const json& input, uin
 	profile.freezeNativeFlickering = input.value("FreezeNativeFlickering", true);
 	profile.nearLightShadowExclusion = input.value("ShadowNearLightExclusion", true);
 	profile.nearLightExclusionUnits = std::clamp(input.value("ShadowNearLightRadius", 16u), 0u, 512u) / 4u * 4u;
-	profile.shadowReachMultiplier = std::clamp(input.value("ShadowReachMultiplier", DX12Native::kDefaultShadowReachMultiplier), 0.1f, 64.0f);
+	profile.shadowReachMultiplier = std::clamp(input.value("ShadowReachMultiplier", defaultReach), 0.1f, 64.0f);
 	profile.shadowFadeRange = std::round(std::clamp(input.value("ShadowFadeRange", DX12Native::kDefaultShadowFadeRange), 0.0f, 1.0f) * 50.0f) / 50.0f;
 	profile.shadowFalloffCurve = std::clamp(input.value("ShadowFalloffCurve", 1.0f), 0.0f, 2.5f);
 }
@@ -166,8 +166,8 @@ void DX12NativeScene::LoadSettings(json& input)
 {
 	globals::features::dx12Control.MigrateLegacyFullShadowMode(input.value("TraceAllPreparedLights", false));
 	const bool rayTraced = globals::features::dx12Control.IsFullShadowMode();
-	LoadProfile(offloadingProfile, DX12::ReadModeProfile(input, false, rayTraced), DX12Native::kDefaultShadowQualityMode);
-	LoadProfile(rayTracedProfile, DX12::ReadModeProfile(input, true, rayTraced), DX12Native::kShadowQualityMedium);
+	LoadProfile(offloadingProfile, DX12::ReadModeProfile(input, false, rayTraced), kOffloadingDefaultQuality, kOffloadingDefaultReach);
+	LoadProfile(rayTracedProfile, DX12::ReadModeProfile(input, true, rayTraced), kRayTracedDefaultQuality, kRayTracedDefaultReach);
 	std::scoped_lock lock(runtimeLightMutex);
 	frozenNativeLights.clear();
 	ResetFullLightInventory();
@@ -181,8 +181,8 @@ void DX12NativeScene::SaveSettings(json& output)
 
 void DX12NativeScene::RestoreDefaultSettings()
 {
-	LoadProfile(offloadingProfile, json::object(), DX12Native::kDefaultShadowQualityMode);
-	LoadProfile(rayTracedProfile, json::object(), DX12Native::kShadowQualityMedium);
+	LoadProfile(offloadingProfile, json::object(), kOffloadingDefaultQuality, kOffloadingDefaultReach);
+	LoadProfile(rayTracedProfile, json::object(), kRayTracedDefaultQuality, kRayTracedDefaultReach);
 	std::scoped_lock lock(runtimeLightMutex);
 	frozenNativeLights.clear();
 	ResetFullLightInventory();
