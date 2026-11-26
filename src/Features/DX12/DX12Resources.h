@@ -61,6 +61,8 @@ namespace DX12
 			Preparing,
 			Ready,         // Geometry prepared and authoritative coverage verified.
 			ReadyPartial,  // Valid geometry/lights, but shadow-offload coverage not certified.
+			Empty,
+			EmptyPartial,  // Enumeration finished, but some caster bounds or geometry are unresolved.
 			RetryWaiting,
 			Incomplete
 		};
@@ -90,6 +92,7 @@ namespace DX12
 		uint32_t rejectedLights = 0;  // Invalid light records are skipped without losing valid geometry.
 		bool enumerationComplete = false;
 		bool wholeCell = false;
+		bool spatialBoundsComplete = false;
 		std::string failureReason;
 		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;
 		std::vector<NifSourceDescriptor> nifSources;

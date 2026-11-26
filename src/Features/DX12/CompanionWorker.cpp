@@ -428,6 +428,9 @@ namespace DX12
 			publication.failedShapes = root.at("failedShapes").get<uint32_t>();
 			publication.enumerationComplete = root.at("enumerationComplete").get<bool>();
 			publication.wholeCell = root.value("wholeCell", false);
+			publication.spatialBoundsComplete = root.value("spatialBoundsComplete", false);
+			if (publication.wholeCell && (!publication.spatialBoundsComplete || !publication.enumerationComplete))
+				throw std::invalid_argument("Uncertified whole-cell bounds");
 			if (publication.wholeCell) {
 				result.scopePlugin = root.at("scopePlugin").get<std::string>();
 				result.scopeLocal = root.at("scopeLocal").get<uint32_t>();

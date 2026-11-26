@@ -1,4 +1,5 @@
 #include "DX12Resources.h"
+#include "TilePreparationPolicy.h"
 
 #include "CompanionWorker.h"
 #include "DX12Control.h"
@@ -109,7 +110,8 @@ namespace DX12
 		// A -> B -> A must not repeat companion processing.
 		if (current->size == size && !current->wholeCell) {
 			const auto retain = [&](const auto& tile) {
-				if (!tile || (tile->state != Tile::State::Ready && tile->state != Tile::State::ReadyPartial))
+				if (!tile || (tile->state != Tile::State::Ready && tile->state != Tile::State::ReadyPartial &&
+					tile->state != Tile::State::Empty && tile->state != Tile::State::EmptyPartial))
 					return;
 				if (std::ranges::contains(next->requested, tile->key) || std::ranges::contains(next->predictive, tile->key))
 					return;
@@ -231,10 +233,20 @@ namespace DX12
 		const bool complete = publication.validated && publication.enumerationComplete &&
 		                      publication.failedShapes == 0 && publication.rejectedLights == 0 &&
 		                      publication.eligibleShapes == tile->shapes.size();
-		if (publication.validated && (!publication.wholeCell || complete) && (complete || !tile->shapes.empty() || !tile->lights.empty())) {
-			// Partial geometry is usable but does not certify complete static-shadow coverage.
-			tile->state = complete ? Tile::State::Ready : Tile::State::ReadyPartial;
-		} else {
+		const bool hasContent = !tile->shapes.empty() || !tile->lights.empty();
+		const bool consolidate = publication.wholeCell && publication.validated &&
+		                         publication.enumerationComplete && publication.spatialBoundsComplete;
+		const auto outcome = ClassifyTilePreparation(publication.validated &&
+			(!publication.wholeCell || consolidate), publication.enumerationComplete, complete, hasContent);
+		if (outcome == TilePreparationOutcome::Ready)
+			tile->state = Tile::State::Ready;
+		else if (outcome == TilePreparationOutcome::Partial)
+			tile->state = Tile::State::ReadyPartial;
+		else if (outcome == TilePreparationOutcome::Empty)
+			tile->state = Tile::State::Empty;
+		else if (outcome == TilePreparationOutcome::EmptyPartial)
+			tile->state = Tile::State::EmptyPartial;
+		else {
 			// Malformed or empty-incomplete companion payloads must not claim native scene readiness.
 			tile->shapes.clear();
 			tile->lights.clear();
@@ -248,7 +260,7 @@ namespace DX12
 			}
 		}
 		auto next = std::make_shared<Grid>(*current);
-		if (publication.wholeCell && complete && active != current->requested.end()) {
+		if (consolidate && active != current->requested.end()) {
 			next->wholeCell = true;
 			next->requested = {};
 			next->predictive = {};
@@ -258,7 +270,8 @@ namespace DX12
 			next->resident.front() = std::move(tile);
 			++next->geometryRevision;
 		} else if (active != current->requested.end()) {
-			++next->geometryRevision;
+			if (!tile->shapes.empty() || (existing && !existing->shapes.empty()))
+				++next->geometryRevision;
 			next->resident[std::distance(current->requested.begin(), active)] = std::move(tile);
 		} else {
 			// A ready predictive emitter can cast toward visible receivers even when
@@ -404,6 +417,8 @@ namespace
 			result[*magic_enum::enum_index(State::Requested)] = [] { return T("menu.dx12.resources.status.not_processed", "Not processed"); };
 			result[*magic_enum::enum_index(State::Preparing)] = [] { return T("menu.dx12.resources.status.processing", "Processing"); };
 			result[*magic_enum::enum_index(State::Ready)] = [] { return T("menu.dx12.resources.status.loaded", "Loaded"); };
+			result[*magic_enum::enum_index(State::Empty)] = [] { return T("menu.dx12.resources.status.empty", "Confirmed empty"); };
+			result[*magic_enum::enum_index(State::EmptyPartial)] = [] { return T("menu.dx12.resources.status.empty_partial", "No prepared content (incomplete coverage)"); };
 			result[*magic_enum::enum_index(State::ReadyPartial)] = [] { return T("menu.dx12.resources.status.partially_loaded", "Partially loaded"); };
 			result[*magic_enum::enum_index(State::RetryWaiting)] = [] { return T("menu.dx12.resources.status.retry_pending", "Failed (retry pending)"); };
 			result[*magic_enum::enum_index(State::Incomplete)] = [] { return T("menu.dx12.resources.status.retry_exhausted", "Skipped (retry exhausted)"); };
@@ -423,6 +438,9 @@ namespace
 			return active ? SubcellMapStyle::activeReady : SubcellMapStyle::predictiveReady;
 		case DX12::Tile::State::ReadyPartial:
 			return active ? SubcellMapStyle::activePartial : SubcellMapStyle::predictivePartial;
+		case DX12::Tile::State::Empty:
+		case DX12::Tile::State::EmptyPartial:
+			return SubcellMapStyle::waiting;
 		case DX12::Tile::State::Preparing:
 			return SubcellMapStyle::preparing;
 		case DX12::Tile::State::RetryWaiting:
@@ -472,10 +490,14 @@ namespace
 				draw->AddRectFilled(p0, p1, TileColor(tile, active), SubcellMapStyle::rounding);
 				draw->AddRect(p0, p1, active ? SubcellMapStyle::activeOutline : SubcellMapStyle::predictiveOutline, SubcellMapStyle::rounding, 0,
 					active ? SubcellMapStyle::activeOutlineWidth : SubcellMapStyle::predictiveOutlineWidth);
-				if (tile && tile->state == DX12::Tile::State::ReadyPartial) {
+				if (tile && (tile->state == DX12::Tile::State::ReadyPartial || tile->state == DX12::Tile::State::EmptyPartial)) {
 					// A diagonal distinguishes partially processed cells without hiding the zone color.
 					draw->AddLine(ImVec2(p0.x + SubcellMapStyle::stripeInset, p1.y - SubcellMapStyle::stripeInset),
 						ImVec2(p1.x - SubcellMapStyle::stripeInset, p0.y + SubcellMapStyle::stripeInset), SubcellMapStyle::partialStripe, SubcellMapStyle::stripeWidth);
+				}
+				if (tile && tile->state == DX12::Tile::State::Empty) {
+					const ImVec2 marker{ (p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f };
+					draw->AddCircle(marker, SubcellMapStyle::playerRadius, SubcellMapStyle::playerOutline);
 				}
 				if (col == DX12::kPredictiveRadius && row == DX12::kPredictiveRadius) {
 					const ImVec2 marker{ (p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f };
@@ -582,16 +604,19 @@ void DX12Resources::DrawSettings()
 
 	const auto drawSubcellDetails = [&]() {
 		if (snapshot) {
-			size_t activeLoaded = 0, predictiveLoaded = 0;
+			size_t activeLoaded = 0, predictiveLoaded = 0, empty = 0, emptyPartial = 0;
 			const auto classify = [&](const auto& tile, bool active) {
 				if (tile && (tile->state == DX12::Tile::State::Ready || tile->state == DX12::Tile::State::ReadyPartial))
 					(active ? activeLoaded : predictiveLoaded)++;
+				if (tile && tile->state == DX12::Tile::State::Empty) ++empty;
+				if (tile && tile->state == DX12::Tile::State::EmptyPartial) ++emptyPartial;
 			};
 			for (const auto& tile : snapshot->resident)
 				classify(tile, true);
 			for (const auto& tile : snapshot->predictiveResident)
 				classify(tile, false);
 			ImGui::Text(T("menu.dx12.resources.loaded_counts", "Loaded: active %zu / 9, predictive %zu / 16"), activeLoaded, predictiveLoaded);
+			ImGui::Text(T("menu.dx12.resources.empty_counts", "Confirmed empty: %zu | Incomplete empty: %zu"), empty, emptyPartial);
 		}
 		ImGui::TextColored(SubcellMapStyle::activeLegend, T("menu.dx12.resources.legend.yellow", "Yellow: loaded 3x3"));
 		ImGui::TextColored(SubcellMapStyle::predictiveLegend, T("menu.dx12.resources.legend.light_blue", "Light blue: loaded predictive ring"));
@@ -719,7 +744,7 @@ void DX12Resources::PollStartup(uint32_t gameplayScope)
 		companion->CancelStartup();
 	if (!result->startup)
 		return;
-	if (!result->failure.empty()) {
+	if (!result->failure.empty() && !result->publication.validated) {
 		logger::warn("[DX12Resources] Startup preparation failed: {}", result->failure);
 		return;
 	}
@@ -743,8 +768,9 @@ void DX12Resources::PollStartup(uint32_t gameplayScope)
 		record.value.referenceID = reference->GetFormID();
 		publication.lights.push_back(record.value);
 	}
-	if (publication.rejectedLights || publication.failedShapes || !publication.enumerationComplete)
+	if (!publication.enumerationComplete || !publication.spatialBoundsComplete)
 		return;
+	publication.failureReason = result->failure;
 	const auto key = publication.key;
 	grid.Advance(key.scope, result->size, double(key.x) * result->size, double(key.y) * result->size);
 	const auto request = grid.NextRequest();

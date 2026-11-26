@@ -1,6 +1,7 @@
 #include "Features/DX12/DX12FenceRetirementPolicy.h"
 #include "Features/DX12/DX12CasterCoverage.h"
 #include "Features/DX12/SpatialGrid.h"
+#include "Features/DX12/TilePreparationPolicy.h"
 #include "Utils/RuntimeTaskGate.h"
 #include "../../features/DX12 Native Scene/Shaders/DX12NativeScene/NativeShadowSampling.hlsli"
 
@@ -160,4 +161,16 @@ TEST_CASE("DX12 caster removal requires matching geometry and pose", "[dx12][sha
 	CHECK_FALSE(matches());
 	CHECK(DX12Native::CasterCoverageKey(3, 3) != DX12Native::CasterCoverageKey(4, 3));
 	CHECK(DX12Native::CasterCoverageKey(0, 3) == 0);
+}
+
+TEST_CASE("DX12 empty tile classification distinguishes failure from completed enumeration", "[dx12][resources]")
+{
+	using DX12::ClassifyTilePreparation;
+	using DX12::TilePreparationOutcome;
+	CHECK(ClassifyTilePreparation(true, true, true, false) == TilePreparationOutcome::Empty);
+	CHECK(ClassifyTilePreparation(true, true, false, false) == TilePreparationOutcome::EmptyPartial);
+	CHECK(ClassifyTilePreparation(true, false, false, false) == TilePreparationOutcome::Retry);
+	CHECK(ClassifyTilePreparation(false, true, true, false) == TilePreparationOutcome::Retry);
+	CHECK(ClassifyTilePreparation(true, true, false, true) == TilePreparationOutcome::Partial);
+	CHECK(ClassifyTilePreparation(true, true, true, true) == TilePreparationOutcome::Ready);
 }
