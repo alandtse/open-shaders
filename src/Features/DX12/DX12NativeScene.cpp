@@ -1,20 +1,20 @@
 #include "DX12NativeScene.h"
 
+#include "../LightLimitFix/ShadowCasterMath.h"
 #include "../Upscaling.h"
 #include "DX12Control.h"
 #include "DX12Resources.h"
 #include "Globals.h"
 #include "GpuPass.h"
-#include "RE/T/TESObjectCELL.h"
 #include "RE/M/MainMenu.h"
+#include "RE/T/TESObjectCELL.h"
+#include "RE/T/TESObjectLIGH.h"
 #include "RE/U/UI.h"
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
 #include "Utils/PointLightFlags.h"
 #include "Utils/TracyZones.h"
-#include "RE/T/TESObjectLIGH.h"
-#include "../LightLimitFix/ShadowCasterMath.h"
 #include <Windows.h>
 
 #include <algorithm>
@@ -65,7 +65,8 @@ void DX12NativeScene::DrawDevSettings()
 		std::scoped_lock lock(runtimeLightMutex);
 		const auto stats = lightWorker.GetStats();
 		ImGui::Text("%s", std::format("Light tasks: {} | Publications: {} | Unchanged: {} | Deferred: {} | Busy: {}",
-			stats.tasks, stats.publications, stats.unchanged, stats.deferred, stats.busy).c_str());
+							  stats.tasks, stats.publications, stats.unchanged, stats.deferred, stats.busy)
+							  .c_str());
 	}
 	auto& enabled = control.IsFullRTMode() ? debugRTLights : debugOffloadLights;
 	bool value = enabled.load(std::memory_order_relaxed);
@@ -112,10 +113,10 @@ void DX12NativeScene::DrawOverlay()
 			continue;
 		const ImVec2 point{ viewport->Pos.x + uv.x * viewport->Size.x, viewport->Pos.y + uv.y * viewport->Size.y };
 		const char* source = mask->quality == DX12Native::kShadowQualityOffloading ? "M" :
-			(i < mask->debugPreparedCount ? "P" : "R");
+		                                                                             (i < mask->debugPreparedCount ? "P" : "R");
 		const auto label = light.unifiedCount > 1 ?
-			std::format("DXR U x{} {:08X} #{}", light.unifiedCount, light.referenceID, i) :
-			std::format("DXR {} {:08X} #{}", source, light.referenceID, i);
+		                       std::format("DXR U x{} {:08X} #{}", light.unifiedCount, light.referenceID, i) :
+		                       std::format("DXR {} {:08X} #{}", source, light.referenceID, i);
 		const ImVec2 text{ point.x + labelOffset, point.y - ImGui::GetTextLineHeight() * 0.5f };
 		const auto size = ImGui::CalcTextSize(label.c_str());
 		draw->AddCircleFilled(point, markerRadius, color);
@@ -153,11 +154,11 @@ void DX12NativeScene::SaveSettings(json& output)
 	output = { { "OutdoorShadowOffloading", outdoorShadowOffloading.load(std::memory_order_relaxed) },
 		{ "DebugNativeLights", debugOffloadLights.load(std::memory_order_relaxed) },
 		{ "FullRT", { { "OutdoorShadowOffloading", outdoorFullRT.load(std::memory_order_relaxed) }, { "ShadowQualityMode", fullRTQuality },
-			{ "DebugNativeLights", debugRTLights.load(std::memory_order_relaxed) },
-			{ "RuntimeUnificationRadius", runtimeUnificationRadius.load(std::memory_order_relaxed) },
-			{ "PreparedExclusionRadius", preparedExclusionRadius.load(std::memory_order_relaxed) },
-			{ "AdditivePreparedEmission", additivePreparedEmission.load(std::memory_order_relaxed) },
-			{ "LightObservationFrames", lightObservationFrames.load(std::memory_order_relaxed) } } } };
+						{ "DebugNativeLights", debugRTLights.load(std::memory_order_relaxed) },
+						{ "RuntimeUnificationRadius", runtimeUnificationRadius.load(std::memory_order_relaxed) },
+						{ "PreparedExclusionRadius", preparedExclusionRadius.load(std::memory_order_relaxed) },
+						{ "AdditivePreparedEmission", additivePreparedEmission.load(std::memory_order_relaxed) },
+						{ "LightObservationFrames", lightObservationFrames.load(std::memory_order_relaxed) } } } };
 }
 
 void DX12NativeScene::RestoreDefaultSettings()
@@ -184,7 +185,8 @@ bool DX12NativeScene::AllowsNativeSceneWork() const
 bool DX12NativeScene::AllowsOutdoorContribution() const
 {
 	return globals::features::dx12Control.IsFullRTMode() ?
-		outdoorFullRT.load(std::memory_order_relaxed) : outdoorShadowOffloading.load(std::memory_order_relaxed);
+	           outdoorFullRT.load(std::memory_order_relaxed) :
+	           outdoorShadowOffloading.load(std::memory_order_relaxed);
 }
 
 bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
@@ -483,9 +485,9 @@ bool DX12NativeScene::ObserveFullRuntimeLights()
 			const auto& rt = ni->GetLightRuntimeData();
 			const auto& position = ni->world.translate;
 			cached.sampled = std::isfinite(rt.radius.x) && rt.radius.x > 0.0f &&
-				std::isfinite(rt.fade) && rt.fade > 0.0f &&
-				std::isfinite(rt.diffuse.red) && std::isfinite(rt.diffuse.green) && std::isfinite(rt.diffuse.blue) &&
-				std::isfinite(position.x) && std::isfinite(position.y) && std::isfinite(position.z);
+			                 std::isfinite(rt.fade) && rt.fade > 0.0f &&
+			                 std::isfinite(rt.diffuse.red) && std::isfinite(rt.diffuse.green) && std::isfinite(rt.diffuse.blue) &&
+			                 std::isfinite(position.x) && std::isfinite(position.y) && std::isfinite(position.z);
 			if (cached.sampled) {
 				auto& value = cached.value;
 				value.position = float3{ position.x, position.y, position.z };
@@ -538,7 +540,7 @@ std::shared_ptr<const DX12Native::NativeLightPublication> DX12NativeScene::Colle
 		fullRuntimeCell = cellID;
 	}
 	if (!fullObserved || DX12Native::NativeLightObservationDue(frame, fullLastObservation,
-			lightObservationFrames.load(std::memory_order_relaxed))) {
+							 lightObservationFrames.load(std::memory_order_relaxed))) {
 		fullObserved = ObserveFullRuntimeLights();
 		fullLastObservation = frame;
 	}
@@ -550,12 +552,10 @@ std::shared_ptr<const DX12Native::NativeLightPublication> DX12NativeScene::Colle
 		additivePreparedEmission.load(std::memory_order_relaxed)
 	};
 	const bool gridChanged = !fullRequestedGrid ||
-		(fullRequestedGrid != grid && (fullRequestedGrid->resident != grid->resident ||
-			fullRequestedGrid->predictiveResident != grid->predictiveResident));
+	                         (fullRequestedGrid != grid && (fullRequestedGrid->resident != grid->resident ||
+															   fullRequestedGrid->predictiveResident != grid->predictiveResident));
 	const bool dirty = gridChanged || fullRequestedRuntime != fullRuntimeSnapshot ||
-		fullRequestedSettings != settings || (lightWorker.NeedsRetry() &&
-			DX12Native::NativeLightObservationDue(frame, fullLastRequestFrame,
-				lightObservationFrames.load(std::memory_order_relaxed)));
+	                   fullRequestedSettings != settings || (lightWorker.NeedsRetry() && DX12Native::NativeLightObservationDue(frame, fullLastRequestFrame, lightObservationFrames.load(std::memory_order_relaxed)));
 	// Promote the completed replacement before admitting another GPU upload.
 	auto ready = lightWorker.GetReady();
 	if (dirty && backend && lightWorker.Request(*backend, grid, fullRuntimeSnapshot, settings, cellID)) {
@@ -627,7 +627,8 @@ void DX12NativeScene::OnOpaqueRasterReady()
 		}
 	}
 	const std::span<const DX12::PreparedLight> submittedLights = fullRT ?
-		std::span<const DX12::PreparedLight>(fullInventory->lights) : std::span<const DX12::PreparedLight>(liveLights);
+	                                                                 std::span<const DX12::PreparedLight>(fullInventory->lights) :
+	                                                                 std::span<const DX12::PreparedLight>(liveLights);
 	if (submittedLights.empty())
 		return;
 

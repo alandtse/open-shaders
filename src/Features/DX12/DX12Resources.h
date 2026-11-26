@@ -1,9 +1,9 @@
 #pragma once
 
 #include "Feature.h"
-#include "SpatialGrid.h"
 #include "RE/B/BSTEvent.h"
 #include "RE/P/PositionPlayerEvent.h"
+#include "SpatialGrid.h"
 
 #include <atomic>
 #include <cstdint>
@@ -245,7 +245,11 @@ private:
 	std::optional<LoadingDestination> queuedDestination;  // Main-thread positioning events only.
 	std::atomic<std::shared_ptr<const LoadingDestination>> loadingDestination;
 	std::atomic<bool> loadingActive{ false };
-	struct LoadingSettings { uint32_t size; bool consolidate; };
+	struct LoadingSettings
+	{
+		uint32_t size;
+		bool consolidate;
+	};
 	std::atomic<LoadingSettings> loadingSettings{ LoadingSettings{ DX12::kSubcellSizes.front(), true } };
 	std::atomic<uint64_t> loadingSerial{ 0 };
 	uint64_t handledLoadingSerial = 0;
@@ -256,7 +260,12 @@ private:
 	void AdvanceLoadingPreparation();
 	void EnsureCompanion(bool menuStartup);
 	void PollStartup(uint32_t gameplayScope = 0);
-	enum class PublicationState { Valid, Invalid, Unavailable };
+	enum class PublicationState
+	{
+		Valid,
+		Invalid,
+		Unavailable
+	};
 	struct PublicationStatus
 	{
 		PublicationState state;

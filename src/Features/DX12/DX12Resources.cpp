@@ -4,14 +4,14 @@
 #include "CompanionWorker.h"
 #include "DX12Control.h"
 #include "DX12NativeScene.h"
-#include "RE/M/MainMenu.h"
-#include "RE/P/PlayerCharacter.h"
-#include "RE/U/UI.h"
 #include "Globals.h"
 #include "GpuPass.h"
-#include "State.h"
+#include "RE/M/MainMenu.h"
+#include "RE/P/PlayerCharacter.h"
 #include "RE/T/TESDataHandler.h"
 #include "RE/T/TESWorldSpace.h"
+#include "RE/U/UI.h"
+#include "State.h"
 #include "Utils/Game.h"
 #include "Utils/PerfUtils.h"
 
@@ -119,7 +119,7 @@ namespace DX12
 		if (current->size == size && !current->wholeCell) {
 			const auto retain = [&](const auto& tile) {
 				if (!tile || (tile->state != Tile::State::Ready && tile->state != Tile::State::ReadyPartial &&
-					tile->state != Tile::State::Empty && tile->state != Tile::State::EmptyPartial))
+								 tile->state != Tile::State::Empty && tile->state != Tile::State::EmptyPartial))
 					return;
 				if (std::ranges::contains(next->requested, tile->key) || std::ranges::contains(next->predictive, tile->key))
 					return;
@@ -250,7 +250,8 @@ namespace DX12
 		const bool hasContent = !tile->shapes.empty() || !tile->lights.empty();
 		const bool consolidate = publication.wholeCell && publication.validated;
 		const auto outcome = ClassifyTilePreparation(publication.validated &&
-			(!publication.wholeCell || consolidate), publication.enumerationComplete || consolidate, complete, hasContent);
+														 (!publication.wholeCell || consolidate),
+			publication.enumerationComplete || consolidate, complete, hasContent);
 		if (outcome == TilePreparationOutcome::Ready)
 			tile->state = Tile::State::Ready;
 		else if (outcome == TilePreparationOutcome::Partial)
@@ -365,8 +366,7 @@ namespace DX12
 		if (pending || !source.requested.front().scope || source.requested.front().scope != current->requested.front().scope || source.size != current->size)
 			return;
 		const auto ready = [](const auto& tile) {
-			return tile && tile->companionValidated && (tile->state == Tile::State::Ready || tile->state == Tile::State::ReadyPartial ||
-				tile->state == Tile::State::Empty || tile->state == Tile::State::EmptyPartial);
+			return tile && tile->companionValidated && (tile->state == Tile::State::Ready || tile->state == Tile::State::ReadyPartial || tile->state == Tile::State::Empty || tile->state == Tile::State::EmptyPartial);
 		};
 		auto next = std::make_shared<Grid>(*current);
 		if (source.wholeCell && ready(source.resident.front())) {
@@ -382,14 +382,17 @@ namespace DX12
 		} else if (!source.wholeCell && !current->wholeCell) {
 			const auto find = [&](SubcellKey key) -> std::shared_ptr<const Tile> {
 				for (const auto& tile : source.resident)
-					if (ready(tile) && tile->key == key) return tile;
+					if (ready(tile) && tile->key == key)
+						return tile;
 				for (const auto& tile : source.predictiveResident)
-					if (ready(tile) && tile->key == key) return tile;
+					if (ready(tile) && tile->key == key)
+						return tile;
 				return {};
 			};
 			const auto merge = [&](const auto& keys, auto& tiles) {
 				for (size_t i = 0; i < keys.size(); ++i)
-					if (auto tile = find(keys[i])) tiles[i] = std::move(tile);
+					if (auto tile = find(keys[i]))
+						tiles[i] = std::move(tile);
 			};
 			merge(next->requested, next->resident);
 			merge(next->predictive, next->predictiveResident);
@@ -402,7 +405,7 @@ namespace DX12
 			const auto& left = next->resident[i];
 			const auto& right = source.resident[i];
 			sameGeometry = left && right ? left->shapes == right->shapes :
-				(!left || left->shapes.empty()) && (!right || right->shapes.empty());
+			                               (!left || left->shapes.empty()) && (!right || right->shapes.empty());
 		}
 		next->geometryRevision = sameGeometry ? source.geometryRevision : NextGeometryRevision();
 		snapshot.store(std::move(next), std::memory_order_release);
@@ -859,10 +862,10 @@ void DX12Resources::DrawResourceStatus()
 		ImGui::TextDisabled("%s", T("menu.dx12.resources.preloaded", "Last-save cell prepared in memory"));
 	if (const auto status = latestPublication.load(std::memory_order_acquire)) {
 		const char* label = status->state == PublicationState::Valid ?
-			T("menu.dx12.resources.publication_valid", "Companion publication: valid") :
-			status->state == PublicationState::Invalid ?
-			T("menu.dx12.resources.publication_invalid", "Companion publication: invalid") :
-			T("menu.dx12.resources.publication_unavailable", "Companion publication: unavailable");
+		                        T("menu.dx12.resources.publication_valid", "Companion publication: valid") :
+		                    status->state == PublicationState::Invalid ?
+		                        T("menu.dx12.resources.publication_invalid", "Companion publication: invalid") :
+		                        T("menu.dx12.resources.publication_unavailable", "Companion publication: unavailable");
 		ImGui::TextUnformatted(label);
 		if (!status->detail.empty())
 			ImGui::TextWrapped("%s", status->detail.c_str());
@@ -890,8 +893,10 @@ void DX12Resources::DrawResourceStatus()
 			const auto classify = [&](const auto& tile, bool active) {
 				if (tile && (tile->state == DX12::Tile::State::Ready || tile->state == DX12::Tile::State::ReadyPartial))
 					(active ? activeLoaded : predictiveLoaded)++;
-				if (tile && tile->state == DX12::Tile::State::Empty) ++empty;
-				if (tile && tile->state == DX12::Tile::State::EmptyPartial) ++emptyPartial;
+				if (tile && tile->state == DX12::Tile::State::Empty)
+					++empty;
+				if (tile && tile->state == DX12::Tile::State::EmptyPartial)
+					++emptyPartial;
 			};
 			for (const auto& tile : snapshot->resident)
 				classify(tile, true);
@@ -1005,7 +1010,6 @@ void DX12Resources::EnsureCompanion(bool menuStartup)
 	});
 }
 
-
 void DX12Resources::RecordPublication(PublicationState state, std::string detail)
 {
 	latestPublication.store(std::make_shared<const PublicationStatus>(PublicationStatus{ state, std::move(detail) }),
@@ -1040,7 +1044,8 @@ void DX12Resources::PollStartup(uint32_t gameplayScope)
 	if (!settings.PreloadLastSave || !settings.ConsolidateInterior ||
 		result->size != settings.SubcellSize || !publication.wholeCell || !publication.validated) {
 		const auto reason = result->residencyReason.empty() ?
-			"No eligible whole-cell publication or settings changed" : result->residencyReason;
+		                        "No eligible whole-cell publication or settings changed" :
+		                        result->residencyReason;
 		RecordPublication(publication.validated ? PublicationState::Unavailable : PublicationState::Invalid, reason);
 		logger::info("[DX12Resources] Last-save preload unavailable: {}", reason);
 		return;
@@ -1224,7 +1229,7 @@ void DX12Resources::PreShadowMaps()
 		consolidationAttemptScope = 0;
 	const auto& position = location->position;
 	if (const auto current = grid.Snapshot(); current->wholeCell && current->requested.front().scope == scope &&
-		globals::features::dx12NativeScene.RetireBudgetDeferredWholeCell(current->geometryRevision)) {
+											  globals::features::dx12NativeScene.RetireBudgetDeferredWholeCell(current->geometryRevision)) {
 		grid.Clear();
 		consolidationAttemptScope = scope;
 		logger::info("[DX12Resources] Whole-cell GPU budget deferred; returning to subdivisions");
@@ -1248,8 +1253,8 @@ void DX12Resources::PreShadowMaps()
 	std::erase_if(stagedResults, [&](const auto& result) {
 		const auto key = result->publication.key;
 		return result->size != settings.SubcellSize || key.scope != scope || neighborhood->wholeCell ||
-			(!result->publication.wholeCell && !std::ranges::contains(neighborhood->requested, key) &&
-			 !std::ranges::contains(neighborhood->predictive, key));
+		       (!result->publication.wholeCell && !std::ranges::contains(neighborhood->requested, key) &&
+				   !std::ranges::contains(neighborhood->predictive, key));
 	});
 	if (inFlight) {
 		const bool stillWanted = std::ranges::contains(neighborhood->requested, *inFlight) ||
@@ -1323,7 +1328,7 @@ void DX12Resources::PreShadowMaps()
 		if (const auto request = grid.NextRequest()) {
 			const auto staged = std::ranges::find_if(stagedResults, [&](const auto& result) {
 				return result->publication.key == *request || (result->publication.wholeCell &&
-					result->publication.key.scope == request->scope && *request == neighborhood->requested.front());
+																  result->publication.key.scope == request->scope && *request == neighborhood->requested.front());
 			});
 			if (staged != stagedResults.end()) {
 				adopting = std::move(*staged);
