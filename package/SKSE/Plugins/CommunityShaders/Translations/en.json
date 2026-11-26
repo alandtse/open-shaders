@@ -4909,7 +4909,7 @@
     "feature.upscaling.neural_rendering.color_strength_tooltip": "How much of Neural Rendering's colour shift is applied on top of its brightness edit. 0 keeps the game's own colours; 1 takes the model's shift in full. Also scaled by the Category Tone Strengths. High values can tint skin and flicker.",
     "feature.upscaling.neural_rendering.combat_resume_delay": "Peaceful gameplay remaining:",
     "feature.upscaling.neural_rendering.crop_calibrate": "Calibrate Crop Cost",
-    "feature.upscaling.neural_rendering.crop_calibrate_failed": "Calibration failed: frame generation on, Neural Rendering not running, or no timing data.",
+    "feature.upscaling.neural_rendering.crop_calibrate_failed": "Calibration failed: frame generation on, Model Scale below 1, Neural Rendering not running, or no timing data.",
     "feature.upscaling.neural_rendering.crop_calibrate_knee": "Largest crop that is still cheap: %.0f%%",
     "feature.upscaling.neural_rendering.crop_calibrate_running": "Calibrating...",
     "feature.upscaling.neural_rendering.crop_calibrate_tooltip": "Measures how Neural Rendering's GPU time falls as the crop shrinks, over about half a minute, and finds the largest crop that is still about as cheap as the smallest. Turn frame generation off first; it skews the timing.",

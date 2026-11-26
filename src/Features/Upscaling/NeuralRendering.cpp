@@ -1748,6 +1748,8 @@ void NeuralRendering::UpdateCalibration()
 		calibration.Fail(NR::CropCalibration::Failure::kFrameGeneration);
 	} else if (publishedState.load(std::memory_order_relaxed) != Status::State::kActive || !resources.eyes || !resources.width || !resources.height) {
 		calibration.Fail(NR::CropCalibration::Failure::kNotActive);
+	} else if (calibrationCropRejected.load(std::memory_order_relaxed)) {
+		calibration.Fail(NR::CropCalibration::Failure::kReducedModel);
 	} else {
 		float gpuMs = 0.0f;
 		if (globals::profiler) {
@@ -1786,6 +1788,7 @@ NR::CropCalibration::Result NeuralRendering::GetCalibration() const
 void NeuralRendering::UpdateRegionOfInterest()
 {
 	if (calibrationRequested.exchange(false, std::memory_order_relaxed)) {
+		calibrationCropRejected.store(false, std::memory_order_relaxed);
 		calibration.Start();
 		std::scoped_lock lock(regionMutex);
 		calibrationResult = calibration.GetResult();
@@ -2623,7 +2626,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		if (calibrationState.state == NR::CropCalibration::State::kRunning) {
 			ImGui::TextUnformatted(T(TKEY("crop_calibrate_running"), "Calibrating..."));
 		} else if (calibrationState.state == NR::CropCalibration::State::kFailed) {
-			ImGui::TextUnformatted(T(TKEY("crop_calibrate_failed"), "Calibration failed: frame generation on, Neural Rendering not running, or no timing data."));
+			ImGui::TextUnformatted(T(TKEY("crop_calibrate_failed"), "Calibration failed: frame generation on, Model Scale below 1, Neural Rendering not running, or no timing data."));
 		} else if (calibrationState.state == NR::CropCalibration::State::kDone) {
 			for (size_t step = 0; step < NR::CropCalibration::kSteps; ++step)
 				ImGui::Text("%3.0f%%: %.2f ms", NR::CropCalibration::kFractions[step] * 100.0f, calibrationState.stepMs[step]);
@@ -2986,6 +2989,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		boundedTuning.Sanitize();
 		const bool cropUsable = NR::ModelTakesCrop(lowExtent.first, compression.Active());
 		const bool cropActive = cropUsable && (boundedTuning.regionOfInterest || calibrationRunning);
+		if (calibrationRunning && !cropUsable)
+			calibrationCropRejected.store(true, std::memory_order_relaxed);
 		work.region = cropActive ? GetRegionOfInterest() : Util::Region::StereoRegion{};
 		work.actorBox = cropActive ? GetActorBox() : Util::Region::StereoRegion{};
 		const bool actorCrop = work.region.active && !calibrationRunning;

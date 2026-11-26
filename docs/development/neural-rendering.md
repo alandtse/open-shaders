@@ -228,7 +228,8 @@ profiler over four passes, and reports the fastest low-percentile GPU time per s
 `stabilityRatio` between passes, the cheapest step and the
 largest crop within `kKneeTolerance` of it under `neuralCalibration` in the
 diagnostics. It refuses to run with frame generation on, since frame generation
-paces the frame and skews the GPU zones.
+paces the frame and skews the GPU zones, and it fails while the model runs below
+the eye size, since the forced crop cannot reach it.
 
 Inside the crop the neural result eases in with a smoothstep ramp, so the different
 shading NR gives the crop does not end at a hard seam. The band on each side spans the
