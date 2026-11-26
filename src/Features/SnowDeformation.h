@@ -446,6 +446,7 @@ private:
 		uint32_t skippedDraws = 0;
 		uint32_t layoutRejects = 0;
 		bool snowCover = false;
+		float snowfall = 0.0f;
 	};
 
 	bool EnsureShaders();
@@ -480,7 +481,7 @@ private:
 	void DispatchProbes(uint32_t a_stampCount);
 	void ReadProbes();
 	void PublishMeasurements(const std::vector<std::pair<RE::FormID, float>>& a_measurements, const std::vector<std::pair<RE::FormID, float>>& a_blankets = {});
-	void UpdateLevel(uint32_t a_index, const RE::NiPoint3& a_position, float a_decay, float a_deltaTime, bool a_sinking, bool a_gateSnowCover, bool a_skylightingReady);
+	void UpdateLevel(uint32_t a_index, const RE::NiPoint3& a_position, float a_decay, float a_deltaTime, float a_snowfall, bool a_sinking, bool a_gateSnowCover, bool a_skylightingReady);
 	void RebuildActivity(Level& a_level);
 	bool OverlapsLevel(const Level& a_level, const RE::NiBound& a_bound) const;
 	bool OverlapsActivity(const RE::NiBound& a_bound) const;

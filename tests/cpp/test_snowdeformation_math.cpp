@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <limits>
 
 using Catch::Approx;
 namespace Math = SnowDeformationMath;
@@ -237,4 +238,28 @@ TEST_CASE("Print walls slump by elapsed time, not by frame count", "[snow-deform
 	REQUIRE(Math::ReposeStep(0.1f, 0.0f) == 0.0f);
 	REQUIRE(Math::ReposeStep(0.1f, -1.0f) == 0.0f);
 	REQUIRE(Math::ReposeStep(0.1f, 0.25f) == 1.0f);
+}
+
+TEST_CASE("Snowfall follows the weather transition", "[snow-deformation]")
+{
+	REQUIRE(Math::BlendSnowfall(false, true, 0.0f) == Approx(0.0f));
+	REQUIRE(Math::BlendSnowfall(false, true, 0.25f) == Approx(0.25f));
+	REQUIRE(Math::BlendSnowfall(false, true, 1.0f) == Approx(1.0f));
+	REQUIRE(Math::BlendSnowfall(true, false, 0.25f) == Approx(0.75f));
+	REQUIRE(Math::BlendSnowfall(true, true, 0.4f) == Approx(1.0f));
+	REQUIRE(Math::BlendSnowfall(false, false, 0.4f) == Approx(0.0f));
+	REQUIRE(Math::BlendSnowfall(false, true, -2.0f) == Approx(0.0f));
+	REQUIRE(Math::BlendSnowfall(false, true, 3.0f) == Approx(1.0f));
+	REQUIRE(Math::BlendSnowfall(false, true, std::numeric_limits<float>::quiet_NaN()) == Approx(1.0f));
+}
+
+TEST_CASE("Prints fill to a tenth over their lifetime, faster as snowfall grows", "[snow-deformation]")
+{
+	constexpr float lifetime = 240.0f;
+	constexpr float refill = 0.05f;
+	REQUIRE(std::pow(Math::KeepPerSecond(lifetime, refill, 0.0f), lifetime) == Approx(0.1f).epsilon(0.001));
+	const float calm = Math::KeepPerSecond(lifetime, refill, 0.0f);
+	REQUIRE(Math::KeepPerSecond(lifetime, refill, 0.5f) == Approx(calm * 0.975f));
+	REQUIRE(Math::KeepPerSecond(lifetime, refill, 1.0f) == Approx(calm * 0.95f));
+	REQUIRE(Math::KeepPerSecond(lifetime, refill, 4.0f) == Approx(calm * 0.95f));
 }
