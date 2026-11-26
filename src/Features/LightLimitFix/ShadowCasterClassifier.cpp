@@ -449,6 +449,13 @@ namespace ShadowCasterManager
 		// Passive collection during the existing SCM caster walk. This does not
 		// change raster filter decisions or add another geometry traversal.
 		const auto nativeMode = s_nativeCasterMode;
+		if (nativeMode == DX12::SCMNativeCasterMode::SuppressAll) {
+			if (!IsCasterDynamic(geom))
+				return true;
+			s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+			s_dynamicCasterDraws.fetch_add(1, std::memory_order_relaxed);
+			return false;
+		}
 		if (nativeMode != DX12::SCMNativeCasterMode::Disabled &&
 			!geom.GetGeometryRuntimeData().skinInstance &&
 			!IsCasterDynamic(geom))
@@ -469,8 +476,6 @@ namespace ShadowCasterManager
 		const bool dynamic = !rec || rec->dynamic;
 		if (nativeDynamicOnly) {
 			if (!dynamic) {
-				if (globals::features::dx12NativeScene.TraceAllPreparedLights())
-					return true;
 				if (rec->nativeCoverageEpoch != s_casterClassEpoch) {
 					rec->nativePreparedCovered = globals::features::dx12NativeScene.IsPreparedStaticCaster(geom);
 					rec->nativeCoverageEpoch = s_casterClassEpoch;

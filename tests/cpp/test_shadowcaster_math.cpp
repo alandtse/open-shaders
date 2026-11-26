@@ -562,4 +562,8 @@ TEST_CASE("Native SCM policy preserves the disabled and VR paths", "[scm][dx12]"
 	CHECK(offload.observeLights);
 	CHECK(SelectSCMNativeCasterMode(offload, false) == SCMNativeCasterMode::Observe);
 	CHECK(SelectSCMNativeCasterMode(offload, true) == SCMNativeCasterMode::Suppress);
+	CHECK(SelectSCMNativeCasterMode(offload, true, true) == SCMNativeCasterMode::SuppressAll);
+	CHECK(SelectSCMNativeCasterMode(offload, false, true) == SCMNativeCasterMode::Observe);
+	CHECK(SelectSCMNativeCasterMode(comparison, true, true) == SCMNativeCasterMode::Observe);
+	CHECK(SelectSCMNativeCasterMode(SelectSCMNativePolicy(false, true, false), true, true) == SCMNativeCasterMode::Disabled);
 }

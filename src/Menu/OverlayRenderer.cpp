@@ -3,6 +3,7 @@
 #include "HomePageRenderer.h"
 #include "ThemeManager.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <dxgi.h>
@@ -279,6 +280,10 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 effectFailed ||
 			 globals::features::performanceOverlay.settings.ShowInOverlay ||
 			 globals::features::sceneSelector.IsOverlayVisible() ||
+			 std::ranges::any_of(Feature::GetFeatureList(), [](Feature* feature) {
+				 const auto* overlay = dynamic_cast<const OverlayFeature*>(feature);
+				 return overlay && overlay->loaded && overlay->IsOverlayVisible();
+			 }) ||
 			 renderDoc->ShouldShowOverlay() ||
 			 globals::features::vr.HelperRequestsRender());
 }

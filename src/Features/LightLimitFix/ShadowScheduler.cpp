@@ -627,6 +627,7 @@ namespace ShadowCasterManager
 		for (auto& [light, state] : s_splitState)
 			state.rasterOmitsNativeStatic = false;
 		s_nativeOwnershipPending = false;
+		s_nativeRasterAllLights = false;
 	}
 
 	static void ObserveNativeShadowLight(RE::BSShadowLight* light)
@@ -668,13 +669,31 @@ namespace ShadowCasterManager
 
 	static void RefreshNativeRasterOwnership()
 	{
-		if (!GetSCMNativePolicy().observeLights || !globals::features::dx12NativeScene.CanSuppressSCMStatic()) {
+		const auto& nativeScene = globals::features::dx12NativeScene;
+		if (!GetSCMNativePolicy().observeLights || !nativeScene.CanSuppressSCMStatic() ||
+			(nativeScene.TraceAllPreparedLights() && !nativeScene.AllLightStaticReady())) {
 			ReleaseNativeShadowOwnership();
 			s_nativeRasterScene.reset();
+			s_nativeRasterAllLights = false;
 			return;
 		}
-		const auto scene = globals::features::dx12NativeScene.GetFrameShadowScene();
-		const bool allLights = globals::features::dx12NativeScene.TraceAllPreparedLights();
+		const bool allLights = nativeScene.TraceAllPreparedLights();
+		if (allLights) {
+			if (!s_nativeRasterAllLights) {
+				ReleaseNativeShadowOwnership();
+				for (int32_t slot = s_lights.PointLightFirst(); slot < s_lights.PointLightEnd(s_settings.ShadowLightCount); ++slot) {
+					auto& entry = s_lights.Lights[slot];
+					if (!entry.Light || entry.Light->GetIsFrustumOrDirectionalLight())
+						continue;
+					TransitionNativeShadowOwnership(s_splitState[entry.Light], slot, true);
+					InvalidateNativeRasterTile(slot);
+					MarkNativeRasterRecovery(entry);
+				}
+				s_nativeRasterAllLights = true;
+			}
+			return;
+		}
+		const auto scene = nativeScene.GetFrameShadowScene();
 		if (s_nativeRasterScene.lock() != scene || s_nativeRasterAllLights != allLights) {
 			// A changed TLAS or ownership policy invalidates cached raster omissions.
 			ReleaseNativeShadowOwnership();
@@ -1415,13 +1434,13 @@ namespace ShadowCasterManager
 		{
 			// Native-owned static shadows never require a legacy atlas bake.
 			const auto nativePolicy = GetSCMNativePolicy();
-			const bool flickers = FlickersFromLiveOrigin(light->light.get());
 			bool native = false;
 			if (nativePolicy.observeLights) {
-				ObserveNativeShadowLight(light);
+				if (!globals::features::dx12NativeScene.TraceAllPreparedLights())
+					ObserveNativeShadowLight(light);
 				native = globals::features::dx12NativeScene.OwnsStaticForLight(light, slotIndex);
 			}
-			bool split = !native && StaticAtlasReady() && !carrier && !flickers;
+			bool split = !native && StaticAtlasReady() && !carrier && !FlickersFromLiveOrigin(light->light.get());
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
 			if (nativePolicy.observeLights || st->rasterOmitsNativeStatic)
@@ -1554,7 +1573,8 @@ namespace ShadowCasterManager
 			s_visitDynamicCount.store(0, std::memory_order_relaxed);
 			s_visitStaticCount.store(0, std::memory_order_relaxed);
 			s_cullPassMode.store(static_cast<int>(mode), std::memory_order_relaxed);
-			s_nativeCasterMode = DX12::SelectSCMNativeCasterMode(nativePolicy, native);
+			s_nativeCasterMode = DX12::SelectSCMNativeCasterMode(nativePolicy, native,
+				globals::features::dx12NativeScene.TraceAllPreparedLights());
 
 			if (camera)
 				s_cullCameraPos = camera->world.translate;  // viewer, for the caster cull
@@ -4434,7 +4454,7 @@ namespace ShadowCasterManager
 		{
 			ZoneNamedN(zPoint, "SCM::Render::PointLights", true);
 			CS_GPU_PASS("SCM::Render::PointLights");
-			const bool observeNativeLights = GetSCMNativePolicy().observeLights;
+			const bool observeNativeLights = GetSCMNativePolicy().observeLights && !globals::features::dx12NativeScene.TraceAllPreparedLights();
 			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
 				// A teardown can begin mid-pass; ClearLightArrays sets the flag before
 				// freeing, so bailing here narrows the window to a single in-flight Render call.

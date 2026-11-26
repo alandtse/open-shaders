@@ -239,6 +239,9 @@ namespace DX12Native
 				records[i * kRecords + 2] = { light.emitterRadius, light.falloffExponent, float(light.flags), std::bit_cast<float>(light.referenceID) };
 			}
 			WriteUpload(slot->lightUpload.get(), records.data(), sizeof(records));
+			slot->debugLights.clear();
+			if (controls.captureDebugLights)
+				slot->debugLights.assign(lights.begin(), lights.begin() + camera.lightCount);
 
 			const UINT step = requested.d3d12Device->GetDescriptorHandleIncrementSize(
 				D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);

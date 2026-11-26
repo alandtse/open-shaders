@@ -4,7 +4,7 @@
 #include "DX12NativeRasterCapture.h"
 #include "DX12NativeRuntimeCapture.h"
 #include "DX12NativeShadowTrace.h"
-#include "Feature.h"
+#include "../OverlayFeature.h"
 
 #include <atomic>
 #include <memory>
@@ -15,7 +15,7 @@
 #include <vector>
 
 /** @brief Independent early opaque raster capture for native DX12. */
-struct DX12NativeScene final : Feature
+struct DX12NativeScene final : OverlayFeature
 {
 	std::string GetName() override { return "DX12 Native Scene"; }
 	std::string GetShortName() override { return "DX12NativeScene"; }
@@ -27,6 +27,10 @@ struct DX12NativeScene final : Feature
 	bool SupportsVR() override { return false; }
 
 	void DrawSettings() override;
+	void DrawOverlay() override;
+	bool IsOverlayVisible() const override;
+	/** @brief Cached frame-wide fast-path ownership for point-light static shadows. */
+	bool AllLightStaticReady() const { return allLightStaticReady.load(std::memory_order_acquire); }
 	bool WantsRenderPassHook() const override;
 	std::function<void()> OnRenderPassBegin(const RE::BSRenderPass* pass) override;
 	bool WantsPreShadowMapsHook() const override;
@@ -81,6 +85,8 @@ private:
 	std::atomic<uint32_t> frameShadowSceneID{ UINT32_MAX };
 	std::atomic<bool> previousShadowSubmitted{ false };
 	std::atomic<bool> frameTraceAllLights{ false };
+	std::atomic<bool> allLightStaticReady{ false };
+	std::atomic<bool> debugNativeLights{ false };
 	bool shadowMaskEnabled = true;
 	bool traceAllPreparedLights = false;
 	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.

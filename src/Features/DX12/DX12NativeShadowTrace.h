@@ -32,6 +32,7 @@ namespace DX12Native
 		float falloffCurve = 1.0f;
 		bool stochasticSampling = true;
 		float emitterRadiusMultiplier = kDefaultShadowEmitterRadiusMultiplier;
+		bool captureDebugLights = false;
 	};
 
 	/** @brief Full render-size raw visibility; the composite owns reconstruction. */
@@ -46,6 +47,7 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12Fence> readyFence;
 		uint64_t readyValue = 0, allocationBytes = 0;
 		uint32_t frame = 0, width = 0, height = 0;
+		std::vector<DX12::PreparedLight> debugLights;
 		// RGBA32F: x weighted visibility, y 1 sampled / -1 omitted / 0 invalid,
 		// z receiver distance, w accumulated light weight.
 	};

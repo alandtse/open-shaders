@@ -18,14 +18,17 @@ namespace DX12
 	{
 		Disabled,
 		Observe,
-		Suppress
+		Suppress,
+		SuppressAll
 	};
 
 	/** @brief Selects the native extension for the synchronous SCM caster walk. */
-	constexpr SCMNativeCasterMode SelectSCMNativeCasterMode(SCMNativePolicy policy, bool nativeOwned)
+	constexpr SCMNativeCasterMode SelectSCMNativeCasterMode(SCMNativePolicy policy, bool nativeOwned, bool allLights = false)
 	{
 		if (!policy.observeGeometry)
 			return SCMNativeCasterMode::Disabled;
-		return policy.observeLights && nativeOwned ? SCMNativeCasterMode::Suppress : SCMNativeCasterMode::Observe;
+		if (!policy.observeLights || !nativeOwned)
+			return SCMNativeCasterMode::Observe;
+		return allLights ? SCMNativeCasterMode::SuppressAll : SCMNativeCasterMode::Suppress;
 	}
 }

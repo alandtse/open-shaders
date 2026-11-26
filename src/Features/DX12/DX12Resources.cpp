@@ -469,6 +469,37 @@ namespace
 		return {};
 	}
 
+	void DrawWholeCellMap(const DX12::Grid& grid)
+	{
+		const auto& tile = grid.resident.front();
+		const float side = std::min(ImGui::GetContentRegionAvail().x,
+			SubcellMapStyle::maxPitch * DX12::kPredictiveDiameter);
+		if (side <= 0.0f)
+			return;
+		const auto origin = ImGui::GetCursorScreenPos();
+		const ImVec2 end{ origin.x + side, origin.y + side };
+		auto* draw = ImGui::GetWindowDrawList();
+		draw->AddRectFilled(origin, end, TileColor(tile, true), SubcellMapStyle::rounding);
+		draw->AddRect(origin, end, SubcellMapStyle::activeOutline, SubcellMapStyle::rounding, 0, SubcellMapStyle::activeOutlineWidth);
+		if (tile && (tile->state == DX12::Tile::State::ReadyPartial || tile->state == DX12::Tile::State::EmptyPartial))
+			draw->AddLine(ImVec2(origin.x + SubcellMapStyle::stripeInset, end.y - SubcellMapStyle::stripeInset),
+				ImVec2(end.x - SubcellMapStyle::stripeInset, origin.y + SubcellMapStyle::stripeInset),
+				SubcellMapStyle::partialStripe, SubcellMapStyle::stripeWidth);
+		const char* label = T("menu.dx12.resources.whole_cell_map", "Unified interior");
+		const auto labelSize = ImGui::CalcTextSize(label);
+		draw->AddText(ImVec2(origin.x + (side - labelSize.x) * 0.5f, origin.y + (side - labelSize.y) * 0.5f),
+			SubcellMapStyle::playerFill, label);
+		ImGui::Dummy(ImVec2(side, side));
+		if (ImGui::IsItemHovered()) {
+			ImGui::BeginTooltip();
+			ImGui::TextUnformatted(TileStatus(tile));
+			if (tile)
+				ImGui::Text(T("menu.dx12.resources.whole_cell_counts", "Shapes: %zu | Lights: %zu"), tile->shapes.size(), tile->lights.size());
+			ImGui::EndTooltip();
+		}
+		ImGui::TextDisabled("%s", T("menu.dx12.resources.whole_cell_map_hint", "Residency diagram, not a geometric floor plan"));
+	}
+
 	void DrawSubcellMap(const DX12::Grid& grid)
 	{
 		const auto center = grid.requested.front();
@@ -613,6 +644,7 @@ void DX12Resources::DrawSettings()
 	const auto timing = GetPreparationStats();
 	if (snapshot && snapshot->wholeCell) {
 		ImGui::Text("%s", T("menu.dx12.resources.whole_cell", "Whole-cell residency (subdivisions bypassed)"));
+		DrawWholeCellMap(*snapshot);
 		if (const auto& tile = snapshot->resident.front()) {
 			ImGui::Text(T("menu.dx12.resources.whole_cell_counts", "Shapes: %zu | Lights: %zu"), tile->shapes.size(), tile->lights.size());
 			ImGui::Text("%s", TileStatus(tile));
