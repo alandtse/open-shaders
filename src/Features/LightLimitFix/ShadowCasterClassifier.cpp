@@ -468,11 +468,18 @@ namespace ShadowCasterManager
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
 		if (nativeDynamicOnly) {
-			// Historical open-RT behavior: all stationary casters for the
-			// owned light are removed, even if TLAS coverage is incomplete.
-			if (dynamic)
-				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
-			return !dynamic;
+			if (!dynamic) {
+				if (rec->nativeCoverageEpoch != s_casterClassEpoch) {
+					rec->nativePreparedCovered = globals::features::dx12NativeScene.IsPreparedStaticCaster(geom);
+					rec->nativeCoverageEpoch = s_casterClassEpoch;
+				}
+				if (rec->nativePreparedCovered)
+					return true;
+			}
+			// Uncovered static casters stay live and prevent empty-raster sleep.
+			s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+			(dynamic ? s_dynamicCasterDraws : s_staticCasterDraws).fetch_add(1, std::memory_order_relaxed);
+			return false;
 		}
 		// A caster that settled since the bake is missing from it and is drawn live; one that started moving is still in
 		// it at its old pose and is left to it. Either way the light is queued for a rebake.

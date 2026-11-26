@@ -583,6 +583,7 @@ namespace ShadowCasterManager
 	};
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
 	static bool s_nativeOwnershipPending = false;  // SCM scheduling thread only.
+	static std::weak_ptr<const DX12Native::TopLevel> s_nativeRasterScene;
 
 	static void RetireSplitBake(SplitState& st)
 	{
@@ -666,8 +667,17 @@ namespace ShadowCasterManager
 	{
 		if (!GetSCMNativePolicy().observeLights || !globals::features::dx12NativeScene.CanSuppressSCMStatic()) {
 			ReleaseNativeShadowOwnership();
+			s_nativeRasterScene.reset();
 			return;
 		}
+		const auto scene = globals::features::dx12NativeScene.GetFrameShadowScene();
+		if (s_nativeRasterScene.lock() != scene) {
+			// Changed TLAS membership invalidates cached raster omissions.
+			ReleaseNativeShadowOwnership();
+			s_nativeRasterScene = scene;
+		}
+		if (!s_nativeOwnershipPending)
+			return;
 		for (int32_t slot = s_lights.PointLightFirst(); slot < s_lights.PointLightEnd(s_settings.ShadowLightCount); ++slot) {
 			auto& entry = s_lights.Lights[slot];
 			if (!entry.Light)
@@ -4271,7 +4281,7 @@ namespace ShadowCasterManager
 			ValidateCandidates(camera, wantDiag, candidates);
 
 			UpdatePoolMembership(ssn, sunLight, candidates);
-			if (s_nativeOwnershipPending)
+			if (s_nativeOwnershipPending || GetSCMNativePolicy().observeLights)
 				RefreshNativeRasterOwnership();
 
 			double budget = ComputeRedrawBudget();
@@ -4428,11 +4438,9 @@ namespace ShadowCasterManager
 				auto& e = s_lights.Lights[i];
 				if (!e.Light)
 					continue;
-				// Cached lights still publish live parameters; only accumulation may change raster provenance.
-				if (observeNativeLights && !e.RedrawFrame) {
-					if (const auto it = s_splitState.find(e.Light); it != s_splitState.end() && !it->second.rasterOmitsNativeStatic)
-						ObserveNativeShadowLight(e.Light);
-				}
+				// Publish selected engine shadow lights even when their raster tiles are cached.
+				if (observeNativeLights)
+					ObserveNativeShadowLight(e.Light);
 				if (!e.RedrawFrame)
 					continue;
 				const CarriedShadowScope carriedShadow(CarrierBody(e.Light) != nullptr);

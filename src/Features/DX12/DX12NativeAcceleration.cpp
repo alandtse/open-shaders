@@ -1,4 +1,5 @@
 #include "DX12NativeAcceleration.h"
+#include "DX12CasterCoverage.h"
 #include "DX12GpuRetirement.h"
 #include "VideoMemoryBudget.h"
 #include "Utils/TracyZones.h"
@@ -206,6 +207,7 @@ namespace DX12Native
 		top->producerFence = completion;
 		instances.reserve(target->geometry.size());
 		top->bottoms.reserve(target->geometry.size());
+		top->casterCoverage.reserve(target->geometry.size());
 
 		for (const auto& input : target->geometry) {
 			const auto found = bottoms.find(input->identity);
@@ -219,6 +221,9 @@ namespace DX12Native
 			desc.AccelerationStructure = found->second->acceleration->GetGPUVirtualAddress();
 			instances.push_back(desc);
 			top->bottoms.push_back(found->second);
+			const auto key = CasterCoverageKey(input->positions.size(), input->indices.size());
+			if (key)
+				top->casterCoverage.emplace(key, input.get());
 		}
 
 		const uint64_t bytes = uint64_t(instances.size()) * sizeof(instances.front());

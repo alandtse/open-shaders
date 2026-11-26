@@ -40,6 +40,8 @@ struct DX12NativeScene final : Feature
 	void ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requireStability = false);
 	/** @brief SCM hands native-owned lights' static casters to RayQuery and retains movers. */
 	bool OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const;
+	bool IsPreparedStaticCaster(RE::BSGeometry& geometry) const;
+	std::shared_ptr<const DX12Native::TopLevel> GetFrameShadowScene() const;
 	/** @brief Global prerequisites for suppressing SCM static shadows. */
 	bool CanSuppressSCMStatic() const;
 	// Snapshot LLF/SCM point-light parameters without altering the DX11 light.
@@ -63,7 +65,11 @@ private:
 	// One immutable, ordered light selection shared by SCM and the RayQuery dispatch.
 	std::atomic<std::shared_ptr<const std::vector<DX12::PreparedLight>>> shadowLights;
 	std::atomic<uint32_t> shadowLightScope{ 0 };
+	std::atomic<std::shared_ptr<const DX12Native::TopLevel>> frameShadowScene;
+	std::atomic<uint32_t> frameShadowSceneID{ UINT32_MAX };
+	std::atomic<bool> previousShadowSubmitted{ false };
 	bool shadowMaskEnabled = true;
+	bool traceAllPreparedLights = false;
 	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
 	bool offloadStaticShadows = true;
 	bool offloadFlickeringStatic = true;

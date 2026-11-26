@@ -2,6 +2,7 @@
 
 #include "../Upscaling.h"
 #include "DX12Control.h"
+#include "DX12CasterCoverage.h"
 #include "DX12Resources.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -20,6 +21,7 @@
 void DX12NativeScene::DrawSettings()
 {
 	ImGui::Checkbox(T("menu.dx12.scene.independent_shadowmask", "Independent shadowmask"), &shadowMaskEnabled);
+	ImGui::Checkbox(T("menu.dx12.scene.trace_all_lights", "Trace all prepared lights (additional shadows)"), &traceAllPreparedLights);
 	ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoorShadowOffloading);
 	bool keepRasterStatic = !offloadStaticShadows;
 	if (ImGui::Checkbox(T("menu.dx12.scene.keep_raster_static", "Keep raster static shadows for native-accounted lights"), &keepRasterStatic))
@@ -60,6 +62,7 @@ void DX12NativeScene::DrawSettings()
 void DX12NativeScene::LoadSettings(json& input)
 {
 	shadowMaskEnabled = input.value("ShadowMask", true);
+	traceAllPreparedLights = input.value("TraceAllPreparedLights", false);
 	outdoorShadowOffloading = input.value("OutdoorShadowOffloading", false);
 	offloadStaticShadows = input.value("OffloadSCMStatic", true);
 	offloadFlickeringStatic = input.value("OffloadFlickeringStatic", true);
@@ -83,7 +86,7 @@ void DX12NativeScene::LoadSettings(json& input)
 
 void DX12NativeScene::SaveSettings(json& output)
 {
-	output = { { "ShadowMask", shadowMaskEnabled }, { "OutdoorShadowOffloading", outdoorShadowOffloading }, { "ShadowTraceDensityMode", densityMode },
+	output = { { "ShadowMask", shadowMaskEnabled }, { "TraceAllPreparedLights", traceAllPreparedLights }, { "OutdoorShadowOffloading", outdoorShadowOffloading }, { "ShadowTraceDensityMode", densityMode },
 		{ "OffloadSCMStatic", offloadStaticShadows },
 		{ "OffloadFlickeringStatic", offloadFlickeringStatic },
 		{ "FreezeNativeFlickering", freezeNativeFlickering },
@@ -99,6 +102,7 @@ void DX12NativeScene::SaveSettings(json& output)
 void DX12NativeScene::RestoreDefaultSettings()
 {
 	shadowMaskEnabled = true;
+	traceAllPreparedLights = false;
 	outdoorShadowOffloading = false;
 	offloadStaticShadows = true;
 	offloadFlickeringStatic = true;
@@ -127,7 +131,10 @@ bool DX12NativeScene::CanSuppressSCMStatic() const
 {
 	return loaded && !globals::game::isVR && globals::features::dx12Control.IsActive() &&
 	       globals::features::dx12Control.IsShadowOffloadMode() && shadowMaskEnabled &&
-	       offloadStaticShadows && CanOffloadShadowsInCurrentCell();
+	       offloadStaticShadows && CanOffloadShadowsInCurrentCell() &&
+	       globals::features::dx12Control.GetShadowStrength() > 0.0f &&
+	       globals::features::dx12Control.GetShadowBlend() > 0.0f &&
+	       previousShadowSubmitted.load(std::memory_order_acquire);
 }
 
 bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const
@@ -138,7 +145,7 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	if (!light || slot < 0 || !CanSuppressSCMStatic() ||
 		light->GetIsFrustumOrDirectionalLight() || !globals::game::graphicsState)
 		return false;
-	const auto scene = acceleration.GetScene();
+	const auto scene = GetFrameShadowScene();
 	const auto lights = shadowLights.load(std::memory_order_acquire);
 	const auto* ni = light->light.get();
 	if (!scene || !scene->acceleration || !lights || !ni ||
@@ -153,7 +160,7 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	const auto found = std::ranges::find_if(runtimeLightSamples, [ni](const RuntimeLightSample& sample) {
 		return sample.source == ni;
 	});
-	if (found == runtimeLightSamples.end() ||
+	if (found == runtimeLightSamples.end() || found->value.fade <= 0.0f ||
 		(found->flickers && !offloadFlickeringStatic))
 		return false;
 
@@ -166,6 +173,14 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 			return true;
 	}
 	return false;
+}
+
+std::shared_ptr<const DX12Native::TopLevel> DX12NativeScene::GetFrameShadowScene() const
+{
+	if (!globals::game::graphicsState ||
+		frameShadowSceneID.load(std::memory_order_acquire) != globals::game::graphicsState->GetFrameCount())
+		return {};
+	return frameShadowScene.load(std::memory_order_acquire);
 }
 
 void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID,
@@ -259,13 +274,24 @@ void DX12NativeScene::PreShadowMaps()
 		return;
 	}
 	nativeSessionStarted = true;
+	if (globals::game::graphicsState) {
+		const uint32_t frame = globals::game::graphicsState->GetFrameCount();
+		if (frameShadowSceneID.load(std::memory_order_acquire) != frame) {
+			previousShadowSubmitted.store(shadows.Get(frame - 1u) != nullptr, std::memory_order_release);
+			frameShadowScene.store(acceleration.GetScene(), std::memory_order_release);
+			frameShadowSceneID.store(frame, std::memory_order_release);
+		}
+	}
 	auto grid = globals::features::dx12Resources.GetGrid();
 	if (!grid || !grid->requested.front().scope) {
 		shadowLightScope.store(0, std::memory_order_release);
 		shadowLights.store(nullptr, std::memory_order_release);
+		frameShadowScene.store(nullptr, std::memory_order_release);
 		return;
 	}
 	shadowLightScope.store(grid->requested.front().scope, std::memory_order_release);
+	if (auto scene = GetFrameShadowScene(); scene && scene->scope != grid->requested.front().scope)
+		frameShadowScene.store(nullptr, std::memory_order_release);
 	// SCM reads a single per-frame publication without re-enumerating tiles
 	// for every shadow light; the same ordered sources feed RayQuery.
 	shadowLights.store(std::make_shared<const std::vector<DX12::PreparedLight>>(
@@ -308,7 +334,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	const uint32_t viewportHeight = std::isfinite(viewport.y) && viewport.y > 0.0f ? uint32_t(viewport.y) : 0u;
 	{
 		const auto captured = raster.Get(frame);
-		const auto built = acceleration.GetScene();
+		const auto built = GetFrameShadowScene();
 		const auto lights = shadowLights.load(std::memory_order_acquire);
 		// The native trace handles unavailable inputs without affecting raster
 		// rendering. RayQuery dispatch remains in DX12NativeShadowTrace.
@@ -324,16 +350,21 @@ void DX12NativeScene::OnOpaqueRasterReady()
 			.stochasticSampling = shadowStochastic,
 			.emitterRadiusMultiplier = shadowEmitterRadiusMultiplier
 		};
-		std::vector<DX12::PreparedLight> liveLights = lights ? *lights : std::vector<DX12::PreparedLight>{};
-		if (!liveLights.empty()) {
+		std::vector<DX12::PreparedLight> liveLights;
+		if (lights) {
 			std::scoped_lock lock(runtimeLightMutex);
-			if (runtimeLightFrame == frame) {
-				for (const auto& runtime : runtimeLightSamples) {
-					auto it = std::ranges::find_if(liveLights, [&](const auto& candidate) {
-						return candidate.referenceID == runtime.referenceID;
-					});
-					if (it != liveLights.end())
-						*it = runtime.value;
+			liveLights.reserve(lights->size());
+			for (const auto& prepared : *lights) {
+				const auto observed = runtimeLightFrame == frame ?
+					std::ranges::find_if(runtimeLightSamples, [&](const auto& sample) {
+						return sample.referenceID == prepared.referenceID;
+					}) : runtimeLightSamples.end();
+				if (observed != runtimeLightSamples.end()) {
+					if (observed->value.fade > 0.0f &&
+						(offloadFlickeringStatic || !observed->flickers || traceAllPreparedLights))
+						liveLights.push_back(observed->value);
+				} else if (traceAllPreparedLights) {
+					liveLights.push_back(prepared);
 				}
 			}
 		}
@@ -357,69 +388,98 @@ std::function<void()> DX12NativeScene::OnRenderPassBegin(const RE::BSRenderPass*
 	return nullptr;
 }
 
+namespace
+{
+	std::optional<DX12Native::RuntimeGeometryCandidate> ReadRigidCaster(RE::BSGeometry& geometry, bool identity)
+	{
+		auto* tri = geometry.AsTriShape();
+		if (!tri || geometry.AsDynamicTriShape())
+			return std::nullopt;
+		const auto& runtime = geometry.GetGeometryRuntimeData();
+		if (runtime.skinInstance || runtime.alphaProperty || !runtime.rendererData ||
+			!runtime.rendererData->rawVertexData || !runtime.rendererData->rawIndexData)
+			return std::nullopt;
+		// Ignore effects, sky, water and other non-lighting draws; geometry only.
+		const auto* property = runtime.shaderProperty.get();
+		if (!property || property->GetRTTI() != globals::rtti::BSLightingShaderPropertyRTTI.get())
+			return std::nullopt;
+		// A drawn BSTriShape often has no user data of its own; Skyrim keeps the
+		// placed reference on an ancestor NiNode. Walk only the existing parent chain.
+		const RE::TESForm* reference = nullptr;
+		RE::NiAVObject* node = &geometry;
+		for (uint32_t depth = 0; node && depth < 16; ++depth, node = node->parent) {
+			if (const auto* owner = node->GetUserData()) {
+				reference = owner;
+				break;
+			}
+		}
+		if (reference && (reference->IsDynamicForm() || reference->IsActor()))
+			return std::nullopt;
+		const auto* file = identity && reference ? reference->GetFile(0) : nullptr;
+		auto desc = runtime.vertexDesc;
+		if (!desc.HasFlag(RE::BSGraphics::Vertex::VF_VERTEX))
+			return std::nullopt;
+		const auto counts = tri->GetTrishapeRuntimeData();
+		const uint32_t stride = desc.GetSize();
+		if (stride < 16 || stride > 256 || !counts.vertexCount || !counts.triangleCount ||
+			counts.vertexCount > 65535 || counts.triangleCount > 65535)
+			return std::nullopt;
+
+		DX12Native::RuntimeGeometryCandidate candidate;
+		if (identity) {
+			candidate.referenceKey = reference && file && !file->GetFilename().empty() ?
+			                             std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename()) :
+			                             std::format("render:{:016X}", reinterpret_cast<std::uintptr_t>(&geometry));
+			candidate.shapeName = geometry.name.empty() ? "<unnamed>" : geometry.name.c_str();
+		}
+		candidate.objectIdentity = reinterpret_cast<std::uintptr_t>(&geometry);
+		candidate.stride = stride;
+		candidate.vertexCount = counts.vertexCount;
+		candidate.triangleCount = counts.triangleCount;
+		candidate.vertices = runtime.rendererData->rawVertexData;
+		candidate.indices = runtime.rendererData->rawIndexData;
+		for (uint32_t row = 0; row < 3; ++row)
+			for (uint32_t col = 0; col < 3; ++col)
+				candidate.transform[4 * row + col] = geometry.world.rotate.entry[row][col] * geometry.world.scale;
+		candidate.transform[3] = geometry.world.translate.x;
+		candidate.transform[7] = geometry.world.translate.y;
+		candidate.transform[11] = geometry.world.translate.z;
+		candidate.centerX = geometry.worldBound.center.x;
+		candidate.centerY = geometry.worldBound.center.y;
+		return candidate;
+	}
+}
+
+bool DX12NativeScene::IsPreparedStaticCaster(RE::BSGeometry& geometry) const
+{
+	if (!CanSuppressSCMStatic())
+		return false;
+	const auto scene = GetFrameShadowScene();
+	if (!scene || !scene->acceleration || scene->scope != shadowLightScope.load(std::memory_order_acquire))
+		return false;
+	const auto candidate = ReadRigidCaster(geometry, false);
+	if (!candidate)
+		return false;
+	const auto key = DX12Native::CasterCoverageKey(candidate->vertexCount, uint64_t(candidate->triangleCount) * 3u);
+	const auto [first, last] = scene->casterCoverage.equal_range(key);
+	for (auto it = first; it != last; ++it) {
+		if (DX12Native::MatchesCasterGeometry(*it->second, candidate->transform, candidate->vertices,
+				candidate->indices, candidate->stride, candidate->vertexCount, candidate->triangleCount))
+			return true;
+	}
+	return false;
+}
+
 void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requireStability)
 {
-	// SCM and already-submitted opaque render passes share this bounded
-	// CPU-only capture path. No scene traversal, readback or GPU wait.
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive())
 		return;
-	auto* tri = geometry.AsTriShape();
-	if (!tri || geometry.AsDynamicTriShape())
+	auto candidate = ReadRigidCaster(geometry, true);
+	if (!candidate)
 		return;
-	const auto& runtime = geometry.GetGeometryRuntimeData();
-	if (runtime.skinInstance || runtime.alphaProperty || !runtime.rendererData ||
-		!runtime.rendererData->rawVertexData || !runtime.rendererData->rawIndexData)
-		return;
-	// Ignore effects, sky, water and other non-lighting draws; geometry only.
-	const auto* property = runtime.shaderProperty.get();
-	if (!property || property->GetRTTI() != globals::rtti::BSLightingShaderPropertyRTTI.get())
-		return;
-	// A drawn BSTriShape often has no user data of its own; Skyrim keeps the
-	// placed reference on an ancestor NiNode. Walk only the existing parent chain.
-	const RE::TESForm* reference = nullptr;
-	RE::NiAVObject* node = &geometry;
-	for (uint32_t depth = 0; node && depth < 16; ++depth, node = node->parent) {
-		if (const auto* owner = node->GetUserData()) {
-			reference = owner;
-			break;
-		}
-	}
-	if (reference && (reference->IsDynamicForm() || reference->IsActor()))
-		return;
-	const auto* file = reference ? reference->GetFile(0) : nullptr;
-	auto desc = runtime.vertexDesc;
-	if (!desc.HasFlag(RE::BSGraphics::Vertex::VF_VERTEX))
-		return;
-	const auto counts = tri->GetTrishapeRuntimeData();
-	const uint32_t stride = desc.GetSize();
-	if (stride < 16 || stride > 256 || !counts.vertexCount || !counts.triangleCount ||
-		counts.vertexCount > 65535 || counts.triangleCount > 65535)
-		return;
-
-	DX12Native::RuntimeGeometryCandidate candidate;
-	candidate.referenceKey = reference && file && !file->GetFilename().empty() ?
-	                             std::format("{:06X}:{}", reference->GetLocalFormID(), file->GetFilename()) :
-	                             std::format("render:{:016X}", reinterpret_cast<std::uintptr_t>(&geometry));
-	candidate.shapeName = geometry.name.empty() ? "<unnamed>" : geometry.name.c_str();
-	candidate.requiresStability = requireStability;
-	candidate.objectIdentity = reinterpret_cast<std::uintptr_t>(&geometry);
-	candidate.stride = stride;
-	candidate.vertexCount = counts.vertexCount;
-	candidate.triangleCount = counts.triangleCount;
-	candidate.vertices = runtime.rendererData->rawVertexData;
-	candidate.indices = runtime.rendererData->rawIndexData;
-	for (uint32_t row = 0; row < 3; ++row)
-		for (uint32_t col = 0; col < 3; ++col)
-			candidate.transform[4 * row + col] = geometry.world.rotate.entry[row][col] * geometry.world.scale;
-	candidate.transform[3] = geometry.world.translate.x;
-	candidate.transform[7] = geometry.world.translate.y;
-	candidate.transform[11] = geometry.world.translate.z;
-	candidate.centerX = geometry.worldBound.center.x;
-	candidate.centerY = geometry.worldBound.center.y;
-	const uint32_t frame = globals::game::graphicsState ?
-	                           globals::game::graphicsState->GetFrameCount() :
-	                           0;
-	geometryCapture.Observe(candidate, frame, globals::features::dx12Resources.GetGrid());
+	candidate->requiresStability = requireStability;
+	const uint32_t frame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : 0u;
+	geometryCapture.Observe(*candidate, frame, globals::features::dx12Resources.GetGrid());
 }
 
 void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
@@ -427,6 +487,9 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 	if (a_opening && nativeSessionStarted) {
 		shadowLightScope.store(0, std::memory_order_release);
 		shadowLights.store(nullptr, std::memory_order_release);
+		frameShadowScene.store(nullptr, std::memory_order_release);
+		frameShadowSceneID.store(UINT32_MAX, std::memory_order_release);
+		previousShadowSubmitted.store(false, std::memory_order_release);
 		{
 			std::scoped_lock lock(runtimeLightMutex);
 			runtimeLightFrame = UINT32_MAX;
@@ -447,6 +510,9 @@ void DX12NativeScene::OnRuntimeDisabled()
 	nativeSessionStarted = false;
 	shadowLightScope.store(0, std::memory_order_release);
 	shadowLights.store(nullptr, std::memory_order_release);
+	frameShadowScene.store(nullptr, std::memory_order_release);
+	frameShadowSceneID.store(UINT32_MAX, std::memory_order_release);
+	previousShadowSubmitted.store(false, std::memory_order_release);
 	{
 		std::scoped_lock lock(runtimeLightMutex);
 		runtimeLightFrame = UINT32_MAX;

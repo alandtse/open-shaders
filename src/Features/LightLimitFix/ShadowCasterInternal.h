@@ -509,6 +509,8 @@ namespace ShadowCasterManager
 		uint64_t foldHash = 0;
 		bool foldHashValid = false;
 		bool dynamic = true;
+		int nativeCoverageEpoch = -1;
+		bool nativePreparedCovered = false;
 		bool actorAttached = false;                ///< parented under an actor's skeleton
 		int ancestryEpoch = -1;                    ///< epoch of the last parent-chain walk
 		int classEpoch = -1;                       ///< epoch its static / dynamic class last changed after its first sighting

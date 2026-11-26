@@ -24,6 +24,7 @@ namespace DX12Native
 	{
 		std::shared_ptr<const SceneInputs> inputs;
 		std::vector<std::shared_ptr<const BottomLevel>> bottoms;
+		std::unordered_multimap<uint64_t, const DX12::Shape*> casterCoverage;
 		winrt::com_ptr<ID3D12Resource> acceleration;
 		winrt::com_ptr<ID3D12Fence> producerFence;
 		uint64_t producerValue = 0;
