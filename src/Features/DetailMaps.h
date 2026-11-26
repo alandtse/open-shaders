@@ -39,6 +39,7 @@ struct DetailMaps : Feature
 	virtual void GenerateShaderPermutations(RE::BSShader* a_shader) override;
 	virtual uint32_t GetLightingVariantFlag() const override;
 	virtual std::string_view GetLightingVariantDefine() const override;
+	virtual void RegisterUxActions() override;
 
 	/**
 	 * @brief Swaps in the detail Lighting variant for the render pass the engine just set up, when a rule matches.
@@ -84,6 +85,7 @@ private:
 	bool ShouldPrecompile(uint32_t a_descriptor) const;
 	bool IsEligible(uint32_t a_descriptor) const;
 	void Reload();
+	json BuildStatus() const;
 	void ForgetLastRule();
 	void LoadSets();
 	void LoadRules();

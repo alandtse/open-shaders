@@ -6,6 +6,7 @@
 #include "State.h"
 #include "TruePBR.h"
 #include "Utils/D3D.h"
+#include "Utils/DevBenchUx.h"
 #include "Utils/FileSystem.h"
 #include "Utils/Game.h"
 #include "Utils/MathUtils.h"
@@ -422,6 +423,30 @@ void DetailMaps::Reset()
 void DetailMaps::SetupResources()
 {
 	Reload();
+}
+
+void DetailMaps::RegisterUxActions()
+{
+	FEATURE_RENDER_COMMAND("reload", "Reread the Detail Maps rules and sets, like the Reload Rules and Sets button.", [](Feature* a_self, const json&) {
+		static_cast<DetailMaps*>(a_self)->Reload();
+	});
+	FEATURE_COMMAND("openPackPage", "Open the Detailed Maps Nexus page, like the Get Detailed Maps button.", [](Feature*, const json&) {
+		Util::FileHelpers::OpenWithShell(PackUrl);
+	});
+	FEATURE_RENDER_QUERY("status", "Return the loaded set and rule counts, rule errors, detail draws last frame and whether the pack is missing.", [](const Feature* a_self, const json&) -> json {
+		return static_cast<const DetailMaps*>(a_self)->BuildStatus();
+	});
+}
+
+json DetailMaps::BuildStatus() const
+{
+	return {
+		{ "sets", sets.size() },
+		{ "rules", rules.size() },
+		{ "errors", ruleErrors },
+		{ "detailDrawsLastFrame", lastPassCount },
+		{ "packMissing", loaded && !HasContent() },
+	};
 }
 
 struct DetailMaps::Hooks
