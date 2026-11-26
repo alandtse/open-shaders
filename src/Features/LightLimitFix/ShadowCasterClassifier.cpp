@@ -307,6 +307,7 @@ namespace ShadowCasterManager
 		// must advance by the elapsed epoch count to keep real-time semantics.
 		const int elapsed = r.lastVerifyEpoch < 0 ? 1 : std::max(1, s_casterClassEpoch - r.lastVerifyEpoch);
 		if (moved) {
+			r.observedMotion |= !inserted;
 			// Leaving the static set is an oscillation (not a first sighting): make
 			// the caster earn its way back, so repeated pausing can't re-bake every time.
 			if (!r.dynamic && !inserted)
@@ -468,7 +469,11 @@ namespace ShadowCasterManager
 		CasterMobility* rec = geom.GetGeometryRuntimeData().skinInstance ?
 		                          nullptr :
 		                          &ClassifyCaster(geom);
-		const bool dynamic = !rec || rec->dynamic;
+		const bool dynamic = nativeMode == DX12::SCMNativeCasterMode::SuppressAll ?
+			DX12::FullRTDynamicCaster(!rec, geom.AsDynamicTriShape() != nullptr,
+				rec && rec->actorAttached, rec && rec->dynamic, rec && rec->observedMotion,
+				rec && s_casterClassEpoch < OwnerMovingUntil(*rec)) :
+			!rec || rec->dynamic;
 		if (nativeDynamicOnly) {
 			// Historical open-RT behavior: all stationary casters for the
 			// owned light are removed, even if TLAS coverage is incomplete.

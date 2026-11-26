@@ -49,6 +49,13 @@ namespace DX12
 		return supportedPointLight && (policy.fullStaticAuthority || (policy.observeLights && matched));
 	}
 
+	/** @brief First sighting is not proof of rigid caster movement in Full RT. */
+	constexpr bool FullRTDynamicCaster(bool skinned, bool deforming, bool actorAttached,
+		bool moving, bool observedMotion, bool ownerMoving)
+	{
+		return skinned || deforming || actorAttached || (moving && (observedMotion || ownerMoving));
+	}
+
 	enum class SCMNativeCasterMode
 	{
 		Disabled,

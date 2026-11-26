@@ -509,6 +509,7 @@ namespace ShadowCasterManager
 		uint64_t foldHash = 0;
 		bool foldHashValid = false;
 		bool dynamic = true;
+		bool observedMotion = false;
 		bool actorAttached = false;                ///< parented under an actor's skeleton
 		int ancestryEpoch = -1;                    ///< epoch of the last parent-chain walk
 		int classEpoch = -1;                       ///< epoch its static / dynamic class last changed after its first sighting
@@ -695,6 +696,8 @@ namespace ShadowCasterManager
 	/** @brief Invalidates only raster tiles that omitted native static casters, including parked tiles. */
 	void InvalidateNativeRasterTiles();
 	bool SlotNativeStaticOmitted(int32_t poolSlot);
+	/** @brief Reject migrated raster depth containing static casters for Full RT. */
+	bool InvalidateFullRTStaticContent(int32_t poolSlot);
 	void InvalidateNativeRasterTile(int32_t poolSlot);
 	/** @brief Retires native tracking after the upstream session reset frees all tiles. */
 	void ResetNativeRasterTracking();

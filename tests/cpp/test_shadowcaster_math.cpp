@@ -583,3 +583,15 @@ TEST_CASE("Native SCM ownership is established by rendering mode", "[scm][dx12]"
 	CHECK(SelectSCMNativeMode(true, false, false, true, true) == SCMNativeMode::FullRT);
 	CHECK(SelectSCMNativeMode(true, false, true, false, true) == SCMNativeMode::ShadowOffload);
 }
+
+TEST_CASE("Full RT admits actual dynamic casters without first-sighting static leakage", "[dx12][shadow]")
+{
+	using DX12::FullRTDynamicCaster;
+	CHECK_FALSE(FullRTDynamicCaster(false, false, false, true, false, false));
+	CHECK_FALSE(FullRTDynamicCaster(false, false, false, false, true, false));
+	CHECK(FullRTDynamicCaster(true, false, false, false, false, false));
+	CHECK(FullRTDynamicCaster(false, true, false, false, false, false));
+	CHECK(FullRTDynamicCaster(false, false, true, false, false, false));
+	CHECK(FullRTDynamicCaster(false, false, false, true, true, false));
+	CHECK(FullRTDynamicCaster(false, false, false, true, false, true));
+}

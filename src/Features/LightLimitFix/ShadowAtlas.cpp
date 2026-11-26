@@ -985,6 +985,23 @@ namespace ShadowCasterManager
 		       s_atlas.slots[poolSlot].nativeStaticOmitted;
 	}
 
+	bool InvalidateFullRTStaticContent(int32_t poolSlot)
+	{
+		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return false;
+		auto& slot = s_atlas.slots[poolSlot];
+		if (slot.nativeStaticOmitted || (!slot.valid && !slot.staticValid))
+			return false;
+		slot.valid = false;
+		slot.staticValid = false;
+		slot.staticHash = 0;
+		slot.staticEmpty = false;
+		slot.staticCompositePending = false;
+		slot.bakeValid = false;
+		slot.bakePending = false;
+		return true;
+	}
+
 	void InvalidateNativeRasterTile(int32_t poolSlot)
 	{
 		if (!SlotNativeStaticOmitted(poolSlot))

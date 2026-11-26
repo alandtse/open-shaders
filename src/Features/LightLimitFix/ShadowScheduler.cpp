@@ -686,6 +686,8 @@ namespace ShadowCasterManager
 				auto& state = s_splitState[entry.Light];
 				TransitionNativeShadowOwnership(state, slot, native);
 				MarkNativeRasterRecovery(entry);
+				if (native && s_frameNativePolicy.fullStaticAuthority)
+					entry.LastDrawnFrame = -1;
 			} else if (!native && SlotNativeStaticOmitted(slot)) {
 				InvalidateNativeRasterTile(slot);
 				MarkNativeRasterRecovery(entry);
@@ -4426,6 +4428,12 @@ namespace ShadowCasterManager
 				auto& e = s_lights.Lights[i];
 				if (!e.Light)
 					continue;
+				const bool fullRTNative = s_frameNativePolicy.fullStaticAuthority &&
+					!e.Light->GetIsFrustumOrDirectionalLight();
+				if (fullRTNative && InvalidateFullRTStaticContent(i) && !e.RedrawFrame) {
+					e.LastDrawnFrame = -1;
+					MarkNativeRasterRecovery(e);
+				}
 				if (!e.RedrawFrame)
 					continue;
 				const CarriedShadowScope carriedShadow(CarrierBody(e.Light) != nullptr);
@@ -4551,7 +4559,7 @@ namespace ShadowCasterManager
 					// degenerating a good shadow to flat black -- keep prior content instead.
 					emptyRender = e.Light->geomList.empty();
 					AtlasTileTexels held{};
-					keepPriorContent = emptyRender &&
+					keepPriorContent = !fullRTNative && emptyRender &&
 					                   GetSlotTileTexels(i, held) && held.contentValid;
 					if (!keepPriorContent)
 						ClearSlotTile(i);
@@ -4571,7 +4579,7 @@ namespace ShadowCasterManager
 					// Never mark an EMPTY render valid: a starved fresh tile stays
 					// contentValid=false, so the sample side reads UNSHADOWED, never a
 					// degenerate (cleared) tile, even under high pressure.
-					if (!emptyRender) {
+					if (!emptyRender || (fullRTNative && AtlasActive())) {
 						bool nativeStaticOmitted = false;
 						if (s_nativeOwnershipPending) {
 							const auto it = s_splitState.find(e.Light);
