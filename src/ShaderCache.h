@@ -1430,7 +1430,7 @@ namespace SIE
 		bool runtimeTaskAdmissionClosed = false;
 		bool runtimeTaskInFlight = false;
 		std::shared_ptr<Util::RuntimeTaskGate> runtimeTaskGate;
-		bool TrySubmitRuntimeTask(std::function<void()> a_work, bool menuPriority);
+		bool TrySubmitRuntimeTask(std::function<void()> a_work);
 		void CloseRuntimeTaskAdmission();
 		ankerl::unordered_dense::map<std::string, ShaderCacheResult> shaderMap{};
 		std::mutex mapMutex;                                                                      // guard for shaderMap

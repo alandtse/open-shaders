@@ -192,7 +192,6 @@ struct DX12Resources final : Feature
 	void SaveSettings(json& output) override;
 	void RestoreDefaultSettings() override;
 	bool WantsPreShadowMapsHook() const override;
-	void DataLoaded() override;
 	void PreShadowMaps() override;
 	void Reset() override;
 	void OnRuntimeDisabled() override;
@@ -215,7 +214,7 @@ struct DX12Resources final : Feature
 	}
 
 private:
-	void EnsureCompanion();
+	void EnsureCompanion(bool menuStartup);
 	void PollStartup(uint32_t gameplayScope = 0);
 	bool startupPending = false;
 	bool menuPreloaded = false;

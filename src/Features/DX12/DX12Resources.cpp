@@ -8,6 +8,7 @@
 #include "RE/U/UI.h"
 #include "Globals.h"
 #include "GpuPass.h"
+#include "State.h"
 #include "RE/T/TESDataHandler.h"
 #include "RE/T/TESWorldSpace.h"
 #include "Utils/Game.h"
@@ -706,26 +707,23 @@ void DX12Resources::RestoreDefaultSettings()
 	}
 }
 
-void DX12Resources::EnsureCompanion()
+void DX12Resources::EnsureCompanion(bool menuStartup)
 {
-	std::call_once(companionStart, [this] {
+	std::call_once(companionStart, [this, menuStartup] {
 		companion = std::make_unique<DX12::CompanionWorker>();
-		DX12::CompanionRequest task;
-		task.preloadLastSave = settings.PreloadLastSave;
-		task.warmup = !task.preloadLastSave;
-		task.size = settings.SubcellSize;
-		startupPending = companion->Enqueue(std::move(task));
+		if (menuStartup) {
+			DX12::CompanionRequest task;
+			task.preloadLastSave = settings.PreloadLastSave;
+			task.warmup = !task.preloadLastSave;
+			task.size = settings.SubcellSize;
+			startupPending = companion->Enqueue(std::move(task));
+		}
 		companionStarted.store(true, std::memory_order_release);
 		if (!IsActive())
 			companion->Stop();
 	});
 }
 
-void DX12Resources::DataLoaded()
-{
-	if (IsActive())
-		EnsureCompanion();
-}
 
 void DX12Resources::PollStartup(uint32_t gameplayScope)
 {
@@ -790,11 +788,12 @@ void DX12Resources::PollStartup(uint32_t gameplayScope)
 
 void DX12Resources::Reset()
 {
-	if (!IsActive() || !globals::game::ui || !globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))
+	if (!IsActive() || !globals::state || !globals::state->startupMenuBlurSourceReady ||
+		!globals::game::ui || !globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))
 		return;
-	EnsureCompanion();
+	EnsureCompanion(true);
 	PollStartup();
-	// Present-driven retry: menu scenes need not execute the world's prepass.
+	// Only after a completed startup Present; rendering keeps priority.
 	if (menuPreloaded)
 		globals::features::dx12NativeScene.PrepareMenuScene(grid.Snapshot());
 }
@@ -807,15 +806,14 @@ void DX12Resources::PreShadowMaps()
 		OnRuntimeDisabled();
 		return;
 	}
-	CS_GPU_PASS("DX12Resources::Grid");
-	EnsureCompanion();
-	if (globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) {
-		PollStartup();
+	if (!globals::state || !globals::state->startupMenuInitializationComplete.load(std::memory_order_acquire) ||
+		(globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME)))
 		return;
-	}
 	const auto location = Util::GetPlayerSpatialLocation();
 	if (!location)
 		return;
+	CS_GPU_PASS("DX12Resources::Grid");
+	EnsureCompanion(false);
 	const auto* cell = location->cell;
 	const auto* world = location->worldspace;
 	const uint32_t cellID = cell->GetFormID();

@@ -14,15 +14,13 @@ namespace Util
 	public:
 		using Task = std::function<void()>;
 		using Submitter = std::function<bool(Task)>;
-		using PrioritySubmitter = std::function<bool(Task, bool)>;
 
-		explicit RuntimeTaskGate(Submitter submit) : submitter([submit = std::move(submit)](Task task, bool) { return submit && submit(std::move(task)); }) {}
-		explicit RuntimeTaskGate(PrioritySubmitter submit) : submitter(std::move(submit)) {}
+		explicit RuntimeTaskGate(Submitter submit) : submitter(std::move(submit)) {}
 
-		bool TrySubmit(Task task, bool menuPriority = false)
+		bool TrySubmit(Task task)
 		{
 			std::scoped_lock lock(mutex);
-			return submitter && task && submitter(std::move(task), menuPriority);
+			return submitter && task && submitter(std::move(task));
 		}
 
 		void Close()
@@ -33,16 +31,15 @@ namespace Util
 
 	private:
 		std::mutex mutex;
-		PrioritySubmitter submitter;
+		Submitter submitter;
 	};
 
-	// Render-demanded shaders win during gameplay. Menu preparation may compete for a free slot.
-	// One runtime task may occupy
+	// Render-demanded shaders always win admission. One runtime task may occupy
 	// the shared budget, including across a scene reset or feature re-enable.
 	constexpr bool CanAdmitRuntimeTask(bool closed, bool runtimeInFlight, bool demandedShaders,
-		uint32_t inFlight, int32_t limit, bool menuPriority = false)
+		uint32_t inFlight, int32_t limit)
 	{
-		return !closed && !runtimeInFlight && (!demandedShaders || menuPriority) && limit > 0 &&
+		return !closed && !runtimeInFlight && !demandedShaders && limit > 0 &&
 		       inFlight < static_cast<uint32_t>(limit);
 	}
 }

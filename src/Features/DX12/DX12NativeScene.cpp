@@ -7,6 +7,8 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "RE/T/TESObjectCELL.h"
+#include "RE/M/MainMenu.h"
+#include "RE/U/UI.h"
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
@@ -125,6 +127,8 @@ void DX12NativeScene::RestoreDefaultSettings()
 
 bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
 {
+	if (globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))
+		return false;
 	const auto* cell = Util::GetPlayerCell();
 	return cell && (!cell->IsExteriorCell() || outdoorShadowOffloading);
 }
@@ -277,7 +281,7 @@ void DX12NativeScene::PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid)
 		return;
 	nativeSessionStarted = true;
 	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
-		acceleration.Request(std::move(grid), true);
+		acceleration.Request(std::move(grid));
 }
 
 void DX12NativeScene::PreShadowMaps()
@@ -286,6 +290,9 @@ void DX12NativeScene::PreShadowMaps()
 		OnRuntimeDisabled();
 		return;
 	}
+	if (!globals::state || !globals::state->startupMenuInitializationComplete.load(std::memory_order_acquire) ||
+		(globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME)))
+		return;
 	nativeSessionStarted = true;
 	if (globals::game::graphicsState) {
 		const uint32_t frame = globals::game::graphicsState->GetFrameCount();

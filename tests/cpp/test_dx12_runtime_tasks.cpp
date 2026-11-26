@@ -22,10 +22,6 @@ TEST_CASE("Runtime task admission shares the shader concurrency budget", "[dx12]
 	CHECK_FALSE(CanAdmitRuntimeTask(false, false, false, 0, 0));
 	CHECK_FALSE(CanAdmitRuntimeTask(false, false, false, 0, -1));
 	CHECK_FALSE(CanAdmitRuntimeTask(false, false, true, 0, 4));
-	CHECK(CanAdmitRuntimeTask(false, false, true, 0, 4, true));
-	CHECK_FALSE(CanAdmitRuntimeTask(false, false, true, 4, 4, true));
-	CHECK_FALSE(CanAdmitRuntimeTask(false, true, true, 0, 4, true));
-	CHECK_FALSE(CanAdmitRuntimeTask(true, false, true, 0, 4, true));
 	CHECK_FALSE(CanAdmitRuntimeTask(false, true, false, 0, 4));
 	CHECK_FALSE(CanAdmitRuntimeTask(true, false, false, 0, 4));
 }
