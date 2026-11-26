@@ -272,6 +272,12 @@ namespace DX12Native
 			if (changed)
 				WriteUpload(slot->lightUpload.get(), records.data(), records.size() * sizeof(records.front()));
 			slot->lightRecordsUploaded = true;
+			slot->debugLights.clear();
+			slot->debugPreparedCount = 0;
+			if (controls.captureDebugLights) {
+				slot->debugLights.assign(lights.begin(), lights.begin() + lightCount);
+				slot->debugPreparedCount = std::min(controls.debugPreparedCount, lightCount);
+			}
 
 			const UINT step = requested.d3d12Device->GetDescriptorHandleIncrementSize(
 				D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);

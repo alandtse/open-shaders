@@ -26,8 +26,9 @@ void DX12Control::DrawSettings()
 	}
 	if (!Util::BeginPillTabBar("##DX12Tabs"))
 		return;
-	const char* labels[] = { T("menu.dx12.tab.resources", "Resources"), T("menu.dx12.tab.native_scene", "Native Scene"), T("menu.dx12.tab.master_switch", "Master Switch") };
-	for (int index = 0; index < int(std::size(labels)); ++index) {
+	const char* labels[] = { T("menu.dx12.tab.resources", "Resources"), T("menu.dx12.tab.native_scene", "Native Scene"), T("menu.dx12.tab.master_switch", "Master Switch"), T("menu.dx12.tab.dev", "Dev") };
+	const int tabCount = globals::state && globals::state->IsDeveloperMode() ? int(std::size(labels)) : int(std::size(labels)) - 1;
+	for (int index = 0; index < tabCount; ++index) {
 		if (!Util::BeginPillTabItem(labels[index]))
 			continue;
 		switch (index) {
@@ -41,6 +42,9 @@ void DX12Control::DrawSettings()
 			ImGui::Checkbox(T("menu.dx12.master.enable", "Enable native DX12 features (restart required)"), &settings.Enabled);
 			if (settings.Enabled != bootActive.load(std::memory_order_acquire))
 				ImGui::TextDisabled(T("menu.dx12.master.restart_boot_state", "A game restart is required; DX12 Resources retains its boot state until then."));
+			break;
+		case 3:
+			globals::features::dx12NativeScene.DrawDevSettings();
 			break;
 		}
 		Util::EndPillTabItem();

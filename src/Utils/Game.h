@@ -216,6 +216,8 @@ namespace Util
 	float GetCameraDistanceToReference(RE::TESObjectREFR* a_ref);
 	/** @brief Projects a flat-runtime reference into top-left depth texture coordinates. */
 	bool GetReferenceFocusCoord(RE::TESObjectREFR* a_ref, float2& a_focusCoord);
+	/** @brief Projects a flat-runtime world position into top-left normalized screen coordinates. */
+	bool GetWorldFocusCoord(const RE::NiPoint3& position, float2& a_focusCoord);
 
 	RE::NiPoint3 GetAverageEyePosition();
 	RE::NiPoint3 GetEyePosition(int eyeIndex);

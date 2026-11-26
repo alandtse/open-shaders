@@ -279,6 +279,7 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 effectFailed ||
 			 globals::features::performanceOverlay.settings.ShowInOverlay ||
 			 globals::features::sceneSelector.IsOverlayVisible() ||
+			 globals::features::dx12NativeScene.IsOverlayVisible() ||
 			 renderDoc->ShouldShowOverlay() ||
 			 globals::features::vr.HelperRequestsRender());
 }

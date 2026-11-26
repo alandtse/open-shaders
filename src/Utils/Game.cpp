@@ -330,6 +330,11 @@ namespace Util
 
 	bool GetReferenceFocusCoord(RE::TESObjectREFR* a_ref, float2& a_focusCoord)
 	{
+		return GetWorldFocusCoord(GetReferenceFocusPosition(a_ref), a_focusCoord);
+	}
+
+	bool GetWorldFocusCoord(const RE::NiPoint3& position, float2& a_focusCoord)
+	{
 		auto* camera = RE::Main::WorldRootCamera();
 		if (!camera || globals::game::isVR)
 			return false;
@@ -337,7 +342,7 @@ namespace Util
 		float screenX = 0.0f;
 		float screenY = 0.0f;
 		float screenZ = 0.0f;
-		if (!camera->WorldPtToScreenPt3(GetReferenceFocusPosition(a_ref), screenX, screenY, screenZ, kScreenProjectionEpsilon) ||
+		if (!camera->WorldPtToScreenPt3(position, screenX, screenY, screenZ, kScreenProjectionEpsilon) ||
 			!std::isfinite(screenX) || !std::isfinite(screenY) || screenZ <= 0.0f ||
 			screenX < 0.0f || screenX > 1.0f || screenY < 0.0f || screenY > 1.0f) {
 			return false;

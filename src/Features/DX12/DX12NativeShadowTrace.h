@@ -21,6 +21,8 @@ namespace DX12Native
 	{
 		uint32_t viewportWidth = 0, viewportHeight = 0;
 		uint32_t quality = kShadowQualityOffloading;
+		bool captureDebugLights = false;
+		uint32_t debugPreparedCount = 0;
 	};
 
 	/** @brief Quarter-resolution raw visibility and receiver distance; the composite reconstructs the full view. */
@@ -37,6 +39,8 @@ namespace DX12Native
 		uint32_t frame = 0, width = 0, height = 0;
 		uint32_t maskWidth = 0, maskHeight = 0;
 		uint32_t quality = kShadowQualityOffloading;
+		std::vector<DX12::PreparedLight> debugLights;
+		uint32_t debugPreparedCount = 0;
 		std::vector<std::array<float, 4>> lightRecords;
 		bool lightRecordsUploaded = false;
 		// RG32F: weighted visibility and receiver distance (zero for invalid receivers).

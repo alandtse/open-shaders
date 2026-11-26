@@ -38,24 +38,90 @@ void DX12NativeScene::DrawSettings()
 	}
 }
 
+void DX12NativeScene::DrawDevSettings()
+{
+	const auto& control = globals::features::dx12Control;
+	if (!control.IsShadowOffloadMode() && !control.IsFullRTMode())
+		return;
+	auto& enabled = control.IsFullRTMode() ? debugRTLights : debugOffloadLights;
+	bool value = enabled.load(std::memory_order_relaxed);
+	if (ImGui::Checkbox(T("menu.dx12.scene.debug_native_lights", "Preview native lights"), &value))
+		enabled.store(value, std::memory_order_relaxed);
+}
+
+bool DX12NativeScene::WantsLightPreview(DX12::SCMNativeMode mode) const
+{
+	if (!globals::state || !globals::state->IsDeveloperMode())
+		return false;
+	switch (mode) {
+	case DX12::SCMNativeMode::ShadowOffload:
+		return debugOffloadLights.load(std::memory_order_relaxed);
+	case DX12::SCMNativeMode::FullRT:
+		return debugRTLights.load(std::memory_order_relaxed);
+	default:
+		return false;
+	}
+}
+
+bool DX12NativeScene::IsOverlayVisible() const
+{
+	return WantsLightPreview(GetFrameNativeMode());
+}
+
+void DX12NativeScene::DrawOverlay()
+{
+	if (!IsOverlayVisible() || globals::state->isMapMenuOpen)
+		return;
+	const auto mask = shadows.Get(globals::game::graphicsState->GetFrameCount());
+	if (!mask || mask->debugLights.empty())
+		return;
+	const auto* viewport = ImGui::GetMainViewport();
+	auto* draw = ImGui::GetForegroundDrawList();
+	constexpr float markerRadius = 4.0f;
+	constexpr float labelOffset = 6.0f;
+	const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+	const ImU32 background = ImGui::GetColorU32(ImGuiCol_PopupBg);
+	for (size_t i = 0; i < mask->debugLights.size(); ++i) {
+		const auto& light = mask->debugLights[i];
+		float2 uv;
+		if (!Util::GetWorldFocusCoord(RE::NiPoint3{ light.position.x, light.position.y, light.position.z }, uv))
+			continue;
+		const ImVec2 point{ viewport->Pos.x + uv.x * viewport->Size.x, viewport->Pos.y + uv.y * viewport->Size.y };
+		const char* source = mask->quality == DX12Native::kShadowQualityOffloading ? "M" :
+			(i < mask->debugPreparedCount ? "P" : "R");
+		const auto label = std::format("DXR {} {:08X} #{}", source, light.referenceID, i);
+		const ImVec2 text{ point.x + labelOffset, point.y - ImGui::GetTextLineHeight() * 0.5f };
+		const auto size = ImGui::CalcTextSize(label.c_str());
+		draw->AddCircleFilled(point, markerRadius, color);
+		draw->AddRectFilled(text, ImVec2(text.x + size.x, text.y + size.y), background);
+		draw->AddText(text, color, label.c_str());
+	}
+}
+
 void DX12NativeScene::LoadSettings(json& input)
 {
 	outdoorShadowOffloading = input.value("OutdoorShadowOffloading", false);
+	debugOffloadLights.store(input.value("DebugNativeLights", false), std::memory_order_relaxed);
 	const auto profile = input.value("FullRT", json::object());
 	outdoorFullRT = profile.value("OutdoorShadowOffloading", false);
+	debugRTLights.store(profile.value("DebugNativeLights", false), std::memory_order_relaxed);
 	fullRTQuality = DX12Native::SanitizeRTQuality(profile.value("ShadowQualityMode", DX12Native::kShadowQualityQuality));
 }
 
 void DX12NativeScene::SaveSettings(json& output)
 {
 	output = { { "OutdoorShadowOffloading", outdoorShadowOffloading },
-		{ "FullRT", { { "OutdoorShadowOffloading", outdoorFullRT }, { "ShadowQualityMode", fullRTQuality } } } };
+		{ "DebugNativeLights", debugOffloadLights.load(std::memory_order_relaxed) },
+		{ "FullRT", { { "OutdoorShadowOffloading", outdoorFullRT }, { "ShadowQualityMode", fullRTQuality },
+			{ "DebugNativeLights", debugRTLights.load(std::memory_order_relaxed) } } } };
 }
 
 void DX12NativeScene::RestoreDefaultSettings()
 {
 	outdoorShadowOffloading = false;
 	outdoorFullRT = false;
+	debugOffloadLights.store(false, std::memory_order_relaxed);
+	debugRTLights.store(false, std::memory_order_relaxed);
 	fullRTQuality = DX12Native::kShadowQualityQuality;
 }
 
@@ -378,7 +444,9 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	const DX12Native::ShadowTraceControls controls{
 		.viewportWidth = viewportWidth,
 		.viewportHeight = viewportHeight,
-		.quality = fullRT ? fullRTQuality : DX12Native::kShadowQualityOffloading
+		.quality = fullRT ? fullRTQuality : DX12Native::kShadowQualityOffloading,
+		.captureDebugLights = WantsLightPreview(mode),
+		.debugPreparedCount = fullRT ? uint32_t(std::min(lights->size(), size_t{ DX12Native::kMaxShadowLights })) : 0u
 	};
 	shadows.Dispatch(*backend, raster.Get(frame), built, liveLights, frame, controls);
 }

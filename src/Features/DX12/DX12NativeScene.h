@@ -4,7 +4,7 @@
 #include "DX12NativeRasterCapture.h"
 #include "DX12NativeRuntimeCapture.h"
 #include "DX12NativeShadowTrace.h"
-#include "Feature.h"
+#include "../OverlayFeature.h"
 #include "SCMNativePolicy.h"
 
 #include <atomic>
@@ -15,7 +15,7 @@
 #include <vector>
 
 /** @brief Independent early opaque raster capture for native DX12. */
-struct DX12NativeScene final : Feature
+struct DX12NativeScene final : OverlayFeature
 {
 	std::string GetName() override { return "DX12 Native Scene"; }
 	std::string GetShortName() override { return "DX12NativeScene"; }
@@ -27,6 +27,9 @@ struct DX12NativeScene final : Feature
 	bool SupportsVR() override { return false; }
 
 	void DrawSettings() override;
+	void DrawDevSettings();
+	void DrawOverlay() override;
+	bool IsOverlayVisible() const override;
 	bool WantsRenderPassHook() const override;
 	std::function<void()> OnRenderPassBegin(const RE::BSRenderPass* pass) override;
 	bool WantsPreShadowMapsHook() const override;
@@ -79,6 +82,9 @@ private:
 	std::atomic<uint32_t> frameNativeModeID{ UINT32_MAX };
 	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
 	bool outdoorFullRT = false;
+	std::atomic<bool> debugOffloadLights{ false };
+	std::atomic<bool> debugRTLights{ false };
+	bool WantsLightPreview(DX12::SCMNativeMode mode) const;
 	uint32_t fullRTQuality = DX12Native::kShadowQualityQuality;
 	std::vector<DX12::PreparedLight> CollectFullRTLights(const std::vector<DX12::PreparedLight>& prepared) const;
 	struct RuntimeLightSample

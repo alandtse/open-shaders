@@ -7015,5 +7015,7 @@
     "menu.dx12.mode.ray_traced_static_shadows": "Ray-Traced Static Shadows",
     "menu.dx12.scene.rt_quality": "Quality",
     "menu.dx12.scene.rt_performance": "Performance",
-    "menu.dx12.scene.shadow_quality": "Shadow quality"
+    "menu.dx12.scene.shadow_quality": "Shadow quality",
+    "menu.dx12.scene.debug_native_lights": "Preview native lights",
+    "menu.dx12.tab.dev": "Dev"
 }
