@@ -1,11 +1,11 @@
 #include "DX12Resources.h"
 
-#include "CompanionWorker.h"
 #include "DX12Control.h"
 #include "Globals.h"
 #include "GpuPass.h"
-#include "RE/T/TESDataHandler.h"
+#include "RE/T/TES.h"
 #include "RE/T/TESWorldSpace.h"
+#include "ScenePrepWorker.h"
 #include "Utils/Game.h"
 #include "Utils/PerfUtils.h"
 
@@ -213,7 +213,7 @@ namespace DX12
 		return std::nullopt;
 	}
 
-	bool ResourceGrid::Publish(CompanionPublication publication)
+	bool ResourceGrid::Publish(TilePublication publication)
 	{
 		std::scoped_lock lock(mutex);
 		if (!pending || *pending != publication.key)
@@ -231,6 +231,7 @@ namespace DX12
 		                          current->resident[std::distance(current->requested.begin(), active)] :
 		                          current->predictiveResident[std::distance(current->predictive.begin(), predictive)];
 		tile->preparationAttempts = static_cast<uint8_t>(std::min<unsigned>(existing ? unsigned(existing->preparationAttempts) + 1 : 1u, kPreparationAttemptLimit));
+		tile->hasUnattachedCells = publication.hasUnattachedCells;
 		tile->failureReason = std::move(publication.failureReason);
 		tile->rejectionReasons = std::move(publication.rejectionReasons);
 		tile->nifSources = std::move(publication.nifSources);
@@ -370,6 +371,32 @@ namespace DX12
 		reset(next->predictive, next->predictiveResident);
 		pending.reset();
 		snapshot.store(std::move(next), std::memory_order_release);
+	}
+
+	void ResourceGrid::RefreshUnattachedTiles()
+	{
+		std::scoped_lock lock(mutex);
+		const auto current = snapshot.load(std::memory_order_acquire);
+		auto next = std::make_shared<Grid>(*current);
+		bool changed = false;
+		const auto markRefresh = [&](auto& tiles) {
+			for (auto& tile : tiles) {
+				if (tile && tile->hasUnattachedCells &&
+					(tile->state == Tile::State::Ready || tile->state == Tile::State::ReadyPartial)) {
+					auto refreshed = std::make_shared<Tile>(*tile);
+					refreshed->state = Tile::State::Requested;
+					refreshed->preparationAttempts = 0;
+					refreshed->retryAfterQpc = 0;
+					refreshed->failureReason.clear();
+					tile = std::move(refreshed);
+					changed = true;
+				}
+			}
+		};
+		markRefresh(next->resident);
+		markRefresh(next->predictiveResident);
+		if (changed)
+			snapshot.store(std::move(next), std::memory_order_release);
 	}
 
 }
@@ -539,21 +566,26 @@ bool DX12Resources::IsActive() const
 }
 
 DX12Resources::DX12Resources() = default;
-DX12Resources::~DX12Resources() = default;
+DX12Resources::~DX12Resources()
+{
+	if (worker) {
+		worker->Cancel();
+		worker.reset();
+	}
+}
 
 void DX12Resources::ResetPreparation()
 {
 	if (!preparationActive)
 		return;
-	// A new subcell size or world-scene epoch invalidates the grid and all
-	// companion work. Keep this off the normal settings-load path when unchanged.
-	if (companion)
-		companion->Cancel();
+	if (worker) {
+		worker->Cancel();
+		worker->DrainRetiredObjects();
+	}
 	inFlight.reset();
-	adopting.reset();
-	lightAdoptionOffset = 0;
 	grid.Clear();
 	lastVisitedCell = previousVisitedCell = distinctTransitions = 0;
+	lastExteriorGridX = lastExteriorGridY = std::numeric_limits<int32_t>::min();
 	generationStats.store(std::make_shared<const DX12::PreparationStats>(), std::memory_order_release);
 }
 
@@ -683,7 +715,7 @@ bool DX12Resources::WantsPreShadowMapsHook() const { return IsActive(); }
 
 void DX12Resources::PreShadowMaps()
 {
-	if (!IsActive()) {
+	if (!IsActive() || globals::game::quitGame) {
 		OnRuntimeDisabled();
 		return;
 	}
@@ -709,9 +741,21 @@ void DX12Resources::PreShadowMaps()
 	const auto& position = location->position;
 	preparationActive = true;
 	grid.Advance(scope, settings.SubcellSize, position.x, position.y);
+	if (world && globals::game::tes) {
+		const int32_t gx = globals::game::tes->currentGridX;
+		const int32_t gy = globals::game::tes->currentGridY;
+		if (lastExteriorGridX != std::numeric_limits<int32_t>::min() &&
+			(gx != lastExteriorGridX || gy != lastExteriorGridY))
+			grid.RefreshUnattachedTiles();
+		lastExteriorGridX = gx;
+		lastExteriorGridY = gy;
+	} else {
+		lastExteriorGridX = lastExteriorGridY = std::numeric_limits<int32_t>::min();
+	}
 	runtimePublicationEnabled.store(true, std::memory_order_release);
-	if (!companion)
-		companion = std::make_unique<DX12::CompanionWorker>();
+	if (!worker)
+		worker = std::make_unique<DX12::ScenePrepWorker>();
+	worker->DrainRetiredObjects();
 	const auto neighborhood = grid.Snapshot();
 	if (inFlight) {
 		const bool stillWanted = std::ranges::contains(neighborhood->requested, *inFlight) ||
@@ -722,95 +766,54 @@ void DX12Resources::PreShadowMaps()
 			return !tile || tile->state == DX12::Tile::State::Requested;
 		});
 		if (!stillWanted || (speculative && activeMissing)) {
-			companion->Cancel();
+			worker->Cancel();
+			worker->DrainRetiredObjects();
 			grid.CancelPending();
 			inFlight.reset();
 		}
 	}
-	if (auto result = companion->Take()) {
+	if (auto result = worker->Take()) {
 		inFlight.reset();
-		adopting = std::make_unique<DX12::CompanionResult>(std::move(*result));
-		adopting->publication.failureReason = adopting->failure.substr(0, 320);
-		adopting->publication.lights.reserve(adopting->lights.size());
-		lightAdoptionOffset = 0;
-	}
-	if (adopting) {
-		const auto key = adopting->publication.key;
+		const auto key = result->publication.key;
 		const bool active = std::ranges::contains(neighborhood->requested, key);
 		const bool predictive = std::ranges::contains(neighborhood->predictive, key);
 		const bool activeMissing = std::ranges::any_of(neighborhood->resident, [](const auto& tile) {
 			return !tile || tile->state == DX12::Tile::State::Requested;
 		});
 		if ((!active && !predictive) || (predictive && activeMissing)) {
-			// A superseded speculative publication must not block an active tile.
-			adopting.reset();
-			lightAdoptionOffset = 0;
 			grid.CancelPending();
 		} else {
-			// Only engine FormID lookup must run on the game thread. Keep it bounded
-			// while immutable geometry remains off-thread prepared.
-			constexpr size_t kFormResolutionsPerFrame = 64;
-			const size_t end = std::min(adopting->lights.size(), lightAdoptionOffset + kFormResolutionsPerFrame);
-			auto* handler = RE::TESDataHandler::GetSingleton();
-			for (; lightAdoptionOffset < end; ++lightAdoptionOffset) {
-				auto& record = adopting->lights[lightAdoptionOffset];
-				const auto* reference = handler ? handler->LookupForm(record.referenceLocal, record.referencePlugin) : nullptr;
-				const auto* base = handler ? handler->LookupForm(record.baseLocal, record.basePlugin) : nullptr;
-				if (!reference || !base) {
-					// This light cannot be matched; it must not invalidate unrelated
-					// geometry or shadow coverage for other successfully resolved lights.
-					continue;
-				}
-				record.value.referenceID = reference->GetFormID();
-				adopting->publication.lights.push_back(record.value);
-			}
-			if (lightAdoptionOffset == adopting->lights.size()) {
-				const bool wasPredictiveRequest = adopting->predictive;
-				const bool wasCornerRequest = adopting->corner;
-				const double elapsedMs = adopting->preparationMs;
-				if (grid.Publish(std::move(adopting->publication))) {
-					// This snapshot only counts accepted, finished worker requests; canceled
-					// and superseded work is not misreported as generated geometry.
-					auto next = std::make_shared<DX12::PreparationStats>(
-						*generationStats.load(std::memory_order_acquire));
-					auto& timing = !wasPredictiveRequest ? next->active :
-					               wasCornerRequest      ? next->corners :
-					                                       next->predictive;
-					++timing.completed;
-					timing.lastMs = elapsedMs;
-					timing.totalMs += elapsedMs;
-					timing.worstMs = std::max(timing.worstMs, elapsedMs);
-					generationStats.store(std::move(next), std::memory_order_release);
-				}
-				adopting.reset();
-				lightAdoptionOffset = 0;
+			result->publication.failureReason = result->failure.substr(0, 320);
+			const bool wasPredictiveRequest = result->predictive;
+			const bool wasCornerRequest = result->corner;
+			const double elapsedMs = result->preparationMs;
+			if (grid.Publish(std::move(result->publication))) {
+				auto next = std::make_shared<DX12::PreparationStats>(
+					*generationStats.load(std::memory_order_acquire));
+				auto& timing = !wasPredictiveRequest ? next->active :
+				               wasCornerRequest      ? next->corners :
+				                                       next->predictive;
+				++timing.completed;
+				timing.lastMs = elapsedMs;
+				timing.totalMs += elapsedMs;
+				timing.worstMs = std::max(timing.worstMs, elapsedMs);
+				generationStats.store(std::move(next), std::memory_order_release);
 			}
 		}
 	}
-	if (!adopting && companion->Idle()) {
+	if (worker->Idle()) {
 		if (const auto request = grid.NextRequest()) {
-			const auto* source = world ? static_cast<const RE::TESForm*>(world) : static_cast<const RE::TESForm*>(cell);
-			const auto* file = source ? source->GetFile(0) : nullptr;
-			if (file && !file->GetFilename().empty()) {
-				DX12::CompanionRequest task;
-				task.key = *request;
-				const auto requestedGrid = grid.Snapshot();
-				task.predictive = !std::ranges::contains(requestedGrid->requested, *request);
-				// Predictive indices 0..11 are sides; 12..15 are corners.
-				// Store the request-time class before a possible player subcell transition.
-				task.corner = task.predictive &&
-				              std::ranges::find(requestedGrid->predictive.begin() + DX12::kPredictiveSideCount,
-								  requestedGrid->predictive.end(), *request) != requestedGrid->predictive.end();
-				task.size = settings.SubcellSize;
-				task.localScopeID = source->GetLocalFormID();
-				task.scopePlugin = file->GetFilename();
-				task.worldspace = world != nullptr;
-				if (companion->Enqueue(std::move(task))) {
-					inFlight = *request;
-					return;
-				}
+			const auto requestedGrid = grid.Snapshot();
+			const bool predictive = !std::ranges::contains(requestedGrid->requested, *request);
+			const bool corner = predictive &&
+			                    std::ranges::find(requestedGrid->predictive.begin() + DX12::kPredictiveSideCount,
+									requestedGrid->predictive.end(), *request) != requestedGrid->predictive.end();
+			if (auto task = DX12::CaptureScenePrepRequest(*request, settings.SubcellSize, cell, world, predictive, corner);
+				task && worker->Enqueue(std::move(*task))) {
+				inFlight = *request;
+				return;
 			}
-			DX12::CompanionPublication incomplete;
+			DX12::TilePublication incomplete;
 			incomplete.key = *request;
 			grid.Publish(std::move(incomplete));
 		}

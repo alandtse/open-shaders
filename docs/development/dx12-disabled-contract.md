@@ -22,7 +22,7 @@ The native acceleration coordinator submits short serialized CPU tasks through t
 
 GPU command submission remains on the native queue. Fence events request CPU continuations through the same gate; active frames retry denied admission and provide a non-blocking readiness fallback if event registration fails. Reset and disable invalidate publication without waiting for submitted GPU work. Producer and consumer resources retire through one-shot OS fence waits, including after a session closes. A failed queue-tail signal retains untracked GPU work until device removal; if no safe completion registration can be made, the exceptional owner is quarantined until process exit.
 
-The companion process, its worker, and its IPC protocol are outside this change.
+Subcell geometry and light preparation runs on DX12 Resources' own stop-token worker only when the master switch is active.
 
 ### Validation
 
