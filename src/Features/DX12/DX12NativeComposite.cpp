@@ -149,8 +149,10 @@ namespace DX12Native
 		bool producerSignalled = false;
 		bool submitted = false;
 		try {
-			const bool recreate = !slot->frame || slot->device != device12 ||
-			                      slot->device11 != device11 || slot->sourceDesc.Width != desc.Width ||
+			const bool recreate = !slot->frame || slot->backend.d3d12Device.get() != device12 ||
+			                      slot->backend.d3d11Device.get() != device11 ||
+			                      slot->backend.d3d11Context.get() != context11 ||
+			                      slot->backend.commandQueue.get() != queue || slot->sourceDesc.Width != desc.Width ||
 			                      slot->sourceDesc.Height != desc.Height || slot->sourceDesc.Format != desc.Format ||
 			                      slot->supportsShadow != supportsShadow ||
 			                      slot->hasReturn != returnColorToDX11 ||
@@ -188,8 +190,10 @@ namespace DX12Native
 				auto replacement = std::make_unique<Slot>();
 				replacement->frameBytes = required;
 				replacement->frame = std::make_shared<Frame>();
-				replacement->device = device12;
-				replacement->device11 = device11;
+				replacement->backend.d3d12Device.copy_from(device12);
+				replacement->backend.d3d11Device.copy_from(device11);
+				replacement->backend.d3d11Context.copy_from(context11);
+				replacement->backend.commandQueue.copy_from(queue);
 				replacement->sourceDesc = desc;
 				replacement->supportsShadow = supportsShadow;
 				replacement->hasReturn = returnColorToDX11;
@@ -241,6 +245,7 @@ namespace DX12Native
 			// without registering a fence that could be abandoned on failure.
 			slot->shadowInput = applyShadow ? shadow : nullptr;
 			slot->rasterInput = applyShadow ? raster : nullptr;
+			slot->source.copy_from(source);
 			slot->frame->valid = false;
 			slot->frame->reconstructedShadowMask = nullptr;
 			slot->frame->producerFence = nullptr;
@@ -457,9 +462,7 @@ namespace DX12Native
 				dependencies.push_back(FencePoint(slot->fence.fence12.get(), slot->frame->producerValue));
 			for (const auto& consumer : slot->consumers)
 				dependencies.push_back({ consumer.first, consumer.second });
-			winrt::com_ptr<ID3D12Device> device;
-			if (slot->device)
-				device.copy_from(slot->device);
+			auto device = slot->backend.d3d12Device;
 			// Borrowed Frame objects independently own their published color and
 			// fence. With no slot reuse after destruction, only submitted GPU
 			// dependencies require retaining the other slot resources.
