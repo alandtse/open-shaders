@@ -58,6 +58,7 @@ namespace SceneSettingsPolicy
 		{ "PostProcessing" },
 		{ "ScreenSpaceGI" },
 		{ "ScreenSpaceShadows" },
+		{ "SkySync" },
 		{ "SubsurfaceScattering" },
 		{ "CSUtility" },
 		{ "LightLimitFix", "EnableContactShadows" },
