@@ -6,11 +6,16 @@
 namespace GrassInstance
 {
 	static const uint Stride = 16;
-	static const uint RecordStride = 80;
-	static const uint CurrentWindOffset = 16;
-	static const uint PreviousWindOffset = 32;
-	static const uint CurrentCollisionOffset = 48;
-	static const uint PreviousCollisionOffset = 64;
+	struct CullRecord
+	{
+		uint SourceIndex;
+		uint Packed;
+		float2 Flutter;
+		float4 CurrentWind;
+		float4 PreviousWind;
+		float4 CurrentCollision;
+		float4 PreviousCollision;
+	};
 
 	// The packed word contains a 19-bit group index, 9-bit fade and 4-bit flags.
 	static const uint RecordGroupBits = 19;
