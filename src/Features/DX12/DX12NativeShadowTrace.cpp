@@ -90,8 +90,7 @@ namespace DX12Native
 		if (!device || !backend.commandQueue)
 			throw std::runtime_error("DX12 Native Scene queue unavailable");
 		constexpr std::array names{
-			"ShadowMask.dxil", "ShadowMaskQuality.dxil", "ShadowMaskMedium.dxil", "ShadowMaskLow.dxil", "ShadowMaskPotato.dxil",
-			"ShadowOffloadQuality.dxil", "ShadowOffloadPerformance.dxil"
+			"ShadowMaskQuality.dxil", "ShadowMaskLow.dxil", "ShadowOffload.dxil"
 		};
 		static_assert(names.size() == kShadowShaderCount);
 		std::ifstream bytecode(Util::PathHelpers::GetShadersPath() / "DX12NativeScene" / names[variant],
@@ -148,9 +147,7 @@ namespace DX12Native
 		if (current && current->frame == frame)
 			return;
 		current.reset();
-		const uint32_t quality = controls.offloading ?
-			(controls.qualityMode == kShadowQualityFull ? kShadowQualityFull : kShadowQualityMedium) :
-			(controls.qualityMode < kShadowQualityCount ? controls.qualityMode : kDefaultShadowQualityMode);
+		const uint32_t quality = controls.offloading ? kShadowOffloadingQuality : NativeShadowSanitizeRTQuality(controls.qualityMode);
 		const auto variant = NativeShadowShaderIndex(controls.offloading, quality);
 		const auto& pipeline = pipelines[variant];
 		if (initializationFailed[variant])
@@ -191,8 +188,7 @@ namespace DX12Native
 				NativeShadowPhysicalWidth(logicalWidth, quality), logicalHeight, quality,
 				NativeShadowCheckerboardOrigin(quality, frame), controls.offloading };
 			const uint32_t recordsPerLight = controls.offloading ? kOffloadRecords : kRecords;
-			const auto maskFormat = controls.offloading ?
-				(quality == kShadowQualityFull ? DXGI_FORMAT_R32_FLOAT : DXGI_FORMAT_R32G32_FLOAT) : DXGI_FORMAT_R32G32B32A32_FLOAT;
+			const auto maskFormat = controls.offloading ? DXGI_FORMAT_R32G32_FLOAT : DXGI_FORMAT_R32G32B32A32_FLOAT;
 			const auto lightCapacity = controls.offloading ? std::bit_ceil(lights.size()) : std::max(lights.size(), size_t(kMaxShadowLights));
 			const uint64_t lightBytes = uint64_t(lightCapacity) * recordsPerLight * sizeof(std::array<float, 4>);
 			const bool fresh = !slot || slot->sampling.physicalWidth != sampling.physicalWidth ||

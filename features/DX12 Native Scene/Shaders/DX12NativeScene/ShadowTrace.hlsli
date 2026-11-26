@@ -2,11 +2,7 @@ RaytracingAccelerationStructure Scene : register(t0);
 Texture2D<float> RasterDepth : register(t1);
 StructuredBuffer<float4> Lights : register(t2);
 #ifdef NATIVE_SHADOW_OFFLOAD
-#if NATIVE_SHADOW_QUALITY == 0
-RWTexture2D<float> RawMask : register(u0);
-#else
 RWTexture2D<float2> RawMask : register(u0);
-#endif
 cbuffer ShadowInputs : register(b0)
 {
 	row_major float4x4 InverseProjection;
@@ -50,11 +46,15 @@ cbuffer ShadowInputs : register(b0)
 };
 #endif
 #include "Common/NativeShadowQuality.hlsli"
+#ifdef NATIVE_SHADOW_OFFLOAD
+static const uint QualityMode = kShadowOffloadingQuality;
+#else
 #ifndef NATIVE_SHADOW_QUALITY
-#define NATIVE_SHADOW_QUALITY 0
+#define NATIVE_SHADOW_QUALITY 1
 #endif
 static const uint QualityMode = NATIVE_SHADOW_QUALITY;
-#if !defined(NATIVE_SHADOW_OFFLOAD) && NATIVE_SHADOW_QUALITY != 4
+#endif
+#ifndef NATIVE_SHADOW_OFFLOAD
 #include "NativeShadowSampling.hlsli"
 
 float3 SampleEmitterOffset(float3 lightDirection, float emitterRadius, uint2 pixel, uint lightID)
@@ -215,11 +215,7 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 		return;
 	if (!valid) {
 #ifdef NATIVE_SHADOW_OFFLOAD
-#if NATIVE_SHADOW_QUALITY == 0
-		RawMask[packed] = 1.0f;
-#else
 		RawMask[packed] = float2(1, 0);
-#endif
 #else
 		RawMask[packed] = float4(1, 0, 0, 0);
 #endif
@@ -293,7 +289,7 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 		float rayDistance = d;
 		float projection = d;
 		float perpendicularSquared = 0.0f;
-#if !defined(NATIVE_SHADOW_OFFLOAD) && NATIVE_SHADOW_QUALITY != 4
+#ifndef NATIVE_SHADOW_OFFLOAD
 		if (StochasticSampling != 0u && EmitterRadiusMultiplier > 0.0f) {
 			const float emitterRadius = NativeShadowEmitterRadius(light.w, params.x, EmitterRadiusMultiplier, d);
 			if (emitterRadius > 0.0f) {
@@ -335,11 +331,7 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 		visible += weight * visibility;
 	}
 #ifdef NATIVE_SHADOW_OFFLOAD
-#if NATIVE_SHADOW_QUALITY == 0
-	RawMask[packed] = total > 1e-8f ? saturate(visible / total) : 1.0f;
-#else
 	RawMask[packed] = float2(total > 1e-8f ? saturate(visible / total) : 1.0f, receiverDistance);
-#endif
 #else
 	if (total > 1e-8f)
 		RawMask[packed] = float4(saturate(visible / total), 1, receiverDistance, total);

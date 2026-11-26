@@ -13,42 +13,29 @@ namespace DX12Native
 #	define SHADOW_QUALITY_FUNCTION
 #endif
 
-	SHADOW_QUALITY_CONST uint kShadowQualityFull = 0u;
+	// Keep the serialized IDs of the two checkerboard qualities.
 	SHADOW_QUALITY_CONST uint kShadowQualityQuality = 1u;
-	SHADOW_QUALITY_CONST uint kShadowQualityMedium = 2u;
+	SHADOW_QUALITY_CONST uint kShadowOffloadingQuality = 2u;
 	SHADOW_QUALITY_CONST uint kShadowQualityLow = 3u;
-	SHADOW_QUALITY_CONST uint kShadowQualityPotato = 4u;
-	SHADOW_QUALITY_CONST uint kShadowQualityCount = 5u;
-	SHADOW_QUALITY_CONST uint kShadowShaderCount = kShadowQualityCount + 2u;
+	SHADOW_QUALITY_CONST uint kOffloadingShaderIndex = 2u;
+	SHADOW_QUALITY_CONST uint kShadowShaderCount = 3u;
 	SHADOW_QUALITY_CONST float kOffloadingFadeRange = 0.66f;
 	SHADOW_QUALITY_CONST float kOffloadingNearRadius = 16.0f;
 	SHADOW_QUALITY_CONST float kOffloadingBlend = 0.40f;
 
-	SHADOW_QUALITY_FUNCTION uint NativeShadowOffloadingQuality(bool performance)
+	SHADOW_QUALITY_FUNCTION uint NativeShadowSanitizeRTQuality(uint quality)
 	{
-		return performance ? kShadowQualityMedium : kShadowQualityFull;
+		return quality >= kShadowOffloadingQuality && quality <= 4u ? kShadowQualityLow : kShadowQualityQuality;
 	}
 
 	SHADOW_QUALITY_FUNCTION uint NativeShadowShaderIndex(bool offloading, uint quality)
 	{
-		return offloading ? kShadowQualityCount + (quality == kShadowQualityFull ? 0u : 1u) :
-		                    (quality < kShadowQualityCount ? quality : kShadowQualityQuality);
+		return offloading ? kOffloadingShaderIndex : (NativeShadowSanitizeRTQuality(quality) == kShadowQualityLow ? 1u : 0u);
 	}
 
 	SHADOW_QUALITY_FUNCTION float NativeShadowEmitterMultiplier(uint quality)
 	{
-		switch (quality) {
-		case kShadowQualityFull:
-			return 1.00f;
-		case kShadowQualityMedium:
-			return 0.40f;
-		case kShadowQualityLow:
-			return 0.20f;
-		case kShadowQualityPotato:
-			return 0.0f;
-		default:
-			return 0.65f;
-		}
+		return quality == kShadowQualityLow ? 0.20f : 0.65f;
 	}
 
 	SHADOW_QUALITY_FUNCTION uint NativeShadowCeilDivide(uint size, uint divisor)
@@ -58,8 +45,7 @@ namespace DX12Native
 
 	SHADOW_QUALITY_FUNCTION uint NativeShadowQualityScale(uint quality)
 	{
-		return quality == kShadowQualityPotato ? 3u :
-		       (quality == kShadowQualityMedium || quality == kShadowQualityLow ? 2u : 1u);
+		return quality == kShadowOffloadingQuality || quality == kShadowQualityLow ? 2u : 1u;
 	}
 
 	SHADOW_QUALITY_FUNCTION bool NativeShadowCheckerboard(uint quality)

@@ -1,18 +1,6 @@
-#ifndef NATIVE_SHADOW_QUALITY
-#define NATIVE_SHADOW_QUALITY 0
-#endif
-
 #include "Common/NativeShadowQuality.hlsli"
 
 RWTexture2D<float4> Scene : register(u0);
-#if NATIVE_SHADOW_QUALITY == 0
-Texture2D<float> ShadowMask : register(t0);
-cbuffer ShadowConstants : register(b0)
-{
-	uint2 Size;
-	uint LegacyTransfer;
-};
-#else
 Texture2D<float2> ShadowMask : register(t0);
 Texture2D<float> RasterDepth : register(t1);
 cbuffer ShadowConstants : register(b0)
@@ -28,19 +16,12 @@ bool ReceiverSample(float2 mask)
 {
 	return all(isfinite(mask)) && mask.y > 0.0f;
 }
-#endif
 
 [numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID)
 {
 	if (any(id.xy >= Size))
 		return;
 	float visibility;
-#if NATIVE_SHADOW_QUALITY == 0
-	visibility = ShadowMask[id.xy];
-	if (!isfinite(visibility) || visibility >= 1.0f)
-		return;
-	visibility = saturate(visibility);
-#else
 	const uint2 logical = id.xy / 2u;
 	const float2 center = ShadowMask[logical];
 	const bool sampled = all(id.xy == min(logical * 2u + 1u, Size - 1u));
@@ -83,7 +64,6 @@ bool ReceiverSample(float2 mask)
 			return;
 		visibility = weighted / total;
 	}
-#endif
 	const float layer = 1.0f - (1.0f - visibility) * kOffloadingBlend;
 	if (layer >= 1.0f)
 		return;

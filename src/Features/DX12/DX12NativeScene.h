@@ -123,9 +123,8 @@ private:
 	{
 		std::atomic<bool> debugNativeLights{ false };
 		bool outdoorShadowOffloading = false;
-		bool performance = true;
 	};
-	static constexpr uint32_t kRayTracedDefaultQuality = DX12Native::kShadowQualityMedium;
+	static constexpr uint32_t kRayTracedDefaultQuality = DX12Native::kShadowQualityLow;
 	static constexpr float kRayTracedDefaultReach = DX12Native::kDefaultShadowReachMultiplier;
 	OffloadingProfile offloadingProfile;
 	ShadowProfile rayTracedProfile{ kRayTracedDefaultQuality, kRayTracedDefaultReach };

@@ -183,13 +183,15 @@ TEST_CASE("DX12 empty tile classification distinguishes failure from completed e
 TEST_CASE("DX12 shadow quality allocates packed physical extents", "[dx12][shadow]")
 {
 	using namespace DX12Native;
-	constexpr std::array<uint32_t, kShadowQualityCount> expectedWidths{ 3840, 1920, 1920, 960, 1280 };
-	constexpr std::array<uint32_t, kShadowQualityCount> expectedHeights{ 2160, 2160, 1080, 1080, 720 };
-	for (uint32_t mode = 0; mode < kShadowQualityCount; ++mode) {
+	constexpr std::array modes{ kShadowQualityQuality, kShadowQualityLow, kShadowOffloadingQuality };
+	constexpr std::array<uint32_t, 3> expectedWidths{ 1920, 960, 1920 };
+	constexpr std::array<uint32_t, 3> expectedHeights{ 2160, 1080, 1080 };
+	for (size_t index = 0; index < modes.size(); ++index) {
+		const auto mode = modes[index];
 		const auto logicalWidth = NativeShadowLogicalExtent(3840, mode);
 		const auto logicalHeight = NativeShadowLogicalExtent(2160, mode);
-		CHECK(NativeShadowPhysicalWidth(logicalWidth, mode) == expectedWidths[mode]);
-		CHECK(logicalHeight == expectedHeights[mode]);
+		CHECK(NativeShadowPhysicalWidth(logicalWidth, mode) == expectedWidths[index]);
+		CHECK(logicalHeight == expectedHeights[index]);
 		for (uint32_t frame = 0; frame < 2; ++frame) {
 			const auto origin = NativeShadowCheckerboardOrigin(mode, frame);
 			CHECK(origin == (NativeShadowCheckerboard(mode) ? frame : 0u));
@@ -334,12 +336,8 @@ TEST_CASE("Prepared emission addition is opt-in and assigned once", "[dx12][shad
 TEST_CASE("DX12 stochastic emitter radius follows the shadow quality", "[dx12][shadow]")
 {
 	using namespace DX12Native;
-	CHECK(NativeShadowEmitterMultiplier(kShadowQualityFull) == 1.00f);
 	CHECK(NativeShadowEmitterMultiplier(kShadowQualityQuality) == 0.65f);
-	CHECK(NativeShadowEmitterMultiplier(kShadowQualityMedium) == 0.40f);
 	CHECK(NativeShadowEmitterMultiplier(kShadowQualityLow) == 0.20f);
-	CHECK(NativeShadowEmitterMultiplier(kShadowQualityPotato) == 0.0f);
-	CHECK(NativeShadowEmitterMultiplier(kShadowQualityCount) == 0.65f);
 }
 
 TEST_CASE("DX12 shadow profiles isolate stored values and legacy settings", "[dx12][shadow]")
@@ -373,24 +371,18 @@ TEST_CASE("DX12 frame modes select distinct SCM caster ownership", "[dx12][shado
 	CHECK(SelectSCMNativeCasterMode(SelectSCMNativePolicy(SCMNativeMode::FullShadow), true, true) == SCMNativeCasterMode::SuppressAll);
 }
 
-TEST_CASE("DX12 offload quality is full or quarter pixel count", "[dx12][shadow]")
+TEST_CASE("DX12 has one offload and two checkerboard variants", "[dx12][shadow]")
 {
 	using namespace DX12Native;
-	const auto quality = NativeShadowOffloadingQuality(false);
-	const auto performance = NativeShadowOffloadingQuality(true);
-	CHECK(quality == kShadowQualityFull);
-	CHECK(performance == kShadowQualityMedium);
-	CHECK_FALSE(NativeShadowCheckerboard(quality));
-	CHECK_FALSE(NativeShadowCheckerboard(performance));
-	CHECK(NativeShadowLogicalExtent(1920, quality) == 1920);
-	CHECK(NativeShadowLogicalExtent(1080, quality) == 1080);
-	CHECK(NativeShadowLogicalExtent(1921, performance) == 961);
-	CHECK(NativeShadowLogicalExtent(1081, performance) == 541);
-	CHECK(NativeShadowPhysicalWidth(961, performance) == 961);
-	CHECK(NativeShadowShaderIndex(true, quality) == kShadowQualityCount);
-	CHECK(NativeShadowShaderIndex(true, performance) == kShadowQualityCount + 1u);
-	for (uint32_t mode = 0; mode < kShadowQualityCount; ++mode)
-		CHECK(NativeShadowShaderIndex(false, mode) == mode);
+	CHECK_FALSE(NativeShadowCheckerboard(kShadowOffloadingQuality));
+	CHECK(NativeShadowLogicalExtent(1921, kShadowOffloadingQuality) == 961);
+	CHECK(NativeShadowLogicalExtent(1081, kShadowOffloadingQuality) == 541);
+	CHECK(NativeShadowShaderIndex(true, kShadowOffloadingQuality) == kOffloadingShaderIndex);
+	CHECK(NativeShadowShaderIndex(false, kShadowQualityQuality) == 0u);
+	CHECK(NativeShadowShaderIndex(false, kShadowQualityLow) == 1u);
+	CHECK(NativeShadowSanitizeRTQuality(0u) == kShadowQualityQuality);
+	CHECK(NativeShadowSanitizeRTQuality(2u) == kShadowQualityLow);
+	CHECK(NativeShadowSanitizeRTQuality(4u) == kShadowQualityLow);
 }
 
 TEST_CASE("DX12 caster coverage cache detects same-address mutations", "[dx12][shadow]")

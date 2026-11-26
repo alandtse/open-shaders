@@ -26,7 +26,7 @@ cbuffer ShadowConstants : register(b0)
 };
 
 #ifndef NATIVE_SHADOW_QUALITY
-#define NATIVE_SHADOW_QUALITY 0
+#define NATIVE_SHADOW_QUALITY 1
 #endif
 static const uint QualityMode = NATIVE_SHADOW_QUALITY;
 
@@ -72,9 +72,6 @@ float4 Reconstruct(uint2 pixel, float receiverDistance, float tolerance)
 			return center;
 		return float4(1, 0, 0, 0);
 	}
-#if NATIVE_SHADOW_QUALITY == 0
-	return float4(1, 0, 0, 0);
-#else
 	const int gridRadius = clamp(int(ReconstructionGridSize), 3, 9) / 2;
 	const int radius = max(1, int(NativeShadowCeilDivide(uint(gridRadius), scale)));
 	float weighted = 0.0f, total = 0.0f, lightWeight = 0.0f;
@@ -96,7 +93,6 @@ float4 Reconstruct(uint2 pixel, float receiverDistance, float tolerance)
 	if (total <= 0.0f)
 		return float4(1, 0, 0, 0);
 	return float4(weighted / total, lightWeight > 0.0f ? 1.0f : 0.0f, receiverDistance, lightWeight / total);
-#endif
 }
 
 float SampleVisibility(int2 logical, float4 center)

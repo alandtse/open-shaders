@@ -27,24 +27,16 @@
 void DX12NativeScene::DrawSettings()
 {
 	if (!globals::features::dx12Control.IsFullShadowMode()) {
-		const char* modes[] = { T("menu.dx12.scene.quality.quality", "Quality"), T("menu.dx12.scene.offload_performance", "Performance") };
-		int mode = offloadingProfile.performance ? 1 : 0;
-		if (ImGui::Combo(T("menu.dx12.scene.shadow_quality", "Shadow quality"), &mode, modes, int(std::size(modes))))
-			offloadingProfile.performance = mode != 0;
 		ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &offloadingProfile.outdoorShadowOffloading);
 		return;
 	}
 	const char* qualities[] = {
-		T("menu.dx12.scene.quality.full", "Full"),
 		T("menu.dx12.scene.quality.quality", "Quality"),
-		T("menu.dx12.scene.quality.medium", "Medium"),
-		T("menu.dx12.scene.quality.low", "Low"),
-		T("menu.dx12.scene.quality.potato", "Potato")
+		T("menu.dx12.scene.quality.low", "Low")
 	};
-	static_assert(std::size(qualities) == DX12Native::kShadowQualityCount);
-	int mode = static_cast<int>(rayTracedProfile.qualityMode);
+	int mode = rayTracedProfile.qualityMode == DX12Native::kShadowQualityLow ? 1 : 0;
 	if (ImGui::Combo(T("menu.dx12.scene.shadow_quality", "Shadow quality"), &mode, qualities, int(std::size(qualities))))
-		rayTracedProfile.qualityMode = static_cast<uint32_t>(mode);
+		rayTracedProfile.qualityMode = mode ? DX12Native::kShadowQualityLow : DX12Native::kShadowQualityQuality;
 }
 
 void DX12NativeScene::DrawDevSettings()
@@ -139,9 +131,7 @@ void DX12NativeScene::LoadProfile(ShadowProfile& profile, const json& input, uin
 	profile.preparedExclusionRadius.store(DX12Native::SanitizeFullShadowRadius(exclude), std::memory_order_relaxed);
 	profile.debugNativeLights.store(input.value("DebugNativeLights", false), std::memory_order_relaxed);
 	profile.outdoorShadowOffloading = input.value("OutdoorShadowOffloading", false);
-	profile.qualityMode = input.value("ShadowQualityMode", defaultQuality);
-	if (profile.qualityMode >= DX12Native::kShadowQualityCount)
-		profile.qualityMode = defaultQuality;
+	profile.qualityMode = DX12Native::NativeShadowSanitizeRTQuality(input.value("ShadowQualityMode", defaultQuality));
 	profile.nearLightShadowExclusion = input.value("ShadowNearLightExclusion", true);
 	profile.nearLightExclusionUnits = std::clamp(input.value("ShadowNearLightRadius", 16u), 0u, 512u) / 4u * 4u;
 	profile.shadowReachMultiplier = std::clamp(input.value("ShadowReachMultiplier", defaultReach), 0.1f, 64.0f);
@@ -166,15 +156,13 @@ json DX12NativeScene::SaveProfile(const ShadowProfile& profile)
 
 void DX12NativeScene::LoadOffloadingProfile(const json& input)
 {
-	offloadingProfile.performance = input.value("Performance", true);
 	offloadingProfile.outdoorShadowOffloading = input.value("OutdoorShadowOffloading", false);
 	offloadingProfile.debugNativeLights.store(input.value("DebugNativeLights", false), std::memory_order_relaxed);
 }
 
 json DX12NativeScene::SaveOffloadingProfile() const
 {
-	return { { "Performance", offloadingProfile.performance },
-		{ "OutdoorShadowOffloading", offloadingProfile.outdoorShadowOffloading },
+	return { { "OutdoorShadowOffloading", offloadingProfile.outdoorShadowOffloading },
 		{ "DebugNativeLights", offloadingProfile.debugNativeLights.load(std::memory_order_relaxed) } };
 }
 
@@ -627,7 +615,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 		const DX12Native::ShadowTraceControls controls{
 			.viewportWidth = viewportWidth,
 			.viewportHeight = viewportHeight,
-			.qualityMode = fullShadow ? profile.qualityMode : DX12Native::NativeShadowOffloadingQuality(offloadingProfile.performance),
+			.qualityMode = fullShadow ? profile.qualityMode : DX12Native::kShadowOffloadingQuality,
 			.nearLightExclusion = !fullShadow || profile.nearLightShadowExclusion,
 			.nearLightRadius = fullShadow ? float(profile.nearLightExclusionUnits) : DX12Native::kOffloadingNearRadius,
 			.reachMultiplier = fullShadow ? profile.shadowReachMultiplier : 1.0f,
