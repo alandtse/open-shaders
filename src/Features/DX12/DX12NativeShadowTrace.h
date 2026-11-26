@@ -60,7 +60,8 @@ namespace DX12Native
 		std::vector<std::array<float, 4>> lightRecords;
 		bool lightRecordsUploaded = false;
 		DXGI_FORMAT maskFormat = DXGI_FORMAT_UNKNOWN;
-		// Offload RG32F: visibility and receiver distance (zero when invalid).
+		// Offload Quality R32F: visibility (one when invalid).
+		// Offload Performance RG32F: visibility and receiver distance (zero when invalid).
 		// Full RT RGBA32F: x weighted visibility, y 1 lit receiver / 0 neutral or invalid,
 		// z receiver distance, w accumulated light weight.
 	};

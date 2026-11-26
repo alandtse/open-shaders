@@ -1,7 +1,20 @@
+#ifndef NATIVE_SHADOW_QUALITY
+#define NATIVE_SHADOW_QUALITY 0
+#endif
+
+#include "Common/NativeShadowQuality.hlsli"
+
+RWTexture2D<float4> Scene : register(u0);
+#if NATIVE_SHADOW_QUALITY == 0
+Texture2D<float> ShadowMask : register(t0);
+cbuffer ShadowConstants : register(b0)
+{
+	uint2 Size;
+	uint LegacyTransfer;
+};
+#else
 Texture2D<float2> ShadowMask : register(t0);
 Texture2D<float> RasterDepth : register(t1);
-RWTexture2D<float4> Scene : register(u0);
-
 cbuffer ShadowConstants : register(b0)
 {
 	uint2 Size;
@@ -11,18 +24,6 @@ cbuffer ShadowConstants : register(b0)
 	row_major float4x4 InverseView;
 	uint2 LogicalSize;
 };
-
-#ifndef NATIVE_SHADOW_QUALITY
-#define NATIVE_SHADOW_QUALITY 0
-#endif
-
-#include "Common/NativeShadowQuality.hlsli"
-bool ValidMask(float2 mask)
-{
-	return all(isfinite(mask)) && mask.y > 0.0f && mask.x < 1.0f;
-}
-
-#if NATIVE_SHADOW_QUALITY == 2
 bool ReceiverSample(float2 mask)
 {
 	return all(isfinite(mask)) && mask.y > 0.0f;
@@ -33,17 +34,18 @@ bool ReceiverSample(float2 mask)
 {
 	if (any(id.xy >= Size))
 		return;
+	float visibility;
 #if NATIVE_SHADOW_QUALITY == 0
-	const float2 center = ShadowMask[id.xy];
-	if (!ValidMask(center))
+	visibility = ShadowMask[id.xy];
+	if (!isfinite(visibility) || visibility >= 1.0f)
 		return;
+	visibility = saturate(visibility);
 #else
 	const uint2 logical = id.xy / 2u;
 	const float2 center = ShadowMask[logical];
 	const bool sampled = all(id.xy == min(logical * 2u + 1u, Size - 1u));
-	if (sampled && !ValidMask(center))
+	if (sampled && (!ReceiverSample(center) || center.x >= 1.0f))
 		return;
-#endif
 	const float depth = RasterDepth[id.xy];
 	if (!isfinite(depth) || depth <= 0.0f || depth >= 1.0f)
 		return;
@@ -56,12 +58,6 @@ bool ReceiverSample(float2 mask)
 	if (!isfinite(distance) || distance <= 0.0f)
 		return;
 	const float tolerance = max(ReceiverTolerance, distance * 1e-5f);
-	float visibility;
-#if NATIVE_SHADOW_QUALITY == 0
-	if (abs(center.y - distance) > tolerance)
-		return;
-	visibility = saturate(center.x);
-#else
 	if (sampled) {
 		if (abs(center.y - distance) > tolerance)
 			return;
