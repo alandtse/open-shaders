@@ -15,7 +15,9 @@ namespace E11Handoff
 			"ImageBasedLighting",
 			"CloudShadows",
 			"ExponentialHeightFog",
-			"ProceduralAurora"
+			"ProceduralAurora",
+			"ScreenSpaceGI",
+			"ScreenSpaceReflections"
 		};
 
 		/** @brief An Effects 11 setting a feature replaces; an empty key covers its whole category. */
@@ -27,6 +29,10 @@ namespace E11Handoff
 		};
 
 		constexpr std::array kE11Settings{
+			E11Setting{ Feature::SSGI, "SSAO_SSIL", {} },
+			E11Setting{ Feature::SSGI, "EFFECT", "EnableAmbientOcclusion" },
+			E11Setting{ Feature::SSR, "REFLECTION", {} },
+			E11Setting{ Feature::SSR, "EFFECT", "EnableReflection" },
 			E11Setting{ Feature::IBL, "IMAGEBASEDLIGHTING", {} },
 			E11Setting{ Feature::IBL, "EFFECT", "EnableImageBasedLighting" },
 			E11Setting{ Feature::CloudShadows, "CLOUDSHADOWS", {} },

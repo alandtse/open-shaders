@@ -1,18 +1,28 @@
 #include "ScreenSpaceGI.h"
-#include "GpuPass.h"
+#include "NRDPortStereo.h"
+#include "ScreenSpaceReflections.h"
 
 #include <DirectXTex.h>
 
-#include "../I18n/I18n.h"
+#include "CSEditor/SceneManager/SceneWidgetInterceptor.h"
 #include "Deferred.h"
-#include "Features/ReverseZ.h"
-#include "Features/VR.h"
+#include "DynamicCubemaps.h"
+#include "Effects11.h"
+#include "Effects11/SettingManager.h"
+#include "I18n/I18n.h"
+#include "IBL.h"
+#include "NRD.h"
+#include "ReverseZ.h"
+#include "Skylighting.h"
 #include "State.h"
+#include "TerrainBlending.h"
+#include "Upscaling.h"
 #include "Util.h"
+#include "GpuPass.h"
+#include "Utils/MathUtils.h"
 #include "Utils/DebugSection.h"
-#include "Utils/Game.h"
-#include "Utils/RenderExtent.h"
-#include "Utils/SettingsControl.h"
+
+namespace { bool AllowsAmbientFallback(); }
 
 #define I18N_KEY_PREFIX "feature.screen_space_gi."
 
@@ -20,153 +30,114 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ScreenSpaceGI::Settings,
 	Enabled,
 	EnableGI,
-	EnableExperimentalSpecularGI,
 	EnableVanillaSSAO,
-	NumSlices,
+	EnableSH,
 	NumSteps,
-	ResolutionMode,
-	ResourceProfile,
-	EnableAdaptiveSampling,
-	DebugUseUnjitteredCameraReconstruction,
-	MinScreenRadius,
-	AORadius,
-	GIRadius,
+	HalfRes,
+	QuarterRes,
 	Thickness,
-	DepthFadeRange,
-	GISaturation,
-	GIDistanceCompensation,
 	AOPower,
 	GIStrength,
-	EnableTemporalDenoiser,
-	EnableBlur,
-	DepthDisocclusion,
-	NormalDisocclusion,
-	MaxAccumFrames,
-	BlurRadius,
-	DistanceNormalisation,
-	UseStereoReproject)
+	ILSaturation,
+	EnableMultiBounce,
+	UseDynamicCubemapsAsFallback,
+	DiffuseCubemapMult,
+	EnableREBLUR,
+	Reblur,
+	DiffusePrepassBlurRadius,
+	E11AOScale,
+	E11ILScale,
+	E11ILSaturation)
 
 ////////////////////////////////////////////////////////////////////////////////////
 
 void ScreenSpaceGI::RestoreDefaultSettings()
 {
 	settings = {};
+	if (globals::game::isVR) settings.EnableGI = false;
+	userSettings = settings;
+	appliedE11Overlay = GetE11Overlay();
+	if (appliedE11Overlay.active) {
+		settings.Enabled = appliedE11Overlay.enabled;
+		settings.EnableGI = appliedE11Overlay.indirectLighting;
+		settings.AOPower = appliedE11Overlay.aoPower;
+		settings.GIStrength = appliedE11Overlay.giStrength;
+	}
 	recompileFlag = true;
-}
-
-void ScreenSpaceGI::DrawReprojectToggle()
-{
-	auto reprojectGuard = Util::DisableGuard(settings.EnableExperimentalSpecularGI);
-	ImGui::Checkbox(T(TKEY("vr_stereo_reproject"), "Stereo Reprojection"), &settings.UseStereoReproject);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text("%s", T(TKEY("vr_stereo_reproject_tooltip"),
-							  "Reprojects Eye 0 (left)'s diffuse GI into Eye 1 (right) and skips the Eye 1 "
-							  "march where it can, reducing GPU cost. Requires HQ Specular IL off (specular "
-							  "is view-dependent). Disoccluded pixels are marched natively instead."));
-}
-
-// Hub view: the SSGI stereo reprojection toggle, bound to the same setting the SSGI panel shows.
-void ScreenSpaceGI::DrawPerformanceSettings()
-{
-	DrawReprojectToggle();
-}
-
-// Reprojection is the GI perf win with a minor disocclusion artifact: on for
-// Performance/Balanced, off for Quality (max fidelity). Ignored when specular GI is on.
-void ScreenSpaceGI::ApplyPerformanceProfile(PerfProfile profile)
-{
-	settings.UseStereoReproject = ProfileEnablesReproject(profile);
-}
-
-bool ScreenSpaceGI::MatchesPerformanceProfile(PerfProfile profile) const
-{
-	// Specular GI forces bilateral sync (view-dependent), so the reproject setting is moot
-	// then, so don't veto the hub's active-profile detection for a knob the user can't apply.
-	return settings.EnableExperimentalSpecularGI || settings.UseStereoReproject == ProfileEnablesReproject(profile);
+	QueueHistoryReset();
+	globals::features::screenSpaceReflections.QueueHistoryReset();
+	resetReblurHistory = true;
+	outputReady = false;
+	denoisedThisFrame = false;
+	hasMultiBounceHistory = false;
+	hasFullResolutionMultiBounceHistory = false;
+	multiBounceHistoryUsesNRDOutput = false;
 }
 
 void ScreenSpaceGI::DrawSettings()
 {
 	static bool showAdvanced;
+	const auto syncUserSettings = SKSE::stl::scope_exit([this]() noexcept {
+		Settings edited = settings;
+		if (appliedE11Overlay.active) {
+			edited.Enabled = userSettings.Enabled;
+			edited.EnableGI = userSettings.EnableGI;
+			edited.AOPower = userSettings.AOPower;
+			edited.GIStrength = userSettings.GIStrength;
+		}
+		userSettings = edited;
+	});
 
 	if (!ShadersOK())
-		Util::Text::Error("%s", T(TKEY("shader_compile_error"), "Compute shaders failed to compile!"));
+		Util::Text::Error("%s", T(TKEY("compute_shaders_failed_to_compile"), "Compute shaders failed to compile!"));
 
 	///////////////////////////////
 	ImGui::SeparatorText(T(TKEY("toggles"), "Toggles"));
 
-	ImGui::Checkbox(T(TKEY("show_advanced"), "Show Advanced Options"), &showAdvanced);
+	ImGui::Checkbox(T(TKEY("show_advanced_options"), "Show Advanced Options"), &showAdvanced);
 
-	ImGui::SeparatorText(T(TKEY("effects_resources"), "Effects & Resources"));
-
-	const int previousResourceProfile = settings.ResourceProfile;
-	if (ImGui::BeginTable("ResourcesTable", 2)) {
-		ImGui::TableNextColumn();
-		if (ImGui::RadioButton(T(TKEY("profile_ao_only"), "AO-only Resources"), settings.ResourceProfile == kResourceProfileAOOnly)) {
-			settings.ResourceProfile = kResourceProfileAOOnly;
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("profile_ao_only_tooltip"), "Uses less video memory but disables indirect lighting. Requires a game restart to change."));
-		}
-
-		ImGui::TableNextColumn();
-		if (ImGui::RadioButton(T(TKEY("profile_ao_gi"), "AO + GI Resources"), settings.ResourceProfile == kResourceProfileFullGI)) {
-			settings.ResourceProfile = kResourceProfileFullGI;
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("profile_ao_gi_tooltip"), "Enables full indirect lighting at the cost of more video memory. Requires a game restart to change."));
-		}
-		ImGui::EndTable();
-	}
-
-	if (settings.ResourceProfile != previousResourceProfile) {
-		if (settings.ResourceProfile == kResourceProfileAOOnly) {
-			settings.EnableGI = false;
-			settings.EnableExperimentalSpecularGI = false;
-		}
-		recompileFlag = true;
-	}
-
-	Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::ResourceProfile);
+	const bool e11Managed = appliedE11Overlay.active;
+	if (e11Managed)
+		Util::Text::WrappedInfo("%s", T(TKEY("e11_managed"), "The active Effects 11 preset drives SSGI: its Ambient Occlusion and Indirect Lighting settings set Enabled, Indirect Lighting, AO Power and IL Brightness. Hand SSGI back on its scene page to use your own values."));
 
 	if (ImGui::BeginTable("Toggles", 4)) {
 		ImGui::TableNextColumn();
-		ImGui::Checkbox(T(TKEY("enabled"), "Enabled"), &settings.Enabled);
+		{
+			auto enabledGuard = Util::DisableGuard(e11Managed);
+			if (ImGui::Checkbox(T(TKEY("enabled"), "Enabled"), &settings.Enabled)) {
+				QueueHistoryReset();
+				globals::features::screenSpaceReflections.QueueHistoryReset();
+			}
+		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("enabled_tooltip"), "Enable Screen Space Global Illumination. When disabled, all other settings are ignored."));
 		}
 
 		ImGui::TableNextColumn();
 		{
-			auto ilToggleGuard = Util::DisableGuard(!settings.Enabled);
-			recompileFlag |= ImGui::Checkbox(T(TKEY("indirect_lighting"), "Indirect Lighting (IL)"), &settings.EnableGI);
-			// GI resources are boot-latched to the profile, so checking IL before a
-			// restart is a no-op until the profile below is picked up.
-			if (settings.EnableGI && !HasGIResources())
-				Util::Text::RestartNeeded("%s", T(TKEY("indirect_lighting_pending"), "Pending restart: needs AO + GI Resources."));
+			auto ilToggleGuard = Util::DisableGuard(!settings.Enabled || e11Managed);
+			if (ImGui::Checkbox(T(TKEY("indirect_lighting"), "Indirect Lighting (IL)"), &settings.EnableGI)) {
+				recompileFlag = true;
+				SetupNRDResources();
+			}
 		}
 		ImGui::TableNextColumn();
 		{
-			auto vanillaSSAOGuard = Util::DisableGuard(globals::game::isVR);
-			ImGui::Checkbox(T(TKEY("vanilla_ssao"), "Vanilla SSAO"), &settings.EnableVanillaSSAO);
+			auto shGuard = Util::DisableGuard(!settings.Enabled || !settings.EnableGI);
+			if (ImGui::Checkbox(T(TKEY("sh_mode"), "SH Mode"), &settings.EnableSH)) {
+				recompileFlag = true;
+				SetupNRDResources();
+			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				if (globals::game::isVR)
-					ImGui::Text("%s", T(TKEY("vanilla_ssao_tooltip_vr"), "Vanilla SSAO is not supported in VR."));
-				else
-					ImGui::Text("%s", T(TKEY("vanilla_ssao_tooltip"), "Enable Skyrim's built-in SSAO. Usually disabled when using SSGI to avoid double-darkening."));
+				ImGui::Text("%s", T(TKEY("sh_mode_tooltip"), "Use Spherical Harmonics for directional GI. Higher quality but more expensive."));
 			}
 		}
 		ImGui::TableNextColumn();
-		if (showAdvanced) {
-			{
-				auto hqSpecGuard = Util::DisableGuard(!settings.EnableGI);
-				recompileFlag |= ImGui::Checkbox(T(TKEY("hq_specular_il"), "(Experimental) HQ Specular IL"), &settings.EnableExperimentalSpecularGI);
-				if (auto _tt = Util::HoverTooltipWrapper())
-					ImGui::Text("%s", T(TKEY("hq_specular_il_tooltip"), "An experimental specular GI that is more accurate but requires more samples. Won't be blurred."));
+		{
+			ImGui::Checkbox(T(TKEY("vanilla_ssao"), "Vanilla SSAO"), &settings.EnableVanillaSSAO);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s", T(TKEY("vanilla_ssao_tooltip"), "Enable Skyrim's built-in SSAO. Usually disabled when using SSGI to avoid double-darkening."));
 			}
-
-			if (globals::game::isVR)
-				DrawReprojectToggle();
 		}
 
 		ImGui::EndTable();
@@ -178,105 +149,45 @@ void ScreenSpaceGI::DrawSettings()
 	{
 		auto qualityGuard = Util::DisableGuard(!settings.Enabled);
 
-		if (!SettingsControl::IsReplicating() && ImGui::BeginTable("Presets", 5)) {
-			auto select = [](auto flatVal, auto vrVal) { return globals::game::isVR ? vrVal : flatVal; };
+		int resolutionMode = settings.QuarterRes ? 2 : (settings.HalfRes ? 1 : 0);
+		bool resolutionChanged = false;
+		if (!SceneWidgetInterceptor::IsArmed() && ImGui::BeginTable("SSGI Resolution", 3)) {
+			ImGui::TableNextColumn();
+			resolutionChanged |= ImGui::RadioButton(T(TKEY("full_resolution"), "Full Resolution"), &resolutionMode, 0);
 
 			ImGui::TableNextColumn();
-			if (Util::Button(T(TKEY("ao_only"), "AO only"), { -1, 0 })) {
-				settings.NumSlices = select(1, 3);
-				settings.NumSteps = select(6, 8);
-				settings.EnableBlur = true;
-				settings.ResourceProfile = kResourceProfileAOOnly;
-				settings.EnableGI = false;
-				settings.EnableExperimentalSpecularGI = false;
-				recompileFlag = true;
-			}
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted(select(T(TKEY("minimal_preset_tooltip"), "1 Slice, 6 Steps, blur enabled, no GI\n"), "3 Slices, 8 Steps, blur enabled, no GI\n"));
+			{
+				auto halfResGuard = Util::DisableGuard(!settings.EnableREBLUR);
+				resolutionChanged |= ImGui::RadioButton(T(TKEY("half_resolution"), "1/2 Resolution"), &resolutionMode, 1);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("%s", T(TKEY("half_resolution_checkerboard_tooltip"), "Trace half the columns in a checkerboard pattern. NRD reconstructs the missing pixels."));
+				}
 			}
 
 			ImGui::TableNextColumn();
-			if (Util::Button(T(TKEY("low"), "Low"), { -1, 0 })) {
-				settings.NumSlices = 10;
-				settings.NumSteps = 12;
-				settings.ResolutionMode = 2;
-				settings.EnableBlur = true;
-				settings.ResourceProfile = kResourceProfileFullGI;
-				settings.EnableGI = true;
-				recompileFlag = true;
+			{
+				auto quarterResGuard = Util::DisableGuard(!settings.EnableREBLUR);
+				resolutionChanged |= ImGui::RadioButton(T(TKEY("quarter_resolution"), "1/4 Resolution"), &resolutionMode, 2);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("%s", T(TKEY("quarter_resolution_tooltip"), "Trace one pixel per 2x2 block with a rotating pattern. REBLUR reconstructs the missing pixels."));
+				}
 			}
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("%s", T(TKEY("low_tooltip"), "Quarter res and blurry."));
-
-			ImGui::TableNextColumn();
-			if (Util::Button(T(TKEY("standard"), "Standard"), { -1, 0 })) {
-				settings.NumSlices = 4;
-				settings.NumSteps = 8;
-				settings.ResolutionMode = 1;
-				settings.EnableBlur = true;
-				settings.ResourceProfile = kResourceProfileFullGI;
-				settings.EnableGI = true;
-				recompileFlag = true;
-			}
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("%s", T(TKEY("standard_tooltip"), "Half res and somewhat stable."));
-
-			ImGui::TableNextColumn();
-			if (Util::Button(T(TKEY("extreme"), "Extreme"), { -1, 0 })) {
-				settings.NumSlices = 4;
-				settings.NumSteps = 8;
-				settings.ResolutionMode = 0;
-				settings.EnableBlur = true;
-				settings.ResourceProfile = kResourceProfileFullGI;
-				settings.EnableGI = true;
-				recompileFlag = true;
-			}
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("%s", T(TKEY("extreme_tooltip"), "Full res and clean."));
-
-			ImGui::TableNextColumn();
-			if (Util::Button(T(TKEY("reference"), "Reference"), { -1, 0 })) {
-				settings.NumSlices = 8;
-				settings.NumSteps = 10;
-				settings.ResolutionMode = 0;
-				settings.EnableBlur = true;
-				settings.ResourceProfile = kResourceProfileFullGI;
-				settings.EnableGI = true;
-				recompileFlag = true;
-			}
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("%s", T(TKEY("reference_tooltip"), "Reference mode."));
 
 			ImGui::EndTable();
+		}
+		if (resolutionChanged) {
+			settings.HalfRes = resolutionMode == 1;
+			settings.QuarterRes = resolutionMode == 2;
+			recompileFlag = true;
+			resetReblurHistory = true;
+			hasMultiBounceHistory = false;
 		}
 
 		if (showAdvanced) {
-			ImGui::SliderInt(T(TKEY("slices"), "Slices"), (int*)&settings.NumSlices, 1, 10, "%d", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("%s", T(TKEY("slices_tooltip"),
-									  "How many directions do the samples take.\n"
-									  "Controls noise."));
-
-			ImGui::SliderInt(T(TKEY("steps_per_slice"), "Steps Per Slice"), (int*)&settings.NumSteps, 1, 20, "%d", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("%s", T(TKEY("steps_per_slice_tooltip"),
-									  "How many samples does it take in one direction.\n"
-									  "Controls accuracy of lighting, and noise when effect radius is large."));
-
-			recompileFlag |= ImGui::Checkbox(T(TKEY("adaptive_sampling"), "Adaptive Sampling"), &settings.EnableAdaptiveSampling);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("%s", T(TKEY("adaptive_sampling_tooltip"), "Reduces steps on distant or flat surfaces. Adds a depth/normal variance pass; net cost depends on scene."));
-		}
-
-		if (ImGui::BeginTable("Less Work", 3, ImGuiTableFlags_SizingStretchSame)) {
-			ImGui::TableNextColumn();
-			recompileFlag |= ImGui::RadioButton(T(TKEY("full_res"), "Full Res"), &settings.ResolutionMode, 0);
-			ImGui::TableNextColumn();
-			recompileFlag |= ImGui::RadioButton(T(TKEY("half_res"), "Half Res"), &settings.ResolutionMode, 1);
-			ImGui::TableNextColumn();
-			recompileFlag |= ImGui::RadioButton(T(TKEY("quarter_res"), "Quarter Res"), &settings.ResolutionMode, 2);
-
-			ImGui::EndTable();
+			if (ImGui::SliderInt(T(TKEY("steps_per_slice"), "Steps Per Slice"), (int*)&settings.NumSteps, 1, 32, "%d", ImGuiSliderFlags_AlwaysClamp)) {
+				resetReblurHistory = true;
+				hasMultiBounceHistory = false;
+			}
 		}
 	}
 
@@ -286,202 +197,290 @@ void ScreenSpaceGI::DrawSettings()
 	{
 		auto visualGuard = Util::DisableGuard(!settings.Enabled);
 
-		ImGui::SliderFloat(T(TKEY("ao_power"), "AO Power"), &settings.AOPower, 0.f, 6.f, "%.2f");
+		{
+			auto aoGuard = Util::DisableGuard(e11Managed);
+			if (ImGui::SliderFloat(T(TKEY("ao_power"), "AO Power"), &settings.AOPower, 0.f, 6.f, "%.2f"))
+				resetReblurHistory = true;
+		}
 
 		{
 			auto ilGuard = Util::DisableGuard(!settings.EnableGI);
-			ImGui::SliderFloat(T(TKEY("il_source_brightness"), "IL Source Brightness"), &settings.GIStrength, 0.f, 6.f, "%.2f");
-		}
-
-		ImGui::Separator();
-
-		ImGui::SliderFloat(T(TKEY("ao_radius"), "AO radius"), &settings.AORadius, 10.f, 1024.0f, "%.1f units");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			std::vector<std::string> tooltipLines = {
-				T(TKEY("ao_radius_tooltip"), "A smaller radius produces tighter AO."),
-				Util::Units::FormatDistance(settings.AORadius)
-			};
-			Util::DrawMultiLineTooltip(tooltipLines);
-		}
-
-		{
-			auto ilRadiusGuard = Util::DisableGuard(!settings.EnableGI);
-
-			ImGui::SliderFloat(T(TKEY("il_radius"), "IL radius"), &settings.GIRadius, 10.f, 1024.0f, "%.1f units");
+			{
+				auto strengthGuard = Util::DisableGuard(e11Managed);
+				if (ImGui::SliderFloat(T(TKEY("il_source_brightness"), "IL Source Brightness"), &settings.GIStrength, 0.f, 6.f, "%.2f")) {
+					resetReblurHistory = true;
+					hasMultiBounceHistory = false;
+				}
+				ImGui::SliderFloat(T(TKEY("il_saturation"), "IL Saturation"), &settings.ILSaturation, 0.f, 2.f, "%.2f");
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::Text("%s", T(TKEY("il_saturation_tooltip"), "Colour of the bounce light. Below 1 keeps sunlit grass and ground from tinting shade, so it keeps the sky's cool fill; 1 is unchanged."));
+			}
+			if (ImGui::Checkbox(T(TKEY("multi_bounce"), "Multi-Bounce"), &settings.EnableMultiBounce)) {
+				resetReblurHistory = true;
+				hasMultiBounceHistory = false;
+			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				std::vector<std::string> tooltipLines = {
-					T(TKEY("il_radius_tooltip"), "A larger radius produces wider IL."),
-					Util::Units::FormatDistance(settings.GIRadius)
-				};
-				Util::DrawMultiLineTooltip(tooltipLines);
+				ImGui::Text("%s", T(TKEY("multi_bounce_tooltip"), "Feed the previous frame's reprojected, post-albedo indirect radiance back into the source radiance pyramid."));
+			}
+
+			{
+				const Util::LockedSection enbLock(!AllowsAmbientFallback(),
+					T("common.settings_managed_by_enb", "This setting is managed by Effects 11."));
+				if (ImGui::Checkbox(T(TKEY("use_dynamic_cubemaps_as_fallback"), "Use Dynamic Cubemaps as Fallback"), &settings.UseDynamicCubemapsAsFallback)) {
+					resetReblurHistory = true;
+					hasMultiBounceHistory = false;
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("%s", T(TKEY("use_dynamic_cubemaps_as_fallback_tooltip"), "Where indirect rays miss the screen, sample dynamic cubemaps for diffuse fallback."));
+				}
+				{
+					auto cubemapGuard = Util::DisableGuard(!settings.UseDynamicCubemapsAsFallback);
+					if (ImGui::SliderFloat(T(TKEY("diffuse_cubemap_multiplier"), "Diffuse Cubemap Multiplier"), &settings.DiffuseCubemapMult, 0.0f, 5.0f, "%.2f")) {
+						resetReblurHistory = true;
+						hasMultiBounceHistory = false;
+					}
+				}
 			}
 		}
 
 		if (showAdvanced) {
-			ImGui::SliderFloat(T(TKEY("min_screen_radius"), "Min Screen Radius"), &settings.MinScreenRadius, 0.f, 0.05f, "%.3f");
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("%s", T(TKEY("min_screen_radius_tooltip"),
-									  "The minimum screen-space effect radius as proportion of display width, to prevent far field AO being too small."));
-		}
-
-		ImGui::SliderFloat2(T(TKEY("depth_fade_range"), "Depth Fade Range"), &settings.DepthFadeRange.x, 1e4, 5e4, "%.0f units");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			std::vector<std::string> tooltipLines = {
-				T(TKEY("depth_fade_range_tooltip"), "Distance range where depth-based effects fade out."),
-				"Near: " + Util::Units::FormatDistance(settings.DepthFadeRange.x),
-				"Far: " + Util::Units::FormatDistance(settings.DepthFadeRange.y)
-			};
-			Util::DrawMultiLineTooltip(tooltipLines);
-		}
-
-		if (showAdvanced) {
 			ImGui::Separator();
-
-			ImGui::SliderFloat(T(TKEY("thickness"), "Thickness"), &settings.Thickness, 0.f, 128.0f, "%.1f units");
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				std::vector<std::string> tooltipLines = {
-					T(TKEY("thickness_tooltip"), "How thick the occluders are. Only affects AO."),
-					Util::Units::FormatDistance(settings.Thickness)
-				};
-				Util::DrawMultiLineTooltip(tooltipLines);
+			if (ImGui::SliderFloat(T(TKEY("thickness"), "Thickness"), &settings.Thickness, 0.f, 0.2f, "%.3f")) {
+				resetReblurHistory = true;
+				hasMultiBounceHistory = false;
 			}
 		}
 	}
 
 	///////////////////////////////
-	ImGui::SeparatorText(T(TKEY("visual_il"), "Visual - IL"));
-
-	{
-		auto visualILGuard = Util::DisableGuard(!settings.Enabled || !settings.EnableGI);
-
-		if (showAdvanced) {
-			ImGui::SliderFloat(T(TKEY("il_distance_compensation"), "IL Distance Compensation"), &settings.GIDistanceCompensation, -5.0f, 5.0f, "%.1f");
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("%s", T(TKEY("il_distance_compensation_tooltip"), "Brighten/Dimming further radiance samples."));
-
-			ImGui::Separator();
-		}
-
-		Util::PercentageSlider(T(TKEY("il_saturation"), "IL Saturation"), &settings.GISaturation);
-	}
-
-	///////////////////////////////
-	ImGui::SeparatorText(T(TKEY("denoising"), "Denoising"));
+	ImGui::SeparatorText(T(TKEY("reblur_denoiser"), "REBLUR Denoiser"));
 
 	{
 		auto denoiseGuard = Util::DisableGuard(!settings.Enabled);
 
-		if (ImGui::BeginTable("denoisers", 2)) {
-			ImGui::TableNextColumn();
-			recompileFlag |= ImGui::Checkbox(T(TKEY("temporal_denoiser"), "Temporal Denoiser"), &settings.EnableTemporalDenoiser);
-
-			ImGui::TableNextColumn();
-			ImGui::Checkbox(T(TKEY("blur"), "Blur"), &settings.EnableBlur);
-
-			ImGui::EndTable();
+		if (ImGui::Checkbox(T(TKEY("enable_reblur"), "Enable REBLUR"), &settings.EnableREBLUR)) {
+			// Reduced-resolution traces are checkerboard/phase packed and are only
+			// full-resolution consumer inputs after REBLUR reconstruction.
+			if (!settings.EnableREBLUR && (settings.HalfRes || settings.QuarterRes)) {
+				settings.HalfRes = false;
+				settings.QuarterRes = false;
+				recompileFlag = true;
+			}
+			resetReblurHistory = true;
+			hasMultiBounceHistory = false;
 		}
 
-		if (showAdvanced) {
-			ImGui::Separator();
-
-			{
-				auto temporalGuard = Util::DisableGuard(!settings.EnableTemporalDenoiser);
-				ImGui::SliderInt(T(TKEY("max_frame_accumulation"), "Max Frame Accumulation"), (int*)&settings.MaxAccumFrames, 1, 64, "%d", ImGuiSliderFlags_AlwaysClamp);
+		if (settings.EnableREBLUR) {
+			resetReblurHistory |= NRDPort::Service().DrawReblurSettings(settings.Reblur, showAdvanced, "ssgi_reblur");
+			if (showAdvanced) {
+				resetReblurHistory |= ImGui::SliderFloat(T(TKEY("diffuse_prepass_blur_radius"), "Diffuse Pre-pass Radius"), &settings.DiffusePrepassBlurRadius, 0.0f, 75.0f, "%.1f px");
 				if (auto _tt = Util::HoverTooltipWrapper())
-					ImGui::Text("%s", T(TKEY("max_frame_accumulation_tooltip"), "How many past frames to accumulate results with. Higher values are less noisy but potentially cause ghosting."));
-			}
-
-			ImGui::Separator();
-
-			{
-				auto disocclusionGuard = Util::DisableGuard(!settings.EnableTemporalDenoiser && !settings.EnableGI);
-
-				Util::PercentageSlider(T(TKEY("movement_disocclusion"), "Movement Disocclusion"), &settings.DepthDisocclusion, 0.f, 20.f);
-				if (auto _tt = Util::HoverTooltipWrapper())
-					ImGui::Text("%s", T(TKEY("movement_disocclusion_tooltip"),
-										  "If a pixel has moved too far from the last frame, its radiance will not be carried to this frame.\n"
-										  "Lower values are stricter."));
-
-				ImGui::Separator();
-			}
-
-			{
-				auto blurGuard = Util::DisableGuard(!settings.EnableBlur);
-				ImGui::SliderFloat(T(TKEY("blur_radius"), "Blur Radius"), &settings.BlurRadius, 0.f, 30.f, "%.1f px");
-
-				if (showAdvanced) {
-					ImGui::SliderFloat(T(TKEY("geometry_weight"), "Geometry Weight"), &settings.DistanceNormalisation, 0.f, 5.f, "%.2f");
-					if (auto _tt = Util::HoverTooltipWrapper())
-						ImGui::Text("%s", T(TKEY("geometry_weight_tooltip"),
-											  "Higher value makes the blur more sensitive to differences in geometry."));
-				}
+					ImGui::Text("%s", T(TKEY("diffuse_prepass_blur_radius_tooltip"), "Spatial reuse before temporal accumulation. It is the only spatial filtering the AO term gets, so lowering it makes AO and dim indirect light noisier."));
 			}
 		}
 	}
+
+	#if defined(ENABLE_EFFECTS11)
+	if (globals::features::effects11.loaded) {
+		ImGui::SeparatorText(T(TKEY("e11_calibration"), "Effects 11 Presets"));
+		ImGui::SliderFloat(T(TKEY("e11_ao_scale"), "Preset AO Scale"), &settings.E11AOScale, 0.0f, 4.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("%s", T(TKEY("e11_ao_scale_tooltip"), "AO Power is the preset's AOAmount times this. ENB's occlusion is weaker than SSGI's, so presets set it high."));
+		ImGui::SliderFloat(T(TKEY("e11_il_scale"), "Preset IL Scale"), &settings.E11ILScale, 0.0f, 4.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("%s", T(TKEY("e11_il_scale_tooltip"), "IL Brightness is the preset's ILAmount times this. ENB's indirect light is faint, so presets often set ILAmount to 3 or 5."));
+		ImGui::SliderFloat(T(TKEY("e11_il_saturation"), "Preset IL Saturation"), &settings.E11ILSaturation, 0.0f, 2.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("%s", T(TKEY("e11_il_saturation_tooltip"), "Colour of the bounce light while a preset drives SSGI. Below 1 keeps strongly coloured surfaces from tinting the preset's grade."));
+	}
+#endif
 }
 
 void ScreenSpaceGI::DrawDebugSection()
 {
 	// The buffer viewer has no scene-context meaning, so hide it while a Scene Manager replica
 	// is borrowing this panel to author overrides.
-	if (SettingsControl::IsReplicating())
+	if (SceneWidgetInterceptor::IsArmed())
 		return;
 
 	Util::DebugSection section;
 	if (!section)
 		return;
 
-	if (globals::game::isVR) {
-		ImGui::Checkbox(T(TKEY("debug_unjittered_vr"), "Use Unjittered VR Camera"), &settings.DebugUseUnjitteredCameraReconstruction);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("debug_unjittered_vr_tooltip"), "May reduce jitter-induced depth swim during head movement. Compare against the default before enabling."));
-		}
-	}
-
 	static float debugRescale = .3f;
 	ImGui::SliderFloat(T(TKEY("view_resize"), "View Resize"), &debugRescale, 0.f, 1.f);
 
+	if (!globals::game::isVR) {
+		DrawBufferViewer(debugRescale);
+	} else {
+		if (ImGui::TreeNode(T("feature.nrd.left_eye", "Left eye"))) {
+			DrawBufferViewer(debugRescale);
+			ImGui::TreePop();
+		}
+		if (ImGui::TreeNode(T("feature.nrd.right_eye", "Right eye"))) {
+			if (const auto* right = NRDPort::RightGIDebug())
+				right->DrawBufferViewer(debugRescale);
+			else
+				ImGui::TextUnformatted(T("feature.nrd.eye_buffers_unavailable", "Right-eye buffers are not allocated yet."));
+			ImGui::TreePop();
+		}
+	}
+}
+
+void ScreenSpaceGI::DrawBufferViewer(float debugRescale) const
+{
 	BUFFER_VIEWER_NODE(texNoise, debugRescale)
 	BUFFER_VIEWER_NODE(texWorkingDepth, debugRescale)
-	BUFFER_VIEWER_NODE(texPrevGeo, debugRescale)
+	BUFFER_VIEWER_NODE(texHistoryGeo[0], debugRescale)
+	BUFFER_VIEWER_NODE(texHistoryGeo[1], debugRescale)
 	BUFFER_VIEWER_NODE(texRadiance, debugRescale)
-	BUFFER_VIEWER_NODE(texAo[0], debugRescale)
-	BUFFER_VIEWER_NODE(texAo[1], debugRescale)
-	BUFFER_VIEWER_NODE(texIlY[0], debugRescale)
-	BUFFER_VIEWER_NODE(texIlY[1], debugRescale)
-	BUFFER_VIEWER_NODE(texIlCoCg[0], debugRescale)
-	BUFFER_VIEWER_NODE(texIlCoCg[1], debugRescale)
+	BUFFER_VIEWER_NODE(texNRDInput, debugRescale)
+	BUFFER_VIEWER_NODE(texNRDOutput, debugRescale)
+	if (texNRDInputSH1)
+		BUFFER_VIEWER_NODE(texNRDInputSH1, debugRescale)
+	if (texNRDOutputSH1)
+		BUFFER_VIEWER_NODE(texNRDOutputSH1, debugRescale)
+	if (auto validation = settings.Reblur.EnableValidation ? nrdReblur.GetValidationSRV() : nullptr) {
+		if (ImGui::TreeNode(T(TKEY("nrd_validation"), "NRD Validation"))) {
+			ImGui::Image(validation, { nrdReblur.GetWidth() * debugRescale, nrdReblur.GetHeight() * debugRescale });
+			ImGui::TreePop();
+		}
+	}
+}
+
+namespace
+{
+	void ResetIfOutOfRange(float& a_value, float a_min, float a_max, float a_default)
+	{
+		if (!std::isfinite(a_value) || a_value < a_min || a_value > a_max)
+			a_value = a_default;
+	}
+
+	bool IsLegacySSGISchema(const json& a_json)
+	{
+		constexpr std::array kLegacyOnlyKeys{
+			"ResolutionMode", "EnableExperimentalSpecularGI", "NumSlices", "MinScreenRadius", "AORadius", "GIRadius",
+			"DepthFadeRange", "GISaturation", "GIDistanceCompensation", "SpecularStrength", "EnableTemporalDenoiser",
+			"EnableBlur", "DepthDisocclusion", "NormalDisocclusion", "MaxAccumFrames", "BlurRadius", "DistanceNormalisation"
+		};
+		return a_json.is_object() && std::ranges::any_of(kLegacyOnlyKeys, [&](const char* key) { return a_json.contains(key); });
+	}
 }
 
 void ScreenSpaceGI::LoadSettings(json& o_json)
 {
-	const auto previousShaderConfiguration = std::tuple{
-		settings.EnableGI, settings.EnableExperimentalSpecularGI,
-		settings.ResolutionMode, settings.EnableTemporalDenoiser, settings.EnableAdaptiveSampling
-	};
+	const auto previous = settings;
+	const Settings defaults{};
+
 	settings = o_json;
-	settings.ResolutionMode = std::clamp(settings.ResolutionMode, 0, 2);
-	settings.NumSlices = std::clamp(settings.NumSlices, 1u, 10u);
-	settings.NumSteps = std::clamp(settings.NumSteps, 1u, 20u);
-	if (!o_json.contains("ResourceProfile")) {
-		// Existing VR configs keep full resources if GI was active, else use lean AO-only.
-		settings.ResourceProfile = (REL::Module::IsVR() && !settings.EnableGI) ? kResourceProfileAOOnly : kResourceProfileFullGI;
+	if (globals::game::isVR && !o_json.contains("EnableGI")) settings.EnableGI = false;
+
+	if (IsLegacySSGISchema(o_json)) {
+		Settings migrated{};
+		migrated.Enabled = settings.Enabled;
+		migrated.EnableGI = settings.EnableGI;
+		migrated.EnableVanillaSSAO = settings.EnableVanillaSSAO;
+		if (const auto resolutionMode = o_json.find("ResolutionMode"); resolutionMode != o_json.end() && resolutionMode->is_number_integer()) {
+			migrated.HalfRes = false;
+			migrated.QuarterRes = resolutionMode->get<int>() != 0;
+		}
+		settings = migrated;
+		logger::info("[SSGI] Migrated settings from the previous Screen Space GI schema; tuning values use the new defaults");
 	}
-	recompileFlag |= previousShaderConfiguration != std::tuple{
-		settings.EnableGI, settings.EnableExperimentalSpecularGI,
-		settings.ResolutionMode, settings.EnableTemporalDenoiser, settings.EnableAdaptiveSampling
-	};
+
+	settings.NumSteps = std::clamp(settings.NumSteps, 1u, 32u);
+	ResetIfOutOfRange(settings.Thickness, 0.0f, 0.2f, defaults.Thickness);
+	ResetIfOutOfRange(settings.AOPower, 0.0f, 6.0f, defaults.AOPower);
+	ResetIfOutOfRange(settings.GIStrength, 0.0f, 6.0f, defaults.GIStrength);
+	ResetIfOutOfRange(settings.ILSaturation, 0.0f, 2.0f, defaults.ILSaturation);
+	ResetIfOutOfRange(settings.DiffuseCubemapMult, 0.0f, 5.0f, defaults.DiffuseCubemapMult);
+	ResetIfOutOfRange(settings.DiffusePrepassBlurRadius, 0.0f, 75.0f, defaults.DiffusePrepassBlurRadius);
+	if (settings.QuarterRes)
+		settings.HalfRes = false;
+	if (!settings.EnableREBLUR) {
+		settings.HalfRes = false;
+		settings.QuarterRes = false;
+	}
+	settings.E11AOScale = Util::ClampFinite(settings.E11AOScale, 0.0f, 4.0f, defaults.E11AOScale);
+	settings.E11ILScale = Util::ClampFinite(settings.E11ILScale, 0.0f, 4.0f, defaults.E11ILScale);
+	settings.E11ILSaturation = Util::ClampFinite(settings.E11ILSaturation, 0.0f, 2.0f, defaults.E11ILSaturation);
+	userSettings = settings;
+	appliedE11Overlay = GetE11Overlay();
+	if (appliedE11Overlay.active) {
+		settings.Enabled = appliedE11Overlay.enabled;
+		settings.EnableGI = appliedE11Overlay.indirectLighting;
+		settings.AOPower = appliedE11Overlay.aoPower;
+		settings.GIStrength = appliedE11Overlay.giStrength;
+	}
+
+	recompileFlag = recompileFlag ||
+	                settings.HalfRes != previous.HalfRes ||
+	                settings.QuarterRes != previous.QuarterRes ||
+	                settings.EnableGI != previous.EnableGI ||
+	                settings.EnableSH != previous.EnableSH;
+	const bool historyInvalidated = recompileFlag ||
+	                                settings.Enabled != previous.Enabled ||
+	                                settings.NumSteps != previous.NumSteps ||
+	                                settings.EnableMultiBounce != previous.EnableMultiBounce ||
+	                                settings.UseDynamicCubemapsAsFallback != previous.UseDynamicCubemapsAsFallback ||
+	                                settings.EnableREBLUR != previous.EnableREBLUR;
+	outputReady = false;
+	denoisedThisFrame = false;
+	if (historyInvalidated) {
+		QueueHistoryReset();
+		resetReblurHistory = true;
+		hasMultiBounceHistory = false;
+		hasFullResolutionMultiBounceHistory = false;
+		multiBounceHistoryUsesNRDOutput = false;
+	}
 }
 
 void ScreenSpaceGI::SaveSettings(json& o_json)
 {
-	o_json = settings;
+	o_json = userSettings;
+}
+
+bool ScreenSpaceGI::IsManagedByE11() const
+{
+	#if defined(ENABLE_EFFECTS11)
+	const auto& effects11 = globals::features::effects11;
+	return effects11.IsActive() && effects11.OwnsFeature(E11Handoff::Feature::SSGI);
+#else
+	return false;
+#endif
+}
+
+ScreenSpaceGI::E11Overlay ScreenSpaceGI::GetE11Overlay() const
+{
+	E11Overlay overlay;
+	if (!IsManagedByE11())
+		return overlay;
+#if defined(ENABLE_EFFECTS11)
+	auto& settingManager = SettingManager::GetSingleton();
+	const bool interior = Util::IsInterior();
+	overlay.active = true;
+	overlay.enabled = settingManager.GetValue<bool>("EnableAmbientOcclusion", "EFFECT");
+	overlay.indirectLighting = settingManager.GetValue<bool>("UseIndirectLighting", "SSAO_SSIL");
+	const float aoAmount = settingManager.GetValue<float>(interior ? "AOAmountInterior" : "AOAmount", "SSAO_SSIL");
+	const float ilAmount = settingManager.GetValue<float>(interior ? "ILAmountInterior" : "ILAmount", "SSAO_SSIL");
+	overlay.aoPower = Util::ClampFinite(aoAmount * userSettings.E11AOScale, 0.0f, 6.0f, 1.0f);
+	overlay.giStrength = Util::ClampFinite(ilAmount * userSettings.E11ILScale, 0.0f, 6.0f, 1.0f);
+#endif
+	return overlay;
+}
+
+void ScreenSpaceGI::RefreshE11Overlay()
+{
+	if (GetE11Overlay() == appliedE11Overlay)
+		return;
+	json document = userSettings;
+	LoadSettings(document);
 }
 
 RE::BSEventNotifyControl ScreenSpaceGI::MenuOpenCloseEventHandler::ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*)
 {
 	if (a_event->menuName == RE::LoadingMenu::MENU_NAME && !a_event->opening)
-		globals::features::screenSpaceGI.QueueHistoryReset();
+		globals::features::screenSpaceGI.queuedResetHistory = true;
 
 	return RE::BSEventNotifyControl::kContinue;
 }
@@ -509,12 +508,13 @@ void ScreenSpaceGI::SetupResources()
 {
 	auto renderer = globals::game::renderer;
 	auto device = globals::d3d::device;
-
-	bootSnapshot.LatchIfNeeded(settings);
-
-	activeResourceProfile = std::clamp(settings.ResourceProfile, kResourceProfileFullGI, kResourceProfileAOOnly);
-	const bool allocateGIResources = HasGIResources();
-	logger::info("SSGI resource profile: {}", allocateGIResources ? "Full GI resources" : "AO-only resources");
+	resetReblurHistory = true;
+	outputReady = false;
+	denoisedThisFrame = false;
+	hasMultiBounceHistory = false;
+	hasFullResolutionMultiBounceHistory = false;
+	multiBounceHistoryUsesNRDOutput = false;
+	historyGeoWriteIndex = 0;
 
 	logger::debug("Creating buffers...");
 	{
@@ -549,62 +549,33 @@ void ScreenSpaceGI::SetupResources()
 		};
 
 		auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-		mainTex.texture->GetDesc(Util::AsW32(&texDesc));
+		Util::AsReal(mainTex.texture)->GetDesc(&texDesc);
+		NRDPort::EyeTextureDesc(texDesc);
+		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-		const uint mipCount = Util::MipChainLength(texDesc.Width, texDesc.Height, 5);
+		const uint mipCount = std::clamp<uint>(static_cast<uint>(std::bit_width(std::min(texDesc.Width, texDesc.Height))), 1u, 5u);
+		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = mipCount;
 		for (uint i = 0; i < 5; ++i)
 			uavRadiance[i] = uavWorkingDepth[i] = uavNormal[i] = nullptr;
 
-		if (allocateGIResources) {
-			srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
-			texDesc.MipLevels = srvDesc.Texture2D.MipLevels = mipCount;
-
+		{
 			texRadiance = eastl::make_unique<Texture2D>(texDesc, "SSGI::Radiance");
 			texRadiance->CreateSRV(srvDesc);
-			// No default UAV needed: prefilterRadiance binds per-mip UAVs via uavRadiance[].
 
-			// Create individual UAVs for each mip level for prefiltering
 			for (uint i = 0; i < mipCount; ++i) {
 				D3D11_UNORDERED_ACCESS_VIEW_DESC mipUavDesc = {
-					.Format = DXGI_FORMAT_R11G11B10_FLOAT,
+					.Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
 					.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
 					.Texture2D = { .MipSlice = i }
 				};
 				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texRadiance->resource.get(), &mipUavDesc, uavRadiance[i].put()));
 				Util::SetResourceName(uavRadiance[i].get(), "SSGI::Radiance UAV mip%u", i);
 			}
-
-			// Staging texture for mip 0 radiance. radianceDisocc writes it directly,
-			// prefilterRadiance reads it as SRV and writes the mip chain back to texRadiance.
-			// Avoids a full-texture CopySubresourceRegion each frame.
-			D3D11_TEXTURE2D_DESC tempTexDesc = texDesc;
-			tempTexDesc.MipLevels = 1;
-			tempTexDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-
-			D3D11_SHADER_RESOURCE_VIEW_DESC tempSrvDesc = {
-				.Format = DXGI_FORMAT_R11G11B10_FLOAT,
-				.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
-				.Texture2D = {
-					.MostDetailedMip = 0,
-					.MipLevels = 1 }
-			};
-
-			D3D11_UNORDERED_ACCESS_VIEW_DESC tempUavDesc = {
-				.Format = DXGI_FORMAT_R11G11B10_FLOAT,
-				.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
-				.Texture2D = { .MipSlice = 0 }
-			};
-
-			texRadianceTemp = eastl::make_unique<Texture2D>(tempTexDesc, "SSGI::RadianceTemp");
-			texRadianceTemp->CreateSRV(tempSrvDesc);
-			texRadianceTemp->CreateUAV(tempUavDesc);
 		}
 
 		texDesc.BindFlags &= ~D3D11_BIND_RENDER_TARGET;
 		texDesc.MiscFlags &= ~D3D11_RESOURCE_MISC_GENERATE_MIPS;
-		// gi.cs.hlsl's depth-edge offset assumes FP32 working depth whenever reverse-Z is active.
 		texDesc.Format = srvDesc.Format = uavDesc.Format = globals::features::reverseZ.IsActive() ? DXGI_FORMAT_R32_FLOAT : DXGI_FORMAT_R16_FLOAT;
-		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = mipCount;
 
 		{
 			texWorkingDepth = eastl::make_unique<Texture2D>(texDesc, "SSGI::WorkingDepth");
@@ -612,7 +583,7 @@ void ScreenSpaceGI::SetupResources()
 			for (uint i = 0; i < mipCount; ++i) {
 				uavDesc.Texture2D.MipSlice = i;
 				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texWorkingDepth->resource.get(), &uavDesc, uavWorkingDepth[i].put()));
-				Util::SetResourceName(uavWorkingDepth[i].get(), "SSGI::WorkingDepth UAV mip%d", i);
+				Util::SetResourceName(uavWorkingDepth[i].get(), "SSGI::WorkingDepth UAV mip%u", i);
 			}
 		}
 
@@ -629,66 +600,15 @@ void ScreenSpaceGI::SetupResources()
 
 		uavDesc.Texture2D.MipSlice = 0;
 		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 1;
-		if (allocateGIResources) {
-			srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-			{
-				texIlY[0] = eastl::make_unique<Texture2D>(texDesc, "SSGI::IlY[0]");
-				texIlY[0]->CreateSRV(srvDesc);
-				texIlY[0]->CreateUAV(uavDesc);
-
-				texIlY[1] = eastl::make_unique<Texture2D>(texDesc, "SSGI::IlY[1]");
-				texIlY[1]->CreateSRV(srvDesc);
-				texIlY[1]->CreateUAV(uavDesc);
-
-				texGiSpecular[0] = eastl::make_unique<Texture2D>(texDesc, "SSGI::GiSpecular[0]");
-				texGiSpecular[0]->CreateSRV(srvDesc);
-				texGiSpecular[0]->CreateUAV(uavDesc);
-
-				texGiSpecular[1] = eastl::make_unique<Texture2D>(texDesc, "SSGI::GiSpecular[1]");
-				texGiSpecular[1]->CreateSRV(srvDesc);
-				texGiSpecular[1]->CreateUAV(uavDesc);
-			}
-			srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
-			{
-				texIlCoCg[0] = eastl::make_unique<Texture2D>(texDesc, "SSGI::IlCoCg[0]");
-				texIlCoCg[0]->CreateSRV(srvDesc);
-				texIlCoCg[0]->CreateUAV(uavDesc);
-
-				texIlCoCg[1] = eastl::make_unique<Texture2D>(texDesc, "SSGI::IlCoCg[1]");
-				texIlCoCg[1]->CreateSRV(srvDesc);
-				texIlCoCg[1]->CreateUAV(uavDesc);
-			}
-		}
-
-		// 8-bit history stalls the temporal AO blend.
-		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16_UNORM;
-		{
-			texAo[0] = eastl::make_unique<Texture2D>(texDesc, "SSGI::AO[0]");
-			texAo[0]->CreateSRV(srvDesc);
-			texAo[0]->CreateUAV(uavDesc);
-
-			texAo[1] = eastl::make_unique<Texture2D>(texDesc, "SSGI::AO[1]");
-			texAo[1]->CreateSRV(srvDesc);
-			texAo[1]->CreateUAV(uavDesc);
-		}
-
-		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R8_UNORM;
-		{
-			texAccumFrames[0] = eastl::make_unique<Texture2D>(texDesc, "SSGI::AccumFrames[0]");
-			texAccumFrames[0]->CreateSRV(srvDesc);
-			texAccumFrames[0]->CreateUAV(uavDesc);
-
-			texAccumFrames[1] = eastl::make_unique<Texture2D>(texDesc, "SSGI::AccumFrames[1]");
-			texAccumFrames[1]->CreateSRV(srvDesc);
-			texAccumFrames[1]->CreateUAV(uavDesc);
-		}
 
 		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
-		{
-			texPrevGeo = eastl::make_unique<Texture2D>(texDesc, "SSGI::PrevGeo");
-			texPrevGeo->CreateSRV(srvDesc);
-			texPrevGeo->CreateUAV(uavDesc);
+		for (uint i = 0; i < 2; ++i) {
+			texHistoryGeo[i] = eastl::make_unique<Texture2D>(texDesc, i == 0 ? "SSGI::HistoryGeo0" : "SSGI::HistoryGeo1");
+			texHistoryGeo[i]->CreateSRV(srvDesc);
+			texHistoryGeo[i]->CreateUAV(uavDesc);
 		}
+
+		SetupNRDResources();
 	}
 
 	logger::debug("Loading noise texture...");
@@ -696,7 +616,6 @@ void ScreenSpaceGI::SetupResources()
 		DirectX::ScratchImage image;
 		try {
 			std::filesystem::path path{ "Data\\Shaders\\ScreenSpaceGI\\fast_2uges.dds" };
-
 			DX::ThrowIfFailed(LoadFromDDSFile(path.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image));
 		} catch (const DX::com_exception& e) {
 			logger::error("{}", e.what());
@@ -715,14 +634,14 @@ void ScreenSpaceGI::SetupResources()
 
 		texNoise = eastl::make_unique<Texture2D>(reinterpret_cast<ID3D11Texture2D*>(pResource), "SSGI::Noise");
 
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
+		D3D11_SHADER_RESOURCE_VIEW_DESC noiseSrvDesc = {
 			.Format = texNoise->desc.Format,
 			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
 			.Texture2D = {
 				.MostDetailedMip = 0,
 				.MipLevels = 1 }
 		};
-		texNoise->CreateSRV(srvDesc);
+		texNoise->CreateSRV(noiseSrvDesc);
 	}
 
 	logger::debug("Creating samplers...");
@@ -747,10 +666,111 @@ void ScreenSpaceGI::SetupResources()
 	CompileComputeShaders();
 }
 
+void ScreenSpaceGI::SetupNRDResources()
+{
+	outputReady = false;
+	denoisedThisFrame = false;
+	resetReblurHistory = true;
+	hasMultiBounceHistory = false;
+	hasFullResolutionMultiBounceHistory = false;
+	multiBounceHistoryUsesNRDOutput = false;
+	const bool useSH = settings.EnableGI && settings.EnableSH;
+	const bool modeChanged = nrdReblurUsesSH != useSH || !texNRDInput;
+	if (nrdReblurUsesSH != useSH)
+		recompileFlag = true;
+
+	uint32_t fullW = 0;
+	uint32_t fullH = 0;
+	GetNRDResourceSize(fullW, fullH);
+
+	D3D11_TEXTURE2D_DESC texDesc{
+		.Width = fullW,
+		.Height = fullH,
+		.MipLevels = 1,
+		.ArraySize = 1,
+		.Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
+		.SampleDesc = { 1, 0 },
+		.Usage = D3D11_USAGE_DEFAULT,
+		.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
+	};
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
+		.Format = texDesc.Format,
+		.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
+		.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 }
+	};
+	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
+		.Format = texDesc.Format,
+		.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+		.Texture2D = { .MipSlice = 0 }
+	};
+
+	nrdReblur.Shutdown();
+
+	texNRDInput = eastl::make_unique<Texture2D>(texDesc, "SSGI::NRDInput");
+	texNRDInput->CreateSRV(srvDesc);
+	texNRDInput->CreateUAV(uavDesc);
+
+	texNRDOutput = eastl::make_unique<Texture2D>(texDesc, "SSGI::NRDOutput");
+	texNRDOutput->CreateSRV(srvDesc);
+	texNRDOutput->CreateUAV(uavDesc);
+
+	if (useSH) {
+		texNRDInputSH1 = eastl::make_unique<Texture2D>(texDesc, "SSGI::NRDInputSH1");
+		texNRDInputSH1->CreateSRV(srvDesc);
+		texNRDInputSH1->CreateUAV(uavDesc);
+
+		texNRDOutputSH1 = eastl::make_unique<Texture2D>(texDesc, "SSGI::NRDOutputSH1");
+		texNRDOutputSH1->CreateSRV(srvDesc);
+		texNRDOutputSH1->CreateUAV(uavDesc);
+
+		const float clearColor[4] = {};
+		globals::d3d::context->ClearUnorderedAccessViewFloat(texNRDInputSH1->uav.get(), clearColor);
+		globals::d3d::context->ClearUnorderedAccessViewFloat(texNRDOutputSH1->uav.get(), clearColor);
+	} else {
+		texNRDInputSH1.reset();
+		texNRDOutputSH1.reset();
+	}
+
+	reblurInitAttempted = settings.Enabled && settings.EnableREBLUR;
+	if (reblurInitAttempted)
+		nrdReblur.Init(fullW, fullH, useSH ? nrd::Denoiser::REBLUR_DIFFUSE_SH : nrd::Denoiser::REBLUR_DIFFUSE, 0);
+	nrdReblurUsesSH = useSH;
+
+	if (modeChanged)
+		globals::deferred->ClearShaderCache();
+}
+
+void ScreenSpaceGI::GetNRDResourceSize(uint32_t& a_width, uint32_t& a_height) const
+{
+	const auto& nrdSvc = NRDPort::Service();
+	const bool multiBounce = settings.EnableGI && settings.EnableMultiBounce;
+	if (!multiBounce && nrdSvc.loaded && nrdSvc.GetResourceExtent(a_width, a_height))
+		return;
+	if (texRadiance) {
+		a_width = texRadiance->desc.Width;
+		a_height = texRadiance->desc.Height;
+	} else {
+		auto mainTex = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+		D3D11_TEXTURE2D_DESC mainDesc;
+		Util::AsReal(mainTex.texture)->GetDesc(&mainDesc);
+		NRDPort::EyeTextureDesc(mainDesc);
+		a_width = mainDesc.Width;
+		a_height = mainDesc.Height;
+	}
+}
+
 void ScreenSpaceGI::ClearShaderCache()
 {
+	NRDPort::InvalidateStereo();
 	queuedResetHistory = true;
-	Util::ClearShaders<ID3D11ComputeShader>({ prefilterDepthsCompute, prefilterRadianceCompute, prefilterNormalCompute, radianceDisoccCompute, giCompute, giEye0OnlyCompute, blurCompute, stereoSyncCompute, reprojectCompute, reprojectDebugCompute, upsampleCompute });
+	outputReady = false;
+	denoisedThisFrame = false;
+	const std::vector<winrt::com_ptr<ID3D11ComputeShader>*> shaderPtrs = {
+		&prefilterDepthsCompute, &prefilterRadianceCompute, &prefilterNormalCompute, &giCompute, &compositeCompute
+	};
+
+	for (auto shader : shaderPtrs)
+		*shader = nullptr;
 
 	CompileComputeShaders();
 }
@@ -764,48 +784,45 @@ void ScreenSpaceGI::CompileComputeShaders()
 		std::vector<std::pair<const char*, const char*>> defines;
 	};
 
-	std::vector<ShaderCompileInfo> shaderInfos;
-	shaderInfos.push_back({ &prefilterDepthsCompute, "prefilterDepths.cs.hlsl", { { "LINEAR_FILTER", "" } } });
-	shaderInfos.push_back({ &prefilterNormalCompute, "prefilterNormal.cs.hlsl", {} });
-	shaderInfos.push_back({ &radianceDisoccCompute, "radianceDisocc.cs.hlsl", {} });
-	shaderInfos.push_back({ &giCompute, "gi.cs.hlsl", {} });
-	shaderInfos.push_back({ &upsampleCompute, "upsample.cs.hlsl", {} });
+	std::vector<ShaderCompileInfo>
+		shaderInfos = {
+			{ &prefilterDepthsCompute, "prefilterDepths.cs.hlsl", { { "LINEAR_FILTER", "" } } },
+			{ &prefilterRadianceCompute, "prefilterRadiance.cs.hlsl", {} },
+			{ &prefilterNormalCompute, "prefilterNormal.cs.hlsl", {} },
+			{ &giCompute, "diffuseGI.cs.hlsl", {} },
+		};
+	if (settings.EnableGI)
+		shaderInfos.push_back({ &compositeCompute, "composite.cs.hlsl", {} });
 
-	// The GI-only passes (radiance prefilter, IL blur) never dispatch on the AO-only profile.
-	if (HasGIResources()) {
-		shaderInfos.push_back({ &prefilterRadianceCompute, "prefilterRadiance.cs.hlsl", {} });
-		shaderInfos.push_back({ &blurCompute, "blur.cs.hlsl", {} });
-	}
+	const bool canDenoise = CanDenoise();
+	tracedHalfRes = settings.HalfRes && canDenoise;
+	tracedQuarterRes = settings.QuarterRes && canDenoise;
 
-	if (globals::game::isVR) {
-		shaderInfos.push_back({ &stereoSyncCompute, "stereoSync.cs.hlsl", { { "FRAMEBUFFER", "" } } });
-		shaderInfos.push_back({ &reprojectCompute, "reproject.cs.hlsl", { { "FRAMEBUFFER", "" } } });
-		shaderInfos.push_back({ &reprojectDebugCompute, "reproject.cs.hlsl", { { "FRAMEBUFFER", "" }, { "DEBUG_DISOCCLUSION", "" } } });
-		// Eye-0-only GI permutation for the reproject path. FRAMEBUFFER exposes the
-		// Stereo:: reprojection helpers (gated out of VR.hlsli for plain compute). Only
-		// meaningful with specular off (the reproject transfers diffuse GI); skip the
-		// unused specular combination.
-		if (!settings.EnableExperimentalSpecularGI)
-			shaderInfos.push_back({ &giEye0OnlyCompute, "gi.cs.hlsl", { { "STEREO_EYE0_ONLY", "" }, { "FRAMEBUFFER", "" } } });
-	}
 	for (auto& info : shaderInfos) {
-		if (globals::game::isVR)
-			info.defines.push_back({ "VR", "" });
-		if (settings.ResolutionMode == 1)
-			info.defines.push_back({ "HALF_RES", "" });
-		if (settings.ResolutionMode == 2)
-			info.defines.push_back({ "QUARTER_RES", "" });
-		if (settings.EnableTemporalDenoiser)
-			info.defines.push_back({ "TEMPORAL_DENOISER", "" });
-		// Key on the active profile, not the raw toggles: a hand-edited config can
-		// pair GI-on with AO-only resources, and compiling GI paths would pay the
-		// full march against null views for silently discarded output.
-		if (IsGIActive())
+		if (info.programPtr == &compositeCompute) {
+			if (settings.EnableSH && settings.EnableGI)
+				info.defines.push_back({ "SSGI_SH", "" });
+			if (globals::features::terrainBlending.loaded)
+				info.defines.push_back({ "TERRAIN_BLENDING", "" });
+			if (globals::features::ibl.loaded) info.defines.push_back({ "IBL", "" });
+			if (globals::features::skylighting.loaded) info.defines.push_back({ "SKYLIGHTING", "" });
+			continue;
+		}
+
+		if (settings.EnableGI)
 			info.defines.push_back({ "GI", "" });
-		if (IsSpecularGIActive())
-			info.defines.push_back({ "GI_SPECULAR", "" });
-		if (settings.EnableAdaptiveSampling && info.filename == "gi.cs.hlsl")
-			info.defines.push_back({ "ADAPTIVE_SAMPLING", "" });
+		if (settings.EnableSH && settings.EnableGI)
+			info.defines.push_back({ "SSGI_SH", "" });
+		if (tracedQuarterRes)
+			info.defines.push_back({ "SSGI_QUARTER", "" });
+		else if (tracedHalfRes)
+			info.defines.push_back({ "SSGI_HALF", "" });
+		if (globals::features::dynamicCubemaps.loaded)
+			info.defines.push_back({ "DYNAMIC_CUBEMAPS", "" });
+		if (globals::features::skylighting.loaded)
+			info.defines.push_back({ "SKYLIGHTING", "" });
+		if (globals::features::ibl.loaded)
+			info.defines.push_back({ "IBL", "" });
 	}
 
 	for (auto& info : shaderInfos) {
@@ -817,89 +834,51 @@ void ScreenSpaceGI::CompileComputeShaders()
 	recompileFlag = false;
 }
 
+bool ScreenSpaceGI::CanDenoise() const
+{
+	return settings.EnableREBLUR && nrdReblur.IsValid() && NRDPort::Service().CanDenoise() && NRDPort::Service().AreGuidesReady();
+}
+
 bool ScreenSpaceGI::ShadersOK()
 {
-	const bool baseShadersOK = texNoise &&
-	                           prefilterDepthsCompute &&
-	                           prefilterNormalCompute &&
-	                           radianceDisoccCompute &&
-	                           giCompute &&
-	                           upsampleCompute;
-
-	const bool giShadersOK = !HasGIResources() || (prefilterRadianceCompute && blurCompute);
-
-	const bool vrShadersOK = !globals::game::isVR || (stereoSyncCompute && reprojectCompute);
-
-	return baseShadersOK && giShadersOK && vrShadersOK;
+	const bool useSH = settings.EnableGI && settings.EnableSH;
+	return texNoise && texWorkingDepth && texRadiance && texNormal && texNRDInput &&
+	       prefilterDepthsCompute && prefilterRadianceCompute && prefilterNormalCompute && giCompute &&
+	       (!settings.EnableGI || compositeCompute) && (!useSH || texNRDInputSH1);
 }
 
 void ScreenSpaceGI::UpdateSB()
 {
-	float2 res = HasGIResources() ?
-	                 float2{ (float)texRadiance->desc.Width, (float)texRadiance->desc.Height } :
-	                 float2{ (float)texWorkingDepth->desc.Width, (float)texWorkingDepth->desc.Height };
-	float2 dynres = Util::ConvertToDynamic(res);
-	dynres = float2{ floor(dynres.x), floor(dynres.y) };
-
-	static float4x4 prevInvView[2] = {};
+	float2 res = { (float)texRadiance->desc.Width, (float)texRadiance->desc.Height };
+	float2 dynres = NRDPort::ActiveSize();
+	dynres = { floor(dynres.x), floor(dynres.y) };
 
 	SSGICB data;
 	{
-		// The game's jittered TAA matrices make the depth reconstruction swim in VR.
-		const bool useUnjitteredCamera = globals::game::isVR && settings.DebugUseUnjitteredCameraReconstruction;
+		const auto& projMat = globals::game::frameBufferCached.GetCameraProj(NRDPort::Eye());
 
-		for (int eyeIndex = 0; eyeIndex < (1 + globals::game::isVR); ++eyeIndex) {
-			const auto eye = Util::GetCameraData(eyeIndex);
-			float proj11 = eye.projMat(0, 0);
-			float proj22 = eye.projMat(1, 1);
-			float4x4 currentInvView = eye.viewMat.Invert();
-
-			if (useUnjitteredCamera) {
-				const auto& projUnjittered = globals::game::frameBufferCached.GetCameraProjUnjittered(eyeIndex);
-				proj11 = projUnjittered._11;
-				proj22 = projUnjittered._22;
-				currentInvView = globals::game::frameBufferCached.GetCameraViewInverse(eyeIndex);
-			}
-
-			data.PrevInvViewMat[eyeIndex] = prevInvView[eyeIndex];
-			data.NDCToViewMul[eyeIndex] = float2{ 2.0f / proj11, -2.0f / proj22 };
-			data.NDCToViewAdd[eyeIndex] = float2{ -1.0f / proj11, 1.0f / proj22 };
-			if (globals::game::isVR)
-				data.NDCToViewMul[eyeIndex].x *= 2;
-
-			prevInvView[eyeIndex] = currentInvView;
-		}
+		data.NDCToViewMul = { 2.0f / projMat(0, 0), -2.0f / projMat(1, 1) };
+		data.NDCToViewAdd = { -1.0f / projMat(0, 0), 1.0f / projMat(1, 1) };
 
 		data.TexDim = res;
 		data.RcpTexDim = float2(1.0f) / res;
 		data.FrameDim = dynres;
 		data.RcpFrameDim = float2(1.0f) / dynres;
+		data.FrameIndex = globals::state->frameCount;
 
-		data.NumSlices = settings.NumSlices;
 		data.NumSteps = settings.NumSteps;
-		data.MinScreenRadius = settings.MinScreenRadius * dynres.x;
 
-		data.EffectRadius = std::max(settings.AORadius, settings.GIRadius);
-		data.AORadius = settings.AORadius / data.EffectRadius;
-		data.GIRadius = settings.GIRadius / data.EffectRadius;
 		data.Thickness = settings.Thickness;
-		data.DepthFadeRange = settings.DepthFadeRange;
-		data.DepthFadeScaleConst = 1 / (settings.DepthFadeRange.y - settings.DepthFadeRange.x);
-
-		data.GISaturation = settings.GISaturation;
-		data.GIDistanceCompensation = settings.GIDistanceCompensation;
-		data.GICompensationMaxDist = settings.AORadius;
-
 		data.AOPower = settings.AOPower;
 		data.GIStrength = settings.GIStrength;
-
-		data.DepthDisocclusion = settings.DepthDisocclusion;
-		data.NormalDisocclusion = settings.NormalDisocclusion;
-		data.MaxAccumFrames = settings.MaxAccumFrames;
-		data.BlurRadius = settings.BlurRadius;
-		data.DistanceNormalisation = settings.DistanceNormalisation;
-		useModeTextureThisFrame = settings.UseStereoReproject && globals::features::vr.stereoOpt.CanExternallyConsumeClassification();
-		data.UseModeTexture = useModeTextureThisFrame;
+		data.DiffuseCubemapMult = settings.DiffuseCubemapMult;
+		data.UseDynamicCubemap = UsesCubemapFallback() ? 1u : 0u;
+		const bool hasContinuousHistory = hasMultiBounceHistory &&
+		                                  globals::state->frameCount == lastMultiBounceHistoryFrame + 1;
+		const bool trackMultiBounce = settings.EnableGI && settings.EnableMultiBounce;
+		const bool injectMultiBounce = trackMultiBounce && hasContinuousHistory && hasFullResolutionMultiBounceHistory;
+		// 0: disabled, 1: populate history, 2: populate and inject valid history.
+		data.MultiBounceMode = injectMultiBounce ? 2u : (trackMultiBounce ? 1u : 0u);
 	}
 
 	ssgiCB->Update(data);
@@ -907,63 +886,79 @@ void ScreenSpaceGI::UpdateSB()
 
 void ScreenSpaceGI::DrawSSGI()
 {
+	outputReady = false;
+	denoisedThisFrame = false;
+
+
 	auto context = globals::d3d::context;
 
 	if (auto* setting = RE::GetINISetting("bSAOEnable:Display"))
 		setting->data.b = settings.EnableVanillaSSAO;
-
-	// Also write the live SAO params object so the toggle applies this frame instead
-	// of only at the next ImageSpaceManager reinit.
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	GET_INSTANCE_MEMBER_VRPTR(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
 	if (auto* sao = BSImagespaceShaderISSAOBlurH)
 		sao->enableSAO = settings.EnableVanillaSSAO;
 
+	const bool useSH = settings.EnableGI && settings.EnableSH;
+	const bool trackMultiBounce = settings.EnableGI && settings.EnableMultiBounce;
+	uint32_t nrdWidth = 0;
+	uint32_t nrdHeight = 0;
+	GetNRDResourceSize(nrdWidth, nrdHeight);
+	if (nrdReblurUsesSH != useSH || !texNRDInput || texNRDInput->desc.Width != nrdWidth || texNRDInput->desc.Height != nrdHeight)
+		SetupNRDResources();
+
+	if (!settings.Enabled || !settings.EnableREBLUR) {
+		if (nrdReblur.IsValid()) {
+			nrdReblur.Shutdown();
+			resetReblurHistory = true;
+		}
+		reblurInitAttempted = false;
+	} else if (!reblurInitAttempted) {
+		SetupNRDResources();
+	}
+
+	if (const bool canDenoise = CanDenoise(); (settings.HalfRes && canDenoise) != tracedHalfRes || (settings.QuarterRes && canDenoise) != tracedQuarterRes) {
+		recompileFlag = true;
+		queuedResetHistory = true;
+	}
+
+	// Compile first: enabling GI may require creating the composite shader, so
+	// checking the old shader set before recompilation can otherwise deadlock the
+	// feature in an unavailable state.
+	if (recompileFlag)
+		ClearShaderCache();
+
 	if (!(settings.Enabled && ShadersOK())) {
-		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
-		if (texAo[outputAoIdx])
-			context->ClearUnorderedAccessViewFloat(texAo[outputAoIdx]->uav.get(), clr);
-		if (texIlY[outputIlIdx])
-			context->ClearUnorderedAccessViewFloat(texIlY[outputIlIdx]->uav.get(), clr);
-		if (texIlCoCg[outputIlIdx])
-			context->ClearUnorderedAccessViewFloat(texIlCoCg[outputIlIdx]->uav.get(), clr);
 		return;
 	}
 
-	const bool runILPath = IsGIActive();
-
-	// Full-profile resources stay allocated with GI off, so the composite keeps
-	// sampling these UAVs even though DrawSSGI no longer writes them -- without
-	// this they freeze on the last lit frame instead of reading as AO-only.
-	if (HasGIResources() && !runILPath) {
-		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
-		context->ClearUnorderedAccessViewFloat(texIlY[outputIlIdx]->uav.get(), clr);
-		context->ClearUnorderedAccessViewFloat(texIlCoCg[outputIlIdx]->uav.get(), clr);
-		context->ClearUnorderedAccessViewFloat(texGiSpecular[outputAoIdx]->uav.get(), clr);
+	if (globals::state->isMapMenuOpen) {
+		queuedResetHistory = true;
+		return;
 	}
 
-	CS_GPU_PASS("ScreenSpaceGI::SSGI");
+	ZoneScoped;
+	CS_GPU_PASS("ScreenSpaceGI::Total");
 
-	static uint lastFrameAoTexIdx = 0;
-	static uint lastFrameGITexIdx = 0;
-	static uint lastFrameAccumTexIdx = 0;
-	uint inputAoTexIdx = lastFrameAoTexIdx;
-	uint inputGITexIdx = lastFrameGITexIdx;
-
-	// Zeroing the accumulation count drives the denoiser's lerp factor to 1, dropping stale
+	// Restarting accumulation drives the denoiser's lerp factor to 1, dropping stale
 	// history in one frame instead of fading it over MaxAccumFrames.
+	if (globals::state->ShouldResetHistory())
+		queuedResetHistory = true;
+	if (const bool usesFallback = UsesCubemapFallback(); usesFallback != lastUsedCubemapFallback) {
+		lastUsedCubemapFallback = usesFallback;
+		queuedResetHistory = true;
+	}
 	if (queuedResetHistory.exchange(false)) {
-		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
-		for (auto& tex : texAccumFrames)
-			context->ClearUnorderedAccessViewFloat(tex->uav.get(), clr);
+		resetReblurHistory = true;
+		hasMultiBounceHistory = false;
+		hasFullResolutionMultiBounceHistory = false;
+		multiBounceHistoryUsesNRDOutput = false;
 	}
 
 	//////////////////////////////////////////////////////
 
-	if (recompileFlag)
-		ClearShaderCache();
-
 	UpdateSB();
+	NRDPort::BindEye();
 
 	//////////////////////////////////////////////////////
 
@@ -971,12 +966,8 @@ void ScreenSpaceGI::DrawSSGI()
 	auto rts = renderer->GetRuntimeData().renderTargets;
 	auto deferred = globals::deferred;
 
-	float2 size = Util::ConvertToDynamic(globals::state->screenSize);
+	float2 size = NRDPort::ActiveSize();
 	auto resolution = std::array{ (uint)size.x, (uint)size.y };
-	auto resChoices = std::array{
-		resolution, std::array{ resolution[0] >> 1, resolution[1] >> 1 }, std::array{ resolution[0] >> 2, resolution[1] >> 2 }
-	};
-	auto internalRes = resChoices[settings.ResolutionMode];
 
 	std::array<ID3D11ShaderResourceView*, 11> srvs = { nullptr };
 	std::array<ID3D11UnorderedAccessView*, 6> uavs = { nullptr };
@@ -994,261 +985,189 @@ void ScreenSpaceGI::DrawSSGI()
 	//////////////////////////////////////////////////////
 
 	context->CSSetConstantBuffers(1, 1, &cb);
-	globals::state->BindSharedDataCS(context, false);
+	globals::state->BindSharedDataCS(context);
 	context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
 
 	// prefilter depths
 	{
 		CS_GPU_PASS("ScreenSpaceGI::PrefilterDepths");
 
-		srvs.at(0) = Util::GetCurrentSceneDepthSRV();
+		srvs.at(0) = NRDPort::Crop(NRDPort::Input::Depth, Util::GetCurrentSceneDepthSRV(false));
 		for (int i = 0; i < 5; ++i)
 			uavs.at(i) = uavWorkingDepth[i].get();
 
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(prefilterDepthsCompute.get(), nullptr, 0);
+
 		context->Dispatch((resolution[0] + 15) >> 4, (resolution[1] + 15) >> 4, 1);
+
 	}
 
-	// fetch radiance and disocclusion; without GI or the temporal denoiser the pass has no outputs
-	if (runILPath || settings.EnableTemporalDenoiser) {
-		CS_GPU_PASS("ScreenSpaceGI::RadianceDisocc");
-
-		resetViews();
-		srvs.at(0) = runILPath ? Util::AsReal(rts[deferred->forwardRenderTargets[0]].SRV) : nullptr;
-		srvs.at(1) = texWorkingDepth->srv.get();
-		srvs.at(2) = Util::AsReal(rts[NORMALROUGHNESS].SRV);
-		srvs.at(3) = texPrevGeo->srv.get();
-		srvs.at(4) = Util::AsReal(rts[RE::RENDER_TARGET::kMOTION_VECTOR].SRV);
-		srvs.at(5) = texAccumFrames[lastFrameAccumTexIdx]->srv.get();
-		srvs.at(6) = texAo[inputAoTexIdx]->srv.get();
-		if (runILPath) {
-			srvs.at(7) = texIlY[inputGITexIdx]->srv.get();
-			srvs.at(8) = texIlCoCg[inputGITexIdx]->srv.get();
-			srvs.at(9) = texGiSpecular[inputAoTexIdx]->srv.get();
-		}
-		srvs.at(10) = nullptr;
-
-		uavs.at(0) = runILPath ? texRadianceTemp->uav.get() : nullptr;
-		uavs.at(1) = texAccumFrames[!lastFrameAccumTexIdx]->uav.get();
-		uavs.at(2) = texAo[!inputAoTexIdx]->uav.get();
-		if (runILPath) {
-			uavs.at(3) = texIlY[!inputGITexIdx]->uav.get();
-			uavs.at(4) = texIlCoCg[!inputGITexIdx]->uav.get();
-			uavs.at(5) = texGiSpecular[!inputAoTexIdx]->uav.get();
-		}
-
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(radianceDisoccCompute.get(), nullptr, 0);
-		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
-
-		// Prefilter radiance texture instead of using GenerateMips for proper dynamic resolution handling.
-		// radianceDisocc wrote mip 0 directly to texRadianceTemp above, so we can bind it
-		// as SRV input here without an intermediate CopySubresourceRegion.
-		if (runILPath) {
-			CS_GPU_PASS("ScreenSpaceGI::PrefilterRadiance");
-
-			resetViews();
-			srvs.at(0) = texRadianceTemp->srv.get();
-			uavs.at(0) = uavRadiance[0].get();  // Mip 0
-			uavs.at(1) = uavRadiance[1].get();  // Mip 1
-			uavs.at(2) = uavRadiance[2].get();  // Mip 2
-			uavs.at(3) = uavRadiance[3].get();  // Mip 3
-			uavs.at(4) = uavRadiance[4].get();  // Mip 4
-
-			context->CSSetShaderResources(0, 1, srvs.data());
-			context->CSSetUnorderedAccessViews(0, 5, uavs.data(), nullptr);
-			context->CSSetShader(prefilterRadianceCompute.get(), nullptr, 0);
-			context->Dispatch((internalRes[0] + 15u) >> 4, (internalRes[1] + 15u) >> 4, 1);
-		}
-
-		inputAoTexIdx = !inputAoTexIdx;
-		inputGITexIdx = !inputGITexIdx;
-		lastFrameAccumTexIdx = !lastFrameAccumTexIdx;
-	}
-
-	// Prefilter normals
+	// Prefilter normals and write the current full-resolution geometry history.
 	{
 		CS_GPU_PASS("ScreenSpaceGI::PrefilterNormals");
 
 		resetViews();
-		srvs.at(0) = Util::AsReal(rts[NORMALROUGHNESS].SRV);
+		srvs.at(0) = NRDPort::Crop(NRDPort::Input::Normal, Util::AsReal(rts[NORMALROUGHNESS].SRV));
 		uavs.at(0) = uavNormal[0].get();
 		uavs.at(1) = uavNormal[1].get();
 		uavs.at(2) = uavNormal[2].get();
 		uavs.at(3) = uavNormal[3].get();
 		uavs.at(4) = uavNormal[4].get();
+		if (trackMultiBounce) {
+			srvs.at(1) = texWorkingDepth->srv.get();
+			uavs.at(5) = texHistoryGeo[historyGeoWriteIndex]->uav.get();
+		}
 
-		context->CSSetShaderResources(0, 1, srvs.data());
-		context->CSSetUnorderedAccessViews(0, 5, uavs.data(), nullptr);
+		context->CSSetShaderResources(0, trackMultiBounce ? 2u : 1u, srvs.data());
+		context->CSSetUnorderedAccessViews(0, trackMultiBounce ? 6u : 5u, uavs.data(), nullptr);
 		context->CSSetShader(prefilterNormalCompute.get(), nullptr, 0);
-		context->Dispatch((internalRes[0] + 15u) >> 4, (internalRes[1] + 15u) >> 4, 1);
+
+		context->Dispatch((resolution[0] + 15u) >> 4, (resolution[1] + 15u) >> 4, 1);
+
 	}
 
-	// Reproject eye 0's view-independent diffuse GI into eye 1; requires specular GI off
-	// (view-dependent) and both the eye-0-only march and reproject shaders compiled.
-	const bool useReproject = globals::game::isVR && settings.UseStereoReproject &&
-	                          !settings.EnableExperimentalSpecularGI && giEye0OnlyCompute && reprojectCompute;
+	// Prefilter source radiance. Multi-bounce history is reprojected, converted
+	// from illumination to post-albedo outgoing radiance, and injected here once.
+	{
+		CS_GPU_PASS("ScreenSpaceGI::PrefilterRadiance");
 
-	// GI
+		resetViews();
+		srvs.at(0) = NRDPort::Crop(NRDPort::Input::Main, Util::AsReal(rts[deferred->forwardRenderTargets[0]].SRV));
+		if (trackMultiBounce) {
+			srvs.at(1) = (multiBounceHistoryUsesNRDOutput ? texNRDOutput : texNRDInput)->srv.get();
+			srvs.at(2) = texHistoryGeo[historyGeoWriteIndex]->srv.get();
+			srvs.at(3) = NRDPort::Crop(NRDPort::Input::Motion, Util::AsReal(rts[RE::RENDER_TARGETS::kMOTION_VECTOR].SRV));
+			srvs.at(4) = texHistoryGeo[historyGeoWriteIndex ^ 1]->srv.get();
+			srvs.at(5) = NRDPort::Crop(NRDPort::Input::Albedo, Util::AsReal(rts[ALBEDO].SRV));
+		}
+		uavs.at(0) = uavRadiance[0].get();
+		uavs.at(1) = uavRadiance[1].get();
+		uavs.at(2) = uavRadiance[2].get();
+		uavs.at(3) = uavRadiance[3].get();
+		uavs.at(4) = uavRadiance[4].get();
+
+		context->CSSetShaderResources(0, trackMultiBounce ? 6u : 1u, srvs.data());
+		context->CSSetUnorderedAccessViews(0, 5, uavs.data(), nullptr);
+		context->CSSetShader(prefilterRadianceCompute.get(), nullptr, 0);
+
+		context->Dispatch((resolution[0] + 15u) >> 4, (resolution[1] + 15u) >> 4, 1);
+
+	}
+
+	// GI → NRD input
 	{
 		CS_GPU_PASS("ScreenSpaceGI::GI");
 
+		auto& dynamicCubemaps = globals::features::dynamicCubemaps;
+		auto& ibl = globals::features::ibl;
+		auto& skylighting = globals::features::skylighting;
+
 		resetViews();
 		srvs.at(0) = texWorkingDepth->srv.get();
-		srvs.at(1) = Util::AsReal(rts[NORMALROUGHNESS].SRV);
-		srvs.at(2) = runILPath ? texRadiance->srv.get() : nullptr;
+		srvs.at(1) = NRDPort::Crop(NRDPort::Input::Masks, Util::AsReal(rts[MASKS].SRV));
+		srvs.at(2) = texRadiance->srv.get();
 		srvs.at(3) = texNoise->srv.get();
-		srvs.at(4) = texAccumFrames[lastFrameAccumTexIdx]->srv.get();
-		if (runILPath) {
-			srvs.at(5) = texIlY[inputGITexIdx]->srv.get();
-			srvs.at(6) = texIlCoCg[inputGITexIdx]->srv.get();
-			srvs.at(7) = texGiSpecular[inputAoTexIdx]->srv.get();
+		if (dynamicCubemaps.loaded) {
+			auto& reflections = renderer->GetRendererData().cubemapRenderTargets[RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS];
+			srvs.at(4) = dynamicCubemaps.envTexture->srv.get();
+			srvs.at(5) = Util::AsReal(reflections.SRV);
 		}
+		if (dynamicCubemaps.loaded && skylighting.loaded && skylighting.texProbeArray)
+			srvs.at(6) = skylighting.texProbeArray->srv.get();
 		srvs.at(8) = texNormal->srv.get();
-		srvs.at(9) = texAo[inputAoTexIdx]->srv.get();
-		if (useModeTextureThisFrame)
-			srvs.at(10) = globals::features::vr.stereoOpt.GetModeTextureSRV();
+		ID3D11ShaderResourceView* iblViews[2] = {ibl.loaded && ibl.envIBLTexture ? ibl.envIBLTexture->srv.get() : nullptr, ibl.loaded && ibl.skyIBLTexture ? ibl.skyIBLTexture->srv.get() : nullptr};
 
-		uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
-		if (runILPath) {
-			uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
-			uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
-			uavs.at(3) = texGiSpecular[!inputAoTexIdx]->uav.get();
-		}
-		uavs.at(4) = texPrevGeo->uav.get();
+		uavs.at(0) = texNRDInput->uav.get();
+		if (useSH && texNRDInputSH1)
+			uavs.at(2) = texNRDInputSH1->uav.get();
 
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+		context->CSSetShaderResources(76, 2, iblViews);
+		if (tracedQuarterRes) {
+			const float clearColor[4] = {};
+			context->ClearUnorderedAccessViewFloat(texNRDInput->uav.get(), clearColor);
+			if (useSH && texNRDInputSH1)
+				context->ClearUnorderedAccessViewFloat(texNRDInputSH1->uav.get(), clearColor);
+		}
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(useReproject ? giEye0OnlyCompute.get() : giCompute.get(), nullptr, 0);
-		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
+		context->CSSetShader(giCompute.get(), nullptr, 0);
 
-		inputAoTexIdx = !inputAoTexIdx;
-		inputGITexIdx = !inputGITexIdx;
-		lastFrameGITexIdx = inputGITexIdx;
-		lastFrameAoTexIdx = inputAoTexIdx;
-	}
+		uint dispatchX = (tracedHalfRes || tracedQuarterRes) ? (resolution[0] + 1) / 2 : resolution[0];
+		uint dispatchY = tracedQuarterRes ? (resolution[1] + 1) / 2 : resolution[1];
 
-	// View-independent reproject: fill eye 1's diffuse GI from eye 0 before the blur, whose
-	// seam taps read across eyes. Replaces the tail bilateral stereo sync below.
-	if (useReproject) {
-		CS_GPU_PASS("ScreenSpaceGI::Reproject");
+		context->Dispatch((dispatchX + 7u) >> 3, (dispatchY + 7u) >> 3, 1);
 
+
+		iblViews[0] = iblViews[1] = nullptr;
+		context->CSSetShaderResources(76, 2, iblViews);
 		resetViews();
-		srvs.at(0) = texWorkingDepth->srv.get();
-		srvs.at(1) = texAo[inputAoTexIdx]->srv.get();
-		if (runILPath) {
-			srvs.at(2) = texIlY[inputGITexIdx]->srv.get();
-			srvs.at(3) = texIlCoCg[inputGITexIdx]->srv.get();
-		}
-		if (useModeTextureThisFrame)
-			srvs.at(4) = globals::features::vr.stereoOpt.GetModeTextureSRV();
-
-		uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
-		if (runILPath) {
-			uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
-			uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
-		}
-
-		const bool useReprojectDebug = globals::features::vr.settings.ReprojectDebugMode == 1 && globals::state->IsDeveloperMode() && reprojectDebugCompute;
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(useReprojectDebug ? reprojectDebugCompute.get() : reprojectCompute.get(), nullptr, 0);
-		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
-
-		inputAoTexIdx = !inputAoTexIdx;
-		inputGITexIdx = !inputGITexIdx;
-		lastFrameGITexIdx = inputGITexIdx;
-		lastFrameAoTexIdx = inputAoTexIdx;
 	}
 
-	// blur
-	if (settings.EnableBlur && runILPath) {
-		CS_GPU_PASS("ScreenSpaceGI::Blur");
+	// REBLUR diffuse denoising via core NRD service
+	auto& nrdSvc = NRDPort::Service();
+	bool producedDenoisedHistory = false;
+	if (settings.EnableREBLUR && nrdReblur.IsValid() && nrdSvc.loaded && nrdSvc.AreGuidesReady()) {
+		CS_GPU_PASS("ScreenSpaceGI::Reblur");
 
-		resetViews();
-		srvs.at(0) = texWorkingDepth->srv.get();
-		srvs.at(1) = Util::AsReal(rts[NORMALROUGHNESS].SRV);
-		srvs.at(2) = texAccumFrames[lastFrameAccumTexIdx]->srv.get();
-		srvs.at(3) = texIlY[inputGITexIdx]->srv.get();
-		srvs.at(4) = texIlCoCg[inputGITexIdx]->srv.get();
+		nrdSvc.RefreshMotionVectors();
+		auto commonSettings = nrdSvc.GetCommonSettings();
+		commonSettings.splitScreen = settings.Reblur.SplitScreen;
+		commonSettings.enableValidation = settings.Reblur.EnableValidation;
+		if (resetReblurHistory)
+			commonSettings.accumulationMode = nrd::AccumulationMode::CLEAR_AND_RESTART;
+		nrdReblur.SetCommonSettings(commonSettings);
 
-		uavs.at(0) = texAccumFrames[!lastFrameAccumTexIdx]->uav.get();
-		uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
-		uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
+		nrdSvc.ApplyReblurSettings(reblurSettings, settings.Reblur,
+			tracedHalfRes ? nrd::CheckerboardMode::BLACK : nrd::CheckerboardMode::OFF);
+		reblurSettings.hitDistanceParameters.A = 3.0f / Util::Units::GAME_UNIT_TO_M;
+		reblurSettings.hitDistanceParameters.B = 0.1f;
+		reblurSettings.diffusePrepassBlurRadius = settings.DiffusePrepassBlurRadius;
+		if (tracedQuarterRes) {
+			if (reblurSettings.hitDistanceReconstructionMode == nrd::HitDistanceReconstructionMode::OFF)
+				reblurSettings.hitDistanceReconstructionMode = nrd::HitDistanceReconstructionMode::AREA_3X3;
+			// Probabilistic inputs require spatial reuse to redistribute the
+			// probability-compensated radiance before temporal accumulation.
+			reblurSettings.diffusePrepassBlurRadius = std::max({ reblurSettings.diffusePrepassBlurRadius, reblurSettings.maxBlurRadius, 1.0f });
+		}
+		nrdReblur.SetDenoiserSettings(&reblurSettings);
 
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(blurCompute.get(), nullptr, 0);
-		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
+		nrdReblur.SetNamedSRV(nrd::ResourceType::IN_MV, nrdSvc.GetMotionVectorSRV());
+		nrdReblur.SetNamedUAV(nrd::ResourceType::IN_MV, nrdSvc.GetMotionVectorUAV());
+		nrdReblur.SetNamedSRV(nrd::ResourceType::IN_NORMAL_ROUGHNESS, nrdSvc.GetNormalRoughnessSRV());
+		nrdReblur.SetNamedSRV(nrd::ResourceType::IN_VIEWZ, nrdSvc.GetViewZSRV());
 
-		inputGITexIdx = !inputGITexIdx;
-		lastFrameGITexIdx = inputGITexIdx;
-		lastFrameAccumTexIdx = !lastFrameAccumTexIdx;
+		if (useSH && texNRDInputSH1) {
+			nrdReblur.SetNamedSRV(nrd::ResourceType::IN_DIFF_SH0, texNRDInput->srv.get());
+			nrdReblur.SetNamedSRV(nrd::ResourceType::IN_DIFF_SH1, texNRDInputSH1->srv.get());
+			nrdReblur.SetNamedSRV(nrd::ResourceType::OUT_DIFF_SH0, texNRDOutput->srv.get());
+			nrdReblur.SetNamedUAV(nrd::ResourceType::OUT_DIFF_SH0, texNRDOutput->uav.get());
+			nrdReblur.SetNamedSRV(nrd::ResourceType::OUT_DIFF_SH1, texNRDOutputSH1->srv.get());
+			nrdReblur.SetNamedUAV(nrd::ResourceType::OUT_DIFF_SH1, texNRDOutputSH1->uav.get());
+		} else {
+			nrdReblur.SetNamedSRV(nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST, texNRDInput->srv.get());
+			nrdReblur.SetNamedSRV(nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST, texNRDOutput->srv.get());
+			nrdReblur.SetNamedUAV(nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST, texNRDOutput->uav.get());
+		}
+
+		producedDenoisedHistory = nrdReblur.Dispatch();
+		denoisedThisFrame = producedDenoisedHistory;
+		resetReblurHistory = !producedDenoisedHistory;
+
 	}
 
-	// VR stereo sync: bilateral blend of SSGI buffers between eyes (skipped when the
-	// view-independent reproject above already unified them).
-	// Shi, Billeter, Eisemann 2022, "Stereo-consistent screen-space ambient occlusion"
-	if (globals::game::isVR && stereoSyncCompute && !useReproject) {
-		CS_GPU_PASS("ScreenSpaceGI::StereoSync");
-
-		resetViews();
-		srvs.at(0) = texWorkingDepth->srv.get();
-		srvs.at(1) = texAo[inputAoTexIdx]->srv.get();
-		if (runILPath) {
-			srvs.at(2) = texIlY[inputGITexIdx]->srv.get();
-			srvs.at(3) = texIlCoCg[inputGITexIdx]->srv.get();
-		}
-
-		uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
-		if (runILPath) {
-			uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
-			uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
-		}
-
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(stereoSyncCompute.get(), nullptr, 0);
-		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
-
-		inputAoTexIdx = !inputAoTexIdx;
-		inputGITexIdx = !inputGITexIdx;
+	if (trackMultiBounce) {
+		hasMultiBounceHistory = true;
+		hasFullResolutionMultiBounceHistory = (!tracedHalfRes && !tracedQuarterRes) || producedDenoisedHistory;
+		multiBounceHistoryUsesNRDOutput = producedDenoisedHistory;
+		lastMultiBounceHistoryFrame = globals::state->frameCount;
+		historyGeoWriteIndex ^= 1;
+	} else {
+		hasMultiBounceHistory = false;
+		hasFullResolutionMultiBounceHistory = false;
+		multiBounceHistoryUsesNRDOutput = false;
 	}
-
-	// upsample
-	if (settings.ResolutionMode != 0) {
-		CS_GPU_PASS("ScreenSpaceGI::Upsample");
-
-		resetViews();
-		srvs.at(0) = texWorkingDepth->srv.get();
-		srvs.at(1) = texAo[inputAoTexIdx]->srv.get();
-		if (runILPath) {
-			srvs.at(2) = texIlY[inputGITexIdx]->srv.get();
-			srvs.at(3) = texIlCoCg[inputGITexIdx]->srv.get();
-			srvs.at(4) = texGiSpecular[inputAoTexIdx]->srv.get();
-		}
-
-		uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
-		if (runILPath) {
-			uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
-			uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
-			uavs.at(3) = texGiSpecular[!inputAoTexIdx]->uav.get();
-		}
-
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(upsampleCompute.get(), nullptr, 0);
-		context->Dispatch((resolution[0] + 7u) >> 3, (resolution[1] + 7u) >> 3, 1);
-
-		inputAoTexIdx = !inputAoTexIdx;
-		inputGITexIdx = !inputGITexIdx;
-	}
-
-	outputAoIdx = inputAoTexIdx;
-	outputIlIdx = inputGITexIdx;
 
 	// cleanup
 	resetViews();
@@ -1259,6 +1178,109 @@ void ScreenSpaceGI::DrawSSGI()
 	context->CSSetConstantBuffers(1, 1, &cb);
 	context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
 	context->CSSetShader(nullptr, nullptr, 0);
+
+	outputReady = (!tracedHalfRes && !tracedQuarterRes) || denoisedThisFrame;
+}
+
+void ScreenSpaceGI::Composite()
+{
+	if (!(outputReady && settings.Enabled && settings.EnableGI && compositeCompute))
+		return;
+
+	ZoneScoped;
+	CS_GPU_PASS("ScreenSpaceGI::Composite");
+
+	auto context = globals::d3d::context;
+	auto renderer = globals::game::renderer;
+	auto& rts = renderer->GetRuntimeData().renderTargets;
+	auto& main = rts[globals::deferred->forwardRenderTargets[0]];
+
+	std::array<ID3D11ShaderResourceView*, 7> srvs = {
+		NRDPort::Crop(NRDPort::Input::Albedo, Util::AsReal(rts[ALBEDO].SRV)),
+		NRDPort::Crop(NRDPort::Input::Normal, Util::AsReal(rts[NORMALROUGHNESS].SRV)),
+		NRDPort::Crop(NRDPort::Input::Depth, Util::GetCurrentSceneDepthSRV(false)),
+		GetDiffuseOutputTexture(),
+		GetDiffuseSH1Texture(),
+		NRDPort::Crop(NRDPort::Input::Masks, Util::AsReal(rts[MASKS].SRV)),
+		globals::features::skylighting.loaded && globals::features::skylighting.texProbeArray ? globals::features::skylighting.texProbeArray->srv.get() : nullptr
+	};
+
+	context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+
+	auto& ibl = globals::features::ibl;
+    ID3D11ShaderResourceView* iblSRVs[2] = {ibl.loaded && ibl.envIBLTexture ? ibl.envIBLTexture->srv.get() : nullptr,ibl.loaded && ibl.skyIBLTexture ? ibl.skyIBLTexture->srv.get() : nullptr};
+    context->CSSetShaderResources(76,2,iblSRVs);
+    auto& sky=globals::features::skylighting;
+    ID3D11ShaderResourceView* skySRVs[2]={sky.loaded && sky.texProbeCoverage ? sky.texProbeCoverage->srv.get() : nullptr,sky.loaded && sky.texZenithOcclusion ? sky.texZenithOcclusion->srv.get() : nullptr};
+    context->CSSetShaderResources(18,2,skySRVs);
+    ID3D11UnorderedAccessView* mainUAV = Util::AsReal(main.UAV);
+	context->CSSetUnorderedAccessViews(0, 1, &mainUAV, nullptr);
+
+	globals::state->BindSharedDataCS(context);
+	context->CSSetShader(compositeCompute.get(), nullptr, 0);
+
+	auto active = NRDPort::ActiveSize();
+	NRDPort::BindEye(UsesCubemapFallback(), appliedE11Overlay.active ? userSettings.E11ILSaturation : settings.ILSaturation);
+
+	context->Dispatch((uint(active.x)+7)/8, (uint(active.y)+7)/8, 1);
+
+
+	srvs.fill(nullptr);
+	context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+
+	iblSRVs[0]=iblSRVs[1]=nullptr; context->CSSetShaderResources(76,2,iblSRVs);
+	skySRVs[0]=skySRVs[1]=nullptr; context->CSSetShaderResources(18,2,skySRVs);
+	mainUAV = nullptr;
+	context->CSSetUnorderedAccessViews(0, 1, &mainUAV, nullptr);
+	context->CSSetShader(nullptr, nullptr, 0);
+}
+
+ID3D11ShaderResourceView* ScreenSpaceGI::GetDiffuseOutputTexture()
+{
+	if (!outputReady)
+		return nullptr;
+	if (denoisedThisFrame)
+		return texNRDOutput->srv.get();
+	else if (loaded && settings.Enabled)
+		return texNRDInput->srv.get();
+	return nullptr;
+}
+
+ID3D11ShaderResourceView* ScreenSpaceGI::GetDiffuseSH1Texture()
+{
+	if (!outputReady || !loaded || !settings.Enabled || !settings.EnableGI || !settings.EnableSH)
+		return nullptr;
+	if (denoisedThisFrame && texNRDOutputSH1)
+		return texNRDOutputSH1->srv.get();
+	else if (texNRDInputSH1)
+		return texNRDInputSH1->srv.get();
+	return nullptr;
+}
+
+namespace { bool AllowsAmbientFallback() {
+#if defined(ENABLE_EFFECTS11)
+    const auto& effects11 = globals::features::effects11;
+    return !(effects11.IsActive() && !effects11.IsHandedOff(E11Handoff::Feature::IBL));
+#else
+    return true;
+#endif
+} }
+bool ScreenSpaceGI::UsesCubemapFallback() const
+{
+	if (!settings.UseDynamicCubemapsAsFallback || settings.DiffuseCubemapMult <= 0.0f || !globals::features::dynamicCubemaps.loaded)
+		return false;
+	return AllowsAmbientFallback();
+}
+
+ScreenSpaceGI::SharedData ScreenSpaceGI::GetCommonBufferData()
+{
+	SharedData data{};
+	data.Enabled = loaded && settings.Enabled ? NRDPort::DiffuseMask() : 0u;
+	data.EnableIL = settings.EnableGI ? data.Enabled : 0u;
+	data.ReplaceAmbient = UsesCubemapFallback() ? data.EnableIL : 0u; // early composite subtracts existing ambient from target masks
+	data.AOPower = settings.AOPower;
+	data.ILSaturation = appliedE11Overlay.active ? userSettings.E11ILSaturation : settings.ILSaturation;
+	return data;
 }
 
 #undef I18N_KEY_PREFIX

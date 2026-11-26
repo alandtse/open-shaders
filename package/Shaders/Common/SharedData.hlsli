@@ -737,6 +737,24 @@ namespace SharedData
 	};
 
 #if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
+	struct SSGISettings
+	{
+		uint Enabled;
+		uint EnableIL;
+		uint ReplaceAmbient;
+		float AOPower;
+		float ILSaturation;
+		float3 pad0;
+	};
+
+	struct SSRSettings
+	{
+		uint Enabled;
+		float SpecularMult;
+		float SpecCubemapMult;
+		uint pad0;
+	};
+
 	struct SnowCoverSettings
 	{
 		float Month;
@@ -849,6 +867,8 @@ namespace SharedData
 		ProceduralAuroraSettings proceduralAuroraSettings;
 #if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
 		SnowCoverSettings snowCoverSettings;
+		SSGISettings ssgiSettings;
+		SSRSettings ssrSettings;
 #endif
 	};
 

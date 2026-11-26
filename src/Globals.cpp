@@ -40,6 +40,8 @@
 #include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
 #include "Features/ScreenSpaceGI.h"
+#include "Features/NRD.h"
+#include "Features/ScreenSpaceReflections.h"
 #include "Features/ScreenSpaceShadows.h"
 #include "Features/ScreenshotFeature.h"
 #include "Features/Skin.h"
@@ -102,7 +104,9 @@ namespace globals
 		FurShells furShells{};
 		DetailMaps detailMaps{};
 		RainRefraction rainRefraction{};
+		NRD nrd{};
 		ScreenSpaceGI screenSpaceGI{};
+		ScreenSpaceReflections screenSpaceReflections{};
 		ScreenSpaceShadows screenSpaceShadows{};
 		Skylighting skylighting{};
 		TerrainVariation terrainVariation{};

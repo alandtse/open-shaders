@@ -582,7 +582,8 @@ void VRStereoOptimizations::ReclassifyFromFinalDepth()
 		return;
 
 	const auto& ssgi = globals::features::screenSpaceGI;
-	const bool lateConsumerActive = ssgi.loaded && ssgi.settings.Enabled && ssgi.settings.UseStereoReproject;
+	const bool lateConsumerActive = false; // new backend currently has no cross-eye reuse
+	(void)ssgi;
 	if (!lateConsumerActive)
 		return;
 

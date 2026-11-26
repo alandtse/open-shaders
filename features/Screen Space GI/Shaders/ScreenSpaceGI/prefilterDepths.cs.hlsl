@@ -1,3 +1,5 @@
+#include "NRD/Eye.hlsli"
+#include "Common/ReverseZ.hlsli"
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Copyright (C) 2016-2021, Intel Corporation
 //
@@ -27,10 +29,8 @@ RWTexture2D<float> outDepth4 : register(u4);
 // is required to be non-linear (i.e. very large outdoors environments).
 float ClampDepth(float depth)
 {
-#ifdef VR
-	if (depth == FrameBuffer::NearPlaneDepth())  // VR hidden-area mask
+	if (abs(depth - FrameBuffer::FarPlaneDepth()) <= 1e-6)
 		return 0.0;
-#endif
 	depth = ScreenToViewDepth(depth);
 	return clamp(depth, 0.0, 3.402823466e+38);
 }
@@ -38,7 +38,10 @@ float ClampDepth(float depth)
 float DepthMIPFilter(float depth0, float depth1, float depth2, float depth3)
 {
 #ifdef LINEAR_FILTER
-	return (depth0 + depth1 + depth2 + depth3) * 0.25;
+	const float4 depths = float4(depth0, depth1, depth2, depth3);
+	const float4 valid = depths > 0.0;
+	const float count = dot(valid, 1.0);
+	return count > 0.0 ? dot(depths, valid) / count : 0.0;
 #elif defined(MAX_FILTER)
 	return max(max(depth0, depth1), max(depth2, depth3));
 #elif defined(MIN_FILTER)

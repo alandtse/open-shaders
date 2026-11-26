@@ -28,6 +28,8 @@ struct FurShells;
 struct DetailMaps;
 struct RainRefraction;
 struct ScreenSpaceGI;
+struct NRD;
+struct ScreenSpaceReflections;
 struct ScreenSpaceShadows;
 struct Skylighting;
 struct TerrainVariation;
@@ -139,6 +141,8 @@ namespace globals
 		extern DetailMaps detailMaps;
 		extern RainRefraction rainRefraction;
 		extern ScreenSpaceGI screenSpaceGI;
+		extern NRD nrd;
+		extern ScreenSpaceReflections screenSpaceReflections;
 		extern ScreenSpaceShadows screenSpaceShadows;
 		extern Skylighting skylighting;
 		extern TerrainVariation terrainVariation;

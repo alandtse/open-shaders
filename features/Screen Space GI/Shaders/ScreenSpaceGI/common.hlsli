@@ -1,3 +1,4 @@
+#include "NRD/Eye.hlsli"
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Copyright (C) 2016-2021, Intel Corporation
 //
@@ -25,45 +26,25 @@
 
 cbuffer SSGICB : register(b1)
 {
-	float4x4 PrevInvViewMat[2];
-	float4 NDCToViewMul;
-	float4 NDCToViewAdd;
+	float2 NDCToViewMul;
+	float2 NDCToViewAdd;
 
 	float2 TexDim;
 	float2 RcpTexDim;
 	float2 FrameDim;
 	float2 RcpFrameDim;
 
-	float pad0;
+	uint FrameIndex;
 
-	uint NumSlices;
 	uint NumSteps;
 
-	float MinScreenRadius;
-	float AORadius;
-	float GIRadius;
-	float EffectRadius;
 	float Thickness;
-	float2 DepthFadeRange;
-	float DepthFadeScaleConst;
-
-	float GISaturation;
-	float GIDistanceCompensation;
-	float GICompensationMaxDist;
-	float pad1;
-
 	float AOPower;
+
 	float GIStrength;
-
-	float DepthDisocclusion;
-	float NormalDisocclusion;
-	uint MaxAccumFrames;
-
-	float BlurRadius;
-	float DistanceNormalisation;
-
-	uint UseModeTexture;  // VRStereoOptimizations' classification available this boot
-	float pad;
+	float DiffuseCubemapMult;
+	uint UseDynamicCubemap;
+	uint MultiBounceMode;
 };
 
 SamplerState samplerPointClamp : register(s0);
@@ -71,8 +52,10 @@ SamplerState samplerLinearClamp : register(s1);
 
 ///////////////////////////////////////////////////////////////////////////////
 
-// first person z
-#define FP_Z (18.0)
+// Use the engine's global near plane instead of a hard-coded first-person distance.
+// A large fixed threshold (18.0) culls visible close geometry and makes SSGI's
+// AO/visibility output zero for those pixels, which darkens surfaces near the camera.
+#define FP_Z (SharedData::CameraData.y)
 
 #define ISNAN(x) (!(x < 0.f || x > 0.f || x == 0.f))
 float filterNaN(float v)
@@ -88,51 +71,39 @@ float2 filterInf(float2 v) { return float2(filterInf(v.x), filterInf(v.y)); }
 float3 filterInf(float3 v) { return float3(filterInf(v.x), filterInf(v.y), filterInf(v.z)); }
 float4 filterInf(float4 v) { return float4(filterInf(v.x), filterInf(v.y), filterInf(v.z), filterInf(v.w)); }
 
-// screenPos - normalised position in FrameDim, one eye only
-// uv - normalised position in FrameDim, both eye
+// screenPos - normalised position in FrameDim
+// uv - normalised position in FrameDim
 // texCoord - texture coordinate
 
-#ifdef HALF_RES
-#	define RES_MIP 1
-#	define READ_DEPTH(tex, px) tex.Load(int3(px, RES_MIP))
-#	define FULLRES_LOAD(tex, px, texCoord, samp) tex.SampleLevel(samp, texCoord, 0)
-#	define OUT_FRAME_DIM (FrameDim * 0.5)
-#	define RCP_OUT_FRAME_DIM (RcpFrameDim * 2)
-#	define OUT_FRAME_SCALE (frameScale * 0.5)
-#elif defined(QUARTER_RES)
-#	define RES_MIP 2
-#	define READ_DEPTH(tex, px) tex.Load(int3(px, RES_MIP))
-#	define FULLRES_LOAD(tex, px, texCoord, samp) tex.SampleLevel(samp, texCoord, 0)
-#	define OUT_FRAME_DIM (FrameDim * 0.25)
-#	define RCP_OUT_FRAME_DIM (RcpFrameDim * 4)
-#	define OUT_FRAME_SCALE (frameScale * 0.25)
-#else
-#	define RES_MIP 0
-#	define READ_DEPTH(tex, px) tex[px]
-#	define FULLRES_LOAD(tex, px, texCoord, samp) tex[px]
-#	define OUT_FRAME_DIM FrameDim
-#	define RCP_OUT_FRAME_DIM RcpFrameDim
-#	define OUT_FRAME_SCALE frameScale
-#endif
+#define READ_DEPTH(tex, px) tex[px]
+#define FULLRES_LOAD(tex, px, texCoord, samp) tex[px]
+#define OUT_FRAME_DIM FrameDim
+#define RCP_OUT_FRAME_DIM RcpFrameDim
+#define OUT_FRAME_SCALE frameScale
 
 ///////////////////////////////////////////////////////////////////////////////
 
 // Inputs are screen XY and viewspace depth, output is viewspace position
-float3 ScreenToViewPosition(const float2 screenPos, const float viewspaceDepth, const uint eyeIndex)
+float3 ScreenToViewPosition(const float2 screenPos, const float viewspaceDepth)
 {
-	const float2 _mul = eyeIndex == 0 ? NDCToViewMul.xy : NDCToViewMul.zw;
-	const float2 _add = eyeIndex == 0 ? NDCToViewAdd.xy : NDCToViewAdd.zw;
-
-	float3 ret;
-	ret.xy = (_mul * screenPos.xy + _add) * viewspaceDepth;
+	#if defined(VR)
+    float4 ray=mul(FrameBuffer::CameraProjInverse[NRDPortEye],float4(2*screenPos.x-1,1-2*screenPos.y,0.5,1));
+    return ray.xyz * (viewspaceDepth/ray.z);
+#else
+    float3 ret;
+    ret.xy = (NDCToViewMul.xy * screenPos.xy + NDCToViewAdd.xy) * viewspaceDepth;
 	ret.z = viewspaceDepth;
 	return ret;
+#endif
 }
 
 float ScreenToViewDepth(const float screenDepth)
 {
-	const float standardDepth = FrameBuffer::ToStandardDepth(screenDepth);
-	return (SharedData::CameraData.w / (-standardDepth * SharedData::CameraData.z + SharedData::CameraData.x));
+#ifdef REVERSE_Z
+	return (SharedData::CameraData.w / (screenDepth * SharedData::CameraData.z + SharedData::CameraData.y));
+#else
+	return (SharedData::CameraData.w / (-screenDepth * SharedData::CameraData.z + SharedData::CameraData.x));
+#endif
 }
 
 float3 ViewToWorldPosition(const float3 pos, const float4x4 invView)

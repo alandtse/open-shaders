@@ -15,6 +15,9 @@
 #include "Features/LightLimitFix.h"
 #include "Features/LightLimitFix/ShadowCasterManager.h"
 #include "Features/ScreenSpaceGI.h"
+#include "Features/NRD.h"
+#include "Features/NRDPortStereo.h"
+#include "Features/ScreenSpaceReflections.h"
 #include "Features/Skylighting.h"
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
@@ -416,11 +419,7 @@ void Deferred::DeferredPasses()
 
 	auto& skylighting = globals::features::skylighting;
 
-	auto& ssgi = globals::features::screenSpaceGI;
-	if (ssgi.loaded)
-		ssgi.DrawSSGI();
-	auto [ssgi_ao, ssgi_y, ssgi_cocg, ssgi_gi_spec] = ssgi.GetOutputTextures();
-	bool ssgi_hq_spec = ssgi.IsSpecularGIActive();
+	const auto nrdOutputs = NRDPort::Run();
 
 	auto dispatchCount = Util::GetScreenDispatchCount(true);
 
@@ -448,16 +447,16 @@ void Deferred::DeferredPasses()
 			Util::AsReal(albedo.SRV),                                                                        // t1  AlbedoTexture
 			Util::AsReal(normalRoughness.SRV),                                                               // t2  NormalRoughnessTexture
 			Util::AsReal(masks.SRV),                                                                         // t3  MasksTexture
-			dynamicCubemaps.loaded || globals::game::isVR ? Util::GetCurrentSceneDepthSRV(false) : nullptr,  // t4  DepthTexture (24/32-bit; HLSL type baked at compile via TERRAIN_BLENDING)
+			Util::GetCurrentSceneDepthSRV(false),  // t4  DepthTexture (24/32-bit; HLSL type baked at compile via TERRAIN_BLENDING)
 			dynamicCubemaps.loaded ? Util::AsReal(reflectance.SRV) : nullptr,                                // t5  ReflectanceTexture
 			dynamicCubemaps.loaded ? dynamicCubemaps.envTexture->srv.get() : nullptr,                        // t6  EnvTexture
 			dynamicCubemaps.loaded ? dynamicCubemaps.envReflectionsTexture->srv.get() : nullptr,             // t7  EnvReflectionsTexture
 			dynamicCubemaps.loaded ? skylightingProbes : nullptr,                                            // t8  SkylightingProbeArray
 			Util::AsReal(masks2.SRV),                                                                        // t9  Masks2Texture (vertexAO in .x, category in .y)
-			ssgi_ao,                                                                                         // t10 SsgiAoTexture
-			ssgi_hq_spec ? nullptr : ssgi_y,                                                                 // t11 SsgiYTexture
-			ssgi_hq_spec ? nullptr : ssgi_cocg,                                                              // t12 SsgiCoCgTexture
-			ssgi_hq_spec ? ssgi_gi_spec : nullptr,                                                           // t13 SsgiSpecularTexture
+			nrdOutputs.diffuse[0], // t10 diffuse radiance/AO left
+			nrdOutputs.diffuse[1], // t11 diffuse radiance/AO right
+			nrdOutputs.specular[1], // t12 SSR right
+			nrdOutputs.specular[0], // t13 SSR left
 			ibl.loaded ? ibl.envIBLTexture->srv.get() : nullptr,                                             // t14 EnvIBLTexture
 			ibl.loaded ? ibl.skyIBLTexture->srv.get() : nullptr,                                             // t15 SkyIBLTexture
 		};
@@ -790,11 +789,10 @@ ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 	if (globals::features::skylighting.loaded)
 		defines.push_back({ "SKYLIGHTING", nullptr });
 
-	if (globals::features::screenSpaceGI.loaded) {
+	if (globals::features::screenSpaceGI.loaded)
 		defines.push_back({ "SSGI", nullptr });
-		if (!globals::features::screenSpaceGI.HasGIResources())
-			defines.push_back({ "SSGI_AO_ONLY", nullptr });
-	}
+	if (globals::features::screenSpaceReflections.loaded)
+		defines.push_back({ "SSR", nullptr });
 
 	if (globals::features::ibl.loaded)
 		defines.push_back({ "IBL", nullptr });
@@ -818,11 +816,10 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 	if (globals::features::dynamicCubemaps.loaded)
 		defines.push_back({ "DYNAMIC_CUBEMAPS", nullptr });
 
-	if (globals::features::screenSpaceGI.loaded) {
+	if (globals::features::screenSpaceGI.loaded)
 		defines.push_back({ "SSGI", nullptr });
-		if (!globals::features::screenSpaceGI.HasGIResources())
-			defines.push_back({ "SSGI_AO_ONLY", nullptr });
-	}
+	if (globals::features::screenSpaceReflections.loaded)
+		defines.push_back({ "SSR", nullptr });
 
 	if (globals::features::ibl.loaded)
 		defines.push_back({ "IBL", nullptr });

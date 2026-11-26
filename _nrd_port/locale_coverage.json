@@ -1,0 +1,63 @@
+{
+  "new_or_changed_keys": 110,
+  "locales": {
+    "de": {
+      "english_fallback": 47,
+      "authored": 59,
+      "target_exact_text": 3,
+      "acronym": 1
+    },
+    "es": {
+      "english_fallback": 47,
+      "authored": 59,
+      "target_exact_text": 3,
+      "acronym": 1
+    },
+    "fr": {
+      "english_fallback": 47,
+      "authored": 59,
+      "target_exact_text": 3,
+      "acronym": 1
+    },
+    "ja": {
+      "english_fallback": 47,
+      "authored": 59,
+      "target_exact_text": 3,
+      "acronym": 1
+    },
+    "nl": {
+      "english_fallback": 47,
+      "authored": 59,
+      "target_exact_text": 3,
+      "acronym": 1
+    },
+    "pl": {
+      "english_fallback": 47,
+      "authored": 59,
+      "target_exact_text": 3,
+      "acronym": 1
+    },
+    "ru": {
+      "donor": 1,
+      "authored": 59,
+      "target_exact_text": 16,
+      "english_fallback": 33,
+      "acronym": 1
+    },
+    "sv": {
+      "donor": 1,
+      "authored": 59,
+      "english_fallback": 36,
+      "target_exact_text": 13,
+      "acronym": 1
+    },
+    "zh_CN": {
+      "donor": 53,
+      "authored": 34,
+      "target_exact_text": 2,
+      "english_fallback": 20,
+      "acronym": 1
+    }
+  },
+  "note": "Empty entries deliberately use existing English fallback. Authored translations are not native-speaker reviewed."
+}

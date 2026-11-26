@@ -31,10 +31,13 @@ namespace SceneSettingsPolicy
 		{ "PostProcessing", "Depth of Field", "HighlightShape" },
 		{ "PostProcessing", "Motion Blur", "VelocityScale" },
 		// Shader defines: a change recompiles every SSGI compute shader on the render thread.
-		{ "ScreenSpaceGI", "ResolutionMode" },
+		{ "ScreenSpaceGI", "HalfRes" },
+		{ "ScreenSpaceGI", "QuarterRes" },
+		{ "ScreenSpaceGI", "EnableSH" },
+		{ "ScreenSpaceGI", "EnableREBLUR" },
+		{ "ScreenSpaceReflections", "HalfRes" },
+		{ "ScreenSpaceReflections", "EnableREBLUR" },
 		{ "ScreenSpaceGI", "EnableGI" },
-		{ "ScreenSpaceGI", "EnableTemporalDenoiser" },
-		{ "ScreenSpaceGI", "EnableExperimentalSpecularGI" },
 		// Debug section: backend log verbosity, read only at startup
 		{ "Upscaling", "streamlineLogLevel" },
 		{ "VolumetricLighting" },
@@ -46,8 +49,6 @@ namespace SceneSettingsPolicy
 		{ "CSUtility", "Underwater Dof", "values", "autoFocusSettings" },
 		{ "CSUtility", "Underwater Dof", "values", "mode" },
 		{ "LightLimitFix", "ShowShadowOverlay" },
-		{ "ScreenSpaceGI", "DebugUseUnjitteredCameraReconstruction" },
-		{ "ScreenSpaceGI", "ResourceProfile" },
 		{ "WetnessEffects", "CharacterSpotDebug" },
 	};
 
