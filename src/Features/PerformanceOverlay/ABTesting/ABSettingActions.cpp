@@ -13,6 +13,8 @@ namespace
 
 	std::string FormatSettingValue(const SceneSettingsCatalog::SettingMetadata& setting, const json& value)
 	{
+		if (value.is_boolean() && setting.invertedDisplay)
+			return Util::Settings::FormatValue(!value.get<bool>());
 		if (value.is_number_integer() && setting.choiceDisplay) {
 			for (size_t index = 0; index < setting.choiceCount; ++index) {
 				if (setting.choices[index] == value.get<std::int64_t>()) {

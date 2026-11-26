@@ -209,6 +209,8 @@ struct DX12Resources final : Feature
 		return generationStats.load(std::memory_order_acquire);
 	}
 
+	Settings settings;
+
 private:
 	void ResetPreparation();
 	bool preparationActive = false;
@@ -222,5 +224,4 @@ private:
 	std::atomic<std::shared_ptr<const DX12::PreparationStats>> generationStats{
 		std::make_shared<const DX12::PreparationStats>()
 	};
-	Settings settings;
 };

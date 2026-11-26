@@ -2148,6 +2148,17 @@ void SyntheticFeature::SaveSettings(json& output) { output = settings; }
         GENERATOR.validate_entries(entries, 1, 1, 1)
         self.assertEqual(GENERATOR.required_entry_points(entries), ["SliderFloat"])
 
+    def test_inverted_checkbox_maps_onto_checkbox(self):
+        self.assertEqual(
+            GENERATOR.SOURCE_WIDGET_ENTRY_POINTS["InvertedCheckbox"], ("Checkbox",))
+        entries = [{
+            "feature": "Foo", "path": "", "key": "Bar",
+            "flags": "SceneSettingsCatalog::SettingFlag::SceneControllable",
+            "editorSemantic": "Toggle", "sourceWidget": "InvertedCheckbox",
+        }]
+        GENERATOR.validate_entries(entries, 1, 1, 1)
+        self.assertEqual(GENERATOR.required_entry_points(entries), ["Checkbox"])
+
     def test_suffix_bound_aggregates_preserve_parent_categories(self):
         header = r'''
 struct Payload {

@@ -10,6 +10,8 @@
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
+#include "Utils/SettingsControl.h"
+#include "Utils/UI.h"
 
 #include <algorithm>
 #include <bit>
@@ -19,17 +21,28 @@
 #include <limits>
 #include <ranges>
 
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	DX12NativeScene::Settings,
+	ShadowMask,
+	OutdoorShadowOffloading,
+	ShadowTraceDensityMode,
+	OffloadSCMStatic,
+	OffloadFlickeringStatic,
+	FreezeNativeFlickering,
+	ShadowNearLightExclusion,
+	ShadowNearLightRadius,
+	ShadowReachMultiplier,
+	ShadowFadeRange,
+	ShadowFalloffCurve)
+
 void DX12NativeScene::DrawSettings()
 {
-	ImGui::Checkbox(T("menu.dx12.scene.independent_shadowmask", "Independent shadowmask"), &shadowMaskEnabled);
-	ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoorShadowOffloading);
-	bool keepRasterStatic = !offloadStaticShadows;
-	if (ImGui::Checkbox(T("menu.dx12.scene.keep_raster_static", "Keep raster static shadows for native-accounted lights"), &keepRasterStatic))
-		offloadStaticShadows = !keepRasterStatic;
-	bool retainFlickeringRaster = !offloadFlickeringStatic;
-	if (ImGui::Checkbox(T("menu.dx12.scene.keep_raster_flickering", "Keep raster static shadows for flickering lights"), &retainFlickeringRaster))
-		offloadFlickeringStatic = !retainFlickeringRaster;
-	if (ImGui::Checkbox(T("menu.dx12.scene.freeze_flickering_native", "Freeze flickering native shadows (DX12 only)"), &freezeNativeFlickering)) {
+	ImGui::Checkbox(T("menu.dx12.scene.independent_shadowmask", "Independent shadowmask"), &settings.ShadowMask);
+	ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &settings.OutdoorShadowOffloading);
+	Util::InvertedCheckbox(T("menu.dx12.scene.keep_raster_static", "Keep raster static shadows for native-accounted lights"), &settings.OffloadSCMStatic);
+	Util::InvertedCheckbox(T("menu.dx12.scene.keep_raster_flickering", "Keep raster static shadows for flickering lights"), &settings.OffloadFlickeringStatic);
+	if (ImGui::Checkbox(T("menu.dx12.scene.freeze_flickering_native", "Freeze flickering native shadows (DX12 only)"), &settings.FreezeNativeFlickering) &&
+		!SettingsControl::IsReplicating()) {
 		std::scoped_lock lock(runtimeLightMutex);
 		frozenNativeLights.clear();
 	}
@@ -37,85 +50,56 @@ void DX12NativeScene::DrawSettings()
 		T("menu.dx12.scene.density.full", "Full"), T("menu.dx12.scene.density.two_thirds", "Two-thirds"), T("menu.dx12.scene.density.half", "Half"), T("menu.dx12.scene.density.one_third", "One-third"), T("menu.dx12.scene.density.quarter", "Quarter"),
 		T("menu.dx12.scene.density.one_sixth", "One-sixth"), T("menu.dx12.scene.density.one_ninth", "One-ninth"), T("menu.dx12.scene.density.four_ninths", "Four-ninths")
 	};
-	int mode = static_cast<int>(densityMode);
-	if (ImGui::Combo(T("menu.dx12.scene.trace_density", "Trace density"), &mode, fractions, 8))
-		densityMode = static_cast<uint32_t>(mode);
-	ImGui::Checkbox(T("menu.dx12.scene.exclude_near_light", "Exclude shadows near light geometry"), &nearLightShadowExclusion);
-	ImGui::BeginDisabled(!nearLightShadowExclusion);
-	int nearUnits = int(nearLightExclusionUnits);
-	if (ImGui::SliderInt(T("menu.dx12.scene.exclusion_radius_units", "Light-centered exclusion radius (units)"), &nearUnits, 0, 512))
-		nearLightExclusionUnits = uint32_t(std::clamp(((nearUnits + 2) / 4) * 4, 0, 512));
+	Util::Combo(T("menu.dx12.scene.trace_density", "Trace density"), &settings.ShadowTraceDensityMode, fractions);
+	ImGui::Checkbox(T("menu.dx12.scene.exclude_near_light", "Exclude shadows near light geometry"), &settings.ShadowNearLightExclusion);
+	ImGui::BeginDisabled(!settings.ShadowNearLightExclusion);
+	if (ImGui::SliderInt(T("menu.dx12.scene.exclusion_radius_units", "Light-centered exclusion radius (units)"), &settings.ShadowNearLightRadius, 0, 512) &&
+		!SettingsControl::IsReplicating())
+		settings.ShadowNearLightRadius = std::clamp(((settings.ShadowNearLightRadius + 2) / 4) * 4, 0, 512);
 	ImGui::EndDisabled();
-	ImGui::SliderFloat(T("menu.dx12.scene.shadow_reach_multiplier", "Shadow reach multiplier (1x = vanilla)"), &shadowReachMultiplier,
+	ImGui::SliderFloat(T("menu.dx12.scene.shadow_reach_multiplier", "Shadow reach multiplier (1x = vanilla)"), &settings.ShadowReachMultiplier,
 		0.1f, 64.0f, "%.2fx", ImGuiSliderFlags_Logarithmic);
-	float fade = shadowFadeRange;
-	if (ImGui::SliderFloat(T("menu.dx12.scene.shadow_fade_fraction", "Shadow fade range fraction"), &fade, 0.0f, 1.0f, "%.2f"))
-		shadowFadeRange = std::round(fade * 50.0f) / 50.0f;
-	ImGui::SliderFloat(T("menu.dx12.scene.shadow_falloff_curve", "Shadow falloff curve"), &shadowFalloffCurve, 0.0f, 2.5f, "%.2f");
+	if (ImGui::SliderFloat(T("menu.dx12.scene.shadow_fade_fraction", "Shadow fade range fraction"), &settings.ShadowFadeRange, 0.0f, 1.0f, "%.2f") &&
+		!SettingsControl::IsReplicating())
+		settings.ShadowFadeRange = std::round(settings.ShadowFadeRange * 50.0f) / 50.0f;
+	ImGui::SliderFloat(T("menu.dx12.scene.shadow_falloff_curve", "Shadow falloff curve"), &settings.ShadowFalloffCurve, 0.0f, 2.5f, "%.2f");
 }
 
 void DX12NativeScene::LoadSettings(json& input)
 {
-	shadowMaskEnabled = input.value("ShadowMask", true);
-	outdoorShadowOffloading = input.value("OutdoorShadowOffloading", false);
-	offloadStaticShadows = input.value("OffloadSCMStatic", true);
-	offloadFlickeringStatic = input.value("OffloadFlickeringStatic", true);
-	densityMode = std::min(input.value("ShadowTraceDensityMode", 7u), 7u);
-	freezeNativeFlickering = input.value("FreezeNativeFlickering", false);
-	{
-		std::scoped_lock lock(runtimeLightMutex);
-		frozenNativeLights.clear();
-	}
-	nearLightShadowExclusion = input.value("ShadowNearLightExclusion", true);
-	nearLightExclusionUnits = std::clamp(input.value("ShadowNearLightRadius", 16u), 0u, 512u) / 4u * 4u;
-	shadowReachMultiplier = std::clamp(input.value("ShadowReachMultiplier", 1.0f), 0.1f, 64.0f);
-	shadowFadeRange = std::round(std::clamp(input.value("ShadowFadeRange", 0.66f), 0.0f, 1.0f) * 50.0f) / 50.0f;
-	shadowFalloffCurve = std::clamp(input.value("ShadowFalloffCurve", 1.0f), 0.0f, 2.5f);
+	settings = input;
+	settings.ShadowTraceDensityMode = std::min(settings.ShadowTraceDensityMode, 7u);
+	settings.ShadowNearLightRadius = std::clamp(settings.ShadowNearLightRadius, 0, 512) / 4 * 4;
+	settings.ShadowReachMultiplier = std::clamp(settings.ShadowReachMultiplier, 0.1f, 64.0f);
+	settings.ShadowFadeRange = std::round(std::clamp(settings.ShadowFadeRange, 0.0f, 1.0f) * 50.0f) / 50.0f;
+	settings.ShadowFalloffCurve = std::clamp(settings.ShadowFalloffCurve, 0.0f, 2.5f);
+	std::scoped_lock lock(runtimeLightMutex);
+	frozenNativeLights.clear();
 }
 
 void DX12NativeScene::SaveSettings(json& output)
 {
-	output = { { "ShadowMask", shadowMaskEnabled }, { "OutdoorShadowOffloading", outdoorShadowOffloading }, { "ShadowTraceDensityMode", densityMode },
-		{ "OffloadSCMStatic", offloadStaticShadows },
-		{ "OffloadFlickeringStatic", offloadFlickeringStatic },
-		{ "FreezeNativeFlickering", freezeNativeFlickering },
-		{ "ShadowNearLightExclusion", nearLightShadowExclusion },
-		{ "ShadowNearLightRadius", nearLightExclusionUnits },
-		{ "ShadowReachMultiplier", shadowReachMultiplier },
-		{ "ShadowFadeRange", shadowFadeRange },
-		{ "ShadowFalloffCurve", shadowFalloffCurve } };
+	output = settings;
 }
 
 void DX12NativeScene::RestoreDefaultSettings()
 {
-	shadowMaskEnabled = true;
-	outdoorShadowOffloading = false;
-	offloadStaticShadows = true;
-	offloadFlickeringStatic = true;
-	densityMode = 7;
-	freezeNativeFlickering = false;
-	{
-		std::scoped_lock lock(runtimeLightMutex);
-		frozenNativeLights.clear();
-	}
-	nearLightShadowExclusion = true;
-	nearLightExclusionUnits = 16;
-	shadowReachMultiplier = 1.0f;
-	shadowFadeRange = 0.66f;
-	shadowFalloffCurve = 1.0f;
+	settings = {};
+	std::scoped_lock lock(runtimeLightMutex);
+	frozenNativeLights.clear();
 }
 
 bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
 {
 	const auto* cell = Util::GetPlayerCell();
-	return cell && (!cell->IsExteriorCell() || outdoorShadowOffloading);
+	return cell && (!cell->IsExteriorCell() || settings.OutdoorShadowOffloading);
 }
 
 bool DX12NativeScene::CanSuppressSCMStatic() const
 {
 	return loaded && !globals::game::isVR && globals::features::dx12Control.IsActive() &&
-	       globals::features::dx12Control.IsShadowOffloadMode() && shadowMaskEnabled &&
-	       offloadStaticShadows && CanOffloadShadowsInCurrentCell();
+	       globals::features::dx12Control.IsShadowOffloadMode() && settings.ShadowMask &&
+	       settings.OffloadSCMStatic && CanOffloadShadowsInCurrentCell();
 }
 
 bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const
@@ -142,7 +126,7 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 		return sample.source == ni;
 	});
 	if (found == runtimeLightSamples.end() ||
-		(found->flickers && !offloadFlickeringStatic))
+		(found->flickers && !settings.OffloadFlickeringStatic))
 		return false;
 
 	// The shader admits only the published prepared lights. Never suppress a
@@ -210,7 +194,7 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 		runtimeLightFrame = frame;
 		runtimeLightSamples.clear();
 	}
-	if (freezeNativeFlickering && flickers && matched->referenceID != 0) {
+	if (settings.FreezeNativeFlickering && flickers && matched->referenceID != 0) {
 		// Keep DX11's flicker intact. Only the native shadow has a stable light.
 		live.position = float3{ restOrigin.x, restOrigin.y, restOrigin.z };
 		live = frozenNativeLights.try_emplace(matched->referenceID, live).first->second;
@@ -274,7 +258,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 			static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections)))
 		return;
 	// Only capture the depth and camera used by the independent shadow layer.
-	if (!shadowMaskEnabled || !globals::features::dx12Control.IsShadowOffloadMode() ||
+	if (!settings.ShadowMask || !globals::features::dx12Control.IsShadowOffloadMode() ||
 		!CanOffloadShadowsInCurrentCell())
 		return;
 
@@ -303,12 +287,12 @@ void DX12NativeScene::OnOpaqueRasterReady()
 		const DX12Native::ShadowTraceControls controls{
 			.viewportWidth = viewportWidth,
 			.viewportHeight = viewportHeight,
-			.densityMode = densityMode,
-			.nearLightExclusion = nearLightShadowExclusion,
-			.nearLightRadius = float(nearLightExclusionUnits),
-			.reachMultiplier = shadowReachMultiplier,
-			.fadeRange = shadowFadeRange,
-			.falloffCurve = shadowFalloffCurve
+			.densityMode = settings.ShadowTraceDensityMode,
+			.nearLightExclusion = settings.ShadowNearLightExclusion,
+			.nearLightRadius = float(settings.ShadowNearLightRadius),
+			.reachMultiplier = settings.ShadowReachMultiplier,
+			.fadeRange = settings.ShadowFadeRange,
+			.falloffCurve = settings.ShadowFalloffCurve
 		};
 		std::vector<DX12::PreparedLight> liveLights = lights ? *lights : std::vector<DX12::PreparedLight>{};
 		if (!liveLights.empty()) {
@@ -332,7 +316,7 @@ std::function<void()> DX12NativeScene::OnRenderPassBegin(const RE::BSRenderPass*
 	// Observe visible static geometry already drawn by the existing opaque
 	// render path. This does not change render-pass state or DX11 draw behavior.
 	if (!loaded || !globals::features::dx12Control.IsActive() || globals::game::isVR ||
-		!pass || !pass->geometry || !shadowMaskEnabled ||
+		!pass || !pass->geometry || !settings.ShadowMask ||
 		!globals::features::dx12Control.IsShadowOffloadMode() ||
 		!globals::features::upscaling.loaded ||
 		!globals::state || globals::state->isMapMenuOpen ||

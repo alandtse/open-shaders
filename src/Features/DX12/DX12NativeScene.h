@@ -51,6 +51,22 @@ struct DX12NativeScene final : Feature
 	/** @brief Raw full-resolution shadow output, independently fenced for Native Composite. */
 	std::shared_ptr<const DX12Native::ShadowMaskFrame> GetShadowMask(uint32_t frame) const { return shadows.Get(frame); }
 
+	struct Settings
+	{
+		bool ShadowMask = true;
+		bool OutdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
+		uint32_t ShadowTraceDensityMode = 7;   // Four-ninths density by default.
+		bool OffloadSCMStatic = true;
+		bool OffloadFlickeringStatic = true;
+		bool FreezeNativeFlickering = false;
+		bool ShadowNearLightExclusion = true;
+		int ShadowNearLightRadius = 16;
+		float ShadowReachMultiplier = 1.0f;  // Native only. Vanilla lights stay unchanged.
+		float ShadowFadeRange = 0.66f;
+		float ShadowFalloffCurve = 1.0f;
+	};
+	Settings settings;
+
 private:
 	/** @brief Gates only native shadow replacement; never disables DX11 baseline shadows. */
 	bool CanOffloadShadowsInCurrentCell() const;
@@ -63,17 +79,6 @@ private:
 	// One immutable, ordered light selection shared by SCM and the RayQuery dispatch.
 	std::atomic<std::shared_ptr<const std::vector<DX12::PreparedLight>>> shadowLights;
 	std::atomic<uint32_t> shadowLightScope{ 0 };
-	bool shadowMaskEnabled = true;
-	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
-	bool offloadStaticShadows = true;
-	bool offloadFlickeringStatic = true;
-	bool freezeNativeFlickering = false;
-	uint32_t densityMode = 7;  // Four-ninths density by default.
-	bool nearLightShadowExclusion = true;
-	uint32_t nearLightExclusionUnits = 16;
-	float shadowReachMultiplier = 1.0f;  // Native only. Vanilla lights stay unchanged.
-	float shadowFadeRange = 0.66f;
-	float shadowFalloffCurve = 1.0f;
 	struct RuntimeLightSample
 	{
 		const RE::NiLight* source = nullptr;  // Identity of the SCM light actually observed.

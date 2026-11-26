@@ -5806,6 +5806,7 @@ SOURCE_WIDGET_ENTRY_POINTS = {
     "InputFloat2": ("InputFloat2",),
     "InputFloat3": ("InputFloat3",),
     "InputInt": ("InputInt",),
+    "InvertedCheckbox": ("Checkbox",),
     "PercentageSlider": ("SliderFloat",),
     "SliderAngle": ("SliderAngle",),
     "SliderFloat": ("SliderFloat",),
