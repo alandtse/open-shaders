@@ -17,6 +17,22 @@ namespace TreeShapes
 		// Crown vertices sit within this many model units (at LOD4 scale) of their trunk
 		constexpr float kCrownRadius = 100.0f;
 		constexpr float kCellSize = 128.0f;
+		struct CrownLayout
+		{
+			Util::ContentHash::Hash128 cards;
+			const void* vertices;
+			const void* indices;
+			uint32_t vertexCount;
+			uint32_t triangleCount;
+			float scale;
+			bool independent;
+			bool orderSensitive;
+			size_t cardCount;
+
+			bool operator==(const CrownLayout&) const = default;
+		};
+		constexpr GUID kCrownLayout{ 0x2ea78f2c, 0x4745, 0x46e5, { 0x95, 0x35, 0x20, 0x11, 0x31, 0xd0, 0xf8, 0x29 } };
+		constexpr GUID kModdedCrownWeights{ 0xb9751a74, 0xcee3, 0x4706, { 0xb8, 0xd5, 0x38, 0xef, 0xea, 0x61, 0x46, 0xe5 } };
 		// Bend data of a shape not drawn for this many frames is freed
 		constexpr uint kEvictFrames = 600;
 
@@ -53,10 +69,10 @@ namespace TreeShapes
 			return static_cast<float>(h & 0xFFFFFF) / static_cast<float>(0xFFFFFF);
 		}
 
-		uint64_t BlockKey(const RE::BSGeometry* a_geometry)
+		uint64_t BlockKey(const RE::NiTransform& a_transform)
 		{
-			const auto x = static_cast<int32_t>(a_geometry->world.translate.x);
-			const auto y = static_cast<int32_t>(a_geometry->world.translate.y);
+			const auto x = static_cast<int32_t>(a_transform.translate.x);
+			const auto y = static_cast<int32_t>(a_transform.translate.y);
 			return (static_cast<uint64_t>(static_cast<uint32_t>(x)) << 32) | static_cast<uint32_t>(y);
 		}
 
@@ -174,12 +190,14 @@ namespace TreeShapes
 		}
 
 		// Nearest card within a_maxDistance model units, or nullptr: a piece far from any trunk card stays still
-		const BendWeights::TrunkCard* NearestCardWithin(const BendWeights::Block& a_block, float a_x, float a_y, float a_maxDistance)
+		const BendWeights::TrunkCard* NearestCardWithin(const BendWeights::Block& a_block, float a_x, float a_y, float a_maxDistance, bool& a_orderSensitive)
 		{
 			const int cx = CellOf(a_x), cy = CellOf(a_y);
 			const int reach = static_cast<int>(std::ceil(a_maxDistance / kCellSize));
 			const BendWeights::TrunkCard* best = nullptr;
 			float bestDistance = a_maxDistance * a_maxDistance;
+			bool nearestTied = false;
+			const std::vector<int>* nearestCell = nullptr;
 			for (int dy = -reach; dy <= reach; ++dy) {
 				for (int dx = -reach; dx <= reach; ++dx) {
 					const auto it = a_block.grid.find(CellKey(cx + dx, cy + dy));
@@ -191,10 +209,20 @@ namespace TreeShapes
 						if (distance < bestDistance) {
 							bestDistance = distance;
 							best = &card;
+							nearestTied = false;
+							nearestCell = &it->second;
+						} else if (!nearestTied && nearestCell == &it->second && distance == bestDistance && std::memcmp(best, &card, sizeof(card)) != 0) {
+							const auto bestIndex = static_cast<size_t>(best - a_block.cards.data());
+							const auto index = static_cast<size_t>(i);
+							// Only ties across shape registrations in the winning cell can change draw-order results.
+							nearestTied = std::ranges::any_of(a_block.firstCardByShape, [&](const auto& a_shape) {
+								return (bestIndex < a_shape.second) != (index < a_shape.second);
+							});
 						}
 					}
 				}
 			}
+			a_orderSensitive |= nearestTied;
 			return best;
 		}
 
@@ -239,10 +267,8 @@ namespace TreeShapes
 		}
 	}
 
-	Kind Classify(const RE::BSRenderPass* a_pass, bool a_treeModSupport)
+	Kind Classify(RE::BSGeometry* geometry, const RE::BSShaderProperty* property, bool a_treeModSupport, float a_scale)
 	{
-		const auto property = a_pass ? a_pass->shaderProperty : nullptr;
-		const auto geometry = a_pass ? a_pass->geometry : nullptr;
 		if (!property || !geometry)
 			return Kind::None;
 
@@ -271,23 +297,50 @@ namespace TreeShapes
 
 		// Tree-mod crowns: two-sided without rim or soft lighting, never all quads, and only in the LOD4 ring;
 		// at LOD8 and LOD16 the tree-mod trees are billboards and these shapes are not trees
-		if (a_treeModSupport && geometry->AsTriShape() && !allQuads && property->flags.all(Flag::kTwoSided) && geometry->world.scale < 6.0f)
+		if (a_treeModSupport && geometry->AsTriShape() && !allQuads && property->flags.all(Flag::kTwoSided) && a_scale < 6.0f)
 			return Kind::Crown;
 
 		return Kind::None;
 	}
 
+	void BendWeights::PrepareCrowns(RE::NiNode* a_root)
+	{
+		BendWeights weights;
+		std::vector<RE::BSGeometry*> trunks;
+		std::vector<RE::BSGeometry*> crowns;
+		RE::BSVisit::TraverseScenegraphObjects(a_root, [&](RE::NiAVObject* a_object) {
+			if (auto* geometry = a_object->AsGeometry()) {
+				const auto kind = Classify(geometry, geometry->GetGeometryRuntimeData().shaderProperty.get(), true, geometry->local.scale);
+				if (kind == Kind::Trunk)
+					trunks.push_back(geometry);
+				else if (kind == Kind::Crown)
+					crowns.push_back(geometry);
+			}
+			return RE::BSVisit::BSVisitControl::kContinue;
+		});
+		// LOD draws commonly submit trunks in reverse scene-graph order.
+		for (auto* geometry : trunks | std::views::reverse)
+			weights.Build(geometry, Kind::Trunk, 0, true, BuildSource::Stream);
+		for (auto* geometry : crowns)
+			weights.Build(geometry, Kind::Crown, 0, true, BuildSource::Stream);
+	}
+
 	ID3D11ShaderResourceView* BendWeights::Get(RE::BSGeometry* a_geometry, Kind a_kind, uint a_frame, bool a_treeModSupport)
 	{
+		return a_geometry ? Build(a_geometry, a_kind, a_frame, a_treeModSupport, BuildSource::Draw) : nullptr;
+	}
+
+	ID3D11ShaderResourceView* BendWeights::Build(RE::BSGeometry* a_geometry, Kind a_kind, uint a_frame, bool a_treeModSupport, BuildSource a_source)
+	{
 		VertexView vertices;
-		if (!a_geometry || a_kind == Kind::None || !GetVertices(a_geometry, vertices))
+		if (a_kind == Kind::None || !GetVertices(a_geometry, vertices))
 			return nullptr;
 
 		const auto firstVertex = vertices(0);
 		if (auto it = entries.find(vertices.vertexBuffer); it != entries.end()) {
 			auto& entry = it->second;
 			// Tree-mod crowns rebuild when their block gains trunk cards
-			const bool stale = a_treeModSupport && entry.crown && [&] {
+			const bool stale = a_treeModSupport && entry.needsTrunkUpdates && [&] {
 				const auto blockIt = blocks.find(entry.blockKey);
 				return blockIt != blocks.end() && blockIt->second.generation != entry.generation;
 			}();
@@ -299,10 +352,12 @@ namespace TreeShapes
 			entries.erase(it);
 		}
 
-		ZoneScopedN("TreeWind::BuildBendWeights");
-		const uint64_t blockKey = BlockKey(a_geometry);
+		const bool streaming = a_source == BuildSource::Stream;
+		const bool registerOnly = streaming && a_kind == Kind::Trunk;
+		const auto& transform = streaming ? a_geometry->local : a_geometry->world;
+		const uint64_t blockKey = BlockKey(transform);
 		auto& block = blocks[blockKey];
-		const float worldScale = a_geometry->world.scale;
+		const float worldScale = transform.scale;
 		const bool allQuads = IsAllQuads(a_geometry);
 		const auto indices = a_geometry->GetGeometryRuntimeData().rendererData->rawIndexData;
 		const uint32_t triangleCount = a_geometry->AsTriShape()->GetTrishapeRuntimeData().triangleCount;
@@ -314,7 +369,30 @@ namespace TreeShapes
 		entry.firstVertex[2] = firstVertex.z;
 		entry.lastFrame = a_frame;
 		entry.blockKey = blockKey;
-		entry.crown = a_kind == Kind::Crown;
+		entry.needsTrunkUpdates = a_kind == Kind::Crown;
+		const bool cacheCrown = entry.needsTrunkUpdates && a_treeModSupport;
+		const bool independent = cacheCrown && (allQuads || IsTreeShapeName(a_geometry));
+		const auto layoutFor = [&](bool a_orderSensitive) {
+			const auto& cards = a_orderSensitive ? block.orderedSignature : block.unorderedSignature;
+			return CrownLayout{ independent ? Util::ContentHash::Hash128{} : cards, vertices.raw, indices, vertices.count, triangleCount, worldScale, independent, a_orderSensitive, independent ? 0 : block.cards.size() };
+		};
+		bool orderSensitive = false;
+		auto* buffer = reinterpret_cast<ID3D11Buffer*>(a_geometry->GetGeometryRuntimeData().rendererData->vertexBuffer);
+		if (cacheCrown) {
+			UINT size = sizeof(ID3D11ShaderResourceView*);
+			if (SUCCEEDED(buffer->GetPrivateData(kModdedCrownWeights, &size, entry.srv.put_void()))) {
+				CrownLayout layout{};
+				size = sizeof(layout);
+				if (SUCCEEDED(entry.srv->GetPrivateData(kCrownLayout, &size, &layout)) && layout == layoutFor(layout.orderSensitive)) {
+					entry.needsTrunkUpdates = !independent;
+					entry.generation = block.generation;
+					return entries.insert_or_assign(vertices.vertexBuffer, std::move(entry)).first->second.srv.get();
+				}
+				entry.srv = nullptr;
+			}
+		}
+
+		ZoneScopedN("TreeWind::BuildBendWeights");
 
 		// Remembers a shape with nothing to sway, so it is not scanned again
 		const auto keepStill = [&]() -> ID3D11ShaderResourceView* {
@@ -324,7 +402,7 @@ namespace TreeShapes
 		};
 
 		// Per vertex: bend weight (0 base, 1 top), tree random, tree sway scale, distance from the trunk (0 trunk, 1 crown edge)
-		std::vector<uint16_t> data(static_cast<size_t>(vertices.count) * 4, 0);
+		std::vector<uint16_t> data(registerOnly ? 0 : static_cast<size_t>(vertices.count) * 4, 0);
 		const auto put = [&](uint32_t a_index, float a_bend, float a_random, float a_scale, float a_radial) {
 			data[a_index * 4 + 0] = DirectX::PackedVector::XMConvertFloatToHalf(std::clamp(a_bend, 0.0f, 1.0f));
 			data[a_index * 4 + 1] = DirectX::PackedVector::XMConvertFloatToHalf(a_random);
@@ -407,7 +485,8 @@ namespace TreeShapes
 			}
 
 			// Each trunk registers its tree for the crowns of this block, once per shape
-			if (block.trunkShapes.insert(vertices.vertexBuffer).second && (!cardStarts.empty() || !trunks.empty())) {
+			const auto [registration, inserted] = block.firstCardByShape.try_emplace(vertices.vertexBuffer, block.cards.size());
+			if (inserted && (!cardStarts.empty() || !trunks.empty())) {
 				++block.generation;
 				for (const auto& trunk : trunks)
 					AddCard(block, trunk, worldScale);
@@ -415,22 +494,42 @@ namespace TreeShapes
 					const auto q = GetQuadBounds(vertices, c);
 					AddCard(block, { q.cx, q.cy, q.base, q.top }, worldScale);
 				}
+				if (a_treeModSupport) {
+					const auto added = std::span(block.cards).subspan(registration->second);
+					const auto hash = Util::ContentHash::HashBytes(added.data(), added.size_bytes());
+					block.orderedSignature = Util::ContentHash::CombineHashes(block.orderedSignature, hash);
+					block.unorderedSignature.high += hash.high;
+					block.unorderedSignature.low += hash.low;
+				}
 			}
+			if (registerOnly)
+				return nullptr;
 			if (cardStarts.empty() && trunks.empty())
 				return keepStill();
 
+			const auto registeredCard = [&](size_t offset, float x, float y) -> const TrunkCard* {
+				const size_t index = registration->second + offset;
+				if (index < block.cards.size()) {
+					const auto& card = block.cards[index];
+					if (card.x == x && card.y == y)
+						return &card;
+				}
+				// A reused vertex-buffer address can refer to different trunk geometry.
+				return NearestCard(block, x, y);
+			};
 			for (uint32_t i = 0; i < vertices.count && !trunks.empty(); ++i) {
 				const auto it = trunkOfPiece.find(roots[i]);
 				if (it == trunkOfPiece.end())
 					continue;
 				const auto& trunk = trunks[it->second];
-				const auto* card = NearestCard(block, trunk.x, trunk.y);
+				const auto* card = registeredCard(it->second, trunk.x, trunk.y);
 				put(i, (vertices(i).z - trunk.base) / std::max(trunk.top - trunk.base, 1.0f), card ? card->random : 0.5f, card ? card->scale : 1.0f, 0.0f);
 			}
 			// Each card bends from its own foot, with its tree's random and scale
-			for (const auto c : cardStarts) {
+			for (size_t i = 0; i < cardStarts.size(); ++i) {
+				const auto c = cardStarts[i];
 				const auto q = GetQuadBounds(vertices, c);
-				const auto* card = NearestCard(block, q.cx, q.cy);
+				const auto* card = registeredCard(trunks.size() + i, q.cx, q.cy);
 				const float height = std::max(q.top - q.base, 1.0f);
 				for (uint32_t k = 0; k < 4; ++k)
 					put(c + k, (vertices(c + k).z - q.base) / height, card ? card->random : 0.5f, card ? card->scale : 1.0f, 0.0f);
@@ -516,7 +615,7 @@ namespace TreeShapes
 			for (auto& [root, piece] : pieces) {
 				const float cx = piece.sumX / piece.count, cy = piece.sumY / piece.count;
 				if (farRing) {
-					piece.card = block.cards.empty() ? nullptr : NearestCardWithin(block, cx, cy, maxDistance);
+					piece.card = block.cards.empty() ? nullptr : NearestCardWithin(block, cx, cy, maxDistance, orderSensitive);
 					piece.ownFoot = !piece.card && piece.maxZ - piece.minZ > 8.0f;
 					matched += piece.card || piece.ownFoot;
 					continue;
@@ -525,7 +624,7 @@ namespace TreeShapes
 					piece.perVertex = true;
 					continue;
 				}
-				piece.card = NearestCardWithin(block, cx, cy, maxDistance);
+				piece.card = NearestCardWithin(block, cx, cy, maxDistance, orderSensitive);
 				matched += piece.card != nullptr;
 			}
 			for (uint32_t i = 0; i < vertices.count; ++i) {
@@ -537,7 +636,7 @@ namespace TreeShapes
 					put(i, (p.z - piece.minZ) / height, Hash01(rx, ry), TreeScale(height, worldScale, Hash01(ry * 1.37f + 11.0f, rx * 0.71f - 5.0f)), 0.6f);
 					continue;
 				}
-				const auto* card = piece.perVertex ? NearestCardWithin(block, p.x, p.y, maxDistance) : piece.card;
+				const auto* card = piece.perVertex ? NearestCardWithin(block, p.x, p.y, maxDistance, orderSensitive) : piece.card;
 				if (piece.perVertex && card)
 					++matched;
 				if (card) {
@@ -581,6 +680,11 @@ namespace TreeShapes
 		if (FAILED(globals::d3d::device->CreateShaderResourceView(entry.buffer.get(), &srvDesc, entry.srv.put())))
 			return nullptr;
 		Util::SetResourceName(entry.srv.get(), "TreeWind::BendWeights SRV");
+		if (cacheCrown) {
+			const auto layout = layoutFor(orderSensitive);
+			if (SUCCEEDED(entry.srv->SetPrivateData(kCrownLayout, sizeof(layout), &layout)))
+				buffer->SetPrivateDataInterface(kModdedCrownWeights, entry.srv.get());
+		}
 
 		entry.generation = block.generation;
 		return entries.insert_or_assign(vertices.vertexBuffer, std::move(entry)).first->second.srv.get();

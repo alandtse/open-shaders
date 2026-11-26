@@ -113,6 +113,8 @@ private:
 	std::unique_ptr<ConstantBuffer> windOnCB;
 	std::unique_ptr<ConstantBuffer> windOffCB;
 
+	bool canStreamWeights = false;
+	std::atomic_bool prepareModdedCrowns{ false };
 	TreeShapes::BendWeights bendWeights;
 	// Bend data of the tree LOD shape being drawn, nullptr for every other draw
 	ID3D11ShaderResourceView* drawBendWeights = nullptr;
