@@ -130,7 +130,7 @@ cbuffer PerGeometry : register(b2)
 
 #	ifdef GRASS_OPTIMIZATIONS
 // Culling writes source indices, fade, flags and wind values for each visible instance.
-ByteAddressBuffer InstanceRecords : register(t2);
+StructuredBuffer<GrassInstance::CullRecord> InstanceRecords : register(t2);
 // Packed instance transforms and group origins share the culling shader's source pools.
 ByteAddressBuffer GrassInstances : register(t3);
 StructuredBuffer<GrassInstance::CullGroup> GrassGroups : register(t4);
@@ -346,13 +346,11 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 
 	VS_OUTPUT vsout = (VS_OUTPUT)0;
 
-	const uint recordOffset = (GrassOutputOffset + EyeSlotBase + instanceID) * GrassInstance::RecordStride;
-	const uint4 record = InstanceRecords.Load4(recordOffset);
-	GrassInstance::Decode(GrassInstances.Load4(record.x * GrassInstance::Stride), input.InstanceData1, input.InstanceData2, input.InstanceData3, input.InstanceData4);
+	const GrassInstance::CullRecord record = InstanceRecords[GrassOutputOffset + EyeSlotBase + instanceID];
+	GrassInstance::Decode(GrassInstances.Load4(record.SourceIndex * GrassInstance::Stride), input.InstanceData1, input.InstanceData2, input.InstanceData3, input.InstanceData4);
 	uint groupIndex, flags;
 	float fade;
-	GrassInstance::UnpackRecord(record.y, groupIndex, fade, flags);
-	const float2 flutter = asfloat(record.zw);
+	GrassInstance::UnpackRecord(record.Packed, groupIndex, fade, flags);
 	const float3 origin = GrassGroups[GrassGroupBase + groupIndex].Origin;
 	const float normalLength = GrassTextureNormalLength[0];
 	vsout.IsComplex = normalLength > 0.0 ? (float)(abs(normalLength - 1.0) < GrassComplexThreshold) : -1.0;
@@ -374,10 +372,10 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 	float bendAngle, previousBendAngle;
 	float4 previousMsPosition = msPosition;
 	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, instanceRoot.z, bladeReach,
-		asfloat(InstanceRecords.Load4(recordOffset + GrassInstance::CurrentWindOffset)), flutter.x, bendAxis, bendAngle);
+		record.CurrentWind, record.Flutter.x, bendAxis, bendAngle);
 #		if !defined(RENDER_DEPTH)
 	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, instanceRoot.z, bladeReach,
-		asfloat(InstanceRecords.Load4(recordOffset + GrassInstance::PreviousWindOffset)), flutter.y, previousBendAxis, previousBendAngle);
+		record.PreviousWind, record.Flutter.y, previousBendAxis, previousBendAngle);
 #		endif
 
 #		ifdef GRASS_COLLISION
@@ -386,7 +384,7 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 	float3 displacement, previousDisplacement;
 	GrassCollision::ApplySampledDeformation(
 		input, msPosition.xyz, previousMsPosition.xyz, instanceRoot,
-		asfloat(InstanceRecords.Load4(recordOffset + GrassInstance::CurrentCollisionOffset)), asfloat(InstanceRecords.Load4(recordOffset + GrassInstance::PreviousCollisionOffset)),
+		record.CurrentCollision, record.PreviousCollision,
 		Math::IdentityMatrix, Math::IdentityMatrix,
 		displacement, previousDisplacement, collisionBendAxis, collisionBendAngle);
 	msPosition.xyz += displacement;
