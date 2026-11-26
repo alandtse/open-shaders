@@ -131,7 +131,7 @@ namespace DX12
 				}
 		}
 		// Keep recently retired immutable cell publications in bounded DRAM.
-		// A -> B -> A must not repeat scene preparation.
+		// A -> B -> A must not repeat subcell preparation.
 		if (current->size == size && !current->wholeCell) {
 			const auto retain = [&](const auto& tile) {
 				if (!tile || (tile->state != Tile::State::Ready && tile->state != Tile::State::ReadyPartial &&
@@ -462,17 +462,28 @@ namespace DX12
 		snapshot.store(std::move(next), std::memory_order_release);
 	}
 
-	void ResourceGrid::RefreshUnattachedTiles()
+	bool ResourceGrid::RefreshUnattachedTiles()
 	{
 		std::scoped_lock lock(mutex);
 		const auto current = snapshot.load(std::memory_order_acquire);
+		if (current->wholeCell) {
+			// A whole-cell grid issues no requests, so a stale capture is dropped for the caller to re-advance.
+			const auto& tile = current->resident.front();
+			if (!tile || !tile->hasUnattachedCells)
+				return false;
+			auto empty = std::make_shared<Grid>();
+			empty->geometryRevision = NextGeometryRevision();
+			pending.reset();
+			previousScope = previousSize = 0;
+			snapshot.store(std::move(empty), std::memory_order_release);
+			return true;
+		}
 		auto next = std::make_shared<Grid>(*current);
 		bool changed = false;
 		const auto markRefresh = [&](auto& tiles) {
 			for (auto& tile : tiles) {
-				if (tile && tile->hasUnattachedCells &&
-					(tile->state == Tile::State::Ready || tile->state == Tile::State::ReadyPartial ||
-						tile->state == Tile::State::Empty || tile->state == Tile::State::EmptyPartial)) {
+				if (tile && tile->hasUnattachedCells && tile->state != Tile::State::Requested &&
+					tile->state != Tile::State::Preparing) {
 					auto refreshed = std::make_shared<Tile>(*tile);
 					refreshed->state = Tile::State::Requested;
 					refreshed->preparationAttempts = 0;
@@ -487,6 +498,7 @@ namespace DX12
 		markRefresh(next->predictiveResident);
 		if (changed)
 			snapshot.store(std::move(next), std::memory_order_release);
+		return false;
 	}
 
 }
@@ -881,6 +893,7 @@ void DX12Resources::ResetPreparation()
 	consolidationAttemptScope = 0;
 	lastVisitedCell = previousVisitedCell = distinctTransitions = 0;
 	lastExteriorGridX = lastExteriorGridY = std::numeric_limits<int32_t>::min();
+	interiorRefsLoaded = false;
 	generationStats.store(std::make_shared<const DX12::PreparationStats>(), std::memory_order_release);
 }
 
@@ -1180,8 +1193,15 @@ void DX12Resources::PreShadowMaps()
 			grid.RefreshUnattachedTiles();
 		lastExteriorGridX = gx;
 		lastExteriorGridY = gy;
+		interiorRefsLoaded = false;
 	} else {
 		lastExteriorGridX = lastExteriorGridY = std::numeric_limits<int32_t>::min();
+		const bool refsLoaded = DX12::IsCellFullyLoaded(cell);
+		if (refsLoaded && !interiorRefsLoaded && grid.RefreshUnattachedTiles()) {
+			consolidationAttemptScope = 0;
+			grid.Advance(scope, settings.SubcellSize, position.x, position.y);
+		}
+		interiorRefsLoaded = refsLoaded;
 	}
 	runtimePublicationEnabled.store(true, std::memory_order_release);
 	const auto neighborhood = grid.Snapshot();
@@ -1268,14 +1288,11 @@ void DX12Resources::OnRuntimeDisabled()
 	loadingGrid.reset();
 	loadingGridSerial = 0;
 	runtimePublicationEnabled.store(false, std::memory_order_release);
-	if (worker) {
-		worker->Cancel();
-		worker.reset();
-	}
-	if (preparationActive) {
+	if (preparationActive)
 		ResetPreparation();
-		preparationActive = false;
-	}
+	// Joins the worker here so model roots it retained are released on this thread, not at exit.
+	worker.reset();
+	preparationActive = false;
 }
 
 std::vector<DX12::PreparedLight> DX12Resources::GetPreparedLights() const

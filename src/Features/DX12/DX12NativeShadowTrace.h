@@ -1,9 +1,9 @@
 #pragma once
 
+#include "../../../package/Shaders/Common/NativeShadowRT.hlsli"
 #include "DX12NativeAcceleration.h"
 #include "DX12NativeRasterCapture.h"
 #include "VideoMemoryBudget.h"
-#include "../../../package/Shaders/Common/NativeShadowRT.hlsli"
 
 #include <array>
 #include <memory>
@@ -17,7 +17,7 @@ namespace DX12Native
 	// Shared CPU-side limit for prepared lights submitted to the native shadow RayQuery.
 	inline constexpr uint32_t kMaxShadowLights = DX12::kMaxPreparedLights;
 
-	/** @brief Shadow-only behavior. Live matched values override companion fallbacks. */
+	/** @brief Shadow-only behavior. Live matched values override prepared fallbacks. */
 	struct ShadowTraceControls
 	{
 		uint32_t viewportWidth = 0, viewportHeight = 0;

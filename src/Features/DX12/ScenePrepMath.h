@@ -185,6 +185,18 @@ namespace DX12
 		       a_y >= double(a_tileY - a_haloTiles) * s && a_y < double(a_tileY + a_haloTiles + 1) * s;
 	}
 
+	/** @brief Conservative XY test of a world bounding sphere against a subcell; an unusable bound counts as overlapping. */
+	[[nodiscard]] inline bool SphereMayOverlapSubcellXY(
+		double a_x, double a_y, double a_radius, int64_t a_tileX, int64_t a_tileY, uint32_t a_size) noexcept
+	{
+		if (!std::isfinite(a_x) || !std::isfinite(a_y) || !std::isfinite(a_radius) || a_radius <= 0.0 || !a_size)
+			return true;
+		const double s = double(a_size);
+		const double dx = std::max({ double(a_tileX) * s - a_x, 0.0, a_x - double(a_tileX + 1) * s });
+		const double dy = std::max({ double(a_tileY) * s - a_y, 0.0, a_y - double(a_tileY + 1) * s });
+		return dx * dx + dy * dy <= a_radius * a_radius;
+	}
+
 	/** @brief Returns nullopt if geometry/transform XY is empty or non-finite; otherwise whether AABB overlaps the subcell. */
 	[[nodiscard]] inline std::optional<bool> OverlapsSubcellXY(
 		std::span<const float3> a_positions, const std::array<float, 12>& a_rows,

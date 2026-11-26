@@ -15,8 +15,8 @@ namespace DX12Native
 		const auto& grid = *inputs->residency;
 		inputs->geometryRevision = grid.geometryRevision;
 
-		// A placed shape may be discovered by both companion and runtime observation.
-		// Keep the companion version; do not require a tile to certify full coverage.
+		// A placed shape may be discovered by both subcell preparation and runtime observation.
+		// Keep the prepared version; do not require a tile to certify full coverage.
 		std::unordered_set<uint64_t> seenShapes;
 		const auto appendShape = [&](const std::shared_ptr<const DX12::Shape>& shape) {
 			if (!shape)

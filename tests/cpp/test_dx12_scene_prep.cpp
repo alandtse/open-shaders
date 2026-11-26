@@ -244,3 +244,16 @@ TEST_CASE("Depth-limited scene traversal cannot certify complete coverage", "[dx
 	CHECK_FALSE(IsScenePrepCoverageComplete(true, false, 0, 0, 12u, 12u));
 	CHECK_FALSE(IsScenePrepCoverageComplete(true, true, 0, 0, 13u, 12u));
 }
+
+TEST_CASE("Bounding-sphere subcell test keeps touching bounds and unknown radii", "[dx12][scene-prep]")
+{
+	constexpr uint32_t size = 4096;
+	CHECK(DX12::SphereMayOverlapSubcellXY(100.0, 100.0, 10.0, 0, 0, size));
+	CHECK(DX12::SphereMayOverlapSubcellXY(-50.0, 100.0, 60.0, 0, 0, size));
+	CHECK_FALSE(DX12::SphereMayOverlapSubcellXY(-50.0, 100.0, 40.0, 0, 0, size));
+	CHECK_FALSE(DX12::SphereMayOverlapSubcellXY(-100.0, -100.0, 100.0, 0, 0, size));
+	CHECK(DX12::SphereMayOverlapSubcellXY(-100.0, -100.0, 142.0, 0, 0, size));
+	CHECK(DX12::SphereMayOverlapSubcellXY(-9000.0, 0.0, 0.0, 0, 0, size));
+	CHECK(DX12::SphereMayOverlapSubcellXY(0.0, 0.0, std::numeric_limits<double>::quiet_NaN(), 5, 5, size));
+	CHECK(DX12::SphereMayOverlapSubcellXY(-4000.0, -4000.0, 10.0, -1, -1, size));
+}

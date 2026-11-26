@@ -153,8 +153,11 @@ namespace DX12
 		bool Publish(TilePublication publication);
 		/** @brief Merges only compatible immutable prepared tiles, never runtime observations. */
 		void MergePrepared(const Grid& source);
-		/** @brief Marks tiles overlapping unattached exterior cells for re-preparation after grid shifts. */
-		void RefreshUnattachedTiles();
+		/**
+		 * @brief Marks tiles prepared before their cells finished loading for re-preparation.
+		 * @return True when a stale whole-cell grid was dropped and must be advanced again.
+		 */
+		bool RefreshUnattachedTiles();
 		/** @brief Accept an observed static shape within the active 3x3 without caching it on disk. */
 		bool PublishRuntimeShape(std::shared_ptr<const Shape> shape, float centerX, float centerY, uint32_t expectedScope = 0);
 		/** @brief Releases every in-memory tile at scene transition. */
@@ -298,6 +301,7 @@ private:
 	uint32_t lastVisitedCell = 0, previousVisitedCell = 0, distinctTransitions = 0;
 	int32_t lastExteriorGridX = std::numeric_limits<int32_t>::min();
 	int32_t lastExteriorGridY = std::numeric_limits<int32_t>::min();
+	bool interiorRefsLoaded = false;
 	std::optional<DX12::SubcellKey> inFlight;
 	std::atomic<std::shared_ptr<const DX12::PreparationStats>> generationStats{
 		std::make_shared<const DX12::PreparationStats>()
