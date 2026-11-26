@@ -450,10 +450,12 @@ namespace ShadowCasterManager
 		// change raster filter decisions or add another geometry traversal.
 		const auto nativeMode = s_nativeCasterMode;
 		if (nativeMode != DX12::SCMNativeCasterMode::Disabled &&
+			nativeMode != DX12::SCMNativeCasterMode::SuppressAll &&
 			!geom.GetGeometryRuntimeData().skinInstance &&
 			!IsCasterDynamic(geom))
 			globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
-		const bool nativeDynamicOnly = nativeMode == DX12::SCMNativeCasterMode::Suppress;
+		const bool nativeDynamicOnly = nativeMode == DX12::SCMNativeCasterMode::Suppress ||
+		                               nativeMode == DX12::SCMNativeCasterMode::SuppressAll;
 		if (!AtlasActive() && !nativeDynamicOnly)
 			return false;
 		if (const auto passless = ShadowMapPassless(geom); passless != PasslessReason::kNone) {

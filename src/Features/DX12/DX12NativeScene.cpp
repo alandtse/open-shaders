@@ -67,10 +67,13 @@ bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
 	return cell && (!cell->IsExteriorCell() || (globals::features::dx12Control.IsFullRTMode() ? outdoorFullRT : outdoorShadowOffloading));
 }
 
-bool DX12NativeScene::CanSuppressSCMStatic() const
+DX12::SCMNativeMode DX12NativeScene::GetFrameNativeMode() const
 {
-	return loaded && !globals::game::isVR && globals::features::dx12Control.IsActive() &&
-	       globals::features::dx12Control.IsShadowOffloadMode() && CanOffloadShadowsInCurrentCell();
+	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive() ||
+		!globals::game::graphicsState ||
+		frameNativeModeID.load(std::memory_order_acquire) != globals::game::graphicsState->GetFrameCount())
+		return DX12::SCMNativeMode::Disabled;
+	return frameNativeMode.load(std::memory_order_acquire);
 }
 
 bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const
@@ -78,7 +81,7 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	// SCM keeps raster dynamic casters unconditionally. Static casters may be
 	// omitted only when this exact runtime light was matched to a native emitter
 	// in the current frame; a nearby prepared light is not sufficient proof.
-	if (!light || slot < 0 || !CanSuppressSCMStatic() ||
+	if (!light || slot < 0 ||
 		light->GetIsFrustumOrDirectionalLight() || !globals::game::graphicsState)
 		return false;
 	const auto scene = acceleration.GetScene();
@@ -114,7 +117,7 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 	bool /*flickers*/, const RE::NiPoint3& restOrigin)
 {
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive() ||
-		!globals::features::dx12Control.IsShadowOffloadMode() || !light || light->GetIsFrustumOrDirectionalLight() || !globals::game::graphicsState)
+		!light || light->GetIsFrustumOrDirectionalLight() || !globals::game::graphicsState)
 		return;
 	auto* ni = light->light.get();
 	const auto lights = shadowLights.load(std::memory_order_acquire);
@@ -204,12 +207,28 @@ void DX12NativeScene::PreShadowMaps()
 		OnRuntimeDisabled();
 		return;
 	}
-	if (!globals::state || !globals::state->startupMenuInitializationComplete.load(std::memory_order_acquire) ||
-		(globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME)))
+	if (!globals::state || !globals::game::graphicsState ||
+		!globals::state->startupMenuInitializationComplete.load(std::memory_order_acquire) ||
+		(globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME))) {
+		frameNativeModeID.store(UINT32_MAX, std::memory_order_release);
 		return;
+	}
 	nativeSessionStarted = true;
+	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
+	if (frameNativeModeID.load(std::memory_order_acquire) != frame) {
+		const auto& control = globals::features::dx12Control;
+		const auto mode = DX12::SelectSCMNativeMode(control.IsActive(), globals::game::isVR,
+			control.IsShadowOffloadMode(), control.IsFullRTMode(), CanOffloadShadowsInCurrentCell());
+		const auto previous = frameNativeMode.exchange(mode, std::memory_order_acq_rel);
+		if (previous != mode) {
+			std::scoped_lock lock(runtimeLightMutex);
+			runtimeLightFrame = UINT32_MAX;
+			runtimeLightSamples.clear();
+		}
+		frameNativeModeID.store(frame, std::memory_order_release);
+	}
 	auto grid = globals::features::dx12Resources.GetGrid();
-	if (!grid || !grid->requested.front().scope) {
+	if (!grid || grid->requested.empty() || !grid->requested.front().scope) {
 		shadowLightScope.store(0, std::memory_order_release);
 		shadowLights.store(nullptr, std::memory_order_release);
 		return;
@@ -299,9 +318,9 @@ void DX12NativeScene::OnOpaqueRasterReady()
 			static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections)))
 		return;
 	// Only capture the depth and camera used by the independent shadow layer.
-	const auto& control = globals::features::dx12Control;
-	const bool fullRT = control.IsFullRTMode();
-	if ((!control.IsShadowOffloadMode() && !fullRT) || !CanOffloadShadowsInCurrentCell())
+	const auto mode = GetFrameNativeMode();
+	const bool fullRT = mode == DX12::SCMNativeMode::FullRT;
+	if (mode != DX12::SCMNativeMode::ShadowOffload && !fullRT)
 		return;
 
 	CS_GPU_PASS("DX12NativeScene::OpaqueRasterReady");
@@ -447,6 +466,10 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requi
 
 void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 {
+	if (a_opening) {
+		frameNativeModeID.store(UINT32_MAX, std::memory_order_release);
+		frameNativeMode.store(DX12::SCMNativeMode::Disabled, std::memory_order_release);
+	}
 	if (a_opening && nativeSessionStarted) {
 		shadowLightScope.store(0, std::memory_order_release);
 		shadowLights.store(nullptr, std::memory_order_release);
@@ -465,6 +488,8 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 
 void DX12NativeScene::OnRuntimeDisabled()
 {
+	frameNativeModeID.store(UINT32_MAX, std::memory_order_release);
+	frameNativeMode.store(DX12::SCMNativeMode::Disabled, std::memory_order_release);
 	if (!nativeSessionStarted)
 		return;
 	nativeSessionStarted = false;

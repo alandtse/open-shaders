@@ -583,6 +583,7 @@ namespace ShadowCasterManager
 	};
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
 	static bool s_nativeOwnershipPending = false;  // SCM scheduling thread only.
+	static DX12::SCMNativePolicy s_frameNativePolicy{};
 
 	static void RetireSplitBake(SplitState& st)
 	{
@@ -610,12 +611,6 @@ namespace ShadowCasterManager
 		InvalidateSlotTileContent(slot);
 		if (!native)
 			InvalidateNativeRasterTile(slot);
-	}
-
-	static DX12::SCMNativePolicy GetSCMNativePolicy()
-	{
-		const auto& control = globals::features::dx12Control;
-		return DX12::SelectSCMNativePolicy(control.IsActive(), control.IsShadowOffloadMode(), globals::game::isVR);
 	}
 
 	void ResetNativeRasterTracking()
@@ -662,27 +657,39 @@ namespace ShadowCasterManager
 		ResetNativeRasterTracking();
 	}
 
-	static void RefreshNativeRasterOwnership()
+	static void EstablishNativeRasterOwnership()
 	{
-		if (!GetSCMNativePolicy().observeLights || !globals::features::dx12NativeScene.CanSuppressSCMStatic()) {
+		auto& nativeScene = globals::features::dx12NativeScene;
+		s_frameNativePolicy = DX12::SelectSCMNativePolicy(nativeScene.GetFrameNativeMode());
+		if (!s_frameNativePolicy.observeLights && !s_frameNativePolicy.fullStaticAuthority) {
 			ReleaseNativeShadowOwnership();
 			return;
 		}
+
+		// Resolve ownership once, after slot membership is settled and before the
+		// redraw scheduler inspects tile validity or chooses an accumulation pass.
 		for (int32_t slot = s_lights.PointLightFirst(); slot < s_lights.PointLightEnd(s_settings.ShadowLightCount); ++slot) {
 			auto& entry = s_lights.Lights[slot];
 			if (!entry.Light)
 				continue;
+			const bool supported = !entry.Light->GetIsFrustumOrDirectionalLight();
+			bool matched = false;
+			if (supported && s_frameNativePolicy.observeLights) {
+				ObserveNativeShadowLight(entry.Light);
+				matched = nativeScene.OwnsStaticForLight(entry.Light, slot);
+			}
+			// Full RT never observes SCM lights or queries native coverage/readiness.
+			const bool native = DX12::NativeStaticAuthority(s_frameNativePolicy, supported, matched);
 			const auto it = s_splitState.find(entry.Light);
 			const bool omitted = it != s_splitState.end() && it->second.rasterOmitsNativeStatic;
-			if (!omitted && !SlotNativeStaticOmitted(slot))
-				continue;
-			ObserveNativeShadowLight(entry.Light);
-			if (globals::features::dx12NativeScene.OwnsStaticForLight(entry.Light, slot))
-				continue;
-			if (omitted)
-				TransitionNativeShadowOwnership(it->second, slot, false);
-			InvalidateNativeRasterTile(slot);
-			MarkNativeRasterRecovery(entry);
+			if (native != omitted) {
+				auto& state = s_splitState[entry.Light];
+				TransitionNativeShadowOwnership(state, slot, native);
+				MarkNativeRasterRecovery(entry);
+			} else if (!native && SlotNativeStaticOmitted(slot)) {
+				InvalidateNativeRasterTile(slot);
+				MarkNativeRasterRecovery(entry);
+			}
 		}
 	}
 
@@ -1399,18 +1406,11 @@ namespace ShadowCasterManager
 		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
 			// Native-owned static shadows never require a legacy atlas bake.
-			const auto nativePolicy = GetSCMNativePolicy();
-			const bool flickers = FlickersFromLiveOrigin(light->light.get());
-			bool native = false;
-			if (nativePolicy.observeLights) {
-				ObserveNativeShadowLight(light);
-				native = globals::features::dx12NativeScene.OwnsStaticForLight(light, slotIndex);
-			}
-			bool split = !native && StaticAtlasReady() && !carrier && !flickers;
-			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+			const auto nativePolicy = s_frameNativePolicy;
 			SplitState* st = &s_splitState[light];
-			if (nativePolicy.observeLights || st->rasterOmitsNativeStatic)
-				TransitionNativeShadowOwnership(*st, slotIndex, native);
+			const bool native = st->rasterOmitsNativeStatic;
+			bool split = !native && StaticAtlasReady() && !carrier && !FlickersFromLiveOrigin(light->light.get());
+			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			// A second accumulate this frame is skipped below, so it keeps the first call's split decision.
 			const auto prior = s_lightAccumFrame.find(light);
 			const bool repeatThisFrame = prior != s_lightAccumFrame.end() && prior->second.frame == nowFrame;
@@ -4271,8 +4271,7 @@ namespace ShadowCasterManager
 			ValidateCandidates(camera, wantDiag, candidates);
 
 			UpdatePoolMembership(ssn, sunLight, candidates);
-			if (s_nativeOwnershipPending)
-				RefreshNativeRasterOwnership();
+			EstablishNativeRasterOwnership();
 
 			double budget = ComputeRedrawBudget();
 			s_redrawnLightsThisFrame = 0;
@@ -4419,7 +4418,6 @@ namespace ShadowCasterManager
 		{
 			ZoneNamedN(zPoint, "SCM::Render::PointLights", true);
 			CS_GPU_PASS("SCM::Render::PointLights");
-			const bool observeNativeLights = GetSCMNativePolicy().observeLights;
 			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
 				// A teardown can begin mid-pass; ClearLightArrays sets the flag before
 				// freeing, so bailing here narrows the window to a single in-flight Render call.
@@ -4428,11 +4426,6 @@ namespace ShadowCasterManager
 				auto& e = s_lights.Lights[i];
 				if (!e.Light)
 					continue;
-				// Cached lights still publish live parameters; only accumulation may change raster provenance.
-				if (observeNativeLights && !e.RedrawFrame) {
-					if (const auto it = s_splitState.find(e.Light); it != s_splitState.end() && !it->second.rasterOmitsNativeStatic)
-						ObserveNativeShadowLight(e.Light);
-				}
 				if (!e.RedrawFrame)
 					continue;
 				const CarriedShadowScope carriedShadow(CarrierBody(e.Light) != nullptr);

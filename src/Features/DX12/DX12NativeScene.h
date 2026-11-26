@@ -5,6 +5,7 @@
 #include "DX12NativeRuntimeCapture.h"
 #include "DX12NativeShadowTrace.h"
 #include "Feature.h"
+#include "SCMNativePolicy.h"
 
 #include <atomic>
 #include <memory>
@@ -51,8 +52,8 @@ struct DX12NativeScene final : Feature
 	void ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requireStability = false);
 	/** @brief SCM hands native-owned lights' static casters to RayQuery and retains movers. */
 	bool OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const;
-	/** @brief Global prerequisites for suppressing SCM static shadows. */
-	bool CanSuppressSCMStatic() const;
+	/** @brief Frame-wide policy established before SCM scheduling. */
+	DX12::SCMNativeMode GetFrameNativeMode() const;
 	// Snapshot LLF/SCM point-light parameters without altering the DX11 light.
 	void ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID, bool flickers,
 		const RE::NiPoint3& restOrigin);
@@ -74,6 +75,8 @@ private:
 	// One immutable, ordered light selection shared by SCM and the RayQuery dispatch.
 	std::atomic<std::shared_ptr<const std::vector<DX12::PreparedLight>>> shadowLights;
 	std::atomic<uint32_t> shadowLightScope{ 0 };
+	std::atomic<DX12::SCMNativeMode> frameNativeMode{ DX12::SCMNativeMode::Disabled };
+	std::atomic<uint32_t> frameNativeModeID{ UINT32_MAX };
 	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
 	bool outdoorFullRT = false;
 	uint32_t fullRTQuality = DX12Native::kShadowQualityQuality;

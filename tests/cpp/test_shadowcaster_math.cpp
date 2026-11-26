@@ -539,27 +539,47 @@ TEST_CASE("PlayerProtectionCap leaves half the slots to the lights in view", "[s
 	REQUIRE(PlayerProtectionCap(0) == 1);
 }
 
-TEST_CASE("Native SCM policy preserves the disabled and VR paths", "[scm][dx12]")
+TEST_CASE("Native SCM ownership is established by rendering mode", "[scm][dx12]")
 {
-	using DX12::SCMNativeCasterMode;
-	using DX12::SelectSCMNativeCasterMode;
-	using DX12::SelectSCMNativePolicy;
-	for (bool offload : { false, true }) {
-		for (bool owned : { false, true }) {
-			const auto disabled = SelectSCMNativePolicy(false, offload, false);
-			CHECK_FALSE(disabled.observeGeometry);
-			CHECK_FALSE(disabled.observeLights);
-			CHECK(SelectSCMNativeCasterMode(disabled, owned) == SCMNativeCasterMode::Disabled);
-			const auto vr = SelectSCMNativePolicy(true, offload, true);
-			CHECK(SelectSCMNativeCasterMode(vr, owned) == SCMNativeCasterMode::Disabled);
+	using namespace DX12;
+	for (bool fullRT : { false, true }) {
+		for (bool offload : { false, true }) {
+			CHECK(SelectSCMNativeMode(false, false, offload, fullRT, true) == SCMNativeMode::Disabled);
+			CHECK(SelectSCMNativeMode(true, true, offload, fullRT, true) == SCMNativeMode::Disabled);
+			CHECK(SelectSCMNativeMode(true, false, offload, fullRT, false) == SCMNativeMode::RasterComparison);
 		}
 	}
-	const auto comparison = SelectSCMNativePolicy(true, false, false);
+	const auto disabled = SelectSCMNativePolicy(SCMNativeMode::Disabled);
+	CHECK_FALSE(disabled.observeGeometry);
+	CHECK_FALSE(disabled.observeLights);
+	CHECK_FALSE(disabled.fullStaticAuthority);
+	CHECK(SelectSCMNativeCasterMode(disabled, true) == SCMNativeCasterMode::Disabled);
+	CHECK_FALSE(NativeStaticAuthority(disabled, true, true));
+
+	const auto comparison = SelectSCMNativePolicy(SCMNativeMode::RasterComparison);
 	CHECK(comparison.observeGeometry);
 	CHECK_FALSE(comparison.observeLights);
+	CHECK_FALSE(NativeStaticAuthority(comparison, true, true));
 	CHECK(SelectSCMNativeCasterMode(comparison, true) == SCMNativeCasterMode::Observe);
-	const auto offload = SelectSCMNativePolicy(true, true, false);
+
+	const auto offload = SelectSCMNativePolicy(SCMNativeMode::ShadowOffload);
+	CHECK(offload.observeGeometry);
 	CHECK(offload.observeLights);
+	CHECK_FALSE(NativeStaticAuthority(offload, true, false));
+	CHECK(NativeStaticAuthority(offload, true, true));
+	CHECK_FALSE(NativeStaticAuthority(offload, false, true));
 	CHECK(SelectSCMNativeCasterMode(offload, false) == SCMNativeCasterMode::Observe);
 	CHECK(SelectSCMNativeCasterMode(offload, true) == SCMNativeCasterMode::Suppress);
+
+	const auto fullRT = SelectSCMNativePolicy(SCMNativeMode::FullRT);
+	CHECK_FALSE(fullRT.observeGeometry);
+	CHECK_FALSE(fullRT.observeLights);
+	CHECK(fullRT.fullStaticAuthority);
+	CHECK(NativeStaticAuthority(fullRT, true, false));
+	CHECK(NativeStaticAuthority(fullRT, true, true));
+	CHECK_FALSE(NativeStaticAuthority(fullRT, false, false));
+	CHECK(SelectSCMNativeCasterMode(fullRT, true) == SCMNativeCasterMode::SuppressAll);
+	CHECK(SelectSCMNativeCasterMode(fullRT, false) == SCMNativeCasterMode::Disabled);
+	CHECK(SelectSCMNativeMode(true, false, false, true, true) == SCMNativeMode::FullRT);
+	CHECK(SelectSCMNativeMode(true, false, true, false, true) == SCMNativeMode::ShadowOffload);
 }
