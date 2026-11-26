@@ -103,6 +103,17 @@ struct Feature
 	/** @brief Gets additional shader define key-value pairs for this feature. */
 	virtual std::vector<std::pair<std::string_view, std::string_view>> GetShaderDefineOptions() { return {}; }
 
+	/**
+	 * @brief Descriptor bit that selects this feature's compiled Lighting variant, or 0 when it has none.
+	 *
+	 * The bit is masked out of the descriptor before the engine builds its define set, so it must not
+	 * collide with an engine, upstream or technique bit (see src/LightingBudget.h).
+	 */
+	virtual uint32_t GetLightingVariantFlag() const { return 0; }
+
+	/** @brief Preprocessor define compiled into the Lighting variant selected by GetLightingVariantFlag(). */
+	virtual std::string_view GetLightingVariantDefine() const { return {}; }
+
 protected:
 	/** @brief Builds a full Nexus Mods URL from a numeric mod ID. */
 	static std::string MakeNexusModURL(std::string_view modId) noexcept

@@ -1076,6 +1076,7 @@ namespace SIE
 			Deferred = 1 << 4,
 			LandscapeSeams = 1 << 5,
 			// Community Shaders end
+			DetailMaps = 1 << 6,
 			Specular = 1 << 9,
 			SoftLighting = 1 << 10,
 			RimLighting = 1 << 11,

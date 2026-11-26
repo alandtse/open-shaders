@@ -670,7 +670,7 @@ namespace Util
 		}
 
 		template <class Json>
-		std::optional<Json> ReadJsonFile(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes, std::string* error)
+		std::optional<Json> ReadJsonFile(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes, std::string* error, bool allowComments)
 		{
 			std::ifstream file(path);
 			if (!file.is_open())
@@ -684,19 +684,19 @@ namespace Util
 				}
 			}
 			try {
-				return Json::parse(file);
+				return Json::parse(file, nullptr, true, allowComments);
 			} catch (const std::exception& e) {
 				ReportReadFailure(path, context, e.what(), error);
 				return std::nullopt;
 			}
 		}
 
-		template std::optional<nlohmann::json> ReadJsonFile<nlohmann::json>(const std::filesystem::path&, std::string_view, std::uintmax_t, std::string*);
-		template std::optional<nlohmann::ordered_json> ReadJsonFile<nlohmann::ordered_json>(const std::filesystem::path&, std::string_view, std::uintmax_t, std::string*);
+		template std::optional<nlohmann::json> ReadJsonFile<nlohmann::json>(const std::filesystem::path&, std::string_view, std::uintmax_t, std::string*, bool);
+		template std::optional<nlohmann::ordered_json> ReadJsonFile<nlohmann::ordered_json>(const std::filesystem::path&, std::string_view, std::uintmax_t, std::string*, bool);
 
-		std::optional<nlohmann::json> ReadJsonObject(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes, std::string* error)
+		std::optional<nlohmann::json> ReadJsonObject(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes, std::string* error, bool allowComments)
 		{
-			auto document = ReadJsonFile(path, context, maxBytes, error);
+			auto document = ReadJsonFile(path, context, maxBytes, error, allowComments);
 			if (document && !document->is_object()) {
 				ReportReadFailure(path, context, "root is not a JSON object", error);
 				return std::nullopt;

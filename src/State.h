@@ -624,6 +624,8 @@ public:
 		float GrassCanopyHeight;
 		float3 canopyPadding;
 
+		float4 PerDrawFeatureData[2];
+
 		bool operator==(const PermutationCB& other) const
 		{
 			return VertexShaderDescriptor == other.VertexShaderDescriptor && PixelShaderDescriptor == other.PixelShaderDescriptor &&
@@ -657,7 +659,15 @@ public:
 			       TreeWindProbeTop.x == other.TreeWindProbeTop.x &&
 			       TreeWindProbeTop.y == other.TreeWindProbeTop.y &&
 			       TreeWindProbeTop.z == other.TreeWindProbeTop.z &&
-			       GrassCanopyHeight == other.GrassCanopyHeight;
+			       GrassCanopyHeight == other.GrassCanopyHeight &&
+			       PerDrawFeatureData[0].x == other.PerDrawFeatureData[0].x &&
+			       PerDrawFeatureData[0].y == other.PerDrawFeatureData[0].y &&
+			       PerDrawFeatureData[0].z == other.PerDrawFeatureData[0].z &&
+			       PerDrawFeatureData[0].w == other.PerDrawFeatureData[0].w &&
+			       PerDrawFeatureData[1].x == other.PerDrawFeatureData[1].x &&
+			       PerDrawFeatureData[1].y == other.PerDrawFeatureData[1].y &&
+			       PerDrawFeatureData[1].z == other.PerDrawFeatureData[1].z &&
+			       PerDrawFeatureData[1].w == other.PerDrawFeatureData[1].w;
 		}
 	};
 	static_assert(offsetof(PermutationCB, EnableAmbientGrassWind) == 60);
@@ -668,7 +678,9 @@ public:
 	static_assert(offsetof(PermutationCB, TreeWindProbeBase) == 112);
 	static_assert(offsetof(PermutationCB, TreeWindProbeTop) == 128);
 	static_assert(offsetof(PermutationCB, GrassCanopyHeight) == 144);
-	static_assert(sizeof(PermutationCB) == 160);
+	static_assert(offsetof(PermutationCB, PerDrawFeatureData) == 160);
+	static_assert(sizeof(PermutationCB) == 192);
+	static_assert(sizeof(PermutationCB) % 16 == 0);
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
 
 	std::unique_ptr<ConstantBuffer> permutationCB;

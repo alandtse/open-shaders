@@ -8,6 +8,7 @@
 #include "Features/CSUtility.h"
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
+#include "Features/DetailMaps.h"
 #include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/Effects11.h"
@@ -99,6 +100,7 @@ namespace globals
 		HorizonFix horizonFix{};
 		InteriorSun interiorSun{};
 		FurShells furShells{};
+		DetailMaps detailMaps{};
 		RainRefraction rainRefraction{};
 		ScreenSpaceGI screenSpaceGI{};
 		ScreenSpaceShadows screenSpaceShadows{};

@@ -1,5 +1,6 @@
 #include "ShaderCache.h"
 #include "Globals.h"
+#include "LightingBudget.h"
 #include "ShaderCompileStatus.h"
 #include "ShaderFileWatcher.h"
 #include "Util.h"
@@ -755,7 +756,13 @@ namespace SIE
 
 		static void GetLightingShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
-			RE::GetLightingShaderDefines(descriptor, reinterpret_cast<REX::W32::D3D_SHADER_MACRO*>(defines.data()));
+			uint32_t variantMask = 0;
+			for (auto* feature : Feature::GetFeatureList()) {
+				if (feature->loaded)
+					variantMask |= feature->GetLightingVariantFlag();
+			}
+
+			RE::GetLightingShaderDefines(descriptor & ~variantMask, reinterpret_cast<REX::W32::D3D_SHADER_MACRO*>(defines.data()));
 
 			size_t lastIndex = std::ranges::find_if(defines, [](const D3D_SHADER_MACRO& macro) { return macro.Name == nullptr; }) - defines.begin();
 
@@ -776,6 +783,14 @@ namespace SIE
 				if ((descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::FurShellsDepth)) != 0) {
 					defines[lastIndex++] = { "FUR_SHELLS_DEPTH", nullptr };
 				}
+			}
+			for (auto* feature : Feature::GetFeatureList()) {
+				if (!feature->loaded)
+					continue;
+				const uint32_t flag = feature->GetLightingVariantFlag();
+				const auto define = feature->GetLightingVariantDefine();
+				if (flag != 0 && !define.empty() && (descriptor & flag) != 0)
+					defines[lastIndex++] = { define.data(), nullptr };
 			}
 
 			for (auto* feature : Feature::GetFeatureList()) {

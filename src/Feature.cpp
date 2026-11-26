@@ -8,6 +8,7 @@
 #include "Features/CSUtility.h"
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
+#include "Features/DetailMaps.h"
 #include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ProceduralSun.h"
@@ -296,6 +297,7 @@ namespace
 			&globals::features::lodBlending,
 			&globals::features::hairSpecular,
 			&globals::features::interiorSun,
+			&globals::features::detailMaps,
 			&globals::features::furShells,
 			&globals::features::terrainVariation,
 			&globals::features::ibl,
