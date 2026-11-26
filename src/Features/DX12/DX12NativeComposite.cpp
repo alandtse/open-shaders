@@ -129,6 +129,17 @@ namespace DX12Native
 		if (!applyShadow)
 			returnColorToDX11 = false;
 
+		// Completed producer work no longer needs its input publications.
+		for (auto& candidate : slots) {
+			if (!candidate || candidate->untracked || !candidate->frame || !candidate->frame->producerValue || !candidate->fence.fence12)
+				continue;
+			const auto completed = candidate->fence.fence12->GetCompletedValue();
+			if (completed != UINT64_MAX && completed >= candidate->frame->producerValue) {
+				candidate->shadowInput.reset();
+				candidate->rasterInput.reset();
+				candidate->source = nullptr;
+			}
+		}
 		Slot* slot = nullptr;
 		for (auto& candidate : slots) {
 			if (!candidate)
@@ -162,7 +173,7 @@ namespace DX12Native
 			                      slot->backend.commandQueue.get() != queue || slot->sourceDesc.Width != desc.Width ||
 			                      slot->sourceDesc.Height != desc.Height || slot->sourceDesc.Format != desc.Format ||
 			                      slot->supportsShadow != supportsShadow ||
-			                      slot->hasReturn != returnColorToDX11 ||
+			                      (returnColorToDX11 && !slot->hasReturn) ||
 			                      (applyShadow && kPublishReconstructedMask && (!slot->reconstructedMask || slot->maskWidth != width || slot->maskHeight != height));
 			if (recreate) {
 				// Reuse open-RT's two-image, four-slot DXGI budget and lifetime policy.

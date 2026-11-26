@@ -129,6 +129,9 @@ private:
 	mutable std::mutex runtimeLightMutex;
 	uint32_t runtimeLightFrame = UINT32_MAX;
 	std::vector<RuntimeLightSample> runtimeLightSamples;
+	std::unordered_map<const RE::NiLight*, size_t> runtimeLightBySource;
+	std::unordered_map<uint32_t, size_t> runtimeLightByReference;
+	void ClearRuntimeLightSamples();
 	std::unordered_map<uint32_t, DX12::PreparedLight> frozenNativeLights;
 	// Full-shadow membership is independent of SCM selection. Keep emitter identity alive
 	// only while the source belongs to the active world light lists.

@@ -211,6 +211,14 @@ bool DX12NativeScene::CanSuppressSCMStatic() const
 	       previousShadowSubmitted.load(std::memory_order_acquire);
 }
 
+
+void DX12NativeScene::ClearRuntimeLightSamples()
+{
+	runtimeLightSamples.clear();
+	runtimeLightBySource.clear();
+	runtimeLightByReference.clear();
+}
+
 bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const
 {
 	// The default mode requires an exact runtime light match; all-light mode
@@ -233,10 +241,11 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	if (runtimeLightFrame != frame)
 		return false;
 
-	const auto found = std::ranges::find_if(runtimeLightSamples, [ni](const RuntimeLightSample& sample) {
-		return sample.source == ni;
-	});
-	if (found == runtimeLightSamples.end() || found->value.fade <= 0.0f)
+	const auto found = runtimeLightBySource.find(ni);
+	if (found == runtimeLightBySource.end())
+		return false;
+	const auto& sample = runtimeLightSamples[found->second];
+	if (sample.value.fade <= 0.0f)
 		return false;
 
 	// The shader admits only the published prepared lights. Never suppress a
@@ -244,7 +253,7 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	const size_t limit = std::min(lights->size(), size_t{ DX12Native::kMaxShadowLights });
 	for (size_t i = 0; i < limit; ++i) {
 		const auto& candidate = (*lights)[i];
-		if (candidate.referenceID != 0 && candidate.referenceID == found->referenceID)
+		if (candidate.referenceID != 0 && candidate.referenceID == sample.referenceID)
 			return true;
 	}
 	return false;
@@ -310,7 +319,7 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 	std::scoped_lock lock(runtimeLightMutex);
 	if (runtimeLightFrame != frame) {
 		runtimeLightFrame = frame;
-		runtimeLightSamples.clear();
+		ClearRuntimeLightSamples();
 	}
 	if (offloadingProfile.freezeNativeFlickering && flickers && matched->referenceID != 0) {
 		// Keep DX11's flicker intact. Only the native shadow has a stable light.
@@ -319,18 +328,24 @@ void DX12NativeScene::ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t ref
 	}
 	// A prepared emitter must not accidentally account for two different SCM
 	// lights that happen to occupy the same position.
-	const auto it = std::ranges::find_if(runtimeLightSamples, [ni](const auto& sample) {
-		return sample.source == ni;
-	});
-	if (it != runtimeLightSamples.end()) {
-		it->referenceID = matched->referenceID;
-		it->value = live;
-		it->flickers = flickers;
+	const auto it = runtimeLightBySource.find(ni);
+	if (it != runtimeLightBySource.end()) {
+		auto& sample = runtimeLightSamples[it->second];
+		const bool referenceChanged = sample.referenceID != matched->referenceID;
+		sample.referenceID = matched->referenceID;
+		sample.value = live;
+		sample.flickers = flickers;
+		if (referenceChanged) {
+			runtimeLightByReference.clear();
+			for (size_t i = 0; i < runtimeLightSamples.size(); ++i)
+				runtimeLightByReference.try_emplace(runtimeLightSamples[i].referenceID, i);
+		}
 	} else if (runtimeLightSamples.size() < DX12Native::kMaxShadowLights &&
-			   !std::ranges::any_of(runtimeLightSamples, [&](const auto& sample) {
-				   return sample.referenceID == matched->referenceID;
-			   })) {
+			   !runtimeLightByReference.contains(matched->referenceID)) {
+		const size_t index = runtimeLightSamples.size();
 		runtimeLightSamples.push_back({ ni, matched->referenceID, live, flickers });
+		runtimeLightBySource.try_emplace(ni, index);
+		runtimeLightByReference.try_emplace(matched->referenceID, index);
 	}
 }
 
@@ -370,7 +385,7 @@ void DX12NativeScene::PreShadowMaps()
 			if (modeChanged) {
 				std::scoped_lock lock(runtimeLightMutex);
 				ResetFullLightInventory();
-				runtimeLightSamples.clear();
+				ClearRuntimeLightSamples();
 				runtimeLightFrame = UINT32_MAX;
 				frozenNativeLights.clear();
 			}
@@ -610,13 +625,11 @@ void DX12NativeScene::OnOpaqueRasterReady()
 			std::scoped_lock lock(runtimeLightMutex);
 			liveLights.reserve(lights->size());
 			for (const auto& prepared : *lights) {
-				const auto observed = runtimeLightFrame == frame ?
-					std::ranges::find_if(runtimeLightSamples, [&](const auto& sample) {
-						return sample.referenceID == prepared.referenceID;
-					}) : runtimeLightSamples.end();
-				if (observed != runtimeLightSamples.end()) {
-					if (observed->value.fade > 0.0f)
-						liveLights.push_back(observed->value);
+				const auto observed = runtimeLightFrame == frame ? runtimeLightByReference.find(prepared.referenceID) : runtimeLightByReference.end();
+				if (observed != runtimeLightByReference.end()) {
+					const auto& sample = runtimeLightSamples[observed->second];
+					if (sample.value.fade > 0.0f)
+						liveLights.push_back(sample.value);
 				}
 			}
 		}
@@ -746,7 +759,7 @@ void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 		{
 			std::scoped_lock lock(runtimeLightMutex);
 			runtimeLightFrame = UINT32_MAX;
-			runtimeLightSamples.clear();
+			ClearRuntimeLightSamples();
 			frozenNativeLights.clear();
 			ResetFullLightInventory();
 		}
@@ -773,7 +786,7 @@ void DX12NativeScene::OnRuntimeDisabled()
 	{
 		std::scoped_lock lock(runtimeLightMutex);
 		runtimeLightFrame = UINT32_MAX;
-		runtimeLightSamples.clear();
+		ClearRuntimeLightSamples();
 		frozenNativeLights.clear();
 		ResetFullLightInventory();
 	}
