@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Utils/MathUtils.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -131,6 +133,24 @@ namespace SnowDeformationMath
 	inline float ReposeStep(float a_rate, float a_dt)
 	{
 		return std::clamp(a_rate * std::max(a_dt, 0.0f) * kReposeReferenceFps, 0.0f, 1.0f);
+	}
+
+	/**
+	 * @brief Snowfall from 0 to 1 while the previous weather gives way to the current one as a_transition runs from 0 to 1.
+	 * @details A transition that is not finite counts as complete.
+	 */
+	inline float BlendSnowfall(bool a_previousSnows, bool a_currentSnows, float a_transition)
+	{
+		return std::lerp(a_previousSnows ? 1.0f : 0.0f, a_currentSnows ? 1.0f : 0.0f, Util::ClampFinite(a_transition, 0.0f, 1.0f, 1.0f));
+	}
+
+	/**
+	 * @brief Share of a print's depth left after one second: a_lifetime seconds fill it to a tenth, and snow falling at
+	 *        a_snowfall (0 to 1) fills a further a_refill share per second at full strength.
+	 */
+	inline float KeepPerSecond(float a_lifetime, float a_refill, float a_snowfall)
+	{
+		return std::pow(0.1f, 1.0f / std::max(a_lifetime, 1e-3f)) * (1.0f - a_refill * std::clamp(a_snowfall, 0.0f, 1.0f));
 	}
 
 	/** @brief Whether a probe read a_sampleFrame exists and is at most a_maxAge frames older than a_frame. */

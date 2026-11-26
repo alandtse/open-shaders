@@ -138,6 +138,8 @@ namespace
 	constexpr float kFadeEndTiles = 14.8f;
 	constexpr float kReposeRate = 0.1f;
 	constexpr float kReposeSlope = 1.19175f;
+	constexpr float kSnowfallReposeRate = 0.2f;
+	constexpr float kSnowfallReposeSlope = 0.57735f;
 	constexpr float kBoundDepth = 2.0f;
 	constexpr float kFootLength = 1.3f;
 	constexpr float kFootAspect = 0.5f;
@@ -2248,7 +2250,7 @@ bool SnowDeformation::OverlapsActivity(const RE::NiBound& a_bound) const
 	return false;
 }
 
-void SnowDeformation::UpdateLevel(uint32_t a_index, const RE::NiPoint3& a_position, float a_decay, float a_deltaTime, bool a_sinking, bool a_gateSnowCover, bool a_skylightingReady)
+void SnowDeformation::UpdateLevel(uint32_t a_index, const RE::NiPoint3& a_position, float a_decay, float a_deltaTime, float a_snowfall, bool a_sinking, bool a_gateSnowCover, bool a_skylightingReady)
 {
 	auto& level = levels[a_index];
 	const bool fine = a_index == 0;
@@ -2388,8 +2390,9 @@ void SnowDeformation::UpdateLevel(uint32_t a_index, const RE::NiPoint3& a_positi
 		const double coarseOriginY = coarse ? static_cast<double>(coarse->windowTileY) * coarse->tileSize : 0.0;
 
 		updateParams.Control = { a_decay, static_cast<float>(frameStampCount), level.cellSize, kShoulder };
-		updateParams.Shape = { kRimWidth, kRimNoise, kChurn, kReposeSlope };
-		updateParams.Options = { a_gateSnowCover ? 1.0f : 0.0f, a_skylightingReady ? 1.0f : 0.0f, seeding ? 1.0f : 0.0f, SnowDeformationMath::ReposeStep(kReposeRate, a_deltaTime) };
+		updateParams.Shape = { kRimWidth, kRimNoise, kChurn, std::lerp(kReposeSlope, kSnowfallReposeSlope, a_snowfall) };
+		const float reposeStep = SnowDeformationMath::ReposeStep(std::lerp(kReposeRate, kSnowfallReposeRate, a_snowfall), a_deltaTime);
+		updateParams.Options = { a_gateSnowCover ? 1.0f : 0.0f, a_skylightingReady ? 1.0f : 0.0f, seeding ? 1.0f : 0.0f, reposeStep };
 		updateParams.EyeOffset = { static_cast<float>(originX - snapshotEye.x), static_cast<float>(originY - snapshotEye.y), -snapshotEye.z, 0.0f };
 		updateParams.Probe = { level.tileSize * 0.5f, level.fadeStart, 1.0f / (level.fadeEnd - level.fadeStart), kProbeSpan };
 		updateParams.OriginCell[0] = tileX * static_cast<int32_t>(kTileTexels);
@@ -2545,10 +2548,13 @@ void SnowDeformation::UpdateField()
 
 	const bool paused = globals::game::ui && globals::game::ui->GameIsPaused();
 	const float deltaTime = paused ? 0.0f : std::clamp(RE::GetSecondsSinceLastFrame(), 0.0f, kMaxDeltaTime);
-	bool snowing = false;
-	if (auto sky = globals::game::sky; sky && sky->currentWeather)
-		snowing = sky->currentWeather->data.flags.any(RE::TESWeather::WeatherDataFlag::kSnow);
-	const float keepPerSecond = std::pow(0.1f, 1.0f / std::clamp(settings.Lifetime, 10.0f, 1800.0f)) * (1.0f - (snowing ? kSnowfallRefill : 0.0f));
+	float snowfall = 0.0f;
+	if (auto sky = globals::game::sky; sky && sky->currentWeather) {
+		const auto snows = [](const RE::TESWeather* a_weather) { return a_weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kSnow); };
+		const bool currentSnows = snows(sky->currentWeather);
+		snowfall = SnowDeformationMath::BlendSnowfall(sky->lastWeather ? snows(sky->lastWeather) : currentSnows, currentSnows, sky->currentWeatherPct);
+	}
+	const float keepPerSecond = SnowDeformationMath::KeepPerSecond(std::clamp(settings.Lifetime, 10.0f, 1800.0f), kSnowfallRefill, snowfall);
 	const float decay = deltaTime > 0.0f ? std::pow(keepPerSecond, deltaTime) : 1.0f;
 
 	const bool snowCover = IsSnowCoverActive();
@@ -2591,9 +2597,10 @@ void SnowDeformation::UpdateField()
 	const bool gateSnowCover = snowCover && snapshotValid;
 	const bool skylightingReady = gateSnowCover && updateSkylighting && skylighting.loaded && skylighting.texProbeArray && skylighting.texProbeArray->srv;
 	debug.snowCover = gateSnowCover;
+	debug.snowfall = snowfall;
 
 	for (uint32_t i = kLevels; i-- > 0;)
-		UpdateLevel(i, position, decay, deltaTime, sinking, gateSnowCover, skylightingReady);
+		UpdateLevel(i, position, decay, deltaTime, snowfall, sinking, gateSnowCover, skylightingReady);
 }
 
 void SnowDeformation::UpdateBlanket(const RE::NiPoint3& a_position, RE::FormID a_worldspace)
@@ -3774,6 +3781,7 @@ json SnowDeformation::GetDiagnostics()
 		{ "SkippedDraws", debugShown.skippedDraws },
 		{ "LayoutRejects", debugShown.layoutRejects },
 		{ "SnowCoverGating", debugShown.snowCover },
+		{ "Snowfall", debugShown.snowfall },
 		{ "LandscapeLayoutSeen", lightingLayoutSeen },
 		{ "BlanketActive", blanketActive },
 		{ "BlanketReadyTexels", blanketReady },
