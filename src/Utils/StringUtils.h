@@ -158,4 +158,35 @@ namespace Util
 			return {};
 		return a_text.substr(first, a_text.find_last_not_of(whitespace) - first + 1);
 	}
+
+	/** @brief Lowercases ASCII letters and turns `/` into `\\`, the form game asset paths are compared in. */
+	inline std::string ToGameAssetPath(std::string_view a_path)
+	{
+		std::string path = ToLowerAscii(a_path);
+		std::ranges::replace(path, '/', '\\');
+		return path;
+	}
+
+	/** @brief ToGameAssetPath rooted at `textures\\`, with any leading `data\\` removed. */
+	inline std::string NormalizeTexturePath(std::string_view a_path)
+	{
+		constexpr std::string_view dataPrefix = "data\\";
+		constexpr std::string_view texturePrefix = "textures\\";
+		std::string path = ToGameAssetPath(a_path);
+		if (path.starts_with(dataPrefix))
+			path.erase(0, dataPrefix.size());
+		if (!path.starts_with(texturePrefix))
+			path.insert(0, texturePrefix);
+		return path;
+	}
+
+	/** @brief Maps a normalized `textures\pbr\...` path to the same path without the `pbr\` folder. */
+	inline std::string StripPbrTextureFolder(std::string a_path)
+	{
+		constexpr std::string_view texturePrefix = "textures\\";
+		constexpr std::string_view pbrFolder = "pbr\\";
+		if (a_path.starts_with(texturePrefix) && std::string_view(a_path).substr(texturePrefix.size()).starts_with(pbrFolder))
+			a_path.erase(texturePrefix.size(), pbrFolder.size());
+		return a_path;
+	}
 }

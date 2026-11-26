@@ -224,12 +224,6 @@ namespace
 	}
 	constexpr std::string_view EmptyOverlayPath = "textures\\actors\\character\\overlays\\default.dds";
 
-	bool IsFirstPersonPass()
-	{
-		auto* accumulator = *globals::game::currentAccumulator.get();
-		return accumulator && accumulator->GetRuntimeData().renderMode == RE::BSShaderAccumulator::RENDER_MODE::kFirstPersonView;
-	}
-
 	bool CanDrawShells(RE::BSGeometry* a_geometry)
 	{
 		if (a_geometry->GetGeometryRuntimeData().skinInstance)
@@ -243,7 +237,7 @@ namespace
 	{
 		using enum SIE::ShaderCache::LightingShaderTechniques;
 
-		switch (static_cast<SIE::ShaderCache::LightingShaderTechniques>((a_descriptor >> 24) & 0x3F)) {
+		switch (SIE::ShaderCache::GetLightingTechnique(a_descriptor)) {
 		case None:
 		case Envmap:
 		case Glowmap:
@@ -262,7 +256,7 @@ namespace
 	{
 		using enum SIE::ShaderCache::LightingShaderTechniques;
 
-		const auto technique = static_cast<SIE::ShaderCache::LightingShaderTechniques>((a_descriptor >> 24) & 0x3F);
+		const auto technique = SIE::ShaderCache::GetLightingTechnique(a_descriptor);
 		return technique == Facegen || technique == FacegenRGBTint;
 	}
 
@@ -272,19 +266,6 @@ namespace
 		const float height = Util::ConvertToDynamic({ 0.0f, static_cast<float>(globals::game::graphicsState->screenHeight) }).y;
 		const float pixels = a_length * 0.5f * height * projection / std::max(a_distance, 1.0f);
 		return std::isfinite(pixels) ? pixels : static_cast<float>(MaxShells) * PixelsPerShell;
-	}
-
-	std::string NormalizeTexturePath(const char* a_path)
-	{
-		std::string path = a_path;
-		std::ranges::transform(path, path.begin(), [](char a_char) {
-			return a_char == '/' ? '\\' : static_cast<char>(std::tolower(static_cast<unsigned char>(a_char)));
-		});
-		if (path.starts_with("data\\"))
-			path.erase(0, 5);
-		if (!path.starts_with("textures\\"))
-			path.insert(0, "textures\\");
-		return path;
 	}
 
 	DXGI_FORMAT GetDepthViewFormat(DXGI_FORMAT a_format)
@@ -323,16 +304,14 @@ namespace
 
 	RE::NiSourceTexturePtr LoadShell(const std::string& a_path, bool& a_exists, std::string& a_shellPath)
 	{
-		constexpr std::string_view pbrPrefix = "textures\\pbr\\";
-
 		a_exists = false;
 		if (!a_path.ends_with(".dds"))
 			return nullptr;
 
 		const std::string stem = a_path.substr(0, a_path.size() - 4);
 		std::array<std::string, 2> candidates{ stem + "_shell.dds", std::string() };
-		if (stem.starts_with(pbrPrefix))
-			candidates[1] = "textures\\" + stem.substr(pbrPrefix.size()) + "_shell.dds";
+		if (const auto vanillaStem = Util::StripPbrTextureFolder(stem); vanillaStem != stem)
+			candidates[1] = vanillaStem + "_shell.dds";
 
 		for (const auto& candidate : candidates) {
 			if (candidate.empty() || !RE::BSResourceNiBinaryStream(candidate).good())
@@ -731,7 +710,7 @@ FurShells::ShellLookup FurShells::FindShell(RE::BSRenderPass* a_pass)
 			if (shell || !diffusePath || !*diffusePath)
 				continue;
 
-			std::string path = NormalizeTexturePath(diffusePath);
+			std::string path = Util::NormalizeTexturePath(diffusePath);
 			if (path == previousPath || missingShells.contains(path))
 				continue;
 			if (resolveBudget == 0)
@@ -755,7 +734,7 @@ FurShells::ShellLookup FurShells::FindShell(RE::BSRenderPass* a_pass)
 			previousPath = std::move(path);
 		}
 
-		const bool emptyOverlay = NormalizeTexturePath(diffuse->name.c_str()) == EmptyOverlayPath || (setPath && NormalizeTexturePath(setPath) == EmptyOverlayPath);
+		const bool emptyOverlay = Util::NormalizeTexturePath(diffuse->name.c_str()) == EmptyOverlayPath || (setPath && Util::NormalizeTexturePath(setPath) == EmptyOverlayPath);
 		if (entries.size() >= MaxEntries)
 			entries.clear();
 		it = entries.insert_or_assign(diffuse, Entry{ diffuse->name, std::move(shell), data, emptyOverlay }).first;
@@ -830,7 +809,7 @@ void FurShells::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
 	if (depthStencilDepthMode != kTestEqual && depthStencilDepthMode != kTestWrite)
 		return;
 
-	const float distance = IsFirstPersonPass() ? 0.0f : std::max(0.0f, geometry->worldBound.center.GetDistance(Util::GetEyePosition(0)) - geometry->worldBound.radius);
+	const float distance = Util::GetPassDistance(*geometry);
 	if (distance >= std::max(settings.FadeEnd, overrideFadeEnd) || !CanDrawShells(geometry))
 		return;
 

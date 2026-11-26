@@ -956,7 +956,7 @@ struct BSLightingShaderProperty_GetRenderPasses
 				constexpr uint32_t LightingTechniqueStart = 0x4800002D;
 				auto lightingTechnique = currentPass->passEnum - LightingTechniqueStart;
 				auto lightingFlags = lightingTechnique & ~(~0u << 24);
-				auto lightingType = static_cast<SIE::ShaderCache::LightingShaderTechniques>((lightingTechnique >> 24) & 0x3F);
+				auto lightingType = SIE::ShaderCache::GetLightingTechnique(lightingTechnique);
 				lightingFlags &= ~(static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::TruePbr) | static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::Deferred));
 				if (isPbr) {
 					lightingFlags |= static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::TruePbr);
@@ -1031,7 +1031,7 @@ bool TruePBR::BSLightingShader_SetupMaterial(RE::BSLightingShader* shader, RE::B
 	const auto& lightingPSConstants = ShaderConstants::LightingPS::Get();
 
 	auto lightingFlags = shader->currentRawTechnique & ~(~0u << 24);
-	auto lightingType = static_cast<SIE::ShaderCache::LightingShaderTechniques>((shader->currentRawTechnique >> 24) & 0x3F);
+	auto lightingType = SIE::ShaderCache::GetLightingTechnique(shader->currentRawTechnique);
 	const bool isObjectTechnique = lightingType == None || lightingType == TreeAnim || lightingType == LODObjects || lightingType == LODObjectHD;
 	if (!(lightingType == LODLand || lightingType == LODLandNoise) && (lightingFlags & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::TruePbr))) {
 		auto shadowState = globals::game::shadowState;
