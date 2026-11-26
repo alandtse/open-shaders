@@ -23,7 +23,7 @@ namespace DX12Native
 		{
 			Matrix projectionInverse, viewInverse;
 			float4 positionAdjust;
-			uint32_t width, height, lightCount, padding;
+			uint32_t width, height, lightCount, frameIndex;
 			uint32_t physicalWidth, physicalHeight;
 		};
 		static_assert(sizeof(Constants) <= D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
@@ -237,7 +237,7 @@ namespace DX12Native
 				slot->raster->camera.CameraProjInverse,
 				slot->raster->camera.CameraViewInverse,
 				slot->raster->camera.CameraPosAdjust,
-				width, height, lightCount, 0u, maskWidth, maskHeight
+				width, height, lightCount, frame, maskWidth, maskHeight
 			};
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
 
@@ -253,7 +253,7 @@ namespace DX12Native
 				                       std::max(light.color.z, 0.0f) * 0.0722f;
 				const std::array<std::array<float, 4>, kRecords> packed{{
 					{ light.position.x, light.position.y, light.position.z, light.radius },
-					{ strength * std::max(light.fade, 0.0f), light.emitterRadius * light.emitterRadius, 0.0f, 0.0f }
+					{ strength * std::max(light.fade, 0.0f), light.emitterRadius * light.emitterRadius, std::max(light.emitterRadius, 0.0f), std::bit_cast<float>(light.referenceID) }
 				}};
 				auto* destination = records.data() + i * kRecords;
 				if (std::memcmp(destination, packed.data(), sizeof(packed)) != 0) {

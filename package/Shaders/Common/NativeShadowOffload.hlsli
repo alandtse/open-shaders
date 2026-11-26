@@ -16,6 +16,7 @@ namespace DX12Native
 	SHADOW_OFFLOAD_CONST float kOffloadingFadeRange = 0.66f;
 	SHADOW_OFFLOAD_CONST float kOffloadingNearRadius = 16.0f;
 	SHADOW_OFFLOAD_CONST float kOffloadingBlend = 0.40f;
+	SHADOW_OFFLOAD_CONST float kOffloadingEmitterMultiplier = 0.30f;
 	SHADOW_OFFLOAD_CONST uint kOffloadingScale = 2u;
 
 	SHADOW_OFFLOAD_FUNCTION uint NativeShadowOffloadExtent(uint size)

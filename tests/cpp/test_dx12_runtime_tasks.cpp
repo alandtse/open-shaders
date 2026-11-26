@@ -134,6 +134,7 @@ TEST_CASE("DX12 offloading has one quarter-resolution layout", "[dx12][shadow]")
 	CHECK(NativeShadowOffloadRenderCoordinate(960, 1921) == 1920);
 	CHECK(NativeShadowOffloadRenderCoordinate(0, 1) == 0);
 	CHECK(kOffloadingBlend == 0.40f);
+	CHECK(kOffloadingEmitterMultiplier == 0.30f);
 	CHECK(kOffloadingFadeRange == 0.66f);
 	CHECK(kOffloadingNearRadius == 16.0f);
 }

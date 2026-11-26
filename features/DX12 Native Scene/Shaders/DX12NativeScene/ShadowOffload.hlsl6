@@ -9,7 +9,7 @@ cbuffer ShadowInputs : register(b0)
 	float4 PositionAdjust;
 	uint2 Size;
 	uint LightCount;
-	uint Padding;
+	uint FrameIndex;
 	uint2 PhysicalSize;
 };
 static const float MinDistance = 0.5f;
@@ -46,6 +46,33 @@ bool ReadReceiver(uint2 packed, out uint2 p, out float3 world, out float receive
 	world = w.xyz / w.w + PositionAdjust.xyz;
 	receiverDistance = length(mul((float3x3)InverseView, v.xyz / v.w));
 	return isfinite(receiverDistance) && receiverDistance > 0.0f;
+}
+
+uint EmitterHash(uint value)
+{
+	value ^= value >> 16u;
+	value *= 0x7feb352du;
+	value ^= value >> 15u;
+	value *= 0x846ca68bu;
+	return value ^ (value >> 16u);
+}
+
+float EmitterRandom(uint seed, uint salt)
+{
+	return (float(EmitterHash(seed ^ salt) >> 9u) + 0.5f) / 8388608.0f;
+}
+
+float3 SampleEmitterOffset(float3 direction, float radius, uint2 pixel, uint lightID)
+{
+	const uint seed = EmitterHash(pixel.x * 0x9e3779b9u ^ pixel.y * 0x85ebca6bu ^
+	                             FrameIndex * 0xc2b2ae35u ^ lightID * 0x27d4eb2fu);
+	const float radial = radius * sqrt(EmitterRandom(seed, 0x68bc21ebu));
+	const float angle = EmitterRandom(seed, 0x02e5be93u) * 6.28318530718f;
+	const float3 tangent = normalize(cross(abs(direction.z) < 0.9f ? float3(0, 0, 1) : float3(0, 1, 0), direction));
+	const float3 bitangent = cross(direction, tangent);
+	float sine, cosine;
+	sincos(angle, sine, cosine);
+	return radial * (cosine * tangent + sine * bitangent);
 }
 
 uint OrderedFloat(float value)
@@ -139,7 +166,7 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 		float d = sqrt(d2);
 		if (d >= radius)
 			continue;
-		const float2 emission = Lights[lightIndex * LightStride + 1u].xy;
+		const float4 emission = Lights[lightIndex * LightStride + 1u];
 		const float fraction = kOffloadingFadeRange;
 		float fade = fraction <= 0.0f ? 1.0f :
 		                                saturate((radius - d) / max(radius * fraction, 1e-4f));
@@ -150,9 +177,18 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 			continue;
 
 		// One visibility ray per contributing light; only its endpoint changes.
-		const float3 rayDirection = delta / d;
-		float tMax = min(d - MinDistance, MaxDistance);
-		tMax = min(tMax, d - kOffloadingNearRadius - MinDistance);
+		const float3 centerDirection = delta / d;
+		const float sourceRadius = max(emission.z > 0.0f ? emission.z : light.w * 0.025f, 0.5f);
+		const float emitterRadius = min(sourceRadius * kOffloadingEmitterMultiplier, d * 0.5f);
+		const uint lightID = asuint(emission.w) != 0u ? asuint(emission.w) : lightIndex;
+		const float3 sampledDelta = delta + SampleEmitterOffset(centerDirection, emitterRadius, p, lightID);
+		const float rayDistance = length(sampledDelta);
+		const float3 rayDirection = sampledDelta / rayDistance;
+		float tMax = min(rayDistance - MinDistance, MaxDistance);
+		const float3 perpendicular = cross(delta, rayDirection);
+		const float discriminant = kOffloadingNearRadius * kOffloadingNearRadius - dot(perpendicular, perpendicular);
+		if (discriminant >= 0.0f)
+			tMax = min(tMax, dot(delta, rayDirection) - sqrt(discriminant) - MinDistance);
 		float visibility = 1.0f;
 		if (tMax > MinDistance) {
 			RayDesc ray;
