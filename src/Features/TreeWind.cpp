@@ -5,6 +5,7 @@
 #include "../I18n/I18n.h"
 #include "Features/Wind/Wind.h"
 #include "Globals.h"
+#include "RE/B/BGSDistantObjectBlock.h"
 #include "State.h"
 
 #define I18N_KEY_PREFIX "feature.tree_wind."
@@ -189,6 +190,19 @@ void TreeWind::ApplyPreset(Preset a_preset)
 
 struct TreeWind::Hooks
 {
+	struct LoadDistantObjects
+	{
+		static RE::BGSDistantObjectBlock* thunk(RE::BGSDistantObjectBlock* a_self, RE::BGSTerrainNode* a_terrain, RE::BSStream& a_stream)
+		{
+			auto* block = func(a_self, a_terrain, a_stream);
+			// The frame waits for terrain preparation; streaming finishes before that barrier.
+			if (globals::features::treeWind.prepareModdedCrowns.load(std::memory_order_relaxed) && block && block->node)
+				TreeShapes::BendWeights::PrepareCrowns(block->node.get());
+			return block;
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	struct BSLightingShader_SetupGeometry
 	{
 		static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
@@ -231,6 +245,7 @@ struct TreeWind::Hooks
 
 	static void Install()
 	{
+		stl::detour_thunk<LoadDistantObjects>(REL::RelocationID(30737, 31575));
 		stl::write_vfunc<0x6, BSLightingShader_SetupGeometry>(RE::VTABLE_BSLightingShader[0]);
 		stl::write_vfunc<0x7, BSLightingShader_RestoreGeometry>(RE::VTABLE_BSLightingShader[0]);
 		stl::write_vfunc<0x6, BSUtilityShader_SetupGeometry>(RE::VTABLE_BSUtilityShader[0]);
@@ -254,9 +269,9 @@ void TreeWind::PostPostLoad()
 void TreeWind::BeginDraw(RE::BSRenderPass* a_pass)
 {
 	drawBendWeights = nullptr;
-	if (!swayActive)
+	if (!swayActive || !a_pass || !a_pass->geometry)
 		return;
-	const auto kind = TreeShapes::Classify(a_pass, settings.TreeModSupport);
+	const auto kind = TreeShapes::Classify(a_pass->geometry, a_pass->shaderProperty, settings.TreeModSupport, a_pass->geometry->world.scale);
 	drawBendWeights = kind == TreeShapes::Kind::None ? nullptr : bendWeights.Get(a_pass->geometry, kind, globals::state->frameCount, settings.TreeModSupport);
 }
 
@@ -267,6 +282,7 @@ void TreeWind::EndDraw()
 
 void TreeWind::SetupResources()
 {
+	canStreamWeights = (globals::d3d::device->GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED) == 0;
 	windOnCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<WindCB>(), "TreeWind::WindOn");
 	windOffCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<WindCB>(), "TreeWind::WindOff");
 }
@@ -336,6 +352,7 @@ void TreeWind::Reset()
 	// The map menus draw the LOD too, and it should stand still there. While off, the draws skip all
 	// per-draw work; both buffers then read as off, whatever is still bound at VS b8.
 	swayActive = settings.Enabled && !globals::state->isMapMenuOpen;
+	prepareModdedCrowns.store(canStreamWeights && swayActive && settings.TreeModSupport, std::memory_order_relaxed);
 
 	WindCB data{};
 	data.Wind = float4{ static_cast<float>(phase), static_cast<float>(prevPhase), windSpeed, windAngle };
