@@ -18,6 +18,7 @@ namespace DX12Native
 	namespace
 	{
 		constexpr uint32_t kRecords = 3;
+		constexpr uint32_t kOffloadRecords = 2;
 		constexpr std::streamoff kMaxShadowBytecodeBytes = 4 * VideoMemoryBudget::kMiB;
 		constexpr uint32_t kShadowThreadGroupSize = 8;
 		constexpr float kMinRayDistance = 0.5f;
@@ -38,6 +39,15 @@ namespace DX12Native
 			uint32_t checkerboardOrigin = 0;
 			uint32_t logicalWidth, logicalHeight, physicalWidth, physicalHeight;
 		};
+		struct OffloadConstants
+		{
+			Matrix projectionInverse, viewInverse;
+			float4 positionAdjust;
+			uint32_t width, height, lightCount, padding;
+			uint32_t physicalWidth, physicalHeight;
+		};
+		static_assert(sizeof(OffloadConstants) <= D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
+
 		winrt::com_ptr<ID3D12Resource> UploadBuffer(ID3D12Device* device, UINT64 bytes)
 		{
 			const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
@@ -178,14 +188,23 @@ namespace DX12Native
 			const ShadowSamplingLayout sampling{ width, height, logicalWidth, logicalHeight,
 				NativeShadowPhysicalWidth(logicalWidth, quality), logicalHeight, quality,
 				NativeShadowCheckerboardOrigin(quality, frame), controls.offloading };
-			const uint64_t lightBytes = uint64_t(std::max(lights.size(), size_t(kMaxShadowLights))) * kRecords * sizeof(std::array<float, 4>);
+			const uint32_t recordsPerLight = controls.offloading ? kOffloadRecords : kRecords;
+			const auto maskFormat = controls.offloading ? DXGI_FORMAT_R32G32_FLOAT : DXGI_FORMAT_R32G32B32A32_FLOAT;
+			const uint64_t lightBytes = uint64_t(lights.size()) * recordsPerLight * sizeof(std::array<float, 4>);
 			const bool fresh = !slot || slot->sampling.physicalWidth != sampling.physicalWidth ||
-			                   slot->sampling.physicalHeight != sampling.physicalHeight;
+			                   slot->sampling.physicalHeight != sampling.physicalHeight || slot->maskFormat != maskFormat;
 			if (fresh) {
 				auto replacement = std::make_shared<ShadowMaskFrame>();
+				replacement->maskFormat = maskFormat;
+				if (controls.offloading) {
+					D3D12_FEATURE_DATA_FORMAT_SUPPORT support{ maskFormat };
+					DX::ThrowIfFailed(requested.d3d12Device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support)));
+					if (!(support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE) || !(support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_LOAD))
+						throw std::runtime_error("Offload mask format unavailable");
+				}
 				const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
 				const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(
-					DXGI_FORMAT_R32G32B32A32_FLOAT, sampling.physicalWidth, sampling.physicalHeight, 1, 1, 1, 0,
+					maskFormat, sampling.physicalWidth, sampling.physicalHeight, 1, 1, 1, 0,
 					D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 				const uint64_t allocation = requested.d3d12Device->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
 				if (!allocation || allocation == UINT64_MAX)
@@ -236,6 +255,12 @@ namespace DX12Native
 			slot->scene = std::move(scene);
 			slot->frame = frame;
 			slot->sampling = sampling;
+			const uint32_t lightCount = uint32_t(lights.size());
+			if (controls.offloading) {
+				const OffloadConstants camera{ slot->raster->camera.CameraProjInverse, slot->raster->camera.CameraViewInverse,
+					slot->raster->camera.CameraPosAdjust, width, height, lightCount, 0u, sampling.physicalWidth, sampling.physicalHeight };
+				WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
+			} else {
 			const Constants camera{
 				slot->raster->camera.CameraProjInverse,
 				slot->raster->camera.CameraViewInverse,
@@ -255,20 +280,34 @@ namespace DX12Native
 			};
 			static_assert(sizeof(Constants) <= D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
+			}
 
 			auto& records = slot->lightRecords;
-			const auto recordCount = size_t(camera.lightCount) * kRecords;
+			const auto recordCount = size_t(lightCount) * recordsPerLight;
 			bool changed = !slot->lightRecordsUploaded || records.size() != recordCount;
 			slot->lightRecordsUploaded = false;
 			records.resize(recordCount);
-			for (size_t i = 0; i < camera.lightCount; ++i) {
+			for (size_t i = 0; i < lightCount; ++i) {
 				const auto& light = lights[i];
 				const std::array<std::array<float, 4>, kRecords> packed{{
 					{ light.position.x, light.position.y, light.position.z, light.radius },
 					{ light.color.x, light.color.y, light.color.z, light.fade },
 					{ light.emitterRadius, light.falloffExponent, float(light.flags), std::bit_cast<float>(light.runtimeIdentity ? uint32_t(light.runtimeIdentity ^ (light.runtimeIdentity >> 32)) : light.referenceID) }
 				}};
-				auto* destination = records.data() + i * kRecords;
+				auto* destination = records.data() + i * recordsPerLight;
+				if (controls.offloading) {
+					const float strength = std::max(light.color.x, 0.0f) * 0.2126f +
+					                       std::max(light.color.y, 0.0f) * 0.7152f +
+					                       std::max(light.color.z, 0.0f) * 0.0722f;
+					const std::array<std::array<float, 4>, kOffloadRecords> compact{{
+						packed[0], { strength * std::max(light.fade, 0.0f), light.emitterRadius * light.emitterRadius, 0.0f, 0.0f }
+					}};
+					if (std::memcmp(destination, compact.data(), sizeof(compact)) != 0) {
+						std::memcpy(destination, compact.data(), sizeof(compact));
+						changed = true;
+					}
+					continue;
+				}
 				if (std::memcmp(destination, packed.data(), sizeof(packed)) != 0) {
 					std::memcpy(destination, packed.data(), sizeof(packed));
 					changed = true;
@@ -279,7 +318,7 @@ namespace DX12Native
 			slot->lightRecordsUploaded = true;
 			slot->debugLights.clear();
 			if (controls.captureDebugLights)
-				slot->debugLights.assign(lights.begin(), lights.begin() + camera.lightCount);
+				slot->debugLights.assign(lights.begin(), lights.begin() + lightCount);
 
 			const UINT step = requested.d3d12Device->GetDescriptorHandleIncrementSize(
 				D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -293,7 +332,7 @@ namespace DX12Native
 				slot->raster->depth->resource.get(), &depth, cpu);
 			cpu.ptr += step;
 			D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
-			uav.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+			uav.Format = maskFormat;
 			uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
 			requested.d3d12Device->CreateUnorderedAccessView(slot->mask.get(), nullptr, &uav, cpu);
 

@@ -1,4 +1,4 @@
-Texture2D<float4> ShadowMask : register(t0);
+Texture2D<float2> ShadowMask : register(t0);
 Texture2D<float> RasterDepth : register(t1);
 RWTexture2D<float4> Scene : register(u0);
 
@@ -6,15 +6,9 @@ cbuffer ShadowConstants : register(b0)
 {
 	uint2 Size;
 	float ReceiverTolerance;
-	float RadiusUnused;
 	uint LegacyTransfer;
-	uint PublishUnused;
-	float StrengthUnused;
-	float BlendUnused;
 	row_major float4x4 InverseProjection;
 	row_major float4x4 InverseView;
-	uint SpatialUnused;
-	uint GridUnused;
 	uint2 LogicalSize;
 };
 
@@ -23,16 +17,15 @@ cbuffer ShadowConstants : register(b0)
 #endif
 
 #include "Common/NativeShadowQuality.hlsli"
-bool ValidMask(float4 mask)
+bool ValidMask(float2 mask)
 {
-	return all(isfinite(mask)) && mask.y == 1.0f && mask.z > 0.0f && mask.w > 0.0f;
+	return all(isfinite(mask)) && mask.y > 0.0f && mask.x < 1.0f;
 }
 
 #if NATIVE_SHADOW_QUALITY == 2
-bool ReceiverSample(float4 mask)
+bool ReceiverSample(float2 mask)
 {
-	return all(isfinite(mask)) && mask.z > 0.0f &&
-	       (ValidMask(mask) || (mask.y == 0.0f && mask.w == 0.0f));
+	return all(isfinite(mask)) && mask.y > 0.0f;
 }
 #endif
 
@@ -41,12 +34,12 @@ bool ReceiverSample(float4 mask)
 	if (any(id.xy >= Size))
 		return;
 #if NATIVE_SHADOW_QUALITY == 0
-	const float4 center = ShadowMask[id.xy];
+	const float2 center = ShadowMask[id.xy];
 	if (!ValidMask(center))
 		return;
 #else
 	const uint2 logical = id.xy / 2u;
-	const float4 center = ShadowMask[logical];
+	const float2 center = ShadowMask[logical];
 	const bool sampled = all(id.xy == min(logical * 2u + 1u, Size - 1u));
 	if (sampled && !ValidMask(center))
 		return;
@@ -65,12 +58,12 @@ bool ReceiverSample(float4 mask)
 	const float tolerance = max(ReceiverTolerance, distance * 1e-5f);
 	float visibility;
 #if NATIVE_SHADOW_QUALITY == 0
-	if (abs(center.z - distance) > tolerance)
+	if (abs(center.y - distance) > tolerance)
 		return;
 	visibility = saturate(center.x);
 #else
 	if (sampled) {
-		if (abs(center.z - distance) > tolerance)
+		if (abs(center.y - distance) > tolerance)
 			return;
 		visibility = saturate(center.x);
 	} else {
@@ -81,8 +74,8 @@ bool ReceiverSample(float4 mask)
 				const int2 neighbor = origin + int2(x, y);
 				if (any(neighbor < 0) || any(neighbor >= int2(LogicalSize)))
 					continue;
-				const float4 sample = all(neighbor == int2(logical)) ? center : ShadowMask[uint2(neighbor)];
-				if (!ReceiverSample(sample) || abs(sample.z - distance) > tolerance)
+				const float2 sample = all(neighbor == int2(logical)) ? center : ShadowMask[uint2(neighbor)];
+				if (!ReceiverSample(sample) || abs(sample.y - distance) > tolerance)
 					continue;
 				const float2 delta = float2(min(uint2(neighbor) * 2u + 1u, Size - 1u)) - float2(id.xy);
 				const float weight = rcp(1.0f + dot(delta, delta));

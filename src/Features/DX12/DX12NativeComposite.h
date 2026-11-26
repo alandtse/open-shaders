@@ -72,7 +72,7 @@ namespace DX12Native
 		};
 
 		std::array<std::unique_ptr<Slot>, 4> slots;
-		winrt::com_ptr<ID3D12RootSignature> shadowRoot;
+		winrt::com_ptr<ID3D12RootSignature> shadowRoot, offloadRoot;
 		std::array<winrt::com_ptr<ID3D12PipelineState>, kShadowShaderCount> shadowPipelines;
 		winrt::com_ptr<ID3D12Device> shadowDevice;
 		std::array<bool, kShadowShaderCount> failedShadowVariants{};

@@ -1,8 +1,26 @@
 RaytracingAccelerationStructure Scene : register(t0);
 Texture2D<float> RasterDepth : register(t1);
 StructuredBuffer<float4> Lights : register(t2);
+#ifdef NATIVE_SHADOW_OFFLOAD
+RWTexture2D<float2> RawMask : register(u0);
+cbuffer ShadowInputs : register(b0)
+{
+	row_major float4x4 InverseProjection;
+	row_major float4x4 InverseView;
+	float4 PositionAdjust;
+	uint2 Size;
+	uint LightCount;
+	uint Padding;
+	uint2 PhysicalSize;
+};
+static const float MinDistance = 0.5f;
+static const float MaxDistance = 60000.0f;
+static const uint CheckerboardOrigin = 0u;
+#define LogicalSize PhysicalSize
+static const uint LightStride = 2u;
+#else
 RWTexture2D<float4> RawMask : register(u0);
-
+static const uint LightStride = 3u;
 cbuffer ShadowInputs : register(b0)
 {
 	row_major float4x4 InverseProjection;
@@ -26,6 +44,7 @@ cbuffer ShadowInputs : register(b0)
 	uint2 LogicalSize;
 	uint2 PhysicalSize;
 };
+#endif
 #include "Common/NativeShadowQuality.hlsli"
 #ifndef NATIVE_SHADOW_QUALITY
 #define NATIVE_SHADOW_QUALITY 0
@@ -110,7 +129,7 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 		const uint last = any(lower > upper) ? first : min(first + 32u, LightCount);
 		[loop] for (uint lightIndex = first; lightIndex < last; ++lightIndex)
 		{
-			const float4 light = Lights[lightIndex * 3u];
+			const float4 light = Lights[lightIndex * LightStride];
 			const float radius = max(light.w * ShadowReachMultiplier, MinDistance);
 			const float3 delta = max(max(lower - light.xyz, light.xyz - upper), 0.0f);
 			const float distanceSquared = dot(delta, delta);
@@ -141,11 +160,17 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 	if (any(packed >= PhysicalSize))
 		return;
 	if (!valid) {
+#ifdef NATIVE_SHADOW_OFFLOAD
+		RawMask[packed] = float2(1, 0);
+#else
 		RawMask[packed] = float4(1, 0, 0, 0);
+#endif
 		return;
 	}
 	// Valid receiver with no applicable light: neutral, not an unsampled pixel.
+#ifndef NATIVE_SHADOW_OFFLOAD
 	RawMask[packed] = float4(1, 0, receiverDistance, 0);
+#endif
 	float total = 0, visible = 0;
 	[loop] for (uint i = 0; i < LightCount; )
 	{
@@ -161,7 +186,7 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 		}
 #endif
 		const uint lightIndex = i++;
-		float4 light = Lights[lightIndex * 3 + 0];     // xyz vanilla position + vanilla radius
+		float4 light = Lights[lightIndex * LightStride];     // xyz vanilla position + vanilla radius
 		float3 delta = light.xyz - world;
 		float d2 = dot(delta, delta);
 		if (d2 <= MinDistance * MinDistance || !isfinite(d2))
@@ -177,8 +202,12 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 		float d = sqrt(d2);
 		if (d >= radius)
 			continue;
-		float4 radiance = Lights[lightIndex * 3 + 1];
-		float4 params = Lights[lightIndex * 3 + 2];
+#ifdef NATIVE_SHADOW_OFFLOAD
+		const float2 emission = Lights[lightIndex * LightStride + 1u].xy;
+#else
+		float4 radiance = Lights[lightIndex * LightStride + 1u];
+		float4 params = Lights[lightIndex * LightStride + 2u];
+#endif
 #ifdef NATIVE_SHADOW_OFFLOAD
 		const float fraction = kOffloadingFadeRange;
 #else
@@ -193,9 +222,13 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 		const float gradualFalloff = fade <= 0.0f ? 0.0f :
 		                       ShadowFalloffCurve == 1.0f ? fade : pow(fade, max(0.0f, ShadowFalloffCurve));
 #endif
+#ifdef NATIVE_SHADOW_OFFLOAD
+		float weight = emission.x * gradualFalloff / max(d2 + emission.y, 1.0f);
+#else
 		float strength = dot(max(radiance.rgb, 0), float3(.2126, .7152, .0722));
 		float weight = strength * max(0, radiance.a) * gradualFalloff /
 		               max(d2 + params.x * params.x, 1);
+#endif
 		if (weight <= 0 || !isfinite(weight))
 			continue;
 
@@ -245,6 +278,10 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 		total += weight;
 		visible += weight * visibility;
 	}
+#ifdef NATIVE_SHADOW_OFFLOAD
+	RawMask[packed] = float2(total > 1e-8f ? saturate(visible / total) : 1.0f, receiverDistance);
+#else
 	if (total > 1e-8f)
 		RawMask[packed] = float4(saturate(visible / total), 1, receiverDistance, total);
+#endif
 }

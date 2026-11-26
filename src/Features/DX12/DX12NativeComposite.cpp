@@ -24,6 +24,7 @@ namespace DX12Native
 		constexpr std::streamoff kMaxShadowBytecodeBytes = 16 * VideoMemoryBudget::kMiB;
 		constexpr uint64_t kSlotOverheadBytes = 2 * VideoMemoryBudget::kMiB;
 		constexpr uint32_t kShadowConstantDwords = 48;
+		constexpr uint32_t kOffloadConstantDwords = 38;
 		constexpr uint32_t kShadowThreadGroupSize = 8;
 		constexpr float kReceiverTolerance = 16.0f;
 		constexpr float kReconstructionRadiusPixels = 2.0f;
@@ -34,9 +35,12 @@ namespace DX12Native
 		if (shadowDevice.get() != device) {
 			shadowPipelines = {};
 			shadowRoot = nullptr;
+			offloadRoot = nullptr;
 			failedShadowVariants = {};
 			shadowDevice.copy_from(device);
 		}
+		const bool offloading = variant >= kShadowQualityCount;
+		auto& variantRoot = offloading ? offloadRoot : shadowRoot;
 		auto& shadowPipeline = shadowPipelines[variant];
 		if (shadowPipeline)
 			return true;
@@ -57,20 +61,20 @@ namespace DX12Native
 				throw std::runtime_error("ShadowLayer.dxil read failed");
 			CD3DX12_DESCRIPTOR_RANGE ranges[2];
 			ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);
-			ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0);
+			ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, offloading ? 1 : 2, 0);
 			CD3DX12_ROOT_PARAMETER parameters[3];
 			parameters[0].InitAsDescriptorTable(1, &ranges[0]);
 			parameters[1].InitAsDescriptorTable(1, &ranges[1]);
-			parameters[2].InitAsConstants(kShadowConstantDwords, 0);
+			parameters[2].InitAsConstants(offloading ? kOffloadConstantDwords : kShadowConstantDwords, 0);
 			const CD3DX12_ROOT_SIGNATURE_DESC desc(3, parameters);
-			if (!shadowRoot) {
+			if (!variantRoot) {
 				winrt::com_ptr<ID3DBlob> serialized, errors;
 				DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
-				DX::ThrowIfFailed(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(shadowRoot.put())));
-				shadowRoot->SetName(L"NativeComposite::ShadowRoot");
+				DX::ThrowIfFailed(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(variantRoot.put())));
+				variantRoot->SetName(offloading ? L"NativeComposite::OffloadRoot" : L"NativeComposite::ShadowRoot");
 			}
 			D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
-			pso.pRootSignature = shadowRoot.get();
+			pso.pRootSignature = variantRoot.get();
 			pso.CS = { shader.data(), shader.size() };
 			winrt::com_ptr<ID3D12PipelineState> newPipeline;
 			DX::ThrowIfFailed(device->CreateComputePipelineState(&pso, IID_PPV_ARGS(newPipeline.put())));
@@ -309,7 +313,7 @@ namespace DX12Native
 			slot->commands->ResourceBarrier(static_cast<UINT>(endCopy.size()), endCopy.data());
 
 			if (applyShadow) {
-				slot->shadowRoot = shadowRoot;
+				slot->shadowRoot = offloading ? offloadRoot : shadowRoot;
 				slot->shadowPipeline = shadowPipelines[variant];
 				const auto step = device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 				auto cpu = slot->shadowDescriptors->GetCPUDescriptorHandleForHeapStart();
@@ -317,7 +321,7 @@ namespace DX12Native
 				srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 				srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 				srv.Texture2D.MipLevels = 1;
-				srv.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+				srv.Format = shadow->maskFormat;
 				device12->CreateShaderResourceView(shadow->mask.get(), &srv, cpu);
 				cpu.ptr += step;
 				srv.Format = DXGI_FORMAT_R32_FLOAT;
@@ -327,9 +331,11 @@ namespace DX12Native
 				uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
 				uav.Format = desc.Format;
 				device12->CreateUnorderedAccessView(slot->frame->color.get(), nullptr, &uav, cpu);
-				cpu.ptr += step;
-				uav.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-				device12->CreateUnorderedAccessView(publishReconstructedMask ? slot->reconstructedMask.get() : nullptr, nullptr, &uav, cpu);
+				if (!offloading) {
+					cpu.ptr += step;
+					uav.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+					device12->CreateUnorderedAccessView(publishReconstructedMask ? slot->reconstructedMask.get() : nullptr, nullptr, &uav, cpu);
+				}
 				const std::array start{
 					CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
 					CD3DX12_RESOURCE_BARRIER::Transition(shadow->mask.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
@@ -361,7 +367,20 @@ namespace DX12Native
 				};
 				static_assert(sizeof(Constants) == kShadowConstantDwords * sizeof(uint32_t));
 				const auto& camera = raster->camera;
-				// Exactly the open-RT default independent shadow settings.
+				if (offloading) {
+					struct OffloadConstants {
+						uint32_t width, height;
+						float receiverTolerance;
+						uint32_t legacyTransfer;
+						DirectX::SimpleMath::Matrix inverseProjection, inverseView;
+						uint32_t logicalWidth, logicalHeight;
+					};
+					static_assert(sizeof(OffloadConstants) == kOffloadConstantDwords * sizeof(uint32_t));
+					const OffloadConstants constants{ width, height, kReceiverTolerance,
+						transfer == Transfer::LegacyScene ? 1u : 0u, camera.CameraProjInverse, camera.CameraViewInverse,
+						shadow->sampling.logicalWidth, shadow->sampling.logicalHeight };
+					slot->commands->SetComputeRoot32BitConstants(2, kOffloadConstantDwords, &constants, 0);
+				} else {
 				const Constants constants{ width, height, kReceiverTolerance, kReconstructionRadiusPixels,
 					transfer == Transfer::LegacyScene ? 1u : 0u,
 					publishReconstructedMask ? 1u : 0u,
@@ -374,6 +393,7 @@ namespace DX12Native
 					shadow->sampling.physicalWidth, shadow->sampling.physicalHeight,
 					shadow->sampling.qualityMode, shadow->sampling.checkerboardOrigin };
 				slot->commands->SetComputeRoot32BitConstants(2, kShadowConstantDwords, &constants, 0);
+				}
 				slot->commands->Dispatch((width + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize,
 					(height + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize, 1);
 				const std::array end{

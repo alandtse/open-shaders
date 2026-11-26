@@ -59,7 +59,9 @@ namespace DX12Native
 		std::vector<DX12::PreparedLight> debugLights;
 		std::vector<std::array<float, 4>> lightRecords;
 		bool lightRecordsUploaded = false;
-		// RGBA32F: x weighted visibility, y 1 lit receiver / 0 neutral or invalid,
+		DXGI_FORMAT maskFormat = DXGI_FORMAT_UNKNOWN;
+		// Offload RG32F: visibility and receiver distance (zero when invalid).
+		// Full RT RGBA32F: x weighted visibility, y 1 lit receiver / 0 neutral or invalid,
 		// z receiver distance, w accumulated light weight.
 	};
 
