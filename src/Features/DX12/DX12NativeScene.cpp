@@ -14,6 +14,7 @@
 #include "Utils/Game.h"
 #include "Utils/PointLightFlags.h"
 #include "RE/T/TESObjectLIGH.h"
+#include "../LightLimitFix/ShadowCasterMath.h"
 #include <Windows.h>
 
 #include <algorithm>
@@ -27,8 +28,16 @@ void DX12NativeScene::DrawSettings()
 {
 	ImGui::Checkbox(T("menu.dx12.scene.independent_shadowmask", "Independent shadowmask"), &shadowMaskEnabled);
 	ImGui::Checkbox(T("menu.dx12.scene.trace_all_lights", "Full-shadow (every supported point light)"), &traceAllPreparedLights);
-	if (traceAllPreparedLights)
+	if (traceAllPreparedLights) {
 		ImGui::TextWrapped("%s", T("menu.dx12.scene.trace_all_lights_warning", "Native static ownership without raster fallback. Includes runtime point lights; incomplete native coverage can cause missing shadows."));
+		int unify = int(runtimeUnificationRadius.load(std::memory_order_relaxed));
+		int exclude = int(preparedExclusionRadius.load(std::memory_order_relaxed));
+		if (ImGui::SliderInt(T("menu.dx12.scene.runtime_unification_radius", "Runtime light unification radius (units)"), &unify, 0, int(DX12Native::kFullShadowRadiusMax), "%d", ImGuiSliderFlags_AlwaysClamp))
+			runtimeUnificationRadius.store(DX12Native::SanitizeFullShadowRadius(uint32_t(unify)), std::memory_order_relaxed);
+		if (ImGui::SliderInt(T("menu.dx12.scene.prepared_exclusion_radius", "Prepared light exclusion radius (units)"), &exclude, 0, int(DX12Native::kFullShadowRadiusMax), "%d", ImGuiSliderFlags_AlwaysClamp))
+			preparedExclusionRadius.store(DX12Native::SanitizeFullShadowRadius(uint32_t(exclude)), std::memory_order_relaxed);
+		ImGui::TextDisabled("%s", T("menu.dx12.scene.stationary_full_lights", "Stationary native emitters (enforced)"));
+	}
 	ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoorShadowOffloading);
 	bool debug = debugNativeLights.load(std::memory_order_relaxed);
 	if (ImGui::Checkbox(T("menu.dx12.scene.debug_native_lights", "Debug: label submitted native lights"), &debug))
@@ -99,9 +108,10 @@ void DX12NativeScene::DrawOverlay()
 		if (!Util::GetWorldFocusCoord(RE::NiPoint3{ light.position.x, light.position.y, light.position.z }, uv))
 			continue;
 		const ImVec2 point{ viewport->Pos.x + uv.x * viewport->Size.x, viewport->Pos.y + uv.y * viewport->Size.y };
-		const auto label = light.runtimeIdentity ?
-			std::format("DXR R {:08X}/{:X}", light.referenceID, light.runtimeIdentity) :
-			std::format("DXR P {:08X}", light.referenceID);
+		const auto label = light.unifiedCount > 1 ?
+			std::format("DXR U x{} {:08X}", light.unifiedCount, light.referenceID) :
+			(light.runtimeIdentity ? std::format("DXR R {:08X}/{:X}", light.referenceID, light.runtimeIdentity) :
+				std::format("DXR P {:08X}", light.referenceID));
 		const ImVec2 text{ point.x + labelOffset, point.y - ImGui::GetTextLineHeight() * 0.5f };
 		const auto size = ImGui::CalcTextSize(label.c_str());
 		draw->AddCircleFilled(point, markerRadius, color);
@@ -114,6 +124,8 @@ void DX12NativeScene::LoadSettings(json& input)
 {
 	shadowMaskEnabled = input.value("ShadowMask", true);
 	traceAllPreparedLights = input.value("TraceAllPreparedLights", false);
+	runtimeUnificationRadius.store(DX12Native::SanitizeFullShadowRadius(input.value("RuntimeUnificationRadius", DX12Native::kDefaultRuntimeUnificationRadius)), std::memory_order_relaxed);
+	preparedExclusionRadius.store(DX12Native::SanitizeFullShadowRadius(input.value("PreparedExclusionRadius", DX12Native::kDefaultPreparedExclusionRadius)), std::memory_order_relaxed);
 	debugNativeLights.store(input.value("DebugNativeLights", false), std::memory_order_relaxed);
 	outdoorShadowOffloading = input.value("OutdoorShadowOffloading", false);
 	offloadStaticShadows = input.value("OffloadSCMStatic", true);
@@ -141,6 +153,8 @@ void DX12NativeScene::LoadSettings(json& input)
 void DX12NativeScene::SaveSettings(json& output)
 {
 	output = { { "ShadowMask", shadowMaskEnabled }, { "TraceAllPreparedLights", traceAllPreparedLights }, { "DebugNativeLights", debugNativeLights.load(std::memory_order_relaxed) }, { "OutdoorShadowOffloading", outdoorShadowOffloading }, { "ShadowQualityMode", qualityMode },
+		{ "RuntimeUnificationRadius", runtimeUnificationRadius.load(std::memory_order_relaxed) },
+		{ "PreparedExclusionRadius", preparedExclusionRadius.load(std::memory_order_relaxed) },
 		{ "OffloadSCMStatic", offloadStaticShadows },
 		{ "OffloadFlickeringStatic", offloadFlickeringStatic },
 		{ "FreezeNativeFlickering", freezeNativeFlickering },
@@ -157,6 +171,8 @@ void DX12NativeScene::RestoreDefaultSettings()
 {
 	shadowMaskEnabled = true;
 	traceAllPreparedLights = false;
+	runtimeUnificationRadius.store(DX12Native::kDefaultRuntimeUnificationRadius, std::memory_order_relaxed);
+	preparedExclusionRadius.store(DX12Native::kDefaultPreparedExclusionRadius, std::memory_order_relaxed);
 	debugNativeLights.store(false, std::memory_order_relaxed);
 	outdoorShadowOffloading = false;
 	offloadStaticShadows = true;
@@ -405,50 +421,56 @@ namespace
 		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
 		}
 	}
+	void ReadFullLightRestPosition(RE::NiLight* ni, uint32_t placedReference, float3& position) noexcept
+	{
+		__try {
+			const auto formID = PointLightFlags::GetRuntimeLightFormID(ni);
+			const auto* light = formID ? RE::TESForm::LookupByID<RE::TESObjectLIGH>(formID) : nullptr;
+			if (!light && placedReference) {
+				auto* reference = RE::TESForm::LookupByID<RE::TESObjectREFR>(placedReference);
+				auto* base = reference ? reference->GetObjectReference() : nullptr;
+				light = base ? base->As<RE::TESObjectLIGH>() : nullptr;
+			}
+			const auto& local = ni->local.translate;
+			if (light && !light->GetNoFlicker() && ni->parent &&
+				ShadowCasterManager::WithinFlickerReach(local.x, local.y, local.z, light->data.flickerMovementAmplitude)) {
+				const auto& rest = ni->parent->world.translate;
+				if (std::isfinite(rest.x) && std::isfinite(rest.y) && std::isfinite(rest.z))
+					position = float3{ rest.x, rest.y, rest.z };
+			}
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		}
+	}
 }
 
 void DX12NativeScene::ResetFullLightInventory()
 {
 	fullRuntimeLights.clear();
-	fullPreparedOrder.clear();
-	fullPreparedIDs.clear();
+	fullPreparedSnapshot.clear();
+	fullConsolidatedLights.reset();
 	fullRuntimeScope = 0;
 	fullLightVisit = 0;
 }
 
-std::vector<DX12::PreparedLight> DX12NativeScene::CollectFullShadowLights(std::span<const DX12::PreparedLight> prepared)
+std::shared_ptr<const std::vector<DX12::PreparedLight>> DX12NativeScene::CollectFullShadowLights(std::span<const DX12::PreparedLight> prepared)
 {
-	std::vector<DX12::PreparedLight> result(prepared.begin(), prepared.end());
 	std::scoped_lock lock(runtimeLightMutex);
 	const uint32_t scope = shadowLightScope.load(std::memory_order_acquire);
 	if (fullRuntimeScope != scope) {
 		ResetFullLightInventory();
 		fullRuntimeScope = scope;
 	}
-	const auto node = globals::game::smState ? globals::game::smState->shadowSceneNode[0] : nullptr;
-	if (!node) {
-		ResetFullLightInventory();
-		return result;
-	}
+	const uint32_t unify = runtimeUnificationRadius.load(std::memory_order_relaxed);
+	const uint32_t exclude = preparedExclusionRadius.load(std::memory_order_relaxed);
+	const bool preparedChanged = prepared.size() != fullPreparedSnapshot.size() ||
+		!std::equal(prepared.begin(), prepared.end(), fullPreparedSnapshot.begin(),
+			DX12Native::SamePreparedShadowLight<DX12::PreparedLight>);
+	bool dirty = !fullConsolidatedLights || preparedChanged || unify != fullCachedUnificationRadius || exclude != fullCachedExclusionRadius;
+	if (preparedChanged)
+		fullPreparedSnapshot.assign(prepared.begin(), prepared.end());
 
-	// Match exact placed-reference identities only when prepared membership changes
-	// or a new runtime emitter appears. Model-attached lights retain their own identity.
-	const bool preparedChanged = prepared.size() != fullPreparedOrder.size() ||
-		!std::equal(prepared.begin(), prepared.end(), fullPreparedOrder.begin(),
-			[](const auto& light, uint32_t id) { return light.referenceID == id; });
-	if (preparedChanged) {
-		fullPreparedIDs.clear();
-		fullPreparedOrder.clear();
-		fullPreparedOrder.reserve(prepared.size());
-		for (const auto& light : prepared) {
-			fullPreparedOrder.push_back(light.referenceID);
-			if (light.referenceID)
-				fullPreparedIDs.insert(light.referenceID);
-		}
-	}
+	const auto node = globals::game::smState ? globals::game::smState->shadowSceneNode[0] : nullptr;
 	const uint64_t visit = ++fullLightVisit;
-	const auto& scene = node->GetRuntimeData();
-	result.reserve(prepared.size() + scene.activeLights.size() + scene.activeShadowLights.size());
 	const auto collect = [&](RE::BSLight* light) {
 		if (!light || !light->pointLight || !light->light)
 			return;
@@ -465,40 +487,60 @@ std::vector<DX12::PreparedLight> DX12NativeScene::CollectFullShadowLights(std::s
 			cached.value.runtimeIdentity = reinterpret_cast<std::uintptr_t>(ni);
 			ReadFullLightOwner(ni, cached.value.referenceID, cached.placedReference);
 		}
-		if (inserted || preparedChanged)
-			cached.duplicate = cached.placedReference && fullPreparedIDs.contains(cached.placedReference);
-		if (!cached.supported || cached.duplicate)
+		if (!cached.supported)
 			return;
-		const auto& rt = ni->GetLightRuntimeData();
-		if (ni->GetFlags().any(RE::NiAVObject::Flag::kHidden) ||
-			!std::isfinite(rt.fade) || rt.fade <= 0.0f) {
-			cached.sampled = false;
-			return;
-		}
-		const auto& position = ni->world.translate;
-		auto& value = cached.value;
-		// Engine-static emitters keep their native parameters until their position
-		// changes. Moving/animated sources are sampled live without rematching.
-		if (!cached.sampled || light->dynamic || position.x != value.position.x ||
-			position.y != value.position.y || position.z != value.position.z) {
+		const bool visible = !ni->GetFlags().any(RE::NiAVObject::Flag::kHidden);
+		if (visible && !cached.sampled) {
+			const auto& rt = ni->GetLightRuntimeData();
+			const auto& position = ni->world.translate;
 			cached.sampled = std::isfinite(rt.radius.x) && rt.radius.x > 0.0f &&
+				std::isfinite(rt.fade) && rt.fade > 0.0f &&
 				std::isfinite(rt.diffuse.red) && std::isfinite(rt.diffuse.green) && std::isfinite(rt.diffuse.blue) &&
 				std::isfinite(position.x) && std::isfinite(position.y) && std::isfinite(position.z);
-			if (!cached.sampled)
-				return;
-			value.position = float3{ position.x, position.y, position.z };
-			value.radius = rt.radius.x;
-			value.color = float3{ rt.diffuse.red, rt.diffuse.green, rt.diffuse.blue };
-			value.fade = rt.fade;
+			if (cached.sampled) {
+				auto& value = cached.value;
+				value.position = float3{ position.x, position.y, position.z };
+				value.radius = rt.radius.x;
+				value.color = float3{ rt.diffuse.red, rt.diffuse.green, rt.diffuse.blue };
+				value.fade = rt.fade;
+				ReadFullLightRestPosition(ni, cached.placedReference, value.position);
+			}
 		}
-		result.push_back(value);
+		const bool active = visible && cached.sampled;
+		dirty |= cached.active != active;
+		cached.active = active;
 	};
-	for (const auto& light : scene.activeLights)
-		collect(light.get());
-	for (const auto& light : scene.activeShadowLights)
-		collect(light.get());
-	std::erase_if(fullRuntimeLights, [visit](const auto& entry) { return entry.second.seen != visit; });
-	return result;
+	if (node) {
+		const auto& scene = node->GetRuntimeData();
+		for (const auto& light : scene.activeLights)
+			collect(light.get());
+		for (const auto& light : scene.activeShadowLights)
+			collect(light.get());
+	}
+	std::erase_if(fullRuntimeLights, [&](const auto& entry) {
+		if (entry.second.seen == visit)
+			return false;
+		dirty |= entry.second.active;
+		return true;
+	});
+	if (!dirty)
+		return fullConsolidatedLights;
+
+	std::unordered_set<uint32_t> preparedIDs;
+	for (const auto& light : prepared)
+		if (light.referenceID)
+			preparedIDs.insert(light.referenceID);
+	std::vector<DX12::PreparedLight> runtime;
+	runtime.reserve(fullRuntimeLights.size());
+	for (const auto& [identity, cached] : fullRuntimeLights) {
+		if (cached.active && (!cached.placedReference || !preparedIDs.contains(cached.placedReference)))
+			runtime.push_back(cached.value);
+	}
+	fullConsolidatedLights = std::make_shared<const std::vector<DX12::PreparedLight>>(
+		DX12Native::ConsolidateFullShadowLights<DX12::PreparedLight>(prepared, runtime, unify, exclude));
+	fullCachedUnificationRadius = unify;
+	fullCachedExclusionRadius = exclude;
+	return fullConsolidatedLights;
 }
 
 void DX12NativeScene::OnOpaqueRasterReady()
@@ -551,7 +593,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 		};
 		if (TraceAllPreparedLights()) {
 			const auto inventory = CollectFullShadowLights(lights ? std::span<const DX12::PreparedLight>(*lights) : std::span<const DX12::PreparedLight>{});
-			shadows.Dispatch(*backend, captured, built, inventory, frame, controls);
+			shadows.Dispatch(*backend, captured, built, *inventory, frame, controls);
 			return;
 		}
 		std::vector<DX12::PreparedLight> liveLights;

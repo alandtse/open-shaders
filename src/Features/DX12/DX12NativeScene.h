@@ -4,6 +4,7 @@
 #include "DX12NativeRasterCapture.h"
 #include "DX12NativeRuntimeCapture.h"
 #include "DX12NativeShadowTrace.h"
+#include "FullShadowLightConsolidation.h"
 #include "../OverlayFeature.h"
 
 #include <atomic>
@@ -73,7 +74,7 @@ struct DX12NativeScene final : OverlayFeature
 private:
 	/** @brief Gates only native shadow replacement; never disables DX11 baseline shadows. */
 	bool CanOffloadShadowsInCurrentCell() const;
-	std::vector<DX12::PreparedLight> CollectFullShadowLights(std::span<const DX12::PreparedLight> prepared);
+	std::shared_ptr<const std::vector<DX12::PreparedLight>> CollectFullShadowLights(std::span<const DX12::PreparedLight> prepared);
 	void ResetFullLightInventory();
 	bool nativeSessionStarted = false;  // Render/main-thread lifecycle.
 	std::optional<GraphicsBackend> backend;
@@ -92,6 +93,8 @@ private:
 	std::atomic<bool> debugNativeLights{ false };
 	bool shadowMaskEnabled = true;
 	bool traceAllPreparedLights = false;
+	std::atomic<uint32_t> runtimeUnificationRadius{ DX12Native::kDefaultRuntimeUnificationRadius };
+	std::atomic<uint32_t> preparedExclusionRadius{ DX12Native::kDefaultPreparedExclusionRadius };
 	bool outdoorShadowOffloading = false;  // Off by default; vanilla raster shadows are unaffected.
 	bool offloadStaticShadows = true;
 	bool offloadFlickeringStatic = true;
@@ -124,11 +127,12 @@ private:
 		DX12::PreparedLight value;
 		uint32_t placedReference = 0;
 		uint64_t seen = 0;
-		bool supported = false, duplicate = false, sampled = false;
+		bool supported = false, sampled = false, active = false;
 	};
 	std::unordered_map<const RE::NiLight*, FullRuntimeLight> fullRuntimeLights;
-	std::vector<uint32_t> fullPreparedOrder;
-	std::unordered_set<uint32_t> fullPreparedIDs;
+	std::vector<DX12::PreparedLight> fullPreparedSnapshot;
+	std::shared_ptr<const std::vector<DX12::PreparedLight>> fullConsolidatedLights;
+	uint32_t fullCachedUnificationRadius = 0, fullCachedExclusionRadius = 0;
 	uint32_t fullRuntimeScope = 0;
 	uint64_t fullLightVisit = 0;
 };
