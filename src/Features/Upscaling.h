@@ -448,8 +448,6 @@ public:
 	static inline DX12SwapChain dx12SwapChain;
 	DX12Native::NativeComposite nativeComposite;
 	std::shared_ptr<const DX12Native::NativeComposite::Frame> nativeCompositeFrame;
-	/** @brief Restore the current composite to its DX11 input before a non-native consumer. */
-	bool ReturnNativeCompositeColor(ID3D11Resource* target);
 	NativeDLSS nativeDLSS;
 	static inline RCAS rcas;                      ///< Standalone RCAS sharpening for DLSS
 	static inline PerfMode perfMode;              ///< VR-only: render engine at upscaled-render res

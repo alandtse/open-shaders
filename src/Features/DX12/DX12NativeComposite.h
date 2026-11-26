@@ -6,8 +6,6 @@
 
 #include <array>
 #include <memory>
-#include <optional>
-#include <string_view>
 #include <vector>
 
 namespace DX12Native
@@ -33,13 +31,12 @@ namespace DX12Native
 			bool valid = false;
 		};
 
-		std::shared_ptr<const Frame> Capture(ID3D11Texture2D* source,
+		std::shared_ptr<const Frame> Capture(ID3D11Device5* device11,
+			ID3D11DeviceContext4* context11, ID3D12Device* device12,
+			ID3D12CommandQueue* queue, ID3D11Texture2D* source,
 			uint32_t frame, uint32_t width, uint32_t height, Transfer transfer,
-			const std::shared_ptr<const ShadowMaskFrame>& shadow);
-		/** @brief Deliver shadowed color to the original DX11 input only when a consumer needs it. */
-		bool ReturnToDX11(const std::shared_ptr<const Frame>& frame, ID3D11Resource* target);
-		/** @brief Prevent reuse or fallback waits if a registered consumer could not signal. */
-		void MarkUntracked(const std::shared_ptr<const Frame>& frame);
+			const std::shared_ptr<const ShadowMaskFrame>& shadow,
+			bool returnColorToDX11);
 		bool Retain(const std::shared_ptr<const Frame>& frame, ID3D12Fence* fence, uint64_t value);
 		~NativeComposite();
 		/** @brief Allow a new initialization attempt after a scene reset. */
@@ -47,8 +44,6 @@ namespace DX12Native
 		{
 			failedShadowDevice = nullptr;
 			captureFailureLogged = false;
-			lastCaptureRejection = {};
-			returnFailureLogged = false;
 		}
 
 	private:
@@ -59,10 +54,9 @@ namespace DX12Native
 			std::shared_ptr<const ShadowMaskFrame> shadowInput;
 			std::shared_ptr<const RasterFrame> rasterInput;
 			std::unique_ptr<WrappedResource> shared;
+			std::unique_ptr<WrappedResource> returned;
 			winrt::com_ptr<ID3D12CommandAllocator> allocator;
 			winrt::com_ptr<ID3D12GraphicsCommandList> commands;
-			winrt::com_ptr<ID3D12CommandAllocator> returnAllocator;
-			winrt::com_ptr<ID3D12GraphicsCommandList> returnCommands;
 			winrt::com_ptr<ID3D12DescriptorHeap> shadowDescriptors;
 			winrt::com_ptr<ID3D12Resource> reconstructedMask;
 			uint32_t maskWidth = 0, maskHeight = 0;
@@ -73,8 +67,7 @@ namespace DX12Native
 			GraphicsBackend backend;
 			winrt::com_ptr<ID3D11Texture2D> source;
 			D3D11_TEXTURE2D_DESC sourceDesc{};
-			bool supportsShadow = false, untracked = false;
-			uint64_t returnValue = 0;
+			bool supportsShadow = false, hasReturn = false, untracked = false;
 			uint64_t frameBytes = 0;
 		};
 
@@ -84,11 +77,6 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12Device> shadowDevice;
 		winrt::com_ptr<ID3D12Device> failedShadowDevice;
 		VideoMemoryBudget videoBudget;
-		std::optional<GraphicsBackend> executionBackend;
-		std::string_view lastCaptureRejection;
-		bool returnFailureLogged = false;
-		bool EnsureBackend(ID3D11Texture2D* source);
-		void LogRejection(std::string_view reason);
 		bool captureFailureLogged = false;
 		bool InitializeShadow(ID3D12Device* device);
 	};
