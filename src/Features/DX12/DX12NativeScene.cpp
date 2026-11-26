@@ -756,12 +756,31 @@ bool DX12NativeScene::IsPreparedStaticCaster(RE::BSGeometry& geometry) const
 		return false;
 	const auto key = DX12Native::CasterCoverageKey(candidate->vertexCount, uint64_t(candidate->triangleCount) * 3u);
 	const auto [first, last] = scene->casterCoverage.equal_range(key);
+	if (first == last)
+		return false;
+	std::scoped_lock lock(casterCoverageMutex);
+	if (casterCoverageScene.lock() != scene) {
+		casterCoverageCache.Clear();
+		casterCoverageScene = scene;
+	}
+	if (const auto cached = casterCoverageCache.Find(candidate->objectIdentity, candidate->transform,
+			candidate->vertices, candidate->indices, candidate->stride, candidate->vertexCount, candidate->triangleCount))
+		return *cached;
+	bool covered = false;
 	for (auto it = first; it != last; ++it) {
 		if (DX12Native::MatchesCasterGeometry(*it->second, candidate->transform, candidate->vertices,
-				candidate->indices, candidate->stride, candidate->vertexCount, candidate->triangleCount))
-			return true;
+				candidate->indices, candidate->stride, candidate->vertexCount, candidate->triangleCount)) {
+			covered = true;
+			break;
+		}
 	}
-	return false;
+	try {
+		casterCoverageCache.Store(candidate->objectIdentity, candidate->transform, candidate->vertices,
+			candidate->indices, candidate->stride, candidate->vertexCount, candidate->triangleCount, covered);
+	} catch (const std::bad_alloc&) {
+		casterCoverageCache.Clear();
+	}
+	return covered;
 }
 
 void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requireStability)
@@ -776,9 +795,17 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requi
 	geometryCapture.Observe(*candidate, frame, globals::features::dx12Resources.GetGrid());
 }
 
+void DX12NativeScene::ResetCasterCoverage()
+{
+	std::scoped_lock lock(casterCoverageMutex);
+	casterCoverageCache.Clear();
+	casterCoverageScene.reset();
+}
+
 void DX12NativeScene::OnSceneTransitionReset(bool a_opening)
 {
 	if (a_opening && nativeSessionStarted) {
+		ResetCasterCoverage();
 		shadowLightScope.store(0, std::memory_order_release);
 		shadowLights.store(nullptr, std::memory_order_release);
 		frameShadowScene.store(nullptr, std::memory_order_release);
@@ -805,6 +832,7 @@ void DX12NativeScene::OnRuntimeDisabled()
 	if (!nativeSessionStarted)
 		return;
 	nativeSessionStarted = false;
+	ResetCasterCoverage();
 	shadowLightScope.store(0, std::memory_order_release);
 	shadowLights.store(nullptr, std::memory_order_release);
 	frameShadowScene.store(nullptr, std::memory_order_release);

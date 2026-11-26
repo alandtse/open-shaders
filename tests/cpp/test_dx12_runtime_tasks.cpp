@@ -392,3 +392,35 @@ TEST_CASE("DX12 offload quality is full or quarter pixel count", "[dx12][shadow]
 	for (uint32_t mode = 0; mode < kShadowQualityCount; ++mode)
 		CHECK(NativeShadowShaderIndex(false, mode) == mode);
 }
+
+TEST_CASE("DX12 caster coverage cache detects same-address mutations", "[dx12][shadow]")
+{
+	DX12Native::CasterCoverageCache cache;
+	std::array<float, 12> pose{};
+	std::array<uint8_t, 48> vertices{};
+	std::array<uint16_t, 3> indices{ 0, 1, 2 };
+	constexpr uintptr_t object = 1;
+	const auto find = [&] {
+		return cache.Find(object, pose, vertices.data(), indices.data(), 16, 3, 1);
+	};
+	const auto store = [&](bool covered) {
+		cache.Store(object, pose, vertices.data(), indices.data(), 16, 3, 1, covered);
+	};
+	CHECK_FALSE(find().has_value());
+	store(true);
+	REQUIRE(find().has_value());
+	CHECK(*find());
+	vertices[0] = 1;
+	CHECK_FALSE(find().has_value());
+	store(false);
+	REQUIRE(find().has_value());
+	CHECK_FALSE(*find());
+	indices[0] = 2;
+	CHECK_FALSE(find().has_value());
+	store(true);
+	pose[3] = 1.0f;
+	CHECK_FALSE(find().has_value());
+	store(true);
+	cache.Clear();
+	CHECK_FALSE(find().has_value());
+}

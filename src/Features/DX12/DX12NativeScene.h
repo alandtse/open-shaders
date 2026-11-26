@@ -7,6 +7,7 @@
 #include "FullShadowLightConsolidation.h"
 #include "DX12ModeProfiles.h"
 #include "SCMNativePolicy.h"
+#include "DX12CasterCoverage.h"
 #include "../OverlayFeature.h"
 
 #include <atomic>
@@ -96,6 +97,10 @@ private:
 	std::atomic<uint32_t> shadowLightScope{ 0 };
 	std::atomic<std::shared_ptr<const DX12Native::TopLevel>> frameShadowScene;
 	std::atomic<uint32_t> frameShadowSceneID{ UINT32_MAX };
+	mutable std::mutex casterCoverageMutex;
+	mutable std::weak_ptr<const DX12Native::TopLevel> casterCoverageScene;
+	mutable DX12Native::CasterCoverageCache casterCoverageCache;
+	void ResetCasterCoverage();
 	std::atomic<bool> previousShadowSubmitted{ false };
 	std::atomic<DX12::SCMNativeMode> frameNativeMode{ DX12::SCMNativeMode::Disabled };
 	std::atomic<bool> allLightStaticReady{ false };
