@@ -66,14 +66,17 @@ float3 SampleEmitterOffset(float3 lightDirection, float emitterRadius, uint2 pix
 }
 
 #endif
-#ifndef NATIVE_SHADOW_OFFLOAD
 static const uint kTileThreads = 64u;
 static const uint kTileLightWordCount = 128u;
 static const uint kTileCullThreshold = 32u;
+#ifdef NATIVE_SHADOW_OFFLOAD
+groupshared uint TileMinimumOrdered[3];
+groupshared uint TileMaximumOrdered[3];
+#else
 groupshared float3 TileMinimum[kTileThreads];
 groupshared float3 TileMaximum[kTileThreads];
-groupshared uint TileLightMask[kTileLightWordCount];
 #endif
+groupshared uint TileLightMask[kTileLightWordCount];
 
 bool ReadReceiver(uint2 packed, out uint2 p, out float3 world, out float receiverDistance)
 {
@@ -103,7 +106,56 @@ bool ReadReceiver(uint2 packed, out uint2 p, out float3 world, out float receive
 	return isfinite(receiverDistance) && receiverDistance > 0.0f;
 }
 
-#ifndef NATIVE_SHADOW_OFFLOAD
+#ifdef NATIVE_SHADOW_OFFLOAD
+uint OrderedFloat(float value)
+{
+	const uint bits = asuint(value);
+	return bits ^ ((bits & 0x80000000u) != 0u ? 0xffffffffu : 0x80000000u);
+}
+
+float DecodeOrderedFloat(uint value)
+{
+	return asfloat(value ^ ((value & 0x80000000u) != 0u ? 0x80000000u : 0xffffffffu));
+}
+
+void BuildTileLightMask(uint lane, bool valid, float3 world)
+{
+	const float extreme = 3.402823466e+38f;
+	const bool finiteReceiver = valid && all(isfinite(world));
+	const uint wordCount = (LightCount + 31u) / 32u;
+	if (lane < 3u) {
+		TileMinimumOrdered[lane] = OrderedFloat(extreme);
+		TileMaximumOrdered[lane] = OrderedFloat(-extreme);
+	}
+	for (uint word = lane; word < wordCount; word += kTileThreads)
+		TileLightMask[word] = 0u;
+	GroupMemoryBarrierWithGroupSync();
+
+	const float3 waveLower = WaveActiveMin(finiteReceiver ? world : float3(extreme, extreme, extreme));
+	const float3 waveUpper = WaveActiveMax(finiteReceiver ? world : float3(-extreme, -extreme, -extreme));
+	if (WaveIsFirstLane()) {
+		[unroll] for (uint axis = 0u; axis < 3u; ++axis) {
+			InterlockedMin(TileMinimumOrdered[axis], OrderedFloat(waveLower[axis]));
+			InterlockedMax(TileMaximumOrdered[axis], OrderedFloat(waveUpper[axis]));
+		}
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	const float3 lower = float3(DecodeOrderedFloat(TileMinimumOrdered[0]), DecodeOrderedFloat(TileMinimumOrdered[1]), DecodeOrderedFloat(TileMinimumOrdered[2]));
+	const float3 upper = float3(DecodeOrderedFloat(TileMaximumOrdered[0]), DecodeOrderedFloat(TileMaximumOrdered[1]), DecodeOrderedFloat(TileMaximumOrdered[2]));
+	if (all(lower <= upper)) {
+		[loop] for (uint lightIndex = lane; lightIndex < LightCount; lightIndex += kTileThreads) {
+			const float4 light = Lights[lightIndex * LightStride];
+			const float radius = max(light.w, MinDistance) * 1.00001f;
+			const float3 delta = max(max(lower - light.xyz, light.xyz - upper), 0.0f);
+			const float distanceSquared = dot(delta, delta);
+			if (!isfinite(distanceSquared) || !isfinite(radius) || distanceSquared <= radius * radius)
+				InterlockedOr(TileLightMask[lightIndex / 32u], 1u << (lightIndex & 31u));
+		}
+	}
+	GroupMemoryBarrierWithGroupSync();
+}
+#else
 void BuildTileLightMask(uint lane, bool valid, float3 world)
 {
 	const float extreme = 3.402823466e+38f;
@@ -152,11 +204,9 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 	const bool valid = ReadReceiver(packed, p, world, receiverDistance);
 	// All lanes participate before rejecting invalid receivers; large inventories
 	// fall back to the complete ordered light loop rather than dropping lights.
-#ifndef NATIVE_SHADOW_OFFLOAD
 	const bool tiled = LightCount >= kTileCullThreshold && LightCount <= kTileLightWordCount * 32u;
 	if (tiled)
 		BuildTileLightMask(lane, valid, world);
-#endif
 	if (any(packed >= PhysicalSize))
 		return;
 	if (!valid) {
@@ -174,7 +224,6 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 	float total = 0, visible = 0;
 	[loop] for (uint i = 0; i < LightCount; )
 	{
-#ifndef NATIVE_SHADOW_OFFLOAD
 		if (tiled) {
 			const uint word = i / 32u;
 			const uint remaining = TileLightMask[word] & (0xffffffffu << (i & 31u));
@@ -184,7 +233,6 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 			}
 			i = word * 32u + uint(firstbitlow(remaining));
 		}
-#endif
 		const uint lightIndex = i++;
 		float4 light = Lights[lightIndex * LightStride];     // xyz vanilla position + vanilla radius
 		float3 delta = light.xyz - world;

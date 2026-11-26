@@ -170,6 +170,8 @@ namespace DX12Native
 		try {
 			Initialize(requested, variant);
 			const uint64_t finished = completion->GetCompletedValue();
+			if (finished == UINT64_MAX)
+				return;
 			auto it = std::ranges::find_if(slots, [&](const auto& slot) {
 				if (!slot)
 					return true;
@@ -190,7 +192,8 @@ namespace DX12Native
 				NativeShadowCheckerboardOrigin(quality, frame), controls.offloading };
 			const uint32_t recordsPerLight = controls.offloading ? kOffloadRecords : kRecords;
 			const auto maskFormat = controls.offloading ? DXGI_FORMAT_R32G32_FLOAT : DXGI_FORMAT_R32G32B32A32_FLOAT;
-			const uint64_t lightBytes = uint64_t(lights.size()) * recordsPerLight * sizeof(std::array<float, 4>);
+			const auto lightCapacity = controls.offloading ? std::bit_ceil(lights.size()) : std::max(lights.size(), size_t(kMaxShadowLights));
+			const uint64_t lightBytes = uint64_t(lightCapacity) * recordsPerLight * sizeof(std::array<float, 4>);
 			const bool fresh = !slot || slot->sampling.physicalWidth != sampling.physicalWidth ||
 			                   slot->sampling.physicalHeight != sampling.physicalHeight || slot->maskFormat != maskFormat;
 			if (fresh) {

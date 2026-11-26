@@ -456,7 +456,7 @@ namespace ShadowCasterManager
 			s_dynamicCasterDraws.fetch_add(1, std::memory_order_relaxed);
 			return false;
 		}
-		if (nativeMode != DX12::SCMNativeCasterMode::Disabled && !geom.GetGeometryRuntimeData().skinInstance) {
+		if (nativeMode != DX12::SCMNativeCasterMode::Disabled && nativeMode != DX12::SCMNativeCasterMode::Suppress && !geom.GetGeometryRuntimeData().skinInstance) {
 			auto& mobility = ClassifyCaster(geom);
 			if (!mobility.dynamic && mobility.nativeObservationEpoch != s_casterClassEpoch) {
 				mobility.nativeObservationEpoch = s_casterClassEpoch;
@@ -485,6 +485,10 @@ namespace ShadowCasterManager
 				}
 				if (rec->nativePreparedCovered)
 					return true;
+				if (rec->nativeObservationEpoch != s_casterClassEpoch) {
+					rec->nativeObservationEpoch = s_casterClassEpoch;
+					globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
+				}
 			}
 			// Uncovered static casters stay live and prevent empty-raster sleep.
 			s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
