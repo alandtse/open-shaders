@@ -22,7 +22,7 @@ namespace DX12
 
 		DWORD RequestPriority(const CompanionRequest& task)
 		{
-			return task.warmup || task.preloadLastSave ? NORMAL_PRIORITY_CLASS :
+			return task.warmup || task.preloadLastSave ? ABOVE_NORMAL_PRIORITY_CLASS :
 			       task.predictive ? IDLE_PRIORITY_CLASS : BELOW_NORMAL_PRIORITY_CLASS;
 		}
 
@@ -239,7 +239,7 @@ namespace DX12
 			auto nextProgress = Util::QpcDeadlineAfterMs(started, frequency, kStartupProgressIntervalMs);
 			const char* stage = task.preloadLastSave ? "last-save cell" : "NIF manifests";
 			if (startup)
-				logger::info("[DX12Resources] Menu {} preparation started (normal process priority)", stage);
+				logger::info("[DX12Resources] Menu {} preparation started (above-normal process priority)", stage);
 			while (!stop.stop_requested() &&
 				   (!startup || generation.load(std::memory_order_acquire) == epoch) &&
 				   Util::QpcDeadlinePending(Util::GetQpcTicks(), deadline)) {
