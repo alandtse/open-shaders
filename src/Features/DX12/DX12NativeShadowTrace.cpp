@@ -143,19 +143,20 @@ namespace DX12Native
 		const auto quality = controls.quality;
 		const auto variant = ShadowVariant(quality);
 		const auto& pipeline = pipelines[variant];
+		const auto finish = [this](Outcome a_outcome) { lastOutcome.store(a_outcome, std::memory_order_relaxed); };
 		if (initializationFailed[variant])
-			return;
+			return finish(Outcome::InitializationFailed);
 		if (!raster || !raster->depth || !raster->depth->resource || !raster->readyFence ||
 			!raster->cameraValid) {
-			return;
+			return finish(Outcome::NoRaster);
 		}
 		if (!scene || !scene->acceleration || !scene->producerFence) {
-			return;
+			return finish(Outcome::NoScene);
 		}
 		if (controls.nativeLights && (!controls.nativeLights->buffer || controls.nativeLights->scope != scene->scope))
 			return;
 		if (lights.empty()) {
-			return;
+			return finish(Outcome::NoLights);
 		}
 		std::shared_ptr<ShadowMaskFrame> attempted;
 		bool submitted = false;
@@ -170,12 +171,12 @@ namespace DX12Native
 				return slot.use_count() == 1 && slot->readyValue <= finished;
 			});
 			if (it == slots.end()) {
-				return;
+				return finish(Outcome::NoFreeSlot);
 			}
 			auto& slot = *it;
 			const UINT width = controls.viewportWidth, height = controls.viewportHeight;
 			if (!width || !height || width > raster->width || height > raster->height) {
-				return;
+				return finish(Outcome::ViewportMismatch);
 			}
 			const uint32_t maskWidth = ShadowPhysicalWidth(ShadowLogicalExtent(width, quality), quality);
 			const uint32_t maskHeight = ShadowLogicalExtent(height, quality);
@@ -342,8 +343,10 @@ namespace DX12Native
 			nextFence = value;
 			slot->readyValue = value;
 			current = slot;
+			finish(Outcome::Dispatched);
 			failureLogged = false;
 		} catch (...) {
+			finish(Outcome::Failed);
 			initializationFailed[variant] = !pipeline;
 			if (attempted) {
 				if (submitted && completion && backend.commandQueue) {

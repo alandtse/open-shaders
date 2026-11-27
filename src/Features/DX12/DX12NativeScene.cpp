@@ -3,6 +3,7 @@
 #include "../LightLimitFix/ShadowCasterMath.h"
 #include "../Upscaling.h"
 #include "DX12Control.h"
+#include "DX12NativeComposite.h"
 #include "DX12Resources.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -913,6 +914,10 @@ json DX12NativeScene::GetStatus() const
 		{ "castersTraced", castersTraced.load(std::memory_order_relaxed) },
 		{ "castersKeptRaster", castersKeptRaster.load(std::memory_order_relaxed) } };
 
+	status["trace"] = { { "lastOutcome", magic_enum::enum_name(shadows.LastOutcome()) } };
+	status["composite"] = { { "lastShadowResult",
+		magic_enum::enum_name(DX12Native::lastCompositeShadowResult.load(std::memory_order_relaxed)) } };
+
 	if (const auto stats = globals::features::dx12Resources.GetPreparationStats())
 		status["preparation"] = { { "active", TimingStatus(stats->active) }, { "predictive", TimingStatus(stats->predictive) },
 			{ "corners", TimingStatus(stats->corners) } };
@@ -922,10 +927,11 @@ json DX12NativeScene::GetStatus() const
 void DX12NativeScene::RegisterUxActions()
 {
 	FEATURE_RENDER_QUERY("status",
-		"DX12 shadow offload readiness. Returns active/shadowOffloadMode/frameNativeMode; grid {scope,size,revision,runtimeShapes,"
+		"DX12 shadow offload readiness. Returns active/shadowOffloadMode/canSuppressStatic; grid {scope,size,revision,runtimeShapes,"
 		"activeTiles[{x,y,state,shapes,lights,bytes,failure,rejections[{reason,count}]}],predictiveStates}; "
 		"tlas {published,scope,revision,instances,readyActiveTiles}; lights {prepared,observedShadowLights,ownedShadowLights} for the latest frame; "
 		"ownership {granted (light-frames owned), castersTraced (static casters dropped from raster because the TLAS holds them), castersKeptRaster (static casters of owned lights the TLAS lacks)} "
-		"cumulative since boot (diff two reads for a rate); preparation timings. Params: none.",
+		"cumulative since boot (diff two reads for a rate); trace {lastOutcome} and composite {lastShadowResult} name the stage where RT shadows stop; "
+		"preparation timings. Params: none.",
 		[](const Feature* a_self, const json&) -> json { return static_cast<const DX12NativeScene*>(a_self)->GetStatus(); });
 }

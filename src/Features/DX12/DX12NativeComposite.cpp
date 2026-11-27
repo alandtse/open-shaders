@@ -135,17 +135,24 @@ namespace DX12Native
 		const auto variant = ShadowVariant(quality);
 		// The native scene's frame counter is used when fetching the mask; the
 		// compositor frame number is the upscaler's existing frame counter.
-		const bool applyShadow = supportsShadow && transfer != Transfer::Unknown &&
-		                         shadow && shadow->mask && shadow->readyFence && shadow->readyValue &&
-		                         shadow->readyValue != UINT64_MAX &&
-		                         shadow->width == width && shadow->height == height &&
-		                         shadow->maskWidth == ShadowPhysicalWidth(ShadowLogicalExtent(width, quality), quality) &&
-		                         shadow->maskHeight == ShadowLogicalExtent(height, quality) &&
-		                         raster && raster->depth && raster->depth->resource &&
-		                         raster->cameraValid && raster->readyFence && raster->readyValue &&
-		                         raster->readyValue != UINT64_MAX &&
-		                         raster->width >= width && raster->height >= height &&
-		                         InitializeShadow(device12, variant);
+		using Result = CompositeShadowResult;
+		const Result shadowResult =
+			!supportsShadow                                                                ? Result::FormatUnsupported :
+			transfer == Transfer::Unknown                                                  ? Result::TransferUnknown :
+			!shadow || !shadow->mask                                                       ? Result::NoMask :
+			!shadow->readyFence || !shadow->readyValue || shadow->readyValue == UINT64_MAX ? Result::MaskNotReady :
+			!raster || !raster->depth || !raster->depth->resource || !raster->cameraValid ||
+					!raster->readyFence || !raster->readyValue || raster->readyValue == UINT64_MAX ?
+																							 Result::NoRasterDepth :
+			shadow->width != width || shadow->height != height ||
+					shadow->maskWidth != ShadowPhysicalWidth(ShadowLogicalExtent(width, quality), quality) ||
+					shadow->maskHeight != ShadowLogicalExtent(height, quality) ||
+					raster->width < width || raster->height < height ?
+																							 Result::SizeMismatch :
+			!InitializeShadow(device12, variant) ? Result::InitializationFailed :
+												   Result::Applied;
+		lastCompositeShadowResult.store(shadowResult, std::memory_order_relaxed);
+		const bool applyShadow = shadowResult == Result::Applied;
 		if (!applyShadow) {
 			returnColorToDX11 = false;
 			publishReconstructedMask = false;
@@ -153,8 +160,8 @@ namespace DX12Native
 		if (publishReconstructedMask) {
 			D3D12_FEATURE_DATA_FORMAT_SUPPORT maskSupport{ kReconstructedMaskFormat };
 			publishReconstructedMask = SUCCEEDED(device12->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &maskSupport, sizeof(maskSupport))) &&
-				(maskSupport.Support1 & D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW) &&
-				(maskSupport.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
+			                           (maskSupport.Support1 & D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW) &&
+			                           (maskSupport.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
 		}
 
 		const bool rtPath = applyShadow && variant != 0u;
@@ -303,8 +310,8 @@ namespace DX12Native
 				slot->rtDescriptors = true;
 			}
 			if (slot->historyOutput && (slot->historyOutput->device != device12 ||
-				slot->historyOutput->stamp.width != width || slot->historyOutput->stamp.height != height ||
-				slot->historyOutput->stamp.quality != quality || !rtPath))
+										   slot->historyOutput->stamp.width != width || slot->historyOutput->stamp.height != height ||
+										   slot->historyOutput->stamp.quality != quality || !rtPath))
 				slot->historyOutput.reset();
 			if (rtPath && !slot->historyOutput) {
 				try {
@@ -441,7 +448,8 @@ namespace DX12Native
 				static_assert(sizeof(Constants) == kShadowConstantDwords * sizeof(uint32_t));
 				const auto& camera = raster->camera;
 				const Constants constants{ width, height, kReceiverTolerance,
-					transfer == Transfer::LegacyScene ? 1u : 0u, camera.CameraProjInverse, camera.CameraViewInverse,
+					transfer == Transfer::LegacyScene ? 1u : 0u,
+					camera.CameraProjInverse, camera.CameraViewInverse,
 					ShadowLogicalExtent(width, quality), ShadowLogicalExtent(height, quality) };
 				slot->commands->SetComputeRoot32BitConstants(2, kShadowConstantDwords, &constants, 0);
 				if (variant != 0u) {
