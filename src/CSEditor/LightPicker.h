@@ -3,6 +3,7 @@
 #include "RE/B/BSCoreTypes.h"      // RE::FormID
 #include "RE/B/BSPointerHandle.h"  // RE::ObjectRefHandle
 
+#include <imgui.h>
 #include <string>
 #include <string_view>
 
@@ -62,15 +63,16 @@ private:
 	/** @brief Finds the world NiCamera among the player camera root's children, or nullptr. */
 	static RE::NiCamera* GetPlayerNiCamera();
 	/** @brief Raycasts through the cursor and resolves the collision mesh/ref under it. */
-	static PickedMesh ResolveUnderCursor(bool logResult = true);
+	static PickedMesh ResolveUnderCursor(const ImVec2& cursor, const ImVec2& display, bool logResult);
 	/** @brief Resolves the on-screen ref nearest the cursor (effect-mesh pick), skipping collision-reachable ones. */
-	static PickedMesh ResolveNearestToCursor(bool logResult = true);
+	static PickedMesh ResolveNearestToCursor(const ImVec2& cursor, const ImVec2& display, bool logResult);
 	/** @brief Fills out's identifying fields (handle, FormID, EditorID, model, plugin) from a ref. */
 	static void PopulateFromRef(PickedMesh& out, RE::TESObjectREFR* refr, RE::TESBoundObject* baseObj);
 
 	bool picking = false;
 	PickedMesh result;
 	PickedMesh hoverMesh;  // last raycast hit under the cursor (updated per frame)
+	ImVec2 lastPickSize{};
 	float lastMouseX = -1.f;
 	float lastMouseY = -1.f;
 	double lastHoverTime = 0.0;  // throttles the hover raycast/cell-scan during cursor movement

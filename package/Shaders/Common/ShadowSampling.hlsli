@@ -58,7 +58,7 @@ namespace ShadowSampling
 		return SharedData::HasDirectionalShadows;
 	}
 
-	float GetTerrainCloudShadow(float3 positionWS, float3 offset, uint eyeIndex)
+	float GetTerrainCloudShadow(float3 positionWS, float3 offset, uint eyeIndex, bool sampleDistantShadow = true)
 	{
 		if (SharedData::InInterior || SharedData::HideSky || SharedData::InMapMenu)
 			return 1.0;
@@ -66,7 +66,7 @@ namespace ShadowSampling
 		float worldShadow = 1.0;
 #if defined(TERRAIN_SHADOWS)
 #	if defined(LOD_SHADOWS)
-		[branch] if (!LODShadows::ReplacesTerrainShadows())
+		[branch] if (!sampleDistantShadow || !LODShadows::ReplacesTerrainShadows())
 #	endif
 			worldShadow = TerrainShadows::GetTerrainShadow(positionWS + offset, LinearSampler);
 #endif
@@ -102,7 +102,7 @@ namespace ShadowSampling
 
 	float GetWorldShadow(float3 positionWS, float3 offset, uint eyeIndex, bool surface = false, bool sampleDistantShadow = true)
 	{
-		return GetTerrainCloudShadow(positionWS, offset, eyeIndex) * (sampleDistantShadow ? GetDistantShadow(positionWS + offset, eyeIndex, surface) : 1.0);
+		return GetTerrainCloudShadow(positionWS, offset, eyeIndex, sampleDistantShadow) * (sampleDistantShadow ? GetDistantShadow(positionWS + offset, eyeIndex, surface) : 1.0);
 	}
 
 	float Get3DFilteredShadow(float3 positionWS, float3 viewDirection, float2 screenPosition, uint eyeIndex, out float surfaceShadow, bool sampleDistantShadow = true)
