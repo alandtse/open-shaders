@@ -2,6 +2,7 @@
 // (src/Features/LightLimitFix/SettingsSanitize.h).
 
 #include "Features/LightLimitFix/SettingsSanitize.h"
+#include "Features/LightLimitFix/ShadowMeshPaths.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -28,4 +29,34 @@ TEST_CASE("SanitizeFloat falls back to the lower bound on non-finite input", "[l
 	REQUIRE(SanitizeFloat(nan, 0.5f, 8.0f) == Approx(0.5f));
 	REQUIRE(SanitizeFloat(inf, 0.5f, 8.0f) == Approx(0.5f));
 	REQUIRE(SanitizeFloat(-inf, 0.5f, 8.0f) == Approx(0.5f));
+}
+
+TEST_CASE("Shadow mesh lists use full mesh-relative NIF identities", "[llf][shadow-meshes]")
+{
+	using namespace ShadowMeshExclusions;
+	const nlohmann::json document = { { "meshes", { R"(Data\Meshes\Clutter\Pot.NIF)", "meshes/clutter/pot.nif", "dungeon/pot.nif" } } };
+	REQUIRE(ReadMeshes(document) == MeshPaths{ "clutter/pot.nif", "dungeon/pot.nif" });
+	REQUIRE(ReadMeshes({ { "meshes", nlohmann::json::array() } }) == MeshPaths{});
+	for (const auto* invalid : { "../outside.nif", "clutter/../pot.nif", "C:/mesh.nif", "/pot.nif", "a.dds", "a//pot.nif" }) {
+		REQUIRE_FALSE(ReadMeshes({ { "meshes", { "valid.nif", invalid } } }));
+	}
+	REQUIRE_FALSE(ReadMeshes({ { "meshes", "single.nif" } }));
+	REQUIRE_FALSE(ReadMeshes({ { "meshes", { 42 } } }));
+	REQUIRE_FALSE(ReadMeshes(nlohmann::json::object()));
+}
+
+TEST_CASE("Editing a shadow mesh list preserves nested root names across reloads", "[llf][shadow-meshes]")
+{
+	using namespace ShadowMeshExclusions;
+	nlohmann::json document = { { "meshes", { "example.nif" } } };
+	for (const auto* input : { "Data/Meshes/meshes/example.nif", "Data/Meshes/data/meshes/example.nif" }) {
+		const auto mesh = MeshPath(input);
+		REQUIRE(UpdateMeshList(document, mesh, true));
+		document = nlohmann::json::parse(document.dump());
+		REQUIRE(ReadMeshes(document) == MeshPaths{ "example.nif", mesh });
+		REQUIRE(UpdateMeshList(document, mesh, true));
+		REQUIRE(document["meshes"].size() == 2);
+		REQUIRE(UpdateMeshList(document, mesh, false));
+		REQUIRE(ReadMeshes(document) == MeshPaths{ "example.nif" });
+	}
 }

@@ -73,7 +73,7 @@ RE::NiCamera* LightPicker::GetPlayerNiCamera()
 	return nullptr;
 }
 
-LightPicker::PickedMesh LightPicker::ResolveUnderCursor(bool logResult)
+LightPicker::PickedMesh LightPicker::ResolveUnderCursor(const ImVec2& cursor, const ImVec2& display, bool logResult)
 {
 	PickedMesh out;
 
@@ -81,13 +81,8 @@ LightPicker::PickedMesh LightPicker::ResolveUnderCursor(bool logResult)
 	if (!niCamera)
 		return out;
 
-	const ImVec2 mouse = ImGui::GetMousePos();
-	const ImVec2 display = ImGui::GetIO().DisplaySize;
-	if (display.x <= 0.0f || display.y <= 0.0f)
-		return out;
-
 	RE::NiPoint3 origin, dir;
-	if (!niCamera->WindowPointToRay(static_cast<std::int32_t>(mouse.x), static_cast<std::int32_t>(mouse.y),
+	if (!niCamera->WindowPointToRay(static_cast<std::int32_t>(cursor.x), static_cast<std::int32_t>(cursor.y),
 			origin, dir, display.x, display.y))
 		return out;
 	dir.Unitize();
@@ -126,7 +121,7 @@ LightPicker::PickedMesh LightPicker::ResolveUnderCursor(bool logResult)
 	return out;
 }
 
-LightPicker::PickedMesh LightPicker::ResolveNearestToCursor(bool logResult)
+LightPicker::PickedMesh LightPicker::ResolveNearestToCursor(const ImVec2& cursor, const ImVec2& display, bool logResult)
 {
 	PickedMesh out;
 
@@ -140,11 +135,6 @@ LightPicker::PickedMesh LightPicker::ResolveNearestToCursor(bool logResult)
 
 	auto* cell = player->GetParentCell();
 	if (!cell)
-		return out;
-
-	const ImVec2 cursor = ImGui::GetMousePos();
-	const ImVec2 display = ImGui::GetIO().DisplaySize;
-	if (display.x <= 0.0f || display.y <= 0.0f)
 		return out;
 
 	static constexpr float kSearchRadius = 5000.0f;          // Skyrim units (~50 m)
@@ -188,7 +178,7 @@ LightPicker::PickedMesh LightPicker::ResolveNearestToCursor(bool logResult)
 	// Discard if the collision raycast also resolves this same ref: it has Havok geometry and is
 	// reachable in normal collision mode.
 	{
-		PickedMesh collisionHit = ResolveUnderCursor(false);
+		PickedMesh collisionHit = ResolveUnderCursor(cursor, display, false);
 		if (collisionHit.valid && collisionHit.refrHandle == bestRef->GetHandle())
 			return out;  // out.valid is still false
 	}
@@ -243,9 +233,11 @@ void LightPicker::Update()
 		return;
 	}
 
-	// Ignore clicks consumed by the UI; only world clicks pick a mesh.
-	if (ImGui::GetIO().WantCaptureMouse) {
-		hoverMesh = {};
+	ImVec2 origin = ImGui::GetMainViewport()->Pos;
+	ImVec2 display = ImGui::GetIO().DisplaySize;
+	const bool inPreview = EditorWindow::GetSingleton()->GetHoveredSceneImage(origin, display);
+	if ((!inPreview && ImGui::GetIO().WantCaptureMouse) || display.x <= 0.0f || display.y <= 0.0f) {
+		InvalidateHover();
 		return;
 	}
 
@@ -254,11 +246,13 @@ void LightPicker::Update()
 	static constexpr double kHoverRefreshSeconds = 0.05;
 	const ImVec2 mouse = ImGui::GetMousePos();
 	const double now = ImGui::GetTime();
-	const bool moved = mouse.x != lastMouseX || mouse.y != lastMouseY;
-	lastMouseX = mouse.x;
-	lastMouseY = mouse.y;
+	const ImVec2 cursor(mouse.x - origin.x, mouse.y - origin.y);
+	const bool moved = cursor.x != lastMouseX || cursor.y != lastMouseY || display.x != lastPickSize.x || display.y != lastPickSize.y;
+	lastMouseX = cursor.x;
+	lastMouseY = cursor.y;
+	lastPickSize = display;
 	hoverDirty |= moved;
-	const auto resolve = [this] { return pickMode == PickMode::kEffect ? ResolveNearestToCursor(false) : ResolveUnderCursor(false); };
+	const auto resolve = [&] { return pickMode == PickMode::kEffect ? ResolveNearestToCursor(cursor, display, false) : ResolveUnderCursor(cursor, display, false); };
 	if (hoverDirty && now - lastHoverTime >= kHoverRefreshSeconds) {
 		lastHoverTime = now;
 		hoverDirty = false;
