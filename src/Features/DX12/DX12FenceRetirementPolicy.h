@@ -13,7 +13,7 @@ namespace DX12Native
 	constexpr bool FenceValueCompleted(bool hasFence, uint64_t completed, uint64_t target)
 	{
 		return target == 0 || (hasFence && completed != kUntrackedFenceValue &&
-		                         target != kUntrackedFenceValue && completed >= target);
+								  target != kUntrackedFenceValue && completed >= target);
 	}
 
 	constexpr bool FenceValueRetired(bool hasFence, uint64_t completed, uint64_t target)

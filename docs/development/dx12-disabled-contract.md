@@ -135,6 +135,7 @@ mode once per invocation; compare its exclusive timing in Tracy before claiming
 performance equivalence.
 
 Additional Windows validation:
+
 - Inject worker startup/terminal failures and exhaust the recovery budget, then
   reset the scene and verify preparation resumes without stranded pending tiles.
 - Inject device removal before a fence wait and during event completion. Inject
