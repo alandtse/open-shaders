@@ -6,6 +6,7 @@
 #include "Features/LightLimitFix/RadiusMath.h"
 #include "Features/LightLimitFix/SettingsSanitize.h"
 #include "Features/LightLimitFix/ShadowCasterMath.h"
+#include "Features/LightLimitFix/ShadowMeshExclusions.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
@@ -52,7 +53,6 @@ namespace
 	constexpr float kJsonPlacedLightIntensityMax = 8.0f;
 	constexpr int kLightAttachRefreshFramesMin = 1;
 	constexpr int kLightAttachRefreshFramesMax = 600;
-	constexpr float kSoftShadowScaleMax = 2.0f;
 
 	void SanitizeSettings(LightLimitFix::Settings& a_settings)
 	{
@@ -67,7 +67,7 @@ namespace
 		a_settings.BillboardRadius =
 			Util::ClampFiniteOrDefault(a_settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, 1.0f);
 		a_settings.SoftShadowScale =
-			Util::ClampFiniteOrDefault(a_settings.SoftShadowScale, 0.0f, kSoftShadowScaleMax, 0.0f);
+			Util::ClampFiniteOrDefault(a_settings.SoftShadowScale, 0.0f, LightLimitFix::kSoftShadowScaleMax, 0.0f);
 		a_settings.ParticleClusterThreshold =
 			Util::ClampFiniteOrDefault(a_settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, 32.0f);
 		a_settings.MaxParticlesPerEmitter = std::clamp(a_settings.MaxParticlesPerEmitter, kMaxParticlesPerEmitterMin, kMaxParticlesPerEmitterMax);
@@ -251,11 +251,7 @@ void LightLimitFix::DrawSettings()
 		ImGui::SetScrollHereY(0.0f);
 	if (Util::BeginPillTabItem(T("feature.light_limit_fix.shadow_limit_fix_header", "Shadow Limit Fix"), nullptr,
 			selectShadows ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None)) {
-		ShadowCasterManager::DrawSettings(settings.ShadowSettings);
-		ImGui::SliderFloat(T("feature.light_limit_fix.soft_shadow_scale", "Soft Shadows by Light Size"), &settings.SoftShadowScale, 0.0f, kSoftShadowScaleMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T("feature.light_limit_fix.soft_shadow_scale_tooltip", "Softens an inverse-square point light's shadow the farther it falls from what casts it, by the light's own size; linear lights have no size and stay hard. 0 keeps every shadow edge hard."));
-		}
+		ShadowCasterManager::DrawSettings(settings.ShadowSettings, settings.SoftShadowScale);
 		Util::EndPillTabItem();
 	}
 
@@ -1255,6 +1251,7 @@ float LightLimitFix::BSLight_GetLuminance::thunk(RE::BSLight* bsLight, RE::NiPoi
 
 void LightLimitFix::DataLoaded()
 {
+	ShadowMeshExclusions::Reload();
 	if (auto gameSettings = globals::game::gameSettingCollection) {
 		if (auto iMagicLightMaxCount = gameSettings->GetSetting("iMagicLightMaxCount")) {
 			iMagicLightMaxCount->data.i = MAXINT32;
@@ -1265,11 +1262,17 @@ void LightLimitFix::DataLoaded()
 
 bool LightLimitFix::ShouldSkipRenderPass(const RE::BSRenderPass* a_pass)
 {
-	return ShadowCasterManager::RejectCyclicPassChain(a_pass);
+	return ShadowCasterManager::RejectCyclicPassChain(a_pass) || ShadowMeshExclusions::ShouldSkip(a_pass);
 }
 
 void LightLimitFix::RegisterUxActions()
 {
+	FEATURE_RENDER_COMMAND("reloadShadowMeshExclusions",
+		"Reload every JSON file in LightLimitFix/ShadowMeshExclusions and refresh point-light shadows. Params: none.",
+		[](Feature*, const json&) { ShadowMeshExclusions::Reload(); });
+	FEATURE_RENDER_QUERY("shadowMeshExclusions",
+		"Lists point-light shadow mesh exclusions by JSON filename, invalid files, unresolved NIFs, and cumulative skipped shadow draws. Params: none.",
+		[](const Feature*, const json&) { return ShadowMeshExclusions::Inspect(); });
 	FEATURE_COMMAND("forcePassGuardTrips",
 		"Forces the next N SCM shadow-render pass-chain guard checks to report a cycle, so the skip path can be exercised without a real ring. Watch inspect kind=llfshadows budget.passGuardCycleSkipsTotal. Params: count (int, default 1, max 1000).",
 		[](Feature*, const json& args) { ShadowCasterManager::ForcePassGuardTrips(args.value("count", 1u)); });

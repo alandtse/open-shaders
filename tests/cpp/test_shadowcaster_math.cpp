@@ -537,3 +537,17 @@ TEST_CASE("PlayerProtectionCap leaves half the slots to the lights in view", "[s
 	REQUIRE(PlayerProtectionCap(1) == 1);
 	REQUIRE(PlayerProtectionCap(0) == 1);
 }
+
+TEST_CASE("A caster refresh preserves redraw admission while its shadow content is invalid", "[llf][shadow-refresh]")
+{
+	using namespace ShadowCasterManager;
+	const auto refreshed = FrameAfterCasterRefresh(42);
+	REQUIRE(refreshed < 0);
+	REQUIRE_FALSE(DeferNewShadowLight(refreshed, false, false));
+	REQUIRE(FrameAfterCasterRefresh(refreshed) == refreshed);
+	const auto undrawn = FrameAfterCasterRefresh(-1);
+	REQUIRE(undrawn == -1);
+	REQUIRE(DeferNewShadowLight(undrawn, false, false));
+	REQUIRE_FALSE(DeferNewShadowLight(undrawn, true, false));
+	REQUIRE_FALSE(DeferNewShadowLight(undrawn, false, true));
+}
