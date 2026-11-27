@@ -1,6 +1,8 @@
 RaytracingAccelerationStructure Scene : register(t0);
 Texture2D<float> RasterDepth : register(t1);
 StructuredBuffer<float4> Lights : register(t2);
+// Rigid casters that moved, rebuilt every frame; bound to the static scene when MoverCount is 0.
+RaytracingAccelerationStructure Movers : register(t3);
 RWTexture2D<float2> RawMask : register(u0);
 // Per-light visibility at logical resolution, slice = submitted light index; cleared to lit.
 RWTexture2DArray<unorm float> LightMask : register(u1);
@@ -14,6 +16,7 @@ cbuffer ShadowInputs : register(b0)
 	uint FrameIndex;
 	uint2 PhysicalSize;
 	uint LightSlotCount;
+	uint MoverCount;
 };
 static const float MinDistance = 0.5f;
 static const float MaxDistance = 60000.0f;
@@ -217,8 +220,15 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 			RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
 			query.TraceRayInline(Scene, RAY_FLAG_NONE, 0xFF, ray);
 			while (query.Proceed()) {}
+			bool occluded = query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+			if (!occluded && MoverCount != 0u) {
+				RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> moverQuery;
+				moverQuery.TraceRayInline(Movers, RAY_FLAG_NONE, 0xFF, ray);
+				while (moverQuery.Proceed()) {}
+				occluded = moverQuery.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+			}
 			// Fade the occlusion itself, not just its light weight.
-			if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
+			if (occluded)
 				visibility = 1.0f - gradualFalloff;
 		}
 		if (lightIndex < LightSlotCount && visibility < 1.0f) {

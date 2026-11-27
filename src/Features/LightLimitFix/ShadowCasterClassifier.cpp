@@ -544,11 +544,12 @@ namespace ShadowCasterManager
 			return true;
 		}
 		if (nativeMode == DX12::SCMNativeCasterMode::SuppressAll) {
-			const bool dynamic = IsFullRTDynamicCaster(geom);
-			if (dynamic)
+			// A caster the trace does not cover this frame keeps its raster shadow.
+			if (IsFullRTDynamicCaster(geom)) {
 				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
-			// A static caster the TLAS lacks would otherwise lose its shadow entirely.
-			return !dynamic && globals::features::dx12NativeScene.CasterInTlas(geom);
+				return globals::features::dx12NativeScene.ObserveMover(geom);
+			}
+			return globals::features::dx12NativeScene.CasterInTlas(geom);
 		}
 		// Skinned = always dynamic (see IsCasterDynamic); only non-skinned
 		// casters have a mobility record, classified once per frame.
@@ -557,10 +558,12 @@ namespace ShadowCasterManager
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
 		if (nativeDynamicOnly) {
-			// Only static casters the TLAS holds leave raster; the rest stay drawn.
-			if (dynamic)
+			// Only casters the trace covers this frame leave raster; the rest stay drawn.
+			if (dynamic) {
 				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
-			return !dynamic && globals::features::dx12NativeScene.CasterInTlas(geom);
+				return globals::features::dx12NativeScene.ObserveMover(geom);
+			}
+			return globals::features::dx12NativeScene.CasterInTlas(geom);
 		}
 		// A caster that settled since the bake is missing from it and is drawn live; one that started moving is still in
 		// it at its old pose and is left to it. Either way the light is queued for a rebake.

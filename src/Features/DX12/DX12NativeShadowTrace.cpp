@@ -26,7 +26,7 @@ namespace DX12Native
 			float4 positionAdjust;
 			uint32_t width, height, lightCount, frameIndex;
 			uint32_t physicalWidth, physicalHeight;
-			uint32_t lightSlotCount;
+			uint32_t lightSlotCount, moverCount;
 		};
 		static_assert(sizeof(Constants) <= D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 		winrt::com_ptr<ID3D12Resource> UploadBuffer(ID3D12Device* device, UINT64 bytes)
@@ -82,7 +82,7 @@ namespace DX12Native
 		D3D12_DESCRIPTOR_RANGE ranges[2]{};
 		ranges[0] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 0, 0 };
 		ranges[1] = { D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0, 0, 0 };
-		D3D12_ROOT_PARAMETER params[5]{};
+		D3D12_ROOT_PARAMETER params[6]{};
 		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
 		params[0].Descriptor.ShaderRegister = 0;  // t0 TLAS
 		params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
@@ -93,6 +93,8 @@ namespace DX12Native
 		params[3].Descriptor.ShaderRegister = 2;  // t2 light records
 		params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 		params[4].Descriptor.ShaderRegister = 0;  // b0 camera and sample settings
+		params[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+		params[5].Descriptor.ShaderRegister = 3;  // t3 rigid mover TLAS
 		const D3D12_ROOT_SIGNATURE_DESC signature{
 			UINT(std::size(params)), params, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE
 		};
@@ -267,14 +269,6 @@ namespace DX12Native
 			slot->maskWidth = maskWidth;
 			slot->maskHeight = maskHeight;
 			slot->quality = quality;
-			const Constants camera{
-				slot->raster->camera.CameraProjInverse,
-				slot->raster->camera.CameraViewInverse,
-				slot->raster->camera.CameraPosAdjust,
-				width, height, lightCount, frame, maskWidth, maskHeight,
-				std::min(lightCount, kMaxLightShadowSlots)
-			};
-			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
 
 			if (!slot->nativeLights) {
 				auto& records = slot->lightRecords;
@@ -327,6 +321,22 @@ namespace DX12Native
 			requested.d3d12Device->CreateUnorderedAccessView(lightMask, nullptr, &lightUav, clearCpu);
 
 			auto* command = slot->commands.get();
+			D3D12_GPU_VIRTUAL_ADDRESS moverScene = 0;
+			if (controls.movers) {
+				winrt::com_ptr<ID3D12Device5> device5;
+				winrt::com_ptr<ID3D12GraphicsCommandList4> command4;
+				if (SUCCEEDED(requested.d3d12Device->QueryInterface(IID_PPV_ARGS(device5.put()))) &&
+					SUCCEEDED(command->QueryInterface(IID_PPV_ARGS(command4.put()))))
+					moverScene = controls.movers->Record(device5.get(), command4.get(), completion.get(), nextFence + 1, frame);
+			}
+			const Constants camera{
+				slot->raster->camera.CameraProjInverse,
+				slot->raster->camera.CameraViewInverse,
+				slot->raster->camera.CameraPosAdjust,
+				width, height, lightCount, frame, maskWidth, maskHeight,
+				std::min(lightCount, kMaxLightShadowSlots), moverScene ? 1u : 0u
+			};
+			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
 			ID3D12DescriptorHeap* heaps[]{ slot->descriptors.get() };
 			command->SetDescriptorHeaps(1, heaps);
 			command->SetComputeRootSignature(root.get());
@@ -338,6 +348,7 @@ namespace DX12Native
 			command->SetComputeRootDescriptorTable(2, gpu);
 			command->SetComputeRootShaderResourceView(3, (slot->nativeLights ? slot->nativeLights->buffer : slot->lightUpload)->GetGPUVirtualAddress());
 			command->SetComputeRootConstantBufferView(4, slot->cameraUpload->GetGPUVirtualAddress());
+			command->SetComputeRootShaderResourceView(5, moverScene ? moverScene : slot->scene->acceleration->GetGPUVirtualAddress());
 
 			const auto depthStart = CD3DX12_RESOURCE_BARRIER::Transition(
 				slot->raster->depth->resource.get(), D3D12_RESOURCE_STATE_COMMON,

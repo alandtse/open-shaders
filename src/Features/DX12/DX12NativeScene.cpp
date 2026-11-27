@@ -777,7 +777,8 @@ void DX12NativeScene::OnDepthPrepassReady()
 		.quality = fullRT ? fullRTQuality.load(std::memory_order_relaxed) : DX12Native::kShadowQualityOffloading,
 		.captureDebugLights = WantsLightPreview(mode),
 		.debugPreparedCount = fullRT ? fullInventory->preparedCount : 0u,
-		.nativeLights = fullInventory
+		.nativeLights = fullInventory,
+		.movers = &movers
 	};
 	tracedLightCount.store(uint32_t(submittedLights.size()), std::memory_order_relaxed);
 	shadows.Dispatch(*backend, raster.Get(frame), built, submittedLights, frame, controls);
@@ -892,6 +893,7 @@ void DX12NativeScene::ApplyPendingLoadingReset()
 		globals::features::upscaling.nativeComposite.ResetShadowHistory();
 		raster.Reset();
 		shadows.Reset();
+		movers.Reset();
 		if (!globals::features::dx12Resources.HasMenuPreload())
 			acceleration.Reset();
 		geometryCapture.Reset();
@@ -918,6 +920,7 @@ void DX12NativeScene::OnRuntimeDisabled()
 	globals::features::upscaling.nativeComposite.ResetShadowHistory();
 	raster.Reset();
 	shadows.Reset();
+	movers.Reset();
 	acceleration.Stop();
 	geometryCapture.Reset();
 }
@@ -938,6 +941,13 @@ namespace
 	{
 		return { { "completed", a_timing.completed }, { "averageMs", a_timing.AverageMs() }, { "worstMs", a_timing.worstMs } };
 	}
+}
+
+bool DX12NativeScene::ObserveMover(RE::BSGeometry& a_geometry)
+{
+	if (!globals::game::graphicsState || !acceleration.GetScene())
+		return false;
+	return movers.Observe(a_geometry, globals::game::graphicsState->GetFrameCount());
 }
 
 bool DX12NativeScene::CasterInTlas(const RE::BSGeometry& a_geometry) const
@@ -1009,7 +1019,8 @@ json DX12NativeScene::GetStatus() const
 
 	status["trace"] = { { "lastOutcome", magic_enum::enum_name(shadows.LastOutcome()) },
 		{ "lights", tracedLightCount.load(std::memory_order_relaxed) },
-		{ "shadedLights", shadedLightCount.load(std::memory_order_relaxed) } };
+		{ "shadedLights", shadedLightCount.load(std::memory_order_relaxed) },
+		{ "movers", movers.LastTraced() } };
 	status["composite"] = { { "lastShadowResult",
 		magic_enum::enum_name(DX12Native::lastCompositeShadowResult.load(std::memory_order_relaxed)) } };
 

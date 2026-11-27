@@ -2,6 +2,7 @@
 
 #include "../../../package/Shaders/Common/NativeShadowRT.hlsli"
 #include "DX12NativeAcceleration.h"
+#include "DX12NativeMovers.h"
 #include "DX12NativeRasterCapture.h"
 #include "GraphicsInterop.h"
 #include "VideoMemoryBudget.h"
@@ -29,6 +30,7 @@ namespace DX12Native
 		bool captureDebugLights = false;
 		uint32_t debugPreparedCount = 0;
 		std::shared_ptr<const NativeLightPublication> nativeLights;
+		MoverScene* movers = nullptr;  // Rigid movers traced alongside the static scene this frame.
 	};
 
 	/** @brief Quarter-resolution raw visibility and receiver distance; the composite reconstructs the full view. */
