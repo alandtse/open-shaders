@@ -13,6 +13,7 @@
 
 #include "../../Buffer.h"
 #include "PostProcessFeature.h"
+#include "Utils/LastUpload.h"
 #include <EASTL/unique_ptr.h>
 
 struct MotionBlur : public PostProcessFeature
@@ -116,8 +117,8 @@ struct MotionBlur : public PostProcessFeature
 	ReductionPassConstantBuffer reductionPassCB;
 
 	// Cache for optimization
-	MotionBlurConstantBuffer lastMotionBlurCB = {};
-	ReductionPassConstantBuffer lastReductionPassCB = {};
+	Util::LastUpload<MotionBlurConstantBuffer> lastMotionBlurCB;
+	Util::LastUpload<ReductionPassConstantBuffer> lastReductionPassCB;
 
 	// Interface methods
 	void SetupResources() override;
