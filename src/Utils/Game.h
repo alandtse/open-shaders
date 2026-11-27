@@ -399,6 +399,9 @@ namespace Util
 	std::string FormatTESForm(const RE::TESForm* form);
 	std::string FormatWeather(const RE::TESWeather* weather);
 
+	/** @brief Borrow the first scene owner (or first actor owner) in a bounded, AV-guarded parent walk; readSucceeded distinguishes faults. */
+	[[nodiscard]] RE::TESObjectREFR* FindSceneOwner(const RE::NiAVObject* object, bool actorOnly = false, bool* readSucceeded = nullptr) noexcept;
+
 	/** @brief Borrow the player's actual parent cell on the game thread, or nullptr. */
 	[[nodiscard]] const RE::TESObjectCELL* GetPlayerCell();
 

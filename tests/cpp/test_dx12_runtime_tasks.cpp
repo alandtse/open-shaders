@@ -467,3 +467,34 @@ TEST_CASE("Exact shadow-light identity replaces its prepared placeholder", "[dx1
 	CHECK(exact.first.front().runtimeIdentity == 42);
 	CHECK(exact.second == 0);
 }
+
+TEST_CASE("GPU completion never accepts device removal or untracked submissions", "[dx12][fence]")
+{
+	using DX12Native::FenceValueCompleted;
+	using DX12Native::kUntrackedFenceValue;
+	CHECK(FenceValueCompleted(false, 0, 0));
+	CHECK_FALSE(FenceValueCompleted(false, 5, 5));
+	CHECK_FALSE(FenceValueCompleted(true, 4, 5));
+	CHECK(FenceValueCompleted(true, 5, 5));
+	CHECK(FenceValueCompleted(true, 6, 5));
+	CHECK_FALSE(FenceValueCompleted(true, kUntrackedFenceValue, 5));
+	CHECK_FALSE(FenceValueCompleted(true, kUntrackedFenceValue, kUntrackedFenceValue));
+}
+
+TEST_CASE("Failed scene preparation workers cannot admit requests", "[dx12][scene-prep]")
+{
+	using DX12::PreparationWorkerAcceptsRequest;
+	CHECK(PreparationWorkerAcceptsRequest(false, false, false, false));
+	CHECK_FALSE(PreparationWorkerAcceptsRequest(true, false, false, false));
+	CHECK_FALSE(PreparationWorkerAcceptsRequest(false, true, false, false));
+	CHECK_FALSE(PreparationWorkerAcceptsRequest(false, false, true, false));
+	CHECK_FALSE(PreparationWorkerAcceptsRequest(false, false, false, true));
+}
+
+TEST_CASE("Scene preparation worker recovery is bounded", "[dx12][scene-prep]")
+{
+	CHECK(DX12::CanRestartPreparationWorker(0));
+	CHECK(DX12::CanRestartPreparationWorker(DX12::kMaxPreparationWorkerRestarts - 1));
+	CHECK_FALSE(DX12::CanRestartPreparationWorker(DX12::kMaxPreparationWorkerRestarts));
+	CHECK_FALSE(DX12::CanRestartPreparationWorker(UINT32_MAX));
+}

@@ -10,11 +10,11 @@
 #include "GpuPass.h"
 #include "PCH.h"
 #include "Utils/FileSystem.h"
+#include "Utils/D3D.h"
 
 #include <algorithm>
 #include <array>
 #include <directx/d3dx12.h>
-#include <fstream>
 #include <limits>
 #include <ranges>
 #include <stdexcept>
@@ -24,7 +24,7 @@ namespace DX12Native
 {
 	namespace
 	{
-		constexpr std::streamoff kMaxShadowBytecodeBytes = 16 * VideoMemoryBudget::kMiB;
+		constexpr uint64_t kMaxShadowBytecodeBytes = 16 * VideoMemoryBudget::kMiB;
 		constexpr uint64_t kSlotOverheadBytes = 2 * VideoMemoryBudget::kMiB;
 		constexpr uint32_t kShadowConstantDwords = 38;
 		constexpr uint32_t kRTConstantDwords = 39;
@@ -46,13 +46,7 @@ namespace DX12Native
 			return false;
 		try {
 			constexpr const char* names[]{ "CompositeOffload.dxil", "CompositeRTQuality.dxil", "CompositeRTPerformance.dxil" };
-			std::ifstream file(Util::PathHelpers::GetShadersPath() / "NativeComposite" / names[variant], std::ios::binary | std::ios::ate);
-			if (!file || file.tellg() <= 0 || file.tellg() > kMaxShadowBytecodeBytes)
-				throw std::runtime_error("Native composite DXIL missing, empty or exceeds the bytecode limit");
-			std::vector<char> shader(static_cast<size_t>(file.tellg()));
-			file.seekg(0);
-			if (!file.read(shader.data(), std::streamsize(shader.size())))
-				throw std::runtime_error("Native composite DXIL read failed");
+			const auto shader = Util::FileHelpers::ReadBoundedBinary(Util::PathHelpers::GetShadersPath() / "NativeComposite" / names[variant], kMaxShadowBytecodeBytes);
 			CD3DX12_DESCRIPTOR_RANGE ranges[2];
 			const uint32_t descriptorCount = variant == 0u ? 2u : 3u;
 			ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, descriptorCount, 0);
@@ -76,12 +70,8 @@ namespace DX12Native
 			state.device = device;
 			state.failedDevice = nullptr;
 			return true;
-		} catch (const winrt::hresult_error& error) {
-			logger::error("[NativeComposite] Shadow initialization failed (HRESULT 0x{:08X}): {}", static_cast<uint32_t>(error.code()), winrt::to_string(error.message()));
-		} catch (const std::exception& error) {
-			logger::error("[NativeComposite] Shadow initialization failed: {}", error.what());
 		} catch (...) {
-			logger::error("[NativeComposite] Shadow initialization failed with an unknown exception");
+			logger::error("[NativeComposite] Shadow initialization failed: {}", Util::DescribeCurrentD3DException());
 		}
 		state.failedDevice.copy_from(device);
 		return false;
@@ -567,15 +557,7 @@ namespace DX12Native
 				}
 			}
 			if (!std::exchange(captureFailureLogged, true)) {
-				try {
-					throw;
-				} catch (const winrt::hresult_error& error) {
-					logger::warn("[NativeComposite] Capture failed (HRESULT 0x{:08X}): {}", static_cast<uint32_t>(error.code()), winrt::to_string(error.message()));
-				} catch (const std::exception& error) {
-					logger::warn("[NativeComposite] Capture failed, the frame keeps its plain color: {}", error.what());
-				} catch (...) {
-					logger::warn("[NativeComposite] Capture failed with an unknown exception");
-				}
+				logger::warn("[NativeComposite] Capture failed, the frame keeps its plain color: {}", Util::DescribeCurrentD3DException());
 			}
 			return {};
 		}

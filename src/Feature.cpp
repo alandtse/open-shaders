@@ -404,22 +404,37 @@ void Feature::ApplyDrawHooks()
 	}
 }
 
-void Feature::ApplyDepthPrepassReadyHooks()
+const std::vector<Feature*>& Feature::GetDepthPrepassReadyHookFeatures()
 {
 	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsDepthPrepassReadyHook(); });
-	ForEachLoadedFeature(features, "OnDepthPrepassReady", [](Feature* feature) { feature->OnDepthPrepassReady(); }, true);
+	return features;
+}
+
+const std::vector<Feature*>& Feature::GetOpaqueRasterReadyHookFeatures()
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsOpaqueRasterReadyHook(); });
+	return features;
+}
+
+const std::vector<Feature*>& Feature::GetPreShadowMapsHookFeatures()
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsPreShadowMapsHook(); });
+	return features;
+}
+
+void Feature::ApplyDepthPrepassReadyHooks()
+{
+	ForEachLoadedFeature(GetDepthPrepassReadyHookFeatures(), "OnDepthPrepassReady", [](Feature* feature) { feature->OnDepthPrepassReady(); }, true);
 }
 
 void Feature::ApplyOpaqueRasterReadyHooks()
 {
-	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsOpaqueRasterReadyHook(); });
-	ForEachLoadedFeature(features, "OnOpaqueRasterReady", [](Feature* feature) { feature->OnOpaqueRasterReady(); }, true);
+	ForEachLoadedFeature(GetOpaqueRasterReadyHookFeatures(), "OnOpaqueRasterReady", [](Feature* feature) { feature->OnOpaqueRasterReady(); }, true);
 }
 
 void Feature::ApplyPreShadowMapsHooks()
 {
-	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsPreShadowMapsHook(); });
-	for (auto* feature : features) {
+	for (auto* feature : GetPreShadowMapsHookFeatures()) {
 		if (feature->loaded)
 			feature->PreShadowMaps();
 	}

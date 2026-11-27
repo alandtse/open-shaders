@@ -1,4 +1,6 @@
 #include "D3D.h"
+#include <exception>
+#include <format>
 
 #include "Deferred.h"
 #include "Features/TerrainBlending.h"
@@ -17,6 +19,19 @@
 
 namespace Util
 {
+	std::string DescribeCurrentD3DException()
+	{
+		try {
+			throw;
+		} catch (const winrt::hresult_error& error) {
+			return std::format("HRESULT 0x{:08X}: {}", static_cast<uint32_t>(error.code()), winrt::to_string(error.message()));
+		} catch (const std::exception& error) {
+			return error.what();
+		} catch (...) {
+			return "unknown exception";
+		}
+	}
+
 	namespace
 	{
 		std::mutex multithreadScopeMutex;

@@ -787,6 +787,8 @@ void DX12Resources::OnLoadingMenuEvent(bool opening)
 void DX12Resources::CancelPreparationWork()
 {
 	interiorBatch.reset();
+	workerRestarts = 0;
+	workerUnavailable = false;
 	if (worker) {
 		worker->Cancel();
 		worker->DrainRetiredObjects();
@@ -1043,11 +1045,49 @@ void DX12Resources::RecordPublication(PublicationState state, DX12::SubcellKey k
 void DX12Resources::PumpPreparation(DX12::ResourceGrid& target, const RE::TESObjectCELL* cell,
 	const RE::TESWorldSpace* world, uint32_t& attemptScope, bool loading)
 {
-	if (!worker)
-		worker = std::make_unique<DX12::ScenePrepWorker>();
-	worker->DrainRetiredObjects();
+	if (workerUnavailable)
+		return;
 	const auto neighborhood = target.Snapshot();
 	const auto scope = neighborhood->requested.front().scope;
+	const auto reportUnavailable = [&] {
+		workerUnavailable = true;
+		RecordPublication(PublicationState::Invalid, neighborhood->requested.front(), false, false, "Scene preparation worker unavailable; restart limit reached");
+		logger::error("[DX12Resources] Scene preparation worker unavailable; restart limit reached");
+	};
+	if (!worker) {
+		try {
+			worker = std::make_unique<DX12::ScenePrepWorker>();
+		} catch (const std::exception& error) {
+			logger::error("[DX12Resources] Scene preparation worker startup failed: {}", error.what());
+			if (DX12::CanRestartPreparationWorker(workerRestarts))
+				++workerRestarts;
+			else
+				reportUnavailable();
+			return;
+		}
+	}
+	worker->DrainRetiredObjects();
+	if (worker->Failed()) {
+		if (inFlight) {
+			const auto key = *inFlight;
+			DX12::TilePublication incomplete;
+			incomplete.key = key;
+			incomplete.failureReason = "Scene preparation worker terminated";
+			target.Publish(std::move(incomplete));
+			RecordPublication(PublicationState::Invalid, key, !std::ranges::contains(neighborhood->requested, key), false, "Scene preparation worker terminated");
+			inFlight.reset();
+			target.CancelPending();
+		}
+		interiorBatch.reset();
+		if (!DX12::CanRestartPreparationWorker(workerRestarts)) {
+			reportUnavailable();
+			return;
+		}
+		++workerRestarts;
+		worker.reset();
+		logger::warn("[DX12Resources] Restarting failed scene preparation worker ({}/{})", workerRestarts, DX12::kMaxPreparationWorkerRestarts);
+		return;
+	}
 	if (interiorBatch && (world || interiorBatch->center != neighborhood->requested.front() ||
 							 interiorBatch->size != neighborhood->size || interiorBatch->loading != loading ||
 							 !Util::QpcDeadlinePending(Util::GetQpcTicks(), interiorBatch->expiresQpc)))

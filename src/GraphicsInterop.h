@@ -53,7 +53,7 @@ struct SharedFence
 	/** @brief Creates and names the fence; throws on failure without leaking the NT handle. */
 	void Create(ID3D12Device* a_device12, ID3D11Device5* a_device11, const char* a_name);
 	/** @brief Waits on the CPU up to a_timeoutMs, polling device removal via fence12's own device.
-	 *  Trivially kComplete when the fence is unset or a_value is 0 (nothing to wait for).
+	 *  Trivially kComplete when a_value is 0; an absent fence with outstanding work fails.
 	 *  @param a_error Receives the error behind a kFailed outcome: the Win32 error from the wait,
 	 *         or the HRESULT a failed completion registration returned; may be null. */
 	WaitOutcome CpuWaitOutcome(uint64_t a_value, DWORD a_timeoutMs, DWORD* a_error = nullptr) const;

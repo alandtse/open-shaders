@@ -1,7 +1,21 @@
 #pragma once
 
+#include <cstdint>
+
 namespace DX12
 {
+	inline constexpr uint32_t kMaxPreparationWorkerRestarts = 3;
+
+	constexpr bool PreparationWorkerAcceptsRequest(bool failed, bool running, bool queued, bool completed)
+	{
+		return !failed && !running && !queued && !completed;
+	}
+
+	constexpr bool CanRestartPreparationWorker(uint32_t attempts)
+	{
+		return attempts < kMaxPreparationWorkerRestarts;
+	}
+
 	/** @brief Only a bounded, non-truncated whole-interior result can seed subdivided requests. */
 	constexpr bool CanReuseWholeInterior(bool attempted, bool consolidated, bool validated, bool enumerated,
 		bool budgetExceeded, bool captureBudgetExceeded, bool rejectedLights, bool allEligibleExtracted)

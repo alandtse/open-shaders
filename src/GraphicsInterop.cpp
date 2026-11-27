@@ -1,4 +1,5 @@
 #include "GraphicsInterop.h"
+#include "Features/DX12/DX12FenceRetirementPolicy.h"
 #include "Utils/D3D.h"
 
 WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* a_d3d11Device, ID3D12Device* a_d3d12Device, const std::string& a_name)
@@ -147,9 +148,14 @@ SharedFence::WaitOutcome SharedFence::CpuWaitOutcome(uint64_t a_value, DWORD a_t
 			*a_error = a_lastError;
 		return WaitOutcome::kFailed;
 	};
-	if (!fence12 || a_value == 0)
+	if (a_value == 0)
 		return WaitOutcome::kComplete;
-	if (fence12->GetCompletedValue() >= a_value)
+	if (!fence12 || a_value == DX12Native::kUntrackedFenceValue)
+		return failed(ERROR_INVALID_PARAMETER);
+	const auto initial = fence12->GetCompletedValue();
+	if (initial == DX12Native::kUntrackedFenceValue)
+		return failed(static_cast<DWORD>(DXGI_ERROR_DEVICE_REMOVED));
+	if (DX12Native::FenceValueCompleted(true, initial, a_value))
 		return WaitOutcome::kComplete;
 
 	winrt::handle fenceEvent(CreateEventW(nullptr, FALSE, FALSE, nullptr));
@@ -163,15 +169,21 @@ SharedFence::WaitOutcome SharedFence::CpuWaitOutcome(uint64_t a_value, DWORD a_t
 	while (waitedMs < a_timeoutMs) {
 		const DWORD sliceMs = std::min<DWORD>(kRemovalPollMs, a_timeoutMs - waitedMs);
 		const DWORD waitResult = WaitForSingleObject(fenceEvent.get(), sliceMs);
+		const auto completed = fence12->GetCompletedValue();
+		if (completed == DX12Native::kUntrackedFenceValue)
+			return failed(static_cast<DWORD>(DXGI_ERROR_DEVICE_REMOVED));
 		if (waitResult == WAIT_OBJECT_0)
-			return WaitOutcome::kComplete;
+			return DX12Native::FenceValueCompleted(true, completed, a_value) ? WaitOutcome::kComplete : failed(ERROR_INVALID_DATA);
 		if (waitResult != WAIT_TIMEOUT)
 			return failed(GetLastError());
 		waitedMs += sliceMs;
 		if (!device12)
 			fence12->GetDevice(IID_PPV_ARGS(&device12));
-		if (device12 && FAILED(device12->GetDeviceRemovedReason()))
-			return WaitOutcome::kFailed;
+		if (device12) {
+			const auto removal = device12->GetDeviceRemovedReason();
+			if (FAILED(removal))
+				return failed(static_cast<DWORD>(removal));
+		}
 	}
 
 	return WaitOutcome::kTimeout;

@@ -1021,7 +1021,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		sl::Extent extentOut{ 0, 0, (uint)displaySize.x, (uint)displaySize.y };
 
 		const bool nativeWasActive = upscaling.nativeDLSS.IsActive();
-		if ((globals::features::dx12Control.IsActive() || nativeWasActive) &&
+		if ((upscaling.nativeCompositeFrame || nativeWasActive || upscaling.nativeDLSS.HasPendingReset()) &&
 			upscaling.nativeDLSS.Upscale(colorOut, a_motionVectors, a_reactiveMask, a_transparencyCompositionMask, extentIn, extentOut)) {
 			// A later DX11 fallback then builds a fresh feature instead of reusing history from before the native frames.
 			if (!nativeWasActive)

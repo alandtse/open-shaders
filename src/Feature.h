@@ -728,6 +728,10 @@ public:
 	/** @brief Dispatches the opaque raster completion event to registered features. */
 	static void ApplyOpaqueRasterReadyHooks();
 	static void ApplyDepthPrepassReadyHooks();
+	/** @brief Boot-time hook subscribers, cached once; empty lists need no frame dispatch. */
+	static const std::vector<Feature*>& GetDepthPrepassReadyHookFeatures();
+	static const std::vector<Feature*>& GetOpaqueRasterReadyHookFeatures();
+	static const std::vector<Feature*>& GetPreShadowMapsHookFeatures();
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();

@@ -8,6 +8,7 @@
 #include <d3dcompiler.h>
 #include <filesystem>
 #include <functional>
+#include <string>
 #include <type_traits>
 #include <winrt/base.h>
 
@@ -19,6 +20,8 @@ namespace DirectX
 namespace Util
 {
 	class HeightMap;
+	/** @brief Formats the active DirectX or C++ exception; call only from a catch handler. */
+	std::string DescribeCurrentD3DException();
 	// The REX::W32 <-> SDK pairings live in CommonLib so every consumer shares one
 	// table; re-exported here to keep this codebase's Util:: call sites.
 	using REX::W32::AsReal;

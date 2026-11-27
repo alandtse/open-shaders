@@ -4298,7 +4298,9 @@ namespace ShadowCasterManager
 					entry.lastGeomHash = 0;
 				}
 			}
-			EstablishNativeRasterOwnership();
+			if (globals::features::dx12Control.IsActive() || s_nativeOwnershipPending ||
+				s_frameNativePolicy.observeGeometry || s_frameNativePolicy.fullStaticAuthority)
+				EstablishNativeRasterOwnership();
 
 			double budget = ComputeRedrawBudget();
 			s_redrawnLightsThisFrame = 0;

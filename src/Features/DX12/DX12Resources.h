@@ -286,6 +286,8 @@ private:
 	std::atomic<bool> runtimePublicationEnabled{ false };
 	DX12::ResourceGrid grid;
 	std::unique_ptr<DX12::ScenePrepWorker> worker;
+	uint32_t workerRestarts = 0;
+	bool workerUnavailable = false;
 	std::shared_ptr<const DX12::InteriorPreparationBatch> interiorBatch;
 	uint32_t lastVisitedCell = 0, previousVisitedCell = 0, distinctTransitions = 0;
 	int32_t lastExteriorGridX = std::numeric_limits<int32_t>::min();

@@ -9,6 +9,13 @@ namespace DX12Native
 	// permits retirement, but must never be interpreted as a successful GPU build.
 	inline constexpr uint64_t kUntrackedFenceValue = std::numeric_limits<uint64_t>::max();
 
+	/** @brief Only a tracked fence value may prove successful GPU completion. */
+	constexpr bool FenceValueCompleted(bool hasFence, uint64_t completed, uint64_t target)
+	{
+		return target == 0 || (hasFence && completed != kUntrackedFenceValue &&
+		                         target != kUntrackedFenceValue && completed >= target);
+	}
+
 	constexpr bool FenceValueRetired(bool hasFence, uint64_t completed, uint64_t target)
 	{
 		return target == 0 ||
