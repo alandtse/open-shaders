@@ -15,7 +15,8 @@ if(CMAKE_HOST_UNIX OR WIN32)
     # sl_pcl.h's __cplusplus==202302L check for std::to_underlying is unreliable under this
     # toolchain; patched here (NVIDIA's repo, not our fork) to always use the portable fallback.
     set(_sl_pcl_h "${CMAKE_SOURCE_DIR}/extern/Streamline-DX12/include/sl_pcl.h")
-    file(READ "${_sl_pcl_h}" _sl_pcl_h_content)
+    file(READ "${_sl_pcl_h}" _sl_pcl_h_original)
+    set(_sl_pcl_h_content "${_sl_pcl_h_original}")
     # Normalize to LF first so the REPLACE below matches regardless of the file's checked-out line endings.
     string(REPLACE "\r" "" _sl_pcl_h_content "${_sl_pcl_h_content}")
     string(
@@ -33,5 +34,8 @@ if(CMAKE_HOST_UNIX OR WIN32)
             "${_sl_pcl_h}: expected to_underlying patch text not found; Streamline-DX12 may have changed upstream."
         )
     endif()
-    file(WRITE "${_sl_pcl_h}" "${_sl_pcl_h_content}")
+    # A rewrite with identical text still bumps the mtime and rebuilds every includer.
+    if(NOT _sl_pcl_h_content STREQUAL _sl_pcl_h_original)
+        file(WRITE "${_sl_pcl_h}" "${_sl_pcl_h_content}")
+    endif()
 endif()

@@ -15,7 +15,7 @@ namespace
 	bool __stdcall IsHDRToggleEnabled()
 	{
 		std::lock_guard<std::mutex> lock(HDR().settingsMutex);
-		return HDRDisplay::isHDRMonitor || HDR().settings.enableHDR;
+		return HDR().swapChainSupportsHDR && (HDRDisplay::isHDRMonitor || HDR().settings.enableHDR);
 	}
 
 	float __stdcall GetHDREnabled()
@@ -31,6 +31,7 @@ namespace
 		if (HDR().settings.enableHDR == enable)
 			return;
 		HDR().settings.enableHDR = enable;
+		HDR().HoldHDROffWithoutHDRSwapChain();
 		HDR().UpdateHDRData();
 		HDR().UpdateSwapChainColorSpace();
 	}

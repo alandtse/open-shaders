@@ -3,6 +3,7 @@
 // SDR path keeps gamma UI and only clamps negatives.
 
 #include "Common/Color.hlsli"
+#include "Common/UIComposition.hlsli"
 
 RWTexture2D<float4> UITex : register(u0);
 
@@ -33,9 +34,10 @@ cbuffer PerFrame : register(b0)
 		// FidelityFX FG blends in PQ space, so UI must be PQ/BT.2020.
 		const float uiReferenceNits = max(paperWhite, 1.0);
 
-		if (ui.a > 0.001) {
+		// Additive UI leaves colour above alpha, which a PQ-space blend would add to the scene and blow out.
+		const float aIn = UIComposition::EffectiveCoverage(ui);
+		if (aIn > 0.001) {
 			// Pause menu only: raise coverage in the soft AA band to avoid washout.
-			float aIn = ui.a;
 			float aOut = aIn;
 			if (fgTweenMenuMidAlphaBoost > 0.5) {
 				float midBand = smoothstep(0.3, 0.35, aIn) * (1.0 - smoothstep(0.55, 0.6, aIn));
@@ -49,12 +51,6 @@ cbuffer PerFrame : register(b0)
 			float3 uiNits = uiBT2020 * uiReferenceNits * uiBrightness;
 			ui.rgb = Color::pq::Encode(uiNits / 10000.0, 10000.0) * aOut;
 			ui.a = aOut;
-		} else {
-			// Broken-alpha path: transform premultiplied color and keep alpha at 0.
-			float3 uiLinear = Color::SrgbToLinear(max(0, ui.rgb));
-			float3 uiBT2020 = Color::BT709ToBT2020(uiLinear);
-			float3 uiNits = uiBT2020 * uiReferenceNits * uiBrightness;
-			ui.rgb = Color::pq::Encode(uiNits / 10000.0, 10000.0);
 		}
 	} else {
 		// SDR path: keep premultiplied gamma UI, clamp negatives only.

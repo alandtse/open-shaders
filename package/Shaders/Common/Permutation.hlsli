@@ -154,6 +154,8 @@ namespace Permutation
 		float4 TreeWindProbeTop;
 		float GrassCanopyHeight;
 		float3 canopyPadding;
+
+		float4 PerDrawFeatureData[2];
 	};
 
 	bool IsReflectionRadianceCapture()

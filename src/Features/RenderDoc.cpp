@@ -1,6 +1,7 @@
 // RenderDoc component of the Developer Tools feature providing in-application graphics debugging capabilities
 #include "Features/RenderDoc.h"
 
+#include "BuildInfo.h"
 #include "CSEditor/Browser/BrowserWidgets.h"
 #include "Globals.h"
 #include "Utils/FileSystem.h"

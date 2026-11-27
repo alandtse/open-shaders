@@ -25,6 +25,7 @@ struct LinearLighting;
 struct LODBlending;
 struct InteriorSun;
 struct FurShells;
+struct DetailMaps;
 struct RainRefraction;
 struct ScreenSpaceGI;
 struct ScreenSpaceShadows;
@@ -135,6 +136,7 @@ namespace globals
 		extern LODBlending lodBlending;
 		extern InteriorSun interiorSun;
 		extern FurShells furShells;
+		extern DetailMaps detailMaps;
 		extern RainRefraction rainRefraction;
 		extern ScreenSpaceGI screenSpaceGI;
 		extern ScreenSpaceShadows screenSpaceShadows;

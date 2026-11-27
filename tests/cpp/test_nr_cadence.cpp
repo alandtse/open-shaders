@@ -244,3 +244,12 @@ TEST_CASE("IsHighMotion clamps an out-of-range dot product and treats a non-fini
 	REQUIRE(NR::Cadence::IsHighMotion(1.0f, nan, 1.0f, 12.0f));
 	REQUIRE(NR::Cadence::IsHighMotion(1.0f, std::numeric_limits<float>::infinity(), 0.0f, 0.0f));
 }
+
+TEST_CASE("The motion chain continues only from the immediately preceding reuse frame", "[nr]")
+{
+	REQUIRE_FALSE(NR::Cadence::ContinuesMotionChain(5, NR::Cadence::kNoModelFrame));
+	REQUIRE_FALSE(NR::Cadence::ContinuesMotionChain(0, NR::Cadence::kNoModelFrame));
+	REQUIRE(NR::Cadence::ContinuesMotionChain(5, 4));
+	REQUIRE_FALSE(NR::Cadence::ContinuesMotionChain(5, 3));
+	REQUIRE_FALSE(NR::Cadence::ContinuesMotionChain(5, 5));
+}

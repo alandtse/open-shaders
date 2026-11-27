@@ -14,12 +14,66 @@
 #include "CSEditor/SceneManager/SceneEntryDraft.h"
 #include "CSEditor/SceneManager/SceneEntryPrecedence.h"
 #include "CSEditor/SceneManager/ScenePresetPauses.h"
+#include "Presets/BaselineCompatibility.h"
 #include "Presets/LegacyPreset.h"
 #include "Presets/PresetActivation.h"
 #include "Presets/PresetContent.h"
 #include "Presets/PresetState.h"
 #include "Utils/RenderTaskQueue.h"
 #include "Utils/SettingsPatch.h"
+
+TEST_CASE("Light Limit Fix baselines ignore upstream local shadow settings", "[presets][baseline-compatibility]")
+{
+	const nlohmann::json upstream{
+		{ "EnableLocalShadows", true },
+		{ "LocalShadowFilterScale", 1.0 },
+		{ "LocalShadowResolution", 0 },
+		{ "LocalShadowSamples", 8 },
+		{ "LocalShadowSlots", 16 },
+	};
+	const nlohmann::json supported{
+		{ "EnableContactShadows", true },
+		{ "ShadowSettings", { { "MaxRedrawPerFrame", 8 } } },
+	};
+	auto values = upstream;
+	BaselineCompatibility::EraseIgnoredSettings("LightLimitFix", values);
+	CHECK(values.empty());
+
+	values = upstream;
+	BaselineCompatibility::EraseIgnoredSettings("AnotherFeature", values);
+	CHECK(values == upstream);
+
+	values = upstream;
+	values.update(supported);
+	values["LocalShadowSlot"] = 16;
+	BaselineCompatibility::EraseIgnoredSettings("LightLimitFix", values);
+	std::vector<std::string> unknown;
+	Util::Settings::CollectUnknownSettingKeys(values, supported, "", unknown);
+	CHECK(unknown == std::vector<std::string>{ "LocalShadowSlot" });
+	values.erase("LocalShadowSlot");
+	CHECK(values == supported);
+}
+
+TEST_CASE("Baseline compatibility selects keys by feature name", "[presets][baseline-compatibility]")
+{
+	static constexpr std::string_view firstKeys[]{ "FirstKey" };
+	static constexpr std::string_view secondKeys[]{ "SecondKey", "SharedKey" };
+	static constexpr BaselineCompatibility::FeatureRule rules[]{
+		{ "FirstFeature", firstKeys },
+		{ "SecondFeature", secondKeys },
+	};
+	const nlohmann::json original{ { "FirstKey", 1 }, { "SecondKey", 2 }, { "SharedKey", true } };
+
+	auto values = original;
+	BaselineCompatibility::EraseIgnoredSettings<rules>("FirstFeature", values);
+	const nlohmann::json firstExpected{ { "SecondKey", 2 }, { "SharedKey", true } };
+	CHECK(values == firstExpected);
+
+	values = original;
+	BaselineCompatibility::EraseIgnoredSettings<rules>("SecondFeature", values);
+	const nlohmann::json secondExpected{ { "FirstKey", 1 } };
+	CHECK(values == secondExpected);
+}
 
 TEST_CASE("Scene presets take precedence over values saved for the same scene", "[presets][scene-settings]")
 {
@@ -155,6 +209,18 @@ TEST_CASE("Imported legacy globals retain their lower priority", "[presets][lega
 	REQUIRE(LegacyPreset::BuildPackId("Same Pack", true) != LegacyPreset::BuildPackId("Same Pack", false));
 }
 
+TEST_CASE("Fresh Base Settings preserve legacy overwrite order within the legacy slots", "[presets][legacy-presets]")
+{
+	const auto global = LegacyPreset::BuildPackId("DOSP", true);
+	const auto first = LegacyPreset::BuildPackId("!DOSP", false);
+	const auto second = LegacyPreset::BuildPackId("DOSP", false);
+	const std::array legacy{ global, first, second };
+	std::vector<std::string> installed{ global, "Dynamic Window Shadows", second, "Alpha", first };
+	PresetState::ApplyBaselineSubsetOrder(installed, legacy);
+	const auto fresh = PresetState::DiscoverBaselines(nlohmann::json::object(), installed);
+	REQUIRE(fresh.at("baselinePackIds") == nlohmann::json({ global, "Dynamic Window Shadows", first, "Alpha", second }));
+}
+
 TEST_CASE("Base Settings default to all enabled and retain explicit disabled choices", "[presets][legacy-presets]")
 {
 	const std::array<std::string, 3> order{ "Z Pack", "Alpha", "!Priority" };
@@ -191,6 +257,17 @@ TEST_CASE("Upstream preset-state saves do not discard OS preferences", "[presets
 	REQUIRE(restored.at("removedLegacyPackIds") == nlohmann::json({ "Legacy - Old" }));
 	REQUIRE(restored.at("automaticPresets") == false);
 	REQUIRE(PresetState::RestorePrivateState({ { "automaticPresets", true } }, privateState).at("automaticPresets") == true);
+}
+
+TEST_CASE("Legacy settings saves retain the last shared Base Settings selection", "[presets]")
+{
+	const nlohmann::json enabled = { "Second", "First" };
+	const nlohmann::json preferences{ { "lastSharedBaselinePackIds", enabled }, { "disabledBaselinePackIds", { "Off" } } };
+	const auto restored = PresetState::RestorePrivateState(nlohmann::json::object(), preferences);
+	REQUIRE(restored.at("baselinePackIds") == enabled);
+	REQUIRE(restored.at("disabledBaselinePackIds") == preferences.at("disabledBaselinePackIds"));
+	const nlohmann::json cleared{ { "baselinePackIds", nlohmann::json::array() } };
+	REQUIRE(PresetState::RestorePrivateState(cleared, preferences).at("baselinePackIds").empty());
 }
 
 TEST_CASE("Disabled Base Settings retain priority across startup and reactivation", "[presets]")

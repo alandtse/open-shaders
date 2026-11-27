@@ -1,5 +1,6 @@
 #include "ShaderCache.h"
 #include "Globals.h"
+#include "LightingBudget.h"
 #include "ShaderCompileStatus.h"
 #include "ShaderFileWatcher.h"
 #include "Util.h"
@@ -753,14 +754,15 @@ namespace SIE
 			return nullptr;
 		}
 
-		uint32_t GetTechnique(uint32_t descriptor)
-		{
-			return 0x3F & (descriptor >> 24);
-		}
-
 		static void GetLightingShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
-			RE::GetLightingShaderDefines(descriptor, reinterpret_cast<REX::W32::D3D_SHADER_MACRO*>(defines.data()));
+			uint32_t variantMask = 0;
+			for (auto* feature : Feature::GetFeatureList()) {
+				if (feature->loaded)
+					variantMask |= feature->GetLightingVariantFlag();
+			}
+
+			RE::GetLightingShaderDefines(descriptor & ~variantMask, reinterpret_cast<REX::W32::D3D_SHADER_MACRO*>(defines.data()));
 
 			size_t lastIndex = std::ranges::find_if(defines, [](const D3D_SHADER_MACRO& macro) { return macro.Name == nullptr; }) - defines.begin();
 
@@ -781,6 +783,14 @@ namespace SIE
 				if ((descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::FurShellsDepth)) != 0) {
 					defines[lastIndex++] = { "FUR_SHELLS_DEPTH", nullptr };
 				}
+			}
+			for (auto* feature : Feature::GetFeatureList()) {
+				if (!feature->loaded)
+					continue;
+				const uint32_t flag = feature->GetLightingVariantFlag();
+				const auto define = feature->GetLightingVariantDefine();
+				if (flag != 0 && !define.empty() && (descriptor & flag) != 0)
+					defines[lastIndex++] = { define.data(), nullptr };
 			}
 
 			for (auto* feature : Feature::GetFeatureList()) {
@@ -2861,9 +2871,17 @@ namespace SIE
 		return defines;
 	}
 
-	winrt::com_ptr<ID3D11GeometryShader> ShaderCache::GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor)
+	winrt::com_ptr<ID3D11GeometryShader> ShaderCache::GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor, std::optional<uint64_t> a_taskGeneration)
 	{
+		using enum UtilityShaderFlags;
+		// The paraboloid bit is shared with AdditionalAlphaMask, so only a shadow-map draw outside OpaqueEffect is paraboloid.
+		constexpr auto paraboloidShadow = static_cast<uint32_t>(RenderShadowmap) | static_cast<uint32_t>(RenderShadowmapPb);
+		if (shader.shaderType.get() != RE::BSShader::Type::Utility ||
+			(vertexDescriptor & paraboloidShadow) != paraboloidShadow || (vertexDescriptor & static_cast<uint32_t>(OpaqueEffect)))
+			return nullptr;
 		std::scoped_lock lock(paraboloidClipMutex);
+		if (IsTaskStale(a_taskGeneration, RE::BSShader::Type::Utility))
+			return nullptr;
 		if (const auto it = paraboloidClipShaders.find(vertexDescriptor); it != paraboloidClipShaders.end())
 			return it->second;
 		auto defines = GetTechniqueDefines(shader, vertexDescriptor);
@@ -4695,6 +4713,7 @@ namespace SIE
 					newShader->shader->Release();
 				}
 			} else {
+				GetParaboloidClipShader(shader, descriptor, a_taskGeneration);
 				std::lock_guard lockGuard(vertexShadersMutex);
 				// Clear() takes this same mutex to wipe vertexShaders, so a mismatch here means
 				// inserting now would resurrect state Clear() already removed.
@@ -5664,7 +5683,7 @@ namespace SIE
 
 		// Known heavy Lighting techniques and flags from straggler analysis
 		if (type == RE::BSShader::Type::Lighting) {
-			const auto technique = static_cast<ShaderCache::LightingShaderTechniques>(0x3F & (descriptor >> 24));
+			const auto technique = ShaderCache::GetLightingTechnique(descriptor);
 
 			// LANDSCAPE techniques (MTLand, MTLandLODBlend) are among the heaviest
 			// due to multi-texture blending codegen â€” regularly 60-130s compile times

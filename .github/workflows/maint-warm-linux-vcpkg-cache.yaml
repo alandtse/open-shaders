@@ -18,6 +18,8 @@ on:
             - "CMakePresets.json"
             - ".github/workflows/_shared-cross-compile.yaml"
             - ".github/workflows/maint-warm-linux-vcpkg-cache.yaml"
+    schedule:
+        - cron: "17 3 * * *"
     workflow_dispatch:
 
 permissions:
@@ -28,7 +30,31 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
+    check:
+        name: Check Linux caches exist
+        runs-on: ubuntu-latest
+        permissions:
+            actions: read
+        outputs:
+            xwin_present: ${{ steps.list.outputs.xwin_present }}
+            vcpkg_present: ${{ steps.list.outputs.vcpkg_present }}
+        steps:
+            # Prefix match: a hash change reaches this workflow through the push paths above.
+            - name: List cache entries
+              id: list
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  for entry in "xwin_present:xwin-sysroot-" "vcpkg_present:Linux-vcpkg-binpkgs-x64-windows-clangcl-"; do
+                      count=$(gh api "repos/${{ github.repository }}/actions/caches?per_page=100&key=${entry#*:}" --jq '.total_count')
+                      present=false; [ "$count" -gt 0 ] && present=true
+                      echo "${entry%%:*}=$present" >> "$GITHUB_OUTPUT"
+                      echo "${entry#*:} entries: $count"
+                  done
+
     warm:
+        needs: check
+        if: github.event_name != 'schedule' || needs.check.outputs.xwin_present != 'true' || needs.check.outputs.vcpkg_present != 'true'
         permissions:
             contents: read
         uses: ./.github/workflows/_shared-cross-compile.yaml
@@ -39,7 +65,9 @@ jobs:
 
     save-cache:
         name: Save vcpkg binary cache
-        needs: warm
+        needs: [check, warm]
+        # Saving over an existing key fails, so a scheduled run skips it while only xwin was missing.
+        if: needs.warm.result == 'success' && (github.event_name != 'schedule' || needs.check.outputs.vcpkg_present != 'true')
         runs-on: ubuntu-latest
         permissions:
             contents: read
@@ -87,3 +115,25 @@ jobs:
                   # No cache-key-suffix: must exactly match _shared-cross-compile.yaml's
                   # suffixless restore key, or restores silently miss forever.
                   key: ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json', 'main/vcpkg-configuration.json', 'main/cmake/ports/**', 'main/cmake/ports-linux-clangcl/**', 'main/cmake/triplets/**', 'main/extern/CommonLibSSE-NG/examples/linux-cross-compile/custom-ports/**', 'main/extern/CommonLibSSE-NG/cmake/toolchain-linux-clangcl.cmake') }}
+
+    verify:
+        name: Verify Linux caches exist
+        needs: [check, warm, save-cache]
+        if: always() && !cancelled()
+        runs-on: ubuntu-latest
+        permissions:
+            actions: read
+        steps:
+            - name: Fail if a cache is missing
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  status=0
+                  echo "| cache prefix | entries |" >> "$GITHUB_STEP_SUMMARY"
+                  echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+                  for prefix in "xwin-sysroot-" "Linux-vcpkg-binpkgs-x64-windows-clangcl-"; do
+                      count=$(gh api "repos/${{ github.repository }}/actions/caches?per_page=100&key=$prefix" --jq '.total_count')
+                      echo "| $prefix | $count |" >> "$GITHUB_STEP_SUMMARY"
+                      if [ "$count" -eq 0 ]; then echo "::error::No cache entry with prefix $prefix"; status=1; fi
+                  done
+                  exit $status

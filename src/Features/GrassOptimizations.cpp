@@ -2,6 +2,7 @@
 
 #include "GpuPass.h"
 #include "GrassCollision.h"
+#include "Hooks.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "TruePBR.h"
@@ -191,6 +192,12 @@ bool GrassOptimizations::HasShaderDefine(RE::BSShader::Type shaderType)
 
 void GrassOptimizations::PostPostLoad()
 {
+	if (!::Hooks::IsGrassMeshLoadHookInstalled()) {
+		loaded = false;
+		failedLoadedMessage = T(TKEY("mesh_load_hook_failed"), "Grass mesh registration failed. Skyrim will render grass using its native renderer.");
+		logger::error("[Grass Optimizations] {}", failedLoadedMessage);
+		return;
+	}
 	Hooks::Install();
 	active = true;
 	if (!settings.Enabled)
@@ -453,7 +460,7 @@ void GrassOptimizations::DrawBucket(GrassBucket& b)
 		ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 
 		// The engine does not track VS resources, so only the record SRV changes between tiers.
-		ID3D11ShaderResourceView* instanceViews[4] = { bucketStore.cullOutput.compactedSRVs[tier].get(), bucketStore.InstancePoolSRV(), bucketStore.GroupPoolSRV(), b.complexSRV };
+		ID3D11ShaderResourceView* instanceViews[4] = { bucketStore.cullOutput.tiers[tier]->SRV(), bucketStore.InstancePoolSRV(), bucketStore.GroupPoolSRV(), b.complexSRV };
 		ctx->VSSetShaderResources(2, std::exchange(bindSharedViews, false) ? 4 : 1, instanceViews);
 
 		for (uint32_t eye = 0; eye < eyeCount; ++eye) {

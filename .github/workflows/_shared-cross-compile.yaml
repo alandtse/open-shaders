@@ -147,6 +147,7 @@ jobs:
             # Restore-only: this job compiles fork-checked-out code and must
             # never hold a write-capable token; saving happens in the caller.
             - name: Restore vcpkg binary packages
+              id: cache-vcpkg
               uses: actions/cache/restore@v4
               with:
                   path: ${{ github.workspace }}/vcpkg_binary_cache
@@ -157,6 +158,22 @@ jobs:
                   key: ${{ runner.os }}-vcpkg-binpkgs${{ inputs.cache-key-suffix }}-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json', 'main/vcpkg-configuration.json', 'main/cmake/ports/**', 'main/cmake/ports-linux-clangcl/**', 'main/cmake/triplets/**', 'main/extern/CommonLibSSE-NG/examples/linux-cross-compile/custom-ports/**', 'main/extern/CommonLibSSE-NG/cmake/toolchain-linux-clangcl.cmake') }}
                   restore-keys: |
                       ${{ runner.os }}-vcpkg-binpkgs${{ inputs.cache-key-suffix }}-x64-windows-clangcl-
+
+            - name: Report cache status
+              env:
+                  XWIN_HIT: ${{ steps.cache-xwin.outputs.cache-hit }}
+                  VCPKG_HIT: ${{ steps.cache-vcpkg.outputs.cache-hit }}
+              run: |
+                  {
+                      echo "### Linux cross-compile caches"
+                      echo "| cache | exact hit |"
+                      echo "|---|---|"
+                      echo "| xwin sysroot | $XWIN_HIT |"
+                      echo "| vcpkg binary packages | $VCPKG_HIT |"
+                  } >> "$GITHUB_STEP_SUMMARY"
+                  if [ "$VCPKG_HIT" != "true" ]; then
+                      echo "::warning title=Linux vcpkg cache miss::Configure will rebuild vcpkg packages (about 5-8 min); run Maint: Warm Linux vcpkg Cache."
+                  fi
 
             - name: Configure
               run: cmake -S main -B main/build/Linux-ClangCL --preset Linux-ClangCL -DBUILD_TESTS=OFF

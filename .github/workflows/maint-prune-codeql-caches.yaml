@@ -1,0 +1,41 @@
+name: "Maint: Prune CodeQL Caches"
+
+# CodeQL saves a base-database cache per push that no other prune matches;
+# unpruned, they crowd the 10 GB repo cap and evict the Linux build caches.
+
+on:
+    schedule:
+        - cron: "47 3 * * *"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: prune-codeql-caches
+    cancel-in-progress: false
+
+jobs:
+    prune:
+        name: Delete superseded CodeQL caches
+        runs-on: ubuntu-latest
+        permissions:
+            actions: write
+        env:
+            KEEP_PER_GROUP: 2
+        steps:
+            - name: Delete all but the newest per language
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  gh api "repos/${{ github.repository }}/actions/caches?per_page=100&key=codeql-overlay-base-database-" --paginate \
+                      --jq '.actions_caches[] | "\(.created_at)\t\(.id)\t\(.key)"' \
+                      | sed -E 's/\t([0-9]+)\t(.*)-[0-9]+\.[0-9]+\.[0-9]+-[0-9a-f]{40}-[0-9]+-[0-9]+$/\t\1\t\2/' \
+                      | sort -k3,3 -k1,1r \
+                      | awk -F'\t' -v keep="$KEEP_PER_GROUP" '{ if (++n[$3] > keep) print $2, $3 }' \
+                      | while read -r id group; do
+                          echo "Deleting superseded cache $id ($group)"
+                          gh api -X DELETE "repos/${{ github.repository }}/actions/caches/$id"
+                      done

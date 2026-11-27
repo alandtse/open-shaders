@@ -819,7 +819,7 @@ namespace SIE
 		RE::BSGraphics::PixelShader* GetPixelShader(const RE::BSShader& shader,
 			uint32_t descriptor, bool a_precompile = false);
 		/** @brief The Utility geometry shader that cuts a paraboloid shadow draw's triangles at its hemisphere plane, for a vertex descriptor; null if it cannot compile. */
-		winrt::com_ptr<ID3D11GeometryShader> GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor);
+		winrt::com_ptr<ID3D11GeometryShader> GetParaboloidClipShader(const RE::BSShader& shader, uint32_t vertexDescriptor, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 		/** @brief Checks that every requested pixel-shader permutation is ready. */
 		bool HasPixelShaders(RE::BSShader::Type type, std::span<const uint32_t> descriptors);
 		RE::BSGraphics::ComputeShader* GetComputeShader(const RE::BSShader& shader,
@@ -1061,6 +1061,12 @@ namespace SIE
 			MTLandLODBlend = 19,
 		};
 
+		/** @brief The technique a Lighting descriptor selects. */
+		static constexpr LightingShaderTechniques GetLightingTechnique(uint32_t a_descriptor)
+		{
+			return static_cast<LightingShaderTechniques>((a_descriptor >> 24) & 0x3F);
+		}
+
 		enum class LightingShaderFlags : uint32_t
 		{
 			VC = 1 << 0,
@@ -1072,6 +1078,7 @@ namespace SIE
 			Deferred = 1 << 4,
 			LandscapeSeams = 1 << 5,
 			// Community Shaders end
+			DetailMaps = 1 << 6,
 			Specular = 1 << 9,
 			SoftLighting = 1 << 10,
 			RimLighting = 1 << 11,

@@ -633,8 +633,44 @@ namespace Util
 			}
 		}
 
+		std::vector<std::filesystem::path> GetSortedDirectoryPaths(
+			const std::filesystem::path& directory, bool directories, std::string_view context)
+		{
+			std::vector<std::filesystem::path> paths;
+			std::error_code ec;
+			std::filesystem::directory_iterator iterator(
+				directory, std::filesystem::directory_options::skip_permission_denied, ec);
+			if (ec) {
+				logger::error("[FileSystem] Failed to enumerate {} '{}': {}", context, directory.string(), ec.message());
+				return paths;
+			}
+
+			const std::filesystem::directory_iterator end;
+			while (iterator != end) {
+				const auto& entry = *iterator;
+				std::error_code statusError;
+				const bool matches = directories ? entry.is_directory(statusError) : entry.is_regular_file(statusError);
+				if (statusError) {
+					logger::warn("[FileSystem] Could not inspect '{}': {}", entry.path().string(), statusError.message());
+				} else if (matches) {
+					paths.push_back(entry.path());
+				}
+
+				iterator.increment(ec);
+				if (ec) {
+					logger::error("[FileSystem] Failed while enumerating {} '{}': {}", context, directory.string(), ec.message());
+					break;
+				}
+			}
+
+			std::sort(paths.begin(), paths.end(), [](const auto& lhs, const auto& rhs) {
+				return lhs.generic_string() < rhs.generic_string();
+			});
+			return paths;
+		}
+
 		template <class Json>
-		std::optional<Json> ReadJsonFile(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes, std::string* error)
+		std::optional<Json> ReadJsonFile(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes, std::string* error, bool allowComments)
 		{
 			std::ifstream file(path);
 			if (!file.is_open())
@@ -648,19 +684,19 @@ namespace Util
 				}
 			}
 			try {
-				return Json::parse(file);
+				return Json::parse(file, nullptr, true, allowComments);
 			} catch (const std::exception& e) {
 				ReportReadFailure(path, context, e.what(), error);
 				return std::nullopt;
 			}
 		}
 
-		template std::optional<nlohmann::json> ReadJsonFile<nlohmann::json>(const std::filesystem::path&, std::string_view, std::uintmax_t, std::string*);
-		template std::optional<nlohmann::ordered_json> ReadJsonFile<nlohmann::ordered_json>(const std::filesystem::path&, std::string_view, std::uintmax_t, std::string*);
+		template std::optional<nlohmann::json> ReadJsonFile<nlohmann::json>(const std::filesystem::path&, std::string_view, std::uintmax_t, std::string*, bool);
+		template std::optional<nlohmann::ordered_json> ReadJsonFile<nlohmann::ordered_json>(const std::filesystem::path&, std::string_view, std::uintmax_t, std::string*, bool);
 
-		std::optional<nlohmann::json> ReadJsonObject(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes, std::string* error)
+		std::optional<nlohmann::json> ReadJsonObject(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes, std::string* error, bool allowComments)
 		{
-			auto document = ReadJsonFile(path, context, maxBytes, error);
+			auto document = ReadJsonFile(path, context, maxBytes, error, allowComments);
 			if (document && !document->is_object()) {
 				ReportReadFailure(path, context, "root is not a JSON object", error);
 				return std::nullopt;

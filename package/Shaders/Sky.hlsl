@@ -90,6 +90,10 @@ struct VS_OUTPUT
 #endif  // VR
 };
 
+// Matches the engine's rasterizer depth bias for these passes, which a float reverse-Z buffer cannot apply.
+static const float MoonMaskBiasUnits = 3.0;
+static const float MoonBiasUnits = 9.0;
+
 #ifdef VSHADER
 cbuffer PerGeometry : register(b2)
 {
@@ -135,10 +139,6 @@ float GetSunGlareVisibility(uint eyeIndex)
 	return FlareOcclusion::GetVisibility(visibility);
 }
 #	endif
-
-// Matches the engine's rasterizer depth bias for these passes, which a float reverse-Z buffer cannot apply.
-static const float MoonMaskBiasUnits = 3.0;
-static const float MoonBiasUnits = 9.0;
 
 VS_OUTPUT main(VS_INPUT input)
 {
@@ -223,8 +223,6 @@ VS_OUTPUT main(VS_INPUT input)
 	float4 skyPosition = mul(WorldViewProj[eyeIndex], inputPosition);
 #		if defined(MOONMASK)
 	float skyBiasUnits = MoonMaskBiasUnits;
-#		elif defined(CLOUDS)
-	float skyBiasUnits = MoonBiasUnits;
 #		elif defined(TEX)
 	float skyBiasUnits = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsMoon) ? MoonBiasUnits : 0.0;
 #		else
@@ -265,6 +263,9 @@ struct PS_OUTPUT
 	float4 Normal: SV_Target2;
 #if defined(CLOUD_SHADOWS) && defined(CLOUDS) && !defined(DEFERRED)
 	float4 CloudShadows: SV_Target3;
+#endif
+#if defined(REVERSE_Z) && defined(CLOUDS)
+	float Depth: SV_Depth;
 #endif
 };
 
@@ -763,6 +764,11 @@ PS_OUTPUT main(PS_INPUT input)
 
 #	if defined(IBL) && !defined(DEFERRED)
 	psout.ReflectionRadiance = psout.Color;
+#	endif
+
+#	if defined(REVERSE_Z) && defined(CLOUDS)
+	// Do not move this into a clip-z offset: the cloud dome crosses the camera plane and clips to depth 1.0.
+	psout.Depth = FrameBuffer::IsReverseProjection() ? MoonBiasUnits * FrameBuffer::DepthBiasUnit24 : input.Position.z;
 #	endif
 
 	return psout;

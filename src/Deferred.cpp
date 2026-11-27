@@ -573,7 +573,7 @@ bool Deferred::ForwardMasks2Available() const
 void Deferred::BindForwardHairMasks()
 {
 	const std::uint32_t descriptor = globals::state->modifiedPixelDescriptor;
-	const auto technique = static_cast<SIE::ShaderCache::LightingShaderTechniques>((descriptor >> 24) & 0x3F);
+	const auto technique = SIE::ShaderCache::GetLightingTechnique(descriptor);
 	const bool deferredDraw = (descriptor & static_cast<std::uint32_t>(SIE::ShaderCache::LightingShaderFlags::Deferred)) != 0;
 	if (!globals::features::lightLimitFix.settings.SunLitHair || deferredPass || !globals::state->inWorld || technique != SIE::ShaderCache::LightingShaderTechniques::Hair || deferredDraw)
 		return;

@@ -764,7 +764,7 @@ void Upscaling::RegisterUxActions()
 		CaptureNeuralRendering);
 
 	FEATURE_COMMAND("calibrateNeuralCrop",
-		"Start the Neural Rendering crop cost sweep: centred crops of shrinking area are forced for about half a minute over four passes while NREvaluate GPU time is measured, and the result (per-step best low-percentile times, stability ratio, floor, and the largest crop still within 5% of the floor) appears under neuralCalibration in openshaders.feature diagnostics. Fails if frame generation is active or Neural Rendering is not running. Params: none.",
+		"Start the Neural Rendering crop cost sweep: centred crops of shrinking area are forced for about half a minute over four passes while NREvaluate GPU time is measured, and the result (per-step best low-percentile times, stability ratio, floor, and the largest crop still within 5% of the floor) appears under neuralCalibration in openshaders.feature diagnostics. Fails if frame generation is active, Model Scale is below 1, or Neural Rendering is not running. Params: none.",
 		CalibrateNeuralCrop);
 }
 
@@ -1358,10 +1358,11 @@ void Upscaling::LoadSettings(json& o_json)
 	// Missing schema fields take the current default during deserialization, so legacy settings need an explicit migration version.
 	const bool hadFsr4SchemaVersion = o_json.contains("fsr4RuntimeSelectionSchemaVersion");
 	const uint previousDLSSGPreset = settings.dlssgPreset;
+	const auto previousTuning = settings.neuralRenderingTuning;
 	settings = o_json;
 	settings.neuralRenderingTuning.Sanitize();
 	settings.neuralRenderingContexts.Sanitize();
-	neuralRendering.ResetHistory();
+	neuralRendering.OnTuningReplaced(previousTuning, settings.neuralRenderingTuning);
 	if (!hadFsr4SchemaVersion)
 		settings.fsr4RuntimeSelectionSchemaVersion = 0;
 	if (settings.fsr4RuntimeSelectionSchemaVersion < kFsr4RuntimeSelectionSchemaVersion) {
@@ -1440,9 +1441,10 @@ void Upscaling::LoadSettings(json& o_json)
 void Upscaling::RestoreDefaultSettings()
 {
 	const uint previousDLSSGPreset = settings.dlssgPreset;
+	const auto previousTuning = settings.neuralRenderingTuning;
 	settings = {};
 	SyncDLSSGPresetDriverProfile(previousDLSSGPreset);
-	neuralRendering.ResetHistory();
+	neuralRendering.OnTuningReplaced(previousTuning, settings.neuralRenderingTuning);
 	foveatedRender.RestoreDefaultSettings();
 	ApplyOpenCompositeUpscalingBlocker(true);
 }

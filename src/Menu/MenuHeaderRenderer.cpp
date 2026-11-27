@@ -5,6 +5,7 @@
 #include <imgui_internal.h>
 
 #include "BaselineManager.h"
+#include "BuildInfo.h"
 #include "CSEditor/Browser/BrowserWidgets.h"
 #include "CSEditor/SceneManager/SceneSettingsManager.h"
 #include "Fonts.h"

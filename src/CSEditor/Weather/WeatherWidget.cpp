@@ -1595,7 +1595,7 @@ ID3D11ShaderResourceView* WeatherWidget::GetCloudTexture(int layerIndex)
 
 #undef I18N_KEY_PREFIX
 
-	const auto resourcePath = WeatherUtils::TexturePath::Normalize(WeatherUtils::TexturePath::BuildResourcePath(texturePath));
+	const auto resourcePath = Util::ToGameAssetPath(WeatherUtils::TexturePath::BuildResourcePath(texturePath));
 	auto [entry, inserted] = cloudTextureCache.try_emplace(resourcePath);
 	if (!inserted)
 		return entry->second.get();

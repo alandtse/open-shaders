@@ -48,6 +48,13 @@ namespace Util
 		return std::round(f / step) * step;
 	}
 
+	/** @brief Inclusive bounds of a numeric setting, shared by its slider and its clamp. */
+	struct Range
+	{
+		float minimum;
+		float maximum;
+	};
+
 	/**
 	 * @brief Clamps a floating-point value to [min, max] if finite, otherwise returns fallback default.
 	 */

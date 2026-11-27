@@ -21,8 +21,9 @@ The package does not redistribute NVIDIA runtime binaries. Supply
 Initialization or evaluation errors pause NR and appear in the Upscaling panel and
 the existing CommunityShaders log. After correcting the error, use **Retry NR**,
 toggle NR off/on, or clear the shader cache to retry on the next rendered world
-frame. Resource setup also permits a retry. Failed GPU work is retired before
-releasing the failed runtime. There is no per-frame automatic retry.
+frame. Resource setup and a different **Runtime Build** also permit a retry.
+Failed GPU work is retired before releasing the failed runtime. There is no
+per-frame automatic retry.
 
 The Enable switch is disabled while the runtime on disk is one the pass would
 refuse, and its tooltip names the reason and the fix, so a missing file or a
@@ -47,12 +48,14 @@ The controls persist under `Upscaling.neuralRenderingTuning`:
 | UI control               | Config key               | Range                       | OS default | Evaluation parameter            |
 | ------------------------ | ------------------------ | --------------------------- | ---------- | ------------------------------- |
 | Style                    | `style`                  | Style 0 / Style 1 / Style 2 | 0          | `DLSSNR.Style`                  |
-| Intensity                | `intensity`              | 0–2                         | 1.0        | `DLSSNR.Intensity`              |
+| Intensity                | `intensity`              | 0–1                         | 1.0        | `DLSSNR.Intensity`              |
 | Local Tone Strength      | `localToneStrength`      | 0–2                         | 1.0        | `DLSSNR.LocalToneStrength`      |
 | Local Structure Strength | `localStructureStrength` | 0–2                         | 1.0        | `DLSSNR.LocalStructureStrength` |
 | Skin Structure Strength  | `skinStructureStrength`  | -1–2 (-1 displays Auto)     | -1         | `DLSSNR.SkinStructureStrength`  |
 | Colour Strength          | `colorStrength`          | 0–1                         | 0          | none (composite only)           |
 | Use Auto Mask            | `useAutoMask`            | Off / On                    | On         | `DLSSNR.UseAutoMask`            |
+
+Feature 18 clamps Intensity at 1, so settings above 1 load as 1.
 
 Colour Strength is not an evaluation parameter: the composite applies
 `ColorStrength` times the model's per-channel colour shift (its change in each
@@ -225,7 +228,8 @@ profiler over four passes, and reports the fastest low-percentile GPU time per s
 `stabilityRatio` between passes, the cheapest step and the
 largest crop within `kKneeTolerance` of it under `neuralCalibration` in the
 diagnostics. It refuses to run with frame generation on, since frame generation
-paces the frame and skews the GPU zones.
+paces the frame and skews the GPU zones, and it fails while the model runs below
+the eye size, since the forced crop cannot reach it.
 
 Inside the crop the neural result eases in with a smoothstep ramp, so the different
 shading NR gives the crop does not end at a hard seam. The band on each side spans the
@@ -269,6 +273,9 @@ rising `neuralFrames` means the crop keeps moving, and a large
 `neuralResetDrainMs` per frame means those resets are costing real CPU time.
 
 ### Fovea crop
+
+Both crop sources are ignored while **Model Scale** is below 1 without peripheral
+compression, because the model then runs on the whole reduced frame.
 
 **Follow Foveation** (`Upscaling.neuralRenderingTuning.regionFollowFoveation`,
 default on) is the second region source. On VR, while FoveatedRender is active
@@ -372,9 +379,10 @@ is capped at 250 ms, and a non-finite jitter offset or one beyond a pixel reads 
 
 Feature resources and frame parameters are updated in place after creation.
 Appearance tuning is written before creation, and committed UI tuning changes
-recreate the persistent eye handles. A contract change must likewise retire
-queued GPU work before releasing the handles and recreate both eye instances
-when it changes creation-latched parameters.
+recreate the persistent eye handles, as does a settings load, DevBench set or
+restore of defaults that changes one of those values. A contract change must
+likewise retire queued GPU work before releasing the handles and recreate both
+eye instances when it changes creation-latched parameters.
 
 Unsigned, float and resource parameters are written through the public
 `NVSDK_NGX_Parameter::Set` overloads. The runtime sets only parameter names the
@@ -671,6 +679,12 @@ pass reprojects that gain through the eye's motion vectors and rebuilds a proxy
 whose luminance ratio is the same gain. Crop, material alpha, tone filtering,
 category strengths and protection all still run, unchanged, for the reused eye;
 only its colours come from its own frame.
+
+The stored gain belongs to the last model frame, so a second reused frame in a
+row has to reach back further than one frame of motion. Every reuse pass writes
+the motion from its pixels to the stored gain, and the next one adds it, sampled
+where this frame's motion lands, to its own. A model frame starts the chain
+again.
 
 The reprojected position takes four bilinear taps of the stored gain. A tap is
 dropped, giving no gain rather than a stale one, when its depth differs by more

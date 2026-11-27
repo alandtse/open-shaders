@@ -183,12 +183,13 @@ float StampDistance(float2 delta, float4 stamp, float4 shape)
 			snowCover = SnowCoverAt(worldPosition, windowPosition, surface.x, surface.y);
 
 		const float snow = max(motion.z, snowCover);
+		// motion.w is the global blanket height; carving past the local raise leaves a negative field on bare ground.
 		float carve = motion.w;
-		[branch] if (surface.w > 0.5)
+		[branch] if (surface.w > 0.5 || carve > 0.0)
 		{
 			if (raise < 0.0)
 				raise = RaiseAt(worldPosition, FieldSampler);
-			carve = max(raise - (surface.w - 1.0), 0.0);
+			carve = surface.w > 0.5 ? max(raise - (surface.w - 1.0), 0.0) : min(carve, raise);
 		}
 		const float profile = (rim * max(1.0 + Shape.y * rimNoise, 0.0) - stamp.w * press * max(1.0 + Shape.z * churn, 0.0)) * snow - carve * press;
 		if (abs(profile) > abs(target))

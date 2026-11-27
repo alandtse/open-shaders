@@ -113,3 +113,45 @@ TEST_CASE("TrimAscii removes surrounding whitespace only", "[stringutils]")
 	REQUIRE(Util::TrimAscii("   ").empty());
 	REQUIRE(Util::TrimAscii("").empty());
 }
+
+TEST_CASE("Asset paths compare lowercased with backslashes", "[stringutils]")
+{
+	REQUIRE(Util::ToGameAssetPath("Architecture/Whiterun\\Wall.DDS") == "architecture\\whiterun\\wall.dds");
+}
+
+TEST_CASE("Texture paths are rooted at the textures folder", "[stringutils]")
+{
+	for (std::string_view path : { "Data/Textures/a.dds", "textures\\a.dds", "a.dds", "data\\a.dds" })
+		REQUIRE(Util::NormalizeTexturePath(path) == "textures\\a.dds");
+}
+
+TEST_CASE("A single star stays inside its folder and a double star crosses folders", "[stringutils]")
+{
+	REQUIRE(Util::MatchesAssetGlob("textures\\rock01.dds", "textures\\rock??.dds"));
+	REQUIRE(Util::MatchesAssetGlob("textures\\rock01.dds", "textures\\*.dds"));
+	REQUIRE_FALSE(Util::MatchesAssetGlob("textures\\a\\rock.dds", "textures\\*.dds"));
+	REQUIRE_FALSE(Util::MatchesAssetGlob("textures\\a", "textures?a"));
+	REQUIRE(Util::MatchesAssetGlob("textures\\a\\b\\rock.dds", "textures\\**\\rock.dds"));
+	REQUIRE(Util::MatchesAssetGlob("textures\\rock.dds", "textures\\**\\rock.dds"));
+	REQUIRE(Util::MatchesAssetGlob("textures\\a\\b.dds", "**"));
+	REQUIRE_FALSE(Util::MatchesAssetGlob("textures\\rock.dds", "textures\\rock"));
+}
+
+TEST_CASE("Repeated stars match in bounded time", "[stringutils]")
+{
+	const std::string path = "textures\\" + std::string(40, 'a') + ".dds";
+	std::string stars = "textures\\";
+	for (int i = 0; i < 20; ++i)
+		stars += "*a";
+	REQUIRE(Util::MatchesAssetGlob(path, stars + ".dds"));
+	REQUIRE_FALSE(Util::MatchesAssetGlob(path, stars + "b.dds"));
+	REQUIRE(Util::MatchesAssetGlob("textures\\a\\rock.dds", "**\\**\\rock.dds"));
+	REQUIRE_FALSE(Util::MatchesAssetGlob("textures\\bigrock.dds", "textures\\**\\rock.dds"));
+}
+
+TEST_CASE("Only a leading pbr texture folder is stripped", "[stringutils]")
+{
+	REQUIRE(Util::StripPbrTextureFolder("textures\\pbr\\a\\b.dds") == "textures\\a\\b.dds");
+	REQUIRE(Util::StripPbrTextureFolder("textures\\a\\pbr\\b.dds") == "textures\\a\\pbr\\b.dds");
+	REQUIRE(Util::StripPbrTextureFolder("pbr\\b.dds") == "pbr\\b.dds");
+}

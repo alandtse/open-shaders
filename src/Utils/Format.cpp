@@ -1,4 +1,5 @@
 #include "Format.h"
+#include "BuildInfo.h"
 #include "Globals.h"
 #include "MathUtils.h"
 #include <algorithm>
