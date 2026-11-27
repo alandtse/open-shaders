@@ -799,7 +799,7 @@ float GetViewRayShadow(float3 worldPosition, float depth, uint eyeIndex, float n
 #		if defined(LOD_SHADOWS)
 			float visibility = LODShadows::SampleRay(lodRay, t, samplePositionWS + FrameBuffer::CameraPosAdjust[eyeIndex].xyz, LinearSampler);
 			[branch] if (visibility > 0.0)
-				shadow += ShadowSampling::GetTerrainCloudShadow(samplePositionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex) * visibility;
+				shadow += ShadowSampling::GetTerrainCloudShadow(samplePositionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, sampleDistantShadow) * visibility;
 #		else
 			shadow += ShadowSampling::GetWorldShadow(samplePositionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, false, sampleDistantShadow);
 #		endif

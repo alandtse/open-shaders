@@ -3118,7 +3118,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	const bool captureRadiance = Permutation::IsReflectionRadianceCapture() && ShadowSampling::HasDistantShadows();
 	float3 radianceDirLightColor = dirLightColor;
 	[branch] if (captureRadiance)
-		radianceDirLightColor *= ShadowSampling::GetTerrainCloudShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+		radianceDirLightColor *= ShadowSampling::GetTerrainCloudShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, false);
 #	endif
 
 #	if defined(LIGHT_LIMIT_FIX)
