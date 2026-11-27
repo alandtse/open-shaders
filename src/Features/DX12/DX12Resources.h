@@ -85,7 +85,7 @@ namespace DX12
 	};
 
 	/** @brief A companion attests that every eligible shape in this subcell was enumerated. */
-	struct CompanionPublication
+	struct TilePublication
 	{
 		SubcellKey key;
 		std::vector<std::shared_ptr<const Shape>> shapes;  // Fully validated and frozen on the companion worker.
@@ -98,11 +98,15 @@ namespace DX12
 		bool enumerationComplete = false;
 		bool wholeCell = false;
 		bool spatialBoundsComplete = false;
+		bool hasUnattachedCells = false;
 		std::string failureReason;
 		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;
 		std::vector<NifSourceDescriptor> nifSources;
 		std::vector<MissingNifShapeDescriptor> missingShapes;
 	};
+
+	// The old producer uses the same immutable tile contract until native cutover.
+	using CompanionPublication = TilePublication;
 
 	/** @brief Renderer-observed static geometry, never proof of full shadow coverage. */
 	struct RuntimeShape
@@ -148,7 +152,7 @@ namespace DX12
 		/** @brief Returns an unprepared tile request to a single companion producer. */
 		std::optional<SubcellKey> NextRequest();
 		/** @brief Publishes one fully enumerated companion subcell, otherwise marks it incomplete. */
-		bool Publish(CompanionPublication publication, bool staged = false);
+		bool Publish(TilePublication publication, bool staged = false);
 		/** @brief Merges only compatible immutable prepared tiles, never runtime observations. */
 		void MergePrepared(const Grid& source);
 		/** @brief Accept an observed static shape within the active 3x3 without caching it on disk. */
