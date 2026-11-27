@@ -1894,6 +1894,7 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 	bool upscaleModeChanged = (previousUpscaleMode != a_upscalemethod);
 
 	if (upscaleModeChanged || frameGenModeChanged) {
+		globals::state->RequestHistoryReset();
 		logger::debug("[Upscaling] Resource change detected - Upscale: {} ({}) -> {} ({}), FrameGen: {} -> {} (d3d12Active={})",
 			static_cast<int>(previousUpscaleMode), magic_enum::enum_name(previousUpscaleMode), static_cast<int>(a_upscalemethod), magic_enum::enum_name(a_upscalemethod), previousFrameGenMode, frameGenModeCurrent, d3d12SwapChainActive);
 
@@ -2406,6 +2407,10 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 	}
 
 	auto& runtimeData = a_viewport->GetRuntimeData();
+
+	if ((upscaleMethod == UpscaleMethod::kDLSS || upscaleMethod == UpscaleMethod::kFSR) &&
+		(std::abs(dynamicResolutionWidthRatio - resolutionScale.x) > 1e-6f || std::abs(dynamicResolutionHeightRatio - resolutionScale.y) > 1e-6f))
+		globals::state->RequestHistoryReset();
 
 	runtimeData.dynamicResolutionPreviousWidthRatio = dynamicResolutionWidthRatio;
 	runtimeData.dynamicResolutionPreviousHeightRatio = dynamicResolutionHeightRatio;

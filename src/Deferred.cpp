@@ -16,7 +16,8 @@
 #include "Features/LightLimitFix/ShadowCasterManager.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/NRD.h"
-#include "Features/NRDPortStereo.h"
+#include "Features/NRD/RenderContext.h"
+#include "Features/VR/NRDStereo.h"
 #include "Features/ScreenSpaceReflections.h"
 #include "Features/Skylighting.h"
 #include "Features/SubsurfaceScattering.h"
@@ -419,7 +420,58 @@ void Deferred::DeferredPasses()
 
 	auto& skylighting = globals::features::skylighting;
 
-	const auto nrdOutputs = NRDPort::Run();
+	NRDStereo::FrameOutputs nrdOutputs{};
+	if (globals::game::isVR) {
+		nrdOutputs = NRDStereo::Run();
+	} else {
+		auto& gi = globals::features::screenSpaceGI;
+		auto& ssr = globals::features::screenSpaceReflections;
+		auto& nrd = globals::features::nrd;
+		gi.outputReady = ssr.outputReady = false;
+		if (gi.loaded) gi.RefreshE11Overlay();
+		if (ssr.loaded) ssr.RefreshE11Overlay();
+		if (!globals::state->isMapMenuOpen && !globals::state->IsMainOrLoadingMenuOpen()) {
+			const bool giDenoises = gi.loaded && gi.settings.Enabled && gi.settings.EnableREBLUR;
+			const bool ssrDenoises = ssr.loaded && ssr.WantsReblur();
+			const bool multiBounce = gi.loaded && gi.settings.Enabled && gi.settings.EnableGI && gi.settings.EnableMultiBounce;
+			try {
+				if (nrd.loaded) nrd.PrepareGuides(giDenoises || ssrDenoises, multiBounce);
+				globals::state->UpdateFeatureData(true);
+				if (gi.loaded) {
+					gi.DrawSSGI();
+					// The early diffuse composite must see this frame's availability, not the previous frame's mask.
+					nrdOutputs.diffuse[0] = gi.GetDiffuseOutputTexture();
+					globals::state->UpdateFeatureData(true);
+					if (nrdOutputs.diffuse[0]) gi.Composite();
+				}
+			} catch (const std::exception& e) {
+				logger::error("[SSGI/NRD] Deferred pass failed: {} (device status 0x{:08X})", e.what(), static_cast<uint32_t>(globals::d3d::device->GetDeviceRemovedReason()));
+				NRDRendering::ClearComputeBindings();
+				gi.outputReady = false;
+				nrdOutputs.diffuse[0] = nullptr;
+				gi.QueueHistoryReset();
+				ssr.QueueHistoryReset();
+			}
+			try {
+				globals::state->UpdateFeatureData(true);
+				if (ssr.loaded) {
+					ssr.DrawSSR();
+					nrdOutputs.specular[0] = ssr.GetOutputTexture();
+				}
+			} catch (const std::exception& e) {
+				logger::error("[SSR] Deferred pass failed: {} (device status 0x{:08X})", e.what(), static_cast<uint32_t>(globals::d3d::device->GetDeviceRemovedReason()));
+				NRDRendering::ClearComputeBindings();
+				ssr.outputReady = false;
+				nrdOutputs.specular[0] = nullptr;
+				ssr.QueueHistoryReset();
+			}
+		} else {
+			gi.QueueHistoryReset();
+			ssr.QueueHistoryReset();
+		}
+		globals::state->UpdateFeatureData(true);
+		NRDRendering::UnbindEye();
+	}
 
 	auto dispatchCount = Util::GetScreenDispatchCount(true);
 

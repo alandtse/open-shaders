@@ -2,7 +2,7 @@
 
 #include "Buffer.h"
 #include "NRD.h"
-#include "NRDReblurIntegration.h"
+#include "NRD/ReblurIntegration.h"
 
 #include <NRDSettings.h>
 
@@ -56,6 +56,7 @@ public:
 	/** @brief Registers the loading screen listener that resets the temporal history. */
 	virtual void PostPostLoad() override;
 	/** @brief Creates GPU textures, samplers, constant buffers, and compiles compute shaders. */
+	void OnSceneTransitionReset(bool) override { QueueHistoryReset(); }
 	virtual void SetupResources() override;
 	/** @brief Releases and recompiles all SSGI compute shaders. */
 	virtual void ClearShaderCache() override;
@@ -72,6 +73,9 @@ public:
 	/** @brief Updates the SSGI constant buffer with current camera, resolution, and settings data. */
 	void UpdateSB();
 	void SetupNRDResources();
+	void SetupTraceResources();
+	void ReleaseTraceResources();
+	void EnsureMultiBounceResources(bool requested);
 	void GetNRDResourceSize(uint32_t& a_width, uint32_t& a_height) const;
 
 	//////////////////////////////////////////////////////////////////////////////////
@@ -180,6 +184,7 @@ public:
 		float pad0[3];
 	};
 
+	static_assert(sizeof(SharedData) == 32);
 	SharedData GetCommonBufferData();
 
 	/** @brief Whether missed IL rays fall back to dynamic cubemaps; off while Effects 11 owns IBL or the multiplier is zero. */
@@ -228,5 +233,8 @@ public:
 	// Prevent downstream passes from sampling stale GI when this frame could not
 	// produce a complete SSGI output (disabled feature, shader failure, etc.).
 	bool outputReady = false;
+	uint32_t lastOutputFrame = UINT32_MAX;
+	bool resourceFailure = false;
+	uint32_t lastFailedAllocationFrame = 0;
 	bool denoisedThisFrame = false;
 };

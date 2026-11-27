@@ -736,7 +736,8 @@ namespace SharedData
 		float2 pad1;
 	};
 
-#if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
+	// NRD settings follow the snow slot in the CPU FeatureData buffer.
+	// Keep the layout independent of feature and shader-stage defines.
 	struct SSGISettings
 	{
 		uint Enabled;
@@ -811,7 +812,6 @@ namespace SharedData
 		uint LandscapeGridWidth;
 		uint LandscapeMaterialMode;
 	};
-#endif
 
 	struct ProceduralAuroraSettings
 	{
@@ -865,11 +865,10 @@ namespace SharedData
 		HorizonFixSettings horizonFixSettings;
 		RainRefractionSettings rainRefractionSettings;
 		ProceduralAuroraSettings proceduralAuroraSettings;
-#if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
+		// Preserve the CPU buffer offsets even when Snow Cover is disabled.
 		SnowCoverSettings snowCoverSettings;
 		SSGISettings ssgiSettings;
 		SSRSettings ssrSettings;
-#endif
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);

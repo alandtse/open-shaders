@@ -1,5 +1,6 @@
 #include "ScreenSpaceGI.h"
-#include "NRDPortStereo.h"
+#include "NRD/RenderContext.h"
+#include "VR/NRDStereo.h"
 #include "ScreenSpaceReflections.h"
 
 #include <DirectXTex.h>
@@ -88,6 +89,8 @@ void ScreenSpaceGI::DrawSettings()
 		userSettings = edited;
 	});
 
+	if (resourceFailure) ImGui::TextWrapped("SSGI GPU resource allocation failed; see CommunityShaders.log.");
+	else if (reblurInitAttempted && !nrdReblur.IsValid()) ImGui::TextWrapped("REBLUR unavailable; using full-resolution tracing.");
 	if (!ShadersOK())
 		Util::Text::Error("%s", T(TKEY("compute_shaders_failed_to_compile"), "Compute shaders failed to compile!"));
 
@@ -118,7 +121,7 @@ void ScreenSpaceGI::DrawSettings()
 			auto ilToggleGuard = Util::DisableGuard(!settings.Enabled || e11Managed);
 			if (ImGui::Checkbox(T(TKEY("indirect_lighting"), "Indirect Lighting (IL)"), &settings.EnableGI)) {
 				recompileFlag = true;
-				SetupNRDResources();
+				QueueHistoryReset();
 			}
 		}
 		ImGui::TableNextColumn();
@@ -126,7 +129,7 @@ void ScreenSpaceGI::DrawSettings()
 			auto shGuard = Util::DisableGuard(!settings.Enabled || !settings.EnableGI);
 			if (ImGui::Checkbox(T(TKEY("sh_mode"), "SH Mode"), &settings.EnableSH)) {
 				recompileFlag = true;
-				SetupNRDResources();
+				QueueHistoryReset();
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s", T(TKEY("sh_mode_tooltip"), "Use Spherical Harmonics for directional GI. Higher quality but more expensive."));
@@ -271,7 +274,7 @@ void ScreenSpaceGI::DrawSettings()
 		}
 
 		if (settings.EnableREBLUR) {
-			resetReblurHistory |= NRDPort::Service().DrawReblurSettings(settings.Reblur, showAdvanced, "ssgi_reblur");
+			resetReblurHistory |= globals::features::nrd.DrawReblurSettings(settings.Reblur, showAdvanced, "ssgi_reblur");
 			if (showAdvanced) {
 				resetReblurHistory |= ImGui::SliderFloat(T(TKEY("diffuse_prepass_blur_radius"), "Diffuse Pre-pass Radius"), &settings.DiffusePrepassBlurRadius, 0.0f, 75.0f, "%.1f px");
 				if (auto _tt = Util::HoverTooltipWrapper())
@@ -318,7 +321,7 @@ void ScreenSpaceGI::DrawDebugSection()
 			ImGui::TreePop();
 		}
 		if (ImGui::TreeNode(T("feature.nrd.right_eye", "Right eye"))) {
-			if (const auto* right = NRDPort::RightGIDebug())
+			if (const auto* right = NRDStereo::RightGIDebug())
 				right->DrawBufferViewer(debugRescale);
 			else
 				ImGui::TextUnformatted(T("feature.nrd.eye_buffers_unavailable", "Right-eye buffers are not allocated yet."));
@@ -506,8 +509,8 @@ void ScreenSpaceGI::PostPostLoad()
 
 void ScreenSpaceGI::SetupResources()
 {
-	auto renderer = globals::game::renderer;
 	auto device = globals::d3d::device;
+	ReleaseTraceResources();
 	resetReblurHistory = true;
 	outputReady = false;
 	denoisedThisFrame = false;
@@ -521,95 +524,6 @@ void ScreenSpaceGI::SetupResources()
 		ssgiCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<SSGICB>(), "SSGI::CB");
 	}
 
-	logger::debug("Creating textures...");
-	{
-		D3D11_TEXTURE2D_DESC texDesc{
-			.Width = 64,
-			.Height = 64,
-			.MipLevels = 1,
-			.ArraySize = 1,
-			.Format = DXGI_FORMAT_R32_UINT,
-			.SampleDesc = { 1, 0 },
-			.Usage = D3D11_USAGE_DEFAULT,
-			.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
-			.CPUAccessFlags = 0,
-			.MiscFlags = 0
-		};
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
-			.Format = texDesc.Format,
-			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
-			.Texture2D = {
-				.MostDetailedMip = 0,
-				.MipLevels = texDesc.MipLevels }
-		};
-		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
-			.Format = texDesc.Format,
-			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
-			.Texture2D = { .MipSlice = 0 }
-		};
-
-		auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-		Util::AsReal(mainTex.texture)->GetDesc(&texDesc);
-		NRDPort::EyeTextureDesc(texDesc);
-		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-		const uint mipCount = std::clamp<uint>(static_cast<uint>(std::bit_width(std::min(texDesc.Width, texDesc.Height))), 1u, 5u);
-		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = mipCount;
-		for (uint i = 0; i < 5; ++i)
-			uavRadiance[i] = uavWorkingDepth[i] = uavNormal[i] = nullptr;
-
-		{
-			texRadiance = eastl::make_unique<Texture2D>(texDesc, "SSGI::Radiance");
-			texRadiance->CreateSRV(srvDesc);
-
-			for (uint i = 0; i < mipCount; ++i) {
-				D3D11_UNORDERED_ACCESS_VIEW_DESC mipUavDesc = {
-					.Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
-					.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
-					.Texture2D = { .MipSlice = i }
-				};
-				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texRadiance->resource.get(), &mipUavDesc, uavRadiance[i].put()));
-				Util::SetResourceName(uavRadiance[i].get(), "SSGI::Radiance UAV mip%u", i);
-			}
-		}
-
-		texDesc.BindFlags &= ~D3D11_BIND_RENDER_TARGET;
-		texDesc.MiscFlags &= ~D3D11_RESOURCE_MISC_GENERATE_MIPS;
-		texDesc.Format = srvDesc.Format = uavDesc.Format = globals::features::reverseZ.IsActive() ? DXGI_FORMAT_R32_FLOAT : DXGI_FORMAT_R16_FLOAT;
-
-		{
-			texWorkingDepth = eastl::make_unique<Texture2D>(texDesc, "SSGI::WorkingDepth");
-			texWorkingDepth->CreateSRV(srvDesc);
-			for (uint i = 0; i < mipCount; ++i) {
-				uavDesc.Texture2D.MipSlice = i;
-				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texWorkingDepth->resource.get(), &uavDesc, uavWorkingDepth[i].put()));
-				Util::SetResourceName(uavWorkingDepth[i].get(), "SSGI::WorkingDepth UAV mip%u", i);
-			}
-		}
-
-		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R8G8_UNORM;
-		{
-			texNormal = eastl::make_unique<Texture2D>(texDesc, "SSGI::Normal");
-			texNormal->CreateSRV(srvDesc);
-			for (uint i = 0; i < mipCount; ++i) {
-				uavDesc.Texture2D.MipSlice = i;
-				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texNormal->resource.get(), &uavDesc, uavNormal[i].put()));
-				Util::SetResourceName(uavNormal[i].get(), "SSGI::Normal UAV mip%u", i);
-			}
-		}
-
-		uavDesc.Texture2D.MipSlice = 0;
-		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 1;
-
-		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
-		for (uint i = 0; i < 2; ++i) {
-			texHistoryGeo[i] = eastl::make_unique<Texture2D>(texDesc, i == 0 ? "SSGI::HistoryGeo0" : "SSGI::HistoryGeo1");
-			texHistoryGeo[i]->CreateSRV(srvDesc);
-			texHistoryGeo[i]->CreateUAV(uavDesc);
-		}
-
-		SetupNRDResources();
-	}
 
 	logger::debug("Loading noise texture...");
 	{
@@ -666,6 +580,133 @@ void ScreenSpaceGI::SetupResources()
 	CompileComputeShaders();
 }
 
+void ScreenSpaceGI::ReleaseTraceResources()
+{
+	outputReady = false;
+	nrdReblur.Shutdown();
+	texNRDInput.reset(); texNRDOutput.reset(); texNRDInputSH1.reset(); texNRDOutputSH1.reset();
+	for (uint i = 0; i < 5; ++i) uavRadiance[i] = uavWorkingDepth[i] = uavNormal[i] = nullptr;
+	texRadiance.reset(); texWorkingDepth.reset(); texNormal.reset();
+	texHistoryGeo[0].reset(); texHistoryGeo[1].reset();
+	reblurInitAttempted = false;
+	resetReblurHistory = true;
+	hasMultiBounceHistory = hasFullResolutionMultiBounceHistory = false;
+	multiBounceHistoryUsesNRDOutput = false;
+}
+
+void ScreenSpaceGI::SetupTraceResources()
+{
+	auto renderer = globals::game::renderer;
+	auto device = globals::d3d::device;
+	ReleaseTraceResources();
+	const auto full = NRDRendering::FullSize();
+	NRDRendering::LogMemory("before SSGI prefilters", uint32_t(full.x), uint32_t(full.y));
+	logger::debug("Creating textures...");
+	{
+		D3D11_TEXTURE2D_DESC texDesc{
+			.Width = 64,
+			.Height = 64,
+			.MipLevels = 1,
+			.ArraySize = 1,
+			.Format = DXGI_FORMAT_R32_UINT,
+			.SampleDesc = { 1, 0 },
+			.Usage = D3D11_USAGE_DEFAULT,
+			.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
+			.CPUAccessFlags = 0,
+			.MiscFlags = 0
+		};
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
+			.Format = texDesc.Format,
+			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
+			.Texture2D = {
+				.MostDetailedMip = 0,
+				.MipLevels = texDesc.MipLevels }
+		};
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
+			.Format = texDesc.Format,
+			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+			.Texture2D = { .MipSlice = 0 }
+		};
+
+		auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+		Util::AsReal(mainTex.texture)->GetDesc(&texDesc);
+		NRDRendering::EyeTextureDesc(texDesc);
+		texDesc.ArraySize = 1; texDesc.SampleDesc = {1, 0}; texDesc.Usage = D3D11_USAGE_DEFAULT; texDesc.CPUAccessFlags = 0; texDesc.MiscFlags = 0;
+		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		if (std::min(texDesc.Width, texDesc.Height) < 16u)
+			throw std::runtime_error("SSGI: main render target too small for five mip levels");
+		constexpr uint mipCount = 5;
+		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = mipCount;
+		for (uint i = 0; i < 5; ++i)
+			uavRadiance[i] = uavWorkingDepth[i] = uavNormal[i] = nullptr;
+
+		{
+			texRadiance = eastl::make_unique<Texture2D>(texDesc, "SSGI::Radiance");
+			texRadiance->CreateSRV(srvDesc);
+
+			for (uint i = 0; i < mipCount; ++i) {
+				D3D11_UNORDERED_ACCESS_VIEW_DESC mipUavDesc = {
+					.Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
+					.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+					.Texture2D = { .MipSlice = i }
+				};
+				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texRadiance->resource.get(), &mipUavDesc, uavRadiance[i].put()));
+				Util::SetResourceName(uavRadiance[i].get(), "SSGI::Radiance UAV mip%u", i);
+			}
+		}
+
+		texDesc.BindFlags &= ~D3D11_BIND_RENDER_TARGET;
+		texDesc.MiscFlags &= ~D3D11_RESOURCE_MISC_GENERATE_MIPS;
+		texDesc.Format = srvDesc.Format = uavDesc.Format = globals::features::reverseZ.IsActive() ? DXGI_FORMAT_R32_FLOAT : DXGI_FORMAT_R16_FLOAT;
+
+		{
+			texWorkingDepth = eastl::make_unique<Texture2D>(texDesc, "SSGI::WorkingDepth");
+			texWorkingDepth->CreateSRV(srvDesc);
+			for (uint i = 0; i < mipCount; ++i) {
+				uavDesc.Texture2D.MipSlice = i;
+				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texWorkingDepth->resource.get(), &uavDesc, uavWorkingDepth[i].put()));
+				Util::SetResourceName(uavWorkingDepth[i].get(), "SSGI::WorkingDepth UAV mip%u", i);
+			}
+		}
+
+		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R8G8_UNORM;
+		{
+			texNormal = eastl::make_unique<Texture2D>(texDesc, "SSGI::Normal");
+			texNormal->CreateSRV(srvDesc);
+			for (uint i = 0; i < mipCount; ++i) {
+				uavDesc.Texture2D.MipSlice = i;
+				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texNormal->resource.get(), &uavDesc, uavNormal[i].put()));
+				Util::SetResourceName(uavNormal[i].get(), "SSGI::Normal UAV mip%u", i);
+			}
+		}
+
+	}
+	NRDRendering::LogMemory("after SSGI prefilters", uint32_t(full.x), uint32_t(full.y));
+}
+
+void ScreenSpaceGI::EnsureMultiBounceResources(bool requested)
+{
+	if (!requested) {
+		texHistoryGeo[0].reset(); texHistoryGeo[1].reset();
+		hasMultiBounceHistory = hasFullResolutionMultiBounceHistory = false;
+		return;
+	}
+	if (texHistoryGeo[0] && texHistoryGeo[1]) return;
+	auto desc = texRadiance->desc;
+	desc.MipLevels = 1;
+	desc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{ .Format = desc.Format, .ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D, .Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 } };
+	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{ .Format = desc.Format, .ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D, .Texture2D = { .MipSlice = 0 } };
+	for (uint i = 0; i < 2; ++i) {
+		texHistoryGeo[i] = eastl::make_unique<Texture2D>(desc, i == 0 ? "SSGI::HistoryGeo0" : "SSGI::HistoryGeo1");
+		texHistoryGeo[i]->CreateSRV(srvDesc);
+		texHistoryGeo[i]->CreateUAV(uavDesc);
+	}
+	hasMultiBounceHistory = hasFullResolutionMultiBounceHistory = false;
+	historyGeoWriteIndex = 0;
+}
+
 void ScreenSpaceGI::SetupNRDResources()
 {
 	outputReady = false;
@@ -675,7 +716,8 @@ void ScreenSpaceGI::SetupNRDResources()
 	hasFullResolutionMultiBounceHistory = false;
 	multiBounceHistoryUsesNRDOutput = false;
 	const bool useSH = settings.EnableGI && settings.EnableSH;
-	const bool modeChanged = nrdReblurUsesSH != useSH || !texNRDInput;
+	const bool modeChanged = nrdReblurUsesSH != useSH;
+	const bool wantsReblur = settings.EnableREBLUR && NRDRendering::Service().CanDenoise() && NRDRendering::Service().AreGuidesReady();
 	if (nrdReblurUsesSH != useSH)
 		recompileFlag = true;
 
@@ -705,63 +747,63 @@ void ScreenSpaceGI::SetupNRDResources()
 	};
 
 	nrdReblur.Shutdown();
-
+	texNRDInput.reset(); texNRDOutput.reset(); texNRDInputSH1.reset(); texNRDOutputSH1.reset();
+	NRDRendering::LogMemory("before SSGI outputs", fullW, fullH);
 	texNRDInput = eastl::make_unique<Texture2D>(texDesc, "SSGI::NRDInput");
 	texNRDInput->CreateSRV(srvDesc);
 	texNRDInput->CreateUAV(uavDesc);
 
-	texNRDOutput = eastl::make_unique<Texture2D>(texDesc, "SSGI::NRDOutput");
-	texNRDOutput->CreateSRV(srvDesc);
-	texNRDOutput->CreateUAV(uavDesc);
+	if (wantsReblur) {
+		texNRDOutput = eastl::make_unique<Texture2D>(texDesc, "SSGI::NRDOutput");
+		texNRDOutput->CreateSRV(srvDesc);
+		texNRDOutput->CreateUAV(uavDesc);
+	}
 
 	if (useSH) {
 		texNRDInputSH1 = eastl::make_unique<Texture2D>(texDesc, "SSGI::NRDInputSH1");
 		texNRDInputSH1->CreateSRV(srvDesc);
 		texNRDInputSH1->CreateUAV(uavDesc);
 
-		texNRDOutputSH1 = eastl::make_unique<Texture2D>(texDesc, "SSGI::NRDOutputSH1");
-		texNRDOutputSH1->CreateSRV(srvDesc);
-		texNRDOutputSH1->CreateUAV(uavDesc);
-
+		if (wantsReblur) {
+			texNRDOutputSH1 = eastl::make_unique<Texture2D>(texDesc, "SSGI::NRDOutputSH1");
+			texNRDOutputSH1->CreateSRV(srvDesc);
+			texNRDOutputSH1->CreateUAV(uavDesc);
+		}
 		const float clearColor[4] = {};
 		globals::d3d::context->ClearUnorderedAccessViewFloat(texNRDInputSH1->uav.get(), clearColor);
-		globals::d3d::context->ClearUnorderedAccessViewFloat(texNRDOutputSH1->uav.get(), clearColor);
+		if (texNRDOutputSH1) globals::d3d::context->ClearUnorderedAccessViewFloat(texNRDOutputSH1->uav.get(), clearColor);
 	} else {
 		texNRDInputSH1.reset();
 		texNRDOutputSH1.reset();
 	}
 
-	reblurInitAttempted = settings.Enabled && settings.EnableREBLUR;
-	if (reblurInitAttempted)
-		nrdReblur.Init(fullW, fullH, useSH ? nrd::Denoiser::REBLUR_DIFFUSE_SH : nrd::Denoiser::REBLUR_DIFFUSE, 0);
+	reblurInitAttempted = wantsReblur;
+	if (wantsReblur && !nrdReblur.Init(fullW, fullH, useSH ? nrd::Denoiser::REBLUR_DIFFUSE_SH : nrd::Denoiser::REBLUR_DIFFUSE, 0)) {
+		texNRDOutput.reset(); texNRDOutputSH1.reset();
+	}
+	NRDRendering::LogMemory("after SSGI outputs", fullW, fullH);
 	nrdReblurUsesSH = useSH;
 
-	if (modeChanged)
-		globals::deferred->ClearShaderCache();
+	if (modeChanged) QueueHistoryReset();
 }
 
 void ScreenSpaceGI::GetNRDResourceSize(uint32_t& a_width, uint32_t& a_height) const
 {
-	const auto& nrdSvc = NRDPort::Service();
+	const auto& nrdSvc = NRDRendering::Service();
 	const bool multiBounce = settings.EnableGI && settings.EnableMultiBounce;
-	if (!multiBounce && nrdSvc.loaded && nrdSvc.GetResourceExtent(a_width, a_height))
+	if (!multiBounce && settings.EnableREBLUR && nrdSvc.CanDenoise() && nrdSvc.AreGuidesReady() && nrdSvc.GetResourceExtent(a_width, a_height))
 		return;
-	if (texRadiance) {
-		a_width = texRadiance->desc.Width;
-		a_height = texRadiance->desc.Height;
-	} else {
-		auto mainTex = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-		D3D11_TEXTURE2D_DESC mainDesc;
-		Util::AsReal(mainTex.texture)->GetDesc(&mainDesc);
-		NRDPort::EyeTextureDesc(mainDesc);
-		a_width = mainDesc.Width;
-		a_height = mainDesc.Height;
-	}
+	const auto full = NRDRendering::FullSize();
+	const auto active = NRDRendering::ActiveSize();
+	const auto align16 = [](float v) { return (uint32_t(std::ceil(std::max(1.f, v))) + 15u) & ~15u; };
+	a_width = multiBounce || globals::game::isVR ? uint32_t(full.x) : std::min(uint32_t(full.x), std::max(align16(active.x), texNRDInput ? texNRDInput->desc.Width : 0u));
+	a_height = multiBounce || globals::game::isVR ? uint32_t(full.y) : std::min(uint32_t(full.y), std::max(align16(active.y), texNRDInput ? texNRDInput->desc.Height : 0u));
 }
 
 void ScreenSpaceGI::ClearShaderCache()
 {
-	NRDPort::InvalidateStereo();
+	if (globals::game::isVR)
+		NRDStereo::InvalidateStereo();
 	queuedResetHistory = true;
 	outputReady = false;
 	denoisedThisFrame = false;
@@ -836,26 +878,24 @@ void ScreenSpaceGI::CompileComputeShaders()
 
 bool ScreenSpaceGI::CanDenoise() const
 {
-	return settings.EnableREBLUR && nrdReblur.IsValid() && NRDPort::Service().CanDenoise() && NRDPort::Service().AreGuidesReady();
+	return settings.EnableREBLUR && nrdReblur.IsValid() && NRDRendering::Service().CanDenoise() && NRDRendering::Service().AreGuidesReady();
 }
 
 bool ScreenSpaceGI::ShadersOK()
 {
-	const bool useSH = settings.EnableGI && settings.EnableSH;
-	return texNoise && texWorkingDepth && texRadiance && texNormal && texNRDInput &&
-	       prefilterDepthsCompute && prefilterRadianceCompute && prefilterNormalCompute && giCompute &&
-	       (!settings.EnableGI || compositeCompute) && (!useSH || texNRDInputSH1);
+	return prefilterDepthsCompute && prefilterRadianceCompute && prefilterNormalCompute && giCompute &&
+	       (!settings.EnableGI || compositeCompute);
 }
 
 void ScreenSpaceGI::UpdateSB()
 {
 	float2 res = { (float)texRadiance->desc.Width, (float)texRadiance->desc.Height };
-	float2 dynres = NRDPort::ActiveSize();
+	float2 dynres = NRDRendering::ActiveSize();
 	dynres = { floor(dynres.x), floor(dynres.y) };
 
 	SSGICB data;
 	{
-		const auto& projMat = globals::game::frameBufferCached.GetCameraProj(NRDPort::Eye());
+		const auto& projMat = globals::game::frameBufferCached.GetCameraProj(NRDRendering::Eye());
 
 		data.NDCToViewMul = { 2.0f / projMat(0, 0), -2.0f / projMat(1, 1) };
 		data.NDCToViewAdd = { -1.0f / projMat(0, 0), 1.0f / projMat(1, 1) };
@@ -899,22 +939,35 @@ void ScreenSpaceGI::DrawSSGI()
 	if (auto* sao = BSImagespaceShaderISSAOBlurH)
 		sao->enableSAO = settings.EnableVanillaSSAO;
 
+	if (!settings.Enabled) {
+		ReleaseTraceResources();
+		return;
+	}
+	if (globals::state->isMapMenuOpen || !texNoise || !ssgiCB || !linearClampSampler || !pointClampSampler)
+		return;
+	const auto full = NRDRendering::FullSize();
+	const auto active = NRDRendering::ActiveSize();
+	if (active.x < 1 || active.y < 1 || full.x < 16 || full.y < 16) return;
+	const bool needTraceResources = !texRadiance || !texWorkingDepth || !texNormal || texRadiance->desc.Width != uint32_t(full.x) || texRadiance->desc.Height != uint32_t(full.y);
+	if (needTraceResources && NRDRendering::ShouldDeferAllocation()) return;
+	if (resourceFailure && globals::state->frameCount - lastFailedAllocationFrame < 120u) return;
 	const bool useSH = settings.EnableGI && settings.EnableSH;
 	const bool trackMultiBounce = settings.EnableGI && settings.EnableMultiBounce;
-	uint32_t nrdWidth = 0;
-	uint32_t nrdHeight = 0;
-	GetNRDResourceSize(nrdWidth, nrdHeight);
-	if (nrdReblurUsesSH != useSH || !texNRDInput || texNRDInput->desc.Width != nrdWidth || texNRDInput->desc.Height != nrdHeight)
-		SetupNRDResources();
-
-	if (!settings.Enabled || !settings.EnableREBLUR) {
-		if (nrdReblur.IsValid()) {
-			nrdReblur.Shutdown();
-			resetReblurHistory = true;
-		}
-		reblurInitAttempted = false;
-	} else if (!reblurInitAttempted) {
-		SetupNRDResources();
+	const bool wantsReblur = settings.EnableREBLUR && NRDRendering::Service().CanDenoise() && NRDRendering::Service().AreGuidesReady();
+	try {
+		if (needTraceResources) SetupTraceResources();
+		EnsureMultiBounceResources(trackMultiBounce);
+		uint32_t nrdWidth = 0, nrdHeight = 0;
+		GetNRDResourceSize(nrdWidth, nrdHeight);
+		if (nrdReblurUsesSH != useSH || !texNRDInput || texNRDInput->desc.Width != nrdWidth || texNRDInput->desc.Height != nrdHeight || wantsReblur != reblurInitAttempted)
+			SetupNRDResources();
+		resourceFailure = false;
+	} catch (const std::exception& e) {
+		logger::error("[SSGI] Resource allocation failed: {} (device status 0x{:08X})", e.what(), uint32_t(globals::d3d::device->GetDeviceRemovedReason()));
+		ReleaseTraceResources();
+		resourceFailure = true;
+		lastFailedAllocationFrame = globals::state->frameCount;
+		return;
 	}
 
 	if (const bool canDenoise = CanDenoise(); (settings.HalfRes && canDenoise) != tracedHalfRes || (settings.QuarterRes && canDenoise) != tracedQuarterRes) {
@@ -928,7 +981,7 @@ void ScreenSpaceGI::DrawSSGI()
 	if (recompileFlag)
 		ClearShaderCache();
 
-	if (!(settings.Enabled && ShadersOK())) {
+	if (!(settings.Enabled && ShadersOK() && texNRDInput && (!useSH || texNRDInputSH1))) {
 		return;
 	}
 
@@ -958,7 +1011,7 @@ void ScreenSpaceGI::DrawSSGI()
 	//////////////////////////////////////////////////////
 
 	UpdateSB();
-	NRDPort::BindEye();
+	NRDRendering::BindEye();
 
 	//////////////////////////////////////////////////////
 
@@ -966,7 +1019,7 @@ void ScreenSpaceGI::DrawSSGI()
 	auto rts = renderer->GetRuntimeData().renderTargets;
 	auto deferred = globals::deferred;
 
-	float2 size = NRDPort::ActiveSize();
+	float2 size = NRDRendering::ActiveSize();
 	auto resolution = std::array{ (uint)size.x, (uint)size.y };
 
 	std::array<ID3D11ShaderResourceView*, 11> srvs = { nullptr };
@@ -992,7 +1045,7 @@ void ScreenSpaceGI::DrawSSGI()
 	{
 		CS_GPU_PASS("ScreenSpaceGI::PrefilterDepths");
 
-		srvs.at(0) = NRDPort::Crop(NRDPort::Input::Depth, Util::GetCurrentSceneDepthSRV(false));
+		srvs.at(0) = NRDRendering::Crop(NRDRendering::Input::Depth, Util::GetCurrentSceneDepthSRV(false));
 		for (int i = 0; i < 5; ++i)
 			uavs.at(i) = uavWorkingDepth[i].get();
 
@@ -1009,7 +1062,7 @@ void ScreenSpaceGI::DrawSSGI()
 		CS_GPU_PASS("ScreenSpaceGI::PrefilterNormals");
 
 		resetViews();
-		srvs.at(0) = NRDPort::Crop(NRDPort::Input::Normal, Util::AsReal(rts[NORMALROUGHNESS].SRV));
+		srvs.at(0) = NRDRendering::Crop(NRDRendering::Input::Normal, Util::AsReal(rts[NORMALROUGHNESS].SRV));
 		uavs.at(0) = uavNormal[0].get();
 		uavs.at(1) = uavNormal[1].get();
 		uavs.at(2) = uavNormal[2].get();
@@ -1034,13 +1087,13 @@ void ScreenSpaceGI::DrawSSGI()
 		CS_GPU_PASS("ScreenSpaceGI::PrefilterRadiance");
 
 		resetViews();
-		srvs.at(0) = NRDPort::Crop(NRDPort::Input::Main, Util::AsReal(rts[deferred->forwardRenderTargets[0]].SRV));
+		srvs.at(0) = NRDRendering::Crop(NRDRendering::Input::Main, Util::AsReal(rts[deferred->forwardRenderTargets[0]].SRV));
 		if (trackMultiBounce) {
 			srvs.at(1) = (multiBounceHistoryUsesNRDOutput ? texNRDOutput : texNRDInput)->srv.get();
 			srvs.at(2) = texHistoryGeo[historyGeoWriteIndex]->srv.get();
-			srvs.at(3) = NRDPort::Crop(NRDPort::Input::Motion, Util::AsReal(rts[RE::RENDER_TARGETS::kMOTION_VECTOR].SRV));
+			srvs.at(3) = NRDRendering::Crop(NRDRendering::Input::Motion, Util::AsReal(rts[RE::RENDER_TARGETS::kMOTION_VECTOR].SRV));
 			srvs.at(4) = texHistoryGeo[historyGeoWriteIndex ^ 1]->srv.get();
-			srvs.at(5) = NRDPort::Crop(NRDPort::Input::Albedo, Util::AsReal(rts[ALBEDO].SRV));
+			srvs.at(5) = NRDRendering::Crop(NRDRendering::Input::Albedo, Util::AsReal(rts[ALBEDO].SRV));
 		}
 		uavs.at(0) = uavRadiance[0].get();
 		uavs.at(1) = uavRadiance[1].get();
@@ -1066,7 +1119,7 @@ void ScreenSpaceGI::DrawSSGI()
 
 		resetViews();
 		srvs.at(0) = texWorkingDepth->srv.get();
-		srvs.at(1) = NRDPort::Crop(NRDPort::Input::Masks, Util::AsReal(rts[MASKS].SRV));
+		srvs.at(1) = NRDRendering::Crop(NRDRendering::Input::Masks, Util::AsReal(rts[MASKS].SRV));
 		srvs.at(2) = texRadiance->srv.get();
 		srvs.at(3) = texNoise->srv.get();
 		if (dynamicCubemaps.loaded) {
@@ -1106,12 +1159,11 @@ void ScreenSpaceGI::DrawSSGI()
 	}
 
 	// REBLUR diffuse denoising via core NRD service
-	auto& nrdSvc = NRDPort::Service();
+	auto& nrdSvc = NRDRendering::Service();
 	bool producedDenoisedHistory = false;
 	if (settings.EnableREBLUR && nrdReblur.IsValid() && nrdSvc.loaded && nrdSvc.AreGuidesReady()) {
 		CS_GPU_PASS("ScreenSpaceGI::Reblur");
 
-		nrdSvc.RefreshMotionVectors();
 		auto commonSettings = nrdSvc.GetCommonSettings();
 		commonSettings.splitScreen = settings.Reblur.SplitScreen;
 		commonSettings.enableValidation = settings.Reblur.EnableValidation;
@@ -1180,6 +1232,7 @@ void ScreenSpaceGI::DrawSSGI()
 	context->CSSetShader(nullptr, nullptr, 0);
 
 	outputReady = (!tracedHalfRes && !tracedQuarterRes) || denoisedThisFrame;
+	lastOutputFrame = globals::state->frameCount;
 }
 
 void ScreenSpaceGI::Composite()
@@ -1196,12 +1249,12 @@ void ScreenSpaceGI::Composite()
 	auto& main = rts[globals::deferred->forwardRenderTargets[0]];
 
 	std::array<ID3D11ShaderResourceView*, 7> srvs = {
-		NRDPort::Crop(NRDPort::Input::Albedo, Util::AsReal(rts[ALBEDO].SRV)),
-		NRDPort::Crop(NRDPort::Input::Normal, Util::AsReal(rts[NORMALROUGHNESS].SRV)),
-		NRDPort::Crop(NRDPort::Input::Depth, Util::GetCurrentSceneDepthSRV(false)),
+		NRDRendering::Crop(NRDRendering::Input::Albedo, Util::AsReal(rts[ALBEDO].SRV)),
+		NRDRendering::Crop(NRDRendering::Input::Normal, Util::AsReal(rts[NORMALROUGHNESS].SRV)),
+		NRDRendering::Crop(NRDRendering::Input::Depth, Util::GetCurrentSceneDepthSRV(false)),
 		GetDiffuseOutputTexture(),
 		GetDiffuseSH1Texture(),
-		NRDPort::Crop(NRDPort::Input::Masks, Util::AsReal(rts[MASKS].SRV)),
+		NRDRendering::Crop(NRDRendering::Input::Masks, Util::AsReal(rts[MASKS].SRV)),
 		globals::features::skylighting.loaded && globals::features::skylighting.texProbeArray ? globals::features::skylighting.texProbeArray->srv.get() : nullptr
 	};
 
@@ -1219,8 +1272,8 @@ void ScreenSpaceGI::Composite()
 	globals::state->BindSharedDataCS(context);
 	context->CSSetShader(compositeCompute.get(), nullptr, 0);
 
-	auto active = NRDPort::ActiveSize();
-	NRDPort::BindEye(UsesCubemapFallback(), appliedE11Overlay.active ? userSettings.E11ILSaturation : settings.ILSaturation);
+	auto active = NRDRendering::ActiveSize();
+	NRDRendering::BindEye(UsesCubemapFallback(), appliedE11Overlay.active ? userSettings.E11ILSaturation : settings.ILSaturation);
 
 	context->Dispatch((uint(active.x)+7)/8, (uint(active.y)+7)/8, 1);
 
@@ -1237,7 +1290,7 @@ void ScreenSpaceGI::Composite()
 
 ID3D11ShaderResourceView* ScreenSpaceGI::GetDiffuseOutputTexture()
 {
-	if (!outputReady)
+	if (!outputReady || !loaded || !settings.Enabled || lastOutputFrame != globals::state->frameCount)
 		return nullptr;
 	if (denoisedThisFrame)
 		return texNRDOutput->srv.get();
@@ -1248,7 +1301,7 @@ ID3D11ShaderResourceView* ScreenSpaceGI::GetDiffuseOutputTexture()
 
 ID3D11ShaderResourceView* ScreenSpaceGI::GetDiffuseSH1Texture()
 {
-	if (!outputReady || !loaded || !settings.Enabled || !settings.EnableGI || !settings.EnableSH)
+	if (!outputReady || lastOutputFrame != globals::state->frameCount || !loaded || !settings.Enabled || !settings.EnableGI || !settings.EnableSH)
 		return nullptr;
 	if (denoisedThisFrame && texNRDOutputSH1)
 		return texNRDOutputSH1->srv.get();
@@ -1275,7 +1328,7 @@ bool ScreenSpaceGI::UsesCubemapFallback() const
 ScreenSpaceGI::SharedData ScreenSpaceGI::GetCommonBufferData()
 {
 	SharedData data{};
-	data.Enabled = loaded && settings.Enabled ? NRDPort::DiffuseMask() : 0u;
+	data.Enabled = loaded && settings.Enabled ? (globals::game::isVR ? NRDStereo::DiffuseMask() : (GetDiffuseOutputTexture() ? 1u : 0u)) : 0u;
 	data.EnableIL = settings.EnableGI ? data.Enabled : 0u;
 	data.ReplaceAmbient = UsesCubemapFallback() ? data.EnableIL : 0u; // early composite subtracts existing ambient from target masks
 	data.AOPower = settings.AOPower;

@@ -71,7 +71,7 @@ float3 SampleSSGIILSkin(uint2 pixCoord)
 }
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchID : SV_DispatchThreadID) {
-	if (any(dispatchID.xy >= uint2(NRDPortActiveWidth,NRDPortActiveHeight)) || SharedData::ssgiSettings.EnableIL == 0)
+	if (any(dispatchID.xy >= uint2(NRDPortActiveWidth,NRDPortActiveHeight)) || (SharedData::ssgiSettings.EnableIL & (1u << NRDPortEye)) == 0)
 		return;
 
 	float depth = DepthTexture[dispatchID.xy];

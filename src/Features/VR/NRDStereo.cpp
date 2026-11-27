@@ -1,20 +1,24 @@
-#include "NRDPortStereo.h"
-#include "NRD.h"
-#include "ScreenSpaceGI.h"
-#include "ScreenSpaceReflections.h"
+#include "NRDStereo.h"
+#include "Features/NRD.h"
+#include "Features/ScreenSpaceGI.h"
+#include "Features/ScreenSpaceReflections.h"
 #include "Globals.h"
 #include "State.h"
 #include "Util.h"
 #include "Buffer.h"
 
-namespace NRDPort {
+namespace NRDStereo {
+using NRDRendering::Input;
+using NRDRendering::FullSize;
+using NRDRendering::ActiveSize;
+using NRDRendering::BindEye;
 namespace {
     uint32_t eye = 0, diffuseMask = 0, specularMask = 0;
+    uint32_t outputFrame = UINT32_MAX;
     bool invalidate = true;
     std::unique_ptr<NRD> rightNRD;
     std::unique_ptr<ScreenSpaceGI> rightGI;
     std::unique_ptr<ScreenSpaceReflections> rightSSR;
-    std::unique_ptr<ConstantBuffer> eyeCB;
     struct CropTexture {
         winrt::com_ptr<ID3D11Texture2D> texture;
         winrt::com_ptr<ID3D11ShaderResourceView> srv;
@@ -26,29 +30,13 @@ namespace {
     std::array<CropTexture,static_cast<size_t>(Input::Count)> crops;
 }
 uint32_t Eye() { return eye; }
-uint32_t DiffuseMask() { return diffuseMask; }
-uint32_t SpecularMask() { return specularMask; }
+uint32_t DiffuseMask() { return outputFrame == globals::state->frameCount ? diffuseMask : 0u; }
+uint32_t SpecularMask() { return outputFrame == globals::state->frameCount ? specularMask : 0u; }
 void InvalidateStereo() { if (eye == 0) { invalidate = true; cropDepthCS=nullptr; } }
-NRD& Service() { return eye && rightNRD ? *rightNRD : globals::features::nrd; }
+NRD* RightNRD() { return rightNRD.get(); }
 const NRD* RightNRDDebug() { return rightNRD && rightNRD->texNRDViewZ ? rightNRD.get() : nullptr; }
 const ScreenSpaceGI* RightGIDebug() { return rightGI && rightGI->texNRDInput ? rightGI.get() : nullptr; }
 const ScreenSpaceReflections* RightSSRDebug() { return rightSSR && rightSSR->texNRDSpecInput ? rightSSR.get() : nullptr; }
-void EyeTextureDesc(D3D11_TEXTURE2D_DESC& d) { if (globals::game::isVR) d.Width /= 2; }
-float2 FullSize() {
-    auto tex = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture;
-    D3D11_TEXTURE2D_DESC d{};
-    if (tex) Util::AsReal(tex)->GetDesc(&d);
-    EyeTextureDesc(d);
-    return {float(d.Width),float(d.Height)};
-}
-float2 ActiveSize() {
-    auto full = FullSize();
-    auto packed = full;
-    if (globals::game::isVR) packed.x *= 2;
-    auto active = Util::ConvertToDynamic(packed, true);
-    if (globals::game::isVR) active.x *= 0.5f;
-    return {std::clamp(std::floor(active.x),1.f,std::max(full.x,1.f)),std::clamp(std::floor(active.y),1.f,std::max(full.y,1.f))};
-}
 ID3D11ShaderResourceView* Crop(Input slot, ID3D11ShaderResourceView* source) {
     if (!globals::game::isVR || !source) return source;
     winrt::com_ptr<ID3D11Resource> resource;
@@ -76,7 +64,7 @@ ID3D11ShaderResourceView* Crop(Input slot, ID3D11ShaderResourceView* source) {
             DX::ThrowIfFailed(device->CreateUnorderedAccessView(c.texture.get(),nullptr,c.uav.put()));
             c.desc=cd;
         }
-        if (!cropDepthCS) cropDepthCS.attach(reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\NRD\\cropEyeDepth.cs.hlsl",{},"cs_5_0")));
+        if (!cropDepthCS) cropDepthCS.attach(reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VR\\NRDCropEyeDepth.cs.hlsl",{},"cs_5_0")));
         if (!cropDepthCS) throw std::runtime_error("NRD: stereo depth crop shader failed");
         auto* ctx=globals::d3d::context;
         BindEye();
@@ -101,24 +89,16 @@ ID3D11ShaderResourceView* Crop(Input slot, ID3D11ShaderResourceView* source) {
     globals::d3d::context->CopySubresourceRegion(c.texture.get(),0,0,0,0,tex.get(),0,&box);
     return c.srv.get();
 }
-void BindEye(bool replaceAmbient, float saturation) {
-    if (!eyeCB) {
-        D3D11_BUFFER_DESC d{}; d.ByteWidth=32; d.Usage=D3D11_USAGE_DEFAULT; d.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
-        eyeCB=std::make_unique<ConstantBuffer>(d,"NRD eye-local constants");
-    }
-    const auto active=ActiveSize();
-    struct alignas(16) Constants { uint32_t eye, offset, width, height, replace; float saturation; float pad[2]; };
-    Constants c{eye,eye*static_cast<uint32_t>(active.x),static_cast<uint32_t>(active.x),static_cast<uint32_t>(active.y),replaceAmbient?1u:0u,saturation,{}};
-    eyeCB->Update(c); auto* cb=eyeCB->CB(); globals::d3d::context->CSSetConstantBuffers(3,1,&cb);
-}
 FrameOutputs Run() {
     FrameOutputs out{}; diffuseMask=specularMask=0; eye=0;
+    outputFrame=globals::state->frameCount;
+    if (!globals::game::isVR) return out;
     auto& gi=globals::features::screenSpaceGI;
     auto& ssr=globals::features::screenSpaceReflections;
     auto& nrd=globals::features::nrd;
     if (gi.loaded) gi.RefreshE11Overlay();
     if (ssr.loaded) ssr.RefreshE11Overlay();
-    if (globals::state->isMapMenuOpen) { gi.QueueHistoryReset(); InvalidateStereo(); globals::state->UpdateFeatureData(true); return out; }
+    if (globals::state->isMapMenuOpen || globals::state->IsMainOrLoadingMenuOpen()) { gi.QueueHistoryReset(); ssr.QueueHistoryReset(); InvalidateStereo(); globals::state->UpdateFeatureData(true); return out; }
     const bool refreshRight = invalidate || gi.recompileFlag || ssr.recompileFlag;
     // Snapshot before eye 0 consumes its atomic flags. History-only changes
     // must reach eye 1, without recompiling NRD guides every disabled frame.
@@ -126,7 +106,7 @@ FrameOutputs Run() {
     const bool resetRightSSR = ssr.queuedHistoryReset.load(std::memory_order_acquire) ||
         ssr.queuedEnabledChange.load(std::memory_order_acquire);
     invalidate=false;
-    const uint32_t count=globals::game::isVR?2u:1u;
+    constexpr uint32_t count=2;
     // Each feature instance owns its own permanent history, including NRD pools.
     for (eye=0;eye<count;++eye) {
         try {
@@ -147,16 +127,24 @@ FrameOutputs Run() {
             const bool guides=(runGI && g->settings.EnableREBLUR) || (runSSR && s->WantsReblur());
             if (n->loaded && (!eye || rightNRD)) n->PrepareGuides(guides, true);
             globals::state->UpdateFeatureData(true);
-            if (runGI) { g->DrawSSGI(); g->Composite(); out.diffuse[eye]=g->GetDiffuseOutputTexture(); if(out.diffuse[eye]) diffuseMask|=1u<<eye; }
+            if (runGI) {
+                g->DrawSSGI();
+                out.diffuse[eye]=g->GetDiffuseOutputTexture();
+                if (out.diffuse[eye]) {
+                    diffuseMask|=1u<<eye;
+                    globals::state->UpdateFeatureData(true);
+                    g->Composite();
+                }
+            }
             else if (!eye && g->loaded) g->DrawSSGI();
             if (runSSR) { s->DrawSSR(); out.specular[eye]=s->GetOutputTexture(); if(out.specular[eye]) specularMask|=1u<<eye; }
             else if (!eye && s->loaded) s->DrawSSR();
         } catch (const std::exception& e) {
             logger::error("NRD: eye {} dispatch failed: {}",eye,e.what());
-            ID3D11ShaderResourceView* nullSRV[128]{}; ID3D11UnorderedAccessView* nullUAV[8]{};
-            globals::d3d::context->CSSetShaderResources(0,128,nullSRV);
-            globals::d3d::context->CSSetUnorderedAccessViews(0,8,nullUAV,nullptr);
-            gi.QueueHistoryReset(); invalidate=true;
+            NRDRendering::ClearComputeBindings();
+            diffuseMask &= ~(1u << eye); specularMask &= ~(1u << eye);
+            out.diffuse[eye]=nullptr; out.specular[eye]=nullptr;
+            gi.QueueHistoryReset(); ssr.QueueHistoryReset(); invalidate=true;
         }
     }
     eye=0;
@@ -164,7 +152,7 @@ FrameOutputs Run() {
     if (!ssr.settings.Enabled || !ssr.loaded) rightSSR.reset();
     if (!nrd.loaded) rightNRD.reset();
     globals::state->UpdateFeatureData(true);
-    ID3D11Buffer* nullCB=nullptr; globals::d3d::context->CSSetConstantBuffers(3,1,&nullCB);
+    NRDRendering::UnbindEye();
     return out;
 }
 }

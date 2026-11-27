@@ -115,7 +115,7 @@ void SampleSSRTracedSpecular(uint2 pixel, out float3 radiance, out float hit) {
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchID : SV_DispatchThreadID) {
 	// Early exit if dispatch thread is outside screen bounds
-	if (any(dispatchID.xy >= uint2(SharedData::BufferDim.xy)))
+	if (any(dispatchID.xy >= uint2(SharedData::BufferDim.xy * FrameBuffer::DynamicResolutionParams1.xy)))
 		return;
 
 	float2 uv = float2(dispatchID.xy + 0.5) * SharedData::BufferDim.zw;

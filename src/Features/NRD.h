@@ -2,7 +2,7 @@
 
 #include "Buffer.h"
 #include "Feature.h"
-#include "NRDReblurIntegration.h"
+#include "NRD/ReblurIntegration.h"
 
 #include <NRDSettings.h>
 
@@ -45,6 +45,7 @@ struct NRD : Feature
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 
+	void OnSceneTransitionReset(bool) override { hasCommonFrameHistory = false; commonSettingsValidThisFrame = false; }
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
 	void CompileComputeShaders();
@@ -52,7 +53,7 @@ struct NRD : Feature
 	// Per-frame service entry point. Called once at the start of the deferred
 	// pass so every consumer sees consistent guides for this frame.
 	/** @brief Prepares this frame's guides; a_requested false only clears the per-frame state, so no consumer reads stale guides. */
-	void RefreshMotionVectors();
+	bool RefreshMotionVectors();
 	void PrepareGuides(bool a_requested, bool a_fullExtent = false);
 	void EnsureResourceExtent(bool a_fullExtent);
 	bool GetResourceExtent(uint32_t& a_width, uint32_t& a_height) const;
@@ -133,6 +134,9 @@ struct NRD : Feature
 	uint16_t prevResourceSize[2] = {};
 	uint16_t prevRectSize[2] = {};
 	uint32_t resourceExtent[2] = {};
+	uint32_t lastResourceUpscaleMethod = UINT32_MAX;
+	uint32_t lastResourceQualityMode = UINT32_MAX;
+	bool lastFullExtent = false;
 
 	// Shared guide textures owned by NRD.
 	eastl::unique_ptr<Texture2D> texNRDViewZ = nullptr;
@@ -142,6 +146,7 @@ struct NRD : Feature
 	winrt::com_ptr<ID3D11ComputeShader> prepareNRDGuidesCompute = nullptr;
 	bool guideShaderFailed = false;
 	bool guideResourcesFailed = false;
+	uint32_t lastFailedAllocationFrame = 0;
 };
 
 // REBLURSettings is consumed by every feature that owns an NRDReblurIntegration

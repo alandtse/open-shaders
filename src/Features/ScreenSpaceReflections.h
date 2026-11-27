@@ -2,7 +2,7 @@
 
 #include "Buffer.h"
 #include "NRD.h"
-#include "NRDReblurIntegration.h"
+#include "NRD/ReblurIntegration.h"
 
 #include <NRDSettings.h>
 
@@ -45,8 +45,11 @@ struct ScreenSpaceReflections : Feature
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 
+	void OnSceneTransitionReset(bool) override { QueueHistoryReset(); }
 	virtual void SetupResources() override;
 	void SetupNRDResources(uint32_t a_width, uint32_t a_height);
+	void SetupTraceResources();
+	void ReleaseTraceResources();
 	/** @brief Whether the specular REBLUR denoiser should hold its pools this frame. */
 	bool WantsReblur() const;
 	virtual void ClearShaderCache() override;
@@ -160,6 +163,7 @@ struct ScreenSpaceReflections : Feature
 		uint pad0;
 	};
 
+	static_assert(sizeof(SharedData) == 16);
 	SharedData GetCommonBufferData();
 
 	// Hi-Z depth pyramid (R32F, raw NDC depth with min-Z mip chain)
@@ -188,5 +192,8 @@ struct ScreenSpaceReflections : Feature
 	uint lastDrawnFrame = 0;
 	// True only after the current DrawSSR invocation has produced a trace output.
 	bool outputReady = false;
+	uint32_t lastOutputFrame = UINT32_MAX;
+	bool resourceFailure = false;
+	uint32_t lastFailedAllocationFrame = 0;
 	bool denoisedThisFrame = false;
 };

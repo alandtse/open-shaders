@@ -1,5 +1,6 @@
 #include "ScreenSpaceReflections.h"
-#include "NRDPortStereo.h"
+#include "NRD/RenderContext.h"
+#include "VR/NRDStereo.h"
 
 #include "Deferred.h"
 #include "DynamicCubemaps.h"
@@ -75,6 +76,8 @@ void ScreenSpaceReflections::DrawSettings()
 	});
 	const bool e11Managed = appliedE11Overlay.active;
 
+	if (resourceFailure) ImGui::TextWrapped("SSR GPU resource allocation failed; see CommunityShaders.log.");
+	else if (reblurInitAttempted && !nrdReblurSpecular.IsValid()) ImGui::TextWrapped("REBLUR unavailable; using full-resolution tracing.");
 	if (!ShadersOK())
 		Util::Text::Error("%s", T(TKEY("compute_shaders_failed_to_compile"), "Compute shaders failed to compile!"));
 	if (e11Managed)
@@ -171,7 +174,7 @@ void ScreenSpaceReflections::DrawSettings()
 		}
 
 		if (settings.EnableREBLUR) {
-			resetReblurHistory |= NRDPort::Service().DrawReblurSettings(settings.Reblur, showAdvanced, "ssr_reblur");
+			resetReblurHistory |= globals::features::nrd.DrawReblurSettings(settings.Reblur, showAdvanced, "ssr_reblur");
 			if (showAdvanced) {
 				resetReblurHistory |= ImGui::SliderFloat(T(TKEY("specular_prepass_blur_radius"), "Specular Pre-pass Radius"), &settings.SpecularPrepassBlurRadius, 0.0f, 75.0f, "%.1f px");
 				resetReblurHistory |= ImGui::Checkbox(T(TKEY("specular_prepass_motion_only"), "Use Pre-pass Only for Motion Estimation"), &settings.UsePrepassOnlyForSpecularMotionEstimation);
@@ -202,7 +205,7 @@ void ScreenSpaceReflections::DrawSettings()
 				ImGui::TreePop();
 			}
 			if (ImGui::TreeNode(T("feature.nrd.right_eye", "Right eye"))) {
-				if (const auto* right = NRDPort::RightSSRDebug())
+				if (const auto* right = NRDStereo::RightSSRDebug())
 					right->DrawBufferViewer(debugRescale);
 				else
 					ImGui::TextUnformatted(T("feature.nrd.eye_buffers_unavailable", "Right-eye buffers are not allocated yet."));
@@ -322,8 +325,8 @@ void ScreenSpaceReflections::RefreshE11Overlay()
 
 void ScreenSpaceReflections::SetupResources()
 {
-	auto renderer = globals::game::renderer;
 	auto device = globals::d3d::device;
+	ReleaseTraceResources();
 	resetReblurHistory = true;
 	outputReady = false;
 
@@ -332,12 +335,54 @@ void ScreenSpaceReflections::SetupResources()
 		ssrCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<SSRCB>(), "SSR::CB");
 	}
 
+
+	logger::debug("ScreenSpaceReflections: creating samplers");
+	{
+		D3D11_SAMPLER_DESC samplerDesc = {
+			.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+			.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP,
+			.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP,
+			.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP,
+			.MaxAnisotropy = 1,
+			.MinLOD = 0,
+			.MaxLOD = D3D11_FLOAT32_MAX
+		};
+		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, linearClampSampler.put()));
+		Util::SetResourceName(linearClampSampler.get(), "SSR::LinearClampSampler");
+
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, pointClampSampler.put()));
+		Util::SetResourceName(pointClampSampler.get(), "SSR::PointClampSampler");
+	}
+
+	CompileComputeShaders();
+}
+
+void ScreenSpaceReflections::ReleaseTraceResources()
+{
+	outputReady = false;
+	nrdReblurSpecular.Shutdown();
+	texNRDSpecInput.reset(); texNRDSpecOutput.reset();
+	for (auto& srv : hiZDepthSRVs) srv = nullptr;
+	for (auto& uav : hiZDepthUAVs) uav = nullptr;
+	texHiZDepth.reset();
+	reblurInitAttempted = false;
+	resetReblurHistory = true;
+}
+
+void ScreenSpaceReflections::SetupTraceResources()
+{
+	auto renderer = globals::game::renderer;
+	auto device = globals::d3d::device;
+	ReleaseTraceResources();
+	const auto full = NRDRendering::FullSize();
+	NRDRendering::LogMemory("before SSR Hi-Z", uint32_t(full.x), uint32_t(full.y));
 	logger::debug("ScreenSpaceReflections: creating textures");
 	{
 		auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 		D3D11_TEXTURE2D_DESC texDesc;
 		Util::AsReal(mainTex.texture)->GetDesc(&texDesc);
-		NRDPort::EyeTextureDesc(texDesc);
+		NRDRendering::EyeTextureDesc(texDesc);
 
 		uint32_t fullW = texDesc.Width;
 		uint32_t fullH = texDesc.Height;
@@ -349,6 +394,7 @@ void ScreenSpaceReflections::SetupResources()
 			while ((minDim >> numHiZMips) >= 16 && numHiZMips < kMaxHiZMips)
 				++numHiZMips;
 
+			if (minDim < 64u) throw std::runtime_error("SSR: main render target too small for seven Hi-Z mips");
 			numHiZMips = std::max(numHiZMips, 7u);
 
 			D3D11_TEXTURE2D_DESC hizDesc{
@@ -388,29 +434,8 @@ void ScreenSpaceReflections::SetupResources()
 			}
 		}
 
-		SetupNRDResources(fullW, fullH);
 	}
-
-	logger::debug("ScreenSpaceReflections: creating samplers");
-	{
-		D3D11_SAMPLER_DESC samplerDesc = {
-			.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR,
-			.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP,
-			.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP,
-			.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP,
-			.MaxAnisotropy = 1,
-			.MinLOD = 0,
-			.MaxLOD = D3D11_FLOAT32_MAX
-		};
-		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, linearClampSampler.put()));
-		Util::SetResourceName(linearClampSampler.get(), "SSR::LinearClampSampler");
-
-		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
-		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, pointClampSampler.put()));
-		Util::SetResourceName(pointClampSampler.get(), "SSR::PointClampSampler");
-	}
-
-	CompileComputeShaders();
+	NRDRendering::LogMemory("after SSR Hi-Z", uint32_t(full.x), uint32_t(full.y));
 }
 
 void ScreenSpaceReflections::SetupNRDResources(uint32_t a_width, uint32_t a_height)
@@ -438,19 +463,22 @@ void ScreenSpaceReflections::SetupNRDResources(uint32_t a_width, uint32_t a_heig
 
 	resetReblurHistory = true;
 	outputReady = false;
-
+	nrdReblurSpecular.Shutdown();
+	texNRDSpecInput.reset(); texNRDSpecOutput.reset();
+	const bool wantsReblur = WantsReblur() && NRDRendering::Service().CanDenoise() && NRDRendering::Service().AreGuidesReady();
+	NRDRendering::LogMemory("before SSR outputs", a_width, a_height);
 	texNRDSpecInput = eastl::make_unique<Texture2D>(specDesc, "SSR::NRDInput");
 	texNRDSpecInput->CreateSRV(srvDesc);
 	texNRDSpecInput->CreateUAV(uavDesc);
 
-	texNRDSpecOutput = eastl::make_unique<Texture2D>(specDesc, "SSR::NRDOutput");
-	texNRDSpecOutput->CreateSRV(srvDesc);
-	texNRDSpecOutput->CreateUAV(uavDesc);
-
-	nrdReblurSpecular.Shutdown();
-	reblurInitAttempted = WantsReblur();
-	if (reblurInitAttempted)
-		nrdReblurSpecular.Init(a_width, a_height, nrd::Denoiser::REBLUR_SPECULAR, 0);
+	reblurInitAttempted = wantsReblur;
+	if (wantsReblur) {
+		texNRDSpecOutput = eastl::make_unique<Texture2D>(specDesc, "SSR::NRDOutput");
+		texNRDSpecOutput->CreateSRV(srvDesc);
+		texNRDSpecOutput->CreateUAV(uavDesc);
+		if (!nrdReblurSpecular.Init(a_width, a_height, nrd::Denoiser::REBLUR_SPECULAR, 0)) texNRDSpecOutput.reset();
+	}
+	NRDRendering::LogMemory("after SSR outputs", a_width, a_height);
 }
 
 bool ScreenSpaceReflections::WantsReblur() const
@@ -460,7 +488,8 @@ bool ScreenSpaceReflections::WantsReblur() const
 
 void ScreenSpaceReflections::ClearShaderCache()
 {
-	NRDPort::InvalidateStereo();
+	if (globals::game::isVR)
+		NRDStereo::InvalidateStereo();
 	resetReblurHistory = true;
 	outputReady = false;
 	denoisedThisFrame = false;
@@ -506,7 +535,7 @@ void ScreenSpaceReflections::CompileComputeShaders()
 
 bool ScreenSpaceReflections::CanDenoise() const
 {
-	return settings.EnableREBLUR && nrdReblurSpecular.IsValid() && NRDPort::Service().CanDenoise() && NRDPort::Service().AreGuidesReady();
+	return settings.EnableREBLUR && nrdReblurSpecular.IsValid() && NRDRendering::Service().CanDenoise() && NRDRendering::Service().AreGuidesReady();
 }
 
 bool ScreenSpaceReflections::ShadersOK()
@@ -517,7 +546,7 @@ bool ScreenSpaceReflections::ShadersOK()
 void ScreenSpaceReflections::UpdateSB()
 {
 	float2 res = { (float)texHiZDepth->desc.Width, (float)texHiZDepth->desc.Height };
-	float2 dynres = NRDPort::ActiveSize();
+	float2 dynres = NRDRendering::ActiveSize();
 	dynres = { floor(dynres.x), floor(dynres.y) };
 
 	SSRCB data;
@@ -551,29 +580,38 @@ void ScreenSpaceReflections::DrawSSR()
 
 	if (queuedEnabledChange.exchange(false)) {
 		resetReblurHistory = true;
-		if (globals::deferred)
-			globals::deferred->ClearShaderCache();
 	}
 	if (queuedHistoryReset.exchange(false))
 		resetReblurHistory = true;
 
-	if (texNRDSpecInput) {
-		uint32_t nrdWidth = 0;
-		uint32_t nrdHeight = 0;
-		const auto& nrdSvc = NRDPort::Service();
-		if (nrdSvc.loaded && nrdSvc.GetResourceExtent(nrdWidth, nrdHeight) &&
-			(texNRDSpecInput->desc.Width != nrdWidth || texNRDSpecInput->desc.Height != nrdHeight))
-			SetupNRDResources(nrdWidth, nrdHeight);
-
-		if (!WantsReblur()) {
-			if (nrdReblurSpecular.IsValid()) {
-				nrdReblurSpecular.Shutdown();
-				resetReblurHistory = true;
-			}
-			reblurInitAttempted = false;
-		} else if (!reblurInitAttempted) {
-			SetupNRDResources(texNRDSpecInput->desc.Width, texNRDSpecInput->desc.Height);
-		}
+	if (!settings.Enabled || !globals::features::dynamicCubemaps.loaded) {
+		ReleaseTraceResources();
+		return;
+	}
+	if (globals::state->isMapMenuOpen || !ssrCB || !pointClampSampler || !linearClampSampler) return;
+	const auto full = NRDRendering::FullSize();
+	const auto active = NRDRendering::ActiveSize();
+	if (active.x < 1 || active.y < 1 || full.x < 64 || full.y < 64) return;
+	const bool needTraceResources = !texHiZDepth || texHiZDepth->desc.Width != uint32_t(full.x) || texHiZDepth->desc.Height != uint32_t(full.y);
+	if (needTraceResources && NRDRendering::ShouldDeferAllocation()) return;
+	if (resourceFailure && globals::state->frameCount - lastFailedAllocationFrame < 120u) return;
+	const auto& guideService = NRDRendering::Service();
+	const bool wantsReblur = WantsReblur() && guideService.CanDenoise() && guideService.AreGuidesReady();
+	try {
+		if (needTraceResources) SetupTraceResources();
+		const auto align16 = [](float v) { return (uint32_t(std::ceil(std::max(1.f, v))) + 15u) & ~15u; };
+		uint32_t width = globals::game::isVR ? uint32_t(full.x) : std::min(uint32_t(full.x), std::max(align16(active.x), texNRDSpecInput ? texNRDSpecInput->desc.Width : 0u));
+		uint32_t height = globals::game::isVR ? uint32_t(full.y) : std::min(uint32_t(full.y), std::max(align16(active.y), texNRDSpecInput ? texNRDSpecInput->desc.Height : 0u));
+		if (wantsReblur) guideService.GetResourceExtent(width, height);
+		if (!texNRDSpecInput || texNRDSpecInput->desc.Width != width || texNRDSpecInput->desc.Height != height || wantsReblur != reblurInitAttempted)
+			SetupNRDResources(width, height);
+		resourceFailure = false;
+	} catch (const std::exception& e) {
+		logger::error("[SSR] Resource allocation failed: {} (device status 0x{:08X})", e.what(), uint32_t(globals::d3d::device->GetDeviceRemovedReason()));
+		ReleaseTraceResources();
+		resourceFailure = true;
+		lastFailedAllocationFrame = globals::state->frameCount;
+		return;
 	}
 
 	if ((settings.HalfRes && CanDenoise()) != tracedHalfRes) {
@@ -600,13 +638,13 @@ void ScreenSpaceReflections::DrawSSR()
 
 
 	UpdateSB();
-	NRDPort::BindEye();
+	NRDRendering::BindEye();
 
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
 	auto rts = renderer->GetRuntimeData().renderTargets;
 
-	float2 size = NRDPort::ActiveSize();
+	float2 size = NRDRendering::ActiveSize();
 	auto resolution = std::array{ (uint)size.x, (uint)size.y };
 	float2 dynres = { floor(size.x), floor(size.y) };
 
@@ -636,7 +674,7 @@ void ScreenSpaceReflections::DrawSSR()
 			// Build mip 0-4 in one pass. Each group covers a 16x16 source tile,
 			// then performs the same min-Z reduction in group-shared memory.
 			resetViews();
-			auto srv = NRDPort::Crop(NRDPort::Input::Depth, Util::GetCurrentSceneDepthSRV(false));
+			auto srv = NRDRendering::Crop(NRDRendering::Input::Depth, Util::GetCurrentSceneDepthSRV(false));
 			context->CSSetShaderResources(0, 1, &srv);
 			std::array<ID3D11UnorderedAccessView*, 5> uavs;
 			for (uint i = 0; i < (uint)uavs.size(); ++i)
@@ -649,7 +687,7 @@ void ScreenSpaceReflections::DrawSSR()
 			// Small or non-16-aligned render targets keep the generic path so its
 			// NPOT edge-reduction behavior remains unchanged.
 			resetViews();
-			auto srv = NRDPort::Crop(NRDPort::Input::Depth, Util::GetCurrentSceneDepthSRV(false));
+			auto srv = NRDRendering::Crop(NRDRendering::Input::Depth, Util::GetCurrentSceneDepthSRV(false));
 			context->CSSetShaderResources(0, 1, &srv);
 			ID3D11UnorderedAccessView* uav = hiZDepthUAVs[0].get();
 			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
@@ -692,9 +730,9 @@ void ScreenSpaceReflections::DrawSSR()
 
 		resetViews();
 		std::array<ID3D11ShaderResourceView*, 7> specSRVs = { nullptr };
-		specSRVs[0] = NRDPort::Crop(NRDPort::Input::Depth, Util::GetCurrentSceneDepthSRV(false));
-		specSRVs[1] = NRDPort::Crop(NRDPort::Input::Normal, Util::AsReal(normal.SRV));
-		specSRVs[2] = NRDPort::Crop(NRDPort::Input::Main, Util::AsReal(main.SRV));
+		specSRVs[0] = NRDRendering::Crop(NRDRendering::Input::Depth, Util::GetCurrentSceneDepthSRV(false));
+		specSRVs[1] = NRDRendering::Crop(NRDRendering::Input::Normal, Util::AsReal(normal.SRV));
+		specSRVs[2] = NRDRendering::Crop(NRDRendering::Input::Main, Util::AsReal(main.SRV));
 		specSRVs[3] = texHiZDepth->srv.get();
 		specSRVs[4] = dynamicCubemaps.loaded ? dynamicCubemaps.envTexture->srv.get() : nullptr;
 		specSRVs[5] = dynamicCubemaps.loaded ? dynamicCubemaps.envReflectionsTexture->srv.get() : nullptr;
@@ -721,12 +759,12 @@ void ScreenSpaceReflections::DrawSSR()
 	}
 
 	// REBLUR denoise (specular)
-	auto& nrdSvc = NRDPort::Service();
+	auto& nrdSvc = NRDRendering::Service();
 	if (settings.EnableREBLUR && nrdReblurSpecular.IsValid() && nrdSvc.loaded && nrdSvc.AreGuidesReady()) {
 		CS_GPU_PASS("ScreenSpaceReflections::ReblurSpecular");
 
 
-		nrdSvc.RefreshMotionVectors();
+		if (!nrdSvc.RefreshMotionVectors()) { QueueHistoryReset(); NRDRendering::ClearComputeBindings(); return; }
 		auto commonSettings = nrdSvc.GetCommonSettings();
 		commonSettings.splitScreen = settings.Reblur.SplitScreen;
 		commonSettings.enableValidation = settings.Reblur.EnableValidation;
@@ -765,12 +803,13 @@ void ScreenSpaceReflections::DrawSSR()
 	context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
 	context->CSSetShader(nullptr, nullptr, 0);
 	outputReady = !tracedHalfRes || denoisedThisFrame;
+	lastOutputFrame = globals::state->frameCount;
 
 }
 
 ID3D11ShaderResourceView* ScreenSpaceReflections::GetOutputTexture()
 {
-	if (!outputReady || !loaded || !settings.Enabled)
+	if (!outputReady || lastOutputFrame != globals::state->frameCount || !loaded || !settings.Enabled)
 		return nullptr;
 	if (denoisedThisFrame)
 		return texNRDSpecOutput->srv.get();
@@ -780,7 +819,7 @@ ID3D11ShaderResourceView* ScreenSpaceReflections::GetOutputTexture()
 ScreenSpaceReflections::SharedData ScreenSpaceReflections::GetCommonBufferData()
 {
 	SharedData data;
-	data.Enabled = loaded && settings.Enabled ? NRDPort::SpecularMask() : 0u;
+	data.Enabled = loaded && settings.Enabled ? (globals::game::isVR ? NRDStereo::SpecularMask() : (GetOutputTexture() ? 1u : 0u)) : 0u;
 	data.SpecularMult = settings.SpecularMult;
 	data.SpecCubemapMult = settings.UseDynamicCubemapsAsFallback && globals::features::dynamicCubemaps.loaded ? settings.SpecCubemapMult : 0.0f;
 	data.pad0 = 0;

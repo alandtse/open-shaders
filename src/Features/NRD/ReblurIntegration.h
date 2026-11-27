@@ -65,6 +65,8 @@ private:
 	nrd::Identifier m_identifier = 0;
 	uint32_t m_width = 0, m_height = 0;
 	bool m_validationEnabled = false;
+	bool m_commonSettingsValid = false;
+	bool m_denoiserSettingsValid = false;
 
 	// Permanent pool (history) + transient pool (can alias between frames)
 	eastl::vector<PoolTexture> m_permanentPool;

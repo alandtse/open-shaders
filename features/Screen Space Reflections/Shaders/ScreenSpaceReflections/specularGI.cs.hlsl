@@ -372,11 +372,8 @@ float SSRT_ValidateHit(float3 hit,
 	outPixelPos = DTid.xy;
 #endif
 
-	const uint2 activeScreenSize = (uint2)(screen_size * (FrameDim * RcpTexDim));
-	if (any(fullResCoords >= activeScreenSize)) {
-		OutSpecRadianceHitDist[outPixelPos] = 0;
-		return;
-	}
+	const uint2 activeScreenSize = uint2(FrameDim);
+	if (any(fullResCoords >= activeScreenSize)) return;
 
 	float depth = FrameBuffer::ToStandardDepth(DepthTexture[fullResCoords].x);
 	if (depth >= 1.0 - 1e-6) {
