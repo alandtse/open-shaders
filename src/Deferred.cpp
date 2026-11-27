@@ -847,6 +847,17 @@ void Deferred::Hooks::Main_RenderShadowMaps::thunk()
 	globals::deferred->EarlyPrepasses();
 };
 
+void Deferred::Hooks::Main_RenderShadowmasks::thunk(bool a1)
+{
+	// Nested shadow-mask renders (cubemaps, reflections) must not re-fire the once-per-frame prepass event.
+	static uint32_t lastFrame = UINT32_MAX;
+	if (auto* state = globals::game::graphicsState; state && state->GetFrameCount() != lastFrame) {
+		lastFrame = state->GetFrameCount();
+		Feature::ApplyDepthPrepassReadyHooks();
+	}
+	func(a1);
+}
+
 void Deferred::Hooks::Main_RenderWorld::thunk(bool a1)
 {
 	CS_GPU_PASS("Deferred::World");

@@ -1,7 +1,7 @@
 #include "Feature.h"
 
-#include <unordered_map>
 #include <mutex>
+#include <unordered_map>
 
 #include "FeatureIssues.h"
 #include "FeatureVersions.h"
@@ -400,6 +400,12 @@ void Feature::ApplyDrawHooks()
 		if (feature->loaded)
 			feature->OnDraw();
 	}
+}
+
+void Feature::ApplyDepthPrepassReadyHooks()
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsDepthPrepassReadyHook(); });
+	ForEachLoadedFeature(features, "OnDepthPrepassReady", [](Feature* feature) { feature->OnDepthPrepassReady(); }, true);
 }
 
 void Feature::ApplyOpaqueRasterReadyHooks()

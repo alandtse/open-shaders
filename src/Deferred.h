@@ -185,6 +185,12 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		struct Main_RenderShadowmasks
+		{
+			static void thunk(bool a1);
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
 		struct Main_RenderWorld
 		{
 			static void thunk(bool a1);
@@ -238,6 +244,7 @@ public:
 			const bool isAE1799 = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0));
 
 			stl::write_thunk_call<Main_RenderShadowMaps>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0x2EC, isAE1799 ? 0x30A : 0x2EC, 0x248));
+			stl::detour_thunk<Main_RenderShadowmasks>(REL::RelocationID(100422, 107140));
 
 			stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0x831, isAE1799 ? 0x85E : 0x841, 0x791));
 			stl::write_thunk_call<Main_RenderWorld_Start>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));

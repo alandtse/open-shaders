@@ -360,7 +360,7 @@ bool DX12NativeScene::WantsRenderPassHook() const
 }
 
 bool DX12NativeScene::WantsPreShadowMapsHook() const { return WantsRenderPassHook(); }
-bool DX12NativeScene::WantsOpaqueRasterReadyHook() const { return WantsRenderPassHook(); }
+bool DX12NativeScene::WantsDepthPrepassReadyHook() const { return WantsRenderPassHook(); }
 
 void DX12NativeScene::PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid)
 {
@@ -610,7 +610,7 @@ std::shared_ptr<const DX12Native::NativeLightPublication> DX12NativeScene::Colle
 	return ready;
 }
 
-void DX12NativeScene::OnOpaqueRasterReady()
+void DX12NativeScene::OnDepthPrepassReady()
 {
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive())
 		return;
@@ -624,7 +624,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	if (mode != DX12::SCMNativeMode::ShadowOffload && !fullRT)
 		return;
 
-	CS_GPU_PASS("DX12NativeScene::OpaqueRasterReady");
+	CS_GPU_PASS("DX12NativeScene::DepthPrepassTrace");
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
 	globals::features::upscaling.nativeComposite.RetireCompletedInputs();
 	shadows.BeginFrame(frame);

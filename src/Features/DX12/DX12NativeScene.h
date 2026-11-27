@@ -77,8 +77,9 @@ struct DX12NativeScene final : OverlayFeature
 	void LoadSettings(json& a_input) override;
 	void SaveSettings(json& a_output) override;
 	void RestoreDefaultSettings() override;
-	bool WantsOpaqueRasterReadyHook() const override;
-	void OnOpaqueRasterReady() override;
+	bool WantsDepthPrepassReadyHook() const override;
+	/** @brief Traces native shadows from prepass depth so forward lighting of this frame can read them. */
+	void OnDepthPrepassReady() override;
 	/** @brief Observe CPU-backed opaque rigid geometry from SCM or normal render passes. */
 	void ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requireStability = false);
 	/** @brief SCM hands native-owned lights' static casters to RayQuery and retains movers. */

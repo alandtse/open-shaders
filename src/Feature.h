@@ -372,6 +372,11 @@ public:
 	/** @brief Called after the world scene is complete, including first-person rendering on SE/AE. */
 	virtual void OnWorldRenderEnd(RE::RENDER_TARGET /*a_renderTarget*/) {}
 
+	/** @brief Called once per frame after the depth prepass, before shadow masks and forward lighting read it. */
+	virtual void OnDepthPrepassReady() {}
+	/** @brief Boot-time opt-in to the depth prepass hook. */
+	virtual bool WantsDepthPrepassReadyHook() const { return false; }
+
 	/** @brief Notifies features that opaque raster rendering is complete. */
 	virtual void OnOpaqueRasterReady() {}
 	/** @brief Boot-time opt-in to the opaque raster hook. */
@@ -711,6 +716,8 @@ public:
 
 	/** @brief Visits PreShadowMaps() on every loaded feature that opted in via WantsPreShadowMapsHook(); the list is cached once. */
 	static void ApplyPreShadowMapsHooks();
+	/** @brief Dispatches the depth prepass completion event to registered features. */
+	static void ApplyDepthPrepassReadyHooks();
 	/** @brief Dispatches the opaque raster completion event to registered features. */
 	static void ApplyOpaqueRasterReadyHooks();
 
