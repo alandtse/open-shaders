@@ -404,6 +404,12 @@ void Feature::ApplyDrawHooks()
 	}
 }
 
+void Feature::ApplyDepthPrepassReadyHooks()
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsDepthPrepassReadyHook(); });
+	ForEachLoadedFeature(features, "OnDepthPrepassReady", [](Feature* feature) { feature->OnDepthPrepassReady(); }, true);
+}
+
 void Feature::ApplyOpaqueRasterReadyHooks()
 {
 	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsOpaqueRasterReadyHook(); });

@@ -65,6 +65,8 @@ struct DX12NativeScene final : OverlayFeature
 	void RestoreDefaultSettings() override;
 	bool WantsOpaqueRasterReadyHook() const override;
 	void OnOpaqueRasterReady() override;
+	bool WantsDepthPrepassReadyHook() const override;
+	void OnDepthPrepassReady() override;
 	/** @brief Observe CPU-backed opaque rigid geometry from SCM or normal render passes. */
 	void ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requireStability = false);
 	/** @brief SCM hands native-owned lights' static casters to RayQuery and retains movers. */
@@ -123,6 +125,7 @@ private:
 		DX12::PreparedLight value;
 	};
 	std::atomic<bool> coverageAudit{ false };
+	std::atomic<bool> earlyTraceExperiment{ false };
 	std::atomic<bool> exactShadowLights{ false }, frameExactShadowLights{ false };
 	std::unordered_map<uintptr_t, float3> scheduledOrigins;
 	uint32_t scheduledOriginsFrame = UINT32_MAX;

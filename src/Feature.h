@@ -387,6 +387,9 @@ public:
 	virtual void OnOpaqueRasterReady() {}
 	/** @brief Boot-time opt-in to the opaque raster hook. */
 	virtual bool WantsOpaqueRasterReadyHook() const { return false; }
+	/** @brief Main depth prepass completed, before forward light evaluation. */
+	virtual void OnDepthPrepassReady() {}
+	virtual bool WantsDepthPrepassReadyHook() const { return false; }
 
 	/** @brief Called before a post-processing implementation consumes the scene target. */
 	virtual void OnBeforePostProcessing(RE::RENDER_TARGET /*a_renderTarget*/) {}
@@ -724,6 +727,7 @@ public:
 	static void ApplyPreShadowMapsHooks();
 	/** @brief Dispatches the opaque raster completion event to registered features. */
 	static void ApplyOpaqueRasterReadyHooks();
+	static void ApplyDepthPrepassReadyHooks();
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();

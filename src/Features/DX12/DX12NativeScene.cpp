@@ -49,6 +49,9 @@ void DX12NativeScene::DrawDevSettings()
 	const auto& control = globals::features::dx12Control;
 	if (!control.IsShadowOffloadMode() && !control.IsFullRTMode())
 		return;
+	bool early = earlyTraceExperiment.load(std::memory_order_relaxed);
+	if (ImGui::Checkbox(T("menu.dx12.scene.early_trace", "Experimental depth-prepass trace"), &early))
+		earlyTraceExperiment.store(early, std::memory_order_relaxed);
 	bool audit = coverageAudit.load(std::memory_order_relaxed);
 	if (ImGui::Checkbox(T("menu.dx12.scene.audit_caster_coverage", "Audit exact caster coverage"), &audit))
 		coverageAudit.store(audit, std::memory_order_relaxed);
@@ -333,6 +336,16 @@ bool DX12NativeScene::WantsRenderPassHook() const
 
 bool DX12NativeScene::WantsPreShadowMapsHook() const { return WantsRenderPassHook(); }
 bool DX12NativeScene::WantsOpaqueRasterReadyHook() const { return WantsRenderPassHook(); }
+bool DX12NativeScene::WantsDepthPrepassReadyHook() const { return WantsRenderPassHook(); }
+
+void DX12NativeScene::OnDepthPrepassReady()
+{
+	if (!earlyTraceExperiment.load(std::memory_order_relaxed) || !globals::state || !globals::state->IsDeveloperMode())
+		return;
+	CS_GPU_PASS("DX12NativeScene::DepthPrepassReady");
+	// The same combined mask is produced. The later hook remains the fallback.
+	OnOpaqueRasterReady();
+}
 
 void DX12NativeScene::PrepareLoadingScene(std::shared_ptr<const DX12::Grid> grid)
 {
