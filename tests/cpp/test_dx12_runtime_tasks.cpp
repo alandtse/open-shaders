@@ -1,9 +1,10 @@
-#include "Features/DX12/NativeShadowHistory.h"
-#include "Features/DX12/DX12FenceRetirementPolicy.h"
-#include "Features/DX12/SpatialGrid.h"
-#include "Features/DX12/NativeLightPublication.h"
-#include "Features/DX12/TilePreparationPolicy.h"
+#include "../../package/Shaders/Common/NativeLightShadowSlot.hlsli"
 #include "../../package/Shaders/Common/NativeShadowRT.hlsli"
+#include "Features/DX12/DX12FenceRetirementPolicy.h"
+#include "Features/DX12/NativeLightPublication.h"
+#include "Features/DX12/NativeShadowHistory.h"
+#include "Features/DX12/SpatialGrid.h"
+#include "Features/DX12/TilePreparationPolicy.h"
 #include "Utils/RuntimeTaskGate.h"
 
 #include <atomic>
@@ -170,7 +171,10 @@ namespace
 {
 	struct ConsolidationLight
 	{
-		struct Vector { float x, y, z; };
+		struct Vector
+		{
+			float x, y, z;
+		};
 		uint32_t referenceID = 0, flags = 0;
 		Vector position{}, color{ 1, 1, 1 };
 		float radius = 100, fade = 1, emitterRadius = 0, falloffExponent = 1;
@@ -327,8 +331,7 @@ TEST_CASE("Native light revision equality includes emission and identity", "[dx1
 TEST_CASE("Native packed records preserve the consolidated shadow ABI", "[dx12][shadow]")
 {
 	using namespace DX12Native;
-	const ConsolidationLight light{ .referenceID = 0x12345678u, .position = { 1, 2, 3 },
-		.color = { 4, 4, 4 }, .radius = 200, .fade = 2, .emitterRadius = 5 };
+	const ConsolidationLight light{ .referenceID = 0x12345678u, .position = { 1, 2, 3 }, .color = { 4, 4, 4 }, .radius = 200, .fade = 2, .emitterRadius = 5 };
 	const auto packed = PackNativeLight(light);
 	static_assert(sizeof(PackedNativeLight) == 32);
 	CHECK(packed[0][0] == 1);
@@ -406,4 +409,22 @@ TEST_CASE("Native RT history accepts only compatible consecutive frames", "[dx12
 	++next.frame;
 	++next.epoch;
 	CHECK(ShadowHistoryCount(previous, next) == 0);
+}
+
+TEST_CASE("A light's shadow slices pack into one word", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	CHECK_FALSE(HasLightShadow(kNoLightShadow));
+	CHECK_FALSE(HasLightShadow(kNoLightShadow | kLightShadowFadesWithSlot));
+	const uint packed = PackLightShadow(5u, 63u, kLightShadowFadesWithSlot);
+	CHECK(HasLightShadow(packed));
+	CHECK(LightShadowCurrent(packed) == 5u);
+	CHECK(LightShadowPrevious(packed) == 63u);
+	CHECK((packed & kLightShadowFadesWithSlot) != 0u);
+	const uint previousOnly = PackLightShadow(kNoLightShadowSlice, 7u, 0u);
+	CHECK(HasLightShadow(previousOnly));
+	CHECK(LightShadowCurrent(previousOnly) == kNoLightShadowSlice);
+	CHECK(LightShadowPrevious(previousOnly) == 7u);
+	CHECK(PackLightShadow(kNoLightShadowSlice, kNoLightShadowSlice, 0u) == kNoLightShadow);
+	CHECK(LightShadowCurrent(PackLightShadow(1u, 2u, 0xFFu)) == 1u);
 }

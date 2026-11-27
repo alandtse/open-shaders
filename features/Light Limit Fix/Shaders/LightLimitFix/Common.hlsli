@@ -17,8 +17,6 @@ namespace LightFlags
 	static const uint PortalStrict = POINT_LIGHT_FLAG_PORTAL_STRICT;
 	static const uint Shadow = POINT_LIGHT_FLAG_SHADOW;
 	static const uint Simple = POINT_LIGHT_FLAG_SIMPLE;
-	static const uint NativeShadow = POINT_LIGHT_FLAG_NATIVE_SHADOW;
-	static const uint NativeShadowFades = POINT_LIGHT_FLAG_NATIVE_SHADOW_FADES;
 
 	static const uint Initialised = POINT_LIGHT_FLAG_INITIALISED;
 	static const uint Disabled = POINT_LIGHT_FLAG_DISABLED;
@@ -54,8 +52,8 @@ struct Light
 	uint4 roomFlags;
 	uint lightFlags;
 	uint shadowMapIndex;
-	uint nativeShadowSlot;
-	uint nativeShadowPreviousSlot;
+	uint nativeShadow;  // Common/NativeLightShadowSlot.hlsli packing.
+	float pad0;
 };
 
 // ---------------------------------------------------------------------------

@@ -97,13 +97,13 @@ namespace
 
 	void ApplyNativeShadow(LightLimitFix::LightData& a_light, const RE::NiLight* a_niLight)
 	{
-		if (const auto slot = globals::features::dx12NativeScene.NativeShadowSlot(a_niLight, a_light.lightFlags.any(LightLimitFix::LightFlags::Shadow))) {
-			a_light.nativeShadowSlot = *slot;
-			a_light.nativeShadowPreviousSlot = globals::features::dx12NativeScene.PreviousShadowSlot(a_niLight);
-			a_light.lightFlags.set(LightLimitFix::LightFlags::NativeShadow);
+		auto& scene = globals::features::dx12NativeScene;
+		a_light.nativeShadow = DX12Native::kNoLightShadow;
+		if (const auto slot = scene.NativeShadowSlot(a_niLight, a_light.lightFlags.any(LightLimitFix::LightFlags::Shadow))) {
+			const auto slice = [](uint32_t a_slot) { return std::min(a_slot, DX12Native::kNoLightShadowSlice); };
 			// Offload traces a light only while SCM schedules it, so its traced term fades with the slot; Full RT keeps tracing it.
-			if (globals::features::dx12NativeScene.GetFrameNativeMode() == DX12::SCMNativeMode::ShadowOffload)
-				a_light.lightFlags.set(LightLimitFix::LightFlags::NativeShadowFades);
+			const uint32_t flags = scene.GetFrameNativeMode() == DX12::SCMNativeMode::ShadowOffload ? DX12Native::kLightShadowFadesWithSlot : 0u;
+			a_light.nativeShadow = DX12Native::PackLightShadow(slice(*slot), slice(scene.PreviousShadowSlot(a_niLight)), flags);
 		}
 	}
 

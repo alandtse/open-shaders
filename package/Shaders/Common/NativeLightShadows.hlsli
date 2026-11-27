@@ -1,6 +1,8 @@
 #ifndef NATIVE_LIGHT_SHADOWS_HLSLI
 #define NATIVE_LIGHT_SHADOWS_HLSLI
 
+#include "Common/NativeLightShadowSlot.hlsli"
+
 // Ray-traced static visibility per light, one slice per traced light, written by DX12 Native Scene
 // at reduced resolution before forward lighting. DX12NativeScene::kLightShadowRegister binds it.
 Texture2DArray<unorm float> NativeLightShadowSlices : register(t57);
@@ -10,8 +12,9 @@ Texture2DArray<unorm float> PreviousNativeLightShadowSlices : register(t58);
 namespace NativeLightShadows
 {
 	/** Visibility of one traced light at a render-target pixel, averaged with the previous frame's slice when it has one; 1 is lit. */
-	float Visibility(uint slot, uint previousSlot, float2 pixel)
+	float Visibility(uint packed, float2 pixel)
 	{
+		const uint slot = LightShadowCurrent(packed), previousSlot = LightShadowPrevious(packed);
 		uint width, height, slices, previousWidth, previousHeight, previousSlices;
 		NativeLightShadowSlices.GetDimensions(width, height, slices);
 		PreviousNativeLightShadowSlices.GetDimensions(previousWidth, previousHeight, previousSlices);
