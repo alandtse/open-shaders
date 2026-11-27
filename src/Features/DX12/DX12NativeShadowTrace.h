@@ -56,8 +56,15 @@ namespace DX12Native
 	public:
 		enum class Outcome : uint8_t
 		{
-			None, InitializationFailed, NoRaster, NoScene, NoLights, NoFreeSlot,
-			ViewportMismatch, Failed, Dispatched
+			None,
+			InitializationFailed,
+			NoRaster,
+			NoScene,
+			NoLights,
+			NoFreeSlot,
+			ViewportMismatch,
+			Failed,
+			Dispatched
 		};
 		Outcome LastOutcome() const { return lastOutcome.load(std::memory_order_relaxed); }
 		uint32_t LastLightCount() const { return lastLightCount.load(std::memory_order_relaxed); }

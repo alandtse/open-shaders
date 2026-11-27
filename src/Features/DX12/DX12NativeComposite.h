@@ -15,7 +15,11 @@ namespace DX12Native
 	// Submission state, not a guarantee that presentation has consumed the frame.
 	enum class CompositeShadowResult : uint8_t
 	{
-		NotCaptured, NoMask, Rejected, Submitted, Failed
+		NotCaptured,
+		NoMask,
+		Rejected,
+		Submitted,
+		Failed
 	};
 	inline std::atomic<CompositeShadowResult> lastCompositeShadowResult{ CompositeShadowResult::NotCaptured };
 	inline std::atomic<bool> compositeShadowDebugView{ false };

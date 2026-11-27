@@ -793,7 +793,6 @@ void DX12NativeScene::OnRuntimeDisabled()
 	geometryCapture.Reset();
 }
 
-
 json DX12NativeScene::GetStatus() const
 {
 	json status = { { "active", globals::features::dx12Control.IsActive() },

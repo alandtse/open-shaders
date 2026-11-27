@@ -1,8 +1,8 @@
 #include "DX12NativeComposite.h"
-#include "State.h"
 #include "DX12Control.h"
 #include "DX12GpuRetirement.h"
 #include "DX12NativeLightWorker.h"
+#include "State.h"
 #include "Utils/TracyZones.h"
 
 #include "Features/DX12/DX12NativeScene.h"
@@ -444,7 +444,7 @@ namespace DX12Native
 				const auto& camera = raster->camera;
 				const Constants constants{ width, height, kReceiverTolerance,
 					(transfer == Transfer::LegacyScene ? 1u : 0u) |
-					(compositeShadowDebugView.load(std::memory_order_relaxed) && globals::state && globals::state->IsDeveloperMode() ? 2u : 0u),
+						(compositeShadowDebugView.load(std::memory_order_relaxed) && globals::state && globals::state->IsDeveloperMode() ? 2u : 0u),
 					camera.CameraProjInverse, camera.CameraViewInverse,
 					ShadowLogicalExtent(width, quality), ShadowLogicalExtent(height, quality) };
 				slot->commands->SetComputeRoot32BitConstants(2, kShadowConstantDwords, &constants, 0);
