@@ -211,6 +211,7 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 		if (discriminant >= 0.0f)
 			tMax = min(tMax, dot(delta, rayDirection) - sqrt(discriminant) - MinDistance);
 		float visibility = 1.0f;
+		bool occluded = false;
 		if (tMax > MinDistance) {
 			RayDesc ray;
 			ray.Origin = world + rayDirection * MinDistance;
@@ -220,7 +221,7 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 			RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
 			query.TraceRayInline(Scene, RAY_FLAG_NONE, 0xFF, ray);
 			while (query.Proceed()) {}
-			bool occluded = query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+			occluded = query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
 			if (!occluded && MoverCount != 0u) {
 				RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> moverQuery;
 				moverQuery.TraceRayInline(Movers, RAY_FLAG_NONE, 0xFF, ray);
@@ -231,11 +232,12 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 			if (occluded)
 				visibility = 1.0f - gradualFalloff;
 		}
-		if (lightIndex < LightSlotCount && visibility < 1.0f) {
-			LightMask[uint3(logical, lightIndex)] = visibility;
+		// A slice replaces a full-strength shadow map term; the light's own attenuation already fades it with distance.
+		if (lightIndex < LightSlotCount && occluded) {
+			LightMask[uint3(logical, lightIndex)] = 0.0f;
 			// Checkerboard modes trace one texel of each pair per frame; fill its partner too.
 			if (QualityMode != kShadowQualityOffloading && (logical.x ^ 1u) < ShadowLogicalExtent(Size.x, QualityMode))
-				LightMask[uint3(logical.x ^ 1u, logical.y, lightIndex)] = visibility;
+				LightMask[uint3(logical.x ^ 1u, logical.y, lightIndex)] = 0.0f;
 		}
 		total += weight;
 		visible += weight * visibility;
