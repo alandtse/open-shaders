@@ -4,7 +4,6 @@ if(NOT DEFINED AIO_STAGE_DIR OR NOT IS_DIRECTORY "${AIO_STAGE_DIR}")
 endif()
 set(_required
     "SKSE/Plugins/CommunityShaders.dll"
-    "SKSE/Plugins/CommunityShaders/DX12Resources/bin/DX12ResourcesPrep.exe"
     "Shaders/Features/DX12.ini"
     "Shaders/Features/DX12Resources.ini"
     "Shaders/Features/DX12NativeScene.ini"
@@ -12,6 +11,8 @@ set(_required
     "Shaders/DX12NativeScene/ShadowOffload.dxil"
     "Shaders/DX12NativeScene/ShadowRTQuality.dxil"
     "Shaders/DX12NativeScene/ShadowRTPerformance.dxil"
+    "Shaders/DX12NativeScene/ShadowRTQualitySlices.dxil"
+    "Shaders/DX12NativeScene/ShadowRTPerformanceSlices.dxil"
     "Shaders/NativeComposite/CompositeOffload.hlsl6"
     "Shaders/NativeComposite/CompositeOffload.dxil"
     "Shaders/NativeComposite/CompositeRTQuality.dxil"

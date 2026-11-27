@@ -1645,7 +1645,7 @@ if(AIO_ZIP_TO_DIST)
         DEPENDS
             PREPARE_AIO
             ${CMAKE_CURRENT_BINARY_DIR}/copy_shaders.stamp
-            ${_shadow_aio_dxil}
+            ${_shadow_aio_outputs}
             ${_native_composite_aio_dxil}
             ${CMAKE_SOURCE_DIR}/cmake/VerifyAioPayload.cmake
         COMMENT "Creating AIO archive ${AIO_ARCHIVE}"
@@ -1870,8 +1870,7 @@ add_custom_command(
     DEPENDS
         ${CORE_SOURCES}
         ${FFX_RUNTIME_FILES}
-        ${DX12_RESOURCES_AIO_EXE}
-        ${_shadow_dxil}
+        ${_shadow_outputs}
         ${_native_composite_dxil}
         ${CMAKE_SOURCE_DIR}/cmake/VerifyAioPayload.cmake
         ${_aio_manual_cmds}
