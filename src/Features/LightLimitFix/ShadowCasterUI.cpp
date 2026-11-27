@@ -8,10 +8,12 @@
 #include "../../Utils/Game.h"
 #include "../../Utils/StringUtils.h"
 #include "../../Utils/UI.h"
+#include "../LightLimitFix.h"
 #include "../Upscaling.h"
 #include "../VR.h"
 #include "I18n/I18n.h"
 #include "ShadowCasterInternal.h"
+#include "ShadowMeshExclusions.h"
 #include <imgui_internal.h>
 
 #define I18N_KEY_PREFIX "feature.light_limit_fix."
@@ -1156,7 +1158,7 @@ namespace ShadowCasterManager
 		DrawImpactCullSliders(settings);
 	}
 
-	void DrawSettings(Settings& settings)
+	void DrawSettings(Settings& settings, float& softShadowScale)
 	{
 		// ---- External conflict banner --------------------------------------
 		if (s_externalConflict) {
@@ -1597,6 +1599,18 @@ namespace ShadowCasterManager
 					Settings::kMinMaxRedrawPerFrame, maxRedraws);
 		}
 
+		if (!settings.Enabled)
+			ImGui::EndDisabled();
+
+		if (s_externalConflict)
+			ImGui::EndDisabled();
+
+		ImGui::SliderFloat(T("feature.light_limit_fix.soft_shadow_scale", "Soft Shadows by Light Size"), &softShadowScale, 0.0f, LightLimitFix::kSoftShadowScaleMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("feature.light_limit_fix.soft_shadow_scale_tooltip", "Softens an inverse-square point light's shadow the farther it falls from what casts it, by the light's own size; linear lights have no size and stay hard. 0 keeps every shadow edge hard."));
+		}
+
+		const auto disableSchedulerControls = Util::DisableGuard(!settings.Enabled || s_externalConflict);
 		// ---- Shadow redraw scheduling ----------------------------------------
 		if (ImGui::TreeNode(T(TKEY("redraw_scheduling"), "Shadow Redraw Scheduling##RedrawScheduling"))) {
 			ImGui::SliderFloat(T(TKEY("redraw_interval_max_frames"), "Shadow Staleness Ceiling (frames)"),
@@ -1792,6 +1806,11 @@ namespace ShadowCasterManager
 			Util::UI::DrawSettingDiff(s_bootSnapshot, settings, &Settings::ForceEnablePortalStrictSpot);
 			ImGui::Unindent();
 
+			ImGui::TreePop();
+		}
+
+		if (ImGui::TreeNode(T(TKEY("shadow_meshes.heading"), "Shadow Mesh Exclusions"))) {
+			ShadowMeshExclusions::DrawSettings();
 			ImGui::TreePop();
 		}
 
@@ -2100,12 +2119,6 @@ namespace ShadowCasterManager
 		// alongside its own quick-stats line, so the table area has full
 		// testing context (cluster light count, shadow slot usage, etc.) in
 		// one place. See LightLimitFix::DrawSettings.
-
-		if (!settings.Enabled)
-			ImGui::EndDisabled();
-
-		if (s_externalConflict)
-			ImGui::EndDisabled();
 	}
 }
 
