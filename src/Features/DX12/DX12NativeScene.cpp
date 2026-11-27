@@ -344,7 +344,8 @@ bool DX12NativeScene::WantsDepthPrepassReadyHook() const { return WantsRenderPas
 
 void DX12NativeScene::OnDepthPrepassReady()
 {
-	if (!earlyTraceExperiment.load(std::memory_order_relaxed) || !globals::state || !globals::state->IsDeveloperMode())
+	if (!earlyTraceExperiment.load(std::memory_order_relaxed) || !globals::state || !globals::state->IsDeveloperMode() ||
+		GetFrameNativeMode() == DX12::SCMNativeMode::Disabled)
 		return;
 	CS_GPU_PASS("DX12NativeScene::DepthPrepassReady");
 	// The same combined mask is produced. The later hook remains the fallback.

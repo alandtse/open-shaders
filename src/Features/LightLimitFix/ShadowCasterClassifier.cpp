@@ -517,79 +517,99 @@ namespace ShadowCasterManager
 	/// Classifies `geom` for the active split-cache pass, folding it into the
 	/// running static hash; returns true when the caller should skip it.
 	/// Shared by both cull-append hooks for identical StaticOnly/DynamicOnly semantics.
-	static bool CasterFilteredByPass(RE::BSGeometry& geom)
+	template <DX12::SCMNativeCasterMode Mode>
+	static bool CasterFilteredByMode(RE::BSGeometry& geom)
 	{
-		// Passive collection during the existing SCM caster walk. This does not
-		// change raster filter decisions or add another geometry traversal.
-		const auto nativeMode = s_nativeCasterMode;
-		if (nativeMode != DX12::SCMNativeCasterMode::Disabled &&
-			nativeMode != DX12::SCMNativeCasterMode::SuppressAll &&
-			!geom.GetGeometryRuntimeData().skinInstance &&
-			!IsCasterDynamic(geom))
-			globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
-		const bool nativeDynamicOnly = nativeMode == DX12::SCMNativeCasterMode::Suppress ||
-		                               nativeMode == DX12::SCMNativeCasterMode::SuppressAll;
-		if (!AtlasActive() && !nativeDynamicOnly)
-			return false;
+		constexpr bool observe = Mode == DX12::SCMNativeCasterMode::Observe || Mode == DX12::SCMNativeCasterMode::Suppress;
+		constexpr bool suppress = Mode == DX12::SCMNativeCasterMode::Suppress || Mode == DX12::SCMNativeCasterMode::SuppressAll;
+		if constexpr (observe) {
+			// Passive capture in the existing SCM walk; no separate traversal.
+			if (!geom.GetGeometryRuntimeData().skinInstance && !IsCasterDynamic(geom))
+				globals::features::dx12NativeScene.ObserveSCMRigidCaster(geom);
+		}
+		if constexpr (!suppress) {
+			if (!AtlasActive())
+				return false;
+		}
 		if (const auto passless = ShadowMapPassless(geom); passless != PasslessReason::kNone) {
 			s_passlessCasterSkipTotal.fetch_add(1, std::memory_order_relaxed);
 			s_passlessCasterSkipByReason[static_cast<int>(passless)].fetch_add(1, std::memory_order_relaxed);
 			return true;
 		}
-		if (nativeMode == DX12::SCMNativeCasterMode::SuppressAll) {
+		if constexpr (Mode == DX12::SCMNativeCasterMode::SuppressAll) {
 			const bool dynamic = IsFullRTDynamicCaster(geom);
 			if (dynamic)
 				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
 			else
 				globals::features::dx12NativeScene.AuditCasterCoverage(geom);
 			return !dynamic;
-		}
-		// Skinned = always dynamic (see IsCasterDynamic); only non-skinned
-		// casters have a mobility record, classified once per frame.
-		CasterMobility* rec = geom.GetGeometryRuntimeData().skinInstance ?
-		                          nullptr :
-		                          &ClassifyCaster(geom);
-		const bool dynamic = !rec || rec->dynamic;
-		if (nativeDynamicOnly) {
-			// Historical open-RT behavior: all stationary casters for the
-			// owned light are removed, even if TLAS coverage is incomplete.
-			if (dynamic)
-				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
-			else
-				globals::features::dx12NativeScene.AuditCasterCoverage(geom);
-			return !dynamic;
-		}
-		// A caster that settled since the bake is missing from it and is drawn live; one that started moving is still in
-		// it at its old pose and is left to it. Either way the light is queued for a rebake.
-		const bool bakeStale = rec && CasterChangedSinceBake(rec->classEpoch, s_visitBakeEpoch);
-		s_visitBakeStale |= bakeStale;
-		// Every static caster folds into the hash regardless of pass, so a
-		// static-set change is seen during whichever accumulate runs this frame.
-		if (!dynamic)
-			FoldStaticCasterHash(geom, *rec);
-		switch (static_cast<CasterPass>(s_cullPassMode.load(std::memory_order_relaxed))) {
-		case CasterPass::StaticOnly:
-			if (dynamic) {
-				// Counted even though filtered: the mover latch must see
-				// dynamics on bake passes too, not only on composites.
-				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
-				return true;  // bake pass skips movers
+		} else {
+			// Skinned casters always remain dynamic.
+			CasterMobility* rec = geom.GetGeometryRuntimeData().skinInstance ?
+			                          nullptr :
+			                          &ClassifyCaster(geom);
+			const bool dynamic = !rec || rec->dynamic;
+			if constexpr (Mode == DX12::SCMNativeCasterMode::Suppress) {
+				// Early static ownership deliberately does not require TLAS coverage.
+				if (dynamic)
+					s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+				else
+					globals::features::dx12NativeScene.AuditCasterCoverage(geom);
+				return !dynamic;
+			} else {
+				// A caster that settled since the bake is missing from it and is drawn live; one that started moving is still in
+				// it at its old pose and is left to it. Either way the light is queued for a rebake.
+				const bool bakeStale = rec && CasterChangedSinceBake(rec->classEpoch, s_visitBakeEpoch);
+				s_visitBakeStale |= bakeStale;
+				// Every static caster folds into the hash regardless of pass, so a
+				// static-set change is seen during whichever accumulate runs this frame.
+				if (!dynamic)
+					FoldStaticCasterHash(geom, *rec);
+				switch (static_cast<CasterPass>(s_cullPassMode.load(std::memory_order_relaxed))) {
+				case CasterPass::StaticOnly:
+					if (dynamic) {
+						// Counted even though filtered: the mover latch must see
+						// dynamics on bake passes too, not only on composites.
+						s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+						return true;  // bake pass skips movers
+					}
+					s_visitStaticCount.fetch_add(1, std::memory_order_relaxed);
+					break;
+				case CasterPass::DynamicOnly:
+					if (dynamic)
+						s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+					if (CompositeSkipsCaster(dynamic, bakeStale))
+						return true;  // composite pass leaves baked geometry to the bake
+					break;
+				case CasterPass::All:
+					(dynamic ? s_dynamicCasterDraws : s_staticCasterDraws).fetch_add(1, std::memory_order_relaxed);
+					if (dynamic)
+						s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+					break;
+				}
+				return false;
 			}
-			s_visitStaticCount.fetch_add(1, std::memory_order_relaxed);
-			break;
-		case CasterPass::DynamicOnly:
-			if (dynamic)
-				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
-			if (CompositeSkipsCaster(dynamic, bakeStale))
-				return true;  // composite pass leaves baked geometry to the bake
-			break;
-		case CasterPass::All:
-			(dynamic ? s_dynamicCasterDraws : s_staticCasterDraws).fetch_add(1, std::memory_order_relaxed);
-			if (dynamic)
-				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
-			break;
 		}
-		return false;
+	}
+
+	static bool CasterFilteredByPass(RE::BSGeometry& geom)
+	{
+		using Mode = DX12::SCMNativeCasterMode;
+		const auto mode = s_nativeCasterMode;
+		// Keep the baseline dispatch a single predictable test; no native
+		// observation or suppression condition is compiled into its classifier.
+		if (mode == Mode::Disabled)
+			return CasterFilteredByMode<Mode::Disabled>(geom);
+		switch (mode) {
+		case Mode::Observe:
+			return CasterFilteredByMode<Mode::Observe>(geom);
+		case Mode::Suppress:
+			return CasterFilteredByMode<Mode::Suppress>(geom);
+		case Mode::SuppressAll:
+			return CasterFilteredByMode<Mode::SuppressAll>(geom);
+		default:
+			return CasterFilteredByMode<Mode::Disabled>(geom);
+		}
 	}
 
 	/// True for the rigid part of the actor carrying this light whose bounds hold it (the weapon, torch or cage it hangs on);

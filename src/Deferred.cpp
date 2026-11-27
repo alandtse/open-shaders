@@ -412,7 +412,9 @@ void Deferred::DeferredPasses()
 
 	auto motionVectors = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
-	Feature::ApplyOpaqueRasterReadyHooks();
+	static const bool hasOpaqueRasterHooks = !Feature::GetOpaqueRasterReadyHookFeatures().empty();
+	if (hasOpaqueRasterHooks)
+		Feature::ApplyOpaqueRasterReadyHooks();
 
 	bool interior = Util::IsInterior();
 
@@ -842,17 +844,22 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 
 void Deferred::Hooks::Main_RenderShadowMaps::thunk()
 {
-	Feature::ApplyPreShadowMapsHooks();
+	static const bool hasPreShadowHooks = !Feature::GetPreShadowMapsHookFeatures().empty();
+	if (hasPreShadowHooks)
+		Feature::ApplyPreShadowMapsHooks();
 	func();
 	globals::deferred->EarlyPrepasses();
 };
 
 void Deferred::Hooks::Main_RenderShadowmasks::thunk(bool a1)
 {
-	static uint32_t lastFrame = UINT32_MAX;
-	if (auto* state = globals::game::graphicsState; state && state->GetFrameCount() != lastFrame) {
-		lastFrame = state->GetFrameCount();
-		Feature::ApplyDepthPrepassReadyHooks();
+	static const bool hasDepthHooks = !Feature::GetDepthPrepassReadyHookFeatures().empty();
+	if (hasDepthHooks) {
+		static uint32_t lastFrame = UINT32_MAX;
+		if (auto* state = globals::game::graphicsState; state && state->GetFrameCount() != lastFrame) {
+			lastFrame = state->GetFrameCount();
+			Feature::ApplyDepthPrepassReadyHooks();
+		}
 	}
 	func(a1);
 }
