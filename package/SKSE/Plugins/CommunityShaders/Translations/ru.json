@@ -1579,7 +1579,6 @@
     "feature.lod_shadows.update_budget": "Бюджет обновления GPU (мс)",
     "feature.nrd.accumulation": "Накопление",
     "feature.nrd.buffer_viewer": "Просмотр буферов",
-    "feature.nrd.debug": "Отладка",
     "feature.nrd.description": "",
     "feature.nrd.description_text": "",
     "feature.nrd.enabled": "Включено",
@@ -2612,7 +2611,6 @@
     "feature.screen_space_reflections.brdf_bias_tooltip": "",
     "feature.screen_space_reflections.buffer_viewer": "Просмотр буферов",
     "feature.screen_space_reflections.compute_shaders_failed_to_compile": "Ошибка компиляции вычислительных шейдеров!",
-    "feature.screen_space_reflections.debug": "Отладка",
     "feature.screen_space_reflections.description": "",
     "feature.screen_space_reflections.e11_amount_scale": "Масштаб отражений предустановки",
     "feature.screen_space_reflections.e11_amount_scale_tooltip": "",
@@ -4284,6 +4282,7 @@
     "ui.vr.color_coding_secondary": "",
     "ui.vr.primary_controller": "",
     "ui.vr.secondary_controller": "",
+    "feature.nrd.debug": "Отладка",
     "feature.screen_space_gi.adaptive_sampling": "",
     "feature.screen_space_gi.adaptive_sampling_tooltip": "",
     "feature.screen_space_gi.ao_radius": "Радиус AO",
@@ -4333,5 +4332,6 @@
     "feature.screen_space_gi.visual_il": "Визуальный — IL",
     "feature.screen_space_gi.vr_stereo_reproject": "",
     "feature.screen_space_gi.vr_stereo_reproject_tooltip": "",
-    "feature.screen_space_gi.vr_warning": ""
+    "feature.screen_space_gi.vr_warning": "",
+    "feature.screen_space_reflections.debug": "Отладка"
 }

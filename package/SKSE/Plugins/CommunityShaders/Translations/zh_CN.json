@@ -2449,7 +2449,6 @@
     "feature.lod_shadows.update_budget": "GPU更新预算（毫秒）",
     "feature.nrd.accumulation": "累积",
     "feature.nrd.buffer_viewer": "缓冲区查看器",
-    "feature.nrd.debug": "调试",
     "feature.nrd.description": "",
     "feature.nrd.description_text": "",
     "feature.nrd.enabled": "启用",
@@ -3979,7 +3978,6 @@
     "feature.screen_space_reflections.brdf_bias_tooltip": "较高的值会减少噪声，但也会让反射看起来更光滑。",
     "feature.screen_space_reflections.buffer_viewer": "缓冲查看器",
     "feature.screen_space_reflections.compute_shaders_failed_to_compile": "计算着色器编译失败！",
-    "feature.screen_space_reflections.debug": "调试",
     "feature.screen_space_reflections.description": "层级化的屏幕空间镜面反射。使用 Hi-Z 深度金字塔进行快速光线步进，并通过 GGX 重要性采样实现基于物理的粗糙反射，随后由 NVIDIA REBLUR 降噪。",
     "feature.screen_space_reflections.e11_amount_scale": "预设反射缩放",
     "feature.screen_space_reflections.e11_amount_scale_tooltip": "",
@@ -6995,6 +6993,7 @@
     "ui.vr.color_coding_secondary": "蓝色 = 副手柄",
     "ui.vr.primary_controller": "（主手柄）",
     "ui.vr.secondary_controller": "（副手柄）",
+    "feature.nrd.debug": "调试",
     "feature.screen_space_gi.adaptive_sampling": "自适应采样",
     "feature.screen_space_gi.adaptive_sampling_tooltip": "在远处或平坦表面上减少步数。新增深度/法线方差通道；净开销取决于场景。",
     "feature.screen_space_gi.ao_radius": "AO半径",
@@ -7045,5 +7044,6 @@
     "feature.screen_space_gi.visual_il": "视觉 - IL",
     "feature.screen_space_gi.vr_stereo_reproject": "立体重投影",
     "feature.screen_space_gi.vr_stereo_reproject_tooltip": "将左眼（Eye 0）的漫反射 GI 重投影到右眼（Eye 1），并在可行时跳过 Eye 1 的步进，从而降低 GPU 开销。需要关闭 HQ 高光 IL（高光取决于视角）。被遮挡的像素改为原生步进。",
-    "feature.screen_space_gi.vr_warning": "\n\n警告：在 VR 中，此功能可能出现视觉伪影，且由于屏幕空间效果的特性，可能带来显著的性能影响。"
+    "feature.screen_space_gi.vr_warning": "\n\n警告：在 VR 中，此功能可能出现视觉伪影，且由于屏幕空间效果的特性，可能带来显著的性能影响。",
+    "feature.screen_space_reflections.debug": "调试"
 }
