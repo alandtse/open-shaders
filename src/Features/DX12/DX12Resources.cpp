@@ -1038,8 +1038,8 @@ void DX12Resources::PumpPreparation(DX12::ResourceGrid& target, const RE::TESObj
 	const auto neighborhood = target.Snapshot();
 	const auto scope = neighborhood->requested.front().scope;
 	if (interiorBatch && (world || interiorBatch->center != neighborhood->requested.front() ||
-		interiorBatch->size != neighborhood->size || interiorBatch->loading != loading ||
-		!Util::QpcDeadlinePending(Util::GetQpcTicks(), interiorBatch->expiresQpc)))
+							 interiorBatch->size != neighborhood->size || interiorBatch->loading != loading ||
+							 !Util::QpcDeadlinePending(Util::GetQpcTicks(), interiorBatch->expiresQpc)))
 		interiorBatch.reset();
 	const auto activeMissing = [&] {
 		return std::ranges::any_of(neighborhood->resident, [](const auto& tile) {

@@ -995,7 +995,7 @@ namespace DX12
 		}
 		pub.failedShapes -= std::min(pub.failedShapes, pub.unlocalizedRejections);
 		if (CanReuseWholeInterior(a_request.consolidate, pub.wholeCell, pub.validated, pub.enumerationComplete,
-			budgetExceeded, a_request.captureBudgetExceeded, pub.rejectedLights != 0, pub.eligibleShapes == pub.shapes.size())) {
+				budgetExceeded, a_request.captureBudgetExceeded, pub.rejectedLights != 0, pub.eligibleShapes == pub.shapes.size())) {
 			auto batch = std::make_shared<InteriorPreparationBatch>();
 			batch->center = a_request.key;
 			batch->size = a_request.size;

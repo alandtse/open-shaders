@@ -7,7 +7,7 @@ namespace DX12
 		bool budgetExceeded, bool captureBudgetExceeded, bool rejectedLights, bool allEligibleExtracted)
 	{
 		return attempted && !consolidated && validated && enumerated && !budgetExceeded &&
-			!captureBudgetExceeded && !rejectedLights && allEligibleExtracted;
+		       !captureBudgetExceeded && !rejectedLights && allEligibleExtracted;
 	}
 
 	enum class TilePreparationOutcome
