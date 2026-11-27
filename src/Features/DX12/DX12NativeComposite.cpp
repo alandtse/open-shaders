@@ -34,6 +34,9 @@ namespace DX12Native
 		constexpr DXGI_FORMAT kReconstructedMaskFormat = DXGI_FORMAT_R32G32_FLOAT;
 		constexpr uint32_t kShadowThreadGroupSize = 8;
 		constexpr float kReceiverTolerance = 16.0f;
+		// Bits of the shaders' Flags constant, matching Common/NativeCompositeFlags.hlsli.
+		constexpr uint32_t kCompositeLegacyTransfer = 1u;
+		constexpr uint32_t kCompositeDebugView = 2u;
 	}
 
 	bool NativeComposite::InitializeShadow(ID3D12Device* device, uint32_t variant)
@@ -441,14 +444,15 @@ namespace DX12Native
 				{
 					uint32_t width, height;
 					float receiverTolerance;
-					uint32_t legacyTransfer;
+					uint32_t flags;
 					DirectX::SimpleMath::Matrix inverseProjection, inverseView;
 					uint32_t logicalWidth, logicalHeight;
 				};
 				static_assert(sizeof(Constants) == kShadowConstantDwords * sizeof(uint32_t));
 				const auto& camera = raster->camera;
 				const Constants constants{ width, height, kReceiverTolerance,
-					transfer == Transfer::LegacyScene ? 1u : 0u,
+					(transfer == Transfer::LegacyScene ? kCompositeLegacyTransfer : 0u) |
+						(compositeShadowDebugView.load(std::memory_order_relaxed) ? kCompositeDebugView : 0u),
 					camera.CameraProjInverse, camera.CameraViewInverse,
 					ShadowLogicalExtent(width, quality), ShadowLogicalExtent(height, quality) };
 				slot->commands->SetComputeRoot32BitConstants(2, kShadowConstantDwords, &constants, 0);

@@ -29,6 +29,9 @@ namespace DX12Native
 	/** @brief Latest composite shadow decision; written on the render thread, read by devbench status. */
 	inline std::atomic<CompositeShadowResult> lastCompositeShadowResult{ CompositeShadowResult::NotCaptured };
 
+	/** @brief Devbench-only switch: the shadow layer writes the native mask instead of shading the frame. */
+	inline std::atomic<bool> compositeShadowDebugView{ false };
+
 	/** @brief Native Composite owns the final pre-upscale DX12 color, as in open-RT. */
 	class NativeComposite
 	{

@@ -19,6 +19,7 @@
 #include "Utils/PointLightFlags.h"
 #include "Utils/SettingsControl.h"
 #include "Utils/TracyZones.h"
+#include "Utils/UI.h"
 #include <Windows.h>
 
 #include <algorithm>
@@ -114,6 +115,12 @@ void DX12NativeScene::DrawDevSettings()
 	}
 	auto& preview = control.IsFullRTMode() ? settings.FullRT.DebugNativeLights : settings.DebugNativeLights;
 	changed |= ImGui::Checkbox(T("menu.dx12.scene.debug_native_lights", "Preview native lights"), &preview);
+	bool maskView = DX12Native::compositeShadowDebugView.load(std::memory_order_relaxed);
+	if (ImGui::Checkbox(T("menu.dx12.scene.debug_shadow_mask", "Show ray-traced shadow mask"), &maskView))
+		DX12Native::compositeShadowDebugView.store(maskView, std::memory_order_relaxed);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T("menu.dx12.scene.debug_shadow_mask_tooltip",
+			"Replaces the frame with the composited shadow visibility: white is lit, black is shadowed, magenta has no matching mask sample."));
 	if (changed && !SettingsControl::IsReplicating())
 		SyncRuntimeSettings();
 }
@@ -926,6 +933,10 @@ json DX12NativeScene::GetStatus() const
 
 void DX12NativeScene::RegisterUxActions()
 {
+	FEATURE_COMMAND("setMaskDebugView",
+		"Writes the native shadow mask into the frame instead of shading it: grayscale = traced visibility, magenta = a receiver without a matching mask sample. "
+		"Diagnostic only, not saved. Params: enabled (bool).",
+		[](Feature*, const json& a_args) { DX12Native::compositeShadowDebugView.store(a_args.value("enabled", false), std::memory_order_relaxed); });
 	FEATURE_RENDER_QUERY("status",
 		"DX12 shadow offload readiness. Returns active/shadowOffloadMode/canSuppressStatic; grid {scope,size,revision,runtimeShapes,"
 		"activeTiles[{x,y,state,shapes,lights,bytes,failure,rejections[{reason,count}]}],predictiveStates}; "
