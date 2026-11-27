@@ -210,6 +210,8 @@ struct DX12Resources final : Feature, private RE::BSTEventSink<RE::PositionPlaye
 	void DrawSettings() override;
 	/** @brief Read-only preparation publication and residency display. */
 	void DrawResourceStatus();
+	/** @brief Developer-only preparation and acceleration structure diagnostics. */
+	void DrawDevResourceStatus();
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
 	void RestoreDefaultSettings() override;
