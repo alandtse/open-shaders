@@ -99,6 +99,7 @@ namespace
 	{
 		if (const auto slot = globals::features::dx12NativeScene.NativeShadowSlot(a_niLight, a_light.lightFlags.any(LightLimitFix::LightFlags::Shadow))) {
 			a_light.nativeShadowSlot = *slot;
+			a_light.nativeShadowPreviousSlot = globals::features::dx12NativeScene.PreviousShadowSlot(a_niLight);
 			a_light.lightFlags.set(LightLimitFix::LightFlags::NativeShadow);
 		}
 	}

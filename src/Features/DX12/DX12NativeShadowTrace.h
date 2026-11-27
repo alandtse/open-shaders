@@ -91,9 +91,20 @@ namespace DX12Native
 		{
 			return current && current->frame == frame ? current : nullptr;
 		}
+		/** @brief The frame before a_frame when it shares a_frame's mask layout, so lighting can average both. */
+		std::shared_ptr<const ShadowMaskFrame> GetPrevious(uint32_t frame) const
+		{
+			const auto now = Get(frame);
+			return now && previous && previous->frame + 1 == frame && previous->lightMask &&
+			               previous->maskWidth == now->maskWidth && previous->maskHeight == now->maskHeight &&
+			               previous->quality == now->quality ?
+			           previous :
+			           nullptr;
+		}
 		void Reset()
 		{
 			current.reset();
+			previous.reset();
 			initializationFailed.fill(false);
 			failureLogged = false;
 		}
@@ -106,7 +117,7 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12RootSignature> root;
 		std::array<winrt::com_ptr<ID3D12PipelineState>, kShadowVariantCount> pipelines;
 		std::array<std::shared_ptr<ShadowMaskFrame>, 4> slots;
-		std::shared_ptr<ShadowMaskFrame> current;
+		std::shared_ptr<ShadowMaskFrame> current, previous;  // Previous stays unreused while lighting may still read it.
 		uint64_t nextFence = 0;
 		VideoMemoryBudget videoBudget;
 		std::array<bool, kShadowVariantCount> initializationFailed{};

@@ -54,7 +54,7 @@ struct Light
 	uint lightFlags;
 	uint shadowMapIndex;
 	uint nativeShadowSlot;
-	float pad0;
+	uint nativeShadowPreviousSlot;
 };
 
 // ---------------------------------------------------------------------------
