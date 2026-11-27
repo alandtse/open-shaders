@@ -1081,7 +1081,7 @@ namespace ShadowCasterManager
 	void DrawVisualisationTooltipShadowModes();
 
 	/// Draws ImGui settings panel for shadow caster scheduler.
-	void DrawSettings(Settings& settings);
+	void DrawSettings(Settings& settings, float& softShadowScale);
 
 	/// Draws the Quality/Balanced/Performance caster-cull preset buttons only.
 	void DrawImpactCullPresetButtons(Settings& settings);

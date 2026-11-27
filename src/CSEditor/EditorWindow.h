@@ -174,6 +174,9 @@ public:
 	/** @brief Returns true if the viewport window is hovered and no popup is blocking it. */
 	bool IsViewportActive() const;
 
+	/** @brief Returns the hovered scene image bounds for picking in this UI frame. */
+	bool GetHoveredSceneImage(ImVec2& origin, ImVec2& size) const;
+
 	/** @brief Returns true if the current preview mode uses a flying camera. */
 	bool IsPreviewFlying() const { return previewMode == PreviewMode::FreeCamera || previewMode == PreviewMode::PlayMode; }
 
@@ -492,6 +495,8 @@ public:
 
 private:
 	friend class Widget;
+	int hoveredSceneImageFrame = -1;
+	ImVec2 sceneImageOrigin{}, sceneImageSize{};
 	bool widgetResourcesInitialized = false;
 	std::unordered_set<Widget*> dirtyFormWidgets;
 	void TrackWidgetEdits(Widget* widget);
