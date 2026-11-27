@@ -49,6 +49,9 @@ void DX12NativeScene::DrawDevSettings()
 	const auto& control = globals::features::dx12Control;
 	if (!control.IsShadowOffloadMode() && !control.IsFullRTMode())
 		return;
+	bool debugMask = DX12Native::compositeShadowDebugView.load(std::memory_order_relaxed);
+	if (ImGui::Checkbox(T("menu.dx12.scene.debug_shadow_mask", "Show ray-traced shadow mask"), &debugMask))
+		DX12Native::compositeShadowDebugView.store(debugMask, std::memory_order_relaxed);
 	if (control.IsFullRTMode()) {
 		int unify = int(runtimeUnificationRadius.load(std::memory_order_relaxed));
 		int exclude = int(preparedExclusionRadius.load(std::memory_order_relaxed));
@@ -237,8 +240,10 @@ bool DX12NativeScene::OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot)
 	const size_t limit = std::min(lights->size(), size_t{ DX12Native::kMaxShadowLights });
 	for (size_t i = 0; i < limit; ++i) {
 		const auto& candidate = (*lights)[i];
-		if (candidate.referenceID != 0 && candidate.referenceID == found->referenceID)
+		if (candidate.referenceID != 0 && candidate.referenceID == found->referenceID) {
+			ownershipGranted.fetch_add(1, std::memory_order_relaxed);
 			return true;
+		}
 	}
 	return false;
 }
@@ -579,6 +584,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	shadows.BeginFrame(frame);
 	if (shadows.Get(frame))
 		return;
+	shadows.ReportSkipped(DX12Native::ShadowMaskTrace::Outcome::None);
 
 	std::shared_ptr<const DX12Native::NativeLightPublication> fullInventory;
 	if (fullRT) {
@@ -594,7 +600,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	const auto lights = shadowLights.load(std::memory_order_acquire);
 	if (!built || !built->acceleration || (fullRT ? !fullInventory : !lights) ||
 		built->scope != shadowLightScope.load(std::memory_order_acquire))
-		return;
+		return shadows.ReportSkipped(DX12Native::ShadowMaskTrace::Outcome::NoScene);
 
 	// Admit only matched runtime emitters that the SCM policy can account for.
 	// Iterate the immutable prepared selection to preserve its deterministic order.
@@ -602,7 +608,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	if (!fullRT) {
 		std::scoped_lock lock(runtimeLightMutex);
 		if (runtimeLightFrame != frame || runtimeLightSamples.empty())
-			return;
+			return shadows.ReportSkipped(DX12Native::ShadowMaskTrace::Outcome::NoLights);
 		std::unordered_map<uint32_t, const DX12::PreparedLight*> liveByReference;
 		liveByReference.reserve(runtimeLightSamples.size());
 		for (const auto& sample : runtimeLightSamples)
@@ -620,7 +626,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	                                                                 std::span<const DX12::PreparedLight>(fullInventory->lights) :
 	                                                                 std::span<const DX12::PreparedLight>(liveLights);
 	if (submittedLights.empty())
-		return;
+		return shadows.ReportSkipped(DX12Native::ShadowMaskTrace::Outcome::NoLights);
 
 	if (!backend) {
 		std::string reason;
@@ -633,7 +639,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	const uint32_t viewportWidth = std::isfinite(viewport.x) && viewport.x > 0.0f ? uint32_t(viewport.x) : 0u;
 	const uint32_t viewportHeight = std::isfinite(viewport.y) && viewport.y > 0.0f ? uint32_t(viewport.y) : 0u;
 	if (!viewportWidth || !viewportHeight)
-		return;
+		return shadows.ReportSkipped(DX12Native::ShadowMaskTrace::Outcome::ViewportMismatch);
 	raster.Capture(*backend, Util::GetCurrentSceneDepthSRV(false),
 		&globals::game::frameBufferCached.nonVR, frame);
 	const DX12Native::ShadowTraceControls controls{
@@ -785,4 +791,59 @@ void DX12NativeScene::OnRuntimeDisabled()
 	shadows.Reset();
 	acceleration.Stop();
 	geometryCapture.Reset();
+}
+
+
+json DX12NativeScene::GetStatus() const
+{
+	json status = { { "active", globals::features::dx12Control.IsActive() },
+		{ "shadowOffloadMode", globals::features::dx12Control.IsShadowOffloadMode() },
+		{ "frameNativeMode", magic_enum::enum_name(GetFrameNativeMode()) },
+		{ "perLightVisibility", false } };
+	if (const auto grid = globals::features::dx12Resources.GetGrid()) {
+		json active = json::array();
+		json predictive = json::object();
+		for (const auto& tile : grid->resident) {
+			if (!tile) {
+				active.push_back(nullptr);
+				continue;
+			}
+			json rejections = json::array();
+			for (const auto& [reason, count] : tile->rejectionReasons)
+				rejections.push_back({ { "reason", reason }, { "count", count } });
+			active.push_back({ { "x", tile->key.x }, { "y", tile->key.y }, { "state", magic_enum::enum_name(tile->state) },
+				{ "shapes", tile->shapes.size() }, { "lights", tile->lights.size() }, { "bytes", tile->bytes },
+				{ "failure", tile->failureReason }, { "rejections", std::move(rejections) } });
+		}
+		for (const auto& tile : grid->predictiveResident) {
+			const auto state = tile ? std::string(magic_enum::enum_name(tile->state)) : "Missing";
+			predictive[state] = predictive.value(state, 0) + 1;
+		}
+		status["grid"] = { { "scope", grid->requested.front().scope }, { "size", grid->size },
+			{ "revision", grid->geometryRevision }, { "runtimeShapes", grid->runtimeShapes.size() },
+			{ "activeTiles", std::move(active) }, { "predictiveStates", std::move(predictive) } };
+	}
+	if (const auto scene = acceleration.GetScene(); scene && scene->acceleration && scene->inputs) {
+		status["tlas"] = { { "published", true }, { "scope", scene->scope }, { "revision", scene->geometryRevision },
+			{ "instances", scene->inputs->geometry.size() }, { "preparedShapes", scene->inputs->preparedShapes },
+			{ "observedShapes", scene->inputs->observedShapes }, { "duplicateShapes", scene->inputs->duplicateShapes },
+			{ "triangles", scene->inputs->triangles } };
+	} else {
+		status["tlas"] = { { "published", false } };
+	}
+	status["ownership"] = { { "granted", ownershipGranted.load(std::memory_order_relaxed) } };
+	status["trace"] = { { "lastOutcome", magic_enum::enum_name(shadows.LastOutcome()) }, { "lights", shadows.LastLightCount() } };
+	status["composite"] = { { "lastShadowResult", magic_enum::enum_name(DX12Native::lastCompositeShadowResult.load(std::memory_order_relaxed)) } };
+	return status;
+}
+
+void DX12NativeScene::RegisterUxActions()
+{
+	FEATURE_COMMAND("setMaskDebugView", "Developer-only native visibility preview. Params: enabled (bool).",
+		[](Feature*, const json& args) {
+			if (globals::state && globals::state->IsDeveloperMode())
+				DX12Native::compositeShadowDebugView.store(args.value("enabled", false), std::memory_order_relaxed);
+		});
+	FEATURE_RENDER_QUERY("status", "Native shadow pipeline readiness, grid and published TLAS counts. Params: none.",
+		[](const Feature* self, const json&) -> json { return static_cast<const DX12NativeScene*>(self)->GetStatus(); });
 }

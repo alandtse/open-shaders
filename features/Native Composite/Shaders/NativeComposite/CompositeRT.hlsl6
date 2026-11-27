@@ -1,3 +1,4 @@
+#include "Common/NativeCompositeFlags.hlsli"
 #include "Common/NativeShadowRT.hlsli"
 
 Texture2D<float2> ShadowMask : register(t0);
@@ -16,7 +17,7 @@ cbuffer ShadowConstants : register(b0)
 {
 	uint2 Size;
 	float ReceiverTolerance;
-	uint LegacyTransfer;
+	uint Flags;
 	row_major float4x4 InverseProjection;
 	row_major float4x4 InverseView;
 	uint2 LogicalSize;
@@ -113,6 +114,8 @@ void PublishMask(uint2 pixel, float2 sample)
 		}
 		if (total <= 0.0f) {
 			PublishInvalid(id.xy);
+			if ((Flags & kCompositeDebugView) != 0u)
+				Scene[id.xy] = kCompositeDebugUnmatched;
 			return;
 		}
 		visibility = weighted / total;
@@ -145,12 +148,16 @@ void PublishMask(uint2 pixel, float2 sample)
 	}
 	visibility = sum / float(count);
 	PublishMask(id.xy, float2(visibility, distance));
+	if ((Flags & kCompositeDebugView) != 0u) {
+		Scene[id.xy] = float4(visibility.xxx, 1.0f);
+		return;
+	}
 	const float layer = 1.0f - (1.0f - visibility) * kRayTracedBlend;
 	if (layer >= 1.0f)
 		return;
 	float4 color = Scene[id.xy];
 	if (!all(isfinite(color.rgb)))
 		return;
-	color.rgb *= LegacyTransfer != 0u ? pow(layer, 1.0f / 1.6f) : layer;
+	color.rgb *= (Flags & kCompositeLegacyTransfer) != 0u ? pow(layer, 1.0f / 1.6f) : layer;
 	Scene[id.xy] = color;
 }

@@ -1,3 +1,4 @@
+#include "Common/NativeCompositeFlags.hlsli"
 #include "Common/NativeShadowOffload.hlsli"
 
 RWTexture2D<float4> Scene : register(u0);
@@ -8,7 +9,7 @@ cbuffer ShadowConstants : register(b0)
 {
 	uint2 Size;
 	float ReceiverTolerance;
-	uint LegacyTransfer;
+	uint Flags;
 	row_major float4x4 InverseProjection;
 	row_major float4x4 InverseView;
 	uint2 LogicalSize;
@@ -32,7 +33,7 @@ void PublishMask(uint2 pixel, float2 sample)
 	const uint2 logical = id.xy / 2u;
 	const float2 center = ShadowMask[logical];
 	const bool sampled = all(id.xy == min(logical * 2u + 1u, Size - 1u));
-	if (PublishReconstructedMask == 0u && sampled && (!ReceiverSample(center) || center.x >= 1.0f))
+	if (PublishReconstructedMask == 0u && (Flags & kCompositeDebugView) == 0u && sampled && (!ReceiverSample(center) || center.x >= 1.0f))
 		return;
 	const float depth = RasterDepth[id.xy];
 	if (!isfinite(depth) || depth <= 0.0f || depth >= 1.0f) {
@@ -55,6 +56,8 @@ void PublishMask(uint2 pixel, float2 sample)
 	if (sampled) {
 		if (!ReceiverSample(center) || abs(center.y - distance) > tolerance) {
 			PublishMask(id.xy, float2(1, 0));
+			if ((Flags & kCompositeDebugView) != 0u)
+				Scene[id.xy] = kCompositeDebugUnmatched;
 			return;
 		}
 		visibility = saturate(center.x);
@@ -79,17 +82,23 @@ void PublishMask(uint2 pixel, float2 sample)
 		}
 		if (total <= 0.0f) {
 			PublishMask(id.xy, float2(1, 0));
+			if ((Flags & kCompositeDebugView) != 0u)
+				Scene[id.xy] = kCompositeDebugUnmatched;
 			return;
 		}
 		visibility = weighted / total;
 	}
 	PublishMask(id.xy, float2(visibility, distance));
+	if ((Flags & kCompositeDebugView) != 0u) {
+		Scene[id.xy] = float4(visibility.xxx, 1.0f);
+		return;
+	}
 	const float layer = 1.0f - (1.0f - visibility) * kOffloadingBlend;
 	if (layer >= 1.0f)
 		return;
 	float4 color = Scene[id.xy];
 	if (!all(isfinite(color.rgb)))
 		return;
-	color.rgb *= LegacyTransfer != 0u ? pow(layer, 1.0f / 1.6f) : layer;
+	color.rgb *= (Flags & kCompositeLegacyTransfer) != 0u ? pow(layer, 1.0f / 1.6f) : layer;
 	Scene[id.xy] = color;
 }

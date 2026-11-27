@@ -30,6 +30,8 @@ struct DX12NativeScene final : OverlayFeature
 
 	void DrawSettings() override;
 	void DrawDevSettings();
+	void RegisterUxActions() override;
+	json GetStatus() const;
 	std::shared_ptr<const DX12Native::TopLevel> GetPublishedScene() const { return acceleration.GetScene(); }
 	/** @brief The selected mode's exterior preparation and shadow contribution setting. */
 	bool AllowsOutdoorContribution() const;
@@ -116,6 +118,7 @@ private:
 		uint32_t referenceID = 0;             // Corresponding prepared native-scene emitter.
 		DX12::PreparedLight value;
 	};
+	mutable std::atomic<uint64_t> ownershipGranted{ 0 };
 	mutable std::mutex runtimeLightMutex;
 	uint32_t runtimeLightFrame = UINT32_MAX;
 	std::vector<RuntimeLightSample> runtimeLightSamples;

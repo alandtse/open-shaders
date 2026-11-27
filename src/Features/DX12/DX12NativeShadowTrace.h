@@ -6,6 +6,7 @@
 #include "VideoMemoryBudget.h"
 
 #include <array>
+#include <atomic>
 #include <memory>
 #include <span>
 #include <string>
@@ -53,6 +54,18 @@ namespace DX12Native
 	class ShadowMaskTrace
 	{
 	public:
+		enum class Outcome : uint8_t
+		{
+			None, InitializationFailed, NoRaster, NoScene, NoLights, NoFreeSlot,
+			ViewportMismatch, Failed, Dispatched
+		};
+		Outcome LastOutcome() const { return lastOutcome.load(std::memory_order_relaxed); }
+		uint32_t LastLightCount() const { return lastLightCount.load(std::memory_order_relaxed); }
+		void ReportSkipped(Outcome outcome)
+		{
+			lastLightCount.store(0, std::memory_order_relaxed);
+			lastOutcome.store(outcome, std::memory_order_relaxed);
+		}
 		~ShadowMaskTrace();
 		/** @brief Release completed, unborrowed inputs before the next raster capture. */
 		void BeginFrame(uint32_t frame);
@@ -66,6 +79,7 @@ namespace DX12Native
 		void Reset()
 		{
 			current.reset();
+			ReportSkipped(Outcome::None);
 			initializationFailed.fill(false);
 			failureLogged = false;
 		}
@@ -82,5 +96,7 @@ namespace DX12Native
 		VideoMemoryBudget videoBudget;
 		std::array<bool, kShadowVariantCount> initializationFailed{};
 		bool failureLogged = false;
+		std::atomic<Outcome> lastOutcome{ Outcome::None };
+		std::atomic<uint32_t> lastLightCount{ 0 };
 	};
 }

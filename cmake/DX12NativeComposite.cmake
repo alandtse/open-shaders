@@ -3,6 +3,7 @@ if(NATIVE_SHADOW_DXC)
     set(_native_composite_source
         "${NATIVE_SHADER_SOURCE_ROOT}/features/Native Composite/Shaders/NativeComposite/CompositeOffload.hlsl6"
     )
+    set(_native_composite_flags "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders/Common/NativeCompositeFlags.hlsli")
     set(_native_composite_dir "${CMAKE_CURRENT_BINARY_DIR}/NativeComposite")
     set(_native_composite_dxil "${_native_composite_dir}/CompositeOffload.dxil")
     set(_native_composite_outputs "${_native_composite_dxil}")
@@ -26,7 +27,7 @@ if(NATIVE_SHADOW_DXC)
                 NATIVE_RT_QUALITY=${_quality_id} -I
                 "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders" -Fo "${_rt_dxil}"
                 "${_rt_composite_source}"
-            DEPENDS "${_rt_composite_source}" ${_shadow_contracts}
+            DEPENDS "${_rt_composite_source}" ${_shadow_contracts} "${_native_composite_flags}"
             VERBATIM
         )
         list(APPEND _native_composite_outputs "${_rt_dxil}")
@@ -39,7 +40,7 @@ if(NATIVE_SHADOW_DXC)
             ${NATIVE_SHADER_VALIDATION_FLAGS} -Ges -Gis -I
             "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders" -Fo
             "${_native_composite_dxil}" "${_native_composite_source}"
-        DEPENDS "${_native_composite_source}" "${_shadow_offload_contract}"
+        DEPENDS "${_native_composite_source}" "${_shadow_offload_contract}" "${_native_composite_flags}"
         VERBATIM
     )
     add_custom_target(

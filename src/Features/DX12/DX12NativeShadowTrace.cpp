@@ -140,22 +140,23 @@ namespace DX12Native
 		if (current && current->frame == frame)
 			return;
 		current.reset();
+		ReportSkipped(Outcome::None);
 		const auto quality = controls.quality;
 		const auto variant = ShadowVariant(quality);
 		const auto& pipeline = pipelines[variant];
 		if (initializationFailed[variant])
-			return;
+			return ReportSkipped(Outcome::InitializationFailed);
 		if (!raster || !raster->depth || !raster->depth->resource || !raster->readyFence ||
 			!raster->cameraValid) {
-			return;
+			return ReportSkipped(Outcome::NoRaster);
 		}
 		if (!scene || !scene->acceleration || !scene->producerFence) {
-			return;
+			return ReportSkipped(Outcome::NoScene);
 		}
 		if (controls.nativeLights && (!controls.nativeLights->buffer || controls.nativeLights->scope != scene->scope))
-			return;
+			return ReportSkipped(Outcome::NoLights);
 		if (lights.empty()) {
-			return;
+			return ReportSkipped(Outcome::NoLights);
 		}
 		std::shared_ptr<ShadowMaskFrame> attempted;
 		bool submitted = false;
@@ -163,19 +164,19 @@ namespace DX12Native
 			Initialize(requested, variant);
 			const uint64_t finished = completion->GetCompletedValue();
 			if (finished == UINT64_MAX)
-				return;
+				return ReportSkipped(Outcome::Failed);
 			auto it = std::ranges::find_if(slots, [&](const auto& slot) {
 				if (!slot)
 					return true;
 				return slot.use_count() == 1 && slot->readyValue <= finished;
 			});
 			if (it == slots.end()) {
-				return;
+				return ReportSkipped(Outcome::NoFreeSlot);
 			}
 			auto& slot = *it;
 			const UINT width = controls.viewportWidth, height = controls.viewportHeight;
 			if (!width || !height || width > raster->width || height > raster->height) {
-				return;
+				return ReportSkipped(Outcome::ViewportMismatch);
 			}
 			const uint32_t maskWidth = ShadowPhysicalWidth(ShadowLogicalExtent(width, quality), quality);
 			const uint32_t maskHeight = ShadowLogicalExtent(height, quality);
@@ -342,8 +343,11 @@ namespace DX12Native
 			nextFence = value;
 			slot->readyValue = value;
 			current = slot;
+			lastLightCount.store(lightCount, std::memory_order_relaxed);
+			lastOutcome.store(Outcome::Dispatched, std::memory_order_relaxed);
 			failureLogged = false;
 		} catch (...) {
+			ReportSkipped(Outcome::Failed);
 			initializationFailed[variant] = !pipeline;
 			if (attempted) {
 				if (submitted && completion && backend.commandQueue) {

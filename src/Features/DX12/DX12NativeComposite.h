@@ -12,6 +12,14 @@
 
 namespace DX12Native
 {
+	// Submission state, not a guarantee that presentation has consumed the frame.
+	enum class CompositeShadowResult : uint8_t
+	{
+		NotCaptured, NoMask, Rejected, Submitted, Failed
+	};
+	inline std::atomic<CompositeShadowResult> lastCompositeShadowResult{ CompositeShadowResult::NotCaptured };
+	inline std::atomic<bool> compositeShadowDebugView{ false };
+
 	/** @brief Native Composite owns the final pre-upscale DX12 color, as in open-RT. */
 	class NativeComposite
 	{

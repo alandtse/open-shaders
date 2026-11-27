@@ -1,4 +1,6 @@
 #include "DX12NativeComposite.h"
+#include "State.h"
+#include "Globals.h"
 #include "DX12Control.h"
 #include "DX12GpuRetirement.h"
 #include "DX12NativeLightWorker.h"
@@ -146,6 +148,7 @@ namespace DX12Native
 		                         raster->readyValue != UINT64_MAX &&
 		                         raster->width >= width && raster->height >= height &&
 		                         InitializeShadow(device12, variant);
+		lastCompositeShadowResult.store(shadow ? CompositeShadowResult::Rejected : CompositeShadowResult::NoMask, std::memory_order_relaxed);
 		if (!applyShadow) {
 			returnColorToDX11 = false;
 			publishReconstructedMask = false;
@@ -441,7 +444,9 @@ namespace DX12Native
 				static_assert(sizeof(Constants) == kShadowConstantDwords * sizeof(uint32_t));
 				const auto& camera = raster->camera;
 				const Constants constants{ width, height, kReceiverTolerance,
-					transfer == Transfer::LegacyScene ? 1u : 0u, camera.CameraProjInverse, camera.CameraViewInverse,
+					(transfer == Transfer::LegacyScene ? 1u : 0u) |
+					(compositeShadowDebugView.load(std::memory_order_relaxed) && globals::state && globals::state->IsDeveloperMode() ? 2u : 0u),
+					camera.CameraProjInverse, camera.CameraViewInverse,
 					ShadowLogicalExtent(width, quality), ShadowLogicalExtent(height, quality) };
 				slot->commands->SetComputeRoot32BitConstants(2, kShadowConstantDwords, &constants, 0);
 				if (variant != 0u) {
@@ -532,8 +537,11 @@ namespace DX12Native
 				latestHistory = slot->historyOutput;
 			}
 			captureFailureLogged = false;
+			if (applyShadow)
+				lastCompositeShadowResult.store(CompositeShadowResult::Submitted, std::memory_order_relaxed);
 			return slot->frame;
 		} catch (...) {
+			lastCompositeShadowResult.store(CompositeShadowResult::Failed, std::memory_order_relaxed);
 			latestHistory.reset();
 			if (submitted && slot->fence.fence12) {
 				// The command list was queued. A tail Signal on that queue tracks
