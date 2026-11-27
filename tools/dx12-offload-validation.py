@@ -40,6 +40,7 @@ REPLAY_TIMEOUT_SECONDS = 120
 SAMPLE_SECONDS = 1.0
 DIFF_THRESHOLD = 8.0
 MAX_DIFF_OVER_NOISE = 3.0
+MAX_TIMING_DRIFT_MS = 0.5
 SHADOW_TIMER_KEYS = ("shadow", "scm", "llf")
 CANDIDATES = {"offload": 0, "fullrt": 2}
 CANDIDATE, CANDIDATE_MODE = "offload", 0
@@ -281,6 +282,8 @@ def sample_replay(bench, out_name, mode=None):
         after = bench.status()
         result["ownership"] = ownership_delta(before, after)
         result["tracedLights"] = after.get("trace", {}).get("lights", 0)
+        result["grantedWithoutSlice"] = (after.get("trace", {}).get("grantedWithoutSliceTotal", 0)
+                                         - before.get("trace", {}).get("grantedWithoutSliceTotal", 0))
     return result
 
 
@@ -326,6 +329,10 @@ def run_ab(bench, report, out):
     report.check(f"{cand} engages at poses", "PASS" if engaged else "FAIL",
                  f"{engaged}/{len(shots)} poses traced native shadows; "
                  + "; ".join(f"pose {s['pose']}: lights {s.get(f'{cand}_tracedLights', 0)}, {s.get(f'{cand}_ownership', {})}" for s in shots))
+    unshadowed = [(s["pose"], s.get(f"{cand}_trace", {}).get("grantedWithoutSlice", 0)) for s in shots]
+    report.check(f"{cand} keeps every shadow", "PASS" if not any(n for _, n in unshadowed) else "FAIL",
+                 "SCM lights handed to the trace but shaded without a slice, per pose: "
+                 + ", ".join(f"pose {p}: {n}" for p, n in unshadowed))
     for shot in shots:
         noise = image_diff(shot["raster"], shot["raster_repeat"])
         change = image_diff(shot["raster"], shot[cand], out / f"pose{shot['pose']}_{cand}_vs_raster_diff.png")
@@ -347,7 +354,7 @@ def run_ab(bench, report, out):
         raster[key] = sum(values) / len(values) if values else None
     report.data["replay"] = [raster_a, candidate, raster_b, raster]
     drift = abs((raster_a["frameAvgMs"] or 0) - (raster_b["frameAvgMs"] or 0))
-    report.check("raster run-to-run drift", "PASS" if drift <= 0.5 else "REVIEW",
+    report.check("raster run-to-run drift", "PASS" if drift <= MAX_TIMING_DRIFT_MS else "REVIEW",
                  f"{raster_a['frameAvgMs']:.2f} vs {raster_b['frameAvgMs']:.2f} ms; differences smaller than this are noise")
     own = candidate.get("ownership", {})
     traced, kept = own.get("castersTraced", 0), own.get("castersKeptRaster", 0)
@@ -355,9 +362,18 @@ def run_ab(bench, report, out):
     report.check(f"{cand} during replay", "PASS" if traced or candidate.get("tracedLights") else "FAIL",
                  f"{candidate.get('tracedLights', 0)} lights traced at the end; {traced} static caster draws moved to RT, "
                  f"{kept} kept in raster ({share:.0%}); light-frames owned {own.get('granted', 0)}")
+    lost = candidate.get("grantedWithoutSlice", 0)
+    report.check(f"{cand} keeps every shadow during replay", "PASS" if not lost else "FAIL",
+                 f"{lost} light-frames handed to the trace but shaded without a slice")
+    # A timing taken while shadows are missing or the machine is noisy measures the wrong thing.
+    invalid = [c["name"] for c in report.checks if c["status"] == "FAIL"]
+    if drift > MAX_TIMING_DRIFT_MS:
+        invalid.append(f"raster drift {drift:.2f} ms")
     if raster["frameAvgMs"] and candidate["frameAvgMs"]:
         delta = candidate["frameAvgMs"] - raster["frameAvgMs"]
-        report.check(f"frame time {cand} vs raster", "PASS" if delta <= 0.05 * raster["frameAvgMs"] else "REVIEW",
+        report.check(f"frame time {cand} vs raster",
+                     "INVALID" if invalid else ("PASS" if delta <= 0.05 * raster["frameAvgMs"] else "REVIEW"),
+                     (f"not comparable ({'; '.join(invalid)}): " if invalid else "") +
                      f"{raster['frameAvgMs']:.2f} -> {candidate['frameAvgMs']:.2f} ms ({delta:+.2f} ms, {delta / 16.7:+.1%} of 60 fps); "
                      f"p99 {raster['frameP99Ms']:.2f} -> {candidate['frameP99Ms']:.2f}; shadow GPU {raster['shadowGpuMs']:.2f} -> {candidate['shadowGpuMs']:.2f} ms")
     bench.set_mode(0)

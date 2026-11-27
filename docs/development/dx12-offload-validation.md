@@ -34,7 +34,13 @@ The `ab` phase takes about five minutes (three 62 s replays); `baseline` about t
   engage, so no performance number means anything. The tile rejection reasons say why.
 - **FAIL** on `RT shadow layer reaches the frame`: offload removes raster static shadows but the ray-traced
   replacement never lands, so the scene loses those shadows.
+- **FAIL** on `keeps every shadow`: SCM handed a light's static casters to the trace, but lighting
+  found no visibility slice for it, so that light lost its static shadows.
+- **INVALID** frame time: a check above failed or raster drift exceeded 0.5 ms. The number is
+  printed but measures a broken or noisy run; fix the cause before quoting it.
 - **REVIEW** on a pose: open the `_diff.png` (red is darker under offload, green brighter). Shadows
-  should keep their shape; uniform darkening means the native layer is double-shadowing.
+  should keep their shape; uniform darkening means the native layer is double-shadowing. Under
+  `fullrt` some darkening is expected, since it shadows lights raster leaves unshadowed, so
+  the image diff is no correctness proof there; the `keeps every shadow` checks are.
 - Frame time is reported against the 16.7 ms frame budget. A `perf:` claim needs `offload` at or
   below `baseline` across repeated runs, not one sample.
