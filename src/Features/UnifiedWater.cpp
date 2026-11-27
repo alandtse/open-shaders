@@ -271,7 +271,7 @@ void UnifiedWater::DrawOverlay()
 
 bool UnifiedWater::IsOverlayVisible() const
 {
-	return true;
+	return waterCache && (waterCache->IsBuildRunning() || waterCache->HasBuildFailed());
 }
 
 void UnifiedWater::DataLoaded()
