@@ -8,6 +8,7 @@
 #include "Skin/Persistence/Characters.h"
 #include "Skin/Runtime/Surfaces.h"
 #include "Skin/Runtime/Textures.h"
+#include "Utils/RevisionCache.h"
 
 #include <mutex>
 
@@ -202,8 +203,7 @@ private:
 	Editor editor;
 	uint64_t revision = 1;
 	uint64_t characterRevision = 0;
-	std::array<SkinData, 2> defaultData{};
-	uint64_t defaultDataRevision = 0;
+	Util::RevisionCache<std::array<SkinData, 2>> defaultData;
 	bool texturesDirty = false;
 	uint32_t lastPrune = 0;
 

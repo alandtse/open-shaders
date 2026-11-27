@@ -297,12 +297,10 @@ Skin::SkinData Skin::MakeData(const SkinMaterials::Material& a_material, bool a_
 
 const Skin::SkinData& Skin::DefaultData(bool a_head)
 {
-	if (defaultDataRevision != revision) {
+	return defaultData.Get(revision, [this] {
 		const auto material = Resolve({}, settings.DefaultProfile);
-		defaultData = { MakeData(material, false), MakeData(material, true) };
-		defaultDataRevision = revision;
-	}
-	return defaultData[a_head];
+		return std::array{ MakeData(material, false), MakeData(material, true) };
+	})[a_head];
 }
 
 Skin::SkinData Skin::GetCommonBufferData()
