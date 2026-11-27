@@ -94,9 +94,9 @@ void ScreenSpaceGI::DrawSettings()
 	});
 
 	if (resourceFailure)
-		ImGui::TextWrapped("SSGI GPU resource allocation failed; see CommunityShaders.log.");
+		ImGui::TextWrapped("%s", T(TKEY("resource_allocation_failed"), "SSGI GPU resource allocation failed; see CommunityShaders.log."));
 	else if (reblurInitAttempted && !nrdReblur.IsValid())
-		ImGui::TextWrapped("REBLUR unavailable; using full-resolution tracing.");
+		ImGui::TextWrapped("%s", T(TKEY("reblur_unavailable"), "REBLUR unavailable; using full-resolution tracing."));
 	if (!ShadersOK())
 		Util::Text::Error("%s", T(TKEY("compute_shaders_failed_to_compile"), "Compute shaders failed to compile!"));
 
@@ -316,42 +316,48 @@ void ScreenSpaceGI::DrawDebugSection()
 	if (!section)
 		return;
 
+	if (settings.EnableREBLUR) {
+		auto denoiseGuard = Util::DisableGuard(!settings.Enabled);
+		if (globals::features::nrd.DrawReblurDebugSettings(settings.Reblur, "ssgi_reblur")) {
+			userSettings.Reblur = settings.Reblur;
+			resetReblurHistory = true;
+			QueueHistoryReset();
+		}
+	}
+
 	static float debugRescale = .3f;
 	ImGui::SliderFloat(T(TKEY("view_resize"), "View Resize"), &debugRescale, 0.f, 1.f);
 
+	const auto drawBuffers = [](const ScreenSpaceGI& buffers) {
+		BUFFER_VIEWER_NODE_TITLE(buffers.texNoise, "texNoise", debugRescale)
+		BUFFER_VIEWER_NODE_TITLE(buffers.texWorkingDepth, "texWorkingDepth", debugRescale)
+		BUFFER_VIEWER_NODE_TITLE(buffers.texHistoryGeo[0], "texHistoryGeo[0]", debugRescale)
+		BUFFER_VIEWER_NODE_TITLE(buffers.texHistoryGeo[1], "texHistoryGeo[1]", debugRescale)
+		BUFFER_VIEWER_NODE_TITLE(buffers.texRadiance, "texRadiance", debugRescale)
+		BUFFER_VIEWER_NODE_TITLE(buffers.texNRDInput, "texNRDInput", debugRescale)
+		BUFFER_VIEWER_NODE_TITLE(buffers.texNRDOutput, "texNRDOutput", debugRescale)
+		BUFFER_VIEWER_NODE_TITLE(buffers.texNRDInputSH1, "texNRDInputSH1", debugRescale)
+		BUFFER_VIEWER_NODE_TITLE(buffers.texNRDOutputSH1, "texNRDOutputSH1", debugRescale)
+		if (auto validation = buffers.settings.Reblur.EnableValidation ? buffers.nrdReblur.GetValidationSRV() : nullptr) {
+			if (ImGui::TreeNode(T(TKEY("nrd_validation"), "NRD Validation"))) {
+				ImGui::Image(validation, { buffers.nrdReblur.GetWidth() * debugRescale, buffers.nrdReblur.GetHeight() * debugRescale });
+				ImGui::TreePop();
+			}
+		}
+	};
+
 	if (!globals::game::isVR) {
-		DrawBufferViewer(debugRescale);
+		drawBuffers(*this);
 	} else {
 		if (ImGui::TreeNode(T("feature.nrd.left_eye", "Left eye"))) {
-			DrawBufferViewer(debugRescale);
+			drawBuffers(*this);
 			ImGui::TreePop();
 		}
 		if (ImGui::TreeNode(T("feature.nrd.right_eye", "Right eye"))) {
 			if (const auto* right = NRDStereo::RightGIDebug())
-				right->DrawBufferViewer(debugRescale);
+				drawBuffers(*right);
 			else
 				ImGui::TextUnformatted(T("feature.nrd.eye_buffers_unavailable", "Right-eye buffers are not allocated yet."));
-			ImGui::TreePop();
-		}
-	}
-}
-
-void ScreenSpaceGI::DrawBufferViewer(float debugRescale) const
-{
-	BUFFER_VIEWER_NODE(texNoise, debugRescale)
-	BUFFER_VIEWER_NODE(texWorkingDepth, debugRescale)
-	BUFFER_VIEWER_NODE(texHistoryGeo[0], debugRescale)
-	BUFFER_VIEWER_NODE(texHistoryGeo[1], debugRescale)
-	BUFFER_VIEWER_NODE(texRadiance, debugRescale)
-	BUFFER_VIEWER_NODE(texNRDInput, debugRescale)
-	BUFFER_VIEWER_NODE(texNRDOutput, debugRescale)
-	if (texNRDInputSH1)
-		BUFFER_VIEWER_NODE(texNRDInputSH1, debugRescale)
-	if (texNRDOutputSH1)
-		BUFFER_VIEWER_NODE(texNRDOutputSH1, debugRescale)
-	if (auto validation = settings.Reblur.EnableValidation ? nrdReblur.GetValidationSRV() : nullptr) {
-		if (ImGui::TreeNode(T(TKEY("nrd_validation"), "NRD Validation"))) {
-			ImGui::Image(validation, { nrdReblur.GetWidth() * debugRescale, nrdReblur.GetHeight() * debugRescale });
 			ImGui::TreePop();
 		}
 	}

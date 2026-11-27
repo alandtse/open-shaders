@@ -41,7 +41,8 @@ struct NRD : Feature
 
 	virtual void RestoreDefaultSettings() override;
 	virtual void DrawSettings() override;
-	void DrawBufferViewer(float debugRescale) const;
+	bool HasDebugSection() const override { return true; }
+	void DrawDebugSection() override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 
@@ -106,6 +107,8 @@ struct NRD : Feature
 	// value changed. Centralized so SSGI/SSR (and future consumers) all expose
 	// the same controls with the same labels and ranges.
 	bool DrawReblurSettings(REBLURSettings& s, bool showAdvanced, const char* tag);
+	// Called only from a consumer's gated Debug section.
+	bool DrawReblurDebugSettings(REBLURSettings& s, const char* tag);
 
 	// Guide accessors. Valid after PrepareGuides() returns guidesReadyThisFrame=true.
 	ID3D11ShaderResourceView* GetViewZSRV() const { return texNRDViewZ ? texNRDViewZ->srv.get() : nullptr; }

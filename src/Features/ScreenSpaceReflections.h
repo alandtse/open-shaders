@@ -41,6 +41,8 @@ struct ScreenSpaceReflections : Feature
 
 	virtual void RestoreDefaultSettings() override;
 	virtual void DrawSettings() override;
+	bool HasDebugSection() const override { return true; }
+	void DrawDebugSection() override;
 
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
@@ -70,7 +72,6 @@ struct ScreenSpaceReflections : Feature
 	std::atomic<bool> queuedEnabledChange{ false };
 	std::atomic<bool> queuedHistoryReset{ true };
 	void QueueHistoryReset() { queuedHistoryReset.store(true, std::memory_order_release); }
-	void DrawBufferViewer(float debugRescale) const;
 
 	struct Settings
 	{

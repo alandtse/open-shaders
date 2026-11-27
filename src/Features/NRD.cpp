@@ -10,6 +10,7 @@
 #include "State.h"
 #include "Upscaling.h"
 #include "Util.h"
+#include "Utils/DebugSection.h"
 #include "Utils/MathUtils.h"
 
 #define I18N_KEY_PREFIX "feature.nrd."
@@ -48,21 +49,34 @@ void NRD::DrawSettings()
 							  "When disabled, NRD skips the guide preparation pass and consumer "
 							  "features that depend on denoising will fall back to undenoised input."));
 	}
+}
+
+void NRD::DrawDebugSection()
+{
+	Util::DebugSection section;
+	if (!section)
+		return;
 
 	if (ImGui::TreeNode(T(TKEY("buffer_viewer"), "Buffer Viewer"))) {
 		static float debugRescale = .3f;
 		ImGui::SliderFloat(T(TKEY("view_resize"), "View Resize"), &debugRescale, 0.f, 1.f);
 
+		const auto drawBuffers = [](const NRD& buffers) {
+			BUFFER_VIEWER_NODE_TITLE(buffers.texNRDViewZ, "texNRDViewZ", debugRescale)
+			BUFFER_VIEWER_NODE_TITLE(buffers.texNRDNormalRoughness, "texNRDNormalRoughness", debugRescale)
+			BUFFER_VIEWER_NODE_TITLE(buffers.texNRDMV, "texNRDMV", debugRescale)
+		};
+
 		if (!globals::game::isVR) {
-			DrawBufferViewer(debugRescale);
+			drawBuffers(*this);
 		} else {
 			if (ImGui::TreeNode(T("feature.nrd.left_eye", "Left eye"))) {
-				DrawBufferViewer(debugRescale);
+				drawBuffers(*this);
 				ImGui::TreePop();
 			}
 			if (ImGui::TreeNode(T("feature.nrd.right_eye", "Right eye"))) {
 				if (const auto* right = NRDStereo::RightNRDDebug())
-					right->DrawBufferViewer(debugRescale);
+					drawBuffers(*right);
 				else
 					ImGui::TextUnformatted(T("feature.nrd.eye_buffers_unavailable", "Right-eye buffers are not allocated yet."));
 				ImGui::TreePop();
@@ -71,16 +85,6 @@ void NRD::DrawSettings()
 
 		ImGui::TreePop();
 	}
-}
-
-void NRD::DrawBufferViewer(float debugRescale) const
-{
-	if (texNRDViewZ)
-		BUFFER_VIEWER_NODE(texNRDViewZ, debugRescale)
-	if (texNRDNormalRoughness)
-		BUFFER_VIEWER_NODE(texNRDNormalRoughness, debugRescale)
-	if (texNRDMV)
-		BUFFER_VIEWER_NODE(texNRDMV, debugRescale)
 }
 
 void NRD::LoadSettings(json& o_json)
@@ -467,13 +471,6 @@ bool NRD::DrawReblurSettings(REBLURSettings& s, bool showAdvanced, const char* t
 				s.HistoryFixBasePixelStride = (uint32_t)v;
 				changed = true;
 			}
-		}
-
-		ImGui::SeparatorText(T(TKEY("debug"), "Debug"));
-		{
-			changed |= ImGui::SliderFloat(T(TKEY("split_screen"), "Split Screen"), &s.SplitScreen, 0.0f, 1.0f, "%.2f");
-			changed |= ImGui::Checkbox(T(TKEY("nrd_validation_overlay"), "NRD Validation Overlay"), &s.EnableValidation);
-			changed |= ImGui::Checkbox(T(TKEY("output_history_length"), "Output History Length"), &s.ReturnHistoryLength);
 
 			const char* hitDistReconModes[] = { T(TKEY("hit_distance_off"), "Off"), T(TKEY("hit_distance_area_3x3"), "3x3 Area"), T(TKEY("hit_distance_area_5x5"), "5x5 Area") };
 			int hdMode = (int)s.HitDistanceReconstructionMode;
@@ -484,6 +481,17 @@ bool NRD::DrawReblurSettings(REBLURSettings& s, bool showAdvanced, const char* t
 		}
 	}
 
+	ImGui::PopID();
+	return changed;
+}
+
+bool NRD::DrawReblurDebugSettings(REBLURSettings& s, const char* tag)
+{
+	bool changed = false;
+	ImGui::PushID(tag);
+	changed |= ImGui::SliderFloat(T(TKEY("split_screen"), "Split Screen"), &s.SplitScreen, 0.0f, 1.0f, "%.2f");
+	changed |= ImGui::Checkbox(T(TKEY("nrd_validation_overlay"), "NRD Validation Overlay"), &s.EnableValidation);
+	changed |= ImGui::Checkbox(T(TKEY("output_history_length"), "Output History Length"), &s.ReturnHistoryLength);
 	ImGui::PopID();
 	return changed;
 }

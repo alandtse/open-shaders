@@ -14,6 +14,7 @@
 #include "State.h"
 #include "Upscaling.h"
 #include "Util.h"
+#include "Utils/DebugSection.h"
 #include "Utils/MathUtils.h"
 
 #define I18N_KEY_PREFIX "feature.screen_space_reflections."
@@ -78,9 +79,9 @@ void ScreenSpaceReflections::DrawSettings()
 	const bool e11Managed = appliedE11Overlay.active;
 
 	if (resourceFailure)
-		ImGui::TextWrapped("SSR GPU resource allocation failed; see CommunityShaders.log.");
+		ImGui::TextWrapped("%s", T(TKEY("resource_allocation_failed"), "SSR GPU resource allocation failed; see CommunityShaders.log."));
 	else if (reblurInitAttempted && !nrdReblurSpecular.IsValid())
-		ImGui::TextWrapped("REBLUR unavailable; using full-resolution tracing.");
+		ImGui::TextWrapped("%s", T(TKEY("reblur_unavailable"), "REBLUR unavailable; using full-resolution tracing."));
 	if (!ShadersOK())
 		Util::Text::Error("%s", T(TKEY("compute_shaders_failed_to_compile"), "Compute shaders failed to compile!"));
 	if (e11Managed)
@@ -193,23 +194,49 @@ void ScreenSpaceReflections::DrawSettings()
 			ImGui::Text("%s", T(TKEY("e11_amount_scale_tooltip"), "Specular Multiplier is the preset's [REFLECTION] Amount times this."));
 	}
 #endif
+}
 
-	ImGui::SeparatorText(T(TKEY("debug"), "Debug"));
+void ScreenSpaceReflections::DrawDebugSection()
+{
+	Util::DebugSection section;
+	if (!section)
+		return;
+
+	if (settings.EnableREBLUR) {
+		auto denoiseGuard = Util::DisableGuard(!settings.Enabled);
+		if (globals::features::nrd.DrawReblurDebugSettings(settings.Reblur, "ssr_reblur")) {
+			userSettings.Reblur = settings.Reblur;
+			resetReblurHistory = true;
+			QueueHistoryReset();
+		}
+	}
 
 	if (ImGui::TreeNode(T(TKEY("buffer_viewer"), "Buffer Viewer"))) {
 		static float debugRescale = .3f;
 		ImGui::SliderFloat(T(TKEY("view_resize"), "View Resize"), &debugRescale, 0.f, 1.f);
 
+		const auto drawBuffers = [](const ScreenSpaceReflections& buffers) {
+			BUFFER_VIEWER_NODE_TITLE(buffers.texHiZDepth, "texHiZDepth", debugRescale)
+			BUFFER_VIEWER_NODE_TITLE(buffers.texNRDSpecInput, "texNRDSpecInput", debugRescale)
+			BUFFER_VIEWER_NODE_TITLE(buffers.texNRDSpecOutput, "texNRDSpecOutput", debugRescale)
+			if (auto validation = buffers.settings.Reblur.EnableValidation ? buffers.nrdReblurSpecular.GetValidationSRV() : nullptr) {
+				if (ImGui::TreeNode(T(TKEY("nrd_validation"), "NRD Validation"))) {
+					ImGui::Image(validation, { buffers.nrdReblurSpecular.GetWidth() * debugRescale, buffers.nrdReblurSpecular.GetHeight() * debugRescale });
+					ImGui::TreePop();
+				}
+			}
+		};
+
 		if (!globals::game::isVR) {
-			DrawBufferViewer(debugRescale);
+			drawBuffers(*this);
 		} else {
 			if (ImGui::TreeNode(T("feature.nrd.left_eye", "Left eye"))) {
-				DrawBufferViewer(debugRescale);
+				drawBuffers(*this);
 				ImGui::TreePop();
 			}
 			if (ImGui::TreeNode(T("feature.nrd.right_eye", "Right eye"))) {
 				if (const auto* right = NRDStereo::RightSSRDebug())
-					right->DrawBufferViewer(debugRescale);
+					drawBuffers(*right);
 				else
 					ImGui::TextUnformatted(T("feature.nrd.eye_buffers_unavailable", "Right-eye buffers are not allocated yet."));
 				ImGui::TreePop();
@@ -217,22 +244,6 @@ void ScreenSpaceReflections::DrawSettings()
 		}
 
 		ImGui::TreePop();
-	}
-}
-
-void ScreenSpaceReflections::DrawBufferViewer(float debugRescale) const
-{
-	if (texHiZDepth)
-		BUFFER_VIEWER_NODE(texHiZDepth, debugRescale)
-	if (texNRDSpecInput)
-		BUFFER_VIEWER_NODE(texNRDSpecInput, debugRescale)
-	if (texNRDSpecOutput)
-		BUFFER_VIEWER_NODE(texNRDSpecOutput, debugRescale)
-	if (auto validation = settings.Reblur.EnableValidation ? nrdReblurSpecular.GetValidationSRV() : nullptr) {
-		if (ImGui::TreeNode(T(TKEY("nrd_validation"), "NRD Validation"))) {
-			ImGui::Image(validation, { nrdReblurSpecular.GetWidth() * debugRescale, nrdReblurSpecular.GetHeight() * debugRescale });
-			ImGui::TreePop();
-		}
 	}
 }
 
