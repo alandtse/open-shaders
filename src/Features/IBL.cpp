@@ -309,16 +309,16 @@ void IBL::ReflectionsPrepass()
 	}
 }
 
+bool IBL::UsesReflectionRadiance() const
+{
+	return loaded && reflectionRadiance && globals::shaderCache->IsEnabled() &&
+	       (globals::game::isVR || globals::features::lodShadows.loaded) &&
+	       !IsDisabledForCurrentScene() && !Util::IsInterior() && (settings.EnableIBL || IsManagedByENB());
+}
+
 std::function<void()> IBL::OnReflectionsRenderBegin()
 {
-	if (!reflectionRadiance || !globals::shaderCache->IsEnabled() || IsDisabledForCurrentScene() ||
-		Util::IsInterior() || (!settings.EnableIBL && !IsManagedByENB())) {
-		validFaces = 0;
-		return nullptr;
-	}
-
-	const auto& lodShadows = globals::features::lodShadows;
-	if (!globals::game::isVR && !lodShadows.loaded) {
+	if (!UsesReflectionRadiance()) {
 		validFaces = 0;
 		return nullptr;
 	}
@@ -521,7 +521,7 @@ void IBL::Prepass()
 			context->CSSetShader(diffuseIBLShader, nullptr, 0);
 	}
 
-	// Reflections retain their shadows while ambient uses the same unshadowed scene radiance.
+	// Visible reflections receive LOD shadows while sky irradiance retains terrain and cloud shadows.
 	{
 		const auto& reflections = globals::game::renderer->GetRendererData().cubemapRenderTargets[RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS];
 		srvs.at(0) = validFaces == kAllCubeFaces ? reflectionRadiance->srv.get() : Util::AsReal(reflections.SRV);

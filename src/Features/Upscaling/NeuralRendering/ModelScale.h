@@ -35,4 +35,10 @@ namespace NR
 		const uint32_t reducedWidth = reduce(width), reducedHeight = reduce(height);
 		return reducedWidth < width && reducedHeight < height ? std::pair{ reducedWidth, reducedHeight } : std::pair<uint32_t, uint32_t>{ 0, 0 };
 	}
+
+	/** @brief Whether the model can run on a crop: always at the eye size (zero width), and reduced only when compressed. */
+	inline bool ModelTakesCrop(uint32_t modelWidth, bool compressed)
+	{
+		return !modelWidth || compressed;
+	}
 }

@@ -963,13 +963,13 @@ namespace Hooks
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// Disable scene TAA for the duration of the menu interface render, then restore it.
+	// The loading model uses the engine's jitter and temporal resolve before the menu text is drawn.
 	struct MenuManagerDrawInterfaceStart
 	{
 		static void thunk(int64_t a1)
 		{
 			const bool temporal = Util::GetTemporal();
-			Util::SetTemporal(false);
+			Util::SetTemporal(temporal && globals::state->isLoadingMenuOpen);
 			func(a1);
 			Util::SetTemporal(temporal);
 		}

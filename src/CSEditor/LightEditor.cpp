@@ -553,6 +553,25 @@ void LightEditor::DrawToolbar()
 	SameLineIfFits(ImGui::CalcTextSize(T(TKEY("select_mesh"), "Select Mesh")).x + ImGui::GetStyle().FramePadding.x * 2.0f);
 	DrawAddLightButton();
 
+	picker.Update();
+	if (auto hit = picker.TakeResult(); hit.valid) {
+		pickedMesh = hit;
+		lpConfigPaths = ScanLPConfigPaths();
+		GatherAttachedBulbs(PickedRefr());
+		ScanFilterListEntries(PickedRefr(), lpConfigPaths);
+		addSelectedConfig = -1;
+		addAttachMode = -1;
+		addSelectedLighFormId = 0;
+		addPopupMode = -1;
+		addLightSubMode = -1;
+		editBulbComboPendingOpen = false;
+		// Filter-flow selections are mesh-specific: reset them so a remembered "Cell" type or filter
+		// index from the previous pick can't persist for a mesh that can't offer it.
+		addFilterEntryType = 0;  // Reference, always available
+		addSelectedFilterEntry = -1;
+		addLightPopupOpen = true;
+	}
+
 	if (picker.IsPicking()) {
 		ImGui::TextColored(Util::Colors::GetInfo(), "%s", T(TKEY("pick_mesh_prompt"), "Click a mesh to attach a light... (right-click / ESC to cancel)"));
 	}
@@ -1953,25 +1972,6 @@ void LightEditor::GatherLights()
 	if (!selected.isSelected && savedSelection.isSelected) {
 		selected = savedSelection;
 		savedSelection = {};
-	}
-
-	picker.Update();
-	if (auto hit = picker.TakeResult(); hit.valid) {
-		pickedMesh = hit;
-		lpConfigPaths = ScanLPConfigPaths();
-		GatherAttachedBulbs(PickedRefr());
-		ScanFilterListEntries(PickedRefr(), lpConfigPaths);
-		addSelectedConfig = -1;
-		addAttachMode = -1;
-		addSelectedLighFormId = 0;
-		addPopupMode = -1;
-		addLightSubMode = -1;
-		editBulbComboPendingOpen = false;
-		// Filter-flow selections are mesh-specific: reset them so a remembered "Cell" type or filter
-		// index from the previous pick can't persist for a mesh that can't offer it.
-		addFilterEntryType = 0;  // Reference, always available
-		addSelectedFilterEntry = -1;
-		addLightPopupOpen = true;
 	}
 
 	// Skip a few frames after disruptive operations (reloadlp, Disable/Enable, position change)
