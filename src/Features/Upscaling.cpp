@@ -3685,7 +3685,12 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		const auto transfer = globals::state->IsMainOrLoadingMenuOpen()                  ? DX12Native::NativeComposite::Transfer::Unknown :
 		                      globals::features::linearLighting.IsLinearLightingActive() ? DX12Native::NativeComposite::Transfer::Linear :
 		                                                                                   DX12Native::NativeComposite::Transfer::LegacyScene;
-		const auto shadow = globals::features::dx12NativeScene.GetShadowMask(globals::game::graphicsState->GetFrameCount());
+		const uint32_t nativeFrame = globals::game::graphicsState->GetFrameCount();
+		auto shadow = globals::features::dx12NativeScene.GetShadowMask(nativeFrame);
+		// Lighting already applied per-light visibility; the final-image layer would darken the frame twice.
+		if (globals::features::dx12NativeScene.ShadesLightsDirectly(nativeFrame) &&
+			!DX12Native::compositeShadowDebugView.load(std::memory_order_relaxed))
+			shadow = nullptr;
 		const bool runtimeFSRReads = upscaleMethod == UpscaleMethod::kFSR && upscaling.fidelityFX.RuntimeUpscalerReadsComposite();
 		// The return also covers a frame DX12 DLSS hands to DX11, so its shadows do not drop for that frame.
 		const bool dx12Reads = runtimeFSRReads || (upscaleMethod == UpscaleMethod::kDLSS && upscaling.nativeDLSS.GetFailure().empty());

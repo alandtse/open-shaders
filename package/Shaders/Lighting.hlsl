@@ -1264,6 +1264,9 @@ bool UseSkylightingShadowVisibility()
 
 #	if defined(LIGHT_LIMIT_FIX)
 #		include "LightLimitFix/LightLimitFix.hlsli"
+#		if !defined(VR)
+#			include "Common/NativeLightShadows.hlsli"
+#		endif
 #	endif
 
 #	if defined(IBL)
@@ -3498,6 +3501,15 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 				shadowComponent = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS + (localShadowPosition - input.WorldPosition.xyz), rotationMatrix, 8u, sqrt(light.sizeBias), shadowCoverage);
 				lightShadow *= shadowComponent;
 			}
+#			if !defined(VR)
+			[branch] if (light.lightFlags & LightLimitFix::LightFlags::NativeShadow)
+			{
+				// Static casters are ray traced; the shadow map above holds only dynamic ones.
+				const float nativeShadow = NativeLightShadows::Visibility(light.nativeShadowSlot, input.Position.xy);
+				shadowComponent *= nativeShadow;
+				lightShadow *= nativeShadow;
+			}
+#			endif
 		}
 
 #			if defined(LLFDEBUG)

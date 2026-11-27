@@ -1,5 +1,6 @@
 #include "LightLimitFix.h"
 #include "CSEditor/EditorWindow.h"
+#include "Features/DX12/DX12NativeScene.h"
 #include "Features/LightLimitFix/Common.h"
 #include "Features/LightLimitFix/LightAttach.h"
 #include "Features/LightLimitFix/LightReadSafety.h"
@@ -92,6 +93,14 @@ namespace
 	void SetPointLightTypeFlags(LightLimitFix::LightData& a_light, RE::BSLight* a_bsLight)
 	{
 		PointLightFlags::SetPointLightTypeFlags(a_light.lightFlags, a_bsLight);
+	}
+
+	void ApplyNativeShadow(LightLimitFix::LightData& a_light, const RE::NiLight* a_niLight)
+	{
+		if (const auto slot = globals::features::dx12NativeScene.NativeShadowSlot(a_niLight)) {
+			a_light.nativeShadowSlot = *slot;
+			a_light.lightFlags.set(LightLimitFix::LightFlags::NativeShadow);
+		}
 	}
 
 	// Tints a hovered/highlighted debug-table row's light magenta in-world so
@@ -977,6 +986,7 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 					light.lightFlags.set(LightFlags::Shadow);
 				}
 			}
+			ApplyNativeShadow(light, niLight);
 
 			strictLightDataTemp.StrictLights[outIndex++] = light;
 		}
@@ -1408,6 +1418,7 @@ void LightLimitFix::UpdateLights()
 						ApplyJsonPlacedLightIntensityScale(light, bsLight, niLight, isPortalStrict, isInterior);
 
 						SetLightPosition(light, niLight->world.translate);
+						ApplyNativeShadow(light, niLight);
 
 						ApplyLightDebugOverrides(light, bsLight);
 
@@ -1450,6 +1461,7 @@ void LightLimitFix::UpdateLights()
 						light.shadowMapIndex = shadowSlot;
 						light.lightFlags.set(LightFlags::Shadow);
 					}
+					ApplyNativeShadow(light, niLight);
 
 					SetLightPosition(light, niLight->world.translate);
 
