@@ -15,6 +15,15 @@ namespace NeuralRenderingReuse
 	static const float kDepthEpsilon = 1e-6f;
 
 	/**
+	 * @brief The model sample a gain is stored from: the model's own where the crop covers the pixel, else the
+	 *        input, because the model writes nothing outside its crop.
+	 */
+	float3 StoredSample(float regionWeight, float3 inputSample, float3 neuralSample)
+	{
+		return regionWeight > 0.0f ? neuralSample : inputSample;
+	}
+
+	/**
 	 * @brief The guide's raw depth as a linear view-space distance, which is the domain the engine's own
 	 *        depth comparisons use.
 	 *        Mirrors SharedData::GetScreenDepth's two projection branches, which the standalone NR shaders
