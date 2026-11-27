@@ -114,7 +114,7 @@ void LinearLighting::RestoreDefaultSettings()
 
 void LinearLighting::SetupResources()
 {
-	PerGeometryCB = new ConstantBuffer(ConstantBufferDesc<PerGeometryData>(), "LinearLighting::PerGeometryCB");
+	PerGeometryCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<PerGeometryData>(), "LinearLighting::PerGeometryCB");
 	CompileSceneGammaDecodeShader();
 	sceneGammaActive = false;
 	weatherLightingColorsInitialized = false;

@@ -65,7 +65,7 @@ struct LinearLighting : Feature
 
 	std::array<std::array<float, 3>, 2> lodProjectedMaterialColorScales{ kNoProjectedMaterialColorScale, kNoProjectedMaterialColorScale };
 
-	ConstantBuffer* PerGeometryCB = nullptr;
+	std::unique_ptr<ConstantBuffer> PerGeometryCB;
 	winrt::com_ptr<ID3D11ComputeShader> sceneGammaDecodeCS;
 	bool sceneGammaActive = false;
 
