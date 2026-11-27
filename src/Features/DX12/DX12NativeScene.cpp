@@ -1,5 +1,6 @@
 #include "DX12NativeScene.h"
 
+#include "../LightLimitFix/ShadowCasterManager.h"
 #include "../LightLimitFix/ShadowCasterMath.h"
 #include "../Upscaling.h"
 #include "DX12Control.h"
@@ -540,13 +541,24 @@ std::span<const DX12::PreparedLight> DX12NativeScene::TraceFullRTAtShadowOrigins
 	movingOriginLights.clear();
 	const auto& scheduled = scheduledLightsFrame == a_frame ? scheduledLightsThisFrame : scheduledLights;
 	constexpr float kMinOriginShift = 0.25f;  // Below this the rest-point trace is indistinguishable.
+	const bool fromRest = ShadowCasterManager::ShadowsFromRest();
+	std::scoped_lock lock(runtimeLightMutex);
 	bool moved = false;
 	for (size_t i = 0; i < a_lights.size(); ++i) {
 		const auto* source = reinterpret_cast<const RE::NiLight*>(a_lights[i].runtimeIdentity);
-		const auto it = source ? std::ranges::find(scheduled, source, &std::pair<const RE::NiLight*, float3>::first) : scheduled.end();
-		if (it == scheduled.end())
+		if (!source)
 			continue;
-		const auto& origin = it->second;
+		float3 origin;
+		if (const auto it = std::ranges::find(scheduled, source, &std::pair<const RE::NiLight*, float3>::first); it != scheduled.end()) {
+			origin = it->second;
+		} else {
+			// Other lights follow SCM's flicker mode too; the map keeps their source alive, merged emitters have no single source.
+			const auto cached = fullRuntimeLights.find(source);
+			if (fromRest || a_lights[i].unifiedCount != 1 || cached == fullRuntimeLights.end() || !cached->second.active || !cached->second.source)
+				continue;
+			const auto& live = cached->second.source->world.translate;
+			origin = float3{ live.x, live.y, live.z };
+		}
 		const auto& rest = a_lights[i].position;
 		const float dx = origin.x - rest.x, dy = origin.y - rest.y, dz = origin.z - rest.z;
 		if (!std::isfinite(dx + dy + dz) || dx * dx + dy * dy + dz * dz < kMinOriginShift * kMinOriginShift)

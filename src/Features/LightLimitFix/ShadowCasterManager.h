@@ -955,6 +955,8 @@ namespace ShadowCasterManager
 	/// 1 shadow origin pinned at the bake pose, 2 cached tile reprojected to the live origin.
 	/// Needs the tolerant split cache.
 	int GetFlickerMode();
+	/// True when flickering lights cast their shadows from their rest point (the Pinned mode with the tolerant split cache).
+	bool ShadowsFromRest();
 	/// The engine's world-to-light matrix for shadow descriptor 0 and its inverse (row-major, 16 floats each).
 	bool GetLightProjection(RE::BSShadowLight* light, float* projOut, float* invOut);
 	/// World position of shadow descriptor 0's camera node: the origin the light's tile is rendered from.

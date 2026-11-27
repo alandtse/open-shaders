@@ -156,7 +156,7 @@ namespace ShadowCasterManager
 	}
 
 	/// True in the Pinned flicker mode, which the menu offers only while cached shadows are kept across flicker.
-	static bool ShadowsFromRest()
+	bool ShadowsFromRest()
 	{
 		return TolerantSplit() && GetFlickerMode() == static_cast<int>(FlickerShadowModeEnum::Pinned);
 	}
