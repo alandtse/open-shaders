@@ -370,6 +370,7 @@ void DX12NativeScene::PublishLightShadowSlots(uint32_t frame, std::span<const DX
 	slotPositions.clear();
 	for (size_t i = 0; i < slotMatches.size(); ++i)
 		slotMatches[i].store(slotMatchesThisFrame[i], std::memory_order_relaxed);
+	grantedWithoutSliceTotal.fetch_add(slotMatchesThisFrame[size_t(SlotMatch::GrantedWithoutSlice)], std::memory_order_relaxed);
 	slotMatchesThisFrame.fill(0);
 	std::swap(slicedLights, slicedLightsThisFrame);
 	slicedLightsThisFrame.clear();
@@ -405,8 +406,13 @@ void DX12NativeScene::PublishLightShadowSlots(uint32_t frame, std::span<const DX
 
 std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_light, bool a_shadowLight)
 {
-	if (!a_light || !globals::game::graphicsState || lightSlotFrame != globals::game::graphicsState->GetFrameCount())
+	if (!a_light || !globals::game::graphicsState)
 		return std::nullopt;
+	if (const uint32_t frame = globals::game::graphicsState->GetFrameCount(); lightSlotFrame != frame) {
+		if (grantedLightsFrame == frame && std::ranges::contains(grantedLights, a_light))
+			++slotMatchesThisFrame[size_t(SlotMatch::GrantedWithoutSlice)];
+		return std::nullopt;
+	}
 	std::optional<uint32_t> slot;
 	auto match = SlotMatch::Source;
 	const auto& p = a_light->world.translate;
@@ -453,8 +459,11 @@ std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_l
 		lightsShadedFrame = lightSlotFrame;
 		++slotMatchesThisFrame[size_t(match)];
 		slicedLightsThisFrame.push_back(a_light);
-	} else if (a_shadowLight) {
-		++slotMatchesThisFrame[size_t(SlotMatch::UnslottedShadowLight)];
+	} else {
+		if (a_shadowLight)
+			++slotMatchesThisFrame[size_t(SlotMatch::UnslottedShadowLight)];
+		if (grantedLightsFrame == lightSlotFrame && std::ranges::contains(grantedLights, a_light))
+			++slotMatchesThisFrame[size_t(SlotMatch::GrantedWithoutSlice)];
 	}
 	return slot;
 }
@@ -465,7 +474,14 @@ bool DX12NativeScene::ShadedFromSlice(const RE::NiLight* a_light) const
 		return false;
 	// SCM schedules before this frame's trace publishes, so the previous frame's publication governs it.
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
-	return (slicedLightsFrame == frame || slicedLightsFrame + 1 == frame) && std::ranges::contains(slicedLights, a_light);
+	if ((slicedLightsFrame != frame && slicedLightsFrame + 1 != frame) || !std::ranges::contains(slicedLights, a_light))
+		return false;
+	if (grantedLightsFrame != frame) {
+		grantedLights.clear();
+		grantedLightsFrame = frame;
+	}
+	grantedLights.push_back(a_light);
+	return true;
 }
 
 bool DX12NativeScene::ShadesLightsDirectly(uint32_t a_frame) const
@@ -1073,6 +1089,8 @@ json DX12NativeScene::GetStatus() const
 							 { "reference", slotMatches[size_t(SlotMatch::Reference)].load(std::memory_order_relaxed) },
 							 { "proximity", slotMatches[size_t(SlotMatch::Proximity)].load(std::memory_order_relaxed) } } },
 		{ "unslottedShadowLights", slotMatches[size_t(SlotMatch::UnslottedShadowLight)].load(std::memory_order_relaxed) },
+		{ "grantedWithoutSlice", slotMatches[size_t(SlotMatch::GrantedWithoutSlice)].load(std::memory_order_relaxed) },
+		{ "grantedWithoutSliceTotal", grantedWithoutSliceTotal.load(std::memory_order_relaxed) },
 		{ "shadowLightSlots", [this] {
 			 std::scoped_lock lock(shadowLightSlotsMutex);
 			 json rows = json::array();
