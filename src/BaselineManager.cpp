@@ -335,7 +335,7 @@ std::unique_ptr<BaselineManager::BaselineFile> BaselineManager::LoadFile(const s
 
 	baselineFile->values = SanitizeJsonData(*fileJson);
 	Util::Settings::EraseMetadataKeys(baselineFile->values);
-	BaselineCompatibility::EraseUpstreamShadowSettings(baselineFile->featureName, baselineFile->values);
+	BaselineCompatibility::EraseIgnoredSettings(baselineFile->featureName, baselineFile->values);
 	return baselineFile;
 }
 
