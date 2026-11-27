@@ -8,7 +8,6 @@
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
-#include "ScreenSpaceGI.h"
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
@@ -71,7 +70,6 @@ void VRStereoOptimizations::SaveSettings(json& o_json)
 	o_json["DebugDepthMap"] = settings.debugDepthMap;
 	o_json["DirectionalOcclusionRatio"] = settings.directionalOcclusionRatio;
 	o_json["RepairFromEye0Depth"] = settings.repairFromEye0Depth;
-	o_json["ReclassifyAfterRepair"] = settings.reclassifyAfterRepair;
 	o_json["ClassifyWithDepthHistory"] = settings.classifyWithDepthHistory;
 }
 
@@ -103,7 +101,6 @@ void VRStereoOptimizations::LoadSettings(json& o_json)
 		logger::info("[VR] ForwardOcclusionScale is obsolete; resetting DirectionalOcclusionRatio to default {}", settings.directionalOcclusionRatio);
 	loadClampedFloat("DirectionalOcclusionRatio", settings.directionalOcclusionRatio, 0.0f, 1.0f);
 	loadBool("RepairFromEye0Depth", settings.repairFromEye0Depth);
-	loadBool("ReclassifyAfterRepair", settings.reclassifyAfterRepair);
 	loadBool("ClassifyWithDepthHistory", settings.classifyWithDepthHistory);
 
 	loadBool("UseEyeTracking", settings.useEyeTracking);
@@ -413,8 +410,6 @@ void VRStereoOptimizations::DrawSettings()
 			ImGui::Checkbox(T("feature.vr_stereo.repair_from_eye0_depth", "Repair From Left Eye Depth"), &settings.repairFromEye0Depth);
 			Util::AddTooltip(T("feature.vr_stereo.repair_from_eye0_depth_tooltip", "Restores objects the depth pre-pass skips, such as alpha-tested rocks and road edges, in the right eye from the left eye's final depth.\nDebug only: turning this off reintroduces the missing-geometry bug."));
 
-			ImGui::Checkbox(T("feature.vr_stereo.reclassify_after_repair", "Reclassify After Repair"), &settings.reclassifyAfterRepair);
-			Util::AddTooltip(T("feature.vr_stereo.reclassify_after_repair_tooltip", "Re-runs the pixel classification on the finished depth so Screen Space GI reprojection sees the restored objects.\nDebug only; runs only when that is on."));
 
 			ImGui::Checkbox(T("feature.vr_stereo.classify_with_depth_history", "Classify With Depth History"), &settings.classifyWithDepthHistory);
 			Util::AddTooltip(T("feature.vr_stereo.classify_with_depth_history_tooltip", "Classifies from the nearer of the depth pre-pass and last frame's final depth, so surfaces the pre-pass skips, such as alpha-tested rocks and road edges, are no longer culled in the right eye.\nDebug only: turning this off reintroduces the missing-geometry bug."));
@@ -533,7 +528,7 @@ void VRStereoOptimizations::DispatchClassify(ID3D11ShaderResourceView* depthSRV,
 	auto cbPtr = paramsCB->CB();
 
 	// Graceful degradation: the history permutation needs its own shader and both feedback
-	// textures; without them classify from the depth alone, exactly like ReclassifyFromFinalDepth.
+	// textures; without them classify from the depth alone, without history.
 	const bool useHistoryShader = useHistory && !settings.debugDepthMap &&
 	                              stencilHistoryCS && texFinalDepthHistory && texUnrepairableMask;
 	const uint32_t srvCount = useHistoryShader ? 3 : 1;
@@ -576,23 +571,6 @@ void VRStereoOptimizations::DispatchClassify(ID3D11ShaderResourceView* depthSRV,
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
-void VRStereoOptimizations::ReclassifyFromFinalDepth()
-{
-	if (!settings.reclassifyAfterRepair || !classifiedThisFrame || !mainDepthSRV || settings.debugDepthMap)
-		return;
-
-	const auto& ssgi = globals::features::screenSpaceGI;
-	const bool lateConsumerActive = false;  // new backend currently has no cross-eye reuse
-	(void)ssgi;
-	if (!lateConsumerActive)
-		return;
-
-	ZoneScoped;
-	CS_GPU_PASS("VRStereoOpt::Reclassify");
-
-	RenderTargetUnbindScope rtScope(globals::d3d::context);
-	DispatchClassify(mainDepthSRV.get(), false);
-}
 
 void VRStereoOptimizations::SetEye1Viewport()
 {
@@ -728,15 +706,12 @@ void VRStereoOptimizations::RepairCulledEye1()
 		// OMSetDepthStencilState hook stops swapping in the NOT_EQUAL clone and the fill's
 		// own EQUAL-ref=1 DSS survives. No engine draw or stencil clear may run between
 		// these steps, or the stencil mask is lost — hence they live in one method.
-		// DispatchUnrepairableMask reads the initial modes, so it precedes
-		// ReclassifyFromFinalDepth, which overwrites them.
 		DeactivateStencil();
 		DispatchDepthScatter();
 		ExecuteDepthFillPass();
 		DispatchGBufferFill();
 		DispatchUnrepairableMask();
 	}
-	ReclassifyFromFinalDepth();
 }
 
 void VRStereoOptimizations::ExecuteDepthFillPass()

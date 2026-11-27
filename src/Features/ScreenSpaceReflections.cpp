@@ -488,6 +488,7 @@ void ScreenSpaceReflections::SetupNRDResources(uint32_t a_width, uint32_t a_heig
 	texNRDSpecInput->CreateUAV(uavDesc);
 
 	reblurInitAttempted = wantsReblur;
+	lastReblurAttemptFrame = globals::state->frameCount;
 	if (wantsReblur) {
 		texNRDSpecOutput = eastl::make_unique<Texture2D>(specDesc, "SSR::NRDOutput");
 		texNRDSpecOutput->CreateSRV(srvDesc);
@@ -591,6 +592,11 @@ void ScreenSpaceReflections::UpdateSB()
 
 void ScreenSpaceReflections::DrawSSR()
 {
+	const auto generation = globals::features::nrd.GetHistoryGeneration();
+	if (generation != seenNRDHistoryGeneration) {
+		seenNRDHistoryGeneration = generation;
+		QueueHistoryReset();
+	}
 	outputReady = false;
 	denoisedThisFrame = false;
 
@@ -625,7 +631,8 @@ void ScreenSpaceReflections::DrawSSR()
 		uint32_t height = globals::game::isVR ? uint32_t(full.y) : std::min(uint32_t(full.y), std::max(align16(active.y), texNRDSpecInput ? texNRDSpecInput->desc.Height : 0u));
 		if (wantsReblur)
 			guideService.GetResourceExtent(width, height);
-		if (!texNRDSpecInput || texNRDSpecInput->desc.Width != width || texNRDSpecInput->desc.Height != height || wantsReblur != reblurInitAttempted)
+		if (!texNRDSpecInput || texNRDSpecInput->desc.Width != width || texNRDSpecInput->desc.Height != height || wantsReblur != reblurInitAttempted ||
+		    (wantsReblur && !nrdReblurSpecular.IsValid() && globals::state->frameCount - lastReblurAttemptFrame >= 120u && !NRDRendering::ShouldDeferAllocation()))
 			SetupNRDResources(width, height);
 		resourceFailure = false;
 	} catch (const std::exception& e) {

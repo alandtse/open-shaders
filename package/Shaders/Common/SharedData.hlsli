@@ -4,6 +4,7 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/ReverseZ.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
+#include "Common/NRDFeatureTypes.hlsli"
 #include "Common/TransientWindTypes.hlsli"
 #include "Common/VR.hlsli"
 #include "Common/WindFieldTypes.hlsli"
@@ -734,26 +735,6 @@ namespace SharedData
 		float CurtainStrength;
 		float CurtainScale;
 		float2 pad1;
-	};
-
-	// NRD settings follow the snow slot in the CPU FeatureData buffer.
-	// Keep the layout independent of feature and shader-stage defines.
-	struct SSGISettings
-	{
-		uint Enabled;
-		uint EnableIL;
-		uint ReplaceAmbient;
-		float AOPower;
-		float ILSaturation;
-		float3 pad0;
-	};
-
-	struct SSRSettings
-	{
-		uint Enabled;
-		float SpecularMult;
-		float SpecCubemapMult;
-		uint pad0;
 	};
 
 	struct SnowCoverSettings

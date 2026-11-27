@@ -22,6 +22,7 @@
 #include "ScreenSpaceGI/common.hlsli"
 
 Texture2D<float4> srcRadiance : register(t0);
+Texture2D<float> srcWorkingDepth : register(t6);
 #ifdef GI
 Texture2D<float4> srcPrevSsgi : register(t1);
 Texture2D<float3> srcCurrentGeo : register(t2);
@@ -36,15 +37,17 @@ RWTexture2D<float3> outRadiance2 : register(u2);
 RWTexture2D<float3> outRadiance3 : register(u3);
 RWTexture2D<float3> outRadiance4 : register(u4);
 
-float3 RadianceMIPFilter(float3 radiance0, float3 radiance1, float3 radiance2, float3 radiance3)
+float3 RadianceMIPFilter(float3 radiance0, float3 radiance1, float3 radiance2, float3 radiance3, float4 valid)
 {
-	// Linear filtering for radiance - simple average
-	return (radiance0 + radiance1 + radiance2 + radiance3) * 0.25;
+	const float count = dot(valid, 1.0);
+	return count > 0.0 ? (radiance0 * valid.x + radiance1 * valid.y + radiance2 * valid.z + radiance3 * valid.w) / count : 0.0;
 }
 
 #ifdef GI
 float3 LoadSsgiMultiBounce(uint2 pixCoord)
 {
+	if (any(pixCoord >= uint2(OUT_FRAME_DIM)))
+		return 0;
 	float3 currentGeo = srcCurrentGeo[pixCoord];
 	float viewspaceZ = currentGeo.x;
 	if (viewspaceZ <= FP_Z)
@@ -88,22 +91,25 @@ float3 LoadSsgiMultiBounce(uint2 pixCoord)
 #endif
 
 groupshared float3 g_scratchRadiance[8][8];
+groupshared float g_scratchValid[8][8];
 [numthreads(8, 8, 1)] void main(uint2 dispatchThreadID : SV_DispatchThreadID, uint2 groupThreadID : SV_GroupThreadID) {
-	const float2 frameScale = FrameDim * RcpTexDim;
-
 	// MIP 0
 	const uint2 baseCoord = dispatchThreadID;
 	const uint2 pixCoord = baseCoord * 2;
-	const float2 uv = (pixCoord + .5) * RcpFrameDim;
-
-	float4 rad0 = srcRadiance.GatherRed(samplerPointClamp, uv * frameScale);
-	float4 rad1 = srcRadiance.GatherGreen(samplerPointClamp, uv * frameScale);
-	float4 rad2 = srcRadiance.GatherBlue(samplerPointClamp, uv * frameScale);
-
-	float3 radiance0 = NRDPort::SceneToLinear(float3(rad0.w, rad1.w, rad2.w));
-	float3 radiance1 = NRDPort::SceneToLinear(float3(rad0.z, rad1.z, rad2.z));
-	float3 radiance2 = NRDPort::SceneToLinear(float3(rad0.x, rad1.x, rad2.x));
-	float3 radiance3 = NRDPort::SceneToLinear(float3(rad0.y, rad1.y, rad2.y));
+	const uint2 active = uint2(OUT_FRAME_DIM);
+	float4 valid;
+	const uint2 p0 = pixCoord + uint2(0, 0);
+	valid[0] = all(p0 < active) && srcWorkingDepth[min(p0, active - 1u)] > 0.0 ? 1.0 : 0.0;
+	float3 radiance0 = valid[0] > 0.0 ? NRDPort::SceneToLinear(srcRadiance[min(p0, active - 1u)].xyz) : 0.0;
+	const uint2 p1 = pixCoord + uint2(1, 0);
+	valid[1] = all(p1 < active) && srcWorkingDepth[min(p1, active - 1u)] > 0.0 ? 1.0 : 0.0;
+	float3 radiance1 = valid[1] > 0.0 ? NRDPort::SceneToLinear(srcRadiance[min(p1, active - 1u)].xyz) : 0.0;
+	const uint2 p2 = pixCoord + uint2(0, 1);
+	valid[2] = all(p2 < active) && srcWorkingDepth[min(p2, active - 1u)] > 0.0 ? 1.0 : 0.0;
+	float3 radiance2 = valid[2] > 0.0 ? NRDPort::SceneToLinear(srcRadiance[min(p2, active - 1u)].xyz) : 0.0;
+	const uint2 p3 = pixCoord + uint2(1, 1);
+	valid[3] = all(p3 < active) && srcWorkingDepth[min(p3, active - 1u)] > 0.0 ? 1.0 : 0.0;
+	float3 radiance3 = valid[3] > 0.0 ? NRDPort::SceneToLinear(srcRadiance[min(p3, active - 1u)].xyz) : 0.0;
 
 #ifdef GI
 	[branch] if (MultiBounceMode >= 2)
@@ -121,9 +127,10 @@ groupshared float3 g_scratchRadiance[8][8];
 	outRadiance0[pixCoord + uint2(1, 1)] = radiance3;
 
 	// MIP 1
-	float3 rm1 = RadianceMIPFilter(radiance0, radiance1, radiance2, radiance3);
+	float3 rm1 = RadianceMIPFilter(radiance0, radiance1, radiance2, radiance3, valid);
 	outRadiance1[baseCoord] = rm1;
 	g_scratchRadiance[groupThreadID.x][groupThreadID.y] = rm1;
+	g_scratchValid[groupThreadID.x][groupThreadID.y] = any(valid > 0.0) ? 1.0 : 0.0;
 
 	GroupMemoryBarrierWithGroupSync();
 
@@ -135,9 +142,12 @@ groupshared float3 g_scratchRadiance[8][8];
 		float3 inBL = g_scratchRadiance[groupThreadID.x + 0][groupThreadID.y + 1];
 		float3 inBR = g_scratchRadiance[groupThreadID.x + 1][groupThreadID.y + 1];
 
-		float3 rm2 = RadianceMIPFilter(inTL, inTR, inBL, inBR);
+		float4 mipValid = float4(g_scratchValid[groupThreadID.x][groupThreadID.y], g_scratchValid[groupThreadID.x + 1][groupThreadID.y],
+			g_scratchValid[groupThreadID.x][groupThreadID.y + 1], g_scratchValid[groupThreadID.x + 1][groupThreadID.y + 1]);
+		float3 rm2 = RadianceMIPFilter(inTL, inTR, inBL, inBR, mipValid);
 		outRadiance2[baseCoord / 2] = rm2;
 		g_scratchRadiance[groupThreadID.x][groupThreadID.y] = rm2;
+		g_scratchValid[groupThreadID.x][groupThreadID.y] = any(mipValid > 0.0) ? 1.0 : 0.0;
 	}
 
 	GroupMemoryBarrierWithGroupSync();
@@ -150,9 +160,12 @@ groupshared float3 g_scratchRadiance[8][8];
 		float3 inBL = g_scratchRadiance[groupThreadID.x + 0][groupThreadID.y + 2];
 		float3 inBR = g_scratchRadiance[groupThreadID.x + 2][groupThreadID.y + 2];
 
-		float3 rm3 = RadianceMIPFilter(inTL, inTR, inBL, inBR);
+		float4 mipValid = float4(g_scratchValid[groupThreadID.x][groupThreadID.y], g_scratchValid[groupThreadID.x + 2][groupThreadID.y],
+			g_scratchValid[groupThreadID.x][groupThreadID.y + 2], g_scratchValid[groupThreadID.x + 2][groupThreadID.y + 2]);
+		float3 rm3 = RadianceMIPFilter(inTL, inTR, inBL, inBR, mipValid);
 		outRadiance3[baseCoord / 4] = rm3;
 		g_scratchRadiance[groupThreadID.x][groupThreadID.y] = rm3;
+		g_scratchValid[groupThreadID.x][groupThreadID.y] = any(mipValid > 0.0) ? 1.0 : 0.0;
 	}
 
 	GroupMemoryBarrierWithGroupSync();
@@ -165,7 +178,9 @@ groupshared float3 g_scratchRadiance[8][8];
 		float3 inBL = g_scratchRadiance[groupThreadID.x + 0][groupThreadID.y + 4];
 		float3 inBR = g_scratchRadiance[groupThreadID.x + 4][groupThreadID.y + 4];
 
-		float3 rm4 = RadianceMIPFilter(inTL, inTR, inBL, inBR);
+		float4 mipValid = float4(g_scratchValid[groupThreadID.x][groupThreadID.y], g_scratchValid[groupThreadID.x + 4][groupThreadID.y],
+			g_scratchValid[groupThreadID.x][groupThreadID.y + 4], g_scratchValid[groupThreadID.x + 4][groupThreadID.y + 4]);
+		float3 rm4 = RadianceMIPFilter(inTL, inTR, inBL, inBR, mipValid);
 		outRadiance4[baseCoord / 8] = rm4;
 	}
 }

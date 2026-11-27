@@ -8,8 +8,9 @@
 
 /**
  * ScreenSpaceReflections: hierarchical Hi-Z screen-space specular ray-march
- * with GGX importance sampling and ReBLUR denoising. Completely standalone —
- * runs whether or not Screen Space GI is enabled, and owns its full pipeline
+ * with GGX importance sampling and REBLUR denoising. Independent of Screen Space GI,
+ * but requires Dynamic Cubemaps for specular composition (even with fallback sampling off).
+ * Owns its full pipeline
  * (Hi-Z depth pyramid, specular ray march, NRD specular denoiser instance).
  *
  * Denoising guides (viewZ, packed normal+roughness, motion vectors) come from
@@ -190,6 +191,8 @@ struct ScreenSpaceReflections : Feature
 	nrd::ReblurSettings reblurSpecularSettings{};
 	bool resetReblurHistory = true;
 	bool reblurInitAttempted = false;
+	uint32_t lastReblurAttemptFrame = 0;
+	uint32_t seenNRDHistoryGeneration = 0;
 	uint lastDrawnFrame = 0;
 	// True only after the current DrawSSR invocation has produced a trace output.
 	bool outputReady = false;

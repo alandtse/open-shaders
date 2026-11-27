@@ -198,9 +198,26 @@ float2 SSRT_GetMipResolution(float2 screen_dimensions, int mip_level)
 	return screen_dimensions * exp2(-float(mip_level));
 }
 
+uint2 SSRT_GetMipExtent(int mip)
+{
+	uint width, height, levels;
+	DepthTextureMips.GetDimensions(mip, width, height, levels);
+	const uint scale = 1u << mip;
+	return min(uint2(width, height), max(uint2(1, 1), (uint2(FrameDim) + scale - 1u) / scale));
+}
+
 float SSRT_LoadDepth(int2 pixel_coordinate, int mip)
 {
-	return DepthTextureMips.Load(int3(pixel_coordinate, mip)).x;
+	return DepthTextureMips.Load(int3(clamp(pixel_coordinate, int2(0, 0), int2(SSRT_GetMipExtent(mip)) - 1), mip)).x;
+}
+
+float2 SSRT_CellBoundary(float2 mipPosition, float2 mipResolutionInv, float2 floorOffset, uint2 mipExtent)
+{
+	float2 extent = float2(mipExtent);
+	float2 cell = clamp(floor(mipPosition), 0.0, extent - 1.0);
+	float2 boundary = (cell + floorOffset) * mipResolutionInv;
+	return float2(cell.x == extent.x - 1.0 && floorOffset.x > 0.0 ? 1.0 : min(boundary.x, 1.0),
+		cell.y == extent.y - 1.0 && floorOffset.y > 0.0 ? 1.0 : min(boundary.y, 1.0));
 }
 
 float3 SSRT_ScreenSpaceToViewSpace(float3 screen_space_position)
@@ -215,12 +232,12 @@ void SSRT_InitialAdvanceRay(float3 origin,
 	float2 current_mip_resolution_inv,
 	float2 floor_offset,
 	float2 uv_offset,
+	uint2 mipExtent,
 	out float3 position,
 	out float current_t)
 {
 	float2 current_mip_position = current_mip_resolution * origin.xy;
-	float2 xy_plane = floor(current_mip_position) + floor_offset;
-	xy_plane = xy_plane * current_mip_resolution_inv + uv_offset;
+	float2 xy_plane = SSRT_CellBoundary(current_mip_position, current_mip_resolution_inv, floor_offset, mipExtent) + uv_offset;
 	float2 t = xy_plane * inv_direction.xy - origin.xy * inv_direction.xy;
 	current_t = min(t.x, t.y);
 	position = origin + current_t * direction;
@@ -233,12 +250,12 @@ bool SSRT_AdvanceRay(float3 origin,
 	float2 current_mip_resolution_inv,
 	float2 floor_offset,
 	float2 uv_offset,
+	uint2 mipExtent,
 	float surface_z,
 	inout float3 position,
 	inout float current_t)
 {
-	float2 xy_plane = floor(current_mip_position) + floor_offset;
-	xy_plane = xy_plane * current_mip_resolution_inv + uv_offset;
+	float2 xy_plane = SSRT_CellBoundary(current_mip_position, current_mip_resolution_inv, floor_offset, mipExtent) + uv_offset;
 	float3 boundary_planes = float3(xy_plane, surface_z);
 
 	float3 t = boundary_planes * inv_direction - origin * inv_direction;
@@ -265,6 +282,7 @@ float3 SSRT_HierarchicalRaymarch(float3 origin,
 	int current_mip = most_detailed_mip;
 	float2 current_mip_resolution = SSRT_GetMipResolution(screen_size, current_mip) * (FrameDim * RcpTexDim);
 	float2 current_mip_resolution_inv = rcp(current_mip_resolution);
+	uint2 current_mip_extent = SSRT_GetMipExtent(current_mip);
 
 	float2 uv_offset = 0.005 * exp2(most_detailed_mip) / (screen_size * (FrameDim * RcpTexDim));
 	uv_offset = direction.xy < 0 ? -uv_offset : uv_offset;
@@ -273,23 +291,25 @@ float3 SSRT_HierarchicalRaymarch(float3 origin,
 
 	float current_t;
 	float3 position;
-	SSRT_InitialAdvanceRay(origin, direction, inv_direction, current_mip_resolution, current_mip_resolution_inv, floor_offset, uv_offset, position, current_t);
+	SSRT_InitialAdvanceRay(origin, direction, inv_direction, current_mip_resolution, current_mip_resolution_inv, floor_offset, uv_offset, current_mip_extent, position, current_t);
 
 	uint num_iters = 0;
 	while (num_iters < max_traversal_intersections && current_mip >= most_detailed_mip) {
-		if (any(position.xy > float2(1.0, 1.0)) || any(position.xy < float2(0.0, 0.0)))
+		if (any(position.xy >= float2(1.0, 1.0)) || any(position.xy < float2(0.0, 0.0)))
 			break;
 		if (position.z > float(1.0) - float(1.0e-6))
 			break;
 
 		float2 current_mip_position = current_mip_resolution * position.xy;
-		float surface_z = SSRT_LoadDepth(current_mip_position, current_mip);
-		bool skipped_tile = SSRT_AdvanceRay(origin, direction, inv_direction, current_mip_position, current_mip_resolution_inv, floor_offset, uv_offset, surface_z, position, current_t);
+		float surface_z = DepthTextureMips.Load(int3(clamp(int2(current_mip_position), int2(0, 0), int2(current_mip_extent) - 1), current_mip)).x;
+		bool skipped_tile = SSRT_AdvanceRay(origin, direction, inv_direction, current_mip_position, current_mip_resolution_inv, floor_offset, uv_offset, current_mip_extent, surface_z, position, current_t);
 		bool nextMipIsOutOfRange = skipped_tile && (current_mip >= SSRT_DEPTH_HIERARCHY_MAX_MIP);
 		if (!nextMipIsOutOfRange) {
 			current_mip += skipped_tile ? 1 : -1;
 			current_mip_resolution *= skipped_tile ? 0.5 : 2;
 			current_mip_resolution_inv *= skipped_tile ? 2 : 0.5;
+			if (current_mip >= most_detailed_mip)
+				current_mip_extent = SSRT_GetMipExtent(current_mip);
 		}
 		++num_iters;
 	}
@@ -446,11 +466,11 @@ float SSRT_ValidateHit(float3 hit,
 	}
 
 #if defined(DYNAMIC_CUBEMAPS)
-	if (SpecUseDynamicCubemap != 0 && (confidence < 0.999f)) {
+	if (SpecUseDynamicCubemap != 0 && (confidence < 1.0f)) {
 		float3 world_space_reflected_direction = mul(FrameBuffer::CameraViewInverse[NRDPortEye], float4(reflect(view_space_ray_direction, view_space_surface_normal), 0)).xyz;
 		const float envLevel = roughness * 8.0;
 		float3 biased_view_space_ray_direction = normalize(view_space_ray);
-		const float NdotV = saturate(dot(biased_view_space_ray_direction, view_space_surface_normal));
+		const float NdotV = saturate(dot(-biased_view_space_ray_direction, view_space_surface_normal));
 		float3 envSampleRaw = EnvTexture.SampleLevel(LinearSampler, world_space_reflected_direction, envLevel);
 		float3 envColor = envSampleRaw;
 
@@ -465,7 +485,7 @@ float SSRT_ValidateHit(float3 hit,
 #		endif
 			float3 world_space_view = -normalize(positionMS);
 
-			sh2 skylightingSH = Skylighting::Sample(Skylighting::ClampToArrayHeight(positionMS), world_space_reflected_direction);
+			sh2 skylightingSH = Skylighting::Sample(Skylighting::ClampToArrayHeight(positionMS), world_space_normal);
 			float fadeOutFactor = Skylighting::GetFadeOutFactor(positionMS);
 			float3 skylightingNormal = normalize(float3(world_space_normal.xy, max(0, world_space_normal.z)));
 			skylightingVisibility = Skylighting::EvaluateVisibility(skylightingSH, fadeOutFactor);
@@ -525,6 +545,12 @@ float SSRT_ValidateHit(float3 hit,
 		sampleColor.xyz = lerp(envColor, sampleColor.xyz, confidence);
 	}
 #endif
+
+	// Cubemap blending already applies confidence; otherwise fade the screen contribution against zero.
+#if defined(DYNAMIC_CUBEMAPS)
+	if (SpecUseDynamicCubemap == 0)
+#endif
+		sampleColor *= confidence;
 
 	float normHitDist;
 	if (screenConfidence > 0.01f) {

@@ -1,3 +1,14 @@
+/*
+Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
+
+NVIDIA CORPORATION and its licensors retain all intellectual property
+and proprietary rights in and to this software, related documentation
+and any modifications thereto. Any use, reproduction, disclosure or
+distribution of this software and related documentation without an express
+license agreement from NVIDIA CORPORATION is strictly prohibited.
+*/
+// This software contains source code provided by NVIDIA Corporation.
+
 // Self-contained NRD REBLUR SH helpers — inlined from NRD v4 (NRD.hlsli).
 // Config: NRD_NORMAL_ENCODING=2 (R10G10B10A2_UNORM), NRD_ROUGHNESS_ENCODING=1 (LINEAR).
 // Do not modify without re-checking against extern/NRD/Shaders/NRD.hlsli.

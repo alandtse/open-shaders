@@ -125,16 +125,6 @@ void NRDReblurIntegration::Shutdown()
 	}
 }
 
-void NRDReblurIntegration::Resize(uint32_t halfWidth, uint32_t halfHeight)
-{
-	if (m_width == halfWidth && m_height == halfHeight)
-		return;
-	m_width = halfWidth;
-	m_height = halfHeight;
-	DestroyPoolTextures();
-	CreatePoolTextures(halfWidth, halfHeight);
-	DestroyValidationTexture();
-}
 
 void NRDReblurIntegration::SetCommonSettings(const nrd::CommonSettings& settings)
 {
@@ -400,7 +390,7 @@ void NRDReblurIntegration::DestroyPoolTextures()
 
 void NRDReblurIntegration::CreateValidationTexture()
 {
-	if (m_validation.texture)
+	if (m_validation.texture && m_validation.srv && m_validation.uav)
 		return;
 
 	D3D11_TEXTURE2D_DESC desc{};
@@ -413,12 +403,14 @@ void NRDReblurIntegration::CreateValidationTexture()
 	desc.Usage = D3D11_USAGE_DEFAULT;
 	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 	auto device = globals::d3d::device;
-	DX::ThrowIfFailed(device->CreateTexture2D(&desc, nullptr, m_validation.texture.put()));
-	DX::ThrowIfFailed(device->CreateShaderResourceView(m_validation.texture.get(), nullptr, m_validation.srv.put()));
-	DX::ThrowIfFailed(device->CreateUnorderedAccessView(m_validation.texture.get(), nullptr, m_validation.uav.put()));
-	Util::SetResourceName(m_validation.texture.get(), "NRD::%s Validation", m_label);
-	Util::SetResourceName(m_validation.srv.get(), "NRD::%s Validation SRV", m_label);
-	Util::SetResourceName(m_validation.uav.get(), "NRD::%s Validation UAV", m_label);
+	PoolTexture validation;
+	DX::ThrowIfFailed(device->CreateTexture2D(&desc, nullptr, validation.texture.put()));
+	DX::ThrowIfFailed(device->CreateShaderResourceView(validation.texture.get(), nullptr, validation.srv.put()));
+	DX::ThrowIfFailed(device->CreateUnorderedAccessView(validation.texture.get(), nullptr, validation.uav.put()));
+	Util::SetResourceName(validation.texture.get(), "NRD::%s Validation", m_label);
+	Util::SetResourceName(validation.srv.get(), "NRD::%s Validation SRV", m_label);
+	Util::SetResourceName(validation.uav.get(), "NRD::%s Validation UAV", m_label);
+	m_validation = std::move(validation);
 }
 
 void NRDReblurIntegration::DestroyValidationTexture()

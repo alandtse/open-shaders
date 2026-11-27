@@ -13,14 +13,13 @@ RWTexture2D<float4> outNormalRoughness : register(u1);
 
 float ScreenToViewDepth(float screenDepth)
 {
-	float standardDepth = FrameBuffer::ToStandardDepth(screenDepth);
-	if (standardDepth >= 1.0 - 1e-6)
+	if (screenDepth == FrameBuffer::FarPlaneDepth())
 		return 3.402823466e+38;
-#ifdef REVERSE_Z
-	return (SharedData::CameraData.w / (screenDepth * SharedData::CameraData.z + SharedData::CameraData.y));
-#else
-	return (SharedData::CameraData.w / (-screenDepth * SharedData::CameraData.z + SharedData::CameraData.x));
+#ifdef VR
+	if (screenDepth == FrameBuffer::NearPlaneDepth())
+		return 3.402823466e+38;
 #endif
+	return SharedData::GetScreenDepth(screenDepth);
 }
 
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {

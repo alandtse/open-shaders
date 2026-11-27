@@ -160,10 +160,11 @@ namespace NRDStereo
 				NRD* n = &nrd;
 				if (eye) {
 					if (nrd.loaded && !rightNRD) {
-						rightNRD = std::make_unique<NRD>();
-						rightNRD->loaded = true;
-						rightNRD->settings = nrd.settings;
-						rightNRD->SetupResources();
+						auto pending = std::make_unique<NRD>();
+						pending->loaded = true;
+						pending->settings = nrd.settings;
+						pending->SetupResources();
+						rightNRD = std::move(pending);
 					}
 					if (rightNRD) {
 						n = rightNRD.get();
@@ -173,11 +174,15 @@ namespace NRDStereo
 							n->ClearShaderCache();
 					}
 					if (gi.loaded && gi.settings.Enabled && !rightGI) {
-						rightGI = std::make_unique<ScreenSpaceGI>();
-						rightGI->loaded = true;
-						rightGI->settings = gi.settings;
-						rightGI->userSettings = gi.userSettings;
-						rightGI->SetupResources();
+						auto pending = std::make_unique<ScreenSpaceGI>();
+						pending->loaded = true;
+						pending->settings = gi.settings;
+						pending->userSettings = gi.userSettings;
+						pending->appliedE11Overlay = gi.appliedE11Overlay;
+						pending->SetupResources();
+						if (!pending->texNoise || !pending->ssgiCB || !pending->linearClampSampler || !pending->pointClampSampler)
+							throw std::runtime_error("NRD: right-eye GI setup incomplete");
+						rightGI = std::move(pending);
 					}
 					if (rightGI) {
 						g = rightGI.get();
@@ -193,11 +198,17 @@ namespace NRDStereo
 					if (rightGI && resetRightGI)
 						g->QueueHistoryReset();
 					if (ssr.loaded && ssr.settings.Enabled && !rightSSR) {
-						rightSSR = std::make_unique<ScreenSpaceReflections>();
-						rightSSR->loaded = true;
-						rightSSR->settings = ssr.settings;
-						rightSSR->userSettings = ssr.userSettings;
-						rightSSR->SetupResources();
+						try {
+							auto pending = std::make_unique<ScreenSpaceReflections>();
+							pending->loaded = true;
+							pending->settings = ssr.settings;
+							pending->userSettings = ssr.userSettings;
+							pending->appliedE11Overlay = ssr.appliedE11Overlay;
+							pending->SetupResources();
+							rightSSR = std::move(pending);
+						} catch (const std::exception& e) {
+							logger::error("NRD: right-eye SSR setup failed: {}", e.what());
+						}
 					}
 					if (rightSSR) {
 						s = rightSSR.get();
@@ -229,22 +240,35 @@ namespace NRDStereo
 					}
 				} else if (!eye && g->loaded)
 					g->DrawSSGI();
-				if (runSSR) {
-					s->DrawSSR();
-					out.specular[eye] = s->GetOutputTexture();
-					if (out.specular[eye])
-						specularMask |= 1u << eye;
-				} else if (!eye && s->loaded)
-					s->DrawSSR();
+				try {
+					if (runSSR) {
+						s->DrawSSR();
+						out.specular[eye] = s->GetOutputTexture();
+						if (out.specular[eye])
+							specularMask |= 1u << eye;
+					} else if (!eye && s->loaded)
+						s->DrawSSR();
+				} catch (const std::exception& e) {
+					logger::error("NRD: eye {} SSR dispatch failed: {}", eye, e.what());
+					NRDRendering::ClearComputeBindings();
+					specularMask &= ~(1u << eye);
+					out.specular[eye] = nullptr;
+					s->outputReady = false;
+					s->QueueHistoryReset();
+				}
 			} catch (const std::exception& e) {
 				logger::error("NRD: eye {} dispatch failed: {}", eye, e.what());
 				NRDRendering::ClearComputeBindings();
 				diffuseMask &= ~(1u << eye);
-				specularMask &= ~(1u << eye);
 				out.diffuse[eye] = nullptr;
-				out.specular[eye] = nullptr;
 				gi.QueueHistoryReset();
+				if (eye && rightGI)
+					rightGI->QueueHistoryReset();
+				specularMask &= ~(1u << eye);
+				out.specular[eye] = nullptr;
 				ssr.QueueHistoryReset();
+				if (eye && rightSSR)
+					rightSSR->QueueHistoryReset();
 				invalidate = true;
 			}
 		}

@@ -15,14 +15,14 @@ class NRDReblurIntegration
 {
 public:
 	NRDReblurIntegration() = default;
+	NRDReblurIntegration(const NRDReblurIntegration&) = delete;
+	NRDReblurIntegration& operator=(const NRDReblurIntegration&) = delete;
 	~NRDReblurIntegration() { Shutdown(); }
 
 	// identifier is an arbitrary uint32 tag for this denoiser (e.g. 0)
 	bool Init(uint32_t halfWidth, uint32_t halfHeight, nrd::Denoiser denoiser, uint32_t identifier);
 	void Shutdown();
 
-	// Call when the render resolution changes (half-res width/height)
-	void Resize(uint32_t halfWidth, uint32_t halfHeight);
 
 	void SetCommonSettings(const nrd::CommonSettings& settings);
 	void SetDenoiserSettings(const void* settings);

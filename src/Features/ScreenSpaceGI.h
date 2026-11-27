@@ -229,6 +229,8 @@ public:
 	bool resetReblurHistory = true;
 	bool nrdReblurUsesSH = false;
 	bool reblurInitAttempted = false;
+	uint32_t lastReblurAttemptFrame = 0;
+	uint32_t seenNRDHistoryGeneration = 0;
 	// Prevent downstream passes from sampling stale GI when this frame could not
 	// produce a complete SSGI output (disabled feature, shader failure, etc.).
 	bool outputReady = false;

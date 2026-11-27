@@ -438,6 +438,7 @@ void ScreenSpaceGI::LoadSettings(json& o_json)
 	                                settings.Enabled != previous.Enabled ||
 	                                settings.NumSteps != previous.NumSteps ||
 	                                settings.EnableMultiBounce != previous.EnableMultiBounce ||
+	                                settings.GIStrength != previous.GIStrength ||
 	                                settings.UseDynamicCubemapsAsFallback != previous.UseDynamicCubemapsAsFallback ||
 	                                settings.EnableREBLUR != previous.EnableREBLUR;
 	outputReady = false;
@@ -663,7 +664,7 @@ void ScreenSpaceGI::SetupTraceResources()
 		for (uint i = 0; i < 5; ++i)
 			uavRadiance[i] = uavWorkingDepth[i] = uavNormal[i] = nullptr;
 
-		{
+		if (settings.EnableGI) {
 			texRadiance = eastl::make_unique<Texture2D>(texDesc, "SSGI::Radiance");
 			texRadiance->CreateSRV(srvDesc);
 
@@ -805,6 +806,7 @@ void ScreenSpaceGI::SetupNRDResources()
 	}
 
 	reblurInitAttempted = wantsReblur;
+	lastReblurAttemptFrame = globals::state->frameCount;
 	if (wantsReblur && !nrdReblur.Init(fullW, fullH, useSH ? nrd::Denoiser::REBLUR_DIFFUSE_SH : nrd::Denoiser::REBLUR_DIFFUSE, 0)) {
 		texNRDOutput.reset();
 		texNRDOutputSH1.reset();
@@ -858,12 +860,13 @@ void ScreenSpaceGI::CompileComputeShaders()
 	std::vector<ShaderCompileInfo>
 		shaderInfos = {
 			{ &prefilterDepthsCompute, "prefilterDepths.cs.hlsl", { { "LINEAR_FILTER", "" } } },
-			{ &prefilterRadianceCompute, "prefilterRadiance.cs.hlsl", {} },
 			{ &prefilterNormalCompute, "prefilterNormal.cs.hlsl", {} },
 			{ &giCompute, "diffuseGI.cs.hlsl", {} },
 		};
-	if (settings.EnableGI)
+	if (settings.EnableGI) {
+		shaderInfos.push_back({ &prefilterRadianceCompute, "prefilterRadiance.cs.hlsl", {} });
 		shaderInfos.push_back({ &compositeCompute, "composite.cs.hlsl", {} });
+	}
 
 	const bool canDenoise = CanDenoise();
 	tracedHalfRes = settings.HalfRes && canDenoise;
@@ -914,13 +917,13 @@ bool ScreenSpaceGI::CanDenoise() const
 
 bool ScreenSpaceGI::ShadersOK()
 {
-	return prefilterDepthsCompute && prefilterRadianceCompute && prefilterNormalCompute && giCompute &&
-	       (!settings.EnableGI || compositeCompute);
+	return prefilterDepthsCompute && prefilterNormalCompute && giCompute &&
+	       (!settings.EnableGI || (prefilterRadianceCompute && compositeCompute));
 }
 
 void ScreenSpaceGI::UpdateSB()
 {
-	float2 res = { (float)texRadiance->desc.Width, (float)texRadiance->desc.Height };
+	float2 res = { (float)texWorkingDepth->desc.Width, (float)texWorkingDepth->desc.Height };
 	float2 dynres = NRDRendering::ActiveSize();
 	dynres = { floor(dynres.x), floor(dynres.y) };
 
@@ -957,6 +960,11 @@ void ScreenSpaceGI::UpdateSB()
 
 void ScreenSpaceGI::DrawSSGI()
 {
+	const auto generation = globals::features::nrd.GetHistoryGeneration();
+	if (generation != seenNRDHistoryGeneration) {
+		seenNRDHistoryGeneration = generation;
+		QueueHistoryReset();
+	}
 	outputReady = false;
 	denoisedThisFrame = false;
 
@@ -979,7 +987,7 @@ void ScreenSpaceGI::DrawSSGI()
 	const auto active = NRDRendering::ActiveSize();
 	if (active.x < 1 || active.y < 1 || full.x < 16 || full.y < 16)
 		return;
-	const bool needTraceResources = !texRadiance || !texWorkingDepth || !texNormal || texRadiance->desc.Width != uint32_t(full.x) || texRadiance->desc.Height != uint32_t(full.y);
+	const bool needTraceResources = !texWorkingDepth || !texNormal || bool(texRadiance) != settings.EnableGI || texWorkingDepth->desc.Width != uint32_t(full.x) || texWorkingDepth->desc.Height != uint32_t(full.y);
 	if (needTraceResources && NRDRendering::ShouldDeferAllocation())
 		return;
 	if (resourceFailure && globals::state->frameCount - lastFailedAllocationFrame < 120u)
@@ -993,7 +1001,8 @@ void ScreenSpaceGI::DrawSSGI()
 		EnsureMultiBounceResources(trackMultiBounce);
 		uint32_t nrdWidth = 0, nrdHeight = 0;
 		GetNRDResourceSize(nrdWidth, nrdHeight);
-		if (nrdReblurUsesSH != useSH || !texNRDInput || texNRDInput->desc.Width != nrdWidth || texNRDInput->desc.Height != nrdHeight || wantsReblur != reblurInitAttempted)
+		if (nrdReblurUsesSH != useSH || !texNRDInput || texNRDInput->desc.Width != nrdWidth || texNRDInput->desc.Height != nrdHeight || wantsReblur != reblurInitAttempted ||
+		    (wantsReblur && !nrdReblur.IsValid() && globals::state->frameCount - lastReblurAttemptFrame >= 120u && !NRDRendering::ShouldDeferAllocation()))
 			SetupNRDResources();
 		resourceFailure = false;
 	} catch (const std::exception& e) {
@@ -1101,12 +1110,12 @@ void ScreenSpaceGI::DrawSSGI()
 		uavs.at(2) = uavNormal[2].get();
 		uavs.at(3) = uavNormal[3].get();
 		uavs.at(4) = uavNormal[4].get();
+		srvs.at(1) = texWorkingDepth->srv.get();
 		if (trackMultiBounce) {
-			srvs.at(1) = texWorkingDepth->srv.get();
 			uavs.at(5) = texHistoryGeo[historyGeoWriteIndex]->uav.get();
 		}
 
-		context->CSSetShaderResources(0, trackMultiBounce ? 2u : 1u, srvs.data());
+		context->CSSetShaderResources(0, 2u, srvs.data());
 		context->CSSetUnorderedAccessViews(0, trackMultiBounce ? 6u : 5u, uavs.data(), nullptr);
 		context->CSSetShader(prefilterNormalCompute.get(), nullptr, 0);
 
@@ -1115,7 +1124,7 @@ void ScreenSpaceGI::DrawSSGI()
 
 	// Prefilter source radiance. Multi-bounce history is reprojected, converted
 	// from illumination to post-albedo outgoing radiance, and injected here once.
-	{
+	if (settings.EnableGI && texRadiance) {
 		CS_GPU_PASS("ScreenSpaceGI::PrefilterRadiance");
 
 		resetViews();
@@ -1127,13 +1136,14 @@ void ScreenSpaceGI::DrawSSGI()
 			srvs.at(4) = texHistoryGeo[historyGeoWriteIndex ^ 1]->srv.get();
 			srvs.at(5) = NRDRendering::Crop(NRDRendering::Input::Albedo, Util::AsReal(rts[ALBEDO].SRV));
 		}
+		srvs.at(6) = texWorkingDepth->srv.get();
 		uavs.at(0) = uavRadiance[0].get();
 		uavs.at(1) = uavRadiance[1].get();
 		uavs.at(2) = uavRadiance[2].get();
 		uavs.at(3) = uavRadiance[3].get();
 		uavs.at(4) = uavRadiance[4].get();
 
-		context->CSSetShaderResources(0, trackMultiBounce ? 6u : 1u, srvs.data());
+		context->CSSetShaderResources(0, 7u, srvs.data());
 		context->CSSetUnorderedAccessViews(0, 5, uavs.data(), nullptr);
 		context->CSSetShader(prefilterRadianceCompute.get(), nullptr, 0);
 
@@ -1151,7 +1161,7 @@ void ScreenSpaceGI::DrawSSGI()
 		resetViews();
 		srvs.at(0) = texWorkingDepth->srv.get();
 		srvs.at(1) = NRDRendering::Crop(NRDRendering::Input::Masks, Util::AsReal(rts[MASKS].SRV));
-		srvs.at(2) = texRadiance->srv.get();
+		srvs.at(2) = texRadiance ? texRadiance->srv.get() : nullptr;
 		srvs.at(3) = texNoise->srv.get();
 		if (dynamicCubemaps.loaded) {
 			auto& reflections = renderer->GetRendererData().cubemapRenderTargets[RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS];

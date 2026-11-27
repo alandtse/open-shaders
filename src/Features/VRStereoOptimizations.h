@@ -90,9 +90,6 @@ struct VRStereoOptimizations
 		/// Culled Eye 1 pixels take Eye 0's warped final depth when it is nearer than the prepass
 		/// depth the classification used (geometry the z-prepass omits, e.g. alpha-tested statics).
 		bool repairFromEye0Depth = true;
-		/// Re-run the classification on the final depth after the repair so later mode-texture
-		/// consumers (SSGI reprojection) see the restored geometry.
-		bool reclassifyAfterRepair = true;
 		/// Classify from the nearer of the prepass depth and the reprojected previous-frame
 		/// final depth, so z-prepass-omitted geometry (alpha-tested statics) is not culled in Eye 1.
 		bool classifyWithDepthHistory = true;
@@ -276,13 +273,9 @@ private:
 	void DispatchGBufferFill();
 
 	/// Write the unrepairable-strip feedback mask from the initial modes and the scatter
-	/// result (RepairCulledEye1 step 5); must run before ReclassifyFromFinalDepth overwrites
-	/// the modes it reads.
+	/// result (RepairCulledEye1 step 5); reads the initial modes.
 	void DispatchUnrepairableMask();
 
-	/// Re-classify both eyes from the repaired kMAIN depth for the passes that read the mode
-	/// texture after geometry (RepairCulledEye1 step 6); skipped when none is active.
-	void ReclassifyFromFinalDepth();
 
 	/// Sets the rasterizer viewport to the Eye 1 (right) half of the classified SBS area (frameDim).
 	void SetEye1Viewport();

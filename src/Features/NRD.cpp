@@ -1,7 +1,5 @@
 #include "NRD.h"
 #include "NRD/RenderContext.h"
-#include "ScreenSpaceGI.h"
-#include "ScreenSpaceReflections.h"
 #include "VR/NRDStereo.h"
 
 #include "Deferred.h"
@@ -26,8 +24,7 @@ void NRD::RestoreDefaultSettings()
 	const bool wasEnabled = settings.Enabled;
 	settings = {};
 	if (wasEnabled != settings.Enabled) {
-		globals::features::screenSpaceGI.QueueHistoryReset();
-		globals::features::screenSpaceReflections.QueueHistoryReset();
+		historyGeneration.fetch_add(1, std::memory_order_release);
 	}
 }
 
@@ -41,8 +38,7 @@ void NRD::DrawSettings()
 
 	ImGui::Separator();
 	if (ImGui::Checkbox(T(TKEY("enabled"), "Enabled"), &settings.Enabled)) {
-		globals::features::screenSpaceGI.QueueHistoryReset();
-		globals::features::screenSpaceReflections.QueueHistoryReset();
+		historyGeneration.fetch_add(1, std::memory_order_release);
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("enabled_tooltip"),
@@ -89,7 +85,10 @@ void NRD::DrawDebugSection()
 
 void NRD::LoadSettings(json& o_json)
 {
+	const bool wasEnabled = settings.Enabled;
 	settings = o_json;
+	if (wasEnabled != settings.Enabled)
+		historyGeneration.fetch_add(1, std::memory_order_release);
 }
 
 void NRD::SaveSettings(json& o_json)
@@ -396,6 +395,8 @@ void NRD::ApplyReblurSettings(nrd::ReblurSettings& out, const REBLURSettings& in
 	const auto toFrames = [fps](uint32_t a_framesAt60, uint32_t a_minimum) {
 		if (a_framesAt60 == 0)
 			return 0u;
+		// Clamp before the SDK converts to uint32_t, not just after conversion.
+		a_framesAt60 = std::min(a_framesAt60, nrd::REBLUR_MAX_HISTORY_FRAME_NUM * 2u);
 		return std::max(nrd::GetMaxAccumulatedFrameNum((float)a_framesAt60 / 60.0f, fps), a_minimum);
 	};
 	out.maxAccumulatedFrameNum = std::min(toFrames(in.MaxAccumulatedFrameNum, 1), nrd::REBLUR_MAX_HISTORY_FRAME_NUM);

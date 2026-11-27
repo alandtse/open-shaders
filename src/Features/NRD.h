@@ -6,6 +6,7 @@
 
 #include <NRDSettings.h>
 
+#include <atomic>
 #include <chrono>
 
 /**
@@ -62,6 +63,10 @@ struct NRD : Feature
 	void PrepareGuides(bool a_requested, bool a_fullExtent = false);
 	void EnsureResourceExtent(bool a_fullExtent);
 	bool GetResourceExtent(uint32_t& a_width, uint32_t& a_height) const;
+
+	// Consumers track this generation to invalidate their histories after NRD settings changes.
+	uint32_t GetHistoryGeneration() const { return historyGeneration.load(std::memory_order_acquire); }
+	std::atomic<uint32_t> historyGeneration{ 0 };
 
 	// True when PrepareGuides has run successfully for this frame. Consumers
 	// should skip their dispatches if guides aren't ready (e.g. world not
