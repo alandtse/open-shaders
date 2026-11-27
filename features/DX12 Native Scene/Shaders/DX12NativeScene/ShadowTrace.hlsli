@@ -2,6 +2,8 @@ RaytracingAccelerationStructure Scene : register(t0);
 Texture2D<float> RasterDepth : register(t1);
 StructuredBuffer<float4> Lights : register(t2);
 RWTexture2D<float2> RawMask : register(u0);
+// Per-light visibility at logical resolution, slice = submitted light index; cleared to lit.
+RWTexture2DArray<unorm float> LightMask : register(u1);
 cbuffer ShadowInputs : register(b0)
 {
 	row_major float4x4 InverseProjection;
@@ -11,6 +13,7 @@ cbuffer ShadowInputs : register(b0)
 	uint LightCount;
 	uint FrameIndex;
 	uint2 PhysicalSize;
+	uint LightSlotCount;
 };
 static const float MinDistance = 0.5f;
 static const float MaxDistance = 60000.0f;
@@ -29,15 +32,17 @@ groupshared uint TileMinimumOrdered[3];
 groupshared uint TileMaximumOrdered[3];
 groupshared uint TileLightMask[kTileLightWordCount];
 
-bool ReadReceiver(uint2 packed, out uint2 p, out float3 world, out float receiverDistance)
+bool ReadReceiver(uint2 packed, out uint2 p, out uint2 logical, out float3 world, out float receiverDistance)
 {
 	p = 0;
+	logical = 0;
 	world = 0;
 	receiverDistance = 0;
 	if (any(packed >= PhysicalSize))
 		return false;
-	const uint2 logical = uint2(QualityMode == kShadowQualityOffloading ? packed.x :
-		ShadowLogicalX(packed.x, packed.y, FrameIndex & 1u), packed.y);
+	logical = uint2(QualityMode == kShadowQualityOffloading ? packed.x :
+															  ShadowLogicalX(packed.x, packed.y, FrameIndex & 1u),
+		packed.y);
 	const uint2 logicalSize = uint2(ShadowLogicalExtent(Size.x, QualityMode), ShadowLogicalExtent(Size.y, QualityMode));
 	if (any(logical >= logicalSize))
 		return false;
@@ -76,7 +81,7 @@ float EmitterRandom(uint seed, uint salt)
 float3 SampleEmitterOffset(float3 direction, float radius, uint2 pixel, uint lightID)
 {
 	const uint seed = EmitterHash(pixel.x * 0x9e3779b9u ^ pixel.y * 0x85ebca6bu ^
-	                             FrameIndex * 0xc2b2ae35u ^ lightID * 0x27d4eb2fu);
+								  FrameIndex * 0xc2b2ae35u ^ lightID * 0x27d4eb2fu);
 	const float radial = radius * sqrt(EmitterRandom(seed, 0x68bc21ebu));
 	const float angle = EmitterRandom(seed, 0x02e5be93u) * 6.28318530718f;
 	const float3 tangent = normalize(cross(abs(direction.z) < 0.9f ? float3(0, 0, 1) : float3(0, 1, 0), direction));
@@ -113,7 +118,8 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 	const float3 waveLower = WaveActiveMin(finiteReceiver ? world : float3(extreme, extreme, extreme));
 	const float3 waveUpper = WaveActiveMax(finiteReceiver ? world : float3(-extreme, -extreme, -extreme));
 	if (WaveIsFirstLane()) {
-		[unroll] for (uint axis = 0u; axis < 3u; ++axis) {
+		[unroll] for (uint axis = 0u; axis < 3u; ++axis)
+		{
 			InterlockedMin(TileMinimumOrdered[axis], OrderedFloat(waveLower[axis]));
 			InterlockedMax(TileMaximumOrdered[axis], OrderedFloat(waveUpper[axis]));
 		}
@@ -123,7 +129,8 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 	const float3 lower = float3(DecodeOrderedFloat(TileMinimumOrdered[0]), DecodeOrderedFloat(TileMinimumOrdered[1]), DecodeOrderedFloat(TileMinimumOrdered[2]));
 	const float3 upper = float3(DecodeOrderedFloat(TileMaximumOrdered[0]), DecodeOrderedFloat(TileMaximumOrdered[1]), DecodeOrderedFloat(TileMaximumOrdered[2]));
 	if (all(lower <= upper)) {
-		[loop] for (uint lightIndex = lane; lightIndex < LightCount; lightIndex += kTileThreads) {
+		[loop] for (uint lightIndex = lane; lightIndex < LightCount; lightIndex += kTileThreads)
+		{
 			const float4 light = Lights[lightIndex * LightStride];
 			const float radius = max(light.w * Reach, MinDistance) * 1.00001f;
 			const float3 delta = max(max(lower - light.xyz, light.xyz - upper), 0.0f);
@@ -136,10 +143,10 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 }
 [numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID, uint lane : SV_GroupIndex) {
 	const uint2 packed = id.xy;
-	uint2 p;
+	uint2 p, logical;
 	float3 world;
 	float receiverDistance;
-	const bool valid = ReadReceiver(packed, p, world, receiverDistance);
+	const bool valid = ReadReceiver(packed, p, logical, world, receiverDistance);
 	// All lanes participate before rejecting invalid receivers; large inventories
 	// fall back to the complete ordered light loop rather than dropping lights.
 	const bool tiled = LightCount >= kTileCullThreshold && LightCount <= kTileLightWordCount * 32u;
@@ -153,7 +160,7 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 	}
 	// Valid receiver with no applicable light: neutral, not an unsampled pixel.
 	float total = 0, visible = 0;
-	[loop] for (uint i = 0; i < LightCount; )
+	[loop] for (uint i = 0; i < LightCount;)
 	{
 		if (tiled) {
 			const uint word = i / 32u;
@@ -165,7 +172,7 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 			i = word * 32u + uint(firstbitlow(remaining));
 		}
 		const uint lightIndex = i++;
-		float4 light = Lights[lightIndex * LightStride];     // xyz vanilla position + vanilla radius
+		float4 light = Lights[lightIndex * LightStride];  // xyz vanilla position + vanilla radius
 		float3 delta = light.xyz - world;
 		float d2 = dot(delta, delta);
 		if (d2 <= MinDistance * MinDistance || !isfinite(d2))
@@ -213,6 +220,12 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 			// Fade the occlusion itself, not just its light weight.
 			if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
 				visibility = 1.0f - gradualFalloff;
+		}
+		if (lightIndex < LightSlotCount && visibility < 1.0f) {
+			LightMask[uint3(logical, lightIndex)] = visibility;
+			// Checkerboard modes trace one texel of each pair per frame; fill its partner too.
+			if (QualityMode != kShadowQualityOffloading && (logical.x ^ 1u) < ShadowLogicalExtent(Size.x, QualityMode))
+				LightMask[uint3(logical.x ^ 1u, logical.y, lightIndex)] = visibility;
 		}
 		total += weight;
 		visible += weight * visibility;

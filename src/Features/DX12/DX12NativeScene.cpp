@@ -362,6 +362,81 @@ bool DX12NativeScene::WantsRenderPassHook() const
 bool DX12NativeScene::WantsPreShadowMapsHook() const { return WantsRenderPassHook(); }
 bool DX12NativeScene::WantsDepthPrepassReadyHook() const { return WantsRenderPassHook(); }
 
+void DX12NativeScene::PublishLightShadowSlots(uint32_t frame, std::span<const DX12::PreparedLight> submitted,
+	std::span<const RE::NiLight* const> sources)
+{
+	slotsBySource.clear();
+	slotsByReference.clear();
+	slotPositions.clear();
+	shadedLightCount.store(shadedThisFrame, std::memory_order_relaxed);
+	shadedThisFrame = 0;
+	const auto traced = shadows.Get(frame);
+	lightSlotFrame = UINT32_MAX;
+	// Queue-side wait before any light is flagged: forward lighting must not read slices the trace has not written.
+	if (!traced || !traced->lightMask || !backend ||
+		FAILED(backend->d3d11Context->Wait(shadows.LightMaskFence().fence11.get(), traced->lightMaskValue)))
+		return;
+	lightSlotFrame = frame;
+	for (uint32_t i = 0; i < traced->lightSlots && i < submitted.size(); ++i) {
+		if (i < sources.size()) {
+			slotsBySource.try_emplace(sources[i], i);
+			continue;
+		}
+		const auto& light = submitted[i];
+		slotPositions.push_back({ light.position, i });
+		if (light.runtimeIdentity)
+			slotsBySource.try_emplace(reinterpret_cast<const RE::NiLight*>(light.runtimeIdentity), i);
+		if (light.referenceID)
+			slotsByReference.try_emplace(light.referenceID, i);
+	}
+}
+
+std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_light)
+{
+	if (!a_light || !globals::game::graphicsState || lightSlotFrame != globals::game::graphicsState->GetFrameCount())
+		return std::nullopt;
+	std::optional<uint32_t> slot;
+	if (const auto it = slotsBySource.find(a_light); it != slotsBySource.end())
+		slot = it->second;
+	else if (const auto* owner = a_light->GetUserData(); owner && !slotsByReference.empty())
+		if (const auto ref = slotsByReference.find(owner->GetFormID()); ref != slotsByReference.end())
+			slot = ref->second;
+	if (!slot && !slotPositions.empty()) {
+		// Full RT merges runtime emitters into the traced light they sit beside; shade them with its slice.
+		const float radius = float(runtimeUnificationRadius.load(std::memory_order_relaxed));
+		const auto& p = a_light->world.translate;
+		float best = radius * radius;
+		for (const auto& [position, index] : slotPositions) {
+			const float dx = position.x - p.x, dy = position.y - p.y, dz = position.z - p.z;
+			if (const float d2 = dx * dx + dy * dy + dz * dz; d2 <= best) {
+				best = d2;
+				slot = index;
+			}
+		}
+	}
+	if (slot) {
+		lightsShadedFrame = lightSlotFrame;
+		++shadedThisFrame;
+	}
+	return slot;
+}
+
+bool DX12NativeScene::ShadesLightsDirectly(uint32_t a_frame) const
+{
+	return lightsShadedFrame == a_frame;
+}
+
+void DX12NativeScene::Prepass()
+{
+	if (!loaded || globals::game::isVR || !backend || !globals::game::graphicsState)
+		return;
+	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
+	ID3D11ShaderResourceView* view = nullptr;
+	if (const auto traced = shadows.Get(frame); traced && traced->lightMask && lightSlotFrame == frame)
+		view = traced->lightMask->srv;
+	globals::d3d::context->PSSetShaderResources(kLightShadowRegister, 1, &view);
+}
+
 void DX12NativeScene::PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid)
 {
 	if (!grid || !grid->wholeCell || !globals::features::dx12Control.IsActive() || !AllowsNativeSceneWork() ||
@@ -650,26 +725,31 @@ void DX12NativeScene::OnDepthPrepassReady()
 	// Admit only matched runtime emitters that the SCM policy can account for.
 	// Iterate the immutable prepared selection to preserve its deterministic order.
 	std::vector<DX12::PreparedLight> liveLights;
+	std::vector<const RE::NiLight*> liveSources;
 	if (!fullRT) {
 		std::scoped_lock lock(runtimeLightMutex);
 		if (runtimeLightFrame != frame || runtimeLightSamples.empty())
 			return;
-		std::unordered_map<uint32_t, const DX12::PreparedLight*> liveByReference;
+		std::unordered_map<uint32_t, const RuntimeLightSample*> liveByReference;
 		liveByReference.reserve(runtimeLightSamples.size());
 		for (const auto& sample : runtimeLightSamples)
 			if (sample.referenceID)
-				liveByReference.try_emplace(sample.referenceID, &sample.value);
+				liveByReference.try_emplace(sample.referenceID, &sample);
 		const size_t limit = std::min(lights->size(), size_t{ DX12Native::kMaxShadowLights });
 		liveLights.reserve(std::min(limit, liveByReference.size()));
 		for (size_t i = 0; i < limit; ++i) {
 			const auto it = liveByReference.find((*lights)[i].referenceID);
-			if (it != liveByReference.end())
-				liveLights.push_back(*it->second);
+			if (it != liveByReference.end()) {
+				liveLights.push_back(it->second->value);
+				liveSources.push_back(it->second->source);
+			}
 		}
 		for (const auto& sample : runtimeLightSamples)
 			if (!sample.referenceID && liveLights.size() < DX12Native::kMaxShadowLights &&
-				std::ranges::contains(ownedLights, sample.source))
+				std::ranges::contains(ownedLights, sample.source)) {
 				liveLights.push_back(sample.value);
+				liveSources.push_back(sample.source);
+			}
 	}
 	const std::span<const DX12::PreparedLight> submittedLights = fullRT ?
 	                                                                 std::span<const DX12::PreparedLight>(fullInventory->lights) :
@@ -701,6 +781,7 @@ void DX12NativeScene::OnDepthPrepassReady()
 	};
 	tracedLightCount.store(uint32_t(submittedLights.size()), std::memory_order_relaxed);
 	shadows.Dispatch(*backend, raster.Get(frame), built, submittedLights, frame, controls);
+	PublishLightShadowSlots(frame, submittedLights, liveSources);
 }
 
 std::function<void()> DX12NativeScene::OnRenderPassBegin(const RE::BSRenderPass* pass)
@@ -927,7 +1008,8 @@ json DX12NativeScene::GetStatus() const
 		{ "castersKeptRaster", castersKeptRaster.load(std::memory_order_relaxed) } };
 
 	status["trace"] = { { "lastOutcome", magic_enum::enum_name(shadows.LastOutcome()) },
-		{ "lights", tracedLightCount.load(std::memory_order_relaxed) } };
+		{ "lights", tracedLightCount.load(std::memory_order_relaxed) },
+		{ "shadedLights", shadedLightCount.load(std::memory_order_relaxed) } };
 	status["composite"] = { { "lastShadowResult",
 		magic_enum::enum_name(DX12Native::lastCompositeShadowResult.load(std::memory_order_relaxed)) } };
 
@@ -940,8 +1022,8 @@ json DX12NativeScene::GetStatus() const
 void DX12NativeScene::RegisterUxActions()
 {
 	FEATURE_COMMAND("setMaskDebugView",
-		"Writes the native shadow mask into the frame instead of shading it: grayscale = traced visibility, magenta = a receiver without a matching mask sample. "
-		"Diagnostic only, not saved. Params: enabled (bool).",
+		"Writes the native shadow mask into the frame instead of shading it: grayscale = traced visibility, magenta = no valid mask, "
+		"red = traced but rejected by the receiver-depth check. Diagnostic only, not saved. Params: enabled (bool).",
 		[](Feature*, const json& a_args) { DX12Native::compositeShadowDebugView.store(a_args.value("enabled", false), std::memory_order_relaxed); });
 	FEATURE_RENDER_QUERY("status",
 		"DX12 shadow offload readiness. Returns active/shadowOffloadMode/canSuppressStatic; grid {scope,size,revision,runtimeShapes,"

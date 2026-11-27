@@ -26,6 +26,7 @@ namespace DX12Native
 			float4 positionAdjust;
 			uint32_t width, height, lightCount, frameIndex;
 			uint32_t physicalWidth, physicalHeight;
+			uint32_t lightSlotCount;
 		};
 		static_assert(sizeof(Constants) <= D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 		winrt::com_ptr<ID3D12Resource> UploadBuffer(ID3D12Device* device, UINT64 bytes)
@@ -80,14 +81,14 @@ namespace DX12Native
 
 		D3D12_DESCRIPTOR_RANGE ranges[2]{};
 		ranges[0] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 0, 0 };
-		ranges[1] = { D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0 };
+		ranges[1] = { D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0, 0, 0 };
 		D3D12_ROOT_PARAMETER params[5]{};
 		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
 		params[0].Descriptor.ShaderRegister = 0;  // t0 TLAS
 		params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 		params[1].DescriptorTable = { 1, &ranges[0] };  // t1 raster depth
 		params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-		params[2].DescriptorTable = { 1, &ranges[1] };  // u0 raw mask
+		params[2].DescriptorTable = { 1, &ranges[1] };  // u0 raw mask, u1 per-light mask
 		params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
 		params[3].Descriptor.ShaderRegister = 2;  // t2 light records
 		params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -110,6 +111,8 @@ namespace DX12Native
 		auto newCompletion = completion;
 		if (!newCompletion)
 			DX::ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(newCompletion.put())));
+		if (!lightMaskFence.fence12)
+			lightMaskFence.Create(device, backend.d3d11Device.get(), "DX12NativeScene::LightShadowFence");
 		root = std::move(newRoot);
 		pipelines[variant] = std::move(newPipeline);
 		completion = std::move(newCompletion);
@@ -212,12 +215,29 @@ namespace DX12Native
 					D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
 					nullptr, IID_PPV_ARGS(replacement->mask.put())));
 				replacement->mask->SetName(L"DX12NativeScene::RawShadowMask");
+				D3D11_TEXTURE2D_DESC lightMaskDesc{};
+				lightMaskDesc.Width = ShadowLogicalExtent(width, quality);
+				lightMaskDesc.Height = maskHeight;
+				lightMaskDesc.MipLevels = 1;
+				lightMaskDesc.ArraySize = kMaxLightShadowSlots;
+				lightMaskDesc.Format = DXGI_FORMAT_R8_UNORM;
+				lightMaskDesc.SampleDesc.Count = 1;
+				lightMaskDesc.Usage = D3D11_USAGE_DEFAULT;
+				lightMaskDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+				replacement->lightMask = std::make_unique<WrappedResource>(lightMaskDesc,
+					requested.d3d11Device.get(), requested.d3d12Device.get(), "DX12NativeScene::LightShadowMask");
+				replacement->allocationBytes += uint64_t(lightMaskDesc.Width) * lightMaskDesc.Height * kMaxLightShadowSlots;
 				D3D12_DESCRIPTOR_HEAP_DESC descriptors{};
 				descriptors.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 				descriptors.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-				descriptors.NumDescriptors = 2;
+				descriptors.NumDescriptors = 3;
 				DX::ThrowIfFailed(requested.d3d12Device->CreateDescriptorHeap(
 					&descriptors, IID_PPV_ARGS(replacement->descriptors.put())));
+				// ClearUnorderedAccessViewFloat needs the same UAV in a CPU-only heap.
+				descriptors.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+				descriptors.NumDescriptors = 1;
+				DX::ThrowIfFailed(requested.d3d12Device->CreateDescriptorHeap(
+					&descriptors, IID_PPV_ARGS(replacement->clearDescriptors.put())));
 				replacement->cameraUpload = UploadBuffer(requested.d3d12Device.get(), D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 				if (!controls.nativeLights)
 					replacement->lightUpload = UploadBuffer(requested.d3d12Device.get(), lightBytes);
@@ -251,7 +271,8 @@ namespace DX12Native
 				slot->raster->camera.CameraProjInverse,
 				slot->raster->camera.CameraViewInverse,
 				slot->raster->camera.CameraPosAdjust,
-				width, height, lightCount, frame, maskWidth, maskHeight
+				width, height, lightCount, frame, maskWidth, maskHeight,
+				std::min(lightCount, kMaxLightShadowSlots)
 			};
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
 
@@ -295,6 +316,15 @@ namespace DX12Native
 			uav.Format = DXGI_FORMAT_R32G32_FLOAT;
 			uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
 			requested.d3d12Device->CreateUnorderedAccessView(slot->mask.get(), nullptr, &uav, cpu);
+			cpu.ptr += step;
+			D3D12_UNORDERED_ACCESS_VIEW_DESC lightUav{};
+			lightUav.Format = DXGI_FORMAT_R8_UNORM;
+			lightUav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+			lightUav.Texture2DArray.ArraySize = kMaxLightShadowSlots;
+			auto* lightMask = slot->lightMask->resource.get();
+			requested.d3d12Device->CreateUnorderedAccessView(lightMask, nullptr, &lightUav, cpu);
+			const auto clearCpu = slot->clearDescriptors->GetCPUDescriptorHandleForHeapStart();
+			requested.d3d12Device->CreateUnorderedAccessView(lightMask, nullptr, &lightUav, clearCpu);
 
 			auto* command = slot->commands.get();
 			ID3D12DescriptorHeap* heaps[]{ slot->descriptors.get() };
@@ -319,12 +349,25 @@ namespace DX12Native
 					D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 				command->ResourceBarrier(1, &maskStart);
 			}
+			const auto lightMaskStart = CD3DX12_RESOURCE_BARRIER::Transition(
+				lightMask, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+			command->ResourceBarrier(1, &lightMaskStart);
+			{
+				auto lightGpu = slot->descriptors->GetGPUDescriptorHandleForHeapStart();
+				lightGpu.ptr += 2ull * step;
+				constexpr float lit[4]{ 1.0f, 1.0f, 1.0f, 1.0f };
+				command->ClearUnorderedAccessViewFloat(lightGpu, clearCpu, lightMask, lit, 0, nullptr);
+				const auto cleared = CD3DX12_RESOURCE_BARRIER::UAV(lightMask);
+				command->ResourceBarrier(1, &cleared);
+			}
 			command->Dispatch((maskWidth + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize,
 				(maskHeight + kShadowThreadGroupSize - 1) / kShadowThreadGroupSize, 1);
-			const auto uavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(slot->mask.get());
-			command->ResourceBarrier(1, &uavBarrier);
+			const std::array uavBarriers{ CD3DX12_RESOURCE_BARRIER::UAV(slot->mask.get()), CD3DX12_RESOURCE_BARRIER::UAV(lightMask) };
+			command->ResourceBarrier(UINT(uavBarriers.size()), uavBarriers.data());
 			const std::array end{
 				CD3DX12_RESOURCE_BARRIER::Transition(slot->mask.get(),
+					D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
+				CD3DX12_RESOURCE_BARRIER::Transition(lightMask,
 					D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
 				CD3DX12_RESOURCE_BARRIER::Transition(slot->raster->depth->resource.get(),
 					D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON)
@@ -342,6 +385,9 @@ namespace DX12Native
 			DX::ThrowIfFailed(requested.commandQueue->Signal(completion.get(), value));
 			nextFence = value;
 			slot->readyValue = value;
+			slot->lightMaskValue = lightMaskFence.Next();
+			DX::ThrowIfFailed(requested.commandQueue->Signal(lightMaskFence.fence12.get(), slot->lightMaskValue));
+			slot->lightSlots = std::min(lightCount, kMaxLightShadowSlots);
 			current = slot;
 			finish(Outcome::Dispatched);
 			failureLogged = false;
