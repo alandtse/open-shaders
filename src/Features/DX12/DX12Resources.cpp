@@ -871,8 +871,9 @@ void DX12Resources::DrawResourceStatus()
 		                        T("menu.dx12.resources.publication_invalid", "Native preparation: invalid");
 		ImGui::TextUnformatted(label);
 		ImGui::Text(T("menu.dx12.resources.latest_request", "Latest request: %s | scope %08X | (%lld, %lld)"),
-			status->wholeCell ? T("menu.dx12.resources.whole_cell", "Whole-cell residency (subdivisions bypassed)") :
-			status->predictive ? T("menu.dx12.resources.predictive", "Predictive") : T("menu.dx12.resources.active", "Active"),
+			status->wholeCell  ? T("menu.dx12.resources.whole_cell", "Whole-cell residency (subdivisions bypassed)") :
+			status->predictive ? T("menu.dx12.resources.predictive", "Predictive") :
+								 T("menu.dx12.resources.active", "Active"),
 			status->key.scope, static_cast<long long>(status->key.x), static_cast<long long>(status->key.y));
 		if (!status->detail.empty())
 			ImGui::TextWrapped("%s", status->detail.c_str());
@@ -897,8 +898,8 @@ void DX12Resources::DrawResourceStatus()
 			ImGui::Text(T("menu.dx12.resources.as_bytes", "AS allocation bytes: BLAS %llu | TLAS %llu"),
 				static_cast<unsigned long long>(scene->blasBytes), static_cast<unsigned long long>(scene->tlasBytes));
 			ImGui::TextUnformatted(scene->geometryRevision == snapshot->geometryRevision ?
-				T("menu.dx12.resources.tlas_current", "TLAS: current") :
-				T("menu.dx12.resources.tlas_previous", "TLAS: previous revision retained"));
+									   T("menu.dx12.resources.tlas_current", "TLAS: current") :
+									   T("menu.dx12.resources.tlas_previous", "TLAS: previous revision retained"));
 		} else {
 			ImGui::TextDisabled("%s", T("menu.dx12.resources.tlas_pending", "TLAS: no published scene for this scope"));
 		}
@@ -967,7 +968,7 @@ void DX12Resources::DrawResourceStatus()
 
 	const float available = ImGui::GetContentRegionAvail().x;
 	if (available >= SubcellMapStyle::twoColumnMinWidth &&
-			   ImGui::BeginTable("##SubcellStatusLayout", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX)) {
+		ImGui::BeginTable("##SubcellStatusLayout", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX)) {
 		ImGui::TableSetupColumn("##SubcellMap", ImGuiTableColumnFlags_WidthFixed, SubcellMapStyle::mapColumnWidth);
 		ImGui::TableSetupColumn("##SubcellDetails", ImGuiTableColumnFlags_WidthStretch);
 		ImGui::TableNextRow();
