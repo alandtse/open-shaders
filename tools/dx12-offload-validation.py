@@ -239,6 +239,7 @@ def screenshots(bench, report, out, modes):
                 pose[f"{label}_ownedLights"] = after.get("lights", {}).get("ownedShadowLights", 0)
                 pose[f"{label}_tracedLights"] = after.get("trace", {}).get("lights", 0)
                 pose[f"{label}_trace"] = after.get("trace", {})
+                pose[f"{label}_repeat"] = str(capture(bench, out, f"pose{index}_{label}_repeat"))
         first = modes[0][0]
         if modes[0][1] is not None:
             bench.set_mode(modes[0][1])
@@ -337,6 +338,11 @@ def run_ab(bench, report, out):
         noise = image_diff(shot["raster"], shot["raster_repeat"])
         change = image_diff(shot["raster"], shot[cand], out / f"pose{shot['pose']}_{cand}_vs_raster_diff.png")
         shot["noise"], shot["change"] = noise, change
+        # Same pose, same mode, captured again: what changes is the candidate's frame-to-frame noise.
+        flicker = image_diff(shot[cand], shot[f"{cand}_repeat"], out / f"pose{shot['pose']}_{cand}_noise.png")
+        shot["candidateNoise"] = flicker
+        report.check(f"pose {shot['pose']} {cand} noise", "PASS" if flicker.get("changedFraction", 0.0) <= MAX_DIFF_OVER_NOISE * max(noise.get("changedFraction", 0.0), 0.002) else "REVIEW",
+                     f"repeat changed {flicker.get('changedFraction', 0):.4f}, mean |diff| {flicker.get('meanAbs', 0):.2f} (raster repeat {noise.get('changedFraction', 0):.4f}, {noise.get('meanAbs', 0):.2f})")
         floor = max(noise.get("changedFraction", 0.0), 0.002)
         ratio = change.get("changedFraction", 0.0) / floor
         status_value = "PASS" if ratio <= MAX_DIFF_OVER_NOISE else "REVIEW"
