@@ -207,7 +207,7 @@ namespace DX12
 		[[nodiscard]] bool Valid() const noexcept
 		{
 			return std::isfinite(minX) && std::isfinite(minY) &&
-				std::isfinite(maxX) && std::isfinite(maxY) && minX <= maxX && minY <= maxY;
+			       std::isfinite(maxX) && std::isfinite(maxY) && minX <= maxX && minY <= maxY;
 		}
 
 		void Include(double x, double y) noexcept
@@ -235,7 +235,7 @@ namespace DX12
 				return true;
 			const double s = size;
 			return minX < (double(x) + 1) * s && maxX >= double(x) * s &&
-				minY < (double(y) + 1) * s && maxY >= double(y) * s;
+			       minY < (double(y) + 1) * s && maxY >= double(y) * s;
 		}
 
 		[[nodiscard]] bool FitsNeighborhood(uint32_t size, int radius) const noexcept
@@ -246,7 +246,7 @@ namespace DX12
 			const auto cx = std::floor((minX + maxX) / (2.0 * s));
 			const auto cy = std::floor((minY + maxY) / (2.0 * s));
 			return minX >= (cx - radius) * s && minY >= (cy - radius) * s &&
-				maxX < (cx + radius + 1) * s && maxY < (cy + radius + 1) * s;
+			       maxX < (cx + radius + 1) * s && maxY < (cy + radius + 1) * s;
 		}
 	};
 

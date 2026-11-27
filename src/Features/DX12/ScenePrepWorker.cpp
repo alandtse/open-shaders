@@ -499,7 +499,7 @@ namespace DX12
 			}
 			if (!supportedStatic) {
 				if (hasModelPath && (request.consolidate || (knownBounds ? bounds.MayOverlap(a_key.x, a_key.y, a_size) :
-					!request.worldspace || InsideSubcellXY(pos.x, pos.y, a_key.x, a_key.y, a_size)))) {
+																		   !request.worldspace || InsideSubcellXY(pos.x, pos.y, a_key.x, a_key.y, a_size)))) {
 					RecordRejection(request.rejectionReasons, request.failedShapes, "unsupported modeled record");
 					AddNifSource(request, plugin, localID, nifView);
 					AddMissingShape(request, plugin, localID, nifView, -1, "unsupported modeled record");
@@ -954,7 +954,7 @@ namespace DX12
 		pub.validated = true;
 		pub.enumerationComplete = a_request.enumerationComplete && !a_request.lightCapacityExceeded && !a_request.candidateOverflow;
 		pub.spatialBoundsComplete = pub.enumerationComplete && a_request.spatialBoundsKnown &&
-			!a_request.captureBudgetExceeded && !budgetExceeded && !pub.rejectedLights;
+		                            !a_request.captureBudgetExceeded && !budgetExceeded && !pub.rejectedLights;
 		if (a_request.consolidate) {
 			if (std::isfinite(lowX) && std::isfinite(lowY)) {
 				a_request.spatialBounds.Include(lowX, lowY);
