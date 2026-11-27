@@ -62,6 +62,19 @@ namespace
 		       format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
 	}
 
+	bool IsAnyFeatureOverlayVisible()
+	{
+		// The Performance Overlay and Scene Selector draw only under the global overlay toggle.
+		const bool globalOverlay = Menu::GetSingleton()->overlayVisible;
+		for (Feature* feat : Feature::GetFeatureList()) {
+			auto* overlay = feat && feat->loaded ? dynamic_cast<OverlayFeature*>(feat) : nullptr;
+			if (overlay && overlay->IsOverlayVisible() &&
+				(globalOverlay || (feat != &globals::features::performanceOverlay && feat != &globals::features::sceneSelector)))
+				return true;
+		}
+		return false;
+	}
+
 	bool BeginShaderStatusCard(const ImVec2& cardPosition)
 	{
 		using Constants = ThemeManager::Constants;
@@ -267,18 +280,6 @@ bool OverlayRenderer::ShouldSkipRendering()
 	uint32_t effectFailed = 0;
 #endif
 
-	// The Performance Overlay and Scene Selector draw only under the global overlay toggle; the other overlays gate themselves.
-	const bool globalOverlay = Menu::GetSingleton()->overlayVisible;
-	bool overlayVisible = false;
-	for (Feature* feat : Feature::GetFeatureList()) {
-		auto* overlay = feat && feat->loaded ? dynamic_cast<OverlayFeature*>(feat) : nullptr;
-		if (overlay && overlay->IsOverlayVisible() &&
-			(globalOverlay || (feat != &globals::features::performanceOverlay && feat != &globals::features::sceneSelector))) {
-			overlayVisible = true;
-			break;
-		}
-	}
-
 	return !(shaderCache->IsCompiling() ||
 			 Menu::GetSingleton()->IsOpen() ||
 			 Menu::GetSingleton()->openFade > 0.0f ||
@@ -289,9 +290,9 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 abTestingManager->IsEnabled() ||
 			 (failed && !hide) ||
 			 effectFailed ||
-			 overlayVisible ||
 			 renderDoc->ShouldShowOverlay() ||
-			 globals::features::vr.HelperRequestsRender());
+			 globals::features::vr.HelperRequestsRender() ||
+			 IsAnyFeatureOverlayVisible());
 }
 
 void OverlayRenderer::HandleFontReload(Menu& menu, float& cachedFontSize, float currentFontSize)
