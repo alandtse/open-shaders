@@ -237,6 +237,7 @@ def screenshots(bench, report, out, modes):
                 pose[f"{label}_ownership"] = ownership_delta(before, after)
                 pose[f"{label}_ownedLights"] = after.get("lights", {}).get("ownedShadowLights", 0)
                 pose[f"{label}_tracedLights"] = after.get("trace", {}).get("lights", 0)
+                pose[f"{label}_trace"] = after.get("trace", {})
         first = modes[0][0]
         if modes[0][1] is not None:
             bench.set_mode(modes[0][1])
