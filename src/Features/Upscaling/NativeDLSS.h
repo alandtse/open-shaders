@@ -30,8 +30,11 @@ public:
 	bool Upscale(ID3D11Resource* a_colorOut, ID3D11Resource* a_motionVectors, ID3D11Resource* a_reactiveMask,
 		ID3D11Resource* a_transparencyMask, const sl::Extent& a_extentIn, const sl::Extent& a_extentOut);
 
-	/** @brief Waits for submitted native work, then frees the DX12 DLSS feature and the shared textures. */
+	/** @brief Requests nonblocking retirement of the current native feature. */
 	void Reset();
+	/** @brief Services a pending reset on the rendering thread without waiting. */
+	void ServiceReset();
+	bool HasPendingReset() const { return resetPending; }
 
 	/** @brief True when the last DLSS frame was upscaled on DX12. */
 	bool IsActive() const { return active; }
@@ -39,7 +42,7 @@ public:
 	/** @brief Why the native path stopped for this session; empty while it may run. */
 	const std::string& GetFailure() const { return failure; }
 
-	/** @brief Parks the shared textures and command lists instead of releasing them while the GPU may still read them. */
+	/** @brief Retires outstanding command contexts and shared textures asynchronously. */
 	~NativeDLSS();
 
 private:
@@ -80,14 +83,14 @@ private:
 	uint64_t lastSubmitted = 0;
 	std::optional<FeatureKey> featureKey;
 	bool active = false;
+	bool resetPending = false;
 	std::string failure;
 
 	bool EnsureStreamline();
 	bool EnsureCommandContexts();
 	bool EnsureSharedResources(const std::array<ID3D11Resource*, kSharedCount>& a_sources);
 	CommandContext* AcquireCommandContext();
-	/** @brief True once the GPU finished the last submitted dispatch; false when the bounded wait gave up. */
-	bool WaitForSubmitted();
-	void ParkInFlight();
+	/** @brief Nonblocking check for a tracked, successfully completed submission. */
+	bool SubmittedComplete() const;
 	void Latch(std::string a_reason);
 };

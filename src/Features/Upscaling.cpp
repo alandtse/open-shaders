@@ -3666,6 +3666,8 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingContexts, upscaling.settings.neuralRenderingTuning, uint32_t(a_target), nrRenderSize);
 	upscaling.neuralRendering.CaptureBeforeUpscaling();
 
+	if (upscaling.nativeDLSS.HasPendingReset())
+		upscaling.nativeDLSS.ServiceReset();
 	upscaling.frameGenerationPrepared = false;
 	if (upscaling.ShouldPrepareFrameGeneration()) {
 		if (postProcessing.loaded)

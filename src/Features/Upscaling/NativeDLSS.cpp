@@ -10,6 +10,7 @@
 
 #include "../../GpuPass.h"
 #include "../DX12/DX12Control.h"
+#include "../DX12/DX12GpuRetirement.h"
 #include "../Upscaling.h"
 
 bool NativeDLSS::Upscale(ID3D11Resource* a_colorOut, ID3D11Resource* a_motionVectors, ID3D11Resource* a_reactiveMask,
@@ -17,6 +18,11 @@ bool NativeDLSS::Upscale(ID3D11Resource* a_colorOut, ID3D11Resource* a_motionVec
 {
 	const bool resumed = !active;
 	active = false;
+	if (resetPending) {
+		ServiceReset();
+		if (resetPending)
+			return false;
+	}
 	if (!globals::features::dx12Control.IsActive())
 		return false;
 
@@ -53,6 +59,10 @@ bool NativeDLSS::Upscale(ID3D11Resource* a_colorOut, ID3D11Resource* a_motionVec
 					commandContext->fenceValue = rescue;
 				lastSubmitted = rescue;
 			} catch (...) {
+				lastSubmitted = DX12Native::kUntrackedFenceValue;
+				if (submitted && commandContext)
+					commandContext->fenceValue = DX12Native::kUntrackedFenceValue;
+				logger::error("[Upscaling] Native DLSS rescue fence signal failed; retaining untracked GPU work");
 			}
 		}
 		Latch(std::format("the DX12 DLSS dispatch threw: {}", a_reason));
@@ -70,7 +80,7 @@ bool NativeDLSS::Upscale(ID3D11Resource* a_colorOut, ID3D11Resource* a_motionVec
 		const FeatureKey key{ upscaling.settings.qualityMode, upscaling.settings.presetDLSS, a_extentOut.width, a_extentOut.height };
 		if (featureKey && *featureKey != key) {
 			// Streamline releases a replaced DLSS feature only from its present hook, which this instance lacks outside DLSS-G.
-			if (!WaitForSubmitted())
+			if (!SubmittedComplete())
 				return false;
 			streamline.DestroyDLSSResources();
 		}
@@ -80,7 +90,10 @@ bool NativeDLSS::Upscale(ID3D11Resource* a_colorOut, ID3D11Resource* a_motionVec
 		for (uint32_t i = 0; i < kOutput; ++i)
 			context11->CopySubresourceRegion(shared[i]->resource11, 0, 0, 0, 0, sources[i], 0, &inputBox);
 		const uint64_t inputsCopied = fence.Next();
+		// The DX11 copies are also submitted work, even if DX12 never dispatches.
+		lastSubmitted = DX12Native::kUntrackedFenceValue;
 		DX::ThrowIfFailed(context11->Signal(fence.fence11.get(), inputsCopied));
+		lastSubmitted = inputsCopied;
 		DX::ThrowIfFailed(queue->Wait(fence.fence12.get(), inputsCopied));
 		DX::ThrowIfFailed(queue->Wait(composite->producerFence.get(), composite->producerValue));
 
@@ -140,40 +153,50 @@ bool NativeDLSS::Upscale(ID3D11Resource* a_colorOut, ID3D11Resource* a_motionVec
 
 NativeDLSS::~NativeDLSS()
 {
-	const uint64_t completed = fence.fence12 ? fence.fence12->GetCompletedValue() : UINT64_MAX;
-	if (completed != UINT64_MAX && completed < lastSubmitted) {
-		ParkInFlight();
-		for (auto& commandContext : commandContexts) {
-			(void)commandContext.allocator.detach();
-			(void)commandContext.commandList.detach();
-		}
-	}
+	if (!lastSubmitted || SubmittedComplete())
+		return;
+
+	// The owner contains both the shared texture interfaces and all command
+	// contexts. No SDK calls are made by the asynchronous retirement callback.
+	winrt::com_ptr<ID3D12Device> device;
+	if (fence.fence12)
+		(void)fence.fence12->GetDevice(IID_PPV_ARGS(device.put()));
+	DX12Native::RetireAfterFences(
+		std::make_pair(std::move(shared), std::move(commandContexts)),
+		std::move(device), { DX12Native::FencePoint(fence.fence12.get(), lastSubmitted) });
 }
 
 void NativeDLSS::Reset()
 {
 	active = false;
-	if (!featureKey && !shared[kOutput])
+	if (!featureKey && !shared[kOutput] && !lastSubmitted)
+		return;
+	resetPending = true;
+	ServiceReset();
+}
+
+void NativeDLSS::ServiceReset()
+{
+	if (!resetPending)
+		return;
+	const bool removed = fence.fence12 &&
+	                     fence.fence12->GetCompletedValue() == DX12Native::kUntrackedFenceValue;
+	if (!removed && !SubmittedComplete())
 		return;
 
-	if (WaitForSubmitted()) {
+	// Streamline destruction stays on the rendering thread, after its work
+	// completed. Device loss must not be treated as successful evaluation.
+	if (!removed)
 		globals::features::upscaling.streamlineDX12.DestroyDLSSResources();
-		for (auto& resource : shared)
-			resource.reset();
-	} else {
-		ParkInFlight();
-	}
+	else
+		Latch("the DX12 device was removed during DLSS retirement");
+	for (auto& resource : shared)
+		resource.reset();
 	sharedDescs = {};
 	sharedBytes = 0;
 	featureKey.reset();
-}
-
-void NativeDLSS::ParkInFlight()
-{
-	static auto* pending = new std::vector<std::unique_ptr<WrappedResource>>;
-	for (auto& resource : shared)
-		if (resource)
-			pending->push_back(std::move(resource));
+	lastSubmitted = 0;
+	resetPending = false;
 }
 
 bool NativeDLSS::EnsureStreamline()
@@ -253,7 +276,7 @@ bool NativeDLSS::EnsureSharedResources(const std::array<ID3D11Resource*, kShared
 		std::memcmp(descs.data(), sharedDescs.data(), sizeof(descs)) == 0)
 		return true;
 
-	if (!WaitForSubmitted())
+	if (!SubmittedComplete())
 		return false;
 	auto& swapChain = globals::features::upscaling.dx12SwapChain;
 	auto* device12 = swapChain.d3d12Device.get();
@@ -296,9 +319,10 @@ NativeDLSS::CommandContext* NativeDLSS::AcquireCommandContext()
 	return &oldest;
 }
 
-bool NativeDLSS::WaitForSubmitted()
+bool NativeDLSS::SubmittedComplete() const
 {
-	return fence.CpuWait(lastSubmitted, SharedFence::kFenceTimeoutMs);
+	return DX12Native::FenceValueCompleted(fence.fence12 != nullptr,
+		fence.fence12 && lastSubmitted ? fence.fence12->GetCompletedValue() : 0, lastSubmitted);
 }
 
 void NativeDLSS::Latch(std::string a_reason)
