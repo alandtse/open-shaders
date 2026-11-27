@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Utils/ContentHash.h"
+
 /**
  * @brief Finds the DynDOLOD tree LOD shapes and builds their per-vertex bend data.
  *
@@ -21,12 +23,15 @@ namespace TreeShapes
 		Trunk
 	};
 
-	/** @brief Classifies a Lighting or Utility pass by its shader flags, geometry type, shape name and layout. */
-	Kind Classify(const RE::BSRenderPass* a_pass, bool a_treeModSupport);
+	/** @brief Classifies tree LOD geometry by its shader flags, shape name and layout. */
+	Kind Classify(RE::BSGeometry* a_geometry, const RE::BSShaderProperty* a_property, bool a_treeModSupport, float a_scale);
 
 	class BendWeights
 	{
 	public:
+		/** @brief Builds tree-mod crown weights while the engine streams an object LOD block. */
+		static void PrepareCrowns(RE::NiNode* a_root);
+
 		/**
 		 * @brief Returns the bend data for a shape, built on first sight.
 		 * @return nullptr when the shape has nothing to sway or its block's trunks have not been drawn yet.
@@ -51,12 +56,21 @@ namespace TreeShapes
 		struct Block
 		{
 			std::vector<TrunkCard> cards;
+			Util::ContentHash::Hash128 orderedSignature;
+			Util::ContentHash::Hash128 unorderedSignature;
 			std::unordered_map<int64_t, std::vector<int>> grid;  // cell -> card indices
-			std::unordered_set<const void*> trunkShapes;
+			std::unordered_map<const void*, size_t> firstCardByShape;
 			uint32_t generation = 0;  // bumped when cards are added, so tree-mod crowns built before rebuild
 		};
 
 	private:
+		enum class BuildSource
+		{
+			Draw,
+			Stream
+		};
+		ID3D11ShaderResourceView* Build(RE::BSGeometry* a_geometry, Kind a_kind, uint a_frame, bool a_treeModSupport, BuildSource a_source);
+
 		struct Entry
 		{
 			winrt::com_ptr<ID3D11Buffer> buffer;
@@ -66,7 +80,7 @@ namespace TreeShapes
 			uint lastFrame = 0;
 			uint64_t blockKey = 0;
 			uint32_t generation = 0;
-			bool crown = false;
+			bool needsTrunkUpdates = false;
 		};
 
 		std::unordered_map<uint64_t, Block> blocks;      // key = the block's world translate

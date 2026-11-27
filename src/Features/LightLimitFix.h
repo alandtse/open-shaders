@@ -34,6 +34,7 @@ private:
 	[[msvc::noinline]] bool CheckParticleLightPass(RE::BSRenderPass* a_pass);
 
 public:
+	static constexpr float kSoftShadowScaleMax = 2.0f;
 	virtual inline std::string GetName() override { return "Light Limit Fix"; }
 	virtual std::string GetDisplayName() override { return T("feature.light_limit_fix.name", "Light Limit Fix"); }
 	virtual inline std::string GetShortName() override { return "LightLimitFix"; }

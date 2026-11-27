@@ -7,6 +7,7 @@
 #include "EngineFixes/LODBlendRingFix.h"
 #include "EngineFixes/LandscapeSeamsFix.h"
 #include "EngineFixes/LightListSearchFix.h"
+#include "EngineFixes/RegionLightEmittanceFix.h"
 #include "EngineFixes/ShadowParabolicNullAccumulatorFix.h"
 #include "EngineFixes/ShadowmapCascadeCullingFix.h"
 #include "EngineFixes/ShadowmapCascadeRasterizerFix.h"
@@ -20,6 +21,7 @@ const std::vector<EngineFix*>& EngineFix::GetOnPostPostLoadFixesList()
 	static CullPoolExhaustionFix cullPoolExhaustionFix;
 	static EffectShaderNoDecalsFix effectShaderNoDecalsFix;
 	static LightListSearchFix lightListSearchFix;
+	static RegionLightEmittanceFix regionLightEmittanceFix;
 	static EmptyOverlayCullFix emptyOverlayCullFix;
 	static ShadowmapCascadeCullingFix shadowmapCascadeCullingFix;
 	static ShadowmapRasterizerFix shadowmapRasterizerFix;
@@ -36,6 +38,7 @@ const std::vector<EngineFix*>& EngineFix::GetOnPostPostLoadFixesList()
 		&LandscapeSeamsFix::GetInstance(),
 		&LODBlendRingFix::GetInstance(),
 		&lightListSearchFix,
+		&regionLightEmittanceFix,
 		&shadowmapCascadeCullingFix,
 		&shadowmapRasterizerFix,
 		&shadowParabolicNullAccumulatorFix,

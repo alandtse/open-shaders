@@ -221,6 +221,11 @@ namespace Util
 	RE::NiPoint3 GetEyePosition(int eyeIndex);
 	RE::BSGraphics::ViewData GetCameraData(int eyeIndex);
 
+	/** @brief Whether the engine is accumulating the first-person view. */
+	bool IsFirstPersonPass();
+	/** @brief Distance from the first eye to the near side of the geometry's bound; 0 in the first-person view. */
+	float GetPassDistance(const RE::BSGeometry& a_geometry);
+
 	float2 ConvertToDynamic(float2 a_size, bool a_ignoreLock = false);
 
 	// Game unit conversions

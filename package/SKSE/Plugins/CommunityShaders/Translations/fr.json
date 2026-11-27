@@ -10,6 +10,7 @@
     "common.inactive": "Inactive",
     "common.restart_required": "",
     "common.settings_managed_by_enb": "Ce paramètre est géré par Effects 11.",
+    "compatibility.tullius_ctd_logger": "Tullius CTD Logger peut figer Skyrim pendant plus d’une seconde lorsqu’il écrit un fichier de diagnostic en cours de partie",
     "cs_editor.actions": "",
     "cs_editor.active": "",
     "cs_editor.active_chip_tooltip": "Cliquez pour le retrouver dans sa liste. Double-cliquez pour ouvrir son éditeur.",

@@ -43,6 +43,14 @@ TEST_CASE("ModelExtent runs the model at the eye size when the reduced size woul
 	REQUIRE(NR::ModelExtent(0.5f, 1080, NR::kMinModelExtent) == none);
 }
 
+TEST_CASE("ModelTakesCrop drops the crop only for a reduced uncompressed model", "[nr]")
+{
+	REQUIRE(NR::ModelTakesCrop(0, false));
+	REQUIRE(NR::ModelTakesCrop(0, true));
+	REQUIRE(NR::ModelTakesCrop(960, true));
+	REQUIRE_FALSE(NR::ModelTakesCrop(960, false));
+}
+
 TEST_CASE("Sanitize bounds the model scale to its range", "[nr]")
 {
 	NR::Tuning tuning;

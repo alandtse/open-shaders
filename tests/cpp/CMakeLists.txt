@@ -131,6 +131,7 @@ add_executable(
     test_prerequisitechain.cpp
     test_desktop_mirror.cpp
     test_furshellassetscan.cpp
+    test_furshelllimits.cpp
     test_furinertiaspring.cpp
     test_region.cpp
     test_bound_points.cpp

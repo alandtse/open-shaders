@@ -213,15 +213,17 @@ bool GrassOptimizations::DispatchCull(ID3D11DeviceContext* ctx)
 	ctx->UpdateSubresource(cullBucketBuffer->resource.get(), 0, &box, cullEntries.data(), 0, 0);
 	cullDispatchCB->Update(params);
 
-	// UploadCullState binds Hi-Z, the slice table, cull parameters and the argument UAV.
+	// UploadCullState binds Hi-Z, the slice table and cull parameters.
 	ID3D11ShaderResourceView* pools[2] = { bucketStore.InstancePoolSRV(), bucketStore.GroupPoolSRV() };
 	ctx->CSSetShaderResources(0, 2, pools);
 	ID3D11ShaderResourceView* buckets = cullBucketBuffer->srv.get();
 	ctx->CSSetShaderResources(4, 1, &buckets);
 	ID3D11Buffer* paramsCB = cullDispatchCB->CB();
 	ctx->CSSetConstantBuffers(1, 1, &paramsCB);
-	ID3D11UnorderedAccessView* output = bucketStore.cullOutput.records->uav.get();
-	ctx->CSSetUnorderedAccessViews(0, 1, &output, nullptr);
+	ID3D11UnorderedAccessView* outputs[1 + kTierCount] = { bucketStore.arguments->uav.get() };
+	for (uint32_t tier = 0; tier < kTierCount; ++tier)
+		outputs[1 + tier] = bucketStore.cullOutput.tiers[tier]->UAV();
+	ctx->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
 	ctx->Dispatch(params.dispatchWidth, (params.groupCount + params.dispatchWidth - 1) / params.dispatchWidth, 1);
 
 	return true;
@@ -757,12 +759,9 @@ void GrassOptimizations::UploadCullState(ID3D11DeviceContext* ctx, CullParamsCB&
 
 	ID3D11ShaderResourceView* sharedSRVs[2] = { useHiZ ? globals::hiZPyramid->GetSRV() : nullptr, sliceTable->srv.get() };
 	ctx->CSSetShaderResources(2, 2, sharedSRVs);
-	ID3D11UnorderedAccessView* argumentsUAV = bucketStore.arguments->uav.get();
-	ctx->CSSetUnorderedAccessViews(1, 1, &argumentsUAV, nullptr);
-
 	const bool dispatched = DispatchCull(ctx);
 
-	ID3D11UnorderedAccessView* nullUAVs[2] = {};
+	ID3D11UnorderedAccessView* nullUAVs[1 + kTierCount] = {};
 	ctx->CSSetUnorderedAccessViews(0, (UINT)std::size(nullUAVs), nullUAVs, nullptr);
 	ID3D11ShaderResourceView* nullSRVs[5] = {};
 	ctx->CSSetShaderResources(0, (UINT)std::size(nullSRVs), nullSRVs);

@@ -10,6 +10,7 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
+#include "IBL.h"
 #include "LODShadows.h"
 #include "SkySync.h"
 #include "State.h"
@@ -382,8 +383,6 @@ bool TerrainShadows::IsHeightMapReady()
 
 TerrainShadows::PerFrame TerrainShadows::GetCommonBufferData()
 {
-	if (globals::features::lodShadows.ReplacesTerrainShadows())
-		return {};
 	bool isHeightmapReady = IsHeightMapReady();
 
 	PerFrame data = {
@@ -659,7 +658,8 @@ void TerrainShadows::ReflectionsPrepass()
 
 void TerrainShadows::EarlyPrepass()
 {
-	if (globals::features::lodShadows.ReplacesTerrainShadows()) {
+	if (globals::features::lodShadows.ReplacesTerrainShadows() &&
+		(!settings.EnableTerrainShadow || !globals::features::ibl.UsesReflectionRadiance())) {
 		if (texShadowHeight) {
 			ID3D11ShaderResourceView* nullView = nullptr;
 			globals::d3d::context->PSSetShaderResources(60, 1, &nullView);

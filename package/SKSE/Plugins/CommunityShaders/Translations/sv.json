@@ -12,6 +12,7 @@
     "common.restart_required": "Omstart krävs",
     "common.settings_managed_by_enb": "Inställningarna hanteras av ENB",
     "common.yes": "Ja",
+    "compatibility.tullius_ctd_logger": "Tullius CTD Logger kan få Skyrim att frysa i över en sekund när en diagnostikdump skrivs under spelets gång",
     "cs_editor.actions": "Åtgärder",
     "cs_editor.active": "Aktiv:",
     "cs_editor.active_chip_tooltip": "Klicka för att hitta posten i listan. Dubbelklicka för att öppna redigeraren.",

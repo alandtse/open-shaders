@@ -407,13 +407,21 @@ namespace Util
 		 * @param context Human-readable description used in the log message
 		 * @param maxBytes Larger files are rejected; 0 means unbounded
 		 * @param error Receives the reason when the file exists but is rejected; untouched when it cannot be opened
+		 * @param allowComments Accepts `//` and block comments
 		 * @return The document, or nullopt when the file cannot be opened, is too large, or cannot be parsed
 		 */
 		template <class Json = nlohmann::json>
-		std::optional<Json> ReadJsonFile(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes = 0, std::string* error = nullptr);
+		std::optional<Json> ReadJsonFile(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes = 0, std::string* error = nullptr, bool allowComments = false);
+
+		/**
+		 * @brief The direct subdirectories or regular files of @p directory, sorted by path.
+		 * @param context Human-readable description used in the log message
+		 * @return What could be listed; enumeration errors, including a missing directory, are logged
+		 */
+		std::vector<std::filesystem::path> GetSortedDirectoryPaths(const std::filesystem::path& directory, bool directories, std::string_view context);
 
 		/** @brief ReadJsonFile that also rejects documents whose root is not an object. */
-		std::optional<nlohmann::json> ReadJsonObject(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes = 0, std::string* error = nullptr);
+		std::optional<nlohmann::json> ReadJsonObject(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes = 0, std::string* error = nullptr, bool allowComments = false);
 	}
 
 	/**

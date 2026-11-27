@@ -6,6 +6,7 @@
 #include "Feature.h"
 #include "SceneSettingsCatalog.generated.h"
 #include "SceneSettingsPolicy.h"
+#include "Utils/FileSystem.h"
 #include "Utils/Hash.h"
 #include "Utils/SettingsCatalog.h"
 #include "Utils/SettingsNumeric.h"
@@ -77,8 +78,7 @@ namespace SceneSettingsInternal
 		SceneSettingsManager::TransitionControl control, std::string_view context);
 
 	/** @brief A directory's subdirectories or regular files in stable path order; errors are logged. */
-	std::vector<std::filesystem::path> GetSortedDirectoryPaths(
-		const std::filesystem::path& directory, bool directories, std::string_view context);
+	using Util::FileHelpers::GetSortedDirectoryPaths;
 
 	/** @brief A directory's .json files in stable path order. */
 	std::vector<std::filesystem::path> GetSortedJsonFiles(

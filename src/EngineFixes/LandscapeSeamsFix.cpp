@@ -685,7 +685,7 @@ struct LandscapeSeamsFix::Hooks
 					continue;
 
 				auto technique = pass->passEnum - LightingTechniqueStart;
-				const auto type = static_cast<SIE::ShaderCache::LightingShaderTechniques>((technique >> 24) & 0x3F);
+				const auto type = SIE::ShaderCache::GetLightingTechnique(technique);
 				const bool landscape = type == SIE::ShaderCache::LightingShaderTechniques::MTLand || type == SIE::ShaderCache::LightingShaderTechniques::MTLandLODBlend;
 
 				// Vanilla packs a light count into the seams bit, so it is cleared on every other lighting pass.
@@ -746,7 +746,7 @@ void LandscapeSeamsFix::GenerateShaderPermutations(RE::BSShader* a_shader)
 	auto state = globals::state;
 	auto shaderCache = globals::shaderCache;
 	for (const auto& entry : a_shader->pixelShaders) {
-		const auto type = static_cast<SIE::ShaderCache::LightingShaderTechniques>((entry->id >> 24) & 0x3F);
+		const auto type = SIE::ShaderCache::GetLightingTechnique(entry->id);
 		if (type != SIE::ShaderCache::LightingShaderTechniques::MTLand && type != SIE::ShaderCache::LightingShaderTechniques::MTLandLODBlend)
 			continue;
 

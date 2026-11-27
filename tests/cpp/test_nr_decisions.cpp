@@ -220,6 +220,8 @@ TEST_CASE("DecideFrame rebuilds for a requested runtime swap only when it can ru
 	REQUIRE(NR::DecideFrame(uninitialized) == NR::FrameAction::InitializeThenRun);
 	auto latched = swapping;
 	latched.failed = true;
+	REQUIRE(NR::DecideFrame(latched) == NR::FrameAction::RebuildThenRun);
+	latched.swapRequested = false;
 	REQUIRE(NR::DecideFrame(latched) == NR::FrameAction::SkipLatched);
 }
 
@@ -408,7 +410,7 @@ TEST_CASE("Tuning::Sanitize bounds every strength knob", "[nr]")
 	tuning.colorStrength = 4.0f;
 	tuning.Sanitize();
 	REQUIRE(tuning.style == NR::Tuning::kMaxStyle);
-	REQUIRE(tuning.intensity == NR::Tuning::kMaxStrength);
+	REQUIRE(tuning.intensity == NR::Tuning::kMaxIntensity);
 	REQUIRE(tuning.localToneStrength == NR::Tuning::kMinStrength);
 	REQUIRE(tuning.localStructureStrength == NR::Tuning::kDefaultStrength);
 	REQUIRE(tuning.skinStructureStrength == NR::Tuning::kMaxStrength);
@@ -433,11 +435,11 @@ TEST_CASE("Tuning::Sanitize bounds every strength knob", "[nr]")
 	REQUIRE(tuning.skinStructureStrength == NR::Tuning::kAutomaticSkinStructure);
 
 	// In-range values are left alone.
-	tuning.intensity = 1.5f;
+	tuning.intensity = 0.75f;
 	tuning.localToneStrength = 0.25f;
 	tuning.style = 1;
 	tuning.Sanitize();
-	REQUIRE(tuning.intensity == Catch::Approx(1.5f));
+	REQUIRE(tuning.intensity == Catch::Approx(0.75f));
 	REQUIRE(tuning.localToneStrength == Catch::Approx(0.25f));
 	REQUIRE(tuning.style == 1);
 }

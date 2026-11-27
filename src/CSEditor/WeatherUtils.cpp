@@ -27,21 +27,14 @@ bool WidgetFactory::IsWidgetFocused(const Widget& widget)
 
 namespace WeatherUtils::TexturePath
 {
-	std::string Normalize(std::string_view path)
-	{
-		auto result = Util::ToLower(std::string(path));
-		std::replace(result.begin(), result.end(), '/', '\\');
-		return result;
-	}
-
 	bool HasDdsExtension(std::string_view path)
 	{
-		return Normalize(path).ends_with(kDdsExtension);
+		return Util::ToGameAssetPath(path).ends_with(kDdsExtension);
 	}
 
 	bool ExistsOnDisk(std::string_view path)
 	{
-		const std::string lower = Normalize(path);
+		const std::string lower = Util::ToGameAssetPath(path);
 		if (!lower.ends_with(kDdsExtension))
 			return false;
 
@@ -62,7 +55,7 @@ namespace WeatherUtils::TexturePath
 	{
 		std::string result(kResourcePrefix);
 		result.append(path);
-		if (!Normalize(result).ends_with(kDdsExtension))
+		if (!Util::ToGameAssetPath(result).ends_with(kDdsExtension))
 			result += kDdsExtension;
 		return result;
 	}

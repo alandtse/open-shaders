@@ -49,7 +49,6 @@ void VolumetricLighting::DrawSettings()
 
 void VolumetricLighting::DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, const bool isInterior, const bool inLocationType)
 {
-	auto& [Width, Height, Depth] = FetchCurrentSizeInUnits(isInterior);
 	const char* qualityNames[] = {
 		T(TKEY("quality_low"), "Low"),
 		T(TKEY("quality_medium"), "Medium"),
@@ -62,83 +61,31 @@ void VolumetricLighting::DrawVolumetricLightingSettings(int32_t& quality, Textur
 			SetupVL();
 	}
 
-	const bool isCustomQuality = static_cast<Quality>(quality) == Quality::Custom;
-	if (!isCustomQuality)
-		ImGui::BeginDisabled();
+	const auto selected = static_cast<Quality>(quality);
+	TextureSize preview = defaultSizeHigh;
+	if (selected == Quality::Low)
+		preview = *gVolumetricLightingSizeLow;
+	else if (selected == Quality::Medium)
+		preview = *gVolumetricLightingSizeMedium;
 
-	if (ImGui::SliderInt(isInterior ? T(TKEY("interior_width"), "Interior Width") : T(TKEY("exterior_width"), "Exterior Width"), &Width, 1, 20, FromUnits(Width, 32), ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
-		customSize.Width = Width * 32;
-		if (inLocationType)
-			SetupVL();
-	}
-
-	if (ImGui::SliderInt(isInterior ? T(TKEY("interior_height"), "Interior Height") : T(TKEY("exterior_height"), "Exterior Height"), &Height, 1, 20, FromUnits(Height, 32), ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
-		customSize.Height = Height * 32;
-		if (inLocationType)
-			SetupVL();
-	}
-
-	if (ImGui::SliderInt(isInterior ? T(TKEY("interior_depth"), "Interior Depth") : T(TKEY("exterior_depth"), "Exterior Depth"), &Depth, 1, 64, FromUnits(Depth, 10), ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
-		customSize.Depth = Depth * 10;
-		if (inLocationType)
-			SetupVL();
-	}
-
-	if (!isCustomQuality)
-		ImGui::EndDisabled();
-}
-
-inline const char* VolumetricLighting::FromUnits(const int32_t value, const int32_t unitScale)
-{
-	static std::string s;
-	s = std::to_string(value * unitScale);
-	return s.c_str();
-}
-
-VolumetricLighting::TextureSize& VolumetricLighting::FetchCurrentSizeInUnits(const bool interior)
-{
-	auto& size = interior ? interiorSizeInUnits : exteriorSizeInUnits;
-	if (interior) {
-		switch (static_cast<Quality>(settings.InteriorQuality)) {
-		case Quality::Low:
-			size = *gVolumetricLightingSizeLow;
-			break;
-		case Quality::Medium:
-			size = *gVolumetricLightingSizeMedium;
-			break;
-		case Quality::High:
-			size = defaultSizeHigh;
-			break;
-		case Quality::Custom:
-			size = settings.InteriorCustomSize;
-			break;
-		default:
-			break;
-		}
-	} else {
-		switch (static_cast<Quality>(settings.ExteriorQuality)) {
-		case Quality::Low:
-			size = *gVolumetricLightingSizeLow;
-			break;
-		case Quality::Medium:
-			size = *gVolumetricLightingSizeMedium;
-			break;
-		case Quality::High:
-			size = defaultSizeHigh;
-			break;
-		case Quality::Custom:
-			size = settings.ExteriorCustomSize;
-			break;
-		default:
-			break;
-		}
-	}
-
-	size.Height /= 32;
-	size.Width /= 32;
-	size.Depth /= 10;
-
-	return size;
+	const bool custom = selected == Quality::Custom;
+	auto& size = custom ? customSize : preview;
+	ImGui::BeginDisabled(!custom);
+	auto drawDimension = [](const char* label, int& texels, int step, int maxSteps) {
+		return SettingsControl::InterceptInt(label, texels, [&](int& value) {
+			int units = value / step;
+			if (!ImGui::SliderInt(label, &units, 1, maxSteps, std::to_string(value).c_str(), ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput))
+				return false;
+			value = units * step;
+			return true;
+		});
+	};
+	bool changed = drawDimension(isInterior ? T(TKEY("interior_width"), "Interior Width") : T(TKEY("exterior_width"), "Exterior Width"), size.Width, 32, 20);
+	changed |= drawDimension(isInterior ? T(TKEY("interior_height"), "Interior Height") : T(TKEY("exterior_height"), "Exterior Height"), size.Height, 32, 20);
+	changed |= drawDimension(isInterior ? T(TKEY("interior_depth"), "Interior Depth") : T(TKEY("exterior_depth"), "Exterior Depth"), size.Depth, 10, 64);
+	ImGui::EndDisabled();
+	if (changed && inLocationType && custom)
+		SetupVL();
 }
 
 void VolumetricLighting::LoadSettings(json& o_json)

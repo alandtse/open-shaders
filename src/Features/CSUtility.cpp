@@ -147,17 +147,22 @@ namespace
 		DrawColorAdjustmentSliders(a_name, a_settings.saturation, a_settings.gammaOffset);
 	}
 
+	void DrawNamedMultiplier(const char* a_name, float& a_multiplier, const char* a_tooltip, float a_min = kMultiplierMin, float a_max = kMultiplierMax)
+	{
+		const auto label = I18n::GetSingleton()->Format(TKEY("color_multiplier"), { { "name", a_name } }, "{name} Multiplier");
+		ImGui::SliderFloat(label.c_str(), &a_multiplier, a_min, a_max, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (a_tooltip) {
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextWrapped("%s", a_tooltip);
+		}
+	}
+
 	void DrawLightGroup(const char* a_name, float& a_multiplier, CSUtility::ColorAdjustment& a_color, ImGuiTreeNodeFlags a_flags = ImGuiTreeNodeFlags_None, float a_min = kMultiplierMin, float a_max = kMultiplierMax, bool a_enabled = true, const char* a_tooltip = nullptr, const char* a_sliderName = nullptr)
 	{
 		if (ImGui::TreeNodeEx(a_name, a_flags)) {
 			const char* sliderName = a_sliderName ? a_sliderName : a_name;
 			ImGui::BeginDisabled(!a_enabled);
-			const auto label = I18n::GetSingleton()->Format(TKEY("color_multiplier"), { { "name", sliderName } }, "{name} Multiplier");
-			ImGui::SliderFloat(label.c_str(), &a_multiplier, a_min, a_max, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (a_tooltip) {
-				if (auto _tt = Util::HoverTooltipWrapper())
-					ImGui::TextWrapped("%s", a_tooltip);
-			}
+			DrawNamedMultiplier(sliderName, a_multiplier, a_tooltip, a_min, a_max);
 			DrawColorAdjustmentSliders(sliderName, a_color);
 			ImGui::EndDisabled();
 			if (!a_enabled)
@@ -302,11 +307,14 @@ void CSUtility::DrawAtmosphereSettings()
 		ImGui::TreePop();
 	}
 	if (ImGui::TreeNodeEx(T(TKEY("effects"), "Effects"))) {
-		ImGui::SliderFloat(T(TKEY("effect_brightness"), "Effect Brightness"), &settings.effectBrightness, kWeatherBrightnessMin, kWeatherBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("effect_brightness"), "Effects Brightness"), &settings.effectBrightness, kWeatherBrightnessMin, kWeatherBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextWrapped("%s", T(TKEY("effect_brightness_tooltip"), "Scales effect lighting from the weather or ambient lighting. One preserves its brightness; lower values darken it and higher values brighten it."));
 		}
-		DrawColorAdjustmentSliders(T(TKEY("effects"), "Effects"), settings.effectColor);
+		DrawNamedMultiplier(T(TKEY("effect_lighting_multiplier"), "Effects"), settings.effectLightingMult,
+			T(TKEY("effect_lighting_multiplier_tooltip"), "Adjusts lighting on effect meshes according to their lighting influence."));
+		DrawColorAdjustmentSliders(T(TKEY("effect_source_lighting"), "Source Lighting"), settings.effectColor);
+		DrawColorAdjustmentSliders(T(TKEY("effect_combined_lighting"), "Combined Lighting"), settings.effectLightingColor);
 		ImGui::TreePop();
 	}
 	if (ImGui::TreeNodeEx(T(TKEY("sky_statics"), "Sky Statics"))) {
@@ -314,11 +322,11 @@ void CSUtility::DrawAtmosphereSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextWrapped("%s", T(TKEY("sky_static_brightness_tooltip"), "Scales sky static lighting from the weather or ambient lighting. One preserves its brightness; lower values darken it and higher values brighten it."));
 		}
-		DrawColorAdjustmentSliders(T(TKEY("sky_statics"), "Sky Statics"), settings.skyStaticColor);
 		ImGui::SliderFloat(T(TKEY("sky_static_transparency"), "Sky Static Transparency"), &settings.skyStaticTransparency, kSkyStaticTransparencyMin, kSkyStaticTransparencyMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextWrapped("%s", T(TKEY("sky_static_transparency_tooltip"), "Fades sky static meshes. Zero preserves their current visibility; one makes them fully transparent."));
 		}
+		DrawColorAdjustmentSliders(T(TKEY("sky_statics"), "Sky Statics"), settings.skyStaticColor);
 		ImGui::TreePop();
 	}
 	if (ImGui::TreeNodeEx(T(TKEY("vanilla_fog"), "Vanilla Fog"))) {
@@ -375,10 +383,8 @@ void CSUtility::DrawMaterialSettings()
 	if (!Util::BeginPillTabItem(T(TKEY("materials"), "Materials")))
 		return;
 	activeSettingsPage = SettingsPage::Materials;
-	DrawLightGroup(T(TKEY("emissive_multiplier"), "Emissive"), settings.emitColorMult, settings.emitColor, ImGuiTreeNodeFlags_DefaultOpen);
 	DrawLightGroup(T(TKEY("glowmap_multiplier"), "Glowmaps"), settings.glowmapMult, settings.glowmapColor, ImGuiTreeNodeFlags_DefaultOpen);
-	DrawLightGroup(T(TKEY("effect_lighting_multiplier"), "Effects"), settings.effectLightingMult, settings.effectLightingColor, ImGuiTreeNodeFlags_DefaultOpen, kMultiplierMin, kMultiplierMax, true,
-		T(TKEY("effect_lighting_multiplier_tooltip"), "Adjusts lighting on effect meshes according to their lighting influence."));
+	DrawLightGroup(T(TKEY("emissive_multiplier"), "Emissive"), settings.emitColorMult, settings.emitColor, ImGuiTreeNodeFlags_DefaultOpen);
 	Util::EndPillTabItem();
 }
 
@@ -510,6 +516,8 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 		settings.vlIntensity = defaults.vlIntensity;
 		settings.sunGlareIntensity = defaults.sunGlareIntensity;
 		settings.effectColor = defaults.effectColor;
+		settings.effectLightingColor = defaults.effectLightingColor;
+		settings.effectLightingMult = defaults.effectLightingMult;
 		settings.skyStaticColor = defaults.skyStaticColor;
 		settings.sunGlareColor = defaults.sunGlareColor;
 		settings.fogSaturation = defaults.fogSaturation;
@@ -542,10 +550,8 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 	case SettingsPage::Materials:
 		settings.emitColor = defaults.emitColor;
 		settings.glowmapColor = defaults.glowmapColor;
-		settings.effectLightingColor = defaults.effectLightingColor;
 		settings.emitColorMult = defaults.emitColorMult;
 		settings.glowmapMult = defaults.glowmapMult;
-		settings.effectLightingMult = defaults.effectLightingMult;
 		break;
 	case SettingsPage::VanillaDepthOfField:
 		settings.sceneDof = defaults.sceneDof;
@@ -559,10 +565,10 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 
 std::vector<std::string> CSUtility::GetCurrentPageSettingKeys() const
 {
-	static constexpr std::array<std::string_view, 21> atmosphereKeys{ "useAmbientEffectLighting", "skyBrightness", "cloudBrightness", "skySaturation", "cloudSaturation", "skyGammaOffset", "cloudGammaOffset", "effectBrightness", "skyStaticBrightness", "skyStaticTransparency", "fogGammaOffset", "fogAlphaGammaOffset", "fogIntensity", "vlGammaOffset", "vlIntensity", "sunGlareIntensity", "effectColor", "skyStaticColor", "sunGlareColor", "fogSaturation", "vlSaturation" };
+	static constexpr std::array<std::string_view, 23> atmosphereKeys{ "useAmbientEffectLighting", "skyBrightness", "cloudBrightness", "skySaturation", "cloudSaturation", "skyGammaOffset", "cloudGammaOffset", "effectBrightness", "effectLightingColor", "effectLightingMult", "skyStaticBrightness", "skyStaticTransparency", "fogGammaOffset", "fogAlphaGammaOffset", "fogIntensity", "vlGammaOffset", "vlIntensity", "sunGlareIntensity", "effectColor", "skyStaticColor", "sunGlareColor", "fogSaturation", "vlSaturation" };
 	static constexpr std::array<std::string_view, 2> waterKeys{ "water", "waterGammaOffset" };
 	static constexpr std::array<std::string_view, 18> lightKeys{ "ambientLightMult", "directionalLightMult", "pointLightMult", "linearPointLightMult", "spotlightMult", "linearSpotlightMult", "omnidirectionalBulbMult", "linearOmnidirectionalBulbMult", "sceneBrightness", "sceneColor", "ambientLightColor", "directionalLightColor", "pointLightColor", "linearPointLightColor", "spotlightColor", "linearSpotlightColor", "omnidirectionalBulbColor", "linearOmnidirectionalBulbColor" };
-	static constexpr std::array<std::string_view, 6> materialKeys{ "emitColorMult", "glowmapMult", "effectLightingMult", "emitColor", "glowmapColor", "effectLightingColor" };
+	static constexpr std::array<std::string_view, 4> materialKeys{ "glowmapMult", "glowmapColor", "emitColorMult", "emitColor" };
 	static constexpr std::array<std::string_view, 2> depthOfFieldKeys{ "sceneDof", "underwaterDof" };
 	static constexpr std::array<std::string_view, 1> bloomKeys{ "bloomEnhancement" };
 

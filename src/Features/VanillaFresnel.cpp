@@ -35,7 +35,7 @@ namespace
 	bool IsEyeTechnique(const RE::BSLightingShader* a_shader)
 	{
 		return a_shader &&
-		       static_cast<SIE::ShaderCache::LightingShaderTechniques>(0x3F & (a_shader->currentRawTechnique >> 24)) == SIE::ShaderCache::LightingShaderTechniques::Eye;
+		       SIE::ShaderCache::GetLightingTechnique(a_shader->currentRawTechnique) == SIE::ShaderCache::LightingShaderTechniques::Eye;
 	}
 
 	bool IsEyePass(const RE::BSLightingShader* a_shader, const RE::BSRenderPass* a_pass)
