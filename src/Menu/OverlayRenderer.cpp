@@ -267,6 +267,18 @@ bool OverlayRenderer::ShouldSkipRendering()
 	uint32_t effectFailed = 0;
 #endif
 
+	// The Performance Overlay and Scene Selector draw only under the global overlay toggle; the other overlays gate themselves.
+	const bool globalOverlay = Menu::GetSingleton()->overlayVisible;
+	bool overlayVisible = false;
+	for (Feature* feat : Feature::GetFeatureList()) {
+		auto* overlay = feat && feat->loaded ? dynamic_cast<OverlayFeature*>(feat) : nullptr;
+		if (overlay && overlay->IsOverlayVisible() &&
+			(globalOverlay || (feat != &globals::features::performanceOverlay && feat != &globals::features::sceneSelector))) {
+			overlayVisible = true;
+			break;
+		}
+	}
+
 	return !(shaderCache->IsCompiling() ||
 			 Menu::GetSingleton()->IsOpen() ||
 			 Menu::GetSingleton()->openFade > 0.0f ||
@@ -277,8 +289,7 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 abTestingManager->IsEnabled() ||
 			 (failed && !hide) ||
 			 effectFailed ||
-			 globals::features::performanceOverlay.settings.ShowInOverlay ||
-			 globals::features::sceneSelector.IsOverlayVisible() ||
+			 overlayVisible ||
 			 renderDoc->ShouldShowOverlay() ||
 			 globals::features::vr.HelperRequestsRender());
 }
