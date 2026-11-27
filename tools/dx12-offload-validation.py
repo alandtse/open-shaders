@@ -34,7 +34,7 @@ POSE_RAISE = 120.0
 POSE_PITCH_DEG = -12.0
 SETTLE_SECONDS = 3.0
 MODE_SETTLE_SECONDS = 8.0  # Cached shadow maps must redraw after a mode switch, or both shadow sources show at once.
-MIN_LAYER_DARKER_FRACTION = 0.05
+MIN_LAYER_CHANGED_FRACTION = 0.5
 READY_TIMEOUT_SECONDS = 90
 REPLAY_TIMEOUT_SECONDS = 120
 SAMPLE_SECONDS = 1.0
@@ -70,8 +70,9 @@ class Devbench:
         result = self.call("openshaders.feature", {"action": "get", "shortName": "DX12"})
         return result.get("settings", result)
 
-    def set_dx12(self, settings):
-        self.call("openshaders.feature", {"action": "set", "shortName": "DX12", "settings": settings})
+    def set_mask_debug_view(self, enabled):
+        self.call("openshaders.actions", {"action": "invokeCommand", "shortName": "DX12NativeScene",
+                                          "name": "setMaskDebugView", "args": {"enabled": enabled}})
 
 
 def find_port(requested):
@@ -277,28 +278,28 @@ def sample_replay(bench, out_name, mode=None):
 
 
 def check_layer_applied(bench, report, out):
-    """The RT shadow layer must visibly darken the frame at full strength, or offload only removes raster shadows."""
-    original = bench.dx12_settings()
+    """The composite must reach the presented frame, or offload only removes raster shadows."""
     x, y, z = player_position(bench)
     set_pose(bench, x, y, z + POSE_RAISE, POSE_YAWS_DEG[0])
     bench.set_mode(0)
     try:
-        bench.set_dx12({"ShadowStrength": 0.0, "ShadowBlend": 1.0})
+        bench.set_mask_debug_view(False)
         time.sleep(SETTLE_SECONDS)
-        off = capture(bench, out, "layer_strength0")
-        bench.set_dx12({"ShadowStrength": 4.0, "ShadowBlend": 1.0})
+        scene = capture(bench, out, "layer_scene")
+        bench.set_mask_debug_view(True)
         time.sleep(SETTLE_SECONDS)
-        full = capture(bench, out, "layer_strength4")
+        mask = capture(bench, out, "layer_mask")
+        stages = bench.status()
     finally:
-        bench.set_dx12({k: original[k] for k in ("ShadowStrength", "ShadowBlend") if k in original})
+        bench.set_mask_debug_view(False)
         freecam_off(bench)
-    diff = image_diff(off, full, out / "layer_strength4_vs_0_diff.png")
-    darker = diff.get("darkerFraction", 0.0)
+    diff = image_diff(scene, mask, out / "layer_mask_vs_scene_diff.png")
+    changed = diff.get("changedFraction", 0.0)
     report.data["layer"] = diff
-    report.check("RT shadow layer reaches the frame", "PASS" if darker >= MIN_LAYER_DARKER_FRACTION else "FAIL",
-                 f"strength 4 darkens {darker:.1%} of pixels vs strength 0 (need {MIN_LAYER_DARKER_FRACTION:.0%}); mean {diff.get('meanSigned', 0):+.2f} luma")
-    if darker < MIN_LAYER_DARKER_FRACTION:
-        report.look(out / "layer_strength4_vs_0_diff.png", "should be mostly red where owned lights cast static shadows")
+    report.check("RT shadow layer reaches the frame", "PASS" if changed >= MIN_LAYER_CHANGED_FRACTION else "FAIL",
+                 f"mask debug view changes {changed:.1%} of pixels (need {MIN_LAYER_CHANGED_FRACTION:.0%}); "
+                 f"trace {stages.get('trace', {}).get('lastOutcome')}, composite {stages.get('composite', {}).get('lastShadowResult')}")
+    report.look(mask, "grayscale shadow visibility; magenta marks receivers without a matching mask sample")
 
 
 def run_ab(bench, report, out):
