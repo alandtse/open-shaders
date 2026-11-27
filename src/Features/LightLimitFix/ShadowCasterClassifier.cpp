@@ -547,7 +547,8 @@ namespace ShadowCasterManager
 			const bool dynamic = IsFullRTDynamicCaster(geom);
 			if (dynamic)
 				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
-			return !dynamic;
+			// A static caster the TLAS lacks would otherwise lose its shadow entirely.
+			return !dynamic && globals::features::dx12NativeScene.CasterInTlas(geom);
 		}
 		// Skinned = always dynamic (see IsCasterDynamic); only non-skinned
 		// casters have a mobility record, classified once per frame.
