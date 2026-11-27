@@ -377,7 +377,7 @@ namespace DX12
 
 	std::optional<ScenePrepRequest> CaptureScenePrepRequest(
 		SubcellKey a_key, uint32_t a_size, const RE::TESObjectCELL* a_cell,
-		const RE::TESWorldSpace* a_world, bool a_predictive, bool a_corner)
+		const RE::TESWorldSpace* a_world, bool a_predictive, bool a_corner, bool a_consolidate, bool a_loading)
 	{
 		if (!a_key.scope || !std::ranges::contains(kSubcellSizes, a_size) || !a_cell)
 			return std::nullopt;
@@ -394,6 +394,8 @@ namespace DX12
 		request.worldspace = a_world != nullptr;
 		request.predictive = a_predictive;
 		request.corner = a_corner;
+		request.consolidate = a_consolidate && !a_world;
+		request.loading = a_loading;
 
 		ankerl::unordered_dense::set<uint32_t> visitedRefs;
 		size_t candidateCount = 0;
@@ -426,7 +428,7 @@ namespace DX12
 			}
 
 			if (const auto* light = base->As<RE::TESObjectLIGH>()) {
-				if (InsideSubcellXY(pos.x, pos.y, a_key.x, a_key.y, a_size)) {
+				if (request.consolidate || InsideSubcellXY(pos.x, pos.y, a_key.x, a_key.y, a_size)) {
 					if (request.lights.size() < kMaxPreparedLights) {
 						PreparedLight prepared;
 						prepared.referenceID = refID;
@@ -687,7 +689,9 @@ namespace DX12
 			}
 
 			ZoneScopedN("DX12::Preparation::Worker");
+			SetThreadPriority(GetCurrentThread(), task->loading ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_BELOW_NORMAL);
 			const auto started = Util::GetQpcTicks();
+			const bool consolidationAttempt = task->consolidate;
 			std::vector<RE::NiPointer<RE::NiObject>> localRetired;
 			ScenePrepResult result;
 			try {
@@ -699,7 +703,9 @@ namespace DX12
 				result.publication.key = task ? task->key : SubcellKey{};
 				result.failure = "Unknown scene preparation failure";
 			}
+			result.consolidationAttempt = consolidationAttempt;
 			result.preparationMs = Util::QpcElapsedUs(started, Util::GetQpcTicks(), Util::GetQpcFrequency()) / 1000.0;
+			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 			{
 				std::scoped_lock lock(mutex);
 				RetireObjectsLocked(localRetired);
@@ -737,6 +743,18 @@ namespace DX12
 		}
 
 		std::unordered_set<uint64_t> emittedIdentities;
+		double lowX = std::numeric_limits<double>::infinity(), lowY = lowX;
+		double highX = -lowX, highY = -lowY;
+		bool budgetExceeded = false;
+		const auto include = [&](double x, double y) {
+			lowX = std::min(lowX, x);
+			lowY = std::min(lowY, y);
+			highX = std::max(highX, x);
+			highY = std::max(highY, y);
+		};
+		if (a_request.consolidate)
+			for (const auto& light : pub.lights)
+				include(light.position.x, light.position.y);
 		const auto emitShape = [&](
 								   uint64_t a_identity, const std::vector<float3>& a_positions,
 								   const std::vector<uint32_t>& a_indices, const std::array<float, 12>& a_transform,
@@ -750,13 +768,18 @@ namespace DX12
 					a_plugin, a_localID, a_nifPath, a_blockIndex, "invalid placed bounds");
 				return;
 			}
-			if (!*overlaps)
+			if (!*overlaps && !a_request.consolidate)
 				return;
+			if (a_request.consolidate)
+				for (const auto& p : a_positions)
+					include(double(a_transform[0]) * p.x + double(a_transform[1]) * p.y + double(a_transform[2]) * p.z + a_transform[3],
+						double(a_transform[4]) * p.x + double(a_transform[5]) * p.y + double(a_transform[6]) * p.z + a_transform[7]);
 
 			++pub.eligibleShapes;
 			const uint64_t bytes = uint64_t(a_positions.size()) * sizeof(float3) +
 			                       uint64_t(a_indices.size()) * sizeof(uint32_t);
 			if (pub.shapes.size() >= kMaxTileShapes || bytes > kMaxTileGeometryBytes - pub.geometryBytes) {
+				budgetExceeded = true;
 				RecordRejection(pub.rejectionReasons, pub.failedShapes, "tile shape or byte budget exceeded");
 				return;
 			}
@@ -889,6 +912,14 @@ namespace DX12
 
 		pub.validated = true;
 		pub.enumerationComplete = a_request.enumerationComplete && !a_request.lightCapacityExceeded && !a_request.candidateOverflow;
+		pub.spatialBoundsComplete = pub.enumerationComplete && !pub.failedShapes && !pub.rejectedLights;
+		if (a_request.consolidate && pub.enumerationComplete && !budgetExceeded && std::isfinite(lowX) && std::isfinite(lowY)) {
+			const auto size = double(a_request.size);
+			const auto cx = std::floor((lowX + highX) / (2.0 * size));
+			const auto cy = std::floor((lowY + highY) / (2.0 * size));
+			pub.wholeCell = lowX >= (cx - kPredictiveRadius) * size && lowY >= (cy - kPredictiveRadius) * size &&
+				highX < (cx + kPredictiveRadius + 1) * size && highY < (cy + kPredictiveRadius + 1) * size;
+		}
 		if (!pub.enumerationComplete || pub.failedShapes || pub.eligibleShapes != pub.shapes.size()) {
 			result.failure = std::format(
 				"Partial coverage: {} eligible shapes, {} extracted, {} unsupported; complete enumeration: {}",

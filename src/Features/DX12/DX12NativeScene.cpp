@@ -319,16 +319,6 @@ bool DX12NativeScene::WantsRenderPassHook() const
 bool DX12NativeScene::WantsPreShadowMapsHook() const { return WantsRenderPassHook(); }
 bool DX12NativeScene::WantsOpaqueRasterReadyHook() const { return WantsRenderPassHook(); }
 
-void DX12NativeScene::PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid)
-{
-	if (!grid || !grid->wholeCell || !globals::features::dx12Control.IsActive() || !AllowsNativeSceneWork() ||
-		!globals::d3d::device || !globals::d3d::context)
-		return;
-	nativeSessionStarted = true;
-	if (acceleration.Start(globals::d3d::device, globals::d3d::context))
-		acceleration.Request(std::move(grid));
-}
-
 void DX12NativeScene::PrepareLoadingScene(std::shared_ptr<const DX12::Grid> grid)
 {
 	ApplyPendingLoadingReset();
@@ -768,8 +758,7 @@ void DX12NativeScene::ApplyPendingLoadingReset()
 		globals::features::upscaling.nativeComposite.ResetShadowHistory();
 		raster.Reset();
 		shadows.Reset();
-		if (!globals::features::dx12Resources.HasMenuPreload())
-			acceleration.Reset();
+		acceleration.Reset();
 		geometryCapture.Reset();
 	}
 }

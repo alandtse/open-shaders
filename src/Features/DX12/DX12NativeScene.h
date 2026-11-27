@@ -41,8 +41,6 @@ struct DX12NativeScene final : OverlayFeature
 	std::function<void()> OnRenderPassBegin(const RE::BSRenderPass* pass) override;
 	bool WantsPreShadowMapsHook() const override;
 	void PreShadowMaps() override;
-	/** @brief Starts asynchronous acceleration preparation for a menu-preloaded cell. */
-	void PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid);
 	/** @brief Prepares a loading destination through the same acceleration worker without scene ownership. */
 	void PrepareLoadingScene(std::shared_ptr<const DX12::Grid> grid);
 	/** @brief Retires a whole-cell build when it cannot fit the current DXGI budget. */

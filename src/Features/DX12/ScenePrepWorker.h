@@ -47,6 +47,8 @@ namespace DX12
 		bool worldspace = false;
 		bool predictive = false;
 		bool corner = false;
+		bool consolidate = false;
+		bool loading = false;
 		bool enumerationComplete = false;
 		bool hasUnattachedCells = false;
 		bool lightCapacityExceeded = false;
@@ -67,13 +69,14 @@ namespace DX12
 		std::string failure;
 		bool predictive = false;
 		bool corner = false;
+		bool consolidationAttempt = false;
 		double preparationMs = 0.0;
 	};
 
 	/** @brief Captures live references, terrain, lights, and unattached model descriptors on the game thread. */
 	[[nodiscard]] std::optional<ScenePrepRequest> CaptureScenePrepRequest(
 		SubcellKey a_key, uint32_t a_size, const RE::TESObjectCELL* a_cell,
-		const RE::TESWorldSpace* a_world, bool a_predictive, bool a_corner);
+		const RE::TESWorldSpace* a_world, bool a_predictive, bool a_corner, bool a_consolidate, bool a_loading);
 
 	/** @brief Single bounded producer preparing immutable subcell geometry and lights off the render thread. */
 	class ScenePrepWorker
