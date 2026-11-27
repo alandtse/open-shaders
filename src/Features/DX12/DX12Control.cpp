@@ -3,6 +3,7 @@
 #include "DX12Resources.h"
 #include "Globals.h"
 #include "State.h"
+#include "Utils/DevBenchUx.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
