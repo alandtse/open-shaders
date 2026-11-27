@@ -225,10 +225,10 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 			if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
 				visibility = 1.0f - gradualFalloff;
 		}
-		#ifdef NATIVE_LIGHT_SLICES
+#ifdef NATIVE_LIGHT_SLICES
 		if (lightIndex < LightSlotCount && visibility < 1.0f)
 			LightMask[uint3(packed, lightIndex)] = visibility;
-		#endif
+#endif
 		total += weight;
 		visible += weight * visibility;
 	}
