@@ -29,12 +29,12 @@ cbuffer GainReuse : register(b1)
 	row_major float4x4 StereoMap;
 };
 
-// Mirrors PrepareToneData tap for tap, so a reused delta is the one the composite would have computed.
+// The delta is stored unfeathered: PrepareToneData and Composite feather the reused proxy at the current crop.
 [numthreads(8, 8, 1)] void StoreGain(uint3 id : SV_DispatchThreadID) {
 	if (id.x >= Width || id.y >= Height)
 		return;
 	const float3 inputSample = ProxyInput[id.xy].rgb;
-	const float3 outputSample = RegionStableNeuralSample(int2(id.xy), inputSample, NeuralOutput[id.xy].rgb);
+	const float3 outputSample = NeuralRenderingReuse::StoredSample(RegionWeight(int2(id.xy)), inputSample, NeuralOutput[id.xy].rgb);
 	const float3 input = ProxySrgbToLinear(inputSample);
 	const float3 output = ProxySrgbToLinear(outputSample);
 	const float inputLuma = max(Color::RGBToLuminance(input, Luma), kLumaEpsilon);

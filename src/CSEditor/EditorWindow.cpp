@@ -698,14 +698,22 @@ void EditorWindow::ShowViewportWindow()
 	}
 	ImGui::SetCursorScreenPos(imageRect.Min);
 	const ImVec2 imageSize = imageRect.GetSize();
+	bool sceneVisible = true;
 
 	if (tempTexture && tempTexture->srv) {
 		// tempTexture is a raw copy of the framebuffer RT; its alpha is not guaranteed to be 1,
 		// so a plain ImGui::Image can show the dimmed backdrop through as a transparency cutout.
 		Util::Subrect::ImageOpaque(tempTexture->srv.get(), imageSize);
 	} else if (!BackgroundBlur::ImageHDRScene(imageSize)) {
+		sceneVisible = false;
 		drawList->AddRectFilled(imageRect.Min, imageRect.Max, ImGui::GetColorU32(ImGuiCol_WindowBg));
 		ImGui::TextDisabled("%s", T(TKEY("viewport_unavailable"), "Viewport unavailable"));
+	}
+
+	if (sceneVisible && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(imageRect.Min, imageRect.Max)) {
+		sceneImageOrigin = imageRect.Min;
+		sceneImageSize = imageSize;
+		hoveredSceneImageFrame = ImGui::GetFrameCount();
 	}
 
 	if (!window->DockIsActive) {
@@ -832,9 +840,6 @@ void EditorWindow::DrawEditorWindows(float scale, float actionBarBottom)
 	const float maxBrowserWidth = ThemeManager::Constants::CSE_BROWSER_MAX_WIDTH * scale;
 	const float browserWidth = std::min(availableWidth * 0.5f, maxBrowserWidth);
 	const float viewportWidth = availableWidth - browserWidth;
-	ImGui::SetNextWindowSize(ImVec2(browserWidth, availableHeight), layoutCond);
-	ImGui::SetNextWindowPos(ImVec2(pad, actionBarBottom + pad), layoutCond);
-	ShowObjectsWindow();
 
 	if (IsViewportActive()) {
 		// Size viewport height to match game aspect ratio so the preview fits snugly
@@ -850,6 +855,10 @@ void EditorWindow::DrawEditorWindows(float scale, float actionBarBottom)
 	} else {
 		viewportBottomY = actionBarBottom + pad;
 	}
+
+	ImGui::SetNextWindowSize(ImVec2(browserWidth, availableHeight), layoutCond);
+	ImGui::SetNextWindowPos(ImVec2(pad, actionBarBottom + pad), layoutCond);
+	ShowObjectsWindow();
 
 	auto settingsWindowHeight = height * ThemeManager::Constants::CSE_SETTINGS_WINDOW_RATIO;
 	auto settingsWindowWidth = width * ThemeManager::Constants::CSE_SETTINGS_WINDOW_RATIO;
@@ -1521,6 +1530,15 @@ try {
 } catch (const std::exception& e) {
 	logger::error("Could not reload editor form documents: {}", e.what());
 	return false;
+}
+
+bool EditorWindow::GetHoveredSceneImage(ImVec2& origin, ImVec2& size) const
+{
+	if (hoveredSceneImageFrame != ImGui::GetFrameCount())
+		return false;
+	origin = sceneImageOrigin;
+	size = sceneImageSize;
+	return true;
 }
 
 bool EditorWindow::IsViewportActive() const

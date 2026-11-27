@@ -17,6 +17,21 @@ namespace ShadowCasterManager
 	using Util::HashCombineFloat;
 	using Util::QuantizeFloat;
 
+	inline constexpr int32_t kUndrawnShadowFrame = -1;
+	inline constexpr int32_t kPendingCasterRefreshFrame = -2;
+
+	/// Keeps previously drawn lights eligible while their shadow content is invalid.
+	inline constexpr int32_t FrameAfterCasterRefresh(int32_t lastDrawnFrame) noexcept
+	{
+		return lastDrawnFrame >= 0 ? kPendingCasterRefreshFrame : lastDrawnFrame;
+	}
+
+	/// Tests whether the new-light policy defers this shadow draw.
+	inline constexpr bool DeferNewShadowLight(int32_t lastDrawnFrame, bool allowNewLight, bool playerProtected) noexcept
+	{
+		return !playerProtected && !allowNewLight && lastDrawnFrame == kUndrawnShadowFrame;
+	}
+
 	/// Shadow strength of a slot: the fade-in ramp from a_fadeStart (a_fadeIn seconds) capped by the fade-out ramp from
 	/// a_releaseStart (a_fadeOut seconds); a negative start means no ramp.
 	inline float ShadowFadeAlpha(double a_now, double a_fadeStart, double a_releaseStart, float a_fadeIn, float a_fadeOut) noexcept

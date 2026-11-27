@@ -105,6 +105,8 @@ public:
 	PerFrame GetCommonBufferData() const;
 	/** @brief Returns true when IBL should be suppressed in the current scene for menus or interior cells. */
 	bool IsDisabledForCurrentScene() const;
+	/** @brief Returns whether exterior reflections supply a separate sky irradiance source. */
+	bool UsesReflectionRadiance() const;
 	/** @brief Returns true when Effects 11 owns IBL (not handed off to CS) with its own image based lighting enabled, overriding these settings. */
 	bool IsManagedByENB() const;
 	/** @brief Returns the diffuse IBL spherical harmonics compute shader, compiling it on first use. */

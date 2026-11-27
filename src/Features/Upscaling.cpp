@@ -764,7 +764,7 @@ void Upscaling::RegisterUxActions()
 		CaptureNeuralRendering);
 
 	FEATURE_COMMAND("calibrateNeuralCrop",
-		"Start the Neural Rendering crop cost sweep: centred crops of shrinking area are forced for about half a minute over four passes while NREvaluate GPU time is measured, and the result (per-step best low-percentile times, stability ratio, floor, and the largest crop still within 5% of the floor) appears under neuralCalibration in openshaders.feature diagnostics. Fails if frame generation is active or Neural Rendering is not running. Params: none.",
+		"Start the Neural Rendering crop cost sweep: centred crops of shrinking area are forced for about half a minute over four passes while NREvaluate GPU time is measured, and the result (per-step best low-percentile times, stability ratio, floor, and the largest crop still within 5% of the floor) appears under neuralCalibration in openshaders.feature diagnostics. Fails if frame generation is active, Model Scale is below 1, or Neural Rendering is not running. Params: none.",
 		CalibrateNeuralCrop);
 }
 
