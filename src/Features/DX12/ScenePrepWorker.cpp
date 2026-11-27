@@ -26,7 +26,6 @@
 #include <ankerl/unordered_dense.h>
 
 #include <algorithm>
-#include <bit>
 #include <cmath>
 #include <format>
 #include <limits>
@@ -163,13 +162,17 @@ namespace DX12
 			RE::BSGeometry& a_geom, ExtractedShapeDesc& a_out, std::string_view& a_outReason)
 		{
 			auto* tri = a_geom.AsTriShape();
-			if (!tri || a_geom.AsDynamicTriShape() || !IsSupportedRigidGeometryType(a_geom.GetType().get())) {
-				a_outReason = "unsupported animated or nontriangle shape";
+			if (a_geom.AsDynamicTriShape()) {
+				a_outReason = "dynamic triangle shape";
+				return GeometryInspectResult::Rejected;
+			}
+			if (!tri || !IsSupportedRigidGeometryType(a_geom.GetType().get())) {
+				a_outReason = "unsupported geometry type";
 				return GeometryInspectResult::Rejected;
 			}
 			const auto& runtime = a_geom.GetGeometryRuntimeData();
 			if (runtime.skinInstance) {
-				a_outReason = "unsupported animated or nontriangle shape";
+				a_outReason = "skinned geometry";
 				return GeometryInspectResult::Rejected;
 			}
 			const auto* property = runtime.shaderProperty.get();
@@ -184,15 +187,15 @@ namespace DX12
 			}
 			const auto* rendererData = runtime.rendererData;
 			if (!rendererData || !rendererData->rawVertexData || !rendererData->rawIndexData) {
-				a_outReason = "invalid or unsupported shape data";
+				a_outReason = "missing CPU mesh buffers";
 				return GeometryInspectResult::Rejected;
 			}
-			const uint64_t rawDesc = std::bit_cast<uint64_t>(runtime.vertexDesc);
-			const uint32_t stride = VertexStrideBytes(rawDesc);
+			auto desc = runtime.vertexDesc;
+			const uint32_t stride = desc.GetSize();
 			const auto counts = tri->GetTrishapeRuntimeData();
-			if (!HasVertexPositionStream(rawDesc) || stride < 16 || stride > 256 ||
+			if (!desc.HasFlag(RE::BSGraphics::Vertex::VF_VERTEX) || stride < 16 || stride > 256 ||
 				!counts.vertexCount || !counts.triangleCount) {
-				a_outReason = "invalid or unsupported shape data";
+				a_outReason = "invalid vertex descriptor or counts";
 				return GeometryInspectResult::Rejected;
 			}
 			uint32_t firstIndex = 0;
@@ -203,7 +206,7 @@ namespace DX12
 				                            .lodTriangleCounts;
 				const auto slice = ResolveMeshLODSlice(a_geom.GetLODMode(), lodCounts, counts.triangleCount);
 				if (!slice) {
-					a_outReason = "invalid or unsupported shape data";
+					a_outReason = "invalid LOD index slice";
 					return GeometryInspectResult::Rejected;
 				}
 				firstIndex = slice->first;
@@ -233,8 +236,8 @@ namespace DX12
 			if (!a_obj || a_depth > kMaxSceneGraphDepth || a_obj->GetAppCulled())
 				return;
 			if (a_obj->GetControllers() != nullptr) {
-				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "unsupported animated or nontriangle shape");
-				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, -1, "unsupported animated or nontriangle shape");
+				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "controlled scene subtree");
+				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, -1, "controlled scene subtree");
 				return;
 			}
 			if (auto* node = a_obj->AsNode()) {
@@ -328,8 +331,8 @@ namespace DX12
 				return;
 			if (a_obj->GetControllers() != nullptr) {
 				uint32_t ignored = 0;
-				RecordRejection(a_out.rejections, ignored, "unsupported animated or nontriangle shape");
-				a_out.missing.emplace_back(-1, "unsupported animated or nontriangle shape");
+				RecordRejection(a_out.rejections, ignored, "controlled scene subtree");
+				a_out.missing.emplace_back(-1, "controlled scene subtree");
 				return;
 			}
 			const auto currentTransform = ComposeAffine(a_parentTransform, FromNiTransform(a_obj->local));
@@ -366,8 +369,8 @@ namespace DX12
 					extracted.rawIndices, extracted.firstIndex, extracted.indexCount,
 					mesh->positions, mesh->indices)) {
 				uint32_t ignored = 0;
-				RecordRejection(a_out.rejections, ignored, "invalid or unsupported shape data");
-				a_out.missing.emplace_back(int32_t(ordinal), "invalid or unsupported shape data");
+				RecordRejection(a_out.rejections, ignored, "invalid decoded mesh data");
+				a_out.missing.emplace_back(int32_t(ordinal), "invalid decoded mesh data");
 				return;
 			}
 			mesh->bytes = uint64_t(mesh->positions.size()) * sizeof(float3) +
@@ -422,15 +425,21 @@ namespace DX12
 			const auto* base = a_ref->GetBaseObject();
 			if (!base) {
 				RecordRejection(request.rejectionReasons, request.failedShapes, "unresolved base record");
+				++request.unlocalizedRejections;
+				request.spatialBoundsKnown = false;
 				return RE::BSContainer::ForEachResult::kContinue;
 			}
 
 			if (!std::isfinite(pos.x) || !std::isfinite(pos.y) || !std::isfinite(pos.z)) {
 				RecordRejection(request.rejectionReasons, request.failedShapes, "invalid placement");
+				++request.unlocalizedRejections;
+				request.spatialBoundsKnown = false;
 				return RE::BSContainer::ForEachResult::kContinue;
 			}
 
 			if (const auto* light = base->As<RE::TESObjectLIGH>()) {
+				if (request.consolidate)
+					request.spatialBounds.Include(pos.x, pos.y);
 				if (request.consolidate || InsideSubcellXY(pos.x, pos.y, a_key.x, a_key.y, a_size)) {
 					if (request.lights.size() < kMaxPreparedLights) {
 						PreparedLight prepared;
@@ -462,17 +471,35 @@ namespace DX12
 			const std::string_view plugin = refFile ? refFile->GetFilename() : std::string_view{};
 			const uint32_t localID = a_ref->GetLocalFormID();
 			const auto* modeled = base->As<RE::TESModel>();
-			const std::optional<std::string> nifPath =
-				(modeled && modeled->GetModel() && modeled->GetModel()[0] != '\0') ?
-					NormalizeNifPath(modeled->GetModel()) :
-					std::nullopt;
+			const bool hasModelPath = modeled && modeled->GetModel() && modeled->GetModel()[0] != '\0';
+			const auto nifPath = hasModelPath ? NormalizeNifPath(modeled->GetModel()) : std::nullopt;
 			const std::string_view nifView = nifPath ? std::string_view(*nifPath) : std::string_view{};
 
+			const auto* stat = base->As<RE::TESObjectSTAT>();
+			if (stat && stat->IsSkyObject())
+				return RE::BSContainer::ForEachResult::kContinue;
+			auto* root = a_ref->Get3D();
+			PreparationBounds bounds;
+			const bool knownBounds = root && bounds.IncludeSphere(root->worldBound.center.x, root->worldBound.center.y, root->worldBound.radius);
+			const auto beforeRejections = request.failedShapes;
+			const SKSE::stl::scope_exit accountUnlocalized([&]() noexcept {
+				if (!knownBounds)
+					request.unlocalizedRejections += request.failedShapes - beforeRejections;
+			});
 			const bool supportedStatic = base->Is(
 				RE::FormType::Static, RE::FormType::StaticCollection,
 				RE::FormType::Furniture, RE::FormType::MovableStatic);
+			if (request.consolidate && (supportedStatic || hasModelPath)) {
+				if (knownBounds) {
+					request.spatialBounds.Include(bounds.minX, bounds.minY);
+					request.spatialBounds.Include(bounds.maxX, bounds.maxY);
+				} else {
+					request.spatialBoundsKnown = false;
+				}
+			}
 			if (!supportedStatic) {
-				if (!nifView.empty() && (!request.worldspace || InsideSubcellXY(pos.x, pos.y, a_key.x, a_key.y, a_size))) {
+				if (hasModelPath && (request.consolidate || (knownBounds ? bounds.MayOverlap(a_key.x, a_key.y, a_size) :
+					!request.worldspace || InsideSubcellXY(pos.x, pos.y, a_key.x, a_key.y, a_size)))) {
 					RecordRejection(request.rejectionReasons, request.failedShapes, "unsupported modeled record");
 					AddNifSource(request, plugin, localID, nifView);
 					AddMissingShape(request, plugin, localID, nifView, -1, "unsupported modeled record");
@@ -480,13 +507,12 @@ namespace DX12
 				return RE::BSContainer::ForEachResult::kContinue;
 			}
 
-			if (const auto* stat = base->As<RE::TESObjectSTAT>(); stat && stat->IsSkyObject())
-				return RE::BSContainer::ForEachResult::kContinue;
-
 			if (!nifView.empty())
 				AddNifSource(request, plugin, localID, nifView);
 
-			if (auto* root = a_ref->Get3D()) {
+			if (root) {
+				if (!request.consolidate && knownBounds && !bounds.MayOverlap(a_key.x, a_key.y, a_size))
+					return RE::BSContainer::ForEachResult::kContinue;
 				uint32_t ordinal = 0;
 				CaptureAttachedSubtree(root, refID, plugin, localID, nifView, ordinal, 0, request, captureCache);
 				return RE::BSContainer::ForEachResult::kContinue;
@@ -742,6 +768,7 @@ namespace DX12
 		pub.missingShapes = std::move(a_request.missingShapes);
 		pub.rejectionReasons = std::move(a_request.rejectionReasons);
 		pub.failedShapes = a_request.failedShapes;
+		pub.unlocalizedRejections = a_request.unlocalizedRejections;
 		pub.rejectedLights = a_request.rejectedLights;
 		pub.hasUnattachedCells = a_request.hasUnattachedCells;
 
@@ -831,7 +858,7 @@ namespace DX12
 						attached.mesh->vertices.data(), attached.mesh->vertexCount, attached.mesh->stride,
 						attached.mesh->indices.data(), 0, static_cast<uint32_t>(attached.mesh->indices.size()),
 						fresh->positions, fresh->indices)) {
-					RecordRejection(pub.rejectionReasons, pub.failedShapes, "invalid or unsupported shape data");
+					RecordRejection(pub.rejectionReasons, pub.failedShapes, "invalid decoded mesh data");
 					continue;
 				}
 				fresh->bytes = uint64_t(fresh->positions.size()) * sizeof(float3) +
@@ -892,8 +919,10 @@ namespace DX12
 				}
 			}
 
-			for (const auto& [reason, count] : extraction->rejections)
+			for (const auto& [reason, count] : extraction->rejections) {
 				RecordRejection(pub.rejectionReasons, pub.failedShapes, reason, count);
+				pub.unlocalizedRejections += count;
+			}
 			for (const auto& [blockIdx, reason] : extraction->missing) {
 				if (pub.missingShapes.size() >= kMaxMissingShapes) {
 					RecordRejection(pub.rejectionReasons, pub.failedShapes, "missing shape manifest capacity");
@@ -924,19 +953,19 @@ namespace DX12
 
 		pub.validated = true;
 		pub.enumerationComplete = a_request.enumerationComplete && !a_request.lightCapacityExceeded && !a_request.candidateOverflow;
-		pub.spatialBoundsComplete = pub.enumerationComplete && !pub.failedShapes && !pub.rejectedLights;
-		if (a_request.consolidate && pub.enumerationComplete && !budgetExceeded && !a_request.captureBudgetExceeded &&
-			std::isfinite(lowX) && std::isfinite(lowY)) {
-			const auto size = double(a_request.size);
-			const auto cx = std::floor((lowX + highX) / (2.0 * size));
-			const auto cy = std::floor((lowY + highY) / (2.0 * size));
-			pub.wholeCell = lowX >= (cx - kPredictiveRadius) * size && lowY >= (cy - kPredictiveRadius) * size &&
-			                highX < (cx + kPredictiveRadius + 1) * size && highY < (cy + kPredictiveRadius + 1) * size;
+		pub.spatialBoundsComplete = pub.enumerationComplete && a_request.spatialBoundsKnown &&
+			!a_request.captureBudgetExceeded && !budgetExceeded && !pub.rejectedLights;
+		if (a_request.consolidate) {
+			if (std::isfinite(lowX) && std::isfinite(lowY)) {
+				a_request.spatialBounds.Include(lowX, lowY);
+				a_request.spatialBounds.Include(highX, highY);
+			}
+			pub.wholeCell = pub.spatialBoundsComplete && a_request.spatialBounds.FitsNeighborhood(a_request.size, kPredictiveRadius);
 		}
 		if (!pub.enumerationComplete || pub.failedShapes || pub.rejectedLights || pub.eligibleShapes != pub.shapes.size()) {
 			result.failure = std::format(
-				"Partial coverage: {} eligible shapes, {} extracted, {} unsupported; complete enumeration: {}",
-				pub.eligibleShapes, pub.shapes.size(), pub.failedShapes,
+				"Request: {} eligible shapes, {} extracted; {} rejection events ({} unlocalized), {} rejected lights; enumeration complete: {}",
+				pub.eligibleShapes, pub.shapes.size(), pub.failedShapes, pub.unlocalizedRejections, pub.rejectedLights,
 				pub.enumerationComplete ? "yes" : "no");
 		}
 		return result;

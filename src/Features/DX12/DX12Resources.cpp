@@ -247,6 +247,7 @@ namespace DX12
 		tile->enumerationComplete = publication.enumerationComplete;
 		tile->eligibleShapes = publication.eligibleShapes;
 		tile->failedShapes = publication.failedShapes;
+		tile->unlocalizedRejections = publication.unlocalizedRejections;
 		tile->rejectedLights = publication.rejectedLights;
 		tile->hasUnattachedCells = publication.hasUnattachedCells;
 		tile->failureReason = std::move(publication.failureReason);
@@ -262,7 +263,7 @@ namespace DX12
 		                      publication.failedShapes == 0 && publication.rejectedLights == 0 &&
 		                      publication.eligibleShapes == tile->shapes.size();
 		const bool hasContent = !tile->shapes.empty() || !tile->lights.empty();
-		const bool consolidate = publication.wholeCell && publication.validated;
+		const bool consolidate = publication.wholeCell && publication.validated && publication.spatialBoundsComplete;
 		const auto outcome = ClassifyTilePreparation(publication.validated &&
 														 (!publication.wholeCell || consolidate),
 			publication.enumerationComplete || consolidate, complete, hasContent);
@@ -694,6 +695,8 @@ namespace
 					ImGui::Text(T("menu.dx12.resources.whole_cell_counts", "Shapes: %zu | Lights: %zu"), tile->shapes.size(), tile->lights.size());
 					if (globals::state && globals::state->IsDeveloperMode())
 						ImGui::Text(T("menu.dx12.resources.rejection_counts", "Eligible: %u | rejection events: %u | rejected lights: %u"), tile->eligibleShapes, tile->failedShapes, tile->rejectedLights);
+					if (globals::state && globals::state->IsDeveloperMode() && tile->unlocalizedRejections)
+						ImGui::Text(T("menu.dx12.resources.unlocalized", "Unlocalized rejection events: %u"), tile->unlocalizedRejections);
 				}
 				if (tile && (!tile->nifSources.empty() || !tile->missingShapes.empty()))
 					ImGui::Text(T("menu.dx12.resources.tooltip.nif_sources", "NIF sources: %zu | Missing shape references: %zu"),

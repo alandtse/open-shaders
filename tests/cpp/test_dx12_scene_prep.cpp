@@ -14,19 +14,19 @@
 
 using Catch::Approx;
 
-TEST_CASE("Vertex descriptor helpers use packed dword stride and position bit", "[dx12][scene-prep]")
+TEST_CASE("Preparation bounds retain unknown coverage and honor tile edges", "[dx12][scene-prep]")
 {
-	using DX12::HasVertexPositionStream;
-	using DX12::kVertexPositionFlagBit;
-	using DX12::VertexStrideBytes;
-
-	constexpr uint64_t kLandscapeDesc = kVertexPositionFlagBit | (uint64_t{ 1u << 7 } << 44) | 9ull;
-	CHECK(HasVertexPositionStream(kLandscapeDesc));
-	CHECK(VertexStrideBytes(kLandscapeDesc) == 36u);
-
-	constexpr uint64_t kNoPosDesc = 4ull;
-	CHECK_FALSE(HasVertexPositionStream(kNoPosDesc));
-	CHECK(VertexStrideBytes(kNoPosDesc) == 16u);
+	DX12::PreparationBounds bounds;
+	CHECK(bounds.MayOverlap(50, 50, 4096));
+	CHECK_FALSE(bounds.FitsNeighborhood(4096, 2));
+	CHECK_FALSE(bounds.IncludeSphere(0, 0, 0));
+	REQUIRE(bounds.IncludeSphere(-4096, -4096, 128));
+	CHECK(bounds.MayOverlap(-2, -2, 4096));
+	CHECK(bounds.MayOverlap(-1, -1, 4096));
+	CHECK_FALSE(bounds.MayOverlap(0, 0, 4096));
+	CHECK(bounds.FitsNeighborhood(4096, 2));
+	bounds.Include(65536, 65536);
+	CHECK_FALSE(bounds.FitsNeighborhood(4096, 2));
 }
 
 TEST_CASE("ResolveMeshLODSlice handles progressive and single-level LOD counts", "[dx12][scene-prep]")

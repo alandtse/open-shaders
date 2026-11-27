@@ -54,6 +54,9 @@ namespace DX12
 		bool lightCapacityExceeded = false;
 		bool candidateOverflow = false;
 		bool captureBudgetExceeded = false;
+		bool spatialBoundsKnown = true;
+		PreparationBounds spatialBounds;
+		uint32_t unlocalizedRejections = 0;
 		double captureMs = 0.0;
 		std::vector<CapturedAttachedShape> attachedShapes;
 		std::vector<UnattachedModelPlacement> unattachedPlacements;

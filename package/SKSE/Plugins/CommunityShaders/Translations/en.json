@@ -6051,6 +6051,7 @@
     "menu.dx12.resources.tooltip.last_reason": "Last reason: %s",
     "menu.dx12.resources.tooltip.nif_sources": "NIF sources: %zu | Missing shape references: %zu",
     "menu.dx12.resources.tooltip.subcell": "%s subcell (%lld, %lld): %s",
+    "menu.dx12.resources.unlocalized": "Unlocalized rejection events: %u",
     "menu.dx12.resources.whole_cell": "Whole-cell residency (subdivisions bypassed)",
     "menu.dx12.resources.whole_cell_counts": "Shapes: %zu | Lights: %zu",
     "menu.dx12.scene.additive_prepared_emission": "Add excluded runtime emission to prepared lights",

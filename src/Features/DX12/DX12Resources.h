@@ -81,6 +81,7 @@ namespace DX12
 		bool preparationValidated = false;
 		bool enumerationComplete = false;
 		uint32_t eligibleShapes = 0, failedShapes = 0, rejectedLights = 0;
+		uint32_t unlocalizedRejections = 0;
 		bool hasUnattachedCells = false;
 		std::string failureReason;                                       // Last bounded preparation failure, retained for Dev and tile hover.
 		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;  // Bounded structured preparation rejection diagnoses.
@@ -98,6 +99,7 @@ namespace DX12
 		bool validated = false;
 		uint32_t eligibleShapes = 0;
 		uint32_t failedShapes = 0;
+		uint32_t unlocalizedRejections = 0;
 		uint32_t rejectedLights = 0;  // Invalid light records are skipped without losing valid geometry.
 		bool enumerationComplete = false;
 		bool wholeCell = false;

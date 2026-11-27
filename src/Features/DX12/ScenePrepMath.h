@@ -16,18 +16,6 @@
 
 namespace DX12
 {
-	inline constexpr uint64_t kVertexPositionFlagBit = 1ull << 44;
-
-	[[nodiscard]] constexpr bool HasVertexPositionStream(uint64_t a_rawVertexDesc) noexcept
-	{
-		return (a_rawVertexDesc & kVertexPositionFlagBit) != 0;
-	}
-
-	[[nodiscard]] constexpr uint32_t VertexStrideBytes(uint64_t a_rawVertexDesc) noexcept
-	{
-		return static_cast<uint32_t>(a_rawVertexDesc & 0xFull) * sizeof(float);
-	}
-
 	/** @brief Resolves the index slice {firstIndex, indexCount} for a BSMeshLODTriShape. */
 	[[nodiscard]] inline std::optional<std::pair<uint32_t, uint32_t>> ResolveMeshLODSlice(
 		uint8_t a_lodMode, std::span<const uint32_t, 3> a_lodTriangleCounts, uint32_t a_totalTriangles) noexcept
@@ -210,6 +198,57 @@ namespace DX12
 		return lowX < double(a_tileX + 1) * s && highX >= double(a_tileX) * s &&
 		       lowY < double(a_tileY + 1) * s && highY >= double(a_tileY) * s;
 	}
+
+	struct PreparationBounds
+	{
+		double minX = std::numeric_limits<double>::infinity(), minY = minX;
+		double maxX = -minX, maxY = -minY;
+
+		[[nodiscard]] bool Valid() const noexcept
+		{
+			return std::isfinite(minX) && std::isfinite(minY) &&
+				std::isfinite(maxX) && std::isfinite(maxY) && minX <= maxX && minY <= maxY;
+		}
+
+		void Include(double x, double y) noexcept
+		{
+			minX = std::min(minX, x);
+			minY = std::min(minY, y);
+			maxX = std::max(maxX, x);
+			maxY = std::max(maxY, y);
+		}
+
+		[[nodiscard]] bool IncludeSphere(double x, double y, double radius) noexcept
+		{
+			if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(radius) || radius <= 0 ||
+				!std::isfinite(x - radius) || !std::isfinite(x + radius) ||
+				!std::isfinite(y - radius) || !std::isfinite(y + radius))
+				return false;
+			Include(x - radius, y - radius);
+			Include(x + radius, y + radius);
+			return true;
+		}
+
+		[[nodiscard]] bool MayOverlap(int64_t x, int64_t y, uint32_t size) const noexcept
+		{
+			if (!Valid() || !size)
+				return true;
+			const double s = size;
+			return minX < (double(x) + 1) * s && maxX >= double(x) * s &&
+				minY < (double(y) + 1) * s && maxY >= double(y) * s;
+		}
+
+		[[nodiscard]] bool FitsNeighborhood(uint32_t size, int radius) const noexcept
+		{
+			if (!Valid() || !size || radius < 0)
+				return false;
+			const double s = size;
+			const auto cx = std::floor((minX + maxX) / (2.0 * s));
+			const auto cy = std::floor((minY + maxY) / (2.0 * s));
+			return minX >= (cx - radius) * s && minY >= (cy - radius) * s &&
+				maxX < (cx + radius + 1) * s && maxY < (cy + radius + 1) * s;
+		}
+	};
 
 	struct ExteriorCellWindow
 	{
