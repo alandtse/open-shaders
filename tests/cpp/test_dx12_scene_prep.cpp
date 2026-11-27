@@ -1,5 +1,5 @@
-#include "Features/DX12/ScenePrepMath.h"
 #include "Features/DX12/NativeCasterSource.h"
+#include "Features/DX12/ScenePrepMath.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>

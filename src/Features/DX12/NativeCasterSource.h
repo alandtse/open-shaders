@@ -2,8 +2,8 @@
 
 #include <array>
 #include <cmath>
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 
 namespace DX12
 {
