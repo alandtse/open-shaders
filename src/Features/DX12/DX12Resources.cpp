@@ -863,8 +863,10 @@ void DX12Resources::DrawSettings()
 		ResetPreparation();
 }
 
-void DX12Resources::DrawResourceStatus()
+void DX12Resources::DrawDevResourceStatus()
 {
+	if (!globals::state || !globals::state->IsDeveloperMode())
+		return;
 	if (preparationSuspended) {
 		ImGui::TextDisabled("%s", T("menu.dx12.resources.suspended", "Native scene preparation suspended."));
 		return;
@@ -885,8 +887,7 @@ void DX12Resources::DrawResourceStatus()
 		ImGui::TextDisabled("%s", T("menu.dx12.resources.publication_pending", "Native preparation: not received"));
 	}
 	const auto snapshot = GetGrid();
-	const auto timing = GetPreparationStats();
-	if (snapshot && globals::state && globals::state->IsDeveloperMode()) {
+	if (snapshot) {
 		ImGui::SeparatorText(T("menu.dx12.resources.geometry_sources", "Native scene geometry"));
 		const auto scene = globals::features::dx12NativeScene.GetPublishedScene();
 		ImGui::Text(T("menu.dx12.resources.runtime_residency", "Grid observed shapes: %zu | CPU bytes: %llu"),
@@ -908,6 +909,16 @@ void DX12Resources::DrawResourceStatus()
 			ImGui::TextDisabled("%s", T("menu.dx12.resources.tlas_pending", "TLAS: no published scene for this scope"));
 		}
 	}
+}
+
+void DX12Resources::DrawResourceStatus()
+{
+	if (preparationSuspended) {
+		ImGui::TextDisabled("%s", T("menu.dx12.resources.suspended", "Native scene preparation suspended."));
+		return;
+	}
+	const auto snapshot = GetGrid();
+	const auto timing = GetPreparationStats();
 	if (snapshot && snapshot->wholeCell) {
 		ImGui::SeparatorText(T("menu.dx12.resources.whole_cell", "Whole-cell residency (subdivisions bypassed)"));
 		DrawWholeCellMap(snapshot->resident.front());

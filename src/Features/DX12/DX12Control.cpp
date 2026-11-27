@@ -3,6 +3,7 @@
 #include "DX12Resources.h"
 #include "Globals.h"
 #include "State.h"
+#include "Utils/DevBenchUx.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -66,6 +67,7 @@ void DX12Control::DrawSettings()
 		Util::EndPillTabItem();
 	}
 	if (IsActive() && developerMode && Util::BeginPillTabItem(T("menu.dx12.tab.dev", "Dev"))) {
+		globals::features::dx12Resources.DrawDevResourceStatus();
 		globals::features::dx12NativeScene.DrawDevSettings();
 		Util::EndPillTabItem();
 	}
@@ -74,8 +76,9 @@ void DX12Control::DrawSettings()
 
 void DX12Control::LoadSettings(json& input)
 {
-	settings.Enabled = input.value("Enabled", false);
-	settings.Mode = static_cast<int>(DX12::SanitizeControlMode(input.value("Mode", static_cast<int>(DX12::ControlMode::ShadowOffload)),
+	const Settings defaults{};
+	settings.Enabled = input.value("Enabled", defaults.Enabled);
+	settings.Mode = static_cast<int>(DX12::SanitizeControlMode(input.value("Mode", defaults.Mode),
 		globals::state && globals::state->IsDeveloperMode()));
 	selectedMode.store(settings.Mode, std::memory_order_relaxed);
 	if (!bootCaptured) {

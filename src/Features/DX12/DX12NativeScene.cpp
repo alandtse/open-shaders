@@ -12,6 +12,7 @@
 #include "RE/U/UI.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/DevBenchUx.h"
 #include "Utils/Game.h"
 #include "Utils/PointLightFlags.h"
 #include "Utils/TracyZones.h"

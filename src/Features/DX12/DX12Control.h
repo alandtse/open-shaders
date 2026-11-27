@@ -10,8 +10,8 @@ struct DX12Control final : Feature
 {
 	struct Settings
 	{
-		bool Enabled = false;
-		int Mode = static_cast<int>(DX12::ControlMode::ShadowOffload);
+		bool Enabled = true;
+		int Mode = static_cast<int>(DX12::ControlMode::FullRT);
 	};
 
 	std::string GetName() override { return "DX12"; }
@@ -38,6 +38,6 @@ private:
 	bool bootCaptured = false;
 	DX12::ControlMode GetMode() const;
 	void DrawSimpleSettings(bool developerMode);
-	mutable std::atomic<int> selectedMode{ static_cast<int>(DX12::ControlMode::ShadowOffload) };
+	mutable std::atomic<int> selectedMode{ Settings{}.Mode };
 	Settings settings;
 };
