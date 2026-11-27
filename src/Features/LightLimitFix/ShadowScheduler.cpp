@@ -2701,7 +2701,7 @@ namespace ShadowCasterManager
 			}
 			// Honour AllowDrawNewLight: when disabled, brand-new entries wait for the
 			// next frame instead of competing for this frame's budget.
-			if (!e.playerProtected && !s_settings.AllowDrawNewLight && e.LastDrawnFrame < 0) {
+			if (DeferNewShadowLight(e.LastDrawnFrame, s_settings.AllowDrawNewLight, e.playerProtected)) {
 				newLightSkips.push_back(&e);
 				continue;
 			}
@@ -4157,7 +4157,7 @@ namespace ShadowCasterManager
 						continue;
 					FreeSlotTile(slot);
 					s_splitState.erase(entry.Light);
-					entry.LastDrawnFrame = -1;
+					entry.LastDrawnFrame = FrameAfterCasterRefresh(entry.LastDrawnFrame);
 					entry.lastGeomHash = 0;
 				}
 			}

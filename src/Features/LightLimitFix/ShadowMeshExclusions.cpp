@@ -82,14 +82,8 @@ namespace ShadowMeshExclusions
 				return false;
 			auto document = exists ? Util::FileHelpers::ReadJsonFile(file, context) :
 			                         std::optional<json>(json{ { "meshes", json::array() } });
-			const auto meshes = document ? ReadMeshes(*document) : std::nullopt;
-			if (!meshes)
+			if (!document || !UpdateMeshList(*document, mesh, add))
 				return false;
-			auto& entries = (*document)["meshes"];
-			if (add && !meshes->contains(mesh))
-				entries.push_back(mesh);
-			else if (!add)
-				std::erase_if(entries.get_ref<json::array_t&>(), [&](const auto& entry) { return MeshPath(entry.template get<std::string>()) == mesh; });
 			const auto target = exists ? Util::FileHelpers::ResolveExistingFile(file) : file;
 			if (target.empty() || !Util::FileHelpers::WriteJsonAtomically(target, *document, 2, context))
 				return false;

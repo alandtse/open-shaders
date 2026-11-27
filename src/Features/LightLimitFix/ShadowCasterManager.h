@@ -410,8 +410,8 @@ namespace ShadowCasterManager
 		/// Sort key: LastDrawnFrame + computed interval. Lower = higher priority.
 		double RedrawScore{ 0.0 };
 
-		/// Frame number this light last rendered its shadow map.
-		int32_t LastDrawnFrame{ -1 };
+		/// Last shadow draw frame, or a negative state while the slot has no usable shadow.
+		int32_t LastDrawnFrame{ kUndrawnShadowFrame };
 
 		/// Util::GetNowSecs() at first-ever render in this slot -- start of the
 		/// fade-in ramp. -1 = complete/n-a. Wall-clock (not frame count) so ramp
@@ -512,7 +512,7 @@ namespace ShadowCasterManager
 		void Clear()
 		{
 			Light = nullptr;
-			LastDrawnFrame = -1;
+			LastDrawnFrame = kUndrawnShadowFrame;
 			FadeStartSeconds = -1.0;
 			ReleaseStartSeconds = -1.0;
 			fadeOnAdmit = false;

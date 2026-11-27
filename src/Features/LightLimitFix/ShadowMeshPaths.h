@@ -58,4 +58,18 @@ namespace ShadowMeshExclusions
 		}
 		return result;
 	}
+
+	/** @brief Adds or removes a normalized mesh path in an existing exclusion document. */
+	inline bool UpdateMeshList(nlohmann::json& document, const std::string& mesh, bool add)
+	{
+		const auto meshes = ReadMeshes(document);
+		if (!meshes)
+			return false;
+		auto& entries = document["meshes"];
+		if (add && !meshes->contains(mesh))
+			entries.push_back("Data/Meshes/" + mesh);
+		else if (!add)
+			std::erase_if(entries.get_ref<nlohmann::json::array_t&>(), [&](const auto& entry) { return MeshPath(entry.template get<std::string>()) == mesh; });
+		return true;
+	}
 }

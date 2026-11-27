@@ -44,3 +44,19 @@ TEST_CASE("Shadow mesh lists use full mesh-relative NIF identities", "[llf][shad
 	REQUIRE_FALSE(ReadMeshes({ { "meshes", { 42 } } }));
 	REQUIRE_FALSE(ReadMeshes(nlohmann::json::object()));
 }
+
+TEST_CASE("Editing a shadow mesh list preserves nested root names across reloads", "[llf][shadow-meshes]")
+{
+	using namespace ShadowMeshExclusions;
+	nlohmann::json document = { { "meshes", { "example.nif" } } };
+	for (const auto* input : { "Data/Meshes/meshes/example.nif", "Data/Meshes/data/meshes/example.nif" }) {
+		const auto mesh = MeshPath(input);
+		REQUIRE(UpdateMeshList(document, mesh, true));
+		document = nlohmann::json::parse(document.dump());
+		REQUIRE(ReadMeshes(document) == MeshPaths{ "example.nif", mesh });
+		REQUIRE(UpdateMeshList(document, mesh, true));
+		REQUIRE(document["meshes"].size() == 2);
+		REQUIRE(UpdateMeshList(document, mesh, false));
+		REQUIRE(ReadMeshes(document) == MeshPaths{ "example.nif" });
+	}
+}
