@@ -85,6 +85,7 @@ struct DX12NativeScene final : OverlayFeature
 	void Prepass() override;
 	/**
 	 * @brief Visibility slice traced this frame for a light, which the lighting shader uses instead of static shadow-map casters.
+	 * UINT32_MAX means no slice this frame but one last frame, for a light SCM already dropped static casters for.
 	 * @param a_shadowLight True for an SCM shadow light, counted in the status when it finds no slice.
 	 */
 	std::optional<uint32_t> NativeShadowSlot(const RE::NiLight* a_light, bool a_shadowLight);
@@ -197,6 +198,7 @@ private:
 		Proximity,
 		UnslottedShadowLight,
 		GrantedWithoutSlice,
+		PreviousOnly,
 		kCount
 	};
 	std::array<uint32_t, size_t(SlotMatch::kCount)> slotMatchesThisFrame{};

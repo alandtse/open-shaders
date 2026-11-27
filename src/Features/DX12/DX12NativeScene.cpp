@@ -463,8 +463,15 @@ std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_l
 	} else {
 		if (a_shadowLight)
 			++slotMatchesThisFrame[size_t(SlotMatch::UnslottedShadowLight)];
-		if (grantedLightsFrame == lightSlotFrame && std::ranges::contains(grantedLights, a_light))
+		if (grantedLightsFrame == lightSlotFrame && std::ranges::contains(grantedLights, a_light)) {
+			// SCM already dropped this light's static casters from last frame's slices; keep shading it from them.
+			if (PreviousShadowSlot(a_light) != UINT32_MAX) {
+				lightsShadedFrame = lightSlotFrame;
+				++slotMatchesThisFrame[size_t(SlotMatch::PreviousOnly)];
+				return UINT32_MAX;
+			}
 			++slotMatchesThisFrame[size_t(SlotMatch::GrantedWithoutSlice)];
+		}
 	}
 	return slot;
 }
@@ -1114,6 +1121,7 @@ json DX12NativeScene::GetStatus() const
 		{ "unslottedShadowLights", slotMatches[size_t(SlotMatch::UnslottedShadowLight)].load(std::memory_order_relaxed) },
 		{ "grantedWithoutSlice", slotMatches[size_t(SlotMatch::GrantedWithoutSlice)].load(std::memory_order_relaxed) },
 		{ "grantedWithoutSliceTotal", grantedWithoutSliceTotal.load(std::memory_order_relaxed) },
+		{ "previousSliceOnly", slotMatches[size_t(SlotMatch::PreviousOnly)].load(std::memory_order_relaxed) },
 		{ "shadowLightSlots", [this] {
 			 std::scoped_lock lock(shadowLightSlotsMutex);
 			 json rows = json::array();
