@@ -786,9 +786,13 @@ void UnifiedPresetCatalog::ScanInstalledPacks(bool automatic)
 	DiscoverLegacyScenes();
 	DiscoverProviderPresets();
 	std::vector<std::string> discoveredBaselines;
+	std::vector<std::string> legacyBaselines;
 	for (const auto& pack : packs)
-		if (pack.hasBaseline)
+		if (pack.hasBaseline) {
 			discoveredBaselines.push_back(pack.id);
+			if (pack.source == SourceKind::LegacyBaseline)
+				legacyBaselines.push_back(pack.id);
+		}
 	std::ranges::sort(discoveredBaselines, [&](const auto& first, const auto& second) {
 		const auto* a = FindPack(first);
 		const auto* b = FindPack(second);
@@ -800,6 +804,7 @@ void UnifiedPresetCatalog::ScanInstalledPacks(bool automatic)
 		const auto bName = Util::ToLowerAscii(b ? b->name : second);
 		return aName != bName ? aName > bName : first > second;
 	});
+	PresetState::ApplyBaselineSubsetOrder(discoveredBaselines, legacyBaselines);
 	std::vector<std::string> automaticBaselines;
 	for (const auto& id : discoveredBaselines)
 		if (const auto* pack = FindPack(id); pack && pack->valid && (IsBaselineEnabled(id) || (pack->IsBaseline() && !pack->IsCS() && !pack->IsE11())))

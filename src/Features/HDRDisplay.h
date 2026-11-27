@@ -86,6 +86,15 @@ public:
 	void UpdateHDRData() const;
 	/** @brief Sets the swap chain color space to HDR10 (PQ/BT.2020) or SDR (sRGB) based on settings. */
 	void UpdateSwapChainColorSpace() const;
+	/**
+	 * @brief Turns HDR off for this session when the presenting swap chain is not 10-bit or fp16, keeping the saved choice.
+	 * @note Call with settingsMutex held.
+	 */
+	void HoldHDROffWithoutHDRSwapChain();
+
+	bool swapChainSupportsHDR = true;
+	DXGI_FORMAT presentFormat = DXGI_FORMAT_UNKNOWN;
+	bool hdrHeldOffBySwapChain = false;
 
 	/** @brief Redirects UI rendering to the separate UI texture for HDR compositing. */
 	void BeginUIRendering();

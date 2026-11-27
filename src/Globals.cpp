@@ -11,6 +11,7 @@
 #include "Features/DX12/DX12Control.h"
 #include "Features/DX12/DX12NativeScene.h"
 #include "Features/DX12/DX12Resources.h"
+#include "Features/DetailMaps.h"
 #include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/Effects11.h"
@@ -102,6 +103,7 @@ namespace globals
 		HorizonFix horizonFix{};
 		InteriorSun interiorSun{};
 		FurShells furShells{};
+		DetailMaps detailMaps{};
 		RainRefraction rainRefraction{};
 		ScreenSpaceGI screenSpaceGI{};
 		ScreenSpaceShadows screenSpaceShadows{};

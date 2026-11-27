@@ -10,6 +10,7 @@
     "common.inactive": "Неактивно",
     "common.restart_required": "Требуется перезапуск",
     "common.settings_managed_by_enb": "Эта настройка управляется Effects 11.",
+    "compatibility.tullius_ctd_logger": "При записи диагностического дампа во время игры Tullius CTD Logger может вызвать зависание Skyrim более чем на секунду",
     "cs_editor.actions": "Действия",
     "cs_editor.active": "Активно:",
     "cs_editor.active_chip_tooltip": "Нажмите, чтобы найти запись в её списке. Двойное нажатие откроет её редактор.",

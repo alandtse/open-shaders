@@ -1,12 +1,10 @@
 #pragma once
 
+#include "Utils/MathUtils.h"
+
 namespace TreeWindSettings
 {
-	struct Range
-	{
-		float minimum;
-		float maximum;
-	};
+	using Range = Util::Range;
 
 	inline constexpr Range kBend{ 0.0f, 4.0f };
 	inline constexpr Range kLeafAmbient{ 0.0f, 4.0f };

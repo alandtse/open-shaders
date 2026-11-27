@@ -160,11 +160,9 @@ public:
 	};
 
 private:
-	static const char* FromUnits(int32_t value, int32_t unitScale);
 	static void SetVLQuality(std::uint32_t quality);
 
 	void DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, bool isInterior, bool inLocationType);
-	TextureSize& FetchCurrentSizeInUnits(bool interior);
 	void SetupVL();
 
 	enum class Quality : uint8_t
@@ -176,8 +174,6 @@ private:
 		Count
 	};
 
-	TextureSize exteriorSizeInUnits;
-	TextureSize interiorSizeInUnits;
 	TextureSize defaultSizeHigh;
 
 	TextureSize* gVolumetricLightingSizeHigh = nullptr;

@@ -107,6 +107,8 @@ struct NeuralRendering
 	void SetupResources();
 	/** @brief Invalidates both temporal histories on loading or setting changes. */
 	void ResetHistory();
+	/** @brief Resets history after settings are replaced outside the panel, rebuilding the model if a creation value changed. */
+	void OnTuningReplaced(const NR::Tuning& previous, const NR::Tuning& current);
 	/** @brief Discards history when NR or the world is inactive, and mirrors the crop controls for the main thread. */
 	void Reset(bool enabled, bool pauseInCombat, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified, const std::string& runtimeVariant);
 	/**
@@ -240,6 +242,8 @@ private:
 	mutable std::mutex regionMutex;
 	/** @brief Set by the settings button or DevBench; the main-thread hook starts the sweep on its next frame. */
 	std::atomic_bool calibrationRequested = false;
+	/** @brief Set by the render hook when a running sweep's crop cannot reach the model. */
+	std::atomic_bool calibrationCropRejected = false;
 	/** @brief Main-thread sweep state; its published copy is guarded by regionMutex. */
 	NR::CropCalibration calibration;
 	/** @brief Captured GPU frame the sweep last sampled, so one capture is never counted twice. */

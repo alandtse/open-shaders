@@ -25,6 +25,7 @@
 #include "LitCap.h"
 #include "LitRegion.h"
 #include "ShadowCasterInternal.h"
+#include "ShadowMeshExclusions.h"
 #include "SplitLatchBackoff.h"
 #include "Utils/Game.h"
 
@@ -2829,7 +2830,7 @@ namespace ShadowCasterManager
 			}
 			// Honour AllowDrawNewLight: when disabled, brand-new entries wait for the
 			// next frame instead of competing for this frame's budget.
-			if (!e.playerProtected && !s_settings.AllowDrawNewLight && e.LastDrawnFrame < 0) {
+			if (DeferNewShadowLight(e.LastDrawnFrame, s_settings.AllowDrawNewLight, e.playerProtected)) {
 				newLightSkips.push_back(&e);
 				continue;
 			}
@@ -4281,6 +4282,19 @@ namespace ShadowCasterManager
 			ValidateCandidates(camera, wantDiag, candidates);
 
 			UpdatePoolMembership(ssn, sunLight, candidates);
+
+			if (ShadowMeshExclusions::ConsumeShadowRefresh()) {
+				const auto end = std::min(s_lights.Size, s_lights.PointLightEnd(s_settings.ShadowLightCount));
+				for (int slot = s_lights.PointLightFirst(); slot < end; ++slot) {
+					auto& entry = s_lights.Lights[slot];
+					if (entry.Light && !entry.Light->GetIsParabolicLight())
+						continue;
+					FreeSlotTile(slot);
+					s_splitState.erase(entry.Light);
+					entry.LastDrawnFrame = FrameAfterCasterRefresh(entry.LastDrawnFrame);
+					entry.lastGeomHash = 0;
+				}
+			}
 			EstablishNativeRasterOwnership();
 
 			double budget = ComputeRedrawBudget();

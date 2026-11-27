@@ -1062,6 +1062,12 @@ namespace SIE
 			MTLandLODBlend = 19,
 		};
 
+		/** @brief The technique a Lighting descriptor selects. */
+		static constexpr LightingShaderTechniques GetLightingTechnique(uint32_t a_descriptor)
+		{
+			return static_cast<LightingShaderTechniques>((a_descriptor >> 24) & 0x3F);
+		}
+
 		enum class LightingShaderFlags : uint32_t
 		{
 			VC = 1 << 0,
@@ -1073,6 +1079,7 @@ namespace SIE
 			Deferred = 1 << 4,
 			LandscapeSeams = 1 << 5,
 			// Community Shaders end
+			DetailMaps = 1 << 6,
 			Specular = 1 << 9,
 			SoftLighting = 1 << 10,
 			RimLighting = 1 << 11,

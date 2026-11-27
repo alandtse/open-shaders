@@ -10,6 +10,7 @@
     "common.inactive": "Inactivo",
     "common.restart_required": "",
     "common.settings_managed_by_enb": "Effects 11 gestiona este ajuste.",
+    "compatibility.tullius_ctd_logger": "Tullius CTD Logger puede congelar Skyrim durante más de un segundo al escribir un volcado de diagnóstico durante la partida",
     "cs_editor.actions": "Acciones",
     "cs_editor.active": "Activo:",
     "cs_editor.active_chip_tooltip": "Haz clic para encontrarlo en su lista. Haz doble clic para abrir su editor.",

@@ -1,4 +1,5 @@
 #include "SnowDeformation/Common.hlsli"
+#include "SnowDeformation/PackedSnow.hlsli"
 
 #define SD_INTERPOLATE(member) output.member = patch[0].member * bary.x + patch[1].member * bary.y + patch[2].member * bary.z
 
@@ -35,6 +36,7 @@
 
 	output.WorldPosition.z += displacement;
 	output.PreviousWorldPosition.z += displacement;
+	output.LandBlendWeights2.z = PackedSnow::Amount(displacement - raise);
 
 	float2 gradient = 0.0;
 	[branch] if (ActivityAt(windowPosition) > 0.0)

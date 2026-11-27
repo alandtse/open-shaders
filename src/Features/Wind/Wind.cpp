@@ -63,7 +63,7 @@ namespace
 	bool SupportsTreeBend(const RE::BSShader& a_shader, uint32_t a_vertexDescriptor)
 	{
 		if (a_shader.shaderType == RE::BSShader::Type::Lighting) {
-			const auto technique = static_cast<SIE::ShaderCache::LightingShaderTechniques>((a_vertexDescriptor >> 24) & 0x3F);
+			const auto technique = SIE::ShaderCache::GetLightingTechnique(a_vertexDescriptor);
 			return technique != SIE::ShaderCache::LightingShaderTechniques::LODObjects &&
 			       technique != SIE::ShaderCache::LightingShaderTechniques::LODObjectHD;
 		}

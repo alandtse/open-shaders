@@ -111,14 +111,14 @@ Texture2D<float> HiZ : register(t2);
 // x and y are the run's first source and dispatch group indices.
 StructuredBuffer<uint2> SliceTable : register(t3);
 
-// RunGrass resolves each output record against its source instance and group.
-RWByteAddressBuffer Compacted : register(u0);
-// Each tier's DrawIndexedInstanced arguments store the instance count at byte offset 4.
-RWByteAddressBuffer Args : register(u1);
-
 static const uint TierCount = 3;
 static const uint ArgsStride = 20;
 static const uint TierCulled = TierCount;
+
+// Each tier's DrawIndexedInstanced arguments store the instance count at byte offset 4.
+RWByteAddressBuffer Args : register(u0);
+// RunGrass resolves each output record against its source instance and group.
+RWStructuredBuffer<GrassInstance::CullRecord> Compacted[TierCount] : register(u1);
 
 // Aggregate survivors within each group to issue one global atomic per occupied tier.
 groupshared uint GroupTierCount[TierCount * 2];
@@ -441,12 +441,13 @@ uint CullInstance(float4 data1, float4 data2, float4 data3, float4 data4, GrassI
 	{
 		if (eye >= EyeCount || tier[eye] == TierCulled)
 			continue;
-		const uint slot = Bucket.OutputOffset + (tier[eye] * EyeCount + eye) * Bucket.TierStride + GroupTierBase[eye * TierCount + tier[eye]] + localSlot[eye];
-		const uint byteOffset = slot * GrassInstance::RecordStride;
-		Compacted.Store4(byteOffset, uint4(sourceIndex, GrassInstance::PackRecord(groupIndex, fade[eye], flags[eye]), asuint(flutter)));
-		Compacted.Store4(byteOffset + GrassInstance::CurrentWindOffset, asuint(currentResponse));
-		Compacted.Store4(byteOffset + GrassInstance::PreviousWindOffset, asuint(previousResponse));
-		Compacted.Store4(byteOffset + GrassInstance::CurrentCollisionOffset, asuint(currentCollision));
-		Compacted.Store4(byteOffset + GrassInstance::PreviousCollisionOffset, asuint(previousCollision));
+		const uint slot = Bucket.OutputOffset + eye * Bucket.TierStride + GroupTierBase[eye * TierCount + tier[eye]] + localSlot[eye];
+		GrassInstance::CullRecord record = { sourceIndex, GrassInstance::PackRecord(groupIndex, fade[eye], flags[eye]), flutter,
+			currentResponse, previousResponse, currentCollision, previousCollision };
+		[unroll] for (uint outTier = 0; outTier < TierCount; ++outTier)
+		{
+			if (tier[eye] == outTier)
+				Compacted[outTier][slot] = record;
+		}
 	}
 }

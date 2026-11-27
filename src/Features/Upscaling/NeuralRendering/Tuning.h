@@ -41,6 +41,8 @@ namespace NR
 	struct Tuning
 	{
 		static constexpr float kMinStrength = 0.0f, kMaxStrength = 2.0f;
+		/** @brief Feature 18 clamps Intensity here, so a larger value changes nothing. */
+		static constexpr float kMaxIntensity = 1.0f;
 		static constexpr float kDefaultStrength = 1.0f, kAutomaticSkinStructure = -1.0f;
 		static constexpr float kMinColorStrength = 0.0f, kMaxColorStrength = 1.0f, kDefaultColorStrength = 0.0f;
 		static constexpr uint32_t kMaxStyle = 2;
@@ -222,6 +224,14 @@ namespace NR
 			materialStrength = std::any_of(values.begin(), values.end(), [](float value) { return value < MaterialStrength::kMaxStrength; });
 		}
 
+		/** @brief Whether a value the runtime reads when it creates the model differs, so existing features must be rebuilt. */
+		[[nodiscard]] bool CreationValuesDiffer(const Tuning& other) const
+		{
+			return style != other.style || intensity != other.intensity || localToneStrength != other.localToneStrength ||
+			       localStructureStrength != other.localStructureStrength || skinStructureStrength != other.skinStructureStrength ||
+			       useAutoMask != other.useAutoMask;
+		}
+
 		/** @brief Writes the eight strengths, in NeuralRenderingCategory id order, leaving the by-material switch alone. */
 		void ApplyStrengths(const std::array<float, MaterialStrength::kCount>& strengths)
 		{
@@ -235,7 +245,8 @@ namespace NR
 		{
 			style = std::min(style, kMaxStyle);
 			regionFit = std::min(regionFit, kMaxRegionFit);
-			for (auto* strength : { &intensity, &localToneStrength, &localStructureStrength,
+			intensity = Util::ClampFinite(intensity, kMinStrength, kMaxIntensity, kDefaultStrength);
+			for (auto* strength : { &localToneStrength, &localStructureStrength,
 					 &skinToneStrength, &hairToneStrength, &eyeToneStrength, &foliageToneStrength, &landscapeToneStrength })
 				*strength = Util::ClampFinite(*strength, kMinStrength, kMaxStrength, kDefaultStrength);
 			skinStructureStrength = Util::ClampFinite(skinStructureStrength, kAutomaticSkinStructure, kMaxStrength, kAutomaticSkinStructure);
