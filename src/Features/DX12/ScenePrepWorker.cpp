@@ -265,6 +265,7 @@ namespace DX12
 			}
 			if (a_request.attachedShapes.size() >= kMaxCapturedShapes ||
 				extracted.vertexCount > 65535u || extracted.indexCount > 65535u * 3u) {
+				a_request.captureBudgetExceeded = true;
 				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "capture shape limit");
 				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, int32_t(ordinal), "capture shape limit");
 				return;
@@ -278,6 +279,7 @@ namespace DX12
 				const auto vertexBytes = uint64_t(extracted.vertexCount) * extracted.stride;
 				const auto bytes = vertexBytes + uint64_t(extracted.indexCount) * sizeof(uint16_t);
 				if (bytes > kMaxCapturedMeshBytes - a_cache.bytes) {
+					a_request.captureBudgetExceeded = true;
 					RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "capture byte budget");
 					AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, int32_t(ordinal), "capture byte budget");
 					return;
@@ -387,6 +389,7 @@ namespace DX12
 			return std::nullopt;
 
 		ZoneScopedN("DX12::Preparation::Capture");
+		const auto captureStarted = Util::GetQpcTicks();
 		ScenePrepRequest request;
 		CaptureCache captureCache;
 		request.key = a_key;
@@ -579,6 +582,7 @@ namespace DX12
 		if (request.lightCapacityExceeded && request.rejectionReasons.size() < kMaxRejectionReasons)
 			request.rejectionReasons.emplace_back("tile light capacity", 1u);
 
+		request.captureMs = Util::QpcElapsedUs(captureStarted, Util::GetQpcTicks(), Util::GetQpcFrequency()) / 1000.0;
 		return request;
 	}
 
@@ -639,6 +643,8 @@ namespace DX12
 	{
 		std::scoped_lock lock(mutex);
 		generation.fetch_add(1, std::memory_order_acq_rel);
+		if (worker.joinable())
+			SetThreadPriority(worker.native_handle(), THREAD_PRIORITY_BELOW_NORMAL);
 		queued.reset();
 		completed.reset();
 		errorLogged = false;
@@ -686,12 +692,15 @@ namespace DX12
 				queued.reset();
 				running = true;
 				epoch = generation.load(std::memory_order_acquire);
+				SetThreadPriority(GetCurrentThread(), task->loading ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_BELOW_NORMAL);
 			}
 
 			ZoneScopedN("DX12::Preparation::Worker");
-			SetThreadPriority(GetCurrentThread(), task->loading ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_BELOW_NORMAL);
 			const auto started = Util::GetQpcTicks();
 			const bool consolidationAttempt = task->consolidate;
+			const bool predictive = task->predictive;
+			const bool corner = task->corner;
+			const double captureMs = task->captureMs;
 			std::vector<RE::NiPointer<RE::NiObject>> localRetired;
 			ScenePrepResult result;
 			try {
@@ -704,6 +713,9 @@ namespace DX12
 				result.failure = "Unknown scene preparation failure";
 			}
 			result.consolidationAttempt = consolidationAttempt;
+			result.predictive = predictive;
+			result.corner = corner;
+			result.captureMs = captureMs;
 			result.preparationMs = Util::QpcElapsedUs(started, Util::GetQpcTicks(), Util::GetQpcFrequency()) / 1000.0;
 			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 			{
@@ -913,14 +925,15 @@ namespace DX12
 		pub.validated = true;
 		pub.enumerationComplete = a_request.enumerationComplete && !a_request.lightCapacityExceeded && !a_request.candidateOverflow;
 		pub.spatialBoundsComplete = pub.enumerationComplete && !pub.failedShapes && !pub.rejectedLights;
-		if (a_request.consolidate && pub.enumerationComplete && !budgetExceeded && std::isfinite(lowX) && std::isfinite(lowY)) {
+		if (a_request.consolidate && pub.enumerationComplete && !budgetExceeded && !a_request.captureBudgetExceeded &&
+			std::isfinite(lowX) && std::isfinite(lowY)) {
 			const auto size = double(a_request.size);
 			const auto cx = std::floor((lowX + highX) / (2.0 * size));
 			const auto cy = std::floor((lowY + highY) / (2.0 * size));
 			pub.wholeCell = lowX >= (cx - kPredictiveRadius) * size && lowY >= (cy - kPredictiveRadius) * size &&
 				highX < (cx + kPredictiveRadius + 1) * size && highY < (cy + kPredictiveRadius + 1) * size;
 		}
-		if (!pub.enumerationComplete || pub.failedShapes || pub.eligibleShapes != pub.shapes.size()) {
+		if (!pub.enumerationComplete || pub.failedShapes || pub.rejectedLights || pub.eligibleShapes != pub.shapes.size()) {
 			result.failure = std::format(
 				"Partial coverage: {} eligible shapes, {} extracted, {} unsupported; complete enumeration: {}",
 				pub.eligibleShapes, pub.shapes.size(), pub.failedShapes,

@@ -1,4 +1,5 @@
 #include "DX12NativeSceneInputs.h"
+#include "DX12ShapeEquivalence.h"
 
 #include <unordered_set>
 #include <utility>
@@ -15,8 +16,7 @@ namespace DX12Native
 		const auto& grid = *inputs->residency;
 		inputs->geometryRevision = grid.geometryRevision;
 
-		// A placed shape may be discovered by both companion and runtime observation.
-		// Keep the companion version; do not require a tile to certify full coverage.
+		// Native preparation takes precedence over equivalent observed rigid geometry.
 		std::unordered_set<uint64_t> seenShapes;
 		const auto appendShape = [&](const std::shared_ptr<const DX12::Shape>& shape) {
 			if (!shape)
@@ -31,8 +31,17 @@ namespace DX12Native
 			for (const auto& shape : tile->shapes)
 				appendShape(shape);
 		}
-		for (const auto& observed : grid.runtimeShapes)
+		const size_t preparedCount = inputs->geometry.size();
+		for (const auto& observed : grid.runtimeShapes) {
+			if (!observed.shape)
+				continue;
+			const auto prepared = std::span(inputs->geometry).first(preparedCount);
+			if (std::ranges::any_of(prepared, [&](const auto& shape) {
+				return DX12::EquivalentGeometry(*shape, *observed.shape);
+			}))
+				continue;
 			appendShape(observed.shape);
+		}
 
 		return inputs;
 	}

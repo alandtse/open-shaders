@@ -2,7 +2,7 @@
 
 The native DX12 master switch is a boot-latched opt-in. When disabled, upstream SCM retains authority over light selection, engine mutations, caster classification, shadow submission and cache reuse. Do not perform native light metadata extraction, geometry observation, ownership queries, worker startup or offload-only resource submission on that path.
 
-Raster comparison is not master-disabled: it permits geometry preparation but does not grant native shadow ownership. Shadow offloading may use the native extension of the synchronous SCM caster walk. Its activation policy is separate from upstream DX12 upscaling and frame generation.
+Raster comparison preserves upstream raster rendering and admits no new native preparation, acceleration or shadow dispatch. Shadow offloading may use the native extension of the synchronous SCM caster walk. Its activation policy is separate from upstream DX12 upscaling and frame generation.
 
 Revoke native ownership before redraw budgeting when switching away from offloading; invalidate affected raster tiles and schedule recovery. Never invalidate upstream raster caches in a session that has not acquired native ownership.
 
@@ -22,7 +22,23 @@ The native acceleration coordinator submits short serialized CPU tasks through t
 
 GPU command submission remains on the native queue. Fence events request CPU continuations through the same gate; active frames retry denied admission and provide a non-blocking readiness fallback if event registration fails. Reset and disable invalidate publication without waiting for submitted GPU work. Producer and consumer resources retire through one-shot OS fence waits, including after a session closes. A failed queue-tail signal retains untracked GPU work until device removal; if no safe completion registration can be made, the exceptional owner is quarantined until process exit.
 
-The companion process, its worker, and its IPC protocol are outside this change.
+Geometry and light preparation uses a single lazy, in-process ScenePrepWorker.
+The render-side capture obtains engine references and copies bounded rigid
+mesh slices; the worker decodes owned data and resolves unattached models
+through the engine model database. Publications are immutable and carry
+partial-coverage diagnostics. No external preparation application, IPC,
+plugin indexing or persistent scene cache is used.
+
+Main-menu preparation is idle. Loading preparation requires the actual
+attached player cell and subcell to agree with the queued destination;
+otherwise preparation begins on arrival. Loading tasks use elevated
+thread priority only while their generation is admitted. Gameplay tasks
+run below normal priority. Cancellation invalidates queued and completed
+work and revokes loading priority without waiting on the render thread.
+
+Profile capture and worker Tracy zones separately. Validate model database
+thread safety and loading contention in Skyrim; attached mesh snapshots
+avoid asynchronous reads of renderer-owned buffers.
 
 ### Validation
 

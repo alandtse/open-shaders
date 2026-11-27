@@ -427,12 +427,22 @@ namespace DX12
 					if (ready(tile) && tile->key == key) return tile;
 				return {};
 			};
-			const auto merge = [&](const auto& keys, auto& tiles) {
-				for (size_t i = 0; i < keys.size(); ++i)
-					if (auto tile = find(keys[i])) tiles[i] = std::move(tile);
+			const auto merge = [&](const auto& keys, auto& tiles, bool speculative) {
+				for (size_t i = 0; i < keys.size(); ++i) {
+					if (auto tile = find(keys[i])) {
+						if (speculative && tile->bytes > kPredictiveTileBudgetBytes) {
+							auto deferred = std::make_shared<Tile>(*tile);
+							deferred->shapes.clear();
+							deferred->bytes = 0;
+							deferred->state = Tile::State::Deferred;
+							tile = std::move(deferred);
+						}
+						tiles[i] = std::move(tile);
+					}
+				}
 			};
-			merge(next->requested, next->resident);
-			merge(next->predictive, next->predictiveResident);
+			merge(next->requested, next->resident, false);
+			merge(next->predictive, next->predictiveResident, true);
 		} else {
 			return;
 		}
@@ -906,6 +916,8 @@ void DX12Resources::DrawResourceStatus()
 			show(T("menu.dx12.resources.stats.main", "Main"), timing->active);
 			show(T("menu.dx12.resources.predictive", "Predictive"), timing->predictive);
 			show(T("menu.dx12.resources.stats.corners", "Corners"), timing->corners);
+			show(T("menu.dx12.resources.stats.capture", "Engine capture"), timing->capture);
+			show(T("menu.dx12.resources.stats.publication", "Publication"), timing->publication);
 		}
 	};
 
@@ -1013,14 +1025,21 @@ void DX12Resources::PumpPreparation(DX12::ResourceGrid& target, const RE::TESObj
 		} else {
 			const bool valid = result->publication.validated;
 			result->publication.failureReason = result->failure.substr(0, 320);
+			const auto publishStarted = Util::GetQpcTicks();
 			if (target.Publish(std::move(result->publication))) {
+				const double publicationMs = Util::QpcElapsedUs(publishStarted, Util::GetQpcTicks(), Util::GetQpcFrequency()) / 1000.0;
 				RecordPublication(valid ? PublicationState::Valid : PublicationState::Invalid, result->failure);
 				auto next = std::make_shared<DX12::PreparationStats>(*generationStats.load(std::memory_order_acquire));
 				auto& timing = !result->predictive ? next->active : result->corner ? next->corners : next->predictive;
-				++timing.completed;
-				timing.lastMs = result->preparationMs;
-				timing.totalMs += result->preparationMs;
-				timing.worstMs = std::max(timing.worstMs, result->preparationMs);
+				const auto record = [](DX12::PreparationTiming& stats, double ms) {
+					++stats.completed;
+					stats.lastMs = ms;
+					stats.totalMs += ms;
+					stats.worstMs = std::max(stats.worstMs, ms);
+				};
+				record(timing, result->preparationMs);
+				record(next->capture, result->captureMs);
+				record(next->publication, publicationMs);
 				generationStats.store(std::move(next), std::memory_order_release);
 			}
 		}
@@ -1064,6 +1083,10 @@ void DX12Resources::Reset()
 {
 	if (!IsActive() || !IsLoading())
 		return;
+	if (!globals::features::dx12NativeScene.AllowsNativeSceneWork()) {
+		SuspendPreparation();
+		return;
+	}
 	const auto serial = loadingSerial.load(std::memory_order_acquire);
 	const auto destination = loadingDestination.load(std::memory_order_acquire);
 	if (loadingGrid && loadingGridSerial != serial) {
@@ -1071,8 +1094,12 @@ void DX12Resources::Reset()
 		loadingGrid.reset();
 		loadingConsolidationAttemptScope = 0;
 	}
-	if (!destination || !globals::features::dx12NativeScene.AllowsScenePreparation(destination->worldspace))
+	if (!destination)
 		return;
+	if (!globals::features::dx12NativeScene.AllowsScenePreparation(destination->worldspace)) {
+		SuspendPreparation();
+		return;
+	}
 	// A queued location alone does not make its engine scene graph safe to read.
 	const auto location = Util::GetPlayerSpatialLocation();
 	if (!location || !location->cell->IsAttached())
@@ -1110,16 +1137,21 @@ void DX12Resources::PreShadowMaps()
 		SuspendPreparation();
 		return;
 	}
-	if (IsLoading() || !globals::state || !globals::state->startupMenuInitializationComplete.load(std::memory_order_acquire) ||
-		(globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME)))
+	if (IsLoading() || !globals::state || !globals::state->startupMenuInitializationComplete.load(std::memory_order_acquire))
 		return;
+	if (globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) {
+		SuspendPreparation();
+		return;
+	}
 	const auto location = Util::GetPlayerSpatialLocation();
-	if (!location || !location->cell->IsAttached())
+	if (!location)
 		return;
 	if (!globals::features::dx12NativeScene.AllowsScenePreparation(location->cell->IsExteriorCell())) {
 		SuspendPreparation();
 		return;
 	}
+	if (!location->cell->IsAttached())
+		return;
 	preparationSuspended = false;
 	CS_GPU_PASS("DX12Resources::Grid");
 	const auto* cell = location->cell;

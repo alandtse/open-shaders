@@ -28,7 +28,7 @@ namespace DX12
 		uint32_t referenceID = 0, flags = 0;
 		float3 position{}, color{};
 		float radius = 0.0f, fade = 1.0f, emitterRadius = 0.0f, falloffExponent = 1.0f;
-		uint64_t runtimeIdentity = 0;  // Supplemental Full RT emitter; not part of the preparation wire format.
+		uint64_t runtimeIdentity = 0;  // Supplemental Full RT emitter identity.
 		uint32_t unifiedCount = 1;
 	};
 
@@ -39,7 +39,7 @@ namespace DX12
 		uint32_t referenceLocal = 0;
 	};
 
-	/** @brief A shape or model unresolved by the preparation; runtime rigid geometry may supplement it. */
+	/** @brief A shape or model unresolved during preparation; runtime rigid geometry may supplement it. */
 	struct MissingNifShapeDescriptor
 	{
 		std::string referencePlugin, nifPath, reason;
@@ -86,7 +86,7 @@ namespace DX12
 		std::vector<MissingNifShapeDescriptor> missingShapes;
 	};
 
-	/** @brief A preparation attests that every eligible shape in this subcell was enumerated. */
+	/** @brief Preparation output with explicit enumeration coverage. */
 	struct TilePublication
 	{
 		SubcellKey key;
@@ -140,7 +140,7 @@ namespace DX12
 
 	struct PreparationStats
 	{
-		PreparationTiming active, predictive, corners;
+		PreparationTiming active, predictive, corners, capture, publication;
 	};
 
 	class ResourceGrid
@@ -181,7 +181,7 @@ namespace DX12
 struct DX12Resources final : Feature, private RE::BSTEventSink<RE::PositionPlayerEvent>
 {
 	// Keep construction and destruction out of this header: the unique_ptr
-	// pointees are forward-declared until ScenePrepWorker.h is included in the TU.
+	// pointee is forward-declared until ScenePrepWorker.h is included in the TU.
 	DX12Resources();
 	~DX12Resources();
 	struct Settings

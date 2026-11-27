@@ -53,6 +53,8 @@ namespace DX12
 		bool hasUnattachedCells = false;
 		bool lightCapacityExceeded = false;
 		bool candidateOverflow = false;
+		bool captureBudgetExceeded = false;
+		double captureMs = 0.0;
 		std::vector<CapturedAttachedShape> attachedShapes;
 		std::vector<UnattachedModelPlacement> unattachedPlacements;
 		std::vector<PreparedLight> lights;
@@ -71,6 +73,7 @@ namespace DX12
 		bool corner = false;
 		bool consolidationAttempt = false;
 		double preparationMs = 0.0;
+		double captureMs = 0.0;
 	};
 
 	/** @brief Captures live references, terrain, lights, and unattached model descriptors on the game thread. */

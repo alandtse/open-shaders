@@ -1,5 +1,6 @@
 #include "DX12NativeRuntimeCapture.h"
 #include "SystemMemoryBudget.h"
+#include "DX12ShapeEquivalence.h"
 
 #include "Globals.h"
 
@@ -55,25 +56,7 @@ namespace DX12Native
 			return hash ? hash : 1;
 		}
 
-		// Compare actual rigid geometry, not subcell readiness or camera coverage.
-		// Companion-produced shapes take precedence over equivalent runtime shapes.
-		bool SameShape(const DX12::Shape& a, const DX12::Shape& b)
-		{
-			if (a.positions.size() != b.positions.size() || a.indices != b.indices)
-				return false;
-			for (size_t i = 0; i < a.transform.size(); ++i)
-				if (std::abs(a.transform[i] - b.transform[i]) > 0.01f)
-					return false;
-			for (size_t i = 0; i < a.positions.size(); ++i) {
-				const auto& x = a.positions[i];
-				const auto& y = b.positions[i];
-				if (std::abs(x.x - y.x) > 0.01f ||
-					std::abs(x.y - y.y) > 0.01f ||
-					std::abs(x.z - y.z) > 0.01f)
-					return false;
-			}
-			return true;
-		}
+
 	}
 
 	RuntimeGeometryCapture::RuntimeGeometryCapture() = default;
@@ -241,19 +224,19 @@ namespace DX12Native
 				releaseIfCurrent();
 				continue;
 			}
-			bool companionOwns = false;
+			bool preparedOwns = false;
 			for (const auto& tile : grid->resident) {
 				if (!tile)
 					continue;
 				for (const auto& prepared : tile->shapes)
-					if (prepared && SameShape(*prepared, *shape)) {
-						companionOwns = true;
+					if (prepared && DX12::EquivalentGeometry(*prepared, *shape)) {
+						preparedOwns = true;
 						break;
 					}
-				if (companionOwns)
+				if (preparedOwns)
 					break;
 			}
-			if (companionOwns)
+			if (preparedOwns)
 				continue;
 			{
 				std::scoped_lock lock(mutex);
