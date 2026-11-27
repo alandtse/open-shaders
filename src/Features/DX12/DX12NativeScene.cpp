@@ -371,6 +371,9 @@ void DX12NativeScene::PublishLightShadowSlots(uint32_t frame, std::span<const DX
 	for (size_t i = 0; i < slotMatches.size(); ++i)
 		slotMatches[i].store(slotMatchesThisFrame[i], std::memory_order_relaxed);
 	slotMatchesThisFrame.fill(0);
+	std::swap(slicedLights, slicedLightsThisFrame);
+	slicedLightsThisFrame.clear();
+	slicedLightsFrame = frame;
 	const auto traced = shadows.Get(frame);
 	lightSlotFrame = UINT32_MAX;
 	// Queue-side wait before any light is flagged: forward lighting must not read slices the trace has not written.
@@ -422,10 +425,20 @@ std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_l
 	if (slot) {
 		lightsShadedFrame = lightSlotFrame;
 		++slotMatchesThisFrame[size_t(match)];
+		slicedLightsThisFrame.push_back(a_light);
 	} else if (a_shadowLight) {
 		++slotMatchesThisFrame[size_t(SlotMatch::UnslottedShadowLight)];
 	}
 	return slot;
+}
+
+bool DX12NativeScene::ShadedFromSlice(const RE::NiLight* a_light) const
+{
+	if (!a_light || !globals::game::graphicsState || slicedLightsFrame == UINT32_MAX)
+		return false;
+	// SCM schedules before this frame's trace publishes, so the previous frame's publication governs it.
+	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
+	return (slicedLightsFrame == frame || slicedLightsFrame + 1 == frame) && std::ranges::contains(slicedLights, a_light);
 }
 
 bool DX12NativeScene::ShadesLightsDirectly(uint32_t a_frame) const

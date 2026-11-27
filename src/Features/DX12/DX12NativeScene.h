@@ -88,6 +88,8 @@ struct DX12NativeScene final : OverlayFeature
 	 * @param a_shadowLight True for an SCM shadow light, counted in the status when it finds no slice.
 	 */
 	std::optional<uint32_t> NativeShadowSlot(const RE::NiLight* a_light, bool a_shadowLight);
+	/** @brief True when lighting read a visibility slice for this light in the last published frame; render thread only. */
+	bool ShadedFromSlice(const RE::NiLight* a_light) const;
 	/** @brief True when lighting consumed per-light visibility this frame, so the final-image layer must not apply it again. */
 	bool ShadesLightsDirectly(uint32_t a_frame) const;
 	/** @brief Traces native shadows from prepass depth so forward lighting of this frame can read them. */
@@ -191,6 +193,8 @@ private:
 		kCount
 	};
 	std::array<uint32_t, size_t(SlotMatch::kCount)> slotMatchesThisFrame{};
+	std::vector<const RE::NiLight*> slicedLightsThisFrame, slicedLights;
+	uint32_t slicedLightsFrame = UINT32_MAX;
 	std::array<std::atomic<uint32_t>, size_t(SlotMatch::kCount)> slotMatches{};  // Previous frame's lookups by outcome.
 	uint32_t lightSlotFrame = UINT32_MAX, lightsShadedFrame = UINT32_MAX;
 	std::atomic<uint32_t> tracedLightCount{ 0 };  // Lights submitted to the last shadow dispatch.

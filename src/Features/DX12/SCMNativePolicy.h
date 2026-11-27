@@ -38,10 +38,13 @@ namespace DX12
 		return fullRT ? SCMNativeMode::FullRT : SCMNativeMode::ShadowOffload;
 	}
 
-	/** @brief Full RT owns every supported point light, independent of native scene coverage. */
+	/**
+	 * @brief Native tracing owns a supported point light's static casters once it is matched: to a traced
+	 * light in shadow offload, or to a visibility slice that lighting read in Full RT.
+	 */
 	constexpr bool NativeStaticAuthority(SCMNativePolicy policy, bool supportedPointLight, bool matched)
 	{
-		return supportedPointLight && (policy.fullStaticAuthority || (policy.observeLights && matched));
+		return supportedPointLight && matched && (policy.fullStaticAuthority || policy.observeLights);
 	}
 
 	/** @brief Full RT admits intrinsic deformation, actor attachments or actual per-shape motion. */
