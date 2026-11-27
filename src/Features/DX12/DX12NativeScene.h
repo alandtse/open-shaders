@@ -34,6 +34,8 @@ struct DX12NativeScene final : OverlayFeature
 	json GetStatus() const;
 	bool CasterInTlas(RE::BSGeometry& geometry) const;
 	void AuditCasterCoverage(RE::BSGeometry& geometry) const;
+	bool WantsExactShadowOrigins() const { return frameExactShadowLights.load(std::memory_order_relaxed); }
+	void ObserveScheduledShadowOrigin(const RE::NiLight* light, const RE::NiPoint3& origin);
 	std::shared_ptr<const DX12Native::TopLevel> GetPublishedScene() const { return acceleration.GetScene(); }
 	/** @brief The selected mode's exterior preparation and shadow contribution setting. */
 	bool AllowsOutdoorContribution() const;
@@ -121,6 +123,11 @@ private:
 		DX12::PreparedLight value;
 	};
 	std::atomic<bool> coverageAudit{ false };
+	std::atomic<bool> exactShadowLights{ false }, frameExactShadowLights{ false };
+	std::unordered_map<uintptr_t, float3> scheduledOrigins;
+	uint32_t scheduledOriginsFrame = UINT32_MAX;
+	std::vector<DX12::PreparedLight> lightsAtShadowOrigins;
+	std::atomic<uint32_t> movingOriginCount{ 0 };
 	mutable std::atomic<uint64_t> coveredCasterChecks{ 0 }, missingCasterChecks{ 0 };
 	mutable std::atomic<uint64_t> ownershipGranted{ 0 };
 	mutable std::mutex runtimeLightMutex;
@@ -134,7 +141,7 @@ private:
 		DX12::PreparedLight value;
 		uint32_t placedReference = 0;
 		uint64_t seen = 0;
-		bool supported = false, sampled = false, active = false;
+		bool supported = false, sampled = false, active = false, shadowLight = false;
 	};
 	std::unordered_map<const RE::NiLight*, FullRuntimeLight> fullRuntimeLights;
 	uint32_t fullRuntimeScope = 0;

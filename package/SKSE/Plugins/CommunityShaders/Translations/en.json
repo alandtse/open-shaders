@@ -6059,6 +6059,7 @@
     "menu.dx12.scene.audit_caster_coverage": "Audit exact caster coverage",
     "menu.dx12.scene.debug_native_lights": "Preview native lights",
     "menu.dx12.scene.debug_shadow_mask": "Show ray-traced shadow mask",
+    "menu.dx12.scene.exact_shadow_lights": "Experimental exact shadow-light origins",
     "menu.dx12.scene.light_observation_interval": "Light observation interval (frames)",
     "menu.dx12.scene.outdoor_shadow_offloading": "Enable outdoor shadow offloading (DX12 only)",
     "menu.dx12.scene.prepared_exclusion_radius": "Prepared light exclusion radius (units)",

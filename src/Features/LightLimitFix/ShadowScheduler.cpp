@@ -683,7 +683,10 @@ namespace ShadowCasterManager
 				ObserveNativeShadowLight(entry.Light);
 				matched = nativeScene.OwnsStaticForLight(entry.Light, slot);
 			}
-			// Full RT never observes SCM lights or queries native coverage/readiness.
+			if (supported && s_frameNativePolicy.fullStaticAuthority && nativeScene.WantsExactShadowOrigins())
+				if (auto* ni = entry.Light->light.get())
+					nativeScene.ObserveScheduledShadowOrigin(ni, ShadowOrigin(ni));
+			// The optional origin observation does not change Full RT raster authority.
 			const bool native = DX12::NativeStaticAuthority(s_frameNativePolicy, supported, matched);
 			const auto it = s_splitState.find(entry.Light);
 			const bool omitted = it != s_splitState.end() && it->second.rasterOmitsNativeStatic;

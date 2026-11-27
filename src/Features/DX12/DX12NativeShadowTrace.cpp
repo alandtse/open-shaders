@@ -143,6 +143,7 @@ namespace DX12Native
 		ReportSkipped(Outcome::None);
 		const auto quality = controls.quality;
 		const auto variant = ShadowVariant(quality);
+		const bool uploadLights = !controls.nativeLights || controls.uploadLights;
 		const auto& pipeline = pipelines[variant];
 		if (initializationFailed[variant])
 			return ReportSkipped(Outcome::InitializationFailed);
@@ -219,7 +220,7 @@ namespace DX12Native
 				DX::ThrowIfFailed(requested.d3d12Device->CreateDescriptorHeap(
 					&descriptors, IID_PPV_ARGS(replacement->descriptors.put())));
 				replacement->cameraUpload = UploadBuffer(requested.d3d12Device.get(), D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
-				if (!controls.nativeLights)
+				if (uploadLights)
 					replacement->lightUpload = UploadBuffer(requested.d3d12Device.get(), lightBytes);
 				DX::ThrowIfFailed(requested.d3d12Device->CreateCommandAllocator(
 					D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(replacement->allocator.put())));
@@ -228,7 +229,7 @@ namespace DX12Native
 					pipeline.get(), IID_PPV_ARGS(replacement->commands.put())));
 				slot = std::move(replacement);
 			} else {
-				if (!controls.nativeLights && (!slot->lightUpload || slot->lightUpload->GetDesc().Width < lightBytes)) {
+				if (uploadLights && (!slot->lightUpload || slot->lightUpload->GetDesc().Width < lightBytes)) {
 					slot->lightRecordsUploaded = false;
 					slot->lightUpload = UploadBuffer(requested.d3d12Device.get(), lightBytes);
 				}
@@ -241,6 +242,7 @@ namespace DX12Native
 			slot->raster = std::move(raster);
 			slot->scene = std::move(scene);
 			slot->nativeLights = controls.nativeLights;
+			slot->uploadedLights = uploadLights;
 			slot->frame = frame;
 			slot->width = width;
 			slot->height = height;
@@ -255,7 +257,7 @@ namespace DX12Native
 			};
 			WriteUpload(slot->cameraUpload.get(), &camera, sizeof(camera));
 
-			if (!slot->nativeLights) {
+			if (slot->uploadedLights) {
 				auto& records = slot->lightRecords;
 				const size_t recordCount = size_t(lightCount) * kRecords;
 				bool changed = !slot->lightRecordsUploaded || records.size() != recordCount;
@@ -306,7 +308,7 @@ namespace DX12Native
 			command->SetComputeRootDescriptorTable(1, gpu);
 			gpu.ptr += step;
 			command->SetComputeRootDescriptorTable(2, gpu);
-			command->SetComputeRootShaderResourceView(3, (slot->nativeLights ? slot->nativeLights->buffer : slot->lightUpload)->GetGPUVirtualAddress());
+			command->SetComputeRootShaderResourceView(3, (slot->uploadedLights ? slot->lightUpload : slot->nativeLights->buffer)->GetGPUVirtualAddress());
 			command->SetComputeRootConstantBufferView(4, slot->cameraUpload->GetGPUVirtualAddress());
 
 			const auto depthStart = CD3DX12_RESOURCE_BARRIER::Transition(

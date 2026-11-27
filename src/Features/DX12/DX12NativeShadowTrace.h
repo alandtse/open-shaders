@@ -26,6 +26,7 @@ namespace DX12Native
 		bool captureDebugLights = false;
 		uint32_t debugPreparedCount = 0;
 		std::shared_ptr<const NativeLightPublication> nativeLights;
+		bool uploadLights = false;
 	};
 
 	/** @brief Quarter-resolution raw visibility and receiver distance; the composite reconstructs the full view. */
@@ -47,6 +48,7 @@ namespace DX12Native
 		uint32_t debugPreparedCount = 0;
 		std::vector<std::array<float, 4>> lightRecords;
 		bool lightRecordsUploaded = false;
+		bool uploadedLights = false;
 		// RG32F: weighted visibility and receiver distance (zero for invalid receivers).
 	};
 

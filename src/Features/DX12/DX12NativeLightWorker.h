@@ -14,6 +14,7 @@ namespace DX12Native
 	{
 		DX12::PreparedLight value;
 		uint32_t placedReference = 0;
+		bool shadowLight = false;
 	};
 
 	struct NativeLightPublication

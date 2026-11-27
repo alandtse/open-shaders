@@ -58,6 +58,9 @@ void DX12NativeScene::DrawDevSettings()
 	if (ImGui::Checkbox(T("menu.dx12.scene.debug_shadow_mask", "Show ray-traced shadow mask"), &debugMask))
 		DX12Native::compositeShadowDebugView.store(debugMask, std::memory_order_relaxed);
 	if (control.IsFullRTMode()) {
+		bool exact = exactShadowLights.load(std::memory_order_relaxed);
+		if (ImGui::Checkbox(T("menu.dx12.scene.exact_shadow_lights", "Experimental exact shadow-light origins"), &exact))
+			exactShadowLights.store(exact, std::memory_order_relaxed);
 		int unify = int(runtimeUnificationRadius.load(std::memory_order_relaxed));
 		int exclude = int(preparedExclusionRadius.load(std::memory_order_relaxed));
 		if (ImGui::SliderInt(T("menu.dx12.scene.runtime_unification_radius", "Runtime light unification radius (units)"), &unify, 0, int(DX12Native::kFullShadowRadiusMax), "%d", ImGuiSliderFlags_AlwaysClamp))
@@ -368,7 +371,9 @@ void DX12NativeScene::PreShadowMaps()
 		const auto mode = DX12::SelectSCMNativeMode(control.IsActive(), globals::game::isVR,
 			control.IsShadowOffloadMode(), control.IsFullRTMode(), CanOffloadShadowsInCurrentCell());
 		const auto previous = frameNativeMode.exchange(mode, std::memory_order_acq_rel);
-		if (previous != mode) {
+		const bool exact = mode == DX12::SCMNativeMode::FullRT && globals::state->IsDeveloperMode() && exactShadowLights.load(std::memory_order_relaxed);
+		const bool previousExact = frameExactShadowLights.exchange(exact, std::memory_order_acq_rel);
+		if (previous != mode || previousExact != exact) {
 			std::scoped_lock lock(runtimeLightMutex);
 			ResetFullLightInventory();
 			runtimeLightFrame = UINT32_MAX;
@@ -462,7 +467,8 @@ bool DX12NativeScene::ObserveFullRuntimeLights()
 	}
 	bool dirty = !fullRuntimeSnapshot;
 	const uint64_t visit = ++fullLightVisit;
-	const auto collect = [&](RE::BSLight* light) {
+	const bool preserveExact = frameExactShadowLights.load(std::memory_order_relaxed);
+	const auto collect = [&](RE::BSLight* light, bool shadowLight) {
 		if (!light || !light->pointLight || !light->light)
 			return;
 		auto* ni = light->light.get();
@@ -498,15 +504,20 @@ bool DX12NativeScene::ObserveFullRuntimeLights()
 			}
 		}
 		const bool active = visible && cached.sampled;
-		dirty |= cached.active != active;
+		dirty |= cached.active != active || cached.shadowLight != shadowLight;
 		cached.active = active;
+		cached.shadowLight = shadowLight;
 	};
 	if (node) {
 		const auto& scene = node->GetRuntimeData();
+		if (preserveExact)
+			for (const auto& light : scene.activeShadowLights)
+				collect(light.get(), true);
 		for (const auto& light : scene.activeLights)
-			collect(light.get());
-		for (const auto& light : scene.activeShadowLights)
-			collect(light.get());
+			collect(light.get(), false);
+		if (!preserveExact)
+			for (const auto& light : scene.activeShadowLights)
+				collect(light.get(), false);
 	}
 	std::erase_if(fullRuntimeLights, [&](const auto& entry) {
 		if (entry.second.seen == visit)
@@ -519,7 +530,7 @@ bool DX12NativeScene::ObserveFullRuntimeLights()
 		snapshot->reserve(fullRuntimeLights.size());
 		for (const auto& [identity, cached] : fullRuntimeLights)
 			if (cached.active)
-				snapshot->push_back({ cached.value, cached.placedReference });
+				snapshot->push_back({ cached.value, cached.placedReference, cached.shadowLight });
 		fullRuntimeSnapshot = std::move(snapshot);
 	}
 	return true;
@@ -549,7 +560,8 @@ std::shared_ptr<const DX12Native::NativeLightPublication> DX12NativeScene::Colle
 	const DX12Native::NativeLightSettings settings{
 		runtimeUnificationRadius.load(std::memory_order_relaxed),
 		preparedExclusionRadius.load(std::memory_order_relaxed),
-		additivePreparedEmission.load(std::memory_order_relaxed)
+		additivePreparedEmission.load(std::memory_order_relaxed),
+		frameExactShadowLights.load(std::memory_order_relaxed)
 	};
 	const bool gridChanged = !fullRequestedGrid ||
 	                         (fullRequestedGrid != grid && (fullRequestedGrid->resident != grid->resident ||
@@ -567,6 +579,22 @@ std::shared_ptr<const DX12Native::NativeLightPublication> DX12NativeScene::Colle
 		fullRequestedGrid = grid;
 	}
 	return ready;
+}
+
+// Only opaque identities and frame-local origin values are submitted to native tracing.
+void DX12NativeScene::ObserveScheduledShadowOrigin(const RE::NiLight* light, const RE::NiPoint3& origin)
+{
+	if (!frameExactShadowLights.load(std::memory_order_relaxed) || GetFrameNativeMode() != DX12::SCMNativeMode::FullRT ||
+		!light || !std::isfinite(origin.x) || !std::isfinite(origin.y) || !std::isfinite(origin.z))
+		return;
+	const auto frame = globals::game::graphicsState->GetFrameCount();
+	std::scoped_lock lock(runtimeLightMutex);
+	if (scheduledOriginsFrame != frame) {
+		scheduledOrigins.clear();
+		scheduledOriginsFrame = frame;
+	}
+	if (scheduledOrigins.size() < DX12::kMaxPreparedLights)
+		scheduledOrigins.try_emplace(reinterpret_cast<uintptr_t>(light), float3{ origin.x, origin.y, origin.z });
 }
 
 void DX12NativeScene::OnOpaqueRasterReady()
@@ -627,9 +655,35 @@ void DX12NativeScene::OnOpaqueRasterReady()
 				liveLights.push_back(*it->second);
 		}
 	}
-	const std::span<const DX12::PreparedLight> submittedLights = fullRT ?
-	                                                                 std::span<const DX12::PreparedLight>(fullInventory->lights) :
-	                                                                 std::span<const DX12::PreparedLight>(liveLights);
+	std::span<const DX12::PreparedLight> submittedLights = fullRT ?
+		std::span<const DX12::PreparedLight>(fullInventory->lights) : std::span<const DX12::PreparedLight>(liveLights);
+	uint32_t moving = 0;
+	if (fullRT && frameExactShadowLights.load(std::memory_order_relaxed)) {
+		std::scoped_lock lock(runtimeLightMutex);
+		if (scheduledOriginsFrame == frame) {
+			constexpr float kMinOriginShift = 0.25f;
+			for (size_t i = 0; i < submittedLights.size(); ++i) {
+				const auto it = scheduledOrigins.find(submittedLights[i].runtimeIdentity);
+				if (it == scheduledOrigins.end())
+					continue;
+				const auto& p = submittedLights[i].position;
+				const auto& q = it->second;
+				const float dx = q.x - p.x, dy = q.y - p.y, dz = q.z - p.z;
+				if (dx * dx + dy * dy + dz * dz < kMinOriginShift * kMinOriginShift)
+					continue;
+				if (!moving)
+					lightsAtShadowOrigins.assign(submittedLights.begin(), submittedLights.end());
+				lightsAtShadowOrigins[i].position = q;
+				++moving;
+			}
+		}
+		if (moving)
+			submittedLights = lightsAtShadowOrigins;
+	}
+	const auto previousMoving = movingOriginCount.exchange(moving, std::memory_order_relaxed);
+	// Until per-light history exists, reject the combined history on moving-origin frames.
+	if (moving || previousMoving)
+		globals::features::upscaling.nativeComposite.ResetShadowHistory();
 	if (submittedLights.empty())
 		return shadows.ReportSkipped(DX12Native::ShadowMaskTrace::Outcome::NoLights);
 
@@ -653,7 +707,8 @@ void DX12NativeScene::OnOpaqueRasterReady()
 		.quality = fullRT ? fullRTQuality : DX12Native::kShadowQualityOffloading,
 		.captureDebugLights = WantsLightPreview(mode),
 		.debugPreparedCount = fullRT ? fullInventory->preparedCount : 0u,
-		.nativeLights = fullInventory
+		.nativeLights = fullInventory,
+		.uploadLights = moving != 0
 	};
 	shadows.Dispatch(*backend, raster.Get(frame), built, submittedLights, frame, controls);
 }
@@ -780,6 +835,8 @@ void DX12NativeScene::OnRuntimeDisabled()
 	loadingResetPending.store(false, std::memory_order_release);
 	frameNativeModeID.store(UINT32_MAX, std::memory_order_release);
 	frameNativeMode.store(DX12::SCMNativeMode::Disabled, std::memory_order_release);
+	frameExactShadowLights.store(false, std::memory_order_relaxed);
+	movingOriginCount.store(0, std::memory_order_relaxed);
 	if (!nativeSessionStarted)
 		return;
 	nativeSessionStarted = false;
@@ -875,7 +932,8 @@ json DX12NativeScene::GetStatus() const
 	status["ownership"] = { { "granted", ownershipGranted.load(std::memory_order_relaxed) },
 		{ "coveredCasterChecks", coveredCasterChecks.load(std::memory_order_relaxed) },
 		{ "missingCasterChecks", missingCasterChecks.load(std::memory_order_relaxed) } };
-	status["trace"] = { { "lastOutcome", magic_enum::enum_name(shadows.LastOutcome()) }, { "lights", shadows.LastLightCount() } };
+	status["trace"] = { { "lastOutcome", magic_enum::enum_name(shadows.LastOutcome()) }, { "lights", shadows.LastLightCount() },
+		{ "movingOrigins", movingOriginCount.load(std::memory_order_relaxed) } };
 	status["composite"] = { { "lastShadowResult", magic_enum::enum_name(DX12Native::lastCompositeShadowResult.load(std::memory_order_relaxed)) } };
 	return status;
 }

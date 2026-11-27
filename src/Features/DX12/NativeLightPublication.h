@@ -3,6 +3,8 @@
 #include "FullShadowLightConsolidation.h"
 
 #include <bit>
+#include <unordered_set>
+#include <utility>
 
 namespace DX12Native
 {
@@ -16,8 +18,53 @@ namespace DX12Native
 		uint32_t unify = kDefaultRuntimeUnificationRadius;
 		uint32_t exclude = kDefaultPreparedExclusionRadius;
 		bool additive = true;
+		bool preserveShadowLights = false;
 		bool operator==(const NativeLightSettings&) const = default;
 	};
+
+	// Preserve actual shadow-light identities before spatial consolidation.
+	// A live placed shadow light replaces its prepared placeholder, not its emission twice.
+	template <class Light, class Emitter>
+	std::pair<std::vector<Light>, uint32_t> BuildNativeLightInventory(std::span<const Light> prepared,
+		std::span<const Emitter> runtime, NativeLightSettings settings, size_t limit)
+	{
+		std::unordered_set<uint32_t> preparedIDs;
+		std::vector<Light> supplemental;
+		supplemental.reserve(runtime.size());
+		for (const auto& light : prepared)
+			if (light.referenceID)
+				preparedIDs.insert(light.referenceID);
+		if (!settings.preserveShadowLights) {
+			for (const auto& emitter : runtime)
+				if (!emitter.placedReference || !preparedIDs.contains(emitter.placedReference))
+					supplemental.push_back(emitter.value);
+			auto lights = ConsolidateFullShadowLights<Light>(prepared, supplemental, settings.unify, settings.exclude, settings.additive);
+			lights.resize(std::min(lights.size(), limit));
+			return { std::move(lights), uint32_t(prepared.size()) };
+		}
+		std::unordered_set<uint32_t> exactPlaced;
+		std::vector<Light> exact, preparedSelection;
+		for (const auto& emitter : runtime) {
+			if (emitter.shadowLight && emitter.value.runtimeIdentity) {
+				exact.push_back(emitter.value);
+				if (emitter.placedReference)
+					exactPlaced.insert(emitter.placedReference);
+			} else if (!emitter.placedReference || !preparedIDs.contains(emitter.placedReference)) {
+				supplemental.push_back(emitter.value);
+			}
+		}
+		std::ranges::sort(exact, {}, &Light::runtimeIdentity);
+		exact.resize(std::min(exact.size(), limit));
+		for (const auto& light : prepared)
+			if (!exactPlaced.contains(light.referenceID) && preparedSelection.size() < limit - exact.size())
+				preparedSelection.push_back(light);
+		auto lights = ConsolidateFullShadowLights<Light>(preparedSelection, supplemental,
+			settings.unify, settings.exclude, settings.additive);
+		const auto preparedCount = uint32_t(preparedSelection.size());
+		lights.insert(lights.begin() + preparedCount, exact.begin(), exact.end());
+		lights.resize(std::min(lights.size(), limit));
+		return { std::move(lights), preparedCount };
+	}
 
 	/** @brief Frame-wrap-safe periodic observation; zero is sanitized to one. */
 	constexpr bool NativeLightObservationDue(uint32_t frame, uint32_t previous, uint32_t interval)

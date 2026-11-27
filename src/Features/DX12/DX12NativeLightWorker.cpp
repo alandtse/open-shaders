@@ -126,24 +126,9 @@ namespace DX12Native
 					current->preparedPredictive = grid->predictiveResident;
 					current->preparedInitialized = true;
 				}
-				std::unordered_set<uint32_t> preparedIDs;
-				for (const auto& light : current->prepared)
-					if (light.referenceID)
-						preparedIDs.insert(light.referenceID);
-				std::vector<DX12::PreparedLight> supplemental;
-				supplemental.reserve(runtime->size());
-				for (const auto& emitter : *runtime)
-					if (!emitter.placedReference || !preparedIDs.contains(emitter.placedReference))
-						supplemental.push_back(emitter.value);
-				std::vector<DX12::PreparedLight> lights;
-				{
-					ZoneScopedN("DX12::Lights::Consolidate");
-					lights = ConsolidateFullShadowLights<DX12::PreparedLight>(current->prepared, supplemental,
-						settings.unify, settings.exclude, settings.additive);
-				}
-				lights.resize(std::min(lights.size(), size_t{ DX12::kMaxPreparedLights }));
+				auto [lights, preparedCount] = BuildNativeLightInventory<DX12::PreparedLight, NativeRuntimeEmitter>(
+					current->prepared, *runtime, settings, DX12::kMaxPreparedLights);
 				const auto previous = current->latest.load(std::memory_order_acquire);
-				const auto preparedCount = uint32_t(current->prepared.size());
 				if (previous && previous->preparedCount == preparedCount &&
 					SameNativeLightInventory<DX12::PreparedLight>(previous->lights, lights)) {
 					current->unchanged.fetch_add(1, std::memory_order_relaxed);

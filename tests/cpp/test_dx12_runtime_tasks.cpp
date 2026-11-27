@@ -423,3 +423,24 @@ TEST_CASE("Interior fallback reuses only non-truncated enumerations", "[dx12][sc
 	CHECK_FALSE(CanReuseWholeInterior(true, false, true, true, false, false, true, true));
 	CHECK_FALSE(CanReuseWholeInterior(true, false, true, true, false, false, false, false));
 }
+
+TEST_CASE("Exact shadow-light identity replaces its prepared placeholder", "[dx12][shadow]")
+{
+	using Light = ConsolidationLight;
+	struct Emitter { Light value; uint32_t placedReference; bool shadowLight; };
+	Light placed{};
+	placed.referenceID = 11;
+	Light runtime = placed;
+	runtime.runtimeIdentity = 42;
+	std::array<Light, 1> prepared{ placed };
+	std::array<Emitter, 1> emitters{ Emitter{ runtime, 11, true } };
+	DX12Native::NativeLightSettings settings;
+	auto legacy = DX12Native::BuildNativeLightInventory<Light, Emitter>(prepared, emitters, settings, 16);
+	REQUIRE(legacy.first.size() == 1);
+	CHECK(legacy.first.front().runtimeIdentity == 0);
+	settings.preserveShadowLights = true;
+	auto exact = DX12Native::BuildNativeLightInventory<Light, Emitter>(prepared, emitters, settings, 16);
+	REQUIRE(exact.first.size() == 1);
+	CHECK(exact.first.front().runtimeIdentity == 42);
+	CHECK(exact.second == 0);
+}
