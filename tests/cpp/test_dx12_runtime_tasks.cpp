@@ -427,7 +427,12 @@ TEST_CASE("Interior fallback reuses only non-truncated enumerations", "[dx12][sc
 TEST_CASE("Exact shadow-light identity replaces its prepared placeholder", "[dx12][shadow]")
 {
 	using Light = ConsolidationLight;
-	struct Emitter { Light value; uint32_t placedReference; bool shadowLight; };
+	struct Emitter
+	{
+		Light value;
+		uint32_t placedReference;
+		bool shadowLight;
+	};
 	Light placed{};
 	placed.referenceID = 11;
 	Light runtime = placed;

@@ -656,7 +656,8 @@ void DX12NativeScene::OnOpaqueRasterReady()
 		}
 	}
 	std::span<const DX12::PreparedLight> submittedLights = fullRT ?
-		std::span<const DX12::PreparedLight>(fullInventory->lights) : std::span<const DX12::PreparedLight>(liveLights);
+	                                                           std::span<const DX12::PreparedLight>(fullInventory->lights) :
+	                                                           std::span<const DX12::PreparedLight>(liveLights);
 	uint32_t moving = 0;
 	if (fullRT && frameExactShadowLights.load(std::memory_order_relaxed)) {
 		std::scoped_lock lock(runtimeLightMutex);
