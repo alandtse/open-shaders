@@ -29,6 +29,7 @@ namespace DX12
 		uint64_t identity = 0;
 		std::shared_ptr<const CapturedMeshSlice> mesh;
 		std::array<float, 12> transform{};
+		CasterSource casterSource;
 	};
 
 	struct UnattachedModelPlacement

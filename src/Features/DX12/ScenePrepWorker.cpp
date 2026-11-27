@@ -296,7 +296,10 @@ namespace DX12
 				a_cache.meshes.emplace(key, mesh);
 			}
 			// Only owned bytes cross the worker boundary.
-			a_request.attachedShapes.push_back({ MakeShapeIdentity(a_ownerFormID, ordinal), std::move(mesh), rows });
+			a_request.attachedShapes.push_back({ MakeShapeIdentity(a_ownerFormID, ordinal), std::move(mesh), rows,
+				{ reinterpret_cast<uintptr_t>(geom), reinterpret_cast<uintptr_t>(extracted.rawVertices),
+					reinterpret_cast<uintptr_t>(extracted.rawIndices), extracted.vertexCount, extracted.indexCount,
+					extracted.stride, extracted.firstIndex } });
 		}
 
 		struct CachedDecodedMesh
@@ -825,7 +828,7 @@ namespace DX12
 								   uint64_t a_identity, const std::vector<float3>& a_positions,
 								   const std::vector<uint32_t>& a_indices, const std::array<float, 12>& a_transform,
 								   std::string_view a_plugin, uint32_t a_localID, std::string_view a_nifPath,
-								   int32_t a_blockIndex) {
+								   int32_t a_blockIndex, CasterSource a_source = {}) {
 			const auto overlaps = OverlapsSubcellXY(a_positions, a_transform, a_request.key.x, a_request.key.y, a_request.size);
 			if (!overlaps) {
 				RecordRejection(pub.rejectionReasons, pub.failedShapes, "invalid placed bounds");
@@ -860,6 +863,7 @@ namespace DX12
 
 			auto shape = std::make_shared<Shape>();
 			shape->identity = a_identity;
+			shape->casterSource = a_source;
 			shape->positions = a_positions;
 			shape->indices = a_indices;
 			shape->transform = a_transform;
@@ -902,7 +906,7 @@ namespace DX12
 					rawCache.emplace(sliceKey, decoded);
 				}
 			}
-			emitShape(attached.identity, decoded->positions, decoded->indices, attached.transform, {}, 0, {}, -1);
+			emitShape(attached.identity, decoded->positions, decoded->indices, attached.transform, {}, 0, {}, -1, attached.casterSource);
 		}
 		rawCache.clear();
 

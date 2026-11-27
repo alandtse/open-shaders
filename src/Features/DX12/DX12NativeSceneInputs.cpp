@@ -25,6 +25,8 @@ namespace DX12Native
 				++inputs->duplicateShapes;
 				return;
 			}
+			if (shape->casterSource.Valid())
+				inputs->casterSources.emplace(shape->casterSource.geometry, inputs->geometry.size());
 			inputs->triangles += shape->indices.size() / 3;
 			inputs->geometry.push_back(shape);
 		};

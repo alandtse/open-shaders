@@ -3,6 +3,7 @@
 #include "DX12Resources.h"
 
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 namespace DX12Native
@@ -12,6 +13,7 @@ namespace DX12Native
 	{
 		std::shared_ptr<const DX12::Grid> residency;
 		std::vector<std::shared_ptr<const DX12::Shape>> geometry;
+		std::unordered_multimap<uintptr_t, size_t> casterSources;
 		uint64_t geometryRevision = 0;
 		size_t preparedShapes = 0, observedShapes = 0, duplicateShapes = 0;
 		uint64_t triangles = 0;

@@ -6056,6 +6056,7 @@
     "menu.dx12.resources.whole_cell": "Whole-cell residency (subdivisions bypassed)",
     "menu.dx12.resources.whole_cell_counts": "Shapes: %zu | Lights: %zu",
     "menu.dx12.scene.additive_prepared_emission": "Add excluded runtime emission to prepared lights",
+    "menu.dx12.scene.audit_caster_coverage": "Audit exact caster coverage",
     "menu.dx12.scene.debug_native_lights": "Preview native lights",
     "menu.dx12.scene.debug_shadow_mask": "Show ray-traced shadow mask",
     "menu.dx12.scene.light_observation_interval": "Light observation interval (frames)",

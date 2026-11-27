@@ -49,6 +49,11 @@ void DX12NativeScene::DrawDevSettings()
 	const auto& control = globals::features::dx12Control;
 	if (!control.IsShadowOffloadMode() && !control.IsFullRTMode())
 		return;
+	bool audit = coverageAudit.load(std::memory_order_relaxed);
+	if (ImGui::Checkbox(T("menu.dx12.scene.audit_caster_coverage", "Audit exact caster coverage"), &audit))
+		coverageAudit.store(audit, std::memory_order_relaxed);
+	ImGui::Text("Covered: %llu | Unconfirmed: %llu", static_cast<unsigned long long>(coveredCasterChecks.load(std::memory_order_relaxed)),
+		static_cast<unsigned long long>(missingCasterChecks.load(std::memory_order_relaxed)));
 	bool debugMask = DX12Native::compositeShadowDebugView.load(std::memory_order_relaxed);
 	if (ImGui::Checkbox(T("menu.dx12.scene.debug_shadow_mask", "Show ray-traced shadow mask"), &debugMask))
 		DX12Native::compositeShadowDebugView.store(debugMask, std::memory_order_relaxed);
@@ -793,6 +798,43 @@ void DX12NativeScene::OnRuntimeDisabled()
 	geometryCapture.Reset();
 }
 
+bool DX12NativeScene::CasterInTlas(RE::BSGeometry& geometry) const
+{
+	const auto scene = acceleration.GetScene();
+	if (!scene || !scene->inputs || scene->scope != shadowLightScope.load(std::memory_order_acquire))
+		return false;
+	const auto* tri = geometry.AsTriShape();
+	const auto& rt = geometry.GetGeometryRuntimeData();
+	if (!tri || !rt.rendererData || rt.skinInstance || rt.alphaProperty || geometry.AsDynamicTriShape())
+		return false;
+	const auto counts = tri->GetTrishapeRuntimeData();
+	auto desc = rt.vertexDesc;
+	const DX12::CasterSource live{ reinterpret_cast<uintptr_t>(&geometry),
+		reinterpret_cast<uintptr_t>(rt.rendererData->rawVertexData), reinterpret_cast<uintptr_t>(rt.rendererData->rawIndexData),
+		counts.vertexCount, uint32_t(counts.triangleCount) * 3u, desc.GetSize(), 0 };
+	std::array<float, 12> transform{};
+	for (uint32_t row = 0; row < 3; ++row)
+		for (uint32_t col = 0; col < 3; ++col)
+			transform[4 * row + col] = geometry.world.rotate.entry[row][col] * geometry.world.scale;
+	transform[3] = geometry.world.translate.x;
+	transform[7] = geometry.world.translate.y;
+	transform[11] = geometry.world.translate.z;
+	const auto [first, last] = scene->inputs->casterSources.equal_range(live.geometry);
+	for (auto it = first; it != last; ++it) {
+		const auto& shape = scene->inputs->geometry[it->second];
+		if (DX12::SameCasterSource(shape->casterSource, live, shape->transform, transform))
+			return true;
+	}
+	return false;
+}
+
+void DX12NativeScene::AuditCasterCoverage(RE::BSGeometry& geometry) const
+{
+	if (!coverageAudit.load(std::memory_order_relaxed) || !globals::state || !globals::state->IsDeveloperMode())
+		return;
+	(CasterInTlas(geometry) ? coveredCasterChecks : missingCasterChecks).fetch_add(1, std::memory_order_relaxed);
+}
+
 json DX12NativeScene::GetStatus() const
 {
 	json status = { { "active", globals::features::dx12Control.IsActive() },
@@ -830,7 +872,9 @@ json DX12NativeScene::GetStatus() const
 	} else {
 		status["tlas"] = { { "published", false } };
 	}
-	status["ownership"] = { { "granted", ownershipGranted.load(std::memory_order_relaxed) } };
+	status["ownership"] = { { "granted", ownershipGranted.load(std::memory_order_relaxed) },
+		{ "coveredCasterChecks", coveredCasterChecks.load(std::memory_order_relaxed) },
+		{ "missingCasterChecks", missingCasterChecks.load(std::memory_order_relaxed) } };
 	status["trace"] = { { "lastOutcome", magic_enum::enum_name(shadows.LastOutcome()) }, { "lights", shadows.LastLightCount() } };
 	status["composite"] = { { "lastShadowResult", magic_enum::enum_name(DX12Native::lastCompositeShadowResult.load(std::memory_order_relaxed)) } };
 	return status;

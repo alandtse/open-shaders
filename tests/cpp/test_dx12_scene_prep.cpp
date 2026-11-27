@@ -1,4 +1,5 @@
 #include "Features/DX12/ScenePrepMath.h"
+#include "Features/DX12/NativeCasterSource.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -195,4 +196,21 @@ TEST_CASE("Subcell overlap, cell windows, and shape identities handle negative t
 	CHECK(id0 != 0u);
 	CHECK(id0 != id1);
 	CHECK(id0 != id2);
+}
+
+TEST_CASE("Native caster source requires matching mesh and transform", "[dx12][shadow]")
+{
+	DX12::CasterSource source{ 1, 2, 3, 12, 18, 16, 0 };
+	std::array<float, 12> transform{ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 };
+	CHECK(DX12::SameCasterSource(source, source, transform, transform));
+	auto changed = source;
+	changed.indices = 4;
+	CHECK_FALSE(DX12::SameCasterSource(source, changed, transform, transform));
+	changed = source;
+	changed.firstIndex = 3;
+	CHECK_FALSE(DX12::SameCasterSource(changed, changed, transform, transform));
+	auto moved = transform;
+	moved[3] = 0.25f;
+	CHECK_FALSE(DX12::SameCasterSource(source, source, transform, moved));
+	CHECK_FALSE(DX12::SameCasterSource({}, source, transform, transform));
 }

@@ -141,6 +141,8 @@ namespace DX12Native
 			Packet packet;
 			packet.identity = id;
 			packet.runtimeObjectKey = stableKey;
+			packet.casterSource = { uintptr_t(candidate.objectIdentity), reinterpret_cast<uintptr_t>(candidate.vertices),
+				reinterpret_cast<uintptr_t>(candidate.indices), candidate.vertexCount, uint32_t(indexCount), candidate.stride, 0 };
 			packet.sourceCenter = center;
 			packet.transform = candidate.transform;
 			packet.stride = candidate.stride;
@@ -189,6 +191,7 @@ namespace DX12Native
 			auto shape = std::make_shared<DX12::Shape>();
 			shape->identity = packet.identity;
 			shape->runtimeObjectKey = packet.runtimeObjectKey;
+			shape->casterSource = packet.casterSource;
 			shape->transform = packet.transform;
 			shape->positions.reserve(packet.vertexCount);
 			bool usable = true;

@@ -32,6 +32,8 @@ struct DX12NativeScene final : OverlayFeature
 	void DrawDevSettings();
 	void RegisterUxActions() override;
 	json GetStatus() const;
+	bool CasterInTlas(RE::BSGeometry& geometry) const;
+	void AuditCasterCoverage(RE::BSGeometry& geometry) const;
 	std::shared_ptr<const DX12Native::TopLevel> GetPublishedScene() const { return acceleration.GetScene(); }
 	/** @brief The selected mode's exterior preparation and shadow contribution setting. */
 	bool AllowsOutdoorContribution() const;
@@ -118,6 +120,8 @@ private:
 		uint32_t referenceID = 0;             // Corresponding prepared native-scene emitter.
 		DX12::PreparedLight value;
 	};
+	std::atomic<bool> coverageAudit{ false };
+	mutable std::atomic<uint64_t> coveredCasterChecks{ 0 }, missingCasterChecks{ 0 };
 	mutable std::atomic<uint64_t> ownershipGranted{ 0 };
 	mutable std::mutex runtimeLightMutex;
 	uint32_t runtimeLightFrame = UINT32_MAX;

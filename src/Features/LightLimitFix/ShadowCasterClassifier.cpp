@@ -547,6 +547,8 @@ namespace ShadowCasterManager
 			const bool dynamic = IsFullRTDynamicCaster(geom);
 			if (dynamic)
 				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+			else
+				globals::features::dx12NativeScene.AuditCasterCoverage(geom);
 			return !dynamic;
 		}
 		// Skinned = always dynamic (see IsCasterDynamic); only non-skinned
@@ -560,6 +562,8 @@ namespace ShadowCasterManager
 			// owned light are removed, even if TLAS coverage is incomplete.
 			if (dynamic)
 				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+			else
+				globals::features::dx12NativeScene.AuditCasterCoverage(geom);
 			return !dynamic;
 		}
 		// A caster that settled since the bake is missing from it and is drawn live; one that started moving is still in
