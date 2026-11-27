@@ -244,6 +244,10 @@ namespace DX12
 		                          current->predictiveResident[std::distance(current->predictive.begin(), predictive)];
 		tile->preparationAttempts = static_cast<uint8_t>(std::min<unsigned>(existing ? unsigned(existing->preparationAttempts) + 1 : 1u, kPreparationAttemptLimit));
 		tile->preparationValidated = publication.validated;
+		tile->enumerationComplete = publication.enumerationComplete;
+		tile->eligibleShapes = publication.eligibleShapes;
+		tile->failedShapes = publication.failedShapes;
+		tile->rejectedLights = publication.rejectedLights;
 		tile->hasUnattachedCells = publication.hasUnattachedCells;
 		tile->failureReason = std::move(publication.failureReason);
 		tile->rejectionReasons = std::move(publication.rejectionReasons);
@@ -532,10 +536,8 @@ namespace
 		static constexpr float stripeWidth = 2.0f;
 		static constexpr float playerRadius = 5.0f;
 		static constexpr float playerOutlineWidth = 1.5f;
-		static constexpr float threeColumnMinWidth = 1050.0f;
 		static constexpr float twoColumnMinWidth = 680.0f;
 		static constexpr float mapColumnWidth = 290.0f;
-		static constexpr float detailsColumnWidth = 375.0f;
 	};
 
 	const char* TileStatus(const std::shared_ptr<const DX12::Tile>& tile)
@@ -688,12 +690,17 @@ namespace
 					ImGui::Text("%s", tile->preparationValidated ? T("menu.dx12.resources.publication_valid", "Native preparation: valid") : T("menu.dx12.resources.publication_invalid", "Native preparation: invalid"));
 				if (tile && tile->preparationAttempts)
 					ImGui::Text(T("menu.dx12.resources.tooltip.attempts", "Attempts: %u / 3"), unsigned(tile->preparationAttempts));
+				if (tile) {
+					ImGui::Text(T("menu.dx12.resources.whole_cell_counts", "Shapes: %zu | Lights: %zu"), tile->shapes.size(), tile->lights.size());
+					if (globals::state && globals::state->IsDeveloperMode())
+						ImGui::Text(T("menu.dx12.resources.rejection_counts", "Eligible: %u | rejection events: %u | rejected lights: %u"), tile->eligibleShapes, tile->failedShapes, tile->rejectedLights);
+				}
 				if (tile && (!tile->nifSources.empty() || !tile->missingShapes.empty()))
 					ImGui::Text(T("menu.dx12.resources.tooltip.nif_sources", "NIF sources: %zu | Missing shape references: %zu"),
 						tile->nifSources.size(), tile->missingShapes.size());
 				if (tile && !tile->failureReason.empty())
 					ImGui::TextWrapped(T("menu.dx12.resources.tooltip.last_reason", "Last reason: %s"), tile->failureReason.c_str());
-				if (tile)
+				if (tile && globals::state && globals::state->IsDeveloperMode())
 					for (const auto& [reason, count] : tile->rejectionReasons)
 						ImGui::Text("%s: %u", reason.c_str(), count);
 				ImGui::EndTooltip();
@@ -863,6 +870,10 @@ void DX12Resources::DrawResourceStatus()
 		                        T("menu.dx12.resources.publication_valid", "Native preparation: valid") :
 		                        T("menu.dx12.resources.publication_invalid", "Native preparation: invalid");
 		ImGui::TextUnformatted(label);
+		ImGui::Text(T("menu.dx12.resources.latest_request", "Latest request: %s | scope %08X | (%lld, %lld)"),
+			status->wholeCell ? T("menu.dx12.resources.whole_cell", "Whole-cell residency (subdivisions bypassed)") :
+			status->predictive ? T("menu.dx12.resources.predictive", "Predictive") : T("menu.dx12.resources.active", "Active"),
+			status->key.scope, static_cast<long long>(status->key.x), static_cast<long long>(status->key.y));
 		if (!status->detail.empty())
 			ImGui::TextWrapped("%s", status->detail.c_str());
 	} else {
@@ -870,6 +881,28 @@ void DX12Resources::DrawResourceStatus()
 	}
 	const auto snapshot = GetGrid();
 	const auto timing = GetPreparationStats();
+	if (snapshot && globals::state && globals::state->IsDeveloperMode()) {
+		ImGui::SeparatorText(T("menu.dx12.resources.geometry_sources", "Native scene geometry"));
+		const auto scene = globals::features::dx12NativeScene.GetPublishedScene();
+		ImGui::Text(T("menu.dx12.resources.runtime_residency", "Grid observed shapes: %zu | CPU bytes: %llu"),
+			snapshot->runtimeShapes.size(), static_cast<unsigned long long>(snapshot->runtimeBytes));
+		if (scene && scene->inputs && scene->scope == snapshot->requested.front().scope) {
+			const auto& inputs = *scene->inputs;
+			ImGui::Text(T("menu.dx12.resources.geometry_counts", "Published sources: prepared %zu | observed %zu | duplicates %zu"),
+				inputs.preparedShapes, inputs.observedShapes, inputs.duplicateShapes);
+			ImGui::Text(T("menu.dx12.resources.geometry_unique", "Unique shapes: %zu | triangles: %llu"),
+				inputs.geometry.size(), static_cast<unsigned long long>(inputs.triangles));
+			ImGui::Text(T("menu.dx12.resources.as_counts", "Published BLAS: %zu | TLAS instances: %zu"),
+				scene->bottoms.size(), inputs.geometry.size());
+			ImGui::Text(T("menu.dx12.resources.as_bytes", "AS allocation bytes: BLAS %llu | TLAS %llu"),
+				static_cast<unsigned long long>(scene->blasBytes), static_cast<unsigned long long>(scene->tlasBytes));
+			ImGui::TextUnformatted(scene->geometryRevision == snapshot->geometryRevision ?
+				T("menu.dx12.resources.tlas_current", "TLAS: current") :
+				T("menu.dx12.resources.tlas_previous", "TLAS: previous revision retained"));
+		} else {
+			ImGui::TextDisabled("%s", T("menu.dx12.resources.tlas_pending", "TLAS: no published scene for this scope"));
+		}
+	}
 	if (snapshot && snapshot->wholeCell) {
 		ImGui::SeparatorText(T("menu.dx12.resources.whole_cell", "Whole-cell residency (subdivisions bypassed)"));
 		DrawWholeCellMap(snapshot->resident.front());
@@ -886,7 +919,12 @@ void DX12Resources::DrawResourceStatus()
 	const auto drawSubcellDetails = [&]() {
 		if (snapshot) {
 			size_t activeLoaded = 0, predictiveLoaded = 0, empty = 0, emptyPartial = 0;
+			size_t activeGeometry = 0, predictiveGeometry = 0, activeLights = 0, predictiveLights = 0;
 			const auto classify = [&](const auto& tile, bool active) {
+				if (tile && !tile->shapes.empty())
+					(active ? activeGeometry : predictiveGeometry)++;
+				if (tile && !tile->lights.empty())
+					(active ? activeLights : predictiveLights)++;
 				if (tile && (tile->state == DX12::Tile::State::Ready || tile->state == DX12::Tile::State::ReadyPartial))
 					(active ? activeLoaded : predictiveLoaded)++;
 				if (tile && tile->state == DX12::Tile::State::Empty)
@@ -898,7 +936,9 @@ void DX12Resources::DrawResourceStatus()
 				classify(tile, true);
 			for (const auto& tile : snapshot->predictiveResident)
 				classify(tile, false);
-			ImGui::Text(T("menu.dx12.resources.loaded_counts", "Loaded: active %zu / 9, predictive %zu / 16"), activeLoaded, predictiveLoaded);
+			ImGui::Text(T("menu.dx12.resources.loaded_counts", "Content: active %zu / 9, predictive %zu / 16"), activeLoaded, predictiveLoaded);
+			ImGui::Text(T("menu.dx12.resources.geometry_tiles", "Geometry tiles: active %zu | predictive %zu"), activeGeometry, predictiveGeometry);
+			ImGui::Text(T("menu.dx12.resources.light_tiles", "Light tiles: active %zu | predictive %zu"), activeLights, predictiveLights);
 			ImGui::Text(T("menu.dx12.resources.empty_counts", "Confirmed empty: %zu | Incomplete empty: %zu"), empty, emptyPartial);
 		}
 		ImGui::TextColored(SubcellMapStyle::activeLegend, T("menu.dx12.resources.legend.yellow", "Yellow: loaded 3x3"));
@@ -926,21 +966,7 @@ void DX12Resources::DrawResourceStatus()
 	};
 
 	const float available = ImGui::GetContentRegionAvail().x;
-	if (available >= SubcellMapStyle::threeColumnMinWidth &&
-		ImGui::BeginTable("##SubcellStatusLayout", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX)) {
-		ImGui::TableSetupColumn("##SubcellMap", ImGuiTableColumnFlags_WidthFixed, SubcellMapStyle::mapColumnWidth);
-		ImGui::TableSetupColumn("##SubcellDetails", ImGuiTableColumnFlags_WidthFixed, SubcellMapStyle::detailsColumnWidth);
-		ImGui::TableSetupColumn("##SubcellGenerationStats", ImGuiTableColumnFlags_WidthStretch);
-		ImGui::TableNextRow();
-		ImGui::TableSetColumnIndex(0);
-		if (snapshot)
-			DrawSubcellMap(*snapshot);
-		ImGui::TableSetColumnIndex(1);
-		drawSubcellDetails();
-		ImGui::TableSetColumnIndex(2);
-		drawGenerationStats();
-		ImGui::EndTable();
-	} else if (available >= SubcellMapStyle::twoColumnMinWidth &&
+	if (available >= SubcellMapStyle::twoColumnMinWidth &&
 			   ImGui::BeginTable("##SubcellStatusLayout", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX)) {
 		ImGui::TableSetupColumn("##SubcellMap", ImGuiTableColumnFlags_WidthFixed, SubcellMapStyle::mapColumnWidth);
 		ImGui::TableSetupColumn("##SubcellDetails", ImGuiTableColumnFlags_WidthStretch);
@@ -989,9 +1015,9 @@ void DX12Resources::RestoreDefaultSettings()
 	}
 }
 
-void DX12Resources::RecordPublication(PublicationState state, std::string detail)
+void DX12Resources::RecordPublication(PublicationState state, DX12::SubcellKey key, bool predictive, bool wholeCell, std::string detail)
 {
-	latestPublication.store(std::make_shared<const PublicationStatus>(PublicationStatus{ state, std::move(detail) }),
+	latestPublication.store(std::make_shared<const PublicationStatus>(PublicationStatus{ state, key, predictive, wholeCell, std::move(detail) }),
 		std::memory_order_release);
 }
 
@@ -1028,11 +1054,12 @@ void DX12Resources::PumpPreparation(DX12::ResourceGrid& target, const RE::TESObj
 			target.CancelPending();
 		} else {
 			const bool valid = result->publication.validated;
+			const bool wholeCell = result->publication.wholeCell;
 			result->publication.failureReason = result->failure.substr(0, 320);
 			const auto publishStarted = Util::GetQpcTicks();
 			if (target.Publish(std::move(result->publication))) {
 				const double publicationMs = Util::QpcElapsedUs(publishStarted, Util::GetQpcTicks(), Util::GetQpcFrequency()) / 1000.0;
-				RecordPublication(valid ? PublicationState::Valid : PublicationState::Invalid, result->failure);
+				RecordPublication(valid ? PublicationState::Valid : PublicationState::Invalid, key, result->predictive, wholeCell, result->failure);
 				auto next = std::make_shared<DX12::PreparationStats>(*generationStats.load(std::memory_order_acquire));
 				auto& timing = !result->predictive ? next->active : result->corner ? next->corners :
 				                                                                     next->predictive;

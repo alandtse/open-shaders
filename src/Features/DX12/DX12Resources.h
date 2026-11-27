@@ -79,6 +79,8 @@ namespace DX12
 		int64_t retryAfterQpc = 0;
 		State state = State::Requested;
 		bool preparationValidated = false;
+		bool enumerationComplete = false;
+		uint32_t eligibleShapes = 0, failedShapes = 0, rejectedLights = 0;
 		bool hasUnattachedCells = false;
 		std::string failureReason;                                       // Last bounded preparation failure, retained for Dev and tile hover.
 		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;  // Bounded structured preparation rejection diagnoses.
@@ -261,10 +263,13 @@ private:
 	struct PublicationStatus
 	{
 		PublicationState state;
+		DX12::SubcellKey key;
+		bool predictive = false;
+		bool wholeCell = false;
 		std::string detail;
 	};
 	std::atomic<std::shared_ptr<const PublicationStatus>> latestPublication;
-	void RecordPublication(PublicationState state, std::string detail);
+	void RecordPublication(PublicationState state, DX12::SubcellKey key, bool predictive, bool wholeCell, std::string detail);
 	uint32_t consolidationAttemptScope = 0;
 	void ResetPreparation();
 	void SuspendPreparation();

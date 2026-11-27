@@ -30,6 +30,7 @@ struct DX12NativeScene final : OverlayFeature
 
 	void DrawSettings() override;
 	void DrawDevSettings();
+	std::shared_ptr<const DX12Native::TopLevel> GetPublishedScene() const { return acceleration.GetScene(); }
 	/** @brief The selected mode's exterior preparation and shadow contribution setting. */
 	bool AllowsOutdoorContribution() const;
 	/** @brief Comparison never admits native scene work, even for interiors. */

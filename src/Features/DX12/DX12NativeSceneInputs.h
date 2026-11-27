@@ -13,6 +13,8 @@ namespace DX12Native
 		std::shared_ptr<const DX12::Grid> residency;
 		std::vector<std::shared_ptr<const DX12::Shape>> geometry;
 		uint64_t geometryRevision = 0;
+		size_t preparedShapes = 0, observedShapes = 0, duplicateShapes = 0;
+		uint64_t triangles = 0;
 	};
 
 	/** @brief Collects geometry from the active 3x3 and runtime rigid supplements. */

@@ -220,6 +220,7 @@ namespace DX12Native
 			desc.AccelerationStructure = found->second->acceleration->GetGPUVirtualAddress();
 			instances.push_back(desc);
 			top->bottoms.push_back(found->second);
+			top->blasBytes += found->second->acceleration->GetDesc().Width;
 		}
 
 		const uint64_t bytes = uint64_t(instances.size()) * sizeof(instances.front());
@@ -242,6 +243,7 @@ namespace DX12Native
 		if (!info.ResultDataMaxSizeInBytes || !info.ScratchDataSizeInBytes)
 			return false;
 
+		top->tlasBytes = info.ResultDataMaxSizeInBytes;
 		top->acceleration = Buffer(info.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
 			D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"DX12NativeScene::TLAS");
 		a_build.scratch = Buffer(info.ScratchDataSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,

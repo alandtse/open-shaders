@@ -27,6 +27,7 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12Resource> acceleration;
 		winrt::com_ptr<ID3D12Fence> producerFence;
 		uint64_t producerValue = 0;
+		uint64_t blasBytes = 0, tlasBytes = 0;
 		uint64_t geometryRevision = 0;
 		uint32_t scope = 0;
 	};
