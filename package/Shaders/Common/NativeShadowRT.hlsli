@@ -19,6 +19,8 @@ namespace DX12Native
 	RT_CONST float kRayTracedFade = 0.36f;
 	RT_CONST float kRayTracedBlend = 0.55f;
 	RT_CONST uint kShadowVariantCount = 3u;
+	RT_CONST uint kMaxLightVisibilitySlots = 64u;
+	RT_CONST uint kShadowTracePipelineCount = kShadowVariantCount + 2u;
 
 	RT_FUNC uint SanitizeRTQuality(uint quality)
 	{
@@ -27,6 +29,19 @@ namespace DX12Native
 	RT_FUNC uint ShadowVariant(uint quality)
 	{
 		return quality == kShadowQualityOffloading ? 0u : (quality == kShadowQualityPerformance ? 2u : 1u);
+	}
+	RT_FUNC uint ShadowTraceVariant(uint quality, bool captureSlices)
+	{
+		return ShadowVariant(quality) + (captureSlices && quality != kShadowQualityOffloading ? kShadowVariantCount - 1u : 0u);
+	}
+	RT_FUNC uint ShadowVisibilityCount(uint lightCount, bool captureSlices)
+	{
+		return !captureSlices ? 0u : (lightCount < kMaxLightVisibilitySlots ? lightCount : kMaxLightVisibilitySlots);
+	}
+	RT_FUNC uint ShadowVisibilityCapacity(uint count)
+	{
+		// WrappedResource selects an array view only for more than one slice.
+		return count == 1u ? 2u : count;
 	}
 	RT_FUNC uint ShadowScale(uint quality)
 	{

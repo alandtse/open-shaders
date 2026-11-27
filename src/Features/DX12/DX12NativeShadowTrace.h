@@ -18,8 +18,6 @@ namespace DX12Native
 	struct NativeLightPublication;
 	// Shared CPU-side limit for prepared lights submitted to the native shadow RayQuery.
 	inline constexpr uint32_t kMaxShadowLights = DX12::kMaxPreparedLights;
-	inline constexpr uint32_t kMaxLightVisibilitySlots = 64;
-	inline constexpr uint32_t kShadowTracePipelineCount = kShadowVariantCount + 2;
 
 	/** @brief Shadow-only behavior. Live matched values override companion fallbacks. */
 	struct ShadowTraceControls

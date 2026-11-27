@@ -259,6 +259,7 @@ def sample_replay(bench, out_name, mode=None):
     run = bench.call("record", {"action": "replay", "path": str(RECORDINGS_DIR / RECORDING), "async": True, "closeMenus": True})
     run_id = run.get("runId")
     samples, timers = [], {}
+    completed = False
     deadline = time.monotonic() + REPLAY_TIMEOUT_SECONDS
     time.sleep(3)
     while time.monotonic() < deadline:
@@ -270,14 +271,24 @@ def sample_replay(bench, out_name, mode=None):
             if timer.get("hasGpu"):
                 timers.setdefault(timer["name"], []).append(timer.get("avgMs") or timer.get("gpuMs") or 0.0)
         state = bench.call("record", {"action": "status", "runId": run_id} if run_id else {"action": "status"})
-        if state.get("done") or state.get("finished") or state.get("state") in ("done", "completed", "failed", "error", "cancelled"):
+        outcome = state.get("state")
+        if outcome in ("failed", "error", "cancelled") or state.get("error") or state.get("success") is False:
+            raise RuntimeError(f"{out_name} replay failed: {state}")
+        if state.get("done") or state.get("finished") or outcome in ("done", "completed"):
+            completed = True
             break
         time.sleep(SAMPLE_SECONDS)
+    if not completed:
+        raise RuntimeError(f"{out_name} replay timed out")
+    averages = [s["avgMs"] for s in samples if s.get("avgMs") and s["avgMs"] > 0]
+    percentiles = [s["p99Ms"] for s in samples if s.get("p99Ms") and s["p99Ms"] > 0]
+    if not averages or not percentiles:
+        raise RuntimeError(f"{out_name} replay has no valid frametime statistics")
     result = {
         "label": out_name,
         "samples": len(samples),
-        "frameAvgMs": statistics.median(s["avgMs"] for s in samples if s["avgMs"]) if samples else None,
-        "frameP99Ms": max((s["p99Ms"] for s in samples if s["p99Ms"]), default=None),
+        "frameAvgMs": statistics.median(averages),
+        "frameP99Ms": max(percentiles),
         "shadowGpuMs": sum(statistics.median(v) for k, v in timers.items() if any(key in k.lower() for key in SHADOW_TIMER_KEYS)),
         "gpuTimers": {k: statistics.median(v) for k, v in timers.items()},
     }
@@ -403,24 +414,41 @@ def run_baseline(bench, report, out):
 
 
 def run_compare(report, ab_dir, baseline_dir):
-    ab = json.loads((ab_dir / "results.json").read_text())["data"]
-    base = json.loads((baseline_dir / "results.json").read_text())["data"]
+    ab_result = json.loads((ab_dir / "results.json").read_text())
+    base_result = json.loads((baseline_dir / "results.json").read_text())
+    for label, source in (("ab", ab_result), ("baseline", base_result)):
+        invalid = [c["name"] for c in source.get("checks", []) if c["status"] in ("FAIL", "INVALID")]
+        if invalid or not source.get("checks"):
+            report.check(f"{label} source valid", "FAIL", ", ".join(invalid) or "Missing source checks")
+            return
+    ab = ab_result["data"]
+    base = base_result["data"]
+    candidate = ab_result.get("meta", {}).get("candidate")
+    if candidate not in CANDIDATES:
+        candidates = {r["label"] for r in ab.get("replay", [])} & CANDIDATES.keys()
+        if len(candidates) != 1:
+            raise RuntimeError("Cannot identify A/B candidate")
+        candidate = candidates.pop()
     rows = {r["label"]: r for r in ab.get("replay", []) + base.get("replay", [])}
     lines = ["| Config | Frame avg ms | Frame p99 ms | Shadow GPU ms |", "|---|---|---|---|"]
-    for label in ("baseline", "raster", "offload"):
+    if not {"baseline", "raster", candidate}.issubset(rows):
+        raise RuntimeError("Missing completed replay in source results")
+    for label in ("baseline", "raster", candidate):
         r = rows.get(label)
         if r:
             lines.append(f"| {label} | {r['frameAvgMs']:.2f} | {r['frameP99Ms']:.2f} | {r['shadowGpuMs']:.2f} |")
     report.data["table"] = lines
-    if "baseline" in rows and "offload" in rows:
-        delta = rows["offload"]["frameAvgMs"] - rows["baseline"]["frameAvgMs"]
-        report.check("offload vs DX12 off", "PASS" if delta <= 0 else "REVIEW",
+    if "baseline" in rows and candidate in rows:
+        delta = rows[candidate]["frameAvgMs"] - rows["baseline"]["frameAvgMs"]
+        report.check(f"{candidate} vs DX12 off", "PASS" if delta <= 0 else "REVIEW",
                      f"{delta:+.2f} ms avg ({delta / 16.7:+.1%} of 60 fps budget)")
     for a, b in zip(ab.get("screenshots", []), base.get("screenshots", [])):
-        change = image_diff(b["baseline"], a["offload"], report.out / f"pose{a['pose']}_offload_vs_off_diff.png")
+        if a["pose"] != b["pose"]:
+            raise RuntimeError("A/B and baseline screenshot poses do not match")
+        change = image_diff(b["baseline"], a[candidate], report.out / f"pose{a['pose']}_{candidate}_vs_off_diff.png")
         report.check(f"pose {a['pose']} vs DX12 off", "REVIEW" if change.get("changedFraction", 0) > 0.02 else "PASS",
                      f"changed {change.get('changedFraction', 0):.4f}, mean {change.get('meanSigned', 0):+.2f} luma")
-        report.look(report.out / f"pose{a['pose']}_offload_vs_off_diff.png", "camera poses come from separate launches; check shadow shape, not noise")
+        report.look(report.out / f"pose{a['pose']}_{candidate}_vs_off_diff.png", "camera poses come from separate launches; check shadow shape, not noise")
     (report.out / "table.md").write_text("\n".join(lines) + "\n")
 
 
@@ -441,7 +469,7 @@ def main():
     if args.game_dir:
         RECORDINGS_DIR = args.game_dir / "Data" / "SKSE" / "Plugins" / "devbench" / "recordings"
     report = Report(args.out, f"DX12 offload validation: {args.phase}")
-    meta = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "phase": args.phase}
+    meta = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "phase": args.phase, "candidate": args.candidate}
     try:
         if args.phase == "compare":
             run_compare(report, args.ab, args.baseline)
@@ -455,7 +483,7 @@ def main():
     except Exception as error:
         report.check("run", "FAIL", f"{type(error).__name__}: {error}")
     report.write(meta)
-    return 1 if any(c["status"] == "FAIL" for c in report.checks) else 0
+    return 1 if any(c["status"] in ("FAIL", "INVALID") for c in report.checks) else 0
 
 
 if __name__ == "__main__":

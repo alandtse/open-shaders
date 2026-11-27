@@ -71,3 +71,8 @@ budget or submission failures fall back to combined tracing where possible.
 Do not bind the slices in DX11 lighting before implementing consumer-fence
 retirement and explicit per-light raster fallback. No raster suppression
 policy is changed by this control.
+
+Replay validation rejects explicit recording failures, cancellation, timeouts,
+and missing frame statistics. The compare phase refuses failed or invalid
+source reports and uses the recorded A/B candidate (`offload` or `fullrt`).
+A producer slice count alone cannot establish that a light was shaded.

@@ -148,7 +148,7 @@ namespace DX12Native
 		ReportSkipped(Outcome::None);
 		const auto quality = controls.quality;
 		const bool slices = controls.captureLightVisibility && quality != kShadowQualityOffloading;
-		const auto variant = ShadowVariant(quality) + (slices ? kShadowVariantCount - 1u : 0u);
+		const auto variant = ShadowTraceVariant(quality, slices);
 		const auto fallback = [&] {
 			auto combined = controls;
 			combined.captureLightVisibility = false;
@@ -180,6 +180,12 @@ namespace DX12Native
 			const uint64_t finished = completion->GetCompletedValue();
 			if (finished == UINT64_MAX)
 				return ReportSkipped(Outcome::Failed);
+			// Retire idle experimental allocations when leaving the experiment.
+			if (!slices) {
+				for (auto& slot : slots)
+					if (slot && slot->lightVisibility && slot.use_count() == 1 && slot->readyValue <= finished)
+						slot.reset();
+			}
 			auto it = std::ranges::find_if(slots, [&](const auto& slot) {
 				if (!slot)
 					return true;
@@ -197,9 +203,9 @@ namespace DX12Native
 			const uint32_t maskHeight = ShadowLogicalExtent(height, quality);
 			const uint32_t lightCount = uint32_t(std::min(lights.size(), size_t(kMaxShadowLights)));
 			const uint64_t lightBytes = uint64_t(std::bit_ceil(lightCount)) * kRecords * sizeof(std::array<float, 4>);
-			const uint32_t lightSlotCount = slices ? std::min(lightCount, kMaxLightVisibilitySlots) : 0u;
+			const uint32_t lightSlotCount = ShadowVisibilityCount(lightCount, slices);
 			// Always create an array SRV, including when only one light is submitted.
-			const uint32_t lightCapacity = slices ? std::max(2u, lightSlotCount) : 0u;
+			const uint32_t lightCapacity = ShadowVisibilityCapacity(lightSlotCount);
 			const bool fresh = !slot || slot->maskWidth != maskWidth || slot->maskHeight != maskHeight ||
 			                   slot->pipelineVariant != variant || slot->lightVisibilityCapacity != lightCapacity;
 			if (fresh) {

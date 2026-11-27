@@ -166,6 +166,24 @@ TEST_CASE("DX12 full RT keeps the two accepted checkerboard layouts", "[dx12][sh
 	CHECK(ShadowVariant(kShadowQualityPerformance) == 2);
 }
 
+TEST_CASE("Per-light visibility preserves ordinary trace variants and bounds array capacity", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	CHECK(ShadowTraceVariant(kShadowQualityOffloading, true) == 0u);
+	CHECK(ShadowTraceVariant(kShadowQualityQuality, false) == 1u);
+	CHECK(ShadowTraceVariant(kShadowQualityPerformance, false) == 2u);
+	CHECK(ShadowTraceVariant(kShadowQualityQuality, true) == 3u);
+	CHECK(ShadowTraceVariant(kShadowQualityPerformance, true) == 4u);
+	CHECK(ShadowTraceVariant(kShadowQualityPerformance, true) < kShadowTracePipelineCount);
+	CHECK(ShadowVisibilityCount(4096u, false) == 0u);
+	CHECK(ShadowVisibilityCount(0u, true) == 0u);
+	CHECK(ShadowVisibilityCount(1u, true) == 1u);
+	CHECK(ShadowVisibilityCount(4096u, true) == kMaxLightVisibilitySlots);
+	CHECK(ShadowVisibilityCapacity(0u) == 0u);
+	CHECK(ShadowVisibilityCapacity(1u) == 2u);
+	CHECK(ShadowVisibilityCapacity(kMaxLightVisibilitySlots) == kMaxLightVisibilitySlots);
+}
+
 namespace
 {
 	struct ConsolidationLight
