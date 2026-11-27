@@ -63,7 +63,8 @@ float SampleSSGIAO(uint2 pixCoord)
 	[branch] if (pixCoord.x >= w)
 	{
 		ao = SsgiRightTexture.Load(int3(int2(pixCoord - uint2(w, 0u)), 0)).w;
-	} else
+	}
+	else
 #	endif
 	{
 		ao = SsgiTexture.Load(int3(int2(pixCoord), 0)).w;
