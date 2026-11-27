@@ -55,3 +55,19 @@ REVIEW, not PASS. A scene can be populated by runtime observation without
 prepared shapes. A TLAS and visible mask are necessary, not sufficient,
 evidence of correct caster coverage. Inspect the fixed-pose images and
 verify off-screen casters manually before treating timing as a valid win.
+
+## Experimental per-light producer
+
+Full RT's developer-only `Experimental per-light visibility (producer only)`
+control enables separate SM6.5 shader variants. The ordinary shaders and
+combined mask remain the default, and the experimental dispatch still writes
+the combined mask. Slices use the packed checkerboard coordinates of the raw
+mask; a cleared value of one is not evidence of a valid receiver. The raw
+mask's receiver distance remains necessary for sample validation. The slice
+order is the exact submitted light order, capped at 64, including the actual
+trace origin. `trace.producedVisibilitySlices` reports producer count only,
+not shaded lights or authoritative coverage. Resource creation, format, DXGI
+budget or submission failures fall back to combined tracing where possible.
+Do not bind the slices in DX11 lighting before implementing consumer-fence
+retirement and explicit per-light raster fallback. No raster suppression
+policy is changed by this control.

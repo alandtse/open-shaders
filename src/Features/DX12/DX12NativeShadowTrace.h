@@ -3,6 +3,7 @@
 #include "../../../package/Shaders/Common/NativeShadowRT.hlsli"
 #include "DX12NativeAcceleration.h"
 #include "DX12NativeRasterCapture.h"
+#include "GraphicsInterop.h"
 #include "VideoMemoryBudget.h"
 
 #include <array>
@@ -17,6 +18,8 @@ namespace DX12Native
 	struct NativeLightPublication;
 	// Shared CPU-side limit for prepared lights submitted to the native shadow RayQuery.
 	inline constexpr uint32_t kMaxShadowLights = DX12::kMaxPreparedLights;
+	inline constexpr uint32_t kMaxLightVisibilitySlots = 64;
+	inline constexpr uint32_t kShadowTracePipelineCount = kShadowVariantCount + 2;
 
 	/** @brief Shadow-only behavior. Live matched values override companion fallbacks. */
 	struct ShadowTraceControls
@@ -27,6 +30,7 @@ namespace DX12Native
 		uint32_t debugPreparedCount = 0;
 		std::shared_ptr<const NativeLightPublication> nativeLights;
 		bool uploadLights = false;
+		bool captureLightVisibility = false;
 	};
 
 	/** @brief Quarter-resolution raw visibility and receiver distance; the composite reconstructs the full view. */
@@ -49,6 +53,15 @@ namespace DX12Native
 		std::vector<std::array<float, 4>> lightRecords;
 		bool lightRecordsUploaded = false;
 		bool uploadedLights = false;
+		uint32_t pipelineVariant = 0;
+		// Producer-only experimental publication. A DX11 consumer must retain the
+		// frame through its own completion fence before these slices can be bound.
+		std::unique_ptr<WrappedResource> lightVisibility;
+		winrt::com_ptr<ID3D12DescriptorHeap> clearDescriptors;
+		winrt::com_ptr<ID3D11Fence> lightVisibilityFence;
+		uint64_t lightVisibilityValue = 0;
+		uint32_t lightVisibilityCapacity = 0;
+		std::vector<DX12::PreparedLight> visibilityLights;
 		// RG32F: weighted visibility and receiver distance (zero for invalid receivers).
 	};
 
@@ -70,9 +83,11 @@ namespace DX12Native
 		};
 		Outcome LastOutcome() const { return lastOutcome.load(std::memory_order_relaxed); }
 		uint32_t LastLightCount() const { return lastLightCount.load(std::memory_order_relaxed); }
+		uint32_t LastVisibilityCount() const { return lastVisibilityCount.load(std::memory_order_relaxed); }
 		void ReportSkipped(Outcome outcome)
 		{
 			lastLightCount.store(0, std::memory_order_relaxed);
+			lastVisibilityCount.store(0, std::memory_order_relaxed);
 			lastOutcome.store(outcome, std::memory_order_relaxed);
 		}
 		~ShadowMaskTrace();
@@ -97,15 +112,17 @@ namespace DX12Native
 		void Initialize(const GraphicsBackend& backend, uint32_t variant);
 		GraphicsBackend backend;
 		winrt::com_ptr<ID3D12Fence> completion;
-		winrt::com_ptr<ID3D12RootSignature> root;
-		std::array<winrt::com_ptr<ID3D12PipelineState>, kShadowVariantCount> pipelines;
+		SharedFence visibilityReady;
+		std::array<winrt::com_ptr<ID3D12RootSignature>, 2> roots;
+		std::array<winrt::com_ptr<ID3D12PipelineState>, kShadowTracePipelineCount> pipelines;
 		std::array<std::shared_ptr<ShadowMaskFrame>, 4> slots;
 		std::shared_ptr<ShadowMaskFrame> current;
 		uint64_t nextFence = 0;
 		VideoMemoryBudget videoBudget;
-		std::array<bool, kShadowVariantCount> initializationFailed{};
+		std::array<bool, kShadowTracePipelineCount> initializationFailed{};
 		bool failureLogged = false;
 		std::atomic<Outcome> lastOutcome{ Outcome::None };
 		std::atomic<uint32_t> lastLightCount{ 0 };
+		std::atomic<uint32_t> lastVisibilityCount{ 0 };
 	};
 }

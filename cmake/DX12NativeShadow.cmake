@@ -47,6 +47,20 @@ if(NATIVE_SHADOW_DXC)
             VERBATIM
         )
         list(APPEND _shadow_outputs "${_rt_dxil}")
+        set(_slices_dxil "${_shadow_dir}/ShadowRT${_quality}Slices.dxil")
+        add_custom_command(
+            OUTPUT "${_slices_dxil}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${_shadow_dir}"
+            COMMAND
+                "${NATIVE_SHADOW_DXC}" -T cs_6_5 -E main -HV 2021 -O3
+                ${NATIVE_SHADER_VALIDATION_FLAGS} -D NATIVE_RT_QUALITY=${_quality_id}
+                -D NATIVE_LIGHT_SLICES=1 -I
+                "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders" -Fo "${_slices_dxil}"
+                "${_shadow_rt_source}"
+            DEPENDS "${_shadow_rt_source}" ${_shadow_contracts}
+            VERBATIM
+        )
+        list(APPEND _shadow_outputs "${_slices_dxil}")
     endforeach()
     add_custom_command(
         OUTPUT "${_shadow_dxil}"

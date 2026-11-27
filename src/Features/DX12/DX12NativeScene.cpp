@@ -61,6 +61,9 @@ void DX12NativeScene::DrawDevSettings()
 	if (ImGui::Checkbox(T("menu.dx12.scene.debug_shadow_mask", "Show ray-traced shadow mask"), &debugMask))
 		DX12Native::compositeShadowDebugView.store(debugMask, std::memory_order_relaxed);
 	if (control.IsFullRTMode()) {
+		bool slices = lightVisibilityExperiment.load(std::memory_order_relaxed);
+		if (ImGui::Checkbox(T("menu.dx12.scene.light_visibility", "Experimental per-light visibility (producer only)"), &slices))
+			lightVisibilityExperiment.store(slices, std::memory_order_relaxed);
 		bool exact = exactShadowLights.load(std::memory_order_relaxed);
 		if (ImGui::Checkbox(T("menu.dx12.scene.exact_shadow_lights", "Experimental exact shadow-light origins"), &exact))
 			exactShadowLights.store(exact, std::memory_order_relaxed);
@@ -722,7 +725,8 @@ void DX12NativeScene::OnOpaqueRasterReady()
 		.captureDebugLights = WantsLightPreview(mode),
 		.debugPreparedCount = fullRT ? fullInventory->preparedCount : 0u,
 		.nativeLights = fullInventory,
-		.uploadLights = moving != 0
+		.uploadLights = moving != 0,
+		.captureLightVisibility = fullRT && globals::state->IsDeveloperMode() && lightVisibilityExperiment.load(std::memory_order_relaxed)
 	};
 	shadows.Dispatch(*backend, raster.Get(frame), built, submittedLights, frame, controls);
 }
@@ -947,7 +951,8 @@ json DX12NativeScene::GetStatus() const
 		{ "coveredCasterChecks", coveredCasterChecks.load(std::memory_order_relaxed) },
 		{ "missingCasterChecks", missingCasterChecks.load(std::memory_order_relaxed) } };
 	status["trace"] = { { "lastOutcome", magic_enum::enum_name(shadows.LastOutcome()) }, { "lights", shadows.LastLightCount() },
-		{ "movingOrigins", movingOriginCount.load(std::memory_order_relaxed) } };
+		{ "movingOrigins", movingOriginCount.load(std::memory_order_relaxed) },
+		{ "producedVisibilitySlices", shadows.LastVisibilityCount() } };
 	status["composite"] = { { "lastShadowResult", magic_enum::enum_name(DX12Native::lastCompositeShadowResult.load(std::memory_order_relaxed)) } };
 	return status;
 }

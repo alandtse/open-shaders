@@ -126,6 +126,7 @@ private:
 	};
 	std::atomic<bool> coverageAudit{ false };
 	std::atomic<bool> earlyTraceExperiment{ false };
+	std::atomic<bool> lightVisibilityExperiment{ false };
 	std::atomic<bool> exactShadowLights{ false }, frameExactShadowLights{ false };
 	std::unordered_map<uintptr_t, float3> scheduledOrigins;
 	uint32_t scheduledOriginsFrame = UINT32_MAX;

@@ -2,6 +2,11 @@ RaytracingAccelerationStructure Scene : register(t0);
 Texture2D<float> RasterDepth : register(t1);
 StructuredBuffer<float4> Lights : register(t2);
 RWTexture2D<float2> RawMask : register(u0);
+#ifdef NATIVE_LIGHT_SLICES
+// Same packed checkerboard coordinates as RawMask. Receiver distance in RawMask
+// distinguishes invalid samples; do not invent visibility for the unsampled partner.
+RWTexture2DArray<unorm float> LightMask : register(u1);
+#endif
 cbuffer ShadowInputs : register(b0)
 {
 	row_major float4x4 InverseProjection;
@@ -11,6 +16,9 @@ cbuffer ShadowInputs : register(b0)
 	uint LightCount;
 	uint FrameIndex;
 	uint2 PhysicalSize;
+#ifdef NATIVE_LIGHT_SLICES
+	uint LightSlotCount;
+#endif
 };
 static const float MinDistance = 0.5f;
 static const float MaxDistance = 60000.0f;
@@ -217,6 +225,10 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 			if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
 				visibility = 1.0f - gradualFalloff;
 		}
+		#ifdef NATIVE_LIGHT_SLICES
+		if (lightIndex < LightSlotCount && visibility < 1.0f)
+			LightMask[uint3(packed, lightIndex)] = visibility;
+		#endif
 		total += weight;
 		visible += weight * visibility;
 	}
