@@ -609,6 +609,19 @@ namespace Util
 		return property ? std::clamp(property->kBlendColor.alpha, 0.0f, 1.0f) : 0.0f;
 	}
 
+	RE::TESObjectREFR* FindSceneOwner(const RE::NiAVObject* object, bool actorOnly) noexcept
+	{
+		constexpr uint32_t kParentLimit = 16;
+		__try {
+			for (uint32_t depth = 0; object && depth < kParentLimit; ++depth, object = object->parent) {
+				if (auto* owner = object->GetUserData(); owner && (!actorOnly || owner->IsActor()))
+					return owner;
+			}
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		}
+		return nullptr;
+	}
+
 	const RE::TESObjectCELL* GetPlayerCell()
 	{
 		const auto* player = globals::game::player;

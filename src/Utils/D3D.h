@@ -19,6 +19,8 @@ namespace DirectX
 namespace Util
 {
 	class HeightMap;
+	/** @brief Formats the active DirectX or C++ exception; call only from a catch handler. */
+	std::string DescribeCurrentD3DException();
 	// The REX::W32 <-> SDK pairings live in CommonLib so every consumer shares one
 	// table; re-exported here to keep this codebase's Util:: call sites.
 	using REX::W32::AsReal;

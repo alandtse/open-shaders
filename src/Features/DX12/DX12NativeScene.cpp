@@ -425,15 +425,11 @@ namespace
 	void ReadFullLightOwner(const RE::NiLight* ni, uint32_t& owner, uint32_t& placed) noexcept
 	{
 		__try {
-			const RE::NiAVObject* node = ni;
-			for (uint32_t depth = 0; node && depth < 16; ++depth, node = node->parent) {
-				if (auto* ref = node->GetUserData()) {
-					owner = ref->GetFormID();
-					auto* base = ref->GetObjectReference();
-					if (base && base->As<RE::TESObjectLIGH>())
-						placed = owner;
-					return;
-				}
+			if (auto* ref = Util::FindSceneOwner(ni)) {
+				owner = ref->GetFormID();
+				auto* base = ref->GetObjectReference();
+				if (base && base->As<RE::TESObjectLIGH>())
+					placed = owner;
 			}
 		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
 		}
@@ -768,14 +764,7 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requi
 		return;
 	// A drawn BSTriShape often has no user data of its own; Skyrim keeps the
 	// placed reference on an ancestor NiNode. Walk only the existing parent chain.
-	const RE::TESForm* reference = nullptr;
-	RE::NiAVObject* node = &geometry;
-	for (uint32_t depth = 0; node && depth < 16; ++depth, node = node->parent) {
-		if (const auto* owner = node->GetUserData()) {
-			reference = owner;
-			break;
-		}
-	}
+	const RE::TESForm* reference = Util::FindSceneOwner(&geometry);
 	if (reference && (reference->IsDynamicForm() || reference->IsActor()))
 		return;
 	const auto* file = reference ? reference->GetFile(0) : nullptr;

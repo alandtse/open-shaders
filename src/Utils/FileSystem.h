@@ -353,6 +353,8 @@ namespace Util
 	 */
 	namespace FileHelpers
 	{
+		/** @brief Reads a nonempty binary file, rejecting files above the caller's size limit. Throws on failure. */
+		std::vector<char> ReadBoundedBinary(const std::filesystem::path& path, std::uintmax_t maxBytes);
 		/** @brief Atomically writes JSON; a failure leaves the destination unchanged. */
 		bool WriteJsonAtomically(const std::filesystem::path& path, const nlohmann::json& data,
 			int indent, std::string_view context);

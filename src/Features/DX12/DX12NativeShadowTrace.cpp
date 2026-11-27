@@ -2,13 +2,13 @@
 #include "DX12GpuRetirement.h"
 #include "DX12NativeLightWorker.h"
 #include "Utils/FileSystem.h"
+#include "Utils/D3D.h"
 
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cstring>
 #include <directx/d3dx12.h>
-#include <fstream>
 #include <ranges>
 #include <stdexcept>
 #include <tuple>
@@ -72,14 +72,7 @@ namespace DX12Native
 		auto& root = roots[slices];
 		constexpr const char* names[]{ "ShadowOffload.dxil", "ShadowRTQuality.dxil", "ShadowRTPerformance.dxil",
 			"ShadowRTQualitySlices.dxil", "ShadowRTPerformanceSlices.dxil" };
-		std::ifstream bytecode(Util::PathHelpers::GetShadersPath() / "DX12NativeScene" / names[variant],
-			std::ios::binary | std::ios::ate);
-		if (!bytecode || bytecode.tellg() <= 0 || bytecode.tellg() > kMaxShadowBytecodeBytes)
-			throw std::runtime_error("Native Scene shadowmask DXIL unavailable");
-		std::vector<char> shader(static_cast<size_t>(bytecode.tellg()));
-		bytecode.seekg(0);
-		if (!bytecode.read(shader.data(), std::streamsize(shader.size())))
-			throw std::runtime_error("Native Scene shadowmask DXIL read failed");
+		const auto shader = Util::FileHelpers::ReadBoundedBinary(Util::PathHelpers::GetShadersPath() / "DX12NativeScene" / names[variant], kMaxShadowBytecodeBytes);
 
 		D3D12_DESCRIPTOR_RANGE ranges[2]{};
 		ranges[0] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 0, 0 };
@@ -474,15 +467,7 @@ namespace DX12Native
 			}
 			if (!failureLogged) {
 				failureLogged = true;
-				try {
-					throw;
-				} catch (const winrt::hresult_error& error) {
-					logger::warn("[DX12NativeScene] Shadow dispatch failed (HRESULT 0x{:08X}): {}", static_cast<uint32_t>(error.code()), winrt::to_string(error.message()));
-				} catch (const std::exception& error) {
-					logger::warn("[DX12NativeScene] Shadow dispatch failed: {}", error.what());
-				} catch (...) {
-					logger::warn("[DX12NativeScene] Shadow dispatch failed with an unknown exception");
-				}
+				logger::warn("[DX12NativeScene] Shadow dispatch failed: {}", Util::DescribeCurrentD3DException());
 			}
 			if (slices)
 				fallback();

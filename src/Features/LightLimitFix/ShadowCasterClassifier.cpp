@@ -365,7 +365,6 @@ namespace ShadowCasterManager
 		constexpr float kFullRTTranslationThreshold = 1.0f;
 		constexpr float kFullRTRotationScaleThreshold = 0.001f;
 		constexpr int kFullRTMotionRetentionEpochs = 300;
-		constexpr uint32_t kFullRTParentLimit = 16;
 	}
 
 	void ResetFullRTCasterMotion()
@@ -393,13 +392,7 @@ namespace ShadowCasterManager
 		if (first)
 			record = {};
 		if (first || s_casterClassEpoch - record.ancestryEpoch >= kAncestryRecheckEpochs) {
-			record.actorAttached = false;
-			auto* node = static_cast<RE::NiAVObject*>(&geom);
-			for (uint32_t depth = 0; node && depth < kFullRTParentLimit; ++depth, node = node->parent)
-				if (const auto* owner = node->GetUserData(); owner && owner->IsActor()) {
-					record.actorAttached = true;
-					break;
-				}
+			record.actorAttached = Util::FindSceneOwner(&geom, true) != nullptr;
 			record.ancestryEpoch = s_casterClassEpoch;
 		}
 		const auto& world = geom.world;
