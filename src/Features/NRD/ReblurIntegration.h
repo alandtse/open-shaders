@@ -23,7 +23,6 @@ public:
 	bool Init(uint32_t halfWidth, uint32_t halfHeight, nrd::Denoiser denoiser, uint32_t identifier);
 	void Shutdown();
 
-
 	void SetCommonSettings(const nrd::CommonSettings& settings);
 	void SetDenoiserSettings(const void* settings);
 

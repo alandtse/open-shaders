@@ -2,9 +2,9 @@
 #define __SHARED_DATA_DEPENDENCY_HLSL__
 
 #include "Common/FrameBuffer.hlsli"
+#include "Common/NRDFeatureTypes.hlsli"
 #include "Common/ReverseZ.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
-#include "Common/NRDFeatureTypes.hlsli"
 #include "Common/TransientWindTypes.hlsli"
 #include "Common/VR.hlsli"
 #include "Common/WindFieldTypes.hlsli"

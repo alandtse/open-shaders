@@ -5233,8 +5233,6 @@
     "feature.vr_stereo.full_blend_distance": "完全混合距离",
     "feature.vr_stereo.full_blend_distance_tooltip": "距离近于此值（游戏单位）的几何体被排除在剔除之外，并在双眼中原生渲染。0 = 禁用。",
     "feature.vr_stereo.off": "关闭",
-    "feature.vr_stereo.reclassify_after_repair": "修复后重新分类",
-    "feature.vr_stereo.reclassify_after_repair_tooltip": "在完成的深度上重新运行像素分类，使屏幕空间 GI 重投影能看到被恢复的物体。\n仅调试用；仅在后者开启时运行。",
     "feature.vr_stereo.repair_from_eye0_depth": "从左眼深度修复",
     "feature.vr_stereo.repair_from_eye0_depth_tooltip": "利用左眼的最终深度，在右眼中恢复深度预通道跳过的物体（如使用 Alpha 测试的岩石和道路边缘）。\n仅调试用：关闭它会重新引入几何体缺失的 bug。",
     "feature.vr_stereo.skip_pixel_reprojection": "跳过像素重投影",
@@ -7045,5 +7043,7 @@
     "feature.screen_space_gi.vr_stereo_reproject": "立体重投影",
     "feature.screen_space_gi.vr_stereo_reproject_tooltip": "将左眼（Eye 0）的漫反射 GI 重投影到右眼（Eye 1），并在可行时跳过 Eye 1 的步进，从而降低 GPU 开销。需要关闭 HQ 高光 IL（高光取决于视角）。被遮挡的像素改为原生步进。",
     "feature.screen_space_gi.vr_warning": "\n\n警告：在 VR 中，此功能可能出现视觉伪影，且由于屏幕空间效果的特性，可能带来显著的性能影响。",
-    "feature.screen_space_reflections.debug": "调试"
+    "feature.screen_space_reflections.debug": "调试",
+    "feature.vr_stereo.reclassify_after_repair": "修复后重新分类",
+    "feature.vr_stereo.reclassify_after_repair_tooltip": "在完成的深度上重新运行像素分类，使屏幕空间 GI 重投影能看到被恢复的物体。\n仅调试用；仅在后者开启时运行。"
 }

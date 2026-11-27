@@ -410,7 +410,6 @@ void VRStereoOptimizations::DrawSettings()
 			ImGui::Checkbox(T("feature.vr_stereo.repair_from_eye0_depth", "Repair From Left Eye Depth"), &settings.repairFromEye0Depth);
 			Util::AddTooltip(T("feature.vr_stereo.repair_from_eye0_depth_tooltip", "Restores objects the depth pre-pass skips, such as alpha-tested rocks and road edges, in the right eye from the left eye's final depth.\nDebug only: turning this off reintroduces the missing-geometry bug."));
 
-
 			ImGui::Checkbox(T("feature.vr_stereo.classify_with_depth_history", "Classify With Depth History"), &settings.classifyWithDepthHistory);
 			Util::AddTooltip(T("feature.vr_stereo.classify_with_depth_history_tooltip", "Classifies from the nearer of the depth pre-pass and last frame's final depth, so surfaces the pre-pass skips, such as alpha-tested rocks and road edges, are no longer culled in the right eye.\nDebug only: turning this off reintroduces the missing-geometry bug."));
 
@@ -570,7 +569,6 @@ void VRStereoOptimizations::DispatchClassify(ID3D11ShaderResourceView* depthSRV,
 	context->CSSetConstantBuffers(1, 1, &nullCB);
 	context->CSSetShader(nullptr, nullptr, 0);
 }
-
 
 void VRStereoOptimizations::SetEye1Viewport()
 {

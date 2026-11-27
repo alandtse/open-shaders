@@ -632,7 +632,7 @@ void ScreenSpaceReflections::DrawSSR()
 		if (wantsReblur)
 			guideService.GetResourceExtent(width, height);
 		if (!texNRDSpecInput || texNRDSpecInput->desc.Width != width || texNRDSpecInput->desc.Height != height || wantsReblur != reblurInitAttempted ||
-		    (wantsReblur && !nrdReblurSpecular.IsValid() && globals::state->frameCount - lastReblurAttemptFrame >= 120u && !NRDRendering::ShouldDeferAllocation()))
+			(wantsReblur && !nrdReblurSpecular.IsValid() && globals::state->frameCount - lastReblurAttemptFrame >= 120u && !NRDRendering::ShouldDeferAllocation()))
 			SetupNRDResources(width, height);
 		resourceFailure = false;
 	} catch (const std::exception& e) {

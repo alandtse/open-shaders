@@ -1002,7 +1002,7 @@ void ScreenSpaceGI::DrawSSGI()
 		uint32_t nrdWidth = 0, nrdHeight = 0;
 		GetNRDResourceSize(nrdWidth, nrdHeight);
 		if (nrdReblurUsesSH != useSH || !texNRDInput || texNRDInput->desc.Width != nrdWidth || texNRDInput->desc.Height != nrdHeight || wantsReblur != reblurInitAttempted ||
-		    (wantsReblur && !nrdReblur.IsValid() && globals::state->frameCount - lastReblurAttemptFrame >= 120u && !NRDRendering::ShouldDeferAllocation()))
+			(wantsReblur && !nrdReblur.IsValid() && globals::state->frameCount - lastReblurAttemptFrame >= 120u && !NRDRendering::ShouldDeferAllocation()))
 			SetupNRDResources();
 		resourceFailure = false;
 	} catch (const std::exception& e) {

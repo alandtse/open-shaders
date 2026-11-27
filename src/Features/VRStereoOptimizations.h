@@ -276,7 +276,6 @@ private:
 	/// result (RepairCulledEye1 step 5); reads the initial modes.
 	void DispatchUnrepairableMask();
 
-
 	/// Sets the rasterizer viewport to the Eye 1 (right) half of the classified SBS area (frameDim).
 	void SetEye1Viewport();
 

@@ -125,7 +125,6 @@ void NRDReblurIntegration::Shutdown()
 	}
 }
 
-
 void NRDReblurIntegration::SetCommonSettings(const nrd::CommonSettings& settings)
 {
 	m_commonSettingsValid = false;

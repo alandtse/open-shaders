@@ -5226,8 +5226,6 @@
     "feature.vr_stereo.full_blend_distance": "Avstånd för fullständig blandning",
     "feature.vr_stereo.full_blend_distance_tooltip": "Geometri närmare än detta avstånd (spelenheter) undantas från gallring och återges normalt i båda ögonen. 0 = inaktiverad.",
     "feature.vr_stereo.off": "Av",
-    "feature.vr_stereo.reclassify_after_repair": "Klassificera om efter reparation",
-    "feature.vr_stereo.reclassify_after_repair_tooltip": "Kör om pixelklassificeringen med det färdiga djupet så att omprojektionen för Screen Space GI ser de återställda objekten.\nDetta är endast för felsökning och körs bara när detta är aktiverat.",
     "feature.vr_stereo.repair_from_eye0_depth": "Reparera utifrån vänster ögas djup",
     "feature.vr_stereo.repair_from_eye0_depth_tooltip": "Funktionen återställer objekt som djupförpasset hoppar över, exempelvis alfa-testade stenar och vägkanter, i höger öga med hjälp av vänster ögas slutliga djup.\nEndast felsökning: om detta stängs av återkommer felet med saknad geometri.",
     "feature.vr_stereo.skip_pixel_reprojection": "Hoppa över omprojektion av pixlar",
@@ -7038,5 +7036,7 @@
     "feature.screen_space_gi.vr_stereo_reproject": "Stereoomprojicering",
     "feature.screen_space_gi.vr_stereo_reproject_tooltip": "Omprojicerar Eye 0 (vänster) diffusa GI till Eye 1 (höger) och hoppar över Eye 1:s strålspårning där det går, vilket minskar GPU-kostnaden. Kräver att spegelreflekterande IL i hög kvalitet är avstängt eftersom spegelreflektionen är vyberoende. Frilagda bildpunkter beräknas i stället på normalt sätt.",
     "feature.screen_space_gi.vr_warning": "\n\nVarning: I VR kan funktionen skapa visuella artefakter och påverka prestandan kraftigt på grund av hur skärmbaserade effekter fungerar.",
-    "feature.screen_space_reflections.debug": ""
+    "feature.screen_space_reflections.debug": "",
+    "feature.vr_stereo.reclassify_after_repair": "Klassificera om efter reparation",
+    "feature.vr_stereo.reclassify_after_repair_tooltip": "Kör om pixelklassificeringen med det färdiga djupet så att omprojektionen för Screen Space GI ser de återställda objekten.\nDetta är endast för felsökning och körs bara när detta är aktiverat."
 }
