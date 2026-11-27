@@ -3505,7 +3505,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 			[branch] if (light.lightFlags & LightLimitFix::LightFlags::NativeShadow)
 			{
 				// Static casters are ray traced; the shadow map above holds only dynamic ones.
-				const float nativeShadow = NativeLightShadows::Visibility(light.nativeShadowSlot, light.nativeShadowPreviousSlot, input.Position.xy);
+				float nativeShadow = NativeLightShadows::Visibility(light.nativeShadowSlot, light.nativeShadowPreviousSlot, input.Position.xy);
+				[branch] if ((light.lightFlags & LightLimitFix::LightFlags::NativeShadowFades) && (light.lightFlags & LightLimitFix::LightFlags::Shadow) &&
+							 light.shadowMapIndex < SharedData::lightLimitFixSettings.ShadowMapSlots)
+					nativeShadow = lerp(1.0, nativeShadow, LightLimitFix::Shadows[light.shadowMapIndex].FadeParam.x);
 				shadowComponent *= nativeShadow;
 				lightShadow *= nativeShadow;
 			}

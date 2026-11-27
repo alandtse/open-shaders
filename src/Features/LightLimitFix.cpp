@@ -101,6 +101,9 @@ namespace
 			a_light.nativeShadowSlot = *slot;
 			a_light.nativeShadowPreviousSlot = globals::features::dx12NativeScene.PreviousShadowSlot(a_niLight);
 			a_light.lightFlags.set(LightLimitFix::LightFlags::NativeShadow);
+			// Offload traces a light only while SCM schedules it, so its traced term fades with the slot; Full RT keeps tracing it.
+			if (globals::features::dx12NativeScene.GetFrameNativeMode() == DX12::SCMNativeMode::ShadowOffload)
+				a_light.lightFlags.set(LightLimitFix::LightFlags::NativeShadowFades);
 		}
 	}
 
