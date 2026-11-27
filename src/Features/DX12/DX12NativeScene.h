@@ -93,6 +93,9 @@ struct DX12NativeScene final : OverlayFeature
 	void OnLoadingMenuEvent(bool opening) override;
 	void OnSceneTransitionReset(bool a_opening) override;
 	void OnRuntimeDisabled() override;
+	void RegisterUxActions() override;
+	/** @brief Offload readiness for devbench: tiles, TLAS residency, per-frame light ownership and cumulative ownership counts. */
+	json GetStatus() const;
 
 	/** @brief Raw mode-sized shadow output, independently fenced for Native Composite. */
 	std::shared_ptr<const DX12Native::ShadowMaskFrame> GetShadowMask(uint32_t frame) const { return shadows.Get(frame); }

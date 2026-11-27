@@ -13,6 +13,7 @@
 #include "ScenePrepEngineBridge.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/DevBenchUx.h"
 #include "Utils/Game.h"
 #include "Utils/PointLightFlags.h"
 #include "Utils/SettingsControl.h"
@@ -25,6 +26,7 @@
 #include <cstdint>
 #include <format>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <ranges>
 #include <unordered_map>
 #include <unordered_set>
@@ -826,6 +828,24 @@ void DX12NativeScene::OnRuntimeDisabled()
 	geometryCapture.Reset();
 }
 
+namespace
+{
+	json TileStatus(const DX12::Tile& a_tile)
+	{
+		json rejections = json::array();
+		for (const auto& [reason, count] : a_tile.rejectionReasons)
+			rejections.push_back({ { "reason", reason }, { "count", count } });
+		return { { "x", a_tile.key.x }, { "y", a_tile.key.y }, { "state", magic_enum::enum_name(a_tile.state) },
+			{ "shapes", a_tile.shapes.size() }, { "lights", a_tile.lights.size() }, { "bytes", a_tile.bytes },
+			{ "failure", a_tile.failureReason }, { "rejections", std::move(rejections) } };
+	}
+
+	json TimingStatus(const DX12::PreparationTiming& a_timing)
+	{
+		return { { "completed", a_timing.completed }, { "averageMs", a_timing.AverageMs() }, { "worstMs", a_timing.worstMs } };
+	}
+}
+
 bool DX12NativeScene::CasterInTlas(const RE::BSGeometry& a_geometry) const
 {
 	const auto scene = acceleration.GetScene();
@@ -847,4 +867,65 @@ bool DX12NativeScene::CasterInTlas(const RE::BSGeometry& a_geometry) const
 	                     found->second == reinterpret_cast<uintptr_t>(renderer->rawVertexData);
 	(covered ? castersTraced : castersKeptRaster).fetch_add(1, std::memory_order_relaxed);
 	return covered;
+}
+
+json DX12NativeScene::GetStatus() const
+{
+	json status = { { "active", globals::features::dx12Control.IsActive() },
+		{ "shadowOffloadMode", globals::features::dx12Control.IsShadowOffloadMode() },
+		{ "frameNativeMode", magic_enum::enum_name(GetFrameNativeMode()) } };
+
+	json activeTiles = json::array();
+	json predictive = json::object();
+	if (const auto grid = globals::features::dx12Resources.GetGrid()) {
+		for (const auto& tile : grid->resident)
+			activeTiles.push_back(tile ? TileStatus(*tile) : json(nullptr));
+		for (const auto& tile : grid->predictiveResident) {
+			const std::string state = tile ? std::string(magic_enum::enum_name(tile->state)) : "Missing";
+			predictive[state] = predictive.value(state, 0) + 1;
+		}
+		status["grid"] = { { "scope", grid->requested.front().scope }, { "size", grid->size },
+			{ "revision", grid->geometryRevision }, { "runtimeShapes", grid->runtimeShapes.size() },
+			{ "activeTiles", std::move(activeTiles) }, { "predictiveStates", std::move(predictive) } };
+	}
+
+	if (const auto scene = acceleration.GetScene(); scene && scene->acceleration) {
+		size_t readyTiles = 0;
+		if (scene->inputs && scene->inputs->residency)
+			for (const auto& tile : scene->inputs->residency->resident)
+				readyTiles += tile && tile->state == DX12::Tile::State::Ready;
+		status["tlas"] = { { "published", true }, { "scope", scene->scope }, { "revision", scene->geometryRevision },
+			{ "instances", scene->bottoms.size() }, { "readyActiveTiles", readyTiles } };
+	} else {
+		status["tlas"] = { { "published", false } };
+	}
+
+	const auto lights = shadowLights.load(std::memory_order_acquire);
+	{
+		std::scoped_lock lock(runtimeLightMutex);
+		const uint32_t frame = globals::game::graphicsState ? globals::game::graphicsState->GetFrameCount() : 0;
+		const bool current = runtimeLightFrame == frame || runtimeLightFrame + 1 == frame;
+		status["lights"] = { { "prepared", lights ? lights->size() : 0 },
+			{ "observedShadowLights", current ? runtimeLightSamples.size() : 0 },
+			{ "ownedShadowLights", current ? ownedLights.size() : 0 } };
+	}
+	status["ownership"] = { { "granted", ownershipGranted.load(std::memory_order_relaxed) },
+		{ "castersTraced", castersTraced.load(std::memory_order_relaxed) },
+		{ "castersKeptRaster", castersKeptRaster.load(std::memory_order_relaxed) } };
+
+	if (const auto stats = globals::features::dx12Resources.GetPreparationStats())
+		status["preparation"] = { { "active", TimingStatus(stats->active) }, { "predictive", TimingStatus(stats->predictive) },
+			{ "corners", TimingStatus(stats->corners) } };
+	return status;
+}
+
+void DX12NativeScene::RegisterUxActions()
+{
+	FEATURE_RENDER_QUERY("status",
+		"DX12 shadow offload readiness. Returns active/shadowOffloadMode/frameNativeMode; grid {scope,size,revision,runtimeShapes,"
+		"activeTiles[{x,y,state,shapes,lights,bytes,failure,rejections[{reason,count}]}],predictiveStates}; "
+		"tlas {published,scope,revision,instances,readyActiveTiles}; lights {prepared,observedShadowLights,ownedShadowLights} for the latest frame; "
+		"ownership {granted (light-frames owned), castersTraced (static casters dropped from raster because the TLAS holds them), castersKeptRaster (static casters of owned lights the TLAS lacks)} "
+		"cumulative since boot (diff two reads for a rate); preparation timings. Params: none.",
+		[](const Feature* a_self, const json&) -> json { return static_cast<const DX12NativeScene*>(a_self)->GetStatus(); });
 }
