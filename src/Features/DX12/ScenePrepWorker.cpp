@@ -620,6 +620,7 @@ namespace DX12
 			} catch (const std::exception& error) {
 				std::scoped_lock lock(mutex);
 				running = false;
+				failed.store(true, std::memory_order_release);
 				if (!errorLogged) {
 					errorLogged = true;
 					logger::error("[DX12] Scene preparation worker failed: {}", error.what());
@@ -627,6 +628,7 @@ namespace DX12
 			} catch (...) {
 				std::scoped_lock lock(mutex);
 				running = false;
+				failed.store(true, std::memory_order_release);
 				if (!errorLogged) {
 					errorLogged = true;
 					logger::error("[DX12] Scene preparation worker failed with unknown exception");
@@ -647,13 +649,13 @@ namespace DX12
 	bool ScenePrepWorker::Idle() const
 	{
 		std::scoped_lock lock(mutex);
-		return !running && !queued && !completed;
+		return !Failed() && !running && !queued && !completed;
 	}
 
 	bool ScenePrepWorker::Enqueue(ScenePrepRequest a_request)
 	{
 		std::scoped_lock lock(mutex);
-		if (running || queued || completed)
+		if (Failed() || running || queued || completed)
 			return false;
 		queued = std::move(a_request);
 		wake.notify_one();

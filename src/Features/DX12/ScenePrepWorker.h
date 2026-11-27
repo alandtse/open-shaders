@@ -117,6 +117,8 @@ namespace DX12
 		ScenePrepWorker& operator=(const ScenePrepWorker&) = delete;
 
 		bool Idle() const;
+		/** @brief A terminal worker failure is distinct from an idle worker. */
+		bool Failed() const { return failed.load(std::memory_order_acquire); }
 		bool Enqueue(ScenePrepRequest a_request);
 		std::optional<ScenePrepResult> Take();
 		void Cancel();
@@ -136,6 +138,7 @@ namespace DX12
 		std::optional<ScenePrepResult> completed;
 		std::vector<RE::NiPointer<RE::NiObject>> retiredObjects;
 		bool running = false;
+		std::atomic<bool> failed{ false };
 		bool errorLogged = false;
 		std::atomic<uint64_t> generation = 1;
 		std::jthread worker;

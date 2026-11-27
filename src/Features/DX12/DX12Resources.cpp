@@ -787,6 +787,7 @@ void DX12Resources::OnLoadingMenuEvent(bool opening)
 void DX12Resources::CancelPreparationWork()
 {
 	interiorBatch.reset();
+	workerRestarts = 0;
 	if (worker) {
 		worker->Cancel();
 		worker->DrainRetiredObjects();
@@ -1048,6 +1049,25 @@ void DX12Resources::PumpPreparation(DX12::ResourceGrid& target, const RE::TESObj
 	worker->DrainRetiredObjects();
 	const auto neighborhood = target.Snapshot();
 	const auto scope = neighborhood->requested.front().scope;
+	if (worker->Failed()) {
+		if (inFlight) {
+			const auto key = *inFlight;
+			DX12::TilePublication incomplete;
+			incomplete.key = key;
+			incomplete.failureReason = "Scene preparation worker terminated";
+			target.Publish(std::move(incomplete));
+			RecordPublication(PublicationState::Invalid, key, !std::ranges::contains(neighborhood->requested, key), false, "Scene preparation worker terminated");
+			inFlight.reset();
+			target.CancelPending();
+		}
+		interiorBatch.reset();
+		if (workerRestarts >= kMaxWorkerRestarts)
+			return;
+		++workerRestarts;
+		worker.reset();
+		logger::warn("[DX12Resources] Restarting failed scene preparation worker ({}/{})", workerRestarts, kMaxWorkerRestarts);
+		return;
+	}
 	if (interiorBatch && (world || interiorBatch->center != neighborhood->requested.front() ||
 							 interiorBatch->size != neighborhood->size || interiorBatch->loading != loading ||
 							 !Util::QpcDeadlinePending(Util::GetQpcTicks(), interiorBatch->expiresQpc)))

@@ -467,3 +467,16 @@ TEST_CASE("Exact shadow-light identity replaces its prepared placeholder", "[dx1
 	CHECK(exact.first.front().runtimeIdentity == 42);
 	CHECK(exact.second == 0);
 }
+
+TEST_CASE("GPU completion never accepts device removal or untracked submissions", "[dx12][fence]")
+{
+	using DX12Native::FenceValueCompleted;
+	using DX12Native::kUntrackedFenceValue;
+	CHECK(FenceValueCompleted(false, 0, 0));
+	CHECK_FALSE(FenceValueCompleted(false, 5, 5));
+	CHECK_FALSE(FenceValueCompleted(true, 4, 5));
+	CHECK(FenceValueCompleted(true, 5, 5));
+	CHECK(FenceValueCompleted(true, 6, 5));
+	CHECK_FALSE(FenceValueCompleted(true, kUntrackedFenceValue, 5));
+	CHECK_FALSE(FenceValueCompleted(true, kUntrackedFenceValue, kUntrackedFenceValue));
+}
