@@ -56,7 +56,7 @@ void DX12NativeScene::DrawDevSettings()
 	bool audit = coverageAudit.load(std::memory_order_relaxed);
 	if (ImGui::Checkbox(T("menu.dx12.scene.audit_caster_coverage", "Audit exact caster coverage"), &audit))
 		coverageAudit.store(audit, std::memory_order_relaxed);
-	ImGui::Text("Covered: %llu | Unconfirmed: %llu", static_cast<unsigned long long>(coveredCasterChecks.load(std::memory_order_relaxed)),
+	ImGui::Text(T("menu.dx12.scene.caster_coverage_counts", "Covered: %llu | Unconfirmed: %llu"), static_cast<unsigned long long>(coveredCasterChecks.load(std::memory_order_relaxed)),
 		static_cast<unsigned long long>(missingCasterChecks.load(std::memory_order_relaxed)));
 	bool debugMask = DX12Native::compositeShadowDebugView.load(std::memory_order_relaxed);
 	if (ImGui::Checkbox(T("menu.dx12.scene.debug_shadow_mask", "Show ray-traced shadow mask"), &debugMask))
