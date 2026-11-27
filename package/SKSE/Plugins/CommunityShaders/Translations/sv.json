@@ -2444,7 +2444,6 @@
     "feature.lod_shadows.update_budget": "Uppdateringsbudget för GPU (ms)",
     "feature.nrd.accumulation": "Ackumulering",
     "feature.nrd.buffer_viewer": "Buffertvisare",
-    "feature.nrd.debug": "",
     "feature.nrd.description": "",
     "feature.nrd.description_text": "",
     "feature.nrd.enabled": "Aktiverad",
@@ -3974,7 +3973,6 @@
     "feature.screen_space_reflections.brdf_bias_tooltip": "",
     "feature.screen_space_reflections.buffer_viewer": "Buffertvisare",
     "feature.screen_space_reflections.compute_shaders_failed_to_compile": "Beräkningsshader gick inte att kompilera!",
-    "feature.screen_space_reflections.debug": "",
     "feature.screen_space_reflections.description": "",
     "feature.screen_space_reflections.e11_amount_scale": "Reflektionsskala för förinställning",
     "feature.screen_space_reflections.e11_amount_scale_tooltip": "",
@@ -6988,6 +6986,7 @@
     "ui.vr.color_coding_secondary": "Blå = sekundär handkontroll",
     "ui.vr.primary_controller": "(Primär handkontroll)",
     "ui.vr.secondary_controller": "(Sekundär handkontroll)",
+    "feature.nrd.debug": "",
     "feature.screen_space_gi.adaptive_sampling": "Adaptiv provtagning",
     "feature.screen_space_gi.adaptive_sampling_tooltip": "Minskar antalet steg på avlägsna eller plana ytor. Lägger till en passering för djup- och normalvariation; nettokostnaden beror på scenen.",
     "feature.screen_space_gi.ao_radius": "AO-radie",
@@ -7038,5 +7037,6 @@
     "feature.screen_space_gi.visual_il": "Visuellt – IL",
     "feature.screen_space_gi.vr_stereo_reproject": "Stereoomprojicering",
     "feature.screen_space_gi.vr_stereo_reproject_tooltip": "Omprojicerar Eye 0 (vänster) diffusa GI till Eye 1 (höger) och hoppar över Eye 1:s strålspårning där det går, vilket minskar GPU-kostnaden. Kräver att spegelreflekterande IL i hög kvalitet är avstängt eftersom spegelreflektionen är vyberoende. Frilagda bildpunkter beräknas i stället på normalt sätt.",
-    "feature.screen_space_gi.vr_warning": "\n\nVarning: I VR kan funktionen skapa visuella artefakter och påverka prestandan kraftigt på grund av hur skärmbaserade effekter fungerar."
+    "feature.screen_space_gi.vr_warning": "\n\nVarning: I VR kan funktionen skapa visuella artefakter och påverka prestandan kraftigt på grund av hur skärmbaserade effekter fungerar.",
+    "feature.screen_space_reflections.debug": ""
 }
