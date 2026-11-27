@@ -295,10 +295,20 @@ Skin::SkinData Skin::MakeData(const SkinMaterials::Material& a_material, bool a_
 	return data;
 }
 
+const Skin::SkinData& Skin::DefaultData(bool a_head)
+{
+	if (defaultDataRevision != revision) {
+		const auto material = Resolve({}, settings.DefaultProfile);
+		defaultData = { MakeData(material, false), MakeData(material, true) };
+		defaultDataRevision = revision;
+	}
+	return defaultData[a_head];
+}
+
 Skin::SkinData Skin::GetCommonBufferData()
 {
 	std::lock_guard lock(mutex);
-	return MakeData(Resolve({}, settings.DefaultProfile), false);
+	return DefaultData(false);
 }
 
 void Skin::RestoreSampler()
@@ -321,13 +331,13 @@ void Skin::BSLightingShader_SetupGeometry(RE::BSRenderPass* a_pass)
 	if (!PerGeometryCB)
 		return;
 	PerGeometryData data{};
-	data.profile = MakeData(Resolve({}, settings.DefaultProfile), false);
+	data.profile = DefaultData(false);
 	data.profile.skinParams.w = 0;
 	if (a_pass && a_pass->geometry && !SkinSurfaces::IsRaceMenuOverlay(a_pass->geometry, a_pass->shaderProperty)) {
 		data.skinPerGeometry = GetWetness(a_pass->geometry);
 		if (SkinMaterials::IsCompatible(a_pass->shaderProperty)) {
 			auto& entry = Observe(a_pass->geometry, a_pass->shaderProperty);
-			data.profile = MakeData(Resolve({}, settings.DefaultProfile), entry.head);
+			data.profile = DefaultData(entry.head);
 			data.profile.skinDetailParams.w = 0;
 			if (entry.ready && entry.revision == revision && entry.characterRevision == characterRevision) {
 				data.profile = MakeData(entry.effective, entry.head);

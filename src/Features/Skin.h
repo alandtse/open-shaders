@@ -202,6 +202,8 @@ private:
 	Editor editor;
 	uint64_t revision = 1;
 	uint64_t characterRevision = 0;
+	std::array<SkinData, 2> defaultData{};
+	uint64_t defaultDataRevision = 0;
 	bool texturesDirty = false;
 	uint32_t lastPrune = 0;
 
@@ -217,6 +219,7 @@ private:
 	SkinMaterials::Material Compose(const std::string& a_key, const SkinCharacters::Customization* a_customization, Layer a_upTo);
 	void Prepare(GeometryEntry& a_entry, const SkinCharacters::State& a_state);
 	SkinData MakeData(const SkinMaterials::Material& a_material, bool a_head) const;
+	const SkinData& DefaultData(bool a_head);
 	GeometryEntry& Observe(RE::BSGeometry* a_geometry, RE::BSShaderProperty* a_property);
 
 	// Editor
