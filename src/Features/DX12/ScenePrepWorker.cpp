@@ -20,6 +20,7 @@
 #include "RE/T/TESObjectSTAT.h"
 #include "RE/T/TESWorldSpace.h"
 #include "ScenePrepEngineBridge.h"
+#include "TilePreparationPolicy.h"
 #include "Utils/PerfUtils.h"
 #include "Utils/TracyZones.h"
 
@@ -48,6 +49,7 @@ namespace DX12
 		constexpr uint64_t kMaxDecodedCacheBytes = 48ull * 1024 * 1024;
 		constexpr uint64_t kMaxCapturedMeshBytes = 96ull * 1024 * 1024;
 		constexpr size_t kMaxCapturedShapes = 8192;
+		constexpr uint32_t kInteriorReuseLifetimeMs = 2000;
 		constexpr uint32_t kMaxSceneGraphDepth = 32;
 		constexpr uint32_t kTerrainOrdinalBase = 0x10000u;
 
@@ -65,7 +67,7 @@ namespace DX12
 					return;
 				}
 			}
-			if (a_reasons.size() < kMaxRejectionReasons) {
+			if (a_reasons.size() + 1 < kMaxRejectionReasons) {
 				a_reasons.emplace_back(key, a_count);
 				return;
 			}
@@ -75,21 +77,19 @@ namespace DX12
 					return;
 				}
 			}
-			a_reasons.back().second += a_count;
+			if (a_reasons.size() < kMaxRejectionReasons)
+				a_reasons.emplace_back("other", a_count);
 		}
 
 		void AddMissingShapeEntry(
 			std::vector<MissingNifShapeDescriptor>& a_missing,
-			std::vector<std::pair<std::string, uint32_t>>& a_reasons, uint32_t& a_failedCount,
 			std::string_view a_plugin, uint32_t a_localID,
 			std::string_view a_nifPath, int32_t a_blockIndex, std::string_view a_reason)
 		{
 			if (a_nifPath.empty() || a_nifPath.size() > 260)
 				return;
-			if (a_missing.size() >= kMaxMissingShapes) {
-				RecordRejection(a_reasons, a_failedCount, "missing shape manifest capacity");
+			if (a_missing.size() >= kMaxMissingShapes)
 				return;
-			}
 			MissingNifShapeDescriptor entry;
 			entry.referencePlugin = std::string(a_plugin.substr(0, 128));
 			entry.referenceLocal = a_localID;
@@ -104,7 +104,7 @@ namespace DX12
 			std::string_view a_nifPath, int32_t a_blockIndex, std::string_view a_reason)
 		{
 			AddMissingShapeEntry(
-				a_request.missingShapes, a_request.rejectionReasons, a_request.failedShapes,
+				a_request.missingShapes,
 				a_plugin, a_localID, a_nifPath, a_blockIndex, a_reason);
 		}
 
@@ -114,10 +114,8 @@ namespace DX12
 		{
 			if (a_nifPath.empty() || a_nifPath.size() > 260 || a_plugin.empty())
 				return;
-			if (a_request.nifSources.size() >= kMaxNifSources) {
-				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "NIF source manifest capacity");
+			if (a_request.nifSources.size() >= kMaxNifSources)
 				return;
-			}
 			NifSourceDescriptor entry;
 			entry.referencePlugin = std::string(a_plugin.substr(0, 128));
 			entry.referenceLocal = a_localID;
@@ -724,6 +722,7 @@ namespace DX12
 			ZoneScopedN("DX12::Preparation::Worker");
 			const auto started = Util::GetQpcTicks();
 			const bool consolidationAttempt = task->consolidate;
+			const bool reusedInterior = bool(task->interiorBatch);
 			const bool predictive = task->predictive;
 			const bool corner = task->corner;
 			const double captureMs = task->captureMs;
@@ -739,6 +738,7 @@ namespace DX12
 				result.failure = "Unknown scene preparation failure";
 			}
 			result.consolidationAttempt = consolidationAttempt;
+			result.reusedInterior = reusedInterior;
 			result.predictive = predictive;
 			result.corner = corner;
 			result.captureMs = captureMs;
@@ -776,6 +776,32 @@ namespace DX12
 			return a_stop.stop_requested() || generation.load(std::memory_order_acquire) != a_epoch;
 		};
 
+		if (a_request.interiorBatch) {
+			const auto& batch = *a_request.interiorBatch;
+			if (batch.center.scope != a_request.key.scope || batch.size != a_request.size || batch.loading != a_request.loading ||
+				a_request.worldspace || canceled())
+				return result;
+			for (const auto& item : batch.shapes) {
+				if (canceled())
+					return result;
+				if (!item.bounds.MayOverlap(pub.key.x, pub.key.y, a_request.size))
+					continue;
+				pub.shapes.push_back(item.shape);
+				pub.geometryBytes += item.bytes;
+			}
+			for (const auto& light : batch.lights)
+				if (InsideSubcellXY(light.position.x, light.position.y, pub.key.x, pub.key.y, a_request.size))
+					pub.lights.push_back(light);
+			pub.eligibleShapes = static_cast<uint32_t>(pub.shapes.size());
+			pub.unlocalizedRejections = batch.scopeRejections;
+			pub.rejectionReasons = batch.rejectionReasons;
+			pub.enumerationComplete = true;
+			pub.validated = true;
+			result.failure = std::format("Reused interior: {} extracted; {} scope-level rejection events (not tile-local)",
+				pub.shapes.size(), pub.unlocalizedRejections);
+			return result;
+		}
+
 		if (a_request.candidateOverflow) {
 			result.failure = "Candidate reference limit exceeded";
 			return result;
@@ -785,6 +811,7 @@ namespace DX12
 		double lowX = std::numeric_limits<double>::infinity(), lowY = lowX;
 		double highX = -lowX, highY = -lowY;
 		bool budgetExceeded = false;
+		std::vector<InteriorPreparationBatch::BoundedShape> batchShapes;
 		const auto include = [&](double x, double y) {
 			lowX = std::min(lowX, x);
 			lowY = std::min(lowY, y);
@@ -803,16 +830,20 @@ namespace DX12
 			if (!overlaps) {
 				RecordRejection(pub.rejectionReasons, pub.failedShapes, "invalid placed bounds");
 				AddMissingShapeEntry(
-					pub.missingShapes, pub.rejectionReasons, pub.failedShapes,
+					pub.missingShapes,
 					a_plugin, a_localID, a_nifPath, a_blockIndex, "invalid placed bounds");
 				return;
 			}
 			if (!*overlaps && !a_request.consolidate)
 				return;
-			if (a_request.consolidate)
+			PreparationBounds shapeBounds;
+			if (a_request.consolidate) {
 				for (const auto& p : a_positions)
-					include(double(a_transform[0]) * p.x + double(a_transform[1]) * p.y + double(a_transform[2]) * p.z + a_transform[3],
+					shapeBounds.Include(double(a_transform[0]) * p.x + double(a_transform[1]) * p.y + double(a_transform[2]) * p.z + a_transform[3],
 						double(a_transform[4]) * p.x + double(a_transform[5]) * p.y + double(a_transform[6]) * p.z + a_transform[7]);
+				include(shapeBounds.minX, shapeBounds.minY);
+				include(shapeBounds.maxX, shapeBounds.maxY);
+			}
 
 			++pub.eligibleShapes;
 			const uint64_t bytes = uint64_t(a_positions.size()) * sizeof(float3) +
@@ -833,6 +864,8 @@ namespace DX12
 			shape->indices = a_indices;
 			shape->transform = a_transform;
 			pub.geometryBytes += bytes;
+			if (a_request.consolidate)
+				batchShapes.push_back({ shape, shapeBounds, bytes });
 			pub.shapes.push_back(std::move(shape));
 		};
 
@@ -924,10 +957,8 @@ namespace DX12
 				pub.unlocalizedRejections += count;
 			}
 			for (const auto& [blockIdx, reason] : extraction->missing) {
-				if (pub.missingShapes.size() >= kMaxMissingShapes) {
-					RecordRejection(pub.rejectionReasons, pub.failedShapes, "missing shape manifest capacity");
+				if (pub.missingShapes.size() >= kMaxMissingShapes)
 					break;
-				}
 				MissingNifShapeDescriptor entry;
 				entry.referencePlugin = placement.refPlugin.substr(0, 128);
 				entry.referenceLocal = placement.refLocal;
@@ -962,9 +993,23 @@ namespace DX12
 			}
 			pub.wholeCell = pub.spatialBoundsComplete && a_request.spatialBounds.FitsNeighborhood(a_request.size, kPredictiveRadius);
 		}
-		if (!pub.enumerationComplete || pub.failedShapes || pub.rejectedLights || pub.eligibleShapes != pub.shapes.size()) {
+		pub.failedShapes -= std::min(pub.failedShapes, pub.unlocalizedRejections);
+		if (CanReuseWholeInterior(a_request.consolidate, pub.wholeCell, pub.validated, pub.enumerationComplete,
+			budgetExceeded, a_request.captureBudgetExceeded, pub.rejectedLights != 0, pub.eligibleShapes == pub.shapes.size())) {
+			auto batch = std::make_shared<InteriorPreparationBatch>();
+			batch->center = a_request.key;
+			batch->size = a_request.size;
+			batch->loading = a_request.loading;
+			batch->expiresQpc = Util::QpcDeadlineAfterMs(Util::GetQpcTicks(), Util::GetQpcFrequency(), kInteriorReuseLifetimeMs);
+			batch->shapes = std::move(batchShapes);
+			batch->lights = pub.lights;
+			batch->rejectionReasons = pub.rejectionReasons;
+			batch->scopeRejections = pub.failedShapes + pub.unlocalizedRejections;
+			result.interiorBatch = std::move(batch);
+		}
+		if (!pub.enumerationComplete || pub.failedShapes || pub.unlocalizedRejections || pub.rejectedLights || pub.eligibleShapes != pub.shapes.size()) {
 			result.failure = std::format(
-				"Request: {} eligible shapes, {} extracted; {} rejection events ({} unlocalized), {} rejected lights; enumeration complete: {}",
+				"Request: {} eligible shapes, {} extracted; {} tile-local rejection events, {} unlocalized, {} rejected lights; enumeration complete: {}",
 				pub.eligibleShapes, pub.shapes.size(), pub.failedShapes, pub.unlocalizedRejections, pub.rejectedLights,
 				pub.enumerationComplete ? "yes" : "no");
 		}

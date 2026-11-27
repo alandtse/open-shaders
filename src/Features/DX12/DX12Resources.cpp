@@ -260,7 +260,7 @@ namespace DX12
 		tile->bytes = publication.geometryBytes;
 		tile->lights = std::move(publication.lights);
 		const bool complete = publication.validated && publication.enumerationComplete &&
-		                      publication.failedShapes == 0 && publication.rejectedLights == 0 &&
+		                      publication.failedShapes == 0 && publication.unlocalizedRejections == 0 && publication.rejectedLights == 0 &&
 		                      publication.eligibleShapes == tile->shapes.size();
 		const bool hasContent = !tile->shapes.empty() || !tile->lights.empty();
 		const bool consolidate = publication.wholeCell && publication.validated && publication.spatialBoundsComplete;
@@ -694,7 +694,7 @@ namespace
 				if (tile) {
 					ImGui::Text(T("menu.dx12.resources.whole_cell_counts", "Shapes: %zu | Lights: %zu"), tile->shapes.size(), tile->lights.size());
 					if (globals::state && globals::state->IsDeveloperMode())
-						ImGui::Text(T("menu.dx12.resources.rejection_counts", "Eligible: %u | rejection events: %u | rejected lights: %u"), tile->eligibleShapes, tile->failedShapes, tile->rejectedLights);
+						ImGui::Text(T("menu.dx12.resources.rejection_counts", "Eligible: %u | local rejection events: %u | rejected lights: %u"), tile->eligibleShapes, tile->failedShapes, tile->rejectedLights);
 					if (globals::state && globals::state->IsDeveloperMode() && tile->unlocalizedRejections)
 						ImGui::Text(T("menu.dx12.resources.unlocalized", "Unlocalized rejection events: %u"), tile->unlocalizedRejections);
 				}
@@ -786,6 +786,7 @@ void DX12Resources::OnLoadingMenuEvent(bool opening)
 
 void DX12Resources::CancelPreparationWork()
 {
+	interiorBatch.reset();
 	if (worker) {
 		worker->Cancel();
 		worker->DrainRetiredObjects();
@@ -921,6 +922,7 @@ void DX12Resources::DrawResourceStatus()
 
 	ImGui::SeparatorText(T("menu.dx12.resources.subcell_status", "Subcell status (5x5)"));
 	const auto drawSubcellDetails = [&]() {
+		ImGui::PushTextWrapPos(0.0f);
 		if (snapshot) {
 			size_t activeLoaded = 0, predictiveLoaded = 0, empty = 0, emptyPartial = 0;
 			size_t activeGeometry = 0, predictiveGeometry = 0, activeLights = 0, predictiveLights = 0;
@@ -949,6 +951,7 @@ void DX12Resources::DrawResourceStatus()
 		ImGui::TextColored(SubcellMapStyle::predictiveLegend, T("menu.dx12.resources.legend.light_blue", "Light blue: loaded predictive ring"));
 		ImGui::TextColored(SubcellMapStyle::retryLegend, T("menu.dx12.resources.legend.red", "Red: failed (retry pending)"));
 		ImGui::TextDisabled(T("menu.dx12.resources.legend.diagonal", "Diagonal: partially loaded  |  Center dot: player subcell"));
+		ImGui::PopTextWrapPos();
 	};
 
 	const auto drawGenerationStats = [&]() {
@@ -966,6 +969,7 @@ void DX12Resources::DrawResourceStatus()
 			show(T("menu.dx12.resources.stats.corners", "Corners"), timing->corners);
 			show(T("menu.dx12.resources.stats.capture", "Engine capture"), timing->capture);
 			show(T("menu.dx12.resources.stats.publication", "Publication"), timing->publication);
+			ImGui::Text(T("menu.dx12.resources.stats.interior_reuse", "Reused interior requests: %llu"), static_cast<unsigned long long>(timing->reusedInterior));
 		}
 	};
 
@@ -1033,6 +1037,10 @@ void DX12Resources::PumpPreparation(DX12::ResourceGrid& target, const RE::TESObj
 	worker->DrainRetiredObjects();
 	const auto neighborhood = target.Snapshot();
 	const auto scope = neighborhood->requested.front().scope;
+	if (interiorBatch && (world || interiorBatch->center != neighborhood->requested.front() ||
+		interiorBatch->size != neighborhood->size || interiorBatch->loading != loading ||
+		!Util::QpcDeadlinePending(Util::GetQpcTicks(), interiorBatch->expiresQpc)))
+		interiorBatch.reset();
 	const auto activeMissing = [&] {
 		return std::ranges::any_of(neighborhood->resident, [](const auto& tile) {
 			return !tile || tile->state == DX12::Tile::State::Requested;
@@ -1043,6 +1051,7 @@ void DX12Resources::PumpPreparation(DX12::ResourceGrid& target, const RE::TESObj
 		const bool predictive = std::ranges::contains(neighborhood->predictive, *inFlight);
 		if ((!active && !predictive) || (!active && activeMissing())) {
 			worker->Cancel();
+			interiorBatch.reset();
 			target.CancelPending();
 			inFlight.reset();
 		}
@@ -1053,6 +1062,10 @@ void DX12Resources::PumpPreparation(DX12::ResourceGrid& target, const RE::TESObj
 		const auto key = result->publication.key;
 		const bool active = std::ranges::contains(neighborhood->requested, key);
 		const bool predictive = std::ranges::contains(neighborhood->predictive, key);
+		if (result->interiorBatch && result->interiorBatch->center == neighborhood->requested.front() &&
+			result->interiorBatch->size == neighborhood->size && result->interiorBatch->loading == loading &&
+			Util::QpcDeadlinePending(Util::GetQpcTicks(), result->interiorBatch->expiresQpc))
+			interiorBatch = std::move(result->interiorBatch);
 		if ((!active && !predictive) || (!active && activeMissing()) ||
 			(result->consolidationAttempt && !result->publication.wholeCell)) {
 			target.CancelPending();
@@ -1074,7 +1087,10 @@ void DX12Resources::PumpPreparation(DX12::ResourceGrid& target, const RE::TESObj
 					stats.worstMs = std::max(stats.worstMs, ms);
 				};
 				record(timing, result->preparationMs);
-				record(next->capture, result->captureMs);
+				if (result->reusedInterior)
+					++next->reusedInterior;
+				else
+					record(next->capture, result->captureMs);
 				record(next->publication, publicationMs);
 				generationStats.store(std::move(next), std::memory_order_release);
 			}
@@ -1083,8 +1099,10 @@ void DX12Resources::PumpPreparation(DX12::ResourceGrid& target, const RE::TESObj
 	if (!worker->Idle())
 		return;
 	const auto key = target.NextRequest();
-	if (!key)
+	if (!key) {
+		interiorBatch.reset();
 		return;
+	}
 	const auto requested = target.Snapshot();
 	const bool predictive = !std::ranges::contains(requested->requested, *key);
 	const bool corner = predictive &&
@@ -1095,9 +1113,19 @@ void DX12Resources::PumpPreparation(DX12::ResourceGrid& target, const RE::TESObj
 	if (consolidate)
 		attemptScope = scope;
 	try {
-		if (auto task = DX12::CaptureScenePrepRequest(*key, settings.SubcellSize, cell, world,
-				predictive, corner, consolidate, loading);
-			task && worker->Enqueue(std::move(*task))) {
+		std::optional<DX12::ScenePrepRequest> task;
+		if (interiorBatch && !consolidate) {
+			task.emplace();
+			task->key = *key;
+			task->size = settings.SubcellSize;
+			task->predictive = predictive;
+			task->corner = corner;
+			task->loading = loading;
+			task->interiorBatch = interiorBatch;
+		} else {
+			task = DX12::CaptureScenePrepRequest(*key, settings.SubcellSize, cell, world, predictive, corner, consolidate, loading);
+		}
+		if (task && worker->Enqueue(std::move(*task))) {
 			inFlight = *key;
 			return;
 		}

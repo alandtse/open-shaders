@@ -22,6 +22,7 @@ namespace DX12
 	inline constexpr uint32_t kMaxPreparedLights = 2048;
 
 	class ScenePrepWorker;
+	struct InteriorPreparationBatch;
 	/** @brief Immutable light record discovered alongside preparation geometry. */
 	struct PreparedLight
 	{
@@ -145,6 +146,7 @@ namespace DX12
 	struct PreparationStats
 	{
 		PreparationTiming active, predictive, corners, capture, publication;
+		uint64_t reusedInterior = 0;
 	};
 
 	class ResourceGrid
@@ -280,6 +282,7 @@ private:
 	std::atomic<bool> runtimePublicationEnabled{ false };
 	DX12::ResourceGrid grid;
 	std::unique_ptr<DX12::ScenePrepWorker> worker;
+	std::shared_ptr<const DX12::InteriorPreparationBatch> interiorBatch;
 	uint32_t lastVisitedCell = 0, previousVisitedCell = 0, distinctTransitions = 0;
 	int32_t lastExteriorGridX = std::numeric_limits<int32_t>::min();
 	int32_t lastExteriorGridY = std::numeric_limits<int32_t>::min();

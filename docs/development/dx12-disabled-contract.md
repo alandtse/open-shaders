@@ -82,3 +82,35 @@ light removal, setting changes, loading screens, same-world cell changes,
 mode switches and shader-pool contention. Compare the diagnostic overlay
 and shadow masks against the prior Full RT path, and repeat the baseline
 offloading/disabled-path checks.
+
+### Native preparation coverage and reuse
+
+Prepared geometry and render-observed geometry remain distinct producers.
+The latter admits stable rigid draws; it cannot certify never-observed
+casters. The published TLAS reports both source counts, deduplication,
+triangles and AS allocation widths, not a percentage of complete coverage.
+Preparation rejects controllers, unsupported base/geometry types, skinning,
+alpha-dependent shapes and unavailable CPU data. Native vertex descriptor
+accessors match the render observation path; the other admission rules
+are intentionally unchanged. Unknown bounds remain scope-level evidence,
+not tile-local omissions. Whole-cell consolidation requires known spatial
+bounds independently of extracted shape counts.
+
+When a complete, bounded whole-interior enumeration cannot consolidate,
+reuse its immutable accepted shape/light records for the same center and
+size for at most two seconds. Partition exact shape bounds on the worker;
+never retain engine pointers or claim rejected geometry is covered. Scope
+rejections remain separate. Discard on cancellation, center/size/scope
+change, loading handover or exhausted requests. Budget-truncated results
+fall back to normal capture. Capture timings exclude reused requests.
+
+Runtime validation: in the same interior and camera route, record grid
+source counts and the published TLAS revision with FG on and off. Compare
+shadows from an occluder initially outside the camera frustum against a
+raster reference and then turn toward it and back. Verify prepared casters
+are present without prior observation; observed-only casters may appear
+only after render-pass observation. Repeat with an interior larger than
+the consolidation footprint, an A-to-B-to-A transition and exterior
+streaming. Compare Tracy capture/worker/acceleration timings and P99 to
+the pre-change build. No complete off-screen coverage is implied by a
+valid publication or a functioning shadow mask.

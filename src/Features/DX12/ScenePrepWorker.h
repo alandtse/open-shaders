@@ -40,6 +40,24 @@ namespace DX12
 		AffineTransform transform{};
 	};
 
+	struct InteriorPreparationBatch
+	{
+		struct BoundedShape
+		{
+			std::shared_ptr<const Shape> shape;
+			PreparationBounds bounds;
+			uint64_t bytes = 0;
+		};
+		SubcellKey center;
+		uint32_t size = 0;
+		bool loading = false;
+		int64_t expiresQpc = 0;
+		std::vector<BoundedShape> shapes;
+		std::vector<PreparedLight> lights;
+		std::vector<std::pair<std::string, uint32_t>> rejectionReasons;
+		uint32_t scopeRejections = 0;
+	};
+
 	struct ScenePrepRequest
 	{
 		SubcellKey key{};
@@ -56,6 +74,7 @@ namespace DX12
 		bool captureBudgetExceeded = false;
 		bool spatialBoundsKnown = true;
 		PreparationBounds spatialBounds;
+		std::shared_ptr<const InteriorPreparationBatch> interiorBatch;
 		uint32_t unlocalizedRejections = 0;
 		double captureMs = 0.0;
 		std::vector<CapturedAttachedShape> attachedShapes;
@@ -75,6 +94,8 @@ namespace DX12
 		bool predictive = false;
 		bool corner = false;
 		bool consolidationAttempt = false;
+		bool reusedInterior = false;
+		std::shared_ptr<const InteriorPreparationBatch> interiorBatch;
 		double preparationMs = 0.0;
 		double captureMs = 0.0;
 	};

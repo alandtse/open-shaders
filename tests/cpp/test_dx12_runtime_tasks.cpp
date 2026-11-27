@@ -409,3 +409,17 @@ TEST_CASE("Native RT history accepts only compatible consecutive frames", "[dx12
 	++next.epoch;
 	CHECK(ShadowHistoryCount(previous, next) == 0);
 }
+
+TEST_CASE("Interior fallback reuses only non-truncated enumerations", "[dx12][scene-prep]")
+{
+	using DX12::CanReuseWholeInterior;
+	CHECK(CanReuseWholeInterior(true, false, true, true, false, false, false, true));
+	CHECK_FALSE(CanReuseWholeInterior(false, false, true, true, false, false, false, true));
+	CHECK_FALSE(CanReuseWholeInterior(true, true, true, true, false, false, false, true));
+	CHECK_FALSE(CanReuseWholeInterior(true, false, false, true, false, false, false, true));
+	CHECK_FALSE(CanReuseWholeInterior(true, false, true, false, false, false, false, true));
+	CHECK_FALSE(CanReuseWholeInterior(true, false, true, true, true, false, false, true));
+	CHECK_FALSE(CanReuseWholeInterior(true, false, true, true, false, true, false, true));
+	CHECK_FALSE(CanReuseWholeInterior(true, false, true, true, false, false, true, true));
+	CHECK_FALSE(CanReuseWholeInterior(true, false, true, true, false, false, false, false));
+}
