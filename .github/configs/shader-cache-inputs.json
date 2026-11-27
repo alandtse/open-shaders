@@ -260,6 +260,7 @@
                 ["REVERSE_Z", ""],
                 ["SKYLIGHTING", null],
                 ["SSGI", null],
+                ["SSR", null],
                 ["TERRAIN_BLENDING", null],
                 ["WINPC", ""]
             ],
@@ -299,126 +300,6 @@
             "profile": "cs_5_0",
             "runtime": "SE",
             "source": "LODShadows/FilterMask.cs.hlsl"
-        },
-        {
-            "defines": [
-                ["COMPUTESHADER", ""],
-                ["DX11", ""],
-                ["GI", ""],
-                ["HALF_RES", ""],
-                ["LINEAR_FILTER", ""],
-                ["REVERSE_Z", ""],
-                ["TEMPORAL_DENOISER", ""],
-                ["WINPC", ""]
-            ],
-            "entryPoint": "main",
-            "flags": 34818,
-            "kind": "standalone",
-            "profile": "cs_5_0",
-            "runtime": "SE",
-            "source": "ScreenSpaceGI/prefilterDepths.cs.hlsl"
-        },
-        {
-            "defines": [
-                ["COMPUTESHADER", ""],
-                ["DX11", ""],
-                ["GI", ""],
-                ["HALF_RES", ""],
-                ["REVERSE_Z", ""],
-                ["TEMPORAL_DENOISER", ""],
-                ["WINPC", ""]
-            ],
-            "entryPoint": "main",
-            "flags": 34818,
-            "kind": "standalone",
-            "profile": "cs_5_0",
-            "runtime": "SE",
-            "source": "ScreenSpaceGI/blur.cs.hlsl"
-        },
-        {
-            "defines": [
-                ["COMPUTESHADER", ""],
-                ["DX11", ""],
-                ["GI", ""],
-                ["HALF_RES", ""],
-                ["REVERSE_Z", ""],
-                ["TEMPORAL_DENOISER", ""],
-                ["WINPC", ""]
-            ],
-            "entryPoint": "main",
-            "flags": 34818,
-            "kind": "standalone",
-            "profile": "cs_5_0",
-            "runtime": "SE",
-            "source": "ScreenSpaceGI/gi.cs.hlsl"
-        },
-        {
-            "defines": [
-                ["COMPUTESHADER", ""],
-                ["DX11", ""],
-                ["GI", ""],
-                ["HALF_RES", ""],
-                ["REVERSE_Z", ""],
-                ["TEMPORAL_DENOISER", ""],
-                ["WINPC", ""]
-            ],
-            "entryPoint": "main",
-            "flags": 34818,
-            "kind": "standalone",
-            "profile": "cs_5_0",
-            "runtime": "SE",
-            "source": "ScreenSpaceGI/prefilterNormal.cs.hlsl"
-        },
-        {
-            "defines": [
-                ["COMPUTESHADER", ""],
-                ["DX11", ""],
-                ["GI", ""],
-                ["HALF_RES", ""],
-                ["REVERSE_Z", ""],
-                ["TEMPORAL_DENOISER", ""],
-                ["WINPC", ""]
-            ],
-            "entryPoint": "main",
-            "flags": 34818,
-            "kind": "standalone",
-            "profile": "cs_5_0",
-            "runtime": "SE",
-            "source": "ScreenSpaceGI/prefilterRadiance.cs.hlsl"
-        },
-        {
-            "defines": [
-                ["COMPUTESHADER", ""],
-                ["DX11", ""],
-                ["GI", ""],
-                ["HALF_RES", ""],
-                ["REVERSE_Z", ""],
-                ["TEMPORAL_DENOISER", ""],
-                ["WINPC", ""]
-            ],
-            "entryPoint": "main",
-            "flags": 34818,
-            "kind": "standalone",
-            "profile": "cs_5_0",
-            "runtime": "SE",
-            "source": "ScreenSpaceGI/radianceDisocc.cs.hlsl"
-        },
-        {
-            "defines": [
-                ["COMPUTESHADER", ""],
-                ["DX11", ""],
-                ["GI", ""],
-                ["HALF_RES", ""],
-                ["REVERSE_Z", ""],
-                ["TEMPORAL_DENOISER", ""],
-                ["WINPC", ""]
-            ],
-            "entryPoint": "main",
-            "flags": 34818,
-            "kind": "standalone",
-            "profile": "cs_5_0",
-            "runtime": "SE",
-            "source": "ScreenSpaceGI/upsample.cs.hlsl"
         },
         {
             "defines": [

@@ -309,6 +309,41 @@ class ShaderCacheManifestTests(unittest.TestCase):
             self.assertEqual(sorted(("BURLEY" in d, "HORIZONTAL" in d) for d in blurs),
                              [(False, False), (False, True), (True, False)])
 
+    def test_nrd_cache_covers_full_and_reduced_resolution_paths(self):
+        self.write_extra_capture([])
+        sources = (
+            "NRD/prepareNRDGuides.cs.hlsl",
+            "ScreenSpaceGI/prefilterDepths.cs.hlsl",
+            "ScreenSpaceGI/prefilterNormal.cs.hlsl",
+            "ScreenSpaceGI/diffuseGI.cs.hlsl",
+            "ScreenSpaceGI/prefilterRadiance.cs.hlsl",
+            "ScreenSpaceGI/composite.cs.hlsl",
+            "ScreenSpaceReflections/prefilterHiZDepth.cs.hlsl",
+            "ScreenSpaceReflections/depthDownsample.cs.hlsl",
+            "ScreenSpaceReflections/specularGI.cs.hlsl",
+            "VR/NRDCropEyeDepth.cs.hlsl",
+        )
+        for source in sources:
+            path = self.root / "features/NRD/Shaders" / source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+        for runtime in ("SE", "VR"):
+            requests = list(builder.extra_shader_requests(self.root, runtime).values())
+            by_source = {source: [dict(r["defines"]) for r in requests if r["source"] == source]
+                         for source in sources}
+            for source in sources[:-1]:
+                self.assertTrue(by_source[source], source)
+            self.assertEqual(bool(by_source[sources[-1]]), runtime == "VR")
+            diffuse = by_source["ScreenSpaceGI/diffuseGI.cs.hlsl"]
+            self.assertEqual({("GI" in d, "SSGI_HALF" in d, "SSGI_QUARTER" in d) for d in diffuse},
+                             {(gi, half, quarter) for gi in (False, True)
+                              for half, quarter in ((False, False), (True, False), (False, True))})
+            self.assertTrue(all("GI" in d for d in by_source["ScreenSpaceGI/prefilterRadiance.cs.hlsl"]))
+            self.assertEqual({("SSR_HALF" in d) for d in by_source["ScreenSpaceReflections/specularGI.cs.hlsl"]},
+                             {False, True})
+            self.assertEqual({("FUSED_HIZ_MIPS" in d) for d in by_source["ScreenSpaceReflections/prefilterHiZDepth.cs.hlsl"]},
+                             {False, True})
+
     def test_captured_reverse_z_variants_follow_disabled_boot_default(self):
         self.write_extra_capture([{"kind": "engine", "runtime": "SE", "source": "Lighting.hlsl",
                                    "shader": "Lighting", "type": "Lighting", "descriptor": 1,

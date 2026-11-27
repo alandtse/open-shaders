@@ -924,15 +924,14 @@ bool ScreenSpaceGI::ShadersOK()
 void ScreenSpaceGI::UpdateSB()
 {
 	float2 res = { (float)texWorkingDepth->desc.Width, (float)texWorkingDepth->desc.Height };
-	float2 dynres = NRDRendering::ActiveSize();
-	dynres = { floor(dynres.x), floor(dynres.y) };
+	const float2 dynres = NRDRendering::ActiveSize();
 
 	SSGICB data;
 	{
 		const auto& projMat = globals::game::frameBufferCached.GetCameraProj(NRDRendering::Eye());
 
-		data.NDCToViewMul = { 2.0f / projMat(0, 0), -2.0f / projMat(1, 1) };
-		data.NDCToViewAdd = { -1.0f / projMat(0, 0), 1.0f / projMat(1, 1) };
+		data.NDCToViewMul = float2(2.0f / projMat(0, 0), -2.0f / projMat(1, 1));
+		data.NDCToViewAdd = float2(-1.0f / projMat(0, 0), 1.0f / projMat(1, 1));
 
 		data.TexDim = res;
 		data.RcpTexDim = float2(1.0f) / res;

@@ -564,8 +564,7 @@ bool ScreenSpaceReflections::ShadersOK()
 void ScreenSpaceReflections::UpdateSB()
 {
 	float2 res = { (float)texHiZDepth->desc.Width, (float)texHiZDepth->desc.Height };
-	float2 dynres = NRDRendering::ActiveSize();
-	dynres = { floor(dynres.x), floor(dynres.y) };
+	const float2 dynres = NRDRendering::ActiveSize();
 
 	SSRCB data;
 	data.TexDim = res;

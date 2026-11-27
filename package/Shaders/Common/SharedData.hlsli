@@ -2,7 +2,6 @@
 #define __SHARED_DATA_DEPENDENCY_HLSL__
 
 #include "Common/FrameBuffer.hlsli"
-#include "Common/NRDFeatureTypes.hlsli"
 #include "Common/ReverseZ.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #include "Common/TransientWindTypes.hlsli"
@@ -812,6 +811,8 @@ namespace SharedData
 		float CurtainCount;       // curtains drawn, 1 .. 7; a fraction fades the last one in or out
 		float3 BodyDisplayColor;  // main curtain color in display space
 	};
+
+#include "Common/NRDFeatureTypes.hlsli"
 
 	cbuffer FeatureData : register(b6)
 	{

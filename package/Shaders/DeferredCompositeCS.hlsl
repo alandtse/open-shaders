@@ -57,21 +57,27 @@ Texture2D<float4> SsgiRightTexture : register(t11);
 bool IsSkinMask(float2 mask) { return mask.x > 0.0 && mask.y < 1.5; }
 float SampleSSGIAO(uint2 pixCoord)
 {
+	float ao = 1.0;
 #	if defined(VR)
-	uint w = uint(SharedData::BufferDim.x * FrameBuffer::DynamicResolutionParams1.x * 0.5);
-	if (pixCoord.x >= w)
-		return saturate(SsgiRightTexture[pixCoord - uint2(w, 0)].w);
+	const uint w = uint(SharedData::BufferDim.x * FrameBuffer::DynamicResolutionParams1.x * 0.5);
+	[branch] if (pixCoord.x >= w)
+	{
+		ao = SsgiRightTexture.Load(int3(int2(pixCoord - uint2(w, 0u)), 0)).w;
+	} else
 #	endif
-	return saturate(SsgiTexture[pixCoord].w);
+	{
+		ao = SsgiTexture.Load(int3(int2(pixCoord), 0)).w;
+	}
+	return saturate(ao);
 }
 float SampleSSGIAOSkin(uint2 pixCoord)
 {
 	int2 maxCoord = int2(SharedData::BufferDim.xy * FrameBuffer::DynamicResolutionParams1.xy) - 1;
 	int2 minCoord = 0;
 #	if defined(VR)
-	int w = (maxCoord.x + 1) / 2;
-	minCoord.x = pixCoord.x >= w ? w : 0;
-	maxCoord.x = minCoord.x + w - 1;
+	const uint w = uint(SharedData::BufferDim.x * FrameBuffer::DynamicResolutionParams1.x * 0.5);
+	minCoord.x = pixCoord.x >= w ? int(w) : 0;
+	maxCoord.x = minCoord.x + int(w) - 1;
 #	endif
 	const float centerDepth = SharedData::GetScreenDepth(DepthTexture[pixCoord]);
 	float ao = 0.0;

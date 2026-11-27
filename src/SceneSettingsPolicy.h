@@ -38,6 +38,13 @@ namespace SceneSettingsPolicy
 		{ "ScreenSpaceReflections", "HalfRes" },
 		{ "ScreenSpaceReflections", "EnableREBLUR" },
 		{ "ScreenSpaceGI", "EnableGI" },
+		// REBLUR diagnostic controls must not be scene-overridden.
+		{ "ScreenSpaceGI", "Reblur", "EnableValidation" },
+		{ "ScreenSpaceGI", "Reblur", "ReturnHistoryLength" },
+		{ "ScreenSpaceGI", "Reblur", "SplitScreen" },
+		{ "ScreenSpaceReflections", "Reblur", "EnableValidation" },
+		{ "ScreenSpaceReflections", "Reblur", "ReturnHistoryLength" },
+		{ "ScreenSpaceReflections", "Reblur", "SplitScreen" },
 		// Debug section: backend log verbosity, read only at startup
 		{ "Upscaling", "streamlineLogLevel" },
 		{ "VolumetricLighting" },
