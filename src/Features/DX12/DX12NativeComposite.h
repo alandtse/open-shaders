@@ -1,8 +1,8 @@
 #pragma once
 
 #include "DX12NativeShadowTrace.h"
-#include "NativeShadowHistory.h"
 #include "GraphicsInterop.h"
+#include "NativeShadowHistory.h"
 #include "VideoMemoryBudget.h"
 
 #include <array>

@@ -2,7 +2,14 @@
 
 namespace DX12
 {
-	enum class TilePreparationOutcome { Retry, Ready, Partial, Empty, EmptyPartial };
+	enum class TilePreparationOutcome
+	{
+		Retry,
+		Ready,
+		Partial,
+		Empty,
+		EmptyPartial
+	};
 
 	/** @brief A finished empty enumeration is terminal, but only complete coverage proves emptiness. */
 	constexpr TilePreparationOutcome ClassifyTilePreparation(bool validated, bool enumerated, bool complete, bool hasContent)

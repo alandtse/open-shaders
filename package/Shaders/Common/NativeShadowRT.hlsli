@@ -69,7 +69,7 @@ namespace DX12Native
 	RT_FUNC float ShadowEmitterMultiplier(uint quality)
 	{
 		return quality == kShadowQualityOffloading ? kOffloadingEmitterMultiplier :
-			(quality == kShadowQualityPerformance ? 0.15f : 0.65f);
+		                                             (quality == kShadowQualityPerformance ? 0.15f : 0.65f);
 	}
 #ifdef __cplusplus
 }

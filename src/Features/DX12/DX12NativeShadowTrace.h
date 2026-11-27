@@ -1,9 +1,9 @@
 #pragma once
 
+#include "../../../package/Shaders/Common/NativeShadowRT.hlsli"
 #include "DX12NativeAcceleration.h"
 #include "DX12NativeRasterCapture.h"
 #include "VideoMemoryBudget.h"
-#include "../../../package/Shaders/Common/NativeShadowRT.hlsli"
 
 #include <array>
 #include <memory>

@@ -389,7 +389,7 @@ namespace ShadowCasterManager
 		if (!inserted && record.lastEpoch == s_casterClassEpoch)
 			return record.dynamic;
 		const bool first = inserted || record.lastEpoch < 0 ||
-			s_casterClassEpoch - record.lastEpoch > kFullRTMotionRetentionEpochs;
+		                   s_casterClassEpoch - record.lastEpoch > kFullRTMotionRetentionEpochs;
 		if (first)
 			record = {};
 		if (first || s_casterClassEpoch - record.ancestryEpoch >= kAncestryRecheckEpochs) {
@@ -424,7 +424,7 @@ namespace ShadowCasterManager
 			record.poseValid = true;
 		}
 		const bool moving = finite && record.lastMovedEpoch >= 0 &&
-			s_casterClassEpoch - record.lastMovedEpoch < kStaticStabilityFrames;
+		                    s_casterClassEpoch - record.lastMovedEpoch < kStaticStabilityFrames;
 		record.lastEpoch = s_casterClassEpoch;
 		record.dynamic = DX12::FullRTDynamicCaster(false, false, record.actorAttached, moving);
 		return record.dynamic;

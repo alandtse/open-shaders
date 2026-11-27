@@ -1,15 +1,15 @@
 #pragma once
 
 #include "Feature.h"
-#include "SpatialGrid.h"
 #include "RE/B/BSTEvent.h"
 #include "RE/P/PositionPlayerEvent.h"
+#include "SpatialGrid.h"
 
 #include <atomic>
 #include <cstdint>
 #include <deque>
-#include <memory>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <span>
 #include <string>
@@ -253,7 +253,11 @@ private:
 	void CancelPreparationWork();
 	void PumpPreparation(DX12::ResourceGrid& target, const RE::TESObjectCELL* cell,
 		const RE::TESWorldSpace* world, uint32_t& attemptScope, bool loading);
-	enum class PublicationState { Valid, Invalid };
+	enum class PublicationState
+	{
+		Valid,
+		Invalid
+	};
 	struct PublicationStatus
 	{
 		PublicationState state;

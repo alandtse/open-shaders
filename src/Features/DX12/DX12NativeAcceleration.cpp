@@ -1,7 +1,7 @@
 #include "DX12NativeAcceleration.h"
 #include "DX12GpuRetirement.h"
-#include "VideoMemoryBudget.h"
 #include "Utils/TracyZones.h"
+#include "VideoMemoryBudget.h"
 
 #include <algorithm>
 #include <cstring>
@@ -17,7 +17,8 @@ namespace DX12Native
 	namespace
 	{
 		constexpr uint32_t kMaximumInstances = (1u << 24u) - 1u;
-		struct AllocationDeferred {};
+		struct AllocationDeferred
+		{};
 
 	}
 

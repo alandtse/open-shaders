@@ -37,8 +37,8 @@ namespace DX12Native
 				continue;
 			const auto prepared = std::span(inputs->geometry).first(preparedCount);
 			if (std::ranges::any_of(prepared, [&](const auto& shape) {
-				return DX12::EquivalentGeometry(*shape, *observed.shape);
-			}))
+					return DX12::EquivalentGeometry(*shape, *observed.shape);
+				}))
 				continue;
 			appendShape(observed.shape);
 		}

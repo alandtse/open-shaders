@@ -153,8 +153,8 @@ namespace DX12Native
 		if (publishReconstructedMask) {
 			D3D12_FEATURE_DATA_FORMAT_SUPPORT maskSupport{ kReconstructedMaskFormat };
 			publishReconstructedMask = SUCCEEDED(device12->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &maskSupport, sizeof(maskSupport))) &&
-				(maskSupport.Support1 & D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW) &&
-				(maskSupport.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
+			                           (maskSupport.Support1 & D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW) &&
+			                           (maskSupport.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
 		}
 
 		const bool rtPath = applyShadow && variant != 0u;
@@ -303,8 +303,8 @@ namespace DX12Native
 				slot->rtDescriptors = true;
 			}
 			if (slot->historyOutput && (slot->historyOutput->device != device12 ||
-				slot->historyOutput->stamp.width != width || slot->historyOutput->stamp.height != height ||
-				slot->historyOutput->stamp.quality != quality || !rtPath))
+										   slot->historyOutput->stamp.width != width || slot->historyOutput->stamp.height != height ||
+										   slot->historyOutput->stamp.quality != quality || !rtPath))
 				slot->historyOutput.reset();
 			if (rtPath && !slot->historyOutput) {
 				try {

@@ -1,17 +1,17 @@
 #include "DX12Resources.h"
 #include "TilePreparationPolicy.h"
 
-#include "ScenePrepWorker.h"
 #include "DX12Control.h"
 #include "DX12NativeScene.h"
-#include "RE/M/MainMenu.h"
-#include "RE/P/PlayerCharacter.h"
-#include "RE/U/UI.h"
 #include "Globals.h"
 #include "GpuPass.h"
-#include "State.h"
+#include "RE/M/MainMenu.h"
+#include "RE/P/PlayerCharacter.h"
 #include "RE/T/TESDataHandler.h"
 #include "RE/T/TESWorldSpace.h"
+#include "RE/U/UI.h"
+#include "ScenePrepWorker.h"
+#include "State.h"
 #include "Utils/Game.h"
 #include "Utils/PerfUtils.h"
 #include "Utils/TracyZones.h"
@@ -133,7 +133,7 @@ namespace DX12
 		if (current->size == size && !current->wholeCell) {
 			const auto retain = [&](const auto& tile) {
 				if (!tile || (tile->state != Tile::State::Ready && tile->state != Tile::State::ReadyPartial &&
-					tile->state != Tile::State::Empty && tile->state != Tile::State::EmptyPartial))
+								 tile->state != Tile::State::Empty && tile->state != Tile::State::EmptyPartial))
 					return;
 				if (std::ranges::contains(next->requested, tile->key) || std::ranges::contains(next->predictive, tile->key))
 					return;
@@ -260,7 +260,8 @@ namespace DX12
 		const bool hasContent = !tile->shapes.empty() || !tile->lights.empty();
 		const bool consolidate = publication.wholeCell && publication.validated;
 		const auto outcome = ClassifyTilePreparation(publication.validated &&
-			(!publication.wholeCell || consolidate), publication.enumerationComplete || consolidate, complete, hasContent);
+														 (!publication.wholeCell || consolidate),
+			publication.enumerationComplete || consolidate, complete, hasContent);
 		if (outcome == TilePreparationOutcome::Ready)
 			tile->state = Tile::State::Ready;
 		else if (outcome == TilePreparationOutcome::Partial)
@@ -405,8 +406,7 @@ namespace DX12
 		if (pending || !source.requested.front().scope || source.requested.front().scope != current->requested.front().scope || source.size != current->size)
 			return;
 		const auto ready = [](const auto& tile) {
-			return tile && tile->preparationValidated && (tile->state == Tile::State::Ready || tile->state == Tile::State::ReadyPartial ||
-				tile->state == Tile::State::Empty || tile->state == Tile::State::EmptyPartial);
+			return tile && tile->preparationValidated && (tile->state == Tile::State::Ready || tile->state == Tile::State::ReadyPartial || tile->state == Tile::State::Empty || tile->state == Tile::State::EmptyPartial);
 		};
 		auto next = std::make_shared<Grid>(*current);
 		if (source.wholeCell && ready(source.resident.front())) {
@@ -422,9 +422,11 @@ namespace DX12
 		} else if (!source.wholeCell && !current->wholeCell) {
 			const auto find = [&](SubcellKey key) -> std::shared_ptr<const Tile> {
 				for (const auto& tile : source.resident)
-					if (ready(tile) && tile->key == key) return tile;
+					if (ready(tile) && tile->key == key)
+						return tile;
 				for (const auto& tile : source.predictiveResident)
-					if (ready(tile) && tile->key == key) return tile;
+					if (ready(tile) && tile->key == key)
+						return tile;
 				return {};
 			};
 			const auto merge = [&](const auto& keys, auto& tiles, bool speculative) {
@@ -452,7 +454,7 @@ namespace DX12
 			const auto& left = next->resident[i];
 			const auto& right = source.resident[i];
 			sameGeometry = left && right ? left->shapes == right->shapes :
-				(!left || left->shapes.empty()) && (!right || right->shapes.empty());
+			                               (!left || left->shapes.empty()) && (!right || right->shapes.empty());
 		}
 		next->geometryRevision = sameGeometry ? source.geometryRevision : NextGeometryRevision();
 		snapshot.store(std::move(next), std::memory_order_release);
@@ -729,7 +731,7 @@ std::optional<DX12Resources::LoadingDestination> DX12Resources::CaptureLoadingDe
 		return std::nullopt;
 	const bool interior = target.interior && target.interior->IsInteriorCell();
 	const auto* source = interior ? static_cast<const RE::TESForm*>(target.interior) :
-		static_cast<const RE::TESForm*>(target.world);
+	                                static_cast<const RE::TESForm*>(target.world);
 	if (!source || !source->GetFormID())
 		return std::nullopt;
 	return LoadingDestination{ source->GetFormID(), !interior,
@@ -858,8 +860,8 @@ void DX12Resources::DrawResourceStatus()
 	}
 	if (const auto status = latestPublication.load(std::memory_order_acquire)) {
 		const char* label = status->state == PublicationState::Valid ?
-			T("menu.dx12.resources.publication_valid", "Native preparation: valid") :
-			T("menu.dx12.resources.publication_invalid", "Native preparation: invalid");
+		                        T("menu.dx12.resources.publication_valid", "Native preparation: valid") :
+		                        T("menu.dx12.resources.publication_invalid", "Native preparation: invalid");
 		ImGui::TextUnformatted(label);
 		if (!status->detail.empty())
 			ImGui::TextWrapped("%s", status->detail.c_str());
@@ -887,8 +889,10 @@ void DX12Resources::DrawResourceStatus()
 			const auto classify = [&](const auto& tile, bool active) {
 				if (tile && (tile->state == DX12::Tile::State::Ready || tile->state == DX12::Tile::State::ReadyPartial))
 					(active ? activeLoaded : predictiveLoaded)++;
-				if (tile && tile->state == DX12::Tile::State::Empty) ++empty;
-				if (tile && tile->state == DX12::Tile::State::EmptyPartial) ++emptyPartial;
+				if (tile && tile->state == DX12::Tile::State::Empty)
+					++empty;
+				if (tile && tile->state == DX12::Tile::State::EmptyPartial)
+					++emptyPartial;
 			};
 			for (const auto& tile : snapshot->resident)
 				classify(tile, true);
@@ -1030,7 +1034,8 @@ void DX12Resources::PumpPreparation(DX12::ResourceGrid& target, const RE::TESObj
 				const double publicationMs = Util::QpcElapsedUs(publishStarted, Util::GetQpcTicks(), Util::GetQpcFrequency()) / 1000.0;
 				RecordPublication(valid ? PublicationState::Valid : PublicationState::Invalid, result->failure);
 				auto next = std::make_shared<DX12::PreparationStats>(*generationStats.load(std::memory_order_acquire));
-				auto& timing = !result->predictive ? next->active : result->corner ? next->corners : next->predictive;
+				auto& timing = !result->predictive ? next->active : result->corner ? next->corners :
+				                                                                     next->predictive;
 				const auto record = [](DX12::PreparationTiming& stats, double ms) {
 					++stats.completed;
 					stats.lastMs = ms;
@@ -1052,10 +1057,10 @@ void DX12Resources::PumpPreparation(DX12::ResourceGrid& target, const RE::TESObj
 	const auto requested = target.Snapshot();
 	const bool predictive = !std::ranges::contains(requested->requested, *key);
 	const bool corner = predictive &&
-		std::ranges::find(requested->predictive.begin() + DX12::kPredictiveSideCount,
-			requested->predictive.end(), *key) != requested->predictive.end();
+	                    std::ranges::find(requested->predictive.begin() + DX12::kPredictiveSideCount,
+							requested->predictive.end(), *key) != requested->predictive.end();
 	const bool consolidate = settings.ConsolidateInterior && !world && attemptScope != scope &&
-		*key == requested->requested.front();
+	                         *key == requested->requested.front();
 	if (consolidate)
 		attemptScope = scope;
 	try {
@@ -1174,7 +1179,7 @@ void DX12Resources::PreShadowMaps()
 	if (consolidationAttemptScope && consolidationAttemptScope != scope)
 		consolidationAttemptScope = 0;
 	if (const auto current = grid.Snapshot(); current->wholeCell && current->requested.front().scope == scope &&
-		globals::features::dx12NativeScene.RetireBudgetDeferredWholeCell(current->geometryRevision)) {
+											  globals::features::dx12NativeScene.RetireBudgetDeferredWholeCell(current->geometryRevision)) {
 		grid.Clear();
 		consolidationAttemptScope = scope;
 	}

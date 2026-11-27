@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Feature.h"
 #include "DX12ControlMode.h"
+#include "Feature.h"
 
 #include <atomic>
 

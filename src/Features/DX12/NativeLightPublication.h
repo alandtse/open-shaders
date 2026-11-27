@@ -40,10 +40,8 @@ namespace DX12Native
 		const float strength = std::max(light.color.x, 0.0f) * 0.2126f +
 		                       std::max(light.color.y, 0.0f) * 0.7152f +
 		                       std::max(light.color.z, 0.0f) * 0.0722f;
-		return {{
-			{ light.position.x, light.position.y, light.position.z, light.radius },
+		return { { { light.position.x, light.position.y, light.position.z, light.radius },
 			{ strength * std::max(light.fade, 0.0f), light.emitterRadius * light.emitterRadius,
-				std::max(light.emitterRadius, 0.0f), std::bit_cast<float>(light.referenceID) }
-		}};
+				std::max(light.emitterRadius, 0.0f), std::bit_cast<float>(light.referenceID) } } };
 	}
 }

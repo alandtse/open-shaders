@@ -25,8 +25,7 @@ void PublishMask(uint2 pixel, float2 sample)
 		ReconstructedMask[pixel] = sample;
 }
 
-[numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID)
-{
+[numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID) {
 	if (any(id.xy >= Size))
 		return;
 	float visibility;
@@ -62,8 +61,10 @@ void PublishMask(uint2 pixel, float2 sample)
 	} else {
 		const int2 origin = int2(logical) - int2((id.x & 1u) == 0u ? 1 : 0, (id.y & 1u) == 0u ? 1 : 0);
 		float weighted = 0.0f, total = 0.0f;
-		[unroll] for (int y = 0; y < 2; ++y) {
-			[unroll] for (int x = 0; x < 2; ++x) {
+		[unroll] for (int y = 0; y < 2; ++y)
+		{
+			[unroll] for (int x = 0; x < 2; ++x)
+			{
 				const int2 neighbor = origin + int2(x, y);
 				if (any(neighbor < 0) || any(neighbor >= int2(LogicalSize)))
 					continue;

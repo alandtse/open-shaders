@@ -31,8 +31,8 @@
 #include <format>
 #include <limits>
 #include <map>
-#include <tuple>
 #include <ranges>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -931,7 +931,7 @@ namespace DX12
 			const auto cx = std::floor((lowX + highX) / (2.0 * size));
 			const auto cy = std::floor((lowY + highY) / (2.0 * size));
 			pub.wholeCell = lowX >= (cx - kPredictiveRadius) * size && lowY >= (cy - kPredictiveRadius) * size &&
-				highX < (cx + kPredictiveRadius + 1) * size && highY < (cy + kPredictiveRadius + 1) * size;
+			                highX < (cx + kPredictiveRadius + 1) * size && highY < (cy + kPredictiveRadius + 1) * size;
 		}
 		if (!pub.enumerationComplete || pub.failedShapes || pub.rejectedLights || pub.eligibleShapes != pub.shapes.size()) {
 			result.failure = std::format(

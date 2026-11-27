@@ -4451,7 +4451,7 @@ namespace ShadowCasterManager
 				if (!e.Light)
 					continue;
 				const bool fullRTNative = s_frameNativePolicy.fullStaticAuthority &&
-					!e.Light->GetIsFrustumOrDirectionalLight();
+				                          !e.Light->GetIsFrustumOrDirectionalLight();
 				if (fullRTNative && InvalidateFullRTStaticContent(i) && !e.RedrawFrame) {
 					e.LastDrawnFrame = -1;
 					MarkNativeRasterRecovery(e);

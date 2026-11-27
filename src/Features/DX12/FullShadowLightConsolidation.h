@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <span>
@@ -202,7 +202,9 @@ namespace DX12Native
 					const double b = std::max(0.0f, source.color.z) * fade;
 					constexpr std::array<double, 3> luminance{ .2126, .7152, .0722 };
 					const double weight = luminance[0] * r + luminance[1] * g + luminance[2] * b;
-					red += r; green += g; blue += b;
+					red += r;
+					green += g;
+					blue += b;
 					weightSum += weight;
 					x += weight * source.position.x;
 					y += weight * source.position.y;

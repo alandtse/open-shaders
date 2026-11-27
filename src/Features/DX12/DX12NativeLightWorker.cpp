@@ -114,7 +114,7 @@ namespace DX12Native
 			return false;
 		current->busy.store(true, std::memory_order_release);
 		const bool accepted = gate->TrySubmit([current, grid = std::move(grid), runtime = std::move(runtime),
-			settings, cell, device = backend.d3d12Device, queue = backend.commandQueue] {
+												  settings, cell, device = backend.d3d12Device, queue = backend.commandQueue] {
 			ZoneScopedN("DX12::Lights::Task");
 			current->tasks.fetch_add(1, std::memory_order_relaxed);
 			try {

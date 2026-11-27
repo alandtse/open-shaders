@@ -64,8 +64,7 @@ void PublishMask(uint2 pixel, float2 sample)
 		ReconstructedMask[pixel] = sample;
 }
 
-[numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID)
-{
+[numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID) {
 	if (any(id.xy >= Size))
 		return;
 	const float depth = RasterDepth[id.xy];
@@ -95,8 +94,10 @@ void PublishMask(uint2 pixel, float2 sample)
 	} else {
 		const int radius = int(ShadowReconstructionRadius(QualityMode));
 		float weighted = 0.0f, total = 0.0f;
-		[loop] for (int y = -radius; y <= radius; ++y) {
-			[loop] for (int x = -radius; x <= radius; ++x) {
+		[loop] for (int y = -radius; y <= radius; ++y)
+		{
+			[loop] for (int x = -radius; x <= radius; ++x)
+			{
 				const int2 neighbor = logical + int2(x, y);
 				const float2 sample = LoadLogical(neighbor);
 				if (!ValidReceiver(sample, distance, tolerance))
@@ -128,7 +129,8 @@ void PublishMask(uint2 pixel, float2 sample)
 	float sum = currentVisibility;
 	uint count = 1u;
 	// History stores raw spatially reconstructed visibility, never the temporal result.
-	[unroll] for (uint i = 0u; i < ShadowTemporalFrames(QualityMode) - 1u; ++i) {
+	[unroll] for (uint i = 0u; i < ShadowTemporalFrames(QualityMode) - 1u; ++i)
+	{
 		if (i >= HistoryCount || previous[i] < 0.0f)
 			break;
 		sum += ShadowClampHistory(QualityMode) ? clamp(previous[i], neighborhoodMin, neighborhoodMax) : previous[i];

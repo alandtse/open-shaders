@@ -39,9 +39,10 @@ if(NATIVE_SHADOW_DXC)
             COMMAND ${CMAKE_COMMAND} -E make_directory "${_shadow_dir}"
             COMMAND
                 "${NATIVE_SHADOW_DXC}" -T cs_6_5 -E main -HV 2021 -O3
-                ${NATIVE_SHADER_VALIDATION_FLAGS} -D NATIVE_RT_QUALITY=${_quality_id}
-                -I "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders"
-                -Fo "${_rt_dxil}" "${_shadow_rt_source}"
+                ${NATIVE_SHADER_VALIDATION_FLAGS} -D
+                NATIVE_RT_QUALITY=${_quality_id} -I
+                "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders" -Fo "${_rt_dxil}"
+                "${_shadow_rt_source}"
             DEPENDS "${_shadow_rt_source}" ${_shadow_contracts}
             VERBATIM
         )
@@ -54,8 +55,8 @@ if(NATIVE_SHADOW_DXC)
             "${NATIVE_SHADOW_DXC}" -T cs_6_5 -E main -HV 2021 -O3
             ${NATIVE_SHADER_VALIDATION_FLAGS} -I
             "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene"
-            -I "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders"
-            -Fo "${_shadow_dxil}" "${_shadow_source}"
+            -I "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders" -Fo
+            "${_shadow_dxil}" "${_shadow_source}"
         DEPENDS "${_shadow_source}" ${_shadow_contracts}
         VERBATIM
     )
@@ -68,8 +69,12 @@ if(NATIVE_SHADOW_DXC)
             set(_aio_dxil "${AIO_DIR}/Shaders/DX12NativeScene/${_name}")
             add_custom_command(
                 OUTPUT "${_aio_dxil}"
-                COMMAND ${CMAKE_COMMAND} -E make_directory "${AIO_DIR}/Shaders/DX12NativeScene"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_dxil}" "${_aio_dxil}"
+                COMMAND
+                    ${CMAKE_COMMAND} -E make_directory
+                    "${AIO_DIR}/Shaders/DX12NativeScene"
+                COMMAND
+                    ${CMAKE_COMMAND} -E copy_if_different "${_dxil}"
+                    "${_aio_dxil}"
                 DEPENDS "${_dxil}"
                 VERBATIM
             )

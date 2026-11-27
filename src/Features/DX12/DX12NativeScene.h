@@ -1,12 +1,12 @@
 #pragma once
 
+#include "../OverlayFeature.h"
 #include "DX12NativeAcceleration.h"
+#include "DX12NativeLightWorker.h"
 #include "DX12NativeRasterCapture.h"
 #include "DX12NativeRuntimeCapture.h"
 #include "DX12NativeShadowTrace.h"
-#include "../OverlayFeature.h"
 #include "SCMNativePolicy.h"
-#include "DX12NativeLightWorker.h"
 
 #include <atomic>
 #include <memory>

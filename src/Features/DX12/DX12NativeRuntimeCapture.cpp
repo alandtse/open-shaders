@@ -1,6 +1,6 @@
 #include "DX12NativeRuntimeCapture.h"
-#include "SystemMemoryBudget.h"
 #include "DX12ShapeEquivalence.h"
+#include "SystemMemoryBudget.h"
 
 #include "Globals.h"
 
@@ -55,7 +55,6 @@ namespace DX12Native
 					add(static_cast<unsigned char>(value >> (n * 8)));
 			return hash ? hash : 1;
 		}
-
 
 	}
 
