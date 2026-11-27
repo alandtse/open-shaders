@@ -2,8 +2,8 @@
 // (src/Features/LightLimitFix/ShadowCasterMath.h): the shadow-light pointer
 // plausibility check and the frame-time 90th-percentile.
 
-#include "Features/DX12/SCMNativePolicy.h"
 #include "Features/DX12/DX12ControlMode.h"
+#include "Features/DX12/SCMNativePolicy.h"
 #include "Features/LightLimitFix/ShadowCasterMath.h"
 
 #include <catch2/catch_approx.hpp>
