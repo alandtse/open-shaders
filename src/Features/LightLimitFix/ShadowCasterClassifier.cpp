@@ -389,7 +389,7 @@ namespace ShadowCasterManager
 		if (!inserted && record.lastEpoch == s_casterClassEpoch)
 			return record.dynamic;
 		const bool first = inserted || record.lastEpoch < 0 ||
-			s_casterClassEpoch - record.lastEpoch > kFullRTMotionRetentionEpochs;
+		                   s_casterClassEpoch - record.lastEpoch > kFullRTMotionRetentionEpochs;
 		if (first)
 			record = {};
 		if (first || s_casterClassEpoch - record.ancestryEpoch >= kAncestryRecheckEpochs) {
@@ -424,7 +424,7 @@ namespace ShadowCasterManager
 			record.poseValid = true;
 		}
 		const bool moving = finite && record.lastMovedEpoch >= 0 &&
-			s_casterClassEpoch - record.lastMovedEpoch < kStaticStabilityFrames;
+		                    s_casterClassEpoch - record.lastMovedEpoch < kStaticStabilityFrames;
 		record.lastEpoch = s_casterClassEpoch;
 		record.dynamic = DX12::FullRTDynamicCaster(false, false, record.actorAttached, moving);
 		return record.dynamic;
@@ -556,11 +556,10 @@ namespace ShadowCasterManager
 		                          &ClassifyCaster(geom);
 		const bool dynamic = !rec || rec->dynamic;
 		if (nativeDynamicOnly) {
-			// Historical open-RT behavior: all stationary casters for the
-			// owned light are removed, even if TLAS coverage is incomplete.
+			// Only static casters the TLAS holds leave raster; the rest stay drawn.
 			if (dynamic)
 				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
-			return !dynamic;
+			return !dynamic && globals::features::dx12NativeScene.CasterInTlas(geom);
 		}
 		// A caster that settled since the bake is missing from it and is drawn live; one that started moving is still in
 		// it at its old pose and is left to it. Either way the light is queued for a rebake.

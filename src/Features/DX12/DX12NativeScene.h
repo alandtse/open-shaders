@@ -9,6 +9,7 @@
 #include "SCMNativePolicy.h"
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -84,6 +85,8 @@ struct DX12NativeScene final : OverlayFeature
 	bool OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const;
 	/** @brief Frame-wide policy established before SCM scheduling. */
 	DX12::SCMNativeMode GetFrameNativeMode() const;
+	/** @brief True when this live static caster is in the published TLAS, so raster may drop it for an owned light. */
+	bool CasterInTlas(const RE::BSGeometry& a_geometry) const;
 	// Snapshot LLF/SCM point-light parameters without altering the DX11 light.
 	void ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID, bool flickers,
 		const RE::NiPoint3& restOrigin);
@@ -152,4 +155,12 @@ private:
 	std::unordered_map<const RE::NiLight*, FullRuntimeLight> fullRuntimeLights;
 	uint32_t fullRuntimeScope = 0;
 	uint64_t fullLightVisit = 0;
+	mutable std::vector<const RE::NiLight*> ownedLights;  // Lights granted static ownership in runtimeLightFrame.
+	mutable std::atomic<uint64_t> ownershipGranted{ 0 }, castersTraced{ 0 }, castersKeptRaster{ 0 };
+	struct TlasCasters
+	{
+		std::shared_ptr<const DX12Native::TopLevel> scene;
+		std::unordered_map<uintptr_t, uintptr_t> vertices;  // Source BSGeometry -> its raw vertex buffer.
+	};
+	mutable std::atomic<std::shared_ptr<const TlasCasters>> tlasCasters;
 };

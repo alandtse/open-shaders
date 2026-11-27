@@ -48,6 +48,7 @@ namespace DX12Native
 		struct Packet
 		{
 			uint64_t identity = 0, runtimeObjectKey = 0, generation = 0;
+			uintptr_t sourceGeometry = 0, sourceVertices = 0;
 			DX12::SubcellKey sourceCenter{};
 			std::array<float, 12> transform{};
 			uint32_t stride = 0, vertexCount = 0;
