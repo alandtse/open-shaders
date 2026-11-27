@@ -70,8 +70,8 @@ void MotionBlur::SetupResources()
 		reductionPassConstantBufferObj->Update(reductionPassCB);
 
 		// Cache the initial values
-		lastMotionBlurCB = motionBlurCB;
-		lastReductionPassCB = reductionPassCB;
+		lastMotionBlurCB.Record(motionBlurCB);
+		lastReductionPassCB.Record(reductionPassCB);
 	} catch (const std::exception& e) {
 		logger::error("Motion blur error initializing constant buffers: {}", e.what());
 	}
@@ -400,10 +400,10 @@ bool MotionBlur::UpdateConstantBuffers()
 	};
 
 	// Update blur constant buffer if needed
-	if (memcmp(&motionBlurCB, &lastMotionBlurCB, sizeof(MotionBlurConstantBuffer)) != 0) {
+	if (lastMotionBlurCB.Differs(motionBlurCB)) {
 		try {
 			blurConstantBufferObj->Update(motionBlurCB);
-			lastMotionBlurCB = motionBlurCB;
+			lastMotionBlurCB.Record(motionBlurCB);
 			updated = true;
 		} catch (const std::exception& e) {
 			logger::error("Motion blur error updating blur constant buffer: {}", e.what());
@@ -412,10 +412,10 @@ bool MotionBlur::UpdateConstantBuffers()
 	}
 
 	// Update reduction pass constant buffer if needed
-	if (memcmp(&reductionPassCB, &lastReductionPassCB, sizeof(ReductionPassConstantBuffer)) != 0) {
+	if (lastReductionPassCB.Differs(reductionPassCB)) {
 		try {
 			reductionPassConstantBufferObj->Update(reductionPassCB);
-			lastReductionPassCB = reductionPassCB;
+			lastReductionPassCB.Record(reductionPassCB);
 			updated = true;
 		} catch (const std::exception& e) {
 			logger::error("Motion blur error updating reduction constant buffer: {}", e.what());
