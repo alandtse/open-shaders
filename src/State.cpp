@@ -1891,19 +1891,27 @@ bool State::SaveCoreSettings(std::span<const std::string_view> paths)
 	const auto configPath = GetConfigPath(ConfigMode::USER);
 	std::error_code ec;
 	const bool fileExists = std::filesystem::exists(configPath, ec);
-	if (ec)
-		return false;
 	const auto saved = fileExists ? Util::FileHelpers::ReadJsonObject(configPath, "user config") : std::optional<json>(json::object());
-	if (!saved)
+	if (ec || !saved) {
+		CheckSettingsChanged();
 		return false;
+	}
 	const auto current = CaptureCoreSettings();
 	json patch = json::object();
+	json trackedFields = json::object();
 	for (const auto path : paths) {
 		const json::json_pointer pointer{ std::string(path) };
-		if (current.contains(pointer) && (!saved->contains(pointer) || saved->at(pointer) != current.at(pointer)))
+		if (!current.contains(pointer))
+			continue;
+		if (!saved->contains(pointer) || saved->at(pointer) != current.at(pointer))
 			patch[pointer] = current.at(pointer);
+		if (!std::ranges::contains(SELF_SAVING_SETTINGS, path))
+			trackedFields[pointer] = true;
 	}
-	return patch.empty() || SaveFeaturePreference(patch, false);
+	const bool persisted = patch.empty() || SaveFeaturePreference(patch, false);
+	if (!trackedFields.empty())
+		CheckSettingsChanged(persisted ? trackedFields : json::object());
+	return persisted;
 }
 
 bool State::SaveFeaturePreference(const json& patch, bool trackInSnapshot)
