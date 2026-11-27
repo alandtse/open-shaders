@@ -765,8 +765,9 @@ void DX12NativeScene::ObserveSCMRigidCaster(RE::BSGeometry& geometry, bool requi
 		return;
 	// A drawn BSTriShape often has no user data of its own; Skyrim keeps the
 	// placed reference on an ancestor NiNode. Walk only the existing parent chain.
-	const RE::TESForm* reference = Util::FindSceneOwner(&geometry);
-	if (reference && (reference->IsDynamicForm() || reference->IsActor()))
+	bool ancestryRead = false;
+	const RE::TESForm* reference = Util::FindSceneOwner(&geometry, false, &ancestryRead);
+	if (!ancestryRead || (reference && (reference->IsDynamicForm() || reference->IsActor())))
 		return;
 	const auto* file = reference ? reference->GetFile(0) : nullptr;
 	auto desc = runtime.vertexDesc;

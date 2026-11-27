@@ -24,7 +24,7 @@ namespace DX12Native
 {
 	namespace
 	{
-		constexpr std::streamoff kMaxShadowBytecodeBytes = 16 * VideoMemoryBudget::kMiB;
+		constexpr uint64_t kMaxShadowBytecodeBytes = 16 * VideoMemoryBudget::kMiB;
 		constexpr uint64_t kSlotOverheadBytes = 2 * VideoMemoryBudget::kMiB;
 		constexpr uint32_t kShadowConstantDwords = 38;
 		constexpr uint32_t kRTConstantDwords = 39;

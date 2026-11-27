@@ -114,3 +114,33 @@ the consolidation footprint, an A-to-B-to-A transition and exterior
 streaming. Compare Tracy capture/worker/acceleration timings and P99 to
 the pre-change build. No complete off-screen coverage is implied by a
 valid publication or a functioning shadow mask.
+
+## Corrective lifecycle and baseline validation
+
+A terminal preparation worker failure rejects admission and resolves any pending
+tile as failed; recreation is bounded and the terminal status is published.
+Scene-transition cancellation resets the recovery budget. Thread priority and
+the active/predictive scheduling order are unchanged.
+
+Shared CPU fence waits reject device removal and untracked values as successful
+completion. Native DLSS uses nonblocking completion checks during resource and
+feature changes. Pending resets are serviced on the rendering thread; shared
+textures and command contexts still in flight at destruction use shared
+asynchronous retirement. Failed recovery signals preserve untracked ownership
+rather than assuming completion.
+
+The SCM baseline classifier compiles without native observation or suppression
+branches. The shared engine cull hook still selects the already-resolved caster
+mode once per invocation; compare its exclusive timing in Tracy before claiming
+performance equivalence.
+
+Additional Windows validation:
+- Inject worker startup/terminal failures and exhaust the recovery budget, then
+  reset the scene and verify preparation resumes without stranded pending tiles.
+- Inject device removal before a fence wait and during event completion. Inject
+  both submission and rescue signal failures on Native DLSS.
+- Switch DLSS quality, preset, resolution and upscaler while work is pending;
+  verify DX11 fallback and safe render-thread SDK resource release.
+- Compare DX12 OFF, raster comparison, offloading and both Full RT profiles
+  against the audited revision using Dragonsreach at 4K and 1080p, FG on/off.
+  Verify dynamic raster ownership and outdoor disable transitions independently.

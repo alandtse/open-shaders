@@ -8,6 +8,7 @@
 #include <d3dcompiler.h>
 #include <filesystem>
 #include <functional>
+#include <string>
 #include <type_traits>
 #include <winrt/base.h>
 

@@ -649,13 +649,13 @@ namespace DX12
 	bool ScenePrepWorker::Idle() const
 	{
 		std::scoped_lock lock(mutex);
-		return !Failed() && !running && !queued && !completed;
+		return PreparationWorkerAcceptsRequest(Failed(), running, queued.has_value(), completed.has_value());
 	}
 
 	bool ScenePrepWorker::Enqueue(ScenePrepRequest a_request)
 	{
 		std::scoped_lock lock(mutex);
-		if (Failed() || running || queued || completed)
+		if (!PreparationWorkerAcceptsRequest(Failed(), running, queued.has_value(), completed.has_value()))
 			return false;
 		queued = std::move(a_request);
 		wake.notify_one();

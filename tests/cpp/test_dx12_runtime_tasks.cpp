@@ -480,3 +480,21 @@ TEST_CASE("GPU completion never accepts device removal or untracked submissions"
 	CHECK_FALSE(FenceValueCompleted(true, kUntrackedFenceValue, 5));
 	CHECK_FALSE(FenceValueCompleted(true, kUntrackedFenceValue, kUntrackedFenceValue));
 }
+
+TEST_CASE("Failed scene preparation workers cannot admit requests", "[dx12][scene-prep]")
+{
+	using DX12::PreparationWorkerAcceptsRequest;
+	CHECK(PreparationWorkerAcceptsRequest(false, false, false, false));
+	CHECK_FALSE(PreparationWorkerAcceptsRequest(true, false, false, false));
+	CHECK_FALSE(PreparationWorkerAcceptsRequest(false, true, false, false));
+	CHECK_FALSE(PreparationWorkerAcceptsRequest(false, false, true, false));
+	CHECK_FALSE(PreparationWorkerAcceptsRequest(false, false, false, true));
+}
+
+TEST_CASE("Scene preparation worker recovery is bounded", "[dx12][scene-prep]")
+{
+	CHECK(DX12::CanRestartPreparationWorker(0));
+	CHECK(DX12::CanRestartPreparationWorker(DX12::kMaxPreparationWorkerRestarts - 1));
+	CHECK_FALSE(DX12::CanRestartPreparationWorker(DX12::kMaxPreparationWorkerRestarts));
+	CHECK_FALSE(DX12::CanRestartPreparationWorker(UINT32_MAX));
+}

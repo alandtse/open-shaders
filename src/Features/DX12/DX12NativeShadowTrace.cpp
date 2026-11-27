@@ -18,7 +18,7 @@ namespace DX12Native
 	namespace
 	{
 		constexpr uint32_t kRecords = kLightRecordsPerEmitter;
-		constexpr std::streamoff kMaxShadowBytecodeBytes = 4 * VideoMemoryBudget::kMiB;
+		constexpr uint64_t kMaxShadowBytecodeBytes = 4 * VideoMemoryBudget::kMiB;
 		constexpr uint32_t kShadowThreadGroupSize = 8;
 		struct Constants
 		{

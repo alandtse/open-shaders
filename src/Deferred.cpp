@@ -853,10 +853,10 @@ void Deferred::Hooks::Main_RenderShadowMaps::thunk()
 
 void Deferred::Hooks::Main_RenderShadowmasks::thunk(bool a1)
 {
-	static const bool hasDepthHooks = !Feature::GetDepthPrepassReadyHookFeatures().empty();
-	if (hasDepthHooks) {
+	if (auto* state = globals::game::graphicsState) {
+		static const bool hasDepthHooks = !Feature::GetDepthPrepassReadyHookFeatures().empty();
 		static uint32_t lastFrame = UINT32_MAX;
-		if (auto* state = globals::game::graphicsState; state && state->GetFrameCount() != lastFrame) {
+		if (hasDepthHooks && state->GetFrameCount() != lastFrame) {
 			lastFrame = state->GetFrameCount();
 			Feature::ApplyDepthPrepassReadyHooks();
 		}

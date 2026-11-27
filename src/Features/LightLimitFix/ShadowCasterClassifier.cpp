@@ -392,7 +392,9 @@ namespace ShadowCasterManager
 		if (first)
 			record = {};
 		if (first || s_casterClassEpoch - record.ancestryEpoch >= kAncestryRecheckEpochs) {
-			record.actorAttached = Util::FindSceneOwner(&geom, true) != nullptr;
+			bool ancestryRead = false;
+			const auto* actor = Util::FindSceneOwner(&geom, true, &ancestryRead);
+			record.actorAttached = actor != nullptr || !ancestryRead;
 			record.ancestryEpoch = s_casterClassEpoch;
 		}
 		const auto& world = geom.world;
