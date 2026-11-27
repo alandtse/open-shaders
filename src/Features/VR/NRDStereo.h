@@ -1,13 +1,14 @@
 #pragma once
+#include "Features/NRD/RenderContext.h"
 #include <array>
 #include <d3d11.h>
-#include "Features/NRD/RenderContext.h"
 struct NRD;
 struct ScreenSpaceGI;
 struct ScreenSpaceReflections;
 namespace NRDStereo
 {
-	struct FrameOutputs {
+	struct FrameOutputs
+	{
 		std::array<ID3D11ShaderResourceView*, 2> diffuse{};
 		std::array<ID3D11ShaderResourceView*, 2> specular{};
 	};

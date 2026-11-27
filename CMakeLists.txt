@@ -224,8 +224,11 @@ if(MSVC)
     target_compile_options(NRD PRIVATE /wd4834)
 endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE NRD)
-target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/extern/NRD/Include")
-
+target_include_directories(
+    ${PROJECT_NAME}
+    SYSTEM
+    PRIVATE "${CMAKE_SOURCE_DIR}/extern/NRD/Include"
+)
 
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
 find_library(DETOURS_LIBRARY detours REQUIRED)

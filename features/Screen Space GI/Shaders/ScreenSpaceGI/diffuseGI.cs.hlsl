@@ -1,5 +1,5 @@
-#include "NRD/Eye.hlsli"
 #include "Common/ReverseZ.hlsli"
+#include "NRD/Eye.hlsli"
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Copyright (C) 2016-2021, Intel Corporation
 //
@@ -54,13 +54,13 @@
 // SOFTWARE.
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#include "NRD/OpenShadersRadiance.hlsli"
 #include "Common/FastMath.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
 #include "Common/Game.hlsli"
 #include "Common/Math.hlsli"
 #include "NRD/NRDReblurSH.hlsli"
+#include "NRD/OpenShadersRadiance.hlsli"
 #include "ScreenSpaceGI/common.hlsli"
 #if defined(IBL)
 #	include "IBL/IBL.hlsli"
@@ -394,9 +394,9 @@ void CalculateGI(
 #if defined(DYNAMIC_CUBEMAPS)
 		if (UseDynamicCubemap != 0) {
 			float3 worldPos = ViewToWorldPosition(pixCenterPos, FrameBuffer::CameraViewInverse[NRDPortEye]);
-#if defined(VR)
- worldPos += FrameBuffer::CameraPosAdjust[NRDPortEye].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
-#endif
+#	if defined(VR)
+			worldPos += FrameBuffer::CameraPosAdjust[NRDPortEye].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
+#	endif
 			float3 worldNormal = ViewToWorldVector(viewspaceNormal, FrameBuffer::CameraViewInverse[NRDPortEye]);
 			float3 iblRatio = 1.0;
 #	if defined(IBL)
@@ -491,7 +491,8 @@ void CalculateGI(
 	uint2 outCoord = dtid;
 #endif
 
-	if (any(pxCoord >= uint2(FrameDim))) return;
+	if (any(pxCoord >= uint2(FrameDim)))
+		return;
 	float2 uv = (pxCoord + .5) * RCP_OUT_FRAME_DIM;
 
 	float viewspaceZ = READ_DEPTH(srcWorkingDepth, pxCoord);

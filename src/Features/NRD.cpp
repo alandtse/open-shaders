@@ -1,15 +1,15 @@
 #include "NRD.h"
 #include "NRD/RenderContext.h"
-#include "VR/NRDStereo.h"
 #include "ScreenSpaceGI.h"
 #include "ScreenSpaceReflections.h"
+#include "VR/NRDStereo.h"
 
 #include "Deferred.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "State.h"
 #include "Upscaling.h"
 #include "Util.h"
-#include "GpuPass.h"
 #include "Utils/MathUtils.h"
 
 #define I18N_KEY_PREFIX "feature.nrd."
@@ -130,14 +130,16 @@ void NRD::EnsureResourceExtent(bool a_fullExtent)
 	NRDRendering::EyeTextureDesc(mainDesc);
 	uint32_t width = mainDesc.Width;
 	uint32_t height = mainDesc.Height;
-	if (!width || !height) return;
+	if (!width || !height)
+		return;
 	const auto method = static_cast<uint32_t>(globals::features::upscaling.GetUpscaleMethod());
 	const auto quality = globals::features::upscaling.settings.qualityMode;
 	const bool policyChanged = method != lastResourceUpscaleMethod || quality != lastResourceQualityMode || a_fullExtent != lastFullExtent;
 	lastResourceUpscaleMethod = method;
 	lastResourceQualityMode = quality;
 	lastFullExtent = a_fullExtent;
-	if (policyChanged) hasCommonFrameHistory = false;
+	if (policyChanged)
+		hasCommonFrameHistory = false;
 	if (!a_fullExtent) {
 		const auto active = NRDRendering::ActiveSize();
 		const auto align16 = [](float value) { return (static_cast<uint32_t>(std::ceil(std::max(value, 1.0f))) + 15u) & ~15u; };
@@ -169,7 +171,9 @@ void NRD::EnsureResourceExtent(bool a_fullExtent)
 	};
 
 	guidesReadyThisFrame = false;
-	texNRDMV.reset(); texNRDViewZ.reset(); texNRDNormalRoughness.reset();
+	texNRDMV.reset();
+	texNRDViewZ.reset();
+	texNRDNormalRoughness.reset();
 	resourceExtent[0] = resourceExtent[1] = 0;
 	NRDRendering::LogMemory("before guides", width, height);
 	try {
@@ -225,13 +229,17 @@ void NRD::PrepareGuides(bool a_requested, bool a_fullExtent)
 	commonSettingsValidThisFrame = false;
 	guidesReadyThisFrame = false;
 	if (!a_requested || !settings.Enabled) {
-		texNRDMV.reset(); texNRDViewZ.reset(); texNRDNormalRoughness.reset();
+		texNRDMV.reset();
+		texNRDViewZ.reset();
+		texNRDNormalRoughness.reset();
 		resourceExtent[0] = resourceExtent[1] = 0;
 		hasCommonFrameHistory = false;
 		return;
 	}
-	if (!prepareNRDGuidesCompute || (guideResourcesFailed && globals::state->frameCount - lastFailedAllocationFrame < 120u)) return;
-	if (!texNRDViewZ && NRDRendering::ShouldDeferAllocation()) return;
+	if (!prepareNRDGuidesCompute || (guideResourcesFailed && globals::state->frameCount - lastFailedAllocationFrame < 120u))
+		return;
+	if (!texNRDViewZ && NRDRendering::ShouldDeferAllocation())
+		return;
 	EnsureResourceExtent(a_fullExtent);
 
 	if (!a_requested || !settings.Enabled || !prepareNRDGuidesCompute || !texNRDViewZ || !texNRDNormalRoughness || !texNRDMV)
@@ -244,7 +252,6 @@ void NRD::PrepareGuides(bool a_requested, bool a_fullExtent)
 	ZoneScoped;
 	CS_GPU_PASS("NRD::PrepareGuides");
 
-
 	auto normal = rts[NORMALROUGHNESS];
 
 	float2 dynres = NRDRendering::ActiveSize();
@@ -256,7 +263,8 @@ void NRD::PrepareGuides(bool a_requested, bool a_fullExtent)
 		NRDRendering::Crop(NRDRendering::Input::Depth, Util::GetCurrentSceneDepthSRV(false)),
 		NRDRendering::Crop(NRDRendering::Input::Normal, Util::AsReal(normal.SRV))
 	};
-	if (!guideSRVs[0] || !guideSRVs[1] || dynres.x < 1 || dynres.y < 1 || dynres.x > resourceExtent[0] || dynres.y > resourceExtent[1]) return;
+	if (!guideSRVs[0] || !guideSRVs[1] || dynres.x < 1 || dynres.y < 1 || dynres.x > resourceExtent[0] || dynres.y > resourceExtent[1])
+		return;
 	std::array<ID3D11UnorderedAccessView*, 2> guideUAVs = {
 		texNRDViewZ->uav.get(),
 		texNRDNormalRoughness->uav.get()
@@ -280,20 +288,21 @@ void NRD::PrepareGuides(bool a_requested, bool a_fullExtent)
 
 bool NRD::RefreshMotionVectors()
 {
-    const auto motion = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
-    auto* source = motion.texture ? Util::AsReal(motion.texture) : nullptr;
-    if (!source || !texNRDMV) return false;
-    D3D11_TEXTURE2D_DESC desc{};
-    source->GetDesc(&desc);
-    const auto active = NRDRendering::ActiveSize();
-    const UINT w = static_cast<UINT>(active.x), h = static_cast<UINT>(active.y), x = NRDRendering::Eye() * w;
-    if (!w || !h || x + w > desc.Width || h > desc.Height || w > texNRDMV->desc.Width || h > texNRDMV->desc.Height || desc.SampleDesc.Count != 1 || (desc.Format != DXGI_FORMAT_R16G16_FLOAT && desc.Format != DXGI_FORMAT_R16G16_TYPELESS)) {
-        logger::error("[NRD] Invalid motion-vector copy extent {}x{} at x={} (source {}x{}, destination {}x{})", w,h,x,desc.Width,desc.Height,texNRDMV->desc.Width,texNRDMV->desc.Height);
-        return false;
-    }
-    const D3D11_BOX box{x,0,0,x+w,h,1};
-    globals::d3d::context->CopySubresourceRegion(texNRDMV->resource.get(),0,0,0,0,source,0,&box);
-    return true;
+	const auto motion = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
+	auto* source = motion.texture ? Util::AsReal(motion.texture) : nullptr;
+	if (!source || !texNRDMV)
+		return false;
+	D3D11_TEXTURE2D_DESC desc{};
+	source->GetDesc(&desc);
+	const auto active = NRDRendering::ActiveSize();
+	const UINT w = static_cast<UINT>(active.x), h = static_cast<UINT>(active.y), x = NRDRendering::Eye() * w;
+	if (!w || !h || x + w > desc.Width || h > desc.Height || w > texNRDMV->desc.Width || h > texNRDMV->desc.Height || desc.SampleDesc.Count != 1 || (desc.Format != DXGI_FORMAT_R16G16_FLOAT && desc.Format != DXGI_FORMAT_R16G16_TYPELESS)) {
+		logger::error("[NRD] Invalid motion-vector copy extent {}x{} at x={} (source {}x{}, destination {}x{})", w, h, x, desc.Width, desc.Height, texNRDMV->desc.Width, texNRDMV->desc.Height);
+		return false;
+	}
+	const D3D11_BOX box{ x, 0, 0, x + w, h, 1 };
+	globals::d3d::context->CopySubresourceRegion(texNRDMV->resource.get(), 0, 0, 0, 0, source, 0, &box);
+	return true;
 }
 
 const nrd::CommonSettings& NRD::GetCommonSettings()
@@ -326,7 +335,7 @@ const nrd::CommonSettings& NRD::GetCommonSettings()
 	auto projMat = globals::game::frameBufferCached.GetCameraProjUnjittered(NRDRendering::Eye()).Transpose();
 
 	auto adjust = globals::game::frameBufferCached.GetCameraPosAdjust(NRDRendering::Eye());
-	float3 cameraWorldPos{adjust.x,adjust.y,adjust.z};
+	float3 cameraWorldPos{ adjust.x, adjust.y, adjust.z };
 	DirectX::XMMATRIX translationMat = DirectX::XMMatrixTranslation(-cameraWorldPos.x, -cameraWorldPos.y, -cameraWorldPos.z);
 	worldToViewMat = DirectX::XMMatrixMultiply(translationMat, viewMat);
 

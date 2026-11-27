@@ -6,6 +6,7 @@
 #include "DynamicCubemaps.h"
 #include "Effects11.h"
 #include "Effects11/SettingManager.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "IBL.h"
 #include "NRD.h"
@@ -13,7 +14,6 @@
 #include "State.h"
 #include "Upscaling.h"
 #include "Util.h"
-#include "GpuPass.h"
 #include "Utils/MathUtils.h"
 
 #define I18N_KEY_PREFIX "feature.screen_space_reflections."
@@ -46,7 +46,8 @@ void ScreenSpaceReflections::RestoreDefaultSettings()
 {
 	const bool wasEnabled = settings.Enabled;
 	settings = {};
-	if (globals::game::isVR) settings.Enabled = false;
+	if (globals::game::isVR)
+		settings.Enabled = false;
 	userSettings = settings;
 	appliedE11Overlay = GetE11Overlay();
 	if (appliedE11Overlay.active) {
@@ -76,8 +77,10 @@ void ScreenSpaceReflections::DrawSettings()
 	});
 	const bool e11Managed = appliedE11Overlay.active;
 
-	if (resourceFailure) ImGui::TextWrapped("SSR GPU resource allocation failed; see CommunityShaders.log.");
-	else if (reblurInitAttempted && !nrdReblurSpecular.IsValid()) ImGui::TextWrapped("REBLUR unavailable; using full-resolution tracing.");
+	if (resourceFailure)
+		ImGui::TextWrapped("SSR GPU resource allocation failed; see CommunityShaders.log.");
+	else if (reblurInitAttempted && !nrdReblurSpecular.IsValid())
+		ImGui::TextWrapped("REBLUR unavailable; using full-resolution tracing.");
 	if (!ShadersOK())
 		Util::Text::Error("%s", T(TKEY("compute_shaders_failed_to_compile"), "Compute shaders failed to compile!"));
 	if (e11Managed)
@@ -182,7 +185,7 @@ void ScreenSpaceReflections::DrawSettings()
 		}
 	}
 
-	#if defined(ENABLE_EFFECTS11)
+#if defined(ENABLE_EFFECTS11)
 	if (globals::features::effects11.loaded) {
 		ImGui::SeparatorText(T(TKEY("e11_calibration"), "Effects 11 Presets"));
 		ImGui::SliderFloat(T(TKEY("e11_amount_scale"), "Preset Reflection Scale"), &settings.E11AmountScale, 0.0f, 4.0f, "%.2f");
@@ -248,7 +251,8 @@ void ScreenSpaceReflections::LoadSettings(json& o_json)
 	const auto previous = settings;
 	const Settings defaults{};
 	settings = o_json;
-	if (globals::game::isVR && !o_json.contains("Enabled")) settings.Enabled = false;
+	if (globals::game::isVR && !o_json.contains("Enabled"))
+		settings.Enabled = false;
 	settings.SpecMaxSteps = std::clamp(settings.SpecMaxSteps, 1u, 256u);
 	ClampSetting(settings.SpecularMult, 0.0f, 5.0f, defaults.SpecularMult);
 	ClampSetting(settings.MaxTraceRoughness, 0.0f, 1.0f, defaults.MaxTraceRoughness);
@@ -289,7 +293,7 @@ void ScreenSpaceReflections::SaveSettings(json& o_json)
 
 bool ScreenSpaceReflections::IsManagedByE11() const
 {
-	#if defined(ENABLE_EFFECTS11)
+#if defined(ENABLE_EFFECTS11)
 	const auto& effects11 = globals::features::effects11;
 	return effects11.IsActive() && effects11.OwnsFeature(E11Handoff::Feature::SSR);
 #else
@@ -335,7 +339,6 @@ void ScreenSpaceReflections::SetupResources()
 		ssrCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<SSRCB>(), "SSR::CB");
 	}
 
-
 	logger::debug("ScreenSpaceReflections: creating samplers");
 	{
 		D3D11_SAMPLER_DESC samplerDesc = {
@@ -362,7 +365,8 @@ void ScreenSpaceReflections::ReleaseTraceResources()
 {
 	outputReady = false;
 	nrdReblurSpecular.Shutdown();
-	texNRDSpecInput.reset(); texNRDSpecOutput.reset();
+	texNRDSpecInput.reset();
+	texNRDSpecOutput.reset();
 	for (auto& srv : hiZDepthSRVs) srv = nullptr;
 	for (auto& uav : hiZDepthUAVs) uav = nullptr;
 	texHiZDepth.reset();
@@ -394,7 +398,8 @@ void ScreenSpaceReflections::SetupTraceResources()
 			while ((minDim >> numHiZMips) >= 16 && numHiZMips < kMaxHiZMips)
 				++numHiZMips;
 
-			if (minDim < 64u) throw std::runtime_error("SSR: main render target too small for seven Hi-Z mips");
+			if (minDim < 64u)
+				throw std::runtime_error("SSR: main render target too small for seven Hi-Z mips");
 			numHiZMips = std::max(numHiZMips, 7u);
 
 			D3D11_TEXTURE2D_DESC hizDesc{
@@ -433,7 +438,6 @@ void ScreenSpaceReflections::SetupTraceResources()
 				Util::SetResourceName(hiZDepthUAVs[i].get(), "SSR::HiZDepth UAV mip%u", i);
 			}
 		}
-
 	}
 	NRDRendering::LogMemory("after SSR Hi-Z", uint32_t(full.x), uint32_t(full.y));
 }
@@ -464,7 +468,8 @@ void ScreenSpaceReflections::SetupNRDResources(uint32_t a_width, uint32_t a_heig
 	resetReblurHistory = true;
 	outputReady = false;
 	nrdReblurSpecular.Shutdown();
-	texNRDSpecInput.reset(); texNRDSpecOutput.reset();
+	texNRDSpecInput.reset();
+	texNRDSpecOutput.reset();
 	const bool wantsReblur = WantsReblur() && NRDRendering::Service().CanDenoise() && NRDRendering::Service().AreGuidesReady();
 	NRDRendering::LogMemory("before SSR outputs", a_width, a_height);
 	texNRDSpecInput = eastl::make_unique<Texture2D>(specDesc, "SSR::NRDInput");
@@ -476,7 +481,8 @@ void ScreenSpaceReflections::SetupNRDResources(uint32_t a_width, uint32_t a_heig
 		texNRDSpecOutput = eastl::make_unique<Texture2D>(specDesc, "SSR::NRDOutput");
 		texNRDSpecOutput->CreateSRV(srvDesc);
 		texNRDSpecOutput->CreateUAV(uavDesc);
-		if (!nrdReblurSpecular.Init(a_width, a_height, nrd::Denoiser::REBLUR_SPECULAR, 0)) texNRDSpecOutput.reset();
+		if (!nrdReblurSpecular.Init(a_width, a_height, nrd::Denoiser::REBLUR_SPECULAR, 0))
+			texNRDSpecOutput.reset();
 	}
 	NRDRendering::LogMemory("after SSR outputs", a_width, a_height);
 }
@@ -577,7 +583,6 @@ void ScreenSpaceReflections::DrawSSR()
 	outputReady = false;
 	denoisedThisFrame = false;
 
-
 	if (queuedEnabledChange.exchange(false)) {
 		resetReblurHistory = true;
 	}
@@ -588,21 +593,27 @@ void ScreenSpaceReflections::DrawSSR()
 		ReleaseTraceResources();
 		return;
 	}
-	if (globals::state->isMapMenuOpen || !ssrCB || !pointClampSampler || !linearClampSampler) return;
+	if (globals::state->isMapMenuOpen || !ssrCB || !pointClampSampler || !linearClampSampler)
+		return;
 	const auto full = NRDRendering::FullSize();
 	const auto active = NRDRendering::ActiveSize();
-	if (active.x < 1 || active.y < 1 || full.x < 64 || full.y < 64) return;
+	if (active.x < 1 || active.y < 1 || full.x < 64 || full.y < 64)
+		return;
 	const bool needTraceResources = !texHiZDepth || texHiZDepth->desc.Width != uint32_t(full.x) || texHiZDepth->desc.Height != uint32_t(full.y);
-	if (needTraceResources && NRDRendering::ShouldDeferAllocation()) return;
-	if (resourceFailure && globals::state->frameCount - lastFailedAllocationFrame < 120u) return;
+	if (needTraceResources && NRDRendering::ShouldDeferAllocation())
+		return;
+	if (resourceFailure && globals::state->frameCount - lastFailedAllocationFrame < 120u)
+		return;
 	const auto& guideService = NRDRendering::Service();
 	const bool wantsReblur = WantsReblur() && guideService.CanDenoise() && guideService.AreGuidesReady();
 	try {
-		if (needTraceResources) SetupTraceResources();
+		if (needTraceResources)
+			SetupTraceResources();
 		const auto align16 = [](float v) { return (uint32_t(std::ceil(std::max(1.f, v))) + 15u) & ~15u; };
 		uint32_t width = globals::game::isVR ? uint32_t(full.x) : std::min(uint32_t(full.x), std::max(align16(active.x), texNRDSpecInput ? texNRDSpecInput->desc.Width : 0u));
 		uint32_t height = globals::game::isVR ? uint32_t(full.y) : std::min(uint32_t(full.y), std::max(align16(active.y), texNRDSpecInput ? texNRDSpecInput->desc.Height : 0u));
-		if (wantsReblur) guideService.GetResourceExtent(width, height);
+		if (wantsReblur)
+			guideService.GetResourceExtent(width, height);
 		if (!texNRDSpecInput || texNRDSpecInput->desc.Width != width || texNRDSpecInput->desc.Height != height || wantsReblur != reblurInitAttempted)
 			SetupNRDResources(width, height);
 		resourceFailure = false;
@@ -635,7 +646,6 @@ void ScreenSpaceReflections::DrawSSR()
 	if (globals::state->ShouldResetHistory() || frame != lastDrawnFrame + 1u)
 		resetReblurHistory = true;
 	lastDrawnFrame = frame;
-
 
 	UpdateSB();
 	NRDRendering::BindEye();
@@ -714,7 +724,6 @@ void ScreenSpaceReflections::DrawSSR()
 		}
 
 		resetViews();
-
 	}
 
 	// Specular GI ray march
@@ -737,7 +746,7 @@ void ScreenSpaceReflections::DrawSSR()
 		specSRVs[4] = dynamicCubemaps.loaded ? dynamicCubemaps.envTexture->srv.get() : nullptr;
 		specSRVs[5] = dynamicCubemaps.loaded ? dynamicCubemaps.envReflectionsTexture->srv.get() : nullptr;
 		specSRVs[6] = dynamicCubemaps.loaded && skylighting.loaded && skylighting.texProbeArray ? skylighting.texProbeArray->srv.get() : nullptr;
-		ID3D11ShaderResourceView* iblViews[2] = {ibl.loaded && ibl.envIBLTexture ? ibl.envIBLTexture->srv.get() : nullptr, ibl.loaded && ibl.skyIBLTexture ? ibl.skyIBLTexture->srv.get() : nullptr};
+		ID3D11ShaderResourceView* iblViews[2] = { ibl.loaded && ibl.envIBLTexture ? ibl.envIBLTexture->srv.get() : nullptr, ibl.loaded && ibl.skyIBLTexture ? ibl.skyIBLTexture->srv.get() : nullptr };
 
 		ID3D11UnorderedAccessView* specUAV = texNRDSpecInput->uav.get();
 
@@ -751,11 +760,9 @@ void ScreenSpaceReflections::DrawSSR()
 
 		context->Dispatch((specDispatchX + 7u) >> 3, (specDispatchY + 7u) >> 3, 1);
 
-
 		iblViews[0] = iblViews[1] = nullptr;
 		context->CSSetShaderResources(76, 2, iblViews);
 		resetViews();
-
 	}
 
 	// REBLUR denoise (specular)
@@ -763,8 +770,11 @@ void ScreenSpaceReflections::DrawSSR()
 	if (settings.EnableREBLUR && nrdReblurSpecular.IsValid() && nrdSvc.loaded && nrdSvc.AreGuidesReady()) {
 		CS_GPU_PASS("ScreenSpaceReflections::ReblurSpecular");
 
-
-		if (!nrdSvc.RefreshMotionVectors()) { QueueHistoryReset(); NRDRendering::ClearComputeBindings(); return; }
+		if (!nrdSvc.RefreshMotionVectors()) {
+			QueueHistoryReset();
+			NRDRendering::ClearComputeBindings();
+			return;
+		}
 		auto commonSettings = nrdSvc.GetCommonSettings();
 		commonSettings.splitScreen = settings.Reblur.SplitScreen;
 		commonSettings.enableValidation = settings.Reblur.EnableValidation;
@@ -791,7 +801,6 @@ void ScreenSpaceReflections::DrawSSR()
 
 		denoisedThisFrame = nrdReblurSpecular.Dispatch();
 		resetReblurHistory = !denoisedThisFrame;
-
 	}
 
 	// cleanup
@@ -804,7 +813,6 @@ void ScreenSpaceReflections::DrawSSR()
 	context->CSSetShader(nullptr, nullptr, 0);
 	outputReady = !tracedHalfRes || denoisedThisFrame;
 	lastOutputFrame = globals::state->frameCount;
-
 }
 
 ID3D11ShaderResourceView* ScreenSpaceReflections::GetOutputTexture()

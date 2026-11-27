@@ -14,16 +14,16 @@
 #include "Features/IBL.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LightLimitFix/ShadowCasterManager.h"
-#include "Features/ScreenSpaceGI.h"
 #include "Features/NRD.h"
 #include "Features/NRD/RenderContext.h"
-#include "Features/VR/NRDStereo.h"
+#include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceReflections.h"
 #include "Features/Skylighting.h"
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
+#include "Features/VR/NRDStereo.h"
 #include "Features/Wind/Wind.h"
 
 #include "Hooks.h"
@@ -428,21 +428,25 @@ void Deferred::DeferredPasses()
 		auto& ssr = globals::features::screenSpaceReflections;
 		auto& nrd = globals::features::nrd;
 		gi.outputReady = ssr.outputReady = false;
-		if (gi.loaded) gi.RefreshE11Overlay();
-		if (ssr.loaded) ssr.RefreshE11Overlay();
+		if (gi.loaded)
+			gi.RefreshE11Overlay();
+		if (ssr.loaded)
+			ssr.RefreshE11Overlay();
 		if (!globals::state->isMapMenuOpen && !globals::state->IsMainOrLoadingMenuOpen()) {
 			const bool giDenoises = gi.loaded && gi.settings.Enabled && gi.settings.EnableREBLUR;
 			const bool ssrDenoises = ssr.loaded && ssr.WantsReblur();
 			const bool multiBounce = gi.loaded && gi.settings.Enabled && gi.settings.EnableGI && gi.settings.EnableMultiBounce;
 			try {
-				if (nrd.loaded) nrd.PrepareGuides(giDenoises || ssrDenoises, multiBounce);
+				if (nrd.loaded)
+					nrd.PrepareGuides(giDenoises || ssrDenoises, multiBounce);
 				globals::state->UpdateFeatureData(true);
 				if (gi.loaded) {
 					gi.DrawSSGI();
 					// The early diffuse composite must see this frame's availability, not the previous frame's mask.
 					nrdOutputs.diffuse[0] = gi.GetDiffuseOutputTexture();
 					globals::state->UpdateFeatureData(true);
-					if (nrdOutputs.diffuse[0]) gi.Composite();
+					if (nrdOutputs.diffuse[0])
+						gi.Composite();
 				}
 			} catch (const std::exception& e) {
 				logger::error("[SSGI/NRD] Deferred pass failed: {} (device status 0x{:08X})", e.what(), static_cast<uint32_t>(globals::d3d::device->GetDeviceRemovedReason()));
@@ -495,22 +499,22 @@ void Deferred::DeferredPasses()
 		const bool skylightingReady = skylighting.loaded && skylighting.texProbeArray;
 		ID3D11ShaderResourceView* skylightingProbes = skylightingReady ? skylighting.texProbeArray->srv.get() : nullptr;
 		ID3D11ShaderResourceView* srvs[16]{
-			Util::AsReal(specular.SRV),                                                                      // t0  SpecularTexture
-			Util::AsReal(albedo.SRV),                                                                        // t1  AlbedoTexture
-			Util::AsReal(normalRoughness.SRV),                                                               // t2  NormalRoughnessTexture
-			Util::AsReal(masks.SRV),                                                                         // t3  MasksTexture
-			Util::GetCurrentSceneDepthSRV(false),  // t4  DepthTexture (24/32-bit; HLSL type baked at compile via TERRAIN_BLENDING)
-			dynamicCubemaps.loaded ? Util::AsReal(reflectance.SRV) : nullptr,                                // t5  ReflectanceTexture
-			dynamicCubemaps.loaded ? dynamicCubemaps.envTexture->srv.get() : nullptr,                        // t6  EnvTexture
-			dynamicCubemaps.loaded ? dynamicCubemaps.envReflectionsTexture->srv.get() : nullptr,             // t7  EnvReflectionsTexture
-			dynamicCubemaps.loaded ? skylightingProbes : nullptr,                                            // t8  SkylightingProbeArray
-			Util::AsReal(masks2.SRV),                                                                        // t9  Masks2Texture (vertexAO in .x, category in .y)
-			nrdOutputs.diffuse[0], // t10 diffuse radiance/AO left
-			nrdOutputs.diffuse[1], // t11 diffuse radiance/AO right
-			nrdOutputs.specular[1], // t12 SSR right
-			nrdOutputs.specular[0], // t13 SSR left
-			ibl.loaded ? ibl.envIBLTexture->srv.get() : nullptr,                                             // t14 EnvIBLTexture
-			ibl.loaded ? ibl.skyIBLTexture->srv.get() : nullptr,                                             // t15 SkyIBLTexture
+			Util::AsReal(specular.SRV),                                                           // t0  SpecularTexture
+			Util::AsReal(albedo.SRV),                                                             // t1  AlbedoTexture
+			Util::AsReal(normalRoughness.SRV),                                                    // t2  NormalRoughnessTexture
+			Util::AsReal(masks.SRV),                                                              // t3  MasksTexture
+			Util::GetCurrentSceneDepthSRV(false),                                                 // t4  DepthTexture (24/32-bit; HLSL type baked at compile via TERRAIN_BLENDING)
+			dynamicCubemaps.loaded ? Util::AsReal(reflectance.SRV) : nullptr,                     // t5  ReflectanceTexture
+			dynamicCubemaps.loaded ? dynamicCubemaps.envTexture->srv.get() : nullptr,             // t6  EnvTexture
+			dynamicCubemaps.loaded ? dynamicCubemaps.envReflectionsTexture->srv.get() : nullptr,  // t7  EnvReflectionsTexture
+			dynamicCubemaps.loaded ? skylightingProbes : nullptr,                                 // t8  SkylightingProbeArray
+			Util::AsReal(masks2.SRV),                                                             // t9  Masks2Texture (vertexAO in .x, category in .y)
+			nrdOutputs.diffuse[0],                                                                // t10 diffuse radiance/AO left
+			nrdOutputs.diffuse[1],                                                                // t11 diffuse radiance/AO right
+			nrdOutputs.specular[1],                                                               // t12 SSR right
+			nrdOutputs.specular[0],                                                               // t13 SSR left
+			ibl.loaded ? ibl.envIBLTexture->srv.get() : nullptr,                                  // t14 EnvIBLTexture
+			ibl.loaded ? ibl.skyIBLTexture->srv.get() : nullptr,                                  // t15 SkyIBLTexture
 		};
 		ID3D11ShaderResourceView* skylightingCoverageSrvs[2]{
 			skylightingReady ? skylighting.texProbeCoverage->srv.get() : nullptr,    // t18 SkylightingProbeCoverage

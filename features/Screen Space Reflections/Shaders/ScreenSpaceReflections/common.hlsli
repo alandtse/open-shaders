@@ -1,9 +1,9 @@
 #include "NRD/Eye.hlsli"
 #ifndef SSR_COMMON
-#define SSR_COMMON
+#	define SSR_COMMON
 
-#include "Common/Math.hlsli"
-#include "Common/SharedData.hlsli"
+#	include "Common/Math.hlsli"
+#	include "Common/SharedData.hlsli"
 
 cbuffer SSRCB : register(b1)
 {

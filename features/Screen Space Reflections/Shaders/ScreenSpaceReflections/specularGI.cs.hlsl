@@ -1,5 +1,5 @@
-#include "NRD/Eye.hlsli"
 #include "Common/ReverseZ.hlsli"
+#include "NRD/Eye.hlsli"
 // Hi-Z hierarchical specular ray march for screen-space reflections.
 // Ported from sssrupdate branch (ssrt_raymarch.hlsl / ssrt_common.hlsli).
 //
@@ -7,7 +7,6 @@
 // SPDX-License-Identifier: MIT
 
 #include "Common/BRDF.hlsli"
-#include "NRD/OpenShadersRadiance.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
 #include "Common/Game.hlsli"
@@ -15,6 +14,7 @@
 #include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
 #include "NRD/NRDReblurSH.hlsli"
+#include "NRD/OpenShadersRadiance.hlsli"
 #include "ScreenSpaceReflections/common.hlsli"
 #if defined(IBL)
 #	include "IBL/IBL.hlsli"
@@ -373,7 +373,8 @@ float SSRT_ValidateHit(float3 hit,
 #endif
 
 	const uint2 activeScreenSize = uint2(FrameDim);
-	if (any(fullResCoords >= activeScreenSize)) return;
+	if (any(fullResCoords >= activeScreenSize))
+		return;
 
 	float depth = FrameBuffer::ToStandardDepth(DepthTexture[fullResCoords].x);
 	if (depth >= 1.0 - 1e-6) {
@@ -455,36 +456,36 @@ float SSRT_ValidateHit(float3 hit,
 
 #	if defined(SKYLIGHTING)
 		float skylightingSpecular = 1.0;
-        float skylightingVisibility = 1.0;
+		float skylightingVisibility = 1.0;
 		if (!SharedData::InInterior) {
 			float3 world_space_normal = normalize(mul(FrameBuffer::CameraViewInverse[NRDPortEye], float4(normalVS, 0)).xyz);
 			float3 positionMS = mul(FrameBuffer::CameraViewInverse[NRDPortEye], float4(unbiased_view_space_ray, 1)).xyz;
-#if defined(VR)
- positionMS += FrameBuffer::CameraPosAdjust[NRDPortEye].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
-#endif
+#		if defined(VR)
+			positionMS += FrameBuffer::CameraPosAdjust[NRDPortEye].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
+#		endif
 			float3 world_space_view = -normalize(positionMS);
 
 			sh2 skylightingSH = Skylighting::Sample(Skylighting::ClampToArrayHeight(positionMS), world_space_reflected_direction);
 			float fadeOutFactor = Skylighting::GetFadeOutFactor(positionMS);
 			float3 skylightingNormal = normalize(float3(world_space_normal.xy, max(0, world_space_normal.z)));
 			skylightingVisibility = Skylighting::EvaluateVisibility(skylightingSH, fadeOutFactor);
-            skylightingSpecular = Skylighting::EvaluateSpecular(skylightingSH, SphericalHarmonics::FauxSpecularLobe(world_space_normal, world_space_view, roughness), fadeOutFactor);
+			skylightingSpecular = Skylighting::EvaluateSpecular(skylightingSH, SphericalHarmonics::FauxSpecularLobe(world_space_normal, world_space_view, roughness), fadeOutFactor);
 		}
 #	endif
 
 #	if defined(IBL)
 		if (SharedData::iblSettings.EnableIBL) {
-            float directionalAmbientColorSpecular = Color::RGBToLuminance(Color::Ambient(max(0, SharedData::GetAmbient(world_space_reflected_direction)))) * Color::ReflectionNormalisationScale;
-            float3 envSpecular, skySpecular;
-            float specularVisibility = 1.0, skyVisibility = 1.0;
-#if defined(SKYLIGHTING)
-            specularVisibility = skylightingSpecular;
-            skyVisibility = skylightingVisibility;
-#endif
-            ImageBasedLighting::ComputeSpecularIBL(EnvTexture, EnvReflectionsTexture, LinearSampler,
-                world_space_reflected_direction, envLevel, directionalAmbientColorSpecular,
-                specularVisibility, skyVisibility, envSpecular, skySpecular);
-            envColor = envSpecular + skySpecular;
+			float directionalAmbientColorSpecular = Color::RGBToLuminance(Color::Ambient(max(0, SharedData::GetAmbient(world_space_reflected_direction)))) * Color::ReflectionNormalisationScale;
+			float3 envSpecular, skySpecular;
+			float specularVisibility = 1.0, skyVisibility = 1.0;
+#		if defined(SKYLIGHTING)
+			specularVisibility = skylightingSpecular;
+			skyVisibility = skylightingVisibility;
+#		endif
+			ImageBasedLighting::ComputeSpecularIBL(EnvTexture, EnvReflectionsTexture, LinearSampler,
+				world_space_reflected_direction, envLevel, directionalAmbientColorSpecular,
+				specularVisibility, skyVisibility, envSpecular, skySpecular);
+			envColor = envSpecular + skySpecular;
 		} else
 #	endif
 		{

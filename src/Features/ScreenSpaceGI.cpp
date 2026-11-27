@@ -1,7 +1,7 @@
 #include "ScreenSpaceGI.h"
 #include "NRD/RenderContext.h"
-#include "VR/NRDStereo.h"
 #include "ScreenSpaceReflections.h"
+#include "VR/NRDStereo.h"
 
 #include <DirectXTex.h>
 
@@ -10,6 +10,7 @@
 #include "DynamicCubemaps.h"
 #include "Effects11.h"
 #include "Effects11/SettingManager.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "IBL.h"
 #include "NRD.h"
@@ -19,11 +20,13 @@
 #include "TerrainBlending.h"
 #include "Upscaling.h"
 #include "Util.h"
-#include "GpuPass.h"
-#include "Utils/MathUtils.h"
 #include "Utils/DebugSection.h"
+#include "Utils/MathUtils.h"
 
-namespace { bool AllowsAmbientFallback(); }
+namespace
+{
+	bool AllowsAmbientFallback();
+}
 
 #define I18N_KEY_PREFIX "feature.screen_space_gi."
 
@@ -55,7 +58,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void ScreenSpaceGI::RestoreDefaultSettings()
 {
 	settings = {};
-	if (globals::game::isVR) settings.EnableGI = false;
+	if (globals::game::isVR)
+		settings.EnableGI = false;
 	userSettings = settings;
 	appliedE11Overlay = GetE11Overlay();
 	if (appliedE11Overlay.active) {
@@ -89,8 +93,10 @@ void ScreenSpaceGI::DrawSettings()
 		userSettings = edited;
 	});
 
-	if (resourceFailure) ImGui::TextWrapped("SSGI GPU resource allocation failed; see CommunityShaders.log.");
-	else if (reblurInitAttempted && !nrdReblur.IsValid()) ImGui::TextWrapped("REBLUR unavailable; using full-resolution tracing.");
+	if (resourceFailure)
+		ImGui::TextWrapped("SSGI GPU resource allocation failed; see CommunityShaders.log.");
+	else if (reblurInitAttempted && !nrdReblur.IsValid())
+		ImGui::TextWrapped("REBLUR unavailable; using full-resolution tracing.");
 	if (!ShadersOK())
 		Util::Text::Error("%s", T(TKEY("compute_shaders_failed_to_compile"), "Compute shaders failed to compile!"));
 
@@ -283,7 +289,7 @@ void ScreenSpaceGI::DrawSettings()
 		}
 	}
 
-	#if defined(ENABLE_EFFECTS11)
+#if defined(ENABLE_EFFECTS11)
 	if (globals::features::effects11.loaded) {
 		ImGui::SeparatorText(T(TKEY("e11_calibration"), "Effects 11 Presets"));
 		ImGui::SliderFloat(T(TKEY("e11_ao_scale"), "Preset AO Scale"), &settings.E11AOScale, 0.0f, 4.0f, "%.2f");
@@ -376,7 +382,8 @@ void ScreenSpaceGI::LoadSettings(json& o_json)
 	const Settings defaults{};
 
 	settings = o_json;
-	if (globals::game::isVR && !o_json.contains("EnableGI")) settings.EnableGI = false;
+	if (globals::game::isVR && !o_json.contains("EnableGI"))
+		settings.EnableGI = false;
 
 	if (IsLegacySSGISchema(o_json)) {
 		Settings migrated{};
@@ -445,7 +452,7 @@ void ScreenSpaceGI::SaveSettings(json& o_json)
 
 bool ScreenSpaceGI::IsManagedByE11() const
 {
-	#if defined(ENABLE_EFFECTS11)
+#if defined(ENABLE_EFFECTS11)
 	const auto& effects11 = globals::features::effects11;
 	return effects11.IsActive() && effects11.OwnsFeature(E11Handoff::Feature::SSGI);
 #else
@@ -524,7 +531,6 @@ void ScreenSpaceGI::SetupResources()
 		ssgiCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<SSGICB>(), "SSGI::CB");
 	}
 
-
 	logger::debug("Loading noise texture...");
 	{
 		DirectX::ScratchImage image;
@@ -584,10 +590,16 @@ void ScreenSpaceGI::ReleaseTraceResources()
 {
 	outputReady = false;
 	nrdReblur.Shutdown();
-	texNRDInput.reset(); texNRDOutput.reset(); texNRDInputSH1.reset(); texNRDOutputSH1.reset();
+	texNRDInput.reset();
+	texNRDOutput.reset();
+	texNRDInputSH1.reset();
+	texNRDOutputSH1.reset();
 	for (uint i = 0; i < 5; ++i) uavRadiance[i] = uavWorkingDepth[i] = uavNormal[i] = nullptr;
-	texRadiance.reset(); texWorkingDepth.reset(); texNormal.reset();
-	texHistoryGeo[0].reset(); texHistoryGeo[1].reset();
+	texRadiance.reset();
+	texWorkingDepth.reset();
+	texNormal.reset();
+	texHistoryGeo[0].reset();
+	texHistoryGeo[1].reset();
 	reblurInitAttempted = false;
 	resetReblurHistory = true;
 	hasMultiBounceHistory = hasFullResolutionMultiBounceHistory = false;
@@ -631,7 +643,11 @@ void ScreenSpaceGI::SetupTraceResources()
 		auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 		Util::AsReal(mainTex.texture)->GetDesc(&texDesc);
 		NRDRendering::EyeTextureDesc(texDesc);
-		texDesc.ArraySize = 1; texDesc.SampleDesc = {1, 0}; texDesc.Usage = D3D11_USAGE_DEFAULT; texDesc.CPUAccessFlags = 0; texDesc.MiscFlags = 0;
+		texDesc.ArraySize = 1;
+		texDesc.SampleDesc = { 1, 0 };
+		texDesc.Usage = D3D11_USAGE_DEFAULT;
+		texDesc.CPUAccessFlags = 0;
+		texDesc.MiscFlags = 0;
 		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 		if (std::min(texDesc.Width, texDesc.Height) < 16u)
@@ -680,7 +696,6 @@ void ScreenSpaceGI::SetupTraceResources()
 				Util::SetResourceName(uavNormal[i].get(), "SSGI::Normal UAV mip%u", i);
 			}
 		}
-
 	}
 	NRDRendering::LogMemory("after SSGI prefilters", uint32_t(full.x), uint32_t(full.y));
 }
@@ -688,11 +703,13 @@ void ScreenSpaceGI::SetupTraceResources()
 void ScreenSpaceGI::EnsureMultiBounceResources(bool requested)
 {
 	if (!requested) {
-		texHistoryGeo[0].reset(); texHistoryGeo[1].reset();
+		texHistoryGeo[0].reset();
+		texHistoryGeo[1].reset();
 		hasMultiBounceHistory = hasFullResolutionMultiBounceHistory = false;
 		return;
 	}
-	if (texHistoryGeo[0] && texHistoryGeo[1]) return;
+	if (texHistoryGeo[0] && texHistoryGeo[1])
+		return;
 	auto desc = texRadiance->desc;
 	desc.MipLevels = 1;
 	desc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
@@ -747,7 +764,10 @@ void ScreenSpaceGI::SetupNRDResources()
 	};
 
 	nrdReblur.Shutdown();
-	texNRDInput.reset(); texNRDOutput.reset(); texNRDInputSH1.reset(); texNRDOutputSH1.reset();
+	texNRDInput.reset();
+	texNRDOutput.reset();
+	texNRDInputSH1.reset();
+	texNRDOutputSH1.reset();
 	NRDRendering::LogMemory("before SSGI outputs", fullW, fullH);
 	texNRDInput = eastl::make_unique<Texture2D>(texDesc, "SSGI::NRDInput");
 	texNRDInput->CreateSRV(srvDesc);
@@ -771,7 +791,8 @@ void ScreenSpaceGI::SetupNRDResources()
 		}
 		const float clearColor[4] = {};
 		globals::d3d::context->ClearUnorderedAccessViewFloat(texNRDInputSH1->uav.get(), clearColor);
-		if (texNRDOutputSH1) globals::d3d::context->ClearUnorderedAccessViewFloat(texNRDOutputSH1->uav.get(), clearColor);
+		if (texNRDOutputSH1)
+			globals::d3d::context->ClearUnorderedAccessViewFloat(texNRDOutputSH1->uav.get(), clearColor);
 	} else {
 		texNRDInputSH1.reset();
 		texNRDOutputSH1.reset();
@@ -779,12 +800,14 @@ void ScreenSpaceGI::SetupNRDResources()
 
 	reblurInitAttempted = wantsReblur;
 	if (wantsReblur && !nrdReblur.Init(fullW, fullH, useSH ? nrd::Denoiser::REBLUR_DIFFUSE_SH : nrd::Denoiser::REBLUR_DIFFUSE, 0)) {
-		texNRDOutput.reset(); texNRDOutputSH1.reset();
+		texNRDOutput.reset();
+		texNRDOutputSH1.reset();
 	}
 	NRDRendering::LogMemory("after SSGI outputs", fullW, fullH);
 	nrdReblurUsesSH = useSH;
 
-	if (modeChanged) QueueHistoryReset();
+	if (modeChanged)
+		QueueHistoryReset();
 }
 
 void ScreenSpaceGI::GetNRDResourceSize(uint32_t& a_width, uint32_t& a_height) const
@@ -846,8 +869,10 @@ void ScreenSpaceGI::CompileComputeShaders()
 				info.defines.push_back({ "SSGI_SH", "" });
 			if (globals::features::terrainBlending.loaded)
 				info.defines.push_back({ "TERRAIN_BLENDING", "" });
-			if (globals::features::ibl.loaded) info.defines.push_back({ "IBL", "" });
-			if (globals::features::skylighting.loaded) info.defines.push_back({ "SKYLIGHTING", "" });
+			if (globals::features::ibl.loaded)
+				info.defines.push_back({ "IBL", "" });
+			if (globals::features::skylighting.loaded)
+				info.defines.push_back({ "SKYLIGHTING", "" });
 			continue;
 		}
 
@@ -929,7 +954,6 @@ void ScreenSpaceGI::DrawSSGI()
 	outputReady = false;
 	denoisedThisFrame = false;
 
-
 	auto context = globals::d3d::context;
 
 	if (auto* setting = RE::GetINISetting("bSAOEnable:Display"))
@@ -947,15 +971,19 @@ void ScreenSpaceGI::DrawSSGI()
 		return;
 	const auto full = NRDRendering::FullSize();
 	const auto active = NRDRendering::ActiveSize();
-	if (active.x < 1 || active.y < 1 || full.x < 16 || full.y < 16) return;
+	if (active.x < 1 || active.y < 1 || full.x < 16 || full.y < 16)
+		return;
 	const bool needTraceResources = !texRadiance || !texWorkingDepth || !texNormal || texRadiance->desc.Width != uint32_t(full.x) || texRadiance->desc.Height != uint32_t(full.y);
-	if (needTraceResources && NRDRendering::ShouldDeferAllocation()) return;
-	if (resourceFailure && globals::state->frameCount - lastFailedAllocationFrame < 120u) return;
+	if (needTraceResources && NRDRendering::ShouldDeferAllocation())
+		return;
+	if (resourceFailure && globals::state->frameCount - lastFailedAllocationFrame < 120u)
+		return;
 	const bool useSH = settings.EnableGI && settings.EnableSH;
 	const bool trackMultiBounce = settings.EnableGI && settings.EnableMultiBounce;
 	const bool wantsReblur = settings.EnableREBLUR && NRDRendering::Service().CanDenoise() && NRDRendering::Service().AreGuidesReady();
 	try {
-		if (needTraceResources) SetupTraceResources();
+		if (needTraceResources)
+			SetupTraceResources();
 		EnsureMultiBounceResources(trackMultiBounce);
 		uint32_t nrdWidth = 0, nrdHeight = 0;
 		GetNRDResourceSize(nrdWidth, nrdHeight);
@@ -1054,7 +1082,6 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShader(prefilterDepthsCompute.get(), nullptr, 0);
 
 		context->Dispatch((resolution[0] + 15) >> 4, (resolution[1] + 15) >> 4, 1);
-
 	}
 
 	// Prefilter normals and write the current full-resolution geometry history.
@@ -1078,7 +1105,6 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShader(prefilterNormalCompute.get(), nullptr, 0);
 
 		context->Dispatch((resolution[0] + 15u) >> 4, (resolution[1] + 15u) >> 4, 1);
-
 	}
 
 	// Prefilter source radiance. Multi-bounce history is reprojected, converted
@@ -1106,7 +1132,6 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShader(prefilterRadianceCompute.get(), nullptr, 0);
 
 		context->Dispatch((resolution[0] + 15u) >> 4, (resolution[1] + 15u) >> 4, 1);
-
 	}
 
 	// GI → NRD input
@@ -1130,7 +1155,7 @@ void ScreenSpaceGI::DrawSSGI()
 		if (dynamicCubemaps.loaded && skylighting.loaded && skylighting.texProbeArray)
 			srvs.at(6) = skylighting.texProbeArray->srv.get();
 		srvs.at(8) = texNormal->srv.get();
-		ID3D11ShaderResourceView* iblViews[2] = {ibl.loaded && ibl.envIBLTexture ? ibl.envIBLTexture->srv.get() : nullptr, ibl.loaded && ibl.skyIBLTexture ? ibl.skyIBLTexture->srv.get() : nullptr};
+		ID3D11ShaderResourceView* iblViews[2] = { ibl.loaded && ibl.envIBLTexture ? ibl.envIBLTexture->srv.get() : nullptr, ibl.loaded && ibl.skyIBLTexture ? ibl.skyIBLTexture->srv.get() : nullptr };
 
 		uavs.at(0) = texNRDInput->uav.get();
 		if (useSH && texNRDInputSH1)
@@ -1151,7 +1176,6 @@ void ScreenSpaceGI::DrawSSGI()
 		uint dispatchY = tracedQuarterRes ? (resolution[1] + 1) / 2 : resolution[1];
 
 		context->Dispatch((dispatchX + 7u) >> 3, (dispatchY + 7u) >> 3, 1);
-
 
 		iblViews[0] = iblViews[1] = nullptr;
 		context->CSSetShaderResources(76, 2, iblViews);
@@ -1206,7 +1230,6 @@ void ScreenSpaceGI::DrawSSGI()
 		producedDenoisedHistory = nrdReblur.Dispatch();
 		denoisedThisFrame = producedDenoisedHistory;
 		resetReblurHistory = !producedDenoisedHistory;
-
 	}
 
 	if (trackMultiBounce) {
@@ -1261,12 +1284,12 @@ void ScreenSpaceGI::Composite()
 	context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 
 	auto& ibl = globals::features::ibl;
-    ID3D11ShaderResourceView* iblSRVs[2] = {ibl.loaded && ibl.envIBLTexture ? ibl.envIBLTexture->srv.get() : nullptr,ibl.loaded && ibl.skyIBLTexture ? ibl.skyIBLTexture->srv.get() : nullptr};
-    context->CSSetShaderResources(76,2,iblSRVs);
-    auto& sky=globals::features::skylighting;
-    ID3D11ShaderResourceView* skySRVs[2]={sky.loaded && sky.texProbeCoverage ? sky.texProbeCoverage->srv.get() : nullptr,sky.loaded && sky.texZenithOcclusion ? sky.texZenithOcclusion->srv.get() : nullptr};
-    context->CSSetShaderResources(18,2,skySRVs);
-    ID3D11UnorderedAccessView* mainUAV = Util::AsReal(main.UAV);
+	ID3D11ShaderResourceView* iblSRVs[2] = { ibl.loaded && ibl.envIBLTexture ? ibl.envIBLTexture->srv.get() : nullptr, ibl.loaded && ibl.skyIBLTexture ? ibl.skyIBLTexture->srv.get() : nullptr };
+	context->CSSetShaderResources(76, 2, iblSRVs);
+	auto& sky = globals::features::skylighting;
+	ID3D11ShaderResourceView* skySRVs[2] = { sky.loaded && sky.texProbeCoverage ? sky.texProbeCoverage->srv.get() : nullptr, sky.loaded && sky.texZenithOcclusion ? sky.texZenithOcclusion->srv.get() : nullptr };
+	context->CSSetShaderResources(18, 2, skySRVs);
+	ID3D11UnorderedAccessView* mainUAV = Util::AsReal(main.UAV);
 	context->CSSetUnorderedAccessViews(0, 1, &mainUAV, nullptr);
 
 	globals::state->BindSharedDataCS(context);
@@ -1275,14 +1298,15 @@ void ScreenSpaceGI::Composite()
 	auto active = NRDRendering::ActiveSize();
 	NRDRendering::BindEye(UsesCubemapFallback(), appliedE11Overlay.active ? userSettings.E11ILSaturation : settings.ILSaturation);
 
-	context->Dispatch((uint(active.x)+7)/8, (uint(active.y)+7)/8, 1);
-
+	context->Dispatch((uint(active.x) + 7) / 8, (uint(active.y) + 7) / 8, 1);
 
 	srvs.fill(nullptr);
 	context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 
-	iblSRVs[0]=iblSRVs[1]=nullptr; context->CSSetShaderResources(76,2,iblSRVs);
-	skySRVs[0]=skySRVs[1]=nullptr; context->CSSetShaderResources(18,2,skySRVs);
+	iblSRVs[0] = iblSRVs[1] = nullptr;
+	context->CSSetShaderResources(76, 2, iblSRVs);
+	skySRVs[0] = skySRVs[1] = nullptr;
+	context->CSSetShaderResources(18, 2, skySRVs);
 	mainUAV = nullptr;
 	context->CSSetUnorderedAccessViews(0, 1, &mainUAV, nullptr);
 	context->CSSetShader(nullptr, nullptr, 0);
@@ -1310,14 +1334,18 @@ ID3D11ShaderResourceView* ScreenSpaceGI::GetDiffuseSH1Texture()
 	return nullptr;
 }
 
-namespace { bool AllowsAmbientFallback() {
+namespace
+{
+	bool AllowsAmbientFallback()
+	{
 #if defined(ENABLE_EFFECTS11)
-    const auto& effects11 = globals::features::effects11;
-    return !(effects11.IsActive() && !effects11.IsHandedOff(E11Handoff::Feature::IBL));
+		const auto& effects11 = globals::features::effects11;
+		return !(effects11.IsActive() && !effects11.IsHandedOff(E11Handoff::Feature::IBL));
 #else
-    return true;
+		return true;
 #endif
-} }
+	}
+}
 bool ScreenSpaceGI::UsesCubemapFallback() const
 {
 	if (!settings.UseDynamicCubemapsAsFallback || settings.DiffuseCubemapMult <= 0.0f || !globals::features::dynamicCubemaps.loaded)
@@ -1330,7 +1358,7 @@ ScreenSpaceGI::SharedData ScreenSpaceGI::GetCommonBufferData()
 	SharedData data{};
 	data.Enabled = loaded && settings.Enabled ? (globals::game::isVR ? NRDStereo::DiffuseMask() : (GetDiffuseOutputTexture() ? 1u : 0u)) : 0u;
 	data.EnableIL = settings.EnableGI ? data.Enabled : 0u;
-	data.ReplaceAmbient = UsesCubemapFallback() ? data.EnableIL : 0u; // early composite subtracts existing ambient from target masks
+	data.ReplaceAmbient = UsesCubemapFallback() ? data.EnableIL : 0u;  // early composite subtracts existing ambient from target masks
 	data.AOPower = settings.AOPower;
 	data.ILSaturation = appliedE11Overlay.active ? userSettings.E11ILSaturation : settings.ILSaturation;
 	return data;

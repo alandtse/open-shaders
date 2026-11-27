@@ -1,8 +1,8 @@
-#include "NRD/Eye.hlsli"
-#include "Common/ReverseZ.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
+#include "Common/ReverseZ.hlsli"
 #include "Common/SharedData.hlsli"
+#include "NRD/Eye.hlsli"
 #include "NRD/NRDReblurSH.hlsli"
 
 Texture2D<float> srcDepth : register(t0);
@@ -24,7 +24,8 @@ float ScreenToViewDepth(float screenDepth)
 }
 
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
-	if (any(dtid >= uint2(NRDPortActiveWidth,NRDPortActiveHeight))) return;
+	if (any(dtid >= uint2(NRDPortActiveWidth, NRDPortActiveHeight)))
+		return;
 
 	float depth = srcDepth[dtid];
 	float viewZ = ScreenToViewDepth(depth);

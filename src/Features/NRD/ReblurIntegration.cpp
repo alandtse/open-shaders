@@ -1,8 +1,8 @@
 #include "ReblurIntegration.h"
 
 #include "Globals.h"
-#include "Utils/D3D.h"
 #include "RenderContext.h"
+#include "Utils/D3D.h"
 #include <DirectXTex.h>
 
 #include <d3dcompiler.h>
@@ -70,7 +70,8 @@ DXGI_FORMAT NRDReblurIntegration::NRDFormatToDXGI(nrd::Format fmt)
 bool NRDReblurIntegration::Init(uint32_t halfWidth, uint32_t halfHeight, nrd::Denoiser denoiser, uint32_t identifier)
 {
 	Shutdown();
-	if (!halfWidth || !halfHeight || halfWidth > UINT16_MAX || halfHeight > UINT16_MAX) return false;
+	if (!halfWidth || !halfHeight || halfWidth > UINT16_MAX || halfHeight > UINT16_MAX)
+		return false;
 	NRDRendering::LogMemory("before REBLUR pool", halfWidth, halfHeight);
 	m_identifier = identifier;
 	m_label = nrd::GetDenoiserString(denoiser);
@@ -139,7 +140,8 @@ void NRDReblurIntegration::SetCommonSettings(const nrd::CommonSettings& settings
 {
 	m_commonSettingsValid = false;
 	m_denoiserSettingsValid = false;
-	if (!m_instance) return;
+	if (!m_instance)
+		return;
 	if (settings.resourceSize[0] != m_width || settings.resourceSize[1] != m_height ||
 		!settings.rectSize[0] || !settings.rectSize[1] || settings.rectSize[0] > m_width || settings.rectSize[1] > m_height) {
 		logger::error("[NRD] {} incompatible resources {}x{}, rect {}x{}, pool {}x{}", m_label, settings.resourceSize[0], settings.resourceSize[1], settings.rectSize[0], settings.rectSize[1], m_width, m_height);
@@ -155,16 +157,19 @@ void NRDReblurIntegration::SetCommonSettings(const nrd::CommonSettings& settings
 	}
 	const auto result = nrd::SetCommonSettings(*m_instance, settings);
 	m_commonSettingsValid = result == nrd::Result::SUCCESS;
-	if (!m_commonSettingsValid) logger::error("[NRD] {} SetCommonSettings failed: {}", m_label, static_cast<uint32_t>(result));
+	if (!m_commonSettingsValid)
+		logger::error("[NRD] {} SetCommonSettings failed: {}", m_label, static_cast<uint32_t>(result));
 }
 
 void NRDReblurIntegration::SetDenoiserSettings(const void* settings)
 {
 	m_denoiserSettingsValid = false;
-	if (!m_instance) return;
+	if (!m_instance)
+		return;
 	const auto result = nrd::SetDenoiserSettings(*m_instance, m_identifier, settings);
 	m_denoiserSettingsValid = result == nrd::Result::SUCCESS;
-	if (!m_denoiserSettingsValid) logger::error("[NRD] {} SetDenoiserSettings failed: {}", m_label, static_cast<uint32_t>(result));
+	if (!m_denoiserSettingsValid)
+		logger::error("[NRD] {} SetDenoiserSettings failed: {}", m_label, static_cast<uint32_t>(result));
 }
 
 void NRDReblurIntegration::SetNamedSRV(nrd::ResourceType type, ID3D11ShaderResourceView* srv)
@@ -186,12 +191,14 @@ ID3D11View* NRDReblurIntegration::ResolveResource(const nrd::ResourceDesc& res)
 	auto typeIdx = static_cast<uint32_t>(res.type);
 
 	if (res.type == nrd::ResourceType::PERMANENT_POOL) {
-		if (res.indexInPool >= m_permanentPool.size()) return nullptr;
+		if (res.indexInPool >= m_permanentPool.size())
+			return nullptr;
 		auto& pt = m_permanentPool[res.indexInPool];
 		return (res.descriptorType == nrd::DescriptorType::TEXTURE) ? (ID3D11View*)pt.srv.get() : (ID3D11View*)pt.uav.get();
 	}
 	if (res.type == nrd::ResourceType::TRANSIENT_POOL) {
-		if (res.indexInPool >= m_transientPool.size()) return nullptr;
+		if (res.indexInPool >= m_transientPool.size())
+			return nullptr;
 		auto& tt = m_transientPool[res.indexInPool];
 		return (res.descriptorType == nrd::DescriptorType::TEXTURE) ? (ID3D11View*)tt.srv.get() : (ID3D11View*)tt.uav.get();
 	}
@@ -237,9 +244,11 @@ bool NRDReblurIntegration::Dispatch()
 	bool constantsUploaded = false;
 	for (uint32_t di = 0; success && di < dispatchCount; ++di) {
 		const auto& dispatch = dispatches[di];
-		if (!dispatch.gridWidth || !dispatch.gridHeight) continue;
+		if (!dispatch.gridWidth || !dispatch.gridHeight)
+			continue;
 		if (dispatch.pipelineIndex >= m_pipelines.size() || dispatch.pipelineIndex >= instanceDesc.pipelinesNum || !m_pipelines[dispatch.pipelineIndex]) {
-			success = false; break;
+			success = false;
+			break;
 		}
 		const auto& pipeline = instanceDesc.pipelines[dispatch.pipelineIndex];
 		ID3D11ShaderResourceView* srvs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT]{};
@@ -250,27 +259,52 @@ bool NRDReblurIntegration::Dispatch()
 		for (uint32_t ri = 0; success && ri < pipeline.resourceRangesNum; ++ri) {
 			const auto& range = pipeline.resourceRanges[ri];
 			for (uint32_t k = 0; k < range.descriptorsNum; ++k, ++resourceIndex) {
-				if (!dispatch.resources || resourceIndex >= dispatch.resourcesNum) { success = false; break; }
+				if (!dispatch.resources || resourceIndex >= dispatch.resourcesNum) {
+					success = false;
+					break;
+				}
 				const auto& resource = dispatch.resources[resourceIndex];
-				if (resource.descriptorType != range.descriptorType) { success = false; break; }
+				if (resource.descriptorType != range.descriptorType) {
+					success = false;
+					break;
+				}
 				auto* view = ResolveResource(resource);
-				if (!view) { success = false; break; }
+				if (!view) {
+					success = false;
+					break;
+				}
 				if (range.descriptorType == nrd::DescriptorType::TEXTURE) {
-					if (base + srvCount >= D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT) { success = false; break; }
+					if (base + srvCount >= D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT) {
+						success = false;
+						break;
+					}
 					srvs[srvCount++] = static_cast<ID3D11ShaderResourceView*>(view);
 				} else {
-					if (base + uavCount >= maxUAVs) { success = false; break; }
+					if (base + uavCount >= maxUAVs) {
+						success = false;
+						break;
+					}
 					uavs[uavCount++] = static_cast<ID3D11UnorderedAccessView*>(view);
 				}
 			}
 		}
-		if (!success || resourceIndex != dispatch.resourcesNum) { success = false; break; }
+		if (!success || resourceIndex != dispatch.resourcesNum) {
+			success = false;
+			break;
+		}
 		if (dispatch.constantBufferDataSize) {
-			if (!dispatch.constantBufferData || !m_constantBuffer || dispatch.constantBufferDataSize > m_cbMaxSize || cbSlot >= D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT) { success = false; break; }
+			if (!dispatch.constantBufferData || !m_constantBuffer || dispatch.constantBufferDataSize > m_cbMaxSize || cbSlot >= D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT) {
+				success = false;
+				break;
+			}
 			if (!constantsUploaded || !dispatch.constantBufferDataMatchesPreviousDispatch) {
 				D3D11_MAPPED_SUBRESOURCE mapped{};
 				const HRESULT hr = context->Map(m_constantBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-				if (FAILED(hr)) { logger::error("[NRD] {} constant-buffer Map failed: 0x{:08X}", m_label, uint32_t(hr)); success = false; break; }
+				if (FAILED(hr)) {
+					logger::error("[NRD] {} constant-buffer Map failed: 0x{:08X}", m_label, uint32_t(hr));
+					success = false;
+					break;
+				}
 				memcpy(mapped.pData, dispatch.constantBufferData, dispatch.constantBufferDataSize);
 				context->Unmap(m_constantBuffer.get(), 0);
 				constantsUploaded = true;
@@ -278,20 +312,29 @@ bool NRDReblurIntegration::Dispatch()
 			auto* cb = m_constantBuffer.get();
 			context->CSSetConstantBuffers(cbSlot, 1, &cb);
 		}
-		ID3D11SamplerState* samplers[2] = {m_samplers[0].get(), m_samplers[1].get()};
-		if (samplerSlot + 2 > D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT) { success = false; break; }
+		ID3D11SamplerState* samplers[2] = { m_samplers[0].get(), m_samplers[1].get() };
+		if (samplerSlot + 2 > D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT) {
+			success = false;
+			break;
+		}
 		context->CSSetSamplers(samplerSlot, 2, samplers);
 		context->CSSetShader(m_pipelines[dispatch.pipelineIndex].get(), nullptr, 0);
-		if (srvCount) context->CSSetShaderResources(base, srvCount, srvs);
-		if (uavCount) context->CSSetUnorderedAccessViews(base, uavCount, uavs, nullptr);
+		if (srvCount)
+			context->CSSetShaderResources(base, srvCount, srvs);
+		if (uavCount)
+			context->CSSetUnorderedAccessViews(base, uavCount, uavs, nullptr);
 		context->Dispatch(dispatch.gridWidth, dispatch.gridHeight, 1);
-		std::fill_n(srvs, srvCount, nullptr); std::fill_n(uavs, uavCount, nullptr);
-		if (srvCount) context->CSSetShaderResources(base, srvCount, srvs);
-		if (uavCount) context->CSSetUnorderedAccessViews(base, uavCount, uavs, nullptr);
+		std::fill_n(srvs, srvCount, nullptr);
+		std::fill_n(uavs, uavCount, nullptr);
+		if (srvCount)
+			context->CSSetShaderResources(base, srvCount, srvs);
+		if (uavCount)
+			context->CSSetUnorderedAccessViews(base, uavCount, uavs, nullptr);
 	}
 	clearNamed();
 	context->CSSetShader(nullptr, nullptr, 0);
-	if (!success) logger::error("[NRD] {} invalid dispatch resource/pipeline/constant buffer; device status 0x{:08X}", m_label, uint32_t(globals::d3d::device->GetDeviceRemovedReason()));
+	if (!success)
+		logger::error("[NRD] {} invalid dispatch resource/pipeline/constant buffer; device status 0x{:08X}", m_label, uint32_t(globals::d3d::device->GetDeviceRemovedReason()));
 	return success;
 }
 

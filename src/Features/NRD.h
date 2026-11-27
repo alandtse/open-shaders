@@ -45,7 +45,11 @@ struct NRD : Feature
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 
-	void OnSceneTransitionReset(bool) override { hasCommonFrameHistory = false; commonSettingsValidThisFrame = false; }
+	void OnSceneTransitionReset(bool) override
+	{
+		hasCommonFrameHistory = false;
+		commonSettingsValidThisFrame = false;
+	}
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
 	void CompileComputeShaders();

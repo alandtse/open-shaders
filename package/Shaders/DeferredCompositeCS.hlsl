@@ -46,32 +46,33 @@ SamplerState LinearSampler : register(s0);
 #endif
 
 #if defined(SSGI) || defined(SSR)
-#include "NRD/NRDReblurSH.hlsli"
+#	include "NRD/NRDReblurSH.hlsli"
 #endif
 #if defined(SSGI)
 Texture2D<float4> SsgiTexture : register(t10);
-#if defined(VR)
+#	if defined(VR)
 Texture2D<float4> SsgiRightTexture : register(t11);
-#endif
-
+#	endif
 
 bool IsSkinMask(float2 mask) { return mask.x > 0.0 && mask.y < 1.5; }
-float SampleSSGIAO(uint2 pixCoord) {
-#if defined(VR)
-    uint w = uint(SharedData::BufferDim.x * FrameBuffer::DynamicResolutionParams1.x * 0.5);
-    if (pixCoord.x >= w) return saturate(SsgiRightTexture[pixCoord-uint2(w,0)].w);
-#endif
-    return saturate(SsgiTexture[pixCoord].w);
+float SampleSSGIAO(uint2 pixCoord)
+{
+#	if defined(VR)
+	uint w = uint(SharedData::BufferDim.x * FrameBuffer::DynamicResolutionParams1.x * 0.5);
+	if (pixCoord.x >= w)
+		return saturate(SsgiRightTexture[pixCoord - uint2(w, 0)].w);
+#	endif
+	return saturate(SsgiTexture[pixCoord].w);
 }
 float SampleSSGIAOSkin(uint2 pixCoord)
 {
 	int2 maxCoord = int2(SharedData::BufferDim.xy * FrameBuffer::DynamicResolutionParams1.xy) - 1;
-    int2 minCoord = 0;
-#if defined(VR)
-    int w = (maxCoord.x+1)/2;
-    minCoord.x = pixCoord.x >= w ? w : 0;
-    maxCoord.x = minCoord.x+w-1;
-#endif
+	int2 minCoord = 0;
+#	if defined(VR)
+	int w = (maxCoord.x + 1) / 2;
+	minCoord.x = pixCoord.x >= w ? w : 0;
+	maxCoord.x = minCoord.x + w - 1;
+#	endif
 	const float centerDepth = SharedData::GetScreenDepth(DepthTexture[pixCoord]);
 	float ao = 0.0;
 	float totalWeight = 0.0;
@@ -92,15 +93,19 @@ float SampleSSGIAOSkin(uint2 pixCoord)
 
 #if defined(SSR)
 Texture2D<float4> SsrTexture : register(t13);
-#if defined(VR)
+#	if defined(VR)
 Texture2D<float4> SsrRightTexture : register(t12);
-#endif
-void SampleSSRTracedSpecular(uint2 pixel, out float3 radiance, out float hit) {
-    #if defined(VR)
-    uint w=uint(SharedData::BufferDim.x*FrameBuffer::DynamicResolutionParams1.x*0.5);
-    if(pixel.x>=w) { REBLUR_BackEnd_UnpackRadianceAndNormHitDist(SsrRightTexture[pixel-uint2(w,0)],radiance,hit); return; }
-#endif
-    REBLUR_BackEnd_UnpackRadianceAndNormHitDist(SsrTexture[pixel], radiance, hit);
+#	endif
+void SampleSSRTracedSpecular(uint2 pixel, out float3 radiance, out float hit)
+{
+#	if defined(VR)
+	uint w = uint(SharedData::BufferDim.x * FrameBuffer::DynamicResolutionParams1.x * 0.5);
+	if (pixel.x >= w) {
+		REBLUR_BackEnd_UnpackRadianceAndNormHitDist(SsrRightTexture[pixel - uint2(w, 0)], radiance, hit);
+		return;
+	}
+#	endif
+	REBLUR_BackEnd_UnpackRadianceAndNormHitDist(SsrTexture[pixel], radiance, hit);
 }
 #endif
 
@@ -157,64 +162,64 @@ void SampleSSRTracedSpecular(uint2 pixel, out float3 radiance, out float hit) {
 	sh2 skylightingSH = Skylighting::Sample(positionMS, normalWS);
 #endif
 
-float ssgiAo = 1.0;
+	float ssgiAo = 1.0;
 #if defined(SSGI)
 
 	if ((SharedData::ssgiSettings.Enabled & (1u << eyeIndex)) && abs(depth - FrameBuffer::FarPlaneDepth()) > 1e-6) {
-	ssgiAo = IsSkinMask(MasksTexture[dispatchID.xy].xy) ? SampleSSGIAOSkin(dispatchID.xy) : SampleSSGIAO(dispatchID.xy);
-	if ((SharedData::ssgiSettings.ReplaceAmbient & (1u << eyeIndex)) == 0) ssgiAo = pow(max(ssgiAo, EPSILON_DIVISION), SharedData::ssgiSettings.AOPower);
+		ssgiAo = IsSkinMask(MasksTexture[dispatchID.xy].xy) ? SampleSSGIAOSkin(dispatchID.xy) : SampleSSGIAO(dispatchID.xy);
+		if ((SharedData::ssgiSettings.ReplaceAmbient & (1u << eyeIndex)) == 0)
+			ssgiAo = pow(max(ssgiAo, EPSILON_DIVISION), SharedData::ssgiSettings.AOPower);
 
-	// Masks2.x stores 1 - vertexAO (Lighting.hlsl only); cleared to 0 for
-	// pixels with no vertex AO contribution, so vertexAO defaults to 1.
-	float vertexAO = 1.0 - Masks2Texture[dispatchID.xy].x;
-	ssgiAo = saturate(ssgiAo / max(vertexAO, EPSILON_DIVISION));
+		// Masks2.x stores 1 - vertexAO (Lighting.hlsl only); cleared to 0 for
+		// pixels with no vertex AO contribution, so vertexAO defaults to 1.
+		float vertexAO = 1.0 - Masks2Texture[dispatchID.xy].x;
+		ssgiAo = saturate(ssgiAo / max(vertexAO, EPSILON_DIVISION));
 
-	float3 linAlbedo = Color::IrradianceToLinear(albedo / Color::PBRLightingScale);
-	float3 multiBounceSSGIAo = MultiBounceAO(linAlbedo, ssgiAo);
+		float3 linAlbedo = Color::IrradianceToLinear(albedo / Color::PBRLightingScale);
+		float3 multiBounceSSGIAo = MultiBounceAO(linAlbedo, ssgiAo);
 
-	if ((SharedData::ssgiSettings.ReplaceAmbient & (1u << eyeIndex)) != 0) {
-		linDiffuseColor *= sqrt(multiBounceSSGIAo);
-	} else {
-	float3 vanillaDALC = Color::Ambient(max(0, SharedData::GetAmbient(normalWS)));
-	float3 directionalAmbientColor = vanillaDALC;
+		if ((SharedData::ssgiSettings.ReplaceAmbient & (1u << eyeIndex)) != 0) {
+			linDiffuseColor *= sqrt(multiBounceSSGIAo);
+		} else {
+			float3 vanillaDALC = Color::Ambient(max(0, SharedData::GetAmbient(normalWS)));
+			float3 directionalAmbientColor = vanillaDALC;
 
 #	if defined(IBL)
-	[branch] if (SharedData::iblSettings.EnableIBL)
-	{
+			[branch] if (SharedData::iblSettings.EnableIBL)
+			{
 #		if defined(SKYLIGHTING)
-		float skylightingDiffuse = Skylighting::EvaluateDiffuse(skylightingSH, normalWS, Skylighting::GetFadeOutFactor(positionMS));
-		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBLOccluded(vanillaDALC, -normalWS, skylightingDiffuse);
+				float skylightingDiffuse = Skylighting::EvaluateDiffuse(skylightingSH, normalWS, Skylighting::GetFadeOutFactor(positionMS));
+				directionalAmbientColor = ImageBasedLighting::GetDiffuseIBLOccluded(vanillaDALC, -normalWS, skylightingDiffuse);
 #		else
-		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(vanillaDALC, -normalWS);
+				directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(vanillaDALC, -normalWS);
 #		endif
-	}
+			}
 #	endif
 
-	directionalAmbientColor *= albedo;
-	directionalAmbientColor = Color::RGBToYCoCg(directionalAmbientColor);
-	directionalAmbientColor.x = MasksTexture[dispatchID.xy].z;
-	directionalAmbientColor = Color::YCoCgToRGB(directionalAmbientColor);
-	directionalAmbientColor = max(0, directionalAmbientColor);
+			directionalAmbientColor *= albedo;
+			directionalAmbientColor = Color::RGBToYCoCg(directionalAmbientColor);
+			directionalAmbientColor.x = MasksTexture[dispatchID.xy].z;
+			directionalAmbientColor = Color::YCoCgToRGB(directionalAmbientColor);
+			directionalAmbientColor = max(0, directionalAmbientColor);
 
-	{
-		float maxScale = 1.0;
-		if (directionalAmbientColor.x > 0.0)
-			maxScale = min(maxScale, diffuseColor.x / directionalAmbientColor.x);
-		if (directionalAmbientColor.y > 0.0)
-			maxScale = min(maxScale, diffuseColor.y / directionalAmbientColor.y);
-		if (directionalAmbientColor.z > 0.0)
-			maxScale = min(maxScale, diffuseColor.z / directionalAmbientColor.z);
-		directionalAmbientColor *= maxScale;
+			{
+				float maxScale = 1.0;
+				if (directionalAmbientColor.x > 0.0)
+					maxScale = min(maxScale, diffuseColor.x / directionalAmbientColor.x);
+				if (directionalAmbientColor.y > 0.0)
+					maxScale = min(maxScale, diffuseColor.y / directionalAmbientColor.y);
+				if (directionalAmbientColor.z > 0.0)
+					maxScale = min(maxScale, diffuseColor.z / directionalAmbientColor.z);
+				directionalAmbientColor *= maxScale;
 
-		diffuseColor = max(0.0, diffuseColor - directionalAmbientColor);
-		linDiffuseColor = Color::IrradianceToLinear(diffuseColor);
-		linDiffuseColor *= sqrt(multiBounceSSGIAo);
-		diffuseColor = Color::IrradianceToGamma(linDiffuseColor);
-		diffuseColor += Color::IrradianceToGamma(Color::IrradianceToLinear(directionalAmbientColor) * multiBounceSSGIAo);
-		linDiffuseColor = Color::IrradianceToLinear(diffuseColor);
-	}
-
-	}
+				diffuseColor = max(0.0, diffuseColor - directionalAmbientColor);
+				linDiffuseColor = Color::IrradianceToLinear(diffuseColor);
+				linDiffuseColor *= sqrt(multiBounceSSGIAo);
+				diffuseColor = Color::IrradianceToGamma(linDiffuseColor);
+				diffuseColor += Color::IrradianceToGamma(Color::IrradianceToLinear(directionalAmbientColor) * multiBounceSSGIAo);
+				linDiffuseColor = Color::IrradianceToLinear(diffuseColor);
+			}
+		}
 	}
 #endif
 
@@ -301,18 +306,19 @@ float ssgiAo = 1.0;
 #	endif
 		}
 
-# if defined(SSR)
-        if (SharedData::ssrSettings.Enabled & (1u << eyeIndex)) {
-            float3 traced; float hit;
-            SampleSSRTracedSpecular(dispatchID.xy, traced, hit);
-            finalIrradiance = lerp(finalIrradiance * SharedData::ssrSettings.SpecCubemapMult,
-                traced, saturate(hit / NRD_EPS));
-        }
-# endif
-# if defined(SSGI)
-        if (SharedData::ssgiSettings.Enabled & (1u << eyeIndex))
-            finalIrradiance *= SpecularOcclusion(saturate(dot(normalWS,V)), roughness * roughness, ssgiAo);
-# endif
+#	if defined(SSR)
+		if (SharedData::ssrSettings.Enabled & (1u << eyeIndex)) {
+			float3 traced;
+			float hit;
+			SampleSSRTracedSpecular(dispatchID.xy, traced, hit);
+			finalIrradiance = lerp(finalIrradiance * SharedData::ssrSettings.SpecCubemapMult,
+				traced, saturate(hit / NRD_EPS));
+		}
+#	endif
+#	if defined(SSGI)
+		if (SharedData::ssgiSettings.Enabled & (1u << eyeIndex))
+			finalIrradiance *= SpecularOcclusion(saturate(dot(normalWS, V)), roughness * roughness, ssgiAo);
+#	endif
 
 		color += reflectance * finalIrradiance;
 	}

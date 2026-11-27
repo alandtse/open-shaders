@@ -17,12 +17,12 @@
 // with additional edits by FiveLimbedCat/ProfJack
 
 #ifndef SSGI_COMMON
-#define SSGI_COMMON
+#	define SSGI_COMMON
 
 ///////////////////////////////////////////////////////////////////////////////
 
-#include "Common/Math.hlsli"
-#include "Common/SharedData.hlsli"
+#	include "Common/Math.hlsli"
+#	include "Common/SharedData.hlsli"
 
 cbuffer SSGICB : register(b1)
 {
@@ -55,9 +55,9 @@ SamplerState samplerLinearClamp : register(s1);
 // Use the engine's global near plane instead of a hard-coded first-person distance.
 // A large fixed threshold (18.0) culls visible close geometry and makes SSGI's
 // AO/visibility output zero for those pixels, which darkens surfaces near the camera.
-#define FP_Z (SharedData::CameraData.y)
+#	define FP_Z (SharedData::CameraData.y)
 
-#define ISNAN(x) (!(x < 0.f || x > 0.f || x == 0.f))
+#	define ISNAN(x) (!(x < 0.f || x > 0.f || x == 0.f))
 float filterNaN(float v)
 {
 	return ISNAN(v) ? 0 : v;
@@ -75,35 +75,35 @@ float4 filterInf(float4 v) { return float4(filterInf(v.x), filterInf(v.y), filte
 // uv - normalised position in FrameDim
 // texCoord - texture coordinate
 
-#define READ_DEPTH(tex, px) tex[px]
-#define FULLRES_LOAD(tex, px, texCoord, samp) tex[px]
-#define OUT_FRAME_DIM FrameDim
-#define RCP_OUT_FRAME_DIM RcpFrameDim
-#define OUT_FRAME_SCALE frameScale
+#	define READ_DEPTH(tex, px) tex[px]
+#	define FULLRES_LOAD(tex, px, texCoord, samp) tex[px]
+#	define OUT_FRAME_DIM FrameDim
+#	define RCP_OUT_FRAME_DIM RcpFrameDim
+#	define OUT_FRAME_SCALE frameScale
 
 ///////////////////////////////////////////////////////////////////////////////
 
 // Inputs are screen XY and viewspace depth, output is viewspace position
 float3 ScreenToViewPosition(const float2 screenPos, const float viewspaceDepth)
 {
-	#if defined(VR)
-    float4 ray=mul(FrameBuffer::CameraProjInverse[NRDPortEye],float4(2*screenPos.x-1,1-2*screenPos.y,0.5,1));
-    return ray.xyz * (viewspaceDepth/ray.z);
-#else
-    float3 ret;
-    ret.xy = (NDCToViewMul.xy * screenPos.xy + NDCToViewAdd.xy) * viewspaceDepth;
+#	if defined(VR)
+	float4 ray = mul(FrameBuffer::CameraProjInverse[NRDPortEye], float4(2 * screenPos.x - 1, 1 - 2 * screenPos.y, 0.5, 1));
+	return ray.xyz * (viewspaceDepth / ray.z);
+#	else
+	float3 ret;
+	ret.xy = (NDCToViewMul.xy * screenPos.xy + NDCToViewAdd.xy) * viewspaceDepth;
 	ret.z = viewspaceDepth;
 	return ret;
-#endif
+#	endif
 }
 
 float ScreenToViewDepth(const float screenDepth)
 {
-#ifdef REVERSE_Z
+#	ifdef REVERSE_Z
 	return (SharedData::CameraData.w / (screenDepth * SharedData::CameraData.z + SharedData::CameraData.y));
-#else
+#	else
 	return (SharedData::CameraData.w / (-screenDepth * SharedData::CameraData.z + SharedData::CameraData.x));
-#endif
+#	endif
 }
 
 float3 ViewToWorldPosition(const float3 pos, const float4x4 invView)

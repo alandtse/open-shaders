@@ -3,7 +3,16 @@
 struct NRD;
 namespace NRDRendering
 {
-	enum class Input : uint32_t { Depth, Normal, Main, Albedo, Masks, Motion, Count };
+	enum class Input : uint32_t
+	{
+		Depth,
+		Normal,
+		Main,
+		Albedo,
+		Masks,
+		Motion,
+		Count
+	};
 	uint32_t Eye();
 	float2 FullSize();
 	float2 ActiveSize();
