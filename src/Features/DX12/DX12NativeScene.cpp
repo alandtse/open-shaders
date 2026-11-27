@@ -465,7 +465,7 @@ std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_l
 			++slotMatchesThisFrame[size_t(SlotMatch::UnslottedShadowLight)];
 		if (grantedLightsFrame == lightSlotFrame && std::ranges::contains(grantedLights, a_light)) {
 			// SCM already dropped this light's static casters from last frame's slices; keep shading it from them.
-			if (PreviousShadowSlot(a_light) != UINT32_MAX) {
+			if (PreviousSlice(a_light) != UINT32_MAX) {
 				lightsShadedFrame = lightSlotFrame;
 				++slotMatchesThisFrame[size_t(SlotMatch::PreviousOnly)];
 				return UINT32_MAX;
@@ -476,7 +476,7 @@ std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_l
 	return slot;
 }
 
-bool DX12NativeScene::ShadedFromSlice(const RE::NiLight* a_light) const
+bool DX12NativeScene::ShadedFromSlice(const RE::NiLight* a_light, const RE::NiPoint3& a_shadowOrigin) const
 {
 	if (!a_light || !globals::game::graphicsState)
 		return false;
@@ -489,7 +489,7 @@ bool DX12NativeScene::ShadedFromSlice(const RE::NiLight* a_light) const
 		scheduledLightsThisFrame.clear();
 		scheduledLightsFrame = frame;
 	}
-	scheduledLightsThisFrame.push_back(a_light);
+	scheduledLightsThisFrame.push_back({ a_light, float3{ a_shadowOrigin.x, a_shadowOrigin.y, a_shadowOrigin.z } });
 	if (slicedLightsFrame == UINT32_MAX || (slicedLightsFrame != frame && slicedLightsFrame + 1 != frame) ||
 		!std::ranges::contains(slicedLights, a_light, &std::pair<const RE::NiLight*, uint32_t>::first))
 		return false;
@@ -501,12 +501,18 @@ bool DX12NativeScene::ShadedFromSlice(const RE::NiLight* a_light) const
 	return true;
 }
 
-uint32_t DX12NativeScene::PreviousShadowSlot(const RE::NiLight* a_light) const
+uint32_t DX12NativeScene::PreviousSlice(const RE::NiLight* a_light) const
 {
 	if (!previousSlicesValid || slicedLightsFrame != lightSlotFrame)
 		return UINT32_MAX;
 	const auto it = std::ranges::find(slicedLights, a_light, &std::pair<const RE::NiLight*, uint32_t>::first);
 	return it != slicedLights.end() ? it->second : UINT32_MAX;
+}
+
+uint32_t DX12NativeScene::PreviousShadowSlot(const RE::NiLight* a_light) const
+{
+	// A shadow that moves with the flame each frame would smear if blended with the last one.
+	return std::ranges::contains(movingOriginLights, a_light) ? UINT32_MAX : PreviousSlice(a_light);
 }
 
 bool DX12NativeScene::ShadesLightsDirectly(uint32_t a_frame) const
@@ -527,6 +533,33 @@ void DX12NativeScene::Prepass()
 	}
 	static_assert(kPreviousLightShadowRegister == kLightShadowRegister + 1);
 	globals::d3d::context->PSSetShaderResources(kLightShadowRegister, 2, views);
+}
+
+std::span<const DX12::PreparedLight> DX12NativeScene::TraceFullRTAtShadowOrigins(std::span<const DX12::PreparedLight> a_lights, uint32_t a_frame)
+{
+	movingOriginLights.clear();
+	const auto& scheduled = scheduledLightsFrame == a_frame ? scheduledLightsThisFrame : scheduledLights;
+	constexpr float kMinOriginShift = 0.25f;  // Below this the rest-point trace is indistinguishable.
+	bool moved = false;
+	for (size_t i = 0; i < a_lights.size(); ++i) {
+		const auto* source = reinterpret_cast<const RE::NiLight*>(a_lights[i].runtimeIdentity);
+		const auto it = source ? std::ranges::find(scheduled, source, &std::pair<const RE::NiLight*, float3>::first) : scheduled.end();
+		if (it == scheduled.end())
+			continue;
+		const auto& origin = it->second;
+		const auto& rest = a_lights[i].position;
+		const float dx = origin.x - rest.x, dy = origin.y - rest.y, dz = origin.z - rest.z;
+		if (!std::isfinite(dx + dy + dz) || dx * dx + dy * dy + dz * dz < kMinOriginShift * kMinOriginShift)
+			continue;
+		if (!moved) {
+			fullLightsAtOrigin.assign(a_lights.begin(), a_lights.end());
+			moved = true;
+		}
+		fullLightsAtOrigin[i].position = origin;
+		movingOriginLights.push_back(source);
+	}
+	movingOriginCount.store(uint32_t(movingOriginLights.size()), std::memory_order_relaxed);
+	return moved ? std::span<const DX12::PreparedLight>(fullLightsAtOrigin) : a_lights;
 }
 
 void DX12NativeScene::PrepareMenuScene(std::shared_ptr<const DX12::Grid> grid)
@@ -715,7 +748,7 @@ bool DX12NativeScene::ObserveFullRuntimeLights()
 		for (const auto& light : scene.activeLights)
 			collect(light.get(), false);
 		for (const auto& light : scene.activeShadowLights)
-			collect(light.get(), light && std::ranges::contains(scheduledLights, light->light.get()));
+			collect(light.get(), light && std::ranges::contains(scheduledLights, light->light.get(), &std::pair<const RE::NiLight*, float3>::first));
 	}
 	std::erase_if(fullRuntimeLights, [&](const auto& entry) {
 		if (entry.second.seen == visit)
@@ -845,7 +878,7 @@ void DX12NativeScene::OnDepthPrepassReady()
 			}
 	}
 	const std::span<const DX12::PreparedLight> submittedLights = fullRT ?
-	                                                                 std::span<const DX12::PreparedLight>(fullInventory->lights) :
+	                                                                 TraceFullRTAtShadowOrigins(fullInventory->lights, frame) :
 	                                                                 std::span<const DX12::PreparedLight>(liveLights);
 	if (submittedLights.empty())
 		return;
@@ -871,7 +904,8 @@ void DX12NativeScene::OnDepthPrepassReady()
 		.captureDebugLights = WantsLightPreview(mode),
 		.debugPreparedCount = fullRT ? fullInventory->preparedCount : 0u,
 		.nativeLights = fullInventory,
-		.movers = &movers
+		.movers = &movers,
+		.uploadLights = fullRT && submittedLights.data() == fullLightsAtOrigin.data()
 	};
 	tracedLightCount.store(uint32_t(submittedLights.size()), std::memory_order_relaxed);
 	shadows.Dispatch(*backend, raster.Get(frame), built, submittedLights, frame, controls);
@@ -1122,6 +1156,7 @@ json DX12NativeScene::GetStatus() const
 		{ "grantedWithoutSlice", slotMatches[size_t(SlotMatch::GrantedWithoutSlice)].load(std::memory_order_relaxed) },
 		{ "grantedWithoutSliceTotal", grantedWithoutSliceTotal.load(std::memory_order_relaxed) },
 		{ "previousSliceOnly", slotMatches[size_t(SlotMatch::PreviousOnly)].load(std::memory_order_relaxed) },
+		{ "movingOrigins", movingOriginCount.load(std::memory_order_relaxed) },
 		{ "shadowLightSlots", [this] {
 			 std::scoped_lock lock(shadowLightSlotsMutex);
 			 json rows = json::array();

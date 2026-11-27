@@ -31,6 +31,7 @@ namespace DX12Native
 		uint32_t debugPreparedCount = 0;
 		std::shared_ptr<const NativeLightPublication> nativeLights;
 		MoverScene* movers = nullptr;  // Rigid movers traced alongside the static scene this frame.
+		bool uploadLights = false;     // Trace the passed lights, not nativeLights' GPU copy, which they override.
 	};
 
 	/** @brief Quarter-resolution raw visibility and receiver distance; the composite reconstructs the full view. */
@@ -52,6 +53,7 @@ namespace DX12Native
 		uint32_t debugPreparedCount = 0;
 		std::vector<std::array<float, 4>> lightRecords;
 		bool lightRecordsUploaded = false;
+		bool uploadedLights = false;  // Lights come from lightUpload rather than nativeLights' buffer.
 		// R8 visibility per submitted light (slice = light index), shared with DX11 lighting.
 		std::unique_ptr<WrappedResource> lightMask;
 		winrt::com_ptr<ID3D12DescriptorHeap> clearDescriptors;

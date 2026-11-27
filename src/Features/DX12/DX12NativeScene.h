@@ -93,9 +93,10 @@ struct DX12NativeScene final : OverlayFeature
 	uint32_t PreviousShadowSlot(const RE::NiLight* a_light) const;
 	/**
 	 * @brief True when lighting read a visibility slice for this light in the last published frame; render thread only.
-	 * SCM asks once per scheduled shadow light per frame, which also tells Full RT which lights to trace as themselves.
+	 * SCM asks once per scheduled shadow light per frame, which also tells Full RT which lights to trace as themselves
+	 * and from where: a_shadowOrigin follows SCM's flicker mode (rest when pinned, live when warped or live).
 	 */
-	bool ShadedFromSlice(const RE::NiLight* a_light) const;
+	bool ShadedFromSlice(const RE::NiLight* a_light, const RE::NiPoint3& a_shadowOrigin) const;
 	/** @brief True when lighting consumed per-light visibility this frame, so the final-image layer must not apply it again. */
 	bool ShadesLightsDirectly(uint32_t a_frame) const;
 	/** @brief Traces native shadows from prepass depth so forward lighting of this frame can read them. */
@@ -208,7 +209,13 @@ private:
 	mutable std::vector<const RE::NiLight*> grantedLights;  // Lights SCM handed to the trace in grantedLightsFrame.
 	mutable uint32_t grantedLightsFrame = UINT32_MAX;
 	// Lights SCM scheduled: the frame being recorded and the last complete one, which Full RT traces as themselves.
-	mutable std::vector<const RE::NiLight*> scheduledLightsThisFrame, scheduledLights;
+	mutable std::vector<std::pair<const RE::NiLight*, float3>> scheduledLightsThisFrame, scheduledLights;
+	std::vector<DX12::PreparedLight> fullLightsAtOrigin;  // Full RT inventory with scheduled lights at SCM's shadow origin.
+	std::vector<const RE::NiLight*> movingOriginLights;   // Traced this frame away from their rest point.
+	std::atomic<uint32_t> movingOriginCount{ 0 };
+	uint32_t PreviousSlice(const RE::NiLight* a_light) const;
+	/** @brief Full RT: moves SCM-scheduled lights to SCM's shadow origin; returns the lights to trace. */
+	std::span<const DX12::PreparedLight> TraceFullRTAtShadowOrigins(std::span<const DX12::PreparedLight> a_lights, uint32_t a_frame);
 	mutable uint32_t scheduledLightsFrame = UINT32_MAX;
 	std::atomic<uint64_t> grantedWithoutSliceTotal{ 0 };  // Light-frames that lost static shadows outright; must stay 0.
 	struct ShadowLightSlot
