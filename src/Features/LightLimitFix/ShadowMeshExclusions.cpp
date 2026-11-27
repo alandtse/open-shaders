@@ -35,7 +35,7 @@ namespace ShadowMeshExclusions
 		void LoadModel(Catalog& next, const std::string& path)
 		{
 			RE::NiPointer<RE::NiNode> root;
-			auto model = path;
+			auto model = "meshes/" + path;
 			std::ranges::replace(model, '/', '\\');
 			if (RE::BSModelDB::Demand(model.c_str(), root, {}) != RE::BSResource::ErrorCode::kNone || !root) {
 				next.unresolved.insert(path);
