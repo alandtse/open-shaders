@@ -428,7 +428,7 @@ RE::NiColor LinearLighting::DecodeAuthoredColor(RE::NiColor inColor, float satur
 
 void LinearLighting::BSLightingShader_SetupGeometry(RE::BSRenderPass* a_pass)
 {
-	if (!IsLinearLightingActive() || !PerGeometryCB || !globals::d3d::context)
+	if (!a_pass || !a_pass->geometry || !IsLinearLightingActive() || !PerGeometryCB || !globals::d3d::context)
 		return;
 
 	auto& property1 = a_pass->geometry->GetGeometryRuntimeData().shaderProperty;
