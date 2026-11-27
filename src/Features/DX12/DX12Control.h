@@ -27,6 +27,7 @@ struct DX12Control final : Feature
 	bool IsShadowOffloadMode() const { return GetMode() == DX12::ControlMode::ShadowOffload; }
 	bool IsFullRTMode() const { return GetMode() == DX12::ControlMode::FullRT; }
 	void DrawSettings() override;
+	void RegisterUxActions() override;
 	void LoadSettings(json& input) override;
 	void SaveSettings(json& output) override;
 	void RestoreDefaultSettings() override;

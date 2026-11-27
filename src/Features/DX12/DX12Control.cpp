@@ -102,3 +102,18 @@ void DX12Control::OnRuntimeDisabled()
 	globals::features::dx12NativeScene.OnRuntimeDisabled();
 	globals::features::dx12Resources.OnRuntimeDisabled();
 }
+
+void DX12Control::RegisterUxActions()
+{
+	FEATURE_COMMAND("setValidationMode", "Developer-only live mode switch for shadow A/B tests. Params: mode (int).",
+		[](Feature* self, const json& args) {
+			if (!globals::state || !globals::state->IsDeveloperMode())
+				return;
+			auto* control = static_cast<DX12Control*>(self);
+			if (!control->IsActive())
+				return;
+			const auto mode = DX12::SanitizeControlMode(args.value("mode", 0), true);
+			control->settings.Mode = static_cast<int>(mode);
+			control->selectedMode.store(control->settings.Mode, std::memory_order_relaxed);
+		});
+}

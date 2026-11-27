@@ -1,6 +1,5 @@
 #include "DX12NativeComposite.h"
 #include "State.h"
-#include "Globals.h"
 #include "DX12Control.h"
 #include "DX12GpuRetirement.h"
 #include "DX12NativeLightWorker.h"
