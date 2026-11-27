@@ -159,6 +159,7 @@ private:
 	uint32_t fullRuntimeScope = 0;
 	uint64_t fullLightVisit = 0;
 	mutable std::vector<const RE::NiLight*> ownedLights;  // Lights granted static ownership in runtimeLightFrame.
+	std::atomic<uint32_t> tracedLightCount{ 0 };          // Lights submitted to the last shadow dispatch.
 	mutable std::atomic<uint64_t> ownershipGranted{ 0 }, castersTraced{ 0 }, castersKeptRaster{ 0 };
 	struct TlasCasters
 	{

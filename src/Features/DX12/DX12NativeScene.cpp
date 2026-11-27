@@ -699,6 +699,7 @@ void DX12NativeScene::OnOpaqueRasterReady()
 		.debugPreparedCount = fullRT ? fullInventory->preparedCount : 0u,
 		.nativeLights = fullInventory
 	};
+	tracedLightCount.store(uint32_t(submittedLights.size()), std::memory_order_relaxed);
 	shadows.Dispatch(*backend, raster.Get(frame), built, submittedLights, frame, controls);
 }
 
@@ -925,7 +926,8 @@ json DX12NativeScene::GetStatus() const
 		{ "castersTraced", castersTraced.load(std::memory_order_relaxed) },
 		{ "castersKeptRaster", castersKeptRaster.load(std::memory_order_relaxed) } };
 
-	status["trace"] = { { "lastOutcome", magic_enum::enum_name(shadows.LastOutcome()) } };
+	status["trace"] = { { "lastOutcome", magic_enum::enum_name(shadows.LastOutcome()) },
+		{ "lights", tracedLightCount.load(std::memory_order_relaxed) } };
 	status["composite"] = { { "lastShadowResult",
 		magic_enum::enum_name(DX12Native::lastCompositeShadowResult.load(std::memory_order_relaxed)) } };
 

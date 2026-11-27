@@ -41,6 +41,8 @@ SAMPLE_SECONDS = 1.0
 DIFF_THRESHOLD = 8.0
 MAX_DIFF_OVER_NOISE = 3.0
 SHADOW_TIMER_KEYS = ("shadow", "scm", "llf")
+CANDIDATES = {"offload": 0, "fullrt": 2}
+CANDIDATE, CANDIDATE_MODE = "offload", 0
 
 
 class Devbench:
@@ -227,12 +229,14 @@ def screenshots(bench, report, out, modes):
         for label, mode in modes:
             if mode is not None:
                 bench.set_mode(mode)
-            before = bench.status() if mode == 0 else None
+            before = bench.status() if mode == CANDIDATE_MODE else None
             pose[label] = str(capture(bench, out, f"pose{index}_{label}"))
             if before is not None:
                 time.sleep(1)
-                pose[f"{label}_ownership"] = ownership_delta(before, bench.status())
-                pose[f"{label}_ownedLights"] = bench.status().get("lights", {}).get("ownedShadowLights", 0)
+                after = bench.status()
+                pose[f"{label}_ownership"] = ownership_delta(before, after)
+                pose[f"{label}_ownedLights"] = after.get("lights", {}).get("ownedShadowLights", 0)
+                pose[f"{label}_tracedLights"] = after.get("trace", {}).get("lights", 0)
         first = modes[0][0]
         if modes[0][1] is not None:
             bench.set_mode(modes[0][1])
@@ -246,7 +250,7 @@ def screenshots(bench, report, out, modes):
 def sample_replay(bench, out_name, mode=None):
     if mode is not None:
         bench.set_mode(mode)
-    before = bench.status() if mode == 0 else None
+    before = bench.status() if mode == CANDIDATE_MODE else None
     run = bench.call("record", {"action": "replay", "path": str(RECORDINGS_DIR / RECORDING), "async": True, "closeMenus": True})
     run_id = run.get("runId")
     samples, timers = [], {}
@@ -273,7 +277,9 @@ def sample_replay(bench, out_name, mode=None):
         "gpuTimers": {k: statistics.median(v) for k, v in timers.items()},
     }
     if before is not None:
-        result["ownership"] = ownership_delta(before, bench.status())
+        after = bench.status()
+        result["ownership"] = ownership_delta(before, after)
+        result["tracedLights"] = after.get("trace", {}).get("lights", 0)
     return result
 
 
@@ -313,44 +319,46 @@ def run_ab(bench, report, out):
     wait_shaders(bench)
     wait_ready(bench, report)
     check_layer_applied(bench, report, out)
-    shots = screenshots(bench, report, out, [("raster", 1), ("offload", 0)])
-    engaged = sum(1 for s in shots if s.get("offload_ownership", {}).get("castersTraced", 0) > 0)
-    report.check("offload engages at poses", "PASS" if engaged else "FAIL",
-                 f"{engaged}/{len(shots)} poses moved static casters from raster to RT; "
-                 + "; ".join(f"pose {s['pose']}: {s.get('offload_ownership', {})}" for s in shots))
+    cand = CANDIDATE
+    shots = screenshots(bench, report, out, [("raster", 1), (cand, CANDIDATE_MODE)])
+    engaged = sum(1 for s in shots if s.get(f"{cand}_ownership", {}).get("castersTraced", 0) > 0 or s.get(f"{cand}_tracedLights", 0) > 0)
+    report.check(f"{cand} engages at poses", "PASS" if engaged else "FAIL",
+                 f"{engaged}/{len(shots)} poses traced native shadows; "
+                 + "; ".join(f"pose {s['pose']}: lights {s.get(f'{cand}_tracedLights', 0)}, {s.get(f'{cand}_ownership', {})}" for s in shots))
     for shot in shots:
         noise = image_diff(shot["raster"], shot["raster_repeat"])
-        change = image_diff(shot["raster"], shot["offload"], out / f"pose{shot['pose']}_offload_vs_raster_diff.png")
+        change = image_diff(shot["raster"], shot[cand], out / f"pose{shot['pose']}_{cand}_vs_raster_diff.png")
         shot["noise"], shot["change"] = noise, change
         floor = max(noise.get("changedFraction", 0.0), 0.002)
         ratio = change.get("changedFraction", 0.0) / floor
         status_value = "PASS" if ratio <= MAX_DIFF_OVER_NOISE else "REVIEW"
         report.check(f"pose {shot['pose']} image", status_value,
-                     f"offload vs raster changed {change.get('changedFraction', 0):.4f} (noise {noise.get('changedFraction', 0):.4f}), mean {change.get('meanSigned', 0):+.2f} luma")
+                     f"{cand} vs raster changed {change.get('changedFraction', 0):.4f} (noise {noise.get('changedFraction', 0):.4f}), mean {change.get('meanSigned', 0):+.2f} luma")
         if status_value == "REVIEW":
-            report.look(out / f"pose{shot['pose']}_offload_vs_raster_diff.png", "red = offload darker, green = brighter; shadows should match raster")
-    # Raster, offload, raster: averaging both raster runs keeps warm-up from reading as an offload win.
+            report.look(out / f"pose{shot['pose']}_{cand}_vs_raster_diff.png", f"red = {cand} darker, green = brighter")
+    # Raster, candidate, raster: averaging both raster runs keeps warm-up from reading as a candidate win.
     raster_a = sample_replay(bench, "raster_first", 1)
-    offload = sample_replay(bench, "offload", 0)
+    candidate = sample_replay(bench, cand, CANDIDATE_MODE)
     raster_b = sample_replay(bench, "raster_second", 1)
     raster = {"label": "raster", "samples": raster_a["samples"] + raster_b["samples"]}
     for key in ("frameAvgMs", "frameP99Ms", "shadowGpuMs"):
         values = [r[key] for r in (raster_a, raster_b) if r[key] is not None]
         raster[key] = sum(values) / len(values) if values else None
-    report.data["replay"] = [raster_a, offload, raster_b, raster]
+    report.data["replay"] = [raster_a, candidate, raster_b, raster]
     drift = abs((raster_a["frameAvgMs"] or 0) - (raster_b["frameAvgMs"] or 0))
     report.check("raster run-to-run drift", "PASS" if drift <= 0.5 else "REVIEW",
                  f"{raster_a['frameAvgMs']:.2f} vs {raster_b['frameAvgMs']:.2f} ms; differences smaller than this are noise")
-    own = offload.get("ownership", {})
+    own = candidate.get("ownership", {})
     traced, kept = own.get("castersTraced", 0), own.get("castersKeptRaster", 0)
     share = traced / max(traced + kept, 1)
-    report.check("raster casters offloaded during replay", "PASS" if traced else "FAIL",
-                 f"{traced} static caster draws moved to RT, {kept} kept in raster ({share:.0%} offloaded); light-frames owned {own.get('granted', 0)}")
-    if raster["frameAvgMs"] and offload["frameAvgMs"]:
-        delta = offload["frameAvgMs"] - raster["frameAvgMs"]
-        report.check("frame time offload vs raster", "PASS" if delta <= 0.05 * raster["frameAvgMs"] else "REVIEW",
-                     f"{raster['frameAvgMs']:.2f} -> {offload['frameAvgMs']:.2f} ms ({delta:+.2f} ms, {delta / 16.7:+.1%} of 60 fps); "
-                     f"p99 {raster['frameP99Ms']:.2f} -> {offload['frameP99Ms']:.2f}; shadow GPU {raster['shadowGpuMs']:.2f} -> {offload['shadowGpuMs']:.2f} ms")
+    report.check(f"{cand} during replay", "PASS" if traced or candidate.get("tracedLights") else "FAIL",
+                 f"{candidate.get('tracedLights', 0)} lights traced at the end; {traced} static caster draws moved to RT, "
+                 f"{kept} kept in raster ({share:.0%}); light-frames owned {own.get('granted', 0)}")
+    if raster["frameAvgMs"] and candidate["frameAvgMs"]:
+        delta = candidate["frameAvgMs"] - raster["frameAvgMs"]
+        report.check(f"frame time {cand} vs raster", "PASS" if delta <= 0.05 * raster["frameAvgMs"] else "REVIEW",
+                     f"{raster['frameAvgMs']:.2f} -> {candidate['frameAvgMs']:.2f} ms ({delta:+.2f} ms, {delta / 16.7:+.1%} of 60 fps); "
+                     f"p99 {raster['frameP99Ms']:.2f} -> {candidate['frameP99Ms']:.2f}; shadow GPU {raster['shadowGpuMs']:.2f} -> {candidate['shadowGpuMs']:.2f} ms")
     bench.set_mode(0)
 
 
@@ -395,7 +403,10 @@ def main():
     parser.add_argument("--ab", type=Path, help="ab output directory (compare)")
     parser.add_argument("--baseline", type=Path, help="baseline output directory (compare)")
     parser.add_argument("--game-dir", type=Path, help="Skyrim SE/AE install, used to locate devbench recordings")
+    parser.add_argument("--candidate", choices=tuple(CANDIDATES), default="offload", help="native mode compared against raster (ab)")
     args = parser.parse_args()
+    global CANDIDATE, CANDIDATE_MODE
+    CANDIDATE, CANDIDATE_MODE = args.candidate, CANDIDATES[args.candidate]
     args.out.mkdir(parents=True, exist_ok=True)
     global RECORDINGS_DIR
     if args.game_dir:
