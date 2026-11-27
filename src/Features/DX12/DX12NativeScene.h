@@ -88,7 +88,10 @@ struct DX12NativeScene final : OverlayFeature
 	 * @param a_shadowLight True for an SCM shadow light, counted in the status when it finds no slice.
 	 */
 	std::optional<uint32_t> NativeShadowSlot(const RE::NiLight* a_light, bool a_shadowLight);
-	/** @brief True when lighting read a visibility slice for this light in the last published frame; render thread only. */
+	/**
+	 * @brief True when lighting read a visibility slice for this light in the last published frame; render thread only.
+	 * SCM asks once per scheduled shadow light per frame, which also tells Full RT which lights to trace as themselves.
+	 */
 	bool ShadedFromSlice(const RE::NiLight* a_light) const;
 	/** @brief True when lighting consumed per-light visibility this frame, so the final-image layer must not apply it again. */
 	bool ShadesLightsDirectly(uint32_t a_frame) const;
@@ -171,7 +174,7 @@ private:
 		DX12::PreparedLight value;
 		uint32_t placedReference = 0;
 		uint64_t seen = 0;
-		bool supported = false, sampled = false, active = false;
+		bool supported = false, sampled = false, active = false, shadowLight = false;
 	};
 	std::unordered_map<const RE::NiLight*, FullRuntimeLight> fullRuntimeLights;
 	uint32_t fullRuntimeScope = 0;
@@ -198,6 +201,9 @@ private:
 	uint32_t slicedLightsFrame = UINT32_MAX;
 	mutable std::vector<const RE::NiLight*> grantedLights;  // Lights SCM handed to the trace in grantedLightsFrame.
 	mutable uint32_t grantedLightsFrame = UINT32_MAX;
+	// Lights SCM scheduled: the frame being recorded and the last complete one, which Full RT traces as themselves.
+	mutable std::vector<const RE::NiLight*> scheduledLightsThisFrame, scheduledLights;
+	mutable uint32_t scheduledLightsFrame = UINT32_MAX;
 	std::atomic<uint64_t> grantedWithoutSliceTotal{ 0 };  // Light-frames that lost static shadows outright; must stay 0.
 	struct ShadowLightSlot
 	{

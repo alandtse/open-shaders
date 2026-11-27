@@ -114,7 +114,7 @@ namespace DX12Native
 			return false;
 		current->busy.store(true, std::memory_order_release);
 		const bool accepted = gate->TrySubmit([current, grid = std::move(grid), runtime = std::move(runtime),
-			settings, cell, device = backend.d3d12Device, queue = backend.commandQueue] {
+												  settings, cell, device = backend.d3d12Device, queue = backend.commandQueue] {
 			ZoneScopedN("DX12::Lights::Task");
 			current->tasks.fetch_add(1, std::memory_order_relaxed);
 			try {
@@ -130,10 +130,12 @@ namespace DX12Native
 				for (const auto& light : current->prepared)
 					if (light.referenceID)
 						preparedIDs.insert(light.referenceID);
-				std::vector<DX12::PreparedLight> supplemental;
+				std::vector<DX12::PreparedLight> supplemental, shadowLights;
 				supplemental.reserve(runtime->size());
 				for (const auto& emitter : *runtime)
-					if (!emitter.placedReference || !preparedIDs.contains(emitter.placedReference))
+					if (emitter.shadowLight)
+						shadowLights.push_back(emitter.value);
+					else if (!emitter.placedReference || !preparedIDs.contains(emitter.placedReference))
 						supplemental.push_back(emitter.value);
 				std::vector<DX12::PreparedLight> lights;
 				{
@@ -141,6 +143,9 @@ namespace DX12Native
 					lights = ConsolidateFullShadowLights<DX12::PreparedLight>(current->prepared, supplemental,
 						settings.unify, settings.exclude, settings.additive);
 				}
+				// Right after the prepared lights, so shadow lights fall inside the slice budget before merged emitters.
+				lights.insert(lights.begin() + std::ptrdiff_t(std::min(current->prepared.size(), lights.size())),
+					shadowLights.begin(), shadowLights.end());
 				lights.resize(std::min(lights.size(), size_t{ DX12::kMaxPreparedLights }));
 				const auto previous = current->latest.load(std::memory_order_acquire);
 				const auto preparedCount = uint32_t(current->prepared.size());

@@ -470,11 +470,20 @@ std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_l
 
 bool DX12NativeScene::ShadedFromSlice(const RE::NiLight* a_light) const
 {
-	if (!a_light || !globals::game::graphicsState || slicedLightsFrame == UINT32_MAX)
+	if (!a_light || !globals::game::graphicsState)
 		return false;
 	// SCM schedules before this frame's trace publishes, so the previous frame's publication governs it.
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
-	if ((slicedLightsFrame != frame && slicedLightsFrame + 1 != frame) || !std::ranges::contains(slicedLights, a_light))
+	if (scheduledLightsFrame != frame) {
+		std::swap(scheduledLights, scheduledLightsThisFrame);
+		if (scheduledLightsFrame + 1 != frame)
+			scheduledLights.clear();
+		scheduledLightsThisFrame.clear();
+		scheduledLightsFrame = frame;
+	}
+	scheduledLightsThisFrame.push_back(a_light);
+	if (slicedLightsFrame == UINT32_MAX || (slicedLightsFrame != frame && slicedLightsFrame + 1 != frame) ||
+		!std::ranges::contains(slicedLights, a_light))
 		return false;
 	if (grantedLightsFrame != frame) {
 		grantedLights.clear();
@@ -641,7 +650,7 @@ bool DX12NativeScene::ObserveFullRuntimeLights()
 	}
 	bool dirty = !fullRuntimeSnapshot;
 	const uint64_t visit = ++fullLightVisit;
-	const auto collect = [&](RE::BSLight* light) {
+	const auto collect = [&](RE::BSLight* light, bool shadowLight) {
 		if (!light || !light->pointLight || !light->light)
 			return;
 		auto* ni = light->light.get();
@@ -677,15 +686,16 @@ bool DX12NativeScene::ObserveFullRuntimeLights()
 			}
 		}
 		const bool active = visible && cached.sampled;
-		dirty |= cached.active != active;
+		dirty |= cached.active != active || cached.shadowLight != shadowLight;
 		cached.active = active;
+		cached.shadowLight = shadowLight;
 	};
 	if (node) {
 		const auto& scene = node->GetRuntimeData();
 		for (const auto& light : scene.activeLights)
-			collect(light.get());
+			collect(light.get(), false);
 		for (const auto& light : scene.activeShadowLights)
-			collect(light.get());
+			collect(light.get(), light && std::ranges::contains(scheduledLights, light->light.get()));
 	}
 	std::erase_if(fullRuntimeLights, [&](const auto& entry) {
 		if (entry.second.seen == visit)
@@ -698,7 +708,7 @@ bool DX12NativeScene::ObserveFullRuntimeLights()
 		snapshot->reserve(fullRuntimeLights.size());
 		for (const auto& [identity, cached] : fullRuntimeLights)
 			if (cached.active)
-				snapshot->push_back({ cached.value, cached.placedReference });
+				snapshot->push_back({ cached.value, cached.placedReference, cached.shadowLight });
 		fullRuntimeSnapshot = std::move(snapshot);
 	}
 	return true;

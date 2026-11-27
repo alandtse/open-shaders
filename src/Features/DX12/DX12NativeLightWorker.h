@@ -14,6 +14,7 @@ namespace DX12Native
 	{
 		DX12::PreparedLight value;
 		uint32_t placedReference = 0;
+		bool shadowLight = false;  // Engine shadow light: traced as itself so lighting can read its own slice.
 	};
 
 	struct NativeLightPublication
