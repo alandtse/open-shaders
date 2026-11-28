@@ -2474,14 +2474,6 @@ namespace ShadowCasterManager
 				}
 			}
 
-			const auto assignPointLight = [](LightEntry& entry, RE::BSShadowLight* light) {
-				const bool completedFadeOut = s_fadedOutLights.erase(light->light.get()) != 0;
-				const auto fade = FadeOnShadowAssignment(s_settings.FadeShadowSwaps, completedFadeOut, Util::GetNowSecs());
-				entry.Light = light;
-				entry.fadeOnAdmit = fade.fadeOnAdmit;
-				entry.FadeStartSeconds = fade.startSeconds;
-			};
-
 			// Two passes: reclaim-by-owner for every chosen light first, then hand
 			// fresh slots to whoever's left -- one pass let a higher-ranked light
 			// steal a peer's still-orphaned slot before it reclaimed it.
@@ -2504,7 +2496,8 @@ namespace ShadowCasterManager
 					const int ownerIdx = FindFreeSlotByOwner(ni);
 					// A tile can be parked at any light-free index; reclaim it only inside the point range.
 					if (ownerIdx >= pointFirst && ownerIdx < pointEnd && !s_lights.Lights[ownerIdx].Light) {
-						assignPointLight(s_lights.Lights[ownerIdx], c.light);
+						s_lights.Lights[ownerIdx].Light = c.light;
+						s_lights.Lights[ownerIdx].fadeOnAdmit = s_fadedOutLights.erase(ni) && s_settings.FadeShadowSwaps;
 						reclaimed = true;
 					}
 				}
@@ -2536,10 +2529,11 @@ namespace ShadowCasterManager
 					s_splitState.erase(splitIt);
 				}
 				if (auto* ni = cp->light->light.get()) {
+					s_lights.Lights[idx].fadeOnAdmit = s_fadedOutLights.erase(ni) && s_settings.FadeShadowSwaps;
 					ResetScoreAnchor(ni);
 					s_hashRadiusAnchor.erase(ni);
 				}
-				assignPointLight(s_lights.Lights[idx], cp->light);
+				s_lights.Lights[idx].Light = cp->light;
 			}
 
 			// Update sun slot (slot 0).
