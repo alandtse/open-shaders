@@ -149,8 +149,8 @@ private:
 	void PublishLightShadowSlots(uint32_t frame, std::span<const DX12::PreparedLight> submitted,
 		std::span<const RE::NiLight* const> sources);
 	std::unordered_map<const RE::NiLight*, uint32_t> slotsBySource;
-	std::unordered_map<uint32_t, uint32_t> slotsByReference;
-	std::vector<std::pair<float3, uint32_t>> slotPositions;  // Full RT only: merged emitters resolve by proximity.
+	std::unordered_multimap<uint32_t, uint32_t> slotsByReference;  // One reference may own several traced emitters.
+	std::vector<std::pair<float3, uint32_t>> slotPositions;        // Full RT only: merged emitters resolve by proximity.
 	enum class SlotMatch : uint8_t
 	{
 		Source,

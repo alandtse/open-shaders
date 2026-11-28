@@ -382,7 +382,7 @@ void DX12NativeScene::PublishLightShadowSlots(uint32_t frame, std::span<const DX
 		if (light.runtimeIdentity)
 			slotsBySource.try_emplace(reinterpret_cast<const RE::NiLight*>(light.runtimeIdentity), i);
 		if (light.referenceID)
-			slotsByReference.try_emplace(light.referenceID, i);
+			slotsByReference.emplace(light.referenceID, i);
 	}
 }
 
@@ -392,34 +392,43 @@ std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_l
 		return std::nullopt;
 	std::optional<uint32_t> slot;
 	auto match = SlotMatch::Source;
+	const auto& p = a_light->world.translate;
+	const auto distanceSquared = [&p](const float3& position) {
+		const float dx = position.x - p.x, dy = position.y - p.y, dz = position.z - p.z;
+		return dx * dx + dy * dy + dz * dz;
+	};
+	const float unifyRadius = float(runtimeUnificationRadius.load(std::memory_order_relaxed));
 	if (const auto it = slotsBySource.find(a_light); it != slotsBySource.end())
 		slot = it->second;
-	else if (const auto* owner = a_light->GetUserData(); owner && !slotsByReference.empty())
-		if (const auto ref = slotsByReference.find(owner->GetFormID()); ref != slotsByReference.end()) {
-			slot = ref->second;
-			match = SlotMatch::Reference;
-		}
+	else if (const auto* owner = a_light->GetUserData(); owner && !slotsByReference.empty()) {
+		// A reference's other emitters sit elsewhere; only the one beside this light shadows it correctly.
+		constexpr float kMinReferenceSlotReach = 64.0f;  // Placed and runtime positions differ slightly even when unification is off.
+		const float reach = std::max(unifyRadius, kMinReferenceSlotReach);
+		float best = reach * reach;
+		const auto [first, last] = slotsByReference.equal_range(owner->GetFormID());
+		for (auto ref = first; ref != last; ++ref)
+			if (ref->second < slotSpheres.size())
+				if (const float d2 = distanceSquared(slotSpheres[ref->second].first); d2 <= best) {
+					best = d2;
+					slot = ref->second;
+					match = SlotMatch::Reference;
+				}
+	}
 	if (!slot && !slotPositions.empty()) {
 		match = SlotMatch::Proximity;
 		// Full RT merges runtime emitters into the traced light they sit beside; shade them with its slice.
-		const float radius = float(runtimeUnificationRadius.load(std::memory_order_relaxed));
-		const auto& p = a_light->world.translate;
-		float best = radius * radius;
-		for (const auto& [position, index] : slotPositions) {
-			const float dx = position.x - p.x, dy = position.y - p.y, dz = position.z - p.z;
-			if (const float d2 = dx * dx + dy * dy + dz * dz; d2 <= best) {
+		float best = unifyRadius * unifyRadius;
+		for (const auto& [position, index] : slotPositions)
+			if (const float d2 = distanceSquared(position); d2 <= best) {
 				best = d2;
 				slot = index;
 			}
-		}
 	}
 	if (a_shadowLight && std::ranges::none_of(shadowLightSlotsThisFrame, [a_light](const auto& s) { return s.light == a_light; })) {
 		ShadowLightSlot entry{ a_light, slot ? match : SlotMatch::UnslottedShadowLight, 0.0f, a_light->GetLightRuntimeData().radius.x, 0.0f };
 		if (slot && *slot < slotSpheres.size()) {
-			const auto& [position, radius] = slotSpheres[*slot];
-			const auto& p = a_light->world.translate;
-			entry.offset = std::sqrt((position.x - p.x) * (position.x - p.x) + (position.y - p.y) * (position.y - p.y) + (position.z - p.z) * (position.z - p.z));
-			entry.tracedRadius = radius;
+			entry.offset = std::sqrt(distanceSquared(slotSpheres[*slot].first));
+			entry.tracedRadius = slotSpheres[*slot].second;
 		}
 		shadowLightSlotsThisFrame.push_back(entry);
 	}
