@@ -125,7 +125,6 @@ private:
 		uint32_t referenceID = 0;             // Corresponding prepared native-scene emitter.
 		DX12::PreparedLight value;
 	};
-	std::atomic<bool> earlyTraceExperiment{ false };
 	std::atomic<bool> lightVisibilityExperiment{ false };
 	std::atomic<bool> exactShadowLights{ false }, frameExactShadowLights{ false };
 	std::unordered_map<uintptr_t, float3> scheduledOrigins;
