@@ -208,19 +208,19 @@ void IntegrateBitfield(
 #if defined(DYNAMIC_CUBEMAPS)
 float GetDiffuseFallbackVisibility(float3 worldPos, float3 worldNormal)
 {
-#if defined(SKYLIGHTING)
+#	if defined(SKYLIGHTING)
 	if (!SharedData::InInterior) {
 		const float fadeOutFactor = Skylighting::GetFadeOutFactor(worldPos);
 		const sh2 skylightingSH = Skylighting::Sample(worldPos, worldNormal);
 		return Skylighting::EvaluateDiffuse(skylightingSH, worldNormal, fadeOutFactor);
 	}
-#endif
+#	endif
 	return 1.0;
 }
 
 float3 SampleDiffuseFallbackCubemap(float3 worldPos, float3 worldDir, float3 iblRatio, float skylightingDiffuse)
 {
-#if defined(IBL)
+#	if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
 		const float3 envSample = Color::IrradianceToLinear(EnvTexture.SampleLevel(samplerLinearClamp, worldDir, SSGI_FALLBACK_MIP));
 		float3 envColor;
@@ -237,17 +237,17 @@ float3 SampleDiffuseFallbackCubemap(float3 worldPos, float3 worldDir, float3 ibl
 
 		const float3 skySample = Color::IrradianceToLinear(ReflectionCubemap.SampleLevel(samplerLinearClamp, worldDir, SSGI_FALLBACK_MIP));
 		float3 skyColor = Color::Saturation(skySample, SharedData::iblSettings.SkyIBLSaturation) * SharedData::iblSettings.SkyIBLScale;
-#if defined(SKYLIGHTING)
+#		if defined(SKYLIGHTING)
 		skyColor *= skylightingDiffuse;
 		if (ImageBasedLighting::SkylightingAffectsEnvironment())
 			envColor *= skylightingDiffuse;
-#endif
+#		endif
 		// Like the donor, fade from local environment plus sky to native reflections
 		// alone at distance. Keep this SSGI-specific rather than alter forward IBL.
 		const float fade = EnableReflectionFallback != 0 ? saturate(length(worldPos) / max(ReflectionFallbackDistance, 1.0)) : 0.0;
 		return lerp(envColor + skyColor, skyColor, fade);
 	}
-#endif
+#	endif
 	// IBL may be disabled by the current scene or Effects 11. Preserve native DALC fallback.
 	const float3 directionalAmbient = Color::Ambient(max(0, SharedData::GetAmbient(worldDir)));
 	return Color::IrradianceToLinear(directionalAmbient) * skylightingDiffuse;
