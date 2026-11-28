@@ -14,6 +14,8 @@ namespace E11Handoff
 		CloudShadows,
 		HeightFog,
 		ProceduralAurora,
+		SSGI,
+		SSR,
 		Count
 	};
 

@@ -1472,16 +1472,23 @@ void Synthetic::DrawGeneral() {
     def test_safe_editor_metadata(self):
         ripple_lifetime = self.entries_by_id[
             ("WetnessEffects", "", "RippleLifetime")]
-        resolution_mode = self.entries_by_id[
-            ("ScreenSpaceGI", "", "ResolutionMode")]
         fog_density = self.entries_by_id[
             ("ExponentialHeightFog", "", "fogDensity")]
         self.assertEqual(ripple_lifetime["editorSemantic"], "Numeric")
         self.assertFalse(ripple_lifetime["hasNumericBounds"])
         self.assertIn("SceneControllable", ripple_lifetime["flags"])
-        self.assertEqual(resolution_mode["editorSemantic"], "Choice")
-        self.assertEqual([choice[0] for choice in resolution_mode["choices"]], [0, 1, 2])
         self.assertEqual((fog_density["minimum"], fog_density["maximum"]), (0.0, 1.0))
+
+    def test_ssgi_resolution_settings_are_not_scene_controllable(self):
+        self.assertNotIn(("ScreenSpaceGI", "", "ResolutionMode"), self.entries_by_id)
+        for key in ("HalfRes", "QuarterRes"):
+            with self.subTest(key=key):
+                entry = self.entries_by_id[("ScreenSpaceGI", "", key)]
+                self.assertEqual(entry["type"], "Boolean")
+                self.assertEqual(entry["editorSemantic"], "None")
+                self.assertIn("Persisted", entry["flags"])
+                self.assertIn("Hidden", entry["flags"])
+                self.assertNotIn("SceneControllable", entry["flags"])
 
     def test_custom_ui_setting_is_scene_controllable_text(self):
         lut_path = self.entries_by_id[("PostProcessing", "LUT/settings", "LutPath")]

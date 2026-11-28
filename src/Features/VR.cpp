@@ -127,7 +127,7 @@ void VR::SetupResources()
 	// stereoMode is restart-gated, so a consumer enabled after boot falls back to its own
 	// check until the next restart.
 	bool needsClassification = stereoOpt.settings.stereoMode != VRStereoOptimizations::StereoMode::Off ||
-	                           (globals::features::screenSpaceGI.settings.Enabled && globals::features::screenSpaceGI.settings.UseStereoReproject);
+	                           false /* NRD backend has no cross-eye reuse */;
 	if (globals::game::isVR && needsClassification) {
 		stereoOpt.SetupResources();
 		stereoOpt.loaded = stereoOpt.GetModeTextureSRV() != nullptr;

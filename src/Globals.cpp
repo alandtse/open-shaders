@@ -29,6 +29,7 @@
 #include "Features/LODShadows.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
+#include "Features/NRD.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
 #include "Features/ProceduralAurora.h"
@@ -40,6 +41,7 @@
 #include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
 #include "Features/ScreenSpaceGI.h"
+#include "Features/ScreenSpaceReflections.h"
 #include "Features/ScreenSpaceShadows.h"
 #include "Features/ScreenshotFeature.h"
 #include "Features/Skin.h"
@@ -102,7 +104,9 @@ namespace globals
 		FurShells furShells{};
 		DetailMaps detailMaps{};
 		RainRefraction rainRefraction{};
+		NRD nrd{};
 		ScreenSpaceGI screenSpaceGI{};
+		ScreenSpaceReflections screenSpaceReflections{};
 		ScreenSpaceShadows screenSpaceShadows{};
 		Skylighting skylighting{};
 		TerrainVariation terrainVariation{};

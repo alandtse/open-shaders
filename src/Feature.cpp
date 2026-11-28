@@ -32,6 +32,7 @@
 #include "Features/LODShadows.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
+#include "Features/NRD.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
 #include "Features/ProceduralAurora.h"
@@ -40,6 +41,7 @@
 #include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
 #include "Features/ScreenSpaceGI.h"
+#include "Features/ScreenSpaceReflections.h"
 #include "Features/ScreenSpaceShadows.h"
 #include "Features/ScreenshotFeature.h"
 #include "Features/Skin.h"
@@ -287,7 +289,9 @@ namespace
 			&globals::features::subsurfaceScattering,
 			&globals::features::lodShadows,
 			&globals::features::terrainShadows,
+			&globals::features::nrd,
 			&globals::features::screenSpaceGI,
+			&globals::features::screenSpaceReflections,
 			&globals::features::skylighting,
 			&globals::features::skySync,
 			&globals::features::terrainBlending,

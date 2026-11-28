@@ -333,7 +333,8 @@ PS_OUTPUT ShadeDistantTree(PS_INPUT input, bool sampleDistantShadow)
 	psout.Normal.zw = 0;
 
 	psout.Albedo = float4(baseColor.xyz, 1);
-	psout.Masks = float4(0, 0, 1, 0);
+	// Masks.z records actual ambient luminance for deferred AO and SSGI replacement.
+	psout.Masks = float4(0, 0, Color::RGBToYCoCg(directionalAmbientColor * baseColor.xyz).x, 0);
 #		else
 #			if defined(TREE_WIND)
 	float dirShadow = ShadowSampling::GetWorldShadow(input.RestWorldPosition, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true, sampleDistantShadow);

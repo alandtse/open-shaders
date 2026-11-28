@@ -707,8 +707,35 @@ def default_standalone_requests(requests: list, runtime: str, source_root: Path)
         "SubsurfaceScattering/DiffuseExtractionCS.hlsl": ("cs_5_0", [{}, {"BURLEY": ""}]),
         "SubsurfaceScattering/SeparableSSSCS.hlsl": ("cs_5_0", [{}, {"HORIZONTAL": ""}, {"BURLEY": ""}]),
     }
+    # Current NRD backend: cover the reduced-resolution denoised paths and
+    # full-resolution fallback paths, with and without indirect lighting.
+    lighting = {"DYNAMIC_CUBEMAPS": "", "IBL": "", "SKYLIGHTING": ""}
+    gi_modes = [lighting, {**lighting, "GI": "", "SSGI_SH": ""}]
+    gi_variants = [
+        {**mode, **resolution}
+        for mode in gi_modes
+        for resolution in ({}, {"SSGI_HALF": ""}, {"SSGI_QUARTER": ""})
+    ]
+    additional.update({
+        "NRD/prepareNRDGuides.cs.hlsl": ("cs_5_0", [{}]),
+        "ScreenSpaceGI/prefilterDepths.cs.hlsl": (
+            "cs_5_0", [{**d, "LINEAR_FILTER": ""} for d in gi_variants]),
+        "ScreenSpaceGI/prefilterNormal.cs.hlsl": ("cs_5_0", gi_variants),
+        "ScreenSpaceGI/diffuseGI.cs.hlsl": ("cs_5_0", gi_variants),
+        "ScreenSpaceGI/prefilterRadiance.cs.hlsl": (
+            "cs_5_0", [d for d in gi_variants if "GI" in d]),
+        "ScreenSpaceGI/composite.cs.hlsl": ("cs_5_0", [
+            {"IBL": "", "SKYLIGHTING": "", "TERRAIN_BLENDING": ""},
+            {"IBL": "", "SKYLIGHTING": "", "TERRAIN_BLENDING": "", "SSGI_SH": ""},
+        ]),
+        "ScreenSpaceReflections/prefilterHiZDepth.cs.hlsl": ("cs_5_0", [{}, {"FUSED_HIZ_MIPS": ""}]),
+        "ScreenSpaceReflections/depthDownsample.cs.hlsl": ("cs_5_0", [{}]),
+        "ScreenSpaceReflections/specularGI.cs.hlsl": (
+            "cs_5_0", [dict(lighting), {**lighting, "SSR_HALF": ""}]),
+    })
     if runtime == "VR":
         additional.update({
+            "VR/NRDCropEyeDepth.cs.hlsl": ("cs_5_0", [{}]),
             "ScreenSpaceShadows/StereoSyncCS.hlsl": ("cs_5_0", [{"FRAMEBUFFER": "", "TERRAIN_BLENDING": ""}]),
             "Upscaling/ClearHMDMaskCS.hlsl": ("cs_5_0", [{}]),
         })

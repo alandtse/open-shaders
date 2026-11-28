@@ -86,6 +86,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SkyIBLSaturation,
 	FogAmount,
 	DALCMode,
+	SkylightingAffectsEnv,
 	DisableInInteriors,
 	DisableInWorldMap,
 	DisableInLoadingScreen)
@@ -184,6 +185,10 @@ void IBL::DrawSettings()
 			ImGui::EndTable();
 		}
 	}
+	Util::CheckboxFlag(T(TKEY("skylighting_affects_env"), "Skylighting Affects Env/DALC"), settings.SkylightingAffectsEnv);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("skylighting_affects_env_tooltip"), "Also attenuate environment IBL with Skylighting, independently of DALC mode. DALC + Sky (Directional) already attenuates DALC."));
+	}
 	Util::CheckboxFlag(T(TKEY("use_static_ibl"), "Use Static IBL For Out-of-World Objects"), settings.UseStaticIBL);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("use_static_ibl_tooltip"), "Uses pre-baked static IBL cubemap textures for objects rendered outside the game world (e.g. inventory items, loading screens)."));
@@ -232,10 +237,11 @@ IBL::PerFrame IBL::GetCommonBufferData() const
 		.FogAmount = source.FogAmount,
 		.DALCMode = GetEffectiveDALCMode(source),
 #if defined(ENABLE_EFFECTS11)
-		.ENBSkyFalloff = globals::features::effects11.OwnsFeature(E11Handoff::Feature::IBL)
+		.ENBSkyFalloff = globals::features::effects11.OwnsFeature(E11Handoff::Feature::IBL),
 #else
-		.ENBSkyFalloff = false
+		.ENBSkyFalloff = false,
 #endif
+		.SkylightingAffectsEnv = source.SkylightingAffectsEnv
 	};
 
 #if defined(ENABLE_EFFECTS11)

@@ -1,3 +1,5 @@
+#include "Common/ReverseZ.hlsli"
+#include "NRD/Eye.hlsli"
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Copyright (C) 2016-2021, Intel Corporation
 //
@@ -27,8 +29,10 @@ RWTexture2D<float> outDepth4 : register(u4);
 // is required to be non-linear (i.e. very large outdoors environments).
 float ClampDepth(float depth)
 {
+	if (depth == FrameBuffer::FarPlaneDepth())
+		return 0.0;
 #ifdef VR
-	if (depth == FrameBuffer::NearPlaneDepth())  // VR hidden-area mask
+	if (depth == FrameBuffer::NearPlaneDepth())
 		return 0.0;
 #endif
 	depth = ScreenToViewDepth(depth);
@@ -38,7 +42,10 @@ float ClampDepth(float depth)
 float DepthMIPFilter(float depth0, float depth1, float depth2, float depth3)
 {
 #ifdef LINEAR_FILTER
-	return (depth0 + depth1 + depth2 + depth3) * 0.25;
+	const float4 depths = float4(depth0, depth1, depth2, depth3);
+	const float4 valid = depths > 0.0;
+	const float count = dot(valid, 1.0);
+	return count > 0.0 ? dot(depths, valid) / count : 0.0;
 #elif defined(MAX_FILTER)
 	return max(max(depth0, depth1), max(depth2, depth3));
 #elif defined(MIN_FILTER)
@@ -48,18 +55,14 @@ float DepthMIPFilter(float depth0, float depth1, float depth2, float depth3)
 
 groupshared float g_scratchDepths[8][8];
 [numthreads(8, 8, 1)] void main(uint2 dispatchThreadID : SV_DispatchThreadID, uint2 groupThreadID : SV_GroupThreadID) {
-	const float2 frameScale = FrameDim * RcpTexDim;
-
-	// MIP 0
+	// MIP 0: padded dispatch lanes must never read outside the active eye.
 	const uint2 baseCoord = dispatchThreadID;
 	const uint2 pixCoord = baseCoord * 2;
-	const float2 uv = (pixCoord + .5) * RcpFrameDim;
-
-	float4 depths4 = srcNDCDepth.GatherRed(samplerPointClamp, uv * frameScale);
-	float depth0 = ClampDepth(depths4.w);
-	float depth1 = ClampDepth(depths4.z);
-	float depth2 = ClampDepth(depths4.x);
-	float depth3 = ClampDepth(depths4.y);
+	const uint2 active = uint2(OUT_FRAME_DIM);
+	float depth0 = all(pixCoord < active) ? ClampDepth(srcNDCDepth[min(pixCoord, active - 1u)]) : 0.0;
+	float depth1 = all(pixCoord + uint2(1, 0) < active) ? ClampDepth(srcNDCDepth[min(pixCoord + uint2(1, 0), active - 1u)]) : 0.0;
+	float depth2 = all(pixCoord + uint2(0, 1) < active) ? ClampDepth(srcNDCDepth[min(pixCoord + uint2(0, 1), active - 1u)]) : 0.0;
+	float depth3 = all(pixCoord + uint2(1, 1) < active) ? ClampDepth(srcNDCDepth[min(pixCoord + uint2(1, 1), active - 1u)]) : 0.0;
 	outDepth0[pixCoord + uint2(0, 0)] = depth0;
 	outDepth0[pixCoord + uint2(1, 0)] = depth1;
 	outDepth0[pixCoord + uint2(0, 1)] = depth2;

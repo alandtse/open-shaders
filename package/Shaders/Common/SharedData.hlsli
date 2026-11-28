@@ -318,9 +318,9 @@ namespace SharedData
 		float EnvIBLSaturation;
 		float SkyIBLSaturation;
 		float FogAmount;
-		uint DALCMode;       // 0: Luminance Ratio, 1: Color Ratio, 2: DALC + Sky, 3: DALC + Sky (Directional)
-		uint ENBSkyFalloff;  // Effects 11 owns IBL: darken sky irradiance from below
-		float pad0;
+		uint DALCMode;               // 0: Luminance Ratio, 1: Color Ratio, 2: DALC + Sky, 3: DALC + Sky (Directional)
+		uint ENBSkyFalloff;          // Effects 11 owns IBL: darken sky irradiance from below
+		uint SkylightingAffectsEnv;  // Reuses the previous padding slot.
 	};
 
 	struct ExtendedTranslucencySettings
@@ -736,7 +736,6 @@ namespace SharedData
 		float2 pad1;
 	};
 
-#if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
 	struct SnowCoverSettings
 	{
 		float Month;
@@ -793,7 +792,6 @@ namespace SharedData
 		uint LandscapeGridWidth;
 		uint LandscapeMaterialMode;
 	};
-#endif
 
 	struct ProceduralAuroraSettings
 	{
@@ -813,6 +811,8 @@ namespace SharedData
 		float CurtainCount;       // curtains drawn, 1 .. 7; a fraction fades the last one in or out
 		float3 BodyDisplayColor;  // main curtain color in display space
 	};
+
+#include "Common/NRDFeatureTypes.hlsli"
 
 	cbuffer FeatureData : register(b6)
 	{
@@ -847,9 +847,10 @@ namespace SharedData
 		HorizonFixSettings horizonFixSettings;
 		RainRefractionSettings rainRefractionSettings;
 		ProceduralAuroraSettings proceduralAuroraSettings;
-#if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
+		// Preserve the CPU buffer offsets even when Snow Cover is disabled.
 		SnowCoverSettings snowCoverSettings;
-#endif
+		SSGISettings ssgiSettings;
+		SSRSettings ssrSettings;
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);

@@ -192,6 +192,16 @@ void EffectManager::RegisterSettings()
 
 	settingManager.RegisterBoolSetting("UseOriginalPostProcessing", "EFFECT", false, false);
 	settingManager.RegisterBoolSetting("EnableAdaptation", "EFFECT", false, false);
+	settingManager.RegisterBoolSetting("EnableAmbientOcclusion", "EFFECT", true, false);
+	settingManager.RegisterBoolSetting("EnableReflection", "EFFECT", false, false);
+	settingManager.RegisterBoolSetting("UseIndirectLighting", "SSAO_SSIL", false, false);
+	settingManager.RegisterFloatSetting("AOAmount", "SSAO_SSIL", 1.0f, 0.0f, 10.0f, 0.01f, false);
+	settingManager.RegisterFloatSetting("AOAmountInterior", "SSAO_SSIL", 1.0f, 0.0f, 10.0f, 0.01f, false);
+	settingManager.RegisterFloatSetting("ILAmount", "SSAO_SSIL", 1.0f, 0.0f, 10.0f, 0.01f, false);
+	settingManager.RegisterFloatSetting("ILAmountInterior", "SSAO_SSIL", 1.0f, 0.0f, 10.0f, 0.01f, false);
+	settingManager.RegisterBoolSetting("EnableInterior", "REFLECTION", false, false);
+	settingManager.RegisterFloatSetting("Amount", "REFLECTION", 1.0f, 0.0f, 1.0f, 0.01f, false);
+	settingManager.RegisterFloatSetting("AmountInterior", "REFLECTION", 1.0f, 0.0f, 1.0f, 0.01f, false);
 	settingManager.RegisterBoolSetting("EnableBloom", "EFFECT", false, false);
 	settingManager.RegisterBoolSetting("EnableLens", "EFFECT", false, false);
 	settingManager.RegisterBoolSetting("EnablePostPassShader", "EFFECT", false, false);
@@ -381,6 +391,8 @@ void EffectManager::RegisterSettings()
 	settingManager.RegisterTimeOfDaySetting("SkyColorAmount", "RAYS", 0.0f, 0.0f, 100.0f, 0.01f, true);
 
 	settingManager.SetCategoryDependency("BLOOM", "EnableBloom", "EFFECT");
+	settingManager.SetCategoryDependency("SSAO_SSIL", "EnableAmbientOcclusion", "EFFECT");
+	settingManager.SetCategoryDependency("REFLECTION", "EnableReflection", "EFFECT");
 	settingManager.SetCategoryDependency("LENS", "EnableLens", "EFFECT");
 	settingManager.SetCategoryDependency("ADAPTATION", "EnableAdaptation", "EFFECT");
 	settingManager.SetCategoryDependency("CLOUDSHADOWS", "EnableCloudShadows", "EFFECT");

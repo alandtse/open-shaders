@@ -11,3 +11,6 @@
 [submodule "extern/AntiLag2-SDK"]
 	path = extern/AntiLag2-SDK
 	url = https://github.com/GPUOpen-LibrariesAndSDKs/AntiLag2-SDK.git
+[submodule "extern/NRD"]
+	path = extern/NRD
+	url = https://github.com/NVIDIA-RTX/NRD.git
