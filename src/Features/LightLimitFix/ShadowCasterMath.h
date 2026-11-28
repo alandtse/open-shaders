@@ -20,6 +20,12 @@ namespace ShadowCasterManager
 	inline constexpr int32_t kUndrawnShadowFrame = -1;
 	inline constexpr int32_t kPendingCasterRefreshFrame = -2;
 
+	/// A staged draw or a static bake over existing content leaves the sampled player pose untouched.
+	inline constexpr int32_t SampledCasterFrameAfterDraw(int32_t previous, int32_t drawn, bool staged, bool hadContent) noexcept
+	{
+		return staged || (drawn < 0 && hadContent) ? previous : drawn;
+	}
+
 	/// Keeps previously drawn lights eligible while their shadow content is invalid.
 	inline constexpr int32_t FrameAfterCasterRefresh(int32_t lastDrawnFrame) noexcept
 	{

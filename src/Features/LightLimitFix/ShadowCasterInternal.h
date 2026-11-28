@@ -645,7 +645,9 @@ namespace ShadowCasterManager
 	uint32_t AtlasCapacityCells();
 	uint32_t CellsForScale(float scale);
 	bool EnsureSlotTile(int32_t poolSlot, float scale);
-	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete = true);
+	/// Last game frame whose dynamic casters reached the sampled tile.
+	int32_t GetSampledCasterFrame(int32_t poolSlot);
+	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete, int32_t a_casterFrame = -1);
 
 	/// Sampling parameters belonging to the rendered tile depth.
 	struct ShadowBakeSnapshot
