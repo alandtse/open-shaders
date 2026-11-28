@@ -11,9 +11,59 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numbers>
 
 namespace
 {
+	constexpr float kFullDiffuseTriangleArea = 12000.0f;
+
+	float BillboardDiffuseWeight(RE::BSTriShape& a_shape, RE::BSGraphics::TriShape& a_mesh)
+	{
+		using Vertex = RE::BSGraphics::Vertex;
+		const auto& shape = a_shape.GetTrishapeRuntimeData();
+		if (!shape.triangleCount || !shape.vertexCount)
+			return 0.0f;
+
+		const auto& desc = a_mesh.vertexDesc;
+		const auto stride = static_cast<uint32_t>(std::bit_cast<uint64_t>(desc) & 0xF) * sizeof(float);
+		const bool full = desc.HasFlag(Vertex::VF_FULLPREC) ||
+		                  (desc.HasFlag(Vertex::VF_UV) && desc.GetAttributeOffset(Vertex::VA_TEXCOORD0) >= 16);
+		if (!a_mesh.rawVertexData || !a_mesh.rawIndexData || !desc.HasFlag(Vertex::VF_VERTEX) ||
+			stride < 3 * (full ? sizeof(float) : sizeof(uint16_t))) {
+			const float radius = a_shape.GetModelData().modelBound.radius;
+			// GPU-only billboards use their projected disk area per triangle.
+			return std::clamp(std::numbers::pi_v<float> * radius * radius / (shape.triangleCount * kFullDiffuseTriangleArea), 0.0f, 1.0f);
+		}
+
+		auto position = [&](uint16_t index) {
+			const auto* data = a_mesh.rawVertexData + index * stride;
+			if (full) {
+				RE::NiPoint3 p;
+				std::memcpy(&p, data, sizeof(p));
+				return p;
+			}
+			uint16_t half[3];
+			std::memcpy(half, data, sizeof(half));
+			using DirectX::PackedVector::XMConvertHalfToFloat;
+			return RE::NiPoint3{ XMConvertHalfToFloat(half[0]), XMConvertHalfToFloat(half[1]), XMConvertHalfToFloat(half[2]) };
+		};
+
+		double areaSum = 0.0;
+		double weightedSum = 0.0;
+		for (uint32_t i = 0; i < shape.triangleCount; ++i) {
+			const auto* indices = a_mesh.rawIndexData + 3 * i;
+			if (std::max({ indices[0], indices[1], indices[2] }) >= shape.vertexCount)
+				continue;
+			const auto a = position(indices[0]);
+			const float area = 0.5f * (position(indices[1]) - a).Cross(position(indices[2]) - a).Length();
+			if (std::isfinite(area)) {
+				areaSum += area;
+				weightedSum += area * std::min(area / kFullDiffuseTriangleArea, 1.0f);
+			}
+		}
+		return areaSum > 0.0 ? static_cast<float>(weightedSum / areaSum) : 0.0f;
+	}
+
 	bool IsNearWhiteTint(const RE::NiColorA& a_color)
 	{
 		const float avg = (a_color.red + a_color.green + a_color.blue) / 3.0f;
@@ -232,12 +282,11 @@ float LightLimitFix::CalculateLightDistance(float3 a_lightPosition, float a_radi
 
 float LightLimitFix::CalculateLuminance(CachedParticleLight& light, RE::NiPoint3& point)
 {
-	// Mirrors BSLight::CalculateLuminance — keeps NPC detection identical to the GPU lighting math.
-	auto lightDirection = light.position - point;
-	float lightDist = lightDirection.Length();
-	float intensityFactor = std::clamp(lightDist / light.radius, 0.0f, 1.0f);
-	float intensityMultiplier = 1 - intensityFactor * intensityFactor;
-	return light.grey * intensityMultiplier;
+	// NPC detection uses the same fourth-power distance window as the particle shader.
+	const float distanceSq = (light.position - point).SqrLength();
+	const float window = std::clamp(1.0f - distanceSq / (light.radius * light.radius), 0.0f, 1.0f);
+	const float squared = window * window;
+	return light.grey * squared * squared;
 }
 
 void LightLimitFix::AddParticleLightLuminance(RE::NiPoint3& targetPosition, int& numHits, float& lightLevel)
@@ -348,8 +397,10 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 
 	if (billboard) {
 		bool hasVertexTint = false;
+		float diffuseWeight = 1.0f;
 		if (auto rendererData = a_pass->geometry->GetGeometryRuntimeData().rendererData) {
 			if (auto triShape = a_pass->geometry->AsTriShape()) {
+				diffuseWeight = BillboardDiffuseWeight(*triShape, *rendererData);
 				const std::uint32_t vertexSize = rendererData->vertexDesc.GetSize();
 				if (rendererData->vertexDesc.HasFlag(RE::BSGraphics::Vertex::Flags::VF_COLORS) && rendererData->rawVertexData && vertexSize > 0u) {
 					const std::uint32_t offset = rendererData->vertexDesc.GetAttributeOffset(RE::BSGraphics::Vertex::Attribute::VA_COLOR);
@@ -372,6 +423,7 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 		bool hasSiblingEmissiveTint = false;
 		const bool vertexTintLooksWhite = hasVertexTint && IsNearWhiteTint(reference.baseColor);
 		if (!hasVertexTint || vertexTintLooksWhite) {
+			const float vertexAlpha = reference.baseColor.alpha;
 			hasSiblingEmissiveTint = TryGetBillboardSiblingEmissiveTint(node, siblingEmissiveTint);
 			const bool siblingTintIsNonWhite = hasSiblingEmissiveTint && !IsNearWhiteTint(siblingEmissiveTint);
 
@@ -382,15 +434,8 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 
 			// Resolve the fallback tint from a single source so a white tint never gets re-tinted
 			// from an adjacent emissive — that double-application produces washed-out particle lights.
-			if (materialTintIsNonWhite) {
-				reference.baseColor = materialEmissiveTint;
-				reference.applyEffectMaterialTint = false;
-			} else if (siblingTintIsNonWhite) {
-				reference.baseColor = siblingEmissiveTint;
-				reference.applyEffectMaterialTint = false;
-			} else if (hasMaterialEmissiveTint) {
-				reference.baseColor = materialEmissiveTint;
-				reference.applyEffectMaterialTint = false;
+			if (materialTintIsNonWhite || (hasMaterialEmissiveTint && !siblingTintIsNonWhite)) {
+				reference.baseColor = { 1.0f, 1.0f, 1.0f, vertexAlpha };
 			} else if (hasSiblingEmissiveTint) {
 				reference.baseColor = siblingEmissiveTint;
 				reference.applyEffectMaterialTint = false;
@@ -398,7 +443,9 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 				reference.baseColor = BuildBillboardFallbackTint(config, hasGradientConfig, gradientConfig);
 				reference.applyEffectMaterialTint = true;
 			}
+			reference.baseColor.alpha = vertexAlpha;
 		}
+		reference.baseColor.alpha *= diffuseWeight;
 	}
 
 	{
@@ -457,9 +504,12 @@ bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, ParticleLightRefe
 
 	RE::NiColorA color = a_reference.baseColor;
 	if (a_reference.applyEffectMaterialTint) {
-		color.red *= material->baseColor.red * material->baseColorScale;
-		color.green *= material->baseColor.green * material->baseColorScale;
-		color.blue *= material->baseColor.blue * material->baseColorScale;
+		const float tintScale = a_reference.billboard ? 1.0f : material->baseColorScale;
+		color.red *= material->baseColor.red * tintScale;
+		color.green *= material->baseColor.green * tintScale;
+		color.blue *= material->baseColor.blue * tintScale;
+		if (a_reference.billboard)
+			color.alpha *= material->baseColorScale;
 
 		if (auto emittance = shaderProperty->emittanceColor) {
 			color.red *= emittance->red;
@@ -478,8 +528,7 @@ bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, ParticleLightRefe
 		color.green *= config.colorMult.green;
 		color.blue *= config.colorMult.blue;
 	}
-	// Stash radiusMult as alpha for the downstream cluster pass.
-	color.alpha = std::max(config.radiusMult, 0.0f);
+	color.alpha *= material->baseColor.alpha;
 
 	ParticleLightInfo info;
 	info.billboard = a_reference.billboard;
@@ -690,8 +739,8 @@ void LightLimitFix::ProcessQueuedParticleLights(eastl::vector<LightData>& lights
 			light.color = Saturation(light.color, settings.ParticleLightsSaturation);
 			Feature::ApplyPointLightColorOverrides(light.color);
 
-			light.color *= particleLight.color.alpha * settings.BillboardBrightness;
-			light.radius = particleLight.node->worldBound.radius * particleLight.radiusMult * settings.BillboardRadius * 0.5f;
+			light.fade = particleLight.color.alpha * settings.BillboardBrightness;
+			light.radius = particleLight.node->worldBound.radius * particleLight.radiusMult * settings.BillboardRadius;
 
 			auto position = particleLight.node->world.translate;
 			SetLightPosition(light, position);
