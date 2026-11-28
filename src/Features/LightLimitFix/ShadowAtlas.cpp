@@ -1032,6 +1032,13 @@ namespace ShadowCasterManager
 		return -1;
 	}
 
+	bool HasSampledShadowForOwner(const void* a_owner)
+	{
+		return s_atlas.ready && a_owner && std::ranges::any_of(s_atlas.slots, [a_owner](const SlotTile& slot) {
+			return slot.owner == a_owner && slot.tile.valid && slot.valid;
+		});
+	}
+
 	bool GetSlotTileTexels(int32_t poolSlot, AtlasTileTexels& out)
 	{
 		// RENDER-side rect: rasters land in the staged promotion tile when one
