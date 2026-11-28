@@ -38,7 +38,16 @@ void DX12Control::DrawSimpleSettings(bool developerMode)
 		settings.Mode = static_cast<int>(modeIDs[index]);
 		selectedMode.store(settings.Mode, std::memory_order_relaxed);
 	}
+	Util::AddTooltip(T("menu.dx12.mode.tooltip",
+		"Shadow offload: ray traces part of the shadow work of the lights Shadow Caster Manager picked.\n"
+		"Ray-Traced Static Shadows: also ray traces other point lights, so more lights cast shadows.\n"
+		"Raster comparison (developer mode): DX12 stays active but draws every shadow with raster.\n"
+		"\n"
+		"Actors, and anything missing from the ray-traced scene, keep raster shadows."));
 	ImGui::Checkbox(T("menu.dx12.master.enable", "Enable native DX12 features (restart required)"), &settings.Enabled);
+	Util::AddTooltip(T("menu.dx12.master.enable_tooltip",
+		"Starts the DirectX 12 layer that ray-traced shadows need. Requires a GPU with ray tracing. "
+		"Not available in VR."));
 	if (settings.Enabled != bootActive.load(std::memory_order_acquire))
 		ImGui::TextDisabled(T("menu.dx12.master.restart_boot_state", "A game restart is required; DX12 Resources retains its boot state until then."));
 	if (!IsActive())

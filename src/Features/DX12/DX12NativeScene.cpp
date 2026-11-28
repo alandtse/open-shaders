@@ -17,6 +17,7 @@
 #include "Utils/Game.h"
 #include "Utils/PointLightFlags.h"
 #include "Utils/TracyZones.h"
+#include "Utils/UI.h"
 #include <Windows.h>
 
 #include <algorithm>
@@ -31,18 +32,28 @@
 void DX12NativeScene::DrawSettings()
 {
 	const auto& control = globals::features::dx12Control;
+	const auto outdoorTooltip = [] {
+		Util::AddTooltip(T("menu.dx12.scene.outdoor_shadow_offloading_tooltip",
+			"Also ray traces shadows in exterior areas. When off, exteriors use raster shadows only."));
+	};
 	if (control.IsFullRTMode()) {
 		const char* qualities[]{ T("menu.dx12.scene.rt_quality", "Quality"), T("menu.dx12.scene.rt_performance", "Performance") };
 		int quality = fullRTQuality == DX12Native::kShadowQualityPerformance ? 1 : 0;
 		if (ImGui::Combo(T("menu.dx12.scene.shadow_quality", "Shadow quality"), &quality, qualities, int(std::size(qualities))))
 			fullRTQuality = quality == 0 ? DX12Native::kShadowQualityQuality : DX12Native::kShadowQualityPerformance;
+		Util::AddTooltip(T("menu.dx12.scene.shadow_quality_tooltip",
+			"Quality: traces half of the screen pixels each frame.\n"
+			"Performance: traces about one pixel in eight and filters more, so shadows are softer "
+			"and can trail behind movement."));
 		bool outdoor = outdoorFullRT.load(std::memory_order_relaxed);
 		if (ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoor))
 			outdoorFullRT.store(outdoor, std::memory_order_relaxed);
+		outdoorTooltip();
 	} else if (control.IsShadowOffloadMode()) {
 		bool outdoor = outdoorShadowOffloading.load(std::memory_order_relaxed);
 		if (ImGui::Checkbox(T("menu.dx12.scene.outdoor_shadow_offloading", "Enable outdoor shadow offloading (DX12 only)"), &outdoor))
 			outdoorShadowOffloading.store(outdoor, std::memory_order_relaxed);
+		outdoorTooltip();
 	}
 }
 
@@ -57,19 +68,33 @@ void DX12NativeScene::DrawDevSettings()
 	bool debugMask = DX12Native::compositeShadowDebugView.load(std::memory_order_relaxed);
 	if (ImGui::Checkbox(T("menu.dx12.scene.debug_shadow_mask", "Show ray-traced shadow mask"), &debugMask))
 		DX12Native::compositeShadowDebugView.store(debugMask, std::memory_order_relaxed);
+	Util::AddTooltip(T("menu.dx12.scene.debug_shadow_mask_tooltip",
+		"Shows ray-traced shadow visibility in grayscale. Magenta marks pixels without a matching sample."));
 	if (control.IsFullRTMode()) {
 		int unify = int(runtimeUnificationRadius.load(std::memory_order_relaxed));
 		int exclude = int(preparedExclusionRadius.load(std::memory_order_relaxed));
 		if (ImGui::SliderInt(T("menu.dx12.scene.runtime_unification_radius", "Runtime light unification radius (units)"), &unify, 0, int(DX12Native::kFullShadowRadiusMax), "%d", ImGuiSliderFlags_AlwaysClamp))
 			runtimeUnificationRadius.store(DX12Native::SanitizeFullShadowRadius(uint32_t(unify)), std::memory_order_relaxed);
+		Util::AddTooltip(T("menu.dx12.scene.runtime_unification_radius_tooltip",
+			"Live lights from the same object that are closer together than this are traced as one light. "
+			"0 keeps them separate."));
 		if (ImGui::SliderInt(T("menu.dx12.scene.prepared_exclusion_radius", "Prepared light exclusion radius (units)"), &exclude, 0, int(DX12Native::kFullShadowRadiusMax), "%d", ImGuiSliderFlags_AlwaysClamp))
 			preparedExclusionRadius.store(DX12Native::SanitizeFullShadowRadius(uint32_t(exclude)), std::memory_order_relaxed);
+		Util::AddTooltip(T("menu.dx12.scene.prepared_exclusion_radius_tooltip",
+			"A live light closer than this to a light read from the cell's data counts as that light and is "
+			"not traced twice. 0 turns the matching off."));
 		bool additive = additivePreparedEmission.load(std::memory_order_relaxed);
 		if (ImGui::Checkbox(T("menu.dx12.scene.additive_prepared_emission", "Add excluded runtime emission to prepared lights"), &additive))
 			additivePreparedEmission.store(additive, std::memory_order_relaxed);
+		Util::AddTooltip(T("menu.dx12.scene.additive_prepared_emission_tooltip",
+			"Adds the color and brightness of matched live lights to the light from the cell's data. "
+			"When off, they are dropped."));
 		int interval = int(lightObservationFrames.load(std::memory_order_relaxed));
 		if (ImGui::SliderInt(T("menu.dx12.scene.light_observation_interval", "Light observation interval (frames)"), &interval, 1, int(DX12Native::kMaxLightObservationFrames)))
 			lightObservationFrames.store(uint32_t(interval), std::memory_order_relaxed);
+		Util::AddTooltip(T("menu.dx12.scene.light_observation_interval_tooltip",
+			"Frames between reads of the scene's live lights. Higher values cost less CPU and react more "
+			"slowly to lights that appear, change or go out."));
 		std::scoped_lock lock(runtimeLightMutex);
 		const auto stats = lightWorker.GetStats();
 		ImGui::Text("%s", std::format("Light tasks: {} | Publications: {} | Unchanged: {} | Deferred: {} | Busy: {}",
@@ -80,6 +105,8 @@ void DX12NativeScene::DrawDevSettings()
 	bool value = enabled.load(std::memory_order_relaxed);
 	if (ImGui::Checkbox(T("menu.dx12.scene.debug_native_lights", "Preview native lights"), &value))
 		enabled.store(value, std::memory_order_relaxed);
+	Util::AddTooltip(T("menu.dx12.scene.debug_native_lights_tooltip",
+		"Marks on screen each light sent to ray-traced shadows."));
 }
 
 bool DX12NativeScene::WantsLightPreview(DX12::SCMNativeMode mode) const

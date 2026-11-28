@@ -15,6 +15,7 @@
 #include "Utils/Game.h"
 #include "Utils/PerfUtils.h"
 #include "Utils/TracyZones.h"
+#include "Utils/UI.h"
 
 #include <algorithm>
 #include <array>
@@ -860,9 +861,15 @@ void DX12Resources::DrawSettings()
 			ResetPreparation();
 		}
 	}
+	Util::AddTooltip(T("menu.dx12.resources.subcell_size_tooltip",
+		"Size of each square of the world prepared for ray tracing around the player. Larger squares "
+		"reach farther but take longer to prepare and use more memory. Changing this rebuilds the scene."));
 
 	if (ImGui::Checkbox(T("menu.dx12.resources.consolidate_interior", "Consolidate small interior cells"), &settings.ConsolidateInterior))
 		ResetPreparation();
+	Util::AddTooltip(T("menu.dx12.resources.consolidate_interior_tooltip",
+		"Prepares an interior that fits the loaded area once as a whole, so moving inside it does not "
+		"prepare it again. Changing this rebuilds the scene."));
 }
 
 void DX12Resources::DrawDevResourceStatus()
