@@ -55,6 +55,8 @@ namespace DX12
 		constexpr uint32_t kInteriorReuseLifetimeMs = 2000;
 		constexpr uint32_t kMaxSceneGraphDepth = 32;
 		constexpr uint32_t kTerrainOrdinalBase = 0x10000u;
+		constexpr double kExteriorCellUnits = 4096.0;
+		constexpr uint32_t kPreparationBudgetMs = 20'000;
 
 		void RecordRejection(
 			std::vector<std::pair<std::string, uint32_t>>& a_reasons, uint32_t& a_failedCount,
@@ -230,6 +232,16 @@ namespace DX12
 			return GeometryInspectResult::Accepted;
 		}
 
+		/** @brief Index of the only rendered child of a switch node; nullopt for other nodes, an out-of-range value when none is active. */
+		std::optional<uint16_t> ActiveSwitchChild(RE::NiNode& a_node)
+		{
+			auto* switchNode = a_node.AsSwitchNode();
+			if (!switchNode)
+				return std::nullopt;
+			const int32_t index = switchNode->index;
+			return index < 0 || index >= std::numeric_limits<uint16_t>::max() ? std::numeric_limits<uint16_t>::max() : uint16_t(index);
+		}
+
 		struct CaptureCache
 		{
 			using Key = std::tuple<uintptr_t, uint32_t, uint32_t, uint32_t, uint32_t>;
@@ -254,7 +266,13 @@ namespace DX12
 				return;
 			}
 			if (auto* node = a_obj->AsNode()) {
-				for (const auto& child : node->GetChildren())
+				const auto& children = node->GetChildren();
+				if (const auto active = ActiveSwitchChild(*node)) {
+					if (*active < children.size())
+						CaptureAttachedSubtree(children[*active].get(), a_ownerFormID, a_plugin, a_localID, a_nifPath, a_shapeOrdinal, a_depth + 1, a_request, a_cache);
+					return;
+				}
+				for (const auto& child : children)
 					CaptureAttachedSubtree(child.get(), a_ownerFormID, a_plugin, a_localID, a_nifPath, a_shapeOrdinal, a_depth + 1, a_request, a_cache);
 				return;
 			}
@@ -359,7 +377,13 @@ namespace DX12
 			}
 			const auto currentTransform = ComposeAffine(a_parentTransform, FromNiTransform(a_obj->local));
 			if (auto* node = a_obj->AsNode()) {
-				for (const auto& child : node->GetChildren())
+				const auto& children = node->GetChildren();
+				if (const auto active = ActiveSwitchChild(*node)) {
+					if (*active < children.size())
+						WalkDemandModelSubtree(children[*active].get(), currentTransform, a_shapeOrdinal, a_depth + 1, a_out);
+					return;
+				}
+				for (const auto& child : children)
 					WalkDemandModelSubtree(child.get(), currentTransform, a_shapeOrdinal, a_depth + 1, a_out);
 				return;
 			}
@@ -600,7 +624,9 @@ namespace DX12
 		} else {
 			request.enumerationComplete = false;
 			const auto coreWindow = SubcellExteriorCellWindow(a_key.x, a_key.y, a_size, 0);
-			const auto haloWindow = SubcellExteriorCellWindow(a_key.x, a_key.y, a_size, 1);
+			// Walk every attached cell the +/-2 subcell origin halo can reach, not just the adjacent ring.
+			const auto haloCells = int32_t(std::ceil(2.0 * double(a_size) / kExteriorCellUnits));
+			const auto haloWindow = SubcellExteriorCellWindow(a_key.x, a_key.y, a_size, haloCells);
 
 			const int64_t coreWidth = int64_t(coreWindow.maxCellX) - coreWindow.minCellX + 1;
 			const int64_t coreHeight = int64_t(coreWindow.maxCellY) - coreWindow.minCellY + 1;
@@ -826,17 +852,20 @@ namespace DX12
 		pub.rejectedLights = a_request.rejectedLights;
 		pub.hasUnattachedCells = a_request.hasUnattachedCells;
 
-		const auto canceled = [&] {
-			return a_stop.stop_requested() || generation.load(std::memory_order_acquire) != a_epoch;
+		const auto deadline = Util::QpcDeadlineAfterMs(Util::GetQpcTicks(), Util::GetQpcFrequency(), kPreparationBudgetMs);
+		const auto stopReason = [&]() -> const char* {
+			if (a_stop.stop_requested() || generation.load(std::memory_order_acquire) != a_epoch)
+				return "Preparation canceled by scene change";
+			return Util::GetQpcTicks() > deadline ? "Preparation exceeded its time budget" : nullptr;
 		};
 
 		if (a_request.interiorBatch) {
 			const auto& batch = *a_request.interiorBatch;
 			if (batch.center.scope != a_request.key.scope || batch.size != a_request.size || batch.loading != a_request.loading ||
-				a_request.worldspace || canceled())
+				a_request.worldspace || stopReason())
 				return result;
 			for (const auto& item : batch.shapes) {
-				if (canceled())
+				if (stopReason())
 					return result;
 				if (!item.bounds.MayOverlap(pub.key.x, pub.key.y, a_request.size))
 					continue;
@@ -928,8 +957,8 @@ namespace DX12
 		uint64_t rawCacheBytes = 0;
 
 		for (const auto& attached : a_request.attachedShapes) {
-			if (canceled()) {
-				result.failure = "Preparation canceled by scene change";
+			if (const auto reason = stopReason()) {
+				result.failure = reason;
 				return result;
 			}
 			if (!attached.mesh) {
@@ -965,8 +994,8 @@ namespace DX12
 		uint64_t modelCacheBytes = 0;
 
 		for (const auto& placement : a_request.unattachedPlacements) {
-			if (canceled()) {
-				result.failure = "Preparation canceled by scene change";
+			if (const auto reason = stopReason()) {
+				result.failure = reason;
 				return result;
 			}
 			std::shared_ptr<const CachedModelExtraction> extraction;
