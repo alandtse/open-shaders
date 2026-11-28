@@ -66,6 +66,7 @@ add_executable(
     test_camera_reprojection.cpp
     test_dlssg_dynamic.cpp
     test_dlssg_preset.cpp
+    test_runtimeupscalerpolicy.cpp
     test_subrect.cpp
     test_gaze_math.cpp
     test_perfutils.cpp

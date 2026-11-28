@@ -99,6 +99,17 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 	}
 }
 
+void DX12SwapChain::ReleaseD3D12Device()
+{
+	for (UINT i = 0; i < kMaxBackBuffers; i++) {
+		commandLists[i] = nullptr;
+		commandAllocators[i] = nullptr;
+	}
+	commandQueue = nullptr;
+	if (auto* device = d3d12Device.detach())
+		logger::info("[DX12SwapChain] Released unused D3D12 device ({} references remain)", device->Release());
+}
+
 void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC a_swapChainDesc)
 {
 	CreateD3D12Device(adapter);

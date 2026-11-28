@@ -99,7 +99,7 @@ public:
 	const std::string& GetRuntimeUpgradeUnavailableReason() const { return runtimeUpgradeUnavailableReason; }
 	/** @brief True if the boot setting selects the confirmed runtime upgrade. */
 	bool ShouldRequestRuntimeUpgrade() const;
-	/** @brief True if the runtime upscaler provider must handle FSR dispatch this frame. */
+	/** @brief True on AMD, or with a selected upgrade; other setups stay on the D3D11 host SDK. */
 	bool ShouldUseRuntimeUpscalerForFSR() const;
 	/** @brief Human-readable label for the frame path the runtime upscaler last dispatched through. */
 	const std::string& GetRuntimeUpscalerLastFramePathLabel() const;
@@ -219,6 +219,9 @@ private:
 	std::string runtimeUpscalerProviderMatchedVersionName;
 
 	bool CanUseRuntimeUpscalerPath();
+	/** @brief Ignores the failure latch, so a failed upgrade keeps FSR on the runtime provider for its FSR3 fallback. */
+	bool IsRuntimeUpgradeSelected() const;
+	void QueryAndConfirmRuntimeUpgrade(uint32_t a_displayWidth, uint32_t a_displayHeight);
 	// True if an earlier eye already published a runtime-provider (upgrade/runtime-FSR3) frame
 	// this same frame index -- a later eye must not fall through to the host FSR3 SDK, which
 	// would present a mixed-provider stereo pair. See UpscaleRegion's failure paths.
