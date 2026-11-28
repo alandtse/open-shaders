@@ -77,7 +77,7 @@ namespace
 		return IsShortBranch(bytes[0]) || IsNearConditionalBranch(bytes[0], bytes[1]);
 	}
 
-	/** @brief Disables the vanilla LOD water and flow map paths that Unified Water supersedes. Irreversible, so it must only run once the mesh is validated. */
+	/** @brief Disables the vanilla LOD water and flow map paths that Unified Water supersedes. Irreversible, so it must only run once water resources are validated. */
 	bool DisableVanillaWaterLOD()
 	{
 		// DataLoaded can run more than once, and re-patching a patched branch no longer matches either encoding
@@ -204,18 +204,27 @@ void UnifiedWater::DrawDebugSection()
 	if (!section)
 		return;
 
-	if (Util::Button(T(TKEY("regenerate_flowmap"), "Regenerate Flowmap")) && flowmap) {
+	if (Util::Button(T(TKEY("regenerate_flowmap"), "Regenerate Flowmap")) && IsWaterDataReady()) {
 		if (flowmap->RegenerateAndLoadFlowmap())
 			SetFlowmapTex();
 	}
 
-	if (Util::Button(T(TKEY("regenerate_caches"), "Regenerate Caches")) && waterCache)
+	if (Util::Button(T(TKEY("regenerate_caches"), "Regenerate Caches")) && IsWaterDataReady())
 		waterCache->RegenerateCaches();
 }
 
 void UnifiedWater::DrawOverlay()
 {
-	if (!waterCache || (!waterCache->IsBuildRunning() && !waterCache->HasBuildFailed()))
+	CacheBuildState build;
+	if (IsWaterDataReady()) {
+		build.running = waterCache->IsBuildRunning();
+		build.failed = waterCache->HasBuildFailed();
+		build.progress = waterCache->GetBuildProgressSnapshot();
+	} else {
+		std::scoped_lock lock(stagedCacheBuildMutex);
+		build = stagedCacheBuild;
+	}
+	if (!build.running && !build.failed)
 		return;
 
 	const float scale = Util::GetUIScale();
@@ -238,13 +247,13 @@ void UnifiedWater::DrawOverlay()
 		}
 	}
 
-	const auto snapshot = waterCache->GetBuildProgressSnapshot();
+	const auto& snapshot = build.progress;
 
 	auto& themeSettings = Menu::GetSingleton()->GetTheme();
 
-	if (waterCache->IsBuildRunning()) {
+	if (build.running) {
 		auto progressTitle = T(TKEY("generating_water_cache"), "Generating Water Cache:");
-		auto percent = static_cast<float>(snapshot.completed) / static_cast<float>(snapshot.total);
+		auto percent = snapshot.total ? static_cast<float>(snapshot.completed) / static_cast<float>(snapshot.total) : 0.0f;
 		auto progressOverlay = fmt::format("{}/{} ({:2.1f}%)", snapshot.completed, snapshot.total, 100 * percent);
 
 		ImGui::SetNextWindowPos(ImVec2(pos, pos + vOffset));
@@ -256,7 +265,7 @@ void UnifiedWater::DrawOverlay()
 		ImGui::ProgressBar(percent, ImVec2(0.0f, 0.0f), progressOverlay.c_str());
 
 		ImGui::End();
-	} else if (waterCache->HasBuildFailed()) {
+	} else if (build.failed) {
 		ImGui::SetNextWindowPos(ImVec2(pos, pos + vOffset));
 		if (!ImGui::Begin("UWCacheCreationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
 			ImGui::End();
@@ -276,6 +285,12 @@ bool UnifiedWater::IsOverlayVisible() const
 
 void UnifiedWater::DataLoaded()
 {
+	if (IsWaterDataReady())
+		return;
+	{
+		std::scoped_lock lock(stagedCacheBuildMutex);
+		stagedCacheBuild = {};
+	}
 	auto args = RE::BSModelDB::DBTraits::ArgsType();
 	args.unk8 = false;
 	args.unkA = false;
@@ -301,33 +316,48 @@ void UnifiedWater::DataLoaded()
 		fail("Water mesh does not contain valid TriShape");
 		return;
 	}
-	waterMesh = RE::NiPointer(waterShape);
+	auto loadedWaterMesh = RE::NiPointer(waterShape);
 	logger::debug("[Unified Water] Water mesh loaded");
+	auto loadedFlowmap = std::make_unique<Flowmap>();
+	auto loadedWaterCache = std::make_unique<WaterCache>();
+	uint64_t loadOrderHash = 0;
+	const bool loadOrderChanged = LoadOrderChanged(loadOrderHash);
+	if (loadOrderChanged)
+		logger::info("[Unified Water] Load order or plugin version changed, regenerating flowmap and caches");
+	const bool flowmapLoaded = loadOrderChanged ? loadedFlowmap->RegenerateAndLoadFlowmap() : loadedFlowmap->LoadOrGenerateFlowmap();
+	if (!flowmapLoaded || !loadedFlowmap->IsValid() || !gFlowMapSourceTex || !gFlowMapSize ||
+		!gDisplacementMeshFlowCellOffset || !gDisplacementCellTexCoordOffset || !gDisplacementMeshPos) {
+		fail("Flowmap initialization failed");
+		return;
+	}
+	const bool cachesStarted = loadOrderChanged ? loadedWaterCache->RegenerateCaches() : loadedWaterCache->LoadOrGenerateCaches();
+	const auto updateBuildProgress = [&] {
+		CacheBuildState build;
+		build.running = loadedWaterCache->IsBuildRunning();
+		build.failed = loadedWaterCache->HasBuildFailed();
+		build.progress = loadedWaterCache->GetBuildProgressSnapshot();
+		std::scoped_lock lock(stagedCacheBuildMutex);
+		stagedCacheBuild = build;
+		return build.running;
+	};
+	while (updateBuildProgress())
+		std::this_thread::sleep_for(100ms);
+	if (!cachesStarted || loadedWaterCache->HasBuildFailed()) {
+		fail("Water cache initialization failed");
+		return;
+	}
 	if (!DisableVanillaWaterLOD()) {
 		fail("Could not disable vanilla water LOD");
 		return;
 	}
-
-	flowmap = new Flowmap();
-	waterCache = new WaterCache();
-
-	if (LoadOrderChanged()) {
-		logger::info("[Unified Water] Load order or plugin version changed, regenerating flowmap and caches");
-
-		if (flowmap->RegenerateAndLoadFlowmap())
-			SetFlowmapTex();
-
-		waterCache->RegenerateCaches();
-	} else {
-		if (flowmap->LoadOrGenerateFlowmap())
-			SetFlowmapTex();
-
-		waterCache->LoadOrGenerateCaches();
-	}
-
-	while (waterCache->IsBuildRunning()) {
-		std::this_thread::sleep_for(100ms);
-	}
+	waterMesh = std::move(loadedWaterMesh);
+	flowmap = loadedFlowmap.release();
+	waterCache = loadedWaterCache.release();
+	SetFlowmapTex();
+	failedLoadedMessage.clear();
+	waterDataReady.store(true, std::memory_order_release);
+	if (loadOrderChanged)
+		PersistLoadOrderHash(loadOrderHash);
 
 	if (!MenuOpenCloseEventHandler::Register()) {
 		logger::warn("[Unified Water] MenuOpenCloseEventHandler registration failed");
@@ -442,13 +472,13 @@ namespace
 	}
 }
 
-bool UnifiedWater::LoadOrderChanged()
+bool UnifiedWater::LoadOrderChanged(uint64_t& hash)
 {
 	auto* dataHandler = RE::TESDataHandler::GetSingleton();
 	if (!dataHandler)
 		return false;
 
-	uint64_t hash = Util::kFnv1a64Basis;
+	hash = Util::kFnv1a64Basis;
 
 	auto addToHash = [&](const RE::TESFile* file) {
 		if (!file || file->fileName[0] == '\0')
@@ -482,13 +512,15 @@ bool UnifiedWater::LoadOrderChanged()
 	const bool changed = hash != existingHash;
 	logger::debug("[Unified Water] Load order hash: computed={:#x} persisted={:#x} changed={}", hash, existingHash, changed);
 
-	if (changed) {
-		std::error_code ec;
-		std::filesystem::create_directories(path.parent_path(), ec);
-		WriteHashFile(path, hash);
-	}
-
 	return changed;
+}
+
+void UnifiedWater::PersistLoadOrderHash(uint64_t hash)
+{
+	const auto path = Util::PathHelpers::GetCommunityShaderPath() / "UWLoadOrder.hash";
+	std::error_code ec;
+	std::filesystem::create_directories(path.parent_path(), ec);
+	WriteHashFile(path, hash);
 }
 
 void UnifiedWater::SetFlowmapTex() const
@@ -580,7 +612,7 @@ int32_t UnifiedWater::BSWaterShaderMaterial_ComputeCRC32::thunk(RE::BSWaterShade
 
 bool UnifiedWater::IsWaterDataReady() const
 {
-	return waterCache && waterMesh;
+	return waterDataReady.load(std::memory_order_acquire);
 }
 
 bool UnifiedWater::IsExteriorWorldspaceActive() const
@@ -591,6 +623,8 @@ bool UnifiedWater::IsExteriorWorldspaceActive() const
 
 void UnifiedWater::UpdateWaterLODCull() const
 {
+	if (!IsWaterDataReady())
+		return;
 	// Only hide UW's generated LOD root, preserving child tile cull flags
 	if (gWaterLOD && *gWaterLOD) {
 		const bool cull = !IsExteriorWorldspaceActive() && !mapMenuOpen.load(std::memory_order_acquire);
@@ -832,6 +866,10 @@ void UnifiedWater::BGSTerrainBlock_Detach::thunk(RE::BGSTerrainBlock* block)
 	if (!block) {
 		return;
 	}
+	if (!globals::features::unifiedWater.IsWaterDataReady()) {
+		func(block);
+		return;
+	}
 
 	RE::NiPointer<RE::BSMultiBoundNode> water(block->water);
 	const bool wasWaterAttached = water && block->waterAttached;
@@ -869,7 +907,7 @@ void UnifiedWater::BSWaterShader_SetupGeometry::thunk(RE::BSShader* waterShader,
 {
 	auto& singleton = globals::features::unifiedWater;
 
-	if (singleton.IsExteriorWorldspaceActive() && singleton.flowmap && pass && pass->geometry) {
+	if (singleton.IsWaterDataReady() && singleton.IsExteriorWorldspaceActive() && pass && pass->geometry) {
 		// ObjectUV.xyz below, xy contains width and height, z contains mesh scale
 		// Previously flowmap size was in x, yz contained flowmap offset for water displacement mesh
 		*singleton.gFlowMapSize = singleton.flowmap->GetWidth();                                            // ObjectUV.x
@@ -900,7 +938,7 @@ void UnifiedWater::TESWaterSystem_UpdateDisplacementMeshPosition::thunk(RE::TESW
 	const auto& singleton = globals::features::unifiedWater;
 	singleton.UpdateWaterLODCull();
 
-	if (!singleton.flowmap || !singleton.IsExteriorWorldspaceActive())
+	if (!singleton.IsWaterDataReady() || !singleton.IsExteriorWorldspaceActive())
 		return;
 
 	const float posX = singleton.gDisplacementMeshPos->x / 4096.0f;

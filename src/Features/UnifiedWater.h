@@ -4,6 +4,7 @@
 #include "UnifiedWater/WaterCache.h"
 
 #include <atomic>
+#include <mutex>
 
 /** @brief Replaces distant water tiles with LOD0 water to eliminate water LOD mismatch. */
 struct UnifiedWater : OverlayFeature
@@ -126,7 +127,26 @@ struct UnifiedWater : OverlayFeature
 	/** @brief Installs engine hooks for water mesh replacement and worldspace handling. */
 	virtual void PostPostLoad() override;
 
+	/** @brief Shader readiness published after water resources initialize. */
+	struct alignas(16) RuntimeData
+	{
+		uint32_t active = 0;
+		uint32_t pad[3]{};
+	};
+	static_assert(sizeof(RuntimeData) == 16);
+	/** @brief Supplies readiness to both shader stages without changing compile defines. */
+	RuntimeData GetRuntimeData() const { return { loaded && IsWaterDataReady() ? 1u : 0u }; }
+
 private:
+	std::atomic_bool waterDataReady{ false };
+	struct CacheBuildState
+	{
+		WaterCache::BuildProgressSnapshot progress{};
+		bool running = false;
+		bool failed = false;
+	};
+	std::mutex stagedCacheBuildMutex;
+	CacheBuildState stagedCacheBuild;
 	RE::NiPointer<RE::BSTriShape> waterMesh;
 	Flowmap* flowmap = nullptr;
 	WaterCache* waterCache = nullptr;
@@ -142,9 +162,10 @@ private:
 	std::atomic_bool mapMenuOpen{ false };
 
 	void SetFlowmapTex() const;
-	/** @brief Returns whether the water mesh and cache built in DataLoaded are available; hooks installed in PostPostLoad run before it and survive its failure paths. */
+	/** @brief Returns whether DataLoaded published validated water resources for hooks and shaders. */
 	bool IsWaterDataReady() const;
 	bool IsExteriorWorldspaceActive() const;
 	void UpdateWaterLODCull() const;
-	static bool LoadOrderChanged();
+	static bool LoadOrderChanged(uint64_t& hash);
+	static void PersistLoadOrderHash(uint64_t hash);
 };

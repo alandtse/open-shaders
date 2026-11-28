@@ -89,6 +89,7 @@ PS_OUTPUT main(PS_INPUT input)
 #	include "Common/ReverseZ.hlsli"
 #	include "Common/Shading.hlsli"
 #	include "Common/Color.hlsli"
+#	include "Common/WaterRefraction.hlsli"
 
 #	define WATER
 
@@ -101,6 +102,15 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 
 #	include "Common/SharedData.hlsli"
+
+bool UseUnifiedWater()
+{
+#	if defined(UNIFIED_WATER)
+	return SharedData::unifiedWaterRuntime.x != 0;
+#	else
+	return false;
+#	endif
+}
 
 #	if defined(VSHADER)
 struct VS_INPUT
@@ -131,9 +141,7 @@ struct VS_OUTPUT
 {
 #	if defined(SPECULAR) || defined(UNDERWATER)
 	float4 HPosition: SV_POSITION0;
-#		if !defined(UNIFIED_WATER)
 	float4 FogParam: COLOR0;
-#		endif
 	float4 WPosition: TEXCOORD0;
 	float4 TexCoord1: TEXCOORD1;
 	float4 TexCoord2: TEXCOORD2;
@@ -246,11 +254,9 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.PreviousWorldPosition = mul(PreviousWorld[eyeIndex], inputPosition);
 #		else
 
-#			if !defined(UNIFIED_WATER)
 	float fogDistanceFactor = min(VSFogFarColor.w, pow(saturate(length(FrameBuffer::ToStandardClip(worldViewPos, reverseProjection)) * VSFogParam.y - VSFogParam.x), NormalsScale.w));
 	vsout.FogParam.xyz = lerp(VSFogNearColor.xyz, VSFogFarColor.xyz, fogDistanceFactor);
 	vsout.FogParam.w = fogDistanceFactor;
-#			endif
 
 	vsout.WPosition.xyz = worldPos.xyz;
 	vsout.WPosition.w = length(worldPos.xyz);
@@ -314,26 +320,32 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.TexCoord3 = 0.0;
 #					elif defined(WADING)
 #						if defined(UNIFIED_WATER)
-	float2 wadingUV = (input.TexCoord0.xy - 0.5f) * 0.5f;
-	vsout.TexCoord2.zw = (CellTexCoordOffset.xy + wadingUV) / ObjectUV.xy;
-	vsout.TexCoord3.xy = CellTexCoordOffset.zw + wadingUV;
-#						else
-	vsout.TexCoord2.zw = ((-0.5 + input.TexCoord0.xy) * 0.1 + CellTexCoordOffset.xy) +
-	                     float2(CellTexCoordOffset.z, -CellTexCoordOffset.w + ObjectUV.x) / ObjectUV.xx;
-	vsout.TexCoord3.xy = -0.25 + (input.TexCoord0.xy * 0.5 + ObjectUV.yz);
+	if (UseUnifiedWater()) {
+		float2 wadingUV = (input.TexCoord0.xy - 0.5f) * 0.5f;
+		vsout.TexCoord2.zw = (CellTexCoordOffset.xy + wadingUV) / ObjectUV.xy;
+		vsout.TexCoord3.xy = CellTexCoordOffset.zw + wadingUV;
+	} else
 #						endif
+	{
+		vsout.TexCoord2.zw = ((-0.5 + input.TexCoord0.xy) * 0.1 + CellTexCoordOffset.xy) +
+		                     float2(CellTexCoordOffset.z, -CellTexCoordOffset.w + ObjectUV.x) / ObjectUV.xx;
+		vsout.TexCoord3.xy = -0.25 + (input.TexCoord0.xy * 0.5 + ObjectUV.yz);
+	}
 	vsout.TexCoord3.zw = input.TexCoord0.xy;
 #					elif (defined(REFRACTIONS) || NUM_SPECULAR_LIGHTS == 0 || defined(BLEND_NORMALS))
 #						if defined(UNIFIED_WATER)
-	float2 dims = float2(ObjectUV.x, ObjectUV.y);
-	vsout.TexCoord2.zw = (CellTexCoordOffset.xy + scaledUV) / dims;
-	vsout.TexCoord3.xy = CellTexCoordOffset.zw + scaledUV;
-	vsout.TexCoord3.zw = scaledUV;
-#						else
-	vsout.TexCoord2.zw = (CellTexCoordOffset.xy + input.TexCoord0.xy) / ObjectUV.xx;
-	vsout.TexCoord3.xy = CellTexCoordOffset.zw + input.TexCoord0.xy;
-	vsout.TexCoord3.zw = input.TexCoord0.xy;
+	if (UseUnifiedWater()) {
+		float2 dims = float2(ObjectUV.x, ObjectUV.y);
+		vsout.TexCoord2.zw = (CellTexCoordOffset.xy + scaledUV) / dims;
+		vsout.TexCoord3.xy = CellTexCoordOffset.zw + scaledUV;
+		vsout.TexCoord3.zw = scaledUV;
+	} else
 #						endif
+	{
+		vsout.TexCoord2.zw = (CellTexCoordOffset.xy + input.TexCoord0.xy) / ObjectUV.xx;
+		vsout.TexCoord3.xy = CellTexCoordOffset.zw + input.TexCoord0.xy;
+		vsout.TexCoord3.zw = input.TexCoord0.xy;
+	}
 #					endif
 	vsout.TexCoord4 = ObjectUV.xy;
 #				else
@@ -747,7 +759,7 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 
 #			if defined(FLOWMAP)
 #				if defined(UNIFIED_WATER)
-	float2 flowmapDimensions = input.TexCoord4.xy;
+	float2 flowmapDimensions = UseUnifiedWater() ? input.TexCoord4.xy : input.TexCoord4.xx;
 #				else
 	float2 flowmapDimensions = input.TexCoord4.xx;
 #				endif
@@ -1021,6 +1033,17 @@ struct DiffuseOutput
 	float3 refractedViewDirection;
 };
 
+DiffuseOutput GetWaterDiffuseColorWithoutRefraction(float3 normal, float3 viewDirection, float fresnel)
+{
+	DiffuseOutput output = (DiffuseOutput)0;
+	output.refractionColor = lerp(Color::Water(ShallowColor.xyz), Color::Water(DeepColor.xyz), fresnel) * GetLdotN(normal);
+	output.refractionDiffuseColor = output.refractionColor;
+	output.depth = 1;
+	output.refractionMul = 1;
+	output.refractedViewDirection = viewDirection;
+	return output;
+}
+
 DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection, inout float4 distanceMul, float refractionsDepthFactor, float fresnel, uint eyeIndex, float3 viewPosition, float depth)
 {
 #			if defined(REFRACTIONS)
@@ -1032,15 +1055,12 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 	RefractionTex.GetDimensions(refractionDimensions.x, refractionDimensions.y);
 	float2 refractionRenderSize = float2(refractionDimensions) * FrameBuffer::DynamicResolutionParams1.xy;
 	float2 depthRenderSize = FrameBuffer::DynamicResolutionParams1.xy / VPOSOffset.xy;
-	float2 eyeMinUV = Stereo::ConvertToStereoUV(float2(0, 0), eyeIndex);
-	float2 eyeMaxUV = Stereo::ConvertToStereoUV(float2(1, 1), eyeIndex);
-	float2 refractionMinUV = max(
-		(floor(eyeMinUV * refractionRenderSize) + 0.5) / refractionRenderSize,
-		(floor(eyeMinUV * depthRenderSize) + 0.5) / depthRenderSize);
-	float2 refractionMaxUV = min(
-		(floor(eyeMaxUV * refractionRenderSize) - 0.5) / refractionRenderSize,
-		(floor(eyeMaxUV * depthRenderSize) - 0.5) / depthRenderSize);
-	refractionUvRaw = clamp(refractionUvRaw, refractionMinUV, refractionMaxUV);
+	float2 refractionMinUV = 0.0;
+	float2 refractionMaxUV = 0.0;
+	[flatten] if (!WaterRefraction::TryGetUVBounds(refractionRenderSize, depthRenderSize, eyeIndex, refractionMinUV, refractionMaxUV)) return GetWaterDiffuseColorWithoutRefraction(normal, viewDirection, fresnel);
+
+	float2 fallbackRefractionUV = FrameBuffer::DynamicResolutionParams2.xy * input.HPosition.xy * VPOSOffset.xy + VPOSOffset.zw;  // This value is already stereo converted for VR
+	refractionUvRaw = WaterRefraction::ClampUV(refractionUvRaw, fallbackRefractionUV, refractionMinUV, refractionMaxUV);
 
 #				if defined(VR)
 	float2 refractionUvRawNoStereo = Stereo::ConvertFromStereoUV(refractionUvRaw, eyeIndex, 1);
@@ -1053,7 +1073,6 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 
 #				if defined(DEPTH) && !defined(VERTEX_ALPHA_DEPTH)
 	float refractionDepth = GetScreenDepthWater(refractionScreenPosition);
-	depth = refractionDepth;
 #					if !defined(VR)
 	float refractionDepthMul = length(float3((((VPOSOffset.zw + refractionUvRaw) * 2 - 1)) * refractionDepth / ProjData.xy, refractionDepth));
 #					else
@@ -1065,28 +1084,40 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 
 	float refractionPlaneMul = (1 - ReflectPlane[eyeIndex].w / refractionViewSurfaceAngle);
 
-	if (refractionPlaneMul < 0.0) {
-		refractionUvRaw = FrameBuffer::DynamicResolutionParams2.xy * input.HPosition.xy * VPOSOffset.xy + VPOSOffset.zw;  // This value is already stereo converted for VR
-	} else {
-		float muddiness = SharedData::enbSettings.EnableWater ? SharedData::enbSettings.WaterMuddiness : 1.0;
-		distanceMul = saturate(float4(1, muddiness, 1, 1) * refractionPlaneMul * float4(length(refractionDepthAdjustedViewDirection).xx, abs(refractionViewSurfaceAngle).xx) / FogParam.z);
+	float muddiness = SharedData::enbSettings.EnableWater ? SharedData::enbSettings.WaterMuddiness : 1.0;
+	float4 candidateDistanceMul = float4(1, muddiness, 1, 1) * refractionPlaneMul *
+	                              float4(length(refractionDepthAdjustedViewDirection).xx, abs(refractionViewSurfaceAngle).xx) / FogParam.z;
+	bool validRefraction = WaterFinite::IsFinite(refractionDepth) && WaterFinite::IsFinite(refractionPlaneMul) &&
+	                       refractionPlaneMul >= 0.0 && all(WaterFinite::IsFinite(candidateDistanceMul));
 
+	if (validRefraction) {
+		float rawRefractionDepth = DepthTex.Load(float3(refractionScreenPosition, 0)).x;
 #					if defined(VR)
-		refractionWorldPosition = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], float4((refractionUvRawNoStereo * 2 - 1), DepthTex.Load(float3(refractionScreenPosition, 0)).x, 1));
+		float4 candidateWorldPosition = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], float4((refractionUvRawNoStereo * 2 - 1), rawRefractionDepth, 1));
 #					else
-		refractionWorldPosition = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], float4((refractionUvRaw * 2 - 1) * float2(1, -1), DepthTex.Load(float3(refractionScreenPosition, 0)).x, 1));
+		float4 candidateWorldPosition = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], float4((refractionUvRaw * 2 - 1) * float2(1, -1), rawRefractionDepth, 1));
 #					endif
-		refractionWorldPosition.xyz /= refractionWorldPosition.w;
-	}
-
+		validRefraction = all(WaterFinite::IsFinite(candidateWorldPosition)) && abs(candidateWorldPosition.w) > 1e-6;
+		if (validRefraction) {
+			float3 candidatePosition = candidateWorldPosition.xyz / candidateWorldPosition.w;
+			validRefraction = all(WaterFinite::IsFinite(candidatePosition));
+			if (validRefraction) {
+				depth = refractionDepth;
+				distanceMul = saturate(candidateDistanceMul);
+				refractionWorldPosition = float4(candidatePosition, 1);
 #					if defined(HORIZON_FIX)
-	if (HorizonFix::IsEmptyDepth(DepthTex.Load(float3(refractionScreenPosition, 0)).x))
-		distanceMul = 1.0.xxxx;
+				if (HorizonFix::IsEmptyDepth(rawRefractionDepth))
+					distanceMul = 1.0.xxxx;
 #					endif
+			}
+		}
+	}
+	if (!validRefraction)
+		refractionUvRaw = fallbackRefractionUV;
 #				endif
 
-	float2 refractionUV = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(
-		clamp(refractionUvRaw, refractionMinUV, refractionMaxUV));
+	float2 refractionUV = FrameBuffer::DynamicResolutionParams1.xy *
+	                      WaterRefraction::ClampUV(refractionUvRaw, fallbackRefractionUV, refractionMinUV, refractionMaxUV);
 	float3 refractionColor = RefractionTex.Sample(RefractionSampler, refractionUV).xyz;
 	if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
 		refractionColor = Color::SceneGammaToLinear(refractionColor);
@@ -1113,21 +1144,16 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 		refractionDiffuseColor = lerp(Color::Water(ShallowColor.xyz), Color::Water(DeepColor.xyz), distanceMul.y);
 	}
 
-	DiffuseOutput output;
+	DiffuseOutput output = (DiffuseOutput)0;
 	output.refractionColor = refractionColor;
 	output.refractionDiffuseColor = refractionDiffuseColor;
 	output.depth = depth;
 	output.refractionMul = saturate(refractionMul * SharedData::csUtilitySettings.waterMuddiness);
-	output.refractedViewDirection = normalize(refractionWorldPosition.xyz - input.WPosition.xyz);
+	float3 refractedDelta = refractionWorldPosition.xyz - input.WPosition.xyz;
+	output.refractedViewDirection = all(WaterFinite::IsFinite(refractedDelta)) && dot(refractedDelta, refractedDelta) > 1e-6 ? normalize(refractedDelta) : viewDirection;
 	return output;
 #			else
-	DiffuseOutput output;
-	output.refractionColor = lerp(Color::Water(ShallowColor.xyz), Color::Water(DeepColor.xyz), fresnel) * GetLdotN(normal);
-	output.refractionDiffuseColor = output.refractionColor;
-	output.depth = 1;
-	output.refractionMul = 1;
-	output.refractedViewDirection = viewDirection;
-	return output;
+	return GetWaterDiffuseColorWithoutRefraction(normal, viewDirection, fresnel);
 #			endif
 }
 
@@ -1176,7 +1202,8 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 distanceMul = saturate(lerp(VarAmounts.z, 1, -(distanceFactor - 1))).xxxx;
 	float distanceBlendFactor = distanceFactor;
 #			if defined(UNIFIED_WATER)
-	distanceBlendFactor = 1.0f;
+	if (UseUnifiedWater())
+		distanceBlendFactor = 1.0f;
 #			endif
 
 	bool isSpecular = false;
@@ -1449,12 +1476,13 @@ PS_OUTPUT main(PS_INPUT input)
 	float specularFraction = lerp(1, fresnel * surfaceMul, distanceBlendFactor);
 	float3 finalColorPreFog = lerp(diffuseColor, specularColor, specularFraction) + sunColor * sunMul;
 
-#						if !defined(UNIFIED_WATER)
 	float fogDistanceFactor = input.FogParam.w;
 	float3 fogColor = Color::Fog(input.FogParam.xyz);
-#						else
-	float fogDistanceFactor = min(FogFarColor.w, pow(saturate(length(input.WPosition.xyz) * FogParam.y - FogParam.x), FresnelRI.y));
-	float3 fogColor = Color::Fog(lerp(FogNearColor.xyz, FogFarColor.xyz, fogDistanceFactor));
+#						if defined(UNIFIED_WATER)
+	if (UseUnifiedWater()) {
+		fogDistanceFactor = min(FogFarColor.w, pow(saturate(length(input.WPosition.xyz) * FogParam.y - FogParam.x), FresnelRI.y));
+		fogColor = Color::Fog(lerp(FogNearColor.xyz, FogFarColor.xyz, fogDistanceFactor));
+	}
 #						endif
 
 #						if defined(IBL)
@@ -1505,12 +1533,13 @@ PS_OUTPUT main(PS_INPUT input)
 		finalColorPreFog = lerp(diffuseOutput.refractionDiffuseColor, specularColor, specularFraction) + sunColor * depthControl.w;
 	}
 
-#						if !defined(UNIFIED_WATER)
 	float fogDistanceFactor = input.FogParam.w;
 	float3 preFogColor = Color::Fog(input.FogParam.xyz);
-#						else
-	float fogDistanceFactor = min(FogFarColor.w, pow(saturate(length(input.WPosition.xyz) * FogParam.y - FogParam.x), FresnelRI.y));
-	float3 preFogColor = Color::Fog(lerp(FogNearColor.xyz, FogFarColor.xyz, fogDistanceFactor));
+#						if defined(UNIFIED_WATER)
+	if (UseUnifiedWater()) {
+		fogDistanceFactor = min(FogFarColor.w, pow(saturate(length(input.WPosition.xyz) * FogParam.y - FogParam.x), FresnelRI.y));
+		preFogColor = Color::Fog(lerp(FogNearColor.xyz, FogFarColor.xyz, fogDistanceFactor));
+	}
 #						endif
 
 #						if defined(IBL)

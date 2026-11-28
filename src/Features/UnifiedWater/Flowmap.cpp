@@ -1,34 +1,31 @@
 ﻿#include "Flowmap.h"
+#include "FlowmapLayout.h"
 
 #include "Utils/D3D.h"
+#include "Utils/StringUtils.h"
 #include <DDSTextureLoader.h>
 #include <DirectXTex.h>
+#include <array>
 #include <charconv>
+#include <sstream>
+
+bool Flowmap::IsValid() const
+{
+	return width > 0 && height > 0 && flowmapTex && flowmapTex->rendererTexture &&
+	       flowmapTex->rendererTexture->texture && flowmapTex->rendererTexture->resourceView;
+}
 
 bool Flowmap::TryGetFlowmap(RE::NiPointer<RE::NiSourceTexture>& outFlowmapTex) const
 {
-	if (!flowmapTex || !flowmapTex->rendererTexture || !flowmapTex->rendererTexture->texture || !flowmapTex->rendererTexture->resourceView)
+	if (!IsValid())
 		return false;
 
 	outFlowmapTex = this->flowmapTex;
 	return true;
 }
 
-void Flowmap::Reset()
-{
-	flowmapTex = nullptr;
-	width = 0;
-	height = 0;
-	invWidth = 0.0f;
-	invHeight = 0.0f;
-	offsetX = 0;
-	offsetY = 0;
-}
-
 bool Flowmap::LoadOrGenerateFlowmap(bool useMips)
 {
-	Reset();
-
 	if (!LoadFlowmap()) {
 		logger::info("[Unified Water] [Flowmap] Could not load flowmap - regenerating...");
 		return RegenerateAndLoadFlowmap(useMips);
@@ -39,129 +36,159 @@ bool Flowmap::LoadOrGenerateFlowmap(bool useMips)
 
 bool Flowmap::RegenerateAndLoadFlowmap(bool useMips)
 {
-	Reset();
-
-	namespace fs = std::filesystem;
-	const fs::path dir = Util::PathHelpers::GetDataPath() / "textures" / "water" / "flowmaps";
-
-	std::error_code ec;
-	fs::create_directories(dir, ec);
-
-	if (!fs::exists(dir))
-		return false;
-
-	for (const auto& entry : fs::directory_iterator(dir, ec)) {
-		if (ec)
-			break;
-		if (!entry.is_regular_file())
-			continue;
-
-		const auto& path = entry.path();
-		if (path.extension() != ".dds")
-			continue;
-
-		std::error_code rec;
-		fs::remove(path, rec);
-		if (rec)
-			logger::warn("[Unified Water] [Flowmap] Failed to remove '{}': {}", path.string(), rec.message());
-	}
-
-	if (!GenerateFlowmap(useMips)) {
+	std::filesystem::path generatedPath;
+	if (!GenerateFlowmap(useMips, generatedPath)) {
 		logger::error("[Unified Water] [Flowmap] Failed to generate flowmap");
 		return false;
 	}
 
-	if (!LoadFlowmap()) {
-		logger::error("[Unified Water] [Flowmap] Failed to load flowmap after generation");
-		Reset();
+	if (!LoadFlowmap(generatedPath)) {
+		logger::error("[Unified Water] [Flowmap] Failed to load generated flowmap '{}'; retaining the previous map", generatedPath.string());
 		return false;
 	}
 
+	std::vector<std::filesystem::path> cachedPaths;
+	if (FindFlowmaps(cachedPaths)) {
+		const auto generatedName = Util::ToLowerAscii(generatedPath.filename().string());
+		for (const auto& path : cachedPaths) {
+			if (Util::ToLowerAscii(path.filename().string()) == generatedName)
+				continue;
+			std::error_code ec;
+			std::filesystem::remove(path, ec);
+			if (ec)
+				logger::warn("[Unified Water] [Flowmap] Cannot remove obsolete cache '{}': {}", path.string(), ec.message());
+		}
+	}
 	logger::debug("[Unified Water] [Flowmap] Flowmap regenerated and loaded");
+	return true;
+}
+
+bool Flowmap::FindFlowmaps(std::vector<std::filesystem::path>& paths)
+{
+	namespace fs = std::filesystem;
+	const fs::path dir = Util::PathHelpers::GetDataPath() / "textures" / "water" / "flowmaps";
+	std::error_code ec;
+	fs::directory_iterator entry(dir, ec);
+	const fs::directory_iterator end;
+	for (; !ec && entry != end; entry.increment(ec)) {
+		const auto name = Util::ToLowerAscii(entry->path().filename().string());
+		if (!name.starts_with("tamriel-flowmap.") || !name.ends_with(".dds"))
+			continue;
+		if (entry->is_regular_file(ec))
+			paths.push_back(entry->path());
+		if (ec)
+			break;
+	}
+	if (ec) {
+		logger::warn("[Unified Water] [Flowmap] Cannot enumerate '{}': {}", dir.string(), ec.message());
+		return false;
+	}
 	return true;
 }
 
 bool Flowmap::LoadFlowmap()
 {
-	namespace fs = std::filesystem;
-
-	const fs::path dir = Util::PathHelpers::GetDataPath() / "textures" / "water" / "flowmaps";
-
-	fs::directory_entry file;
-
-	if (fs::exists(dir) && fs::is_directory(dir)) {
-		for (const auto& entry : fs::directory_iterator(dir)) {
-			if (!entry.is_regular_file()) {
-				continue;
-			}
-
-			const std::wstring name = entry.path().filename().wstring();
-			if (name.rfind(L"Tamriel-Flowmap", 0) == 0) {
-				file = entry;
-				break;
-			}
-		}
-	}
-
-	if (file.path().empty()) {
-		logger::debug("[Unified Water] [Flowmap] No flowmap found");
+	std::vector<std::filesystem::path> candidates;
+	if (!FindFlowmaps(candidates))
+		return false;
+	// Timestamps cannot establish which retained cache matches the current data.
+	if (candidates.size() != 1) {
+		logger::warn("[Unified Water] [Flowmap] Expected one cached flowmap, found {}; regeneration required", candidates.size());
 		return false;
 	}
+	return LoadFlowmap(candidates.front());
+}
 
+bool Flowmap::LoadFlowmap(const std::filesystem::path& file)
+{
 	std::vector<std::string> tokens;
-	std::istringstream iss(file.path().filename().stem().string());
+	const auto stem = file.filename().stem().string();
+	std::istringstream iss(stem);
 	std::string token;
-
 	while (std::getline(iss, token, '.')) {
 		tokens.push_back(token);
 	}
 
-	if (tokens.size() != 5) {
-		logger::error("[Unified Water] [Flowmap] Invalid file name");
+	if ((tokens.size() != 5 && tokens.size() != 6) || stem.ends_with('.') || Util::ToLowerAscii(tokens[0]) != "tamriel-flowmap" ||
+		!Util::IEquals(file.extension().string(), ".dds")) {
+		logger::error("[Unified Water] [Flowmap] Invalid file name '{}'", file.string());
 		return false;
 	}
 
-	auto path = std::format(R"(textures\water\flowmaps\{})", file.path().filename().string().c_str());
+	if (tokens.size() == 6) {
+		uint64_t generation;
+		const auto& value = tokens.back();
+		const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), generation, 16);
+		if (ec != std::errc{} || ptr != value.data() + value.size()) {
+			logger::error("[Unified Water] [Flowmap] Invalid generation ID in '{}'", file.string());
+			return false;
+		}
+	}
+
+	std::array<int32_t, 4> dimensions;
+	for (size_t i = 0; i < dimensions.size(); ++i) {
+		const auto& value = tokens[i + 1];
+		const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), dimensions[i]);
+		if (ec != std::errc{} || ptr != value.data() + value.size()) {
+			logger::error("[Unified Water] [Flowmap] Invalid dimensions in '{}'", file.string());
+			return false;
+		}
+	}
+	static_assert(WaterFlowmapLayout::MaxCells == D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION / WaterFlowmapLayout::TexelsPerCell);
+	if (!WaterFlowmapLayout::ValidCells(dimensions[0], dimensions[1])) {
+		logger::error("[Unified Water] [Flowmap] Unsupported dimensions in '{}'", file.string());
+		return false;
+	}
+
+	auto path = std::format(R"(textures\water\flowmaps\{})", file.filename().string());
 	RE::NiPointer<RE::NiTexture> tex;
 	RE::BSShaderManager::GetTexture(path.c_str(), true, tex, false);
-
 	if (!tex || tex->GetRTTI() != globals::rtti::NiSourceTextureRTTI.get()) {
 		logger::error("[Unified Water] [Flowmap] Failed to load flowmap from {}", path);
 		return false;
 	}
 
 	const auto sourceTex = static_cast<RE::NiSourceTexture*>(tex.get());
+	if (!sourceTex->rendererTexture || !sourceTex->rendererTexture->texture || !sourceTex->rendererTexture->resourceView) {
+		logger::error("[Unified Water] [Flowmap] Flowmap texture or view invalid: {}", path);
+		return false;
+	}
 
-	if (!sourceTex || !sourceTex->rendererTexture || !sourceTex->rendererTexture->texture) {
-		logger::error("[Unified Water] [Flowmap] Flowmap invalid", path);
+	D3D11_RESOURCE_DIMENSION resourceDimension;
+	Util::AsReal(sourceTex->rendererTexture->texture)->GetType(&resourceDimension);
+	if (resourceDimension != D3D11_RESOURCE_DIMENSION_TEXTURE2D) {
+		logger::error("[Unified Water] [Flowmap] Resource is not a 2D texture: {}", path);
+		return false;
+	}
+	D3D11_TEXTURE2D_DESC desc;
+	static_cast<ID3D11Texture2D*>(Util::AsReal(sourceTex->rendererTexture->texture))->GetDesc(&desc);
+	// Texture quality may strip top mips; normalized UVs still cover the same cells.
+	const bool sizeMatches = WaterFlowmapLayout::MatchesTexture(desc.Width, desc.Height, dimensions[0], dimensions[1]);
+	if (!sizeMatches || desc.ArraySize != 1 || desc.SampleDesc.Count != 1) {
+		logger::error("[Unified Water] [Flowmap] Texture size/type does not match cell dimensions: {} ({}x{}, cells {}x{})", path, desc.Width, desc.Height, dimensions[0], dimensions[1]);
+		return false;
+	}
+
+	D3D11_SHADER_RESOURCE_VIEW_DESC viewDesc;
+	Util::AsReal(sourceTex->rendererTexture->resourceView)->GetDesc(&viewDesc);
+	if (viewDesc.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D) {
+		logger::error("[Unified Water] [Flowmap] Texture view must expose a 2D map: {}", path);
 		return false;
 	}
 
 	flowmapTex = RE::NiPointer(sourceTex);
-
-	auto parse_int = [&](const std::string& str, int32_t& out) -> bool {
-		int temp;
-		auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), temp);
-		if (ec != std::errc{} || ptr != str.data() + str.size()) {
-			logger::error("[Unified Water] [Flowmap] Failed to parse '{}' from filename", str);
-			return false;
-		}
-		out = temp;
-		return true;
-	};
-
-	if (!parse_int(tokens[1], width) || !parse_int(tokens[2], height) || !parse_int(tokens[3], offsetX) || !parse_int(tokens[4], offsetY)) {
-		return false;
-	}
-
+	width = dimensions[0];
+	height = dimensions[1];
+	offsetX = dimensions[2];
+	offsetY = dimensions[3];
 	invWidth = 1.0f / static_cast<float>(width);
 	invHeight = 1.0f / static_cast<float>(height);
 
-	logger::debug("[Unified Water] [Flowmap] Flowmap loaded");
+	logger::debug("[Unified Water] [Flowmap] Flowmap loaded from {}", file.string());
 	return true;
 }
 
-bool Flowmap::GenerateFlowmap(bool useMips)
+bool Flowmap::GenerateFlowmap(bool useMips, std::filesystem::path& generatedPath)
 {
 	const auto t0 = std::chrono::steady_clock::now();
 
@@ -265,7 +292,7 @@ bool Flowmap::GenerateFlowmap(bool useMips)
 
 				D3D11_TEXTURE2D_DESC d{};
 				tex->GetDesc(&d);
-				if (d.Width != 64 || d.Height != 64 || d.Format != DXGI_FORMAT_B8G8R8A8_UNORM || d.MipLevels < 6) {
+				if (d.Width != WaterFlowmapLayout::TexelsPerCell || d.Height != WaterFlowmapLayout::TexelsPerCell || d.Format != DXGI_FORMAT_B8G8R8A8_UNORM || d.MipLevels < WaterFlowmapLayout::MipCount) {
 					logger::warn("[Unified Water] [Flowmap] Flow texture at {},{} is invalid", x, y);
 					continue;
 				}
@@ -292,10 +319,15 @@ bool Flowmap::GenerateFlowmap(bool useMips)
 
 	logger::debug("[Unified Water] [Flowmap] Loaded {} flow textures, creating a {}x{} flow map...", cells.size(), width, height);
 
+	static_assert(WaterFlowmapLayout::MaxCells == D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION / WaterFlowmapLayout::TexelsPerCell);
+	if (!WaterFlowmapLayout::ValidCells(width, height)) {
+		logger::error("[Unified Water] [Flowmap] Generated map exceeds supported dimensions");
+		return false;
+	}
 	D3D11_TEXTURE2D_DESC desc{};
-	desc.Width = width * 64;
-	desc.Height = height * 64;
-	desc.MipLevels = 6;
+	desc.Width = width * WaterFlowmapLayout::TexelsPerCell;
+	desc.Height = height * WaterFlowmapLayout::TexelsPerCell;
+	desc.MipLevels = useMips ? WaterFlowmapLayout::MipCount : 1;
 	desc.ArraySize = 1;
 	desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
 	desc.SampleDesc = { 1, 0 };
@@ -316,13 +348,13 @@ bool Flowmap::GenerateFlowmap(bool useMips)
 
 		const UINT sx = static_cast<UINT>(x + offsetX);
 		const UINT sy = static_cast<UINT>(y + offsetY);
-		const UINT dstX0 = sx * 64;
+		const UINT dstX0 = sx * WaterFlowmapLayout::TexelsPerCell;
 
-		const UINT maxMipLevel = useMips ? 6u : 1u;
+		const UINT maxMipLevel = useMips ? WaterFlowmapLayout::MipCount : 1u;
 		for (UINT mipLevel = 0; mipLevel < maxMipLevel; ++mipLevel) {
 			const UINT srcSub = D3D11CalcSubresource(mipLevel, 0, srcDesc.MipLevels);
 			const UINT dstSub = D3D11CalcSubresource(mipLevel, 0, desc.MipLevels);
-			const UINT tileSize = std::max(1u, 64u >> mipLevel);
+			const UINT tileSize = std::max(1u, WaterFlowmapLayout::TexelsPerCell >> mipLevel);
 			const UINT flowmapHeight = std::max(1u, desc.Height >> mipLevel);
 			const UINT dstX = dstX0 >> mipLevel;
 			const UINT dstY = flowmapHeight - (sy + 1) * tileSize;
@@ -340,7 +372,8 @@ bool Flowmap::GenerateFlowmap(bool useMips)
 	{
 		ctx->ExecuteCommandList(commandList.get(), TRUE);
 
-		const auto filename = std::format(L"Tamriel-Flowmap.{}.{}.{}.{}.dds", width, height, offsetX, offsetY);
+		const auto generation = static_cast<uint64_t>(t0.time_since_epoch().count());
+		const auto filename = std::format(L"Tamriel-Flowmap.{}.{}.{}.{}.{:016X}.dds", width, height, offsetX, offsetY, generation);
 		const auto path = Util::PathHelpers::GetDataPath() / "textures" / "water" / "flowmaps" / filename;
 		const auto hr = Util::SaveTextureToFile(dvc, ctx, path, flowmap.get());
 
@@ -348,6 +381,7 @@ bool Flowmap::GenerateFlowmap(bool useMips)
 			logger::error("[Unified Water] [Flowmap] Failed to save flowmap to {}: hr={:08X}", path.string().c_str(), static_cast<uint32_t>(hr));
 			return false;
 		}
+		generatedPath = path;
 	}
 
 	const auto t1 = std::chrono::steady_clock::now();
