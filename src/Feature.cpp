@@ -1,5 +1,6 @@
 #include "Feature.h"
 
+#include <mutex>
 #include <unordered_map>
 
 #include "FeatureIssues.h"
@@ -8,6 +9,9 @@
 #include "Features/CSUtility.h"
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
+#include "Features/DX12/DX12Control.h"
+#include "Features/DX12/DX12NativeScene.h"
+#include "Features/DX12/DX12Resources.h"
 #include "Features/DetailMaps.h"
 #include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
@@ -303,6 +307,9 @@ namespace
 			&globals::features::ibl,
 			&globals::features::extendedTranslucency,
 			&globals::features::upscaling,
+			&globals::features::dx12Control,
+			&globals::features::dx12Resources,
+			&globals::features::dx12NativeScene,
 			&globals::features::developerTools,
 			&globals::features::csEditor,
 			&globals::features::sceneSelector,
@@ -397,10 +404,37 @@ void Feature::ApplyDrawHooks()
 	}
 }
 
-void Feature::ApplyPreShadowMapsHooks()
+const std::vector<Feature*>& Feature::GetDepthPrepassReadyHookFeatures()
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsDepthPrepassReadyHook(); });
+	return features;
+}
+
+const std::vector<Feature*>& Feature::GetOpaqueRasterReadyHookFeatures()
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsOpaqueRasterReadyHook(); });
+	return features;
+}
+
+const std::vector<Feature*>& Feature::GetPreShadowMapsHookFeatures()
 {
 	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsPreShadowMapsHook(); });
-	for (auto* feature : features) {
+	return features;
+}
+
+void Feature::ApplyDepthPrepassReadyHooks()
+{
+	ForEachLoadedFeature(GetDepthPrepassReadyHookFeatures(), "OnDepthPrepassReady", [](Feature* feature) { feature->OnDepthPrepassReady(); }, true);
+}
+
+void Feature::ApplyOpaqueRasterReadyHooks()
+{
+	ForEachLoadedFeature(GetOpaqueRasterReadyHookFeatures(), "OnOpaqueRasterReady", [](Feature* feature) { feature->OnOpaqueRasterReady(); }, true);
+}
+
+void Feature::ApplyPreShadowMapsHooks()
+{
+	for (auto* feature : GetPreShadowMapsHookFeatures()) {
 		if (feature->loaded)
 			feature->PreShadowMaps();
 	}
@@ -482,6 +516,15 @@ namespace
 					g_loadingMenuOpenPending.store(true, std::memory_order_release);
 				else
 					g_loadingMenuClosePending.store(true, std::memory_order_release);
+				Feature::ForEachLoadedFeature("OnLoadingMenuEvent", [&](Feature* feature) {
+					try {
+						feature->OnLoadingMenuEvent(a_event->opening);
+					} catch (const std::exception& error) {
+						logger::error("{} loading notification failed: {}", feature->GetShortName(), error.what());
+					} catch (...) {
+						logger::error("{} loading notification failed", feature->GetShortName());
+					}
+				});
 			}
 			return RE::BSEventNotifyControl::kContinue;
 		}
@@ -493,19 +536,25 @@ namespace
 	};
 }
 
-void Feature::DrainSceneTransitions()
+void Feature::RegisterSceneTransitionEvents()
 {
 	static std::atomic<bool> registered{ false };
-	if (!registered.load(std::memory_order_acquire)) {
-		if (auto* ui = globals::game::ui) {
-			// GetEventSource can be null before the UI is fully up; leave registered=false and retry
-			// next frame rather than dereferencing it.
-			if (auto* source = ui->GetEventSource<RE::MenuOpenCloseEvent>()) {
+	static std::once_flag registration;
+	if (registered.load(std::memory_order_acquire))
+		return;
+	if (auto* ui = globals::game::ui) {
+		if (auto* source = ui->GetEventSource<RE::MenuOpenCloseEvent>()) {
+			std::call_once(registration, [source] {
 				source->AddEventSink(SceneTransitionSink::GetSingleton());
 				registered.store(true, std::memory_order_release);
-			}
+			});
 		}
 	}
+}
+
+void Feature::DrainSceneTransitions()
+{
+	RegisterSceneTransitionEvents();
 
 	if (g_loadingMenuOpenPending.exchange(false, std::memory_order_acq_rel))
 		ForEachLoadedFeature("OnSceneTransitionReset(open)", [](Feature* f) { f->OnSceneTransitionReset(true); });

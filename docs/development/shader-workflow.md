@@ -373,3 +373,16 @@ cmake --build ./build/ALL --target FORMAT_CODE
 # Generate shader validation configs from game logs (requires PowerShell)
 cmake --build ./build/ALL --target generate_shader_configs
 ```
+
+## Native DX12 shaders
+
+Native `.hlsl6` files are DXC-only and use the repository's existing pinned ClangFormat hook (C++ style), alongside `.hlsli`. Run `pre-commit run clang-format --files <paths>` for the changed shaders. The `FORMAT_CODE` CMake target also includes `.hlsl6`, without adding those sources to the legacy FXC list.
+
+For shader-only native validation, use the standalone CMake project (no plugin, vcpkg, or game build required). It reuses the production native shadow and composite compile definitions with `-WX` enabled for validation:
+
+```powershell
+cmake -S cmake/native-shaders -B build/native-shader-validation -DNATIVE_SHADOW_DXC="C:/path/to/dxc.exe"
+cmake --build build/native-shader-validation --target native_shader_validation
+```
+
+The Native Shader Validation workflow runs the pinned formatter and compares the DXIL output before and after any formatting changes, using the same DXC and compile options. A bytecode difference fails validation and requires investigation (for example, disassemble and compare executable instructions and bindings); it is not treated as a proven formatting-only change. Formatting violations also fail even when bytecode is identical. Keep the existing HLSLKit/FXC validation for legacy shaders unchanged. Add future native entry points to the shared native CMake build definitions and the standalone validation target.

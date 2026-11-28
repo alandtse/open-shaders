@@ -1,9 +1,11 @@
 #pragma once
 
+#include "DX12/DX12NativeComposite.h"
 #include "OverlayFeature.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/FoveatedRender.h"
+#include "Upscaling/NativeDLSS.h"
 #include "Upscaling/NeuralRendering.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/RCAS/RCAS.h"
@@ -150,7 +152,7 @@ public:
 		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
 		UTIL_RESTART_FIELD(Settings, qualityMode, "Upscale Preset"),
 		UTIL_RESTART_FIELD(Settings, vrRenderScale, "VR Render Scale"),
-		// CreateUpscalingTextureResources (which allocates runtimeFsrDepthTexture)
+		// CreateUpscalingTextureResources (which allocates typedDepthTexture)
 		// only runs on an upscale-method change, not on this toggle -- restart-gate
 		// it so a mid-session flip can't select the runtime provider without ever
 		// allocating the texture Upscale() then dereferences.
@@ -297,7 +299,12 @@ public:
 	/** @brief NR reads the Masks2 material-category lane whenever it is on. */
 	bool WantsForwardMaterialCategory() const override { return settings.neuralRenderingEnabled; }
 	/** @brief Resets NR history across loading transitions. */
-	void OnSceneTransitionReset(bool) override { neuralRendering.ResetHistory(); }
+	void OnSceneTransitionReset(bool opening) override
+	{
+		neuralRendering.ResetHistory();
+		if (opening)
+			nativeComposite.ResetFailures();
+	}
 	/** @brief Exposes the display-sized scene to post-processing through the shared feature contract. */
 	PostProcessingInput GetPostProcessingInput() const override;
 
@@ -430,7 +437,7 @@ public:
 	Texture2D* transparencyCompositionMaskTexture = nullptr;
 	Texture2D* motionVectorCopyTexture = nullptr;
 	Texture2D* sharpenerTexture = nullptr;
-	Texture2D* runtimeFsrDepthTexture = nullptr;
+	Texture2D* typedDepthTexture = nullptr;  ///< R32_FLOAT copy of the game's depth for flat runtime FSR and DX12 DLSS.
 
 	virtual void ClearShaderCache() override;
 
@@ -439,6 +446,9 @@ public:
 	static inline Streamline streamlineDX12;  ///< DX12 instance: DLSS-G frame generation
 	static inline FidelityFX fidelityFX;      ///< AMD FSR frame generation
 	static inline DX12SwapChain dx12SwapChain;
+	DX12Native::NativeComposite nativeComposite;
+	std::shared_ptr<const DX12Native::NativeComposite::Frame> nativeCompositeFrame;
+	NativeDLSS nativeDLSS;
 	static inline RCAS rcas;                      ///< Standalone RCAS sharpening for DLSS
 	static inline PerfMode perfMode;              ///< VR-only: render engine at upscaled-render res
 	static inline FoveatedRender foveatedRender;  ///< VR-only: foveated subrect DLSS

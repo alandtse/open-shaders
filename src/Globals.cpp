@@ -8,6 +8,9 @@
 #include "Features/CSUtility.h"
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
+#include "Features/DX12/DX12Control.h"
+#include "Features/DX12/DX12NativeScene.h"
+#include "Features/DX12/DX12Resources.h"
 #include "Features/DetailMaps.h"
 #include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
@@ -142,6 +145,9 @@ namespace globals
 		PostProcessing postProcessing{};
 		SceneManager sceneManager{};
 		ProceduralAurora proceduralAurora{};
+		DX12Control dx12Control{};
+		DX12Resources dx12Resources{};
+		DX12NativeScene dx12NativeScene{};
 
 		namespace llf
 		{

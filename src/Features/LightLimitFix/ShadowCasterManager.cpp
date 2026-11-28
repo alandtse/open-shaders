@@ -387,6 +387,7 @@ namespace ShadowCasterManager
 	void ResetSession()
 	{
 		FreeAllTiles();
+		ResetNativeRasterTracking();
 		// Wholesale drop of pointers the engine is about to free during
 		// a scene transition. Called from LightLimitFix::OnSceneTransitionReset
 		// on the render thread when the LoadingMenu opens. The per-frame reconciliation in

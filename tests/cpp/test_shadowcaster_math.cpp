@@ -2,6 +2,8 @@
 // (src/Features/LightLimitFix/ShadowCasterMath.h): the shadow-light pointer
 // plausibility check and the frame-time 90th-percentile.
 
+#include "Features/DX12/DX12ControlMode.h"
+#include "Features/DX12/SCMNativePolicy.h"
 #include "Features/LightLimitFix/ShadowCasterMath.h"
 
 #include <catch2/catch_approx.hpp>
@@ -536,6 +538,76 @@ TEST_CASE("PlayerProtectionCap leaves half the slots to the lights in view", "[s
 	REQUIRE(PlayerProtectionCap(127) == 63);
 	REQUIRE(PlayerProtectionCap(1) == 1);
 	REQUIRE(PlayerProtectionCap(0) == 1);
+}
+
+TEST_CASE("Native SCM ownership is established by rendering mode", "[scm][dx12]")
+{
+	using namespace DX12;
+	for (bool fullRT : { false, true }) {
+		for (bool offload : { false, true }) {
+			CHECK(SelectSCMNativeMode(false, false, offload, fullRT, true) == SCMNativeMode::Disabled);
+			CHECK(SelectSCMNativeMode(true, true, offload, fullRT, true) == SCMNativeMode::Disabled);
+			CHECK(SelectSCMNativeMode(true, false, offload, fullRT, false) == SCMNativeMode::Disabled);
+		}
+	}
+	const auto disabled = SelectSCMNativePolicy(SCMNativeMode::Disabled);
+	CHECK_FALSE(disabled.observeGeometry);
+	CHECK_FALSE(disabled.observeLights);
+	CHECK_FALSE(disabled.fullStaticAuthority);
+	CHECK(SelectSCMNativeCasterMode(disabled, true) == SCMNativeCasterMode::Disabled);
+	CHECK_FALSE(NativeStaticAuthority(disabled, true, true));
+
+	const auto comparison = SelectSCMNativePolicy(SCMNativeMode::RasterComparison);
+	CHECK_FALSE(comparison.observeGeometry);
+	CHECK_FALSE(comparison.observeLights);
+	CHECK_FALSE(NativeStaticAuthority(comparison, true, true));
+	CHECK(SelectSCMNativeCasterMode(comparison, true) == SCMNativeCasterMode::Disabled);
+	CHECK_FALSE(comparison.fullStaticAuthority);
+	CHECK(SelectSCMNativeMode(true, false, false, false, true) == SCMNativeMode::Disabled);
+
+	const auto offload = SelectSCMNativePolicy(SCMNativeMode::ShadowOffload);
+	CHECK(offload.observeGeometry);
+	CHECK(offload.observeLights);
+	CHECK_FALSE(NativeStaticAuthority(offload, true, false));
+	CHECK(NativeStaticAuthority(offload, true, true));
+	CHECK_FALSE(NativeStaticAuthority(offload, false, true));
+	CHECK(SelectSCMNativeCasterMode(offload, false) == SCMNativeCasterMode::Observe);
+	CHECK(SelectSCMNativeCasterMode(offload, true) == SCMNativeCasterMode::Suppress);
+
+	const auto fullRT = SelectSCMNativePolicy(SCMNativeMode::FullRT);
+	CHECK_FALSE(fullRT.observeGeometry);
+	CHECK_FALSE(fullRT.observeLights);
+	CHECK(fullRT.fullStaticAuthority);
+	CHECK(NativeStaticAuthority(fullRT, true, false));
+	CHECK(NativeStaticAuthority(fullRT, true, true));
+	CHECK_FALSE(NativeStaticAuthority(fullRT, false, false));
+	CHECK(SelectSCMNativeCasterMode(fullRT, true) == SCMNativeCasterMode::SuppressAll);
+	CHECK(SelectSCMNativeCasterMode(fullRT, false) == SCMNativeCasterMode::Disabled);
+	CHECK(SelectSCMNativeMode(true, false, false, true, true) == SCMNativeMode::FullRT);
+	CHECK(SelectSCMNativeMode(true, false, true, false, true) == SCMNativeMode::ShadowOffload);
+}
+
+TEST_CASE("Full RT admits actual dynamic casters without first-sighting static leakage", "[dx12][shadow]")
+{
+	using DX12::FullRTDynamicCaster;
+	CHECK_FALSE(FullRTDynamicCaster(false, false, false, false));
+	CHECK(FullRTDynamicCaster(true, false, false, false));
+	CHECK(FullRTDynamicCaster(false, true, false, false));
+	CHECK(FullRTDynamicCaster(false, false, true, false));
+	CHECK(FullRTDynamicCaster(false, false, false, true));
+}
+
+TEST_CASE("Raster comparison requires developer mode without changing persisted IDs", "[dx12][shadow]")
+{
+	using DX12::ControlMode;
+	using DX12::SanitizeControlMode;
+	CHECK(SanitizeControlMode(0, false) == ControlMode::ShadowOffload);
+	CHECK(SanitizeControlMode(1, false) == ControlMode::ShadowOffload);
+	CHECK(SanitizeControlMode(1, true) == ControlMode::RasterComparison);
+	CHECK(SanitizeControlMode(2, false) == ControlMode::FullRT);
+	CHECK(SanitizeControlMode(2, true) == ControlMode::FullRT);
+	CHECK(SanitizeControlMode(-1, true) == ControlMode::ShadowOffload);
+	CHECK(SanitizeControlMode(99, false) == ControlMode::FullRT);
 }
 
 TEST_CASE("A caster refresh preserves redraw admission while its shadow content is invalid", "[llf][shadow-refresh]")

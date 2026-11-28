@@ -14,6 +14,7 @@
 
 #include <imgui.h>
 
+#include "../DX12/SCMNativePolicy.h"
 #include "ShadowCasterManager.h"
 #include "Utils/BootSnapshot.h"
 
@@ -424,6 +425,8 @@ namespace ShadowCasterManager
 		DynamicOnly = 2  ///< keep only moving casters (composite over cache)
 	};
 	extern std::atomic<int> s_cullPassMode;
+	/// Native extension of the synchronous, thread-owned caster walk.
+	extern thread_local DX12::SCMNativeCasterMode s_nativeCasterMode;
 
 	extern std::atomic<uint32_t> s_staticCasterDraws;
 	extern std::atomic<uint32_t> s_dynamicCasterDraws;
@@ -481,7 +484,11 @@ namespace ShadowCasterManager
 
 	/// Renders one shadow light with the pass-chain guard armed. False if the guard skipped any of its
 	/// passes, in which case the light is not fully drawn and must not be marked rendered.
-	bool RenderLightGuarded(RE::BSShadowLight* a_light, uint32_t& a_index);
+	bool RenderLightGuarded(RE::BSShadowLight* a_light, uint32_t& a_index, bool fullRTDynamicOnly = false);
+	/** @brief Shared Full RT caster admission for accumulation and final raster draws. */
+	bool IsFullRTDynamicCaster(RE::BSGeometry& geometry);
+	void ResetFullRTCasterMotion();
+	void PruneFullRTCasterMotion();
 
 	// Per-accumulate split-cache visitation state, reset/consumed by EnableLight.
 	extern std::uint64_t s_visitStaticHash;
@@ -645,7 +652,7 @@ namespace ShadowCasterManager
 	uint32_t AtlasCapacityCells();
 	uint32_t CellsForScale(float scale);
 	bool EnsureSlotTile(int32_t poolSlot, float scale);
-	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete = true);
+	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete = true, bool a_nativeStaticOmitted = false);
 
 	/// Sampling parameters belonging to the rendered tile depth.
 	struct ShadowBakeSnapshot
@@ -689,6 +696,14 @@ namespace ShadowCasterManager
 	/// Marks the sampled tile's content invalid so the scheduler redraws it. No-op while a
 	/// staged promotion exists, because the sampled tile is then not the one being rendered.
 	void InvalidateSlotTileContent(int32_t poolSlot);
+	/** @brief Invalidates only raster tiles that omitted native static casters, including parked tiles. */
+	void InvalidateNativeRasterTiles();
+	bool SlotNativeStaticOmitted(int32_t poolSlot);
+	/** @brief Reject migrated raster depth containing static casters for Full RT. */
+	bool InvalidateFullRTStaticContent(int32_t poolSlot);
+	void InvalidateNativeRasterTile(int32_t poolSlot);
+	/** @brief Retires native tracking after the upstream session reset frees all tiles. */
+	void ResetNativeRasterTracking();
 
 	// --- Static/dynamic split cache (parallel static depth atlas) ------------
 

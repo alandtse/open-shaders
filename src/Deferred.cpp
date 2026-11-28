@@ -412,6 +412,10 @@ void Deferred::DeferredPasses()
 
 	auto motionVectors = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
+	static const bool hasOpaqueRasterHooks = !Feature::GetOpaqueRasterReadyHookFeatures().empty();
+	if (hasOpaqueRasterHooks)
+		Feature::ApplyOpaqueRasterReadyHooks();
+
 	bool interior = Util::IsInterior();
 
 	auto& skylighting = globals::features::skylighting;
@@ -840,10 +844,25 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 
 void Deferred::Hooks::Main_RenderShadowMaps::thunk()
 {
-	Feature::ApplyPreShadowMapsHooks();
+	static const bool hasPreShadowHooks = !Feature::GetPreShadowMapsHookFeatures().empty();
+	if (hasPreShadowHooks)
+		Feature::ApplyPreShadowMapsHooks();
 	func();
 	globals::deferred->EarlyPrepasses();
 };
+
+void Deferred::Hooks::Main_RenderShadowmasks::thunk(bool a1)
+{
+	if (auto* state = globals::game::graphicsState) {
+		static const bool hasDepthHooks = !Feature::GetDepthPrepassReadyHookFeatures().empty();
+		static uint32_t lastFrame = UINT32_MAX;
+		if (hasDepthHooks && state->GetFrameCount() != lastFrame) {
+			lastFrame = state->GetFrameCount();
+			Feature::ApplyDepthPrepassReadyHooks();
+		}
+	}
+	func(a1);
+}
 
 void Deferred::Hooks::Main_RenderWorld::thunk(bool a1)
 {

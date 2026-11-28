@@ -21,6 +21,7 @@
 #	include "Features/Effects11/EffectManager.h"
 #	include "Features/Effects11/Editor/Effects11Editor.h"
 #endif
+#include "Features/DX12/DX12NativeScene.h"
 #include "Features/HDRDisplay.h"
 #include "Features/RenderDoc.h"
 #include "Features/SceneSelector.h"
@@ -279,6 +280,7 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 effectFailed ||
 			 globals::features::performanceOverlay.settings.ShowInOverlay ||
 			 globals::features::sceneSelector.IsOverlayVisible() ||
+			 globals::features::dx12NativeScene.IsOverlayVisible() ||
 			 renderDoc->ShouldShowOverlay() ||
 			 globals::features::vr.HelperRequestsRender());
 }

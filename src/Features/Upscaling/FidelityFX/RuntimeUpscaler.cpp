@@ -17,6 +17,7 @@
 
 #include "../../../GpuPass.h"
 #include "../../../State.h"
+#include "../../DX12/DX12Control.h"
 #include "../../ReverseZ.h"
 #include "../../Upscaling.h"
 #include "../DX12SwapChain.h"
@@ -537,6 +538,11 @@ bool FidelityFX::ShouldUseRuntimeUpscalerForFSR() const
 	return IsRuntimeUpscalerPresent();
 }
 
+bool FidelityFX::RuntimeUpscalerReadsComposite()
+{
+	return (ShouldRequestRuntimeUpgrade() || ShouldUseRuntimeUpscalerForFSR()) && CanUseRuntimeUpscalerPath();
+}
+
 bool FidelityFX::CanUseRuntimeUpscalerPath()
 {
 	if (runtimeUpscalerQuarantined || runtimeUpscalerFailureLatched)
@@ -556,24 +562,10 @@ bool FidelityFX::EnsureRuntimeUpscalerInterop()
 {
 	auto& swapChain = globals::features::upscaling.dx12SwapChain;
 
-	if (!globals::d3d::device || !globals::d3d::context)
+	if (!swapChain.EnsureSharedDevice())
 		return false;
 
 	try {
-		if (!swapChain.d3d11Device)
-			swapChain.SetD3D11Device(globals::d3d::device);
-		if (!swapChain.d3d11Context)
-			swapChain.SetD3D11DeviceContext(globals::d3d::context);
-
-		if (!swapChain.d3d12Device) {
-			winrt::com_ptr<IDXGIDevice> dxgiDevice;
-			DX::ThrowIfFailed(globals::d3d::device->QueryInterface(IID_PPV_ARGS(dxgiDevice.put())));
-
-			winrt::com_ptr<IDXGIAdapter> adapter;
-			DX::ThrowIfFailed(dxgiDevice->GetAdapter(adapter.put()));
-			swapChain.CreateD3D12Device(adapter.get());
-		}
-
 		if (!runtimeFence.fence12 || !runtimeFence.fence11) {
 			runtimeFence.Create(swapChain.d3d12Device.get(), swapChain.d3d11Device.get(), "FidelityFX::RuntimeFence");
 			for (auto& commandContext : runtimeCommandContexts)
@@ -1156,6 +1148,13 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 	if (!state)
 		return false;
 
+	const auto composite = upscaling.nativeCompositeFrame;
+	const bool nativeColor = !globals::game::isVR && composite && composite->valid &&
+	                         composite->color && composite->producerFence &&
+	                         composite->producerValue && composite->frame == state->frameCount &&
+	                         composite->width == a_renderWidth && composite->height == a_renderHeight &&
+	                         composite->format == colorDesc.Format;
+
 	auto isValidShared = [](WrappedResource* a_resource) {
 		return a_resource && a_resource->resource11 && a_resource->resource.get();
 	};
@@ -1204,7 +1203,7 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			return true;
 		};
 
-		if (!copyIntoShared(a_color, runtimeColorShared[a_contextIndex], colorDesc.Width, colorDesc.Height, runtimeColorSharedDesc.Width, runtimeColorSharedDesc.Height) ||
+		if ((!nativeColor && !copyIntoShared(a_color, runtimeColorShared[a_contextIndex], colorDesc.Width, colorDesc.Height, runtimeColorSharedDesc.Width, runtimeColorSharedDesc.Height)) ||
 			!copyIntoShared(a_depth, runtimeDepthShared[a_contextIndex], depthDesc.Width, depthDesc.Height, runtimeDepthSharedDesc.Width, runtimeDepthSharedDesc.Height) ||
 			!copyIntoShared(a_motionVectors, runtimeMotionShared[a_contextIndex], motionDesc.Width, motionDesc.Height, runtimeMotionSharedDesc.Width, runtimeMotionSharedDesc.Height) ||
 			!copyIntoShared(a_reactiveMask, runtimeReactiveShared[a_contextIndex], reactiveDesc.Width, reactiveDesc.Height, runtimeReactiveSharedDesc.Width, runtimeReactiveSharedDesc.Height) ||
@@ -1215,12 +1214,15 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			const uint64_t d3d11SubmitFence = runtimeFence.Next();
 			DX::ThrowIfFailed(swapChain.d3d11Context->Signal(runtimeFence.fence11.get(), d3d11SubmitFence));
 			DX::ThrowIfFailed(swapChain.commandQueue->Wait(runtimeFence.fence12.get(), d3d11SubmitFence));
+			if (nativeColor)
+				DX::ThrowIfFailed(swapChain.commandQueue->Wait(composite->producerFence.get(), composite->producerValue));
 
 			DX::ThrowIfFailed(commandAllocator->Reset());
 			DX::ThrowIfFailed(commandList->Reset(commandAllocator, nullptr));
 
+			auto* color12 = nativeColor ? composite->color.get() : runtimeColorShared[a_contextIndex]->resource.get();
 			std::array<D3D12_RESOURCE_BARRIER, 6> beginBarriers = {
-				CD3DX12_RESOURCE_BARRIER::Transition(runtimeColorShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
+				CD3DX12_RESOURCE_BARRIER::Transition(color12, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
 				CD3DX12_RESOURCE_BARRIER::Transition(runtimeDepthShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
 				CD3DX12_RESOURCE_BARRIER::Transition(runtimeMotionShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
 				CD3DX12_RESOURCE_BARRIER::Transition(runtimeReactiveShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
@@ -1231,7 +1233,7 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 
 			ffx::DispatchDescUpscale dispatchParameters{};
 			dispatchParameters.commandList = commandList;
-			dispatchParameters.color = ffxApiGetResourceDX12(runtimeColorShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+			dispatchParameters.color = ffxApiGetResourceDX12(color12, FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.depth = ffxApiGetResourceDX12(runtimeDepthShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.motionVectors = ffxApiGetResourceDX12(runtimeMotionShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.exposure = FfxApiResource({});
@@ -1246,8 +1248,8 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			dispatchParameters.sharpness = a_sharpness;
 			dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
 			dispatchParameters.preExposure = 1.0f;
-			// Our repo has no ShouldResetHistoryThisFrame(); mirror Upscale()'s existing
-			// menu-reset predicate (menus produce no fresh motion vectors/depth).
+			// Preserve the baseline menu-camera reset and independent provider
+			// fallback reset below; no diagnostic preview history exists.
 			dispatchParameters.reset = state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid;
 			dispatchParameters.cameraNear = *globals::game::cameraNear;
 			dispatchParameters.cameraFar = *globals::game::cameraFar;
@@ -1283,7 +1285,7 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			}
 
 			std::array<D3D12_RESOURCE_BARRIER, 6> endBarriers = {
-				CD3DX12_RESOURCE_BARRIER::Transition(runtimeColorShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
+				CD3DX12_RESOURCE_BARRIER::Transition(color12, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
 				CD3DX12_RESOURCE_BARRIER::Transition(runtimeDepthShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
 				CD3DX12_RESOURCE_BARRIER::Transition(runtimeMotionShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
 				CD3DX12_RESOURCE_BARRIER::Transition(runtimeReactiveShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
@@ -1296,6 +1298,10 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 
 			ID3D12CommandList* commandListsToExecute[] = { commandList };
 			const uint64_t d3d12SubmitFence = runtimeFence.Next();
+			if (nativeColor && !upscaling.nativeComposite.Retain(composite, runtimeFence.fence12.get(), d3d12SubmitFence)) {
+				commandContext->fenceValue = 0;
+				return false;
+			}
 			swapChain.commandQueue->ExecuteCommandLists(1, commandListsToExecute);
 			commandListSubmitted = true;
 			DX::ThrowIfFailed(swapChain.commandQueue->Signal(runtimeFence.fence12.get(), d3d12SubmitFence));

@@ -7,6 +7,7 @@ namespace FeatureCategories
 {
 	inline constexpr std::string_view kCharacters = "Characters";
 	inline constexpr std::string_view kDisplay = "Display";
+	inline constexpr std::string_view kDX12 = "DX12";
 	inline constexpr std::string_view kFoliage = "Foliage";
 	inline constexpr std::string_view kLandscapeAndTextures = "Landscape & Textures";
 	inline constexpr std::string_view kLighting = "Lighting";
@@ -18,6 +19,6 @@ namespace FeatureCategories
 	inline constexpr std::string_view kWater = "Water";
 
 	/** @brief Order in which categories are listed in feature menus. */
-	inline constexpr std::array kMenuOrder = { kDisplay, kUtility, kCharacters, kFoliage, kLighting, kMaterials,
+	inline constexpr std::array kMenuOrder = { kDisplay, kDX12, kUtility, kCharacters, kFoliage, kLighting, kMaterials,
 		kPostProcessing, kSky, kLandscapeAndTextures, kWater, kOther };
 }

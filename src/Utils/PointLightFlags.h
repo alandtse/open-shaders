@@ -35,6 +35,14 @@ namespace PointLightFlags
 		return (flags & ToMask(Flags::Initialised)) != 0 ? flags : 0;
 	}
 
+	/** @brief Read the authored light ID stored in initialized runtime extension data. */
+	inline std::uint32_t GetRuntimeLightFormID(RE::NiLight* a_niLight) noexcept
+	{
+		if (!GetRuntimeLightFlags(a_niLight))
+			return 0;
+		return std::bit_cast<std::uint32_t>(a_niLight->GetLightRuntimeData().ambient.blue);
+	}
+
 	inline std::uint32_t GetPointLightTypeFlags(RE::BSLight* a_bsLight)
 	{
 		if (!a_bsLight || !a_bsLight->pointLight)

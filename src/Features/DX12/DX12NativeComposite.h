@@ -1,0 +1,123 @@
+#pragma once
+
+#include "DX12NativeShadowTrace.h"
+#include "GraphicsInterop.h"
+#include "NativeShadowHistory.h"
+#include "VideoMemoryBudget.h"
+
+#include <array>
+#include <atomic>
+#include <memory>
+#include <vector>
+
+namespace DX12Native
+{
+	// Submission state, not a guarantee that presentation has consumed the frame.
+	enum class CompositeShadowResult : uint8_t
+	{
+		NotCaptured,
+		NoMask,
+		Rejected,
+		Submitted,
+		Failed
+	};
+	inline std::atomic<CompositeShadowResult> lastCompositeShadowResult{ CompositeShadowResult::NotCaptured };
+	inline std::atomic<bool> compositeShadowDebugView{ false };
+
+	/** @brief Native Composite owns the final pre-upscale DX12 color, as in open-RT. */
+	class NativeComposite
+	{
+	public:
+		enum class Transfer
+		{
+			Unknown,
+			Linear,
+			LegacyScene
+		};
+
+		struct Frame
+		{
+			winrt::com_ptr<ID3D12Resource> color;
+			// Optional RG32F: reconstructed visibility and receiver distance (zero if invalid).
+			winrt::com_ptr<ID3D12Resource> reconstructedShadowMask;
+			winrt::com_ptr<ID3D12Fence> producerFence;
+			uint64_t producerValue = 0;
+			uint32_t frame = 0, width = 0, height = 0;
+			DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+			bool valid = false;
+		};
+
+		std::shared_ptr<const Frame> Capture(ID3D11Device5* device11,
+			ID3D11DeviceContext4* context11, ID3D12Device* device12,
+			ID3D12CommandQueue* queue, ID3D11Texture2D* source,
+			uint32_t frame, uint32_t width, uint32_t height, Transfer transfer,
+			const std::shared_ptr<const ShadowMaskFrame>& shadow,
+			bool returnColorToDX11, bool publishReconstructedMask = false);
+		bool Retain(const std::shared_ptr<const Frame>& frame, ID3D12Fence* fence, uint64_t value);
+		~NativeComposite();
+		/** @brief Release completed input publications on the render thread. */
+		void RetireCompletedInputs();
+		/** @brief Invalidate temporal visibility on a scene/session transition. */
+		void ResetShadowHistory() { historyEpoch.fetch_add(1, std::memory_order_relaxed); }
+		/** @brief Allow a new initialization attempt after a scene reset. */
+		void ResetFailures()
+		{
+			for (auto& variant : shadowVariants)
+				variant.failedDevice = nullptr;
+			captureFailureLogged = false;
+		}
+
+	private:
+		struct History
+		{
+			winrt::com_ptr<ID3D12Resource> texture;
+			ShadowHistoryStamp stamp;
+			ID3D12Device* device = nullptr;
+			ID3D12CommandQueue* queue = nullptr;
+			uint64_t bytes = 0;
+		};
+		std::atomic<uint64_t> historyEpoch{ 0 };
+		std::shared_ptr<const History> latestHistory;
+		bool historyFailureLogged = false;
+
+		struct Slot
+		{
+			std::shared_ptr<Frame> frame;
+			// Retain producer textures until the composite GPU work completes.
+			std::shared_ptr<const ShadowMaskFrame> shadowInput;
+			std::shared_ptr<const RasterFrame> rasterInput;
+			std::shared_ptr<const History> historyInput;
+			std::shared_ptr<History> historyOutput;
+			bool rtDescriptors = false;
+			winrt::com_ptr<ID3D12Resource> reconstructedMask;
+			uint32_t maskWidth = 0, maskHeight = 0;
+			std::unique_ptr<WrappedResource> shared;
+			std::unique_ptr<WrappedResource> returned;
+			winrt::com_ptr<ID3D12CommandAllocator> allocator;
+			winrt::com_ptr<ID3D12GraphicsCommandList> commands;
+			winrt::com_ptr<ID3D12DescriptorHeap> shadowDescriptors;
+			winrt::com_ptr<ID3D12RootSignature> shadowRoot;
+			winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
+			SharedFence fence;
+			std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
+			ID3D12Device* device = nullptr;
+			ID3D11Device* device11 = nullptr;
+			D3D11_TEXTURE2D_DESC sourceDesc{};
+			bool supportsShadow = false, hasReturn = false, untracked = false;
+			uint64_t frameBytes = 0;
+		};
+
+		std::array<std::unique_ptr<Slot>, 4> slots;
+		struct ShadowVariantState
+		{
+			winrt::com_ptr<ID3D12RootSignature> root;
+			winrt::com_ptr<ID3D12PipelineState> pipeline;
+			ID3D12Device* device = nullptr;
+			winrt::com_ptr<ID3D12Device> failedDevice;
+		};
+		std::array<ShadowVariantState, kShadowVariantCount> shadowVariants;
+		VideoMemoryBudget videoBudget;
+		bool captureFailureLogged = false;
+		bool InitializeShadow(ID3D12Device* device, uint32_t variant);
+	};
+}

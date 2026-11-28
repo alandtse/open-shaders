@@ -185,6 +185,12 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		struct Main_RenderShadowmasks
+		{
+			static void thunk(bool a1);
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
 		struct Main_RenderWorld
 		{
 			static void thunk(bool a1);
@@ -244,6 +250,7 @@ public:
 			stl::write_thunk_call<Main_RenderWorld_BlendedDecals>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x319, 0x308, 0x321));
 
 			if (!globals::game::isVR) {
+				stl::detour_thunk<Main_RenderShadowmasks>(REL::RelocationID(100422, 107140));
 				stl::write_thunk_call<Main_RenderFirstPersonView>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0x944, isAE1799 ? 0x971 : 0x954));
 				stl::write_thunk_call<Main_RenderPlayerView_EndWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0xA01, isAE1799 ? 0xA2C : 0xA0F));
 			}

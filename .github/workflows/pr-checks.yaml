@@ -16,6 +16,7 @@ on:
             - "**.c"
             - "**.hlsl"
             - "**.hlsli"
+            - "**.hlsl6"
             - "**.ini"
             - "CMakeLists.txt"
             - "CMakePresets.json"

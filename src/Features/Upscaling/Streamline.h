@@ -41,6 +41,9 @@ public:
 
 	bool initialized = false;
 	bool triedInitialization = false;
+	bool d3d12DeviceBound = false;     ///< SetD3DDevice12 succeeded (DX12 instance only).
+	bool dlssRequested = false;        ///< DLSS is in this instance's slInit feature list.
+	bool pendingHistoryReset = false;  ///< The next CheckFrameConstants resets DLSS's temporal history.
 
 	bool featureDLSS = false;
 	bool featureDLSSG = false;
@@ -95,7 +98,7 @@ public:
 	PFun_slGetNewFrameToken* slGetNewFrameToken{};
 	PFun_slSetD3DDevice* slSetD3DDevice{};
 
-	// DLSS specific functions (DX11 instance)
+	// DLSS specific functions
 	PFun_slDLSSGetOptimalSettings* slDLSSGetOptimalSettings{};
 	PFun_slDLSSGetState* slDLSSGetState{};
 	PFun_slDLSSSetOptions* slDLSSSetOptions{};
@@ -159,6 +162,20 @@ public:
 		ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
 		const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth,
 		uint32_t outputHeight = 0);
+
+	/**
+	 * @brief Records DLSS for the flat viewport into a D3D12 command list (DX12 instance only).
+	 * Inputs must be in NON_PIXEL_SHADER_RESOURCE and the output in UNORDERED_ACCESS; they are passed
+	 * as evaluate-local tags, so they never replace the DLSS-G tags of the same frame.
+	 * @return False on a real failure; eWarnOutOfVRAM counts as success.
+	 */
+	bool EvaluateDLSSDX12(ID3D12GraphicsCommandList* a_commandList,
+		ID3D12Resource* a_colorIn, ID3D12Resource* a_colorOut, ID3D12Resource* a_depth,
+		ID3D12Resource* a_motionVectors, ID3D12Resource* a_reactiveMask, ID3D12Resource* a_transparencyMask,
+		const sl::Extent& a_extentIn, const sl::Extent& a_extentOut);
+
+	/** @brief Logs a failed DLSS evaluate (rate-limited) and returns whether its output is usable. */
+	bool ReportDLSSEvaluateResult(sl::Result a_result, uint32_t a_eyeIndex);
 
 	// Cached DLL version info for Streamline plugin directory
 	static std::vector<std::pair<std::string, std::string>> dllVersions;

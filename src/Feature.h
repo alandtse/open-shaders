@@ -275,6 +275,8 @@ public:
 	 * @param opening true when the LoadingMenu is opening (old cell teardown), false when closing.
 	 */
 	virtual void OnSceneTransitionReset(bool /*opening*/) {}
+	/** @brief Main-thread loading notification; publish immutable data only, never mutate render-owned state. */
+	virtual void OnLoadingMenuEvent(bool /*opening*/) {}
 	virtual void DrawSettings() {}
 
 	/**
@@ -380,6 +382,14 @@ public:
 
 	/** @brief Called after the world scene is complete, including first-person rendering on SE/AE. */
 	virtual void OnWorldRenderEnd(RE::RENDER_TARGET /*a_renderTarget*/) {}
+
+	/** @brief Notifies features that opaque raster rendering is complete. */
+	virtual void OnOpaqueRasterReady() {}
+	/** @brief Boot-time opt-in to the opaque raster hook. */
+	virtual bool WantsOpaqueRasterReadyHook() const { return false; }
+	/** @brief Main depth prepass completed, before forward light evaluation. */
+	virtual void OnDepthPrepassReady() {}
+	virtual bool WantsDepthPrepassReadyHook() const { return false; }
 
 	/** @brief Called before a post-processing implementation consumes the scene target. */
 	virtual void OnBeforePostProcessing(RE::RENDER_TARGET /*a_renderTarget*/) {}
@@ -715,6 +725,13 @@ public:
 
 	/** @brief Visits PreShadowMaps() on every loaded feature that opted in via WantsPreShadowMapsHook(); the list is cached once. */
 	static void ApplyPreShadowMapsHooks();
+	/** @brief Dispatches the opaque raster completion event to registered features. */
+	static void ApplyOpaqueRasterReadyHooks();
+	static void ApplyDepthPrepassReadyHooks();
+	/** @brief Boot-time hook subscribers, cached once; empty lists need no frame dispatch. */
+	static const std::vector<Feature*>& GetDepthPrepassReadyHookFeatures();
+	static const std::vector<Feature*>& GetOpaqueRasterReadyHookFeatures();
+	static const std::vector<Feature*>& GetPreShadowMapsHookFeatures();
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();
@@ -761,6 +778,8 @@ public:
 	 * the render path so feature resets serialize with render-thread menu/Prepass iteration.
 	 */
 	static void DrainSceneTransitions();
+	/** @brief Registers the shared loading event sink before the first gameplay frame. */
+	static void RegisterSceneTransitionEvents();
 
 	/**
 	 * @brief Finds a loaded feature by its short name.

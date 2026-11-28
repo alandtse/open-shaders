@@ -6,7 +6,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <psapi.h>
+#include <stdexcept>
 
 namespace Util
 {
@@ -438,6 +440,20 @@ namespace Util
 	// File system utilities implementation
 	namespace FileHelpers
 	{
+		std::vector<char> ReadBoundedBinary(const std::filesystem::path& path, std::uintmax_t maxBytes)
+		{
+			std::ifstream file(path, std::ios::binary | std::ios::ate);
+			const auto size = static_cast<std::streamoff>(file.tellg());
+			if (!file || size <= 0 || static_cast<std::uintmax_t>(size) > maxBytes ||
+				static_cast<std::uintmax_t>(size) > std::numeric_limits<size_t>::max() || size > std::numeric_limits<std::streamsize>::max())
+				throw std::runtime_error("Binary file missing, empty or exceeds size limit: " + PathHelpers::ToUtf8(path));
+			std::vector<char> bytes(static_cast<size_t>(size));
+			file.seekg(0);
+			if (!file.read(bytes.data(), static_cast<std::streamsize>(bytes.size())))
+				throw std::runtime_error("Binary file read failed: " + PathHelpers::ToUtf8(path));
+			return bytes;
+		}
+
 		std::optional<unsigned> PrepareImGuiLayout(const std::filesystem::path& path)
 		{
 			std::error_code error;
