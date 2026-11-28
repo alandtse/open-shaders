@@ -157,11 +157,15 @@ private:
 		Reference,
 		Proximity,
 		UnslottedShadowLight,
+		GrantedWithoutSlice,
 		kCount
 	};
 	std::array<uint32_t, size_t(SlotMatch::kCount)> slotMatchesThisFrame{};
 	std::vector<const RE::NiLight*> slicedLightsThisFrame, slicedLights;
 	uint32_t slicedLightsFrame = UINT32_MAX;
+	mutable std::vector<const RE::NiLight*> grantedLights;  // Lights SCM handed to the trace in grantedLightsFrame.
+	mutable uint32_t grantedLightsFrame = UINT32_MAX;
+	std::atomic<uint64_t> grantedWithoutSliceTotal{ 0 };  // Light-frames that lost static shadows outright; must stay 0.
 	struct ShadowLightSlot
 	{
 		const RE::NiLight* light = nullptr;
