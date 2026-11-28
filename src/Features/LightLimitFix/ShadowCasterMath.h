@@ -299,6 +299,14 @@ namespace ShadowCasterManager
 	inline constexpr float kTileScaleSixteenth = 0.0625f;
 	inline constexpr float kTileScaleFloor = kTileScaleSixteenth;
 
+	inline constexpr float kShadowDepthBiasUnit = 0.00025f;
+
+	/// The sampler divides by tile scale; only the first bias unit compensates for larger texels.
+	inline constexpr float PointShadowBiasForUpload(float authoredBias, float tileScale) noexcept
+	{
+		return std::min(authoredBias, std::max(kShadowDepthBiasUnit, authoredBias * tileScale));
+	}
+
 	// Shadow texels per unit of projected light size. sizeProxy 1.0 (a light
 	// dominating the view, or sitting on the viewer) maps past the full
 	// class at any sane base resolution; calibration knob.

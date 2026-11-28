@@ -70,7 +70,7 @@ static bool SetShadowParameters(T& lightData, Deferred::ShadowLightData& sd)
 	DirectX::XMMATRIX invProj = DirectX::XMMatrixInverse(nullptr, proj);
 	DirectX::XMStoreFloat4x4(&sd.InvShadowProj, invProj);
 
-	sd.ShadowParam.z = lightData.shadowBiasScale * 0.00025f;
+	sd.ShadowParam.z = lightData.shadowBiasScale * ShadowCasterManager::kShadowDepthBiasUnit;
 	return true;
 }
 
@@ -230,6 +230,8 @@ void LightLimitFix::CopyShadowLightData()
 							sd[depthSlot].ShadowParam.y = snap.radius;
 							sd[depthSlot].ShadowParam.z = snap.bias;
 						}
+						if (shadowTypeF != 0.0f)
+							sd[depthSlot].ShadowParam.z = ShadowCasterManager::PointShadowBiasForUpload(sd[depthSlot].ShadowParam.z, rect.classScale);
 					}
 				} else if (sd[depthSlot].ShadowParam.y > 0.0f) {
 					// No rendered tile behind this slot; atlas mode never writes the
