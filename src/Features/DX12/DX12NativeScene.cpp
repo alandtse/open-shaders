@@ -1,5 +1,6 @@
 #include "DX12NativeScene.h"
 
+#include "../LightLimitFix/ShadowCasterManager.h"
 #include "../LightLimitFix/ShadowCasterMath.h"
 #include "../Upscaling.h"
 #include "DX12Control.h"
@@ -841,23 +842,33 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	                                                           std::span<const DX12::PreparedLight>(liveLights);
 	movingOriginLights.clear();
 	if (fullRT) {
+		constexpr float kMinOriginShift = 0.25f;  // Below this the rest-point trace is indistinguishable.
+		const bool fromRest = ShadowCasterManager::ShadowsFromRest();
 		std::scoped_lock lock(runtimeLightMutex);
-		if (scheduledOriginsFrame == frame) {
-			constexpr float kMinOriginShift = 0.25f;
-			for (size_t i = 0; i < submittedLights.size(); ++i) {
-				const auto it = scheduledOrigins.find(submittedLights[i].runtimeIdentity);
-				if (it == scheduledOrigins.end())
+		const bool hasScheduled = scheduledOriginsFrame == frame;
+		for (size_t i = 0; i < submittedLights.size(); ++i) {
+			const auto* source = reinterpret_cast<const RE::NiLight*>(submittedLights[i].runtimeIdentity);
+			if (!source)
+				continue;
+			float3 q;
+			if (const auto it = scheduledOrigins.find(submittedLights[i].runtimeIdentity); hasScheduled && it != scheduledOrigins.end()) {
+				q = it->second;
+			} else {
+				// Other lights follow SCM's flicker mode too; the cache keeps their source alive, merged emitters have no single source.
+				const auto cached = fullRuntimeLights.find(source);
+				if (fromRest || submittedLights[i].unifiedCount != 1 || cached == fullRuntimeLights.end() || !cached->second.active || !cached->second.source)
 					continue;
-				const auto& p = submittedLights[i].position;
-				const auto& q = it->second;
-				const float dx = q.x - p.x, dy = q.y - p.y, dz = q.z - p.z;
-				if (dx * dx + dy * dy + dz * dz < kMinOriginShift * kMinOriginShift)
-					continue;
-				if (movingOriginLights.empty())
-					lightsAtShadowOrigins.assign(submittedLights.begin(), submittedLights.end());
-				lightsAtShadowOrigins[i].position = q;
-				movingOriginLights.push_back(reinterpret_cast<const RE::NiLight*>(it->first));
+				const auto& live = cached->second.source->world.translate;
+				q = float3{ live.x, live.y, live.z };
 			}
+			const auto& p = submittedLights[i].position;
+			const float dx = q.x - p.x, dy = q.y - p.y, dz = q.z - p.z;
+			if (!std::isfinite(dx + dy + dz) || dx * dx + dy * dy + dz * dz < kMinOriginShift * kMinOriginShift)
+				continue;
+			if (movingOriginLights.empty())
+				lightsAtShadowOrigins.assign(submittedLights.begin(), submittedLights.end());
+			lightsAtShadowOrigins[i].position = q;
+			movingOriginLights.push_back(source);
 		}
 		if (!movingOriginLights.empty())
 			submittedLights = lightsAtShadowOrigins;
