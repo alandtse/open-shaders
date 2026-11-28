@@ -216,8 +216,12 @@ bool DX12NativeScene::CanOffloadShadowsInCurrentCell() const
 DX12::SCMNativeMode DX12NativeScene::GetFrameNativeMode() const
 {
 	if (!loaded || globals::game::isVR || !globals::features::dx12Control.IsActive() ||
-		globals::features::dx12Resources.IsLoading() || !globals::game::graphicsState ||
-		frameNativeModeID.load(std::memory_order_acquire) != globals::game::graphicsState->GetFrameCount())
+		globals::features::dx12Resources.IsLoading() || !globals::game::graphicsState)
+		return DX12::SCMNativeMode::Disabled;
+	// SCM schedules before this frame's PreShadowMaps stamps the mode, so the previous frame's stamp governs it.
+	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
+	const uint32_t stamped = frameNativeModeID.load(std::memory_order_acquire);
+	if (stamped == UINT32_MAX || (stamped != frame && stamped + 1 != frame))
 		return DX12::SCMNativeMode::Disabled;
 	return frameNativeMode.load(std::memory_order_acquire);
 }
