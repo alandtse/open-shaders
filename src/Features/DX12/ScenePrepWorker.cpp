@@ -7,6 +7,7 @@
 #include "RE/B/BSModelDB.h"
 #include "RE/B/BSShaderProperty.h"
 #include "RE/B/BSTriShape.h"
+#include "RE/E/ExtraEnableStateParent.h"
 #include "RE/G/GridCellArray.h"
 #include "RE/N/NiNode.h"
 #include "RE/N/NiTimeController.h"
@@ -19,6 +20,8 @@
 #include "RE/T/TESObjectREFR.h"
 #include "RE/T/TESObjectSTAT.h"
 #include "RE/T/TESWorldSpace.h"
+#include "RE/V/VirtualMachine.h"
+#include "ScenePrepEligibility.h"
 #include "ScenePrepEngineBridge.h"
 #include "TilePreparationPolicy.h"
 #include "Utils/PerfUtils.h"
@@ -381,6 +384,20 @@ namespace DX12
 		}
 	}
 
+	bool HasAttachedScripts(const RE::TESObjectREFR& a_ref)
+	{
+		// TESForm::HasVMAD only proves a VM handle can exist, which holds for every reference.
+		auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		auto* policy = vm ? vm->GetObjectHandlePolicy() : nullptr;
+		if (!policy)
+			return false;
+		const auto handle = policy->GetHandleForObject(a_ref.GetFormType(), &a_ref);
+		if (handle == policy->EmptyHandle())
+			return false;
+		RE::BSSpinLockGuard lock(vm->attachedScriptsLock);
+		return vm->attachedScripts.contains(handle);
+	}
+
 	std::optional<ScenePrepRequest> CaptureScenePrepRequest(
 		SubcellKey a_key, uint32_t a_size, const RE::TESObjectCELL* a_cell,
 		const RE::TESWorldSpace* a_world, bool a_predictive, bool a_corner, bool a_consolidate, bool a_loading)
@@ -511,19 +528,24 @@ namespace DX12
 			if (!nifView.empty())
 				AddNifSource(request, plugin, localID, nifView);
 
+			if (root && !request.consolidate && knownBounds && !bounds.MayOverlap(a_key.x, a_key.y, a_size))
+				return RE::BSContainer::ForEachResult::kContinue;
+
+			if (IsRuntimeDependentPlacement(
+					base->Is(RE::FormType::MovableStatic), HasAttachedScripts(*a_ref),
+					a_ref->extraList.GetByType<RE::ExtraEnableStateParent>() != nullptr,
+					a_ref->IsInitiallyDisabled())) {
+				RecordRejection(request.rejectionReasons, request.failedShapes, "runtime-dependent placement");
+				AddMissingShape(request, plugin, localID, nifView, -1, "runtime-dependent placement");
+				return RE::BSContainer::ForEachResult::kContinue;
+			}
+
 			if (root) {
-				if (!request.consolidate && knownBounds && !bounds.MayOverlap(a_key.x, a_key.y, a_size))
-					return RE::BSContainer::ForEachResult::kContinue;
 				uint32_t ordinal = 0;
 				CaptureAttachedSubtree(root, refID, plugin, localID, nifView, ordinal, 0, request, captureCache);
 				return RE::BSContainer::ForEachResult::kContinue;
 			}
 
-			if (base->Is(RE::FormType::MovableStatic) || a_ref->HasVMAD()) {
-				RecordRejection(request.rejectionReasons, request.failedShapes, "runtime-dependent placement");
-				AddMissingShape(request, plugin, localID, nifView, -1, "runtime-dependent placement");
-				return RE::BSContainer::ForEachResult::kContinue;
-			}
 			if (!nifPath) {
 				RecordRejection(request.rejectionReasons, request.failedShapes, "missing mesh path");
 				return RE::BSContainer::ForEachResult::kContinue;

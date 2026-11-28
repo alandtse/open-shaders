@@ -107,6 +107,9 @@ namespace DX12
 		const RE::TESWorldSpace* a_world, bool a_predictive, bool a_corner, bool a_consolidate, bool a_loading);
 
 	/** @brief Single bounded producer preparing immutable subcell geometry and lights off the render thread. */
+	/** @brief True when the Papyrus VM has scripts bound to this reference. */
+	[[nodiscard]] bool HasAttachedScripts(const RE::TESObjectREFR& a_ref);
+
 	class ScenePrepWorker
 	{
 	public:

@@ -1,4 +1,5 @@
 #include "Features/DX12/NativeCasterSource.h"
+#include "Features/DX12/ScenePrepEligibility.h"
 #include "Features/DX12/ScenePrepMath.h"
 
 #include <catch2/catch_approx.hpp>
@@ -213,4 +214,13 @@ TEST_CASE("Native caster source requires matching mesh and transform", "[dx12][s
 	moved[3] = 0.25f;
 	CHECK_FALSE(DX12::SameCasterSource(source, source, transform, moved));
 	CHECK_FALSE(DX12::SameCasterSource({}, source, transform, transform));
+}
+
+TEST_CASE("Scene preparation rejects placements that can change at runtime", "[dx12][scene-prep]")
+{
+	CHECK_FALSE(DX12::IsRuntimeDependentPlacement(false, false, false, false));
+	CHECK(DX12::IsRuntimeDependentPlacement(true, false, false, false));
+	CHECK(DX12::IsRuntimeDependentPlacement(false, true, false, false));
+	CHECK(DX12::IsRuntimeDependentPlacement(false, false, true, false));
+	CHECK(DX12::IsRuntimeDependentPlacement(false, false, false, true));
 }
