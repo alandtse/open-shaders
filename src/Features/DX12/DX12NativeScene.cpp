@@ -357,6 +357,12 @@ void DX12NativeScene::PublishLightShadowSlots(uint32_t frame, std::span<const DX
 	std::swap(slicedLights, slicedLightsThisFrame);
 	slicedLightsThisFrame.clear();
 	slicedLightsFrame = frame;
+	{
+		std::scoped_lock lock(shadowLightSlotsMutex);
+		std::swap(shadowLightSlots, shadowLightSlotsThisFrame);
+	}
+	shadowLightSlotsThisFrame.clear();
+	slotSpheres.clear();
 	const auto traced = shadows.Get(frame);
 	lightSlotFrame = UINT32_MAX;
 	// Queue-side wait before any light is flagged: forward lighting must not read slices the trace has not written.
@@ -364,6 +370,8 @@ void DX12NativeScene::PublishLightShadowSlots(uint32_t frame, std::span<const DX
 		FAILED(backend->d3d11Context->Wait(traced->lightVisibilityFence.get(), traced->lightVisibilityValue)))
 		return;
 	lightSlotFrame = frame;
+	for (uint32_t i = 0; i < traced->visibilityLights.size() && i < submitted.size(); ++i)
+		slotSpheres.push_back({ submitted[i].position, submitted[i].radius });
 	for (uint32_t i = 0; i < traced->visibilityLights.size() && i < submitted.size(); ++i) {
 		if (i < sources.size()) {
 			slotsBySource.try_emplace(sources[i], i);
@@ -404,6 +412,16 @@ std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_l
 				slot = index;
 			}
 		}
+	}
+	if (a_shadowLight && std::ranges::none_of(shadowLightSlotsThisFrame, [a_light](const auto& s) { return s.light == a_light; })) {
+		ShadowLightSlot entry{ a_light, slot ? match : SlotMatch::UnslottedShadowLight, 0.0f, a_light->GetLightRuntimeData().radius.x, 0.0f };
+		if (slot && *slot < slotSpheres.size()) {
+			const auto& [position, radius] = slotSpheres[*slot];
+			const auto& p = a_light->world.translate;
+			entry.offset = std::sqrt((position.x - p.x) * (position.x - p.x) + (position.y - p.y) * (position.y - p.y) + (position.z - p.z) * (position.z - p.z));
+			entry.tracedRadius = radius;
+		}
+		shadowLightSlotsThisFrame.push_back(entry);
 	}
 	if (slot) {
 		lightsShadedFrame = lightSlotFrame;
@@ -1076,6 +1094,14 @@ json DX12NativeScene::GetStatus() const
 							 { "reference", slotMatches[size_t(SlotMatch::Reference)].load(std::memory_order_relaxed) },
 							 { "proximity", slotMatches[size_t(SlotMatch::Proximity)].load(std::memory_order_relaxed) } } },
 		{ "unslottedShadowLights", slotMatches[size_t(SlotMatch::UnslottedShadowLight)].load(std::memory_order_relaxed) },
+		{ "shadowLightSlots", [this] {
+			 std::scoped_lock lock(shadowLightSlotsMutex);
+			 json rows = json::array();
+			 for (const auto& s : shadowLightSlots)
+				 rows.push_back({ { "match", magic_enum::enum_name(s.match) }, { "offset", s.offset },
+					 { "radius", s.lightRadius }, { "tracedRadius", s.tracedRadius } });
+			 return rows;
+		 }() },
 		{ "movers", movers.LastTraced() } };
 	status["composite"] = { { "lastShadowResult", magic_enum::enum_name(DX12Native::lastCompositeShadowResult.load(std::memory_order_relaxed)) } };
 	return status;

@@ -162,6 +162,16 @@ private:
 	std::array<uint32_t, size_t(SlotMatch::kCount)> slotMatchesThisFrame{};
 	std::vector<const RE::NiLight*> slicedLightsThisFrame, slicedLights;
 	uint32_t slicedLightsFrame = UINT32_MAX;
+	struct ShadowLightSlot
+	{
+		const RE::NiLight* light = nullptr;
+		SlotMatch match = SlotMatch::UnslottedShadowLight;
+		float offset = 0.0f, lightRadius = 0.0f, tracedRadius = 0.0f;
+	};
+	std::vector<std::pair<float3, float>> slotSpheres;  // Traced position and radius per slot.
+	std::vector<ShadowLightSlot> shadowLightSlotsThisFrame;
+	mutable std::mutex shadowLightSlotsMutex;
+	std::vector<ShadowLightSlot> shadowLightSlots;                               // SCM shadow lights' slice lookups in the previous frame.
 	std::array<std::atomic<uint32_t>, size_t(SlotMatch::kCount)> slotMatches{};  // Previous frame's lookups by outcome.
 	uint32_t lightSlotFrame = UINT32_MAX, lightsShadedFrame = UINT32_MAX;
 	std::atomic<bool> exactShadowLights{ false }, frameExactShadowLights{ false };
