@@ -791,7 +791,6 @@ void DX12Resources::CancelPreparationWork()
 	workerUnavailable = false;
 	if (worker) {
 		worker->Cancel();
-		worker->DrainRetiredObjects();
 	}
 	grid.CancelPending();
 	if (loadingGrid)
@@ -1067,7 +1066,6 @@ void DX12Resources::PumpPreparation(DX12::ResourceGrid& target, const RE::TESObj
 			return;
 		}
 	}
-	worker->DrainRetiredObjects();
 	if (worker->Failed()) {
 		if (inFlight) {
 			const auto key = *inFlight;

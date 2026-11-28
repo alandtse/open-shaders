@@ -24,8 +24,8 @@ GPU command submission remains on the native queue. Fence events request CPU con
 
 Geometry and light preparation uses a single lazy, in-process ScenePrepWorker.
 The render-side capture obtains engine references and copies bounded rigid
-mesh slices; the worker decodes owned data and resolves unattached models
-through the engine model database. Publications are immutable and carry
+mesh slices; the worker decodes owned data. References without loaded 3D
+stay in raster: loading models off an engine thread crashes. Publications are immutable and carry
 partial-coverage diagnostics. No external preparation application, IPC,
 plugin indexing or persistent scene cache is used.
 

@@ -4,7 +4,6 @@
 #include "RE/B/BGSMovableStatic.h"
 #include "RE/B/BSGeometry.h"
 #include "RE/B/BSMeshLODTriShape.h"
-#include "RE/B/BSModelDB.h"
 #include "RE/B/BSShaderProperty.h"
 #include "RE/B/BSTriShape.h"
 #include "RE/E/ExtraEnableStateParent.h"
@@ -338,89 +337,6 @@ namespace DX12
 			std::vector<uint32_t> indices;
 			uint64_t bytes = 0;
 		};
-
-		struct ExtractedModelShape
-		{
-			uint32_t ordinal = 0;
-			std::shared_ptr<const CachedDecodedMesh> mesh;
-			AffineTransform toModel{};
-		};
-
-		struct CachedModelExtraction
-		{
-			std::vector<ExtractedModelShape> shapes;
-			std::vector<std::tuple<int32_t, std::string>> missing;
-			std::vector<std::pair<std::string, uint32_t>> rejections;
-			uint64_t bytes = 0;
-		};
-
-		void WalkDemandModelSubtree(
-			RE::NiAVObject* a_obj, const AffineTransform& a_parentTransform, uint32_t& a_shapeOrdinal,
-			uint32_t a_depth, CachedModelExtraction& a_out)
-		{
-			if (!a_obj || a_obj->GetAppCulled())
-				return;
-			if (IsSceneGraphDepthExceeded(a_depth, kMaxSceneGraphDepth)) {
-				uint32_t ignored = 0;
-				RecordRejection(a_out.rejections, ignored, "scene graph depth limit exceeded");
-				a_out.missing.emplace_back(-1, "scene graph depth limit exceeded");
-				return;
-			}
-			if (a_obj->GetControllers() != nullptr) {
-				uint32_t ignored = 0;
-				RecordRejection(a_out.rejections, ignored, "controlled scene subtree");
-				a_out.missing.emplace_back(-1, "controlled scene subtree");
-				return;
-			}
-			const auto currentTransform = ComposeAffine(a_parentTransform, FromNiTransform(a_obj->local));
-			if (auto* node = a_obj->AsNode()) {
-				const auto& children = node->GetChildren();
-				if (const auto active = ActiveSwitchChild(*node)) {
-					if (*active < children.size())
-						WalkDemandModelSubtree(children[*active].get(), currentTransform, a_shapeOrdinal, a_depth + 1, a_out);
-					return;
-				}
-				for (const auto& child : children)
-					WalkDemandModelSubtree(child.get(), currentTransform, a_shapeOrdinal, a_depth + 1, a_out);
-				return;
-			}
-			auto* geom = a_obj->AsGeometry();
-			if (!geom)
-				return;
-
-			const uint32_t ordinal = a_shapeOrdinal++;
-			ExtractedShapeDesc extracted{};
-			std::string_view rejectReason;
-			const auto status = InspectGeometry(*geom, extracted, rejectReason);
-			if (status == GeometryInspectResult::SkippedNonShadow)
-				return;
-			if (status == GeometryInspectResult::Rejected) {
-				uint32_t ignored = 0;
-				RecordRejection(a_out.rejections, ignored, rejectReason);
-				a_out.missing.emplace_back(int32_t(ordinal), std::string(rejectReason));
-				return;
-			}
-			const auto rows = TransformToRows3x4(currentTransform);
-			if (!IsInvertibleTransform3x4(rows)) {
-				uint32_t ignored = 0;
-				RecordRejection(a_out.rejections, ignored, "invalid NIF transform");
-				a_out.missing.emplace_back(int32_t(ordinal), "invalid NIF transform");
-				return;
-			}
-			auto mesh = std::make_shared<CachedDecodedMesh>();
-			if (!DecodeRawMeshBuffers(extracted.rawVertices, extracted.vertexCount, extracted.stride,
-					extracted.rawIndices, extracted.firstIndex, extracted.indexCount,
-					mesh->positions, mesh->indices)) {
-				uint32_t ignored = 0;
-				RecordRejection(a_out.rejections, ignored, "invalid decoded mesh data");
-				a_out.missing.emplace_back(int32_t(ordinal), "invalid decoded mesh data");
-				return;
-			}
-			mesh->bytes = uint64_t(mesh->positions.size()) * sizeof(float3) +
-			              uint64_t(mesh->indices.size()) * sizeof(uint32_t);
-			a_out.bytes += 128ull + mesh->bytes;
-			a_out.shapes.push_back({ ordinal, std::move(mesh), currentTransform });
-		}
 	}
 
 	bool HasAttachedScripts(const RE::TESObjectREFR& a_ref)
@@ -597,20 +513,9 @@ namespace DX12
 				RecordRejection(request.rejectionReasons, request.failedShapes, "missing mesh path");
 				return RE::BSContainer::ForEachResult::kContinue;
 			}
-			const auto placement = PlacementFromEulerXYZ(
-				float3{ pos.x, pos.y, pos.z },
-				float3{ a_ref->GetAngleX(), a_ref->GetAngleY(), a_ref->GetAngleZ() },
-				a_ref->GetScale());
-			if (!placement) {
-				RecordRejection(request.rejectionReasons, request.failedShapes, "invalid placement");
-				AddMissingShape(request, plugin, localID, nifView, -1, "invalid placement");
-				return RE::BSContainer::ForEachResult::kContinue;
-			}
-			request.unattachedPlacements.push_back({ refID,
-				localID,
-				std::string(plugin),
-				*nifPath,
-				*placement });
+			// BSModelDB::Demand off an engine thread crashes in Havok's per-thread allocator, so unloaded meshes stay raster.
+			RecordRejection(request.rejectionReasons, request.failedShapes, "mesh not loaded");
+			AddMissingShape(request, plugin, localID, nifView, -1, "mesh not loaded");
 			return RE::BSContainer::ForEachResult::kContinue;
 		};
 
@@ -715,7 +620,6 @@ namespace DX12
 		wake.notify_all();
 		if (worker.joinable())
 			worker.join();
-		DrainRetiredObjects();
 	}
 
 	bool ScenePrepWorker::Idle() const
@@ -752,26 +656,6 @@ namespace DX12
 		wake.notify_all();
 	}
 
-	void ScenePrepWorker::DrainRetiredObjects()
-	{
-		std::vector<RE::NiPointer<RE::NiObject>> toRelease;
-		{
-			std::scoped_lock lock(mutex);
-			toRelease.swap(retiredObjects);
-		}
-	}
-
-	void ScenePrepWorker::RetireObjectsLocked(std::vector<RE::NiPointer<RE::NiObject>>& a_objects)
-	{
-		if (a_objects.empty())
-			return;
-		retiredObjects.insert(
-			retiredObjects.end(),
-			std::make_move_iterator(a_objects.begin()),
-			std::make_move_iterator(a_objects.end()));
-		a_objects.clear();
-	}
-
 	void ScenePrepWorker::Run(std::stop_token a_stop)
 	{
 		uint64_t observedGeneration = generation.load(std::memory_order_acquire);
@@ -803,10 +687,9 @@ namespace DX12
 			const bool predictive = task->predictive;
 			const bool corner = task->corner;
 			const double captureMs = task->captureMs;
-			std::vector<RE::NiPointer<RE::NiObject>> localRetired;
 			ScenePrepResult result;
 			try {
-				result = Prepare(std::move(*task), epoch, a_stop, localRetired);
+				result = Prepare(std::move(*task), epoch, a_stop);
 			} catch (const std::exception& error) {
 				result.publication.key = task ? task->key : SubcellKey{};
 				result.failure = std::format("Scene preparation error: {}", std::string_view(error.what()).substr(0, 240));
@@ -823,7 +706,6 @@ namespace DX12
 			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 			{
 				std::scoped_lock lock(mutex);
-				RetireObjectsLocked(localRetired);
 				running = false;
 				if (!a_stop.stop_requested() && epoch == generation.load(std::memory_order_acquire))
 					completed = std::move(result);
@@ -832,8 +714,7 @@ namespace DX12
 	}
 
 	ScenePrepResult ScenePrepWorker::Prepare(
-		ScenePrepRequest a_request, uint64_t a_epoch, std::stop_token a_stop,
-		std::vector<RE::NiPointer<RE::NiObject>>& a_outRetired)
+		ScenePrepRequest a_request, uint64_t a_epoch, std::stop_token a_stop)
 	{
 		ScenePrepResult result;
 		result.predictive = a_request.predictive;
@@ -987,84 +868,6 @@ namespace DX12
 			emitShape(attached.identity, decoded->positions, decoded->indices, attached.transform, {}, 0, {}, -1, attached.casterSource);
 		}
 		rawCache.clear();
-
-		std::unordered_map<std::string, std::shared_ptr<const CachedModelExtraction>> modelCache;
-		uint64_t modelCacheBytes = 0;
-
-		for (const auto& placement : a_request.unattachedPlacements) {
-			if (const auto reason = stopReason()) {
-				result.failure = reason;
-				return result;
-			}
-			std::shared_ptr<const CachedModelExtraction> extraction;
-			if (const auto it = modelCache.find(placement.nifPath); it != modelCache.end()) {
-				extraction = it->second;
-			} else {
-				auto fresh = std::make_shared<CachedModelExtraction>();
-				RE::BSModelDB::DBTraits::ArgsType args{};
-				args.LODmult = 0;
-				args.texLoadLevel = 0;
-				args.unk8 = false;
-				args.unk9 = false;
-				args.unkA = false;
-				args.postProcess = false;
-				RE::NiPointer<RE::NiNode> modelRoot;
-				ZoneScopedN("DX12::Preparation::DemandModel");
-				const auto err = RE::BSModelDB::Demand(placement.nifPath.c_str(), modelRoot, args);
-				if (modelRoot)
-					a_outRetired.emplace_back(modelRoot.get());
-				if (err != RE::BSResource::ErrorCode::kNone || !modelRoot) {
-					uint32_t ignored = 0;
-					RecordRejection(fresh->rejections, ignored, "NIF unavailable or unsupported");
-					fresh->missing.emplace_back(-1, "NIF unavailable or unsupported");
-				} else {
-					uint32_t ordinal = 0;
-					WalkDemandModelSubtree(modelRoot.get(), AffineTransform{}, ordinal, 0, *fresh);
-					if (fresh->shapes.empty() && fresh->missing.empty()) {
-						uint32_t ignored = 0;
-						RecordRejection(fresh->rejections, ignored, "no supported opaque rigid triangles");
-						fresh->missing.emplace_back(-1, "no supported opaque rigid triangles");
-					}
-				}
-				extraction = fresh;
-				fresh->bytes += 256ull + placement.nifPath.size() + fresh->missing.size() * 96ull;
-				if (fresh->bytes <= kMaxDecodedCacheBytes - modelCacheBytes) {
-					modelCacheBytes += fresh->bytes;
-					modelCache.emplace(placement.nifPath, extraction);
-				}
-			}
-
-			for (const auto& [reason, count] : extraction->rejections) {
-				RecordRejection(pub.rejectionReasons, pub.failedShapes, reason, count);
-				pub.unlocalizedRejections += count;
-			}
-			for (const auto& [blockIdx, reason] : extraction->missing) {
-				if (pub.missingShapes.size() >= kMaxMissingShapes) {
-					RecordRejection(pub.rejectionReasons, pub.failedShapes, "missing shape manifest capacity");
-					break;
-				}
-				MissingNifShapeDescriptor entry;
-				entry.referencePlugin = placement.refPlugin.substr(0, 128);
-				entry.referenceLocal = placement.refLocal;
-				entry.nifPath = placement.nifPath;
-				entry.blockIndex = blockIdx;
-				entry.reason = reason.substr(0, 80);
-				pub.missingShapes.push_back(std::move(entry));
-			}
-
-			for (const auto& modelShape : extraction->shapes) {
-				const auto worldAffine = ComposeAffine(placement.transform, modelShape.toModel);
-				const auto rows = TransformToRows3x4(worldAffine);
-				if (!IsInvertibleTransform3x4(rows)) {
-					RecordRejection(pub.rejectionReasons, pub.failedShapes, "invalid placed bounds");
-					continue;
-				}
-				emitShape(
-					MakeShapeIdentity(placement.refFormID, modelShape.ordinal),
-					modelShape.mesh->positions, modelShape.mesh->indices, rows,
-					placement.refPlugin, placement.refLocal, placement.nifPath, int32_t(modelShape.ordinal));
-			}
-		}
 
 		pub.validated = true;
 		pub.enumerationComplete = a_request.enumerationComplete && !a_request.lightCapacityExceeded && !a_request.candidateOverflow;

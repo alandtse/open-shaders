@@ -32,15 +32,6 @@ namespace DX12
 		CasterSource casterSource;
 	};
 
-	struct UnattachedModelPlacement
-	{
-		uint32_t refFormID = 0;
-		uint32_t refLocal = 0;
-		std::string refPlugin;
-		std::string nifPath;
-		AffineTransform transform{};
-	};
-
 	struct InteriorPreparationBatch
 	{
 		struct BoundedShape
@@ -79,7 +70,6 @@ namespace DX12
 		uint32_t unlocalizedRejections = 0;
 		double captureMs = 0.0;
 		std::vector<CapturedAttachedShape> attachedShapes;
-		std::vector<UnattachedModelPlacement> unattachedPlacements;
 		std::vector<PreparedLight> lights;
 		std::vector<NifSourceDescriptor> nifSources;
 		std::vector<MissingNifShapeDescriptor> missingShapes;
@@ -101,7 +91,7 @@ namespace DX12
 		double captureMs = 0.0;
 	};
 
-	/** @brief Captures live references, terrain, lights, and unattached model descriptors on the game thread. */
+	/** @brief Captures live references, terrain, and lights on the game thread. */
 	[[nodiscard]] std::optional<ScenePrepRequest> CaptureScenePrepRequest(
 		SubcellKey a_key, uint32_t a_size, const RE::TESObjectCELL* a_cell,
 		const RE::TESWorldSpace* a_world, bool a_predictive, bool a_corner, bool a_consolidate, bool a_loading);
@@ -128,21 +118,16 @@ namespace DX12
 		bool Enqueue(ScenePrepRequest a_request);
 		std::optional<ScenePrepResult> Take();
 		void Cancel();
-		/** @brief Releases retained engine NiObjects on the game thread. */
-		void DrainRetiredObjects();
 
 	private:
 		void Run(std::stop_token a_stop);
 		ScenePrepResult Prepare(
-			ScenePrepRequest a_request, uint64_t a_epoch, std::stop_token a_stop,
-			std::vector<RE::NiPointer<RE::NiObject>>& a_outRetired);
-		void RetireObjectsLocked(std::vector<RE::NiPointer<RE::NiObject>>& a_objects);
+			ScenePrepRequest a_request, uint64_t a_epoch, std::stop_token a_stop);
 
 		mutable std::mutex mutex;
 		std::condition_variable_any wake;
 		std::optional<ScenePrepRequest> queued;
 		std::optional<ScenePrepResult> completed;
-		std::vector<RE::NiPointer<RE::NiObject>> retiredObjects;
 		bool running = false;
 		std::atomic<bool> failed{ false };
 		bool errorLogged = false;
