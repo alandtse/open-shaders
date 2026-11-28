@@ -9,7 +9,11 @@
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	InteriorSun::Settings,
 	ForceDoubleSidedRendering,
-	InteriorShadowDistance)
+	InteriorShadowDistance,
+	DetectOpenings,
+	MinimumOpeningWidth,
+	MinimumDepthDrop,
+	MinimumRimCoverage)
 
 void InteriorSun::DrawSettings()
 {
@@ -20,15 +24,21 @@ void InteriorSun::DrawSettings()
 							  "Will prevent most light leaking through unmasked/unprepared interiors at a small performance cost. "));
 	}
 	if (ImGui::SliderFloat(T(TKEY("interior_shadow_distance"), "Interior Shadow Distance"), &settings.InteriorShadowDistance, 1000.0f, 8000.0f)) {
-		*gInteriorShadowDistance = settings.InteriorShadowDistance;
-		auto tes = globals::game::tes;
-		SetShadowDistance(tes && tes->interiorCell);
+		ApplyInteriorShadowDistance();
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("interior_shadow_distance_tooltip"),
 							  "Sets the distance shadows are rendered at in interiors. "
 							  "Lower values provide higher quality shadows and improved performance but may cause distant interior spaces to light up incorrectly. "));
 	}
+	ImGui::Checkbox(T(TKEY("detect_openings"), "Detect Physical Openings"), &settings.DetectOpenings);
+	ImGui::BeginDisabled(!settings.DetectOpenings);
+	ImGui::SliderFloat(T(TKEY("minimum_opening_width"), "Minimum Opening Width"), &settings.MinimumOpeningWidth, 4.0f, 128.0f, "%.0f");
+	ImGui::SliderFloat(T(TKEY("minimum_depth_drop"), "Minimum Depth Drop"), &settings.MinimumDepthDrop, 8.0f, 512.0f, "%.0f");
+	ImGui::SliderInt(T(TKEY("minimum_rim_coverage"), "Minimum Rim Coverage"), &settings.MinimumRimCoverage, 1, 100, "%d%%");
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("minimum_rim_coverage_tooltip"), "Complete an enclosed opening when this percentage of its rim meets Minimum Depth Drop. Lower values admit more of a shallow, angled rim."));
+	ImGui::EndDisabled();
 }
 
 void InteriorSun::LoadSettings(json& o_json)
@@ -52,6 +62,7 @@ void InteriorSun::RestoreDefaultSettings()
 
 void InteriorSun::PostPostLoad()
 {
+	stl::write_vfunc<0x25, StartShadowCamera>(RE::VTABLE_BSShaderAccumulator[0]);
 	stl::write_thunk_call<BSBatchRenderer_RenderPassImmediately>(REL::RelocationID(100852, 107642).address() + REL::Relocate(0x29E, 0x28F));
 
 	// Hooks and patch to enable directional lighting for interiors
@@ -234,8 +245,14 @@ bool InteriorSun::IsInSunDirectionAndWithinShadowDistance(const RE::NiPointer<RE
 	return projection >= -radius && (distance - radius) <= *gShadowDistance;
 }
 
-void InteriorSun::SetShadowDistance(bool inInterior)
+void InteriorSun::ApplyInteriorShadowDistance()
 {
-	RE::BSShaderManager::UpdateShadowDistanceAndInteriorFlag(inInterior);
+	if (!gInteriorShadowDistance || !gShadowDistance)
+		return;
+	const bool interior = globals::game::tes && globals::game::tes->interiorCell;
+	if (*gInteriorShadowDistance != settings.InteriorShadowDistance || (interior && *gShadowDistance != settings.InteriorShadowDistance)) {
+		*gInteriorShadowDistance = settings.InteriorShadowDistance;
+		RE::BSShaderManager::UpdateShadowDistanceAndInteriorFlag(interior);
+	}
 }
 #undef I18N_KEY_PREFIX

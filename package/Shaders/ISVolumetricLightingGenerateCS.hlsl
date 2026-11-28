@@ -22,6 +22,7 @@ RWTexture3D<float> DensityRW : register(u0);
 #	include "Common/SharedData.hlsli"
 
 #	include "Common/ShadowSampling.hlsli"
+#	include "Common/WindowShadow.hlsli"
 
 cbuffer PerTechnique : register(b0)
 {
@@ -102,6 +103,8 @@ cbuffer PerTechnique : register(b0)
 			float shadowMapVLValue = ShadowmapVLTex.SampleLevel(ShadowmapVLSampler, float3(positionLS.xy, cascadeIndex), 0);
 			noShadow = noShadow & shadowMapVLValue >= positionLS.z - shadowMapThreshold;
 		}
+		[branch] if (noShadow && SharedData::InInterior)
+			noShadow = WindowShadow::Visibility(cascadeIndex, positionLS, false) > 0;
 	}
 
 	float3 noiseUv = 0.0125 * (InverseDensityScale * (positionWS.xyz + WindInput[eyeIndex]));

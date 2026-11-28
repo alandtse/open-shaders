@@ -882,6 +882,8 @@ namespace SIE
 			uint32_t descriptor, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 
 		static std::string GetDefinesString(const RE::BSShader& shader, uint32_t descriptor);
+		/** @brief Returns the engine and feature defines for compiling a matching shader technique. */
+		static std::vector<std::pair<const char*, const char*>> GetTechniqueDefines(const RE::BSShader& shader, uint32_t descriptor);
 
 		uint64_t GetCachedHitTasks();
 		uint64_t GetCompletedTasks();
