@@ -12,18 +12,20 @@ namespace NativeLightShadows
 	/** Visibility of one traced light at a render-target pixel, averaged with the previous frame's slice when it has one; 1 is lit. */
 	float Visibility(uint slot, uint previousSlot, float2 pixel)
 	{
-		uint width, height, slices;
+		uint width, height, slices, previousWidth, previousHeight, previousSlices;
 		NativeLightShadowSlices.GetDimensions(width, height, slices);
-		if (slot >= slices || width == 0 || height == 0)
-			return 1.0;
-		const float2 renderSize = SharedData::BufferDim.xy * FrameBuffer::DynamicResolutionParams1.xy;
-		const uint2 texel = min(uint2(pixel * float2(width, height) / max(renderSize, 1.0)), uint2(width, height) - 1);
-		const float current = NativeLightShadowSlices.Load(int4(texel, slot, 0));
-		uint previousWidth, previousHeight, previousSlices;
 		PreviousNativeLightShadowSlices.GetDimensions(previousWidth, previousHeight, previousSlices);
-		if (previousSlot >= previousSlices || previousWidth != width || previousHeight != height)
-			return current;
-		return 0.5 * (current + PreviousNativeLightShadowSlices.Load(int4(texel, previousSlot, 0)));
+		const bool hasCurrent = slot < slices && width != 0 && height != 0;
+		const bool hasPrevious = previousSlot < previousSlices && previousWidth != 0 && previousHeight != 0 &&
+		                         (!hasCurrent || (previousWidth == width && previousHeight == height));
+		if (!hasCurrent && !hasPrevious)
+			return 1.0;
+		const uint2 size = hasCurrent ? uint2(width, height) : uint2(previousWidth, previousHeight);
+		const float2 renderSize = SharedData::BufferDim.xy * FrameBuffer::DynamicResolutionParams1.xy;
+		const uint2 texel = min(uint2(pixel * float2(size) / max(renderSize, 1.0)), size - 1);
+		const float current = hasCurrent ? NativeLightShadowSlices.Load(int4(texel, slot, 0)) : 1.0;
+		const float previous = hasPrevious ? PreviousNativeLightShadowSlices.Load(int4(texel, previousSlot, 0)) : 1.0;
+		return hasCurrent && hasPrevious ? 0.5 * (current + previous) : (hasCurrent ? current : previous);
 	}
 }
 
