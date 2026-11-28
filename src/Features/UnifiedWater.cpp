@@ -13,7 +13,6 @@
 #include "RE/L/LoadingMenu.h"
 #include "RE/M/MapMenu.h"
 #include "RE/P/PlayerCharacter.h"
-#include "Utils/DebugSection.h"
 
 #include <imgui_internal.h>
 
@@ -196,21 +195,6 @@ void UnifiedWater::TESWaterSystem_AddWater::thunk(RE::TESWaterSystem* waterSyste
 	RepairSharedMaterials(waterSystem, waterSystem->waterReflections, &RE::TESWaterObject::reflections);
 	RepairSharedMaterials(waterSystem, waterSystem->waterNormals, &RE::TESWaterObject::normals);
 	func(waterSystem, water, waterType, waterHeight, multiBounds, noDisplacement, isProcedural);
-}
-
-void UnifiedWater::DrawDebugSection()
-{
-	Util::DebugSection section;
-	if (!section)
-		return;
-
-	if (Util::Button(T(TKEY("regenerate_flowmap"), "Regenerate Flowmap")) && flowmap) {
-		if (flowmap->RegenerateAndLoadFlowmap())
-			SetFlowmapTex();
-	}
-
-	if (Util::Button(T(TKEY("regenerate_caches"), "Regenerate Caches")) && waterCache)
-		waterCache->RegenerateCaches();
 }
 
 void UnifiedWater::DrawOverlay()

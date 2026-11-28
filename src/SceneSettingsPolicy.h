@@ -35,6 +35,12 @@ namespace SceneSettingsPolicy
 		{ "ScreenSpaceGI", "EnableGI" },
 		{ "ScreenSpaceGI", "EnableTemporalDenoiser" },
 		{ "ScreenSpaceGI", "EnableExperimentalSpecularGI" },
+		{ "UnifiedWater", "DeepConnectionProbeReachUnits" },
+		{ "UnifiedWater", "DeepContextDepthUnits" },
+		{ "UnifiedWater", "DeepContextTransitionUnits" },
+		{ "UnifiedWater", "ShallowSurfaceDepthRangeUnits" },
+		{ "UnifiedWater", "ShoreContactMinFadePixels" },
+		{ "UnifiedWater", "UseOpenShadersDepthBehaviour" },
 		// Debug section: backend log verbosity, read only at startup
 		{ "Upscaling", "streamlineLogLevel" },
 		{ "VolumetricLighting" },

@@ -814,6 +814,18 @@ namespace SharedData
 		float3 BodyDisplayColor;  // main curtain color in display space
 	};
 
+	struct UnifiedWaterSettings
+	{
+		float ShallowFallbackStrength;
+		float DeepConnectionProbeReachUnits;
+		float DeepContextDepthUnits;
+		float ShoreContactMinFadePixels;
+		float ShoreDepthBlendRangeUnits;
+		float ShallowSurfaceDepthRangeUnits;
+		float ShallowFallbackMaxDistance;
+		float DeepContextTransitionUnits;
+	};
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
@@ -847,6 +859,7 @@ namespace SharedData
 		HorizonFixSettings horizonFixSettings;
 		RainRefractionSettings rainRefractionSettings;
 		ProceduralAuroraSettings proceduralAuroraSettings;
+		UnifiedWaterSettings unifiedWaterSettings;
 #if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
 		SnowCoverSettings snowCoverSettings;
 #endif

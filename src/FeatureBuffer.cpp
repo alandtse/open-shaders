@@ -30,6 +30,7 @@
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainShadows.h"
 #include "Features/TerrainVariation.h"
+#include "Features/UnifiedWater.h"
 #include "Features/VanillaFresnel.h"
 #include "Features/WetnessEffects.h"
 #include "Features/Wind/Wind.h"
@@ -97,5 +98,6 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::horizonFix.GetCommonBufferData(),
 		globals::features::rainRefraction.GetCommonBufferData(),
 		globals::features::proceduralAurora.GetCommonBufferData(),
+		globals::features::unifiedWater.GetShallowSettings(),
 		globals::features::snowCover.GetCommonBufferData(a_inWorld));
 }
