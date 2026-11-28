@@ -431,20 +431,20 @@ void LinearLighting::BSLightingShader_SetupGeometry(RE::BSRenderPass* a_pass)
 	if (!IsLinearLightingActive() || !PerGeometryCB || !globals::d3d::context)
 		return;
 
-	auto& property1 = a_pass->geometry->GetGeometryRuntimeData().shaderProperty;
-	auto lightProperty = property1 && property1->GetRTTI() == globals::rtti::BSLightingShaderPropertyRTTI.get() ? static_cast<RE::BSLightingShaderProperty*>(property1.get()) : nullptr;
-	if (!lightProperty)
-		return;
+	auto* property1 = a_pass && a_pass->geometry ? a_pass->geometry->GetGeometryRuntimeData().shaderProperty.get() : nullptr;
+	auto lightProperty = property1 && property1->GetRTTI() == globals::rtti::BSLightingShaderPropertyRTTI.get() ? static_cast<RE::BSLightingShaderProperty*>(property1) : nullptr;
 
 	PerGeometryData perGeometryData{};
-	perGeometryData.emissiveMult = lightProperty->emissiveMult;
-	const auto descriptor = static_cast<RE::BSLightingShader*>(a_pass->shader)->currentRawTechnique;
-	using LightingFlags = SIE::ShaderCache::LightingShaderFlags;
-	using enum SIE::ShaderCache::LightingShaderTechniques;
-	if ((descriptor & static_cast<uint32_t>(LightingFlags::ProjectedUV)) != 0 && (descriptor & static_cast<uint32_t>(LightingFlags::TruePbr)) == 0) {
-		const auto technique = SIE::ShaderCache::GetLightingTechnique(descriptor);
-		if (technique == LODObjects || technique == LODObjectHD)
-			perGeometryData.projectedMaterialColorScale = lodProjectedMaterialColorScales[technique == LODObjectHD ? 1 : 0];
+	if (lightProperty) {
+		perGeometryData.emissiveMult = lightProperty->emissiveMult;
+		const auto descriptor = static_cast<RE::BSLightingShader*>(a_pass->shader)->currentRawTechnique;
+		using LightingFlags = SIE::ShaderCache::LightingShaderFlags;
+		using enum SIE::ShaderCache::LightingShaderTechniques;
+		if ((descriptor & static_cast<uint32_t>(LightingFlags::ProjectedUV)) != 0 && (descriptor & static_cast<uint32_t>(LightingFlags::TruePbr)) == 0) {
+			const auto technique = SIE::ShaderCache::GetLightingTechnique(descriptor);
+			if (technique == LODObjects || technique == LODObjectHD)
+				perGeometryData.projectedMaterialColorScale = lodProjectedMaterialColorScales[technique == LODObjectHD ? 1 : 0];
+		}
 	}
 	PerGeometryCB->Update(perGeometryData);
 
