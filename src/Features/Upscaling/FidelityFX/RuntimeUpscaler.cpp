@@ -20,6 +20,7 @@
 #include "../../ReverseZ.h"
 #include "../../Upscaling.h"
 #include "../DX12SwapChain.h"
+#include "../RuntimeUpscalerPolicy.h"
 #include "Utils/SehGuard.h"
 
 extern ffxFunctions ffxModule;
@@ -499,6 +500,18 @@ void FidelityFX::ProbeRuntimeUpscalerUpgrade(uint32_t a_displayWidth, uint32_t a
 		return;
 	}
 
+	auto& swapChain = globals::features::upscaling.dx12SwapChain;
+	const bool createdByProbe = !swapChain.d3d12Device;
+	QueryAndConfirmRuntimeUpgrade(a_displayWidth, a_displayHeight);
+	if (RuntimeUpscalerPolicy::ReleaseProbeDevice(createdByProbe, runtimeUpscalerQuarantined, ShouldUseRuntimeUpscalerForFSR())) {
+		ReleaseRuntimeUpscalerResourcesForRelatch();
+		runtimeFence.Reset();
+		swapChain.ReleaseD3D12Device();
+	}
+}
+
+void FidelityFX::QueryAndConfirmRuntimeUpgrade(uint32_t a_displayWidth, uint32_t a_displayHeight)
+{
 	try {
 		if (!EnsureRuntimeUpscalerInterop()) {
 			runtimeUpgradeUnavailableReason = "Runtime upgrade requires working DX11/DX12 interoperability on the active device.";
@@ -534,7 +547,7 @@ bool FidelityFX::IsRuntimeUpgradeAvailable() const
 
 bool FidelityFX::ShouldUseRuntimeUpscalerForFSR() const
 {
-	return IsRuntimeUpscalerPresent();
+	return RuntimeUpscalerPolicy::UseRuntimeProvider(IsRuntimeUpscalerPresent(), IsAmdAdapterDetected(), IsRuntimeUpgradeSelected());
 }
 
 bool FidelityFX::CanUseRuntimeUpscalerPath()
@@ -544,12 +557,15 @@ bool FidelityFX::CanUseRuntimeUpscalerPath()
 	return true;
 }
 
+bool FidelityFX::IsRuntimeUpgradeSelected() const
+{
+	return globals::features::upscaling.bootSnapshot.Boot(&Upscaling::Settings::fsr4RuntimeEnable) &&
+	       IsRuntimeUpgradeAvailable();
+}
+
 bool FidelityFX::ShouldRequestRuntimeUpgrade() const
 {
-	auto& upscaling = globals::features::upscaling;
-	return upscaling.bootSnapshot.Boot(&Upscaling::Settings::fsr4RuntimeEnable) &&
-	       !runtimeUpgradeFailureLatched &&
-	       IsRuntimeUpgradeAvailable();
+	return !runtimeUpgradeFailureLatched && IsRuntimeUpgradeSelected();
 }
 
 bool FidelityFX::EnsureRuntimeUpscalerInterop()

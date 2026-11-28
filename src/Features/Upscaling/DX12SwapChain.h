@@ -162,6 +162,8 @@ public:
 	bool IsAntiLag2Active() const { return antiLag2Context && antiLag2Enabled; }
 
 	void CreateD3D12Device(IDXGIAdapter* a_adapter);
+	/** @brief Releases the device, queue and command lists; only for a device no swap chain or shared resource uses. */
+	void ReleaseD3D12Device();
 	void CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
 	void CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
 

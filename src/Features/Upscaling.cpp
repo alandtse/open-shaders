@@ -720,7 +720,7 @@ void Upscaling::RegisterUxActions()
 		});
 
 	FEATURE_RENDER_QUERY("runtimeUpgradeStatus",
-		"Runtime upscaler capability and actual dispatch status: available, confirmedProvider, selected, enabledAtBoot, lastFramePath, contextProvider, and unavailableReason. Availability requires a device query and successful context creation; lastFramePath stays pending until dispatch. Change fsr4RuntimeEnable through openshaders.feature and restart to apply the selection.",
+		"Runtime upscaler capability and actual dispatch status: available, confirmedProvider, selected, enabledAtBoot, lastFramePath, contextProvider, and unavailableReason. Availability is checked only once FSR becomes the active upscaler and requires a device query and successful context creation; lastFramePath stays pending until dispatch. Non-AMD adapters use the host SDK unless an available upgrade was selected at boot. Change fsr4RuntimeEnable through openshaders.feature and restart to apply the selection.",
 		([](const Feature* self, const json&) -> json {
 			const auto& upscaling = *static_cast<const Upscaling*>(self);
 			const auto& runtime = upscaling.fidelityFX;
@@ -1919,8 +1919,12 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 					}
 				}
 			}
-			if (a_upscalemethod == UpscaleMethod::kFSR)
+			if (a_upscalemethod == UpscaleMethod::kFSR) {
+				// The probe creates a D3D12 device, so only FSR users may reach it.
+				const auto displaySize = perfMode.IsHookActive() ? perfMode.GetDisplayScreenSize() : globals::state->screenSize;
+				fidelityFX.ProbeRuntimeUpscalerUpgrade(static_cast<uint32_t>(Util::EyeWidth(displaySize.x)), static_cast<uint32_t>(displaySize.y));
 				fidelityFX.CreateFSRResources();
+			}
 		}
 
 		// Create new upscaling method resources
@@ -2440,9 +2444,6 @@ void Upscaling::SetupResources()
 		logger::warn("[Upscaling] Skipping upscaling resource setup because OpenComposite has {}=true.", blocker.settingName);
 		return;
 	}
-
-	const auto displaySize = perfMode.IsHookActive() ? perfMode.GetDisplayScreenSize() : globals::state->screenSize;
-	fidelityFX.ProbeRuntimeUpscalerUpgrade(static_cast<uint32_t>(Util::EyeWidth(displaySize.x)), static_cast<uint32_t>(displaySize.y));
 
 	QueryPerformanceFrequency(&qpf);
 
