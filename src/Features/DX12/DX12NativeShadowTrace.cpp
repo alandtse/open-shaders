@@ -119,7 +119,7 @@ namespace DX12Native
 	void ShadowMaskTrace::BeginFrame(uint32_t frame)
 	{
 		if (current && current->frame != frame)
-			current.reset();
+			previous = std::move(current);
 		if (!completion)
 			return;
 		const uint64_t finished = completion->GetCompletedValue();
@@ -140,7 +140,8 @@ namespace DX12Native
 	{
 		if (current && current->frame == frame)
 			return;
-		current.reset();
+		if (current)
+			previous = std::move(current);
 		ReportSkipped(Outcome::None);
 		const auto quality = controls.quality;
 		const bool slices = controls.captureLightVisibility;

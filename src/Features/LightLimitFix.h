@@ -79,7 +79,7 @@ public:
 		stl::enumeration<LightFlags> lightFlags;
 		uint32_t shadowMapIndex = 0;
 		uint32_t nativeShadowSlot = 0;
-		float pad0;
+		uint32_t nativeShadowPreviousSlot = UINT32_MAX;
 	};
 	STATIC_ASSERT_ALIGNAS_16(LightData);
 

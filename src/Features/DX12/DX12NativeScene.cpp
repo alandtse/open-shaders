@@ -371,6 +371,7 @@ void DX12NativeScene::PublishLightShadowSlots(uint32_t frame, std::span<const DX
 		FAILED(backend->d3d11Context->Wait(traced->lightVisibilityFence.get(), traced->lightVisibilityValue)))
 		return;
 	lightSlotFrame = frame;
+	previousSlicesValid = shadows.GetPrevious(frame) != nullptr;
 	for (uint32_t i = 0; i < traced->visibilityLights.size() && i < submitted.size(); ++i)
 		slotSpheres.push_back({ submitted[i].position, submitted[i].radius });
 	for (uint32_t i = 0; i < traced->visibilityLights.size() && i < submitted.size(); ++i) {
@@ -441,7 +442,7 @@ std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_l
 	if (slot) {
 		lightsShadedFrame = lightSlotFrame;
 		++slotMatchesThisFrame[size_t(match)];
-		slicedLightsThisFrame.push_back(a_light);
+		slicedLightsThisFrame.push_back({ a_light, *slot });
 	} else {
 		if (a_shadowLight)
 			++slotMatchesThisFrame[size_t(SlotMatch::UnslottedShadowLight)];
@@ -457,7 +458,8 @@ bool DX12NativeScene::ShadedFromSlice(const RE::NiLight* a_light) const
 		return false;
 	// SCM schedules before this frame's trace publishes, so the previous frame's publication governs it.
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
-	if ((slicedLightsFrame != frame && slicedLightsFrame + 1 != frame) || !std::ranges::contains(slicedLights, a_light))
+	if ((slicedLightsFrame != frame && slicedLightsFrame + 1 != frame) ||
+		!std::ranges::contains(slicedLights, a_light, &std::pair<const RE::NiLight*, uint32_t>::first))
 		return false;
 	if (grantedLightsFrame != frame) {
 		grantedLights.clear();
@@ -465,6 +467,14 @@ bool DX12NativeScene::ShadedFromSlice(const RE::NiLight* a_light) const
 	}
 	grantedLights.push_back(a_light);
 	return true;
+}
+
+uint32_t DX12NativeScene::PreviousShadowSlot(const RE::NiLight* a_light) const
+{
+	if (!previousSlicesValid || slicedLightsFrame != lightSlotFrame)
+		return UINT32_MAX;
+	const auto it = std::ranges::find(slicedLights, a_light, &std::pair<const RE::NiLight*, uint32_t>::first);
+	return it != slicedLights.end() ? it->second : UINT32_MAX;
 }
 
 bool DX12NativeScene::ShadesLightsDirectly(uint32_t a_frame) const
@@ -477,10 +487,14 @@ void DX12NativeScene::Prepass()
 	if (!loaded || globals::game::isVR || !backend || !globals::game::graphicsState)
 		return;
 	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
-	ID3D11ShaderResourceView* view = nullptr;
-	if (const auto traced = shadows.Get(frame); traced && traced->lightVisibility && lightSlotFrame == frame)
-		view = traced->lightVisibility->srv;
-	globals::d3d::context->PSSetShaderResources(kLightShadowRegister, 1, &view);
+	ID3D11ShaderResourceView* views[2]{};
+	if (const auto traced = shadows.Get(frame); traced && traced->lightVisibility && lightSlotFrame == frame) {
+		views[0] = traced->lightVisibility->srv;
+		if (const auto previous = shadows.GetPrevious(frame))
+			views[1] = previous->lightVisibility->srv;
+	}
+	static_assert(kPreviousLightShadowRegister == kLightShadowRegister + 1);
+	globals::d3d::context->PSSetShaderResources(kLightShadowRegister, 2, views);
 }
 
 void DX12NativeScene::OnDepthPrepassReady()

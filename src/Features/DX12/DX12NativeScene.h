@@ -92,6 +92,8 @@ struct DX12NativeScene final : OverlayFeature
 	 * @param a_shadowLight True for an SCM shadow light, counted in the status when it finds no slice.
 	 */
 	std::optional<uint32_t> NativeShadowSlot(const RE::NiLight* a_light, bool a_shadowLight);
+	/** @brief The light's slice in the previous traced frame, or UINT32_MAX; lighting averages both frames' samples. */
+	uint32_t PreviousShadowSlot(const RE::NiLight* a_light) const;
 	/** @brief True when lighting read a visibility slice for this light in the last published frame; render thread only. */
 	bool ShadedFromSlice(const RE::NiLight* a_light) const;
 	/** @brief True when lighting consumed per-light visibility this frame, so the final-image layer must not apply it again. */
@@ -146,6 +148,7 @@ private:
 	};
 	// Pixel shader register of the per-light visibility array; Lighting.hlsl declares the same.
 	static constexpr UINT kLightShadowRegister = 57;
+	static constexpr UINT kPreviousLightShadowRegister = 58;
 	void PublishLightShadowSlots(uint32_t frame, std::span<const DX12::PreparedLight> submitted,
 		std::span<const RE::NiLight* const> sources);
 	std::unordered_map<const RE::NiLight*, uint32_t> slotsBySource;
@@ -161,7 +164,8 @@ private:
 		kCount
 	};
 	std::array<uint32_t, size_t(SlotMatch::kCount)> slotMatchesThisFrame{};
-	std::vector<const RE::NiLight*> slicedLightsThisFrame, slicedLights;
+	std::vector<std::pair<const RE::NiLight*, uint32_t>> slicedLightsThisFrame, slicedLights;  // Light and its slice.
+	bool previousSlicesValid = false;                                                          // lightSlotFrame's previous frame shares its slice layout.
 	uint32_t slicedLightsFrame = UINT32_MAX;
 	mutable std::vector<const RE::NiLight*> grantedLights;  // Lights SCM handed to the trace in grantedLightsFrame.
 	mutable uint32_t grantedLightsFrame = UINT32_MAX;
