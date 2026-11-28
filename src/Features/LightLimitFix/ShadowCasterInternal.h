@@ -670,6 +670,8 @@ namespace ShadowCasterManager
 	/// would refill the same rect: a staged promotion is not a fit.
 	bool SlotTileFits(int32_t poolSlot, float scale);
 	int32_t FindFreeSlotByOwner(const void* a_owner);
+	/// True when this owner's depth can be sampled, including a tile awaiting reassignment.
+	bool HasSampledShadowForOwner(const void* a_owner);
 	void DumpSlotTileRegion(int32_t poolSlot, uint32_t a_stamp);
 
 	/// Slot's tile shader UV transform.

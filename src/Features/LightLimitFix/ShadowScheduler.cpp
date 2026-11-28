@@ -2117,7 +2117,7 @@ namespace ShadowCasterManager
 		RE::BSCullingProcess* globalCull = globalCullingProcesses.empty() ? nullptr : globalCullingProcesses.front();
 
 		int wantCount = 0;
-		const auto seat = [&wantCount](CandidateLight& c) {
+		const auto seat = [&wantCount](CandidateLight& c, bool inView = true) {
 			// Impact floor: a below-floor light converts to a non-shadow light
 			// (keeps diffuse via clusters, drops redraw), same path as over-budget.
 			if (c.belowFloor) {
@@ -2128,7 +2128,7 @@ namespace ShadowCasterManager
 				c.chosen = true;
 				wantCount++;
 				ResumeAfterRelease(c.light);
-			} else if (s_settings.FadeShadowSwaps && HoldForFadeOut(c.light)) {
+			} else if (inView && s_settings.FadeShadowSwaps && HoldForFadeOut(c.light)) {
 				// Kept past the count while it fades out; the newcomer finds no free slot until then.
 				c.chosen = true;
 				c.fadingOut = true;
@@ -2271,7 +2271,7 @@ namespace ShadowCasterManager
 			while (nextPastCap < pastCap.size())
 				seat(*pastCap[nextPastCap++]);
 			for (auto* held : heldOffView) {
-				seat(*held);
+				seat(*held, false);
 				// One that found no slot has no shadow left to keep, so its tile may go to the lights in view.
 				if (!held->chosen)
 					s_cameraHold.erase(held->light);
@@ -2497,8 +2497,7 @@ namespace ShadowCasterManager
 					// A tile can be parked at any light-free index; reclaim it only inside the point range.
 					if (ownerIdx >= pointFirst && ownerIdx < pointEnd && !s_lights.Lights[ownerIdx].Light) {
 						s_lights.Lights[ownerIdx].Light = c.light;
-						if (s_fadedOutLights.erase(ni) && s_settings.FadeShadowSwaps)
-							s_lights.Lights[ownerIdx].FadeStartSeconds = Util::GetNowSecs();
+						s_lights.Lights[ownerIdx].fadeOnAdmit = s_fadedOutLights.erase(ni) && s_settings.FadeShadowSwaps;
 						reclaimed = true;
 					}
 				}
@@ -2530,12 +2529,11 @@ namespace ShadowCasterManager
 					s_splitState.erase(splitIt);
 				}
 				if (auto* ni = cp->light->light.get()) {
-					s_fadedOutLights.erase(ni);
+					s_lights.Lights[idx].fadeOnAdmit = s_fadedOutLights.erase(ni) && s_settings.FadeShadowSwaps;
 					ResetScoreAnchor(ni);
 					s_hashRadiusAnchor.erase(ni);
 				}
 				s_lights.Lights[idx].Light = cp->light;
-				s_lights.Lights[idx].fadeOnAdmit = s_settings.FadeShadowSwaps;
 			}
 
 			// Update sun slot (slot 0).
@@ -3086,7 +3084,8 @@ namespace ShadowCasterManager
 		if (e->LastDrawnFrame < 0) {
 			const auto* ni = e->Light ? e->Light->light.get() : nullptr;
 			PruneIfOversized(s_everHadShadow, 1024);
-			if (!ni || s_everHadShadow.insert(ni).second || e->fadeOnAdmit)
+			const bool firstShadow = !ni || s_everHadShadow.insert(ni).second;
+			if ((firstShadow || e->fadeOnAdmit) && !(AtlasActive() && HasSampledShadowForOwner(ni)))
 				e->FadeStartSeconds = Util::GetNowSecs();
 		}
 		e->fadeOnAdmit = false;
