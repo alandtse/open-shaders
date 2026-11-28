@@ -75,6 +75,8 @@ struct DX12NativeScene final : OverlayFeature
 	bool OwnsStaticForLight(RE::BSShadowLight* light, int32_t slot) const;
 	/** @brief Frame-wide policy established before SCM scheduling. */
 	DX12::SCMNativeMode GetFrameNativeMode() const;
+	/** @brief Records a rigid mover from an owned light's caster walk; true when this frame's trace covers it. */
+	bool ObserveMover(RE::BSGeometry& a_geometry);
 	// Snapshot LLF/SCM point-light parameters without altering the DX11 light.
 	void ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID, bool flickers,
 		const RE::NiPoint3& restOrigin);
@@ -102,6 +104,7 @@ private:
 	DX12Native::RuntimeGeometryCapture geometryCapture;
 	DX12Native::AccelerationWorker acceleration;
 	DX12Native::ShadowMaskTrace shadows;
+	DX12Native::MoverScene movers;
 	// One immutable, ordered light selection shared by SCM and the RayQuery dispatch.
 	std::atomic<std::shared_ptr<const std::vector<DX12::PreparedLight>>> shadowLights;
 	std::atomic<uint32_t> shadowLightScope{ 0 };

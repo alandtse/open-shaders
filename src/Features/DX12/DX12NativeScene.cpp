@@ -811,7 +811,8 @@ void DX12NativeScene::OnOpaqueRasterReady()
 		.debugPreparedCount = fullRT ? fullInventory->preparedCount : 0u,
 		.nativeLights = fullInventory,
 		.uploadLights = moving != 0,
-		.captureLightVisibility = true
+		.captureLightVisibility = true,
+		.movers = &movers
 	};
 	shadows.Dispatch(*backend, raster.Get(frame), built, submittedLights, frame, controls);
 	PublishLightShadowSlots(frame, submittedLights, liveSources);
@@ -924,6 +925,7 @@ void DX12NativeScene::ApplyPendingLoadingReset()
 		globals::features::upscaling.nativeComposite.ResetShadowHistory();
 		raster.Reset();
 		shadows.Reset();
+		movers.Reset();
 		acceleration.Reset();
 		geometryCapture.Reset();
 	}
@@ -951,8 +953,16 @@ void DX12NativeScene::OnRuntimeDisabled()
 	globals::features::upscaling.nativeComposite.ResetShadowHistory();
 	raster.Reset();
 	shadows.Reset();
+	movers.Reset();
 	acceleration.Stop();
 	geometryCapture.Reset();
+}
+
+bool DX12NativeScene::ObserveMover(RE::BSGeometry& a_geometry)
+{
+	if (!globals::game::graphicsState || !acceleration.GetScene())
+		return false;
+	return movers.Observe(a_geometry, globals::game::graphicsState->GetFrameCount());
 }
 
 bool DX12NativeScene::CasterInTlas(RE::BSGeometry& geometry) const
@@ -1039,7 +1049,8 @@ json DX12NativeScene::GetStatus() const
 	status["trace"] = { { "lastOutcome", magic_enum::enum_name(shadows.LastOutcome()) }, { "lights", shadows.LastLightCount() },
 		{ "movingOrigins", movingOriginCount.load(std::memory_order_relaxed) },
 		{ "producedVisibilitySlices", shadows.LastVisibilityCount() },
-		{ "shadedLights", shadedLightCount.load(std::memory_order_relaxed) } };
+		{ "shadedLights", shadedLightCount.load(std::memory_order_relaxed) },
+		{ "movers", movers.LastTraced() } };
 	status["composite"] = { { "lastShadowResult", magic_enum::enum_name(DX12Native::lastCompositeShadowResult.load(std::memory_order_relaxed)) } };
 	return status;
 }
