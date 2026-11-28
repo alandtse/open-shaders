@@ -761,7 +761,7 @@ float3 GetLightingColor(
 		[unroll] for (uint lightIndex = 0; lightIndex < 4; lightIndex++)
 		{
 			float3 pointColor = float3(PLightColorR[lightIndex], PLightColorG[lightIndex], PLightColorB[lightIndex]);
-			color += Color::EffectPointLight(pointColor) * lightFadeMul[lightIndex] * pointScale;
+			color += Color::EffectPointLight(pointColor) * Color::LegacyLightFalloff(lightFadeMul[lightIndex]) * pointScale;
 		}
 	}
 

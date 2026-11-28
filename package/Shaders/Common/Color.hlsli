@@ -562,6 +562,11 @@ namespace Color
 		return adjustment;
 	}
 
+	float LegacyLightFalloff(float attenuation)
+	{
+		return ENABLE_LL ? SkyrimGammaToLinear(attenuation) : attenuation;
+	}
+
 	float3 PointLight(float3 color, bool isLinear = false, uint lightFlags = 0)
 	{
 		return Light(color, isLinear, GetPointLightColorAdjustment(isLinear, lightFlags)) *
@@ -588,7 +593,8 @@ namespace Color
 #	if defined(PSHADER) && defined(CS_UTILITY) && !defined(LIGHT_LIMIT_FIX)
 		if (lightIndex >= MaxVanillaPointLightFlags)
 			return 0;
-		return lightIndex < PackedPointLightFlagVectorSize ? CSUtilityPointLightFlags0[lightIndex] : CSUtilityPointLightFlags1[lightIndex - PackedPointLightFlagVectorSize];
+		uint component = lightIndex % PackedPointLightFlagVectorSize;
+		return lightIndex < PackedPointLightFlagVectorSize ? CSUtilityPointLightFlags0[component] : CSUtilityPointLightFlags1[component];
 #	else
 		return 0;
 #	endif

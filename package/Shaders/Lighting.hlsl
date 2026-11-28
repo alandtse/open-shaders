@@ -3414,7 +3414,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		if (intensityFactor == 1)
 			continue;
 
-		float intensityMultiplier = 1 - intensityFactor * intensityFactor;
+		float intensityMultiplier = Color::LegacyLightFalloff(1 - intensityFactor * intensityFactor);
 		uint lightFlags = Color::GetVanillaPointLightFlags(lightIndex);
 		bool isPointLightLinear = (lightFlags & Color::PointLightFlagLinear) != 0;
 		float3 lightColor = Color::PointLight(PointLightColor[lightIndex].xyz, isPointLightLinear, lightFlags) * intensityMultiplier;
