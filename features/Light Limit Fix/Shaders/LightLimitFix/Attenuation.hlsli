@@ -24,6 +24,10 @@ namespace LightLimitFix
 
 		float intensityFactor = saturate(distance * light.invRadius);
 		float reg = 1.0f - intensityFactor * intensityFactor;
+		if (light.lightFlags & LightFlags::Particle) {
+			float squared = reg * reg;
+			return squared * squared * isEnabled;
+		}
 
 		return lerp(reg, invSq, isInvSq) * isEnabled;
 	}
