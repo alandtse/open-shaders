@@ -59,6 +59,20 @@ namespace
 	}
 }
 
+TEST_CASE("Point shadow atlas resizes preserve authored bias and small-tile protection", "[scm][atlas]")
+{
+	using namespace ShadowCasterManager;
+	for (const float scale : { kTileScaleFull, kTileScaleHalf, kTileScaleQuarter, kTileScaleEighth, kTileScaleSixteenth }) {
+		CAPTURE(scale);
+		const float authoredBias = 25.0f * kShadowDepthBiasUnit;
+		REQUIRE(PointShadowBiasForUpload(authoredBias, scale) / scale == Approx(authoredBias));
+		REQUIRE(PointShadowBiasForUpload(kShadowDepthBiasUnit, scale) == kShadowDepthBiasUnit);
+		REQUIRE(PointShadowBiasForUpload(0.5f * kShadowDepthBiasUnit, scale) == 0.5f * kShadowDepthBiasUnit);
+		REQUIRE(PointShadowBiasForUpload(0.0f, scale) == 0.0f);
+	}
+	REQUIRE(PointShadowBiasForUpload(2.0f * kShadowDepthBiasUnit, kTileScaleQuarter) == kShadowDepthBiasUnit);
+}
+
 TEST_CASE("TileScaleTarget picks the smallest class meeting the target", "[scm]")
 {
 	// 2048 base: targets above half-class resolution stay full.
