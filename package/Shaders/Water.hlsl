@@ -1270,7 +1270,7 @@ PS_OUTPUT main(PS_INPUT input)
 		float3 lightVector = LightPos[lightIndex].xyz - (PosAdjust[eyeIndex].xyz + input.WPosition.xyz);
 		float3 lightDirection = normalize(normalize(lightVector) - viewDirection);
 		float lightFade = saturate(length(lightVector) / LightPos[lightIndex].w);
-		float lightColorMul = (1 - lightFade * lightFade);
+		float lightColorMul = Color::LegacyLightFalloff(1 - lightFade * lightFade);
 		float LdotN = saturate(dot(lightDirection, normal));
 		uint lightFlags = Color::GetVanillaPointLightFlags(lightIndex);
 		bool isPointLightLinear = (lightFlags & Color::PointLightFlagLinear) != 0;

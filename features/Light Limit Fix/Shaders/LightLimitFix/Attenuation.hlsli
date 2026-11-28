@@ -1,6 +1,7 @@
 #ifndef __LLF_ATTENUATION_DEPENDENCY_HLSL__
 #define __LLF_ATTENUATION_DEPENDENCY_HLSL__
 
+#include "Common/Color.hlsli"
 #include "Common/Game.hlsli"
 
 namespace LightLimitFix
@@ -15,7 +16,7 @@ namespace LightLimitFix
 	float GetAttenuation(float distance, Light light)
 	{
 		float isEnabled = 1.0f - float((light.lightFlags & LightFlags::Disabled) != 0);
-		float isInvSq = float((light.lightFlags & LightFlags::InverseSquare) != 0);
+		bool isInvSq = (light.lightFlags & LightFlags::InverseSquare) != 0;
 
 		float invSq = SCALED_UNITS_SQ * rcp(distance * distance + light.sizeBias);
 		float t = saturate((light.radius - distance) * light.fadeZone);
@@ -29,7 +30,7 @@ namespace LightLimitFix
 			return squared * squared * isEnabled;
 		}
 
-		return lerp(reg, invSq, isInvSq) * isEnabled;
+		return (isInvSq ? invSq : Color::LegacyLightFalloff(reg)) * isEnabled;
 	}
 }
 

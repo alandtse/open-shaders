@@ -308,3 +308,14 @@ static float emissiveMult = 1.0;
 		ASSERT(IsTrue, all(abs(Color::EffectLight(adjusted) - Color::AdjustUtilityColor(working, adjustment)) < 0.00001));
 	}
 }
+
+/// @tags color, gamma, lighting
+[numthreads(1, 1, 1)] void TestLegacyLightFalloff() {
+	const float samples[] = { 0.0, 0.05, 0.5, 1.0 };
+	for (uint i = 0; i < 4; ++i) {
+		SharedData::linearLightingSettings.enableLinearLighting = false;
+		ASSERT(IsTrue, Color::LegacyLightFalloff(samples[i]) == samples[i]);
+		SharedData::linearLightingSettings.enableLinearLighting = true;
+		ASSERT(IsTrue, abs(Color::LinearToSkyrimGamma(Color::LegacyLightFalloff(samples[i])) - samples[i]) < 0.000001);
+	}
+}
