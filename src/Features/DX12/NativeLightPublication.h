@@ -18,7 +18,6 @@ namespace DX12Native
 		uint32_t unify = kDefaultRuntimeUnificationRadius;
 		uint32_t exclude = kDefaultPreparedExclusionRadius;
 		bool additive = true;
-		bool preserveShadowLights = false;
 		bool operator==(const NativeLightSettings&) const = default;
 	};
 
@@ -34,14 +33,6 @@ namespace DX12Native
 		for (const auto& light : prepared)
 			if (light.referenceID)
 				preparedIDs.insert(light.referenceID);
-		if (!settings.preserveShadowLights) {
-			for (const auto& emitter : runtime)
-				if (!emitter.placedReference || !preparedIDs.contains(emitter.placedReference))
-					supplemental.push_back(emitter.value);
-			auto lights = ConsolidateFullShadowLights<Light>(prepared, supplemental, settings.unify, settings.exclude, settings.additive);
-			lights.resize(std::min(lights.size(), limit));
-			return { std::move(lights), uint32_t(prepared.size()) };
-		}
 		std::unordered_set<uint32_t> exactPlaced;
 		std::vector<Light> exact, preparedSelection;
 		for (const auto& emitter : runtime) {

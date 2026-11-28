@@ -461,10 +461,6 @@ TEST_CASE("Exact shadow-light identity replaces its prepared placeholder", "[dx1
 	std::array<Light, 1> prepared{ placed };
 	std::array<Emitter, 1> emitters{ Emitter{ runtime, 11, true } };
 	DX12Native::NativeLightSettings settings;
-	auto legacy = DX12Native::BuildNativeLightInventory<Light, Emitter>(prepared, emitters, settings, 16);
-	REQUIRE(legacy.first.size() == 1);
-	CHECK(legacy.first.front().runtimeIdentity == 0);
-	settings.preserveShadowLights = true;
 	auto exact = DX12Native::BuildNativeLightInventory<Light, Emitter>(prepared, emitters, settings, 16);
 	REQUIRE(exact.first.size() == 1);
 	CHECK(exact.first.front().runtimeIdentity == 42);

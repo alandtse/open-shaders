@@ -622,7 +622,6 @@ bool DX12NativeScene::ObserveFullRuntimeLights()
 	}
 	bool dirty = !fullRuntimeSnapshot;
 	const uint64_t visit = ++fullLightVisit;
-	const bool preserveExact = frameExactShadowLights.load(std::memory_order_relaxed);
 	const auto collect = [&](RE::BSLight* light, bool shadowLight) {
 		if (!light || !light->pointLight || !light->light)
 			return;
@@ -665,14 +664,11 @@ bool DX12NativeScene::ObserveFullRuntimeLights()
 	};
 	if (node) {
 		const auto& scene = node->GetRuntimeData();
-		if (preserveExact)
-			for (const auto& light : scene.activeShadowLights)
-				collect(light.get(), true);
+		// Shadow lights first: a light on both lists keeps the first visit's identity as itself.
+		for (const auto& light : scene.activeShadowLights)
+			collect(light.get(), true);
 		for (const auto& light : scene.activeLights)
 			collect(light.get(), false);
-		if (!preserveExact)
-			for (const auto& light : scene.activeShadowLights)
-				collect(light.get(), false);
 	}
 	std::erase_if(fullRuntimeLights, [&](const auto& entry) {
 		if (entry.second.seen == visit)
@@ -715,8 +711,7 @@ std::shared_ptr<const DX12Native::NativeLightPublication> DX12NativeScene::Colle
 	const DX12Native::NativeLightSettings settings{
 		runtimeUnificationRadius.load(std::memory_order_relaxed),
 		preparedExclusionRadius.load(std::memory_order_relaxed),
-		additivePreparedEmission.load(std::memory_order_relaxed),
-		frameExactShadowLights.load(std::memory_order_relaxed)
+		additivePreparedEmission.load(std::memory_order_relaxed)
 	};
 	const bool gridChanged = !fullRequestedGrid ||
 	                         (fullRequestedGrid != grid && (fullRequestedGrid->resident != grid->resident ||
