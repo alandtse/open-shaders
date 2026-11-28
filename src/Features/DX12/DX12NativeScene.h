@@ -1,5 +1,9 @@
 #pragma once
 
+#include <array>
+
+#include <array>
+
 #include "../OverlayFeature.h"
 #include "DX12NativeAcceleration.h"
 #include "DX12NativeLightWorker.h"
@@ -83,8 +87,11 @@ struct DX12NativeScene final : OverlayFeature
 	void OnLoadingMenuEvent(bool opening) override;
 	/** @brief Binds this frame's per-light visibility for forward lighting once the trace has finished. */
 	void Prepass() override;
-	/** @brief Visibility slice traced this frame for a light, which the lighting shader uses instead of static shadow-map casters. */
-	std::optional<uint32_t> NativeShadowSlot(const RE::NiLight* a_light);
+	/**
+	 * @brief Visibility slice traced this frame for a light, which the lighting shader uses instead of static shadow-map casters.
+	 * @param a_shadowLight True for an SCM shadow light, counted in the status when it finds no slice.
+	 */
+	std::optional<uint32_t> NativeShadowSlot(const RE::NiLight* a_light, bool a_shadowLight);
 	/** @brief True when lighting consumed per-light visibility this frame, so the final-image layer must not apply it again. */
 	bool ShadesLightsDirectly(uint32_t a_frame) const;
 	void OnSceneTransitionReset(bool a_opening) override;
@@ -142,8 +149,16 @@ private:
 	std::unordered_map<const RE::NiLight*, uint32_t> slotsBySource;
 	std::unordered_map<uint32_t, uint32_t> slotsByReference;
 	std::vector<std::pair<float3, uint32_t>> slotPositions;  // Full RT only: merged emitters resolve by proximity.
-	uint32_t shadedThisFrame = 0;
-	std::atomic<uint32_t> shadedLightCount{ 0 };  // Lights shaded from slices in the previous frame.
+	enum class SlotMatch : uint8_t
+	{
+		Source,
+		Reference,
+		Proximity,
+		UnslottedShadowLight,
+		kCount
+	};
+	std::array<uint32_t, size_t(SlotMatch::kCount)> slotMatchesThisFrame{};
+	std::array<std::atomic<uint32_t>, size_t(SlotMatch::kCount)> slotMatches{};  // Previous frame's lookups by outcome.
 	uint32_t lightSlotFrame = UINT32_MAX, lightsShadedFrame = UINT32_MAX;
 	std::atomic<bool> exactShadowLights{ false }, frameExactShadowLights{ false };
 	std::unordered_map<uintptr_t, float3> scheduledOrigins;

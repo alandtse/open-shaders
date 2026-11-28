@@ -351,8 +351,9 @@ void DX12NativeScene::PublishLightShadowSlots(uint32_t frame, std::span<const DX
 	slotsBySource.clear();
 	slotsByReference.clear();
 	slotPositions.clear();
-	shadedLightCount.store(shadedThisFrame, std::memory_order_relaxed);
-	shadedThisFrame = 0;
+	for (size_t i = 0; i < slotMatches.size(); ++i)
+		slotMatches[i].store(slotMatchesThisFrame[i], std::memory_order_relaxed);
+	slotMatchesThisFrame.fill(0);
 	const auto traced = shadows.Get(frame);
 	lightSlotFrame = UINT32_MAX;
 	// Queue-side wait before any light is flagged: forward lighting must not read slices the trace has not written.
@@ -374,17 +375,21 @@ void DX12NativeScene::PublishLightShadowSlots(uint32_t frame, std::span<const DX
 	}
 }
 
-std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_light)
+std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_light, bool a_shadowLight)
 {
 	if (!a_light || !globals::game::graphicsState || lightSlotFrame != globals::game::graphicsState->GetFrameCount())
 		return std::nullopt;
 	std::optional<uint32_t> slot;
+	auto match = SlotMatch::Source;
 	if (const auto it = slotsBySource.find(a_light); it != slotsBySource.end())
 		slot = it->second;
 	else if (const auto* owner = a_light->GetUserData(); owner && !slotsByReference.empty())
-		if (const auto ref = slotsByReference.find(owner->GetFormID()); ref != slotsByReference.end())
+		if (const auto ref = slotsByReference.find(owner->GetFormID()); ref != slotsByReference.end()) {
 			slot = ref->second;
+			match = SlotMatch::Reference;
+		}
 	if (!slot && !slotPositions.empty()) {
+		match = SlotMatch::Proximity;
 		// Full RT merges runtime emitters into the traced light they sit beside; shade them with its slice.
 		const float radius = float(runtimeUnificationRadius.load(std::memory_order_relaxed));
 		const auto& p = a_light->world.translate;
@@ -399,7 +404,9 @@ std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_l
 	}
 	if (slot) {
 		lightsShadedFrame = lightSlotFrame;
-		++shadedThisFrame;
+		++slotMatchesThisFrame[size_t(match)];
+	} else if (a_shadowLight) {
+		++slotMatchesThisFrame[size_t(SlotMatch::UnslottedShadowLight)];
 	}
 	return slot;
 }
@@ -1049,7 +1056,13 @@ json DX12NativeScene::GetStatus() const
 	status["trace"] = { { "lastOutcome", magic_enum::enum_name(shadows.LastOutcome()) }, { "lights", shadows.LastLightCount() },
 		{ "movingOrigins", movingOriginCount.load(std::memory_order_relaxed) },
 		{ "producedVisibilitySlices", shadows.LastVisibilityCount() },
-		{ "shadedLights", shadedLightCount.load(std::memory_order_relaxed) },
+		{ "shadedLights", slotMatches[size_t(SlotMatch::Source)].load(std::memory_order_relaxed) +
+							  slotMatches[size_t(SlotMatch::Reference)].load(std::memory_order_relaxed) +
+							  slotMatches[size_t(SlotMatch::Proximity)].load(std::memory_order_relaxed) },
+		{ "slotMatches", { { "source", slotMatches[size_t(SlotMatch::Source)].load(std::memory_order_relaxed) },
+							 { "reference", slotMatches[size_t(SlotMatch::Reference)].load(std::memory_order_relaxed) },
+							 { "proximity", slotMatches[size_t(SlotMatch::Proximity)].load(std::memory_order_relaxed) } } },
+		{ "unslottedShadowLights", slotMatches[size_t(SlotMatch::UnslottedShadowLight)].load(std::memory_order_relaxed) },
 		{ "movers", movers.LastTraced() } };
 	status["composite"] = { { "lastShadowResult", magic_enum::enum_name(DX12Native::lastCompositeShadowResult.load(std::memory_order_relaxed)) } };
 	return status;

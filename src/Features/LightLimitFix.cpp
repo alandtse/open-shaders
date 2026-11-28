@@ -97,7 +97,7 @@ namespace
 
 	void ApplyNativeShadow(LightLimitFix::LightData& a_light, const RE::NiLight* a_niLight)
 	{
-		if (const auto slot = globals::features::dx12NativeScene.NativeShadowSlot(a_niLight)) {
+		if (const auto slot = globals::features::dx12NativeScene.NativeShadowSlot(a_niLight, a_light.lightFlags.any(LightLimitFix::LightFlags::Shadow))) {
 			a_light.nativeShadowSlot = *slot;
 			a_light.lightFlags.set(LightLimitFix::LightFlags::NativeShadow);
 		}
