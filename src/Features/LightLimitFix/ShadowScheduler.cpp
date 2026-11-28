@@ -3144,8 +3144,10 @@ namespace ShadowCasterManager
 			int32_t budgetEstimate = s_budget.GetCost(e->Light);
 			if (e->playerProtected && (maxRedraw <= 0 || budgetEstimate > budgetRemain)) {
 				AtlasTileTexels held{};
-				if (!isFirst && AtlasActive() && GetSlotTileTexels(e->Index, held) && held.contentValid)
+				if (!isFirst && AtlasActive() && GetSlotTileTexels(e->Index, held) && held.contentValid) {
+					anyCostRejected |= budgetEstimate > budgetRemain;
 					continue;
+				}
 				s_schedDiag.player_forced_past_budget++;
 				s_playerForcedPastBudgetTotal.fetch_add(1, std::memory_order_relaxed);
 			}
