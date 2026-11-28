@@ -443,6 +443,16 @@ TEST_CASE("ShadowFadeAlpha caps the fade-in by the fade-out", "[scm]")
 	REQUIRE(ShadowFadeAlpha(10.2, 10.0, 10.1, fadeIn, fadeOut) == Approx(0.8f));
 }
 
+TEST_CASE("Only depth published to the sampled tile advances the player pose", "[scm]")
+{
+	using ShadowCasterManager::SampledCasterFrameAfterDraw;
+	REQUIRE(SampledCasterFrameAfterDraw(14, 15, true, true) == 14);
+	REQUIRE(SampledCasterFrameAfterDraw(14, -1, false, true) == 14);
+	REQUIRE(SampledCasterFrameAfterDraw(14, -1, false, false) == -1);
+	REQUIRE(SampledCasterFrameAfterDraw(14, 17, false, true) == 17);
+	REQUIRE(SampledCasterFrameAfterDraw(-1, 18, false, false) == 18);
+}
+
 TEST_CASE("ResumedFadeStart continues from the strength shown", "[scm]")
 {
 	constexpr float duration = 0.25f;

@@ -1207,6 +1207,15 @@ namespace ShadowCasterManager
 		}
 	}
 
+	static int32_t s_lastPlayerMotionFrame = -1;
+	static bool s_playerWasMoving = false;
+
+	static bool NeedsPlayerPose(const LightEntry& entry)
+	{
+		return entry.playerProtected && s_lastPlayerMotionFrame >= 0 &&
+		       GetSampledCasterFrame(entry.Index) < s_lastPlayerMotionFrame && PlayerWithinLightRadius(entry.Light);
+	}
+
 	static void EnableLight(RE::BSShadowLight* light, RE::NiCamera* camera,
 		RE::ShadowSceneNode* ssn, int slotIndex, const RE::NiAVObject* carrier)
 	{
@@ -1353,9 +1362,9 @@ namespace ShadowCasterManager
 				// starves the redraw budget. Deferred bakes stay queued; with
 				// no valid seed the light renders full instead.
 				if (mode == CasterPass::StaticOnly &&
-					s_staticBakeCount.load(std::memory_order_relaxed) >= 2u) {
+					(s_staticBakeCount.load(std::memory_order_relaxed) >= 2u || (slotInRange && NeedsPlayerPose(s_lights.Lights[slotIndex])))) {
 					st->bakeQueued = true;
-					if (staticValid && !st->bakeStale) {
+					if (staticValid && !st->bakeStale && SplitPoseMatches(light, *st)) {
 						mode = CasterPass::DynamicOnly;
 					} else {
 						mode = CasterPass::All;
@@ -2695,7 +2704,7 @@ namespace ShadowCasterManager
 				cameraHoldSkips.push_back(&e);
 				continue;
 			}
-			if (e.ReleaseStartSeconds >= 0.0) {
+			if (e.ReleaseStartSeconds >= 0.0 && !NeedsPlayerPose(e)) {
 				e.skippedThisFrame = true;
 				continue;
 			}
@@ -3171,6 +3180,29 @@ namespace ShadowCasterManager
 			}
 			anyCostRejected = true;
 		}
+
+		// Follow the moving player with spare budget after servicing all normally due shadows.
+		if (s_lastPlayerMotionFrame >= 0 && AtlasActive()) {
+			for (auto* e : pending) {
+				if (maxRedraw <= 0 || budgetRemain <= 0 || !e->playerProtected)
+					break;
+				if (e->RedrawFrame || !NeedsPlayerPose(*e))
+					continue;
+				AtlasTileTexels held{};
+				if (!GetSlotTileTexels(e->Index, held) || !held.contentValid)
+					continue;
+				const int32_t cost = s_budget.GetCost(e->Light);
+				if (cost > budgetRemain) {
+					anyCostRejected = true;
+					continue;
+				}
+				budgetRemain -= cost;
+				--maxRedraw;
+				e->RedrawFrame = true;
+				AdmitRedraw(e, now);
+				latchGeomHash(e);
+			}
+		}
 	}
 
 	/// Replays the identical admission algorithm on a counterfactual pool (scratch
@@ -3304,6 +3336,11 @@ namespace ShadowCasterManager
 		int32_t budgetRemain = static_cast<int32_t>(budget * 1000.0);
 		bool isFirst = true;
 		int32_t now = *globals::game::frameCounter;
+
+		const bool playerMoving = AtlasActive() && s_settings.ProtectPlayerShadows && globals::game::player && globals::game::player->IsMoving();
+		if (playerMoving || s_playerWasMoving)
+			s_lastPlayerMotionFrame = now;
+		s_playerWasMoving = playerMoving;
 
 		// Maintains the per-slot consecutive-absence streak, consumed by the audit's
 		// Q2 counterfactual, the real hard skip, and occlusionConfidence further down.
@@ -4081,6 +4118,8 @@ namespace ShadowCasterManager
 		// ClearLightArrays frees the lights but doesn't shrink activeShadowLights, so
 		// scoring it now touches freed memory. Load-bearing: don't remove this return.
 		if (s_pendingSessionReset.exchange(false, std::memory_order_acquire)) {
+			s_lastPlayerMotionFrame = -1;
+			s_playerWasMoving = false;
 			s_everHadShadow.clear();
 			s_fadedOutLights.clear();
 			s_lastValidFrame.clear();
@@ -4428,7 +4467,7 @@ namespace ShadowCasterManager
 							if (rendered && !compositeKeepPrior && composedContent) {
 								if (!resizeAfterComposite)
 									e.renderedScale = e.pendingScale;
-								MarkSlotTileRendered(i, compositeValid);
+								MarkSlotTileRendered(i, compositeValid, *globals::game::frameCounter);
 							}
 							if (resizeAfterComposite) {
 								// Staging a larger tile invalidates the static seed this draw was queued to use.
@@ -4463,7 +4502,7 @@ namespace ShadowCasterManager
 					// contentValid=false, so the sample side reads UNSHADOWED, never a
 					// degenerate (cleared) tile, even under high pressure.
 					if (!emptyRender)
-						MarkSlotTileRendered(i);
+						MarkSlotTileRendered(i, true, *globals::game::frameCounter);
 				}
 			}
 		}

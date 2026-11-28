@@ -25,6 +25,7 @@ namespace ShadowCasterManager
 	{
 		struct SlotTile
 		{
+			int32_t casterFrame = -1;
 			AtlasAllocator::Tile tile;     ///< SAMPLED rect (content lives here)
 			AtlasAllocator::Tile pending;  ///< promotion target; rasters land here, swapped in once rendered
 			uint32_t escalateFrame = 0;    ///< frame a short-changed slot may retry escalation
@@ -885,7 +886,15 @@ namespace ShadowCasterManager
 		return true;
 	}
 
-	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete)
+	int32_t GetSampledCasterFrame(int32_t poolSlot)
+	{
+		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return -1;
+		const auto& slot = s_atlas.slots[poolSlot];
+		return slot.tile.valid && slot.valid ? slot.casterFrame : -1;
+	}
+
+	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete, int32_t a_casterFrame)
 	{
 		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
 			return;
@@ -900,6 +909,7 @@ namespace ShadowCasterManager
 			slot.pending = {};
 		}
 		if (slot.tile.valid) {
+			slot.casterFrame = SampledCasterFrameAfterDraw(slot.casterFrame, a_casterFrame, slot.pending.valid, slot.valid);
 			if (a_swapComplete)
 				slot.staticCompositePending = false;
 			// Refresh the bake snapshot only when this mark actually rewrote the
