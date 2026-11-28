@@ -86,6 +86,61 @@ TEST_CASE("Save with no changes since Load is a no-op that still reports success
 	CHECK_FALSE(fs::exists(path));  // nothing dirty -> nothing written
 }
 
+TEST_CASE("A legacy shipped blob must predate the manifest loaded at boot", "[ShaderCacheManifest]")
+{
+	TempDir dir;
+	const auto path = dir.path / "Manifest.json";
+	const auto blob = dir.path / "1.pso";
+	std::ofstream(path) << R"({"entries":{"1.pso":"original"}})";
+	std::ofstream(blob) << "DXBC";
+	const auto cutoff = fs::file_time_type::clock::now() - std::chrono::hours(2);
+	fs::last_write_time(path, cutoff);
+	Manifest manifest;
+	manifest.Load(path);
+	fs::last_write_time(blob, cutoff);
+	CHECK(manifest.MatchesRecordedBlob("1.pso", "DXBC", 4));
+	fs::last_write_time(blob, cutoff + std::chrono::minutes(1));
+	CHECK_FALSE(manifest.MatchesRecordedBlob("1.pso", "DXBC", 4));
+	manifest.Set("unrelated.vso", "updated");
+	REQUIRE(manifest.Save());
+	REQUIRE(fs::last_write_time(path) > fs::last_write_time(blob));
+	CHECK_FALSE(manifest.MatchesRecordedBlob("1.pso", "DXBC", 4));
+	manifest.Load(path);
+	CHECK_FALSE(manifest.MatchesRecordedBlob("1.pso", "DXBC", 4));
+	fs::last_write_time(blob, cutoff);
+	CHECK(manifest.MatchesRecordedBlob("1.pso", "DXBC", 4));
+	fs::remove(blob);
+	CHECK_FALSE(manifest.MatchesRecordedBlob("1.pso", "DXBC", 4));
+}
+
+TEST_CASE("Shipped bytecode hashes survive unrelated writes and validate the bytes being reused", "[ShaderCacheManifest]")
+{
+	TempDir dir;
+	const auto path = dir.path / "Manifest.json";
+	std::ofstream(path) << R"({"entries":{"1.pso":"original"},"bytecodeHashes":{"1.pso":"47dbde411bf6c8c03263732723a46892"}})";
+	Manifest manifest;
+	manifest.Load(path);
+	manifest.Set("unrelated.vso", "updated");
+	REQUIRE(manifest.Save());
+	manifest.Load(path);
+	const auto blob = dir.path / "1.pso";
+	std::ofstream(blob) << "DXBC";
+	const auto cutoff = fs::last_write_time(path);
+	fs::last_write_time(blob, cutoff + std::chrono::hours(1));
+	CHECK(manifest.MatchesRecordedBlob("1.pso", "DXBC", 4));
+	CHECK_FALSE(manifest.MatchesRecordedBlob("1.pso", "replacement", 11));
+	fs::last_write_time(blob, cutoff);
+	CHECK_FALSE(manifest.MatchesRecordedBlob("1.pso", "replacement", 11));
+	manifest.Set("1.pso", "recompiled");
+	fs::last_write_time(blob, cutoff + std::chrono::hours(1));
+	CHECK_FALSE(manifest.MatchesRecordedBlob("1.pso", "DXBC", 4));
+	manifest.Set("1.pso", "recompiled", Util::ContentHash::HashString("replacement").ToHex());
+	REQUIRE(manifest.Save());
+	manifest.Load(path);
+	CHECK(manifest.MatchesRecordedBlob("1.pso", "replacement", 11));
+	CHECK_FALSE(manifest.MatchesRecordedBlob("1.pso", "DXBC", 4));
+}
+
 TEST_CASE("A later Set overwrites an earlier one for the same path", "[ShaderCacheManifest]")
 {
 	TempDir dir;

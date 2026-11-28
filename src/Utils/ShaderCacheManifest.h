@@ -12,6 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -23,6 +24,14 @@
 
 namespace Util::ShaderCacheManifest
 {
+	/// A blob newer than the manifest may have replaced the recorded bytecode.
+	inline bool IsSavedBeforeManifest(const std::filesystem::path& blob, std::filesystem::file_time_type manifestTime)
+	{
+		std::error_code ec;
+		const auto blobTime = std::filesystem::last_write_time(blob, ec);
+		return !ec && blobTime <= manifestTime;
+	}
+
 	class Manifest
 	{
 	public:
@@ -33,6 +42,9 @@ namespace Util::ShaderCacheManifest
 			path = manifestPath;
 			entries.clear();
 			contentKeys.clear();
+			bytecodeHashes.clear();
+			std::error_code ec;
+			legacyCutoff = std::filesystem::last_write_time(manifestPath, ec);
 			std::ifstream ifs(manifestPath, std::ios::binary);
 			if (!ifs.is_open())
 				return;
@@ -44,16 +56,34 @@ namespace Util::ShaderCacheManifest
 			}
 			if (!j.is_object() || !j.contains("entries") || !j["entries"].is_object())
 				return;
-			for (const auto& [key, value] : j["entries"].items()) {
-				if (value.is_string())
-					entries[key] = value.get<std::string>();
+			if (const auto cutoff = j.find("legacyCutoffTicks"); cutoff != j.end()) {
+				using FileTime = std::filesystem::file_time_type;
+				legacyCutoff = cutoff->is_number_integer() ?
+				                   std::min(legacyCutoff, FileTime{ FileTime::duration{ cutoff->get<int64_t>() } }) :
+				                   FileTime::min();
 			}
-			if (j.contains("contentKeys") && j["contentKeys"].is_object()) {
-				for (const auto& [key, value] : j["contentKeys"].items()) {
+			const auto loadHashes = [&](const char* field, auto& hashes) {
+				if (!j.contains(field) || !j[field].is_object())
+					return;
+				for (const auto& [key, value] : j[field].items()) {
 					if (value.is_string())
-						contentKeys[key] = value.get<std::string>();
+						hashes[key] = value.get<std::string>();
 				}
-			}
+			};
+			loadHashes("entries", entries);
+			loadHashes("contentKeys", contentKeys);
+			loadHashes("bytecodeHashes", bytecodeHashes);
+		}
+
+		/// Validate recorded bytecode, falling back to the original manifest timestamp for legacy entries.
+		bool MatchesRecordedBlob(const std::string& relativePath, const void* data, size_t size) const
+		{
+			std::lock_guard lock(mutex);
+			if (!entries.contains(relativePath) && !contentKeys.contains(relativePath))
+				return false;
+			if (const auto it = bytecodeHashes.find(relativePath); it != bytecodeHashes.end())
+				return ContentHash::HashBytes(data, size).ToHex() == it->second;
+			return IsSavedBeforeManifest(path.parent_path() / relativePath, legacyCutoff);
 		}
 
 		/// True when no digest is on record, so no cached blob can be validated against its source.
@@ -75,10 +105,14 @@ namespace Util::ShaderCacheManifest
 
 		/// Record/overwrite a digest. Does not itself write to disk; call Save()
 		/// (directly, or via a debounced caller) to persist.
-		void Set(const std::string& relativePath, const std::string& digestHex)
+		void Set(const std::string& relativePath, const std::string& digestHex, std::string bytecodeHash = {})
 		{
 			std::lock_guard lock(mutex);
 			entries[relativePath] = digestHex;
+			if (bytecodeHash.empty())
+				bytecodeHashes.erase(relativePath);
+			else
+				bytecodeHashes[relativePath] = std::move(bytecodeHash);
 			dirty = true;
 		}
 
@@ -113,6 +147,7 @@ namespace Util::ShaderCacheManifest
 			for (auto it = entries.begin(); it != entries.end();) {
 				if (shouldRemove(it->first)) {
 					contentKeys.erase(it->first);
+					bytecodeHashes.erase(it->first);
 					it = entries.erase(it);
 					++removed;
 					dirty = true;
@@ -136,8 +171,11 @@ namespace Util::ShaderCacheManifest
 			nlohmann::json j;
 			j["schemaVersion"] = 1;
 			j["entries"] = entries;
+			j["legacyCutoffTicks"] = legacyCutoff.time_since_epoch().count();
 			if (!contentKeys.empty())
 				j["contentKeys"] = contentKeys;
+			if (!bytecodeHashes.empty())
+				j["bytecodeHashes"] = bytecodeHashes;
 			std::error_code ec;
 			std::filesystem::create_directories(path.parent_path(), ec);
 			const auto tempPath = path.parent_path() / std::format("{}.{}.tmp", path.filename().string(), std::random_device{}());
@@ -161,8 +199,10 @@ namespace Util::ShaderCacheManifest
 	private:
 		mutable std::mutex mutex;
 		std::filesystem::path path;
+		std::filesystem::file_time_type legacyCutoff = std::filesystem::file_time_type::min();
 		std::unordered_map<std::string, std::string> entries;
 		std::unordered_map<std::string, std::string> contentKeys;
+		std::unordered_map<std::string, std::string> bytecodeHashes;
 		bool dirty = false;
 	};
 }

@@ -100,6 +100,7 @@ add_executable(
     test_generationclaim.cpp
     test_framelatch.cpp
     test_revisioncache.cpp
+    test_lastupload.cpp
     test_render_extent.cpp
     test_dlssg_input_fence.cpp
     test_lightattachgate.cpp

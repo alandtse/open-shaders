@@ -345,12 +345,22 @@ TEST_CASE("BackupCacheDirectory and RestoreCacheDirectory: transactional swap lo
 
 	SECTION("Backup when no previous exists")
 	{
+		Write(active / "Water/1.pso", "water");
+		Write(active / "Manifest.json", R"({"schemaVersion":1,"entries":{"Water/1.pso":"digest"}})");
+		const auto waterTime = fs::last_write_time(active / "Water/1.pso");
 		std::string error;
 		REQUIRE(BackupCacheDirectory(active, previous, swap, &error));
 		CHECK(fs::exists(previous / "Info.ini"));
 		CHECK(fs::exists(previous / "blob1.pso"));
 		CHECK(fs::exists(active));
-		CHECK_FALSE(fs::exists(active / "Info.ini"));
+		CHECK(fs::exists(active / "Info.ini"));
+		CHECK(fs::exists(active / "blob1.pso"));
+		CHECK(fs::exists(active / "Manifest.json"));
+		CHECK(fs::exists(previous / "Manifest.json"));
+		CHECK(fs::last_write_time(active / "Water/1.pso") == waterTime);
+		CHECK(fs::exists(previous / "Water/1.pso"));
+		Write(active / "blob1.pso", "recompiled");
+		CHECK(fs::file_size(previous / "blob1.pso") == 5);
 		CHECK_FALSE(fs::exists(swap));
 	}
 
@@ -396,8 +406,6 @@ TEST_CASE("BackupCacheDirectory: transactional failure paths leave state untouch
 
 	SECTION("fails when the rollback destination's parent does not exist")
 	{
-		// No previous cache yet, so this hits the active->previous rename directly
-		// (the "could not move the active cache into the rollback slot" branch).
 		auto missingParentPrevious = t.path / "no-such-dir" / "Previous";
 
 		std::string error;

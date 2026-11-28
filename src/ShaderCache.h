@@ -415,7 +415,7 @@ namespace SIE
 		std::atomic<int64_t> digestComputeTimeUs = 0;       // cumulative microseconds spent computing content digests
 		std::atomic<uint64_t> digestHitTasks = 0;           // disk-cache validity checks where the manifest digest confirmed the cached blob is still valid
 		std::atomic<uint64_t> contentDedupeTasks = 0;       // compiles skipped because an identical-bytecode task had already compiled the blob this session
-		std::atomic<uint64_t> activeReuseTasks = 0;         // outdated active-cache blobs kept because their recorded content key still matches
+		std::atomic<uint64_t> activeReuseTasks = 0;         // active-cache blobs retained after verifying identical preprocessed code
 		std::atomic<uint64_t> previousReuseTasks = 0;       // blobs copied from the previous cache because their recorded content key matches
 		std::atomic<uint64_t> digestMissTasks = 0;          // disk-cache validity checks where the manifest digest marked the cached blob stale (recompile)
 		std::atomic<uint64_t> contentStoreHitTasks = 0;     // compiles skipped because the content store already held an identical blob

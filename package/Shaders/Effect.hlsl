@@ -553,7 +553,7 @@ static const float EffectDirectionalLightScale = 0.5;
 
 bool UseAmbientEffectLighting()
 {
-	return SharedData::csUtilitySettings.useAmbientEffectLighting &&
+	return SharedData::csUtilitySettings.useAmbientEffectLighting && !SharedData::InMapMenu &&
 	       (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
 }
 
