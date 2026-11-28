@@ -86,13 +86,16 @@ namespace DX12
 
 		void AddMissingShapeEntry(
 			std::vector<MissingNifShapeDescriptor>& a_missing,
+			std::vector<std::pair<std::string, uint32_t>>& a_reasons, uint32_t& a_failedCount,
 			std::string_view a_plugin, uint32_t a_localID,
 			std::string_view a_nifPath, int32_t a_blockIndex, std::string_view a_reason)
 		{
 			if (a_nifPath.empty() || a_nifPath.size() > 260)
 				return;
-			if (a_missing.size() >= kMaxMissingShapes)
+			if (a_missing.size() >= kMaxMissingShapes) {
+				RecordRejection(a_reasons, a_failedCount, "missing shape manifest capacity");
 				return;
+			}
 			MissingNifShapeDescriptor entry;
 			entry.referencePlugin = std::string(a_plugin.substr(0, 128));
 			entry.referenceLocal = a_localID;
@@ -107,7 +110,7 @@ namespace DX12
 			std::string_view a_nifPath, int32_t a_blockIndex, std::string_view a_reason)
 		{
 			AddMissingShapeEntry(
-				a_request.missingShapes,
+				a_request.missingShapes, a_request.rejectionReasons, a_request.failedShapes,
 				a_plugin, a_localID, a_nifPath, a_blockIndex, a_reason);
 		}
 
@@ -117,8 +120,10 @@ namespace DX12
 		{
 			if (a_nifPath.empty() || a_nifPath.size() > 260 || a_plugin.empty())
 				return;
-			if (a_request.nifSources.size() >= kMaxNifSources)
+			if (a_request.nifSources.size() >= kMaxNifSources) {
+				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "NIF source manifest capacity");
 				return;
+			}
 			NifSourceDescriptor entry;
 			entry.referencePlugin = std::string(a_plugin.substr(0, 128));
 			entry.referenceLocal = a_localID;
@@ -131,8 +136,6 @@ namespace DX12
 			switch (a_type) {
 			case RE::BSGeometry::Type::kTriShape:
 			case RE::BSGeometry::Type::kMeshLODTriShape:
-			case RE::BSGeometry::Type::kLODMultiIndexTriShape:
-			case RE::BSGeometry::Type::kMultiIndexTriShape:
 			case RE::BSGeometry::Type::kSubIndexTriShape:
 			case RE::BSGeometry::Type::kSubIndexLandTriShape:
 				return true;
@@ -177,7 +180,11 @@ namespace DX12
 				return GeometryInspectResult::Rejected;
 			}
 			const auto* property = runtime.shaderProperty.get();
-			if (!property || property->GetRTTI() != globals::rtti::BSLightingShaderPropertyRTTI.get() ||
+			if (!property) {
+				a_outReason = "missing shader property";
+				return GeometryInspectResult::Rejected;
+			}
+			if (property->GetRTTI() != globals::rtti::BSLightingShaderPropertyRTTI.get() ||
 				property->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kRefraction,
 					RE::BSShaderProperty::EShaderPropertyFlag::kTempRefraction)) {
 				return GeometryInspectResult::SkippedNonShadow;
@@ -234,8 +241,13 @@ namespace DX12
 			RE::NiAVObject* a_obj, uint32_t a_ownerFormID, std::string_view a_plugin, uint32_t a_localID,
 			std::string_view a_nifPath, uint32_t& a_shapeOrdinal, uint32_t a_depth, ScenePrepRequest& a_request, CaptureCache& a_cache)
 		{
-			if (!a_obj || a_depth > kMaxSceneGraphDepth || a_obj->GetAppCulled())
+			if (!a_obj || a_obj->GetAppCulled())
 				return;
+			if (IsSceneGraphDepthExceeded(a_depth, kMaxSceneGraphDepth)) {
+				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "scene graph depth limit exceeded");
+				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, -1, "scene graph depth limit exceeded");
+				return;
+			}
 			if (a_obj->GetControllers() != nullptr) {
 				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "controlled scene subtree");
 				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, -1, "controlled scene subtree");
@@ -331,8 +343,14 @@ namespace DX12
 			RE::NiAVObject* a_obj, const AffineTransform& a_parentTransform, uint32_t& a_shapeOrdinal,
 			uint32_t a_depth, CachedModelExtraction& a_out)
 		{
-			if (!a_obj || a_depth > kMaxSceneGraphDepth || a_obj->GetAppCulled())
+			if (!a_obj || a_obj->GetAppCulled())
 				return;
+			if (IsSceneGraphDepthExceeded(a_depth, kMaxSceneGraphDepth)) {
+				uint32_t ignored = 0;
+				RecordRejection(a_out.rejections, ignored, "scene graph depth limit exceeded");
+				a_out.missing.emplace_back(-1, "scene graph depth limit exceeded");
+				return;
+			}
 			if (a_obj->GetControllers() != nullptr) {
 				uint32_t ignored = 0;
 				RecordRejection(a_out.rejections, ignored, "controlled scene subtree");
@@ -396,6 +414,14 @@ namespace DX12
 			return false;
 		RE::BSSpinLockGuard lock(vm->attachedScriptsLock);
 		return vm->attachedScripts.contains(handle);
+	}
+
+	bool IsCellFullyLoaded(const RE::TESObjectCELL* a_cell)
+	{
+		if (!a_cell || !a_cell->IsAttached())
+			return false;
+		const auto* loaded = a_cell->GetRuntimeData().loadedData;
+		return loaded && loaded->refsFullyLoaded;
 	}
 
 	std::optional<ScenePrepRequest> CaptureScenePrepRequest(
@@ -568,7 +594,8 @@ namespace DX12
 		};
 
 		if (!request.worldspace) {
-			request.enumerationComplete = a_cell->IsAttached();
+			request.enumerationComplete = IsCellFullyLoaded(a_cell);
+			request.hasUnattachedCells = !request.enumerationComplete;
 			a_cell->ForEachReference(visitRef);
 		} else {
 			request.enumerationComplete = false;
@@ -857,7 +884,7 @@ namespace DX12
 			if (!overlaps) {
 				RecordRejection(pub.rejectionReasons, pub.failedShapes, "invalid placed bounds");
 				AddMissingShapeEntry(
-					pub.missingShapes,
+					pub.missingShapes, pub.rejectionReasons, pub.failedShapes,
 					a_plugin, a_localID, a_nifPath, a_blockIndex, "invalid placed bounds");
 				return;
 			}
@@ -985,8 +1012,10 @@ namespace DX12
 				pub.unlocalizedRejections += count;
 			}
 			for (const auto& [blockIdx, reason] : extraction->missing) {
-				if (pub.missingShapes.size() >= kMaxMissingShapes)
+				if (pub.missingShapes.size() >= kMaxMissingShapes) {
+					RecordRejection(pub.rejectionReasons, pub.failedShapes, "missing shape manifest capacity");
 					break;
+				}
 				MissingNifShapeDescriptor entry;
 				entry.referencePlugin = placement.refPlugin.substr(0, 128);
 				entry.referenceLocal = placement.refLocal;

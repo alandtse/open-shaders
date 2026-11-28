@@ -826,6 +826,7 @@ void DX12Resources::ResetPreparation()
 	preparationActive = false;
 	lastVisitedCell = previousVisitedCell = distinctTransitions = 0;
 	lastExteriorGridX = lastExteriorGridY = std::numeric_limits<int32_t>::min();
+	interiorRefsLoaded = false;
 	latestPublication.store(nullptr, std::memory_order_release);
 	generationStats.store(std::make_shared<const DX12::PreparationStats>(), std::memory_order_release);
 }
@@ -1313,8 +1314,16 @@ void DX12Resources::PreShadowMaps()
 			grid.RefreshUnattachedTiles();
 		lastExteriorGridX = gx;
 		lastExteriorGridY = gy;
+		interiorRefsLoaded = false;
 	} else {
 		lastExteriorGridX = lastExteriorGridY = std::numeric_limits<int32_t>::min();
+		const bool refsLoaded = DX12::IsCellFullyLoaded(cell);
+		if (refsLoaded && !interiorRefsLoaded) {
+			// Tiles captured while references were still loading are incomplete.
+			grid.RefreshUnattachedTiles();
+			consolidationAttemptScope = 0;
+		}
+		interiorRefsLoaded = refsLoaded;
 	}
 	runtimePublicationEnabled.store(true, std::memory_order_release);
 	PumpPreparation(grid, cell, world, consolidationAttemptScope, false);

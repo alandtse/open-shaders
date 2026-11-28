@@ -110,6 +110,9 @@ namespace DX12
 	/** @brief True when the Papyrus VM has scripts bound to this reference. */
 	[[nodiscard]] bool HasAttachedScripts(const RE::TESObjectREFR& a_ref);
 
+	/** @brief True once an attached cell reports its reference set fully loaded. */
+	[[nodiscard]] bool IsCellFullyLoaded(const RE::TESObjectCELL* a_cell);
+
 	class ScenePrepWorker
 	{
 	public:

@@ -224,3 +224,9 @@ TEST_CASE("Scene preparation rejects placements that can change at runtime", "[d
 	CHECK(DX12::IsRuntimeDependentPlacement(false, false, true, false));
 	CHECK(DX12::IsRuntimeDependentPlacement(false, false, false, true));
 }
+
+TEST_CASE("Scene preparation reports subtrees past the depth limit", "[dx12][scene-prep]")
+{
+	CHECK_FALSE(DX12::IsSceneGraphDepthExceeded(32, 32));
+	CHECK(DX12::IsSceneGraphDepthExceeded(33, 32));
+}
