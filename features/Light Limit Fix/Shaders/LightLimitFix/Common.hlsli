@@ -18,6 +18,7 @@ namespace LightFlags
 	static const uint Shadow = POINT_LIGHT_FLAG_SHADOW;
 	static const uint Simple = POINT_LIGHT_FLAG_SIMPLE;
 	static const uint NativeShadow = POINT_LIGHT_FLAG_NATIVE_SHADOW;
+	static const uint NativeShadowFades = POINT_LIGHT_FLAG_NATIVE_SHADOW_FADES;
 
 	static const uint Initialised = POINT_LIGHT_FLAG_INITIALISED;
 	static const uint Disabled = POINT_LIGHT_FLAG_DISABLED;
