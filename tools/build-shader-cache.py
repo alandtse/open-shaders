@@ -909,11 +909,13 @@ def shader_cache_manifest_entries(cache_dir: Path, shader_root: Path, runtime: s
 
 def write_shader_cache_manifest(cache_dir: Path, shader_root: Path, runtime: str, config: Path) -> None:
     """Write the runtime manifest for the inputs that produced these blobs."""
-    from hlslkit.shader_digest import SCHEMA_VERSION
+    from hlslkit.shader_digest import SCHEMA_VERSION, hash_bytes, to_hex
 
     entries = shader_cache_manifest_entries(cache_dir, shader_root, runtime, config)
+    bytecode_hashes = {path: to_hex(hash_bytes((cache_dir / path).read_bytes())) for path in entries}
     (cache_dir / "Manifest.json").write_text(
-        json.dumps({"schemaVersion": SCHEMA_VERSION, "entries": entries}, sort_keys=True), encoding="utf-8")
+        json.dumps({"schemaVersion": SCHEMA_VERSION, "entries": entries, "bytecodeHashes": bytecode_hashes},
+                   sort_keys=True), encoding="utf-8")
     print(f"{runtime}: wrote {len(entries)} entries to cache manifest -> {cache_dir / 'Manifest.json'}")
 
 
