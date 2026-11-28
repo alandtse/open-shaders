@@ -67,6 +67,14 @@ t57. A failed slice allocation or dispatch falls back to the combined
 mask. `trace.producedVisibilitySlices` counts written slices and
 `trace.shadedLights` the lights lighting matched to one.
 
+Pixel register t58 holds the previous frame's array, and lighting averages
+the two samples. A light that lost its slice after SCM handed over its
+static casters is shaded from the previous one
+(`trace.previousSliceOnly`). Full RT follows SCM's flicker mode: lights
+traced away from their rest point (`trace.movingOrigins`) skip the blend.
+Each light's slices are packed into one word of its light data
+(`Common/NativeLightShadowSlot.hlsli`).
+
 Replay validation rejects explicit recording failures, cancellation, timeouts,
 and missing frame statistics. The compare phase refuses failed or invalid
 source reports and uses the recorded A/B candidate (`offload` or `fullrt`).
