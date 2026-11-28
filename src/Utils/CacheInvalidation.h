@@ -282,10 +282,7 @@ namespace Util::CacheInvalidation
 		}
 	}
 
-	/// Rotate the active cache into the rollback slot (active -> previous; any old
-	/// previous is discarded via the swap path), then recreate an empty active dir.
-	/// Transactional: every failure moves directories back, so the active cache
-	/// path is never left missing. English failure detail in outError.
+	/// Snapshot the active cache for rollback while keeping its blobs available for digest validation.
 	inline bool BackupCacheDirectory(
 		const std::filesystem::path& active, const std::filesystem::path& previous,
 		const std::filesystem::path& swap, std::string* outError = nullptr)
@@ -307,24 +304,25 @@ namespace Util::CacheInvalidation
 				return fail(std::format("could not stash the old rollback cache: {}", ec.message()));
 		}
 
-		std::filesystem::rename(active, previous, ec);
+		std::filesystem::create_directory(previous, ec);
+		if (!ec) {
+			for (std::filesystem::directory_iterator it(active, ec), end; !ec && it != end; it.increment(ec)) {
+				const auto name = it->path().filename();
+				if (name != kContentStoreDirName) {
+					std::filesystem::copy(it->path(), previous / name, std::filesystem::copy_options::recursive, ec);
+					if (ec)
+						break;
+				}
+			}
+		}
 		if (ec) {
 			std::error_code undoEc;
+			std::filesystem::remove_all(previous, undoEc);
 			if (hadPrevious)
 				std::filesystem::rename(swap, previous, undoEc);
-			return fail(std::format("could not move the active cache into the rollback slot: {}", ec.message()));
+			return fail(std::format("could not copy the active cache into the rollback slot: {}", ec.message()));
 		}
 
-		std::filesystem::create_directories(active, ec);
-		if (ec) {
-			std::error_code undoEc;
-			std::filesystem::rename(previous, active, undoEc);
-			if (hadPrevious)
-				std::filesystem::rename(swap, previous, undoEc);
-			return fail(std::format("could not create the new active cache folder: {}", ec.message()));
-		}
-
-		MoveContentStore(previous, active);
 		if (hadPrevious)
 			std::filesystem::remove_all(swap, ec);  // best effort; a stale swap is cleared next rotation
 		return true;

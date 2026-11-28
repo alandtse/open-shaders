@@ -58,14 +58,14 @@ struct LinearLighting : Feature
 
 	struct alignas(16) PerGeometryData
 	{
-		float emissiveMult;
+		float emissiveMult = 1.0f;
 		std::array<float, 3> projectedMaterialColorScale = kNoProjectedMaterialColorScale;
 	};
 	static_assert(sizeof(PerGeometryData) == 16);
 
 	std::array<std::array<float, 3>, 2> lodProjectedMaterialColorScales{ kNoProjectedMaterialColorScale, kNoProjectedMaterialColorScale };
 
-	ConstantBuffer* PerGeometryCB = nullptr;
+	std::unique_ptr<ConstantBuffer> PerGeometryCB;
 	winrt::com_ptr<ID3D11ComputeShader> sceneGammaDecodeCS;
 	bool sceneGammaActive = false;
 

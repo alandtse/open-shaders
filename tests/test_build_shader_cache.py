@@ -454,6 +454,8 @@ class ShaderCacheManifestTests(unittest.TestCase):
 
         original = manifest("SE")
         self.assertEqual(len(original), 2)
+        hashes = json.loads((self.cache / "Manifest.json").read_text())["bytecodeHashes"]
+        self.assertEqual(hashes, {path: "47dbde411bf6c8c03263732723a46892" for path in original})
         self.assertNotEqual(original["Lighting/0.pso"], original["Lighting/1.pso"])
         self.assertEqual(original, manifest("SE"))
         for path, digest in manifest("VR").items():

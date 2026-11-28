@@ -2,6 +2,7 @@
 
 #include "FurShells/InertiaSpring.h"
 #include "FurShells/Interactors.h"
+#include "Utils/LastUpload.h"
 
 struct FurShells : Feature
 {
@@ -282,7 +283,7 @@ private:
 	float lastMaxInertia = 0.0f;
 	RE::NiSourceTexture* lastDiffuse = nullptr;
 	ShellLookup lastLookup;
-	PerPass lastPerPass{};
+	Util::LastUpload<PerPass> lastPerPass;
 	winrt::com_ptr<ID3D11VertexShader> savedVertexShader;
 	winrt::com_ptr<ID3D11PixelShader> savedPixelShader;
 	ID3D11VertexShader* furVertexShader = nullptr;
