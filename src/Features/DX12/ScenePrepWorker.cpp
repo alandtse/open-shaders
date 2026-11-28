@@ -23,6 +23,7 @@
 #include "RE/V/VirtualMachine.h"
 #include "ScenePrepEligibility.h"
 #include "ScenePrepEngineBridge.h"
+#include "SystemMemoryBudget.h"
 #include "TilePreparationPolicy.h"
 #include "Utils/PerfUtils.h"
 #include "Utils/TracyZones.h"
@@ -44,14 +45,11 @@ namespace DX12
 	namespace
 	{
 		constexpr size_t kMaxCandidateRefs = 150'000;
-		constexpr size_t kMaxTileShapes = 384;
+		constexpr size_t kMemoryAdmissionInterval = 256;
 		constexpr size_t kMaxNifSources = 4096;
 		constexpr size_t kMaxMissingShapes = 4096;
 		constexpr size_t kMaxRejectionReasons = 12;
-		constexpr uint64_t kMaxTileGeometryBytes = 48ull * 1024 * 1024;
 		constexpr uint64_t kMaxDecodedCacheBytes = 48ull * 1024 * 1024;
-		constexpr uint64_t kMaxCapturedMeshBytes = 96ull * 1024 * 1024;
-		constexpr size_t kMaxCapturedShapes = 8192;
 		constexpr uint32_t kInteriorReuseLifetimeMs = 2000;
 		constexpr uint32_t kMaxSceneGraphDepth = 32;
 		constexpr uint32_t kTerrainOrdinalBase = 0x10000u;
@@ -297,8 +295,7 @@ namespace DX12
 				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, int32_t(ordinal), "invalid NIF transform");
 				return;
 			}
-			if (a_request.attachedShapes.size() >= kMaxCapturedShapes ||
-				extracted.vertexCount > 65535u || extracted.indexCount > 65535u * 3u) {
+			if (extracted.vertexCount > 65535u || extracted.indexCount > 65535u * 3u) {
 				a_request.captureBudgetExceeded = true;
 				RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "capture shape limit");
 				AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, int32_t(ordinal), "capture shape limit");
@@ -312,10 +309,10 @@ namespace DX12
 			} else {
 				const auto vertexBytes = uint64_t(extracted.vertexCount) * extracted.stride;
 				const auto bytes = vertexBytes + uint64_t(extracted.indexCount) * sizeof(uint16_t);
-				if (bytes > kMaxCapturedMeshBytes - a_cache.bytes) {
+				if (bytes > UINT64_MAX - a_cache.bytes || !HasAvailableSystemMemory(a_cache.bytes + bytes)) {
 					a_request.captureBudgetExceeded = true;
-					RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "capture byte budget");
-					AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, int32_t(ordinal), "capture byte budget");
+					RecordRejection(a_request.rejectionReasons, a_request.failedShapes, "system memory admission");
+					AddMissingShape(a_request, a_plugin, a_localID, a_nifPath, int32_t(ordinal), "system memory admission");
 					return;
 				}
 				auto owned = std::make_shared<CapturedMeshSlice>();
@@ -931,9 +928,10 @@ namespace DX12
 			++pub.eligibleShapes;
 			const uint64_t bytes = uint64_t(a_positions.size()) * sizeof(float3) +
 			                       uint64_t(a_indices.size()) * sizeof(uint32_t);
-			if (pub.shapes.size() >= kMaxTileShapes || bytes > kMaxTileGeometryBytes - pub.geometryBytes) {
+			if (bytes > UINT64_MAX - pub.geometryBytes ||
+				(pub.shapes.size() % kMemoryAdmissionInterval == 0 && !HasAvailableSystemMemory(pub.geometryBytes + bytes))) {
 				budgetExceeded = true;
-				RecordRejection(pub.rejectionReasons, pub.failedShapes, "tile shape or byte budget exceeded");
+				RecordRejection(pub.rejectionReasons, pub.failedShapes, "system memory admission");
 				return;
 			}
 			if (!a_identity || !emittedIdentities.insert(a_identity).second) {
