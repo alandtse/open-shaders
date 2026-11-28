@@ -33,7 +33,8 @@ struct DX12NativeScene final : OverlayFeature
 	void RegisterUxActions() override;
 	json GetStatus() const;
 	bool CasterInTlas(RE::BSGeometry& geometry) const;
-	void AuditCasterCoverage(RE::BSGeometry& geometry) const;
+	/** @brief CasterInTlas for a static caster raster is about to drop, counted for status. */
+	bool ClaimCasterForTrace(RE::BSGeometry& geometry) const;
 	bool WantsExactShadowOrigins() const { return frameExactShadowLights.load(std::memory_order_relaxed); }
 	void ObserveScheduledShadowOrigin(const RE::NiLight* light, const RE::NiPoint3& origin);
 	std::shared_ptr<const DX12Native::TopLevel> GetPublishedScene() const { return acceleration.GetScene(); }
@@ -124,7 +125,6 @@ private:
 		uint32_t referenceID = 0;             // Corresponding prepared native-scene emitter.
 		DX12::PreparedLight value;
 	};
-	std::atomic<bool> coverageAudit{ false };
 	std::atomic<bool> earlyTraceExperiment{ false };
 	std::atomic<bool> lightVisibilityExperiment{ false };
 	std::atomic<bool> exactShadowLights{ false }, frameExactShadowLights{ false };
@@ -132,8 +132,8 @@ private:
 	uint32_t scheduledOriginsFrame = UINT32_MAX;
 	std::vector<DX12::PreparedLight> lightsAtShadowOrigins;
 	std::atomic<uint32_t> movingOriginCount{ 0 };
-	mutable std::atomic<uint64_t> coveredCasterChecks{ 0 }, missingCasterChecks{ 0 };
-	mutable std::atomic<uint64_t> ownershipGranted{ 0 };
+	mutable std::atomic<uint64_t> ownershipGranted{ 0 }, castersTraced{ 0 }, castersKeptRaster{ 0 };
+	mutable std::vector<const RE::NiLight*> ownedLights;  // Lights granted static ownership in runtimeLightFrame.
 	mutable std::mutex runtimeLightMutex;
 	uint32_t runtimeLightFrame = UINT32_MAX;
 	std::vector<RuntimeLightSample> runtimeLightSamples;
