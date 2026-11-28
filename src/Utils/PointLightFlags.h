@@ -10,8 +10,6 @@ namespace PointLightFlags
 		PortalStrict = (1u << 0),
 		Shadow = (1u << 1),
 		Simple = (1u << 2),
-		NativeShadow = (1u << 3),       // Ray-traced static visibility in slice nativeShadowSlot.
-		NativeShadowFades = (1u << 4),  // The ray-traced term follows the shadow slot's swap fade.
 
 		Initialised = (1u << 8),
 		Disabled = (1u << 9),

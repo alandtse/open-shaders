@@ -1,3 +1,4 @@
+#include "../../package/Shaders/Common/NativeLightShadowSlot.hlsli"
 #include "../../package/Shaders/Common/NativeShadowRT.hlsli"
 #include "Features/DX12/DX12FenceRetirementPolicy.h"
 #include "Features/DX12/NativeLightPublication.h"
@@ -496,4 +497,22 @@ TEST_CASE("Scene preparation worker recovery is bounded", "[dx12][scene-prep]")
 	CHECK(DX12::CanRestartPreparationWorker(DX12::kMaxPreparationWorkerRestarts - 1));
 	CHECK_FALSE(DX12::CanRestartPreparationWorker(DX12::kMaxPreparationWorkerRestarts));
 	CHECK_FALSE(DX12::CanRestartPreparationWorker(UINT32_MAX));
+}
+
+TEST_CASE("A light's shadow slices pack into one word", "[dx12][shadow]")
+{
+	using namespace DX12Native;
+	CHECK_FALSE(HasLightShadow(kNoLightShadow));
+	CHECK_FALSE(HasLightShadow(kNoLightShadow | kLightShadowFadesWithSlot));
+	const uint packed = PackLightShadow(5u, 63u, kLightShadowFadesWithSlot);
+	CHECK(HasLightShadow(packed));
+	CHECK(LightShadowCurrent(packed) == 5u);
+	CHECK(LightShadowPrevious(packed) == 63u);
+	CHECK((packed & kLightShadowFadesWithSlot) != 0u);
+	const uint previousOnly = PackLightShadow(kNoLightShadowSlice, 7u, 0u);
+	CHECK(HasLightShadow(previousOnly));
+	CHECK(LightShadowCurrent(previousOnly) == kNoLightShadowSlice);
+	CHECK(LightShadowPrevious(previousOnly) == 7u);
+	CHECK(PackLightShadow(kNoLightShadowSlice, kNoLightShadowSlice, 0u) == kNoLightShadow);
+	CHECK(LightShadowCurrent(PackLightShadow(1u, 2u, 0xFFu)) == 1u);
 }

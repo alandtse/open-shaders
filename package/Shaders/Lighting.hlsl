@@ -3547,11 +3547,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 				lightShadow *= shadowComponent;
 			}
 #			if !defined(VR)
-			[branch] if (light.lightFlags & LightLimitFix::LightFlags::NativeShadow)
+			[branch] if (HasLightShadow(light.nativeShadow))
 			{
 				// Static casters are ray traced; the shadow map above holds only dynamic ones.
-				float nativeShadow = NativeLightShadows::Visibility(light.nativeShadowSlot, light.nativeShadowPreviousSlot, input.Position.xy);
-				[branch] if ((light.lightFlags & LightLimitFix::LightFlags::NativeShadowFades) && (light.lightFlags & LightLimitFix::LightFlags::Shadow) &&
+				float nativeShadow = NativeLightShadows::Visibility(light.nativeShadow, input.Position.xy);
+				[branch] if ((light.nativeShadow & kLightShadowFadesWithSlot) && (light.lightFlags & LightLimitFix::LightFlags::Shadow) &&
 							 light.shadowMapIndex < SharedData::lightLimitFixSettings.ShadowMapSlots)
 					nativeShadow = lerp(1.0, nativeShadow, LightLimitFix::Shadows[light.shadowMapIndex].FadeParam.x);
 				shadowComponent *= nativeShadow;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../package/Shaders/Common/NativeLightShadowSlot.hlsli"
 #include "Buffer.h"
 #include "Features/LightLimitFix/ParticleLights.h"
 #include "LightLimitFix/ShadowCasterManager.h"
@@ -78,8 +79,8 @@ public:
 		uint128_t roomFlags = uint32_t(0);
 		stl::enumeration<LightFlags> lightFlags;
 		uint32_t shadowMapIndex = 0;
-		uint32_t nativeShadowSlot = 0;
-		uint32_t nativeShadowPreviousSlot = UINT32_MAX;
+		uint32_t nativeShadow = DX12Native::kNoLightShadow;  // Ray-traced shadow slices, NativeLightShadowSlot.hlsli packing.
+		float pad0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(LightData);
 
