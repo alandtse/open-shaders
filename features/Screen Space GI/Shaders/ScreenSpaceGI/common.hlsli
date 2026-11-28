@@ -45,6 +45,9 @@ cbuffer SSGICB : register(b1)
 	float DiffuseCubemapMult;
 	uint UseDynamicCubemap;
 	uint MultiBounceMode;
+	uint EnableReflectionFallback;
+	float ReflectionFallbackDistance;
+	uint2 reflectionFallbackPadding;
 };
 
 SamplerState samplerPointClamp : register(s0);

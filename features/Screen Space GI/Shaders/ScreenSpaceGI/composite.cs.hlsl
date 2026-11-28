@@ -2,7 +2,6 @@
 #include "Common/SharedData.hlsli"
 #include "NRD/Eye.hlsli"
 #include "NRD/NRDReblurSH.hlsli"
-#include "NRD/OpenShadersRadiance.hlsli"
 
 Texture2D<unorm float3> AlbedoTexture : register(t0);
 Texture2D<unorm float3> NormalTexture : register(t1);
@@ -16,6 +15,8 @@ Texture2D<unorm float3> NormalTexture : register(t1);
 #	define SKYLIGHTING_ZENITH_REGISTER t19
 #	include "Skylighting/Skylighting.hlsli"
 #endif
+#define NRD_PORT_RECONSTRUCT_AMBIENT
+#include "NRD/OpenShadersRadiance.hlsli"
 // 24/32-bit depth: TerrainBlending ON -> R32_FLOAT (no unorm),
 // OFF -> R24_UNORM_X8_TYPELESS game depth (unorm).
 Texture2D<float> DepthTexture : register(t2);
@@ -81,34 +82,12 @@ float3 SampleSSGIILSkin(uint2 pixCoord)
 	float3 linAlbedo = Color::IrradianceToLinear(AlbedoTexture[dispatchID.xy] / Color::PBRLightingScale);
 	float3 ssgiIl = IsSkinMask(MasksTexture[dispatchID.xy].xy) ? SampleSSGIILSkin(dispatchID.xy) : SampleSSGIIL(dispatchID.xy);
 	ssgiIl = max(lerp(Color::RGBToLuminance(ssgiIl), ssgiIl, NRDPortILSaturation), 0.0);
-	// Masks.z is an IL gain here: Lighting's character light fill, or grass transmission albedo relative to reflection albedo.
-
+	// Remove the same native ambient estimate that was excluded from the source pyramid.
+	// Only a successful per-eye GI composite mutates the main render target.
 	float4 mainColor = MainRW[dispatchID.xy + uint2(NRDPortOffsetX, 0)];
 	float3 linDiffuseColor = NRDPort::SceneToLinear(mainColor.xyz);
-	if (NRDPortReplaceAmbient != 0) {
-		float3 normalWS = normalize(mul(FrameBuffer::CameraViewInverse[NRDPortEye], float4(GBuffer::DecodeNormal(NormalTexture[dispatchID.xy].xy), 0)).xyz);
-		float3 ambient = Color::Ambient(max(0, SharedData::GetAmbient(normalWS)));
-#if defined(IBL)
-		if (SharedData::iblSettings.EnableIBL) {
-#	if defined(SKYLIGHTING)
-			float2 uv = (dispatchID.xy + 0.5) / float2(NRDPortActiveWidth, NRDPortActiveHeight);
-			float4 pos = mul(FrameBuffer::CameraViewProjInverse[NRDPortEye], float4(2 * float2(uv.x, 1 - uv.y) - 1, depth, 1));
-			float3 positionMS = pos.xyz / pos.w;
-#		if defined(VR)
-			positionMS += FrameBuffer::CameraPosAdjust[NRDPortEye].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
-#		endif
-			float visibility = Skylighting::EvaluateDiffuse(Skylighting::Sample(positionMS, normalWS), normalWS, Skylighting::GetFadeOutFactor(positionMS));
-			ambient = ImageBasedLighting::GetDiffuseIBLOccluded(ambient, -normalWS, visibility);
-#	else
-			ambient = ImageBasedLighting::GetDiffuseIBL(ambient, -normalWS);
-#	endif
-		}
-#endif
-		ambient *= AlbedoTexture[dispatchID.xy];
-		float3 yc = Color::RGBToYCoCg(ambient);
-		yc.x = MasksTexture[dispatchID.xy].z;
-		linDiffuseColor = max(0, linDiffuseColor - Color::IrradianceToLinear(max(0, Color::YCoCgToRGB(yc))));
-	}
+	if (NRDPortReplaceAmbient != 0)
+		linDiffuseColor = NRDPort::RemoveAmbient(linDiffuseColor, dispatchID.xy, depth, NormalTexture[dispatchID.xy].xy, AlbedoTexture[dispatchID.xy], MasksTexture[dispatchID.xy].z);
 	linDiffuseColor += ssgiIl * linAlbedo;
 	MainRW[dispatchID.xy + uint2(NRDPortOffsetX, 0)] = float4(NRDPort::LinearToScene(linDiffuseColor), mainColor.a);
 }

@@ -193,6 +193,7 @@ struct ScreenSpaceReflections : Feature
 	bool reblurInitAttempted = false;
 	uint32_t lastReblurAttemptFrame = 0;
 	uint32_t seenNRDHistoryGeneration = 0;
+	std::array<uint, 4> lastFallbackIBLMode{};
 	uint lastDrawnFrame = 0;
 	// True only after the current DrawSSR invocation has produced a trace output.
 	bool outputReady = false;

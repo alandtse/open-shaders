@@ -18,8 +18,20 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
 #include "NRD/NRDReblurSH.hlsli"
-#include "NRD/OpenShadersRadiance.hlsli"
 #include "ScreenSpaceGI/common.hlsli"
+#if defined(GI)
+#	if defined(IBL)
+#		include "IBL/IBL.hlsli"
+#	endif
+#	if defined(SKYLIGHTING)
+#		define SKYLIGHTING_PROBE_REGISTER t10
+#		define SKYLIGHTING_COVERAGE_REGISTER t18
+#		define SKYLIGHTING_ZENITH_REGISTER t19
+#		include "Skylighting/Skylighting.hlsli"
+#	endif
+#	define NRD_PORT_RECONSTRUCT_AMBIENT
+#endif
+#include "NRD/OpenShadersRadiance.hlsli"
 
 Texture2D<float4> srcRadiance : register(t0);
 Texture2D<float> srcWorkingDepth : register(t6);
@@ -29,6 +41,9 @@ Texture2D<float3> srcCurrentGeo : register(t2);
 Texture2D<float2> srcMotion : register(t3);
 Texture2D<float3> srcPrevGeo : register(t4);
 Texture2D<unorm float3> srcAlbedo : register(t5);
+Texture2D<unorm float3> srcMaterialNormal : register(t7);
+Texture2D<float3> srcMasks : register(t8);
+Texture2D<float> srcSceneDepth : register(t9);
 #endif
 
 RWTexture2D<float3> outRadiance0 : register(u0);
@@ -41,6 +56,16 @@ float3 RadianceMIPFilter(float3 radiance0, float3 radiance1, float3 radiance2, f
 {
 	const float count = dot(valid, 1.0);
 	return count > 0.0 ? (radiance0 * valid.x + radiance1 * valid.y + radiance2 * valid.z + radiance3 * valid.w) / count : 0.0;
+}
+
+float3 LoadSourceRadiance(uint2 pixel)
+{
+	float3 radiance = NRDPort::SceneToLinear(srcRadiance[pixel].xyz);
+#ifdef GI
+	[branch] if (UseDynamicCubemap != 0)
+		radiance = NRDPort::RemoveAmbient(radiance, pixel, srcSceneDepth[pixel], srcMaterialNormal[pixel].xy, srcAlbedo[pixel], srcMasks[pixel].z);
+#endif
+	return radiance;
 }
 
 #ifdef GI
@@ -100,16 +125,16 @@ groupshared float g_scratchValid[8][8];
 	float4 valid;
 	const uint2 p0 = pixCoord + uint2(0, 0);
 	valid[0] = all(p0 < active) && srcWorkingDepth[min(p0, active - 1u)] > 0.0 ? 1.0 : 0.0;
-	float3 radiance0 = valid[0] > 0.0 ? NRDPort::SceneToLinear(srcRadiance[min(p0, active - 1u)].xyz) : 0.0;
+	float3 radiance0 = valid[0] > 0.0 ? LoadSourceRadiance(min(p0, active - 1u)) : 0.0;
 	const uint2 p1 = pixCoord + uint2(1, 0);
 	valid[1] = all(p1 < active) && srcWorkingDepth[min(p1, active - 1u)] > 0.0 ? 1.0 : 0.0;
-	float3 radiance1 = valid[1] > 0.0 ? NRDPort::SceneToLinear(srcRadiance[min(p1, active - 1u)].xyz) : 0.0;
+	float3 radiance1 = valid[1] > 0.0 ? LoadSourceRadiance(min(p1, active - 1u)) : 0.0;
 	const uint2 p2 = pixCoord + uint2(0, 1);
 	valid[2] = all(p2 < active) && srcWorkingDepth[min(p2, active - 1u)] > 0.0 ? 1.0 : 0.0;
-	float3 radiance2 = valid[2] > 0.0 ? NRDPort::SceneToLinear(srcRadiance[min(p2, active - 1u)].xyz) : 0.0;
+	float3 radiance2 = valid[2] > 0.0 ? LoadSourceRadiance(min(p2, active - 1u)) : 0.0;
 	const uint2 p3 = pixCoord + uint2(1, 1);
 	valid[3] = all(p3 < active) && srcWorkingDepth[min(p3, active - 1u)] > 0.0 ? 1.0 : 0.0;
-	float3 radiance3 = valid[3] > 0.0 ? NRDPort::SceneToLinear(srcRadiance[min(p3, active - 1u)].xyz) : 0.0;
+	float3 radiance3 = valid[3] > 0.0 ? LoadSourceRadiance(min(p3, active - 1u)) : 0.0;
 
 #ifdef GI
 	[branch] if (MultiBounceMode >= 2)

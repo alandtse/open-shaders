@@ -29,6 +29,8 @@ TextureCube<float3> EnvTexture : register(t4);
 TextureCube<float3> EnvReflectionsTexture : register(t5);
 #	if defined(SKYLIGHTING)
 #		define SKYLIGHTING_PROBE_REGISTER t6
+#		define SKYLIGHTING_COVERAGE_REGISTER t18
+#		define SKYLIGHTING_ZENITH_REGISTER t19
 #		include "Skylighting/Skylighting.hlsli"
 #	endif
 #endif
@@ -483,11 +485,11 @@ float SSRT_ValidateHit(float3 hit,
 #		if defined(VR)
 			positionMS += FrameBuffer::CameraPosAdjust[NRDPortEye].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
 #		endif
-			float3 world_space_view = -normalize(positionMS);
+			float3 world_space_view = normalize(mul(FrameBuffer::CameraViewInverse[NRDPortEye], float4(-view_space_ray_direction, 0)).xyz);
 
-			sh2 skylightingSH = Skylighting::Sample(Skylighting::ClampToArrayHeight(positionMS), world_space_normal);
+			sh2 skylightingSH = Skylighting::Sample(positionMS, world_space_normal);
+			skylightingSH = Skylighting::SampleSpecular(skylightingSH, positionMS);
 			float fadeOutFactor = Skylighting::GetHorizontalFadeOutFactor(positionMS);
-			float3 skylightingNormal = normalize(float3(world_space_normal.xy, max(0, world_space_normal.z)));
 			skylightingVisibility = Skylighting::EvaluateVisibility(skylightingSH, fadeOutFactor);
 			skylightingSpecular = Skylighting::EvaluateSpecular(skylightingSH, SphericalHarmonics::FauxSpecularLobe(world_space_normal, world_space_view, roughness), fadeOutFactor);
 		}

@@ -118,6 +118,8 @@ public:
 		bool EnableMultiBounce = false;
 		bool UseDynamicCubemapsAsFallback = true;
 		float DiffuseCubemapMult = 1.0f;
+		bool EnableReflectionFallback = true;
+		float ReflectionFallbackDistance = 1024.0f;
 		// NRD REBLUR
 		bool EnableREBLUR = true;
 		NRD::REBLURSettings Reblur;
@@ -169,6 +171,9 @@ public:
 		float DiffuseCubemapMult;
 		uint UseDynamicCubemap;
 		uint MultiBounceMode;
+		uint EnableReflectionFallback;
+		float ReflectionFallbackDistance;
+		uint reflectionFallbackPadding[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(SSGICB);
 	eastl::unique_ptr<ConstantBuffer> ssgiCB;
@@ -189,6 +194,7 @@ public:
 	/** @brief Whether missed IL rays fall back to dynamic cubemaps; off while Effects 11 owns IBL or the multiplier is zero. */
 	bool UsesCubemapFallback() const;
 	bool lastUsedCubemapFallback = false;
+	std::array<uint, 3> lastFallbackIBLMode{};
 
 	eastl::unique_ptr<Texture2D> texNoise = nullptr;
 	eastl::unique_ptr<Texture2D> texWorkingDepth = nullptr;

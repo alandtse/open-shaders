@@ -75,6 +75,8 @@ TextureCube<float3> EnvTexture : register(t4);
 TextureCube<float3> ReflectionCubemap : register(t5);
 #	if defined(SKYLIGHTING)
 #		define SKYLIGHTING_PROBE_REGISTER t6
+#		define SKYLIGHTING_COVERAGE_REGISTER t18
+#		define SKYLIGHTING_ZENITH_REGISTER t19
 #		include "Skylighting/Skylighting.hlsli"
 #	endif
 #endif
@@ -204,60 +206,51 @@ void IntegrateBitfield(
 }
 
 #if defined(DYNAMIC_CUBEMAPS)
-float3 SampleDiffuseFallbackCubemap(float3 worldPos, float3 worldNormal, float3 worldDir, float3 iblRatio)
+float GetDiffuseFallbackVisibility(float3 worldPos, float3 worldNormal)
 {
-	float3 envSampleRaw = EnvTexture.SampleLevel(samplerLinearClamp, worldDir, SSGI_FALLBACK_MIP);
-	float3 envColor = envSampleRaw;
-
-#	if defined(SKYLIGHTING)
-	float skylightingDiffuse = 1.0;
+#if defined(SKYLIGHTING)
 	if (!SharedData::InInterior) {
-		float fadeOutFactor = Skylighting::GetFadeOutFactor(worldPos);
-		float3 skylightingNormal = normalize(float3(worldNormal.xy, max(0, worldNormal.z)));
-		float skylightingBoost = 1.0 + saturate(worldNormal.z) * (1.0 - SharedData::skylightingSettings.MinDiffuseVisibility);
-		sh2 skylightingSH = Skylighting::Sample(worldPos, worldDir);
-		skylightingDiffuse = Skylighting::EvaluateDiffuse(skylightingSH, skylightingNormal, fadeOutFactor) * skylightingBoost;
+		const float fadeOutFactor = Skylighting::GetFadeOutFactor(worldPos);
+		const sh2 skylightingSH = Skylighting::Sample(worldPos, worldNormal);
+		return Skylighting::EvaluateDiffuse(skylightingSH, worldNormal, fadeOutFactor);
 	}
-#	endif
+#endif
+	return 1.0;
+}
 
-#	if defined(IBL)
+float3 SampleDiffuseFallbackCubemap(float3 worldPos, float3 worldDir, float3 iblRatio, float skylightingDiffuse)
+{
+#if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
-		uint dalcMode = SharedData::iblSettings.DALCMode;
-
-		if (dalcMode >= 2) {
-			// Mode 2: DALC-normalized env scaled by DALCAmount
-			float envLum = Color::RGBToLuminance(EnvTexture.SampleLevel(samplerLinearClamp, worldDir, 15));
-			float3 dalc = Color::Ambient(max(0, SharedData::GetAmbient(worldDir)));
-			envColor = (Color::RGBToLuminance(envSampleRaw) / max(envLum, 0.001)) * dalc * SharedData::iblSettings.DALCAmount;
+		const float3 envSample = Color::IrradianceToLinear(EnvTexture.SampleLevel(samplerLinearClamp, worldDir, SSGI_FALLBACK_MIP));
+		float3 envColor;
+		if (SharedData::iblSettings.DALCMode >= 2) {
+			const float envLum = Color::RGBToLuminance(Color::IrradianceToLinear(EnvTexture.SampleLevel(samplerLinearClamp, worldDir, 15)));
+			const float3 dalc = Color::Ambient(max(0, SharedData::GetAmbient(worldDir)));
+			// Match the decoded cubemap luminance reference with the linear DALC target.
+			envColor = (Color::RGBToLuminance(envSample) / max(envLum, 0.001)) * Color::IrradianceToLinear(dalc * SharedData::iblSettings.DALCAmount);
 		} else {
-			// Mode 0/1: ratio-based
-			float3 saturatedEnv = Color::Saturation(envSampleRaw, SharedData::iblSettings.EnvIBLSaturation);
-			envColor = saturatedEnv * iblRatio * SharedData::iblSettings.EnvIBLScale;
+			envColor = Color::Saturation(envSample, SharedData::iblSettings.EnvIBLSaturation) * iblRatio * SharedData::iblSettings.EnvIBLScale;
 		}
+		if (SharedData::InInterior)
+			return envColor;
 
-		if (!SharedData::InInterior) {
-			float3 skySample = ReflectionCubemap.SampleLevel(samplerLinearClamp, worldDir, SSGI_FALLBACK_MIP);
-			float3 skyColor = Color::Saturation(skySample, SharedData::iblSettings.SkyIBLSaturation) * SharedData::iblSettings.SkyIBLScale;
-#		if defined(SKYLIGHTING)
-			skyColor *= skylightingDiffuse;
-			if (SharedData::iblSettings.DALCMode == 3)
-				envColor *= skylightingDiffuse;
-#		endif
-			envColor += skyColor;
-		}
-		envColor = Color::IrradianceToLinear(envColor);
-	} else
-#	endif
-	{
-		float3 directionalAmbient = Color::Ambient(max(0, SharedData::GetAmbient(worldDir)));
-		envColor = Color::IrradianceToLinear(directionalAmbient);
-#	if defined(SKYLIGHTING)
-		if (!SharedData::InInterior)
+		const float3 skySample = Color::IrradianceToLinear(ReflectionCubemap.SampleLevel(samplerLinearClamp, worldDir, SSGI_FALLBACK_MIP));
+		float3 skyColor = Color::Saturation(skySample, SharedData::iblSettings.SkyIBLSaturation) * SharedData::iblSettings.SkyIBLScale;
+#if defined(SKYLIGHTING)
+		skyColor *= skylightingDiffuse;
+		if (ImageBasedLighting::SkylightingAffectsEnvironment())
 			envColor *= skylightingDiffuse;
-#	endif
+#endif
+		// Like the donor, fade from local environment plus sky to native reflections
+		// alone at distance. Keep this SSGI-specific rather than alter forward IBL.
+		const float fade = EnableReflectionFallback != 0 ? saturate(length(worldPos) / max(ReflectionFallbackDistance, 1.0)) : 0.0;
+		return lerp(envColor + skyColor, skyColor, fade);
 	}
-
-	return envColor;
+#endif
+	// IBL may be disabled by the current scene or Effects 11. Preserve native DALC fallback.
+	const float3 directionalAmbient = Color::Ambient(max(0, SharedData::GetAmbient(worldDir)));
+	return Color::IrradianceToLinear(directionalAmbient) * skylightingDiffuse;
 }
 #endif
 
@@ -398,6 +391,7 @@ void CalculateGI(
 			worldPos += FrameBuffer::CameraPosAdjust[NRDPortEye].xyz - FrameBuffer::CameraPosAdjust[0].xyz;
 #	endif
 			float3 worldNormal = ViewToWorldVector(viewspaceNormal, FrameBuffer::CameraViewInverse[NRDPortEye]);
+			const float skylightingDiffuse = GetDiffuseFallbackVisibility(worldPos, worldNormal);
 			float3 iblRatio = 1.0;
 #	if defined(IBL)
 			[branch] if (SharedData::iblSettings.EnableIBL && SharedData::iblSettings.DALCMode < 2)
@@ -423,7 +417,7 @@ void CalculateGI(
 
 				float3 rayDir = normalize(openDirectionWeight / openWeight);
 				float3 worldDir = ViewToWorldVector(rayDir, FrameBuffer::CameraViewInverse[NRDPortEye]);
-				float3 fallbackSample = SampleDiffuseFallbackCubemap(worldPos, worldNormal, worldDir, iblRatio);
+				float3 fallbackSample = SampleDiffuseFallbackCubemap(worldPos, worldDir, iblRatio, skylightingDiffuse);
 				float3 contrib = fallbackSample * openWeight;
 				fallbackRadiance += contrib;
 #	ifdef SSGI_SH

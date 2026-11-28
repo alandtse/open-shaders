@@ -76,6 +76,7 @@ public:
 		float SkyIBLSaturation = 1.0f;
 		float FogAmount = 0.0f;
 		uint DALCMode = 0;  // 0: Luminance Ratio, 1: Color Ratio, 2: DALC + Sky, 3: DALC + Sky (Directional)
+		uint SkylightingAffectsEnv = 0;
 		bool DisableInInteriors = true;
 		bool DisableInWorldMap = true;
 		bool DisableInLoadingScreen = true;
@@ -94,7 +95,7 @@ public:
 		float FogAmount;
 		uint DALCMode;
 		uint ENBSkyFalloff;
-		float pad0;
+		uint SkylightingAffectsEnv;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 

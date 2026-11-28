@@ -602,6 +602,13 @@ void ScreenSpaceReflections::DrawSSR()
 	if (queuedEnabledChange.exchange(false)) {
 		resetReblurHistory = true;
 	}
+	// Track effective IBL state separately in each eye instance, including Effects 11 overrides.
+	const auto iblData = globals::features::ibl.loaded ? globals::features::ibl.GetCommonBufferData() : IBL::PerFrame{};
+	const std::array<uint, 4> fallbackIBLMode{ settings.UseDynamicCubemapsAsFallback ? 1u : 0u, iblData.EnableIBL, iblData.DALCMode, iblData.SkylightingAffectsEnv };
+	if (fallbackIBLMode != lastFallbackIBLMode) {
+		lastFallbackIBLMode = fallbackIBLMode;
+		QueueHistoryReset();
+	}
 	if (queuedHistoryReset.exchange(false))
 		resetReblurHistory = true;
 
@@ -686,6 +693,7 @@ void ScreenSpaceReflections::DrawSSR()
 		ID3D11ShaderResourceView* nullSRVs[8] = {};
 		ID3D11UnorderedAccessView* nullUAVs[8] = {};
 		context->CSSetShaderResources(0, 8, nullSRVs);
+		context->CSSetShaderResources(18, 2, nullSRVs);
 		context->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
 	};
 
@@ -769,6 +777,8 @@ void ScreenSpaceReflections::DrawSSR()
 
 		context->CSSetShaderResources(0, (uint)specSRVs.size(), specSRVs.data());
 		context->CSSetShaderResources(76, 2, iblViews);
+		ID3D11ShaderResourceView* skyViews[2] = { skylighting.loaded && skylighting.texProbeCoverage ? skylighting.texProbeCoverage->srv.get() : nullptr, skylighting.loaded && skylighting.texZenithOcclusion ? skylighting.texZenithOcclusion->srv.get() : nullptr };
+		context->CSSetShaderResources(18, 2, skyViews);
 		context->CSSetUnorderedAccessViews(0, 1, &specUAV, nullptr);
 		context->CSSetShader(specularGICompute.get(), nullptr, 0);
 

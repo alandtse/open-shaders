@@ -46,6 +46,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableMultiBounce,
 	UseDynamicCubemapsAsFallback,
 	DiffuseCubemapMult,
+	EnableReflectionFallback,
+	ReflectionFallbackDistance,
 	EnableREBLUR,
 	Reblur,
 	DiffusePrepassBlurRadius,
@@ -245,9 +247,15 @@ void ScreenSpaceGI::DrawSettings()
 				{
 					auto cubemapGuard = Util::DisableGuard(!settings.UseDynamicCubemapsAsFallback);
 					if (ImGui::SliderFloat(T(TKEY("diffuse_cubemap_multiplier"), "Diffuse Cubemap Multiplier"), &settings.DiffuseCubemapMult, 0.0f, 5.0f, "%.2f")) {
-						resetReblurHistory = true;
-						hasMultiBounceHistory = false;
+						QueueHistoryReset();
 					}
+					if (ImGui::Checkbox(T(TKEY("enable_reflection_fallback"), "Reflection Cubemap Distance Fallback"), &settings.EnableReflectionFallback))
+						QueueHistoryReset();
+					if (auto _tt = Util::HoverTooltipWrapper())
+						ImGui::Text("%s", T(TKEY("reflection_fallback_tooltip"), "Fade the SSGI cubemap contribution toward native reflections with distance outdoors when IBL is enabled."));
+					const auto distanceGuard = Util::DisableGuard(!settings.EnableReflectionFallback);
+					if (ImGui::SliderFloat(T(TKEY("reflection_fallback_distance"), "Reflection Fallback Distance"), &settings.ReflectionFallbackDistance, 1.0f, 100000.0f, "%.0f"))
+						QueueHistoryReset();
 				}
 			}
 		}
@@ -410,6 +418,7 @@ void ScreenSpaceGI::LoadSettings(json& o_json)
 	ResetIfOutOfRange(settings.GIStrength, 0.0f, 6.0f, defaults.GIStrength);
 	ResetIfOutOfRange(settings.ILSaturation, 0.0f, 2.0f, defaults.ILSaturation);
 	ResetIfOutOfRange(settings.DiffuseCubemapMult, 0.0f, 5.0f, defaults.DiffuseCubemapMult);
+	settings.ReflectionFallbackDistance = Util::ClampFinite(settings.ReflectionFallbackDistance, 1.0f, 100000.0f, defaults.ReflectionFallbackDistance);
 	ResetIfOutOfRange(settings.DiffusePrepassBlurRadius, 0.0f, 75.0f, defaults.DiffusePrepassBlurRadius);
 	if (settings.QuarterRes)
 		settings.HalfRes = false;
@@ -440,6 +449,9 @@ void ScreenSpaceGI::LoadSettings(json& o_json)
 	                                settings.EnableMultiBounce != previous.EnableMultiBounce ||
 	                                settings.GIStrength != previous.GIStrength ||
 	                                settings.UseDynamicCubemapsAsFallback != previous.UseDynamicCubemapsAsFallback ||
+	                                settings.DiffuseCubemapMult != previous.DiffuseCubemapMult ||
+	                                settings.EnableReflectionFallback != previous.EnableReflectionFallback ||
+	                                settings.ReflectionFallbackDistance != previous.ReflectionFallbackDistance ||
 	                                settings.EnableREBLUR != previous.EnableREBLUR;
 	outputReady = false;
 	denoisedThisFrame = false;
@@ -926,7 +938,7 @@ void ScreenSpaceGI::UpdateSB()
 	float2 res = { (float)texWorkingDepth->desc.Width, (float)texWorkingDepth->desc.Height };
 	const float2 dynres = NRDRendering::ActiveSize();
 
-	SSGICB data;
+	SSGICB data{};
 	{
 		const auto& projMat = globals::game::frameBufferCached.GetCameraProj(NRDRendering::Eye());
 
@@ -946,6 +958,8 @@ void ScreenSpaceGI::UpdateSB()
 		data.GIStrength = settings.GIStrength;
 		data.DiffuseCubemapMult = settings.DiffuseCubemapMult;
 		data.UseDynamicCubemap = UsesCubemapFallback() ? 1u : 0u;
+		data.EnableReflectionFallback = settings.EnableReflectionFallback ? 1u : 0u;
+		data.ReflectionFallbackDistance = settings.ReflectionFallbackDistance;
 		const bool hasContinuousHistory = hasMultiBounceHistory &&
 		                                  globals::state->frameCount == lastMultiBounceHistoryFrame + 1;
 		const bool trackMultiBounce = settings.EnableGI && settings.EnableMultiBounce;
@@ -1039,8 +1053,15 @@ void ScreenSpaceGI::DrawSSGI()
 	// history in one frame instead of fading it over MaxAccumFrames.
 	if (globals::state->ShouldResetHistory())
 		queuedResetHistory = true;
-	if (const bool usesFallback = UsesCubemapFallback(); usesFallback != lastUsedCubemapFallback) {
+	const bool usesFallback = UsesCubemapFallback();
+	if (usesFallback != lastUsedCubemapFallback) {
 		lastUsedCubemapFallback = usesFallback;
+		queuedResetHistory = true;
+	}
+	const auto iblData = usesFallback && globals::features::ibl.loaded ? globals::features::ibl.GetCommonBufferData() : IBL::PerFrame{};
+	const std::array<uint, 3> fallbackIBLMode{ iblData.EnableIBL, iblData.DALCMode, iblData.SkylightingAffectsEnv };
+	if (fallbackIBLMode != lastFallbackIBLMode) {
+		lastFallbackIBLMode = fallbackIBLMode;
 		queuedResetHistory = true;
 	}
 	if (queuedResetHistory.exchange(false)) {
@@ -1083,11 +1104,16 @@ void ScreenSpaceGI::DrawSSGI()
 	globals::state->BindSharedDataCS(context);
 	context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
 
+	// Reuse the same eye-local scene depth and normals for source ambient reconstruction.
+	ID3D11ShaderResourceView* sceneDepth = nullptr;
+	ID3D11ShaderResourceView* sceneNormal = nullptr;
+
 	// prefilter depths
 	{
 		CS_GPU_PASS("ScreenSpaceGI::PrefilterDepths");
 
-		srvs.at(0) = NRDRendering::Crop(NRDRendering::Input::Depth, Util::GetCurrentSceneDepthSRV(false));
+		sceneDepth = NRDRendering::Crop(NRDRendering::Input::Depth, Util::GetCurrentSceneDepthSRV(false));
+		srvs.at(0) = sceneDepth;
 		for (int i = 0; i < 5; ++i)
 			uavs.at(i) = uavWorkingDepth[i].get();
 
@@ -1103,7 +1129,8 @@ void ScreenSpaceGI::DrawSSGI()
 		CS_GPU_PASS("ScreenSpaceGI::PrefilterNormals");
 
 		resetViews();
-		srvs.at(0) = NRDRendering::Crop(NRDRendering::Input::Normal, Util::AsReal(rts[NORMALROUGHNESS].SRV));
+		sceneNormal = NRDRendering::Crop(NRDRendering::Input::Normal, Util::AsReal(rts[NORMALROUGHNESS].SRV));
+		srvs.at(0) = sceneNormal;
 		uavs.at(0) = uavNormal[0].get();
 		uavs.at(1) = uavNormal[1].get();
 		uavs.at(2) = uavNormal[2].get();
@@ -1133,20 +1160,42 @@ void ScreenSpaceGI::DrawSSGI()
 			srvs.at(2) = texHistoryGeo[historyGeoWriteIndex]->srv.get();
 			srvs.at(3) = NRDRendering::Crop(NRDRendering::Input::Motion, Util::AsReal(rts[RE::RENDER_TARGETS::kMOTION_VECTOR].SRV));
 			srvs.at(4) = texHistoryGeo[historyGeoWriteIndex ^ 1]->srv.get();
-			srvs.at(5) = NRDRendering::Crop(NRDRendering::Input::Albedo, Util::AsReal(rts[ALBEDO].SRV));
 		}
+		if (trackMultiBounce || usesFallback)
+			srvs.at(5) = NRDRendering::Crop(NRDRendering::Input::Albedo, Util::AsReal(rts[ALBEDO].SRV));
 		srvs.at(6) = texWorkingDepth->srv.get();
+		// The source main stays intact. Reconstruct ambient into the private pyramid only.
+		auto& ibl = globals::features::ibl;
+		auto& sky = globals::features::skylighting;
+		ID3D11ShaderResourceView* iblViews[2]{};
+		ID3D11ShaderResourceView* skyViews[2]{};
+		if (usesFallback) {
+			srvs.at(7) = sceneNormal;
+			srvs.at(8) = NRDRendering::Crop(NRDRendering::Input::Masks, Util::AsReal(rts[MASKS].SRV));
+			srvs.at(9) = sceneDepth;
+			srvs.at(10) = sky.loaded && sky.texProbeArray ? sky.texProbeArray->srv.get() : nullptr;
+			iblViews[0] = ibl.loaded && ibl.envIBLTexture ? ibl.envIBLTexture->srv.get() : nullptr;
+			iblViews[1] = ibl.loaded && ibl.skyIBLTexture ? ibl.skyIBLTexture->srv.get() : nullptr;
+			skyViews[0] = sky.loaded && sky.texProbeCoverage ? sky.texProbeCoverage->srv.get() : nullptr;
+			skyViews[1] = sky.loaded && sky.texZenithOcclusion ? sky.texZenithOcclusion->srv.get() : nullptr;
+		}
+		context->CSSetShaderResources(76, 2, iblViews);
+		context->CSSetShaderResources(18, 2, skyViews);
 		uavs.at(0) = uavRadiance[0].get();
 		uavs.at(1) = uavRadiance[1].get();
 		uavs.at(2) = uavRadiance[2].get();
 		uavs.at(3) = uavRadiance[3].get();
 		uavs.at(4) = uavRadiance[4].get();
 
-		context->CSSetShaderResources(0, 7u, srvs.data());
+		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, 5, uavs.data(), nullptr);
 		context->CSSetShader(prefilterRadianceCompute.get(), nullptr, 0);
 
 		context->Dispatch((resolution[0] + 15u) >> 4, (resolution[1] + 15u) >> 4, 1);
+		iblViews[0] = iblViews[1] = nullptr;
+		skyViews[0] = skyViews[1] = nullptr;
+		context->CSSetShaderResources(76, 2, iblViews);
+		context->CSSetShaderResources(18, 2, skyViews);
 	}
 
 	// GI → NRD input
@@ -1178,6 +1227,8 @@ void ScreenSpaceGI::DrawSSGI()
 
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetShaderResources(76, 2, iblViews);
+		ID3D11ShaderResourceView* skyViews[2] = { skylighting.loaded && skylighting.texProbeCoverage ? skylighting.texProbeCoverage->srv.get() : nullptr, skylighting.loaded && skylighting.texZenithOcclusion ? skylighting.texZenithOcclusion->srv.get() : nullptr };
+		context->CSSetShaderResources(18, 2, skyViews);
 		if (tracedQuarterRes) {
 			const float clearColor[4] = {};
 			context->ClearUnorderedAccessViewFloat(texNRDInput->uav.get(), clearColor);
@@ -1193,7 +1244,9 @@ void ScreenSpaceGI::DrawSSGI()
 		context->Dispatch((dispatchX + 7u) >> 3, (dispatchY + 7u) >> 3, 1);
 
 		iblViews[0] = iblViews[1] = nullptr;
+		skyViews[0] = skyViews[1] = nullptr;
 		context->CSSetShaderResources(76, 2, iblViews);
+		context->CSSetShaderResources(18, 2, skyViews);
 		resetViews();
 	}
 
@@ -1363,7 +1416,7 @@ namespace
 }
 bool ScreenSpaceGI::UsesCubemapFallback() const
 {
-	if (!settings.UseDynamicCubemapsAsFallback || settings.DiffuseCubemapMult <= 0.0f || !globals::features::dynamicCubemaps.loaded)
+	if (!settings.EnableGI || !settings.UseDynamicCubemapsAsFallback || settings.DiffuseCubemapMult <= 0.0f || !globals::features::dynamicCubemaps.loaded)
 		return false;
 	return AllowsAmbientFallback();
 }
