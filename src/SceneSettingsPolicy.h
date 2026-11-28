@@ -12,6 +12,9 @@ namespace SceneSettingsPolicy
 	/// Settings that must never be scene-overridden, matched by catalog address prefix.
 	inline const std::vector<SettingPolicyPath> kSettingBlacklist = {
 		{ "DeveloperTools" },
+		{ "DX12" },
+		{ "DX12NativeScene" },
+		{ "DX12Resources" },
 		{ "ExponentialHeightFog", "volumetricGridPixelSize" },
 		{ "ExponentialHeightFog", "volumetricGridSizeZ" },
 		{ "ExponentialHeightFog", "volumetricFarGridPixelSize" },

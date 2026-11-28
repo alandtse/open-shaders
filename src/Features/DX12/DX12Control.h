@@ -2,6 +2,7 @@
 
 #include "DX12ControlMode.h"
 #include "Feature.h"
+#include "Utils/BootSnapshot.h"
 
 #include <atomic>
 
@@ -13,6 +14,18 @@ struct DX12Control final : Feature
 		bool Enabled = true;
 		int Mode = static_cast<int>(DX12::ControlMode::FullRT);
 	};
+
+	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
+		UTIL_RESTART_FIELD(Settings, Enabled, "Enable native DX12 features"),
+	} };
+
+	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
+	{
+		return { kRestartFields.data(), kRestartFields.size() };
+	}
+	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
+	const void* GetSettingsBlob() const override { return &settings; }
+	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
 
 	std::string GetName() override { return "DX12"; }
 	std::string GetShortName() override { return "DX12"; }
@@ -40,4 +53,5 @@ private:
 	void DrawSimpleSettings(bool developerMode);
 	mutable std::atomic<int> selectedMode{ Settings{}.Mode };
 	Settings settings;
+	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
 };

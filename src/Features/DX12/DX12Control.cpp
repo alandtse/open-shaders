@@ -81,6 +81,7 @@ void DX12Control::LoadSettings(json& input)
 	settings.Mode = static_cast<int>(DX12::SanitizeControlMode(input.value("Mode", defaults.Mode),
 		globals::state && globals::state->IsDeveloperMode()));
 	selectedMode.store(settings.Mode, std::memory_order_relaxed);
+	bootSnapshot.LatchIfNeeded(settings);
 	if (!bootCaptured) {
 		bootActive.store(settings.Enabled, std::memory_order_release);
 		bootCaptured = true;
