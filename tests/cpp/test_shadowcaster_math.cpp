@@ -578,7 +578,7 @@ TEST_CASE("Native SCM ownership is established by rendering mode", "[scm][dx12]"
 	CHECK_FALSE(fullRT.observeGeometry);
 	CHECK_FALSE(fullRT.observeLights);
 	CHECK(fullRT.fullStaticAuthority);
-	CHECK(NativeStaticAuthority(fullRT, true, false));
+	CHECK_FALSE(NativeStaticAuthority(fullRT, true, false));
 	CHECK(NativeStaticAuthority(fullRT, true, true));
 	CHECK_FALSE(NativeStaticAuthority(fullRT, false, false));
 	CHECK(SelectSCMNativeCasterMode(fullRT, true) == SCMNativeCasterMode::SuppressAll);

@@ -682,11 +682,12 @@ namespace ShadowCasterManager
 			if (supported && s_frameNativePolicy.observeLights) {
 				ObserveNativeShadowLight(entry.Light);
 				matched = nativeScene.OwnsStaticForLight(entry.Light, slot);
+			} else if (supported && s_frameNativePolicy.fullStaticAuthority) {
+				matched = nativeScene.ShadedFromSlice(entry.Light->light.get());
 			}
 			if (supported && s_frameNativePolicy.fullStaticAuthority && nativeScene.WantsExactShadowOrigins())
 				if (auto* ni = entry.Light->light.get())
 					nativeScene.ObserveScheduledShadowOrigin(ni, ShadowOrigin(ni));
-			// The optional origin observation does not change Full RT raster authority.
 			const bool native = DX12::NativeStaticAuthority(s_frameNativePolicy, supported, matched);
 			const auto it = s_splitState.find(entry.Light);
 			const bool omitted = it != s_splitState.end() && it->second.rasterOmitsNativeStatic;
@@ -1418,7 +1419,7 @@ namespace ShadowCasterManager
 			// Native-owned static shadows never require a legacy atlas bake.
 			const auto nativePolicy = s_frameNativePolicy;
 			SplitState* st = &s_splitState[light];
-			const bool native = nativePolicy.fullStaticAuthority ? !light->GetIsFrustumOrDirectionalLight() : st->rasterOmitsNativeStatic;
+			const bool native = st->rasterOmitsNativeStatic;
 			bool split = !native && StaticAtlasReady() && !carrier && !FlickersFromLiveOrigin(light->light.get());
 			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			// A second accumulate this frame is skipped below, so it keeps the first call's split decision.
@@ -4455,8 +4456,9 @@ namespace ShadowCasterManager
 				auto& e = s_lights.Lights[i];
 				if (!e.Light)
 					continue;
+				const auto ownership = s_splitState.find(e.Light);
 				const bool fullRTNative = s_frameNativePolicy.fullStaticAuthority &&
-				                          !e.Light->GetIsFrustumOrDirectionalLight();
+				                          ownership != s_splitState.end() && ownership->second.rasterOmitsNativeStatic;
 				if (fullRTNative && InvalidateFullRTStaticContent(i) && !e.RedrawFrame) {
 					e.LastDrawnFrame = -1;
 					MarkNativeRasterRecovery(e);
