@@ -272,7 +272,7 @@ def sample_replay(bench, out_name, mode=None):
                 timers.setdefault(timer["name"], []).append(timer.get("avgMs") or timer.get("gpuMs") or 0.0)
         state = bench.call("record", {"action": "status", "runId": run_id} if run_id else {"action": "status"})
         outcome = state.get("state")
-        if outcome in ("failed", "error", "cancelled") or state.get("error") or state.get("success") is False:
+        if outcome in ("failed", "error", "cancelled") or state.get("error") or False in (state.get("success"), state.get("ok")):
             raise RuntimeError(f"{out_name} replay failed: {state}")
         if state.get("done") or state.get("finished") or outcome in ("done", "completed"):
             completed = True
