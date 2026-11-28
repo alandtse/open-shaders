@@ -25,6 +25,7 @@ if(EXCLUDE_NATIVE_DXIL)
         "DX12NativeScene/ShadowOffload.dxil"
         "DX12NativeScene/ShadowRTQuality.dxil"
         "DX12NativeScene/ShadowRTPerformance.dxil"
+        "DX12NativeScene/ShadowOffloadSlices.dxil"
         "DX12NativeScene/ShadowRTQualitySlices.dxil"
         "DX12NativeScene/ShadowRTPerformanceSlices.dxil"
         "NativeComposite/CompositeOffload.dxil"

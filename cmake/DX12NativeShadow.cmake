@@ -26,7 +26,8 @@ if(NATIVE_SHADOW_DXC)
     set(_shadow_rt_source
         "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene/ShadowRT.hlsl6"
     )
-    set(_shadow_outputs "${_shadow_dxil}")
+    set(_shadow_offload_slices_dxil "${_shadow_dir}/ShadowOffloadSlices.dxil")
+    set(_shadow_outputs "${_shadow_dxil}" "${_shadow_offload_slices_dxil}")
     foreach(_quality IN ITEMS Quality Performance)
         if(_quality STREQUAL "Quality")
             set(_quality_id 1)
@@ -71,6 +72,18 @@ if(NATIVE_SHADOW_DXC)
             "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene"
             -I "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders" -Fo
             "${_shadow_dxil}" "${_shadow_source}"
+        DEPENDS "${_shadow_source}" ${_shadow_contracts}
+        VERBATIM
+    )
+    add_custom_command(
+        OUTPUT "${_shadow_offload_slices_dxil}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_shadow_dir}"
+        COMMAND
+            "${NATIVE_SHADOW_DXC}" -T cs_6_5 -E main -HV 2021 -O3
+            ${NATIVE_SHADER_VALIDATION_FLAGS} -D NATIVE_LIGHT_SLICES=1 -I
+            "${NATIVE_SHADER_SOURCE_ROOT}/features/DX12 Native Scene/Shaders/DX12NativeScene"
+            -I "${NATIVE_SHADER_SOURCE_ROOT}/package/Shaders" -Fo
+            "${_shadow_offload_slices_dxil}" "${_shadow_source}"
         DEPENDS "${_shadow_source}" ${_shadow_contracts}
         VERBATIM
     )

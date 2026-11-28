@@ -71,7 +71,8 @@ namespace DX12Native
 		const bool slices = variant >= kShadowVariantCount;
 		auto& root = roots[slices];
 		constexpr const char* names[]{ "ShadowOffload.dxil", "ShadowRTQuality.dxil", "ShadowRTPerformance.dxil",
-			"ShadowRTQualitySlices.dxil", "ShadowRTPerformanceSlices.dxil" };
+			"ShadowOffloadSlices.dxil", "ShadowRTQualitySlices.dxil", "ShadowRTPerformanceSlices.dxil" };
+		static_assert(std::size(names) == kShadowTracePipelineCount);
 		const auto shader = Util::FileHelpers::ReadBoundedBinary(Util::PathHelpers::GetShadersPath() / "DX12NativeScene" / names[variant], kMaxShadowBytecodeBytes);
 
 		D3D12_DESCRIPTOR_RANGE ranges[2]{};
@@ -140,7 +141,7 @@ namespace DX12Native
 		current.reset();
 		ReportSkipped(Outcome::None);
 		const auto quality = controls.quality;
-		const bool slices = controls.captureLightVisibility && quality != kShadowQualityOffloading;
+		const bool slices = controls.captureLightVisibility;
 		const auto variant = ShadowTraceVariant(quality, slices);
 		const auto fallback = [&] {
 			auto combined = controls;
@@ -173,7 +174,7 @@ namespace DX12Native
 			const uint64_t finished = completion->GetCompletedValue();
 			if (finished == UINT64_MAX)
 				return ReportSkipped(Outcome::Failed);
-			// Retire idle experimental allocations when leaving the experiment.
+			// A combined-mask dispatch frees idle slice allocations.
 			if (!slices) {
 				for (auto& slot : slots)
 					if (slot && slot->lightVisibility && slot.use_count() == 1 && slot->readyValue <= finished)
@@ -199,8 +200,10 @@ namespace DX12Native
 			const uint32_t lightSlotCount = ShadowVisibilityCount(lightCount, slices);
 			// Always create an array SRV, including when only one light is submitted.
 			const uint32_t lightCapacity = ShadowVisibilityCapacity(lightSlotCount);
+			const uint32_t sliceWidth = slices ? ShadowLogicalExtent(width, quality) : 0u;
 			const bool fresh = !slot || slot->maskWidth != maskWidth || slot->maskHeight != maskHeight ||
-			                   slot->pipelineVariant != variant || slot->lightVisibilityCapacity != lightCapacity;
+			                   slot->pipelineVariant != variant || slot->lightVisibilityCapacity != lightCapacity ||
+			                   slot->lightVisibilityWidth != sliceWidth;
 			if (fresh) {
 				auto replacement = std::make_shared<ShadowMaskFrame>();
 				D3D12_FEATURE_DATA_FORMAT_SUPPORT support{ DXGI_FORMAT_R32G32_FLOAT };
@@ -219,7 +222,7 @@ namespace DX12Native
 					DX::ThrowIfFailed(requested.d3d12Device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &sliceSupport, sizeof(sliceSupport)));
 					if (!(sliceSupport.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE) || !(sliceSupport.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_LOAD))
 						throw std::runtime_error("Native light visibility format unavailable");
-					const auto sliceDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R8_UNORM, maskWidth, maskHeight,
+					const auto sliceDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R8_UNORM, sliceWidth, maskHeight,
 						static_cast<UINT16>(lightCapacity), 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
 					const uint64_t sliceBytes = requested.d3d12Device->GetResourceAllocationInfo(0, 1, &sliceDesc).SizeInBytes;
 					if (!sliceBytes || sliceBytes == UINT64_MAX || allocation > UINT64_MAX - sliceBytes)
@@ -240,13 +243,14 @@ namespace DX12Native
 				replacement->allocationBytes = allocation;
 				replacement->pipelineVariant = variant;
 				replacement->lightVisibilityCapacity = lightCapacity;
+				replacement->lightVisibilityWidth = sliceWidth;
 				DX::ThrowIfFailed(requested.d3d12Device->CreateCommittedResource(&heap,
 					D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
 					nullptr, IID_PPV_ARGS(replacement->mask.put())));
 				replacement->mask->SetName(L"DX12NativeScene::RawShadowMask");
 				if (slices) {
 					D3D11_TEXTURE2D_DESC sliceDesc{};
-					sliceDesc.Width = maskWidth;
+					sliceDesc.Width = sliceWidth;
 					sliceDesc.Height = maskHeight;
 					sliceDesc.MipLevels = 1;
 					sliceDesc.ArraySize = lightCapacity;
@@ -436,7 +440,7 @@ namespace DX12Native
 			lastLightCount.store(lightCount, std::memory_order_relaxed);
 			lastVisibilityCount.store(lightSlotCount, std::memory_order_relaxed);
 			lastOutcome.store(Outcome::Dispatched, std::memory_order_relaxed);
-			failureLogged = false;
+			(slices ? sliceFailureLogged : failureLogged) = false;
 		} catch (...) {
 			ReportSkipped(Outcome::Failed);
 			initializationFailed[variant] = !pipeline;
@@ -465,9 +469,11 @@ namespace DX12Native
 					}
 				}
 			}
-			if (!failureLogged) {
-				failureLogged = true;
-				logger::warn("[DX12NativeScene] Shadow dispatch failed: {}", Util::DescribeCurrentD3DException());
+			// Tracked apart so a successful fallback cannot re-arm the slice warning every frame.
+			if (bool& logged = slices ? sliceFailureLogged : failureLogged; !logged) {
+				logged = true;
+				logger::warn("[DX12NativeScene] Shadow dispatch{} failed: {}", slices ? " with light slices" : "",
+					Util::DescribeCurrentD3DException());
 			}
 			if (slices)
 				fallback();

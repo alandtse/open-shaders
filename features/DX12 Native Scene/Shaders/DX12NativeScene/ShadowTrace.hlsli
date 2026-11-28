@@ -3,8 +3,7 @@ Texture2D<float> RasterDepth : register(t1);
 StructuredBuffer<float4> Lights : register(t2);
 RWTexture2D<float2> RawMask : register(u0);
 #ifdef NATIVE_LIGHT_SLICES
-// Same packed checkerboard coordinates as RawMask. Receiver distance in RawMask
-// distinguishes invalid samples; do not invent visibility for the unsampled partner.
+// Per-light visibility at logical resolution, slice = submitted light index; cleared to lit.
 RWTexture2DArray<unorm float> LightMask : register(u1);
 #endif
 cbuffer ShadowInputs : register(b0)
@@ -37,15 +36,16 @@ groupshared uint TileMinimumOrdered[3];
 groupshared uint TileMaximumOrdered[3];
 groupshared uint TileLightMask[kTileLightWordCount];
 
-bool ReadReceiver(uint2 packed, out uint2 p, out float3 world, out float receiverDistance)
+bool ReadReceiver(uint2 packed, out uint2 p, out uint2 logical, out float3 world, out float receiverDistance)
 {
 	p = 0;
+	logical = 0;
 	world = 0;
 	receiverDistance = 0;
 	if (any(packed >= PhysicalSize))
 		return false;
-	const uint2 logical = uint2(QualityMode == kShadowQualityOffloading ? packed.x :
-																		  ShadowLogicalX(packed.x, packed.y, FrameIndex & 1u),
+	logical = uint2(QualityMode == kShadowQualityOffloading ? packed.x :
+															  ShadowLogicalX(packed.x, packed.y, FrameIndex & 1u),
 		packed.y);
 	const uint2 logicalSize = uint2(ShadowLogicalExtent(Size.x, QualityMode), ShadowLogicalExtent(Size.y, QualityMode));
 	if (any(logical >= logicalSize))
@@ -147,10 +147,10 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 }
 [numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID, uint lane : SV_GroupIndex) {
 	const uint2 packed = id.xy;
-	uint2 p;
+	uint2 p, logical;
 	float3 world;
 	float receiverDistance;
-	const bool valid = ReadReceiver(packed, p, world, receiverDistance);
+	const bool valid = ReadReceiver(packed, p, logical, world, receiverDistance);
 	// All lanes participate before rejecting invalid receivers; large inventories
 	// fall back to the complete ordered light loop rather than dropping lights.
 	const bool tiled = LightCount >= kTileCullThreshold && LightCount <= kTileLightWordCount * 32u;
@@ -226,8 +226,12 @@ void BuildTileLightMask(uint lane, bool valid, float3 world)
 				visibility = 1.0f - gradualFalloff;
 		}
 #ifdef NATIVE_LIGHT_SLICES
-		if (lightIndex < LightSlotCount && visibility < 1.0f)
-			LightMask[uint3(packed, lightIndex)] = visibility;
+		if (lightIndex < LightSlotCount && visibility < 1.0f) {
+			LightMask[uint3(logical, lightIndex)] = visibility;
+			// Checkerboard modes trace one texel of each pair per frame; fill its partner too.
+			if (QualityMode != kShadowQualityOffloading && (logical.x ^ 1u) < ShadowLogicalExtent(Size.x, QualityMode))
+				LightMask[uint3(logical.x ^ 1u, logical.y, lightIndex)] = visibility;
+		}
 #endif
 		total += weight;
 		visible += weight * visibility;

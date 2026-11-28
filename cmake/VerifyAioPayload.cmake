@@ -11,6 +11,7 @@ set(_required
     "Shaders/DX12NativeScene/ShadowOffload.dxil"
     "Shaders/DX12NativeScene/ShadowRTQuality.dxil"
     "Shaders/DX12NativeScene/ShadowRTPerformance.dxil"
+    "Shaders/DX12NativeScene/ShadowOffloadSlices.dxil"
     "Shaders/DX12NativeScene/ShadowRTQualitySlices.dxil"
     "Shaders/DX12NativeScene/ShadowRTPerformanceSlices.dxil"
     "Shaders/NativeComposite/CompositeOffload.hlsl6"

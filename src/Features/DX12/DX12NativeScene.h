@@ -12,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -78,6 +79,12 @@ struct DX12NativeScene final : OverlayFeature
 	void ObserveRuntimeLight(RE::BSShadowLight* light, uint32_t referenceID, bool flickers,
 		const RE::NiPoint3& restOrigin);
 	void OnLoadingMenuEvent(bool opening) override;
+	/** @brief Binds this frame's per-light visibility for forward lighting once the trace has finished. */
+	void Prepass() override;
+	/** @brief Visibility slice traced this frame for a light, which the lighting shader uses instead of static shadow-map casters. */
+	std::optional<uint32_t> NativeShadowSlot(const RE::NiLight* a_light);
+	/** @brief True when lighting consumed per-light visibility this frame, so the final-image layer must not apply it again. */
+	bool ShadesLightsDirectly(uint32_t a_frame) const;
 	void OnSceneTransitionReset(bool a_opening) override;
 	void OnRuntimeDisabled() override;
 
@@ -125,7 +132,16 @@ private:
 		uint32_t referenceID = 0;             // Corresponding prepared native-scene emitter.
 		DX12::PreparedLight value;
 	};
-	std::atomic<bool> lightVisibilityExperiment{ false };
+	// Pixel shader register of the per-light visibility array; Lighting.hlsl declares the same.
+	static constexpr UINT kLightShadowRegister = 57;
+	void PublishLightShadowSlots(uint32_t frame, std::span<const DX12::PreparedLight> submitted,
+		std::span<const RE::NiLight* const> sources);
+	std::unordered_map<const RE::NiLight*, uint32_t> slotsBySource;
+	std::unordered_map<uint32_t, uint32_t> slotsByReference;
+	std::vector<std::pair<float3, uint32_t>> slotPositions;  // Full RT only: merged emitters resolve by proximity.
+	uint32_t shadedThisFrame = 0;
+	std::atomic<uint32_t> shadedLightCount{ 0 };  // Lights shaded from slices in the previous frame.
+	uint32_t lightSlotFrame = UINT32_MAX, lightsShadedFrame = UINT32_MAX;
 	std::atomic<bool> exactShadowLights{ false }, frameExactShadowLights{ false };
 	std::unordered_map<uintptr_t, float3> scheduledOrigins;
 	uint32_t scheduledOriginsFrame = UINT32_MAX;

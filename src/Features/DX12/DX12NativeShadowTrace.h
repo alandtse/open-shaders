@@ -52,13 +52,13 @@ namespace DX12Native
 		bool lightRecordsUploaded = false;
 		bool uploadedLights = false;
 		uint32_t pipelineVariant = 0;
-		// Producer-only experimental publication. A DX11 consumer must retain the
-		// frame through its own completion fence before these slices can be bound.
+		// R8 visibility per submitted light (slice = light index), read by DX11 lighting. The next
+		// frame's raster fence orders DX12 reuse behind those reads.
 		std::unique_ptr<WrappedResource> lightVisibility;
 		winrt::com_ptr<ID3D12DescriptorHeap> clearDescriptors;
 		winrt::com_ptr<ID3D11Fence> lightVisibilityFence;
 		uint64_t lightVisibilityValue = 0;
-		uint32_t lightVisibilityCapacity = 0;
+		uint32_t lightVisibilityCapacity = 0, lightVisibilityWidth = 0;
 		std::vector<DX12::PreparedLight> visibilityLights;
 		// RG32F: weighted visibility and receiver distance (zero for invalid receivers).
 	};
@@ -103,7 +103,7 @@ namespace DX12Native
 			current.reset();
 			ReportSkipped(Outcome::None);
 			initializationFailed.fill(false);
-			failureLogged = false;
+			failureLogged = sliceFailureLogged = false;
 		}
 
 	private:
@@ -118,7 +118,7 @@ namespace DX12Native
 		uint64_t nextFence = 0;
 		VideoMemoryBudget videoBudget;
 		std::array<bool, kShadowTracePipelineCount> initializationFailed{};
-		bool failureLogged = false;
+		bool failureLogged = false, sliceFailureLogged = false;
 		std::atomic<Outcome> lastOutcome{ Outcome::None };
 		std::atomic<uint32_t> lastLightCount{ 0 };
 		std::atomic<uint32_t> lastVisibilityCount{ 0 };
