@@ -45,13 +45,13 @@ The `ab` phase takes about five minutes (three 62 s replays); `baseline` about t
 - Frame time is reported against the 16.7 ms frame budget. A `perf:` claim needs `offload` at or
   below `baseline` across repeated runs, not one sample.
 
-## Combined-mask baseline adaptation
+## Coverage limits
 
 On feat/dx12, enable developer mode before running the tool. It uses the
 explicit DX12 setValidationMode command, leaving the boot master unchanged.
-The initial port still applies the combined mask in Native Composite.
-Per-light coverage counters are deliberately absent; such checks report
-REVIEW, not PASS. A scene can be populated by runtime observation without
+When `perLightVisibility` is false the frame used the combined mask in
+Native Composite, and the per-light coverage checks report REVIEW, not
+PASS. A scene can be populated by runtime observation without
 prepared shapes. A TLAS and visible mask are necessary, not sufficient,
 evidence of correct caster coverage. Inspect the fixed-pose images and
 verify off-screen casters manually before treating timing as a valid win.

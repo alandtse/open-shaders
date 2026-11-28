@@ -1125,6 +1125,8 @@ json DX12NativeScene::GetStatus() const
 			 return rows;
 		 }() },
 		{ "movers", movers.LastTraced() } };
+	// Tells the validation harness that the slice coverage counters apply.
+	status["perLightVisibility"] = shadows.LastVisibilityCount() != 0;
 	status["composite"] = { { "lastShadowResult", magic_enum::enum_name(DX12Native::lastCompositeShadowResult.load(std::memory_order_relaxed)) } };
 	return status;
 }
