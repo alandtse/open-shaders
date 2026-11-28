@@ -443,6 +443,29 @@ TEST_CASE("ShadowFadeAlpha caps the fade-in by the fade-out", "[scm]")
 	REQUIRE(ShadowFadeAlpha(10.2, 10.0, 10.1, fadeIn, fadeOut) == Approx(0.8f));
 }
 
+TEST_CASE("Returning point shadows preserve visibility across slot assignment", "[scm]")
+{
+	using ShadowCasterManager::FadeOnShadowAssignment;
+	using ShadowCasterManager::ShadowFadeAlpha;
+	constexpr double now = 5.0;
+	constexpr float duration = 0.25f;
+
+	const auto returned = FadeOnShadowAssignment(true, false, now);
+	REQUIRE(returned.fadeOnAdmit);
+	REQUIRE(ShadowFadeAlpha(now, returned.startSeconds, -1.0, duration, duration) == 1.0f);
+
+	const auto fadedOut = FadeOnShadowAssignment(true, true, now);
+	REQUIRE(fadedOut.fadeOnAdmit);
+	REQUIRE(ShadowFadeAlpha(now, fadedOut.startSeconds, -1.0, duration, duration) == 0.0f);
+	REQUIRE(ShadowFadeAlpha(now + duration / 2, fadedOut.startSeconds, -1.0, duration, duration) == 0.5f);
+
+	for (bool completed : { false, true }) {
+		const auto disabled = FadeOnShadowAssignment(false, completed, now);
+		REQUIRE_FALSE(disabled.fadeOnAdmit);
+		REQUIRE(disabled.startSeconds < 0.0);
+	}
+}
+
 TEST_CASE("ResumedFadeStart continues from the strength shown", "[scm]")
 {
 	constexpr float duration = 0.25f;

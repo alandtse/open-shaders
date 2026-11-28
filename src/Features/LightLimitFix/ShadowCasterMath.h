@@ -32,6 +32,18 @@ namespace ShadowCasterManager
 		return !playerProtected && !allowNewLight && lastDrawnFrame == kUndrawnShadowFrame;
 	}
 
+	struct ShadowAssignmentFade
+	{
+		bool fadeOnAdmit;
+		double startSeconds;
+	};
+
+	/// A completed fade-out starts recovering at assignment because retained depth can be sampled before the next redraw.
+	inline constexpr ShadowAssignmentFade FadeOnShadowAssignment(bool fadeSwaps, bool completedFadeOut, double now) noexcept
+	{
+		return { fadeSwaps, fadeSwaps && completedFadeOut ? now : -1.0 };
+	}
+
 	/// Shadow strength of a slot: the fade-in ramp from a_fadeStart (a_fadeIn seconds) capped by the fade-out ramp from
 	/// a_releaseStart (a_fadeOut seconds); a negative start means no ramp.
 	inline float ShadowFadeAlpha(double a_now, double a_fadeStart, double a_releaseStart, float a_fadeIn, float a_fadeOut) noexcept
