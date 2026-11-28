@@ -135,6 +135,7 @@ void RainRefraction::DrawSettings()
 			ImGui::Text("%s", T(TKEY("motion_transparency_tooltip"), "Fades the drops; higher values make rain more transparent."));
 		}
 	}
+	ImGui::SeparatorText(T("feature.wind.name", "Wind"));
 	drawUserOwned();
 }
 
