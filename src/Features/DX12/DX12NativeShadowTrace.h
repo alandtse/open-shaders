@@ -28,7 +28,7 @@ namespace DX12Native
 		bool captureDebugLights = false;
 		uint32_t debugPreparedCount = 0;
 		std::shared_ptr<const NativeLightPublication> nativeLights;
-		bool uploadLights = false;
+		bool uploadLights = false;  // Trace the passed lights, which override nativeLights' GPU copy.
 		bool captureLightVisibility = false;
 		MoverScene* movers = nullptr;  // Rigid movers traced alongside the static scene this frame.
 	};

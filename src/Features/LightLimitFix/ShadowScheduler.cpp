@@ -685,7 +685,7 @@ namespace ShadowCasterManager
 			} else if (supported && s_frameNativePolicy.fullStaticAuthority) {
 				matched = nativeScene.ShadedFromSlice(entry.Light->light.get());
 			}
-			if (supported && s_frameNativePolicy.fullStaticAuthority && nativeScene.WantsExactShadowOrigins())
+			if (supported && s_frameNativePolicy.fullStaticAuthority)
 				if (auto* ni = entry.Light->light.get())
 					nativeScene.ObserveScheduledShadowOrigin(ni, ShadowOrigin(ni));
 			const bool native = DX12::NativeStaticAuthority(s_frameNativePolicy, supported, matched);

@@ -57,9 +57,6 @@ void DX12NativeScene::DrawDevSettings()
 	if (ImGui::Checkbox(T("menu.dx12.scene.debug_shadow_mask", "Show ray-traced shadow mask"), &debugMask))
 		DX12Native::compositeShadowDebugView.store(debugMask, std::memory_order_relaxed);
 	if (control.IsFullRTMode()) {
-		bool exact = exactShadowLights.load(std::memory_order_relaxed);
-		if (ImGui::Checkbox(T("menu.dx12.scene.exact_shadow_lights", "Experimental exact shadow-light origins"), &exact))
-			exactShadowLights.store(exact, std::memory_order_relaxed);
 		int unify = int(runtimeUnificationRadius.load(std::memory_order_relaxed));
 		int exclude = int(preparedExclusionRadius.load(std::memory_order_relaxed));
 		if (ImGui::SliderInt(T("menu.dx12.scene.runtime_unification_radius", "Runtime light unification radius (units)"), &unify, 0, int(DX12Native::kFullShadowRadiusMax), "%d", ImGuiSliderFlags_AlwaysClamp))
@@ -448,7 +445,7 @@ std::optional<uint32_t> DX12NativeScene::NativeShadowSlot(const RE::NiLight* a_l
 			++slotMatchesThisFrame[size_t(SlotMatch::UnslottedShadowLight)];
 		if (grantedLightsFrame == lightSlotFrame && std::ranges::contains(grantedLights, a_light)) {
 			// SCM already dropped this light's static casters from last frame's slices; keep shading it from them.
-			if (PreviousShadowSlot(a_light) != UINT32_MAX) {
+			if (PreviousSlice(a_light) != UINT32_MAX) {
 				lightsShadedFrame = lightSlotFrame;
 				++slotMatchesThisFrame[size_t(SlotMatch::PreviousOnly)];
 				return UINT32_MAX;
@@ -476,12 +473,18 @@ bool DX12NativeScene::ShadedFromSlice(const RE::NiLight* a_light) const
 	return true;
 }
 
-uint32_t DX12NativeScene::PreviousShadowSlot(const RE::NiLight* a_light) const
+uint32_t DX12NativeScene::PreviousSlice(const RE::NiLight* a_light) const
 {
 	if (!previousSlicesValid || slicedLightsFrame != lightSlotFrame)
 		return UINT32_MAX;
 	const auto it = std::ranges::find(slicedLights, a_light, &std::pair<const RE::NiLight*, uint32_t>::first);
 	return it != slicedLights.end() ? it->second : UINT32_MAX;
+}
+
+uint32_t DX12NativeScene::PreviousShadowSlot(const RE::NiLight* a_light) const
+{
+	// A shadow that moves with the flame each frame would smear if blended with the last one.
+	return std::ranges::contains(movingOriginLights, a_light) ? UINT32_MAX : PreviousSlice(a_light);
 }
 
 bool DX12NativeScene::ShadesLightsDirectly(uint32_t a_frame) const
@@ -550,9 +553,7 @@ void DX12NativeScene::PreShadowMaps()
 		const auto mode = DX12::SelectSCMNativeMode(control.IsActive(), globals::game::isVR,
 			control.IsShadowOffloadMode(), control.IsFullRTMode(), CanOffloadShadowsInCurrentCell());
 		const auto previous = frameNativeMode.exchange(mode, std::memory_order_acq_rel);
-		const bool exact = mode == DX12::SCMNativeMode::FullRT && globals::state->IsDeveloperMode() && exactShadowLights.load(std::memory_order_relaxed);
-		const bool previousExact = frameExactShadowLights.exchange(exact, std::memory_order_acq_rel);
-		if (previous != mode || previousExact != exact) {
+		if (previous != mode) {
 			std::scoped_lock lock(runtimeLightMutex);
 			ResetFullLightInventory();
 			runtimeLightFrame = UINT32_MAX;
@@ -755,7 +756,7 @@ std::shared_ptr<const DX12Native::NativeLightPublication> DX12NativeScene::Colle
 // Only opaque identities and frame-local origin values are submitted to native tracing.
 void DX12NativeScene::ObserveScheduledShadowOrigin(const RE::NiLight* light, const RE::NiPoint3& origin)
 {
-	if (!frameExactShadowLights.load(std::memory_order_relaxed) || GetFrameNativeMode() != DX12::SCMNativeMode::FullRT ||
+	if (GetFrameNativeMode() != DX12::SCMNativeMode::FullRT ||
 		!light || !std::isfinite(origin.x) || !std::isfinite(origin.y) || !std::isfinite(origin.z))
 		return;
 	const auto frame = globals::game::graphicsState->GetFrameCount();
@@ -838,8 +839,8 @@ void DX12NativeScene::OnOpaqueRasterReady()
 	std::span<const DX12::PreparedLight> submittedLights = fullRT ?
 	                                                           std::span<const DX12::PreparedLight>(fullInventory->lights) :
 	                                                           std::span<const DX12::PreparedLight>(liveLights);
-	uint32_t moving = 0;
-	if (fullRT && frameExactShadowLights.load(std::memory_order_relaxed)) {
+	movingOriginLights.clear();
+	if (fullRT) {
 		std::scoped_lock lock(runtimeLightMutex);
 		if (scheduledOriginsFrame == frame) {
 			constexpr float kMinOriginShift = 0.25f;
@@ -852,18 +853,19 @@ void DX12NativeScene::OnOpaqueRasterReady()
 				const float dx = q.x - p.x, dy = q.y - p.y, dz = q.z - p.z;
 				if (dx * dx + dy * dy + dz * dz < kMinOriginShift * kMinOriginShift)
 					continue;
-				if (!moving)
+				if (movingOriginLights.empty())
 					lightsAtShadowOrigins.assign(submittedLights.begin(), submittedLights.end());
 				lightsAtShadowOrigins[i].position = q;
-				++moving;
+				movingOriginLights.push_back(reinterpret_cast<const RE::NiLight*>(it->first));
 			}
 		}
-		if (moving)
+		if (!movingOriginLights.empty())
 			submittedLights = lightsAtShadowOrigins;
 	}
+	const auto moving = uint32_t(movingOriginLights.size());
 	const auto previousMoving = movingOriginCount.exchange(moving, std::memory_order_relaxed);
-	// Until per-light history exists, reject the combined history on moving-origin frames.
-	if (moving || previousMoving)
+	// The combined layer has no per-light history, so moving origins restart it while it reaches the frame.
+	if ((moving || previousMoving) && lightsShadedFrame + 1 != frame)
 		globals::features::upscaling.nativeComposite.ResetShadowHistory();
 	if (submittedLights.empty())
 		return shadows.ReportSkipped(DX12Native::ShadowMaskTrace::Outcome::NoLights);
@@ -1015,7 +1017,6 @@ void DX12NativeScene::OnRuntimeDisabled()
 	loadingResetPending.store(false, std::memory_order_release);
 	frameNativeModeID.store(UINT32_MAX, std::memory_order_release);
 	frameNativeMode.store(DX12::SCMNativeMode::Disabled, std::memory_order_release);
-	frameExactShadowLights.store(false, std::memory_order_relaxed);
 	movingOriginCount.store(0, std::memory_order_relaxed);
 	if (!nativeSessionStarted)
 		return;
@@ -1138,6 +1139,7 @@ json DX12NativeScene::GetStatus() const
 		{ "grantedWithoutSlice", slotMatches[size_t(SlotMatch::GrantedWithoutSlice)].load(std::memory_order_relaxed) },
 		{ "grantedWithoutSliceTotal", grantedWithoutSliceTotal.load(std::memory_order_relaxed) },
 		{ "previousSliceOnly", slotMatches[size_t(SlotMatch::PreviousOnly)].load(std::memory_order_relaxed) },
+		{ "movingOrigins", movingOriginCount.load(std::memory_order_relaxed) },
 		{ "shadowLightSlots", [this] {
 			 std::scoped_lock lock(shadowLightSlotsMutex);
 			 json rows = json::array();

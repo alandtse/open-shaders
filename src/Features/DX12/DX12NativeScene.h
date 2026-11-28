@@ -40,7 +40,6 @@ struct DX12NativeScene final : OverlayFeature
 	bool CasterInTlas(RE::BSGeometry& geometry) const;
 	/** @brief CasterInTlas for a static caster raster is about to drop, counted for status. */
 	bool ClaimCasterForTrace(RE::BSGeometry& geometry) const;
-	bool WantsExactShadowOrigins() const { return frameExactShadowLights.load(std::memory_order_relaxed); }
 	void ObserveScheduledShadowOrigin(const RE::NiLight* light, const RE::NiPoint3& origin);
 	std::shared_ptr<const DX12Native::TopLevel> GetPublishedScene() const { return acceleration.GetScene(); }
 	/** @brief The selected mode's exterior preparation and shadow contribution setting. */
@@ -184,10 +183,11 @@ private:
 	std::vector<ShadowLightSlot> shadowLightSlots;                               // SCM shadow lights' slice lookups in the previous frame.
 	std::array<std::atomic<uint32_t>, size_t(SlotMatch::kCount)> slotMatches{};  // Previous frame's lookups by outcome.
 	uint32_t lightSlotFrame = UINT32_MAX, lightsShadedFrame = UINT32_MAX;
-	std::atomic<bool> exactShadowLights{ false }, frameExactShadowLights{ false };
 	std::unordered_map<uintptr_t, float3> scheduledOrigins;
 	uint32_t scheduledOriginsFrame = UINT32_MAX;
 	std::vector<DX12::PreparedLight> lightsAtShadowOrigins;
+	std::vector<const RE::NiLight*> movingOriginLights;  // Traced this frame away from their rest point.
+	uint32_t PreviousSlice(const RE::NiLight* a_light) const;
 	std::atomic<uint32_t> movingOriginCount{ 0 };
 	mutable std::atomic<uint64_t> ownershipGranted{ 0 }, castersTraced{ 0 }, castersKeptRaster{ 0 };
 	mutable std::vector<const RE::NiLight*> ownedLights;  // Lights granted static ownership in runtimeLightFrame.
