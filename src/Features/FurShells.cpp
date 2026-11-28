@@ -1051,9 +1051,9 @@ void FurShells::BeginOverlayPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pas
 
 void FurShells::BindPass(const PerPass& a_perPass, ID3D11ShaderResourceView* a_shellView, ID3D11ShaderResourceView* a_normalView)
 {
-	if (std::memcmp(&a_perPass, &lastPerPass, sizeof(PerPass)) != 0) {
+	if (lastPerPass.Differs(a_perPass)) {
 		perPassCB->Update(a_perPass);
-		lastPerPass = a_perPass;
+		lastPerPass.Record(a_perPass);
 	}
 
 	auto* context = globals::d3d::context;
@@ -1396,6 +1396,7 @@ void FurShells::SetupResources()
 	static bool drawHookInstalled = false;
 
 	perPassCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<PerPass>(), "FurShells::PerPass");
+	lastPerPass.Reset();
 
 	noColorWrite = nullptr;
 	D3D11_BLEND_DESC blendDesc{};
