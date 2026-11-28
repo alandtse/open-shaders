@@ -84,7 +84,7 @@ public:
 		float WallRainNormalStrength = 2.0f;
 		float WallRainWetness = 1.0f;
 		float WallRainDarkening = 0.65f;
-		uint EnableWallRain = true;
+		uint EnableWallRain = false;
 		float WallRainTrailLength = 1.0f;
 	};
 
